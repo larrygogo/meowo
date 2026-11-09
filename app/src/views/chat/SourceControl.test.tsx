@@ -135,6 +135,57 @@ describe("文件行与操作", () => {
   });
 });
 
+describe("做空第 1 轮", () => {
+  /// 「本会话」筛选下点「全部放弃」，此前连看不见的 12 个文件一起放弃了。
+  it("整组操作只作用于当前显示的行", async () => {
+    const files = [file("agent.ts", null, "M"), ...Array.from({ length: 12 }, (_, i) => file(`mine${i}.ts`, null, "M"))];
+    renderScm([repo({ summary: summary(files) })], { touchedPaths: ["C:/w/meowo/agent.ts"] });
+    fireEvent.click(screen.getByRole("button", { name: /本会话/ }));
+    fireEvent.click(within(screen.getByTestId("scm-group-work")).getByRole("button", { name: "全部放弃" }));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText("放弃这个文件的更改？")).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole("button", { name: "放弃更改" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("git_discard", { cwd: "C:/w/meowo", paths: ["agent.ts"] }));
+    fireEvent.click(within(screen.getByTestId("scm-group-work")).getByRole("button", { name: "全部暂存" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("git_stage", { cwd: "C:/w/meowo", paths: ["agent.ts"] }));
+  });
+
+  it("开着筛选时不能「提交全部」，并说明原因", () => {
+    const { container } = renderScm([repo({ summary: summary([file("a.ts", null, "M"), file("secret.env", null, "U")]) })]);
+    fireEvent.change(screen.getByRole("textbox", { name: /^消息/ }), { target: { value: "x" } });
+    expect((screen.getByRole("button", { name: /^提交/ }) as HTMLButtonElement).disabled).toBe(false);
+    fireEvent.change(container.querySelector(".chat-diff-search")!, { target: { value: "a.ts" } });
+    expect((screen.getByRole("button", { name: /^提交/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText("列表开着筛选，不能提交全部。先暂存要提交的文件，或清除筛选")).toBeTruthy();
+  });
+
+  /// 确认框开着时选中的 worktree 从列表消失：此前确认后放弃的是主仓库的同名文件。
+  it("确认框钉住仓库：仓库从列表消失就作废，不落到别的仓库；确认框写明仓库名", async () => {
+    const main = repo({ summary: summary([file("src/a.ts", null, "M")]) });
+    const wt = repo({ root: "C:/w/meowo-wt", name: "meowo-wt", isCwdRepo: false, summary: summary([file("src/a.ts", null, "M")]) });
+    const props = { cwd: "C:/w/meowo", selectedRoot: "C:/w/meowo-wt", onSelectRoot: () => {}, onChanged: () => {}, comments: [], touchedPaths: [], turnTouchedPaths: [],
+      onAddComment: () => {}, onRemoveComment: () => {}, escOverrideRef: { current: null } };
+    const { rerender } = render(<SourceControl {...props} repos={[main, wt]} />);
+    fireEvent.click(within(screen.getByTestId("scm-group-work")).getByRole("button", { name: "全部放弃" }));
+    expect(within(screen.getByRole("dialog")).getByText("仓库：meowo-wt")).toBeTruthy();
+    rerender(<SourceControl {...props} repos={[main]} />);
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "放弃更改" }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(invoke).not.toHaveBeenCalledWith("git_discard", expect.anything());
+  });
+
+  it("有冲突时提交报 git/conflict 的文案", async () => {
+    vi.mocked(invoke).mockImplementation(async (command: string) => {
+      if (command === "git_commit") throw "git/conflict";
+      return [];
+    });
+    renderScm([repo({ summary: summary([file("a.ts", "M", null)]) })]);
+    fireEvent.change(screen.getByRole("textbox", { name: /^消息/ }), { target: { value: "x" } });
+    fireEvent.click(screen.getByRole("button", { name: /^提交/ }));
+    expect(await screen.findByRole("alert")).toHaveProperty("textContent", "有未解决的合并冲突，先在终端或编辑器里解决再提交");
+  });
+});
+
 describe("提交框", () => {
   it("没暂存时是「提交全部」，有暂存时是「提交」；空信息禁用；Ctrl+Enter 提交，成功后清空", async () => {
     const { rerender } = renderScm([repo({ summary: summary([file("a.ts", null, "M")]) })]);

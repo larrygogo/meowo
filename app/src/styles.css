@@ -5022,6 +5022,12 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .scm-discard-list { margin: 0; padding: 0 0 0 var(--sp-16); max-height: 160px; overflow-y: auto; font-size: var(--text-xs); color: var(--cc-text); font-family: ui-monospace, SFMono-Regular, "Cascadia Code", Consolas, monospace; overflow-wrap: anywhere; }
 .scm-discard-list .is-more { list-style: none; margin-left: calc(-1 * var(--sp-16)); color: var(--cc-text-faint); font-family: inherit; }
 .scm-discard-note { font-size: var(--text-xs); color: var(--cc-err); }
+.scm-discard-repo { font-size: var(--text-xs); color: var(--cc-text-dim); }
+/* 「文件」页签顶上的目录切换：工作目录 + 本会话用过的 worktree，与「更改」共用选中。 */
+.files-roots { flex: 0 0 auto; display: flex; flex-wrap: wrap; gap: var(--sp-4); padding: var(--sp-8) var(--sp-8) 0; }
+.files-roots button { max-width: 100%; height: 24px; padding: 0 var(--sp-8); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-dim); font: inherit; font-size: var(--text-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.files-roots button:hover { color: var(--cc-text); background: var(--fill-hover); }
+.files-roots button[aria-pressed="true"] { color: var(--cc-text); background: var(--fill-selected); border-color: transparent; }
 .chat-modal .ns-btn.is-danger { border-color: transparent; background: var(--cc-err-vivid); color: #fff; }
 .chat-modal .ns-btn.is-danger:hover { background: color-mix(in srgb, var(--cc-err-vivid) 85%, #000); }
 /* 触屏没有悬停：行内操作常驻，不然手机上点不到暂存 / 放弃。 */

@@ -6,6 +6,8 @@ import { BrowserPane } from "./BrowserPane";
 import type { ReviewComment } from "./diffComments";
 import { FilesView, PathMenu, PathMentionContext, singleRepo, type PathMenuItem } from "./GitDiffView";
 import { pickRepo, SourceControl } from "./SourceControl";
+
+const sameDir = (a: string, b: string) => a.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase() === b.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
 import type { PanelState, PanelTab } from "./panelTabs";
 import { PANEL_ICONS as ICONS, PANEL_SHORTCUTS, shortcutLabel as mod } from "./panelIcons";
 import { ShellTerminal } from "./ShellTerminal";
@@ -239,10 +241,26 @@ export const SidePanel = memo(function SidePanel(props: Props) {
         : <p className="side-panel-empty">{t.chat.diffNoRepo}</p>)}
       {active?.type === "files" && (() => {
         // 「文件」跟着「更改」选中的仓库走：worktree 不在工作目录下，不切过去就看不到它的文件。
-        // 仓库清单里只有一个工作目录所在仓库时（没进过 worktree）照旧浏览工作目录本身——它可能是仓库的子目录。
-        const picked = props.repos && props.repos.length > 0 ? pickRepo(props.repos, props.selectedRoot) : null;
+        // 选的是工作目录所在仓库（或显式选了「工作目录」）就浏览工作目录本身——它可能是仓库的子目录，
+        // 也可能根本不是仓库（会话开在 workspace）。顶上一排可切换，与「更改」共用同一个选中（做空：此前
+        // 「文件」里切不了，工作目录不是仓库时还再也回不去）。
+        const others = (props.repos ?? []).filter((repo) => !repo.isCwdRepo);
+        const workdirPicked = !props.selectedRoot || sameDir(props.selectedRoot, cwd);
+        const picked = !workdirPicked && props.repos && props.repos.length > 0 ? pickRepo(props.repos, props.selectedRoot) : null;
         const root = picked && !picked.isCwdRepo ? picked.root : cwd;
-        return <FilesView key={root} cwd={root} live={!collapsed} />;
+        return (
+          <>
+            {others.length > 0 && (
+              <div className="files-roots" role="group" aria-label={t.chat.filesRepoSwitch}>
+                <button type="button" aria-pressed={root === cwd} data-tip={cwd} onClick={() => props.onSelectRoot(cwd)}>{t.chat.filesWorkdir}</button>
+                {others.map((repo) => (
+                  <button key={repo.root} type="button" aria-pressed={root !== cwd && sameDir(repo.root, root)} data-tip={repo.root} onClick={() => props.onSelectRoot(repo.root)}>{repo.name}</button>
+                ))}
+              </div>
+            )}
+            <FilesView key={root} cwd={root} live={!collapsed} />
+          </>
+        );
       })()}
       </PathMentionContext.Provider>
     </aside>

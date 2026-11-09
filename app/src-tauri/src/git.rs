@@ -869,12 +869,33 @@ fn commit_blocking(cwd: &str, message: &str, all: bool, env: GitEnv) -> Result<S
         return Err("git/empty_message".into());
     }
     let run = |args: &[&str], stdin: Option<&[u8]>| git_run(dir, args, env, stdin).map_err(|e| format!("git/failed: {e}"));
+    // 「提交全部」替用户暂存的文件：提交没成（没配身份、钩子失败……）就原样退回，不留下用户没做过的暂存。
+    let mut staged_by_us: Vec<String> = Vec::new();
     let result = (|| {
+        // 有冲突（unmerged）不提交：冲突文件在列表里只显示成 M，「提交全部」会把带冲突标记的内容
+        // 当成已解决提交进去（做空复现：agent 在 worktree 里 merge 到一半，手机上顺手一点）。
+        let unmerged = run(&["diff", "--name-only", "--diff-filter=U"], None)?;
+        if !unmerged.status.success() {
+            return Err(classify_git_failure(&unmerged));
+        }
+        if !stdout_text(&unmerged.stdout).trim().is_empty() {
+            return Err("git/conflict".into());
+        }
         if all {
-            let added = run(&["add", "-A"], None)?;
-            if !added.status.success() {
-                return Err(classify_git_failure(&added));
+            // 只暂存列表里显示的那些文件，不用 `add -A`：未跟踪的嵌套仓库（.claude/worktrees/x）
+            // 在列表里不显示，`add -A` 却会把它当 gitlink 提交进去（做空复现）。范围与界面一致。
+            let status = run(&["status", "--porcelain", "-z", "--no-renames", "-uall"], None)?;
+            if !status.status.success() {
+                return Err(classify_git_failure(&status));
             }
+            let files = parse_porcelain_z(&status.stdout);
+            let paths: Vec<String> = files.iter().filter(|f| f.worktree_status.is_some()).map(|f| f.path.clone()).collect();
+            staged_by_us = files
+                .iter()
+                .filter(|f| f.worktree_status.is_some() && f.index_status.is_none())
+                .map(|f| f.path.clone())
+                .collect();
+            run_pathspec_batches(dir, &["add"], &paths)?;
         }
         // 先用退出码判「没东西可提交」「没配身份」：git 的提示文字会随用户的语言设置本地化，
         // 光靠匹配英文输出认不全。diff --cached --quiet 有差异时退出码 1。
@@ -904,6 +925,12 @@ fn commit_blocking(cwd: &str, message: &str, all: bool, env: GitEnv) -> Result<S
         let head = run(&["rev-parse", "--short", "HEAD"], None)?;
         Ok(stdout_text(&head.stdout).trim().to_string())
     })();
+    if result.is_err() && !staged_by_us.is_empty() {
+        // 退回失败不覆盖原来的错误：用户要看的是提交为什么没成。
+        let has_head = git_output(dir, &["rev-parse", "--verify", "--quiet", "HEAD"]).is_ok_and(|o| o.status.success());
+        let args: &[&str] = if has_head { &["restore", "--staged"] } else { &["rm", "--cached", "-q", "-f"] };
+        let _ = run_pathspec_batches(dir, args, &staged_by_us);
+    }
     invalidate_caches();
     result
 }
@@ -1598,6 +1625,56 @@ mod tests {
         sb.git(&repo, &["config", "user.useConfigOnly", "true"]);
         std::fs::write(repo.join("README.md"), "edited\n").unwrap();
         assert_eq!(commit_isolated(&sb, &repo, "x", true, false).unwrap_err(), "git/identity");
+    }
+
+    /// 做空复现：「提交全部」先暂存再提交，提交没成时暂存不能留下（用户没做过这个暂存）。
+    #[test]
+    fn failed_commit_all_rolls_back_staging() {
+        let sb = Sandbox::new("rollback");
+        let repo = sb.repo("r");
+        sb.git(&repo, &["config", "user.useConfigOnly", "true"]);
+        std::fs::write(repo.join("README.md"), "edited\n").unwrap();
+        std::fs::write(repo.join("new.txt"), "n\n").unwrap();
+        let before = statuses(&repo);
+        assert_eq!(commit_isolated(&sb, &repo, "x", true, false).unwrap_err(), "git/identity");
+        assert_eq!(statuses(&repo), before);
+    }
+
+    /// 做空复现：merge 到一半有冲突时，「提交全部」把带冲突标记的内容当成已解决提交了。
+    #[test]
+    fn commit_refuses_unmerged_conflicts() {
+        let sb = Sandbox::new("conflict");
+        let repo = sb.repo("r");
+        let env = isolated_env(&sb, true);
+        let env: Vec<(&str, Option<&str>)> = env.iter().map(|(k, v)| (*k, v.as_deref())).collect();
+        let git = |args: &[&str]| git_run(&s(&repo), args, &env, None).unwrap();
+        git(&["checkout", "-q", "-b", "other"]);
+        std::fs::write(repo.join("README.md"), "other\n").unwrap();
+        git(&["commit", "-qam", "other"]);
+        git(&["checkout", "-q", "-"]);
+        std::fs::write(repo.join("README.md"), "mine\n").unwrap();
+        git(&["commit", "-qam", "mine"]);
+        assert!(!git(&["merge", "-q", "other"]).status.success());
+        assert_eq!(commit_isolated(&sb, &repo, "x", true, true).unwrap_err(), "git/conflict");
+        assert_eq!(commit_isolated(&sb, &repo, "x", false, true).unwrap_err(), "git/conflict");
+    }
+
+    /// 做空复现：未跟踪的嵌套仓库（Claude Code 的 .claude/worktrees/x）列表里不显示，
+    /// `add -A` 却会把它当 gitlink 提交。「提交全部」只提交列表里的文件。
+    #[test]
+    fn commit_all_skips_untracked_nested_repo() {
+        let sb = Sandbox::new("nested_commit");
+        let repo = sb.repo("r");
+        let nested = repo.join(".claude").join("worktrees").join("feat");
+        std::fs::create_dir_all(&nested).unwrap();
+        sb.git(&nested, &["init", "-q"]);
+        std::fs::write(nested.join("x.txt"), "x\n").unwrap();
+        std::fs::write(repo.join("README.md"), "edited\n").unwrap();
+        commit_isolated(&sb, &repo, "all", true, true).unwrap();
+        let tree = git_output(&s(&repo), &["ls-tree", "-r", "--name-only", "HEAD"]).unwrap();
+        let tree = stdout_text(&tree.stdout);
+        assert!(!tree.contains(".claude"), "{tree}");
+        assert!(tree.contains("README.md"));
     }
 
     /// agent 正在跑 git（index.lock 在）：暂存 / 提交都报 git/locked，不是一串原始报错。

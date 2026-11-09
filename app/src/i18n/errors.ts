@@ -41,6 +41,7 @@ export const ENTRIES: ErrorEntry[] = [
   // 「更改」面板的 git 写操作（git.rs git_stage / git_unstage / git_discard / git_commit）。
   { m: "git/locked", exact: true, zh: "另一个 git 操作正在进行（可能是 agent 在跑），稍后再试", en: "Another git operation is in progress (maybe the agent). Try again shortly." },
   { m: "git/identity", exact: true, zh: "还没配置 git 用户名和邮箱，先在终端里运行 git config 设置", en: "Git user name and email aren't set. Run git config in a terminal first." },
+  { m: "git/conflict", exact: true, zh: "有未解决的合并冲突，先在终端或编辑器里解决再提交", en: "There are unresolved merge conflicts. Resolve them in a terminal or editor first." },
   { m: "git/nothing_to_commit", exact: true, zh: "没有可提交的更改", en: "Nothing to commit" },
   { m: "git/empty_message", exact: true, zh: "请填写提交信息", en: "Enter a commit message" },
   { m: "git/not_in_changes", exact: true, zh: "文件已不在更改列表里，刷新后再试", en: "The file is no longer in the change list. Refresh and try again." },

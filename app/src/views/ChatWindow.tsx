@@ -999,7 +999,8 @@ export function ChatWindow() {
     if (repoChangesInflightRef.current) { repoChangesAgainRef.current = true; return; }
     repoChangesInflightRef.current = true;
     const forCwd = diffCwd;
-    const touched = [...(touchedKey ? touchedKey.split("\0") : []), ...usedRootsRef.current];
+    // 粘住的仓库排最前：后端最多查 MAX_ROOT_LOOKUPS 个不同目录，排在编辑过的文件后面会被截掉（做空）。
+    const touched = [...usedRootsRef.current, ...(touchedKey ? touchedKey.split("\0") : [])];
     getGitChangesOverview(diffCwd, touched, commandsKey ? commandsKey.split("\u0001") : [])
       .then((result) => {
         if (forCwd === diffCwdRef.current) for (const repo of result) if (!repo.isCwdRepo) usedRootsRef.current.add(repo.root);

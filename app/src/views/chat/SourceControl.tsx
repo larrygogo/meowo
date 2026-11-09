@@ -90,7 +90,9 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [confirmDiscard, setConfirmDiscard] = useState<readonly ScmFile[] | null>(null);
+  // 打开确认框时钉住仓库根与文件：确认前轮询可能把选中的 worktree 挤出列表，pickRepo 退回主仓库，
+  // 按渲染时的 root 放弃就会删到主仓库的同名文件（做空复现）。
+  const [confirmDiscard, setConfirmDiscard] = useState<{ root: string; name: string; files: readonly ScmFile[] } | null>(null);
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; rel: string } | null>(null);
 
   if (!repo) return <p className="side-panel-empty">{t.chat.diffNoRepo}</p>;
@@ -146,11 +148,24 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
   };
   const stage = (rows: readonly Row[]) => run(() => gitStage(root, rows.map((row) => row.file.path), sessionCwd));
   const unstage = (rows: readonly Row[]) => run(() => gitUnstage(root, rows.map((row) => row.file.path), sessionCwd));
-  const discard = (list: readonly ScmFile[]) => run(() => gitDiscard(root, list.map((file) => file.path), sessionCwd));
+  const askDiscard = (list: readonly ScmFile[]) => setConfirmDiscard({ root, name: repo.name, files: list });
+  const confirmAndDiscard = () => {
+    const pending = confirmDiscard;
+    setConfirmDiscard(null);
+    if (!pending) return;
+    // 仓库已经不在列表里（worktree 被删、被挤出上限）：作废这次确认，不拿别的仓库顶上。
+    if (!repos.some((item) => sameRoot(item.root, pending.root))) return;
+    const target = pending.root;
+    void run(() => gitDiscard(target, pending.files.map((file) => file.path), target === cwd ? null : cwd));
+  };
   const message = messages.get(key) ?? "";
   const setMessage = (value: string) => setMessages((prev) => new Map(prev).set(key, value));
   const commitAll = staged.length === 0;
-  const canCommit = !busy && !!message.trim() && (staged.length > 0 || work.length > 0);
+  // 开着搜索或「本会话 / 本轮」筛选时不许「提交全部」：列表只露出一部分，全部提交会带上看不见的文件
+  //（做空复现：筛到只剩 agent 改的那个，隐藏的 secret.env 一起进了提交）。先暂存要提交的，或清掉筛选。
+  const filtering = !!search.trim() || scope !== "all";
+  const commitBlockedByFilter = commitAll && filtering;
+  const canCommit = !busy && !!message.trim() && (staged.length > 0 || work.length > 0) && !commitBlockedByFilter;
   const commit = () => {
     if (!canCommit) return;
     void run(() => gitCommit(root, message, commitAll, sessionCwd), (sha) => {
@@ -189,7 +204,7 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
         )}
         {kind === "work" && (
           <button type="button" className="scm-icon-btn" aria-label={t.chat.scmDiscard} data-tip={t.chat.scmDiscard} disabled={busy}
-            onClick={() => setConfirmDiscard([row.file])}>
+            onClick={() => askDiscard([row.file])}>
             <DiscardIcon />
           </button>
         )}
@@ -246,7 +261,9 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
       return row ? [fileRow(kind, row, depth, false)] : [];
     });
 
-  const group = (kind: GroupKind, title: string, rows: readonly Row[], headActions: ReactNode) => {
+  // headActions 拿到的是当前显示的行：整组操作只作用于看得见的文件（做空复现：「本会话」筛选下点
+  // 「全部放弃」，13 个文件全被放弃，其中 12 个不是本会话改的）。
+  const group = (kind: GroupKind, title: string, rows: readonly Row[], headActions: ((shown: readonly Row[]) => ReactNode) | null) => {
     const shown = filter(rows);
     if (rows.length === 0) return null;
     const isFolded = folded.has(kind);
@@ -258,7 +275,7 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
             <Chevron open={!isFolded} />
             <span>{title}</span>
           </button>
-          {headActions && <span className="scm-group-actions">{headActions}</span>}
+          {headActions && shown.length > 0 && <span className="scm-group-actions">{headActions(shown)}</span>}
           <span className="scm-count">{rows.length}</span>
         </div>
         {!isFolded && (shown.length === 0
@@ -312,12 +329,14 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
             }
           }}
         />
-        <button type="button" className="scm-commit-btn" disabled={!canCommit} data-tip={commitAll ? t.chat.scmCommitAllTip : undefined} onClick={commit}>
+        <button type="button" className="scm-commit-btn" disabled={!canCommit}
+          data-tip={commitBlockedByFilter ? t.chat.scmCommitAllFiltered : commitAll ? t.chat.scmCommitAllTip : undefined} onClick={commit}>
           <CheckIcon />
           {commitAll ? t.chat.scmCommitAll : t.chat.scmCommit}
         </button>
         {error && <div className="scm-error" role="alert">{error}</div>}
         {notice && <div className="scm-notice" role="status">{notice}</div>}
+        {commitBlockedByFilter && !!message.trim() && <div className="scm-notice">{t.chat.scmCommitAllFiltered}</div>}
       </div>
 
       <div className="scm-tools">
@@ -355,32 +374,29 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
 
       <div className="scm-groups">
         {nothing && <div className="scm-empty is-clean">{t.chat.scmNoChanges}</div>}
-        {group("staged", t.chat.scmStaged, staged, (
-          <button type="button" className="scm-icon-btn" aria-label={t.chat.scmUnstageAll} data-tip={t.chat.scmUnstageAll} disabled={busy} onClick={() => void unstage(staged)}><MinusIcon /></button>
+        {group("staged", t.chat.scmStaged, staged, (shown) => (
+          <button type="button" className="scm-icon-btn" aria-label={t.chat.scmUnstageAll} data-tip={t.chat.scmUnstageAll} disabled={busy} onClick={() => void unstage(shown)}><MinusIcon /></button>
         ))}
-        {group("work", t.chat.scmChanges, work, <>
-          <button type="button" className="scm-icon-btn" aria-label={t.chat.scmDiscardAll} data-tip={t.chat.scmDiscardAll} disabled={busy} onClick={() => setConfirmDiscard(work.map((row) => row.file))}><DiscardIcon /></button>
-          <button type="button" className="scm-icon-btn" aria-label={t.chat.scmStageAll} data-tip={t.chat.scmStageAll} disabled={busy} onClick={() => void stage(work)}><PlusIcon /></button>
+        {group("work", t.chat.scmChanges, work, (shown) => <>
+          <button type="button" className="scm-icon-btn" aria-label={t.chat.scmDiscardAll} data-tip={t.chat.scmDiscardAll} disabled={busy} onClick={() => askDiscard(shown.map((row) => row.file))}><DiscardIcon /></button>
+          <button type="button" className="scm-icon-btn" aria-label={t.chat.scmStageAll} data-tip={t.chat.scmStageAll} disabled={busy} onClick={() => void stage(shown)}><PlusIcon /></button>
         </>)}
         {group("committed", t.chat.scmCommitted(repo.baseLabel ?? "main"), committed, null)}
       </div>
 
       {ctxMenu && <PathContextMenu cwd={root} rel={ctxMenu.rel} isDir={false} x={ctxMenu.x} y={ctxMenu.y} onClose={() => setCtxMenu(null)} />}
       {confirmDiscard && (
-        <AppModal label={t.chat.scmDiscardTitle(confirmDiscard.length)} onClose={() => setConfirmDiscard(null)}>
-          <div className="chat-modal-title">{t.chat.scmDiscardTitle(confirmDiscard.length)}</div>
+        <AppModal label={t.chat.scmDiscardTitle(confirmDiscard.files.length)} onClose={() => setConfirmDiscard(null)}>
+          <div className="chat-modal-title">{t.chat.scmDiscardTitle(confirmDiscard.files.length)}</div>
+          <div className="scm-discard-repo">{t.chat.scmDiscardIn(confirmDiscard.name)}</div>
           <ul className="scm-discard-list">
-            {confirmDiscard.slice(0, 8).map((file) => <li key={file.path}>{file.path}</li>)}
-            {confirmDiscard.length > 8 && <li className="is-more">{t.chat.scmDiscardMore(confirmDiscard.length - 8)}</li>}
+            {confirmDiscard.files.slice(0, 8).map((file) => <li key={file.path}>{file.path}</li>)}
+            {confirmDiscard.files.length > 8 && <li className="is-more">{t.chat.scmDiscardMore(confirmDiscard.files.length - 8)}</li>}
           </ul>
           <div className="scm-discard-note">{t.chat.scmDiscardNote}</div>
           <div className="chat-modal-actions">
             <button type="button" className="ns-btn" autoFocus onClick={() => setConfirmDiscard(null)}>{t.newSession.cancel}</button>
-            <button type="button" className="ns-btn is-danger" onClick={() => {
-              const list = confirmDiscard;
-              setConfirmDiscard(null);
-              void discard(list);
-            }}>{t.chat.scmDiscardConfirm}</button>
+            <button type="button" className="ns-btn is-danger" onClick={confirmAndDiscard}>{t.chat.scmDiscardConfirm}</button>
           </div>
         </AppModal>
       )}
