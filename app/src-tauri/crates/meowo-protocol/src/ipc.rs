@@ -676,6 +676,30 @@ pub struct GitDiffSummaryDto {
     pub files: Vec<GitChangedFileDto>,
 }
 
+/// 「更改」面板里的一个仓库（用户要求 2026-11-09：会话开在父目录、或 agent 新开 worktree 去改、
+/// 改完又提交时，面板都要看得到）。工作目录所在仓库排第一。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct RepoChangesDto {
+    /// 仓库（或 worktree）根目录，正斜杠。单文件 diff 以它为 cwd。
+    pub root: String,
+    /// 根目录名，分组标题用。
+    pub name: String,
+    /// 是不是会话工作目录所在的仓库。
+    pub is_cwd_repo: bool,
+    /// 未提交的改动（与单仓库时的 git_diff_summary 同一份）。
+    pub summary: GitDiffSummaryDto,
+    /// 「已提交未合并」的基准提交（merge-base(HEAD, 默认分支) 的 SHA）。当前就在默认分支上、
+    /// 或找不到默认分支时为 None，committed 为空。
+    pub base: Option<String>,
+    /// 默认分支名（如 `main`），展示用。
+    pub base_label: Option<String>,
+    /// 本分支相对基准已提交的改动（`git diff base HEAD`）。
+    pub committed: Vec<GitChangedFileDto>,
+}
+
 /// 当前分支的 Pull Request（对话页标题栏，对照 Kimi 的「打开 Pull Request」与状态标记）。
 /// 由 `gh pr view` 取得；没装 gh / 没登录 / 分支没有 PR 时命令返回 None，前端不显示。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

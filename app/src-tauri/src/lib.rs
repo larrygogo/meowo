@@ -68,7 +68,7 @@ use fsutil::{
     list_dir_entries, list_file_openers, open_path_with, read_file_text, read_image_preview,
     reveal_path_in_file_manager, reveal_terminal_path, search_project_files, file_mention_candidates,
 };
-use git::{git_diff_summary, git_file_diff, git_pull_request};
+use git::{git_changes_overview, git_diff_summary, git_file_diff, git_pull_request};
 use lead::{answer_lead_gate, lead_task_snapshot, lead_workflow_installed, set_lead_workflow};
 use handoff::{copy_session_to_provider, get_session_lineage};
 use install::{
@@ -1245,6 +1245,7 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             macos::notify::open_notification_settings,
             git_diff_summary,
+            git_changes_overview,
             lead_task_snapshot,
             answer_lead_gate,
             lead_workflow_installed,

@@ -33,6 +33,10 @@
 //! （store `is_session_dir`，逐字比较）；单文件 diff 的路径必须出现在该目录此刻的
 //! 改动清单里，未跟踪读盘只认状态为 U 的条目。手机端因此只能看 agent 工作目录里
 //! 「改了什么」，不能借它读任意文件。
+//! 2026-11-09 扩到多仓库（`git_changes_overview`，会话开在父目录、或 agent 新开 worktree 时）：
+//! 远程端只放行和会话目录**相关**的仓库——它所在仓库、该仓库的 worktree、它下一层的仓库
+//! （`git::related_roots`）；单文件 diff 带 `sessionCwd` 时按这份清单收口，带 `base` 时文件
+//! 必须在「已提交未合并」清单里、base 必须等于 overview 算出的那个。
 //!
 //! 例外（2026-11-09 用户决定，Lead 工作流关卡 B）：`lead_task_snapshot` / `answer_lead_gate`
 //! 放行，供手机看任务进度、回答关卡。两道收口：目录先过 `ensure_session_dir`；后端只按约定
@@ -154,6 +158,7 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     "list_subdirectories",
     // 改动列表（只读，收口见模块头「例外」一节）
     "git_diff_summary",
+    "git_changes_overview",
     "git_file_diff",
     // 输入框 `@` 补全（2026-11-04 用户决定放行）：只回文件/目录名，不读内容；目录收口同改动列表。
     "file_mention_candidates",
@@ -833,8 +838,13 @@ bridged_args!(ForkSessionArgs { session_id: i64, cols: u16, rows: u16 });
 bridged_args!(GitFileDiffArgs {
     cwd: String,
     path: String,
-    untracked: bool
+    untracked: bool,
+    #[serde(default)]
+    base: Option<String>,
+    #[serde(default)]
+    session_cwd: Option<String>
 });
+bridged_args!(GitChangesOverviewArgs { cwd: String, touched: Vec<String> });
 
 /// 单文件 diff 的路径收口：必须逐字是改动清单里的一项；要读盘（untracked）的只认 U 条目。
 fn changed_file_listed(
@@ -1114,21 +1124,72 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
             let a = args!(ForkSessionArgs);
             reply(crate::terminal::fork_session(app.clone(), state, a.session_id, a.cols, a.rows).await)
         }
+        "git_changes_overview" => {
+            let a = args!(GitChangesOverviewArgs);
+            if let Err(e) = ensure_session_dir(app, &a.cwd).await {
+                return reply::<()>(Err(e));
+            }
+            let cwd = a.cwd.clone();
+            let result = tauri::async_runtime::spawn_blocking(move || {
+                let related = crate::git::related_roots(&cwd);
+                crate::git::changes_overview_blocking(&cwd, &a.touched).map(|repos| {
+                    repos
+                        .into_iter()
+                        .filter(|repo| related.iter().any(|root| crate::git::same_root(root, &repo.root)))
+                        .collect::<Vec<_>>()
+                })
+            })
+            .await
+            .map_err(|e| e.to_string());
+            match result {
+                Ok(inner) => reply(inner),
+                Err(e) => reply::<()>(Err(e)),
+            }
+        }
         "git_file_diff" => {
             let a = args!(GitFileDiffArgs);
-            if let Err(e) = ensure_session_dir(app, &a.cwd).await {
+            // 目录收口：带 sessionCwd 时，它必须是会话目录、a.cwd 必须是它的相关仓库；不带就是
+            // 老规矩，a.cwd 本身得是会话目录。
+            let gate = match &a.session_cwd {
+                Some(session_cwd) => match ensure_session_dir(app, session_cwd).await {
+                    Ok(()) => {
+                        let (s, c) = (session_cwd.clone(), a.cwd.clone());
+                        tauri::async_runtime::spawn_blocking(move || crate::git::is_related_root(&s, &c))
+                            .await
+                            .unwrap_or(false)
+                            .then_some(())
+                            .ok_or_else(|| "remote/not_session_dir".to_string())
+                    }
+                    Err(e) => Err(e),
+                },
+                None => ensure_session_dir(app, &a.cwd).await,
+            };
+            if let Err(e) = gate {
                 return reply::<()>(Err(e));
             }
             // 路径必须是这个目录此刻的改动文件：untracked 分支直接读盘，不收口就是任意文件读
             // （`../` 或绝对路径）。多跑一次 status 的代价换这道门，手机上点一个文件才一次。
-            let listed = match crate::git::git_diff_summary(a.cwd.clone()).await {
-                Ok(summary) => changed_file_listed(&summary, &a.path, a.untracked),
-                Err(e) => return reply::<()>(Err(e)),
+            // 带 base 的看「已提交未合并」段：文件要在那份清单里，base 也得是同一个 merge-base。
+            let listed = match &a.base {
+                Some(base) => {
+                    let (cwd, base, path) = (a.cwd.clone(), base.clone(), a.path.clone());
+                    tauri::async_runtime::spawn_blocking(move || {
+                        crate::git::repo_changes(&cwd, false).is_some_and(|repo| {
+                            repo.base.as_deref() == Some(base.as_str()) && repo.committed.iter().any(|f| f.path == path)
+                        })
+                    })
+                    .await
+                    .unwrap_or(false)
+                }
+                None => match crate::git::git_diff_summary(a.cwd.clone()).await {
+                    Ok(summary) => changed_file_listed(&summary, &a.path, a.untracked),
+                    Err(e) => return reply::<()>(Err(e)),
+                },
             };
             if !listed {
                 return reply::<()>(Err("remote/not_changed_file".into()));
             }
-            reply(crate::git::git_file_diff(a.cwd, a.path, a.untracked).await)
+            reply(crate::git::git_file_diff(a.cwd, a.path, a.untracked, a.base).await)
         }
         "rename_session" => {
             let a = args!(RenameSessionArgs);
@@ -2092,7 +2153,12 @@ mod tests {
             "git_diff_summary" => parse::<GitDiffSummaryArgs>(br#"{"cwd":"C:/repo"}"#).map(|_| ()),
             // api.ts:507（gitFileDiff）
             "git_file_diff" => parse::<GitFileDiffArgs>(
-                br#"{"cwd":"C:/repo","path":"src/a.ts","untracked":false}"#,
+                br#"{"cwd":"C:/repo-wt","path":"src/a.ts","untracked":false,"base":"0123abcd","sessionCwd":"C:/repo"}"#,
+            )
+            .map(|_| ()),
+            // api.ts（getGitChangesOverview）
+            "git_changes_overview" => parse::<GitChangesOverviewArgs>(
+                br#"{"cwd":"C:/work","touched":["C:/work/app/src/a.ts"]}"#,
             )
             .map(|_| ()),
             // api.ts:451（renameSession：cwd/provider 可 null，sessionId 是 cc_session_id 字符串）

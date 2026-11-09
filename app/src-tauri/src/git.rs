@@ -2,7 +2,7 @@
 //! 不经 shell 直接 spawn git（路径作为独立 argv，无注入面）；子进程可能被杀软拖慢，
 //! 统一走 spawn_blocking，不进主线程（同类教训见 terminal.rs open_project_dir 的注释）。
 
-use meowo_protocol::ipc::{GitChangedFileDto, GitDiffSummaryDto, GitFileDiffDto, PullRequestDto};
+use meowo_protocol::ipc::{GitChangedFileDto, GitDiffSummaryDto, GitFileDiffDto, PullRequestDto, RepoChangesDto};
 use std::path::Path;
 use std::process::Command;
 
@@ -150,29 +150,287 @@ fn count_lines(bytes: &[u8]) -> u32 {
     u32::try_from(newlines + tail).unwrap_or(u32::MAX)
 }
 
+// ═══ 多仓库「更改」═══
+
+/// 面板里最多列这么多个仓库：5 秒一轮的轮询里每个仓库要跑好几条 git，不设上限会拖慢。
+const MAX_REPOS: usize = 8;
+/// 工作目录下一层最多看这么多个子目录（找有改动的仓库，见 changes_overview_blocking）。
+const MAX_CHILD_SCAN: usize = 200;
+
+/// 「更改」面板的仓库清单。`touched` 是会话编辑 / 写入过的文件（绝对路径），按各自所在仓库
+/// 归组；工作目录所在仓库排第一。会话还没动过文件、工作目录又不是仓库时，列工作目录下一层
+/// 当前有改动的仓库（用户要求，2026-11-09：只列会话动过的，不混入别的会话或手动的改动）。
+#[tauri::command]
+pub(crate) async fn git_changes_overview(cwd: String, touched: Vec<String>) -> Result<Vec<RepoChangesDto>, String> {
+    tauri::async_runtime::spawn_blocking(move || changes_overview_blocking(&cwd, &touched))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+pub(crate) fn changes_overview_blocking(cwd: &str, touched: &[String]) -> Result<Vec<RepoChangesDto>, String> {
+    let dir = cwd.trim();
+    if dir.is_empty() || !Path::new(dir).is_dir() {
+        return Err("目录不存在".into());
+    }
+    let cwd_root = repo_root(dir);
+    let mut roots: Vec<String> = cwd_root.iter().cloned().collect();
+    for path in touched {
+        if roots.len() >= MAX_REPOS {
+            break;
+        }
+        let Some(start) = existing_dir_of(path) else { continue };
+        if let Some(root) = repo_root(&start) {
+            if !roots.iter().any(|known| same_path(known, &root)) {
+                roots.push(root);
+            }
+        }
+    }
+    let mut out: Vec<RepoChangesDto> = roots
+        .iter()
+        .filter_map(|root| repo_changes(root, cwd_root.as_deref().is_some_and(|c| same_path(c, root))))
+        .collect();
+    if out.is_empty() && cwd_root.is_none() {
+        out = child_repos(dir)
+            .into_iter()
+            .filter_map(|root| repo_changes(&root, false))
+            .filter(|repo| !repo.summary.files.is_empty())
+            .take(MAX_REPOS)
+            .collect();
+    }
+    Ok(out)
+}
+
+/// 和会话目录相关的仓库：它所在仓库、这个仓库的各个 worktree、它下一层的仓库。手机远程页
+/// 只放行这些（远程端传什么路径都进得来，不能借面板去看任意仓库）。
+pub(crate) fn related_roots(cwd: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Some(root) = repo_root(cwd) {
+        if let Ok(output) = git_output(&root, &["worktree", "list", "--porcelain"]) {
+            if output.status.success() {
+                for line in stdout_text(&output.stdout).lines() {
+                    if let Some(path) = line.strip_prefix("worktree ") {
+                        out.push(norm_slashes(path));
+                    }
+                }
+            }
+        }
+        if !out.iter().any(|known| same_path(known, &root)) {
+            out.push(root);
+        }
+    }
+    out.extend(child_repos(cwd));
+    out
+}
+
+/// 远程端带来的目录是不是 session_dir 的相关仓库之一。
+pub(crate) fn is_related_root(session_dir: &str, root: &str) -> bool {
+    related_roots(session_dir).iter().any(|known| same_path(known, root))
+}
+
+/// 一个仓库的两段改动。不是仓库（或 git 跑不起来）返回 None。
+pub(crate) fn repo_changes(root: &str, is_cwd_repo: bool) -> Option<RepoChangesDto> {
+    let summary = git_diff_summary_blocking(root).ok()?;
+    if !summary.is_repo {
+        return None;
+    }
+    let (base, base_label, committed) = match default_base(root, summary.branch.as_deref()) {
+        Some((sha, label)) => {
+            let committed = committed_files(root, &sha);
+            (Some(sha), Some(label), committed)
+        }
+        None => (None, None, Vec::new()),
+    };
+    let name = Path::new(root)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| root.to_string());
+    Some(RepoChangesDto {
+        root: root.to_string(),
+        name,
+        is_cwd_repo,
+        summary,
+        base,
+        base_label,
+        committed,
+    })
+}
+
+/// 「已提交未合并」的基准：merge-base(HEAD, 默认分支)。默认分支先认 origin/HEAD 指向的，
+/// 再退到 origin/main、origin/master、本地 main、master。当前就在默认分支上、HEAD 本身就是
+/// 基准（没有自己的提交）时返回 None。
+fn default_base(root: &str, branch: Option<&str>) -> Option<(String, String)> {
+    let mut candidates: Vec<String> = Vec::new();
+    if let Ok(output) = git_output(root, &["rev-parse", "--abbrev-ref", "origin/HEAD"]) {
+        let name = stdout_text(&output.stdout).trim().to_string();
+        if output.status.success() && name.starts_with("origin/") && name != "origin/HEAD" {
+            candidates.push(name);
+        }
+    }
+    for name in ["origin/main", "origin/master", "main", "master"] {
+        if !candidates.iter().any(|c| c == name) {
+            candidates.push(name.to_string());
+        }
+    }
+    let base_ref = candidates.into_iter().find(|name| {
+        git_output(root, &["rev-parse", "--verify", "--quiet", &format!("{name}^{{commit}}")])
+            .is_ok_and(|o| o.status.success())
+    })?;
+    let label = base_ref.strip_prefix("origin/").unwrap_or(&base_ref).to_string();
+    if branch == Some(label.as_str()) {
+        return None;
+    }
+    let output = git_output(root, &["merge-base", "HEAD", &base_ref]).ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let sha = stdout_text(&output.stdout).trim().to_string();
+    let head = git_output(root, &["rev-parse", "HEAD"]).ok()?;
+    if stdout_text(&head.stdout).trim() == sha || !is_commit_sha(&sha) {
+        return None;
+    }
+    Some((sha, label))
+}
+
+/// `git diff --name-status base HEAD` 加行数。
+fn committed_files(root: &str, base: &str) -> Vec<GitChangedFileDto> {
+    let Ok(output) = git_output(root, &["diff", "--name-status", "-z", "--no-renames", base, "HEAD"]) else {
+        return Vec::new();
+    };
+    if !output.status.success() {
+        return Vec::new();
+    }
+    let mut files = parse_name_status_z(&output.stdout);
+    if let Ok(numstat) = git_output(root, &["diff", "--numstat", "-z", "--no-renames", base, "HEAD"]) {
+        if numstat.status.success() {
+            let counts = parse_numstat_z(&numstat.stdout);
+            for file in files.iter_mut() {
+                if let Some(&(added, deleted)) = counts.get(file.path.as_str()) {
+                    file.additions = Some(added);
+                    file.deletions = Some(deleted);
+                }
+            }
+        }
+    }
+    files
+}
+
+/// `--name-status -z`：状态和路径各占一个 NUL 段（`M\0path\0A\0path\0…`）。
+fn parse_name_status_z(bytes: &[u8]) -> Vec<GitChangedFileDto> {
+    let parts: Vec<&[u8]> = bytes.split(|b| *b == 0).filter(|p| !p.is_empty()).collect();
+    parts
+        .chunks(2)
+        .filter_map(|pair| {
+            let [status, path] = pair else { return None };
+            let letter = *status.first()?;
+            Some(GitChangedFileDto {
+                path: String::from_utf8_lossy(path).into_owned(),
+                status: (letter as char).to_string(),
+                additions: None,
+                deletions: None,
+            })
+        })
+        .collect()
+}
+
+/// 目录所在仓库（或 worktree）的根，正斜杠。
+fn repo_root(dir: &str) -> Option<String> {
+    let output = git_output(dir, &["rev-parse", "--show-toplevel"]).ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let root = stdout_text(&output.stdout).trim().to_string();
+    (!root.is_empty()).then(|| norm_slashes(&root))
+}
+
+/// 文件路径往上找到第一个还在的目录（文件可能已被删掉）。
+fn existing_dir_of(path: &str) -> Option<String> {
+    let mut current = Path::new(path.trim());
+    if current.is_dir() {
+        return Some(current.to_string_lossy().into_owned());
+    }
+    while let Some(parent) = current.parent() {
+        if parent.as_os_str().is_empty() {
+            return None;
+        }
+        if parent.is_dir() {
+            return Some(parent.to_string_lossy().into_owned());
+        }
+        current = parent;
+    }
+    None
+}
+
+/// 下一层里的仓库（有 `.git` 的子目录，`.git` 是目录或 worktree 的指针文件都算）。
+fn child_repos(dir: &str) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
+    let mut out: Vec<String> = entries
+        .flatten()
+        .take(MAX_CHILD_SCAN)
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir() && path.join(".git").exists())
+        .map(|path| norm_slashes(&path.to_string_lossy()))
+        .collect();
+    out.sort();
+    out
+}
+
+fn norm_slashes(path: &str) -> String {
+    path.replace('\\', "/").trim_end_matches('/').to_string()
+}
+
+/// 远程桥用：两个仓库根是不是同一个目录。
+pub(crate) fn same_root(a: &str, b: &str) -> bool {
+    same_path(a, b)
+}
+
+fn same_path(a: &str, b: &str) -> bool {
+    let (a, b) = (norm_slashes(a), norm_slashes(b));
+    if cfg!(target_os = "windows") {
+        a.eq_ignore_ascii_case(&b)
+    } else {
+        a == b
+    }
+}
+
 /// 单个文件的 diff。tracked 走 `git diff HEAD -- <path>`（staged+unstaged 合一）；
 /// untracked 直接读盘合成伪 diff（`--- /dev/null` / `+++ b/<path>` 头 + 每行 `+` 前缀，
 /// 见 GitFileDiffDto 注释）。
+/// `base` 给了就是「已提交未合并」段的文件：看 `base..HEAD` 的 diff（base 是 overview 给出的
+/// merge-base SHA）。
 #[tauri::command]
 pub(crate) async fn git_file_diff(
     cwd: String,
     path: String,
     untracked: bool,
+    base: Option<String>,
 ) -> Result<GitFileDiffDto, String> {
-    tauri::async_runtime::spawn_blocking(move || git_file_diff_blocking(&cwd, &path, untracked))
+    tauri::async_runtime::spawn_blocking(move || git_file_diff_blocking(&cwd, &path, untracked, base.as_deref()))
         .await
         .map_err(|e| e.to_string())?
 }
 
-fn git_file_diff_blocking(cwd: &str, path: &str, untracked: bool) -> Result<GitFileDiffDto, String> {
+/// 基准只认完整或缩写的提交 SHA：它会拼进 git 的参数里，不能让 `--output=…` 这类东西混进来。
+fn is_commit_sha(value: &str) -> bool {
+    (7..=64).contains(&value.len()) && value.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+fn git_file_diff_blocking(cwd: &str, path: &str, untracked: bool, base: Option<&str>) -> Result<GitFileDiffDto, String> {
     let dir = cwd.trim();
     if dir.is_empty() || !Path::new(dir).is_dir() {
         return Err("目录不存在".into());
     }
-    if untracked {
+    if let Some(base) = base {
+        if !is_commit_sha(base) {
+            return Err("git/bad_base".into());
+        }
+    } else if untracked {
         return untracked_file_diff(dir, path);
     }
-    let output = git_output(dir, &["diff", "HEAD", "--", path]).map_err(|e| e.to_string())?;
+    let output = match base {
+        Some(base) => git_output(dir, &["diff", base, "HEAD", "--", path]),
+        None => git_output(dir, &["diff", "HEAD", "--", path]),
+    }
+    .map_err(|e| e.to_string())?;
     if !output.status.success() {
         return Err("git diff 执行失败".into());
     }
@@ -555,6 +813,112 @@ mod tests {
         run(&clone, &["fetch", "-q"]);
         assert_eq!(upstream_divergence(clone.to_str().unwrap()), Some((1, 1)));
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 多仓库测试的小工具：在临时目录里跑 git、提交。
+    struct Sandbox(std::path::PathBuf);
+    impl Sandbox {
+        fn new(tag: &str) -> Self {
+            let root = std::env::temp_dir().join(format!("meowo-multi-{tag}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(&root).unwrap();
+            Sandbox(root)
+        }
+        fn git(&self, dir: &Path, args: &[&str]) {
+            let output = git_output(dir.to_str().unwrap(), args).unwrap();
+            assert!(output.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&output.stderr));
+        }
+        fn repo(&self, name: &str) -> std::path::PathBuf {
+            let dir = self.0.join(name);
+            std::fs::create_dir_all(&dir).unwrap();
+            self.git(&dir, &["init", "-q", "-b", "main"]);
+            std::fs::write(dir.join("README.md"), "hi\n").unwrap();
+            self.commit(&dir, "init");
+            dir
+        }
+        fn commit(&self, dir: &Path, message: &str) {
+            self.git(dir, &["add", "-A"]);
+            self.git(dir, &["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "-m", message]);
+        }
+    }
+    impl Drop for Sandbox {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    fn s(path: &Path) -> String {
+        norm_slashes(&path.to_string_lossy())
+    }
+
+    /// 会话开在父目录（不是仓库），下面两个项目：没动过文件时列有改动的那个；动过 a 就只列 a。
+    #[test]
+    fn overview_from_parent_dir_lists_changed_or_touched_repos() {
+        let sb = Sandbox::new("parent");
+        let a = sb.repo("a");
+        let b = sb.repo("b");
+        std::fs::write(b.join("x.txt"), "changed\n").unwrap();
+        let parent = s(&sb.0);
+        let repos = changes_overview_blocking(&parent, &[]).unwrap();
+        assert_eq!(repos.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["b"]);
+        assert!(!repos[0].is_cwd_repo);
+        let touched = [s(&a.join("README.md"))];
+        let repos = changes_overview_blocking(&parent, &touched).unwrap();
+        assert_eq!(repos.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["a"]);
+    }
+
+    /// 会话开在主仓库，agent 新开 worktree 去改：主仓库排第一，worktree 一组显示新分支。
+    #[test]
+    fn overview_includes_worktree_the_session_edited() {
+        let sb = Sandbox::new("wt");
+        let main = sb.repo("meowo");
+        let wt = sb.0.join("meowo-feat");
+        sb.git(&main, &["worktree", "add", "-q", "-b", "feat/x", wt.to_str().unwrap()]);
+        std::fs::write(wt.join("new.rs"), "fn main() {}\n").unwrap();
+        let repos = changes_overview_blocking(&s(&main), &[s(&wt.join("new.rs"))]).unwrap();
+        assert_eq!(repos.len(), 2);
+        assert!(repos[0].is_cwd_repo);
+        assert_eq!(repos[0].name, "meowo");
+        assert_eq!(repos[1].name, "meowo-feat");
+        assert_eq!(repos[1].summary.branch.as_deref(), Some("feat/x"));
+        assert_eq!(repos[1].summary.files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), ["new.rs"]);
+        // 相关仓库（手机远程页的放行清单）同样认得这个 worktree。
+        assert!(is_related_root(&s(&main), &s(&wt)));
+        assert!(!is_related_root(&s(&main), &s(&sb.0)));
+    }
+
+    /// 已提交的进「已提交未合并」、没提交的进「未提交」；在默认分支上没有已提交段。
+    #[test]
+    fn committed_and_uncommitted_are_separate_sections() {
+        let sb = Sandbox::new("sections");
+        let repo = sb.repo("r");
+        let on_main = repo_changes(&s(&repo), true).unwrap();
+        assert_eq!(on_main.base, None);
+        assert!(on_main.committed.is_empty());
+        sb.git(&repo, &["checkout", "-q", "-b", "feat/y"]);
+        std::fs::write(repo.join("done.txt"), "a\nb\n").unwrap();
+        sb.commit(&repo, "feat");
+        std::fs::write(repo.join("wip.txt"), "wip\n").unwrap();
+        let changes = repo_changes(&s(&repo), true).unwrap();
+        assert_eq!(changes.base_label.as_deref(), Some("main"));
+        assert!(changes.base.as_deref().is_some_and(is_commit_sha));
+        assert_eq!(changes.committed.iter().map(|f| (f.path.as_str(), f.status.as_str(), f.additions)).collect::<Vec<_>>(), [("done.txt", "A", Some(2))]);
+        assert_eq!(changes.summary.files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), ["wip.txt"]);
+    }
+
+    /// 已提交段的单文件 diff 看 base..HEAD；base 不是 SHA 一律拒绝（会拼进 git 参数）。
+    #[test]
+    fn file_diff_with_base_shows_committed_change() {
+        let sb = Sandbox::new("base");
+        let repo = sb.repo("r");
+        sb.git(&repo, &["checkout", "-q", "-b", "feat/z"]);
+        std::fs::write(repo.join("README.md"), "hi\nmore\n").unwrap();
+        sb.commit(&repo, "edit");
+        let base = repo_changes(&s(&repo), true).unwrap().base.unwrap();
+        let diff = git_file_diff_blocking(&s(&repo), "README.md", false, Some(&base)).unwrap();
+        assert!(diff.diff.contains("+more"), "{}", diff.diff);
+        // 没 base 时这份改动已经提交，相对 HEAD 是空的。
+        assert!(git_file_diff_blocking(&s(&repo), "README.md", false, None).unwrap().diff.is_empty());
+        assert_eq!(git_file_diff_blocking(&s(&repo), "README.md", false, Some("--output=x")).unwrap_err(), "git/bad_base");
     }
 
     #[test]
