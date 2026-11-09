@@ -177,6 +177,12 @@ describe("parseUserText", () => {
     const plain = parseUserText("<hook-feedback>\nStop hook feedback:\n[lead] 任务 x 还在实施阶段\n#1 a\n</hook-feedback>");
     expect(plain.text).toBe("");
     expect(plain.blocks).toEqual([{ kind: "hook", summary: "[lead] 任务 x 还在实施阶段", body: "Stop hook feedback:\n[lead] 任务 x 还在实施阶段\n#1 a" }]);
+    // exit 2 形态：原因前带「[命令]: 」，摘要要剥掉它（本机 rewake 样本，做空审查第 1 条）。
+    const exit2 = parseUserText('<hook-feedback>\nStop hook feedback:\n[bash "C:/x/rewake/hook.sh"]: LEAD GATE ANSWER: PURPLE-42\n</hook-feedback>');
+    expect(exit2.blocks[0]).toMatchObject({ kind: "hook", summary: "LEAD GATE ANSWER: PURPLE-42" });
+    // 事件名带匹配器、命令名带引号：仍合成一行（做空审查第 3 条）。
+    const odd = parseUserText('<task-notification><summary>PreToolUse:Bash hook feedback</summary></task-notification><system-reminder>PreToolUse:Bash hook blocking error from command "node "C:\\x.js"": 禁止 rm</system-reminder>');
+    expect(odd.blocks).toEqual([{ kind: "hook", summary: "禁止 rm", body: 'PreToolUse:Bash hook blocking error from command "node "C:\\x.js"": 禁止 rm' }]);
     const shell = parseUserText("<task-notification><summary>Stop hook feedback</summary></task-notification>");
     expect(shell.blocks).toEqual([{ kind: "hook", summary: "Stop hook feedback", body: "Stop hook feedback" }]);
   });

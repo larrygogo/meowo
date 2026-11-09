@@ -296,7 +296,7 @@ pub(crate) async fn set_lead_workflow(enabled: bool) -> Result<(), String> {
     .map_err(|e| e.to_string())?
 }
 
-// ---------------- 关卡巡检：看板「等你拍板」+ 通知 ----------------
+// ---------------- 关卡巡检：看板「待拍板」+ 通知 ----------------
 
 /// 巡检间隔。关卡由 agent 写文件发起，没有推送通道；读的是最近 20 个项目里的几个小文件。
 const GATE_POLL: std::time::Duration = std::time::Duration::from_secs(10);

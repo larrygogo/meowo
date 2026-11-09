@@ -82,11 +82,16 @@ const PASTED = /<pasted_content\b[^>]*>([\s\S]*?)<\/pasted_content\b[^>]*>/g;
 // 正文「Stop hook blocking error from command "<命令>": <原因>」（本机 transcript 扫描：11 条
 // 全是这个形态，SessionStart 等事件同句式）。分开渲染就成了「后台任务通知 Stop hook feedback」
 // +「系统记录 system-reminder」两行，真正有用的原因藏在第二行展开里（实拍 IMG_2093）。
-const HOOK_FEEDBACK = /^<summary>\s*\w+ hook feedback\s*<\/summary>$/i;
-const HOOK_ERROR = /^\w+ hook blocking error from command "[^"]*":\s*([\s\S]*)$/;
+// 事件名可带匹配器（`PreToolUse:Bash`），命令名可含引号（`"node "C:\x.js""`）：命令段惰性吃到
+// 第一个 `": ` 为止（做空审查第 3 条）。
+const HOOK_FEEDBACK = /^<summary>\s*[\w:]+ hook feedback\s*<\/summary>$/i;
+const HOOK_ERROR = /^[\w:]+ hook blocking error from command "[\s\S]*?":\s*([\s\S]*)$/;
 // 同步拦截（decision:block）的形态：isMeta 行、正文是无标签的「Stop hook feedback:\n<原因>」
 // （2.1.319 实拍 IMG_2095，曾显示成用户气泡）。后端按 isMeta 认出后包成 <hook-feedback> 送来。
-const HOOK_PLAIN = /^\w+ hook feedback:\s*([\s\S]*)$/;
+const HOOK_PLAIN = /^[\w:]+ hook feedback:\s*([\s\S]*)$/;
+// exit 2 的 hook 原因前面带「[<命令>]: 」（本机样本 `[bash "C:/…/hook.sh"]: LEAD GATE ANSWER…`）：
+// 不剥的话摘要被一长串路径占满，原因看不到（做空审查第 1 条）。
+const HOOK_COMMAND_PREFIX = /^\[[^\]\n]*\]:\s*/;
 const NOTE_SUMMARY = /<summary>([\s\S]*?)<\/summary>/;
 
 function firstLine(text: string): string {
@@ -110,7 +115,7 @@ function mergeHookBlocks(blocks: MachineBlock[]): MachineBlock[] {
     const error = block.kind === "record" ? HOOK_ERROR.exec(block.body) ?? HOOK_PLAIN.exec(block.body) : null;
     if (error) {
       if (shell) out.pop();
-      out.push({ kind: "hook", summary: firstLine(error[1]) || firstLine(block.body), body: block.body });
+      out.push({ kind: "hook", summary: firstLine(error[1].replace(HOOK_COMMAND_PREFIX, "")) || firstLine(block.body), body: block.body });
       shell = false;
     } else if (block.kind === "notification" && HOOK_FEEDBACK.test(block.body)) {
       out.push({ kind: "hook", summary: block.summary, body: block.summary });

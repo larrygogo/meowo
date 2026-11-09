@@ -399,11 +399,11 @@ fn is_image_scale_note(v: &serde_json::Value, content: Option<&serde_json::Value
         && text.matches('[').count() == 1
 }
 
-/// 行首是「<事件名> hook feedback:」（事件名是 Stop、SubagentStop 这类纯字母数字）。
+/// 行首是「<事件名> hook feedback:」（事件名是 Stop、SubagentStop，或带匹配器的 `PreToolUse:Bash`）。
 fn is_hook_feedback(text: &str) -> bool {
     text.trim_start()
         .split_once(" hook feedback:")
-        .is_some_and(|(event, _)| !event.is_empty() && event.chars().all(|c| c.is_ascii_alphanumeric()))
+        .is_some_and(|(event, _)| !event.is_empty() && event.chars().all(|c| c.is_ascii_alphanumeric() || c == ':'))
 }
 
 /// CC 把粘贴的文本按原样落盘，但前后各套一行 `<pasted_content id="6bad">` /
