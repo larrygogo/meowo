@@ -6,7 +6,7 @@
 /// 关卡卡片的作答只写 gate.json（answer_lead_gate），答复由 agent 侧的 asyncRewake 后台
 /// hook 看到后唤醒模型——卡片不往终端写字，所以 Meowo 重启、手机断线都不会丢答复。
 
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { answerLeadGate, leadTaskSnapshot, type LeadGateDto, type LeadTaskDto } from "../../api";
 import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
@@ -138,6 +138,13 @@ export function LeadGateCard({ cwd, gate, onAnswered }: { cwd: string; gate: Lea
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
+  // 「展开全部」按实际是否溢出决定，不按字数：按字数判断时短段落多的摘要被截断却没有展开钮（实拍）。
+  const summaryRef = useRef<HTMLDivElement>(null);
+  const [overflows, setOverflows] = useState(false);
+  useLayoutEffect(() => {
+    const el = summaryRef.current;
+    if (el && !expanded) setOverflows(el.scrollHeight > el.clientHeight + 1);
+  }, [gate.summary, expanded]);
   const choices = gateChoices(gate, t);
   const needsNote = choice === "revise" || choice === "reject";
   const submit = () => {
@@ -161,11 +168,11 @@ export function LeadGateCard({ cwd, gate, onAnswered }: { cwd: string; gate: Lea
       }
     >
       {gate.summary && (
-        <div className={"lead-gate-summary chat-md" + (expanded ? " is-expanded" : "")}>
+        <div ref={summaryRef} className={"lead-gate-summary chat-md" + (expanded ? " is-expanded" : "")}>
           <ChatMarkdown text={gate.summary} />
         </div>
       )}
-      {gate.summary.length > 280 && (
+      {(overflows || expanded) && (
         <button type="button" className="lead-gate-more" onClick={() => setExpanded((v) => !v)}>
           {expanded ? t.chat.leadGateLess : t.chat.leadGateMore}
         </button>
