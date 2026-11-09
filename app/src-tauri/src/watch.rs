@@ -1162,12 +1162,14 @@ pub(crate) fn spawn_liveness_watch(
                             let key = match s.pending_review.as_deref() {
                                 Some("question") => "notify.pending.question",
                                 Some("plan") => "notify.pending.plan",
+                                Some("gate") => "notify.pending.gate",
                                 _ => "notify.pending.approval",
                             };
                             if fired {
                                 let kind = match s.pending_review.as_deref() {
                                     Some("question") => "question",
                                     Some("plan") => "plan",
+                                    Some("gate") => "question",
                                     _ => "approval",
                                 };
                                 emit_island_alert(&app, s.session.id, kind, &display_title, &s.project_name, None);

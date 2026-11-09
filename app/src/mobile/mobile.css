@@ -154,6 +154,8 @@ body.remote-ui .chat-window.is-remote-compact .chat-compose .chat-model-button {
   body.remote-ui [role="button"] { touch-action: manipulation; }
   /* 问题卡的自定义回答框同样钉 16px：iOS 对 <16px 的输入框聚焦即整页自动放大（7M-11）。 */
   body.remote-ui .chat-approval-custom input { font-size: 16px; }
+  /* Lead 关卡的意见框同理：小于 16px 时 iOS 聚焦会整页放大（做空审查第二轮 M6）。 */
+  body.remote-ui .lead-gate-note { font-size: 16px; }
   /* 对话内搜索条：同理钉 16px；桌面 22px 的上下条/关闭钮手指点不准，放到 36px。
      铺满宽度，窄屏上桌面那条右上角的浮条连输入框都挤不下。 */
   body.remote-ui .chat-search { left: var(--chat-strip-gap); padding: var(--sp-4) var(--sp-8); }

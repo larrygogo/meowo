@@ -276,6 +276,8 @@ pub enum PendingReviewKind {
     Approval,
     Question,
     Plan,
+    /// Lead 关卡等 leader 拍板。
+    Gate,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -304,6 +306,7 @@ impl PendingReviewKind {
             "approval" => Some(Self::Approval),
             "question" => Some(Self::Question),
             "plan" => Some(Self::Plan),
+            "gate" => Some(Self::Gate),
             _ => None,
         }
     }
@@ -713,6 +716,85 @@ pub struct DirEntryDto {
     /// 相对会话 cwd 的路径（正斜杠形式），展开/读取时回传给后端。
     pub rel_path: String,
     pub is_dir: bool,
+}
+
+/// Lead 工作流：会话所在项目当前任务的只读快照（lead_task_snapshot 的返回）。
+///
+/// 为什么不让前端直接 read_file_text：手机端远程桥刻意不放行任意文件读，这里由后端按约定
+/// 只读 `.lead/active` 指向的任务目录（2026-11-09 用户在关卡 B 决定）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct LeadTaskDto {
+    /// 任务目录名（`.lead/<slug>`）。
+    pub slug: String,
+    /// 阶段：interview / spec / design / implement / verify / done / blocked，解析不到为 unknown。
+    pub phase: String,
+    /// SPEC.md 原文（封顶，超出截断）。
+    pub spec: String,
+    pub checks: Vec<LeadCheckDto>,
+    /// decisions.md 原文末尾。
+    pub decisions: String,
+    /// progress.md 原文末尾。
+    pub progress: String,
+    /// 正在挂起或已作答未消费的关卡；没有关卡或 gate.json 损坏为 None。
+    pub gate: Option<LeadGateDto>,
+}
+
+/// 验收清单的一条。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct LeadCheckDto {
+    pub id: String,
+    pub check: String,
+    pub passes: bool,
+}
+
+/// 关卡（`.lead/<task>/gate.json`）。状态 pending → answered（Meowo 写）→ consumed（agent 写）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct LeadGateDto {
+    pub id: String,
+    /// A（确认规格）/ B（单向门拍板）/ C（看证据验收）。
+    pub kind: String,
+    pub title: String,
+    /// markdown 摘要。
+    pub summary: String,
+    /// B 由 agent 写选项；A、C 的选项固定（前端按 kind 渲染），这里可为空。
+    pub options: Vec<LeadGateOptionDto>,
+    /// pending / answered / consumed。
+    pub status: String,
+    /// 已作答时的答复。
+    pub answer: Option<LeadGateAnswerDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct LeadGateOptionDto {
+    pub id: String,
+    pub label: String,
+    #[serde(default)]
+    pub detail: String,
+    #[serde(default)]
+    pub recommended: bool,
+}
+
+/// leader 的答复：选了哪个选项（A：confirm/revise；C：accept/reject；B：方案 id），可附意见。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct LeadGateAnswerDto {
+    pub choice: String,
+    #[serde(default)]
+    pub note: String,
 }
 
 /// 「文件」页签单文件文本内容（read_file_text 的返回）。

@@ -214,6 +214,16 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "只支持 http/https 链接", exact: true, zh: "只支持 http/https 链接", en: "Only http/https links can be opened" },
   { m: "该文件类型没有关联应用", exact: true, zh: "该文件类型没有关联应用", en: "No app is associated with this file type" },
   { m: "该打开方式已不可用", exact: true, zh: "该打开方式已不可用", en: "That app is no longer available" },
+  // ── Lead 工作流（reporter lead 模块的结构化 reason）──
+  { m: "lead/claude_missing", exact: true, zh: "没找到 Claude Code 的配置目录，请先安装并登录 Claude Code", en: "Claude Code's config folder wasn't found. Install and sign in to Claude Code first" },
+  { m: "lead/reporter_missing", exact: true, zh: "找不到 meowo-reporter，请重新安装 Meowo", en: "meowo-reporter is missing. Reinstall Meowo" },
+  { m: "lead/user_file_exists", exact: true, zh: "~/.claude 里已有你自己的同名 lead skill 或 lead-redteam 子代理，为免覆盖已停止安装", en: "You already have your own lead skill or lead-redteam agent in ~/.claude; installation stopped to avoid overwriting it" },
+  { m: "lead/settings_invalid", exact: true, zh: "Claude Code 的 settings.json 格式不对，没有改动它", en: "Claude Code's settings.json is malformed; it was left unchanged" },
+  { m: "lead/gate_missing", exact: true, zh: "关卡已经不在了", en: "This gate no longer exists" },
+  { m: "lead/gate_invalid", exact: true, zh: "关卡文件格式不对", en: "The gate file is malformed" },
+  { m: "lead/gate_changed", exact: true, zh: "关卡已经更新，请看最新的卡片", en: "The gate has changed; check the latest card" },
+  { m: "lead/gate_bad_choice", exact: true, zh: "这个选项不属于当前关卡，请刷新后重选", en: "That option doesn't belong to this gate; refresh and pick again" },
+  { m: "lead/gate_closed", exact: true, zh: "这个关卡已经回答过了", en: "This gate has already been answered" },
   // ── 窗口 ──
   { m: "创建对话窗口失败", tail: true, zh: "打开对话窗口失败", en: "Couldn't open the chat window" },
   { m: "打开对话窗口失败", tail: true, zh: "打开对话窗口失败", en: "Couldn't open the chat window" },

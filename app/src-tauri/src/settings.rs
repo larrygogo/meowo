@@ -283,6 +283,10 @@ pub(crate) struct Settings {
     /// 只拦系统休眠、不拦息屏；没有会话在跑立刻交还系统的休眠策略。见 power.rs。
     #[serde(default = "default_true")]
     pub(crate) keep_awake_while_running: bool,
+    /// 有 Lead 关卡在等 leader 拍板时也防止休眠（2026-11-09 用户在关卡 B 决定，默认开）。
+    /// leader 多半在手机上隔几小时作答，电脑一睡就连不上。见 power.rs。
+    #[serde(default = "default_true")]
+    pub(crate) keep_awake_for_lead_gate: bool,
     /// 系统通知是否带提示音（对照 Kimi「通知提示音」）。只管声音，通知照弹；关掉后 Windows
     /// toast 走 silent、macOS 不挂 sound。老 settings.json 缺席 = 开，与改之前的行为一致。
     #[serde(default = "default_true")]
@@ -343,6 +347,7 @@ impl Default for Settings {
             bark_paused: false,
             workspace_order: Vec::new(),
             keep_awake_while_running: true,
+            keep_awake_for_lead_gate: true,
             notification_sound: true,
             chat_turn_folding: false,
             sticker_window: StickerWindowState::default(),
@@ -376,6 +381,7 @@ pub(crate) fn tr(lang: &str, key: &str) -> &'static str {
         ("en", "notify.pending.approval") => "Approve a tool call?",
         ("en", "notify.pending.question") => "A session is asking you a question",
         ("en", "notify.pending.plan") => "Plan awaiting approval",
+        ("en", "notify.pending.gate") => "A Lead gate is waiting for your call",
         ("en", "notify.blocked") => "The Agent is waiting for input",
         ("en", "notify.open") => "Open session",
         ("en", "notify.pushTest") => "Phone push is working",
@@ -416,6 +422,7 @@ pub(crate) fn tr(lang: &str, key: &str) -> &'static str {
         (_, "notify.pending.approval") => "需要你批准工具调用",
         (_, "notify.pending.question") => "会话在问你问题",
         (_, "notify.pending.plan") => "计划待批准",
+        (_, "notify.pending.gate") => "Lead 关卡等你拍板",
         (_, "notify.blocked") => "Agent 正在等待输入",
         (_, "notify.open") => "打开会话",
         (_, "notify.pushTest") => "手机推送已接通",

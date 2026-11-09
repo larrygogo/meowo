@@ -1109,6 +1109,23 @@ impl Store {
     /// 审批一旦被错误清掉,卡片与通知一起哑掉,agent 却还阻塞在等人。真正的清除事件
     /// （用户回复/回合结束/GUI 决策）必然晚于置位,极罕见的同 ms 合法清除顶多推迟到
     /// 下一个事件补清（审批展示侧另有 pending_review_live 的 broker 校正兜底）。
+    /// pending_review 为指定值的会话 id（Lead 关卡巡检据此清理残留标记，不依赖内存状态）。
+    pub fn sessions_with_pending_review(&self, kind: &str) -> Result<Vec<i64>, StoreError> {
+        let mut stmt = self.conn.prepare("SELECT id FROM sessions WHERE pending_review = ?1")?;
+        let rows = stmt.query_map([kind], |r| r.get(0))?;
+        Ok(rows.collect::<Result<Vec<i64>, _>>()?)
+    }
+
+    /// 会话当前的 pending_review 原值（Lead 关卡巡检用：真有审批/提问在等时，不拿关卡盖掉它）。
+    pub fn pending_review_of(&self, session_id: i64) -> Result<Option<String>, StoreError> {
+        use rusqlite::OptionalExtension;
+        Ok(self
+            .conn
+            .query_row("SELECT pending_review FROM sessions WHERE id = ?1", [session_id], |r| r.get(0))
+            .optional()?
+            .flatten())
+    }
+
     pub fn clear_pending_review(&self, session_id: i64, now_ms: i64) -> Result<(), StoreError> {
         self.conn.execute(
             "UPDATE sessions SET pending_review = NULL WHERE id = ?1 AND last_event_at < ?2",

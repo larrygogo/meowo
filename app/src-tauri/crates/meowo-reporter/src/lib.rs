@@ -4,6 +4,7 @@
 pub mod dispatch;
 pub mod hook;
 pub mod import;
+pub mod lead;
 pub mod proc;
 pub mod statusline;
 pub mod tabtitle;

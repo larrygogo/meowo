@@ -83,6 +83,8 @@ pub enum PendingReview {
     Approval,
     Question,
     Plan,
+    /// Lead 工作流的关卡在等 leader 拍板（由 Meowo 后端的关卡巡检写入，见 app 的 lead.rs）。
+    Gate,
 }
 
 impl PendingReview {
@@ -91,6 +93,7 @@ impl PendingReview {
             PendingReview::Approval => "approval",
             PendingReview::Question => "question",
             PendingReview::Plan => "plan",
+            PendingReview::Gate => "gate",
         }
     }
 }
