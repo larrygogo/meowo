@@ -44,7 +44,6 @@ fn default_session_open_in() -> String {
 fn default_card_menu_mode() -> String {
     "button".to_string()
 }
-/// 贴纸风格：flat = 扁平（默认），elevated = 立体感。
 fn default_island_compact() -> String {
     "counts".into()
 }
@@ -57,6 +56,7 @@ fn default_island_alert_seconds() -> u32 {
     6
 }
 
+/// 贴纸风格：flat = 扁平（默认），elevated = 立体感。
 fn default_sticker_style() -> String {
     "flat".to_string()
 }
@@ -126,6 +126,10 @@ pub(crate) struct StickerWindowState {
     /// 灵动岛中心点在所在屏工作区里的横向比例（0..1，用户左右拖过才有）。None = 居中。
     #[serde(default)]
     pub(crate) island_center: Option<f64>,
+    /// 灵动岛所在显示器的系统名（Windows 上形如 `\\.\DISPLAY2`）。只记比例的话，拖到副屏的岛
+    /// 重启后按同一比例落回主屏（审查发现）。None 或那块屏不在了 = 窗口当前所在屏。
+    #[serde(default)]
+    pub(crate) island_monitor: Option<String>,
 }
 
 /// 应用设置（持久化到 ~/.meowo/settings.json）。
@@ -466,8 +470,11 @@ fn load_settings_unlocked() -> Settings {
 /// 兜底自身不能再拖死启动。
 fn load_settings_from(path: &std::path::Path) -> Settings {
     match std::fs::read_to_string(path) {
-        Ok(raw) => match serde_json::from_str(&raw) {
-            Ok(settings) => settings,
+        Ok(raw) => match serde_json::from_str::<Settings>(&raw) {
+            Ok(mut settings) => {
+                sanitize_island(&mut settings);
+                settings
+            }
             Err(e) => {
                 eprintln!("[settings] settings.json 解析失败，回退默认设置（原文件已隔离）: {e}");
                 quarantine_corrupt_settings(path);
@@ -753,7 +760,20 @@ fn sanitize_sticker_window(mut s: StickerWindowState) -> StickerWindowState {
     s.x = s.x.map(|v| v.clamp(-100_000, 100_000));
     s.y = s.y.map(|v| v.clamp(-100_000, 100_000));
     s.island_center = s.island_center.filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0));
+    s.island_monitor = s
+        .island_monitor
+        .map(|m| m.trim().to_string())
+        .filter(|m| !m.is_empty() && m.chars().count() <= 256);
     s
+}
+
+/// 灵动岛设置的取值保护：提醒停留秒数钳到 2..=30（与设置页滑块、前端一致），收起样式只认
+/// 三种，手改 settings.json 塞的怪值回落默认。纯函数便于单测。
+fn sanitize_island(s: &mut Settings) {
+    s.island_alert_seconds = s.island_alert_seconds.clamp(2, 30);
+    if !matches!(s.island_compact.as_str(), "counts" | "focus" | "minimal") {
+        s.island_compact = default_island_compact();
+    }
 }
 
 /// 贴纸主窗口几何读取（W-17）。与 get_settings 分开：贴纸窗启动路径只需要这一小块，
@@ -1241,6 +1261,7 @@ mod tests {
             x: Some(100),
             y: Some(200),
             island_center: None,
+            island_monitor: None,
         };
 
         preserve_independently_managed_fields(&mut incoming, &current);
@@ -1271,6 +1292,7 @@ mod tests {
                 x: Some(100),
                 y: Some(200),
                 island_center: None,
+                island_monitor: None,
             },
             "贴纸几何不得被设置窗旧快照盖掉（W-17）"
         );
@@ -1297,6 +1319,7 @@ mod tests {
             x: Some(9_999_999),
             y: Some(-9_999_999),
             island_center: None,
+            island_monitor: None,
         });
         assert_eq!(s.normal_width, None);
         assert_eq!(s.normal_height, None);
@@ -1313,6 +1336,7 @@ mod tests {
             x: Some(-1600), // 多屏负坐标是合法位置
             y: Some(0),
             island_center: None,
+            island_monitor: None,
         };
         assert_eq!(sanitize_sticker_window(ok.clone()), ok);
     }
@@ -1330,5 +1354,18 @@ mod tests {
         assert!(json.contains(r#""snap_edge":"right""#));
         let back: Settings = serde_json::from_str(&json).unwrap();
         assert_eq!(back.sticker_window, v.sticker_window);
+    }
+
+    #[test]
+    fn island_settings_out_of_range_fall_back() {
+        let mut s = Settings { island_alert_seconds: 999, island_compact: "huge".into(), ..Settings::default() };
+        sanitize_island(&mut s);
+        assert_eq!(s.island_alert_seconds, 30);
+        assert_eq!(s.island_compact, "counts");
+        s.island_alert_seconds = 0;
+        s.island_compact = "focus".into();
+        sanitize_island(&mut s);
+        assert_eq!(s.island_alert_seconds, 2);
+        assert_eq!(s.island_compact, "focus");
     }
 }

@@ -468,6 +468,14 @@ export function App() {
   // 形态切换进行中（窗口正在改尺寸）：期间的测量不得去改窗口尺寸。展开时窗口先长大，
   // 此刻任何「按胶囊宽度摆窗口」的调用都会把它缩回去，列表被挤进胶囊大小（DEV 实拍）。
   const transitioningRef = useRef(false);
+  // 收起动画的定时器。收起途中又展开（托盘找回、再点一下胶囊）要把它作废：此前展开因形态
+  // 还是 expanded 直接返回，旧定时器到点照样把面板缩回胶囊（审查复现）。
+  const collapseTimerRef = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (collapseTimerRef.current != null) window.clearTimeout(collapseTimerRef.current);
+  }, []);
+  // 提醒倒计时的挂法定义在 grow 之后，经 ref 取（与 pumpAlertRef 同理）。
+  const armAlertRef = useRef<(ms: number) => void>(() => {});
   // 设置：收起样式、哪些事弹提醒、提醒停留多久、额度环取哪家（实时跟随设置页改动）。
   const [islandCompact, setIslandCompact] = useState<IslandCompactStyle>("counts");
   const [quotaProviders, setQuotaProviders] = useState<string[]>(["claude"]);
@@ -553,8 +561,9 @@ export function App() {
     invoke("set_menubar_status", { tone, segments, mood: menubarMood }).catch(() => {});
   }, [stripSessions, usage, quotaProviders, activeProviders, t, menubarMood]);
 
-  const layout = useCallback((width: number, height: number, centerRatio: number | null = null) =>
-    invoke("island_layout", { width, height, centerRatio }), []);
+  // monitor 只在启动还原时有；平时不带，后端缺参即按窗口当前所在屏。
+  const layout = useCallback((width: number, height: number, centerRatio: number | null = null, monitor: string | null = null) =>
+    invoke("island_layout", monitor ? { width, height, centerRatio, monitor } : { width, height, centerRatio }), []);
   // 菜单栏落点平时藏着，提醒、展开时摆到图标下方再显示。要等新内容画上去再显示：窗口底下的系统
   // 毛玻璃是一显示就整块出现的，先显示的话会先闪一块空玻璃（2026-11-05 Mac 录屏）。
   // 藏着的窗口里 WebView 可能停了 requestAnimationFrame，所以再挂一个 80ms 的定时器兜底，谁先到用谁。
@@ -575,7 +584,7 @@ export function App() {
   // 图标的点击才到，不挡一下就又展开了（录屏里关了又弹开）。
   const lastCollapseRef = useRef(0);
   const alertHeight = () => ISLAND_ALERT_SIZE.height + safeTopOf(hostRef.current);
-  const layoutCompact = useCallback(async (centerRatio: number | null = null) => {
+  const layoutCompact = useCallback(async (centerRatio: number | null = null, monitor: string | null = null) => {
     const h = hostRef.current;
     // 菜单栏落点：收起 = 藏起来，状态看菜单栏上的迷你岛。
     if (h.kind === "menubar") {
@@ -583,12 +592,12 @@ export function App() {
       return;
     }
     if (h.kind === "floating" && islandStripRef.current && !stripPeekRef.current) {
-      await layout(ISLAND_STRIP_SIZE.width, ISLAND_STRIP_SIZE.height, centerRatio);
+      await layout(ISLAND_STRIP_SIZE.width, ISLAND_STRIP_SIZE.height, centerRatio, monitor);
       return;
     }
     // 有刘海：高度就是刘海高，和菜单栏齐平。
     const height = h.kind === "notch" ? h.notchHeight : ISLAND_PILL_HEIGHT;
-    await layout(pillWidthRef.current + ISLAND_EAR * 2, height, centerRatio);
+    await layout(pillWidthRef.current + ISLAND_EAR * 2, height, centerRatio, monitor);
   }, [layout]);
 
   // 极简模式开关一变（面板上点、设置页改、启动时读到设置），收起着的岛立刻换形。
@@ -647,6 +656,10 @@ export function App() {
     } catch (err) {
       transitioningRef.current = false;
       console.error("[island] 展开失败：", err);
+      // 从提醒展开失败：开头清掉了它的倒计时，重新挂上，不然提醒一直挂着。
+      // 从胶囊展开失败：展开途中排进来的提醒补弹（pumpAlert 在展开途中只排队不弹）。
+      if (islandModeRef.current === "alert") armAlertRef.current(ISLAND_ALERT_LINGER_MS);
+      else pumpAlertRef.current();
       return;
     }
     // 展开着不弹提醒：排队的那些在面板/列表里都看得到，作废。
@@ -666,6 +679,13 @@ export function App() {
 
   const expand = useCallback(() => {
     const mode = islandModeRef.current;
+    if (mode === "expanded" && collapseTimerRef.current != null) {
+      // 收起动画还没播完：窗口还是面板尺寸，作废收起、停在面板上即可。
+      window.clearTimeout(collapseTimerRef.current);
+      collapseTimerRef.current = null;
+      setClosing(false);
+      return;
+    }
     if (mode === "expanded" || draggingRef.current) return;
     void grow("expanded", ISLAND_PANEL_WIDTH, panelHeightRef.current);
   }, [grow]);
@@ -688,8 +708,11 @@ export function App() {
     if (alertTimerRef.current != null) window.clearTimeout(alertTimerRef.current);
     alertTimerRef.current = window.setTimeout(finishAlert, ms);
   }, [finishAlert]);
+  armAlertRef.current = armAlertTimer;
   const pumpAlert = useCallback(() => {
-    if (islandModeRef.current !== "compact" || alertTimerRef.current != null) return;
+    // transitioningRef：正在展开（grow 在等窗口长大），形态还是 compact。这时弹提醒会把窗口
+    // 改成提醒尺寸、盖掉展开的尺寸，面板被截在提醒高度里（审查复现）。只排队，展开失败再补弹。
+    if (islandModeRef.current !== "compact" || alertTimerRef.current != null || transitioningRef.current) return;
     const next = alertQueueRef.current.shift();
     setAlertQueued(alertQueueRef.current.length);
     if (!next) return;
@@ -748,9 +771,12 @@ export function App() {
         .finally(() => pumpAlert());
       return;
     }
+    if (collapseTimerRef.current != null) return;
     setClosing(true);
     // 先播收回动画（缩回胶囊轮廓），播完再把窗口缩小。
-    window.setTimeout(() => {
+    collapseTimerRef.current = window.setTimeout(() => {
+      collapseTimerRef.current = null;
+      if (islandModeRef.current !== "expanded") return;
       setClosing(false);
       islandModeRef.current = "compact";
       setIslandMode("compact");
@@ -798,17 +824,22 @@ export function App() {
         });
       }
     };
-    const finish = () => {
+    // pointercancel（失去捕获、触控手势被系统接管）不是用户松手：没拖起来就什么都不做，
+    // 此前同走 finish 被当成一次点击，岛自己展开或打开了对话窗（审查复现）。
+    const finish = (event: PointerEvent) => {
       target.removeEventListener("pointermove", move);
       target.removeEventListener("pointerup", finish);
       target.removeEventListener("pointercancel", finish);
       if (frame) window.cancelAnimationFrame(frame);
       if (!dragging) {
-        onClick();
+        if (event.type !== "pointercancel") onClick();
         return;
       }
-      invoke<number | null>("island_drag_end")
-        .then((ratio) => { if (typeof ratio === "number") updateStickerWindowState({ island_center: ratio }); })
+      // 记下中心比例和所在显示器：只记比例的话，拖到副屏的岛重启后按同一比例落回主屏（审查发现）。
+      invoke<{ ratio: number; monitor: string | null } | null>("island_drag_end")
+        .then((spot) => {
+          if (spot && typeof spot.ratio === "number") updateStickerWindowState({ island_center: spot.ratio, island_monitor: spot.monitor ?? null });
+        })
         .catch(() => {})
         .finally(() => { draggingRef.current = false; });
     };
@@ -918,7 +949,7 @@ export function App() {
         }
         if (cancelled) return;
         applyPinned(s.pinned);
-        await layoutCompact(s.island_center ?? 0.5);
+        await layoutCompact(s.island_center ?? 0.5, s.island_monitor);
         // 刘海落点摆好就显示（不抢键盘）；菜单栏落点平时藏着，等点图标。
         if (hostRef.current.kind === "notch") await invoke("island_set_visible", { visible: true, focus: false });
       } catch (err) {
