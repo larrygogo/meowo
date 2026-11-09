@@ -558,7 +558,11 @@ pub(crate) fn processes_using(root: &Path) -> Vec<WorktreeProcessDto> {
                 } else {
                     n
                 };
-                is_under(&n, &root)
+                // 进程当前目录是它自己设的原样字符串，可能是 8.3 短名（GitHub Windows 机器的
+                // 临时目录就是 C:/Users/RUNNER~1/...），root 却经 canonicalize 成了长名，字符串
+                // 对不上就漏掉占用进程（CI 实测）。带 `~` 的再按 root 同一套规则解析一次；只在
+                // 对不上时才解析，不给每个进程都多一次系统调用。
+                is_under(&n, &root) || (n.contains('~') && is_under(&norm(Path::new(path)), &root))
             })
         })
         .map(|p| WorktreeProcessDto {

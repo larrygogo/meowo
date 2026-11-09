@@ -411,6 +411,37 @@ fn 主检出和共用目录的会话都不可清理() {
     assert_eq!(status.reason.as_deref(), Some("shared_session"));
 }
 
+/// 进程用 8.3 短名进的目录（GitHub Windows 机器的临时目录就是 RUNNER~1）：也要认成占用者。
+/// 此前只按字符串比，CI 上漏掉占用进程，删除走到改名试探才报 busy。
+#[cfg(target_os = "windows")]
+#[test]
+fn 用短名进目录的进程也算占用() {
+    let fx = fixture("short");
+    let long = fx.wt.to_string_lossy().into_owned();
+    // 取短名：卷上关了 8.3 生成时拿到的还是长名，那就没法复现，跳过。
+    // raw_arg：cmd 不认 Rust 给引号加的反斜杠转义，原样交给它。
+    use std::os::windows::process::CommandExt;
+    let out = StdCommand::new("cmd")
+        .raw_arg(format!("/c for %I in (\"{long}\") do @echo %~sI"))
+        .output()
+        .unwrap();
+    let short = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    if !short.contains('~') {
+        eprintln!("本卷未生成 8.3 短名，跳过：{short}");
+        return;
+    }
+    let mut child = StdCommand::new("cmd")
+        .args(["/c", "ping -n 30 127.0.0.1 >nul"])
+        .current_dir(&short)
+        .spawn()
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    let found = processes_using(&fx.wt);
+    let _ = child.kill();
+    let _ = child.wait();
+    assert!(found.iter().any(|p| p.pid == child.id()), "短名 {short} 下的子进程 {} 没认出来：{found:?}", child.id());
+}
+
 #[test]
 fn 有进程占着目录时先列出来_确认后结束进程再删() {
     let fx = fixture("busy");
