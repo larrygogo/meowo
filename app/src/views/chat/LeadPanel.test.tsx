@@ -95,6 +95,25 @@ describe("Lead 入口", () => {
   });
 });
 
+describe("网络抖动", () => {
+  /// 做空审查 M3：手机远程中继一次失败，卡片不能卸载——leader 写了一半的驳回意见会丢。
+  it("快照读失败时保留上一次的数据和卡片里没提交的意见", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      snapshot.mockResolvedValue(task({ gate: gate("C") }));
+      render(<DockWork sessionId={1} cwd="C:/repo" items={[]} history={history} loading={false} />);
+      const note = await screen.findByPlaceholderText("附加意见（可选）");
+      fireEvent.change(note, { target: { value: "截图第二张对不上" } });
+      snapshot.mockRejectedValue("network");
+      await act(async () => { vi.advanceTimersByTime(4500); });
+      await waitFor(() => expect(snapshot.mock.calls.length).toBeGreaterThanOrEqual(2));
+      expect((screen.getByPlaceholderText("附加意见（可选）") as HTMLTextAreaElement).value).toBe("截图第二张对不上");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("关卡卡片", () => {
   it("A：确认直接提交；选「要改」必须写意见", async () => {
     answer.mockResolvedValue();

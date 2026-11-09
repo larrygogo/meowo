@@ -527,6 +527,9 @@ export function ChatWindow() {
   // 启动即落 running、首条消息前无事件纠正,只看 DB 会把空闲会话当运行中、发送改按排队键
   // Tab——正文停在输入框里发不出去(0.6.11 实机)。
   const tone = sessionTone(history?.connected ?? false, history?.status, history?.pendingReview, history?.errored, undefined, history?.screenState);
+  // 要在终端里答的交互。Lead 关卡（gate）不算：它有自己的卡片（DockWork 的 LeadGateCard），
+  // 不能再冒出一张「Agent 请求权限 / 去终端批准」的降级卡和发送软拦（做空审查 M2）。
+  const terminalReview = history?.pendingReview && history.pendingReview !== "gate" ? history.pendingReview : null;
   const toneRef = useRef(tone);
   toneRef.current = tone;
   // 运行条：压缩中的哨兵顶替首行动词；真实命令才进次行（空值/哨兵不占次行）。
@@ -2156,7 +2159,7 @@ export function ChatWindow() {
       // 软拦(非阻断):hook 说 agent 在等交互(pendingReview),但屏幕识别没认出卡片——识别
       // 是启发式的,误报率不低,弹窗拦截会把最高频的「发消息」路径卡住。改为照常发送,
       // 同时亮一条可跳终端的提示;真误触的兜底仍是终端页人工确认。
-      if (current && !terminalAttention && history?.pendingReview && !approval && !brokerOwnsReview) {
+      if (current && !terminalAttention && terminalReview && !approval && !brokerOwnsReview) {
         setSoftPromptNotice(true);
       }
       if (!await ensureWritableTerminal(detached) || !alive()) return false;
@@ -3474,7 +3477,7 @@ export function ChatWindow() {
     || (view === "chat" && (
       (commandAttention && commandApproval)
       || (terminalAttention && !commandAttention && !interactiveAttention)
-      || (!terminalAttention && (approval || (!brokerOwnsReview && history?.pendingReview && history?.ptyManaged !== false)))
+      || (!terminalAttention && (approval || (!brokerOwnsReview && terminalReview && history?.ptyManaged !== false)))
     )),
   );
   // 屏幕菜单/审批「一次性作答」的在途去重(对应 broker 审批的 resolvingApproval):写 PTY
@@ -4309,10 +4312,10 @@ export function ChatWindow() {
           会话的提问/审批一律留在终端处理（broker 同口径整段短路，见 pty.rs handle_approval），
           对着它弹一张只能「打开终端」的卡，和不弹相比只多一次打扰。ptyManaged 用严格
           === false（与 composerGated 同哲学）：DTO 必填，信号缺失只可能是错配，退回旧路径。 */}
-      {view === "chat" && !terminalAttention && !approval && !brokerOwnsReview && history?.pendingReview && history?.ptyManaged !== false && <ApprovalCard
+      {view === "chat" && !terminalAttention && !approval && !brokerOwnsReview && terminalReview && history?.ptyManaged !== false && <ApprovalCard
         returnFocusTo={promptInputRef}
-        title={history.pendingReview === "question" ? t.chat.questionTitle : history.pendingReview === "plan" ? t.chat.planTitle : t.chat.approvalTitle}
-        badge={history.pendingReview === "question" ? t.chat.questionPending : t.chat.approvalPending}
+        title={terminalReview === "question" ? t.chat.questionTitle : terminalReview === "plan" ? t.chat.planTitle : t.chat.approvalTitle}
+        badge={terminalReview === "question" ? t.chat.questionPending : t.chat.approvalPending}
         // 远程没有终端页可去：直接把终端画面和按键摆进卡里（RemoteTerminalKeys），
         // 此前这里写「请在桌面端作答」，人在手机上等于死路（用户实拍反馈）。
         actions={remoteUi() ? undefined : <button type="button" onClick={() => setView("terminal")}>{t.chat.goTerminal}</button>}
@@ -4363,7 +4366,7 @@ export function ChatWindow() {
             cwd={cwd}
             // 停滞检测豁免:broker 审批/hook 落库的待批/屏幕识别的表单/结构化题面,任一
             // 在场都说明 TUI 静止是「在等人」——回合没结束 status 仍 running,不能报僵死。
-            reviewPending={Boolean(approval || history?.pendingReview || terminalAttention || structuredQuestion)}
+            reviewPending={Boolean(approval || terminalReview || terminalAttention || structuredQuestion)}
             visible={view === "terminal"}
             background={history?.background ?? false}
             resumeOptions={resumeOptions}

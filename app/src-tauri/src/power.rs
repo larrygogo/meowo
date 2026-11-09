@@ -49,8 +49,18 @@ fn lead_gate_pending(app: &tauri::AppHandle) -> bool {
     let db_path = app.state::<crate::AppState>().db_path.clone();
     let Ok(store) = crate::open_store(&db_path) else { return false };
     let Ok(cwds) = store.recent_cwds(20) else { return false };
+    // 挂了一天还没人答的关卡多半已被遗弃（agent 中途放弃、在终端答了却没改状态），不再为它拦休眠，
+    // 否则电脑会一直睡不着（做空审查 L5）。
+    const STALE: std::time::Duration = std::time::Duration::from_secs(24 * 3600);
     cwds.iter().any(|cwd| {
-        meowo_reporter::lead::snapshot(cwd).and_then(|t| t.gate).is_some_and(|g| g.status == "pending")
+        meowo_reporter::lead::project_gates(cwd).iter().any(|(task, g)| {
+            g.status == "pending"
+                && std::fs::metadata(task.join("gate.json"))
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(|t| t.elapsed().ok())
+                    .is_some_and(|age| age < STALE)
+        })
     })
 }
 

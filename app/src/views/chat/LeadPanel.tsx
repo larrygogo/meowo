@@ -28,8 +28,9 @@ export function useLeadTask(cwd: string | null | undefined): [LeadTaskDto | null
     const mine = ++seq.current;
     leadTaskSnapshot(cwd)
       .then((next) => { if (mine === seq.current) setTask(next); })
-      // 读失败（目录不是会话目录、后端异常）按「没有任务」处理：入口隐藏，不打扰对话。
-      .catch(() => { if (mine === seq.current) setTask(null); });
+      // 读失败（手机远程中继抖一下、后端偶发异常）保留上一次的数据：卡片若因此卸载，leader 在手机上
+      // 写了一半的驳回意见会丢（做空审查 M3）。真没有任务时后端返回的是 null，不是报错。
+      .catch(() => {});
   }, [cwd]);
   useEffect(() => {
     refresh();

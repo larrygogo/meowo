@@ -113,7 +113,7 @@ fn norm(v: &Value) -> String {
 /// git 根目录；不在 git 里就是 cwd 本身。绝不越过项目边界向上找（初版踩过：主目录下的任务
 /// 注入到了所有非 git 目录）。
 fn project_root(cwd: &Path) -> PathBuf {
-    let start = cwd.canonicalize().unwrap_or_else(|_| cwd.to_path_buf());
+    let start = cwd.canonicalize().map(strip_verbatim).unwrap_or_else(|_| cwd.to_path_buf());
     let mut d = Some(start.as_path());
     while let Some(dir) = d {
         if dir.join(".git").exists() {
@@ -532,68 +532,88 @@ pub fn snapshot(cwd: &str) -> Option<LeadTaskDto> {
         checks,
         decisions: tail(&read(&task.join("decisions.md")), 6000),
         progress: tail(&read(&task.join("progress.md")), 6000),
-        gate: read_gate(&task),
+        gate: read_gate(&task).filter(|g| g.status != "consumed").or_else(|| {
+            project_gates(cwd).into_iter().map(|(_, g)| g).find(|g| g.status == "pending")
+        }),
     })
 }
 
-/// 会话 cwd 所在项目的任务目录（给 Meowo 后端作答用）。
+/// 会话 cwd 所在项目的当前任务目录（`.lead/active` 指向的那个）。
 pub fn task_dir(cwd: &str) -> Option<PathBuf> {
     find_task(Some(cwd))
 }
 
+/// 项目里**所有**任务目录下的关卡（不只 active）：新开一个任务会改写 active，但旧任务挂着的
+/// 关卡还在等 leader，不能因此从卡片、看板、防休眠里消失（做空审查 M4）。
+pub fn project_gates(cwd: &str) -> Vec<(PathBuf, LeadGateDto)> {
+    let lead = project_root(Path::new(cwd)).join(".lead");
+    let Ok(entries) = std::fs::read_dir(&lead) else { return vec![] };
+    let mut out: Vec<(PathBuf, LeadGateDto)> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.is_dir() && p.file_name().is_some_and(|n| slug_ok(&n.to_string_lossy())))
+        .filter_map(|t| read_gate(&t).map(|g| (t, g)))
+        .collect();
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
+/// 按关卡 id 找它所在的任务目录（作答用）。
+pub fn task_of_gate(cwd: &str, gate_id: &str) -> Option<PathBuf> {
+    project_gates(cwd).into_iter().find(|(_, g)| g.id == gate_id).map(|(t, _)| t)
+}
+
 // ---------------- wait（asyncRewake 后台 hook） ----------------
-
-fn pid_alive(pid: u32) -> bool {
-    let mut sys = sysinfo::System::new();
-    let p = sysinfo::Pid::from_u32(pid);
-    sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[p]), true);
-    sys.process(p).is_some()
-}
-
-fn parent_pid() -> Option<u32> {
-    let me = sysinfo::get_current_pid().ok()?;
-    let mut sys = sysinfo::System::new();
-    sys.refresh_processes(sysinfo::ProcessesToUpdate::Some(&[me]), true);
-    sys.process(me).and_then(|x| x.parent()).map(|pp| pp.as_u32())
-}
 
 /// 后台等待关卡答复（Stop / SessionStart 上的 asyncRewake hook）。
 /// - 关卡已作答：立刻以退出码 2 结束，stderr 是答复 → 模型被唤醒（会话恢复后也走这里）。
 /// - 关卡挂起：每 `poll` 看一次，直到作答（退出码 2）、被消费/撤掉/换了关卡（0）、
 ///   claude 进程没了（0）或超过 `max`（0）。
-/// - 同一关卡只留一个等待者（`.waiter` 记 `pid:关卡id`）：Stop 每轮都会触发，不能越堆越多。
+/// - 只唤醒关卡的归属会话：做空审查复现过，按工作目录兜底时，同项目里任何会话停下都会被唤醒，
+///   无关会话会去执行别人任务的单向门决定。
+/// - 等待者「后来者接管」：`.waiter` 记最新等待者的 `pid:关卡id`，旧等待者看到被换掉就自己退出。
+///   不能靠「父进程还活着」判断：Windows 上 hook 的父进程是 bash 存根而不是 claude，claude 退出后
+///   旧等待者会一直活着，挡住恢复后的新会话（做空审查复现过）。
 pub fn wait(data: &Value, registry: &Path, poll: std::time::Duration, max: std::time::Duration) -> Output {
     let sid = data.get("session_id").and_then(Value::as_str).unwrap_or("");
-    let task = task_of_session(sid, registry).or_else(|| find_task(data.get("cwd").and_then(Value::as_str)));
-    let Some(task) = task else { return Output::default() };
+    let Some(task) = task_of_session(sid, registry) else { return Output::default() };
     let Some(first) = read_gate(&task) else { return Output::default() };
-    let wake = |g: &LeadGateDto| Output { stderr: Some(answer_message(g)), exit: 2, ..Output::default() };
+    // 每个关卡的答复只唤醒一次（`.delivered` 记关卡 id）。真机实测踩过：agent 醒来后没把关卡标成
+    // consumed，下一次 Stop 的 wait 又看到 answered，再唤醒一次——agent 若一直不消费就成了死循环。
+    // 例外是 SessionStart：那是新起的进程（例如崩溃后恢复），之前的唤醒可能没被处理完，再送一次。
+    let delivered = task.join(".delivered");
+    let on_start = data.get("hook_event_name").and_then(Value::as_str) == Some("SessionStart");
+    let wake = |g: &LeadGateDto| {
+        let _ = std::fs::write(&delivered, &g.id);
+        Output { stderr: Some(answer_message(g)), exit: 2, ..Output::default() }
+    };
     match first.status.as_str() {
-        "answered" => return wake(&first),
+        "answered" if on_start || read(&delivered).trim() != first.id => return wake(&first),
         "pending" => {}
         _ => return Output::default(),
     }
     let me = std::process::id();
     let waiter = task.join(".waiter");
     let mine = format!("{me}:{}", first.id);
-    let current = read(&waiter);
-    if let Some((pid, gid)) = current.trim().split_once(':') {
-        if gid == first.id && pid.parse::<u32>().is_ok_and(|p| p != me && pid_alive(p)) {
-            return Output::default();
-        }
-    }
-    let _ = std::fs::write(&waiter, &mine);
-    let parent = parent_pid();
+    let _ = std::fs::write(&waiter, &mine); // 接管：之前的等待者下一轮看到不是自己就退出
     let start = std::time::Instant::now();
+    let mut misses = 0;
     let out = loop {
         std::thread::sleep(poll);
+        if read(&waiter).trim() != mine || start.elapsed() > max {
+            break Output::default(); // 被新等待者接管，或超时
+        }
         match read_gate(&task) {
             Some(g) if g.id == first.id && g.status == "answered" => break wake(&g),
-            Some(g) if g.id == first.id && g.status == "pending" => {}
-            _ => break Output::default(),
-        }
-        if parent.is_some_and(|pp| !pid_alive(pp)) || start.elapsed() > max {
-            break Output::default();
+            Some(g) if g.id == first.id && g.status == "pending" => misses = 0,
+            Some(_) => break Output::default(), // 换了关卡或已消费
+            // 读失败（作答时的 rename、杀毒软件占用）偶发一次不算数，连续多次才当作关卡被撤掉
+            None => {
+                misses += 1;
+                if misses >= 5 {
+                    break Output::default();
+                }
+            }
         }
     };
     if read(&waiter).trim() == mine {

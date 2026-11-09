@@ -30,7 +30,8 @@ pub(crate) async fn answer_lead_gate(
     note: String,
 ) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let task = meowo_reporter::lead::task_dir(&cwd).ok_or("lead/no_task")?;
+        // 按关卡 id 找任务：关卡可能挂在非 active 的旧任务里（做空审查 M4）
+        let task = meowo_reporter::lead::task_of_gate(&cwd, &gate_id).ok_or("lead/gate_missing")?;
         meowo_reporter::lead::answer_gate(&task, &gate_id, &LeadGateAnswerDto { choice, note })?;
         if let Err(e) = resume_owner_if_gone(&app, &task) {
             eprintln!("Lead 关卡已作答，但恢复会话失败（答复已保存，打开会话时会送达）: {e}");
@@ -148,7 +149,11 @@ fn add_lead_hooks(settings: &mut Value, reporter: &str) {
 fn read_settings(path: &Path) -> Result<Value, String> {
     match std::fs::read_to_string(path) {
         Ok(text) if text.trim().is_empty() => Ok(json!({})),
-        Ok(text) => serde_json::from_str(&text).map_err(|_| "lead/settings_invalid".to_owned()),
+        // 根节点必须是对象：数组之类的形态下面的 `settings["hooks"] = …` 会 panic（做空审查 L3）
+        Ok(text) => match serde_json::from_str::<Value>(&text) {
+            Ok(v) if v.is_object() => Ok(v),
+            _ => Err("lead/settings_invalid".to_owned()),
+        },
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(json!({})),
         Err(e) => Err(e.to_string()),
     }
@@ -167,15 +172,26 @@ fn managed_file(path: &Path) -> bool {
 
 /// 安装到 claude 配置目录：skill、做空子代理、hook。可重复执行（先删旧条目再加）。
 /// 同名文件若是用户自己写的（没有托管标记），不覆盖，报错让用户先处理。
-pub(crate) fn install_into(claude_dir: &Path, reporter: &str) -> Result<(), String> {
+pub(crate) fn install_into(claude_dir: &Path, reporter: &str, registry: Option<&Path>) -> Result<(), String> {
     if !claude_dir.is_dir() {
         return Err("lead/claude_missing".into()); // 没装 Claude Code 不凭空造目录
     }
     let skill = claude_dir.join("skills/lead/SKILL.md");
     let agent = claude_dir.join("agents/lead-redteam.md");
+    // 初版（~/.claude/lead/hook.py 那套）留下的同名文件不带托管标记，但它就是要被接管的对象：
+    // 先备份成 *.prototype-bak 再覆盖。不是初版的同名文件才算用户自己的，拒绝覆盖（做空审查 H3）。
+    let prototype = claude_dir.join("lead/hook.py").exists();
     for p in [&skill, &agent] {
         if p.exists() && !managed_file(p) {
-            return Err("lead/user_file_exists".into());
+            if !prototype {
+                return Err("lead/user_file_exists".into());
+            }
+            std::fs::copy(p, p.with_extension("md.prototype-bak")).map_err(|e| e.to_string())?;
+        }
+    }
+    if prototype {
+        if let Some(reg) = registry {
+            migrate_prototype_registry(&claude_dir.join("lead/sessions.json"), reg);
         }
     }
     let settings_path = claude_dir.join("settings.json");
@@ -187,6 +203,20 @@ pub(crate) fn install_into(claude_dir: &Path, reporter: &str) -> Result<(), Stri
     strip_lead_hooks(&mut settings);
     add_lead_hooks(&mut settings, reporter);
     write_settings(&settings_path, &settings)
+}
+
+/// 初版的「会话 → 任务」登记表并进新登记表（新表已有的会话不动），进行中的任务不必重新认领。
+fn migrate_prototype_registry(old: &Path, new: &Path) {
+    let Ok(text) = std::fs::read_to_string(old) else { return };
+    let Ok(Value::Object(old_map)) = serde_json::from_str::<Value>(&text) else { return };
+    let mut map = match std::fs::read_to_string(new).ok().and_then(|t| serde_json::from_str::<Value>(&t).ok()) {
+        Some(Value::Object(m)) => m,
+        _ => serde_json::Map::new(),
+    };
+    for (k, v) in old_map {
+        map.entry(k).or_insert(v);
+    }
+    let _ = std::fs::write(new, Value::Object(map).to_string());
 }
 
 /// 卸载：只删带托管标记的文件与 lead hook 条目，其余原样保留。
@@ -220,6 +250,22 @@ fn claude_dir() -> Option<PathBuf> {
     meowo_agent::home_dir().map(|h| h.join(".claude"))
 }
 
+/// reporter lead 子命令用的登记表（与 board.db 同目录，见 meowo-reporter main.rs）。
+fn lead_registry() -> Option<PathBuf> {
+    meowo_reporter::db_path().and_then(|p| p.parent().map(|d| d.join("lead-sessions.json")))
+}
+
+/// 启动时：装着 Lead 就重装一遍——reporter 路径变了（挪了 app、dev 与安装版混用）要跟着改，
+/// 否则所有 lead hook 都会 127、拦截悄悄失效（做空审查 L2）；顺带把 skill 文本更新到本版本。
+pub(crate) fn refresh_if_installed() {
+    let (Some(dir), Some(reporter)) = (claude_dir(), crate::setup::sibling_reporter()) else { return };
+    if installed_in(&dir) {
+        if let Err(e) = install_into(&dir, &reporter, None) {
+            eprintln!("Lead 工作流启动时刷新失败: {e}");
+        }
+    }
+}
+
 /// 设置页读开关状态：以「是否真的装着」为准，不另存一份设置（两者不会不一致）。
 #[tauri::command]
 pub(crate) async fn lead_workflow_installed() -> Result<bool, String> {
@@ -234,7 +280,7 @@ pub(crate) async fn set_lead_workflow(enabled: bool) -> Result<(), String> {
         let dir = claude_dir().ok_or("lead/claude_missing")?;
         if enabled {
             let reporter = crate::setup::sibling_reporter().ok_or("lead/reporter_missing")?;
-            install_into(&dir, &reporter)
+            install_into(&dir, &reporter, lead_registry().as_deref())
         } else {
             uninstall_from(&dir)
         }
@@ -253,13 +299,15 @@ fn sessions_with_pending_gate(store: &meowo_store::Store) -> std::collections::H
     let mut out = std::collections::HashSet::new();
     let Ok(cwds) = store.recent_cwds(20) else { return out };
     for cwd in cwds {
-        let Some(task) = meowo_reporter::lead::task_dir(&cwd) else { continue };
-        if !meowo_reporter::lead::read_gate(&task).is_some_and(|g| g.status == "pending") {
-            continue;
-        }
-        let owner = std::fs::read_to_string(task.join(".owner")).unwrap_or_default();
-        if let Ok(Some(sid)) = store.find_session_id_pub(owner.trim()) {
-            out.insert(sid);
+        // 项目里所有任务的关卡，不只 active 指向的那个（做空审查 M4）
+        for (task, gate) in meowo_reporter::lead::project_gates(&cwd) {
+            if gate.status != "pending" {
+                continue;
+            }
+            let owner = std::fs::read_to_string(task.join(".owner")).unwrap_or_default();
+            if let Ok(Some(sid)) = store.find_session_id_pub(owner.trim()) {
+                out.insert(sid);
+            }
         }
     }
     out
@@ -271,7 +319,7 @@ fn sessions_with_pending_gate(store: &meowo_store::Store) -> std::collections::H
 pub(crate) fn spawn_gate_watcher(app: tauri::AppHandle) {
     use tauri::Manager;
     let spawned = std::thread::Builder::new().name("lead-gates".into()).spawn(move || {
-        let mut marked: std::collections::HashSet<i64> = std::collections::HashSet::new();
+        refresh_if_installed();
         loop {
             std::thread::sleep(GATE_POLL);
             let db_path = app.state::<crate::AppState>().db_path.clone();
@@ -281,14 +329,19 @@ pub(crate) fn spawn_gate_watcher(app: tauri::AppHandle) {
             let mut changed = false;
             for sid in &want {
                 if store.pending_review_of(*sid).ok().flatten().is_none() {
-                    // 只在空着时写：真有工具审批/提问在等时，不拿关卡盖掉它。
-                    changed |= store.set_pending_review(*sid, meowo_store::PendingReview::Gate, now).is_ok();
+                    // 只在空着时写：真有工具审批/提问在等时，不拿关卡盖掉它。会话已 ended 时写不进去
+                    // （set_pending_review 的条件），以实际是否变成 gate 为准，避免每轮都刷看板（做空审查 M1）。
+                    let _ = store.set_pending_review(*sid, meowo_store::PendingReview::Gate, now);
+                    changed |= store.pending_review_of(*sid).ok().flatten().as_deref() == Some("gate");
                 }
             }
-            for sid in marked.difference(&want) {
-                changed |= store.clear_pending_review_kind(*sid, meowo_store::PendingReview::Gate, now + 1).is_ok();
+            // 以库为准清理：Meowo 重启后内存里没有上次标过谁，残留的 gate 标记也要清掉。
+            for sid in store.sessions_with_pending_review("gate").unwrap_or_default() {
+                if !want.contains(&sid) {
+                    let _ = store.clear_pending_review_kind(sid, meowo_store::PendingReview::Gate, now + 1);
+                    changed |= store.pending_review_of(sid).ok().flatten().is_none();
+                }
             }
-            marked = want;
             if changed {
                 crate::watch::emit_board_changed(&app, "lead-gate");
             }
@@ -358,7 +411,7 @@ mod install_tests {
         });
         write_settings(&dir.join("settings.json"), &original).unwrap();
 
-        install_into(&dir, "C:/m/meowo-reporter.exe").unwrap();
+        install_into(&dir, "C:/m/meowo-reporter.exe", None).unwrap();
         assert!(installed_in(&dir));
         assert!(dir.join("agents/lead-redteam.md").exists());
         let v = settings_of(&dir);
@@ -380,7 +433,7 @@ mod install_tests {
         assert_eq!(waits[0]["asyncRewake"], true);
         assert!(waits[0]["timeout"].as_u64().unwrap() > 7 * 24 * 3600);
 
-        install_into(&dir, "C:/m/meowo-reporter.exe").unwrap();
+        install_into(&dir, "C:/m/meowo-reporter.exe", None).unwrap();
         assert_eq!(lead_cmds(&settings_of(&dir)).len(), cmds.len(), "重复安装不重复追加");
 
         uninstall_from(&dir).unwrap();
@@ -412,7 +465,7 @@ mod install_tests {
         let dir = tmp.path().join(".claude");
         std::fs::create_dir_all(&dir).unwrap();
         let reporter = "C:/m/meowo-reporter.exe";
-        install_into(&dir, reporter).unwrap();
+        install_into(&dir, reporter, None).unwrap();
         let before = lead_cmds(&settings_of(&dir));
         let text = std::fs::read_to_string(dir.join("settings.json")).unwrap();
         let after_text = match SPEC.ensure_hooks(&text, reporter, "claude") {
@@ -431,14 +484,49 @@ mod install_tests {
         let proto = json!({"hooks": {"Stop": [{"hooks": [
             {"type": "command", "command": "python \"C:/Users/x/.claude/lead/hook.py\" stop"}]}]}});
         write_settings(&dir.join("settings.json"), &proto).unwrap();
-        install_into(&dir, "C:/m/meowo-reporter.exe").unwrap();
+        install_into(&dir, "C:/m/meowo-reporter.exe", None).unwrap();
         assert!(!lead_cmds(&settings_of(&dir)).iter().any(|c| c.contains("hook.py")), "初版 Python hook 要被接管");
-        assert_eq!(install_into(&tmp.path().join("nope"), "x"), Err("lead/claude_missing".into()));
+        assert_eq!(install_into(&tmp.path().join("nope"), "x", None), Err("lead/claude_missing".into()));
         let dir2 = tmp.path().join(".claude2");
         std::fs::create_dir_all(dir2.join("skills/lead")).unwrap();
         std::fs::write(dir2.join("skills/lead/SKILL.md"), "我自己的 lead").unwrap();
-        assert_eq!(install_into(&dir2, "x"), Err("lead/user_file_exists".into()));
+        assert_eq!(install_into(&dir2, "x", None), Err("lead/user_file_exists".into()));
         uninstall_from(&dir2).unwrap();
         assert_eq!(std::fs::read_to_string(dir2.join("skills/lead/SKILL.md")).unwrap(), "我自己的 lead");
+    }
+
+    #[test]
+    fn takes_over_python_prototype_files_with_backup_and_migrates_registry() {
+        // 做空审查 H3：作者机器上的真实情况——初版的 skill 和子代理文件都在、都没有托管标记，
+        // 而且 ~/.claude/lead/hook.py 在。原来直接报 user_file_exists，接管落空。
+        let tmp = Tmp::new();
+        let dir = tmp.path().join(".claude");
+        std::fs::create_dir_all(dir.join("skills/lead")).unwrap();
+        std::fs::create_dir_all(dir.join("agents")).unwrap();
+        std::fs::create_dir_all(dir.join("lead")).unwrap();
+        std::fs::write(dir.join("skills/lead/SKILL.md"), "初版 skill").unwrap();
+        std::fs::write(dir.join("agents/lead-redteam.md"), "初版做空").unwrap();
+        std::fs::write(dir.join("lead/hook.py"), "# 初版").unwrap();
+        std::fs::write(dir.join("lead/sessions.json"), r#"{"old-sid":"C:/p/.lead/t"}"#).unwrap();
+        let reg = tmp.path().join("lead-sessions.json");
+        std::fs::write(&reg, r#"{"new-sid":"C:/q/.lead/u"}"#).unwrap();
+
+        install_into(&dir, "C:/m/meowo-reporter.exe", Some(&reg)).unwrap();
+        assert!(installed_in(&dir));
+        assert_eq!(std::fs::read_to_string(dir.join("skills/lead/SKILL.md.prototype-bak")).unwrap(), "初版 skill");
+        assert_eq!(std::fs::read_to_string(dir.join("agents/lead-redteam.md.prototype-bak")).unwrap(), "初版做空");
+        let merged: Value = serde_json::from_str(&std::fs::read_to_string(&reg).unwrap()).unwrap();
+        assert_eq!(merged, json!({"new-sid": "C:/q/.lead/u", "old-sid": "C:/p/.lead/t"}));
+    }
+
+    #[test]
+    fn refuses_non_object_settings() {
+        // 做空审查 L3：根节点是数组时原来会 panic
+        let tmp = Tmp::new();
+        let dir = tmp.path().join(".claude");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("settings.json"), "[]").unwrap();
+        assert_eq!(install_into(&dir, "x", None), Err("lead/settings_invalid".into()));
+        assert_eq!(std::fs::read_to_string(dir.join("settings.json")).unwrap(), "[]", "不改用户文件");
     }
 }

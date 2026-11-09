@@ -349,6 +349,14 @@ fn wait_wakes_on_answer_and_dedupes_waiters() {
     let t = make_with(&root, "design", &[json!(false)], SLUG);
     let data = json!({"session_id": "S", "cwd": root});
     let fast = |d: &Value| wait(d, &e.reg, Duration::from_millis(20), Duration::from_secs(5));
+    // 只唤醒归属会话（做空审查 H1）：S 还没认领时，哪怕关卡已作答也不唤醒
+    write_gate(&t, "g0", "B", "pending");
+    answer_gate(&t, "g0", &ans("1", "")).unwrap();
+    assert_eq!(fast(&data).exit, 0, "没认领任务的会话不能被唤醒");
+    claim_as(&e, &root, "S", "Edit", json!({"file_path": t.join("progress.md").to_string_lossy()}));
+    let other = json!({"session_id": "OTHER", "cwd": root});
+    assert_eq!(fast(&other).exit, 0, "同项目的其他会话不被唤醒");
+    fs::remove_file(t.join("gate.json")).unwrap();
     // 没有关卡 / 已消费 → 立刻 0
     assert_eq!(fast(&data).exit, 0);
     write_gate(&t, "g1", "B", "consumed");
@@ -359,6 +367,10 @@ fn wait_wakes_on_answer_and_dedupes_waiters() {
     let out = fast(&data);
     assert_eq!(out.exit, 2);
     assert!(out.stderr.unwrap().contains("选择 1，意见：好"));
+    // 同一答复不重复唤醒（真机实测：agent 没标 consumed 时，下一次 Stop 又被唤醒）
+    assert_eq!(fast(&data).exit, 0, "Stop 时同一答复第二次不唤醒");
+    let start = json!({"session_id": "S", "cwd": root, "hook_event_name": "SessionStart"});
+    assert_eq!(fast(&start).exit, 2, "新起的进程（SessionStart）再送一次");
     // 挂起中：另一线程稍后作答 → 唤醒
     write_gate(&t, "g2", "A", "pending");
     let t2 = t.clone();
@@ -379,13 +391,42 @@ fn wait_wakes_on_answer_and_dedupes_waiters() {
     });
     assert_eq!(fast(&data).exit, 0);
     h.join().unwrap();
-    // 已有活着的等待者（本测试进程的父进程 pid 一定活着）→ 新等待者直接退出
+    // 后来者接管（做空审查 H2：旧会话的孤儿等待者不能挡住新会话）：
+    // 旧等待者看到 .waiter 被换掉就退出 0；新等待者收到答复
     write_gate(&t, "g4", "C", "pending");
-    let live = super::parent_pid().unwrap();
-    fs::write(t.join(".waiter"), format!("{live}:g4")).unwrap();
-    assert_eq!(fast(&data).exit, 0);
+    fs::write(t.join(".waiter"), "999999:g4").unwrap(); // 一个已经不在的旧等待者
+    let t4 = t.clone();
+    let h = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(150));
+        answer_gate(&t4, "g4", &ans("accept", "")).unwrap();
+    });
+    assert_eq!(fast(&data).exit, 2, "新等待者直接接管，不被旧记录挡住");
+    h.join().unwrap();
+    // 被接管的等待者退出
+    write_gate(&t, "g5", "C", "pending");
+    let t5 = t.clone();
+    let h = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(100));
+        fs::write(t5.join(".waiter"), "1:g5").unwrap(); // 新等待者写入
+    });
+    assert_eq!(fast(&data).exit, 0, "被接管后退出");
+    h.join().unwrap();
+    // 偶发读失败不退出（做空审查 M5）：短暂删掉 gate.json 再放回，仍能收到答复
+    write_gate(&t, "g6", "A", "pending");
+    let t6 = t.clone();
+    let h = std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(50));
+        let body = fs::read_to_string(t6.join("gate.json")).unwrap();
+        fs::remove_file(t6.join("gate.json")).unwrap();
+        std::thread::sleep(Duration::from_millis(30));
+        fs::write(t6.join("gate.json"), body).unwrap();
+        std::thread::sleep(Duration::from_millis(50));
+        answer_gate(&t6, "g6", &ans("confirm", "")).unwrap();
+    });
+    assert_eq!(fast(&data).exit, 2);
+    h.join().unwrap();
     // 超时 → 0
-    fs::remove_file(t.join(".waiter")).unwrap();
+    write_gate(&t, "g7", "C", "pending");
     let out = wait(&data, &e.reg, Duration::from_millis(20), Duration::from_millis(100));
     assert_eq!(out.exit, 0);
 }
@@ -395,4 +436,25 @@ fn verbatim_prefix_is_stripped() {
     assert_eq!(strip_verbatim(PathBuf::from(r"\\?\C:\a\.lead\x")), PathBuf::from(r"C:\a\.lead\x"));
     assert_eq!(strip_verbatim(PathBuf::from(r"\\?\UNC\srv\share")), PathBuf::from(r"\\?\UNC\srv\share"));
     assert_eq!(strip_verbatim(PathBuf::from("/tmp/x")), PathBuf::from("/tmp/x"));
+}
+
+#[test]
+fn gates_of_all_tasks_are_visible() {
+    // 做空审查 M4：新开任务改写 active 后，旧任务挂着的关卡不能隐身
+    let e = env();
+    let root = e.d.join("p");
+    fs::create_dir_all(root.join(".git")).unwrap();
+    let old = make_with(&root, "design", &[json!(false)], SLUG);
+    write_gate(&old, "B-old", "B", "pending");
+    let new = root.join(".lead/20261110-new");
+    fs::create_dir_all(&new).unwrap();
+    fs::write(new.join("progress.md"), "phase: interview
+").unwrap();
+    fs::write(root.join(".lead/active"), "20261110-new").unwrap();
+    let cwd = root.to_string_lossy().into_owned();
+    let snap = snapshot(&cwd).unwrap();
+    assert_eq!(snap.slug, "20261110-new");
+    assert_eq!(snap.gate.unwrap().id, "B-old", "active 没有关卡时带出别的任务挂起的关卡");
+    assert_eq!(task_of_gate(&cwd, "B-old").unwrap().file_name().unwrap(), SLUG);
+    assert!(!snapshot(&cwd).unwrap().spec.contains("\\?"));
 }
