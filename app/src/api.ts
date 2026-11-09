@@ -448,7 +448,7 @@ export function openBrowserPane(owner: number, url?: string): Promise<BrowserPan
 export function listBrowserPanes(owner: number): Promise<BrowserPaneInfo[]> {
   return invoke("browser_pane_list", { owner });
 }
-/** 占位区域的位置（CSS 像素，相对窗口内容区）；visible=false 只藏不动。 */
+/** 占位区域的位置（CSS 像素，相对窗口内容区）；visible=false 让开：agent 用过的页签挪到窗口外接着渲染，其余藏起来（见 browser_pane.rs Placement）。 */
 export function setBrowserPaneBounds(id: number, rect: { x: number; y: number; width: number; height: number }, visible: boolean): Promise<void> {
   return invoke("browser_pane_set_bounds", { id, ...rect, visible });
 }

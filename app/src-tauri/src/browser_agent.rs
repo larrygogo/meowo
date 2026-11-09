@@ -50,6 +50,9 @@ pub(crate) fn handle(session_id: i64, tool: &str, args: &Value) -> Result<Value,
     let app = APP.get().ok_or("Meowo 还没启动完")?;
     let panes = app.state::<BrowserPanes>();
     let id = pane_for(app, &panes, session_id, tool == "browser_open")?;
+    // 面板收起时页签是藏着的：页面进 document.hidden、视口可能只有 2×2，滚动检测、
+    // IntersectionObserver、截图全不工作（2026-11-09 Discord 授权页实测）。先让它接着渲染。
+    browser_pane::keep_rendering(app, &panes, id)?;
     let paused = panes
         .panes
         .lock()
