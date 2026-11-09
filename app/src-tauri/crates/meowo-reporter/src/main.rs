@@ -14,6 +14,27 @@ fn main() {
         mcp::run();
         return;
     }
+    // Lead 工作流 hook（用户在设置里打开 Lead 后才装）。与下面的主路径分开：只有它会输出
+    // 改变 CLI 行为的内容；仍然吞掉一切错误、以 0 退出。
+    if args.first().is_some_and(|arg| arg == "lead") {
+        // wait 模式（asyncRewake）用退出码 2 + stderr 唤醒模型；其余模式恒为 0。
+        let mut raw = String::new();
+        let mut code = 0;
+        if std::io::stdin().read_to_string(&mut raw).is_ok() {
+            if let Some(registry) = db_path().and_then(|p| p.parent().map(|d| d.join("lead-sessions.json"))) {
+                let mode = args.get(1).map(String::as_str).unwrap_or("");
+                let out = meowo_reporter::lead::run(mode, &raw, &registry);
+                if let Some(text) = out.stdout {
+                    print!("{text}");
+                }
+                if let Some(text) = out.stderr {
+                    eprint!("{text}");
+                }
+                code = out.exit;
+            }
+        }
+        std::process::exit(code);
+    }
     if args.first().is_some_and(|arg| arg == "attach") {
         if let Err(error) = attach::run(&args) {
             eprintln!("Meowo attach failed: {error}");

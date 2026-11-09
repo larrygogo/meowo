@@ -5608,6 +5608,30 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .dock-work-close { width: var(--icon-button-sm); height: var(--icon-button-sm); padding: 0; display: grid; place-items: center; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-dim); font-size: var(--text-base); cursor: pointer; }
 .dock-work-close:hover { background: var(--fill-hover); color: var(--cc-text); }
 .dock-work-body { overflow-y: auto; padding: var(--sp-8) var(--sp-16) var(--sp-16); }
+
+/* Lead 工作流：进度条、分页签、验收清单、关卡卡片。沿用 dock-work-panel 的毛玻璃壳与 Kimi 式留白。 */
+.lead-pill-dot { width: 6px; height: 6px; margin-left: var(--sp-4); border-radius: 50%; background: var(--cc-warn-vivid); }
+.lead-meter { height: 3px; margin: 0 var(--sp-16); border-radius: 2px; background: var(--fill-selected); overflow: hidden; }
+.lead-meter-fill { display: block; height: 100%; background: var(--cc-ok-vivid); transition: width 0.3s ease; }
+.lead-tabs { display: flex; gap: var(--sp-4); padding: var(--sp-8) var(--sp-16) 0; }
+.lead-tab { padding: var(--sp-4) var(--sp-8); border: 0; border-radius: var(--radius-md); background: transparent; color: var(--cc-text-dim); font-size: var(--text-xs); cursor: pointer; }
+.lead-tab.is-active { background: var(--fill-selected); color: var(--cc-text); }
+.lead-checks { margin: 0; padding: 0; list-style: none; }
+.lead-check { display: grid; grid-template-columns: 16px auto 1fr; gap: var(--sp-8); align-items: baseline; padding: var(--sp-4) 0; color: var(--cc-text-dim); font-size: var(--text-sm); line-height: 1.5; }
+.lead-check.is-pass { color: var(--cc-text-faint); }
+.lead-check.is-pass .lead-check-mark { color: var(--cc-ok-vivid); }
+.lead-check-id { color: var(--cc-text-faint); font-variant-numeric: tabular-nums; }
+.lead-gate-summary { max-height: 7.5em; overflow: hidden; font-size: var(--text-sm); }
+.lead-gate-summary.is-expanded { max-height: none; }
+.lead-gate-more { margin: var(--sp-4) 0; padding: 0; border: 0; background: none; color: var(--cc-accent); font-size: var(--text-xs); cursor: pointer; }
+.lead-gate-options { display: flex; flex-direction: column; gap: var(--sp-4); margin: var(--sp-8) 0; }
+.lead-gate-option { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-8); padding: var(--sp-8) var(--sp-11); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-lg); cursor: pointer; }
+.lead-gate-option.is-picked { border-color: var(--cc-accent); background: color-mix(in srgb, var(--cc-accent) 8%, transparent); }
+.lead-gate-option input { margin: 0; }
+.lead-gate-option-detail { flex-basis: 100%; padding-left: 22px; color: var(--cc-text-dim); font-size: var(--text-xs); }
+.lead-gate-rec { padding: 0 var(--sp-6, 6px); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--cc-ok-vivid) 16%, transparent); color: var(--cc-ok-vivid); font-size: var(--text-xs); }
+.lead-gate-note { width: 100%; box-sizing: border-box; padding: var(--sp-8); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); background: transparent; color: var(--cc-text); font: inherit; font-size: var(--text-sm); resize: vertical; }
+.lead-gate-error { margin-top: var(--sp-4); color: var(--cc-warn); font-size: var(--text-xs); }
 .chat-plan-doc { font-size: var(--text-base); line-height: var(--leading-body); }
 .chat-plan-doc h1 { font-size: calc(20px * var(--cc-ui)); }
 .chat-plan-doc h2 { font-size: calc(16px * var(--cc-ui)); }

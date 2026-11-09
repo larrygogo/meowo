@@ -4394,7 +4394,7 @@ export function ChatWindow() {
       {view === "chat" && sessionId !== 0 && (
         <div className="chat-dock">
           {/* 停靠栏（计划/进度/后台任务）：状态、关闭规则与入口判定见 chat/DockWork。 */}
-          <DockWork sessionId={sessionId} items={items} history={history} loading={loading} />
+          <DockWork sessionId={sessionId} cwd={cwd} items={items} history={history} loading={loading} />
           {sideAnswers.length > 0 && (
             <div className="chat-side-answers">
               {sideAnswers.map((entry) => (
