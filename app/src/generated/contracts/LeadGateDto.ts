@@ -7,7 +7,7 @@ import type { LeadGateOptionDto } from "./LeadGateOptionDto";
  */
 export type LeadGateDto = { id: string, 
 /**
- * A（确认规格）/ B（单向门拍板）/ C（看证据验收）。
+ * A（确认规格）/ B（单向门拍板）/ C（看证据验收）/ D（需要授权或亲手操作）/ Q（访谈提问）。
  */
 kind: string, title: string, 
 /**
@@ -15,7 +15,7 @@ kind: string, title: string,
  */
 summary: string, 
 /**
- * B 由 agent 写选项；A、C 的选项固定（前端按 kind 渲染），这里可为空。
+ * B、Q 由 agent 写选项；A、C、D 的选项固定（前端按 kind 渲染），这里可为空。
  */
 options: Array<LeadGateOptionDto>, 
 /**

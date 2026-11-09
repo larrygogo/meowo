@@ -47,8 +47,17 @@ export function gateWaiting(task: LeadTaskDto | null): boolean {
   return task?.gate?.status === "pending";
 }
 
+/// 进度不算豁免项：leader 已经决定不做的条目留在分母里，任务就永远差几条（实测三个任务带红收工）。
 export function leadProgress(task: LeadTaskDto): { passed: number; total: number } {
-  return { passed: task.checks.filter((c) => c.passes).length, total: task.checks.length };
+  const live = task.checks.filter((c) => !c.waived);
+  return { passed: live.filter((c) => c.passes).length, total: live.length };
+}
+
+/// 排序权重：还要 agent 做的 → 等 leader 验收的 → 已通过 → 已豁免。同组保持原顺序。
+function checkRank(c: LeadTaskDto["checks"][number]): number {
+  if (c.waived) return 3;
+  if (c.passes) return 2;
+  return c.leader ? 1 : 0;
 }
 
 function LeadIcon({ className }: { className: string }) {
@@ -92,6 +101,7 @@ function LeadRing({ passed, total }: { passed: number; total: number }) {
 const CHECK_ICONS = {
   pass: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>,
   pending: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><circle cx="12" cy="12" r="7.5" /></svg>,
+  waived: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M7 12h10" /></svg>,
 };
 
 export const LeadPanel = memo(function LeadPanel({ task, onClose }: { task: LeadTaskDto; onClose: () => void }) {
@@ -100,8 +110,8 @@ export const LeadPanel = memo(function LeadPanel({ task, onClose }: { task: Lead
   const [section, setSection] = useState<"checks" | "spec" | "decisions" | "progress">("checks");
   // 展开看全文的验收项（默认两行截断）。
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
-  // 没通过的排前面：还要做的事一眼看到；同一组内保持原顺序。
-  const checks = [...task.checks].sort((a, b) => Number(a.passes) - Number(b.passes));
+  // 还要做的排前面，豁免的沉底：一眼看到剩下的事。
+  const checks = [...task.checks].sort((a, b) => checkRank(a) - checkRank(b));
   return (
     <div className="dock-work-panel panel-lead">
       <div className="dock-work-head">
@@ -135,16 +145,23 @@ export const LeadPanel = memo(function LeadPanel({ task, onClose }: { task: Lead
             ? <div className="chat-tasks-empty">{t.chat.leadChecksEmpty}</div>
             : (
               <ul className="lead-checks">
-                {checks.map((c) => (
-                  <li key={c.id} className={"lead-check" + (c.passes ? " is-pass" : "") + (open.has(c.id) ? " is-open" : "")}
-                    title={c.check}
-                    onClick={() => setOpen((prev) => { const next = new Set(prev); if (next.has(c.id)) next.delete(c.id); else next.add(c.id); return next; })}>
-                    <span className="lead-check-mark" aria-label={c.passes ? t.chat.leadCheckPass : t.chat.leadCheckPending}>
-                      {c.passes ? CHECK_ICONS.pass : CHECK_ICONS.pending}
-                    </span>
-                    <span className="lead-check-text">{c.check}</span>
-                  </li>
-                ))}
+                {checks.map((c) => {
+                  const state = c.waived ? "waived" : c.passes ? "pass" : "pending";
+                  const label = c.waived ? t.chat.leadCheckWaived : c.passes ? t.chat.leadCheckPass : t.chat.leadCheckPending;
+                  return (
+                    <li key={c.id} className={"lead-check is-" + state + (open.has(c.id) ? " is-open" : "")}
+                      title={c.waived ? `${c.check}
+${t.chat.leadCheckWaivedReason(c.waived)}` : c.check}
+                      onClick={() => setOpen((prev) => { const next = new Set(prev); if (next.has(c.id)) next.delete(c.id); else next.add(c.id); return next; })}>
+                      <span className="lead-check-mark" aria-label={label}>{CHECK_ICONS[state]}</span>
+                      <span className="lead-check-body">
+                        <span className="lead-check-text">{c.check}</span>
+                        {c.waived && <span className="lead-check-note">{t.chat.leadCheckWaivedReason(c.waived)}</span>}
+                        {!c.waived && !c.passes && c.leader && <span className="lead-check-note is-leader">{t.chat.leadCheckLeader}</span>}
+                      </span>
+                    </li>
+                  );
+                })}
               </ul>
             )
         )}
@@ -158,10 +175,11 @@ export const LeadPanel = memo(function LeadPanel({ task, onClose }: { task: Lead
   );
 });
 
-/// A、C 的选项固定；B 用 agent 写进 gate.json 的方案。
+/// A、C、D 的选项固定（与 reporter 的 fixed_choices 一致，后端会再校验一次）；B、Q 用 agent 写进 gate.json 的选项。
 function gateChoices(gate: LeadGateDto, t: ReturnType<typeof useT>): { id: string; label: string; recommended?: boolean; detail?: string }[] {
   if (gate.kind === "A") return [{ id: "confirm", label: t.chat.leadGateConfirm }, { id: "revise", label: t.chat.leadGateRevise }];
   if (gate.kind === "C") return [{ id: "accept", label: t.chat.leadGateAccept }, { id: "reject", label: t.chat.leadGateReject }];
+  if (gate.kind === "D") return [{ id: "approve", label: t.chat.leadGateApprove }, { id: "done", label: t.chat.leadGateDone }, { id: "deny", label: t.chat.leadGateDeny }];
   return gate.options.map((o) => ({ id: o.id, label: o.label, recommended: o.recommended, detail: o.detail }));
 }
 
@@ -194,7 +212,7 @@ export function LeadGateCard({ cwd, gate, onAnswered }: { cwd: string; gate: Lea
   return (
     <ApprovalCard
       className="lead-gate-card"
-      title={`${t.chat.leadGateKind[gate.kind as "A" | "B" | "C"] ?? gate.kind} · ${gate.title}`}
+      title={`${t.chat.leadGateKind[gate.kind as keyof typeof t.chat.leadGateKind] ?? gate.kind} · ${gate.title}`}
       badge={t.chat.leadGateWaiting}
       actions={
         <button type="button" className="is-allow" disabled={!choice || busy || (needsNote && !note.trim())} onClick={submit}>

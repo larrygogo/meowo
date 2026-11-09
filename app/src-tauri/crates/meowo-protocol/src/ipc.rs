@@ -853,6 +853,12 @@ pub struct LeadCheckDto {
     pub id: String,
     pub check: String,
     pub passes: bool,
+    /// 豁免原因（leader 决定不做/不验）；有值时这一条不算未通过，面板单独显示。
+    #[serde(default)]
+    pub waived: Option<String>,
+    /// 要 leader 亲自验收（check 里写了「由 leader 验收」）；关卡 C 接受时自动勾上。
+    #[serde(default)]
+    pub leader: bool,
 }
 
 /// 关卡（`.lead/<task>/gate.json`）。状态 pending → answered（Meowo 写）→ consumed（agent 写）。
@@ -862,12 +868,12 @@ pub struct LeadCheckDto {
 #[serde(rename_all = "camelCase")]
 pub struct LeadGateDto {
     pub id: String,
-    /// A（确认规格）/ B（单向门拍板）/ C（看证据验收）。
+    /// A（确认规格）/ B（单向门拍板）/ C（看证据验收）/ D（需要授权或亲手操作）/ Q（访谈提问）。
     pub kind: String,
     pub title: String,
     /// markdown 摘要。
     pub summary: String,
-    /// B 由 agent 写选项；A、C 的选项固定（前端按 kind 渲染），这里可为空。
+    /// B、Q 由 agent 写选项；A、C、D 的选项固定（前端按 kind 渲染），这里可为空。
     pub options: Vec<LeadGateOptionDto>,
     /// pending / answered / consumed。
     pub status: String,
@@ -888,7 +894,7 @@ pub struct LeadGateOptionDto {
     pub recommended: bool,
 }
 
-/// leader 的答复：选了哪个选项（A：confirm/revise；C：accept/reject；B：方案 id），可附意见。
+/// leader 的答复：选了哪个选项（A：confirm/revise；C：accept/reject；D：approve/done/deny；B、Q：选项 id），可附意见。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
