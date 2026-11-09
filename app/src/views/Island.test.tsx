@@ -5,7 +5,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 import { render, cleanup, fireEvent, screen } from "@testing-library/react";
 import { Island, byUrgency, focusSession, islandCounts, islandTone } from "./Island";
 import { IslandPanel } from "./island/IslandPanel";
-import { liveIslandUsage, orderIslandUsage, pickIslandUsage, primaryLane } from "./island/useIslandUsage";
+import { liveIslandUsage, orderIslandUsage, primaryLane } from "./island/useIslandUsage";
 import { Eyes, EYES_SLEEP_AFTER_MS, UsageRing, remainingColor, remainingOf, USAGE_FLIP_MS } from "./island/islandParts";
 import { act } from "@testing-library/react";
 import type { Item } from "./sticker/types";
@@ -103,13 +103,13 @@ describe("额度", () => {
     expect(primaryLane({ lanes: [lane("five_hour", null)], note: null } as ProviderUsage)).toBeNull();
   });
 
-  it("按「显示配额」设置的顺序挑第一个有数据的 agent", () => {
+  it("按「显示配额」设置的顺序排，没数据的不列", () => {
     const usage = {
       claude: { lanes: [lane("five_hour", null)], note: null },
       codex: { lanes: [lane("weekly", 40)], note: null },
     } as unknown as Record<string, ProviderUsage>;
-    expect(pickIslandUsage(usage, ["claude", "codex"])).toEqual({ provider: "codex", pct: 40, kind: "weekly" });
-    expect(pickIslandUsage({}, ["claude"])).toBeNull();
+    expect(orderIslandUsage(usage, ["claude", "codex"])).toEqual([{ provider: "codex", pct: 40, kind: "weekly" }]);
+    expect(orderIslandUsage({}, ["claude"])).toEqual([]);
   });
 
   // 用户反馈：设置里 kimi 排第一，会话全是 claude 时环上也固定是 kimi。正在用的 agent 排前面。
@@ -122,7 +122,6 @@ describe("额度", () => {
     const order = (active: string[]) => orderIslandUsage(usage, ["kimi", "codex", "claude"], active).map((u) => u.provider);
     expect(order([])).toEqual(["kimi", "codex", "claude"]);
     expect(order(["claude"])).toEqual(["claude", "kimi", "codex"]);
-    expect(pickIslandUsage(usage, ["kimi", "codex", "claude"], ["claude"])?.provider).toBe("claude");
   });
 
   // 用户要求：额度环只轮换岛上正有会话的 agent。
@@ -346,7 +345,6 @@ describe("IslandPanel 展开面板", () => {
         usage={{}}
         quotaProviders={["claude"]}
         onOpenSession={noop}
-        onShowAll={noop}
         onMeasure={noop}
         onPointerDownDrag={noop}
         {...props}
@@ -392,7 +390,7 @@ describe("IslandPanel 展开面板", () => {
   it("面板上不放「全部」按钮（用户要求）；没有额度数据时只有一页、不出翻页点", () => {
     const { container } = renderPanel();
     expect(screen.getByText(zh.island.idle)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: zh.island.showAll })).toBeNull();
+    expect(screen.queryByRole("button", { name: "全部" })).toBeNull();
     expect(container.querySelector(".isl-dots-nav")).toBeNull();
   });
 

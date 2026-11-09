@@ -467,6 +467,9 @@ export function App() {
   // 形态切换进行中（窗口正在改尺寸）：期间的测量不得去改窗口尺寸。展开时窗口先长大，
   // 此刻任何「按胶囊宽度摆窗口」的调用都会把它缩回去，列表被挤进胶囊大小（DEV 实拍）。
   const transitioningRef = useRef(false);
+  // 收起动画的定时器。展开/找回（grow）要把它作废：收起途中点托盘「找回」，旧定时器
+  // 到点会把刚展开的完整列表又缩回胶囊（审查复现）。同时防 Esc 与光标离开各排一个。
+  const collapseTimerRef = useRef<number | null>(null);
   // 设置：收起样式、哪些事弹提醒、提醒停留多久、额度环取哪家（实时跟随设置页改动）。
   const [islandCompact, setIslandCompact] = useState<IslandCompactStyle>("counts");
   const [quotaProviders, setQuotaProviders] = useState<string[]>(["claude"]);
@@ -480,7 +483,8 @@ export function App() {
       islandAlertMsRef.current = Math.min(30, Math.max(2, settings.island_alert_seconds)) * 1000;
     }
   });
-  const usage = useIslandUsage();
+  // 完整列表里贴纸底栏自己取额度，岛这份先停：两边同时每 5 分钟各刷一遍（审查发现）。
+  const usage = useIslandUsage(isMacPanel() || islandMode !== "full");
   // 额度按「正在用的」排：在跑/要处理的会话的 agent 在前，再按设置顺序。
   const activeProviders = useMemo(
     () => byUrgency(stripSessions).map((item) => item.provider).filter((p, i, all) => all.indexOf(p) === i),
@@ -498,14 +502,20 @@ export function App() {
     if (!isMacPanel() && islandMode !== "full" && search) changeSearch("");
   }, [islandMode, search, changeSearch]);
 
-  const layout = useCallback((width: number, height: number, centerRatio: number | null = null) =>
-    invoke("island_layout", { width, height, centerRatio }), []);
-  const layoutCompact = useCallback((centerRatio: number | null = null) =>
-    layout(pillWidthRef.current + ISLAND_EAR * 2, ISLAND_PILL_HEIGHT, centerRatio), [layout]);
+  const layout = useCallback((width: number, height: number, centerRatio: number | null = null, monitor: string | null = null) =>
+    // monitor 只在启动还原时有；平时不带，后端缺参即按窗口当前所在屏。
+    invoke("island_layout", monitor ? { width, height, centerRatio, monitor } : { width, height, centerRatio }), []);
+  const layoutCompact = useCallback((centerRatio: number | null = null, monitor: string | null = null) =>
+    layout(pillWidthRef.current + ISLAND_EAR * 2, ISLAND_PILL_HEIGHT, centerRatio, monitor), [layout]);
 
   /// 切到一个更大的形态：先把窗口放大（刘海居中，屏幕位置不动），再换内容、播动画。
   /// 顺序反过来会让内容先在小窗口里挤一帧（W-4 同一课）。
   const grow = useCallback(async (mode: "expanded" | "full", width: number, height: number) => {
+    if (collapseTimerRef.current != null) {
+      window.clearTimeout(collapseTimerRef.current);
+      collapseTimerRef.current = null;
+      setClosing(false);
+    }
     if (alertTimerRef.current != null) {
       window.clearTimeout(alertTimerRef.current);
       alertTimerRef.current = null;
@@ -560,7 +570,9 @@ export function App() {
     alertTimerRef.current = window.setTimeout(finishAlert, ms);
   }, [finishAlert]);
   const pumpAlert = useCallback(() => {
-    if (islandModeRef.current !== "compact" || alertTimerRef.current != null) return;
+    // transitioningRef：正在展开（grow 在等窗口长大），形态还是 compact。这时弹提醒会把
+    // 窗口改成提醒尺寸、盖掉展开的尺寸，面板被截在 68px 高的窗口里（审查复现）。
+    if (islandModeRef.current !== "compact" || alertTimerRef.current != null || transitioningRef.current) return;
     const next = alertQueueRef.current.shift();
     setAlertQueued(alertQueueRef.current.length);
     if (!next) return;
@@ -587,7 +599,7 @@ export function App() {
     if (isMacPanel()) return;
     const un = listen<IslandAlertEvent>("island-alert", (event) => {
       const mode = islandModeRef.current;
-      if (mode === "expanded" || mode === "full") return;
+      if (mode === "expanded" || mode === "full" || transitioningRef.current) return;
       // 设置还没读到时（启动头一两秒）按全开处理，宁可多弹一次也别漏掉要人处理的事。
       const enabled = islandAlertsRef.current;
       if (enabled && !enabled.includes(islandAlertSwitch(event.payload.kind))) return;
@@ -607,10 +619,12 @@ export function App() {
 
   const collapse = useCallback(() => {
     const mode = islandModeRef.current;
-    if (isMacPanel() || (mode !== "expanded" && mode !== "full")) return;
+    if (isMacPanel() || (mode !== "expanded" && mode !== "full") || collapseTimerRef.current != null) return;
     setClosing(true);
     // 先播收回动画（缩回胶囊轮廓），播完再把窗口缩小。
-    window.setTimeout(() => {
+    collapseTimerRef.current = window.setTimeout(() => {
+      collapseTimerRef.current = null;
+      if (islandModeRef.current !== mode) return;
       setClosing(false);
       islandModeRef.current = "compact";
       setIslandMode("compact");
@@ -656,17 +670,21 @@ export function App() {
         });
       }
     };
-    const finish = () => {
+    // pointercancel（失去捕获、触控手势被系统接管）不是用户松手：没拖起来就什么都不做，
+    // 此前同走 finish 被当成一次点击，岛自己展开或打开了对话窗（审查复现）。
+    const finish = (event: PointerEvent) => {
       target.removeEventListener("pointermove", move);
       target.removeEventListener("pointerup", finish);
       target.removeEventListener("pointercancel", finish);
       if (frame) window.cancelAnimationFrame(frame);
       if (!dragging) {
-        onClick();
+        if (event.type !== "pointercancel") onClick();
         return;
       }
-      invoke<number | null>("island_drag_end")
-        .then((ratio) => { if (typeof ratio === "number") updateStickerWindowState({ island_center: ratio }); })
+      invoke<{ ratio: number; monitor: string | null } | null>("island_drag_end")
+        .then((spot) => {
+          if (spot && typeof spot.ratio === "number") updateStickerWindowState({ island_center: spot.ratio, island_monitor: spot.monitor ?? null });
+        })
         .catch(() => {})
         .finally(() => { draggingRef.current = false; });
     };
@@ -716,11 +734,20 @@ export function App() {
   // 托盘「找回贴纸」：岛本来就在顶上，找回就是打开完整列表。
   useEffect(() => {
     if (isMacPanel()) return;
-    const un = listen("recall-sticker", () => showAll());
+    // 已经是完整列表时 showAll 直接返回：仍要按当前尺寸重摆一次（贴顶 + 置顶），
+    // 托盘点了要有反应（审查复现：只剩后端那一步时窗口落在主屏正中、还沉到别的窗口下面）。
+    const un = listen("recall-sticker", () => {
+      if (!isMacPanel() && islandModeRef.current === "full") {
+        const { w, h } = normalSize();
+        layout(w, h).catch(() => {});
+        return;
+      }
+      showAll();
+    });
     return () => {
       un.then((f) => f());
     };
-  }, [showAll]);
+  }, [showAll, layout]);
 
   // 换显示器缩放（拖到另一块屏、系统改缩放）：按当前形态的逻辑尺寸重摆一次。
   useEffect(() => {
@@ -759,7 +786,7 @@ export function App() {
         const s = await initStickerWindowState();
         if (cancelled) return;
         applyPinned(s.pinned);
-        await layoutCompact(s.island_center ?? 0.5);
+        await layoutCompact(s.island_center ?? 0.5, s.island_monitor);
       } catch (err) {
         console.error("[island] 启动摆放失败：", err);
       } finally {
@@ -891,7 +918,6 @@ export function App() {
             usage={usage}
             quotaProviders={quotaProviders}
             onOpenSession={openSession}
-            onShowAll={showAll}
             onMeasure={onPanelMeasure}
             onPointerDownDrag={onPanelHeadPointerDown}
             onNewSession={() => {

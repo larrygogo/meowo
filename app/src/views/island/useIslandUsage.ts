@@ -11,9 +11,11 @@ export type IslandUsage = {
   kind: string;
 };
 
-export function useIslandUsage(): Record<string, ProviderUsage> {
+/// enabled=false 时不取（完整列表开着，贴纸底栏自己在取，两边同时刷是重复请求）。已取到的保留。
+export function useIslandUsage(enabled = true): Record<string, ProviderUsage> {
   const [usage, setUsage] = useState<Record<string, ProviderUsage>>({});
   useEffect(() => {
+    if (!enabled) return;
     let cancelled = false;
     const timers: number[] = [];
     getAccounts()
@@ -45,7 +47,7 @@ export function useIslandUsage(): Record<string, ProviderUsage> {
       cancelled = true;
       timers.forEach((id) => window.clearInterval(id));
     };
-  }, []);
+  }, [enabled]);
   return usage;
 }
 
@@ -87,13 +89,4 @@ export function liveIslandUsage(
   liveProviders: readonly string[],
 ): IslandUsage[] {
   return orderIslandUsage(usage, providers, liveProviders).filter((u) => liveProviders.includes(u.provider));
-}
-
-/// 最该显示的那一家（展开面板的大环用）。
-export function pickIslandUsage(
-  usage: Record<string, ProviderUsage>,
-  providers: readonly string[],
-  activeProviders: readonly string[] = [],
-): IslandUsage | null {
-  return orderIslandUsage(usage, providers, activeProviders)[0] ?? null;
 }

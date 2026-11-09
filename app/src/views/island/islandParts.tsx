@@ -69,8 +69,9 @@ export function Eyes({ tone, small = false }: { tone: IslandTone; small?: boolea
 
 type EyeMode = "open" | "wide" | "happy" | "dead" | "sleep";
 
-/// 鼠标相对岛中心的方向，归一到 -1..1。只在需要「看」的时候轮询（110ms 一次，瞳孔有 CSS 过渡，
-/// 看着是连续转的）。页面不可见时暂停。island_cursor 只读光标与窗口位置，很便宜。
+/// 鼠标相对岛中心的方向，归一到 -1..1。只在需要「看」的时候轮询：光标在动时 110ms 一次（瞳孔有
+/// CSS 过渡，看着是连续转的），连续几次没动就放慢到 600ms。岛恒置顶，visibilityState 一直是
+/// visible，不放慢的话有会话在跑就整天每秒九次 IPC（审查发现）。
 function useCursorLook(active: boolean): { x: number; y: number } {
   const [look, setLook] = useState({ x: 0, y: 0 });
   useEffect(() => {
@@ -79,24 +80,32 @@ function useCursorLook(active: boolean): { x: number; y: number } {
       return;
     }
     let cancelled = false;
+    let timer = 0;
+    let last: [number, number] | null = null;
+    let still = 0;
+    const schedule = () => {
+      if (!cancelled) timer = window.setTimeout(tick, still >= 5 ? 600 : 110);
+    };
     const tick = () => {
-      if (document.visibilityState !== "visible") return;
+      if (document.visibilityState !== "visible") { schedule(); return; }
       invoke<[number, number] | null>("island_cursor")
         .then((pos) => {
           if (cancelled || !pos) return;
           const [dx, dy] = pos;
+          still = last && Math.abs(last[0] - dx) < 1 && Math.abs(last[1] - dy) < 1 ? still + 1 : 0;
+          last = [dx, dy];
           // 横向在 150px 内由中间转到最边，纵向 60px：鼠标在屏幕下方远处时眼睛朝下看到底。
           const x = Math.max(-1, Math.min(1, dx / 150));
           const y = Math.max(-1, Math.min(1, dy / 60));
           setLook((prev) => (Math.abs(prev.x - x) < 0.05 && Math.abs(prev.y - y) < 0.05 ? prev : { x, y }));
         })
-        .catch(() => {});
+        .catch(() => {})
+        .finally(schedule);
     };
     tick();
-    const id = window.setInterval(tick, 110);
     return () => {
       cancelled = true;
-      window.clearInterval(id);
+      window.clearTimeout(timer);
     };
   }, [active]);
   return look;

@@ -870,38 +870,6 @@ pub(crate) fn open_chat_window_target(
     Ok(())
 }
 
-/// 「找回贴纸」：把主窗口按当前尺寸居中到主显示器工作区，并显示/取消最小化/聚焦。
-/// 置顶是**临时**的（W-6）：先置顶确保浮到所有窗口（含其它置顶窗口）之上，聚焦后按调用方给的
-/// 用户 pin 偏好还原——「找回」只把窗口带到眼前，不替用户改写置顶偏好。
-/// 只剩托盘找回（recall_sticker）这一个调用方，前端不再直接调，故不再注册为命令。
-#[cfg(not(target_os = "macos"))]
-pub(crate) fn recall_center(window: tauri::WebviewWindow, pinned: bool) -> Result<(), String> {
-    let _ = window.unminimize();
-    let _ = window.show();
-    // 优先主显示器（找回的「家」最可预期）；取不到回退当前屏。
-    let monitor = window
-        .primary_monitor()
-        .ok()
-        .flatten()
-        .or_else(|| window.current_monitor().ok().flatten());
-    if let Some(m) = monitor {
-        let wa = m.work_area();
-        let sz = window.outer_size().map_err(|e| e.to_string())?;
-        let x = wa.position.x + (wa.size.width as i32 - sz.width as i32) / 2;
-        let y = wa.position.y + (wa.size.height as i32 - sz.height as i32) / 2;
-        window
-            .set_position(tauri::PhysicalPosition::new(x, y))
-            .map_err(|e| e.to_string())?;
-    }
-    window.set_always_on_top(true).map_err(|e| e.to_string())?;
-    let _ = window.set_focus();
-    if !pinned {
-        // 聚焦完成后撤掉临时置顶：z-order 已抬到最前，窗口保持可见但不长期压住其它窗口。
-        window.set_always_on_top(false).map_err(|e| e.to_string())?;
-    }
-    Ok(())
-}
-
 /// 托盘「找回贴纸」：唤起主窗口并通知前端执行完整找回（岛展开成完整列表 + 置顶）。
 #[cfg(not(target_os = "macos"))]
 pub(crate) fn recall_sticker(app: &tauri::AppHandle) {
@@ -925,7 +893,10 @@ pub(crate) fn recall_sticker(app: &tauri::AppHandle) {
         }
         // 原生救援路径读不到前端的 pin 偏好（localStorage 在 webview 里，可能已崩）——
         // 传 false：只做临时置顶带到眼前，不假设用户偏好；前端活着时随后会按真实偏好还原。
-        let _ = recall_center(w.clone(), false);
+        // 不再 recall_center：岛恒贴顶置顶，居中主屏再撤置顶会让它落在屏幕中间、沉到别的
+        // 窗口下面，前端已是完整列表时也没人把它摆回去（审查发现）。只保证置顶、带到眼前。
+        let _ = w.set_always_on_top(true);
+        let _ = w.set_focus();
         let _ = w.emit("recall-sticker", ());
     }
 }

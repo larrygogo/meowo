@@ -12,7 +12,8 @@ import { type Item, UNNAMED_SESSION_SENTINEL } from "./sticker/types";
 import { AgentRing, Clock, Eyes, UsageRing, useNow, type IslandTone } from "./island/islandParts";
 
 export type { IslandTone } from "./island/islandParts";
-export type IslandCompactStyle = "counts" | "focus" | "minimal";
+import type { IslandCompactStyle } from "../api";
+export type { IslandCompactStyle };
 
 /// 刘海两侧「耳朵」的宽度（逻辑像素）。窗口宽 = 刘海本体 + 2 × 耳朵。
 export const ISLAND_EAR = 14;

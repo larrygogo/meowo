@@ -8,10 +8,21 @@
 //! 调 begin、移动时调 update、松手时调 end，由这里读真实光标位置算横坐标。拖过显示器边界
 //! 就落到那块屏的顶边。
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 /// 拖动起点：(光标物理 x, 窗口左上角物理 x)。
 static DRAG: Mutex<Option<(f64, i32)>> = Mutex::new(None);
+/// 岛的窗口样式（不可缩放、放开最小尺寸）是否已设过。只需设一次：每次改形态都重设会让
+/// tao 重新比对窗口风格位，window.rs 里岛消失的问题就出在这类重设上（审查发现）。
+static STYLE_SET: AtomicBool = AtomicBool::new(false);
+
+/// 松手时记下的位置：中心比例 + 所在显示器名。
+#[derive(serde::Serialize)]
+pub(crate) struct IslandSpot {
+    ratio: f64,
+    monitor: Option<String>,
+}
 
 /// 工作区的物理矩形 (x, y, w, h)。
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -68,11 +79,18 @@ pub(crate) fn island_layout(
     width: f64,
     height: f64,
     center_ratio: Option<f64>,
+    monitor: Option<String>,
 ) -> Result<(), String> {
-    let monitor = window
-        .current_monitor()
-        .ok()
-        .flatten()
+    // 启动还原时给了记住的显示器名：那块屏还在就落到它上面，否则用窗口当前所在屏。
+    let named = monitor.as_deref().and_then(|name| {
+        window
+            .available_monitors()
+            .ok()?
+            .into_iter()
+            .find(|m| m.name().map(String::as_str) == Some(name))
+    });
+    let monitor = named
+        .or_else(|| window.current_monitor().ok().flatten())
         .or_else(|| window.primary_monitor().ok().flatten())
         .ok_or("no monitor")?;
     let work = work_of(&monitor);
@@ -90,18 +108,39 @@ pub(crate) fn island_layout(
     let (x, y) = place(work, center, phys_w);
     // 岛的尺寸全由程序给，用户拖边缩放没有意义；最小尺寸也要放开，否则胶囊缩不下去
     // （贴纸的 360×330 下限是给正常卡片的）。
-    window.set_resizable(false).map_err(|e| e.to_string())?;
-    window.set_min_size(None::<tauri::LogicalSize<f64>>).map_err(|e| e.to_string())?;
-    window
-        .set_size(tauri::PhysicalSize::new(phys_w.min(work.w) as u32, phys_h as u32))
-        .map_err(|e| e.to_string())?;
-    window
-        .set_position(tauri::PhysicalPosition::new(x, y))
-        .map_err(|e| e.to_string())?;
+    if !STYLE_SET.swap(true, Ordering::Relaxed) {
+        window.set_resizable(false).map_err(|e| e.to_string())?;
+        window.set_min_size(None::<tauri::LogicalSize<f64>>).map_err(|e| e.to_string())?;
+    }
+    set_bounds(&window, x, y, phys_w.min(work.w), phys_h)?;
     if !window.is_always_on_top().map_err(|e| e.to_string())? {
         window.set_always_on_top(true).map_err(|e| e.to_string())?;
     }
     Ok(())
+}
+
+/// 尺寸和位置一次设好。分两步的话，中间那一帧窗口从旧的左边缘往右长，展开时看得到
+/// 一下往一边歪（审查发现）。Windows 用一次 SetWindowPos；别的平台退回两步。
+#[cfg(target_os = "windows")]
+fn set_bounds(window: &tauri::WebviewWindow, x: i32, y: i32, w: i32, h: i32) -> Result<(), String> {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER};
+    let hwnd = window.hwnd().map_err(|e| e.to_string())?;
+    // SAFETY: hwnd 来自活着的 tauri 窗口；只改位置尺寸，不动 z 序、不抢焦点。
+    let ok = unsafe { SetWindowPos(hwnd.0 as _, std::ptr::null_mut(), x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE) };
+    if ok == 0 {
+        return Err("SetWindowPos failed".into());
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "windows"))]
+fn set_bounds(window: &tauri::WebviewWindow, x: i32, y: i32, w: i32, h: i32) -> Result<(), String> {
+    window
+        .set_size(tauri::PhysicalSize::new(w.max(1) as u32, h.max(1) as u32))
+        .map_err(|e| e.to_string())?;
+    window
+        .set_position(tauri::PhysicalPosition::new(x, y))
+        .map_err(|e| e.to_string())
 }
 
 /// 光标相对岛中心的位置（逻辑像素，x 向右、y 向下为正）。眼睛据此看向鼠标。
@@ -145,9 +184,9 @@ pub(crate) fn island_drag_update(window: tauri::WebviewWindow) -> Result<(), Str
         .map_err(|e| e.to_string())
 }
 
-/// 松手：返回中心点在所在屏工作区里的横向比例，前端拿去记住位置。
+/// 松手：返回中心点在所在屏工作区里的横向比例和那块屏的名字，前端拿去记住位置。
 #[tauri::command]
-pub(crate) fn island_drag_end(window: tauri::WebviewWindow) -> Result<Option<f64>, String> {
+pub(crate) fn island_drag_end(window: tauri::WebviewWindow) -> Result<Option<IslandSpot>, String> {
     let started = DRAG.lock().unwrap_or_else(|e| e.into_inner()).take();
     if started.is_none() {
         return Ok(None);
@@ -159,7 +198,10 @@ pub(crate) fn island_drag_end(window: tauri::WebviewWindow) -> Result<Option<f64
         .ok()
         .flatten()
         .ok_or("no monitor")?;
-    Ok(Some(center_ratio(work_of(&monitor), pos.x, size.width as i32)))
+    Ok(Some(IslandSpot {
+        ratio: center_ratio(work_of(&monitor), pos.x, size.width as i32),
+        monitor: monitor.name().cloned(),
+    }))
 }
 
 /// 全屏程序在前台时（游戏、全屏视频、演示模式）岛该怎么办。岛恒置顶、贴在屏幕顶部正中，
@@ -182,22 +224,73 @@ fn fullscreen_action(fullscreen: bool, hidden_by_us: bool, visible: bool) -> Ful
     }
 }
 
-/// Windows 自己判断「有全屏程序 / 演示模式」的那套状态（系统据此暂停通知横幅）。
+/// 有全屏程序盖住岛所在的那块屏（游戏、全屏视频、F11 浏览器、放映）。看前台窗口是否
+/// 铺满岛所在显示器的整块屏幕：此前用 SHQueryUserNotificationState，它的 BUSY/APP 不分是哪块
+/// 屏、也不一定真是全屏（前台是商店应用、副屏在放全屏视频都会让岛在自己屏上消失，审查发现）。
+/// 演示模式（Win+P 的「演示设置」）系统层面要求免打扰，照旧算。
 #[cfg(target_os = "windows")]
-fn fullscreen_app_running() -> bool {
-    use windows_sys::Win32::UI::Shell::{
-        SHQueryUserNotificationState, QUERY_USER_NOTIFICATION_STATE, QUNS_APP, QUNS_BUSY,
-        QUNS_PRESENTATION_MODE, QUNS_RUNNING_D3D_FULL_SCREEN,
-    };
+fn fullscreen_app_running(island: &tauri::WebviewWindow) -> bool {
+    use windows_sys::Win32::Foundation::{HWND, RECT};
+    use windows_sys::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONULL};
+    use windows_sys::Win32::UI::Shell::{SHQueryUserNotificationState, QUERY_USER_NOTIFICATION_STATE, QUNS_PRESENTATION_MODE};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetClassNameW, GetForegroundWindow, GetWindowRect};
+
     let mut state: QUERY_USER_NOTIFICATION_STATE = 0;
-    // SAFETY: 传入有效的输出指针；失败时 state 不可信，按「不是全屏」处理。
-    let hr = unsafe { SHQueryUserNotificationState(&mut state) };
-    // QUNS_APP：应用商店类应用全屏运行（本机实测正常时返回 5 = 可接收通知）。
-    hr >= 0
-        && matches!(
-            state,
-            QUNS_BUSY | QUNS_RUNNING_D3D_FULL_SCREEN | QUNS_PRESENTATION_MODE | QUNS_APP
-        )
+    // SAFETY: 传入有效的输出指针；失败时 state 不可信，按「不是演示模式」处理。
+    if unsafe { SHQueryUserNotificationState(&mut state) } >= 0 && state == QUNS_PRESENTATION_MODE {
+        return true;
+    }
+    let Ok(own) = island.hwnd() else { return false };
+    let own = own.0 as HWND;
+    // SAFETY: 以下都是只读查询，句柄来自系统或活着的 tauri 窗口，输出缓冲大小如实传入。
+    unsafe {
+        let fg = GetForegroundWindow();
+        if fg.is_null() || fg == own {
+            return false;
+        }
+        // 桌面（Progman / WorkerW）铺满屏幕但不是全屏程序。
+        let mut class = [0u16; 32];
+        let n = GetClassNameW(fg, class.as_mut_ptr(), class.len() as i32);
+        let class = String::from_utf16_lossy(&class[..n.max(0) as usize]);
+        if class == "Progman" || class == "WorkerW" {
+            return false;
+        }
+        let own_monitor = MonitorFromWindow(own, MONITOR_DEFAULTTONULL);
+        if own_monitor.is_null() || MonitorFromWindow(fg, MONITOR_DEFAULTTONULL) != own_monitor {
+            return false;
+        }
+        let mut info: MONITORINFO = std::mem::zeroed();
+        info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+        let mut rect: RECT = std::mem::zeroed();
+        if GetMonitorInfoW(own_monitor, &mut info) == 0 || GetWindowRect(fg, &mut rect) == 0 {
+            return false;
+        }
+        covers(rect, info.rcMonitor)
+    }
+}
+
+/// 窗口矩形盖住整块屏幕（最大化窗口不盖任务栏，不算）。
+#[cfg(any(target_os = "windows", test))]
+fn covers(window: windows_rect::Rect, monitor: windows_rect::Rect) -> bool {
+    window.left <= monitor.left
+        && window.top <= monitor.top
+        && window.right >= monitor.right
+        && window.bottom >= monitor.bottom
+}
+
+/// 测试里没有 windows-sys：给 covers 一个同形的矩形。
+#[cfg(any(target_os = "windows", test))]
+mod windows_rect {
+    #[cfg(target_os = "windows")]
+    pub(super) type Rect = windows_sys::Win32::Foundation::RECT;
+    #[cfg(not(target_os = "windows"))]
+    #[derive(Clone, Copy)]
+    pub(super) struct Rect {
+        pub left: i32,
+        pub top: i32,
+        pub right: i32,
+        pub bottom: i32,
+    }
 }
 
 /// 后台每 1.5 秒查一次全屏状态：进全屏把岛藏起来，退出再不抢焦点地显示回来。
@@ -214,7 +307,7 @@ pub(crate) fn spawn_fullscreen_watch(app: tauri::AppHandle) {
                     continue;
                 };
                 let visible = window.is_visible().unwrap_or(false);
-                match fullscreen_action(fullscreen_app_running(), hidden_by_us, visible) {
+                match fullscreen_action(fullscreen_app_running(&window), hidden_by_us, visible) {
                     FullscreenAction::Hide => {
                         if window.hide().is_ok() {
                             hidden_by_us = true;
@@ -246,6 +339,19 @@ mod tests {
         // 退出全屏：只恢复我们藏的。
         assert_eq!(fullscreen_action(false, true, false), FullscreenAction::Show);
         assert_eq!(fullscreen_action(false, false, false), FullscreenAction::Nothing);
+    }
+
+    #[test]
+    fn fullscreen_means_covering_the_whole_monitor() {
+        let r = |left, top, right, bottom| windows_rect::Rect { left, top, right, bottom };
+        let screen = r(0, 0, 1920, 1080);
+        assert!(covers(r(0, 0, 1920, 1080), screen));
+        // 无边框全屏常比屏幕大几像素。
+        assert!(covers(r(-8, -8, 1928, 1088), screen));
+        // 最大化窗口不盖任务栏。
+        assert!(!covers(r(0, 0, 1920, 1040), screen));
+        // 另一块屏上的全屏窗口。
+        assert!(!covers(r(1920, 0, 3840, 1080), screen));
     }
 
     #[test]

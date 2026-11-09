@@ -42,8 +42,6 @@ export function IslandPanel({
   usage: Record<string, ProviderUsage>;
   quotaProviders: readonly string[];
   onOpenSession: (sessionId: number) => void;
-  /** 不再在面板上放「全部」按钮（用户要求）；完整列表只从托盘「找回贴纸」进。保留参数兼容调用方。 */
-  onShowAll?: () => void;
   /** 面板实测高度（逻辑像素），App 据此让窗口贴合。 */
   onMeasure: (height: number) => void;
   onPointerDownDrag: (event: React.PointerEvent<HTMLElement>) => void;
@@ -87,7 +85,7 @@ export function IslandPanel({
       case "opus": return t.account.laneOpus;
       case "model_weekly": return lane.label ? t.account.laneModelWeekly(lane.label) : t.account.laneWeekly;
       case "balance": return t.account.laneBalance;
-      default: return t.island.usageLane.other;
+      default: return t.island.usageOther;
     }
   };
 

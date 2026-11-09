@@ -559,13 +559,39 @@ fn island_preview(last_ai_text: Option<&str>) -> Option<String> {
     const MAX_CHARS: usize = 80;
     let line = last_ai_text?
         .lines()
-        .map(|l| l.trim().trim_start_matches(['#', '-', '*', '>', ' ']).trim())
+        .map(|l| strip_line_marker(l.trim()).trim())
         .find(|l| !l.is_empty())?;
+    let line = &strip_emphasis(line);
     if line.chars().count() <= MAX_CHARS {
         Some(line.to_string())
     } else {
         Some(line.chars().take(MAX_CHARS).collect::<String>() + "…")
     }
+}
+
+/// 剥掉 Markdown 行首的标题 / 引用 / 列表标记。只认「标记 + 空格」：此前把行首所有 `#-*>`
+/// 一并剥掉，「**改好了**」剩下「改好了**」、「-1 个失败」丢了负号（审查发现）。
+fn strip_line_marker(line: &str) -> &str {
+    let mut rest = line;
+    loop {
+        let trimmed = rest.trim_start();
+        let after = trimmed
+            .strip_prefix('>')
+            .or_else(|| {
+                let hashes = trimmed.len() - trimmed.trim_start_matches('#').len();
+                (hashes > 0 && hashes <= 6 && trimmed[hashes..].starts_with(' ')).then(|| &trimmed[hashes..])
+            })
+            .or_else(|| ["- ", "* ", "+ "].iter().find_map(|m| trimmed.strip_prefix(m)));
+        match after {
+            Some(next) => rest = next,
+            None => return trimmed,
+        }
+    }
+}
+
+/// 去掉成对的加粗/斜体记号（`**x**`、`__x__`），岛上只显示文字。
+fn strip_emphasis(line: &str) -> String {
+    line.replace("**", "").replace("__", "")
 }
 
 /// 灵动岛提醒：只发主窗口。发不出去（窗口未建/已关）静默，系统通知与推送照常。
@@ -1594,6 +1620,10 @@ mod tests {
             Some("改好了")
         );
         assert_eq!(island_preview(Some("- 第一条")).as_deref(), Some("第一条"));
+        assert_eq!(island_preview(Some("**改好了**，测试全过")).as_deref(), Some("改好了，测试全过"));
+        assert_eq!(island_preview(Some("-1 个失败")).as_deref(), Some("-1 个失败"));
+        assert_eq!(island_preview(Some("> ## 结论")).as_deref(), Some("结论"));
+        assert_eq!(island_preview(Some("#3 号问题修好了")).as_deref(), Some("#3 号问题修好了"));
         let long = "字".repeat(100);
         let cut = island_preview(Some(&long)).unwrap();
         assert_eq!(cut.chars().count(), 81);
