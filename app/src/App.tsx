@@ -470,6 +470,8 @@ export function App() {
   // 收起动画的定时器。展开/找回（grow）要把它作废：收起途中点托盘「找回」，旧定时器
   // 到点会把刚展开的完整列表又缩回胶囊（审查复现）。同时防 Esc 与光标离开各排一个。
   const collapseTimerRef = useRef<number | null>(null);
+  // 提醒倒计时的挂法定义在 grow 之后，经 ref 取（与 pumpAlertRef 同理）。
+  const armAlertRef = useRef<(ms: number) => void>(() => {});
   useEffect(() => () => {
     if (collapseTimerRef.current != null) window.clearTimeout(collapseTimerRef.current);
   }, []);
@@ -529,8 +531,10 @@ export function App() {
     } catch (err) {
       transitioningRef.current = false;
       console.error("[island] 展开失败：", err);
-      // 展开途中排进来的提醒，留在胶囊上补弹。
-      pumpAlertRef.current();
+      // 从提醒展开失败：grow 开头清掉了它的倒计时，重新挂上，不然提醒一直挂着（做空推演）。
+      // 从胶囊展开失败：展开途中排进来的提醒补弹。
+      if (islandModeRef.current === "alert") armAlertRef.current(ISLAND_ALERT_LINGER_MS);
+      else pumpAlertRef.current();
       return;
     }
     // 展开着不弹提醒：排队的那些在面板/列表里都看得到，作废。
@@ -574,6 +578,7 @@ export function App() {
     if (alertTimerRef.current != null) window.clearTimeout(alertTimerRef.current);
     alertTimerRef.current = window.setTimeout(finishAlert, ms);
   }, [finishAlert]);
+  armAlertRef.current = armAlertTimer;
   const pumpAlert = useCallback(() => {
     // transitioningRef：正在展开（grow 在等窗口长大），形态还是 compact。这时弹提醒会把
     // 窗口改成提醒尺寸、盖掉展开的尺寸，面板被截在 68px 高的窗口里（审查复现）。

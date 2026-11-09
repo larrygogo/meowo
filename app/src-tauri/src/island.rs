@@ -232,6 +232,8 @@ fn fullscreen_action(fullscreen: bool, hidden_by_us: bool, visible: bool) -> Ful
 /// 排除，否则那块屏上一用最大化窗口岛就没了（做空实测：最大化矩形每边比工作区多 11px）。
 /// 此前用 SHQueryUserNotificationState 的 BUSY/APP，不分是哪块屏、也不一定真是全屏。
 /// 演示模式（Windows「演示设置」）系统层面要求免打扰，照旧算。
+/// UWP 全屏（Win+Shift+Enter）EnumWindows 枚举不到，这里判不出；它所在的层高于所有桌面
+/// 置顶窗口，岛本来就被盖住、点不到（做空实测），所以不必为它把 QUNS_APP 加回来。
 #[cfg(target_os = "windows")]
 fn fullscreen_app_running(island: &tauri::WebviewWindow) -> bool {
     use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
@@ -240,7 +242,7 @@ fn fullscreen_app_running(island: &tauri::WebviewWindow) -> bool {
     use windows_sys::Win32::UI::Shell::{SHQueryUserNotificationState, QUERY_USER_NOTIFICATION_STATE, QUNS_PRESENTATION_MODE};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         EnumWindows, GetClassNameW, GetWindowLongW, GetWindowRect, IsIconic, IsWindowVisible, IsZoomed, GWL_EXSTYLE,
-        WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+        GWL_STYLE, WS_CAPTION, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
     };
 
     let mut state: QUERY_USER_NOTIFICATION_STATE = 0;
@@ -276,7 +278,9 @@ fn fullscreen_app_running(island: &tauri::WebviewWindow) -> bool {
             return 1;
         }
         let ex = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
-        if ex & WS_EX_TOOLWINDOW != 0 {
+        // 工具窗不算；点击穿透的分层覆盖层（游戏/录屏的 HUD）铺满整屏也不是全屏程序，算了会让
+        // 岛在那块屏上一直消失、用户找不到原因（做空复现）。
+        if ex & WS_EX_TOOLWINDOW != 0 || ex & (WS_EX_LAYERED | WS_EX_TRANSPARENT) == (WS_EX_LAYERED | WS_EX_TRANSPARENT) {
             return 1;
         }
         let mut class = [0u16; 64];
@@ -291,7 +295,10 @@ fn fullscreen_app_running(island: &tauri::WebviewWindow) -> bool {
         if GetWindowRect(hwnd, &mut rect) == 0 {
             return 1;
         }
-        let full = IsZoomed(hwnd) == 0 && covers(rect, scan.screen);
+        // 只排除带标题栏的最大化窗口（没有任务栏的屏上它也铺满整屏）。无边框 + 最大化是 WPF/
+        // WinForms 程序最常见的全屏写法，矩形与屏幕严格相等，要算全屏（做空复现）。
+        let captioned = GetWindowLongW(hwnd, GWL_STYLE) as u32 & WS_CAPTION == WS_CAPTION;
+        let full = !(IsZoomed(hwnd) != 0 && captioned) && covers(rect, scan.screen);
         if ex & WS_EX_TOPMOST != 0 {
             // 置顶的小工具不挡判定，继续往下看；铺满整屏的置顶窗口就是全屏。
             if full {
