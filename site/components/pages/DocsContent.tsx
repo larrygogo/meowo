@@ -86,7 +86,7 @@ bun scripts/install-hooks.mjs "<repo-abs-path>/app/src-tauri/target/release/meow
       </div>
 
       <h2 id="remote">Phone access</h2>
-      <p>Phone access lets you read conversations, send messages, approve commands and answer questions from your phone's browser. No app to install.</p>
+      <p>With phone access on, you can read and reply to conversations and handle approvals and questions from your phone's browser. No app needs to be installed.</p>
       <ol>
         <li>Open Settings → <strong>Phone access</strong> and turn on remote access. The default port is 18620.</li>
         <li>Pick the network interface to bind. <strong>Tailscale only</strong> is recommended: your phone connects from anywhere as long as Tailscale is installed. Binding to all interfaces also works on the same Wi-Fi.</li>
@@ -149,7 +149,7 @@ bun scripts/install-hooks.mjs "<仓库绝对路径>/app/src-tauri/target/release
       </div>
 
       <h2 id="remote">手机远程</h2>
-      <p>手机远程让你在手机浏览器里看对话、发消息、批审批、答提问，不用装 App。</p>
+      <p>开启手机远程后，可以在手机浏览器里查看和回复对话、处理审批和提问，不需要安装 App。</p>
       <ol>
         <li>打开设置 →「<strong>手机远程</strong>」，开启远程访问。默认端口 18620。</li>
         <li>选择绑定的网卡。推荐<strong>仅 Tailscale</strong>：手机装了 Tailscale，在哪儿都能连。绑定所有网卡时，手机连上同一个 Wi-Fi 也能用。</li>

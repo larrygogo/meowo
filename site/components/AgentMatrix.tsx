@@ -33,13 +33,13 @@ const ROWS: Record<Lang, { groups: { title: string; rows: Row[] }[]; note: strin
         title: "接入与登录",
         rows: [
           { label: "怎么接入", cells: ["hooks + 状态栏", "hooks", "hooks", "hooks", "桥接插件"] },
-          { label: "在 Meowo 里登录", cells: ["一键登录", "一键登录", "一键登录", "填 API Key", "一键登录"] },
+          { label: "在 Meowo 里登录", cells: ["支持", "支持", "支持", "填 API Key", "支持"] },
         ],
       },
       {
         title: "对话窗",
         rows: [
-          { label: "提问卡直接作答", cells: [true, false, true, false, false] },
+          { label: "在卡片上回答提问", cells: [true, false, true, false, false] },
           { label: "Agent 操作面板浏览器", cells: [true, true, true, false, false] },
           { label: "上下文用量", cells: [true, true, true, false, false] },
         ],
@@ -73,14 +73,14 @@ const ROWS: Record<Lang, { groups: { title: string; rows: Row[] }[]; note: strin
         title: "Connect & sign in",
         rows: [
           { label: "How it connects", cells: ["hooks + statusline", "hooks", "hooks", "hooks", "bridge plugin"] },
-          { label: "Sign in from Meowo", cells: ["one click", "one click", "one click", "API key", "one click"] },
+          { label: "Sign in from Meowo", cells: ["yes", "yes", "yes", "API key", "yes"] },
         ],
       },
       {
         title: "Chat window",
         rows: [
           { label: "Answer questions on the card", cells: [true, false, true, false, false] },
-          { label: "Agent drives the panel browser", cells: [true, true, true, false, false] },
+          { label: "Agent operates the panel browser", cells: [true, true, true, false, false] },
           { label: "Context usage", cells: [true, true, true, false, false] },
         ],
       },

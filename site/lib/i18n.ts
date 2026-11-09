@@ -76,7 +76,7 @@ const ZH: Dict = {
     switchTo: "English",
   },
   footer: {
-    tagline: "本地优先的 AI 编程代理桌面工作台。会话在对话窗里跑，状态常驻屏幕顶部，离开电脑手机接着推进。",
+    tagline: "同时使用多个 AI 编程 CLI 时用的桌面应用。开源，数据存在本机。",
     cols: [
       {
         title: "产品",
@@ -106,20 +106,20 @@ const ZH: Dict = {
     tip: "名字来自猫叫 meow，中文译作「喵呜」🐱",
   },
   cta: {
-    title: "多开 AI 编程，从这里开始",
-    subtitle: "少切终端，少输命令。会话、审批、改动和额度都在一处，人不在电脑前也能推进。",
+    title: "下载 Meowo",
+    subtitle: "支持 Windows 和 macOS，免费开源。AI 编程 CLI 可以装好 Meowo 之后再装。",
     download: "下载最新版",
     star: "在 GitHub 上 Star",
   },
   features: [
-    { title: "五家 Agent，一个工作台", body: "Claude Code、Codex、Kimi、Gemini CLI、OpenCode 的会话排在同一个侧栏里，可以按工作区分组、拖着排序。做完的会话点「标记完成」收进「已完成」，随时找回。" },
-    { title: "托管终端", body: "会话跑在 Meowo 托管的终端里，对话和终端是同一个会话的两种视图。你在自己终端里开的会话也会被收录，断开的会话点一下就在原目录续上。" },
-    { title: "进度与子任务", body: "Agent 的待办清单、派出去的子任务、后台还在跑的命令，都在进度面板里列着。主回合停了但后台还在跑，不会误报成「等你输入」。" },
-    { title: "审批与提问按钮化", body: "等批准的命令、Agent 的选择题、终端弹出的信任确认和模型菜单，都渲染成按钮。点一下就把对应按键发回终端，不用敲键盘应答。" },
-    { title: "多账号 + API 中转", body: "Claude Code、Codex、Kimi、OpenCode 都能存多个官方账号，一键切换；Claude Code、Codex、Kimi 正在跑的会话可以一起切过去。没有官方账号时，给这家 Agent 接 API 中转。" },
-    { title: "本地优先", body: "会话与设置只存在本机 ~/.meowo/ 的 SQLite 里。Meowo 没有自己的服务器，不上传会话内容，断网也照常工作。只有开了 Bark 推送时，推送内容会经过 Bark 的服务器。" },
-    { title: "一键安装、登录与接入", body: "五家 CLI 都能在应用内一键安装、登录（Gemini CLI 填 API Key），所需 hooks 自动接好。检测到接入缺失时，再点一下就修好。" },
-    { title: "额度与上下文", body: "灵动岛显示 Claude Code、Codex、Kimi 的 5 小时 / 7 天额度，Opus 这类模型单独的周额度也列出来，快用完时变红。这三家的会话还显示上下文用量。" },
+    { title: "统一的会话列表", body: "五家 CLI 的会话在同一个侧栏里，可以按工作区分组，也可以拖动调整顺序。处理完的会话标记完成后移到「已完成」，需要时再找回来。" },
+    { title: "托管终端", body: "会话运行在 Meowo 托管的终端里，对话窗和终端显示的是同一个会话。你在自己终端里开的会话也会出现在列表里。断开的会话可以在原目录重新接上。" },
+    { title: "进度与子任务", body: "进度面板列出 Agent 的待办清单、派出的子任务和仍在后台运行的命令。后台命令没跑完时，会话不会被标成等待输入。" },
+    { title: "审批和提问显示成按钮", body: "待批准的命令、Agent 的选择题、终端里的信任确认和模型菜单，都显示成按钮。点击后，Meowo 把对应的按键发给终端。" },
+    { title: "多账号与 API 中转", body: "Claude Code、Codex、Kimi 和 OpenCode 可以保存多个官方账号。切换账号时，Claude Code、Codex 和 Kimi 正在运行的会话可以一起切过去。没有官方账号的，可以给这家 Agent 配 API 中转。" },
+    { title: "本地优先", body: "会话和设置存在本机 ~/.meowo/ 的 SQLite 数据库里。Meowo 没有自己的服务器，不上传会话内容，断网也能用。开启 Bark 推送是唯一的例外，推送内容会经过 Bark 的服务器。" },
+    { title: "安装、登录和接入", body: "五家 CLI 都可以在 Meowo 里安装和登录，Gemini CLI 需要填 API Key。所需的 hooks 由 Meowo 配置，检测到配置缺失时可以在设置里修复。" },
+    { title: "额度与上下文", body: "灵动岛显示 Claude Code、Codex 和 Kimi 的 5 小时和 7 天额度，Opus 这类模型单独计算的周额度也会列出。这三家的会话还会显示上下文用量。" },
   ],
   featuresMore: "查看全部功能",
 };
@@ -140,7 +140,7 @@ const EN: Dict = {
     switchTo: "中文",
   },
   footer: {
-    tagline: "A local-first desktop workbench for AI coding agents. Sessions run in the chat window, status stays at the top of your screen, and your phone takes over when you step away.",
+    tagline: "A desktop app for using several AI coding CLIs at once. Open source, with your data kept on your machine.",
     cols: [
       {
         title: "Product",
@@ -170,20 +170,20 @@ const EN: Dict = {
     tip: "Named after a cat's “meow”, written 喵呜 in Chinese 🐱",
   },
   cta: {
-    title: "Run AI coding in parallel, starting here",
-    subtitle: "Fewer terminal switches, fewer commands. Sessions, approvals, changes and quota in one place, even when you're away from your desk.",
+    title: "Download Meowo",
+    subtitle: "Free and open source, for Windows and macOS. You can install the AI coding CLIs after Meowo.",
     download: "Download latest",
     star: "Star on GitHub",
   },
   features: [
-    { title: "Five agents, one workbench", body: "Claude Code, Codex, Kimi, Gemini CLI and OpenCode sessions share one sidebar, grouped by workspace and sorted by drag. Mark a finished session done and it moves to Done, ready to bring back." },
-    { title: "Managed terminal", body: "Sessions run in a terminal hosted by Meowo; chat and terminal are two views of the same session. Sessions you start in your own terminal show up too, and a disconnected one resumes in its folder with one click." },
-    { title: "Progress & subagents", body: "The agent's todo list, the subagents it sends out and commands still running in the background all show in the progress panel. A background command keeps the session from being shown as waiting for you." },
-    { title: "Approvals & questions as buttons", body: "Pending commands, the agent's multiple-choice questions, and terminal trust prompts and model menus all render as buttons. One click sends the matching keys back to the terminal." },
-    { title: "Multiple accounts + API relay", body: "Claude Code, Codex, Kimi and OpenCode keep several official accounts and switch in one click; for Claude Code, Codex and Kimi, running sessions can switch along. No official account? Connect an API relay for that agent." },
-    { title: "Local-first", body: "Sessions and settings live only in ~/.meowo/ as local SQLite. Meowo has no server of its own, uploads no conversations, and works offline. Only Bark push, if you turn it on, goes through Bark's server." },
-    { title: "One-click install, sign-in & connect", body: "Install and sign in to any of the five CLIs right in the app (Gemini CLI takes an API key); the hooks are wired for you. If a connection breaks, one more click repairs it." },
-    { title: "Quota & context", body: "The island shows 5-hour / 7-day quota for Claude Code, Codex and Kimi, plus per-model weekly quota such as Opus, turning red near the limit. Sessions of those three show context usage too." },
+    { title: "One session list", body: "Sessions from all five CLIs share one sidebar. Group them by workspace or drag them into your own order. Mark a session done when you're finished and it moves to Done, where you can find it later." },
+    { title: "Managed terminal", body: "Sessions run in a terminal managed by Meowo, and the chat window and the terminal show the same session. Sessions you start in your own terminal appear in the list too. A disconnected session can be resumed in its original folder." },
+    { title: "Progress and subagents", body: "The progress panel lists the agent's todo list, the subagents it starts and commands still running in the background. While a background command runs, the session isn't marked as waiting for input." },
+    { title: "Approvals and questions as buttons", body: "Commands pending approval, the agent's multiple-choice questions, and the terminal's trust prompts and model menus show up as buttons. When you click one, Meowo sends the matching keys to the terminal." },
+    { title: "Multiple accounts and API relay", body: "Claude Code, Codex, Kimi and OpenCode can keep several official accounts. When you switch, running Claude Code, Codex and Kimi sessions can switch with you. Without an official account, you can set up an API relay for that agent." },
+    { title: "Local-first", body: "Sessions and settings are stored in a SQLite database in ~/.meowo/ on your machine. Meowo has no server of its own, doesn't upload conversations and works offline. Bark push is the one exception: when it's on, pushes go through Bark's server." },
+    { title: "Install, sign in, connect", body: "You can install and sign in to all five CLIs from Meowo. Gemini CLI needs an API key. Meowo sets up the hooks it needs, and if something is missing you can repair it in Settings." },
+    { title: "Quota and context", body: "The island shows 5-hour and 7-day quota for Claude Code, Codex and Kimi, including separate weekly quota for models such as Opus. Sessions from those three also show context usage." },
   ],
   featuresMore: "See all features",
 };

@@ -1,7 +1,7 @@
 <div align="center">
   <img src="docs/images/logo.png" width="104" alt="Meowo logo" />
   <h1>Meowo / 喵呜</h1>
-  <p><b>多开 AI 编程的桌面工作台。Claude Code、Codex、Kimi、Gemini CLI、OpenCode 的会话，都在一个地方跑。</b></p>
+  <p><b>同时使用多个 AI 编程 CLI 时用的桌面应用，支持 Claude Code、Codex、Kimi、Gemini CLI 和 OpenCode。</b></p>
   <p>
     <a href="https://github.com/larrygogo/meowo/actions/workflows/ci.yml"><img src="https://github.com/larrygogo/meowo/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
     <a href="https://github.com/larrygogo/meowo/releases/latest"><img src="https://img.shields.io/github/v/release/larrygogo/meowo?label=release&color=d97757" alt="Release" /></a>
@@ -10,73 +10,73 @@
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT" /></a>
   </p>
   <p><b>中文</b> · <a href="README.en.md">English</a> · <a href="https://meowo.io">官网 meowo.io</a></p>
-  <p>新建会话、看对话、批审批、查改动、开终端和浏览器，都在 Meowo 的对话窗里完成。<br/>屏幕顶部的灵动岛告诉你谁在跑、谁在等你；人不在电脑前，手机上也能接着推进。</p>
+  <p>会话在 Meowo 的对话窗里运行，旁边可以看改动、开终端和浏览器。<br/>有会话等你处理时，屏幕顶部的灵动岛会提醒；不在电脑前，可以用手机浏览器处理。</p>
   <img src="docs/images/island.webp" alt="Meowo 灵动岛：收起时显示额度和每个会话的状态，会话要你批准时弹出提醒，点开看会话列表" width="760" />
 </div>
 
 ## 下载
 
-到 **[meowo.io](https://meowo.io)** 下载，页面会按你的系统给出对应的安装包。也可以直接去 [GitHub Releases](https://github.com/larrygogo/meowo/releases/latest) 下载：
+到 **[meowo.io](https://meowo.io)** 下载，页面会按你的系统给出对应的安装包。也可以从 [GitHub Releases](https://github.com/larrygogo/meowo/releases/latest) 下载：
 
 | 平台 | 安装包 | 说明 |
 |------|--------|------|
 | **Windows 10 / 11** | `Meowo_x.y.z_x64-installer.exe` | 双击安装；没有 WebView2 的环境会自动换成经典安装界面 |
 | **macOS 14+** | Apple 芯片选 `_aarch64.dmg`，Intel 选 `_x64.dmg` | 已签名公证。不确定芯片：苹果菜单 → 关于本机 |
 
-不用提前装 AI CLI：打开 Meowo 后，在设置里就能一键安装、登录，所需的 hooks 也会自动接好。应用内可以检查并安装更新。
+AI 编程 CLI 可以等装好 Meowo 之后，在设置里安装和登录，所需的 hooks 由 Meowo 配置。新版本可以在应用内检查和安装。
 
 > **Windows 提示「Windows 已保护你的电脑」**：Windows 安装包暂时没有代码签名，点「更多信息」→「仍要运行」即可。
 > 安装包由 GitHub Actions 从公开源码构建（见 [release.yml](.github/workflows/release.yml)），自动更新另有 minisign 签名校验。
 
 ## 能做什么
 
-### 对话窗：会话在这里跑
+### 对话窗
 
 <img src="docs/images/panel.png" alt="Meowo 对话窗：左侧是会话侧栏，中间是对话和一张待批准的命令审批卡，右侧面板打开着这次改动的 diff" width="760" />
 
-- **结构化对话**：消息、工具调用、子任务各占一行，展开看完整输入输出；待办清单和进度实时刷新。
-- **审批和提问变成按钮**：命令审批卡标出这次操作会碰到哪里（工作区外的路径、删文件、联网），允许 / 拒绝一点即发；Agent 的选择题直接在卡片上作答；终端里的信任确认、模型菜单也识别成按钮。
-- **直接开新会话**：在对话窗选好 Agent 和目录，写下第一句话就开聊；可以带图片、截图后框出位置再发。
-- **托管终端**：会话跑在 Meowo 托管的终端里，对话和终端是同一个会话的两种视图，随时切过去亲手操作。
-- **右侧面板**：更改、文件、终端、浏览器放在同一排页签里。
-  - 「更改」页签看 diff，可以对某一行写评论，一键放进输入框发给 Agent。
-  - 浏览器页能打开 localhost；claude、codex、kimi 会话可以自己操作这个浏览器，你看得到它的鼠标，随时能接管。
-- **标题栏**：显示分支和 Pull Request，一键用编辑器打开项目。
+- 在对话窗里选 Agent 和目录，输入第一句话就新建会话。可以附图片，也可以截图后标出位置再发。
+- 对话按消息、工具调用、子任务分开显示，工具调用默认折叠成一行。待办清单和进度会随会话更新。
+- 待批准的命令显示成审批卡，卡上写明这次操作会动到什么，比如工作区外的路径、删除文件、联网。Agent 的选择题可以在卡片上回答，终端里的信任确认和模型菜单显示成按钮。
+- 会话运行在 Meowo 托管的终端里。对话和终端是同一个会话的两种视图，可以切到终端自己操作。
+- 右侧面板有四个页签：更改、文件、终端、浏览器。
+  - 「更改」页签显示 diff。可以对某一行写评论，再放进输入框发给 Agent。
+  - 浏览器可以打开 localhost。Claude Code、Codex 和 Kimi 的会话可以自己操作这个浏览器，操作时能看到它的鼠标，你可以随时接管。
+- 标题栏显示当前分支和 Pull Request，可以用编辑器打开项目。
 
-### 灵动岛：状态常驻屏幕顶部
+### 灵动岛
 
-- 收起时显示额度环、每个会话一个头像：在跑的外圈转绿弧，等你的亮黄点。
-- 会话要你批准、有提问、出错或跑完时，岛会展开几秒提醒你；点头像直接打开那个会话。
-- 点开面板看最要紧的会话和各家额度，也能在这里新建会话。
-- Windows 上可以左右拖动位置，或开极简模式只留一道细条；有刘海的 Mac 上岛包住刘海，没刘海时收进菜单栏。
+- 灵动岛在屏幕顶部。收起时显示额度环，每个会话一个头像：运行中的头像外圈是绿色的弧，等你处理的亮一个黄点。
+- 会话等待批准、提出问题、出错或运行结束时，灵动岛会展开几秒。点头像打开那个会话。
+- 点开面板可以看最需要处理的会话和各家额度，也可以新建会话。
+- Windows 上可以左右拖动位置，或者开极简模式只留一条细线。有刘海的 Mac 上，灵动岛围在刘海周围；没有刘海时，它在菜单栏里。
 
-### 手机远程：人不在电脑前也能推进
+### 手机远程
 
 <img src="docs/images/mobile.png" alt="Meowo 手机远程页：在手机浏览器里看对话、处理命令审批" width="280" align="right" />
 
-- 设置里开启「手机远程」，手机扫码就能用，不用装 App；可以添加到主屏幕。
-- 在手机上看对话、发消息、**批审批**、答 Agent 的提问，也能新建和分叉会话、看终端画面和改动。
-- 会话需要你时，可以经 [Bark](https://github.com/Finb/Bark)（iPhone App）推送到手机。
-- 有会话在跑时电脑不睡；这个开关在手机上也能改。
-- 局域网或 Tailscale 下可用，推荐只绑定 Tailscale 网卡。
+- 在设置里开启「手机远程」，用手机扫码，就能在手机浏览器里使用，不需要安装 App。页面可以添加到主屏幕。
+- 手机上可以查看和回复对话，处理审批和提问，新建或分叉会话，查看终端画面和改动。
+- 会话需要你时，可以通过 [Bark](https://github.com/Finb/Bark)（iPhone App）推送通知。
+- 「运行时防止休眠」开启后，有会话在运行时电脑不会睡眠。这个开关也可以在手机上改。
+- 支持局域网和 Tailscale，推荐只绑定 Tailscale 网卡。
 
 <br clear="right" />
 
 ### 账号、额度与网络
 
-- Claude Code、Codex、Kimi、OpenCode 都能保存多个官方账号，一键切换；Claude Code、Codex、Kimi 正在跑的会话可以一起切过去。Gemini CLI 只有一个账号，用 API Key 登录。
-- 没有官方账号时，可以给某一家 Agent 接入 API 中转。
-- 显示 Claude Code、Codex、Kimi 的 5 小时 / 7 天额度，以及 Opus 等模型单独的周额度，快用完时变红。
-- 代理可以设全局默认，也能按 Agent 单独设；支持 HTTP 和带认证的写法，SOCKS 只有 Kimi 和 Gemini CLI 认。
+- Claude Code、Codex、Kimi 和 OpenCode 可以保存多个官方账号。切换账号时，Claude Code、Codex 和 Kimi 正在运行的会话可以一起切过去。Gemini CLI 只能有一个账号，用 API Key 登录。
+- 没有官方账号的，可以给这家 Agent 配 API 中转。
+- 显示 Claude Code、Codex 和 Kimi 的 5 小时和 7 天额度，Opus 这类模型单独计算的周额度也会列出，用到 85% 以上会变红。
+- 代理可以设一个默认值，也可以给每家 Agent 单独设置。支持 HTTP 代理和带认证的写法，SOCKS 只有 Kimi 和 Gemini CLI 支持。
 
 ### 五家 Agent 的差别
 
-五家 CLI 的能力不完全一样，取自 0.8.1 各家插件的声明（完整对照见[官网功能页](https://meowo.io/features#agents)）：
+五家 CLI 能用的功能不完全一样。下表取自 0.8.1 各家插件的声明，完整对照见[官网功能页](https://meowo.io/features#agents)。
 
 | | Claude Code | Codex | Kimi Code | Gemini CLI | OpenCode |
 |---|:-:|:-:|:-:|:-:|:-:|
-| 在 Meowo 里登录 | 一键 | 一键 | 一键 | 填 API Key | 一键 |
-| 提问卡直接作答 | ✓ | – | ✓ | – | – |
+| 在 Meowo 里登录 | 支持 | 支持 | 支持 | 填 API Key | 支持 |
+| 在卡片上回答提问 | ✓ | – | ✓ | – | – |
 | Agent 操作面板浏览器 | ✓ | ✓ | ✓ | – | – |
 | 额度读数 | 官方账号登录时 | ChatGPT 登录时 | 官方账号登录时 | – | – |
 | 上下文用量 | ✓ | ✓ | ✓ | – | – |
@@ -85,7 +85,7 @@
 
 ### 本地优先
 
-会话数据和设置只存在本机的 `~/.meowo/`（SQLite）。Meowo 没有自己的服务器，不上传会话内容，断网也照常工作。唯一的例外是可选的 Bark 推送：开了它，推送内容（会话标题、Agent 最后一句话、打开会话的链接）会经过 Bark 的服务器。你自己在终端里开的会话也会被收录进来。
+会话数据和设置只存在本机的 `~/.meowo/` 目录（SQLite）。Meowo 没有自己的服务器，不上传会话内容，断网也能用。唯一的例外是 Bark 推送：开启后，推送内容（会话标题、Agent 的最后一句话、打开会话的链接）会经过 Bark 的服务器。你在自己终端里开的会话也会出现在 Meowo 里。
 
 ## 工作原理
 

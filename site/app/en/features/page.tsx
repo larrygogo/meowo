@@ -4,7 +4,7 @@ import FeaturesContent from "@/components/pages/FeaturesContent";
 export const metadata: Metadata = {
   title: "Features · Meowo",
   description:
-    "Meowo features: structured chat with one-click approvals, a side panel for changes, files, terminal and browser, phone access, an always-on island at the top of the screen, quota & context monitoring, multiple accounts & API relay, per-agent proxy, and one-click install & sign-in.",
+    "Features in Meowo 0.8.1: the chat window, a right panel with Changes, Files, Terminal and Browser, phone access, the island, quota and context, multiple accounts and API relay, proxy settings, and a comparison of the five agents.",
   alternates: { canonical: "/en/features/", languages: { "zh-CN": "/features/", en: "/en/features/" } },
 };
 

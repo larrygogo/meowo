@@ -6,7 +6,7 @@ import LangHint from "@/components/LangHint";
 
 const title = "Meowo / 喵呜 — AI 编程代理桌面工作台";
 const description =
-  "Meowo（喵呜）是本地优先的 AI 编程代理桌面工作台：Claude Code、Codex、Kimi、Gemini CLI、OpenCode 的会话在一个对话窗里跑，审批、改动、终端和浏览器都在手边，灵动岛常驻屏幕顶部，离开电脑用手机接着推进。开源，MIT 许可，支持 Windows 与 macOS。";
+  "Meowo（喵呜）是同时使用多个 AI 编程 CLI 时用的桌面应用，支持 Claude Code、Codex、Kimi、Gemini CLI 和 OpenCode。会话在对话窗里运行，可以查看改动、打开终端和浏览器；有会话等待处理时，屏幕顶部的灵动岛会提醒，也可以用手机处理。开源，MIT 许可，支持 Windows 与 macOS。";
 
 // 站点域名，用于生成社交分享图（Open Graph / Twitter）的绝对 URL。
 // 默认自定义域名；可用环境变量 NEXT_PUBLIC_SITE_URL 覆盖（如预览环境）。
