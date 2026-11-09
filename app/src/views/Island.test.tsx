@@ -346,7 +346,6 @@ describe("IslandPanel 展开面板", () => {
         usage={{}}
         quotaProviders={["claude"]}
         onOpenSession={noop}
-        onShowAll={noop}
         onMeasure={noop}
         onPointerDownDrag={noop}
         {...props}
@@ -379,14 +378,23 @@ describe("IslandPanel 展开面板", () => {
     expect(onOpenSession).toHaveBeenCalledWith(pending.session.id);
   });
 
-  it("新建会话：标题旁的按钮与空态按钮都能开", () => {
+  it("新建会话：空态只留空态里那一个，按钮名就是「新建会话」（加号是图标，不念出来）", () => {
     const onNewSession = vi.fn();
     renderPanel({ onNewSession });
-    const buttons = screen.getAllByRole("button", { name: new RegExp(zh.sticker.newSession) });
-    // 空态时两个：标题旁一个、空态里一个。
-    expect(buttons).toHaveLength(2);
-    buttons.forEach((button) => fireEvent.click(button));
-    expect(onNewSession).toHaveBeenCalledTimes(2);
+    const buttons = screen.getAllByRole("button", { name: zh.sticker.newSession });
+    expect(buttons).toHaveLength(1);
+    expect(buttons[0].querySelector("svg[aria-hidden='true']")).toBeTruthy();
+    fireEvent.click(buttons[0]);
+    expect(onNewSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("新建会话：有会话时在标题旁；翻到用量页就不显示", () => {
+    const usage = { claude: { lanes: [lane("five_hour", 43)], note: null } } as unknown as Record<string, ProviderUsage>;
+    renderPanel({ sessions: [mk()], usage, onNewSession: vi.fn() });
+    expect(screen.getAllByRole("button", { name: zh.sticker.newSession })).toHaveLength(1);
+    fireEvent.click(screen.getByRole("tab", { name: zh.island.page(2) }));
+    expect(screen.getByText(zh.island.panelUsage)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: zh.sticker.newSession })).toBeNull();
   });
 
   it("面板上不放「全部」按钮（用户要求）；没有额度数据时只有一页、不出翻页点", () => {

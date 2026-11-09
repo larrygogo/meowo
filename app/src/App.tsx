@@ -453,6 +453,8 @@ export function App() {
   const islandModeRef = useRef<IslandMode>("compact");
   islandModeRef.current = islandMode;
   const [closing, setClosing] = useState(false);
+  // collapse 的防重入标记。state 要等下一次渲染才生效，同一拍里的第二次调用看不到它（审查 2026-11-09）。
+  const closingRef = useRef(false);
   const [alert, setAlert] = useState<IslandAlertEvent | null>(null);
   const alertQueueRef = useRef<IslandAlertEvent[]>([]);
   // 队列里还排着几条（不含正在弹的那条），提醒卡片上显示「还有 N 条」。
@@ -607,10 +609,15 @@ export function App() {
 
   const collapse = useCallback(() => {
     const mode = islandModeRef.current;
-    if (isMacPanel() || (mode !== "expanded" && mode !== "full")) return;
+    // 收回动画进行中再调用直接返回：双击「新建会话」、点完立刻移出面板（光标轮询在途的请求晚到）都会
+    // 连调两次，排下两个定时器。第一个跑完 pumpAlert 弹出排队的提醒，第二个又把模式改回 compact、
+    // 把提醒压回胶囊，这条提醒就丢了（审查 2026-11-09）。所有收起入口都走这里，守卫只放这一处。
+    if (isMacPanel() || (mode !== "expanded" && mode !== "full") || closingRef.current) return;
+    closingRef.current = true;
     setClosing(true);
     // 先播收回动画（缩回胶囊轮廓），播完再把窗口缩小。
     window.setTimeout(() => {
+      closingRef.current = false;
       setClosing(false);
       islandModeRef.current = "compact";
       setIslandMode("compact");
@@ -844,6 +851,13 @@ export function App() {
   }, [collapse, layoutCompact, pumpAlert]);
   openSessionRef.current = openSession;
 
+  // 面板上的「新建会话」。收起中再点（双击）不再开第二次窗口：后端两个线程会抢着建同名窗口。
+  const newSession = useCallback(() => {
+    if (closingRef.current) return;
+    openNewSessionWindow().catch((err) => console.error("[island] 打开新建会话失败：", err));
+    collapse();
+  }, [collapse]);
+
   if (!isMacPanel() && !bootReady) {
     return null;
   }
@@ -891,13 +905,9 @@ export function App() {
             usage={usage}
             quotaProviders={quotaProviders}
             onOpenSession={openSession}
-            onShowAll={showAll}
             onMeasure={onPanelMeasure}
             onPointerDownDrag={onPanelHeadPointerDown}
-            onNewSession={() => {
-              openNewSessionWindow().catch((err) => console.error("[island] 打开新建会话失败：", err));
-              collapse();
-            }}
+            onNewSession={newSession}
           />
         )}
       </div>

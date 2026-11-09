@@ -24,6 +24,10 @@ function shownLanes(usage: ProviderUsage | undefined): UsageLane[] {
     .sort((a, b) => LANE_ORDER.indexOf(a.kind) - LANE_ORDER.indexOf(b.kind));
 }
 
+/// 加号用 SVG（与对话窗工作区头部的新建按钮同一个形状）：全角「＋」拼在文案里会被读屏念出来，
+/// 按钮名也就不是「新建会话」了。
+const PLUS = <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>;
+
 function providerLabel(provider: string): string {
   return provider ? provider[0].toUpperCase() + provider.slice(1) : provider;
 }
@@ -42,14 +46,12 @@ export function IslandPanel({
   usage: Record<string, ProviderUsage>;
   quotaProviders: readonly string[];
   onOpenSession: (sessionId: number) => void;
-  /** 不再在面板上放「全部」按钮（用户要求）；完整列表只从托盘「找回贴纸」进。保留参数兼容调用方。 */
-  onShowAll?: () => void;
   /** 面板实测高度（逻辑像素），App 据此让窗口贴合。 */
   onMeasure: (height: number) => void;
   onPointerDownDrag: (event: React.PointerEvent<HTMLElement>) => void;
   /** 打开时停在第几页（0 起）。 */
   initialPage?: number;
-  /** 新建会话（标题旁的「＋」与空态按钮）。 */
+  /** 新建会话。有会话时在标题旁，空态时在空态里，同一时刻只出现一个。 */
   onNewSession?: () => void;
 }) {
   const t = useT();
@@ -98,17 +100,18 @@ export function IslandPanel({
           <span className="isl-panel-title">
             Meowo <span className="isl-accent">{onUsagePage ? t.island.panelUsage : t.island.panelSessions}</span>
           </span>
-          {/* 原来「全部」的位置放新建：开新会话不用再绕去托盘或完整列表。 */}
-          {onNewSession && (
+          {/* 原来「全部」的位置放新建：开新会话不用再绕去托盘或完整列表。用量页不放（与那页无关）；
+              空态不放（空态里已经有一个，两个挨着显得多余）。审查 2026-11-09。 */}
+          {onNewSession && !onUsagePage && rows.length > 0 && (
             <button
               type="button"
-              className="isl-btn is-ghost"
+              className="isl-btn is-ghost isl-new"
               onPointerDown={(event) => event.stopPropagation()}
               onClick={onNewSession}
-            >＋ {t.sticker.newSession}</button>
+            >{PLUS}{t.sticker.newSession}</button>
           )}
           <span className="isl-panel-meta">
-            {now.toLocaleDateString(t.locale, { month: "long", day: "numeric", weekday: "short" })}
+            <span className="isl-panel-meta-date">{now.toLocaleDateString(t.locale, { month: "long", day: "numeric", weekday: "short" })}</span>
             <b>{now.toLocaleTimeString(t.locale, { hour: "2-digit", minute: "2-digit", hour12: false })}</b>
           </span>
         </div>
@@ -120,7 +123,7 @@ export function IslandPanel({
                 <div className="isl-empty">
                   <span>{t.island.idle}</span>
                   {onNewSession && (
-                    <button type="button" className="isl-btn is-primary" onClick={onNewSession}>＋ {t.sticker.newSession}</button>
+                    <button type="button" className="isl-btn is-primary isl-new" onClick={onNewSession}>{PLUS}{t.sticker.newSession}</button>
                   )}
                 </div>
               )}

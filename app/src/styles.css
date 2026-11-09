@@ -6819,10 +6819,14 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
   border-radius: 0 0 26px 26px;
 }
 .isl-panel-head { display: flex; align-items: center; gap: 10px; cursor: grab; }
-.isl-panel-title { font-size: 15px; font-weight: 700; }
+.isl-panel-title { flex: none; font-size: 15px; font-weight: 700; }
 .isl-accent { color: var(--isl-warn); }
-.isl-panel-meta { margin-left: auto; display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--isl-dim); }
-.isl-panel-meta b { color: var(--isl-text); font-size: 13px; font-variant-numeric: tabular-nums; }
+/* meta 可收缩、日期截断：标题旁加了新建按钮后，英文长星期 + 日期 + 时间会挤出面板（审查 2026-11-09）。
+   时间（b）不缩，先省略日期。 */
+.isl-panel-meta { margin-left: auto; min-width: 0; display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--isl-dim); white-space: nowrap; }
+.isl-panel-meta-date { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.isl-btn.isl-new { display: inline-flex; align-items: center; gap: 5px; }
+.isl-panel-meta b { flex: none; color: var(--isl-text); font-size: 13px; font-variant-numeric: tabular-nums; }
 .isl-panel-body { display: flex; gap: 18px; margin-top: 12px; }
 .isl-rows { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
 .isl-row {

@@ -62,8 +62,9 @@ class MockResizeObserver {
 }
 vi.stubGlobal("ResizeObserver", MockResizeObserver);
 
+const openNewSessionWindowMock = vi.hoisted(() => vi.fn(() => Promise.resolve()));
 vi.mock("./api", () => ({
-  openNewSessionWindow: () => Promise.resolve(),
+  openNewSessionWindow: () => openNewSessionWindowMock(),
   getLiveSessionsCounts: () => getLiveSessionsCounts(),
   // 与真实 api.ts 同款归一化：允许各测试继续用「裸数组」写 mock 数据，这里补上
   // { items, next_cursor } 包装（给满 limit → 用末项当游标；给不满 → 到底）。
@@ -177,6 +178,7 @@ const expandIsland = async () => {
   await waitFor(() => expect(document.querySelector(".island-shell.is-full")).toBeTruthy());
 };
 const layoutCalls = () => vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === "island_layout").map(([, args]) => args);
+const layoutHeights = () => layoutCalls().map((args) => (args as { height: number }).height);
 
 describe("App", () => {
   it("挂载时拉取 counts 和第 0 页", async () => {
@@ -318,6 +320,53 @@ describe("App", () => {
     await act(async () => { emitRecallSticker(); });
     await waitFor(() => expect(container.querySelector(".island-shell.is-full")).toBeTruthy());
     expect(layoutCalls()).toContainEqual({ width: 360, height: 440, centerRatio: null });
+  });
+
+  // 审查 2026-11-09：双击「新建会话」会连调两次 collapse，第二次把刚弹出的排队提醒压回胶囊、提醒丢失；
+  // 新建窗口也会被开两次。
+  it("面板上双击新建会话：只开一次窗口，只收起一次", async () => {
+    openNewSessionWindowMock.mockClear();
+    const { container } = render(<App />);
+    const pill = await waitFor(() => {
+      const el = container.querySelector(".isl-notch");
+      expect(el).toBeTruthy();
+      return el as HTMLElement;
+    });
+    await waitFor(() => expect(layoutCalls().length).toBeGreaterThan(0));
+    const compactHeight = layoutHeights()[0];
+    fireEvent.pointerDown(pill, { button: 0, pointerId: 1, screenX: 100 });
+    fireEvent.pointerUp(pill, { button: 0, pointerId: 1, screenX: 101 });
+    await waitFor(() => expect(container.querySelector(".isl-panel")).toBeTruthy());
+    const before = layoutCalls().length;
+    const button = screen.getByRole("button", { name: zh.sticker.newSession });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    expect(openNewSessionWindowMock).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(container.querySelector(".isl-panel")).toBeNull());
+    // 多等一个收起动画的时长：若排下了第二个收起定时器，它会再缩一次胶囊（会把那一刻弹出的提醒压回去）。
+    await new Promise((r) => setTimeout(r, 400));
+    expect(layoutHeights().slice(before).filter((h) => h === compactHeight)).toHaveLength(1);
+  });
+
+  // collapse 自身的防重入（光标轮询、Esc 这些入口不经过新建按钮的守卫）：连按两次 Esc 只收起一次。
+  it("收起动画进行中再次触发收起不会重复缩回", async () => {
+    const { container } = render(<App />);
+    const pill = await waitFor(() => {
+      const el = container.querySelector(".isl-notch");
+      expect(el).toBeTruthy();
+      return el as HTMLElement;
+    });
+    await waitFor(() => expect(layoutCalls().length).toBeGreaterThan(0));
+    const compactHeight = layoutHeights()[0];
+    fireEvent.pointerDown(pill, { button: 0, pointerId: 1, screenX: 100 });
+    fireEvent.pointerUp(pill, { button: 0, pointerId: 1, screenX: 101 });
+    await waitFor(() => expect(container.querySelector(".isl-panel")).toBeTruthy());
+    const before = layoutCalls().length;
+    fireEvent.keyDown(window, { key: "Escape" });
+    fireEvent.keyDown(window, { key: "Escape" });
+    await waitFor(() => expect(container.querySelector(".isl-panel")).toBeNull());
+    await new Promise((r) => setTimeout(r, 400));
+    expect(layoutHeights().slice(before).filter((h) => h === compactHeight)).toHaveLength(1);
   });
 
   // 点胶囊上的会话图标直接打开那个会话；点胶囊别处才展开面板。
