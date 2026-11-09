@@ -6840,6 +6840,8 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
   --isl-ok-track: #123a1f;
   --isl-warn: #ff9f0a;
   --isl-warn-track: #40300a;
+  /* 待交互的会话图标与角标：Apple 系统黄。额度警示仍用上面的橙（--isl-warn）。 */
+  --isl-pending: #ffd60a;
   --isl-err: #ff453a;
   --isl-err-track: #44150f;
   --isl-blue: #409cff;
@@ -7046,7 +7048,7 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
   display: grid; place-items: center;
   font-size: 9px; font-weight: 800; line-height: 1; color: #000;
 }
-.isl-agent-badge.is-pending { background: var(--isl-warn); }
+.isl-agent-badge.is-pending { background: var(--isl-pending); }
 .isl-agent-badge.is-error { background: var(--isl-err); color: #fff; }
 /* 跑完在等你：右下角一个琥珀小点。与对话窗侧栏完全一样：侧栏连着的会话一跑完就是琥珀点（不看未读），
    岛上曾只给未读的亮蓝点，同一个会话两边颜色对不上（用户要求统一，2026-11-05）。
