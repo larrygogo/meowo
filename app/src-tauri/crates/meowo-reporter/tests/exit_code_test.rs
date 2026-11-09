@@ -4,6 +4,12 @@ use std::process::{Command, Stdio};
 /// 跑 meowo-reporter 二进制，喂给定 stdin 与可选 MEOWO_DB，返回退出码。
 fn run_with(stdin: &str, db: Option<&str>) -> Option<i32> {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_meowo-reporter"));
+    // 清掉从外层托管终端继承的认领凭据：在 Meowo 托管的会话里跑 cargo test 时，喂进去的
+    // SessionStart 会拿临时库里的会话 id 去真 broker 认领，把外层会话的终端换绑走
+    // （实拍：会话 1537 被换代到不存在的会话 1，对话页从此显示「在外部终端运行」）。
+    for key in ["MEOWO_PTY_ENDPOINT", "MEOWO_PTY_TOKEN", "MEOWO_PTY_LAUNCH", "MEOWO_PTY_PROTOCOL", "MEOWO_PTY_DB"] {
+        cmd.env_remove(key);
+    }
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null());

@@ -849,6 +849,23 @@ fn finalize_exit(broker: &PtyBroker, app: &tauri::AppHandle, managed: &Arc<Manag
 /// 仅当「旧行记了 pid + 认领方是别的进程 + 旧进程还活着」三条同时成立才拦；旧行没记 pid
 /// 时无从比对，放行维持旧行为。`old_alive` 须同时校验进程名仍是 agent——Windows 会复用
 /// pid，无名校验会把「旧会话已死、pid 被无关进程接走」误判成活着而错杀真换代。
+/// 认领的会话 id 在本库里查不到（打不开库按「查得到」算，不拦）。单测不碰用户的真库：
+/// 用 MISSING_FOR_TEST 指定哪些 id 算查不到。
+#[cfg(not(test))]
+fn session_missing(session_id: i64) -> bool {
+    crate::open_store(&crate::db_path())
+        .map(|store| store.session_header(session_id).is_err())
+        .unwrap_or(false)
+}
+
+#[cfg(test)]
+static MISSING_FOR_TEST: std::sync::Mutex<Vec<i64>> = std::sync::Mutex::new(Vec::new());
+
+#[cfg(test)]
+fn session_missing(session_id: i64) -> bool {
+    MISSING_FOR_TEST.lock().is_ok_and(|ids| ids.contains(&session_id))
+}
+
 fn nested_claim_hijacks_reclaim(
     claim_pid: u32,
     old_pid: Option<i64>,
@@ -1943,6 +1960,12 @@ impl PtyBroker {
             (
                 "MEOWO_PTY_PROTOCOL".into(),
                 CURRENT_PROTOCOL_VERSION.to_string(),
+            ),
+            // broker 自己的库：reporter 落库用的不是它（会话内跑的测试、探针用 MEOWO_DB 指开了
+            // 临时库）时，那边的会话 id 在这里毫无意义，reporter 据此不认领（见 notify_claim）。
+            (
+                "MEOWO_PTY_DB".into(),
+                crate::db_path().to_string_lossy().into_owned(),
             ),
         ]);
         if let Err(error) = self.start(
@@ -3205,6 +3228,13 @@ impl PtyBroker {
         };
         if real_id <= 0 {
             return Err("PTY claim session 无效".into());
+        }
+        // 认领的会话必须在本库里：reporter 先落库再认领，合法认领一定查得到这一行。查不到 =
+        // 别的库里的 id（会话内跑的测试、探针继承了 PTY 凭据），照单换绑会把真会话的终端交给
+        // 一个不存在的会话——此前是先换绑、后落库失败，1537 就这样成了「外部会话」（实拍）。
+        // 打不开库时不拦：守卫只在证据齐全时收紧。
+        if session_missing(real_id) {
+            return Err(format!("PTY claim 拒绝：会话 {real_id} 不在本库中（别的库里的会话 id）"));
         }
         let temp_id = *self
             .attach
@@ -5256,6 +5286,31 @@ mod tests {
         // 换代到新 id，但旧会话已不在 sessions（PTY 已退出）：报错，且绑定保持原值。
         assert!(broker.handle_claim(&token, "launch-token", 10, None).is_err());
         assert_eq!(broker.binding(-7), Some(9));
+    }
+
+    /// 认领的会话不在本库里（会话内跑的测试 / 探针用临时库建的会话，id 继承外层 PTY 凭据
+    /// 来认领）：首次认领和换代都拒绝，原绑定不动（实拍 1537 被换代到不存在的会话 1）。
+    #[test]
+    fn claim_for_a_session_missing_from_the_db_is_rejected() {
+        const GHOST: i64 = 424_242;
+        MISSING_FOR_TEST.lock().unwrap().push(GHOST);
+        let broker = PtyBroker::default();
+        let token = broker.attach.token.clone();
+        broker
+            .attach
+            .pending
+            .lock()
+            .unwrap()
+            .insert("launch-ghost".into(), -17);
+        // 首次认领：拒绝，不建绑定。
+        assert!(broker.handle_claim(&token, "launch-ghost", GHOST, None).is_err());
+        assert_eq!(broker.binding(-17), None);
+        // 换代：拒绝，原绑定保持。
+        broker.attach.bindings.lock().unwrap().insert(-17, 9);
+        let err = broker.handle_claim(&token, "launch-ghost", GHOST, None).unwrap_err();
+        assert!(err.contains("不在本库中"), "{err}");
+        assert_eq!(broker.binding(-17), Some(9));
+        MISSING_FOR_TEST.lock().unwrap().retain(|id| *id != GHOST);
     }
 
     /// 换代守卫：会话内 Bash 起的嵌套 agent（`claude -p` 探针等）继承 PTY 环境变量后，
