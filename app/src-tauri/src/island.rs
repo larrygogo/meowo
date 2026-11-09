@@ -13,8 +13,9 @@ use std::sync::Mutex;
 
 /// 拖动起点：(光标物理 x, 窗口左上角物理 x)。
 static DRAG: Mutex<Option<(f64, i32)>> = Mutex::new(None);
-/// 岛的窗口样式（不可缩放、放开最小尺寸）是否已设过。只需设一次：每次改形态都重设会让
-/// tao 重新比对窗口风格位，window.rs 里岛消失的问题就出在这类重设上（审查发现）。
+/// 岛的窗口样式（不可缩放、放开最小尺寸）是否已设过。它们不随形态变，只需设一次；每次改
+/// 形态都重设，就是每次都让 tao 走一遍风格位比对（window.rs 记过那里 VISIBLE 不同步会把
+/// 窗口藏掉），白担风险（审查发现）。
 static STYLE_SET: AtomicBool = AtomicBool::new(false);
 
 /// 松手时记下的位置：中心比例 + 所在显示器名。
@@ -224,16 +225,23 @@ fn fullscreen_action(fullscreen: bool, hidden_by_us: bool, visible: bool) -> Ful
     }
 }
 
-/// 有全屏程序盖住岛所在的那块屏（游戏、全屏视频、F11 浏览器、放映）。看前台窗口是否
-/// 铺满岛所在显示器的整块屏幕：此前用 SHQueryUserNotificationState，它的 BUSY/APP 不分是哪块
-/// 屏、也不一定真是全屏（前台是商店应用、副屏在放全屏视频都会让岛在自己屏上消失，审查发现）。
-/// 演示模式（Win+P 的「演示设置」）系统层面要求免打扰，照旧算。
+/// 有全屏程序盖住岛所在的那块屏（游戏、全屏视频、F11 浏览器、放映）。按 z 序从上往下看岛所在
+/// 屏上的窗口：第一个普通（非置顶）窗口铺满整块屏且不是最大化，才算全屏；置顶窗口里有铺满的
+/// （独占全屏游戏常带 TOPMOST）也算。不看前台窗口：放映在投影屏、人在笔记本屏上操作时，前台
+/// 在别的屏，岛会冒到投影画面上（做空复现）。最大化窗口在没有任务栏的屏上也铺满整屏，必须
+/// 排除，否则那块屏上一用最大化窗口岛就没了（做空实测：最大化矩形每边比工作区多 11px）。
+/// 此前用 SHQueryUserNotificationState 的 BUSY/APP，不分是哪块屏、也不一定真是全屏。
+/// 演示模式（Windows「演示设置」）系统层面要求免打扰，照旧算。
 #[cfg(target_os = "windows")]
 fn fullscreen_app_running(island: &tauri::WebviewWindow) -> bool {
-    use windows_sys::Win32::Foundation::{HWND, RECT};
+    use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
+    use windows_sys::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
     use windows_sys::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONULL};
     use windows_sys::Win32::UI::Shell::{SHQueryUserNotificationState, QUERY_USER_NOTIFICATION_STATE, QUNS_PRESENTATION_MODE};
-    use windows_sys::Win32::UI::WindowsAndMessaging::{GetClassNameW, GetForegroundWindow, GetWindowRect};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetClassNameW, GetWindowLongW, GetWindowRect, IsIconic, IsWindowVisible, IsZoomed, GWL_EXSTYLE,
+        WS_EX_TOOLWINDOW, WS_EX_TOPMOST,
+    };
 
     let mut state: QUERY_USER_NOTIFICATION_STATE = 0;
     // SAFETY: 传入有效的输出指针；失败时 state 不可信，按「不是演示模式」处理。
@@ -242,30 +250,74 @@ fn fullscreen_app_running(island: &tauri::WebviewWindow) -> bool {
     }
     let Ok(own) = island.hwnd() else { return false };
     let own = own.0 as HWND;
-    // SAFETY: 以下都是只读查询，句柄来自系统或活着的 tauri 窗口，输出缓冲大小如实传入。
+
+    struct Scan {
+        own: HWND,
+        monitor: windows_sys::Win32::Graphics::Gdi::HMONITOR,
+        screen: RECT,
+        found: bool,
+    }
+    /// 外壳/输入法这类铺满屏幕但不是全屏程序的窗口（桌面、Win+. 输入体验等）。
+    fn shell_class(class: &str) -> bool {
+        matches!(
+            class,
+            "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd" | "Windows.UI.Core.CoreWindow"
+                | "XamlExplorerHostIslandWindow" | "ApplicationFrameWindow_Placeholder"
+        )
+    }
+    unsafe extern "system" fn visit(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        // SAFETY: lparam 是下面传入的 &mut Scan，EnumWindows 同步回调，期间独占。
+        let scan = &mut *(lparam as *mut Scan);
+        if hwnd == scan.own || IsWindowVisible(hwnd) == 0 || IsIconic(hwnd) != 0 {
+            return 1;
+        }
+        let mut cloaked: u32 = 0;
+        if DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED as u32, (&mut cloaked as *mut u32).cast(), 4) >= 0 && cloaked != 0 {
+            return 1;
+        }
+        let ex = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
+        if ex & WS_EX_TOOLWINDOW != 0 {
+            return 1;
+        }
+        let mut class = [0u16; 64];
+        let n = GetClassNameW(hwnd, class.as_mut_ptr(), class.len() as i32);
+        if shell_class(&String::from_utf16_lossy(&class[..n.max(0) as usize])) {
+            return 1;
+        }
+        if MonitorFromWindow(hwnd, MONITOR_DEFAULTTONULL) != scan.monitor {
+            return 1;
+        }
+        let mut rect: RECT = std::mem::zeroed();
+        if GetWindowRect(hwnd, &mut rect) == 0 {
+            return 1;
+        }
+        let full = IsZoomed(hwnd) == 0 && covers(rect, scan.screen);
+        if ex & WS_EX_TOPMOST != 0 {
+            // 置顶的小工具不挡判定，继续往下看；铺满整屏的置顶窗口就是全屏。
+            if full {
+                scan.found = true;
+                return 0;
+            }
+            return 1;
+        }
+        // 第一个普通窗口说了算：它铺满就是全屏，否则这块屏上最上层是个普通窗口。
+        scan.found = full;
+        0
+    }
+    // SAFETY: 只读查询；回调里的指针在 EnumWindows 返回前一直有效。
     unsafe {
-        let fg = GetForegroundWindow();
-        if fg.is_null() || fg == own {
-            return false;
-        }
-        // 桌面（Progman / WorkerW）铺满屏幕但不是全屏程序。
-        let mut class = [0u16; 32];
-        let n = GetClassNameW(fg, class.as_mut_ptr(), class.len() as i32);
-        let class = String::from_utf16_lossy(&class[..n.max(0) as usize]);
-        if class == "Progman" || class == "WorkerW" {
-            return false;
-        }
-        let own_monitor = MonitorFromWindow(own, MONITOR_DEFAULTTONULL);
-        if own_monitor.is_null() || MonitorFromWindow(fg, MONITOR_DEFAULTTONULL) != own_monitor {
+        let monitor = MonitorFromWindow(own, MONITOR_DEFAULTTONULL);
+        if monitor.is_null() {
             return false;
         }
         let mut info: MONITORINFO = std::mem::zeroed();
         info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
-        let mut rect: RECT = std::mem::zeroed();
-        if GetMonitorInfoW(own_monitor, &mut info) == 0 || GetWindowRect(fg, &mut rect) == 0 {
+        if GetMonitorInfoW(monitor, &mut info) == 0 {
             return false;
         }
-        covers(rect, info.rcMonitor)
+        let mut scan = Scan { own, monitor, screen: info.rcMonitor, found: false };
+        EnumWindows(Some(visit), &mut scan as *mut Scan as LPARAM);
+        scan.found
     }
 }
 

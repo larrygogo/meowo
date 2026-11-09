@@ -381,6 +381,44 @@ describe("App", () => {
     expect(layoutCalls().at(-1)).toEqual({ width: 360, height: 440, centerRatio: null });
   });
 
+  // 做空复现：从完整列表收起、动画没播完又点托盘找回，旧定时器到点仍缩回胶囊。
+  it("完整列表收起途中托盘找回，仍停在完整列表", async () => {
+    const { container } = render(<App />);
+    await waitFor(() => expect(container.querySelector(".isl-notch")).toBeTruthy());
+    await act(async () => { emitRecallSticker(); });
+    await waitFor(() => expect(container.querySelector(".island-shell.is-full")).toBeTruthy());
+    fireEvent.keyDown(window, { key: "Escape" });
+    await act(async () => { emitRecallSticker(); });
+    await new Promise((r) => setTimeout(r, 400));
+    expect(container.querySelector(".island-shell.is-full")).toBeTruthy();
+    expect(layoutCalls().at(-1)).toEqual({ width: 360, height: 440, centerRatio: null });
+  });
+
+  // 做空复现：展开失败时，等待期间到达的提醒被直接丢掉。
+  it("展开失败时，途中到达的提醒回到胶囊上补弹", async () => {
+    const base = vi.mocked(invoke).getMockImplementation()!;
+    let failGrow: () => void = () => {};
+    vi.mocked(invoke).mockImplementation(((cmd: string, args?: Record<string, unknown>) =>
+      cmd === "island_layout" && (args as { width: number }).width === 628
+        ? new Promise<void>((_, reject) => { failGrow = () => reject(new Error("boom")); })
+        : base(cmd, args)) as typeof invoke);
+    const { container } = render(<App />);
+    const pill = await waitFor(() => {
+      const el = container.querySelector(".isl-notch");
+      expect(el).toBeTruthy();
+      return el as HTMLElement;
+    });
+    fireEvent.pointerDown(pill, { button: 0, pointerId: 1, screenX: 100 });
+    fireEvent.pointerUp(pill, { button: 0, pointerId: 1, screenX: 100 });
+    await waitFor(() => expect(layoutCalls()).toContainEqual({ width: 628, height: 250, centerRatio: null }));
+    act(() => {
+      emitIslandAlert({ payload: { sessionId: 7, kind: "approval", title: "修登录页", project: "web", detail: null } });
+    });
+    await act(async () => { failGrow(); });
+    expect(await screen.findByText("修登录页")).toBeTruthy();
+    expect(layoutCalls()).toContainEqual({ width: 548, height: 68, centerRatio: null });
+  });
+
   // 审查复现：已是完整列表时托盘找回什么都不做，后端那一步留下的位置没人摆回去。
   it("已是完整列表时托盘找回也重新贴顶摆一次", async () => {
     const { container } = render(<App />);

@@ -470,6 +470,9 @@ export function App() {
   // 收起动画的定时器。展开/找回（grow）要把它作废：收起途中点托盘「找回」，旧定时器
   // 到点会把刚展开的完整列表又缩回胶囊（审查复现）。同时防 Esc 与光标离开各排一个。
   const collapseTimerRef = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (collapseTimerRef.current != null) window.clearTimeout(collapseTimerRef.current);
+  }, []);
   // 设置：收起样式、哪些事弹提醒、提醒停留多久、额度环取哪家（实时跟随设置页改动）。
   const [islandCompact, setIslandCompact] = useState<IslandCompactStyle>("counts");
   const [quotaProviders, setQuotaProviders] = useState<string[]>(["claude"]);
@@ -526,6 +529,8 @@ export function App() {
     } catch (err) {
       transitioningRef.current = false;
       console.error("[island] 展开失败：", err);
+      // 展开途中排进来的提醒，留在胶囊上补弹。
+      pumpAlertRef.current();
       return;
     }
     // 展开着不弹提醒：排队的那些在面板/列表里都看得到，作废。
@@ -599,7 +604,9 @@ export function App() {
     if (isMacPanel()) return;
     const un = listen<IslandAlertEvent>("island-alert", (event) => {
       const mode = islandModeRef.current;
-      if (mode === "expanded" || mode === "full" || transitioningRef.current) return;
+      // 正在展开（transitioning）时照样排进队列，只是先不弹（pumpAlert 会拦）：展开成功会清队，
+      // 展开失败回到胶囊后补弹，不能就此丢掉（做空复现）。
+      if (mode === "expanded" || mode === "full") return;
       // 设置还没读到时（启动头一两秒）按全开处理，宁可多弹一次也别漏掉要人处理的事。
       const enabled = islandAlertsRef.current;
       if (enabled && !enabled.includes(islandAlertSwitch(event.payload.kind))) return;
@@ -738,6 +745,12 @@ export function App() {
     // 托盘点了要有反应（审查复现：只剩后端那一步时窗口落在主屏正中、还沉到别的窗口下面）。
     const un = listen("recall-sticker", () => {
       if (!isMacPanel() && islandModeRef.current === "full") {
+        // 完整列表正在收起：作废收起定时器，不然它到点照样缩回胶囊（做空复现）。
+        if (collapseTimerRef.current != null) {
+          window.clearTimeout(collapseTimerRef.current);
+          collapseTimerRef.current = null;
+          setClosing(false);
+        }
         const { w, h } = normalSize();
         layout(w, h).catch(() => {});
         return;

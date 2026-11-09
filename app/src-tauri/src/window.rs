@@ -551,7 +551,7 @@ pub(crate) fn show_window_no_activate(window: &tauri::WebviewWindow) {
             // `set_ignore_cursor_events` 全在此列。
             // 实拍症状（旧贴边缩略条时代）：悬停偷看展开第一句就是 set_resizable(true)，
             // 贴纸整个不见——它 skipTaskbar + transparent，任务栏也没入口，只能托盘「找回
-            // 贴纸」；而找回走的 `recall_center` 里正好有一句 tauri 的 `show()`，把 VISIBLE
+            // 贴纸」；而找回（recall_sticker）里正好有一句 tauri 的 `show()`，把 VISIBLE
             // 补上后当次会话就不再复现（「有时候才出现」的由来）。
             // 补这一次 show() 把标志对齐：窗口此刻已可见，且贴纸建窗时 focused:false 让 tao 的
             // MARKER_DONT_FOCUS 常驻，apply_diff 里同样走 SW_SHOWNOACTIVATE，不抢焦点（W-7）。
@@ -870,31 +870,15 @@ pub(crate) fn open_chat_window_target(
     Ok(())
 }
 
-/// 托盘「找回贴纸」：唤起主窗口并通知前端执行完整找回（岛展开成完整列表 + 置顶）。
+/// 托盘「找回贴纸」：唤起主窗口、置顶带到眼前，再通知前端展开成完整列表（island_layout
+/// 贴顶摆放）。几何全交给前端：这里若先把窗口撑到正常最小尺寸，tao 以左上角为锚改尺寸，
+/// 岛的中心随之右移，前端又按「当前中心」展开收起，每找回一次胶囊就往右挪一截（做空复现）。
+/// WebView 崩了的话前端收不到事件，窗口停在原地、置顶可见——与此前一样救不回内容，要靠重启。
 #[cfg(not(target_os = "macos"))]
 pub(crate) fn recall_sticker(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
         let _ = w.unminimize();
         let _ = w.show();
-        // 原生层几何救援，不依赖 webview 活着：WebView2 浏览器进程崩溃后窗口 JS 全灭，
-        // 下面 emit 的事件无人处理，「找回」就彻底失灵（实拍：吸附细条卡在屏边，重启
-        // 才恢复）。窗口还是细条尺寸就先撑回正常最小尺寸，再居中主屏；前端若活着，
-        // 随后收到 recall-sticker 会用 island_layout 重新贴顶摆成完整列表，终态一致。
-        let scale = w.scale_factor().unwrap_or(1.0);
-        if let Ok(size) = w.outer_size() {
-            let logical = size.to_logical::<f64>(scale);
-            if logical.width < crate::snap::STICKER_MIN_W || logical.height < crate::snap::STICKER_MIN_H
-            {
-                let _ = w.set_size(tauri::LogicalSize::new(
-                    crate::snap::STICKER_MIN_W,
-                    crate::snap::STICKER_MIN_H,
-                ));
-            }
-        }
-        // 原生救援路径读不到前端的 pin 偏好（localStorage 在 webview 里，可能已崩）——
-        // 传 false：只做临时置顶带到眼前，不假设用户偏好；前端活着时随后会按真实偏好还原。
-        // 不再 recall_center：岛恒贴顶置顶，居中主屏再撤置顶会让它落在屏幕中间、沉到别的
-        // 窗口下面，前端已是完整列表时也没人把它摆回去（审查发现）。只保证置顶、带到眼前。
         let _ = w.set_always_on_top(true);
         let _ = w.set_focus();
         let _ = w.emit("recall-sticker", ());
