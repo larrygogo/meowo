@@ -1132,7 +1132,13 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
             let cwd = a.cwd.clone();
             let result = tauri::async_runtime::spawn_blocking(move || {
                 let related = crate::git::related_roots(&cwd);
-                crate::git::changes_overview_blocking(&cwd, &a.touched).map(|repos| {
+                // 先把落在相关仓库之外的路径滤掉，别替远程端在无关仓库里白跑一遍 git。
+                let touched: Vec<String> = a
+                    .touched
+                    .into_iter()
+                    .filter(|path| related.iter().any(|root| crate::git::path_under(path, root)))
+                    .collect();
+                crate::git::changes_overview_blocking(&cwd, &touched).map(|repos| {
                     repos
                         .into_iter()
                         .filter(|repo| related.iter().any(|root| crate::git::same_root(root, &repo.root)))

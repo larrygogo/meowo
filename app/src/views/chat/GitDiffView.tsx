@@ -42,7 +42,7 @@ import { remoteUi } from "../../remoteMode";
 import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
 import type { Dict } from "../../i18n/zh";
-import { buildFileTree, diffLineClass, touchedByPath, type FileTreeNode } from "./gitDiff";
+import { buildFileTree, diffLineClass, normPath, touchedByPath, type FileTreeNode } from "./gitDiff";
 import { diffLineAnchors, diffLineNumbers, type DiffLineAnchor, type ReviewComment } from "./diffComments";
 import { highlightLines, languageForPath } from "./highlight";
 
@@ -547,7 +547,7 @@ function GitDiffViewImpl({ cwd, summary, repos = null, width, collapsed, maximiz
   onToggleMaximize: () => void;
   /** 本会话攒着的改动评论（全部仓）；面板只显示激活仓的那些。 */
   comments: readonly ReviewComment[];
-  onAddComment: (comment: Omit<ReviewComment, "id" | "dir">) => void;
+  onAddComment: (comment: Omit<ReviewComment, "id" | "dir">, dir: string) => void;
   onRemoveComment: (id: string) => void;
   /** 本会话编辑工具碰过的文件（见 sessionTouchedPaths）；空数组 = 认不出，不出过滤开关。 */
   touchedPaths: readonly string[];
@@ -666,27 +666,13 @@ function GitDiffViewImpl({ cwd, summary, repos = null, width, collapsed, maximiz
         </button>}
       </header>
       {/* key=cwd:切仓即重挂,树展开态/选中文件不跨仓串场。 */}
-      {tab === "changes" && repos && repos.length > 0
+      {tab === "changes" && ((repos && repos.length > 0) || (changesAvailable && summary?.isRepo))
         ? (
           <RepoChanges
             key={cwd}
             cwd={cwd}
-            repos={repos}
+            repos={repos && repos.length > 0 ? repos : singleRepo(cwd, summary!)}
             comments={comments}
-            touchedPaths={touchedPaths}
-            turnTouchedPaths={turnTouchedPaths}
-            onAddComment={onAddComment}
-            onRemoveComment={onRemoveComment}
-            escOverrideRef={escOverrideRef}
-          />
-        )
-        : tab === "changes" && changesAvailable && summary
-        ? (
-          <ChangesView
-            key={cwd}
-            cwd={cwd}
-            summary={summary}
-            comments={dirComments}
             touchedPaths={touchedPaths}
             turnTouchedPaths={turnTouchedPaths}
             onAddComment={onAddComment}
@@ -700,7 +686,7 @@ function GitDiffViewImpl({ cwd, summary, repos = null, width, collapsed, maximiz
 }
 
 /** 「更改」页签：可搜索的变更目录树 + 单文件 diff（返回行 + 着色行）。 */
-export function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedPaths, onAddComment, onRemoveComment, escOverrideRef, live = false, diffBase = null, sessionCwd = null, initialPath = null, onBack }: {
+export function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedPaths, onAddComment, onRemoveComment, escOverrideRef, live = false, diffBase = null, sessionCwd = null, initialPath = null, onBack, onSelectPath }: {
   cwd: string;
   summary: GitDiffSummaryDto;
   comments: readonly ReviewComment[];
@@ -719,10 +705,15 @@ export function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedP
   initialPath?: string | null;
   /** 从文件页返回时交给外层（回到多仓库分组列表），不回本组件自己的列表。 */
   onBack?: () => void;
+  /** 打开 / 关上的文件告诉外层：轮询让面板在单仓库与分组形态间切换时，外层据此把它重新打开。 */
+  onSelectPath?: (path: string | null) => void;
 }) {
   const t = useT();
   // 当前查看的文件（null = 文件树形态）；diff 结果按路径缓存，往返切换不重复拉取。
   const [selectedPath, setSelectedPath] = useState<string | null>(initialPath);
+  const onSelectPathRef = useRef(onSelectPath);
+  onSelectPathRef.current = onSelectPath;
+  useEffect(() => { onSelectPathRef.current?.(selectedPath); }, [selectedPath]);
   const [entries, setEntries] = useState<Map<string, FetchEntry<GitFileDiffDto>>>(new Map());
   // 图片改动的预览缓存(与 FilesView 的图片通道同款):git 对二进制只会说 "(binary file)",
   // 但图片完全可以直接把工作区当前版本渲染出来——「二进制文件,无法显示 diff」对一张
@@ -1212,9 +1203,18 @@ export function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedP
 
 /// 「更改」的多仓库形态（用户要求 2026-11-09）：会话开在父目录、agent 新开 worktree 去改、改完又
 /// 提交时，单仓库的 ChangesView 都是一片空白。按仓库分组列出，每组分「未提交」与「已提交未合并」；
-/// 点文件进到那一段自己的 ChangesView，返回回到分组列表。只有工作目录仓库、且只有未提交一段时，
-/// 直接就是原来的 ChangesView，界面不变。
+/// 点文件进到那一段自己的 ChangesView，返回回到分组列表。只有一个仓库、且只有未提交一段时，
+/// 直接就是原来的 ChangesView（目录树、搜索、本会话 / 本轮筛选都在）。
+///
+/// 打开的文件记在这里（open），不在 ChangesView 里：5 秒轮询会让面板在两种形态之间切（agent 刚提交
+/// 出现已提交段，或首屏先用单仓库摘要、overview 到了才分组），子组件重挂会把正在看的文件踢回列表
+/// （做空复现）。外层记着，换了形态照样把它打开。
 type RepoSection = { key: string; repo: RepoChangesDto; kind: "work" | "committed"; summary: GitDiffSummaryDto; base: string | null };
+
+/** 只有单仓库摘要、overview 还没到时，把摘要包成一个仓库交给 RepoChanges（形态不变，不重挂）。 */
+export function singleRepo(cwd: string, summary: GitDiffSummaryDto): RepoChangesDto[] {
+  return [{ root: cwd, name: folderName(cwd), isCwdRepo: true, summary, base: null, baseLabel: null, committed: [] }];
+}
 
 export function RepoChanges({ cwd, repos, comments, touchedPaths, turnTouchedPaths, onAddComment, onRemoveComment, escOverrideRef, live = false }: {
   cwd: string;
@@ -1222,7 +1222,8 @@ export function RepoChanges({ cwd, repos, comments, touchedPaths, turnTouchedPat
   comments: readonly ReviewComment[];
   touchedPaths: readonly string[];
   turnTouchedPaths: readonly string[];
-  onAddComment: (comment: Omit<ReviewComment, "id" | "dir">) => void;
+  /** dir：评论所在仓库（非工作目录仓库的评论要记在它自己的根下，插入输入框时才拼得出对的路径）。 */
+  onAddComment: (comment: Omit<ReviewComment, "id" | "dir">, dir: string) => void;
   onRemoveComment: (id: string) => void;
   escOverrideRef: MutableRefObject<(() => void) | null>;
   live?: boolean;
@@ -1236,64 +1237,112 @@ export function RepoChanges({ cwd, repos, comments, touchedPaths, turnTouchedPat
     return out;
   }), [repos]);
   const [open, setOpen] = useState<{ key: string; path: string } | null>(null);
-  // 工作目录所在仓库沿用会话目录（可能是仓库里的子目录，单文件 diff、评论都按它算）。
-  const dirOf = (repo: RepoChangesDto) => (repo.isCwdRepo ? cwd : repo.root);
+  const [search, setSearch] = useState("");
+  const [onlySession, setOnlySession] = useState(false);
+  // 单文件 diff、图片预览、路径菜单、评论都按仓库根算：改动清单的路径是相对仓库根的，工作目录
+  // 是仓库子目录时按它算会对不上（做空复现：已提交段点进去 diff 是空的）。
+  const dirOf = (repo: RepoChangesDto) => repo.root;
+  const sessionCwdOf = (dir: string) => (normPath(dir) === normPath(cwd) ? null : cwd);
   const viewProps = (dir: string) => ({
-    comments: comments.filter((comment) => comment.dir === dir),
+    comments: comments.filter((comment) => normPath(comment.dir) === normPath(dir)),
     touchedPaths,
     turnTouchedPaths,
-    onAddComment,
+    onAddComment: (comment: Omit<ReviewComment, "id" | "dir">) => onAddComment(comment, dir),
     onRemoveComment,
     escOverrideRef,
     live,
   });
-  if (sections.length === 1 && sections[0].kind === "work" && sections[0].repo.isCwdRepo) {
-    return <ChangesView key={cwd} cwd={cwd} summary={sections[0].summary} {...viewProps(cwd)} />;
-  }
+  const single = sections.length === 1 && sections[0].kind === "work";
   const opened = open ? sections.find((section) => section.key === open.key) : undefined;
-  if (open && opened) {
-    const dir = dirOf(opened.repo);
+  if (single && !(opened && open?.path)) {
+    const section = sections[0];
+    const dir = dirOf(section.repo);
     return (
       <ChangesView
-        key={`${open.key}\u0000${open.path}`}
+        key={`single\u0000${dir}`}
         cwd={dir}
-        summary={opened.summary}
-        diffBase={opened.base}
-        sessionCwd={dir === cwd ? null : cwd}
-        initialPath={open.path}
-        onBack={() => setOpen(null)}
+        summary={section.summary}
+        sessionCwd={sessionCwdOf(dir)}
+        initialPath={open?.key === section.key ? open.path : null}
+        onSelectPath={(path) => setOpen(path ? { key: section.key, path } : null)}
         {...viewProps(dir)}
       />
     );
   }
+  if (open && opened) {
+    const dir = dirOf(opened.repo);
+    return (
+      <ChangesView
+        key={`open\u0000${open.key}`}
+        cwd={dir}
+        summary={opened.summary}
+        diffBase={opened.base}
+        sessionCwd={sessionCwdOf(dir)}
+        initialPath={open.path}
+        onBack={() => setOpen(null)}
+        onSelectPath={(path) => { if (path) setOpen({ key: open.key, path }); }}
+        {...viewProps(dir)}
+      />
+    );
+  }
+  // 分组形态也给搜索与「本会话」筛选（单仓库在分支上一有提交就进这里，不能把这两样丢了）。
+  const query = search.trim().toLowerCase();
+  const touched = touchedPaths.length > 0;
+  const visible = (section: RepoSection) => section.summary.files.filter((file) =>
+    (!query || file.path.toLowerCase().includes(query))
+    && (!onlySession || touchedByPath(touchedPaths, section.repo.root, file.path)));
   return (
-    <div className="chat-diff-tree chat-repos" data-testid="repo-changes">
-      {repos.map((repo) => (
-        <section key={repo.root} className="chat-repo">
-          <div className="chat-repo-head" data-tip={repo.root}>
-            <span className="chat-repo-name">{repo.name}</span>
-            {repo.summary.branch && <span className="chat-repo-branch">{repo.summary.branch}</span>}
-          </div>
-          {sections.filter((section) => section.repo === repo).map((section) => (
-            <div key={section.key} className="chat-repo-section">
-              <div className="chat-repo-label">
-                {section.kind === "work" ? t.chat.changesUncommitted : t.chat.changesCommitted(repo.baseLabel ?? "main")}
-              </div>
-              {section.summary.files.length === 0
-                ? <div className="chat-repo-empty">{t.chat.changesRepoClean}</div>
-                : section.summary.files.map((file) => (
-                  <div key={file.path} className="chat-diff-tree-row">
-                    <button type="button" className="chat-diff-tree-file is-flat" data-tip={file.path} onClick={() => setOpen({ key: section.key, path: file.path })}>
-                      <StatusBadge status={file.status} />
-                      <span className="chat-diff-path">{file.path}</span>
-                      <LineCounts file={file} />
-                    </button>
-                  </div>
-                ))}
+    <div className="chat-repos" data-testid="repo-changes">
+      <input
+        type="text"
+        className="chat-diff-search"
+        placeholder={t.chat.diffSearchPlaceholder}
+        value={search}
+        onChange={(event) => {
+          if ((event.nativeEvent as InputEvent).isComposing) return;
+          setSearch(event.target.value);
+        }}
+        onCompositionEnd={(event) => setSearch(event.currentTarget.value)}
+      />
+      {touched && (
+        <div className="chat-diff-scope" role="group" aria-label={t.chat.diffScopeLabel}>
+          <button type="button" aria-pressed={!onlySession} onClick={() => setOnlySession(false)}>{t.chat.diffScopeAll}</button>
+          <button type="button" aria-pressed={onlySession} data-tip={t.chat.diffOnlySessionTip} onClick={() => setOnlySession(true)}>
+            {t.chat.diffScopeSession(sections.reduce((sum, section) => sum + section.summary.files.filter((file) => touchedByPath(touchedPaths, section.repo.root, file.path)).length, 0))}
+          </button>
+        </div>
+      )}
+      <div className="chat-diff-tree">
+        {repos.map((repo) => (
+          <section key={repo.root} className="chat-repo">
+            <div className="chat-repo-head" data-tip={repo.root}>
+              <span className="chat-repo-name">{repo.name}</span>
+              {repo.summary.branch && <span className="chat-repo-branch">· {repo.summary.branch}</span>}
             </div>
-          ))}
-        </section>
-      ))}
+            {sections.filter((section) => section.repo === repo).map((section) => {
+              const files = visible(section);
+              return (
+                <div key={section.key} className="chat-repo-section">
+                  <div className="chat-repo-label">
+                    {section.kind === "work" ? t.chat.changesUncommitted : t.chat.changesCommitted(repo.baseLabel ?? "main")}
+                  </div>
+                  {files.length === 0
+                    ? <div className="chat-repo-empty">{t.chat.changesRepoClean}</div>
+                    : files.map((file) => (
+                      <div key={file.path} className="chat-diff-tree-row">
+                        <button type="button" className="chat-diff-tree-file is-flat" data-tip={file.path} onClick={() => setOpen({ key: section.key, path: file.path })}>
+                          <StatusBadge status={file.status} />
+                          <span className="chat-diff-path">{file.path}</span>
+                          <LineCounts file={file} />
+                        </button>
+                      </div>
+                    ))}
+                </div>
+              );
+            })}
+          </section>
+        ))}
+      </div>
     </div>
   );
 }

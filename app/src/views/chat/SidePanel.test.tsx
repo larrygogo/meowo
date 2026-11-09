@@ -97,6 +97,23 @@ describe("右侧面板", () => {
     expect(actions.openFiles).toHaveBeenCalledTimes(1);
   });
 
+  /// 做空复现：工作目录不是仓库（会话开在 workspace）时，「更改」入口此前全没了。
+  it("工作目录不是仓库、但会话改过别的仓库时，启动列表里有「更改」", () => {
+    const actions = {
+      activate: vi.fn(), move: vi.fn(), close: vi.fn(), openDiff: vi.fn(), openFiles: vi.fn(), newTerminal: vi.fn(), newBrowser: vi.fn(),
+      show: vi.fn(), hide: vi.fn(), toggle: vi.fn(), toggleExpanded: vi.fn(), cycle: vi.fn(), toggleFiles: vi.fn(), toggleTerminal: vi.fn(), openUrl: vi.fn(),
+    } satisfies PanelActions;
+    render(
+      <SidePanel
+        state={{ tabs: [], active: null, visible: true, expanded: false }} actions={actions} shells={shells} panes={panes} cwd={"C:\\w"}
+        summary={{ ...summary, isRepo: false, branch: null }} width={420}
+        repos={[{ root: "C:/w/meowo-feat", name: "meowo-feat", isCwdRepo: false, summary, base: null, baseLabel: null, committed: [] }]}
+        comments={[]} onAddComment={() => {}} onRemoveComment={() => {}} touchedPaths={[]} turnTouchedPaths={[]} browserSuggestions={[]}
+      />,
+    );
+    expect(screen.getByRole("navigation", { name: "可打开" }).textContent).toContain("更改");
+  });
+
   it("一个页签都没有时显示启动列表", () => {
     const actions = renderPanel({ tabs: [], active: null, visible: true, expanded: false });
     const launcher = screen.getByRole("navigation", { name: "可打开" });

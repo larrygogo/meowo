@@ -888,7 +888,8 @@ export function ChatWindow() {
   // （正在看就收起），Ctrl+T 新浏览器，Ctrl+` 面板终端，Ctrl+W 关当前页签，Ctrl+(Shift+)Tab 切换。
   // 焦点在终端里时这些键 xterm 自己吃掉（Ctrl+W 是删词、Ctrl+T 是换字），只有 Ctrl+` 被放行。
   const isRepoRef = useRef(false);
-  isRepoRef.current = !!gitSummary?.isRepo;
+  const effectiveSummaryRef = useRef<GitDiffSummaryDto | null>(null);
+  isRepoRef.current = !!effectiveSummaryRef.current?.isRepo;
   const panelStateRef = useRef(panelState);
   panelStateRef.current = panelState;
   useEffect(() => {
@@ -925,10 +926,13 @@ export function ChatWindow() {
       return next;
     });
   }, [sessionId]);
-  const addReviewComment = useCallback((comment: Omit<ReviewComment, "id" | "dir">) => {
-    if (!diffCwd) return;
+  // dir：评论所在仓库的根（多仓库「更改」里别的仓库 / worktree 的评论记在它自己下面，插入输入框时
+  // formatReviewComments 才会拼成绝对路径；记成会话目录的话 agent 会去会话目录下找这个相对路径）。
+  const addReviewComment = useCallback((comment: Omit<ReviewComment, "id" | "dir">, dir?: string) => {
+    const at = dir ?? diffCwd;
+    if (!at) return;
     const id = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-    setSessionReviewComments((list) => [...list, { ...comment, id, dir: diffCwd }]);
+    setSessionReviewComments((list) => [...list, { ...comment, id, dir: at }]);
   }, [diffCwd, setSessionReviewComments]);
   const removeReviewComment = useCallback((id: string) => {
     setSessionReviewComments((list) => list.filter((comment) => comment.id !== id));
@@ -962,14 +966,33 @@ export function ChatWindow() {
   // 工作目录也可能是父目录。面板可见时拉一次、「更改」开着时随 5 秒轮询一起刷新；内容没变不换对象。
   const [repoChanges, setRepoChanges] = useState<RepoChangesDto[] | null>(null);
   useEffect(() => setRepoChanges(null), [diffCwd]);
+  // 上一轮还没回来就不发下一轮：仓库多时一轮可能超过 5 秒，不拦会越积越多（做空复现）。
+  const repoChangesInflightRef = useRef(false);
   const loadRepoChanges = useCallback((cancelled: () => boolean) => {
-    if (!diffCwd) return;
+    if (!diffCwd || repoChangesInflightRef.current) return;
+    repoChangesInflightRef.current = true;
     getGitChangesOverview(diffCwd, touchedKey ? touchedKey.split("\0") : [])
       .then((result) => {
         if (!cancelled()) setRepoChanges((prev) => (JSON.stringify(prev) === JSON.stringify(result) ? prev : result));
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => { repoChangesInflightRef.current = false; });
   }, [diffCwd, touchedKey]);
+  // 工作目录不是仓库（会话开在 workspace 这种父目录）时，面板没开也先拉一次：标题栏胶囊、Ctrl+Shift+G、
+  // 面板「+」菜单这些入口都靠它才知道有没有改动可看（做空复现：此前全只认工作目录本身是不是仓库，
+  // 这种会话根本打不开「更改」）。会话又改了文件（touched 变了）隔 2 秒再拉。
+  const cwdNotRepo = !!gitSummary && !gitSummary.isRepo;
+  useEffect(() => {
+    if (!cwdNotRepo) return;
+    let cancelled = false;
+    const timer = window.setTimeout(() => loadRepoChanges(() => cancelled), 2000);
+    loadRepoChanges(() => cancelled);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [cwdNotRepo, loadRepoChanges]);
+  // 各入口与标题栏用的摘要：工作目录是仓库就是它自己；不是的话取第一个仓库（规格终态 6）。
+  const effectiveSummary = gitSummary?.isRepo ? gitSummary : (repoChanges?.[0]?.summary ?? gitSummary);
+  effectiveSummaryRef.current = effectiveSummary;
+  isRepoRef.current = !!effectiveSummary?.isRepo;
   useEffect(() => {
     if (!diffCwd) { setGitSummary(null); return; }
     let cancelled = false;
@@ -1304,8 +1327,8 @@ export function ChatWindow() {
     name: transcriptAgent.name,
     version: chatUi?.version ?? null,
     model: transcriptAgent.model,
-    branch: gitSummary?.isRepo ? gitSummary.branch : null,
-    changes: gitSummary?.isRepo ? gitSummary.files.length : 0,
+    branch: effectiveSummary?.isRepo ? effectiveSummary.branch : null,
+    changes: effectiveSummary?.isRepo ? effectiveSummary.files.length : 0,
   };
   // 评论拼成文字接在已打的字后面,光标放到末尾:用户可能还想补一句总的要求再发。
   const insertReviewComments = () => {
@@ -4047,7 +4070,7 @@ export function ChatWindow() {
         archive={history && !history.archived && sessionId > 0 ? { busy: archiving, onClick: () => void toggleArchived() } : null}
         end={history?.endable ? { busy: endingSession, onClick: () => void endSession() } : null}
         cwd={cwd}
-        gitSummary={gitSummary}
+        gitSummary={effectiveSummary}
         changesOpen={panelState.visible && panel.active?.type === "diff"}
         panelOpen={panelState.visible}
         terminalOn={view === "terminal"}
@@ -5270,7 +5293,7 @@ export function ChatWindow() {
           actions={panelActions}
           shells={panel.shells}
           panes={panel.panes}
-          summary={gitSummary}
+          summary={effectiveSummary}
           onClose={infoWide ? undefined : () => setInfoFloating(false)}
         />
       )}

@@ -4,7 +4,7 @@ import { pushEscLayer } from "../../escLayers";
 import { useT } from "../../i18n";
 import { BrowserPane } from "./BrowserPane";
 import type { ReviewComment } from "./diffComments";
-import { ChangesView, FilesView, PathMenu, PathMentionContext, RepoChanges, type PathMenuItem } from "./GitDiffView";
+import { FilesView, PathMenu, PathMentionContext, RepoChanges, singleRepo, type PathMenuItem } from "./GitDiffView";
 import type { PanelState, PanelTab } from "./panelTabs";
 import { PANEL_ICONS as ICONS, PANEL_SHORTCUTS, shortcutLabel as mod } from "./panelIcons";
 import { ShellTerminal } from "./ShellTerminal";
@@ -23,7 +23,7 @@ type Props = {
   repos?: readonly RepoChangesDto[] | null;
   width: number;
   comments: readonly ReviewComment[];
-  onAddComment: (comment: Omit<ReviewComment, "id" | "dir">) => void;
+  onAddComment: (comment: Omit<ReviewComment, "id" | "dir">, dir: string) => void;
   onRemoveComment: (id: string) => void;
   touchedPaths: readonly string[];
   turnTouchedPaths: readonly string[];
@@ -43,7 +43,7 @@ export const SidePanel = memo(function SidePanel(props: Props) {
   const t = useT();
   const collapsed = !state.visible;
   const active = state.tabs.find((tab) => tab.key === state.active) ?? null;
-  const isRepo = !!summary?.isRepo;
+  const isRepo = !!summary?.isRepo || (props.repos?.length ?? 0) > 0;
   // 评论框开着时 Esc 只关评论框（同 GitDiffView）。
   const escOverrideRef = useRef<(() => void) | null>(null);
 
@@ -212,28 +212,13 @@ export const SidePanel = memo(function SidePanel(props: Props) {
         return null;
       })}
       <PathMentionContext.Provider value={props.onMention ?? null}>
-      {active?.type === "diff" && (props.repos && props.repos.length > 0
+      {active?.type === "diff" && ((props.repos && props.repos.length > 0) || (summary?.isRepo)
         ? (
           <RepoChanges
             key={cwd}
             cwd={cwd}
-            repos={props.repos}
+            repos={props.repos && props.repos.length > 0 ? props.repos : singleRepo(cwd, summary!)}
             comments={props.comments}
-            touchedPaths={props.touchedPaths}
-            turnTouchedPaths={props.turnTouchedPaths}
-            onAddComment={props.onAddComment}
-            onRemoveComment={props.onRemoveComment}
-            escOverrideRef={escOverrideRef}
-            live={!collapsed}
-          />
-        )
-        : isRepo && summary
-        ? (
-          <ChangesView
-            key={cwd}
-            cwd={cwd}
-            summary={summary}
-            comments={props.comments.filter((comment) => comment.dir === cwd)}
             touchedPaths={props.touchedPaths}
             turnTouchedPaths={props.turnTouchedPaths}
             onAddComment={props.onAddComment}

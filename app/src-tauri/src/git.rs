@@ -156,6 +156,14 @@ fn count_lines(bytes: &[u8]) -> u32 {
 const MAX_REPOS: usize = 8;
 /// 工作目录下一层最多看这么多个子目录（找有改动的仓库，见 changes_overview_blocking）。
 const MAX_CHILD_SCAN: usize = 200;
+/// 按目录缓存、带写入时刻的小缓存（过期由读的一方按各自的 TTL 判断）。
+type TtlCache<T> = std::sync::Mutex<Option<std::collections::HashMap<String, (std::time::Instant, T)>>>;
+/// touched 里最多为这么多个不同目录查所属仓库（见 changes_overview_blocking）。
+const MAX_ROOT_LOOKUPS: usize = 24;
+/// 「下一层有改动的仓库」粗筛结果的缓存时长。
+const CHILD_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(30);
+/// 默认分支解析结果的缓存时长（远程分支很少变，不必每 5 秒重认一遍）。
+const BASE_REF_TTL: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// 「更改」面板的仓库清单。`touched` 是会话编辑 / 写入过的文件（绝对路径），按各自所在仓库
 /// 归组；工作目录所在仓库排第一。会话还没动过文件、工作目录又不是仓库时，列工作目录下一层
@@ -174,11 +182,21 @@ pub(crate) fn changes_overview_blocking(cwd: &str, touched: &[String]) -> Result
     }
     let cwd_root = repo_root(dir);
     let mut roots: Vec<String> = cwd_root.iter().cloned().collect();
+    // 5 秒轮询里每个文件都跑一次 rev-parse 会很重（做空实测 100 个文件 3 秒）：落在已认出仓库里的
+    // 文件直接跳过，同一目录只查一次，总共最多查 MAX_ROOT_LOOKUPS 个目录。
+    let mut looked: Vec<String> = Vec::new();
     for path in touched {
-        if roots.len() >= MAX_REPOS {
+        if roots.len() >= MAX_REPOS || looked.len() >= MAX_ROOT_LOOKUPS {
             break;
         }
+        if roots.iter().any(|known| path_under(path, known)) {
+            continue;
+        }
         let Some(start) = existing_dir_of(path) else { continue };
+        if looked.iter().any(|seen| same_path(seen, &start)) {
+            continue;
+        }
+        looked.push(start.clone());
         if let Some(root) = repo_root(&start) {
             if !roots.iter().any(|known| same_path(known, &root)) {
                 roots.push(root);
@@ -190,7 +208,7 @@ pub(crate) fn changes_overview_blocking(cwd: &str, touched: &[String]) -> Result
         .filter_map(|root| repo_changes(root, cwd_root.as_deref().is_some_and(|c| same_path(c, root))))
         .collect();
     if out.is_empty() && cwd_root.is_none() {
-        out = child_repos(dir)
+        out = changed_children(dir)
             .into_iter()
             .filter_map(|root| repo_changes(&root, false))
             .filter(|repo| !repo.summary.files.is_empty())
@@ -198,6 +216,34 @@ pub(crate) fn changes_overview_blocking(cwd: &str, touched: &[String]) -> Result
             .collect();
     }
     Ok(out)
+}
+
+/// 工作目录下一层里此刻有未提交改动的仓库。每个子仓库只跑一条 `git status --porcelain` 粗筛，
+/// 结果按目录缓存 CHILD_CACHE_TTL：codex / gemini 会话认不出改过的文件（touched 恒空），会一直
+/// 走这条路，workspace 下二十几个仓库挨个跑完整的 repo_changes 要好几秒（做空实测 6.7 秒，超过
+/// 5 秒的轮询间隔）。
+fn changed_children(dir: &str) -> Vec<String> {
+    static CACHE: TtlCache<Vec<String>> = std::sync::Mutex::new(None);
+    let key = norm_slashes(dir).to_lowercase();
+    if let Ok(cache) = CACHE.lock() {
+        if let Some((at, hit)) = cache.as_ref().and_then(|map| map.get(&key)) {
+            if at.elapsed() < CHILD_CACHE_TTL {
+                return hit.clone();
+            }
+        }
+    }
+    let changed: Vec<String> = child_repos(dir)
+        .into_iter()
+        .filter(|root| {
+            git_output(root, &["status", "--porcelain", "-uall"])
+                .is_ok_and(|o| o.status.success() && !o.stdout.is_empty())
+        })
+        .take(MAX_REPOS)
+        .collect();
+    if let Ok(mut cache) = CACHE.lock() {
+        cache.get_or_insert_with(Default::default).insert(key, (std::time::Instant::now(), changed.clone()));
+    }
+    changed
 }
 
 /// 和会话目录相关的仓库：它所在仓库、这个仓库的各个 worktree、它下一层的仓库。手机远程页
@@ -259,22 +305,7 @@ pub(crate) fn repo_changes(root: &str, is_cwd_repo: bool) -> Option<RepoChangesD
 /// 再退到 origin/main、origin/master、本地 main、master。当前就在默认分支上、HEAD 本身就是
 /// 基准（没有自己的提交）时返回 None。
 fn default_base(root: &str, branch: Option<&str>) -> Option<(String, String)> {
-    let mut candidates: Vec<String> = Vec::new();
-    if let Ok(output) = git_output(root, &["rev-parse", "--abbrev-ref", "origin/HEAD"]) {
-        let name = stdout_text(&output.stdout).trim().to_string();
-        if output.status.success() && name.starts_with("origin/") && name != "origin/HEAD" {
-            candidates.push(name);
-        }
-    }
-    for name in ["origin/main", "origin/master", "main", "master"] {
-        if !candidates.iter().any(|c| c == name) {
-            candidates.push(name.to_string());
-        }
-    }
-    let base_ref = candidates.into_iter().find(|name| {
-        git_output(root, &["rev-parse", "--verify", "--quiet", &format!("{name}^{{commit}}")])
-            .is_ok_and(|o| o.status.success())
-    })?;
+    let base_ref = default_base_ref(root)?;
     let label = base_ref.strip_prefix("origin/").unwrap_or(&base_ref).to_string();
     if branch == Some(label.as_str()) {
         return None;
@@ -289,6 +320,43 @@ fn default_base(root: &str, branch: Option<&str>) -> Option<(String, String)> {
         return None;
     }
     Some((sha, label))
+}
+
+/// 默认分支的引用名（如 `origin/main`），按仓库缓存 BASE_REF_TTL。
+fn default_base_ref(root: &str) -> Option<String> {
+    static CACHE: TtlCache<Option<String>> = std::sync::Mutex::new(None);
+    let key = norm_slashes(root).to_lowercase();
+    if let Ok(cache) = CACHE.lock() {
+        if let Some((at, hit)) = cache.as_ref().and_then(|map| map.get(&key)) {
+            if at.elapsed() < BASE_REF_TTL {
+                return hit.clone();
+            }
+        }
+    }
+    let found = resolve_default_base_ref(root);
+    if let Ok(mut cache) = CACHE.lock() {
+        cache.get_or_insert_with(Default::default).insert(key, (std::time::Instant::now(), found.clone()));
+    }
+    found
+}
+
+fn resolve_default_base_ref(root: &str) -> Option<String> {
+    let mut candidates: Vec<String> = Vec::new();
+    if let Ok(output) = git_output(root, &["rev-parse", "--abbrev-ref", "origin/HEAD"]) {
+        let name = stdout_text(&output.stdout).trim().to_string();
+        if output.status.success() && name.starts_with("origin/") && name != "origin/HEAD" {
+            candidates.push(name);
+        }
+    }
+    for name in ["origin/main", "origin/master", "main", "master"] {
+        if !candidates.iter().any(|c| c == name) {
+            candidates.push(name.to_string());
+        }
+    }
+    candidates.into_iter().find(|name| {
+        git_output(root, &["rev-parse", "--verify", "--quiet", &format!("{name}^{{commit}}")])
+            .is_ok_and(|o| o.status.success())
+    })
 }
 
 /// `git diff --name-status base HEAD` 加行数。
@@ -378,6 +446,13 @@ fn norm_slashes(path: &str) -> String {
     path.replace('\\', "/").trim_end_matches('/').to_string()
 }
 
+/// path 在 root 目录里（或就是它）。按斜杠归一、Windows 不分大小写比较。
+pub(crate) fn path_under(path: &str, root: &str) -> bool {
+    let (p, r) = (norm_slashes(path), norm_slashes(root));
+    let (p, r) = if cfg!(target_os = "windows") { (p.to_lowercase(), r.to_lowercase()) } else { (p, r) };
+    p == r || p.starts_with(&format!("{r}/"))
+}
+
 /// 远程桥用：两个仓库根是不是同一个目录。
 pub(crate) fn same_root(a: &str, b: &str) -> bool {
     same_path(a, b)
@@ -426,9 +501,12 @@ fn git_file_diff_blocking(cwd: &str, path: &str, untracked: bool, base: Option<&
     } else if untracked {
         return untracked_file_diff(dir, path);
     }
+    // 改动清单里的路径都相对仓库根（porcelain / name-status 的口径），而 `-- path` 默认按 cwd
+    // 解析：cwd 是仓库子目录时 diff 是空的（做空复现）。`:(top)` 让它从仓库根算。
+    let spec = format!(":(top){path}");
     let output = match base {
-        Some(base) => git_output(dir, &["diff", base, "HEAD", "--", path]),
-        None => git_output(dir, &["diff", "HEAD", "--", path]),
+        Some(base) => git_output(dir, &["diff", base, "HEAD", "--", &spec]),
+        None => git_output(dir, &["diff", "HEAD", "--", &spec]),
     }
     .map_err(|e| e.to_string())?;
     if !output.status.success() {

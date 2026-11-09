@@ -112,7 +112,7 @@ describe("GitDiffView 行评论", () => {
     fireEvent.click(adds[1]);
     fireEvent.change(screen.getByPlaceholderText("写下对这一行的意见，Enter 添加"), { target: { value: "别删这行" } });
     fireEvent.keyDown(screen.getByPlaceholderText("写下对这一行的意见，Enter 添加"), { key: "Enter" });
-    expect(onAddComment).toHaveBeenCalledWith({ path: "src/a.ts", side: "old", line: 11, code: "old", text: "别删这行" });
+    expect(onAddComment).toHaveBeenCalledWith({ path: "src/a.ts", side: "old", line: 11, code: "old", text: "别删这行" }, "C:\\repo");
     expect(box.isConnected).toBe(false);
 
     fireEvent.keyDown(window, { key: "Escape" });
@@ -340,6 +340,40 @@ epo" summary={sum} comments={[]} touchedPaths={[]} turnTouchedPaths={[]}
 
 /// 多仓库「更改」（用户要求 2026-11-09）：会话开在父目录、agent 新开 worktree 并提交后也看得到改动。
 describe("RepoChanges", () => {
+  /// 做空复现：agent 刚提交、出现已提交段时，面板从单仓库切到分组形态，正在看的文件被踢回列表。
+  it("轮询让形态从单仓库切到分组时，正在看的文件不被踢走", async () => {
+    vi.mocked(invoke).mockImplementation(async (command: string) => (command === "git_file_diff" ? { path: "src/a.ts", status: "M", diff: DIFF, truncated: false } : []));
+    const props = { cwd: "C:/w/meowo", comments: [], touchedPaths: [], turnTouchedPaths: [], onAddComment: () => {}, onRemoveComment: () => {}, escOverrideRef: { current: null } };
+    const one: RepoChangesDto = { root: "C:/w/meowo", name: "meowo", isCwdRepo: true, summary, base: null, baseLabel: null, committed: [] };
+    const { rerender, container } = render(<RepoChanges {...props} repos={[one]} />);
+    fireEvent.click(screen.getByText("src/a.ts"));
+    await screen.findByRole("button", { name: "返回" });
+    rerender(<RepoChanges {...props} repos={[{ ...one, base: "0123abcd", baseLabel: "main", committed: [{ path: "done.rs", status: "A", additions: 1, deletions: 0 }] }]} />);
+    expect(await screen.findByRole("button", { name: "返回" })).toBeTruthy();
+    expect(container.querySelector("[data-testid=repo-changes]")).toBeNull();
+    // 返回才回到分组列表。
+    fireEvent.click(screen.getByRole("button", { name: "返回" }));
+    expect(container.querySelector("[data-testid=repo-changes]")).toBeTruthy();
+  });
+
+  it("别的仓库里写的评论记在那个仓库的根下；分组列表有搜索框", async () => {
+    vi.mocked(invoke).mockImplementation(async (command: string) => (command === "git_file_diff" ? { path: "src/a.ts", status: "M", diff: DIFF, truncated: false } : []));
+    const onAddComment = vi.fn();
+    const other: RepoChangesDto = { root: "C:/w/other", name: "other", isCwdRepo: false, summary: { ...summary, files: [{ path: "src/a.ts", status: "M", additions: 1, deletions: 1 }, { path: "b.md", status: "M", additions: 1, deletions: 0 }] }, base: null, baseLabel: null, committed: [] };
+    const mine: RepoChangesDto = { root: "C:/w/meowo", name: "meowo", isCwdRepo: true, summary: { ...summary, files: [] }, base: null, baseLabel: null, committed: [] };
+    const { container } = render(<RepoChanges cwd="C:/w" repos={[mine, other]} comments={[]} touchedPaths={[]} turnTouchedPaths={[]}
+      onAddComment={onAddComment} onRemoveComment={() => {}} escOverrideRef={{ current: null }} />);
+    fireEvent.change(container.querySelector(".chat-diff-search")!, { target: { value: "b.md" } });
+    expect(screen.queryByText("src/a.ts")).toBeNull();
+    fireEvent.change(container.querySelector(".chat-diff-search")!, { target: { value: "" } });
+    fireEvent.click(screen.getByText("src/a.ts"));
+    const adds = await screen.findAllByRole("button", { name: "评论这一行" });
+    fireEvent.click(adds[1]);
+    fireEvent.change(screen.getByPlaceholderText("写下对这一行的意见，Enter 添加"), { target: { value: "看这里" } });
+    fireEvent.keyDown(screen.getByPlaceholderText("写下对这一行的意见，Enter 添加"), { key: "Enter" });
+    expect(onAddComment).toHaveBeenCalledWith(expect.objectContaining({ path: "src/a.ts", text: "看这里" }), "C:/w/other");
+  });
+
   const repo = (over: Partial<RepoChangesDto>): RepoChangesDto => ({
     root: "C:/w/meowo", name: "meowo", isCwdRepo: true, summary, base: null, baseLabel: null, committed: [], ...over,
   });
@@ -370,7 +404,7 @@ describe("RepoChanges", () => {
     });
     const { container } = renderRepos([repo({ summary: { ...summary, files: [] } }), worktree]);
     const heads = [...container.querySelectorAll(".chat-repo-head")].map((el) => el.textContent);
-    expect(heads).toEqual(["meowomain", "meowo-featfeat/x"]);
+    expect(heads).toEqual(["meowo· main", "meowo-feat· feat/x"]);
     const labels = [...container.querySelectorAll(".chat-repo-label")].map((el) => el.textContent);
     expect(labels).toEqual(["未提交", "未提交", "已提交未合并 · 相对 main"]);
     expect(screen.getByText("没有改动")).toBeTruthy();
