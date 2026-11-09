@@ -567,3 +567,43 @@ fn answer_injected_only_into_owner_and_choice_validated() {
     assert!(ctx("OWNER").contains("选择 confirm"));
     assert!(!ctx("OTHER").contains("选择 confirm"), "无关会话不能拿到「按答复继续」");
 }
+
+/// 恢复会话（session_id 不变）时注入本会话自己的任务，不是 `.lead/active` 指的别人的任务
+/// （安装版 reporter 实测复现，2026-11-09）；答复消息带任务目录，免得 agent 读错 gate.json。
+#[test]
+fn resume_injects_the_sessions_own_task_over_active() {
+    use std::time::Duration;
+    let e = env();
+    let root = e.d.join("p");
+    fs::create_dir_all(root.join(".git")).unwrap();
+    let mine = make_with(&root, "implement", &[json!(false)], SLUG);
+    claim_as(&e, &root, "ME", "Edit", json!({"file_path": mine.join("progress.md").to_string_lossy()}));
+    // 同项目别的会话开了新任务，active 改指过去。
+    let other = root.join(".lead/20261110-other");
+    fs::create_dir_all(&other).unwrap();
+    fs::write(other.join("progress.md"), "phase: implement\n").unwrap();
+    fs::write(other.join("SPEC.md"), "# 别人的任务").unwrap();
+    fs::write(root.join(".lead/active"), "20261110-other").unwrap();
+    let ctx = |sid: &str| {
+        call(&e, "session", json!({"session_id": sid, "cwd": root, "source": "resume"})).unwrap()["hookSpecificOutput"]
+            ["additionalContext"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    assert!(ctx("ME").contains(SLUG) && !ctx("ME").contains("别人的任务"), "恢复后注入自己的任务");
+    assert!(ctx("NEW").contains("别人的任务"), "没认领任务的会话照旧看 active");
+    // 关卡答复：注入和唤醒都带任务目录。
+    write_gate(&mine, "g1", "B", "pending");
+    answer_gate(&mine, "g1", &ans("1", "")).unwrap();
+    // 登记表里存的是去掉 `\\?\` 的路径（Windows 上 env() 的临时目录 canonicalize 后带这个前缀）。
+    let dir = strip_verbatim(mine.clone()).display().to_string();
+    assert!(ctx("ME").contains(&format!("任务目录：{dir}")));
+    let start = json!({"session_id": "ME", "cwd": root, "hook_event_name": "SessionStart"});
+    let out = wait(&start, &e.reg, Duration::from_millis(20), Duration::from_secs(5));
+    assert_eq!(out.exit, 2);
+    assert!(out.stderr.unwrap().contains(&format!("任务目录：{dir}")));
+    // 自己的任务做完了：退回 active。
+    fs::write(mine.join("progress.md"), "phase: done\n").unwrap();
+    assert!(ctx("ME").contains("别人的任务"));
+}

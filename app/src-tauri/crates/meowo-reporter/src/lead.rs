@@ -307,7 +307,14 @@ fn contains_stop_word(text: &str) -> bool {
 
 fn session(data: &Value, registry: &Path) -> Option<String> {
     let sid = data.get("session_id").and_then(Value::as_str).unwrap_or("");
-    let task = find_task(data.get("cwd").and_then(Value::as_str)).or_else(|| task_of_session(sid, registry))?;
+    let cwd = data.get("cwd").and_then(Value::as_str);
+    // 先认本会话认领的、没做完的任务，没有才看 `.lead/active`。恢复会话时 session_id 不变
+    // （2.1.319 实测），但 active 全项目只有一个：同项目别的会话开了新任务，它就指着别人的。
+    // 此前 active 优先，恢复后注入的是别人的任务（安装版 reporter 实测复现，2026-11-09）。
+    let task = task_of_session(sid, registry)
+        .filter(|t| phase_of(t) != "done")
+        .or_else(|| cwd.and_then(|c| own_task(c, sid)))
+        .or_else(|| find_task(cwd))?;
     let phase = phase_of(&task);
     if phase == "done" {
         return None;
@@ -333,7 +340,7 @@ fn session(data: &Value, registry: &Path) -> Option<String> {
     // （做空审查第二轮 M1；第一轮只修了 wait）。
     let owner = task_of_session(sid, registry).is_some_and(|t| t == task);
     if let Some(g) = read_gate(&task).filter(|g| g.status == "answered" && owner) {
-        parts.push(answer_message(&g));
+        parts.push(answer_message(&task, &g));
     }
     for extra in ["product.md", "standards.md"] {
         let t = read(&lead.join(extra));
@@ -522,12 +529,15 @@ pub fn read_gate(task: &Path) -> Option<LeadGateDto> {
 }
 
 /// 唤醒 / 注入给 agent 的答复文本。内容以 gate.json 为准，这句话重复送达也无害。
-fn answer_message(g: &LeadGateDto) -> String {
+/// 带上任务目录：同项目常有几个任务，只说「读 gate.json」agent 可能去读 active 指向的那个。
+fn answer_message(task: &Path, g: &LeadGateDto) -> String {
     let (choice, note) = g.answer.as_ref().map(|a| (a.choice.as_str(), a.note.as_str())).unwrap_or(("", ""));
     let note = if note.trim().is_empty() { String::new() } else { format!("，意见：{note}") };
     format!(
-        "[lead] leader 已在 Meowo 里回答关卡 {}（{}）：选择 {choice}{note}。读 gate.json 确认，把答复记进 decisions.md，把 gate.json 的 status 改成 consumed，然后按答复继续。",
-        g.kind, g.title
+        "[lead] leader 已在 Meowo 里回答关卡 {}（{}）：选择 {choice}{note}。任务目录：{}。读这个目录里的 gate.json 确认，把答复记进 decisions.md，把 gate.json 的 status 改成 consumed，然后按答复继续。",
+        g.kind,
+        g.title,
+        task.display()
     )
 }
 
@@ -661,7 +671,7 @@ pub fn wait(data: &Value, registry: &Path, poll: std::time::Duration, max: std::
     let on_start = data.get("hook_event_name").and_then(Value::as_str) == Some("SessionStart");
     let wake = |g: &LeadGateDto| {
         let _ = std::fs::write(&delivered, &g.id);
-        Output { stderr: Some(answer_message(g)), exit: 2, ..Output::default() }
+        Output { stderr: Some(answer_message(&task, g)), exit: 2, ..Output::default() }
     };
     match first.status.as_str() {
         "answered" if on_start || read(&delivered).trim() != first.id => return wake(&first),
