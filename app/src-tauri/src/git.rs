@@ -363,16 +363,38 @@ fn command_mentioned_roots(cwd: &str, candidates: &[String], commands: &[String]
             out
         }
     };
-    let cwd_norm = fold(&norm_slashes(cwd));
+    // 会话目录与候选各取两种写法（原样、真实路径）：命令里多半是会话目录的写法，候选却来自 git /
+    // worktree 记录（解开了软链、8.3 短名），只用一种算相对写法会对不上（CI 复现：macOS /var vs /private/var）。
+    let cwd_forms: Vec<String> = {
+        let raw = fold(&norm_slashes(cwd));
+        let real = fold(&real_path(cwd));
+        if raw == real { vec![raw] } else { vec![raw, real] }
+    };
     // 值：(候选下标, 是不是裸目录名)。裸目录名（`backend`，不带 ./、../、也不含 /）在命令里常常只是
     // 个普通词（`git commit -m "fix backend"`、`npm run backend`），单独出现不算，要有路径的样子：
     // 前一个词是 cd / -C 这类，或者后面跟着 `/`（用户 2026-11-09：只列本会话用过的，误认等于混进别的）。
     let mut needles: std::collections::HashMap<String, (usize, bool)> = std::collections::HashMap::new();
     for (index, root) in candidates.iter().enumerate() {
-        let abs = fold(&norm_slashes(root));
-        for form in path_spellings(&abs, &cwd_norm) {
-            let bare = !form.contains('/');
-            needles.entry(form).or_insert((index, bare));
+        let mut roots = vec![fold(&norm_slashes(root))];
+        let real = fold(&real_path(root));
+        if !roots.contains(&real) {
+            roots.push(real);
+        }
+        // 候选在会话目录下面时，补一个「会话目录原样写法 + 剩余部分」的绝对路径。
+        for cwd_real in &cwd_forms[1..] {
+            for r in roots.clone() {
+                if let Some(rest) = r.strip_prefix(&format!("{cwd_real}/")) {
+                    roots.push(format!("{}/{rest}", cwd_forms[0]));
+                }
+            }
+        }
+        for abs in &roots {
+            for cwd_form in &cwd_forms {
+                for form in path_spellings(abs, cwd_form) {
+                    let bare = !form.contains('/');
+                    needles.entry(form).or_insert((index, bare));
+                }
+            }
         }
     }
     let path_verb = |word: &str| {
@@ -439,7 +461,23 @@ fn path_spellings(abs: &str, cwd: &str) -> Vec<String> {
 
 /// 远程端带来的目录是不是 session_dir 的相关仓库之一。
 pub(crate) fn is_related_root(session_dir: &str, root: &str) -> bool {
-    related_roots(session_dir).iter().any(|known| same_path(known, root))
+    // 按真实路径比：git / worktree 记录给的是长名、解开软链的路径，会话目录可能是 8.3 短名
+    //（CI 的 C:/Users/RUNNER~1）或软链（macOS 的 /var → /private/var），逐字比对不上（CI 复现）。
+    let root = real_path(root);
+    related_roots(session_dir).iter().any(|known| same_path(known, root.as_str()) || same_path(&real_path(known), &root))
+}
+
+/// 文件系统里的真实路径（解开软链、8.3 短名），正斜杠、去掉 Windows 的 `\\?\` 前缀。拿不到（不存在）
+/// 就原样归一。
+fn real_path(path: &str) -> String {
+    match std::fs::canonicalize(path) {
+        Ok(real) => {
+            let text = real.to_string_lossy();
+            let text = text.strip_prefix(r"\\?\UNC\").map(|rest| format!(r"\\{rest}")).unwrap_or_else(|| text.strip_prefix(r"\\?\").unwrap_or(&text).to_owned());
+            norm_slashes(&text)
+        }
+        Err(_) => norm_slashes(path),
+    }
 }
 
 /// 一个仓库的两段改动。不是仓库（或 git 跑不起来）返回 None。
@@ -1991,6 +2029,44 @@ mod tests {
         }
         let repos = changes_overview_blocking(&s(&ws), &[], &[]).unwrap();
         assert_eq!(repos.len(), 11);
+    }
+
+    /// CI 复现：会话目录和 git 记录的写法不同（Windows 8.3 短名、macOS /var 软链），worktree 认不出、
+    /// 手机端放行判定也不对。这里用目录联接给项目起个别名，会话开在别名上。
+    #[test]
+    fn related_roots_match_through_path_aliases() {
+        if !cfg!(windows) {
+            return;
+        }
+        let sb = Sandbox::new("alias");
+        let real = sb.0.join("real");
+        let frontend = real.join("frontend");
+        std::fs::create_dir_all(&frontend).unwrap();
+        sb.git(&frontend, &["init", "-q", "-b", "main"]);
+        std::fs::write(frontend.join("README.md"), "hi
+").unwrap();
+        sb.commit(&frontend, "init");
+        std::fs::write(frontend.join(".gitignore"), ".claude/
+").unwrap();
+        sb.commit(&frontend, "ignore");
+        let wt = frontend.join(".claude").join("worktrees").join("x");
+        sb.git(&frontend, &["worktree", "add", "-q", "-b", "x", wt.to_str().unwrap()]);
+        let alias = sb.0.join("alias");
+        let made = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J", alias.to_str().unwrap(), real.to_str().unwrap()])
+            .output()
+            .unwrap();
+        assert!(made.status.success(), "{}", String::from_utf8_lossy(&made.stderr));
+        let cwd = s(&alias);
+        let names = |command: &str| -> Vec<String> {
+            changes_overview_blocking(&cwd, &[], &[command.to_string()]).unwrap().into_iter().map(|r| r.name).collect()
+        };
+        assert_eq!(names("cd frontend/.claude/worktrees/x && git status"), ["x"]);
+        assert_eq!(names(&format!("cd {}/frontend/.claude/worktrees/x", cwd)), ["x"]);
+        assert!(is_related_root(&cwd, &s(&alias.join("frontend").join(".claude").join("worktrees").join("x"))));
+        assert!(is_related_root(&cwd, &s(&wt)));
+        // 只拆联接，不进去删（联接里是真目录）。
+        std::fs::remove_dir(&alias).unwrap();
     }
 
     /// 用户 2026-11-09：先显示目录，具体内容点击后异步。只有点名（或默认）的那个仓库算行数和已提交段。
