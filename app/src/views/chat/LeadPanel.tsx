@@ -67,6 +67,9 @@ export function LeadPill({ task, active, onClick }: { task: LeadTaskDto; active:
       {t.chat.leadEntry}
       <span className="ui-pill-meta">{total > 0 ? `${passed}/${total}` : t.chat.leadPhase(task.phase)}</span>
       {gateWaiting(task) && <span className="lead-pill-dot" aria-label={t.chat.leadGateWaiting} />}
+      {/* 已答复、agent 还没接手：答复已落盘，agent 醒来或会话被恢复后会接着做。会话没能自动恢复时
+          （安装器杀了等待进程、外部终端会话），这就是界面上的降级提示（做空审查第二轮 M2）。 */}
+      {task.gate?.status === "answered" && <span className="ui-pill-meta lead-pill-answered">{t.chat.leadGateAnswered}</span>}
     </button>
   );
 }

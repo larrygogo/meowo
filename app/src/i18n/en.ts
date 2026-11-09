@@ -613,6 +613,7 @@ export const en: Dict = {
     leadSection: { spec: "Spec", decisions: "Decisions", progress: "Progress" },
     leadSectionEmpty: "Nothing here yet",
     leadGateWaiting: "Your call",
+    leadGateAnswered: "Answered · waiting for the agent",
     leadGateKind: { A: "Gate A · Confirm spec", B: "Gate B · Decide", C: "Gate C · Accept" },
     leadGateConfirm: "Confirm, go ahead",
     leadGateRevise: "Needs changes",

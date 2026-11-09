@@ -670,6 +670,7 @@ export const zh = {
     leadSection: { spec: "规格", decisions: "决策", progress: "进度" },
     leadSectionEmpty: "暂无内容",
     leadGateWaiting: "等你拍板",
+    leadGateAnswered: "已答复·等 agent 接手",
     leadGateKind: { A: "关卡 A 确认规格", B: "关卡 B 拍板", C: "关卡 C 验收" },
     leadGateConfirm: "确认，开工",
     leadGateRevise: "要改",

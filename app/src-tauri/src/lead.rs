@@ -258,6 +258,12 @@ fn lead_registry() -> Option<PathBuf> {
 /// 启动时：装着 Lead 就重装一遍——reporter 路径变了（挪了 app、dev 与安装版混用）要跟着改，
 /// 否则所有 lead hook 都会 127、拦截悄悄失效（做空审查 L2）；顺带把 skill 文本更新到本版本。
 pub(crate) fn refresh_if_installed() {
+    // 与 Meowo 自身 hook 同一道 dev 门：dev 构建一启动就把 lead hook 改指到 target/debug，
+    // 挂着的 wait 会锁住那个 exe（cargo build 报 os error 5），cargo clean 后拦截与注入一起静默失效
+    // （做空审查第二轮 M4）。
+    if !crate::setup::auto_wire_enabled() {
+        return;
+    }
     let (Some(dir), Some(reporter)) = (claude_dir(), crate::setup::sibling_reporter()) else { return };
     if installed_in(&dir) {
         if let Err(e) = install_into(&dir, &reporter, None) {
@@ -313,6 +319,41 @@ fn sessions_with_pending_gate(store: &meowo_store::Store) -> std::collections::H
     out
 }
 
+/// 归属会话已离线（进程退出、Meowo 重启后托管终端随之退出）时，看板标不上「待处理」，
+/// watch.rs 的通知循环也会跳过它——leader 在手机上就完全不知道有关卡在等他（做空审查第二轮 H1）。
+/// 这种情况直接推一次手机推送（Bark，用户配置过才会发），每个关卡只推一次。
+fn notify_offline_gates(
+    store: &meowo_store::Store,
+    want: &std::collections::HashSet<i64>,
+    pushed: &mut std::collections::HashSet<String>,
+) {
+    let settings = crate::settings::load_settings();
+    let lang = crate::settings::ui_lang(&settings);
+    let Ok(cwds) = store.recent_cwds(20) else { return };
+    for cwd in cwds {
+        for (task, gate) in meowo_reporter::lead::project_gates(&cwd) {
+            if gate.status != "pending" || pushed.contains(&gate.id) {
+                continue;
+            }
+            let owner = std::fs::read_to_string(task.join(".owner")).unwrap_or_default();
+            let Ok(Some(sid)) = store.find_session_id_pub(owner.trim()) else { continue };
+            // 在线的会话由看板标记 + watch.rs 的常规通知负责；只有标不上（离线）的才走这里。
+            let marked = store.pending_review_of(sid).ok().flatten().as_deref() == Some("gate");
+            if want.contains(&sid) && marked && crate::terminal::session_agent_alive(store, sid).unwrap_or(false) {
+                continue;
+            }
+            pushed.insert(gate.id.clone());
+            let project = std::path::Path::new(&cwd).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+            crate::push::push_session(&settings, crate::push::PushMessage {
+                title: format!("{project} · {}", crate::settings::tr(lang, "notify.pending.gate")),
+                body: gate.title.clone(),
+                session_id: sid,
+                urgent: true,
+            });
+        }
+    }
+}
+
 /// 关卡挂起 → 会话标成 pending_review=gate：看板/侧栏/托盘的「待处理」、桌面通知、手机推送都复用
 /// 现有链路（watch.rs 按 pending_review 指纹发通知）。关卡答完或撤掉 → 清掉。reporter 处理 Stop 时会
 /// 清 pending_review，所以每轮都按文件重新对齐，而不是只写一次。
@@ -320,6 +361,8 @@ pub(crate) fn spawn_gate_watcher(app: tauri::AppHandle) {
     use tauri::Manager;
     let spawned = std::thread::Builder::new().name("lead-gates".into()).spawn(move || {
         refresh_if_installed();
+        // 已经为哪些关卡推送过（每个关卡只推一次）。重启后会再推一次，可以接受。
+        let mut pushed: std::collections::HashSet<String> = std::collections::HashSet::new();
         loop {
             std::thread::sleep(GATE_POLL);
             let db_path = app.state::<crate::AppState>().db_path.clone();
@@ -327,6 +370,7 @@ pub(crate) fn spawn_gate_watcher(app: tauri::AppHandle) {
             let want = sessions_with_pending_gate(&store);
             let now = crate::now_ms();
             let mut changed = false;
+            notify_offline_gates(&store, &want, &mut pushed);
             for sid in &want {
                 if store.pending_review_of(*sid).ok().flatten().is_none() {
                     // 只在空着时写：真有工具审批/提问在等时，不拿关卡盖掉它。会话已 ended 时写不进去

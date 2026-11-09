@@ -92,6 +92,8 @@ describe("Lead 入口", () => {
     render(<DockWork sessionId={1} cwd="C:/repo" items={[]} history={history} loading={false} />);
     await screen.findByRole("button", { name: /Lead/ });
     expect(screen.queryByText(/关卡 B 拍板/)).toBeNull();
+    // 已答复、agent 还没接手：入口上要看得出来（第二轮 M2 的降级提示）
+    expect(screen.getByText("已答复·等 agent 接手")).toBeTruthy();
   });
 });
 

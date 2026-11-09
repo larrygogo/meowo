@@ -458,3 +458,27 @@ fn gates_of_all_tasks_are_visible() {
     assert_eq!(task_of_gate(&cwd, "B-old").unwrap().file_name().unwrap(), SLUG);
     assert!(!snapshot(&cwd).unwrap().spec.contains("\\?"));
 }
+
+#[test]
+fn answer_injected_only_into_owner_and_choice_validated() {
+    let e = env();
+    let root = e.d.join("p");
+    fs::create_dir_all(root.join(".git")).unwrap();
+    let t = make_with(&root, "design", &[json!(false)], SLUG);
+    write_gate(&t, "g1", "B", "pending");
+    // 第二轮 L5：不存在的方案 id、A/C 的非法选项都拒绝
+    assert_eq!(answer_gate(&t, "g1", &ans("9", "")), Err("lead/gate_bad_choice".into()));
+    write_gate(&t, "gA", "A", "pending");
+    assert_eq!(answer_gate(&t, "gA", &ans("accept", "")), Err("lead/gate_bad_choice".into()));
+    answer_gate(&t, "gA", &ans("confirm", "")).unwrap();
+    // 第二轮 M1：答复只注入归属会话
+    claim_as(&e, &root, "OWNER", "Edit", json!({"file_path": t.join("progress.md").to_string_lossy()}));
+    let ctx = |sid: &str| {
+        call(&e, "session", json!({"session_id": sid, "cwd": root})).unwrap()["hookSpecificOutput"]["additionalContext"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    assert!(ctx("OWNER").contains("选择 confirm"));
+    assert!(!ctx("OTHER").contains("选择 confirm"), "无关会话不能拿到「按答复继续」");
+}

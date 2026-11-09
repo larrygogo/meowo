@@ -294,7 +294,10 @@ fn session(data: &Value, registry: &Path) -> Option<String> {
         ),
         format!("## progress.md（最近部分）\n{}", tail(&read(&task.join("progress.md")), 2500)),
     ];
-    if let Some(g) = read_gate(&task).filter(|g| g.status == "answered") {
+    // 只有关卡的归属会话才拿到「按答复继续」：同项目新开的无关会话不能去执行别人的单向门决定
+    // （做空审查第二轮 M1；第一轮只修了 wait）。
+    let owner = task_of_session(sid, registry).is_some_and(|t| t == task);
+    if let Some(g) = read_gate(&task).filter(|g| g.status == "answered" && owner) {
         parts.push(answer_message(&g));
     }
     for extra in ["product.md", "standards.md"] {
@@ -351,7 +354,12 @@ fn claim(data: &Value, registry: &Path) {
         .filter(|(_, v)| v.as_str().is_some_and(|s| s != key && Path::new(s).is_dir()))
         .collect();
     reg.insert(sid.to_owned(), Value::String(key)); // 一个任务只归一个会话
-    let _ = std::fs::write(registry, serde_json::to_string(&reg).unwrap_or_default());
+    // 先写临时文件再 rename：直接 write 会先截断，并发认领时别的会话可能读到空表再写回，
+    // 把其他会话的映射冲掉（做空审查第二轮 L1）。
+    let tmp = registry.with_extension(format!("tmp{}", std::process::id()));
+    if std::fs::write(&tmp, serde_json::to_string(&reg).unwrap_or_default()).is_ok() {
+        let _ = std::fs::rename(&tmp, registry);
+    }
 }
 
 // ---------------- stop ----------------
@@ -504,6 +512,16 @@ pub fn answer_gate(task: &Path, gate_id: &str, answer: &LeadGateAnswerDto) -> Re
         "pending" => {}
         "answered" if g.answer.as_ref() == Some(answer) => return Ok(()),
         _ => return Err("lead/gate_closed".into()),
+    }
+    // 选项必须是这个关卡的：A 只有 confirm/revise，C 只有 accept/reject，B 是 agent 写的方案 id
+    // （做空审查第二轮 L5）。
+    let valid = match g.kind.as_str() {
+        "A" => ["confirm", "revise"].contains(&answer.choice.as_str()),
+        "C" => ["accept", "reject"].contains(&answer.choice.as_str()),
+        _ => g.options.iter().any(|o| o.id == answer.choice),
+    };
+    if !valid {
+        return Err("lead/gate_bad_choice".into());
     }
     v["status"] = json!("answered");
     v["answer"] = serde_json::to_value(answer).map_err(|e| e.to_string())?;
