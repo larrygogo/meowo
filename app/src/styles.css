@@ -5752,6 +5752,11 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .lead-check-mark { display: grid; place-items: center; height: 1.55em; color: var(--cc-text-faint); }
 .lead-check.is-pass { color: var(--cc-text-faint); }
 .lead-check.is-pass .lead-check-mark { color: var(--cc-ok-vivid); }
+.lead-check.is-waived { color: var(--cc-text-faint); }
+.lead-check.is-waived .lead-check-text { text-decoration: line-through; text-decoration-color: var(--cc-text-faint); }
+.lead-check-body { min-width: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
+.lead-check-note { color: var(--cc-text-faint); font-size: var(--text-xs); overflow-wrap: anywhere; }
+.lead-check-note.is-leader { color: var(--cc-text-dim); }
 .lead-check-text { min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
 .lead-check.is-open .lead-check-text { display: block; -webkit-line-clamp: unset; }
 /* 卡片正文区 .chat-approval-copy 是限高（44vh）的纵向 flex 列，子项默认可收缩：摘要带

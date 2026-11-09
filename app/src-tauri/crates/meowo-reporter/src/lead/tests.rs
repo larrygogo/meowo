@@ -176,10 +176,13 @@ fn scenarios() {
     // 全部通过 / 非实施阶段 → 放行
     make_with(&root, "implement", &[json!(true), json!(true)], SLUG);
     assert!(!blocked(&e, d_work.clone()));
-    for ph in ["blocked", "verify", "design", "done"] {
+    for ph in ["blocked", "design", "done", "spec"] {
         make_with(&root, ph, &[json!(false)], SLUG);
         assert!(!blocked(&e, d_work.clone()), "{ph}");
     }
+    // 做空后修问题在 verify 阶段：同样要拦（审查 2026-11-09）
+    make_with(&root, "verify", &[json!(false)], SLUG);
+    assert!(blocked(&e, d_work.clone()));
     make_with(&root, "done", &[json!(false)], SLUG);
     assert!(call(&e, "session", json!({"session_id": "D", "cwd": wt})).is_none());
 
@@ -635,4 +638,144 @@ fn resume_reaches_answer_on_earlier_claimed_task() {
     let out = wait(&start, &e.reg, Duration::from_millis(20), Duration::from_secs(5));
     assert_eq!(out.exit, 2, "wait 也落在 A 上");
     assert!(own_task(root.to_str().unwrap(), "").is_none(), "空会话 id 不匹配未认领的任务");
+}
+
+/// 审查 2026-11-09：豁免项、由 leader 验收的项不拦；拦截文案指向 gate.json，不再叫 agent「提问」。
+#[test]
+fn waived_and_leader_items_do_not_block() {
+    let e = env();
+    let root = e.d.join("p");
+    fs::create_dir_all(root.join(".git")).unwrap();
+    let t = make(&root);
+    let prog = t.join("progress.md").to_string_lossy().into_owned();
+    claim_as(&e, &root, "A", "Edit", json!({"file_path": prog}));
+    let tr = transcript(&root, "w", "继续做", &[("Edit", json!({"file_path": prog}))]);
+    let work = json!({"session_id": "A", "transcript_path": tr});
+    let write_items = |items: Value| fs::write(t.join("acceptance.json"), items.to_string()).unwrap();
+
+    // 只剩豁免项 / by:"leader" 的项 → 放行
+    write_items(json!([{"id": 1, "check": "a", "passes": true},
+                       {"id": 2, "check": "b", "passes": false, "waived": "leader 选了不做（关卡 B-1）"},
+                       {"id": 3, "check": "视觉", "passes": false, "by": "Leader"}]));
+    assert!(!blocked(&e, work.clone()));
+    // 空串、非字符串的 waived 不算豁免
+    for w in [json!(""), json!("  "), json!(true)] {
+        write_items(json!([{"id": 1, "check": "a", "passes": false, "waived": w}]));
+        assert!(blocked(&e, work.clone()), "{w}");
+    }
+    let v = call(&e, "stop", work.clone()).unwrap();
+    let reason = v["reason"].as_str().unwrap();
+    assert!(reason.contains("gate.json") && !reason.contains("再提问") && reason.contains("实施阶段"), "{reason}");
+    // 旧条目只在文字里写了「由 leader 验收」：提示 agent 补上 by 字段
+    assert!(reason.contains(r#""by": "leader""#), "{reason}");
+    fs::write(t.join("progress.md"), "phase: verify
+").unwrap();
+    let reason = call(&e, "stop", work.clone()).unwrap()["reason"].as_str().unwrap().to_owned();
+    assert!(reason.contains("验证阶段"), "{reason}");
+    fs::write(t.join("progress.md"), "phase: implement
+").unwrap();
+
+    // 做空第 2 轮：只认 by 字段，不看文字。描述 lead 流程本身的条目常引用「由 leader 验收」，
+    // 按文字判会被放过、还会在关卡 C 被代勾（本任务验收 #3 实测中招）
+    for check in ["check 含「由 leader 验收」的条目在 acceptance.json 里变为 passes:true", "视觉由 leader 在真机验收"] {
+        write_items(json!([{"id": 1, "check": check, "passes": false}]));
+        assert!(blocked(&e, work.clone()), "{check}");
+    }
+    write_items(json!([{"id": 1, "check": "主题切换", "passes": false, "by": "leader"}]));
+    assert!(!blocked(&e, work.clone()));
+    write_items(json!([{"id": 1, "check": "x", "passes": false, "by": "agent"}]));
+    assert!(blocked(&e, work.clone()));
+
+    // 会话注入与面板同口径：分母不含豁免项，leader 条目不进待办列表、单独一句
+    write_items(json!([{"id": 1, "check": "要做的", "passes": false},
+                       {"id": 2, "check": "不做了", "passes": false, "waived": "leader 定的"},
+                       {"id": 3, "check": "看视觉", "passes": false, "by": "leader"}]));
+    let ctx = call(&e, "session", json!({"session_id": "A", "cwd": root})).unwrap();
+    let ctx = ctx["hookSpecificOutput"]["additionalContext"].as_str().unwrap().to_owned();
+    assert!(ctx.contains("未通过的验收项（1/2）") && ctx.contains("#1 要做的"), "{ctx}");
+    assert!(!ctx.contains("#3 看视觉") && ctx.contains("另有 1 条待 leader 验收"), "{ctx}");
+
+    // 快照把豁免原因、是否要 leader 验收带给面板；旧条目没有这两个字段照常读
+    write_items(json!([{"id": 1, "check": "旧条目", "passes": true},
+                       {"id": 2, "check": "b", "passes": false, "waived": "不做"},
+                       {"id": 3, "check": "c", "passes": false, "by": "leader"}]));
+    let snap = snapshot(&root.to_string_lossy()).unwrap();
+    let got: Vec<(bool, Option<&str>, bool)> = snap.checks.iter().map(|c| (c.passes, c.waived.as_deref(), c.leader)).collect();
+    assert_eq!(got, vec![(true, None, false), (false, Some("不做"), false), (false, None, true)]);
+}
+
+/// 关卡 D（授权/操作）只认固定三个选项；Q（访谈）只认 agent 写的选项；未知类型照旧拒绝。
+#[test]
+fn gate_kinds_d_and_q() {
+    let e = env();
+    let root = e.d.join("p");
+    fs::create_dir_all(root.join(".git")).unwrap();
+    let t = make_with(&root, "implement", &[json!(false)], SLUG);
+    write_gate(&t, "d1", "D", "pending");
+    assert_eq!(answer_gate(&t, "d1", &ans("1", "")), Err("lead/gate_bad_choice".into()));
+    assert_eq!(answer_gate(&t, "d1", &ans("accept", "")), Err("lead/gate_bad_choice".into()));
+    answer_gate(&t, "d1", &ans("done", "已登录")).unwrap();
+    assert_eq!(read_gate(&t).unwrap().answer.unwrap().choice, "done");
+    write_gate(&t, "q1", "Q", "pending");
+    assert_eq!(answer_gate(&t, "q1", &ans("approve", "")), Err("lead/gate_bad_choice".into()));
+    answer_gate(&t, "q1", &ans("2", "补充：手机也要")).unwrap();
+    // Q 可以只写意见作答（选 other），但意见不能空；其他类型不认 other
+    write_gate(&t, "q2", "Q", "pending");
+    assert_eq!(answer_gate(&t, "q2", &ans("other", " ")), Err("lead/gate_bad_choice".into()));
+    answer_gate(&t, "q2", &ans("other", "两个都不对，按周统计")).unwrap();
+    // agent 自己写了 id 为 other 的选项：按普通选项处理，不要求意见
+    fs::write(t.join("gate.json"), json!({"v": 1, "id": "q3", "type": "Q", "title": "t", "summary": "",
+        "options": [{"id": "other", "label": "别的城市"}], "status": "pending", "answer": null}).to_string()).unwrap();
+    answer_gate(&t, "q3", &ans("other", "")).unwrap();
+    write_gate(&t, "b9", "B", "pending");
+    assert_eq!(answer_gate(&t, "b9", &ans("other", "x")), Err("lead/gate_bad_choice".into()));
+    // 旧的 A/B/C 行为不变
+    write_gate(&t, "a1", "A", "pending");
+    assert_eq!(answer_gate(&t, "a1", &ans("1", "")), Err("lead/gate_bad_choice".into()));
+    answer_gate(&t, "a1", &ans("confirm", "")).unwrap();
+    for bad in ["E", "a", ""] {
+        write_gate(&t, "x", bad, "pending");
+        assert!(read_gate(&t).is_none(), "{bad}");
+    }
+    // 挂着 D 关卡时 Stop 不拦（在等 leader 授权，停下是对的）
+    claim_as(&e, &root, "A", "Edit", json!({"file_path": t.join("progress.md")}));
+    write_gate(&t, "d2", "D", "pending");
+    let tr = transcript(&root, "w", "继续", &[("Edit", json!({"file_path": t.join("progress.md")}))]);
+    assert!(!blocked(&e, json!({"session_id": "A", "transcript_path": tr})));
+}
+
+/// 关卡 C 接受时自动勾上「由 leader 验收」的条目；驳回不动；其他条目、旧字段原样。
+#[test]
+fn accepting_gate_c_marks_leader_checks() {
+    let e = env();
+    let root = e.d.join("p");
+    fs::create_dir_all(root.join(".git")).unwrap();
+    let t = make_with(&root, "verify", &[json!(false)], SLUG);
+    let items = json!([{"id": 1, "check": "cargo test 过", "passes": true},
+                       {"id": 2, "check": "视觉与交互", "passes": false, "by": "leader"},
+                       {"id": 4, "check": "文字里写了「由 leader 验收」但没有 by", "passes": false},
+                       {"id": 3, "check": "c", "passes": false, "waived": "不做", "by": "leader"}]);
+    fs::write(t.join("acceptance.json"), items.to_string()).unwrap();
+    write_gate(&t, "c1", "C", "pending");
+    answer_gate(&t, "c1", &ans("reject", "按钮太挤")).unwrap();
+    let read_items = || serde_json::from_str::<Value>(&fs::read_to_string(t.join("acceptance.json")).unwrap()).unwrap();
+    assert_eq!(read_items(), items);
+    write_gate(&t, "c2", "C", "pending");
+    answer_gate(&t, "c2", &ans("accept", "")).unwrap();
+    let after = read_items();
+    assert_eq!(after[1]["passes"], json!(true));
+    assert_eq!(after[1]["verified_by"], json!("leader"));
+    assert_eq!(after[0], items[0]);
+    // 没有 by 字段的不代勾（只看文字等于替 leader 签字）；豁免项即使 by:"leader" 也不勾
+    assert_eq!(after[2], items[2]);
+    assert_eq!(after[3], items[3]);
+    assert!(!t.join("acceptance.json.tmp").exists());
+    // 坏的验收清单不影响作答
+    fs::write(t.join("acceptance.json"), "{坏").unwrap();
+    write_gate(&t, "c3", "C", "pending");
+    answer_gate(&t, "c3", &ans("accept", "")).unwrap();
+    // PR #156 审查：第一次勾失败（清单读不了），手机重发同一答案时补勾
+    fs::write(t.join("acceptance.json"), json!([{"id": 1, "check": "看视觉", "passes": false, "by": "leader"}]).to_string()).unwrap();
+    answer_gate(&t, "c3", &ans("accept", "")).unwrap();
+    assert_eq!(read_items()[0]["verified_by"], json!("leader"));
 }

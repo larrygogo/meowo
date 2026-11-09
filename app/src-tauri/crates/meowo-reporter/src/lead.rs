@@ -219,9 +219,24 @@ fn acceptance(task: &Path) -> Option<Vec<Value>> {
     }
 }
 
-/// 只有 `passes: true` 算通过；字符串 "false"、缺字段都算未通过。
+/// 只有 `passes: true` 算通过；字符串 "false"、缺字段都算未通过。豁免项（`waived` 非空）不算：
+/// 实测三个任务带着没通过的项收工（leader 说"就这样吧"/选了不做），skill 又不许删项，只能挂红。
 fn failing(items: &[Value]) -> Vec<&Value> {
-    items.iter().filter(|i| i.get("passes") != Some(&Value::Bool(true))).collect()
+    items.iter().filter(|i| i.get("passes") != Some(&Value::Bool(true)) && waived(i).is_none()).collect()
+}
+
+/// 豁免原因；空串、非字符串都不算豁免（豁免必须说清楚是谁、为什么定的）。
+fn waived(i: &Value) -> Option<&str> {
+    i.get("waived").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty())
+}
+
+/// 这一条要 leader 亲自验收。agent 自己永远勾不上它，Stop hook 不该为它拦人；关卡 C 接受时由 Meowo 勾上
+/// （answer_gate）。**只认结构化字段 `by: "leader"`**，不看 check 文字。做空审查两轮来回：只认固定连写
+/// 「由 leader 验收」时旧措辞认不出；放宽成「同时含 leader 和验收」后，描述 lead 流程本身的条目
+/// （本任务自己的验收 #3 就引用了这几个字）都被当成 leader 条目，Stop 放过、关卡 C 还会代勾。
+/// 代勾等于替 leader 签字，宁可多拦几次也不能误判；只写了文字的旧条目回到原来的行为（会被拦）。
+fn needs_leader(i: &Value) -> bool {
+    i.get("by").and_then(Value::as_str).is_some_and(|by| by.trim().eq_ignore_ascii_case("leader"))
 }
 
 fn item_line(i: &Value) -> String {
@@ -334,7 +349,12 @@ fn session(data: &Value, registry: &Path) -> Option<String> {
     }
     let lead = task.parent()?;
     let items = acceptance(&task).unwrap_or_default();
-    let fail: Vec<String> = failing(&items).iter().map(|i| format!("  {}", item_line(i))).collect();
+    // 与 Stop、面板同口径：豁免项不进分母，leader 条目单独说「不用你勾」，免得恢复会话的 agent 去推进
+    // 自己勾不上的条目（做空审查第 2 轮）。
+    let open = failing(&items);
+    let fail: Vec<String> = open.iter().filter(|i| !needs_leader(i)).map(|i| format!("  {}", item_line(i))).collect();
+    let leader_n = open.len() - fail.len();
+    let live = items.iter().filter(|i| waived(i).is_none()).count();
     let mut parts = vec![
         format!(
             "[lead] 这个项目有进行中的任务：{}（phase: {phase}）。如果用户这次说的事与它有关，就按 lead skill 的流程继续推进，不要等用户说“继续”；无关就正常处理用户的请求。",
@@ -342,10 +362,11 @@ fn session(data: &Value, registry: &Path) -> Option<String> {
         ),
         format!("## SPEC.md\n{}", truncate(&read(&task.join("SPEC.md")), 4000)),
         format!(
-            "## 未通过的验收项（{}/{}）\n{}",
+            "## 未通过的验收项（{}/{}）\n{}{}",
             fail.len(),
-            items.len(),
-            if fail.is_empty() { "  无".to_owned() } else { fail.join("\n") }
+            live,
+            if fail.is_empty() { "  无".to_owned() } else { fail.join("\n") },
+            if leader_n > 0 { format!("\n  另有 {leader_n} 条待 leader 验收（by: leader），不用你勾，关卡 C 接受时会勾上") } else { String::new() }
         ),
         format!("## progress.md（最近部分）\n{}", tail(&read(&task.join("progress.md")), 2500)),
     ];
@@ -475,14 +496,16 @@ fn wrote_task(calls: &[Value], task: &Path) -> bool {
 fn stop(data: &Value, registry: &Path) -> Option<String> {
     let sid = data.get("session_id").and_then(Value::as_str)?;
     let task = task_of_session(sid, registry)?; // 按会话找任务：不依赖工作目录
-    if phase_of(&task) != "implement" {
+    // verify 也拦：做空之后修问题就在这个阶段，此前只拦 implement，修到一半停下没人管（审查 2026-11-09）。
+    let phase = phase_of(&task);
+    if !["implement", "verify"].contains(&phase.as_str()) {
         return None;
     }
     if read_gate(&task).is_some_and(|g| g.status != "consumed") {
         return None; // 在等 leader 拍板，停下是对的
     }
     let items = acceptance(&task)?;
-    let fail = failing(&items);
+    let fail: Vec<&Value> = failing(&items).into_iter().filter(|i| !needs_leader(i)).collect();
     let state_f = task.join(".stop-state.json");
     let mut state = load_map(&state_f);
     if fail.is_empty() {
@@ -511,7 +534,8 @@ fn stop(data: &Value, registry: &Path) -> Option<String> {
     let slug = task.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let list: Vec<String> = fail.iter().take(8).map(|i| item_line(i)).collect();
     let reason = format!(
-        "[lead] 任务 {slug} 还在实施阶段，有 {} 条验收未通过（本轮第 {blocks}/{MAX_BLOCKS} 次拦截）：\n{}\n继续推进下一条，并实际验证。确实卡住了：在 progress.md 写明原因，把 phase 改为 blocked，再找用户。需要用户做决定（单向门）：把 phase 改为 design，再提问。",
+        "[lead] 任务 {slug} 还在{}阶段，有 {} 条验收未通过（本轮第 {blocks}/{MAX_BLOCKS} 次拦截）：\n{}\n继续推进下一条，并实际验证。需要 leader 拍板、授权或亲手操作：按 lead skill 写 gate.json（B 拍板、D 授权或操作），然后结束本轮，不要用 AskUserQuestion。确实卡住了：在 progress.md 写明原因，把 phase 改为 blocked。某条只能由 leader 验收：给它加 \"by\": \"leader\"，就不会再为它拦你。",
+        if phase == "verify" { "验证" } else { "实施" },
         fail.len(),
         list.join("\n")
     );
@@ -522,13 +546,28 @@ fn stop(data: &Value, registry: &Path) -> Option<String> {
 
 use meowo_protocol::ipc::{LeadCheckDto, LeadGateAnswerDto, LeadGateDto, LeadGateOptionDto, LeadTaskDto};
 
+/// A 确认规格 / B 拍板单向门 / C 看证据验收 / D 需要授权或亲手操作 / Q 访谈提问。
+/// D、Q 是 2026-11-09 审查补的：「要不要开云主机」「请在面板里登录」只能 blocked 干等，手机上收不到卡片；
+/// 访谈问题也只能在终端答。
+const GATE_KINDS: [&str; 5] = ["A", "B", "C", "D", "Q"];
+
+/// 固定选项的关卡（A、C、D）；B、Q 的选项由 agent 写。
+fn fixed_choices(kind: &str) -> Option<&'static [&'static str]> {
+    match kind {
+        "A" => Some(&["confirm", "revise"]),
+        "C" => Some(&["accept", "reject"]),
+        "D" => Some(&["approve", "done", "deny"]),
+        _ => None,
+    }
+}
+
 /// 读 gate.json；文件不存在或格式不合法返回 None。
 pub fn read_gate(task: &Path) -> Option<LeadGateDto> {
     let v: Value = serde_json::from_str(&read(&task.join("gate.json"))).ok()?;
     let s = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_owned();
     let (id, kind, status) = (s("id"), s("type"), s("status"));
     if id.is_empty()
-        || !["A", "B", "C"].contains(&kind.as_str())
+        || !GATE_KINDS.contains(&kind.as_str())
         || !["pending", "answered", "consumed"].contains(&status.as_str())
     {
         return None;
@@ -564,20 +603,36 @@ pub fn answer_gate(task: &Path, gate_id: &str, answer: &LeadGateAnswerDto) -> Re
     if g.id != gate_id {
         return Err("lead/gate_changed".into());
     }
+    let accepts_c = g.kind == "C" && answer.choice == "accept";
     match g.status.as_str() {
         "pending" => {}
-        "answered" if g.answer.as_ref() == Some(answer) => return Ok(()),
+        "answered" if g.answer.as_ref() == Some(answer) => {
+            // 手机断线重发同一答案：上次勾 leader 条目若失败（文件被杀毒或编辑器占用），这里补一次。幂等。
+            if accepts_c {
+                mark_leader_checks(task);
+            }
+            return Ok(());
+        }
         _ => return Err("lead/gate_closed".into()),
     }
     // 选项必须是这个关卡的：A 只有 confirm/revise，C 只有 accept/reject，B 是 agent 写的方案 id
     // （做空审查第二轮 L5）。
-    let valid = match g.kind.as_str() {
-        "A" => ["confirm", "revise"].contains(&answer.choice.as_str()),
-        "C" => ["accept", "reject"].contains(&answer.choice.as_str()),
-        _ => g.options.iter().any(|o| o.id == answer.choice),
+    let valid = match fixed_choices(&g.kind) {
+        Some(fixed) => fixed.contains(&answer.choice.as_str()),
+        // Q 是访谈：开放式问题常常没有合适的选项，允许选 other 只写意见（意见必填）。agent 自己写了 id 为
+        // other 的选项时，它就是普通选项（前端也不再追加「其他」）。
+        None if g.kind == "Q" && answer.choice == "other" && !g.options.iter().any(|o| o.id == "other") => {
+            !answer.note.trim().is_empty()
+        }
+        None => g.options.iter().any(|o| o.id == answer.choice),
     };
     if !valid {
         return Err("lead/gate_bad_choice".into());
+    }
+    // 先勾 leader 条目、再写 answered：后台 wait 一看到 answered 就会唤醒 agent，顺序反过来时 agent
+    // 可能读到还没勾的清单，再按旧内容写回，leader 的签字就丢了（PR #156 审查）。尽力而为，失败不挡作答。
+    if accepts_c {
+        mark_leader_checks(task);
     }
     v["status"] = json!("answered");
     v["answer"] = serde_json::to_value(answer).map_err(|e| e.to_string())?;
@@ -585,6 +640,30 @@ pub fn answer_gate(task: &Path, gate_id: &str, answer: &LeadGateAnswerDto) -> Re
     let text = serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?;
     std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
     std::fs::rename(&tmp, &path).map_err(|e| e.to_string())
+}
+
+/// 关卡 C 被接受：「由 leader 验收」的条目就是这次验收的对象，勾上并记 `verified_by`。
+/// 实测两个任务的这类条目在 leader 说"就这样吧"后一直挂红（multi-repo-changes #9、scm-panel #13）。
+/// 只动这两个字段；条目顺序不变，条目内的键会按字母序重排（本仓 serde_json 没开 preserve_order），内容不变。
+fn mark_leader_checks(task: &Path) {
+    let path = task.join("acceptance.json");
+    let Ok(Value::Array(mut items)) = serde_json::from_str::<Value>(&read(&path)) else { return };
+    let mut changed = false;
+    // 豁免项不勾：leader 已经决定不看它，再写一个「leader 已验收」就是错误的记录（做空审查第 2 轮）。
+    for i in items.iter_mut().filter(|i| i.is_object() && needs_leader(i) && waived(i).is_none()) {
+        if i.get("passes") != Some(&Value::Bool(true)) {
+            i["passes"] = json!(true);
+            i["verified_by"] = json!("leader");
+            changed = true;
+        }
+    }
+    if !changed {
+        return;
+    }
+    let tmp = task.join("acceptance.json.tmp");
+    if std::fs::write(&tmp, serde_json::to_string_pretty(&Value::Array(items)).unwrap_or_default()).is_ok() {
+        let _ = std::fs::rename(&tmp, &path);
+    }
 }
 
 /// 会话 cwd 所在项目的任务快照；没有任务返回 None。只读 `.lead` 下约定的文件。
@@ -619,6 +698,8 @@ pub fn snapshot_for(cwd: &str, session: Option<&str>) -> Option<LeadTaskDto> {
             id: i.get("id").map(|v| v.as_str().map(str::to_owned).unwrap_or_else(|| v.to_string())).unwrap_or_default(),
             check: i.get("check").and_then(Value::as_str).unwrap_or("").to_owned(),
             passes: i.get("passes") == Some(&Value::Bool(true)),
+            waived: waived(i).map(str::to_owned),
+            leader: needs_leader(i),
         })
         .collect();
     Some(LeadTaskDto {

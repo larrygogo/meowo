@@ -11,7 +11,7 @@ vi.mock("../../api", async (importActual) => ({
 }));
 
 const { DockWork } = await import("./DockWork");
-const { LeadGateCard, gateWaiting, leadProgress } = await import("./LeadPanel");
+const { LeadGateCard, LeadPanel, gateWaiting, leadProgress } = await import("./LeadPanel");
 
 const history = { plan: undefined, agentModes: [], pendingReview: null, todos: [] };
 
@@ -21,8 +21,8 @@ function task(over: Partial<LeadTaskDto> = {}): LeadTaskDto {
     phase: "implement",
     spec: "# SPEC\n目的：演示",
     checks: [
-      { id: "1", check: "测试全过", passes: true },
-      { id: "2", check: "手机能用", passes: false },
+      { id: "1", check: "测试全过", passes: true, waived: null, leader: false },
+      { id: "2", check: "手机能用", passes: false, waived: null, leader: false },
     ],
     decisions: "| 决策 |",
     progress: "phase: implement",
@@ -31,13 +31,13 @@ function task(over: Partial<LeadTaskDto> = {}): LeadTaskDto {
   };
 }
 
-function gate(kind: "A" | "B" | "C", over: Partial<LeadGateDto> = {}): LeadGateDto {
+function gate(kind: "A" | "B" | "C" | "D" | "Q", over: Partial<LeadGateDto> = {}): LeadGateDto {
   return {
     id: `${kind}-1`,
     kind,
     title: "选机制",
     summary: "**两种做法**",
-    options: kind === "B" ? [{ id: "1", label: "方案一", detail: "持久化", recommended: true }, { id: "2", label: "方案二", detail: "", recommended: false }] : [],
+    options: kind === "B" || kind === "Q" ? [{ id: "1", label: "方案一", detail: "持久化", recommended: true }, { id: "2", label: "方案二", detail: "", recommended: false }] : [],
     status: "pending",
     answer: null,
     ...over,
@@ -174,5 +174,69 @@ describe("纯函数", () => {
     expect(gateWaiting(task({ gate: gate("A", { status: "answered" }) }))).toBe(false);
     expect(gateWaiting(null)).toBe(false);
     expect(leadProgress(task())).toEqual({ passed: 1, total: 2 });
+  });
+
+  it("豁免项不进进度分母（实测三个任务带着没通过的项收工）", () => {
+    const checks = [
+      { id: "1", check: "a", passes: true, waived: null, leader: false },
+      { id: "2", check: "b", passes: false, waived: "leader 选了不做", leader: false },
+      { id: "3", check: "由 leader 验收", passes: false, waived: null, leader: true },
+    ];
+    expect(leadProgress(task({ checks }))).toEqual({ passed: 1, total: 2 });
+    // 先豁免、后来又做完的条目按通过算（与后端一致）
+    const done = [{ id: "1", check: "a", passes: true, waived: "曾经不做", leader: false }];
+    expect(leadProgress(task({ checks: done }))).toEqual({ passed: 1, total: 1 });
+  });
+});
+
+describe("验收清单与新关卡", () => {
+  it("豁免项沉底并显示原因，待 leader 验收的项有标签", () => {
+    const checks = [
+      { id: "1", check: "已豁免的", passes: false, waived: "leader 选了不做", leader: false },
+      { id: "2", check: "已通过的", passes: true, waived: null, leader: false },
+      { id: "3", check: "视觉（由 leader 验收）", passes: false, waived: null, leader: true },
+      { id: "4", check: "还要做的", passes: false, waived: null, leader: false },
+    ];
+    const { container } = render(<LeadPanel task={task({ checks })} onClose={() => {}} />);
+    const order = [...container.querySelectorAll(".lead-check-text")].map((n) => n.textContent);
+    expect(order).toEqual(["还要做的", "视觉（由 leader 验收）", "已通过的", "已豁免的"]);
+    expect(screen.getByText("已豁免：leader 选了不做")).toBeTruthy();
+    expect(screen.getByText("待你验收")).toBeTruthy();
+    expect(screen.getByLabelText("已豁免")).toBeTruthy();
+  });
+
+  it("关卡 D 给固定三个选项并按 id 作答", async () => {
+    answer.mockResolvedValue(undefined);
+    const onAnswered = vi.fn();
+    render(<LeadGateCard cwd="C:/repo" gate={gate("D", { title: "开一台云主机" })} onAnswered={onAnswered} />);
+    expect(screen.getByText("关卡 D 授权或操作 · 开一台云主机")).toBeTruthy();
+    for (const label of ["允许", "我已完成", "不允许"]) expect(screen.getByLabelText(label)).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("我已完成"));
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "提交" })); });
+    expect(answer).toHaveBeenCalledWith("C:/repo", "D-1", "done", "");
+    expect(onAnswered).toHaveBeenCalled();
+  });
+
+  it("关卡 Q 用 agent 写的选项", () => {
+    render(<LeadGateCard cwd="C:/repo" gate={gate("Q")} onAnswered={() => {}} />);
+    expect(screen.getByText("关卡 Q 回答问题 · 选机制")).toBeTruthy();
+    expect(screen.getByLabelText(/方案一/)).toBeTruthy(); // 标签里还含「推荐」和说明
+  });
+
+  it("关卡 Q 没有选项时也能选「其他」只写意见作答，意见必填", async () => {
+    answer.mockResolvedValue(undefined);
+    render(<LeadGateCard cwd="C:/repo" gate={gate("Q", { options: [] })} onAnswered={() => {}} />);
+    fireEvent.click(screen.getByLabelText("其他（写在意见里）"));
+    const submit = screen.getByRole("button", { name: "提交" }) as HTMLButtonElement;
+    expect(submit.disabled).toBe(true);
+    fireEvent.change(screen.getByPlaceholderText("写下你的回答（必填）"), { target: { value: "按周统计" } });
+    await act(async () => { fireEvent.click(submit); });
+    expect(answer).toHaveBeenCalledWith("C:/repo", "Q-1", "other", "按周统计");
+  });
+
+  it("agent 自己写了 id 为 other 的选项时不再追加「其他」", () => {
+    render(<LeadGateCard cwd="C:/repo" gate={gate("Q", { options: [{ id: "other", label: "别的城市", detail: "", recommended: false }] })} onAnswered={() => {}} />);
+    expect(screen.getAllByRole("radio")).toHaveLength(1);
+    expect(screen.queryByLabelText("其他（写在意见里）")).toBeNull();
   });
 });
