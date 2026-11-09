@@ -17,7 +17,7 @@ const C = {
 
 const COPY = {
   zh: {
-    terminalTitle: "重构吸边状态机 · meowo",
+    terminalTitle: "重构登录页表单校验 · web-app",
     segChat: "对话",
     segTerm: "终端",
     cardTitle: "如何恢复这个长会话？",
@@ -26,7 +26,7 @@ const COPY = {
     hint: "点按钮 = 把对应按键发回终端",
   },
   en: {
-    terminalTitle: "Refactor edge-snap state machine · meowo",
+    terminalTitle: "Refactor login form validation · web-app",
     segChat: "Chat",
     segTerm: "Terminal",
     cardTitle: "How should this long session resume?",

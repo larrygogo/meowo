@@ -7,19 +7,21 @@ const TOC = {
     { id: "how", label: "工作原理" },
     { id: "connect", label: "自动接入" },
     { id: "manual", label: "手动接入 Claude Code" },
+    { id: "remote", label: "手机远程" },
     { id: "data", label: "数据与配置" },
   ],
   en: [
     { id: "how", label: "How it works" },
     { id: "connect", label: "Auto-connect" },
     { id: "manual", label: "Manual Claude Code setup" },
+    { id: "remote", label: "Phone access" },
     { id: "data", label: "Data & config" },
   ],
 };
 
 const HEAD = {
-  zh: { eyebrow: "文档", title: "文档", lead: "工作原理、接入方式、数据和配置文件的位置。", toc: "目录" },
-  en: { eyebrow: "Docs", title: "Docs", lead: "How it works, how it connects, and where data and config files live.", toc: "Contents" },
+  zh: { eyebrow: "文档", title: "文档", lead: "工作原理、接入方式、手机远程的设置，以及数据和配置文件的位置。", toc: "目录" },
+  en: { eyebrow: "Docs", title: "Docs", lead: "How it works, how it connects, how to set up phone access, and where data and config files live.", toc: "Contents" },
 };
 
 const FLOW = ` Claude Code 会话
@@ -53,9 +55,11 @@ function EnDocs() {
       <p>Using Claude Code as the example; Codex / Kimi / Gemini CLI use their own CLI hook mechanisms (OpenCode uses a bridge plugin instead), and the data all lands in the same local database.</p>
       <div className="codeblock"><pre>{FLOW_EN}</pre></div>
       <ul>
-        <li><strong>meowo-reporter</strong> is a one-shot process with no state. It starts on each hook, reads the event, writes the DB, and exits — never blocking the session.</li>
+        <li><strong>meowo-reporter</strong> is a one-shot process with no state. It starts on each hook, reads the event, writes the DB, and exits, so it never blocks the session.</li>
         <li><strong>meowo-app</strong> watches <code className="inline">~/.meowo/</code> on startup and refreshes the UI whenever the DB changes. It also runs two background tasks: marking idle sessions, and importing history on first launch.</li>
         <li>The two sides talk only through this SQLite file and don't depend on each other at runtime.</li>
+        <li>Sessions started from Meowo run in a terminal (PTY) hosted by <strong>meowo-app</strong>. The chat window and the terminal view show the same session, and the app sends your messages, approvals and answers straight to that terminal.</li>
+        <li>With phone access on, <strong>meowo-app</strong> also runs a small HTTP server that only allows a whitelist of calls; the phone page talks to it.</li>
       </ul>
 
       <h2 id="connect">Auto-connect AI coding CLIs</h2>
@@ -80,10 +84,24 @@ bun scripts/install-hooks.mjs "<repo-abs-path>/app/src-tauri/target/release/meow
         <span>This script only handles Claude Code. codex, kimi, and gemini connect through their own native hook config (the hook command carries <code className="inline">--provider codex|kimi|gemini</code>); opencode has no hook mechanism, so Meowo generates a bridge plugin under <code className="inline">~/.config/opencode/plugin/</code> instead. None of them go through this script.</span>
       </div>
 
+      <h2 id="remote">Phone access</h2>
+      <p>Phone access lets you read conversations, send messages, approve commands and answer questions from your phone's browser. No app to install.</p>
+      <ol>
+        <li>Open Settings → <strong>Phone access</strong> and turn on remote access. The default port is 18620.</li>
+        <li>Pick the network interface to bind. <strong>Tailscale only</strong> is recommended: your phone connects from anywhere as long as Tailscale is installed. Binding to all interfaces also works on the same Wi-Fi.</li>
+        <li>Scan the QR code with your phone, or copy the address into its browser. The access token is inside the QR code, so pairing is automatic. You can add the page to your home screen.</li>
+        <li>Optional: fill in your <a href="https://github.com/Finb/Bark" target="_blank" rel="noopener noreferrer">Bark</a> address (<code className="inline">https://api.day.app/&lt;your key&gt;</code>) to get a push when a session needs you, and tap "Send a test" to check it.</li>
+      </ol>
+      <div className="callout">
+        <span className="ci"><InfoIcon /></span>
+        <span>The connection is plain HTTP and can be read by anyone on the same network, so use Tailscale on networks you don't trust. Regenerating the token unpairs every phone; they need to scan again. Push messages go through Bark's server.</span>
+      </div>
+
       <h2 id="data">Data & config</h2>
       <ul>
         <li><strong>Database</strong>: <code className="inline">~/.meowo/board.db</code> (SQLite, WAL). Override the path with <code className="inline">MEOWO_DB</code>.</li>
-        <li><strong>App settings</strong>: <code className="inline">~/.meowo/settings.json</code> — notification toggle, theme, opacity, UI density, archive auto-hide days, and which terminal resumes sessions all live here.</li>
+        <li><strong>App settings</strong>: <code className="inline">~/.meowo/settings.json</code>. Notifications, theme, UI scale, island, phone access, how sessions open, and every other setting live here.</li>
+        <li><strong>Diagnostic log</strong>: <code className="inline">~/.meowo/logs/meowo.log</code> (installed builds). Export it from Settings and attach it when reporting a problem.</li>
         <li><strong>Usage cache</strong>: <code className="inline">~/.meowo/usage-cache.json</code>.</li>
         <li><strong>statusLine wrapper</strong>: <code className="inline">~/.meowo/statusline.sh</code>. Generated and maintained by the app; no need to edit.</li>
         <li><strong>First-import marker</strong>: <code className="inline">~/.meowo/imported.json</code>. Delete it to re-import recent history on the next launch.</li>
@@ -102,6 +120,8 @@ function ZhDocs() {
         <li><strong>meowo-reporter</strong> 是一次性进程，不保存状态。每次触发 hook 时启动，读取事件、写库，然后退出，不会阻塞会话。</li>
         <li><strong>meowo-app</strong> 启动时监听 <code className="inline">~/.meowo/</code> 目录的变化，库一变就刷新界面。它还跑两个后台任务：标记空闲会话，以及首次启动时导入历史会话。</li>
         <li>两端只通过这个 SQLite 文件通信，运行时不互相依赖。</li>
+        <li>从 Meowo 开的会话跑在 <strong>meowo-app</strong> 托管的终端（PTY）里。对话窗和终端视图看的是同一个会话，你在对话窗发的消息、批的审批、答的问题，由 app 直接送进这个终端。</li>
+        <li>开启手机远程后，<strong>meowo-app</strong> 还会跑一个只放行白名单接口的小 HTTP 服务，手机页通过它和电脑通信。</li>
       </ul>
 
       <h2 id="connect">自动接入 AI 编程 CLI</h2>
@@ -120,16 +140,30 @@ cd app/src-tauri && cargo build --release -p meowo-reporter
 
 # 2. 接入 ~/.claude/settings.json 的 hooks（用绝对路径）
 bun scripts/install-hooks.mjs "<仓库绝对路径>/app/src-tauri/target/release/meowo-reporter.exe"`}</pre></div>
-      <p>脚本会把 reporter 挂到需要的 hook 事件上（SessionStart / UserPromptSubmit / PostToolUse / Stop / SessionEnd / PermissionRequest，以及 PreToolUse 的 AskUserQuestion / ExitPlanMode；普通 hook 带 5s 超时，PermissionRequest 为 310s——要等你审批）。用同一个路径重复运行不会重复追加，也不会破坏已有的 hooks。</p>
+      <p>脚本会把 reporter 挂到需要的 hook 事件上（SessionStart / UserPromptSubmit / PostToolUse / Stop / SessionEnd / PermissionRequest，以及 PreToolUse 的 AskUserQuestion / ExitPlanMode；普通 hook 带 5s 超时，PermissionRequest 要等你审批，为 310s）。用同一个路径重复运行不会重复追加，也不会破坏已有的 hooks。</p>
       <div className="callout">
         <span className="ci"><InfoIcon /></span>
         <span>这个脚本只管 Claude Code。codex、kimi、gemini 的接入走各自 CLI 的原生 hook 配置（hook 命令带 <code className="inline">--provider codex|kimi|gemini</code>）；opencode 没有 hook 机制，Meowo 改为在 <code className="inline">~/.config/opencode/plugin/</code> 下生成桥接插件。它们都不经过这个脚本。</span>
       </div>
 
+      <h2 id="remote">手机远程</h2>
+      <p>手机远程让你在手机浏览器里看对话、发消息、批审批、答提问，不用装 App。</p>
+      <ol>
+        <li>打开设置 →「<strong>手机远程</strong>」，开启远程访问。默认端口 18620。</li>
+        <li>选择绑定的网卡。推荐<strong>仅 Tailscale</strong>：手机装了 Tailscale，在哪儿都能连。绑定所有网卡时，手机连上同一个 Wi-Fi 也能用。</li>
+        <li>用手机扫二维码，或者把地址复制到手机浏览器打开。访问令牌就在二维码里，扫完自动配对。可以把页面添加到主屏幕。</li>
+        <li>可选：填上 <a href="https://github.com/Finb/Bark" target="_blank" rel="noopener noreferrer">Bark</a> 地址（<code className="inline">https://api.day.app/你的key</code>），会话需要你时推送到手机；点「发一条测试」确认能收到。</li>
+      </ol>
+      <div className="callout">
+        <span className="ci"><InfoIcon /></span>
+        <span>连接全程是明文 HTTP，同一网络里的人能截获，不可信的网络请用 Tailscale。重新生成令牌后，已配对的手机都要重新扫码。推送内容会经过 Bark 的服务器转发。</span>
+      </div>
+
       <h2 id="data">数据与配置</h2>
       <ul>
         <li><strong>数据库</strong>：<code className="inline">~/.meowo/board.db</code>（SQLite，WAL）。可用 <code className="inline">MEOWO_DB</code> 覆盖路径。</li>
-        <li><strong>应用设置</strong>：<code className="inline">~/.meowo/settings.json</code>。通知开关、主题、不透明度、界面密度、归档自动隐藏天数、用哪个终端恢复会话，都在这里。</li>
+        <li><strong>应用设置</strong>：<code className="inline">~/.meowo/settings.json</code>。通知、主题、界面缩放、灵动岛、手机远程、会话用什么打开等全部设置项都在这里。</li>
+        <li><strong>诊断日志</strong>：<code className="inline">~/.meowo/logs/meowo.log</code>（安装版）。设置里可以导出，反馈问题时附上。</li>
         <li><strong>用量缓存</strong>：<code className="inline">~/.meowo/usage-cache.json</code>。</li>
         <li><strong>statusLine 包装脚本</strong>：<code className="inline">~/.meowo/statusline.sh</code>。由 app 生成和维护，不用手改。</li>
         <li><strong>首次导入标记</strong>：<code className="inline">~/.meowo/imported.json</code>。删掉它，下次启动会重新导入最近的历史会话。</li>

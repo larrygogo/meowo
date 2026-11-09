@@ -4,7 +4,7 @@ import FaqContent from "@/components/pages/FaqContent";
 export const metadata: Metadata = {
   title: "FAQ · Meowo",
   description:
-    "Meowo FAQ: which AI CLIs are supported, how it cuts commands, proxy setup, data privacy, auto-connect, and uninstall.",
+    "Meowo FAQ: supported AI CLIs, phone access safety, the agent driving the browser, data privacy, accounts and proxies, the Windows install prompt, and uninstall.",
   alternates: { canonical: "/en/faq/", languages: { "zh-CN": "/faq/", en: "/en/faq/" } },
 };
 

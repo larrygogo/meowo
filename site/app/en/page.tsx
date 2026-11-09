@@ -4,7 +4,7 @@ import HomeContent from "@/components/pages/HomeContent";
 export const metadata: Metadata = {
   title: "Meowo — Desktop workbench for AI coding agents",
   description:
-    "Meowo is a local-first desktop workbench for AI coding agents. Track status, to-dos, and quotas for multiple CLI sessions; launch and resume without commands. Open source, MIT, Windows & macOS.",
+    "Meowo is a local-first desktop workbench for AI coding agents. Run Claude Code, Codex, Kimi, Gemini CLI and OpenCode sessions in one chat window with approvals, diffs, terminal and browser at hand; an island at the top of your screen and your phone keep you in the loop. Open source, MIT, Windows & macOS.",
   alternates: { canonical: "/en/", languages: { "zh-CN": "/", en: "/en/" } },
 };
 

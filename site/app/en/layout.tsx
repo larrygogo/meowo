@@ -8,7 +8,7 @@ import Footer from "@/components/Footer";
 // openGraph 时统一回落到这套英文文案；页面如需更贴切的 og 文案可在自己的 metadata 里覆盖。
 const title = "Meowo — Desktop workbench for AI coding agents";
 const description =
-  "Meowo is a local-first desktop workbench for AI coding agents. Track status, to-dos, and quotas for multiple CLI sessions; launch and resume without commands. Open source, MIT, Windows & macOS.";
+  "Meowo is a local-first desktop workbench for AI coding agents. Run Claude Code, Codex, Kimi, Gemini CLI and OpenCode sessions in one chat window with approvals, diffs, terminal and browser at hand; an island at the top of your screen and your phone keep you in the loop. Open source, MIT, Windows & macOS.";
 
 // 与 (zh)/layout.tsx 相同的站点域名逻辑：社交分享图需要绝对 URL。
 const siteUrl = process.env.NEXT_PUBLIC_SITE_URL || "https://meowo.io";

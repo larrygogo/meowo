@@ -471,7 +471,7 @@ code.inline {
   color: var(--text-faint);
 }
 
-/* 产品舞台：深色径向辉光 + 细网格，贴纸悬浮其中 */
+/* 产品舞台：深色径向辉光 + 细网格，演示悬浮其中 */
 .stage {
   position: relative;
   display: flex;
@@ -1403,19 +1403,8 @@ code.inline {
     transform: none;
     transition: none;
   }
-  /* 贴纸状态环 run-spin 等无限循环动画在减弱动效下停掉 */
-  .stk-win * {
-    animation: none !important;
-  }
   html {
     scroll-behavior: auto;
-  }
-}
-
-/* ---------- 截图组件全局动画（StickerWindow 内联引用） ---------- */
-@keyframes run-spin {
-  to {
-    transform: rotate(360deg);
   }
 }
 
@@ -1441,78 +1430,35 @@ code.inline {
   overflow: hidden;
 }
 
-/* ── 主题互动块（ThemeShowcase）：左控制列 + 右贴纸预览 ── */
-.theme-showcase {
-  display: grid;
-  grid-template-columns: 300px 1fr;
-  gap: 28px;
-  align-items: stretch;
+/* ── 手机远程演示：DemoFrame（390×780）外面套一层机身 ── */
+.phone-shell {
+  width: min(300px, 100%);
+  padding: 9px;
+  border-radius: 46px;
+  background: #0b0b0d;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 30px 60px -20px rgba(0, 0, 0, 0.6);
 }
-.ts-controls {
-  display: flex;
-  flex-direction: column;
-  gap: 18px;
-  padding: 22px;
-  background: var(--bg-raise);
-  border: 1px solid var(--hairline);
-  border-radius: var(--r-lg);
-}
-.ts-group { display: flex; flex-direction: column; gap: 8px; }
-.ts-label {
-  font-family: var(--mono);
-  font-size: 11px;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: var(--text-faint);
-}
-.ts-swatches { display: flex; flex-wrap: wrap; gap: 8px; }
-.ts-swatch {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  padding: 0;
-  cursor: pointer;
-}
-.ts-swatch.on { box-shadow: 0 0 0 2px var(--bg-raise), 0 0 0 4px var(--accent); }
-.ts-seg {
-  display: inline-flex;
-  gap: 2px;
-  width: fit-content;
-  padding: 2px;
-  background: var(--bg-sunken);
-  border: 1px solid var(--hairline);
-  border-radius: 999px;
-}
-.ts-seg button {
+.phone-shell .hero-demo-wrap {
   border: 0;
-  padding: 5px 14px;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--text-dim);
-  font-size: 12.5px;
-  cursor: pointer;
+  border-radius: 37px;
+  background: #fff;
 }
-.ts-seg button.on {
-  background: var(--accent);
-  color: #06281f;
-  font-weight: 600;
+
+/* ── 右侧面板演示：整宽大图，要点在图下面排两列 ── */
+.wide-demo {
+  margin-top: 40px;
 }
-.ts-hint {
-  margin-top: auto;
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--text-faint);
+.wide-demo .hero-demo-wrap {
+  margin: 0 auto;
 }
-.ts-stage {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 28px;
-  background: var(--bg-sunken);
-  border: 1px solid var(--hairline);
-  border-radius: var(--r-lg);
+.wide-checks {
+  margin-top: 36px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 40px;
 }
-@media (max-width: 900px) {
-  .theme-showcase { grid-template-columns: 1fr; }
+@media (max-width: 760px) {
+  .wide-checks {
+    grid-template-columns: 1fr;
+  }
 }
