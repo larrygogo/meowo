@@ -376,6 +376,30 @@ impl Store {
         Ok(())
     }
 
+    /// 诊断用：每张用户表的「行数/最大 rowid」，按表名排序，形如 `events=12/40 sessions=3/3`。
+    /// 只给 e2e 构建的 db-watcher 用，对比前后两次就知道空闲时是哪张表在被写。
+    pub fn debug_table_fingerprint(&self) -> Result<Vec<(String, String)>, StoreError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
+        )?;
+        let names: Vec<String> = stmt.query_map([], |r| r.get(0))?.filter_map(Result::ok).collect();
+        let mut out = Vec::new();
+        for name in names {
+            let sql = format!("SELECT count(*), coalesce(max(rowid), 0) FROM \"{}\"", name.replace('"', "\"\""));
+            // WITHOUT ROWID 表没有 rowid：退回只统计行数。
+            let value = self
+                .conn
+                .query_row(&sql, [], |r| Ok(format!("{}/{}", r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)))
+                .or_else(|_| {
+                    self.conn.query_row(&format!("SELECT count(*) FROM \"{}\"", name.replace('"', "\"\"")), [], |r| {
+                        Ok(r.get::<_, i64>(0)?.to_string())
+                    })
+                })?;
+            out.push((name, value));
+        }
+        Ok(out)
+    }
+
     /// `PRAGMA data_version`：一个整数，仅当**别的连接**向本库提交过写入时才变化（本连接自身的
     /// 写入不改它，纯读也不改）。跨调用比较须用**同一个持久连接**才有意义。
     /// db-watcher 用它把「真实写入」与「app 读库时新开 WAL 连接触碰 -wal/-shm 文件」的空事件区分开：
