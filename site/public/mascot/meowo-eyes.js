@@ -5973,6 +5973,10 @@ const ip = `:host {\r
 @keyframes isl-grow {\r
   from { clip-path: inset(0 28% 34% 28% round 0 0 22px 22px); }\r
   to { clip-path: inset(0 0 0 0 round 0 0 24px 24px); }\r
+}
+@media (prefers-reduced-motion: reduce) {
+.isl-notch.is-alert, .island-shell.is-entering, .island-shell.is-leaving,\r
+  .isl-eye-pair, .isl-zz, .isl-spark, .isl-eye-pop, .isl-spiral, .isl-sweat, .isl-eye-plead, .isl-eye-squeeze, .isl-cheeks, .isl-tear, .isl-dot, .isl-ring.is-spin > svg, .isl-ring-arc { animation: none !important; }
 }`, Io = 38, cc = 16, Mn = { x: -1, y: -1 };
 window.addEventListener("pointermove", (e) => {
   Mn.x = e.clientX, Mn.y = e.clientY;

@@ -1,4 +1,4 @@
-import{u as hc,r as W,a5 as ms,ah as yu,ar as lr,c0 as fl,a_ as xu,ab as Vi,bB as ku,c1 as Lu,c2 as hr,c3 as gl,j as Y,c4 as Eu,c5 as Mu,ag as Ru,aq as Tu,br as Bu,bs as Du,Z as Au,bF as Pu,bL as Ou,B as pl,aS as cr}from"./demo-DiN2ph7F.js";import{p as $u,f as ht,a as Iu}from"./useAgents-DPdIcH6N.js";import{h as vl,v as Nu}from"./ChatWindow-5fgaW0Zx.js";/**
+import{u as hc,r as W,a5 as ms,ah as yu,ar as lr,c0 as fl,a_ as xu,ab as Vi,bB as ku,c1 as Lu,c2 as hr,c3 as gl,j as Y,c4 as Eu,c5 as Mu,ag as Ru,aq as Tu,br as Bu,bs as Du,Z as Au,bF as Pu,bL as Ou,B as pl,aS as cr}from"./demo-D63R7RSr.js";import{p as $u,f as ht,a as Iu}from"./useAgents-B4HQO6ox.js";import{h as vl,v as Nu}from"./ChatWindow-Bb_49V-J.js";/**
  * Copyright (c) 2014-2024 The xterm.js authors. All rights reserved.
  * @license MIT
  *

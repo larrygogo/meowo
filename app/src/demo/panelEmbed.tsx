@@ -1,6 +1,7 @@
 // 官网「右侧面板」演示入口（embed-panel.html）：真实 ChatWindow + 对话演示的同一段假会话，
 // 右侧面板预先开好「改动」页签，git 接口 mock 成这次重构改到的三个文件。
 // 终端、浏览器页签背后是真进程 / 原生 webview，静态页里起不来，只开改动和文件两个页签。
+import "./isolatedStorage"; // 必须第一个：每段演示一份独立的内存 localStorage，见该文件说明
 import ReactDOM from "react-dom/client";
 import { detectHostOs } from "../platform";
 import { bootAppearance } from "../appearance";
@@ -18,7 +19,6 @@ import "./demo.css";
 const params = new URLSearchParams(location.search);
 const lang: DemoLang = params.get("lang") === "en" ? "en" : "zh";
 
-localStorage.clear();
 const FIXED_NOW = 1_780_000_000_000;
 Date.now = () => FIXED_NOW;
 

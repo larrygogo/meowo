@@ -1,6 +1,7 @@
 // 官网「手机远程」演示入口（embed-mobile.html）：和手机远程页（src/mobile/main.tsx）同一套接线——
 // 置位远程门控 + mobile.css + 真实 ChatWindow，只是后端换成对话演示（chatData.ts）的同一段假会话。
 // 不手画手机截图：手机页改版后演示自动跟上（用户要求视觉复用真实组件）。
+import "./isolatedStorage"; // 必须第一个：每段演示一份独立的内存 localStorage，见该文件说明
 import ReactDOM from "react-dom/client";
 import { markRemoteUi } from "../remoteMode";
 import { setHostOsUnknown } from "../platform";
@@ -18,7 +19,6 @@ import "./demo.css";
 const params = new URLSearchParams(location.search);
 const lang: DemoLang = params.get("lang") === "en" ? "en" : "zh";
 
-localStorage.clear();
 const FIXED_NOW = 1_780_000_000_000;
 Date.now = () => FIXED_NOW;
 

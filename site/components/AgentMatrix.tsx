@@ -2,7 +2,7 @@
 // - 多账号 / 切账号会话跟着搬 / 上下文 / SOCKS / 代理写进配置 / API Key 登录：
 //   app/src-tauri/crates/meowo-agent/src/descriptor.rs 的字段，逐家取值见 app/src/test/agents.ts
 //   （那份夹具与后端矩阵有绊线测试钉着同源）
-// - 额度读数：各插件 account.rs 的 usage_supported（claude 要 OAuth 登录、codex 要 ChatGPT 登录、
+// - 额度读数：各插件 account.rs 的 usage_supported（claude 要 OAuth 登录、codex 要 ChatGPT 登录、kimi 要有官方凭据、
 //   gemini / opencode 恒 false）
 // - Agent 操作浏览器：声明了 mcp_attach 的 claude / codex / kimi（0.8.1 发版说明同）
 // - 提问卡作答：claude（0.6.1）、kimi（0.8.0）
@@ -47,7 +47,7 @@ const ROWS: Record<Lang, { groups: { title: string; rows: Row[] }[]; note: strin
       {
         title: "账号与额度",
         rows: [
-          { label: "额度读数", cells: ["官方账号登录时", "ChatGPT 登录时", true, false, false] },
+          { label: "额度读数", cells: ["官方账号登录时", "ChatGPT 登录时", "官方账号登录时", false, false] },
           { label: "多个账号", cells: [true, true, true, false, true] },
           { label: "切账号时运行中的会话一起切", cells: [true, true, true, false, false] },
           { label: "API 中转", cells: [true, true, true, true, true] },
@@ -87,7 +87,7 @@ const ROWS: Record<Lang, { groups: { title: string; rows: Row[] }[]; note: strin
       {
         title: "Accounts & quota",
         rows: [
-          { label: "Quota readout", cells: ["with official sign-in", "with ChatGPT sign-in", true, false, false] },
+          { label: "Quota readout", cells: ["with official sign-in", "with ChatGPT sign-in", "with official sign-in", false, false] },
           { label: "Multiple accounts", cells: [true, true, true, false, true] },
           { label: "Running sessions switch with the account", cells: [true, true, true, false, false] },
           { label: "API relay", cells: [true, true, true, true, true] },

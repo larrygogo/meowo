@@ -56,7 +56,7 @@ No AI CLI needed upfront: once Meowo is open, install and sign in from Settings 
 
 - Turn on "Phone access" in Settings and scan the QR code. No app to install; add it to your home screen if you like.
 - Read conversations, send messages, **approve commands** and answer the agent's questions from your phone. You can also start and fork sessions, and see the terminal and changes.
-- Get a push on your phone through [Bark](https://github.com/Finb/Bark) when a session needs you.
+- Get a push on your phone through [Bark](https://github.com/Finb/Bark) (an iPhone app) when a session needs you.
 - The computer stays awake while sessions run; you can flip that switch from your phone too.
 - Works over your LAN or Tailscale; binding to the Tailscale interface only is recommended.
 
@@ -65,7 +65,7 @@ No AI CLI needed upfront: once Meowo is open, install and sign in from Settings 
 ### Accounts, quota and network
 
 - Claude Code, Codex, Kimi and OpenCode can keep several official accounts and switch in one click; for Claude Code, Codex and Kimi, running sessions can switch along. Gemini CLI has a single account and signs in with an API key.
-- No official account? Connect an API relay per model.
+- No official account? Connect an API relay for an agent.
 - Shows 5-hour / 7-day quota for Claude Code, Codex and Kimi, plus per-model weekly quota (such as Opus), turning red near the limit.
 - Set a global default proxy or one per agent; HTTP and authenticated proxies are supported, and only Kimi and Gemini CLI accept SOCKS.
 
@@ -78,14 +78,14 @@ The CLIs don't all support the same things. Taken from each plugin's declared ca
 | Sign in from Meowo | one click | one click | one click | API key | one click |
 | Answer questions on the card | ✓ | – | ✓ | – | – |
 | Agent drives the panel browser | ✓ | ✓ | ✓ | – | – |
-| Quota readout | with official sign-in | with ChatGPT sign-in | ✓ | – | – |
+| Quota readout | with official sign-in | with ChatGPT sign-in | with official sign-in | – | – |
 | Context usage | ✓ | ✓ | ✓ | – | – |
 | Multiple accounts | ✓ | ✓ | ✓ | – | ✓ |
 | SOCKS proxy | – | – | ✓ | ✓ | – |
 
 ### Local-first
 
-Session data and settings live only in `~/.meowo/` on your machine (SQLite). Meowo has no server of its own, uploads no conversations, and works offline. The one exception is optional Bark push: if you turn it on, the project name and session title in each push go through Bark's server. Sessions you start in your own terminal show up too.
+Session data and settings live only in `~/.meowo/` on your machine (SQLite). Meowo has no server of its own, uploads no conversations, and works offline. The one exception is optional Bark push: if you turn it on, each push (session title, the agent's last message, a link back to the session) goes through Bark's server. Sessions you start in your own terminal show up too.
 
 ## How it works
 

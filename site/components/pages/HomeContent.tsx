@@ -73,7 +73,7 @@ const CONTENT: Record<Lang, Content> = {
         demo: "chat",
       },
       {
-        time: "10:30", tone: "warn", eyes: { tone: "pending" }, label: "等你批准",
+        time: "10:30", tone: "warn", eyes: { tone: "pending" }, label: "待批准",
         title: "有人要你点头，灵动岛会叫你",
         body: "Kimi 要跑一条需要批准的命令。灵动岛从屏幕顶部弹出提醒，你在写别的也看得见，点「打开」就回到那个会话的审批卡。卡片标出这次会碰到哪里：工作区外的路径、删文件、联网。",
         demo: "island-alert",
@@ -81,7 +81,7 @@ const CONTENT: Record<Lang, Content> = {
       {
         time: "12:30", tone: "run", eyes: { tone: "running", busy: true }, label: "离开工位",
         title: "吃饭路上，手机上批掉",
-        body: "在设置里开好手机远程，手机扫一次码就配对，不用装 App。会话需要你时经 Bark 推到手机，点开就是同一个对话：批审批、答提问、回一句「继续」，会话不用等你回来。",
+        body: "在设置里开好手机远程，手机扫一次码就配对，不用装 App。会话需要你时经 Bark（iPhone App）推到手机，点开就是同一个对话：批审批、答提问、回一句「继续」，会话不用等你回来。",
         demo: "mobile",
       },
       {
@@ -93,12 +93,12 @@ const CONTENT: Record<Lang, Content> = {
       {
         time: "17:30", tone: "err", eyes: { tone: "running", quota: 92 }, label: "额度见底",
         title: "额度快用完，眼睛先发愁",
-        body: "灵动岛的额度环显示 Claude Code、Codex、Kimi 的 5 小时和 7 天额度，Opus 这类模型单独的周额度也算在内。快用完时环变红，眼睛跟着发愁。同一个 Agent 可以存多个账号一键切换（Gemini CLI 除外），也可以按模型接 API 中转。",
+        body: "灵动岛的额度环显示 Claude Code、Codex、Kimi 的 5 小时和 7 天额度，Opus 这类模型单独的周额度也算在内。快用完时环变红，眼睛跟着发愁。同一个 Agent 可以存多个账号一键切换（Gemini CLI 除外），也可以接 API 中转。",
       },
       {
         time: "19:00", tone: "done", eyes: { tone: "running", cue: "star" }, label: "收工",
         title: "跑完的会话，明天接着看",
-        body: "会话跑完，岛上那个头像亮起一个点，眼睛冒星星。做完的会话收进「已完成」，随时找回。还有会话没跑完？开着「运行时防止休眠」，电脑不会睡，屏幕照常熄灭。",
+        body: "会话跑完，岛上那个头像亮起一个点，眼睛冒星星。点「标记完成」把它收进「已完成」，随时找回。还有会话没跑完？开着「运行时防止休眠」，电脑不会睡，屏幕照常熄灭。",
       },
     ],
     agents: {
@@ -111,10 +111,10 @@ const CONTENT: Record<Lang, Content> = {
       eyebrow: "本地优先",
       title: "你的会话，留在你的电脑上",
       cells: [
-        { big: "0", title: "台自己的服务器", body: "会话和设置只存在本机的 ~/.meowo/。只有你开了 Bark 推送时，推送内容会经过 Bark 的服务器。" },
+        { big: "0", title: "台自己的服务器", body: "会话和设置只存在本机的 ~/.meowo/。只有你开了 Bark 推送时，推送内容（会话标题、Agent 最后一句话、打开会话的链接）会经过 Bark 的服务器。" },
         { big: "MIT", title: "开源，构建可查", body: "源码和发版流程都在 GitHub 上。安装包由 GitHub Actions 从公开源码构建，应用内更新有 minisign 签名校验。" },
       ],
-      releases: (count, since) => ({ big: String(count), title: "个版本", body: `从 ${since.slice(0, 4)} 年 ${Number(since.slice(5, 7))} 月起持续发版，每一版都写了更新说明。` }),
+      releases: (count, since) => ({ big: String(count), title: "个版本", body: `从 ${since.slice(0, 4)} 年 ${Number(since.slice(5, 7))} 月起持续发版，更新日志里有每一版的说明。` }),
     },
     platHead: { eyebrow: "平台", title: "Windows 和 macOS，都是这双眼睛" },
     plats: [
@@ -154,7 +154,7 @@ const CONTENT: Record<Lang, Content> = {
       {
         time: "12:30", tone: "run", eyes: { tone: "running", busy: true }, label: "Away from desk",
         title: "Approve it from your phone at lunch",
-        body: "Turn on phone access in Settings and scan the QR code once to pair. No app to install. When a session needs you, Bark pushes it to your phone and opens the same conversation: approve, answer a question, or say “go on”. The session doesn't wait for you to get back.",
+        body: "Turn on phone access in Settings and scan the QR code once to pair. No app to install. When a session needs you, Bark (an iPhone app) pushes it to your phone and opens the same conversation: approve, answer a question, or say “go on”. The session doesn't wait for you to get back.",
         demo: "mobile",
       },
       {
@@ -166,12 +166,12 @@ const CONTENT: Record<Lang, Content> = {
       {
         time: "17:30", tone: "err", eyes: { tone: "running", quota: 92 }, label: "Quota running low",
         title: "Quota almost gone? The eyes worry first",
-        body: "The island's quota ring shows 5-hour and 7-day quota for Claude Code, Codex and Kimi, including per-model weekly quota such as Opus. Near the limit the ring turns red and the eyes start to worry. Keep several accounts per agent and switch in one click (except Gemini CLI), or connect an API relay per model.",
+        body: "The island's quota ring shows 5-hour and 7-day quota for Claude Code, Codex and Kimi, including per-model weekly quota such as Opus. Near the limit the ring turns red and the eyes start to worry. Keep several accounts per agent and switch in one click (except Gemini CLI), or connect an API relay.",
       },
       {
         time: "19:00", tone: "done", eyes: { tone: "running", cue: "star" }, label: "Wrap-up",
         title: "Finished sessions wait for tomorrow",
-        body: "When a session finishes, its icon on the island lights up and the eyes go starry. Finished sessions move to Done, ready to bring back. Something still running? With keep-awake on, the computer won't sleep, though the screen still turns off.",
+        body: "When a session finishes, its icon on the island lights up and the eyes go starry. Mark it done and it moves to Done, ready to bring back. Something still running? With keep-awake on, the computer won't sleep, though the screen still turns off.",
       },
     ],
     agents: {
@@ -184,13 +184,13 @@ const CONTENT: Record<Lang, Content> = {
       eyebrow: "Local-first",
       title: "Your sessions stay on your computer",
       cells: [
-        { big: "0", title: "servers of our own", body: "Sessions and settings live only in ~/.meowo/ on your machine. The one exception: if you turn on Bark push, the push message goes through Bark's server." },
+        { big: "0", title: "servers of our own", body: "Sessions and settings live only in ~/.meowo/ on your machine. The one exception: if you turn on Bark push, each push (session title, the agent's last message, a link back to the session) goes through Bark's server." },
         { big: "MIT", title: "Open source, verifiable builds", body: "The source and the release process are on GitHub. Installers are built by GitHub Actions from the public source, and in-app updates are verified with a minisign signature." },
       ],
       releases: (count, since) => ({
         big: String(count),
         title: "releases",
-        body: `Shipping steadily since ${new Date(`${since}-01T00:00:00Z`).toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" })}, each with written release notes.`,
+        body: `Shipping steadily since ${new Date(`${since}-01T00:00:00Z`).toLocaleString("en-US", { month: "long", year: "numeric", timeZone: "UTC" })}; the changelog covers every release.`,
       }),
     },
     platHead: { eyebrow: "Platforms", title: "The same eyes on Windows and macOS" },

@@ -51,7 +51,17 @@ function mascotCss(): Plugin {
         b.head.startsWith("@keyframes isl-") || (!b.head.startsWith("@") && KEEP.some((k) => b.head.includes(k))),
       );
       const host = vars ? `:host ${vars.text.slice(vars.text.indexOf("{"))}` : "";
-      return `export default ${JSON.stringify([host, ...picked.map((b) => b.text)].join("\n"))};`;
+      // 系统开了「减少动态效果」时岛上的眼睛不弹不抖（styles.css 里包在 @media 里），官网照办：
+      // 从这类 @media 块里再挑出眼睛的规则，原样包回去（做空审查发现第一版漏了它）。
+      const reduced = blocks
+        .filter((b) => b.head.startsWith("@media") && b.head.includes("prefers-reduced-motion"))
+        .map((b) => {
+          const inner = topLevelBlocks(b.text.slice(b.text.indexOf("{") + 1, b.text.lastIndexOf("}")))
+            .filter((r) => KEEP.some((k) => r.head.includes(k)));
+          return inner.length ? `${b.head} {\n${inner.map((r) => r.text).join("\n")}\n}` : "";
+        })
+        .filter(Boolean);
+      return `export default ${JSON.stringify([host, ...picked.map((b) => b.text), ...reduced].join("\n"))};`;
     },
   };
 }

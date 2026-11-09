@@ -72,8 +72,9 @@ function EnDocs() {
 
       <h2 id="manual">Manual Claude Code setup (optional)</h2>
       <p>If you don't want to launch the app first, or need to write to a custom settings path, you can hook it up by hand:</p>
-      <div className="codeblock"><pre>{`# 1. Build meowo-reporter (the Rust workspace root is app/src-tauri)
-cd app/src-tauri && cargo build --release -p meowo-reporter
+      <div className="codeblock"><pre>{`# Run from the repo root.
+# 1. Build meowo-reporter (the Rust workspace root is app/src-tauri)
+(cd app/src-tauri && cargo build --release -p meowo-reporter)
 # output: app/src-tauri/target/release/meowo-reporter(.exe)
 
 # 2. Wire into ~/.claude/settings.json hooks (use an absolute path)
@@ -90,11 +91,11 @@ bun scripts/install-hooks.mjs "<repo-abs-path>/app/src-tauri/target/release/meow
         <li>Open Settings → <strong>Phone access</strong> and turn on remote access. The default port is 18620.</li>
         <li>Pick the network interface to bind. <strong>Tailscale only</strong> is recommended: your phone connects from anywhere as long as Tailscale is installed. Binding to all interfaces also works on the same Wi-Fi.</li>
         <li>Scan the QR code with your phone, or copy the address into its browser. The access token is inside the QR code, so pairing is automatic. You can add the page to your home screen.</li>
-        <li>Optional: fill in your <a href="https://github.com/Finb/Bark" target="_blank" rel="noopener noreferrer">Bark</a> address (<code className="inline">https://api.day.app/&lt;your key&gt;</code>) to get a push when a session needs you, and tap "Send a test" to check it.</li>
+        <li>Optional: fill in your <a href="https://github.com/Finb/Bark" target="_blank" rel="noopener noreferrer">Bark</a> address (<code className="inline">https://api.day.app/&lt;your key&gt;</code>; Bark is an iPhone app) to get a push when a session needs you, and tap "Send a test" to check it.</li>
       </ol>
       <div className="callout">
         <span className="ci"><InfoIcon /></span>
-        <span>The connection is plain HTTP and can be read by anyone on the same network, so use Tailscale on networks you don't trust. Regenerating the token unpairs every phone; they need to scan again. Push messages go through Bark's server.</span>
+        <span>The connection is plain HTTP and can be read by anyone on the same network, so use Tailscale on networks you don't trust. Regenerating the token unpairs every phone; they need to scan again. Each push (session title, the agent's last message, a link back to the session) goes through Bark's server.</span>
       </div>
 
       <h2 id="data">Data & config</h2>
@@ -134,8 +135,9 @@ function ZhDocs() {
 
       <h2 id="manual">手动接入 Claude Code（可选）</h2>
       <p>不想先启动 app，或者要写入自定义的 settings 路径时，可以手动挂：</p>
-      <div className="codeblock"><pre>{`# 1. 编译 meowo-reporter（Rust workspace 根在 app/src-tauri）
-cd app/src-tauri && cargo build --release -p meowo-reporter
+      <div className="codeblock"><pre>{`# 在仓库根目录执行。
+# 1. 编译 meowo-reporter（Rust workspace 根在 app/src-tauri）
+(cd app/src-tauri && cargo build --release -p meowo-reporter)
 # 产物：app/src-tauri/target/release/meowo-reporter(.exe)
 
 # 2. 接入 ~/.claude/settings.json 的 hooks（用绝对路径）
@@ -152,11 +154,11 @@ bun scripts/install-hooks.mjs "<仓库绝对路径>/app/src-tauri/target/release
         <li>打开设置 →「<strong>手机远程</strong>」，开启远程访问。默认端口 18620。</li>
         <li>选择绑定的网卡。推荐<strong>仅 Tailscale</strong>：手机装了 Tailscale，在哪儿都能连。绑定所有网卡时，手机连上同一个 Wi-Fi 也能用。</li>
         <li>用手机扫二维码，或者把地址复制到手机浏览器打开。访问令牌就在二维码里，扫完自动配对。可以把页面添加到主屏幕。</li>
-        <li>可选：填上 <a href="https://github.com/Finb/Bark" target="_blank" rel="noopener noreferrer">Bark</a> 地址（<code className="inline">https://api.day.app/你的key</code>），会话需要你时推送到手机；点「发一条测试」确认能收到。</li>
+        <li>可选：填上 <a href="https://github.com/Finb/Bark" target="_blank" rel="noopener noreferrer">Bark</a> 地址（<code className="inline">https://api.day.app/你的key</code>，Bark 是 iPhone App），会话需要你时推送到手机。点「发一条测试」确认能收到。</li>
       </ol>
       <div className="callout">
         <span className="ci"><InfoIcon /></span>
-        <span>连接全程是明文 HTTP，同一网络里的人能截获，不可信的网络请用 Tailscale。重新生成令牌后，已配对的手机都要重新扫码。推送内容会经过 Bark 的服务器转发。</span>
+        <span>连接全程是明文 HTTP，同一网络里的人能截获，不可信的网络请用 Tailscale。重新生成令牌后，已配对的手机都要重新扫码。推送内容（会话标题、Agent 最后一句话、打开会话的链接）会经过 Bark 的服务器。</span>
       </div>
 
       <h2 id="data">数据与配置</h2>
