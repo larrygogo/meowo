@@ -2008,8 +2008,9 @@ mod tests {
         assert_eq!(names("ls frontend"), none);
         assert_eq!(names("cd node_modules/pkg"), none);
         // 手机端放行范围：两层仓库、子仓库的 worktree 都在，node_modules 里的不在。
+        // 走产品里同一个判定（is_related_root 会对齐软链 / 8.3 短名两种写法；逐字比在 macOS CI 上对不上）。
         let related = related_roots(&cwd);
-        let has = |p: &Path| related.iter().any(|r| same_path(r, &repo_root(&s(p)).unwrap()));
+        let has = |p: &Path| is_related_root(&cwd, &s(p));
         assert!(has(&proj.join("apps").join("web")), "{related:?}");
         assert!(has(&wt), "{related:?}");
         assert!(!has(&proj.join("node_modules").join("pkg")), "{related:?}");
