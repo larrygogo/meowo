@@ -1978,8 +1978,8 @@ export function ChatWindow() {
       return;
     }
     shownQuestionSessionRef.current = structuredQuestion.sessionId;
-    // 作答卡不吃 180s 过期：broker 挂着 300s，到点它自己降级（answerable 随轮询翻
-    // false，本 effect 因对象更换重跑，展示卡的 180s 从那一刻起算）。
+    // 作答卡不吃 180s 过期：broker 一直挂着等作答；交还终端后 answerable 随轮询翻
+    // false，本 effect 因对象更换重跑，展示卡的 180s 从那一刻起算。
     if (structuredQuestion.answerable) return;
     const timer = window.setTimeout(() => {
       setStructuredQuestion(null);
@@ -1989,33 +1989,8 @@ export function ChatWindow() {
     }, 180_000);
     return () => window.clearTimeout(timer);
   }, [structuredQuestion, sessionId, t]);
-  // 作答卡的剩余时间徽章：broker 侧挂起 300s，与审批倒计时同一课——到点降级不能像
-  // bug 一样凭空发生。从本窗口首见该 requestId 起本地计时（晚开窗只会显得更宽裕）。
-  const QUESTION_TIMEOUT_MS = 300_000;
-  const questionSeenRef = useRef<{ id: string; at: number } | null>(null);
-  const [questionNow, setQuestionNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!structuredQuestion?.answerable) {
-      questionSeenRef.current = null;
-      return;
-    }
-    if (questionSeenRef.current?.id !== structuredQuestion.requestId) {
-      questionSeenRef.current = { id: structuredQuestion.requestId, at: Date.now() };
-      setQuestionNow(Date.now());
-    }
-    const timer = window.setInterval(() => setQuestionNow(Date.now()), 1_000);
-    return () => window.clearInterval(timer);
-  }, [structuredQuestion]);
-  const questionCountdown = (() => {
-    if (!structuredQuestion?.answerable || !questionSeenRef.current) return null;
-    const left = Math.max(0, QUESTION_TIMEOUT_MS - (questionNow - questionSeenRef.current.at));
-    const totalSeconds = Math.floor(left / 1000);
-    return `${Math.floor(totalSeconds / 60)}:${String(totalSeconds % 60).padStart(2, "0")}`;
-  })();
-  // 与审批倒计时同一课（useApprovalChannel 的 approvalTimedOut）：归零切「已超时」态，
-  // 卡片要等后端降级事件才收，定格 0:00 像 bug。
-  const questionTimedOut = !!structuredQuestion?.answerable && !!questionSeenRef.current
-    && questionNow - questionSeenRef.current.at >= QUESTION_TIMEOUT_MS;
+  // 作答卡不显示倒计时：提问不限时（用户要求 2026-11-09，broker 等待上限见 QUESTION_WAIT_SECS），
+  // 一直等到作答、「去终端页」交还或 agent 取消。
   // 「问题已了结」的收卡信号：判定逻辑见 observeTranscriptForDismiss。
   //
   // 计数**必须**读独立累积的 items state，不能读 history.offset/history.items——那两个
@@ -4394,14 +4369,14 @@ export function ChatWindow() {
       </ApprovalCard>}
       {/* AskUserQuestion 的作答卡（broker 挂起代答）：表单尚未渲染，卡片就是作答面——
           多选/多问题/自定义输入全部可答，提交后答案经 hook 直达模型。刻意没有「仅收起」：
-          收起等于让 hook 干等到 300s 超时（与 broker 审批卡同理），出口只有提交与
+          收起等于让 hook 一直干等（与 broker 审批卡同理），出口只有提交与
           「去终端作答」（交还终端表单）。两视图都渲染（用户要求）：broker 挂起期间终端
           画面上没有表单，终端视图不渲染卡的话用户对「agent 在等」毫无感知。 */}
       {structuredQuestions.length > 0 && !terminalAttention && !approval && questionAnswerable && <ApprovalCard
         returnFocusTo={promptInputRef}
         className="chat-screen-approval"
         title={t.chat.questionTitle}
-        badge={questionTimedOut ? t.chat.approvalTimedOut : questionCountdown ? `${t.chat.questionPending} · ${questionCountdown}` : t.chat.questionPending}
+        badge={t.chat.questionPending}
         actions={<>
           {/* 远程：卡本身就是作答面，直接提交。卡内答不了时放行挂起，终端表单经屏幕识别
               变成作答卡回到手机上（此前一律「请在桌面端作答」，手机答不了题）。 */}

@@ -52,9 +52,12 @@ static EVENTS: [HookEvent; 11] = [
     HookEvent::matched("StopFailure", "*"),
     HookEvent::matched("SessionEnd", "*"),
     HookEvent::matched("PermissionRequest", "*").with_timeout(310),
-    // AskUserQuestion 的代答桥挂在这条上（reporter 阻塞等 GUI 作答），超时与
-    // PermissionRequest 同一量纲：310 > reporter 读 305 > broker 等 300。
-    HookEvent::matched("PreToolUse", "AskUserQuestion").with_timeout(310),
+    // AskUserQuestion 的代答桥挂在这条上（reporter 阻塞等 GUI 作答）。提问不限时（用户要求
+    // 2026-11-09），层层递减：hook > reporter 读（等待上限 + 5s）> broker 等待上限。
+    // 实测 claude 2.1.319 接受 660s 的阻塞 PreToolUse；更长若被 claude 自己掐断，reporter
+    // 随之退出、零输出等同放行，表单照常回到终端，不会更坏。
+    HookEvent::matched("PreToolUse", "AskUserQuestion")
+        .with_timeout(meowo_protocol::broker::QUESTION_HOOK_TIMEOUT_SECS),
     HookEvent::matched("PreToolUse", "ExitPlanMode"),
     HookEvent::matched("PreCompact", "*"),
     HookEvent::matched("PostCompact", "*"),
@@ -976,14 +979,19 @@ mod tests {
             .iter()
             .filter(|e| e.name != "PreToolUse")
             .all(|e| e.matcher == Some("*")));
-        // 长超时恰两条：都在等人（PermissionRequest 等审批、PreToolUse:AskUserQuestion
-        // 等代答），其余 hook 是纯落库、5s 足够。
+        // 长超时恰两条：都在等人（PermissionRequest 等审批 310s、PreToolUse:AskUserQuestion
+        // 等代答且不限时），其余 hook 是纯落库、5s 足够。
         for event in EVENTS.iter() {
-            let waits_on_user = event.name == "PermissionRequest"
-                || (event.name == "PreToolUse" && event.matcher == Some("AskUserQuestion"));
+            let question = event.name == "PreToolUse" && event.matcher == Some("AskUserQuestion");
             assert_eq!(
                 event.timeout,
-                if waits_on_user { 310 } else { 5 },
+                if question {
+                    meowo_protocol::broker::QUESTION_HOOK_TIMEOUT_SECS
+                } else if event.name == "PermissionRequest" {
+                    310
+                } else {
+                    5
+                },
                 "{} {:?}",
                 event.name,
                 event.matcher

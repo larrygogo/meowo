@@ -20,6 +20,14 @@ pub const V2_MAGIC: &[u8; 4] = b"MWO2";
 /// 正是提示注入的典型形态——模型会(也应当)起疑并停下来找用户确认,措辞修不好。
 pub const QUESTION_ANSWER_MARKER: &str = "【Meowo 代答】";
 
+/// AskUserQuestion 代答的等待上限（中转挂起的时长）。用户要求问答不限 5 分钟（2026-11-09：
+/// 「问答模块不一定限制5分钟」，此前只给 Lead 关卡放宽，普通提问卡仍在倒计时）。提问会一直
+/// 等到用户作答、按「去终端页」交还终端表单、或 agent 那边取消；7 天只是兜底，与 Lead 的等待
+/// 同一量级。hook 与 reporter 的读超时都要比它长，否则先断的一层会把提问提前交还终端。
+pub const QUESTION_WAIT_SECS: u64 = 7 * 24 * 3600;
+/// AskUserQuestion 代答 hook 的 timeout：比 reporter 读超时（等待上限 + 5s）再长一点。
+pub const QUESTION_HOOK_TIMEOUT_SECS: u64 = QUESTION_WAIT_SECS + 10;
+
 /// GUI broker 的发现文件。`pid` 用于拒绝崩溃后遗留的过期端点。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

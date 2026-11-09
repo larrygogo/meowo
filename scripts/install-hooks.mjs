@@ -75,7 +75,8 @@ for (const [event, matcher] of SPECS) {
   // 等人的 hook（审批、AskUserQuestion 代答）用长超时，与 Rust 侧 EVENTS 的 with_timeout 同步。
   const waitsOnUser =
     event === "PermissionRequest" || (event === "PreToolUse" && matcher === "AskUserQuestion");
-  const timeout = waitsOnUser ? 310 : 5;
+  // 提问不限时（与 meowo-protocol 的 QUESTION_HOOK_TIMEOUT_SECS 同步：7 天 + 10s）；审批仍是 310s。
+  const timeout = !waitsOnUser ? 5 : event === "PermissionRequest" ? 310 : 7 * 24 * 3600 + 10;
   settings.hooks[event] ??= [];
   // hooks[event] 非数组（如被手改成对象）时下面的 .map 会抛裸 TypeError，先校验再合并。
   if (!Array.isArray(settings.hooks[event])) {

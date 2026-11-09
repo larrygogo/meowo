@@ -100,9 +100,15 @@ fn send_approval(broker: &(String, String, u16), payload: &ApprovalRequest) -> A
     let Ok(mut stream) = TcpStream::connect_timeout(&addr, CONNECT_TIMEOUT) else {
         return ApprovalAttempt::Unreachable;
     };
+    // 提问代答不限时（见 QUESTION_WAIT_SECS），读超时跟着放长，比 broker 的等待上限多 5s。
+    let read_timeout = if payload.tool_name == "AskUserQuestion" && payload.pre_tool_use {
+        meowo_protocol::broker::QUESTION_WAIT_SECS + 5
+    } else {
+        305
+    };
     if stream
         .set_write_timeout(Some(Duration::from_secs(2)))
-        .and_then(|_| stream.set_read_timeout(Some(Duration::from_secs(305))))
+        .and_then(|_| stream.set_read_timeout(Some(Duration::from_secs(read_timeout))))
         .is_err()
     {
         return ApprovalAttempt::Unreachable;

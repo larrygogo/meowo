@@ -925,13 +925,23 @@ mod tests {
         );
 
         // timeout 的弱绊线：SPECS 行不带 timeout（脚本在循环里算），至少钉住「哪些事件
-        // 用长超时」的判定式与 Rust 侧 with_timeout(310) 同步——本次改动正是它守不住的
+        // 用长超时」的判定式与 Rust 侧 with_timeout 同步——本次改动正是它守不住的
         // 形态漂移（PreToolUse:AskUserQuestion 加入长超时家族）。
         assert!(
             src.contains(
                 r#"event === "PermissionRequest" || (event === "PreToolUse" && matcher === "AskUserQuestion")"#
             ),
             "install-hooks.mjs 的长超时判定与 EVENTS 的 with_timeout(310) 不同步"
+        );
+        // 提问不限时：脚本里的秒数与协议常量一致。
+        assert_eq!(
+            7 * 24 * 3600 + 10,
+            meowo_protocol::broker::QUESTION_HOOK_TIMEOUT_SECS,
+            "install-hooks.mjs 的提问 hook 超时与 QUESTION_HOOK_TIMEOUT_SECS 不同步"
+        );
+        assert!(
+            src.contains("7 * 24 * 3600 + 10"),
+            "install-hooks.mjs 的提问 hook 超时与 QUESTION_HOOK_TIMEOUT_SECS 不同步"
         );
     }
 
