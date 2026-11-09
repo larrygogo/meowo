@@ -5658,10 +5658,12 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .lead-head-end { display: inline-flex; align-items: center; gap: var(--sp-8); }
 .lead-progress { display: inline-flex; align-items: center; gap: var(--sp-4); color: var(--cc-text-dim); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
 .lead-ring circle:last-child { transition: stroke-dasharray 0.4s ease; }
-.lead-tabs { display: flex; gap: var(--sp-2); margin: var(--sp-4) var(--sp-16) var(--sp-4); padding: var(--sp-2); border-radius: var(--radius-md); background: var(--fill-hover); align-self: flex-start; width: fit-content; }
+.lead-tabs { display: flex; gap: var(--sp-2); margin: var(--sp-10) var(--sp-16) var(--sp-4); padding: var(--sp-2); border-radius: var(--radius-md); background: var(--fill-hover); align-self: flex-start; width: fit-content; }
 .lead-tab { padding: var(--sp-2) var(--sp-10, 10px); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-dim); font: inherit; font-size: var(--text-xs); cursor: pointer; }
 .lead-tab:hover { color: var(--cc-text); }
 .lead-tab.is-active { background: var(--cc-bg); color: var(--cc-text); box-shadow: 0 0 0 var(--hairline) var(--cc-border); }
+/* 验收项自带 4px 内边距（悬停底色要包住文字）：列表区左右收 12px，圆圈与标题图标、页签同落在 16px 线上。 */
+.panel-lead .dock-work-body { padding-left: var(--sp-12); padding-right: var(--sp-12); }
 .lead-checks { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--sp-2); }
 .lead-check { display: grid; grid-template-columns: 16px 1fr; gap: var(--sp-8); align-items: start; padding: var(--sp-6) var(--sp-4); border-radius: var(--radius-md); color: var(--cc-text); font-size: var(--text-sm); line-height: 1.55; cursor: pointer; }
 .lead-check:hover { background: var(--fill-hover); }
