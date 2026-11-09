@@ -1,7 +1,7 @@
 <div align="center">
   <img src="docs/images/logo.png" width="104" alt="Meowo logo" />
   <h1>Meowo / 喵呜</h1>
-  <p><b>桌面贴纸，集中查看 Claude Code、Codex、Kimi、Gemini CLI、OpenCode 等 AI 编程会话的状态。</b></p>
+  <p><b>同时使用多个 AI 编程 CLI 时用的桌面应用，支持 Claude Code、Codex、Kimi、Gemini CLI 和 OpenCode。</b></p>
   <p>
     <a href="https://github.com/larrygogo/meowo/actions/workflows/ci.yml"><img src="https://github.com/larrygogo/meowo/actions/workflows/ci.yml/badge.svg" alt="CI" /></a>
     <a href="https://github.com/larrygogo/meowo/releases/latest"><img src="https://img.shields.io/github/v/release/larrygogo/meowo?label=release&color=d97757" alt="Release" /></a>
@@ -9,241 +9,128 @@
     <img src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS-555" alt="Platform: Windows | macOS" />
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT" /></a>
   </p>
-  <p><b>中文</b> · <a href="README.en.md">English</a></p>
-  <p>Meowo 把各个 AI CLI 的会话事件收集到本地数据库，再用一个小窗口实时展示。<br/>不用在终端之间来回切，也能知道谁在跑、谁在等你、进行到哪一步。</p>
-  <img src="docs/images/demo.webp" alt="Meowo 演示：实时会话贴纸、待交互提醒、会话搜索、重命名归档、底栏用量、吸边缩略" width="760" />
+  <p><b>中文</b> · <a href="README.en.md">English</a> · <a href="https://meowo.io">官网 meowo.io</a></p>
+  <p>会话在 Meowo 的对话窗里运行，旁边可以看改动、开终端和浏览器。<br/>有会话等你处理时，屏幕顶部的灵动岛会提醒；不在电脑前，可以用手机浏览器处理。</p>
+  <img src="docs/images/island.webp" alt="Meowo 灵动岛：收起时显示额度和每个会话的状态，会话要你批准时弹出提醒，点开看会话列表" width="760" />
 </div>
 
 ## 下载
 
-官网：**[meowo.io](https://meowo.io)** —— 点进去会按你的系统直接给对应安装包。
+到 **[meowo.io](https://meowo.io)** 下载，页面会按你的系统给出对应的安装包。也可以从 [GitHub Releases](https://github.com/larrygogo/meowo/releases/latest) 下载：
 
 | 平台 | 安装包 | 说明 |
 |------|--------|------|
-| **Windows** | [最新版 x64 安装包](https://github.com/larrygogo/meowo/releases/latest)（`Meowo_x.y.z_x64-installer.exe`，老版本为 `-setup.exe`） | 一键安装；无 WebView2 环境自动回退经典安装界面 |
-| **macOS** | [最新版 DMG](https://github.com/larrygogo/meowo/releases/latest)（Apple 芯片选 `Meowo_x.y.z_aarch64.dmg`，Intel 选 `Meowo_x.y.z_x64.dmg`） | 需 macOS ≥ 14 Sonoma；已签名公证。不确定芯片：苹果菜单 → 关于本机 |
+| **Windows 10 / 11** | `Meowo_x.y.z_x64-installer.exe` | 双击安装；没有 WebView2 的环境会自动换成经典安装界面 |
+| **macOS 14+** | Apple 芯片选 `_aarch64.dmg`，Intel 选 `_x64.dmg` | 已签名公证。不确定芯片：苹果菜单 → 关于本机 |
 
-下载对应安装包，双击安装即可。应用内支持检查更新。
+AI 编程 CLI 可以等装好 Meowo 之后，在设置里安装和登录，所需的 hooks 由 Meowo 配置。新版本可以在应用内检查和安装。
 
-> **Windows 首次运行会提示「Windows 已保护你的电脑」**：Meowo 暂未做代码签名，点
-> **「更多信息」→「仍要运行」** 即可继续。安装包由 GitHub Actions 从公开源码构建
-> （见 [release.yml](.github/workflows/release.yml)），自动更新另有 minisign 签名校验。
-> 正在申请开源项目的免费代码签名，后续版本会去掉这个提示。
+> **Windows 提示「Windows 已保护你的电脑」**：Windows 安装包暂时没有代码签名，点「更多信息」→「仍要运行」即可。
+> 安装包由 GitHub Actions 从公开源码构建（见 [release.yml](.github/workflows/release.yml)），自动更新另有 minisign 签名校验。
 
 ## 能做什么
 
-### 实时会话看板
+### 对话窗
 
-- 每个 AI CLI 会话一张卡片，显示项目名、会话标题、最近一条 AI 正文和连接状态。
-- Claude Code 会话会显示准确的 **Context 已用百分比**（来自 statusline）。
-- 顶部 tab 分类：全部 / 待交互 / 运行中 / 已归档，并显示各自数量。
-- 状态用颜色区分：运行中（橙色转圈）、待交互（黄）、在线/闲置（绿）、已断开（虚线环）。
-- 「待交互」按等待时间排序，等得最久的排在最前面。
-- 底栏搜索可按会话标题或仓库名过滤。
-- 第一次启动会自动导入最近 7 天的历史会话（最多 30 条），不会从空白开始。
+<img src="docs/images/panel.png" alt="Meowo 对话窗：左侧是会话侧栏，中间是对话和一张待批准的命令审批卡，右侧面板打开着这次改动的 diff" width="760" />
 
-### 点击直达终端
+- 在对话窗里选 Agent 和目录，输入第一句话就新建会话。可以附图片，也可以截图后标出位置再发。
+- 对话按消息、工具调用、子任务分开显示，工具调用默认折叠成一行。待办清单和进度会随会话更新。
+- 待批准的命令显示成审批卡，卡上写明这次操作会动到什么，比如工作区外的路径、删除文件、联网。Agent 的选择题可以在卡片上回答，终端里的信任确认和模型菜单显示成按钮。
+- 会话运行在 Meowo 托管的终端里。对话和终端是同一个会话的两种视图，可以切到终端自己操作。
+- 右侧面板有四个页签：更改、文件、终端、浏览器。
+  - 「更改」页签显示 diff。可以对某一行写评论，再放进输入框发给 Agent。
+  - 浏览器可以打开 localhost。Claude Code、Codex 和 Kimi 的会话可以自己操作这个浏览器，操作时能看到它的鼠标，你可以随时接管。
+- 标题栏显示当前分支和 Pull Request，可以用编辑器打开项目。
 
-- 点**连接中**的会话，直接跳到它所在的终端标签页。Windows 精确切到 Windows Terminal 对应标签；macOS 聚焦 Terminal 或 iTerm2 对应标签。
-- 点**已断开**的会话，在原项目目录新开终端并按对应 CLI 的方式续接会话（claude `--resume`、kimi `-r`、codex `resume` 等，由各 agent 插件声明）。
-- 打开方式可以在设置里改：默认点卡片跳转，也可以改成只通过卡片上的「打开」按钮跳转。
+### 灵动岛
 
-### 内置对话窗与托管终端
+- 灵动岛在屏幕顶部。收起时显示额度环，每个会话一个头像：运行中的头像外圈是绿色的弧，等你处理的亮一个黄点。
+- 会话等待批准、提出问题、出错或运行结束时，灵动岛会展开几秒。点头像打开那个会话。
+- 点开面板可以看最需要处理的会话和各家额度，也可以新建会话。
+- Windows 上可以左右拖动位置，或者开极简模式只留一条细线。有刘海的 Mac 上，灵动岛围在刘海周围；没有刘海时，它在菜单栏里。
 
-- 会话可以直接在 Meowo 的原生对话窗里继续：完整对话流（用户消息、AI 正文、工具调用与结果）实时渲染，输入框直接发消息，斜杠命令与模型切换有补全菜单。
-- 会话由 Meowo 托管的 PTY 持有，对话窗与外部终端只是同一会话的两种视图，可随时互切。
-- 权限审批、AskUserQuestion 提问、计划确认渲染成可点的卡片；终端里的信任确认、模型菜单等弹窗也被识别成按钮。
-- 从看板可直接**新建会话**：选 agent、工作目录与启动选项（模型、权限模式等，按各 CLI 支持情况下发）。
-- 托管会话带屏幕状态角标（运行中 / 空闲 / 等待输入），来自终端画面的实时检测。
+### 手机远程
 
-### 待交互与出错提醒
+<img src="docs/images/mobile.png" alt="Meowo 手机远程页：在手机浏览器里看对话、处理命令审批" width="280" align="right" />
 
-- 会话需要你回复，或者因为工具调用失败、认证失败等原因卡住时，会归类到「待交互」。
-- 同一情况只弹一次系统通知，点击通知即可跳转到对应终端。
-- 通知可在设置里关闭，默认开启。
+- 在设置里开启「手机远程」，用手机扫码，就能在手机浏览器里使用，不需要安装 App。页面可以添加到主屏幕。
+- 手机上可以查看和回复对话，处理审批和提问，新建或分叉会话，查看终端画面和改动。
+- 会话需要你时，可以通过 [Bark](https://github.com/Finb/Bark)（iPhone App）推送通知。
+- 「运行时防止休眠」开启后，有会话在运行时电脑不会睡眠。这个开关也可以在手机上改。
+- 支持局域网和 Tailscale，推荐只绑定 Tailscale 网卡。
 
-### 卡片管理
+<br clear="right" />
 
-- **星标置顶**：重要会话加星后始终排在最前面。
-- **便签**：给会话挂一段本地备忘，纯本地，和会话内容无关。
-- **改名**：在卡片上直接改名，写入与 Claude Code `/rename` 一致的记录。
-- **归档**：把会话收进「已归档」，可随时还原；归档条目可在 1 / 7 / 30 天后自动隐藏。
-- 操作按钮默认悬停才出现，保持列表简洁。
+### 账号、额度与网络
 
-### 吸边与窗口（Windows）
+- Claude Code、Codex、Kimi 和 OpenCode 可以保存多个官方账号。切换账号时，Claude Code、Codex 和 Kimi 正在运行的会话可以一起切过去。Gemini CLI 只能有一个账号，用 API Key 登录。
+- 没有官方账号的，可以给这家 Agent 配 API 中转。
+- 显示 Claude Code、Codex 和 Kimi 的 5 小时和 7 天额度，Opus 这类模型单独计算的周额度也会列出，用到 85% 以上会变红。
+- 代理可以设一个默认值，也可以给每家 Agent 单独设置。支持 HTTP 代理和带认证的写法，SOCKS 只有 Kimi 和 Gemini CLI 支持。
 
-- 把窗口拖到屏幕**左 / 右 / 顶**边缘，松手后缩成一条缩略条。左右为竖条，顶部为横条。
-- 缩略条用状态色点表示会话；悬停展开，移开收回；拖离边缘恢复普通窗口。
-- 可 pin 置顶，重启后保留上次的位置、尺寸和吸附边。
-- 托盘悬停时显示待交互 / 运行中会话数。
+### 五家 Agent 的差别
 
-### 菜单栏面板（macOS）
+五家 CLI 能用的功能不完全一样。下表取自 0.8.1 各家插件的声明，完整对照见[官网功能页](https://meowo.io/features#agents)。
 
-macOS 上是状态栏应用：无独立浮窗，不显示在 Dock。
+| | Claude Code | Codex | Kimi Code | Gemini CLI | OpenCode |
+|---|:-:|:-:|:-:|:-:|:-:|
+| 在 Meowo 里登录 | 支持 | 支持 | 支持 | 填 API Key | 支持 |
+| 在卡片上回答提问 | ✓ | – | ✓ | – | – |
+| Agent 操作面板浏览器 | ✓ | ✓ | ✓ | – | – |
+| 额度读数 | 官方账号登录时 | ChatGPT 登录时 | 官方账号登录时 | – | – |
+| 上下文用量 | ✓ | ✓ | ✓ | – | – |
+| 多个账号 | ✓ | ✓ | ✓ | – | ✓ |
+| SOCKS 代理 | – | – | ✓ | ✓ | – |
 
-- 左键点击菜单栏图标弹出贴纸面板，不抢焦点，失焦自动收起。
-- 右键点击图标打开「设置 / 退出」菜单。
-- 图标实时显示运行中与待交互会话数。
+### 本地优先
 
-<details>
-<summary>macOS 首次使用的权限说明</summary>
-
-首次点击「跳转 / 恢复终端」会触发 macOS「自动化」授权（系统设置 → 隐私与安全性 → 自动化），需允许 Meowo 控制 Terminal / iTerm2；首次通知会请求通知权限。授权弹窗期间应用保持响应。
-
-</details>
-
-### 外观与系统集成
-
-- 深色 / 浅色 / 跟随系统三种主题。
-- 窗口不透明度（60%–100%）与界面密度（紧凑 / 标准 / 宽松）可调。
-- Windows 托盘 / macOS 菜单栏均可快速打开设置或退出。
-- 支持开机自启。
-
-### 账号与用量
-
-- 底栏常显 5 小时 / 7 天配额利用率。
-- 设置页显示各家 CLI 的账号、用量与配额重置时间；支持 agent 一键安装、登录与多账号（profile）切换。
-- 用量先显示缓存，再后台刷新；token 过期会自动续期。
-
-### 接入 Claude Code
-
-启动时，Meowo 会自动把 `meowo-reporter` 接入 Claude Code 的 hooks 和 statusLine，先备份、再原子写入，不会破坏已有配置。前提是 `~/.claude/settings.json` 已存在（运行过一次 Claude Code 就会生成）。
-
-## 为什么叫 Meowo？
-
-名字来自猫叫 **meow**，中文译作「喵呜」。
+会话数据和设置只存在本机的 `~/.meowo/` 目录（SQLite）。Meowo 没有自己的服务器，不上传会话内容，断网也能用。唯一的例外是 Bark 推送：开启后，推送内容（会话标题、Agent 的最后一句话、打开会话的链接）会经过 Bark 的服务器。你在自己终端里开的会话也会出现在 Meowo 里。
 
 ## 工作原理
 
-> 以 Claude Code 为例；Codex / Kimi / Gemini CLI 走各自 CLI 的 hook 机制，OpenCode 没有 hook、改由一份自动生成的桥接插件转发事件。数据最终都落到同一份本地数据库。
+每家 CLI 用自己的 hook 机制把事件交给 `meowo-reporter`（OpenCode 没有 hook，改用一份自动生成的桥接插件），数据写进同一份本地数据库：
 
 ```
- Claude Code 会话
-   │  触发 hooks（SessionStart / UserPromptSubmit / PostToolUse / Stop / SessionEnd …）
-   │  渲染 statusline（包装脚本把数据喂给 meowo-reporter statusline）
+ AI CLI 会话（claude / codex / kimi / gemini / opencode）
+   │  触发 hooks；claude 另有 statusline 提供 Context 用量
    ▼
- meowo-reporter（命令行，读 stdin 的事件 JSON）
-   │  解析事件、标题、项目、todo、Context 用量
+ meowo-reporter（一次性命令行进程，写完就退出）
    ▼
  ~/.meowo/board.db（SQLite，WAL）
-   ▲
-   │  文件监听 + 去抖刷新
- meowo-app（Tauri 贴纸，React 前端）
+   ▲  文件监听，变了就刷新
+ meowo-app（Tauri 桌面应用）
+   ├─ 托管会话的终端（PTY），对话窗和终端看的是同一个会话
+   └─ 手机远程开启时，内嵌一个只放行白名单接口的 HTTP 服务
 ```
 
-- **meowo-reporter** 是无状态的一次性进程：Claude Code 每次触发 hook 都会启动它，读取事件、写库后立即退出，不会阻塞会话。
-- **meowo-app** 启动时监听 `~/.meowo/` 目录变化，库一变就刷新 UI；同时跑后台任务标记空闲会话、首次导入历史会话。
-- 两端只通过 SQLite 通信，运行时不直接依赖。
+启动时，Meowo 会为检测到的 CLI 自动接好 hooks：先备份，再原子写入，不破坏你已有的配置。想手动接入或排查问题，见官网的[手动接入说明](https://meowo.io/docs#manual)。数据和配置文件的位置见[数据与配置](https://meowo.io/docs#data)。
 
-## 项目结构
+架构细节见 [`docs/architecture/`](docs/architecture/)。
 
-```
-meowo/
-├── app/
-│   ├── src/                # React 前端（贴纸看板、对话窗、吸边状态机、设置页）
-│   └── src-tauri/          # Tauri 桌面壳（窗口、托盘、PTY 托管、审批、账号用量）；Rust workspace 根
-│       └── crates/
-│           ├── meowo-protocol/  # 跨进程契约（IPC DTO 生成 TypeScript + broker 线协议）
-│           ├── meowo-store/     # SQLite 读写
-│           ├── meowo-agent/     # Agent 插件层（身份、变体、transcript 解析、屏幕规则）
-│           └── meowo-reporter/  # AI CLI hooks 上报器 + statusline + 首次导入
-├── scripts/
-│   └── install-hooks.mjs   # 把 meowo-reporter 接入 Claude Code settings.json
-└── docs/                   # 架构文档（architecture/）与历史设计存档（archive/）
-```
+## 从源码构建
 
-**技术栈**：Rust（Tauri v2 + rusqlite）、React 18 + TypeScript + Vite（xterm.js、react-markdown、TanStack Virtual）、Bun。
-
-## 环境要求
-
-- [Rust](https://rustup.rs/)（stable）
-- [Bun](https://bun.sh/)
-- Windows 上的 Tauri 前置依赖：**WebView2 Runtime**（Win11 自带）、**MSVC 构建工具**（Visual Studio Build Tools，含 C++ 桌面开发）。详见 [Tauri 前置依赖](https://tauri.app/start/prerequisites/)。
-- macOS 上的前置依赖：**Xcode 命令行工具**（`xcode-select --install`）；如需本地构建 universal 包，另需 `rustup target add aarch64-apple-darwin x86_64-apple-darwin`。
-- 已安装的 AI 编程 CLI（[Claude Code](https://docs.claude.com/en/docs/claude-code) / Codex / Kimi / [Gemini CLI](https://github.com/google-gemini/gemini-cli) / [OpenCode](https://opencode.ai)，用于产生会话事件）。
-
-## 快速开始
+需要 [Rust](https://rustup.rs/)（stable）和 [Bun](https://bun.sh/)，以及 [Tauri 前置依赖](https://tauri.app/start/prerequisites/)（Windows：WebView2 + MSVC 构建工具；macOS：Xcode 命令行工具）。
 
 ```bash
-# 1. 安装前端依赖
 cd app
 bun install
-
-# 2. 开发模式运行（含热更新；首次会编译 Rust，稍慢）
-bun run tauri dev
+bun run tauri dev     # 开发模式，首次会编译 Rust，稍慢
+bun run tauri build   # 打安装包，产物在 app/src-tauri/target/release/bundle/
 ```
 
-构建发布版安装包：
+测试与检查：
 
 ```bash
-cd app
-bun run tauri build
-# 产物在 app/src-tauri/target/release/bundle/ 下（Windows 为 NSIS 安装包，macOS 为 dmg/app）
+cd app && bunx tsc --noEmit && bun run test
+cd app/src-tauri && cargo clippy --workspace --all-targets -- -D warnings && cargo test
 ```
 
-## 接入 Claude Code
+代码结构：前端在 `app/src/`（React + TypeScript），Rust workspace 在 `app/src-tauri/`，下面有 `meowo-protocol`（跨进程契约）、`meowo-store`（SQLite）、`meowo-agent`（各家 Agent 的适配）、`meowo-reporter`（hook 上报）四个 crate；官网在 `site/`。README 的演示图由 `cd app && bun run demo:webp` 生成。
 
-Meowo 启动时会自动接入。如果你不想启动 app 就先挂 hooks，或要写入自定义 settings 路径，可以手动操作：
+## 为什么叫 Meowo？
 
-<details>
-<summary>手动挂 hooks（可选）</summary>
-
-```bash
-# 1. 编译 meowo-reporter（Rust workspace 根在 app/src-tauri）
-cd app/src-tauri && cargo build --release -p meowo-reporter
-# 产物：app/src-tauri/target/release/meowo-reporter.exe
-
-# 2. 把它接入 ~/.claude/settings.json 的 hooks（用绝对路径）
-bun scripts/install-hooks.mjs "<仓库绝对路径>/app/src-tauri/target/release/meowo-reporter.exe"
-```
-
-脚本会把 meowo-reporter 挂到所需的 hook 事件上（SessionStart / UserPromptSubmit / PostToolUse / Stop / SessionEnd / PermissionRequest，以及 PreToolUse 的 AskUserQuestion / ExitPlanMode；普通 hook 带 5s 超时上限，PermissionRequest 为 310s——要等你审批）。用同一路径重复运行不会重复追加，也不会破坏你已有的其它 hooks。若更换了 reporter 路径（如 debug 换 release、换了安装目录），再跑一次脚本即可——它按可执行文件名认领旧条目并原地更新为新路径，不会留下重复条目。
-
-> 此脚本仅用于 Claude Code（写入 `~/.claude/settings.json`）。其余几家不经本脚本，由 app 启动时自动接线：codex / kimi / gemini 写各自 CLI 的原生 hook 配置（hook 命令带 `--provider <id>`）；opencode 没有 hook 机制，改为在 `~/.config/opencode/plugin/` 下生成一份桥接插件，由它把事件转发给 meowo-reporter。
-
-也可指定写入别的 settings 文件：`bun scripts/install-hooks.mjs <reporter路径> <settings路径>`，或用环境变量 `MEOWO_SETTINGS`。
-
-</details>
-
-挂好后，新开的 Claude Code 会话就会实时出现在贴纸里。
-
-## 数据与配置
-
-<details>
-<summary>数据与配置文件位置</summary>
-
-- **数据库**：`~/.meowo/board.db`（SQLite，WAL 模式）。可用环境变量 `MEOWO_DB` 覆盖路径。
-- **应用设置**：`~/.meowo/settings.json`（通知、主题、不透明度、界面密度、语言、终端字号/行高、打开方式等全部设置项）。
-- **用量缓存**：`~/.meowo/usage-cache.json`。
-- **statusLine 包装脚本**：`~/.meowo/statusline.sh`（由 app 自动生成与维护，无需手改）。
-- **首次导入标记**：`~/.meowo/imported.json`（存在即跳过再次导入）。删掉它可让下次启动重新导入近期历史会话。
-- **前端本地状态**（localStorage）：当前 tab、吸附边、记忆的正常窗口尺寸、置顶偏好、会话星标。
-
-</details>
-
-## 测试
-
-```bash
-# Rust（全 workspace）
-cargo test --workspace
-cargo clippy --workspace --all-targets -- -D warnings
-
-# 前端
-cd app
-bunx tsc --noEmit
-bunx vitest run
-```
-
-> 演示动图可以重新生成：`cd app && bun run demo:webp`（Playwright 逐帧录制 `demo.html`，再用 sharp 合成动画 WebP，产物写到 `docs/images/demo.webp`）。
-
-## 路线
-
-- [x] CI（GitHub Actions：cargo test/clippy + IPC 契约生成校验 + 前端 tsc/vitest + cargo/bun audit，windows-latest + macos-latest）
-- [x] 在线更新（`tauri-plugin-updater` + tag 触发的 GitHub Releases）
-- [x] macOS 打包（arm64 / x64 各一份 dmg，签名公证 + 自动更新）
-- [ ] Linux 打包
-
-现行架构见 [`docs/architecture/`](docs/architecture/)；历史设计与实现计划存档在 [`docs/archive/superpowers/`](docs/archive/superpowers/)。
+名字来自猫叫 **meow**，中文写作「喵呜」。
 
 ## License
 

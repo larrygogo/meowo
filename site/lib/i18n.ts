@@ -49,24 +49,6 @@ type CtaDict = { title: string; subtitle: string; download: string; star: string
 
 type Feature = { title: string; body: string };
 
-type ThemeDict = {
-  eyebrowHome: string;
-  headingHome: string;
-  subHome: string;
-  eyebrowFeat: string;
-  headingFeat: string;
-  subFeat: string;
-  extra: string;
-  color: string;
-  style: string;
-  theme: string;
-  flat: string;
-  emboss: string;
-  dark: string;
-  light: string;
-  hint: string;
-  swatches: Record<string, string>;
-};
 
 export type Dict = {
   htmlLang: string;
@@ -75,16 +57,6 @@ export type Dict = {
   cta: CtaDict;
   // 与 components/FeatureGrid.tsx 的 ICONS 一一对应，共 8 张卡。
   features: Feature[];
-  theme: ThemeDict;
-  sticker: {
-    tabs: { all: string; waiting: string; running: string; archived: string };
-    quota5h: string;
-    quota7d: string;
-    ai: string;
-    you: string;
-    justNow: string;
-    menu: { star: string; note: string; rename: string; archive: string; newSession: string; openDir: string };
-  };
   featuresMore: string; // 首页「查看全部功能」
 };
 
@@ -104,7 +76,7 @@ const ZH: Dict = {
     switchTo: "English",
   },
   footer: {
-    tagline: "本地优先的 AI 编程代理桌面工作台。会话状态常驻屏幕顶部，少切终端，少输命令。",
+    tagline: "同时使用多个 AI 编程 CLI 时用的桌面应用。开源，数据存在本机。",
     cols: [
       {
         title: "产品",
@@ -134,48 +106,21 @@ const ZH: Dict = {
     tip: "名字来自猫叫 meow，中文译作「喵呜」🐱",
   },
   cta: {
-    title: "把多开 AI 编程，收在屏幕顶上",
-    subtitle: "少切终端，少输命令。每个会话的状态、配额与待办，一切尽在计划之中。",
+    title: "下载 Meowo",
+    subtitle: "支持 Windows 和 macOS，免费开源。AI 编程 CLI 可以装好 Meowo 之后再装。",
     download: "下载最新版",
     star: "在 GitHub 上 Star",
   },
   features: [
-    { title: "会话看板", body: "项目名、会话标题、最近一条 AI 输出、连接状态，一张卡看完。能读 Context 的 Agent 还会带上上下文已用百分比——哪个会话快撑爆上下文，扫一眼卡片就知道。" },
-    { title: "点击直达终端 tab", body: "点卡片就切到会话所在的终端标签页：Windows 上是 Windows Terminal，macOS 上是 Terminal 或 iTerm2。会话已断开时自动回到原目录、按各工具自己的方式续接——不用查会话 ID，也不用记续接参数。" },
-    { title: "Agent 待办清单", body: "Agent 拆解任务后，对话窗口实时显示它的待办清单：正在做哪一条、4 条里完成了几条，随 hook 落库跟着刷新——不用翻终端输出找进度。" },
-    { title: "审批与菜单按钮化", body: "等批准的命令、弹出的选择菜单，在对话窗口里直接渲染成按钮：允许 / 拒绝、信任确认、长会话恢复、模型选择，点一下就把对应按键发回终端——不用敲键盘应答。" },
-    { title: "多账号 + API 中转", body: "同一个工具保存多个官方账号，一键切换，凭据与会话历史各自独立；也可以按模型填入中转地址与密钥接入 API 中转。两种接入互斥，配置中转期间仍走官方账号。" },
-    { title: "本地优先", body: "会话与设置只写进本机 ~/.meowo/ 的 SQLite，reporter 与 app 只通过这个本地文件通信。没有自己的服务器，不上传会话内容，断网也照常工作。" },
-    { title: "一键安装、登录与接入", body: "Claude Code、Codex、Kimi、Gemini CLI、OpenCode 直接在应用内一键安装并发起登录，所需 hooks 自动接入；检测到连接缺失时，再点一下就修好。" },
-    { title: "用量与上下文监控", body: "灵动岛实时显示 5 小时 / 7 天配额用了多少，越接近上限颜色越偏红。每个会话还显示上下文用量。限额将至你有预判，不会被突然中断打个措手不及。" },
+    { title: "统一的会话列表", body: "五家 CLI 的会话在同一个侧栏里，可以按工作区分组，也可以拖动调整顺序。处理完的会话标记完成后移到「已完成」，需要时再找回来。" },
+    { title: "托管终端", body: "会话运行在 Meowo 托管的终端里，对话窗和终端显示的是同一个会话。你在自己终端里开的会话也会出现在列表里。断开的会话可以在原目录重新接上。" },
+    { title: "进度与子任务", body: "进度面板列出 Agent 的待办清单、派出的子任务和仍在后台运行的命令。后台命令没跑完时，会话不会被标成等待输入。" },
+    { title: "审批和提问显示成按钮", body: "待批准的命令、Agent 的选择题、终端里的信任确认和模型菜单，都显示成按钮。点击后，Meowo 把对应的按键发给终端。" },
+    { title: "多账号与 API 中转", body: "Claude Code、Codex、Kimi 和 OpenCode 可以保存多个官方账号。切换账号时，Claude Code、Codex 和 Kimi 正在运行的会话可以一起切过去。没有官方账号的，可以给这家 Agent 配 API 中转。" },
+    { title: "本地优先", body: "会话和设置存在本机 ~/.meowo/ 的 SQLite 数据库里。Meowo 没有自己的服务器，不上传会话内容，断网也能用。开启 Bark 推送是唯一的例外，推送内容会经过 Bark 的服务器。" },
+    { title: "安装、登录和接入", body: "五家 CLI 都可以在 Meowo 里安装和登录，Gemini CLI 需要填 API Key。所需的 hooks 由 Meowo 配置，检测到配置缺失时可以在设置里修复。" },
+    { title: "额度与上下文", body: "灵动岛显示 Claude Code、Codex 和 Kimi 的 5 小时和 7 天额度，Opus 这类模型单独计算的周额度也会列出。这三家的会话还会显示上下文用量。" },
   ],
-  sticker: {
-    tabs: { all: "全部", waiting: "待交互", running: "运行中", archived: "已归档" },
-    quota5h: "5 小时配额",
-    quota7d: "7 天配额",
-    ai: "AI",
-    you: "你",
-    justNow: "刚刚",
-    menu: { star: "置顶", note: "添加便签", rename: "重命名", archive: "归档", newSession: "新建会话", openDir: "打开项目目录" },
-  },
-  theme: {
-    eyebrowHome: "你的桌面，你说了算",
-    headingHome: "多种风格与配色，随手切换",
-    subHome: "下面这块就是活的，点点看它怎么变。",
-    eyebrowFeat: "外观",
-    headingFeat: "多种风格与配色，随手切换",
-    subFeat: "macOS 面板有 7 种配色、扁平与立体两种风格，两个平台都有深浅主题。点点下面这块试试。",
-    extra: "macOS 面板还能调不透明度（配合系统毛玻璃透出桌面），两个平台都能调界面密度。",
-    color: "配色",
-    style: "风格",
-    theme: "明暗",
-    flat: "扁平",
-    emboss: "立体",
-    dark: "深色",
-    light: "浅色",
-    hint: "7 种配色 · 扁平 / 立体 · 深 / 浅 · 还能调透明度与界面密度，随手换一套。",
-    swatches: { neutral: "无色", classic: "经典", slate: "石青", moss: "苔绿", plum: "暮紫", rose: "玫粉", amber: "琥珀" },
-  },
   featuresMore: "查看全部功能",
 };
 
@@ -195,7 +140,7 @@ const EN: Dict = {
     switchTo: "中文",
   },
   footer: {
-    tagline: "A local-first desktop workbench for AI coding agents. Session status stays at the top of your screen. Fewer terminal switches, fewer commands.",
+    tagline: "A desktop app for using several AI coding CLIs at once. Open source, with your data kept on your machine.",
     cols: [
       {
         title: "Product",
@@ -225,48 +170,21 @@ const EN: Dict = {
     tip: "Named after a cat's “meow”, written 喵呜 in Chinese 🐱",
   },
   cta: {
-    title: "Keep your parallel AI coding at the top of your screen",
-    subtitle: "Fewer terminal switches, fewer commands. Every session's status, quota, and to-dos — all under control.",
+    title: "Download Meowo",
+    subtitle: "Free and open source, for Windows and macOS. You can install the AI coding CLIs after Meowo.",
     download: "Download latest",
     star: "Star on GitHub",
   },
   features: [
-    { title: "Session board", body: "Project, session title, the latest AI output, connection state — one card tells it all. Agents that expose Context also show how full the context window is, so you know which session is about to burst." },
-    { title: "Click to jump to the terminal tab", body: "Click a card and you land in its terminal tab — Windows Terminal on Windows, Terminal or iTerm2 on macOS. Disconnected? Meowo returns to the project directory and resumes the session the tool's own way — no IDs or resume flags to remember." },
-    { title: "Agent todo list", body: "When the agent breaks a task into steps, the chat window shows its todo list live: the item in progress and how many of the list are done, refreshed as hooks land. No scrolling terminal output to find the progress." },
-    { title: "Approvals & menus as buttons", body: "Commands awaiting approval and popup menus render as buttons in the chat window: allow / deny, trust prompts, long-session resume, model pickers. One click sends the matching keys back to the terminal — no keyboard replies." },
-    { title: "Multiple accounts + API relay", body: "Keep several official accounts per tool, switch in one click, each with its own credentials and history. Or fill in a relay address and key per model to use an API relay — mutually exclusive, and the official account keeps serving while you configure." },
-    { title: "Local-first", body: "Sessions and settings live only in ~/.meowo/ as local SQLite; the reporter and the app talk only through that file. No Meowo server, no uploaded conversations — works just fine offline." },
-    { title: "One-click install, sign-in & connect", body: "Install Claude Code, Codex, Kimi, Gemini CLI, or OpenCode right in the app and start the login; the required hooks are wired automatically. Detect a broken connection? One more click repairs it." },
-    { title: "Quota & context monitoring", body: "The island tracks 5-hour / 7-day quota live, turning redder near the cap; every session shows context usage. You see limits coming — no sudden interruption catching you off guard." },
+    { title: "One session list", body: "Sessions from all five CLIs share one sidebar. Group them by workspace or drag them into your own order. Mark a session done when you're finished and it moves to Done, where you can find it later." },
+    { title: "Managed terminal", body: "Sessions run in a terminal managed by Meowo, and the chat window and the terminal show the same session. Sessions you start in your own terminal appear in the list too. A disconnected session can be resumed in its original folder." },
+    { title: "Progress and subagents", body: "The progress panel lists the agent's todo list, the subagents it starts and commands still running in the background. While a background command runs, the session isn't marked as waiting for input." },
+    { title: "Approvals and questions as buttons", body: "Commands pending approval, the agent's multiple-choice questions, and the terminal's trust prompts and model menus show up as buttons. When you click one, Meowo sends the matching keys to the terminal." },
+    { title: "Multiple accounts and API relay", body: "Claude Code, Codex, Kimi and OpenCode can keep several official accounts. When you switch, running Claude Code, Codex and Kimi sessions can switch with you. Without an official account, you can set up an API relay for that agent." },
+    { title: "Local-first", body: "Sessions and settings are stored in a SQLite database in ~/.meowo/ on your machine. Meowo has no server of its own, doesn't upload conversations and works offline. Bark push is the one exception: when it's on, pushes go through Bark's server." },
+    { title: "Install, sign in, connect", body: "You can install and sign in to all five CLIs from Meowo. Gemini CLI needs an API key. Meowo sets up the hooks it needs, and if something is missing you can repair it in Settings." },
+    { title: "Quota and context", body: "The island shows 5-hour and 7-day quota for Claude Code, Codex and Kimi, including separate weekly quota for models such as Opus. Sessions from those three also show context usage." },
   ],
-  sticker: {
-    tabs: { all: "All", waiting: "Needs you", running: "Running", archived: "Archived" },
-    quota5h: "5-hr",
-    quota7d: "7-day",
-    ai: "AI",
-    you: "You",
-    justNow: "just now",
-    menu: { star: "Star to pin", note: "Add note", rename: "Rename", archive: "Archive", newSession: "New session", openDir: "Open project dir" },
-  },
-  theme: {
-    eyebrowHome: "Your desktop, your call",
-    headingHome: "Styles and colors, switched on a whim",
-    subHome: "The block below is live — click around and watch it change.",
-    eyebrowFeat: "Appearance",
-    headingFeat: "Styles and colors, switched on a whim",
-    subFeat: "7 colors and flat or dimensional styles for the macOS panel, dark or light on both platforms — try the live block below.",
-    extra: "The macOS panel also takes an opacity setting (to let the frosted desktop show through); UI density works on both platforms.",
-    color: "Color",
-    style: "Style",
-    theme: "Theme",
-    flat: "Flat",
-    emboss: "3D",
-    dark: "Dark",
-    light: "Light",
-    hint: "7 colors · Flat / 3D · Dark / Light · plus opacity and UI density — swap a whole set anytime.",
-    swatches: { neutral: "None", classic: "Classic", slate: "Slate", moss: "Moss", plum: "Plum", rose: "Rose", amber: "Amber" },
-  },
   featuresMore: "See all features",
 };
 

@@ -2,6 +2,7 @@ import { REPO } from "@/lib/site";
 import { getLatestRelease } from "@/lib/release";
 import { getDict, withLang, type Lang } from "@/lib/i18n";
 import DownloadButton from "./DownloadButton";
+import Mascot from "./Mascot";
 
 type Props = {
   lang?: Lang;
@@ -17,6 +18,10 @@ export default async function CtaBand({ lang = "zh", title, subtitle }: Props) {
     <section className="section-sm">
       <div className="container">
         <div className="cta-band">
+          {/* 收尾的眼睛：眯成「^ ^」（跑完等你的那个表情） */}
+          <div className="cta-eyes">
+            <Mascot tone="waiting" size={84} />
+          </div>
           <h2 className="h1">{title ?? d.cta.title}</h2>
           <p>{subtitle ?? d.cta.subtitle}</p>
           <div className="hero-cta" style={{ marginTop: 0 }}>

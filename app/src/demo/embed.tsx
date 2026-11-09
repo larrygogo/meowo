@@ -1,6 +1,7 @@
 // 网页内嵌演示入口（官网 hero 用 iframe 引这个页面）：装 mock → 渲染舞台 →
 // 用 Timeline.play() 实时循环播放整段分镜。语言由 URL ?lang=zh|en 决定：
 // 既设 app 的 i18n（Sticker 自身标签），也把 demo 字幕/正文切到对应语言。
+import "./isolatedStorage"; // 必须第一个：每段演示一份独立的内存 localStorage，见该文件说明
 import ReactDOM from "react-dom/client";
 import { detectHostOs } from "../platform";
 import { bootAppearance } from "../appearance";
@@ -16,7 +17,6 @@ import "./demo.css";
 const params = new URLSearchParams(location.search);
 const lang: DemoLang = params.get("lang") === "en" ? "en" : "zh";
 
-localStorage.clear();
 // 冻结时钟：让卡片相对时间戳（fmtAgo）稳定为「刚刚 / just now」，不随播放漂移。
 const FIXED_NOW = 1_780_000_000_000;
 Date.now = () => FIXED_NOW;

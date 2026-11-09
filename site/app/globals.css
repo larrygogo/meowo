@@ -471,7 +471,7 @@ code.inline {
   color: var(--text-faint);
 }
 
-/* 产品舞台：深色径向辉光 + 细网格，贴纸悬浮其中 */
+/* 产品舞台：深色径向辉光 + 细网格，演示悬浮其中 */
 .stage {
   position: relative;
   display: flex;
@@ -509,58 +509,6 @@ code.inline {
   .stage {
     padding: 40px 12px;
   }
-}
-
-/* ---------- 三色状态语义条 ---------- */
-.sem-strip {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 16px;
-}
-@media (max-width: 640px) {
-  .sem-strip {
-    grid-template-columns: 1fr;
-  }
-}
-.sem {
-  background: var(--bg-raise);
-  border: 1px solid var(--hairline);
-  border-radius: var(--r-md);
-  padding: 20px 22px;
-}
-.sem-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  font-family: var(--mono);
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: var(--text-dim);
-  margin-bottom: 10px;
-}
-.sem-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-}
-.sem-err .sem-dot {
-  background: var(--err);
-  box-shadow: 0 0 0 3px rgba(224, 88, 76, 0.18);
-}
-.sem-warn .sem-dot {
-  background: var(--warn);
-  box-shadow: 0 0 0 3px rgba(224, 162, 60, 0.18);
-}
-.sem-ok .sem-dot {
-  background: var(--accent);
-  box-shadow: 0 0 0 3px rgba(45, 212, 167, 0.18);
-}
-.sem p {
-  font-size: 14px;
-  color: var(--text-dim);
-  line-height: 1.6;
 }
 
 /* ---------- 交替图文段（对话窗口等 split） ---------- */
@@ -995,6 +943,8 @@ code.inline {
 }
 .prose {
   max-width: 720px;
+  /* 网格子项默认 min-width:auto，代码块的长行会把整列撑宽，手机上文档页横向溢出到 744px（实测） */
+  min-width: 0;
 }
 .prose h2 {
   font-size: 26px;
@@ -1403,19 +1353,8 @@ code.inline {
     transform: none;
     transition: none;
   }
-  /* 贴纸状态环 run-spin 等无限循环动画在减弱动效下停掉 */
-  .stk-win * {
-    animation: none !important;
-  }
   html {
     scroll-behavior: auto;
-  }
-}
-
-/* ---------- 截图组件全局动画（StickerWindow 内联引用） ---------- */
-@keyframes run-spin {
-  to {
-    transform: rotate(360deg);
   }
 }
 
@@ -1441,78 +1380,371 @@ code.inline {
   overflow: hidden;
 }
 
-/* ── 主题互动块（ThemeShowcase）：左控制列 + 右贴纸预览 ── */
-.theme-showcase {
+/* ── 手机远程演示：DemoFrame（390×780）外面套一层机身 ── */
+.phone-shell {
+  width: min(300px, 100%);
+  padding: 9px;
+  border-radius: 46px;
+  background: #0b0b0d;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 30px 60px -20px rgba(0, 0, 0, 0.6);
+}
+.phone-shell .hero-demo-wrap {
+  border: 0;
+  border-radius: 37px;
+  background: #fff;
+}
+
+/* ── 右侧面板演示：整宽大图，要点在图下面排两列 ── */
+.wide-demo {
+  margin-top: 40px;
+}
+.wide-demo .hero-demo-wrap {
+  margin: 0 auto;
+}
+.wide-checks {
+  margin-top: 36px;
   display: grid;
-  grid-template-columns: 300px 1fr;
-  gap: 28px;
-  align-items: stretch;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 40px;
 }
-.ts-controls {
+@media (max-width: 760px) {
+  .wide-checks {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ============================================================
+   第二版首页（2026-11-09）：眼睛吉祥物 + 一天的时间线 + 状态色
+   眼睛是应用里真实的灵动岛 Eyes（<meowo-eyes>），底座用岛的纯黑，
+   时间点按那一刻的状态上色：运行中绿、等你处理琥珀、跑完蓝、额度告急红。
+   ============================================================ */
+:root {
+  --done: #5aa9ff;
+  --tone-run: var(--accent-text);
+  --tone-warn: var(--warn);
+  --tone-done: var(--done);
+  --tone-err: var(--err);
+}
+
+/* Hero 顶上的大眼睛：岛的纯黑胶囊底座，跟着鼠标看 */
+.hero-eyes {
   display: flex;
-  flex-direction: column;
-  gap: 18px;
-  padding: 22px;
-  background: var(--bg-raise);
-  border: 1px solid var(--hairline);
-  border-radius: var(--r-lg);
+  width: fit-content;
+  margin-left: auto;
+  margin-right: auto;
+  align-items: center;
+  justify-content: center;
+  padding: 22px 34px;
+  margin-bottom: 30px;
+  border-radius: 999px;
+  background: #000;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.07), 0 24px 60px -24px rgba(45, 212, 167, 0.35);
 }
-.ts-group { display: flex; flex-direction: column; gap: 8px; }
-.ts-label {
+.hero-agents {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: center;
+  gap: 10px 18px;
+  margin-top: 30px;
+  font-size: 14px;
+  color: var(--text-dim);
+}
+.hero-agents-label {
   font-family: var(--mono);
   font-size: 11px;
-  letter-spacing: 0.1em;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
   color: var(--text-faint);
 }
-.ts-swatches { display: flex; flex-wrap: wrap; gap: 8px; }
-.ts-swatch {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  padding: 0;
-  cursor: pointer;
-}
-.ts-swatch.on { box-shadow: 0 0 0 2px var(--bg-raise), 0 0 0 4px var(--accent); }
-.ts-seg {
+.hero-agent {
   display: inline-flex;
-  gap: 2px;
-  width: fit-content;
-  padding: 2px;
-  background: var(--bg-sunken);
-  border: 1px solid var(--hairline);
-  border-radius: 999px;
+  align-items: center;
+  gap: 8px;
 }
-.ts-seg button {
-  border: 0;
-  padding: 5px 14px;
-  border-radius: 999px;
-  background: transparent;
-  color: var(--text-dim);
-  font-size: 12.5px;
-  cursor: pointer;
+
+/* 时间线：左边一根竖线串起时间点，每一格左边是时间 + 那一刻的眼睛，右边是说明 + 真实界面 */
+.tl {
+  list-style: none;
+  position: relative;
+  margin-top: 24px;
 }
-.ts-seg button.on {
-  background: var(--accent);
-  color: #06281f;
+.tl::before {
+  content: "";
+  position: absolute;
+  left: 69px;
+  top: 24px;
+  bottom: 24px;
+  width: 2px;
+  background: linear-gradient(var(--hairline), rgba(255, 255, 255, 0.12) 10%, rgba(255, 255, 255, 0.12) 90%, var(--hairline));
+}
+.tl-node {
+  --tone: var(--tone-run);
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+  gap: 44px;
+  padding: 56px 0;
+}
+.tl-node[data-tone="warn"] { --tone: var(--tone-warn); }
+.tl-node[data-tone="done"] { --tone: var(--tone-done); }
+.tl-node[data-tone="err"] { --tone: var(--tone-err); }
+.tl-rail {
+  position: sticky;
+  top: calc(var(--nav-h) + 28px);
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+.tl-time {
+  font-family: var(--mono);
+  font-size: 15px;
   font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--tone);
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--tone) 45%, transparent);
+  background: var(--bg);
 }
-.ts-hint {
-  margin-top: auto;
+.tl-eyes {
+  display: grid;
+  place-items: center;
+  width: 112px;
+  height: 64px;
+  border-radius: 999px;
+  background: #000;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--tone) 40%, transparent), 0 14px 36px -16px color-mix(in srgb, var(--tone) 60%, transparent);
+}
+.tl-label {
+  display: inline-block;
+  font-family: var(--mono);
   font-size: 12px;
-  line-height: 1.6;
-  color: var(--text-faint);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--tone);
 }
-.ts-stage {
+.tl-title {
+  margin-top: 8px;
+  font-size: clamp(24px, 3vw, 32px);
+  line-height: 1.2;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--text);
+}
+.tl-text {
+  margin-top: 14px;
+  max-width: 680px;
+  font-size: 17px;
+  line-height: 1.75;
+  color: var(--text-dim);
+}
+.tl-demo {
+  margin-top: 30px;
+  padding: 28px;
+  border-radius: var(--r-xl);
+  border: 1px solid var(--hairline);
+  background:
+    radial-gradient(70% 80% at 50% 0%, color-mix(in srgb, var(--tone) 12%, transparent), transparent 65%),
+    var(--bg-sunken);
+}
+.tl-demo .hero-demo-wrap {
+  margin: 0 auto;
+}
+.tl-demo-chat .hero-demo-wrap {
+  max-width: 520px !important;
+}
+.tl-demo-phone {
+  display: flex;
+  justify-content: center;
+}
+@media (max-width: 760px) {
+  .tl::before {
+    display: none;
+  }
+  .tl-node {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 18px;
+    padding: 40px 0;
+    border-top: 1px solid var(--hairline);
+  }
+  .tl-rail {
+    position: static;
+    flex-direction: row;
+    justify-content: flex-start;
+  }
+  .tl-eyes {
+    width: 84px;
+    height: 48px;
+  }
+  .tl-demo {
+    padding: 14px;
+  }
+}
+
+/* 五家 Agent：左说明右列表 */
+.agents-band {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 56px;
+  align-items: center;
+}
+.agents-band .lead {
+  margin-top: 16px;
+}
+.agents-more {
+  margin-top: 26px;
+}
+.agents-list {
+  list-style: none;
+  display: grid;
+  gap: 10px;
+}
+.agents-list li {
   display: flex;
   align-items: center;
-  justify-content: center;
-  padding: 28px;
-  background: var(--bg-sunken);
+  gap: 14px;
+  padding: 14px 18px;
+  border-radius: var(--r-md);
   border: 1px solid var(--hairline);
-  border-radius: var(--r-lg);
+  background: var(--bg-raise);
+  font-size: 16px;
+  font-weight: 600;
 }
 @media (max-width: 900px) {
-  .theme-showcase { grid-template-columns: 1fr; }
+  .agents-band {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 32px;
+  }
+}
+
+/* 本地优先：三格大数字 */
+.trust {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 20px;
+}
+.trust-cell {
+  height: 100%;
+  padding: 30px 28px;
+  border-radius: var(--r-lg);
+  border: 1px solid var(--hairline);
+  background: var(--bg-raise);
+}
+.trust-big {
+  font-size: 52px;
+  line-height: 1;
+  font-weight: 700;
+  letter-spacing: -0.04em;
+  color: var(--accent-text);
+}
+.trust-title {
+  margin-top: 12px;
+  font-size: 17px;
+  font-weight: 600;
+}
+.trust-cell p {
+  margin-top: 10px;
+  font-size: 15px;
+  color: var(--text-dim);
+}
+@media (max-width: 900px) {
+  .trust {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+/* CTA 里的眼睛 */
+.cta-eyes {
+  display: inline-flex;
+  padding: 14px 24px;
+  margin-bottom: 26px;
+  border-radius: 999px;
+  background: #000;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.07);
+}
+
+/* 五家 Agent 能力对照（components/AgentMatrix.tsx）：窄屏时表格自己横向滚，不撑宽页面 */
+.am-scroll {
+  overflow-x: auto;
+  border-radius: var(--r-lg);
+  border: 1px solid var(--hairline);
+  background: var(--bg-raise);
+}
+.am table {
+  width: 100%;
+  min-width: 720px;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.am th,
+.am td {
+  padding: 13px 16px;
+  text-align: center;
+  border-bottom: 1px solid var(--hairline);
+}
+.am thead th {
+  position: sticky;
+  top: 0;
+  background: var(--bg-raise);
+  font-weight: 600;
+  color: var(--text);
+}
+.am-agent {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.am tbody th[scope="row"] {
+  text-align: left;
+  font-weight: 500;
+  color: var(--text-dim);
+  min-width: 180px;
+}
+.am-group th {
+  text-align: left !important;
+  padding-top: 22px;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent-text);
+  background: var(--bg-sunken);
+}
+.am tbody tr:last-child td,
+.am tbody tr:last-child th {
+  border-bottom-color: var(--border);
+}
+.am-yes {
+  color: var(--accent-text);
+  font-size: 12px;
+}
+.am-no {
+  color: var(--text-faint);
+}
+.am-text {
+  font-size: 13px;
+  color: var(--text);
+  white-space: nowrap;
+}
+.am-note {
+  margin-top: 14px;
+  font-size: 13px;
+  color: var(--text-faint);
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
 }

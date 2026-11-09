@@ -84,16 +84,18 @@ function useClock(lang: DemoLang) {
   };
 }
 
-export function IslandStage({ lang = "zh" }: { lang?: DemoLang }) {
+/// scene="alert"：定格在审批提醒那一刻，不跑鼠标剧本（官网首页时间线「10:30 岛提醒你」那一格用）。
+export function IslandStage({ lang = "zh", scene }: { lang?: DemoLang; scene?: "alert" }) {
   const copy = COPY[lang];
   const sessions = useMemo(() => buildSessions(lang), [lang]);
-  const [phase, setPhase] = useState<Phase>("compact");
+  const [phase, setPhase] = useState<Phase>(scene === "alert" ? "alert" : "compact");
   const cursorRef = useRef<HTMLDivElement>(null);
   const pos = useRef({ x: 560, y: 430 });
   const clock = useClock(lang);
 
   // 剧本：一只假鼠标循环操作。卸载即停。
   useEffect(() => {
+    if (scene === "alert") return;
     let alive = true;
     const place = () => {
       const el = cursorRef.current;
@@ -148,7 +150,7 @@ export function IslandStage({ lang = "zh" }: { lang?: DemoLang }) {
     return () => {
       alive = false;
     };
-  }, []);
+  }, [scene]);
 
   const pending = sessions[1];
   const alert: IslandAlertEvent | null = phase === "alert"
@@ -219,7 +221,7 @@ export function IslandStage({ lang = "zh" }: { lang?: DemoLang }) {
         </div>
       </div>
 
-      <div className="isw-cursor" ref={cursorRef}>
+      <div className="isw-cursor" ref={cursorRef} hidden={scene === "alert"}>
         <svg width="20" height="22" viewBox="0 0 20 22">
           <path d="M2 1 L2 17 L6.5 13.5 L9.5 20 L12.5 18.7 L9.6 12.3 L15.5 11.8 Z" fill="#fff" stroke="#1b1917" strokeWidth="1.4" />
         </svg>

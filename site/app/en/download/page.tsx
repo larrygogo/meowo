@@ -4,7 +4,7 @@ import DownloadContent from "@/components/pages/DownloadContent";
 export const metadata: Metadata = {
   title: "Download · Meowo",
   description:
-    "Download Meowo: Windows x64 installer, macOS DMG for Apple silicon or Intel (signed & notarized). No AI CLI required upfront — install and sign in inside the app.",
+    "Download Meowo: a Windows x64 installer, and macOS DMGs for Apple silicon and Intel (signed and notarized). You can install and sign in to the AI coding CLIs from Meowo afterwards.",
   alternates: { canonical: "/en/download/", languages: { "zh-CN": "/download/", en: "/en/download/" } },
 };
 

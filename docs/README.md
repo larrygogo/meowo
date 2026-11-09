@@ -12,7 +12,7 @@
 | [research/kimi-workspace-trust-2026-09.md](research/kimi-workspace-trust-2026-09.md) | kimi 工作区信任的机制取证 + 预信任实现计划（活文档，被 `trust.rs` 注释引用） |
 | [macos-release-secrets.md](macos-release-secrets.md) | macOS 发布 secrets 清单（与 release.yml 对齐） |
 | [macos-acceptance-checklist.md](macos-acceptance-checklist.md) | macOS 真机验收清单 |
-| images/ | logo 与演示动图（demo.webp 由 `app/scripts/record-demo.mjs` 按相对路径生成，**勿移动**） |
+| images/ | logo 与 README 演示图（island / panel / mobile，中英各一套，由 `app/scripts/record-demo.mjs` 按相对路径生成，**勿移动**） |
 
 代码里的架构文档（同等权威）：`app/src-tauri/CLAUDE.md`（线程/平台/检测三条硬纪律）、
 `crates/meowo-agent/src/plugins/mod.rs` rustdoc（接入新 agent 指南）、`app/e2e/README.md`。

@@ -196,3 +196,19 @@ export const getReleaseNotes = cache(async (): Promise<ReleaseNote[]> => {
 });
 
 export const formatSize = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+
+export type ReleaseStats = { count: number; since: string };
+
+/**
+ * 首页「持续发版」那一格的数字：已发布版本数 + 第一个版本的日期（YYYY-MM）。
+ * 只算已发布的（草稿跳过）。下载量和 star 数刻意不展示：眼下数字还小，摆出来反而减分
+ * （2026-11-09 决策，见 .lead 决策表）。取不到时返回 null，页面就不显示这一格。
+ */
+export const getReleaseStats = cache(async (): Promise<ReleaseStats | null> => {
+  const list = await gh<ApiRelease[]>("/releases?per_page=100");
+  if (!list) return null;
+  const published = list.filter((r) => !r.draft && r.published_at);
+  if (published.length === 0) return null;
+  const first = published.map((r) => r.published_at as string).sort()[0];
+  return { count: published.length, since: first.slice(0, 7) };
+});
