@@ -88,12 +88,3 @@ export function liveIslandUsage(
 ): IslandUsage[] {
   return orderIslandUsage(usage, providers, liveProviders).filter((u) => liveProviders.includes(u.provider));
 }
-
-/// 最该显示的那一家（展开面板的大环用）。
-export function pickIslandUsage(
-  usage: Record<string, ProviderUsage>,
-  providers: readonly string[],
-  activeProviders: readonly string[] = [],
-): IslandUsage | null {
-  return orderIslandUsage(usage, providers, activeProviders)[0] ?? null;
-}
