@@ -602,7 +602,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
   };
   // 归档动作(单条/批量)与撤销条统一走 useSessionActions(C-13):与对话窗标题菜单同一条
   // set_archived、同一个「下一条」取序(按当前可见顺序取当前条之后的第一条)、同一个 8s 撤销窗。
-  const { archiveUndo, archive: archiveSessions, undoArchive, holdUndo, releaseUndo } = useSessionActions({
+  const { archive: archiveSessions } = useSessionActions({
     onNavigate: onSelect,
     onError: setActionError,
   });
@@ -1483,24 +1483,6 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
       )}
       {/* 动作失败的唯一出口（重命名/便签/归档）：4s 后自动消失。 */}
       {actionError && <div className="chat-sidebar-error" role="status">{actionError}</div>}
-      {/* 归档撤销条:8s 内可一键取回并跳回该会话(批量归档整批撤销)。 */}
-      {archiveUndo != null && !actionError && (
-        <div className="chat-sidebar-error is-undo" role="status">
-          <span>{archiveUndo.length > 1 ? `${t.chat.archivedNotice} × ${archiveUndo.length}` : t.chat.archivedNotice}</span>
-          <button type="button" onClick={() => undoArchive({ onUndone: (ids) => { void loadRef.current("refresh"); onSelect(ids[0]); }, errorMessage: t.chat.sidebarActionFailed })}>{t.sticker.archiveUndo}</button>
-          {/* 单条归档才给：批量归档的 worktree 走会话管理页的批量清理。key 让连着归档两条时重新判定。 */}
-          {archiveUndo.length === 1 && (
-            <WorktreeRemoveButton
-              key={archiveUndo[0]}
-              t={t}
-              sessionId={archiveUndo[0]}
-              className=""
-              onEngage={holdUndo}
-              onSettled={() => { releaseUndo(); void loadRef.current("refresh"); }}
-            />
-          )}
-        </div>
-      )}
       {/* 批量归档操作条:多选态常驻底部(Ctrl+点击增删,Esc 退出)。 */}
       {selectedIds.size > 0 && (
         <div className="chat-sidebar-batch" role="toolbar" aria-label={t.chat.selectedCount(selectedIds.size)}>

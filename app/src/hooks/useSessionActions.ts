@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback } from "react";
 import { setArchived } from "../api";
 
 /**
@@ -45,26 +45,6 @@ export function useSessionActions({
   /** 部分/全部失败或撤销失败时上报（文案经 errorMessage 参数给到）。 */
   onError: (message: string) => void;
 }) {
-  // 归档撤销条：动作无确认、取回入口（筛选菜单→已归档）较隐蔽，归档成功后给 8s 一键撤销
-  // （与看板 toast 同一语义）。数组承载批量归档的整批撤销，单条归档即长度为 1 的批。
-  const [archiveUndo, setArchiveUndo] = useState<number[] | null>(null);
-  // 撤销条上的「删除 worktree」被点下后要等两道确认和删除完成，8s 不够：期间暂停计时，
-  // 结果出来后重新计 8s（让用户看清结果），见 holdUndo / releaseUndo。
-  const [undoHeld, setUndoHeld] = useState(false);
-  const [undoEpoch, setUndoEpoch] = useState(0);
-  useEffect(() => {
-    if (archiveUndo == null || undoHeld) return;
-    const timer = window.setTimeout(() => setArchiveUndo(null), 8_000);
-    return () => window.clearTimeout(timer);
-  }, [archiveUndo, undoHeld, undoEpoch]);
-
-  const dismissUndo = useCallback(() => setArchiveUndo(null), []);
-  const holdUndo = useCallback(() => setUndoHeld(true), []);
-  const releaseUndo = useCallback(() => {
-    setUndoHeld(false);
-    setUndoEpoch((n) => n + 1);
-  }, []);
-
   /**
    * 归档一批会话（单条归档走同一入口）。visibleOrder 是用户当前可见的列表顺序
    * （侧栏 ordered，或 ChatWindow 持有的侧栏顺序镜像）；归档的含当前打开的会话时，
@@ -101,32 +81,11 @@ export function useSessionActions({
           onError(resolveMessage(errorMessage, reason));
           onFailure?.();
         }
-        if (ok.length > 0) {
-          setUndoHeld(false);
-          setArchiveUndo(ok);
-        }
       });
     },
     [onNavigate, onError]
   );
 
-  /** 一键撤销：把撤销条里的整批会话捞回来；全成功才 onUndone（跳回/刷新由调用方定）。 */
-  const undoArchive = useCallback(
-    (args: { onUndone?: (ids: number[]) => void; errorMessage: ErrorMessage }) => {
-      const ids = archiveUndo;
-      setArchiveUndo(null);
-      if (!ids || ids.length === 0) return;
-      void Promise.allSettled(ids.map((id) => setArchived(id, false))).then((results) => {
-        const reason = (results.find((entry) => entry.status === "rejected") as PromiseRejectedResult | undefined)?.reason;
-        if (results.some((entry) => entry.status === "rejected")) {
-          onError(resolveMessage(args.errorMessage, reason));
-        } else {
-          args.onUndone?.(ids);
-        }
-      });
-    },
-    [archiveUndo, onError]
-  );
-
-  return { archiveUndo, archive, undoArchive, dismissUndo, holdUndo, releaseUndo };
+  // 不再有归档撤销条（用户要求，2026-11-09：「不要显示这个」）。取回走侧栏「已完成」。
+  return { archive };
 }

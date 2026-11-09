@@ -977,8 +977,6 @@ export const zh = {
     sidebarUnfoldAll: "全部展开",
     sidebarSearchClear: "清空搜索",
     sidebarEmptySearch: "没有匹配的会话",
-    // 对话窗里的完成提示：侧栏「已完成」页就能找回，不必指向更深的设置页（贴纸仍用 sticker.archivedNotice）
-    archivedNotice: "已完成，可在侧栏「已完成」找回",
     // 对话内容全文搜索（显式动作：扫 transcript 文件，不随击键触发）。
     searchTranscripts: "搜索对话内容",
     searchTranscriptsRunning: "正在搜索对话内容…",

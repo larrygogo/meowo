@@ -34,7 +34,7 @@ describe("pickNextAfterArchive", () => {
 });
 
 describe("useSessionActions", () => {
-  it("归档当前会话：写后端、按可见顺序跳「下一条」、给出撤销条", async () => {
+  it("归档当前会话：写后端、按可见顺序跳「下一条」、不再弹撤销条", async () => {
     const onNavigate = vi.fn();
     const onError = vi.fn();
     const hook = renderHook(() => useSessionActions({ onNavigate, onError }));
@@ -44,7 +44,6 @@ describe("useSessionActions", () => {
     expect(api.setArchived).toHaveBeenCalledWith(2, true);
     expect(onNavigate).toHaveBeenCalledWith(3);
     expect(onError).not.toHaveBeenCalled();
-    expect(hook.result.current.archiveUndo).toEqual([2]);
   });
 
   it("归档别的会话不动当前对话", async () => {
@@ -54,10 +53,9 @@ describe("useSessionActions", () => {
       await hook.result.current.archive({ ids: [3], visibleOrder: [1, 2, 3], activeId: 1, errorMessage: "失败" });
     });
     expect(onNavigate).not.toHaveBeenCalled();
-    expect(hook.result.current.archiveUndo).toEqual([3]);
   });
 
-  it("失败：报错并走 onFailure 兜底，不出撤销条；errorMessage 函数拿得到原因", async () => {
+  it("失败：报错并走 onFailure 兜底；errorMessage 函数拿得到原因", async () => {
     api.setArchived.mockRejectedValue(new Error("db busy"));
     const onError = vi.fn();
     const onFailure = vi.fn();
@@ -73,7 +71,6 @@ describe("useSessionActions", () => {
     });
     expect(onError).toHaveBeenCalledWith("失败:db busy");
     expect(onFailure).toHaveBeenCalled();
-    expect(hook.result.current.archiveUndo).toBeNull();
   });
 
   it("可见顺序为空时退回 fallbackNext 现查", async () => {
@@ -85,20 +82,5 @@ describe("useSessionActions", () => {
     });
     expect(fallbackNext).toHaveBeenCalled();
     expect(onNavigate).toHaveBeenCalledWith(9);
-  });
-
-  it("撤销：整批取消归档并 onUndone，撤销条清空", async () => {
-    const onUndone = vi.fn();
-    const hook = renderHook(() => useSessionActions({ onNavigate: vi.fn(), onError: vi.fn() }));
-    await act(async () => {
-      await hook.result.current.archive({ ids: [2], visibleOrder: [1, 2, 3], activeId: 1, errorMessage: "失败" });
-    });
-    expect(hook.result.current.archiveUndo).toEqual([2]);
-    await act(async () => {
-      hook.result.current.undoArchive({ onUndone, errorMessage: "失败" });
-    });
-    expect(api.setArchived).toHaveBeenCalledWith(2, false);
-    expect(onUndone).toHaveBeenCalledWith([2]);
-    expect(hook.result.current.archiveUndo).toBeNull();
   });
 });

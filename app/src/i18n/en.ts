@@ -914,7 +914,6 @@ export const en: Dict = {
     dropToAttach: "Drop to attach",
     dropToTerminal: "Drop to insert path",
     sidebarEmptySearch: "No matching sessions",
-    archivedNotice: "Done. Find it under the Done tab in the sidebar",
     sidebarLoading: "Loading sessions…",
     // First-load failure row (P1-1): never degrade to the empty state — a backend fault
     // must not read as "all sessions gone".
