@@ -1831,6 +1831,26 @@ impl Store {
     /// `dir` 是否为某个会话的工作目录（逐字比较，前端传的就是库里存的串）。
     /// 远程桥放行 git 只读命令时拿它收口：手机端只能看会话自己目录里的改动，
     /// 不能借 git 命令把任意路径当仓库来读。
+    /// 未归档会话的 (id, cwd)。worktree 清理用它判断目录是不是还有别的会话在用。
+    pub fn unarchived_session_cwds(&self) -> Result<Vec<(i64, String)>, StoreError> {
+        self.session_cwds_where("archived = 0")
+    }
+
+    /// 已归档会话的 (id, cwd)。批量清理 worktree 的候选来源。
+    pub fn archived_session_cwds(&self) -> Result<Vec<(i64, String)>, StoreError> {
+        self.session_cwds_where("archived = 1")
+    }
+
+    fn session_cwds_where(&self, cond: &str) -> Result<Vec<(i64, String)>, StoreError> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT id, cwd FROM sessions WHERE {cond} AND cwd IS NOT NULL AND cwd != '' ORDER BY id"
+        ))?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
     pub fn is_session_dir(&self, dir: &str) -> Result<bool, StoreError> {
         let as_cwd: bool = self.conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM sessions WHERE cwd = ?1)",

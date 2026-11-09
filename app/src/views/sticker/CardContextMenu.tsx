@@ -3,6 +3,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useDismissable } from "../../hooks/useDismissable";
 import { useT } from "../../i18n";
+import { runWorktreeRemoval, useWorktreeStatus, worktreeApplicable, worktreeReasonText, type RemovalOutcome } from "../../worktreeCleanup";
 import { ArchiveIcon, CheckIcon, FolderIcon, NoteIcon, PencilIcon, StopIcon, TopIcon } from "./icons";
 
 // 卡片右键菜单：置顶/便签/重命名/归档收拢于此（替代原 hover 图标行，卡片标题行更干净）。
@@ -22,6 +23,8 @@ export function CardContextMenu({
   onSelectMode = null,
   onOpenDir,
   onEndSession,
+  worktreeSessionId = null,
+  onWorktreeDone,
   onClose,
 }: {
   x: number;
@@ -39,9 +42,14 @@ export function CardContextMenu({
   onOpenDir: (() => void) | null;
   /** 结束会话（杀托管 PTY）；仅本 GUI 托管的会话可结束，其余传 null 隐藏该项。 */
   onEndSession: (() => void) | null;
+  /** 已完成会话的 id：菜单打开时查它的 worktree 能不能删（gh 要联网，约 1 秒）。进行中会话传 null。 */
+  worktreeSessionId?: number | null;
+  /** 删除流程结束（删完/失败/取消）。菜单那时已经关了，结果由宿主提示。 */
+  onWorktreeDone?: (outcome: RemovalOutcome) => void;
   onClose: () => void;
 }) {
   const t = useT();
+  const worktree = useWorktreeStatus(worktreeSessionId);
   const ref = useRef<HTMLDivElement>(null);
   const [pos, setPos] = useState({ left: x, top: y });
   useLayoutEffect(() => {
@@ -133,6 +141,32 @@ export function CardContextMenu({
           <FolderIcon />
           {t.sticker.openProjectDir}
         </button>
+      )}
+      {worktreeSessionId != null && worktreeApplicable(worktree) && (
+        <>
+          <div className="ctx-sep" role="separator" />
+          {/* 不可删时置灰并写明原因（用户定：第一版不提供强制删除）。aria-disabled 而非 disabled：
+              禁用按钮拿不到焦点，读屏用户就听不到下面那句原因。 */}
+          <button
+            type="button"
+            role="menuitem"
+            className={"ctx-item ctx-item-danger" + (worktree?.eligible ? "" : " is-disabled")}
+            aria-disabled={!worktree?.eligible}
+            onClick={() => {
+              if (!worktree?.eligible) return;
+              const id = worktreeSessionId;
+              const status = worktree;
+              onClose();
+              void runWorktreeRemoval(t, id, status).then((outcome) => onWorktreeDone?.(outcome));
+            }}
+          >
+            <FolderIcon />
+            {worktree == null ? t.worktree.checking : t.worktree.remove}
+          </button>
+          {worktree != null && !worktree.eligible && (
+            <div className="ctx-note" role="note">{worktreeReasonText(t, worktree)}</div>
+          )}
+        </>
       )}
       {onEndSession && (
         <>

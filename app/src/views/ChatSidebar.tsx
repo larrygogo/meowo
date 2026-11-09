@@ -21,6 +21,7 @@ import { formatBackendError } from "../i18n/errors";
 import { isMac } from "../platform";
 import { reconcileRows, sameRefs, type RowCache } from "../rowCache";
 import type { Dict } from "../i18n/zh";
+import { WorktreeRemoveButton, type RemovalOutcome } from "../worktreeCleanup";
 
 /** 每翻一页新增的会话数。滚到底自动加载下一页，直到后端带回 next_cursor = null 为止。 */
 const PAGE_LIMIT = 60;
@@ -593,7 +594,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
   };
   // 归档动作(单条/批量)与撤销条统一走 useSessionActions(C-13):与对话窗标题菜单同一条
   // set_archived、同一个「下一条」取序(按当前可见顺序取当前条之后的第一条)、同一个 8s 撤销窗。
-  const { archiveUndo, archive: archiveSessions, undoArchive } = useSessionActions({
+  const { archiveUndo, archive: archiveSessions, undoArchive, holdUndo, releaseUndo } = useSessionActions({
     onNavigate: onSelect,
     onError: setActionError,
   });
@@ -1078,6 +1079,10 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
               <span className="chat-sidebar-meta" data-tip={item.cwd ?? undefined}>{dir}</span>
             </span>
           )}
+          {/* 目录已删除（worktree 清理掉了）：不管按不按目录分组都要显示——点进去恢复不了，得先说。 */}
+          {!noting && item.cwd_missing && (
+            <span className="chat-sidebar-gone" data-tip={t.worktree.dirMissingTip} data-testid="sidebar-dir-missing">{t.worktree.dirMissing}</span>
+          )}
           {/* 便签写完要看得见，否则「添加便签」等于写进黑洞。编辑中的那条让位给输入框。 */}
           {!noting && item.note && (
             <span className="chat-sidebar-note" data-tip={item.note}><NoteIcon />{item.note}</span>
@@ -1451,6 +1456,17 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
         <div className="chat-sidebar-error is-undo" role="status">
           <span>{archiveUndo.length > 1 ? `${t.chat.archivedNotice} × ${archiveUndo.length}` : t.chat.archivedNotice}</span>
           <button type="button" onClick={() => undoArchive({ onUndone: (ids) => { void loadRef.current("refresh"); onSelect(ids[0]); }, errorMessage: t.chat.sidebarActionFailed })}>{t.sticker.archiveUndo}</button>
+          {/* 单条归档才给：批量归档的 worktree 走会话管理页的批量清理。key 让连着归档两条时重新判定。 */}
+          {archiveUndo.length === 1 && (
+            <WorktreeRemoveButton
+              key={archiveUndo[0]}
+              t={t}
+              sessionId={archiveUndo[0]}
+              className=""
+              onEngage={holdUndo}
+              onSettled={() => { releaseUndo(); void loadRef.current("refresh"); }}
+            />
+          )}
         </div>
       )}
       {/* 批量归档操作条:多选态常驻底部(Ctrl+点击增删,Esc 退出)。 */}
@@ -1483,6 +1499,14 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
           // 被 supervisor 拉回来（endable 已内含排除）。远程同样放行:stop_managed_terminal
           // 已进 /rpc 白名单(remote.rs 头注释记录了放行理由)。
           onEndSession={ctxItem.endable ? () => endSession(ctxItem) : null}
+          worktreeSessionId={ctxItem.archived && !ctxItem.foreign && !ctxItem.cwd_missing ? ctxItem.session.id : null}
+          onWorktreeDone={(outcome: RemovalOutcome) => {
+            if (outcome.kind === "failed") setActionError(outcome.message);
+            else if (outcome.kind === "removed") {
+              if (!outcome.branchDeleted) setActionError(t.worktree.removedKeepBranch);
+              void loadRef.current("refresh");
+            }
+          }}
           onClose={() => setCtxMenu(null)}
         />
       )}

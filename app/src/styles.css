@@ -1208,6 +1208,18 @@ button.stab {
 .ctx-item-danger:hover, .ctx-item-danger:focus-visible { color: var(--cc-err-vivid); background: color-mix(in srgb, var(--cc-err-vivid) 10%, transparent); }
 .ctx-item-danger:hover svg, .ctx-item-danger:focus-visible svg { color: var(--cc-err-vivid); }
 .ctx-sep { height: 1px; margin: var(--sp-3) var(--sp-6); background: var(--cc-border); }
+/* 「删除 worktree」不可删时：aria-disabled 而不是 disabled（要能聚焦，读屏才念得到下面的原因），
+   外观与 :disabled 一致；原因写在项下方，和菜单项文字左缘对齐（图标 14px + gap）。 */
+.ctx-item.is-disabled { opacity: 0.4; cursor: default; }
+.ctx-item.is-disabled:hover, .ctx-item.is-disabled:focus-visible { background: transparent; color: var(--cc-text); }
+.ctx-item.is-disabled:hover svg, .ctx-item.is-disabled:focus-visible svg { color: var(--cc-text-faint); }
+.ctx-note {
+  max-width: 220px;
+  padding: 0 var(--sp-10) var(--sp-6) calc(var(--sp-10) + 14px + var(--sp-8));
+  color: var(--cc-text-faint);
+  font-size: calc(10.5px * var(--cc-ui));
+  line-height: 1.45;
+}
 /* 卡片菜单按钮（card_menu_mode=button 时替代右键触发）：常显小圆角图标钮——
    为触屏等无 hover 环境而生，不能做 hover 才浮现。 */
 .stk-menu-btn {
@@ -4071,6 +4083,8 @@ select.ns-input {
 .sa-pg:disabled { opacity: .38; cursor: default; background: transparent; }
 .sa-ellipsis { padding: 0 var(--sp-2); color: var(--cc-text-faint); font-size: var(--text-sm); }
 .sa-toast { position: absolute; left: 50%; bottom: var(--sp-16); transform: translateX(-50%); display: flex; align-items: center; gap: var(--sp-10); padding: var(--sp-8) var(--sp-14); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); background: var(--cc-menu-bg); box-shadow: var(--cc-shadow-popup); color: var(--cc-text); font-size: var(--text-sm); white-space: nowrap; z-index: 20; }
+/* 批量清理 worktree 的结果要逐行列出失败项：多行时换行显示，限宽不撑出窗口。 */
+.sa-toast > span { white-space: pre-line; max-width: min(560px, 80vw); }
 /* Windows/Linux：主内容列（标题行 + 正文 + 输入框）平铺在外壳里（对照 Kimi，用户 2026-10-29
    定：取代此前四周留白 + 圆角 + 阴影的浮起卡片）。顶栏与侧栏用较深的窗口底色，主列稍亮一档，
    两者之间只用一条细线分隔——常驻区域靠底色差与细线分层，阴影只留给浮层。
@@ -4297,6 +4311,8 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 /* 便签：一行截断（完整内容进 title）。写了看不见的备忘等于没写。 */
 .chat-sidebar-note { display: flex; align-items: center; gap: var(--sp-4); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cc-text-faint); font-size: var(--text-xs); }
 .chat-sidebar-note svg { flex: 0 0 auto; width: 10px; height: 10px; }
+/* 目录已删除：与看板卡片的虚线徽章同语汇（这里没有东西了），不抢标题的视觉权重。 */
+.chat-sidebar-gone { align-self: flex-start; margin-top: 2px; padding: 0 var(--sp-6); border: 1px dashed var(--cc-border); border-radius: var(--r-sm); color: var(--cc-text-faint); font-size: var(--text-xs); line-height: 1.5; white-space: nowrap; }
 /* 就地编辑（重命名/便签）：铺满文本列，视觉上顶掉原来那一行，不撑宽条目。 */
 .chat-sidebar-edit { width: 100%; min-width: 0; padding: var(--sp-2) var(--sp-5); border: var(--hairline) solid var(--cc-accent-border); border-radius: var(--radius-sm); color: var(--cc-text); background: var(--cc-bg); font: inherit; font-size: var(--text-xs); }
 .chat-sidebar-edit:focus { outline: none; border-color: var(--cc-accent); }

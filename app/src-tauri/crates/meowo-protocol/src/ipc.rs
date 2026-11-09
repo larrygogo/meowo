@@ -687,6 +687,60 @@ pub struct PullRequestDto {
     pub title: String,
 }
 
+/// 会话所在 worktree 能不能清理（归档后的「删除 worktree」入口用）。判定全在桌面端做，
+/// 手机端经远程桥拿到的是同一份结论。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreeStatusDto {
+    /// worktree 根目录（会话 cwd 可能是它的子目录）；不是 worktree 时为会话 cwd。
+    pub path: Option<String>,
+    pub branch: Option<String>,
+    pub pr_number: Option<u32>,
+    pub eligible: bool,
+    /// 不能清理的原因码（`not_worktree` / `dir_missing` / `gh_unavailable` / `no_pr` /
+    /// `pr_open` / `pr_closed` / `dirty` / `untracked` / `unpushed` / `submodule_dirty` /
+    /// `submodule_unpushed` / `shared_session` / `detached` / `locked` / `not_repo`）。可清理时为 None。
+    pub reason: Option<String>,
+    /// 原因附带的数量（如没提交的文件数、共用目录的会话数）。
+    pub count: Option<u32>,
+}
+
+/// 占着 worktree 目录的进程（删除前列给用户确认）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreeProcessDto {
+    pub pid: u32,
+    pub name: String,
+}
+
+/// 一次删除的结果。`removed = false` 且 `blockers` 非空：有进程占用，什么都没动，
+/// 等用户确认后带 `kill_processes = true` 再调。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreeRemovalDto {
+    pub removed: bool,
+    pub blockers: Vec<WorktreeProcessDto>,
+    /// 本地分支是否一并删掉（worktree 删了但分支删失败时为 false，前端提示一句）。
+    pub branch_deleted: bool,
+}
+
+/// 批量清理清单的一项：一个 worktree 目录，可能对应多条已归档会话。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct CleanableWorktreeDto {
+    #[cfg_attr(test, ts(type = "number[]"))]
+    pub session_ids: Vec<i64>,
+    pub status: WorktreeStatusDto,
+}
+
 /// 单个文件的统一 diff 文本。未跟踪文件的 `diff` 是合成的伪 diff
 /// （`--- /dev/null` / `+++ b/<path>` 头 + 每行加 `+` 前缀）；二进制文件只有
 /// 一行占位 "(binary file)"。

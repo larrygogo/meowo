@@ -7,7 +7,11 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { useT } from "../../i18n";
-import { getSessionAdminPage, recentCwds, setArchived, type LiveSession } from "../../api";
+import { getSessionAdminPage, listCleanableWorktrees, recentCwds, setArchived, type LiveSession } from "../../api";
+import { appConfirm } from "../../confirm";
+import { formatBackendError } from "../../i18n/errors";
+import { runWorktreeRemoval } from "../../worktreeCleanup";
+import { UNNAMED_SESSION_SENTINEL } from "../sticker/types";
 import { folderName, pathKey } from "../../paths";
 import { useMenuPopup } from "../menu";
 import { CheckIcon } from "../sticker/icons";
@@ -297,6 +301,50 @@ export function SessionAdmin({ onBack, onOpen, initialWorkspaces = [], initialSt
     });
   };
 
+  /// 批量清理已合并的 worktree（用户定：攒多了要能一次清掉）。清单整体确认一次，之后逐个删；
+  /// 某个 worktree 有程序占着时，runWorktreeRemoval 仍会单独问——结束哪个程序必须让用户看到名字。
+  const [cleaning, setCleaning] = useState(false);
+  const cleanWorktrees = async () => {
+    setCleaning(true);
+    try {
+      const all = await listCleanableWorktrees();
+      const ready = all.filter((item) => item.status.eligible);
+      if (ready.length === 0) {
+        setToast({ text: t.worktree.batchNone, undo: null });
+        return;
+      }
+      // 会话名：拉一页最近的已完成会话对上 id（最多 200 条），对不上的只显示目录。
+      const titles = new Map<number, string>();
+      const donePage = await getSessionAdminPage({ workspaces: [], status: "done", updatedBeforeDays: null, page: 0, pageSize: 200 }).catch(() => null);
+      for (const row of donePage?.items ?? []) {
+        if (row.task_title && row.task_title !== UNNAMED_SESSION_SENTINEL) titles.set(row.session.id, row.task_title);
+      }
+      const lines = ready.map((item) => {
+        const name = item.sessionIds.map((id) => titles.get(id)).find(Boolean);
+        return `• ${name ? `${name} — ` : ""}${item.status.path ?? ""} (${item.status.branch ?? ""})`;
+      });
+      const yes = await appConfirm(t.worktree.batchMessage(lines.join("\n"), all.length - ready.length), {
+        title: t.worktree.batchTitle,
+        danger: true,
+        confirmLabel: t.worktree.remove,
+      });
+      if (!yes) return;
+      let ok = 0;
+      const failures: string[] = [];
+      for (const item of ready) {
+        const outcome = await runWorktreeRemoval(t, item.sessionIds[0], item.status, false);
+        if (outcome.kind === "removed") ok += 1;
+        else if (outcome.kind === "failed") failures.push(t.worktree.batchFailedItem(item.status.path ?? "", outcome.message));
+      }
+      load(applied, page, pageSize);
+      setToast({ text: [t.worktree.batchDone(ok, failures.length), ...failures].join("\n"), undo: null });
+    } catch (error) {
+      setToast({ text: formatBackendError(error, t.locale), undo: null });
+    } finally {
+      setCleaning(false);
+    }
+  };
+
   const statusOptions = useMemo(() => [
     { value: "all" as Status, label: t.admin.statusAll },
     { value: "open" as Status, label: t.admin.statusOpen, dot: "open" as const },
@@ -328,6 +376,12 @@ export function SessionAdmin({ onBack, onOpen, initialWorkspaces = [], initialSt
             <span className="sa-f-actions">
               <button type="button" className="sa-btn-q sa-btn-q--primary" onClick={() => query(draft)}>{t.admin.query}</button>
               <button type="button" className="sa-btn-q" onClick={() => { setDraft(DEFAULT_FILTERS); query(DEFAULT_FILTERS); }}>{t.admin.reset}</button>
+              {/* 只在看「已完成」时出现：清理对象就是已完成会话的 worktree。 */}
+              {applied.status === "done" && (
+                <button type="button" className="sa-btn-q" disabled={cleaning} onClick={() => void cleanWorktrees()}>
+                  {cleaning ? t.worktree.batchScanning : t.worktree.batch}
+                </button>
+              )}
             </span>
           </div>
           {selected.size > 0 && (

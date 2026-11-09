@@ -48,13 +48,22 @@ export function useSessionActions({
   // 归档撤销条：动作无确认、取回入口（筛选菜单→已归档）较隐蔽，归档成功后给 8s 一键撤销
   // （与看板 toast 同一语义）。数组承载批量归档的整批撤销，单条归档即长度为 1 的批。
   const [archiveUndo, setArchiveUndo] = useState<number[] | null>(null);
+  // 撤销条上的「删除 worktree」被点下后要等两道确认和删除完成，8s 不够：期间暂停计时，
+  // 结果出来后重新计 8s（让用户看清结果），见 holdUndo / releaseUndo。
+  const [undoHeld, setUndoHeld] = useState(false);
+  const [undoEpoch, setUndoEpoch] = useState(0);
   useEffect(() => {
-    if (archiveUndo == null) return;
+    if (archiveUndo == null || undoHeld) return;
     const timer = window.setTimeout(() => setArchiveUndo(null), 8_000);
     return () => window.clearTimeout(timer);
-  }, [archiveUndo]);
+  }, [archiveUndo, undoHeld, undoEpoch]);
 
   const dismissUndo = useCallback(() => setArchiveUndo(null), []);
+  const holdUndo = useCallback(() => setUndoHeld(true), []);
+  const releaseUndo = useCallback(() => {
+    setUndoHeld(false);
+    setUndoEpoch((n) => n + 1);
+  }, []);
 
   /**
    * 归档一批会话（单条归档走同一入口）。visibleOrder 是用户当前可见的列表顺序
@@ -92,7 +101,10 @@ export function useSessionActions({
           onError(resolveMessage(errorMessage, reason));
           onFailure?.();
         }
-        if (ok.length > 0) setArchiveUndo(ok);
+        if (ok.length > 0) {
+          setUndoHeld(false);
+          setArchiveUndo(ok);
+        }
       });
     },
     [onNavigate, onError]
@@ -116,5 +128,5 @@ export function useSessionActions({
     [archiveUndo, onError]
   );
 
-  return { archiveUndo, archive, undoArchive, dismissUndo };
+  return { archiveUndo, archive, undoArchive, dismissUndo, holdUndo, releaseUndo };
 }
