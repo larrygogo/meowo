@@ -199,6 +199,16 @@ fn pid_alive(pid: u32) -> bool {
 /// 起的嵌套 agent（`claude -p` 探针等）原样继承——broker 端靠这个 pid 把嵌套 agent 的
 /// 误认领与真 /clear 换代区分开（见 app 侧 pty.rs 的换代守卫）。
 pub(crate) fn notify_claim(session_id: i64, agent_pid: Option<u32>) {
+    // 会话 id 是 reporter 落库的那个库里的编号。broker 用的是另一个库（会话内 Bash 跑的测试、
+    // 探针用 MEOWO_DB 指开了临时库，却继承了外层的 PTY 凭据），这个 id 拿去认领只会把外层
+    // 会话的终端换绑到一个不存在或不相干的会话上（实拍 1537 → 1）。旧 broker 不给
+    // MEOWO_PTY_DB 时照旧认领。
+    if let Ok(broker_db) = std::env::var("MEOWO_PTY_DB") {
+        match meowo_reporter::db_path() {
+            Some(own) if same_db(&own.to_string_lossy(), &broker_db) => {}
+            _ => return,
+        }
+    }
     let Ok(endpoint) = std::env::var("MEOWO_PTY_ENDPOINT") else {
         return;
     };
@@ -239,6 +249,21 @@ pub(crate) fn notify_claim(session_id: i64, agent_pid: Option<u32>) {
         let handshake = encode_legacy_claim(&token, &launch, session_id);
         let _ = stream.write_all(handshake.as_bytes());
     }
+}
+
+/// 两个库路径是不是同一个文件。不做 canonicalize（库可能还没建、网络盘慢）：统一斜杠方向，
+/// Windows 上路径不分大小写。
+fn same_db(a: &str, b: &str) -> bool {
+    let norm = |p: &str| {
+        let p = p.trim().replace('\\', "/");
+        let p = p.trim_end_matches('/').to_string();
+        if cfg!(windows) {
+            p.to_lowercase()
+        } else {
+            p
+        }
+    };
+    !a.trim().is_empty() && norm(a) == norm(b)
 }
 
 /// TUI 遗留的私有模式收回序列。agent 自己正常退出时会收，**崩溃 / 被 Meowo 结束 /
@@ -477,6 +502,16 @@ pub(crate) fn run(args: &[String]) -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn claim_only_against_the_same_db() {
+        assert!(same_db(r"C:\Users\me\.meowo\board.db", "C:/Users/me/.meowo/board.db"));
+        // 会话内跑的测试 / 探针用 MEOWO_DB 指开的临时库：不认领。
+        assert!(!same_db(r"C:\Temp\probe\board.db", r"C:\Users\me\.meowo\board.db"));
+        assert!(!same_db("", ""));
+        #[cfg(windows)]
+        assert!(same_db(r"c:\users\ME\.meowo\board.db", r"C:\Users\me\.meowo\board.db"));
+    }
 
     fn sample_request() -> ApprovalRequest {
         ApprovalRequest {
