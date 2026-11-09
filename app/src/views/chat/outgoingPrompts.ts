@@ -278,6 +278,17 @@ export function createOutgoingStore() {
       bySession.delete(from);
       put(to, [...(bySession.get(to) ?? EMPTY), ...list]);
     },
+    /// 按回执编号推进或撤掉（patch 为 null），不管它此刻挂在哪个会话下：编号全局唯一，
+    /// 认领搬家后按会话找会落空。
+    settle(id: number, patch: Partial<Pick<OutgoingPrompt, "phase" | "at">> | null) {
+      for (const [sessionId, list] of bySession) {
+        if (!list.some((prompt) => prompt.id === id)) continue;
+        put(sessionId, patch
+          ? list.map((prompt) => (prompt.id === id ? { ...prompt, ...patch } : prompt))
+          : list.filter((prompt) => prompt.id !== id));
+        return;
+      }
+    },
     /// 只撤界面上的回执：消息已经写进终端，CLI 照样会处理它。
     dismiss(sessionId: number, id: number) {
       const list = bySession.get(sessionId);

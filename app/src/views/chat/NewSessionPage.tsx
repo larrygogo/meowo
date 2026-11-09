@@ -44,6 +44,9 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched, onOpenSession
   // 粘进来的截图/文件（用户反馈：新建页粘不了图，只能等会话起来再贴一次）。和对话页同一套
   // 落盘与附件形状，发出去后交给对话页的发送通道，原生贴图 / 附路径降级都在那边。
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  // 还在落盘的粘贴数：大截图写盘要一会儿，「Ctrl+V 紧接回车」会在图回来之前就把会话发出去，
+  // 图静默丢掉（做空复现）。落盘期间先不让发。
+  const [pasting, setPasting] = useState(0);
   const textRef = useRef<HTMLTextAreaElement>(null);
   // 打开即可打字：九成场景目录已按最近一次预填好，第一步就是写第一句话。
   useEffect(() => textRef.current?.focus(), []);
@@ -81,6 +84,7 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched, onOpenSession
   }
 
   async function submit() {
+    if (pasting > 0) return;
     if (!cwd.trim()) { setError(t.newSession.workspaceRequired); return; }
     const launched = await form.launch();
     // 旧后端桌面命令不回临时 id（null）：会话照样起来、reveal 照样切过去，只是第一句话
@@ -89,10 +93,12 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched, onOpenSession
   }
 
   const pasteFiles = async (files: File[]) => {
+    setPasting((count) => count + 1);
     const results = await Promise.allSettled(files.map(async (file) => {
       const path = await savePastedAttachment(file.name || "pasted.png", base64OfBuffer(await file.arrayBuffer()));
       return { ...attachmentOf(path), size: file.size };
     }));
+    setPasting((count) => count - 1);
     const fresh = results.flatMap((entry) => (entry.status === "fulfilled" ? [entry.value] : []));
     const failed = results.find((entry): entry is PromiseRejectedResult => entry.status === "rejected");
     if (failed) setError(formatBackendError(failed.reason, t.locale));
@@ -218,7 +224,7 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched, onOpenSession
               data-testid="nsp-send"
               aria-label={busy ? t.newSession.launching : t.newSession.start}
               data-tip={busy ? t.newSession.launching : t.newSession.start}
-              disabled={busy || (avail?.length ?? 0) === 0}
+              disabled={busy || pasting > 0 || (avail?.length ?? 0) === 0}
               onClick={() => void submit()}
             >
               {busy ? <span className="nsp-spin" aria-hidden="true" /> : (

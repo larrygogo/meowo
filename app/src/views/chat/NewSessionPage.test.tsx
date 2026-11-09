@@ -91,6 +91,28 @@ describe("新建会话页（对话窗主区，对照 Kimi）", () => {
     ]));
   });
 
+  it("粘贴的图还在落盘时不发出去，落盘回来才能发", async () => {
+    api.newSession.mockResolvedValue(-6);
+    let finish: (path: string) => void = () => {};
+    api.savePastedAttachment.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
+    const onLaunched = vi.fn();
+    render(<NewSessionPage prefill={{}} onLaunched={onLaunched} />);
+    await waitFor(() => expect(screen.getByTestId("nsp-workspace").textContent).toContain("meowo"));
+    const input = screen.getByTestId("nsp-input");
+    const file = { name: "shot.png", size: 3, arrayBuffer: () => Promise.resolve(new Uint8Array([1, 2, 3]).buffer) } as unknown as File;
+    fireEvent.paste(input, { clipboardData: { files: [file] } });
+    fireEvent.change(input, { target: { value: "看图" } });
+    await waitFor(() => expect(api.savePastedAttachment).toHaveBeenCalled());
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect((screen.getByTestId("nsp-send") as HTMLButtonElement).disabled).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(api.newSession).not.toHaveBeenCalled();
+    finish("C:/tmp/meowo-paste/1-0/shot.png");
+    expect(await screen.findByAltText("shot.png")).toBeTruthy();
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(onLaunched).toHaveBeenCalledWith(-6, "claude", "看图", [expect.objectContaining({ image: true })]));
+  });
+
   it("没有工作区时提示先选，不发起启动", async () => {
     api.recentCwds.mockResolvedValue([]);
     render(<NewSessionPage prefill={{}} onLaunched={vi.fn()} />);
