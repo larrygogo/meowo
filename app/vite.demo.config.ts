@@ -18,6 +18,9 @@ export default defineConfig({
         island: resolve(__dirname, "embed-island.html"),
         // 官网「对话窗口」一段：真实 ChatWindow + 假会话（src/demo/chatEmbed.tsx）。
         chat: resolve(__dirname, "embed-chat.html"),
+        // 官网「右侧面板」「手机远程」两段：同一段假会话，分别开着改动页签 / 用手机页布局。
+        panel: resolve(__dirname, "embed-panel.html"),
+        mobile: resolve(__dirname, "embed-mobile.html"),
       },
     },
   },
