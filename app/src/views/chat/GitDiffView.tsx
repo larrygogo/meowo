@@ -1303,6 +1303,15 @@ export function RepoChanges({ cwd, repos, comments, touchedPaths, turnTouchedPat
   const visible = (section: RepoSection) => section.summary.files.filter((file) =>
     (!query || file.path.toLowerCase().includes(query))
     && (!onlySession || touchedInRoot(touchedPaths, section.repo.root, file.path)));
+  // 空的段、空的仓库都不列（用户要求 2026-11-09）：工作目录仓库两段都写「没有改动」时，真有改动的
+  // worktree 被挤到下面，用户看不懂这是在分什么。全空时给一句总的空态。
+  const shown = repos.flatMap((repo) => {
+    const parts = sections
+      .filter((section) => section.repo === repo)
+      .map((section) => ({ section, files: visible(section) }))
+      .filter((part) => part.files.length > 0);
+    return parts.length > 0 ? [{ repo, parts }] : [];
+  });
   return (
     <div className="chat-repos" data-testid="repo-changes">
       <input
@@ -1325,33 +1334,30 @@ export function RepoChanges({ cwd, repos, comments, touchedPaths, turnTouchedPat
         </div>
       )}
       <div className="chat-diff-tree">
-        {repos.map((repo) => (
+        {shown.length === 0
+          ? <div className="chat-diff-empty">{query ? t.chat.diffSearchNoResults : onlySession ? t.chat.diffNoSessionChanges : t.chat.diffNoChanges}</div>
+          : shown.map(({ repo, parts }) => (
           <section key={repo.root} className="chat-repo">
             <div className="chat-repo-head" data-tip={repo.root}>
               <span className="chat-repo-name">{repo.name}</span>
               {repo.summary.branch && <span className="chat-repo-branch">· {repo.summary.branch}</span>}
             </div>
-            {sections.filter((section) => section.repo === repo).map((section) => {
-              const files = visible(section);
-              return (
-                <div key={section.key} className="chat-repo-section">
-                  <div className="chat-repo-label">
-                    {section.kind === "work" ? t.chat.changesUncommitted : t.chat.changesCommitted(repo.baseLabel ?? "main")}
-                  </div>
-                  {files.length === 0
-                    ? <div className="chat-repo-empty">{t.chat.changesRepoClean}</div>
-                    : files.map((file) => (
-                      <div key={file.path} className="chat-diff-tree-row">
-                        <button type="button" className="chat-diff-tree-file is-flat" data-tip={file.path} onClick={() => setOpen({ key: section.key, path: file.path })}>
-                          <StatusBadge status={file.status} />
-                          <span className="chat-diff-path">{file.path}</span>
-                          <LineCounts file={file} />
-                        </button>
-                      </div>
-                    ))}
+            {parts.map(({ section, files }) => (
+              <div key={section.key} className="chat-repo-section">
+                <div className="chat-repo-label">
+                  {section.kind === "work" ? t.chat.changesUncommitted : t.chat.changesCommitted(repo.baseLabel ?? "main")}
                 </div>
-              );
-            })}
+                {files.map((file) => (
+                  <div key={file.path} className="chat-diff-tree-row">
+                    <button type="button" className="chat-diff-tree-file is-flat" data-tip={file.path} onClick={() => setOpen({ key: section.key, path: file.path })}>
+                      <StatusBadge status={file.status} />
+                      <span className="chat-diff-path">{file.path}</span>
+                      <LineCounts file={file} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            ))}
           </section>
         ))}
       </div>

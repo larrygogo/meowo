@@ -905,7 +905,6 @@ export const en: Dict = {
     wsHide: "Remove from list",
     wsHideTip: "Only hides it here. The folder and its sessions stay; it comes back when you start a new session in it",
     changesCommitted: (base: string) => `Committed, not merged · vs ${base}`,
-    changesRepoClean: "No changes",
     systemRecord: "System record",
     sidebarApproval: "Pending approval",
     sidebarExpand: "Expand session list",

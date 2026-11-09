@@ -422,10 +422,10 @@ describe("RepoChanges", () => {
     });
     const { container } = renderRepos([repo({ summary: { ...summary, files: [] } }), worktree]);
     const heads = [...container.querySelectorAll(".chat-repo-head")].map((el) => el.textContent);
-    expect(heads).toEqual(["meowo· main", "meowo-feat· feat/x"]);
+    // 工作目录仓库一个改动都没有：整组不列，只剩真有改动的 worktree。
+    expect(heads).toEqual(["meowo-feat· feat/x"]);
     const labels = [...container.querySelectorAll(".chat-repo-label")].map((el) => el.textContent);
-    expect(labels).toEqual(["未提交", "未提交", "已提交未合并 · 相对 main"]);
-    expect(screen.getByText("没有改动")).toBeTruthy();
+    expect(labels).toEqual(["未提交", "已提交未合并 · 相对 main"]);
     fireEvent.click(screen.getByText("done.rs"));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("git_file_diff", {
       cwd: "C:/w/meowo-feat", path: "done.rs", untracked: false, base: "0123abcd", sessionCwd: "C:/w/meowo",
@@ -436,5 +436,16 @@ describe("RepoChanges", () => {
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("git_file_diff", {
       cwd: "C:/w/meowo-feat", path: "wip.rs", untracked: true, sessionCwd: "C:/w/meowo",
     }));
+  });
+
+  it("空的段不列；所有仓库都没改动时给一句总的空态", () => {
+    const committedOnly = repo({ root: "C:/w/meowo-feat", name: "meowo-feat", isCwdRepo: false, summary: { ...summary, files: [] },
+      base: "0123abcd", baseLabel: "main", committed: [{ path: "done.rs", status: "A", additions: 2, deletions: 0 }] });
+    const { container, unmount } = renderRepos([repo({ summary: { ...summary, files: [] } }), committedOnly]);
+    expect([...container.querySelectorAll(".chat-repo-label")].map((el) => el.textContent)).toEqual(["已提交未合并 · 相对 main"]);
+    unmount();
+    const empty = renderRepos([repo({ summary: { ...summary, files: [] } }), { ...committedOnly, committed: [], base: null }]);
+    expect(empty.container.querySelector(".chat-repo")).toBeNull();
+    expect(screen.getByText("工作区干净，无改动")).toBeTruthy();
   });
 });
