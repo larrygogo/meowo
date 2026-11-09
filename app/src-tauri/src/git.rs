@@ -152,8 +152,6 @@ fn count_lines(bytes: &[u8]) -> u32 {
 
 // ═══ 多仓库「更改」═══
 
-/// 面板里最多列这么多个仓库：5 秒一轮的轮询里每个仓库要跑好几条 git，不设上限会拖慢。
-const MAX_REPOS: usize = 8;
 /// 工作目录下一层最多看这么多个子目录（找有改动的仓库，见 changes_overview_blocking）。
 const MAX_CHILD_SCAN: usize = 200;
 /// 按目录缓存、带写入时刻的小缓存（过期由读的一方按各自的 TTL 判断）。
@@ -199,7 +197,7 @@ pub(crate) fn changes_overview_blocking(
     // worktree 建在仓库里面（.claude/worktrees/<名字>），子模块、嵌套仓库同理，跳过就认不出（做空复现）。
     let mut looked: Vec<String> = Vec::new();
     for path in touched {
-        if roots.len() >= MAX_REPOS || looked.len() >= MAX_ROOT_LOOKUPS {
+        if looked.len() >= MAX_ROOT_LOOKUPS {
             break;
         }
         let Some(start) = existing_dir_of(path) else { continue };
@@ -215,17 +213,13 @@ pub(crate) fn changes_overview_blocking(
     }
     // 候选只取相关仓库（本仓库的 worktree + 下一层仓库）：命令里提到的任意路径都上榜的话，
     // `cat C:/别的项目/x` 也会拉进一个无关仓库；别的会话建的 worktree 没在本会话命令里出现，不上榜。
-    if roots.len() < MAX_REPOS && !commands.is_empty() {
+    if !commands.is_empty() {
         let candidates: Vec<String> = related_roots(dir)
             .into_iter()
             .filter(|root| !roots.iter().any(|known| same_path(known, root)))
             .collect();
-        for root in command_mentioned_roots(dir, &candidates, commands) {
-            if roots.len() >= MAX_REPOS {
-                break;
-            }
-            roots.push(root);
-        }
+        // 仓库个数不设上限（用户 2026-11-09：主目录下有改动的仓库常常多于 8 个，截掉的就看不到）。
+        roots.extend(command_mentioned_roots(dir, &candidates, commands));
     }
     let mut out: Vec<RepoChangesDto> = roots
         .iter()
@@ -236,7 +230,6 @@ pub(crate) fn changes_overview_blocking(
             .into_iter()
             .filter_map(|root| repo_changes(&root, false))
             .filter(|repo| !repo.summary.files.is_empty())
-            .take(MAX_REPOS)
             .collect();
     }
     Ok(out)
@@ -264,7 +257,6 @@ fn changed_children(dir: &str) -> Vec<String> {
             git_output(root, &["status", "--porcelain", "-uall"])
                 .is_ok_and(|o| o.status.success() && !o.stdout.is_empty())
         })
-        .take(MAX_REPOS)
         .collect();
     if let Ok(mut cache) = CHILD_CACHE.lock() {
         cache.get_or_insert_with(Default::default).insert(key, (std::time::Instant::now(), changed.clone()));
@@ -1918,6 +1910,22 @@ mod tests {
         assert!(has(&proj.join("apps").join("web")), "{related:?}");
         assert!(has(&wt), "{related:?}");
         assert!(!has(&proj.join("node_modules").join("pkg")), "{related:?}");
+    }
+
+    /// 用户 2026-11-09：主目录下有改动的仓库多于 8 个时，此前只列前 8 个，后面的看不到。不设上限。
+    #[test]
+    fn overview_fallback_lists_every_dirty_child_repo() {
+        let sb = Sandbox::new("many");
+        let ws = sb.0.join("ws");
+        for i in 0..11 {
+            let dir = ws.join(format!("p{i:02}"));
+            std::fs::create_dir_all(&dir).unwrap();
+            sb.git(&dir, &["init", "-q", "-b", "main"]);
+            std::fs::write(dir.join("a.txt"), "x
+").unwrap();
+        }
+        let repos = changes_overview_blocking(&s(&ws), &[], &[]).unwrap();
+        assert_eq!(repos.len(), 11);
     }
 
     #[test]
