@@ -272,8 +272,8 @@ fn changed_children(dir: &str) -> Vec<String> {
     changed
 }
 
-/// 和会话目录相关的仓库：它所在仓库、这个仓库的各个 worktree、它下一层的仓库。手机远程页
-/// 只放行这些（远程端传什么路径都进得来，不能借面板去看任意仓库）。
+/// 和会话目录相关的仓库：它所在仓库、这个仓库的各个 worktree、它下面两层的仓库及这些仓库各自的
+/// worktree。手机远程页只放行这些（远程端传什么路径都进得来，不能借面板去看任意仓库）。
 pub(crate) fn related_roots(cwd: &str) -> Vec<String> {
     let mut out = Vec::new();
     if let Some(root) = repo_root(cwd) {
@@ -290,7 +290,18 @@ pub(crate) fn related_roots(cwd: &str) -> Vec<String> {
             out.push(root);
         }
     }
-    out.extend(child_repos(cwd));
+    for child in child_repos(cwd) {
+        // 子仓库的 worktree（前后端分仓时 agent 给 frontend 开的 worktree）：会话开在主目录、只用命令在
+        // worktree 里干活时，没有它就认不出（用户 2026-11-09）。
+        for wt in linked_worktrees(&child) {
+            if !out.iter().any(|known| same_path(known, &wt)) {
+                out.push(wt);
+            }
+        }
+        if !out.iter().any(|known| same_path(known, &child)) {
+            out.push(child);
+        }
+    }
     out
 }
 
@@ -319,23 +330,39 @@ fn command_mentioned_roots(cwd: &str, candidates: &[String], commands: &[String]
         }
     };
     let cwd_norm = fold(&norm_slashes(cwd));
-    let mut needles: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    // 值：(候选下标, 是不是裸目录名)。裸目录名（`backend`，不带 ./、../、也不含 /）在命令里常常只是
+    // 个普通词（`git commit -m "fix backend"`、`npm run backend`），单独出现不算，要有路径的样子：
+    // 前一个词是 cd / -C 这类，或者后面跟着 `/`（用户 2026-11-09：只列本会话用过的，误认等于混进别的）。
+    let mut needles: std::collections::HashMap<String, (usize, bool)> = std::collections::HashMap::new();
     for (index, root) in candidates.iter().enumerate() {
         let abs = fold(&norm_slashes(root));
         for form in path_spellings(&abs, &cwd_norm) {
-            needles.entry(form).or_insert(index);
+            let bare = !form.contains('/');
+            needles.entry(form).or_insert((index, bare));
         }
     }
+    let path_verb = |word: &str| {
+        matches!(word, "cd" | "pushd" | "-c" | "-C" | "--prefix" | "--cwd" | "--dir" | "--work-tree" | "--git-dir" | "--manifest-path")
+    };
     let mut hits: Vec<usize> = Vec::new();
     // 词的左边界：空白、引号、shell 运算符、`=`（`--dir=x`）、括号。右边界同理，外加 `/` 处截断。
     let is_delim = |c: char| c.is_whitespace() || matches!(c, '"' | '\'' | '`' | ';' | '&' | '|' | '(' | ')' | '<' | '>' | '=' | ',');
     for command in commands {
         let text = fold(command);
-        for word in text.split(is_delim).filter(|w| !w.is_empty()) {
-            let word = word.trim_end_matches('/');
+        let words: Vec<&str> = text.split(is_delim).filter(|w| !w.is_empty()).collect();
+        for (at, raw) in words.iter().enumerate() {
+            let word = raw.trim_end_matches('/');
+            let slash_after = word.len() < raw.len();
+            let after_verb = at > 0 && path_verb(words[at - 1]);
             // 从长到短试：候选之间可能嵌套（仓库里的 `.claude/worktrees/x`），取最具体的那个。
-            let mut prefixes = std::iter::once(word).chain(word.rmatch_indices('/').map(|(at, _)| &word[..at]));
-            if let Some(index) = prefixes.find_map(|prefix| needles.get(prefix).copied()) {
+            let mut prefixes = std::iter::once(word).chain(word.rmatch_indices('/').map(|(cut, _)| &word[..cut]));
+            let hit = prefixes.find_map(|prefix| {
+                let (index, bare) = *needles.get(prefix)?;
+                // 裸目录名：整词就是它时要前面有 cd 这类、或后面带 `/`；作为前缀命中（`backend/src/a.rs`）本身就是路径。
+                let path_like = !bare || prefix.len() < word.len() || slash_after || after_verb;
+                path_like.then_some(index)
+            });
+            if let Some(index) = hit {
                 if !hits.contains(&index) {
                     hits.push(index);
                 }
@@ -541,16 +568,53 @@ fn existing_dir_of(path: &str) -> Option<String> {
 
 /// 下一层里的仓库（有 `.git` 的子目录，`.git` 是目录或 worktree 的指针文件都算）。
 fn child_repos(dir: &str) -> Vec<String> {
-    let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
-    let mut out: Vec<String> = entries
-        .flatten()
-        .take(MAX_CHILD_SCAN)
-        .map(|entry| entry.path())
-        .filter(|path| path.is_dir() && path.join(".git").exists())
-        .map(|path| norm_slashes(&path.to_string_lossy()))
-        .collect();
+    let mut out: Vec<String> = Vec::new();
+    for path in scan_dirs(dir) {
+        if path.join(".git").exists() {
+            out.push(norm_slashes(&path.to_string_lossy()));
+            continue;
+        }
+        // 第二层：大项目常把仓库放在 apps/、services/、packages/ 下，主目录本身不是仓库
+        //（用户 2026-11-09：前后端分仓的大项目）。只看不是仓库的目录，仓库里面不再往下扫。
+        let skip = path.file_name().and_then(|n| n.to_str()).is_none_or(skip_scan);
+        if skip {
+            continue;
+        }
+        out.extend(
+            scan_dirs(&path.to_string_lossy())
+                .into_iter()
+                .filter(|sub| sub.join(".git").exists())
+                .map(|sub| norm_slashes(&sub.to_string_lossy())),
+        );
+    }
     out.sort();
     out
+}
+
+/// 目录下的子目录（最多 MAX_CHILD_SCAN 个）。
+fn scan_dirs(dir: &str) -> Vec<std::path::PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
+    entries.flatten().take(MAX_CHILD_SCAN).map(|entry| entry.path()).filter(|path| path.is_dir()).collect()
+}
+
+/// 找仓库时不往里钻的目录：隐藏目录、依赖、构建产物。里面要么没有用户的仓库，要么是装进来的第三方
+/// 仓库（node_modules 里带 .git 的包），列出来只会混淆。
+fn skip_scan(name: &str) -> bool {
+    name.starts_with('.') || matches!(name, "node_modules" | "target" | "dist" | "build" | "vendor" | "out")
+}
+
+/// 仓库自己的 linked worktree 根目录：读 `.git/worktrees/<名字>/gitdir`（里面是 worktree 的 `.git`
+/// 文件路径），不起 git 进程——会话开在大项目主目录时子仓库几十个，5 秒一轮每个都跑 git 太贵。
+fn linked_worktrees(repo: &str) -> Vec<String> {
+    let admin = Path::new(repo).join(".git").join("worktrees");
+    let Ok(entries) = std::fs::read_dir(admin) else { return Vec::new() };
+    entries
+        .flatten()
+        .filter_map(|entry| std::fs::read_to_string(entry.path().join("gitdir")).ok())
+        .filter_map(|gitdir| Path::new(gitdir.trim()).parent().map(Path::to_path_buf))
+        .filter(|root| root.is_dir())
+        .map(|root| norm_slashes(&root.to_string_lossy()))
+        .collect()
 }
 
 fn norm_slashes(path: &str) -> String {
@@ -1803,6 +1867,57 @@ mod tests {
         assert_eq!(names("cd .claude/worktrees/x && git status"), ["main", "x"]);
         assert_eq!(names("cd ./.claude/worktrees/x"), ["main", "x"]);
         assert_eq!(names("ls .claude/worktrees"), ["main"]);
+    }
+
+    /// 前后端分仓的大项目（用户 2026-11-09）：主目录不是仓库，frontend / backend 在下一层，apps/web 在
+    /// 下两层，frontend 里还有 agent 开的 worktree。只用命令干活也要认出来；裸目录名当普通词时不误认。
+    #[test]
+    fn overview_in_multi_repo_project_dir() {
+        let sb = Sandbox::new("bigproj");
+        let proj = sb.0.join("bigproj");
+        std::fs::create_dir_all(proj.join("apps")).unwrap();
+        let mk = |rel: &str| {
+            let dir = proj.join(rel);
+            std::fs::create_dir_all(&dir).unwrap();
+            sb.git(&dir, &["init", "-q", "-b", "main"]);
+            std::fs::write(dir.join("README.md"), "hi\n").unwrap();
+            sb.commit(&dir, "init");
+            dir
+        };
+        let frontend = mk("frontend");
+        mk("backend");
+        mk("apps/web");
+        // node_modules 里带 .git 的第三方包不当候选。
+        mk("node_modules/pkg");
+        std::fs::write(frontend.join(".gitignore"), ".claude/\n").unwrap();
+        sb.commit(&frontend, "ignore");
+        let wt = frontend.join(".claude").join("worktrees").join("x");
+        sb.git(&frontend, &["worktree", "add", "-q", "-b", "x", wt.to_str().unwrap()]);
+        let cwd = s(&proj);
+        let names = |command: &str| -> Vec<String> {
+            let mut got: Vec<String> =
+                changes_overview_blocking(&cwd, &[], &[command.to_string()]).unwrap().into_iter().map(|r| r.name).collect();
+            got.sort();
+            got
+        };
+        let none: Vec<String> = Vec::new();
+        assert_eq!(names("cd apps/web && npm test"), ["web"]);
+        assert_eq!(names("cd frontend/.claude/worktrees/x && git status"), ["x"]);
+        assert_eq!(names("git -C backend status"), ["backend"]);
+        assert_eq!(names("cat backend/src/a.rs"), ["backend"]);
+        assert_eq!(names("cd backend"), ["backend"]);
+        assert_eq!(names("pushd frontend/ && ls"), ["frontend"]);
+        // 裸目录名当普通词：不认。都没认出来时走「下一层有改动的仓库」兜底，这几个仓库都干净，列表为空。
+        assert_eq!(names("git commit -m \"fix backend\""), none);
+        assert_eq!(names("npm run backend"), none);
+        assert_eq!(names("ls frontend"), none);
+        assert_eq!(names("cd node_modules/pkg"), none);
+        // 手机端放行范围：两层仓库、子仓库的 worktree 都在，node_modules 里的不在。
+        let related = related_roots(&cwd);
+        let has = |p: &Path| related.iter().any(|r| same_path(r, &repo_root(&s(p)).unwrap()));
+        assert!(has(&proj.join("apps").join("web")), "{related:?}");
+        assert!(has(&wt), "{related:?}");
+        assert!(!has(&proj.join("node_modules").join("pkg")), "{related:?}");
     }
 
     #[test]
