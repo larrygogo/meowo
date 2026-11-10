@@ -30,7 +30,7 @@ function usePullRequest(cwd: string | null, branch: string | null): PullRequestD
 
 export function ChatTitleBar({
   leading, title, archive, end, cwd, prCwd, gitSummary, changesOpen, panelOpen, terminalOn,
-  onToggleChanges, onTogglePanel, onToggleTerminal, onError, panelAgentBusy = false, info = null,
+  onToggleChanges, onTogglePanel, onToggleTerminal, onError, panelAgentBusy = false, panelWaiting = false, info = null,
 }: {
   /** 标题前的侧栏开关（macOS 侧栏收起时 / 手机紧凑形态才有）。 */
   leading: ReactNode;
@@ -54,6 +54,8 @@ export function ChatTitleBar({
   onError: (message: string) => void;
   /** 面板收起着，但 agent 正在操作这个会话的面板浏览器：开关上亮一个点（同 Kimi Code）。 */
   panelAgentBusy?: boolean;
+  /** 面板收起时，里面的网页在等用户答复权限请求。 */
+  panelWaiting?: boolean;
   /** 会话信息栏开关（面板收起时才有，同 Kimi Code 的「显示 / 隐藏会话信息」）。 */
   info?: { open: boolean; onToggle: () => void } | null;
 }) {
@@ -130,15 +132,17 @@ export function ChatTitleBar({
         <button
           type="button"
           className={"chat-todo-btn chat-panel-toggle" + (panelOpen ? " is-active" : "")}
-          data-tip={panelAgentBusy ? `${t.chat.browserAgentBusyTip} · ${t.chat.togglePanel}` : t.chat.togglePanel}
-          aria-label={panelAgentBusy ? `${t.chat.browserAgentBusyTip} · ${t.chat.togglePanel}` : t.chat.togglePanel}
+          data-tip={panelWaiting ? `${t.chat.browserPermissionWaiting} · ${t.chat.togglePanel}` : panelAgentBusy ? `${t.chat.browserAgentBusyTip} · ${t.chat.togglePanel}` : t.chat.togglePanel}
+          aria-label={panelWaiting ? `${t.chat.browserPermissionWaiting} · ${t.chat.togglePanel}` : panelAgentBusy ? `${t.chat.browserAgentBusyTip} · ${t.chat.togglePanel}` : t.chat.togglePanel}
           aria-pressed={panelOpen}
           onClick={onTogglePanel}
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" aria-hidden="true">
             <rect x="3.5" y="4.5" width="17" height="15" rx="3" /><path d="M14.5 4.5v15" />
           </svg>
-          {panelAgentBusy && <span className="chat-panel-agent-dot" aria-hidden="true" />}
+          {panelWaiting
+            ? <span className="chat-panel-waiting-dot" aria-hidden="true" />
+            : panelAgentBusy && <span className="chat-panel-agent-dot" aria-hidden="true" />}
         </button>
       )}
     </header>

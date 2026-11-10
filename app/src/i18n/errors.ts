@@ -61,6 +61,7 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "browser_pane/blocked_url", exact: true, zh: "面板浏览器只能打开 http/https 网页", en: "The panel browser only opens http/https pages" },
   { m: "browser_pane/bad_url", exact: true, zh: "网址格式不对", en: "That doesn't look like a valid address" },
   { m: "browser_pane/too_many", exact: true, zh: "浏览器页签开太多了（最多 16 个），先关掉一些", en: "Too many browser tabs (16 max). Close some first." },
+  { m: "browser_pane/download_missing", exact: true, zh: "文件已经不在了，可能被移动或删除", en: "The file is gone. It may have been moved or deleted." },
   { m: "browser_pane/not_found", exact: true, zh: "这个浏览器页签已经关掉了", en: "This browser tab has been closed" },
   { m: "shell_terminal/not_found", exact: true, zh: "这个终端已经关掉了", en: "This terminal has been closed" },
   { m: "shell_terminal/exited", exact: true, zh: "这个终端里的程序已经退出了", en: "The program in this terminal has exited" },

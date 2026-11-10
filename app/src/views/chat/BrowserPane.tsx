@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { browserPaneAction, navigateBrowserPane, openLink, setBrowserPaneAgentPaused, setBrowserPaneBounds, type BrowserPaneInfo } from "../../api";
+import { answerBrowserPanePermission, browserPaneAction, navigateBrowserPane, openLink, revealBrowserPaneDownload, setBrowserPaneAgentPaused, setBrowserPaneBounds, type BrowserDownload, type BrowserPaneInfo } from "../../api";
 import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
 import { PathMenu, type PathMenuItem } from "./GitDiffView";
@@ -102,6 +102,30 @@ export function BrowserPane({ info, visible, suggestions }: {
     void browserPaneAction(info.id, action).catch((e) => setError(formatBackendError(e, t.locale)));
   };
 
+  // 权限请求：按钮在答复送达前锁住。后端每次答复的是排在最前的那条，连点两下会把下一条也
+  // 一起答掉。按请求编号判断，不按对象引用：标题、加载状态这些无关推送每次都是新对象，会提前
+  // 解锁（做空审查）。
+  const [answeredId, setAnsweredId] = useState<number | null>(null);
+  const answering = info.permission !== null && info.permission?.id === answeredId;
+  const answer = (allow: boolean) => {
+    if (!info.permission) return;
+    setAnsweredId(info.permission.id);
+    void answerBrowserPanePermission(info.id, info.permission.id, allow).catch((e) => {
+      setAnsweredId(null);
+      setError(formatBackendError(e, t.locale));
+    });
+  };
+  const [dismissedBlock, setDismissedBlock] = useState<number | null>(null);
+  const blocked = info.blocked && info.blocked.id !== dismissedBlock ? info.blocked : null;
+  const permissionText = (prompt: { kind: string; host: string }, blockedText = false) => {
+    const what = t.chat.browserPermissionKinds[prompt.kind] ?? t.chat.browserPermissionKinds.other;
+    return blockedText ? t.chat.browserPermissionBlocked(prompt.host, what) : t.chat.browserPermissionAsk(prompt.host, what);
+  };
+  // 只显示最新一次下载；用户点 × 收起的那条不再出现，下一次下载照常出来。
+  const [dismissedDownload, setDismissedDownload] = useState<number | null>(null);
+  const latestDownload = info.downloads?.at(-1);
+  const download = latestDownload && latestDownload.id !== dismissedDownload ? latestDownload : null;
+
   return (
     <div className="browser-pane" style={visible ? undefined : { display: "none" }}>
       <form className="browser-pane-bar" onSubmit={submit}>
@@ -179,6 +203,28 @@ export function BrowserPane({ info, visible, suggestions }: {
           </button>
         </div>
       )}
+      {info.permission && (
+        <div className="browser-pane-notice is-permission" role="alert">
+          <span className="browser-pane-notice-text">{permissionText(info.permission)}</span>
+          <button type="button" disabled={answering} onClick={() => answer(false)}>{t.chat.browserPermissionBlock}</button>
+          <button type="button" className="is-primary" disabled={answering} onClick={() => answer(true)}>{t.chat.browserPermissionAllow}</button>
+        </div>
+      )}
+      {/* 阻止之后同一页面不会再问，被拦的下载也悄无声息：留一条，刷新页面就能重新下载。 */}
+      {!info.permission && blocked && (
+        <div className="browser-pane-notice is-blocked" role="status">
+          <span className="browser-pane-notice-text">{permissionText(blocked, true)}</span>
+          <button type="button" onClick={() => act("reload")}>{t.chat.browserPermissionRetry}</button>
+          <button type="button" className="browser-pane-notice-close" aria-label={t.chat.browserDownloadDismiss} data-tip={t.chat.browserDownloadDismiss} data-tip-placement="top" onClick={() => setDismissedBlock(blocked.id)}>×</button>
+        </div>
+      )}
+      {download && (
+        <DownloadNotice
+          download={download}
+          onReveal={() => void revealBrowserPaneDownload(info.id, download.id).catch((e) => setError(formatBackendError(e, t.locale)))}
+          onDismiss={() => setDismissedDownload(download.id)}
+        />
+      )}
       {error && <div className="browser-pane-error" role="alert">{error}</div>}
       <div ref={hostRef} className="browser-pane-view">
         {blank && (
@@ -194,6 +240,26 @@ export function BrowserPane({ info, visible, suggestions }: {
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/** 最新一次下载的提示条：下载中 / 已下载（带「打开文件夹」）/ 失败。 */
+function DownloadNotice({ download, onReveal, onDismiss }: { download: BrowserDownload; onReveal: () => void; onDismiss: () => void }) {
+  const t = useT();
+  const label = download.state === "progress"
+    ? t.chat.browserDownloading(download.fileName)
+    : download.state === "done"
+      ? t.chat.browserDownloaded(download.fileName)
+      : t.chat.browserDownloadFailed(download.fileName);
+  return (
+    <div className={"browser-pane-notice is-download is-" + download.state} role="status">
+      <svg className="browser-pane-notice-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 4v11" /><path d="M7 10l5 5 5-5" /><path d="M5 20h14" /></svg>
+      <span className="browser-pane-notice-text" title={download.fileName}>{label}</span>
+      {download.state === "done" && <button type="button" onClick={onReveal}>{t.chat.browserDownloadReveal}</button>}
+      {download.state !== "progress" && (
+        <button type="button" className="browser-pane-notice-close" aria-label={t.chat.browserDownloadDismiss} data-tip={t.chat.browserDownloadDismiss} data-tip-placement="top" onClick={onDismiss}>×</button>
+      )}
     </div>
   );
 }

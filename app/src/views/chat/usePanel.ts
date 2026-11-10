@@ -281,7 +281,12 @@ export function usePanel(sessionId: number, cwd: string | null, onError: (messag
   const agentBusy = liveLoaded && state.tabs.some((tab) => tab.type === "browser" && tab.paneId !== null
     && panes.get(tab.paneId)?.owner === sessionId && !!panes.get(tab.paneId)?.agentActive);
 
-  return { state, active, shells, panes, actions, agentBusy };
+  // 网页在等用户答复权限请求：提示画在浏览器页签里，页签藏着、面板收起时用户看不到，网页就
+  // 一直卡着（做空审查）。标题栏的面板按钮据此挂一个标记。
+  const permissionWaiting = liveLoaded && state.tabs.some((tab) => tab.type === "browser" && tab.paneId !== null
+    && panes.get(tab.paneId)?.owner === sessionId && !!panes.get(tab.paneId)?.permission);
+
+  return { state, active, shells, panes, actions, agentBusy, permissionWaiting };
 }
 
 /** 页签上显示的名字。 */

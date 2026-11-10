@@ -4752,6 +4752,18 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 /* agent 操作提示条：在工具栏下方，网页之上（不压在原生视图上，原生视图在它下面开始）。 */
 .browser-pane-agent { flex: none; display: flex; align-items: center; gap: var(--sp-8); padding: var(--sp-6) var(--sp-10); border-bottom: var(--hairline) solid var(--cc-border); color: var(--cc-text); background: color-mix(in srgb, var(--cc-accent-text) 12%, transparent); font-size: var(--text-xs); }
 .browser-pane-agent.is-paused { background: var(--fill-hover); color: var(--cc-text-faint); }
+/* 网页权限请求与下载提示（BrowserPane.tsx）。与 agent 提示条同一条横条语言，画在网页区域上方的
+   HTML 里：原生网页视图盖不住它，页签切走时随面板一起藏，不像 WebView2 原生框那样四处飘。 */
+.browser-pane-notice { flex: none; display: flex; align-items: center; gap: var(--sp-8); min-width: 0; padding: var(--sp-6) var(--sp-10); border-bottom: var(--hairline) solid var(--cc-border); color: var(--cc-text); background: var(--fill-hover); font-size: var(--text-xs); }
+.browser-pane-notice.is-permission { background: color-mix(in srgb, var(--cc-warn-vivid) 12%, transparent); }
+.browser-pane-notice.is-failed { color: var(--cc-err-text); }
+.browser-pane-notice-icon { flex: none; color: var(--cc-text-dim); }
+.browser-pane-notice-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.browser-pane-notice button { flex: none; padding: 2px var(--sp-10); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-sm); color: var(--cc-text); background: var(--cc-bg); font: inherit; cursor: pointer; }
+.browser-pane-notice button.is-primary { border-color: transparent; color: var(--cc-on-accent); background: var(--cc-accent); }
+.browser-pane-notice button:disabled { opacity: .5; cursor: default; }
+.browser-pane-notice .browser-pane-notice-close { padding: 0 var(--sp-6); border: 0; background: transparent; color: var(--cc-text-faint); font-size: var(--text-base); line-height: 1; }
+.browser-pane-notice .browser-pane-notice-close:hover { color: var(--cc-text); }
 .browser-pane-agent-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--cc-accent-text); animation: browser-agent-pulse 1.2s ease-in-out infinite; }
 .browser-pane-agent.is-paused .browser-pane-agent-dot { animation: none; background: var(--cc-text-faint); }
 .browser-pane-agent button { margin-left: auto; padding: 2px var(--sp-10); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-sm); color: var(--cc-text); background: var(--cc-bg); font: inherit; cursor: pointer; }
@@ -4762,6 +4774,9 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 /* 面板收起时 agent 在操作浏览器：标题栏的面板开关右上角亮一个点。 */
 .chat-panel-toggle { position: relative; }
 .chat-panel-agent-dot { position: absolute; top: 4px; right: 4px; width: 7px; height: 7px; border-radius: 50%; background: var(--cc-accent-text); box-shadow: 0 0 0 2px var(--cc-bg); animation: browser-agent-pulse 1.2s ease-in-out infinite; }
+/* 网页在等用户答复权限请求：琥珀色静态点（与「待批准」同色系），区别于 agent 操作中的脉冲点。 */
+.side-panel-tab-waiting { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--cc-warn-vivid); }
+.chat-panel-waiting-dot { position: absolute; top: 4px; right: 4px; width: 7px; height: 7px; border-radius: 50%; background: var(--cc-warn-vivid); box-shadow: 0 0 0 2px var(--cc-bg); }
 @media (prefers-reduced-motion: reduce) { .browser-pane-agent-dot, .side-panel-tab-agent, .chat-panel-agent-dot { animation: none; } }
 .browser-pane-view { position: relative; flex: 1; min-height: 0; background: var(--cc-bg); }
 .browser-pane-start { padding: var(--sp-30) var(--sp-18); color: var(--cc-text-faint); font-size: var(--text-xs); text-align: center; }
@@ -5787,7 +5802,9 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 /* 审批卡的标题圆点挂在 .chat-approval-copy strong 上；摘要是 markdown，加粗不该带圆点（实拍）。 */
 .lead-gate-summary strong::before { content: none; }
 /* 收起时底部渐隐，不要半行字被齐刷刷切掉（实拍）。 */
-.lead-gate-summary:not(.is-expanded) { -webkit-mask-image: linear-gradient(to bottom, #000 70%, transparent); mask-image: linear-gradient(to bottom, #000 70%, transparent); }
+/* 只在真的被截断时渐隐（is-clipped 由 LeadGateCard 按实测溢出挂上）。以前收起态一律渐隐：
+   摘要刚好放得下时最后一行也被淡掉，又因为没溢出不给「展开全部」，那行字读不全（实拍）。 */
+.lead-gate-summary.is-clipped { -webkit-mask-image: linear-gradient(to bottom, #000 70%, transparent); mask-image: linear-gradient(to bottom, #000 70%, transparent); }
 /* 审批卡外壳里的按钮会被统一成按钮条，展开钮要保持成文字链接（实拍）。 */
 .chat-approval .lead-gate-more { width: auto; height: auto; padding: 0; border: 0; background: none; color: var(--cc-accent); font-size: var(--text-xs); font-weight: 400; }
 .lead-gate-more { margin: var(--sp-4) 0; padding: 0; border: 0; background: none; color: var(--cc-accent); font-size: var(--text-xs); cursor: pointer; }

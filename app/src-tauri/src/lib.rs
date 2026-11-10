@@ -4,6 +4,7 @@ mod agent_updates;
 mod app_bundle;
 mod browser_agent;
 mod browser_pane;
+mod browser_permission;
 mod bgpty;
 mod chat;
 mod confirm;
@@ -1291,6 +1292,8 @@ pub fn run() {
             browser_pane::browser_pane_action,
             browser_pane::browser_pane_close,
             browser_pane::browser_pane_set_agent_paused,
+            browser_pane::browser_pane_answer_permission,
+            browser_pane::browser_pane_reveal_download,
             shell_terminal::shell_terminal_open,
             shell_terminal::shell_terminal_list,
             shell_terminal::shell_terminal_attach,
@@ -1619,6 +1622,7 @@ mod tests {
             ("bgpty.rs", include_str!("bgpty.rs")),
             ("browser_agent.rs", include_str!("browser_agent.rs")),
             ("browser_pane.rs", include_str!("browser_pane.rs")),
+            ("browser_permission.rs", include_str!("browser_permission.rs")),
             ("chat.rs", include_str!("chat.rs")),
             ("confirm.rs", include_str!("confirm.rs")),
             ("detect.rs", include_str!("detect.rs")),

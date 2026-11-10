@@ -132,6 +132,38 @@ describe("网络抖动", () => {
 });
 
 describe("关卡卡片", () => {
+  it("摘要只在真被截断时渐隐并给「展开全部」；卡片宽度变了会重新量", () => {
+    // 实拍：摘要刚好放得下时最后一行也被淡掉，又没有「展开全部」，那行字读不全。
+    let contentHeight = 100;
+    const scroll = vi.spyOn(Element.prototype, "scrollHeight", "get").mockImplementation(() => contentHeight);
+    const client = vi.spyOn(Element.prototype, "clientHeight", "get").mockImplementation(() => 100);
+    let resize = () => {};
+    const original = globalThis.ResizeObserver;
+    globalThis.ResizeObserver = class {
+      constructor(callback: ResizeObserverCallback) { resize = () => callback([], this as unknown as ResizeObserver); }
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    } as unknown as typeof ResizeObserver;
+    try {
+      const { container } = render(<LeadGateCard cwd="C:/repo" gate={gate("B")} onAnswered={() => {}} />);
+      const summary = container.querySelector(".lead-gate-summary")!;
+      expect(summary.classList.contains("is-clipped")).toBe(false);
+      expect(screen.queryByRole("button", { name: "展开全部" })).toBeNull();
+      // 卡片变窄，摘要折成更多行，超出了。
+      contentHeight = 300;
+      act(() => resize());
+      expect(summary.classList.contains("is-clipped")).toBe(true);
+      fireEvent.click(screen.getByRole("button", { name: "展开全部" }));
+      expect(summary.classList.contains("is-clipped")).toBe(false);
+      expect(summary.classList.contains("is-expanded")).toBe(true);
+    } finally {
+      scroll.mockRestore();
+      client.mockRestore();
+      globalThis.ResizeObserver = original;
+    }
+  });
+
   it("A：确认直接提交；选「要改」必须写意见", async () => {
     answer.mockResolvedValue();
     const onAnswered = vi.fn();

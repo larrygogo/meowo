@@ -20,10 +20,12 @@
 //! 子 webview 随 chat 窗口一起销毁，窗口销毁时这里只清表。
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde::Serialize;
-use tauri::webview::{NewWindowResponse, PageLoadEvent};
+use tauri::webview::{DownloadEvent, NewWindowResponse, PageLoadEvent};
 use tauri::{
     Emitter, LogicalPosition, LogicalSize, Manager, Rect, Url, WebviewBuilder, WebviewUrl,
 };
@@ -90,6 +92,14 @@ pub(crate) struct BrowserPaneInfo {
     pub(crate) agent_paused: bool,
     /// 页面缩放比例（1.0 = 100%），「…」菜单里调。
     pub(crate) zoom: f64,
+    /// 最近几次下载，旧的在前（见 `download_started`）。
+    pub(crate) downloads: Vec<BrowserDownload>,
+    /// 网页在等用户答复的权限请求，只给排在最前的一条（见 browser_permission.rs）。
+    pub(crate) permission: Option<BrowserPermission>,
+    /// 用户刚阻止的请求。WebView2 在同一页面里不会再问，之后被拦的下载连事件都没有（做空审查
+    /// 实测：阻止后再下两次，既无权限请求也无下载事件），不留这条提示用户又会以为没下成而
+    /// 反复点。有新下载开始（说明不拦了）、页面重新加载或跳走、用户点 × 时消失。
+    pub(crate) blocked: Option<BrowserPermission>,
     // 以下三项只在后端用，不发给前端。
     /// 原生视图眼下摆在哪。
     #[serde(skip)]
@@ -101,6 +111,196 @@ pub(crate) struct BrowserPaneInfo {
     /// agent 用过这个页签：收起时挪到窗口外接着渲染，而不是藏起来。见 `Placement`。
     #[serde(skip)]
     keep_rendering: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum DownloadState {
+    Progress,
+    Done,
+    Failed,
+}
+
+/// 面板浏览器里的一次下载。以前不接下载事件，WebView2 静默存进「下载」文件夹、什么都不提示，
+/// 用户以为没下成又连点（2026-11-10 实拍：同一份文件下了 6 份）。现在开始、完成、失败都在
+/// 面板里提示一条。
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct BrowserDownload {
+    pub(crate) id: u32,
+    pub(crate) file_name: String,
+    pub(crate) state: DownloadState,
+    /// 网址的哈希，只用来给完成事件对号。不存原文：data: 网址可能有几 MB，每次推状态都要复制。
+    #[serde(skip)]
+    url_key: u64,
+    /// 存到哪。完成前是预定路径（macOS 完成时拿不到路径，只能用这个）。
+    #[serde(skip)]
+    pub(crate) path: Option<PathBuf>,
+}
+
+/// 最多记几次下载。面板里只显示最新一条，留几条是为了并发下载时完成事件对得上号。
+const MAX_DOWNLOADS: usize = 5;
+
+static NEXT_DOWNLOAD: AtomicU32 = AtomicU32::new(1);
+
+fn url_key(url: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    url.hash(&mut hasher);
+    hasher.finish()
+}
+
+fn file_name_of(path: &Path, url: &str) -> String {
+    path.file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| url.rsplit('/').next().unwrap_or(url).to_string())
+}
+
+/// 下载开始：记一条「下载中」，超出上限丢最旧的。
+pub(crate) fn download_started(list: &mut Vec<BrowserDownload>, url: &str, destination: &Path) {
+    list.push(BrowserDownload {
+        id: NEXT_DOWNLOAD.fetch_add(1, Ordering::Relaxed),
+        file_name: file_name_of(destination, url),
+        state: DownloadState::Progress,
+        url_key: url_key(url),
+        path: Some(destination.to_path_buf()),
+    });
+    if list.len() > MAX_DOWNLOADS {
+        let excess = list.len() - MAX_DOWNLOADS;
+        list.drain(..excess);
+    }
+}
+
+/// 下载结束：找同网址、还在下载中的最近一条改状态。完成事件给了路径就以它为准（WebView2
+/// 重名时可能另起名字）。对不上号（已被挤出列表）返回 false。
+pub(crate) fn download_finished(
+    list: &mut [BrowserDownload],
+    url: &str,
+    path: Option<PathBuf>,
+    success: bool,
+) -> bool {
+    let key = url_key(url);
+    let Some(entry) = list
+        .iter_mut()
+        .rev()
+        .find(|entry| entry.url_key == key && entry.state == DownloadState::Progress)
+    else {
+        return false;
+    };
+    entry.state = if success {
+        DownloadState::Done
+    } else {
+        DownloadState::Failed
+    };
+    if let Some(path) = path.filter(|path| !path.as_os_str().is_empty()) {
+        entry.file_name = file_name_of(&path, url);
+        entry.path = Some(path);
+    }
+    true
+}
+
+/// 目标文件已存在（或正被别的下载占用）就在文件名后加「 (1)」「 (2)」…，不覆盖用户已有的文件
+/// （与浏览器同习惯）。WebView2 拿到已存在的路径会直接覆盖。只看磁盘不够：同一页面连着下同名
+/// 文件时，前一个还没写到磁盘，后一个会挑中同一个名字（测试程序实测 4 次下载只剩 3 个文件）。
+pub(crate) fn unique_path(path: &Path, taken: impl Fn(&Path) -> bool) -> PathBuf {
+    let busy = |candidate: &Path| candidate.exists() || taken(candidate);
+    if !busy(path) {
+        return path.to_path_buf();
+    }
+    let stem = path
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let ext = path
+        .extension()
+        .map(|ext| format!(".{}", ext.to_string_lossy()))
+        .unwrap_or_default();
+    (1..)
+        .map(|n| path.with_file_name(format!("{stem} ({n}){ext}")))
+        .find(|candidate| !busy(candidate))
+        .unwrap_or_else(|| path.to_path_buf())
+}
+
+/// 下载开始：在一次加锁里挑好不撞名的路径并登记，并发的下载才不会挑中同一个名字。
+/// 「正被占用」看所有页签里还在下载中的路径（都存进同一个「下载」文件夹）。
+fn start_download(
+    app: &tauri::AppHandle,
+    panes: &Arc<Mutex<HashMap<u32, BrowserPaneInfo>>>,
+    id: u32,
+    url: &str,
+    destination: &mut PathBuf,
+) {
+    let info = {
+        let Ok(mut map) = panes.lock() else { return };
+        let in_progress: Vec<PathBuf> = map
+            .values()
+            .flat_map(|info| info.downloads.iter())
+            .filter(|entry| entry.state == DownloadState::Progress)
+            .filter_map(|entry| entry.path.clone())
+            .collect();
+        *destination = unique_path(destination, |candidate| {
+            in_progress.iter().any(|busy| busy == candidate)
+        });
+        let Some(info) = map.get_mut(&id) else { return };
+        download_started(&mut info.downloads, url, destination);
+        if info
+            .blocked
+            .as_ref()
+            .is_some_and(|blocked| blocked.kind == "downloads")
+        {
+            info.blocked = None;
+        }
+        info.clone()
+    };
+    emit_state(app, &info);
+}
+
+/// 网页在等用户答复的权限请求（见 browser_permission.rs）。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct BrowserPermission {
+    /// 每条请求一个编号。前端靠它判断「答复送达前锁住按钮」该不该解开：只比对象引用的话，
+    /// 标题、加载状态这些无关推送也会提前解锁（做空审查）。
+    pub(crate) id: u32,
+    /// downloads / camera / microphone / location / notifications / clipboard / files / other。
+    pub(crate) kind: String,
+    /// 提示里显示的网站名（主机名）。
+    pub(crate) host: String,
+}
+
+// 只有 Windows 的 browser_permission::imp 建请求；macOS 下这两项没有调用方，clippy -D warnings
+// 会报从未使用（CI macOS 矩阵，第二轮做空审查用最小 crate 模拟复现）。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+static NEXT_PERMISSION: AtomicU32 = AtomicU32::new(1);
+
+impl BrowserPermission {
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+    pub(crate) fn new(kind: &str, uri: &str) -> Self {
+        Self {
+            id: NEXT_PERMISSION.fetch_add(1, Ordering::Relaxed),
+            kind: kind.to_string(),
+            host: Url::parse(uri)
+                .ok()
+                .and_then(|url| url.host_str().map(str::to_string))
+                .unwrap_or_else(|| uri.to_string()),
+        }
+    }
+
+    /// 给 agent 看的一句话：「httpbin.org 想要下载多个文件」。前端有自己的双语文案。
+    pub(crate) fn describe(&self) -> String {
+        let what = match self.kind.as_str() {
+            "downloads" => "下载多个文件",
+            "camera" => "使用摄像头",
+            "microphone" => "使用麦克风",
+            "location" => "获取位置",
+            "notifications" => "发送通知",
+            "clipboard" => "读取剪贴板",
+            "files" => "读写文件",
+            _ => "使用额外权限",
+        };
+        format!("{} 想要{what}", self.host)
+    }
 }
 
 #[derive(Default)]
@@ -136,6 +336,7 @@ impl BrowserPanes {
             Err(_) => return,
         };
         for id in ids {
+            crate::browser_permission::forget(app, id);
             if let Ok(webview) = webview(app, id) {
                 let _ = webview.close();
             }
@@ -297,6 +498,9 @@ pub(crate) fn open_pane(
         agent_active: false,
         agent_paused: false,
         zoom: 1.0,
+        downloads: Vec::new(),
+        permission: None,
+        blocked: None,
         placement: Placement::Hidden,
         viewport: DEFAULT_VIEWPORT,
         keep_rendering: false,
@@ -314,16 +518,53 @@ pub(crate) fn open_pane(
     let title_app = app.clone();
     let title_panes = state.panes.clone();
     let popup_app = app.clone();
+    let download_app = app.clone();
+    let download_panes = state.panes.clone();
     let builder = WebviewBuilder::new(label_of(id), WebviewUrl::External(target))
         // 页内跳转同样过一遍白名单：页面自己把 location 改到 tauri.localhost 也拦得住。
         .on_navigation(move |url| allowed(url, nav_dev.as_ref()))
         .on_page_load(move |_, payload| {
-            let url = payload.url().to_string();
+            // Started 对应 WebView2 的 ContentLoading：只有新文档开始加载才触发，点附件链接
+            // 下载不会触发（wry 0.57.1 webview2/mod.rs）。
             let loading = matches!(payload.event(), PageLoadEvent::Started);
+            if loading {
+                // 新文档开始加载（刷新、同站或跨站跳转都算），旧页面挂着的请求一律作废。只作废
+                // 跨站的不行：同站刷新后旧请求留在队首，新页面的下载全卡在它后面，点「允许」也
+                // 下不下来（第二轮做空审查用同版本测试程序实测；作废后新页面会重新问一次）。
+                crate::browser_permission::drop_all(&load_app, id);
+            }
+            let url = payload.url().to_string();
             update(&load_app, &load_panes, id, |info| {
                 info.url = url;
                 info.loading = loading;
+                if loading {
+                    info.blocked = None;
+                }
             });
+        })
+        // 接管下载：Windows 上 wry 随之 SetHandled，WebView2 自己的下载框不再出；macOS 上
+        // 不接 WKWebView 根本不下（wry 只在有回调时才挂下载代理）。都存进系统「下载」文件夹，
+        // 进度和结果在面板里提示（BrowserPane.tsx）。
+        .on_download(move |_, event| {
+            match event {
+                DownloadEvent::Requested { url, destination } => {
+                    start_download(
+                        &download_app,
+                        &download_panes,
+                        id,
+                        url.as_str(),
+                        destination,
+                    );
+                }
+                DownloadEvent::Finished { url, path, success } => {
+                    let url = url.to_string();
+                    update(&download_app, &download_panes, id, |info| {
+                        download_finished(&mut info.downloads, &url, path, success);
+                    });
+                }
+                _ => {}
+            }
+            true
         })
         .on_document_title_changed(move |_, title| {
             update(&title_app, &title_panes, id, |info| info.title = title);
@@ -343,6 +584,7 @@ pub(crate) fn open_pane(
     match created {
         Ok(webview) => {
             let _ = webview.hide();
+            crate::browser_permission::install(&app, &webview, id);
             Ok(info)
         }
         Err(e) => {
@@ -533,15 +775,172 @@ pub(crate) async fn browser_pane_close(
     if let Ok(mut panes) = state.panes.lock() {
         panes.remove(&id);
     }
+    crate::browser_permission::forget(&app, id);
     if let Ok(webview) = webview(&app, id) {
         webview.close().map_err(|e| e.to_string())?;
     }
     Ok(())
 }
 
+/// 面板里对网页权限请求点了「允许 / 阻止」。permission 是用户看到的那条请求的编号：
+/// 队首已经换成别的请求（页面刚跳走、新请求顶上来）时不答，免得把「允许」给了没显示的权限。
+#[tauri::command]
+pub(crate) async fn browser_pane_answer_permission(
+    app: tauri::AppHandle,
+    id: u32,
+    permission: u32,
+    allow: bool,
+) -> Result<(), String> {
+    crate::browser_permission::answer(&app, id, permission, allow)
+}
+
+/// 下载完成后的「打开文件夹」：在系统文件管理器里选中下好的文件，不打开也不运行它（下载物
+/// 可能是可执行文件）。路径取后端记下的，不信前端传来的。
+#[tauri::command]
+pub(crate) async fn browser_pane_reveal_download(
+    state: tauri::State<'_, BrowserPanes>,
+    id: u32,
+    download: u32,
+) -> Result<(), String> {
+    let path = state
+        .panes
+        .lock()
+        .map_err(|e| e.to_string())?
+        .get(&id)
+        .ok_or("browser_pane/not_found")?
+        .downloads
+        .iter()
+        .find(|entry| entry.id == download && entry.state == DownloadState::Done)
+        .and_then(|entry| entry.path.clone())
+        .ok_or("browser_pane/download_missing")?;
+    tauri::async_runtime::spawn_blocking(move || {
+        if !path.exists() {
+            return Err("browser_pane/download_missing".to_string());
+        }
+        crate::fsutil::reveal_target(&path)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn download_list_tracks_start_finish_and_failure() {
+        let mut list = Vec::new();
+        download_started(&mut list, "https://a.test/f.txt", Path::new("C:/dl/f.txt"));
+        download_started(&mut list, "https://a.test/g.zip", Path::new("C:/dl/g.zip"));
+        assert_eq!(list[0].file_name, "f.txt");
+        assert_eq!(list[0].state, DownloadState::Progress);
+
+        // 完成事件给的路径为准（WebView2 重名时另起名）。
+        assert!(download_finished(
+            &mut list,
+            "https://a.test/f.txt",
+            Some(PathBuf::from("C:/dl/f (1).txt")),
+            true
+        ));
+        assert_eq!(list[0].state, DownloadState::Done);
+        assert_eq!(list[0].file_name, "f (1).txt");
+
+        // macOS 完成时没有路径：保留开始时记下的。
+        assert!(download_finished(
+            &mut list,
+            "https://a.test/g.zip",
+            None,
+            false
+        ));
+        assert_eq!(list[1].state, DownloadState::Failed);
+        assert_eq!(list[1].path.as_deref(), Some(Path::new("C:/dl/g.zip")));
+
+        // 已经结束的不会再被改；对不上号返回 false。
+        assert!(!download_finished(&mut list, "https://a.test/f.txt", None, false));
+        assert_eq!(list[0].state, DownloadState::Done);
+    }
+
+    #[test]
+    fn same_url_downloaded_twice_finishes_the_latest_one() {
+        let mut list = Vec::new();
+        download_started(&mut list, "https://a.test/f.txt", Path::new("C:/dl/f.txt"));
+        download_started(&mut list, "https://a.test/f.txt", Path::new("C:/dl/f (1).txt"));
+        download_finished(&mut list, "https://a.test/f.txt", None, true);
+        assert_eq!(list[0].state, DownloadState::Progress);
+        assert_eq!(list[1].state, DownloadState::Done);
+    }
+
+    #[test]
+    fn download_list_keeps_only_the_latest() {
+        let mut list = Vec::new();
+        for n in 0..(MAX_DOWNLOADS + 3) {
+            download_started(&mut list, &format!("https://a.test/{n}"), Path::new(""));
+        }
+        assert_eq!(list.len(), MAX_DOWNLOADS);
+        // 没有文件名时取网址最后一段。
+        assert_eq!(list.last().unwrap().file_name, format!("{}", MAX_DOWNLOADS + 2));
+        let ids: Vec<u32> = list.iter().map(|entry| entry.id).collect();
+        assert!(ids.windows(2).all(|pair| pair[0] < pair[1]));
+    }
+
+    #[test]
+    fn unique_path_never_overwrites_existing_files() {
+        let dir = std::env::temp_dir().join(format!("meowo-dl-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let free = |_: &Path| false;
+        let first = dir.join("report.csv");
+        assert_eq!(unique_path(&first, free), first);
+        std::fs::write(&first, "a").unwrap();
+        std::fs::write(dir.join("report (1).csv"), "b").unwrap();
+        assert_eq!(unique_path(&first, free), dir.join("report (2).csv"));
+        // 还在下载、没落盘的也算占用（并发同名下载实测会互相覆盖）。
+        let downloading = dir.join("report (2).csv");
+        assert_eq!(
+            unique_path(&first, |candidate| candidate == downloading),
+            dir.join("report (3).csv")
+        );
+        let fresh = dir.join("fresh.txt");
+        assert_eq!(
+            unique_path(&fresh, |candidate| candidate == fresh),
+            dir.join("fresh (1).txt")
+        );
+        // 没有扩展名也行。
+        let bare = dir.join("README");
+        std::fs::write(&bare, "c").unwrap();
+        assert_eq!(unique_path(&bare, free), dir.join("README (1)"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn permission_prompt_shows_host_and_has_unique_ids() {
+        let prompt = BrowserPermission::new("downloads", "https://httpbin.org/html?x=1");
+        assert_eq!(prompt.host, "httpbin.org");
+        let json = serde_json::to_value(&prompt).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({ "id": prompt.id, "kind": "downloads", "host": "httpbin.org" })
+        );
+        assert_eq!(prompt.describe(), "httpbin.org 想要下载多个文件");
+        // 每条请求编号不同（前端据此解锁按钮）。
+        assert_ne!(
+            BrowserPermission::new("downloads", "https://httpbin.org/").id,
+            prompt.id
+        );
+        assert_eq!(
+            BrowserPermission::new("window_management", "https://a.test/").describe(),
+            "a.test 想要使用额外权限"
+        );
+    }
+
+    #[test]
+    fn download_serializes_without_url_or_path() {
+        let mut list = Vec::new();
+        download_started(&mut list, "https://a.test/f.txt", Path::new("C:/dl/f.txt"));
+        let json = serde_json::to_value(&list[0]).unwrap();
+        assert_eq!(json["fileName"], "f.txt");
+        assert_eq!(json["state"], "progress");
+        assert!(json.get("url").is_none() && json.get("urlKey").is_none() && json.get("path").is_none());
+    }
 
     #[test]
     fn address_bar_input_becomes_a_url() {

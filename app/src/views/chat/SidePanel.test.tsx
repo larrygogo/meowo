@@ -26,7 +26,7 @@ afterEach(cleanup);
 
 const summary: GitDiffSummaryDto = { gitAvailable: true, isRepo: true, branch: "main", ahead: null, behind: null, files: [] };
 const shells = new Map<number, ShellTerminalInfo>([[3, { id: 3, owner: 1, title: "pwsh", exited: false }]]);
-const panes = new Map<number, BrowserPaneInfo>([[5, { id: 5, owner: 1, url: "http://localhost:5173/", title: "Vite App", loading: false, agentActive: true, agentPaused: false, zoom: 1 }]]);
+const panes = new Map<number, BrowserPaneInfo>([[5, { id: 5, owner: 1, url: "http://localhost:5173/", title: "Vite App", loading: false, agentActive: true, agentPaused: false, zoom: 1, downloads: [], permission: null, blocked: null }]]);
 const full: PanelState = {
   tabs: [
     { key: "d", type: "diff" },
@@ -65,6 +65,18 @@ describe("右侧面板", () => {
     // agent 正在操作的浏览器页签上亮一个点。
     expect(tabs[2].querySelector(".side-panel-tab-agent")).not.toBeNull();
     expect(tabs[1].querySelector(".side-panel-tab-agent")).toBeNull();
+  });
+
+  it("页签里的网页在等你允许时，页签上换成琥珀点（页签藏着也看得到）", () => {
+    panes.set(5, { ...panes.get(5)!, permission: { id: 1, kind: "downloads", host: "httpbin.org" } });
+    try {
+      renderPanel();
+      const tab = screen.getAllByRole("tab")[2];
+      expect(tab.querySelector(".side-panel-tab-waiting")?.getAttribute("aria-label")).toBe("网页在等你允许");
+      expect(tab.querySelector(".side-panel-tab-agent")).toBeNull();
+    } finally {
+      panes.set(5, { ...panes.get(5)!, permission: null });
+    }
   });
 
   it("点页签切换，叉和中键关闭，键盘 → 切到下一个、Alt+→ 挪位置", () => {

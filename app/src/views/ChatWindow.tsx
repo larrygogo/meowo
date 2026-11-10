@@ -2344,6 +2344,8 @@ export function ChatWindow() {
           await refreshRef.current?.();
           return itemsRef.current.some((item) => item.id === id);
         },
+        // 终端输入框里原有的草稿：接在对话页输入框已有内容后面，撤回成功与否都不丢。
+        onDraftMoved: (draft) => setPrompt((current) => current.trim() ? `${current}\n\n${draft}` : draft),
         onUndone: () => {
           // 菜单式撤回不写 transcript：本地先收掉被撤的消息（下一条落盘时读取层按分叉收回）。
           if (control.menu) {
@@ -4116,6 +4118,7 @@ export function ChatWindow() {
         onToggleChanges={() => (panelState.visible && (remoteUi() || panel.active?.type === "diff") ? panelActions.hide() : panelActions.openDiff())}
         onTogglePanel={panelActions.toggle}
         panelAgentBusy={!panelState.visible && panel.agentBusy}
+        panelWaiting={!panelState.visible && panel.permissionWaiting}
         info={!remoteUi() && cwd && !panelState.visible ? { open: infoWide ? infoOn : infoFloating, onToggle: toggleInfo } : null}
         onToggleTerminal={() => { const next = view === "terminal" ? "chat" : "terminal"; rememberViewPref(next); setView(next); }}
         onError={setSendError}

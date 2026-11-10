@@ -16,7 +16,7 @@ afterEach(() => {
   setPanelLinkHandler(null);
 });
 
-const pane = (over: Partial<BrowserPaneInfo> = {}): BrowserPaneInfo => ({ id: 5, owner: 1, url: "http://localhost:5173/", title: "", loading: false, agentActive: false, agentPaused: false, zoom: 1, ...over });
+const pane = (over: Partial<BrowserPaneInfo> = {}): BrowserPaneInfo => ({ id: 5, owner: 1, url: "http://localhost:5173/", title: "", loading: false, agentActive: false, agentPaused: false, zoom: 1, downloads: [], permission: null, blocked: null, ...over });
 
 describe("面板浏览器", () => {
   it("页签名：标题优先，其次主机名，空白页叫新标签页", () => {
@@ -75,6 +75,65 @@ describe("面板浏览器", () => {
     fireEvent.click(screen.getByRole("button", { name: "更多" }));
     fireEvent.click(screen.getByRole("menuitem", { name: /打印/ }));
     expect(invoke).toHaveBeenCalledWith("browser_pane_action", { id: 5, action: "print" });
+  });
+
+  it("网页的权限请求在面板里答：允许 / 阻止，答复送达前按钮锁住防连点", () => {
+    const ask = { id: 1, kind: "downloads", host: "httpbin.org" };
+    const { rerender } = render(<BrowserPane info={pane({ permission: ask })} visible suggestions={[]} />);
+    expect(screen.getByRole("alert").textContent).toContain("httpbin.org 想要下载多个文件");
+    fireEvent.click(screen.getByRole("button", { name: "允许" }));
+    expect(invoke).toHaveBeenCalledWith("browser_pane_answer_permission", { id: 5, permission: 1, allow: true });
+    // 后端还没推新状态前再点无效：后端每次答的是排在最前的一条，连点会误答下一条。
+    expect((screen.getByRole("button", { name: "阻止" }) as HTMLButtonElement).disabled).toBe(true);
+    // 无关的状态推送（标题、加载状态变了）同一条请求仍锁着（做空审查：按对象引用会提前解锁）。
+    rerender(<BrowserPane info={pane({ permission: { ...ask }, title: "x", loading: true })} visible suggestions={[]} />);
+    expect((screen.getByRole("button", { name: "阻止" }) as HTMLButtonElement).disabled).toBe(true);
+    // 下一条请求（编号不同，哪怕内容相同）推来就解锁。
+    rerender(<BrowserPane info={pane({ permission: { ...ask, id: 2 } })} visible suggestions={[]} />);
+    fireEvent.click(screen.getByRole("button", { name: "阻止" }));
+    expect(invoke).toHaveBeenCalledWith("browser_pane_answer_permission", { id: 5, permission: 2, allow: false });
+    // 不认识的种类给通用说法；答完就没有提示了。
+    rerender(<BrowserPane info={pane({ permission: { id: 3, kind: "window_management", host: "a.test" } })} visible suggestions={[]} />);
+    expect(screen.getByRole("alert").textContent).toContain("a.test 想要使用额外权限");
+    rerender(<BrowserPane info={pane()} visible suggestions={[]} />);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("阻止之后留一条「已阻止」：可刷新重试，可收起；有新的请求时让位", () => {
+    const blocked = { id: 7, kind: "downloads", host: "httpbin.org" };
+    const { rerender } = render(<BrowserPane info={pane({ blocked })} visible suggestions={[]} />);
+    expect(screen.getByRole("status").textContent).toContain("已阻止 httpbin.org 下载多个文件");
+    fireEvent.click(screen.getByRole("button", { name: "刷新重试" }));
+    expect(invoke).toHaveBeenCalledWith("browser_pane_action", { id: 5, action: "reload" });
+    // 新请求在等答复时只显示请求本身。
+    rerender(<BrowserPane info={pane({ blocked, permission: { id: 8, kind: "camera", host: "a.test" } })} visible suggestions={[]} />);
+    expect(screen.queryByText(/已阻止/)).toBeNull();
+    rerender(<BrowserPane info={pane({ blocked })} visible suggestions={[]} />);
+    fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+    expect(screen.queryByText(/已阻止/)).toBeNull();
+    // 再阻止一条（编号不同）照常出来。
+    rerender(<BrowserPane info={pane({ blocked: { ...blocked, id: 9 } })} visible suggestions={[]} />);
+    expect(screen.getByText(/已阻止/)).not.toBeNull();
+  });
+
+  it("下载提示：下载中、已下载（打开文件夹）、失败；收起后下一次下载照常出来", () => {
+    const item = (id: number, state: "progress" | "done" | "failed") => ({ id, fileName: "report.csv", state });
+    const { rerender } = render(<BrowserPane info={pane({ downloads: [item(1, "progress")] })} visible suggestions={[]} />);
+    expect(screen.getByRole("status").textContent).toContain("正在下载 report.csv");
+    expect(screen.queryByRole("button", { name: "打开文件夹" })).toBeNull();
+
+    rerender(<BrowserPane info={pane({ downloads: [item(1, "done")] })} visible suggestions={[]} />);
+    expect(screen.getByRole("status").textContent).toContain("已下载 report.csv");
+    fireEvent.click(screen.getByRole("button", { name: "打开文件夹" }));
+    expect(invoke).toHaveBeenCalledWith("browser_pane_reveal_download", { id: 5, download: 1 });
+
+    fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+    expect(screen.queryByRole("status")).toBeNull();
+
+    // 只显示最新一条。
+    rerender(<BrowserPane info={pane({ downloads: [item(1, "done"), item(2, "failed")] })} visible suggestions={[]} />);
+    expect(screen.getByRole("status").textContent).toContain("下载失败 report.csv");
+    expect(screen.queryByRole("button", { name: "打开文件夹" })).toBeNull();
   });
 
   it("卸载时把原生视图藏起来（它不会跟着 DOM 消失）", () => {

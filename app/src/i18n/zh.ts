@@ -806,6 +806,28 @@ export const zh = {
     browserZoomReset: "重置缩放",
     browserPrint: "打印",
     browserCopyUrl: "复制网址",
+    // 网页的权限请求（browser_permission.rs）：「httpbin.org 想要下载多个文件」。
+    browserPermissionAsk: (host: string, what: string) => `${host} 想要${what}`,
+    browserPermissionKinds: {
+      downloads: "下载多个文件",
+      camera: "使用摄像头",
+      microphone: "使用麦克风",
+      location: "获取你的位置",
+      notifications: "向你发送通知",
+      clipboard: "读取剪贴板",
+      files: "读写你的文件",
+      other: "使用额外权限",
+    } as Record<string, string>,
+    browserPermissionBlocked: (host: string, what: string) => `已阻止 ${host} ${what}`,
+    browserPermissionWaiting: "网页在等你允许",
+    browserPermissionRetry: "刷新重试",
+    browserPermissionAllow: "允许",
+    browserPermissionBlock: "阻止",
+    browserDownloading: (name: string) => `正在下载 ${name}`,
+    browserDownloaded: (name: string) => `已下载 ${name}`,
+    browserDownloadFailed: (name: string) => `下载失败 ${name}`,
+    browserDownloadReveal: "打开文件夹",
+    browserDownloadDismiss: "关闭",
     shellBusyTitle: "关闭正在运行的终端？",
     shellBusyMessage: "这些终端里还有程序在跑，关闭会把它们一起结束。",
     shellBusyConfirm: "结束程序并关闭",
@@ -1164,7 +1186,7 @@ export const zh = {
     // 会话仍在本应用里跑：两边同时恢复会写乱同一份会话。
     resumeCommandCopiedLive: "已复制，先在这里结束会话再运行",
     copyFailed: "复制失败，请重试",
-    undoComposerBusy: "终端输入框里有未发送的内容，清空后再撤回",
+    undoComposerBusy: "终端输入框没能自动清空，清空后再撤回",
     // 菜单式撤回（claude /rewind）每一步核对屏幕，选中项或引文与要撤的消息对不上就退出菜单。
     undoMenuMismatch: "撤回菜单与所选消息对不上，已取消",
     // CLI 拒绝某档位时原样带出它的说法（如当前模型不支持 Max）。

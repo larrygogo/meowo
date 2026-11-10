@@ -441,7 +441,24 @@ export type BrowserPaneInfo = {
   agentPaused: boolean;
   /** 页面缩放比例（1 = 100%）。 */
   zoom: number;
+  /** 最近几次下载，旧的在前；面板只显示最后一条。 */
+  downloads: BrowserDownload[];
+  /** 网页在等用户答复的权限请求（只给排在最前的一条）。kind 见 browser_permission.rs。 */
+  permission: BrowserPermission | null;
+  /** 用户刚阻止的请求：同一页面不会再问，被拦的下载也没有事件，留一条提示（刷新后可重试）。 */
+  blocked: BrowserPermission | null;
 };
+/** id 每条请求不同：前端据此判断答复是否已送达（见 BrowserPane 的防连点）。 */
+export type BrowserPermission = { id: number; kind: string; host: string };
+export type BrowserDownload = { id: number; fileName: string; state: "progress" | "done" | "failed" };
+/** 网页权限请求的「允许 / 阻止」。 */
+export function answerBrowserPanePermission(id: number, permission: number, allow: boolean): Promise<void> {
+  return invoke("browser_pane_answer_permission", { id, permission, allow });
+}
+/** 在文件管理器里选中下好的文件（不打开）。download 是 BrowserDownload.id。 */
+export function revealBrowserPaneDownload(id: number, download: number): Promise<void> {
+  return invoke("browser_pane_reveal_download", { id, download });
+}
 export function openBrowserPane(owner: number, url?: string): Promise<BrowserPaneInfo> {
   return invoke("browser_pane_open", { owner, url: url ?? null });
 }
