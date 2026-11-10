@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LeadGateDto, LeadTaskDto } from "../../api";
@@ -238,5 +241,24 @@ describe("验收清单与新关卡", () => {
     render(<LeadGateCard cwd="C:/repo" gate={gate("Q", { options: [{ id: "other", label: "别的城市", detail: "", recommended: false }] })} onAnswered={() => {}} />);
     expect(screen.getAllByRole("radio")).toHaveLength(1);
     expect(screen.queryByLabelText("其他（写在意见里）")).toBeNull();
+  });
+});
+
+// jsdom 不排版，量不了「卡片是否超出屏幕」；这里按文本守住三条让关卡卡片在手机上不出屏的规则。
+// 实际效果靠 Playwright iPhone 仿真验证过（修复前视口 664、dock 619 从 315 起，卡底和提交按钮在屏外）。
+describe("关卡卡片在底部 dock 里的高度", () => {
+  const css = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../styles.css"), "utf8");
+  const rule = (selector: string) => {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    return css.match(new RegExp(`^${escaped} \\{([^}]*)\\}`, "m"))?.[1] ?? "";
+  };
+
+  it("dock 可收缩且是纵向 flex，卡片能让出高度、其余子项不让", () => {
+    expect(rule(".chat-dock")).toMatch(/flex: 0 1 auto/);
+    expect(rule(".chat-dock")).toMatch(/min-height: 0/);
+    expect(rule(".chat-dock")).toMatch(/flex-direction: column/);
+    expect(rule(".chat-dock > *")).toMatch(/flex-shrink: 0/);
+    expect(rule(".chat-dock > .lead-gate-card")).toMatch(/flex-shrink: 1/);
+    expect(rule(".chat-dock > .lead-gate-card")).toMatch(/min-height: min\(/);
   });
 });
