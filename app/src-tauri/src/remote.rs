@@ -2231,6 +2231,10 @@ mod tests {
     /// 注释行号是样例键的出处（api.ts 的 invoke 调用点；host_os/file_access_token
     /// 不经 api.ts，走 mobile/transport.ts 直发）。无参臂 dispatch 不读载荷，样例 `{}`
     /// 用 IgnoredAny 只是钉死「传 {} 即可」这一事实（空 body 由 parse 归一为 {}）。
+    // 已在测试模块里，这个 cfg 是给 lib.rs 的 host_code_does_not_branch_on_agent_identity 看的：
+    // 它按 `#[test]` / `#[cfg(test)]` 认测试代码，上一个测试函数一结束就回到「生产代码」，
+    // 这个不带 #[test] 的辅助函数里的 "provider":"claude" 样例会被当成按身份分支（二期 CI 实测）。
+    #[cfg(test)]
     fn sample_payload_parse_check(cmd: &str) -> Result<(), String> {
         match cmd {
             // api.ts:566（getLiveSessionsPage：filter/limit 恒有，search/cwd/游标键恒发、
