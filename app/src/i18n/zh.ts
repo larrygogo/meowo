@@ -1186,7 +1186,7 @@ export const zh = {
     // 会话仍在本应用里跑：两边同时恢复会写乱同一份会话。
     resumeCommandCopiedLive: "已复制，先在这里结束会话再运行",
     copyFailed: "复制失败，请重试",
-    undoComposerBusy: "终端输入框里有未发送的内容，清空后再撤回",
+    undoComposerBusy: "终端输入框没能自动清空，清空后再撤回",
     // 菜单式撤回（claude /rewind）每一步核对屏幕，选中项或引文与要撤的消息对不上就退出菜单。
     undoMenuMismatch: "撤回菜单与所选消息对不上，已取消",
     // CLI 拒绝某档位时原样带出它的说法（如当前模型不支持 Max）。

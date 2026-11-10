@@ -112,6 +112,26 @@ export function composerDraftText(screen: string[] | null, stash: NonNullable<Ch
   return null;
 }
 
+/// composer 里的完整草稿（多行）：提示符那行加上它下面、底边横线之前的各行，去掉续行缩进。
+/// 认不出 composer 返回 null，空 composer 返回 ""。软折行也会被当成换行，内容不丢，只是排版
+/// 可能和原样差一点（撤回时搬进对话页输入框给用户继续改，见 undoTerminal）。
+export function composerDraftBlock(screen: string[] | null, stash: NonNullable<ChatUi["draft_stash"]>): string | null {
+  if (!screen) return null;
+  const isBorder = (line: string) => {
+    const trimmed = line.trim();
+    return trimmed !== "" && [...trimmed].every((char) => char === stash.composer_border);
+  };
+  for (let index = screen.length - 1; index > 0; index -= 1) {
+    const line = screen[index].trimStart();
+    if (isBorder(screen[index - 1]) && line.startsWith(stash.composer_prompt)) {
+      const lines = [line.slice(stash.composer_prompt.length).trim()];
+      for (let next = index + 1; next < screen.length && !isBorder(screen[next]); next += 1) lines.push(screen[next].trim());
+      return lines.join("\n").trim();
+    }
+  }
+  return null;
+}
+
 /// 发送前收起 composer 里用户在终端输入行留下的未提交草稿(issue #72:残留会拼进
 /// 消息)。CLI 在下一次提交后自己还原草稿,终端里的输入原样回来。判断全看仿真后的整屏
 /// (规格与取证见后端 DraftStash / tests/probe_draft_residual.rs):

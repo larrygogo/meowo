@@ -1094,7 +1094,7 @@ export const en: Dict = {
     sideQuestionClose: "Close aside",
     resumeCommandCopiedLive: "Copied. End the session here before running it",
     copyFailed: "Copy failed. Try again.",
-    undoComposerBusy: "The terminal input box has unsent text. Clear it, then undo.",
+    undoComposerBusy: "Couldn't clear the terminal input box. Clear it, then undo.",
     undoMenuMismatch: "The undo menu didn't match the selected message. Cancelled.",
     effortRejected: (line: string) => `Thinking level unchanged: ${line}`,
     switchProvider: "Copy to new session",

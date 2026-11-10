@@ -691,6 +691,70 @@ describe("ChatWindow 适配回归", () => {
     }
   }, 15000);
 
+  /// claude 撤回时终端输入框里有草稿：以前直接报「清空后再撤回」让用户去终端清（用户反馈：不要
+  /// 让用户去终端清）。现在读出整段草稿、双 Esc 清掉、搬进对话页输入框，再照常撤回。
+  /// 认不出清空（双 Esc 后框里还有字）才退回原来的提示，且不发 /rewind。
+  it.each(["moved", "stuck"])("claude 撤回时终端输入框有草稿：%s", async (mode) => {
+    const base = setup(517, "claude");
+    const items = [
+      { type: "user_text", id: "u1", timestamp: null, text: "先做甲" },
+      { type: "assistant_text", id: "a1", timestamp: null, text: "甲做完了" },
+    ];
+    let stage: "idle" | "list" | "confirm" | "restored" | "cleared" = "idle";
+    let draft: string[] = ["终端里写了一半", "  第二行"];
+    let draftEscs = 0;
+    let escs = 0;
+    let ups = 0;
+    let typed = "";
+    const composer = (lines: string[]) => ["────────", `❯ ${lines[0] ?? ""}`, ...lines.slice(1), "────────"];
+    const screenNow = () => {
+      if (stage === "list") {
+        const rows = ["先做甲", "(current)"];
+        const at = rows.length - 1 - ups;
+        return ["   Rewind", ...rows.map((row, index) => (index === at ? "   ❯ " : "     ") + row), "   Enter to continue · Esc to cancel"];
+      }
+      if (stage === "confirm") return ["   Rewind", "   │ 先做甲", "   ❯ 1. Restore conversation"];
+      if (stage === "restored") return ["❯ 先做甲", ...composer(["先做甲"])];
+      return ["❯ 先做甲", "● 甲做完了", ...composer(draft)];
+    };
+    invoke.mockImplementation((command, args) => {
+      if (command === "get_chat_history") return base(command, args).then((h: object) => ({ ...h, offset: 5, items: args?.offset ? [] : items }));
+      if (command === "confirm_dialog") return Promise.resolve(true);
+      if (command === "managed_terminal_screen") return Promise.resolve(screenNow());
+      if (command === "write_managed_terminal") {
+        const data = String(args?.data);
+        if (data === "\u001b" && stage === "idle" && draft.length > 0) {
+          // claude：第一下 Esc 只提示「再按一次清空」，第二下才清；stuck 模式清不掉。
+          draftEscs += 1;
+          if (draftEscs >= 2 && mode === "moved") draft = [];
+        } else if (data === "\r" && typed.endsWith("/rewind")) { stage = "list"; typed = ""; }
+        else if (data === "\r" && stage === "list") stage = "confirm";
+        else if (data === "\u001b[A" && stage === "list") ups += 1;
+        else if (data === "1" && stage === "confirm") stage = "restored";
+        else if (data === "\u001b") {
+          escs += 1;
+          if (stage === "restored" && escs >= 2) stage = "cleared";
+        } else typed += data;
+      }
+      return base(command, args);
+    });
+    render(<ChatWindow />);
+    await screen.findByText("甲做完了");
+    fireEvent.click(await screen.findByRole("button", { name: zh.chat.undoTip }));
+    if (mode === "moved") {
+      await screen.findByText(zh.chat.undoDone, {}, { timeout: 8000 });
+      expect(draftEscs).toBe(2);
+      expect(stage).toBe("cleared");
+      // 撤回的原文在前，终端草稿接在后面，一个字不丢。
+      expect(box().value).toBe("先做甲\n\n终端里写了一半\n第二行");
+      expect(screen.queryByText(zh.chat.undoComposerBusy)).toBeNull();
+    } else {
+      await screen.findByText(zh.chat.undoComposerBusy, {}, { timeout: 8000 });
+      expect(writes(517)).not.toContain("/rewind");
+      expect(box().value).toBe("");
+    }
+  }, 20000);
+
   /// claude 侧问（2.1.314 probe_claude_rewind 实测 /btw）：答案只在终端覆盖层、不写 transcript。
   /// 对话页拦下 `/btw <问题>`，读下覆盖层里的答案挂成侧问卡，读完按 Esc 收起覆盖层。
   it("claude 侧问：/btw 的答案挂成卡片并收起覆盖层", async () => {
