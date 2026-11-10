@@ -5,7 +5,7 @@
 // 令牌失效(rpc 收 401)时 transport 广播 auth-lost,这里清态退回配对页,并说明原因——
 // 静默弹回而不解释,用户只会反复点「连接」。
 import { useEffect, useState, type ReactNode } from "react";
-import { getToken, setToken, clearToken, onAuthLost, probeToken, primeFileToken } from "./transport";
+import { getToken, setToken, clearToken, onAuthLost, parsePairingInput, probeToken, primeFileToken } from "./transport";
 import { useT } from "../i18n";
 import logoUrl from "../../src-tauri/icons/128x128@2x.png";
 
@@ -25,8 +25,13 @@ export function TokenGate({ children, onReady }: { children: ReactNode; onReady?
   if (ready) return <>{children}</>;
 
   const submit = () => {
-    const token = manual.trim();
-    if (!token || checking) return;
+    if (!manual.trim() || checking) return;
+    // 整段地址、#token=…、纯令牌都认（parsePairingInput）；认不出令牌就直接说令牌不对，不白打一发请求。
+    const token = parsePairingInput(manual);
+    if (!token) {
+      setError("invalid");
+      return;
+    }
     setChecking(true);
     setError(null);
     // 先验后放行:直接 setReady 的话,错令牌要等第一发业务请求 401 才弹回,

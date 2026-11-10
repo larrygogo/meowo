@@ -2,7 +2,7 @@ import { createContext, memo, useEffect, useState, type ReactNode } from "react"
 import { useT } from "../../i18n";
 import type { DiffHunk } from "../../generated/contracts/DiffHunk";
 import type { ToolDetail } from "../../generated/contracts/ToolDetail";
-import { highlightLines, languageForPath } from "./highlight";
+import { highlightLines, languageForPath, useHighlighter } from "./highlight";
 import { toolKind } from "./ToolIcon";
 import { BashTool } from "./tools/BashTool";
 import { ReadTool } from "./tools/ReadTool";
@@ -200,6 +200,8 @@ export function toolSummary(item: import("./shared").ToolUseItem, cwd: string | 
 /// 统一 diff（claude 回执的 structuredPatch）：终端同款「行号 + -/+ + 代码」，增删交错、
 /// 带上下文。删行标旧文件行号、其余标新文件行号；多段之间放一行省略号。
 export function UnifiedDiff({ hunks, lang }: { hunks: DiffHunk[]; lang: string | null }) {
+  // hljs 懒加载：就绪前 highlightLines 给转义纯文本，到位后重渲染上色（见 highlight.ts）。
+  useHighlighter(!!lang);
   return (
     <div className="chat-tool-code chat-tool-udiff">
       {hunks.map((hunk, hunkIndex) => {

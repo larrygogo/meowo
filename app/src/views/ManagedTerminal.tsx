@@ -39,6 +39,7 @@ import type { PtyRestartedEvent as RestartedEvent } from "../generated/contracts
 import { terminalAttention, visibleTerminalText, type AttentionGrammar, type TerminalAttention } from "../terminalAttention";
 import { remoteUi } from "../remoteMode";
 import { isMac } from "../platform";
+import { WINDOW_CLOSE_CANCELLED_EVENT } from "./chat/windowClose";
 
 /** 远程模式补查周期（ms）。手机端收不到 pty-output 事件,靠定时补查增量快照喂满屏幕识别
  *  （AskUserQuestion 表单检测跑在这条通道上）。带 nextOffset 只取增量,不重传 backlog。 */
@@ -1567,8 +1568,9 @@ export function ManagedTerminal({ sessionId, status, reviewPending = false, back
     // 这条通道同时喂饱隐藏的屏幕识别(AskUserQuestion 表单检测)。桌面走事件,不进此分支。
     let remotePollTimer = 0;
     if (remoteUi()) {
+      // 页面隐藏（锁屏、切后台）时不补查；回到前台下一拍就会续上增量，间隔很短不另外补。
       remotePollTimer = window.setInterval(() => {
-        if (!cancelled) void inspectSnapshot();
+        if (!cancelled && !document.hidden) void inspectSnapshot();
       }, REMOTE_SNAPSHOT_POLL_MS);
     }
 
@@ -1632,6 +1634,15 @@ export function ManagedTerminal({ sessionId, status, reviewPending = false, back
     sessionChangedRef.current?.(prev);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- sessionIdRef/sessionChangedRef 是稳定 ref
   }, [sessionId]);
+
+  // 原生关窗被用户取消：后端关窗收尾只在 Destroyed 跑（window.rs），取消时「正在看」其实还在；
+  // 这里重新登记是兜底（登记幂等），防以后有人把收尾挪回 CloseRequested（见 chat/windowClose.ts）。
+  useEffect(() => {
+    if (remoteUi()) return;
+    const onCancelled = () => void registerTerminalViewer(sessionIdRef.current).catch(() => {});
+    window.addEventListener(WINDOW_CLOSE_CANCELLED_EVENT, onCancelled);
+    return () => window.removeEventListener(WINDOW_CLOSE_CANCELLED_EVENT, onCancelled);
+  }, []);
 
   // capability 查询可能比 PTY 首屏稍晚返回。提示文字先到、markers 后到时也要立刻补判，
   // 不能等一个可能永远不会来的后续输出 chunk。
@@ -1707,6 +1718,7 @@ export function ManagedTerminal({ sessionId, status, reviewPending = false, back
   useEffect(() => {
     if (!visible || !active || exitCode !== undefined || sessionId < 0) return;
     const timer = window.setInterval(() => {
+      if (document.hidden) return; // 窗口隐藏时没人看错位，可见后下一拍就会对齐
       managedTerminalGrid(sessionId)
         .then(([cols, rows]) => resyncGridIfDrifted(sessionId, cols, rows))
         .catch(() => {});

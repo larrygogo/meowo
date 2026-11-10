@@ -70,8 +70,8 @@ use fsutil::{
     reveal_path_in_file_manager, reveal_terminal_path, search_project_files, file_mention_candidates,
 };
 use git::{
-    git_changes_overview, git_commit, git_diff_summary, git_discard, git_file_diff, git_pull_request, git_stage,
-    git_unstage,
+    git_changes_overview, git_commit, git_diff_summary, git_discard, git_file_diff, git_ignore_dir, git_pull_request,
+    git_stage, git_unstage, git_untracked_dir_files,
 };
 use lead::{answer_lead_gate, lead_task_snapshot, lead_workflow_installed, set_lead_workflow};
 use handoff::{copy_session_to_provider, get_session_lineage};
@@ -201,6 +201,30 @@ struct DownloadedUpdate {
     bytes: Vec<u8>,
 }
 
+/// 检查更新的请求超时。插件默认不设超时：代理半死不活（握手成功后不回包）时 check
+/// 会永远挂着，前端一直显示「检查中」，12 小时一次的自动检查也跟着排不上。
+/// 只给 check 设：tauri-plugin-updater 2.14.1 里 builder.timeout 走 reqwest 的
+/// ClientBuilder::timeout（整个请求含读完响应体），而 check 产出的 Update.timeout 固定为
+/// None（updater.rs:735），下载不继承，几十 MB 的安装包不会被 30 秒误杀。
+const UPDATE_CHECK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// 下载连续这么久没有新字节就判失败。下载本身不设总超时（慢网下几十 MB 要好几分钟），
+/// 只防「连接还在、数据不来」：此前这种情况 update_downloading 永远是 true，之后每轮
+/// 检查都回 downloading，自动更新再也触发不了下载，只能重启 Meowo。
+const UPDATE_STALL_LIMIT: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// 下载停顿看门狗：`progress` 每来一块数据被 notify 一次，连续 `limit` 没动静就返回。
+/// 用 notify_one 而不是 notify_waiters：数据块到达时看门狗可能正在重建 sleep、没在等，
+/// notify_one 会留一个许可，下一轮 notified() 立即拿到，不会把那块进度漏掉。
+async fn stall_watchdog(progress: &tokio::sync::Notify, limit: std::time::Duration) {
+    loop {
+        tokio::select! {
+            _ = progress.notified() => {}
+            _ = tokio::time::sleep(limit) => return,
+        }
+    }
+}
+
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 struct AvailableUpdate {
@@ -229,6 +253,13 @@ async fn check_update(
         let handle = app.clone();
         builder = builder.on_before_exit(move || {
             handle.state::<AppState>().ptys.shutdown();
+            // 面板里的普通终端平时靠对话窗 Destroyed 回调收（window.rs 关窗兜底的 kill_all），
+            // 可插件直接 process::exit，窗口销毁事件同样不会来：pwsh 及其子孙（dev server
+            // 之类）会被孤儿化继续占端口。ShellTerminals 先于 updater 命令可用就 manage 了
+            // （lib.rs setup），try_state 只是防御。
+            if let Some(shells) = handle.try_state::<crate::shell_terminal::ShellTerminals>() {
+                shells.kill_all();
+            }
         });
     }
     if let Some(proxy) = ports::resolve_proxy(None) {
@@ -244,6 +275,7 @@ async fn check_update(
         builder = builder.no_proxy();
     }
     let update = builder
+        .timeout(UPDATE_CHECK_TIMEOUT)
         .build()
         .map_err(|e| e.to_string())?
         .check()
@@ -318,11 +350,14 @@ async fn download_update(
     // 每次下载前重置取消信号（上次取消/残留状态不能误杀本次下载）。
     let _ = state.update_download_cancel.send(false);
     let mut cancel_rx = state.update_download_cancel.subscribe();
+    let progress = tokio::sync::Notify::new();
     // tauri-plugin-updater（2.x）的 download 没有取消 API：用 select! 赛跑取消信号，
     // 取消即丢弃下载 future——reqwest 流随 future drop 中止，字节全在内存、无半成品文件要清。
+    // 停顿看门狗同理，判死后丢 future 即中止连接。
     let result = tokio::select! {
         result = update.download(
             |chunk, total| {
+                progress.notify_one();
                 downloaded = downloaded.saturating_add(chunk as u64);
                 let _ = app.emit(
                     "update-download-progress",
@@ -338,6 +373,14 @@ async fn download_update(
             state.update_downloading.store(false, Ordering::Release);
             let _ = app.emit("update-download-cancelled", ());
             return Ok("available".to_string());
+        }
+        _ = stall_watchdog(&progress, UPDATE_STALL_LIMIT) => {
+            // 复位 downloading，下一轮 check_update 才会回 available，前端
+            // （useUpdate 自动检查拿到 available 就 download）得以重新发起下载。
+            state.update_downloading.store(false, Ordering::Release);
+            let message = "update/stalled".to_string();
+            let _ = app.emit("update-download-failed", &message);
+            return Err(message);
         }
     };
     state.update_downloading.store(false, Ordering::Release);
@@ -1260,6 +1303,8 @@ pub fn run() {
             git_unstage,
             git_discard,
             git_commit,
+            git_untracked_dir_files,
+            git_ignore_dir,
             worktree::worktree_status,
             worktree::remove_session_worktree,
             worktree::list_cleanable_worktrees,
@@ -1302,6 +1347,7 @@ pub fn run() {
             shell_terminal::shell_terminal_resize,
             shell_terminal::shell_terminal_close,
             shell_terminal::shell_terminal_busy,
+            shell_terminal::shell_terminal_list_all,
             rename_session,
             set_archived,
             move_session_rank,
@@ -1527,10 +1573,72 @@ pub fn run() {
             // 端点去连一个可能已被回收的端口。
             if matches!(event, tauri::RunEvent::Exit) {
                 exit_ptys.shutdown();
+                // 面板终端也在这里收：托盘「退出」走 app.exit(0)，tauri-runtime-wry 直接把事件循环
+                // 设成 ExitWithCode 再发 RunEvent::Exit，不给窗口发 Destroyed（做空审查读
+                // tauri-runtime-wry 2.12.3 lib.rs:4300-4312），window.rs 关窗兜底的 kill_all 不会跑。
+                // 与 on_before_exit 同理；kill_all 幂等，窗口先销毁过再来一次无害。
+                if let Some(shells) = app.try_state::<crate::shell_terminal::ShellTerminals>() {
+                    shells.kill_all();
+                }
                 // 收尾之后再装：安装器会杀残留进程，先把 PTY 善后做完。
                 install_downloaded_on_exit(app);
             }
         });
+}
+
+#[cfg(test)]
+mod update_watchdog_tests {
+    use super::stall_watchdog;
+    use std::time::Duration;
+    use tokio::sync::Notify;
+    use tokio::time::{sleep, Instant};
+
+    const LIMIT: Duration = Duration::from_secs(60);
+
+    /// 每 30 秒来一块数据、持续 5 分钟：总时长远超阈值，但从没停顿过，看门狗不能叫。
+    #[tokio::test(start_paused = true)]
+    async fn steady_progress_never_trips() {
+        let progress = Notify::new();
+        let download = async {
+            for _ in 0..10 {
+                sleep(Duration::from_secs(30)).await;
+                progress.notify_one();
+            }
+        };
+        let finished = tokio::select! {
+            _ = download => true,
+            _ = stall_watchdog(&progress, LIMIT) => false,
+        };
+        assert!(finished, "有进度时看门狗误判停顿");
+    }
+
+    /// 一直没数据：恰好在阈值时触发。
+    #[tokio::test(start_paused = true)]
+    async fn no_progress_trips_at_limit() {
+        let progress = Notify::new();
+        let start = Instant::now();
+        stall_watchdog(&progress, LIMIT).await;
+        assert_eq!(start.elapsed(), LIMIT);
+    }
+
+    /// 先有 3 块进度（90 秒）再断流：从最后一块起算 60 秒触发，而不是从开始算。
+    #[tokio::test(start_paused = true)]
+    async fn stall_after_progress_trips_from_last_chunk() {
+        let progress = Notify::new();
+        let start = Instant::now();
+        let download = async {
+            for _ in 0..3 {
+                sleep(Duration::from_secs(30)).await;
+                progress.notify_one();
+            }
+            std::future::pending::<()>().await;
+        };
+        tokio::select! {
+            _ = download => unreachable!(),
+            _ = stall_watchdog(&progress, LIMIT) => {}
+        }
+        assert_eq!(start.elapsed(), Duration::from_secs(90) + LIMIT);
+    }
 }
 
 #[cfg(test)]

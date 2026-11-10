@@ -10,6 +10,7 @@ import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 
 import { answerLeadGate, leadTaskSnapshot, type LeadGateDto, type LeadTaskDto } from "../../api";
 import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
+import { useVisibleInterval } from "../../hooks/useVisibleInterval";
 import { ChatMarkdown } from "../ChatMarkdown";
 import { ApprovalCard } from "./ApprovalCard";
 
@@ -35,10 +36,11 @@ export function useLeadTask(cwd: string | null | undefined, session?: string | n
   }, [cwd, session]);
   useEffect(() => {
     refresh();
-    if (!cwd || !session) return;
-    const timer = window.setInterval(refresh, POLL_MS);
-    return () => window.clearInterval(timer);
   }, [cwd, refresh]);
+  // 窗口隐藏时不拉：关卡等的是 leader，看不见的时候拉了也没人看；重新可见那刻立即补一次。
+  useVisibleInterval(() => {
+    if (cwd && session) refresh();
+  }, POLL_MS);
   return [task, refresh];
 }
 

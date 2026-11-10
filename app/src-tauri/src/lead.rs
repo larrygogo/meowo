@@ -160,11 +160,14 @@ fn read_settings(path: &Path) -> Result<Value, String> {
     }
 }
 
+/// 写 ~/.claude/settings.json：这是用户自己的文件，claude 也在同时读写它。
+/// 原子写（唯一临时名 + fsync + rename，崩溃/并发都不会留半截），首次覆盖前留原件备份。
 fn write_settings(path: &Path, v: &Value) -> Result<(), String> {
-    let tmp = path.with_extension("json.meowo-tmp");
     let text = serde_json::to_string_pretty(v).map_err(|e| e.to_string())? + "\n";
-    std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp, path).map_err(|e| e.to_string())
+    if path.exists() {
+        meowo_agent::wiring::backup_once(path).map_err(|e| e.to_string())?;
+    }
+    meowo_agent::fsutil::write_atomic(path, &text).map_err(|e| e.to_string())
 }
 
 fn managed_file(path: &Path) -> bool {
@@ -199,11 +202,25 @@ pub(crate) fn install_into(claude_dir: &Path, reporter: &str, registry: Option<&
     let mut settings = read_settings(&settings_path)?;
     std::fs::create_dir_all(claude_dir.join("skills/lead")).map_err(|e| e.to_string())?;
     std::fs::create_dir_all(claude_dir.join("agents")).map_err(|e| e.to_string())?;
-    std::fs::write(&skill, SKILL_MD).map_err(|e| e.to_string())?;
-    std::fs::write(&agent, REDTEAM_MD).map_err(|e| e.to_string())?;
+    write_if_changed(&skill, SKILL_MD)?;
+    write_if_changed(&agent, REDTEAM_MD)?;
+    // 每次启动 refresh_if_installed 都会走到这里：hook 已是目标状态就不重写 settings.json——
+    // 否则每启动一次就改一次用户文件的 mtime、多一个与 claude 并发写同一文件的窗口。
+    let before = settings.clone();
     strip_lead_hooks(&mut settings);
     add_lead_hooks(&mut settings, reporter);
+    if settings == before {
+        return Ok(());
+    }
     write_settings(&settings_path, &settings)
+}
+
+/// 托管文件内容没变就不写（理由同 settings.json），变了走原子写：claude 可能正在读 skill。
+fn write_if_changed(path: &Path, body: &str) -> Result<(), String> {
+    if std::fs::read_to_string(path).is_ok_and(|t| t == body) {
+        return Ok(());
+    }
+    meowo_agent::fsutil::write_atomic(path, body).map_err(|e| e.to_string())
 }
 
 /// 初版的「会话 → 任务」登记表并进新登记表（新表已有的会话不动），进行中的任务不必重新认领。
@@ -217,7 +234,9 @@ fn migrate_prototype_registry(old: &Path, new: &Path) {
     for (k, v) in old_map {
         map.entry(k).or_insert(v);
     }
-    let _ = std::fs::write(new, Value::Object(map).to_string());
+    // 原子写：这张登记表 reporter（lead hook，每次一个进程）随时在读写，直接 write 先截断，
+    // 并发读到空表再写回就把别的会话的认领冲掉（同 meowo-reporter lead.rs 认领处的做法）。
+    let _ = meowo_agent::fsutil::write_atomic(new, &Value::Object(map).to_string());
 }
 
 /// 卸载：只删带托管标记的文件与 lead hook 条目，其余原样保留。
@@ -486,6 +505,36 @@ mod install_tests {
         assert!(!installed_in(&dir));
         assert!(!dir.join("skills/lead").exists() && !dir.join("agents/lead-redteam.md").exists());
         assert_eq!(std::fs::read_to_string(dir.join("skills/mine/SKILL.md")).unwrap(), "用户自己的 skill");
+    }
+
+    /// 启动刷新（refresh_if_installed）每次都会走 install_into：内容没变就不能重写用户的
+    /// settings.json（无谓改 mtime、和并行写 settings 的 claude 抢文件）；首次改写前要留原件备份。
+    #[test]
+    fn reinstall_with_same_content_does_not_rewrite_settings() {
+        let tmp = Tmp::new();
+        let dir = tmp.path().join(".claude");
+        std::fs::create_dir_all(&dir).unwrap();
+        let settings = dir.join("settings.json");
+        let original = "{\n  \"model\": \"opus\"\n}\n";
+        std::fs::write(&settings, original).unwrap();
+
+        install_into(&dir, "C:/m/meowo-reporter.exe", None).unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join("settings.json.cckb-bak")).unwrap(), original);
+        // 把 mtime 拨回很久以前：第二次只要发生了写入，mtime 必然变化，不受文件系统时间粒度影响。
+        let old = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000_000);
+        let pin_mtime = |p: &Path| std::fs::File::options().write(true).open(p).unwrap().set_modified(old).unwrap();
+        let skill = dir.join("skills/lead/SKILL.md");
+        let agent = dir.join("agents/lead-redteam.md");
+        for p in [&settings, &skill, &agent] {
+            pin_mtime(p);
+        }
+        let text = std::fs::read_to_string(&settings).unwrap();
+
+        install_into(&dir, "C:/m/meowo-reporter.exe", None).unwrap();
+        assert_eq!(std::fs::read_to_string(&settings).unwrap(), text);
+        for p in [&settings, &skill, &agent] {
+            assert_eq!(std::fs::metadata(p).unwrap().modified().unwrap(), old, "{} 被重写", p.display());
+        }
     }
 
     #[test]

@@ -2280,20 +2280,18 @@ impl PtyBroker {
                 pid: std::process::id(),
                 protocol_version: CURRENT_PROTOCOL_VERSION,
             };
-            if let Ok(json) = serde_json::to_vec(&discovery) {
+            if let Ok(json) = serde_json::to_string(&discovery) {
                 let _ = std::fs::create_dir_all(dir);
                 let path = dir.join(APPROVAL_BROKER_FILE);
+                // 原子写：reporter（每个 hook 一个进程）随时在读这份文件，直接 write 先截断再写，
+                // 读到空/半截 JSON 就把审批静默回落 TUI。token 等于 PTY 完全接管权：secure 版的
+                // 临时文件从创建起就是 0600（unix），rename 后不存在「先宽后收紧」的暴露窗口，
+                // 取代原先写完再 chmod 的纵深防御。
                 // 写失败要留痕：agent 侧的表现只是「审批默默回到 TUI」，没有日志根本查不到磁盘满/无权限。
-                if let Err(error) = std::fs::write(&path, json) {
+                if let Err(error) = meowo_agent::fsutil::write_atomic_secure(&path, &json) {
                     eprintln!(
                         "审批 broker discovery 文件写入失败（外部终端的审批将回落 TUI）: {error}"
                     );
-                }
-                // token 等于 PTY 完全接管权。父目录权限已经挡住他人，这里再收紧到 0600 作纵深防御。
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::PermissionsExt;
-                    let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
                 }
             }
         }

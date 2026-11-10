@@ -48,19 +48,37 @@ export function clearToken(): void {
   fileToken = null;
 }
 
+/** 从「…#token=xxx」形态里取令牌（整段地址或只有 fragment 都认）；没有返回 null。
+ *  扫码进来的 hash 与手动粘贴的地址共用这一份解析，两边不分叉。 */
+export function tokenFromFragment(text: string): string | null {
+  const m = /(?:^|[#&?])token=([^&#\s]+)/.exec(text);
+  if (!m) return null;
+  try {
+    return decodeURIComponent(m[1]);
+  } catch {
+    return m[1];
+  }
+}
+
+/** 配对页手动输入 → 令牌。桌面「复制地址」给的是 `http://ip:port/#token=…` 整串，用户多半
+ *  原样粘过来（此前原样当令牌，必然 401）；也认只粘 `#token=…` 和纯令牌。像地址却不带令牌、
+ *  或含空白的，返回 null（不是令牌，别拿去试）。 */
+export function parsePairingInput(input: string): string | null {
+  const text = input.trim();
+  if (!text) return null;
+  const fromFragment = tokenFromFragment(text);
+  if (fromFragment) return fromFragment;
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(text) || text.includes("#") || /\s/.test(text)) return null;
+  return text;
+}
+
 /** 首帧从 URL fragment 收取 token 并立即清 hash(令牌不进服务器日志、不留地址栏历史)。
  *  必须发生在任何 rpc 之前:mobile/main.tsx 的 bootAppearance 在模块体里就会发
  *  get_settings,若此时 token 还躺在 hash 里没入库,那发 401 回来会把随后才存好的
  *  合法 token 一并清掉——首次扫码永远配对失败,就是这个竞态。 */
 export function primeTokenFromHash(): void {
-  const m = /(?:^#|[#&])token=([^&]+)/.exec(window.location.hash);
-  if (!m) return;
-  let token: string;
-  try {
-    token = decodeURIComponent(m[1]);
-  } catch {
-    token = m[1];
-  }
+  const token = tokenFromFragment(window.location.hash);
+  if (!token) return;
   try {
     history.replaceState(null, "", window.location.pathname + window.location.search);
   } catch {

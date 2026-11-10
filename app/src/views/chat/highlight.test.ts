@@ -1,5 +1,21 @@
-import { describe, expect, it } from "vitest";
-import { escapeHtml, highlightCode, highlightLines, languageForFence, languageForPath } from "./highlight";
+import { beforeAll, describe, expect, it } from "vitest";
+import { escapeHtml, highlightCode, highlightLines, languageForFence, languageForPath, LANGUAGE_ALIASES, loadHighlighter } from "./highlight";
+import { registeredAliases } from "./highlightEngine";
+
+// 引擎是懒加载的（highlight.ts 文件头）；这里验高亮结果本身，先加载好。
+beforeAll(() => loadHighlighter());
+
+describe("LANGUAGE_ALIASES", () => {
+  it("手抄的别名表与 hljs 语言定义一致", () => {
+    const actual = registeredAliases();
+    expect(Object.keys(LANGUAGE_ALIASES).sort()).toEqual(Object.keys(actual).sort());
+    for (const [name, aliases] of Object.entries(actual)) expect([...LANGUAGE_ALIASES[name]].sort(), name).toEqual([...aliases].sort());
+  });
+  it("围栏别名返回规范名", () => {
+    expect(languageForFence("golang")).toBe("go");
+    expect(languageForFence("html")).toBe("xml");
+  });
+});
 
 describe("languageForFence", () => {
   it("accepts registered names and extension aliases", () => {

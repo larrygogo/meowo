@@ -1,5 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { loadHighlighter } from "./highlight";
 
 import { Message } from "./Message";
 import { Transcript } from "./Transcript";
@@ -85,6 +86,8 @@ describe("Message 复制", () => {
 /// 对话代码块语法高亮:复用文件/diff 面板的 hljs 基建(highlight.ts),块级带语言
 /// 标注才上色;框线图与超大块保持原渲染(对齐/性能优先于颜色)。
 describe("ChatMarkdown 代码高亮", () => {
+  // hljs 改成懒加载（highlight.ts）：这组只验上色规则，先把引擎加载好。加载前后的切换另有用例。
+  beforeAll(() => loadHighlighter());
   it("带语言标注的代码块渲染出 hljs 着色 span", () => {
     const { container } = render(<ChatMarkdown text={"```ts\nconst x = 1;\n```"} />);
     expect(container.querySelector("code.language-ts .hljs-keyword")).toBeTruthy();

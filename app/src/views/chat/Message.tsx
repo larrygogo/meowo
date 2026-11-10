@@ -3,10 +3,10 @@ import { createPortal } from "react-dom";
 import { pushEscLayer } from "../../escLayers";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useT } from "../../i18n";
-import { zh } from "../../i18n/zh";
-import { en } from "../../i18n/en";
+import { attachmentInstructionEn, attachmentInstructionZh } from "../../i18n/attachmentInstruction";
 import { type ChatItem } from "../../api";
-import { ChatMarkdown } from "../ChatMarkdown";
+import { ChatMarkdown, PlainMarkdown } from "../ChatMarkdown";
+import { ErrorBoundary } from "../../ErrorBoundary";
 import { parseUserText, type CrossMessage } from "./localCommand";
 import { copyPlainText } from "./clipboard";
 import { fmtSpan, stripAnsi } from "./shared";
@@ -53,11 +53,12 @@ const IMAGE_REF = /\[Image(?: #\d+)?: source: ([^\]]+?)\]/g;
 const IMAGE_PATH_LINE = /^- ([A-Za-z]:\\.+\.(?:png|jpe?g|gif|webp|bmp|svg))\s*$/i;
 
 /** 附件指令头（composer 注入给 CLI 的那句，见 i18n 的 attachmentInstruction）。
- *  图片已渲染成缩略图时，这句对人是纯噪音——按下方规则剥掉。直接从两份语言资产派生
- *  （attachmentInstruction("") 去掉附件列表后 trim），不手抄原句：文案改动自动跟上，
- *  历史消息无论当时用哪种语言写下都认（评审：手抄字面量会在改文案时静默失效）。 */
+ *  图片已渲染成缩略图时，这句对人是纯噪音——按下方规则剥掉。直接从两份字典共用的那一处真源
+ *  派生（attachmentInstruction("") 去掉附件列表后 trim），不手抄原句：文案改动自动跟上，
+ *  历史消息无论当时用哪种语言写下都认（评审：手抄字面量会在改文案时静默失效）。
+ *  不引整份 zh/en 字典：那样会把按需加载的另一种语言又静态拖回来（i18n/index.tsx）。 */
 const ATTACHMENT_INSTRUCTION_HEADERS = new Set(
-  [zh, en].map((dict) => dict.chat.attachmentInstruction("").trim()),
+  [attachmentInstructionZh, attachmentInstructionEn].map((make) => make("").trim()),
 );
 
 /** 把用户文本拆成「正文（去掉图片引用行）+ 图片路径列表」。图片不混排在文字里：
@@ -556,7 +557,31 @@ function RememberedDetails({ memoryKey, className, children }: { memoryKey: stri
   return <details className={className} {...useRememberedDetails(memoryKey)}>{children}</details>;
 }
 
-export const Message = memo(function Message({ item, nextStamp = null, latest = false, compactSummary = null }: { item: ChatItem; nextStamp?: string | null; latest?: boolean; compactSummary?: string | null }) {
+type MessageProps = { item: ChatItem; nextStamp?: string | null; latest?: boolean; compactSummary?: string | null };
+
+/** 消息级兜底：这一条渲染抛错时只把它换成原文，别的消息照常（ErrorBoundary.tsx）。
+ *  正文变了（流式追加）就重试一次；按内容而不是对象比，轮询每次换新对象时不必反复重试、反复报错。 */
+export const Message = memo(function Message(props: MessageProps) {
+  const { item } = props;
+  const resetKey = `${item.id}\u0000${"text" in item && typeof item.text === "string" ? item.text : ""}`;
+  return (
+    <ErrorBoundary scope="message" resetKey={resetKey} fallback={() => <MessageFallback item={props.item} />}>
+      <MessageBody {...props} />
+    </ErrorBoundary>
+  );
+});
+
+/** 原文：有正文的取正文，工具调用之类没有正文的把记录本身摊开（排障时也看得到是哪条）。 */
+function MessageFallback({ item }: { item: ChatItem }) {
+  const raw = "text" in item && typeof item.text === "string" ? item.text : JSON.stringify(item, null, 2);
+  return (
+    <article className="chat-message" data-msg-id={item.id}>
+      <div className="chat-text chat-md"><PlainMarkdown text={raw} /></div>
+    </article>
+  );
+}
+
+function MessageBody({ item, nextStamp = null, latest = false, compactSummary = null }: MessageProps) {
   const t = useT();
   const echoPhase = useContext(EchoPhaseContext).get(item.id);
   const echoActions = useContext(EchoActionsContext);
@@ -697,4 +722,4 @@ export const Message = memo(function Message({ item, nextStamp = null, latest = 
   // 送达回执在 reduceChatEvents 就滤掉了，走到这里说明有绕过它的来源，不画。
   if (item.type === "prompt_queued") return null;
   return <CompactDivider item={item} summary={compactSummary} />;
-});
+}

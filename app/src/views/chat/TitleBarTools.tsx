@@ -12,6 +12,7 @@ import { formatBackendError } from "../../i18n/errors";
 import { isMac } from "../../platform";
 import { useMenuPopup } from "../menu";
 import { CheckIcon, ChevronDownIcon } from "../sticker/icons";
+import { changedFileCount } from "./gitDiff";
 
 /** 上次选的打开方式（编辑器 id 或 "files"）。只是界面偏好，存本机即可。 */
 const OPENER_KEY = "meowo-folder-opener";
@@ -146,7 +147,7 @@ export function GitStatusChip({ summary, active, onToggle }: {
   onToggle: () => void;
 }) {
   const t = useT();
-  const files = summary.files.length;
+  const files = changedFileCount(summary.files);
   const additions = summary.files.reduce((sum, file) => sum + (file.additions ?? 0), 0);
   const deletions = summary.files.reduce((sum, file) => sum + (file.deletions ?? 0), 0);
   const ahead = summary.ahead ?? 0;

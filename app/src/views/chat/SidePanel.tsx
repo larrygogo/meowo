@@ -4,7 +4,9 @@ import { pushEscLayer } from "../../escLayers";
 import { useT } from "../../i18n";
 import { BrowserPane } from "./BrowserPane";
 import type { ReviewComment } from "./diffComments";
-import { FilesView, PathMenu, PathMentionContext, singleRepo, type PathMenuItem } from "./GitDiffView";
+import { singleRepo } from "./diffShared";
+import { LazyFilesView as FilesView } from "./lazyDiff";
+import { PathMenu, PathMentionContext, type PathMenuItem } from "./pathMenu";
 import { pickRepo, SourceControl } from "./SourceControl";
 
 const sameDir = (a: string, b: string) => a.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase() === b.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();

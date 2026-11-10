@@ -11,6 +11,7 @@ import { appConfirm } from "../confirm";
 import { diagLog, forkSession, agentChatUi, attachBackgroundSession, sendBackgroundPrompt, clipboardRestore, clipboardSetImage, confirmStopSession, dismissInteractiveQuestion, getChatHistory, getGitChangesOverview, getGitDiffSummary, getLiveSessionsPage, getSessionLineage, isExternallyHeld, managedTerminalBinding, managedTerminalPendingLaunch, managedTerminalScreen, managedTerminalSnapshot, openNewSessionWindow,  refreshSessionModel, refreshSessionTodos, renameSession as renameSessionCmd, savePastedAttachment, sessionLaunchSelections, setArchived as setArchivedCmd, setSessionLaunchSelection, sessionTone, startManagedTerminal, copySessionToProvider, takeoverManagedTerminal, writeManagedTerminal, type AgentId, type ChatHistory, type ChatItem, type ChatUi, type GitDiffSummaryDto, type RepoChangesDto, type LiveSession, type ModelPreset, type ModeScreenMarker, type PendingApproval } from "../api";
 import { hasEscLayers } from "../escLayers";
 import { useTauriEvent } from "../hooks/useTauriEvent";
+import { useVisibleInterval } from "../hooks/useVisibleInterval";
 import { useSettingsEffect } from "../hooks/useSettings";
 import { useSessionActions } from "../hooks/useSessionActions";
 import { useT } from "../i18n";
@@ -51,9 +52,10 @@ import { Transcript, type TranscriptAgent } from "./chat/Transcript";
 import { UserMessageNav } from "./chat/UserMessageNav";
 import { TranscriptSearch } from "./chat/TranscriptSearch";
 import { formatReviewComments, type ReviewComment } from "./chat/diffComments";
-import { sessionTouchedPaths } from "./chat/gitDiff";
+import { changedFileCount, sessionTouchedPaths } from "./chat/gitDiff";
 import { setPanelLinkHandler } from "./chat/panelLinks";
-import { localUrlsIn } from "./chat/BrowserPane";
+import { localUrlsIn } from "./chat/localUrls";
+import { useGuardedWindowClose } from "./chat/windowClose";
 import { usePanel } from "./chat/usePanel";
 import { SessionInfo } from "./chat/SessionInfo";
 import { ApprovalScopeTags } from "./chat/ApprovalScopeTags";
@@ -1384,7 +1386,7 @@ export function ChatWindow() {
     version: chatUi?.version ?? null,
     model: transcriptAgent.model,
     branch: effectiveSummary?.isRepo ? effectiveSummary.branch : null,
-    changes: effectiveSummary?.isRepo ? effectiveSummary.files.length : 0,
+    changes: effectiveSummary?.isRepo ? changedFileCount(effectiveSummary.files) : 0,
   };
   // 评论拼成文字接在已打的字后面,光标放到末尾:用户可能还想补一句总的要求再发。
   const insertReviewComments = () => {
@@ -1909,11 +1911,12 @@ export function ChatWindow() {
   // 两条事件通道都收不到，轮询仍是唯一驱动，保持 650ms。单测（MODE==="test"，与
   // DevBadge 同一开关）也保持 650ms：一批历史测试的真实定时器等待是按这个节奏写的。
   const FALLBACK_POLL_MS = remoteUi() || import.meta.env.MODE === "test" ? 650 : 2000;
+  // 页面隐藏时跳过、重新可见立即补拉（useVisibleInterval）。换会话时 refresh 换引用，
+  // 那一刻也要立刻拉一次——此前靠 effect 依赖 refresh 重跑做到，这里保留同样的行为。
   useEffect(() => {
     void refresh();
-    const timer = window.setInterval(() => void refresh(), FALLBACK_POLL_MS);
-    return () => window.clearInterval(timer);
-  }, [refresh, FALLBACK_POLL_MS]);
+  }, [refresh]);
+  useVisibleInterval(() => void refresh(), FALLBACK_POLL_MS);
 
   // 事件驱动的提前刷新（C-14）：两条事件通道共用同一个 200ms 合流窗口——
   // - pty-output：托管会话的输出帧，agent 打印时 transcript 多半同步在写；
@@ -2183,7 +2186,8 @@ export function ChatWindow() {
     return () => observer.disconnect();
   }, [hasEarlier, loadingEarlier, earlierError, loading]);
 
-  const close = () => getCurrentWindow().close().catch(() => {});
+  // 面板终端里有程序在跑时先确认（标题栏按钮与系统原生关闭都经过这里，见 windowClose.ts）。
+  const close = useGuardedWindowClose(t);
   // Ctrl+K 命令面板的命令清单（U1-14）：每条都映射到窗口已有动作，不发明新能力。
   // 扁平一个数组，按直觉频率排序：新建/切视图/侧栏/搜索在前，速查表与设置殿后。
   const paletteCommands: PaletteCommand[] = [

@@ -1,10 +1,14 @@
 // 中文字典（基准）。en.ts 用 `typeof zh` 约束 key 与函数签名编译期对齐。
 // 注意：「(未命名会话)」是数据库 sentinel 不在此处——展示层用 sticker.waitingFirstInput 映射。
+import { attachmentInstructionZh } from "./attachmentInstruction";
+
 export const zh = {
   // BCP-47 locale：日期/时刻格式化走 Intl（12/24 小时制、月日顺序随语言），不再手拼。
   locale: "zh-CN",
   // 应用内确认模态(confirm.tsx)的通用按钮。
   dialog: { ok: "确定", cancel: "取消" },
+  // 渲染崩溃兜底（ErrorBoundary.tsx）：窗口级整页替换时显示。
+  crash: { title: "出错了", hint: "这个窗口遇到问题，重新加载即可恢复。", reload: "重新加载" },
   tabs: { all: "全部", waiting: "待交互", running: "运行中" },
   time: {
     now: "刚刚",
@@ -556,7 +560,7 @@ export const zh = {
     attachmentFile: "文件",
     attachmentLimit: (max: number) => `最多添加 ${max} 个附件，超出的已忽略`,
     // 拼进发给 agent 的消息里，必须跟随界面语言——英文界面混入中文指令会把 agent 的回答语言带偏。
-    attachmentInstruction: (files: string) => `请读取并结合以下本地附件完成任务（图片请使用图像读取能力）：\n${files}`,
+    attachmentInstruction: attachmentInstructionZh,
     approvalTitle: "Agent 请求权限",
     approvalPending: "待批准",
     questionTitle: "Agent 正在等待你的回答",
@@ -1033,9 +1037,14 @@ export const zh = {
     scmNoChanges: "没有更改",
     scmLoadingDetail: "正在加载这个仓库的行数和已提交内容…",
     scmDiscardTitle: (n: number) => (n === 1 ? "放弃这个文件的更改？" : `放弃 ${n} 个文件的更改？`),
-    scmDiscardNote: "放弃后无法恢复。未跟踪的文件会被删除。",
+    scmDiscardNote: "已跟踪文件的改动无法恢复。未跟踪的文件移到回收站。",
     scmDiscardMore: (n: number) => `还有 ${n} 个文件`,
     scmDiscardConfirm: "放弃更改",
+    scmDirFiles: (n: number) => `${n} 个文件`,
+    scmDirExpand: "展开文件",
+    scmDirLoading: "正在列出文件…",
+    scmIgnoreDir: "加入 .gitignore",
+    scmDiscardDirNote: "目录整个移到回收站，含其中被忽略的文件。",
     systemRecord: "系统记录",
     hookFeedback: "Hook 反馈",
     sidebarApproval: "待批准",
@@ -1513,8 +1522,8 @@ export const zh = {
     startError: (e: string) => `启动失败：${e}`,
     // ── 手机端配对闸门（7M-7：此前整页文案硬编码在 TokenGate 里，且用的是半角标点）──
     gateTitle: "Meowo 远程",
-    gateHint: "扫码后自动配对。手动配对请粘贴桌面「远程访问」里的令牌。",
-    gateTokenLabel: "访问令牌",
+    gateHint: "扫码后自动配对。也可以粘贴桌面「远程访问」里复制的地址或令牌。",
+    gateTokenLabel: "地址或令牌",
     gateConnect: "连接",
     gateConnecting: "正在连接…",
     gateLoading: "正在加载…",

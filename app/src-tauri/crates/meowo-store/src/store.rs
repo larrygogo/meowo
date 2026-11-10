@@ -87,13 +87,13 @@ pub struct SessionContext {
 /// 「先 SELECT 后写入」的间隙被别的连接提交写入时，升级写锁会 SQLITE_BUSY_SNAPSHOT 直接
 /// 失败（busy handler 不生效）。IMMEDIATE 开局即取写锁（冲突走 busy_timeout 等待），
 /// 配本守卫保证任何错误路径都不会把写锁/未决事务留在连接上。
-struct ImmediateTx<'a> {
+pub(crate) struct ImmediateTx<'a> {
     conn: &'a Connection,
     committed: bool,
 }
 
 impl<'a> ImmediateTx<'a> {
-    fn begin(conn: &'a Connection) -> Result<Self, StoreError> {
+    pub(crate) fn begin(conn: &'a Connection) -> Result<Self, StoreError> {
         conn.execute_batch("BEGIN IMMEDIATE")?;
         Ok(Self {
             conn,
@@ -101,7 +101,7 @@ impl<'a> ImmediateTx<'a> {
         })
     }
 
-    fn commit(mut self) -> Result<(), StoreError> {
+    pub(crate) fn commit(mut self) -> Result<(), StoreError> {
         self.conn.execute_batch("COMMIT")?;
         self.committed = true;
         Ok(())
@@ -343,6 +343,9 @@ impl Store {
     }
 
     /// 写入/更新某会话的上下文用量与模型展示名（来自 Claude Code statusline）。
+    ///
+    /// 值没变就不写：statusline 每次刷新都上报，同值也提交会推动 data_version，db-watcher 随即
+    /// 每 2s 发一次 board-changed 白刷看板。updated_at 只作单调守卫、没有读者，跳过它不丢信息。
     pub fn set_session_context(
         &self,
         cc_session_id: &str,
@@ -359,7 +362,10 @@ impl Store {
                  window_size = COALESCE(excluded.window_size, window_size),
                  model = COALESCE(excluded.model, model),
                  updated_at = excluded.updated_at
-             WHERE excluded.updated_at >= session_context.updated_at",
+             WHERE excluded.updated_at >= session_context.updated_at
+               AND (COALESCE(excluded.used_pct, used_pct) IS NOT used_pct
+                    OR COALESCE(excluded.window_size, window_size) IS NOT window_size
+                    OR COALESCE(excluded.model, model) IS NOT model)",
             rusqlite::params![cc_session_id, used_pct, window_size, model, now_ms],
         )?;
         Ok(())
@@ -370,7 +376,8 @@ impl Store {
     /// 一个对当前模型无意义的值。只更新已有行——行由同一次 statusline 的 set_session_context 建。
     pub fn set_session_effort(&self, cc_session_id: &str, effort: Option<&str>) -> Result<(), StoreError> {
         self.conn.execute(
-            "UPDATE session_context SET effort = ?2 WHERE cc_session_id = ?1",
+            // `IS NOT` 而非 `!=`：NULL 也要参与比较（清空与已清空都要判得出），同值不写，理由同 set_session_context。
+            "UPDATE session_context SET effort = ?2 WHERE cc_session_id = ?1 AND effort IS NOT ?2",
             rusqlite::params![cc_session_id, effort],
         )?;
         Ok(())
@@ -2586,6 +2593,56 @@ mod debug_fingerprint_watcher_tests {
         writer.set_session_note("s", "y", 2).unwrap();
         let v2 = watcher.data_version().unwrap();
         assert!(v1 != v0 && v2 != v1, "v0={v0} v1={v1} v2={v2}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod session_context_noop_tests {
+    use super::*;
+
+    /// statusline 每次刷新都上报一遍；值没变也提交的话 data_version 跟着变，db-watcher
+    /// 每 2s 发一次 board-changed，整张看板白刷。同值必须零写入，变值照写。
+    #[test]
+    fn same_statusline_values_do_not_write() {
+        let dir = std::env::temp_dir().join(format!("meowo-ctx-noop-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("b.db");
+        let writer = Store::open(&db).unwrap();
+        let watcher = Store::open(&db).unwrap();
+
+        writer.set_session_context("s", Some(40), Some(200_000), Some("Opus"), 1).unwrap();
+        writer.set_session_effort("s", Some("high")).unwrap();
+        let changes = writer.conn.total_changes();
+        let v0 = watcher.data_version().unwrap();
+        writer.set_session_context("s", Some(40), Some(200_000), Some("Opus"), 2).unwrap();
+        writer.set_session_context("s", None, None, None, 3).unwrap();
+        writer.set_session_effort("s", Some("high")).unwrap();
+        assert_eq!(writer.conn.total_changes(), changes, "同值上报产生了写入");
+        assert_eq!(watcher.data_version().unwrap(), v0, "同值上报改变了 data_version");
+
+        // None = 不改该字段，已有值保留。
+        let ctx = writer.session_context("s").unwrap();
+        assert_eq!((ctx.used_pct, ctx.window_size, ctx.model.as_deref()), (Some(40), Some(200_000), Some("Opus")));
+
+        // 值变了照写。
+        writer.set_session_context("s", Some(41), None, None, 4).unwrap();
+        assert_eq!(writer.session_context("s").unwrap().used_pct, Some(41));
+        assert_ne!(watcher.data_version().unwrap(), v0);
+        // 时间倒流的迟到上报仍被单调守卫挡住。
+        writer.set_session_context("s", Some(10), None, None, 0).unwrap();
+        assert_eq!(writer.session_context("s").unwrap().used_pct, Some(41));
+
+        // effort 的 None 是刻意的「清空」（换到不支持思考程度的模型），不能被同值判断吞掉。
+        writer.set_session_effort("s", None).unwrap();
+        assert_eq!(writer.session_context("s").unwrap().effort, None);
+        let changes = writer.conn.total_changes();
+        writer.set_session_effort("s", None).unwrap();
+        assert_eq!(writer.conn.total_changes(), changes);
+        writer.set_session_effort("s", Some("low")).unwrap();
+        assert_eq!(writer.session_context("s").unwrap().effort.as_deref(), Some("low"));
+        drop((writer, watcher));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

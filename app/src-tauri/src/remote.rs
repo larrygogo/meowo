@@ -45,6 +45,9 @@
 //! 必须在该仓库此刻的改动清单里，由命令本身校验（`git/not_in_changes`），远程端不能借「放弃」
 //! 删任意文件。`git_changes_overview` 的 `commands` 只是会话命令文本，用来在相关仓库里挑本会话
 //! 用过的那些，不会把相关仓库之外的目录带进来。
+//! 2026-11-10 起摘要把文件多的未跟踪目录折成一条 `dir/`：点开它的 `git_untracked_dir_files` 放行，
+//! 目录条目、目录里的文件同样由命令按此刻的清单校验；同一行的「加入 .gitignore」（`git_ignore_dir`）
+//! 改的是仓库配置文件，不放行。
 //!
 //! 例外（2026-11-09 用户决定，Lead 工作流关卡 B）：`lead_task_snapshot` / `answer_lead_gate`
 //! 放行，供手机看任务进度、回答关卡。两道收口：目录先过 `ensure_session_dir`；后端只按约定
@@ -174,6 +177,9 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     "git_unstage",
     "git_discard",
     "git_commit",
+    // 点开折叠的未跟踪目录看其中的文件（只读，目录收口同 git_file_diff，目录条目由命令自己校验）。
+    // 同目录的「加入 .gitignore」（git_ignore_dir）不放行，见拒绝名单测试。
+    "git_untracked_dir_files",
     // 输入框 `@` 补全（2026-11-04 用户决定放行）：只回文件/目录名，不读内容；目录收口同改动列表。
     "file_mention_candidates",
     // Lead 工作流（模块头「例外（2026-11-09）」）
@@ -881,6 +887,12 @@ bridged_args!(GitPathsArgs {
     #[serde(default)]
     session_cwd: Option<String>
 });
+bridged_args!(GitDirArgs {
+    cwd: String,
+    path: String,
+    #[serde(default)]
+    session_cwd: Option<String>
+});
 bridged_args!(GitCommitArgs {
     cwd: String,
     message: String,
@@ -1251,6 +1263,13 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
                     .unwrap_or(false)
                 }
                 None => match crate::git::git_diff_summary(a.cwd.clone()).await {
+                    // 折叠目录里的文件不在摘要里（摘要只给一条 `dir/`），点开后看 diff 的要再问一次清单。
+                    Ok(summary) if !changed_file_listed(&summary, &a.path, a.untracked) && a.untracked => {
+                        let (cwd, path) = (a.cwd.clone(), a.path.clone());
+                        tauri::async_runtime::spawn_blocking(move || crate::git::untracked_file_listed(&cwd, &path))
+                            .await
+                            .unwrap_or(false)
+                    }
                     Ok(summary) => changed_file_listed(&summary, &a.path, a.untracked),
                     Err(e) => return reply::<()>(Err(e)),
                 },
@@ -1281,6 +1300,13 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
                 return reply::<()>(Err(e));
             }
             reply(crate::git::git_discard(a.cwd, a.paths).await)
+        }
+        "git_untracked_dir_files" => {
+            let a = args!(GitDirArgs);
+            if let Err(e) = ensure_git_repo_dir(app, &a.cwd, a.session_cwd.as_deref()).await {
+                return reply::<()>(Err(e));
+            }
+            reply(crate::git::git_untracked_dir_files(a.cwd, a.path).await)
         }
         "git_commit" => {
             let a = args!(GitCommitArgs);
@@ -1922,6 +1948,8 @@ mod tests {
             // git_diff_summary / git_file_diff 已按用户决定放行（2026-10-31），收口在
             // ensure_session_dir + changed_file_listed，由各自的单测钉住；「更改」面板写操作
             // 2026-11-09 放行（模块头「例外」）；git_pull_request 等其余 git_* 仍拒。
+            // 折叠目录的「加入 .gitignore」改的是仓库里的配置文件，手机端不给（2026-11-10 leader 定）。
+            "git_ignore_dir",
             "set_autostart",
             "clipboard_text",
             "clipboard_set_image",
@@ -1938,6 +1966,7 @@ mod tests {
             "shell_terminal_resize",
             "shell_terminal_close",
             "shell_terminal_busy",
+            "shell_terminal_list_all",
             // 面板浏览器：在宿主上开网页（子 webview），同属宿主执行类。
             "browser_pane_open",
             "browser_pane_list",
@@ -2215,6 +2244,7 @@ mod tests {
             deletions: None,
             index_status: None,
             worktree_status: None,
+            untracked_files: None,
         };
         let summary = GitDiffSummaryDto {
             git_available: true,
@@ -2300,6 +2330,11 @@ mod tests {
             // api.ts（gitStage / gitUnstage / gitDiscard / gitCommit）
             "git_stage" | "git_unstage" | "git_discard" => parse::<GitPathsArgs>(
                 br#"{"cwd":"C:/work-wt","paths":["src/a.ts","new.md"],"sessionCwd":"C:/work"}"#,
+            )
+            .map(|_| ()),
+            // api.ts（getUntrackedDirFiles）
+            "git_untracked_dir_files" => parse::<GitDirArgs>(
+                br#"{"cwd":"C:/work-wt","path":"target-x/","sessionCwd":"C:/work"}"#,
             )
             .map(|_| ()),
             "git_commit" => parse::<GitCommitArgs>(

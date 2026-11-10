@@ -2,7 +2,9 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { answerBrowserPanePermission, browserPaneAction, navigateBrowserPane, openLink, revealBrowserPaneDownload, setBrowserPaneAgentPaused, setBrowserPaneBounds, type BrowserDownload, type BrowserPaneInfo } from "../../api";
 import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
-import { PathMenu, type PathMenuItem } from "./GitDiffView";
+import { PathMenu, type PathMenuItem } from "./pathMenu";
+// 老调用方（测试）从这里拿；ChatWindow 直接引 localUrls，免得把面板浏览器拖进主 chunk。
+export { localUrlsIn } from "./localUrls";
 
 /**
  * 这些元素出现且和浏览器区域重叠时，原生 webview 要先藏起来：它是叠在页面上的原生视图，
@@ -275,20 +277,3 @@ export function browserTabTitle(info: BrowserPaneInfo, blankTitle: string): stri
   }
 }
 
-/** 从对话文本里挑出本机地址（dev server），去重、最近出现的在前，最多 5 个。 */
-export function localUrlsIn(texts: readonly string[]): string[] {
-  const seen = new Set<string>();
-  const out: string[] = [];
-  // 路径里遇到中文标点就停：agent 的中文回复里网址后面常直接跟「。」「，」。
-  const pattern = /https?:\/\/(?:localhost|127\.\d+\.\d+\.\d+|0\.0\.0\.0|\[::1\])(?::\d+)?(?:\/[^\s"'`<>)\]，。；：！？、（）「」《》]*)?/gi;
-  for (let i = texts.length - 1; i >= 0 && out.length < 5; i -= 1) {
-    const matches = texts[i].match(pattern) ?? [];
-    for (let k = matches.length - 1; k >= 0 && out.length < 5; k -= 1) {
-      const url = matches[k].replace(/[.,;:!?]+$/, "");
-      if (seen.has(url)) continue;
-      seen.add(url);
-      out.push(url);
-    }
-  }
-  return out;
-}
