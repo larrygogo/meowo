@@ -71,6 +71,8 @@ type Busy = "push" | "pr" | "merge" | null;
 
 /// 合并按钮能不能点、不能点时说什么。
 export function mergeBlock(t: ReturnType<typeof useT>, forge: ForgeStatusDto, pr: PullRequestDto): string | null {
+  // 草稿 PR GitHub 不让合并：按钮灰着要说清楚为什么（做空审查：以前只是灰着，没有原因）。
+  if (pr.state === "draft") return t.forge.mergeBlockedDraft;
   if (forge.ghTooOld) return t.forge.mergeTooOld;
   if (forge.mergeMethods.length === 0) return t.forge.mergeNoMethods;
   if (pr.checksSummary === "fail") return t.forge.mergeBlockedFail;

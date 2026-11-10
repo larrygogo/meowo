@@ -254,6 +254,19 @@ describe("#22 合并", () => {
     expect(screen.queryByTestId("scm-merge")).toBeNull();
   });
 
+  // 做空审查：草稿 PR 的合并按钮是灰的，却没有任何原因。
+  it("草稿 PR：合并按钮不能点，并说明原因", async () => {
+    status = forge({ pr: pr({ state: "draft" }) });
+    renderBar();
+    expect((await screen.findByTestId("scm-merge") as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getAllByText(zh.forge.mergeBlockedDraft).length).toBeGreaterThan(0);
+    for (const text of [zh.forge.mergeBlockedDraft, en.forge.mergeBlockedDraft]) {
+      expect(text).toBeTruthy();
+      expect(text).not.toMatch(/[—–;；]/);
+    }
+    expect(zh.forge.mergeBlockedDraft.length).toBeLessThanOrEqual(20);
+  });
+
   it("合并时后端说有冲突：错误旁边给网页入口；进合并队列时说已入队不说已合并", async () => {
     status = forge({ pr: pr() });
     handler = (command) => (command === "gh_pr_merge" ? new Error("gh/merge_conflict: https://github.com/o/r/pull/12") : null);

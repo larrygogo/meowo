@@ -1854,6 +1854,7 @@ export const zh = {
     mergeAgainNote: "会改动远端分支，再确认一次",
     mergeBlockedFail: "CI 有失败，不能合并",
     mergeBlockedPending: "CI 还在跑，跑完再合并",
+    mergeBlockedDraft: "草稿 PR，标为就绪后才能合并",
     mergeConflict: "有冲突，去网页处理",
     mergeTooOld: "gh 版本太旧，不能合并",
     mergeNoMethods: "读不到仓库允许的合并方式",

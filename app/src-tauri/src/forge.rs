@@ -1073,10 +1073,13 @@ pub(crate) fn pr_merge_with(ctx: &Ctx, cwd: &str, number: u32, method: &str, exp
     }
     save_merge_method(&ctx.prefs, &slug, method);
     // 仓库开了合并队列时 gh 回的是「will be added to the merge queue」，PR 还是 OPEN：不能说已合并。
+    // 只认 gh 的这句原话：合并成功后 GitHub 有延迟，立刻 view 常常还是 OPEN，以前据此标「已入队」并记进
+    // queued 缓存，之后刷新一直挂着「在队列里」（做空审查）。gh 没说排队就按已合并处理；这次 view 不进
+    // PR 缓存（上面已作废），下一次刷新以服务器为准。
     let said_queue = out.both().to_lowercase().contains("merge queue");
     let after = view_pr(ctx.gh, ctx.caches, dir, Some(&slug), Some(&target)).ok().flatten();
-    let merged = after.as_ref().is_some_and(|p| p.state == "merged");
-    let queued = !merged && (said_queue || after.as_ref().is_some_and(|p| p.state == "open"));
+    let queued = said_queue && !after.as_ref().is_some_and(|p| p.state == "merged");
+    let merged = !queued;
     if queued {
         lock(&ctx.caches.queued).insert((slug, number, head));
     }

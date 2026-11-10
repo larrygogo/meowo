@@ -1710,6 +1710,7 @@ export const en: Dict = {
     mergeAgainNote: "This changes the remote branch. Confirm again.",
     mergeBlockedFail: "CI failed. Can't merge.",
     mergeBlockedPending: "CI is still running",
+    mergeBlockedDraft: "Draft PR. Mark it ready to merge.",
     mergeConflict: "Conflicts. Resolve on GitHub.",
     mergeTooOld: "gh is too old to merge",
     mergeNoMethods: "Couldn't read the allowed merge methods",

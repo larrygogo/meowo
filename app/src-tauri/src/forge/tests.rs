@@ -634,6 +634,26 @@ fn 合并_无检查允许_带头提交_不删分支_记住方式() {
     assert_eq!(status(&fake, &caches, &prefs, &repo, false).last_merge_method.as_deref(), Some("squash"));
 }
 
+/// 做空审查：合并成功后 GitHub 有延迟，立刻 view 还是 OPEN，以前就被当成「已加入合并队列」，
+/// 还记进 queued 缓存，之后刷新一直挂着「在队列里」。只有 gh 明说进了队列才算排队。
+#[test]
+fn 合并_成功后立刻查还是_open_不当成进了队列_按已合并_下次刷新以服务器为准() {
+    let sb = Sandbox::new("merge-lag");
+    let repo = github_repo(&sb);
+    let prefs = sb.root.join("forge.json");
+    let caches = Caches::default();
+    let open = ok(&fixture("derived_pr_no_checks.json"));
+    let fake = FakeGh {
+        merge_out: CmdOut { code: Some(0), stderr: "✓ Squashed and merged pull request larrygogo/meowo-pr-drill#12".into(), ..Default::default() },
+        ..FakeGh::new().views(vec![open.clone(), open, ok(&fixture("derived_pr_no_checks_merged.json"))])
+    };
+    let result = merge(&fake, &caches, &prefs, &repo, "squash", HEAD).unwrap();
+    assert_eq!(result, MergeResultDto { merged: true, queued: false });
+    assert!(caches.queued.lock().unwrap().is_empty(), "没进队列就不记队列标记");
+    let pr = status(&fake, &caches, &prefs, &repo, false).pr.unwrap();
+    assert_eq!((pr.state.as_str(), pr.queued), ("merged", false), "下一次刷新以服务器为准");
+}
+
 #[test]
 fn 合并_进了合并队列不说已合并_刷新后仍显示在队列里() {
     let sb = Sandbox::new("merge-queue");
