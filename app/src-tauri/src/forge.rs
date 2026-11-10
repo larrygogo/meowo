@@ -634,9 +634,17 @@ pub(crate) fn parse_pr_full(json: &str) -> Option<PullRequestDto> {
     Some(pr)
 }
 
-/// 查当前分支的 PR。Ok(None) = 没有 PR；Err = 查不了（没登录、断网），调用方保留上一次的结果。
-fn view_pr(gh: GhExec, caches: &Caches, dir: &str) -> Result<Option<PullRequestDto>, String> {
-    let Some(out) = gh(dir, &["pr", "view", "--json", PR_FIELDS]) else { return Err("gh/not_installed".into()) };
+/// 查一个分支（或 PR 号）的 PR。Ok(None) = 没有 PR；Err = 查不了（没登录、断网），调用方保留上一次的结果。
+/// 知道 owner/repo 就显式带 `--repo`：fork + upstream 两个远端又没设 gh default repo 时，gh 不带它会
+/// 报 set-default（做空审查实测）。带了 --repo 的 `gh pr view` 不再看当前分支，必须把分支名作参数。
+fn view_pr(gh: GhExec, caches: &Caches, dir: &str, slug: Option<&str>, target: Option<&str>) -> Result<Option<PullRequestDto>, String> {
+    let mut args = vec!["pr", "view"];
+    args.extend(target);
+    if let (Some(slug), Some(_)) = (slug, target) {
+        args.extend(["--repo", slug]);
+    }
+    args.extend(["--json", PR_FIELDS]);
+    let Some(out) = gh(dir, &args) else { return Err("gh/not_installed".into()) };
     if out.ok() {
         return parse_pr_full(&out.stdout).map(Some).ok_or_else(|| "gh/failed: bad json".into());
     }
@@ -862,7 +870,7 @@ pub(crate) fn forge_status_with(ctx: &Ctx, cwd: &str, force: bool) -> Result<For
         let ttl = if force { FORCE_MIN } else { PR_TTL };
         let pr = match cached {
             Some((at, pr)) if at.elapsed() < ttl => pr,
-            _ => match view_pr(ctx.gh, ctx.caches, dir) {
+            _ => match view_pr(ctx.gh, ctx.caches, dir, Some(&slug), info.branch.as_deref()) {
                 Ok(pr) => {
                     lock(&ctx.caches.prs).insert(key, (Instant::now(), pr.clone()));
                     pr
@@ -960,6 +968,9 @@ pub(crate) fn pr_create_with(
     if draft {
         args.push("--draft");
     }
+    if let Some(slug) = info.slug.as_deref() {
+        args.extend(["--repo", slug]);
+    }
     let out = (ctx.gh)(dir, &args).ok_or("gh/not_installed")?;
     if let Some(key) = pr_key(&info) {
         ctx.caches.invalidate_pr(&key);
@@ -975,7 +986,7 @@ pub(crate) fn pr_create_with(
         return Err(classify_gh_failure(&out, None));
     }
     let url = out.stdout.lines().map(str::trim).find(|l| l.starts_with("https://")).unwrap_or_default().to_string();
-    match view_pr(ctx.gh, ctx.caches, dir) {
+    match view_pr(ctx.gh, ctx.caches, dir, info.slug.as_deref(), Some(&branch)) {
         Ok(Some(pr)) => Ok(pr),
         // 刚建好就查不到（GitHub 偶有延迟）：用 gh 打出的链接拼一个最小的。
         _ => Ok(PullRequestDto {
@@ -1018,7 +1029,10 @@ pub(crate) fn pr_merge_with(ctx: &Ctx, cwd: &str, number: u32, method: &str, exp
     if !methods.iter().any(|m| m == method) {
         return Err("gh/method_not_allowed".into());
     }
-    let pr = view_pr(ctx.gh, ctx.caches, dir)?.ok_or("gh/head_changed")?;
+    let number_text = number.to_string();
+    // 查当前分支的 PR（再核对号对不对得上）；detached 时按号查。
+    let target = info.branch.clone().unwrap_or_else(|| number_text.clone());
+    let pr = view_pr(ctx.gh, ctx.caches, dir, Some(&slug), Some(&target))?.ok_or("gh/head_changed")?;
     if pr.number != number {
         return Err("gh/head_changed".into());
     }
@@ -1045,9 +1059,8 @@ pub(crate) fn pr_merge_with(ctx: &Ctx, cwd: &str, number: u32, method: &str, exp
         return Err("gh/checks_pending".into());
     }
     let flag = format!("--{method}");
-    let number_text = number.to_string();
     // 不加 --delete-branch：远端分支留着，worktree 与本地分支的清理走 worktree.rs 的判定，只提示。
-    let args = ["pr", "merge", number_text.as_str(), flag.as_str(), "--match-head-commit", head.as_str()];
+    let args = ["pr", "merge", number_text.as_str(), flag.as_str(), "--match-head-commit", head.as_str(), "--repo", slug.as_str()];
     let out = (ctx.gh)(dir, &args).ok_or("gh/not_installed")?;
     if let Some(key) = pr_key(&info) {
         ctx.caches.invalidate_pr(&key);
@@ -1061,7 +1074,7 @@ pub(crate) fn pr_merge_with(ctx: &Ctx, cwd: &str, number: u32, method: &str, exp
     save_merge_method(&ctx.prefs, &slug, method);
     // 仓库开了合并队列时 gh 回的是「will be added to the merge queue」，PR 还是 OPEN：不能说已合并。
     let said_queue = out.both().to_lowercase().contains("merge queue");
-    let after = view_pr(ctx.gh, ctx.caches, dir).ok().flatten();
+    let after = view_pr(ctx.gh, ctx.caches, dir, Some(&slug), Some(&target)).ok().flatten();
     let merged = after.as_ref().is_some_and(|p| p.state == "merged");
     let queued = !merged && (said_queue || after.as_ref().is_some_and(|p| p.state == "open"));
     if queued {

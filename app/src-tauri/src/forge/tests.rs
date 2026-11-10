@@ -431,6 +431,8 @@ struct FakeGh {
     merge_help: String,
     merge_out: CmdOut,
     create_out: CmdOut,
+    /// 模拟 fork + upstream 两个远端、没设 gh default repo：pr 子命令不带 --repo 就报 set-default（gh 2.x 原话）。
+    require_repo: bool,
 }
 
 fn ok(stdout: &str) -> CmdOut {
@@ -452,6 +454,7 @@ impl FakeGh {
             merge_help: "Flags:\n      --match-head-commit SHA   Commit SHA that the pull request head must match to allow merge".into(),
             merge_out: ok(""),
             create_out: ok("https://github.com/larrygogo/meowo-pr-drill/pull/12\n"),
+            require_repo: false,
         }
     }
     /// pr view 依次回这些（最后一个之后一直回最后一个）。
@@ -465,6 +468,9 @@ impl FakeGh {
         }
         let line = args.join(" ");
         self.calls.lock().unwrap().push(line.clone());
+        if self.require_repo && line.starts_with("pr ") && line != "pr merge --help" && !line.contains("--repo ") {
+            return Some(fail("X No default remote repository has been set. To learn more about the default repository, run: gh repo set-default --help"));
+        }
         Some(if line.starts_with("auth status") {
             if self.authed { ok("") } else { fail("You are not logged into any GitHub hosts. To log in, run: gh auth login") }
         } else if line.starts_with("pr view") {
@@ -621,7 +627,7 @@ fn 合并_无检查允许_带头提交_不删分支_记住方式() {
     assert_eq!(result, MergeResultDto { merged: true, queued: false });
     let calls = fake.calls.lock().unwrap().clone();
     let merge_call = calls.iter().find(|c| c.starts_with("pr merge 12")).unwrap();
-    assert_eq!(merge_call, &format!("pr merge 12 --squash --match-head-commit {HEAD}"));
+    assert_eq!(merge_call, &format!("pr merge 12 --squash --match-head-commit {HEAD} --repo larrygogo/meowo-pr-drill"));
     assert!(!merge_call.contains("--delete-branch"));
     assert_eq!(last_merge_method(&prefs, "larrygogo/meowo-pr-drill").as_deref(), Some("squash"));
     let fake = FakeGh::new();
@@ -674,7 +680,7 @@ fn 开_pr_先推再建_默认标题正文_已有_pr_带回链接() {
     assert_eq!(pr.number, 12);
     assert_eq!(pushed.load(std::sync::atomic::Ordering::SeqCst), 1, "没上游：先推");
     let create = fake.calls.lock().unwrap().iter().find(|c| c.starts_with("pr create")).cloned().unwrap();
-    assert_eq!(create, "pr create --title feat: drill one --body - feat: drill one --base main --head meowo/drill");
+    assert_eq!(create, "pr create --title feat: drill one --body - feat: drill one --base main --head meowo/drill --repo larrygogo/meowo-pr-drill");
 
     let exists = FakeGh {
         create_out: fail("a pull request for branch \"meowo/drill\" into branch \"main\" already exists:\nhttps://github.com/larrygogo/meowo-pr-drill/pull/7"),
@@ -685,7 +691,7 @@ fn 开_pr_先推再建_默认标题正文_已有_pr_带回链接() {
     let err = pr_create_with(&ctx, &s(&repo), Some("自定义标题"), Some("正文"), Some("main"), true, &push).unwrap_err();
     assert_eq!(err, "gh/pr_exists: https://github.com/larrygogo/meowo-pr-drill/pull/7");
     let create = exists.calls.lock().unwrap().iter().find(|c| c.starts_with("pr create")).cloned().unwrap();
-    assert!(create.starts_with("pr create --title 自定义标题 --body 正文 --base main") && create.ends_with("--draft"), "{create}");
+    assert!(create.starts_with("pr create --title 自定义标题 --body 正文 --base main") && create.contains(" --draft"), "{create}");
 }
 
 #[test]
@@ -705,4 +711,35 @@ fn 开_pr_上游是_origin_main_先推同名分支_head_是功能分支_不碰_m
     assert_eq!(sb.git(&remote, &["rev-parse", "feat"]), sb.git(&repo, &["rev-parse", "HEAD"]));
     let create = fake.calls.lock().unwrap().iter().find(|c| c.starts_with("pr create")).cloned().unwrap();
     assert!(create.contains("--base main --head feat"), "{create}");
+}
+
+/// 做空审查：fork + upstream 两个远端、没设 gh default repo 时，gh pr view/create/merge 不带 --repo
+/// 会报 set-default。所有 pr 子命令都显式带推送目标远端（origin）推出的 owner/repo；pr view 带了
+/// --repo 之后 gh 不再认当前分支，必须把分支名作参数。
+#[test]
+fn 多远端没设_default_repo_gh_调用都带_repo_与分支() {
+    let sb = Sandbox::new("gh-repo");
+    let repo = github_repo(&sb);
+    sb.git(&repo, &["remote", "add", "upstream", "https://github.com/someone-else/meowo-pr-drill.git"]);
+    let prefs = sb.root.join("forge.json");
+    let caches = Caches::default();
+    let open = ok(&fixture("derived_pr_no_checks.json"));
+    let fake = FakeGh { require_repo: true, ..FakeGh::new().views(vec![open.clone(), open, ok(&fixture("derived_pr_no_checks_merged.json"))]) };
+    let dto = status(&fake, &caches, &prefs, &repo, false);
+    assert_eq!(dto.pr.map(|p| p.number), Some(12), "带 --repo 才查得到 PR");
+    let result = merge(&fake, &caches, &prefs, &repo, "squash", HEAD).unwrap();
+    assert!(result.merged);
+    let calls = fake.calls.lock().unwrap().clone();
+    let view = calls.iter().find(|c| c.starts_with("pr view")).unwrap();
+    assert!(view.starts_with("pr view meowo/drill --repo larrygogo/meowo-pr-drill"), "{view}");
+    let merge_call = calls.iter().find(|c| c.starts_with("pr merge 12")).unwrap();
+    assert!(merge_call.contains("--repo larrygogo/meowo-pr-drill"), "{merge_call}");
+
+    let fake = FakeGh { require_repo: true, ..FakeGh::new().views(vec![ok(&fixture("derived_pr_no_checks.json"))]) };
+    let gh = |dir: &str, args: &[&str]| fake.run(dir, args);
+    let ctx = Ctx { gh: &gh, caches: &Caches::default(), prefs: prefs.clone(), env: &[] };
+    let push = |_: &str| Ok(PushResultDto { remote: "origin".into(), branch: "meowo/drill".into(), set_upstream: true, pushed: 1 });
+    pr_create_with(&ctx, &s(&repo), None, None, None, false, &push).unwrap();
+    let create = fake.calls.lock().unwrap().iter().find(|c| c.starts_with("pr create")).cloned().unwrap();
+    assert!(create.contains("--repo larrygogo/meowo-pr-drill"), "{create}");
 }
