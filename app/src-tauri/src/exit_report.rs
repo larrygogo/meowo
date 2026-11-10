@@ -51,7 +51,14 @@ pub(crate) fn notify_unexpected_exit(app: &tauri::AppHandle, session_id: i64, co
         .map(|name| name.to_string_lossy().into_owned())
         .unwrap_or_default();
     let label = crash_label(lang, code);
-    crate::watch::emit_island_alert(app, session_id, "error", &title, &project, Some(label.clone()));
+    crate::watch::emit_island_alert(
+        app,
+        session_id,
+        "error",
+        &title,
+        &project,
+        Some(label.clone()),
+    );
     crate::push::push_session(
         &settings,
         crate::push::PushMessage {
@@ -88,22 +95,37 @@ mod tests {
     #[test]
     fn nonzero_exit_without_user_stop_is_unexpected() {
         assert!(is_unexpected_exit(Some(1), false, false));
-        assert!(is_unexpected_exit(Some(0xC000_0005), false, false), "访问冲突崩溃");
+        assert!(
+            is_unexpected_exit(Some(0xC000_0005), false, false),
+            "访问冲突崩溃"
+        );
     }
 
     #[test]
     fn clean_exit_user_stop_restart_and_unknown_code_are_not_reported() {
         assert!(!is_unexpected_exit(Some(0), false, false), "正常退出");
-        assert!(!is_unexpected_exit(Some(1), true, false), "用户点了结束会话 / 退出 Meowo");
+        assert!(
+            !is_unexpected_exit(Some(1), true, false),
+            "用户点了结束会话 / 退出 Meowo"
+        );
         assert!(!is_unexpected_exit(Some(1), false, true), "就地重启窗口内");
         assert!(!is_unexpected_exit(None, false, false), "拿不到退出码不报");
-        assert!(!is_unexpected_exit(Some(STATUS_CONTROL_C_EXIT), false, false), "终端里 Ctrl+C");
-        assert!(!is_unexpected_exit(Some(SIGINT_EXIT), false, false), "Unix 上 Ctrl+C");
+        assert!(
+            !is_unexpected_exit(Some(STATUS_CONTROL_C_EXIT), false, false),
+            "终端里 Ctrl+C"
+        );
+        assert!(
+            !is_unexpected_exit(Some(SIGINT_EXIT), false, false),
+            "Unix 上 Ctrl+C"
+        );
     }
 
     #[test]
     fn crash_label_matches_frontend_copy() {
         assert_eq!(crash_label("zh", 3), "Agent 意外退出（退出码 3）");
-        assert_eq!(crash_label("en", 3), "Agent exited unexpectedly (exit code 3)");
+        assert_eq!(
+            crash_label("en", 3),
+            "Agent exited unexpectedly (exit code 3)"
+        );
     }
 }
