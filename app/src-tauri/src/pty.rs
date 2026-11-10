@@ -273,6 +273,9 @@ struct CompletedPty {
     start_offset: u64,
     end_offset: u64,
     code: Option<u32>,
+    /// 退出是用户要的（点了「结束会话」/ 升级链强制收尾 / Meowo 正在退出）。意外退出的判定
+    /// 要排除这些（见 exit_report::is_unexpected_exit）。
+    user_stopped: bool,
     /// 入表顺序，淘汰时取最小者。不能按 session id 淘汰：pending 启动失败的条目
     /// 是递减的负数 id，按 id 取 min 会恰好先扔掉最新的失败诊断。
     seq: u64,
@@ -714,6 +717,15 @@ fn finalize_exit(broker: &PtyBroker, app: &tauri::AppHandle, managed: &Arc<Manag
     // 拿整个收尾陪葬（与 reap 内部的原则一脉相承）。
     let code = lock_within(&managed.child, std::time::Duration::from_millis(500))
         .and_then(|mut child| reap_child(child.as_mut()));
+    // 是不是用户要的退出：结束会话会先落 stop_requested_at（就地重启也走 stop，另由下面
+    // 3s 后是否又被托管兜住），强制收尾只发生在结束会话的升级链末档，退出 Meowo 先置 shutting_down。
+    let user_stopped = forced
+        || broker.shutting_down.load(Ordering::Acquire)
+        || managed
+            .stop_requested_at
+            .lock()
+            .map(|at| at.is_some())
+            .unwrap_or(true);
     // 释放伪终端让 conhost 退出。它救不了阻塞的 reader，但能停掉资源。牺牲线程 + 有界
     // 拿锁：conhost 僵死时 ClosePseudoConsole 永不返回，锁的持有者（卡死的 resize）也
     // 永不放手——两种形态都不许把收尾拖死在这一步。
@@ -750,6 +762,7 @@ fn finalize_exit(broker: &PtyBroker, app: &tauri::AppHandle, managed: &Arc<Manag
                 start_offset,
                 end_offset,
                 code,
+                user_stopped,
                 seq: COMPLETED_SEQ.fetch_add(1, Ordering::Relaxed),
             },
         );
@@ -773,12 +786,21 @@ fn finalize_exit(broker: &PtyBroker, app: &tauri::AppHandle, managed: &Arc<Manag
     // （切模型、接管换参数）也会先走这里退出，紧接着起新进程——那种不算结束，
     // 不能把用户的 dev server 一并杀掉。没认领的临时会话（负 id）一样要关：在信任页
     // 就退出、CLI 秒退时，它名下的面板没有别的地方会收。
+    //
+    // 同一个 3s 窗口也用来判「CLI 意外退出」（二期 #7）：重启窗口内又被托管上的不算，用户结束的
+    // 不算，退出码为 0 或拿不到的不算。临时会话（负 id）没有库行、对话页也认不出它，不报。
     let watcher = broker.clone();
     let panel_app = app.clone();
     std::thread::spawn(move || {
         std::thread::sleep(std::time::Duration::from_secs(3));
-        if !watcher.is_managed(session_id) {
+        let restarted = watcher.is_managed(session_id);
+        if !restarted {
             crate::browser_agent::close_session_panels(&panel_app, session_id);
+        }
+        if session_id > 0 && crate::exit_report::is_unexpected_exit(code, user_stopped, restarted) {
+            if let Some(code) = code {
+                crate::exit_report::notify_unexpected_exit(&panel_app, session_id, code);
+            }
         }
     });
     if session_id < 0 {
@@ -2176,6 +2198,10 @@ impl PtyBroker {
             // CLI 拒绝启动的原因只打在 PTY 输出里：尾部可读文本随快照带给对话页
             // （秒退探测只盖启动后第 1 秒，之后退出的失败否则只剩一句「退出码 X」）。
             exit_tail: completed.as_ref().map(|item| readable_tail(&item.data, 240)),
+            // 定格快照只在会话不再被托管时返回，重启窗口天然排除在外。
+            exit_unexpected: completed.as_ref().is_some_and(|item| {
+                crate::exit_report::is_unexpected_exit(item.code, item.user_stopped, false)
+            }),
             cols,
             rows,
             // 已退出的定格快照不补基线:进程退出时 TUI 自己已经 ?1049l/?1000l 收尾,
@@ -4950,6 +4976,7 @@ mod tests {
             start_offset: 0,
             end_offset: 3,
             code: Some(1),
+            user_stopped: false,
             seq: 0,
         };
         // sessions.contains 分支（会话仍在运行，completed 里躺着上一代的退出快照）。
@@ -5096,6 +5123,7 @@ mod tests {
                 start_offset: 96,
                 end_offset: 100,
                 code: Some(0),
+                user_stopped: false,
                 seq: 0,
             },
         );
@@ -5202,6 +5230,7 @@ mod tests {
                 start_offset: 100,
                 end_offset: 106,
                 code: Some(0),
+                user_stopped: false,
                 seq: 0,
             },
         );

@@ -936,6 +936,9 @@ export type Settings = {
   island_strip: boolean;
   /** 哪些事让灵动岛弹提醒：waiting / approval（含计划确认、屏幕上挂着交互）/ question / error。 */
   island_alerts: string[];
+  /** 哪些事弹系统通知（总开关 notifications_enabled 之下再分种类），种类与 island_alerts 同一套。
+   *  老设置文件没有这个字段，后端按四类全开补上。 */
+  notify_kinds: string[];
   /** 提醒停留秒数（4 / 6 / 10）。 */
   island_alert_seconds: number;
   /** 在贴纸底栏显示配额的 agent id 列表（后端给默认值）。 */

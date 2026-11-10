@@ -48,6 +48,13 @@ const ISLAND_ALERT_MS_DEFAULT = 6_000;
 function islandAlertSwitch(kind: string): string {
   return kind === "plan" || kind === "blocked" ? "approval" : kind;
 }
+/// 要人做决定的提醒（审批、提问、计划、屏幕阻塞、出错）插到队头。跑完只是告知，可以晚点看。
+function isUrgentAlert(kind: string): boolean {
+  return kind !== "waiting";
+}
+/// 急事插队时，正在显示的「跑完」至少露这么久再让位：刚弹出就被换掉像闪了一下。
+/// 再加两条提醒之间 300ms 的间隔，审批在 1.5s 内弹出（二期定：原来排在三条跑完后面要等约 19s）。
+const ISLAND_ALERT_YIELD_MS = 1_200;
 /// 鼠标从提醒上移开后，提醒再留多久才缩回。
 const ISLAND_ALERT_LINGER_MS = 3_000;
 /// 收回动画时长，与 styles.css 的 .island-shell.is-leaving 同源。
@@ -459,6 +466,10 @@ export function App() {
   // 队列里还排着几条（不含正在弹的那条），提醒卡片上显示「还有 N 条」。
   const [alertQueued, setAlertQueued] = useState(0);
   const alertTimerRef = useRef<number | null>(null);
+  // 正在显示的提醒与它弹出的时刻、倒计时到点的时刻：急事插队要据此算「跑完」还该留多久，
+  // 点正文要据此知道打开哪个会话（state 在事件回调里读到的是旧值，故另存 ref）。
+  const shownAlertRef = useRef<{ event: IslandAlertEvent; at: number } | null>(null);
+  const alertDueRef = useRef(0);
   // 胶囊（刘海本体，不含耳朵）的实测宽度。展开/收起动画以它为起止轮廓，窗口收回时按它定尺寸。
   const [pillWidth, setPillWidth] = useState(ISLAND_PILL_MIN_WIDTH);
   const pillWidthRef = useRef(ISLAND_PILL_MIN_WIDTH);
@@ -706,6 +717,7 @@ export function App() {
   }, [layoutCompact]);
   const armAlertTimer = useCallback((ms: number) => {
     if (alertTimerRef.current != null) window.clearTimeout(alertTimerRef.current);
+    alertDueRef.current = Date.now() + ms;
     alertTimerRef.current = window.setTimeout(finishAlert, ms);
   }, [finishAlert]);
   armAlertRef.current = armAlertTimer;
@@ -716,6 +728,7 @@ export function App() {
     const next = alertQueueRef.current.shift();
     setAlertQueued(alertQueueRef.current.length);
     if (!next) return;
+    shownAlertRef.current = { event: next, at: Date.now() };
     setAlert(next);
     islandModeRef.current = "alert";
     setIslandMode("alert");
@@ -745,18 +758,25 @@ export function App() {
       const enabled = islandAlertsRef.current;
       if (enabled && !enabled.includes(islandAlertSwitch(event.payload.kind))) return;
       // 同一会话排队中的旧提醒换成新的：一个会话接连变状态时只弹最新的那条，不连弹好几次。
-      alertQueueRef.current = [
-        ...alertQueueRef.current.filter((queued) => queued.sessionId !== event.payload.sessionId),
-        event.payload,
-      ];
+      const rest = alertQueueRef.current.filter((queued) => queued.sessionId !== event.payload.sessionId);
+      const urgent = isUrgentAlert(event.payload.kind);
+      // 急事排在已有急事之后、所有「跑完」之前：急事之间仍按先来后到。
+      const at = urgent ? rest.findIndex((queued) => !isUrgentAlert(queued.kind)) : -1;
+      alertQueueRef.current = at < 0 ? [...rest, event.payload] : [...rest.slice(0, at), event.payload, ...rest.slice(at)];
       setAlertQueued(alertQueueRef.current.length);
+      // 正在显示「跑完」时让它提前让位。鼠标停在上面（倒计时已暂停）说明人在看，不打断。
+      const shown = shownAlertRef.current;
+      if (urgent && islandModeRef.current === "alert" && alertTimerRef.current != null && shown && !isUrgentAlert(shown.event.kind)) {
+        const wait = Math.max(0, ISLAND_ALERT_YIELD_MS - (Date.now() - shown.at));
+        if (Date.now() + wait < alertDueRef.current) armAlertTimer(wait);
+      }
       pumpAlert();
     });
     return () => {
       un.then((f) => f());
       if (alertTimerRef.current != null) window.clearTimeout(alertTimerRef.current);
     };
-  }, [pumpAlert]);
+  }, [pumpAlert, armAlertTimer]);
 
   const collapse = useCallback(() => {
     const mode = islandModeRef.current;
@@ -862,7 +882,9 @@ export function App() {
   const onPillPointerDown = useCallback((event: React.PointerEvent<HTMLElement>) => {
     if (event.button !== 0) return;
     const hit = (event.target as HTMLElement | null)?.closest?.("[data-session-id]");
-    const sessionId = hit ? Number(hit.getAttribute("data-session-id")) : NaN;
+    // 提醒在场时点正文 = 打开那条会话（与系统通知横幅一致，二期定）；只有空闲胶囊点了才展开面板。
+    const alerting = islandModeRef.current === "alert" ? shownAlertRef.current?.event.sessionId : undefined;
+    const sessionId = hit ? Number(hit.getAttribute("data-session-id")) : alerting ?? NaN;
     const onClick = Number.isFinite(sessionId) ? () => openSessionRef.current(sessionId) : expand;
     startDrag(event.currentTarget, event.pointerId, event.screenX, onClick);
   }, [startDrag, expand]);

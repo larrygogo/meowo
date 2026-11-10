@@ -430,6 +430,50 @@ describe("App", () => {
     expect(screen.getByText(zh.island.moreAlerts(2))).toBeTruthy();
   });
 
+  // 二期 #1（2026-11-10 定）：提醒在场时点正文 = 打开那条会话，与系统通知横幅一致；排在后面的提醒照常弹。
+  it("提醒显示时点正文打开该会话，排队的提醒不被清空", async () => {
+    const { container } = render(<App />);
+    await waitFor(() => expect(vi.mocked(invoke)).toHaveBeenCalledWith("island_layout", expect.anything()));
+    act(() => {
+      emitIslandAlert({ payload: { sessionId: 11, kind: "approval", title: "正文点我", project: "p", detail: null } });
+      emitIslandAlert({ payload: { sessionId: 12, kind: "waiting", title: "排在后面", project: "p", detail: null } });
+    });
+    expect(await screen.findByText("正文点我")).toBeTruthy();
+    const notch = container.querySelector(".isl-notch") as HTMLElement;
+    fireEvent.pointerDown(notch, { button: 0, pointerId: 1, screenX: 100 });
+    fireEvent.pointerUp(notch, { button: 0, pointerId: 1, screenX: 100 });
+    await waitFor(() => expect(vi.mocked(invoke)).toHaveBeenCalledWith("open_chat_window", { sessionId: 11 }));
+    expect(container.querySelector(".isl-panel")).toBeNull();
+    // 300ms 间隔后排队的那条接着弹。
+    expect(await screen.findByText("排在后面")).toBeTruthy();
+  });
+
+  // 二期 #2：审批/提问/出错插到队头；正在显示的「跑完」顶多再留一小会儿就让位（原来要等约 19s）。
+  it("连发 3 条跑完再来审批，1.5s 内显示审批", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      render(<App />);
+      await waitFor(() => expect(vi.mocked(invoke)).toHaveBeenCalledWith("island_layout", expect.anything()));
+      const waiting = (sessionId: number, title: string) =>
+        ({ payload: { sessionId, kind: "waiting", title, project: "p", detail: null } });
+      act(() => {
+        emitIslandAlert(waiting(1, "跑完一"));
+        emitIslandAlert(waiting(2, "跑完二"));
+        emitIslandAlert(waiting(3, "跑完三"));
+      });
+      expect(await screen.findByText("跑完一")).toBeTruthy();
+      act(() => {
+        emitIslandAlert({ payload: { sessionId: 4, kind: "approval", title: "要审批", project: "p", detail: null } });
+      });
+      await act(async () => { await vi.advanceTimersByTimeAsync(1_500); });
+      expect(screen.getByText("要审批")).toBeTruthy();
+      // 被插队的跑完提醒没丢：审批后面还排着两条。
+      expect(screen.getByText(zh.island.moreAlerts(2))).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   // 用户 2026-11-05 要求：点开后光标移开不收，点岛外面才收。点到别的窗口靠失焦；
   // 点桌面空白这类不夺焦的地方，靠后端「鼠标按着且在窗口外」。
   it("展开的面板光标移开不收，点外面才收", async () => {

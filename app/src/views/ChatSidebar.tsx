@@ -4,6 +4,7 @@ import { moveNextTo, orderKey, sidebarDirGroups, usePointerReorder, useSessionDr
 import { WorkspaceDirectory } from "./chat/WorkspaceDirectory";
 import { confirmStopSession, getLiveSessionsPage, getSettings, moveSessionRank, setWorkspaceOrder as saveWorkspaceOrder, openNewSessionWindow, openProjectDir, recentCwds, renameSession, searchChatTranscripts, sessionTone, setArchived, setSessionNote, type CardMenuMode, type LiveSession, type SessionTone, type TranscriptSearchHit } from "../api";
 import { noteSessionMeta } from "./chat/historyCache";
+import { attentionTone } from "./chat/nextAttention";
 import { remoteUi } from "../remoteMode";
 import { useBoardRefresh } from "../hooks/useBoardRefresh";
 import { useSessionActions } from "../hooks/useSessionActions";
@@ -198,7 +199,7 @@ export const ChatSidebar = memo(ChatSidebarImpl);
 const titleScrollAnims = new WeakMap<HTMLElement, Animation>();
 const titleScrollTimers = new WeakMap<HTMLElement, number>();
 
-function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visibleOrderRef, searchInputRef, width, onSelect, onPrefetch, onCollapse, onOpenAdmin }: {
+function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visibleOrderRef, attentionIdsRef, searchInputRef, width, onSelect, onPrefetch, onCollapse, onOpenAdmin }: {
   activeId: number;
   /** 主区正开着新建会话页：「新建会话」行高亮（对照 Kimi），会话行都不高亮。 */
   newSessionActive?: boolean;
@@ -209,6 +210,8 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
   /** 当前显示顺序的镜像（父层归档跳转用）：归档当前会话后跳「用户看到的下一条」，
    *  两个归档入口（标题菜单/侧栏菜单）取序自此一致。卸载时清空，父层退回后端现查。 */
   visibleOrderRef?: MutableRefObject<number[]>;
+  /** 显示顺序里待处理或出错的会话（含等授权的），父层 Alt+Shift+↓ 跳转用。口径同状态点。 */
+  attentionIdsRef?: MutableRefObject<Set<number>>;
   /** 搜索框句柄交给父层：Ctrl/Cmd+F 监听在 ChatWindow（侧栏收起后它仍要能把人带回来）。 */
   searchInputRef?: MutableRefObject<HTMLInputElement | null>;
   /** 停靠形态的栏宽（分栏柄拖拽，ChatWindow 持久化）。抽屉形态不传：CSS 的
@@ -806,6 +809,14 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
     visibleOrderRef.current = (ordered ?? []).map((item) => item.session.id);
   }, [ordered, visibleOrderRef]);
   useEffect(() => () => { if (visibleOrderRef) visibleOrderRef.current = []; }, [visibleOrderRef]);
+  useEffect(() => {
+    if (!attentionIdsRef) return;
+    attentionIdsRef.current = new Set((ordered ?? [])
+      .filter((item) => approvalAwaitingIds.has(item.session.id)
+        || attentionTone(sessionTone(item.connected, item.session.status, item.pending_review, item.errored, item.busy_subagents, item.screen_state)))
+      .map((item) => item.session.id));
+  }, [ordered, approvalAwaitingIds, attentionIdsRef]);
+  useEffect(() => () => { if (attentionIdsRef) attentionIdsRef.current = new Set(); }, [attentionIdsRef]);
 
   // 滚到底前 120px 就预取下一页。
   const onScroll = (event: UIEvent<HTMLElement>) => {

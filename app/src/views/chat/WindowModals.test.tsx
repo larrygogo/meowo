@@ -4,6 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(() => Promise.resolve(() => {})) }));
+const platform = vi.hoisted(() => ({ mac: false }));
+vi.mock("../../platform", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../platform")>()),
+  isMac: () => platform.mac,
+}));
 
 import { QuickSwitcher, ShortcutSheet, type PaletteCommand } from "./WindowModals";
 import type { LiveSession } from "../../api";
@@ -131,17 +136,37 @@ describe("QuickSwitcher 命令面板（U1-14）", () => {
     expect(props.onCommand).toHaveBeenCalledWith("open-settings");
   });
 
-  it("Enter 落在会话上仍是跳转（is-current 会话也先关弹层）", async () => {
+  // 二期 #4（2026-11-10 定）：空查询默认选中第 0 条，而第 0 条多半就是当前会话（最近活跃），
+  // 打开就回车等于没切。改为默认选中第一个不是当前会话的条目。
+  it("空查询默认选中第一个非当前会话，回车切到它", async () => {
     mockSessions([session(7, "当前会话"), session(8, "别的会话")]);
     const props = renderPalette({ activeId: 7 });
     const input = await screen.findByRole("textbox");
-    // 默认 active=0（当前会话）：Enter 关闭但不重复 onPick。
+    await waitFor(() => expect(screen.getByRole("option", { name: /别的会话/ }).getAttribute("aria-selected")).toBe("true"));
     fireEvent.keyDown(input, { key: "Enter" });
     expect(props.onClose).toHaveBeenCalled();
-    expect(props.onPick).not.toHaveBeenCalled();
-    // 重新打开场景下 ArrowDown 一次再 Enter 才跳别的会话——这里直接测点击。
-    fireEvent.click(screen.getByRole("option", { name: /别的会话/ }));
     expect(props.onPick).toHaveBeenCalledWith(8);
+  });
+
+  it("点到当前会话只关弹层，不重复跳转", async () => {
+    mockSessions([session(7, "当前会话"), session(8, "别的会话")]);
+    const props = renderPalette({ activeId: 7 });
+    fireEvent.click(await screen.findByRole("option", { name: /当前会话/ }));
+    expect(props.onClose).toHaveBeenCalled();
+    expect(props.onPick).not.toHaveBeenCalled();
+  });
+
+  it("行尾显示未读点；当前会话正在看，不显示", async () => {
+    mockSessions([
+      session(7, "当前会话", { unread: true } as Partial<LiveSession>),
+      session(8, "没看过的", { unread: true } as Partial<LiveSession>),
+      session(9, "看过的"),
+    ]);
+    renderPalette({ activeId: 7 });
+    const unreadOf = async (name: RegExp) => (await screen.findByRole("option", { name })).querySelector(".chat-switcher-unread");
+    expect(await unreadOf(/没看过的/)).toBeTruthy();
+    expect(await unreadOf(/^看过的/)).toBeNull();
+    expect(await unreadOf(/当前会话/)).toBeNull();
   });
 });
 
@@ -155,8 +180,34 @@ describe("ShortcutSheet 快捷键速查表", () => {
     expect(dialog.querySelectorAll(".chat-shortcuts-row")).toHaveLength(18);
     expect(dialog.textContent).toContain("Ctrl+Shift+F");
     expect(dialog.textContent).toContain("Ctrl+`");
-    expect(dialog.textContent).toContain(zh.chat.shortcutTerminalNote);
+    expect(dialog.textContent).toContain(zh.chat.shortcutTerminalNote("Ctrl"));
     fireEvent.keyDown(dialog, { key: "Escape" });
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  // 二期 #5/#8：Ctrl+F 统一为找字（Ctrl+Shift+F 别名同行），新增跳下一个待处理会话。
+  it("Ctrl+F 一行写找字并带别名；有 Alt+Shift+↓ 跳转行", () => {
+    render(<ShortcutSheet onClose={vi.fn()} />);
+    const rows = [...document.querySelectorAll(".chat-shortcuts-row")];
+    const rowOf = (desc: string) => rows.find((row) => row.querySelector("dd")?.textContent === desc);
+    expect(rowOf(zh.chat.shortcutFind)?.querySelector("dt")?.textContent).toBe("Ctrl+F / Ctrl+Shift+F");
+    expect(rowOf(zh.chat.shortcutNextPending)?.querySelector("dt")?.textContent).toBe("Alt+Shift+↓");
+    // 搜会话不再占 Ctrl+F。
+    expect(rowOf(zh.chat.shortcutSearch)).toBeUndefined();
+  });
+
+  it("mac 上速查表显示 ⌘ 与 ⌥", () => {
+    platform.mac = true;
+    try {
+      render(<ShortcutSheet onClose={vi.fn()} />);
+      const dialog = screen.getByRole("dialog", { name: zh.chat.shortcutsTitle });
+      expect(dialog.textContent).toContain("⌘+K");
+      expect(dialog.textContent).toContain("⌘+F / ⌘+Shift+F");
+      expect(dialog.textContent).toContain("⌥+Shift+↓");
+      expect(dialog.textContent).not.toContain("Ctrl");
+      expect(dialog.textContent).toContain(zh.chat.shortcutTerminalNote("⌘"));
+    } finally {
+      platform.mac = false;
+    }
   });
 });

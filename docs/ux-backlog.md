@@ -185,6 +185,7 @@
 | C-15 | 任何发送错误都把占位符改成「尚未接管」（与真实原因无关）；会话结束时 composer 整块卸载藏起草稿 | `ChatWindow.tsx:2443-2449,2374-2390` | 已修（占位符只随 needsTakeover，普通发送错误只走错误条；gate/被接替态降为上横幅 + composer 禁用不卸载，草稿原地可见。遗留：gate 态下附件/模型按钮未一并禁用） |
 | C-16 | 超长粘贴固定 250ms 后回车，TUI 可能没消化完；`sessionLaunchSelections` 无 stale 守卫会把旧会话启动档落到新会话 | `ChatWindow.tsx:405-414,727-730` | 已修（submitGapMs 按长度动态间隔 250ms+50ms/KB 封顶 2s；stale 守卫此前已由 cancelled 标志补齐） |
 | C-17 | 快捷键体系整体缺位：无切会话/收展侧栏/切视图/新建/查找；侧栏平铺 tabindex 上百次 Tab | `ChatWindow.tsx:1948-1962`、`ChatSidebar.tsx:629-647` | 已修（Ctrl+K/B/1/2/N/F + ? 速查表全部落地；侧栏 roving tabindex + ↑↓/Home/End 导航） |
+| C-17 补记 | 2026-11-10 leader 改定：Ctrl+F 在对话与终端视图都是在当前内容里找字，搜会话交给 Ctrl+K，Ctrl+Shift+F 保留为找字别名；mac 速查表显示 ⌘/⌥ | `ChatWindow.tsx`、`chat/WindowModals.tsx` | 二期 #8 落地 |
 | C-18 | 断线语言缺失：分不出「agent 进程没了」和「IPC 通道断了」 | `zh.ts:153-160`、`ChatWindow.tsx:565` | 已修（轮询连续失败 ≥3 次升级「同步中断」横幅 role=alert 错误色，瞬时失败仍琥珀通用文案；与 tone 解耦） |
 | C-19 | 子任务展开后滚动，吸顶标题与视口顶之间有一条缝，内容从缝里透出 | `styles.css:3802`（`.chat-scroll` padding-top）+ `styles.css:4460`（sticky summary） | 已修（Chromium 里 sticky top:0 贴滚动容器内容盒上沿，padding-top 变成缝隙，Playwright 实测 24px；顶部留白改文档流内 `.chat-scroll::before` 占位，吸顶贴顶=0；`.chat-sync-warn` 同道受益） |
 | C-20 | 运行状态条（SnakeSpinner + currentActivity）非 Bash 工具只显示工具名，看不出在做什么 | `dispatch.rs:114` 兜底分支 | 已修（hook.rs 新增 `activity_detail()`：pattern→file_path→path→query→url→subject→description 逐键试，兼容 claude/kimi 字段名，截 120 字；有细节写「Grep: 个子任务」，无细节维持裸名；dispatch_test 钉死两种形态） |

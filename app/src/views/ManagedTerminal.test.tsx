@@ -307,6 +307,19 @@ describe("ManagedTerminal", () => {
     expect(screen.queryByPlaceholderText("搜索终端输出")).toBeNull();
   });
 
+  // 二期 #8：Ctrl+Shift+F 是找字的别名，终端里同样打开搜索条，不把按键落进 PTY。
+  it("Ctrl+Shift+F 在终端里也打开搜索条", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "managed_terminal_snapshot") return Promise.resolve(noPty);
+      return Promise.resolve();
+    });
+    render(<ManagedTerminal sessionId={163} status="running" />);
+    await waitFor(() => expect(keyHandler.current).toBeTruthy());
+    const key = (init: Partial<KeyboardEvent> & { type: string; code: string }) => init as KeyboardEvent;
+    expect(keyHandler.current!(key({ type: "keydown", code: "KeyF", ctrlKey: true, shiftKey: true }))).toBe(false);
+    expect(await screen.findByPlaceholderText("搜索终端输出")).toBeTruthy();
+  });
+
   it("终端搜索无匹配时显示提示;WebGL 构造失败静默回退不炸组件", async () => {
     searchFindNext.mockReturnValue(false);
     searchFindPrevious.mockReturnValue(false);
