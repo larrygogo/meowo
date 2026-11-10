@@ -287,8 +287,11 @@ fn 推送_凭据失败不弹窗不卡住_归为认证失败() {
     sb.git(&repo, &["remote", "add", "origin", &format!("http://127.0.0.1:{port}/o/r.git")]);
     let start = Instant::now();
     let err = push(&sb, &repo).unwrap_err();
+    // 真卡在等输入时，push 会一直耗到 120s 超时、返回 git/push_timeout；拿到 push_auth 就说明没等人。
+    // 时限只防“慢到接近超时”：本机 0.3s，Windows CI 实测 20.6s（run 42852133839，runner 自带的
+    // Git Credential Manager 在并行负载下启动慢），所以放到 60s，离 120s 超时还有一倍余量。
     assert_eq!(err, "git/push_auth");
-    assert!(start.elapsed() < Duration::from_secs(20), "不该等用户输入：{:?}", start.elapsed());
+    assert!(start.elapsed() < Duration::from_secs(60), "不该等用户输入：{:?}", start.elapsed());
 }
 
 #[test]
