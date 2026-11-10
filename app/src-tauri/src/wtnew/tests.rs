@@ -357,6 +357,43 @@ fn setup_跑着时可停止_可跳过() {
     assert!(setup_action(&task, "bogus", &setup::Shells::default(), &always, quiet()).is_err());
 }
 
+/// 做空审查：在仓库子目录（如 repo/app）勾「在新 worktree 里开」，会话却落在 worktree 根目录。
+/// 子目录在基点里有：会话开在 worktree 里同一相对子目录；没有：退回根目录，预览先说明。
+#[test]
+fn 在子目录里建_会话开在_worktree_的同一子目录_基点里没有就退回根目录() {
+    let fx = fixture("subdir");
+    std::fs::create_dir_all(fx.main.join("pkg/core")).unwrap();
+    std::fs::write(fx.main.join("pkg/core/x.txt"), "x\n").unwrap();
+    run(&fx.main, &["add", "."]);
+    run(&fx.main, &["commit", "-qm", "pkg"]);
+    run(&fx.main, &["push", "-q", "origin", "main"]);
+    let sub = fx.main.join("pkg").join("core");
+    let p = preview(&sub, &req(Some("sub"), None), &fx.opts()).unwrap();
+    assert_eq!((p.sub_dir.as_deref(), p.sub_dir_missing), (Some("pkg/core"), false));
+    let dto = create(&sub, &req(Some("sub"), None), &fx.opts(), &never, quiet()).unwrap();
+    assert_eq!(
+        PathBuf::from(&dto.session_cwd),
+        PathBuf::from(&dto.path).join("pkg").join("core"),
+        "会话开在同一相对子目录"
+    );
+    assert!(Path::new(&dto.session_cwd).is_dir());
+
+    // 只在本地、基点里没有的子目录：退回 worktree 根目录，预览里先说明。
+    let scratch = fx.main.join("scratch");
+    std::fs::create_dir_all(&scratch).unwrap();
+    std::fs::write(scratch.join("n.txt"), "n\n").unwrap();
+    let p = preview(&scratch, &req(Some("scr"), None), &fx.opts()).unwrap();
+    assert_eq!((p.sub_dir.as_deref(), p.sub_dir_missing), (Some("scratch"), true));
+    let dto = create(&scratch, &req(Some("scr"), None), &fx.opts(), &never, quiet()).unwrap();
+    assert_eq!(dto.session_cwd, dto.path, "子目录不存在：退回根目录");
+
+    // 在仓库根目录建：没有子目录，会话就在根目录。
+    let p = preview(&fx.main, &req(Some("top"), None), &fx.opts()).unwrap();
+    assert_eq!((p.sub_dir, p.sub_dir_missing), (None, false));
+    let dto = create(&fx.main, &req(Some("top"), None), &fx.opts(), &never, quiet()).unwrap();
+    assert_eq!(dto.session_cwd, dto.path);
+}
+
 /// 做空审查：hash 覆盖整份配置、env 会注入 setup 进程，确认框却只给看脚本——NODE_OPTIONS 之类
 /// 能让一行无害的 `bun install` 加载任意代码。确认框要拿到 env 原样展示；重跑时按新配置的 env 跑。
 #[test]

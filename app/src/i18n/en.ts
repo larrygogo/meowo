@@ -299,6 +299,8 @@ export const en: Dict = {
     useSuggestion: (name: string) => `Use ${name}`,
     notRepo: "This folder isn't in a git repository",
     hasSetup: "Setup runs in the background after creation",
+    subDir: (dir: string) => `Session opens in ${dir}`,
+    subDirMissing: (dir: string) => `${dir} isn't in the base, opening at the root`,
     creating: "Creating worktree…",
     tag: "worktree",
     tagTip: (name: string) => `In worktree ${name}`,

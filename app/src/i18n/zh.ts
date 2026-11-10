@@ -323,6 +323,8 @@ export const zh = {
     useSuggestion: (name: string) => `改用 ${name}`,
     notRepo: "这个目录不在 git 仓库里",
     hasSetup: "建好后在后台跑 setup",
+    subDir: (dir: string) => `会话开在子目录 ${dir}`,
+    subDirMissing: (dir: string) => `基点里没有 ${dir}，会话开在根目录`,
     creating: "正在建 worktree…",
     tag: "worktree",
     tagTip: (name: string) => `在 worktree ${name} 里`,

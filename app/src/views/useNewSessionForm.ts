@@ -198,7 +198,12 @@ export function useNewSessionForm(startCwd: string, startProvider: AgentId | nul
       let dir = unquotePath(cwd);
       // 勾了「在新 worktree 里开」：先建 worktree（同步，≤2s），会话照常开在新目录里；
       // setup 在后台跑，进度在会话页顶部看。不勾时这一步不走，与改前完全一样。
-      if (worktree.enabled) dir = (await worktree.create(dir, provider)).path;
+      // 选的是仓库子目录（repo/app）时会话开在 worktree 里同一子目录，后端给的 sessionCwd；
+      // 旧后端没有这个字段时退回 worktree 根目录。
+      if (worktree.enabled) {
+        const wt = await worktree.create(dir, provider);
+        dir = wt.sessionCwd || wt.path;
+      }
       const tempId = await newSession(dir, provider, opts);
       saveStoredOpts(provider, opts); // 启动成功才记：失败的组合不该成为下次的默认
       return { tempId };

@@ -307,6 +307,27 @@ pub(crate) fn plan(repo: &Repo, req: &Request, opts: &Options) -> Result<Plan, S
     Ok(first)
 }
 
+/// 选中目录相对仓库根的子目录（`pkg/core`，正斜杠、无尾斜杠）；选的就是仓库根时 None。
+/// 用 `rev-parse --show-prefix` 而不是拿路径相减：大小写、符号链接、8.3 短名都由 git 自己归一。
+fn sub_dir_of(dir: &Path) -> Option<String> {
+    git(dir, &["rev-parse", "--show-prefix"])
+        .ok()
+        .map(|p| p.trim_end_matches('/').to_string())
+        .filter(|p| !p.is_empty())
+}
+
+/// 子目录在基点里是不是一棵树：新 worktree 从基点检出，基点里没有的目录（只在本地、没提交）新 worktree
+/// 里也不会有。预览和建立用同一个判据，预览说「会退回根目录」时建立就真的退回根目录。
+fn sub_dir_in_base(repo: &Repo, base_ref: &str, sub: &str) -> bool {
+    // `<ref>:<路径>` 冒号后整段都算路径，不能再接 `^{tree}` 剥类型，只能看 cat-file -t。
+    git(&repo.top, &["cat-file", "-t", &format!("{base_ref}:{sub}")]).is_ok_and(|t| t == "tree")
+}
+
+/// worktree 里的同一子目录（逐段拼，Windows 上不留混着的 `/`）。
+fn join_sub(root: &Path, sub: &str) -> PathBuf {
+    sub.split('/').filter(|s| !s.is_empty()).fold(root.to_path_buf(), |p, s| p.join(s))
+}
+
 /// 新建会话页的实时预览。撞名不报错，只把标记带回去，界面上给提示和建议名。
 pub(crate) fn preview(
     dir: &Path,
@@ -314,7 +335,9 @@ pub(crate) fn preview(
     opts: &Options,
 ) -> Result<WorktreePreviewDto, String> {
     let repo = repo_of(dir)?;
-    let (_, base) = base_of(&repo);
+    let (base_ref, base) = base_of(&repo);
+    let sub_dir = sub_dir_of(dir);
+    let sub_dir_missing = sub_dir.as_deref().is_some_and(|s| !sub_dir_in_base(&repo, &base_ref, s));
     let cfg = config::load(&repo.top);
     let has_setup = cfg
         .setup
@@ -364,6 +387,8 @@ pub(crate) fn preview(
         suggested_slug: suggestion.as_ref().map(|s| s.slug.clone()),
         suggested_branch: suggestion.map(|s| s.branch),
         has_setup,
+        sub_dir,
+        sub_dir_missing,
     })
 }
 
@@ -414,6 +439,15 @@ pub(crate) fn create(
         let _ = git(&repo.top, &["worktree", "prune"]);
         return Err(format!("worktree/add_failed: {stderr}"));
     }
+
+    // 会话开在 worktree 里的同一子目录。在复制被忽略文件之前判：复制 `apps/web/.env.local` 会顺手建出
+    // 基点里没有的 apps/web，那样就和预览的判据（基点里有没有这棵树）对不上了。
+    let session_cwd = sub_dir_of(dir)
+        .map(|sub| join_sub(&plan.path, &sub))
+        .filter(|p| p.is_dir())
+        .unwrap_or_else(|| plan.path.clone())
+        .to_string_lossy()
+        .into_owned();
 
     let cfg = config::load(&repo.top);
     let rules = copy::Rules::new(&cfg.copy);
@@ -466,6 +500,7 @@ pub(crate) fn create(
     origin::remember(&path_s, &origin_s);
     Ok(WorktreeCreateDto {
         task_id: task.id.clone(),
+        session_cwd,
         path: path_s,
         branch: plan.branch,
         base,
