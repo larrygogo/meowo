@@ -177,9 +177,14 @@ jobs:
           bun-version-file: .bun-version
       - name: 前端依赖漏洞审计 (bun audit)
         working-directory: app
-        # npm 生态常有无法立即修的传递性低危告警，先告警不阻断（continue-on-error）。
-        continue-on-error: true
-        run: bun install --frozen-lockfile && bun audit
+        # 不先 bun install：audit 只读 package.json + bun.lock，装依赖会走 lock 里的国内镜像
+        # 地址，曾在 runner 上卡满 900s。源指回 npmjs：镜像不支持审计接口（npmmirror 返回 404），
+        # 本地 bun.lock/.npmrc 的镜像设置不动。
+        # 门禁只拦生产依赖的 high/critical（豁免清单 app/audit-allowlist.json，每条写原因）；
+        # devDependency 的告警全部打印但不阻断。原先 continue-on-error 整步吞掉了 93 条（含 3 条 critical）。
+        env:
+          BUN_CONFIG_REGISTRY: https://registry.npmjs.org
+        run: bun scripts/audit-gate.mjs
 
   # E2E：拉起真实的 app 二进制，用 WDIO 驱动 WebView2 走一遍看板刷新。
   #
