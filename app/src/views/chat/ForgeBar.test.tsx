@@ -40,7 +40,7 @@ const pr = (over: Partial<PullRequestDto> = {}): PullRequestDto => ({
 const forge = (over: Partial<ForgeStatusDto> = {}): ForgeStatusDto => ({
   gh: "ok", ghTooOld: false, repoUrl: "https://github.com/o/r", compareUrl: "https://github.com/o/r/compare/main...meowo/drill?expand=1",
   mergeMethods: ["squash", "rebase"], lastMergeMethod: "rebase", pr: null,
-  prDefaults: { title: "feat: drill", body: "- feat: drill", base: "main" }, ...over,
+  prDefaults: { title: "feat: drill", body: "- feat: drill", base: "main" }, repoChoices: [], repoRemote: "origin", repoNeedsChoice: false, ...over,
 });
 
 type Handler = (command: string, args: Record<string, unknown>) => unknown;
@@ -318,7 +318,7 @@ describe("#25 手机", () => {
     walk(zh.forge);
     walk(en.forge);
     const codes = ["git/no_remote", "git/detached", "git/push_auth", "git/push_rejected", "git/push_protected", "git/push_hook", "git/push_timeout", "git/push_network", "git/push_failed", "git/job_not_found",
-      "gh/not_installed", "gh/not_authed", "gh/too_old", "gh/checks_failed", "gh/checks_pending", "gh/merge_conflict", "gh/head_changed", "gh/method_not_allowed", "gh/review_required", "gh/merge_blocked", "gh/pr_exists", "gh/failed"];
+      "gh/not_installed", "gh/not_authed", "gh/too_old", "gh/checks_failed", "gh/checks_pending", "gh/merge_conflict", "gh/head_changed", "gh/method_not_allowed", "gh/review_required", "gh/merge_blocked", "gh/pr_exists", "gh/ambiguous_repo", "gh/failed"];
     for (const code of codes) texts.push(formatBackendError(code, "zh"), formatBackendError(code, "en"));
     const bad = texts.filter((text) => /电脑|桌面|终端|computer|desktop|terminal/i.test(text));
     expect(bad).toEqual([]);
@@ -340,5 +340,76 @@ describe("#24 归档后提示清理", () => {
     act(() => { window.dispatchEvent(new CustomEvent(SESSION_ARCHIVED_EVENT, { detail: { ids: [8] } })); });
     await waitFor(() => expect(calls("worktree_status").some(([, a]) => (a as { sessionId: number }).sessionId === 8)).toBe(true));
     expect(screen.queryByTestId("archived-worktree-prompt")).toBeNull();
+  });
+});
+
+// 做空第二轮：推送去向、PR 所在仓库以后端的单点判定为准（git_target::resolve / resolve_gh_repo）。
+describe("推送去向与 PR 所在仓库", () => {
+  it("pushDefault 指向 fork：提示写推送目标 fork/feat，不写上游 origin/feat", async () => {
+    renderBar({ upstream: "origin/meowo/drill", pushTarget: "fork/meowo/drill", unpushed: 3, ahead: 0 });
+    const button = await screen.findByRole("button", { name: /推送 ↑3/ });
+    expect(button.getAttribute("data-tip")).toBe(zh.forge.pushTip("fork/meowo/drill"));
+  });
+
+  const choices = [{ remote: "origin", slug: "me/r" }, { remote: "upstream", slug: "o/r" }];
+
+  it("多个 GitHub 远端没定：提示先选仓库，合并不可点，开 PR 改为弹出远端列表，选了记到后端再刷新", async () => {
+    status = forge({ repoChoices: choices, repoRemote: "origin", repoNeedsChoice: true });
+    renderBar();
+    expect((await screen.findByTestId("scm-repo-choice")).textContent).toContain(zh.forge.repoNeedsChoice);
+    fireEvent.click(screen.getByRole("button", { name: zh.forge.openPr }));
+    const dialog = await screen.findByRole("dialog");
+    expect(calls("gh_pr_create").length).toBe(0);
+    const radios = within(dialog).getAllByRole("radio") as HTMLInputElement[];
+    expect(radios.map((r) => [r.value, r.checked])).toEqual([["origin", true], ["upstream", false]]);
+    fireEvent.click(radios[1]);
+    const before = calls("git_forge_status").length;
+    fireEvent.click(within(dialog).getByTestId("repo-confirm"));
+    await waitFor(() => expect(calls("forge_choose_repo").length).toBe(1));
+    expect(calls("forge_choose_repo")[0][1]).toEqual({ cwd: ROOT, remote: "upstream", sessionCwd: "C:/w/meowo" });
+    await waitFor(() => expect(calls("git_forge_status").length).toBe(before + 1));
+    expect(calls("git_forge_status").at(-1)?.[1]).toMatchObject({ force: true });
+  });
+
+  it("没定时合并按钮灰着并说明原因；Esc 关掉远端列表", async () => {
+    status = forge({ pr: pr(), repoChoices: choices, repoRemote: "origin", repoNeedsChoice: true });
+    renderBar();
+    const merge = await screen.findByTestId("scm-merge") as HTMLButtonElement;
+    expect(merge.disabled).toBe(true);
+    expect(merge.getAttribute("data-tip")).toBe(zh.forge.repoNeedsChoice);
+    fireEvent.click(within(screen.getByTestId("scm-repo-choice")).getByRole("button", { name: zh.forge.repoPick }));
+    const picker = await screen.findByRole("dialog");
+    fireEvent.keyDown(picker, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("选过之后显示 PR 开在哪个仓库，可以更换；后端说要先选时直接弹出列表", async () => {
+    status = forge({ repoChoices: choices, repoRemote: "upstream", repoNeedsChoice: false });
+    handler = (command) => (command === "gh_pr_create" ? new Error("gh/ambiguous_repo") : null);
+    renderBar();
+    const line = await screen.findByTestId("scm-repo-choice");
+    expect(line.textContent).toContain(zh.forge.repoAt("o/r"));
+    fireEvent.click(screen.getByRole("button", { name: zh.forge.openPr }));
+    fireEvent.click(within(await screen.findByRole("dialog")).getByRole("button", { name: zh.forge.prCreate }));
+    const picker = await screen.findByRole("dialog", { name: zh.forge.repoPickTitle });
+    expect((within(picker).getAllByRole("radio") as HTMLInputElement[]).find((r) => r.checked)?.value).toBe("upstream");
+    expect(formatBackendError("gh/ambiguous_repo", "zh")).toBe("有多个 GitHub 远端，先选仓库");
+    expect(formatBackendError("gh/ambiguous_repo", "en")).toBe("Several GitHub remotes. Choose a repository first.");
+  });
+
+  it("只有一个 GitHub 远端：不出现选仓库", async () => {
+    renderBar();
+    await screen.findByRole("button", { name: zh.forge.openPr });
+    expect(screen.queryByTestId("scm-repo-choice")).toBeNull();
+  });
+
+  it("手机上同样能选仓库，选择走同一个命令", async () => {
+    remote = true;
+    status = forge({ repoChoices: choices, repoRemote: "origin", repoNeedsChoice: true });
+    renderBar();
+    fireEvent.click(within(await screen.findByTestId("scm-repo-choice")).getByRole("button", { name: zh.forge.repoPick }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(within(dialog).getByTestId("repo-confirm"));
+    await waitFor(() => expect(calls("forge_choose_repo").length).toBe(1));
   });
 });

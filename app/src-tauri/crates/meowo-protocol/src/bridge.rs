@@ -192,6 +192,14 @@ bridged_args!(GhPrMergeArgs {
     session_cwd: Option<String>
 });
 
+// 多个 GitHub 远端时选 PR 开在哪个远端的仓库（forge_choose_repo）。
+bridged_args!(ForgeChooseRepoArgs {
+    cwd: String,
+    remote: String,
+    #[serde(default)]
+    session_cwd: Option<String>
+});
+
 bridged_args!(RenameSessionArgs {
     #[serde(default)]
     cwd: Option<String>,

@@ -698,21 +698,22 @@ pub struct GitDiffSummaryDto {
     pub ahead: Option<u32>,
     pub behind: Option<u32>,
     pub files: Vec<GitChangedFileDto>,
-    /// 上游分支（如 `origin/feat`），「推送」按钮写明推到哪。没设上游、上游已被删（gone）时为 None。
-    /// 和 ahead/behind 同一条 `git status --branch` 读出，本地计数、不 fetch。旧后端不下发。
+    /// 上游分支（如 `origin/feat`、远端名带斜杠时 `team/fork/feat`），拉取来源，ahead/behind 按它算。远端与分支名
+    /// 读 branch.<b>.remote / merge 配置原样拼，不从 `远端/分支` 字符串里拆。没设上游、上游已被删（gone）、上游
+    /// 是远端默认分支而本地不是它（推送不会推到那里）时为 None。本地计数、不 fetch。旧后端不下发。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub upstream: Option<String>,
-    /// 还没推上去的提交数：有上游时等于 ahead；没上游时是不在任何远端分支上的提交数（新建的
-    /// worktree 分支第一次推之前也要看得到「有几个没推」）。没有远端、detached、没算（非选中的仓库
-    /// 且没上游）时为 None，前端不显示推送按钮。旧后端不下发。
+    /// 还没推上去的提交数：推送目标就是上游时等于 ahead；否则（没上游、pushDefault 指向别的远端）是推送远端上
+    /// 还没有的提交数（新建的 worktree 分支第一次推之前也要看得到「有几个没推」）。没有远端、detached、没算
+    /// （非选中的仓库且推送目标不是上游）时为 None，前端不显示推送按钮。旧后端不下发。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub unpushed: Option<u32>,
-    /// 「推送」实际会推到哪（如 `origin/feat`）。上游分支名和本地分支名不同（典型：`git worktree add -b feat
-    /// <路径> origin/main` 让 feat 跟踪 origin/main）时 Meowo 不推上游，改推同名远端分支并设上游，这时
-    /// upstream 为 None、这里是将要新建的 `origin/feat`（做空审查实测：照上游推会把提交推进远端 main）。
-    /// 没有远端、detached 时为 None。旧后端不下发。
+    /// 「推送」实际会推到哪（如 `origin/feat`），与 forge 的推送同一个判定（meowo-app git_target::resolve）：
+    /// 远端按 branch.<b>.pushRemote → remote.pushDefault → 上游远端 → origin；上游是远端默认分支（典型：
+    /// `git worktree add -b feat <路径> origin/main`）时改推同名分支并设上游，绝不推进默认分支；上游是别的功能
+    /// 分支（fix 跟踪 origin/bugfix-123）时推到它。没有远端、detached 时为 None。旧后端不下发。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub push_target: Option<String>,
@@ -836,6 +837,23 @@ pub struct ForgeStatusDto {
     pub pr: Option<PullRequestDto>,
     /// 还没有 PR 时，开 PR 表单的默认值。
     pub pr_defaults: Option<PrDefaultsDto>,
+    /// 多个 GitHub 远端、又没用 `gh repo set-default` 定过时，PR 可以开在哪些远端的仓库（界面上让用户选，
+    /// 选择按仓库记在 `~/.meowo/forge.json`）。只有一个 GitHub 远端或 gh 已定时为空。
+    pub repo_choices: Vec<ForgeRepoChoiceDto>,
+    /// PR 现在按哪个远端的仓库算（gh-resolved、用户选的、唯一的；没定时是暂按的 origin）。
+    pub repo_remote: Option<String>,
+    /// 多个 GitHub 远端还没定：查状态暂按 origin，开 PR / 合并返回 `gh/ambiguous_repo`，要先选。
+    pub repo_needs_choice: bool,
+}
+
+/// PR 可以开在的一个仓库：远端名 + GitHub 的 owner/repo。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct ForgeRepoChoiceDto {
+    pub remote: String,
+    pub slug: String,
 }
 
 /// 开 PR 的默认标题、正文与目标分支（本地 git 算，不联网）。

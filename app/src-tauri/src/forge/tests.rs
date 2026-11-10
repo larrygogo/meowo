@@ -733,33 +733,220 @@ fn 开_pr_上游是_origin_main_先推同名分支_head_是功能分支_不碰_m
     assert!(create.contains("--base main --head feat"), "{create}");
 }
 
-/// 做空审查：fork + upstream 两个远端、没设 gh default repo 时，gh pr view/create/merge 不带 --repo
-/// 会报 set-default。所有 pr 子命令都显式带推送目标远端（origin）推出的 owner/repo；pr view 带了
-/// --repo 之后 gh 不再认当前分支，必须把分支名作参数。
+/// 做空第一轮：fork + upstream 两个远端、没设 gh default repo 时，gh pr view/create/merge 不带 --repo
+/// 会报 set-default，所以一律显式带 --repo；pr view 带了 --repo 之后 gh 不再认当前分支，必须把分支名作参数。
+/// 做空第二轮：两个都是 GitHub 远端又没定时，静默挑 origin 会把 PR 开错仓库。查状态暂按 origin，
+/// 开 PR / 合并返回 gh/ambiguous_repo，界面给出远端列表；选了之后按选的仓库、head 带 fork owner。
 #[test]
-fn 多远端没设_default_repo_gh_调用都带_repo_与分支() {
+fn 多个_github_远端没定_查状态按_origin_开_pr_合并要先选_选了按选的仓库() {
     let sb = Sandbox::new("gh-repo");
     let repo = github_repo(&sb);
     sb.git(&repo, &["remote", "add", "upstream", "https://github.com/someone-else/meowo-pr-drill.git"]);
     let prefs = sb.root.join("forge.json");
     let caches = Caches::default();
     let open = ok(&fixture("derived_pr_no_checks.json"));
-    let fake = FakeGh { require_repo: true, ..FakeGh::new().views(vec![open.clone(), open, ok(&fixture("derived_pr_no_checks_merged.json"))]) };
+    let fake = FakeGh { require_repo: true, ..FakeGh::new().views(vec![open.clone()]) };
     let dto = status(&fake, &caches, &prefs, &repo, false);
     assert_eq!(dto.pr.map(|p| p.number), Some(12), "带 --repo 才查得到 PR");
-    let result = merge(&fake, &caches, &prefs, &repo, "squash", HEAD).unwrap();
-    assert!(result.merged);
+    assert!(dto.repo_needs_choice);
+    assert_eq!(dto.repo_remote.as_deref(), Some("origin"));
+    let choices: Vec<(String, String)> = dto.repo_choices.iter().map(|c| (c.remote.clone(), c.slug.clone())).collect();
+    assert_eq!(
+        choices,
+        vec![
+            ("origin".to_string(), "larrygogo/meowo-pr-drill".to_string()),
+            ("upstream".to_string(), "someone-else/meowo-pr-drill".to_string())
+        ]
+    );
+    let view = fake.calls.lock().unwrap().iter().find(|c| c.starts_with("pr view")).cloned().unwrap();
+    assert!(view.starts_with("pr view meowo/drill --repo larrygogo/meowo-pr-drill"), "{view}");
+    assert_eq!(merge(&fake, &caches, &prefs, &repo, "squash", HEAD), Err("gh/ambiguous_repo".into()));
+    assert_eq!(fake.count("pr merge 12"), 0);
+    let gh = |dir: &str, args: &[&str]| fake.run(dir, args);
+    let ctx = Ctx { gh: &gh, caches: &caches, prefs: prefs.clone(), env: &[] };
+    assert_eq!(pr_create_with(&ctx, &s(&repo), None, None, None, false, &|_| panic!("没定仓库不该推")), Err("gh/ambiguous_repo".into()));
+    assert_eq!(fake.count("pr create"), 0);
+
+    // 界面上选了 upstream：记在测试的 forge.json 里，按公共 .git 目录。
+    assert_eq!(choose_repo_with(&prefs, &s(&repo), "nope", &[]), Err("git/no_remote".into()));
+    choose_repo_with(&prefs, &s(&repo), "upstream", &[]).unwrap();
+    assert!(std::fs::read_to_string(&prefs).unwrap().contains("\"repoRemote\""));
+    let fake = FakeGh { require_repo: true, ..FakeGh::new().views(vec![open.clone(), open.clone(), ok(&fixture("derived_pr_no_checks_merged.json"))]) };
+    let dto = status(&fake, &caches, &prefs, &repo, false);
+    assert!(!dto.repo_needs_choice);
+    assert_eq!((dto.repo_remote.as_deref(), dto.repo_choices.len()), (Some("upstream"), 2), "选过之后还能换");
+    assert_eq!(dto.repo_url.as_deref(), Some("https://github.com/someone-else/meowo-pr-drill"));
+    assert!(merge(&fake, &caches, &prefs, &repo, "squash", HEAD).unwrap().merged);
     let calls = fake.calls.lock().unwrap().clone();
     let view = calls.iter().find(|c| c.starts_with("pr view")).unwrap();
-    assert!(view.starts_with("pr view meowo/drill --repo larrygogo/meowo-pr-drill"), "{view}");
+    assert!(view.starts_with("pr view larrygogo:meowo/drill --repo someone-else/meowo-pr-drill"), "{view}");
     let merge_call = calls.iter().find(|c| c.starts_with("pr merge 12")).unwrap();
-    assert!(merge_call.contains("--repo larrygogo/meowo-pr-drill"), "{merge_call}");
+    assert!(merge_call.contains("--repo someone-else/meowo-pr-drill"), "{merge_call}");
+    assert_eq!(last_merge_method(&prefs, "someone-else/meowo-pr-drill").as_deref(), Some("squash"), "合并方式按 PR 所在仓库记");
 
-    let fake = FakeGh { require_repo: true, ..FakeGh::new().views(vec![ok(&fixture("derived_pr_no_checks.json"))]) };
+    let fake = FakeGh { require_repo: true, ..FakeGh::new().views(vec![open]) };
     let gh = |dir: &str, args: &[&str]| fake.run(dir, args);
     let ctx = Ctx { gh: &gh, caches: &Caches::default(), prefs: prefs.clone(), env: &[] };
     let push = |_: &str| Ok(PushResultDto { remote: "origin".into(), branch: "meowo/drill".into(), set_upstream: true, pushed: 1 });
     pr_create_with(&ctx, &s(&repo), None, None, None, false, &push).unwrap();
     let create = fake.calls.lock().unwrap().iter().find(|c| c.starts_with("pr create")).cloned().unwrap();
-    assert!(create.contains("--repo larrygogo/meowo-pr-drill"), "{create}");
+    assert!(create.ends_with("--head larrygogo:meowo/drill --repo someone-else/meowo-pr-drill"), "{create}");
+}
+
+/// 只有一个 GitHub 远端（另一个是公司 GitLab 镜像）：直接用它，不要求选。
+#[test]
+fn 只有一个_github_远端_直接用_不要求选() {
+    let sb = Sandbox::new("gh-one");
+    let repo = github_repo(&sb);
+    sb.git(&repo, &["remote", "add", "mirror", "https://gitlab.com/o/meowo-pr-drill.git"]);
+    let prefs = sb.root.join("forge.json");
+    let dto = status(&FakeGh::new(), &Caches::default(), &prefs, &repo, false);
+    assert!(!dto.repo_needs_choice && dto.repo_choices.is_empty());
+    assert_eq!(dto.repo_url.as_deref(), Some("https://github.com/larrygogo/meowo-pr-drill"));
+}
+
+// ═══ 推送 / PR 目标判定（做空第二轮，scratchpad/redteam2r 的 rt2_ 实验转正）═══
+
+fn has_branch(bare: &Path, branch: &str) -> bool {
+    std::process::Command::new("git")
+        .arg("-C")
+        .arg(bare)
+        .args(["rev-parse", "--verify", "-q", &format!("refs/heads/{branch}")])
+        .output()
+        .unwrap()
+        .status
+        .success()
+}
+
+/// 做空第二轮 rt2_远端名带斜杠：远端叫 team/fork，feat 跟踪同名的 team/fork/feat。以前摘要用
+/// split_once('/') 把上游拆成「team」+「fork/feat」，认不出同名上游：upstream 丢了、pushTarget 写成
+/// origin/feat，推送却去了 team/fork（摘要与真实去向不一致）。
+#[test]
+fn 目标判定_远端名带斜杠_摘要认出上游且与推送去向一致() {
+    let sb = Sandbox::new("tgt-slash");
+    let (repo, origin) = sb.repo_with_remote("r");
+    let fork = sb.bare("fork.git");
+    sb.git(&repo, &["remote", "add", "team/fork", &fork.to_string_lossy()]);
+    sb.git(&repo, &["push", "-q", "-u", "team/fork", "feat"]);
+    sb.commit(&repo, "c.txt", "feat: c");
+    let summary = git_diff_summary_blocking(&s(&repo)).unwrap();
+    assert_eq!(
+        (summary.upstream.as_deref(), summary.ahead, summary.unpushed, summary.push_target.as_deref()),
+        (Some("team/fork/feat"), Some(1), Some(1), Some("team/fork/feat")),
+        "带斜杠的远端名：上游、领先数、未推数、推送目标"
+    );
+    let result = push(&sb, &repo).unwrap();
+    assert_eq!(result, PushResultDto { remote: "team/fork".into(), branch: "feat".into(), set_upstream: false, pushed: 1 });
+    assert_eq!(sb.git(&fork, &["rev-parse", "feat"]), sb.git(&repo, &["rev-parse", "HEAD"]));
+    assert!(!has_branch(&origin, "feat"), "不该推到 origin");
+}
+
+/// 做空第二轮 rt2_本地名与上游功能分支不同名：`git switch -c fix --track origin/bugfix-123`。上游是别人的
+/// 功能分支（不是默认分支），用户的跟踪关系要尊重：推到 bugfix-123、不新建远端 fix、上游不改。
+/// 以前「上游不同名一律推同名分支」：推出一个远端 fix 并把上游改成 origin/fix，bugfix-123 没动。
+#[test]
+fn 目标判定_跟踪不同名的功能分支_推到这个上游_不另建同名分支() {
+    let sb = Sandbox::new("tgt-rename");
+    let (repo, remote) = sb.repo_with_remote("r");
+    sb.git(&repo, &["push", "-q", "origin", "feat:bugfix-123"]);
+    sb.git(&repo, &["fetch", "-q"]);
+    sb.git(&repo, &["switch", "-q", "-c", "fix", "--track", "origin/bugfix-123"]);
+    sb.commit(&repo, "f.txt", "fix: f");
+    let summary = git_diff_summary_blocking(&s(&repo)).unwrap();
+    assert_eq!(
+        (summary.upstream.as_deref(), summary.ahead, summary.unpushed, summary.push_target.as_deref()),
+        (Some("origin/bugfix-123"), Some(1), Some(1), Some("origin/bugfix-123"))
+    );
+    let result = push(&sb, &repo).unwrap();
+    assert_eq!(result, PushResultDto { remote: "origin".into(), branch: "bugfix-123".into(), set_upstream: false, pushed: 1 });
+    assert_eq!(sb.git(&remote, &["rev-parse", "bugfix-123"]), sb.git(&repo, &["rev-parse", "HEAD"]), "推进了跟踪的 bugfix-123");
+    assert!(!has_branch(&remote, "fix"), "不该另建远端 fix");
+    assert_eq!(sb.git(&repo, &["rev-parse", "--abbrev-ref", "fix@{upstream}"]), "origin/bugfix-123", "上游不改");
+}
+
+/// 同上，PR 这一侧：PR 的 head 是推去的远端分支 bugfix-123，查 PR、开 PR、compare 链接都按它。
+#[test]
+fn 目标判定_跟踪不同名的功能分支_pr_按上游分支查和开() {
+    let sb = Sandbox::new("tgt-rename-pr");
+    let repo = github_repo(&sb);
+    let head = sb.git(&repo, &["rev-parse", "HEAD"]);
+    sb.git(&repo, &["update-ref", "refs/remotes/origin/bugfix-123", &head]);
+    sb.git(&repo, &["config", "branch.meowo/drill.remote", "origin"]);
+    sb.git(&repo, &["config", "branch.meowo/drill.merge", "refs/heads/bugfix-123"]);
+    let prefs = sb.root.join("forge.json");
+    let fake = FakeGh::new();
+    let dto = status(&fake, &Caches::default(), &prefs, &repo, false);
+    assert_eq!(dto.compare_url.as_deref(), Some("https://github.com/larrygogo/meowo-pr-drill/compare/main...bugfix-123?expand=1"));
+    let view = fake.calls.lock().unwrap().iter().find(|c| c.starts_with("pr view")).cloned().unwrap();
+    assert!(view.starts_with("pr view bugfix-123 --repo larrygogo/meowo-pr-drill"), "{view}");
+
+    let fake = FakeGh::new().views(vec![ok(&fixture("derived_pr_no_checks.json"))]);
+    let gh = |dir: &str, args: &[&str]| fake.run(dir, args);
+    let ctx = Ctx { gh: &gh, caches: &Caches::default(), prefs, env: &[] };
+    pr_create_with(&ctx, &s(&repo), None, None, None, false, &|_| panic!("已推到上游，不该再推")).unwrap();
+    let create = fake.calls.lock().unwrap().iter().find(|c| c.starts_with("pr create")).cloned().unwrap();
+    assert!(create.contains("--base main --head bugfix-123 --repo larrygogo/meowo-pr-drill"), "{create}");
+}
+
+/// 做空第二轮 rt2_push_default_与同名上游：feat 跟踪 origin/feat，remote.pushDefault=fork。git 原生 push
+/// 去 fork（pushDefault 优先于 branch.<b>.remote）；以前 Meowo 沿用同名上游推回 origin，摘要也写 origin/feat。
+/// 再看 branch.<b>.pushRemote 压过 pushDefault。
+#[test]
+fn 目标判定_push_default_与_push_remote_优先于上游远端_与_git_一致() {
+    let sb = Sandbox::new("tgt-pushdefault");
+    let (repo, origin) = sb.repo_with_remote("r");
+    let fork = sb.bare("fork.git");
+    sb.git(&repo, &["remote", "add", "fork", &fork.to_string_lossy()]);
+    sb.git(&repo, &["push", "-q", "-u", "origin", "feat"]);
+    let origin_feat = sb.git(&origin, &["rev-parse", "feat"]);
+    sb.git(&repo, &["config", "remote.pushDefault", "fork"]);
+    sb.commit(&repo, "c.txt", "feat: c");
+    let summary = git_diff_summary_blocking(&s(&repo)).unwrap();
+    // fork 上什么都没有：四个提交（init、a、b、c）都要推过去。上游照旧是拉取来源 origin/feat。
+    assert_eq!(
+        (summary.upstream.as_deref(), summary.unpushed, summary.push_target.as_deref()),
+        (Some("origin/feat"), Some(4), Some("fork/feat"))
+    );
+    let result = push(&sb, &repo).unwrap();
+    assert_eq!(result, PushResultDto { remote: "fork".into(), branch: "feat".into(), set_upstream: false, pushed: 4 });
+    assert_eq!(sb.git(&fork, &["rev-parse", "feat"]), sb.git(&repo, &["rev-parse", "HEAD"]));
+    assert_eq!(sb.git(&origin, &["rev-parse", "feat"]), origin_feat, "origin/feat 不动");
+    assert_eq!(sb.git(&repo, &["config", "--get", "branch.feat.remote"]), "origin", "跟踪关系不改");
+
+    let other = sb.bare("other.git");
+    sb.git(&repo, &["remote", "add", "other", &other.to_string_lossy()]);
+    sb.git(&repo, &["config", "branch.feat.pushRemote", "other"]);
+    let summary = git_diff_summary_blocking(&s(&repo)).unwrap();
+    assert_eq!(summary.push_target.as_deref(), Some("other/feat"), "branch.<b>.pushRemote 压过 remote.pushDefault");
+}
+
+/// 做空第二轮 rt2_fork_工作流_set_default_被无视：origin 是自己的 fork，upstream 是上游仓库，已
+/// `gh repo set-default upstream`（gh 写 remote.upstream.gh-resolved=base）。PR 应开在上游仓库、head 写
+/// `<fork owner>:<分支>`；以前一律 `--repo` origin，PR 开到了自己的 fork 里。
+#[test]
+fn 目标判定_fork_工作流_认_gh_set_default_head_带_fork_owner() {
+    let sb = Sandbox::new("tgt-fork");
+    let repo = github_repo(&sb);
+    sb.git(&repo, &["remote", "add", "upstream", "https://github.com/someone-else/meowo-pr-drill.git"]);
+    sb.git(&repo, &["config", "remote.upstream.gh-resolved", "base"]);
+    let prefs = sb.root.join("forge.json");
+    let fake = FakeGh::new();
+    let dto = status(&fake, &Caches::default(), &prefs, &repo, false);
+    assert_eq!(dto.repo_url.as_deref(), Some("https://github.com/someone-else/meowo-pr-drill"));
+    assert_eq!(
+        dto.compare_url.as_deref(),
+        Some("https://github.com/someone-else/meowo-pr-drill/compare/main...larrygogo:meowo/drill?expand=1")
+    );
+    let calls = fake.calls.lock().unwrap().clone();
+    assert!(calls.iter().any(|c| c.starts_with("repo view someone-else/meowo-pr-drill ")), "合并方式按上游仓库查：{calls:?}");
+    let view = calls.iter().find(|c| c.starts_with("pr view")).unwrap();
+    assert!(view.starts_with("pr view larrygogo:meowo/drill --repo someone-else/meowo-pr-drill"), "{view}");
+
+    let fake = FakeGh::new().views(vec![ok(&fixture("derived_pr_no_checks.json"))]);
+    let gh = |dir: &str, args: &[&str]| fake.run(dir, args);
+    let ctx = Ctx { gh: &gh, caches: &Caches::default(), prefs, env: &[] };
+    let push = |_: &str| Ok(PushResultDto { remote: "origin".into(), branch: "meowo/drill".into(), set_upstream: true, pushed: 1 });
+    pr_create_with(&ctx, &s(&repo), None, None, None, false, &push).unwrap();
+    let create = fake.calls.lock().unwrap().iter().find(|c| c.starts_with("pr create")).cloned().unwrap();
+    assert!(create.ends_with("--base main --head larrygogo:meowo/drill --repo someone-else/meowo-pr-drill"), "{create}");
 }

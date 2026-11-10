@@ -7,9 +7,12 @@
 ///   ≥60s 一次、隐藏时 0 次」）。
 /// - 合并确认框写明合进哪、用什么方式（只列仓库允许的，默认上次用的），CI 有失败或在跑时不能点，有冲突时
 ///   引导去网页。手机上多一道「确认合并」。合并后会话所在 worktree 可以清理就提示，不自动删。
+/// - 多个 GitHub 远端、gh 没定默认仓库时（做空第二轮）：在这里列出远端让用户选 PR 开在哪个仓库，后端按仓库
+///   记住；没选之前开 PR / 合并不可用。不让用户去终端跑 gh repo set-default（产品标准：别让用户去终端收拾）。
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  forgeChooseRepo,
   getForgeStatus,
   ghPrCreate,
   ghPrMerge,
@@ -67,12 +70,13 @@ export function useForgeStatus(root: string, sessionCwd: string | null, active: 
   return { forge, refresh: load };
 }
 
-type Busy = "push" | "pr" | "merge" | null;
+type Busy = "push" | "pr" | "merge" | "repo" | null;
 
 /// 合并按钮能不能点、不能点时说什么。
 export function mergeBlock(t: ReturnType<typeof useT>, forge: ForgeStatusDto, pr: PullRequestDto): string | null {
   // 草稿 PR GitHub 不让合并：按钮灰着要说清楚为什么（做空审查：以前只是灰着，没有原因）。
   if (pr.state === "draft") return t.forge.mergeBlockedDraft;
+  if (forge.repoNeedsChoice) return t.forge.repoNeedsChoice;
   if (forge.ghTooOld) return t.forge.mergeTooOld;
   if (forge.mergeMethods.length === 0) return t.forge.mergeNoMethods;
   if (pr.checksSummary === "fail") return t.forge.mergeBlockedFail;
@@ -104,14 +108,17 @@ export function ForgeBar({ repo, sessionCwd, sessionId, active, onChanged }: {
   const [mergeDlg, setMergeDlg] = useState<{ pr: PullRequestDto; method: string; step: 1 | 2 } | null>(null);
   const [cleanup, setCleanup] = useState<WorktreeStatusDto | null>(null);
   const [cleanState, setCleanState] = useState<"idle" | "busy">("idle");
+  const [repoDlg, setRepoDlg] = useState<string | null>(null);
 
   const summary = repo.summary;
   const branch = summary.branch;
   // 旧后端没有 unpushed：有上游时 ahead 就是未推数。
   const unpushed = summary.unpushed ?? (summary.upstream ? summary.ahead : null) ?? 0;
-  const pushTarget = summary.upstream ?? null;
-  // 没上游、或上游不是同名分支（后端按没上游下发）：推送会新建同名远端分支并设为上游，写明推去哪。
-  const pushNew = !pushTarget ? summary.pushTarget ?? null : null;
+  // 推去哪以后端的判定为准（git_target::resolve）：pushDefault 指向 fork 时上游是 origin/feat，推的却是
+  // fork/feat（做空第二轮）。旧后端没有 pushTarget 时退回上游。
+  const pushTarget = summary.pushTarget ?? summary.upstream ?? null;
+  // 没上游、或上游是默认分支（后端按没上游下发）：推送会新建远端分支并设为上游。
+  const pushNew = !summary.upstream;
 
   const fail = (e: unknown) => {
     const raw = typeof e === "string" ? e : e instanceof Error ? e.message : String(e);
@@ -168,6 +175,8 @@ export function ForgeBar({ repo, sessionCwd, sessionId, active, onChanged }: {
     } catch (e) {
       // 已经有 PR：关掉表单，刷新就能看到它。
       if (String(e).startsWith("gh/pr_exists")) setPrForm(null);
+      // 状态刷新前别处改了远端：后端说要先选仓库，直接把选择框打开。
+      if (String(e) === "gh/ambiguous_repo") openRepoPicker();
       fail(e);
     } finally {
       setBusy(null);
@@ -196,11 +205,32 @@ export function ForgeBar({ repo, sessionCwd, sessionId, active, onChanged }: {
           .catch(() => {});
       }
     } catch (e) {
+      if (String(e) === "gh/ambiguous_repo") openRepoPicker();
       fail(e);
     } finally {
       setBusy(null);
       refresh(true);
       onChanged();
+    }
+  };
+
+  const openRepoPicker = () => {
+    if (!forge || forge.repoChoices.length === 0) return;
+    setPrForm(null);
+    setRepoDlg(forge.repoRemote ?? forge.repoChoices[0].remote);
+  };
+  const chooseRepo = async () => {
+    if (!repoDlg) return;
+    const remote = repoDlg;
+    setRepoDlg(null);
+    begin("repo");
+    try {
+      await forgeChooseRepo(root, remote, sessionCwd);
+    } catch (e) {
+      fail(e);
+    } finally {
+      setBusy(null);
+      refresh(true);
     }
   };
 
@@ -253,7 +283,7 @@ export function ForgeBar({ repo, sessionCwd, sessionId, active, onChanged }: {
     <div className="scm-forge" data-testid="scm-forge">
       {showPush && (
         <button type="button" className="scm-forge-btn" disabled={busy !== null}
-          data-tip={pushTarget ? t.forge.pushTip(pushTarget) : pushNew ? t.forge.pushNewTip(pushNew) : t.forge.publishTip} onClick={() => void push()}>
+          data-tip={pushTarget ? (pushNew ? t.forge.pushNewTip(pushTarget) : t.forge.pushTip(pushTarget)) : t.forge.publishTip} onClick={() => void push()}>
           <PushIcon />
           {busy === "push" ? t.forge.pushing : t.forge.push(unpushed)}
         </button>
@@ -300,11 +330,27 @@ export function ForgeBar({ repo, sessionCwd, sessionId, active, onChanged }: {
         </div>
       )}
 
+      {showPr && forge && forge.repoChoices.length > 0 && (
+        forge.repoNeedsChoice
+          ? (
+            <div className="scm-notice scm-cleanup" data-testid="scm-repo-choice">
+              <span>{t.forge.repoNeedsChoice}</span>
+              <button type="button" className="scm-link-btn" disabled={busy !== null} onClick={openRepoPicker}>{t.forge.repoPick}</button>
+            </div>
+          )
+          : (
+            <div className="scm-notice scm-cleanup" data-testid="scm-repo-choice">
+              <span>{t.forge.repoAt(forge.repoChoices.find((c) => c.remote === forge.repoRemote)?.slug ?? forge.repoRemote ?? "")}</span>
+              <button type="button" className="scm-link-btn" disabled={busy !== null} onClick={openRepoPicker}>{t.forge.repoChange}</button>
+            </div>
+          )
+      )}
+
       {showPr && !pr && forge?.prDefaults && (
         ghOk
           ? (
             <button type="button" className="scm-forge-btn is-ghost" disabled={busy !== null}
-              onClick={() => setPrForm({ title: forge.prDefaults!.title, body: forge.prDefaults!.body, draft: false })}>
+              onClick={() => forge.repoNeedsChoice ? openRepoPicker() : setPrForm({ title: forge.prDefaults!.title, body: forge.prDefaults!.body, draft: false })}>
               {t.forge.openPr}
             </button>
           )
@@ -354,6 +400,26 @@ export function ForgeBar({ repo, sessionCwd, sessionId, active, onChanged }: {
             <button type="button" className="ns-btn is-primary" disabled={busy !== null || !prForm.title.trim()} onClick={() => void createPr()}>
               {busy === "pr" ? t.forge.prCreating : t.forge.prCreate}
             </button>
+          </div>
+        </AppModal>
+      )}
+
+      {repoDlg && forge && (
+        <AppModal label={t.forge.repoPickTitle} onClose={() => setRepoDlg(null)}>
+          <div className="chat-modal-title">{t.forge.repoPickTitle}</div>
+          <div className="ns-field" role="radiogroup" aria-label={t.forge.repoPickTitle}>
+            {forge.repoChoices.map((choice) => (
+              <label key={choice.remote} className="scm-merge-method">
+                <input type="radio" name="forge-repo" value={choice.remote} checked={repoDlg === choice.remote}
+                  onChange={() => setRepoDlg(choice.remote)} />
+                {choice.slug} <span className="scm-check-wf">{choice.remote}</span>
+              </label>
+            ))}
+          </div>
+          <div className="scm-discard-repo">{t.forge.repoPickNote}</div>
+          <div className="chat-modal-actions">
+            <button type="button" className="ns-btn" onClick={() => setRepoDlg(null)}>{t.newSession.cancel}</button>
+            <button type="button" className="ns-btn is-primary" data-testid="repo-confirm" onClick={() => void chooseRepo()}>{t.forge.repoConfirm}</button>
           </div>
         </AppModal>
       )}
