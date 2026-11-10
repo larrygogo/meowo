@@ -1337,7 +1337,14 @@ fn discard_with(cwd: &str, paths: &[String], trash: TrashFn) -> Result<(), Strin
                 to_trash.push(full);
             }
         }
-        trash(&to_trash)
+        // 只放弃了符号链接（已在上面直接删掉）时没有要进回收站的：不调回收站。CI 的 Linux/macOS
+        // 能建链接，discard_untracked_symlink_removes_link_only 注入必败回收站钉住这条（本机 Windows
+        // 无开发者模式建不了链接，该测试跳过，第一次整批化时漏在这里）。
+        if to_trash.is_empty() {
+            Ok(())
+        } else {
+            trash(&to_trash)
+        }
     })();
     invalidate_caches();
     result
@@ -2220,6 +2227,18 @@ mod tests {
 ").unwrap();
         discard_with(&s(&repo), &["new.txt".into()], fake_trash_ok).unwrap();
         assert!(std::fs::symlink_metadata(repo.join("new.txt")).is_err());
+        assert!(statuses(&repo).is_empty());
+    }
+
+    /// 没有未跟踪文件要回收时不调回收站：只放弃已跟踪文件的改动，注入必败回收站也得成功。
+    /// 整批化后曾对空清单照调回收站，CI 的 Linux/macOS 上符号链接用例因此挂掉；本机 Windows
+    /// 建不了链接，这条用例在任何平台都能钉住同一个缺陷。
+    #[test]
+    fn discard_tracked_only_never_touches_recycle_bin() {
+        let sb = Sandbox::new("discard-no-trash");
+        let repo = sb.repo("r");
+        std::fs::write(repo.join("README.md"), "changed\n").unwrap();
+        discard_with(&s(&repo), &["README.md".into()], fake_trash_fail).unwrap();
         assert!(statuses(&repo).is_empty());
     }
 
