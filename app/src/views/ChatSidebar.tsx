@@ -730,6 +730,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
       if (star !== 0) return star;
       return 0;
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- sortMode 是重排信号，切排序方式时按置顶再排一次，保留原行为
   }, [sessions, starred, sortMode]);
 
   const groups = useMemo(() => {
@@ -865,7 +866,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
     unfoldedForRef.current = activeId;
     if (folded.has(home.key)) toggleFolded(home.key);
     // folded 不进依赖：只在会话切换/分组就位时判一次，用户之后折起不该触发重新展开。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- folded 不进依赖，用户之后折起不该触发重新展开
   }, [groups, activeId]);
 
   // C-17：侧栏列表 roving tabindex——上百条会话只占一个 Tab 停靠点，↑↓/Home/End 在

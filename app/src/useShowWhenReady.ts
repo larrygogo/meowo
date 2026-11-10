@@ -43,6 +43,6 @@ export function useShowWhenReady(opts?: { focus?: boolean; enabled?: boolean; re
       cancelAnimationFrame(raf2);
     };
     // focus/enabled 是挂载时刻的一次性配置；ready 是响应式闸门，翻 true 才 show。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- focus/enabled 是挂载时的一次性配置，只按 ready 闸门触发
   }, [ready]);
 }

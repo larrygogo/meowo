@@ -585,6 +585,7 @@ export function ChatWindow() {
     const hasAnything =
       history.items.length > 0 || !!history.lastUserText || !!history.lastAiText;
     if (history.background && !hasAnything) setView("terminal");
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- setView 是本组件 useCallback([]) 包出来的，引用稳定
   }, [history]);
   // 后台会话(Agent 自己托管的,见 LiveSession.background):画面不在托管 PTY 表里,要先接上
   // 那条旁路 socket,终端页才有东西可看。background 每次翻真都接(后端 attach 幂等,活着
@@ -762,6 +763,7 @@ export function ChatWindow() {
   // 侧栏回调的稳定引用:ChatSidebar 已 memo,内联箭头函数每次击键都换新引用会让 memo
   // 失效——composer 每个字符都重建整张会话列表(上百条 item)就是这么来的。
   const collapseSidebar = useCallback(() => toggleSidebarRef.current(), []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 来自 useSidebarLayout 的 useState setter，引用稳定
   const closeOverlaySidebar = useCallback(() => setOverlaySidebar(false), []);
   // 远程记住最后看的会话:刷新/重开页面直接回到它(桌面开窗恒带 query,不用这条)。
   useEffect(() => {
@@ -809,6 +811,7 @@ export function ChatWindow() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- setView 是本组件 useCallback([]) 包出来的，引用稳定
   }, []);
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   // 模型市场（完整清单：搜索、收藏、切换引擎）。模型按钮先开就地菜单，「更多模型…」才进这里。
@@ -1274,7 +1277,7 @@ export function ChatWindow() {
       document.removeEventListener("visibilitychange", onVisible);
     };
     // 文法按值指纹入依赖(理由见 grammarKey);实时值走 ref,不吃陈旧闭包。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 文法按值指纹 grammarKey 入依赖，实时值走 ref
   }, [sessionId, startupAttentionMarkerKey, terminalInteractivePrompt, revealTerminalAttention, grammarKey]);
   // ↑ 取回历史消息(CLI 惯例):空输入框按 ↑ 进入浏览,↑/↓ 前后翻,翻回最新即回到空框;
   // 一旦手动编辑退出浏览态(当前文本保留成草稿)。只浏览自己发过的 user_text。
@@ -1510,6 +1513,7 @@ export function ChatWindow() {
       }
     })();
     return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 来自聊天滚动 hook 的 ref 对象，引用稳定
   }, [sessionId, history?.predecessorId, prefixSegments.length]);
   // 渲染序列 = 前序段（含段间与当前段的分隔条）+ 当前会话消息。分隔条的展示名在渲染期
   // 解析（agentsForOptions 可能晚于拉取到达），拿不到就退回 provider id。
@@ -1636,6 +1640,7 @@ export function ChatWindow() {
     children.observe(el, { childList: true });
     rewatch();
     return () => { sizes.disconnect(); children.disconnect(); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 来自聊天滚动 hook 的 ref 对象，引用稳定
   }, []);
 
   /// claim=true:临时负 id 被认领成真 id。这不是换会话——同一个 PTY、同一个 CLI 进程,只是
@@ -1762,6 +1767,7 @@ export function ChatWindow() {
       setLoading(false);
     }
     setSessionId(id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 这些都是拆出去的 hook 里的 useState setter 或 useCallback，引用稳定
   }, []);
   // Alt+↑/↓ 切到侧栏里的上一条/下一条会话（对照 Kimi 的「上一条/下一条」）：按用户眼前的
   // 顺序走（分组、筛选、排序都算上，同归档跳转用的那份镜像），挨个过一遍在跑的会话不必摸鼠标。
@@ -1783,6 +1789,7 @@ export function ChatWindow() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 来自 useMainPages 的 useCallback([])，引用稳定
   }, [resetTo]);
   // Alt/Option+Shift+↓ 跳到下一个待批准、提问或出错的会话（二期 #5，leader 定：按侧栏顺序、
   // 循环、不另起视图）。贴纸下线后没有「等待中」聚合入口，多开时挨个点侧栏找谁在等太慢。
@@ -1818,6 +1825,7 @@ export function ChatWindow() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 来自 useMainPages 的 useCallback([])，引用稳定
   }, [resetTo]);
   // 窄窗抽屉里的选中:先收抽屉再切(resetTo 自带同 id 守卫)。稳定引用给 memo 的
   // ChatSidebar 用,理由见 collapseSidebar。
@@ -2025,6 +2033,7 @@ export function ChatWindow() {
       if (cancelled) fn(); else un = fn;
     }).catch(() => {});
     return () => { cancelled = true; un?.(); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 来自 useMainPages 的 useCallback([])，引用稳定
   }, [resetTo]);
 
   // 题面的轮询兜底在 useApprovalChannel 的 pendingInteraction 合并轮询里（同一次 IPC
@@ -2064,6 +2073,7 @@ export function ChatWindow() {
       setSendError(remoteUi() ? t.chat.questionExpiredRemote : t.chat.questionExpired);
     }, 180_000);
     return () => window.clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 来自 useApprovalChannel 的 useState setter 与 ref，引用稳定
   }, [structuredQuestion, sessionId, t]);
   // 作答卡不显示倒计时：提问不限时（用户要求 2026-11-09，broker 等待上限见 QUESTION_WAIT_SECS），
   // 一直等到作答、「去终端页」交还或 agent 取消。
@@ -2111,12 +2121,14 @@ export function ChatWindow() {
       setDismissedQuestion(null);
       if (sessionId > 0) void dismissInteractiveQuestion(sessionId).catch(() => {});
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 来自 useApprovalChannel 的 useState setter 与 ref，引用稳定
   }, [watchedQuestion, structuredQuestion, dismissedQuestion, sessionId, history, items]);
 
   useEffect(() => {
     // transcript 的 pendingReview 比 broker 的实时状态慢一拍。只有历史状态确实清空后，
     // 才重新启用“去终端处理”的兼容提示，避免 GUI 审批完成时闪一下旧提示。
     if (!history?.pendingReview) setBrokerOwnsReview(false);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 来自 useApprovalChannel 的 useState setter 与 ref，引用稳定
   }, [history?.pendingReview]);
 
   // 终端页会把焦点交给 xterm（且 footer 整个卸载，回来的 textarea 是全新节点）；
@@ -2218,6 +2230,7 @@ export function ChatWindow() {
     }, { root: scrollRef.current ?? null, rootMargin: "200px 0px 0px 0px" });
     observer.observe(node);
     return () => observer.disconnect();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 来自聊天滚动 hook 的 ref 对象，引用稳定
   }, [hasEarlier, loadingEarlier, earlierError, loading]);
 
   // 面板终端里有程序在跑时先确认（标题栏按钮与系统原生关闭都经过这里，见 windowClose.ts）。
@@ -3450,6 +3463,7 @@ export function ChatWindow() {
       setDragHover(event.payload.type === "enter");
     }).then((fn) => { if (cancelled) fn(); else un = fn; }).catch(() => {});
     return () => { cancelled = true; un?.(); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 来自 useMainPages 的 ref 与 useCallback([])，引用稳定
   }, []);
   const decideApproval = async (choice: string) => {
     if (!approval || resolvingApproval) return;
@@ -3953,6 +3967,7 @@ export function ChatWindow() {
     try { localStorage.removeItem(REMOTE_LAST_SESSION_KEY); } catch { /* 隐私模式退化为每次手选 */ }
     setOverlaySidebar(false);
     resetTo(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 来自 useSidebarLayout 的 useState setter，引用稳定
   }, [resetTo]);
   // 手机「列表 → 会话」接上浏览器历史（用户问「会话页向右滑能不能返回」）：进会话压一条
   // 历史记录，iPhone Safari 的左缘右滑、安卓返回键就回到会话列表——此前导航全在页内，

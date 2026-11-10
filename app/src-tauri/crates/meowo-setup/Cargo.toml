@@ -11,15 +11,16 @@ publish = false
 
 # GUI 依赖全部锁在 Windows 目标下：CI 的 macos 矩阵跑 --workspace，
 # 非 Windows 只编译 logic 纯逻辑（单测宿主）+ 空 main，零成本过编译。
-# 版本与 Cargo.lock 现有解析对齐（wry/tao 与 tauri 2.11 同源），不引新审计面。
+# wry/tao 与 tauri（2.12，经 tauri-runtime-wry）用同一版本：Cargo.lock 里只留一份，不重复编译、不多一份审计面。
+# tauri 升级后这里跟着升（2026-11-10 从 0.55/0.35 升到 0.57/0.37，接口未变，零代码改动）。
 # build-dependencies 的 cfg 按 HOST 解析：mac CI 矩阵不装不编，Windows 构建机才用。
 # embed-resource 3.x 已在 Cargo.lock（tauri-build 依赖链），零新增审计面。
 [target.'cfg(windows)'.build-dependencies]
 embed-resource = "3"
 
 [target.'cfg(windows)'.dependencies]
-wry = "0.55"
-tao = "0.35"
+wry = "0.57"
+tao = "0.37"
 rfd = "0.16"
 winreg = "0.55"
 semver = "1"

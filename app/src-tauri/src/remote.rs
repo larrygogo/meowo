@@ -1954,13 +1954,20 @@ fn cache_control_for(rel: &str) -> &'static str {
     }
 }
 
+/// debug 下仓库内的 dist-mobile。包目录取运行时环境变量（tauri dev 经 cargo run 启动，
+/// cargo 会设它），不用编译期 env!()：多个 worktree 共用 CARGO_TARGET_DIR 时产物会被
+/// 复用，env!() 烙进去的是别的 worktree 的路径（meowo-setup build.rs 同病，2026-11-10
+/// 复现脚本实测）。没设或目录不在返回 None，由调用方退回打包资源。
+#[cfg_attr(not(debug_assertions), allow(dead_code))]
+fn dev_static_root(manifest_dir: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
+    let dev = PathBuf::from(manifest_dir?).join("../dist-mobile");
+    dev.is_dir().then_some(dev)
+}
+
 fn static_root(app: &tauri::AppHandle) -> Option<PathBuf> {
     #[cfg(debug_assertions)]
-    {
-        let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../dist-mobile");
-        if dev.is_dir() {
-            return Some(dev);
-        }
+    if let Some(dev) = dev_static_root(std::env::var_os("CARGO_MANIFEST_DIR").as_deref()) {
+        return Some(dev);
     }
     // tauri.conf.json 用 map 形式 `resources: { "../dist-mobile": "dist-mobile" }` 打包:
     // 落点钉在 resource_dir()/dist-mobile。列表形式 `["../dist-mobile"]` 在 tauri-cli
@@ -2017,6 +2024,20 @@ fn mime_for(ext: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dev_static_root_follows_runtime_manifest_dir() {
+        // 运行时给哪个包目录就找它旁边的 dist-mobile；没给或目录不在 → None 交给打包资源兜底
+        let base = std::env::temp_dir().join(format!("meowo-dev-root-{}", std::process::id()));
+        let manifest = base.join("src-tauri");
+        std::fs::create_dir_all(&manifest).unwrap();
+        assert_eq!(dev_static_root(Some(manifest.as_os_str())), None);
+        std::fs::create_dir_all(base.join("dist-mobile")).unwrap();
+        let got = dev_static_root(Some(manifest.as_os_str())).unwrap();
+        assert!(got.ends_with("dist-mobile") && got.starts_with(&manifest));
+        assert_eq!(dev_static_root(None), None);
+        let _ = std::fs::remove_dir_all(&base);
+    }
 
     #[test]
     fn token_compare_rejects_mismatch_and_empty() {

@@ -113,7 +113,7 @@ export function I18nProvider({ children, initial }: { children: ReactNode; initi
   useEffect(() => {
     if (!shown) setLangRef.current(wanted.current);
   // 只在挂载时补一次；之后的切换走下面的订阅。
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 只在挂载时补取首个字典，之后的切换走订阅
   }, []);
   const lang = shown?.lang;
   // <html lang> 跟随当前语言（屏幕阅读器朗读、字体回退、连字符断行都依赖它）。

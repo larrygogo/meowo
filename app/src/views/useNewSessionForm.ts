@@ -161,6 +161,7 @@ export function useNewSessionForm(startCwd: string, startProvider: AgentId | nul
       })
       .catch(() => {});
     reloadAgents();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 只在打开新建页时初始化一次；startProvider 是打开时带入的参数，之后不变
   }, []);
   // 装完一个 agent，这里的可选项就该多一个——不必关掉面板重开。
   useAgentListRefresh(reloadAgents);

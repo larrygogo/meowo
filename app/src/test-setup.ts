@@ -42,3 +42,11 @@ afterEach(() => clearHistoryCache());
 // 也修过同类偶发）。只拉长「等不到」的上限，等得到的用例耗时不变。
 import { configure } from "@testing-library/react";
 configure({ asyncUtilTimeout: 3000 });
+
+// 每个测试文件收尾前留 600ms 宽限，再拆 jsdom。组件卸载后还挂着的短计时器（账号卡片刷新
+// 转圈的最短 500ms、@tanstack/virtual 的滚动防抖）若在环境拆掉后才触发，setState 里一碰
+// window 就抛 ReferenceError。vitest 2 静默吞掉，升到 3.2.7 后记成 Unhandled Error、整轮
+// 退出码 1（2026-11-10 实测：About.account.test.tsx 单跑 3 次 1 次报，vitest 2 下 4 次 0 报）。
+// 文件间并行，600ms 摊到全量墙钟上约 1–2s。
+import { afterAll } from "vitest";
+afterAll(() => new Promise<void>((resolve) => setTimeout(resolve, 600)));

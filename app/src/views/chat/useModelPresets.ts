@@ -60,6 +60,7 @@ export function useModelPresets(provider: string | null, chatUi: ChatUi | null, 
       applyLearnedLabels(chatUi?.model_presets ?? [], loadLearnedLabels(provider, version)),
       menuOnly ? [] : modelCatalog,
     );
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- learnedModelLabels 是学到新标签后的重算信号（标签本身从 localStorage 读）；listedModels/modelCatalog 未命中时是新的空数组，多算一次很便宜
   }, [listedModels, chatUi?.model_presets, learnedModelLabels, provider, version, menuOnly, modelCatalog]);
   const modelMenuCommand = chatUi?.model_menu_command ?? null;
   // 能直接下拉 = 清单已知（内置别名或学到的真实清单），且标签已是真的/该 CLI 无菜单可学。

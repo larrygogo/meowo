@@ -240,7 +240,7 @@ export function stripTerminalReplies(data: string): string {
   // (如 \x1b[4;2$y),只匹配 DEC 私有形态会漏放。CSI-t 是窗口尺寸报告(CSI 18 t 等,
   // windowOptions 开启时 xterm 会应答)——无用户按键以裸 t 收尾,纳入无误伤。
   return data.replace(
-    // eslint-disable-next-line no-control-regex
+    // eslint-disable-next-line no-control-regex -- 匹配终端应答序列必须写 ESC/BEL 控制字符
     /\x1b\[\??\d+(?:;\d+)*R|\x1b\[0n|\x1b\[[?>][\d;]*c|\x1b\[\??\d+;\d+\$y|\x1b\[\d+(?:;\d+)*t|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1bP[^\x1b]*\x1b\\/g,
     "",
   );
@@ -1624,6 +1624,7 @@ export function ManagedTerminal({ sessionId, status, reviewPending = false, back
     };
     // 会话 id 变更不再重挂本 effect（xterm 重建、首屏清空重画）：临时 id→真实 id 的
     // 重绑与换会话都走 sessionChangedRef（见其实现注释），effect 只随宿主 ref 变化重建。
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 终端实例只建一次；提示文案与 t.locale 在创建时读入，切语言不重建终端（重建要全量回放 backlog）
   }, [externalRearmRef, externalGridRef]);
 
   // 会话 id 变更（挂载后）：不重挂终端，只换「认哪个 id」。viewer 注册跟着 id 走——
@@ -1669,7 +1670,7 @@ export function ManagedTerminal({ sessionId, status, reviewPending = false, back
     attentionReportedRef.current = signature;
     setInitialized(true);
     onAttentionRef.current?.(attention);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 标记与文法按值指纹入依赖，回调走 ref
   }, [attentionMarkerKey, grammarKey, interactivePrompt, expectMenu]);
 
   // 隐藏期间容器尺寸为 0，xterm 会按 0 列算布局。切回来立刻 fit 一次并聚焦——
@@ -1710,7 +1711,7 @@ export function ManagedTerminal({ sessionId, status, reviewPending = false, back
       terminal.focus();
     });
     return () => cancelAnimationFrame(raf);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 只在显隐或换会话时重画，终端实例走 ref
   }, [visible, sessionId]);
 
   // 网格自愈的心跳。resize 平时由容器尺寸变化驱动,某次没落地就没有下一次纠正它
@@ -1728,7 +1729,7 @@ export function ManagedTerminal({ sessionId, status, reviewPending = false, back
         .catch(() => {});
     }, GRID_POLL_MS);
     return () => window.clearInterval(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 只按可见、存活与会话重挂轮询，回调里用的是模块函数
   }, [visible, active, exitCode, sessionId]);
 
   const initializing = !snapshotReady || ((active || sessionId < 0) && !initialized);

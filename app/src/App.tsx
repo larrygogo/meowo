@@ -994,7 +994,7 @@ export function App() {
       cancelled = true;
     };
     // 仅启动跑一次
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 启动流程只跑一次
   }, []);
 
   // 展开态收回：点岛外面才收，光标移开不收（用户 2026-11-05 要求；原来光标出窗口就收，
