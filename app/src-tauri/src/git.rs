@@ -42,11 +42,14 @@ fn summary_blocking(cwd: &str, counts: bool) -> Result<GitDiffSummaryDto, String
         unpushed: None,
     };
     // spawn 失败（git 未安装/被拦）不算错误——前端只是不显示按钮。
-    let inside = match git_output(dir, &["rev-parse", "--is-inside-work-tree"]) {
+    // 顺带要公共 .git 目录：没上游时靠读它的 config 判断有没有远端，不再多起一个 `git remote`。
+    let inside = match git_output(dir, &["rev-parse", "--is-inside-work-tree", "--git-common-dir"]) {
         Ok(output) => output,
         Err(_) => return Ok(unavailable()),
     };
-    if !inside.status.success() || stdout_text(&inside.stdout).trim() != "true" {
+    let inside_text = stdout_text(&inside.stdout);
+    let mut inside_lines = inside_text.lines();
+    if !inside.status.success() || inside_lines.next().map(str::trim) != Some("true") {
         return Ok(GitDiffSummaryDto {
             is_repo: false,
             ..unavailable()
@@ -61,6 +64,8 @@ fn summary_blocking(cwd: &str, counts: bool) -> Result<GitDiffSummaryDto, String
     // 以前另跑 `rev-parse --abbrev-ref HEAD` 和 `rev-list --left-right --count`，「更改」面板要显示
     // 推送按钮和未推数，又不能让冷耗时变慢（规格预算 ≤197ms），合进这一条反而少起两个进程。
     // porcelain 格式下这一行不随语言设置翻译（wt-status.c 的 wt_porcelain_print 置 no_gettext）。
+    // 二期实测（release，bench_summary_with_15000_untracked_files，同轮对照）：改前 -uall 182ms，折叠后冷态
+    // 从 199ms 降到 146ms（Windows 上每个 git 进程固定约 30ms）。
     let status = git_output(dir, &["status", "--porcelain", "-z", "--no-renames", "-unormal", "--branch"])
         .map_err(|e| e.to_string())?;
     if !status.status.success() {
@@ -81,7 +86,10 @@ fn summary_blocking(cwd: &str, counts: bool) -> Result<GitDiffSummaryDto, String
     let unpushed = match (&head.upstream, &head.branch) {
         (Some(_), _) => head.ahead,
         // 没上游：数不在任何远端分支上的提交。只给选中的仓库算（多一次进程），没有远端就不算。
-        (None, Some(_)) if counts => unpushed_without_upstream(dir),
+        (None, Some(_)) if counts => {
+            let common = inside_lines.next().map(|c| Path::new(dir).join(c.trim()));
+            unpushed_without_upstream(dir, common.as_deref())
+        }
         _ => None,
     };
     Ok(GitDiffSummaryDto {
@@ -159,9 +167,17 @@ pub(crate) fn parse_branch_header(line: &str) -> BranchHeader {
 }
 
 /// 没有上游的分支有几个提交不在任何远端分支上。没有远端时为 None（推不了，不显示推送按钮）。
-fn unpushed_without_upstream(dir: &str) -> Option<u32> {
-    let remotes = git_output(dir, &["remote"]).ok().filter(|o| o.status.success())?;
-    if stdout_text(&remotes.stdout).trim().is_empty() {
+/// 有没有远端看公共 .git 目录下 config 里有没有 `[remote "…"]` 节，省一个 git 进程（摘要的进程数
+/// 预算见 summary_spawns_at_most_four_git_processes）。读不到 config 时退回 `git remote`。
+fn unpushed_without_upstream(dir: &str, common: Option<&Path>) -> Option<u32> {
+    let has_remote = match common.and_then(|c| std::fs::read_to_string(c.join("config")).ok()) {
+        Some(config) => config.lines().any(|l| l.trim_start().starts_with("[remote \"")),
+        None => {
+            let remotes = git_output(dir, &["remote"]).ok().filter(|o| o.status.success())?;
+            !stdout_text(&remotes.stdout).trim().is_empty()
+        }
+    };
+    if !has_remote {
         return None;
     }
     let output = git_output(dir, &["rev-list", "--count", "HEAD", "--not", "--remotes"])
@@ -1727,6 +1743,12 @@ fn invalidate_caches() {
     }
 }
 
+// 测试用：本线程起过几个 git 进程（摘要的进程数预算，见 summary_spawns_at_most_four_git_processes）。
+#[cfg(test)]
+thread_local! {
+    static GIT_SPAWNS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 fn git_output(dir: &str, args: &[&str]) -> std::io::Result<std::process::Output> {
     git_run(dir, args, &[], None)
 }
@@ -1735,6 +1757,8 @@ fn git_output(dir: &str, args: &[&str]) -> std::io::Result<std::process::Output>
 /// stdin，信息又长时，同步写满管道会和钩子写满 stdout 互相等死。
 fn git_run(dir: &str, args: &[&str], env: GitEnv, stdin: Option<&[u8]>) -> std::io::Result<std::process::Output> {
     use std::process::Stdio;
+    #[cfg(test)]
+    GIT_SPAWNS.with(|n| n.set(n.get() + 1));
     let mut command = Command::new("git");
     command.arg("-C").arg(dir).args(args);
     for (key, value) in env {
@@ -3097,6 +3121,109 @@ mod tests {
             })
             .collect();
         assert_eq!(got, vec!["dir:target-check/", "file:src/new.rs", "file:a.rs"]);
+    }
+
+    /// 摘要起的 git 进程数（二期 #28）：Windows 上每个 git 进程固定约 30ms，冷态 15000 个未跟踪文件
+    /// 时 -unormal + 折叠比改前多一个 ls-files，冷耗时 186→199ms。分支名、↑↓ 改由 status -b 一并给出，
+    /// 有折叠目录时共 4 个（rev-parse、status、ls-files、diff），改前 6 个。
+    #[test]
+    fn summary_spawns_at_most_four_git_processes() {
+        let sb = Sandbox::new("spawns");
+        let repo = sb.repo("r");
+        for i in 0..60 {
+            std::fs::create_dir_all(repo.join("build")).unwrap();
+            std::fs::write(repo.join("build").join(format!("f{i}")), "x\n").unwrap();
+        }
+        std::fs::write(repo.join("README.md"), "edited\n").unwrap();
+        invalidate_caches();
+        GIT_SPAWNS.with(|n| n.set(0));
+        let summary = git_diff_summary_blocking(&s(&repo)).unwrap();
+        let spawned = GIT_SPAWNS.with(|n| n.get());
+        assert_eq!(folded_of(&summary.files), vec![("build/".to_string(), 60)]);
+        assert!(spawned <= 4, "摘要起了 {spawned} 个 git 进程");
+    }
+
+    #[test]
+    fn branch_header_covers_every_tracking_shape() {
+        // (分支, 上游, 领先, 落后)
+        type Want<'a> = (Option<&'a str>, Option<&'a str>, Option<u32>, Option<u32>);
+        let cases: [(&str, Want); 11] = [
+            ("main", (Some("main"), None, None, None)),
+            ("main...origin/main", (Some("main"), Some("origin/main"), Some(0), Some(0))),
+            ("main...origin/main [ahead 3]", (Some("main"), Some("origin/main"), Some(3), Some(0))),
+            ("main...origin/main [behind 2]", (Some("main"), Some("origin/main"), Some(0), Some(2))),
+            (
+                "feat/a.b...origin/feat/a.b [ahead 1, behind 12]",
+                (Some("feat/a.b"), Some("origin/feat/a.b"), Some(1), Some(12)),
+            ),
+            ("main...origin/main [gone]", (Some("main"), None, None, None)),
+            // aheadBehind 关掉时只说「不同」：上游在，数字未知，由调用方退回 rev-list。
+            ("main...origin/main [different]", (Some("main"), Some("origin/main"), None, None)),
+            ("HEAD (no branch)", (None, None, None, None)),
+            ("No commits yet on main", (None, None, None, None)),
+            ("Initial commit on main", (None, None, None, None)),
+            ("", (None, None, None, None)),
+        ];
+        for (header, (branch, upstream, ahead, behind)) in cases {
+            let want = BranchHeader {
+                branch: branch.map(str::to_string),
+                upstream: upstream.map(str::to_string),
+                ahead,
+                behind,
+            };
+            assert_eq!(parse_branch_header(header), want, "{header}");
+        }
+        let (header, rest) = split_branch_header(b"## main...o/main [ahead 1]  M a.rs ");
+        assert_eq!((header.as_deref(), rest), (Some("main...o/main [ahead 1]"), &b" M a.rs "[..]));
+        assert_eq!(split_branch_header(b" M a.rs "), (None, &b" M a.rs "[..]));
+    }
+
+    /// 分支名与 ↑↓ 与改前（rev-parse --abbrev-ref HEAD + rev-list --left-right）逐项一致：
+    /// 无上游、同步、领先、领先且落后、上游已删、detached、还没有提交。
+    #[test]
+    fn summary_branch_and_divergence_match_rev_parse_and_rev_list() {
+        let sb = Sandbox::new("branch-ab");
+        let origin = sb.repo("origin");
+        let clone = sb.0.join("clone");
+        sb.git(&sb.0, &["clone", "-q", "-b", "main", origin.to_str().unwrap(), clone.to_str().unwrap()]);
+        let empty_commit = |dir: &Path, message: &str| {
+            sb.git(dir, &["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-q", "-m", message]);
+        };
+        let check = |dir: &Path, label: &str| {
+            let d = s(dir);
+            let summary = git_diff_summary_blocking(&d).unwrap();
+            let branch = git_output(&d, &["rev-parse", "--abbrev-ref", "HEAD"])
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| stdout_text(&o.stdout).trim().to_string())
+                .filter(|name| !name.is_empty() && name != "HEAD");
+            let ab = upstream_divergence(&d);
+            assert_eq!(summary.branch, branch, "{label}");
+            assert_eq!(summary.ahead.zip(summary.behind), ab, "{label}");
+            ab
+        };
+        assert_eq!(check(&origin, "无上游"), None);
+        assert_eq!(check(&clone, "同步"), Some((0, 0)));
+        empty_commit(&clone, "local");
+        assert_eq!(check(&clone, "领先"), Some((1, 0)));
+        empty_commit(&origin, "remote");
+        sb.git(&clone, &["fetch", "-q"]);
+        assert_eq!(check(&clone, "领先且落后"), Some((1, 1)));
+        sb.git(&clone, &["checkout", "-q", "-b", "feature/x.y", "--track", "origin/main"]);
+        assert_eq!(check(&clone, "带斜杠和点的分支名"), Some((0, 0)));
+        sb.git(&origin, &["branch", "-q", "gone"]);
+        sb.git(&clone, &["fetch", "-q"]);
+        sb.git(&clone, &["checkout", "-q", "-b", "g", "--track", "origin/gone"]);
+        sb.git(&origin, &["branch", "-q", "-D", "gone"]);
+        sb.git(&clone, &["fetch", "-q", "--prune"]);
+        assert_eq!(check(&clone, "上游已删"), None);
+        sb.git(&clone, &["checkout", "-q", "--detach"]);
+        assert_eq!(check(&clone, "detached"), None);
+        let unborn = sb.0.join("unborn");
+        std::fs::create_dir_all(&unborn).unwrap();
+        sb.git(&unborn, &["init", "-q", "-b", "main"]);
+        std::fs::write(unborn.join("a.txt"), "a\n").unwrap();
+        assert_eq!(check(&unborn, "还没有提交"), None);
     }
 
     /// 基准（#25）：15000 个文件的未跟踪目录，改前（-uall 逐个文件）与改后（-unormal + 折叠）的摘要耗时。

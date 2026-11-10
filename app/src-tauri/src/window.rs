@@ -1205,6 +1205,9 @@ pub(crate) fn tray_tooltip_text(lang: &str, running: usize, waiting: usize) -> S
 /// 托盘「退出」。退出会杀掉 Meowo 托管的全部 agent 进程（见 lib.rs 的 RunEvent::Exit 收尾），
 /// 跑到一半的任务就断了，此前一点即退、没有任何提示。对照 Kimi Code 的退出确认：有托管会话
 /// 正在运行时先问一句，没有就直接退。等你回答 / 审批的会话不拦，恢复后进度不丢。
+/// 面板终端同理：RunEvent::Exit 会 kill_all，里面跑着的 dev server、构建一起结束，判定与写法
+/// 同关对话窗（chat/windowClose.ts）。确认走原生小窗（confirm::ask），没开对话窗也能问。
+/// 更新安装重启不经过这里（updater 的 on_before_exit），照旧不问。
 pub(crate) fn request_quit(app: &tauri::AppHandle) {
     use std::sync::atomic::{AtomicBool, Ordering};
     // 确认框开着时再点一次「退出」不再弹第二个。
@@ -1217,14 +1220,19 @@ pub(crate) fn request_quit(app: &tauri::AppHandle) {
         let count_app = app.clone();
         // 查库、读设置都是文件 IO，放进 blocking 池。统计失败按「没在跑」处理：宁可照常退出，
         // 也不能让「退出」点了没反应。
-        let (running, lang) = tauri::async_runtime::spawn_blocking(move || {
+        let (message, lang) = tauri::async_runtime::spawn_blocking(move || {
             let running = crate::session_query::managed_running_now(&count_app).unwrap_or(0);
-            (running, ui_lang(&load_settings()))
+            let busy = count_app
+                .try_state::<crate::shell_terminal::ShellTerminals>()
+                .map(|shells| shells.busy_all())
+                .unwrap_or_default();
+            let lang = ui_lang(&load_settings());
+            let busy: Vec<String> = busy.iter().map(|shell| shell.describe()).collect();
+            (quit_confirm_message(lang, running, &busy), lang)
         })
         .await
-        .unwrap_or((0, "zh"));
-        let quit = running <= 0 || {
-            let message = tr(lang, "quit.confirmMessage").replace("{n}", &running.to_string());
+        .unwrap_or((None, "zh"));
+        let quit = confirm_quit(message, |message| {
             crate::confirm::ask(
                 app.clone(),
                 None,
@@ -1233,10 +1241,8 @@ pub(crate) fn request_quit(app: &tauri::AppHandle) {
                 true,
                 Some(tr(lang, "quit.confirmQuit").to_string()),
             )
-            .await
-            // 确认框建不起来（理论上不发生）就照常退出：用户明确点了「退出」。
-            .unwrap_or(true)
-        };
+        })
+        .await;
         ASKING.store(false, Ordering::SeqCst);
         if quit {
             app.exit(0);
@@ -1244,6 +1250,61 @@ pub(crate) fn request_quit(app: &tauri::AppHandle) {
     });
 }
 
+/// 托盘退出要问的话；None = 没有会话在跑、面板终端也都空闲，直接退。`busy_shells` 是
+/// 有程序在跑的面板终端（[`crate::shell_terminal::ShellBusy::describe`]），逐行列在说明下面。
+fn quit_confirm_message(lang: &str, running_sessions: i64, busy_shells: &[String]) -> Option<String> {
+    let mut parts = Vec::new();
+    if running_sessions > 0 {
+        parts.push(tr(lang, "quit.confirmMessage").replace("{n}", &running_sessions.to_string()));
+    }
+    if !busy_shells.is_empty() {
+        parts.push(format!("{}\n\n{}", tr(lang, "quit.shellBusy"), busy_shells.join("\n")));
+    }
+    (!parts.is_empty()).then(|| parts.join("\n\n"))
+}
+
+/// 没什么要问的直接退；要问就等用户回答，取消则不退。确认框建不起来（理论上不发生）
+/// 照常退出：用户明确点了「退出」。
+async fn confirm_quit<F, Fut, E>(message: Option<String>, ask: F) -> bool
+where
+    F: FnOnce(String) -> Fut,
+    Fut: std::future::Future<Output = Result<bool, E>>,
+{
+    match message {
+        None => true,
+        Some(message) => ask(message).await.unwrap_or(true),
+    }
+}
+
+#[cfg(test)]
+mod quit_tests {
+    use super::{confirm_quit, quit_confirm_message};
+
+    #[test]
+    fn quit_asks_when_panel_terminal_runs_a_program_even_without_sessions() {
+        let busy = vec!["pwsh · node.exe (PID 42)".to_string()];
+        let message = quit_confirm_message("zh", 0, &busy).expect("面板终端在跑程序要先问");
+        assert!(message.contains("面板终端还有程序在跑") && message.contains("node.exe (PID 42)"), "{message}");
+        let both = quit_confirm_message("en", 2, &busy).unwrap();
+        assert!(both.contains("Sessions still running: 2") && both.contains("panel terminals"), "{both}");
+        assert_eq!(quit_confirm_message("zh", 0, &[]), None);
+        assert!(quit_confirm_message("zh", 1, &[]).unwrap().contains('1'));
+    }
+
+    #[test]
+    fn quit_cancelled_keeps_running_and_nothing_to_ask_quits_without_prompt() {
+        use tauri::async_runtime::block_on as block;
+        assert!(!block(confirm_quit(Some("q".into()), |_| async { Ok::<_, ()>(false) })));
+        assert!(block(confirm_quit(Some("q".into()), |_| async { Ok::<_, ()>(true) })));
+        assert!(block(confirm_quit(Some("q".into()), |_| async { Err::<bool, _>(()) })));
+        let mut asked = false;
+        assert!(block(confirm_quit(None, |_| {
+            asked = true;
+            async { Ok::<_, ()>(false) }
+        })));
+        assert!(!asked, "没什么要问时不该弹确认");
+    }
+}
 
 #[cfg(test)]
 mod chat_target_tests {

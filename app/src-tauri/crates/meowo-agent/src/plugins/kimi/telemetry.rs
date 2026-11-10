@@ -1076,6 +1076,16 @@ impl TranscriptSpec for KimiTranscript {
         true
     }
 
+    /// 长会话首开只解析尾部一屏。wire.jsonl 逐行独立解析（parse_events 只看本行与 blobs 目录），
+    /// 跨行的撤回、双写判重由通用读取层回放，判不准时它自己扩窗。模式只来自三种 type
+    /// （agent_modes_from_line），计划只来自工具调用的 `display.plan`，子串必在行内。
+    fn tail_read(&self) -> Option<crate::transcript::TailRead> {
+        Some(crate::transcript::TailRead {
+            mode_markers: &["permission.set_mode", "plan_mode.enter", "plan_mode.exit"],
+            plan_markers: &["\"plan\""],
+        })
+    }
+
     fn subagents(&self) -> Option<&'static dyn SubagentSpec> {
         Some(&KIMI_SUBAGENTS)
     }
