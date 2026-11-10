@@ -100,6 +100,29 @@ describe("worktree setup 进度条", () => {
     expect(screen.getByTestId("wt-setup-bar").textContent).toContain(zh.wtnew.state.running);
   });
 
+  // 做空审查：hash 覆盖整份配置，env 会注入 setup 进程（NODE_OPTIONS 能让 bun install 加载任意代码），
+  // 确认框只给看脚本等于让用户盲签。
+  it("待确认：配置里有 env 时确认框逐条列出键和值", async () => {
+    api.worktreeSetup.mockResolvedValue(dto({
+      state: "needs_trust", startedAt: null,
+      setupEnv: [["NODE_OPTIONS", "--require ./evil.js"], ["API_URL", "http://x"]],
+    }));
+    render(<WorktreeSetupBar cwd="C:/w/app-feat" />);
+    fireEvent.click(await screen.findByTestId("wt-setup-review"));
+    const env = await screen.findByTestId("wt-trust-env");
+    expect(env.textContent).toContain("NODE_OPTIONS=--require ./evil.js");
+    expect(env.textContent).toContain("API_URL=http://x");
+    expect(screen.getByTestId("wt-trust-dialog").textContent).toContain(zh.wtnew.trustEnv);
+  });
+
+  it("待确认：没有 env 时不显示环境变量一节", async () => {
+    api.worktreeSetup.mockResolvedValue(dto({ state: "needs_trust", startedAt: null, setupEnv: [] }));
+    render(<WorktreeSetupBar cwd="C:/w/app-feat" />);
+    fireEvent.click(await screen.findByTestId("wt-setup-review"));
+    await screen.findByTestId("wt-trust-dialog");
+    expect(screen.queryByTestId("wt-trust-env")).toBeNull();
+  });
+
   it("完成后可以关掉这条", async () => {
     api.worktreeSetup.mockResolvedValue(dto({ state: "ok", exitCode: 0, finishedAt: 5 }));
     render(<WorktreeSetupBar cwd="C:/w/app-feat" />);

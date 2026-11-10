@@ -435,7 +435,6 @@ pub(crate) fn create(
     ] {
         env.push((k.to_string(), v));
     }
-    env.extend(cfg.env.iter().map(|(k, v)| (k.clone(), v.clone())));
     let repo_key = crate::worktree::norm(&repo.common);
     let task = Arc::new(setup::Task {
         id: task_id,
@@ -452,6 +451,7 @@ pub(crate) fn create(
             started_at: None,
             finished_at: None,
             script: None,
+            config_env: Vec::new(),
             hash: None,
             source: cfg.source.map(config::Source::as_str),
             timeout: std::time::Duration::from_secs(cfg.timeout_sec),
@@ -542,6 +542,7 @@ fn arm(
     {
         let mut s = task.inner.lock().unwrap_or_else(|e| e.into_inner());
         s.script = script.clone();
+        s.config_env = cfg.env.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
         s.hash = script.is_some().then(|| hash.clone());
         s.source = cfg.source.map(config::Source::as_str);
         s.timeout = std::time::Duration::from_secs(cfg.timeout_sec);

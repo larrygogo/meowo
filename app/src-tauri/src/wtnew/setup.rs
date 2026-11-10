@@ -188,6 +188,7 @@ pub(crate) struct Task {
     /// 读配置的 checkout 根目录（建立时选中的那个仓库）。
     pub(crate) config_root: PathBuf,
     pub(crate) log_path: PathBuf,
+    /// Meowo 自己给的环境（代理、MEOWO_* 路径变量）。配置里的 env 不在这里，见 TaskState::config_env。
     pub(crate) env: Vec<(String, String)>,
     pub(crate) inner: Mutex<TaskState>,
 }
@@ -200,6 +201,9 @@ pub(crate) struct TaskState {
     pub(crate) started_at: Option<i64>,
     pub(crate) finished_at: Option<i64>,
     pub(crate) script: Option<String>,
+    /// 配置里的 env（按键排序）。和 script、hash 同一次读配置得来（arm），信任确认框展示的、hash 覆盖的、
+    /// 真正注入进程的是同一份；以前钉在建立那一刻，重跑时配置改了 env 还是旧的。
+    pub(crate) config_env: Vec<(String, String)>,
     pub(crate) hash: Option<String>,
     pub(crate) source: Option<&'static str>,
     pub(crate) timeout: Duration,
@@ -276,6 +280,7 @@ pub(crate) fn dto(task: &Task) -> WorktreeSetupDto {
         config_hash: s.hash,
         config_source: s.source.map(str::to_string),
         runner: s.runner.as_ref().map(|r| r.name().to_string()),
+        setup_env: s.config_env,
     }
 }
 
@@ -296,7 +301,7 @@ fn append_log(path: &Path, line: &str) {
 /// 起一轮 setup（调用方已确认可以跑：有脚本、已信任、版本支持）。立即返回，后台线程等进程结束。
 /// `on_change`：状态变化时通知前端（桌面发事件）；测试里传空。
 pub(crate) fn start(task: &Arc<Task>, on_change: Arc<dyn Fn(&str) + Send + Sync>) {
-    let (script, runner, timeout, generation) = {
+    let (script, runner, timeout, generation, config_env) = {
         let mut s = task.inner.lock().unwrap_or_else(|e| e.into_inner());
         let Some(script) = s.script.clone() else {
             return;
@@ -311,7 +316,7 @@ pub(crate) fn start(task: &Arc<Task>, on_change: Arc<dyn Fn(&str) + Send + Sync>
         s.started_at = Some(crate::now_ms());
         s.finished_at = None;
         s.pid = None;
-        (script, runner, s.timeout, s.generation)
+        (script, runner, s.timeout, s.generation, s.config_env.clone())
     };
     append_log(
         &task.log_path,
@@ -325,7 +330,7 @@ pub(crate) fn start(task: &Arc<Task>, on_change: Arc<dyn Fn(&str) + Send + Sync>
     let mut cmd = super::command(&runner_path(&runner).to_string_lossy());
     cmd.args(runner_args(&runner, &script))
         .current_dir(&task.path);
-    for (k, v) in &task.env {
+    for (k, v) in task.env.iter().chain(config_env.iter()) {
         cmd.env(k, v);
     }
     // Git Bash 的登录 profile 默认会 cd 到 $HOME，设了 CHERE_INVOKING 才留在当前目录。

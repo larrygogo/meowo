@@ -357,6 +357,28 @@ fn setup_跑着时可停止_可跳过() {
     assert!(setup_action(&task, "bogus", &setup::Shells::default(), &always, quiet()).is_err());
 }
 
+/// 做空审查：hash 覆盖整份配置、env 会注入 setup 进程，确认框却只给看脚本——NODE_OPTIONS 之类
+/// 能让一行无害的 `bun install` 加载任意代码。确认框要拿到 env 原样展示；重跑时按新配置的 env 跑。
+#[test]
+fn 确认框带上配置里的_env_重跑按新配置的_env() {
+    let fx = fixture("trust-env");
+    fx.config(r#"{ "setup": "echo hi", "env": { "NODE_OPTIONS": "--require ./evil.js", "A": "1" } }"#);
+    let dto = create(&fx.main, &req(Some("te"), None), &fx.opts(), &never, quiet()).unwrap();
+    assert_eq!(dto.setup.state, "needs_trust");
+    assert_eq!(
+        dto.setup.setup_env,
+        vec![("A".to_string(), "1".to_string()), ("NODE_OPTIONS".to_string(), "--require ./evil.js".to_string())],
+    );
+    let task = setup::find(Some(&dto.task_id), None).unwrap();
+    fx.config(r#"{ "setup": "echo hi", "env": { "B": "2" } }"#);
+    let again = setup_action(&task, "rerun", &fx.opts().shells, &never, quiet()).unwrap();
+    assert_eq!(again.setup_env, vec![("B".to_string(), "2".to_string())], "改过配置后展示和要跑的是新那份");
+    assert!(
+        !task.env.iter().any(|(k, _)| k == "NODE_OPTIONS"),
+        "配置里的 env 跟着配置走，不钉在建立那一刻"
+    );
+}
+
 #[test]
 fn 没信任过的脚本先等确认_hash_对得上才跑() {
     let fx = fixture("trust");

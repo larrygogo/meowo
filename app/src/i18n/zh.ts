@@ -353,6 +353,7 @@ export const zh = {
     trustTitle: "运行仓库的 setup 脚本？",
     trustSource: (file: string) => `来自 ${file}，将在新 worktree 里运行：`,
     trustNote: "配置里引用的脚本文件改了不会重新确认",
+    trustEnv: "同时注入这些环境变量：",
     trustRun: "信任并运行",
     settingsLocation: "新 worktree 的位置",
     settingsLocationDesc: "勾选在新 worktree 里开时建在哪",

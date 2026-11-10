@@ -329,6 +329,7 @@ export const en: Dict = {
     trustTitle: "Run the repository's setup script?",
     trustSource: (file: string) => `From ${file}. It will run in the new worktree:`,
     trustNote: "Changes to script files it calls won't ask again",
+    trustEnv: "These environment variables are also set:",
     trustRun: "Trust and run",
     settingsLocation: "New worktree location",
     settingsLocationDesc: "Where \"Open in a new worktree\" creates folders",
