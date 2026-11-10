@@ -8,7 +8,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { pathKey, unquotePath } from "../paths";
 import { COMPACTING_ACTIVITY } from "../activity";
 import { appConfirm } from "../confirm";
-import { diagLog, forkSession, agentChatUi, attachBackgroundSession, sendBackgroundPrompt, clipboardRestore, clipboardSetImage, confirmStopSession, dismissInteractiveQuestion, getChatHistory, getGitChangesOverview, getGitDiffSummary, getLiveSessionsPage, getSessionLineage, isExternallyHeld, managedTerminalBinding, managedTerminalPendingLaunch, managedTerminalScreen, managedTerminalSnapshot, openNewSessionWindow,  refreshSessionModel, refreshSessionTodos, renameSession as renameSessionCmd, savePastedAttachment, sessionLaunchSelections, setArchived as setArchivedCmd, setSessionLaunchSelection, sessionTone, startManagedTerminal, copySessionToProvider, takeoverManagedTerminal, writeManagedTerminal, type AgentId, type ChatHistory, type ChatItem, type ChatUi, type GitDiffSummaryDto, type RepoChangesDto, type LiveSession, type ModelPreset, type ModeScreenMarker, type PendingApproval } from "../api";
+import { diagLog, forkSession, agentChatUi, attachBackgroundSession, sendBackgroundPrompt, clipboardRestore, clipboardSetImage, confirmStopSession, dismissInteractiveQuestion, getChatHistory, getGitChangesOverview, getGitDiffSummary, getLiveSessionsPage, getSessionLineage, isExternallyHeld, managedTerminalBinding, managedTerminalPendingLaunch, managedTerminalScreen, managedTerminalSnapshot, openNewSessionWindow,  refreshSessionModel, refreshSessionTodos, renameSession as renameSessionCmd, savePastedAttachment, sessionLaunchSelections, setArchived as setArchivedCmd, sessionTone, startManagedTerminal, copySessionToProvider, takeoverManagedTerminal, writeManagedTerminal, type AgentId, type ChatHistory, type ChatItem, type ChatUi, type GitDiffSummaryDto, type RepoChangesDto, type LiveSession, type ModelPreset, type PendingApproval } from "../api";
 import { hasEscLayers } from "../escLayers";
 import { useTauriEvent } from "../hooks/useTauriEvent";
 import { useVisibleInterval } from "../hooks/useVisibleInterval";
@@ -26,6 +26,7 @@ import { answersRepresentable, composeAnswers, matchFocusedQuestion, matchOption
 import { detectAtToken, useAtFileCompletion, useSlashCompletion } from "./chat/composerCompletion";
 import { useApprovalChannel } from "./chat/useApprovalChannel";
 import { useModelPresets } from "./chat/useModelPresets";
+import { useModelControls } from "./chat/useModelControls";
 import { ContextMeter } from "./chat/ContextMeter";
 import { ImageRef, splitUserText } from "./chat/Message";
 import { parseUserText } from "./chat/localCommand";
@@ -94,7 +95,7 @@ import { useMainPages } from "./chat/useMainPages";
 import { AddMenu } from "./chat/AddMenu";
 import { DIFF_PANEL_MIN_WIDTH, useDiffPanelWidth } from "./chat/useDiffPanelWidth";
 import { attachmentOf, base64OfBuffer, formatBytes, loadStoredDrafts, promptWithAttachments, saveStoredDraft, type Attachment } from "./chat/drafts";
-import { appendTerminalText, modeFromScreen, terminalAttention as detectTerminalAttention, visibleTerminalText, type AttentionGrammar, type TerminalAttention, type TerminalAttentionOption } from "../terminalAttention";
+import { appendTerminalText, terminalAttention as detectTerminalAttention, visibleTerminalText, type AttentionGrammar, type TerminalAttention, type TerminalAttentionOption } from "../terminalAttention";
 import { Dropdown, useMenuPopup } from "./menu";
 // 恢复时的权限改选需要 agent 的启动选项声明表（与新建会话面板同源）。
 import { listAgents, type AgentDescriptor } from "../api";
@@ -3110,206 +3111,11 @@ export function ChatWindow() {
     setTerminalAttention(null);
     void writeManagedTerminal(sessionId, "\x1b").catch(() => {});
   };
-  const selectModel = async (preset: ModelPreset) => {
-    const command = chatUi?.model_select_command;
-    if (!command || toneRef.current === "running") { setSendError(t.chat.menuBusy); return; }
-    await withSendGuard(async () => {
-      const before = await managedTerminalSnapshot(sessionId);
-      if (chatUi?.draft_stash) await stashComposerDraft(sessionId, chatUi.draft_stash);
-      await submitToTerminal(sessionId, `${command} ${preset.id}`, attentionAbort);
-      let since = before.endOffset;
-      let tail = "";
-      const decoder = new TextDecoder();
-      let confirmed = false;
-      for (let attempt = 0; attempt < 12 && !confirmed; attempt += 1) {
-        await new Promise((resolve) => window.setTimeout(resolve, 200));
-        if (!isCurrentOperation()) return false;
-        const snapshot = await managedTerminalSnapshot(sessionId, since);
-        if (!snapshot.active || snapshot.endOffset < since) break;
-        since = snapshot.endOffset;
-        tail = appendTerminalText(tail, snapshot.data, decoder);
-        // 只认本次命令之后 CLI 自己的确认行，菜单列表中出现模型名不算切换成功。
-        confirmed = visibleTerminalText(tail).split(/\r?\n/).some((line) => {
-          if (!/set model to|switched (?:the )?model to|model (?:changed|switched) to/i.test(line)) return false;
-          const value = line.toLowerCase().replace(/[^a-z0-9]/g, "");
-          const id = preset.id.toLowerCase().replace(/[^a-z0-9]/g, "");
-          return value.includes(id);
-        });
-      }
-      if (!confirmed) { setSendError(t.chat.modelSwitchUnconfirmed); return false; }
-      await setSessionLaunchSelection(sessionId, "model", preset.id);
-      if (isCurrentOperation()) setStoredSelections((prev) => ({ ...prev, model: preset.id }));
-      return true;
-    });
-  };
-  /// 切换思考程度（对照 Kimi 模型菜单的「思考」分段）：写 `/effort <档位>`，只认本次之后
-  /// CLI 自己的确认行 `Set effort level to <Level>`；被拒（如当前模型不支持 Max）时把 CLI
-  /// 的原话带给用户。确认后乐观写进 history，statusline 下一帧会用同一个值覆盖。
-  const [effortBusy, setEffortBusy] = useState(false);
-  const selectEffort = async (level: string) => {
-    const command = chatUi?.effort?.command;
-    if (!command || toneRef.current === "running") { setSendError(t.chat.menuBusy); return; }
-    setEffortBusy(true);
-    try {
-      await withSendGuard(async () => {
-        const before = await managedTerminalSnapshot(sessionId);
-        if (chatUi?.draft_stash) await stashComposerDraft(sessionId, chatUi.draft_stash);
-        await submitToTerminal(sessionId, `${command} ${level}`, attentionAbort);
-        let since = before.endOffset;
-        let tail = "";
-        const decoder = new TextDecoder();
-        let outcome: "ok" | string | null = null;
-        for (let attempt = 0; attempt < 12 && outcome === null; attempt += 1) {
-          await new Promise((resolve) => window.setTimeout(resolve, 200));
-          if (!isCurrentOperation()) return false;
-          const snapshot = await managedTerminalSnapshot(sessionId, since);
-          if (!snapshot.active || snapshot.endOffset < since) break;
-          since = snapshot.endOffset;
-          tail = appendTerminalText(tail, snapshot.data, decoder);
-          // 确认/拒绝文案由插件声明（claude `Set effort level to X`、kimi `Thinking set to X.`）。
-          const confirm = new RegExp(chatUi.effort!.confirm_pattern, "i");
-          const reject = new RegExp(chatUi.effort!.reject_pattern, "i");
-          for (const line of visibleTerminalText(tail).split(/\r?\n/)) {
-            const set = confirm.exec(line);
-            if (set && set[1].toLowerCase() === level) { outcome = "ok"; break; }
-            if (reject.test(line)) { outcome = line.trim(); break; }
-          }
-        }
-        if (outcome === null) { setSendError(t.chat.effortUnconfirmed); return false; }
-        if (outcome !== "ok") { setSendError(t.chat.effortRejected(outcome)); return false; }
-        if (isCurrentOperation()) setHistory((current) => current ? { ...current, effort: level } : current);
-        return true;
-      });
-    } finally {
-      setEffortBusy(false);
-    }
-  };
-  /// 当前模型可选的思考档位：插件给了静态表就用（claude），否则取模型目录里当前模型声明的
-  /// （kimi 的 support_efforts，随模型变）。
-  const effortLevels: readonly string[] = !chatUi?.effort ? []
-    : chatUi.effort.levels.length > 0 ? chatUi.effort.levels
-    : modelCatalog.find((entry) => entry.id === currentPresetId(modelCatalog, history?.model))?.efforts ?? [];
-  /// 把某维度的显示值写进 history（乐观更新与屏幕回显共用）。transcript 增量随后到达时
-  /// 会覆盖为同一个值（或纠正我们），合并逻辑见轮询处。
-  const applyModeValue = (dimension: string, value: string) => {
-    setHistory((current) => {
-      if (!current) return current;
-      const agentModes = [...current.agentModes];
-      const index = agentModes.findIndex((mode) => mode.dimension === dimension);
-      const update = { dimension, value };
-      if (index >= 0) agentModes[index] = update;
-      else agentModes.push(update);
-      return { ...current, agentModes };
-    });
-  };
-  /// 屏幕回显的代际计数：新一次模式操作作废还在跑的旧轮询，避免旧屏幕的滞后帧倒灌。
-  const modeEchoSeqRef = useRef(0);
-  // 换会话/卸载同样作废：旧会话的回显不能写进新会话的 history。
-  useEffect(() => () => { modeEchoSeqRef.current += 1; }, [sessionId]);
-  /// cycle 是盲切，而 claude 只在活跃回合往 transcript 写模式记录——空闲时切换（恰是用户
-  /// 切权限模式的典型时机）没有任何增量可等，标签会一直冻在旧值上，看起来就是「点了没效果」。
-  /// 补救：写入后短暂轮询 PTY 屏幕，用插件声明的指示文案（provider 文档承诺的稳定文本）
-  /// 识别落点。屏幕就是 CLI 自己画的权威状态，识别到什么就显示什么；识别不到则保持现状，
-  /// 等 transcript 下一条记录兜底。
-  /// 读一次屏幕回显：在 `budgetMs` 内轮询 PTY，识别到模式值就立刻返回（识别不到返回 null）。
-  /// 供 echoModeFromScreen（观察）与 cycleToMode（逐步逼近目标）共用同一套识别口径。
-  const readModeEcho = async (markers: ModeScreenMarker[], baseline: number, budgetMs: number): Promise<string | null> => {
-    if (markers.length === 0) return null;
-    const decoder = new TextDecoder();
-    let tail = "";
-    let since = baseline;
-    const startedAt = Date.now();
-    while (Date.now() - startedAt < budgetMs) {
-      let snapshot;
-      try { snapshot = await managedTerminalSnapshot(sessionId, since); } catch { return null; }
-      if (!snapshot?.active) return null;
-      if (snapshot.endOffset < since) { since = 0; tail = ""; continue; }
-      since = snapshot.endOffset;
-      tail = appendTerminalText(tail, snapshot.data, decoder);
-      const value = modeFromScreen(visibleTerminalText(tail), markers);
-      if (value) return value;
-      await new Promise((resolve) => window.setTimeout(resolve, 120));
-    }
-    return null;
-  };
-  /// 循环按 cycle 键直到落到目标模式：claude 的权限模式只有「切下一个」的快捷键，没有
-  /// 直达某个值的办法，但用户要的是「选那个模式」而不是「按 N 次」。每按一次读一次屏幕
-  /// 回显确认落点，最多绕一圈（模式数）——转满一圈还没到说明该模式在当前账号/启动参数下
-  /// 不可用（插件注释已声明模式集合会变），此时停手并说明，不再空转。
-  const cycleToMode = async (dimension: string, target: string, cycleInput: string, markers: ModeScreenMarker[]) => {
-    if (sending) return;
-    await withSendGuard(async () => {
-      const seq = ++modeEchoSeqRef.current;
-      for (let step = 0; step < Math.max(1, markers.length); step += 1) {
-        if (modeEchoSeqRef.current !== seq) return true; // 换会话/新操作作废本轮
-        let base = 0;
-        try { base = (await managedTerminalSnapshot(sessionId, 0))?.endOffset ?? 0; } catch { /* 从 0 起扫 */ }
-        await writeManagedTerminal(sessionId, cycleInput);
-        const value = await readModeEcho(markers, base, 1_500);
-        if (value) applyModeValue(dimension, value);
-        if (value === target) return true;
-      }
-      setSendError(t.chat.modeUnreachable);
-      return true;
-    });
-  };
-  const echoModeFromScreen = async (dimension: string, markers: ModeScreenMarker[], baseline: number) => {
-    if (markers.length === 0) return;
-    const seq = ++modeEchoSeqRef.current;
-    const decoder = new TextDecoder();
-    let tail = "";
-    // 从**按键之前**的偏移起扫(baseline 由 changeMode 在写入前采):回显必然落在其后,
-    // 旧指示天然出局——扫 backlog 会把切换前的旧指示当回显,把乐观值/transcript 刚落的
-    // 正确模式覆写回去;而「循环启动时」当基线又会吞掉写入与启动之间已到达的重绘。
-    let since = baseline;
-    const startedAt = Date.now();
-    while (Date.now() - startedAt < 3_000) {
-      let snapshot;
-      try { snapshot = await managedTerminalSnapshot(sessionId, since); } catch { return; }
-      if (modeEchoSeqRef.current !== seq) return;
-      if (!snapshot?.active) return;
-      // 偏移回绕(PTY 被就地重启复位):与发送/探测循环同款守卫,从头扫——新进程的
-      // 首屏重绘就带着当前模式指示,不会误认旧进程残影。
-      if (snapshot.endOffset < since) {
-        since = 0;
-        tail = "";
-        continue;
-      }
-      since = snapshot.endOffset;
-      tail = appendTerminalText(tail, snapshot.data, decoder);
-      const value = modeFromScreen(visibleTerminalText(tail), markers);
-      if (value) applyModeValue(dimension, value);
-      await new Promise((resolve) => window.setTimeout(resolve, 250));
-      if (modeEchoSeqRef.current !== seq) return;
-    }
-  };
-  /// 模式动作完全由插件描述：快捷键原样发送，命令则用和人工输入一致的 paste + Enter 序列。
-  const changeMode = async (dimension: string, inputs: { data: string; submit: boolean }[], optimisticValue?: string, screenMarkers: ModeScreenMarker[] = []) => {
-    if (inputs.length === 0 || sending) return;
-    if (toneRef.current === "running") { setSendError(t.chat.menuBusy); return; }
-    // 若因外部占用被拒，接管后重放的是这同一个动作。
-    retryRef.current = () => changeMode(dimension, inputs, optimisticValue, screenMarkers);
-    // 守卫与发送同一套(withSendGuard):交后端权威判定,被拒才给接管入口。
-    await withSendGuard(async () => {
-      // 回显基线:按键**之前**的输出末尾偏移。在写入前采,回显循环从它之后扫——
-      // 见 echoModeFromScreen 的注释。拿不到就从 0 起扫,宁可多扫不可漏扫。
-      let echoBase = 0;
-      try { echoBase = (await managedTerminalSnapshot(sessionId, 0))?.endOffset ?? 0; } catch { /* noop */ }
-      for (const input of inputs) {
-        const cancelled = attentionAbort();
-        if (cancelled) throw new Error(cancelled);
-        // submit 的动作（如 `/plan on`）走同一套提交逻辑，消除「只换行不提交」的竞态；
-        // 非 submit 的是原始按键序列（如循环快捷键），原样写、不追回车。
-        if (input.submit) await submitToTerminal(sessionId, input.data, attentionAbort);
-        else await writeManagedTerminal(sessionId, input.data);
-      }
-      if (!isCurrentOperation()) return false;
-
-      // 不 await：回显是后台观察，不该把发送按钮按住 3 秒。
-      void echoModeFromScreen(dimension, screenMarkers, echoBase);
-      return true;
-    });
-  };
+  // 模型/思考档位/模式的切换动作在 chat/useModelControls.ts；守卫、会话判定与 setter 由这里注入。
+  const { selectModel, selectEffort, effortBusy, effortLevels, cycleToMode, changeMode } = useModelControls({
+    sessionId, chatUi, model: history?.model, modelCatalog, sending, toneRef, retryRef,
+    withSendGuard, attentionAbort, isCurrentOperation, setSendError, setHistory, setStoredSelections,
+  });
   const chooseAttachments = async () => {
     if (remoteUi()) {
       // 手机没有系统文件对话框(plugin-dialog 也拿不到源路径):用原生 <input type=file> 取 File,
