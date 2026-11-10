@@ -173,7 +173,7 @@ function ShortcutsSection() {
 }
 
 // 通用：应用级设置（语言、自启、更新、通知）。会话与卡片的行为在 SessionsSection。
-function GeneralSection() {
+export function GeneralSection() {
   const t = useT();
   const [autostart, setAutostart] = useState(false);
   // autostart 是独立 invoke（不走 patch）：失败曾静默回滚，开关弹回去零解释。
@@ -225,6 +225,7 @@ function GeneralSection() {
       .catch((e) => setLeadError(formatBackendError(e, t.locale)));
   };
   const toggleKeepAwake = () => patch({ keep_awake_while_running: !keepAwakeOn });
+  const notifyKinds = settings?.notify_kinds ?? SETTINGS_DEFAULTS.notify_kinds;
   const soundOn = settings?.notification_sound ?? true;
   const toggleSound = () => patch({ notification_sound: !soundOn });
   const toggleNotify = () => patch({ notifications_enabled: !notifyOn });
@@ -313,6 +314,20 @@ function GeneralSection() {
           </div>
           <Switch checked={notifyOn} onChange={toggleNotify} label={t.settings.notify} />
         </div>
+        {/* 按种类开关（二期 #6）：与灵动岛的提醒开关同一组种类、同一份文案，各存各的。
+            总开关关着时不给，免得勾着却什么也不弹。 */}
+        {notifyOn && <>
+          <div className="row row-col">
+            <div className="row-text">
+              <div className="row-label">{t.settings.notifyKinds}</div>
+            </div>
+          </div>
+          <AlertKindSwitches
+            caption={t.settings.notifyKinds}
+            value={notifyKinds}
+            onChange={(next) => patch({ notify_kinds: next })}
+          />
+        </>}
         {/* 提示音只在通知开着时有意义：通知关了就不给这一行，免得开着它却什么也听不到。 */}
         {notifyOn && <div className="row">
           <div className="row-text">
@@ -641,6 +656,31 @@ const ISLAND_COMPACT_STYLES: IslandCompactStyle[] = ["counts", "focus", "minimal
 const ISLAND_ALERT_SECONDS = [4, 6, 10];
 const ISLAND_ALERT_KINDS = ["waiting", "approval", "question", "error"] as const;
 
+/// 一组「哪些事提醒你」的开关：灵动岛的提醒与系统通知共用（二期 #6），种类和文案只有一份。
+/// caption 给了就作为开关的无障碍名前缀，两组同屏时读屏分得清是哪一组。
+function AlertKindSwitches({ value, onChange, caption }: { value: readonly string[]; onChange: (next: string[]) => void; caption?: string }) {
+  const t = useT();
+  return (
+    <>
+      {ISLAND_ALERT_KINDS.map((kind) => {
+        const label = t.settings.islandAlertKinds[kind];
+        return (
+          <div className="row" key={kind}>
+            <div className="row-text">
+              <div className="row-label">{label}</div>
+            </div>
+            <Switch
+              checked={value.includes(kind)}
+              onChange={() => onChange(value.includes(kind) ? value.filter((k) => k !== kind) : [...value, kind])}
+              label={caption ? `${caption} · ${label}` : label}
+            />
+          </div>
+        );
+      })}
+    </>
+  );
+}
+
 const stickerStyleOptions = (t: Dict): { value: StickerStyle; label: string }[] => [
   { value: "elevated", label: t.settings.styleElevated },
   { value: "flat", label: t.settings.styleFlat },
@@ -814,22 +854,7 @@ function AppearanceSection() {
               <div className="row-desc">{t.settings.islandAlertsDesc}</div>
             </div>
           </div>
-          {ISLAND_ALERT_KINDS.map((kind) => (
-            <div className="row" key={kind}>
-              <div className="row-text">
-                <div className="row-label">{t.settings.islandAlertKinds[kind]}</div>
-              </div>
-              <Switch
-                checked={islandAlerts.includes(kind)}
-                onChange={() => patch({
-                  island_alerts: islandAlerts.includes(kind)
-                    ? islandAlerts.filter((k) => k !== kind)
-                    : [...islandAlerts, kind],
-                })}
-                label={t.settings.islandAlertKinds[kind]}
-              />
-            </div>
-          ))}
+          <AlertKindSwitches value={islandAlerts} onChange={(next) => patch({ island_alerts: next })} />
         </div>
       </>}
 

@@ -1364,6 +1364,8 @@ export const zh = {
     autostartFailed: "开机自启设置失败，请重试",
     notify: "桌面通知",
     notifyDesc: "会话需要你回复或出错时弹系统通知",
+    // 系统通知分种类（二期 #6），种类与灵动岛的「自动弹出提醒」同一套。
+    notifyKinds: "通知这些事",
     // macOS 系统层授权被拒时的开关旁提示（见 About.tsx GeneralSection）。
     notifySystemDenied: "已在系统设置中关闭",
     openSystemSettings: "打开系统设置",

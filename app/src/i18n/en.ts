@@ -1250,6 +1250,7 @@ export const en: Dict = {
     autostartFailed: "Couldn't toggle launch at login. Try again",
     notify: "Desktop notifications",
     notifyDesc: "Notify when a session needs your reply or errors out",
+    notifyKinds: "Notify for",
     // macOS 系统层授权被拒时的开关旁提示（见 About.tsx GeneralSection）。
     notifySystemDenied: "Turned off in System Settings",
     openSystemSettings: "Open System Settings",

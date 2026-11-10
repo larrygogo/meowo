@@ -52,6 +52,21 @@ fn default_island_alerts() -> Vec<String> {
     ["waiting", "approval", "question", "error"].map(String::from).to_vec()
 }
 
+/// 提醒种类 → 设置里的开关键。计划确认、屏幕上挂着交互都算「等待审批」，用户分不出也不必分
+/// （与前端 App.tsx 的 islandAlertSwitch 同一口径）。
+fn alert_switch(kind: &str) -> &str {
+    match kind {
+        "plan" | "blocked" => "approval",
+        other => other,
+    }
+}
+
+/// 这类事要不要弹系统通知：总开关开着且该种类勾着。watch.rs 每个弹系统通知的地方都过这里。
+pub(crate) fn notify_kind_enabled(settings: &Settings, kind: &str) -> bool {
+    let key = alert_switch(kind);
+    settings.notifications_enabled && settings.notify_kinds.iter().any(|k| k == key)
+}
+
 fn default_island_alert_seconds() -> u32 {
     6
 }
@@ -215,6 +230,11 @@ pub(crate) struct Settings {
     /// 哪些事让灵动岛弹提醒：waiting（跑完）/ approval（含计划确认、屏幕上挂着交互）/ question / error。缺省全开。
     #[serde(default = "default_island_alerts")]
     pub(crate) island_alerts: Vec<String>,
+    /// 哪些事弹系统通知，种类与 island_alerts 同一套（二期 #6，2026-11-10 定）。总开关
+    /// notifications_enabled 仍在上面，这里只分种类。缺省四类全开（含回合结束）：老设置文件
+    /// 没有这个字段，升级后行为不变。
+    #[serde(default = "default_island_alerts")]
+    pub(crate) notify_kinds: Vec<String>,
     /// 提醒停留秒数（前端给 4 / 6 / 10 三档）。缺省 6。
     #[serde(default = "default_island_alert_seconds")]
     pub(crate) island_alert_seconds: u32,
@@ -333,6 +353,7 @@ impl Default for Settings {
             island_compact: default_island_compact(),
             island_strip: false,
             island_alerts: default_island_alerts(),
+            notify_kinds: default_island_alerts(),
             island_alert_seconds: default_island_alert_seconds(),
             hidden_workspaces: Default::default(),
             sticker_quota_providers: default_sticker_quota_providers(),
@@ -1381,5 +1402,32 @@ mod tests {
         sanitize_island(&mut s);
         assert_eq!(s.island_alert_seconds, 2);
         assert_eq!(s.island_compact, "focus");
+    }
+
+    /// 二期 #6：系统通知按种类开关，种类与灵动岛一致。老设置文件没有这个字段，
+    /// 升级后行为不能变：四类（含回合结束）都照常弹。
+    #[test]
+    fn notify_kinds_default_on_for_legacy_files() {
+        let legacy: Settings = serde_json::from_str(r#"{"notifications_enabled":true}"#).unwrap();
+        for kind in ["waiting", "approval", "plan", "blocked", "question", "error"] {
+            assert!(notify_kind_enabled(&legacy, kind), "老文件 {kind} 应照常通知");
+        }
+        assert!(notify_kind_enabled(&Settings::default(), "waiting"));
+    }
+
+    #[test]
+    fn notify_kinds_follow_switches_and_master() {
+        let only_approval: Settings =
+            serde_json::from_str(r#"{"notify_kinds":["approval"]}"#).unwrap();
+        // 计划确认、屏幕上挂着交互与灵动岛同口径归「等待审批」。
+        assert!(notify_kind_enabled(&only_approval, "approval"));
+        assert!(notify_kind_enabled(&only_approval, "plan"));
+        assert!(notify_kind_enabled(&only_approval, "blocked"));
+        assert!(!notify_kind_enabled(&only_approval, "waiting"));
+        assert!(!notify_kind_enabled(&only_approval, "error"));
+        assert!(!notify_kind_enabled(&only_approval, "question"));
+        // 总开关关了，种类全开也不弹。
+        let off: Settings = serde_json::from_str(r#"{"notifications_enabled":false}"#).unwrap();
+        assert!(!notify_kind_enabled(&off, "error"));
     }
 }
