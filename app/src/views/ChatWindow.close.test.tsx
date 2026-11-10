@@ -39,6 +39,8 @@ const SESSION = 77;
 let busy: { id: number; title: string; processes: { pid: number; name: string }[] }[] = [];
 let confirmAnswer = false;
 let shells: { id: number; owner: number; title: string; exited: boolean }[] = [];
+// 后端的全部面板终端（shell_terminal_list_all）；null 表示与当前会话的清单相同。
+let allShells: typeof shells | null = null;
 
 beforeEach(() => {
   Object.defineProperty(window, "matchMedia", {
@@ -53,6 +55,7 @@ beforeEach(() => {
     });
     if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
     if (command === "shell_terminal_list") return Promise.resolve(shells);
+    if (command === "shell_terminal_list_all") return Promise.resolve(allShells ?? shells);
     if (command === "browser_pane_list") return Promise.resolve([]);
     if (command === "shell_terminal_busy") return Promise.resolve(busy);
     if (command === "confirm_dialog") return Promise.resolve(confirmAnswer);
@@ -66,6 +69,7 @@ afterEach(() => {
   win.close.mockClear();
   win.unlisten.mockClear();
   win.closeHandler = null;
+  allShells = null;
   invoke.mockReset();
 });
 
@@ -138,6 +142,24 @@ describe("关对话窗前确认面板终端", () => {
     fireEvent.click(closeButton());
     await waitFor(() => expect(win.close).toHaveBeenCalledTimes(1));
     expect(calls("confirm_dialog")).toHaveLength(0);
+  });
+
+  // 做空审查：整页重载（兜底页「重新加载」）后本窗账本是空的，只会重新登记当前会话的终端；
+  // 别的会话里在跑的 dev server 在原生关窗时没有确认、直接被 kill_all。
+  it("重载后当前会话没有终端、别的会话有程序在跑：原生关闭照样拦下确认", async () => {
+    shells = [];
+    allShells = [{ id: 9, owner: 88, title: "pwsh", exited: false }];
+    busy = [{ id: 9, title: "pwsh", processes: [{ pid: 5151, name: "vite" }] }];
+    confirmAnswer = false;
+    await mount();
+    await waitFor(() => expect(win.closeHandler).toBeTruthy());
+    const event = { preventDefault: vi.fn() };
+    await act(async () => { await win.closeHandler!(event); });
+    expect(event.preventDefault).toHaveBeenCalled();
+    await waitFor(() => expect(calls("confirm_dialog")).toHaveLength(1));
+    expect(calls("shell_terminal_busy")[0][1]).toEqual({ ids: [9] });
+    expect(String(calls("confirm_dialog")[0][1]?.message)).toContain("vite (PID 5151)");
+    expect(win.close).not.toHaveBeenCalled();
   });
 
   it("面板里没开过终端：不挂原生关闭拦截，按钮直接关", async () => {

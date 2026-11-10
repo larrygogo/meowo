@@ -267,10 +267,19 @@ export function usePanel(sessionId: number, cwd: string | null, onError: (messag
         .catch(() => {});
     };
     poll();
-    const timer = window.setInterval(poll, 3000);
+    // 每拍后端都要给全系统进程拍快照（shell_terminal.rs process_table），窗口最小化时没人看
+    // 标题栏的运行点，跳过；重新可见那刻补一次。关窗确认自己现查，不依赖这里的结果。
+    const timer = window.setInterval(() => {
+      if (!document.hidden) poll();
+    }, 3000);
+    const onVisible = () => {
+      if (!document.hidden) poll();
+    };
+    document.addEventListener("visibilitychange", onVisible);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [state.visible, termIds, liveLoaded]);
 

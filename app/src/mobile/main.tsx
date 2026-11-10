@@ -68,7 +68,13 @@ const pullSettings = () => {
 };
 // 扫码路径:令牌在装桥时就从 hash 收走了,这里已能直接对齐。
 pullSettings();
-window.setInterval(pullSettings, 12_000);
+// 锁屏或切后台时不拉，回到前台那刻补一次。
+window.setInterval(() => {
+  if (!document.hidden) pullSettings();
+}, 12_000);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) pullSettings();
+});
 
 const ChatWindow = React.lazy(() =>
   import("../views/ChatWindow").then((m) => ({ default: m.ChatWindow })),

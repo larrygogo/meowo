@@ -1568,8 +1568,9 @@ export function ManagedTerminal({ sessionId, status, reviewPending = false, back
     // 这条通道同时喂饱隐藏的屏幕识别(AskUserQuestion 表单检测)。桌面走事件,不进此分支。
     let remotePollTimer = 0;
     if (remoteUi()) {
+      // 页面隐藏（锁屏、切后台）时不补查；回到前台下一拍就会续上增量，间隔很短不另外补。
       remotePollTimer = window.setInterval(() => {
-        if (!cancelled) void inspectSnapshot();
+        if (!cancelled && !document.hidden) void inspectSnapshot();
       }, REMOTE_SNAPSHOT_POLL_MS);
     }
 
@@ -1717,6 +1718,7 @@ export function ManagedTerminal({ sessionId, status, reviewPending = false, back
   useEffect(() => {
     if (!visible || !active || exitCode !== undefined || sessionId < 0) return;
     const timer = window.setInterval(() => {
+      if (document.hidden) return; // 窗口隐藏时没人看错位，可见后下一拍就会对齐
       managedTerminalGrid(sessionId)
         .then(([cols, rows]) => resyncGridIfDrifted(sessionId, cols, rows))
         .catch(() => {});

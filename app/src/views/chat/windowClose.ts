@@ -19,7 +19,7 @@
 // WINDOW_CLOSE_CANCELLED_EVENT 让终端视图与审批通道重新登记，作兜底（重复登记无害）。
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { shellTerminalBusy } from "../../api";
+import { listAllShellTerminals, shellTerminalBusy } from "../../api";
 import { appConfirm } from "../../confirm";
 import type { Dict } from "../../i18n/zh";
 import { remoteUi } from "../../remoteMode";
@@ -87,7 +87,12 @@ export function useGuardedWindowClose(t: Dict): () => void {
     if (inFlight.current) return; // 确认框开着时再点关闭，不叠第二个
     inFlight.current = true;
     try {
-      const ok = await confirmCloseShells(trackedShellIds(), tRef.current);
+      // 以后端为准：窗口销毁时收的是全部面板终端，本窗账本在整页重载后会缺别的会话的。
+      // 后端查不到（旧后端没这条命令）才退回账本。
+      const ids = await listAllShellTerminals()
+        .then((list) => list.filter((info) => !info.exited).map((info) => info.id))
+        .catch(() => trackedShellIds());
+      const ok = await confirmCloseShells(ids, tRef.current);
       if (!ok) {
         if (native) window.dispatchEvent(new CustomEvent(WINDOW_CLOSE_CANCELLED_EVENT));
         return;
@@ -103,6 +108,20 @@ export function useGuardedWindowClose(t: Dict): () => void {
     } finally {
       inFlight.current = false;
     }
+  }, []);
+
+  // 整页重载（兜底页「重新加载」）后账本是空的，只有当前会话的终端会重新登记：挂载时从后端补齐，
+  // 否则别的会话里还在跑的程序在原生关窗时不弹确认就被 kill_all。
+  useEffect(() => {
+    if (remoteUi()) return;
+    let disposed = false;
+    listAllShellTerminals()
+      .then((list) => {
+        if (disposed) return;
+        for (const info of list) if (!info.exited) trackShell(info.id, info.owner);
+      })
+      .catch(() => {});
+    return () => { disposed = true; };
   }, []);
 
   useEffect(() => {

@@ -407,6 +407,10 @@ export function openShellTerminal(owner: number, cwd: string, cols: number, rows
 export function listShellTerminals(owner: number): Promise<ShellTerminalInfo[]> {
   return invoke("shell_terminal_list", { owner });
 }
+/** 全部会话的面板终端（关窗确认用；手机端不给，在 remote.rs 拒绝名单里）。 */
+export function listAllShellTerminals(): Promise<ShellTerminalInfo[]> {
+  return invoke("shell_terminal_list_all");
+}
 /** 挂上输出通道；第一帧是历史输出回放。返回代次，卸载时交给 detachShellTerminal。 */
 export function attachShellTerminal(id: number, onEvent: (event: ShellTerminalEvent) => void): Promise<number> {
   const channel = new Channel<ShellTerminalEvent>();

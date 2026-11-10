@@ -119,8 +119,8 @@ export function useApprovalChannel({ sessionId, activeSessionRef, viewRef, setVi
         void registerApprovalConsumer(sessionId, consumerId).catch(() => {});
       }, REMOTE_CONSUMER_HEARTBEAT_MS);
     }
-    // 原生关窗被用户取消：后端在拦下之前已经清了桌面租约（window.rs CloseRequested 分支），
-    // 窗口还开着就得重新登记，否则之后的审批全被直接交还终端（见 windowClose.ts）。
+    // 原生关窗被用户取消：后端关窗收尾只在 Destroyed 跑（window.rs），取消时租约其实还在；
+    // 这里重新登记是兜底（登记幂等），防以后有人把收尾挪回 CloseRequested（见 windowClose.ts）。
     const onCloseCancelled = () => register(0);
     if (!remoteUi()) window.addEventListener(WINDOW_CLOSE_CANCELLED_EVENT, onCloseCancelled);
     return () => {
@@ -191,8 +191,19 @@ export function useApprovalChannel({ sessionId, activeSessionRef, viewRef, setVi
       }).catch(() => {});
     };
     sweep();
-    const timer = window.setInterval(sweep, 3_000);
-    return () => { cancelled = true; window.clearInterval(timer); };
+    // 只喂侧栏的「待批准」标记：窗口隐藏时没人看，跳过；重新可见那刻补一次。
+    const timer = window.setInterval(() => {
+      if (!document.hidden) sweep();
+    }, 3_000);
+    const onVisible = () => {
+      if (!document.hidden) sweep();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, []);
 
   useEffect(() => {

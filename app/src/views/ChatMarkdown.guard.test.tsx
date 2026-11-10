@@ -77,6 +77,37 @@ describe("病态 markdown 降级", () => {
     expect(container.querySelector("blockquote blockquote blockquote")).toBeTruthy();
   });
 
+  // 做空审查（2026-11-10）找到的绕过形状：修复前要么栈溢出、要么同步卡 1–60+ 秒。
+  const BYPASSES: Array<[string, string]> = [
+    ["交错嵌套强调", `${"*a ".repeat(4000)}b${" a*".repeat(4000)}`],
+    ["20000 个 *", "*".repeat(20000)],
+    ["15000 个 **", "**".repeat(15000)],
+    ["15000 个 ~~", "~~".repeat(15000)],
+    ["440 层缩进列表", Array.from({ length: 440 }, (_, n) => `${"  ".repeat(n)}- x`).join("\n")],
+    ["20000 个链接", "[a](b)".repeat(20000)],
+  ];
+  it.each(BYPASSES)("%s：不抛错、500ms 内、原文显示", (_name, text) => {
+    const { container, ms } = timedRender(text);
+    expect(ms).toBeLessThan(500);
+    expect(container.querySelector("pre.chat-md-plain")?.textContent).toBe(text);
+  });
+
+  it("正常的强调、snake_case、代码块与长列表不被误降级", () => {
+    // 几百条连写的「- **名称**：说明」：列表项各自是独立的行内上下文，不累计。
+    const list = Array.from({ length: 600 }, (_, n) => `- **条目 ${n}**：说明 _斜体_ ~~删除~~`).join("\n");
+    expect(markdownTooComplex(list)).toBe(false);
+    // 表格每行都加粗。
+    const table = ["| a | b |", "| --- | --- |", ...Array.from({ length: 600 }, () => "| **x** | *y* |")].join("\n");
+    expect(markdownTooComplex(table)).toBe(false);
+    // 一段里大量 snake_case 标识符（词内 `_` 不能开合强调）。
+    expect(markdownTooComplex(Array.from({ length: 2000 }, (_, n) => `foo_bar_${n}`).join(" "))).toBe(false);
+    // 代码块里成片的 `**kwargs` 和深缩进不算（800 行约 14 万字，在总长上限内）。
+    const code = ["```py", ...Array.from({ length: 800 }, () => `${" ".repeat(160)}f(**kwargs, *args)`), "```", "正文"].join("\n");
+    expect(markdownTooComplex(code)).toBe(false);
+    // 分隔线。
+    expect(markdownTooComplex("前\n\n***\n\n后")).toBe(false);
+  });
+
   it("预检阈值：正常嵌套放行，超深嵌套、超长拦下", () => {
     expect(markdownTooComplex("> a\n> > b\n- x\n  - y\n    1. z")).toBe(false);
     expect(markdownTooComplex(`${"- ".repeat(40)}x`)).toBe(true);

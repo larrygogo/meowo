@@ -463,6 +463,25 @@ pub(crate) fn shell_terminal_list(
     list
 }
 
+/// 全部会话的面板终端。关整扇对话窗前用：窗口 Destroyed 时 kill_all 收的是这里的全部，前端
+/// 只按当前会话列（shell_terminal_list）的话，「重新加载」后别的会话的终端不在它账上，关窗
+/// 就不弹确认、直接杀掉（做空审查）。
+#[tauri::command]
+pub(crate) fn shell_terminal_list_all(state: tauri::State<'_, ShellTerminals>) -> Vec<ShellTerminalInfo> {
+    state.list_all()
+}
+
+impl ShellTerminals {
+    fn list_all(&self) -> Vec<ShellTerminalInfo> {
+        let Ok(map) = self.shells.lock() else {
+            return Vec::new();
+        };
+        let mut list: Vec<ShellTerminalInfo> = map.iter().map(|(id, shell)| Self::info(*id, shell)).collect();
+        list.sort_by_key(|info| info.id);
+        list
+    }
+}
+
 /// 挂上前端通道：先在同一把锁里把历史输出作为第一帧发出去，之后的输出接着走同一条通道，
 /// 回放与实时输出之间不会漏字节也不会重复。返回代次，detach 时带回来。
 #[tauri::command]

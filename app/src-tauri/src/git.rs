@@ -1012,12 +1012,25 @@ type TrashFn = fn(&Path) -> Result<(), String>;
 /// 失败一律报 git/trash_failed、文件原样保留，**不退回永久删除**：没回收站的盘（网络盘、
 /// 部分 U 盘）上宁可让用户自己去删，也不替用户做不可恢复的决定。
 fn trash_to_recycle_bin(path: &Path) -> Result<(), String> {
-    // trash 5.2.9 的 Windows 实现对 CoCreateInstance 直接 unwrap（windows.rs:95），
-    // COM 起不来时会 panic；接住它，按回收失败报错而不是让 spawn_blocking 抛 JoinError。
-    match std::panic::catch_unwind(|| trash_context().delete(path)) {
-        Ok(Ok(())) => {}
-        Ok(Err(e)) => return Err(format!("git/trash_failed: {e}")),
-        Err(_) => return Err("git/trash_failed: recycle bin unavailable".into()),
+    // 必须在一次性的专用线程里调：trash 5.2.9 在 Windows 上把所在线程 CoInitializeEx 成 STA 且
+    // 永不 CoUninitialize（windows.rs:317-348）。若直接跑在 spawn_blocking 线程池里，这个线程以后
+    // 被 focus_session 复用时 UIAutomation 要 MTA 会失败（terminal.rs:144 要求干净 apartment），
+    // 反过来先跑过 UIA 的线程上 trash 也会失败（做空审查 comprobe 探针实测两向都复现）。
+    // 用完即弃的线程让 COM 状态随线程结束。
+    let owned = path.to_path_buf();
+    let joined = std::thread::Builder::new()
+        .name("meowo-trash".into())
+        .spawn(move || {
+            // trash 的 Windows 实现对 CoCreateInstance 直接 unwrap（windows.rs:95），COM 起不来会
+            // panic；接住它按回收失败报错。
+            std::panic::catch_unwind(|| trash_context().delete(&owned))
+        })
+        .map_err(|e| format!("git/trash_failed: {e}"))?
+        .join();
+    match joined {
+        Ok(Ok(Ok(()))) => {}
+        Ok(Ok(Err(e))) => return Err(format!("git/trash_failed: {e}")),
+        Ok(Err(_)) | Err(_) => return Err("git/trash_failed: recycle bin unavailable".into()),
     }
     // 防御：IFileOperation 只靠 GetAnyOperationsAborted 报失败，trash 自己也注明拿不到具体
     // 原因（windows.rs:111）。落地再核一次，免得界面说放弃成功、文件其实还在。
@@ -1863,14 +1876,27 @@ mod tests {
         std::fs::write(repo.join(&name), "probe\n").unwrap();
         discard_blocking(&s(&repo), std::slice::from_ref(&name)).unwrap();
         assert!(!repo.join(&name).exists());
+        // 调用线程的 COM apartment 不能被 trash 染成 STA：同一线程池里 focus_session 的
+        // UIAutomation 要 MTA。必须放在下面 os_limited::list 之前——那两个调用本身也会染线程。
+        #[cfg(windows)]
+        assert!(
+            uiautomation::UIAutomation::new().is_ok(),
+            "放弃更改之后，同一线程上 UIAutomation 起不来（trash 把线程染成了 STA）"
+        );
         let parent = dunce::canonicalize(&repo).unwrap();
-        let ours: Vec<_> = trash::os_limited::list()
-            .unwrap()
-            .into_iter()
-            .filter(|item| item.name == name.as_str() && dunce::simplified(&item.original_parent) == parent)
-            .collect();
-        let found = !ours.is_empty();
-        let _ = trash::os_limited::purge_all(ours);
+        // 查回收站也要换线程：上面 UIAutomation 已把本线程初始化成 MTA，trash 在这里要 STA 会 panic。
+        let found = std::thread::spawn(move || {
+            let ours: Vec<_> = trash::os_limited::list()
+                .unwrap()
+                .into_iter()
+                .filter(|item| item.name == name.as_str() && dunce::simplified(&item.original_parent) == parent)
+                .collect();
+            let found = !ours.is_empty();
+            let _ = trash::os_limited::purge_all(ours);
+            found
+        })
+        .join()
+        .unwrap();
         assert!(found, "放弃的未跟踪文件没进回收站（被永久删除了）");
     }
 

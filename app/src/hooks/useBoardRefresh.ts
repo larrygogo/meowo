@@ -76,10 +76,20 @@ export function useBoardRefresh(doRefresh: () => void): () => void {
   }, []);
 
   // 远程模式:board-changed 收不到,改用定时轮询驱动同一条节流刷新通道。桌面永不进此分支。
+  // 手机锁屏或切到后台时不拉（白耗电和流量），回到前台那刻立即补一次。
   useEffect(() => {
     if (!remoteUi()) return;
-    const id = window.setInterval(() => refresh(), REMOTE_BOARD_POLL_MS);
-    return () => window.clearInterval(id);
+    const id = window.setInterval(() => {
+      if (!document.hidden) refresh();
+    }, REMOTE_BOARD_POLL_MS);
+    const onVisible = () => {
+      if (!document.hidden) refresh();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [refresh]);
 
   return refresh;
