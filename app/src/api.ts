@@ -41,6 +41,7 @@ import type { GetSessionAdminPageArgs } from "./generated/contracts/bridge/GetSe
 import type { GetSubagentTranscriptArgs } from "./generated/contracts/bridge/GetSubagentTranscriptArgs";
 import type { GhPrCreateArgs } from "./generated/contracts/bridge/GhPrCreateArgs";
 import type { GhPrMergeArgs } from "./generated/contracts/bridge/GhPrMergeArgs";
+import type { ForgeChooseRepoArgs } from "./generated/contracts/bridge/ForgeChooseRepoArgs";
 import type { GitChangesOverviewArgs } from "./generated/contracts/bridge/GitChangesOverviewArgs";
 import type { GitCommitArgs } from "./generated/contracts/bridge/GitCommitArgs";
 import type { GitDiffSummaryArgs } from "./generated/contracts/bridge/GitDiffSummaryArgs";
@@ -804,6 +805,11 @@ export function ghPrCreate(cwd: string, pr: { title: string; body: string; base:
 /// expectedHeadOid：确认框里看到的 PR 头提交，之后有人推了新提交 GitHub 会拒（gh/head_changed）。
 export function ghPrMerge(cwd: string, number: number, method: string, expectedHeadOid: string, sessionCwd?: string | null): Promise<MergeResultDto> {
   return invoke("gh_pr_merge", { cwd, number, method, expectedHeadOid, ...withSession(sessionCwd) } satisfies GhPrMergeArgs);
+}
+/// 多个 GitHub 远端时选 PR 开在哪个远端的仓库（ForgeStatusDto.repoChoices 里的 remote），按仓库记在本机。
+/// 传参改动须同步 meowo_protocol::bridge 的 ForgeChooseRepoArgs 与样例 payload 测试。
+export function forgeChooseRepo(cwd: string, remote: string, sessionCwd?: string | null): Promise<void> {
+  return invoke("forge_choose_repo", { cwd, remote, ...withSession(sessionCwd) } satisfies ForgeChooseRepoArgs);
 }
 export type { ForgeStatusDto, GitJobDto, MergeResultDto, PushResultDto };
 

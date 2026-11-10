@@ -73,6 +73,7 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "gh/review_required", exact: true, zh: "还需要审核通过才能合并", en: "An approving review is required first" },
   { m: "gh/merge_blocked", tail: true, zh: "GitHub 拒绝了合并", en: "GitHub blocked the merge" },
   { m: "gh/pr_exists", zh: "这个分支已经有 PR 了", en: "This branch already has a PR" },
+  { m: "gh/ambiguous_repo", exact: true, zh: "有多个 GitHub 远端，先选仓库", en: "Several GitHub remotes. Choose a repository first." },
   { m: "gh/failed", tail: true, zh: "gh 操作失败", en: "gh failed" },
   { m: "remote/bind_failed", tail: true, zh: "无法监听这个端口", en: "Couldn't listen on this port" },
   // ── 诊断日志（diaglog.rs）──

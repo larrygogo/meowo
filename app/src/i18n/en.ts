@@ -1720,6 +1720,13 @@ export const en: Dict = {
     cleanupHint: "This worktree can be cleaned up",
     ghMissing: "gh isn't installed, so CI is hidden",
     ghUnauthed: "gh isn't signed in, so CI is hidden",
+    repoNeedsChoice: "Several GitHub remotes. Choose a repository.",
+    repoPick: "Choose repository",
+    repoAt: (slug) => `PRs go to ${slug}`,
+    repoChange: "Change",
+    repoPickTitle: "Which repository gets the PR",
+    repoPickNote: "Remembered for this repository",
+    repoConfirm: "Use this repository",
   },
   about: {
     updateTo: (v) => `Update to v${v}`,

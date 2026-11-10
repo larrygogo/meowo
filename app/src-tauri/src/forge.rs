@@ -13,8 +13,9 @@
 //! gh 调用全部经 [`GhExec`] 注入：单测喂录制的 gh JSON（录自真实仓库的只读 `gh pr view`，见
 //! forge/fixtures），不碰任何真实远端。
 
+use crate::git_target::{resolve, GitConfig, PushTarget};
 use meowo_protocol::ipc::{
-    ForgeStatusDto, GitJobDto, MergeResultDto, PrCheckDto, PrDefaultsDto, PullRequestDto, PushResultDto,
+    ForgeRepoChoiceDto, ForgeStatusDto, GitJobDto, MergeResultDto, PrCheckDto, PrDefaultsDto, PullRequestDto, PushResultDto,
 };
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -183,48 +184,39 @@ struct PushPlan {
     set_upstream: bool,
 }
 
-/// 推到哪个远端，以及分支现在的上游是不是「同名的远端分支」。
-///
-/// 只有上游正是 `<远端>/<本地分支名>` 才沿用它；上游分支名和本地不同（典型：`git worktree add -b feat
-/// <路径> origin/main` 的默认 autoSetupMerge 让 feat 跟踪 origin/main）一律不推上游，改推同名分支并
-/// 重设上游，等价 git 默认的 push.default=simple。做空审查实测（redteam/push-main）：以前照上游推
-/// `HEAD:refs/heads/main`，功能分支的提交直接进了远端 main。
-/// 不沿用上游时远端优先 remote.pushDefault，再 origin，再唯一的那个（fork + upstream 的仓库里功能分支
-/// 常跟踪 upstream/main，推回 upstream 不对，推自己的 origin 才对）。
-fn push_remote(dir: &str, branch: &str, remotes: &[String], env: GitEnv) -> Option<(String, bool)> {
-    let up_remote = git(dir, &["config", "--get", &format!("branch.{branch}.remote")], env);
-    let up_merge = git(dir, &["config", "--get", &format!("branch.{branch}.merge")], env);
-    if let (Some(remote), Some(merge)) = (&up_remote, &up_merge) {
-        // 上游是「.」（跟踪的是本地分支）不算远端上游。
-        if remotes.iter().any(|r| r == remote) && *merge == format!("refs/heads/{branch}") {
-            return Some((remote.clone(), true));
+/// 公共 .git 目录与本 worktree 的 .git 目录（绝对路径）。
+fn git_dirs(dir: &str, env: GitEnv) -> Option<(PathBuf, PathBuf)> {
+    let out = git(dir, &["rev-parse", "--path-format=absolute", "--git-common-dir", "--git-dir"], env)?;
+    let mut lines = out.lines().map(str::trim);
+    Some((PathBuf::from(lines.next()?), PathBuf::from(lines.next()?)))
+}
+
+/// 读配置：与摘要（git.rs）同一个读法（git_target::GitConfig::load），环境变量先看注入的 env 再看进程的
+///（测试把全局配置隔离到空文件，判定也得跟着隔离）。
+fn load_config(common: &Path, git_dir: &Path, env: GitEnv) -> GitConfig {
+    let lookup = |key: &str| -> Option<String> {
+        match env.iter().find(|(k, _)| *k == key) {
+            Some((_, value)) => value.map(str::to_string),
+            None => std::env::var(key).ok(),
         }
-    }
-    let preferred = git(dir, &["config", "--get", "remote.pushDefault"], env).filter(|r| remotes.contains(r));
-    let remote = preferred
-        .or_else(|| remotes.iter().find(|r| *r == "origin").cloned())
-        .or_else(|| remotes.first().cloned())?;
-    Some((remote, false))
+    };
+    GitConfig::load(common, Some(git_dir), &lookup)
 }
 
-fn remote_names(dir: &str, env: GitEnv) -> Vec<String> {
-    git(dir, &["remote"], env)
-        .unwrap_or_default()
-        .lines()
-        .map(|l| l.trim().to_string())
-        .filter(|l| !l.is_empty())
-        .collect()
-}
-
-/// 永远推到同名分支：refspec 写死 `HEAD:refs/heads/<本地分支>`（不写裸 `HEAD`，remote.<名>.push 的映射
-/// 不生效）。上游不是同名分支（或没有）时带 -u，推完上游就是同名的那个。
+/// 推到哪：git_target::resolve 的结论（与摘要的 pushTarget 同一个判定，做空第二轮）。refspec 写死
+/// `HEAD:refs/heads/<远端分支>`（不写裸 `HEAD`，remote.<名>.push 的映射不生效）。
 fn plan_push(dir: &str, env: GitEnv) -> Result<PushPlan, String> {
     let branch = git(dir, &["symbolic-ref", "--quiet", "--short", "HEAD"], env)
         .filter(|b| !b.is_empty())
         .ok_or("git/detached")?;
-    let remotes = remote_names(dir, env);
-    let (remote, tracked) = push_remote(dir, &branch, &remotes, env).ok_or("git/no_remote")?;
-    Ok(PushPlan { remote, refspec: format!("HEAD:refs/heads/{branch}"), branch, set_upstream: !tracked })
+    let (common, git_dir) = git_dirs(dir, env).ok_or("git/no_remote")?;
+    let target = resolve(&load_config(&common, &git_dir, env), &common, &branch).ok_or("git/no_remote")?;
+    Ok(PushPlan {
+        refspec: format!("HEAD:refs/heads/{}", target.branch),
+        remote: target.remote,
+        branch: target.branch,
+        set_upstream: target.set_upstream,
+    })
 }
 
 /// push 失败归类（LC_ALL=C 下 git 的英文输出；remote: 开头的是服务器原话，不受语言影响）。
@@ -661,14 +653,128 @@ fn view_pr(gh: GhExec, caches: &Caches, dir: &str, slug: Option<&str>, target: O
 // ═══ 仓库信息（本地 git）═══
 
 struct RepoInfo {
-    /// 公共 .git 目录（worktree 共用），缓存键用。
+    /// 公共 .git 目录（worktree 共用），缓存键、按仓库记的选择用。
     common: String,
     branch: Option<String>,
-    /// GitHub 的 owner/repo；远端不是 GitHub 时 None。
-    slug: Option<String>,
+    /// 推送去向（git_target::resolve）。PR 的 head 分支就是它的远端分支。detached / 没远端时 None。
+    target: Option<PushTarget>,
+    gh: GhRepo,
     has_remote: bool,
-    /// 默认分支名（`main`）。
+    /// PR 的目标分支（PR 所在仓库的默认分支，`main`）。
     base: Option<String>,
+}
+
+/// 一个 GitHub 远端：远端名 + owner/repo。
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GhRemote {
+    remote: String,
+    slug: String,
+}
+
+/// PR 在哪个仓库开、head 在哪个仓库（单点判定，见 [`resolve_gh_repo`]）。
+#[derive(Debug, Clone, Default)]
+struct GhRepo {
+    /// PR 所在仓库（gh 的 `--repo`）。没有 GitHub 远端时 None。
+    base: Option<GhRemote>,
+    /// head 分支所在仓库（推送远端）。和 base 不同就是 fork：`--head <owner>:<分支>`。
+    head: Option<GhRemote>,
+    /// 多个 GitHub 远端、又没用 gh repo set-default 定过时，界面上可选的远端。
+    choices: Vec<GhRemote>,
+    /// 还没选：查状态先按 origin 看，开 PR / 合并返回 `gh/ambiguous_repo`，不静默挑一个。
+    needs_choice: bool,
+}
+
+impl GhRepo {
+    fn slug(&self) -> Option<&str> {
+        self.base.as_ref().map(|b| b.slug.as_str())
+    }
+    /// gh 认的 head 写法：同仓库是分支名，fork 是 `<fork owner>:<分支>`（`gh pr create --head`、
+    /// `gh pr view <owner>:<分支>` 都认这个写法）。
+    fn head_ref(&self, branch: &str) -> String {
+        match (&self.base, &self.head) {
+            (Some(base), Some(head)) if base.slug != head.slug => {
+                format!("{}:{branch}", head.slug.split_once('/').map(|(owner, _)| owner).unwrap_or(&head.slug))
+            }
+            _ => branch.to_string(),
+        }
+    }
+}
+
+/// PR 所在仓库：
+/// 1. 远端上有 `gh-resolved = base`（`gh repo set-default`、`gh repo fork --clone` 写的）就用它，与 gh 一致；
+/// 2. 用户在 Meowo 里选过（按仓库记在 forge.json）；
+/// 3. 只有一个 GitHub 远端就是它；
+/// 4. 多个又都没定：先按 origin（没有就第一个）查状态，标 needs_choice，界面给出可选列表。
+///
+/// 做空第二轮实测：以前一律 `--repo` 推送远端（origin），fork 工作流 set-default 到 upstream 后，PR 开进了自己的 fork。
+fn resolve_gh_repo(cfg: &GitConfig, chosen: Option<&str>, target: Option<&PushTarget>) -> GhRepo {
+    let github: Vec<GhRemote> = cfg
+        .remotes()
+        .into_iter()
+        .filter_map(|remote| {
+            let slug = github_slug(cfg.get("remote", Some(&remote), "url")?)?;
+            Some(GhRemote { remote, slug })
+        })
+        .collect();
+    let by_name = |name: &str| github.iter().find(|g| g.remote == name).cloned();
+    let resolved = github
+        .iter()
+        .find(|g| cfg.get("remote", Some(&g.remote), "gh-resolved") == Some("base"))
+        .cloned();
+    let mut repo = GhRepo::default();
+    repo.base = match (&resolved, chosen.and_then(by_name)) {
+        (Some(base), _) => Some(base.clone()),
+        (None, Some(base)) => Some(base),
+        (None, None) if github.len() <= 1 => github.first().cloned(),
+        (None, None) => {
+            repo.needs_choice = true;
+            by_name("origin").or_else(|| github.first().cloned())
+        }
+    };
+    if resolved.is_none() && github.len() > 1 {
+        repo.choices = github.clone();
+    }
+    repo.head = target.and_then(|t| by_name(&t.remote)).or_else(|| repo.base.clone());
+    repo
+}
+
+/// 公共 .git 目录 → 缓存 / 选择记录的键（斜杠统一、不分大小写）。
+fn common_key(common_dir: &Path) -> String {
+    common_dir.to_string_lossy().replace('\\', "/").to_lowercase()
+}
+
+fn repo_info(dir: &str, env: GitEnv, prefs: &Path) -> Option<RepoInfo> {
+    let (common_dir, git_dir) = git_dirs(dir, env)?;
+    let common = common_key(&common_dir);
+    let branch = git(dir, &["symbolic-ref", "--quiet", "--short", "HEAD"], env).filter(|b| !b.is_empty());
+    let cfg = load_config(&common_dir, &git_dir, env);
+    let target = branch.as_deref().and_then(|b| resolve(&cfg, &common_dir, b));
+    let gh = resolve_gh_repo(&cfg, chosen_remote(prefs, &common).as_deref(), target.as_ref());
+    let base = default_branch(dir, gh.base.as_ref().map(|b| b.remote.as_str()), env);
+    Some(RepoInfo { common, branch, target, gh, has_remote: !cfg.remotes().is_empty(), base })
+}
+
+/// 默认分支名：PR 所在远端的 HEAD 指向的，否则它的 main、master；再看 origin；最后本地的 main、master。
+fn default_branch(dir: &str, remote: Option<&str>, env: GitEnv) -> Option<String> {
+    let remotes: Vec<&str> = remote.into_iter().chain((remote != Some("origin")).then_some("origin")).collect();
+    for remote in &remotes {
+        if let Some(head) = git(dir, &["symbolic-ref", "-q", "--short", &format!("refs/remotes/{remote}/HEAD")], env) {
+            if let Some(name) = head.strip_prefix(&format!("{remote}/")) {
+                return Some(name.to_string());
+            }
+        }
+        for name in ["main", "master"] {
+            if git(dir, &["rev-parse", "-q", "--verify", &format!("refs/remotes/{remote}/{name}")], env).is_some() {
+                return Some(name.to_string());
+            }
+        }
+    }
+    for name in ["main", "master"] {
+        if git(dir, &["rev-parse", "-q", "--verify", &format!("refs/heads/{name}")], env).is_some() {
+            return Some(name.to_string());
+        }
+    }
+    None
 }
 
 /// 远端地址 → GitHub 的 owner/repo。认 https / ssh / scp 三种写法；GitHub Enterprise 与 ssh 主机别名不认
@@ -702,45 +808,14 @@ fn url_path_escape(text: &str) -> String {
         .collect()
 }
 
-fn repo_info(dir: &str, env: GitEnv) -> Option<RepoInfo> {
-    let common = git(dir, &["rev-parse", "--path-format=absolute", "--git-common-dir"], env)?;
-    let branch = git(dir, &["symbolic-ref", "--quiet", "--short", "HEAD"], env).filter(|b| !b.is_empty());
-    let remotes = remote_names(dir, env);
-    // 看哪个远端：推送会推去的那个（与 plan_push 同一套判定），detached 时 origin，否则第一个。
-    let remote = match &branch {
-        Some(b) => push_remote(dir, b, &remotes, env).map(|(r, _)| r),
-        None => remotes.iter().find(|r| *r == "origin").cloned().or_else(|| remotes.first().cloned()),
-    };
-    let slug = remote.as_ref().and_then(|r| git(dir, &["remote", "get-url", r], env)).and_then(|u| github_slug(&u));
-    let base = default_branch(dir, env);
-    Some(RepoInfo { common: common.replace('\\', "/").to_lowercase(), branch, slug, has_remote: !remotes.is_empty(), base })
-}
-
-/// 默认分支名：origin/HEAD 指向的，否则 origin/main、origin/master，否则 main。
-fn default_branch(dir: &str, env: GitEnv) -> Option<String> {
-    if let Some(head) = git(dir, &["symbolic-ref", "-q", "--short", "refs/remotes/origin/HEAD"], env) {
-        if let Some(name) = head.strip_prefix("origin/") {
-            return Some(name.to_string());
-        }
-    }
-    for name in ["main", "master"] {
-        if git(dir, &["rev-parse", "-q", "--verify", &format!("refs/remotes/origin/{name}")], env).is_some() {
-            return Some(name.to_string());
-        }
-    }
-    for name in ["main", "master"] {
-        if git(dir, &["rev-parse", "-q", "--verify", &format!("refs/heads/{name}")], env).is_some() {
-            return Some(name.to_string());
-        }
-    }
-    None
-}
-
 /// 开 PR 的默认值：base..HEAD 只有一个提交时取它的标题，否则用分支名；正文是提交列表。
-/// base 用远端的默认分支（本地 main 可能落后），没有就本地的。
-pub(crate) fn pr_defaults(dir: &str, branch: &str, base: &str, env: GitEnv) -> PrDefaultsDto {
-    let range_base = [format!("refs/remotes/origin/{base}"), format!("refs/heads/{base}")]
+/// base 用 PR 所在远端的默认分支（本地 main 可能落后），再看 origin 的，没有就本地的。
+pub(crate) fn pr_defaults(dir: &str, branch: &str, base: &str, base_remote: Option<&str>, env: GitEnv) -> PrDefaultsDto {
+    let range_base = base_remote
+        .filter(|r| *r != "origin")
+        .map(|r| format!("refs/remotes/{r}/{base}"))
         .into_iter()
+        .chain([format!("refs/remotes/origin/{base}"), format!("refs/heads/{base}")])
         .find(|r| git(dir, &["rev-parse", "-q", "--verify", r], env).is_some());
     let subjects: Vec<String> = range_base
         .and_then(|b| git(dir, &["log", "--reverse", "--format=%s", "--no-merges", "-n", "50", &format!("{b}..HEAD")], env))
@@ -755,7 +830,7 @@ pub(crate) fn pr_defaults(dir: &str, branch: &str, base: &str, env: GitEnv) -> P
     PrDefaultsDto { title, body, base: base.to_string() }
 }
 
-// ═══ 上次的合并方式（按 owner/repo 记在本机）═══
+// ═══ 本机记住的选择：上次的合并方式（按 owner/repo）、PR 所在仓库（按公共 .git 目录）═══
 
 /// 记在 `~/.meowo/forge.json`，不进 settings.json：settings 由设置窗口整份回写（set_settings），窗口开着期间
 /// 记下的值会被旧快照盖掉，要再加一条「独立维护字段」的保护；单独一个小文件没有这个坑。
@@ -763,13 +838,13 @@ fn prefs_path() -> PathBuf {
     crate::db_path().with_file_name("forge.json")
 }
 
-pub(crate) fn last_merge_method(path: &Path, slug: &str) -> Option<String> {
+fn read_pref(path: &Path, field: &str, key: &str) -> Option<String> {
     let raw = std::fs::read_to_string(path).ok()?;
     let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
-    v.get("lastMergeMethod")?.get(slug)?.as_str().map(str::to_string)
+    v.get(field)?.get(key)?.as_str().map(str::to_string)
 }
 
-pub(crate) fn save_merge_method(path: &Path, slug: &str, method: &str) {
+fn save_pref(path: &Path, field: &str, key: &str, value: &str) {
     static LOCK: Mutex<()> = Mutex::new(());
     let _guard = lock(&LOCK);
     let mut v: serde_json::Value = std::fs::read_to_string(path)
@@ -777,16 +852,29 @@ pub(crate) fn save_merge_method(path: &Path, slug: &str, method: &str) {
         .and_then(|raw| serde_json::from_str(&raw).ok())
         .filter(|v: &serde_json::Value| v.is_object())
         .unwrap_or_else(|| serde_json::json!({}));
-    if !v.get("lastMergeMethod").is_some_and(|m| m.is_object()) {
-        v["lastMergeMethod"] = serde_json::json!({});
+    if !v.get(field).is_some_and(|m| m.is_object()) {
+        v[field] = serde_json::json!({});
     }
-    v["lastMergeMethod"][slug] = serde_json::Value::String(method.to_string());
+    v[field][key] = serde_json::Value::String(value.to_string());
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
     if let Ok(body) = serde_json::to_string_pretty(&v) {
         let _ = crate::fsutil::write_atomic(path, &body);
     }
+}
+
+pub(crate) fn last_merge_method(path: &Path, slug: &str) -> Option<String> {
+    read_pref(path, "lastMergeMethod", slug)
+}
+
+pub(crate) fn save_merge_method(path: &Path, slug: &str, method: &str) {
+    save_pref(path, "lastMergeMethod", slug, method);
+}
+
+/// 用户在界面上选的 PR 所在远端（多个 GitHub 远端、没用 gh repo set-default 定过时）。
+fn chosen_remote(path: &Path, common: &str) -> Option<String> {
+    read_pref(path, "repoRemote", common)
 }
 
 // ═══ 状态 / 开 PR / 合并 ═══
@@ -805,8 +893,27 @@ impl Ctx<'static> {
     }
 }
 
+/// PR 缓存键：公共 .git 目录 + PR 所在仓库 + head。换了仓库（界面上选了别的远端）就是另一份缓存。
 fn pr_key(info: &RepoInfo) -> Option<String> {
-    Some(format!("{}\u{0}{}", info.common, info.branch.as_ref()?))
+    Some(format!("{}\u{0}{}\u{0}{}", info.common, info.gh.slug()?, info.head_ref()?))
+}
+
+impl RepoInfo {
+    /// PR 的 head 分支：推送去的远端分支（跟踪 origin/bugfix-123 的 fix 就是 bugfix-123）。
+    fn head_branch(&self) -> Option<&str> {
+        self.target.as_ref().map(|t| t.branch.as_str()).or(self.branch.as_deref())
+    }
+    /// gh 认的 head（fork 时带 owner）。
+    fn head_ref(&self) -> Option<String> {
+        self.head_branch().map(|b| self.gh.head_ref(b))
+    }
+    /// (head, base)：同一仓库里 head 就是目标分支时没有 PR 可开（本地就在默认分支上），返回 None。
+    fn pr_branches(&self) -> Option<(&str, &str)> {
+        let head = self.head_branch()?;
+        let base = self.base.as_deref()?;
+        let same_repo = self.gh.base.as_ref().map(|b| &b.slug) == self.gh.head.as_ref().map(|h| &h.slug);
+        (head != base || !same_repo).then_some((head, base))
+    }
 }
 
 /// push、开 PR、合并之后作废 PR 缓存（同一个公共 .git 目录下的全部分支）。
@@ -827,7 +934,7 @@ fn gh_label(state: GhState) -> &'static str {
 /// 「更改」面板 GitHub 区块的数据。force：窗口重新聚焦 / 手动刷新，跳过 60s 缓存（但最短 10s）并重查登录状态。
 pub(crate) fn forge_status_with(ctx: &Ctx, cwd: &str, force: bool) -> Result<ForgeStatusDto, String> {
     let dir = existing_dir(cwd)?;
-    let info = repo_info(dir, ctx.env).ok_or("worktree/not_repo")?;
+    let info = repo_info(dir, ctx.env, &ctx.prefs).ok_or("worktree/not_repo")?;
     let mut dto = ForgeStatusDto {
         gh: "no_remote".into(),
         gh_too_old: false,
@@ -837,27 +944,36 @@ pub(crate) fn forge_status_with(ctx: &Ctx, cwd: &str, force: bool) -> Result<For
         last_merge_method: None,
         pr: None,
         pr_defaults: None,
+        repo_choices: Vec::new(),
+        repo_remote: None,
+        repo_needs_choice: false,
     };
     if !info.has_remote {
         return Ok(dto);
     }
-    let Some(slug) = info.slug.clone() else {
+    let Some(slug) = info.gh.slug().map(str::to_string) else {
         dto.gh = "not_github".into();
         return Ok(dto);
     };
+    dto.repo_choices = info.gh.choices.iter().map(|c| ForgeRepoChoiceDto { remote: c.remote.clone(), slug: c.slug.clone() }).collect();
+    dto.repo_remote = info.gh.base.as_ref().map(|b| b.remote.clone());
+    dto.repo_needs_choice = info.gh.needs_choice;
     let repo_url = format!("https://github.com/{slug}");
-    if let (Some(branch), Some(base)) = (&info.branch, &info.base) {
-        if branch != base {
-            dto.compare_url = Some(format!("{repo_url}/compare/{}...{}?expand=1", url_path_escape(base), url_path_escape(branch)));
-        }
+    if let (Some((head, base)), Some(head_ref)) = (info.pr_branches(), info.head_ref()) {
+        // fork 的 head 写 `<owner>:<分支>`：GitHub 的 compare 页就是这个写法，冒号原样保留。
+        let head = match head_ref.split_once(':') {
+            Some((owner, _)) => format!("{owner}:{}", url_path_escape(head)),
+            None => url_path_escape(head),
+        };
+        dto.compare_url = Some(format!("{repo_url}/compare/{}...{head}?expand=1", url_path_escape(base)));
     }
     dto.repo_url = Some(repo_url);
     dto.last_merge_method = last_merge_method(&ctx.prefs, &slug);
     let state = ctx.caches.gh_state(ctx.gh, force);
     dto.gh = gh_label(state).into();
-    let defaults = |info: &RepoInfo| match (&info.branch, &info.base) {
-        (Some(branch), Some(base)) if branch != base => Some(pr_defaults(dir, branch, base, ctx.env)),
-        _ => None,
+    let base_remote = info.gh.base.as_ref().map(|b| b.remote.clone());
+    let defaults = |info: &RepoInfo| {
+        info.pr_branches().map(|(head, base)| pr_defaults(dir, head, base, base_remote.as_deref(), ctx.env))
     };
     if state != GhState::Ok {
         dto.pr_defaults = defaults(&info);
@@ -870,7 +986,7 @@ pub(crate) fn forge_status_with(ctx: &Ctx, cwd: &str, force: bool) -> Result<For
         let ttl = if force { FORCE_MIN } else { PR_TTL };
         let pr = match cached {
             Some((at, pr)) if at.elapsed() < ttl => pr,
-            _ => match view_pr(ctx.gh, ctx.caches, dir, Some(&slug), info.branch.as_deref()) {
+            _ => match view_pr(ctx.gh, ctx.caches, dir, Some(&slug), info.head_ref().as_deref()) {
                 Ok(pr) => {
                     lock(&ctx.caches.prs).insert(key, (Instant::now(), pr.clone()));
                     pr
@@ -951,24 +1067,32 @@ pub(crate) fn pr_create_with(
 ) -> Result<PullRequestDto, String> {
     let dir = existing_dir(cwd)?;
     require_gh(ctx)?;
-    let info = repo_info(dir, ctx.env).ok_or("worktree/not_repo")?;
-    let branch = info.branch.clone().ok_or("git/detached")?;
+    let info = repo_info(dir, ctx.env, &ctx.prefs).ok_or("worktree/not_repo")?;
+    info.branch.as_ref().ok_or("git/detached")?;
+    // 多个 GitHub 远端、没定 PR 开在哪：不静默挑 origin，界面拿到这个码就弹出远端列表让用户选。
+    if info.gh.needs_choice {
+        return Err("gh/ambiguous_repo".into());
+    }
+    // 远端不是 GitHub（企业版、ssh 别名）时不带 --repo，交给 gh 自己按远端认（同以前）。
+    let slug = info.gh.slug().map(str::to_string);
     let base = base.map(str::trim).filter(|b| !b.is_empty()).map(str::to_string).or(info.base.clone()).ok_or("gh/failed: no base")?;
     let summary = crate::git::git_diff_summary_blocking(dir)?;
     if summary.upstream.is_none() || summary.unpushed.unwrap_or(0) > 0 {
         push(dir)?;
     }
-    // PR 的 head 就是本地分支名：推送永远推到同名远端分支（plan_push）。以前取上游分支名，上游是
-    // origin/main 时 head 成了 main（做空审查实测）。
-    let head = branch.clone();
-    let defaults = pr_defaults(dir, &branch, &base, ctx.env);
+    // PR 的 head = 推送去的远端分支（git_target::resolve，与 push 同一个判定）：上游是 origin/main 时是同名分支
+    // （第一轮做空：以前 head 成了 main），跟踪 origin/bugfix-123 时是 bugfix-123，fork 时带 owner。
+    let head_branch = info.head_branch().ok_or("git/detached")?.to_string();
+    let head = info.gh.head_ref(&head_branch);
+    let base_remote = info.gh.base.as_ref().map(|b| b.remote.clone());
+    let defaults = pr_defaults(dir, &head_branch, &base, base_remote.as_deref(), ctx.env);
     let title = title.map(str::trim).filter(|t| !t.is_empty()).map(str::to_string).unwrap_or(defaults.title);
     let body = body.map(str::to_string).unwrap_or(defaults.body);
     let mut args = vec!["pr", "create", "--title", &title, "--body", &body, "--base", &base, "--head", &head];
     if draft {
         args.push("--draft");
     }
-    if let Some(slug) = info.slug.as_deref() {
+    if let Some(slug) = slug.as_deref() {
         args.extend(["--repo", slug]);
     }
     let out = (ctx.gh)(dir, &args).ok_or("gh/not_installed")?;
@@ -986,7 +1110,7 @@ pub(crate) fn pr_create_with(
         return Err(classify_gh_failure(&out, None));
     }
     let url = out.stdout.lines().map(str::trim).find(|l| l.starts_with("https://")).unwrap_or_default().to_string();
-    match view_pr(ctx.gh, ctx.caches, dir, info.slug.as_deref(), Some(&branch)) {
+    match view_pr(ctx.gh, ctx.caches, dir, slug.as_deref(), Some(&head)) {
         Ok(Some(pr)) => Ok(pr),
         // 刚建好就查不到（GitHub 偶有延迟）：用 gh 打出的链接拼一个最小的。
         _ => Ok(PullRequestDto {
@@ -1023,15 +1147,18 @@ pub(crate) fn pr_merge_with(ctx: &Ctx, cwd: &str, number: u32, method: &str, exp
     if ctx.caches.gh_too_old(ctx.gh) {
         return Err("gh/too_old".into());
     }
-    let info = repo_info(dir, ctx.env).ok_or("worktree/not_repo")?;
-    let slug = info.slug.clone().ok_or("gh/merge_blocked: not github")?;
+    let info = repo_info(dir, ctx.env, &ctx.prefs).ok_or("worktree/not_repo")?;
+    if info.gh.needs_choice {
+        return Err("gh/ambiguous_repo".into());
+    }
+    let slug = info.gh.slug().ok_or("gh/merge_blocked: not github")?.to_string();
     let methods = ctx.caches.merge_methods(ctx.gh, dir, &slug);
     if !methods.iter().any(|m| m == method) {
         return Err("gh/method_not_allowed".into());
     }
     let number_text = number.to_string();
-    // 查当前分支的 PR（再核对号对不对得上）；detached 时按号查。
-    let target = info.branch.clone().unwrap_or_else(|| number_text.clone());
+    // 查当前分支的 PR（head 与开 PR 同一个判定，再核对号对不对得上）；detached 时按号查。
+    let target = info.branch.as_ref().and_then(|_| info.head_ref()).unwrap_or_else(|| number_text.clone());
     let pr = view_pr(ctx.gh, ctx.caches, dir, Some(&slug), Some(&target))?.ok_or("gh/head_changed")?;
     if pr.number != number {
         return Err("gh/head_changed".into());
@@ -1089,6 +1216,27 @@ pub(crate) fn pr_merge_with(ctx: &Ctx, cwd: &str, number: u32, method: &str, exp
 #[tauri::command]
 pub(crate) async fn gh_pr_merge(cwd: String, number: u32, method: String, expected_head_oid: String) -> Result<MergeResultDto, String> {
     tauri::async_runtime::spawn_blocking(move || pr_merge_with(&Ctx::real(), &cwd, number, &method, &expected_head_oid))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// 多个 GitHub 远端、没用 gh repo set-default 定过时，用户在界面上选 PR 开在哪个远端的仓库（不推用户去终端跑
+/// gh repo set-default）。按公共 .git 目录记在 forge.json，同一仓库的各 worktree 共用这个选择。
+pub(crate) fn choose_repo_with(prefs: &Path, cwd: &str, remote: &str, env: GitEnv) -> Result<(), String> {
+    let dir = existing_dir(cwd)?;
+    let (common_dir, git_dir) = git_dirs(dir, env).ok_or("worktree/not_repo")?;
+    let cfg = load_config(&common_dir, &git_dir, env);
+    let github = cfg.remotes().iter().any(|r| r == remote) && cfg.get("remote", Some(remote), "url").and_then(github_slug).is_some();
+    if !github {
+        return Err("git/no_remote".into());
+    }
+    save_pref(prefs, "repoRemote", &common_key(&common_dir), remote);
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) async fn forge_choose_repo(cwd: String, remote: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || choose_repo_with(&prefs_path(), &cwd, &remote, &[]))
         .await
         .map_err(|e| e.to_string())?
 }

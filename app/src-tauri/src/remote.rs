@@ -51,6 +51,8 @@
 //! 2026-11-10（leader 定：手机端全部放开）：推送 / 开 PR / 看 CI / 合并（`git_push_start` /
 //! `git_job_status` / `git_forge_status` / `gh_pr_create` / `gh_pr_merge`）放行，目录收口同上；推送只给
 //! 后台任务形式（手机 RPC 等不了首推），合并前后端重查检查与头提交（forge.rs），二次确认在界面上。
+//! 同日做空第二轮：多个 GitHub 远端时选 PR 开在哪个仓库（`forge_choose_repo`，只写 ~/.meowo/forge.json
+//! 里这个仓库的一条选择）放行，手机上也能选，不推用户回电脑或终端。
 //!
 //! 例外（2026-11-09 用户决定，Lead 工作流关卡 B）：`lead_task_snapshot` / `answer_lead_gate`
 //! 放行，供手机看任务进度、回答关卡。两道收口：目录先过 `ensure_session_dir`；后端只按约定
@@ -200,6 +202,7 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     "git_forge_status",
     "gh_pr_create",
     "gh_pr_merge",
+    "forge_choose_repo",
     // 输入框 `@` 补全（2026-11-04 用户决定放行）：只回文件/目录名，不读内容；目录收口同改动列表。
     "file_mention_candidates",
     // Lead 工作流（模块头「例外（2026-11-09）」）
@@ -1112,6 +1115,13 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
                 return reply::<()>(Err(e));
             }
             reply(crate::forge::gh_pr_merge(a.cwd, a.number, a.method, a.expected_head_oid).await)
+        }
+        "forge_choose_repo" => {
+            let a = args!(ForgeChooseRepoArgs);
+            if let Err(e) = ensure_git_repo_dir(app, &a.cwd, a.session_cwd.as_deref()).await {
+                return reply::<()>(Err(e));
+            }
+            reply(crate::forge::forge_choose_repo(a.cwd, a.remote).await)
         }
         "rename_session" => {
             let a = args!(RenameSessionArgs);
@@ -2290,6 +2300,11 @@ mod tests {
             .map(|_| ()),
             "gh_pr_create" => parse::<GhPrCreateArgs>(
                 br#"{"cwd":"C:/work-wt","title":"feat: x","body":"- feat: x","base":"main","draft":false,"sessionCwd":"C:/work"}"#,
+            )
+            .map(|_| ()),
+            // api.ts（forgeChooseRepo）
+            "forge_choose_repo" => parse::<ForgeChooseRepoArgs>(
+                br#"{"cwd":"C:/work-wt","remote":"upstream","sessionCwd":"C:/work"}"#,
             )
             .map(|_| ()),
             "gh_pr_merge" => parse::<GhPrMergeArgs>(

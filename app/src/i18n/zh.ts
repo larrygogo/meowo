@@ -1864,6 +1864,13 @@ export const zh = {
     cleanupHint: "这个 worktree 可以清理了",
     ghMissing: "没装 gh，看不到 CI",
     ghUnauthed: "gh 没登录，看不到 CI",
+    repoNeedsChoice: "有多个 GitHub 远端，先选仓库",
+    repoPick: "选择仓库",
+    repoAt: (slug: string) => `PR 开在 ${slug}`,
+    repoChange: "更换",
+    repoPickTitle: "PR 开在哪个仓库",
+    repoPickNote: "按仓库记住，下次不再问",
+    repoConfirm: "使用这个仓库",
   },
   about: {
     updateTo: (v: string) => `更新到 v${v}`,

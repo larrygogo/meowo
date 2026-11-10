@@ -17,6 +17,7 @@ mod exit_report;
 mod forge;
 mod fsutil;
 mod git;
+mod git_target;
 mod island;
 mod lead;
 // 只有 macOS 的菜单栏用；放在 macos 模块外是为了 Windows 开发机上也能跑单测。
@@ -1321,6 +1322,7 @@ pub fn run() {
             forge::git_forge_status,
             forge::gh_pr_create,
             forge::gh_pr_merge,
+            forge::forge_choose_repo,
             list_dir_entries,
             read_file_text,
             read_image_preview,
