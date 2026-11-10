@@ -227,7 +227,7 @@ export function Island({
   usages: readonly { provider: string; pct: number }[];
   /** 刘海本体（不含耳朵）的实测宽度，App 据此让窗口贴合。 */
   onMeasure: (width: number) => void;
-  /** 点一下胶囊（没拖动）。 */
+  /** 点一下空闲胶囊（没拖动）：展开面板。提醒在场时点正文走 onOpenSession。 */
   onActivate: () => void;
   onOpenSession: (sessionId: number) => void;
   /** 按下胶囊：交给 App 判断是点击还是左右拖动。 */
@@ -424,7 +424,9 @@ export function Island({
         onKeyDown={(event) => {
           if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
-            onActivate();
+            // 与点击同一口径：提醒在场时是打开那条会话，空闲胶囊才展开面板。
+            if (alert) onOpenSession(alert.sessionId);
+            else onActivate();
           }
         }}
       >
