@@ -709,6 +709,13 @@ pub struct GitDiffSummaryDto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub unpushed: Option<u32>,
+    /// 「推送」实际会推到哪（如 `origin/feat`）。上游分支名和本地分支名不同（典型：`git worktree add -b feat
+    /// <路径> origin/main` 让 feat 跟踪 origin/main）时 Meowo 不推上游，改推同名远端分支并设上游，这时
+    /// upstream 为 None、这里是将要新建的 `origin/feat`（做空审查实测：照上游推会把提交推进远端 main）。
+    /// 没有远端、detached 时为 None。旧后端不下发。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub push_target: Option<String>,
 }
 
 /// 「更改」面板里的一个仓库（用户要求 2026-11-09：会话开在父目录、或 agent 新开 worktree 去改、

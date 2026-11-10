@@ -2103,6 +2103,7 @@ mod tests {
             files: vec![file("src/a.ts", "M"), file("notes.md", "U")],
             upstream: None,
             unpushed: None,
+            push_target: None,
         };
         assert!(changed_file_listed(&summary, "src/a.ts", false));
         assert!(changed_file_listed(&summary, "notes.md", true));

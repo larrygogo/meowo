@@ -4,7 +4,12 @@ import type { WorktreeSetupDto } from "./WorktreeSetupDto";
 /**
  * 一次新建的结果。prune / add / 复制已经同步做完，setup 在后台跑（见 `setup`）。
  */
-export type WorktreeCreateDto = { taskId: string, path: string, branch: string, base: string, originRoot: string, 
+export type WorktreeCreateDto = { taskId: string, path: string, 
+/**
+ * 会话该开在哪：选中的是仓库子目录且新 worktree 里有同一子目录时是 `<path>/<子目录>`，否则就是
+ * path（做空审查：在 repo/app 里勾选，会话却落在 worktree 根目录）。旧后端不下发（空串），前端退回 path。
+ */
+sessionCwd: string, branch: string, base: string, originRoot: string, 
 /**
  * 从原目录复制过来的被忽略文件数（`.env*` 等）。
  */

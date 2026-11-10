@@ -40,6 +40,7 @@ fn summary_blocking(cwd: &str, counts: bool) -> Result<GitDiffSummaryDto, String
         files: vec![],
         upstream: None,
         unpushed: None,
+        push_target: None,
     };
     // spawn 失败（git 未安装/被拦）不算错误——前端只是不显示按钮。
     // 顺带要公共 .git 目录：没上游时靠读它的 config 判断有没有远端，不再多起一个 `git remote`。
@@ -77,19 +78,36 @@ fn summary_blocking(cwd: &str, counts: bool) -> Result<GitDiffSummaryDto, String
         fill_line_counts(dir, &mut files);
     }
     let mut head = header.map(|h| parse_branch_header(&h)).unwrap_or_default();
+    // 上游不是同名远端分支（`git worktree add -b feat <路径> origin/main` 的默认 autoSetupMerge 让 feat
+    // 跟踪 origin/main）：推送不会推到它（forge::plan_push 改推同名分支并重设上游），领先落后、未推数也
+    // 不能拿 origin/main 算，按没上游处理（做空审查实测：以前照这个上游推，提交进了远端 main）。
+    if let (Some(up), Some(branch)) = (&head.upstream, &head.branch) {
+        if up.split_once('/').map(|(_, b)| b) != Some(branch.as_str()) {
+            (head.upstream, head.ahead, head.behind) = (None, None, None);
+        }
+    }
     // status.aheadBehind=false 时只写「[different]」不给数：退回单独数一次，和以前一样。
     if head.upstream.is_some() && head.ahead.is_none() {
         if let Some((ahead, behind)) = upstream_divergence(dir) {
             (head.ahead, head.behind) = (Some(ahead), Some(behind));
         }
     }
+    // 公共 .git 目录的 config：没上游时靠它判断有没有远端、推送会推去哪个远端，不多起 git 进程。
+    let config = inside_lines
+        .next()
+        .and_then(|c| std::fs::read_to_string(Path::new(dir).join(c.trim()).join("config")).ok());
     let unpushed = match (&head.upstream, &head.branch) {
         (Some(_), _) => head.ahead,
         // 没上游：数不在任何远端分支上的提交。只给选中的仓库算（多一次进程），没有远端就不算。
-        (None, Some(_)) if counts => {
-            let common = inside_lines.next().map(|c| Path::new(dir).join(c.trim()));
-            unpushed_without_upstream(dir, common.as_deref())
-        }
+        (None, Some(_)) if counts => unpushed_without_upstream(dir, config.as_deref()),
+        _ => None,
+    };
+    let push_target = match (&head.upstream, &head.branch) {
+        (Some(up), _) => Some(up.clone()),
+        (None, Some(branch)) => config
+            .as_deref()
+            .and_then(push_remote_from_config)
+            .map(|remote| format!("{remote}/{branch}")),
         _ => None,
     };
     Ok(GitDiffSummaryDto {
@@ -101,6 +119,7 @@ fn summary_blocking(cwd: &str, counts: bool) -> Result<GitDiffSummaryDto, String
         files,
         upstream: head.upstream,
         unpushed,
+        push_target,
     })
 }
 
@@ -166,12 +185,48 @@ pub(crate) fn parse_branch_header(line: &str) -> BranchHeader {
     head
 }
 
+/// config 原文里的远端名与 remote.pushDefault（手工解析：只认 `[remote "名"]` 节头和 `[remote]` 节里的
+/// pushDefault 键，键名不分大小写；include 引入的配置不看，读不出时调用方按「不知道」处理）。
+fn config_remotes(config: &str) -> (Vec<String>, Option<String>) {
+    let mut remotes = Vec::new();
+    let mut push_default = None;
+    let mut in_remote_section = false;
+    for line in config.lines().map(str::trim) {
+        if line.starts_with('[') {
+            let header = line.trim_start_matches('[').split(']').next().unwrap_or_default().trim();
+            in_remote_section = header.eq_ignore_ascii_case("remote");
+            if let Some(rest) = header.strip_prefix("remote ").or_else(|| header.strip_prefix("remote	")) {
+                let name = rest.trim().trim_matches('"');
+                if !name.is_empty() && !remotes.iter().any(|r| r == name) {
+                    remotes.push(name.to_string());
+                }
+            }
+        } else if in_remote_section {
+            if let Some((key, value)) = line.split_once('=') {
+                if key.trim().eq_ignore_ascii_case("pushdefault") {
+                    push_default = Some(value.trim().trim_matches('"').to_string());
+                }
+            }
+        }
+    }
+    (remotes, push_default)
+}
+
+/// 没上游时推送会推去的远端：remote.pushDefault、origin、第一个（与 forge::plan_push 同一顺序）。
+pub(crate) fn push_remote_from_config(config: &str) -> Option<String> {
+    let (remotes, push_default) = config_remotes(config);
+    push_default
+        .filter(|r| remotes.contains(r))
+        .or_else(|| remotes.iter().find(|r| *r == "origin").cloned())
+        .or_else(|| remotes.first().cloned())
+}
+
 /// 没有上游的分支有几个提交不在任何远端分支上。没有远端时为 None（推不了，不显示推送按钮）。
 /// 有没有远端看公共 .git 目录下 config 里有没有 `[remote "…"]` 节，省一个 git 进程（摘要的进程数
 /// 预算见 summary_spawns_at_most_four_git_processes）。读不到 config 时退回 `git remote`。
-fn unpushed_without_upstream(dir: &str, common: Option<&Path>) -> Option<u32> {
-    let has_remote = match common.and_then(|c| std::fs::read_to_string(c.join("config")).ok()) {
-        Some(config) => config.lines().any(|l| l.trim_start().starts_with("[remote \"")),
+fn unpushed_without_upstream(dir: &str, config: Option<&str>) -> Option<u32> {
+    let has_remote = match config {
+        Some(config) => !config_remotes(config).0.is_empty(),
         None => {
             let remotes = git_output(dir, &["remote"]).ok().filter(|o| o.status.success())?;
             !stdout_text(&remotes.stdout).trim().is_empty()
@@ -3209,7 +3264,13 @@ mod tests {
         empty_commit(&origin, "remote");
         sb.git(&clone, &["fetch", "-q"]);
         assert_eq!(check(&clone, "领先且落后"), Some((1, 1)));
+        // 上游不是同名分支（跟踪 origin/main）：推送不会推到它，↑↓ 不按它算（做空审查：以前照它推进了 main）。
         sb.git(&clone, &["checkout", "-q", "-b", "feature/x.y", "--track", "origin/main"]);
+        let mismatched = git_diff_summary_blocking(&s(&clone)).unwrap();
+        assert_eq!((mismatched.upstream, mismatched.ahead, mismatched.push_target.as_deref()), (None, None, Some("origin/feature/x.y")), "上游不同名");
+        sb.git(&origin, &["branch", "-q", "feature/x.y"]);
+        sb.git(&clone, &["fetch", "-q"]);
+        sb.git(&clone, &["branch", "-q", "--set-upstream-to=origin/feature/x.y"]);
         assert_eq!(check(&clone, "带斜杠和点的分支名"), Some((0, 0)));
         sb.git(&origin, &["branch", "-q", "gone"]);
         sb.git(&clone, &["fetch", "-q"]);

@@ -183,39 +183,48 @@ struct PushPlan {
     set_upstream: bool,
 }
 
-/// 有上游就推到上游（`HEAD:<上游分支>`，上游分支名和本地不同也对）；没有就 `-u <远端> HEAD`。
-/// 远端优先 remote.pushDefault，再 origin，再唯一的那个。
-fn plan_push(dir: &str, env: GitEnv) -> Result<PushPlan, String> {
-    let branch = git(dir, &["symbolic-ref", "--quiet", "--short", "HEAD"], env)
-        .filter(|b| !b.is_empty())
-        .ok_or("git/detached")?;
-    let remotes: Vec<String> = git(dir, &["remote"], env)
-        .unwrap_or_default()
-        .lines()
-        .map(|l| l.trim().to_string())
-        .filter(|l| !l.is_empty())
-        .collect();
-    if remotes.is_empty() {
-        return Err("git/no_remote".into());
-    }
+/// 推到哪个远端，以及分支现在的上游是不是「同名的远端分支」。
+///
+/// 只有上游正是 `<远端>/<本地分支名>` 才沿用它；上游分支名和本地不同（典型：`git worktree add -b feat
+/// <路径> origin/main` 的默认 autoSetupMerge 让 feat 跟踪 origin/main）一律不推上游，改推同名分支并
+/// 重设上游，等价 git 默认的 push.default=simple。做空审查实测（redteam/push-main）：以前照上游推
+/// `HEAD:refs/heads/main`，功能分支的提交直接进了远端 main。
+/// 不沿用上游时远端优先 remote.pushDefault，再 origin，再唯一的那个（fork + upstream 的仓库里功能分支
+/// 常跟踪 upstream/main，推回 upstream 不对，推自己的 origin 才对）。
+fn push_remote(dir: &str, branch: &str, remotes: &[String], env: GitEnv) -> Option<(String, bool)> {
     let up_remote = git(dir, &["config", "--get", &format!("branch.{branch}.remote")], env);
     let up_merge = git(dir, &["config", "--get", &format!("branch.{branch}.merge")], env);
     if let (Some(remote), Some(merge)) = (&up_remote, &up_merge) {
         // 上游是「.」（跟踪的是本地分支）不算远端上游。
-        if remotes.iter().any(|r| r == remote) && merge.starts_with("refs/heads/") {
-            return Ok(PushPlan {
-                remote: remote.clone(),
-                branch: branch.clone(),
-                refspec: format!("HEAD:{merge}"),
-                set_upstream: false,
-            });
+        if remotes.iter().any(|r| r == remote) && *merge == format!("refs/heads/{branch}") {
+            return Some((remote.clone(), true));
         }
     }
     let preferred = git(dir, &["config", "--get", "remote.pushDefault"], env).filter(|r| remotes.contains(r));
     let remote = preferred
         .or_else(|| remotes.iter().find(|r| *r == "origin").cloned())
-        .unwrap_or_else(|| remotes[0].clone());
-    Ok(PushPlan { remote, branch, refspec: "HEAD".into(), set_upstream: true })
+        .or_else(|| remotes.first().cloned())?;
+    Some((remote, false))
+}
+
+fn remote_names(dir: &str, env: GitEnv) -> Vec<String> {
+    git(dir, &["remote"], env)
+        .unwrap_or_default()
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect()
+}
+
+/// 永远推到同名分支：refspec 写死 `HEAD:refs/heads/<本地分支>`（不写裸 `HEAD`，remote.<名>.push 的映射
+/// 不生效）。上游不是同名分支（或没有）时带 -u，推完上游就是同名的那个。
+fn plan_push(dir: &str, env: GitEnv) -> Result<PushPlan, String> {
+    let branch = git(dir, &["symbolic-ref", "--quiet", "--short", "HEAD"], env)
+        .filter(|b| !b.is_empty())
+        .ok_or("git/detached")?;
+    let remotes = remote_names(dir, env);
+    let (remote, tracked) = push_remote(dir, &branch, &remotes, env).ok_or("git/no_remote")?;
+    Ok(PushPlan { remote, refspec: format!("HEAD:refs/heads/{branch}"), branch, set_upstream: !tracked })
 }
 
 /// push 失败归类（LC_ALL=C 下 git 的英文输出；remote: 开头的是服务器原话，不受语言影响）。
@@ -625,9 +634,17 @@ pub(crate) fn parse_pr_full(json: &str) -> Option<PullRequestDto> {
     Some(pr)
 }
 
-/// 查当前分支的 PR。Ok(None) = 没有 PR；Err = 查不了（没登录、断网），调用方保留上一次的结果。
-fn view_pr(gh: GhExec, caches: &Caches, dir: &str) -> Result<Option<PullRequestDto>, String> {
-    let Some(out) = gh(dir, &["pr", "view", "--json", PR_FIELDS]) else { return Err("gh/not_installed".into()) };
+/// 查一个分支（或 PR 号）的 PR。Ok(None) = 没有 PR；Err = 查不了（没登录、断网），调用方保留上一次的结果。
+/// 知道 owner/repo 就显式带 `--repo`：fork + upstream 两个远端又没设 gh default repo 时，gh 不带它会
+/// 报 set-default（做空审查实测）。带了 --repo 的 `gh pr view` 不再看当前分支，必须把分支名作参数。
+fn view_pr(gh: GhExec, caches: &Caches, dir: &str, slug: Option<&str>, target: Option<&str>) -> Result<Option<PullRequestDto>, String> {
+    let mut args = vec!["pr", "view"];
+    args.extend(target);
+    if let (Some(slug), Some(_)) = (slug, target) {
+        args.extend(["--repo", slug]);
+    }
+    args.extend(["--json", PR_FIELDS]);
+    let Some(out) = gh(dir, &args) else { return Err("gh/not_installed".into()) };
     if out.ok() {
         return parse_pr_full(&out.stdout).map(Some).ok_or_else(|| "gh/failed: bad json".into());
     }
@@ -688,14 +705,12 @@ fn url_path_escape(text: &str) -> String {
 fn repo_info(dir: &str, env: GitEnv) -> Option<RepoInfo> {
     let common = git(dir, &["rev-parse", "--path-format=absolute", "--git-common-dir"], env)?;
     let branch = git(dir, &["symbolic-ref", "--quiet", "--short", "HEAD"], env).filter(|b| !b.is_empty());
-    let remotes: Vec<String> = git(dir, &["remote"], env).unwrap_or_default().lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
-    // 看哪个远端：分支的上游远端，否则 origin，否则第一个（与 plan_push 一致）。
-    let remote = branch
-        .as_ref()
-        .and_then(|b| git(dir, &["config", "--get", &format!("branch.{b}.remote")], env))
-        .filter(|r| remotes.contains(r))
-        .or_else(|| remotes.iter().find(|r| *r == "origin").cloned())
-        .or_else(|| remotes.first().cloned());
+    let remotes = remote_names(dir, env);
+    // 看哪个远端：推送会推去的那个（与 plan_push 同一套判定），detached 时 origin，否则第一个。
+    let remote = match &branch {
+        Some(b) => push_remote(dir, b, &remotes, env).map(|(r, _)| r),
+        None => remotes.iter().find(|r| *r == "origin").cloned().or_else(|| remotes.first().cloned()),
+    };
     let slug = remote.as_ref().and_then(|r| git(dir, &["remote", "get-url", r], env)).and_then(|u| github_slug(&u));
     let base = default_branch(dir, env);
     Some(RepoInfo { common: common.replace('\\', "/").to_lowercase(), branch, slug, has_remote: !remotes.is_empty(), base })
@@ -855,7 +870,7 @@ pub(crate) fn forge_status_with(ctx: &Ctx, cwd: &str, force: bool) -> Result<For
         let ttl = if force { FORCE_MIN } else { PR_TTL };
         let pr = match cached {
             Some((at, pr)) if at.elapsed() < ttl => pr,
-            _ => match view_pr(ctx.gh, ctx.caches, dir) {
+            _ => match view_pr(ctx.gh, ctx.caches, dir, Some(&slug), info.branch.as_deref()) {
                 Ok(pr) => {
                     lock(&ctx.caches.prs).insert(key, (Instant::now(), pr.clone()));
                     pr
@@ -943,16 +958,18 @@ pub(crate) fn pr_create_with(
     if summary.upstream.is_none() || summary.unpushed.unwrap_or(0) > 0 {
         push(dir)?;
     }
-    // 推送可能刚设好上游：PR 的 head 用上游分支名（和本地名不同也对）。
-    let head = git(dir, &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"], ctx.env)
-        .and_then(|u| u.split_once('/').map(|(_, b)| b.to_string()))
-        .unwrap_or_else(|| branch.clone());
+    // PR 的 head 就是本地分支名：推送永远推到同名远端分支（plan_push）。以前取上游分支名，上游是
+    // origin/main 时 head 成了 main（做空审查实测）。
+    let head = branch.clone();
     let defaults = pr_defaults(dir, &branch, &base, ctx.env);
     let title = title.map(str::trim).filter(|t| !t.is_empty()).map(str::to_string).unwrap_or(defaults.title);
     let body = body.map(str::to_string).unwrap_or(defaults.body);
     let mut args = vec!["pr", "create", "--title", &title, "--body", &body, "--base", &base, "--head", &head];
     if draft {
         args.push("--draft");
+    }
+    if let Some(slug) = info.slug.as_deref() {
+        args.extend(["--repo", slug]);
     }
     let out = (ctx.gh)(dir, &args).ok_or("gh/not_installed")?;
     if let Some(key) = pr_key(&info) {
@@ -969,7 +986,7 @@ pub(crate) fn pr_create_with(
         return Err(classify_gh_failure(&out, None));
     }
     let url = out.stdout.lines().map(str::trim).find(|l| l.starts_with("https://")).unwrap_or_default().to_string();
-    match view_pr(ctx.gh, ctx.caches, dir) {
+    match view_pr(ctx.gh, ctx.caches, dir, info.slug.as_deref(), Some(&branch)) {
         Ok(Some(pr)) => Ok(pr),
         // 刚建好就查不到（GitHub 偶有延迟）：用 gh 打出的链接拼一个最小的。
         _ => Ok(PullRequestDto {
@@ -1012,7 +1029,10 @@ pub(crate) fn pr_merge_with(ctx: &Ctx, cwd: &str, number: u32, method: &str, exp
     if !methods.iter().any(|m| m == method) {
         return Err("gh/method_not_allowed".into());
     }
-    let pr = view_pr(ctx.gh, ctx.caches, dir)?.ok_or("gh/head_changed")?;
+    let number_text = number.to_string();
+    // 查当前分支的 PR（再核对号对不对得上）；detached 时按号查。
+    let target = info.branch.clone().unwrap_or_else(|| number_text.clone());
+    let pr = view_pr(ctx.gh, ctx.caches, dir, Some(&slug), Some(&target))?.ok_or("gh/head_changed")?;
     if pr.number != number {
         return Err("gh/head_changed".into());
     }
@@ -1039,9 +1059,8 @@ pub(crate) fn pr_merge_with(ctx: &Ctx, cwd: &str, number: u32, method: &str, exp
         return Err("gh/checks_pending".into());
     }
     let flag = format!("--{method}");
-    let number_text = number.to_string();
     // 不加 --delete-branch：远端分支留着，worktree 与本地分支的清理走 worktree.rs 的判定，只提示。
-    let args = ["pr", "merge", number_text.as_str(), flag.as_str(), "--match-head-commit", head.as_str()];
+    let args = ["pr", "merge", number_text.as_str(), flag.as_str(), "--match-head-commit", head.as_str(), "--repo", slug.as_str()];
     let out = (ctx.gh)(dir, &args).ok_or("gh/not_installed")?;
     if let Some(key) = pr_key(&info) {
         ctx.caches.invalidate_pr(&key);
@@ -1054,10 +1073,13 @@ pub(crate) fn pr_merge_with(ctx: &Ctx, cwd: &str, number: u32, method: &str, exp
     }
     save_merge_method(&ctx.prefs, &slug, method);
     // 仓库开了合并队列时 gh 回的是「will be added to the merge queue」，PR 还是 OPEN：不能说已合并。
+    // 只认 gh 的这句原话：合并成功后 GitHub 有延迟，立刻 view 常常还是 OPEN，以前据此标「已入队」并记进
+    // queued 缓存，之后刷新一直挂着「在队列里」（做空审查）。gh 没说排队就按已合并处理；这次 view 不进
+    // PR 缓存（上面已作废），下一次刷新以服务器为准。
     let said_queue = out.both().to_lowercase().contains("merge queue");
-    let after = view_pr(ctx.gh, ctx.caches, dir).ok().flatten();
-    let merged = after.as_ref().is_some_and(|p| p.state == "merged");
-    let queued = !merged && (said_queue || after.as_ref().is_some_and(|p| p.state == "open"));
+    let after = view_pr(ctx.gh, ctx.caches, dir, Some(&slug), Some(&target)).ok().flatten();
+    let queued = said_queue && !after.as_ref().is_some_and(|p| p.state == "merged");
+    let merged = !queued;
     if queued {
         lock(&ctx.caches.queued).insert((slug, number, head));
     }

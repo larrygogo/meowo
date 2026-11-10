@@ -58,7 +58,12 @@ export function WorktreeOption({ choice, disabled }: { choice: WorktreeChoice; d
               <span>{t.wtnew.base(p.base)}</span>
               <span className="wt-opt-path" data-tip={p.path}>{t.wtnew.path(p.path)}</span>
               {p.hasSetup && <span>{t.wtnew.hasSetup}</span>}
+              {p.subDir && !p.subDirMissing && <span>{t.wtnew.subDir(p.subDir)}</span>}
             </div>
+          )}
+          {/* 选的是仓库里只在本地的子目录：新 worktree 从基点检出没有它，会话退回根目录，先说清楚。 */}
+          {p?.subDir && p.subDirMissing && (
+            <div className="wt-opt-warn" data-testid="wt-subdir-missing">{t.wtnew.subDirMissing(p.subDir)}</div>
           )}
           {conflict && (
             <div className="wt-opt-warn" data-testid="wt-conflict">

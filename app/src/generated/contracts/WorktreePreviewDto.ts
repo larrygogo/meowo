@@ -28,4 +28,14 @@ suggestedSlug: string | null, suggestedBranch: string | null,
 /**
  * 仓库里配置了 setup（meowo / cursor / conductor 任一）。
  */
-hasSetup: boolean, };
+hasSetup: boolean, 
+/**
+ * 选中目录相对仓库根的子目录（`app`、`pkg/core`，正斜杠）。选的就是仓库根时为 None。
+ * 会话会开在新 worktree 里的同一子目录（做空审查：以前一律落在 worktree 根目录）。旧后端不下发。
+ */
+subDir: string | null, 
+/**
+ * 这个子目录在基点里没有（只在本地、没提交的目录）：新 worktree 里不会有它，会话退回根目录，
+ * 预览里先说明。
+ */
+subDirMissing: boolean, };

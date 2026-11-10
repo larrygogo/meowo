@@ -30,6 +30,14 @@ pub struct WorktreePreviewDto {
     pub suggested_branch: Option<String>,
     /// 仓库里配置了 setup（meowo / cursor / conductor 任一）。
     pub has_setup: bool,
+    /// 选中目录相对仓库根的子目录（`app`、`pkg/core`，正斜杠）。选的就是仓库根时为 None。
+    /// 会话会开在新 worktree 里的同一子目录（做空审查：以前一律落在 worktree 根目录）。旧后端不下发。
+    #[serde(default)]
+    pub sub_dir: Option<String>,
+    /// 这个子目录在基点里没有（只在本地、没提交的目录）：新 worktree 里不会有它，会话退回根目录，
+    /// 预览里先说明。
+    #[serde(default)]
+    pub sub_dir_missing: bool,
 }
 
 /// setup 脚本的进度。`state`：needs_trust | running | ok | failed | timeout | stopped | skipped。
@@ -60,6 +68,11 @@ pub struct WorktreeSetupDto {
     pub config_source: Option<String>,
     /// 用哪个 shell 跑：pwsh | powershell | bash | sh。
     pub runner: Option<String>,
+    /// 配置里要注入 setup 进程的环境变量（键, 值），按键排序。和 script 一起进信任确认框：hash 覆盖整份
+    /// 配置，NODE_OPTIONS 这类变量能让一行无害的 `bun install` 加载任意代码（做空审查实测），只给看脚本
+    /// 等于让用户盲签。旧后端不下发。
+    #[serde(default)]
+    pub setup_env: Vec<(String, String)>,
 }
 
 /// 一次新建的结果。prune / add / 复制已经同步做完，setup 在后台跑（见 `setup`）。
@@ -70,6 +83,10 @@ pub struct WorktreeSetupDto {
 pub struct WorktreeCreateDto {
     pub task_id: String,
     pub path: String,
+    /// 会话该开在哪：选中的是仓库子目录且新 worktree 里有同一子目录时是 `<path>/<子目录>`，否则就是
+    /// path（做空审查：在 repo/app 里勾选，会话却落在 worktree 根目录）。旧后端不下发（空串），前端退回 path。
+    #[serde(default)]
+    pub session_cwd: String,
     pub branch: String,
     pub base: String,
     pub origin_root: String,

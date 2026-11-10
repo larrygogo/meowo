@@ -141,7 +141,8 @@ export function WorktreeSetupBar({ cwd }: { cwd: string | null }) {
   );
 }
 
-/// setup 脚本的信任确认：原样展示要跑的脚本。走 AppModal（Esc 层 escLayers、焦点陷阱），
+/// setup 脚本的信任确认：原样展示要跑的脚本，以及配置里会注入 setup 进程的环境变量（hash 覆盖整份配置，
+/// NODE_OPTIONS 这类变量能让无害的脚本加载任意代码，只给看脚本等于盲签，做空审查实测）。走 AppModal（Esc 层 escLayers、焦点陷阱），
 /// Esc 只关确认框，不会被窗口级「Esc=拒绝审批」当成拒绝。
 export function TrustDialog({ setup, busy, error, onRun, onSkip, onClose }: {
   setup: WorktreeSetupDto;
@@ -159,6 +160,12 @@ export function TrustDialog({ setup, busy, error, onRun, onSkip, onClose }: {
         <h2 className="wt-trust-title">{t.wtnew.trustTitle}</h2>
         <p className="wt-trust-text">{t.wtnew.trustSource(file)}</p>
         <pre className="wt-trust-script" data-testid="wt-trust-script">{setup.script ?? ""}</pre>
+        {(setup.setupEnv?.length ?? 0) > 0 && (
+          <>
+            <p className="wt-trust-text">{t.wtnew.trustEnv}</p>
+            <pre className="wt-trust-script" data-testid="wt-trust-env">{setup.setupEnv!.map(([k, v]) => `${k}=${v}`).join("\n")}</pre>
+          </>
+        )}
         {setup.runner && <p className="wt-trust-text">{t.wtnew.runner(setup.runner)}</p>}
         <p className="wt-trust-note">{t.wtnew.trustNote}</p>
         {error && <p className="wt-setup-error" role="alert">{error}</p>}

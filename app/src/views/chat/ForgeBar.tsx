@@ -71,6 +71,8 @@ type Busy = "push" | "pr" | "merge" | null;
 
 /// 合并按钮能不能点、不能点时说什么。
 export function mergeBlock(t: ReturnType<typeof useT>, forge: ForgeStatusDto, pr: PullRequestDto): string | null {
+  // 草稿 PR GitHub 不让合并：按钮灰着要说清楚为什么（做空审查：以前只是灰着，没有原因）。
+  if (pr.state === "draft") return t.forge.mergeBlockedDraft;
   if (forge.ghTooOld) return t.forge.mergeTooOld;
   if (forge.mergeMethods.length === 0) return t.forge.mergeNoMethods;
   if (pr.checksSummary === "fail") return t.forge.mergeBlockedFail;
@@ -108,6 +110,8 @@ export function ForgeBar({ repo, sessionCwd, sessionId, active, onChanged }: {
   // 旧后端没有 unpushed：有上游时 ahead 就是未推数。
   const unpushed = summary.unpushed ?? (summary.upstream ? summary.ahead : null) ?? 0;
   const pushTarget = summary.upstream ?? null;
+  // 没上游、或上游不是同名分支（后端按没上游下发）：推送会新建同名远端分支并设为上游，写明推去哪。
+  const pushNew = !pushTarget ? summary.pushTarget ?? null : null;
 
   const fail = (e: unknown) => {
     const raw = typeof e === "string" ? e : e instanceof Error ? e.message : String(e);
@@ -249,7 +253,7 @@ export function ForgeBar({ repo, sessionCwd, sessionId, active, onChanged }: {
     <div className="scm-forge" data-testid="scm-forge">
       {showPush && (
         <button type="button" className="scm-forge-btn" disabled={busy !== null}
-          data-tip={pushTarget ? t.forge.pushTip(pushTarget) : t.forge.publishTip} onClick={() => void push()}>
+          data-tip={pushTarget ? t.forge.pushTip(pushTarget) : pushNew ? t.forge.pushNewTip(pushNew) : t.forge.publishTip} onClick={() => void push()}>
           <PushIcon />
           {busy === "push" ? t.forge.pushing : t.forge.push(unpushed)}
         </button>

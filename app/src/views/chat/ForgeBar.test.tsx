@@ -90,6 +90,15 @@ describe("#19 推送", () => {
     expect(onChanged).toHaveBeenCalled();
   });
 
+  // 做空审查：上游是 origin/main 的功能分支，后端改推同名分支并新建上游，提示要据实写出推去哪。
+  it("上游不是同名分支：提示写明推到 origin/<分支> 并新建", async () => {
+    renderBar({ upstream: undefined, pushTarget: "origin/meowo/drill", unpushed: 2 });
+    const button = await screen.findByRole("button", { name: /推送 ↑2/ });
+    expect(button.getAttribute("data-tip")).toBe(zh.forge.pushNewTip("origin/meowo/drill"));
+    expect(zh.forge.pushNewTip("origin/x")).toBe("推送到 origin/x（新建）");
+    expect(en.forge.pushNewTip("origin/x")).toBe("Push to origin/x (new branch)");
+  });
+
   it("有上游时写明推到哪；没有未推提交不显示按钮", async () => {
     const { unmount } = renderBar({ upstream: "origin/meowo/drill", unpushed: 1, ahead: 1 });
     expect((await screen.findByRole("button", { name: /推送 ↑1/ })).getAttribute("data-tip")).toBe(zh.forge.pushTip("origin/meowo/drill"));
@@ -243,6 +252,19 @@ describe("#22 合并", () => {
     fireEvent.click(await screen.findByRole("button", { name: zh.forge.mergeConflict }));
     await waitFor(() => expect(calls("open_link")[0]?.[1]).toEqual({ url: "https://github.com/o/r/pull/12" }));
     expect(screen.queryByTestId("scm-merge")).toBeNull();
+  });
+
+  // 做空审查：草稿 PR 的合并按钮是灰的，却没有任何原因。
+  it("草稿 PR：合并按钮不能点，并说明原因", async () => {
+    status = forge({ pr: pr({ state: "draft" }) });
+    renderBar();
+    expect((await screen.findByTestId("scm-merge") as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getAllByText(zh.forge.mergeBlockedDraft).length).toBeGreaterThan(0);
+    for (const text of [zh.forge.mergeBlockedDraft, en.forge.mergeBlockedDraft]) {
+      expect(text).toBeTruthy();
+      expect(text).not.toMatch(/[—–;；]/);
+    }
+    expect(zh.forge.mergeBlockedDraft.length).toBeLessThanOrEqual(20);
   });
 
   it("合并时后端说有冲突：错误旁边给网页入口；进合并队列时说已入队不说已合并", async () => {

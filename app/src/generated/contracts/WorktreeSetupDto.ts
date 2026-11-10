@@ -28,4 +28,10 @@ configSource: string | null,
 /**
  * 用哪个 shell 跑：pwsh | powershell | bash | sh。
  */
-runner: string | null, };
+runner: string | null, 
+/**
+ * 配置里要注入 setup 进程的环境变量（键, 值），按键排序。和 script 一起进信任确认框：hash 覆盖整份
+ * 配置，NODE_OPTIONS 这类变量能让一行无害的 `bun install` 加载任意代码（做空审查实测），只给看脚本
+ * 等于让用户盲签。旧后端不下发。
+ */
+setupEnv: Array<[string, string]>, };
