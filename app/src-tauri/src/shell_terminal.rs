@@ -680,6 +680,67 @@ mod tests {
         String::from_utf8_lossy(&out.backlog).into_owned()
     }
 
+    /// 测试里充当终端：ConPTY 启动时发光标位置查询 `ESC[6n`（portable-pty 建伪终端带
+    /// PSEUDOCONSOLE_INHERIT_CURSOR）和设备属性查询 `ESC[c`，等终端回话。
+    #[derive(Default)]
+    struct StartupQueries {
+        cursor: usize,
+        device: usize,
+    }
+
+    impl StartupQueries {
+        /// 新出现的查询各答一次。
+        fn answers(&mut self, text: &str) -> Vec<&'static str> {
+            let (cursor, device) = (text.matches("\x1b[6n").count(), text.matches("\x1b[c").count());
+            let mut out = Vec::new();
+            out.extend(std::iter::repeat_n("\x1b[1;1R", cursor.saturating_sub(self.cursor)));
+            out.extend(std::iter::repeat_n("\x1b[?1;0c", device.saturating_sub(self.device)));
+            (self.cursor, self.device) = (cursor.max(self.cursor), device.max(self.device));
+            out
+        }
+
+        /// shell 已经画出了可见字符（提示符之类），不再只有控制序列。
+        fn settled(&self, text: &str) -> bool {
+            let mut chars = text.chars().peekable();
+            while let Some(c) = chars.next() {
+                match c {
+                    '\x1b' => match chars.next() {
+                        // CSI：参数直到 0x40–0x7e 的终止字节。
+                        Some('[') => {
+                            for c in chars.by_ref() {
+                                if ('\x40'..='\x7e').contains(&c) {
+                                    break;
+                                }
+                            }
+                        }
+                        // OSC：直到 BEL 或 ST（ESC \）。
+                        Some(']') => {
+                            while let Some(c) = chars.next() {
+                                if c == '\x07' || (c == '\x1b' && chars.next_if_eq(&'\\').is_some()) {
+                                    break;
+                                }
+                            }
+                        }
+                        _ => {}
+                    },
+                    c if !c.is_whitespace() && !c.is_control() => return true,
+                    _ => {}
+                }
+            }
+            false
+        }
+    }
+
+    #[test]
+    fn startup_queries_answered_once_and_settle_on_visible_text() {
+        let mut queries = StartupQueries::default();
+        let head = "\x1b[1t\x1b[6n\x1b[c\x1b[?1004h\x1b[?9001h\x1b]0;C:\\pwsh.exe\x1b\\";
+        assert_eq!(queries.answers(head), ["\x1b[1;1R", "\x1b[?1;0c"]);
+        assert!(queries.answers(head).is_empty());
+        assert!(!queries.settled(head));
+        assert!(queries.settled(&format!("{head}\x1b[1;1HPS C:\\> ")));
+    }
+
     /// 真起一个 shell：工作目录对、能敲命令、关掉后从表里消失。
     #[test]
     fn opens_shell_in_cwd_and_runs_commands() {
@@ -689,19 +750,29 @@ mod tests {
         let shells = ShellTerminals::default();
         let info = shells.open(42, &cwd, 120, 30).unwrap();
         assert_eq!(info.owner, 42);
-        // `$((6*7))` 在 PowerShell 和 POSIX shell 里都算出 42；回显的命令行里没有 42，
-        // 看到它就说明命令真被执行了。
-        shells
-            .write(info.id, "echo meowo-shell-$((6*7))\r")
-            .unwrap();
-        #[cfg(target_os = "windows")]
-        shells.write(info.id, "(Get-Location).Path\r").unwrap();
-        #[cfg(not(target_os = "windows"))]
-        shells.write(info.id, "pwd\r").unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
         let leaf = dir.file_name().unwrap().to_string_lossy().into_owned();
+        let mut queries = StartupQueries::default();
+        let mut typed = false;
         loop {
             let text = backlog_text(&shells, info.id);
+            // 像真终端一样答 ConPTY 的启动查询（产品里由前端 xterm 答）。不答的话 ConPTY 要等到
+            // 自己超时才放 shell 往下跑：二期实测本机空载 8 轮 3.9–10.1s，答了 0.8–1.9s；
+            // 全量并发跑时叠上负载就超过 20s（CI 失败日志里 backlog 正停在这几个查询加标题）。
+            for answer in queries.answers(&text) {
+                shells.write(info.id, answer).unwrap();
+            }
+            // 握手答完再敲命令，等同用户看到提示符才打字。
+            if !typed && queries.settled(&text) {
+                // `$((6*7))` 在 PowerShell 和 POSIX shell 里都算出 42；回显的命令行里没有 42，
+                // 看到它就说明命令真被执行了。
+                shells.write(info.id, "echo meowo-shell-$((6*7))\r").unwrap();
+                #[cfg(target_os = "windows")]
+                shells.write(info.id, "(Get-Location).Path\r").unwrap();
+                #[cfg(not(target_os = "windows"))]
+                shells.write(info.id, "pwd\r").unwrap();
+                typed = true;
+            }
             if text.contains("meowo-shell-42") && text.contains(&leaf) {
                 break;
             }
