@@ -471,6 +471,40 @@ function SessionsSection() {
             onChange={(v: SessionOpenIn) => patch({ session_open_in: v })}
           />
         </div>
+        {/* 包 5：「在新 worktree 里开」建在哪、分支名用什么开头。 */}
+        <div className="row">
+          <div className="row-text">
+            <div className="row-label">{t.wtnew.settingsLocation}</div>
+            <div className="row-desc">{t.wtnew.settingsLocationDesc}</div>
+          </div>
+          <Dropdown
+            value={settings?.worktree?.location === "meowo" ? "meowo" : "sibling"}
+            options={[
+              { value: "sibling", label: t.wtnew.locationSibling },
+              { value: "meowo", label: t.wtnew.locationMeowo },
+            ]}
+            onChange={(v: string) => patch({ worktree: { location: v, branch_prefix: settings?.worktree?.branch_prefix ?? null, trusted: settings?.worktree?.trusted ?? {} } })}
+          />
+        </div>
+        <div className="row">
+          <div className="row-text">
+            <div className="row-label">{t.wtnew.settingsPrefix}</div>
+            <div className="row-desc">{t.wtnew.settingsPrefixDesc}</div>
+          </div>
+          <input
+            // 设置是异步拉回来的：值变了就重挂，免得输入框停在首帧的空值。
+            key={settings?.worktree?.branch_prefix ?? ""}
+            className="ns-input wt-prefix-input"
+            aria-label={t.wtnew.settingsPrefix}
+            defaultValue={settings?.worktree?.branch_prefix ?? ""}
+            placeholder="meowo/"
+            onBlur={(e) => {
+              const value = e.target.value.trim();
+              if (value === (settings?.worktree?.branch_prefix ?? "")) return;
+              void patch({ worktree: { location: settings?.worktree?.location ?? "sibling", branch_prefix: value || null, trusted: settings?.worktree?.trusted ?? {} } });
+            }}
+          />
+        </div>
         {showTermRow && (
           <div className="row">
             <div className="row-text">

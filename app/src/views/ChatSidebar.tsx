@@ -9,7 +9,7 @@ import { remoteUi } from "../remoteMode";
 import { useBoardRefresh } from "../hooks/useBoardRefresh";
 import { useSessionActions } from "../hooks/useSessionActions";
 import { useSettingsEffect } from "../hooks/useSettings";
-import { folderName, parentSegment, pathKey } from "../paths";
+import { folderName, parentSegment, pathKey, worktreeNameOf } from "../paths";
 import { useMenuPopup } from "./menu";
 import { useDismissable } from "../hooks/useDismissable";
 import { CardContextMenu } from "./sticker/CardContextMenu";
@@ -1096,6 +1096,12 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
           {!noting && dir && groupMode !== "dir" && (
             <span className="chat-sidebar-metaline">
               <span className="chat-sidebar-meta" data-tip={item.cwd ?? undefined}>{dir}</span>
+            </span>
+          )}
+          {/* 包 5：按工作区分组时 worktree 会话归在原项目的组里，组内标出它开在哪个 worktree。 */}
+          {!noting && groupMode === "dir" && worktreeNameOf(item) && (
+            <span className="chat-sidebar-metaline">
+              <span className="chat-sidebar-wt" data-testid="sidebar-worktree-tag" data-tip={t.wtnew.tagTip(worktreeNameOf(item)!)}>{worktreeNameOf(item)}</span>
             </span>
           )}
           {/* 目录已删除（worktree 清理掉了）：不管按不按目录分组都要显示——点进去恢复不了，得先说。 */}

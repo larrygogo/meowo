@@ -13,6 +13,7 @@ import { formatBackendError } from "../i18n/errors";
 import { useNewSessionForm } from "./useNewSessionForm";
 import { useEscClose } from "../hooks/useEscClose";
 import { remoteUi } from "../remoteMode";
+import { WorktreeOption } from "./WorktreeOption";
 
 function FolderIcon() {
   return (
@@ -249,6 +250,11 @@ export function NewSessionPanel({ onClose, prefill, onLaunched }: {
             )}
           </div>
         </label>
+
+        {/* 包 5：在新 worktree 里开（默认不勾）。手机上同样可用，目录由桌面端建。 */}
+        <div className="ns-field">
+          <WorktreeOption choice={form.worktree} disabled={busy} />
+        </div>
 
         <div className="ns-field">
           <span className="ns-label">{t.newSession.agent}</span>

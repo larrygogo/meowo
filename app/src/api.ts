@@ -12,6 +12,9 @@ import type { LiveSessionCounts } from "./generated/contracts/LiveSessionCounts"
 import type { WorktreeStatusDto } from "./generated/contracts/WorktreeStatusDto";
 import type { WorktreeRemovalDto } from "./generated/contracts/WorktreeRemovalDto";
 import type { CleanableWorktreeDto } from "./generated/contracts/CleanableWorktreeDto";
+import type { WorktreeCreateDto } from "./generated/contracts/WorktreeCreateDto";
+import type { WorktreePreviewDto } from "./generated/contracts/WorktreePreviewDto";
+import type { WorktreeSetupDto } from "./generated/contracts/WorktreeSetupDto";
 import type { LeadTaskDto } from "./generated/contracts/LeadTaskDto";
 import type { Session as SessionDto } from "./generated/contracts/Session";
 import type { Todo as TodoRowDto } from "./generated/contracts/Todo";
@@ -160,6 +163,8 @@ export type LiveSession = Omit<LiveSessionDto, "session" | "todos" | "column" | 
   foreign: boolean;
   /** 已归档会话的工作目录已不在磁盘上（worktree 被清理等）。可选：旧后端不带。 */
   cwd_missing?: boolean;
+  /** 会话开在 linked worktree 里时主检出的根目录；分组键 = origin_root ?? cwd。可选：旧后端不带。 */
+  origin_root?: string | null;
 };
 
 export type { LiveSessionCounts };
@@ -627,6 +632,26 @@ export function listCleanableWorktrees(): Promise<CleanableWorktreeDto[]> {
 }
 export type { WorktreeStatusDto, WorktreeRemovalDto, CleanableWorktreeDto };
 
+// ── 在新 worktree 里开会话（包 5）。改这几处的 invoke 传参必须同步 remote.rs 的桥臂与样例 payload ──
+
+/** 新建会话页的实时预览：建议的用途名、分支、目录、基点，以及有没有撞名。 */
+export function worktreePreview(repoCwd: string, slug: string | null, branch: string | null, fallbackSlug: string): Promise<WorktreePreviewDto> {
+  return invoke("worktree_preview", { repoCwd, slug, branch, fallbackSlug });
+}
+/** 建 worktree 并复制被忽略的 .env* 等文件（同步，≤2s），setup 在后台跑。requestId 相同只建一次。 */
+export function worktreeCreate(args: { repoCwd: string; slug: string | null; branch: string | null; fallbackSlug: string; provider: string; requestId: string }): Promise<WorktreeCreateDto> {
+  return invoke("worktree_create", args);
+}
+/** setup 进度与操作。按会话 cwd 查（path），不是 Meowo 建的 worktree 时回 null。 */
+export function worktreeSetup(path: string, action: "status" | "rerun" | "skip" | "stop" = "status"): Promise<WorktreeSetupDto | null> {
+  return invoke("worktree_setup", { taskId: null, path, action });
+}
+/** 用户看过脚本原文后信任它（hash 必须是确认框里展示的那份），随即开跑。 */
+export function worktreeSetupTrust(path: string, hash: string): Promise<WorktreeSetupDto> {
+  return invoke("worktree_setup_trust", { path, hash });
+}
+export type { WorktreeCreateDto, WorktreePreviewDto, WorktreeSetupDto };
+
 /** 给会话挂 / 改便签（纯本地备忘，键为 cc_session_id）。 */
 export function setSessionNote(ccSessionId: string, note: string): Promise<void> {
   return invoke("set_session_note", { sessionId: ccSessionId, note });
@@ -941,6 +966,9 @@ export type Settings = {
   notify_kinds: string[];
   /** 提醒停留秒数（4 / 6 / 10）。 */
   island_alert_seconds: number;
+  /** 「在新 worktree 里开」：位置（sibling = 和主检出并排，meowo = ~/.meowo/worktrees）、分支前缀、
+   *  setup 信任记录（后端单独维护）。可选：旧后端不带。 */
+  worktree?: { location: string; branch_prefix: string | null; trusted: Record<string, string> };
   /** 在贴纸底栏显示配额的 agent id 列表（后端给默认值）。 */
   sticker_quota_providers: AgentId[];
   /** 「新建会话」面板默认选中的 agent（后端给默认值）。 */

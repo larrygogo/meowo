@@ -17,6 +17,7 @@ import { useAgentListRefresh } from "../useAgents";
 import { useLoginOperations } from "../hooks/useLoginOperations";
 import { useT, repairFailMessage } from "../i18n";
 import { formatBackendError } from "../i18n/errors";
+import { useWorktreeChoice } from "./useWorktreeChoice";
 
 /// 新建会话的表单状态与动作（目录、agent、启动选项、hook / 登录检查、启动）。
 /// 独立窗口面板（NewSessionPanel，手机页内浮层与关闭对话功能时用）和对话窗里的
@@ -72,6 +73,8 @@ export function useNewSessionForm(startCwd: string, startProvider: AgentId | nul
   // relay 启用的 provider → 中转固定的模型。中转的 --model 在 argv 里压轴（terminal.rs），
   // 面板选的模型静默不生效——model 档置灰并注明固定值，不留「选了却没生效」的坑。
   const [relayPins, setRelayPins] = useState<Record<string, string>>({});
+  // 「在新 worktree 里开」（包 5），默认不勾。
+  const worktree = useWorktreeChoice(cwd);
   const loginOperations = useLoginOperations((event) => {
     const p = event.provider;
     // 登录成功与否是该 provider 的客观事实，与当前选中谁无关。
@@ -191,7 +194,10 @@ export function useNewSessionForm(startCwd: string, startProvider: AgentId | nul
     try {
       // 输入框里躺的是用户原样粘的串:资源管理器「复制为路径」带引号,后端按字面
       // 找不到(7T-4)。只剥引号,不动斜杠方向——发给后端的 cwd 保持用户写法。
-      const dir = unquotePath(cwd);
+      let dir = unquotePath(cwd);
+      // 勾了「在新 worktree 里开」：先建 worktree（同步，≤2s），会话照常开在新目录里；
+      // setup 在后台跑，进度在会话页顶部看。不勾时这一步不走，与改前完全一样。
+      if (worktree.enabled) dir = (await worktree.create(dir, provider)).path;
       const tempId = await newSession(dir, provider, opts);
       saveStoredOpts(provider, opts); // 启动成功才记：失败的组合不该成为下次的默认
       return { tempId };
@@ -258,5 +264,6 @@ export function useNewSessionForm(startCwd: string, startProvider: AgentId | nul
     cwd, setCwd, provider, setProvider, recent, hooks, busy, repairing, error, setError,
     agents, avail, opts, setOpts, loggedIn, activeProfiles, relayPins, loginOperations,
     swappedFrom, launchOptions, canLaunch, launch, repairHooks, doLogin, cancelLoginWait, warn, needLogin,
+    worktree,
   };
 }

@@ -242,6 +242,10 @@ pub(crate) struct Settings {
     /// 2026-11-09）；之后这个目录里又有了新会话就自动回来。由 hide_workspace 单独维护。
     #[serde(default)]
     pub(crate) hidden_workspaces: std::collections::BTreeMap<String, i64>,
+    /// 「在新 worktree 里开」的位置、分支前缀和 setup 信任记录（包 5）。缺省 = 和主检出并排、
+    /// 分支 `meowo/<用途>`、一个都没信任过，兼容老 settings.json。
+    #[serde(default)]
+    pub(crate) worktree: WorktreeSettings,
     /// 在贴纸底栏显示配额的 provider key 列表（如 "claude"/"kimi"/"codex"）。
     /// 缺省 ["claude"]，旧 settings.json 无此字段时反序列化给默认，不 panic。
     #[serde(default = "default_sticker_quota_providers")]
@@ -356,6 +360,7 @@ impl Default for Settings {
             notify_kinds: default_island_alerts(),
             island_alert_seconds: default_island_alert_seconds(),
             hidden_workspaces: Default::default(),
+            worktree: Default::default(),
             sticker_quota_providers: default_sticker_quota_providers(),
             default_agent: default_default_agent(),
             proxy: crate::proxy::ProxySettings::default(),
@@ -850,6 +855,22 @@ fn preserve_independently_managed_fields(incoming: &mut Settings, current: &Sett
     incoming.sticker_window = current.sticker_window.clone();
     // 隐藏的工作空间由 hide_workspace 独立维护，设置窗的旧快照不得把它盖掉。
     incoming.hidden_workspaces = current.hidden_workspaces.clone();
+    // setup 信任记录由 worktree_setup_trust 独立维护：设置窗打开期间刚点的信任不能被旧快照抹掉。
+    incoming.worktree.trusted = current.worktree.trusted.clone();
+}
+
+/// worktree 相关设置。
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub(crate) struct WorktreeSettings {
+    /// `sibling`（缺省，和主检出并排 `<父目录>/<仓库名>-<用途>`）| `meowo`（`~/.meowo/worktrees/<仓库名>/<用途>`）。
+    #[serde(default)]
+    pub(crate) location: String,
+    /// 分支前缀；None = `meowo/`。
+    #[serde(default)]
+    pub(crate) branch_prefix: Option<String>,
+    /// 仓库公共 .git 目录（归一后）→ 信任过的配置 hash。配置改了 hash 就对不上，要重新确认。
+    #[serde(default)]
+    pub(crate) trusted: std::collections::BTreeMap<String, String>,
 }
 
 #[tauri::command]

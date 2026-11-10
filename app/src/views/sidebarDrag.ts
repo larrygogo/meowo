@@ -12,7 +12,7 @@
 /// 日期 / 状态决定，不由位置决定），跨置顶边界拖了也会被置顶浮顶规则弹回去。
 
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import { folderName, pathKey } from "../paths";
+import { folderName, groupDirOf, pathKey } from "../paths";
 
 export type DropAt<K = number> = { id: K; after: boolean };
 
@@ -230,15 +230,17 @@ export type DirGroup<T> = { key: string; cwd: string | null; label: string; item
  * 按 cwd 分组,**组序由已有排序派生**:组按「组内第一条会话的位置」排,组内保持原顺序。
  * 于是后端的 connected-first + 时间倒序原样透过来——正在跑的会话所在目录自然浮到最上面,
  * 用户原来靠什么找会话,分组后还靠什么找。另起一套组排序(按目录名/会话数)会打乱这一点。
+ * 包 5:worktree 会话按 origin_root(主检出)归组(groupDirOf),和原项目的会话排在一起。
  */
-export function groupByDir<T extends { cwd: string | null }>(items: readonly T[]): DirGroup<T>[] {
+export function groupByDir<T extends { cwd: string | null; origin_root?: string | null }>(items: readonly T[]): DirGroup<T>[] {
   const groups: DirGroup<T>[] = [];
   const index = new Map<string, DirGroup<T>>();
   for (const item of items) {
-    const key = item.cwd ? pathKey(item.cwd) : NO_DIR;
+    const dir = groupDirOf(item);
+    const key = dir ? pathKey(dir) : NO_DIR;
     let group = index.get(key);
     if (!group) {
-      group = { key, cwd: item.cwd, label: folderName(item.cwd), items: [] };
+      group = { key, cwd: dir, label: folderName(dir), items: [] };
       index.set(key, group);
       groups.push(group);
     }
@@ -255,7 +257,7 @@ export function orderKey(groupKey: string): string {
 
 /** 侧栏「按工作区分组」时的组序：手动排序时组序也归用户（对照 Kimi 可拖的分组头）；按最近活动时
  *  组序随组内会话的位置。侧栏和灵动岛共用这一份，岛上头像才和侧栏扁平下来的顺序一致。 */
-export function sidebarDirGroups<T extends { cwd: string | null }>(
+export function sidebarDirGroups<T extends { cwd: string | null; origin_root?: string | null }>(
   ordered: readonly T[],
   sortMode: "manual" | "recent",
   workspaceOrder: readonly string[],
