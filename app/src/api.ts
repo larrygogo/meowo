@@ -36,6 +36,10 @@ import type { LoginDoneEvent } from "./generated/contracts/LoginDoneEvent";
 import type { GitDiffSummaryDto } from "./generated/contracts/GitDiffSummaryDto";
 import type { GitChangedFileDto } from "./generated/contracts/GitChangedFileDto";
 import type { PullRequestDto } from "./generated/contracts/PullRequestDto";
+import type { ForgeStatusDto } from "./generated/contracts/ForgeStatusDto";
+import type { GitJobDto } from "./generated/contracts/GitJobDto";
+import type { MergeResultDto } from "./generated/contracts/MergeResultDto";
+import type { PushResultDto } from "./generated/contracts/PushResultDto";
 import type { GitFileDiffDto } from "./generated/contracts/GitFileDiffDto";
 import type { RepoChangesDto } from "./generated/contracts/RepoChangesDto";
 import type { DirEntryDto } from "./generated/contracts/DirEntryDto";
@@ -690,6 +694,39 @@ export function gitIgnoreDir(cwd: string, path: string): Promise<void> {
 export function gitCommit(cwd: string, message: string, all: boolean, sessionCwd?: string | null, paths?: readonly string[]): Promise<string> {
   return invoke("git_commit", { cwd, message, all, ...(all && paths ? { paths } : {}), ...withSession(sessionCwd) });
 }
+
+/// 推送 / 开 PR / 看 CI / 合并（forge.rs，二期包 5）。传参改动须同步 remote.rs 的 GitRepoArgs /
+/// GitJobStatusArgs / GitForgeStatusArgs / GhPrCreateArgs / GhPrMergeArgs 与样例 payload 测试。
+/// 推送一律走后台任务：手机 RPC 等不了首推的几十秒，桌面用同一套，界面只有一条路径。
+export function gitPushStart(cwd: string, sessionCwd?: string | null): Promise<string> {
+  return invoke("git_push_start", { cwd, ...withSession(sessionCwd) });
+}
+export function gitJobStatus(jobId: string): Promise<GitJobDto> {
+  return invoke("git_job_status", { jobId });
+}
+/// 起推送并等它结束（1 秒查一次，最多等 130 秒，后端自己 120 秒超时）。失败按 Error 抛出原因码。
+export async function gitPush(cwd: string, sessionCwd?: string | null, sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms))): Promise<PushResultDto> {
+  const jobId = await gitPushStart(cwd, sessionCwd);
+  for (let waited = 0; waited < 130_000; waited += 1000) {
+    const job = await gitJobStatus(jobId);
+    if (job.state === "ok" && job.push) return job.push;
+    if (job.state === "failed") throw job.error ?? "git/push_failed";
+    await sleep(1000);
+  }
+  throw "git/push_timeout";
+}
+/// force：窗口重新聚焦 / 手动刷新，跳过后端 60s 缓存（后端最短仍隔 10s）。
+export function getForgeStatus(cwd: string, force: boolean, sessionCwd?: string | null): Promise<ForgeStatusDto> {
+  return invoke("git_forge_status", { cwd, force, ...withSession(sessionCwd) });
+}
+export function ghPrCreate(cwd: string, pr: { title: string; body: string; base: string | null; draft: boolean }, sessionCwd?: string | null): Promise<PullRequestDto> {
+  return invoke("gh_pr_create", { cwd, title: pr.title, body: pr.body, base: pr.base, draft: pr.draft, ...withSession(sessionCwd) });
+}
+/// expectedHeadOid：确认框里看到的 PR 头提交，之后有人推了新提交 GitHub 会拒（gh/head_changed）。
+export function ghPrMerge(cwd: string, number: number, method: string, expectedHeadOid: string, sessionCwd?: string | null): Promise<MergeResultDto> {
+  return invoke("gh_pr_merge", { cwd, number, method, expectedHeadOid, ...withSession(sessionCwd) });
+}
+export type { ForgeStatusDto, GitJobDto, MergeResultDto, PushResultDto };
 
 /** 「文件」页签：列出 cwd 下 rel 目录的直接子条目（目录在前，后端已排序并跳过 .git）。 */
 export function listDirEntries(cwd: string, rel: string): Promise<DirEntryDto[]> {

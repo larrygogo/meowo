@@ -48,6 +48,9 @@
 //! 2026-11-10 起摘要把文件多的未跟踪目录折成一条 `dir/`：点开它的 `git_untracked_dir_files` 放行，
 //! 目录条目、目录里的文件同样由命令按此刻的清单校验；同一行的「加入 .gitignore」（`git_ignore_dir`）
 //! 改的是仓库配置文件，不放行。
+//! 2026-11-10（leader 定：手机端全部放开）：推送 / 开 PR / 看 CI / 合并（`git_push_start` /
+//! `git_job_status` / `git_forge_status` / `gh_pr_create` / `gh_pr_merge`）放行，目录收口同上；推送只给
+//! 后台任务形式（手机 RPC 等不了首推），合并前后端重查检查与头提交（forge.rs），二次确认在界面上。
 //!
 //! 例外（2026-11-09 用户决定，Lead 工作流关卡 B）：`lead_task_snapshot` / `answer_lead_gate`
 //! 放行，供手机看任务进度、回答关卡。两道收口：目录先过 `ensure_session_dir`；后端只按约定

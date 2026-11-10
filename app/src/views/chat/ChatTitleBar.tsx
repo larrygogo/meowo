@@ -20,9 +20,10 @@ function usePullRequest(cwd: string | null, branch: string | null): PullRequestD
     setPullRequest(null);
     if (!cwd || !branch || remoteUi()) return;
     let alive = true;
-    const load = () => void getPullRequest(cwd).then((pr) => { if (alive) setPullRequest(pr ?? null); }).catch(() => {});
-    load();
-    const timer = window.setInterval(load, 180_000);
+    const fetchPr = () => void getPullRequest(cwd).then((pr) => { if (alive) setPullRequest(pr ?? null); }).catch(() => {});
+    fetchPr();
+    // 窗口隐藏时不查（规格：PR/CI 轮询隐藏时 0 次），首次查询照常。
+    const timer = window.setInterval(() => { if (document.visibilityState !== "hidden") fetchPr(); }, 180_000);
     return () => { alive = false; window.clearInterval(timer); };
   }, [cwd, branch]);
   return pullRequest;

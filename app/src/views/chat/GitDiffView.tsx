@@ -297,7 +297,7 @@ function clampTreeWidth(width: number): number {
 export const GitDiffView = memo(GitDiffViewImpl);
 export type DiffPanelTab = "changes" | "files";
 
-function GitDiffViewImpl({ cwd, summary, repos = null, width, collapsed, maximized, onCollapse, onToggleMaximize, comments, onAddComment, onRemoveComment, touchedPaths, turnTouchedPaths = [], activeTab, onTabChange, selectedRoot = null, onSelectRoot, onChanged }: {
+function GitDiffViewImpl({ cwd, summary, repos = null, width, collapsed, maximized, onCollapse, onToggleMaximize, comments, onAddComment, onRemoveComment, touchedPaths, turnTouchedPaths = [], activeTab, onTabChange, selectedRoot = null, onSelectRoot, onChanged, sessionId = null }: {
   /** 会话目录：文件树与更改都对着它。 */
   cwd: string;
   summary: GitDiffSummaryDto | null;
@@ -326,6 +326,8 @@ function GitDiffViewImpl({ cwd, summary, repos = null, width, collapsed, maximiz
   selectedRoot?: string | null;
   onSelectRoot?: (root: string) => void;
   onChanged?: () => void;
+  /** 会话 id：PR 合并后提示清理它的 worktree（见 ForgeBar）。 */
+  sessionId?: number | null;
 }) {
   const t = useT();
   const changesAvailable = !!summary?.isRepo || (repos?.length ?? 0) > 0;
@@ -451,6 +453,8 @@ function GitDiffViewImpl({ cwd, summary, repos = null, width, collapsed, maximiz
             onAddComment={onAddComment}
             onRemoveComment={onRemoveComment}
             escOverrideRef={escOverrideRef}
+            sessionId={sessionId}
+            visible={!collapsed}
           />
         )
         : !remoteUi() && <FilesView key={cwd} cwd={cwd} />}

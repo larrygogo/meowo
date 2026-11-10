@@ -40,6 +40,8 @@ type Props = {
   onSelectRoot: (root: string) => void;
   /** git 写操作之后立刻重拉清单。 */
   onChanged: () => void;
+  /** 会话 id：PR 合并后提示清理它的 worktree（见 ForgeBar）。 */
+  sessionId?: number | null;
 };
 
 /**
@@ -240,6 +242,8 @@ export const SidePanel = memo(function SidePanel(props: Props) {
             onRemoveComment={props.onRemoveComment}
             escOverrideRef={escOverrideRef}
             live={!collapsed}
+            sessionId={props.sessionId ?? null}
+            visible={!collapsed}
           />
         )
         : <p className="side-panel-empty">{t.chat.diffNoRepo}</p>)}
