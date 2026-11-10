@@ -79,9 +79,12 @@
 //!
 //! 反例教训（2026-08-31）：api.ts 给 `newSession` 加 `extraDirs` 时没同步桥臂，
 //! deny_unknown_fields 把手机端每次新建会话都打成 400（字段空也发 `[]`，无可选豁免）。
-//! **改 api.ts 的 invoke 传参时必须同步本文件对应臂**——契约仍是人肉对齐，但有机制
-//! 兜底：tests::every_bridged_command_sample_payload_parses 给每条臂钉了一份镜像
-//! api.ts 实参的样例 payload，api.ts 加键后同步样例、桥臂没跟上即红。
+//! **改 api.ts 的 invoke 传参时必须同步对应臂的参数结构体**（meowo_protocol::bridge）。
+//! 2026-11-10 起契约不再人肉对齐：结构体经 ts-rs 导出 `generated/contracts/bridge/*.ts`，
+//! api.ts 每个桥接 invoke 写 `satisfies <结构体名>`，多键、少必填键 tsc 直接报错；
+//! tests::api_ts_bridged_invokes_satisfy_their_arm_args 钉住「每个带参臂都有 satisfies 且类型名对得上」。
+//! tests::every_bridged_command_sample_payload_parses 的样例 payload 保留，管的是 null/缺键这类
+//! 运行时形态（类型层管不到）。
 
 use std::path::{Path as FsPath, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -814,145 +817,10 @@ async fn rpc_handler(
     dispatch(&ctx.app, &command, &body).await
 }
 
-/// 各臂参数结构体（模块级）。原先是 dispatch 各臂内的匿名 `struct A`，测试够不着；
-/// 机械外提（字段、serde 属性一字未改）只为让「样例 payload → 不 400」契约测试拿得到
-/// 类型（见 tests::every_bridged_command_sample_payload_parses）。camelCase +
-/// deny_unknown_fields 由宏统一强制——新臂手写漏了 deny_unknown_fields 会退化成
-/// 静默丢键，不许再有这个自由度。
-macro_rules! bridged_args {
-    ($name:ident { $( $(#[$attr:meta])* $field:ident : $ty:ty ),* $(,)? }) => {
-        #[derive(serde::Deserialize)]
-        #[serde(rename_all = "camelCase", deny_unknown_fields)]
-        struct $name {
-            $( $(#[$attr])* $field : $ty, )*
-        }
-    };
-}
-
-// sessionId 单参臂共用。
-bridged_args!(SessionArg { session_id: i64 });
-
-bridged_args!(GetLiveSessionsPageArgs {
-    filter: String,
-    #[serde(default)]
-    search: Option<String>,
-    #[serde(default)]
-    cwd: Option<String>,
-    #[serde(default)]
-    before_last_event_at: Option<i64>,
-    #[serde(default)]
-    before_id: Option<i64>,
-    limit: usize,
-    #[serde(default)]
-    include_foreign: Option<bool>,
-    #[serde(default)]
-    include_pending: Option<bool>,
-    // 对话侧栏按创建时间排时才发（api.ts 只在 "created" 时带这个键）。
-    #[serde(default)]
-    order: Option<String>
-});
-
-bridged_args!(GetSessionAdminPageArgs {
-    workspaces: Vec<String>,
-    #[serde(default)]
-    status: Option<String>,
-    #[serde(default)]
-    updated_before_days: Option<u32>,
-    page: usize,
-    page_size: usize
-});
-
-bridged_args!(SearchChatTranscriptsArgs { query: String });
-
-bridged_args!(RecentCwdsArgs {
-    limit: usize,
-    #[serde(default)]
-    include_hidden: Option<bool>
-});
-bridged_args!(HideWorkspaceArgs { cwd: String });
-
-bridged_args!(GitDiffSummaryArgs { cwd: String });
-bridged_args!(FileMentionCandidatesArgs { cwd: String, query: String });
-bridged_args!(LeadTaskSnapshotArgs {
-    cwd: String,
-    #[serde(default)]
-    session: Option<String>
-});
-bridged_args!(AnswerLeadGateArgs { cwd: String, gate_id: String, choice: String, note: String });
-bridged_args!(ForkSessionArgs { session_id: i64, cols: u16, rows: u16 });
-
-bridged_args!(GitFileDiffArgs {
-    cwd: String,
-    path: String,
-    untracked: bool,
-    #[serde(default)]
-    base: Option<String>,
-    #[serde(default)]
-    session_cwd: Option<String>
-});
-bridged_args!(GitChangesOverviewArgs {
-    cwd: String,
-    touched: Vec<String>,
-    #[serde(default)]
-    commands: Option<Vec<String>>,
-    #[serde(default)]
-    detail: Option<String>
-});
-bridged_args!(GitPathsArgs {
-    cwd: String,
-    paths: Vec<String>,
-    #[serde(default)]
-    session_cwd: Option<String>
-});
-bridged_args!(GitDirArgs {
-    cwd: String,
-    path: String,
-    #[serde(default)]
-    session_cwd: Option<String>
-});
-bridged_args!(GitCommitArgs {
-    cwd: String,
-    message: String,
-    all: bool,
-    #[serde(default)]
-    paths: Option<Vec<String>>,
-    #[serde(default)]
-    session_cwd: Option<String>
-});
-bridged_args!(GitRepoArgs {
-    cwd: String,
-    #[serde(default)]
-    session_cwd: Option<String>
-});
-bridged_args!(GitJobStatusArgs { job_id: String });
-bridged_args!(GitForgeStatusArgs {
-    cwd: String,
-    #[serde(default)]
-    force: Option<bool>,
-    #[serde(default)]
-    session_cwd: Option<String>
-});
-bridged_args!(GhPrCreateArgs {
-    cwd: String,
-    #[serde(default)]
-    title: Option<String>,
-    #[serde(default)]
-    body: Option<String>,
-    #[serde(default)]
-    base: Option<String>,
-    #[serde(default)]
-    draft: Option<bool>,
-    #[serde(default)]
-    session_cwd: Option<String>
-});
-bridged_args!(GhPrMergeArgs {
-    cwd: String,
-    number: u32,
-    method: String,
-    expected_head_oid: String,
-    #[serde(default)]
-    session_cwd: Option<String>
-});
+// 各臂参数结构体住在 meowo_protocol::bridge（camelCase + deny_unknown_fields 由那边的
+// bridged_args! 宏统一强制），ts-rs 从同一份定义导出 TS 类型，api.ts 的 invoke 传参用
+// `satisfies` 对齐——多键、少键在 tsc 就红，不再等手机端 400（2026-08-31 extraDirs 事故）。
+use meowo_protocol::bridge::*;
 
 /// git 命令的目录收口（单文件 diff 与写操作共用）：带 sessionCwd 时，它必须是会话目录、cwd 必须是
 /// 它的相关仓库；不带就是老规矩，cwd 本身得是会话目录。
@@ -1007,195 +875,6 @@ async fn ensure_session_dir(app: &tauri::AppHandle, dir: &str) -> Result<(), Str
         Err("remote/not_session_dir".into())
     }
 }
-
-bridged_args!(RenameSessionArgs {
-    #[serde(default)]
-    cwd: Option<String>,
-    session_id: String,
-    title: String,
-    #[serde(default)]
-    provider: Option<String>
-});
-
-bridged_args!(SetArchivedArgs {
-    session_id: i64,
-    archived: bool
-});
-
-bridged_args!(WorktreeStatusArgs { session_id: i64 });
-
-bridged_args!(RemoveSessionWorktreeArgs {
-    session_id: i64,
-    expected_path: String,
-    confirmed_pids: Vec<u32>
-});
-
-bridged_args!(WorktreePreviewArgs {
-    repo_cwd: String,
-    #[serde(default)]
-    slug: Option<String>,
-    #[serde(default)]
-    branch: Option<String>,
-    #[serde(default)]
-    fallback_slug: Option<String>
-});
-
-bridged_args!(WorktreeCreateArgs {
-    repo_cwd: String,
-    #[serde(default)]
-    slug: Option<String>,
-    #[serde(default)]
-    branch: Option<String>,
-    #[serde(default)]
-    fallback_slug: Option<String>,
-    #[serde(default)]
-    provider: Option<String>,
-    request_id: String
-});
-
-bridged_args!(WorktreeSetupArgs {
-    #[serde(default)]
-    task_id: Option<String>,
-    #[serde(default)]
-    path: Option<String>,
-    #[serde(default)]
-    action: Option<String>
-});
-
-bridged_args!(WorktreeSetupTrustArgs { path: String, hash: String });
-
-bridged_args!(MoveSessionRankArgs {
-    session_id: i64,
-    #[serde(default)]
-    above_id: Option<i64>,
-    #[serde(default)]
-    below_id: Option<i64>
-});
-
-bridged_args!(SetWorkspaceOrderArgs { order: Vec<String> });
-
-bridged_args!(SetKeepAwakeArgs { enabled: bool });
-
-bridged_args!(SetPushPausedArgs { paused: bool });
-
-bridged_args!(SetSessionNoteArgs {
-    session_id: String,
-    note: String
-});
-
-bridged_args!(StopManagedTerminalArgs { session_id: i64 });
-
-bridged_args!(GetChatHistoryArgs {
-    session_id: i64,
-    offset: u64,
-    #[serde(default)]
-    full: Option<bool>,
-    #[serde(default)]
-    before: Option<u64>
-});
-
-bridged_args!(GetSubagentTranscriptArgs {
-    session_id: i64,
-    tool_use_id: String
-});
-
-bridged_args!(ManagedTerminalSnapshotArgs {
-    session_id: i64,
-    #[serde(default)]
-    since: Option<u64>
-});
-
-bridged_args!(WriteManagedTerminalArgs {
-    session_id: i64,
-    data: String
-});
-
-bridged_args!(ResizeManagedTerminalArgs {
-    session_id: i64,
-    cols: u16,
-    rows: u16
-});
-
-bridged_args!(StartManagedTerminalArgs {
-    session_id: i64,
-    cols: u16,
-    rows: u16,
-    #[serde(default)]
-    options: Option<std::collections::HashMap<String, String>>
-});
-
-bridged_args!(TakeoverManagedTerminalArgs {
-    session_id: i64,
-    cols: u16,
-    rows: u16,
-    #[serde(default)]
-    options: Option<std::collections::HashMap<String, String>>
-});
-
-bridged_args!(SendBackgroundPromptArgs {
-    session_id: i64,
-    text: String
-});
-
-bridged_args!(SetSessionLaunchSelectionArgs {
-    session_id: i64,
-    option: String,
-    choice: String
-});
-
-bridged_args!(RegisterApprovalConsumerArgs {
-    session_id: i64,
-    consumer_id: String
-});
-
-bridged_args!(UnregisterApprovalConsumerArgs {
-    consumer_id: String
-});
-
-bridged_args!(ResolvePendingApprovalArgs {
-    session_id: i64,
-    request_id: String,
-    choice: String
-});
-
-bridged_args!(SavePastedAttachmentArgs {
-    file_name: String,
-    data_base64: String
-});
-
-bridged_args!(AgentChatUiArgs {
-    provider: String,
-    #[serde(default)]
-    cwd: Option<String>,
-    #[serde(default)]
-    session_id: Option<i64>
-});
-
-bridged_args!(AgentModelsArgs { provider: String, session_id: Option<i64> });
-bridged_args!(AgentModelCatalogArgs { provider: String, session_id: Option<i64> });
-
-bridged_args!(NewSessionArgs {
-    cwd: String,
-    provider: String,
-    /// 旧前端兼容参数，桌面命令同样忽略。
-    #[serde(default)]
-    #[allow(dead_code)]
-    terminal: Option<String>,
-    #[serde(default)]
-    options: Option<std::collections::HashMap<String, String>>,
-    // 附加目录已按用户要求去掉，新页面不再发它。字段仍收下并忽略：手机上没刷新的旧页面
-    // 还会带 extraDirs，deny_unknown_fields 会把它们的每次新建都打成 400。
-    #[serde(default)]
-    #[allow(dead_code)]
-    extra_dirs: Option<Vec<String>>
-});
-
-bridged_args!(CheckProviderHooksArgs { provider: String });
-
-bridged_args!(ListSubdirectoriesArgs {
-    #[serde(default)]
-    path: Option<String>
-});
 
 /// 白名单命令 → 各 command 函数本体。参数结构体见上方模块级定义（camelCase +
 /// deny_unknown_fields），与 api.ts 的 invoke 传参逐名对齐。
@@ -2435,6 +2114,91 @@ mod tests {
             "C:/Users/me/.ssh/id_rsa",
             true
         ));
+    }
+
+    /// dispatch 里每个读参数的臂 → 它解析的结构体名（按源码文本扫：`"cmd" =>` 之后第一个
+    /// `args!(T)`，下一个臂开始前没出现就算无参臂）。
+    fn dispatch_arm_arg_types() -> Vec<(String, String)> {
+        let src = include_str!("remote.rs");
+        let body = &src[src.find("async fn dispatch(").expect("dispatch 函数")..];
+        let body = &body[..body.find("\n}").expect("dispatch 结尾")];
+        let mut out = Vec::new();
+        let mut current: Option<String> = None;
+        for line in body.lines() {
+            let t = line.trim_start();
+            if let Some(rest) = t.strip_prefix('"') {
+                if let Some(end) = rest.find('"') {
+                    if rest[end + 1..].trim_start().starts_with("=>") {
+                        current = Some(rest[..end].to_string());
+                    }
+                }
+            }
+            if let (Some(cmd), Some(pos)) = (current.as_ref(), t.find("args!(")) {
+                let ty = &t[pos + 6..];
+                let ty = &ty[..ty.find(')').expect("args!( 收尾")];
+                out.push((cmd.clone(), ty.to_string()));
+                current = None;
+            }
+        }
+        out
+    }
+
+    /// api.ts 里 `invoke…("cmd", …)` 这次调用的整段实参文本（括号配平截取）。
+    fn api_ts_invoke_args(api: &str, cmd: &str) -> Vec<String> {
+        let needle = format!("(\"{cmd}\"");
+        let mut out = Vec::new();
+        let mut from = 0;
+        while let Some(rel) = api[from..].find(&needle) {
+            let start = from + rel;
+            from = start + needle.len();
+            // 只认 invoke 调用点（同一行里 needle 前出现 invoke），排除注释/字符串里的同名词。
+            let line_start = api[..start].rfind('\n').map_or(0, |i| i + 1);
+            if !api[line_start..start].contains("invoke") {
+                continue;
+            }
+            let mut depth = 0i32;
+            let mut end = start;
+            for (i, ch) in api[start..].char_indices() {
+                match ch {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = start + i;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            out.push(api[start + needle.len()..end].to_string());
+        }
+        out
+    }
+
+    /// 桥参数契约的前端那半：api.ts 每个走手机桥、带参数的 invoke 都必须写
+    /// `satisfies <该臂结构体名>`（类型由 ts-rs 从 meowo_protocol::bridge 导出），tsc 才会拦多键/少键。
+    /// 防的是「新加一个桥臂、api.ts 照旧裸传对象」——那样又回到只能等手机端 400 才发现。
+    #[test]
+    fn api_ts_bridged_invokes_satisfy_their_arm_args() {
+        let api = include_str!("../../src/api.ts");
+        let arms = dispatch_arm_arg_types();
+        let mut problems = Vec::new();
+        for cmd in BRIDGED_COMMANDS {
+            let Some((_, ty)) = arms.iter().find(|(c, _)| c == cmd) else { continue };
+            let calls = api_ts_invoke_args(api, cmd);
+            if calls.is_empty() {
+                // host_os / file_access_token 不经 api.ts（mobile/transport.ts 直发），不在此列。
+                continue;
+            }
+            let want = format!("satisfies {ty}");
+            for args in calls {
+                if !args.contains(&want) {
+                    problems.push(format!("{cmd}: 缺 `{want}`，实参 = {}", args.trim()));
+                }
+            }
+        }
+        assert!(problems.is_empty(), "api.ts 桥接 invoke 未做类型校验：\n{}", problems.join("\n"));
     }
 
     #[test]
