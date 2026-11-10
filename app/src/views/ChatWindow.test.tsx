@@ -2386,8 +2386,8 @@ describe("ChatWindow", () => {
     const options = await screen.findAllByRole("option");
     expect(options).toHaveLength(11);
     expect(screen.getByText(zh.chat.switcherGroupCommands)).toBeTruthy();
-    // ↓ 移到第二条（目标会话），Enter 切换
-    fireEvent.keyDown(input, { key: "ArrowDown" });
+    // 二期 #4：空查询默认选中第一个非当前会话（目标会话），直接 Enter 切换
+    await waitFor(() => expect(screen.getByRole("option", { name: /目标会话/ }).getAttribute("aria-selected")).toBe("true"));
     fireEvent.keyDown(input, { key: "Enter" });
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("get_chat_history", { sessionId: 9, offset: 0 }));
     // 切换器已关闭

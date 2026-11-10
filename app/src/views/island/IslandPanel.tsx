@@ -7,7 +7,7 @@ import { agentAssets, tintStyle } from "../../providers";
 import { useT } from "../../i18n";
 import { cardTone, fmtAgo } from "../sticker/helpers";
 import type { Item } from "../sticker/types";
-import { sessionTitle, useSidebarOrder } from "../Island";
+import { groupTone, sessionTitle, useSidebarOrder } from "../Island";
 import { AgentRing, Ring, useNow, usedColor, usedOf } from "./islandParts";
 import { primaryLane } from "./useIslandUsage";
 import { ChatIcon, GearIcon } from "../sticker/icons";
@@ -310,7 +310,11 @@ export function IslandPanel({
                 role="tab"
                 aria-selected={i === current}
                 aria-label={t.island.page(i + 1)}
-                className={i === current ? "is-on" : ""}
+                // 会话页的圆点按该页最急状态上色（二期 #3），用量页没有状态。
+                className={[
+                  i === current ? "is-on" : "",
+                  i < sessionPages ? `is-${groupTone(ordered.slice(i * MAX_ROWS, i * MAX_ROWS + MAX_ROWS))}` : "",
+                ].filter(Boolean).join(" ")}
                 onClick={() => setPage(i)}
               />
             ))}

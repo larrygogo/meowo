@@ -409,6 +409,10 @@ export const zh = {
     shortcutNewSession: "新建会话",
     shortcutSearch: "搜索会话",
     shortcutPrevNext: "切到侧栏的上一条 / 下一条会话",
+    // 二期 #5/#8（2026-11-10 定）：Ctrl+F 两种视图都是在当前内容里找字，搜会话交给 Ctrl+K。
+    shortcutFind: "在当前内容中查找",
+    shortcutNextPending: "跳到下一个待处理或出错的会话",
+    noPendingSession: "没有待处理或出错的会话",
     shortcutSend: "发送消息",
     shortcutNewline: "换行",
     shortcutInterruptSend: "中断当前回合并发送",
@@ -419,7 +423,7 @@ export const zh = {
     shortcutGroupWindow: "窗口",
     shortcutGroupInput: "输入框",
     // 终端视图的让位说明（速查表底注）：静默失效的键必须有一处写明。
-    shortcutTerminalNote: "终端视图中 Ctrl+K/B/N/1/2 由应用占用，Ctrl+F 是终端搜索",
+    shortcutTerminalNote: (mod: string) => `终端视图中 ${mod}+K/B/N/1/2 由应用占用，${mod}+F 在终端里查找`,
     // 终端内搜索条（Ctrl+F，xterm addon-search）。
     termSearchPlaceholder: "搜索终端输出",
     termSearchPrev: "上一个",
@@ -935,6 +939,8 @@ export const zh = {
     // 一句说清现状与代价（用户实拍：两句长文把按钮挤到第二行）。点按钮后的确认框再写细节。
     sendNeedsTakeover: "会话在外部终端运行，接管会结束它",
     composerGateEnded: "会话已结束。恢复后即可继续对话。",
+    // CLI 意外退出（二期 #7）：与后端 exit_report::crash_label 同文，灵动岛/通知里也是这句。
+    agentCrashed: (code: number) => `Agent 意外退出（退出码 ${code}）`,
     resumeSession: "恢复会话",
     terminalNeedsAttention: "Agent 在等启动确认，请先在交互卡片中选择，再重新发送。",
     // 拦住发送的是提问卡时用这句：「启动确认」对一个回合中途的提问是错的说法（用户实拍）。
@@ -1361,6 +1367,8 @@ export const zh = {
     autostartFailed: "开机自启设置失败，请重试",
     notify: "桌面通知",
     notifyDesc: "会话需要你回复或出错时弹系统通知",
+    // 系统通知分种类（二期 #6），种类与灵动岛的「自动弹出提醒」同一套。
+    notifyKinds: "通知这些事",
     // macOS 系统层授权被拒时的开关旁提示（见 About.tsx GeneralSection）。
     notifySystemDenied: "已在系统设置中关闭",
     openSystemSettings: "打开系统设置",
