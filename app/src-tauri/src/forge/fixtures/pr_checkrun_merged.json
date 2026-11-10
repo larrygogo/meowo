@@ -1,0 +1,64 @@
+{
+ "baseRefName": "main",
+ "headRefName": "perf/stop-loss-speedup",
+ "headRefOid": "a72e75f81e6c99f272c5e963927fcd7ed06fef32",
+ "isDraft": false,
+ "mergeStateStatus": "UNKNOWN",
+ "mergeable": "UNKNOWN",
+ "number": 161,
+ "state": "MERGED",
+ "statusCheckRollup": [
+  {
+   "__typename": "CheckRun",
+   "completedAt": "2026-11-10T10:30:55Z",
+   "conclusion": "SUCCESS",
+   "detailsUrl": "https://github.com/larrygogo/meowo/actions/runs/42799445575/job/129772905932",
+   "name": "frontend",
+   "startedAt": "2026-11-10T10:28:34Z",
+   "status": "COMPLETED",
+   "workflowName": "CI"
+  },
+  {
+   "__typename": "CheckRun",
+   "completedAt": "2026-11-10T10:41:11Z",
+   "conclusion": "SUCCESS",
+   "detailsUrl": "https://github.com/larrygogo/meowo/actions/runs/42799445575/job/129772906328",
+   "name": "check (windows-latest)",
+   "startedAt": "2026-11-10T10:28:34Z",
+   "status": "COMPLETED",
+   "workflowName": "CI"
+  },
+  {
+   "__typename": "CheckRun",
+   "completedAt": "2026-11-10T10:34:25Z",
+   "conclusion": "SUCCESS",
+   "detailsUrl": "https://github.com/larrygogo/meowo/actions/runs/42799445575/job/129772906311",
+   "name": "check (macos-latest)",
+   "startedAt": "2026-11-10T10:28:34Z",
+   "status": "COMPLETED",
+   "workflowName": "CI"
+  },
+  {
+   "__typename": "CheckRun",
+   "completedAt": "2026-11-10T10:29:02Z",
+   "conclusion": "SUCCESS",
+   "detailsUrl": "https://github.com/larrygogo/meowo/actions/runs/42799445575/job/129772906304",
+   "name": "audit",
+   "startedAt": "2026-11-10T10:28:33Z",
+   "status": "COMPLETED",
+   "workflowName": "CI"
+  },
+  {
+   "__typename": "CheckRun",
+   "completedAt": "2026-11-10T10:28:32Z",
+   "conclusion": "SKIPPED",
+   "detailsUrl": "https://github.com/larrygogo/meowo/actions/runs/42799445575/job/129772909322",
+   "name": "e2e",
+   "startedAt": "2026-11-10T10:28:32Z",
+   "status": "COMPLETED",
+   "workflowName": "CI"
+  }
+ ],
+ "title": "fix: 放弃更改进回收站、不再白屏卡死、长会话首开快约 14 倍，「更改」面板扛住上万未跟踪文件",
+ "url": "https://github.com/larrygogo/meowo/pull/161"
+}

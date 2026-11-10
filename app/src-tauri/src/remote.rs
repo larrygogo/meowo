@@ -48,6 +48,9 @@
 //! 2026-11-10 起摘要把文件多的未跟踪目录折成一条 `dir/`：点开它的 `git_untracked_dir_files` 放行，
 //! 目录条目、目录里的文件同样由命令按此刻的清单校验；同一行的「加入 .gitignore」（`git_ignore_dir`）
 //! 改的是仓库配置文件，不放行。
+//! 2026-11-10（leader 定：手机端全部放开）：推送 / 开 PR / 看 CI / 合并（`git_push_start` /
+//! `git_job_status` / `git_forge_status` / `gh_pr_create` / `gh_pr_merge`）放行，目录收口同上；推送只给
+//! 后台任务形式（手机 RPC 等不了首推），合并前后端重查检查与头提交（forge.rs），二次确认在界面上。
 //!
 //! 例外（2026-11-09 用户决定，Lead 工作流关卡 B）：`lead_task_snapshot` / `answer_lead_gate`
 //! 放行，供手机看任务进度、回答关卡。两道收口：目录先过 `ensure_session_dir`；后端只按约定
@@ -186,6 +189,14 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     // 点开折叠的未跟踪目录看其中的文件（只读，目录收口同 git_file_diff，目录条目由命令自己校验）。
     // 同目录的「加入 .gitignore」（git_ignore_dir）不放行，见拒绝名单测试。
     "git_untracked_dir_files",
+    // 推送 / 开 PR / 看 CI / 合并（2026-11-10 leader 定：手机端全部放开，关卡 Q-mobile-scope-2）。收口同
+    // 「更改」面板写操作：目录必须是会话目录或它的相关仓库。推送走后台任务（手机 RPC 等不了首推的
+    // 几十秒），同步的 git_push 不放行。合并的「二次确认、CI 不全绿禁用」在界面上，后端合并前另外重判检查。
+    "git_push_start",
+    "git_job_status",
+    "git_forge_status",
+    "gh_pr_create",
+    "gh_pr_merge",
     // 输入框 `@` 补全（2026-11-04 用户决定放行）：只回文件/目录名，不读内容；目录收口同改动列表。
     "file_mention_candidates",
     // Lead 工作流（模块头「例外（2026-11-09）」）
@@ -908,6 +919,40 @@ bridged_args!(GitCommitArgs {
     #[serde(default)]
     session_cwd: Option<String>
 });
+bridged_args!(GitRepoArgs {
+    cwd: String,
+    #[serde(default)]
+    session_cwd: Option<String>
+});
+bridged_args!(GitJobStatusArgs { job_id: String });
+bridged_args!(GitForgeStatusArgs {
+    cwd: String,
+    #[serde(default)]
+    force: Option<bool>,
+    #[serde(default)]
+    session_cwd: Option<String>
+});
+bridged_args!(GhPrCreateArgs {
+    cwd: String,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    body: Option<String>,
+    #[serde(default)]
+    base: Option<String>,
+    #[serde(default)]
+    draft: Option<bool>,
+    #[serde(default)]
+    session_cwd: Option<String>
+});
+bridged_args!(GhPrMergeArgs {
+    cwd: String,
+    number: u32,
+    method: String,
+    expected_head_oid: String,
+    #[serde(default)]
+    session_cwd: Option<String>
+});
 
 /// git 命令的目录收口（单文件 diff 与写操作共用）：带 sessionCwd 时，它必须是会话目录、cwd 必须是
 /// 它的相关仓库；不带就是老规矩，cwd 本身得是会话目录。
@@ -1354,6 +1399,40 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
                 return reply::<()>(Err(e));
             }
             reply(crate::git::git_commit(a.cwd, a.message, a.all, a.paths).await)
+        }
+        // 推送 / PR / 合并：目录收口同上面的写操作。
+        "git_push_start" => {
+            let a = args!(GitRepoArgs);
+            if let Err(e) = ensure_git_repo_dir(app, &a.cwd, a.session_cwd.as_deref()).await {
+                return reply::<()>(Err(e));
+            }
+            reply(crate::forge::git_push_start(a.cwd).await)
+        }
+        // 只认任务号（随机、只在本进程内有效），拿到的只是推送结果。
+        "git_job_status" => {
+            let a = args!(GitJobStatusArgs);
+            reply(crate::forge::git_job_status(a.job_id).await)
+        }
+        "git_forge_status" => {
+            let a = args!(GitForgeStatusArgs);
+            if let Err(e) = ensure_git_repo_dir(app, &a.cwd, a.session_cwd.as_deref()).await {
+                return reply::<()>(Err(e));
+            }
+            reply(crate::forge::git_forge_status(a.cwd, a.force).await)
+        }
+        "gh_pr_create" => {
+            let a = args!(GhPrCreateArgs);
+            if let Err(e) = ensure_git_repo_dir(app, &a.cwd, a.session_cwd.as_deref()).await {
+                return reply::<()>(Err(e));
+            }
+            reply(crate::forge::gh_pr_create(a.cwd, a.title, a.body, a.base, a.draft).await)
+        }
+        "gh_pr_merge" => {
+            let a = args!(GhPrMergeArgs);
+            if let Err(e) = ensure_git_repo_dir(app, &a.cwd, a.session_cwd.as_deref()).await {
+                return reply::<()>(Err(e));
+            }
+            reply(crate::forge::gh_pr_merge(a.cwd, a.number, a.method, a.expected_head_oid).await)
         }
         "rename_session" => {
             let a = args!(RenameSessionArgs);
@@ -2015,6 +2094,8 @@ mod tests {
             // git_diff_summary / git_file_diff 已按用户决定放行（2026-10-31），收口在
             // ensure_session_dir + changed_file_listed，由各自的单测钉住；「更改」面板写操作
             // 2026-11-09 放行（模块头「例外」）；git_pull_request 等其余 git_* 仍拒。
+            // 同步推送：手机 RPC 等不了首推的几十秒，手机走 git_push_start + git_job_status。
+            "git_push",
             // 折叠目录的「加入 .gitignore」改的是仓库里的配置文件，手机端不给（2026-11-10 leader 定）。
             "git_ignore_dir",
             "set_autostart",
@@ -2320,6 +2401,8 @@ mod tests {
             ahead: None,
             behind: None,
             files: vec![file("src/a.ts", "M"), file("notes.md", "U")],
+            upstream: None,
+            unpushed: None,
         };
         assert!(changed_file_listed(&summary, "src/a.ts", false));
         assert!(changed_file_listed(&summary, "notes.md", true));
@@ -2406,6 +2489,21 @@ mod tests {
             .map(|_| ()),
             "git_commit" => parse::<GitCommitArgs>(
                 br#"{"cwd":"C:/work-wt","message":"feat: x\n\nbody","all":true,"paths":["a.ts"],"sessionCwd":"C:/work"}"#,
+            )
+            .map(|_| ()),
+            // api.ts（gitPushStart / gitJobStatus / getForgeStatus / ghPrCreate / ghPrMerge）
+            "git_push_start" => parse::<GitRepoArgs>(br#"{"cwd":"C:/work-wt","sessionCwd":"C:/work"}"#).map(|_| ()),
+            "git_job_status" => parse::<GitJobStatusArgs>(br#"{"jobId":"push-1a2b-0"}"#).map(|_| ()),
+            "git_forge_status" => parse::<GitForgeStatusArgs>(
+                br#"{"cwd":"C:/work-wt","force":true,"sessionCwd":"C:/work"}"#,
+            )
+            .map(|_| ()),
+            "gh_pr_create" => parse::<GhPrCreateArgs>(
+                br#"{"cwd":"C:/work-wt","title":"feat: x","body":"- feat: x","base":"main","draft":false,"sessionCwd":"C:/work"}"#,
+            )
+            .map(|_| ()),
+            "gh_pr_merge" => parse::<GhPrMergeArgs>(
+                br#"{"cwd":"C:/work-wt","number":12,"method":"squash","expectedHeadOid":"a72e75f81e6c99f272c5e963927fcd7ed06fef32","sessionCwd":"C:/work"}"#,
             )
             .map(|_| ()),
             // api.ts:451（renameSession：cwd/provider 可 null，sessionId 是 cc_session_id 字符串）

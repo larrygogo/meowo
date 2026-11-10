@@ -5444,6 +5444,7 @@ export function ChatWindow() {
                 selectedRoot={scmRoot}
                 onSelectRoot={setScmRoot}
                 onChanged={refreshChanges}
+                sessionId={sessionId}
               />
             )
             : (
@@ -5466,6 +5467,7 @@ export function ChatWindow() {
                 selectedRoot={scmRoot}
                 onSelectRoot={setScmRoot}
                 onChanged={refreshChanges}
+                sessionId={sessionId}
               />
             )}
           </Suspense>

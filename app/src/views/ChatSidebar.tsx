@@ -22,7 +22,7 @@ import { formatBackendError } from "../i18n/errors";
 import { isMac } from "../platform";
 import { reconcileRows, sameRefs, type RowCache } from "../rowCache";
 import type { Dict } from "../i18n/zh";
-import { WorktreeRemoveButton, runBatchCleanup, type RemovalOutcome } from "../worktreeCleanup";
+import { ArchivedWorktreePrompt, WorktreeRemoveButton, runBatchCleanup, type RemovalOutcome } from "../worktreeCleanup";
 
 /** 每翻一页新增的会话数。滚到底自动加载下一页，直到后端带回 next_cursor = null 为止。 */
 const PAGE_LIMIT = 60;
@@ -1499,6 +1499,8 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
           <button type="button" onClick={() => setCleanResult(null)}>{t.dialog.ok}</button>
         </div>
       )}
+      {/* 归档后所在 worktree 能清理就提示（二期包 5，不自动删）。 */}
+      {!actionError && <ArchivedWorktreePrompt t={t} className="chat-sidebar-error is-undo" />}
       {/* 动作失败的唯一出口（重命名/便签/归档）：4s 后自动消失。 */}
       {actionError && <div className="chat-sidebar-error" role="status">{actionError}</div>}
       {/* 批量归档操作条:多选态常驻底部(Ctrl+点击增删,Esc 退出)。 */}

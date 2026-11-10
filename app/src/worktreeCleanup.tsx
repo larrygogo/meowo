@@ -11,6 +11,7 @@ import {
   type WorktreeStatusDto,
 } from "./api";
 import { appConfirm } from "./confirm";
+import { SESSION_ARCHIVED_EVENT } from "./hooks/useSessionActions";
 import { formatBackendError } from "./i18n/errors";
 import type { Dict } from "./i18n/zh";
 import { UNNAMED_SESSION_SENTINEL } from "./views/sticker/types";
@@ -210,5 +211,41 @@ export function WorktreeRemoveButton({
     >
       {state === "busy" ? t.worktree.removing : t.worktree.remove}
     </button>
+  );
+}
+
+/** 归档后提示停留多久（没点就自己收起，不催用户）。 */
+const ARCHIVED_PROMPT_MS = 15_000;
+
+/**
+ * 会话归档后，它所在的 worktree 能清理就提示一句并给「删除 worktree」（二期包 5：PR 合并或会话归档后
+ * 提示清理，不自动删除）。听 useSessionActions 广播的归档事件，只对单条归档提示：批量归档走「已完成」页的
+ * 批量清理。看板的归档撤销条已有同一个按钮（Sticker.tsx），这里给侧栏与对话窗标题菜单的归档用。
+ */
+export function ArchivedWorktreePrompt({ t, className }: { t: Dict; className: string }) {
+  const [sessionId, setSessionId] = useState<number | null>(null);
+  const [engaged, setEngaged] = useState(false);
+  useEffect(() => {
+    const onArchived = (event: Event) => {
+      const ids = (event as CustomEvent<{ ids?: number[] }>).detail?.ids ?? [];
+      setEngaged(false);
+      setSessionId(ids.length === 1 ? ids[0] : null);
+    };
+    window.addEventListener(SESSION_ARCHIVED_EVENT, onArchived);
+    return () => window.removeEventListener(SESSION_ARCHIVED_EVENT, onArchived);
+  }, []);
+  useEffect(() => {
+    if (sessionId == null || engaged) return;
+    const timer = window.setTimeout(() => setSessionId(null), ARCHIVED_PROMPT_MS);
+    return () => window.clearTimeout(timer);
+  }, [sessionId, engaged]);
+  const status = useWorktreeStatus(sessionId);
+  if (sessionId == null || !status?.eligible) return null;
+  return (
+    <div className={className} role="status" data-testid="archived-worktree-prompt">
+      <span>{t.forge.cleanupHint}</span>
+      <WorktreeRemoveButton t={t} sessionId={sessionId} className="" onEngage={() => setEngaged(true)} onSettled={() => setEngaged(false)} />
+      <button type="button" onClick={() => setSessionId(null)}>{t.dialog.ok}</button>
+    </div>
   );
 }

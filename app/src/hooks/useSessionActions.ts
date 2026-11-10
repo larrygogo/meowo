@@ -1,6 +1,10 @@
 import { useCallback } from "react";
 import { setArchived } from "../api";
 
+/** 归档成功后在窗口上广播（detail.ids = 成功归档的会话）。侧栏据此提示「worktree 可以清理了」：
+ *  归档入口有好几个（侧栏、对话窗标题菜单、批量），提示只放在侧栏一处（二期包 5「归档后提示清理」）。 */
+export const SESSION_ARCHIVED_EVENT = "meowo:session-archived";
+
 /**
  * 归档后「自动跳到下一条」的统一取序（C-13）。此前侧栏按本地 ordered 取首条幸存项、
  * 对话窗另发后端查询按默认排序取第一条，两个入口的跳转目标不一致、对用户不可预期。
@@ -76,6 +80,7 @@ export function useSessionActions({
       }
       return Promise.allSettled(ids.map((id) => setArchived(id, true))).then((results) => {
         const ok = ids.filter((_, index) => results[index].status === "fulfilled");
+        if (ok.length > 0) window.dispatchEvent(new CustomEvent(SESSION_ARCHIVED_EVENT, { detail: { ids: ok } }));
         if (ok.length < ids.length) {
           const reason = (results.find((entry) => entry.status === "rejected") as PromiseRejectedResult | undefined)?.reason;
           onError(resolveMessage(errorMessage, reason));

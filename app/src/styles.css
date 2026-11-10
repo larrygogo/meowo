@@ -4998,6 +4998,41 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .scm-commit-btn:disabled { opacity: 0.45; cursor: default; }
 .scm-error { color: var(--cc-err); font-size: var(--text-xs); overflow-wrap: anywhere; }
 .scm-notice { color: var(--cc-text-dim); font-size: var(--text-xs); }
+/* 推送 / PR / CI / 合并（ForgeBar.tsx）：提交框下面一段，按钮和提交按钮同高，次要动作用描边款。 */
+.scm-forge { flex: 0 0 auto; display: flex; flex-direction: column; gap: var(--sp-6); padding: var(--sp-4) var(--sp-8) var(--sp-8); }
+.scm-forge-btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-6); height: 28px; padding: 0 var(--sp-10); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-sm); background: var(--cc-surface); color: var(--cc-text); font: inherit; font-size: var(--text-sm); cursor: pointer; }
+.scm-forge-btn:hover:not(:disabled) { background: var(--fill-hover); }
+.scm-forge-btn:disabled { opacity: 0.45; cursor: default; }
+.scm-forge-btn.is-ghost { color: var(--cc-text-dim); }
+.scm-pr { display: flex; flex-direction: column; gap: var(--sp-4); padding: var(--sp-6) var(--sp-8); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-sm); }
+.scm-pr-head { display: flex; align-items: center; gap: var(--sp-6); min-width: 0; padding: 0; border: 0; background: transparent; color: var(--cc-text); font: inherit; font-size: var(--text-sm); text-align: left; cursor: pointer; }
+.scm-pr-head:hover .scm-pr-title { text-decoration: underline; }
+.scm-pr-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scm-pr-state { flex: 0 0 auto; padding: 0 var(--sp-6); border-radius: 8px; background: var(--fill-selected); color: var(--cc-text-dim); font-size: 10px; line-height: 16px; }
+.scm-pr-head.is-open .scm-pr-state { background: color-mix(in srgb, var(--cc-ok-vivid) 18%, transparent); color: var(--cc-ok-vivid); }
+.scm-pr-head.is-merged .scm-pr-state { background: color-mix(in srgb, var(--cc-accent) 18%, transparent); color: var(--cc-accent); }
+.scm-checks-line { display: flex; align-items: center; gap: var(--sp-4); font-size: var(--text-xs); color: var(--cc-text-dim); }
+.scm-checks-line > span { flex: 1; min-width: 0; }
+.scm-checks-line.is-pass { color: var(--cc-ok-vivid); }
+.scm-checks-line.is-fail { color: var(--cc-err-vivid); }
+.scm-checks-line.is-pending { color: var(--cc-warn-vivid); }
+.scm-checks { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; max-height: 180px; overflow-y: auto; }
+.scm-check { display: flex; align-items: center; gap: var(--sp-6); min-height: 22px; font-size: var(--text-xs); color: var(--cc-text); }
+.scm-check-icon { flex: 0 0 auto; color: var(--cc-text-faint); }
+.scm-check.is-pass .scm-check-icon { color: var(--cc-ok-vivid); }
+.scm-check.is-fail .scm-check-icon { color: var(--cc-err-vivid); }
+.scm-check.is-pending .scm-check-icon { color: var(--cc-warn-vivid); }
+.scm-check-name { flex: 0 1 auto; min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+span.scm-check-name { cursor: default; }
+button.scm-check-name:hover { text-decoration: underline; }
+.scm-check-wf { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cc-text-faint); }
+.scm-link-btn { margin-left: var(--sp-6); padding: 0; border: 0; background: transparent; color: var(--cc-accent); font: inherit; font-size: var(--text-xs); cursor: pointer; }
+.scm-link-btn:hover:not(:disabled) { text-decoration: underline; }
+.scm-cleanup { display: flex; flex-wrap: wrap; align-items: center; }
+.scm-merge-into { font-size: var(--text-sm); color: var(--cc-text); overflow-wrap: anywhere; }
+.scm-merge-method { display: flex; align-items: center; gap: var(--sp-6); min-height: 26px; font-size: var(--text-sm); color: var(--cc-text); cursor: pointer; }
+.scm-pr-draft { display: flex; align-items: center; gap: var(--sp-6); font-size: var(--text-sm); color: var(--cc-text-dim); cursor: pointer; }
+.scm-pr-body { min-height: 96px; resize: vertical; font: inherit; font-size: var(--text-sm); }
 
 .scm-tools { flex: 0 0 auto; display: flex; align-items: center; gap: var(--sp-6); padding-right: var(--sp-8); }
 .scm-tools .chat-diff-search { flex: 1; width: auto; min-width: 0; margin-right: 0; }
