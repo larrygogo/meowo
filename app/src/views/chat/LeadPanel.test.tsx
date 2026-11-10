@@ -259,6 +259,7 @@ describe("关卡卡片在底部 dock 里的高度", () => {
     expect(rule(".chat-dock")).toMatch(/flex-direction: column/);
     expect(rule(".chat-dock > *")).toMatch(/flex-shrink: 0/);
     expect(rule(".chat-dock > .lead-gate-card")).toMatch(/flex-shrink: 1/);
-    expect(rule(".chat-dock > .lead-gate-card")).toMatch(/min-height: min\(/);
+    // 不许设非零下限：下限会把输入框挤出窗口底部（桌面版实拍）。
+    expect(rule(".chat-dock > .lead-gate-card")).toMatch(/min-height: 0;/);
   });
 });

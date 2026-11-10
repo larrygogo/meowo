@@ -5690,10 +5690,11 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
    正文被压在一层半透明雾里；缓动版前段几乎全透、到输入框才收实。 */
 .chat-dock::before { content: ""; position: absolute; top: -48px; right: 0; bottom: 0; left: 0; z-index: 0; pointer-events: none; background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--cc-bg) 30%, transparent) 21px, color-mix(in srgb, var(--cc-bg) 70%, transparent) 45px, var(--cc-bg) 72px); }
 .chat-dock > * { position: relative; z-index: 1; flex-shrink: 0; }
-/* 显式 min-height 不能省：flex 子项默认 min-height:auto，不肯缩到内容高以下。下限留
-   min(200px, 35dvh)：键盘弹起或浮层里同时有提问/审批卡时，卡片不至于被压成一条缝
-   （仿真里正文区只剩 12~20px）；到了下限宁可让输入框底部出屏，关卡才是 leader 此刻要做的事。 */
-.chat-dock > .lead-gate-card { flex-shrink: 1; min-height: min(200px, 35dvh); }
+/* min-height:0 不能省：flex 子项默认 min-height:auto，不肯缩到内容高以下。刻意不设下限：
+   设过 min(200px, 35dvh)，浮层里同时有审批/提问卡时消息区要留出浮层补白、缩不动，下限把
+   输入框挤出窗口底部（用户实拍桌面版；仿真 1000×700 输入框落在 594–702）。输入框必须始终
+   可见；空间极紧时关卡卡片缩小、正文区在卡内滚动。 */
+.chat-dock > .lead-gate-card { flex-shrink: 1; min-height: 0; }
 /* composer 要保住自己的 z-index:9（压过审批 overlay 的 8 与「回到最新」的 sticky 5，
    见 .chat-compose 的注释）。上一条与它同特异性且写在后面，会把它降成 1——模型/斜杠菜单
    向上探出时就被「回到最新」浮钮压住（实拍）。 */
