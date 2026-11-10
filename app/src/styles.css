@@ -5690,11 +5690,16 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
    正文被压在一层半透明雾里；缓动版前段几乎全透、到输入框才收实。 */
 .chat-dock::before { content: ""; position: absolute; top: -48px; right: 0; bottom: 0; left: 0; z-index: 0; pointer-events: none; background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--cc-bg) 30%, transparent) 21px, color-mix(in srgb, var(--cc-bg) 70%, transparent) 45px, var(--cc-bg) 72px); }
 .chat-dock > * { position: relative; z-index: 1; flex-shrink: 0; }
-/* min-height:0 不能省：flex 子项默认 min-height:auto，不肯缩到内容高以下。刻意不设下限：
-   设过 min(200px, 35dvh)，浮层里同时有审批/提问卡时消息区要留出浮层补白、缩不动，下限把
-   输入框挤出窗口底部（用户实拍桌面版；仿真 1000×700 输入框落在 594–702）。输入框必须始终
-   可见；空间极紧时关卡卡片缩小、正文区在卡内滚动。 */
-.chat-dock > .lead-gate-card { flex-shrink: 1; min-height: 0; }
+/* 显式 min-height 不能省：flex 子项默认 min-height:auto，不肯缩到内容高以下。下限只留到
+   「内边距 + 标题行 + 按钮行」（104px）：设过 min(200px, 35dvh)，浮层里同时有审批/提问卡时
+   消息区要留出浮层补白、缩不动，下限把输入框挤出窗口底部（用户实拍桌面版；仿真 1000×700
+   输入框落在 594–702）；设 0 又会把卡压得比按钮行还矮，提交按钮伸出卡外、被输入框盖住
+   （审查发现）。 */
+.chat-dock > .lead-gate-card { flex-shrink: 1; min-height: 104px; }
+/* 浮层里有审批/提问卡时（agent 正卡在那张卡上，它比关卡急），消息区要留浮层补白、缩不动，
+   104px 下限会在 iPhone SE 上把输入框挤出屏幕 48px（仿真；下限为 0 时放得下）。此时关卡卡片
+   放弃下限，矮于按钮行时裁掉溢出，不让按钮叠到输入框上。 */
+.chat-main:has(> .chat-approval-overlay.is-active) > .chat-dock > .lead-gate-card { min-height: 0; overflow: hidden; }
 /* composer 要保住自己的 z-index:9（压过审批 overlay 的 8 与「回到最新」的 sticky 5，
    见 .chat-compose 的注释）。上一条与它同特异性且写在后面，会把它降成 1——模型/斜杠菜单
    向上探出时就被「回到最新」浮钮压住（实拍）。 */

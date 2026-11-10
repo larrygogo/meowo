@@ -247,19 +247,27 @@ describe("验收清单与新关卡", () => {
 // jsdom 不排版，量不了「卡片是否超出屏幕」；这里按文本守住三条让关卡卡片在手机上不出屏的规则。
 // 实际效果靠 Playwright iPhone 仿真验证过（修复前视口 664、dock 619 从 315 起，卡底和提交按钮在屏外）。
 describe("关卡卡片在底部 dock 里的高度", () => {
-  const css = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../styles.css"), "utf8");
-  const rule = (selector: string) => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const css = readFileSync(join(here, "../../styles.css"), "utf8");
+  /// 取某条规则大括号里的声明文本。只认写在一行、选择器顶格的规则（styles.css 的惯例）；
+  /// 规则改成多行会返回空串，断言随之失败——那时改这里，别放宽断言。
+  const ruleBody = (selector: string) => {
     const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     return css.match(new RegExp(`^${escaped} \\{([^}]*)\\}`, "m"))?.[1] ?? "";
   };
 
   it("dock 可收缩且是纵向 flex，卡片能让出高度、其余子项不让", () => {
-    expect(rule(".chat-dock")).toMatch(/flex: 0 1 auto/);
-    expect(rule(".chat-dock")).toMatch(/min-height: 0/);
-    expect(rule(".chat-dock")).toMatch(/flex-direction: column/);
-    expect(rule(".chat-dock > *")).toMatch(/flex-shrink: 0/);
-    expect(rule(".chat-dock > .lead-gate-card")).toMatch(/flex-shrink: 1/);
-    // 不许设非零下限：下限会把输入框挤出窗口底部（桌面版实拍）。
-    expect(rule(".chat-dock > .lead-gate-card")).toMatch(/min-height: 0;/);
+    expect(ruleBody(".chat-dock")).toMatch(/flex: 0 1 auto/);
+    expect(ruleBody(".chat-dock")).toMatch(/min-height: 0/);
+    expect(ruleBody(".chat-dock")).toMatch(/flex-direction: column/);
+    expect(ruleBody(".chat-dock > *")).toMatch(/flex-shrink: 0/);
+    expect(ruleBody(".chat-dock > .lead-gate-card")).toMatch(/flex-shrink: 1/);
+    // 下限只能是固定的小值（标题 + 按钮行）：按视口比例的下限会把输入框挤出窗口（桌面版实拍），
+    // 0 又会让提交按钮伸出卡外、被输入框盖住。
+    expect(ruleBody(".chat-dock > .lead-gate-card")).toMatch(/min-height: 104px;/);
+    // 浮层有卡时放弃下限并裁掉溢出：下限会把 iPhone SE 的输入框挤出屏幕。
+    const withOverlay = ruleBody(".chat-main:has(> .chat-approval-overlay.is-active) > .chat-dock > .lead-gate-card");
+    expect(withOverlay).toMatch(/min-height: 0;/);
+    expect(withOverlay).toMatch(/overflow: hidden;/);
   });
 });
