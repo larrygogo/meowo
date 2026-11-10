@@ -24,6 +24,8 @@ use std::time::{Duration, Instant};
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod drill;
 
 /// push 的超时：大仓库首推、慢网络留足余量，又不至于让按钮无限转。
 const PUSH_TIMEOUT: Duration = Duration::from_secs(120);
