@@ -5680,11 +5680,26 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 
 /* Kimi ChatDock：workbar pill + 向上弹出的面板 + composer。底部渐变让消息流
    在 dock 后方渐隐，与对话区融为一体。 */
-.chat-dock { position: relative; flex: 0 0 auto; width: 100%; }
+/* dock 可收缩、自身是纵向 flex：常驻的 Lead 关卡卡片也在 dock 里，按自己的 68dvh 限高
+   再叠上进度条和输入框，手机上整个 dock 比屏幕还高，被 .chat-main 裁掉——摘要展开后
+   选项、意见框、提交按钮都在屏外，卡内也滑不到（手机实拍；Playwright iPhone 13 仿真复现：
+   视口 664，dock 619 从 315 起）。现在只让关卡卡片让出高度（下方 flex-shrink 规则），
+   卡片正文区自己滚动，其余子项不收缩。子项都只有下外边距，改 flex 不影响间距。 */
+.chat-dock { position: relative; flex: 0 1 auto; min-height: 0; width: 100%; display: flex; flex-direction: column; }
 /* 渐隐按 Kimi 的四段缓动（0/30/70/100% @ 0/21/45/72px）：线性渐变在中段显得发灰，
    正文被压在一层半透明雾里；缓动版前段几乎全透、到输入框才收实。 */
 .chat-dock::before { content: ""; position: absolute; top: -48px; right: 0; bottom: 0; left: 0; z-index: 0; pointer-events: none; background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--cc-bg) 30%, transparent) 21px, color-mix(in srgb, var(--cc-bg) 70%, transparent) 45px, var(--cc-bg) 72px); }
-.chat-dock > * { position: relative; z-index: 1; }
+.chat-dock > * { position: relative; z-index: 1; flex-shrink: 0; }
+/* 显式 min-height 不能省：flex 子项默认 min-height:auto，不肯缩到内容高以下。下限只留到
+   「内边距 + 标题行 + 按钮行」（104px）：设过 min(200px, 35dvh)，浮层里同时有审批/提问卡时
+   消息区要留出浮层补白、缩不动，下限把输入框挤出窗口底部（用户实拍桌面版；仿真 1000×700
+   输入框落在 594–702）；设 0 又会把卡压得比按钮行还矮，提交按钮伸出卡外、被输入框盖住
+   （审查发现）。 */
+.chat-dock > .lead-gate-card { flex-shrink: 1; min-height: 104px; }
+/* 浮层里有审批/提问卡时（agent 正卡在那张卡上，它比关卡急），消息区要留浮层补白、缩不动，
+   104px 下限会在 iPhone SE 上把输入框挤出屏幕 48px（仿真；下限为 0 时放得下）。此时关卡卡片
+   放弃下限，矮于按钮行时裁掉溢出，不让按钮叠到输入框上。 */
+.chat-main:has(> .chat-approval-overlay.is-active) > .chat-dock > .lead-gate-card { min-height: 0; overflow: hidden; }
 /* composer 要保住自己的 z-index:9（压过审批 overlay 的 8 与「回到最新」的 sticky 5，
    见 .chat-compose 的注释）。上一条与它同特异性且写在后面，会把它降成 1——模型/斜杠菜单
    向上探出时就被「回到最新」浮钮压住（实拍）。 */
