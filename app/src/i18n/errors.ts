@@ -47,6 +47,9 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "git/not_in_changes", exact: true, zh: "文件已不在更改列表里，刷新后再试", en: "The file is no longer in the change list. Refresh and try again." },
   // 放弃更改时未跟踪文件进回收站失败（git.rs trash_to_recycle_bin）。文件原样保留、不会永久删。
   { m: "git/trash_failed", tail: true, zh: "没能移到回收站，文件已保留", en: "Couldn't move the file to the trash. It was kept." },
+  // 整目录放弃（折叠的未跟踪目录，git.rs untracked_dir_to_trash）：里面有链接或嵌套仓库就不动。
+  { m: "git/dir_has_links", exact: true, zh: "目录里有链接，没有放弃", en: "The folder contains links, so nothing was discarded." },
+  { m: "git/dir_has_repo", exact: true, zh: "目录里有另一个仓库，没有放弃", en: "The folder contains another repository, so nothing was discarded." },
   { m: "git/failed", tail: true, zh: "git 操作失败", en: "Git operation failed" },
   { m: "remote/bind_failed", tail: true, zh: "无法监听这个端口", en: "Couldn't listen on this port" },
   // ── 诊断日志（diaglog.rs）──

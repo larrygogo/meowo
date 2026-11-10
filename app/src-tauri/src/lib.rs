@@ -70,8 +70,8 @@ use fsutil::{
     reveal_path_in_file_manager, reveal_terminal_path, search_project_files, file_mention_candidates,
 };
 use git::{
-    git_changes_overview, git_commit, git_diff_summary, git_discard, git_file_diff, git_pull_request, git_stage,
-    git_unstage,
+    git_changes_overview, git_commit, git_diff_summary, git_discard, git_file_diff, git_ignore_dir, git_pull_request,
+    git_stage, git_unstage, git_untracked_dir_files,
 };
 use lead::{answer_lead_gate, lead_task_snapshot, lead_workflow_installed, set_lead_workflow};
 use handoff::{copy_session_to_provider, get_session_lineage};
@@ -1303,6 +1303,8 @@ pub fn run() {
             git_unstage,
             git_discard,
             git_commit,
+            git_untracked_dir_files,
+            git_ignore_dir,
             worktree::worktree_status,
             worktree::remove_session_worktree,
             worktree::list_cleanable_worktrees,

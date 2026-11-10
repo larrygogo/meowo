@@ -34,6 +34,7 @@ import type { PendingLaunchDto } from "./generated/contracts/PendingLaunchDto";
 import type { PendingInteractionDto } from "./generated/contracts/PendingInteractionDto";
 import type { LoginDoneEvent } from "./generated/contracts/LoginDoneEvent";
 import type { GitDiffSummaryDto } from "./generated/contracts/GitDiffSummaryDto";
+import type { GitChangedFileDto } from "./generated/contracts/GitChangedFileDto";
 import type { PullRequestDto } from "./generated/contracts/PullRequestDto";
 import type { GitFileDiffDto } from "./generated/contracts/GitFileDiffDto";
 import type { RepoChangesDto } from "./generated/contracts/RepoChangesDto";
@@ -675,6 +676,14 @@ export function gitUnstage(cwd: string, paths: readonly string[], sessionCwd?: s
 /// 放弃工作区改动：已跟踪的恢复到暂存区内容，未跟踪的删除。调用方负责先确认。
 export function gitDiscard(cwd: string, paths: readonly string[], sessionCwd?: string | null): Promise<void> {
   return invoke("git_discard", { cwd, paths, ...withSession(sessionCwd) });
+}
+/// 折叠的未跟踪目录（path 以 / 结尾，见 GitChangedFileDto.untrackedFiles）里的文件：点开时才拉，不进 5 秒轮询。
+export function getUntrackedDirFiles(cwd: string, path: string, sessionCwd?: string | null): Promise<GitChangedFileDto[]> {
+  return invoke("git_untracked_dir_files", { cwd, path, ...withSession(sessionCwd) });
+}
+/// 把折叠的未跟踪目录加进仓库根的 .gitignore。手机端不放行（remote.rs 拒绝名单），界面上也不显示。
+export function gitIgnoreDir(cwd: string, path: string): Promise<void> {
+  return invoke("git_ignore_dir", { cwd, path });
 }
 /// all：没有暂存的更改时提交全部（含未跟踪）。paths：「提交全部」时界面上显示的文件，后端只提交它们
 ///（列表外、agent 刚写出来的不跟着进）。返回新提交的短 SHA。

@@ -8,6 +8,8 @@ import { normPath } from "./gitDiff";
  *  那是给单仓库子目录用的宽松规则，在多仓库里会把别的仓库的同名文件算进来，做空复现）。 */
 export function touchedInRoot(touched: readonly string[], root: string, rel: string): boolean {
   const full = `${normPath(root)}/${normPath(rel)}`;
+  // 折叠的未跟踪目录（rel 以 / 结尾）：本会话写过其中任何一个文件就算。
+  if (rel.endsWith("/")) return touched.some((path) => normPath(path).startsWith(`${full}/`));
   return touched.some((path) => normPath(path) === full);
 }
 

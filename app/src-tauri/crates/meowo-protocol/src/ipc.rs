@@ -666,6 +666,13 @@ pub struct GitChangedFileDto {
     #[serde(default)]
     #[cfg_attr(test, ts(optional = nullable))]
     pub worktree_status: Option<String>,
+    /// 折叠的未跟踪目录：`path` 以 `/` 结尾，这里是其中未跟踪文件的个数；普通文件为 None。
+    /// 没进 .gitignore 的构建目录能有上万个文件（用户实测 15612 个），逐个下发会让面板卡死，
+    /// 多于 50 个的目录只给一条，点开再按需列（见 git.rs UNTRACKED_FOLD_MIN）。
+    /// TS 里可选：旧后端不下发，前端按普通文件处理。
+    #[serde(default)]
+    #[cfg_attr(test, ts(optional = nullable))]
+    pub untracked_files: Option<u32>,
 }
 
 /// 对话页「Diff」按钮的可见性与弹层文件列表的数据源。

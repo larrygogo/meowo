@@ -36,3 +36,9 @@ for (const name of ["localStorage", "sessionStorage"] as const) {
 import { afterEach } from "vitest";
 import { clearHistoryCache } from "./views/chat/historyCache";
 afterEach(() => clearHistoryCache());
+
+// waitFor / findBy 的默认等待上限从 1 秒放宽到 3 秒：全量并发跑时机器很忙，虚拟列表、整窗渲染这类
+// 单条 0.5–1 秒的用例会贴着 1 秒线偶发超时（做空第 3 轮：4 次全量 1 次红，单跑都过；此前 b17624e9
+// 也修过同类偶发）。只拉长「等不到」的上限，等得到的用例耗时不变。
+import { configure } from "@testing-library/react";
+configure({ asyncUtilTimeout: 3000 });

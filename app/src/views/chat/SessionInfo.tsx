@@ -1,5 +1,6 @@
 import { useRef, type ReactNode } from "react";
 import type { BrowserPaneInfo, GitDiffSummaryDto, ShellTerminalInfo } from "../../api";
+import { changedFileCount } from "./gitDiff";
 import { useDismissable } from "../../hooks/useDismissable";
 import { useT } from "../../i18n";
 import type { PanelState, PanelTabType } from "./panelTabs";
@@ -58,7 +59,7 @@ export function SessionInfo({ mode, state, actions, shells, panes, summary, onCl
           <button type="button" className="session-info-row" onClick={done(actions.openDiff)}>
             {PANEL_ICONS.diff}
             <span className="session-info-label">
-              {files.length === 0 ? t.chat.sessionInfoClean : t.chat.uncommitted(files.length)}
+              {files.length === 0 ? t.chat.sessionInfoClean : t.chat.uncommitted(changedFileCount(files))}
             </span>
             {additions + deletions > 0 && (
               <span className="session-info-diff"><span className="tb-git-add">+{additions}</span> <span className="tb-git-del">−{deletions}</span></span>

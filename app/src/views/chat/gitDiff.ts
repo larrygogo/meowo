@@ -76,6 +76,11 @@ export function buildFileTree(files: { path: string; status: string }[]): FileTr
   return sortNodes(collapse(roots));
 }
 
+/** 改动清单里的文件个数：折叠的未跟踪目录（untrackedFiles）按其中的文件数算，不是一条算一个。 */
+export function changedFileCount(files: readonly { untrackedFiles?: number | null }[]): number {
+  return files.reduce((sum, file) => sum + (file.untrackedFiles ?? 1), 0);
+}
+
 /** 路径比较用的统一形态：正斜杠、去尾斜杠、小写（Windows 路径不分大小写，大小写不同的
  *  同名文件在别的平台上几乎碰不到）。 */
 export function normPath(path: string): string {

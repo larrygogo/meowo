@@ -2,10 +2,10 @@
 node_modules/
 target/
 # 隔离校验用 cargo target(dev 实例占用 target/ 的 exe 时,CARGO_TARGET_DIR=<名> 跑测试)。
-# 两个名字都收:历史脚手架与部分会话用 target-verify,新约定用 target-check——
-# 任一未忽略都会让 git status -uall 灌进上万条产物、把「更改」计数撑爆。
-target-check/
-target-verify/
+# 历史脚手架与部分会话用 target-verify,新约定用 target-check;并行 agent 还会各起各的
+# (target-a、target-redteam……)。按前缀一律收:任一未忽略都会让 git status 灌进上万条产物、
+# 把「更改」面板撑爆(2026-11-10 实遇:target-redteam 15612 个文件)。
+target-*/
 dist/
 # 手机远程 UI 的独立构建产物(vite.mobile.config.ts 输出)。beforeBuildCommand 每次
 # 重建,打进安装包由 tauri.conf.json 的 bundle.resources 负责,不入库。

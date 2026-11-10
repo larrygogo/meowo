@@ -28,4 +28,11 @@ indexStatus?: string | null,
  * 部分暂存（MM）的文件两个字段都有值，两组里都出现。
  * 两个字段在 TS 里是可选的：手机页可能先于安装版更新，旧后端不下发，前端按「全是未暂存」处理。
  */
-worktreeStatus?: string | null, };
+worktreeStatus?: string | null, 
+/**
+ * 折叠的未跟踪目录：`path` 以 `/` 结尾，这里是其中未跟踪文件的个数；普通文件为 None。
+ * 没进 .gitignore 的构建目录能有上万个文件（用户实测 15612 个），逐个下发会让面板卡死，
+ * 多于 50 个的目录只给一条，点开再按需列（见 git.rs UNTRACKED_FOLD_MIN）。
+ * TS 里可选：旧后端不下发，前端按普通文件处理。
+ */
+untrackedFiles?: number | null, };

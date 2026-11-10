@@ -52,7 +52,7 @@ import { Transcript, type TranscriptAgent } from "./chat/Transcript";
 import { UserMessageNav } from "./chat/UserMessageNav";
 import { TranscriptSearch } from "./chat/TranscriptSearch";
 import { formatReviewComments, type ReviewComment } from "./chat/diffComments";
-import { sessionTouchedPaths } from "./chat/gitDiff";
+import { changedFileCount, sessionTouchedPaths } from "./chat/gitDiff";
 import { setPanelLinkHandler } from "./chat/panelLinks";
 import { localUrlsIn } from "./chat/localUrls";
 import { useGuardedWindowClose } from "./chat/windowClose";
@@ -1386,7 +1386,7 @@ export function ChatWindow() {
     version: chatUi?.version ?? null,
     model: transcriptAgent.model,
     branch: effectiveSummary?.isRepo ? effectiveSummary.branch : null,
-    changes: effectiveSummary?.isRepo ? effectiveSummary.files.length : 0,
+    changes: effectiveSummary?.isRepo ? changedFileCount(effectiveSummary.files) : 0,
   };
   // 评论拼成文字接在已打的字后面,光标放到末尾:用户可能还想补一句总的要求再发。
   const insertReviewComments = () => {
