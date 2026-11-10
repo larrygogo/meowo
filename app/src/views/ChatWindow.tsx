@@ -87,6 +87,7 @@ import { useOutgoingUpkeep } from "./chat/useOutgoingUpkeep";
 import { SessionAdmin } from "./chat/SessionAdmin";
 import { NewSessionPage } from "./chat/NewSessionPage";
 import { ChatTitleBar } from "./chat/ChatTitleBar";
+import { WorktreeSetupBar } from "./chat/WorktreeSetupBar";
 import { useConversationExport } from "./chat/useConversationExport";
 import { useMainPages } from "./chat/useMainPages";
 import { AddMenu } from "./chat/AddMenu";
@@ -4127,6 +4128,8 @@ export function ChatWindow() {
         onToggleTerminal={() => { const next = view === "terminal" ? "chat" : "terminal"; rememberViewPref(next); setView(next); }}
         onError={setSendError}
       />
+      {/* 包 5：在新 worktree 里开的会话，setup 后台跑的进度（看日志、跳过、重跑）。 */}
+      <WorktreeSetupBar cwd={sessionId !== 0 ? cwd ?? null : null} />
       {/* 两个视图都留在树上、用 CSS 切换可见性：此前三元表达式会在每次切 tab 时
           dispose + new Terminal()，还要把整个 backlog 重传并让 xterm 重放一遍 ANSI。
           终端侧懒挂载（terminalMounted），纯对话的用户不用白付 xterm 的创建成本。 */}

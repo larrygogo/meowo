@@ -56,6 +56,18 @@ export function folderName(cwd: string | null): string {
   return cwd.split(/[\\/]/).filter(Boolean).pop() ?? cwd;
 }
 
+/** 分组用的目录：worktree 会话归到主检出（后端算好的 origin_root），其余按自己的 cwd（包 5）。
+ *  只管「归到哪个项目」，隐藏工作区、按目录筛选仍用会话自己的 cwd。 */
+export function groupDirOf(item: { cwd: string | null; origin_root?: string | null }): string | null {
+  return item.origin_root || item.cwd;
+}
+
+/** 会话开在 worktree 里时，worktree 目录名（组内标记用）；不是 worktree 返回 null。 */
+export function worktreeNameOf(item: { cwd: string | null; origin_root?: string | null }): string | null {
+  if (!item.origin_root || !item.cwd) return null;
+  return folderName(item.cwd) || null;
+}
+
 /** 同名目录消歧用的「上一级目录」段（侧栏目录下拉与 Ctrl+K 切换器共用，原先各抄一份）。
  *  上级只为消歧不必全名，超长段（uuid 一类的 agent 沙箱目录）截短——但要保**尾部**：
  *  消歧信息通常在尾部，截头会让共享长前缀的一批目录（feature-auth-login / -logout）

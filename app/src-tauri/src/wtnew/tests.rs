@@ -548,6 +548,11 @@ fn 目录已存在_自动名加后缀_用户名报错带建议名() {
     // 预览同样标出来，不报错。
     let p = preview(&fx.main, &req(Some("mine"), None), &fx.opts()).unwrap();
     assert!(p.dir_exists && !p.branch_exists);
+    assert_eq!(p.suggested_slug.as_deref(), Some("mine-2"));
+    assert_eq!(p.suggested_branch.as_deref(), Some("meowo/mine-2"));
+    let free = preview(&fx.main, &req(Some("fresh"), None), &fx.opts()).unwrap();
+    assert_eq!((free.slug.as_str(), free.branch.as_str(), free.base.as_str()), ("fresh", "meowo/fresh", "origin/main"));
+    assert_eq!(free.suggested_slug, None);
 }
 
 #[test]

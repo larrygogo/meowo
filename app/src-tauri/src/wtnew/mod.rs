@@ -321,6 +321,7 @@ pub(crate) fn preview(
         .as_ref()
         .and_then(|s| s.resolve(cfg!(target_os = "windows")))
         .is_some();
+    let mut suggestion: Option<Plan> = None;
     let (plan, dir_exists, branch_exists_flag, branch_checked_out) = match plan(&repo, req, opts) {
         Ok(p) => (p, false, false, false),
         Err(e) => {
@@ -338,6 +339,9 @@ pub(crate) fn preview(
                 .map(str::to_string)
                 .unwrap_or_else(|| format!("{}{}", opts.branch_prefix, slug));
             let p = candidate(&repo, opts, &slug, &branch, 1);
+            if !e.starts_with("worktree/branch_invalid") {
+                suggestion = Some(next_free(&repo, opts, &slug, &branch, &checked_out(&repo)));
+            }
             (
                 p,
                 e.starts_with("worktree/dir_exists"),
@@ -357,6 +361,8 @@ pub(crate) fn preview(
         dir_exists,
         branch_exists: branch_exists_flag,
         branch_checked_out,
+        suggested_slug: suggestion.as_ref().map(|s| s.slug.clone()),
+        suggested_branch: suggestion.map(|s| s.branch),
         has_setup,
     })
 }

@@ -9,7 +9,7 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { folderName } from "../paths";
+import { folderName, groupDirOf, worktreeNameOf } from "../paths";
 import {
   LiveSessionCounts,
   Settings,
@@ -1178,8 +1178,10 @@ export function Sticker({
                               <agentIcon.Icon />
                             </span>
                             {l.cwd && (
+                              /* 包 5：worktree 会话显示原项目名，后面标 worktree 目录名。 */
                               <span className="stk-repo" data-tip={l.cwd}>
-                                {folderName(l.cwd)}
+                                {folderName(groupDirOf(l))}
+                                {worktreeNameOf(l) && <span className="stk-wt" data-testid="stk-worktree-tag">{worktreeNameOf(l)}</span>}
                               </span>
                             )}
                           </div>
@@ -1426,8 +1428,10 @@ export function Sticker({
                             <agentIcon.Icon />
                           </span>
                           {l.cwd && (
+                            /* 包 5：worktree 会话显示原项目名，后面标 worktree 目录名。 */
                             <span className="stk-repo" data-tip={l.cwd}>
-                              {folderName(l.cwd)}
+                              {folderName(groupDirOf(l))}
+                              {worktreeNameOf(l) && <span className="stk-wt" data-testid="stk-worktree-tag">{worktreeNameOf(l)}</span>}
                             </span>
                           )}
                           {/* Agent 从这个会话派生出去的后台作业**不在卡片上留痕**：它们自己

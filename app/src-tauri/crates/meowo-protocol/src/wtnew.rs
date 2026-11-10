@@ -25,6 +25,9 @@ pub struct WorktreePreviewDto {
     pub branch_exists: bool,
     /// 分支已经在别的 worktree 里检出（git 不允许同一分支检出两次）。
     pub branch_checked_out: bool,
+    /// 撞名时建议改用的用途名 / 分支名（目录和分支都空着的下一个后缀）。
+    pub suggested_slug: Option<String>,
+    pub suggested_branch: Option<String>,
     /// 仓库里配置了 setup（meowo / cursor / conductor 任一）。
     pub has_setup: bool,
 }

@@ -99,6 +99,16 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "worktree/remove_failed", tail: true, zh: "删除目录失败（目录里的链接已拆掉，链接指向的内容没动）", en: "Couldn't delete the folder (links inside it were removed; what they pointed to is untouched)" },
   { m: "worktree/git_failed", tail: true, zh: "git 没能运行", en: "Couldn't run git" },
   { m: "worktree/probe_restore", tail: true, zh: "检查占用时改名后没能改回，请手动检查目录", en: "The folder was renamed during the check and couldn't be restored; check it manually" },
+  // ── 在新 worktree 里开会话（wtnew）。撞名时后缀是建议名，新建页会单独给「改用」按钮 ──
+  { m: "worktree/dir_exists", tail: true, zh: "目录已存在，可改用", en: "The folder already exists. Try" },
+  { m: "worktree/branch_exists", tail: true, zh: "分支已存在，可改用", en: "The branch already exists. Try" },
+  { m: "worktree/branch_checked_out", tail: true, zh: "这个分支已在别处检出", en: "This branch is checked out in another folder" },
+  { m: "worktree/branch_invalid", exact: true, zh: "分支名不合法", en: "Invalid branch name" },
+  { m: "worktree/add_failed", tail: true, zh: "worktree 没建成", en: "Couldn't create the worktree" },
+  { m: "worktree/trust_stale", exact: true, zh: "配置刚被改过，请重新查看", en: "The config just changed; review it again" },
+  { m: "worktree/no_task", exact: true, zh: "找不到这次 setup，可能 Meowo 重启过", en: "This setup run is gone; Meowo may have restarted" },
+  { m: "worktree/bad_action", exact: true, zh: "不支持的操作", en: "Unsupported action" },
+  { m: "worktree/setup_shell_unsupported", exact: true, zh: "需要 PowerShell 7 或 Git Bash", en: "Needs PowerShell 7 or Git Bash" },
   // ── 手机推送（push.rs）──
   { m: "push/invalid_url", exact: true, zh: "推送地址无效，请从 Bark App 里复制", en: "Invalid push URL; copy it from the Bark app" },
   { m: "push/missing_key", exact: true, zh: "推送地址缺少设备 key", en: "The push URL is missing the device key" },

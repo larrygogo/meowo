@@ -22,6 +22,10 @@ base: string, dirExists: boolean, branchExists: boolean,
  */
 branchCheckedOut: boolean, 
 /**
+ * 撞名时建议改用的用途名 / 分支名（目录和分支都空着的下一个后缀）。
+ */
+suggestedSlug: string | null, suggestedBranch: string | null, 
+/**
  * 仓库里配置了 setup（meowo / cursor / conductor 任一）。
  */
 hasSetup: boolean, };
