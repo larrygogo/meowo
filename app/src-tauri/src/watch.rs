@@ -639,7 +639,7 @@ fn strip_emphasis(line: &str) -> String {
 }
 
 /// 灵动岛提醒：只发主窗口。发不出去（窗口未建/已关）静默，系统通知与推送照常。
-fn emit_island_alert(
+pub(crate) fn emit_island_alert(
     app: &tauri::AppHandle,
     session_id: i64,
     kind: &str,

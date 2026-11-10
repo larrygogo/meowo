@@ -102,6 +102,8 @@ import { agentAssets, tintStyle } from "../providers";
 import appLogoUrl from "../../src-tauri/icons/64x64.png";
 
 
+/// 对话页意外退出说明附几行终端输出：够看出报错，不把输入框上方铺满。
+const CRASH_TAIL_LINES = 4;
 /** 远程刷新后回到上次看的会话(桌面开窗恒带 ?sessionId,不落到这条)。 */
 const REMOTE_LAST_SESSION_KEY = "meowo-remote-last-session";
 /** initialSessionId 若用了存储恢复,记下该 id:恢复目标可能已被删/归档,首次加载
@@ -3476,6 +3478,25 @@ export function ChatWindow() {
   // background 例外:它没有终端可接管,composer 是唯一出口(发送时后端另有拒绝话术)。
   const composerGated = !!history && history.supported && !history.background
     && history.ptyManaged === false && (externalRunning || history.status === "ended");
+  // CLI 意外退出（二期 #7）：已结束的会话问一次托管终端的定格快照，后端判定为意外退出
+  //（退出码非 0、不是用户结束、不在重启窗口内）就把「会话已结束」换成退出码 + 最后几行输出。
+  // since 给最大值：只要退出信息，不要整段 1MiB 的输出回放。
+  const endedHere = composerGated && !externalRunning && sessionId > 0;
+  const [crash, setCrash] = useState<{ id: number; code: number; tail: string | null } | null>(null);
+  useEffect(() => {
+    if (!endedHere) return;
+    let cancelled = false;
+    managedTerminalSnapshot(sessionId, Number.MAX_SAFE_INTEGER)
+      .then((snap) => {
+        if (cancelled || !snap.exited || !snap.exitUnexpected || snap.exitCode == null) return;
+        const lines = (snap.exitTail ?? "").split(/\r?\n/).map((line) => line.trimEnd()).filter(Boolean);
+        setCrash({ id: sessionId, code: snap.exitCode, tail: lines.length > 0 ? lines.slice(-CRASH_TAIL_LINES).join("\n") : null });
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [endedHere, sessionId]);
+  // 换了会话或会话恢复了就不再显示（id 对不上即作废，省一次清零的 effect）。
+  const crashShown = endedHere && crash?.id === sessionId ? crash : null;
   // 已被跨 provider 切换接替的会话：只读回看。禁发优先于其它门卡——「恢复会话」对它
   // 是错误动作（会让接续链分叉，store 层也会拒绝再次接替），唯一正确的出口是去链尾。
   const supersededTo = history?.supersededBy ?? null;
@@ -4701,7 +4722,8 @@ export function ChatWindow() {
           </div>
         </div>}
         {supersededTo == null && composerGated && <div className="chat-compose-gate">
-          <span>{externalRunning ? t.chat.sendNeedsTakeover : t.chat.composerGateEnded}</span>
+          <span>{externalRunning ? t.chat.sendNeedsTakeover : crashShown ? t.chat.agentCrashed(crashShown.code) : t.chat.composerGateEnded}</span>
+          {crashShown?.tail && <pre className="chat-compose-gate-tail">{crashShown.tail}</pre>}
           {/* 恢复失败的原因就地可见（接管态的主文案已是同一句，不重复）。 */}
           {sendError && sendError !== t.chat.sendNeedsTakeover && (
             <span className="chat-compose-gate-error" role="alert">{sendError}</span>

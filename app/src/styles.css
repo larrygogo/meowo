@@ -6085,6 +6085,14 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 /* 文字与按钮同一行（用户实拍：长文案 + 固定 220px 起步把按钮挤到第二行）；窄到放不下才换行。 */
 .chat-compose-gate > span { flex: 1 1 auto; min-width: 12em; }
 .chat-compose-gate-error { color: var(--cc-err-text); font-size: var(--text-base); }
+/* 意外退出时附的最后几行终端输出（二期 #7）：占满一行、等宽、限高，长了卡内滚动，不把输入框挤出窗口。 */
+.chat-compose-gate-tail {
+  flex: 1 1 100%; margin: 0; max-height: 6.5em; overflow: auto;
+  padding: var(--sp-4) var(--sp-8); border-radius: var(--radius-sm);
+  background: var(--cc-surface); color: var(--cc-text-dim);
+  font-family: var(--cc-mono); font-size: var(--text-xs); line-height: var(--leading-normal);
+  white-space: pre-wrap; word-break: break-word;
+}
 /* 动作组可缩可换行：右侧文件/更改面板分走宽度后，下拉 + 接管按钮一度顶出
    门卡右缘被卡片裁掉（0.5.15 实拍）。换行后按钮落到下一行，下拉再收窄兜底。 */
 .chat-compose-gate-actions { display: flex; align-items: center; gap: var(--sp-8); margin-left: auto; flex: 0 1 auto; min-width: 0; flex-wrap: wrap; }

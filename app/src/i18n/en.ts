@@ -871,6 +871,7 @@ export const en: Dict = {
     terminalWaitingReady: (seconds: number) => `Waiting for the Agent terminal to be ready… ${seconds}s elapsed. Check the Terminal tab for startup progress.`,
     sendNeedsTakeover: "Running in an external terminal. Taking over stops it.",
     composerGateEnded: "This session has ended. Resume it to continue chatting.",
+    agentCrashed: (code: number) => `Agent exited unexpectedly (exit code ${code})`,
     resumeSession: "Resume session",
     terminalNeedsAttention: "The Agent awaits a startup confirmation. Pick an option in the card, then send again.",
     questionNeedsAnswer: "The Agent is waiting for your answer. Answer it, then send.",

@@ -559,6 +559,11 @@ pub struct ManagedTerminalSnapshotDto {
     /// 承担的是重开窗口/重对齐时的初始值。
     #[serde(default)]
     pub external_viewers: bool,
+    /// 已退出的 CLI 是意外退出（退出码非 0、不是用户结束、不在重启窗口内，判定见 app 的
+    /// exit_report::is_unexpected_exit）。对话页据此把「会话已结束」换成「Agent 意外退出
+    ///（退出码 N）」并附 exit_tail 的最后几行（二期 #7）。仅 exited 时可能为 true。
+    #[serde(default)]
+    pub exit_unexpected: bool,
 }
 
 /// 某会话的托管 PTY 被**就地换了一个新进程**（`pty-restarted`）。
@@ -1033,12 +1038,14 @@ mod tests {
             rows: 40,
             modes: vec![1049, 1006],
             external_viewers: false,
+            exit_unexpected: true,
         })
         .unwrap();
         assert_eq!(value["sessionId"], 7);
         assert_eq!(value["startOffset"], 10);
         assert_eq!(value["endOffset"], 13);
         assert!(value.get("start_offset").is_none());
+        assert_eq!(value["exitUnexpected"], true);
     }
 
     /// GUI 边界必须走 DTO 的理由，钉成测试：原始 `broker::ApprovalRequest` 在

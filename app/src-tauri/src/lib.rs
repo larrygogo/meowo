@@ -13,6 +13,7 @@ mod diaglog;
 mod editors;
 #[cfg(target_os = "windows")]
 mod envpath;
+mod exit_report;
 mod fsutil;
 mod git;
 mod island;
