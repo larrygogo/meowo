@@ -45,7 +45,14 @@ fn wait_checks(ctx: &Ctx, dir: &str) -> ForgeStatusDto {
             "[drill] {:>4}s checks={summary:?}",
             start.elapsed().as_secs()
         );
-        if summary.as_deref().is_some_and(|s| s != "pending") {
+        // 还要等 GitHub 算出能不能合并：刚开的 PR mergeable 常是 UNKNOWN，后端按“进行中”拒绝合并
+        // （2026-11-11 重跑实测，第一次演练只是赶巧没碰上）。
+        let mergeable_known = status
+            .pr
+            .as_ref()
+            .and_then(|p| p.mergeable.as_deref())
+            .is_some_and(|m| !m.eq_ignore_ascii_case("UNKNOWN"));
+        if summary.as_deref().is_some_and(|s| s != "pending") && mergeable_known {
             return status;
         }
         assert!(
