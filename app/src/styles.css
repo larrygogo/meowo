@@ -5802,7 +5802,9 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 /* 审批卡的标题圆点挂在 .chat-approval-copy strong 上；摘要是 markdown，加粗不该带圆点（实拍）。 */
 .lead-gate-summary strong::before { content: none; }
 /* 收起时底部渐隐，不要半行字被齐刷刷切掉（实拍）。 */
-.lead-gate-summary:not(.is-expanded) { -webkit-mask-image: linear-gradient(to bottom, #000 70%, transparent); mask-image: linear-gradient(to bottom, #000 70%, transparent); }
+/* 只在真的被截断时渐隐（is-clipped 由 LeadGateCard 按实测溢出挂上）。以前收起态一律渐隐：
+   摘要刚好放得下时最后一行也被淡掉，又因为没溢出不给「展开全部」，那行字读不全（实拍）。 */
+.lead-gate-summary.is-clipped { -webkit-mask-image: linear-gradient(to bottom, #000 70%, transparent); mask-image: linear-gradient(to bottom, #000 70%, transparent); }
 /* 审批卡外壳里的按钮会被统一成按钮条，展开钮要保持成文字链接（实拍）。 */
 .chat-approval .lead-gate-more { width: auto; height: auto; padding: 0; border: 0; background: none; color: var(--cc-accent); font-size: var(--text-xs); font-weight: 400; }
 .lead-gate-more { margin: var(--sp-4) 0; padding: 0; border: 0; background: none; color: var(--cc-accent); font-size: var(--text-xs); cursor: pointer; }

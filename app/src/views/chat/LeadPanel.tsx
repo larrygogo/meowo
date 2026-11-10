@@ -201,9 +201,17 @@ export function LeadGateCard({ cwd, gate, onAnswered }: { cwd: string; gate: Lea
   // 「展开全部」按实际是否溢出决定，不按字数：按字数判断时短段落多的摘要被截断却没有展开钮（实拍）。
   const summaryRef = useRef<HTMLDivElement>(null);
   const [overflows, setOverflows] = useState(false);
+  // 卡片宽度会变（面板拉宽拉窄、窗口缩放、手机横竖屏），只在摘要变化时量一次会漏判，
+  // 所以挂 ResizeObserver 跟着重量。
   useLayoutEffect(() => {
     const el = summaryRef.current;
-    if (el && !expanded) setOverflows(el.scrollHeight > el.clientHeight + 1);
+    if (!el || expanded) return;
+    const measure = () => setOverflows(el.scrollHeight > el.clientHeight + 1);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
   }, [gate.summary, expanded]);
   const choices = gateChoices(gate, t);
   // 哪个选项要求写意见由 gateChoices 一处决定，这里和提示语都只读这个标记（PR #156 审查：条件写了三遍）。
@@ -231,7 +239,7 @@ export function LeadGateCard({ cwd, gate, onAnswered }: { cwd: string; gate: Lea
       }
     >
       {gate.summary && (
-        <div ref={summaryRef} className={"lead-gate-summary chat-md" + (expanded ? " is-expanded" : "")}>
+        <div ref={summaryRef} className={"lead-gate-summary chat-md" + (expanded ? " is-expanded" : overflows ? " is-clipped" : "")}>
           <ChatMarkdown text={gate.summary} />
         </div>
       )}
