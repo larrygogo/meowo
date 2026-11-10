@@ -110,7 +110,7 @@ export function BrowserPane({ info, visible, suggestions }: {
   const answer = (allow: boolean) => {
     if (!info.permission) return;
     setAnsweredId(info.permission.id);
-    void answerBrowserPanePermission(info.id, allow).catch((e) => {
+    void answerBrowserPanePermission(info.id, info.permission.id, allow).catch((e) => {
       setAnsweredId(null);
       setError(formatBackendError(e, t.locale));
     });

@@ -11,18 +11,15 @@
 //!
 //! macOS 的 WKWebView 没有这类原生框（不拦多次下载），这里是空实现。
 
-#[cfg(not(target_os = "windows"))]
-use tauri::Url;
-
 #[cfg(target_os = "windows")]
-pub(crate) use imp::{answer, drop_stale, forget, install};
+pub(crate) use imp::{answer, drop_all, forget, install};
 
 #[cfg(target_os = "windows")]
 mod imp {
     use std::cell::RefCell;
     use std::collections::{HashMap, VecDeque};
 
-    use tauri::{Manager, Url};
+    use tauri::Manager;
     use webview2_com::Microsoft::Web::WebView2::Win32::{
         ICoreWebView2Deferral, ICoreWebView2PermissionRequestedEventArgs,
         ICoreWebView2PermissionRequestedEventArgs3,
@@ -143,15 +140,22 @@ mod imp {
         }
     }
 
-    /// 面板里点了「允许 / 阻止」：答复排在最前的那条。
-    pub(crate) fn answer(app: &tauri::AppHandle, id: u32, allow: bool) -> Result<(), String> {
+    /// 面板里点了「允许 / 阻止」：答复排在最前、且正是用户看到的那条（编号对得上）。
+    pub(crate) fn answer(
+        app: &tauri::AppHandle,
+        id: u32,
+        permission: u32,
+        allow: bool,
+    ) -> Result<(), String> {
         let handle = app.clone();
         app.run_on_main_thread(move || {
             let next = PENDING.with(|pending| {
-                pending
-                    .borrow_mut()
-                    .get_mut(&id)
-                    .and_then(|queue| queue.pop_front())
+                let mut map = pending.borrow_mut();
+                let queue = map.get_mut(&id)?;
+                if queue.front()?.prompt.id != permission {
+                    return None;
+                }
+                queue.pop_front()
             });
             if let Some(entry) = next {
                 let prompt = entry.prompt.clone();
@@ -167,24 +171,14 @@ mod imp {
         .map_err(|e| e.to_string())
     }
 
-    /// 页面跳到了别的网站：旧网站的请求按阻止处理，提示随之消失。同站跳转（点附件链接
-    /// 下载也会起一次导航）不动，否则刚弹出的「下载多个文件」会被自己的导航冲掉。
-    pub(crate) fn drop_stale(app: &tauri::AppHandle, id: u32, url: Url) {
+    /// 新文档开始加载：旧页面挂着的请求一律按阻止处理，提示随之消失（新页面需要的话会重新问）。
+    pub(crate) fn drop_all(app: &tauri::AppHandle, id: u32) {
         let handle = app.clone();
         let _ = app.run_on_main_thread(move || {
-            let stale: VecDeque<Pending> = PENDING.with(|pending| {
-                let mut map = pending.borrow_mut();
-                let Some(queue) = map.get_mut(&id) else {
-                    return VecDeque::new();
-                };
-                let (stale, keep): (VecDeque<Pending>, VecDeque<Pending>) =
-                    queue.drain(..).partition(|entry| entry.prompt.stale_for(&url));
-                *queue = keep;
-                stale
-            });
-            if stale.is_empty() {
+            let stale = PENDING.with(|pending| pending.borrow_mut().remove(&id));
+            let Some(stale) = stale.filter(|queue| !queue.is_empty()) else {
                 return;
-            }
+            };
             for entry in stale {
                 settle(entry, false);
             }
@@ -232,12 +226,17 @@ mod tests {
 pub(crate) fn install(_app: &tauri::AppHandle, _webview: &tauri::Webview, _id: u32) {}
 
 #[cfg(not(target_os = "windows"))]
-pub(crate) fn answer(_app: &tauri::AppHandle, _id: u32, _allow: bool) -> Result<(), String> {
+pub(crate) fn answer(
+    _app: &tauri::AppHandle,
+    _id: u32,
+    _permission: u32,
+    _allow: bool,
+) -> Result<(), String> {
     Ok(())
 }
 
 #[cfg(not(target_os = "windows"))]
-pub(crate) fn drop_stale(_app: &tauri::AppHandle, _id: u32, _url: Url) {}
+pub(crate) fn drop_all(_app: &tauri::AppHandle, _id: u32) {}
 
 #[cfg(not(target_os = "windows"))]
 pub(crate) fn forget(_app: &tauri::AppHandle, _id: u32) {}

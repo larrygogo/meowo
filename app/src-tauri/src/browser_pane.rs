@@ -98,7 +98,7 @@ pub(crate) struct BrowserPaneInfo {
     pub(crate) permission: Option<BrowserPermission>,
     /// 用户刚阻止的请求。WebView2 在同一页面里不会再问，之后被拦的下载连事件都没有（做空审查
     /// 实测：阻止后再下两次，既无权限请求也无下载事件），不留这条提示用户又会以为没下成而
-    /// 反复点。有新下载开始（说明不拦了）、换了网站、用户点 × 时消失。
+    /// 反复点。有新下载开始（说明不拦了）、页面重新加载或跳走、用户点 × 时消失。
     pub(crate) blocked: Option<BrowserPermission>,
     // 以下三项只在后端用，不发给前端。
     /// 原生视图眼下摆在哪。
@@ -267,25 +267,22 @@ pub(crate) struct BrowserPermission {
     pub(crate) kind: String,
     /// 提示里显示的网站名（主机名）。
     pub(crate) host: String,
-    /// 发起请求的来源，判断页面是不是换了网站。
-    #[serde(skip)]
-    origin: String,
 }
 
+// 只有 Windows 的 browser_permission::imp 建请求；macOS 下这两项没有调用方，clippy -D warnings
+// 会报从未使用（CI macOS 矩阵，第二轮做空审查用最小 crate 模拟复现）。
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 static NEXT_PERMISSION: AtomicU32 = AtomicU32::new(1);
 
 impl BrowserPermission {
+    #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
     pub(crate) fn new(kind: &str, uri: &str) -> Self {
-        let parsed = Url::parse(uri).ok();
         Self {
             id: NEXT_PERMISSION.fetch_add(1, Ordering::Relaxed),
             kind: kind.to_string(),
-            host: parsed
-                .as_ref()
+            host: Url::parse(uri)
+                .ok()
                 .and_then(|url| url.host_str().map(str::to_string))
-                .unwrap_or_else(|| uri.to_string()),
-            origin: parsed
-                .map(|url| url.origin().ascii_serialization())
                 .unwrap_or_else(|| uri.to_string()),
         }
     }
@@ -303,11 +300,6 @@ impl BrowserPermission {
             _ => "使用额外权限",
         };
         format!("{} 想要{what}", self.host)
-    }
-
-    /// 页面导航到 `url` 之后这条请求是否作废：换了网站才算。
-    pub(crate) fn stale_for(&self, url: &Url) -> bool {
-        url.origin().ascii_serialization() != self.origin
     }
 }
 
@@ -535,20 +527,17 @@ pub(crate) fn open_pane(
             // Started 对应 WebView2 的 ContentLoading：只有新文档开始加载才触发，点附件链接
             // 下载不会触发（wry 0.57.1 webview2/mod.rs）。
             let loading = matches!(payload.event(), PageLoadEvent::Started);
-            let target = payload.url().clone();
             if loading {
-                // 换了网站，旧网站还挂着的权限请求就作废了。
-                crate::browser_permission::drop_stale(&load_app, id, target.clone());
+                // 新文档开始加载（刷新、同站或跨站跳转都算），旧页面挂着的请求一律作废。只作废
+                // 跨站的不行：同站刷新后旧请求留在队首，新页面的下载全卡在它后面，点「允许」也
+                // 下不下来（第二轮做空审查用同版本测试程序实测；作废后新页面会重新问一次）。
+                crate::browser_permission::drop_all(&load_app, id);
             }
+            let url = payload.url().to_string();
             update(&load_app, &load_panes, id, |info| {
-                info.url = target.to_string();
+                info.url = url;
                 info.loading = loading;
-                if loading
-                    && info
-                        .blocked
-                        .as_ref()
-                        .is_some_and(|blocked| blocked.stale_for(&target))
-                {
+                if loading {
                     info.blocked = None;
                 }
             });
@@ -793,14 +782,16 @@ pub(crate) async fn browser_pane_close(
     Ok(())
 }
 
-/// 面板里对网页权限请求点了「允许 / 阻止」。
+/// 面板里对网页权限请求点了「允许 / 阻止」。permission 是用户看到的那条请求的编号：
+/// 队首已经换成别的请求（页面刚跳走、新请求顶上来）时不答，免得把「允许」给了没显示的权限。
 #[tauri::command]
 pub(crate) async fn browser_pane_answer_permission(
     app: tauri::AppHandle,
     id: u32,
+    permission: u32,
     allow: bool,
 ) -> Result<(), String> {
-    crate::browser_permission::answer(&app, id, allow)
+    crate::browser_permission::answer(&app, id, permission, allow)
 }
 
 /// 下载完成后的「打开文件夹」：在系统文件管理器里选中下好的文件，不打开也不运行它（下载物
@@ -921,15 +912,9 @@ mod tests {
     }
 
     #[test]
-    fn permission_prompt_shows_host_and_expires_only_on_another_site() {
+    fn permission_prompt_shows_host_and_has_unique_ids() {
         let prompt = BrowserPermission::new("downloads", "https://httpbin.org/html?x=1");
         assert_eq!(prompt.host, "httpbin.org");
-        let same = Url::parse("https://httpbin.org/response-headers").unwrap();
-        let other = Url::parse("https://example.com/").unwrap();
-        let other_scheme = Url::parse("http://httpbin.org/").unwrap();
-        assert!(!prompt.stale_for(&same));
-        assert!(prompt.stale_for(&other));
-        assert!(prompt.stale_for(&other_scheme));
         let json = serde_json::to_value(&prompt).unwrap();
         assert_eq!(
             json,

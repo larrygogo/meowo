@@ -452,8 +452,8 @@ export type BrowserPaneInfo = {
 export type BrowserPermission = { id: number; kind: string; host: string };
 export type BrowserDownload = { id: number; fileName: string; state: "progress" | "done" | "failed" };
 /** 网页权限请求的「允许 / 阻止」。 */
-export function answerBrowserPanePermission(id: number, allow: boolean): Promise<void> {
-  return invoke("browser_pane_answer_permission", { id, allow });
+export function answerBrowserPanePermission(id: number, permission: number, allow: boolean): Promise<void> {
+  return invoke("browser_pane_answer_permission", { id, permission, allow });
 }
 /** 在文件管理器里选中下好的文件（不打开）。download 是 BrowserDownload.id。 */
 export function revealBrowserPaneDownload(id: number, download: number): Promise<void> {
