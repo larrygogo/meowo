@@ -122,7 +122,7 @@ function SubagentBlockBody({ sessionId, item, outcome, settled, finishedAt }: Su
       .finally(() => { if (mountedRef.current) setLoading(false); });
   };
   // 切会话回来时记忆里是展开的：没有 toggle 可等，挂载时自己拉一次。
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 只在挂载时按记住的展开态拉一次，之后由 onToggle 拉
   useEffect(() => { if (open) load(); }, []);
   // 展开着且还有分支在跑时定期重取：子任务边跑边写，静态快照会一直停在打开那一刻。
   // 收起或全部结束就停——不给已完结的子任务留一个永动的轮询。

@@ -179,6 +179,18 @@ fn broadcast_env_change() {
     }
 }
 
+/// 持久 PATH（用户级在前、机器级在后）里的目录，变量已展开。找外部命令（gh）用：Meowo 启动之后
+/// 才装的 gh 只在注册表里，进程 PATH 是启动那一刻的快照，看不见（同模块头的结论）。
+pub(crate) fn persistent_path_dirs() -> Vec<String> {
+    let user = read_path(HKEY_CURRENT_USER, USER_ENV).unwrap_or_default();
+    let machine = read_path(HKEY_LOCAL_MACHINE, MACHINE_ENV).unwrap_or_default();
+    format!("{user};{machine}")
+        .split(';')
+        .map(|e| expand_env(e.trim()))
+        .filter(|e| !e.is_empty())
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

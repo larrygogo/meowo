@@ -35,6 +35,7 @@ export const SETTINGS_DEFAULTS: Settings = {
   island_compact: "counts",
   island_strip: false,
   island_alerts: ["waiting", "approval", "question", "error"],
+  notify_kinds: ["waiting", "approval", "question", "error"],
   island_alert_seconds: 6,
   // 首帧占位（get_settings() resolve 前）。真实默认值由后端 settings 给，前端不据此做任何判断。
   sticker_quota_providers: ["claude"],
@@ -144,7 +145,7 @@ export function useSettingsState() {
         resetShared();
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 共享订阅计数只在挂载与卸载时增减
   }, []);
   const patch = (p: Partial<Settings>): Promise<string | null> => {
     const task = sharedSaveQueue.current.then(async (): Promise<string | null> => {

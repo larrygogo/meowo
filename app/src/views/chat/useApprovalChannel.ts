@@ -255,7 +255,7 @@ export function useApprovalChannel({ sessionId, activeSessionRef, viewRef, setVi
     }).then((fn) => { if (cancelled) fn(); else unCleared = fn; }).catch(() => {});
     return () => { cancelled = true; unApproval?.(); unCleared?.(); };
     // eslint 语义上 setView/setSendError 是稳定 setter、ref 是稳定引用,mount-once 成立。
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- 只在挂载时订阅一次，用到的 setter 与 ref 引用稳定
 
   // AskUserQuestion 题面直达。事件与 chat-session-changed 存在竞态（后端先切窗再发题面，
   // 前端两个事件到达顺序不保证）：无论当下会话是否匹配都先暂存进 ref，会话切换完成的
@@ -293,7 +293,7 @@ export function useApprovalChannel({ sessionId, activeSessionRef, viewRef, setVi
       }
     }).then((fn) => { if (cancelled) fn(); else un = fn; }).catch(() => {});
     return () => { cancelled = true; un?.(); };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- 只在挂载时订阅一次，用到的 setter 引用稳定
   // 会话切换：清掉旧会话的题面卡；竞态暂存的题面若属于新会话（事件先于切换抵达）则领养。
   useEffect(() => {
     // 徽标的使命是「把人带过来」，人到了就退场——审批经 pending-approval-cleared 也会清，

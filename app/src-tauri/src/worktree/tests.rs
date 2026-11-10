@@ -439,7 +439,11 @@ fn 用短名进目录的进程也算占用() {
     let found = processes_using(&fx.wt);
     let _ = child.kill();
     let _ = child.wait();
-    assert!(found.iter().any(|p| p.pid == child.id()), "短名 {short} 下的子进程 {} 没认出来：{found:?}", child.id());
+    assert!(
+        found.iter().any(|p| p.pid == child.id()),
+        "短名 {short} 下的子进程 {} 没认出来：{found:?}",
+        child.id()
+    );
 }
 
 #[test]
@@ -811,4 +815,116 @@ fn 确认时看到的目录和此刻解析出的不一致时拒绝() {
     assert_eq!(err, "worktree/target_changed");
     assert!(fx.wt.join("a.txt").exists());
     assert!(fx.wt.join("node_modules").exists());
+}
+
+// ═══ 没有 gh 时的本地判定（2026-11-10 关卡 Q-no-gh） ═══
+
+fn no_gh(_: &Path) -> PrLookup {
+    PrLookup::Unavailable
+}
+
+/// 在主检出里用指定方式把 feat/done 合进 main 并推到远端，模拟 GitHub 网页上的三种合并按钮。
+fn merge_on_remote(fx: &Fixture, how: &str) {
+    match how {
+        "squash" => {
+            run(&fx.main, &["merge", "-q", "--squash", "feat/done"]);
+            run(&fx.main, &["commit", "-qm", "feat (#1)"]);
+        }
+        "merge" => {
+            run(
+                &fx.main,
+                &["merge", "-q", "--no-ff", "-m", "Merge #1", "feat/done"],
+            );
+        }
+        "rebase" => {
+            // 先让 main 往前走一步，cherry-pick 出来的提交和分支上的提交 id 就不同了，只有 patch-id 相同。
+            std::fs::write(fx.main.join("z.txt"), "z\n").unwrap();
+            run(&fx.main, &["add", "."]);
+            run(&fx.main, &["commit", "-qm", "other"]);
+            run(&fx.main, &["cherry-pick", "feat/done"]);
+        }
+        _ => unreachable!(),
+    }
+    run(&fx.main, &["push", "-q", "origin", "main"]);
+}
+
+#[test]
+fn 没有_gh_时_squash_合并后可清理() {
+    let fx = fixture("local-squash");
+    // 分支上再加一个提交，squash 时两个提交被压成一个，分支提交本身都不在 main 历史里。
+    std::fs::write(fx.wt.join("c.txt"), "c\n").unwrap();
+    run(&fx.wt, &["add", "."]);
+    run(&fx.wt, &["commit", "-qm", "feat 2"]);
+    run(&fx.wt, &["push", "-q", "origin", "feat/done"]);
+    merge_on_remote(&fx, "squash");
+    let status = status_for_dir(&fx.wt, &nobody, &no_gh);
+    assert!(status.eligible, "squash 合并后应可清理: {status:?}");
+    let result =
+        remove_dir_worktree(&fx.wt, &top_of(&fx.wt), &nobody, &no_gh, &[]).expect("删除成功");
+    assert!(result.removed);
+}
+
+#[test]
+fn 没有_gh_时_普通合并和_rebase_合并都认得出() {
+    for how in ["merge", "rebase"] {
+        let fx = fixture(&format!("local-{how}"));
+        merge_on_remote(&fx, how);
+        let status = status_for_dir(&fx.wt, &nobody, &no_gh);
+        assert!(status.eligible, "{how} 合并后应可清理: {status:?}");
+    }
+}
+
+#[test]
+fn 没有_gh_时没合并的分支不可清理() {
+    let fx = fixture("local-open");
+    let status = status_for_dir(&fx.wt, &nobody, &no_gh);
+    assert_eq!(status.reason.as_deref(), Some("not_merged_local"));
+    assert_eq!(
+        remove_dir_worktree(&fx.wt, &top_of(&fx.wt), &nobody, &no_gh, &[]).unwrap_err(),
+        "worktree/not_merged_local"
+    );
+    assert!(fx.wt.exists());
+}
+
+#[test]
+fn 没有_gh_时_squash_之后分支又多了提交_不可清理() {
+    let fx = fixture("local-after");
+    merge_on_remote(&fx, "squash");
+    std::fs::write(fx.wt.join("late.txt"), "late\n").unwrap();
+    run(&fx.wt, &["add", "."]);
+    run(&fx.wt, &["commit", "-qm", "after merge"]);
+    run(&fx.wt, &["push", "-q", "origin", "feat/done"]);
+    let status = status_for_dir(&fx.wt, &nobody, &no_gh);
+    assert_eq!(
+        status.reason.as_deref(),
+        Some("not_merged_local"),
+        "{status:?}"
+    );
+}
+
+#[test]
+fn 没有_gh_也没有远端主分支时判断不了() {
+    let fx = fixture("local-noremote");
+    run(&fx.main, &["remote", "remove", "origin"]);
+    let status = status_for_dir(&fx.wt, &nobody, &no_gh);
+    assert_eq!(status.reason.as_deref(), Some("gh_unavailable"));
+}
+
+#[test]
+fn 没有_gh_时_主分支在附近也改过再_squash_仍认得出() {
+    let fx = fixture("local-nearby");
+    // a.txt 两边都动：分支在第 2 行加内容，主分支先在第 1 行前面加一行，再 squash 合并。
+    std::fs::write(fx.wt.join("a.txt"), "a\nbranch\n").unwrap();
+    run(&fx.wt, &["add", "."]);
+    run(&fx.wt, &["commit", "-qm", "edit a"]);
+    run(&fx.wt, &["push", "-q", "origin", "feat/done"]);
+    std::fs::write(fx.main.join("a.txt"), "top\na\n").unwrap();
+    run(&fx.main, &["add", "."]);
+    run(&fx.main, &["commit", "-qm", "main edit"]);
+    merge_on_remote(&fx, "squash");
+    let status = status_for_dir(&fx.wt, &nobody, &no_gh);
+    assert!(
+        status.eligible,
+        "附近有改动的 squash 合并也应认出: {status:?}"
+    );
 }

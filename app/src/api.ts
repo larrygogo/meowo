@@ -12,6 +12,9 @@ import type { LiveSessionCounts } from "./generated/contracts/LiveSessionCounts"
 import type { WorktreeStatusDto } from "./generated/contracts/WorktreeStatusDto";
 import type { WorktreeRemovalDto } from "./generated/contracts/WorktreeRemovalDto";
 import type { CleanableWorktreeDto } from "./generated/contracts/CleanableWorktreeDto";
+import type { WorktreeCreateDto } from "./generated/contracts/WorktreeCreateDto";
+import type { WorktreePreviewDto } from "./generated/contracts/WorktreePreviewDto";
+import type { WorktreeSetupDto } from "./generated/contracts/WorktreeSetupDto";
 import type { LeadTaskDto } from "./generated/contracts/LeadTaskDto";
 import type { Session as SessionDto } from "./generated/contracts/Session";
 import type { Todo as TodoRowDto } from "./generated/contracts/Todo";
@@ -25,6 +28,61 @@ import type { RelayUi } from "./generated/contracts/RelayUi";
 import type { SlashCommand } from "./generated/contracts/SlashCommand";
 import type { ChatItem as GeneratedChatItem } from "./generated/contracts/ChatItem";
 import type { SubagentRun as GeneratedSubagentRun } from "./generated/contracts/SubagentRun";
+import type { AgentChatUiArgs } from "./generated/contracts/bridge/AgentChatUiArgs";
+import type { AgentModelCatalogArgs } from "./generated/contracts/bridge/AgentModelCatalogArgs";
+import type { AgentModelsArgs } from "./generated/contracts/bridge/AgentModelsArgs";
+import type { AnswerLeadGateArgs } from "./generated/contracts/bridge/AnswerLeadGateArgs";
+import type { CheckProviderHooksArgs } from "./generated/contracts/bridge/CheckProviderHooksArgs";
+import type { FileMentionCandidatesArgs } from "./generated/contracts/bridge/FileMentionCandidatesArgs";
+import type { ForkSessionArgs } from "./generated/contracts/bridge/ForkSessionArgs";
+import type { GetChatHistoryArgs } from "./generated/contracts/bridge/GetChatHistoryArgs";
+import type { GetLiveSessionsPageArgs } from "./generated/contracts/bridge/GetLiveSessionsPageArgs";
+import type { GetSessionAdminPageArgs } from "./generated/contracts/bridge/GetSessionAdminPageArgs";
+import type { GetSubagentTranscriptArgs } from "./generated/contracts/bridge/GetSubagentTranscriptArgs";
+import type { GhPrCreateArgs } from "./generated/contracts/bridge/GhPrCreateArgs";
+import type { GhPrMergeArgs } from "./generated/contracts/bridge/GhPrMergeArgs";
+import type { ForgeChooseRepoArgs } from "./generated/contracts/bridge/ForgeChooseRepoArgs";
+import type { GitChangesOverviewArgs } from "./generated/contracts/bridge/GitChangesOverviewArgs";
+import type { GitCommitArgs } from "./generated/contracts/bridge/GitCommitArgs";
+import type { GitDiffSummaryArgs } from "./generated/contracts/bridge/GitDiffSummaryArgs";
+import type { GitDirArgs } from "./generated/contracts/bridge/GitDirArgs";
+import type { GitFileDiffArgs } from "./generated/contracts/bridge/GitFileDiffArgs";
+import type { GitForgeStatusArgs } from "./generated/contracts/bridge/GitForgeStatusArgs";
+import type { GitJobStatusArgs } from "./generated/contracts/bridge/GitJobStatusArgs";
+import type { GitPathsArgs } from "./generated/contracts/bridge/GitPathsArgs";
+import type { GitRepoArgs } from "./generated/contracts/bridge/GitRepoArgs";
+import type { HideWorkspaceArgs } from "./generated/contracts/bridge/HideWorkspaceArgs";
+import type { LeadTaskSnapshotArgs } from "./generated/contracts/bridge/LeadTaskSnapshotArgs";
+import type { ListSubdirectoriesArgs } from "./generated/contracts/bridge/ListSubdirectoriesArgs";
+import type { ManagedTerminalSnapshotArgs } from "./generated/contracts/bridge/ManagedTerminalSnapshotArgs";
+import type { MoveSessionRankArgs } from "./generated/contracts/bridge/MoveSessionRankArgs";
+import type { NewSessionArgs } from "./generated/contracts/bridge/NewSessionArgs";
+import type { RecentCwdsArgs } from "./generated/contracts/bridge/RecentCwdsArgs";
+import type { RegisterApprovalConsumerArgs } from "./generated/contracts/bridge/RegisterApprovalConsumerArgs";
+import type { RemoveSessionWorktreeArgs } from "./generated/contracts/bridge/RemoveSessionWorktreeArgs";
+import type { RenameSessionArgs } from "./generated/contracts/bridge/RenameSessionArgs";
+import type { ResizeManagedTerminalArgs } from "./generated/contracts/bridge/ResizeManagedTerminalArgs";
+import type { ResolvePendingApprovalArgs } from "./generated/contracts/bridge/ResolvePendingApprovalArgs";
+import type { SavePastedAttachmentArgs } from "./generated/contracts/bridge/SavePastedAttachmentArgs";
+import type { SearchChatTranscriptsArgs } from "./generated/contracts/bridge/SearchChatTranscriptsArgs";
+import type { SendBackgroundPromptArgs } from "./generated/contracts/bridge/SendBackgroundPromptArgs";
+import type { SessionArg } from "./generated/contracts/bridge/SessionArg";
+import type { SetArchivedArgs } from "./generated/contracts/bridge/SetArchivedArgs";
+import type { SetKeepAwakeArgs } from "./generated/contracts/bridge/SetKeepAwakeArgs";
+import type { SetPushPausedArgs } from "./generated/contracts/bridge/SetPushPausedArgs";
+import type { SetSessionLaunchSelectionArgs } from "./generated/contracts/bridge/SetSessionLaunchSelectionArgs";
+import type { SetSessionNoteArgs } from "./generated/contracts/bridge/SetSessionNoteArgs";
+import type { SetWorkspaceOrderArgs } from "./generated/contracts/bridge/SetWorkspaceOrderArgs";
+import type { StartManagedTerminalArgs } from "./generated/contracts/bridge/StartManagedTerminalArgs";
+import type { StopManagedTerminalArgs } from "./generated/contracts/bridge/StopManagedTerminalArgs";
+import type { TakeoverManagedTerminalArgs } from "./generated/contracts/bridge/TakeoverManagedTerminalArgs";
+import type { UnregisterApprovalConsumerArgs } from "./generated/contracts/bridge/UnregisterApprovalConsumerArgs";
+import type { WorktreeCreateArgs } from "./generated/contracts/bridge/WorktreeCreateArgs";
+import type { WorktreePreviewArgs } from "./generated/contracts/bridge/WorktreePreviewArgs";
+import type { WorktreeSetupArgs } from "./generated/contracts/bridge/WorktreeSetupArgs";
+import type { WorktreeSetupTrustArgs } from "./generated/contracts/bridge/WorktreeSetupTrustArgs";
+import type { WorktreeStatusArgs } from "./generated/contracts/bridge/WorktreeStatusArgs";
+import type { WriteManagedTerminalArgs } from "./generated/contracts/bridge/WriteManagedTerminalArgs";
 import type { SubagentProbeDto } from "./generated/contracts/SubagentProbeDto";
 import type { ManagedTerminalSnapshotDto } from "./generated/contracts/ManagedTerminalSnapshotDto";
 import type { LineageEntryDto } from "./generated/contracts/LineageEntryDto";
@@ -36,6 +94,10 @@ import type { LoginDoneEvent } from "./generated/contracts/LoginDoneEvent";
 import type { GitDiffSummaryDto } from "./generated/contracts/GitDiffSummaryDto";
 import type { GitChangedFileDto } from "./generated/contracts/GitChangedFileDto";
 import type { PullRequestDto } from "./generated/contracts/PullRequestDto";
+import type { ForgeStatusDto } from "./generated/contracts/ForgeStatusDto";
+import type { GitJobDto } from "./generated/contracts/GitJobDto";
+import type { MergeResultDto } from "./generated/contracts/MergeResultDto";
+import type { PushResultDto } from "./generated/contracts/PushResultDto";
 import type { GitFileDiffDto } from "./generated/contracts/GitFileDiffDto";
 import type { RepoChangesDto } from "./generated/contracts/RepoChangesDto";
 import type { DirEntryDto } from "./generated/contracts/DirEntryDto";
@@ -160,6 +222,8 @@ export type LiveSession = Omit<LiveSessionDto, "session" | "todos" | "column" | 
   foreign: boolean;
   /** 已归档会话的工作目录已不在磁盘上（worktree 被清理等）。可选：旧后端不带。 */
   cwd_missing?: boolean;
+  /** 会话开在 linked worktree 里时主检出的根目录；分组键 = origin_root ?? cwd。可选：旧后端不带。 */
+  origin_root?: string | null;
 };
 
 export type { LiveSessionCounts };
@@ -180,7 +244,7 @@ export type PendingApproval = PendingApprovalDto;
  * `full` 传 true 仍返回整段——只留给接续段历史这类「内容静态、只取一次」的场景。
  */
 export function getChatHistory(sessionId: number, offset: number, full?: boolean, before?: number): Promise<ChatHistory> {
-  return invoke("get_chat_history", { sessionId, offset, full, before });
+  return invoke("get_chat_history", { sessionId, offset, full, before } satisfies GetChatHistoryArgs);
 }
 
 /**
@@ -191,7 +255,7 @@ export function getChatHistory(sessionId: number, offset: number, full?: boolean
  * 历史轮询：一个会话可能有几十个子任务，跟着热路径一起读毫无必要。
  */
 export function getSubagentTranscript(sessionId: number, toolUseId: string): Promise<SubagentRun[]> {
-  return invoke("get_subagent_transcript", { sessionId, toolUseId });
+  return invoke("get_subagent_transcript", { sessionId, toolUseId } satisfies GetSubagentTranscriptArgs);
 }
 
 /**
@@ -216,7 +280,7 @@ export function probeSubagentStates(
  * GUI 驱动切换后调它，对话页与贴纸才会立刻反映新模型，而不是等下一条消息跑完。
  */
 export function refreshSessionModel(sessionId: number): Promise<string | null> {
-  return invoke("refresh_session_model", { sessionId });
+  return invoke("refresh_session_model", { sessionId } satisfies SessionArg);
 }
 
 /**
@@ -227,7 +291,7 @@ export function refreshSessionModel(sessionId: number): Promise<string | null> {
  * 切换会话时调一次即可；agent 不从日志提供待办时返回 0 并保持 DB 现状。
  */
 export function refreshSessionTodos(sessionId: number): Promise<number> {
-  return invoke("refresh_session_todos", { sessionId });
+  return invoke("refresh_session_todos", { sessionId } satisfies SessionArg);
 }
 
 export function openChatWindow(sessionId: number): Promise<void> {
@@ -245,7 +309,7 @@ export function openLink(url: string): Promise<void> {
  * 只能由宿主代为落盘。
  */
 export function savePastedAttachment(fileName: string, dataBase64: string): Promise<string> {
-  return invoke("save_pasted_attachment", { fileName, dataBase64 });
+  return invoke("save_pasted_attachment", { fileName, dataBase64 } satisfies SavePastedAttachmentArgs);
 }
 
 /**
@@ -328,7 +392,7 @@ export type ManagedTerminalSnapshot = ManagedTerminalSnapshotDto;
 /** `options`：恢复时对启动选项的改选（option id → choice id，如 {permission:"bypassPermissions"}），
  *  省略 = 沿用会话存的选择。改选会被后端合并写回，成为会话新的持久形态。 */
 export function startManagedTerminal(sessionId: number, cols: number, rows: number, options?: Record<string, string>): Promise<void> {
-  return invoke("start_managed_terminal", { sessionId, cols, rows, options });
+  return invoke("start_managed_terminal", { sessionId, cols, rows, options } satisfies StartManagedTerminalArgs);
 }
 /**
  * 接上一个后台会话的画面（Agent 自己托管的会话，见 LiveSession.background）。
@@ -337,7 +401,7 @@ export function startManagedTerminal(sessionId: number, cols: number, rows: numb
  * ——键盘输入另有一道 attach 流程尚未打通。所以接上之后只把终端视图当只读画面用。
  */
 export function attachBackgroundSession(sessionId: number): Promise<void> {
-  return invoke("attach_background_session", { sessionId });
+  return invoke("attach_background_session", { sessionId } satisfies SessionArg);
 }
 
 /**
@@ -345,52 +409,52 @@ export function attachBackgroundSession(sessionId: number): Promise<void> {
  * stdin，往它的终端写按键会石沉大海。发出后 agent 就开始干活，回复照常落进 transcript。
  */
 export function sendBackgroundPrompt(sessionId: number, text: string): Promise<void> {
-  return invoke("send_background_prompt", { sessionId, text });
+  return invoke("send_background_prompt", { sessionId, text } satisfies SendBackgroundPromptArgs);
 }
 
 /** `options` 语义同 startManagedTerminal：接管时改权限模式等启动选项，省略 = 沿用。 */
 export function takeoverManagedTerminal(sessionId: number, cols: number, rows: number, options?: Record<string, string>): Promise<void> {
-  return invoke("takeover_managed_terminal", { sessionId, cols, rows, options });
+  return invoke("takeover_managed_terminal", { sessionId, cols, rows, options } satisfies TakeoverManagedTerminalArgs);
 }
 /** 会话存的启动选项（option id → choice id）。恢复权限下拉据此把「沿用原设置」
  *  亮成具体档位；没存过 / 旧后端无此命令时为空。 */
 export function sessionLaunchSelections(sessionId: number): Promise<Record<string, string>> {
-  return invoke<Record<string, string>>("session_launch_selections", { sessionId }).then((map) => map ?? {}).catch(() => ({}));
+  return invoke<Record<string, string>>("session_launch_selections", { sessionId } satisfies SessionArg).then((map) => map ?? {}).catch(() => ({}));
 }
 /** 把单个启动选项写进会话存档（合并写）。模型/权限是启动参数，resume/接管时回放
  *  ——对话页切换后不落库的话，每次重启都回默认档（1M 上下文档回落 200K，实拍）。
  *  写失败要让调用方知道（否则用户切了档、下次 resume 悄悄回默认），错误不在这里吞。 */
 export function setSessionLaunchSelection(sessionId: number, option: string, choice: string): Promise<void> {
-  return invoke<void>("set_session_launch_selection", { sessionId, option, choice });
+  return invoke<void>("set_session_launch_selection", { sessionId, option, choice } satisfies SetSessionLaunchSelectionArgs);
 }
 /**
  * 取终端输出快照。`since` 传上次拿到的 endOffset，只回增量——不传则全量（首帧用）。
  * backlog 上限 1 MiB，轮询里省掉的就是这一整份的 base64 + IPC 传输。
  */
 export function managedTerminalSnapshot(sessionId: number, since?: number): Promise<ManagedTerminalSnapshot> {
-  return invoke("managed_terminal_snapshot", { sessionId, since });
+  return invoke("managed_terminal_snapshot", { sessionId, since } satisfies ManagedTerminalSnapshotArgs);
 }
 export function managedTerminalBinding(sessionId: number): Promise<number | null> {
-  return invoke("managed_terminal_binding", { sessionId });
+  return invoke("managed_terminal_binding", { sessionId } satisfies SessionArg);
 }
 /** 临时负 id 认领前的 provider/cwd；null = 不是 pending 启动（已认领或从未存在）。 */
 export function managedTerminalPendingLaunch(sessionId: number): Promise<PendingLaunchDto | null> {
-  return invoke("managed_terminal_pending_launch", { sessionId });
+  return invoke("managed_terminal_pending_launch", { sessionId } satisfies SessionArg);
 }
 /** 托管 PTY 仿真后的整屏文本（自上而下）；null = 该会话无屏幕仿真。 */
 export function managedTerminalScreen(sessionId: number): Promise<string[] | null> {
-  return invoke("managed_terminal_screen", { sessionId });
+  return invoke("managed_terminal_screen", { sessionId } satisfies SessionArg);
 }
 /// 分叉会话：后端用 CLI 原生分叉起一个独立的新会话，返回其临时 id（认领后换真 id）。
 /// 远程桥未开放（前端在远程模式下不给入口）。
 export function forkSession(sessionId: number, cols: number, rows: number): Promise<number> {
-  return invoke("fork_session", { sessionId, cols, rows });
+  return invoke("fork_session", { sessionId, cols, rows } satisfies ForkSessionArgs);
 }
 export function writeManagedTerminal(sessionId: number, data: string): Promise<void> {
-  return invoke("write_managed_terminal", { sessionId, data });
+  return invoke("write_managed_terminal", { sessionId, data } satisfies WriteManagedTerminalArgs);
 }
 export function resizeManagedTerminal(sessionId: number, cols: number, rows: number): Promise<void> {
-  return invoke("resize_managed_terminal", { sessionId, cols, rows });
+  return invoke("resize_managed_terminal", { sessionId, cols, rows } satisfies ResizeManagedTerminalArgs);
 }
 
 /** 对话窗右侧面板的「终端」页签：会话目录下的普通 shell（后端 shell_terminal.rs）。
@@ -495,10 +559,10 @@ export function closeBrowserPane(id: number): Promise<void> {
  * 补发一次把 PTY 拉齐。刻意不复用快照：那个要把整个 backlog（可达 1 MiB）编码重传。
  */
 export function managedTerminalGrid(sessionId: number): Promise<[number, number]> {
-  return invoke("managed_terminal_grid", { sessionId });
+  return invoke("managed_terminal_grid", { sessionId } satisfies SessionArg);
 }
 export function stopManagedTerminal(sessionId: number): Promise<void> {
-  return invoke("stop_managed_terminal", { sessionId });
+  return invoke("stop_managed_terminal", { sessionId } satisfies StopManagedTerminalArgs);
 }
 /** 声明 chat 窗终端视图「正在看」的会话——后端 emitter 只对它推送 pty-output 实时帧。 */
 export function registerTerminalViewer(sessionId: number): Promise<void> {
@@ -535,20 +599,20 @@ export async function confirmStopSession(
  * 会打进虚空（Tauri emit 不排队、不重放），轮询这条是把错过的卡补回来的唯一途径。
  */
 export function pendingInteraction(sessionId: number): Promise<PendingInteractionDto> {
-  return invoke("pending_interaction", { sessionId });
+  return invoke("pending_interaction", { sessionId } satisfies SessionArg);
 }
 /** 收卡时撤下后端的待处理题面，避免轮询把已答过的题重新弹出来。 */
 export function dismissInteractiveQuestion(sessionId: number): Promise<void> {
-  return invoke("dismiss_interactive_question", { sessionId });
+  return invoke("dismiss_interactive_question", { sessionId } satisfies SessionArg);
 }
 export function registerApprovalConsumer(sessionId: number, consumerId: string): Promise<void> {
-  return invoke("register_approval_consumer", { sessionId, consumerId });
+  return invoke("register_approval_consumer", { sessionId, consumerId } satisfies RegisterApprovalConsumerArgs);
 }
 export function unregisterApprovalConsumer(consumerId: string): Promise<void> {
-  return invoke("unregister_approval_consumer", { consumerId });
+  return invoke("unregister_approval_consumer", { consumerId } satisfies UnregisterApprovalConsumerArgs);
 }
 export function resolvePendingApproval(sessionId: number, requestId: string, choice: string): Promise<void> {
-  return invoke("resolve_pending_approval", { sessionId, requestId, choice });
+  return invoke("resolve_pending_approval", { sessionId, requestId, choice } satisfies ResolvePendingApprovalArgs);
 }
 export function openAttachedTerminal(sessionId: number): Promise<void> {
   return invoke("open_attached_terminal", { sessionId });
@@ -565,7 +629,7 @@ export function renameSession(
   title: string,
   provider?: string | null,
 ): Promise<void> {
-  return invoke("rename_session", { cwd, sessionId: ccSessionId, title, provider });
+  return invoke("rename_session", { cwd, sessionId: ccSessionId, title, provider } satisfies RenameSessionArgs);
 }
 
 /** 会话管理页的一页（对照 Kimi Code 的会话管理）。 */
@@ -579,39 +643,39 @@ export function getSessionAdminPage(query: { workspaces: string[]; status: "all"
     updatedBeforeDays: query.updatedBeforeDays,
     page: query.page,
     pageSize: query.pageSize,
-  });
+  } satisfies GetSessionAdminPageArgs);
 }
 
 /** 侧栏拖拽排序：把会话挪到 aboveId 正下方（没有 above 时挂到 belowId 正上方）。
  *  桌面拖动、手机长按拖动共用（远程桥 MoveSessionRankArgs 同形）。 */
 export function moveSessionRank(sessionId: number, aboveId: number | null, belowId: number | null): Promise<void> {
-  return invoke("move_session_rank", { sessionId, aboveId, belowId });
+  return invoke("move_session_rank", { sessionId, aboveId, belowId } satisfies MoveSessionRankArgs);
 }
 
 /** 写工作区分组的手动顺序。只碰 workspace_order 一个字段：手机也要能拖分组头，
  *  而整份 setSettings 在远程是禁区（远程桥 SetWorkspaceOrderArgs 同形）。 */
 export function setWorkspaceOrder(order: string[]): Promise<void> {
-  return invoke("set_workspace_order", { order });
+  return invoke("set_workspace_order", { order } satisfies SetWorkspaceOrderArgs);
 }
 
 /** 「运行时防止休眠」开关。手机设置面板用（整份 setSettings 在远程禁止；远程桥 SetKeepAwakeArgs 同形）。 */
 export function setKeepAwake(enabled: boolean): Promise<void> {
-  return invoke("set_keep_awake", { enabled });
+  return invoke("set_keep_awake", { enabled } satisfies SetKeepAwakeArgs);
 }
 
 /** 暂停 / 恢复手机推送，只动开关不动地址（远程桥 SetPushPausedArgs 同形）。 */
 export function setPushPaused(paused: boolean): Promise<void> {
-  return invoke("set_push_paused", { paused });
+  return invoke("set_push_paused", { paused } satisfies SetPushPausedArgs);
 }
 
 /** 归档 / 还原会话（键为 DB 数字主键，不是 cc_session_id）。 */
 export function setArchived(sessionId: number, archived: boolean): Promise<void> {
-  return invoke("set_archived", { sessionId, archived });
+  return invoke("set_archived", { sessionId, archived } satisfies SetArchivedArgs);
 }
 
 /** 会话所在 worktree 能不能清理（PR 已合并、无改动、无未推提交…）。判定全在桌面端，手机端经桥拿同一份。 */
 export function worktreeStatus(sessionId: number): Promise<WorktreeStatusDto> {
-  return invoke("worktree_status", { sessionId });
+  return invoke("worktree_status", { sessionId } satisfies WorktreeStatusArgs);
 }
 /**
  * 删除会话所在 worktree 和本地分支。有进程占用时，只有它们全在 confirmedPids（用户看过名字的那批）里
@@ -619,7 +683,7 @@ export function worktreeStatus(sessionId: number): Promise<WorktreeStatusDto> {
  */
 export function removeSessionWorktree(sessionId: number, expectedPath: string, confirmedPids: number[]): Promise<WorktreeRemovalDto> {
   // expectedPath：用户在确认框里看到的目录；后端此刻解析出的对不上就拒绝，不拿这次确认去删别处。
-  return invoke("remove_session_worktree", { sessionId, expectedPath, confirmedPids });
+  return invoke("remove_session_worktree", { sessionId, expectedPath, confirmedPids } satisfies RemoveSessionWorktreeArgs);
 }
 /** 已归档会话所在的 worktree（去重）及各自判定，批量清理用。 */
 export function listCleanableWorktrees(): Promise<CleanableWorktreeDto[]> {
@@ -627,9 +691,29 @@ export function listCleanableWorktrees(): Promise<CleanableWorktreeDto[]> {
 }
 export type { WorktreeStatusDto, WorktreeRemovalDto, CleanableWorktreeDto };
 
+// ── 在新 worktree 里开会话（包 5）。改这几处的 invoke 传参必须同步 remote.rs 的桥臂与样例 payload ──
+
+/** 新建会话页的实时预览：建议的用途名、分支、目录、基点，以及有没有撞名。 */
+export function worktreePreview(repoCwd: string, slug: string | null, branch: string | null, fallbackSlug: string): Promise<WorktreePreviewDto> {
+  return invoke("worktree_preview", { repoCwd, slug, branch, fallbackSlug } satisfies WorktreePreviewArgs);
+}
+/** 建 worktree 并复制被忽略的 .env* 等文件（同步，≤2s），setup 在后台跑。requestId 相同只建一次。 */
+export function worktreeCreate(args: WorktreeCreateArgs): Promise<WorktreeCreateDto> {
+  return invoke("worktree_create", args satisfies WorktreeCreateArgs);
+}
+/** setup 进度与操作。按会话 cwd 查（path），不是 Meowo 建的 worktree 时回 null。 */
+export function worktreeSetup(path: string, action: "status" | "rerun" | "skip" | "stop" = "status"): Promise<WorktreeSetupDto | null> {
+  return invoke("worktree_setup", { taskId: null, path, action } satisfies WorktreeSetupArgs);
+}
+/** 用户看过脚本原文后信任它（hash 必须是确认框里展示的那份），随即开跑。 */
+export function worktreeSetupTrust(path: string, hash: string): Promise<WorktreeSetupDto> {
+  return invoke("worktree_setup_trust", { path, hash } satisfies WorktreeSetupTrustArgs);
+}
+export type { WorktreeCreateDto, WorktreePreviewDto, WorktreeSetupDto };
+
 /** 给会话挂 / 改便签（纯本地备忘，键为 cc_session_id）。 */
 export function setSessionNote(ccSessionId: string, note: string): Promise<void> {
-  return invoke("set_session_note", { sessionId: ccSessionId, note });
+  return invoke("set_session_note", { sessionId: ccSessionId, note } satisfies SetSessionNoteArgs);
 }
 
 /** 在系统文件管理器里打开会话的工作目录。 */
@@ -645,14 +729,14 @@ export function getPullRequest(cwd: string): Promise<PullRequestDto | null> {
 export type { PullRequestDto };
 
 export function getGitDiffSummary(cwd: string): Promise<GitDiffSummaryDto> {
-  return invoke("git_diff_summary", { cwd });
+  return invoke("git_diff_summary", { cwd } satisfies GitDiffSummaryArgs);
 }
 
 /** 单个文件的 diff（untracked=true 时由后端读盘合成伪 diff，见 GitFileDiffDto 注释）。 */
 /// base：「已提交未合并」段的文件，看 base..HEAD。sessionCwd：cwd 不是会话目录本身（别的仓库、
 /// worktree）时带上会话目录，手机远程页据此收口。两者没有就不传（老桥不认识的字段会被拒）。
 export function getGitFileDiff(cwd: string, path: string, untracked: boolean, base?: string | null, sessionCwd?: string | null): Promise<GitFileDiffDto> {
-  return invoke("git_file_diff", { cwd, path, untracked, ...(base ? { base } : {}), ...(sessionCwd ? { sessionCwd } : {}) });
+  return invoke("git_file_diff", { cwd, path, untracked, ...(base ? { base } : {}), ...(sessionCwd ? { sessionCwd } : {}) } satisfies GitFileDiffArgs);
 }
 
 /// 「更改」面板的仓库清单（多仓库 + 已提交未合并），见 git.rs 的 git_changes_overview。
@@ -661,25 +745,25 @@ export function getGitFileDiff(cwd: string, path: string, untracked: boolean, ba
 /// detail：只给哪个仓库算完整内容（增删行数、「本分支已提交」），空串 = 默认那个；其余仓库只给分支和
 /// 文件清单，点到时再拉（用户要求 2026-11-09：先显示目录，内容点击后异步）。
 export function getGitChangesOverview(cwd: string, touched: readonly string[], commands: readonly string[] = [], detail?: string | null): Promise<RepoChangesDto[]> {
-  return invoke("git_changes_overview", { cwd, touched, ...(commands.length > 0 ? { commands } : {}), ...(detail != null ? { detail } : {}) });
+  return invoke("git_changes_overview", { cwd, touched, ...(commands.length > 0 ? { commands } : {}), ...(detail != null ? { detail } : {}) } satisfies GitChangesOverviewArgs);
 }
 
 /// 「更改」面板的 git 写操作（用户要求 2026-11-09，对照 VS Code 源代码管理）。paths 相对仓库根，
 /// 必须在当前改动清单里。sessionCwd 规则同 getGitFileDiff。
 const withSession = (sessionCwd?: string | null) => (sessionCwd ? { sessionCwd } : {});
 export function gitStage(cwd: string, paths: readonly string[], sessionCwd?: string | null): Promise<void> {
-  return invoke("git_stage", { cwd, paths, ...withSession(sessionCwd) });
+  return invoke("git_stage", { cwd, paths, ...withSession(sessionCwd) } satisfies GitPathsArgs);
 }
 export function gitUnstage(cwd: string, paths: readonly string[], sessionCwd?: string | null): Promise<void> {
-  return invoke("git_unstage", { cwd, paths, ...withSession(sessionCwd) });
+  return invoke("git_unstage", { cwd, paths, ...withSession(sessionCwd) } satisfies GitPathsArgs);
 }
 /// 放弃工作区改动：已跟踪的恢复到暂存区内容，未跟踪的删除。调用方负责先确认。
 export function gitDiscard(cwd: string, paths: readonly string[], sessionCwd?: string | null): Promise<void> {
-  return invoke("git_discard", { cwd, paths, ...withSession(sessionCwd) });
+  return invoke("git_discard", { cwd, paths, ...withSession(sessionCwd) } satisfies GitPathsArgs);
 }
 /// 折叠的未跟踪目录（path 以 / 结尾，见 GitChangedFileDto.untrackedFiles）里的文件：点开时才拉，不进 5 秒轮询。
 export function getUntrackedDirFiles(cwd: string, path: string, sessionCwd?: string | null): Promise<GitChangedFileDto[]> {
-  return invoke("git_untracked_dir_files", { cwd, path, ...withSession(sessionCwd) });
+  return invoke("git_untracked_dir_files", { cwd, path, ...withSession(sessionCwd) } satisfies GitDirArgs);
 }
 /// 把折叠的未跟踪目录加进仓库根的 .gitignore。手机端不放行（remote.rs 拒绝名单），界面上也不显示。
 export function gitIgnoreDir(cwd: string, path: string): Promise<void> {
@@ -688,8 +772,46 @@ export function gitIgnoreDir(cwd: string, path: string): Promise<void> {
 /// all：没有暂存的更改时提交全部（含未跟踪）。paths：「提交全部」时界面上显示的文件，后端只提交它们
 ///（列表外、agent 刚写出来的不跟着进）。返回新提交的短 SHA。
 export function gitCommit(cwd: string, message: string, all: boolean, sessionCwd?: string | null, paths?: readonly string[]): Promise<string> {
-  return invoke("git_commit", { cwd, message, all, ...(all && paths ? { paths } : {}), ...withSession(sessionCwd) });
+  return invoke("git_commit", { cwd, message, all, ...(all && paths ? { paths } : {}), ...withSession(sessionCwd) } satisfies GitCommitArgs);
 }
+
+/// 推送 / 开 PR / 看 CI / 合并（forge.rs，二期包 5）。传参改动须同步 meowo_protocol::bridge 的 GitRepoArgs /
+/// GitJobStatusArgs / GitForgeStatusArgs / GhPrCreateArgs / GhPrMergeArgs 与样例 payload 测试。
+/// 推送一律走后台任务：手机 RPC 等不了首推的几十秒，桌面用同一套，界面只有一条路径。
+export function gitPushStart(cwd: string, sessionCwd?: string | null): Promise<string> {
+  return invoke("git_push_start", { cwd, ...withSession(sessionCwd) } satisfies GitRepoArgs);
+}
+export function gitJobStatus(jobId: string): Promise<GitJobDto> {
+  return invoke("git_job_status", { jobId } satisfies GitJobStatusArgs);
+}
+/// 起推送并等它结束（1 秒查一次，最多等 130 秒，后端自己 120 秒超时）。失败按 Error 抛出原因码。
+export async function gitPush(cwd: string, sessionCwd?: string | null, sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms))): Promise<PushResultDto> {
+  const jobId = await gitPushStart(cwd, sessionCwd);
+  for (let waited = 0; waited < 130_000; waited += 1000) {
+    const job = await gitJobStatus(jobId);
+    if (job.state === "ok" && job.push) return job.push;
+    if (job.state === "failed") throw job.error ?? "git/push_failed";
+    await sleep(1000);
+  }
+  throw "git/push_timeout";
+}
+/// force：窗口重新聚焦 / 手动刷新，跳过后端 60s 缓存（后端最短仍隔 10s）。
+export function getForgeStatus(cwd: string, force: boolean, sessionCwd?: string | null): Promise<ForgeStatusDto> {
+  return invoke("git_forge_status", { cwd, force, ...withSession(sessionCwd) } satisfies GitForgeStatusArgs);
+}
+export function ghPrCreate(cwd: string, pr: { title: string; body: string; base: string | null; draft: boolean }, sessionCwd?: string | null): Promise<PullRequestDto> {
+  return invoke("gh_pr_create", { cwd, title: pr.title, body: pr.body, base: pr.base, draft: pr.draft, ...withSession(sessionCwd) } satisfies GhPrCreateArgs);
+}
+/// expectedHeadOid：确认框里看到的 PR 头提交，之后有人推了新提交 GitHub 会拒（gh/head_changed）。
+export function ghPrMerge(cwd: string, number: number, method: string, expectedHeadOid: string, sessionCwd?: string | null): Promise<MergeResultDto> {
+  return invoke("gh_pr_merge", { cwd, number, method, expectedHeadOid, ...withSession(sessionCwd) } satisfies GhPrMergeArgs);
+}
+/// 多个 GitHub 远端时选 PR 开在哪个远端的仓库（ForgeStatusDto.repoChoices 里的 remote），按仓库记在本机。
+/// 传参改动须同步 meowo_protocol::bridge 的 ForgeChooseRepoArgs 与样例 payload 测试。
+export function forgeChooseRepo(cwd: string, remote: string, sessionCwd?: string | null): Promise<void> {
+  return invoke("forge_choose_repo", { cwd, remote, ...withSession(sessionCwd) } satisfies ForgeChooseRepoArgs);
+}
+export type { ForgeStatusDto, GitJobDto, MergeResultDto, PushResultDto };
 
 /** 「文件」页签：列出 cwd 下 rel 目录的直接子条目（目录在前，后端已排序并跳过 .git）。 */
 export function listDirEntries(cwd: string, rel: string): Promise<DirEntryDto[]> {
@@ -711,9 +833,9 @@ export function searchProjectFiles(cwd: string, query: string): Promise<SearchRe
   return invoke("search_project_files", { cwd, query });
 }
 /** 输入框 `@` 补全候选（只回相对路径，目录带 `/`，不读文件内容）。手机端用它：上面两个
- *  文件浏览命令是远程拒绝项。传参改动须同步 remote.rs 的 FileMentionCandidatesArgs。 */
+ *  文件浏览命令是远程拒绝项。传参改动须同步 meowo_protocol::bridge 的 FileMentionCandidatesArgs。 */
 export function fileMentionCandidates(cwd: string, query: string): Promise<string[]> {
-  return invoke("file_mention_candidates", { cwd, query });
+  return invoke("file_mention_candidates", { cwd, query } satisfies FileMentionCandidatesArgs);
 }
 
 export type { LeadTaskDto } from "./generated/contracts/LeadTaskDto";
@@ -723,7 +845,7 @@ export type { LeadCheckDto } from "./generated/contracts/LeadCheckDto";
 /// Lead 工作流：会话 cwd 所在项目的任务快照；没有任务为 null（入口据此隐藏）。
 /// 手机端经远程桥放行（remote.rs 模块头「例外（2026-11-09）」），参数改动须同步 AnswerLeadGateArgs 等桥臂结构体。
 export function leadTaskSnapshot(cwd: string, session?: string | null): Promise<LeadTaskDto | null> {
-  return invoke("lead_task_snapshot", { cwd, ...(session ? { session } : {}) });
+  return invoke("lead_task_snapshot", { cwd, ...(session ? { session } : {}) } satisfies LeadTaskSnapshotArgs);
 }
 
 /// Lead 工作流是否已装进 Claude Code（以实际安装为准，不另存设置）。
@@ -738,7 +860,7 @@ export function setLeadWorkflow(enabled: boolean): Promise<void> {
 
 /// 回答关卡：A 用 confirm/revise，C 用 accept/reject，B 用方案 id；note 为附加意见。
 export function answerLeadGate(cwd: string, gateId: string, choice: string, note: string): Promise<void> {
-  return invoke("answer_lead_gate", { cwd, gateId, choice, note });
+  return invoke("answer_lead_gate", { cwd, gateId, choice, note } satisfies AnswerLeadGateArgs);
 }
 
 /** 文件面板「打开」菜单：能打开该文件的应用清单（Windows 为系统「打开方式」推荐列表，
@@ -798,7 +920,7 @@ export type TranscriptSearchHit = {
 /** 对话内容全文搜索：扫最近会话的 transcript 文件（显式动作，不随击键触发）。
  *  每会话至多一条命中，按活跃序返回，后端带扫描上限（秒级以内）。 */
 export function searchChatTranscripts(query: string): Promise<TranscriptSearchHit[]> {
-  return invoke("search_chat_transcripts", { query });
+  return invoke("search_chat_transcripts", { query } satisfies SearchChatTranscriptsArgs);
 }
 
 /** 打开「新建会话」独立窗；带 prefill 时预选目录与 agent。 */
@@ -854,7 +976,7 @@ export function getLiveSessionsPage(
     includePending,
     // 只在需要时带键：remote.rs 的桥是 deny_unknown_fields，缺省形态保持与旧后端一致。
     ...(order !== "activity" ? { order } : {}),
-  }).then((res) => {
+  } satisfies GetLiveSessionsPageArgs).then((res) => {
     // 旧后端 / demo mock 仍返回裸数组：给不满 limit 视作到底，满页时按旧约定用末项续查
     // （旧后端本就只有这套语义）。undefined = 后端没有该命令，静默降级为空列表。
     if (Array.isArray(res)) {
@@ -936,8 +1058,14 @@ export type Settings = {
   island_strip: boolean;
   /** 哪些事让灵动岛弹提醒：waiting / approval（含计划确认、屏幕上挂着交互）/ question / error。 */
   island_alerts: string[];
+  /** 哪些事弹系统通知（总开关 notifications_enabled 之下再分种类），种类与 island_alerts 同一套。
+   *  老设置文件没有这个字段，后端按四类全开补上。 */
+  notify_kinds: string[];
   /** 提醒停留秒数（4 / 6 / 10）。 */
   island_alert_seconds: number;
+  /** 「在新 worktree 里开」：位置（sibling = 和主检出并排，meowo = ~/.meowo/worktrees）、分支前缀、
+   *  setup 信任记录（后端单独维护）。可选：旧后端不带。 */
+  worktree?: { location: string; branch_prefix: string | null; trusted: Record<string, string> };
   /** 在贴纸底栏显示配额的 agent id 列表（后端给默认值）。 */
   sticker_quota_providers: AgentId[];
   /** 「新建会话」面板默认选中的 agent（后端给默认值）。 */
@@ -1120,7 +1248,7 @@ export function listAgentExtensions(): Promise<AgentExtensionsDto[]> {
  * 补全就出什么。未知 provider → null，调用方降级为不补全、不给模型菜单。
  */
 export function agentChatUi(provider: AgentId, cwd: string | null, sessionId?: number): Promise<ChatUi | null> {
-  return invoke("agent_chat_ui", { provider, cwd, sessionId });
+  return invoke("agent_chat_ui", { provider, cwd, sessionId } satisfies AgentChatUiArgs);
 }
 /**
  * 该 agent 的模型清单，**由 CLI 自己列举**（非交互子命令，后端带进程级缓存）。
@@ -1131,12 +1259,12 @@ export function agentChatUi(provider: AgentId, cwd: string | null, sessionId?: n
  * 空表 = 该 CLI 没声明这项能力或配置读不到。
  */
 export function agentModelCatalog(provider: string, sessionId?: number): Promise<ModelCatalogEntry[]> {
-  return invoke<ModelCatalogEntry[] | null>("agent_model_catalog", { provider, sessionId: sessionId ?? null }).then((models) => models ?? []);
+  return invoke<ModelCatalogEntry[] | null>("agent_model_catalog", { provider, sessionId: sessionId ?? null } satisfies AgentModelCatalogArgs).then((models) => models ?? []);
 }
 
 export function agentModels(provider: string, sessionId?: number): Promise<string[]> {
   // 旧后端/demo 对未知命令返回 undefined——统一兜成空表，调用方不必各自判空。
-  return invoke<string[] | null>("agent_models", { provider, sessionId: sessionId ?? null }).then((models) => models ?? []);
+  return invoke<string[] | null>("agent_models", { provider, sessionId: sessionId ?? null } satisfies AgentModelsArgs).then((models) => models ?? []);
 }
 
 /**
@@ -1208,7 +1336,7 @@ export type DirListing = {
 
 /** 仅远程模式可用：命令只在 /rpc 白名单登记，桌面 invoke 会被拒（桌面有系统对话框）。 */
 export function listSubdirectories(path?: string): Promise<DirListing> {
-  return invoke("list_subdirectories", { path: path ?? null });
+  return invoke("list_subdirectories", { path: path ?? null } satisfies ListSubdirectoriesArgs);
 }
 
 // 纯函数：根据 todo 列表算完成度。
@@ -1263,18 +1391,18 @@ export type HooksStatus = "installed" | "missing" | "unknown";
 /** 返回：桌面命令回 () → null（reveal 开窗即导航，前端无需句柄）；远程桥回临时负 id，
  *  移动页据此选中新会话（ChatWindow 的 binding 轮询认领后重绑成真 id）。 */
 export function newSession(cwd: string, provider: AgentId, options?: Record<string, string>): Promise<number | null> {
-  return invoke("new_session", { cwd, provider, options });
+  return invoke("new_session", { cwd, provider, options } satisfies NewSessionArgs);
 }
 
 /** 最近使用过的工作目录（新建面板快捷选择）。 */
 /// 从工作空间列表里移除（只是不显示；之后又在这里开会话会自动回来）。
 export function hideWorkspace(cwd: string): Promise<void> {
-  return invoke("hide_workspace", { cwd });
+  return invoke("hide_workspace", { cwd } satisfies HideWorkspaceArgs);
 }
 
 /// includeHidden：连「从列表里移除」过的也要（会话管理页按工作区筛会话用）。
 export function recentCwds(limit: number, includeHidden = false): Promise<string[]> {
-  return invoke("recent_cwds", { limit, ...(includeHidden ? { includeHidden } : {}) });
+  return invoke("recent_cwds", { limit, ...(includeHidden ? { includeHidden } : {}) } satisfies RecentCwdsArgs);
 }
 
 export type SwitchStarted = SwitchStartedDto;
@@ -1294,12 +1422,12 @@ export function copySessionToProvider(
 
 /** 接续链回看（按时间升序）。不在链上的会话返回仅含自身的单段。 */
 export function getSessionLineage(sessionId: number): Promise<LineageEntry[]> {
-  return invoke("get_session_lineage", { sessionId });
+  return invoke("get_session_lineage", { sessionId } satisfies SessionArg);
 }
 
 /** 检测某 provider 的 meowo-reporter hooks 是否已接入（决定新建后会不会入库）。 */
 export function checkProviderHooks(provider: AgentId): Promise<HooksStatus> {
-  return invoke("check_provider_hooks", { provider });
+  return invoke("check_provider_hooks", { provider } satisfies CheckProviderHooksArgs);
 }
 
 /** 修复接线失败的原因（后端 setup::RepairReason），null = 成功/已是目标状态。 */

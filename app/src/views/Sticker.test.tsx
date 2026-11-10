@@ -1048,6 +1048,15 @@ describe("Sticker", () => {
     expect(repo?.getAttribute("data-tip")).toBe("C:\\Users\\larry\\projects\\autopilot");
   });
 
+  // 包 5：worktree 会话在看板上归到原项目，后面标出 worktree 目录名。
+  it("worktree 会话显示原项目名并标出 worktree 名", () => {
+    const { container } = render(<Sticker filter="all" data={[mk({ cwd: "C:/w/app-fix-login", origin_root: "C:/w/app" })]} />);
+    const repo = container.querySelector(".stk-repo") as HTMLElement;
+    expect(repo.firstChild?.textContent).toBe("app");
+    expect(repo.querySelector("[data-testid=stk-worktree-tag]")?.textContent).toBe("app-fix-login");
+    expect(repo.getAttribute("data-tip")).toBe("C:/w/app-fix-login");
+  });
+
   it("无 cwd 时不显示项目名", () => {
     const { container } = render(<Sticker filter="all" data={[mk({ cwd: null, project_name: "larrygogo/autopilot" })]} />);
     expect(container.querySelector(".stk-repo")).toBeNull();

@@ -713,3 +713,36 @@ describe("macOS 菜单栏富文本", () => {
     expect(menubarSegments([], "idle", null, labels)).toEqual([]);
   });
 });
+
+// 二期 #3（2026-11-10 定）：贴纸下线后没有聚合入口，折起来的会话里有人在等也得看得出来。
+describe("折叠的 +N 与分页圆点按最急状态上色", () => {
+  const five = () => Array.from({ length: 5 }, (_, i) => mk({
+    task_title: `第${i + 1}个`,
+    manual_key: 500 - i,
+    // 第 5 个（侧栏顺序最后、被折进 +N 的那个）在等审批。
+    ...(i === 4 ? { status: "waiting", pending_review: "approval" } : {}),
+  } as Partial<Item>));
+
+  it("5 个会话第 5 个待审批：+1 带待审批色", () => {
+    const { container } = renderIsland({ sessions: five() });
+    const more = container.querySelector(".isl-more")!;
+    expect(more.textContent).toBe("+1");
+    expect(more.classList.contains("is-pending")).toBe(true);
+  });
+
+  it("折进去的都在跑：+N 用运行色，不冒充待审批", () => {
+    const sessions = Array.from({ length: 6 }, (_, i) => mk({ manual_key: 500 - i } as Partial<Item>));
+    const { container } = renderIsland({ sessions });
+    expect(container.querySelector(".isl-more")?.classList.contains("is-running")).toBe(true);
+  });
+
+  it("面板分页圆点按该页最急状态上色", () => {
+    const { container } = render(
+      <IslandPanel sessions={five()} usage={{}} quotaProviders={[]} onOpenSession={noop} onMeasure={noop} onPointerDownDrag={noop} />,
+    );
+    const dots = [...container.querySelectorAll(".isl-dots-nav button")];
+    expect(dots).toHaveLength(2);
+    expect(dots[0].classList.contains("is-running")).toBe(true);
+    expect(dots[1].classList.contains("is-pending")).toBe(true);
+  });
+});

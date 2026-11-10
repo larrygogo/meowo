@@ -2,11 +2,20 @@
 //! ③按 MEOWO_INNER_SETUP 环境变量生成内芯载荷桥文件（缺省生成空占位，保证
 //! 本地 clippy/test 与 CI macos 矩阵在没有 NSIS 产物时也能编译）。
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+/// 运行时读 CARGO_MANIFEST_DIR，不用编译期 env!()：cargo 对 path 包的产物哈希与
+/// 目录位置无关，多个 worktree 共用 CARGO_TARGET_DIR 时会复用别处编出的 build-script
+/// 二进制，env!() 烙进去的是第一份 worktree 的路径——实测第二份读到第一份的版本号，
+/// 第一份删掉后直接 panic（复现脚本 repro-shared-target.sh，2026-11-10）。
+/// cargo 每次执行 build script 都会按当前包重设这个环境变量。
+fn manifest_dir() -> PathBuf {
+    PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("cargo 未设置 CARGO_MANIFEST_DIR"))
+}
 
 fn main() {
     // ── 版本：workspace 根包（meowo-app）的 version 是全仓唯一真源 ──
-    let root_manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Cargo.toml");
+    let root_manifest = manifest_dir().join("../../Cargo.toml");
     println!("cargo:rerun-if-changed={}", root_manifest.display());
     let version = std::fs::read_to_string(&root_manifest)
         .ok()
@@ -23,8 +32,7 @@ fn main() {
     let windows_msvc = std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
         && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc");
     if windows_msvc {
-        let manifest =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("windows-manifest.xml");
+        let manifest = manifest_dir().join("windows-manifest.xml");
         println!("cargo:rerun-if-changed={}", manifest.display());
         println!("cargo:rustc-link-arg=/MANIFEST:EMBED");
         // 注：/MANIFESTINPUT 的路径不能含空格（link.exe 参数不带引号透传）。
@@ -57,7 +65,7 @@ fn main() {
 /// rc.exe 缺席的开发机上静默跳过（manifest_optional）——CI 的 windows runner 必有。
 #[cfg(windows)]
 fn embed_icon_and_version(version: &str) {
-    let icon = Path::new(env!("CARGO_MANIFEST_DIR"))
+    let icon = manifest_dir()
         .join("../../icons/icon.ico")
         .canonicalize()
         .expect("找不到 app/src-tauri/icons/icon.ico");

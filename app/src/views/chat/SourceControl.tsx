@@ -28,6 +28,7 @@ import { FileIcon, FolderIcon, LineCounts, readDiffLayout, saveDiffLayout, touch
 import { OpenIcon, PathContextMenu, RowMore } from "./pathMenu";
 // ChangesView 住在 GitDiffView 里，静态引会把整个改动面板并进 SidePanel / 对话窗 chunk（见 lazyDiff.tsx）。
 import { LazyChangesView as ChangesView } from "./lazyDiff";
+import { ForgeBar } from "./ForgeBar";
 
 /// 旧后端（手机页可能先于安装版更新）不下发两个新字段：按「全部是未暂存」处理。
 type ScmFile = GitChangedFileDto & { indexStatus?: string | null; worktreeStatus?: string | null; untrackedFiles?: number | null };
@@ -67,7 +68,7 @@ export function pickRepo(repos: readonly RepoChangesDto[], selected: string | nu
     ?? null;
 }
 
-export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChanged, comments, touchedPaths, turnTouchedPaths, onAddComment, onRemoveComment, escOverrideRef, live = false }: {
+export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChanged, comments, touchedPaths, turnTouchedPaths, onAddComment, onRemoveComment, escOverrideRef, live = false, sessionId = null, visible = true }: {
   /** 会话工作目录（手机桥按它收口）。 */
   cwd: string;
   repos: readonly RepoChangesDto[];
@@ -83,6 +84,10 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
   onRemoveComment: (id: string) => void;
   escOverrideRef: MutableRefObject<(() => void) | null>;
   live?: boolean;
+  /** 会话 id：PR 合并后查它的 worktree 能不能清理。 */
+  sessionId?: number | null;
+  /** 面板可见：收起时推送 / PR 区块不轮询 GitHub。 */
+  visible?: boolean;
 }) {
   const t = useT();
   const repo = pickRepo(repos, selectedRoot);
@@ -112,6 +117,7 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
   // 点开的折叠目录还没拉（或写操作后清掉了）就拉一次。只在这几种时候跑，不跟 5 秒轮询（轮询换了 repo
   // 对象会进来，但拉过的不再拉）。目录已不在清单里（被放弃、加进 .gitignore、里面有文件被暂存）就不拉。
   const sessionCwdOf = (r: string) => (r === cwd ? null : cwd);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 刻意每次渲染都检查，靠 dirFiles 里已有或在途的条目去重，不会重复拉
   useEffect(() => {
     if (!repo) return;
     const r = repo.root;
@@ -473,6 +479,8 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
         {notice && <div className="scm-notice" role="status">{notice}</div>}
         {commitBlockedByFilter && !!message.trim() && <div className="scm-notice">{t.chat.scmCommitFiltered}</div>}
       </div>
+      {/* 推送 / PR / CI / 合并（二期包 5）。key 按仓库：切仓库时轮询、表单、提示都换成那个仓库的。 */}
+      <ForgeBar key={key} repo={repo} sessionCwd={sessionCwd} sessionId={sessionId} active={visible} onChanged={onChanged} />
 
       <div className="scm-tools">
         <input
@@ -561,6 +569,7 @@ function observeRect(instance: Virtualizer<HTMLDivElement, Element>, cb: (rect: 
 function VirtualRows({ items, scrollEl }: { items: readonly VRow[]; scrollEl: HTMLDivElement | null }) {
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const [margin, setMargin] = useState(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 刻意每次渲染后重量列表起点（上方提交框会变高），值没变不 setState，不会循环
   useLayoutEffect(() => {
     const body = bodyRef.current;
     if (!body || !scrollEl) return;

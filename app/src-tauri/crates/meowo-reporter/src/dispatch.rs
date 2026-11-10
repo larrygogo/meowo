@@ -495,9 +495,27 @@ fn owner_repo_from_url(url: &str) -> Option<String> {
     }
 }
 
-/// 读 <root>/.git/config，取 [remote "origin"] 的 url，解析 owner/repo。
+/// `<root>/.git` 对应的 config 文件。`.git` 是目录 → 就在里面；是文件（linked worktree、子模块）→
+/// 读 `gitdir:`（可能是相对路径），gitdir 里有 `commondir` 时 config 在公共目录（worktree，
+/// commondir 通常是相对的 `../..`），没有就在 gitdir 里（子模块）。
+fn git_config_path(root: &Path) -> Option<std::path::PathBuf> {
+    let dot_git = root.join(".git");
+    if dot_git.is_dir() {
+        return Some(dot_git.join("config"));
+    }
+    let text = std::fs::read_to_string(&dot_git).ok()?;
+    let gitdir = text.lines().find_map(|l| l.trim().strip_prefix("gitdir:"))?.trim();
+    let gitdir = root.join(gitdir); // join 遇到绝对路径会整体替换
+    match std::fs::read_to_string(gitdir.join("commondir")) {
+        Ok(common) => Some(gitdir.join(common.trim()).join("config")),
+        Err(_) => Some(gitdir.join("config")),
+    }
+}
+
+/// 读仓库 config，取 [remote "origin"] 的 url，解析 owner/repo。
+/// 包 5：worktree 会话的通知标题曾因 `.git` 是文件读不到 config，只剩目录名。
 fn owner_repo_from_git(root: &str) -> Option<String> {
-    let cfg = Path::new(root).join(".git").join("config");
+    let cfg = git_config_path(Path::new(root))?;
     let content = std::fs::read_to_string(cfg).ok()?;
     let mut in_origin = false;
     for line in content.lines() {
@@ -516,6 +534,12 @@ fn owner_repo_from_git(root: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// 供测试调用的公开包装。
+#[doc(hidden)]
+pub fn project_root_and_name_pub(cwd: &str) -> (String, String) {
+    project_root_and_name(cwd)
 }
 
 /// 供测试调用的公开包装。

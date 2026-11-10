@@ -176,6 +176,7 @@ export function PathMenu({ x, y, items, onClose }: {
     const prev = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     ref.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
     return () => {
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- 关闭时读当下的菜单节点判断焦点在不在菜单里；节点挂载期内不变，读当下值与挂载时快照等价
       if (document.activeElement === document.body || ref.current?.contains(document.activeElement)) {
         prev?.focus();
       }

@@ -3,7 +3,7 @@
 
 use crate::proc::agent_pids_snapshot;
 use crate::session_query::RESUME_GRACE_MS;
-use crate::settings::{load_settings, tr, ui_lang};
+use crate::settings::{load_settings, notify_kind_enabled, tr, ui_lang};
 #[cfg(target_os = "windows")]
 use crate::terminal::focus_session_terminal;
 #[cfg(target_os = "windows")]
@@ -639,7 +639,7 @@ fn strip_emphasis(line: &str) -> String {
 }
 
 /// 灵动岛提醒：只发主窗口。发不出去（窗口未建/已关）静默，系统通知与推送照常。
-fn emit_island_alert(
+pub(crate) fn emit_island_alert(
     app: &tauri::AppHandle,
     session_id: i64,
     kind: &str,
@@ -964,7 +964,7 @@ fn flash_chat_window_if_unfocused(app: &tauri::AppHandle) {
 
 /// 周期轮询：收尾进程已死的卡住会话；存活集合变化或有收尾时发 board-changed 让前端刷新。
 /// 同时对「连接中」会话做去重桌面通知：出错（优先）或进入待交互时各弹一次。
-/// 总开关（settings.notifications_enabled）只门控是否 .show()，去重 map 始终更新，
+/// 通知开关（总开关 + 按种类，见 notify_kind_enabled）只门控是否 .show()，去重 map 始终更新，
 /// 故中途打开开关不会把积压的旧错误/待交互一次性炸出来。启动首扫**分类播种**：
 /// 错误/待交互播种不弹（旧闻不炸）；待审批/屏幕阻塞**不播种**——这两类指纹不随时间
 /// 推进，首轮播种即永久静音，而「agent 停着等决定」无论新旧都该提醒，留到第二轮触发。
@@ -1019,12 +1019,12 @@ pub(crate) fn spawn_liveness_watch(
                     last = alive;
                 }
 
-                // 通知总开关 + 语言：每轮读一次（文件读极廉价；设置改动 5s 内生效）。
+                // 通知开关 + 语言：每轮读一次（文件读极廉价；设置改动 5s 内生效）。系统通知按种类
+                // 判定（notify_kind_enabled = 总开关 && 该种类勾着，二期 #6），种类与灵动岛同一套。
                 let settings = load_settings();
-                let notify_on = settings.notifications_enabled;
                 let lang = ui_lang(&settings);
                 let sound = settings.notification_sound;
-                // 本轮是否有新的需关注事件(与 toast 同一套指纹判定,但不受 notify_on 门控):
+                // 本轮是否有新的需关注事件(与 toast 同一套指纹判定,但不受通知开关门控):
                 // 循环末尾据此请求一次任务栏注意力。
                 let mut attention_fired = false;
 
@@ -1146,7 +1146,7 @@ pub(crate) fn spawn_liveness_watch(
                                 urgent: false,
                             });
                         }
-                        if fired && notify_on {
+                        if fired && notify_kind_enabled(&settings, "error") {
                             // 标题带项目名：多会话并行时通知中心里堆着一排相同的状态标题，
                             // 必须逐条点开正文才分得清是谁在叫（四类通知同此）。
                             show_session_notification(
@@ -1182,13 +1182,13 @@ pub(crate) fn spawn_liveness_watch(
                                 Some("gate") => "notify.pending.gate",
                                 _ => "notify.pending.approval",
                             };
+                            let kind = match s.pending_review.as_deref() {
+                                Some("question") => "question",
+                                Some("plan") => "plan",
+                                Some("gate") => "question",
+                                _ => "approval",
+                            };
                             if fired {
-                                let kind = match s.pending_review.as_deref() {
-                                    Some("question") => "question",
-                                    Some("plan") => "plan",
-                                    Some("gate") => "question",
-                                    _ => "approval",
-                                };
                                 emit_island_alert(&app, s.session.id, kind, &display_title, &s.project_name, None);
                                 crate::push::push_session(&settings, crate::push::PushMessage {
                                     title: format!("{} · {}", s.project_name, tr(lang, key)),
@@ -1197,7 +1197,7 @@ pub(crate) fn spawn_liveness_watch(
                                     urgent: true,
                                 });
                             }
-                            if fired && notify_on {
+                            if fired && notify_kind_enabled(&settings, kind) {
                                 show_session_notification(
                                     &app,
                                     format!("{} · {}", s.project_name, tr(lang, key)),
@@ -1248,7 +1248,7 @@ pub(crate) fn spawn_liveness_watch(
                                     urgent: true,
                                 });
                             }
-                            if fired && notify_on {
+                            if fired && notify_kind_enabled(&settings, "blocked") {
                                 show_session_notification(
                                     &app,
                                     format!("{} · {}", s.project_name, tr(lang, "notify.blocked")),
@@ -1300,7 +1300,7 @@ pub(crate) fn spawn_liveness_watch(
                                     urgent: false,
                                 });
                             }
-                            if fired && notify_on {
+                            if fired && notify_kind_enabled(&settings, "waiting") {
                                 show_session_notification(
                                     &app,
                                     format!("{} · {}", s.project_name, tr(lang, "notify.waiting")),

@@ -4998,6 +4998,41 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .scm-commit-btn:disabled { opacity: 0.45; cursor: default; }
 .scm-error { color: var(--cc-err); font-size: var(--text-xs); overflow-wrap: anywhere; }
 .scm-notice { color: var(--cc-text-dim); font-size: var(--text-xs); }
+/* 推送 / PR / CI / 合并（ForgeBar.tsx）：提交框下面一段，按钮和提交按钮同高，次要动作用描边款。 */
+.scm-forge { flex: 0 0 auto; display: flex; flex-direction: column; gap: var(--sp-6); padding: var(--sp-4) var(--sp-8) var(--sp-8); }
+.scm-forge-btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-6); height: 28px; padding: 0 var(--sp-10); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-sm); background: var(--cc-surface); color: var(--cc-text); font: inherit; font-size: var(--text-sm); cursor: pointer; }
+.scm-forge-btn:hover:not(:disabled) { background: var(--fill-hover); }
+.scm-forge-btn:disabled { opacity: 0.45; cursor: default; }
+.scm-forge-btn.is-ghost { color: var(--cc-text-dim); }
+.scm-pr { display: flex; flex-direction: column; gap: var(--sp-4); padding: var(--sp-6) var(--sp-8); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-sm); }
+.scm-pr-head { display: flex; align-items: center; gap: var(--sp-6); min-width: 0; padding: 0; border: 0; background: transparent; color: var(--cc-text); font: inherit; font-size: var(--text-sm); text-align: left; cursor: pointer; }
+.scm-pr-head:hover .scm-pr-title { text-decoration: underline; }
+.scm-pr-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.scm-pr-state { flex: 0 0 auto; padding: 0 var(--sp-6); border-radius: 8px; background: var(--fill-selected); color: var(--cc-text-dim); font-size: 10px; line-height: 16px; }
+.scm-pr-head.is-open .scm-pr-state { background: color-mix(in srgb, var(--cc-ok-vivid) 18%, transparent); color: var(--cc-ok-vivid); }
+.scm-pr-head.is-merged .scm-pr-state { background: color-mix(in srgb, var(--cc-accent) 18%, transparent); color: var(--cc-accent); }
+.scm-checks-line { display: flex; align-items: center; gap: var(--sp-4); font-size: var(--text-xs); color: var(--cc-text-dim); }
+.scm-checks-line > span { flex: 1; min-width: 0; }
+.scm-checks-line.is-pass { color: var(--cc-ok-vivid); }
+.scm-checks-line.is-fail { color: var(--cc-err-vivid); }
+.scm-checks-line.is-pending { color: var(--cc-warn-vivid); }
+.scm-checks { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; max-height: 180px; overflow-y: auto; }
+.scm-check { display: flex; align-items: center; gap: var(--sp-6); min-height: 22px; font-size: var(--text-xs); color: var(--cc-text); }
+.scm-check-icon { flex: 0 0 auto; color: var(--cc-text-faint); }
+.scm-check.is-pass .scm-check-icon { color: var(--cc-ok-vivid); }
+.scm-check.is-fail .scm-check-icon { color: var(--cc-err-vivid); }
+.scm-check.is-pending .scm-check-icon { color: var(--cc-warn-vivid); }
+.scm-check-name { flex: 0 1 auto; min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+span.scm-check-name { cursor: default; }
+button.scm-check-name:hover { text-decoration: underline; }
+.scm-check-wf { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cc-text-faint); }
+.scm-link-btn { margin-left: var(--sp-6); padding: 0; border: 0; background: transparent; color: var(--cc-accent); font: inherit; font-size: var(--text-xs); cursor: pointer; }
+.scm-link-btn:hover:not(:disabled) { text-decoration: underline; }
+.scm-cleanup { display: flex; flex-wrap: wrap; align-items: center; }
+.scm-merge-into { font-size: var(--text-sm); color: var(--cc-text); overflow-wrap: anywhere; }
+.scm-merge-method { display: flex; align-items: center; gap: var(--sp-6); min-height: 26px; font-size: var(--text-sm); color: var(--cc-text); cursor: pointer; }
+.scm-pr-draft { display: flex; align-items: center; gap: var(--sp-6); font-size: var(--text-sm); color: var(--cc-text-dim); cursor: pointer; }
+.scm-pr-body { min-height: 96px; resize: vertical; font: inherit; font-size: var(--text-sm); }
 
 .scm-tools { flex: 0 0 auto; display: flex; align-items: center; gap: var(--sp-6); padding-right: var(--sp-8); }
 .scm-tools .chat-diff-search { flex: 1; width: auto; min-width: 0; margin-right: 0; }
@@ -6085,6 +6120,14 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 /* 文字与按钮同一行（用户实拍：长文案 + 固定 220px 起步把按钮挤到第二行）；窄到放不下才换行。 */
 .chat-compose-gate > span { flex: 1 1 auto; min-width: 12em; }
 .chat-compose-gate-error { color: var(--cc-err-text); font-size: var(--text-base); }
+/* 意外退出时附的最后几行终端输出（二期 #7）：占满一行、等宽、限高，长了卡内滚动，不把输入框挤出窗口。 */
+.chat-compose-gate-tail {
+  flex: 1 1 100%; margin: 0; max-height: 6.5em; overflow: auto;
+  padding: var(--sp-4) var(--sp-8); border-radius: var(--radius-sm);
+  background: var(--cc-surface); color: var(--cc-text-dim);
+  font-family: var(--cc-mono); font-size: var(--text-xs); line-height: var(--leading-normal);
+  white-space: pre-wrap; word-break: break-word;
+}
 /* 动作组可缩可换行：右侧文件/更改面板分走宽度后，下拉 + 接管按钮一度顶出
    门卡右缘被卡片裁掉（0.5.15 实拍）。换行后按钮落到下一行，下拉再收窄兜底。 */
 .chat-compose-gate-actions { display: flex; align-items: center; gap: var(--sp-8); margin-left: auto; flex: 0 1 auto; min-width: 0; flex-wrap: wrap; }
@@ -7077,6 +7120,10 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .isl-clock { font-size: 20px; font-weight: 700; letter-spacing: 0.2px; font-variant-numeric: tabular-nums; }
 .isl-agents { display: flex; align-items: center; gap: 9px; }
 .isl-more { font-size: 12px; font-weight: 600; color: var(--isl-dim); }
+/* 「+N」按折进去的会话里最急的状态上色（二期 #3），颜色与会话图标的角标同源。 */
+.isl-more.is-running { color: var(--isl-ok); }
+.isl-more.is-pending { color: var(--isl-pending); }
+.isl-more.is-error { color: var(--isl-err); }
 .isl-dots { display: inline-flex; align-items: center; gap: 6px; }
 .isl-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--isl-faint); }
 .isl-dot.is-running { background: var(--isl-ok); animation: isl-pulse 1.2s ease-in-out infinite; }
@@ -7343,6 +7390,10 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
   transition: width 0.2s ease, background 0.2s ease;
 }
 .isl-dots-nav button.is-on { width: 16px; background: var(--isl-text-2); }
+/* 分页圆点按该页最急状态上色；放在 is-on 之后，当前页也保留状态色、只靠变宽表示选中。 */
+.isl-dots-nav button.is-running { background: var(--isl-ok); }
+.isl-dots-nav button.is-pending { background: var(--isl-pending); }
+.isl-dots-nav button.is-error { background: var(--isl-err); }
 
 /* 极简模式的细条：整个窗口就是一条黑边，底下一道状态色。 */
 .isl-strip {
@@ -7443,3 +7494,48 @@ pre.chat-md-plain {
   font: inherit;
   background: transparent;
 }
+
+/* ── 包 5：新建会话「在新 worktree 里开」与会话页 setup 进度条 ── */
+.wt-opt { display: flex; flex-direction: column; gap: var(--sp-6); margin: var(--sp-6) 0; font-size: var(--text-xs); color: var(--cc-text-dim); }
+.wt-opt-toggle { display: inline-flex; align-items: center; gap: var(--sp-6); width: fit-content; cursor: pointer; color: var(--cc-text-dim); }
+.wt-opt-toggle input { margin: 0; accent-color: var(--cc-accent); }
+.wt-opt-body { display: flex; flex-direction: column; gap: var(--sp-6); padding: var(--sp-8) var(--sp-10); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); }
+.wt-opt-fields { display: flex; gap: var(--sp-8); flex-wrap: wrap; }
+.wt-opt-field { display: flex; flex-direction: column; gap: var(--sp-3); flex: 1 1 140px; min-width: 0; }
+.wt-opt-label { color: var(--cc-text-faint); }
+.wt-opt-input { height: 26px; padding: 0 var(--sp-8); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-sm); background: transparent; color: var(--cc-text); font: inherit; min-width: 0; }
+.wt-opt-input:focus { outline: none; border-color: var(--cc-accent); }
+.wt-opt-meta { display: flex; flex-wrap: wrap; gap: var(--sp-4) var(--sp-10); color: var(--cc-text-faint); }
+.wt-opt-path { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wt-opt-warn { display: flex; align-items: center; gap: var(--sp-8); flex-wrap: wrap; color: var(--cc-warn); }
+.wt-opt-btn { height: 22px; padding: 0 var(--sp-8); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-sm); background: none; color: var(--cc-text-dim); font: inherit; font-size: var(--text-xs); cursor: pointer; white-space: nowrap; }
+.wt-opt-btn:hover:not(:disabled) { background: var(--fill-hover); color: var(--cc-text); }
+.wt-opt-btn:disabled { opacity: .5; cursor: default; }
+.wt-opt-btn.is-primary { border-color: var(--cc-accent); background: var(--cc-accent); color: var(--cc-accent-text); }
+.wt-setup { margin: 0 var(--sp-14) var(--sp-6); padding: var(--sp-6) var(--sp-10); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-sm); font-size: var(--text-xs); color: var(--cc-text-dim); }
+.wt-setup.is-err { border-color: color-mix(in srgb, var(--cc-err) 45%, transparent); }
+.wt-setup.is-warn { border-color: color-mix(in srgb, var(--cc-warn) 45%, transparent); }
+.wt-setup-row { display: flex; align-items: center; gap: var(--sp-8); flex-wrap: wrap; }
+.wt-setup-label { color: var(--cc-text); }
+.wt-setup.is-err .wt-setup-label { color: var(--cc-err-text); }
+.wt-setup-detail { color: var(--cc-text-faint); }
+.wt-setup-actions { display: inline-flex; gap: var(--sp-6); margin-left: auto; flex-wrap: wrap; }
+.wt-setup-progress { position: relative; height: 2px; margin-top: var(--sp-6); overflow: hidden; border-radius: 1px; background: var(--cc-border); }
+.wt-setup-progress span { position: absolute; top: 0; bottom: 0; width: 30%; background: var(--cc-accent); animation: wt-setup-indet 1.4s var(--ease-out) infinite; }
+@keyframes wt-setup-indet { 0% { left: -30%; } 100% { left: 100%; } }
+@media (prefers-reduced-motion: reduce) { .wt-setup-progress span { animation: none; left: 0; width: 100%; opacity: .5; } }
+.wt-setup-error { margin-top: var(--sp-4); color: var(--cc-err-text); }
+.wt-setup-log { max-height: 200px; margin: var(--sp-6) 0 0; padding: var(--sp-6) var(--sp-8); overflow: auto; border-radius: var(--radius-sm); background: var(--fill-hover); color: var(--cc-text-dim); font-family: var(--cc-mono); font-size: var(--fs-11); white-space: pre-wrap; overflow-wrap: anywhere; }
+.wt-trust { width: 460px; }
+.wt-trust-body { display: flex; flex-direction: column; gap: var(--sp-8); }
+.wt-trust-title { margin: 0; font-size: var(--text-base); font-weight: 600; color: var(--cc-text); }
+.wt-trust-text { margin: 0; color: var(--cc-text-dim); font-size: var(--text-xs); }
+.wt-trust-script { max-height: 240px; margin: 0; padding: var(--sp-8) var(--sp-10); overflow: auto; border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-sm); color: var(--cc-text); font-family: var(--cc-mono); font-size: var(--fs-12); white-space: pre-wrap; overflow-wrap: anywhere; }
+.wt-trust-note { margin: 0; color: var(--cc-text-faint); font-size: var(--text-xs); }
+.wt-trust-actions { display: flex; justify-content: flex-end; gap: var(--sp-8); }
+.wt-trust-actions .wt-opt-btn { height: 28px; padding: 0 var(--sp-12); }
+.chat-sidebar-wt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cc-text-faint); font-size: var(--text-xs); }
+.chat-sidebar-wt::before { content: "⑂ "; }
+.stk-wt { margin-left: var(--sp-4); color: var(--cc-text-faint); }
+.stk-wt::before { content: "· "; }
+.wt-prefix-input { width: 140px; height: 28px; }

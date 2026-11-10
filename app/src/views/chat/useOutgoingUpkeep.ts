@@ -63,7 +63,7 @@ export function useOutgoingUpkeep({ sessionId, outgoing, loading, items, acks, l
       });
     }
     // isActive 是读 ref 的稳定判断，不进依赖。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- isActive 读 ref，是稳定判断
   }, [outgoing, chatUi, sessionId]);
 
   /// 「提交」：替用户在 CLI 输入框里按一次回车，回显转回「已写入」重新计时等落盘。

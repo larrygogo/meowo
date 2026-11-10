@@ -8,7 +8,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { pathKey, unquotePath } from "../paths";
 import { COMPACTING_ACTIVITY } from "../activity";
 import { appConfirm } from "../confirm";
-import { diagLog, forkSession, agentChatUi, attachBackgroundSession, sendBackgroundPrompt, clipboardRestore, clipboardSetImage, confirmStopSession, dismissInteractiveQuestion, getChatHistory, getGitChangesOverview, getGitDiffSummary, getLiveSessionsPage, getSessionLineage, isExternallyHeld, managedTerminalBinding, managedTerminalPendingLaunch, managedTerminalScreen, managedTerminalSnapshot, openNewSessionWindow,  refreshSessionModel, refreshSessionTodos, renameSession as renameSessionCmd, savePastedAttachment, sessionLaunchSelections, setArchived as setArchivedCmd, setSessionLaunchSelection, sessionTone, startManagedTerminal, copySessionToProvider, takeoverManagedTerminal, writeManagedTerminal, type AgentId, type ChatHistory, type ChatItem, type ChatUi, type GitDiffSummaryDto, type RepoChangesDto, type LiveSession, type ModelPreset, type ModeScreenMarker, type PendingApproval } from "../api";
+import { diagLog, forkSession, agentChatUi, attachBackgroundSession, sendBackgroundPrompt, clipboardRestore, clipboardSetImage, confirmStopSession, dismissInteractiveQuestion, getChatHistory, getGitChangesOverview, getGitDiffSummary, getLiveSessionsPage, getSessionLineage, isExternallyHeld, managedTerminalBinding, managedTerminalPendingLaunch, managedTerminalScreen, managedTerminalSnapshot, openNewSessionWindow,  refreshSessionModel, refreshSessionTodos, renameSession as renameSessionCmd, savePastedAttachment, sessionLaunchSelections, setArchived as setArchivedCmd, sessionTone, startManagedTerminal, copySessionToProvider, takeoverManagedTerminal, writeManagedTerminal, type AgentId, type ChatHistory, type ChatItem, type ChatUi, type GitDiffSummaryDto, type RepoChangesDto, type LiveSession, type ModelPreset, type PendingApproval } from "../api";
 import { hasEscLayers } from "../escLayers";
 import { useTauriEvent } from "../hooks/useTauriEvent";
 import { useVisibleInterval } from "../hooks/useVisibleInterval";
@@ -26,6 +26,7 @@ import { answersRepresentable, composeAnswers, matchFocusedQuestion, matchOption
 import { detectAtToken, useAtFileCompletion, useSlashCompletion } from "./chat/composerCompletion";
 import { useApprovalChannel } from "./chat/useApprovalChannel";
 import { useModelPresets } from "./chat/useModelPresets";
+import { useModelControls } from "./chat/useModelControls";
 import { ContextMeter } from "./chat/ContextMeter";
 import { ImageRef, splitUserText } from "./chat/Message";
 import { parseUserText } from "./chat/localCommand";
@@ -46,7 +47,8 @@ import { QuestionPanels } from "./chat/QuestionPanels";
 import { RemoteTerminalKeys } from "./chat/RemoteTerminalKeys";
 import { peekSessionMeta, prefetchPending, recallHistory, rememberHistory, takePrefetch, trackPrefetch } from "./chat/historyCache";
 import { ChatTitleMenu, ChatTitlePlaceholder } from "./chat/TitleMenus";
-import { QuickSwitcher, RenameModal, ShortcutSheet, type PaletteCommand } from "./chat/WindowModals";
+import { displayKeys, QuickSwitcher, RenameModal, ShortcutSheet, type PaletteCommand } from "./chat/WindowModals";
+import { attentionTone, nextAttentionSession } from "./chat/nextAttention";
 import { isBackgroundShell, isSubagentDelegation } from "./chat/shared";
 import { Transcript, type TranscriptAgent } from "./chat/Transcript";
 import { UserMessageNav } from "./chat/UserMessageNav";
@@ -87,12 +89,13 @@ import { useOutgoingUpkeep } from "./chat/useOutgoingUpkeep";
 import { SessionAdmin } from "./chat/SessionAdmin";
 import { NewSessionPage } from "./chat/NewSessionPage";
 import { ChatTitleBar } from "./chat/ChatTitleBar";
+import { WorktreeSetupBar } from "./chat/WorktreeSetupBar";
 import { useConversationExport } from "./chat/useConversationExport";
 import { useMainPages } from "./chat/useMainPages";
 import { AddMenu } from "./chat/AddMenu";
 import { DIFF_PANEL_MIN_WIDTH, useDiffPanelWidth } from "./chat/useDiffPanelWidth";
 import { attachmentOf, base64OfBuffer, formatBytes, loadStoredDrafts, promptWithAttachments, saveStoredDraft, type Attachment } from "./chat/drafts";
-import { appendTerminalText, modeFromScreen, terminalAttention as detectTerminalAttention, visibleTerminalText, type AttentionGrammar, type TerminalAttention, type TerminalAttentionOption } from "../terminalAttention";
+import { appendTerminalText, terminalAttention as detectTerminalAttention, visibleTerminalText, type AttentionGrammar, type TerminalAttention, type TerminalAttentionOption } from "../terminalAttention";
 import { Dropdown, useMenuPopup } from "./menu";
 // 恢复时的权限改选需要 agent 的启动选项声明表（与新建会话面板同源）。
 import { listAgents, type AgentDescriptor } from "../api";
@@ -101,6 +104,8 @@ import { agentAssets, tintStyle } from "../providers";
 import appLogoUrl from "../../src-tauri/icons/64x64.png";
 
 
+/// 对话页意外退出说明附几行终端输出：够看出报错，不把输入框上方铺满。
+const CRASH_TAIL_LINES = 4;
 /** 远程刷新后回到上次看的会话(桌面开窗恒带 ?sessionId,不落到这条)。 */
 const REMOTE_LAST_SESSION_KEY = "meowo-remote-last-session";
 /** initialSessionId 若用了存储恢复,记下该 id:恢复目标可能已被删/归档,首次加载
@@ -581,6 +586,7 @@ export function ChatWindow() {
     const hasAnything =
       history.items.length > 0 || !!history.lastUserText || !!history.lastAiText;
     if (history.background && !hasAnything) setView("terminal");
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- setView 是本组件 useCallback([]) 包出来的，引用稳定
   }, [history]);
   // 后台会话(Agent 自己托管的,见 LiveSession.background):画面不在托管 PTY 表里,要先接上
   // 那条旁路 socket,终端页才有东西可看。background 每次翻真都接(后端 attach 幂等,活着
@@ -630,6 +636,8 @@ export function ChatWindow() {
   // 与侧栏入口的归档同一取序（useSessionActions 的 pickNextAfterArchive）。侧栏收起时
   // 镜像为空,退回后端现查（toggleArchived 的 fallbackNext）。
   const sidebarOrderRef = useRef<number[]>([]);
+  // 同一份镜像里「待处理或出错」的会话（侧栏按 sessionTone 判定写入），Alt+Shift+↓ 跳转用。
+  const sidebarAttentionRef = useRef<Set<number>>(new Set());
   // 归档动作与撤销条统一走 useSessionActions（C-13）：与侧栏入口同一条 set_archived、
   // 同一个「下一条」取序。对话窗不挂撤销条（用户实拍「不要显示这个」），完成的会话从
   // 侧栏「已完成」找回。
@@ -719,18 +727,17 @@ export function ChatWindow() {
     toggleDocked();
   };
   // 窗口级快捷键（均带 Ctrl/Cmd，不与输入冲突）：B=收展侧栏，1/2=对话/终端视图，
-  // N=新建会话，F=聚焦侧栏搜索（监听就在下方）；Esc 语义各归其主（审批/菜单/弹层）。
+  // N=新建会话，F=在当前内容里找字（监听就在下方）；Esc 语义各归其主（审批/菜单/弹层）。
   // 此前整个对话窗除 Esc 外零快捷键，收侧栏、切视图、新建全要鼠标。
   const toggleSidebarRef = useRef(toggleSidebar);
   toggleSidebarRef.current = toggleSidebar;
-  // Ctrl/Cmd+F 聚焦侧栏搜索框。监听曾挂在 ChatSidebar 内——侧栏一收起组件就卸载，
-  // 快捷键静默失效。收起着时先展开（窄窗开抽屉）再聚焦；终端视图内让位（焦点在
-  // xterm 里时 Ctrl+F 是终端搜索，见速查表底注）。
+  // 命令面板的「搜索会话」聚焦侧栏搜索框：收起着时先展开（窄窗开抽屉）再聚焦。
+  // Ctrl+F 不再走这里（二期 #8），搜会话的快捷键是 Ctrl+K。
   const sidebarSearchRef = useRef<HTMLInputElement | null>(null);
   const sidebarVisibleRef = useRef(sidebarVisible);
   sidebarVisibleRef.current = sidebarVisible;
-  // Ctrl+F 与命令面板的「聚焦搜索」走同一动作：桌面窄窗开抽屉，远程窄屏回列表页；
-  // 视图切换后要过一拍渲染，搜索框才挂得上。
+  // 命令面板的「聚焦搜索」：桌面窄窗开抽屉，远程窄屏回列表页；视图切换后要过一拍渲染，
+  // 搜索框才挂得上。
   const focusSidebarSearch = () => {
     if (!sidebarVisibleRef.current) toggleSidebarRef.current();
     requestAnimationFrame(() => {
@@ -738,24 +745,18 @@ export function ChatWindow() {
       sidebarSearchRef.current?.select();
     });
   };
+  // Ctrl/Cmd+F 在当前内容里找字：对话视图开对话内搜索，终端视图开终端搜索（与浏览器、
+  // VS Code、Slack 一致，二期 #8 推翻 C-17 的「F 找会话、Shift+F 找字」分工）。Ctrl+Shift+F
+  // 保留为别名。此前两个监听各管一半，Ctrl+F 那个没排除 Shift，按 Ctrl+Shift+F 会连带
+  // 展开侧栏、把焦点抢去会话搜索框。焦点已在 xterm 里时让位给它自己的键处理（同一动作）。
+  const terminalFindRef = useRef<(() => void) | null>(null);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey) || e.altKey || e.code !== "KeyF") return;
       if (document.activeElement?.closest(".managed-terminal")) return;
       e.preventDefault();
-      focusSidebarSearch();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-  // Ctrl/Cmd+Shift+F = 区内搜索（对话内容），与 Ctrl+F（侧栏会话列表）分职：一个找会话，
-  // 一个在当前会话里找字。终端里让位给 xterm 自己的搜索。
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!(e.ctrlKey || e.metaKey) || !e.shiftKey || e.altKey || e.code !== "KeyF") return;
-      if (document.activeElement?.closest(".managed-terminal")) return;
-      e.preventDefault();
-      setSearchOpen(true);
+      if (viewRef.current === "terminal") terminalFindRef.current?.();
+      else setSearchOpen(true);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -763,6 +764,7 @@ export function ChatWindow() {
   // 侧栏回调的稳定引用:ChatSidebar 已 memo,内联箭头函数每次击键都换新引用会让 memo
   // 失效——composer 每个字符都重建整张会话列表(上百条 item)就是这么来的。
   const collapseSidebar = useCallback(() => toggleSidebarRef.current(), []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 来自 useSidebarLayout 的 useState setter，引用稳定
   const closeOverlaySidebar = useCallback(() => setOverlaySidebar(false), []);
   // 远程记住最后看的会话:刷新/重开页面直接回到它(桌面开窗恒带 query,不用这条)。
   useEffect(() => {
@@ -810,6 +812,7 @@ export function ChatWindow() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- setView 是本组件 useCallback([]) 包出来的，引用稳定
   }, []);
   const [modelPickerOpen, setModelPickerOpen] = useState(false);
   // 模型市场（完整清单：搜索、收藏、切换引擎）。模型按钮先开就地菜单，「更多模型…」才进这里。
@@ -1275,7 +1278,7 @@ export function ChatWindow() {
       document.removeEventListener("visibilitychange", onVisible);
     };
     // 文法按值指纹入依赖(理由见 grammarKey);实时值走 ref,不吃陈旧闭包。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 文法按值指纹 grammarKey 入依赖，实时值走 ref
   }, [sessionId, startupAttentionMarkerKey, terminalInteractivePrompt, revealTerminalAttention, grammarKey]);
   // ↑ 取回历史消息(CLI 惯例):空输入框按 ↑ 进入浏览,↑/↓ 前后翻,翻回最新即回到空框;
   // 一旦手动编辑退出浏览态(当前文本保留成草稿)。只浏览自己发过的 user_text。
@@ -1511,6 +1514,7 @@ export function ChatWindow() {
       }
     })();
     return () => { cancelled = true; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 来自聊天滚动 hook 的 ref 对象，引用稳定
   }, [sessionId, history?.predecessorId, prefixSegments.length]);
   // 渲染序列 = 前序段（含段间与当前段的分隔条）+ 当前会话消息。分隔条的展示名在渲染期
   // 解析（agentsForOptions 可能晚于拉取到达），拿不到就退回 provider id。
@@ -1637,6 +1641,7 @@ export function ChatWindow() {
     children.observe(el, { childList: true });
     rewatch();
     return () => { sizes.disconnect(); children.disconnect(); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 来自聊天滚动 hook 的 ref 对象，引用稳定
   }, []);
 
   /// claim=true:临时负 id 被认领成真 id。这不是换会话——同一个 PTY、同一个 CLI 进程,只是
@@ -1763,6 +1768,7 @@ export function ChatWindow() {
       setLoading(false);
     }
     setSessionId(id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 这些都是拆出去的 hook 里的 useState setter 或 useCallback，引用稳定
   }, []);
   // Alt+↑/↓ 切到侧栏里的上一条/下一条会话（对照 Kimi 的「上一条/下一条」）：按用户眼前的
   // 顺序走（分组、筛选、排序都算上，同归档跳转用的那份镜像），挨个过一遍在跑的会话不必摸鼠标。
@@ -1784,6 +1790,43 @@ export function ChatWindow() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 来自 useMainPages 的 useCallback([])，引用稳定
+  }, [resetTo]);
+  // Alt/Option+Shift+↓ 跳到下一个待批准、提问或出错的会话（二期 #5，leader 定：按侧栏顺序、
+  // 循环、不另起视图）。贴纸下线后没有「等待中」聚合入口，多开时挨个点侧栏找谁在等太慢。
+  // 侧栏收起时镜像为空，退回后端同一列表现查（默认手动排序，与侧栏没调过排序时一致）。
+  // 终端里让位给 shell 的 Alt 组合键，同 Alt+↑/↓。
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.altKey || !e.shiftKey || e.ctrlKey || e.metaKey || e.isComposing || e.key !== "ArrowDown") return;
+      if (document.activeElement?.closest(".managed-terminal")) return;
+      e.preventDefault();
+      const go = (next: number | null) => {
+        if (next == null) {
+          setCopyNotice({ text: tRef.current.chat.noPendingSession });
+          return;
+        }
+        leavePages();
+        resetTo(next);
+      };
+      const order = sidebarOrderRef.current;
+      if (order.length > 0) {
+        const attention = sidebarAttentionRef.current;
+        go(nextAttentionSession(order, (id) => attention.has(id), activeSessionRef.current));
+        return;
+      }
+      getLiveSessionsPage("all", null, null, 200)
+        .then((page) => {
+          const needs = new Set(page.items
+            .filter((row) => attentionTone(sessionTone(row.connected, row.session.status, row.pending_review, row.errored, row.busy_subagents, row.screen_state)))
+            .map((row) => row.session.id));
+          go(nextAttentionSession(page.items.map((row) => row.session.id), (id) => needs.has(id), activeSessionRef.current));
+        })
+        .catch(() => {});
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 来自 useMainPages 的 useCallback([])，引用稳定
   }, [resetTo]);
   // 窄窗抽屉里的选中:先收抽屉再切(resetTo 自带同 id 守卫)。稳定引用给 memo 的
   // ChatSidebar 用,理由见 collapseSidebar。
@@ -1991,6 +2034,7 @@ export function ChatWindow() {
       if (cancelled) fn(); else un = fn;
     }).catch(() => {});
     return () => { cancelled = true; un?.(); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 来自 useMainPages 的 useCallback([])，引用稳定
   }, [resetTo]);
 
   // 题面的轮询兜底在 useApprovalChannel 的 pendingInteraction 合并轮询里（同一次 IPC
@@ -2030,6 +2074,7 @@ export function ChatWindow() {
       setSendError(remoteUi() ? t.chat.questionExpiredRemote : t.chat.questionExpired);
     }, 180_000);
     return () => window.clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 来自 useApprovalChannel 的 useState setter 与 ref，引用稳定
   }, [structuredQuestion, sessionId, t]);
   // 作答卡不显示倒计时：提问不限时（用户要求 2026-11-09，broker 等待上限见 QUESTION_WAIT_SECS），
   // 一直等到作答、「去终端页」交还或 agent 取消。
@@ -2077,12 +2122,14 @@ export function ChatWindow() {
       setDismissedQuestion(null);
       if (sessionId > 0) void dismissInteractiveQuestion(sessionId).catch(() => {});
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 来自 useApprovalChannel 的 useState setter 与 ref，引用稳定
   }, [watchedQuestion, structuredQuestion, dismissedQuestion, sessionId, history, items]);
 
   useEffect(() => {
     // transcript 的 pendingReview 比 broker 的实时状态慢一拍。只有历史状态确实清空后，
     // 才重新启用“去终端处理”的兼容提示，避免 GUI 审批完成时闪一下旧提示。
     if (!history?.pendingReview) setBrokerOwnsReview(false);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 来自 useApprovalChannel 的 useState setter 与 ref，引用稳定
   }, [history?.pendingReview]);
 
   // 终端页会把焦点交给 xterm（且 footer 整个卸载，回来的 textarea 是全新节点）；
@@ -2184,6 +2231,7 @@ export function ChatWindow() {
     }, { root: scrollRef.current ?? null, rootMargin: "200px 0px 0px 0px" });
     observer.observe(node);
     return () => observer.disconnect();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 来自聊天滚动 hook 的 ref 对象，引用稳定
   }, [hasEarlier, loadingEarlier, earlierError, loading]);
 
   // 面板终端里有程序在跑时先确认（标题栏按钮与系统原生关闭都经过这里，见 windowClose.ts）。
@@ -2195,12 +2243,14 @@ export function ChatWindow() {
     { id: "view-chat", label: t.chat.cmdViewChat, keys: "Ctrl+1" },
     { id: "view-terminal", label: t.chat.cmdViewTerminal, keys: "Ctrl+2" },
     { id: "toggle-sidebar", label: t.chat.shortcutSidebar, keys: "Ctrl+B" },
-    { id: "focus-search", label: t.chat.shortcutSearch, keys: "Ctrl+F" },
-    { id: "search-transcript", label: t.chat.searchTranscript, keys: "Ctrl+Shift+F" },
+    // 搜会话没有单独的快捷键了：命令面板（Ctrl+K）本身就能搜会话（二期 #8）。
+    { id: "focus-search", label: t.chat.shortcutSearch },
+    { id: "search-transcript", label: t.chat.searchTranscript, keys: "Ctrl+F" },
     { id: "jump-latest", label: t.chat.jumpLatest },
     { id: "show-shortcuts", label: t.chat.cmdShowShortcuts, keys: "?" },
     { id: "open-settings", label: t.sticker.openSettings },
   ];
+  for (const cmd of paletteCommands) if (cmd.keys) cmd.keys = displayKeys(cmd.keys);
   const runPaletteCommand = (id: string) => {
     switch (id) {
       case "new-session": void openNewSessionWindow().catch(() => {}); break;
@@ -3061,206 +3111,11 @@ export function ChatWindow() {
     setTerminalAttention(null);
     void writeManagedTerminal(sessionId, "\x1b").catch(() => {});
   };
-  const selectModel = async (preset: ModelPreset) => {
-    const command = chatUi?.model_select_command;
-    if (!command || toneRef.current === "running") { setSendError(t.chat.menuBusy); return; }
-    await withSendGuard(async () => {
-      const before = await managedTerminalSnapshot(sessionId);
-      if (chatUi?.draft_stash) await stashComposerDraft(sessionId, chatUi.draft_stash);
-      await submitToTerminal(sessionId, `${command} ${preset.id}`, attentionAbort);
-      let since = before.endOffset;
-      let tail = "";
-      const decoder = new TextDecoder();
-      let confirmed = false;
-      for (let attempt = 0; attempt < 12 && !confirmed; attempt += 1) {
-        await new Promise((resolve) => window.setTimeout(resolve, 200));
-        if (!isCurrentOperation()) return false;
-        const snapshot = await managedTerminalSnapshot(sessionId, since);
-        if (!snapshot.active || snapshot.endOffset < since) break;
-        since = snapshot.endOffset;
-        tail = appendTerminalText(tail, snapshot.data, decoder);
-        // 只认本次命令之后 CLI 自己的确认行，菜单列表中出现模型名不算切换成功。
-        confirmed = visibleTerminalText(tail).split(/\r?\n/).some((line) => {
-          if (!/set model to|switched (?:the )?model to|model (?:changed|switched) to/i.test(line)) return false;
-          const value = line.toLowerCase().replace(/[^a-z0-9]/g, "");
-          const id = preset.id.toLowerCase().replace(/[^a-z0-9]/g, "");
-          return value.includes(id);
-        });
-      }
-      if (!confirmed) { setSendError(t.chat.modelSwitchUnconfirmed); return false; }
-      await setSessionLaunchSelection(sessionId, "model", preset.id);
-      if (isCurrentOperation()) setStoredSelections((prev) => ({ ...prev, model: preset.id }));
-      return true;
-    });
-  };
-  /// 切换思考程度（对照 Kimi 模型菜单的「思考」分段）：写 `/effort <档位>`，只认本次之后
-  /// CLI 自己的确认行 `Set effort level to <Level>`；被拒（如当前模型不支持 Max）时把 CLI
-  /// 的原话带给用户。确认后乐观写进 history，statusline 下一帧会用同一个值覆盖。
-  const [effortBusy, setEffortBusy] = useState(false);
-  const selectEffort = async (level: string) => {
-    const command = chatUi?.effort?.command;
-    if (!command || toneRef.current === "running") { setSendError(t.chat.menuBusy); return; }
-    setEffortBusy(true);
-    try {
-      await withSendGuard(async () => {
-        const before = await managedTerminalSnapshot(sessionId);
-        if (chatUi?.draft_stash) await stashComposerDraft(sessionId, chatUi.draft_stash);
-        await submitToTerminal(sessionId, `${command} ${level}`, attentionAbort);
-        let since = before.endOffset;
-        let tail = "";
-        const decoder = new TextDecoder();
-        let outcome: "ok" | string | null = null;
-        for (let attempt = 0; attempt < 12 && outcome === null; attempt += 1) {
-          await new Promise((resolve) => window.setTimeout(resolve, 200));
-          if (!isCurrentOperation()) return false;
-          const snapshot = await managedTerminalSnapshot(sessionId, since);
-          if (!snapshot.active || snapshot.endOffset < since) break;
-          since = snapshot.endOffset;
-          tail = appendTerminalText(tail, snapshot.data, decoder);
-          // 确认/拒绝文案由插件声明（claude `Set effort level to X`、kimi `Thinking set to X.`）。
-          const confirm = new RegExp(chatUi.effort!.confirm_pattern, "i");
-          const reject = new RegExp(chatUi.effort!.reject_pattern, "i");
-          for (const line of visibleTerminalText(tail).split(/\r?\n/)) {
-            const set = confirm.exec(line);
-            if (set && set[1].toLowerCase() === level) { outcome = "ok"; break; }
-            if (reject.test(line)) { outcome = line.trim(); break; }
-          }
-        }
-        if (outcome === null) { setSendError(t.chat.effortUnconfirmed); return false; }
-        if (outcome !== "ok") { setSendError(t.chat.effortRejected(outcome)); return false; }
-        if (isCurrentOperation()) setHistory((current) => current ? { ...current, effort: level } : current);
-        return true;
-      });
-    } finally {
-      setEffortBusy(false);
-    }
-  };
-  /// 当前模型可选的思考档位：插件给了静态表就用（claude），否则取模型目录里当前模型声明的
-  /// （kimi 的 support_efforts，随模型变）。
-  const effortLevels: readonly string[] = !chatUi?.effort ? []
-    : chatUi.effort.levels.length > 0 ? chatUi.effort.levels
-    : modelCatalog.find((entry) => entry.id === currentPresetId(modelCatalog, history?.model))?.efforts ?? [];
-  /// 把某维度的显示值写进 history（乐观更新与屏幕回显共用）。transcript 增量随后到达时
-  /// 会覆盖为同一个值（或纠正我们），合并逻辑见轮询处。
-  const applyModeValue = (dimension: string, value: string) => {
-    setHistory((current) => {
-      if (!current) return current;
-      const agentModes = [...current.agentModes];
-      const index = agentModes.findIndex((mode) => mode.dimension === dimension);
-      const update = { dimension, value };
-      if (index >= 0) agentModes[index] = update;
-      else agentModes.push(update);
-      return { ...current, agentModes };
-    });
-  };
-  /// 屏幕回显的代际计数：新一次模式操作作废还在跑的旧轮询，避免旧屏幕的滞后帧倒灌。
-  const modeEchoSeqRef = useRef(0);
-  // 换会话/卸载同样作废：旧会话的回显不能写进新会话的 history。
-  useEffect(() => () => { modeEchoSeqRef.current += 1; }, [sessionId]);
-  /// cycle 是盲切，而 claude 只在活跃回合往 transcript 写模式记录——空闲时切换（恰是用户
-  /// 切权限模式的典型时机）没有任何增量可等，标签会一直冻在旧值上，看起来就是「点了没效果」。
-  /// 补救：写入后短暂轮询 PTY 屏幕，用插件声明的指示文案（provider 文档承诺的稳定文本）
-  /// 识别落点。屏幕就是 CLI 自己画的权威状态，识别到什么就显示什么；识别不到则保持现状，
-  /// 等 transcript 下一条记录兜底。
-  /// 读一次屏幕回显：在 `budgetMs` 内轮询 PTY，识别到模式值就立刻返回（识别不到返回 null）。
-  /// 供 echoModeFromScreen（观察）与 cycleToMode（逐步逼近目标）共用同一套识别口径。
-  const readModeEcho = async (markers: ModeScreenMarker[], baseline: number, budgetMs: number): Promise<string | null> => {
-    if (markers.length === 0) return null;
-    const decoder = new TextDecoder();
-    let tail = "";
-    let since = baseline;
-    const startedAt = Date.now();
-    while (Date.now() - startedAt < budgetMs) {
-      let snapshot;
-      try { snapshot = await managedTerminalSnapshot(sessionId, since); } catch { return null; }
-      if (!snapshot?.active) return null;
-      if (snapshot.endOffset < since) { since = 0; tail = ""; continue; }
-      since = snapshot.endOffset;
-      tail = appendTerminalText(tail, snapshot.data, decoder);
-      const value = modeFromScreen(visibleTerminalText(tail), markers);
-      if (value) return value;
-      await new Promise((resolve) => window.setTimeout(resolve, 120));
-    }
-    return null;
-  };
-  /// 循环按 cycle 键直到落到目标模式：claude 的权限模式只有「切下一个」的快捷键，没有
-  /// 直达某个值的办法，但用户要的是「选那个模式」而不是「按 N 次」。每按一次读一次屏幕
-  /// 回显确认落点，最多绕一圈（模式数）——转满一圈还没到说明该模式在当前账号/启动参数下
-  /// 不可用（插件注释已声明模式集合会变），此时停手并说明，不再空转。
-  const cycleToMode = async (dimension: string, target: string, cycleInput: string, markers: ModeScreenMarker[]) => {
-    if (sending) return;
-    await withSendGuard(async () => {
-      const seq = ++modeEchoSeqRef.current;
-      for (let step = 0; step < Math.max(1, markers.length); step += 1) {
-        if (modeEchoSeqRef.current !== seq) return true; // 换会话/新操作作废本轮
-        let base = 0;
-        try { base = (await managedTerminalSnapshot(sessionId, 0))?.endOffset ?? 0; } catch { /* 从 0 起扫 */ }
-        await writeManagedTerminal(sessionId, cycleInput);
-        const value = await readModeEcho(markers, base, 1_500);
-        if (value) applyModeValue(dimension, value);
-        if (value === target) return true;
-      }
-      setSendError(t.chat.modeUnreachable);
-      return true;
-    });
-  };
-  const echoModeFromScreen = async (dimension: string, markers: ModeScreenMarker[], baseline: number) => {
-    if (markers.length === 0) return;
-    const seq = ++modeEchoSeqRef.current;
-    const decoder = new TextDecoder();
-    let tail = "";
-    // 从**按键之前**的偏移起扫(baseline 由 changeMode 在写入前采):回显必然落在其后,
-    // 旧指示天然出局——扫 backlog 会把切换前的旧指示当回显,把乐观值/transcript 刚落的
-    // 正确模式覆写回去;而「循环启动时」当基线又会吞掉写入与启动之间已到达的重绘。
-    let since = baseline;
-    const startedAt = Date.now();
-    while (Date.now() - startedAt < 3_000) {
-      let snapshot;
-      try { snapshot = await managedTerminalSnapshot(sessionId, since); } catch { return; }
-      if (modeEchoSeqRef.current !== seq) return;
-      if (!snapshot?.active) return;
-      // 偏移回绕(PTY 被就地重启复位):与发送/探测循环同款守卫,从头扫——新进程的
-      // 首屏重绘就带着当前模式指示,不会误认旧进程残影。
-      if (snapshot.endOffset < since) {
-        since = 0;
-        tail = "";
-        continue;
-      }
-      since = snapshot.endOffset;
-      tail = appendTerminalText(tail, snapshot.data, decoder);
-      const value = modeFromScreen(visibleTerminalText(tail), markers);
-      if (value) applyModeValue(dimension, value);
-      await new Promise((resolve) => window.setTimeout(resolve, 250));
-      if (modeEchoSeqRef.current !== seq) return;
-    }
-  };
-  /// 模式动作完全由插件描述：快捷键原样发送，命令则用和人工输入一致的 paste + Enter 序列。
-  const changeMode = async (dimension: string, inputs: { data: string; submit: boolean }[], optimisticValue?: string, screenMarkers: ModeScreenMarker[] = []) => {
-    if (inputs.length === 0 || sending) return;
-    if (toneRef.current === "running") { setSendError(t.chat.menuBusy); return; }
-    // 若因外部占用被拒，接管后重放的是这同一个动作。
-    retryRef.current = () => changeMode(dimension, inputs, optimisticValue, screenMarkers);
-    // 守卫与发送同一套(withSendGuard):交后端权威判定,被拒才给接管入口。
-    await withSendGuard(async () => {
-      // 回显基线:按键**之前**的输出末尾偏移。在写入前采,回显循环从它之后扫——
-      // 见 echoModeFromScreen 的注释。拿不到就从 0 起扫,宁可多扫不可漏扫。
-      let echoBase = 0;
-      try { echoBase = (await managedTerminalSnapshot(sessionId, 0))?.endOffset ?? 0; } catch { /* noop */ }
-      for (const input of inputs) {
-        const cancelled = attentionAbort();
-        if (cancelled) throw new Error(cancelled);
-        // submit 的动作（如 `/plan on`）走同一套提交逻辑，消除「只换行不提交」的竞态；
-        // 非 submit 的是原始按键序列（如循环快捷键），原样写、不追回车。
-        if (input.submit) await submitToTerminal(sessionId, input.data, attentionAbort);
-        else await writeManagedTerminal(sessionId, input.data);
-      }
-      if (!isCurrentOperation()) return false;
-
-      // 不 await：回显是后台观察，不该把发送按钮按住 3 秒。
-      void echoModeFromScreen(dimension, screenMarkers, echoBase);
-      return true;
-    });
-  };
+  // 模型/思考档位/模式的切换动作在 chat/useModelControls.ts；守卫、会话判定与 setter 由这里注入。
+  const { selectModel, selectEffort, effortBusy, effortLevels, cycleToMode, changeMode } = useModelControls({
+    sessionId, chatUi, model: history?.model, modelCatalog, sending, toneRef, retryRef,
+    withSendGuard, attentionAbort, isCurrentOperation, setSendError, setHistory, setStoredSelections,
+  });
   const chooseAttachments = async () => {
     if (remoteUi()) {
       // 手机没有系统文件对话框(plugin-dialog 也拿不到源路径):用原生 <input type=file> 取 File,
@@ -3414,6 +3269,7 @@ export function ChatWindow() {
       setDragHover(event.payload.type === "enter");
     }).then((fn) => { if (cancelled) fn(); else un = fn; }).catch(() => {});
     return () => { cancelled = true; un?.(); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 来自 useMainPages 的 ref 与 useCallback([])，引用稳定
   }, []);
   const decideApproval = async (choice: string) => {
     if (!approval || resolvingApproval) return;
@@ -3443,6 +3299,25 @@ export function ChatWindow() {
   // background 例外:它没有终端可接管,composer 是唯一出口(发送时后端另有拒绝话术)。
   const composerGated = !!history && history.supported && !history.background
     && history.ptyManaged === false && (externalRunning || history.status === "ended");
+  // CLI 意外退出（二期 #7）：已结束的会话问一次托管终端的定格快照，后端判定为意外退出
+  //（退出码非 0、不是用户结束、不在重启窗口内）就把「会话已结束」换成退出码 + 最后几行输出。
+  // since 给最大值：只要退出信息，不要整段 1MiB 的输出回放。
+  const endedHere = composerGated && !externalRunning && sessionId > 0;
+  const [crash, setCrash] = useState<{ id: number; code: number; tail: string | null } | null>(null);
+  useEffect(() => {
+    if (!endedHere) return;
+    let cancelled = false;
+    managedTerminalSnapshot(sessionId, Number.MAX_SAFE_INTEGER)
+      .then((snap) => {
+        if (cancelled || !snap.exited || !snap.exitUnexpected || snap.exitCode == null) return;
+        const lines = (snap.exitTail ?? "").split(/\r?\n/).map((line) => line.trimEnd()).filter(Boolean);
+        setCrash({ id: sessionId, code: snap.exitCode, tail: lines.length > 0 ? lines.slice(-CRASH_TAIL_LINES).join("\n") : null });
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [endedHere, sessionId]);
+  // 换了会话或会话恢复了就不再显示（id 对不上即作废，省一次清零的 effect）。
+  const crashShown = endedHere && crash?.id === sessionId ? crash : null;
   // 已被跨 provider 切换接替的会话：只读回看。禁发优先于其它门卡——「恢复会话」对它
   // 是错误动作（会让接续链分叉，store 层也会拒绝再次接替），唯一正确的出口是去链尾。
   const supersededTo = history?.supersededBy ?? null;
@@ -3898,6 +3773,7 @@ export function ChatWindow() {
     try { localStorage.removeItem(REMOTE_LAST_SESSION_KEY); } catch { /* 隐私模式退化为每次手选 */ }
     setOverlaySidebar(false);
     resetTo(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 来自 useSidebarLayout 的 useState setter，引用稳定
   }, [resetTo]);
   // 手机「列表 → 会话」接上浏览器历史（用户问「会话页向右滑能不能返回」）：进会话压一条
   // 历史记录，iPhone Safari 的左缘右滑、安卓返回键就回到会话列表——此前导航全在页内，
@@ -3997,6 +3873,7 @@ export function ChatWindow() {
               newSessionActive={newSessionOpen != null}
               approvalAwaitingIds={approvalAwaitingIds}
               visibleOrderRef={sidebarOrderRef}
+              attentionIdsRef={sidebarAttentionRef}
               searchInputRef={sidebarSearchRef}
               onSelect={selectFromOverlay}
               onPrefetch={prefetchSession}
@@ -4016,6 +3893,7 @@ export function ChatWindow() {
         newSessionActive={newSessionOpen != null}
         approvalAwaitingIds={approvalAwaitingIds}
         visibleOrderRef={sidebarOrderRef}
+        attentionIdsRef={sidebarAttentionRef}
         searchInputRef={sidebarSearchRef}
         width={sidebarWidth}
         onSelect={selectSession}
@@ -4127,6 +4005,8 @@ export function ChatWindow() {
         onToggleTerminal={() => { const next = view === "terminal" ? "chat" : "terminal"; rememberViewPref(next); setView(next); }}
         onError={setSendError}
       />
+      {/* 包 5：在新 worktree 里开的会话，setup 后台跑的进度（看日志、跳过、重跑）。 */}
+      <WorktreeSetupBar cwd={sessionId !== 0 ? cwd ?? null : null} />
       {/* 两个视图都留在树上、用 CSS 切换可见性：此前三元表达式会在每次切 tab 时
           dispose + new Terminal()，还要把整个 backlog 重传并让 xterm 重放一遍 ANSI。
           终端侧懒挂载（terminalMounted），纯对话的用户不用白付 xterm 的创建成本。 */}
@@ -4561,6 +4441,10 @@ export function ChatWindow() {
               <button type="button" onClick={() => setView("chat")}>{t.chat.terminalApprovalGo}</button>
             </div>
           )}
+          {/* 一次性提示（如 Alt+Shift+↓ 没有可跳的会话）：对话页的提示挂在输入框上方，终端视图没有输入框。 */}
+          {view === "terminal" && copyNotice && (
+            <div className="chat-terminal-approval" role="status"><span>{copyNotice.text}</span></div>
+          )}
           <Suspense fallback={null}>
           <ManagedTerminal
             // 不换 key:临时 id→真实 id 的重绑与换会话都由组件内部 sessionChangedRef
@@ -4593,6 +4477,7 @@ export function ChatWindow() {
             gridRef={terminalGridRef}
             // T-14：外部视图在线初值（快照回报）；实时增删走 pty-external-viewers 事件。
             onExternalViewers={setExternalViewersOnline}
+            findRef={terminalFindRef}
           />
           </Suspense>
         </div>
@@ -4661,7 +4546,8 @@ export function ChatWindow() {
           </div>
         </div>}
         {supersededTo == null && composerGated && <div className="chat-compose-gate">
-          <span>{externalRunning ? t.chat.sendNeedsTakeover : t.chat.composerGateEnded}</span>
+          <span>{externalRunning ? t.chat.sendNeedsTakeover : crashShown ? t.chat.agentCrashed(crashShown.code) : t.chat.composerGateEnded}</span>
+          {crashShown?.tail && <pre className="chat-compose-gate-tail">{crashShown.tail}</pre>}
           {/* 恢复失败的原因就地可见（接管态的主文案已是同一句，不重复）。 */}
           {sendError && sendError !== t.chat.sendNeedsTakeover && (
             <span className="chat-compose-gate-error" role="alert">{sendError}</span>
@@ -5379,6 +5265,7 @@ export function ChatWindow() {
                 selectedRoot={scmRoot}
                 onSelectRoot={setScmRoot}
                 onChanged={refreshChanges}
+                sessionId={sessionId}
               />
             )
             : (
@@ -5401,6 +5288,7 @@ export function ChatWindow() {
                 selectedRoot={scmRoot}
                 onSelectRoot={setScmRoot}
                 onChanged={refreshChanges}
+                sessionId={sessionId}
               />
             )}
           </Suspense>

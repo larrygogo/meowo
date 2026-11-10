@@ -13,8 +13,11 @@ mod diaglog;
 mod editors;
 #[cfg(target_os = "windows")]
 mod envpath;
+mod exit_report;
+mod forge;
 mod fsutil;
 mod git;
+mod git_target;
 mod island;
 mod lead;
 // 只有 macOS 的菜单栏用；放在 macos 模块外是为了 Windows 开发机上也能跑单测。
@@ -58,6 +61,7 @@ mod terminal;
 mod watch;
 mod window;
 mod worktree;
+mod wtnew;
 
 // run() 的 generate_handler 以裸标识符登记这些命令，须在 crate 根作用域可见。
 use chat::{
@@ -1308,6 +1312,17 @@ pub fn run() {
             worktree::worktree_status,
             worktree::remove_session_worktree,
             worktree::list_cleanable_worktrees,
+            wtnew::worktree_preview,
+            wtnew::worktree_create,
+            wtnew::worktree_setup,
+            wtnew::worktree_setup_trust,
+            forge::git_push,
+            forge::git_push_start,
+            forge::git_job_status,
+            forge::git_forge_status,
+            forge::gh_pr_create,
+            forge::gh_pr_merge,
+            forge::forge_choose_repo,
             list_dir_entries,
             read_file_text,
             read_image_preview,

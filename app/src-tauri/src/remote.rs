@@ -48,6 +48,11 @@
 //! 2026-11-10 起摘要把文件多的未跟踪目录折成一条 `dir/`：点开它的 `git_untracked_dir_files` 放行，
 //! 目录条目、目录里的文件同样由命令按此刻的清单校验；同一行的「加入 .gitignore」（`git_ignore_dir`）
 //! 改的是仓库配置文件，不放行。
+//! 2026-11-10（leader 定：手机端全部放开）：推送 / 开 PR / 看 CI / 合并（`git_push_start` /
+//! `git_job_status` / `git_forge_status` / `gh_pr_create` / `gh_pr_merge`）放行，目录收口同上；推送只给
+//! 后台任务形式（手机 RPC 等不了首推），合并前后端重查检查与头提交（forge.rs），二次确认在界面上。
+//! 同日做空第二轮：多个 GitHub 远端时选 PR 开在哪个仓库（`forge_choose_repo`，只写 ~/.meowo/forge.json
+//! 里这个仓库的一条选择）放行，手机上也能选，不推用户回电脑或终端。
 //!
 //! 例外（2026-11-09 用户决定，Lead 工作流关卡 B）：`lead_task_snapshot` / `answer_lead_gate`
 //! 放行，供手机看任务进度、回答关卡。两道收口：目录先过 `ensure_session_dir`；后端只按约定
@@ -76,9 +81,12 @@
 //!
 //! 反例教训（2026-08-31）：api.ts 给 `newSession` 加 `extraDirs` 时没同步桥臂，
 //! deny_unknown_fields 把手机端每次新建会话都打成 400（字段空也发 `[]`，无可选豁免）。
-//! **改 api.ts 的 invoke 传参时必须同步本文件对应臂**——契约仍是人肉对齐，但有机制
-//! 兜底：tests::every_bridged_command_sample_payload_parses 给每条臂钉了一份镜像
-//! api.ts 实参的样例 payload，api.ts 加键后同步样例、桥臂没跟上即红。
+//! **改 api.ts 的 invoke 传参时必须同步对应臂的参数结构体**（meowo_protocol::bridge）。
+//! 2026-11-10 起契约不再人肉对齐：结构体经 ts-rs 导出 `generated/contracts/bridge/*.ts`，
+//! api.ts 每个桥接 invoke 写 `satisfies <结构体名>`，多键、少必填键 tsc 直接报错；
+//! tests::api_ts_bridged_invokes_satisfy_their_arm_args 钉住「每个带参臂都有 satisfies 且类型名对得上」。
+//! tests::every_bridged_command_sample_payload_parses 的样例 payload 保留，管的是 null/缺键这类
+//! 运行时形态（类型层管不到）。
 
 use std::path::{Path as FsPath, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -121,6 +129,12 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     "worktree_status",
     "remove_session_worktree",
     "list_cleanable_worktrees",
+    // 在新 worktree 里开会话（包 5，leader 定手机端全部放开）：和 new_session 同级，目录由用户选。
+    // setup 脚本要先在确认框里看过原文、点了信任才会跑（worktree_setup_trust），手机端同样弹确认。
+    "worktree_preview",
+    "worktree_create",
+    "worktree_setup",
+    "worktree_setup_trust",
     // 侧栏手动排序（手机长按拖动）：只改顺序，不碰会话内容与其它设置。
     "move_session_rank",
     "set_workspace_order",
@@ -180,6 +194,15 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     // 点开折叠的未跟踪目录看其中的文件（只读，目录收口同 git_file_diff，目录条目由命令自己校验）。
     // 同目录的「加入 .gitignore」（git_ignore_dir）不放行，见拒绝名单测试。
     "git_untracked_dir_files",
+    // 推送 / 开 PR / 看 CI / 合并（2026-11-10 leader 定：手机端全部放开，关卡 Q-mobile-scope-2）。收口同
+    // 「更改」面板写操作：目录必须是会话目录或它的相关仓库。推送走后台任务（手机 RPC 等不了首推的
+    // 几十秒），同步的 git_push 不放行。合并的「二次确认、CI 不全绿禁用」在界面上，后端合并前另外重判检查。
+    "git_push_start",
+    "git_job_status",
+    "git_forge_status",
+    "gh_pr_create",
+    "gh_pr_merge",
+    "forge_choose_repo",
     // 输入框 `@` 补全（2026-11-04 用户决定放行）：只回文件/目录名，不读内容；目录收口同改动列表。
     "file_mention_candidates",
     // Lead 工作流（模块头「例外（2026-11-09）」）
@@ -797,111 +820,10 @@ async fn rpc_handler(
     dispatch(&ctx.app, &command, &body).await
 }
 
-/// 各臂参数结构体（模块级）。原先是 dispatch 各臂内的匿名 `struct A`，测试够不着；
-/// 机械外提（字段、serde 属性一字未改）只为让「样例 payload → 不 400」契约测试拿得到
-/// 类型（见 tests::every_bridged_command_sample_payload_parses）。camelCase +
-/// deny_unknown_fields 由宏统一强制——新臂手写漏了 deny_unknown_fields 会退化成
-/// 静默丢键，不许再有这个自由度。
-macro_rules! bridged_args {
-    ($name:ident { $( $(#[$attr:meta])* $field:ident : $ty:ty ),* $(,)? }) => {
-        #[derive(serde::Deserialize)]
-        #[serde(rename_all = "camelCase", deny_unknown_fields)]
-        struct $name {
-            $( $(#[$attr])* $field : $ty, )*
-        }
-    };
-}
-
-// sessionId 单参臂共用。
-bridged_args!(SessionArg { session_id: i64 });
-
-bridged_args!(GetLiveSessionsPageArgs {
-    filter: String,
-    #[serde(default)]
-    search: Option<String>,
-    #[serde(default)]
-    cwd: Option<String>,
-    #[serde(default)]
-    before_last_event_at: Option<i64>,
-    #[serde(default)]
-    before_id: Option<i64>,
-    limit: usize,
-    #[serde(default)]
-    include_foreign: Option<bool>,
-    #[serde(default)]
-    include_pending: Option<bool>,
-    // 对话侧栏按创建时间排时才发（api.ts 只在 "created" 时带这个键）。
-    #[serde(default)]
-    order: Option<String>
-});
-
-bridged_args!(GetSessionAdminPageArgs {
-    workspaces: Vec<String>,
-    #[serde(default)]
-    status: Option<String>,
-    #[serde(default)]
-    updated_before_days: Option<u32>,
-    page: usize,
-    page_size: usize
-});
-
-bridged_args!(SearchChatTranscriptsArgs { query: String });
-
-bridged_args!(RecentCwdsArgs {
-    limit: usize,
-    #[serde(default)]
-    include_hidden: Option<bool>
-});
-bridged_args!(HideWorkspaceArgs { cwd: String });
-
-bridged_args!(GitDiffSummaryArgs { cwd: String });
-bridged_args!(FileMentionCandidatesArgs { cwd: String, query: String });
-bridged_args!(LeadTaskSnapshotArgs {
-    cwd: String,
-    #[serde(default)]
-    session: Option<String>
-});
-bridged_args!(AnswerLeadGateArgs { cwd: String, gate_id: String, choice: String, note: String });
-bridged_args!(ForkSessionArgs { session_id: i64, cols: u16, rows: u16 });
-
-bridged_args!(GitFileDiffArgs {
-    cwd: String,
-    path: String,
-    untracked: bool,
-    #[serde(default)]
-    base: Option<String>,
-    #[serde(default)]
-    session_cwd: Option<String>
-});
-bridged_args!(GitChangesOverviewArgs {
-    cwd: String,
-    touched: Vec<String>,
-    #[serde(default)]
-    commands: Option<Vec<String>>,
-    #[serde(default)]
-    detail: Option<String>
-});
-bridged_args!(GitPathsArgs {
-    cwd: String,
-    paths: Vec<String>,
-    #[serde(default)]
-    session_cwd: Option<String>
-});
-bridged_args!(GitDirArgs {
-    cwd: String,
-    path: String,
-    #[serde(default)]
-    session_cwd: Option<String>
-});
-bridged_args!(GitCommitArgs {
-    cwd: String,
-    message: String,
-    all: bool,
-    #[serde(default)]
-    paths: Option<Vec<String>>,
-    #[serde(default)]
-    session_cwd: Option<String>
-});
+// 各臂参数结构体住在 meowo_protocol::bridge（camelCase + deny_unknown_fields 由那边的
+// bridged_args! 宏统一强制），ts-rs 从同一份定义导出 TS 类型，api.ts 的 invoke 传参用
+// `satisfies` 对齐——多键、少键在 tsc 就红，不再等手机端 400（2026-08-31 extraDirs 事故）。
+use meowo_protocol::bridge::*;
 
 /// git 命令的目录收口（单文件 diff 与写操作共用）：带 sessionCwd 时，它必须是会话目录、cwd 必须是
 /// 它的相关仓库；不带就是老规矩，cwd 本身得是会话目录。
@@ -956,161 +878,6 @@ async fn ensure_session_dir(app: &tauri::AppHandle, dir: &str) -> Result<(), Str
         Err("remote/not_session_dir".into())
     }
 }
-
-bridged_args!(RenameSessionArgs {
-    #[serde(default)]
-    cwd: Option<String>,
-    session_id: String,
-    title: String,
-    #[serde(default)]
-    provider: Option<String>
-});
-
-bridged_args!(SetArchivedArgs {
-    session_id: i64,
-    archived: bool
-});
-
-bridged_args!(WorktreeStatusArgs { session_id: i64 });
-
-bridged_args!(RemoveSessionWorktreeArgs {
-    session_id: i64,
-    expected_path: String,
-    confirmed_pids: Vec<u32>
-});
-
-bridged_args!(MoveSessionRankArgs {
-    session_id: i64,
-    #[serde(default)]
-    above_id: Option<i64>,
-    #[serde(default)]
-    below_id: Option<i64>
-});
-
-bridged_args!(SetWorkspaceOrderArgs { order: Vec<String> });
-
-bridged_args!(SetKeepAwakeArgs { enabled: bool });
-
-bridged_args!(SetPushPausedArgs { paused: bool });
-
-bridged_args!(SetSessionNoteArgs {
-    session_id: String,
-    note: String
-});
-
-bridged_args!(StopManagedTerminalArgs { session_id: i64 });
-
-bridged_args!(GetChatHistoryArgs {
-    session_id: i64,
-    offset: u64,
-    #[serde(default)]
-    full: Option<bool>,
-    #[serde(default)]
-    before: Option<u64>
-});
-
-bridged_args!(GetSubagentTranscriptArgs {
-    session_id: i64,
-    tool_use_id: String
-});
-
-bridged_args!(ManagedTerminalSnapshotArgs {
-    session_id: i64,
-    #[serde(default)]
-    since: Option<u64>
-});
-
-bridged_args!(WriteManagedTerminalArgs {
-    session_id: i64,
-    data: String
-});
-
-bridged_args!(ResizeManagedTerminalArgs {
-    session_id: i64,
-    cols: u16,
-    rows: u16
-});
-
-bridged_args!(StartManagedTerminalArgs {
-    session_id: i64,
-    cols: u16,
-    rows: u16,
-    #[serde(default)]
-    options: Option<std::collections::HashMap<String, String>>
-});
-
-bridged_args!(TakeoverManagedTerminalArgs {
-    session_id: i64,
-    cols: u16,
-    rows: u16,
-    #[serde(default)]
-    options: Option<std::collections::HashMap<String, String>>
-});
-
-bridged_args!(SendBackgroundPromptArgs {
-    session_id: i64,
-    text: String
-});
-
-bridged_args!(SetSessionLaunchSelectionArgs {
-    session_id: i64,
-    option: String,
-    choice: String
-});
-
-bridged_args!(RegisterApprovalConsumerArgs {
-    session_id: i64,
-    consumer_id: String
-});
-
-bridged_args!(UnregisterApprovalConsumerArgs {
-    consumer_id: String
-});
-
-bridged_args!(ResolvePendingApprovalArgs {
-    session_id: i64,
-    request_id: String,
-    choice: String
-});
-
-bridged_args!(SavePastedAttachmentArgs {
-    file_name: String,
-    data_base64: String
-});
-
-bridged_args!(AgentChatUiArgs {
-    provider: String,
-    #[serde(default)]
-    cwd: Option<String>,
-    #[serde(default)]
-    session_id: Option<i64>
-});
-
-bridged_args!(AgentModelsArgs { provider: String, session_id: Option<i64> });
-bridged_args!(AgentModelCatalogArgs { provider: String, session_id: Option<i64> });
-
-bridged_args!(NewSessionArgs {
-    cwd: String,
-    provider: String,
-    /// 旧前端兼容参数，桌面命令同样忽略。
-    #[serde(default)]
-    #[allow(dead_code)]
-    terminal: Option<String>,
-    #[serde(default)]
-    options: Option<std::collections::HashMap<String, String>>,
-    // 附加目录已按用户要求去掉，新页面不再发它。字段仍收下并忽略：手机上没刷新的旧页面
-    // 还会带 extraDirs，deny_unknown_fields 会把它们的每次新建都打成 400。
-    #[serde(default)]
-    #[allow(dead_code)]
-    extra_dirs: Option<Vec<String>>
-});
-
-bridged_args!(CheckProviderHooksArgs { provider: String });
-
-bridged_args!(ListSubdirectoriesArgs {
-    #[serde(default)]
-    path: Option<String>
-});
 
 /// 白名单命令 → 各 command 函数本体。参数结构体见上方模块级定义（camelCase +
 /// deny_unknown_fields），与 api.ts 的 invoke 传参逐名对齐。
@@ -1315,6 +1082,47 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
             }
             reply(crate::git::git_commit(a.cwd, a.message, a.all, a.paths).await)
         }
+        // 推送 / PR / 合并：目录收口同上面的写操作。
+        "git_push_start" => {
+            let a = args!(GitRepoArgs);
+            if let Err(e) = ensure_git_repo_dir(app, &a.cwd, a.session_cwd.as_deref()).await {
+                return reply::<()>(Err(e));
+            }
+            reply(crate::forge::git_push_start(a.cwd).await)
+        }
+        // 只认任务号（随机、只在本进程内有效），拿到的只是推送结果。
+        "git_job_status" => {
+            let a = args!(GitJobStatusArgs);
+            reply(crate::forge::git_job_status(a.job_id).await)
+        }
+        "git_forge_status" => {
+            let a = args!(GitForgeStatusArgs);
+            if let Err(e) = ensure_git_repo_dir(app, &a.cwd, a.session_cwd.as_deref()).await {
+                return reply::<()>(Err(e));
+            }
+            reply(crate::forge::git_forge_status(a.cwd, a.force).await)
+        }
+        "gh_pr_create" => {
+            let a = args!(GhPrCreateArgs);
+            if let Err(e) = ensure_git_repo_dir(app, &a.cwd, a.session_cwd.as_deref()).await {
+                return reply::<()>(Err(e));
+            }
+            reply(crate::forge::gh_pr_create(a.cwd, a.title, a.body, a.base, a.draft).await)
+        }
+        "gh_pr_merge" => {
+            let a = args!(GhPrMergeArgs);
+            if let Err(e) = ensure_git_repo_dir(app, &a.cwd, a.session_cwd.as_deref()).await {
+                return reply::<()>(Err(e));
+            }
+            reply(crate::forge::gh_pr_merge(a.cwd, a.number, a.method, a.expected_head_oid).await)
+        }
+        "forge_choose_repo" => {
+            let a = args!(ForgeChooseRepoArgs);
+            if let Err(e) = ensure_git_repo_dir(app, &a.cwd, a.session_cwd.as_deref()).await {
+                return reply::<()>(Err(e));
+            }
+            reply(crate::forge::forge_choose_repo(a.cwd, a.remote).await)
+        }
         "rename_session" => {
             let a = args!(RenameSessionArgs);
             reply(
@@ -1372,6 +1180,33 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
             )
         }
         "list_cleanable_worktrees" => reply(crate::worktree::list_cleanable_worktrees(state).await),
+        "worktree_preview" => {
+            let a = args!(WorktreePreviewArgs);
+            reply(crate::wtnew::worktree_preview(a.repo_cwd, a.slug, a.branch, a.fallback_slug).await)
+        }
+        "worktree_create" => {
+            let a = args!(WorktreeCreateArgs);
+            reply(
+                crate::wtnew::worktree_create(
+                    app.clone(),
+                    a.repo_cwd,
+                    a.slug,
+                    a.branch,
+                    a.fallback_slug,
+                    a.provider,
+                    a.request_id,
+                )
+                .await,
+            )
+        }
+        "worktree_setup" => {
+            let a = args!(WorktreeSetupArgs);
+            reply(crate::wtnew::worktree_setup(app.clone(), a.task_id, a.path, a.action).await)
+        }
+        "worktree_setup_trust" => {
+            let a = args!(WorktreeSetupTrustArgs);
+            reply(crate::wtnew::worktree_setup_trust(app.clone(), a.path, a.hash).await)
+        }
         "set_archived" => {
             let a = args!(SetArchivedArgs);
             reply(
@@ -1808,13 +1643,20 @@ fn cache_control_for(rel: &str) -> &'static str {
     }
 }
 
+/// debug 下仓库内的 dist-mobile。包目录取运行时环境变量（tauri dev 经 cargo run 启动，
+/// cargo 会设它），不用编译期 env!()：多个 worktree 共用 CARGO_TARGET_DIR 时产物会被
+/// 复用，env!() 烙进去的是别的 worktree 的路径（meowo-setup build.rs 同病，2026-11-10
+/// 复现脚本实测）。没设或目录不在返回 None，由调用方退回打包资源。
+#[cfg_attr(not(debug_assertions), allow(dead_code))]
+fn dev_static_root(manifest_dir: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
+    let dev = PathBuf::from(manifest_dir?).join("../dist-mobile");
+    dev.is_dir().then_some(dev)
+}
+
 fn static_root(app: &tauri::AppHandle) -> Option<PathBuf> {
     #[cfg(debug_assertions)]
-    {
-        let dev = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../dist-mobile");
-        if dev.is_dir() {
-            return Some(dev);
-        }
+    if let Some(dev) = dev_static_root(std::env::var_os("CARGO_MANIFEST_DIR").as_deref()) {
+        return Some(dev);
     }
     // tauri.conf.json 用 map 形式 `resources: { "../dist-mobile": "dist-mobile" }` 打包:
     // 落点钉在 resource_dir()/dist-mobile。列表形式 `["../dist-mobile"]` 在 tauri-cli
@@ -1871,6 +1713,20 @@ fn mime_for(ext: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dev_static_root_follows_runtime_manifest_dir() {
+        // 运行时给哪个包目录就找它旁边的 dist-mobile；没给或目录不在 → None 交给打包资源兜底
+        let base = std::env::temp_dir().join(format!("meowo-dev-root-{}", std::process::id()));
+        let manifest = base.join("src-tauri");
+        std::fs::create_dir_all(&manifest).unwrap();
+        assert_eq!(dev_static_root(Some(manifest.as_os_str())), None);
+        std::fs::create_dir_all(base.join("dist-mobile")).unwrap();
+        let got = dev_static_root(Some(manifest.as_os_str())).unwrap();
+        assert!(got.ends_with("dist-mobile") && got.starts_with(&manifest));
+        assert_eq!(dev_static_root(None), None);
+        let _ = std::fs::remove_dir_all(&base);
+    }
 
     #[test]
     fn token_compare_rejects_mismatch_and_empty() {
@@ -1948,6 +1804,8 @@ mod tests {
             // git_diff_summary / git_file_diff 已按用户决定放行（2026-10-31），收口在
             // ensure_session_dir + changed_file_listed，由各自的单测钉住；「更改」面板写操作
             // 2026-11-09 放行（模块头「例外」）；git_pull_request 等其余 git_* 仍拒。
+            // 同步推送：手机 RPC 等不了首推的几十秒，手机走 git_push_start + git_job_status。
+            "git_push",
             // 折叠目录的「加入 .gitignore」改的是仓库里的配置文件，手机端不给（2026-11-10 leader 定）。
             "git_ignore_dir",
             "set_autostart",
@@ -2253,6 +2111,9 @@ mod tests {
             ahead: None,
             behind: None,
             files: vec![file("src/a.ts", "M"), file("notes.md", "U")],
+            upstream: None,
+            unpushed: None,
+            push_target: None,
         };
         assert!(changed_file_listed(&summary, "src/a.ts", false));
         assert!(changed_file_listed(&summary, "notes.md", true));
@@ -2264,6 +2125,91 @@ mod tests {
             "C:/Users/me/.ssh/id_rsa",
             true
         ));
+    }
+
+    /// dispatch 里每个读参数的臂 → 它解析的结构体名（按源码文本扫：`"cmd" =>` 之后第一个
+    /// `args!(T)`，下一个臂开始前没出现就算无参臂）。
+    fn dispatch_arm_arg_types() -> Vec<(String, String)> {
+        let src = include_str!("remote.rs");
+        let body = &src[src.find("async fn dispatch(").expect("dispatch 函数")..];
+        let body = &body[..body.find("\n}").expect("dispatch 结尾")];
+        let mut out = Vec::new();
+        let mut current: Option<String> = None;
+        for line in body.lines() {
+            let t = line.trim_start();
+            if let Some(rest) = t.strip_prefix('"') {
+                if let Some(end) = rest.find('"') {
+                    if rest[end + 1..].trim_start().starts_with("=>") {
+                        current = Some(rest[..end].to_string());
+                    }
+                }
+            }
+            if let (Some(cmd), Some(pos)) = (current.as_ref(), t.find("args!(")) {
+                let ty = &t[pos + 6..];
+                let ty = &ty[..ty.find(')').expect("args!( 收尾")];
+                out.push((cmd.clone(), ty.to_string()));
+                current = None;
+            }
+        }
+        out
+    }
+
+    /// api.ts 里 `invoke…("cmd", …)` 这次调用的整段实参文本（括号配平截取）。
+    fn api_ts_invoke_args(api: &str, cmd: &str) -> Vec<String> {
+        let needle = format!("(\"{cmd}\"");
+        let mut out = Vec::new();
+        let mut from = 0;
+        while let Some(rel) = api[from..].find(&needle) {
+            let start = from + rel;
+            from = start + needle.len();
+            // 只认 invoke 调用点（同一行里 needle 前出现 invoke），排除注释/字符串里的同名词。
+            let line_start = api[..start].rfind('\n').map_or(0, |i| i + 1);
+            if !api[line_start..start].contains("invoke") {
+                continue;
+            }
+            let mut depth = 0i32;
+            let mut end = start;
+            for (i, ch) in api[start..].char_indices() {
+                match ch {
+                    '(' => depth += 1,
+                    ')' => {
+                        depth -= 1;
+                        if depth == 0 {
+                            end = start + i;
+                            break;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            out.push(api[start + needle.len()..end].to_string());
+        }
+        out
+    }
+
+    /// 桥参数契约的前端那半：api.ts 每个走手机桥、带参数的 invoke 都必须写
+    /// `satisfies <该臂结构体名>`（类型由 ts-rs 从 meowo_protocol::bridge 导出），tsc 才会拦多键/少键。
+    /// 防的是「新加一个桥臂、api.ts 照旧裸传对象」——那样又回到只能等手机端 400 才发现。
+    #[test]
+    fn api_ts_bridged_invokes_satisfy_their_arm_args() {
+        let api = include_str!("../../src/api.ts");
+        let arms = dispatch_arm_arg_types();
+        let mut problems = Vec::new();
+        for cmd in BRIDGED_COMMANDS {
+            let Some((_, ty)) = arms.iter().find(|(c, _)| c == cmd) else { continue };
+            let calls = api_ts_invoke_args(api, cmd);
+            if calls.is_empty() {
+                // host_os / file_access_token 不经 api.ts（mobile/transport.ts 直发），不在此列。
+                continue;
+            }
+            let want = format!("satisfies {ty}");
+            for args in calls {
+                if !args.contains(&want) {
+                    problems.push(format!("{cmd}: 缺 `{want}`，实参 = {}", args.trim()));
+                }
+            }
+        }
+        assert!(problems.is_empty(), "api.ts 桥接 invoke 未做类型校验：\n{}", problems.join("\n"));
     }
 
     #[test]
@@ -2295,6 +2241,10 @@ mod tests {
     /// 注释行号是样例键的出处（api.ts 的 invoke 调用点；host_os/file_access_token
     /// 不经 api.ts，走 mobile/transport.ts 直发）。无参臂 dispatch 不读载荷，样例 `{}`
     /// 用 IgnoredAny 只是钉死「传 {} 即可」这一事实（空 body 由 parse 归一为 {}）。
+    // 已在测试模块里，这个 cfg 是给 lib.rs 的 host_code_does_not_branch_on_agent_identity 看的：
+    // 它按 `#[test]` / `#[cfg(test)]` 认测试代码，上一个测试函数一结束就回到「生产代码」，
+    // 这个不带 #[test] 的辅助函数里的 "provider":"claude" 样例会被当成按身份分支（二期 CI 实测）。
+    #[cfg(test)]
     fn sample_payload_parse_check(cmd: &str) -> Result<(), String> {
         match cmd {
             // api.ts:566（getLiveSessionsPage：filter/limit 恒有，search/cwd/游标键恒发、
@@ -2341,6 +2291,26 @@ mod tests {
                 br#"{"cwd":"C:/work-wt","message":"feat: x\n\nbody","all":true,"paths":["a.ts"],"sessionCwd":"C:/work"}"#,
             )
             .map(|_| ()),
+            // api.ts（gitPushStart / gitJobStatus / getForgeStatus / ghPrCreate / ghPrMerge）
+            "git_push_start" => parse::<GitRepoArgs>(br#"{"cwd":"C:/work-wt","sessionCwd":"C:/work"}"#).map(|_| ()),
+            "git_job_status" => parse::<GitJobStatusArgs>(br#"{"jobId":"push-1a2b-0"}"#).map(|_| ()),
+            "git_forge_status" => parse::<GitForgeStatusArgs>(
+                br#"{"cwd":"C:/work-wt","force":true,"sessionCwd":"C:/work"}"#,
+            )
+            .map(|_| ()),
+            "gh_pr_create" => parse::<GhPrCreateArgs>(
+                br#"{"cwd":"C:/work-wt","title":"feat: x","body":"- feat: x","base":"main","draft":false,"sessionCwd":"C:/work"}"#,
+            )
+            .map(|_| ()),
+            // api.ts（forgeChooseRepo）
+            "forge_choose_repo" => parse::<ForgeChooseRepoArgs>(
+                br#"{"cwd":"C:/work-wt","remote":"upstream","sessionCwd":"C:/work"}"#,
+            )
+            .map(|_| ()),
+            "gh_pr_merge" => parse::<GhPrMergeArgs>(
+                br#"{"cwd":"C:/work-wt","number":12,"method":"squash","expectedHeadOid":"a72e75f81e6c99f272c5e963927fcd7ed06fef32","sessionCwd":"C:/work"}"#,
+            )
+            .map(|_| ()),
             // api.ts:451（renameSession：cwd/provider 可 null，sessionId 是 cc_session_id 字符串）
             "rename_session" => parse::<RenameSessionArgs>(
                 br#"{"cwd":"C:/repo","sessionId":"cc-abc","title":"renamed","provider":"claude"}"#,
@@ -2366,6 +2336,23 @@ mod tests {
             "worktree_status" => parse::<WorktreeStatusArgs>(br#"{"sessionId":7}"#).map(|_| ()),
             "remove_session_worktree" => parse::<RemoveSessionWorktreeArgs>(
                 br#"{"sessionId":7,"expectedPath":"C:/w/wt","confirmedPids":[]}"#,
+            )
+            .map(|_| ()),
+            // api.ts worktreePreview / worktreeCreate / worktreeSetup / worktreeSetupTrust
+            "worktree_preview" => parse::<WorktreePreviewArgs>(
+                br#"{"repoCwd":"C:/w/repo","slug":null,"branch":"meowo/x","fallbackSlug":"1110-0930"}"#,
+            )
+            .map(|_| ()),
+            "worktree_create" => parse::<WorktreeCreateArgs>(
+                br#"{"repoCwd":"C:/w/repo","slug":"fix-login","branch":null,"fallbackSlug":"1110-0930","provider":"claude","requestId":"r-1"}"#,
+            )
+            .map(|_| ()),
+            "worktree_setup" => parse::<WorktreeSetupArgs>(
+                br#"{"taskId":null,"path":"C:/w/repo-x","action":"rerun"}"#,
+            )
+            .map(|_| ()),
+            "worktree_setup_trust" => parse::<WorktreeSetupTrustArgs>(
+                br#"{"path":"C:/w/repo-x","hash":"abc"}"#,
             )
             .map(|_| ()),
             // api.ts:390

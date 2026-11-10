@@ -559,6 +559,11 @@ pub struct ManagedTerminalSnapshotDto {
     /// 承担的是重开窗口/重对齐时的初始值。
     #[serde(default)]
     pub external_viewers: bool,
+    /// 已退出的 CLI 是意外退出（退出码非 0、不是用户结束、不在重启窗口内，判定见 app 的
+    /// exit_report::is_unexpected_exit）。对话页据此把「会话已结束」换成「Agent 意外退出
+    ///（退出码 N）」并附 exit_tail 的最后几行（二期 #7）。仅 exited 时可能为 true。
+    #[serde(default)]
+    pub exit_unexpected: bool,
 }
 
 /// 某会话的托管 PTY 被**就地换了一个新进程**（`pty-restarted`）。
@@ -693,6 +698,25 @@ pub struct GitDiffSummaryDto {
     pub ahead: Option<u32>,
     pub behind: Option<u32>,
     pub files: Vec<GitChangedFileDto>,
+    /// 上游分支（如 `origin/feat`、远端名带斜杠时 `team/fork/feat`），拉取来源，ahead/behind 按它算。远端与分支名
+    /// 读 branch.<b>.remote / merge 配置原样拼，不从 `远端/分支` 字符串里拆。没设上游、上游已被删（gone）、上游
+    /// 是远端默认分支而本地不是它（推送不会推到那里）时为 None。本地计数、不 fetch。旧后端不下发。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub upstream: Option<String>,
+    /// 还没推上去的提交数：推送目标就是上游时等于 ahead；否则（没上游、pushDefault 指向别的远端）是推送远端上
+    /// 还没有的提交数（新建的 worktree 分支第一次推之前也要看得到「有几个没推」）。没有远端、detached、没算
+    /// （非选中的仓库且推送目标不是上游）时为 None，前端不显示推送按钮。旧后端不下发。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub unpushed: Option<u32>,
+    /// 「推送」实际会推到哪（如 `origin/feat`），与 forge 的推送同一个判定（meowo-app git_target::resolve）：
+    /// 远端按 branch.<b>.pushRemote → remote.pushDefault → 上游远端 → origin；上游是远端默认分支（典型：
+    /// `git worktree add -b feat <路径> origin/main`）时改推同名分支并设上游，绝不推进默认分支；上游是别的功能
+    /// 分支（fix 跟踪 origin/bugfix-123）时推到它。没有远端、detached 时为 None。旧后端不下发。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub push_target: Option<String>,
 }
 
 /// 「更改」面板里的一个仓库（用户要求 2026-11-09：会话开在父目录、或 agent 新开 worktree 去改、
@@ -731,7 +755,7 @@ fn detailed_default() -> bool {
 
 /// 当前分支的 Pull Request（对话页标题栏，对照 Kimi 的「打开 Pull Request」与状态标记）。
 /// 由 `gh pr view` 取得；没装 gh / 没登录 / 分支没有 PR 时命令返回 None，前端不显示。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
 #[serde(rename_all = "camelCase")]
@@ -741,6 +765,146 @@ pub struct PullRequestDto {
     pub state: String,
     pub url: String,
     pub title: String,
+    /// 以下字段由 `git_forge_status` 填（「更改」面板的 PR 与检查区块）；标题栏的 `git_pull_request`
+    /// 不填。serde default：旧后端不下发时前端按「不知道」处理。
+    /// 目标分支（合并确认框写明合进哪）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub base_ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub head_ref: Option<String>,
+    /// PR 头提交。合并时原样带回给 `gh_pr_merge --match-head-commit`：确认框打开之后又有人推了新提交，
+    /// 合并就会被拒，不会把用户没看过的提交合进去。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub head_oid: Option<String>,
+    /// GitHub 的 `mergeable`：`MERGEABLE` / `CONFLICTING` / `UNKNOWN`（还在算，按进行中处理）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub mergeable: Option<String>,
+    /// GitHub 的 `mergeStateStatus`：`CLEAN` / `BLOCKED` / `BEHIND` / `DIRTY` / `UNSTABLE` / `DRAFT` / `UNKNOWN` 等。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub merge_state: Option<String>,
+    /// 每一项检查（CheckRun 与老式 StatusContext 都映射进来）。
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(test, ts(as = "Option<Vec<PrCheckDto>>", optional))]
+    pub checks: Vec<PrCheckDto>,
+    /// 检查汇总：`none`（没有任何检查，允许合并）/ `pass` / `fail` / `pending`。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub checks_summary: Option<String>,
+    /// 已加入合并队列（本机发起合并时 GitHub 回的是入队而不是合并）。这时不能提示「已合并」。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[cfg_attr(test, ts(type = "boolean", optional))]
+    pub queued: bool,
+}
+
+/// PR 的一项检查。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct PrCheckDto {
+    pub name: String,
+    /// CheckRun 所属的 workflow 名（StatusContext 没有）。
+    pub workflow: Option<String>,
+    /// `pass` / `fail` / `pending` / `skipped`。
+    pub state: String,
+    pub url: Option<String>,
+}
+
+/// 「更改」面板的 GitHub 区块（`git_forge_status`）：gh 能不能用、开 PR 的默认值、当前分支的 PR 与检查。
+/// gh 不可用时只有 `compare_url`（前端开 PR 改为打开 GitHub 网页），不显示 CI、不能在应用里合并。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct ForgeStatusDto {
+    /// `ok` / `missing`（没装）/ `unauthenticated`（没登录）/ `not_github`（远端不是 GitHub）/ `no_remote`。
+    pub gh: String,
+    /// gh 太旧（`gh pr merge` 没有 `--match-head-commit`）：合并按钮不可用并说明。
+    pub gh_too_old: bool,
+    /// GitHub 仓库首页（`https://github.com/<owner>/<repo>`）。远端不是 GitHub 时为 None。
+    pub repo_url: Option<String>,
+    /// 当前分支对默认分支的 compare 网页（没装 gh 时「开 PR」打开它）。
+    pub compare_url: Option<String>,
+    /// 仓库允许的合并方式（`merge` / `squash` / `rebase`），gh repo view 读，缓存 1 小时。
+    pub merge_methods: Vec<String>,
+    /// 这个仓库上次用的合并方式（按 owner/repo 记在本机）。
+    pub last_merge_method: Option<String>,
+    pub pr: Option<PullRequestDto>,
+    /// 还没有 PR 时，开 PR 表单的默认值。
+    pub pr_defaults: Option<PrDefaultsDto>,
+    /// 多个 GitHub 远端、又没用 `gh repo set-default` 定过时，PR 可以开在哪些远端的仓库（界面上让用户选，
+    /// 选择按仓库记在 `~/.meowo/forge.json`）。只有一个 GitHub 远端或 gh 已定时为空。
+    pub repo_choices: Vec<ForgeRepoChoiceDto>,
+    /// PR 现在按哪个远端的仓库算（gh-resolved、用户选的、唯一的；没定时是暂按的 origin）。
+    pub repo_remote: Option<String>,
+    /// 多个 GitHub 远端还没定：查状态暂按 origin，开 PR / 合并返回 `gh/ambiguous_repo`，要先选。
+    pub repo_needs_choice: bool,
+}
+
+/// PR 可以开在的一个仓库：远端名 + GitHub 的 owner/repo。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct ForgeRepoChoiceDto {
+    pub remote: String,
+    pub slug: String,
+}
+
+/// 开 PR 的默认标题、正文与目标分支（本地 git 算，不联网）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct PrDefaultsDto {
+    /// 只有一个提交时取它的标题，否则用分支名。
+    pub title: String,
+    /// base..HEAD 的提交列表（每行 `- 标题`）。
+    pub body: String,
+    pub base: String,
+}
+
+/// 一次推送的结果。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct PushResultDto {
+    pub remote: String,
+    pub branch: String,
+    /// 这次顺手设了上游（原来没有上游，走的 `push -u`）。
+    pub set_upstream: bool,
+    /// 推上去的提交数（推之前算的「没推的提交」）。
+    pub pushed: u32,
+}
+
+/// 后台 git 任务（手机端推送：手机 RPC 等不了 20–90 秒，先拿任务号再轮询）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct GitJobDto {
+    /// `running` / `ok` / `failed`。
+    pub state: String,
+    pub push: Option<PushResultDto>,
+    /// 失败原因（`git/push_auth` 之类，前端走 formatBackendError）。
+    pub error: Option<String>,
+}
+
+/// 应用内合并的结果。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct MergeResultDto {
+    pub merged: bool,
+    /// 进了合并队列（还没真正合并）。
+    pub queued: bool,
 }
 
 /// 会话所在 worktree 能不能清理（归档后的「删除 worktree」入口用）。判定全在桌面端做，
@@ -755,7 +919,7 @@ pub struct WorktreeStatusDto {
     pub branch: Option<String>,
     pub pr_number: Option<u32>,
     pub eligible: bool,
-    /// 不能清理的原因码（`not_worktree` / `dir_missing` / `gh_unavailable` / `no_pr` /
+    /// 不能清理的原因码（`not_worktree` / `dir_missing` / `gh_unavailable` / `no_pr` / `not_merged_local` /
     /// `pr_open` / `pr_closed` / `dirty` / `untracked` / `unpushed` / `submodule_dirty` /
     /// `submodule_unpushed` / `shared_session` / `detached` / `locked` / `not_repo`）。可清理时为 None。
     pub reason: Option<String>,
@@ -1033,12 +1197,14 @@ mod tests {
             rows: 40,
             modes: vec![1049, 1006],
             external_viewers: false,
+            exit_unexpected: true,
         })
         .unwrap();
         assert_eq!(value["sessionId"], 7);
         assert_eq!(value["startOffset"], 10);
         assert_eq!(value["endOffset"], 13);
         assert!(value.get("start_offset").is_none());
+        assert_eq!(value["exitUnexpected"], true);
     }
 
     /// GUI 边界必须走 DTO 的理由，钉成测试：原始 `broker::ApprovalRequest` 在

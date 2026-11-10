@@ -33,4 +33,10 @@ modes: Array<number>,
  * 「输入可能交错」（T-14）；实时增删另有 `pty-external-viewers` 事件推送，这里
  * 承担的是重开窗口/重对齐时的初始值。
  */
-externalViewers: boolean, };
+externalViewers: boolean, 
+/**
+ * 已退出的 CLI 是意外退出（退出码非 0、不是用户结束、不在重启窗口内，判定见 app 的
+ * exit_report::is_unexpected_exit）。对话页据此把「会话已结束」换成「Agent 意外退出
+ *（退出码 N）」并附 exit_tail 的最后几行（二期 #7）。仅 exited 时可能为 true。
+ */
+exitUnexpected: boolean, };

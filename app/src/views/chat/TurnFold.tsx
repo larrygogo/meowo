@@ -92,6 +92,7 @@ export const TurnFold = memo(function TurnFold({ id, items, durationMs, running 
   useEffect(() => {
     if (running !== wasRunning.current) setOpen(running);
     wasRunning.current = running;
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 只在运行态翻转时同步开合；setOpen 来自 useRememberedOpen，变化不该触发
   }, [running]);
 
   const tools = items.filter((item): item is ToolUseItem => item.type === "tool_use");

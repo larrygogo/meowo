@@ -40,6 +40,7 @@ export const store: Store = {
     island_compact: "counts",
     island_strip: false,
     island_alerts: ["waiting", "approval", "question", "error"],
+    notify_kinds: ["waiting", "approval", "question", "error"],
     island_alert_seconds: 6,
     sticker_quota_providers: ["claude", "codex"],
     default_agent: "claude",

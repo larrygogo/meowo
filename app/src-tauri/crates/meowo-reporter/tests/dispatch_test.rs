@@ -1366,3 +1366,39 @@ fn compact_session_start_clears_compacting_state() {
     );
     assert_eq!(store.get_session(sid).unwrap().status, "waiting");
 }
+
+/// 包 5：worktree 的 `.git` 是文件，origin 地址在主仓库的 config 里（经 gitdir → commondir 找到）。
+/// 曾经直接读 `<root>/.git/config`，worktree 会话的通知标题只剩目录名（app-feat），认不出是哪个仓库。
+#[test]
+fn owner_repo_follows_worktree_git_file_to_the_common_config() {
+    let tmp = tempfile::tempdir().unwrap();
+    let main = tmp.path().join("app");
+    let git = main.join(".git");
+    std::fs::create_dir_all(git.join("worktrees").join("feat")).unwrap();
+    std::fs::write(
+        git.join("config"),
+        "[core]\n\tbare = false\n[remote \"origin\"]\n\turl = https://github.com/acme/rocket.git\n",
+    )
+    .unwrap();
+    // linked worktree：gitdir 绝对路径，commondir 相对（git 默认写 ../..）。
+    let wt = tmp.path().join("app-feat");
+    std::fs::create_dir_all(wt.join("src")).unwrap();
+    std::fs::write(wt.join(".git"), format!("gitdir: {}\n", git.join("worktrees").join("feat").display())).unwrap();
+    std::fs::write(git.join("worktrees").join("feat").join("commondir"), "../..\n").unwrap();
+    let (root, name) = meowo_reporter::dispatch::project_root_and_name_pub(wt.join("src").to_str().unwrap());
+    assert_eq!(root, wt.to_string_lossy());
+    assert_eq!(name, "acme/rocket");
+    // gitdir 写成相对路径（worktree.useRelativePaths）。
+    std::fs::write(wt.join(".git"), "gitdir: ../app/.git/worktrees/feat\n").unwrap();
+    assert_eq!(meowo_reporter::dispatch::project_root_and_name_pub(wt.to_str().unwrap()).1, "acme/rocket");
+    // 子模块：.git 文件指向 .git/modules/sub，没有 commondir，config 就在 gitdir 里。
+    let sub = main.join("sub");
+    let modules = git.join("modules").join("sub");
+    std::fs::create_dir_all(&modules).unwrap();
+    std::fs::create_dir_all(&sub).unwrap();
+    std::fs::write(sub.join(".git"), "gitdir: ../.git/modules/sub\n").unwrap();
+    std::fs::write(modules.join("config"), "[remote \"origin\"]\n\turl = git@github.com:acme/engine.git\n").unwrap();
+    assert_eq!(meowo_reporter::dispatch::project_root_and_name_pub(sub.to_str().unwrap()).1, "acme/engine");
+    // 主检出照旧。
+    assert_eq!(meowo_reporter::dispatch::project_root_and_name_pub(main.to_str().unwrap()).1, "acme/rocket");
+}

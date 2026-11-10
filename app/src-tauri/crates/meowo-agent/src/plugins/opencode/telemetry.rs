@@ -84,6 +84,15 @@ impl TranscriptSpec for OpencodeTranscript {
         true
     }
 
+    /// 长会话首开只解析尾部一屏。导出的 JSONL 逐行独立（parse_line 只看本行），没有撤回、
+    /// 分叉记录，也不产出模式与计划，窗口前的内容不影响结果。
+    fn tail_read(&self) -> Option<crate::transcript::TailRead> {
+        Some(crate::transcript::TailRead {
+            mode_markers: &[],
+            plan_markers: &[],
+        })
+    }
+
     /// 看板后台分析会对每张卡反复定位 transcript——对 opencode 那意味着反复导出，而它能产出的
     /// 只有空的 TranscriptInfo（ChatOnlyParser），故关掉。
     fn supports_analysis(&self) -> bool {

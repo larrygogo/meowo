@@ -22,4 +22,23 @@ branch: string | null,
  * 相对上游分支领先 / 落后的提交数（对照 Kimi 改动面板的「领先远程 / 落后远程」：agent 提交
  * 之后要不要推送，一眼可见）。按本地记录的远程分支算，不自动 fetch。没有上游时为 None。
  */
-ahead: number | null, behind: number | null, files: Array<GitChangedFileDto>, };
+ahead: number | null, behind: number | null, files: Array<GitChangedFileDto>, 
+/**
+ * 上游分支（如 `origin/feat`、远端名带斜杠时 `team/fork/feat`），拉取来源，ahead/behind 按它算。远端与分支名
+ * 读 branch.<b>.remote / merge 配置原样拼，不从 `远端/分支` 字符串里拆。没设上游、上游已被删（gone）、上游
+ * 是远端默认分支而本地不是它（推送不会推到那里）时为 None。本地计数、不 fetch。旧后端不下发。
+ */
+upstream?: string, 
+/**
+ * 还没推上去的提交数：推送目标就是上游时等于 ahead；否则（没上游、pushDefault 指向别的远端）是推送远端上
+ * 还没有的提交数（新建的 worktree 分支第一次推之前也要看得到「有几个没推」）。没有远端、detached、没算
+ * （非选中的仓库且推送目标不是上游）时为 None，前端不显示推送按钮。旧后端不下发。
+ */
+unpushed?: number, 
+/**
+ * 「推送」实际会推到哪（如 `origin/feat`），与 forge 的推送同一个判定（meowo-app git_target::resolve）：
+ * 远端按 branch.<b>.pushRemote → remote.pushDefault → 上游远端 → origin；上游是远端默认分支（典型：
+ * `git worktree add -b feat <路径> origin/main`）时改推同名分支并设上游，绝不推进默认分支；上游是别的功能
+ * 分支（fix 跟踪 origin/bugfix-123）时推到它。没有远端、detached 时为 None。旧后端不下发。
+ */
+pushTarget?: string, };

@@ -428,6 +428,7 @@ impl BgPtyRegistry {
             modes: Vec::new(),
             // 旁路是 daemon 画面的单向镜子,不存在 Meowo 的外部 attach 视图。
             external_viewers: false,
+            exit_unexpected: false,
         })
     }
 

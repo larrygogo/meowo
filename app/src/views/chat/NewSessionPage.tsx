@@ -17,6 +17,7 @@ function ShieldIcon() {
 import { useT } from "../../i18n";
 import { useNewSessionForm } from "../useNewSessionForm";
 import { WorkspacePicker } from "./WorkspacePicker";
+import { WorktreeOption } from "../WorktreeOption";
 
 /// 对话窗里的新建会话页（对照 Kimi Code：新建会话不弹窗，主区就地换成一个输入框，
 /// 上方是工作区选择，下面一排 Agent / 启动选项的小下拉，写下第一句话发出去就开聊）。
@@ -137,6 +138,8 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched, onOpenSession
           onPick={(dir) => { setCwd(dir); setError(null); }}
           onPickFolder={() => void pickFolder()}
         />
+        {/* 包 5：在新 worktree 里开（默认不勾）。放在工作区下面：它是「在哪跑」的一部分。 */}
+        <WorktreeOption choice={form.worktree} disabled={busy} />
         <div className={"nsp-composer" + (busy ? " is-busy" : "")}>
           <textarea
             ref={textRef}

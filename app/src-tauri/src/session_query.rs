@@ -212,6 +212,19 @@ mod hidden_workspace_tests {
         // 过滤后再按 limit 截。
         assert_eq!(visible_workspaces(vec![("a".into(), 1), ("b".into(), 2)], &Default::default(), 1), vec!["a".to_string()]);
     }
+
+    /// 包 5：worktree 会话在侧栏归到原项目下，但「隐藏工作区」仍按会话自己的 cwd 记。
+    /// 隐藏 worktree 那一行不能把主仓库一起藏掉，反过来也一样。
+    #[test]
+    fn hiding_a_worktree_workspace_keeps_the_main_checkout() {
+        let mut hidden = std::collections::BTreeMap::new();
+        hidden.insert(workspace_key("C:/w/app-feat"), 100);
+        let rows = vec![("C:/w/app-feat".to_string(), 90), ("C:/w/app".to_string(), 80)];
+        assert_eq!(visible_workspaces(rows.clone(), &hidden, 10), vec!["C:/w/app".to_string()]);
+        let mut hidden = std::collections::BTreeMap::new();
+        hidden.insert(workspace_key("C:/w/app"), 100);
+        assert_eq!(visible_workspaces(rows, &hidden, 10), vec!["C:/w/app-feat".to_string()]);
+    }
 }
 
 #[derive(serde::Serialize)]
@@ -262,6 +275,10 @@ pub(crate) struct LiveItem {
     /// 只对已归档会话检查：进行中会话的目录没了是另一回事，照旧走原来的报错路径；
     /// 而且归档列表很长时每次刷新都 stat 一遍没必要扩大到全部会话。
     cwd_missing: bool,
+    /// 会话开在 linked worktree 里时，主检出的根目录（包 5）。前端分组键 = `origin_root ?? cwd`，
+    /// worktree 会话因此归到原项目下。主检出、非 git 目录为 None（见 wtnew::origin）。
+    /// 「隐藏工作区」仍按会话自己的 cwd，不受它影响。
+    pub(crate) origin_root: Option<String>,
 }
 
 /// profile id → 展示名。查不到（profile 已删）回退 id 本身。纯函数便于单测。
@@ -815,6 +832,7 @@ fn pending_placeholder_item(
         unread: false,
         foreign: false,
         cwd_missing: false,
+        origin_root: info.cwd.as_deref().and_then(crate::wtnew::origin::origin_root_cached),
     }
 }
 
@@ -1224,6 +1242,12 @@ fn enrich(
     }
     let unread = crate::watch::is_unread(session.session.id);
     let cwd_missing = session.archived && cwd_is_missing(session.cwd.as_deref());
+    // 目录已删的不推算：.git 文件跟着没了，推不出来，也不必为它读盘。
+    let origin_root = if cwd_missing {
+        None
+    } else {
+        session.cwd.as_deref().and_then(crate::wtnew::origin::origin_root_cached)
+    };
     Some(LiveItem {
         inner: session,
         connected,
@@ -1251,6 +1275,7 @@ fn enrich(
         // 外库标记由 foreign_live_items 在聚合时置真，本库路径恒为 false。
         foreign: false,
         cwd_missing,
+        origin_root,
     })
 }
 

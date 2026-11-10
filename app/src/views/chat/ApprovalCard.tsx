@@ -52,12 +52,14 @@ export function ApprovalCard({ title, badge, className, children, sideActions, a
     const el = ref.current;
     return () => {
       if (!el || !el.contains(document.activeElement)) return;
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- returnFocusTo 是父组件给的 ref 容器，卸载时要读它最新指向的元素
       const target = returnFocusTo?.current;
       window.setTimeout(() => {
         // 切到终端视图时 composer 同帧卸载(detached),focus 无意义也不生效——跳过。
         if ((document.activeElement === document.body || document.activeElement == null) && target?.isConnected) target.focus();
       }, 0);
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- returnFocusTo 是父组件的 ref 容器，卸载时读它最新指向的元素；只在挂载卸载时跑，父组件重渲染不该重挂
   }, []);
   return (
     <section ref={ref} className={"chat-approval" + (className ? ` ${className}` : "")} role="alertdialog" aria-modal="false" aria-label={title}>

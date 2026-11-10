@@ -83,6 +83,7 @@ export function usePanel(sessionId: number, cwd: string | null, onError: (messag
       .catch(() => { if (!cancelled) setLiveFor(sessionId); });
     return () => { cancelled = true; };
   // cwd 只在补页签时兜底用，不因它重拉。
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- cwd 只是补页签时的默认目录；进程清单按会话号重拉，cwd 变了不该重拉
   }, [sessionId, update, reloadTick]);
 
   // agent 第一次用浏览器时后端自己建的页签（browser_agent.rs）：加进这个会话的面板并切过去，

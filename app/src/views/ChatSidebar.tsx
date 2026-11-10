@@ -4,11 +4,12 @@ import { moveNextTo, orderKey, sidebarDirGroups, usePointerReorder, useSessionDr
 import { WorkspaceDirectory } from "./chat/WorkspaceDirectory";
 import { confirmStopSession, getLiveSessionsPage, getSettings, moveSessionRank, setWorkspaceOrder as saveWorkspaceOrder, openNewSessionWindow, openProjectDir, recentCwds, renameSession, searchChatTranscripts, sessionTone, setArchived, setSessionNote, type CardMenuMode, type LiveSession, type SessionTone, type TranscriptSearchHit } from "../api";
 import { noteSessionMeta } from "./chat/historyCache";
+import { attentionTone } from "./chat/nextAttention";
 import { remoteUi } from "../remoteMode";
 import { useBoardRefresh } from "../hooks/useBoardRefresh";
 import { useSessionActions } from "../hooks/useSessionActions";
 import { useSettingsEffect } from "../hooks/useSettings";
-import { folderName, parentSegment, pathKey } from "../paths";
+import { folderName, parentSegment, pathKey, worktreeNameOf } from "../paths";
 import { useMenuPopup } from "./menu";
 import { useDismissable } from "../hooks/useDismissable";
 import { CardContextMenu } from "./sticker/CardContextMenu";
@@ -21,7 +22,7 @@ import { formatBackendError } from "../i18n/errors";
 import { isMac } from "../platform";
 import { reconcileRows, sameRefs, type RowCache } from "../rowCache";
 import type { Dict } from "../i18n/zh";
-import { WorktreeRemoveButton, runBatchCleanup, type RemovalOutcome } from "../worktreeCleanup";
+import { ArchivedWorktreePrompt, WorktreeRemoveButton, runBatchCleanup, type RemovalOutcome } from "../worktreeCleanup";
 
 /** 每翻一页新增的会话数。滚到底自动加载下一页，直到后端带回 next_cursor = null 为止。 */
 const PAGE_LIMIT = 60;
@@ -198,7 +199,7 @@ export const ChatSidebar = memo(ChatSidebarImpl);
 const titleScrollAnims = new WeakMap<HTMLElement, Animation>();
 const titleScrollTimers = new WeakMap<HTMLElement, number>();
 
-function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visibleOrderRef, searchInputRef, width, onSelect, onPrefetch, onCollapse, onOpenAdmin }: {
+function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visibleOrderRef, attentionIdsRef, searchInputRef, width, onSelect, onPrefetch, onCollapse, onOpenAdmin }: {
   activeId: number;
   /** 主区正开着新建会话页：「新建会话」行高亮（对照 Kimi），会话行都不高亮。 */
   newSessionActive?: boolean;
@@ -209,6 +210,8 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
   /** 当前显示顺序的镜像（父层归档跳转用）：归档当前会话后跳「用户看到的下一条」，
    *  两个归档入口（标题菜单/侧栏菜单）取序自此一致。卸载时清空，父层退回后端现查。 */
   visibleOrderRef?: MutableRefObject<number[]>;
+  /** 显示顺序里待处理或出错的会话（含等授权的），父层 Alt+Shift+↓ 跳转用。口径同状态点。 */
+  attentionIdsRef?: MutableRefObject<Set<number>>;
   /** 搜索框句柄交给父层：Ctrl/Cmd+F 监听在 ChatWindow（侧栏收起后它仍要能把人带回来）。 */
   searchInputRef?: MutableRefObject<HTMLInputElement | null>;
   /** 停靠形态的栏宽（分栏柄拖拽，ChatWindow 持久化）。抽屉形态不传：CSS 的
@@ -727,6 +730,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
       if (star !== 0) return star;
       return 0;
     });
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- sortMode 是重排信号，切排序方式时按置顶再排一次，保留原行为
   }, [sessions, starred, sortMode]);
 
   const groups = useMemo(() => {
@@ -806,6 +810,14 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
     visibleOrderRef.current = (ordered ?? []).map((item) => item.session.id);
   }, [ordered, visibleOrderRef]);
   useEffect(() => () => { if (visibleOrderRef) visibleOrderRef.current = []; }, [visibleOrderRef]);
+  useEffect(() => {
+    if (!attentionIdsRef) return;
+    attentionIdsRef.current = new Set((ordered ?? [])
+      .filter((item) => approvalAwaitingIds.has(item.session.id)
+        || attentionTone(sessionTone(item.connected, item.session.status, item.pending_review, item.errored, item.busy_subagents, item.screen_state)))
+      .map((item) => item.session.id));
+  }, [ordered, approvalAwaitingIds, attentionIdsRef]);
+  useEffect(() => () => { if (attentionIdsRef) attentionIdsRef.current = new Set(); }, [attentionIdsRef]);
 
   // 滚到底前 120px 就预取下一页。
   const onScroll = (event: UIEvent<HTMLElement>) => {
@@ -854,7 +866,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
     unfoldedForRef.current = activeId;
     if (folded.has(home.key)) toggleFolded(home.key);
     // folded 不进依赖：只在会话切换/分组就位时判一次，用户之后折起不该触发重新展开。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- folded 不进依赖，用户之后折起不该触发重新展开
   }, [groups, activeId]);
 
   // C-17：侧栏列表 roving tabindex——上百条会话只占一个 Tab 停靠点，↑↓/Home/End 在
@@ -1085,6 +1097,12 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
           {!noting && dir && groupMode !== "dir" && (
             <span className="chat-sidebar-metaline">
               <span className="chat-sidebar-meta" data-tip={item.cwd ?? undefined}>{dir}</span>
+            </span>
+          )}
+          {/* 包 5：按工作区分组时 worktree 会话归在原项目的组里，组内标出它开在哪个 worktree。 */}
+          {!noting && groupMode === "dir" && worktreeNameOf(item) && (
+            <span className="chat-sidebar-metaline">
+              <span className="chat-sidebar-wt" data-testid="sidebar-worktree-tag" data-tip={t.wtnew.tagTip(worktreeNameOf(item)!)}>{worktreeNameOf(item)}</span>
             </span>
           )}
           {/* 目录已删除（worktree 清理掉了）：不管按不按目录分组都要显示——点进去恢复不了，得先说。 */}
@@ -1482,6 +1500,8 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
           <button type="button" onClick={() => setCleanResult(null)}>{t.dialog.ok}</button>
         </div>
       )}
+      {/* 归档后所在 worktree 能清理就提示（二期包 5，不自动删）。 */}
+      {!actionError && <ArchivedWorktreePrompt t={t} className="chat-sidebar-error is-undo" />}
       {/* 动作失败的唯一出口（重命名/便签/归档）：4s 后自动消失。 */}
       {actionError && <div className="chat-sidebar-error" role="status">{actionError}</div>}
       {/* 批量归档操作条:多选态常驻底部(Ctrl+点击增删,Esc 退出)。 */}

@@ -1,0 +1,98 @@
+//! 「在新 worktree 里开会话」的 DTO（包 5，定案见关卡 B-20261110-p5-design）。
+//!
+//! 单独成文件而不是塞进 ipc.rs：push / PR 那条车道同时在改 ipc.rs，分开放合并时不打架。
+
+use serde::{Deserialize, Serialize};
+
+/// 新建 worktree 之前的预览：建议的用途名、分支名、目录和基点，以及有没有撞名。
+/// 新建会话页勾上「在新 worktree 里开」后实时显示，让用户在点开始之前就知道会建在哪。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreePreviewDto {
+    /// 选中目录所在仓库的根目录（选的是子目录时也是根）。
+    pub repo_root: String,
+    /// 主检出根目录：worktree 会话在看板和侧栏归到它下面。
+    pub origin_root: String,
+    pub repo_name: String,
+    pub slug: String,
+    pub branch: String,
+    pub path: String,
+    /// 基点的展示名：`origin/main`，没有远端主分支时是 `HEAD`。
+    pub base: String,
+    pub dir_exists: bool,
+    pub branch_exists: bool,
+    /// 分支已经在别的 worktree 里检出（git 不允许同一分支检出两次）。
+    pub branch_checked_out: bool,
+    /// 撞名时建议改用的用途名 / 分支名（目录和分支都空着的下一个后缀）。
+    pub suggested_slug: Option<String>,
+    pub suggested_branch: Option<String>,
+    /// 仓库里配置了 setup（meowo / cursor / conductor 任一）。
+    pub has_setup: bool,
+    /// 选中目录相对仓库根的子目录（`app`、`pkg/core`，正斜杠）。选的就是仓库根时为 None。
+    /// 会话会开在新 worktree 里的同一子目录（做空审查：以前一律落在 worktree 根目录）。旧后端不下发。
+    #[serde(default)]
+    pub sub_dir: Option<String>,
+    /// 这个子目录在基点里没有（只在本地、没提交的目录）：新 worktree 里不会有它，会话退回根目录，
+    /// 预览里先说明。
+    #[serde(default)]
+    pub sub_dir_missing: bool,
+}
+
+/// setup 脚本的进度。`state`：needs_trust | running | ok | failed | timeout | stopped | skipped。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreeSetupDto {
+    pub task_id: String,
+    pub path: String,
+    pub state: String,
+    pub exit_code: Option<i32>,
+    /// 日志最后几十行。完整日志在 `~/.meowo/worktree-setup/<任务号>.log`，不写进 worktree。
+    pub log_tail: String,
+    pub log_path: Option<String>,
+    #[cfg_attr(test, ts(type = "number | null"))]
+    pub started_at: Option<i64>,
+    #[cfg_attr(test, ts(type = "number | null"))]
+    pub finished_at: Option<i64>,
+    /// 没跑或跑不了的原因码：`none`（没配 setup）、`user`（用户跳过）、
+    /// `worktree/config_version`、`worktree/config_invalid`、`worktree/setup_shell_unsupported`。
+    pub reason: Option<String>,
+    /// 要执行的脚本原文（信任确认框原样展示）。
+    pub script: Option<String>,
+    /// 配置文本的 hash，确认信任时原样回传：用户看到的和要跑的必须是同一份。
+    pub config_hash: Option<String>,
+    /// 配置来源：meowo | cursor | conductor。
+    pub config_source: Option<String>,
+    /// 用哪个 shell 跑：pwsh | powershell | bash | sh。
+    pub runner: Option<String>,
+    /// 配置里要注入 setup 进程的环境变量（键, 值），按键排序。和 script 一起进信任确认框：hash 覆盖整份
+    /// 配置，NODE_OPTIONS 这类变量能让一行无害的 `bun install` 加载任意代码（做空审查实测），只给看脚本
+    /// 等于让用户盲签。旧后端不下发。
+    #[serde(default)]
+    pub setup_env: Vec<(String, String)>,
+}
+
+/// 一次新建的结果。prune / add / 复制已经同步做完，setup 在后台跑（见 `setup`）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct WorktreeCreateDto {
+    pub task_id: String,
+    pub path: String,
+    /// 会话该开在哪：选中的是仓库子目录且新 worktree 里有同一子目录时是 `<path>/<子目录>`，否则就是
+    /// path（做空审查：在 repo/app 里勾选，会话却落在 worktree 根目录）。旧后端不下发（空串），前端退回 path。
+    #[serde(default)]
+    pub session_cwd: String,
+    pub branch: String,
+    pub base: String,
+    pub origin_root: String,
+    /// 从原目录复制过来的被忽略文件数（`.env*` 等）。
+    pub copied: u32,
+    /// 超过总量上限没复制的文件数。
+    pub copy_skipped: u32,
+    pub setup: WorktreeSetupDto,
+}

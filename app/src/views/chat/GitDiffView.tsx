@@ -297,7 +297,7 @@ function clampTreeWidth(width: number): number {
 export const GitDiffView = memo(GitDiffViewImpl);
 export type DiffPanelTab = "changes" | "files";
 
-function GitDiffViewImpl({ cwd, summary, repos = null, width, collapsed, maximized, onCollapse, onToggleMaximize, comments, onAddComment, onRemoveComment, touchedPaths, turnTouchedPaths = [], activeTab, onTabChange, selectedRoot = null, onSelectRoot, onChanged }: {
+function GitDiffViewImpl({ cwd, summary, repos = null, width, collapsed, maximized, onCollapse, onToggleMaximize, comments, onAddComment, onRemoveComment, touchedPaths, turnTouchedPaths = [], activeTab, onTabChange, selectedRoot = null, onSelectRoot, onChanged, sessionId = null }: {
   /** 会话目录：文件树与更改都对着它。 */
   cwd: string;
   summary: GitDiffSummaryDto | null;
@@ -326,6 +326,8 @@ function GitDiffViewImpl({ cwd, summary, repos = null, width, collapsed, maximiz
   selectedRoot?: string | null;
   onSelectRoot?: (root: string) => void;
   onChanged?: () => void;
+  /** 会话 id：PR 合并后提示清理它的 worktree（见 ForgeBar）。 */
+  sessionId?: number | null;
 }) {
   const t = useT();
   const changesAvailable = !!summary?.isRepo || (repos?.length ?? 0) > 0;
@@ -451,6 +453,8 @@ function GitDiffViewImpl({ cwd, summary, repos = null, width, collapsed, maximiz
             onAddComment={onAddComment}
             onRemoveComment={onRemoveComment}
             escOverrideRef={escOverrideRef}
+            sessionId={sessionId}
+            visible={!collapsed}
           />
         )
         : !remoteUi() && <FilesView key={cwd} cwd={cwd} />}
@@ -587,6 +591,7 @@ export function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedP
     getGitFileDiff(cwd, path, !diffBase && file?.status === "U", diffBase, sessionCwd)
       .then((data) => setEntries((prev) => new Map(prev).set(path, { loading: false, error: null, data })))
       .catch((error) => setEntries((prev) => new Map(prev).set(path, { loading: false, error: formatBackendError(error, t.locale), data: null })));
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 组件按仓库与分段 key 挂载，diffBase/sessionCwd 随 key 一起换；t.locale 只用来格式化报错文案
   }, [selectedPath, entries, cwd, fileByPath]);
 
   const toggleDir = (path: string) => {
@@ -644,6 +649,7 @@ export function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedP
       if (at >= 0) result[at] = html;
     });
     return result;
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- highlighterReady 是 hljs 懒加载就绪信号，引擎到了要重算出带颜色的行
   }, [activeDiff, highlighterReady]);
   const diffMaxCols = useMemo(
     () => (activeDiff && activeDiff.diff.trim() !== BINARY_PLACEHOLDER ? estimateMaxColumns(activeDiff.diff.split("\n")) : 0),
@@ -1117,6 +1123,7 @@ export function FilesView({ cwd, live = false }: { cwd: string; /** 面板正显
         });
     }, 250);
     return () => window.clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- t.locale 只用来格式化报错文案，切语言不该重跑
   }, [cwd, query, searchActive]);
 
   // 打开文件的逐行高亮 HTML（useMemo 按文件对象缓存；二进制/未打开为 null）。
@@ -1130,6 +1137,7 @@ export function FilesView({ cwd, live = false }: { cwd: string; /** 面板正显
   const highlightedFile = useMemo(() => {
     if (!selectedFile || displayText == null) return null;
     return highlightLines(displayText.split("\n"), languageForPath(selectedFile.relPath));
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- highlighterReady 是 hljs 懒加载就绪信号，引擎到了要重算出带颜色的行
   }, [selectedFile, displayText, highlighterReady]);
   const fileMaxCols = useMemo(() => (displayText != null ? estimateMaxColumns(displayText.split("\n")) : 0), [displayText]);
   const staleFile = useStaleWatch(
@@ -1158,7 +1166,7 @@ export function FilesView({ cwd, live = false }: { cwd: string; /** 面板正显
   // 根目录进面板即拉。
   useEffect(() => {
     if (!dirs.has("")) fetchDir("");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fetchDir 每次渲染新建，按 cwd 与目录缓存判断即可
   }, [cwd, dirs]);
 
   // 展开时按需拉子目录；上次失败的条目借「重新展开」重试。
