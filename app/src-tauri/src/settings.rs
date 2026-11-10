@@ -401,6 +401,7 @@ pub(crate) fn tr(lang: &str, key: &str) -> &'static str {
             "Sessions still running: {n}. Quitting stops them. Their history is kept, so you can resume later."
         }
         ("en", "quit.confirmQuit") => "Quit",
+        ("en", "quit.shellBusy") => "Programs are still running in panel terminals. Quitting stops them.",
         ("en", "window.settings") => "Settings",
         ("en", "window.updater") => "Software Update",
         ("en", "window.newSession") => "New Session",
@@ -440,6 +441,7 @@ pub(crate) fn tr(lang: &str, key: &str) -> &'static str {
         (_, "quit.confirmTitle") => "退出 Meowo？",
         (_, "quit.confirmMessage") => "{n} 个会话还在运行，退出会中断它们。对话记录不受影响，之后可以恢复。",
         (_, "quit.confirmQuit") => "退出",
+        (_, "quit.shellBusy") => "面板终端还有程序在跑，退出会一并结束。",
         (_, "window.settings") => "设置",
         (_, "window.updater") => "软件更新",
         (_, "window.newSession") => "新建会话",
@@ -1054,6 +1056,7 @@ mod tests {
             assert!(tr(lang, "quit.confirmMessage").contains("{n}"), "{lang}");
             assert!(!tr(lang, "quit.confirmTitle").is_empty(), "{lang}");
             assert!(!tr(lang, "quit.confirmQuit").is_empty(), "{lang}");
+            assert!(!tr(lang, "quit.shellBusy").is_empty(), "{lang}");
         }
     }
 

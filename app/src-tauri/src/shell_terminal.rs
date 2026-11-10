@@ -94,6 +94,18 @@ pub(crate) struct ShellBusy {
     processes: Vec<ShellProcess>,
 }
 
+impl ShellBusy {
+    /// 「标题 · 程序 (PID n), ...」：与关窗确认（chat/windowClose.ts confirmCloseShells）同一写法。
+    pub(crate) fn describe(&self) -> String {
+        let processes: Vec<String> = self
+            .processes
+            .iter()
+            .map(|p| format!("{} (PID {})", if p.name.is_empty() { "?" } else { &p.name }, p.pid))
+            .collect();
+        format!("{} · {}", self.title, processes.join(", "))
+    }
+}
+
 /// 进程表：pid -> (父 pid, 进程名)。
 fn process_table() -> HashMap<u32, (u32, String)> {
     #[cfg(target_os = "windows")]
@@ -410,40 +422,53 @@ pub(crate) async fn shell_terminal_busy(
     state: tauri::State<'_, ShellTerminals>,
     ids: Vec<u32>,
 ) -> Result<Vec<ShellBusy>, String> {
-    let roots: Vec<(u32, u32, String)> = {
-        let map = state.shells.lock().map_err(|e| e.to_string())?;
-        ids.iter()
-            .filter_map(|id| {
-                let shell = map.get(id)?;
-                let exited = shell
-                    .output
-                    .lock()
-                    .map(|o| o.exit.is_some())
-                    .unwrap_or(true);
-                if exited {
-                    return None;
-                }
-                Some((*id, shell.pid?, shell.title.clone()))
-            })
-            .collect()
-    };
+    let roots = state.live_roots(Some(&ids))?;
     if roots.is_empty() {
         return Ok(Vec::new());
     }
     let table = tauri::async_runtime::spawn_blocking(process_table)
         .await
         .map_err(|e| e.to_string())?;
-    Ok(roots
+    Ok(busy_from(roots, &table))
+}
+
+impl ShellTerminals {
+    /// 还活着的终端（编号, shell pid, 标题）；`ids` 为 None 时取全部。
+    fn live_roots(&self, ids: Option<&[u32]>) -> Result<Vec<(u32, u32, String)>, String> {
+        let map = self.shells.lock().map_err(|e| e.to_string())?;
+        let mut roots: Vec<(u32, u32, String)> = map
+            .iter()
+            .filter(|(id, _)| ids.is_none_or(|ids| ids.contains(id)))
+            .filter_map(|(id, shell)| {
+                let exited = shell.output.lock().map(|o| o.exit.is_some()).unwrap_or(true);
+                if exited {
+                    return None;
+                }
+                Some((*id, shell.pid?, shell.title.clone()))
+            })
+            .collect();
+        roots.sort_by_key(|(id, ..)| *id);
+        Ok(roots)
+    }
+
+    /// 全部面板终端里有程序在跑的那些（托盘退出前问一句用，同步取进程表，调用方放 blocking 池）。
+    pub(crate) fn busy_all(&self) -> Vec<ShellBusy> {
+        let roots = self.live_roots(None).unwrap_or_default();
+        if roots.is_empty() {
+            return Vec::new();
+        }
+        busy_from(roots, &process_table())
+    }
+}
+
+fn busy_from(roots: Vec<(u32, u32, String)>, table: &HashMap<u32, (u32, String)>) -> Vec<ShellBusy> {
+    roots
         .into_iter()
         .filter_map(|(id, pid, title)| {
-            let processes = running_under(pid, &table);
-            (!processes.is_empty()).then_some(ShellBusy {
-                id,
-                title,
-                processes,
-            })
+            let processes = running_under(pid, table);
+            (!processes.is_empty()).then_some(ShellBusy { id, title, processes })
         })
-        .collect())
+        .collect()
 }
 
 #[tauri::command]
