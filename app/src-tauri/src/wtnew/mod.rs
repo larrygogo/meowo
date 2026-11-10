@@ -514,7 +514,12 @@ fn arm(
     let script = cfg.setup.as_ref().and_then(|s| s.resolve(windows));
     let hash = cfg.hash();
     let decided: Option<(&'static str, &'static str)> = if let Some(err) = &cfg.invalid {
-        setup_log(task, &format!("── .meowo/worktree.json 读不懂：{err}"));
+        let file = match cfg.source {
+            Some(config::Source::Cursor) => ".cursor/worktrees.json",
+            Some(config::Source::Conductor) => "conductor.json",
+            _ => ".meowo/worktree.json",
+        };
+        setup_log(task, &format!("── {file} 读不懂：{err}"));
         Some(("failed", "worktree/config_invalid"))
     } else if script.is_none() {
         Some(("skipped", "none"))
