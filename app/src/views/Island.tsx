@@ -90,6 +90,12 @@ export function islandTone(counts: Counts): IslandTone {
   return "idle";
 }
 
+/// 一组会话里最急的状态（口径同眼睛：出错 > 待处理 > 在跑 > 跑完），状态取自 cardTone（源于 activityTone）。
+/// 收起时的「+N」与面板的分页圆点据此上色：折进去的会话里有人在等，不展开也看得出来（二期 #3）。
+export function groupTone(items: readonly Item[]): IslandTone {
+  return islandTone(islandCounts(items));
+}
+
 function urgency(item: Item): number {
   const tone = cardTone(item);
   if (tone === "pending") return 0;
@@ -321,7 +327,7 @@ export function Island({
               tip={`${sessionTitle(item, t.sticker.waitingFirstInput)} · ${t.island.toneLabel[cardTone(item)] ?? ""}`}
             />
           ))}
-          {more > 0 && <span className="isl-more">+{more}</span>}
+          {more > 0 && <span className={`isl-more is-${groupTone(listed.slice(MAX_AGENTS))}`}>+{more}</span>}
         </span>
       ) : null,
     ];
@@ -382,7 +388,7 @@ export function Island({
                 tip={`${sessionTitle(item, t.sticker.waitingFirstInput)} · ${t.island.toneLabel[cardTone(item)] ?? ""}`}
               />
             ))}
-            {more > 0 && <span className="isl-more">+{more}</span>}
+            {more > 0 && <span className={`isl-more is-${groupTone(listed.slice(MAX_AGENTS))}`}>+{more}</span>}
           </span>
         )}
       </>

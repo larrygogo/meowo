@@ -7077,6 +7077,10 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .isl-clock { font-size: 20px; font-weight: 700; letter-spacing: 0.2px; font-variant-numeric: tabular-nums; }
 .isl-agents { display: flex; align-items: center; gap: 9px; }
 .isl-more { font-size: 12px; font-weight: 600; color: var(--isl-dim); }
+/* 「+N」按折进去的会话里最急的状态上色（二期 #3），颜色与会话图标的角标同源。 */
+.isl-more.is-running { color: var(--isl-ok); }
+.isl-more.is-pending { color: var(--isl-pending); }
+.isl-more.is-error { color: var(--isl-err); }
 .isl-dots { display: inline-flex; align-items: center; gap: 6px; }
 .isl-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--isl-faint); }
 .isl-dot.is-running { background: var(--isl-ok); animation: isl-pulse 1.2s ease-in-out infinite; }
@@ -7343,6 +7347,10 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
   transition: width 0.2s ease, background 0.2s ease;
 }
 .isl-dots-nav button.is-on { width: 16px; background: var(--isl-text-2); }
+/* 分页圆点按该页最急状态上色；放在 is-on 之后，当前页也保留状态色、只靠变宽表示选中。 */
+.isl-dots-nav button.is-running { background: var(--isl-ok); }
+.isl-dots-nav button.is-pending { background: var(--isl-pending); }
+.isl-dots-nav button.is-error { background: var(--isl-err); }
 
 /* 极简模式的细条：整个窗口就是一条黑边，底下一道状态色。 */
 .isl-strip {
