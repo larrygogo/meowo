@@ -131,17 +131,37 @@ describe("QuickSwitcher 命令面板（U1-14）", () => {
     expect(props.onCommand).toHaveBeenCalledWith("open-settings");
   });
 
-  it("Enter 落在会话上仍是跳转（is-current 会话也先关弹层）", async () => {
+  // 二期 #4（2026-11-10 定）：空查询默认选中第 0 条，而第 0 条多半就是当前会话（最近活跃），
+  // 打开就回车等于没切。改为默认选中第一个不是当前会话的条目。
+  it("空查询默认选中第一个非当前会话，回车切到它", async () => {
     mockSessions([session(7, "当前会话"), session(8, "别的会话")]);
     const props = renderPalette({ activeId: 7 });
     const input = await screen.findByRole("textbox");
-    // 默认 active=0（当前会话）：Enter 关闭但不重复 onPick。
+    await waitFor(() => expect(screen.getByRole("option", { name: /别的会话/ }).getAttribute("aria-selected")).toBe("true"));
     fireEvent.keyDown(input, { key: "Enter" });
     expect(props.onClose).toHaveBeenCalled();
-    expect(props.onPick).not.toHaveBeenCalled();
-    // 重新打开场景下 ArrowDown 一次再 Enter 才跳别的会话——这里直接测点击。
-    fireEvent.click(screen.getByRole("option", { name: /别的会话/ }));
     expect(props.onPick).toHaveBeenCalledWith(8);
+  });
+
+  it("点到当前会话只关弹层，不重复跳转", async () => {
+    mockSessions([session(7, "当前会话"), session(8, "别的会话")]);
+    const props = renderPalette({ activeId: 7 });
+    fireEvent.click(await screen.findByRole("option", { name: /当前会话/ }));
+    expect(props.onClose).toHaveBeenCalled();
+    expect(props.onPick).not.toHaveBeenCalled();
+  });
+
+  it("行尾显示未读点；当前会话正在看，不显示", async () => {
+    mockSessions([
+      session(7, "当前会话", { unread: true } as Partial<LiveSession>),
+      session(8, "没看过的", { unread: true } as Partial<LiveSession>),
+      session(9, "看过的"),
+    ]);
+    renderPalette({ activeId: 7 });
+    const unreadOf = async (name: RegExp) => (await screen.findByRole("option", { name })).querySelector(".chat-switcher-unread");
+    expect(await unreadOf(/没看过的/)).toBeTruthy();
+    expect(await unreadOf(/^看过的/)).toBeNull();
+    expect(await unreadOf(/当前会话/)).toBeNull();
   });
 });
 

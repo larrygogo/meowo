@@ -91,13 +91,16 @@ export function QuickSwitcher({ activeId, commands, onPick, onCommand, onClose }
         .then((page) => {
           if (seqRef.current !== seq) return;
           setRows(page.items);
-          setActive(0);
+          // 空查询按最近活跃排，第 0 条多半就是正在看的会话，打开就回车等于没切。默认选中第一个
+          // 不是当前会话的（对照 Slack/VS Code 的「最近切换」，二期 #4）。有查询时人在找特定一条，仍选第 0 条。
+          const other = query.trim() ? -1 : page.items.findIndex((row) => row.session.id !== activeId);
+          setActive(Math.max(0, other));
           if (listRef.current) listRef.current.scrollTop = 0;
         })
         .catch(() => {});
     }, query ? 200 : 0);
     return () => window.clearTimeout(timer);
-  }, [query]);
+  }, [query, activeId]);
   // 空查询时命令组全列而非隐藏：命令只有个位数条，全列让「这不只是会话切换器」
   // 一眼可见（信息 scent），藏起来用户永远不知道还能搜命令。
   const filteredCommands = useMemo(() => {
@@ -204,6 +207,10 @@ export function QuickSwitcher({ activeId, commands, onPick, onCommand, onClose }
                   <i className={`chat-sidebar-dot is-${tone}`} aria-hidden="true" />
                   <span className="chat-switcher-name">{row.task_title || t.sticker.waitingFirstInput}</span>
                   <span className="chat-switcher-meta">{metaOf(row)}</span>
+                  {/* 未读点同侧栏（回合结束时你没在看，打开即清）；当前会话正在看，不标。 */}
+                  {row.unread && row.session.id !== activeId && (
+                    <i className="chat-sidebar-unread chat-switcher-unread" role="img" aria-label={t.chat.unread} />
+                  )}
                 </button>
               );
             })}
