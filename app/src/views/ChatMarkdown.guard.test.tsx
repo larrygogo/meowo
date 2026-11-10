@@ -85,11 +85,24 @@ describe("病态 markdown 降级", () => {
     ["15000 个 ~~", "~~".repeat(15000)],
     ["440 层缩进列表", Array.from({ length: 440 }, (_, n) => `${"  ".repeat(n)}- x`).join("\n")],
     ["20000 个链接", "[a](b)".repeat(20000)],
+    // 第二轮做空审查：表格与词内下划线（修复前 4.5 秒、4.7 秒、17 秒）。
+    ["10 列 × 2000 行表格", ["|" + " h |".repeat(10), "|" + " --- |".repeat(10), ...Array.from({ length: 2000 }, (_, n) => "|" + ` c${n} |`.repeat(10))].join("\n")],
+    ["100 列 × 200 行表格", ["|" + " h |".repeat(100), "|" + " - |".repeat(100), ...Array.from({ length: 200 }, () => "|" + " c |".repeat(100))].join("\n")],
+    ["a_b_ × 20000", "a_b_".repeat(20000)],
   ];
   it.each(BYPASSES)("%s：不抛错、500ms 内、原文显示", (_name, text) => {
     const { container, ms } = timedRender(text);
     expect(ms).toBeLessThan(500);
     expect(container.querySelector("pre.chat-md-plain")?.textContent).toBe(text);
+  });
+
+  it("刚好低于竖线上限的大表格照常排版，且 500ms 内渲染完", () => {
+    // 5 列：每行 6 根竖线，330 行 ≈ 1992 根，压在 2000 以下。
+    const table = ["| a | b | c | d | e |", "| - | - | - | - | - |", ...Array.from({ length: 328 }, (_, n) => `| ${n} | **x** | y | z | w |`)].join("\n");
+    expect(markdownTooComplex(table)).toBe(false);
+    const { container, ms } = timedRender(table);
+    expect(container.querySelector("table")).toBeTruthy();
+    expect(ms).toBeLessThan(500);
   });
 
   it("正常的强调、snake_case、代码块与长列表不被误降级", () => {
@@ -99,8 +112,11 @@ describe("病态 markdown 降级", () => {
     // 表格每行都加粗。
     const table = ["| a | b |", "| --- | --- |", ...Array.from({ length: 600 }, () => "| **x** | *y* |")].join("\n");
     expect(markdownTooComplex(table)).toBe(false);
-    // 一段里大量 snake_case 标识符（词内 `_` 不能开合强调）。
-    expect(markdownTooComplex(Array.from({ length: 2000 }, (_, n) => `foo_bar_${n}`).join(" "))).toBe(false);
+    // 一段里几百个 snake_case 标识符（800 个词内 `_`，上限 1024）。
+    expect(markdownTooComplex(Array.from({ length: 400 }, (_, n) => `foo_bar_${n}`).join(" "))).toBe(false);
+    // 长报告里很多张小表：竖线按一张表计，不累计。
+    const manyTables = Array.from({ length: 200 }, (_, n) => [`表 ${n}`, "", "| a | b | c |", "| - | - | - |", "| 1 | 2 | 3 |", "| 4 | 5 | 6 |", ""].join("\n")).join("\n");
+    expect(markdownTooComplex(manyTables)).toBe(false);
     // 代码块里成片的 `**kwargs` 和深缩进不算（800 行约 14 万字，在总长上限内）。
     const code = ["```py", ...Array.from({ length: 800 }, () => `${" ".repeat(160)}f(**kwargs, *args)`), "```", "正文"].join("\n");
     expect(markdownTooComplex(code)).toBe(false);

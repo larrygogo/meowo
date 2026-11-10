@@ -1005,25 +1005,30 @@ fn unstage_blocking(cwd: &str, paths: &[String]) -> Result<(), String> {
 }
 
 /// 把一个未跟踪文件挪走的实现。抽成函数指针是为了测试能注入「回收失败」，验证不退回永久删除。
-type TrashFn = fn(&Path) -> Result<(), String>;
+type TrashFn = fn(&[std::path::PathBuf]) -> Result<(), String>;
 
 /// 移进系统回收站（Windows 回收站 / macOS 废纸篓 / Linux freedesktop Trash）。
 /// 未跟踪文件 git 里没有任何副本，以前直接 remove_file，手滑点了「放弃」就永久没了。
 /// 失败一律报 git/trash_failed、文件原样保留，**不退回永久删除**：没回收站的盘（网络盘、
 /// 部分 U 盘）上宁可让用户自己去删，也不替用户做不可恢复的决定。
-fn trash_to_recycle_bin(path: &Path) -> Result<(), String> {
+fn trash_to_recycle_bin(paths: &[std::path::PathBuf]) -> Result<(), String> {
+    if paths.is_empty() {
+        return Ok(());
+    }
     // 必须在一次性的专用线程里调：trash 5.2.9 在 Windows 上把所在线程 CoInitializeEx 成 STA 且
     // 永不 CoUninitialize（windows.rs:317-348）。若直接跑在 spawn_blocking 线程池里，这个线程以后
     // 被 focus_session 复用时 UIAutomation 要 MTA 会失败（terminal.rs:144 要求干净 apartment），
     // 反过来先跑过 UIA 的线程上 trash 也会失败（做空审查 comprobe 探针实测两向都复现）。
     // 用完即弃的线程让 COM 状态随线程结束。
-    let owned = path.to_path_buf();
+    // 整批一次 delete_all：一个线程、一次 COM 初始化、一次 IFileOperation。逐个调的话，新生成的
+    // 目录有上千个未跟踪文件（-uall 逐个列出）时要串行上千轮，回收站里也散成上千条（做空审查）。
+    let owned = paths.to_vec();
     let joined = std::thread::Builder::new()
         .name("meowo-trash".into())
         .spawn(move || {
             // trash 的 Windows 实现对 CoCreateInstance 直接 unwrap（windows.rs:95），COM 起不来会
             // panic；接住它按回收失败报错。
-            std::panic::catch_unwind(|| trash_context().delete(&owned))
+            std::panic::catch_unwind(|| trash_context().delete_all(&owned))
         })
         .map_err(|e| format!("git/trash_failed: {e}"))?
         .join();
@@ -1033,8 +1038,8 @@ fn trash_to_recycle_bin(path: &Path) -> Result<(), String> {
         Ok(Err(_)) | Err(_) => return Err("git/trash_failed: recycle bin unavailable".into()),
     }
     // 防御：IFileOperation 只靠 GetAnyOperationsAborted 报失败，trash 自己也注明拿不到具体
-    // 原因（windows.rs:111）。落地再核一次，免得界面说放弃成功、文件其实还在。
-    if std::fs::symlink_metadata(path).is_ok() {
+    // 原因（windows.rs:111）。落地逐个再核一次，免得界面说放弃成功、文件其实还在。
+    if paths.iter().any(|path| std::fs::symlink_metadata(path).is_ok()) {
         return Err("git/trash_failed: file still exists".into());
     }
     Ok(())
@@ -1070,6 +1075,7 @@ fn discard_with(cwd: &str, paths: &[String], trash: TrashFn) -> Result<(), Strin
         run_pathspec_batches(dir, &["restore", "--worktree"], &tracked)?;
         // porcelain 的路径相对仓库根；cwd 按约定就是仓库根，保险起见还是以 git 认的根为准。
         let root = repo_root(dir).unwrap_or_else(|| dir.to_string());
+        let mut to_trash = Vec::new();
         for file in untracked {
             // 不 canonicalize：未跟踪的符号链接要删的是链接本身，跟过去会删到链接指向的文件。
             // 路径已在 listed_changes 里挡掉了绝对路径和 `..`，git 也不会穿过符号链接目录列文件。
@@ -1086,10 +1092,10 @@ fn discard_with(cwd: &str, paths: &[String], trash: TrashFn) -> Result<(), Strin
                 // 删 junction 会连带删目标内容，Finder 的行为本机也验证不了，不值得冒这个险。
                 std::fs::remove_file(&full).map_err(|e| format!("git/failed: {e}"))?;
             } else {
-                trash(&full)?;
+                to_trash.push(full);
             }
         }
-        Ok(())
+        trash(&to_trash)
     })();
     invalidate_caches();
     result
@@ -1806,11 +1812,14 @@ mod tests {
     }
 
     /// 假回收站：直接删，模拟「回收成功、原路径消失」。
-    fn fake_trash_ok(path: &Path) -> Result<(), String> {
-        std::fs::remove_file(path).map_err(|e| format!("git/trash_failed: {e}"))
+    fn fake_trash_ok(paths: &[std::path::PathBuf]) -> Result<(), String> {
+        for path in paths {
+            std::fs::remove_file(path).map_err(|e| format!("git/trash_failed: {e}"))?;
+        }
+        Ok(())
     }
     /// 假回收站：回收失败（没回收站的盘、COM 起不来……）。
-    fn fake_trash_fail(_: &Path) -> Result<(), String> {
+    fn fake_trash_fail(_: &[std::path::PathBuf]) -> Result<(), String> {
         Err("git/trash_failed: injected".into())
     }
 
@@ -1837,6 +1846,31 @@ mod tests {
 ").unwrap();
         discard_with(&s(&repo), &["new.txt".into()], fake_trash_ok).unwrap();
         assert!(std::fs::symlink_metadata(repo.join("new.txt")).is_err());
+        assert!(statuses(&repo).is_empty());
+    }
+
+    /// 放弃多个未跟踪文件只调一次回收站（整批）：逐个调时上千个文件要串行上千轮 COM + IFileOperation。
+    #[test]
+    fn discard_trashes_untracked_files_in_one_batch() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        static CALLS: AtomicUsize = AtomicUsize::new(0);
+        static FILES: AtomicUsize = AtomicUsize::new(0);
+        fn counting_trash(paths: &[std::path::PathBuf]) -> Result<(), String> {
+            CALLS.fetch_add(1, Ordering::SeqCst);
+            FILES.fetch_add(paths.len(), Ordering::SeqCst);
+            fake_trash_ok(paths)
+        }
+        let sb = Sandbox::new("discard-trash-batch");
+        let repo = sb.repo("r");
+        let names = ["a.txt", "b.txt", "sub/c.txt"];
+        std::fs::create_dir_all(repo.join("sub")).unwrap();
+        for name in names {
+            std::fs::write(repo.join(name), "n\n").unwrap();
+        }
+        let paths: Vec<String> = names.iter().map(|n| n.to_string()).collect();
+        discard_with(&s(&repo), &paths, counting_trash).unwrap();
+        assert_eq!(CALLS.load(Ordering::SeqCst), 1, "应整批调一次回收站");
+        assert_eq!(FILES.load(Ordering::SeqCst), 3);
         assert!(statuses(&repo).is_empty());
     }
 

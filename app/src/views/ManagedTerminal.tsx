@@ -1635,8 +1635,8 @@ export function ManagedTerminal({ sessionId, status, reviewPending = false, back
     // eslint-disable-next-line react-hooks/exhaustive-deps -- sessionIdRef/sessionChangedRef 是稳定 ref
   }, [sessionId]);
 
-  // 原生关窗被用户取消：后端在拦下之前已经清了「正在看」（window.rs CloseRequested 分支），
-  // 不重新登记的话实时帧就断了，画面退回快照兜底（见 chat/windowClose.ts）。
+  // 原生关窗被用户取消：后端关窗收尾只在 Destroyed 跑（window.rs），取消时「正在看」其实还在；
+  // 这里重新登记是兜底（登记幂等），防以后有人把收尾挪回 CloseRequested（见 chat/windowClose.ts）。
   useEffect(() => {
     if (remoteUi()) return;
     const onCancelled = () => void registerTerminalViewer(sessionIdRef.current).catch(() => {});

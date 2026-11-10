@@ -30,6 +30,12 @@ export const MARKDOWN_MAX_EMPHASIS_RUN_LENGTH = 64;
 export const MARKDOWN_MAX_INDENT = 128;
 /** 整条消息里 `](` 的最大个数。 */
 export const MARKDOWN_MAX_LINKS = 2000;
+// 第二轮做空审查实测：10 列 × 2000 行的表格 4.5 秒、100 × 200 行 4.7 秒、3000 列 × 30 行 270 秒；
+// `a_b_`×20000 17 秒——词内 `_` 开合不了强调，但照样进分隔符栈，数量一多同样是平方级。
+/** 一张表格（连续含 `|` 的行，代码块外）里竖线的最大个数，约等于单元格数。 */
+export const MARKDOWN_MAX_TABLE_PIPES = 2000;
+/** 同一段落里词内 `_`（snake_case）的最大个数：正常一段写到几百个已经很多。 */
+export const MARKDOWN_MAX_INTRAWORD_UNDERSCORES = 1024;
 
 const SPACE = 32;
 const TAB = 9;
@@ -101,9 +107,13 @@ export function markdownTooComplex(text: string): boolean {
   if (text.length > MARKDOWN_MAX_CHARS) return true;
   let bracket = 0;
   let emphasisRuns = 0;
+  let intraword = 0;
   let links = 0;
+  let pipes = 0;
   let lineStart = 0;
   let lineHasContent = false;
+  // 表格到第一行不含 `|` 的行就结束：竖线按「一张表」计，长报告里很多张小表不累计。
+  let lineHasPipe = false;
   // 围栏代码块里的内容 remark 不做行内解析，`**kwargs`、深缩进都不贵，整段跳过不计。
   let fence = 0;
   for (let i = 0; i <= text.length; i += 1) {
@@ -124,6 +134,7 @@ export function markdownTooComplex(text: string): boolean {
         fence = f;
         bracket = 0;
         emphasisRuns = 0;
+        intraword = 0;
       }
       const depth = containerDepth(text, i);
       if (depth > MARKDOWN_MAX_CONTAINER_DEPTH) return true;
@@ -139,9 +150,12 @@ export function markdownTooComplex(text: string): boolean {
         // 空行：段落结束，链接标签和强调都不会跨过去
         bracket = 0;
         emphasisRuns = 0;
+        intraword = 0;
       }
+      if (!lineHasPipe) pipes = 0;
       lineStart = i + 1;
       lineHasContent = false;
+      lineHasPipe = false;
       continue;
     }
     if (!isBlank(code) && code !== 13 /* CR，CRLF 的空行也算空行 */) lineHasContent = true;
@@ -156,13 +170,19 @@ export function markdownTooComplex(text: string): boolean {
       let j = i;
       while (j < text.length && text.charCodeAt(j) === code) j += 1;
       const runLength = j - i;
-      // 词内的 `_`（snake_case）不能开合强调，不算。
-      const intraword = code === 95 && isWordChar(text.charCodeAt(i - 1)) && isWordChar(text.charCodeAt(j));
-      if (!intraword) {
+      // 词内的 `_`（snake_case）不能开合强调，按宽得多的上限单独计数（见常量注释）。
+      const inWord = code === 95 && isWordChar(text.charCodeAt(i - 1)) && isWordChar(text.charCodeAt(j));
+      if (inWord) {
+        intraword += runLength;
+        if (intraword > MARKDOWN_MAX_INTRAWORD_UNDERSCORES) return true;
+      } else {
         if (runLength > MARKDOWN_MAX_EMPHASIS_RUN_LENGTH) return true;
         if (++emphasisRuns > MARKDOWN_MAX_EMPHASIS_RUNS) return true;
       }
       i = j - 1;
+    } else if (code === 124 /* | */) {
+      lineHasPipe = true;
+      if (++pipes > MARKDOWN_MAX_TABLE_PIPES) return true;
     }
   }
   return false;

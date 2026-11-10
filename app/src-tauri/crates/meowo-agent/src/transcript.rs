@@ -1047,7 +1047,14 @@ fn tail_region(
     first_block: u64,
 ) -> TailOutcome {
     use std::io::{Read, Seek, SeekFrom};
+    // 文件不比首块大多少时直接整读：先解析尾部一块、条数不够再扩到文件头，等于解析两遍。
+    // 做空审查实测 1–4MB 的真实会话因此比改前慢约 2 倍（2.36MB：11.2→27.4ms），本机约五分之一
+    // 的会话落在这个区间。按首块的倍数算而不是绝对字节：测试用极小首块压块边界，照样走尾读。
+    const WHOLE_FILE_FACTOR: u64 = 8;
     let mut block = first_block.max(1);
+    if end <= block.saturating_mul(WHOLE_FILE_FACTOR) {
+        block = end;
+    }
     loop {
         let raw = end.saturating_sub(block);
         let mut buf = vec![0; (end - raw) as usize];
@@ -1093,6 +1100,10 @@ fn tail_region(
             let estimate = span.saturating_mul(page_size as u64 + 1) / total as u64;
             (estimate.saturating_mul(3) / 2).max(block.saturating_mul(2))
         };
+        // 下一窗已过半个文件：再扩一次多半就到头，不如这就整读，免得多解析一遍。
+        if block.saturating_mul(2) >= end {
+            block = end;
+        }
     }
 }
 
@@ -2267,13 +2278,23 @@ mod tests {
         );
         content.push_str(r#"{"type":"user","message":{"content":"没写完"#);
         let path = write_tmp("tail_claude_plain", &content);
+        let len = content.len() as u64;
         let mut taken = 0;
+        let mut eligible = 0;
         for page in PAGES {
             for block in BLOCKS {
-                taken += usize::from(tail_matches_full(&CLAUDE_TRANSCRIPT, &path, page, block));
+                let tail = tail_matches_full(&CLAUDE_TRANSCRIPT, &path, page, block);
+                // 不比首块大 8 倍的文件按规则直接整读（tail_region 的 WHOLE_FILE_FACTOR），不该走尾读。
+                if len <= block * 8 {
+                    assert!(!tail, "文件只有首块的 {} 倍，应直接整读（page={page} block={block}）", len / block);
+                } else {
+                    eligible += 1;
+                    taken += usize::from(tail);
+                }
             }
         }
-        assert!(taken >= PAGES.len() * (BLOCKS.len() - 1), "尾读应接管绝大多数组合，实际 {taken}");
+        assert!(eligible >= PAGES.len() * 2, "合成文件太小，测不到尾读：len={len}");
+        assert!(taken * 5 >= eligible * 4, "尾读应接管绝大多数够大的组合，实际 {taken}/{eligible}");
         // 公共入口（默认块）与整读一致。
         let full = read_chat_delta_paged(&NoTail(&CLAUDE_TRANSCRIPT), &path, 0, None, 200);
         let public = read_chat_delta_paged(&CLAUDE_TRANSCRIPT, &path, 0, None, 200);

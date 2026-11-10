@@ -1571,6 +1571,13 @@ pub fn run() {
             // 端点去连一个可能已被回收的端口。
             if matches!(event, tauri::RunEvent::Exit) {
                 exit_ptys.shutdown();
+                // 面板终端也在这里收：托盘「退出」走 app.exit(0)，tauri-runtime-wry 直接把事件循环
+                // 设成 ExitWithCode 再发 RunEvent::Exit，不给窗口发 Destroyed（做空审查读
+                // tauri-runtime-wry 2.12.3 lib.rs:4300-4312），window.rs 关窗兜底的 kill_all 不会跑。
+                // 与 on_before_exit 同理；kill_all 幂等，窗口先销毁过再来一次无害。
+                if let Some(shells) = app.try_state::<crate::shell_terminal::ShellTerminals>() {
+                    shells.kill_all();
+                }
                 // 收尾之后再装：安装器会杀残留进程，先把 PTY 善后做完。
                 install_downloaded_on_exit(app);
             }
