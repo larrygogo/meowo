@@ -26,7 +26,7 @@ afterEach(cleanup);
 
 const summary: GitDiffSummaryDto = { gitAvailable: true, isRepo: true, branch: "main", ahead: null, behind: null, files: [] };
 const shells = new Map<number, ShellTerminalInfo>([[3, { id: 3, owner: 1, title: "pwsh", exited: false }]]);
-const panes = new Map<number, BrowserPaneInfo>([[5, { id: 5, owner: 1, url: "http://localhost:5173/", title: "Vite App", loading: false, agentActive: true, agentPaused: false, zoom: 1 }]]);
+const panes = new Map<number, BrowserPaneInfo>([[5, { id: 5, owner: 1, url: "http://localhost:5173/", title: "Vite App", loading: false, agentActive: true, agentPaused: false, zoom: 1, downloads: [], permission: null }]]);
 const full: PanelState = {
   tabs: [
     { key: "d", type: "diff" },

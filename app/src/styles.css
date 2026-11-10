@@ -4752,6 +4752,18 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 /* agent 操作提示条：在工具栏下方，网页之上（不压在原生视图上，原生视图在它下面开始）。 */
 .browser-pane-agent { flex: none; display: flex; align-items: center; gap: var(--sp-8); padding: var(--sp-6) var(--sp-10); border-bottom: var(--hairline) solid var(--cc-border); color: var(--cc-text); background: color-mix(in srgb, var(--cc-accent-text) 12%, transparent); font-size: var(--text-xs); }
 .browser-pane-agent.is-paused { background: var(--fill-hover); color: var(--cc-text-faint); }
+/* 网页权限请求与下载提示（BrowserPane.tsx）。与 agent 提示条同一条横条语言，画在网页区域上方的
+   HTML 里：原生网页视图盖不住它，页签切走时随面板一起藏，不像 WebView2 原生框那样四处飘。 */
+.browser-pane-notice { flex: none; display: flex; align-items: center; gap: var(--sp-8); min-width: 0; padding: var(--sp-6) var(--sp-10); border-bottom: var(--hairline) solid var(--cc-border); color: var(--cc-text); background: var(--fill-hover); font-size: var(--text-xs); }
+.browser-pane-notice.is-permission { background: color-mix(in srgb, var(--cc-warn-vivid) 12%, transparent); }
+.browser-pane-notice.is-failed { color: var(--cc-err-text); }
+.browser-pane-notice-icon { flex: none; color: var(--cc-text-dim); }
+.browser-pane-notice-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.browser-pane-notice button { flex: none; padding: 2px var(--sp-10); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-sm); color: var(--cc-text); background: var(--cc-bg); font: inherit; cursor: pointer; }
+.browser-pane-notice button.is-primary { border-color: transparent; color: var(--cc-on-accent); background: var(--cc-accent); }
+.browser-pane-notice button:disabled { opacity: .5; cursor: default; }
+.browser-pane-notice .browser-pane-notice-close { padding: 0 var(--sp-6); border: 0; background: transparent; color: var(--cc-text-faint); font-size: var(--text-base); line-height: 1; }
+.browser-pane-notice .browser-pane-notice-close:hover { color: var(--cc-text); }
 .browser-pane-agent-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--cc-accent-text); animation: browser-agent-pulse 1.2s ease-in-out infinite; }
 .browser-pane-agent.is-paused .browser-pane-agent-dot { animation: none; background: var(--cc-text-faint); }
 .browser-pane-agent button { margin-left: auto; padding: 2px var(--sp-10); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-sm); color: var(--cc-text); background: var(--cc-bg); font: inherit; cursor: pointer; }

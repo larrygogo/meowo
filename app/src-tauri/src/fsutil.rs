@@ -754,7 +754,7 @@ fn reveal_path_blocking(cwd: &str, rel: &str) -> Result<(), String> {
     reveal_target(&target)
 }
 
-fn reveal_target(target: &Path) -> Result<(), String> {
+pub(crate) fn reveal_target(target: &Path) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         // `/select,路径` 是单个 argv：explorer 语法如此，含空格也无需引号

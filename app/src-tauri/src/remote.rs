@@ -1946,6 +1946,8 @@ mod tests {
             "browser_pane_action",
             "browser_pane_close",
             "browser_pane_set_agent_paused",
+            "browser_pane_answer_permission",
+            "browser_pane_reveal_download",
         ];
         for cmd in FORBIDDEN {
             assert!(
