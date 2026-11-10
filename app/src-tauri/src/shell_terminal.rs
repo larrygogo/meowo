@@ -750,7 +750,12 @@ mod tests {
         let shells = ShellTerminals::default();
         let info = shells.open(42, &cwd, 120, 30).unwrap();
         assert_eq!(info.owner, 42);
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        // 两段时限：shell 画出提示符之前最多等 90s，之后敲命令到看见结果再给 20s。
+        // 启动查询答上之后，CI 上仍挂过一次（run 42836973728，Windows）：backlog 停在查询和标题，
+        // 查询都已答过，是 pwsh 冷启动叠上同进程 600 多个并行测试的负载，20s 内没画出提示符。
+        // 启动慢只说明机器忙；提示符出来以后还跑不出命令，才是这个测试要抓的毛病，那段仍按 20s 判。
+        let started = std::time::Instant::now();
+        let mut deadline = started + std::time::Duration::from_secs(90);
         let leaf = dir.file_name().unwrap().to_string_lossy().into_owned();
         let mut queries = StartupQueries::default();
         let mut typed = false;
@@ -772,13 +777,16 @@ mod tests {
                 #[cfg(not(target_os = "windows"))]
                 shells.write(info.id, "pwd\r").unwrap();
                 typed = true;
+                deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
             }
             if text.contains("meowo-shell-42") && text.contains(&leaf) {
                 break;
             }
             assert!(
                 std::time::Instant::now() < deadline,
-                "shell 没有输出预期内容：{text}"
+                "shell 没有输出预期内容（{}，已等 {:?}）：{text}",
+                if typed { "提示符出来后命令没跑出结果" } else { "提示符一直没出来" },
+                started.elapsed()
             );
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
