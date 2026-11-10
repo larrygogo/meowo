@@ -875,6 +875,8 @@ struct Folded {
     agent_modes: Vec<AgentMode>,
     undone: bool,
     ambiguous: bool,
+    /// 尾读窗口的第一条消息就是用户消息：只差窗口前一行就能判双写，不必按块扩窗。
+    lead_user: bool,
 }
 
 impl Folded {
@@ -930,6 +932,7 @@ fn fold_lines(spec: &dyn TranscriptSpec, path: &Path, base: u64, parsed: &[Parse
     // 尾读专用：结果可能依赖窗口之前的内容（见函数注释）；窗口前最后一个主链节点（懒取一次）；
     // 「还没产出过任何消息」：此时 last_user 的真值取决于窗口前一行，窗口内无从得知。
     let mut ambiguous = false;
+    let mut lead_user = false;
     let mut seed_link: Option<Option<String>> = None;
     let mut user_state_unknown = tail;
     for (index, line) in parsed.iter().enumerate() {
@@ -960,7 +963,7 @@ fn fold_lines(spec: &dyn TranscriptSpec, path: &Path, base: u64, parsed: &[Parse
         for item in &line.items {
             if let ChatItem::UserText { text, timestamp, .. } = item {
                 // 窗口里的第一条消息就是用户消息：整读时它可能与窗口前一条双写判重被吞。
-                ambiguous |= user_state_unknown;
+                lead_user |= user_state_unknown;
                 let key = text.trim();
                 if last_user.is_some_and(|(prev, prev_ts)| {
                     prev == key && within_double_write(prev_ts, timestamp.as_deref())
@@ -1021,7 +1024,7 @@ fn fold_lines(spec: &dyn TranscriptSpec, path: &Path, base: u64, parsed: &[Parse
         }
     }
     offsets.push(kept.len());
-    Folded { kept, offsets, agent_modes, undone, ambiguous }
+    Folded { kept, offsets, agent_modes, undone, ambiguous, lead_user }
 }
 
 /// `base` 之前最后一个主链节点的 id（增量批次判分叉用：批次里第一条用户提示的 parent 该是它）。
@@ -1170,7 +1173,7 @@ fn tail_region(
         let start = parsed_start.unwrap_or(end);
         let folded = fold_lines(spec, path, start, &parsed, true);
         let total = folded.total();
-        if !folded.ambiguous && total > page_size {
+        if !folded.ambiguous && !folded.lead_user && total > page_size {
             let region = folded.into_region(parsed);
             return TailOutcome::Window {
                 lines: region.lines,
@@ -1182,6 +1185,14 @@ fn tail_region(
         }
         block = if folded.ambiguous || total == 0 {
             block.saturating_mul(4)
+        } else if total > page_size {
+            // 条数够了，只差窗口前一行（lead_user）：往回退一整行。大工具结果后面紧跟下一轮提示
+            // 是常态，按块扩窗的新起点又会落在提示上。二期实测（release，100MB 合成 kimi wire）：
+            // ×4 扩窗一路扩到 46MB 处仍判不准，首开 395→739ms。
+            match previous_line_start(file, start) {
+                Some(prev) => end - prev + 1,
+                None => return TailOutcome::Unreadable,
+            }
         } else {
             let span = end - start;
             let estimate = span.saturating_mul(page_size as u64 + 1) / total as u64;
@@ -1191,6 +1202,26 @@ fn tail_region(
         // 二期实测（release，真实 21MB 会话「加载更早」，末尾 200 条横跨 7.5MB）：
         // 过半整读要解析整段 19.3MB。
     }
+}
+
+/// `start`（行首，>0）之前那一整行的起点。只往回读到上一个换行为止。
+fn previous_line_start(file: &mut std::fs::File, start: u64) -> Option<u64> {
+    use std::io::{Read, Seek, SeekFrom};
+    const CHUNK: u64 = 64 << 10;
+    // start-1 是上一行的换行符，从它前面开始找。
+    let mut hi = start.checked_sub(1)?;
+    let mut buf = vec![0u8; CHUNK as usize];
+    while hi > 0 {
+        let lo = hi.saturating_sub(CHUNK);
+        let part = &mut buf[..(hi - lo) as usize];
+        file.seek(SeekFrom::Start(lo)).ok()?;
+        file.read_exact(part).ok()?;
+        if let Some(at) = memchr::memrchr(b'\n', part) {
+            return Some(lo + at as u64 + 1);
+        }
+        hi = lo;
+    }
+    Some(0)
 }
 
 /// 顺序扫 `[0, end)`（`end` 在行首），对含任一 `markers` 的整行调用 `visit`（按文件顺序）。
@@ -2679,6 +2710,183 @@ mod tests {
             }
         }
         println!("[real] files {checked}, tail taken {taken}, full {full_ms:.0} ms vs tail {tail_ms:.0} ms");
+    }
+
+    // ── 其他四家的尾读（二期 #30）──
+
+    /// 合成 kimi wire.jsonl：每轮 turn.prompt + 同文双写的 append_message + 正文 + 工具调用（每 40 轮
+    /// 带一份计划）+ 带填充的结果；`modes` 的轮次前插权限/计划模式切换，`undos`=(轮次, n) 在该轮后撤回 n 轮。
+    pub(crate) fn kimi_wire(turns: usize, pad_len: usize, modes: &[usize], undos: &[(usize, usize)]) -> String {
+        let pad = "k".repeat(pad_len);
+        let mut out = String::new();
+        for t in 0..turns {
+            let time = 1_793_000_000_000u64 + t as u64 * 1000;
+            if modes.contains(&t) {
+                out.push_str(&format!(r#"{{"type":"permission.set_mode","mode":"m{t}","time":{time}}}"#));
+                out.push('\n');
+                out.push_str(if t % 2 == 0 { r#"{"type":"plan_mode.enter"}"# } else { r#"{"type":"plan_mode.exit"}"# });
+                out.push('\n');
+            }
+            out.push_str(&format!(r#"{{"type":"turn.prompt","input":"提示 {t}","origin":{{"kind":"user"}},"time":{time}}}"#));
+            out.push('\n');
+            out.push_str(&format!(r#"{{"type":"context.append_message","message":{{"role":"user","content":"提示 {t}"}},"time":{time}}}"#));
+            out.push('\n');
+            out.push_str(&format!(r#"{{"type":"context.append_loop_event","time":{time},"event":{{"type":"content.part","uuid":"a{t}","part":{{"type":"text","text":"回答 {t}"}}}}}}"#));
+            out.push('\n');
+            let display = if t % 40 == 3 { format!(r#","display":{{"plan":"计划 {t}"}}"#) } else { String::new() };
+            out.push_str(&format!(r#"{{"type":"context.append_loop_event","time":{time},"event":{{"type":"tool.call","uuid":"c{t}","id":"call{t}","name":"Shell","input":{{"command":"ls {t}"}}{display}}}}}"#));
+            out.push('\n');
+            out.push_str(&format!(r#"{{"type":"context.append_loop_event","time":{time},"event":{{"type":"tool.result","callId":"call{t}","output":"结果 {t} {pad}"}}}}"#));
+            out.push('\n');
+            for (at, n) in undos {
+                if *at == t {
+                    out.push_str(&format!(r#"{{"type":"context.undo","count":{n}}}"#));
+                    out.push('\n');
+                }
+            }
+        }
+        out
+    }
+
+    /// 合成 codex rollout：每轮 task_started + turn_context（`modes` 的轮次换审批/协作模式）+ 用户消息 +
+    /// 推理 + 工具调用与输出（带填充）+ 回答；`undos`=(轮次, n) 在该轮后回溯 n 轮。
+    pub(crate) fn codex_rollout(turns: usize, pad_len: usize, modes: &[usize], undos: &[(usize, usize)]) -> String {
+        let pad = "c".repeat(pad_len);
+        let mut out = String::new();
+        let mut approval = "on-request".to_string();
+        for t in 0..turns {
+            let ts = format!("2026-11-10T{:02}:{:02}:{:02}.000Z", (t / 3600) % 24, (t / 60) % 60, t % 60);
+            if modes.contains(&t) {
+                approval = format!("policy-{t}");
+            }
+            let kind = if modes.contains(&t) && t % 2 == 0 { "plan" } else { "default" };
+            out.push_str(&format!(r#"{{"timestamp":"{ts}","type":"event_msg","payload":{{"type":"task_started","collaboration_mode_kind":"{kind}"}}}}"#));
+            out.push('\n');
+            out.push_str(&format!(r#"{{"timestamp":"{ts}","type":"turn_context","payload":{{"approval_policy":"{approval}","sandbox_policy":{{"type":"workspace-write"}},"collaboration_mode":{{"mode":"{kind}"}}}}}}"#));
+            out.push('\n');
+            out.push_str(&format!(r#"{{"timestamp":"{ts}","type":"event_msg","payload":{{"type":"user_message","message":"提示 {t}"}}}}"#));
+            out.push('\n');
+            out.push_str(&format!(r#"{{"timestamp":"{ts}","type":"response_item","payload":{{"type":"function_call","name":"shell_command","arguments":"{{\"command\":\"ls {t}\"}}","call_id":"c{t}"}}}}"#));
+            out.push('\n');
+            out.push_str(&format!(r#"{{"timestamp":"{ts}","type":"response_item","payload":{{"type":"function_call_output","call_id":"c{t}","output":"结果 {t} {pad}"}}}}"#));
+            out.push('\n');
+            out.push_str(&format!(r#"{{"timestamp":"{ts}","type":"event_msg","payload":{{"type":"agent_message","message":"回答 {t}"}}}}"#));
+            out.push('\n');
+            for (at, n) in undos {
+                if *at == t {
+                    out.push_str(&format!(r#"{{"timestamp":"{ts}","type":"event_msg","payload":{{"type":"thread_rolled_back","num_turns":{n}}}}}"#));
+                    out.push('\n');
+                }
+            }
+        }
+        out
+    }
+
+    /// 合成 opencode 导出（store::collect_lines 的行形）：每轮 用户消息 + 推理 + 工具 + 正文。
+    pub(crate) fn opencode_export(turns: usize, pad_len: usize) -> String {
+        let pad = "o".repeat(pad_len);
+        let mut out = String::new();
+        for t in 0..turns {
+            let time = 1_793_000_000_000u64 + t as u64 * 1000;
+            out.push_str(&format!(r#"{{"kind":"user","msg":"mu{t}","key":"pu{t}","time":{time},"parts":[{{"type":"text","text":"提示 {t}"}}]}}"#));
+            out.push('\n');
+            out.push_str(&format!(r#"{{"kind":"part","msg":"ma{t}","key":"pr{t}","time":{time},"part":{{"type":"reasoning","text":"想一想 {t}"}}}}"#));
+            out.push('\n');
+            out.push_str(&format!(r#"{{"kind":"part","msg":"ma{t}","key":"pt{t}","time":{time},"part":{{"type":"tool","tool":"bash","callID":"call{t}","state":{{"status":"completed","input":{{"command":"ls {t}"}},"output":"结果 {t} {pad}"}}}}}}"#));
+            out.push('\n');
+            out.push_str(&format!(r#"{{"kind":"part","msg":"ma{t}","key":"px{t}","time":{time},"part":{{"type":"text","text":"回答 {t}"}}}}"#));
+            out.push('\n');
+        }
+        out
+    }
+
+    /// 按插件 id 取它的 transcript 规格（opencode 的规格不对外导出）。
+    pub(crate) fn spec_of(id: &str) -> &'static dyn TranscriptSpec {
+        crate::by_id(id).unwrap().telemetry().unwrap().transcript().unwrap()
+    }
+
+    /// 首屏与逐屏「加载更早」都与整读一致，且确实走了尾读。
+    fn assert_tail_equivalent(spec: &dyn TranscriptSpec, label: &str, content: &str) {
+        let path = write_tmp(label, content);
+        let mut taken = 0;
+        for page in [1, 7, 60, 200] {
+            for block in [64, 777, 4096, 65536] {
+                taken += usize::from(tail_matches_full(spec, &path, page, block));
+            }
+            // 小屏逐屏翻到头是 O(行数²) 次整读对照：只翻前 8 屏，200 条一屏的翻到头。
+            let mut end = read_chat_delta_paged(&NoTail(spec), &path, 0, None, page).start;
+            for _ in 0..if page < 200 { 8 } else { usize::MAX } {
+                if end == 0 {
+                    break;
+                }
+                let window = read_chat_window_in(spec, &path, end, page, 777).unwrap();
+                assert_eq!(window, read_chat_window(&NoTail(spec), &path, end, page).unwrap(), "{label} page {page} end {end}");
+                end = window.start;
+            }
+        }
+        assert!(taken >= 8, "{label}：尾读应接管多数组合，实际 {taken}/16");
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn tail_matches_full_read_for_kimi_codex_opencode() {
+        assert_tail_equivalent(spec_of("kimi"), "tail_kimi", &kimi_wire(400, 200, &[0, 30, 351], &[(120, 2), (380, 1), (395, 9)]));
+        assert_tail_equivalent(spec_of("codex"), "tail_codex", &codex_rollout(400, 200, &[0, 40, 360], &[(150, 3), (390, 1), (398, 12)]));
+        assert_tail_equivalent(spec_of("opencode"), "tail_opencode", &opencode_export(400, 200));
+        // 大工具结果后紧跟下一轮提示（kimi 常态）：窗口起点总落在提示上，也该只读尾部。
+        let big = write_tmp("tail_kimi_big", &kimi_wire(300, 8 << 10, &[0], &[]));
+        assert!(tail_matches_full(spec_of("kimi"), &big, 200, 65536), "窗口起点落在提示上时退回了整读");
+        std::fs::remove_file(big).ok();
+    }
+
+    /// 其他三家 100MB 合成会话的首屏与一次「加载更早」：改前（整读，NoTail）对尾读，各 3 次取最好。手动跑：
+    /// `cargo test -p meowo-agent --release --lib bench_first_page_other_agents -- --ignored --nocapture --test-threads=1`
+    #[test]
+    #[ignore]
+    fn bench_first_page_other_agents() {
+        let turns = 100 << 20 >> 13; // 每轮约 8KB 填充：凑出约 100MB
+        let modes: Vec<usize> = (0..turns).step_by(50).collect();
+        let cases = [
+            ("kimi", kimi_wire(turns, 8 << 10, &modes, &[(turns / 2, 3)])),
+            ("codex", codex_rollout(turns, 8 << 10, &modes, &[(turns / 2, 3)])),
+            ("opencode", opencode_export(turns, 8 << 10)),
+        ];
+        let best = |f: &mut dyn FnMut()| {
+            f();
+            (0..3)
+                .map(|_| {
+                    let at = std::time::Instant::now();
+                    f();
+                    at.elapsed().as_secs_f64() * 1e3
+                })
+                .fold(f64::MAX, f64::min)
+        };
+        for (id, content) in cases {
+            let spec = spec_of(id);
+            let path = write_tmp(&format!("bench_{id}"), &content);
+            drop(content);
+            let mb = path.metadata().unwrap().len() as f64 / 1048576.0;
+            let full = best(&mut || {
+                read_chat_delta_paged(&NoTail(spec), &path, 0, None, 200);
+            });
+            let tail = best(&mut || {
+                read_chat_delta_paged(spec, &path, 0, None, 200);
+            });
+            let first = read_chat_delta_paged(spec, &path, 0, None, 200);
+            let reference = read_chat_delta_paged(&NoTail(spec), &path, 0, None, 200);
+            assert_eq!((&first.items, first.start, &first.agent_modes), (&reference.items, reference.start, &reference.agent_modes), "{id}");
+            let earlier_full = best(&mut || {
+                read_chat_window(&NoTail(spec), &path, first.start, 200);
+            });
+            let earlier_tail = best(&mut || {
+                read_chat_window(spec, &path, first.start, 200);
+            });
+            println!(
+                "[perf] {id} {mb:.0}MB first page: full {full:.1} ms vs tail {tail:.1} ms ({:.1}x); load earlier: full {earlier_full:.1} ms vs tail {earlier_tail:.1} ms",
+                full / tail
+            );
+            std::fs::remove_file(path).ok();
+        }
     }
 
     /// 尾读耗时基准（只读）：`MEOWO_TAIL_BENCH_DIR` 指向一个放 transcript 副本的目录，逐份比对

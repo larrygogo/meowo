@@ -452,6 +452,16 @@ impl TranscriptSpec for CodexTranscript {
         true
     }
 
+    /// 长会话首开只解析尾部一屏。rollout 逐行独立解析，回溯（thread_rolled_back）由通用读取层
+    /// 回放、判不准时自己扩窗；续写段已由 lineage 拼成一份文件。模式只来自 turn_context 与
+    /// task_started 两种行（agent_modes_from_line），codex 从不产出计划。
+    fn tail_read(&self) -> Option<crate::transcript::TailRead> {
+        Some(crate::transcript::TailRead {
+            mode_markers: &["turn_context", "task_started"],
+            plan_markers: &[],
+        })
+    }
+
     fn supports_analysis(&self) -> bool {
         false
     }
