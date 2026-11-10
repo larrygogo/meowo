@@ -1,0 +1,64 @@
+{
+ "baseRefName": "main",
+ "headRefName": "flight-performance-metadata",
+ "headRefOid": "80262b9ee61c2f3bf8cb6a990398a21e05906458",
+ "isDraft": false,
+ "mergeStateStatus": "BLOCKED",
+ "mergeable": "MERGEABLE",
+ "number": 38135,
+ "state": "OPEN",
+ "statusCheckRollup": [
+  {
+   "__typename": "CheckRun",
+   "completedAt": "2026-11-07T00:26:00Z",
+   "conclusion": "SUCCESS",
+   "detailsUrl": "https://github.com/react/react/actions/runs/42318097181/job/128235646794",
+   "name": "Cache Runtime node_modules",
+   "startedAt": "2026-11-07T00:25:41Z",
+   "status": "COMPLETED",
+   "workflowName": "(Runtime) Build and Test"
+  },
+  {
+   "__typename": "CheckRun",
+   "completedAt": "2026-11-09T18:10:11Z",
+   "conclusion": "SUCCESS",
+   "detailsUrl": "https://github.com/react/react/actions/runs/42671517367/job/129348136270",
+   "name": "check_access",
+   "startedAt": "2026-11-09T18:10:09Z",
+   "status": "COMPLETED",
+   "workflowName": "(Runtime) Discord Notify"
+  },
+  {
+   "__typename": "CheckRun",
+   "completedAt": "2026-11-07T00:28:14Z",
+   "conclusion": "SUCCESS",
+   "detailsUrl": "https://github.com/react/react/actions/runs/42318097507/job/128235647757",
+   "name": "ESLint v6",
+   "startedAt": "2026-11-07T00:25:43Z",
+   "status": "COMPLETED",
+   "workflowName": "(Runtime) ESLint Plugin E2E"
+  },
+  {
+   "__typename": "CheckRun",
+   "completedAt": "2026-11-07T00:25:11Z",
+   "conclusion": "SKIPPED",
+   "detailsUrl": "https://github.com/react/react/actions/runs/42318097256/job/128235687017",
+   "name": "check_access",
+   "startedAt": "2026-11-07T00:25:18Z",
+   "status": "COMPLETED",
+   "workflowName": "(Runtime) Discord Notify"
+  },
+  {
+   "__typename": "CheckRun",
+   "completedAt": "2026-11-07T00:27:29Z",
+   "conclusion": "FAILURE",
+   "detailsUrl": "https://github.com/react/react/actions/runs/42318097507/job/128235647495",
+   "name": "ESLint v7",
+   "startedAt": "2026-11-07T00:25:43Z",
+   "status": "COMPLETED",
+   "workflowName": "(Runtime) ESLint Plugin E2E"
+  }
+ ],
+ "title": "[Flight] Tag Server Component performance measures with React metadata",
+ "url": "https://github.com/react/react/pull/38135"
+}

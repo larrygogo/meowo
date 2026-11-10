@@ -22,4 +22,15 @@ branch: string | null,
  * 相对上游分支领先 / 落后的提交数（对照 Kimi 改动面板的「领先远程 / 落后远程」：agent 提交
  * 之后要不要推送，一眼可见）。按本地记录的远程分支算，不自动 fetch。没有上游时为 None。
  */
-ahead: number | null, behind: number | null, files: Array<GitChangedFileDto>, };
+ahead: number | null, behind: number | null, files: Array<GitChangedFileDto>, 
+/**
+ * 上游分支（如 `origin/feat`），「推送」按钮写明推到哪。没设上游、上游已被删（gone）时为 None。
+ * 和 ahead/behind 同一条 `git status --branch` 读出，本地计数、不 fetch。旧后端不下发。
+ */
+upstream?: string, 
+/**
+ * 还没推上去的提交数：有上游时等于 ahead；没上游时是不在任何远端分支上的提交数（新建的
+ * worktree 分支第一次推之前也要看得到「有几个没推」）。没有远端、detached、没算（非选中的仓库
+ * 且没上游）时为 None，前端不显示推送按钮。旧后端不下发。
+ */
+unpushed?: number, };

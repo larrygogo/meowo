@@ -1,0 +1,28 @@
+{
+ "baseRefName": "master",
+ "headRefName": "watchcache-resync-optimize",
+ "headRefOid": "0e29712b7aa97f97e82e1828cf460d991ef973a9",
+ "isDraft": true,
+ "mergeStateStatus": "DIRTY",
+ "mergeable": "CONFLICTING",
+ "number": 143958,
+ "state": "OPEN",
+ "statusCheckRollup": [
+  {
+   "__typename": "StatusContext",
+   "context": "tide",
+   "startedAt": "2026-11-10T01:52:14Z",
+   "state": "ERROR",
+   "targetUrl": "https://prow.k8s.io/pr?query=is%3Apr+repo%3Akubernetes%2Fkubernetes+author%3Aserathius+head%3Awatchcache-resync-optimize"
+  },
+  {
+   "__typename": "StatusContext",
+   "context": "EasyCLA",
+   "startedAt": "2026-11-08T19:27:56Z",
+   "state": "SUCCESS",
+   "targetUrl": "https://easycla.lfx.linuxfoundation.org/#/?version=2"
+  }
+ ],
+ "title": "Watchcache resync optimize",
+ "url": "https://github.com/kubernetes/kubernetes/pull/143958"
+}

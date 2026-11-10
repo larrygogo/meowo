@@ -1,0 +1,13 @@
+{
+ "baseRefName": "main",
+ "headRefName": "meowo/drill",
+ "headRefOid": "1111111111111111111111111111111111111111",
+ "isDraft": false,
+ "mergeStateStatus": "CLEAN",
+ "mergeable": "MERGEABLE",
+ "number": 12,
+ "state": "MERGED",
+ "statusCheckRollup": [],
+ "title": "fix: 放弃更改进回收站、不再白屏卡死、长会话首开快约 14 倍，「更改」面板扛住上万未跟踪文件",
+ "url": "https://github.com/larrygogo/meowo-pr-drill/pull/12"
+}

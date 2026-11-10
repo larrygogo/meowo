@@ -13,6 +13,7 @@ mod diaglog;
 mod editors;
 #[cfg(target_os = "windows")]
 mod envpath;
+mod forge;
 mod fsutil;
 mod git;
 mod island;
@@ -1308,6 +1309,12 @@ pub fn run() {
             worktree::worktree_status,
             worktree::remove_session_worktree,
             worktree::list_cleanable_worktrees,
+            forge::git_push,
+            forge::git_push_start,
+            forge::git_job_status,
+            forge::git_forge_status,
+            forge::gh_pr_create,
+            forge::gh_pr_merge,
             list_dir_entries,
             read_file_text,
             read_image_preview,
