@@ -46,7 +46,8 @@ import { QuestionPanels } from "./chat/QuestionPanels";
 import { RemoteTerminalKeys } from "./chat/RemoteTerminalKeys";
 import { peekSessionMeta, prefetchPending, recallHistory, rememberHistory, takePrefetch, trackPrefetch } from "./chat/historyCache";
 import { ChatTitleMenu, ChatTitlePlaceholder } from "./chat/TitleMenus";
-import { QuickSwitcher, RenameModal, ShortcutSheet, type PaletteCommand } from "./chat/WindowModals";
+import { displayKeys, QuickSwitcher, RenameModal, ShortcutSheet, type PaletteCommand } from "./chat/WindowModals";
+import { attentionTone, nextAttentionSession } from "./chat/nextAttention";
 import { isBackgroundShell, isSubagentDelegation } from "./chat/shared";
 import { Transcript, type TranscriptAgent } from "./chat/Transcript";
 import { UserMessageNav } from "./chat/UserMessageNav";
@@ -630,6 +631,8 @@ export function ChatWindow() {
   // 与侧栏入口的归档同一取序（useSessionActions 的 pickNextAfterArchive）。侧栏收起时
   // 镜像为空,退回后端现查（toggleArchived 的 fallbackNext）。
   const sidebarOrderRef = useRef<number[]>([]);
+  // 同一份镜像里「待处理或出错」的会话（侧栏按 sessionTone 判定写入），Alt+Shift+↓ 跳转用。
+  const sidebarAttentionRef = useRef<Set<number>>(new Set());
   // 归档动作与撤销条统一走 useSessionActions（C-13）：与侧栏入口同一条 set_archived、
   // 同一个「下一条」取序。对话窗不挂撤销条（用户实拍「不要显示这个」），完成的会话从
   // 侧栏「已完成」找回。
@@ -719,18 +722,17 @@ export function ChatWindow() {
     toggleDocked();
   };
   // 窗口级快捷键（均带 Ctrl/Cmd，不与输入冲突）：B=收展侧栏，1/2=对话/终端视图，
-  // N=新建会话，F=聚焦侧栏搜索（监听就在下方）；Esc 语义各归其主（审批/菜单/弹层）。
+  // N=新建会话，F=在当前内容里找字（监听就在下方）；Esc 语义各归其主（审批/菜单/弹层）。
   // 此前整个对话窗除 Esc 外零快捷键，收侧栏、切视图、新建全要鼠标。
   const toggleSidebarRef = useRef(toggleSidebar);
   toggleSidebarRef.current = toggleSidebar;
-  // Ctrl/Cmd+F 聚焦侧栏搜索框。监听曾挂在 ChatSidebar 内——侧栏一收起组件就卸载，
-  // 快捷键静默失效。收起着时先展开（窄窗开抽屉）再聚焦；终端视图内让位（焦点在
-  // xterm 里时 Ctrl+F 是终端搜索，见速查表底注）。
+  // 命令面板的「搜索会话」聚焦侧栏搜索框：收起着时先展开（窄窗开抽屉）再聚焦。
+  // Ctrl+F 不再走这里（二期 #8），搜会话的快捷键是 Ctrl+K。
   const sidebarSearchRef = useRef<HTMLInputElement | null>(null);
   const sidebarVisibleRef = useRef(sidebarVisible);
   sidebarVisibleRef.current = sidebarVisible;
-  // Ctrl+F 与命令面板的「聚焦搜索」走同一动作：桌面窄窗开抽屉，远程窄屏回列表页；
-  // 视图切换后要过一拍渲染，搜索框才挂得上。
+  // 命令面板的「聚焦搜索」：桌面窄窗开抽屉，远程窄屏回列表页；视图切换后要过一拍渲染，
+  // 搜索框才挂得上。
   const focusSidebarSearch = () => {
     if (!sidebarVisibleRef.current) toggleSidebarRef.current();
     requestAnimationFrame(() => {
@@ -738,24 +740,18 @@ export function ChatWindow() {
       sidebarSearchRef.current?.select();
     });
   };
+  // Ctrl/Cmd+F 在当前内容里找字：对话视图开对话内搜索，终端视图开终端搜索（与浏览器、
+  // VS Code、Slack 一致，二期 #8 推翻 C-17 的「F 找会话、Shift+F 找字」分工）。Ctrl+Shift+F
+  // 保留为别名。此前两个监听各管一半，Ctrl+F 那个没排除 Shift，按 Ctrl+Shift+F 会连带
+  // 展开侧栏、把焦点抢去会话搜索框。焦点已在 xterm 里时让位给它自己的键处理（同一动作）。
+  const terminalFindRef = useRef<(() => void) | null>(null);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey) || e.altKey || e.code !== "KeyF") return;
       if (document.activeElement?.closest(".managed-terminal")) return;
       e.preventDefault();
-      focusSidebarSearch();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
-  // Ctrl/Cmd+Shift+F = 区内搜索（对话内容），与 Ctrl+F（侧栏会话列表）分职：一个找会话，
-  // 一个在当前会话里找字。终端里让位给 xterm 自己的搜索。
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!(e.ctrlKey || e.metaKey) || !e.shiftKey || e.altKey || e.code !== "KeyF") return;
-      if (document.activeElement?.closest(".managed-terminal")) return;
-      e.preventDefault();
-      setSearchOpen(true);
+      if (viewRef.current === "terminal") terminalFindRef.current?.();
+      else setSearchOpen(true);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -1785,6 +1781,41 @@ export function ChatWindow() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [resetTo]);
+  // Alt/Option+Shift+↓ 跳到下一个待批准、提问或出错的会话（二期 #5，leader 定：按侧栏顺序、
+  // 循环、不另起视图）。贴纸下线后没有「等待中」聚合入口，多开时挨个点侧栏找谁在等太慢。
+  // 侧栏收起时镜像为空，退回后端同一列表现查（默认手动排序，与侧栏没调过排序时一致）。
+  // 终端里让位给 shell 的 Alt 组合键，同 Alt+↑/↓。
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!e.altKey || !e.shiftKey || e.ctrlKey || e.metaKey || e.isComposing || e.key !== "ArrowDown") return;
+      if (document.activeElement?.closest(".managed-terminal")) return;
+      e.preventDefault();
+      const go = (next: number | null) => {
+        if (next == null) {
+          setCopyNotice({ text: tRef.current.chat.noPendingSession });
+          return;
+        }
+        leavePages();
+        resetTo(next);
+      };
+      const order = sidebarOrderRef.current;
+      if (order.length > 0) {
+        const attention = sidebarAttentionRef.current;
+        go(nextAttentionSession(order, (id) => attention.has(id), activeSessionRef.current));
+        return;
+      }
+      getLiveSessionsPage("all", null, null, 200)
+        .then((page) => {
+          const needs = new Set(page.items
+            .filter((row) => attentionTone(sessionTone(row.connected, row.session.status, row.pending_review, row.errored, row.busy_subagents, row.screen_state)))
+            .map((row) => row.session.id));
+          go(nextAttentionSession(page.items.map((row) => row.session.id), (id) => needs.has(id), activeSessionRef.current));
+        })
+        .catch(() => {});
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [resetTo]);
   // 窄窗抽屉里的选中:先收抽屉再切(resetTo 自带同 id 守卫)。稳定引用给 memo 的
   // ChatSidebar 用,理由见 collapseSidebar。
   // 会话列表项按下/悬停即预取首屏（对照 Kimi 的 prefetchMainTranscript）：手机上从按下到
@@ -2195,12 +2226,14 @@ export function ChatWindow() {
     { id: "view-chat", label: t.chat.cmdViewChat, keys: "Ctrl+1" },
     { id: "view-terminal", label: t.chat.cmdViewTerminal, keys: "Ctrl+2" },
     { id: "toggle-sidebar", label: t.chat.shortcutSidebar, keys: "Ctrl+B" },
-    { id: "focus-search", label: t.chat.shortcutSearch, keys: "Ctrl+F" },
-    { id: "search-transcript", label: t.chat.searchTranscript, keys: "Ctrl+Shift+F" },
+    // 搜会话没有单独的快捷键了：命令面板（Ctrl+K）本身就能搜会话（二期 #8）。
+    { id: "focus-search", label: t.chat.shortcutSearch },
+    { id: "search-transcript", label: t.chat.searchTranscript, keys: "Ctrl+F" },
     { id: "jump-latest", label: t.chat.jumpLatest },
     { id: "show-shortcuts", label: t.chat.cmdShowShortcuts, keys: "?" },
     { id: "open-settings", label: t.sticker.openSettings },
   ];
+  for (const cmd of paletteCommands) if (cmd.keys) cmd.keys = displayKeys(cmd.keys);
   const runPaletteCommand = (id: string) => {
     switch (id) {
       case "new-session": void openNewSessionWindow().catch(() => {}); break;
@@ -3997,6 +4030,7 @@ export function ChatWindow() {
               newSessionActive={newSessionOpen != null}
               approvalAwaitingIds={approvalAwaitingIds}
               visibleOrderRef={sidebarOrderRef}
+              attentionIdsRef={sidebarAttentionRef}
               searchInputRef={sidebarSearchRef}
               onSelect={selectFromOverlay}
               onPrefetch={prefetchSession}
@@ -4016,6 +4050,7 @@ export function ChatWindow() {
         newSessionActive={newSessionOpen != null}
         approvalAwaitingIds={approvalAwaitingIds}
         visibleOrderRef={sidebarOrderRef}
+        attentionIdsRef={sidebarAttentionRef}
         searchInputRef={sidebarSearchRef}
         width={sidebarWidth}
         onSelect={selectSession}
@@ -4561,6 +4596,10 @@ export function ChatWindow() {
               <button type="button" onClick={() => setView("chat")}>{t.chat.terminalApprovalGo}</button>
             </div>
           )}
+          {/* 一次性提示（如 Alt+Shift+↓ 没有可跳的会话）：对话页的提示挂在输入框上方，终端视图没有输入框。 */}
+          {view === "terminal" && copyNotice && (
+            <div className="chat-terminal-approval" role="status"><span>{copyNotice.text}</span></div>
+          )}
           <Suspense fallback={null}>
           <ManagedTerminal
             // 不换 key:临时 id→真实 id 的重绑与换会话都由组件内部 sessionChangedRef
@@ -4593,6 +4632,7 @@ export function ChatWindow() {
             gridRef={terminalGridRef}
             // T-14：外部视图在线初值（快照回报）；实时增删走 pty-external-viewers 事件。
             onExternalViewers={setExternalViewersOnline}
+            findRef={terminalFindRef}
           />
           </Suspense>
         </div>

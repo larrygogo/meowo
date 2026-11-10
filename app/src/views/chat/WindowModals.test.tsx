@@ -4,6 +4,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const invoke = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(() => Promise.resolve(() => {})) }));
+const platform = vi.hoisted(() => ({ mac: false }));
+vi.mock("../../platform", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../platform")>()),
+  isMac: () => platform.mac,
+}));
 
 import { QuickSwitcher, ShortcutSheet, type PaletteCommand } from "./WindowModals";
 import type { LiveSession } from "../../api";
@@ -175,8 +180,34 @@ describe("ShortcutSheet 快捷键速查表", () => {
     expect(dialog.querySelectorAll(".chat-shortcuts-row")).toHaveLength(18);
     expect(dialog.textContent).toContain("Ctrl+Shift+F");
     expect(dialog.textContent).toContain("Ctrl+`");
-    expect(dialog.textContent).toContain(zh.chat.shortcutTerminalNote);
+    expect(dialog.textContent).toContain(zh.chat.shortcutTerminalNote("Ctrl"));
     fireEvent.keyDown(dialog, { key: "Escape" });
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  // 二期 #5/#8：Ctrl+F 统一为找字（Ctrl+Shift+F 别名同行），新增跳下一个待处理会话。
+  it("Ctrl+F 一行写找字并带别名；有 Alt+Shift+↓ 跳转行", () => {
+    render(<ShortcutSheet onClose={vi.fn()} />);
+    const rows = [...document.querySelectorAll(".chat-shortcuts-row")];
+    const rowOf = (desc: string) => rows.find((row) => row.querySelector("dd")?.textContent === desc);
+    expect(rowOf(zh.chat.shortcutFind)?.querySelector("dt")?.textContent).toBe("Ctrl+F / Ctrl+Shift+F");
+    expect(rowOf(zh.chat.shortcutNextPending)?.querySelector("dt")?.textContent).toBe("Alt+Shift+↓");
+    // 搜会话不再占 Ctrl+F。
+    expect(rowOf(zh.chat.shortcutSearch)).toBeUndefined();
+  });
+
+  it("mac 上速查表显示 ⌘ 与 ⌥", () => {
+    platform.mac = true;
+    try {
+      render(<ShortcutSheet onClose={vi.fn()} />);
+      const dialog = screen.getByRole("dialog", { name: zh.chat.shortcutsTitle });
+      expect(dialog.textContent).toContain("⌘+K");
+      expect(dialog.textContent).toContain("⌘+F / ⌘+Shift+F");
+      expect(dialog.textContent).toContain("⌥+Shift+↓");
+      expect(dialog.textContent).not.toContain("Ctrl");
+      expect(dialog.textContent).toContain(zh.chat.shortcutTerminalNote("⌘"));
+    } finally {
+      platform.mac = false;
+    }
   });
 });

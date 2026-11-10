@@ -408,6 +408,10 @@ export const zh = {
     shortcutNewSession: "新建会话",
     shortcutSearch: "搜索会话",
     shortcutPrevNext: "切到侧栏的上一条 / 下一条会话",
+    // 二期 #5/#8（2026-11-10 定）：Ctrl+F 两种视图都是在当前内容里找字，搜会话交给 Ctrl+K。
+    shortcutFind: "在当前内容中查找",
+    shortcutNextPending: "跳到下一个待处理或出错的会话",
+    noPendingSession: "没有待处理或出错的会话",
     shortcutSend: "发送消息",
     shortcutNewline: "换行",
     shortcutInterruptSend: "中断当前回合并发送",
@@ -418,7 +422,7 @@ export const zh = {
     shortcutGroupWindow: "窗口",
     shortcutGroupInput: "输入框",
     // 终端视图的让位说明（速查表底注）：静默失效的键必须有一处写明。
-    shortcutTerminalNote: "终端视图中 Ctrl+K/B/N/1/2 由应用占用，Ctrl+F 是终端搜索",
+    shortcutTerminalNote: (mod: string) => `终端视图中 ${mod}+K/B/N/1/2 由应用占用，${mod}+F 在终端里查找`,
     // 终端内搜索条（Ctrl+F，xterm addon-search）。
     termSearchPlaceholder: "搜索终端输出",
     termSearchPrev: "上一个",

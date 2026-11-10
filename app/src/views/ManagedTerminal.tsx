@@ -325,9 +325,12 @@ type ManagedTerminalProps = {
   /// 外部同步终端（attach 客户端）在线状态变化时上报（T-14）：初值来自快照的
   /// externalViewers；对话页据此提示「两边同时输入会交错」。
   onExternalViewers?: (online: boolean) => void;
+  /// 父层拿它打开终端搜索：终端视图里焦点不在 xterm 上（点过标题栏等）时，窗口级 Ctrl+F
+  /// 也要在终端里找字（二期 #8：Ctrl+F 两种视图都是在当前内容里找字）。
+  findRef?: MutableRefObject<(() => void) | null>;
 };
 
-export function ManagedTerminal({ sessionId, status, reviewPending = false, background = false, onBackgroundInput, visible = true, onUserSubmit, attentionMarkers = [], interactivePrompt = false, expectMenu = false, grammar, newlineInput = null, imagePasteInput = "\x16", onAttention, onScreen, rearmRef: externalRearmRef, gridRef: externalGridRef, resumeOptions, takeoverExtra, cwd = null, onExternalViewers }: ManagedTerminalProps) {
+export function ManagedTerminal({ sessionId, status, reviewPending = false, background = false, onBackgroundInput, visible = true, onUserSubmit, attentionMarkers = [], interactivePrompt = false, expectMenu = false, grammar, newlineInput = null, imagePasteInput = "\x16", onAttention, onScreen, rearmRef: externalRearmRef, gridRef: externalGridRef, resumeOptions, takeoverExtra, cwd = null, onExternalViewers, findRef }: ManagedTerminalProps) {
   const t = useT();
   const hostRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
@@ -430,6 +433,7 @@ export function ManagedTerminal({ sessionId, status, reviewPending = false, back
   // proposed API,选区高亮已足够表达「当前命中在哪」)。
   const searchAddonRef = useRef<SearchAddon | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
+  if (findRef) findRef.current = () => setSearchOpen(true);
   // 右键菜单（U0-11：复制/粘贴/全选/搜索）：生产构建的 WebView 默认菜单被
   // devtools-guard 整个封死，应用内必须补一份。canCopy/canPaste 在打开那一刻定格
   //（选区在菜单开着期间被键盘清掉也不追——动作落空是无害 no-op）。
@@ -748,9 +752,9 @@ export function ManagedTerminal({ sessionId, status, reviewPending = false, back
       const appNav = (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey
         && ["KeyK", "KeyB", "KeyN", "Digit1", "Digit2"].includes(event.code);
       if (appNav) return false;
-      // Ctrl/Cmd+F = 终端内搜索:拦下打开搜索条,不让 ^F(光标前移)落进 PTY。
-      // ChatSidebar 的窗口级 Ctrl+F 对 .managed-terminal 内的焦点已让位,互不抢。
-      const findCombo = (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey && event.code === "KeyF";
+      // Ctrl/Cmd+F = 终端内搜索:拦下打开搜索条,不让 ^F(光标前移)落进 PTY。Ctrl+Shift+F 是
+      // 同一动作的别名(二期 #8,对话视图同此)。窗口级的找字监听对 .managed-terminal 内的焦点已让位,互不抢。
+      const findCombo = (event.ctrlKey || event.metaKey) && !event.altKey && event.code === "KeyF";
       if (findCombo) {
         setSearchOpen(true);
         return false;

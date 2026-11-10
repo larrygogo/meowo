@@ -10,6 +10,7 @@ import { getLiveSessionsPage, sessionTone, type LiveSession } from "../../api";
 import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
 import { parentSegment } from "../../paths";
+import { isMac } from "../../platform";
 import { AppModal } from "../AppModal";
 
 /** 重命名会话的独立 modal（用户指定，不做就地编辑）。Enter 保存、Esc/取消/点遮罩关闭；
@@ -244,20 +245,28 @@ export function QuickSwitcher({ activeId, commands, onPick, onCommand, onClose }
   );
 }
 
+/// 键位的显示写法：清单按 Windows 写（Ctrl/Alt），mac 上换成 ⌘/⌥。监听本来就同认 ctrlKey 与
+/// metaKey、Option 即 altKey，此前速查表在 mac 上照写 Ctrl，按了 Ctrl 反而不灵（二期 #8）。
+export function displayKeys(keys: string, mac: boolean = isMac()): string {
+  return mac ? keys.replace(/\bCtrl\b/g, "⌘").replace(/\bAlt\b/g, "⌥") : keys;
+}
+
 /** 对话窗速查表与设置页共用同一份清单，避免新增快捷键只补到其中一处。 */
 /// 快捷键清单（唯一数据源）：`?` 速查表与设置页「快捷键」共用，分「窗口」「输入框」两组。
-export function shortcutGroups(t: ReturnType<typeof useT>): { title: string; rows: Array<[string, string]> }[] {
-  return [
+export function shortcutGroups(t: ReturnType<typeof useT>, mac: boolean = isMac()): { title: string; rows: Array<[string, string]> }[] {
+  const groups: { title: string; rows: Array<[string, string]> }[] = [
     {
       title: t.chat.shortcutGroupWindow,
       rows: [
+        // 搜会话交给 Ctrl+K（命令面板本就能搜会话）；Ctrl+F 在对话和终端里都是找字，
+        // Ctrl+Shift+F 保留为别名（二期 #8，2026-11-10 leader 改定，推翻 C-17 的分工）。
         ["Ctrl+K", t.chat.shortcutSwitcher],
         ["Ctrl+N", t.chat.shortcutNewSession],
         ["Ctrl+B", t.chat.shortcutSidebar],
         ["Ctrl+1 / Ctrl+2", t.chat.shortcutViews],
-        ["Ctrl+F", t.chat.shortcutSearch],
+        ["Ctrl+F / Ctrl+Shift+F", t.chat.shortcutFind],
         ["Alt+↑ / Alt+↓", t.chat.shortcutPrevNext],
-        ["Ctrl+Shift+F", t.chat.searchTranscript],
+        ["Alt+Shift+↓", t.chat.shortcutNextPending],
         ["Ctrl+Shift+B", t.chat.shortcutPanel],
         ["Ctrl+`", t.chat.shortcutShell],
         ["Ctrl+T", t.chat.shortcutNewBrowser],
@@ -277,6 +286,7 @@ export function shortcutGroups(t: ReturnType<typeof useT>): { title: string; row
       ],
     },
   ];
+  return groups.map((group) => ({ ...group, rows: group.rows.map(([keys, desc]) => [displayKeys(keys, mac), desc]) }));
 }
 
 /// 一组键位：「Ctrl+Shift+F」拆成一枚枚键帽（对照系统设置的写法），多套组合之间用「/」。
@@ -308,9 +318,9 @@ export function ShortcutList() {
           </div>
         ))}
       </dl>
-      {/* 终端视图的让位说明:Ctrl+K/B/N/1/2 被应用导航占用、readline 编辑键失效,
-          Ctrl+F 也不抢 xterm 焦点——这些"静默失效"必须有一处写明,否则无从排查。 */}
-      <div className="chat-shortcuts-note">{t.chat.shortcutTerminalNote}</div>
+      {/* 终端视图的让位说明:Ctrl+K/B/N/1/2 被应用导航占用、readline 编辑键失效——
+          这些"静默失效"必须有一处写明,否则无从排查。 */}
+      <div className="chat-shortcuts-note">{t.chat.shortcutTerminalNote(displayKeys("Ctrl"))}</div>
     </>
   );
 }

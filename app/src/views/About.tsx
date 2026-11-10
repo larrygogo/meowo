@@ -24,7 +24,7 @@ import { NetworkSection } from "./settings/NetworkSection";
 import { RemoteAccessCard } from "./settings/RemoteAccessCard";
 import { applySettingsFilter } from "./settings/searchFilter";
 import { useEscClose } from "../hooks/useEscClose";
-import { KeyCombos, shortcutGroups } from "./chat/WindowModals";
+import { displayKeys, KeyCombos, shortcutGroups } from "./chat/WindowModals";
 import { SETTINGS_SECTION_KEY } from "../settingsNav";
 
 const REPO = "github.com/larrygogo/meowo";
@@ -167,7 +167,7 @@ function ShortcutsSection() {
           </div>
         </Fragment>
       ))}
-      <div className="sec-hint">{t.chat.shortcutTerminalNote}</div>
+      <div className="sec-hint">{t.chat.shortcutTerminalNote(displayKeys("Ctrl"))}</div>
     </>
   );
 }
