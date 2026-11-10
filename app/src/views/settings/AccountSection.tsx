@@ -1376,7 +1376,7 @@ export function AccountSection() {
     }, 5 * 60_000);
     return () => window.clearInterval(id);
     // doRefresh 每次渲染新建但只用稳定 setter，按挂载一次即可。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- doRefresh 每次渲染新建但只用稳定 setter，挂载一次即可
   }, []);
 
   // 三态区分（曾一律 return null 整页空白）：检测中给文案占位；失败给重试；

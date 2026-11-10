@@ -529,7 +529,7 @@ export function Sticker({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
     // closeSearch 每次渲染新建但内部只用稳定 setter；按状态位重挂即可。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- closeSearch 每次渲染新建但只用稳定 setter，按状态位重挂即可
   }, [focusNotice, archivedToasts.length, searchOpen]);
   const startNote = (l: Item) => {
     // 外库卡的便签只读:写入走本库 cc_session_id 查行,对外库会话必然落空。
@@ -815,6 +815,7 @@ export function Sticker({
     if (last && last.index >= shown.length - 10) {
       onLoadMore();
     }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 没传 loadMore 时 onLoadMore 是每次新建的空函数，多跑一次无副作用；传了时是父组件的稳定回调
   }, [virtualItems, shown.length, data.length, isLoadingMore, hasMore, onLoadMore]);
 
   // 各标签角标计数：优先用后端返回的总数（稳定、不随懒加载闪烁）；
@@ -991,7 +992,7 @@ export function Sticker({
     if (inner) ro.observe(inner);
     for (const child of Array.from(inner?.children ?? el.children)) ro.observe(child);
     return () => ro.disconnect();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- syncSb 每次渲染新建，按 shown 变化重新观察即可
   }, [shown]);
 
   // 拖拽 thumb 滚动列表。

@@ -42,6 +42,10 @@ jobs:
       - name: 安装前端依赖
         working-directory: app
         run: bun install --frozen-lockfile
+      - name: 前端 lint（oxlint：rules-of-hooks / exhaustive-deps）
+        # 只开两条 hooks 规则，存量都带了原因注释，这里只拦新增（配置见 app/.oxlintrc.json）。
+        working-directory: app
+        run: bun run lint
       - name: 前端单测
         working-directory: app
         run: bunx vitest run

@@ -112,6 +112,7 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
   // 点开的折叠目录还没拉（或写操作后清掉了）就拉一次。只在这几种时候跑，不跟 5 秒轮询（轮询换了 repo
   // 对象会进来，但拉过的不再拉）。目录已不在清单里（被放弃、加进 .gitignore、里面有文件被暂存）就不拉。
   const sessionCwdOf = (r: string) => (r === cwd ? null : cwd);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 刻意每次渲染都检查，靠 dirFiles 里已有或在途的条目去重，不会重复拉
   useEffect(() => {
     if (!repo) return;
     const r = repo.root;
@@ -561,6 +562,7 @@ function observeRect(instance: Virtualizer<HTMLDivElement, Element>, cb: (rect: 
 function VirtualRows({ items, scrollEl }: { items: readonly VRow[]; scrollEl: HTMLDivElement | null }) {
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const [margin, setMargin] = useState(0);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 刻意每次渲染后重量列表起点（上方提交框会变高），值没变不 setState，不会循环
   useLayoutEffect(() => {
     const body = bodyRef.current;
     if (!body || !scrollEl) return;

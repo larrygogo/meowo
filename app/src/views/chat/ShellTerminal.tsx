@@ -137,6 +137,7 @@ export function ShellTerminal({ id, visible }: { id: number; visible: boolean })
       fitRef.current = null;
     };
   // t 只用于错误文案，换语言不值得重建终端。
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 终端按 id 只建一次；t.locale 只用于打开链接失败的报错文案，切语言不该重建终端
   }, [id]);
 
   // 切回这个页签时把焦点给终端，点「+」新开的也能直接打字。

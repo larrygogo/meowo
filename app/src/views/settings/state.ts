@@ -145,7 +145,7 @@ export function useSettingsState() {
         resetShared();
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 共享订阅计数只在挂载与卸载时增减
   }, []);
   const patch = (p: Partial<Settings>): Promise<string | null> => {
     const task = sharedSaveQueue.current.then(async (): Promise<string | null> => {

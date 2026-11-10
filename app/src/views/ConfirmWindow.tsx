@@ -41,7 +41,7 @@ export function ConfirmWindow() {
       .then(setPayload)
       // 取不到内容(请求已被并发取消)就直接按取消收场,不渲染空壳。
       .catch(() => decide(false));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- decide 每次渲染新建，按确认框 id 拉一次内容即可
   }, [id]);
   // 首帧 paint 后按内容实高收拢窗口,再显示——不用 useShowWhenReady(它 mount 即 show,
   // 用户会看到窗口先大后小跳一下)。正文里的 span 是块级测量探针:p 被 flex:1 撑开时
@@ -104,7 +104,7 @@ export function ConfirmWindow() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- decide 每次渲染新建，按确认框 id 重挂 Esc 监听即可
   }, [id]);
   if (!payload) return null;
   return (
