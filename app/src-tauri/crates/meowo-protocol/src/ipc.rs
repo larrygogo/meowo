@@ -755,7 +755,7 @@ pub struct WorktreeStatusDto {
     pub branch: Option<String>,
     pub pr_number: Option<u32>,
     pub eligible: bool,
-    /// 不能清理的原因码（`not_worktree` / `dir_missing` / `gh_unavailable` / `no_pr` /
+    /// 不能清理的原因码（`not_worktree` / `dir_missing` / `gh_unavailable` / `no_pr` / `not_merged_local` /
     /// `pr_open` / `pr_closed` / `dirty` / `untracked` / `unpushed` / `submodule_dirty` /
     /// `submodule_unpushed` / `shared_session` / `detached` / `locked` / `not_repo`）。可清理时为 None。
     pub reason: Option<String>,

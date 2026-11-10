@@ -34,6 +34,7 @@ export function worktreeReasonText(t: Dict, status: WorktreeStatusDto): string {
   switch (status.reason) {
     case "gh_unavailable": return r.gh_unavailable;
     case "no_pr": return r.no_pr;
+    case "not_merged_local": return r.not_merged_local;
     case "pr_open": return r.pr_open;
     case "pr_closed": return r.pr_closed;
     case "dirty": return r.dirty(n);

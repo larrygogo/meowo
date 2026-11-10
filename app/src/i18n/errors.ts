@@ -79,6 +79,7 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "worktree/dir_missing", exact: true, zh: "目录已经不在了", en: "The folder is already gone" },
   { m: "worktree/gh_unavailable", exact: true, zh: "没装 gh 或没登录，判断不了 PR 有没有合并", en: "gh isn't installed or signed in, so the PR status is unknown" },
   { m: "worktree/no_pr", exact: true, zh: "这个分支没有 PR", en: "This branch has no PR" },
+  { m: "worktree/not_merged_local", exact: true, zh: "没装 gh，本地看分支还没合进主分支", en: "Without gh, git shows this branch isn't in the main branch yet" },
   { m: "worktree/pr_open", exact: true, zh: "PR 还没合并", en: "The PR isn't merged yet" },
   { m: "worktree/pr_closed", exact: true, zh: "PR 已关闭，没有合并", en: "The PR was closed without merging" },
   { m: "worktree/dirty", exact: true, zh: "还有文件改动没提交", en: "There are uncommitted changes" },

@@ -291,6 +291,7 @@ export const zh = {
     reason: {
       gh_unavailable: "没装 gh 或没登录，判断不了 PR 有没有合并",
       no_pr: "这个分支没有 PR",
+      not_merged_local: "没装 gh，本地看分支还没合进主分支",
       pr_open: "PR 还没合并",
       pr_closed: "PR 已关闭，没有合并",
       dirty: (n: number) => `还有 ${n} 个文件改动没提交`,

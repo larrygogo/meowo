@@ -267,6 +267,7 @@ export const en: Dict = {
     reason: {
       gh_unavailable: "gh isn't installed or signed in, so the PR status is unknown",
       no_pr: "This branch has no PR",
+      not_merged_local: "Without gh, git shows this branch isn't in the main branch yet",
       pr_open: "The PR isn't merged yet",
       pr_closed: "The PR was closed without merging",
       dirty: (n: number) => `${n} changed file${n === 1 ? "" : "s"} not committed`,

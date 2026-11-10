@@ -10,6 +10,9 @@
 //! - 没有别的未归档会话也在这个 worktree 里
 //! - `gh` 查到当前分支的 PR 是 MERGED——用 PR 状态而不是提交祖先关系，squash 合并后
 //!   分支提交不在主干历史里，祖先判断会全部误判成「没合并」（这次清理里有 30+ 个这样的分支）
+//!   gh 用不了时（没装、没登录）改用 git 本地判断：分支内容已经全部进了远端主分支才算合并，
+//!   squash 合并靠「把整条分支压成一个提交再比 patch-id」认出来（[`local_merge_check`]）。
+//!   2026-11-10 leader 定（关卡 Q-no-gh）：没装 gh 的用户也要能清理。
 //! - worktree 里没有嵌套的仓库或 worktree（Claude Code 的 `.claude/worktrees/` 通常被忽略，
 //!   status 看不见，`git worktree remove` 却会连它一起删）
 //! - 每个子模块干净，且子模块 HEAD 在它的远端存在
@@ -43,6 +46,10 @@ pub(crate) enum PrLookup {
         state: String,
         head_oid: String,
     },
+    /// gh 用不了，git 本地确认分支内容已经全部在远端主分支里（普通合并、快进或 squash）。
+    LocalMerged,
+    /// gh 用不了，git 本地看分支还有内容不在远端主分支里。
+    LocalNotMerged,
 }
 
 /// 子模块状况，按严重程度取最坏的一个。
@@ -89,6 +96,8 @@ pub(crate) fn evaluate(f: &Facts) -> Option<(&'static str, Option<u32>)> {
     match &f.pr {
         PrLookup::Unavailable => return Some(("gh_unavailable", None)),
         PrLookup::NoPr => return Some(("no_pr", None)),
+        PrLookup::LocalNotMerged => return Some(("not_merged_local", None)),
+        PrLookup::LocalMerged => {}
         PrLookup::Found { state, .. } => match state.as_str() {
             "MERGED" => {}
             "CLOSED" => return Some(("pr_closed", None)),
@@ -178,6 +187,134 @@ fn parse_pr_view(json: &str) -> Option<PrLookup> {
         state: v.get("state")?.as_str()?.to_string(),
         head_oid: v.get("headRefOid")?.as_str()?.to_string(),
     })
+}
+
+// ═══ 没有 gh 时的本地判定 ═══
+
+/// 远端主分支的 remote-tracking 引用：优先 origin/HEAD 指向的那个，没有就试 origin/main、origin/master。
+/// 只认远端引用不认本地 main：本地 main 上可能有没推的合并，删了 worktree 东西就只剩本机一份。
+fn remote_default_ref(top: &Path) -> Option<String> {
+    if let Some(r) =
+        git(top, &["symbolic-ref", "-q", "refs/remotes/origin/HEAD"]).filter(|r| !r.is_empty())
+    {
+        return Some(r);
+    }
+    ["refs/remotes/origin/main", "refs/remotes/origin/master"]
+        .into_iter()
+        .find(|r| git(top, &["rev-parse", "-q", "--verify", r]).is_some())
+        .map(str::to_string)
+}
+
+/// 每个仓库最多 5 分钟 fetch 一次主分支：清理列表一次会判很多个 worktree，它们共用同一个仓库，
+/// 不能每个都联网一次。
+static LAST_FETCH: std::sync::Mutex<
+    Option<std::collections::HashMap<PathBuf, std::time::Instant>>,
+> = std::sync::Mutex::new(None);
+const FETCH_EVERY: std::time::Duration = std::time::Duration::from_secs(300);
+const FETCH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// 先把远端主分支拉到最新，免得刚在网页上合并的 PR 被判成没合并。失败或超时就用本地已有的引用：
+/// 判错只会偏向「没合并」（引用旧了只会少认，不会多认），不会误删。
+fn refresh_default_ref(common: &Path, top: &Path, reference: &str) {
+    let key = PathBuf::from(norm(common));
+    {
+        let mut guard = LAST_FETCH.lock().unwrap_or_else(|e| e.into_inner());
+        let map = guard.get_or_insert_with(Default::default);
+        if map.get(&key).is_some_and(|t| t.elapsed() < FETCH_EVERY) {
+            return;
+        }
+        map.insert(key, std::time::Instant::now());
+    }
+    let Some(branch) = reference.strip_prefix("refs/remotes/origin/") else {
+        return;
+    };
+    let Ok(mut child) = command("git")
+        .arg("-C")
+        .arg(top)
+        .args(["fetch", "--quiet", "--no-tags", "origin", branch])
+        // 没有凭据时别卡在命令行密码提示上：这里没有终端可以输。
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+    else {
+        return;
+    };
+    let start = std::time::Instant::now();
+    while start.elapsed() < FETCH_TIMEOUT {
+        match child.try_wait() {
+            Ok(Some(_)) | Err(_) => return,
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(50)),
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+}
+
+/// 本地判断 HEAD 的内容是不是已经全部在远端主分支里。三种合并都要认：
+/// 1. 快进或普通合并：HEAD 是主分支的祖先；
+/// 2. rebase 合并：每个提交在主分支上都有 patch-id 相同的提交（`git cherry` 全是 `-`）；
+/// 3. squash 合并：先试 `merge-tree`（合进去结果不变就算合并过），再退回把 merge-base 到 HEAD
+///    整条压成一个临时提交、比 patch-id（git-delete-squashed 的做法）。
+///
+/// 任何一步 git 失败都返回 Unavailable，按「判断不了」处理。
+pub(crate) fn local_merge_check(common: &Path, top: &Path) -> PrLookup {
+    let Some(base) = remote_default_ref(top) else {
+        return PrLookup::Unavailable;
+    };
+    refresh_default_ref(common, top, &base);
+    if git(top, &["merge-base", "--is-ancestor", "HEAD", &base]).is_some() {
+        return PrLookup::LocalMerged;
+    }
+    // 把分支合进主分支，结果树和主分支的树一模一样，说明分支没有主分支里还缺的东西。
+    // 主分支在分支改动附近也改过时，下面的 patch-id 比对认不出 squash（做空实测：3 行内有改动就漏判），
+    // merge-tree 按三方合并算，认得出。git 2.38 之前没有 --write-tree，失败就往下走老办法。
+    if let (Some(merged), Some(base_tree)) = (
+        git(top, &["merge-tree", "--write-tree", &base, "HEAD"]),
+        git(top, &["rev-parse", &format!("{base}^{{tree}}")]),
+    ) {
+        // 有冲突时 merge-tree 退出码非 0，git() 已返回 None；成功时第一行是结果树。
+        if merged.lines().next() == Some(base_tree.as_str()) {
+            return PrLookup::LocalMerged;
+        }
+    }
+    let Some(cherry) = git(top, &["cherry", &base, "HEAD"]) else {
+        return PrLookup::Unavailable;
+    };
+    if !cherry.is_empty() && cherry.lines().all(|l| l.starts_with('-')) {
+        return PrLookup::LocalMerged;
+    }
+    let (Some(mb), Some(tree)) = (
+        git(top, &["merge-base", &base, "HEAD"]),
+        git(top, &["rev-parse", "HEAD^{tree}"]),
+    ) else {
+        return PrLookup::Unavailable;
+    };
+    // commit-tree 只往对象库里写一个没人引用的提交，不动任何分支，gc 时自然回收。
+    let Some(squashed) = git(
+        top,
+        &[
+            // 没配 user.name 的机器上 commit-tree 会直接失败，临时给一个身份，只用来算 patch-id。
+            "-c",
+            "user.name=meowo",
+            "-c",
+            "user.email=meowo@localhost",
+            "commit-tree",
+            &tree,
+            "-p",
+            &mb,
+            "-m",
+            "meowo squash probe",
+        ],
+    ) else {
+        return PrLookup::Unavailable;
+    };
+    match git(top, &["cherry", &base, &squashed]) {
+        Some(out) if out.starts_with('-') => PrLookup::LocalMerged,
+        Some(_) => PrLookup::LocalNotMerged,
+        None => PrLookup::Unavailable,
+    }
 }
 
 /// worktree 根目录与公共 .git 目录。不在 git 里返回 None。
@@ -388,6 +525,10 @@ fn worktree_changes(top: &Path) -> (u32, u32) {
 /// 本地没有多出来的东西。不再用「某个远端分支包含 HEAD」兜底——分支名沿用旧名时，gh 会
 /// 拿到旧的已合并 PR，那时 HEAD 往往也在远端（刚推的新提交），兜底会把没合并的工作判成可删。
 fn has_unpushed(top: &Path, pr: &PrLookup) -> bool {
+    // 本地判定已合并时，HEAD 的内容已经在远端主分支里（判定本身就是拿 HEAD 比的），删了不丢东西。
+    if *pr == PrLookup::LocalMerged {
+        return false;
+    }
     let PrLookup::Found { head_oid, .. } = pr else {
         return true;
     };
@@ -421,6 +562,9 @@ fn gather_facts(lay: &Layout, other_sessions: u32, pr_lookup: &dyn Fn(&Path) -> 
     }
     facts.locked = is_locked(&lay.common, top);
     facts.pr = pr_lookup(top);
+    if facts.pr == PrLookup::Unavailable {
+        facts.pr = local_merge_check(&lay.common, top);
+    }
     if evaluate(&facts).is_some() {
         return facts;
     }
@@ -849,6 +993,7 @@ fn refusal_error(reason: &str) -> &'static str {
         "shared_session" => "worktree/shared_session",
         "gh_unavailable" => "worktree/gh_unavailable",
         "no_pr" => "worktree/no_pr",
+        "not_merged_local" => "worktree/not_merged_local",
         "pr_open" => "worktree/pr_open",
         "pr_closed" => "worktree/pr_closed",
         "nested_repo" => "worktree/nested_repo",
