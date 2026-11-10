@@ -5,3 +5,4 @@
 
 pub mod broker;
 pub mod ipc;
+pub mod wtnew;

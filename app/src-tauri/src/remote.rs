@@ -121,6 +121,12 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     "worktree_status",
     "remove_session_worktree",
     "list_cleanable_worktrees",
+    // 在新 worktree 里开会话（包 5，leader 定手机端全部放开）：和 new_session 同级，目录由用户选。
+    // setup 脚本要先在确认框里看过原文、点了信任才会跑（worktree_setup_trust），手机端同样弹确认。
+    "worktree_preview",
+    "worktree_create",
+    "worktree_setup",
+    "worktree_setup_trust",
     // 侧栏手动排序（手机长按拖动）：只改顺序，不碰会话内容与其它设置。
     "move_session_rank",
     "set_workspace_order",
@@ -979,6 +985,40 @@ bridged_args!(RemoveSessionWorktreeArgs {
     confirmed_pids: Vec<u32>
 });
 
+bridged_args!(WorktreePreviewArgs {
+    repo_cwd: String,
+    #[serde(default)]
+    slug: Option<String>,
+    #[serde(default)]
+    branch: Option<String>,
+    #[serde(default)]
+    fallback_slug: Option<String>
+});
+
+bridged_args!(WorktreeCreateArgs {
+    repo_cwd: String,
+    #[serde(default)]
+    slug: Option<String>,
+    #[serde(default)]
+    branch: Option<String>,
+    #[serde(default)]
+    fallback_slug: Option<String>,
+    #[serde(default)]
+    provider: Option<String>,
+    request_id: String
+});
+
+bridged_args!(WorktreeSetupArgs {
+    #[serde(default)]
+    task_id: Option<String>,
+    #[serde(default)]
+    path: Option<String>,
+    #[serde(default)]
+    action: Option<String>
+});
+
+bridged_args!(WorktreeSetupTrustArgs { path: String, hash: String });
+
 bridged_args!(MoveSessionRankArgs {
     session_id: i64,
     #[serde(default)]
@@ -1372,6 +1412,33 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
             )
         }
         "list_cleanable_worktrees" => reply(crate::worktree::list_cleanable_worktrees(state).await),
+        "worktree_preview" => {
+            let a = args!(WorktreePreviewArgs);
+            reply(crate::wtnew::worktree_preview(a.repo_cwd, a.slug, a.branch, a.fallback_slug).await)
+        }
+        "worktree_create" => {
+            let a = args!(WorktreeCreateArgs);
+            reply(
+                crate::wtnew::worktree_create(
+                    app.clone(),
+                    a.repo_cwd,
+                    a.slug,
+                    a.branch,
+                    a.fallback_slug,
+                    a.provider,
+                    a.request_id,
+                )
+                .await,
+            )
+        }
+        "worktree_setup" => {
+            let a = args!(WorktreeSetupArgs);
+            reply(crate::wtnew::worktree_setup(app.clone(), a.task_id, a.path, a.action).await)
+        }
+        "worktree_setup_trust" => {
+            let a = args!(WorktreeSetupTrustArgs);
+            reply(crate::wtnew::worktree_setup_trust(app.clone(), a.path, a.hash).await)
+        }
         "set_archived" => {
             let a = args!(SetArchivedArgs);
             reply(
@@ -2366,6 +2433,23 @@ mod tests {
             "worktree_status" => parse::<WorktreeStatusArgs>(br#"{"sessionId":7}"#).map(|_| ()),
             "remove_session_worktree" => parse::<RemoveSessionWorktreeArgs>(
                 br#"{"sessionId":7,"expectedPath":"C:/w/wt","confirmedPids":[]}"#,
+            )
+            .map(|_| ()),
+            // api.ts worktreePreview / worktreeCreate / worktreeSetup / worktreeSetupTrust
+            "worktree_preview" => parse::<WorktreePreviewArgs>(
+                br#"{"repoCwd":"C:/w/repo","slug":null,"branch":"meowo/x","fallbackSlug":"1110-0930"}"#,
+            )
+            .map(|_| ()),
+            "worktree_create" => parse::<WorktreeCreateArgs>(
+                br#"{"repoCwd":"C:/w/repo","slug":"fix-login","branch":null,"fallbackSlug":"1110-0930","provider":"claude","requestId":"r-1"}"#,
+            )
+            .map(|_| ()),
+            "worktree_setup" => parse::<WorktreeSetupArgs>(
+                br#"{"taskId":null,"path":"C:/w/repo-x","action":"rerun"}"#,
+            )
+            .map(|_| ()),
+            "worktree_setup_trust" => parse::<WorktreeSetupTrustArgs>(
+                br#"{"path":"C:/w/repo-x","hash":"abc"}"#,
             )
             .map(|_| ()),
             // api.ts:390
