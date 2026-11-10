@@ -23,7 +23,7 @@ cd app/src-tauri && cargo test       # 或按 crate：cargo test -p meowo-store 
 - 弹层统一走 `escLayers` / `useDismissable`；新建自绘弹层必须接入（Esc 误拒审批有前科）。
 - 用户向错误文案走 `formatBackendError` + `i18n/errors.ts` 双语映射，后端错误用 `模块/代码` 结构化 reason。
 - 状态判定单点：`activityTone`（`app/src/activity.ts`）是看板/侧栏/后端 `tab_class` 的共同地基，别另起炉灶。
-- **改 `api.ts` 的 invoke 传参必须同步 `remote.rs` 桥臂结构体**（deny_unknown_fields；手机端 400 事故出处）。桥有样例 payload 防护测试，改样例时同步。
+- **手机桥参数结构体在 `meowo-protocol/src/bridge.rs`**（deny_unknown_fields；手机端 400 事故出处），ts-rs 生成到 `generated/contracts/bridge/`，`api.ts` 桥接 invoke 一律 `{…} satisfies XxxArgs`，多键少键 tsc 直接报错。改字段后跑 `cargo test -p meowo-protocol` 提交生成物；桥另有样例 payload 测试管 null 与缺键，改样例时同步。
 
 ## 平台注意事项
 
