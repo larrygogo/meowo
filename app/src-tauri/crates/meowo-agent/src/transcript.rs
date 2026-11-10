@@ -1187,10 +1187,9 @@ fn tail_region(
             let estimate = span.saturating_mul(page_size as u64 + 1) / total as u64;
             (estimate.saturating_mul(3) / 2).max(block.saturating_mul(2))
         };
-        // 下一窗已过半个文件：再扩一次多半就到头，不如这就整读，免得多解析一遍。
-        if block.saturating_mul(2) >= end {
-            block = end;
-        }
+        // 不再「过半就整读」：扩窗只解析新增前缀，多扩一轮不白解析，按估算扩更省。
+        // 二期实测（release，真实 21MB 会话「加载更早」，末尾 200 条横跨 7.5MB）：
+        // 过半整读要解析整段 19.3MB。
     }
 }
 
