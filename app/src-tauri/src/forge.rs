@@ -183,39 +183,48 @@ struct PushPlan {
     set_upstream: bool,
 }
 
-/// 有上游就推到上游（`HEAD:<上游分支>`，上游分支名和本地不同也对）；没有就 `-u <远端> HEAD`。
-/// 远端优先 remote.pushDefault，再 origin，再唯一的那个。
-fn plan_push(dir: &str, env: GitEnv) -> Result<PushPlan, String> {
-    let branch = git(dir, &["symbolic-ref", "--quiet", "--short", "HEAD"], env)
-        .filter(|b| !b.is_empty())
-        .ok_or("git/detached")?;
-    let remotes: Vec<String> = git(dir, &["remote"], env)
-        .unwrap_or_default()
-        .lines()
-        .map(|l| l.trim().to_string())
-        .filter(|l| !l.is_empty())
-        .collect();
-    if remotes.is_empty() {
-        return Err("git/no_remote".into());
-    }
+/// 推到哪个远端，以及分支现在的上游是不是「同名的远端分支」。
+///
+/// 只有上游正是 `<远端>/<本地分支名>` 才沿用它；上游分支名和本地不同（典型：`git worktree add -b feat
+/// <路径> origin/main` 的默认 autoSetupMerge 让 feat 跟踪 origin/main）一律不推上游，改推同名分支并
+/// 重设上游，等价 git 默认的 push.default=simple。做空审查实测（redteam/push-main）：以前照上游推
+/// `HEAD:refs/heads/main`，功能分支的提交直接进了远端 main。
+/// 不沿用上游时远端优先 remote.pushDefault，再 origin，再唯一的那个（fork + upstream 的仓库里功能分支
+/// 常跟踪 upstream/main，推回 upstream 不对，推自己的 origin 才对）。
+fn push_remote(dir: &str, branch: &str, remotes: &[String], env: GitEnv) -> Option<(String, bool)> {
     let up_remote = git(dir, &["config", "--get", &format!("branch.{branch}.remote")], env);
     let up_merge = git(dir, &["config", "--get", &format!("branch.{branch}.merge")], env);
     if let (Some(remote), Some(merge)) = (&up_remote, &up_merge) {
         // 上游是「.」（跟踪的是本地分支）不算远端上游。
-        if remotes.iter().any(|r| r == remote) && merge.starts_with("refs/heads/") {
-            return Ok(PushPlan {
-                remote: remote.clone(),
-                branch: branch.clone(),
-                refspec: format!("HEAD:{merge}"),
-                set_upstream: false,
-            });
+        if remotes.iter().any(|r| r == remote) && *merge == format!("refs/heads/{branch}") {
+            return Some((remote.clone(), true));
         }
     }
     let preferred = git(dir, &["config", "--get", "remote.pushDefault"], env).filter(|r| remotes.contains(r));
     let remote = preferred
         .or_else(|| remotes.iter().find(|r| *r == "origin").cloned())
-        .unwrap_or_else(|| remotes[0].clone());
-    Ok(PushPlan { remote, branch, refspec: "HEAD".into(), set_upstream: true })
+        .or_else(|| remotes.first().cloned())?;
+    Some((remote, false))
+}
+
+fn remote_names(dir: &str, env: GitEnv) -> Vec<String> {
+    git(dir, &["remote"], env)
+        .unwrap_or_default()
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect()
+}
+
+/// 永远推到同名分支：refspec 写死 `HEAD:refs/heads/<本地分支>`（不写裸 `HEAD`，remote.<名>.push 的映射
+/// 不生效）。上游不是同名分支（或没有）时带 -u，推完上游就是同名的那个。
+fn plan_push(dir: &str, env: GitEnv) -> Result<PushPlan, String> {
+    let branch = git(dir, &["symbolic-ref", "--quiet", "--short", "HEAD"], env)
+        .filter(|b| !b.is_empty())
+        .ok_or("git/detached")?;
+    let remotes = remote_names(dir, env);
+    let (remote, tracked) = push_remote(dir, &branch, &remotes, env).ok_or("git/no_remote")?;
+    Ok(PushPlan { remote, refspec: format!("HEAD:refs/heads/{branch}"), branch, set_upstream: !tracked })
 }
 
 /// push 失败归类（LC_ALL=C 下 git 的英文输出；remote: 开头的是服务器原话，不受语言影响）。
@@ -688,14 +697,12 @@ fn url_path_escape(text: &str) -> String {
 fn repo_info(dir: &str, env: GitEnv) -> Option<RepoInfo> {
     let common = git(dir, &["rev-parse", "--path-format=absolute", "--git-common-dir"], env)?;
     let branch = git(dir, &["symbolic-ref", "--quiet", "--short", "HEAD"], env).filter(|b| !b.is_empty());
-    let remotes: Vec<String> = git(dir, &["remote"], env).unwrap_or_default().lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect();
-    // 看哪个远端：分支的上游远端，否则 origin，否则第一个（与 plan_push 一致）。
-    let remote = branch
-        .as_ref()
-        .and_then(|b| git(dir, &["config", "--get", &format!("branch.{b}.remote")], env))
-        .filter(|r| remotes.contains(r))
-        .or_else(|| remotes.iter().find(|r| *r == "origin").cloned())
-        .or_else(|| remotes.first().cloned());
+    let remotes = remote_names(dir, env);
+    // 看哪个远端：推送会推去的那个（与 plan_push 同一套判定），detached 时 origin，否则第一个。
+    let remote = match &branch {
+        Some(b) => push_remote(dir, b, &remotes, env).map(|(r, _)| r),
+        None => remotes.iter().find(|r| *r == "origin").cloned().or_else(|| remotes.first().cloned()),
+    };
     let slug = remote.as_ref().and_then(|r| git(dir, &["remote", "get-url", r], env)).and_then(|u| github_slug(&u));
     let base = default_branch(dir, env);
     Some(RepoInfo { common: common.replace('\\', "/").to_lowercase(), branch, slug, has_remote: !remotes.is_empty(), base })
@@ -943,10 +950,9 @@ pub(crate) fn pr_create_with(
     if summary.upstream.is_none() || summary.unpushed.unwrap_or(0) > 0 {
         push(dir)?;
     }
-    // 推送可能刚设好上游：PR 的 head 用上游分支名（和本地名不同也对）。
-    let head = git(dir, &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"], ctx.env)
-        .and_then(|u| u.split_once('/').map(|(_, b)| b.to_string()))
-        .unwrap_or_else(|| branch.clone());
+    // PR 的 head 就是本地分支名：推送永远推到同名远端分支（plan_push）。以前取上游分支名，上游是
+    // origin/main 时 head 成了 main（做空审查实测）。
+    let head = branch.clone();
     let defaults = pr_defaults(dir, &branch, &base, ctx.env);
     let title = title.map(str::trim).filter(|t| !t.is_empty()).map(str::to_string).unwrap_or(defaults.title);
     let body = body.map(str::to_string).unwrap_or(defaults.body);

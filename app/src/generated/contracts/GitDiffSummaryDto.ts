@@ -33,4 +33,11 @@ upstream?: string,
  * worktree 分支第一次推之前也要看得到「有几个没推」）。没有远端、detached、没算（非选中的仓库
  * 且没上游）时为 None，前端不显示推送按钮。旧后端不下发。
  */
-unpushed?: number, };
+unpushed?: number, 
+/**
+ * 「推送」实际会推到哪（如 `origin/feat`）。上游分支名和本地分支名不同（典型：`git worktree add -b feat
+ * <路径> origin/main` 让 feat 跟踪 origin/main）时 Meowo 不推上游，改推同名远端分支并设上游，这时
+ * upstream 为 None、这里是将要新建的 `origin/feat`（做空审查实测：照上游推会把提交推进远端 main）。
+ * 没有远端、detached 时为 None。旧后端不下发。
+ */
+pushTarget?: string, };

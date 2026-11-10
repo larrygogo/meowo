@@ -90,6 +90,15 @@ describe("#19 推送", () => {
     expect(onChanged).toHaveBeenCalled();
   });
 
+  // 做空审查：上游是 origin/main 的功能分支，后端改推同名分支并新建上游，提示要据实写出推去哪。
+  it("上游不是同名分支：提示写明推到 origin/<分支> 并新建", async () => {
+    renderBar({ upstream: undefined, pushTarget: "origin/meowo/drill", unpushed: 2 });
+    const button = await screen.findByRole("button", { name: /推送 ↑2/ });
+    expect(button.getAttribute("data-tip")).toBe(zh.forge.pushNewTip("origin/meowo/drill"));
+    expect(zh.forge.pushNewTip("origin/x")).toBe("推送到 origin/x（新建）");
+    expect(en.forge.pushNewTip("origin/x")).toBe("Push to origin/x (new branch)");
+  });
+
   it("有上游时写明推到哪；没有未推提交不显示按钮", async () => {
     const { unmount } = renderBar({ upstream: "origin/meowo/drill", unpushed: 1, ahead: 1 });
     expect((await screen.findByRole("button", { name: /推送 ↑1/ })).getAttribute("data-tip")).toBe(zh.forge.pushTip("origin/meowo/drill"));

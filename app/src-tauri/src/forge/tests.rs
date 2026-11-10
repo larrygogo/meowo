@@ -178,6 +178,44 @@ fn 推送_没上游时自动设上游_推完未推数归零() {
     assert_eq!((again.set_upstream, again.pushed), (false, 1));
 }
 
+/// 做空复现（redteam/push-main）：`git worktree add -b feat <路径> origin/main` 默认 autoSetupMerge，
+/// feat 的上游是 origin/main（branch.feat.merge=refs/heads/main）。以前照上游推 `HEAD:refs/heads/main`，
+/// 功能分支的提交直接进了远端 main。
+fn feat_tracking_main(sb: &Sandbox, tag: &str) -> (PathBuf, PathBuf) {
+    let (repo, remote) = sb.repo_with_remote(tag);
+    sb.git(&repo, &["branch", "-q", "--set-upstream-to=origin/main", "feat"]);
+    (repo, remote)
+}
+
+#[test]
+fn 推送_上游是_origin_main_的功能分支_推到同名分支_远端_main_不动() {
+    let sb = Sandbox::new("push-feat-main");
+    let (repo, remote) = feat_tracking_main(&sb, "r");
+    let main_before = sb.git(&remote, &["rev-parse", "main"]);
+    // 摘要按「同名远端分支」口径：不拿 origin/main 算领先数，推送目标写明是新建的 origin/feat。
+    let summary = git_diff_summary_blocking(&s(&repo)).unwrap();
+    assert_eq!((summary.upstream.as_deref(), summary.ahead, summary.unpushed), (None, None, Some(2)));
+    assert_eq!(summary.push_target.as_deref(), Some("origin/feat"));
+    let result = push(&sb, &repo).unwrap();
+    assert_eq!(result, PushResultDto { remote: "origin".into(), branch: "feat".into(), set_upstream: true, pushed: 2 });
+    assert_eq!(sb.git(&remote, &["rev-parse", "main"]), main_before, "远端 main 不能被功能分支推动");
+    assert_eq!(sb.git(&remote, &["rev-parse", "feat"]), sb.git(&repo, &["rev-parse", "HEAD"]));
+    assert_eq!(sb.git(&repo, &["config", "--get", "branch.feat.merge"]), "refs/heads/feat", "上游改成同名分支");
+    let summary = git_diff_summary_blocking(&s(&repo)).unwrap();
+    assert_eq!((summary.upstream.as_deref(), summary.unpushed, summary.push_target.as_deref()), (Some("origin/feat"), Some(0), Some("origin/feat")));
+}
+
+#[test]
+fn 推送_本地就在_main_照常推_main() {
+    let sb = Sandbox::new("push-main");
+    let (repo, remote) = sb.repo_with_remote("r");
+    sb.git(&repo, &["switch", "-q", "main"]);
+    sb.commit(&repo, "m.txt", "main: m");
+    let result = push(&sb, &repo).unwrap();
+    assert_eq!(result, PushResultDto { remote: "origin".into(), branch: "main".into(), set_upstream: false, pushed: 1 });
+    assert_eq!(sb.git(&remote, &["rev-parse", "main"]), sb.git(&repo, &["rev-parse", "HEAD"]));
+}
+
 #[test]
 fn 推送_远端有新提交被拒_提示先拉取() {
     let sb = Sandbox::new("push-reject");
@@ -648,4 +686,23 @@ fn 开_pr_先推再建_默认标题正文_已有_pr_带回链接() {
     assert_eq!(err, "gh/pr_exists: https://github.com/larrygogo/meowo-pr-drill/pull/7");
     let create = exists.calls.lock().unwrap().iter().find(|c| c.starts_with("pr create")).cloned().unwrap();
     assert!(create.starts_with("pr create --title 自定义标题 --body 正文 --base main") && create.ends_with("--draft"), "{create}");
+}
+
+#[test]
+fn 开_pr_上游是_origin_main_先推同名分支_head_是功能分支_不碰_main() {
+    let sb = Sandbox::new("create-feat-main");
+    let (repo, remote) = feat_tracking_main(&sb, "r");
+    let main_before = sb.git(&remote, &["rev-parse", "main"]);
+    let fake = FakeGh::new().views(vec![ok(&fixture("derived_pr_no_checks.json"))]);
+    let gh = |dir: &str, args: &[&str]| fake.run(dir, args);
+    let owned = sb.env();
+    let env: Vec<(&str, Option<&str>)> = owned.iter().map(|(k, v)| (*k, v.as_deref())).collect();
+    let caches = Caches::default();
+    let ctx = Ctx { gh: &gh, caches: &caches, prefs: sb.root.join("forge.json"), env: &env };
+    let real_push = |dir: &str| push_with(dir, &env, Duration::from_secs(60));
+    pr_create_with(&ctx, &s(&repo), None, None, None, false, &real_push).unwrap();
+    assert_eq!(sb.git(&remote, &["rev-parse", "main"]), main_before, "开 PR 前的推送不能进 main");
+    assert_eq!(sb.git(&remote, &["rev-parse", "feat"]), sb.git(&repo, &["rev-parse", "HEAD"]));
+    let create = fake.calls.lock().unwrap().iter().find(|c| c.starts_with("pr create")).cloned().unwrap();
+    assert!(create.contains("--base main --head feat"), "{create}");
 }

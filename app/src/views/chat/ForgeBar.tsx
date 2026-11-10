@@ -108,6 +108,8 @@ export function ForgeBar({ repo, sessionCwd, sessionId, active, onChanged }: {
   // 旧后端没有 unpushed：有上游时 ahead 就是未推数。
   const unpushed = summary.unpushed ?? (summary.upstream ? summary.ahead : null) ?? 0;
   const pushTarget = summary.upstream ?? null;
+  // 没上游、或上游不是同名分支（后端按没上游下发）：推送会新建同名远端分支并设为上游，写明推去哪。
+  const pushNew = !pushTarget ? summary.pushTarget ?? null : null;
 
   const fail = (e: unknown) => {
     const raw = typeof e === "string" ? e : e instanceof Error ? e.message : String(e);
@@ -249,7 +251,7 @@ export function ForgeBar({ repo, sessionCwd, sessionId, active, onChanged }: {
     <div className="scm-forge" data-testid="scm-forge">
       {showPush && (
         <button type="button" className="scm-forge-btn" disabled={busy !== null}
-          data-tip={pushTarget ? t.forge.pushTip(pushTarget) : t.forge.publishTip} onClick={() => void push()}>
+          data-tip={pushTarget ? t.forge.pushTip(pushTarget) : pushNew ? t.forge.pushNewTip(pushNew) : t.forge.publishTip} onClick={() => void push()}>
           <PushIcon />
           {busy === "push" ? t.forge.pushing : t.forge.push(unpushed)}
         </button>

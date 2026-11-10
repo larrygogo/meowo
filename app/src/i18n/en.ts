@@ -1677,6 +1677,7 @@ export const en: Dict = {
     push: (n: number) => (n > 0 ? `Push ↑${n}` : "Push"),
     pushTip: (target: string) => `Push to ${target}`,
     publishTip: "Push and set the upstream branch",
+    pushNewTip: (target: string) => `Push to ${target} (new branch)`,
     pushing: "Pushing…",
     pushed: (n: number, target: string) => `Pushed ${n} commit${n === 1 ? "" : "s"} to ${target}`,
     openPr: "Open PR",

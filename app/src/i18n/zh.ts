@@ -1821,6 +1821,7 @@ export const zh = {
     push: (n: number) => (n > 0 ? `推送 ↑${n}` : "推送"),
     pushTip: (target: string) => `推送到 ${target}`,
     publishTip: "推送并设好上游分支",
+    pushNewTip: (target: string) => `推送到 ${target}（新建）`,
     pushing: "正在推送…",
     pushed: (n: number, target: string) => `已推送 ${n} 个提交到 ${target}`,
     openPr: "开 PR",
