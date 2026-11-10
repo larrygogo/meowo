@@ -4774,6 +4774,9 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 /* 面板收起时 agent 在操作浏览器：标题栏的面板开关右上角亮一个点。 */
 .chat-panel-toggle { position: relative; }
 .chat-panel-agent-dot { position: absolute; top: 4px; right: 4px; width: 7px; height: 7px; border-radius: 50%; background: var(--cc-accent-text); box-shadow: 0 0 0 2px var(--cc-bg); animation: browser-agent-pulse 1.2s ease-in-out infinite; }
+/* 网页在等用户答复权限请求：琥珀色静态点（与「待批准」同色系），区别于 agent 操作中的脉冲点。 */
+.side-panel-tab-waiting { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--cc-warn-vivid); }
+.chat-panel-waiting-dot { position: absolute; top: 4px; right: 4px; width: 7px; height: 7px; border-radius: 50%; background: var(--cc-warn-vivid); box-shadow: 0 0 0 2px var(--cc-bg); }
 @media (prefers-reduced-motion: reduce) { .browser-pane-agent-dot, .side-panel-tab-agent, .chat-panel-agent-dot { animation: none; } }
 .browser-pane-view { position: relative; flex: 1; min-height: 0; background: var(--cc-bg); }
 .browser-pane-start { padding: var(--sp-30) var(--sp-18); color: var(--cc-text-faint); font-size: var(--text-xs); text-align: center; }

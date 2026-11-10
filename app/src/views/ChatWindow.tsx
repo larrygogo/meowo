@@ -4116,6 +4116,7 @@ export function ChatWindow() {
         onToggleChanges={() => (panelState.visible && (remoteUi() || panel.active?.type === "diff") ? panelActions.hide() : panelActions.openDiff())}
         onTogglePanel={panelActions.toggle}
         panelAgentBusy={!panelState.visible && panel.agentBusy}
+        panelWaiting={!panelState.visible && panel.permissionWaiting}
         info={!remoteUi() && cwd && !panelState.visible ? { open: infoWide ? infoOn : infoFloating, onToggle: toggleInfo } : null}
         onToggleTerminal={() => { const next = view === "terminal" ? "chat" : "terminal"; rememberViewPref(next); setView(next); }}
         onError={setSendError}

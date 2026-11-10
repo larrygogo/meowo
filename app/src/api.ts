@@ -444,8 +444,12 @@ export type BrowserPaneInfo = {
   /** 最近几次下载，旧的在前；面板只显示最后一条。 */
   downloads: BrowserDownload[];
   /** 网页在等用户答复的权限请求（只给排在最前的一条）。kind 见 browser_permission.rs。 */
-  permission: { kind: string; host: string } | null;
+  permission: BrowserPermission | null;
+  /** 用户刚阻止的请求：同一页面不会再问，被拦的下载也没有事件，留一条提示（刷新后可重试）。 */
+  blocked: BrowserPermission | null;
 };
+/** id 每条请求不同：前端据此判断答复是否已送达（见 BrowserPane 的防连点）。 */
+export type BrowserPermission = { id: number; kind: string; host: string };
 export type BrowserDownload = { id: number; fileName: string; state: "progress" | "done" | "failed" };
 /** 网页权限请求的「允许 / 阻止」。 */
 export function answerBrowserPanePermission(id: number, allow: boolean): Promise<void> {

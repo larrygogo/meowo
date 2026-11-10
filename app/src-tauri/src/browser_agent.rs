@@ -569,10 +569,45 @@ fn act(app: &tauri::AppHandle, id: u32, expr: &str) -> Result<String, String> {
 }
 
 fn snapshot(app: &tauri::AppHandle, id: u32) -> Result<String, String> {
-    match eval(app, id, "H.snapshot()")? {
-        Value::String(s) => Ok(s),
-        other => Ok(other.to_string()),
+    let page = match eval(app, id, "H.snapshot()")? {
+        Value::String(s) => s,
+        other => other.to_string(),
+    };
+    let (waiting, blocked) = app
+        .state::<BrowserPanes>()
+        .panes
+        .lock()
+        .ok()
+        .and_then(|map| {
+            map.get(&id)
+                .map(|info| (info.permission.clone(), info.blocked.clone()))
+        })
+        .unwrap_or((None, None));
+    Ok(format!(
+        "{}{page}",
+        permission_note(waiting.as_ref(), blocked.as_ref())
+    ))
+}
+
+/// 网页的权限请求只能由用户在面板里答（agent 不能替用户决定）。面板收起是常态，用户多半看不到
+/// 提示，网页就一直卡在那（做空审查）：在 agent 拿到的页面快照最前面说清楚，让它转告用户。
+fn permission_note(
+    waiting: Option<&browser_pane::BrowserPermission>,
+    blocked: Option<&browser_pane::BrowserPermission>,
+) -> String {
+    if let Some(prompt) = waiting {
+        return format!(
+            "注意：网页在等用户答复「{}」。只有用户能在 Meowo 面板浏览器里点允许或阻止，在此之前相关操作（如下载）会卡住。请告诉用户去处理，不要反复重试。\n\n",
+            prompt.describe()
+        );
     }
+    if let Some(prompt) = blocked {
+        return format!(
+            "注意：用户已阻止「{}」，这个页面里同类操作会被静默拦下。需要的话请用户刷新页面后重试。\n\n",
+            prompt.describe()
+        );
+    }
+    String::new()
 }
 
 /// 等页面加载完（readyState complete），最多 LOAD_TIMEOUT。等不到也不报错：页面可能一直在
@@ -1037,6 +1072,21 @@ if (!window.__meowoAgent) window.__meowoAgent = (() => {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn snapshot_tells_the_agent_when_the_page_waits_for_the_user() {
+        use browser_pane::BrowserPermission;
+        let ask = BrowserPermission::new("downloads", "https://httpbin.org/html");
+        let note = permission_note(Some(&ask), None);
+        assert!(note.contains("httpbin.org 想要下载多个文件"), "{note}");
+        assert!(note.contains("请告诉用户"), "{note}");
+        // 在等答复优先于「已阻止」。
+        assert_eq!(permission_note(Some(&ask), Some(&ask)), note);
+        let blocked = permission_note(None, Some(&ask));
+        assert!(blocked.contains("已阻止") && blocked.contains("刷新"), "{blocked}");
+        assert!(note.ends_with("\n\n") && blocked.ends_with("\n\n"));
+        assert_eq!(permission_note(None, None), "");
+    }
 
     #[test]
     fn decode_unwraps_both_layers() {

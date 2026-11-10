@@ -102,16 +102,24 @@ export function BrowserPane({ info, visible, suggestions }: {
     void browserPaneAction(info.id, action).catch((e) => setError(formatBackendError(e, t.locale)));
   };
 
-  // 权限请求：后端每次推来新的一条（哪怕内容一样）都是新对象，据此解开按钮。按钮在答复送达前
-  // 锁住：后端每次答复的是排在最前的那条，连点两下会把下一条也一起答掉。
-  const [answering, setAnswering] = useState(false);
-  useEffect(() => setAnswering(false), [info.permission]);
+  // 权限请求：按钮在答复送达前锁住。后端每次答复的是排在最前的那条，连点两下会把下一条也
+  // 一起答掉。按请求编号判断，不按对象引用：标题、加载状态这些无关推送每次都是新对象，会提前
+  // 解锁（做空审查）。
+  const [answeredId, setAnsweredId] = useState<number | null>(null);
+  const answering = info.permission !== null && info.permission?.id === answeredId;
   const answer = (allow: boolean) => {
-    setAnswering(true);
+    if (!info.permission) return;
+    setAnsweredId(info.permission.id);
     void answerBrowserPanePermission(info.id, allow).catch((e) => {
-      setAnswering(false);
+      setAnsweredId(null);
       setError(formatBackendError(e, t.locale));
     });
+  };
+  const [dismissedBlock, setDismissedBlock] = useState<number | null>(null);
+  const blocked = info.blocked && info.blocked.id !== dismissedBlock ? info.blocked : null;
+  const permissionText = (prompt: { kind: string; host: string }, blockedText = false) => {
+    const what = t.chat.browserPermissionKinds[prompt.kind] ?? t.chat.browserPermissionKinds.other;
+    return blockedText ? t.chat.browserPermissionBlocked(prompt.host, what) : t.chat.browserPermissionAsk(prompt.host, what);
   };
   // 只显示最新一次下载；用户点 × 收起的那条不再出现，下一次下载照常出来。
   const [dismissedDownload, setDismissedDownload] = useState<number | null>(null);
@@ -197,11 +205,17 @@ export function BrowserPane({ info, visible, suggestions }: {
       )}
       {info.permission && (
         <div className="browser-pane-notice is-permission" role="alert">
-          <span className="browser-pane-notice-text">
-            {t.chat.browserPermissionAsk(info.permission.host, t.chat.browserPermissionKinds[info.permission.kind] ?? t.chat.browserPermissionKinds.other)}
-          </span>
+          <span className="browser-pane-notice-text">{permissionText(info.permission)}</span>
           <button type="button" disabled={answering} onClick={() => answer(false)}>{t.chat.browserPermissionBlock}</button>
           <button type="button" className="is-primary" disabled={answering} onClick={() => answer(true)}>{t.chat.browserPermissionAllow}</button>
+        </div>
+      )}
+      {/* 阻止之后同一页面不会再问，被拦的下载也悄无声息：留一条，刷新页面就能重新下载。 */}
+      {!info.permission && blocked && (
+        <div className="browser-pane-notice is-blocked" role="status">
+          <span className="browser-pane-notice-text">{permissionText(blocked, true)}</span>
+          <button type="button" onClick={() => act("reload")}>{t.chat.browserPermissionRetry}</button>
+          <button type="button" className="browser-pane-notice-close" aria-label={t.chat.browserDownloadDismiss} data-tip={t.chat.browserDownloadDismiss} data-tip-placement="top" onClick={() => setDismissedBlock(blocked.id)}>×</button>
         </div>
       )}
       {download && (

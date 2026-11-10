@@ -120,6 +120,8 @@ export const SidePanel = memo(function SidePanel(props: Props) {
           closeLabel={t.chat.tabClose}
           agentBusy={(tab) => tab.type === "browser" && tab.paneId !== null && !!panes.get(tab.paneId)?.agentActive}
           agentLabel={t.chat.browserAgentActive}
+          waiting={(tab) => tab.type === "browser" && tab.paneId !== null && !!panes.get(tab.paneId)?.permission}
+          waitingLabel={t.chat.browserPermissionWaiting}
           onOverflow={setOverflowing}
         />
         <span className="chat-diff-spacer" data-tauri-drag-region />
@@ -273,7 +275,7 @@ export const SidePanel = memo(function SidePanel(props: Props) {
  *
  * 拖动用 pointer 事件自己做：对话窗开着 Tauri 的文件拖放，WebView2 上 HTML5 拖放会被它截走。
  */
-function TabBar({ state, actions, title, onContextMenu, closeLabel, agentBusy, agentLabel, onOverflow }: {
+function TabBar({ state, actions, title, onContextMenu, closeLabel, agentBusy, agentLabel, waiting, waitingLabel, onOverflow }: {
   state: PanelState;
   actions: PanelActions;
   title: (tab: PanelTab) => string;
@@ -282,6 +284,9 @@ function TabBar({ state, actions, title, onContextMenu, closeLabel, agentBusy, a
   /** 这个页签此刻是不是 agent 在操作（浏览器页签上亮一个点）。 */
   agentBusy: (tab: PanelTab) => boolean;
   agentLabel: string;
+  /** 页签里的网页在等用户答复权限请求。 */
+  waiting: (tab: PanelTab) => boolean;
+  waitingLabel: string;
   /** 页签放不下（需要横向滚动）时通知外面，好显示「全部页签」按钮。 */
   onOverflow: (overflowing: boolean) => void;
 }) {
@@ -414,7 +419,9 @@ function TabBar({ state, actions, title, onContextMenu, closeLabel, agentBusy, a
           >
             {ICONS[tab.type]}
             <span className="side-panel-tab-name">{name}</span>
-            {agentBusy(tab) && <span className="side-panel-tab-agent" title={agentLabel} aria-label={agentLabel} />}
+            {waiting(tab)
+              ? <span className="side-panel-tab-waiting" title={waitingLabel} aria-label={waitingLabel} />
+              : agentBusy(tab) && <span className="side-panel-tab-agent" title={agentLabel} aria-label={agentLabel} />}
             <span
               role="button"
               tabIndex={-1}

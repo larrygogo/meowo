@@ -51,7 +51,7 @@ mod imp {
     }
 
     /// WebView2 的权限种类 → 前端文案键。不认识的归 other，文案说「使用额外权限」。
-    fn kind_name(kind: COREWEBVIEW2_PERMISSION_KIND) -> &'static str {
+    pub(super) fn kind_name(kind: COREWEBVIEW2_PERMISSION_KIND) -> &'static str {
         match kind {
             COREWEBVIEW2_PERMISSION_KIND_MULTIPLE_AUTOMATIC_DOWNLOADS => "downloads",
             COREWEBVIEW2_PERMISSION_KIND_CAMERA => "camera",
@@ -154,7 +154,13 @@ mod imp {
                     .and_then(|queue| queue.pop_front())
             });
             if let Some(entry) = next {
+                let prompt = entry.prompt.clone();
                 settle(entry, allow);
+                // 阻止后同一页面不会再问，被拦的下载连事件都没有：留一条「已阻止」提示。
+                let panes = handle.state::<BrowserPanes>().panes.clone();
+                update(&handle, &panes, id, |info| {
+                    info.blocked = if allow { None } else { Some(prompt) };
+                });
             }
             publish(&handle, id);
         })
@@ -194,6 +200,31 @@ mod imp {
                 settle(entry, false);
             }
         });
+    }
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod tests {
+    use super::imp::kind_name;
+    use webview2_com::Microsoft::Web::WebView2::Win32::*;
+
+    #[test]
+    fn webview2_permission_kinds_map_to_prompt_keys() {
+        // 前端 browserPermissionKinds 的键与这里一一对应，不认识的一律 other。
+        let cases = [
+            (COREWEBVIEW2_PERMISSION_KIND_MULTIPLE_AUTOMATIC_DOWNLOADS, "downloads"),
+            (COREWEBVIEW2_PERMISSION_KIND_CAMERA, "camera"),
+            (COREWEBVIEW2_PERMISSION_KIND_MICROPHONE, "microphone"),
+            (COREWEBVIEW2_PERMISSION_KIND_GEOLOCATION, "location"),
+            (COREWEBVIEW2_PERMISSION_KIND_NOTIFICATIONS, "notifications"),
+            (COREWEBVIEW2_PERMISSION_KIND_CLIPBOARD_READ, "clipboard"),
+            (COREWEBVIEW2_PERMISSION_KIND_FILE_READ_WRITE, "files"),
+            (COREWEBVIEW2_PERMISSION_KIND_WINDOW_MANAGEMENT, "other"),
+            (COREWEBVIEW2_PERMISSION_KIND_UNKNOWN_PERMISSION, "other"),
+        ];
+        for (kind, name) in cases {
+            assert_eq!(kind_name(kind), name);
+        }
     }
 }
 

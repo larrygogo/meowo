@@ -96,6 +96,10 @@ pub(crate) struct BrowserPaneInfo {
     pub(crate) downloads: Vec<BrowserDownload>,
     /// 网页在等用户答复的权限请求，只给排在最前的一条（见 browser_permission.rs）。
     pub(crate) permission: Option<BrowserPermission>,
+    /// 用户刚阻止的请求。WebView2 在同一页面里不会再问，之后被拦的下载连事件都没有（做空审查
+    /// 实测：阻止后再下两次，既无权限请求也无下载事件），不留这条提示用户又会以为没下成而
+    /// 反复点。有新下载开始（说明不拦了）、换了网站、用户点 × 时消失。
+    pub(crate) blocked: Option<BrowserPermission>,
     // 以下三项只在后端用，不发给前端。
     /// 原生视图眼下摆在哪。
     #[serde(skip)]
@@ -126,8 +130,9 @@ pub(crate) struct BrowserDownload {
     pub(crate) id: u32,
     pub(crate) file_name: String,
     pub(crate) state: DownloadState,
+    /// 网址的哈希，只用来给完成事件对号。不存原文：data: 网址可能有几 MB，每次推状态都要复制。
     #[serde(skip)]
-    url: String,
+    url_key: u64,
     /// 存到哪。完成前是预定路径（macOS 完成时拿不到路径，只能用这个）。
     #[serde(skip)]
     pub(crate) path: Option<PathBuf>,
@@ -137,6 +142,13 @@ pub(crate) struct BrowserDownload {
 const MAX_DOWNLOADS: usize = 5;
 
 static NEXT_DOWNLOAD: AtomicU32 = AtomicU32::new(1);
+
+fn url_key(url: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    url.hash(&mut hasher);
+    hasher.finish()
+}
 
 fn file_name_of(path: &Path, url: &str) -> String {
     path.file_name()
@@ -151,7 +163,7 @@ pub(crate) fn download_started(list: &mut Vec<BrowserDownload>, url: &str, desti
         id: NEXT_DOWNLOAD.fetch_add(1, Ordering::Relaxed),
         file_name: file_name_of(destination, url),
         state: DownloadState::Progress,
-        url: url.to_string(),
+        url_key: url_key(url),
         path: Some(destination.to_path_buf()),
     });
     if list.len() > MAX_DOWNLOADS {
@@ -168,10 +180,11 @@ pub(crate) fn download_finished(
     path: Option<PathBuf>,
     success: bool,
 ) -> bool {
+    let key = url_key(url);
     let Some(entry) = list
         .iter_mut()
         .rev()
-        .find(|entry| entry.url == url && entry.state == DownloadState::Progress)
+        .find(|entry| entry.url_key == key && entry.state == DownloadState::Progress)
     else {
         return false;
     };
@@ -231,6 +244,13 @@ fn start_download(
         });
         let Some(info) = map.get_mut(&id) else { return };
         download_started(&mut info.downloads, url, destination);
+        if info
+            .blocked
+            .as_ref()
+            .is_some_and(|blocked| blocked.kind == "downloads")
+        {
+            info.blocked = None;
+        }
         info.clone()
     };
     emit_state(app, &info);
@@ -240,6 +260,9 @@ fn start_download(
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct BrowserPermission {
+    /// 每条请求一个编号。前端靠它判断「答复送达前锁住按钮」该不该解开：只比对象引用的话，
+    /// 标题、加载状态这些无关推送也会提前解锁（做空审查）。
+    pub(crate) id: u32,
     /// downloads / camera / microphone / location / notifications / clipboard / files / other。
     pub(crate) kind: String,
     /// 提示里显示的网站名（主机名）。
@@ -249,10 +272,13 @@ pub(crate) struct BrowserPermission {
     origin: String,
 }
 
+static NEXT_PERMISSION: AtomicU32 = AtomicU32::new(1);
+
 impl BrowserPermission {
     pub(crate) fn new(kind: &str, uri: &str) -> Self {
         let parsed = Url::parse(uri).ok();
         Self {
+            id: NEXT_PERMISSION.fetch_add(1, Ordering::Relaxed),
             kind: kind.to_string(),
             host: parsed
                 .as_ref()
@@ -262,6 +288,21 @@ impl BrowserPermission {
                 .map(|url| url.origin().ascii_serialization())
                 .unwrap_or_else(|| uri.to_string()),
         }
+    }
+
+    /// 给 agent 看的一句话：「httpbin.org 想要下载多个文件」。前端有自己的双语文案。
+    pub(crate) fn describe(&self) -> String {
+        let what = match self.kind.as_str() {
+            "downloads" => "下载多个文件",
+            "camera" => "使用摄像头",
+            "microphone" => "使用麦克风",
+            "location" => "获取位置",
+            "notifications" => "发送通知",
+            "clipboard" => "读取剪贴板",
+            "files" => "读写文件",
+            _ => "使用额外权限",
+        };
+        format!("{} 想要{what}", self.host)
     }
 
     /// 页面导航到 `url` 之后这条请求是否作废：换了网站才算。
@@ -467,6 +508,7 @@ pub(crate) fn open_pane(
         zoom: 1.0,
         downloads: Vec::new(),
         permission: None,
+        blocked: None,
         placement: Placement::Hidden,
         viewport: DEFAULT_VIEWPORT,
         keep_rendering: false,
@@ -490,15 +532,25 @@ pub(crate) fn open_pane(
         // 页内跳转同样过一遍白名单：页面自己把 location 改到 tauri.localhost 也拦得住。
         .on_navigation(move |url| allowed(url, nav_dev.as_ref()))
         .on_page_load(move |_, payload| {
+            // Started 对应 WebView2 的 ContentLoading：只有新文档开始加载才触发，点附件链接
+            // 下载不会触发（wry 0.57.1 webview2/mod.rs）。
             let loading = matches!(payload.event(), PageLoadEvent::Started);
+            let target = payload.url().clone();
             if loading {
                 // 换了网站，旧网站还挂着的权限请求就作废了。
-                crate::browser_permission::drop_stale(&load_app, id, payload.url().clone());
+                crate::browser_permission::drop_stale(&load_app, id, target.clone());
             }
-            let url = payload.url().to_string();
             update(&load_app, &load_panes, id, |info| {
-                info.url = url;
+                info.url = target.to_string();
                 info.loading = loading;
+                if loading
+                    && info
+                        .blocked
+                        .as_ref()
+                        .is_some_and(|blocked| blocked.stale_for(&target))
+                {
+                    info.blocked = None;
+                }
             });
         })
         // 接管下载：Windows 上 wry 随之 SetHandled，WebView2 自己的下载框不再出；macOS 上
@@ -879,7 +931,20 @@ mod tests {
         assert!(prompt.stale_for(&other));
         assert!(prompt.stale_for(&other_scheme));
         let json = serde_json::to_value(&prompt).unwrap();
-        assert_eq!(json, serde_json::json!({ "kind": "downloads", "host": "httpbin.org" }));
+        assert_eq!(
+            json,
+            serde_json::json!({ "id": prompt.id, "kind": "downloads", "host": "httpbin.org" })
+        );
+        assert_eq!(prompt.describe(), "httpbin.org 想要下载多个文件");
+        // 每条请求编号不同（前端据此解锁按钮）。
+        assert_ne!(
+            BrowserPermission::new("downloads", "https://httpbin.org/").id,
+            prompt.id
+        );
+        assert_eq!(
+            BrowserPermission::new("window_management", "https://a.test/").describe(),
+            "a.test 想要使用额外权限"
+        );
     }
 
     #[test]
@@ -889,7 +954,7 @@ mod tests {
         let json = serde_json::to_value(&list[0]).unwrap();
         assert_eq!(json["fileName"], "f.txt");
         assert_eq!(json["state"], "progress");
-        assert!(json.get("url").is_none() && json.get("path").is_none());
+        assert!(json.get("url").is_none() && json.get("urlKey").is_none() && json.get("path").is_none());
     }
 
     #[test]
