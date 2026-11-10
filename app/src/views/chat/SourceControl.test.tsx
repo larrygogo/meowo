@@ -116,7 +116,7 @@ describe("文件行与操作", () => {
     fireEvent.click(within(row).getByRole("button", { name: "放弃更改" }));
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).getByText("new.txt")).toBeTruthy();
-    expect(within(dialog).getByText("放弃后无法恢复。未跟踪的文件会被删除。")).toBeTruthy();
+    expect(within(dialog).getByText("已跟踪文件的改动无法恢复。未跟踪的文件移到回收站。")).toBeTruthy();
     fireEvent.keyDown(dialog, { key: "Escape" });
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(invoke).not.toHaveBeenCalledWith("git_discard", expect.anything());

@@ -10,7 +10,8 @@ import { markRemoteUi, REMOTE_SETTINGS_EVENT, SELECT_SESSION_EVENT } from "../re
 import { installRemoteTransport, NEW_SESSION_EVENT, getToken } from "./transport";
 import { getSettings } from "../api";
 import { TokenGate } from "./TokenGate";
-import { I18nProvider, useT } from "../i18n";
+import { bootI18n, I18nProvider, useT } from "../i18n";
+import { WindowErrorBoundary } from "../ErrorBoundary";
 import { TooltipLayer } from "../Tooltip";
 import { installInputModality } from "../input-modality";
 import { bootAppearance } from "../appearance";
@@ -125,16 +126,22 @@ function RemoteBoot() {
   return <div className="remote-boot" role="status">{t.remote.gateLoading}</div>;
 }
 
-ReactDOM.createRoot(document.getElementById("root")!).render(
-  <React.StrictMode>
-    <I18nProvider>
-      <React.Suspense fallback={<RemoteBoot />}>
-        <TokenGate onReady={pullSettings}>
-          <RemoteApp />
-        </TokenGate>
-      </React.Suspense>
-      <RemoteTitle />
-      <TooltipLayer />
-    </I18nProvider>
-  </React.StrictMode>,
-);
+// 字典按需加载（i18n/index.tsx）：英文界面先取到 en 再挂载，首帧不闪中文。bootI18n 不会 reject。
+void bootI18n().then(() => {
+  ReactDOM.createRoot(document.getElementById("root")!).render(
+    <React.StrictMode>
+      <I18nProvider>
+        {/* 渲染崩溃时整页换成「出错了 / 重新加载」，不白屏（ErrorBoundary.tsx）。 */}
+        <WindowErrorBoundary>
+          <React.Suspense fallback={<RemoteBoot />}>
+            <TokenGate onReady={pullSettings}>
+              <RemoteApp />
+            </TokenGate>
+          </React.Suspense>
+        </WindowErrorBoundary>
+        <RemoteTitle />
+        <TooltipLayer />
+      </I18nProvider>
+    </React.StrictMode>,
+  );
+});

@@ -45,6 +45,8 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "git/nothing_to_commit", exact: true, zh: "没有可提交的更改", en: "Nothing to commit" },
   { m: "git/empty_message", exact: true, zh: "请填写提交信息", en: "Enter a commit message" },
   { m: "git/not_in_changes", exact: true, zh: "文件已不在更改列表里，刷新后再试", en: "The file is no longer in the change list. Refresh and try again." },
+  // 放弃更改时未跟踪文件进回收站失败（git.rs trash_to_recycle_bin）。文件原样保留、不会永久删。
+  { m: "git/trash_failed", tail: true, zh: "没能移到回收站，文件已保留", en: "Couldn't move the file to the trash. It was kept." },
   { m: "git/failed", tail: true, zh: "git 操作失败", en: "Git operation failed" },
   { m: "remote/bind_failed", tail: true, zh: "无法监听这个端口", en: "Couldn't listen on this port" },
   // ── 诊断日志（diaglog.rs）──
@@ -232,6 +234,8 @@ export const ENTRIES: ErrorEntry[] = [
   // ── 更新 ──
   { m: "请先检查更新", exact: true, zh: "请先检查更新", en: "Check for updates first" },
   { m: "更新尚未下载完成", exact: true, zh: "更新还没下载完", en: "The update hasn't finished downloading" },
+  // 下载 60 秒没有新数据，被看门狗中止（lib.rs stall_watchdog）。下一轮检查会重新下载。
+  { m: "update/stalled", exact: true, zh: "下载没有进展，已停止", en: "The download stalled and was stopped" },
   // ── 文件 / git / 打开方式 ──
   { m: "附件过大", zh: "附件过大（上限 32MB）", en: "Attachment too large (max 32MB)" },
   { m: "空附件", exact: true, zh: "附件是空的", en: "Empty attachment" },

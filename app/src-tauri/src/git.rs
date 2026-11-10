@@ -956,7 +956,7 @@ pub(crate) async fn git_unstage(cwd: String, paths: Vec<String>) -> Result<(), S
         .map_err(|e| e.to_string())?
 }
 
-/// 放弃工作区改动：已跟踪的恢复成暂存区内容，未跟踪的删文件。不可恢复，确认由前端负责。
+/// 放弃工作区改动：已跟踪的恢复成暂存区内容，未跟踪的移进系统回收站。确认由前端负责。
 #[tauri::command]
 pub(crate) async fn git_discard(cwd: String, paths: Vec<String>) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || discard_blocking(&cwd, &paths))
@@ -1004,7 +1004,48 @@ fn unstage_blocking(cwd: &str, paths: &[String]) -> Result<(), String> {
     result
 }
 
+/// 把一个未跟踪文件挪走的实现。抽成函数指针是为了测试能注入「回收失败」，验证不退回永久删除。
+type TrashFn = fn(&Path) -> Result<(), String>;
+
+/// 移进系统回收站（Windows 回收站 / macOS 废纸篓 / Linux freedesktop Trash）。
+/// 未跟踪文件 git 里没有任何副本，以前直接 remove_file，手滑点了「放弃」就永久没了。
+/// 失败一律报 git/trash_failed、文件原样保留，**不退回永久删除**：没回收站的盘（网络盘、
+/// 部分 U 盘）上宁可让用户自己去删，也不替用户做不可恢复的决定。
+fn trash_to_recycle_bin(path: &Path) -> Result<(), String> {
+    // trash 5.2.9 的 Windows 实现对 CoCreateInstance 直接 unwrap（windows.rs:95），
+    // COM 起不来时会 panic；接住它，按回收失败报错而不是让 spawn_blocking 抛 JoinError。
+    match std::panic::catch_unwind(|| trash_context().delete(path)) {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => return Err(format!("git/trash_failed: {e}")),
+        Err(_) => return Err("git/trash_failed: recycle bin unavailable".into()),
+    }
+    // 防御：IFileOperation 只靠 GetAnyOperationsAborted 报失败，trash 自己也注明拿不到具体
+    // 原因（windows.rs:111）。落地再核一次，免得界面说放弃成功、文件其实还在。
+    if std::fs::symlink_metadata(path).is_ok() {
+        return Err("git/trash_failed: file still exists".into());
+    }
+    Ok(())
+}
+
+fn trash_context() -> trash::TrashContext {
+    #[allow(unused_mut)]
+    let mut ctx = trash::TrashContext::default();
+    // macOS 默认走 osascript 让 Finder 删：首次会弹「Meowo 想控制 Finder」的自动化授权框，
+    // 每删一个都放废纸篓音效（trash 5.2.9 macos/mod.rs DeleteMethod 文档表）。NSFileManager
+    // 不要额外权限、无声；代价是部分系统版本右键没有「放回原处」，文件仍在废纸篓可拖出。
+    #[cfg(target_os = "macos")]
+    {
+        use trash::macos::{DeleteMethod, TrashContextExtMacos};
+        ctx.set_delete_method(DeleteMethod::NsFileManager);
+    }
+    ctx
+}
+
 fn discard_blocking(cwd: &str, paths: &[String]) -> Result<(), String> {
+    discard_with(cwd, paths, trash_to_recycle_bin)
+}
+
+fn discard_with(cwd: &str, paths: &[String], trash: TrashFn) -> Result<(), String> {
     let dir = existing_dir(cwd)?;
     let files = listed_changes(dir, paths, |f| f.worktree_status.is_some())?;
     refuse_conflicts(&files)?;
@@ -1025,7 +1066,15 @@ fn discard_blocking(cwd: &str, paths: &[String]) -> Result<(), String> {
             if meta.is_dir() {
                 return Err(format!("git/failed: {} 是目录", file.path));
             }
-            std::fs::remove_file(&full).map_err(|e| format!("git/failed: {e}"))?;
+            if meta.file_type().is_symlink() {
+                // 符号链接不进回收站，照旧只删链接本身。链接不承载数据（内容在指向处），
+                // 删了零损失。trash 5.2.9 本身只规范化父目录、保留链接名（其 lib.rs
+                // canonicalize_paths），但最终交给 Windows Shell / Finder 处理链接：早期 Explorer
+                // 删 junction 会连带删目标内容，Finder 的行为本机也验证不了，不值得冒这个险。
+                std::fs::remove_file(&full).map_err(|e| format!("git/failed: {e}"))?;
+            } else {
+                trash(&full)?;
+            }
         }
         Ok(())
     })();
@@ -1722,8 +1771,8 @@ mod tests {
         assert_eq!(discard_blocking(&dir, &["README.md".into()]).unwrap_err(), "git/not_in_changes");
         unstage_blocking(&dir, &["README.md".into(), "dir/new.txt".into()]).unwrap();
         assert_eq!(statuses(&repo), vec![st("README.md", None, Some("M")), st("dir/new.txt", None, Some("U"))]);
-        // 放弃：已跟踪的恢复，未跟踪的删文件（目录留着）。
-        discard_blocking(&dir, &["README.md".into(), "dir/new.txt".into()]).unwrap();
+        // 放弃：已跟踪的恢复，未跟踪的挪走（目录留着）。用假回收站，单测不往本机回收站塞东西。
+        discard_with(&dir, &["README.md".into(), "dir/new.txt".into()], fake_trash_ok).unwrap();
         assert!(statuses(&repo).is_empty());
         assert_eq!(std::fs::read_to_string(repo.join("README.md")).unwrap().trim(), "hi");
         assert!(!repo.join("dir").join("new.txt").exists());
@@ -1741,6 +1790,88 @@ mod tests {
         discard_blocking(&s(&repo), &["README.md".into()]).unwrap();
         assert_eq!(std::fs::read_to_string(repo.join("README.md")).unwrap().replace("\r\n", "\n"), "staged\n");
         assert_eq!(statuses(&repo), vec![st("README.md", Some("M"), None)]);
+    }
+
+    /// 假回收站：直接删，模拟「回收成功、原路径消失」。
+    fn fake_trash_ok(path: &Path) -> Result<(), String> {
+        std::fs::remove_file(path).map_err(|e| format!("git/trash_failed: {e}"))
+    }
+    /// 假回收站：回收失败（没回收站的盘、COM 起不来……）。
+    fn fake_trash_fail(_: &Path) -> Result<(), String> {
+        Err("git/trash_failed: injected".into())
+    }
+
+    /// 回收失败时报 git/trash_failed，文件原样保留，不退回永久删除。
+    #[test]
+    fn discard_keeps_untracked_file_when_trash_fails() {
+        let sb = Sandbox::new("discard-trash-fail");
+        let repo = sb.repo("r");
+        std::fs::write(repo.join("new.txt"), "keep me
+").unwrap();
+        let err = discard_with(&s(&repo), &["new.txt".into()], fake_trash_fail).unwrap_err();
+        assert!(err.starts_with("git/trash_failed"), "{err}");
+        assert_eq!(std::fs::read_to_string(repo.join("new.txt")).unwrap(), "keep me
+");
+        assert_eq!(statuses(&repo), vec![st("new.txt", None, Some("U"))]);
+    }
+
+    /// 回收成功后原路径不存在。
+    #[test]
+    fn discard_trashes_untracked_file() {
+        let sb = Sandbox::new("discard-trash-ok");
+        let repo = sb.repo("r");
+        std::fs::write(repo.join("new.txt"), "n
+").unwrap();
+        discard_with(&s(&repo), &["new.txt".into()], fake_trash_ok).unwrap();
+        assert!(std::fs::symlink_metadata(repo.join("new.txt")).is_err());
+        assert!(statuses(&repo).is_empty());
+    }
+
+    /// 未跟踪的符号链接不走回收站，只删链接本身，指向的文件不动。
+    /// 注入必败的回收站：链接若误走回收站这里就会报错。Windows 无开发者模式时建不了链接，跳过。
+    #[test]
+    fn discard_untracked_symlink_removes_link_only() {
+        let sb = Sandbox::new("discard-symlink");
+        let repo = sb.repo("r");
+        let target = sb.0.join("target.txt");
+        std::fs::write(&target, "precious
+").unwrap();
+        #[cfg(windows)]
+        let made = std::os::windows::fs::symlink_file(&target, repo.join("link.txt")).is_ok();
+        #[cfg(unix)]
+        let made = std::os::unix::fs::symlink(&target, repo.join("link.txt")).is_ok();
+        if !made {
+            eprintln!("建不了符号链接（Windows 未开开发者模式），跳过");
+            return;
+        }
+        discard_with(&s(&repo), &["link.txt".into()], fake_trash_fail).unwrap();
+        assert!(std::fs::symlink_metadata(repo.join("link.txt")).is_err());
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "precious
+");
+    }
+
+    /// 真回收站：放弃的未跟踪文件必须能在回收站里找回，而不是永久删掉。
+    /// ignored：会真往本机回收站放东西（测完按原路径 purge 掉自己那条），CI 无桌面回收站。
+    /// macOS 的 trash crate 不提供 list/purge，无法自检，只在 Windows/Linux 跑。
+    #[cfg(any(windows, all(unix, not(target_os = "macos"))))]
+    #[test]
+    #[ignore]
+    fn discard_moves_untracked_to_real_recycle_bin() {
+        let sb = Sandbox::new("discard-trash");
+        let repo = sb.repo("r");
+        let name = format!("meowo-trash-probe-{}.txt", std::process::id());
+        std::fs::write(repo.join(&name), "probe\n").unwrap();
+        discard_blocking(&s(&repo), std::slice::from_ref(&name)).unwrap();
+        assert!(!repo.join(&name).exists());
+        let parent = dunce::canonicalize(&repo).unwrap();
+        let ours: Vec<_> = trash::os_limited::list()
+            .unwrap()
+            .into_iter()
+            .filter(|item| item.name == name.as_str() && dunce::simplified(&item.original_parent) == parent)
+            .collect();
+        let found = !ours.is_empty();
+        let _ = trash::os_limited::purge_all(ours);
+        assert!(found, "放弃的未跟踪文件没进回收站（被永久删除了）");
     }
 
     /// 清单外的路径一律拒，包括 `..`、绝对路径、干净的已跟踪文件——放弃不能被借去删任意文件。

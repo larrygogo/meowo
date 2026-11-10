@@ -1,6 +1,6 @@
 import { memo, useState } from "react";
 import { useT } from "../../i18n";
-import { highlightLines } from "./highlight";
+import { highlightLines, useHighlighter } from "./highlight";
 
 /// 预览露出的行数上限。CC 终端里 Write 也只露十来行再写「+262 lines」——整篇摊开会把
 /// 对话流顶掉几屏，而用户要的是「看一眼在写什么」，不是在对话页读文件。
@@ -22,6 +22,8 @@ function CodeLines({ lines, lang, start = 1, tone, gutter }: {
   tone?: "add" | "del";
   gutter?: (index: number) => string;
 }) {
+  // hljs 懒加载：就绪前是转义纯文本，到位后重渲染上色（见 highlight.ts）。
+  useHighlighter(!!lang);
   const html = highlightLines(lines, lang);
   const mark = (index: number) => gutter ? gutter(index) : tone ? (tone === "add" ? "+" : "-") : String(start + index);
   return (

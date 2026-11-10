@@ -23,6 +23,7 @@ import {
 } from "../../api";
 import { useT } from "../../i18n";
 import { remoteUi } from "../../remoteMode";
+import { WINDOW_CLOSE_CANCELLED_EVENT } from "./windowClose";
 
 /** 远程审批租约续约周期（ms）。须显著小于后端 REMOTE_CONSUMER_TTL_MS(60s),留足网络抖动余量。 */
 export const REMOTE_CONSUMER_HEARTBEAT_MS = 20_000;
@@ -118,10 +119,15 @@ export function useApprovalChannel({ sessionId, activeSessionRef, viewRef, setVi
         void registerApprovalConsumer(sessionId, consumerId).catch(() => {});
       }, REMOTE_CONSUMER_HEARTBEAT_MS);
     }
+    // 原生关窗被用户取消：后端在拦下之前已经清了桌面租约（window.rs CloseRequested 分支），
+    // 窗口还开着就得重新登记，否则之后的审批全被直接交还终端（见 windowClose.ts）。
+    const onCloseCancelled = () => register(0);
+    if (!remoteUi()) window.addEventListener(WINDOW_CLOSE_CANCELLED_EVENT, onCloseCancelled);
     return () => {
       disposed = true;
       window.clearTimeout(retryTimer);
       window.clearInterval(heartbeat);
+      window.removeEventListener(WINDOW_CLOSE_CANCELLED_EVENT, onCloseCancelled);
       void unregisterApprovalConsumer(consumerId).catch(() => {});
     };
   }, [sessionId]);

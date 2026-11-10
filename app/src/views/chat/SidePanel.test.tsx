@@ -11,10 +11,10 @@ vi.mock("./ShellTerminal", () => ({
 vi.mock("./BrowserPane", () => ({
   BrowserPane: ({ info, visible }: { info: { id: number }; visible: boolean }) => <div data-testid={`web-${info.id}`} data-visible={String(visible)} />,
 }));
-vi.mock("./GitDiffView", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./GitDiffView")>()),
-  ChangesView: () => <div>改动内容</div>,
-  FilesView: ({ cwd }: { cwd: string }) => <div data-testid="files" data-cwd={cwd}>文件内容</div>,
+// SidePanel / SourceControl 经 lazyDiff 按需取 GitDiffView 的两个大组件（拆 chunk，见 lazyDiff.tsx）。
+vi.mock("./lazyDiff", () => ({
+  LazyChangesView: () => <div>改动内容</div>,
+  LazyFilesView: ({ cwd }: { cwd: string }) => <div data-testid="files" data-cwd={cwd}>文件内容</div>,
 }));
 
 import type { BrowserPaneInfo, GitDiffSummaryDto, ShellTerminalInfo } from "../../api";

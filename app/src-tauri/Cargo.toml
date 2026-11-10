@@ -114,7 +114,11 @@ tauri-plugin-single-instance = "2.4.3"
 axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio"] }
 # tokio 经 tauri 传递引入，但 tauri 默认不开 net（现由 updater→reqwest 链传递打开）——
 # 远程桥的 TcpListener 依赖它，显式声明不把编译成败押在别人的依赖树上。
-tokio = { version = "1", features = ["net", "sync"] }
+# time：更新下载的停顿看门狗（lib.rs stall_watchdog）要 tokio::time::sleep。
+tokio = { version = "1", features = ["net", "sync", "time"] }
+# 「更改」面板放弃未跟踪文件时移进系统回收站而不是永久删（git.rs discard_blocking）。
+# 钉在 5.2.x：5.3.0 发布不满两周；5.2.9 覆盖 Windows(IFileOperation)/macOS(Finder)/Linux(freedesktop)。
+trash = "~5.2.9"
 # 远程目录浏览（remote.rs list_subdirectories）：std canonicalize 在 Windows 回 \\?\
 # 前缀路径，展示难看且回填 cwd 后部分 agent 不认。已在依赖树（tauri 传递），零新增。
 dunce = "1"
@@ -170,3 +174,7 @@ block2 = { version = "0.6", features = ["alloc"] }
 # tauri-nspanel 的 panel_delegate! 宏展开含 #[cfg(feature = "cargo-clippy")]，新 rustc 下触发
 # unexpected_cfgs；该 cfg 来自上游宏、无法在调用处消除，整体放行（仅影响本 crate）。
 unexpected_cfgs = "allow"
+
+[dev-dependencies]
+# test-util：看门狗单测用 paused time 快进时钟，不真等 60 秒。
+tokio = { version = "1", features = ["test-util", "macros", "rt", "time"] }

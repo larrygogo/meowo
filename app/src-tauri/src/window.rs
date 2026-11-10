@@ -769,10 +769,11 @@ pub(crate) fn open_chat_window_target(
     show_after_grace(&win, activate);
     let app_handle = app.clone();
     win.on_window_event(move |e| {
-        if matches!(
-            e,
-            tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed
-        ) {
+        // 只在真正销毁时收尾，不碰 CloseRequested：前端在面板终端有程序在跑时会拦下关闭
+        // 让用户确认（chat/windowClose.ts），用户点取消窗口还在。若这里在 CloseRequested
+        // 就交还审批、清「正在看」、减 macOS 激活计数，取消后审批已落回 TUI 收不回、Dock
+        // 计数也错减。全仓没有把对话窗关闭改成隐藏的路径，真关闭必然走到 Destroyed。
+        if matches!(e, tauri::WindowEvent::Destroyed) {
             let ptys = &app_handle.state::<crate::AppState>().ptys;
             // 关窗兜底：清桌面租约，再把无人看的挂起审批交还 TUI。手机端（remote:）
             // 的新鲜租约与桌面窗生命周期无关，不被连坐——手机上正等着批的卡不能
@@ -783,15 +784,12 @@ pub(crate) fn open_chat_window_target(
             ptys.reset_viewer();
             #[cfg(target_os = "macos")]
             crate::macos::menubar::settings_window_did_close(&app_handle, "chat");
-            // 面板里开的普通终端只属于这扇窗：窗没了就再没人能看到或关掉它们。只在真正
-            // 销毁时收，CloseRequested 之后窗口可能还在（被拦下或改成隐藏）。
-            if matches!(e, tauri::WindowEvent::Destroyed) {
-                if let Some(shells) = app_handle.try_state::<crate::shell_terminal::ShellTerminals>() {
-                    shells.kill_all();
-                }
-                if let Some(panes) = app_handle.try_state::<crate::browser_pane::BrowserPanes>() {
-                    panes.clear();
-                }
+            // 面板里开的普通终端只属于这扇窗：窗没了就再没人能看到或关掉它们。
+            if let Some(shells) = app_handle.try_state::<crate::shell_terminal::ShellTerminals>() {
+                shells.kill_all();
+            }
+            if let Some(panes) = app_handle.try_state::<crate::browser_pane::BrowserPanes>() {
+                panes.clear();
             }
         }
     });

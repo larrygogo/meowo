@@ -1,44 +1,19 @@
 /**
- * 面板内代码高亮（文件预览 + diff 视图）：highlight.js 模块化引入，只打包注册的语言。
+ * 面板内代码高亮（文件预览 + diff 视图 + 对话里的代码块）。
  * 刻意不做 highlightAuto 自动探测——短行/片段上误判率高、颜色跳变比不高亮更糟。
  *
  * 渲染按行、高亮按篇：全文先整体交给 hljs（多行字符串/块注释/模板串的跨行状态
  * 得以保留），再把结果 HTML 按换行拆回逐行——断行处补闭合、下一行重开同名
  * span，每行 HTML 各自平衡，可独立塞进行容器（diff 行/带行号的代码行）。
+ *
+ * hljs 本体在 highlightEngine.ts，第一次真要上色时才动态加载（它占对话窗主 chunk 约三成，
+ * 构建实测）。加载完成前 highlightCode / highlightLines 返回转义后的纯文本；调用方用
+ * useHighlighter() 订阅，引擎到了就重渲染上色。纯文本与上色后字形、字号、行高完全一样，
+ * 只是颜色变化，不会有布局跳动。
  */
-import hljs from "highlight.js/lib/core";
-import bash from "highlight.js/lib/languages/bash";
-import c from "highlight.js/lib/languages/c";
-import cpp from "highlight.js/lib/languages/cpp";
-import csharp from "highlight.js/lib/languages/csharp";
-import css from "highlight.js/lib/languages/css";
-import diff from "highlight.js/lib/languages/diff";
-import dockerfile from "highlight.js/lib/languages/dockerfile";
-import go from "highlight.js/lib/languages/go";
-import ini from "highlight.js/lib/languages/ini";
-import java from "highlight.js/lib/languages/java";
-import javascript from "highlight.js/lib/languages/javascript";
-import json from "highlight.js/lib/languages/json";
-import kotlin from "highlight.js/lib/languages/kotlin";
-import markdown from "highlight.js/lib/languages/markdown";
-import php from "highlight.js/lib/languages/php";
-import plaintext from "highlight.js/lib/languages/plaintext";
-import python from "highlight.js/lib/languages/python";
-import ruby from "highlight.js/lib/languages/ruby";
-import rust from "highlight.js/lib/languages/rust";
-import sql from "highlight.js/lib/languages/sql";
-import swift from "highlight.js/lib/languages/swift";
-import typescript from "highlight.js/lib/languages/typescript";
-import xml from "highlight.js/lib/languages/xml";
-import yaml from "highlight.js/lib/languages/yaml";
+import { useEffect, useSyncExternalStore } from "react";
 
-const LANGUAGES = {
-  bash, c, cpp, csharp, css, diff, dockerfile, go, ini, java, javascript, json,
-  kotlin, markdown, php, plaintext, python, ruby, rust, sql, swift, typescript, xml, yaml,
-} as const;
-for (const [name, language] of Object.entries(LANGUAGES)) {
-  hljs.registerLanguage(name, language);
-}
+type Engine = typeof import("./highlightEngine");
 
 /** 扩展名（小写、不含点）→ 已注册的 hljs 语言名。 */
 const EXT_TO_LANG: Record<string, string> = {
@@ -67,15 +42,27 @@ const EXT_TO_LANG: Record<string, string> = {
   txt: "plaintext",
 };
 
+/** 已注册语言自带的别名（hljs 语言定义里的 aliases）。手抄一份是为了不加载引擎也能判断围栏标注认不认识；
+ *  highlight.test.ts 加载引擎后逐项对账，语言表改了没同步会红。 */
+export const LANGUAGE_ALIASES: Record<string, readonly string[]> = {
+  bash: ["sh", "zsh"], c: ["h"], cpp: ["cc", "c++", "h++", "hpp", "hh", "hxx", "cxx"], csharp: ["cs", "c#"], css: [],
+  diff: ["patch"], dockerfile: ["docker"], go: ["golang"], ini: ["toml"], java: ["jsp"], javascript: ["js", "jsx", "mjs", "cjs"],
+  json: ["jsonc", "json5"], kotlin: ["kt", "kts", "ktm", "ktx"], markdown: ["md", "mkdown", "mkd"], php: [], plaintext: ["text", "txt"],
+  python: ["py", "gyp", "ipython"], ruby: ["rb", "gemspec", "podspec", "thor", "irb"], rust: ["rs"], sql: [], swift: [],
+  typescript: ["ts", "tsx", "mts", "cts"], xml: ["html", "xhtml", "rss", "atom", "xjb", "xsd", "xsl", "plist", "wsf", "svg"], yaml: ["yml"],
+};
+const ALIAS_TO_LANG = new Map<string, string>(
+  Object.entries(LANGUAGE_ALIASES).flatMap(([name, aliases]) => [[name, name] as const, ...aliases.map((alias) => [alias, name] as const)]),
+);
+
 /** markdown 代码围栏的语言标注 → 已注册的 hljs 语言名。围栏里用户/模型写的常是
- *  扩展名式别名（```ts、```py、```sh），先认注册名、再走扩展名别名表；都不认识
- *  返回 null（按纯文本渲染，不做自动探测——文件头注释里说过为什么）。 */
+ *  扩展名式别名（```ts、```py、```sh），先认扩展名别名表、再认 hljs 的语言别名；都不认识
+ *  返回 null（按纯文本渲染，不做自动探测——文件头注释里说过为什么）。一律返回规范名，
+ *  免得高亮缓存键分裂成 ts/typescript 两份。 */
 export function languageForFence(tag: string): string | null {
   const lower = tag.trim().toLowerCase();
   if (!lower) return null;
-  // 先查别名表拿规范名（hljs 的语言自带 aliases，"ts" 直接问 getLanguage 也命中，
-  // 但返回别名会让高亮缓存键分裂成 ts/typescript 两份）；表外的再问 hljs 兜底。
-  return EXT_TO_LANG[lower] ?? (hljs.getLanguage(lower) ? lower : null);
+  return EXT_TO_LANG[lower] ?? ALIAS_TO_LANG.get(lower) ?? null;
 }
 
 /** 路径 → 高亮语言；不认识/无扩展名/点文件（.gitignore 等）返回 null（按纯文本渲染）。 */
@@ -96,77 +83,52 @@ export function escapeHtml(text: string): string {
     .replace(/"/g, "&quot;");
 }
 
-/** 高亮一段代码，返回 hljs HTML；语言为空/未注册/高亮抛错时回退为转义纯文本。 */
+// ── 引擎按需加载 ──
+let engine: Engine | null = null;
+let loading: Promise<void> | null = null;
+const listeners = new Set<() => void>();
+
+/** 加载 hljs（幂等）。失败时清掉记录，下一次需要时再试；期间一直按纯文本显示。 */
+export function loadHighlighter(): Promise<void> {
+  if (engine) return Promise.resolve();
+  loading ??= import("./highlightEngine").then(
+    (mod) => {
+      engine = mod;
+      for (const listener of listeners) listener();
+    },
+    (error) => {
+      loading = null;
+      console.error("加载代码高亮失败", error);
+    },
+  );
+  return loading;
+}
+
+export function highlighterReady(): boolean {
+  return engine !== null;
+}
+
+function subscribe(listener: () => void) {
+  listeners.add(listener);
+  return () => { listeners.delete(listener); };
+}
+
+/** 订阅高亮引擎是否就绪；needed 为真（有语言要上色）时顺手触发加载。返回值放进 useMemo
+ *  依赖里，引擎到了才会重算出带颜色的 HTML。 */
+export function useHighlighter(needed = true): boolean {
+  const ready = useSyncExternalStore(subscribe, highlighterReady, highlighterReady);
+  useEffect(() => {
+    if (needed && !ready) void loadHighlighter();
+  }, [needed, ready]);
+  return ready;
+}
+
+/** 高亮一段代码，返回 hljs HTML；语言为空/未注册/引擎未就绪/高亮抛错时回退为转义纯文本。 */
 export function highlightCode(code: string, lang: string | null): string {
-  if (!lang || !hljs.getLanguage(lang)) return escapeHtml(code);
-  try {
-    // ignoreIllegals：diff 侧会把不连续的 hunk 拼成一篇，语法不完整是常态，
-    // 不能因一处解析失败整篇退成纯文本。
-    return hljs.highlight(code, { language: lang, ignoreIllegals: true }).value;
-  } catch {
-    return escapeHtml(code);
-  }
+  return engine ? engine.highlightCode(code, lang) : escapeHtml(code);
 }
 
-/**
- * 把 hljs 整篇输出按换行拆回逐行 HTML。hljs 的 value 只含三种片段：
- * `<span class="…">`、`</span>`、转义后的文本（class 值不含 '>'，按 '>' 截取安全）。
- * 维护未闭合 span 栈：遇换行先按栈深补闭合，下一行以同栈重开——跨行 token
- * （多行注释/字符串）的颜色因此延续，且每行自平衡。
- */
-function splitHighlightedHtml(html: string): string[] {
-  const lines: string[] = [];
-  const open: string[] = [];
-  let current = "";
-  let index = 0;
-  while (index < html.length) {
-    const char = html[index];
-    if (char === "\n") {
-      lines.push(current + "</span>".repeat(open.length));
-      current = open.join("");
-      index += 1;
-    } else if (char === "<") {
-      const close = html.indexOf(">", index);
-      if (close === -1) {
-        // 残缺标签按理不会出现（hljs 输出总是成对完整）；防御性当文本吞掉。
-        current += html.slice(index);
-        break;
-      }
-      const tag = html.slice(index, close + 1);
-      if (tag.startsWith("</")) open.pop();
-      else open.push(tag);
-      current += tag;
-      index = close + 1;
-    } else {
-      let next = index;
-      while (next < html.length && html[next] !== "<" && html[next] !== "\n") next += 1;
-      current += html.slice(index, next);
-      index = next;
-    }
-  }
-  lines.push(current + "</span>".repeat(open.length));
-  return lines;
-}
-
-/// 超过这个总量不高亮、只转义：hljs 同步跑在渲染路径上，后端给面板的文件/diff 上限是
-/// 200KB，整篇送 hljs 会把主线程卡到接近秒级。阈值比对话区（ChatMarkdown 20K）宽——
-/// 这里每个文件只算一次（useMemo），不像流式消息每个 delta 都重来。
-const HIGHLIGHT_MAX_TOTAL_CHARS = 100_000;
-
-/**
- * 逐行高亮：行数组拼成整篇送 hljs（跨行状态保留），拆回后行数与输入一一对应。
- * 拆分结果行数对不上（拆分假设被打破）时宁可整体退纯文本，也不冒错位渲染的险。
- */
+/** 逐行高亮（行数与输入一一对应）；引擎未就绪时逐行转义。 */
 export function highlightLines(lines: string[], lang: string | null): string[] {
-  if (!lang || !hljs.getLanguage(lang)) return lines.map(escapeHtml);
-  let total = 0;
-  for (const line of lines) total += line.length + 1;
-  if (total > HIGHLIGHT_MAX_TOTAL_CHARS) return lines.map(escapeHtml);
-  try {
-    const html = hljs.highlight(lines.join("\n"), { language: lang, ignoreIllegals: true }).value;
-    const split = splitHighlightedHtml(html);
-    return split.length === lines.length ? split : lines.map(escapeHtml);
-  } catch {
-    return lines.map(escapeHtml);
-  }
+  return engine && lang ? engine.highlightLines(lines, lang) : lines.map(escapeHtml);
 }

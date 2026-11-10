@@ -809,7 +809,9 @@ fn config_file(agent: &str, reporter: &str) -> Option<String> {
     std::fs::create_dir_all(&dir).ok()?;
     let path = dir.join(format!("{agent}-browser.json"));
     let body = json!({ "mcpServers": { SERVER_NAME: server_entry(reporter) } });
-    std::fs::write(&path, serde_json::to_vec_pretty(&body).ok()?).ok()?;
+    // 原子写：每次启动都重写，而 agent CLI 启动时按 --mcp-config 读它；直接 write 先截断，
+    // 恰在此刻拉起的会话会读到空/半截 JSON，整组浏览器工具缺席。
+    meowo_agent::fsutil::write_atomic(&path, &serde_json::to_string_pretty(&body).ok()?).ok()?;
     Some(path.to_string_lossy().into_owned())
 }
 
@@ -849,7 +851,9 @@ fn sync_mcp_file(path: &std::path::Path, enabled: bool, reporter: Option<&str>) 
             // 用户手写坏了的文件不动，免得把他的配置冲掉。
             Err(_) => return,
         },
-        Err(_) if enabled => json!({}),
+        // 只有「确实不存在」才当空文件新建。拒绝访问、被占用、路径是目录之类的读取错误
+        // 若也当空文件，下面会写出只剩 meowo 一项的 mcpServers，把用户的配置冲掉。
+        Err(e) if enabled && e.kind() == std::io::ErrorKind::NotFound => json!({}),
         Err(_) => return,
     };
     if !root.is_object() {
@@ -875,13 +879,15 @@ fn sync_mcp_file(path: &std::path::Path, enabled: bool, reporter: Option<&str>) 
     if !changed {
         return;
     }
-    let Ok(body) = serde_json::to_vec_pretty(&root) else {
+    let Ok(body) = serde_json::to_string_pretty(&root) else {
         return;
     };
-    let tmp = path.with_extension("json.meowo-tmp");
-    if std::fs::write(&tmp, body).is_ok() {
-        let _ = std::fs::rename(&tmp, &path);
+    // 同 wiring 的「写前必备份、一律原子写」：这是用户自己的配置文件（kimi 的 mcp.json），
+    // 覆盖前留一份原件；备份失败就不写，宁可这次不接线也不冒丢配置的险。
+    if path.exists() && meowo_agent::wiring::backup_once(&path).is_err() {
+        return;
     }
+    let _ = meowo_agent::fsutil::write_atomic(&path, &body);
 }
 
 /// 页面里的辅助对象。每次 eval 都带上，已有就跳过。
@@ -1136,6 +1142,55 @@ mod tests {
         std::fs::write(&path, "{broken").unwrap();
         sync_mcp_file(&dir.join("mcp.json"), true, Some("C:/m/meowo-reporter.exe"));
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "{broken");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 读取失败不等于「文件不存在」：权限/锁/路径是目录之类的错误下绝不写，
+    /// 否则会用只剩 meowo 一项的 mcpServers 冲掉用户配置。这里用「目标路径是个目录」
+    /// 构造非 NotFound 的读取错误（Windows 上是拒绝访问，Unix 上是 EISDIR）。
+    #[test]
+    fn mcp_file_read_error_other_than_not_found_writes_nothing() {
+        let dir = std::env::temp_dir().join(format!("meowo-mcp-readerr-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let target = dir.join("mcp.json");
+        std::fs::create_dir_all(&target).unwrap();
+        sync_mcp_file(&target, true, Some("C:/m/meowo-reporter.exe"));
+        assert!(target.is_dir(), "目录被替换了");
+        let siblings: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name()).collect();
+        assert_eq!(siblings, vec![std::ffi::OsString::from("mcp.json")], "不该落任何临时/新文件");
+        assert_eq!(std::fs::read_dir(&target).unwrap().count(), 0, "目录内容被改动");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// NotFound 才当空文件：开着时新建出只含 meowo 一项的配置；关着时不凭空造文件。
+    #[test]
+    fn mcp_file_missing_is_created_only_when_enabled() {
+        let dir = std::env::temp_dir().join(format!("meowo-mcp-missing-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("mcp.json");
+        sync_mcp_file(&path, false, Some("C:/m/meowo-reporter.exe"));
+        assert!(!path.exists());
+        sync_mcp_file(&path, true, Some("C:/m/meowo-reporter.exe"));
+        let root: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(root["mcpServers"]["meowo"]["args"], json!(["mcp"]));
+        // 新建的文件没有可备份的原件，不该凭空出一份 .cckb-bak。
+        assert!(!dir.join("mcp.json.cckb-bak").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 覆盖用户已有的文件前留一份原件备份（只留第一次的），同 wiring 的「写前必备份」。
+    #[test]
+    fn mcp_file_overwrite_backs_up_original_once() {
+        let dir = std::env::temp_dir().join(format!("meowo-mcp-backup-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("mcp.json");
+        let original = r#"{"mcpServers":{"other":{"command":"x"}}}"#;
+        std::fs::write(&path, original).unwrap();
+        sync_mcp_file(&path, true, Some("C:/m/meowo-reporter.exe"));
+        sync_mcp_file(&path, false, Some("C:/m/meowo-reporter.exe"));
+        assert_eq!(std::fs::read_to_string(dir.join("mcp.json.cckb-bak")).unwrap(), original);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

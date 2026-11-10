@@ -851,7 +851,9 @@ pub(crate) fn analyze_transcript(
     cc_session_id: &str,
 ) -> Option<meowo_agent::transcript::TranscriptInfo> {
     let spec = super::agent_transcript(provider).filter(|spec| spec.supports_analysis())?;
-    let path = spec.resolve_transcript_path(None, cwd, cc_session_id)?;
+    // 看板/侧栏每 ~2s 刷新都会走到这里：用轮询版定位，「查不到」有短期负缓存（见 claude 实现），
+    // 免得几十个没有 transcript 的会话每次都把 projects 下所有子目录扫一遍。
+    let path = spec.resolve_transcript_path_polled(cwd, cc_session_id)?;
     let path = path.to_str()?;
     Some(meowo_agent::TranscriptCache::analyze_shared(
         tx_cache, spec, path,

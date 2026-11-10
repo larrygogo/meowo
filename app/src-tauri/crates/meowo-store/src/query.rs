@@ -543,13 +543,17 @@ impl Store {
         // 会话只该比原来的第一条高一点，之后新建的会话照样出现在它上面。
         const GAP: i64 = 1024;
         const KEY: &str = "COALESCE(manual_rank, started_at * 1024)";
-        let tx = self.conn.unchecked_transaction()?;
+        // IMMEDIATE 而非 unchecked_transaction 的 deferred：这里先 SELECT 邻居键再 UPDATE，WAL 下
+        // 读写之间若 reporter 进程提交了一次写入（hook 事件随时在写），升级写锁直接
+        // SQLITE_BUSY_SNAPSHOT、busy_timeout 不生效，拖拽就失败（见 store.rs ImmediateTx 注释）。
+        let tx = crate::store::ImmediateTx::begin(&self.conn)?;
+        let conn = &self.conn;
         let key_of = |sid: i64| -> Result<i64, StoreError> {
-            Ok(tx.query_row(&format!("SELECT {KEY} FROM sessions WHERE id = ?1"), [sid], |r| r.get(0))?)
+            Ok(conn.query_row(&format!("SELECT {KEY} FROM sessions WHERE id = ?1"), [sid], |r| r.get(0))?)
         };
         let rank = if let Some(above) = above.filter(|&a| a != id) {
             let hi = key_of(above)?;
-            let lo: Option<i64> = tx.query_row(
+            let lo: Option<i64> = conn.query_row(
                 &format!("SELECT MAX({KEY}) FROM sessions WHERE {KEY} < ?1 AND id != ?2"),
                 rusqlite::params![hi, id],
                 |r| r.get(0),
@@ -557,7 +561,7 @@ impl Store {
             match lo {
                 Some(lo) if hi - lo >= 2 => lo + (hi - lo) / 2,
                 Some(lo) => {
-                    tx.execute(
+                    conn.execute(
                         &format!("UPDATE sessions SET manual_rank = {KEY} - ?1 WHERE {KEY} <= ?2 AND id != ?3"),
                         rusqlite::params![GAP, lo, id],
                     )?;
@@ -568,7 +572,7 @@ impl Store {
             }
         } else if let Some(below) = below.filter(|&b| b != id) {
             let lo = key_of(below)?;
-            let hi: Option<i64> = tx.query_row(
+            let hi: Option<i64> = conn.query_row(
                 &format!("SELECT MIN({KEY}) FROM sessions WHERE {KEY} > ?1 AND id != ?2"),
                 rusqlite::params![lo, id],
                 |r| r.get(0),
@@ -576,7 +580,7 @@ impl Store {
             match hi {
                 Some(hi) if hi - lo >= 2 => lo + (hi - lo) / 2,
                 Some(hi) => {
-                    tx.execute(
+                    conn.execute(
                         &format!("UPDATE sessions SET manual_rank = {KEY} + ?1 WHERE {KEY} >= ?2 AND id != ?3"),
                         rusqlite::params![GAP, hi, id],
                     )?;
@@ -588,7 +592,13 @@ impl Store {
         } else {
             return Ok(());
         };
-        tx.execute("UPDATE sessions SET manual_rank = ?1 WHERE id = ?2", rusqlite::params![rank, id])?;
+        #[cfg(test)]
+        tests::RANK_AFTER_READ.with(|hook| {
+            if let Some(f) = hook.borrow_mut().take() {
+                f();
+            }
+        });
+        conn.execute("UPDATE sessions SET manual_rank = ?1 WHERE id = ?2", rusqlite::params![rank, id])?;
         tx.commit()?;
         Ok(())
     }
@@ -746,6 +756,41 @@ impl Store {
 mod tests {
     use super::build_live_sessions_sql;
     use crate::Store;
+
+    thread_local! {
+        /// 测试钩子：move_session_rank 读完邻居键、写回之前调一次，用来插入「另一连接提交写入」的时序。
+        pub(super) static RANK_AFTER_READ: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+            const { std::cell::RefCell::new(None) };
+    }
+
+    /// WAL 下 deferred 事务「先读后写」，读完到写之间别的连接（reporter 进程）提交一次写入，
+    /// 升级写锁就 SQLITE_BUSY_SNAPSHOT（报 database is locked），busy_timeout 不管用——
+    /// 侧栏拖拽偶发失败。IMMEDIATE 开局拿写锁：另一连接的写只能等（这里它用 0 超时直接让路）。
+    #[test]
+    fn move_session_rank_survives_concurrent_commit_between_read_and_write() {
+        let dir = std::env::temp_dir().join(format!("meowo-rank-snapshot-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("b.db");
+        let store = Store::open(&db).unwrap();
+        let pid = store.upsert_project_by_root("/p", "p", 1).unwrap();
+        let (a, _) = store.start_session(pid, "a", 100).unwrap();
+        let (b, _) = store.start_session(pid, "b", 200).unwrap();
+
+        let other = rusqlite::Connection::open(&db).unwrap();
+        other.pragma_update(None, "busy_timeout", 0).unwrap();
+        let other_committed = std::rc::Rc::new(std::cell::Cell::new(false));
+        let flag = other_committed.clone();
+        RANK_AFTER_READ.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(move || {
+                let r = other.execute("UPDATE projects SET updated_at = updated_at + 1", []);
+                flag.set(r.is_ok());
+            }));
+        });
+        let result = store.move_session_rank(a, Some(b), None);
+        assert!(result.is_ok(), "并发提交后 move_session_rank 失败：{result:?}（另一连接已提交={}）", other_committed.get());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// 对**真正执行的那条 SQL**取查询计划。用 `build_live_sessions_sql` 而非抄写的
     /// 字面量:谓词一旦改写到用不上索引,这里立刻红,而不是等大库上用户报「越滚越卡」。

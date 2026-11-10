@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { loadHighlighter } from "./highlight";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { ToolActivity, ActivityGroup, diffText, lineDelta } from "./ToolActivity";
 import type { ToolResultItem, ToolUseItem } from "./shared";
@@ -13,6 +14,8 @@ const done: ToolResultItem = { type: "tool_result", id: "r1", timestamp: null, t
 
 /** 写入/编辑在摘要行显示增删规模，展开卡片带文件头与带行号的正文预览。 */
 describe("ToolActivity 详情", () => {
+  // hljs 懒加载（highlight.ts）：这组验高亮结果，先把引擎加载好。
+  beforeAll(() => loadHighlighter());
   it("Write：标题行写增行数，展开是带行号预览，长正文折成「还有 N 行」", () => {
     const body = Array.from({ length: 30 }, (_, i) => `const v${i} = ${i};`).join("\n");
     render(<ToolActivity item={write(body, 30)} result={done} />);

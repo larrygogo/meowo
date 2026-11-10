@@ -1256,43 +1256,122 @@ impl TranscriptParser for ClaudeParser {
 
 // ═══ 路径布局：~/.claude/projects/<encode(cwd)>/<session_id>.jsonl ═══
 
-/// 从 CC transcript JSONL 取会话标题：最后一条 custom-title 优先，否则最后一条 ai-title。
-/// 读不到/无标题返回 None。只解析含 "-title" 的行，避免全量 JSON 解析开销。
+/// 从 CC transcript JSONL 取会话标题：**全文最后一条** custom-title 优先（哪怕它比最后一条
+/// ai-title 更早），否则最后一条 ai-title。读不到/无标题返回 None。
+///
+/// 从文件尾按块往前扫：reporter 在每次 UserPromptSubmit/Stop/SessionStart 都同步调用本函数、
+/// 阻塞 CLI，而 CC 会把 custom-title 反复追加到尾部（本机 285MB 的会话里有 3585 条），
+/// 倒扫碰到的第一条 custom-title 就是答案，立刻收工。只有 ai-title 的会话仍须扫到文件头
+/// 确认前面没有 custom-title（语义如此，不能猜），但那段只做字节子串查找，不切行不转码。
 pub fn title_from_transcript(path: &str) -> Option<String> {
-    use std::io::BufRead;
-    // 流式逐行读：transcript 可达数 MB，且 reporter 在每个 hook 事件都调用本函数，
-    // 整体 read_to_string 会反复把整文件吃进内存——改 BufReader 降峰值内存（扫描复杂度不变）。
-    let file = std::fs::File::open(path).ok()?;
-    let mut custom: Option<String> = None;
+    let mut file = std::fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len();
+    title_scan_backward(&mut file, len, 256 * 1024, 4 << 20)
+}
+
+/// 一行若是有效标题记录，返回（是否 custom-title, 标题）。判据与旧的顺读实现逐字一致：
+/// 行内含 `-title`、整行是合法 UTF-8 与 JSON、`type` 命中、标题去空白后非空。
+fn title_record(line: &[u8]) -> Option<(bool, String)> {
+    let line = std::str::from_utf8(line).ok()?;
+    let v: serde_json::Value = serde_json::from_str(line).ok()?;
+    let (custom, field) = match v.get("type").and_then(|t| t.as_str())? {
+        "custom-title" => (true, "customTitle"),
+        "ai-title" => (false, "aiTitle"),
+        _ => return None,
+    };
+    let title = v.get(field).and_then(|x| x.as_str())?;
+    (!title.trim().is_empty()).then(|| (custom, title.to_string()))
+}
+
+/// [`title_from_transcript`] 的倒扫本体。块大小从 `first_block` 倍增到 `max_block`（测试用
+/// 极小块压边界）。跨块的行先把后半截存进 `pending`，等读到它的行首再拼整——每个字节只拷一次，
+/// 单行几十 MB 的工具结果也不会退化成平方。读失败按「到此为止」处理，返回已确认的结果。
+fn title_scan_backward(
+    file: &mut std::fs::File,
+    len: u64,
+    first_block: u64,
+    max_block: u64,
+) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let any_title = memchr::memmem::Finder::new(b"-title");
+    // 已拿到最后一条 ai-title 后只剩一个问题：前面还有没有 custom-title。
+    let custom_only = memchr::memmem::Finder::new(b"custom-title");
     let mut ai: Option<String> = None;
-    for line in std::io::BufReader::new(file).lines() {
-        let Ok(line) = line else { continue }; // 单行非 UTF-8 等只跳过，不放弃整文件
-        if !line.contains("-title") {
-            continue;
+    // 跨块行的后半截，靠后的片段在前。
+    let mut pending: Vec<Vec<u8>> = Vec::new();
+    let mut end = len;
+    let mut block = first_block.max(1);
+    let mut buf = Vec::new();
+    // 逐条处理（自后向前）：custom-title 一出现即是答案；ai-title 只记第一次见到的（即最后一条）。
+    let consider = |line: &[u8], ai: &mut Option<String>| -> Option<String> {
+        let finder = if ai.is_some() { &custom_only } else { &any_title };
+        finder.find(line)?;
+        match title_record(line)? {
+            (true, title) => Some(title),
+            (false, title) => {
+                ai.get_or_insert(title);
+                None
+            }
         }
-        let v: serde_json::Value = match serde_json::from_str(&line) {
-            Ok(v) => v,
-            Err(_) => continue,
+    };
+    while end > 0 {
+        let start = end.saturating_sub(block);
+        buf.resize((end - start) as usize, 0);
+        if file.seek(SeekFrom::Start(start)).is_err() || file.read_exact(&mut buf).is_err() {
+            return ai;
+        }
+        let Some(last_nl) = memchr::memrchr(b'\n', &buf) else {
+            // 整块都在一行里：攒着，等读到行首。
+            pending.push(buf.clone());
+            end = start;
+            block = (block * 2).min(max_block);
+            continue;
         };
-        match v.get("type").and_then(|t| t.as_str()) {
-            Some("custom-title") => {
-                if let Some(s) = v.get("customTitle").and_then(|x| x.as_str()) {
-                    if !s.trim().is_empty() {
-                        custom = Some(s.to_string());
-                    }
-                }
+        // 1) 最后一个换行之后的片段 + 之前攒下的后半截 = 一整行（文件里最靠后的未处理行）。
+        let mut line = buf[last_nl + 1..].to_vec();
+        for piece in pending.drain(..).rev() {
+            line.extend_from_slice(&piece);
+        }
+        if let Some(title) = consider(&line, &mut ai) {
+            return Some(title);
+        }
+        // 2) 块内完整行：首个换行之前是半截行（块不从文件头开始时），留给下一块。
+        let first_nl = memchr::memchr(b'\n', &buf).unwrap_or(last_nl);
+        let body_start = if start == 0 { 0 } else { first_nl + 1 };
+        let body = &buf[body_start.min(last_nl)..last_nl];
+        // 只对子串命中的行求行界，自后向前处理；同一行多处命中只处理一次。
+        let finder = if ai.is_some() { &custom_only } else { &any_title };
+        let mut hits: Vec<usize> = finder.find_iter(body).collect();
+        hits.reverse();
+        let mut done_before = usize::MAX; // 已处理行的起点：命中位置 ≥ 它的属于已处理行
+        for hit in hits {
+            if hit >= done_before {
+                continue;
             }
-            Some("ai-title") => {
-                if let Some(s) = v.get("aiTitle").and_then(|x| x.as_str()) {
-                    if !s.trim().is_empty() {
-                        ai = Some(s.to_string());
-                    }
-                }
+            let line_start = memchr::memrchr(b'\n', &body[..hit]).map_or(0, |i| i + 1);
+            let line_end = memchr::memchr(b'\n', &body[hit..]).map_or(body.len(), |i| hit + i);
+            done_before = line_start;
+            if let Some(title) = consider(&body[line_start..line_end], &mut ai) {
+                return Some(title);
             }
-            _ => {}
+        }
+        if start > 0 {
+            pending.push(buf[..first_nl].to_vec());
+        }
+        end = start;
+        block = (block * 2).min(max_block);
+    }
+    // 读到文件头时仍攒着的片段就是第一行（整块没有换行的情形）。
+    if !pending.is_empty() {
+        let mut line = Vec::new();
+        for piece in pending.drain(..).rev() {
+            line.extend_from_slice(&piece);
+        }
+        if let Some(title) = consider(&line, &mut ai) {
+            return Some(title);
         }
     }
-    custom.or(ai)
+    ai
 }
 
 /// 把 cwd 编码成 Claude Code 在 ~/.claude/projects 下的子目录名：
@@ -1417,6 +1496,75 @@ pub fn find_transcript_by_session(session_id: &str) -> Option<std::path::PathBuf
                 .collect::<Vec<_>>()
         })
         .max_by_key(|path| transcript_freshness(path))
+}
+
+/// 「全局找不到」负缓存的有效期。看板活跃时每 ~2s 刷新一次，没有 transcript 的 claude 会话
+/// （本机实测 102 个未归档里 93 个：只起过进程没发过消息、或已被 cleanupPeriodDays 清掉）
+/// 每次都要把各账号 projects 下所有子目录 stat 一遍，合起来约 200ms/次。30s 内文件真冒出来的
+/// 情形只剩「cwd 缺失/失真的会话刚写下第一条消息」——cwd 正确的会话走重建路径，不受缓存影响。
+const MISSING_TTL: std::time::Duration = std::time::Duration::from_secs(30);
+/// 负缓存条目上限：只防长期运行无界增长（每条几十字节）。远大于任何真实的活跃会话数。
+const MISSING_CAP: usize = 4096;
+
+/// session_id → 上次全局扫描确认「不存在」的时刻。
+#[derive(Default)]
+struct MissingCache {
+    entries: std::collections::HashMap<String, std::time::Instant>,
+}
+
+impl MissingCache {
+    /// TTL 内确认过不存在 → true（调用方直接当作找不到）。
+    fn fresh_miss(&self, key: &str, now: std::time::Instant) -> bool {
+        self.entries
+            .get(key)
+            .is_some_and(|at| now.saturating_duration_since(*at) < MISSING_TTL)
+    }
+
+    fn record(&mut self, key: &str, found: bool, now: std::time::Instant) {
+        if found {
+            self.entries.remove(key);
+            return;
+        }
+        if !self.entries.contains_key(key) && self.entries.len() >= MISSING_CAP {
+            // 先扔过期的；仍然满（短时间内涌入海量不同 id）就整表清空——负缓存丢了只是多扫一次。
+            self.entries
+                .retain(|_, at| now.saturating_duration_since(*at) < MISSING_TTL);
+            if self.entries.len() >= MISSING_CAP {
+                self.entries.clear();
+            }
+        }
+        self.entries.insert(key.to_string(), now);
+    }
+}
+
+/// 带负缓存的全局查找。扫描本身在锁外：多个刷新线程同时扫同一个 id 只是重复劳动，结果一致。
+fn find_with_missing_cache(
+    cache: &std::sync::Mutex<MissingCache>,
+    session_id: &str,
+    now: std::time::Instant,
+    scan: impl FnOnce() -> Option<std::path::PathBuf>,
+) -> Option<std::path::PathBuf> {
+    let lock = || cache.lock().unwrap_or_else(|e| e.into_inner());
+    if lock().fresh_miss(session_id, now) {
+        return None;
+    }
+    let found = scan();
+    lock().record(session_id, found.is_some(), now);
+    found
+}
+
+static MISSING_TRANSCRIPTS: std::sync::LazyLock<std::sync::Mutex<MissingCache>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// 轮询路径的定位（[`TranscriptSpec::resolve_transcript_path_polled`]）：cwd 重建照旧每次实测
+/// （几次 stat，新会话的 transcript 一出现就能看到）；只有昂贵的全局扫描走负缓存。
+fn resolve_path_polled(cwd: Option<&str>, session_id: &str) -> Option<std::path::PathBuf> {
+    if let Some(p) = cwd.and_then(|cwd| reconstruct_transcript_path(cwd, session_id)) {
+        return Some(p);
+    }
+    find_with_missing_cache(&MISSING_TRANSCRIPTS, session_id, std::time::Instant::now(), || {
+        find_transcript_by_session(session_id)
+    })
 }
 
 /// 从 transcript JSONL 里读出会话工作目录(cwd)：取第一条带非空 "cwd" 字段的记录。
@@ -2154,6 +2302,16 @@ impl TranscriptSpec for ClaudeTranscript {
         true
     }
 
+    /// 长会话首开只解析尾部一屏（本机最大的会话 285MB / 7.4 万行，整读一次数秒）。
+    /// 模式只来自顶层 `permissionMode` 字段（见 agent_modes_from_line），子串必在行内；
+    /// claude 从不产出计划（ToolCall.plan 恒 None，计划只有 kimi 带），无计划标记。
+    fn tail_read(&self) -> Option<crate::transcript::TailRead> {
+        Some(crate::transcript::TailRead {
+            mode_markers: &["permissionMode"],
+            plan_markers: &[],
+        })
+    }
+
     fn subagents(&self) -> Option<&'static dyn SubagentSpec> {
         Some(&CLAUDE_SUBAGENTS)
     }
@@ -2217,6 +2375,14 @@ impl TranscriptSpec for ClaudeTranscript {
         session_id: &str,
     ) -> Option<std::path::PathBuf> {
         resolve_path(transcript_path, cwd, session_id)
+    }
+
+    fn resolve_transcript_path_polled(
+        &self,
+        cwd: Option<&str>,
+        session_id: &str,
+    ) -> Option<std::path::PathBuf> {
+        resolve_path_polled(cwd, session_id)
     }
 
     /// 解析会话标题，依次尝试：
@@ -4231,6 +4397,224 @@ c".into(), lines: 3, truncated: false })
         assert_eq!(outcome.task_id.as_deref(), Some("acb7f0cbde2eb991a"));
     }
 
+    /// 改写前的顺读实现，作为倒扫的语义对照（逐字保留）。
+    fn title_from_transcript_linear(path: &str) -> Option<String> {
+        use std::io::BufRead;
+        let file = std::fs::File::open(path).ok()?;
+        let mut custom: Option<String> = None;
+        let mut ai: Option<String> = None;
+        for line in std::io::BufReader::new(file).lines() {
+            let Ok(line) = line else { continue };
+            if !line.contains("-title") {
+                continue;
+            }
+            let v: serde_json::Value = match serde_json::from_str(&line) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            match v.get("type").and_then(|t| t.as_str()) {
+                Some("custom-title") => {
+                    if let Some(s) = v.get("customTitle").and_then(|x| x.as_str()) {
+                        if !s.trim().is_empty() {
+                            custom = Some(s.to_string());
+                        }
+                    }
+                }
+                Some("ai-title") => {
+                    if let Some(s) = v.get("aiTitle").and_then(|x| x.as_str()) {
+                        if !s.trim().is_empty() {
+                            ai = Some(s.to_string());
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        custom.or(ai)
+    }
+
+    /// 倒扫与顺读逐案一致：标题在头/尾/跨块边界、无标题、custom 与 ai 交替、空标题、
+    /// 非法 UTF-8 与坏 JSON 行、引用了标题串的普通消息、CRLF、无结尾换行、超长单行。
+    /// 每份内容都用一组极小块尺寸重扫，覆盖「行跨 1~N 个块」的所有切法。
+    #[test]
+    fn title_backward_scan_matches_linear_scan() {
+        let ai = |t: &str| format!(r#"{{"type":"ai-title","aiTitle":"{t}"}}"#);
+        let custom = |t: &str| format!(r#"{{"type":"custom-title","customTitle":"{t}"}}"#);
+        let user = |t: &str| format!(r#"{{"type":"user","message":{{"content":"{t}"}}}}"#);
+        let long = "y".repeat(3000);
+        let cases: Vec<Vec<u8>> = vec![
+            b"".to_vec(),
+            format!("{}\n", user("hi")).into_bytes(),
+            format!("{}\n{}\n{}\n", ai("头部"), user("a"), user("b")).into_bytes(),
+            format!("{}\n{}\n{}\n", user("a"), user("b"), ai("尾部")).into_bytes(),
+            // custom 比 ai 早：custom 仍然胜出。
+            format!("{}\n{}\n{}\n{}\n", custom("早的自定义"), user("a"), ai("晚的 AI"), user("b")).into_bytes(),
+            // 交替：取最后一条 custom。
+            format!(
+                "{}\n{}\n{}\n{}\n{}\n{}\n",
+                ai("ai1"), custom("c1"), ai("ai2"), custom("c2"), ai("ai3"), user("x")
+            )
+            .into_bytes(),
+            // 最后一条 custom 为空白：跳过它取更早的有效 custom。
+            format!("{}\n{}\n{}\n", custom("c1"), ai("ai1"), custom("   ")).into_bytes(),
+            format!("{}\n{}\n", ai(" "), ai("")).into_bytes(),
+            // 普通消息里引用了标题串（type 不对）不算。
+            format!("{}\n{}\n", ai("真"), user(r#"{\"type\":\"custom-title\",\"customTitle\":\"假\"}"#)).into_bytes(),
+            // 无结尾换行、CRLF。
+            format!("{}\r\n{}\r\n{}", user("a"), ai("crlf"), custom("末行无换行")).into_bytes(),
+            // 超长单行夹在标题之间。
+            format!("{}\n{}\n{}\n{}\n", ai("前"), user(&long), custom(&format!("长{long}")), user(&long)).into_bytes(),
+            // 坏 JSON 与非法 UTF-8 行只跳过本行。
+            [
+                format!("{}\n", custom("有效")).into_bytes(),
+                b"{\"type\":\"custom-title\",\"customTitle\":\"\xff\xfe\"}\n".to_vec(),
+                b"{\"type\":\"custom-title\" broken -title\n".to_vec(),
+                format!("{}\n", ai("ai")).into_bytes(),
+            ]
+            .concat(),
+            // 文件只有一行且没有换行。
+            custom("唯一").into_bytes(),
+        ];
+        let dir = std::env::temp_dir().join(format!("cc_title_backward_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for (index, content) in cases.iter().enumerate() {
+            let path = dir.join(format!("case{index}.jsonl"));
+            std::fs::write(&path, content).unwrap();
+            let p = path.to_str().unwrap();
+            let expected = title_from_transcript_linear(p);
+            assert_eq!(title_from_transcript(p), expected, "case {index}");
+            for first in [1u64, 2, 3, 5, 7, 16, 31, 64, 100, 257] {
+                for max in [first, first * 4, 4096] {
+                    let mut file = std::fs::File::open(&path).unwrap();
+                    let len = content.len() as u64;
+                    assert_eq!(
+                        title_scan_backward(&mut file, len, first, max),
+                        expected,
+                        "case {index} block {first}..{max}"
+                    );
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 真实数据核对（只读）：`MEOWO_TAIL_CHECK_DIR` 下全部 transcript 的倒扫标题与顺读一致。
+    #[test]
+    #[ignore]
+    fn title_backward_scan_matches_on_real_transcripts() {
+        let Ok(root) = std::env::var("MEOWO_TAIL_CHECK_DIR") else {
+            return;
+        };
+        let (mut n, mut old_ms, mut new_ms) = (0, 0f64, 0f64);
+        for dir in std::fs::read_dir(root).unwrap().flatten().filter(|e| e.path().is_dir()) {
+            for file in std::fs::read_dir(dir.path()).unwrap().flatten() {
+                let path = file.path();
+                if path.extension().is_none_or(|x| x != "jsonl") {
+                    continue;
+                }
+                let p = path.to_str().unwrap();
+                let at = std::time::Instant::now();
+                let expected = title_from_transcript_linear(p);
+                old_ms += at.elapsed().as_secs_f64() * 1e3;
+                let at = std::time::Instant::now();
+                let got = title_from_transcript(p);
+                new_ms += at.elapsed().as_secs_f64() * 1e3;
+                // 正在写的会话两次读之间可能追加了新标题：不一致时以第二次顺读复核。
+                if got != expected {
+                    assert_eq!(got, title_from_transcript_linear(p), "{p}");
+                }
+                n += 1;
+            }
+        }
+        println!("[real] titles {n} files: linear {old_ms:.0} ms vs backward {new_ms:.0} ms");
+    }
+
+    /// 负缓存：TTL 内的重复查找不再扫盘；文件后来出现，最多一个 TTL 后就能被发现；
+    /// 找到之后条目即删，不会把「已存在」的会话再挡在外面。
+    #[test]
+    fn missing_cache_rediscovers_transcript_after_ttl() {
+        let cache = std::sync::Mutex::new(MissingCache::default());
+        let file = std::env::temp_dir().join(format!("cc_missing_ttl_{}.jsonl", std::process::id()));
+        let _ = std::fs::remove_file(&file);
+        let scans = std::cell::Cell::new(0);
+        let scan = || {
+            scans.set(scans.get() + 1);
+            file.exists().then(|| file.clone())
+        };
+        let t0 = std::time::Instant::now();
+        assert_eq!(find_with_missing_cache(&cache, "sid", t0, scan), None);
+        assert_eq!(scans.get(), 1);
+        // transcript 在 TTL 内出现：仍按缓存判「无」，且不扫盘。
+        std::fs::write(&file, "{}\n").unwrap();
+        let mid = t0 + MISSING_TTL / 2;
+        assert_eq!(find_with_missing_cache(&cache, "sid", mid, scan), None);
+        assert_eq!(scans.get(), 1);
+        // 过了一个 TTL：重新扫盘并发现它。
+        let later = t0 + MISSING_TTL + std::time::Duration::from_millis(1);
+        assert_eq!(find_with_missing_cache(&cache, "sid", later, scan).as_deref(), Some(file.as_path()));
+        assert_eq!(scans.get(), 2);
+        assert!(!cache.lock().unwrap().entries.contains_key("sid"));
+        // 已找到的 id 不受缓存影响，每次都实测（文件被删也能当场反映）。
+        assert!(find_with_missing_cache(&cache, "sid", later, scan).is_some());
+        assert_eq!(scans.get(), 3);
+        std::fs::remove_file(&file).ok();
+    }
+
+    #[test]
+    fn missing_cache_is_bounded() {
+        let mut cache = MissingCache::default();
+        let t0 = std::time::Instant::now();
+        for i in 0..MISSING_CAP + 100 {
+            cache.record(&format!("sid-{i}"), false, t0);
+        }
+        assert!(cache.entries.len() <= MISSING_CAP);
+        // 过期条目在满载时优先清走，新条目照常记入。
+        cache.entries.clear();
+        for i in 0..MISSING_CAP {
+            cache.record(&format!("sid-{i}"), false, t0);
+        }
+        assert_eq!(cache.entries.len(), MISSING_CAP);
+        let later = t0 + MISSING_TTL * 2;
+        cache.record("fresh", false, later);
+        assert!(cache.fresh_miss("fresh", later));
+        assert_eq!(cache.entries.len(), 1);
+    }
+
+    /// 轮询定位：cwd 正确时走重建路径，不受全局扫描的负缓存影响——新会话第一条消息落盘后
+    /// 下一次刷新就能拿到标题；cwd 缺失的会话在负缓存过期前判「无」。
+    #[test]
+    fn polled_resolve_bypasses_missing_cache_when_cwd_matches() {
+        let sid = format!("polled-resolve-{}", std::process::id());
+        let home = std::env::temp_dir().join(format!("cc_polled_home_{}", std::process::id()));
+        let proj = home.join(".claude").join("projects").join("C--real-proj");
+        std::fs::create_dir_all(&proj).unwrap();
+        let _env = crate::env_guard();
+        let old_home = std::env::var("USERPROFILE").ok();
+        let old_db = std::env::var("MEOWO_DB").ok();
+        std::env::set_var("USERPROFILE", &home);
+        std::env::set_var("MEOWO_DB", home.join(".meowo").join("board.db"));
+        assert_eq!(CLAUDE_TRANSCRIPT.resolve_transcript_path_polled(None, &sid), None);
+        assert_eq!(CLAUDE_TRANSCRIPT.resolve_transcript_path_polled(Some(r"C:\real\proj"), &sid), None);
+        let transcript = proj.join(format!("{sid}.jsonl"));
+        std::fs::write(&transcript, "{}\n").unwrap();
+        let by_cwd = CLAUDE_TRANSCRIPT.resolve_transcript_path_polled(Some(r"C:\real\proj"), &sid);
+        let no_cwd = CLAUDE_TRANSCRIPT.resolve_transcript_path_polled(None, &sid);
+        // 非轮询入口不吃负缓存：一次性动作拿到的是此刻的真相。
+        let uncached = CLAUDE_TRANSCRIPT.resolve_transcript_path(None, None, &sid);
+        match old_home {
+            Some(v) => std::env::set_var("USERPROFILE", v),
+            None => std::env::remove_var("USERPROFILE"),
+        }
+        match old_db {
+            Some(v) => std::env::set_var("MEOWO_DB", v),
+            None => std::env::remove_var("MEOWO_DB"),
+        }
+        let _ = std::fs::remove_dir_all(&home);
+        assert_eq!(by_cwd.as_deref(), Some(transcript.as_path()));
+        assert_eq!(no_cwd, None, "TTL 内 cwd 缺失的查找按负缓存判无");
+        assert_eq!(uncached.as_deref(), Some(transcript.as_path()));
+    }
+
     /// 非 claude agent 走默认实现：直接采信 DB cwd，不去翻 ~/.claude/projects。
     #[test]
     fn default_resolve_cwd_trusts_db_value() {
@@ -4238,5 +4622,213 @@ c".into(), lines: 3, truncated: false })
         assert_eq!(default_resolve_cwd(Some("/x/y")).as_deref(), Some("/x/y"));
         assert_eq!(default_resolve_cwd(Some("   ")), None);
         assert_eq!(default_resolve_cwd(None), None);
+    }
+}
+
+/// 性能基准（`#[ignore]`，手动跑：`cargo test -p meowo-agent --release --lib perf_bench -- --ignored --nocapture --test-threads=1`）。
+/// 数据全部在临时目录合成，不碰真实 `~/.claude`。
+#[cfg(test)]
+pub(crate) mod perf_bench {
+    use super::*;
+    use std::io::Write;
+    use std::time::Instant;
+
+    pub(crate) fn bench_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("meowo_perf_{}_{name}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// 合成一份约 `target` 字节的 claude transcript：每轮 用户提示 → 助手正文 → 工具调用 →
+    /// 带填充的工具结果 → 助手收尾，parentUuid 串成单链；每 50 轮一条 permission-mode，
+    /// 每 100 轮一条 ai-title。`tail` 原样追加在文件末尾（例如末尾标题）。
+    pub(crate) fn synth_claude_transcript(path: &Path, target: u64, tail: &str) {
+        let file = std::fs::File::create(path).unwrap();
+        let mut out = std::io::BufWriter::new(file);
+        let pad = "x".repeat(8 * 1024);
+        let mut written = 0u64;
+        let mut prev = String::from("null");
+        let mut turn = 0u64;
+        while written < target {
+            let ts = format!(
+                "2026-11-10T{:02}:{:02}:{:02}.000Z",
+                (turn / 3600) % 24,
+                (turn / 60) % 60,
+                turn % 60
+            );
+            let mut lines = Vec::new();
+            if turn.is_multiple_of(50) {
+                let mode = if turn.is_multiple_of(100) { "default" } else { "auto" };
+                lines.push(format!(
+                    r#"{{"type":"permission-mode","permissionMode":"{mode}","sessionId":"s"}}"#
+                ));
+            }
+            if turn % 100 == 7 {
+                lines.push(format!(
+                    r#"{{"type":"ai-title","aiTitle":"第 {turn} 轮标题","sessionId":"s"}}"#
+                ));
+            }
+            let parent = if prev == "null" { prev.clone() } else { format!("\"{prev}\"") };
+            lines.push(format!(r#"{{"parentUuid":{parent},"isSidechain":false,"type":"user","message":{{"role":"user","content":"第 {turn} 轮提示"}},"uuid":"u{turn}","timestamp":"{ts}","permissionMode":"auto"}}"#));
+            lines.push(format!(r#"{{"parentUuid":"u{turn}","isSidechain":false,"type":"assistant","message":{{"id":"m{turn}a","role":"assistant","content":[{{"type":"text","text":"好的，第 {turn} 轮"}}]}},"uuid":"a{turn}","timestamp":"{ts}"}}"#));
+            lines.push(format!(r#"{{"parentUuid":"a{turn}","isSidechain":false,"type":"assistant","message":{{"id":"m{turn}b","role":"assistant","content":[{{"type":"tool_use","id":"toolu_{turn}","name":"Bash","input":{{"command":"ls {turn}"}}}}]}},"uuid":"t{turn}","timestamp":"{ts}"}}"#));
+            lines.push(format!(r#"{{"parentUuid":"t{turn}","isSidechain":false,"type":"user","message":{{"role":"user","content":[{{"type":"tool_result","tool_use_id":"toolu_{turn}","content":"{pad}"}}]}},"uuid":"r{turn}","timestamp":"{ts}"}}"#));
+            lines.push(format!(r#"{{"parentUuid":"r{turn}","isSidechain":false,"type":"assistant","message":{{"id":"m{turn}c","role":"assistant","content":[{{"type":"text","text":"第 {turn} 轮完成"}}]}},"uuid":"e{turn}","timestamp":"{ts}"}}"#));
+            prev = format!("e{turn}");
+            for line in lines {
+                written += line.len() as u64 + 1;
+                writeln!(out, "{line}").unwrap();
+            }
+            turn += 1;
+        }
+        out.write_all(tail.as_bytes()).unwrap();
+        out.flush().unwrap();
+    }
+
+    fn time<T>(label: &str, runs: usize, mut f: impl FnMut() -> T) -> T {
+        let mut out = f(); // 预热一次（页缓存）
+        let mut best = std::time::Duration::MAX;
+        for _ in 0..runs {
+            let at = Instant::now();
+            out = f();
+            best = best.min(at.elapsed());
+        }
+        println!("[perf] {label}: best of {runs} = {:.2} ms", best.as_secs_f64() * 1e3);
+        out
+    }
+
+    /// 第 1 项：93 个查不到 transcript 的 claude 会话，模拟两次看板刷新的定位总耗时。
+    #[test]
+    #[ignore]
+    fn bench_missing_transcript_lookup() {
+        let home = bench_dir("lookup_home");
+        for i in 0..37 {
+            let dir = home.join(".claude/projects").join(format!("C--proj-{i}"));
+            std::fs::create_dir_all(&dir).unwrap();
+            for j in 0..5 {
+                std::fs::write(dir.join(format!("present-{i}-{j}.jsonl")), "{}\n").unwrap();
+            }
+        }
+        for profile in ["work", "alt"] {
+            for i in 0..10 {
+                let dir = home.join(".meowo/profiles/claude").join(profile).join("projects");
+                std::fs::create_dir_all(dir.join(format!("C--p-{i}"))).unwrap();
+            }
+        }
+        let _env = crate::env_guard();
+        let old_home = std::env::var("USERPROFILE").ok();
+        let old_db = std::env::var("MEOWO_DB").ok();
+        std::env::set_var("USERPROFILE", &home);
+        std::env::set_var("MEOWO_DB", home.join(".meowo").join("board.db"));
+        let rows: Vec<(String, String)> = (0..93)
+            .map(|i| (format!(r"C:\gone\proj{i}"), format!("missing-{i:04}")))
+            .collect();
+        let refresh = |polled: bool| {
+            rows.iter()
+                .filter(|(cwd, sid)| {
+                    if polled {
+                        CLAUDE_TRANSCRIPT.resolve_transcript_path_polled(Some(cwd), sid)
+                    } else {
+                        CLAUDE_TRANSCRIPT.resolve_transcript_path(None, Some(cwd), sid)
+                    }
+                    .is_some()
+                })
+                .count()
+        };
+        for (label, polled) in [("uncached", false), ("polled", true)] {
+            for round in 1..=3 {
+                let at = Instant::now();
+                assert_eq!(refresh(polled), 0);
+                println!(
+                    "[perf] lookup {label} refresh #{round} (93 rows): {:.2} ms",
+                    at.elapsed().as_secs_f64() * 1e3
+                );
+            }
+        }
+        match old_home {
+            Some(v) => std::env::set_var("USERPROFILE", v),
+            None => std::env::remove_var("USERPROFILE"),
+        }
+        match old_db {
+            Some(v) => std::env::set_var("MEOWO_DB", v),
+            None => std::env::remove_var("MEOWO_DB"),
+        }
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// 第 2 项：100MB transcript，标题在尾部（ai-title / custom-title 各一份）。
+    #[test]
+    #[ignore]
+    fn bench_title_tail() {
+        let dir = bench_dir("title");
+        let ai = dir.join("ai.jsonl");
+        synth_claude_transcript(&ai, 100 << 20, "{\"type\":\"ai-title\",\"aiTitle\":\"尾部 AI 标题\"}\n");
+        let custom = dir.join("custom.jsonl");
+        synth_claude_transcript(
+            &custom,
+            100 << 20,
+            "{\"type\":\"custom-title\",\"customTitle\":\"尾部自定义标题\"}\n",
+        );
+        let t = time("title ai-tail 100MB", 5, || title_from_transcript(ai.to_str().unwrap()));
+        assert_eq!(t.as_deref(), Some("尾部 AI 标题"));
+        let t = time("title custom-tail 100MB", 5, || {
+            title_from_transcript(custom.to_str().unwrap())
+        });
+        assert_eq!(t.as_deref(), Some("尾部自定义标题"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 第 3 项：100MB transcript 首屏（offset=0、200 条）与一次「加载更早」。
+    #[test]
+    #[ignore]
+    fn bench_first_page() {
+        let dir = bench_dir("first_page");
+        let path = dir.join("big.jsonl");
+        synth_claude_transcript(&path, 100 << 20, "");
+        let first = time("first page 100MB", 3, || {
+            crate::read_chat_delta_paged(&CLAUDE_TRANSCRIPT, &path, 0, None, 200)
+        });
+        assert!(first.start > 0 && !first.items.is_empty());
+        let window = time("load earlier 100MB", 3, || {
+            crate::read_chat_window(&CLAUDE_TRANSCRIPT, &path, first.start, 200).unwrap()
+        });
+        assert!(window.has_more);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 第 4 项：8 个线程各自冷读一份 12MB transcript（共享同一把缓存锁）的墙钟时间。
+    #[test]
+    #[ignore]
+    fn bench_shared_cold_analyze() {
+        let dir = bench_dir("cold");
+        let paths: Vec<String> = (0..8)
+            .map(|i| {
+                let p = dir.join(format!("t{i}.jsonl"));
+                synth_claude_transcript(&p, 12 << 20, "");
+                p.to_string_lossy().into_owned()
+            })
+            .collect();
+        let single = std::sync::Mutex::new(crate::transcript::TranscriptCache::new());
+        let at = Instant::now();
+        crate::transcript::TranscriptCache::analyze_shared(&single, &CLAUDE_TRANSCRIPT, &paths[0]);
+        println!("[perf] cold analyze_shared 1x12MB: {:.2} ms", at.elapsed().as_secs_f64() * 1e3);
+        for round in 0..3 {
+            let cache = std::sync::Mutex::new(crate::transcript::TranscriptCache::new());
+            let at = Instant::now();
+            std::thread::scope(|scope| {
+                for p in &paths {
+                    let cache = &cache;
+                    scope.spawn(move || {
+                        crate::transcript::TranscriptCache::analyze_shared(cache, &CLAUDE_TRANSCRIPT, p)
+                    });
+                }
+            });
+            println!(
+                "[perf] cold analyze_shared 8x12MB round {round}: {:.2} ms",
+                at.elapsed().as_secs_f64() * 1e3
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

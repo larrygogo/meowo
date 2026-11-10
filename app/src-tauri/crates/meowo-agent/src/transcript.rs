@@ -417,6 +417,12 @@ pub trait TranscriptSpec: Sync {
         cwd: Option<&str>,
         session_id: &str,
     ) -> Option<PathBuf>;
+    /// 高频轮询（看板/侧栏每 ~2s 一次刷新）专用的定位：允许实现对「找不到」做短期负缓存，
+    /// 代价是文件后来出现时最多晚一个 TTL 才被发现。默认等同 [`Self::resolve_transcript_path`]
+    /// （不缓存）。一次性动作（恢复、接续、交接）必须走原方法——它们要的是此刻的真相。
+    fn resolve_transcript_path_polled(&self, cwd: Option<&str>, session_id: &str) -> Option<PathBuf> {
+        self.resolve_transcript_path(None, cwd, session_id)
+    }
     /// 解析会话标题（读不到/无标题返回 None）。
     fn resolve_title(
         &self,
@@ -487,14 +493,10 @@ pub trait TranscriptSpec: Sync {
         false
     }
 
-    /// 首屏尾读时给「模式恢复」用的头部子串预筛标记：头部只有包含其一的行才值得 JSON 解析取模式，
-    /// 其余整行跳过——`agent_modes_from_line` 对多数 agent 是一次完整 serde 解析，这是长会话首开的
-    /// 关键省时点。默认空：无模式维度的 agent 头部零解析。
-    ///
-    /// **契约**：凡覆写 `agent_modes_from_line` 又想要首开模式恢复的 agent，这里必须覆盖所有可能
-    /// 产出模式的行的判定子串（对 claude 即字段名 `permissionMode`）；留空则仅尾窗内的模式被识别。
-    fn agent_mode_markers(&self) -> &[&'static str] {
-        &[]
+    /// 长会话首屏 / 「加载更早」的尾读声明（见 [`read_chat_delta_paged`]）。None（默认）= 不支持，
+    /// 照旧整段解析。声明了的 agent 只解析文件尾部够凑一屏的那段，窗口之前的内容只做子串预筛。
+    fn tail_read(&self) -> Option<TailRead> {
+        None
     }
 
     /// 是否需要主看板后台增量分析标题/错误/预览。仅聊天用的日志应返回 false，避免无意义热读大文件。
@@ -710,6 +712,10 @@ pub fn read_chat_delta_paged(
     prev_mtime: Option<std::time::SystemTime>,
     page_size: usize,
 ) -> ChatDelta {
+    // 长会话首开：能尾读就只解析尾部一屏（结果与下方整读逐字段一致，判不准时它自己退回整读）。
+    if let Some(delta) = tail_first_page(spec, path, offset, prev_mtime, page_size, TAIL_FIRST_BLOCK) {
+        return delta;
+    }
     // 文件 IO 与失效判据复用 read_transcript_delta（与看板分析同一份）。
     // NoChange 不早退：空文件首读（offset=0）也要走到下方 base==0 分支下发默认模式。
     let (reset, buf, mtime) = match read_transcript_delta(path, offset, prev_mtime) {
@@ -730,7 +736,7 @@ pub fn read_chat_delta_paged(
     };
     let base = if reset { 0 } else { offset };
     let consumed = buf.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1);
-    let region = parse_chat_region(spec, path, base, &buf[..consumed]);
+    let region = parse_chat_region(spec, path, base, &buf[..consumed], false);
     // 增量批次里出现撤回：被撤的消息多半早已下发，增量收不回来——改为从文件头整读，
     // 按 reset 下发让前端清空重灌。undone 告诉前端「整读结果为空也是真的」（撤掉了唯一一轮）。
     if region.undone && base > 0 {
@@ -739,15 +745,8 @@ pub fn read_chat_delta_paged(
         full.undone = true;
         return full;
     }
-    let ChatRegion { mut lines, agent_modes, undone } = region;
-    let plan = lines.iter().rev().find_map(|(_, items)| {
-        items.iter().rev().find_map(|item| match item {
-            ChatItem::ToolUse { plan: Some(plan), .. } if !plan.trim().is_empty() => {
-                Some(plan.clone())
-            }
-            _ => None,
-        })
-    });
+    let ChatRegion { mut lines, agent_modes, undone, .. } = region;
+    let plan = latest_plan(&lines);
     // 只有整读（首屏/reset 重读）才裁首屏：增量赶上来的大批次裁了会丢消息。
     let start = if base == 0 {
         tail_window_start(&mut lines, base, page_size)
@@ -786,12 +785,38 @@ pub fn read_chat_window(
     end: u64,
     page_size: usize,
 ) -> Option<ChatWindow> {
+    read_chat_window_in(spec, path, end, page_size, TAIL_FIRST_BLOCK)
+}
+
+/// [`read_chat_window`] 本体；`first_block` 是尾读初始窗口（测试用极小值压块边界）。
+fn read_chat_window_in(
+    spec: &dyn TranscriptSpec,
+    path: &Path,
+    end: u64,
+    page_size: usize,
+    first_block: u64,
+) -> Option<ChatWindow> {
     use std::io::Read;
-    let file = std::fs::File::open(path).ok()?;
+    let mut file = std::fs::File::open(path).ok()?;
+    // 与首屏同一套尾读：只解析 `end` 之前够凑一屏的那段（判不准时它自己扩到文件头整段解析）。
+    if spec.tail_read().is_some() && page_size > 0 {
+        let end = end.min(file.metadata().ok()?.len());
+        let TailOutcome::Window { mut lines, start, .. } =
+            tail_region(spec, path, &mut file, end, page_size, first_block)
+        else {
+            return None;
+        };
+        let start = tail_window_start(&mut lines, start, page_size);
+        return Some(ChatWindow {
+            items: lines.into_iter().flat_map(|(_, items)| items).collect(),
+            start,
+            has_more: start > 0,
+        });
+    }
     let mut buf = Vec::new();
     file.take(end).read_to_end(&mut buf).ok()?;
     let consumed = buf.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1);
-    let mut lines = parse_chat_region(spec, path, 0, &buf[..consumed]).lines;
+    let mut lines = parse_chat_region(spec, path, 0, &buf[..consumed], false).lines;
     let start = tail_window_start(&mut lines, 0, page_size);
     let items = lines.into_iter().flat_map(|(_, items)| items).collect();
     Some(ChatWindow {
@@ -804,11 +829,17 @@ pub fn read_chat_window(
 /// 解析一段完整 JSONL 字节（`base` = 该段在文件中的起始字节），逐行产出
 /// （行起始字节， 该行消息）并顺手折叠本段的模式记录。行界在**原始字节**上切：
 /// `from_utf8_lossy` 的替换字符会改变字节数，拿它算偏移会对不上文件。
+///
+/// `tail = true`：这一段是尾读窗口（[`tail_region`]），调用方要拿它冒充「整读的尾部」。
+/// 此时凡是结果可能取决于 `base` 之前内容的地方都不自作主张，而是置 `ambiguous`
+/// 让调用方扩大窗口重来：撤回的轮数超出窗口、用户提示的分叉点不在窗口内、
+/// 窗口里第一条消息就是用户消息（双写判重要看前一条）。
 fn parse_chat_region(
     spec: &dyn TranscriptSpec,
     path: &Path,
     base: u64,
     buf: &[u8],
+    tail: bool,
 ) -> ChatRegion {
     let mut lines: Vec<(u64, Vec<ChatItem>)> = Vec::new();
     // 本段里各轮起点所在的行下标（撤回回放用），以及本段有没有撤回记录。
@@ -827,6 +858,11 @@ fn parse_chat_region(
     let mut link_at: std::collections::HashMap<String, (usize, usize)> = std::collections::HashMap::new();
     let mut last_link: Option<String> = None;
     let mut prompts = 0usize;
+    // 尾读专用：结果可能依赖窗口之前的内容（见函数注释）；窗口前最后一个主链节点（懒取一次）；
+    // 「还没产出过任何消息」——此时 last_user 的真值取决于窗口前一行，窗口内无从得知。
+    let mut ambiguous = false;
+    let mut seed_link: Option<Option<String>> = None;
+    let mut user_state_unknown = tail;
     for chunk in buf.split_inclusive(|b| *b == b'\n') {
         let start = pos;
         pos += chunk.len() as u64;
@@ -848,6 +884,9 @@ fn parse_chat_region(
             Some(ChatLineMark::TurnStart) => turn_starts.push(lines.len()),
             Some(ChatLineMark::Undo(count)) => {
                 undone = true;
+                // 窗口里不够 n 轮：整读会收回窗口之前的轮次，起点在窗口外，这里复现不了。
+                ambiguous |= tail && turn_starts.len() < count;
+                user_state_unknown = false;
                 // 本段里不够 n 轮（增量批次只含末尾几行）时整段收回；调用方见 undone
                 // 会改为从文件头重读，那时起点都在段内，回放是准的。
                 let cut = turn_starts.len().saturating_sub(count);
@@ -865,6 +904,8 @@ fn parse_chat_region(
         let mut items: Vec<ChatItem> = Vec::new();
         for item in spec.parse_transcript_line_in(path, line).into_iter().map(ChatItem::from) {
             if let ChatItem::UserText { text, timestamp, .. } = &item {
+                // 窗口里的第一条消息就是用户消息：整读时它可能与窗口前一条双写判重被吞。
+                ambiguous |= user_state_unknown;
                 let key = text.trim().to_string();
                 if last_user.as_ref().is_some_and(|(prev, prev_ts)| {
                     *prev == key && within_double_write(prev_ts.as_deref(), timestamp.as_deref())
@@ -875,6 +916,7 @@ fn parse_chat_region(
             } else {
                 last_user = None;
             }
+            user_state_unknown = false;
             items.push(item);
         }
         if let Some((id, parent)) = link {
@@ -892,6 +934,17 @@ fn parse_chat_region(
                             last_user = None;
                         }
                         Some(_) => {}
+                        // 尾读窗口：parent 恰是窗口前最后一个节点 = 正常接续（整读时它就是
+                        // last_link，根本不进这个分支）；否则分叉点可能在窗口外，整读会把窗口
+                        // 前后一并收回，这里复现不了——交给调用方扩窗。
+                        None if tail => {
+                            let continues = last_link.is_none()
+                                && seed_link
+                                    .get_or_insert_with(|| last_link_before(spec, path, base))
+                                    .as_deref()
+                                    == Some(parent.as_str());
+                            ambiguous |= !continues;
+                        }
                         // 分叉点在本段之前（增量批次）：本段收不回已下发的消息，标 undone 让
                         // 调用方从文件头整读。批次首个节点之前的「上一个节点」按需回读；
                         // 回读不到（窗口外/不可读）就不判，宁可漏收不误收。
@@ -914,7 +967,7 @@ fn parse_chat_region(
         }
         lines.push((start, items));
     }
-    ChatRegion { lines, agent_modes, undone }
+    ChatRegion { lines, agent_modes, undone, ambiguous }
 }
 
 /// `base` 之前最后一个主链节点的 id（增量批次判分叉用：批次里第一条用户提示的 parent 该是它）。
@@ -947,6 +1000,284 @@ struct ChatRegion {
     lines: Vec<(u64, Vec<ChatItem>)>,
     agent_modes: Vec<AgentMode>,
     undone: bool,
+    /// 仅尾读：结果可能依赖窗口之前的内容，不能冒充整读的尾部（见 [`parse_chat_region`]）。
+    ambiguous: bool,
+}
+
+/// [`TranscriptSpec::tail_read`] 的声明：窗口之前的内容只做字节子串预筛，以下两类行
+/// 必须能靠子串认出来，否则尾读会漏掉它们对结果的影响。
+#[derive(Debug, Clone, Copy)]
+pub struct TailRead {
+    /// 可能产出模式（`agent_modes_from_line` 非空）的行必含其一。
+    pub mode_markers: &'static [&'static str],
+    /// 可能产出计划（`ToolUse.plan`）的行必含其一；空 = 该 agent 从不产出计划。
+    pub plan_markers: &'static [&'static str],
+}
+
+/// 尾读初始窗口。claude 长会话平均一行 ~4KB，1MB 通常够凑满 200 条。
+const TAIL_FIRST_BLOCK: u64 = 1 << 20;
+
+/// [`tail_region`] 的结果。`Window` 的逐行结果与整读的同段逐字一致：要么窗口从文件头起
+/// （`start == 0`，本身就是整读），要么窗口内消息数 **严格多于** 一屏且无窗口外依赖
+/// （等于一屏时整读会因「总数 ≤ 一屏」不裁剪，start 口径不同）。
+enum TailOutcome {
+    Window {
+        lines: Vec<(u64, Vec<ChatItem>)>,
+        agent_modes: Vec<AgentMode>,
+        undone: bool,
+        start: u64,
+        end: u64,
+    },
+    Unreadable,
+}
+
+/// 读 `[0, end)` 里最后一屏所需的那段：从尾部按块往前，直到窗口里的消息够一屏、且没有任何
+/// 依赖窗口外内容的迹象（[`parse_chat_region`] 的 `ambiguous`）。窗口起点对齐到行首，
+/// 终点对齐到 `end` 之前最后一个换行——与整读的 `consumed` 同口径。
+///
+/// 扩窗：消息不够时按已见密度估算还差多少字节（留 1.5 倍余量，至少翻倍），判不准时 ×4；
+/// 扩到文件头就在这里直接整段解析（`tail=false`），不让调用方再读一遍。真实数据里「末尾 200 条
+/// 横跨 18MB」（大工具结果）和「整份不到 200 条」都常见，固定倍数会在它们身上反复白解析。
+fn tail_region(
+    spec: &dyn TranscriptSpec,
+    path: &Path,
+    file: &mut std::fs::File,
+    end: u64,
+    page_size: usize,
+    first_block: u64,
+) -> TailOutcome {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut block = first_block.max(1);
+    loop {
+        let raw = end.saturating_sub(block);
+        let mut buf = vec![0; (end - raw) as usize];
+        if file.seek(SeekFrom::Start(raw)).is_err() || file.read_exact(&mut buf).is_err() {
+            return TailOutcome::Unreadable;
+        }
+        if raw == 0 {
+            let consumed = memchr::memrchr(b'\n', &buf).map_or(0, |i| i + 1);
+            let region = parse_chat_region(spec, path, 0, &buf[..consumed], false);
+            return TailOutcome::Window {
+                lines: region.lines,
+                agent_modes: region.agent_modes,
+                undone: region.undone,
+                start: 0,
+                end: consumed as u64,
+            };
+        }
+        // 首个换行之前是半截行，跳过；最后一个换行之后是没写完的行，不碰。
+        let body_at = memchr::memchr(b'\n', &buf).map(|i| i + 1);
+        let consumed = body_at
+            .and_then(|at| memchr::memrchr(b'\n', &buf[at..]).map(|i| i + 1))
+            .unwrap_or(0);
+        let (Some(body_at), true) = (body_at, consumed > 0) else {
+            block = block.saturating_mul(4);
+            continue;
+        };
+        let start = raw + body_at as u64;
+        let region = parse_chat_region(spec, path, start, &buf[body_at..body_at + consumed], true);
+        let total: usize = region.lines.iter().map(|(_, items)| items.len()).sum();
+        if !region.ambiguous && total > page_size {
+            return TailOutcome::Window {
+                lines: region.lines,
+                agent_modes: region.agent_modes,
+                undone: region.undone,
+                start,
+                end: start + consumed as u64,
+            };
+        }
+        block = if region.ambiguous || total == 0 {
+            block.saturating_mul(4)
+        } else {
+            let span = end - start;
+            let estimate = span.saturating_mul(page_size as u64 + 1) / total as u64;
+            (estimate.saturating_mul(3) / 2).max(block.saturating_mul(2))
+        };
+    }
+}
+
+/// 顺序扫 `[0, end)`（`end` 在行首），对含任一 `markers` 的整行调用 `visit`（按文件顺序）。
+/// 只做字节子串查找，命中才切行；跨块的行拼整后再判。读失败返回 false。
+fn scan_marked_lines(
+    file: &mut std::fs::File,
+    end: u64,
+    markers: &[&str],
+    mut visit: impl FnMut(&[u8]),
+) -> bool {
+    use std::io::{Read, Seek, SeekFrom};
+    const CHUNK: usize = 4 << 20;
+    if markers.is_empty() || end == 0 {
+        return true;
+    }
+    let finders: Vec<_> = markers.iter().map(|m| memchr::memmem::Finder::new(m.as_bytes())).collect();
+    let marked = |line: &[u8]| finders.iter().any(|f| f.find(line).is_some());
+    if file.seek(SeekFrom::Start(0)).is_err() {
+        return false;
+    }
+    let mut buf = vec![0; CHUNK];
+    let mut carry: Vec<u8> = Vec::new();
+    let mut pos = 0u64;
+    let mut starts: Vec<usize> = Vec::new();
+    while pos < end {
+        let want = CHUNK.min((end - pos) as usize);
+        if file.read_exact(&mut buf[..want]).is_err() {
+            return false;
+        }
+        pos += want as u64;
+        let mut chunk = &buf[..want];
+        // 上一块留下的半行：补到本块第一个换行为止再判。
+        if !carry.is_empty() {
+            match memchr::memchr(b'\n', chunk) {
+                None => {
+                    carry.extend_from_slice(chunk);
+                    continue;
+                }
+                Some(nl) => {
+                    carry.extend_from_slice(&chunk[..nl]);
+                    if marked(&carry) {
+                        visit(&carry);
+                    }
+                    carry.clear();
+                    chunk = &chunk[nl + 1..];
+                }
+            }
+        }
+        let body_len = memchr::memrchr(b'\n', chunk).map_or(0, |i| i + 1);
+        let (body, rest) = chunk.split_at(body_len);
+        // 命中位置 → 行首，去重排序后按文件顺序回调（多个标记可能命中同一行）。
+        starts.clear();
+        for finder in &finders {
+            for hit in finder.find_iter(body) {
+                starts.push(memchr::memrchr(b'\n', &body[..hit]).map_or(0, |i| i + 1));
+            }
+        }
+        starts.sort_unstable();
+        starts.dedup();
+        for &line_start in &starts {
+            let line_end = memchr::memchr(b'\n', &body[line_start..]).map_or(body.len(), |i| line_start + i);
+            visit(&body[line_start..line_end]);
+        }
+        carry.extend_from_slice(rest);
+    }
+    if !carry.is_empty() && marked(&carry) {
+        visit(&carry);
+    }
+    true
+}
+
+/// 首屏尾读（[`read_chat_delta_paged`] 的快路径）。只接管「整读 + 裁首屏」：offset=0 的首开
+/// 或失效重读。返回 None = 不适用或判不准，调用方走整读——所以这里任何拿不准的情形都退回去。
+///
+/// 与整读逐字段一致的依据：
+/// - items / start：窗口逐行结果与整读同段一致（[`tail_region`]），且窗口消息数多于一屏，
+///   整读的裁剪点必然落在窗口里；窗口扩到文件头时本身就是整读。
+/// - agent_modes：默认值 → 窗口前所有含模式标记的行按序折叠 → 叠上窗口内的折叠结果。
+///   按维度覆盖、新维度按首次出现顺序追加，分两段做与一口气顺序折叠等价。
+/// - plan：窗口内有就是它（最靠后）；没有而窗口前出现过计划标记，退回整读。
+/// - undone：窗口不从文件头起时只反映窗口内。整读时它为真只影响「reset 且 items 为空」的
+///   前端判定（ChatWindow.tsx emptyReset），而这种窗口的 items 恒多于一屏，观察不到差别。
+fn tail_first_page(
+    spec: &dyn TranscriptSpec,
+    path: &Path,
+    offset: u64,
+    prev_mtime: Option<std::time::SystemTime>,
+    page_size: usize,
+    first_block: u64,
+) -> Option<ChatDelta> {
+    tail_first_page_window(spec, path, offset, prev_mtime, page_size, first_block).map(|(delta, _)| delta)
+}
+
+/// [`tail_first_page`] 本体，额外返回尾读窗口起点（测试据此确认确实只解析了尾部）。
+fn tail_first_page_window(
+    spec: &dyn TranscriptSpec,
+    path: &Path,
+    offset: u64,
+    prev_mtime: Option<std::time::SystemTime>,
+    page_size: usize,
+    first_block: u64,
+) -> Option<(ChatDelta, u64)> {
+    let declared = spec.tail_read()?;
+    if page_size == 0 {
+        return None;
+    }
+    let mut file = std::fs::File::open(path).ok()?;
+    let meta = file.metadata().ok()?;
+    let (len, mtime) = (meta.len(), meta.modified().ok());
+    let reset = transcript_reset(len, offset, mtime, prev_mtime);
+    if !reset && offset != 0 {
+        return None;
+    }
+    let TailOutcome::Window { mut lines, agent_modes: window_modes, undone, start: window_start, end } =
+        tail_region(spec, path, &mut file, len, page_size, first_block)
+    else {
+        return None;
+    };
+    let plan = latest_plan(&lines);
+    let mut agent_modes = spec.default_agent_modes();
+    let mut prefix_plan = false;
+    let plan_finders: Vec<_> = declared
+        .plan_markers
+        .iter()
+        .map(|m| memchr::memmem::Finder::new(m.as_bytes()))
+        .collect();
+    let mode_finders: Vec<_> = declared
+        .mode_markers
+        .iter()
+        .map(|m| memchr::memmem::Finder::new(m.as_bytes()))
+        .collect();
+    // 窗口内已有计划时，窗口前的计划标记无关紧要，不必为它扫。
+    let markers: Vec<&str> = declared
+        .mode_markers
+        .iter()
+        .chain(if plan.is_none() { declared.plan_markers } else { &[] })
+        .copied()
+        .collect();
+    let scanned = scan_marked_lines(&mut file, window_start, &markers, |raw| {
+        if plan.is_none() && plan_finders.iter().any(|f| f.find(raw).is_some()) {
+            prefix_plan = true;
+        }
+        if mode_finders.iter().any(|f| f.find(raw).is_some()) {
+            let line = String::from_utf8_lossy(raw);
+            merge_modes(&mut agent_modes, spec.agent_modes_from_line(line.trim_end_matches(['\r', '\n'])));
+        }
+    });
+    if !scanned || prefix_plan {
+        return None;
+    }
+    merge_modes(&mut agent_modes, window_modes);
+    let start = tail_window_start(&mut lines, window_start, page_size);
+    let delta = ChatDelta {
+        items: lines.into_iter().flat_map(|(_, items)| items).collect(),
+        plan,
+        agent_modes,
+        start,
+        offset: end,
+        reset,
+        undone,
+        mtime,
+    };
+    Some((delta, window_start))
+}
+
+/// 按维度覆盖、新维度追加——与 [`parse_chat_region`] 内的模式折叠同一规则。
+fn merge_modes(into: &mut Vec<AgentMode>, modes: Vec<AgentMode>) {
+    for mode in modes {
+        if let Some(previous) = into.iter_mut().find(|previous| previous.dimension == mode.dimension) {
+            *previous = mode;
+        } else {
+            into.push(mode);
+        }
+    }
+}
+
+/// 逐行结果里最靠后的非空计划（整读与尾读共用，保证同一口径）。
+fn latest_plan(lines: &[(u64, Vec<ChatItem>)]) -> Option<String> {
+    lines.iter().rev().find_map(|(_, items)| {
+        items.iter().rev().find_map(|item| match item {
+            ChatItem::ToolUse { plan: Some(plan), .. } if !plan.trim().is_empty() => Some(plan.clone()),
+            _ => None,
+        })
+    })
 }
 
 /// kimi 每条用户消息双写（`turn.prompt` + `context.append_message`，真机全量核对：前者
@@ -1092,9 +1423,11 @@ impl TranscriptCache {
         match read_transcript_delta(path, offset, prev_mtime) {
             DeltaOutcome::Unreadable => self.current_info(path),
             DeltaOutcome::NoChange(mtime) => self.touch_mtime(path, mtime),
-            DeltaOutcome::Data { reset, buf, mtime } => {
-                self.commit(spec, path, offset, reset, &buf, mtime)
+            DeltaOutcome::Data { reset, buf, mtime } if reset || offset == 0 => {
+                let fresh = fold_fresh(spec, &buf);
+                self.commit_fresh(path, offset, fresh, mtime)
             }
+            DeltaOutcome::Data { buf, mtime, .. } => self.commit(path, offset, &buf, mtime),
         }
     }
 
@@ -1114,11 +1447,52 @@ impl TranscriptCache {
         match read_transcript_delta(path, offset, prev_mtime) {
             DeltaOutcome::Unreadable => lock().current_info(path),
             DeltaOutcome::NoChange(mtime) => lock().touch_mtime(path, mtime),
-            // 短临界区 2：偏移仍与快照一致才提交；其它线程已推进则弃用本次读取、复用其结果。
-            DeltaOutcome::Data { reset, buf, mtime } => {
-                lock().commit(spec, path, offset, reset, &buf, mtime)
+            // 从头读（冷启动 / 截断重读）：整文件的 fold_line 是大头（12MB ≈ 20ms，几个大会话
+            // 同时冷启动时曾在锁里排成一串），改在锁外用全新解析器折叠完，临界区里只做替换。
+            // 提交前同样比对偏移快照：期间别人已提交过就丢弃自己的结果，不会重复计数。
+            DeltaOutcome::Data { reset, buf, mtime } if reset || offset == 0 => {
+                let fresh = fold_fresh(spec, &buf);
+                lock().commit_fresh(path, offset, fresh, mtime)
             }
+            // 短临界区 2：偏移仍与快照一致才提交；其它线程已推进则弃用本次读取、复用其结果。
+            // 增量只含新追加的行（O(新增字节)），累积解析器不可克隆，留在锁内续折。
+            DeltaOutcome::Data { buf, mtime, .. } => lock().commit(path, offset, &buf, mtime),
         }
+    }
+
+    /// [`fold_fresh`] 结果的提交：条目偏移仍等于快照（期间没人推进）才整体替换解析器与偏移，
+    /// 否则弃用本次结果、返回已有累积状态。条目在锁外窗口被 LRU 淘汰时按新条目灌入
+    /// （本结果从文件头读起，可安全重建）。
+    fn commit_fresh(
+        &mut self,
+        path: &str,
+        snap_offset: u64,
+        (parser, consumed): (Box<dyn TranscriptParser>, u64),
+        mtime: Option<std::time::SystemTime>,
+    ) -> TranscriptInfo {
+        self.tick += 1;
+        let tick = self.tick;
+        if let Some(entry) = self.entries.get_mut(path) {
+            entry.last_used = tick;
+            if entry.offset != snap_offset {
+                return entry.parser.to_info();
+            }
+            entry.parser = parser;
+            entry.offset = consumed;
+            entry.mtime = mtime;
+            return entry.parser.to_info();
+        }
+        let info = parser.to_info();
+        self.entries.insert(
+            path.to_string(),
+            CacheEntry {
+                offset: consumed,
+                mtime,
+                parser,
+                last_used: tick,
+            },
+        );
+        info
     }
 
     /// analyze / analyze_shared 临界区 1：确保条目存在（含 LRU 淘汰），返回（偏移, mtime）快照。不做文件 IO。
@@ -1171,60 +1545,50 @@ impl TranscriptCache {
         }
     }
 
-    /// analyze / analyze_shared 临界区 2：把读到的字节合并进缓存。仅当条目偏移仍等于快照偏移
-    /// （期间无其它线程推进）时生效；否则弃用本次读取，直接返回已有结果。
+    /// analyze / analyze_shared 临界区 2（增量）：把新追加的完整行续折进累积解析器。仅当条目偏移
+    /// 仍等于快照偏移（期间无其它线程推进）时生效；否则弃用本次读取，直接返回已有结果。
+    /// 从文件头读起的情形不走这里，见 [`Self::commit_fresh`]。
     fn commit(
         &mut self,
-        spec: &dyn TranscriptSpec,
         path: &str,
         snap_offset: u64,
-        reset: bool,
         buf: &[u8],
         mtime: Option<std::time::SystemTime>,
     ) -> TranscriptInfo {
         self.tick += 1;
         let tick = self.tick;
-        // buf 是否从文件头读起（reset 或条目本就是新建的 0 偏移）——只有这种读取才能安全灌入全新条目。
-        let from_zero = reset || snap_offset == 0;
-        let entry = match self.entries.get_mut(path) {
-            Some(e) => e,
-            None => {
-                // 条目在锁外窗口被 LRU 淘汰：从头读的可重建灌入；增量读的丢弃，下轮重来。
-                if !from_zero {
-                    return TranscriptInfo::default();
-                }
-                self.entries.insert(
-                    path.to_string(),
-                    CacheEntry {
-                        offset: 0,
-                        mtime: None,
-                        parser: spec.new_parser(),
-                        last_used: tick,
-                    },
-                );
-                self.entries
-                    .get_mut(path)
-                    .expect("刚插入的缓存条目必然存在")
-            }
+        // 条目在锁外窗口被 LRU 淘汰：增量读没有前文可接，丢弃，下轮从头重来。
+        let Some(entry) = self.entries.get_mut(path) else {
+            return TranscriptInfo::default();
         };
         entry.last_used = tick;
         if entry.offset != snap_offset {
             return entry.parser.to_info();
         }
-        if reset {
-            entry.offset = 0;
-            entry.parser = spec.new_parser();
-        }
         if let Some(nl) = buf.iter().rposition(|&b| b == b'\n') {
             entry.offset += (nl + 1) as u64;
-            let chunk = String::from_utf8_lossy(&buf[..=nl]);
-            for line in chunk.lines() {
-                entry.parser.fold_line(line);
-            }
+            fold_complete_lines(entry.parser.as_mut(), &buf[..=nl]);
         }
         entry.mtime = mtime;
         entry.parser.to_info()
     }
+}
+
+/// 把一段以换行结尾的完整行逐行折进解析器（增量与从头两条提交路径同一份切行/转码口径）。
+fn fold_complete_lines(parser: &mut dyn TranscriptParser, complete: &[u8]) {
+    let chunk = String::from_utf8_lossy(complete);
+    for line in chunk.lines() {
+        parser.fold_line(line);
+    }
+}
+
+/// 从文件头读到的字节在**锁外**折成一个全新解析器，返回（解析器, 已消费到的字节偏移）。
+/// 末尾没换行的半行不消费，留给下一轮——与增量提交同口径。
+fn fold_fresh(spec: &dyn TranscriptSpec, buf: &[u8]) -> (Box<dyn TranscriptParser>, u64) {
+    let mut parser = spec.new_parser();
+    let consumed = buf.iter().rposition(|&b| b == b'\n').map_or(0, |nl| nl + 1);
+    fold_complete_lines(parser.as_mut(), &buf[..consumed]);
+    (parser, consumed as u64)
 }
 
 #[cfg(test)]
@@ -1701,5 +2065,449 @@ mod tests {
         std::fs::remove_file(&p).ok();
         let i5 = TranscriptCache::analyze_shared(&cache, spec, path);
         assert_eq!(i5.title.as_deref(), Some("C"));
+    }
+
+    /// 计数解析器：标题 = 「已折叠行数:最后一行」。同一行被折两次（重复计数）或漏折都会让
+    /// 计数与文件实际行数对不上——比真实解析器的「最后一条标题」更能暴露并发提交的错乱。
+    struct CountSpec;
+    struct CountParser(usize, String);
+
+    impl TranscriptParser for CountParser {
+        fn fold_line(&mut self, line: &str) {
+            self.0 += 1;
+            self.1 = line.to_string();
+        }
+        fn to_info(&self) -> TranscriptInfo {
+            TranscriptInfo {
+                title: Some(format!("{}:{}", self.0, self.1)),
+                ..TranscriptInfo::default()
+            }
+        }
+    }
+
+    impl TranscriptSpec for CountSpec {
+        fn new_parser(&self) -> Box<dyn TranscriptParser> {
+            Box::new(CountParser(0, String::new()))
+        }
+        fn resolve_transcript_path(&self, _: Option<&str>, _: Option<&str>, _: &str) -> Option<PathBuf> {
+            None
+        }
+        fn resolve_title(&self, _: Option<&str>, _: Option<&str>, _: &str) -> Option<String> {
+            None
+        }
+    }
+
+    /// 锁外解析：多个线程同时对同一文件冷读 + 追加中的增量读，最终累积结果与单线程整读一致
+    /// （不丢增量、不重复计数）；中途任何一次返回的计数都不超过文件实际完整行数。
+    #[test]
+    fn analyze_shared_concurrent_reads_match_single_thread() {
+        use std::io::Write;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let p = write_tmp("cache_concurrent", "");
+        let path = p.to_str().unwrap().to_string();
+        {
+            let mut f = std::fs::OpenOptions::new().append(true).open(&p).unwrap();
+            for i in 0..3000 {
+                writeln!(f, "line-{i}-{}", "z".repeat(i % 97)).unwrap();
+            }
+        }
+        let written = AtomicUsize::new(3000);
+        for round in 0..5 {
+            let cache = std::sync::Mutex::new(TranscriptCache::new());
+            std::thread::scope(|scope| {
+                for _ in 0..8 {
+                    scope.spawn(|| {
+                        for _ in 0..20 {
+                            let before = written.load(Ordering::SeqCst);
+                            let info = TranscriptCache::analyze_shared(&cache, &CountSpec, &path);
+                            let count: usize = info.title.unwrap().split(':').next().unwrap().parse().unwrap();
+                            // 写线程只增不减，故读后再取一次上界。
+                            let after = written.load(Ordering::SeqCst);
+                            assert!(count <= after, "计数 {count} 超过已写完整行 {after}（读前 {before}）");
+                        }
+                    });
+                }
+                scope.spawn(|| {
+                    let mut f = std::fs::OpenOptions::new().append(true).open(&p).unwrap();
+                    for i in 0..200 {
+                        let n = written.load(Ordering::SeqCst);
+                        // 先写半行再补完：读者可能恰好看到半行，必须留到下轮。
+                        write!(f, "late-{round}-{i}").unwrap();
+                        f.flush().unwrap();
+                        // 先记账再补换行：任何时刻「完整行数 ≤ 计数器」，读者的上界断言才成立。
+                        written.store(n + 1, Ordering::SeqCst);
+                        writeln!(f, "-done").unwrap();
+                        f.flush().unwrap();
+                    }
+                });
+            });
+            let shared = TranscriptCache::analyze_shared(&cache, &CountSpec, &path);
+            let single = TranscriptCache::new().analyze(&CountSpec, &path);
+            assert_eq!(shared, single, "round {round}");
+            assert!(shared.title.unwrap().starts_with(&format!("{}:", written.load(Ordering::SeqCst))));
+        }
+        std::fs::remove_file(&p).ok();
+    }
+
+    // ── 尾读（首屏 / 加载更早）与整读的一致性 ──
+
+    /// 对照组：把真实 spec 的一切原样转发，唯独不声明尾读——于是走的就是改动前的整读路径。
+    struct NoTail<'a>(&'a dyn TranscriptSpec);
+
+    impl TranscriptSpec for NoTail<'_> {
+        fn new_parser(&self) -> Box<dyn TranscriptParser> {
+            self.0.new_parser()
+        }
+        fn resolve_transcript_path(&self, a: Option<&str>, b: Option<&str>, c: &str) -> Option<PathBuf> {
+            self.0.resolve_transcript_path(a, b, c)
+        }
+        fn resolve_title(&self, a: Option<&str>, b: Option<&str>, c: &str) -> Option<String> {
+            self.0.resolve_title(a, b, c)
+        }
+        fn parse_transcript_line(&self, line: &str) -> Vec<TranscriptEvent> {
+            self.0.parse_transcript_line(line)
+        }
+        fn parse_transcript_line_in(&self, path: &Path, line: &str) -> Vec<TranscriptEvent> {
+            self.0.parse_transcript_line_in(path, line)
+        }
+        fn agent_modes_from_line(&self, line: &str) -> Vec<AgentMode> {
+            self.0.agent_modes_from_line(line)
+        }
+        fn chat_line_mark(&self, line: &str) -> Option<ChatLineMark> {
+            self.0.chat_line_mark(line)
+        }
+        fn default_agent_modes(&self) -> Vec<AgentMode> {
+            self.0.default_agent_modes()
+        }
+        fn supports_chat(&self) -> bool {
+            self.0.supports_chat()
+        }
+    }
+
+    /// 尾读结果与整读逐字段比对（undone 除外，理由见 tail_first_page 注释）。返回尾读是否接管。
+    /// 返回 true = 真的只解析了尾部（窗口不从文件头起）。
+    fn tail_matches_full(spec: &dyn TranscriptSpec, path: &Path, page: usize, block: u64) -> bool {
+        let full = read_chat_delta_paged(&NoTail(spec), path, 0, None, page);
+        let Some((tail, window_start)) = tail_first_page_window(spec, path, 0, None, page, block) else {
+            return false;
+        };
+        let at = format!("page {page} block {block}");
+        assert_eq!(tail.items, full.items, "{at}");
+        assert_eq!(tail.start, full.start, "{at}");
+        assert_eq!(tail.plan, full.plan, "{at}");
+        assert_eq!(tail.agent_modes, full.agent_modes, "{at}");
+        assert_eq!(tail.offset, full.offset, "{at}");
+        assert_eq!(tail.reset, full.reset, "{at}");
+        assert_eq!(tail.mtime, full.mtime, "{at}");
+        if window_start == 0 {
+            // 扩到了文件头：本身就是整读，连 undone 也必须一致。
+            assert_eq!(tail.undone, full.undone, "{at}");
+        } else {
+            assert!(tail.items.len() >= page, "{at}");
+        }
+        window_start > 0
+    }
+
+    /// 合成 claude transcript：`turns` 轮单链，每轮 提示/正文/工具/结果/收尾五行；
+    /// `modes`=(轮次, 值) 在该轮前插 permission-mode 行；`forks`=(轮次, 指回的更早轮次) 让该轮
+    /// 提示从更早的收尾节点长出新分支（/rewind 形态）；`dups` 的轮次把提示双写一遍。
+    /// 每行带一段填充，凑出跨多个尾读块的体积。
+    fn claude_session(turns: usize, modes: &[(usize, &str)], forks: &[(usize, usize)], dups: &[usize]) -> String {
+        let pad = "p".repeat(300);
+        let mut out = String::new();
+        let mut prev: Option<String> = None;
+        for t in 0..turns {
+            let ts = format!("2026-11-10T{:02}:{:02}:{:02}.000Z", (t / 3600) % 24, (t / 60) % 60, t % 60);
+            for (at, mode) in modes {
+                if *at == t {
+                    out.push_str(&format!(r#"{{"type":"permission-mode","permissionMode":"{mode}"}}"#));
+                    out.push('\n');
+                }
+            }
+            let parent = forks
+                .iter()
+                .find(|(at, _)| *at == t)
+                .map(|(_, back)| format!("e{back}"))
+                .or(prev.clone());
+            let parent = parent.map_or("null".to_string(), |p| format!("\"{p}\""));
+            out.push_str(&format!(r#"{{"parentUuid":{parent},"type":"user","message":{{"content":"提示 {t}"}},"uuid":"u{t}","timestamp":"{ts}","permissionMode":"x{t}"}}"#));
+            out.push('\n');
+            let mut last = format!("u{t}");
+            if dups.contains(&t) {
+                out.push_str(&format!(r#"{{"parentUuid":"{last}","type":"user","message":{{"content":"提示 {t}"}},"uuid":"d{t}","timestamp":"{ts}"}}"#));
+                out.push('\n');
+                last = format!("d{t}");
+            }
+            out.push_str(&format!(r#"{{"parentUuid":"{last}","type":"assistant","message":{{"id":"m{t}a","content":[{{"type":"text","text":"回答 {t} {pad}"}}]}},"uuid":"a{t}","timestamp":"{ts}"}}"#));
+            out.push('\n');
+            out.push_str(&format!(r#"{{"parentUuid":"a{t}","type":"assistant","message":{{"id":"m{t}b","content":[{{"type":"tool_use","id":"toolu_{t}","name":"Bash","input":{{"command":"ls {t}"}}}}]}},"uuid":"t{t}","timestamp":"{ts}"}}"#));
+            out.push('\n');
+            out.push_str(&format!(r#"{{"parentUuid":"t{t}","type":"user","message":{{"content":[{{"type":"tool_result","tool_use_id":"toolu_{t}","content":"结果 {pad}"}}]}},"uuid":"r{t}","timestamp":"{ts}"}}"#));
+            out.push('\n');
+            out.push_str(&format!(r#"{{"parentUuid":"r{t}","type":"system","subtype":"turn_duration","uuid":"e{t}"}}"#));
+            out.push('\n');
+            prev = Some(format!("e{t}"));
+        }
+        out
+    }
+
+    const PAGES: [usize; 4] = [1, 7, 60, 200];
+    const BLOCKS: [u64; 5] = [64, 777, 4096, 65536, TAIL_FIRST_BLOCK];
+
+    /// 首屏：普通长会话（窗口前有模式切换、双写的提示、一行没写完的尾巴）尾读与整读一致，
+    /// 且确实走了尾读。
+    #[test]
+    fn tail_first_page_matches_full_read_for_claude() {
+        use crate::plugins::claude::transcript::CLAUDE_TRANSCRIPT;
+        let mut content = claude_session(
+            900,
+            &[(0, "default"), (10, "plan"), (300, "acceptEdits")],
+            &[],
+            &[5, 450, 897],
+        );
+        content.push_str(r#"{"type":"user","message":{"content":"没写完"#);
+        let path = write_tmp("tail_claude_plain", &content);
+        let mut taken = 0;
+        for page in PAGES {
+            for block in BLOCKS {
+                taken += usize::from(tail_matches_full(&CLAUDE_TRANSCRIPT, &path, page, block));
+            }
+        }
+        assert!(taken >= PAGES.len() * (BLOCKS.len() - 1), "尾读应接管绝大多数组合，实际 {taken}");
+        // 公共入口（默认块）与整读一致。
+        let full = read_chat_delta_paged(&NoTail(&CLAUDE_TRANSCRIPT), &path, 0, None, 200);
+        let public = read_chat_delta_paged(&CLAUDE_TRANSCRIPT, &path, 0, None, 200);
+        assert_eq!((public.items, public.start, public.agent_modes), (full.items, full.start, full.agent_modes));
+        // 小文件（不到一个初始块）直接整段解析，与整读一致；空文件给默认模式。
+        let small = write_tmp("tail_claude_small", &claude_session(20, &[(3, "plan")], &[], &[]));
+        assert!(!tail_matches_full(&CLAUDE_TRANSCRIPT, &small, 5, TAIL_FIRST_BLOCK));
+        assert!(!tail_matches_full(&CLAUDE_TRANSCRIPT, &small, 500, 64));
+        let empty = write_tmp("tail_claude_empty", "");
+        assert!(!tail_matches_full(&CLAUDE_TRANSCRIPT, &empty, 5, 64));
+        std::fs::remove_file(empty).ok();
+        std::fs::remove_file(path).ok();
+        std::fs::remove_file(small).ok();
+    }
+
+    /// /rewind 分叉：分叉点在窗口外（整读会把中间一大段收回）、在窗口边界附近、在窗口内，
+    /// 尾读要么复现整读、要么自己退回整读——绝不给出不同的结果。
+    #[test]
+    fn tail_first_page_matches_full_read_across_rewind_forks() {
+        use crate::plugins::claude::transcript::CLAUDE_TRANSCRIPT;
+        let cases: [&[(usize, usize)]; 4] = [
+            &[(890, 3)],            // 远处分叉：收回第 4~889 轮
+            &[(700, 650)],          // 中段分叉
+            &[(895, 893)],          // 窗口内分叉
+            &[(400, 10), (898, 420)], // 两次分叉
+        ];
+        for forks in cases {
+            let path = write_tmp("tail_claude_fork", &claude_session(900, &[(0, "default"), (500, "plan")], forks, &[]));
+            for page in PAGES {
+                for block in BLOCKS {
+                    tail_matches_full(&CLAUDE_TRANSCRIPT, &path, page, block);
+                }
+            }
+            std::fs::remove_file(path).ok();
+        }
+    }
+
+    /// 加载更早：从首屏一路上翻到文件头，每一屏都与整读版 read_chat_window 一致，拼起来就是整读全部消息。
+    #[test]
+    fn tail_load_earlier_pages_concatenate_to_full_history() {
+        use crate::plugins::claude::transcript::CLAUDE_TRANSCRIPT;
+        let path = write_tmp("tail_claude_pages", &claude_session(300, &[(0, "default")], &[], &[100]));
+        let all = read_chat_delta_paged(&NoTail(&CLAUDE_TRANSCRIPT), &path, 0, None, 0).items;
+        for page in [60, 200] {
+            for block in [64, 4096, TAIL_FIRST_BLOCK] {
+                let first = tail_first_page(&CLAUDE_TRANSCRIPT, &path, 0, None, page, block)
+                    .or_else(|| Some(read_chat_delta_paged(&NoTail(&CLAUDE_TRANSCRIPT), &path, 0, None, page)))
+                    .unwrap();
+                let mut items = first.items;
+                let mut end = first.start;
+                while end > 0 {
+                    let window = read_chat_window_in(&CLAUDE_TRANSCRIPT, &path, end, page, block).unwrap();
+                    let reference = read_chat_window(&NoTail(&CLAUDE_TRANSCRIPT), &path, end, page).unwrap();
+                    assert_eq!(window, reference, "page {page} block {block} end {end}");
+                    assert!(window.start < end);
+                    items.splice(0..0, window.items);
+                    end = window.start;
+                }
+                assert_eq!(items, all, "page {page} block {block}");
+            }
+        }
+        std::fs::remove_file(path).ok();
+    }
+
+    /// 通用口径（撤回、双写判重、多维模式、计划）：用一个声明了尾读的最小 spec 随机造数，
+    /// 尾读与整读逐字段一致。claude 本身没有撤回记录与计划，这些分支靠它覆盖。
+    struct TailStub;
+
+    impl TranscriptSpec for TailStub {
+        fn new_parser(&self) -> Box<dyn TranscriptParser> {
+            Box::new(ChatOnlyParser)
+        }
+        fn resolve_transcript_path(&self, _: Option<&str>, _: Option<&str>, _: &str) -> Option<PathBuf> {
+            None
+        }
+        fn resolve_title(&self, _: Option<&str>, _: Option<&str>, _: &str) -> Option<String> {
+            None
+        }
+        fn supports_chat(&self) -> bool {
+            true
+        }
+        fn tail_read(&self) -> Option<TailRead> {
+            Some(TailRead {
+                mode_markers: &["mode:"],
+                plan_markers: &["plan:"],
+            })
+        }
+        fn default_agent_modes(&self) -> Vec<AgentMode> {
+            vec![AgentMode::new("base", "init")]
+        }
+        fn agent_modes_from_line(&self, line: &str) -> Vec<AgentMode> {
+            line.strip_prefix("mode:")
+                .and_then(|rest| rest.split_once('='))
+                .map(|(dim, value)| vec![AgentMode::new(dim, value)])
+                .unwrap_or_default()
+        }
+        fn chat_line_mark(&self, line: &str) -> Option<ChatLineMark> {
+            if line.starts_with("t:") {
+                return Some(ChatLineMark::TurnStart);
+            }
+            line.strip_prefix("x:").map(|n| ChatLineMark::Undo(n.parse().unwrap_or(1)))
+        }
+        fn parse_transcript_line(&self, line: &str) -> Vec<TranscriptEvent> {
+            let user = |rest: &str| {
+                let (text, ts) = rest.split_once('@').unwrap_or((rest, ""));
+                vec![TranscriptEvent::UserMessage {
+                    id: format!("u-{text}"),
+                    timestamp: (!ts.is_empty()).then(|| ts.to_string()),
+                    text: text.to_string(),
+                    interjected: false,
+                }]
+            };
+            if let Some(rest) = line.strip_prefix("t:").or_else(|| line.strip_prefix("u:")) {
+                return user(rest);
+            }
+            if let Some(text) = line.strip_prefix("a:") {
+                return vec![TranscriptEvent::AssistantMessage { id: format!("a-{text}"), timestamp: None, text: text.to_string() }];
+            }
+            if let Some(plan) = line.strip_prefix("plan:") {
+                return vec![TranscriptEvent::ToolCall {
+                    id: format!("plan-{plan}"),
+                    timestamp: None,
+                    name: "ExitPlanMode".into(),
+                    summary: String::new(),
+                    subagent: None,
+                    detail: None,
+                    plan: Some(plan.to_string()),
+                }];
+            }
+            Vec::new()
+        }
+    }
+
+    #[test]
+    fn tail_first_page_matches_full_read_for_undo_dupes_modes_and_plans() {
+        let mut state = 0x2545_F491_4F6C_DD1Du64;
+        let mut next = move |n: u64| {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state % n
+        };
+        let mut taken = 0;
+        for seed in 0..60 {
+            let mut content = String::new();
+            let lines = 150 + next(250);
+            for i in 0..lines {
+                let line = match next(100) {
+                    0..=17 => format!("t:q{}@2026-11-10T00:00:0{}.000Z", next(4), next(3)),
+                    18..=27 => format!("u:q{}@2026-11-10T00:00:0{}.000Z", next(4), next(3)),
+                    28..=60 => format!("a:r{i}"),
+                    61..=64 => format!("x:{}", 1 + next(12)),
+                    65..=70 => format!("mode:{}={}", ["base", "perm", "model"][next(3) as usize], next(5)),
+                    71..=73 => format!("plan:v{i}"),
+                    74..=76 => String::new(),
+                    _ => format!("pad:{}", "z".repeat(next(120) as usize)),
+                };
+                content.push_str(&line);
+                content.push('\n');
+            }
+            let path = write_tmp(&format!("tail_stub_{seed}"), &content);
+            for page in [1, 3, 10, 40] {
+                for block in [8, 33, 200, 1000] {
+                    taken += usize::from(tail_matches_full(&TailStub, &path, page, block));
+                }
+                // 加载更早：每一屏与整读版一致。
+                let mut end = read_chat_delta_paged(&NoTail(&TailStub), &path, 0, None, page).start;
+                while end > 0 {
+                    let window = read_chat_window_in(&TailStub, &path, end, page, 64).unwrap();
+                    assert_eq!(window, read_chat_window(&NoTail(&TailStub), &path, end, page).unwrap(), "seed {seed} page {page} end {end}");
+                    end = window.start;
+                }
+            }
+            std::fs::remove_file(path).ok();
+        }
+        assert!(taken > 50, "尾读应在相当一部分随机样本上接管，实际 {taken}");
+    }
+
+    /// 真实数据核对（只读）：`MEOWO_TAIL_CHECK_DIR` 指向一个 claude projects 目录，逐个大于 1MB 的
+    /// transcript 比对首屏与前 3 次「加载更早」的尾读/整读结果。手动跑：
+    /// `MEOWO_TAIL_CHECK_DIR=~/.claude/projects cargo test -p meowo-agent --release --lib real_transcripts -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn tail_matches_full_on_real_transcripts() {
+        use crate::plugins::claude::transcript::CLAUDE_TRANSCRIPT;
+        let Ok(root) = std::env::var("MEOWO_TAIL_CHECK_DIR") else {
+            return;
+        };
+        let mut files: Vec<PathBuf> = std::fs::read_dir(&root)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.path().is_dir())
+            .flat_map(|e| std::fs::read_dir(e.path()).into_iter().flatten().flatten())
+            .map(|e| e.path())
+            .filter(|p| p.extension().is_some_and(|x| x == "jsonl"))
+            .filter(|p| p.metadata().is_ok_and(|m| m.len() > TAIL_FIRST_BLOCK))
+            .collect();
+        files.sort();
+        let (mut checked, mut taken) = (0, 0);
+        let (mut full_ms, mut tail_ms) = (0f64, 0f64);
+        for path in &files {
+            let at = std::time::Instant::now();
+            let full = read_chat_delta_paged(&NoTail(&CLAUDE_TRANSCRIPT), path, 0, None, 200);
+            let one_full = at.elapsed().as_secs_f64() * 1e3;
+            let at = std::time::Instant::now();
+            let tail = tail_first_page_window(&CLAUDE_TRANSCRIPT, path, 0, None, 200, TAIL_FIRST_BLOCK);
+            let one_tail = at.elapsed().as_secs_f64() * 1e3;
+            (full_ms, tail_ms) = (full_ms + one_full, tail_ms + one_tail);
+            if one_full > 100.0 {
+                let len = path.metadata().map_or(0, |m| m.len()) >> 20;
+                println!("[real] {len} MB: full {one_full:.0} ms vs tail {one_tail:.0} ms");
+            }
+            checked += 1;
+            // 会话可能正在被写：以整读为准时文件若变了就跳过这份。
+            if let Some((tail, window_start)) = tail {
+                if tail.offset != full.offset {
+                    continue;
+                }
+                taken += usize::from(window_start > 0);
+                assert_eq!(tail.items, full.items, "{}", path.display());
+                assert_eq!(tail.start, full.start, "{}", path.display());
+                assert_eq!(tail.agent_modes, full.agent_modes, "{}", path.display());
+                assert_eq!(tail.plan, full.plan, "{}", path.display());
+            }
+            let mut end = full.start;
+            for _ in 0..3 {
+                if end == 0 {
+                    break;
+                }
+                let window = read_chat_window(&CLAUDE_TRANSCRIPT, path, end, 200).unwrap();
+                assert_eq!(window, read_chat_window(&NoTail(&CLAUDE_TRANSCRIPT), path, end, 200).unwrap(), "{}", path.display());
+                end = window.start;
+            }
+        }
+        println!("[real] files {checked}, tail taken {taken}, full {full_ms:.0} ms vs tail {tail_ms:.0} ms");
     }
 }

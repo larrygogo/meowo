@@ -7390,3 +7390,47 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
   .isl-ring-arc { transition: none !important; }
   .isl-usage-swap { animation: none !important; }
 }
+
+/* 窗口级渲染崩溃兜底（ErrorBoundary.tsx 的 WindowCrash）：整窗同底色，居中两行字 + 一个按钮。
+   不铺图标、不放错误详情（详情在 console）；留白克制，与空态同一口吻。 */
+.app-crash {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-8);
+  padding: 24px;
+  background: var(--cc-window-bg);
+  color: var(--cc-text);
+  text-align: center;
+}
+.app-crash p { margin: 0; }
+.app-crash-title { font-size: var(--text-base); font-weight: 600; }
+.app-crash-hint { font-size: var(--text-sm); color: var(--cc-text-dim); }
+.app-crash-reload {
+  margin-top: var(--sp-8);
+  padding: var(--sp-6) var(--sp-14);
+  border: 1px solid var(--cc-border);
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--cc-text);
+  font: inherit;
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+.app-crash-reload:hover { background: var(--fill-hover); }
+
+/* markdown 降级/渲染失败时的原文显示（ChatMarkdown 的 PlainMarkdown）：保留换行、长行折行，
+   字体随正文，不套代码块的框和底色——它是正文，只是没排版。 */
+.chat-md pre.chat-md-plain,
+pre.chat-md-plain {
+  margin: 0;
+  padding: 0;
+  overflow-x: visible;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  background: transparent;
+}

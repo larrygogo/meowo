@@ -1,7 +1,7 @@
 import { renderHook, act } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { ReactNode } from "react";
-import { I18nProvider } from "../../i18n";
+import { bootI18n, I18nProvider } from "../../i18n";
 
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn(() => Promise.resolve(null)) }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
@@ -14,6 +14,8 @@ import { useConversationExport } from "./useConversationExport";
 const wrapper = ({ children }: { children: ReactNode }) => <I18nProvider>{children}</I18nProvider>;
 
 describe("useConversationExport（手机端）", () => {
+  // 字典按需加载（i18n/index.tsx）：jsdom 的 navigator.language 是 en-US，与各窗口入口一样先把字典取到手。
+  beforeAll(() => bootI18n());
   afterEach(() => vi.restoreAllMocks());
 
   /** 手机上导出走浏览器下载：不弹宿主保存框、不调宿主写文件（远程拒绝项），文件落在手机里。 */

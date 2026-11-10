@@ -8,8 +8,10 @@ import { useT } from "../i18n";
 import { formatBackendError } from "../i18n/errors";
 // 语法高亮复用文件/diff 面板的同一套 hljs 基建（highlight.ts）：语言表、回退策略、
 // --cc-syn-* 主题变量全部现成，不另引第二套高亮引擎——两处不分叉。
-import { highlightCode, languageForFence } from "./chat/highlight";
+import { highlightCode, languageForFence, useHighlighter } from "./chat/highlight";
 import { copyPlainText } from "./chat/clipboard";
+import { markdownTooComplex } from "./chat/markdownGuard";
+import { ErrorBoundary } from "../ErrorBoundary";
 
 /** 文件面板的 FileMarkdown 复用同一份 remark 插件表——渲染规则两处不分叉。 */
 export const PLUGINS = [remarkGfm];
@@ -314,6 +316,16 @@ function keepUrl(url: string): string {
   return /^\s*(javascript|data|vbscript):/i.test(url) ? "" : url;
 }
 
+/** 带语言的围栏代码块。hljs 懒加载（见 chat/highlight.ts）：引擎到位前按原样文本显示，
+ *  到位后这一块自己重渲染上色——整条消息是 memo 的，不能指望父层重来。 */
+function HighlightedCode({ className, text, lang, children }: { className?: string; text: string; lang: string; children: ReactNode }) {
+  const ready = useHighlighter();
+  if (!ready) return <code className={className}>{children}</code>;
+  // 围栏文本以 \n 收尾（remark 保留）,高亮前剥掉,免得末尾多渲染一个空行。
+  const html = cachedHighlight(text.replace(/\n$/, ""), lang);
+  return <code className={className} dangerouslySetInnerHTML={{ __html: html }} />;
+}
+
 /** 导出供 chat/FileMarkdown.tsx 复用（它只覆写 img，其余规则原样继承）。 */
 export const components: Components = {
   pre: ({ children }) => <CopyablePre>{children}</CopyablePre>,
@@ -342,9 +354,7 @@ export const components: Components = {
     if (!lang || text.length > HIGHLIGHT_MAX_CHARS || text.split("\n").length > HIGHLIGHT_MAX_LINES) {
       return <code className={className}>{children}</code>;
     }
-    // 围栏文本以 \n 收尾（remark 保留）,高亮前剥掉,免得末尾多渲染一个空行。
-    const html = cachedHighlight(text.replace(/\n$/, ""), lang);
-    return <code className={className} dangerouslySetInnerHTML={{ __html: html }} />;
+    return <HighlightedCode className={className} text={text} lang={lang}>{children}</HighlightedCode>;
   },
   // 7C-10：markdown 里的图片此前完全没管。远端大图按原始像素铺开，把 720px 的消息列
   // 撑出横向滚动条；本地路径/相对路径在 webview 里根本加载不到，只剩一个碎图标，
@@ -390,14 +400,25 @@ export const components: Components = {
  * 模型输出（正文 / reasoning）的 markdown 渲染。react-markdown 不渲染内嵌原始 HTML，
  * transcript 里的 `<script>` 之类只会按文本展示——不要换成任何 dangerouslySetInnerHTML 方案。
  * memo 按 text 比较：流式期间只有 delta 那一条重新解析，历史消息不重复付解析成本。
+ *
+ * 两道保护：病态正文（超深嵌套、超长）预检后直接按原文显示，不去解析（markdownGuard.ts）；
+ * 预检没拦住的渲染异常由 ErrorBoundary 接住，同样退回原文——一条消息坏了不连累整个窗口。
  */
 export const ChatMarkdown = memo(function ChatMarkdown({ text }: { text: string }) {
+  if (markdownTooComplex(text)) return <PlainMarkdown text={text} />;
   return (
-    <ReactMarkdown remarkPlugins={PLUGINS} components={components} urlTransform={keepUrl}>
-      {text}
-    </ReactMarkdown>
+    <ErrorBoundary scope="markdown" resetKey={text} fallback={() => <PlainMarkdown text={text} />}>
+      <ReactMarkdown remarkPlugins={PLUGINS} components={components} urlTransform={keepUrl}>
+        {text}
+      </ReactMarkdown>
+    </ErrorBoundary>
   );
 });
+
+/** 不排版、原样显示正文（保留换行，长行折行）。markdown 降级与消息渲染失败共用。 */
+export function PlainMarkdown({ text }: { text: string }) {
+  return <pre className="chat-md-plain">{text}</pre>;
+}
 
 /* 「文件」面板的预览形态（FileMarkdown）住在 chat/FileMarkdown.tsx：它要渲染 README
    的内嵌 HTML，得引 rehype-raw（整套 HTML 解析器，约 193KB min / 43KB br），而对话渲染

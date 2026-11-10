@@ -7,7 +7,8 @@ import { lockdownInProduction, suppressNativeFind } from "./devtools-guard";
 import { installInputModality } from "./input-modality";
 import { bootAppearance } from "./appearance";
 import { detectHostOs } from "./platform";
-import { I18nProvider } from "./i18n";
+import { bootI18n, I18nProvider } from "./i18n";
+import { WindowErrorBoundary } from "./ErrorBoundary";
 import "./fonts"; // 内置字体集的唯一入口(取舍理由见 fonts.ts;demo/poster 也走它,不再各自 import)
 import "./styles.css";
 
@@ -66,27 +67,32 @@ bootAppearance({ scale: label === "main" || label === "chat", panel: label === "
 // 渲染前先探测宿主平台：isMacPanel 等同步判定在首帧与各 effect 中即正确，
 // 消除「effect 跑在探测 resolve 前、guard 固化为 false」的竞态。
 // detectHostOs 内部兜底（非 Tauri 环境立即落为 other），不会悬挂。
-void detectHostOs().then(() => {
+// 同时把当前语言的字典取到手（非中文时是一次动态 import，见 i18n/index.tsx）：首帧就是对的
+// 语言。bootI18n 失败退回中文、不会 reject。
+void Promise.all([detectHostOs(), bootI18n()]).then(() => {
   ReactDOM.createRoot(document.getElementById("root")!).render(
     <React.StrictMode>
       <I18nProvider>
-        <React.Suspense fallback={null}>
-          {label === "about" ? (
-            <About />
-          ) : label === "updater" ? (
-            <Updater />
-          ) : label === "new-session" ? (
-            <NewSessionPanel />
-          ) : label === "onboarding" ? (
-            <Onboarding />
-          ) : label === "chat" ? (
-            <ChatWindow />
-          ) : label.startsWith("confirm-") ? (
-            <ConfirmWindow />
-          ) : (
-            <App />
-          )}
-        </React.Suspense>
+        {/* 渲染崩溃时整窗换成「出错了 / 重新加载」，不白屏（ErrorBoundary.tsx）。 */}
+        <WindowErrorBoundary>
+          <React.Suspense fallback={null}>
+            {label === "about" ? (
+              <About />
+            ) : label === "updater" ? (
+              <Updater />
+            ) : label === "new-session" ? (
+              <NewSessionPanel />
+            ) : label === "onboarding" ? (
+              <Onboarding />
+            ) : label === "chat" ? (
+              <ChatWindow />
+            ) : label.startsWith("confirm-") ? (
+              <ConfirmWindow />
+            ) : (
+              <App />
+            )}
+          </React.Suspense>
+        </WindowErrorBoundary>
         <TooltipLayer />
       </I18nProvider>
     </React.StrictMode>,

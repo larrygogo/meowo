@@ -1,9 +1,11 @@
 // 英文字典：`Dict`（typeof zh）约束——缺 key、多 key、函数签名不符均编译报错。
 import type { Dict } from "./zh";
+import { attachmentInstructionEn } from "./attachmentInstruction";
 
 export const en: Dict = {
   locale: "en-US",
   dialog: { ok: "OK", cancel: "Cancel" },
+  crash: { title: "Something went wrong", hint: "This window ran into a problem. Reload to recover.", reload: "Reload" },
   tabs: { all: "All", waiting: "Waiting", running: "Running" },
   time: {
     now: "now",
@@ -516,7 +518,7 @@ export const en: Dict = {
     // Attachment type badges (tiny monospace tag on each compose attachment chip).
     attachmentFile: "FILE",
     attachmentLimit: (max) => `Up to ${max} attachments; the rest were skipped`,
-    attachmentInstruction: (files) => `Read the following local attachments and use them to complete the task (use image reading for images):\n${files}`,
+    attachmentInstruction: attachmentInstructionEn,
     approvalTitle: "Agent requests permission",
     approvalPending: "Pending approval",
     questionTitle: "Agent is waiting for your answer",
@@ -959,7 +961,7 @@ export const en: Dict = {
     scmNoChanges: "No changes",
     scmLoadingDetail: "Loading line counts and commits for this repository…",
     scmDiscardTitle: (n: number) => (n === 1 ? "Discard changes to this file?" : `Discard changes to ${n} files?`),
-    scmDiscardNote: "This can't be undone. Untracked files will be deleted.",
+    scmDiscardNote: "Changes to tracked files can't be undone. Untracked files go to the trash.",
     scmDiscardMore: (n: number) => `${n} more files`,
     scmDiscardConfirm: "Discard Changes",
     systemRecord: "System record",
@@ -1396,8 +1398,8 @@ export const en: Dict = {
     pushTestOk: "Sent, check your phone",
     startError: (e) => `Failed to start: ${e}`,
     gateTitle: "Meowo Remote",
-    gateHint: "Scanning the code pairs automatically. To pair manually, paste the token from Remote access on the desktop.",
-    gateTokenLabel: "Access token",
+    gateHint: "Scanning the code pairs automatically. You can also paste the address or token copied from Remote access on the desktop.",
+    gateTokenLabel: "Address or token",
     gateConnect: "Connect",
     gateConnecting: "Connecting…",
     gateLoading: "Loading…",

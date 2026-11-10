@@ -3,7 +3,6 @@ import {
   closeBrowserPane, closeShellTerminal, listBrowserPanes, listShellTerminals, openBrowserPane, openShellTerminal, shellTerminalBusy,
   type BrowserPaneInfo, type ShellTerminalInfo,
 } from "../../api";
-import { appConfirm } from "../../confirm";
 import { useTauriEvent } from "../../hooks/useTauriEvent";
 import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
@@ -12,6 +11,7 @@ import {
   activate, activeTab, addTab, closeTabs, cycle, EMPTY_PANEL, forgetPanel, keysToClose, loadPanel, movePanel, moveTab, newTabKey, openSingleton,
   savePanel, setVisible, updateTab, type PanelState, type PanelTab,
 } from "./panelTabs";
+import { confirmCloseShells, moveShellOwner, trackShell, untrackShell, untrackShellOwner } from "./windowClose";
 
 export type PanelActions = ReturnType<typeof usePanel>["actions"];
 
@@ -59,6 +59,8 @@ export function usePanel(sessionId: number, cwd: string | null, onError: (messag
     Promise.all([listShellTerminals(sessionId), listBrowserPanes(sessionId)])
       .then(([shellList, paneList]) => {
         if (cancelled) return;
+        // 关窗确认要问全部会话的终端，这里登记到窗口级账本（windowClose.ts）。
+        for (const info of shellList) trackShell(info.id, info.owner);
         setShells(new Map(shellList.map((info) => [info.id, info])));
         setPanes(new Map(paneList.map((info) => [info.id, info])));
         // 后端开着、页签里却没有的（比如存储被清过），补成页签，别让进程无处可关。
@@ -101,6 +103,7 @@ export function usePanel(sessionId: number, cwd: string | null, onError: (messag
   useTauriEvent<{ from: number; to: number }>("panel-session-moved", ({ payload: { from, to } }) => {
     if (from === sessionId) savePanel(from, stateRef.current);
     movePanel(from, to);
+    moveShellOwner(from, to);
     if (to !== sessionId) return;
     setPanel({ sessionId, state: loadPanel(sessionId) });
     setLiveFor(null);
@@ -108,6 +111,7 @@ export function usePanel(sessionId: number, cwd: string | null, onError: (messag
   });
   useTauriEvent<number>("panel-session-closed", ({ payload: closed }) => {
     forgetPanel(closed);
+    untrackShellOwner(closed);
     // 后端已经关了这个会话的进程，本地缓存里它们的状态也作废。
     setPanes((prev) => new Map([...prev].filter(([, info]) => info.owner !== closed)));
     setShells((prev) => new Map([...prev].filter(([, info]) => info.owner !== closed)));
@@ -152,6 +156,7 @@ export function usePanel(sessionId: number, cwd: string | null, onError: (messag
       spawning.current.add(key);
       openShellTerminal(owner, dir, 80, 24)
         .then((info) => {
+          trackShell(info.id, info.owner);
           setShells((prev) => new Map(prev).set(info.id, info));
           update((prev) => updateTab(prev, key, (tab) => (tab.type === "term" ? { ...tab, shellId: info.id, cwd: dir } : tab)));
         })
@@ -173,20 +178,13 @@ export function usePanel(sessionId: number, cwd: string | null, onError: (messag
   const close = useCallback(async (keys: readonly string[]) => {
     const tabs = stateRef.current.tabs.filter((tab) => keys.includes(tab.key));
     const shellIds = tabs.flatMap((tab) => (tab.type === "term" && tab.shellId !== null ? [tab.shellId] : []));
-    if (shellIds.length > 0) {
-      const busy = await shellTerminalBusy(shellIds).catch(() => []);
-      if (busy.length > 0) {
-        const lines = busy.map((item) => `${item.title} · ${item.processes.map((p) => `${p.name || "?"} (PID ${p.pid})`).join(", ")}`);
-        const ok = await appConfirm(`${t.chat.shellBusyMessage}\n\n${lines.join("\n")}`, {
-          title: t.chat.shellBusyTitle,
-          danger: true,
-          confirmLabel: t.chat.shellBusyConfirm,
-        });
-        if (!ok) return;
-      }
-    }
+    // 与关整扇窗共用同一份确认（windowClose.ts）。
+    if (!(await confirmCloseShells(shellIds, t))) return;
     for (const tab of tabs) {
-      if (tab.type === "term" && tab.shellId !== null) void closeShellTerminal(tab.shellId).catch(() => {});
+      if (tab.type === "term" && tab.shellId !== null) {
+        untrackShell(tab.shellId);
+        void closeShellTerminal(tab.shellId).catch(() => {});
+      }
       if (tab.type === "browser" && tab.paneId !== null) void closeBrowserPane(tab.paneId).catch(() => {});
     }
     // 关掉的进程从本地缓存里删掉：留着的话，关之前那份「agent 正在操作」会一直亮在标题栏上（实拍）。

@@ -19,18 +19,10 @@ import { remoteUi } from "../../remoteMode";
 import { AppModal } from "../AppModal";
 import type { ReviewComment } from "./diffComments";
 import { buildFileTree, normPath, type FileTreeNode } from "./gitDiff";
-import {
-  ChangesView,
-  FileIcon,
-  FolderIcon,
-  LineCounts,
-  OpenIcon,
-  PathContextMenu,
-  RowMore,
-  readDiffLayout,
-  saveDiffLayout,
-  touchedInRoot,
-} from "./GitDiffView";
+import { FileIcon, FolderIcon, LineCounts, readDiffLayout, saveDiffLayout, touchedInRoot } from "./diffShared";
+import { OpenIcon, PathContextMenu, RowMore } from "./pathMenu";
+// ChangesView 住在 GitDiffView 里，静态引会把整个改动面板并进 SidePanel / 对话窗 chunk（见 lazyDiff.tsx）。
+import { LazyChangesView as ChangesView } from "./lazyDiff";
 
 /// 旧后端（手机页可能先于安装版更新）不下发两个新字段：按「全部是未暂存」处理。
 type ScmFile = GitChangedFileDto & { indexStatus?: string | null; worktreeStatus?: string | null };
