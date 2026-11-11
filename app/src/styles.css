@@ -1970,7 +1970,11 @@ button.stab {
   padding: var(--sp-9) var(--sp-11);
   cursor: pointer;
   transition: background var(--dur-base), color var(--dur-base);
+  /* button 默认居中：英文长项折行后按居中排，和其他项的左对齐错开（调研 s7）。英文导航名已改短，
+     再长也单行省略，不折行。 */
+  text-align: left;
 }
+.nav-item > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nav-item svg { color: var(--cc-text-faint); transition: color var(--dur-base); }
 .nav-item:hover { background: var(--cc-surface); color: var(--cc-text); }
 .nav-item.on { background: var(--cc-surface-hover); color: var(--cc-text); }

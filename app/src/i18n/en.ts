@@ -1284,7 +1284,7 @@ export const en: Dict = {
     "回合出错": "Turn failed",
   },
   settings: {
-    nav: { general: "General", sessions: "Sessions", appearance: "Appearance", shortcuts: "Keyboard shortcuts", remote: "Phone access", network: "Network", account: "Accounts & usage", extensions: "Extensions", about: "About" },
+    nav: { general: "General", sessions: "Sessions", appearance: "Appearance", shortcuts: "Shortcuts", remote: "Phone access", network: "Network", account: "Accounts", extensions: "Extensions", about: "About" },
     searchPlaceholder: "Search settings…",
     searchClear: "Clear search",
     searchNoResults: "No matching settings",
@@ -1768,7 +1768,7 @@ export const en: Dict = {
     connect: {
       title: "Connect your AI CLIs",
       points: [
-        "Install Agents like Claude Code or Codex under Settings → Accounts & usage.",
+        "Install Agents like Claude Code or Codex under Settings → Accounts.",
         "Then click “Sign in” and finish authorization in the terminal that pops up.",
         "Sessions these CLIs start will show up on the board.",
       ],
