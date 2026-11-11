@@ -48,3 +48,23 @@ fn 标题栏_没有_pr_或不是仓库_返回空() {
     assert_eq!(title(&fake, &caches, &diffs, &prefs, &plain), None);
     assert_eq!(title(&fake, &caches, &diffs, &prefs, &sb.root.join("missing")), None);
 }
+
+/// 回退修复（coordinator 11-11）：forge 只认 github.com，企业版这类远端解析不出仓库。标题栏以前照样能
+/// 直接问 gh 拿到 PR，不能因为改走共用缓存就丢掉；这一支照旧按目录缓存 60 秒。
+#[test]
+fn 标题栏_企业版远端_照旧直查_六十秒只调一次() {
+    let sb = Sandbox::new("title-pr-ghe");
+    let repo = sb.repo("ghe");
+    sb.git(&repo, &["remote", "add", "origin", "git@github.example.com:o/r.git"]);
+    sb.git(&repo, &["switch", "-q", "-c", "feat"]);
+    let fake = FakeGh::new().views(vec![ok(&fixture("pr_checkrun_fail.json"))]);
+    let (caches, diffs) = (Caches::default(), DiffCache::default());
+    let prefs = sb.root.join("forge.json");
+    let pr = title(&fake, &caches, &diffs, &prefs, &repo).expect("企业版远端也要拿到 PR");
+    assert_eq!(pr, PullRequestDto { number: pr.number, state: pr.state.clone(), url: pr.url.clone(), title: pr.title.clone(), ..Default::default() });
+    for _ in 0..3 {
+        assert!(title(&fake, &caches, &diffs, &prefs, &repo).is_some());
+    }
+    assert_eq!(fake.count("pr view"), 1, "60 秒内只调一次：{:?}", fake.calls.lock().unwrap());
+    assert_eq!(fake.count("auth status"), 0, "直查这一支与以前一样不先问登录状态");
+}
