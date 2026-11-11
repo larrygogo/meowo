@@ -70,7 +70,7 @@ body.remote-ui .chat-diff-head,
 body.remote-ui .chat-sidebar-overlay-head {
   position: sticky;
   top: 0;
-  z-index: 2;
+  z-index: calc(var(--z-raised) + 1);
   background: var(--cc-bg);
 }
 body.remote-ui .chat-sidebar-overlay-head { background: var(--cc-window-bg); }
@@ -401,7 +401,7 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
-  z-index: 50;
+  z-index: var(--z-menu);
   width: min(340px, calc(100vw - 32px));
   padding: 6px 14px 12px;
   border-radius: var(--radius-md);
@@ -474,7 +474,7 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
   flex-direction: column;
   gap: 13px;
   padding: 26px;
-  border: 1px solid var(--cc-border);
+  border: var(--hairline) solid var(--cc-border);
   border-radius: 18px;
   background: var(--cc-panel-bg);
   box-shadow: var(--shadow-md);
@@ -499,12 +499,12 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
   margin-top: 6px;
   padding: 0 13px;
   border-radius: 10px;
-  border: 1px solid var(--cc-border);
+  border: var(--hairline) solid var(--cc-border);
   outline: none;
   background: var(--fill-hover);
   color: inherit;
   font-size: 16px;
-  transition: border-color var(--dur-fast), background var(--dur-fast);
+  transition: border-color var(--dur-fast) var(--ease-in-out), background var(--dur-fast) var(--ease-in-out);
 }
 .remote-gate-card input:focus { border-color: var(--cc-accent-border); background: var(--fill-selected); }
 .remote-gate-card button {
@@ -514,7 +514,7 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
   font-size: 16px;
   font-weight: 600;
   cursor: pointer;
-  transition: background var(--dur-fast), opacity var(--dur-fast);
+  transition: background var(--dur-fast) var(--ease-in-out), opacity var(--dur-fast) var(--ease-in-out);
 }
 .remote-gate-card button:disabled { opacity: 0.45; cursor: default; }
 
@@ -565,7 +565,7 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
   position: fixed;
   inset: 0;
   /* 压过窄屏侧栏抽屉(scrim 60 / 抽屉 61):抽屉未收或再拉开时,sheet 仍在最上层。 */
-  z-index: 70;
+  z-index: var(--z-sheet);
   background: var(--cc-window-bg);
 }
 
