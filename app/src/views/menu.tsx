@@ -10,6 +10,8 @@
 import { useCallback, useId, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactElement } from "react";
 import { useDismissable } from "../hooks/useDismissable";
 import { CheckIcon, ChevronDownIcon } from "./sticker/icons";
+import { Icon } from "../icons/Icon";
+import { icMore } from "../icons/glyphs";
 
 /** 菜单定位坐标（仅 fixed 模式；`cssPositioned` 时恒为空对象，定位交给 CSS）。
     maxHeight 不在这里：它由 relayout 直接写 DOM（imperative 全权管理）——曾放进 pos，
@@ -117,7 +119,8 @@ export function useMenuPopup({
   // 而不是 aria-activedescendant——菜单里没有输入框，焦点落在哪项，Enter/Space 就激活哪项。
   const onKeyDown = (e: ReactKeyboardEvent) => {
     if (!open) return;
-    const items = Array.from(ref.current?.querySelectorAll<HTMLElement>('[role="menuitem"], [role="option"]') ?? []);
+    // menuitemcheckbox：标题 ⋯ 菜单里收进来的终端、改动等开关项（titleOverflow），漏掉就方向键跳不到。
+    const items = Array.from(ref.current?.querySelectorAll<HTMLElement>('[role="menuitem"], [role="menuitemcheckbox"], [role="option"]') ?? []);
     if (items.length === 0) return;
     const cur = items.indexOf(document.activeElement as HTMLElement);
     let next: number | null = null;
@@ -273,11 +276,7 @@ export function ActionMenu({
         data-testid={testId}
         onClick={toggle}
       >
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-          <circle cx="5" cy="12" r="1.6" />
-          <circle cx="12" cy="12" r="1.6" />
-          <circle cx="19" cy="12" r="1.6" />
-        </svg>
+        <Icon glyph={icMore} size={14} />
       </button>
       {open && (
         <div className="dd-menu" role="menu" ref={menuRef} style={{ position: "fixed", top: pos.top, bottom: pos.bottom, right: pos.right }}>

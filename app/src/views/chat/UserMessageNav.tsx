@@ -3,6 +3,8 @@ import { type ChatItem } from "../../api";
 import { useT } from "../../i18n";
 import { imageOnlyPaths, splitUserText } from "./Message";
 import { parseUserText } from "./localCommand";
+import { Icon } from "../../icons/Icon";
+import { icTerminal } from "../../icons/glyphs";
 
 /** 一条导航项：id 对应气泡上的 data-msg-id；kind 决定前缀图标与空正文时的占位。 */
 export type UserNavEntry = { id: string; label: string; kind: "text" | "command" | "image" };
@@ -196,7 +198,7 @@ export const UserMessageNav = memo(function UserMessageNav({ items, scrollRef }:
             <i className="chat-msg-nav-bar" aria-hidden="true" />
             <span className="chat-msg-nav-label">
               {entry.kind === "command" && (
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 17l6-6-6-6M12 19h8" /></svg>
+                <Icon glyph={icTerminal} size={12} />
               )}
               <span className="chat-msg-nav-text">{entry.kind === "image" ? t.chat.messageNavImage : entry.label}</span>
             </span>

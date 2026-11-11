@@ -240,7 +240,7 @@ export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | 
       ? [{ marker: "type something", kind: "input" as const }, { marker: "chat about this", kind: "chat" as const }]
       : [],
     // 与后端同源:五家都用 Esc 中断(claude/codex 确证,其余约定推断,见插件注释)。
-    interrupt_input: "",
+    interrupt_input: "\x1b",
     // 与后端同源:opencode 首按 Esc 只提示 "esc again to interrupt",须分两次写。
     interrupt_presses: provider === "opencode" ? 2 : 1,
     // 与后端同源:换行注入序列 claude 是 ESC+CR,其余四家是 ctrl+j(裸 LF),见各插件的取证注释。

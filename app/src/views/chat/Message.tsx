@@ -15,6 +15,9 @@ import { EchoActionsContext, EchoPhaseContext, outgoingIdOf, type EchoActions } 
 import { useRememberedDetails, useRememberedOpen } from "./foldMemory";
 import { FILE_TOKEN_REFRESHED_EVENT, IMAGE_LOAD_FAILED_EVENT, remoteUi } from "../../remoteMode";
 import { openSettingsAt } from "../../settingsNav";
+import { Icon } from "../../icons/Icon";
+import { icCopy, icFile, icImage, icLightbulb, icSwap, icUndo } from "../../icons/glyphs.chat";
+import { icAlert, icCheck, icClose, icTerminal } from "../../icons/glyphs";
 
 export function MessageCopyButton({ text, className = "chat-message-copy" }: { text: string; className?: string }) {
   const t = useT();
@@ -30,9 +33,9 @@ export function MessageCopyButton({ text, className = "chat-message-copy" }: { t
   return (
     <button type="button" className={className} aria-label={label} data-tip={label} onClick={copy}>
       {copied ? (
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m5 12 4 4L19 6" /></svg>
+        <Icon glyph={icCheck} size={14} />
       ) : (
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="8" y="8" width="11" height="12" rx="2" /><path d="M15 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h2" /></svg>
+        <Icon glyph={icCopy} size={14} />
       )}
     </button>
   );
@@ -224,7 +227,7 @@ function Lightbox({ src, name, onClose }: { src: string; name: string; onClose: 
         <button type="button" className="chat-lightbox-zoom" aria-label={t.chat.zoomReset} data-tip={t.chat.zoomReset} onClick={reset}>{Math.round(scale * 100)}%</button>
         <button type="button" aria-label={t.chat.zoomIn} data-tip={t.chat.zoomIn} onClick={() => setScale((s) => clampScale(s * 1.25))}>+</button>
         <button type="button" aria-label={t.chat.lightboxClose} data-tip={t.chat.lightboxClose} onClick={onClose}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 6l12 12M18 6L6 18" /></svg>
+          <Icon glyph={icClose} size={16} />
         </button>
       </div>
     </div>,
@@ -259,7 +262,7 @@ function CrossMessageBlock({ message }: { message: CrossMessage }) {
     <div className="chat-crossmsg">
       <div className="chat-crossmsg-head">
         <span className="chat-crossmsg-icon" aria-hidden="true">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M7 8h10l-3-3M17 16H7l3 3" /></svg>
+          <Icon glyph={icSwap} size={12} />
         </span>
         <span className="chat-crossmsg-from">{message.fromName || t.chat.crossMessageUnknown}</span>
         {/* 权限模式只在**非默认**时显示：default 是常态，写出来只是噪声。 */}
@@ -298,7 +301,7 @@ export function ImageRef({ path }: { path: string }) {
   if (failed) {
     return (
       <span className="chat-image-chip" data-tip={name}>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="5" width="18" height="14" rx="2" /><circle cx="9" cy="10" r="1.6" /><path d="m5 17 4.5-4.5L13 16l3-3 3 4" /></svg>
+        <Icon glyph={icImage} size={12} />
         <span>{name}</span>
       </span>
     );
@@ -378,7 +381,7 @@ function ReasoningBlock({ item, nextStamp = null }: { item: Extract<ChatItem, { 
     <details className="chat-reasoning" {...reasoningDetails}>
       <summary>
         <span className="chat-reasoning-icon" aria-hidden="true">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z" /></svg>
+          <Icon glyph={icLightbulb} size={16} />
         </span>
         {live ? t.chat.reasoningLive : t.chat.reasoning}
         {span && <span className="chat-reasoning-time">{span}</span>}
@@ -410,7 +413,7 @@ function TurnErrorCard({ item, latest }: { item: Extract<ChatItem, { type: "turn
   return (
     <article className="chat-message is-turn-error" role="alert">
       <div className="chat-turn-error-label">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 8v5M12 16.5v.5" /></svg>
+        <Icon glyph={icAlert} size={14} />
         {/* 标签是后端写的中文 sentinel，英文界面要经 errorLabels 翻译（看板卡片同一张表）。 */}
         {t.errorLabels[item.label] ?? item.label}
       </div>
@@ -450,7 +453,7 @@ function UndoButton({ id, text }: { id: string; text: string }) {
   const undo = actions.undoFrom;
   return (
     <button type="button" className="chat-turn-copy" aria-label={t.chat.undoTip} data-tip={t.chat.undoTip} onClick={() => undo(id, text)}>
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5" /><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" /></svg>
+      <Icon glyph={icUndo} size={14} />
     </button>
   );
 }
@@ -477,7 +480,10 @@ function UserBubbleText({ id, body }: { id: string; body: string }) {
   const clamped = !expanded;
   return (
     <div className={"chat-user-text" + (clamped && overflowing ? " is-clamped" : "")}>
-      <div ref={textRef} className={"chat-text" + (clamped ? " is-clampable" : "")}>{body}</div>
+      {/* 气泡（底色、内边距）在外层，限高与渐隐落在正文层：深色主题气泡色是半透明 rgba，
+          「渐变到气泡色」的遮罩盖不住字（UI 调研 chat #13 实拍无渐隐），只能对文字层 mask。
+          正文层保留 .chat-text：正文排版规则与按 .chat-text 找正文的地方都不用改。 */}
+      <div className="chat-user-bubble"><div ref={textRef} className={"chat-text chat-user-clip" + (clamped ? " is-clampable" : "")}>{body}</div></div>
       {(overflowing || expanded) && (
         <button type="button" className="chat-user-toggle" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
           {expanded ? t.chat.approvalCollapse : t.chat.approvalExpand}
@@ -603,7 +609,7 @@ function MessageBody({ item, nextStamp = null, latest = false, compactSummary = 
           {parts.commands.map((command, index) => (
             <span className="chat-command" key={`${command.name}-${index}`}>
               <span className="chat-command-icon" aria-hidden="true">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M4 17l6-6-6-6M12 19h8" /></svg>
+                <Icon glyph={icTerminal} size={12} />
               </span>
               <span className="chat-command-name">{command.name || t.chat.localCommand}</span>
               {command.args && <span className="chat-command-args">{command.args}</span>}
@@ -648,10 +654,13 @@ function MessageBody({ item, nextStamp = null, latest = false, compactSummary = 
       <article className={"chat-message is-user" + (images.length ? " has-images" : "")} data-msg-id={item.id}>
         {images.length > 0 && <ImageRow images={images} />}
         {body && <UserBubbleText id={item.id} body={body} />}
-        {(body || timeText || echoPhase || item.interjected) && <div className="chat-user-foot">
+        {(body || timeText || echoPhase || item.interjected || item.to_agent) && <div className="chat-user-foot">
           {/* 来源与送达是这条消息的事实，标在页脚：中途插入解释它为何出现在回复中间；
               未确认是回显超时仍不见落盘，照实说，不悄悄撤掉。 */}
           {item.interjected && <span className="chat-user-note" data-tip={t.chat.interjectedBadgeTip}>{t.chat.interjectedBadge}</span>}
+          {/* 发给子代理的话（Claude Code 里切到子代理视图发的）：正文只在子代理记录里，后端取回挂到主时间线。
+              标出去向，不然看着像对主会话说的，后面的回复也对不上（用户实拍 11-11）。 */}
+          {item.to_agent && <span className="chat-user-note" data-tip={t.chat.toAgentBadgeTip}>{t.chat.toAgentBadge(item.to_agent)}</span>}
           {echoPhase === "uncertain" && <EchoUncertainActions itemId={item.id} actions={echoActions} />}
           {/* 发出时以为空闲、其实 CLI 还在忙：它把这条收进了队列，照实说「已排队」。 */}
           {echoPhase === "accepted" && <span className="chat-user-note" data-tip={t.chat.echoQueuedTip}>{t.chat.echoQueued}</span>}
@@ -688,7 +697,7 @@ function MessageBody({ item, nextStamp = null, latest = false, compactSummary = 
     return (
       <RememberedDetails className="chat-tool" memoryKey={`tool:${item.id}`}>
         <summary>
-          <span className="chat-tool-icon"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 17l6-6-6-6M12 19h8" /></svg></span>
+          <span className="chat-tool-icon"><Icon glyph={icTerminal} size={16} /></span>
           <span className="chat-tool-name">{item.name}</span><span className="chat-tool-summary">{item.summary}</span><span className="chat-tool-chevron">›</span>
         </summary>
         <pre>{item.summary}</pre>
@@ -699,7 +708,7 @@ function MessageBody({ item, nextStamp = null, latest = false, compactSummary = 
     return (
       <RememberedDetails className={"chat-tool chat-result" + (item.is_error ? " is-error" : "")} memoryKey={`result:${item.id}`}>
         <summary>
-          <span className="chat-tool-icon is-file"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M6 3h8l4 4v14H6zM14 3v5h5" /></svg></span>
+          <span className="chat-tool-icon is-file"><Icon glyph={icFile} size={16} /></span>
           <span className="chat-tool-name">{t.chat.toolResult}</span><span className="chat-tool-summary">{stripAnsi(item.text)}</span><span className="chat-tool-chevron">›</span>
         </summary>
         <pre>{stripAnsi(item.text)}</pre>

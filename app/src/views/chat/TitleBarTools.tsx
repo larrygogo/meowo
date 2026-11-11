@@ -13,6 +13,9 @@ import { isMac } from "../../platform";
 import { useMenuPopup } from "../menu";
 import { CheckIcon, ChevronDownIcon } from "../sticker/icons";
 import { changedFileCount } from "./gitDiff";
+import { Icon } from "../../icons/Icon";
+import { icCode, icGitBranch, icPullRequest } from "../../icons/glyphs.chat";
+import { icFolder } from "../../icons/glyphs";
 
 /** 上次选的打开方式（编辑器 id 或 "files"）。只是界面偏好，存本机即可。 */
 const OPENER_KEY = "meowo-folder-opener";
@@ -35,24 +38,35 @@ const loadEditors = () => (editorsOnce ??= listFolderEditors()
 
 function FolderGlyph() {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
-    </svg>
+    <Icon glyph={icFolder} size={16} />
   );
 }
 function CodeGlyph() {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="m8 7-5 5 5 5M16 7l5 5-5 5" />
-    </svg>
+    <Icon glyph={icCode} size={16} />
   );
 }
-function OpenerIcon({ opener }: { opener: FileOpenerDto }) {
+export function OpenerIcon({ opener }: { opener: FileOpenerDto }) {
   if (opener.icon) return <img src={opener.icon} width={16} height={16} alt="" draggable={false} />;
   return opener.id === FILE_MANAGER ? <FolderGlyph /> : <CodeGlyph />;
 }
 
-export function OpenInEditor({ cwd, onError }: { cwd: string; onError: (message: string) => void }) {
+/// 用指定的打开方式打开目录；失败交给 onError（已按界面语言格式化）。Ctrl+K「用…打开」也走这里。
+export function openFolderWith(cwd: string, id: string, onError: (message: string) => void, locale: string) {
+  const opening = id === FILE_MANAGER ? openProjectDir(cwd) : openFolderIn(cwd, id);
+  opening.catch((error) => onError(formatBackendError(error, locale)));
+}
+
+export type FolderOpeners = {
+  options: FileOpenerDto[];
+  current: FileOpenerDto;
+  /** 用指定方式打开并记成下次的默认（对照 Kimi：选了就记住）。 */
+  pick: (id: string) => void;
+};
+
+/** 打开方式（已装的编辑器 + 系统文件管理器）的清单、当前默认与「打开」动作。标题栏分体按钮、
+ *  窄窗 ⋯ 菜单与 Ctrl+K 命令面板（UI 优化 #53）共用一份，几处选过的默认才不会各记各的。 */
+export function useFolderOpeners(cwd: string, onError: (message: string) => void): FolderOpeners {
   const t = useT();
   const [editors, setEditors] = useState<FileOpenerDto[]>([]);
   useEffect(() => {
@@ -61,17 +75,25 @@ export function OpenInEditor({ cwd, onError }: { cwd: string; onError: (message:
     return () => { alive = false; };
   }, []);
   const [preferred, setPreferred] = useState(readOpener);
-  const { open, setOpen, pos, ref, btnRef, menuRef, toggle, onKeyDown } = useMenuPopup({});
   const options: FileOpenerDto[] = [
     ...editors,
     { id: FILE_MANAGER, name: isMac() ? t.chat.fileManagerMac : t.chat.fileManager, icon: null },
   ];
   // 没选过（或选的那个已卸载）时默认第一个编辑器；一个都没装就是文件管理器。
   const current = options.find((option) => option.id === preferred) ?? options[0];
-  const openWith = (id: string) => {
-    const opening = id === FILE_MANAGER ? openProjectDir(cwd) : openFolderIn(cwd, id);
-    opening.catch((error) => onError(formatBackendError(error, t.locale)));
+  const pick = (id: string) => {
+    setPreferred(id);
+    saveOpener(id);
+    openFolderWith(cwd, id, onError, t.locale);
   };
+  return { options, current, pick };
+}
+
+export function OpenInEditor({ cwd, onError, openers }: { cwd: string; onError: (message: string) => void; openers?: FolderOpeners }) {
+  const t = useT();
+  const own = useFolderOpeners(cwd, onError);
+  const { options, current, pick } = openers ?? own;
+  const { open, setOpen, pos, ref, btnRef, menuRef, toggle, onKeyDown } = useMenuPopup({});
   return (
     <div className="dd tb-open" ref={ref} onKeyDown={onKeyDown}>
       <button
@@ -79,7 +101,7 @@ export function OpenInEditor({ cwd, onError }: { cwd: string; onError: (message:
         className="tb-open-main"
         data-tip={t.chat.openWith(current.name)}
         aria-label={t.chat.openWith(current.name)}
-        onClick={() => openWith(current.id)}
+        onClick={() => pick(current.id)}
       >
         <OpenerIcon opener={current} />
       </button>
@@ -105,10 +127,8 @@ export function OpenInEditor({ cwd, onError }: { cwd: string; onError: (message:
               className="dd-item"
               onClick={() => {
                 // 选了就记住并直接打开（对照 Kimi）：下次点主钮就是它。
-                setPreferred(option.id);
-                saveOpener(option.id);
                 setOpen(false);
-                openWith(option.id);
+                pick(option.id);
               }}
             >
               <span className="dd-val">
@@ -131,10 +151,7 @@ export function PullRequestChip({ pr }: { pr: PullRequestDto }) {
   const tip = t.chat.prOpenTip(pr.number, pr.title);
   return (
     <button type="button" className={`tb-pr is-${pr.state}`} aria-label={tip} data-tip={tip} onClick={() => void openLink(pr.url).catch(() => {})}>
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <circle cx="6" cy="6" r="2.2" /><circle cx="6" cy="18" r="2.2" /><circle cx="18" cy="18" r="2.2" />
-        <path d="M6 8.2v7.6M18 15.8V9a3 3 0 0 0-3-3h-4M13 3.5 10.5 6 13 8.5" />
-      </svg>
+      <Icon glyph={icPullRequest} size={14} />
       <span>#{pr.number}</span>
       <span className="tb-pr-state">{t.chat.prState[pr.state] ?? pr.state}</span>
     </button>
@@ -167,10 +184,7 @@ export function GitStatusChip({ summary, active, onToggle }: {
       data-tip={tip}
       onClick={onToggle}
     >
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <circle cx="6" cy="5" r="2" /><circle cx="6" cy="19" r="2" /><circle cx="18" cy="7" r="2" />
-        <path d="M6 7v10" /><path d="M18 9c0 5-6 5-11.5 8" />
-      </svg>
+      <Icon glyph={icGitBranch} size={14} />
       {summary.branch && <span className="tb-git-branch">{summary.branch}</span>}
       {ahead > 0 && <span className="tb-git-pill is-ahead">↑{ahead}</span>}
       {behind > 0 && <span className="tb-git-pill is-behind">↓{behind}</span>}

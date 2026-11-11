@@ -14,8 +14,11 @@ import type { PanelState, PanelTab } from "./panelTabs";
 import { PANEL_ICONS as ICONS, PANEL_SHORTCUTS, shortcutLabel as mod } from "./panelIcons";
 import { ShellTerminal } from "./ShellTerminal";
 import { tabTitle, type PanelActions } from "./usePanel";
+import { Icon } from "../../icons/Icon";
+import { icCollapse, icExpand, icSidebarRight } from "../../icons/glyphs.chat";
+import { icChevronDown, icClose, icPlus } from "../../icons/glyphs";
 
-const CLOSE_ICON = <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>;
+const CLOSE_ICON = <Icon glyph={icClose} size={12} />;
 
 type Props = {
   state: PanelState;
@@ -152,7 +155,7 @@ export const SidePanel = memo(function SidePanel(props: Props) {
               });
             }}
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
+            <Icon glyph={icChevronDown} size={14} />
           </button>
         )}
         <button
@@ -166,7 +169,7 @@ export const SidePanel = memo(function SidePanel(props: Props) {
             setMenu(menu ? null : { x: rect.right - 220, y: rect.bottom + 4, items: launchItems() });
           }}
         >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>
+          <Icon glyph={icPlus} size={14} />
         </button>
         {state.tabs.length > 0 && (
           <button
@@ -177,21 +180,14 @@ export const SidePanel = memo(function SidePanel(props: Props) {
             onClick={actions.toggleExpanded}
           >
             {state.expanded ? (
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M4 14h6v6" /><path d="M20 10h-6V4" /><path d="M14 10l7-7" /><path d="M3 21l7-7" />
-              </svg>
+              <Icon glyph={icCollapse} size={14} />
             ) : (
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M15 3h6v6" /><path d="M9 21H3v-6" /><path d="M21 3l-7 7" /><path d="M3 21l7-7" />
-              </svg>
+              <Icon glyph={icExpand} size={14} />
             )}
           </button>
         )}
         <button type="button" className="chat-diff-action" data-tip={t.chat.diffCollapse} aria-label={t.chat.diffCollapse} onClick={actions.hide}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" aria-hidden="true">
-            <rect x="3.5" y="4.5" width="17" height="15" rx="3" />
-            <path d="M14.5 4.5v15" />
-          </svg>
+          <Icon glyph={icSidebarRight} size={14} />
         </button>
       </header>
       {menu && <PathMenu x={Math.max(4, menu.x)} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}
@@ -428,9 +424,10 @@ function TabBar({ state, actions, title, onContextMenu, closeLabel, agentBusy, a
             {waiting(tab)
               ? <span className="side-panel-tab-waiting" title={waitingLabel} aria-label={waitingLabel} />
               : agentBusy(tab) && <span className="side-panel-tab-agent" title={agentLabel} aria-label={agentLabel} />}
+            {/* 关闭叉在页签按钮里面：按钮的子元素对读屏是「纯展示」，嵌套的 role=button 本来就
+                读不到（axe nested-interactive）。读屏/键盘关页签走右键菜单（菜单键同样触发）。 */}
             <span
-              role="button"
-              tabIndex={-1}
+              aria-hidden="true"
               className="side-panel-tab-close"
               aria-label={closeLabel}
               onPointerDown={(event) => event.stopPropagation()}

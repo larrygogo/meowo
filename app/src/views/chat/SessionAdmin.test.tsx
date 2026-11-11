@@ -62,7 +62,7 @@ describe("会话管理页（对照 Kimi Code）", () => {
   it("筛选改完点「查询」才生效：工作空间多选、状态、N 天以前", async () => {
     render(<SessionAdmin onBack={() => {}} onOpen={() => {}} />);
     await screen.findByText("会话2");
-    fireEvent.click(screen.getByRole("button", { name: "工作空间" }));
+    fireEvent.click(screen.getByRole("button", { name: "工作区" }));
     fireEvent.click(await screen.findByRole("option", { name: "reverse-bot-gui" }));
     fireEvent.click(screen.getByRole("button", { name: "状态" }));
     fireEvent.click(await screen.findByRole("option", { name: "进行中" }));

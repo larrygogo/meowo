@@ -16,6 +16,10 @@ import { listFileOpeners, openPathWith, revealPathInFileManager, type FileOpener
 import { pushEscLayer } from "../../escLayers";
 import { useT } from "../../i18n";
 import type { Dict } from "../../i18n/zh";
+import { Icon } from "../../icons/Icon";
+import { icAt, icCode, icCopy } from "../../icons/glyphs.chat";
+import { icFolderOpen, icMore } from "../../icons/glyphs";
+import { icAppWindow, icExternal } from "../../icons/glyphs.scm";
 
 /** cwd + rel 拼绝对路径（复制路径用）：cwd 是本机形态，Windows 下 rel 的正斜杠翻成反斜杠。 */
 export function joinAbsPath(cwd: string, rel: string): string {
@@ -257,16 +261,14 @@ export function RowMore({ label, open, onOpen }: { label: string; open: boolean;
         onOpen(rect.left, rect.bottom + 2);
       }}
     >
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="6" cy="12" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="18" cy="12" r="1.6" /></svg>
+      <Icon glyph={icMore} size={14} />
     </button>
   );
 }
 
 function MentionIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <circle cx="12" cy="12" r="4" /><path d="M16 8v5a3 3 0 0 0 6 0v-1a10 10 0 1 0-3.9 7.9" />
-    </svg>
+    <Icon glyph={icAt} size={14} />
   );
 }
 
@@ -274,47 +276,30 @@ function MentionIcon() {
 
 export function OpenIcon() {
   return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-      <polyline points="15 3 21 3 21 9" />
-      <line x1="10" y1="14" x2="21" y2="3" />
-    </svg>
+    <Icon glyph={icExternal} size={12} />
   );
 }
 
 export function CopyIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <rect x="9" y="9" width="13" height="13" rx="2" />
-      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-    </svg>
+    <Icon glyph={icCopy} size={14} />
   );
 }
 
 function RevealIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="m6 14 1.45-2.9A2 2 0 0 1 9.24 10H20a2 2 0 0 1 1.94 2.5l-1.55 6a2 2 0 0 1-1.94 1.5H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H18a2 2 0 0 1 2 2v2" />
-    </svg>
+    <Icon glyph={icFolderOpen} size={14} />
   );
 }
 
 function EditorIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <polyline points="16 18 22 12 16 6" />
-      <polyline points="8 6 2 12 8 18" />
-    </svg>
+    <Icon glyph={icCode} size={14} />
   );
 }
 
 function AppWindowIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <rect x="2" y="4" width="20" height="16" rx="2" />
-      <path d="M10 4v4" />
-      <path d="M2 8h20" />
-      <path d="M6 4v4" />
-    </svg>
+    <Icon glyph={icAppWindow} size={14} />
   );
 }

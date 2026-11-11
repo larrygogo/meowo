@@ -991,7 +991,7 @@ describe("ChatWindow", () => {
     // 多行文本经括号粘贴包裹送入 PTY(\x1b[200~…\x1b[201~),指令文本恒多行,断言带包裹。
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", {
       sessionId: 21,
-      data: `[200~看图\n\n请读取并结合以下本地附件完成任务（图片请使用图像读取能力）：\n- C:\\repo\\shot.png[201~`,
+      data: `\x1b[200~看图\n\n请读取并结合以下本地附件完成任务（图片请使用图像读取能力）：\n- C:\\repo\\shot.png\x1b[201~`,
     }));
   });
 

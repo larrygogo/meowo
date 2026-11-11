@@ -46,7 +46,7 @@
 /* 假光标不触发 :hover，用 .demo-hover 镜像真实卡片 hover。扁平风(默认)的 .stk-card:hover
    只淡入悬停底色、不抬起(--card-elev-hover 为 none、transform 为 none),故这里如实照做。 */
 .demo-window .stk-card.demo-hover {
-  background: var(--cc-surface-hover);
+  background: var(--fill-selected);
   box-shadow: var(--card-elev-hover);
 }
 /* docking / expanded 位置与 normal 相同(窗口已停在右缘):docking 只额外亮 snap-glow 提示,

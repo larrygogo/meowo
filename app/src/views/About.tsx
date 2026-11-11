@@ -4,14 +4,14 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useAgentListRefresh } from "../useAgents";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { availableTerminals, exportDiagLog, leadWorkflowInstalled, setLeadWorkflow, getLiveSessionsPage, listAgents, agentName, setArchived, type AgentId, type AgentDescriptor, type LiveSession, type PageCursor, type ThemeMode, type ResumeTerminal, type TerminalOpenMode, type SessionOpenIn, type CardMenuMode, type StickerStyle, type TerminalLineHeight, type ChatContentWidth, type IslandCompactStyle } from "../api";
+import { availableTerminals, exportDiagLog, leadWorkflowInstalled, setLeadWorkflow, getLiveSessionsPage, listAgents, agentName, setArchived, type AgentId, type AgentDescriptor, type LiveSession, type PageCursor, type ThemeMode, type ResumeTerminal, type SessionOpenIn, type CardMenuMode, type StickerStyle, type TerminalLineHeight, type ChatContentWidth, type IslandCompactStyle } from "../api";
 import { folderName } from "../paths";
 import { fmtAgo } from "./sticker/helpers";
 import { useUpdate, type UpdateStatus } from "../useUpdate";
 import { useShowWhenReady } from "../useShowWhenReady";
 import { languageOptions, useT } from "../i18n";
 import { formatBackendError } from "../i18n/errors";
-import { appConfirm } from "../confirm";
+import { appAlert } from "../confirm";
 import logoUrl from "../../src-tauri/icons/128x128.png";
 import type { Dict } from "../i18n/zh";
 import { SETTINGS_DEFAULTS, useSettingsState } from "./settings/state";
@@ -26,6 +26,9 @@ import { applySettingsFilter } from "./settings/searchFilter";
 import { useEscClose } from "../hooks/useEscClose";
 import { displayKeys, KeyCombos, shortcutGroups } from "./chat/WindowModals";
 import { SETTINGS_SECTION_KEY } from "../settingsNav";
+import { Icon } from "../icons/Icon";
+import { icClose, icContrast, icGlobe, icSearch, icSettings } from "../icons/glyphs";
+import { icBot, icCards, icInfo, icKeyboard, icPuzzle, icSmartphone } from "../icons/glyphs.settings";
 
 const REPO = "github.com/larrygogo/meowo";
 const REPO_URL = "https://github.com/larrygogo/meowo";
@@ -57,92 +60,60 @@ const resumeTermOptionsWin = (t: Dict): { value: ResumeTerminal; label: string }
 
 function IconGear() {
   return (
-    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="3" />
-      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-    </svg>
+    <Icon glyph={icSettings} size={16} />
   );
 }
 function IconInfo() {
   return (
-    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="9" />
-      <line x1="12" y1="11" x2="12" y2="16" />
-      <line x1="12" y1="8" x2="12" y2="8" />
-    </svg>
+    <Icon glyph={icInfo} size={16} />
   );
 }
 
 // 机器人徽标：这一分区管的是各家 AI Agent，比人像更贴切。
 function IconAgent() {
   return (
-    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 8V4H8" />
-      <rect x="4" y="8" width="16" height="12" rx="2.5" />
-      <path d="M2 14h2" />
-      <path d="M20 14h2" />
-      <path d="M9 13.5v2" />
-      <path d="M15 13.5v2" />
-    </svg>
+    <Icon glyph={icBot} size={16} />
   );
 }
 
 // 叠放的圆角卡片：会话分区管的是会话与看板卡片。
 function IconCards() {
   return (
-    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="3" width="13" height="13" rx="2.5" />
-      <path d="M8 21h10.5a2.5 2.5 0 0 0 2.5-2.5V8" />
-    </svg>
+    <Icon glyph={icCards} size={16} />
   );
 }
 
 // 半填充对比圆：外观/主题的经典图标。
 function IconAppearance() {
   return (
-    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="9" />
-      <path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor" stroke="none" />
-    </svg>
+    <Icon glyph={icContrast} size={16} />
   );
 }
 
 // 键盘：快捷键分区。
 function IconKeyboard() {
   return (
-    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="2" y="5" width="20" height="14" rx="2.5" />
-      <path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 13h.01M10 13h.01M14 13h.01M18 13h.01M8 16h8" />
-    </svg>
+    <Icon glyph={icKeyboard} size={16} />
   );
 }
 
 // 地球：网络/代理。
 function IconPhone() {
   return (
-    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="6.5" y="2.5" width="11" height="19" rx="2.5" />
-      <line x1="10.5" y1="18" x2="13.5" y2="18" />
-    </svg>
+    <Icon glyph={icSmartphone} size={16} />
   );
 }
 
 // 拼图块：扩展（技能 / MCP / 插件）。
 function IconPuzzle() {
   return (
-    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M15.4 4.6a2.4 2.4 0 1 0-4.8 0V6H7a1 1 0 0 0-1 1v3.6h1.4a2.4 2.4 0 1 1 0 4.8H6V19a1 1 0 0 0 1 1h3.6v-1.4a2.4 2.4 0 1 1 4.8 0V20H19a1 1 0 0 0 1-1v-3.6h-1.4a2.4 2.4 0 1 1 0-4.8H20V7a1 1 0 0 0-1-1h-3.6z" />
-    </svg>
+    <Icon glyph={icPuzzle} size={16} />
   );
 }
 
 function IconGlobe() {
   return (
-    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="9" />
-      <line x1="3" y1="12" x2="21" y2="12" />
-      <path d="M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18z" />
-    </svg>
+    <Icon glyph={icGlobe} size={16} />
   );
 }
 
@@ -167,7 +138,7 @@ function ShortcutsSection() {
           </div>
         </Fragment>
       ))}
-      <div className="sec-hint">{t.chat.shortcutTerminalNote(displayKeys("Ctrl"))}</div>
+      <div className="sec-hint">{t.chat.shortcutTerminalNote(displayKeys("Ctrl"), IS_MAC ? "⌃" : "Ctrl")}</div>
     </>
   );
 }
@@ -209,6 +180,7 @@ export function GeneralSection() {
   const autoUpdateOn = settings?.auto_update_enabled ?? true;
   const chatOn = settings?.chat_enabled ?? true;
   const keepAwakeOn = settings?.keep_awake_while_running ?? true;
+  const browserAgentOn = settings?.browser_agent ?? true;
   const leadAwakeOn = settings?.keep_awake_for_lead_gate ?? true;
   const toggleLeadAwake = () => patch({ keep_awake_for_lead_gate: !leadAwakeOn });
   const [leadOn, setLeadOn] = useState<boolean | null>(null);
@@ -283,6 +255,13 @@ export function GeneralSection() {
           </div>
           <Switch checked={keepAwakeOn} onChange={toggleKeepAwake} label={t.settings.keepAwake} />
         </div>}
+        <div className="row">
+          <div className="row-text">
+            <div className="row-label">{t.settings.browserAgent}</div>
+            <div className="row-desc">{t.settings.browserAgentDesc}</div>
+          </div>
+          <Switch checked={browserAgentOn} onChange={() => patch({ browser_agent: !browserAgentOn })} label={t.settings.browserAgent} />
+        </div>
       </div>
 
       {/* Lead 工作流（2026-11-09）：开关状态以「是否真的装着」为准。 */}
@@ -400,7 +379,7 @@ function LaunchDefaultRows({ agent }: { agent: AgentDescriptor }) {
   );
 }
 
-function SessionsSection() {
+export function SessionsSection() {
   const t = useT();
   const [settings, patch, patchError, clearPatchError] = useSettingsState();
   const [availTerms, setAvailTerms] = useState<ResumeTerminal[] | null>(null);
@@ -414,9 +393,6 @@ function SessionsSection() {
   };
   useEffect(reloadAgents, []);
   useAgentListRefresh(reloadAgents); // 装完新 agent 立刻反映
-  const previewOn = settings?.preview_enabled ?? true;
-  const togglePreview = () => patch({ preview_enabled: !previewOn });
-  const browserAgentOn = settings?.browser_agent ?? true;
   const chatOn = settings?.chat_enabled ?? true;
   // 终端选项按平台给，再用后端探测到的「本机实际可用」列表过滤（未装的不列出）。
   const platformOpts = IS_MAC ? RESUME_TERM_OPTIONS_MAC : resumeTermOptionsWin(t);
@@ -516,36 +492,11 @@ function SessionsSection() {
         )}
       </div>
 
+      {/* 原「卡片」组：「对话预览」「打开方式」只有已下线的贴纸在读（UI 调研 shell #2，拨了没反应），
+          关卡 A 定案删掉，字段留在 settings.json 照常读写；侧栏 ⋯ 仍用卡片菜单，组名改叫「会话列表」。
+          浏览器那项和卡片无关，挪去通用分区「运行」组。 */}
       <div className="sec-caption">{t.settings.cardsGroup}</div>
       <div className="row-card">
-        <div className="row">
-          <div className="row-text">
-            <div className="row-label">{t.settings.preview}</div>
-            <div className="row-desc">{t.settings.previewDesc}</div>
-          </div>
-          <Switch checked={previewOn} onChange={togglePreview} label={t.settings.preview} />
-        </div>
-        <div className="row">
-          <div className="row-text">
-            <div className="row-label">{t.settings.browserAgent}</div>
-            <div className="row-desc">{t.settings.browserAgentDesc}</div>
-          </div>
-          <Switch checked={browserAgentOn} onChange={() => patch({ browser_agent: !browserAgentOn })} label={t.settings.browserAgent} />
-        </div>
-        <div className="row">
-          <div className="row-text">
-            <div className="row-label">{t.settings.terminalOpen}</div>
-            <div className="row-desc">{t.settings.terminalOpenDesc}</div>
-          </div>
-          <Dropdown
-            value={settings?.terminal_open_mode ?? "card"}
-            options={[
-              { value: "card" as const, label: t.settings.openModeCard },
-              { value: "button" as const, label: t.settings.openModeButton },
-            ]}
-            onChange={(v: TerminalOpenMode) => patch({ terminal_open_mode: v })}
-          />
-        </div>
         <div className="row">
           <div className="row-text">
             <div className="row-label">{t.settings.cardMenu}</div>
@@ -791,6 +742,7 @@ function AppearanceSection() {
   const stickerStyle = settings?.sticker_style ?? SETTINGS_DEFAULTS.sticker_style;
   const islandCompact = settings?.island_compact ?? SETTINGS_DEFAULTS.island_compact;
   const islandStrip = settings?.island_strip ?? SETTINGS_DEFAULTS.island_strip;
+  const islandAutoStrip = settings?.island_auto_strip ?? SETTINGS_DEFAULTS.island_auto_strip;
   const islandAlerts = settings?.island_alerts ?? SETTINGS_DEFAULTS.island_alerts;
   const islandAlertSeconds = settings?.island_alert_seconds ?? SETTINGS_DEFAULTS.island_alert_seconds;
   const stickerColor = settings?.sticker_color ?? SETTINGS_DEFAULTS.sticker_color;
@@ -857,6 +809,14 @@ function AppearanceSection() {
               <div className="row-desc">{t.settings.islandStripDesc}</div>
             </div>
             <Switch checked={islandStrip} onChange={() => patch({ island_strip: !islandStrip })} label={t.settings.islandStrip} />
+          </div>}
+          {/* 最大化窗口在前台时自动收细条（关卡 A 定案，i6）。只有 Windows：macOS 岛钉在刘海/菜单栏，不挡标题栏。 */}
+          {IS_WIN && <div className="row">
+            <div className="row-text">
+              <div className="row-label">{t.settings.islandAutoStrip}</div>
+              <div className="row-desc">{t.settings.islandAutoStripDesc}</div>
+            </div>
+            <Switch checked={islandAutoStrip} onChange={() => patch({ island_auto_strip: !islandAutoStrip })} label={t.settings.islandAutoStrip} />
           </div>}
           <div className="row">
             <div className="row-text">
@@ -949,7 +909,7 @@ function AppearanceSection() {
   );
 }
 
-function AboutSection({
+export function AboutSection({
   status,
   newVersion,
 }: {
@@ -969,7 +929,7 @@ function AboutSection({
   const openUpdater = () => invoke("open_update_window").catch((e) => {
     // 点了「检查更新」毫无反应是最糟的失败：console 留线索 + 兜底错误框（S-14 范式）。
     console.error("[about] 打开更新窗口失败：", e);
-    void appConfirm(formatBackendError(e, t.locale), { title: t.about.checkUpdate });
+    void appAlert(formatBackendError(e, t.locale), { title: t.about.checkUpdate });
   });
   const hasUpdate = status === "available" || status === "downloading" || status === "ready";
   // 7S-3：三个态此前都压成一句「发现新版本」+ 一颗「更新到 vX」——正在下载和已经下完
@@ -990,7 +950,7 @@ function AboutSection({
       setDiagExported(true);
       window.setTimeout(() => setDiagExported(false), 2_000);
     } catch (e) {
-      void appConfirm(formatBackendError(e, t.locale), { title: t.about.diagLog });
+      void appAlert(formatBackendError(e, t.locale), { title: t.about.diagLog });
     }
   };
 
@@ -1016,7 +976,7 @@ function AboutSection({
             <div className="row-label">{t.about.versionInfo}</div>
             <div className="row-desc">{verSub}</div>
           </div>
-          <button className={"sbtn" + (updateBtn.primary ? " primary" : "")} onClick={openUpdater}>
+          <button className={"sbtn" + (updateBtn.primary ? " btn-primary" : "")} onClick={openUpdater}>
             {updateBtn.label}
           </button>
         </div>
@@ -1156,10 +1116,10 @@ export function About() {
       general: t.settings.nav.general,
       sessions: t.settings.nav.sessions,
       appearance: t.settings.nav.appearance,
-      shortcuts: t.settings.nav.shortcuts,
+      shortcuts: `${t.settings.nav.shortcuts} ${t.settings.navSearchExtra.shortcuts}`,
       remote: t.settings.nav.remote,
       network: t.settings.nav.network,
-      account: t.settings.nav.account,
+      account: `${t.settings.nav.account} ${t.settings.navSearchExtra.account}`,
       extensions: t.settings.nav.extensions,
       about: t.settings.nav.about,
     };
@@ -1181,10 +1141,7 @@ export function About() {
         {/* S-1：设置搜索入口。命中过滤分区与行（见 settings/searchFilter.ts）；
             输入框里的 Esc 先清词——useEscClose 对输入框让位，不会误关窗。 */}
         <div className="side-search">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-            <circle cx="11" cy="11" r="7" />
-            <line x1="21" y1="21" x2="16.5" y2="16.5" />
-          </svg>
+          <Icon glyph={icSearch} size={12} />
           <input
             ref={searchInputRef}
             value={query}
@@ -1266,10 +1223,7 @@ export function About() {
             搜索时各分区平铺，才由分区内的 .sec-title 当分隔。 */}
         <div className="main-bar" data-tauri-drag-region>
           <button className="winclose" data-tip={t.settings.close} onClick={close} aria-label={t.settings.close}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <line x1="6" y1="6" x2="18" y2="18" />
-              <line x1="18" y1="6" x2="6" y2="18" />
-            </svg>
+            <Icon glyph={icClose} size={14} />
           </button>
         </div>
         <div className={"main-body" + (searching ? " is-searching" : "")} ref={bodyRef}>

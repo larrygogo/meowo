@@ -12,6 +12,8 @@ import { highlightCode, languageForFence, useHighlighter } from "./chat/highligh
 import { copyPlainText } from "./chat/clipboard";
 import { markdownTooComplex } from "./chat/markdownGuard";
 import { ErrorBoundary } from "../ErrorBoundary";
+import { Icon } from "../icons/Icon";
+import { icImage } from "../icons/glyphs.chat";
 
 /** 文件面板的 FileMarkdown 复用同一份 remark 插件表——渲染规则两处不分叉。 */
 export const PLUGINS = [remarkGfm];
@@ -197,7 +199,9 @@ function CopyablePre({ children }: { children?: ReactNode }) {
         )}
         <button type="button" className="chat-md-pre-copy" onClick={copy}>{copied ? t.chat.codeCopied : t.chat.codeCopy}</button>
       </div>
-      <pre ref={preRef}>{children}</pre>
+      {/* 横向溢出时代码块是可滚动区域，键盘用户要能 Tab 进来用方向键滚（axe scrollable-region-focusable，
+          验收 #23）。不溢出时不进 Tab 序，免得每个短代码块都多停一下。 */}
+      <pre ref={preRef} {...(overflowing ? { tabIndex: 0, role: "region", "aria-label": t.chat.codeBlockLabel(lang) } : {})}>{children}</pre>
     </div>
   );
 }
@@ -365,7 +369,7 @@ export const components: Components = {
       const name = alt || url.split(/[\\/]/).pop() || url;
       return (
         <span className="chat-image-chip" data-tip={url || name}>
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="5" width="18" height="14" rx="2" /><circle cx="9" cy="10" r="1.6" /><path d="m5 17 4.5-4.5L13 16l3-3 3 4" /></svg>
+          <Icon glyph={icImage} size={12} />
           <span>{name}</span>
         </span>
       );

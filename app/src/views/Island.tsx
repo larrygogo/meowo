@@ -15,6 +15,8 @@ import { AgentRing, Clock, Eyes, EYES_BLUSH_AFTER_MS, EYES_BUSY_AT, UsageRing, u
 
 export type { IslandTone } from "./island/islandParts";
 import type { IslandCompactStyle } from "../api";
+import { Icon } from "../icons/Icon";
+import { icCheck, icClose, icExclamation, icQuestion, icShieldAlert } from "../icons/glyphs";
 export type { IslandCompactStyle };
 
 /// 刘海两侧「耳朵」的宽度（逻辑像素）。窗口宽 = 刘海本体 + 2 × 耳朵。
@@ -25,6 +27,8 @@ export const ISLAND_PILL_HEIGHT = 46;
 export const ISLAND_ALERT_SIZE = { width: 520 + ISLAND_EAR * 2, height: 68 } as const;
 /// 胶囊上最多摆几个会话图标，再多折成「+N」。
 const MAX_AGENTS = 4;
+/// 圆点样式最多画几个点，再多折成「+N」（i13：此前多出来的直接不画，看不出后面还有人在等）。
+const MAX_DOTS = 6;
 
 export type IslandCounts = { pending: number; error: number; running: number; waiting: number };
 type Counts = IslandCounts;
@@ -96,6 +100,30 @@ export function groupTone(items: readonly Item[]): IslandTone {
   return islandTone(islandCounts(items));
 }
 
+/// 收起态给读屏的名字（i8）：按要紧程度报各状态的会话数。此前固定一句「点击展开会话列表」，
+/// 里面的会话、状态全被盖掉，读屏用户只知道这是个按钮。
+export function islandAriaSummary(counts: Counts, t: ReturnType<typeof useT>): string {
+  const order = ["pending", "error", "running", "waiting"] as const;
+  return t.island.ariaSummary(
+    order.filter((tone) => counts[tone] > 0).map((tone) => t.island.ariaCount(counts[tone], t.island.toneLabel[tone])),
+  );
+}
+
+/// 圆点样式：按要紧程度取前 MAX_DOTS 个，余下折成「+N」，颜色取折进去的最急状态（同概览的 +N）。
+function Dots({ sessions }: { sessions: readonly Item[] }) {
+  const ordered = byUrgency(sessions);
+  const shown = ordered.slice(0, MAX_DOTS);
+  const rest = ordered.slice(MAX_DOTS);
+  return (
+    <span className="isl-dots">
+      {shown.map((item) => (
+        <span key={item.session.id} className={`isl-dot is-${cardTone(item)}`} />
+      ))}
+      {rest.length > 0 && <span className={`isl-more is-${groupTone(rest)}`}>+{rest.length}</span>}
+    </span>
+  );
+}
+
 function urgency(item: Item): number {
   const tone = cardTone(item);
   if (tone === "pending") return 0;
@@ -160,18 +188,8 @@ export function sessionTitle(item: Item, fallback: string): string {
 
 /// 提醒左侧的状态图标：审批是盾牌、提问是问号、跑完是对勾、出错是感叹号。
 function AlertIcon({ kind }: { kind: string }) {
-  const path = kind === "question"
-    ? "M9.2 9a2.9 2.9 0 1 1 4.1 2.6c-.8.4-1.3 1-1.3 1.9v.5M12 17.2v.1"
-    : kind === "waiting"
-    ? "M5 12.5l4.2 4.2L19 7"
-    : kind === "error"
-    ? "M12 7v6M12 16.5v.1"
-    : "M12 3l8 4v5c0 4.5-3.3 8-8 9-4.7-1-8-4.5-8-9V7zM12 9v4M12 16.2v.1";
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d={path} />
-    </svg>
-  );
+  const glyph = kind === "question" ? icQuestion : kind === "waiting" ? icCheck : kind === "error" ? icExclamation : icShieldAlert;
+  return <Icon glyph={glyph} size={14} />;
 }
 
 /** 极简模式的细条：宽度与高度（逻辑像素）。贴着屏幕顶边，鼠标甩到顶上就能点到。 */
@@ -192,14 +210,15 @@ export function IslandStrip({
   onHover?: () => void;
 }) {
   const t = useT();
-  const tone = islandTone(islandCounts(sessions));
+  const counts = islandCounts(sessions);
+  const tone = islandTone(counts);
   return (
     <div
       className="isl-strip"
       data-tone={tone}
       role="button"
       tabIndex={0}
-      aria-label={t.island.ariaLabel}
+      aria-label={islandAriaSummary(counts, t)}
       onPointerEnter={onHover}
       onPointerDown={onPointerDownDrag}
       onKeyDown={(event) => {
@@ -222,6 +241,8 @@ export function Island({
   onOpenSession,
   onPointerDownDrag,
   onAlertHover,
+  onDismissAlert,
+  onDismissAllAlerts,
   alertQueued = 0,
   notch,
 }: {
@@ -240,6 +261,10 @@ export function Island({
   onPointerDownDrag: (event: React.PointerEvent<HTMLElement>) => void;
   /** 鼠标进出提醒：App 据此暂停/恢复提醒的倒计时。 */
   onAlertHover?: (hovering: boolean) => void;
+  /** 关掉正在弹的这条提醒（×）。不给就不画关闭钮。 */
+  onDismissAlert?: () => void;
+  /** 关掉这条并清空排队的（「全部忽略」）。 */
+  onDismissAllAlerts?: () => void;
   /** 提醒队列里还排着几条（不含正在弹的）。 */
   alertQueued?: number;
   /** macOS 有刘海时刘海的宽高（逻辑点）。给了就把收起的内容分到刘海左右两翼，中间留空：
@@ -280,10 +305,16 @@ export function Island({
       case "question": return t.pending.question;
       case "plan": return t.pending.plan;
       case "blocked": return t.pending.blocked;
-      case "error": return event.detail || t.chat.status.error;
+      // 出错时状态词固定，详情另放进可省略的 detail（i12：此前整段详情塞进不收缩的状态词，字中间被硬切）。
+      case "error": return t.island.toneLabel.error;
       default: return t.island.finished;
     }
   };
+  const alertTitle = alert && alert.title && alert.title !== UNNAMED_SESSION_SENTINEL ? alert.title : t.sticker.waitingFirstInput;
+  // 状态词后面跟的那段：跑完带 agent 最后一句话，出错带错误详情，其余带项目名。
+  const alertDetail = alert && (alert.kind === "waiting" || alert.kind === "error") && alert.detail ? alert.detail : null;
+  // 按钮上按下不该开始拖动，也不该冒泡成「点胶囊 = 打开 / 展开」。
+  const stop = (event: React.SyntheticEvent) => event.stopPropagation();
   const alertTone: IslandTone = alert
     ? alert.kind === "error" ? "error" : alert.kind === "waiting" ? "waiting" : "pending"
     : tone;
@@ -294,11 +325,7 @@ export function Island({
     if (compactStyle === "minimal") {
       return [
         <Eyes key="eyes" {...eyes} small />,
-        <span key="dots" className="isl-dots">
-          {liveSessions(sessions).slice(0, 6).map((item) => (
-            <span key={item.session.id} className={`isl-dot is-${cardTone(item)}`} />
-          ))}
-        </span>,
+        <Dots key="dots" sessions={sessions} />,
       ];
     }
     if (compactStyle === "focus") {
@@ -348,11 +375,7 @@ export function Island({
       return (
         <>
           <Eyes {...eyes} />
-          <span className="isl-dots">
-            {liveSessions(sessions).slice(0, 6).map((item) => (
-              <span key={item.session.id} className={`isl-dot is-${cardTone(item)}`} />
-            ))}
-          </span>
+          <Dots sessions={sessions} />
         </>
       );
     }
@@ -363,7 +386,7 @@ export function Island({
           <Eyes {...eyes} />
           {focus ? (
             <span className="isl-focus">
-              <span className="isl-focus-title">{sessionTitle(focus, t.sticker.waitingFirstInput)}</span>
+              <span className="isl-focus-title" title={sessionTitle(focus, t.sticker.waitingFirstInput)}>{sessionTitle(focus, t.sticker.waitingFirstInput)}</span>
               <span className={`isl-state is-${cardTone(focus)}`}>{t.island.toneLabel[cardTone(focus)] ?? ""}</span>
             </span>
           ) : <span className="isl-faint">{t.island.idle}</span>}
@@ -404,9 +427,11 @@ export function Island({
           ? { "--isl-notch-w": `${notch.width}px`, "--isl-notch-h": `${notch.height}px` } as React.CSSProperties
           : undefined}
         data-tone={alertTone}
-        role="button"
-        tabIndex={0}
-        aria-label={t.island.ariaLabel}
+        // 提醒在场时里面有「打开」「关闭」按钮，整块不能再是按钮（按钮套按钮，读屏念不出里面的，
+        // axe nested-interactive）：按钮角色和名字移到正文那块（.isl-alert-main）。
+        role={alert ? undefined : "button"}
+        tabIndex={alert ? undefined : 0}
+        aria-label={alert ? undefined : islandAriaSummary(counts, t)}
         // 只点击展开，悬停不展开（用户要求，2026-11-04）。提醒在场时悬停是「我在看」：
         // 留住提醒、暂停倒计时。
         // 收起时鼠标移上来，眼睛冲你眨一下（隔 8 秒以上才再眨，来回划过不至于一直眨）。
@@ -428,46 +453,88 @@ export function Island({
         }}
         onPointerDown={onPointerDownDrag}
         onKeyDown={(event) => {
+          if (alert) return;
           if (event.key === "Enter" || event.key === " ") {
             event.preventDefault();
-            // 与点击同一口径：提醒在场时是打开那条会话，空闲胶囊才展开面板。
-            if (alert) onOpenSession(alert.sessionId);
-            else onActivate();
+            onActivate();
           }
         }}
       >
         {alert ? (
           <>
-            <Eyes tone={alertTone} cue={cue} small />
-            <span className={`isl-alert-icon is-${alertTone}`}><AlertIcon kind={alert.kind} /></span>
-            <span className="isl-alert-text">
-              <span className="isl-alert-title-row">
-                <span className="isl-alert-title">
-                  {alert.title && alert.title !== UNNAMED_SESSION_SENTINEL ? alert.title : t.sticker.waitingFirstInput}
+            {/* 正文：与点击同一口径，Enter / 空格打开那条会话；名字就说是哪条、什么事（i8）。 */}
+            <span
+              className="isl-alert-main"
+              role="button"
+              tabIndex={0}
+              aria-label={t.island.alertAria(alertTitle, alertLabel(alert))}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onOpenSession(alert.sessionId);
+                }
+              }}
+            >
+              <Eyes tone={alertTone} cue={cue} small />
+              <span className={`isl-alert-icon is-${alertTone}`}><AlertIcon kind={alert.kind} /></span>
+              <span className="isl-alert-text">
+                <span className="isl-alert-title-row">
+                  <span className="isl-alert-title" title={alertTitle}>{alertTitle}</span>
+                  {alertQueued > 0 && <span className="isl-alert-more">{t.island.moreAlerts(alertQueued)}</span>}
                 </span>
-                {alertQueued > 0 && <span className="isl-alert-more">{t.island.moreAlerts(alertQueued)}</span>}
-              </span>
-              <span className="isl-alert-sub">
-                <span className={`isl-state is-${alertTone}`}>{alertLabel(alert)}</span>
-                {/* 跑完的提醒带 agent 最后一句话（后端取的第一行），比项目名更能说明它做完了什么。 */}
-                {alert.kind === "waiting" && alert.detail
-                  ? <><span className="isl-sep">·</span><span className="isl-alert-detail" title={alert.detail}>{alert.detail}</span></>
-                  : alert.project && <><span className="isl-sep">·</span>{alert.project}</>}
+                <span className="isl-alert-sub">
+                  <span className={`isl-state is-${alertTone}`}>{alertLabel(alert)}</span>
+                  {/* 跑完的提醒带 agent 最后一句话（后端取的第一行），比项目名更能说明它做完了什么。
+                      出错时项目名和详情都要：只看详情分不清是哪个工作区出的错（i12）。两段都可省略、带 title。 */}
+                  {alert.project && (!alertDetail || alert.kind === "error") && (
+                    <><span className="isl-sep">·</span><span className="isl-alert-proj" title={alert.project}>{alert.project}</span></>
+                  )}
+                  {alertDetail && <><span className="isl-sep">·</span><span className="isl-alert-detail" title={alertDetail}>{alertDetail}</span></>}
+                </span>
               </span>
             </span>
+            {/* 「全部忽略」只在后面还排着的时候出现：只有一条时它和 × 是一回事（i5：排了 12 条只能一条条等）。 */}
+            {onDismissAllAlerts && alertQueued > 0 && (
+              <button
+                type="button"
+                className="isl-btn is-ghost isl-alert-skip"
+                onPointerDown={stop}
+                onKeyDown={stop}
+                onClick={(event) => {
+                  stop(event);
+                  onDismissAllAlerts();
+                }}
+              >{t.island.dismissAll}</button>
+            )}
             <button
               type="button"
               className="isl-btn is-primary"
-              // 按钮上按下不该开始拖动，也不该冒泡成「点胶囊 = 展开」。
-              onPointerDown={(event) => event.stopPropagation()}
+              onPointerDown={stop}
+              onKeyDown={stop}
               onClick={(event) => {
-                event.stopPropagation();
+                stop(event);
                 onOpenSession(alert.sessionId);
               }}
             >{t.island.open}</button>
+            {onDismissAlert && (
+              <button
+                type="button"
+                className="isl-alert-close"
+                aria-label={t.island.dismiss}
+                title={t.island.dismiss}
+                onPointerDown={stop}
+                onKeyDown={stop}
+                onClick={(event) => {
+                  stop(event);
+                  onDismissAlert();
+                }}
+              ><Icon glyph={icClose} size={12} /></button>
+            )}
           </>
         ) : compact()}
       </div>
+      {/* 提醒出现时读屏播报（i8）。收起态不播：会话数变化太频繁，播起来没完。 */}
+      <span className="chat-sronly" role="status" aria-live="polite">{alert ? t.island.alertAria(alertTitle, alertLabel(alert)) : ""}</span>
     </div>
   );
 }

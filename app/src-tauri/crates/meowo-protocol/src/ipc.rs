@@ -170,6 +170,12 @@ pub enum ChatItem {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         #[cfg_attr(test, ts(type = "boolean", optional))]
         interjected: bool,
+        /// 这句话是发给某个子代理的（claude：用户切到子代理视图直接发），值是它的任务描述。
+        /// 正文只记在子代理侧车里，主链没有这条（2.1.322 实拍），不标出来前端既找不到它
+        /// 判「未确认送达」，也说不清后面的回复是谁给的。None 不下发。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(type = "string", optional))]
+        to_agent: Option<String>,
     },
     AssistantText {
         id: String,
@@ -846,6 +852,41 @@ pub struct ForgeStatusDto {
     pub repo_needs_choice: bool,
 }
 
+/// 侧栏会话行的 PR / CI 与改动数（`sidebar_git_badges`，UI 优化 #54，对照 Conductor / Warp 的侧栏）。
+/// 按工作目录一条；PR 走「更改」面板同一份 forge 缓存（每仓库 ≥60s 查一次 GitHub，窗口隐藏时只读缓存）。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct SidebarGitBadgeDto {
+    /// 请求里的原样写法（前端按它回填到会话行）。
+    pub cwd: String,
+    /// 未提交改动的增删行数与文件数（与标题栏分支胶囊同一口径）。不是仓库的目录整条不回。
+    pub additions: u32,
+    pub deletions: u32,
+    pub files: u32,
+    /// 当前分支的 PR。没装 gh、没登录、没有 PR、或窗口隐藏且缓存里没有时为 None。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub pr: Option<SidebarPrBadgeDto>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct SidebarPrBadgeDto {
+    pub number: u32,
+    /// `open` / `draft` / `merged` / `closed`（同 PullRequestDto.state，配色同标题栏 `.tb-pr`）。
+    pub state: String,
+    /// 检查汇总 `none` / `pass` / `fail` / `pending`；拿不到时 None。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub checks: Option<String>,
+    pub url: String,
+    pub title: String,
+}
+
 /// PR 可以开在的一个仓库：远端名 + GitHub 的 owner/repo。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -1237,9 +1278,9 @@ mod tests {
     /// interjected 只在为真时下发；缺字段（旧后端/旧缓存）按 false 读回。
     #[test]
     fn user_text_interjected_is_omitted_when_false() {
-        let plain = ChatItem::UserText { id: "u".into(), timestamp: None, text: "hi".into(), interjected: false };
+        let plain = ChatItem::UserText { id: "u".into(), timestamp: None, text: "hi".into(), interjected: false, to_agent: None };
         assert!(serde_json::to_value(&plain).unwrap().get("interjected").is_none());
-        let steered = ChatItem::UserText { id: "u".into(), timestamp: None, text: "hi".into(), interjected: true };
+        let steered = ChatItem::UserText { id: "u".into(), timestamp: None, text: "hi".into(), interjected: true, to_agent: None };
         assert_eq!(serde_json::to_value(&steered).unwrap()["interjected"], true);
         let old: ChatItem = serde_json::from_str(r#"{"type":"user_text","id":"u","timestamp":null,"text":"hi"}"#).unwrap();
         assert_eq!(old, plain);

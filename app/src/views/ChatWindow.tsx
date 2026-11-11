@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type SetStateAction } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 // 文件拖入走 Tauri 的 drag-drop 事件(webview 原生 drop 被拦截,DOM 拿不到 File;
@@ -19,6 +19,8 @@ import { formatBackendError } from "../i18n/errors";
 import { useShowWhenReady } from "../useShowWhenReady";
 import { reduceChatEvents } from "../chat/reducer";
 import { ApprovalCard, ApprovalCommandDetail, isRiskyCommand } from "./chat/ApprovalCard";
+import { CardAnnouncer } from "./chat/cardAnnouncer";
+import { isSidebarToggleKey } from "./terminalKeys";
 import { copyPlainText } from "./chat/clipboard";
 import { readSideAnswer, sideQuestionText } from "./chat/sideQuestion";
 import { approvalChoiceForKey, BrokerApprovalCard, useBrokerResolver } from "./chat/BrokerApprovalCard";
@@ -33,12 +35,12 @@ import { parseUserText } from "./chat/localCommand";
 import { ChatActionsContext, type ChatActions } from "./chat/chatActions";
 import { anchorFrom, echoItemId, freshAnchor, EchoActionsContext, EchoPhaseContext, outgoingStore, useOutgoingPrompts, type PromptAck } from "./chat/outgoingPrompts";
 import { DockWork } from "./chat/DockWork";
-import { ANCHOR_PX, countsAsUnseen, useStickToBottom } from "./chat/useStickToBottom";
+import { ANCHOR_PX, countsAsUnseen, stickToBottom, useStickToBottom } from "./chat/useStickToBottom";
 import { useSidebarLayout } from "./chat/useSidebarLayout";
 import { pasteImagesNatively, useInterrupt, writeInterruptKeys } from "./chat/terminalInput";
 import { clearPartialImageDraft, composerDraftText, createSendQueue, IMAGE_PASTE_LANDING_POLLS, LATE_IMAGE_GRACE_MS, RESUME_VERIFY_WINDOW_MS, stashComposerDraft, submitToTerminal, terminalInput, waitForTerminalReady, type TerminalReadyMessages, type TerminalStartupResult } from "./chat/terminalSubmit";
 import { BottomSheet, SheetOnPhone } from "./chat/BottomSheet";
-import { runningActivityView, RunningBar, SnakeSpinner, useCliStatusStore } from "./chat/RunningBar";
+import { runningActivityView, RunningBar, SnakeSpinner, TurnAnnouncer, useCliStatusStore } from "./chat/RunningBar";
 import { arrowPanelApprovalDetails, framedBoxApprovalDetails, proceedBoxApprovalDetails } from "./chat/terminalApprovalDetails";
 import { ModelPicker, readStarred, type ModelPickerItem } from "./chat/ModelPicker";
 import { currentPresetId } from "./chat/modelLabels";
@@ -47,7 +49,9 @@ import { QuestionPanels } from "./chat/QuestionPanels";
 import { RemoteTerminalKeys } from "./chat/RemoteTerminalKeys";
 import { peekSessionMeta, prefetchPending, recallHistory, rememberHistory, takePrefetch, trackPrefetch } from "./chat/historyCache";
 import { ChatTitleMenu, ChatTitlePlaceholder } from "./chat/TitleMenus";
-import { displayKeys, QuickSwitcher, RenameModal, ShortcutSheet, type PaletteCommand } from "./chat/WindowModals";
+import { displayKeys, QuickSwitcher, RenameModal, ShortcutSheet, tipWithKeys, type PaletteCommand } from "./chat/WindowModals";
+import { buildPaletteCommands, OPEN_WITH_PREFIX } from "./chat/paletteCommands";
+import { openFolderWith, useFolderOpeners } from "./chat/TitleBarTools";
 import { attentionTone, nextAttentionSession } from "./chat/nextAttention";
 import { isBackgroundShell, isSubagentDelegation } from "./chat/shared";
 import { Transcript, type TranscriptAgent } from "./chat/Transcript";
@@ -89,11 +93,13 @@ import { useOutgoingUpkeep } from "./chat/useOutgoingUpkeep";
 import { SessionAdmin } from "./chat/SessionAdmin";
 import { NewSessionPage } from "./chat/NewSessionPage";
 import { ChatTitleBar } from "./chat/ChatTitleBar";
+import { openLink, type PullRequestDto } from "../api";
 import { WorktreeSetupBar } from "./chat/WorktreeSetupBar";
 import { useConversationExport } from "./chat/useConversationExport";
 import { useMainPages } from "./chat/useMainPages";
 import { AddMenu } from "./chat/AddMenu";
 import { DIFF_PANEL_MIN_WIDTH, useDiffPanelWidth } from "./chat/useDiffPanelWidth";
+import { fitPanes, useElementWidth } from "./chat/paneLayout";
 import { attachmentOf, base64OfBuffer, formatBytes, loadStoredDrafts, promptWithAttachments, saveStoredDraft, type Attachment } from "./chat/drafts";
 import { appendTerminalText, terminalAttention as detectTerminalAttention, visibleTerminalText, type AttentionGrammar, type TerminalAttention, type TerminalAttentionOption } from "../terminalAttention";
 import { Dropdown, useMenuPopup } from "./menu";
@@ -102,6 +108,9 @@ import { listAgents, type AgentDescriptor } from "../api";
 // 「切换引擎」分组的目标 agent 图标（前端资产表，未知 id 走中性兜底）。
 import { agentAssets, tintStyle } from "../providers";
 import appLogoUrl from "../../src-tauri/icons/64x64.png";
+import { Icon } from "../icons/Icon";
+import { icArrowLeftRight, icArrowUp, icChevronLeft, icCollapse, icExpand, icFile, icMessage, icShield, icSidebarLeft, icStop } from "../icons/glyphs.chat";
+import { icCheck, icChevronDown, icClose, icPencil } from "../icons/glyphs";
 
 
 /// 对话页意外退出说明附几行终端输出：够看出报错，不把输入框上方铺满。
@@ -232,6 +241,12 @@ type FirstEcho = { tempId: number; realId: number | null; echoId: number; done: 
 /// 插件没声明贴图键时的兜底（Ctrl-V），与 sendPrompt 里同一个值。
 const CLIPBOARD_PASTE_FALLBACK = String.fromCharCode(0x16);
 
+/// 一颗按钮同时挂两个 ref（菜单 hook 的锚点 + 命令面板要点的那颗）。useRef 出来的 RefObject
+/// 在类型上只读，运行时就是普通对象。
+function assignRef<T>(ref: { readonly current: T | null }, node: T | null) {
+  (ref as { current: T | null }).current = node;
+}
+
 export function ChatWindow() {
   const t = useT();
   // 窗口以 visible:false 创建（window.rs），首帧渲染后再显示，消除打开瞬间的白框闪烁。
@@ -261,6 +276,9 @@ export function ChatWindow() {
   // 抖动只配通用「读取失败，正在重试」。它与 tone 解耦：tone 讲 agent 进程（connected），
   // syncLost 只讲「窗口与后端的通道断了」，两种事实不再共用一套措辞。
   const [syncLost, setSyncLost] = useState(false);
+  // 最近一次读取失败的原因：连续失败（syncLost）时写在错误行下面，只说「正在重试」用户无从判断
+  // 是该等还是该做点什么（UI 调研 chat #13，参照 C-18 的分级）。
+  const [loadReason, setLoadReason] = useState<{ error: unknown } | null>(null);
   const failStreakRef = useRef(0);
   // 首读裁剪掉的更早消息：hasMore 只在首读那一发为 true，轮询会把它带回 false，
   // 所以单独存一份状态，别直接读 history.hasMore（提示会闪一下就没）。
@@ -714,7 +732,10 @@ export function ChatWindow() {
   const {
     sidebarCollapsed, sidebarWidth, narrow, overlaySidebar, setOverlaySidebar,
     drawerMounted, sidebarVisible, toggleDocked, startSidebarResize, nudgeSidebarWidth, sidebarMinWidth,
+    resetSidebarWidth, uiScale,
   } = useSidebarLayout();
+  const chatBodyRef = useRef<HTMLDivElement>(null);
+  const chatBodyWidth = useElementWidth(chatBodyRef);
   const toggleSidebar = () => {
     if (narrow) {
       if (remoteUi()) {
@@ -795,6 +816,8 @@ export function ChatWindow() {
         // 同键开合（VS Code/Slack 惯例）：已开着时再按一次是「收起」，不是无操作。
         setSwitcherOpen((open) => !open);
       } else if (e.code === "KeyB") {
+        // 焦点在托管终端里的 Ctrl+B 归 claude（转后台），xterm 已经发了 \x02（Ctrl+B 的控制字节），这里不再收侧栏。
+        if (!isSidebarToggleKey(e, document.activeElement)) return;
         e.preventDefault();
         toggleSidebarRef.current();
       } else if (e.code === "Digit1") {
@@ -834,6 +857,12 @@ export function ChatWindow() {
     open: modeMenu !== null,
     setOpen: (v) => { if (!v) setModeMenu(null); },
   });
+  // Ctrl+K「切换模型 / 切换权限模式」直接点底栏这两颗按钮（UI 优化 #53）：开菜单的逻辑写在按钮的
+  // onClick 里（探测、互斥、恢复态改选），命令面板复用它，不另抄一份。
+  const modelButtonRef = useRef<HTMLButtonElement | null>(null);
+  const permissionButtonRef = useRef<HTMLButtonElement | null>(null);
+  // 标题栏查到的 PR（ChatTitleBar 回报），命令面板的「打开 PR」用它。
+  const [titlePullRequest, setTitlePullRequest] = useState<PullRequestDto | null>(null);
   // 对话页能力由安装实况组装（基础命令 ∪ 用户/项目命令 ∪ 当前会话 runtime skill 清单），
   // 按 provider+cwd 查询——换会话、换项目都重取，装了新命令下次打开就见。
   // 未知 provider / 查询未回时为空：不补全、不给菜单，宁缺毋滥。
@@ -857,6 +886,7 @@ export function ChatWindow() {
   const launchInfo = pendingLaunch?.sessionId === sessionId ? pendingLaunch : null;
   const provider = history?.provider ?? launchInfo?.provider;
   const cwd = history?.cwd ?? launchInfo?.cwd ?? null;
+  const folderOpeners = useFolderOpeners(cwd ?? "", setSendError).options;
   // 「文件」入口有 cwd 即可用；「改动」入口仅当后端确认 cwd 是 git 仓库时出现。
   // 两个入口共用同一停靠面板，activeTab 保证面板不卸载时也能直达对应页签。
   const [gitSummary, setGitSummary] = useState<GitDiffSummaryDto | null>(null);
@@ -1577,6 +1607,11 @@ export function ChatWindow() {
     return () => window.clearTimeout(timer);
   }, [menuWatchUntil]);
   const modeControls = chatUi?.mode_controls ?? [];
+  // 底栏「权限模式」按钮对应的维度：插件声明的权限启动项优先，否则按维度名认（UI 优化 #53）。
+  const permissionDimension = permissionOption?.id
+    ?? [...modeControls.map((control) => control.dimension), ...(history?.agentModes ?? []).map((mode) => mode.dimension)]
+      .find((dimension) => dimension === "permission" || dimension === "approval")
+    ?? null;
   const offsetRef = useRef(0);
   // 轮询从 transcript 尾部累计读到的条目数，只增不减。「问题已了结」的收卡判定拿它
   // 判断有没有新内容落盘，不受「加载更早」前插旧历史影响（见 observeTranscriptForDismiss 调用处）。
@@ -1604,37 +1639,48 @@ export function ChatWindow() {
 
   // 7C-2：overlay 的卡片从锚点向上溢出，盖住 transcript 末尾约 500px——零位移的代价
   // 本来「可接受」，但计划审批时刚写完的计划正文正好落在这一段，滚到底也露不出来。
-  // 把卡片实高回写成 .chat-scroll 的额外 padding-bottom：文档流不动（overlay 仍 height:0），
-  // 滚动区却多出一段可滚空白，被盖住的内容能滚出卡片上缘。卡片高度随正文/按钮变，
-  // 所以观察每张卡（ResizeObserver）+ 卡片增删（MutationObserver）。
+  // 把卡片实高回写成 --chat-overlay-h，喂给滚动内容末尾的占位块（.chat-overlay-spacer）：
+  // 文档流不动（overlay 仍 height:0），滚动区却多出一段可滚空白，被盖住的内容能滚出卡片上缘。
+  // 占位块不能换回 padding-bottom：padding 是滚动区的最小高度，flex:1 压不到它以下，矮窗/手机
+  // 键盘态下 dock 被挤、输入框掉出窗口（UI 优化 c2/m2：620×480 输入 14 行时 composer 落在
+  // 377–489，SE 键盘态 341–449/376，Playwright layout.js 实测）。
+  // 同时回写 --chat-overlay-room = 卡片能占的高度（锚点到滚动区上沿，即标题栏之下、composer
+  // 之上那一段，多卡并存时均分），卡片按它限高、超出卡内滚动。它只取决于 dock 与窗口，
+  // 不随卡高变，回写不会自激。
+  // 卡片高度随正文/按钮变，所以观察每张卡（ResizeObserver）+ 卡片增删（MutationObserver）；
+  // 区域高度随窗口、键盘、composer 变，所以也观察滚动区和主列本身。
   const overlayRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = overlayRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
     const apply = () => {
       const scroll = scrollRef.current;
-      // 变量写在 overlay 的父容器（chat-window 根）上而不是滚动区自己：滚动区的
-      // padding、sticky 的「回到最新」浮钮、以及流里紧贴 composer 的排队回执/运行条
-      // 都要读它，它们互为兄弟，只有共同祖先能同时喂到（7C-2 / 7C-3）。
+      // 变量写在 overlay 的父容器（.chat-main）上而不是滚动区自己：滚动区里的占位块、
+      // sticky 的「回到最新」浮钮、卡片自身都要读它，只有共同祖先能同时喂到（7C-2 / 7C-3）。
       const host = el.parentElement;
       if (!scroll || !host) return;
-      // 锚点 = overlay 在流中的位置（零高，等于 composer 上沿）；卡片向上溢出到 top。
+      // 锚点 = overlay 在流中的位置（零高，等于 dock 上沿）；卡片向上溢出到 top。
       const anchor = el.getBoundingClientRect().bottom;
       let top = anchor;
-      for (const child of Array.from(el.children)) {
-        const rect = child.getBoundingClientRect();
-        if (rect.height > 0) top = Math.min(top, rect.top);
-      }
+      const cards = Array.from(el.children).filter((child) => child.getBoundingClientRect().height > 0);
+      for (const child of cards) top = Math.min(top, child.getBoundingClientRect().top);
       const height = Math.max(0, Math.round(anchor - top));
       host.style.setProperty("--chat-overlay-h", `${height}px`);
-      // padding 变化不改变滚动容器自身的 border-box 尺寸，上面那个 ResizeObserver 不会
-      // 触发——已吸底的用户在这里自己钉回去。
-      if (!scroll.hidden && followRef.current && !touchingRef.current) scroll.scrollTop = scroll.scrollHeight;
+      // 可用区上沿：对话视图取滚动区上沿；终端视图滚动区 display:none，取标题栏下沿。
+      const bar = host.querySelector(":scope > .chat-bar");
+      const ceiling = !scroll.hidden ? scroll.getBoundingClientRect().top : bar ? bar.getBoundingClientRect().bottom : host.getBoundingClientRect().top;
+      const room = Math.max(0, Math.floor((anchor - ceiling) / Math.max(1, cards.length)));
+      host.style.setProperty("--chat-overlay-room", `${room}px`);
+      // 占位块变高不改变滚动容器自身的 border-box 尺寸，useStickToBottom 的尺寸观察者
+      // 不一定接得到——已吸底的用户在这里自己钉回去（走 stickToBottom，裸写会被 smooth 动画化）。
+      if (!scroll.hidden && followRef.current && !touchingRef.current) stickToBottom(scroll);
     };
     const sizes = new ResizeObserver(apply);
     const rewatch = () => {
       sizes.disconnect();
       for (const child of Array.from(el.children)) sizes.observe(child);
+      if (scrollRef.current) sizes.observe(scrollRef.current);
+      if (el.parentElement) sizes.observe(el.parentElement);
       apply();
     };
     const children = new MutationObserver(rewatch);
@@ -1922,9 +1968,10 @@ export function ChatWindow() {
       setFailed(false);
       failStreakRef.current = 0;
       setSyncLost(false);
+      setLoadReason(null);
       // 存储恢复的会话加载成功:解除恢复标记,此后的瞬时失败按普通失败处理。
       if (restoredSessionId === sessionId) restoredSessionId = 0;
-    } catch {
+    } catch (error) {
       // 远程从 localStorage 恢复的会话可能已被删/归档:恒失败会卡在「读取失败」,
       // 空态与自动拉抽屉都进不去。首败即放弃恢复回「选会话」空态(误伤瞬时网络
       // 抖动可接受——抽屉在场,点回去即可);用户手选的会话不受此影响。
@@ -1941,12 +1988,16 @@ export function ChatWindow() {
       }
       setLoading(false);
       setFailed(true);
+      setLoadReason({ error });
       failStreakRef.current += 1;
       if (failStreakRef.current >= 3) setSyncLost(true);
     } finally {
       busyRef.current = false;
     }
   }, [sessionId]);
+
+  // 读取失败时的「立即重试」：轮询本来就在重试，但用户只能干等下一拍（UI 调研 chat #13）。
+  const retryNow = <button type="button" className="chat-retry-now" onClick={() => void refresh()}>{t.chat.retryNow}</button>;
 
   // C-14 收尾：流式刷新已事件驱动（托管会话 pty-output + 后端 transcript 文件 watch
   // 推送 chat-transcript，见下），本定时器降级为最终兜底——事件在窗口重挂间隙丢失、
@@ -2135,6 +2186,23 @@ export function ChatWindow() {
   // 终端页会把焦点交给 xterm（且 footer 整个卸载，回来的 textarea 是全新节点）；
   // 用户切回对话时把焦点还给输入框。只在「终端 → 对话」的切换沿触发——chat 内的
   // 普通重渲染不动焦点，不打断正在输入的人。
+  // 首焦点规则（UI 优化 c3）：开窗、切会话时焦点给 composer。此前焦点停在 body，审批卡挂载时
+  // 抢去「说明并拒绝」，开窗就打字的人一个空格点开理由框、回车即误拒。焦点已在别的输入框或
+  // 弹层里不动（命令面板、重命名框等自己管焦点）；终端视图焦点归 xterm；手机远程不移焦——
+  // 聚焦输入框会弹键盘，WebKit 还把程序化 focus 画成焦点环（mobile m11）。推迟一帧：
+  // 命令面板选中会话后先收起自己，再轮到这里判断。
+  useEffect(() => {
+    if (remoteUi() || sessionId === 0) return;
+    const frame = requestAnimationFrame(() => {
+      if (viewRef.current !== "chat") return;
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && active !== document.body
+        && (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.isContentEditable
+          || active.closest("[role=\"dialog\"], [aria-modal=\"true\"]"))) return;
+      promptInputRef.current?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [sessionId]);
   const prevViewRef = useRef(view);
   useEffect(() => {
     const prev = prevViewRef.current;
@@ -2236,21 +2304,19 @@ export function ChatWindow() {
 
   // 面板终端里有程序在跑时先确认（标题栏按钮与系统原生关闭都经过这里，见 windowClose.ts）。
   const close = useGuardedWindowClose(t);
-  // Ctrl+K 命令面板的命令清单（U1-14）：每条都映射到窗口已有动作，不发明新能力。
-  // 扁平一个数组，按直觉频率排序：新建/切视图/侧栏/搜索在前，速查表与设置殿后。
-  const paletteCommands: PaletteCommand[] = [
-    { id: "new-session", label: t.chat.shortcutNewSession, keys: "Ctrl+N" },
-    { id: "view-chat", label: t.chat.cmdViewChat, keys: "Ctrl+1" },
-    { id: "view-terminal", label: t.chat.cmdViewTerminal, keys: "Ctrl+2" },
-    { id: "toggle-sidebar", label: t.chat.shortcutSidebar, keys: "Ctrl+B" },
-    // 搜会话没有单独的快捷键了：命令面板（Ctrl+K）本身就能搜会话（二期 #8）。
-    { id: "focus-search", label: t.chat.shortcutSearch },
-    { id: "search-transcript", label: t.chat.searchTranscript, keys: "Ctrl+F" },
-    { id: "jump-latest", label: t.chat.jumpLatest },
-    { id: "show-shortcuts", label: t.chat.cmdShowShortcuts, keys: "?" },
-    { id: "open-settings", label: t.sticker.openSettings },
-  ];
-  for (const cmd of paletteCommands) if (cmd.keys) cmd.keys = displayKeys(cmd.keys);
+  // Ctrl+K 命令面板的命令清单（U1-14，UI 优化 #53 补面板/模型/权限/PR/打开方式）：每条都映射到
+  // 窗口已有动作，不发明新能力。清单本身见 chat/paletteCommands（纯函数，单测钉住）。
+  const paletteCommands = buildPaletteCommands(t, {
+    remote: remoteUi(),
+    hasCwd: !!cwd,
+    isRepo: !!effectiveSummary?.isRepo,
+    panelVisible: panelState.visible,
+    // 与底栏模型按钮的可用条件同口径（见下方 .chat-model-select）。
+    canSwitchModel: modelPresets.length > 0 || !!modelMenuCommand || switchTargets.length > 0,
+    canSwitchPermission: !!permissionDimension,
+    pullRequest: titlePullRequest,
+    openers: folderOpeners,
+  });
   const runPaletteCommand = (id: string) => {
     switch (id) {
       case "new-session": void openNewSessionWindow().catch(() => {}); break;
@@ -2263,6 +2329,20 @@ export function ChatWindow() {
       case "jump-latest": jumpToLatest(); break;
       case "show-shortcuts": setShortcutsOpen(true); break;
       case "open-settings": void invoke("open_settings").catch(() => {}); break;
+      // 面板类与快捷键监听调同一组动作（见上方面板快捷键 useEffect）。
+      case "panel-toggle": panelActions.toggle(); break;
+      case "panel-changes": panelActions.openDiff(); break;
+      case "panel-files": panelActions.toggleFiles(); break;
+      case "panel-browser": panelActions.newBrowser(); break;
+      case "panel-terminal": panelActions.toggleTerminal(); break;
+      case "panel-next-tab": panelActions.cycle(1); break;
+      // 模型与权限：等于点一下底栏那颗按钮（开菜单、或无菜单时按一次轮换），语义与禁用态全随按钮走。
+      // 按钮在弹层关掉之后才点：AppModal 卸载时焦点已归还，菜单的焦点管理不被打断。
+      case "switch-model": modelButtonRef.current?.click(); break;
+      case "switch-permission": permissionButtonRef.current?.click(); break;
+      case "open-pr": if (titlePullRequest) void openLink(titlePullRequest.url).catch(() => {}); break;
+      default:
+        if (id.startsWith(OPEN_WITH_PREFIX) && cwd) openFolderWith(cwd, id.slice(OPEN_WITH_PREFIX.length), setSendError, t.locale);
     }
   };
   /// 发送类动作的公共守卫:sending 置位/清错 → 终端占用检查 → 确保可写终端 → 执行 body,
@@ -2379,7 +2459,7 @@ export function ChatWindow() {
     const list = itemsRef.current;
     const index = list.findIndex((item) => item.id === id);
     if (index < 0) return;
-    const turns = list.slice(index).filter((item) => item.type === "user_text" && !item.interjected).length;
+    const turns = list.slice(index).filter((item) => item.type === "user_text" && !item.interjected && !item.to_agent).length;
     if (turns === 0) return;
     if (!control.count_arg && !control.menu && turns !== 1) return;
     const yes = await appConfirm(control.restores_files ? t.chat.undoConfirmFiles : t.chat.undoConfirm, { title: t.chat.undoTitle, danger: true, confirmLabel: t.chat.undoConfirmLabel });
@@ -2431,14 +2511,14 @@ export function ChatWindow() {
   undoFromRef.current = undoFrom;
   const sendTextRef = useRef(sendText);
   sendTextRef.current = sendText;
-  // 能撤回的用户消息：当前段（接续的前序段不在这个 CLI 进程的上下文里）、非插话，且空闲时
+  // 能撤回的用户消息：当前段（接续的前序段不在这个 CLI 进程的上下文里）、非插话、不是发给子代理的（不算主会话的一轮），且空闲时
   // （kimi 的 /undo 只在空闲可用）。运行中整个置空——流式期间 items 每轮都变，不必跟着重算。
   // 撤回命令不带轮数、也不是菜单式的（opencode）只能撤最近一轮，只挂最后一条。
   const undoAvailable = !!chatUi?.undo && tone !== "running" && view === "chat";
   const undoStepwise = chatUi?.undo ? !chatUi.undo.count_arg && !chatUi.undo.menu : false;
   const undoableIds = useMemo(() => {
     if (!undoAvailable) return undefined;
-    const ids = items.filter((item) => item.type === "user_text" && !item.interjected).map((item) => item.id);
+    const ids = items.filter((item) => item.type === "user_text" && !item.interjected && !item.to_agent).map((item) => item.id);
     return new Set(undoStepwise ? ids.slice(-1) : ids);
   }, [undoAvailable, undoStepwise, items]);
   // 给对话流里消息用的动作（出错卡「继续」、用户消息「撤回」）。引用保持稳定：用户消息
@@ -3580,7 +3660,7 @@ export function ChatWindow() {
     terminalMenuOpenRef.current = false;
     terminalMenuSeenRef.current = false;
     setTerminalMenuOpen(false);
-    void writeInterruptKeys((data) => writeManagedTerminal(sessionId, data), "", wanted.searched ? 2 : 1).catch(() => {});
+    void writeInterruptKeys((data) => writeManagedTerminal(sessionId, data), "\x1b", wanted.searched ? 2 : 1).catch(() => {});
     setSendError(message);
   };
   /// 菜单迟迟认不出（或搜索后没再画出来）：到点收尾并说清楚，不留一个永远转圈的按钮。
@@ -3812,22 +3892,25 @@ export function ChatWindow() {
       type="button"
       className={"chat-sidebar-open" + (remoteBackMode ? " is-back" : "")}
       aria-label={remoteBackMode ? t.remote.backToSessions : sidebarVisible ? t.chat.sidebarCollapse : t.chat.sidebarExpand}
-      data-tip={remoteBackMode ? undefined : sidebarVisible ? t.chat.sidebarCollapse : t.chat.sidebarExpand}
+      data-tip={remoteBackMode ? undefined : remoteUi() ? (sidebarVisible ? t.chat.sidebarCollapse : t.chat.sidebarExpand) : tipWithKeys(sidebarVisible ? t.chat.sidebarCollapse : t.chat.sidebarExpand, "Ctrl+B")}
       aria-expanded={remoteBackMode ? undefined : sidebarVisible}
       onClick={remoteBackMode ? goBackToRemoteList : toggleSidebar}
     >
       {remoteBackMode ? (
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="m14.5 5-7 7 7 7" />
-        </svg>
+        <Icon glyph={icChevronLeft} size={16} />
       ) : (
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" aria-hidden="true">
-          <rect x="3.5" y="4.5" width="17" height="15" rx="3" />
-          <path d="M9.5 4.5v15" />
-        </svg>
+        <Icon glyph={icSidebarLeft} size={16} />
       )}
     </button>
   );
+
+  // 三栏宽度按 .chat-body 实测宽重新钳制（chat/paneLayout）：侧栏和面板互相扣、对话区保 320，
+  // 窗口缩小时跟着回收；存储里用户拖的宽度不动，窗口拉回宽时原样恢复。
+  const dockedSidebar = !narrow && !sidebarCollapsed;
+  const dockedPanel = !!cwd && !remoteUi() && shownPanelState.visible && !panelState.expanded;
+  const panes = fitPanes({ body: chatBodyWidth, sidebar: dockedSidebar ? sidebarWidth : null, panel: dockedPanel ? diffResize.width : null, ui: uiScale });
+  const shownSidebarWidth = panes.sidebar ?? sidebarWidth;
+  const shownPanelWidth = panes.panel ?? diffResize.width;
 
   return (
     <div className={"chat-window" + (view === "terminal" ? " is-terminal" : "") + (compactChrome ? " is-remote-compact" : "") + (remoteListMode ? " is-remote-list" : "") + (narrow || sidebarCollapsed ? " is-sidebar-undocked" : "")}>
@@ -3865,7 +3948,9 @@ export function ChatWindow() {
       {narrow && drawerMounted && (
         <>
           <div className="chat-sidebar-scrim" hidden={!overlaySidebar} onClick={() => setOverlaySidebar(false)} />
-          <div className="chat-sidebar-overlay" hidden={!overlaySidebar}>
+          {/* 抽屉宽 = min(侧栏宽, 85vw)（CSS 读 --sidebar-w）：此前写死 244，宽窗拖宽过、调大缩放后
+              进窄窗又变回窄的（调研 s14）。 */}
+          <div className="chat-sidebar-overlay" hidden={!overlaySidebar} style={{ "--sidebar-w": `${Math.round(sidebarWidth)}px` } as CSSProperties}>
             {/* 与顶栏同样先摆 logo：开关钮才和顶栏里那颗对齐，抽屉展开时看起来原地不动。 */}
             <div className="chat-sidebar-overlay-head">{appLogo}{sidebarToggleButton}</div>
             <ChatSidebar
@@ -3883,7 +3968,12 @@ export function ChatWindow() {
           </div>
         </>
       )}
-      <div className={"chat-body" + (shownPanelState.visible && (panelState.expanded || remoteUi()) ? " is-diff-max" : "")}>
+      <div
+        ref={chatBodyRef}
+        className={"chat-body" + (shownPanelState.visible && (panelState.expanded || remoteUi()) ? " is-diff-max" : "")}
+        // CSS 兜底（.side-panel 的 max-width）也要扣掉常驻侧栏，JS 还没量到的首帧就不会超。
+        style={dockedSidebar ? { "--docked-sidebar-w": `${Math.round(shownSidebarWidth)}px` } as CSSProperties : undefined}
+      >
       {/* 停靠侧栏 + 分栏柄：柄落在侧栏与主列的缝隙里，拖拽调宽（用户要求：侧栏可拖）。
           窄窗抽屉形态与收起态不渲染（柄在停靠布局里才有意义）。键盘同规：separator
           可聚焦，←/→ 步进 16px 调宽（柄在侧栏右缘，与拖拽方向一致）。 */}
@@ -3895,7 +3985,8 @@ export function ChatWindow() {
         visibleOrderRef={sidebarOrderRef}
         attentionIdsRef={sidebarAttentionRef}
         searchInputRef={sidebarSearchRef}
-        width={sidebarWidth}
+        width={shownSidebarWidth}
+        remoteSettings={remoteUi()}
         onSelect={selectSession}
         onPrefetch={prefetchSession}
         onCollapse={collapseSidebar}
@@ -3907,10 +3998,11 @@ export function ChatWindow() {
         aria-orientation="vertical"
         aria-label={t.chat.diffResize}
         tabIndex={0}
-        aria-valuenow={Math.round(sidebarWidth)}
+        aria-valuenow={Math.round(shownSidebarWidth)}
         aria-valuemin={sidebarMinWidth}
         onKeyDown={nudgeSidebarWidth}
         onPointerDown={startSidebarResize}
+        onDoubleClick={resetSidebarWidth}
       />
       </>}
       {/* 会话管理页占据主列（对照 Kimi）；对话主列不卸载只藏起来，终端、草稿等状态切回来都在。 */}
@@ -4004,6 +4096,7 @@ export function ChatWindow() {
         info={!remoteUi() && cwd && !panelState.visible ? { open: infoWide ? infoOn : infoFloating, onToggle: toggleInfo } : null}
         onToggleTerminal={() => { const next = view === "terminal" ? "chat" : "terminal"; rememberViewPref(next); setView(next); }}
         onError={setSendError}
+        onPullRequest={setTitlePullRequest}
       />
       {/* 包 5：在新 worktree 里开的会话，setup 后台跑的进度（看日志、跳过、重跑）。 */}
       <WorktreeSetupBar cwd={sessionId !== 0 ? cwd ?? null : null} />
@@ -4022,8 +4115,8 @@ export function ChatWindow() {
             与 tone 讲的「agent 进程没了」是两种事实，措辞与样式都分开。 */}
         {failed && items.length > 0 && (
           syncLost
-            ? <div className="chat-sync-warn is-lost" role="alert">{t.chat.syncInterrupted}</div>
-            : <div className="chat-sync-warn" role="status">{t.chat.loadError}</div>
+            ? <div className="chat-sync-warn is-lost" role="alert">{t.chat.syncInterrupted}{retryNow}</div>
+            : <div className="chat-sync-warn" role="status">{t.chat.loadError}{retryNow}</div>
         )}
         {sessionId === 0 ? <div className="chat-empty">{t.chat.pickSession}</div>
           : loading ? (loadingShown
@@ -4032,7 +4125,13 @@ export function ChatWindow() {
                灰条在手机上像「内容就这样」，明说「正在加载」更不会被误读。 */
             ? <div className="chat-loading" role="status"><span className="chat-model-spinner" aria-hidden="true" /><span>{t.chat.loadingConversation}</span></div>
             : null)
-          : failed && items.length === 0 ? <div className="chat-empty is-error">{syncLost ? t.chat.syncInterrupted : t.chat.loadError}</div>
+          : failed && items.length === 0 ? (
+            <div className="chat-empty is-error">
+              {syncLost ? t.chat.syncInterrupted : t.chat.loadError}
+              {retryNow}
+              {syncLost && loadReason && <div className="chat-load-reason">{formatBackendError(loadReason.error, t.locale)}</div>}
+            </div>
+          )
           : history && !history.supported ? (
             /* 不提供结构化 transcript 的 agent：hook 落库的最近往来仍然是真实数据，先渲染它，
                「暂未提供结构化对话记录」降为其下的注脚——有什么就展示什么，而不是只报没有。 */
@@ -4058,12 +4157,14 @@ export function ChatWindow() {
                         /* 目的性跳转，不写视图偏好。 */
                         <button type="button" className="chat-empty-cta" onClick={() => setView("terminal")}>{t.chat.goTerminal}</button>
                       )}
-                      {/* 7M-8：远程连这个出口都被门掉，于是「正在启动…」永远转，一个字
-                          解释都没有。启动阻塞（信任目录询问/登录）只在桌面终端画面上，
-                          手机这头唯一能做的就是去桌面确认——那就把它说出来。 */}
-                      {startingSlow && remoteUi() && (
-                        <div className="chat-remote-hint">{t.chat.startingOnDesktop}</div>
-                      )}
+                      {/* 7M-8 曾在这里写「请在桌面端确认」，违反「不推用户去桌面端」（UI 调研 m3）。
+                          启动阻塞（信任目录询问/登录）就在 PTY 画面上，临时负 id 在后端能取屏、能写键
+                          （pty.rs screen_probe_snapshot 走 lookup 解析临时 id，issue #72），
+                          直接把终端画面和按键摆出来，手机上就地确认。 */}
+                      {startingSlow && remoteUi() && (<>
+                        <div className="chat-remote-hint">{t.chat.startingStuckRemote}</div>
+                        <RemoteTerminalKeys sessionId={sessionId} />
+                      </>)}
                     </div>
                   : welcomeInfo ? <WelcomePanel info={welcomeInfo} commands={welcomeCommands} mention={chatUi?.attachment_mention ?? false} onPick={pickStarter} />
                   : t.chat.empty}</div>
@@ -4098,6 +4199,10 @@ export function ChatWindow() {
         {/* 运行行是对话的最后一行（对照 Kimi 的 WorkingIndicator）：它说的是「接下来会出现
             什么」，该待在视线所在的对话末尾，而不是输入框上方的一条常驻栏；对话还没有任何
             内容时也照样出现。上翻历史时由「回到最新」钮上的运行记号接住这条信号。 */}
+        {/* 回合状态的读屏播报常驻在这里（运行条会随回合结束卸载）；loading 期间不算运行，
+            切会话时旧 tone 还没换掉的那一帧不会被当成「回复完成」。 */}
+        <TurnAnnouncer running={!loading && tone === "running"} sessionId={sessionId} />
+        <CardAnnouncer />
         {!loading && sessionId !== 0 && !(failed && items.length === 0) && tone === "running" && (
           <RunningBar
             store={cliStatusStore}
@@ -4143,6 +4248,9 @@ export function ChatWindow() {
             ))}
           </section>
         )}
+        {/* 审批卡的让位占位块（高度 = --chat-overlay-h，见 overlayRef 的观察者）：跟内容一起滚，
+            不抬高滚动区的最小高度。必须是滚动内容的最后一个子块。 */}
+        <div className="chat-overlay-spacer" aria-hidden="true" />
       </main>
       </EchoActionsContext.Provider>
       </EchoPhaseContext.Provider>
@@ -4183,7 +4291,7 @@ export function ChatWindow() {
             <button type="button" disabled={!option.input} key={`${option.position}:${option.label}`} onClick={() => chooseInteractiveOption(option)}>{t.chat.chatAboutThis}</button>
           ))}
           {interactiveAttention.options?.filter((option) => option.kind === "submit").map((option) => (
-            <button type="button" disabled={!option.input} className="is-allow" key={`${option.position}:${option.label}`} onClick={() => chooseInteractiveOption(option)}>{t.chat.submitAnswer}</button>
+            <button type="button" disabled={!option.input} className="btn-primary" key={`${option.position}:${option.label}`} onClick={() => chooseInteractiveOption(option)}>{t.chat.submitAnswer}</button>
           ))}
         </>}
       >
@@ -4225,7 +4333,7 @@ export function ChatWindow() {
           </button>}
           {/* 危险命令的「允许一次」降级为红色警示主按钮(is-danger):rm -rf 与 ls 不该
               同一个视觉权重(判定见 isRiskyCommand,宁漏勿冤)。 */}
-          {commandAllowOnce && <button type="button" className={"is-allow" + (commandApproval.command && isRiskyCommand(commandApproval.command) ? " is-danger" : "")} onClick={() => chooseTerminalOption(commandAllowOnce)}>{t.chat.allowOnce}</button>}
+          {commandAllowOnce && <button type="button" className={"btn-primary" + (commandApproval.command && isRiskyCommand(commandApproval.command) ? " is-danger" : "")} onClick={() => chooseTerminalOption(commandAllowOnce)}>{t.chat.allowOnce}</button>}
         </>}
       >
         {commandApproval.tool && <div className="chat-approval-tool"><span>{t.chat.approvalTool}</span><code>{commandApproval.tool}</code></div>}
@@ -4268,7 +4376,7 @@ export function ChatWindow() {
               .then(() => setTerminalAttention(null))
               .catch((error) => setSendError(formatBackendError(error, t.locale)));
           }}>{t.chat.terminalPromptCancel}</button>
-          <button type="button" className="is-allow" onClick={() => {
+          <button type="button" className="btn-primary" onClick={() => {
             void writeManagedTerminal(sessionId, "\r")
               .then(() => setTerminalAttention(null))
               .catch((error) => setSendError(formatBackendError(error, t.locale)));
@@ -4287,7 +4395,7 @@ export function ChatWindow() {
           {terminalAttention.options!.map((option, index) => (
             // 走同一个 chooseTerminalOption：它还负责关掉菜单识别窗口、并在模型菜单
             // 选完后主动刷新模型（`/model` 切换不产生 Stop hook，不刷就一直显示旧值）。
-            <button type="button" className={index === 0 ? "is-primary" : ""} key={`${index}:${option.label}`} onClick={() => chooseTerminalOption(option)}>
+            <button type="button" className={index === 0 ? "is-recommended" : ""} key={`${index}:${option.label}`} onClick={() => chooseTerminalOption(option)}>
               <span><b>{option.label}</b></span>
             </button>
           ))}
@@ -4319,7 +4427,7 @@ export function ChatWindow() {
                 {view === "terminal" ? t.chat.questionAnswerInTerminal : t.chat.goTerminal}
               </button>
             )}
-          <button type="button" className="is-allow" disabled={resolvingApproval || !answerMap} onClick={() => void submitQuestionAnswers()}>{t.chat.submitAnswer}</button>
+          <button type="button" className="btn-primary" disabled={resolvingApproval || !answerMap} onClick={() => void submitQuestionAnswers()}>{t.chat.submitAnswer}</button>
         </>}
       >
         <QuestionPanels
@@ -4354,7 +4462,7 @@ export function ChatWindow() {
         title={t.chat.questionTitle}
         badge={t.chat.questionPending}
         sideActions={<button type="button" className="chat-attention-dismiss is-inline" data-tip={t.chat.attentionDismissTip} onClick={collapseQuestion}>{t.chat.attentionDismiss}</button>}
-        actions={view === "chat" && !remoteUi() && history?.ptyManaged && <button type="button" className="is-allow" onClick={() => setView("terminal")}>{t.chat.goTerminal}</button>}
+        actions={view === "chat" && !remoteUi() && history?.ptyManaged && <button type="button" className="btn-primary" onClick={() => setView("terminal")}>{t.chat.goTerminal}</button>}
       >
         {/* 可点选排队的条件：托管会话（GUI 持有 PTY 才写得进按键）+ 至少一题带选项。
             排队按问题 keyed：落键前先认屏幕上停的是第几题（题面原文反查，
@@ -4429,7 +4537,15 @@ export function ChatWindow() {
       )}
       </div>
       {terminalMounted && (
-        <div className={`chat-terminal-pane${view !== "terminal" ? " is-background" : ""}`} aria-hidden={view !== "terminal"}>
+        // 对话视图下终端常驻在屏外，aria-hidden 只瞒得过读屏、瞒不过 Tab：xterm 的输入框仍在
+        // Tab 序列里，Tab 掉进去就出不来，Shift+Tab 写进 PTY 的 ESC[Z 会切走 claude 的权限模式
+        // （island-a11y trap.js 实测：6 次按键 5 次写进 write_managed_terminal）。inert 让整块
+        // 不可聚焦、不可交互；经 ref 设置的理由同 composer（React 18 不认 inert 属性）。
+        <div
+          ref={(el) => { el?.toggleAttribute("inert", view !== "terminal"); }}
+          className={`chat-terminal-pane${view !== "terminal" ? " is-background" : ""}`}
+          aria-hidden={view !== "terminal"}
+        >
           {/* broker 审批横幅——只给「hook 阻塞期间 TUI 不显示权限框」的 provider 挂
               （permission_prompt_races_hook=false，如 codex/未取证者）：那种终端视图下
               用户什么都看不到，agent 干等到 300s 超时，须领回对话页。claude 相反：官方
@@ -4500,7 +4616,7 @@ export function ChatWindow() {
                       aria-label={t.chat.sideQuestionClose}
                       onClick={() => setSideAnswers((prev) => prev.filter((item) => item.id !== entry.id))}
                     >
-                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+                      <Icon glyph={icClose} size={12} />
                     </button>
                   </div>
                   <div className={"chat-side-answer-body" + (entry.answer === null || entry.failed ? " is-muted" : "")} role="status">
@@ -4522,8 +4638,8 @@ export function ChatWindow() {
               onClick={() => { setComposerExpanded((v) => !v); promptInputRef.current?.focus(); }}
             >
               {composerExpanded
-                ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" /></svg>
-                : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" /></svg>}
+                ? <Icon glyph={icCollapse} size={14} />
+                : <Icon glyph={icExpand} size={14} />}
             </button>
           )}
         {/* T-14：外部终端连着同一 PTY 时输入无互斥——先把「可能交错」说在 composer
@@ -4610,7 +4726,7 @@ export function ChatWindow() {
           {slashMatches.map((command, index) => (
             <button type="button" key={command.name} role="option" id={`chat-slash-option-${index}`} aria-selected={index === slashActive} className="chat-slash-item"
               // styles.css 不在本次改动范围：键盘高亮复用 hover 的同一条表面色变量。
-              style={index === slashActive ? { background: "var(--cc-surface-hover)" } : undefined}
+              style={index === slashActive ? { background: "var(--fill-selected)" } : undefined}
               onMouseEnter={() => setSlashIndex(index)}
               onClick={() => { setPrompt(command.name + " "); setSlashIndex(0); }}>
               <code>{command.name}</code>
@@ -4631,7 +4747,7 @@ export function ChatWindow() {
         {atFiles.length > 0 && atQuery !== null && <div className="dd-menu chat-slash-menu" role="listbox" id="chat-at-listbox">
           {atFiles.map((rel, index) => (
             <button type="button" key={rel} role="option" id={`chat-at-option-${index}`} aria-selected={index === atActive} className="chat-slash-item"
-              style={index === atActive ? { background: "var(--cc-surface-hover)" } : undefined}
+              style={index === atActive ? { background: "var(--fill-selected)" } : undefined}
               onMouseEnter={() => setAtIndex(index)}
               onClick={() => pickAtFile(rel)}>
               <code>@{rel}</code>
@@ -4639,12 +4755,10 @@ export function ChatWindow() {
           ))}
         </div>}
         {sessionReviewComments.length > 0 && <div className="chat-review-bar">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-          </svg>
+          <Icon glyph={icMessage} size={14} />
           <span className="chat-review-bar-label">{t.chat.reviewComments(sessionReviewComments.length)}</span>
           <button type="button" onClick={() => setSessionReviewComments(() => [])}>{t.chat.reviewCommentsClear}</button>
-          <button type="button" className="is-primary" onClick={insertReviewComments}>{t.chat.reviewCommentsInsert}</button>
+          <button type="button" className="btn-primary" onClick={insertReviewComments}>{t.chat.reviewCommentsInsert}</button>
         </div>}
         {attachments.length > 0 && <div className="chat-attachments">
           {attachments.map((file) => file.image ? (
@@ -4655,16 +4769,13 @@ export function ChatWindow() {
               <button type="button" aria-label={`${t.chat.removeAttachment} ${file.name}`} onClick={() => setAttachments((items) => items.filter((item) => item.path !== file.path))}>×</button>
               {/* 已有的图也能补标注(粘贴进来的截图最常见):标完换成带框的那张。 */}
               {!remoteUi() && <button type="button" className="chat-attachment-annotate" aria-label={`${t.chat.annotate} ${file.name}`} data-tip={t.chat.annotate} onClick={() => setAnnotating({ path: file.path, replace: file.path })}>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg>
+                <Icon glyph={icPencil} size={12} />
               </button>}
             </div>
           ) : (
             <div className="chat-attachment" key={file.path} data-tip={file.path}>
               <span className="chat-file-icon" role="img" aria-label={t.chat.attachmentFile}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
-                  <path d="M14 3v5h5" />
-                </svg>
+                <Icon glyph={icFile} size={16} />
               </span>
               {/* 两行：文件名 + 「扩展名 · 大小」（大小仅粘贴来源有，见 Attachment.size）。 */}
               <span className="chat-file-info">
@@ -4786,9 +4897,14 @@ export function ChatWindow() {
               }
             }
             // ↑ 取回历史消息:空框(或已在浏览态)时 ↑ 往前翻,↓ 往回,翻回最新回到空框。
-            // 有草稿时 ↑ 保持原生光标语义,不抢多行编辑。
+            // 有草稿时 ↑ 保持原生光标语义,不抢多行编辑。浏览态下也只在光标位于首行时才翻上一条、
+            // 末行时才翻下一条（shell 与 Claude Code CLI 惯例）：召回一条多行提示词想改中间一行，
+            // 按 ↑ 就被换成另一条（UI 调研 chat #12）。按逻辑行（换行符）判，不按软换行。
+            const caret = event.currentTarget;
+            const onFirstLine = !caret.value.slice(0, caret.selectionStart).includes("\n");
+            const onLastLine = !caret.value.slice(caret.selectionEnd).includes("\n");
             if (event.key === "ArrowUp" && !event.nativeEvent.isComposing && userHistory.length > 0
-              && (historyNavRef.current !== null || !prompt.trim())) {
+              && (historyNavRef.current !== null || !prompt.trim()) && onFirstLine) {
               const at = historyNavRef.current?.index ?? userHistory.length;
               if (at > 0) {
                 event.preventDefault();
@@ -4802,7 +4918,7 @@ export function ChatWindow() {
               }
               return;
             }
-            if (event.key === "ArrowDown" && historyNavRef.current !== null && !event.nativeEvent.isComposing) {
+            if (event.key === "ArrowDown" && historyNavRef.current !== null && !event.nativeEvent.isComposing && onLastLine) {
               event.preventDefault();
               const next = historyNavRef.current.index + 1;
               if (next >= userHistory.length) {
@@ -4927,7 +5043,10 @@ export function ChatWindow() {
               const risky = riskOf(resumePick ? nextResume : state?.value);
               return <div className="chat-model" key={dimension} ref={modeMenu === dimension ? modeMenuUi.ref : undefined} onKeyDown={modeMenu === dimension ? modeMenuUi.onKeyDown : undefined}>
                 <button
-                  ref={modeMenu === dimension ? modeMenuUi.btnRef : undefined}
+                  ref={(node) => {
+                    if (modeMenu === dimension) assignRef(modeMenuUi.btnRef, node);
+                    if (dimension === permissionDimension) permissionButtonRef.current = node;
+                  }}
                   type="button"
                   className={"chat-model-button chat-mode-button" + (risky ? " is-risk" : "")}
                   disabled={!interactive || sending}
@@ -4949,14 +5068,14 @@ export function ChatWindow() {
                 >
                   {/* 权限 pill 的图标与短文案（对齐 Kimi 的 perm-pill）。同模型按钮：标签套 span 防挤压竖排。 */}
                   <span className="chat-mode-icon" aria-hidden="true">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>
+                    <Icon glyph={icShield} size={14} />
                   </span>
                   <span className="chat-model-label">{value}</span>
                   {options.length > 0
-                    ? <svg className="chat-model-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M6 9l6 6 6-6" /></svg>
+                    ? <Icon glyph={icChevronDown} size={12} className="chat-model-chevron" />
                     // 双向箭头而不是圆形箭头：后者在任何界面里都读作「刷新」，
                     // 而这里的语义是「在几个值之间轮换」。
-                    : canCycle && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m16 3 4 4-4 4M20 7H5M8 21l-4-4 4-4M4 17h15" /></svg>}
+                    : canCycle && <Icon glyph={icArrowLeftRight} size={12} />}
                 </button>
                 {/* 手机上换成底部面板（对照 Kimi 手机端的模式切换）：内容同一份，仍挂在 modeMenuUi.ref
                     容器里，点面板内不算「点外面」，Esc/点外关闭照旧由菜单负责。 */}
@@ -4997,7 +5116,7 @@ export function ChatWindow() {
                         <span className="chat-model-item-name">{option.label}</span>
                         {modeDesc(String(option.value)) && <span className="chat-model-item-desc" id={`chat-mode-desc-${dimension}-${option.value}`}>{modeDesc(String(option.value))}</span>}
                       </span>
-                      {active && <svg className="chat-model-check" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4.5 12.5l5 5 10-11" /></svg>}
+                      {active && <Icon glyph={icCheck} size={16} className="chat-model-check" />}
                     </button>;
                   })}
                 </div></SheetOnPhone>}
@@ -5009,7 +5128,7 @@ export function ChatWindow() {
           )}
           {(modelPresets.length > 0 || modelMenuCommand || history?.model || switchTargets.length > 0) && <div className="chat-model chat-model-select" ref={modelPickerOpenUi.ref} onKeyDown={modelPickerOpenUi.onKeyDown}>
             <button
-              ref={modelPickerOpenUi.btnRef}
+              ref={(node) => { assignRef(modelPickerOpenUi.btnRef, node); modelButtonRef.current = node; }}
               type="button"
               className="chat-model-button"
               disabled={modelPresets.length === 0 && !modelMenuCommand && switchTargets.length === 0}
@@ -5050,7 +5169,7 @@ export function ChatWindow() {
               {/* 静默探测时把箭头换成转圈：这一下点击确实在做事，但做的事不在屏幕上。 */}
               {modelProbing || modelPicking
                 ? <span className="chat-model-spinner" aria-hidden="true" />
-                : (modelPresets.length > 0 || modelMenuCommand) && <svg className="chat-model-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M6 9l6 6 6-6" /></svg>}
+                : (modelPresets.length > 0 || modelMenuCommand) && <Icon glyph={icChevronDown} size={12} className="chat-model-chevron" />}
             </button>
             {modelPickerOpen && (
               <ModelMenu
@@ -5105,7 +5224,7 @@ export function ChatWindow() {
             >
               {interrupting
                 ? <span className="chat-model-spinner" aria-hidden="true" />
-                : <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="4.5" /></svg>}
+                : <Icon glyph={icStop} size={16} />}
             </button>
           )}
           {/* 主圆钮双身份:回合运行中且输入框是空的 → 它就是停止键(黑圆方块,一按停当前
@@ -5129,10 +5248,10 @@ export function ChatWindow() {
             {stopMode
               ? interrupting
                 ? <span className="chat-model-spinner" aria-hidden="true" />
-                : <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="4.5" /></svg>
+                : <Icon glyph={icStop} size={16} />
               : sending
                 ? <span className="chat-model-spinner" aria-hidden="true" />
-                : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 19V5M6.5 10.5 12 5l5.5 5.5" /></svg>}
+                : <Icon glyph={icArrowUp} size={16} />}
           </button>
         </div>
         {/* 整条横幅的显隐挂 needsTakeover 而不是 sendError：打字会清掉 sendError（见
@@ -5236,10 +5355,11 @@ export function ChatWindow() {
             aria-label={t.chat.diffResize}
             // 可聚焦：← 变宽、→ 变窄（见 useDiffPanelWidth）。
             tabIndex={0}
-            aria-valuenow={Math.round(diffResize.width)}
+            aria-valuenow={Math.round(shownPanelWidth)}
             aria-valuemin={DIFF_PANEL_MIN_WIDTH}
             onKeyDown={diffResize.onKeyDown}
             onPointerDown={diffResize.onPointerDown}
+            onDoubleClick={diffResize.reset}
           />}
           {/* fallback=null:桌面端已在挂载时预取 chunk,点开即到;真等到的话面板位置
               短暂空着比塞一个骨架更安静(分栏柄已经先渲染出来占位了)。 */}
@@ -5277,7 +5397,7 @@ export function ChatWindow() {
                 cwd={cwd}
                 summary={gitSummary}
                 repos={repoChanges}
-                width={diffResize.width}
+                width={shownPanelWidth}
                 comments={sessionReviewComments}
                 onAddComment={addReviewComment}
                 onRemoveComment={removeReviewComment}

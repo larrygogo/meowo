@@ -227,6 +227,10 @@ pub(crate) struct Settings {
     /// 缺省关闭，兼容老 settings.json。
     #[serde(default)]
     pub(crate) island_strip: bool,
+    /// 灵动岛压在前台最大化窗口的标题栏上时自动收成细条，光标靠近恢复胶囊（UI 优化关卡 A 定案，
+    /// Windows）。缺省开：岛默认在屏幕顶部正中，正好挡最大化窗口标题栏中间的可点区域。
+    #[serde(default = "default_true")]
+    pub(crate) island_auto_strip: bool,
     /// 哪些事让灵动岛弹提醒：waiting（跑完）/ approval（含计划确认、屏幕上挂着交互）/ question / error。缺省全开。
     #[serde(default = "default_island_alerts")]
     pub(crate) island_alerts: Vec<String>,
@@ -356,6 +360,7 @@ impl Default for Settings {
             sticker_color: default_sticker_color(),
             island_compact: default_island_compact(),
             island_strip: false,
+            island_auto_strip: true,
             island_alerts: default_island_alerts(),
             notify_kinds: default_island_alerts(),
             island_alert_seconds: default_island_alert_seconds(),

@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as Rea
 import { listen } from "@tauri-apps/api/event";
 import { appConfirm } from "../confirm";
 import { Terminal } from "@xterm/xterm";
+import { terminalTheme } from "./terminalTheme";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { SearchAddon } from "@xterm/addon-search";
@@ -40,6 +41,10 @@ import { terminalAttention, visibleTerminalText, type AttentionGrammar, type Ter
 import { remoteUi } from "../remoteMode";
 import { isMac } from "../platform";
 import { WINDOW_CLOSE_CANCELLED_EVENT } from "./chat/windowClose";
+import { isTerminalAppNavKey } from "./terminalKeys";
+import { Icon } from "../icons/Icon";
+import { icChevronUp } from "../icons/glyphs.chat";
+import { icChevronDown } from "../icons/glyphs";
 
 /** 远程模式补查周期（ms）。手机端收不到 pty-output 事件,靠定时补查增量快照喂满屏幕识别
  *  （AskUserQuestion 表单检测跑在这条通道上）。带 nextOffset 只取增量,不重传 backlog。 */
@@ -622,9 +627,9 @@ export function ManagedTerminal({ sessionId, status, reviewPending = false, back
       // 占位默认值,真实值由设置(terminal_scrollback)经 applyTermStyle 下发——挂载时读一次,
       // settings-changed 热应用。
       scrollback: 5000,
-      // 绿色只留给光标这一格宽的点缀；选区是成片色块，用低饱和灰绿保持清爽。
+      // 配色取自 --term-*（terminalTheme.ts）：光标用品牌蓝点缀，选区是成片色块，用淡蓝保持清爽。
       // 底色与对话视图同档（--cc-bg / --cc-window-bg = #121212），切页签时不跳色。
-      theme: { background: "#121212", foreground: "#e7e9e8", cursor: "#55d6ae", selectionBackground: "#31403a" },
+      theme: terminalTheme(),
     });
     const fit = new FitAddon();
     terminal.loadAddon(fit);
@@ -744,14 +749,12 @@ export function ManagedTerminal({ sessionId, status, reviewPending = false, back
     copySelectionRef.current = copyTerminalSelection;
     terminal.attachCustomKeyEventHandler((event) => {
       if (event.type !== "keydown") return true;
-      // 应用级导航键（Ctrl/Cmd+K 切换器、B 收侧栏、1/2 切视图、N 新建）放行给窗口监听：
+      // 应用级导航键（Ctrl/Cmd+K 切换器、⌘B 收侧栏、1/2 切视图、N 新建）放行给窗口监听：
       // xterm 吃掉 keydown 会 stopPropagation，事件到不了 window，这些快捷键在终端视图
       // 全部失灵。放行 = xterm 不处理也不下发 PTY，事件自然冒泡（与粘贴键同一机制）。
-      // 代价：agent composer 的 readline 编辑键（如 Ctrl+K 删到行尾）在托管终端让位——
-      // 应用内导航的跨视图一致性优先。
-      const appNav = (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey
-        && ["KeyK", "KeyB", "KeyN", "Digit1", "Digit2"].includes(event.code);
-      if (appNav) return false;
+      // 代价：agent composer 的 readline 编辑键（如 Ctrl+K 删到行尾）在托管终端让位。
+      // Ctrl+B 例外，交给 PTY：它是 claude 的「转到后台」（关卡 A 定案，见 terminalKeys）。
+      if (isTerminalAppNavKey(event)) return false;
       // Ctrl/Cmd+F = 终端内搜索:拦下打开搜索条,不让 ^F(光标前移)落进 PTY。Ctrl+Shift+F 是
       // 同一动作的别名(二期 #8,对话视图同此)。窗口级的找字监听对 .managed-terminal 内的焦点已让位,互不抢。
       const findCombo = (event.ctrlKey || event.metaKey) && !event.altKey && event.code === "KeyF";
@@ -1841,10 +1844,10 @@ export function ManagedTerminal({ sessionId, status, reviewPending = false, back
             <span className="term-search-miss" role="status">{t.chat.termSearchWrapped(searchWrapped)}</span>
           )}
           <button type="button" className="term-search-btn" aria-label={t.chat.termSearchPrev} data-tip={t.chat.termSearchPrev} onClick={() => runSearch(searchQuery, "prev")}>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m18 15-6-6-6 6" /></svg>
+            <Icon glyph={icChevronUp} size={12} />
           </button>
           <button type="button" className="term-search-btn" aria-label={t.chat.termSearchNext} data-tip={t.chat.termSearchNext} onClick={() => runSearch(searchQuery, "next")}>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+            <Icon glyph={icChevronDown} size={12} />
           </button>
           <button type="button" className="term-search-btn is-close" aria-label={t.chat.close} onClick={closeSearch}>×</button>
         </div>

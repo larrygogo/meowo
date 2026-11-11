@@ -79,7 +79,7 @@ describe("设置 › 扩展", () => {
     await screen.findByText("lark-doc");
     expect(document.querySelector(".ext-summary")?.textContent).toContain("2 个技能 · 1 个 MCP 服务 · 1 个插件 · 1 个钩子");
     expect(screen.getByText("Meowo 状态上报")).toBeTruthy();
-    expect(screen.getByText("挂在 2 个事件上，看板靠它显示状态")).toBeTruthy();
+    expect(screen.getByText("挂在 2 个事件上，用来上报会话状态")).toBeTruthy();
     expect(screen.getByText("PreToolUse")).toBeTruthy();
     expect(screen.getByText("2 条命令")).toBeTruthy();
     expect(screen.queryByText("Stop")).toBeNull();

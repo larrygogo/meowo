@@ -619,16 +619,24 @@ pub(crate) fn open_latest_chat_window(app: &tauri::AppHandle) {
         let latest = crate::open_store(&crate::db_path())
             .ok()
             .and_then(|store| store.latest_session_id().ok().flatten());
-        match latest {
-            Some(session_id) => {
-                // 托盘入口没有 UI 可上报；至少留日志。
-                if let Err(error) = open_chat_window_impl(&app, session_id, true) {
-                    eprintln!("打开对话窗口失败: {error}");
-                }
-            }
-            None => open_settings_window(&app),
+        // 托盘入口没有 UI 可上报；至少留日志。
+        if let Err(error) = open_chat_window_target(&app, latest_chat_target(latest), true) {
+            eprintln!("打开对话窗口失败: {error}");
         }
     });
+}
+
+/// 托盘单击/菜单「打开对话窗口」落在哪。库里一个会话都没有（全新安装）时也开对话窗新建页：
+/// 引导最后一步教的就是「单击托盘图标打开对话窗口」，原先回落设置「通用」分区与引导对不上
+/// （UI 调研 shell #1：全新 ~/.meowo 走完引导单击托盘弹出设置窗）。新建页自带「未检测到 CLI · 去安装」。
+fn latest_chat_target(latest: Option<i64>) -> ChatTarget {
+    match latest {
+        Some(session_id) => ChatTarget::Session(session_id),
+        None => ChatTarget::NewSession {
+            cwd: None,
+            provider: None,
+        },
+    }
 }
 
 /// 前端调用（贴纸底栏「打开对话窗口」按钮）：打开最近活跃会话的对话窗口。
@@ -1328,6 +1336,10 @@ mod chat_target_tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "window_latest_target_tests.rs"]
+mod latest_target_tests;
 
 #[cfg(all(test, not(target_os = "macos")))]
 mod tray_click_tests {

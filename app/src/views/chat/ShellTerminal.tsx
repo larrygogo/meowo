@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
+import { terminalTheme } from "../terminalTheme";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { WebglAddon } from "@xterm/addon-webgl";
@@ -44,7 +45,7 @@ export function ShellTerminal({ id, visible }: { id: number; visible: boolean })
       fontSize: style.size,
       lineHeight: style.line,
       scrollback: 5000,
-      theme: { background: "#121212", foreground: "#e7e9e8", cursor: "#55d6ae", selectionBackground: "#31403a" },
+      theme: terminalTheme(),
     });
     termRef.current = terminal;
     const fit = new FitAddon();

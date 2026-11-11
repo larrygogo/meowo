@@ -67,12 +67,12 @@ describe("右侧面板", () => {
     expect(tabs[1].querySelector(".side-panel-tab-agent")).toBeNull();
   });
 
-  it("页签里的网页在等你允许时，页签上换成琥珀点（页签藏着也看得到）", () => {
+  it("页签里的网页请求权限时，页签上换成琥珀点（页签藏着也看得到）", () => {
     panes.set(5, { ...panes.get(5)!, permission: { id: 1, kind: "downloads", host: "httpbin.org" } });
     try {
       renderPanel();
       const tab = screen.getAllByRole("tab")[2];
-      expect(tab.querySelector(".side-panel-tab-waiting")?.getAttribute("aria-label")).toBe("网页在等你允许");
+      expect(tab.querySelector(".side-panel-tab-waiting")?.getAttribute("aria-label")).toBe("网页请求权限");
       expect(tab.querySelector(".side-panel-tab-agent")).toBeNull();
     } finally {
       panes.set(5, { ...panes.get(5)!, permission: null });

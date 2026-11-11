@@ -412,7 +412,7 @@ describe("ChatSidebar", () => {
     expect(args[1]).toEqual({ search: null, cwd: null, limit: 120 });
 
     // 筛选从「工作空间」页签进入（对照 Kimi，视图菜单里不再有工作区筛选）：⋯ → 只看这个工作区的会话。
-    fireEvent.click(screen.getByRole("tab", { name: "工作空间" }));
+    fireEvent.click(screen.getByRole("tab", { name: "工作区" }));
     fireEvent.click(screen.getAllByRole("button", { name: "选项" })[1]);
     fireEvent.click(await screen.findByRole("menuitem", { name: "只看这个工作区的会话" }));
     expect(await screen.findByRole("button", { name: /临时活儿/ })).toBeTruthy();
@@ -600,7 +600,7 @@ describe("ChatSidebar", () => {
     });
     render(<ChatSidebar activeId={0} approvalAwaitingIds={new Set()} onSelect={() => {}} onCollapse={() => {}} />);
     await screen.findByRole("button", { name: /甲/ });
-    fireEvent.click(screen.getByRole("tab", { name: "工作空间" }));
+    fireEvent.click(screen.getByRole("tab", { name: "工作区" }));
     expect(screen.getByText("C:/w/meowo")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /甲/ })).toBeNull();
     // 搜索框在这个页签里过滤工作区。
@@ -633,7 +633,7 @@ describe("ChatSidebar", () => {
     });
     render(<ChatSidebar activeId={0} approvalAwaitingIds={new Set()} onSelect={() => {}} onCollapse={() => {}} />);
     await screen.findByRole("button", { name: /甲/ });
-    fireEvent.click(screen.getByRole("tab", { name: "工作空间" }));
+    fireEvent.click(screen.getByRole("tab", { name: "工作区" }));
     expect(screen.getByText("C:/w/old")).toBeTruthy();
     fireEvent.click(screen.getAllByRole("button", { name: "选项" })[1]);
     fireEvent.click(await screen.findByRole("menuitem", { name: "从列表中移除" }));
@@ -661,7 +661,7 @@ describe("ChatSidebar", () => {
     fireEvent.click(await screen.findByRole("menuitem", { name: "只看这个工作区的会话" }));
     await waitFor(() => expect(pages[pages.length - 1]).toMatchObject({ cwd: "C:/w/meowo" }));
     // 工作空间页签的目录行右键 → 同一个菜单，选「在此工作区新建会话」。
-    fireEvent.click(screen.getByRole("tab", { name: "工作空间" }));
+    fireEvent.click(screen.getByRole("tab", { name: "工作区" }));
     fireEvent.contextMenu(screen.getByText("C:/w/meowo"), { clientX: 40, clientY: 60 });
     fireEvent.click(await screen.findByRole("menuitem", { name: "在此工作区新建会话" }));
     expect(invoke).toHaveBeenCalledWith("open_new_session_window", { cwd: "C:/w/meowo", provider: undefined });
@@ -882,7 +882,8 @@ describe("ChatSidebar", () => {
     /// 会以为没生效（另一个还在），没改的人平白多一个不知从哪来的按钮。
     it("按钮模式下有「⋯」，右键同样弹菜单（惯例恒可用）", async () => {
       await renderList(1, "button");
-      const menus = await screen.findAllByRole("button", { name: "更多操作" });
+      // 「⋯」嵌在 role=button 的条目里、对读屏 aria-hidden（axe nested-interactive），按标签找。
+      const menus = await screen.findAllByLabelText("更多操作");
       expect(menus).toHaveLength(2);
       // 右键恒开菜单：card_menu_mode 只决定「⋯」是否常驻，不再关掉右键这条路——
       // 「右键出上下文菜单」是通用惯例，随设置失效会变成无反馈的黑洞。
@@ -907,12 +908,12 @@ describe("ChatSidebar", () => {
       await renderList(1, "context");
       fireEvent.contextMenu(screen.getByRole("button", { name: /旧任务/ }));
       expect(await screen.findByRole("menuitem", { name: "标记完成" })).toBeTruthy();
-      expect(screen.queryByRole("button", { name: "更多操作" })).toBeNull();
+      expect(screen.queryByLabelText("更多操作")).toBeNull();
     });
 
     it("「⋯」按钮同样打开菜单，重命名就地编辑并写回后端", async () => {
       await renderList(1, "button");
-      const menus = await screen.findAllByRole("button", { name: "更多操作" });
+      const menus = await screen.findAllByLabelText("更多操作");
       fireEvent.click(menus[1]);
       fireEvent.click(await screen.findByRole("menuitem", { name: "重命名" }));
       const input = screen.getByPlaceholderText("输入名称，回车保存");

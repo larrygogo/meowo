@@ -51,6 +51,10 @@ import {
 } from "./pathMenu";
 import { FileIcon, FolderIcon, LineCounts, readDiffLayout, saveDiffLayout, singleRepo, touchedInRoot } from "./diffShared";
 import { registerDiffModule } from "./lazyDiff";
+import { Icon } from "../../icons/Icon";
+import { icChevronLeft, icCollapse, icExpand, icGitBranch, icMenu, icSidebarLeft, icSidebarRight } from "../../icons/glyphs.chat";
+import { icCheck, icChevronDown, icCircleCheck, icFolder, icRefresh, icSettings } from "../../icons/glyphs";
+import { icTree, icWrap } from "../../icons/glyphs.scm";
 
 // 拆到 pathMenu / diffShared 之前这些都从这里导出，老调用方（含测试）照旧能从这里拿。
 export { OpenIcon, PathContextMenu, PathMentionContext, PathMenu, RowMore, type PathMenuItem } from "./pathMenu";
@@ -165,9 +169,7 @@ function OpenSplitButton({ cwd, rel }: { cwd: string; rel: string }) {
           if (rect) setMenu({ x: rect.left, y: rect.bottom + 4 });
         }}
       >
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="M6 9l6 6 6-6" />
-        </svg>
+        <Icon glyph={icChevronDown} size={12} />
       </button>
       {menu && (
         <PathMenu x={menu.x} y={menu.y} items={buildPathMenuItems(cwd, rel, openers, t, mention)} onClose={() => setMenu(null)} />
@@ -259,9 +261,7 @@ function WrapButton({ wrap, onToggle }: { wrap: boolean; onToggle: () => void })
   const t = useT();
   return (
     <button type="button" className="chat-diff-iconbtn" aria-pressed={wrap} aria-label={t.chat.codeWrap} data-tip={t.chat.codeWrap} onClick={onToggle}>
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <path d="M4 6h16M4 12h13a3 3 0 0 1 0 6h-4" /><path d="M15 16l-2 2 2 2" /><path d="M4 18h5" />
-      </svg>
+      <Icon glyph={icWrap} size={14} />
     </button>
   );
 }
@@ -382,9 +382,7 @@ function GitDiffViewImpl({ cwd, summary, repos = null, width, collapsed, maximiz
         {remoteUi() && (
           <>
             <button type="button" className="chat-diff-back" aria-label={t.chat.diffBack} onClick={onCollapse}>
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M15 18l-6-6 6-6" />
-              </svg>
+              <Icon glyph={icChevronLeft} size={16} />
             </button>
             <span className="chat-diff-title">{t.chat.diffChangesTab}</span>
           </>
@@ -392,17 +390,12 @@ function GitDiffViewImpl({ cwd, summary, repos = null, width, collapsed, maximiz
         {!remoteUi() && <div className="chat-diff-tabs">
           {/* 远程只放行改动列表（remote.rs 模块头「例外」），「文件」页签要读任意文件，不给。 */}
           {!remoteUi() && <button type="button" className={tab === "files" || !changesAvailable ? "is-active" : ""} onClick={() => selectTab("files")}>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-            </svg>
+            <Icon glyph={icFolder} size={12} />
             {t.chat.filesTab}
           </button>}
           {changesAvailable && (
             <button type="button" className={tab === "changes" ? "is-active" : ""} onClick={() => selectTab("changes")}>
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <circle cx="6" cy="6" r="2.5" /><circle cx="6" cy="18" r="2.5" /><circle cx="18" cy="9" r="2.5" />
-                <path d="M6 8.5v7" /><path d="M18 11.5c0 4-4 4.5-9.2 4.6" />
-              </svg>
+              <Icon glyph={icGitBranch} size={12} />
               {t.chat.diffChangesTab}
             </button>
           )}
@@ -419,22 +412,15 @@ function GitDiffViewImpl({ cwd, summary, repos = null, width, collapsed, maximiz
           onClick={onToggleMaximize}
         >
           {maximized ? (
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M4 14h6v6" /><path d="M20 10h-6V4" /><path d="M14 10l7-7" /><path d="M3 21l7-7" />
-            </svg>
+            <Icon glyph={icCollapse} size={14} />
           ) : (
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M15 3h6v6" /><path d="M9 21H3v-6" /><path d="M21 3l-7 7" /><path d="M3 21l7-7" />
-            </svg>
+            <Icon glyph={icExpand} size={14} />
           )}
         </button>}
         {/* 折叠：面板收成隐藏（不卸载，状态保留）。图标与侧栏开关同款「面板+分隔线」，
             镜像到右缘（面板在右侧，线靠右）。 */}
         {!remoteUi() && <button type="button" className="chat-diff-action" data-tip={t.chat.diffCollapse} aria-label={t.chat.diffCollapse} onClick={onCollapse}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" aria-hidden="true">
-            <rect x="3.5" y="4.5" width="17" height="15" rx="3" />
-            <path d="M14.5 4.5v15" />
-          </svg>
+          <Icon glyph={icSidebarRight} size={14} />
         </button>}
       </header>
       {/* key=cwd:切仓即重挂,树展开态/选中文件不跨仓串场。 */}
@@ -728,12 +714,7 @@ export function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedP
               onClick={() => toggleDir(node.path)}
               onContextMenu={(event) => openCtxMenu(event, node.path, true)}
             >
-              <svg
-                className={collapsed.has(node.path) ? "chat-diff-chev is-collapsed" : "chat-diff-chev"}
-                width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
-              >
-                <path d="M6 9l6 6 6-6" />
-              </svg>
+              <Icon glyph={icChevronDown} size={12} className={collapsed.has(node.path) ? "chat-diff-chev is-collapsed" : "chat-diff-chev"} />
               <FolderIcon />
               <span className="chat-diff-path">{node.name}</span>
             </button>
@@ -851,7 +832,7 @@ export function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedP
                       />
                       <div className="chat-diff-cmt-actions">
                         <button type="button" onClick={() => setEditing(null)}>{t.chat.diffCommentCancel}</button>
-                        <button type="button" className="is-primary" disabled={!commentDraft.trim()} onClick={saveComment}>{t.chat.diffCommentSave}</button>
+                        <button type="button" className="btn-primary" disabled={!commentDraft.trim()} onClick={saveComment}>{t.chat.diffCommentSave}</button>
                       </div>
                     </div>
                   )}
@@ -871,9 +852,7 @@ export function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedP
     return (
       <div className="chat-diff-empty">
         <div className="chat-diff-clean">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <circle cx="12" cy="12" r="9" /><path d="M8 12.5l2.8 2.8L16 10" />
-          </svg>
+          <Icon glyph={icCircleCheck} size={20} />
           {t.chat.diffNoChanges}
         </div>
       </div>
@@ -902,10 +881,7 @@ export function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedP
           行尾照 Kimi 放文件数与「列表 / 树形」切换。 */}
       <div className="chat-diff-branchline" data-tip={summary.branch ?? undefined}>
           {summary.branch && <>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <circle cx="6" cy="6" r="2.5" /><circle cx="6" cy="18" r="2.5" /><circle cx="18" cy="9" r="2.5" />
-              <path d="M6 8.5v7" /><path d="M18 11.5c0 4-4 4.5-9.2 4.6" />
-            </svg>
+            <Icon glyph={icGitBranch} size={12} />
             <span>{summary.branch}</span>
             {/* 旧后端不下发 ahead/behind（手机页可能先于安装版更新），按缺省处理。 */}
             {!!summary.ahead && <em className="chat-diff-divergence" data-tip={t.chat.diffAheadTip(summary.ahead)}>↑{summary.ahead}</em>}
@@ -915,11 +891,11 @@ export function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedP
           <span className="chat-diff-filecount">{t.chat.diffFileCount(listedFiles.length)}</span>
           <div className="chat-diff-layout" role="group" aria-label={t.chat.diffLayoutLabel}>
             <button type="button" aria-pressed={layout === "list"} onClick={() => setLayout("list")}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M5 7h14M5 12h14M5 17h14" /></svg>
+              <Icon glyph={icMenu} size={12} />
               {t.chat.diffLayoutList}
             </button>
             <button type="button" aria-pressed={layout === "tree"} onClick={() => setLayout("tree")}>
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="6" rx="1.5" /><rect x="14" y="10" width="7" height="5" rx="1.5" /><rect x="14" y="17" width="7" height="4" rx="1.5" /><path d="M6.5 9v9.5H14M6.5 12.5H14" /></svg>
+              <Icon glyph={icTree} size={12} />
               {t.chat.diffLayoutTree}
             </button>
           </div>
@@ -1262,12 +1238,7 @@ export function FilesView({ cwd, live = false }: { cwd: string; /** 面板正显
               onClick={() => toggleDir(entry.relPath)}
               onContextMenu={(event) => openCtxMenu(event, entry.relPath, true)}
             >
-              <svg
-                className={expanded.has(entry.relPath) ? "chat-diff-chev" : "chat-diff-chev is-collapsed"}
-                width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
-              >
-                <path d="M6 9l6 6 6-6" />
-              </svg>
+              <Icon glyph={icChevronDown} size={12} className={expanded.has(entry.relPath) ? "chat-diff-chev" : "chat-diff-chev is-collapsed"} />
               <FolderIcon />
               <span className="chat-diff-path">{entry.name}</span>
             </button>
@@ -1331,12 +1302,7 @@ export function FilesView({ cwd, live = false }: { cwd: string; /** 面板正显
                   onContextMenu={(event) => openCtxMenu(event, group.relPath, group.isDir)}
                 >
                   {hasLines && (
-                    <svg
-                      className={collapsed ? "chat-diff-chev is-collapsed" : "chat-diff-chev"}
-                      width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"
-                    >
-                      <path d="M6 9l6 6 6-6" />
-                    </svg>
+                    <Icon glyph={icChevronDown} size={12} className={collapsed ? "chat-diff-chev is-collapsed" : "chat-diff-chev"} />
                   )}
                   {group.isDir ? <FolderIcon /> : <FileIcon />}
                   <span className="chat-diff-path" data-tip={group.relPath}>{group.relPath}</span>
@@ -1522,9 +1488,7 @@ export function FilesView({ cwd, live = false }: { cwd: string; /** 面板正显
             setPosMenu({ x: rect.left, y: rect.bottom + 4 });
           }}
         >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z" />
-          </svg>
+          <Icon glyph={icSettings} size={14} />
         </button>
       </div>
       <input
@@ -1597,7 +1561,7 @@ function StatusBadge({ status }: { status: string }) {
 function BackButton({ label, onClick }: { label: string; onClick: () => void }) {
   return (
     <button type="button" className="chat-diff-back" onClick={onClick}>
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6" /></svg>
+      <Icon glyph={icChevronLeft} size={12} />
       {label}
     </button>
   );
@@ -1605,26 +1569,20 @@ function BackButton({ label, onClick }: { label: string; onClick: () => void }) 
 
 function RefreshIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M20 11a8 8 0 1 0-2.3 5.7" /><path d="M20 4v7h-7" />
-    </svg>
+    <Icon glyph={icRefresh} size={14} />
   );
 }
 
 function CheckIcon() {
   return (
-    <svg className="ctx-check" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M5 12.5l4.5 4.5L19 7.5" />
-    </svg>
+    <Icon glyph={icCheck} size={14} className="ctx-check" />
   );
 }
 
 /** 文件树显隐按钮：一个窗格、竖线画在树所在的那一侧。 */
 function TreePaneIcon({ right }: { right: boolean }) {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <rect x="3" y="4" width="18" height="16" rx="2" /><path d={right ? "M15 4v16" : "M9 4v16"} />
-    </svg>
+    <Icon glyph={right ? icSidebarRight : icSidebarLeft} size={14} />
   );
 }
 

@@ -1,8 +1,11 @@
-import { memo, useState } from "react";
+import { memo, useId, useState } from "react";
+import { tablistIds, useTablist } from "../useTablist";
 import { useT } from "../../i18n";
 import { collectSubagentReceipts } from "../../chat/reducer";
 import { durationText, isBackgroundShell, isSubagentDelegation, type ToolUseItem } from "./shared";
 import type { ChatItem } from "../../api";
+import { Icon } from "../../icons/Icon";
+import { icCircleCheck, icClose } from "../../icons/glyphs";
 
 export type BackgroundTask = {
   id: string;
@@ -76,12 +79,14 @@ export function filterTasks(tasks: BackgroundTask[], filter: TaskFilter): Backgr
 const FILTERS: TaskFilter[] = ["recent", "running", "done", "all"];
 
 /// 面板头右侧的分段筛选（最近/进行中/已完成/全部）。
-export function TaskFilterTabs({ value, onChange }: { value: TaskFilter; onChange: (next: TaskFilter) => void }) {
+/// 页签在面板头、列表在面板体，分属两处：idBase 由 TasksDockPanel 生成后两边共用。
+export function TaskFilterTabs({ value, onChange, idBase }: { value: TaskFilter; onChange: (next: TaskFilter) => void; idBase?: string }) {
   const t = useT();
+  const tabs = useTablist({ keys: FILTERS, active: value, onSelect: onChange, idBase });
   return (
-    <div className="chat-task-filter" role="tablist">
+    <div className="chat-task-filter" {...tabs.listProps}>
       {FILTERS.map((filter) => (
-        <button key={filter} type="button" role="tab" aria-selected={value === filter} className={value === filter ? "is-active" : ""} onClick={() => onChange(filter)}>
+        <button key={filter} type="button" {...tabs.tabProps(filter)} className={value === filter ? "is-active" : ""} onClick={() => onChange(filter)}>
           {t.chat.taskFilters[filter]}
         </button>
       ))}
@@ -101,8 +106,8 @@ export const TasksPanel = memo(function TasksPanel({ tasks, filter }: { tasks: B
           <span className="chat-task-glyph" role="img" aria-label={t.chat.taskStates[task.state]}>
             {task.state === "run" ? <span className="chat-task-spin" aria-hidden="true" />
               : task.state === "done"
-                ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="m8.5 12 2.5 2.5 4.5-5" /></svg>
-                : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>}
+                ? <Icon glyph={icCircleCheck} size={14} />
+                : <Icon glyph={icClose} size={14} />}
           </span>
           <span className="chat-task-name">{task.name}</span>
           {task.meta && <span className="chat-task-meta">{task.meta}</span>}
@@ -117,6 +122,8 @@ export const TasksPanel = memo(function TasksPanel({ tasks, filter }: { tasks: B
 export function TasksDockPanel({ title, icon, tasks, onClose }: { title: string; icon: JSX.Element; tasks: BackgroundTask[]; onClose: () => void }) {
   const t = useT();
   const [filter, setFilter] = useState<TaskFilter>("recent");
+  const tabsId = useId();
+  const ids = tablistIds(tabsId);
   const running = tasks.filter((task) => task.state === "run").length;
   return (
     <div className="dock-work-panel panel-tasks">
@@ -127,11 +134,11 @@ export function TasksDockPanel({ title, icon, tasks, onClose }: { title: string;
           <span className="dock-work-meta">{t.chat.tasksRunningCount(running)}</span>
         </span>
         <span className="dock-work-actions">
-          <TaskFilterTabs value={filter} onChange={setFilter} />
+          <TaskFilterTabs value={filter} onChange={setFilter} idBase={tabsId} />
           <button type="button" className="dock-work-close" aria-label={t.chat.close} onClick={onClose}>×</button>
         </span>
       </div>
-      <div className="dock-work-body"><TasksPanel tasks={tasks} filter={filter} /></div>
+      <div className="dock-work-body" id={ids.panelId} role="tabpanel" aria-labelledby={ids.tabId(filter)}><TasksPanel tasks={tasks} filter={filter} /></div>
     </div>
   );
 }

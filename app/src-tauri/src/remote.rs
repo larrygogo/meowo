@@ -54,6 +54,13 @@
 //! 同日做空第二轮：多个 GitHub 远端时选 PR 开在哪个仓库（`forge_choose_repo`，只写 ~/.meowo/forge.json
 //! 里这个仓库的一条选择）放行，手机上也能选，不推用户回电脑或终端。
 //!
+//! 例外（2026-11-11 UI 优化，按「不推用户去桌面端」的定案）：`repair_provider_hooks` 放行。
+//! 它只做 Meowo 每次启动都会自动做的那件事——把 reporter 接入项写进已识别 agent 的配置
+//! （`setup::apply_provider`，首次写前备份、其余配置原样保留），provider 只认已注册的 agent id，
+//! 不接受路径或任意内容。比白名单里早已放行的 `write_managed_terminal`（等于任意命令）窄得多，
+//! 不扩大风险面；此前手机新建会话碰到「尚未接入」只能写「请在桌面端处理」（UI 调研 m10）。
+//! 登录（`login_agent`，要在宿主拉起终端与浏览器授权）、安装（`install_agent`）仍拒。
+//!
 //! 例外（2026-11-09 用户决定，Lead 工作流关卡 B）：`lead_task_snapshot` / `answer_lead_gate`
 //! 放行，供手机看任务进度、回答关卡。两道收口：目录先过 `ensure_session_dir`；后端只按约定
 //! 读 `.lead/active` 指向的任务目录（slug 只允许字母数字与 `.-_`，拒绝 `..`），只写该目录下的
@@ -181,6 +188,8 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     // 会话，参数只有会话 id 和终端尺寸，不给路径、不给 argv。
     "fork_session",
     "check_provider_hooks",
+    // 修复接入项（2026-11-11，收口见模块头「例外」一节）
+    "repair_provider_hooks",
     "list_subdirectories",
     // 改动列表（只读，收口见模块头「例外」一节）
     "git_diff_summary",
@@ -203,6 +212,8 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     "gh_pr_create",
     "gh_pr_merge",
     "forge_choose_repo",
+    // 侧栏会话行的 PR / CI 与改动数（UI 优化 #54）：只读，每个目录逐一过会话目录收口，不是的直接丢掉。
+    "sidebar_git_badges",
     // 输入框 `@` 补全（2026-11-04 用户决定放行）：只回文件/目录名，不读内容；目录收口同改动列表。
     "file_mention_candidates",
     // Lead 工作流（模块头「例外（2026-11-09）」）
@@ -932,7 +943,7 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
             if let Err(e) = ensure_session_dir(app, &a.cwd).await {
                 return reply::<()>(Err(e));
             }
-            reply(crate::session_query::hide_workspace(a.cwd).await)
+            reply(crate::session_query::hide_workspace(a.cwd, a.restore).await)
         }
         "get_session_admin_page" => {
             let a = args!(GetSessionAdminPageArgs);
@@ -954,6 +965,18 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
                 return reply::<()>(Err(e));
             }
             reply(crate::git::git_diff_summary(a.cwd).await)
+        }
+        "sidebar_git_badges" => {
+            let a = args!(SidebarGitBadgesArgs);
+            // 收口同 git_diff_summary：只算会话目录。不是的丢掉而不是整批拒绝——侧栏里一条旧会话
+            // 的目录对不上，不该让其他行的状态点全没了。
+            let mut cwds = Vec::new();
+            for cwd in a.cwds {
+                if ensure_session_dir(app, &cwd).await.is_ok() {
+                    cwds.push(cwd);
+                }
+            }
+            reply(crate::forge::sidebar_git_badges_for(cwds, true).await)
         }
         "lead_task_snapshot" => {
             let a = args!(LeadTaskSnapshotArgs);
@@ -1428,6 +1451,10 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
         "check_provider_hooks" => {
             let a = args!(CheckProviderHooksArgs);
             reply(crate::install::check_provider_hooks(a.provider).await)
+        }
+        "repair_provider_hooks" => {
+            let a = args!(RepairProviderHooksArgs);
+            reply(crate::install::repair_provider_hooks(a.provider).await)
         }
         "list_subdirectories" => {
             let a = args!(ListSubdirectoriesArgs);
@@ -2267,6 +2294,8 @@ mod tests {
             .map(|_| ()),
             // api.ts:502（gitDiffSummary）
             "git_diff_summary" => parse::<GitDiffSummaryArgs>(br#"{"cwd":"C:/repo"}"#).map(|_| ()),
+            // api.ts（getSidebarGitBadges）
+            "sidebar_git_badges" => parse::<SidebarGitBadgesArgs>(br#"{"cwds":["C:/repo","C:/repo-wt"]}"#).map(|_| ()),
             // api.ts:507（gitFileDiff）
             "git_file_diff" => parse::<GitFileDiffArgs>(
                 br#"{"cwd":"C:/repo-wt","path":"src/a.ts","untracked":false,"base":"0123abcd","sessionCwd":"C:/repo"}"#,
@@ -2451,6 +2480,10 @@ mod tests {
             // api.ts:972
             "check_provider_hooks" => {
                 parse::<CheckProviderHooksArgs>(br#"{"provider":"claude"}"#).map(|_| ())
+            }
+            // api.ts repairProviderHooks
+            "repair_provider_hooks" => {
+                parse::<RepairProviderHooksArgs>(br#"{"provider":"claude"}"#).map(|_| ())
             }
             // api.ts:885（path 键恒发、无参发 null）
             "list_subdirectories" => {

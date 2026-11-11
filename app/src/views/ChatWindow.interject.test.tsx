@@ -387,7 +387,7 @@ describe("ChatWindow", () => {
     fireEvent.keyDown(input, { key: "Enter", ctrlKey: true });
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 95, data: "插话" }), { timeout: 3_000 });
     expect(invoke.mock.calls.filter(([command, args]) =>
-      command === "write_managed_terminal" && (args as { data: string }).data === "")).toHaveLength(0);
+      command === "write_managed_terminal" && (args as { data: string }).data === "\x1b")).toHaveLength(0);
     // 圆钮同一道门:停不下来就不许摆出停止的样子,按钮不能骗人。
     fireEvent.change(input, { target: { value: "" } });
     await waitFor(() => expect((input as HTMLTextAreaElement).value).toBe(""));

@@ -33,6 +33,7 @@ import type { AgentModelCatalogArgs } from "./generated/contracts/bridge/AgentMo
 import type { AgentModelsArgs } from "./generated/contracts/bridge/AgentModelsArgs";
 import type { AnswerLeadGateArgs } from "./generated/contracts/bridge/AnswerLeadGateArgs";
 import type { CheckProviderHooksArgs } from "./generated/contracts/bridge/CheckProviderHooksArgs";
+import type { RepairProviderHooksArgs } from "./generated/contracts/bridge/RepairProviderHooksArgs";
 import type { FileMentionCandidatesArgs } from "./generated/contracts/bridge/FileMentionCandidatesArgs";
 import type { ForkSessionArgs } from "./generated/contracts/bridge/ForkSessionArgs";
 import type { GetChatHistoryArgs } from "./generated/contracts/bridge/GetChatHistoryArgs";
@@ -45,6 +46,8 @@ import type { ForgeChooseRepoArgs } from "./generated/contracts/bridge/ForgeChoo
 import type { GitChangesOverviewArgs } from "./generated/contracts/bridge/GitChangesOverviewArgs";
 import type { GitCommitArgs } from "./generated/contracts/bridge/GitCommitArgs";
 import type { GitDiffSummaryArgs } from "./generated/contracts/bridge/GitDiffSummaryArgs";
+import type { SidebarGitBadgesArgs } from "./generated/contracts/bridge/SidebarGitBadgesArgs";
+import type { SidebarGitBadgeDto } from "./generated/contracts/SidebarGitBadgeDto";
 import type { GitDirArgs } from "./generated/contracts/bridge/GitDirArgs";
 import type { GitFileDiffArgs } from "./generated/contracts/bridge/GitFileDiffArgs";
 import type { GitForgeStatusArgs } from "./generated/contracts/bridge/GitForgeStatusArgs";
@@ -732,6 +735,14 @@ export function getGitDiffSummary(cwd: string): Promise<GitDiffSummaryDto> {
   return invoke("git_diff_summary", { cwd } satisfies GitDiffSummaryArgs);
 }
 
+/// 侧栏会话行的 PR / CI 与改动数（UI 优化 #54）。只回有 PR 或有改动的目录；PR 走 forge 缓存
+/// （每仓库 ≥60s 查一次 GitHub，调用方窗口隐藏时后端只读缓存）。传参改动须同步 meowo_protocol::bridge
+/// 的 SidebarGitBadgesArgs 与样例 payload 测试。
+export function getSidebarGitBadges(cwds: readonly string[]): Promise<SidebarGitBadgeDto[]> {
+  return invoke("sidebar_git_badges", { cwds } satisfies SidebarGitBadgesArgs);
+}
+export type { SidebarGitBadgeDto };
+
 /** 单个文件的 diff（untracked=true 时由后端读盘合成伪 diff，见 GitFileDiffDto 注释）。 */
 /// base：「已提交未合并」段的文件，看 base..HEAD。sessionCwd：cwd 不是会话目录本身（别的仓库、
 /// worktree）时带上会话目录，手机远程页据此收口。两者没有就不传（老桥不认识的字段会被拒）。
@@ -1056,6 +1067,8 @@ export type Settings = {
   island_compact: IslandCompactStyle;
   /** 灵动岛极简模式：收起时只在屏幕顶边留一条细条。 */
   island_strip: boolean;
+  /** 灵动岛压在前台最大化窗口的标题栏上时自动收成细条（Windows）。缺省开。 */
+  island_auto_strip: boolean;
   /** 哪些事让灵动岛弹提醒：waiting / approval（含计划确认、屏幕上挂着交互）/ question / error。 */
   island_alerts: string[];
   /** 哪些事弹系统通知（总开关 notifications_enabled 之下再分种类），种类与 island_alerts 同一套。
@@ -1395,9 +1408,14 @@ export function newSession(cwd: string, provider: AgentId, options?: Record<stri
 }
 
 /** 最近使用过的工作目录（新建面板快捷选择）。 */
-/// 从工作空间列表里移除（只是不显示；之后又在这里开会话会自动回来）。
+/// 从工作区列表里移除（只是不显示；之后又在这里开会话会自动回来）。
 export function hideWorkspace(cwd: string): Promise<void> {
   return invoke("hide_workspace", { cwd } satisfies HideWorkspaceArgs);
+}
+
+/// 撤销刚才的移除（侧栏 5 秒撤销条）。
+export function restoreWorkspace(cwd: string): Promise<void> {
+  return invoke("hide_workspace", { cwd, restore: true } satisfies HideWorkspaceArgs);
 }
 
 /// includeHidden：连「从列表里移除」过的也要（会话管理页按工作区筛会话用）。
@@ -1442,7 +1460,7 @@ export type RepairResult = { status: HooksStatus; reason: RepairReason | null };
 
 /** 手动修复某 provider 的 hooks：立即执行一次 setup::apply_provider，返回最新状态与失败原因。 */
 export function repairProviderHooks(provider: AgentId): Promise<RepairResult> {
-  return invoke("repair_provider_hooks", { provider });
+  return invoke("repair_provider_hooks", { provider } satisfies RepairProviderHooksArgs);
 }
 
 /** 一键安装某 agent（在终端跑官方安装脚本）。装完在窗口重新聚焦/手动刷新时重检安装状态。 */

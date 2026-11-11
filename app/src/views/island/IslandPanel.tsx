@@ -11,14 +11,13 @@ import { groupTone, sessionTitle, useSidebarOrder } from "../Island";
 import { AgentRing, Ring, useNow, usedColor, usedOf } from "./islandParts";
 import { primaryLane } from "./useIslandUsage";
 import { ChatIcon, GearIcon } from "../sticker/icons";
+import { Icon } from "../../icons/Icon";
+import { icPlus, icStrip } from "../../icons/glyphs";
 
 /** 极简模式图标：一条贴顶的细线。 */
 function StripIcon() {
   return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-      <rect x="3" y="4" width="18" height="16" rx="3" />
-      <path d="M8 8h8" strokeWidth="3" />
-    </svg>
+    <Icon glyph={icStrip} size={12} />
   );
 }
 
@@ -74,7 +73,7 @@ function providerLabel(provider: string): string {
 
 /// 加号用 SVG（与对话窗工作区头部的新建按钮同一个形状）：全角「＋」拼在文案里会被读屏念出来，
 /// 按钮名也就不是「新建会话」了（审查 2026-11-09）。
-const PLUS = <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>;
+const PLUS = <Icon glyph={icPlus} size={12} />;
 
 export function IslandPanel({
   sessions,
@@ -153,7 +152,13 @@ export function IslandPanel({
 
   return (
     <div className="isl-stage">
-      <div ref={panelRef} className={`isl-notch isl-panel${pages > 1 ? " is-paged" : ""}`}>
+      {/* region + 名字：岛窗口里只有这一块，读屏能按地标跳到它（axe region，embed-island 实扫）。 */}
+      <div
+        ref={panelRef}
+        className={`isl-notch isl-panel${pages > 1 ? " is-paged" : ""}`}
+        role="region"
+        aria-label={`Meowo ${onUsagePage ? t.island.panelUsage : t.island.panelSessions}`}
+      >
         <div className="isl-panel-head" onPointerDown={onPointerDownDrag}>
           <span className="isl-panel-title">
             Meowo <span className="isl-accent">{onUsagePage ? t.island.panelUsage : t.island.panelSessions}</span>
@@ -237,11 +242,16 @@ export function IslandPanel({
                     role="button"
                     tabIndex={0}
                     onClick={() => onOpenSession(item.session.id)}
-                    onKeyDown={(event) => { if (event.key === "Enter") onOpenSession(item.session.id); }}
+                    // 空格也算（i8）：role=button 的约定，原来只认 Enter。
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" && event.key !== " ") return;
+                      event.preventDefault();
+                      onOpenSession(item.session.id);
+                    }}
                   >
                     <AgentRing item={item} size={30} />
                     <span className="isl-row-text">
-                      <span className="isl-row-title">{sessionTitle(item, t.sticker.waitingFirstInput)}</span>
+                      <span className="isl-row-title" title={sessionTitle(item, t.sticker.waitingFirstInput)}>{sessionTitle(item, t.sticker.waitingFirstInput)}</span>
                       <span className="isl-row-sub">{detail}</span>
                     </span>
                     <span className={`isl-state is-${tone}`}>{t.island.toneLabel[tone] ?? ""}</span>
@@ -302,13 +312,15 @@ export function IslandPanel({
           </>
         )}
         {pages > 1 && (
-          <div className="isl-dots-nav" role="tablist">
+          // 分页圆点是普通按钮组、当前页标 aria-current（i8）。不用 tablist：这里是翻页，没有对应的
+          // tabpanel，冒充 tablist 却不支持方向键反而让读屏用户以为键盘坏了；按钮组每个点各占一个 Tab
+          // 停靠，最多 4 页，代价可接受，也不必等 a11y 车道的 useTablist。
+          <div className="isl-dots-nav" role="group" aria-label={t.island.pages}>
             {Array.from({ length: pages }, (_, i) => (
               <button
                 key={i}
                 type="button"
-                role="tab"
-                aria-selected={i === current}
+                aria-current={i === current ? "page" : undefined}
                 aria-label={t.island.page(i + 1)}
                 // 会话页的圆点按该页最急状态上色（二期 #3），用量页没有状态。
                 className={[

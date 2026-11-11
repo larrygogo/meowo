@@ -12,12 +12,14 @@ import { PillSelect } from "./PillSelect";
 import { AgentAppIcon } from "./AgentAppIcon";
 
 function ShieldIcon() {
-  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>;
+  return <Icon glyph={icShield} size={14} />;
 }
 import { useT } from "../../i18n";
 import { useNewSessionForm } from "../useNewSessionForm";
 import { WorkspacePicker } from "./WorkspacePicker";
 import { WorktreeOption } from "../WorktreeOption";
+import { Icon } from "../../icons/Icon";
+import { icArrowUp, icShield } from "../../icons/glyphs.chat";
 
 /// 对话窗里的新建会话页（对照 Kimi Code：新建会话不弹窗，主区就地换成一个输入框，
 /// 上方是工作区选择，下面一排 Agent / 启动选项的小下拉，写下第一句话发出去就开聊）。
@@ -231,9 +233,7 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched, onOpenSession
               onClick={() => void submit()}
             >
               {busy ? <span className="nsp-spin" aria-hidden="true" /> : (
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                  <path d="M12 19V5M5 12l7-7 7 7" />
-                </svg>
+                <Icon glyph={icArrowUp} size={16} />
               )}
             </button>
           </div>

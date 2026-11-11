@@ -51,25 +51,19 @@ import { useTauriEvent } from "../../hooks/useTauriEvent";
 import { useLoginOperations, type LoginOperationState } from "../../hooks/useLoginOperations";
 import { useInstallOperations, type InstallOperationState } from "../../hooks/useInstallOperations";
 import { isWindows } from "../../platform";
+import { Icon } from "../../icons/Icon";
+import { icDownload, icRefreshCw } from "../../icons/glyphs";
+import { icInfo } from "../../icons/glyphs.settings";
 
 function RefreshIcon({ spinning }: { spinning?: boolean }) {
   return (
-    <svg className={spinning ? "spin" : undefined} width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M3 12a9 9 0 0 1 15-6.7L21 8" />
-      <path d="M21 3v5h-5" />
-      <path d="M21 12a9 9 0 0 1-15 6.7L3 16" />
-      <path d="M3 21v-5h5" />
-    </svg>
+    <Icon glyph={icRefreshCw} size={14} className={spinning ? "spin" : undefined} />
   );
 }
 
 function IconDownload() {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-      <polyline points="7 10 12 15 17 10" />
-      <line x1="12" y1="15" x2="12" y2="3" />
-    </svg>
+    <Icon glyph={icDownload} size={14} />
   );
 }
 
@@ -586,7 +580,7 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsApiK
           ) : (
             <button
               type="button"
-              className="provider-card-action provider-card-action-primary"
+              className="provider-card-action btn-primary"
               data-testid={"agent-install-" + provider}
               onClick={startInstall}
             >
@@ -600,7 +594,7 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsApiK
         {isInstalled && !isLoggedIn && !relayEnabled && supportsAccount && (
           <button
             type="button"
-            className={"provider-card-action" + (justInstalled ? " provider-card-action-primary" : "")}
+            className={"provider-card-action" + (justInstalled ? " btn-primary" : "")}
             data-testid={"agent-login-" + provider}
             // 等待中不再是死按钮：终端可能已被关掉（用户手动关/崩溃），而后端只轮询账号文件，
             // 要 5 分钟才超时。点它即取消等待，立刻落回可点状态。
@@ -670,7 +664,7 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsApiK
             />
             <button
               type="button"
-              className="provider-card-action provider-card-action-primary"
+              className="provider-card-action btn-primary"
               data-testid={"agent-api-key-save-" + provider}
               disabled={apiKeyBusy || !apiKeyValue.trim()}
               onClick={saveApiKey}
@@ -821,11 +815,7 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsApiK
           只在已装时显示——没装谈不上能力。 */}
       {isInstalled && !supportsContext && (
         <div className="provider-cap-note" data-testid={"agent-context-unsupported-" + provider}>
-          <svg className="provider-cap-note-ico" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <circle cx="12" cy="12" r="9.5" />
-            <path d="M12 11v5" />
-            <path d="M12 7.5h.01" />
-          </svg>
+          <Icon glyph={icInfo} size={12} className="provider-cap-note-ico" />
           <span>{t.account.contextUnsupported}</span>
         </div>
       )}
@@ -1163,7 +1153,7 @@ function ProfileList({ provider, movesSessionsAcrossAccounts, onChanged, loginSt
           />
           <button
             type="button"
-            className="provider-card-action provider-card-action-primary"
+            className="provider-card-action btn-primary"
             data-testid={"profile-add-confirm-" + provider}
             disabled={busy || !name.trim()}
             onClick={add}

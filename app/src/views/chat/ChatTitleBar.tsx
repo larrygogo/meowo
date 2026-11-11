@@ -5,12 +5,82 @@
  * 右侧照 Kimi：[标记完成] [结束会话] [用编辑器打开 ▾] [分支 ↑领先 +增-删] [PR] [终端] [侧边面板]。
  * 「标记完成」「结束会话」是 Meowo 自己的收尾动作，放在 Kimi 那组前面。
  */
-import { useEffect, useState, type ReactNode } from "react";
-import { getPullRequest, type GitDiffSummaryDto, type PullRequestDto } from "../../api";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { flushSync } from "react-dom";
+import { getPullRequest, openLink, type GitDiffSummaryDto, type PullRequestDto } from "../../api";
 import { useT } from "../../i18n";
 import { remoteUi } from "../../remoteMode";
 import { ArchiveIcon } from "../sticker/icons";
-import { GitStatusChip, OpenInEditor, PullRequestChip } from "./TitleBarTools";
+import { GitStatusChip, OpenerIcon, OpenInEditor, PullRequestChip, useFolderOpeners } from "./TitleBarTools";
+import { fitTitleBar, sameOverflow, TitleOverflowContext, type TitleOverflowItem, type TitleOverflowKey } from "./titleOverflow";
+
+const NO_OVERFLOW: ReadonlySet<TitleOverflowKey> = new Set();
+
+/// 量标题栏、算哪些项收进 ⋯（规则见 titleOverflow.fitTitleBar）。
+/// 收起的项不卸载，只加 aria-hidden 退出排版流、不可见（.chat-bar-slot[aria-hidden]），
+/// 所以每颗按钮的自然宽度随时量得到：不用「先全显示量一遍、再收、再量」，没有来回抖。
+/// 收起与否不改变任何被量的宽度（结束会话按钮只跟栏宽的容器查询走），结果收敛，
+/// 再次触发观察也只会算出同一组，setState 原样返回不重渲染。
+/// 首帧在 layout effect 里同步量；之后栏宽、各项尺寸（语言、--cc-ui 缩放、PR/改动数到达）
+/// 变化走 ResizeObserver，增删子项走 MutationObserver，都用 flushSync 赶在绘制前收好，
+/// 不让出界的一帧闪出来。jsdom 没有布局，宽度都是 0，按「全部放得下」处理。
+function useTitleBarOverflow(ref: RefObject<HTMLElement | null>, remote: boolean): ReadonlySet<TitleOverflowKey> {
+  const [hidden, setHidden] = useState<ReadonlySet<TitleOverflowKey>>(NO_OVERFLOW);
+  useLayoutEffect(() => {
+    const bar = ref.current;
+    if (!bar) return;
+    const compute = () => {
+      const style = getComputedStyle(bar);
+      const available = bar.getBoundingClientRect().width - (parseFloat(style.paddingLeft) || 0) - (parseFloat(style.paddingRight) || 0);
+      const fixed: number[] = [];
+      const items: { key: TitleOverflowKey; width: number }[] = [];
+      let titleMin = 0;
+      for (const child of Array.from(bar.children) as HTMLElement[]) {
+        const key = child.dataset.overflowKey as TitleOverflowKey | undefined;
+        const width = child.getBoundingClientRect().width;
+        if (key) items.push({ key, width });
+        else if (child.classList.contains("chat-title-menu")) titleMin = parseFloat(getComputedStyle(child).minWidth) || 0;
+        else if (width > 0 && getComputedStyle(child).position !== "absolute") fixed.push(width);
+      }
+      const next = fitTitleBar({ available, gap: parseFloat(style.columnGap) || 0, titleMin, fixed, items }, remote);
+      return (prev: ReadonlySet<TitleOverflowKey>) => (sameOverflow(prev, next) ? prev : next);
+    };
+    setHidden(compute());
+    if (typeof ResizeObserver !== "function") return;
+    const update = () => { const apply = compute(); flushSync(() => setHidden(apply)); };
+    const resize = new ResizeObserver(update);
+    const observeAll = () => { resize.disconnect(); resize.observe(bar); for (const child of Array.from(bar.children)) resize.observe(child); };
+    observeAll();
+    const mutation = typeof MutationObserver === "function" ? new MutationObserver(() => { observeAll(); update(); }) : null;
+    mutation?.observe(bar, { childList: true });
+    return () => { resize.disconnect(); mutation?.disconnect(); };
+  }, [ref, remote]);
+  return hidden;
+}
+
+/** 可收起项的外壳：收起时留在 DOM 里照常排版量宽度，但退出排版流、不可见、不可聚焦
+ *  （inert：React 18 不认 inert prop，直写属性，同 AppModal）。 */
+function OverflowSlot({ k, hidden, children }: { k: TitleOverflowKey; hidden: ReadonlySet<TitleOverflowKey>; children: ReactNode }) {
+  const off = hidden.has(k);
+  return (
+    <span className="chat-bar-slot" data-overflow-key={k} aria-hidden={off || undefined} {...(off ? { inert: "" } : {})}>
+      {children}
+    </span>
+  );
+}
+
+const PR_ICON = (
+  <Icon glyph={icPullRequest} size={14} />
+);
+const GIT_ICON = (
+  <Icon glyph={icGitBranch} size={14} />
+);
+const terminalIcon = (size: IconSize) => <Icon glyph={icTerminalBox} size={size} />;
+const infoIcon = (size: IconSize) => <Icon glyph={icList} size={size} />;
+import { tipWithKeys } from "./WindowModals";
+import { Icon, type IconSize } from "../../icons/Icon";
+import { icGitBranch, icList, icPullRequest, icSidebarRight, icTerminalBox } from "../../icons/glyphs.chat";
+import { icStopCircle } from "../../icons/glyphs";
 
 /// 当前分支的 PR（对照 Kimi 标题栏）：换目录 / 换分支时查一次，之后 3 分钟一次——gh 要联网，
 /// 不跟改动摘要的轮询走（后端另按目录缓存 60s）。手机不查：桌面专用命令，桥上不放行。
@@ -32,6 +102,7 @@ function usePullRequest(cwd: string | null, branch: string | null): PullRequestD
 export function ChatTitleBar({
   leading, title, archive, end, cwd, prCwd, gitSummary, changesOpen, panelOpen, terminalOn,
   onToggleChanges, onTogglePanel, onToggleTerminal, onError, panelAgentBusy = false, panelWaiting = false, info = null,
+  onPullRequest,
 }: {
   /** 标题前的侧栏开关（macOS 侧栏收起时 / 手机紧凑形态才有）。 */
   leading: ReactNode;
@@ -59,11 +130,34 @@ export function ChatTitleBar({
   panelWaiting?: boolean;
   /** 会话信息栏开关（面板收起时才有，同 Kimi Code 的「显示 / 隐藏会话信息」）。 */
   info?: { open: boolean; onToggle: () => void } | null;
+  /** 查到的 PR 报给对话窗：Ctrl+K 的「打开 PR」用同一份，不再多打一次 gh（UI 优化 #53）。 */
+  onPullRequest?: (pr: PullRequestDto | null) => void;
 }) {
   const t = useT();
   const pullRequest = usePullRequest(prCwd ?? cwd, gitSummary?.isRepo ? gitSummary.branch : null);
+  useEffect(() => { onPullRequest?.(pullRequest); }, [pullRequest, onPullRequest]);
+  const barRef = useRef<HTMLElement>(null);
+  const hidden = useTitleBarOverflow(barRef, remoteUi());
+  const openers = useFolderOpeners(cwd ?? "", onError);
+  const showOpen = !remoteUi() && !!cwd;
+  const showGit = !!cwd && !!gitSummary?.isRepo;
+  // 放不下的项按栏上从左到右的顺序进 ⋯ 菜单（与栏上读同一份 hidden，见 titleOverflow）。
+  const overflow: TitleOverflowItem[] = [];
+  if (showOpen && hidden.has("open")) {
+    for (const option of openers.options) {
+      overflow.push({ key: `open:${option.id}`, group: "open", label: t.chat.openWith(option.name), icon: <OpenerIcon opener={option} />, onClick: () => openers.pick(option.id) });
+    }
+  }
+  if (showGit && hidden.has("git")) overflow.push({ key: "git", group: "git", label: t.chat.diff, icon: GIT_ICON, onClick: onToggleChanges, checked: changesOpen });
+  if (pullRequest && hidden.has("pr")) {
+    const url = pullRequest.url;
+    overflow.push({ key: "pr", group: "pr", label: t.chat.prOpenTip(pullRequest.number, ""), icon: PR_ICON, onClick: () => void openLink(url).catch(() => {}) });
+  }
+  if (!remoteUi() && hidden.has("terminal")) overflow.push({ key: "terminal", group: "terminal", label: t.chat.terminal, icon: terminalIcon(14), onClick: onToggleTerminal, checked: terminalOn });
+  if (info && hidden.has("info")) overflow.push({ key: "info", group: "info", label: info.open ? t.chat.sessionInfoHide : t.chat.sessionInfoShow, icon: infoIcon(14), onClick: info.onToggle });
   return (
-    <header className="chat-bar" data-tauri-drag-region>
+    <TitleOverflowContext.Provider value={overflow}>
+    <header className="chat-bar" data-tauri-drag-region ref={barRef}>
       {leading}
       {title}
       {/* 标题栏刻意不放运行状态徽标（实拍反馈嫌吵）：运行态已有多处冗余信号——
@@ -72,9 +166,10 @@ export function ChatTitleBar({
       {/* 「标记完成」直达钮（对照 Kimi 标题栏的 markSessionDone）：做完一件事就勾掉，
           是对话页最高频的收尾动作，不该藏在标题菜单的第二层。「恢复进行中」仍在标题菜单里（低频）。 */}
       {archive && (
+        <OverflowSlot k="archive" hidden={hidden}>
         <button
           type="button"
-          className="chat-todo-btn"
+          className="chat-todo-btn chat-archive-btn"
           data-tip={t.sticker.archive}
           aria-label={t.sticker.archive}
           disabled={archive.busy}
@@ -83,69 +178,78 @@ export function ChatTitleBar({
           {/* 16px 与同排的文件/改动入口图标对齐（菜单里的同款是 13px）。 */}
           <ArchiveIcon archived={false} size={16} />
         </button>
+        </OverflowSlot>
       )}
       {/* endable 口径:托管 PTY 或进程仍活着的孤儿会话(后端按 pid 杀树兜底),见 ChatHistoryDto。
           远程不再隐藏:stop_managed_terminal 已进 /rpc 白名单(remote.rs 头注释记录了放行理由),
           确认框在手机上走 window.confirm(transport 的 confirm_dialog 替身)。 */}
+      {/* 标题栏窄到 ≤400 时只留图标（CSS 容器查询切换），名字由 aria-label 与提示给出。 */}
       {end && (
-        <button type="button" className="chat-end" disabled={end.busy} onClick={end.onClick}>
-          {end.busy ? t.chat.terminalStopping : t.chat.endSession}
+        <button
+          type="button"
+          className="chat-end"
+          disabled={end.busy}
+          onClick={end.onClick}
+          aria-label={end.busy ? t.chat.terminalStopping : t.chat.endSession}
+          data-tip={end.busy ? t.chat.terminalStopping : t.chat.endSession}
+        >
+          <Icon glyph={icStopCircle} size={16} className="chat-end-ico" />
+          <span className="chat-end-label">{end.busy ? t.chat.terminalStopping : t.chat.endSession}</span>
         </button>
       )}
       {/* 用编辑器打开会话目录（宿主执行类，远程隐藏）。 */}
-      {!remoteUi() && cwd && <OpenInEditor cwd={cwd} onError={onError} />}
+      {showOpen && cwd && <OverflowSlot k="open" hidden={hidden}><OpenInEditor cwd={cwd} onError={onError} openers={openers} /></OverflowSlot>}
       {/* 分支 + 改动：点开 / 收起改动页签（远程放行改动列表，remote.rs 模块头「例外」）。 */}
-      {cwd && gitSummary?.isRepo && <GitStatusChip summary={gitSummary} active={changesOpen} onToggle={onToggleChanges} />}
-      {pullRequest && <PullRequestChip pr={pullRequest} />}
+      {showGit && gitSummary && <OverflowSlot k="git" hidden={hidden}><GitStatusChip summary={gitSummary} active={changesOpen} onToggle={onToggleChanges} /></OverflowSlot>}
+      {pullRequest && <OverflowSlot k="pr" hidden={hidden}><PullRequestChip pr={pullRequest} /></OverflowSlot>}
       {/* 终端：对话与终端两个视图之间切换（原「对话 | 终端」页签收成一颗开关，对照 Kimi）。
           远程没有终端视图（见 ChatWindow 的 setView 说明），不给死按钮。 */}
       {!remoteUi() && (
+        <OverflowSlot k="terminal" hidden={hidden}>
         <button
           type="button"
-          className={"chat-todo-btn" + (terminalOn ? " is-active" : "")}
-          data-tip={t.chat.terminal}
+          className={"chat-todo-btn chat-terminal-toggle" + (terminalOn ? " is-active" : "")}
+          data-tip={tipWithKeys(t.chat.terminal, terminalOn ? "Ctrl+1" : "Ctrl+2")}
           aria-label={t.chat.terminal}
           aria-pressed={terminalOn}
           onClick={onToggleTerminal}
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <rect x="3" y="4.5" width="18" height="15" rx="3" /><path d="m7.5 9.5 3 2.5-3 2.5M13 15h4" />
-          </svg>
+          {terminalIcon(16)}
         </button>
+        </OverflowSlot>
       )}
       {/* 侧边面板（文件 / 改动停靠面板）开合，回到上次看的页签；不是仓库就只有文件页。
           远程不放行文件页，面板只能经改动入口打开。 */}
       {info && (
+        <OverflowSlot k="info" hidden={hidden}>
         <button
           type="button"
-          className={"chat-todo-btn" + (info.open ? " is-active" : "")}
+          className={"chat-todo-btn chat-info-toggle" + (info.open ? " is-active" : "")}
           data-tip={info.open ? t.chat.sessionInfoHide : t.chat.sessionInfoShow}
           aria-label={info.open ? t.chat.sessionInfoHide : t.chat.sessionInfoShow}
           aria-pressed={info.open}
           onClick={info.onToggle}
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
-            <path d="M9 6h11" /><path d="M9 12h11" /><path d="M9 18h11" /><circle cx="4.5" cy="6" r="1" /><circle cx="4.5" cy="12" r="1" /><circle cx="4.5" cy="18" r="1" />
-          </svg>
+          {infoIcon(16)}
         </button>
+        </OverflowSlot>
       )}
       {!remoteUi() && cwd && (
         <button
           type="button"
           className={"chat-todo-btn chat-panel-toggle" + (panelOpen ? " is-active" : "")}
-          data-tip={panelWaiting ? `${t.chat.browserPermissionWaiting} · ${t.chat.togglePanel}` : panelAgentBusy ? `${t.chat.browserAgentBusyTip} · ${t.chat.togglePanel}` : t.chat.togglePanel}
+          data-tip={tipWithKeys(panelWaiting ? `${t.chat.browserPermissionWaiting} · ${t.chat.togglePanel}` : panelAgentBusy ? `${t.chat.browserAgentBusyTip} · ${t.chat.togglePanel}` : t.chat.togglePanel, "Ctrl+Shift+B")}
           aria-label={panelWaiting ? `${t.chat.browserPermissionWaiting} · ${t.chat.togglePanel}` : panelAgentBusy ? `${t.chat.browserAgentBusyTip} · ${t.chat.togglePanel}` : t.chat.togglePanel}
           aria-pressed={panelOpen}
           onClick={onTogglePanel}
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" aria-hidden="true">
-            <rect x="3.5" y="4.5" width="17" height="15" rx="3" /><path d="M14.5 4.5v15" />
-          </svg>
+          <Icon glyph={icSidebarRight} size={16} />
           {panelWaiting
             ? <span className="chat-panel-waiting-dot" aria-hidden="true" />
             : panelAgentBusy && <span className="chat-panel-agent-dot" aria-hidden="true" />}
         </button>
       )}
     </header>
+    </TitleOverflowContext.Provider>
   );
 }

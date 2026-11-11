@@ -14,22 +14,12 @@ import { useNewSessionForm } from "./useNewSessionForm";
 import { useEscClose } from "../hooks/useEscClose";
 import { remoteUi } from "../remoteMode";
 import { WorktreeOption } from "./WorktreeOption";
+import { Icon } from "../icons/Icon";
+import { icFolder } from "../icons/glyphs";
 
 function FolderIcon() {
   return (
-    <svg
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-    >
-      <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
-    </svg>
+    <Icon glyph={icFolder} size={14} />
   );
 }
 
@@ -269,9 +259,9 @@ export function NewSessionPanel({ onClose, prefill, onLaunched }: {
             <div className="ns-warn" data-testid="ns-no-agents">
               <span>{t.newSession.noAgents}</span>
               {/* open_settings 是宿主执行类命令，远程桥对它返 null——按钮在手机上是死点击
-                  （复核指出）。与同卡的修复/登录按钮同规：远程换成「请在桌面端处理」。 */}
+                  （复核指出）。安装要在宿主跑安装脚本，手机做不了：说明原因，不写「去桌面端」（m10）。 */}
               {remoteUi() ? (
-                <span className="ns-warn-remote">{t.newSession.fixOnDesktop}</span>
+                <span className="ns-warn-remote">{t.newSession.installOnHost}</span>
               ) : (
                 <button type="button" className="ns-btn" onClick={() => void invoke("open_settings").catch(() => {})}>
                   {t.newSession.goInstall}
@@ -342,33 +332,30 @@ export function NewSessionPanel({ onClose, prefill, onLaunched }: {
               })}
             </div>
           )}
-          {/* 修复 hook / 登录的按钮都要在桌面拉起终端进程,远程无从操作——按钮隐藏。但警告
-              文字必须留:远程若整块藏掉,用户对着「启动」点下去会起一个 hook 没接、永远
-              不出现在看板的哑会话且毫无线索(审查 #10)。远程把动作换成「请在桌面端处理」。 */}
+          {/* 修复接入项只是 Meowo 写自己的接入配置，2026-11-11 起进了远程白名单（remote.rs 模块头
+              「例外」），手机上同样给按钮，不再写「请在桌面端处理」（UI 调研 m10）。警告文字必须留：
+              整块藏掉的话，用户点「启动」会起一个 hook 没接、永远不显示状态的哑会话(审查 #10)。 */}
           {avail && avail.length > 0 && warn && (
             <div className="ns-warn" data-testid="ns-hooks-warn">
               <span>{hooks[provider] === "unknown" ? t.newSession.hooksUnknown : t.newSession.hooksMissing}</span>
-              {remoteUi() ? (
-                <span className="ns-warn-remote">{t.newSession.fixOnDesktop}</span>
-              ) : (
-                <button
-                  type="button"
-                  className="ns-repair"
-                  data-testid="ns-repair-hooks"
-                  onClick={repairHooks}
-                  disabled={repairing}
-                >
-                  {repairing ? t.newSession.repairingHooks : t.newSession.repairHooks}
-                </button>
-              )}
+              <button
+                type="button"
+                className="ns-repair"
+                data-testid="ns-repair-hooks"
+                onClick={repairHooks}
+                disabled={repairing}
+              >
+                {repairing ? t.newSession.repairingHooks : t.newSession.repairHooks}
+              </button>
             </div>
           )}
           {avail && avail.length > 0 && needLogin && (
             <div className="ns-warn" data-testid="ns-login-warn">
               {/* 等待中：这行承载「正在等」，按钮则变成「取消等待」。 */}
               <span>{loginOperations.isPending(provider) ? t.newSession.loggingIn : t.newSession.notLoggedIn}</span>
+              {/* 登录要在宿主拉起终端、在电脑的浏览器里授权，手机做不了：说明原因（m10）。 */}
               {remoteUi() ? (
-                <span className="ns-warn-remote">{t.newSession.fixOnDesktop}</span>
+                <span className="ns-warn-remote">{t.newSession.loginOnHost}</span>
               ) : (
                 <button
                   type="button"
@@ -403,7 +390,7 @@ export function NewSessionPanel({ onClose, prefill, onLaunched }: {
         </button>
         <button
           type="button"
-          className="ns-btn is-primary"
+          className="ns-btn btn-primary"
           data-testid="ns-launch"
           disabled={!canLaunch}
           onClick={launch}

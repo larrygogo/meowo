@@ -171,7 +171,7 @@ export function TrustDialog({ setup, busy, error, onRun, onSkip, onClose }: {
         {error && <p className="wt-setup-error" role="alert">{error}</p>}
         <div className="wt-trust-actions">
           <button type="button" className="wt-opt-btn" data-testid="wt-trust-skip" disabled={busy} onClick={onSkip}>{t.wtnew.skip}</button>
-          <button type="button" className="wt-opt-btn is-primary" data-testid="wt-trust-run" disabled={busy || !setup.configHash} onClick={onRun}>{t.wtnew.trustRun}</button>
+          <button type="button" className="wt-opt-btn btn-primary" data-testid="wt-trust-run" disabled={busy || !setup.configHash} onClick={onRun}>{t.wtnew.trustRun}</button>
         </div>
       </div>
     </AppModal>

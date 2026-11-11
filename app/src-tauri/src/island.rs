@@ -347,6 +347,41 @@ fn fullscreen_action(fullscreen: bool, hidden_by_us: bool, visible: bool) -> Ful
     }
 }
 
+/// 岛所在屏上 z 序最高的那个普通（非置顶）窗口：岛压着的就是它。
+#[cfg(any(target_os = "windows", test))]
+#[derive(Clone, Copy)]
+struct UnderWindow {
+    rect: windows_rect::Rect,
+    maximized: bool,
+}
+
+/// 一次扫描的结论：有没有全屏程序，以及岛底下压着谁。
+#[cfg(target_os = "windows")]
+struct ScreenScan {
+    fullscreen: bool,
+    under: Option<UnderWindow>,
+}
+
+/// 岛是否压在最大化窗口的标题栏上（i6，关卡 A 定案：是就自动收成细条）。岛恒置顶、默认在顶部
+/// 正中，正好盖住 Chrome 标签栏中段、VS Code 命令中心、Office 搜索框（compact-counts-7-dpr2.png）。
+/// 看的是「岛所在屏 z 序最高的普通窗口」而不是 GetForegroundWindow：点岛、点岛的面板时前台
+/// 是岛自己，用前台判定会一点岛就恢复胶囊，收起后又要等用户点回那个窗口才再收。
+/// `titlebar` 是标题栏那一条的物理高度（含最大化时探出屏外的边框）。只要求最大化，不要求带
+/// WS_CAPTION：Chrome、VS Code、Office 都是自绘标题栏。
+#[cfg(any(target_os = "windows", test))]
+fn covers_maximized_titlebar(under: Option<UnderWindow>, island: windows_rect::Rect, titlebar: i32) -> bool {
+    let Some(w) = under else { return false };
+    w.maximized
+        && island.left < w.rect.right
+        && island.right > w.rect.left
+        && island.top < w.rect.top + titlebar
+        && island.bottom > w.rect.top
+}
+
+/// 标题栏那一条按多高算（逻辑像素）：自绘标题栏里最高的 Office 约 48，再加最大化时探出屏外的 8px 边框。
+#[cfg(target_os = "windows")]
+const TITLEBAR_BAND: f64 = 48.0 + 8.0;
+
 /// 有全屏程序盖住岛所在的那块屏（游戏、全屏视频、F11 浏览器、放映）。按 z 序从上往下看岛所在
 /// 屏上的窗口：第一个普通（非置顶）窗口铺满整块屏且不是最大化，才算全屏；置顶窗口里有铺满的
 /// （独占全屏游戏常带 TOPMOST）也算。不看前台窗口：放映在投影屏、人在笔记本屏上操作时，前台
@@ -357,7 +392,7 @@ fn fullscreen_action(fullscreen: bool, hidden_by_us: bool, visible: bool) -> Ful
 /// UWP 全屏（Win+Shift+Enter）EnumWindows 枚举不到，这里判不出；它所在的层高于所有桌面
 /// 置顶窗口，岛本来就被盖住、点不到（做空实测），所以不必为它把 QUNS_APP 加回来。
 #[cfg(target_os = "windows")]
-fn fullscreen_app_running(island: &tauri::WebviewWindow) -> bool {
+fn scan_island_screen(island: &tauri::WebviewWindow) -> ScreenScan {
     use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
     use windows_sys::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
     use windows_sys::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONULL};
@@ -370,9 +405,9 @@ fn fullscreen_app_running(island: &tauri::WebviewWindow) -> bool {
     let mut state: QUERY_USER_NOTIFICATION_STATE = 0;
     // SAFETY: 传入有效的输出指针；失败时 state 不可信，按「不是演示模式」处理。
     if unsafe { SHQueryUserNotificationState(&mut state) } >= 0 && state == QUNS_PRESENTATION_MODE {
-        return true;
+        return ScreenScan { fullscreen: true, under: None };
     }
-    let Ok(own) = island.hwnd() else { return false };
+    let Ok(own) = island.hwnd() else { return ScreenScan { fullscreen: false, under: None } };
     let own = own.0 as HWND;
 
     struct Scan {
@@ -380,6 +415,7 @@ fn fullscreen_app_running(island: &tauri::WebviewWindow) -> bool {
         monitor: windows_sys::Win32::Graphics::Gdi::HMONITOR,
         screen: RECT,
         found: bool,
+        under: Option<UnderWindow>,
     }
     /// 外壳/输入法这类铺满屏幕但不是全屏程序的窗口（桌面、Win+. 输入体验等）。
     fn shell_class(class: &str) -> bool {
@@ -431,23 +467,40 @@ fn fullscreen_app_running(island: &tauri::WebviewWindow) -> bool {
         }
         // 第一个普通窗口说了算：它铺满就是全屏，否则这块屏上最上层是个普通窗口。
         scan.found = full;
+        scan.under = Some(UnderWindow { rect, maximized: IsZoomed(hwnd) != 0 });
         0
     }
     // SAFETY: 只读查询；回调里的指针在 EnumWindows 返回前一直有效。
     unsafe {
+        let none = ScreenScan { fullscreen: false, under: None };
         let monitor = MonitorFromWindow(own, MONITOR_DEFAULTTONULL);
         if monitor.is_null() {
-            return false;
+            return none;
         }
         let mut info: MONITORINFO = std::mem::zeroed();
         info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
         if GetMonitorInfoW(monitor, &mut info) == 0 {
-            return false;
+            return none;
         }
-        let mut scan = Scan { own, monitor, screen: info.rcMonitor, found: false };
+        let mut scan = Scan { own, monitor, screen: info.rcMonitor, found: false, under: None };
         EnumWindows(Some(visit), &mut scan as *mut Scan as LPARAM);
-        scan.found
+        ScreenScan { fullscreen: scan.found, under: if scan.found { None } else { scan.under } }
     }
+}
+
+/// 岛此刻是否压在最大化窗口的标题栏上（见 covers_maximized_titlebar）。
+#[cfg(target_os = "windows")]
+fn island_over_titlebar(island: &tauri::WebviewWindow, under: Option<UnderWindow>) -> bool {
+    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowRect;
+    let Ok(own) = island.hwnd() else { return false };
+    let mut rect: RECT = unsafe { std::mem::zeroed() };
+    // SAFETY: hwnd 来自活着的 tauri 窗口，rect 是有效的输出指针。
+    if unsafe { GetWindowRect(own.0 as _, &mut rect) } == 0 {
+        return false;
+    }
+    let scale = island.scale_factor().unwrap_or(1.0).max(0.1);
+    covers_maximized_titlebar(under, rect, (TITLEBAR_BAND * scale).round() as i32)
 }
 
 /// 窗口矩形盖住整块屏幕（最大化窗口不盖任务栏，不算）。
@@ -474,21 +527,32 @@ mod windows_rect {
     }
 }
 
-/// 后台每 1.5 秒查一次全屏状态：进全屏把岛藏起来，退出再不抢焦点地显示回来。
+/// 后台每 1.5 秒查一次全屏状态：进全屏把岛藏起来，退出再不抢焦点地显示回来。同一次扫描顺带
+/// 判岛是否压在最大化窗口的标题栏上，变了就发 island-titlebar（bool）给前端，前端按设置收细条。
 #[cfg(target_os = "windows")]
 pub(crate) fn spawn_fullscreen_watch(app: tauri::AppHandle) {
-    use tauri::Manager as _;
+    use tauri::{Emitter as _, Manager as _};
     let _ = std::thread::Builder::new()
         .name("island-fullscreen".into())
         .spawn(move || {
             let mut hidden_by_us = false;
+            let mut last_covered = false;
+            let mut tick: u32 = 0;
             loop {
                 std::thread::sleep(std::time::Duration::from_millis(1500));
                 let Some(window) = app.get_webview_window("main") else {
                     continue;
                 };
                 let visible = window.is_visible().unwrap_or(false);
-                match fullscreen_action(fullscreen_app_running(&window), hidden_by_us, visible) {
+                let scan = scan_island_screen(&window);
+                // 只在变化时发；隔 10 拍（15s）补发一次，前端重载或启动时错过那一条也能跟上。
+                let covered = visible && island_over_titlebar(&window, scan.under);
+                tick = tick.wrapping_add(1);
+                if covered != last_covered || tick.is_multiple_of(10) {
+                    let _ = app.emit_to("main", "island-titlebar", covered);
+                    last_covered = covered;
+                }
+                match fullscreen_action(scan.fullscreen, hidden_by_us, visible) {
                     FullscreenAction::Hide => {
                         if window.hide().is_ok() {
                             hidden_by_us = true;
@@ -551,6 +615,30 @@ mod tests {
         assert!(!covers(r(0, 0, 1920, 1040), screen));
         // 另一块屏上的全屏窗口。
         assert!(!covers(r(1920, 0, 3840, 1080), screen));
+    }
+
+    #[test]
+    fn maximized_window_under_the_island_means_titlebar_covered() {
+        let r = |left, top, right, bottom| windows_rect::Rect { left, top, right, bottom };
+        // 1920×1080、任务栏在下：最大化窗口每边比工作区多 8px，岛贴工作区顶边、在正中。
+        let island = r(770, 0, 1150, 46);
+        let maxed = UnderWindow { rect: r(-8, -8, 1928, 1048), maximized: true };
+        let band = 84; // (48 + 8) × 150%
+        assert!(covers_maximized_titlebar(Some(maxed), island, band));
+        // 收成细条后还在标题栏范围里：保持收起，不来回跳。
+        assert!(covers_maximized_titlebar(Some(maxed), r(880, 0, 1040, 8), band));
+        // 同样铺满但没最大化（普通窗口拖大了）：不收，那是用户自己摆的。
+        assert!(!covers_maximized_titlebar(Some(UnderWindow { maximized: false, ..maxed }), island, band));
+        // 岛底下没有普通窗口（桌面）：不收。
+        assert!(!covers_maximized_titlebar(None, island, band));
+        // 最大化窗口在任务栏顶置的屏上，标题栏往下挪：岛仍贴工作区顶边，照样在标题栏里。
+        let top_bar = UnderWindow { rect: r(-8, 40, 1928, 1088), maximized: true };
+        assert!(covers_maximized_titlebar(Some(top_bar), r(770, 48, 1150, 94), band));
+        // 岛横向不在窗口上（窗口最大化在副屏、岛矩形算在主屏坐标里）：不收。
+        let other = UnderWindow { rect: r(1912, -8, 3848, 1048), maximized: true };
+        assert!(!covers_maximized_titlebar(Some(other), r(100, 0, 480, 46), band));
+        // 岛在标题栏下面很远（理论上不会，岛总贴顶）：不收。
+        assert!(!covers_maximized_titlebar(Some(maxed), r(770, 300, 1150, 346), band));
     }
 
     #[test]

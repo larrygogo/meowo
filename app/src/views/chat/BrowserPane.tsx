@@ -3,6 +3,9 @@ import { answerBrowserPanePermission, browserPaneAction, navigateBrowserPane, op
 import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
 import { PathMenu, type PathMenuItem } from "./pathMenu";
+import { Icon } from "../../icons/Icon";
+import { icDownload, icMore, icRefresh } from "../../icons/glyphs";
+import { icArrowLeft, icArrowRight, icExternal } from "../../icons/glyphs.scm";
 // 老调用方（测试）从这里拿；ChatWindow 直接引 localUrls，免得把面板浏览器拖进主 chunk。
 export { localUrlsIn } from "./localUrls";
 
@@ -132,13 +135,13 @@ export function BrowserPane({ info, visible, suggestions }: {
     <div className="browser-pane" style={visible ? undefined : { display: "none" }}>
       <form className="browser-pane-bar" onSubmit={submit}>
         <button type="button" className="chat-diff-action" data-tip-placement="top" aria-label={t.chat.browserBack} data-tip={t.chat.browserBack} disabled={blank} onClick={() => act("back")}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M19 12H5" /><path d="M12 19l-7-7 7-7" /></svg>
+          <Icon glyph={icArrowLeft} size={14} />
         </button>
         <button type="button" className="chat-diff-action" data-tip-placement="top" aria-label={t.chat.browserForward} data-tip={t.chat.browserForward} disabled={blank} onClick={() => act("forward")}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12h14" /><path d="M12 5l7 7-7 7" /></svg>
+          <Icon glyph={icArrowRight} size={14} />
         </button>
         <button type="button" className={"chat-diff-action" + (info.loading ? " is-loading" : "")} aria-label={t.chat.browserReload} data-tip-placement="top" data-tip={t.chat.browserReload} disabled={blank} onClick={() => act("reload")}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8" /><path d="M21 3v5h-5" /></svg>
+          <Icon glyph={icRefresh} size={14} />
         </button>
         <input
           ref={inputRef}
@@ -160,7 +163,7 @@ export function BrowserPane({ info, visible, suggestions }: {
           }}
         />
         <button type="button" className="chat-diff-action" aria-label={t.chat.browserOpenExternal} data-tip-placement="top" data-tip={t.chat.browserOpenExternal} disabled={blank} onClick={() => void openLink(info.url).catch((e) => setError(formatBackendError(e, t.locale)))}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M14 4h6v6" /><path d="M20 4l-9 9" /><path d="M19 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h5" /></svg>
+          <Icon glyph={icExternal} size={14} />
         </button>
         {/* 「…」菜单：缩放、打印、复制网址。网页里 Ctrl+F / Ctrl+P / Ctrl+滚轮这些 WebView2
             自带的快捷键本来就能用（只有主界面关了浏览器快捷键），这里补个找得到的入口。 */}
@@ -177,7 +180,7 @@ export function BrowserPane({ info, visible, suggestions }: {
             setMenu(menu ? null : { x: rect.right - 200, y: rect.bottom + 4 });
           }}
         >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="19" cy="12" r="1.6" /></svg>
+          <Icon glyph={icMore} size={14} />
         </button>
       </form>
       {menu && (
@@ -209,7 +212,7 @@ export function BrowserPane({ info, visible, suggestions }: {
         <div className="browser-pane-notice is-permission" role="alert">
           <span className="browser-pane-notice-text">{permissionText(info.permission)}</span>
           <button type="button" disabled={answering} onClick={() => answer(false)}>{t.chat.browserPermissionBlock}</button>
-          <button type="button" className="is-primary" disabled={answering} onClick={() => answer(true)}>{t.chat.browserPermissionAllow}</button>
+          <button type="button" className="btn-primary" disabled={answering} onClick={() => answer(true)}>{t.chat.browserPermissionAllow}</button>
         </div>
       )}
       {/* 阻止之后同一页面不会再问，被拦的下载也悄无声息：留一条，刷新页面就能重新下载。 */}
@@ -256,7 +259,7 @@ function DownloadNotice({ download, onReveal, onDismiss }: { download: BrowserDo
       : t.chat.browserDownloadFailed(download.fileName);
   return (
     <div className={"browser-pane-notice is-download is-" + download.state} role="status">
-      <svg className="browser-pane-notice-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 4v11" /><path d="M7 10l5 5 5-5" /><path d="M5 20h14" /></svg>
+      <Icon glyph={icDownload} size={14} className="browser-pane-notice-icon" />
       <span className="browser-pane-notice-text" title={download.fileName}>{label}</span>
       {download.state === "done" && <button type="button" onClick={onReveal}>{t.chat.browserDownloadReveal}</button>}
       {download.state !== "progress" && (

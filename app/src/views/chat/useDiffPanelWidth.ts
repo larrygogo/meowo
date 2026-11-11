@@ -2,21 +2,24 @@
 ///
 /// 从 ChatWindow 拆出：这是一段只和分栏柄、面板宽度打交道的指针事件处理，和对话本身无关。
 
+import { CHAT_MIN_WIDTH, panelDefaultWidth, PANEL_MIN_WIDTH, siblingWidth } from "./paneLayout";
 import { useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 
 /** 改动/文件停靠面板的宽度持久化键（localStorage 既有 meowo-* 命名惯例）。 */
 const DIFF_WIDTH_KEY = "meowo-diff-panel-width";
-/** 面板宽度下限保面板可用；上限按 .chat-body 实测宽给对话区留 CHAT_MIN_WIDTH。 */
-// 照 Kimi Code：面板最窄 320，对话区至少留 320；没调过宽度时默认占可用宽度的一半。
-export const DIFF_PANEL_MIN_WIDTH = 320;
-const CHAT_MIN_WIDTH = 320;
-/** 没调过宽度时的默认值：窗口宽减去左侧栏后的一半。挂载时 .chat-body 还没量，按窗口估。 */
-const defaultWidth = () => Math.max(DIFF_PANEL_MIN_WIDTH, Math.round((window.innerWidth - 280) / 2));
+// 照 Kimi Code：面板最窄 320，对话区至少留 320（常驻侧栏的宽也要扣掉，见 paneLayout）。
+export const DIFF_PANEL_MIN_WIDTH = PANEL_MIN_WIDTH;
+/** 没调过宽度时的默认值，挂载时 .chat-body 还没量，按窗口估（见 paneLayout.panelDefaultWidth）。 */
+const defaultWidth = () => panelDefaultWidth(window.innerWidth);
 /** 键盘调宽的步进。 */
 const KEY_STEP = 24;
 
+/** 拖拽 / 键盘调宽的上限：.chat-body 宽减常驻侧栏、再给对话区留 CHAT_MIN_WIDTH。
+ *  此前没扣侧栏，1440 宽侧栏常驻时能把对话区压到 80px（调研 c4）。 */
 const maxWidthIn = (body: Element | null) =>
-  body ? Math.max(DIFF_PANEL_MIN_WIDTH, body.getBoundingClientRect().width - CHAT_MIN_WIDTH) : Number.MAX_SAFE_INTEGER;
+  body
+    ? Math.max(DIFF_PANEL_MIN_WIDTH, body.getBoundingClientRect().width - siblingWidth(body, ".chat-sidebar") - CHAT_MIN_WIDTH)
+    : Number.MAX_SAFE_INTEGER;
 const persist = (width: number) => {
   try { localStorage.setItem(DIFF_WIDTH_KEY, String(Math.round(width))); } catch { /* 存不下就只在内存里 */ }
 };
@@ -28,8 +31,8 @@ export function useDiffPanelWidth() {
     return Number.isFinite(stored) && stored >= DIFF_PANEL_MIN_WIDTH ? stored : defaultWidth();
   });
 
-  // 拖拽分栏柄：pointer capture 挂在柄上，移出窗口也不丢事件；宽度上限按
-  // .chat-body 实测宽给对话区留 ≥360px（CSS 的 max-width:40vw 仍是窗口缩小的兜底）。
+  // 拖拽分栏柄：pointer capture 挂在柄上，移出窗口也不丢事件；上限见 maxWidthIn。
+  // 窗口缩小时的回收不在这里：ChatWindow 渲染时按实测宽再钳一次（paneLayout.fitPanes）。
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
     const handle = event.currentTarget;
@@ -39,7 +42,7 @@ export function useDiffPanelWidth() {
     handle.setPointerCapture(event.pointerId);
     const startX = event.clientX;
     const panel = body.querySelector<HTMLElement>(".chat-diff-panel");
-    // 以实测宽为起点：state 宽可能被 40vw 上限压小，从 state 起算会跳变。
+    // 以实测宽为起点：画出来的宽可能已被 fitPanes 压小，从 state 起算会跳变。
     const startWidth = panel ? panel.getBoundingClientRect().width : width;
     const maxWidth = maxWidthIn(body);
     let lastWidth = startWidth;
@@ -81,5 +84,11 @@ export function useDiffPanelWidth() {
     persist(next);
   };
 
-  return { width, onPointerDown, onKeyDown };
+  // 双击分栏柄恢复默认宽（VS Code / Kimi 同款）：拖坏了不必再一点点拖回来。
+  const reset = () => {
+    try { localStorage.removeItem(DIFF_WIDTH_KEY); } catch { /* 同上 */ }
+    setWidth(defaultWidth());
+  };
+
+  return { width, onPointerDown, onKeyDown, reset };
 }

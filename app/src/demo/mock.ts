@@ -39,6 +39,7 @@ export const store: Store = {
     sticker_color: "neutral",
     island_compact: "counts",
     island_strip: false,
+    island_auto_strip: true,
     island_alerts: ["waiting", "approval", "question", "error"],
     notify_kinds: ["waiting", "approval", "question", "error"],
     island_alert_seconds: 6,
@@ -132,12 +133,12 @@ export function installMocks(windowLabel = "main"): void {
           menu_slash_commands: ["/config", "/mcp", "/memory", "/model", "/resume"],
           startup_attention_markers: ["do you trust the files in this folder", "do you trust the contents of this directory", "trust this folder", "workspace not trusted", "workspace trust dialog"],
           selector_anchors: [{ marker: "type something", kind: "input" }, { marker: "chat about this", kind: "chat" }],
-          interrupt_input: "",
+          interrupt_input: "\x1b",
           interrupt_presses: 1,
           runtime_commands_pending: false,
           attachment_mention: true,
           clipboard_image_paste: "\\[Image #\\d",
-          clipboard_paste_input: "",
+          clipboard_paste_input: "\x16",
           version: "2.1.215 (Claude Code)",
         };
       }

@@ -7,7 +7,7 @@
 // 压在每个窗口的入口 chunk 里（构建实测 en 86KB / zh 64KB 未压缩）。入口在首次渲染前
 // await bootI18n()，Provider 挂载时字典已在手；万一没等（demo、测试），Provider 先不渲染
 // 子树，绝不先画一帧另一种语言或 key。
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getSettings, type Settings, type RepairReason } from "../api";
 import { remoteUi, REMOTE_SETTINGS_EVENT } from "../remoteMode";
@@ -117,7 +117,9 @@ export function I18nProvider({ children, initial }: { children: ReactNode; initi
   }, []);
   const lang = shown?.lang;
   // <html lang> 跟随当前语言（屏幕阅读器朗读、字体回退、连字符断行都依赖它）。
-  useEffect(() => {
+  // 用 layout effect：与换语言的那次提交同步写入、在绘制之前生效。被动 effect 会晚一拍，
+  // 首帧已是英文而 lang 仍为空（CI run 42949946113 的 lazy.test 撞上这一拍，本机未能稳定复现）。
+  useLayoutEffect(() => {
     if (lang) document.documentElement.lang = lang;
   }, [lang]);
   useEffect(() => {

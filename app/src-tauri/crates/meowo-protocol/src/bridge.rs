@@ -77,9 +77,20 @@ bridged_args!(RecentCwdsArgs {
     include_hidden: Option<bool>
 });
 
-bridged_args!(HideWorkspaceArgs { cwd: String });
+bridged_args!(HideWorkspaceArgs {
+    cwd: String,
+    /// true = 撤销刚才的移除（侧栏 5 秒撤销条，UI 调研 shell #15）；缺省 = 移除。
+    #[serde(default)]
+    restore: Option<bool>
+});
 
 bridged_args!(GitDiffSummaryArgs { cwd: String });
+
+// 侧栏会话行的 PR / CI 与改动数（UI 优化 #54）：一次带上可见会话的全部工作目录（去重后）。
+bridged_args!(SidebarGitBadgesArgs {
+    #[cfg_attr(test, ts(type = "readonly string[]"))]
+    cwds: Vec<String>
+});
 
 bridged_args!(FileMentionCandidatesArgs {
     cwd: String,
@@ -425,6 +436,8 @@ bridged_args!(NewSessionArgs {
 });
 
 bridged_args!(CheckProviderHooksArgs { provider: String });
+
+bridged_args!(RepairProviderHooksArgs { provider: String });
 
 bridged_args!(ListSubdirectoriesArgs {
     #[serde(default)]

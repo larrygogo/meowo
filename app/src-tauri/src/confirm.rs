@@ -19,6 +19,9 @@ pub(crate) struct ConfirmPayload {
     danger: bool,
     /// 主按钮文案（「删除」「合并」——说清后果，不用通用「确定」）；None 时前端回退通用确定。
     confirm_label: Option<String>,
+    /// 单按钮提示（只有「知道了」）：失败提示曾借用确认框，出现「取消 / 确定」两个按钮，
+    /// 点哪个效果都一样，用户会犹豫该点哪个（UI 调研 shell #13）。
+    alert: bool,
 }
 
 type ResultSender = tauri::async_runtime::Sender<bool>;
@@ -98,14 +101,18 @@ pub(crate) async fn confirm_dialog(
     message: String,
     danger: Option<bool>,
     confirm_label: Option<String>,
+    alert: Option<bool>,
 ) -> Result<bool, String> {
-    ask(
+    ask_impl(
         app,
         Some(window),
-        title,
-        message,
-        danger.unwrap_or(false),
-        confirm_label,
+        ConfirmPayload {
+            title,
+            message,
+            danger: danger.unwrap_or(false),
+            confirm_label,
+            alert: alert.unwrap_or(false),
+        },
     )
     .await
 }
@@ -120,6 +127,25 @@ pub(crate) async fn ask(
     danger: bool,
     confirm_label: Option<String>,
 ) -> Result<bool, String> {
+    ask_impl(
+        app,
+        parent,
+        ConfirmPayload {
+            title,
+            message,
+            danger,
+            confirm_label,
+            alert: false,
+        },
+    )
+    .await
+}
+
+async fn ask_impl(
+    app: AppHandle,
+    parent: Option<tauri::Window>,
+    payload: ConfirmPayload,
+) -> Result<bool, String> {
     let confirms = app.state::<super::AppState>().confirms.clone();
     let id = confirms.next_id.fetch_add(1, Ordering::Relaxed);
     let (tx, mut rx) = tauri::async_runtime::channel::<bool>(1);
@@ -129,18 +155,7 @@ pub(crate) async fn ask(
         .pending
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .insert(
-            id,
-            (
-                ConfirmPayload {
-                    title,
-                    message,
-                    danger,
-                    confirm_label,
-                },
-                Some(tx),
-            ),
-        );
+        .insert(id, (payload, Some(tx)));
     let label = format!("confirm-{id}");
     let builder = WebviewWindowBuilder::new(&app, &label, WebviewUrl::App("index.html".into()))
         .inner_size(WIDTH, HEIGHT)

@@ -13,6 +13,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { isMac, isWindows } from "../platform";
 import { useT } from "../i18n";
+import { Icon } from "../icons/Icon";
+import { icMinus, icWindowMaximize, icWindowRestore } from "../icons/glyphs.chat";
+import { icClose } from "../icons/glyphs";
 
 export function WindowControls({ onClose }: { onClose: () => void }): ReactElement | null {
   const t = useT();
@@ -105,9 +108,7 @@ export function WindowControls({ onClose }: { onClose: () => void }): ReactEleme
         aria-label={t.chat.minimize}
         onClick={minimize}
       >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-          <path d="M5 12h14" />
-        </svg>
+        <Icon glyph={icMinus} size={14} />
       </button>
       <button
         ref={maxBtnRef}
@@ -118,14 +119,9 @@ export function WindowControls({ onClose }: { onClose: () => void }): ReactEleme
       >
         {maximized ? (
           // 还原：前后两个错位方框（Windows 惯例 ❐）。
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" aria-hidden="true">
-            <rect x="5" y="8.5" width="10.5" height="10.5" rx="1.5" />
-            <path d="M8.8 8.5V6.6A1.6 1.6 0 0 1 10.4 5h7A1.6 1.6 0 0 1 19 6.6v7a1.6 1.6 0 0 1-1.6 1.6h-1.9" />
-          </svg>
+          <Icon glyph={icWindowRestore} size={14} />
         ) : (
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" aria-hidden="true">
-            <rect x="5.5" y="5.5" width="13" height="13" rx="1.5" />
-          </svg>
+          <Icon glyph={icWindowMaximize} size={14} />
         )}
       </button>
       <button
@@ -135,9 +131,7 @@ export function WindowControls({ onClose }: { onClose: () => void }): ReactEleme
         aria-label={t.chat.close}
         onClick={onClose}
       >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-          <path d="M6 6l12 12M18 6L6 18" />
-        </svg>
+        <Icon glyph={icClose} size={14} />
       </button>
     </div>
   );

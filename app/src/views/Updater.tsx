@@ -10,6 +10,8 @@ import { getLiveSessionsPage } from "../api";
 import { appConfirm } from "../confirm";
 import logoUrl from "../../src-tauri/icons/128x128.png";
 import { useEscClose } from "../hooks/useEscClose";
+import { Icon } from "../icons/Icon";
+import { icClose } from "../icons/glyphs";
 
 // 紧凑高度（检查中/已最新/失败：只有状态行+按钮）与增高高度（发现新版：带更新说明滚动区）。
 // 与 Rust 侧 open_update_window_impl 的初始 inner_size 保持一致。
@@ -102,10 +104,7 @@ export function Updater() {
           </button>
         )}
         <button className="winclose" data-tip={t.settings.close} aria-label={t.settings.close} onClick={close}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <line x1="6" y1="6" x2="18" y2="18" />
-            <line x1="18" y1="6" x2="6" y2="18" />
-          </svg>
+          <Icon glyph={icClose} size={14} />
         </button>
       </div>
       <div className={"up-body" + (tall ? "" : " up-compact")}>
@@ -159,7 +158,7 @@ export function Updater() {
               </div>
             )}
             {status === "available" ? (
-              <button className="sbtn primary" onClick={() => void download()}>{t.updater.download}</button>
+              <button className="sbtn btn-primary" onClick={() => void download()}>{t.updater.download}</button>
             ) : status === "downloading" ? (
               <div className="up-dl">
                 {/* progress 为 null 时总大小未知：indeterminate 进度条按 ARIA 规范不给 aria-valuenow。 */}
@@ -191,7 +190,7 @@ export function Updater() {
                     「更新还在、随时可装」——并排给出两条路，主次分明。 */}
                 <div className="up-actions">
                   {!installing && <button className="sbtn" onClick={close}>{t.updater.later}</button>}
-                  <button className="sbtn primary" disabled={installing} onClick={() => void restartAndInstall()}>
+                  <button className="sbtn btn-primary" disabled={installing} onClick={() => void restartAndInstall()}>
                     {installing ? t.updater.installing : t.updater.restart}
                   </button>
                 </div>

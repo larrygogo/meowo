@@ -70,7 +70,7 @@ body.remote-ui .chat-diff-head,
 body.remote-ui .chat-sidebar-overlay-head {
   position: sticky;
   top: 0;
-  z-index: 2;
+  z-index: calc(var(--z-raised) + 1);
   background: var(--cc-bg);
 }
 body.remote-ui .chat-sidebar-overlay-head { background: var(--cc-window-bg); }
@@ -148,6 +148,14 @@ body.remote-ui .chat-window.is-remote-compact .chat-compose .chat-model-button {
   body.remote-ui .chat-sidebar-search input,
   body.remote-ui .chat-sidebar-edit,
   body.remote-ui .ns-input { font-size: 16px; }
+  /* 逐个点名总有漏网：审批卡拒绝理由 13px（点「说明并拒绝」同时 autoFocus，一点就整页放大）、
+     「更改」提交框 13px、文件搜索 12px（UI 调研 m4）。放大后 main.tsx 停止同步 --app-height，
+     布局与键盘处理一起失效。点名补上，再加一条兜底：远程页任何文字输入框都不小于 16px。
+     兜底特异度 (0,1,2) 压得过 `.xxx input` 这类组件写法；更高特异度的组件规则自己负责。 */
+  body.remote-ui .chat-approval-reason input,
+  body.remote-ui .scm-commit-input,
+  body.remote-ui .chat-diff-search,
+  body.remote-ui :is(textarea, input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"])) { font-size: 16px; }
 
   /* 触屏上禁掉双击缩放的 300ms 等待(缩放本身仍由双指手势提供)。 */
   body.remote-ui button,
@@ -387,19 +395,19 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
   color: var(--cc-text-dim);
   background: transparent;
 }
-.remote-settings-btn[aria-expanded="true"] { color: var(--cc-text); background: var(--cc-selected); }
+.remote-settings-btn[aria-expanded="true"] { color: var(--cc-text); background: var(--fill-selected-hover); }
 /* 面板从齿轮下方往左展开，宽度卡在屏宽内（两侧各留 16px）。 */
 .remote-settings-panel {
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
-  z-index: 50;
+  z-index: var(--z-menu);
   width: min(340px, calc(100vw - 32px));
   padding: 6px 14px 12px;
   border-radius: var(--radius-md);
   color: var(--cc-text);
   background: var(--cc-menu-bg);
-  box-shadow: var(--cc-shadow-popup);
+  box-shadow: var(--shadow-menu);
 }
 .remote-settings-group {
   margin-top: 10px;
@@ -466,21 +474,21 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
   flex-direction: column;
   gap: 13px;
   padding: 26px;
-  border: 1px solid var(--cc-border);
+  border: var(--hairline) solid var(--cc-border);
   border-radius: 18px;
   background: var(--cc-panel-bg);
-  box-shadow: var(--cc-shadow-panel);
+  box-shadow: var(--shadow-md);
 }
 
 .remote-gate-brand { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 8px; }
-.remote-gate-brand img { border-radius: 12px; }
-.remote-gate-brand span { font-size: 18px; font-weight: 650; letter-spacing: -0.02em; }
+.remote-gate-brand img { border-radius: var(--radius-lg); }
+.remote-gate-brand span { font-size: 18px; font-weight: 600; letter-spacing: -0.02em; }
 .remote-gate-card h1 { margin: 0; font-size: 20px; text-align: center; letter-spacing: -0.015em; }
 .remote-gate-card > p { text-align: center; }
 .remote-gate-card p { margin: 0; color: var(--cc-text-dim); font-size: 14px; line-height: 1.55; }
 .remote-gate-card .remote-gate-err {
   padding: 9px 11px;
-  border-radius: 9px;
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--cc-err) 9%, transparent);
   color: var(--cc-err);
   font-size: 13px;
@@ -491,26 +499,23 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
   margin-top: 6px;
   padding: 0 13px;
   border-radius: 10px;
-  border: 1px solid var(--cc-border);
+  border: var(--hairline) solid var(--cc-border);
   outline: none;
-  background: var(--cc-surface);
+  background: var(--fill-hover);
   color: inherit;
   font-size: 16px;
-  transition: border-color var(--dur-fast), background var(--dur-fast);
+  transition: border-color var(--dur-fast) var(--ease-in-out), background var(--dur-fast) var(--ease-in-out);
 }
-.remote-gate-card input:focus { border-color: var(--cc-accent-border); background: var(--cc-surface-hover); }
+.remote-gate-card input:focus { border-color: var(--cc-accent-border); background: var(--fill-selected); }
 .remote-gate-card button {
   height: 46px;
   border: none;
   border-radius: 10px;
-  background: var(--cc-accent);
-  color: var(--cc-on-accent);
   font-size: 16px;
   font-weight: 600;
   cursor: pointer;
-  transition: background var(--dur-fast), opacity var(--dur-fast);
+  transition: background var(--dur-fast) var(--ease-in-out), opacity var(--dur-fast) var(--ease-in-out);
 }
-.remote-gate-card button:hover:not(:disabled) { background: var(--cc-accent-dim); }
 .remote-gate-card button:disabled { opacity: 0.45; cursor: default; }
 
 @media (max-width: 699px) {
@@ -524,19 +529,24 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
     width: calc(100% - 24px);
     margin-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
     padding: 11px 12px 10px;
-    border-radius: 14px;
+    border-radius: var(--radius-lg);
   }
   body.remote-ui .chat-compose textarea { min-height: 44px; padding-left: 4px; padding-right: 4px; }
   body.remote-ui .chat-compose-actions { gap: 6px; }
   body.remote-ui .chat-compose .chat-model-button { padding-left: 7px; padding-right: 7px; }
   body.remote-ui .chat-approval {
     width: calc(100% - 24px);
-    max-height: min(68dvh, 560px);
+    /* 按实际剩余高度限高（见 styles.css 的 .chat-approval）：iOS 键盘弹出时 dvh 不变，
+       68dvh 在 SE 键盘态（视口 376）仍有 450px，卡片把输入框挤出屏幕（UI 优化 m2）。
+       --chat-overlay-room 量的是布局后的真实位置，--app-height 跟着键盘缩，它也跟着缩。 */
+    max-height: min(560px, calc(var(--chat-overlay-room, 68dvh) - 14px - 8px));
     padding: 14px;
-    border-radius: 16px;
+    border-radius: var(--radius-xl);
   }
+  /* dock 里的卡不按 room 限高，否则自激闪烁（见 styles.css 的 .chat-dock > .chat-approval）。 */
+  body.remote-ui .chat-dock > .chat-approval { max-height: min(560px, 68dvh); }
   body.remote-ui .chat-approval-actions { gap: 10px; }
-  body.remote-ui .chat-approval-actions .is-deny + .is-allow { margin-inline-start: 4px; }
+  body.remote-ui .chat-approval-actions .is-deny + .btn-primary { margin-inline-start: 4px; }
   body.remote-ui .chat-approval button { min-height: 36px; }
   .remote-new-session-overlay .ns-titlebar { padding: 14px 16px; }
   .remote-new-session-overlay .ns-body { padding: 16px; gap: 16px; }
@@ -550,6 +560,15 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
   .remote-new-session-overlay .ns-profile-hint { flex: 1; min-width: 0; }
 }
 
+/* 矮屏有审批/提问卡在场时给输入框封顶（超出在框内滚动）：卡片的限高是标题栏到 composer 之间的
+   剩余高度，composer 打到 6 行（150px）时 667×375、375×376 下卡片只剩约 50px，按钮只露半截
+   （做空审查 p3b）。实测卡片要约 94px 才放得下标题加一行按钮，按视口扣掉 280px 留给标题栏、
+   进度条和卡片：376 高时封在 96px（约 4 行），高屏 min 取回原 150px 不受影响；
+   --app-height 跟键盘缩（main.tsx），键盘态同样生效。 */
+body.remote-ui:has(.chat-approval-overlay.is-active) .chat-compose textarea {
+  max-height: max(44px, min(150px, calc(var(--app-height, 100dvh) - 280px)));
+}
+
 /* 新建会话浮层:桌面是独立窗口,远程改全屏 sheet 盖在会话列表上。
    注意 .ns-window 桌面态是 100vw/100vh 填满自己的 OS 窗,在这里必须双双改掉——
    之前只覆宽不覆高,sheet 恒撑 100vh(比手机可视区还高),底部按钮直接出屏。 */
@@ -557,7 +576,7 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
   position: fixed;
   inset: 0;
   /* 压过窄屏侧栏抽屉(scrim 60 / 抽屉 61):抽屉未收或再拉开时,sheet 仍在最上层。 */
-  z-index: 70;
+  z-index: var(--z-sheet);
   background: var(--cc-window-bg);
 }
 
@@ -585,7 +604,62 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
     height: min(520px, 100%);
     padding-top: 0;
     padding-bottom: 0;
-    border-radius: 12px;
-    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-xl);
   }
 }
+
+/* 「更改」面板(SourceControl)在手机上的命中面与横溢(验收 #13 #30,调研 m8/m9/m13)。
+   横溢:SE 上 .scm 的 scrollWidth 377 > 375,竖滑时带出横向橡皮筋。逐个元素量出来是仓库行
+   .scm-repo(贴右缘 4px)的触屏 ::after 外扩 6px 越界;它本来就是整行宽,左右不需要外扩。
+   面板本来就不该横滚,overflow-x 一并关掉兜底。 */
+body.remote-ui .scm { overflow-x: hidden; }
+@media (pointer: coarse) {
+  body.remote-ui .scm-repo::after { inset: -6px 0; }
+  /* 行内「放弃 / 暂存」原先外观 22px、命中 34px、彼此只隔 1px(SE 实测),放弃是破坏性动作。
+     按钮做到 36px、外扩 4px 合 44px;两钮隔 8px,外扩正好相接不重叠;行高同步到 44px,
+     上下两行的外扩也不互相压。 */
+  body.remote-ui .scm-row,
+  body.remote-ui .scm-group-head { min-height: 44px; height: auto; }
+  body.remote-ui .scm-row-actions,
+  body.remote-ui .scm-group-actions { gap: 8px; }
+  body.remote-ui .scm-icon-btn,
+  body.remote-ui .chat-diff-layout button { min-width: 36px; min-height: 36px; }
+  body.remote-ui .scm-icon-btn::after,
+  body.remote-ui .chat-diff-layout button::after { inset: -4px; }
+}
+
+/* 刘海机横屏:左右安全区(验收 #28,调研 m6)。此前只处理了上下,横屏时返回钮、列表和「更改」行
+   会落到刘海下(左右各约 47~59px)。整个远程页内容统一内缩,竖屏 env() 为 0,零影响。
+   Playwright 模拟不了 env(),这条按代码核对。 */
+body.remote-ui #root {
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+  box-sizing: border-box;
+}
+
+/* 手机横屏的会话列表(验收 #28,调研 m5):页头 + 新建 + 搜索 + 页签加起来约 205px,393 高的
+   横屏只看得到 2 个会话。矮屏时页头压成一行(去副标题、缩 logo),各入口收紧,一屏能放 4 个。 */
+@media (max-height: 500px) and (orientation: landscape) {
+  .remote-session-list-head { padding: calc(4px + env(safe-area-inset-top, 0px)) 16px 2px; gap: 10px; }
+  .remote-session-list-head img { width: 24px; height: 24px; border-radius: 7px; }
+  .remote-session-list-head h1 { font-size: 16px; }
+  .remote-session-list-head p { display: none; }
+  .remote-session-list .chat-sidebar-head { padding-bottom: 2px; }
+  .remote-session-list .chat-sidebar-new { padding-top: 4px; padding-bottom: 4px; }
+  .remote-session-list .chat-sidebar-search { padding-bottom: 4px; }
+  .remote-session-list .chat-sidebar-search input { min-height: 0; padding-top: 4px; padding-bottom: 4px; }
+  .remote-session-list .chat-sidebar-tabs { margin-bottom: 4px; }
+  .remote-session-list .chat-sidebar-list { padding-top: 0; }
+  .remote-session-list .chat-sidebar-item { min-height: 48px; }
+}
+
+/* iPad 竖屏(≤880 走手机列表)时整宽行拉到 800px,行尾时间和 ⋯ 离标题很远(调研 m14)。
+   列表限 640 居中,和 Kimi 平板端的阅读宽一致;手机宽度本来就不到 640,不受影响。 */
+.remote-session-list > * { width: 100%; max-width: 640px; margin-inline: auto; box-sizing: border-box; }
+/* 宽屏远程页侧栏头里的设置齿轮(ChatSidebar remoteSettings):齿轮在侧栏右缘,面板照列表页
+   那样往左展开会出屏,改成往右展开、盖在对话区上。按钮跟侧栏头其他入口同高。 */
+.chat-sidebar-head:has(.remote-settings) { flex-direction: row; align-items: center; }
+.chat-sidebar-head:has(.remote-settings) .chat-sidebar-new { flex: 1 1 auto; }
+.chat-sidebar-head .remote-settings-btn { width: 32px; height: 32px; }
+.chat-sidebar-head .remote-settings-panel { right: auto; left: 0; }
