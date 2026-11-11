@@ -51,6 +51,10 @@
   /* 比填充档再亮一级：#3d9bff 在最亮的卡面 raised #292929 上 5.08:1、panel 5.75:1、裸底 6.54:1，
      三档都过 4.5:1（Kimi 的 hover 档 #258eff 在 raised 只剩 4.43:1）。 */
   --cc-accent-text: #d4f64c;
+  /* 青柠线条（链接下划线、进度弧）：浅色主题强调色是墨，白底上要露青柠只能走这档，且只画线不铺面。 */
+  --cc-brand-line: #d4f64c;
+  /* 系统材质（Windows Mica、macOS 玻璃）生效时压在材质上的染色层；没有材质时不用。 */
+  --mat-tint: rgba(24, 25, 22, 0.8);
   /* accent 填充上的文字/图标：白字压 #1a88ff 只有 3.49:1（小字不达 AA）；深墨 #04202e
      在 #1a88ff 上 4.80:1、在 hover 档 #258eff 上 5.11:1，两态都过 4.5:1。 */
   --cc-on-accent: #1c2600;
@@ -137,6 +141,8 @@
   color-scheme: dark;
   /* 中性近黑底 + 蓝强调（对齐 Kimi Code 桌面的 --color-* 板：bg #121212 / accent #1a88ff）。 */
   /* 贴纸底色拆成 rgb（见下方深色调色板）+ 不透明度，方便「外观设置」单独调透明度（仅影响走 --cc-bg 的贴纸/缩略条）。 */
+  /* L0 窗口底：侧栏与标题行直接坐在它上面。系统材质生效（根元素带 mat-on）时换成半透明染色层。 */
+  --cc-l0: var(--cc-window-bg);
   --cc-opacity: 1;
   --cc-bg: rgba(var(--cc-bg-rgb), var(--cc-opacity));
   /* 界面密度乘子：外观设置驱动（紧凑 0.9 / 标准 1 / 宽松 1.12）；默认 1，与原视觉逐像素一致。 */
@@ -341,6 +347,8 @@
   /* 当文字/图标前景用的强调色要单独压深：#1783ff 在白底只有约 3.7:1，#1266cc 在白底 5.53:1、
      在 #f5f5f5 面 5.07:1，两档都过 4.5:1。 */
   --cc-accent-text: #1b1d17;
+  --cc-brand-line: #a9cc1f;
+  --mat-tint: rgba(244, 245, 240, 0.72);
   /* accent 填充上的文字：深墨 #001a33（#1783ff 上 4.79:1、悬停 #167ff7 上 4.53:1，过 AA）。
      原取 Kimi 的白字（3.67:1，曾以「深墨发闷」实拍定案），2026-11-11 leader 在关卡
      Q-20261111-onaccent 改定深字：13px 按钮字不算大字，且与深色主题的深墨一致。
@@ -432,6 +440,11 @@
 :root[data-theme="light"] .tabseg-slider {
   background: #fff;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12), 0 2px 6px -2px rgba(0, 0, 0, 0.16);
+}
+:root.mat-on { --cc-l0: var(--mat-tint); }
+/* 用户让系统少用透明或开了高对比度：回到不透明底，文字对比度不依赖壁纸。 */
+@media (prefers-reduced-transparency: reduce), (forced-colors: active) {
+  :root.mat-on { --cc-l0: var(--cc-window-bg); }
 }
 * { box-sizing: border-box; }
 
