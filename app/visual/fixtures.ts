@@ -187,3 +187,41 @@ export function questionInput(lang: "zh" | "en"): string {
     ] },
   ] });
 }
+
+/// ── 补看场景共用的假数据（qa-scenes.mjs 里的场景，桌面与手机 harness 都用）──────────────
+/// @ 补全的候选（file_mention_candidates）：目录以 / 结尾，带一条超长路径看省略。
+export const MENTION_CANDIDATES = [
+  "src/", "src/schemas/login.ts", "src/components/LoginForm.tsx", "src/components/LoginForm.test.tsx",
+  "packages/frontend/src/components/authentication/forms/LoginFormWithValidation.tsx", "README.md",
+];
+
+/// Lead 任务快照（lead_task_snapshot）：一张待作答的 B 类关卡，摘要够长（会出「展开」），三个选项带推荐。
+export function leadTask(lang: "zh" | "en"): unknown {
+  const zh = lang === "zh";
+  return {
+    slug: "login-schema", phase: "design", spec: "", decisions: "", progress: "",
+    checks: [
+      { id: "c1", check: zh ? "12 个测试全部通过" : "All 12 tests pass", passes: true, waived: null, leader: false },
+      { id: "c2", check: zh ? "PR 已开并通过 CI" : "PR opened and CI green", passes: false, waived: null, leader: true },
+    ],
+    gate: {
+      id: "g1", kind: "B", status: "pending", answer: null,
+      title: zh ? "校验规则放前端还是后端" : "Validate on the client or the server",
+      summary: zh
+        ? "三个表单各写了一份校验，规则已经对不上。两种收法：\n\n- **前端 schema 复用**：规则收进 `src/schemas/login.ts`，三个表单共用，改动小、今天能完\n- **后端统一校验**：前端只做格式提示，以接口返回为准，更稳但要改接口\n- **两边都做**：前端先拦一遍，后端兜底\n\n我的建议是先做前端复用，后端兜底另开一个任务。\n\n影响面：登录、注册、找回密码三个页面；不动接口契约。"
+        : "Three forms each carry their own validation and the rules have drifted. Options:\n\n- **Shared client schema**: move the rules into `src/schemas/login.ts`, small change, done today\n- **Server-side validation**: the client only hints, the API decides; sturdier but changes the API\n- **Both**: client first, server as the backstop\n\nI suggest the shared client schema now and a follow-up for the server.\n\nScope: sign-in, sign-up and password reset; the API contract stays.",
+      options: [
+        { id: "a", label: zh ? "前端 schema 复用" : "Shared client schema", detail: zh ? "改动小，今天能完" : "Small change, done today", recommended: true },
+        { id: "b", label: zh ? "后端统一校验" : "Server-side validation", detail: zh ? "更稳，但要改接口" : "Sturdier, but changes the API", recommended: false },
+        { id: "c", label: zh ? "两边都做" : "Both", detail: null, recommended: false },
+      ],
+    },
+  };
+}
+
+/// 权限模式有可选项时（agent_chat_ui.mode_controls 带屏幕标记），点权限按钮才出菜单而不是直接轮换。
+export const MODE_MARKERS = [
+  { marker: "accept edits on", value: "acceptEdits" },
+  { marker: "plan mode on", value: "plan" },
+  { marker: "bypass permissions on", value: "bypassPermissions" },
+];

@@ -789,6 +789,10 @@ body.remote-ui .chat-window.is-remote-compact .chat-compose {
   box-shadow: 0 0 0 var(--hairline) var(--cc-border), var(--shadow-md);
 }
 body.remote-ui .chat-window.is-remote-compact .chat-compose:focus-within { box-shadow: 0 0 0 var(--hairline) var(--line-strong), var(--shadow-md); }
+/* 底部面板（命令、添加、模型、权限模式）长在输入框里面，靠 position:fixed 铺满屏幕。带 backdrop-filter
+   的元素会变成 fixed 后代的包含块，面板就被关在输入框那一小块里，只露出标题和搜索框
+   （visual 截图 qa-m-slash 实拍）。面板开着时整屏有遮罩，输入框的模糊本来也看不见，这时关掉。 */
+body.remote-ui .chat-window.is-remote-compact .chat-compose:has(.chat-sheet) { -webkit-backdrop-filter: none; backdrop-filter: none; background: var(--cc-panel-raised); }
 /* 拒绝 / 允许这一排是拇指的落点：按钮本身做到 44px 高（不只靠外扩的命中面），圆角跟着放大一档。
    特异度带上 .chat-main 压过 ≤699 块里的 36px。 */
 body.remote-ui .chat-window.is-remote-compact .chat-main .chat-approval-actions button { min-height: 44px; padding-left: 16px; padding-right: 16px; border-radius: var(--radius-lg); }
@@ -800,6 +804,19 @@ body.remote-ui .chat-window.is-remote-compact .chat-main .chat-approval-actions 
    --app-height 跟键盘缩（main.tsx），键盘态同样生效。 */
 body.remote-ui:has(.chat-approval-overlay.is-active) .chat-compose textarea {
   max-height: max(44px, min(150px, calc(var(--app-height, 100dvh) - 280px)));
+}
+/* 键盘弹出时（可视高度不到 560）审批卡只剩两百多像素，命令那一行排在卡片正文的最下面，正好被挤到
+   折叠线以下：用户看得到「允许」却看不到要允许什么（visual 截图 qa-m-approval-kbd，375×476）。
+   这时把进度胶囊那一排和「复制命令」那一行收掉，腾出的约 70px 让命令露出来。
+   键盘不改布局视口，媒体查询认不出来，只能拿 --app-height 算：差值乘一个大数再夹到 [0, 上限]，
+   可视高度够时是原高度，不够时是 0。 */
+body.remote-ui:has(.chat-approval-overlay.is-active) .chat-window.is-remote-compact .dock-workbar,
+body.remote-ui .chat-window.is-remote-compact .chat-approval-overlay.is-active .chat-approval-detail-tools {
+  max-height: clamp(0px, calc((var(--app-height, 100dvh) - 560px) * 999), 80px);
+  overflow: hidden;
+}
+body.remote-ui:has(.chat-approval-overlay.is-active) .chat-window.is-remote-compact .dock-workbar {
+  margin-bottom: clamp(0px, calc((var(--app-height, 100dvh) - 560px) * 999), 6px);
 }
 
 /* 新建会话浮层:桌面是独立窗口,远程改全屏 sheet 盖在会话列表上。

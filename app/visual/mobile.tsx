@@ -12,12 +12,13 @@ import { bootAppearance } from "../src/appearance";
 import { I18nProvider } from "../src/i18n";
 import { TooltipLayer } from "../src/Tooltip";
 import { installInputModality } from "../src/input-modality";
-import { installMocks, setExtraMock, store } from "../src/demo/mock";
+import { demoChatUi, installMocks, setExtraMock, store } from "../src/demo/mock";
+import { patchChatUi } from "./qaFlow";
 import { chatMock } from "../src/demo/chatData";
 import { panelMock } from "../src/demo/panelData";
 import { savePanel } from "../src/views/chat/panelTabs";
 import { NEW_SESSION_EVENT } from "../src/remoteMode";
-import { CHAT_SESSION_ID, FIXED_NOW, markReady, scmMock } from "./fixtures";
+import { CHAT_SESSION_ID, FIXED_NOW, leadTask, markReady, MENTION_CANDIDATES, scmMock } from "./fixtures";
 import "../src/fonts";
 import "../src/styles.css";
 import "../src/mobile/mobile.css";
@@ -35,7 +36,8 @@ installInputModality();
 if (scene === "mobile-changes") {
   savePanel(CHAT_SESSION_ID, { tabs: [{ key: "diff", type: "diff" }], active: "diff", visible: true, expanded: false });
 }
-const inChat = scene === "mobile-chat" || scene === "mobile-changes";
+// mobile-idle：对话页但没有待批准的请求（拍补全、菜单用）；mobile-lead：再加一张 Lead 关卡卡。
+const inChat = scene === "mobile-chat" || scene === "mobile-changes" || scene === "mobile-idle" || scene === "mobile-lead";
 const sid = inChat ? `&sessionId=${CHAT_SESSION_ID}` : "";
 window.history.replaceState({}, "", `${location.pathname}?${q.toString()}${sid}`);
 const chat = chatMock(lang);
@@ -53,6 +55,12 @@ setExtraMock((cmd, args) => {
     return null;
   }
   if (cmd === "managed_terminal_screen" && scene === "mobile-keys") return SCREEN;
+  if (cmd === "file_mention_candidates") return MENTION_CANDIDATES;
+  // 模型菜单要有切换命令才点得开；权限模式要有可选项才出菜单（与桌面补看场景同一份补丁）。
+  if (cmd === "agent_chat_ui" && (scene === "mobile-idle" || scene === "mobile-lead")) return patchChatUi(demoChatUi());
+  if (cmd === "lead_task_snapshot" && scene === "mobile-lead") return leadTask(lang);
+  if ((scene === "mobile-idle" || scene === "mobile-lead") && cmd === "pending_interaction") return { approval: null, question: null };
+  if ((scene === "mobile-idle" || scene === "mobile-lead") && cmd === "get_chat_history") return { ...(chat(cmd) as object), pendingReview: null, status: "waiting" };
   // 列表的空态与首载失败。
   if (cmd === "get_live_sessions_page" && scene === "mobile-list-empty") return [];
   if (cmd === "get_live_sessions_page" && scene === "mobile-list-error") throw new Error("offline");
@@ -61,6 +69,11 @@ setExtraMock((cmd, args) => {
 installMocks("chat");
 store.settings.language = lang;
 store.settings.theme = theme;
+// ?on=1：设置屏的开关全拍成「开」（消息自动折叠、防休眠、手机推送）。
+if (q.get("on")) {
+  store.settings.chat_turn_folding = true;
+  store.settings.bark_url = "https://api.day.app/visual";
+}
 bootAppearance({ scale: false });
 
 const viewport = window.visualViewport;

@@ -50,6 +50,8 @@
   --cc-accent-text: #d4f64c;
   /* 青柠线条（链接下划线、进度弧）：浅色主题强调色是墨，白底上要露青柠只能走这档，且只画线不铺面。 */
   --cc-brand-line: #d4f64c;
+  /* 链接下划线：深色链接是青柠字，不画线；浅色链接是墨字，靠 2px 青柠线和正文分开。 */
+  --link-line: transparent;
   /* 系统材质（Windows Mica、macOS 玻璃）生效时压在材质上的染色层；没有材质时不用。
      浓度按真机定：Windows 11 深色 Mica 的底约 #202020，染色层 80% 时合成出来和内容面 #191a17 分不开（2026-11-11 实拍，
      侧栏 #191a18），所以取更深、更透的一档，让窗口底比内容面沉一级，也让壁纸的色调透得出来。 */
@@ -118,16 +120,18 @@
   --cc-user-bubble: #2d2f28;
   /* 工具时间线/命令着色的色调。深色直接取语法色；浅色在 light 块里另配低饱和的一套——
      语法色板是给代码高亮调的，拿来给工具名整行上色，在白底上一排彩虹（用户实拍「不协调」）。 */
-  /* tone-orange 沿用旧名（类名与消费点不动），取值已是粉：橙色会和「等待」琥珀撞。 */
+  /* 第三个色调是粉不是橙：橙色会和「等待」琥珀撞。 */
   --cc-tone-blue: var(--cc-syn-func);
   --cc-tone-purple: var(--cc-syn-keyword);
-  --cc-tone-orange: var(--cc-syn-number);
+  --cc-tone-pink: var(--cc-syn-number);
   --cc-tone-teal: var(--cc-syn-builtin);
   --cc-tool-verb-weight: 400;
   --fill-hover: rgba(255, 255, 255, 0.05);
   --fill-selected: rgba(255, 255, 255, 0.1);
   --fill-selected-hover: rgba(255, 255, 255, 0.14);
   --fill-tab: rgba(255, 255, 255, 0.18);
+  /* 分段控件与页签的选中块：深色是亮一档的填充，浅色是 L2 白块（都再加 --shadow-sm 浮在凹槽上）。 */
+  --seg-on-bg: var(--fill-tab);
   --line-subtle: rgba(255, 255, 255, 0.05);
   --line-strong: rgba(255, 255, 255, 0.18);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.22), 0 1px 3px rgba(0, 0, 0, 0.18);
@@ -309,15 +313,18 @@
   --btn-h-lg: 32px;
   /* 文字四档（Kimi 原值，对话窗专用；贴纸/看板的小字另按卡面对比度校过，见 --cc-text-faint）。
      深浅主题各一组、名字分开，终端页签在浅色主题下也能直接取到深色那组。 */
-  --kt-dark-1: rgba(255, 255, 255, 0.84);
-  --kt-dark-2: rgba(255, 255, 255, 0.56);
+  --kt-dark-1: rgba(244, 248, 230, 0.86);
+  --kt-dark-2: rgba(244, 248, 230, 0.58);
   /* 第三档是对话窗的 --cc-text-faint（时间、路径、小节标题这类正文级小字），必须过 4.5:1。
-     Kimi 原值 .42/.45 在 #121212 上 4.10:1、白底 3.35:1（axe color-contrast，2026-11-11 复测）；
-     .52 在 #121212/#292929/#353535 上 5.66/5.06/4.58:1，.56 在白/#f2f2f2/#ebebeb 上 4.94/4.80/4.72:1。 */
-  --kt-dark-3: rgba(255, 255, 255, 0.52);
-  --kt-light-1: rgba(0, 0, 0, 0.9);
-  --kt-light-2: rgba(0, 0, 0, 0.6);
-  --kt-light-3: rgba(0, 0, 0, 0.56);
+     墨色与全局文字同一组中性色（带一点暖绿，深 244,248,230 / 浅 20,24,8）：纯白纯黑 alpha 压在
+     新底色上偏冷，和侧栏、设置窗的文字不是一个色温。alpha 按「对比度不低于换色前」重取，
+     在内容面 / 卡片 / 用户气泡上依次为：深色 .86 → 12.15/11.00/9.69，.58 → 6.16/5.79/5.31，
+     .54 → 5.51/5.22/4.82；浅色 .92 → 14.35/14.58/13.03，.66 → 5.76/5.81/5.51，.62 → 5.02/5.06/4.83
+     （WCAG 相对亮度公式复算，2026-11-11；brandPalette.test 钉着 ≥4.5）。 */
+  --kt-dark-3: rgba(244, 248, 230, 0.54);
+  --kt-light-1: rgba(20, 24, 8, 0.92);
+  --kt-light-2: rgba(20, 24, 8, 0.66);
+  --kt-light-3: rgba(20, 24, 8, 0.62);
   /* 键盘焦点环：2px 实线强调色。原先是 3px accent-soft 柔光，合成后对底色只有 1.11:1（深）/
      1.12:1（浅），WCAG 1.4.11 要求 ≥3:1（2026-11-11 调研 i2）。accent 实线在深浅两套底上都远高于 3:1
      （深色青柠对窗口底、浅色墨对白）。
@@ -334,6 +341,7 @@
   --fill-selected: rgba(0, 0, 0, 0.05);
   --fill-selected-hover: rgba(0, 0, 0, 0.08);
   --fill-tab: rgba(0, 0, 0, 0.12);
+  --seg-on-bg: var(--cc-panel-raised);
   --line-subtle: rgba(0, 0, 0, 0.05);
   --line-strong: rgba(0, 0, 0, 0.15);
   --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.05), 0 1px 3px rgba(16, 24, 40, 0.06);
@@ -363,6 +371,7 @@
   /* 浅色下强调色文字就是墨色：青柠字在白底上读不清，青柠只走 --cc-brand-line 画线。 */
   --cc-accent-text: #1b1d17;
   --cc-brand-line: #a9cc1f;
+  --link-line: var(--cc-brand-line);
   --mat-tint: rgba(238, 240, 233, 0.5);
   /* accent 填充上的文字：浅色主题是墨底青柠字（13.84:1，tokens.md 复算）。
      正文级强调字走 --cc-accent-text，不走这档。 */
@@ -408,7 +417,7 @@
      四色对状态色与青柠线条 CIEDE2000 ≥ 18.5，彼此 ≥ 15.1，九种底上 ≥ 4.68:1。 */
   --cc-tone-blue: #2a5f9e;
   --cc-tone-purple: #6a4fa6;
-  --cc-tone-orange: #93467e;
+  --cc-tone-pink: #93467e;
   --cc-tone-teal: #1f6878;
   --cc-tool-verb-weight: 400;
   /* 浅色下投影更淡、顶部高光用近白，模拟纸卡浮在暖白底上；底部一道极淡暗边强化厚度。 */
@@ -423,12 +432,12 @@
   /* 文字同步加深一档：低分屏上没有次像素细节，Kimi 原档的浅字会发虚。 */
   :root {
     --hairline: 1px;
-    --kt-dark-1: rgba(255, 255, 255, 0.9);
-    --kt-dark-2: rgba(255, 255, 255, 0.64);
-    --kt-dark-3: rgba(255, 255, 255, 0.54);
-    --kt-light-1: rgba(0, 0, 0, 0.95);
-    --kt-light-2: rgba(0, 0, 0, 0.68);
-    --kt-light-3: rgba(0, 0, 0, 0.58);
+    --kt-dark-1: rgba(244, 248, 230, 0.92);
+    --kt-dark-2: rgba(244, 248, 230, 0.66);
+    --kt-dark-3: rgba(244, 248, 230, 0.56);
+    --kt-light-1: rgba(20, 24, 8, 0.95);
+    --kt-light-2: rgba(20, 24, 8, 0.76);
+    --kt-light-3: rgba(20, 24, 8, 0.64);
   }
 }
 /* 浅色下把硬编码的白/黑叠层、纯黑选中、深色面板换成浅色等价物（其余规则吃变量自动适配）。 */
@@ -510,10 +519,9 @@ html, body {
 :where(button, input, textarea, select) { font-family: inherit; }
 /* 原生复选框与单选的勾选色跟品牌走（UA 默认是系统蓝）。:where 零特异度，自绘的照常覆盖。 */
 :where(input[type="checkbox"], input[type="radio"]) { accent-color: var(--cc-accent); }
-/* 链接：深色青柠字、不加下划线；浅色墨字 + 2px 青柠下划线（青柠字在白底上读不清）。
-   --link-line 是车道内的局部变量（深色透明、浅色 = --cc-brand-line），待并入调色板。 */
-:root, :where(.chat-window.is-terminal) { --link-line: transparent; }
-:root[data-theme="light"] { --link-line: var(--cc-brand-line); }
+/* 文字选区跟品牌走：UA 默认是系统蓝，新建会话窗一打开目录框就是全选状态，一整条蓝底
+   （newsession-window 实拍）。用青柠线条色兑透明，字色不变，深浅两套底上都读得清。 */
+::selection { background: color-mix(in srgb, var(--cc-brand-line) 38%, transparent); }
 /* 高度链路用 100% 而非 100vh：WebView2 下 100vh 可能比客户区高几像素，
    导致贴纸底部(含圆角)被窗口裁掉。逐级 100% 精确等于客户区高度。 */
 #root { height: 100%; }
@@ -2206,6 +2214,10 @@ button.stab {
 /* 设置页卡片外的分组标题（标题放卡片里会像一个可交互设置项）。只有标题、不带副标题。 */
 /* 设置页报错提示块（SettingsError）：浅红底 + 图标 + 关闭钮，与卡片同圆角。 */
 .settings-error { display: flex; align-items: flex-start; gap: var(--sp-8); margin: var(--sp-10) 0 0; padding: var(--sp-10) var(--sp-10) var(--sp-10) var(--sp-12); border: var(--hairline) solid color-mix(in srgb, var(--cc-err) 35%, transparent); border-radius: var(--radius-lg); background: color-mix(in srgb, var(--cc-err) 10%, transparent); color: var(--cc-err-text); font-size: var(--text-sm); line-height: 1.5; }
+/* 错误块长在分区末尾，而设置窗只有 460 高：拨第一行的开关失败，开关自己弹回去，解释却在一屏以下
+   （qa-set-error 实拍，首屏完全看不到）。吸在可视区底部；浮在别的行上面时底色必须不透明，
+   所以把 10% 的错误色叠在内容面的底色上。 */
+.settings-error { position: sticky; bottom: var(--sp-8); z-index: var(--z-sticky); background: linear-gradient(color-mix(in srgb, var(--cc-err) 10%, transparent), color-mix(in srgb, var(--cc-err) 10%, transparent)), var(--cc-panel-raised); box-shadow: var(--shadow-md); }
 .settings-error-icon { flex: none; margin-top: 2px; }
 .settings-error-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .settings-error-close { flex: none; width: 22px; height: 22px; display: grid; place-items: center; margin: -1px 0; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: inherit; opacity: .7; cursor: pointer; }
@@ -2401,6 +2413,9 @@ button.stab {
   gap: var(--sp-6);
   margin-top: var(--sp-6);
 }
+/* 配对行里这一排可以折行：英文「Copy address」「Regenerate token」两颗并排比文字列宽，
+   第二颗伸到二维码底下被盖住半截（qa-set-en-remote 实拍）。Bark 那一行是输入框带按钮，不折。 */
+.remote-pair-row .remote-url-row { flex-wrap: wrap; }
 /* 7G-11：这颗钮此前引用的 --radius-sm / --cc-surface-2 / --cc-surface-3 / --cc-hover
    全项目都不存在，四处都在吃兜底值——background 落到 transparent，hover 落到另一个
    不存在的变量（等于没有 hover 反馈）。改吃真实 token。 */
@@ -2613,10 +2628,7 @@ button.stab {
   transition: background var(--dur-base) var(--ease-in-out), color var(--dur-base) var(--ease-in-out);
 }
 .seg-btn:hover { color: var(--cc-text); }
-/* 选中块浮在凹槽上：浅色是白块，深色是亮一档的填充；字用正文色，强调色留给主动作。
-   --seg-on-bg 是车道内的局部变量（深色 = --fill-tab，浅色 = L2 白），待并入调色板。 */
-:root, :where(.chat-window.is-terminal) { --seg-on-bg: var(--fill-tab); }
-:root[data-theme="light"] { --seg-on-bg: var(--cc-panel-raised); }
+/* 选中块浮在凹槽上（--seg-on-bg：浅色是白块，深色是亮一档的填充）；字用正文色，强调色留给主动作。 */
 .seg-btn.on { background: var(--seg-on-bg); color: var(--cc-text); font-weight: 500; box-shadow: var(--shadow-sm); }
 
 /* 字体大小离散滑块：轨道 + 滑钮 + 底部标签（小/中/大）。 */
@@ -2729,8 +2741,7 @@ button.stab {
   color: var(--cc-text-dim);
 }
 /* 底部链接：<a> 与 <button> 同式。深色是青柠字、不加下划线；浅色强调色是墨，和正文分不开，
-   补一道 2px 青柠下划线。--link-underline 尚未进调色板（待主会话统一加：深色 transparent、浅色 --cc-brand-line），
-   先用 light-dark() 顶上；两者都没有的内核退回与文字同色的下划线，仍看得出是链接。 */
+   补一道 2px 青柠下划线（--link-line，与对话正文里的链接同一档）。 */
 .about-foot a, .about-foot button {
   appearance: none;
   padding: 0;
@@ -2742,7 +2753,7 @@ button.stab {
   text-decoration: underline;
   text-decoration-thickness: 2px;
   text-underline-offset: 3px;
-  text-decoration-color: var(--link-underline, light-dark(var(--cc-brand-line), transparent));
+  text-decoration-color: var(--link-line);
 }
 .about-foot a:hover, .about-foot button:hover { text-decoration-color: currentColor; }
 .about-foot .dot { color: var(--cc-text-faint); }
@@ -4144,14 +4155,17 @@ body:not(.remote-ui) .ns-actions { position: relative; margin: 0 var(--sp-8) var
 .sa-batch-spacer { flex: 1; }
 .sa-table-card { border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-lg); background: var(--cc-bg); overflow-x: auto; transition: opacity var(--dur-fast) var(--ease-out); }
 .sa-table-card.is-loading { opacity: .45; pointer-events: none; }
-.sa-table-card table { width: 100%; min-width: 720px; border-collapse: collapse; table-layout: fixed; }
+/* 最小宽 860 = 各定宽列之和 760 + 「最后一条 prompt」至少 100：原先 720 比定宽列之和还小，
+   620 窗口里会话名被压到三个字、表头互相压住（qa-admin-620 实拍）；窄窗下表格横向滚动。 */
+.sa-table-card table { width: 100%; min-width: 860px; border-collapse: collapse; table-layout: fixed; }
 .sa-col-cb { width: 36px; }
-.sa-col-status { width: 88px; }
+/* 104：英文「In progress」加状态点在 88 里被切成「In progres」。 */
+.sa-col-status { width: 104px; }
 .sa-col-title { width: max(200px, 22%); }
 .sa-col-ws { width: 120px; }
 .sa-col-time { width: 112px; }
 .sa-col-act { width: 76px; }
-.sa-table-card thead th { height: 32px; padding: 0 var(--sp-10); border-bottom: var(--hairline) solid var(--cc-border); color: var(--cc-text-faint); font-size: var(--text-xs); font-weight: 500; text-align: left; white-space: nowrap; user-select: none; }
+.sa-table-card thead th { height: 32px; padding: 0 var(--sp-10); border-bottom: var(--hairline) solid var(--cc-border); color: var(--cc-text-faint); font-size: var(--text-xs); font-weight: 500; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; user-select: none; }
 .sa-table-card th.sa-col-cb, .sa-table-card td.sa-col-cb { padding-right: 0; }
 .sa-table-card tbody td { height: 40px; padding: 0 var(--sp-10); border-bottom: var(--hairline) solid color-mix(in srgb, var(--cc-border) 60%, transparent); font-size: var(--text-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: middle; }
 .sa-table-card tbody tr:last-child td { border-bottom: 0; }
@@ -4584,6 +4598,10 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-sidebar-batch { flex: 0 0 auto; display: flex; align-items: center; gap: var(--sp-8); margin: var(--sp-4) var(--sp-8) 0; padding: var(--sp-6) var(--sp-6) var(--sp-6) var(--sp-10); border-radius: var(--radius-md); background: var(--cc-menu-bg); box-shadow: 0 0 0 var(--hairline) var(--cc-border), var(--shadow-sm); font-size: var(--text-xs); color: var(--cc-text-dim); font-variant-numeric: tabular-nums; }
 .chat-sidebar-batch button { min-height: var(--btn-h-sm); border: 0; border-radius: var(--radius-sm); padding: 0 var(--sp-8); color: var(--cc-text); background: var(--fill-selected); font-size: var(--text-xs); cursor: pointer; }
 .chat-sidebar-batch button:hover { background: var(--fill-selected-hover); }
+/* 英文三段（2 selected / Mark done / Exit selection）在 240 宽侧栏里一行放不下，原先每段各自折成两行、
+   按钮被撑高（qa-side-batch 英文实拍）：改成整段不折、放不下的按钮换到下一行。 */
+.chat-sidebar-batch { flex-wrap: wrap; row-gap: var(--sp-6); }
+.chat-sidebar-batch > * { white-space: nowrap; }
 /* 对话内容全文搜索区段(侧栏搜索的第二段)。 */
 .chat-sidebar-deep { border-top: var(--hairline) solid var(--line-subtle); margin-top: var(--sp-6); padding-top: var(--sp-4); }
 .chat-sidebar-deep-head { padding: var(--sp-4) var(--sp-10) var(--sp-2); font-size: var(--text-xs); color: var(--cc-text-faint); user-select: none; }
@@ -4785,8 +4803,9 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .shell-term-exit.is-error { color: #ff8580; }
 /* 会话信息栏（同 Kimi Code 的 SessionInfoTabs）：面板收起时停靠在对话右侧，窄窗改成浮层。 */
 .session-info { display: flex; flex-direction: column; gap: var(--sp-16); padding: var(--sp-12) var(--sp-8); color: var(--cc-text); font-size: var(--text-sm); overflow-y: auto; }
-.session-info.is-docked { flex: 0 0 240px; min-height: 0; border-left: var(--hairline) solid var(--cc-border); background: transparent; }
-.session-info.is-floating { position: fixed; top: 56px; right: 12px; z-index: var(--z-panel); width: 260px; max-height: calc(100vh - 80px); border: 0; border-radius: var(--radius-lg); background: var(--cc-menu-bg); box-shadow: 0 0 0 var(--hairline) var(--cc-border), var(--shadow-menu); }
+/* 宽度跟界面缩放走：150% 时字大了一半，240 定宽里「新建浏览器」「3 个文件有未提交…」都只剩省略号。 */
+.session-info.is-docked { flex: 0 0 calc(240px * var(--cc-ui)); min-height: 0; border-left: var(--hairline) solid var(--cc-border); background: transparent; }
+.session-info.is-floating { position: fixed; top: 56px; right: 12px; z-index: var(--z-panel); width: calc(260px * var(--cc-ui)); max-width: calc(100vw - 24px); max-height: calc(100vh - 80px); border: 0; border-radius: var(--radius-lg); background: var(--cc-menu-bg); box-shadow: 0 0 0 var(--hairline) var(--cc-border), var(--shadow-menu); }
 .session-info-section { display: flex; flex-direction: column; gap: 2px; }
 .session-info-section h3 { margin: 0 0 var(--sp-4); padding: 0 var(--sp-8); color: var(--cc-text-faint); font-size: var(--text-xs); font-weight: 500; }
 .session-info-row { display: flex; align-items: center; gap: var(--sp-10); min-width: 0; min-height: 32px; padding: 0 var(--sp-8); border: 0; border-radius: var(--radius-md); color: var(--cc-text); background: transparent; font: inherit; text-align: left; cursor: pointer; }
@@ -5121,7 +5140,7 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 span.scm-check-name { cursor: default; }
 button.scm-check-name:hover { text-decoration: underline; }
 .scm-check-wf { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cc-text-faint); }
-.scm-link-btn { margin-left: var(--sp-6); padding: 0; border: 0; background: transparent; color: var(--cc-accent-text); text-decoration: underline; text-decoration-color: var(--cc-brand-line); text-underline-offset: 3px; font: inherit; font-size: var(--text-xs); cursor: pointer; }
+.scm-link-btn { margin-left: var(--sp-6); padding: 0; border: 0; background: transparent; color: var(--cc-accent-text); text-decoration: underline 2px var(--link-line); text-underline-offset: 3px; font: inherit; font-size: var(--text-xs); cursor: pointer; }
 .scm-link-btn:hover:not(:disabled) { text-decoration: underline; }
 .scm-cleanup { display: flex; flex-wrap: wrap; align-items: center; }
 .scm-merge-into { font-size: var(--text-sm); color: var(--cc-text); overflow-wrap: anywhere; }
@@ -5313,7 +5332,7 @@ button.scm-check-name:hover { text-decoration: underline; }
 .chat-user-note.is-warn { color: var(--cc-warn-text); }
 /* 先上屏再发送：发送中的小圈与失败后的文字级出口（重发 / 放回输入框）。 */
 .chat-user-note.is-sending, .chat-queued-tag[role="status"] { display: inline-flex; align-items: center; gap: var(--sp-4); color: var(--cc-text-faint); }
-.chat-user-action { height: auto; padding: 0; border: 0; background: none; color: var(--cc-accent-text); text-decoration: underline; text-decoration-color: var(--cc-brand-line); text-underline-offset: 3px; font: inherit; font-size: var(--text-xs); cursor: pointer; }
+.chat-user-action { height: auto; padding: 0; border: 0; background: none; color: var(--cc-accent-text); text-decoration: underline 2px var(--link-line); text-underline-offset: 3px; font: inherit; font-size: var(--text-xs); cursor: pointer; }
 .chat-user-action:hover { text-decoration-thickness: 2px; }
 .chat-queued-tag.is-warn { color: var(--cc-warn-text); }
 /* 正文与 Kimi 同取 14px 基准；letter-spacing 归零，避免中文被光学收紧。 */
@@ -5410,7 +5429,8 @@ button.scm-check-name:hover { text-decoration: underline; }
 .chat-meta-link:hover { color: var(--cc-text); background: var(--fill-hover); }
 /* 压缩摘要：上万字的上下文快照，限高自己滚，读完收起不占时间线。 */
 .chat-compact-summary { margin: calc(-1 * var(--sp-16)) 0 var(--sp-28); padding: var(--sp-12) var(--sp-16); max-height: 360px; overflow-y: auto; overscroll-behavior: contain; border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-lg); color: var(--cc-text-dim); font-size: var(--text-sm); }
-.chat-empty { min-height: 100%; display: grid; place-items: center; color: var(--cc-text-faint); font-size: var(--text-xs); text-align: center; }
+/* align-content：失败态有「说明 / 重试 / 原因」三行，不收拢的话三行平分整屏高度，各隔一两百像素（qa-load-error 实拍）。 */
+.chat-empty { min-height: 100%; display: grid; place-items: center; align-content: center; row-gap: var(--sp-10); color: var(--cc-text-faint); font-size: var(--text-xs); text-align: center; }
 .chat-empty.is-error { color: var(--cc-err-text); }
 /* 读取失败的「立即重试」与连续失败原因（UI 调研 chat #13）：文字级按钮，跟在错误行后面。 */
 .chat-retry-now { margin-left: var(--sp-8); min-height: var(--btn-h-sm); padding: var(--sp-2) var(--sp-8); border: 0; border-radius: var(--radius-sm); background: var(--fill-selected); color: var(--cc-text); font: inherit; font-size: var(--text-xs); cursor: pointer; }
@@ -5489,6 +5509,10 @@ button.scm-check-name:hover { text-decoration: underline; }
    min-height:0 让卡片级 max-height(矮窗兜底)能把它压小——flex 子项默认不肯缩到
    内容高以下,缺了它卡片限高会失效。 */
 .chat-approval-copy { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: var(--sp-8); max-height: min(44vh, 420px); overflow-y: auto; }
+/* 卡片被限高时（手机键盘弹出、矮窗）让这一块自己滚，里面各行不许被压扁：命令框带 overflow，
+   flex 里它的最小高度是 0，会先被压成一条 4px 的线，用户看不到要批准的是什么命令
+   （visual 截图 qa-m-approval-kbd，375×476 实拍）。 */
+.chat-approval-copy > * { flex-shrink: 0; }
 /* 多问题的 tab 条（单问题不渲染，见 QuestionPanels）。与标题栏「对话/终端」同一套
    分段控件语言（凹槽容器 + 凸起的选中块），而不是胶囊——胶囊读起来像标签徽章，
    不像可切换的 tab（用户实拍反馈）。
@@ -5502,7 +5526,9 @@ button.scm-check-name:hover { text-decoration: underline; }
 @keyframes chat-model-spin { to { transform: rotate(360deg); } }
 /* 题干与选项列表之间要有呼吸感（copy 容器自身的 gap 只有 5px，对这两块太挤）。 */
 .chat-question-panel { display: flex; flex-direction: column; gap: var(--sp-9); }
-.chat-approval-head { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--sp-10); }
+/* 允许折行：320 宽的对话列（620 窗口开着右侧面板）里英文标题和计时胶囊挤在一行，标题被压成三行；
+   放不下时胶囊换到标题下面。 */
+.chat-approval-head { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: var(--sp-4) var(--sp-10); }
 .chat-approval-copy strong { min-width: 0; font-size: var(--text-base); font-weight: 600; line-height: var(--leading-tight); }
 /* 标题前的实心圆点：整张卡唯一的暖色主体，视线第一落点。inline-block 而非 flex 的
    伪元素，标题换行时点仍钉在第一行行首。 */
@@ -5961,8 +5987,8 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
    摘要刚好放得下时最后一行也被淡掉，又因为没溢出不给「展开全部」，那行字读不全（实拍）。 */
 .lead-gate-summary.is-clipped { -webkit-mask-image: linear-gradient(to bottom, #000 70%, transparent); mask-image: linear-gradient(to bottom, #000 70%, transparent); }
 /* 审批卡外壳里的按钮会被统一成按钮条，展开钮要保持成文字链接（实拍）。 */
-.chat-approval .lead-gate-more { width: auto; height: auto; padding: 0; border: 0; background: none; color: var(--cc-accent-text); text-decoration: underline; text-decoration-color: var(--cc-brand-line); text-underline-offset: 3px; font-size: var(--text-xs); font-weight: 400; }
-.lead-gate-more { margin: var(--sp-4) 0; padding: 0; border: 0; background: none; color: var(--cc-accent-text); text-decoration: underline; text-decoration-color: var(--cc-brand-line); text-underline-offset: 3px; font-size: var(--text-xs); cursor: pointer; }
+.chat-approval .lead-gate-more { width: auto; height: auto; padding: 0; border: 0; background: none; color: var(--cc-accent-text); text-decoration: underline 2px var(--link-line); text-underline-offset: 3px; font-size: var(--text-xs); font-weight: 400; }
+.lead-gate-more { margin: var(--sp-4) 0; padding: 0; border: 0; background: none; color: var(--cc-accent-text); text-decoration: underline 2px var(--link-line); text-underline-offset: 3px; font-size: var(--text-xs); cursor: pointer; }
 .lead-gate-options { display: flex; flex-direction: column; gap: var(--sp-4); margin: var(--sp-8) 0; }
 .lead-gate-option { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-8); padding: var(--sp-8) var(--sp-11); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); cursor: pointer; }
 .lead-gate-option.is-picked { border-color: var(--line-strong); background: var(--fill-selected); }
@@ -6378,6 +6404,9 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .chat-compose .chat-slash-item code { flex: 0 0 auto; color: var(--cc-text); font-family: var(--cc-mono); font-size: var(--text-xs); font-weight: 500; }
 .chat-compose .chat-slash-item span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cc-text-faint); font-size: var(--text-xs); margin-left: auto; }
 /* 参数提示行（命令已命中、正在填参数）：纯展示，不是可点候选——收回手型与 hover 反馈。 */
+/* @ 补全只有一列路径：长路径原先直接被菜单边缘切掉（没有省略号），菜单放宽一档并给省略号。 */
+.chat-compose #chat-at-listbox { width: min(420px, 100%); }
+.chat-compose #chat-at-listbox .chat-slash-item code { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-compose .chat-slash-arg-hint .chat-slash-item { cursor: default; }
 .chat-compose .chat-slash-arg-hint .chat-slash-item:hover { background: transparent; }
 /* min-width:0 解除 flex 的 min-content 下限：窄窗格里这一行处于容量临界，默认下限是
@@ -7048,7 +7077,7 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .chat-cmd { color: var(--cc-chat-text); }
 .chat-cmd .chat-tool-ln { color: var(--cc-text-faint); }
 .chat-cmd-name { color: var(--cc-tone-blue); font-weight: 500; }
-.chat-cmd-flag { color: var(--cc-tone-orange); }
+.chat-cmd-flag { color: var(--cc-tone-pink); }
 .chat-cmd-str { color: var(--cc-syn-string); }
 .chat-cmd-op { color: var(--cc-tone-purple); }
 .chat-cmd-env, .chat-cmd-var { color: var(--cc-tone-teal); }
@@ -7673,7 +7702,8 @@ pre.chat-md-plain {
 .wt-trust-body { display: flex; flex-direction: column; gap: var(--sp-8); }
 .wt-trust-title { margin: 0; font-size: var(--text-base); font-weight: 600; color: var(--cc-text); }
 .wt-trust-text { margin: 0; color: var(--cc-text-dim); font-size: var(--text-xs); }
-.wt-trust-script { max-height: 240px; margin: 0; padding: var(--sp-8) var(--sp-10); overflow: auto; border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-sm); color: var(--cc-text); font-family: var(--cc-mono); font-size: var(--text-xs); white-space: pre-wrap; overflow-wrap: anywhere; }
+/* 脚本是代码：用下沉的代码底，不用「对话框底色 + 描边」再画一张卡（卡里套卡，浅色下白框压白底）。 */
+.wt-trust-script { max-height: 240px; margin: 0; padding: var(--sp-8) var(--sp-10); overflow: auto; border: 0; border-radius: var(--radius-md); background: var(--cc-code-bg); color: var(--cc-text); font-family: var(--cc-mono); font-size: var(--text-xs); white-space: pre-wrap; overflow-wrap: anywhere; }
 .wt-trust-note { margin: 0; color: var(--cc-text-faint); font-size: var(--text-xs); }
 .wt-trust-actions { display: flex; justify-content: flex-end; gap: var(--sp-8); }
 .wt-trust-actions .wt-opt-btn { height: var(--btn-h-md); padding: 0 var(--sp-12); }

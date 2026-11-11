@@ -8,6 +8,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve, join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { VISUAL_PORT } from "./vite.visual.config.mjs";
+import { QA_SHOTS } from "./qa-scenes.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXED_NOW = 1_780_000_000_000; // 与 fixtures.ts / src/demo 的冻结时刻一致
@@ -172,7 +173,37 @@ function buildMatrix() {
     const shot = { ...sc, page: "mobile", lang, theme, w, h, dpr: 2, mobile: true };
     shots.push({ ...shot, name: `${sc.scene}${sc.tag ? "-" + sc.tag : ""}__${lang}__${theme}__w${w}${sc.tag ? "h" + h : ""}__dpr2` });
   }
+  // 补看场景（qa-scenes.mjs）：要靠真实的点击、悬停、键盘才出得来的状态，以及缩放、超宽这些状态维度。
+  for (const sc of QA_SHOTS) for (const lang of sc.langs ?? ["zh"]) for (const theme of sc.themes ?? THEMES) {
+    const [w, h] = sc.size ?? [1280, 800];
+    shots.push({ sel: "body", ...sc, page: sc.page ?? "desktop", lang, theme, w, h, dpr: 2, mobile: sc.page === "mobile", name: `${sc.name}__${lang}__${theme}__w${w}__dpr2` });
+  }
   return shots;
+}
+
+// 截图前替用户做的动作（真实的指针与键盘事件，悬停态、焦点环、右键菜单都靠它）。
+// 每步之后推进假时钟：菜单进场、tooltip 延时、防抖都要它走。
+async function runSteps(page, ctx, steps, netIdle) {
+  for (const [op, a, b] of steps) {
+    const loc = () => page.locator(a).first();
+    if (op === "click") await loc().click({ timeout: 8000, ...(b ?? {}) });
+    else if (op === "rclick") await loc().click({ button: "right", timeout: 8000 });
+    else if (op === "dblclick") await loc().dblclick({ timeout: 8000 });
+    else if (op === "hover") await loc().hover({ timeout: 8000, ...(b ?? {}) });
+    else if (op === "focus") await loc().focus({ timeout: 8000 });
+    else if (op === "type") { await loc().click({ timeout: 8000 }); await page.keyboard.type(b); }
+    else if (op === "fill") await loc().fill(b, { timeout: 8000 });
+    else if (op === "key") await page.keyboard.press(a);
+    else if (op === "keys") for (let i = 0; i < (b ?? 1); i++) await page.keyboard.press(a);
+    else if (op === "eval") await page.evaluate(a);
+    // log：把页面里量到的东西打到终端（量对齐、查某个元素为什么被压扁）。
+    else if (op === "log") console.log("  · " + JSON.stringify(await page.evaluate(a)));
+    else if (op === "wait") await loc().waitFor({ state: "attached", timeout: 8000 }).catch(() => {});
+    else if (op === "tick") { await ctx.clock.runFor(a); await netIdle(60); continue; }
+    else if (op === "mouse") await page.mouse.move(a, b);
+    else throw new Error("未知动作：" + op);
+    for (let i = 0; i < 4; i++) { await ctx.clock.runFor(STEP_MS); await netIdle(60); }
+  }
 }
 
 // ── 冻结 ──────────────────────────────────────────────
@@ -233,7 +264,7 @@ async function shootOne(browser, base, shot, outDir, dryRun = false) {
     // 资源 4xx/5xx（字体被拒、模块 404）会让画面悄悄变样，按失败处理，别把它拍进基线。
     page.on("response", (r) => { if (r.status() >= 400) errors.push(`HTTP ${r.status()} ${r.url()}`); });
     const netIdle = trackNetwork(page);
-    const url = `${base}/visual/${shot.page}.html?scene=${shot.scene}&lang=${shot.lang}&theme=${shot.theme}`;
+    const url = `${base}/visual/${shot.page}.html?scene=${shot.scene}&lang=${shot.lang}&theme=${shot.theme}${shot.params ? "&" + shot.params : ""}`;
     await page.goto(url, { waitUntil: "load" });
     await netIdle();
     for (let t = 0; t < ADVANCE_MS; t += STEP_MS) {
@@ -243,6 +274,16 @@ async function shootOne(browser, base, shot, outDir, dryRun = false) {
     if (errors.length) throw new Error(errors.slice(0, 3).join(" | "));
     const ready = await page.evaluate(() => window.__visualReady === true);
     if (!ready) throw new Error("harness 没有发出就绪信号");
+    if (shot.steps) {
+      try { await runSteps(page, ctx, shot.steps, netIdle); } catch (e) {
+        const failDir = join(outDir, "_failed");
+        mkdirSync(failDir, { recursive: true });
+        await page.screenshot({ path: join(failDir, shot.name + ".png") }).catch(() => {});
+        throw new Error(`动作没做成：${String(e?.message ?? e).slice(0, 240)}`);
+      }
+    }
+    // 动作可能把页面点崩（渲染报错后整页空白）：先报页面错误，别让它被「缺少关键元素」盖住。
+    if (errors.length) throw new Error(errors.slice(0, 3).join(" | "));
     if (!(await page.locator(shot.sel).first().count())) {
       // 留一张失败现场图，方便看场景到底挂成了什么样（不进输出目录，免得被当成基线）。
       const failDir = join(outDir, "_failed");
