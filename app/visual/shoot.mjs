@@ -174,7 +174,7 @@ function buildMatrix() {
     shots.push({ ...shot, name: `${sc.scene}${sc.tag ? "-" + sc.tag : ""}__${lang}__${theme}__w${w}${sc.tag ? "h" + h : ""}__dpr2` });
   }
   // 主窗口的名单外壳（desktop.tsx 的 roster*）：标准宽与最小窗口各一组。
-  for (const scene of ["roster", "roster-open", "roster-quiet", "roster-scene"]) for (const [w, h] of [[1200, 760], [620, 480]]) for (const theme of THEMES) for (const lang of scene === "roster" ? ["zh", "en"] : ["zh"]) {
+  for (const scene of ["roster", "roster-open", "roster-glance", "roster-quiet", "roster-scene"]) for (const [w, h] of [[1200, 760], [620, 480]]) for (const theme of THEMES) for (const lang of scene === "roster" ? ["zh", "en"] : ["zh"]) {
     shots.push({ page: "desktop", scene, sel: ".roster-shell", lang, theme, w, h, dpr: 2, name: `${scene}__${lang}__${theme}__w${w}__dpr2` });
   }
   // 补看场景（qa-scenes.mjs）：要靠真实的点击、悬停、键盘才出得来的状态，以及缩放、超宽这些状态维度。

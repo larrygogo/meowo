@@ -140,6 +140,8 @@ async function boot(): Promise<React.ReactNode> {
     bootAppearance({ scale: true });
     const { RosterShell } = await import("../src/views/roster/RosterShell");
     if (scene === "roster-open") whenReady<HTMLElement>(".roster-row", (el) => el.click());
+    // roster-glance = 点开一个在跑的行：最近几步 + 它最后说的话。
+    if (scene === "roster-glance") whenReady<HTMLElement>(".roster-item:nth-child(2) .roster-row", (el) => el.click());
 
     return <div className="demo-chat-frame" style={{ position: "fixed", inset: 0, overflow: "hidden" }}><RosterShell /></div>;
   }

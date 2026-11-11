@@ -36,7 +36,9 @@ export function RosterComposer({ target, targetTitle, onNewSession, onSay }: {
     setText("");
   };
 
-  const placeholder = target ? t.roster.composeTo(targetTitle) : t.roster.composeNew;
+  // 去向写在上面那一行，placeholder 不重复它：说清楚回车之后会发生什么。
+  const label = target ? t.roster.composeTo(targetTitle) : t.roster.composeNew;
+  const placeholder = target ? t.roster.composeToHint : t.roster.composeNew;
   return (
     <form className="roster-composer" onSubmit={(event) => { event.preventDefault(); submit(); }}>
       {/* 这句话是给谁的，一直写在输入框上面：placeholder 一打字就看不见了，原先为派新 agent 写的字
@@ -48,7 +50,7 @@ export function RosterComposer({ target, targetTitle, onNewSession, onSay }: {
           rows={1}
           value={text}
           placeholder={placeholder}
-          aria-label={placeholder}
+          aria-label={label}
           onChange={(event) => setText(event.target.value)}
           onKeyDown={(event) => {
             // 回车提交，Shift+回车换行；输入法正在组字时的回车不算。

@@ -7948,6 +7948,14 @@ button.btn-primary:disabled { opacity: 1; background: var(--fill-selected); colo
 .roster-del { color: var(--cc-fail-text); margin-left: 6px; }
 /* 展开：这一行近况，和头像右边的文字左对齐（16 内边距 + 36 头像 + 16 列距）。 */
 .roster-sheet { padding: 2px 16px 14px 68px; }
+/* 最近几步：时间 · 动作 · 对象，一步一行不折行。报错的那一步对象标红。 */
+.roster-steps { list-style: none; margin: 0 0 10px; padding: 0; max-width: 72ch; }
+.roster-steps li { display: grid; grid-template-columns: 40px 64px minmax(0, 1fr); column-gap: 12px; font-size: var(--text-xs); line-height: 22px; color: var(--cc-text-dim); white-space: nowrap; }
+.roster-step-time { font-family: var(--cc-mono); color: var(--cc-text-faint); font-variant-numeric: tabular-nums; }
+.roster-step-name { color: var(--cc-text-faint); overflow: hidden; text-overflow: ellipsis; }
+.roster-step-what { font-family: var(--cc-mono); overflow: hidden; text-overflow: ellipsis; }
+.roster-steps li.is-failed .roster-step-what { color: var(--cc-fail-text); }
+.roster-error { margin: 0 0 10px; max-width: 72ch; max-height: 120px; overflow: auto; padding: 8px 12px; border-radius: var(--radius-md); background: var(--cc-code-bg); color: var(--cc-fail-text); font: var(--text-xs)/1.5 var(--cc-mono); white-space: pre-wrap; overflow-wrap: anywhere; }
 /* 限高约六行，超出的裁掉：这里是速览，全文在现场里。 */
 .roster-said { margin: 0; max-width: 72ch; max-height: calc(1.65em * 6); font-size: var(--text-sm); line-height: 1.65; color: var(--cc-text); overflow: hidden; overflow-wrap: anywhere; }
 .roster-said > :first-child { margin-top: 0; }

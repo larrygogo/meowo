@@ -25,6 +25,7 @@ import { UNNAMED_SESSION_SENTINEL, type Item } from "../sticker/types";
 import { attentionFocus } from "./attention";
 import { RosterComposer } from "./RosterComposer";
 import { RosterDecision } from "./RosterDecision";
+import { RosterGlance } from "./RosterGlance";
 
 /** 名单一次取多少行。名单不翻页：超过这个数的老会话去「已完成 / 工作区」里找。 */
 const ROSTER_LIMIT = 200;
@@ -349,8 +350,12 @@ function RosterItem({ item, open, gitBadges, onToggle, onEnter }: {
       </button>
       {open && (
         <div className="roster-sheet">
+          {/* 最近几步在上、它最后说的话在下，顺着时间读。待处理的行不摆：那里要紧的是决定单。 */}
+          {tone !== "pending" && id > 0 && <RosterGlance sessionId={id} />}
+          {/* 出错的行把错误原文摆出来：行里那一句只是个短标签。 */}
+          {tone === "error" && item.error_raw && <pre className="roster-error">{item.error_raw}</pre>}
           {/* 它最后说的话是 Markdown 原文：照对话窗那样渲染，不把星号和反引号直接摆出来（真机实拍）。 */}
-          {said ? <div className="roster-said chat-md"><ChatMarkdown text={said} /></div> : <p className="roster-said is-empty">{t.roster.nothingSaid}</p>}
+          {said ? <div className="roster-said chat-md"><ChatMarkdown text={said} /></div> : null}
           {/* 轮到你的行：决定就在这里做（批准 / 拒绝 / 拍板）。答不了的由它说明原因。 */}
           {tone === "pending" && <RosterDecision item={item} fallback={null} />}
           <div className="roster-foot">
