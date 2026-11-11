@@ -31,6 +31,14 @@ const theme = q.get("theme") === "light" ? "light" : "dark";
 const scene = q.get("scene") ?? "chat";
 
 Date.now = () => FIXED_NOW;
+// 截图里关掉 WebGL，让 xterm 退回 DOM 渲染（ManagedTerminal / ShellTerminal 加载 WebglAddon 失败时自己兜底）：
+// WebGL 画布不保留绘制缓冲，Playwright 截图那一帧重新合成时画布是空的，托管终端的八个场景
+// （qa-term*）终端区整片漆黑，搜索命中、链接提示都看不到（做空审查 2026-11-11）。
+const getContext = HTMLCanvasElement.prototype.getContext;
+HTMLCanvasElement.prototype.getContext = function (this: HTMLCanvasElement, kind: string, ...rest: unknown[]) {
+  if (kind === "webgl" || kind === "webgl2") return null;
+  return (getContext as (...a: unknown[]) => unknown).call(this, kind, ...rest);
+} as typeof HTMLCanvasElement.prototype.getContext;
 store.settings.language = lang;
 store.settings.theme = theme;
 // ?ui=1.5：界面缩放（只有对话窗与灵动岛吃，设置等定尺寸窗口的 bootAppearance 不下发）。

@@ -276,6 +276,10 @@ async function shootOne(browser, base, shot, outDir, dryRun = false) {
     if (!ready) throw new Error("harness 没有发出就绪信号");
     if (shot.steps) {
       try { await runSteps(page, ctx, shot.steps, netIdle); } catch (e) {
+        // 预热那一遍（dryRun）用 800×600 的小视口，只为让 vite 把模块转译完：侧栏在这个宽度下是收起的，
+        // 找不到元素、动作点不成都正常，不留现场图——否则 _failed/ 里会多出几张「失败」图，
+        // 而正式那一遍其实一次拍成（qa-side-empty、qa-side-error 就是这样被误读成「首拍失败」的）。
+        if (dryRun) throw e;
         const failDir = join(outDir, "_failed");
         mkdirSync(failDir, { recursive: true });
         await page.screenshot({ path: join(failDir, shot.name + ".png") }).catch(() => {});
@@ -284,7 +288,7 @@ async function shootOne(browser, base, shot, outDir, dryRun = false) {
     }
     // 动作可能把页面点崩（渲染报错后整页空白）：先报页面错误，别让它被「缺少关键元素」盖住。
     if (errors.length) throw new Error(errors.slice(0, 3).join(" | "));
-    if (!(await page.locator(shot.sel).first().count())) {
+    if (!dryRun && !(await page.locator(shot.sel).first().count())) {
       // 留一张失败现场图，方便看场景到底挂成了什么样（不进输出目录，免得被当成基线）。
       const failDir = join(outDir, "_failed");
       mkdirSync(failDir, { recursive: true });

@@ -42,3 +42,37 @@ describe("主列窄时输入框的模型、权限按钮只留图标", () => {
     expect(body).toContain("flex: 0 1 auto");
   });
 });
+
+// leader 2026-11-11 定的统一原则：手机/窄宽下的小控件（分段控件、页签组、图标切换、行内图标钮）
+// 视觉高度与桌面同档，44px 命中面靠不可见的 ::after 外扩补，不靠把控件本身撑高。
+describe("手机上的小控件不被触屏规则撑高", () => {
+  const mobile = read("../../mobile/mobile.css");
+  const css = read("../../styles.css");
+  it("后台任务面板头：标题行右端是关闭钮，分段筛选另起一行并平分", () => {
+    expect(mobile).toContain("body.remote-ui .panel-tasks .dock-work-actions { display: contents; }");
+    expect(mobile).toContain("body.remote-ui .panel-tasks .dock-work-close { order: 1; }");
+    expect(mobile).toMatch(/body\.remote-ui \.panel-tasks \.chat-task-filter \{ order: 2; flex: 1 1 100%;/);
+    // 桌面面板不到 480 宽同样排法（容器查询挂在面板锚点上）。
+    expect(css).toMatch(/@container dock-anchor \(max-width: 527px\) \{[^@]*\.panel-tasks \.dock-work-close \{ order: 1; \}/);
+  });
+  it("分段筛选的段高 28（凹槽 32），命中面靠 ::after 上下外扩", () => {
+    expect(mobile).toMatch(/body\.remote-ui \.chat-task-filter > button \{[^}]*min-height: 28px/);
+    expect(mobile).toContain("body.remote-ui .chat-task-filter > button::after { inset: -8px 0; }");
+    // 曾经的写法：直接把每一段撑到 44px，凹槽成了面板里最粗的一条。
+    expect(mobile).not.toMatch(/\.chat-task-filter > button \{[^}]*min-height: 44px/);
+  });
+  it("更改面板：行内图标钮与列表/树切换不再撑到 36px", () => {
+    expect(mobile).not.toMatch(/\.scm-icon-btn[^{]*\{[^}]*min-height: 36px/);
+    expect(mobile).not.toMatch(/\.chat-diff-layout button \{[^}]*min-height: 36px/);
+    expect(mobile).toContain("body.remote-ui .scm-icon-btn::after { inset: -10px 0; }");
+  });
+  it("更改面板的行右侧按列对齐：动作格定宽、统计列定最小宽并右对齐，组头计数坐进同一尾列", () => {
+    expect(css).toMatch(/^\.scm \{ --scm-slot: 22px; --scm-slot-gap: 0px; --scm-stat-w: \d+px; \}/m);
+    expect(css).toMatch(/^\.scm-letters \{[^}]*min-width: var\(--scm-stat-w\)[^}]*justify-content: flex-end/m);
+    expect(css).toMatch(/^\.scm-icon-btn \{[^}]*width: var\(--scm-slot, 24px\)/m);
+    expect(read("./SourceControl.tsx")).toContain('<span className="scm-letters"><span className="scm-count">');
+  });
+  it("搜索框与列表/树切换等高：切换组跟着搜索框拉伸", () => {
+    expect(css).toMatch(/^\.scm-tools \{[^}]*align-items: stretch/m);
+  });
+});
