@@ -7522,7 +7522,8 @@ pre.chat-md-plain {
    PR 点用实心、CI 用空心环：两个记号并排也分得清，且都与行首 activityTone 的状态点不在一格。
    PR 四态配色同标题栏 .tb-pr（开着绿、草稿灰、已合并紫、已关闭红）。 */
 .chat-sidebar-git { display: inline-flex; align-items: center; gap: var(--sp-4); flex: none; font-size: var(--text-xs); font-variant-numeric: tabular-nums; color: var(--cc-text-faint); }
-.chat-sidebar-pr { --pr-color: var(--cc-ok-vivid); width: 6px; height: 6px; border-radius: 50%; background: var(--pr-color); }
+.chat-sidebar-prnum { display: inline-flex; align-items: center; gap: var(--sp-3); }
+.chat-sidebar-pr { --pr-color: var(--cc-ok-vivid); flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--pr-color); }
 .chat-sidebar-pr.is-draft { --pr-color: var(--cc-text-faint); }
 .chat-sidebar-pr.is-merged { --pr-color: #a371f7; }
 .chat-sidebar-pr.is-closed { --pr-color: var(--cc-err-vivid); }

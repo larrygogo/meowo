@@ -672,6 +672,7 @@ export const en: Dict = {
     branchBehind: (n: number) => `${n} commit${n === 1 ? "" : "s"} behind remote`,
     uncommitted: (files: number) => `${files} file${files === 1 ? "" : "s"} with uncommitted changes`,
     sidebarPr: (n: number, state: string) => `PR #${n} ${state}`,
+    sidebarFiles: (n: number) => `${n} file${n === 1 ? "" : "s"}`,
     sidebarCi: (state: string) => `CI ${state}`,
     terminalReady: "Once disconnected, the session can be resumed here",
     terminalExternal: "Running in an external terminal; mirrored here",

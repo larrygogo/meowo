@@ -63,7 +63,8 @@ describe("侧栏 PR / CI 与改动数", () => {
     expect(badge.getAttribute("aria-label")).toBe("PR #162 已打开 · CI 失败 · 2 个文件有未提交的改动");
     expect(badge.querySelector(".chat-sidebar-pr.is-open")).not.toBeNull();
     expect(badge.querySelector(".chat-sidebar-ci.is-fail")).not.toBeNull();
-    expect(badge.textContent).toBe("+12−3");
+    // PR 点旁写编号：只有一个色点读不出意思（2026-11-11 实拍：已合并的紫点像是错位）。
+    expect(badge.textContent).toBe("#162+12−3");
     // 跟在副行工作区名后面，不进行首状态点那一格。
     expect(badge.closest(".chat-sidebar-metaline")).not.toBeNull();
     expect(badge.closest(".chat-sidebar-lead")).toBeNull();
@@ -84,9 +85,25 @@ describe("侧栏 PR / CI 与改动数", () => {
     expect(await screen.findAllByTestId("sidebar-git-badge")).toHaveLength(2);
   });
 
-  it("按工作区分组时没有副行也给摘要开一行", async () => {
+  it("按工作区分组时没有副行，摘要跟在标题同一行末尾，不单独换行", async () => {
+    // 2026-11-11 实拍：单独开一行时，只剩一个紫点挂在标题下面，看着像换行错位。
     localStorage.setItem("meowo-chat-sidebar-group-mode", "dir");
     render(<ChatSidebar activeId={1} approvalAwaitingIds={new Set()} onSelect={() => {}} onCollapse={() => {}} />);
     await waitFor(() => expect(screen.getAllByTestId("sidebar-git-badge")).toHaveLength(2));
+    for (const badge of screen.getAllByTestId("sidebar-git-badge")) {
+      expect(badge.closest(".chat-sidebar-name")).not.toBeNull();
+      expect(badge.closest(".chat-sidebar-metaline")).toBeNull();
+    }
+  });
+
+  it("数不出行数时写「N 个文件」，不留一个光秃秃的数字", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "get_live_sessions_page") return Promise.resolve(SESSIONS);
+      if (command === "sidebar_git_badges") return Promise.resolve([{ cwd: "C:/work/clean", additions: 0, deletions: 0, files: 1, pr: null }]);
+      return Promise.resolve();
+    });
+    render(<ChatSidebar activeId={1} approvalAwaitingIds={new Set()} onSelect={() => {}} onCollapse={() => {}} />);
+    const badge = await screen.findByTestId("sidebar-git-badge");
+    expect(badge.textContent).toBe("1 个文件");
   });
 });

@@ -80,14 +80,13 @@ export function useSidebarGitBadges(cwds: readonly (string | null | undefined)[]
 }
 
 /**
- * 会话行副行里的摘要位。wrap：这一行本来没有副行（按工作区分组、又不是 worktree），有摘要时自己开一行。
+ * 会话行里的摘要位：有副行时跟在工作区名后；按工作区分组、本行没有副行时跟在标题同一行末尾。
+ * 不再为它单独开一行——2026-11-11 实拍：单开一行时只剩一个紫点挂在标题下，像换行错位。
  */
-export function SidebarGitBadgeSlot({ store, cwd, wrap = false }: { store: GitBadgeStore; cwd: string; wrap?: boolean }) {
+export function SidebarGitBadgeSlot({ store, cwd }: { store: GitBadgeStore; cwd: string }) {
   const badge = useSyncExternalStore(store.subscribe, () => store.get(cwd));
   if (!badge) return null;
-  return wrap
-    ? <span className="chat-sidebar-metaline"><SidebarGitBadge badge={badge} /></span>
-    : <SidebarGitBadge badge={badge} />;
+  return <SidebarGitBadge badge={badge} />;
 }
 
 /** 副行里的紧凑摘要：PR 状态点（+ CI 记号）与未提交的增删行数。 */
@@ -104,12 +103,13 @@ export function SidebarGitBadge({ badge }: { badge: SidebarGitBadgeDto }) {
   const lines = badge.additions + badge.deletions > 0;
   return (
     <span className="chat-sidebar-git" role="img" aria-label={label} data-tip={label} data-testid="sidebar-git-badge">
-      {pr && <i className={`chat-sidebar-pr is-${pr.state}`} aria-hidden="true" />}
+      {/* 点旁写编号：一个色点自己读不出是什么（同一实拍）。 */}
+      {pr && <span className="chat-sidebar-prnum" aria-hidden="true"><i className={`chat-sidebar-pr is-${pr.state}`} />#{pr.number}</span>}
       {ci && <i className={`chat-sidebar-ci is-${ci}`} aria-hidden="true" />}
       {badge.files > 0 && (lines
         ? <span className="chat-sidebar-diff" aria-hidden="true"><span className="chat-sidebar-add">+{badge.additions}</span><span className="chat-sidebar-del">−{badge.deletions}</span></span>
         // 二进制等数不出行数的：只报文件数，不写误导的 +0 −0（同标题栏分支胶囊）。
-        : <span className="chat-sidebar-diff" aria-hidden="true">{badge.files}</span>)}
+        : <span className="chat-sidebar-diff" aria-hidden="true">{t.chat.sidebarFiles(badge.files)}</span>)}
     </span>
   );
 }

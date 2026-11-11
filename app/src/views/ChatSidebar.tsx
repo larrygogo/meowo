@@ -1149,6 +1149,8 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
               <span className="chat-sidebar-name-text" data-tip={item.task_title || undefined}>
                 <span className="chat-sidebar-name-inner">{item.task_title || t.sticker.waitingFirstInput}</span>
               </span>
+              {/* 按工作区分组、本行没有副行（不是 worktree）时，PR/CI 与改动数跟在标题末尾，不单开一行。 */}
+              {!noting && groupMode === "dir" && !worktreeNameOf(item) && badgeCwd && <SidebarGitBadgeSlot store={gitBadges} cwd={badgeCwd} />}
             </span>
           )}
           {/* 目录行 = 目录名 + 附加目录标(+N,与贴纸卡同款) + 最后活跃时间同排——前两者曾是
@@ -1157,7 +1159,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
               「哪条是刚才动的」只能靠猜。waiting 态改「已等待 X」警示色(与看板 B-3 同款,
               fmtWaited 复用 sticker/helpers):等待时长是召唤信号,「X 前」读不出急迫。 */}
           {/* 副行只在不按工作区分组时出现（对照 Kimi：平铺列表才在标题下写工作区名）。 */}
-          {/* PR / CI 与改动数跟在工作区名（或 worktree 标）后面；分组视图没有副行时只为它开一行。 */}
+          {/* PR / CI 与改动数跟在工作区名（或 worktree 标）后面；分组视图没有副行时跟在标题行末尾（见上）。 */}
           {/* 摘要位自己订阅结果（SidebarGitBadgeSlot），回来时不重渲染整张列表。 */}
           {!noting && (dir && groupMode !== "dir" ? (
             <span className="chat-sidebar-metaline">
@@ -1170,7 +1172,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
               <span className="chat-sidebar-wt" data-testid="sidebar-worktree-tag" data-tip={t.wtnew.tagTip(worktreeNameOf(item)!)}>{worktreeNameOf(item)}</span>
               {badgeCwd && <SidebarGitBadgeSlot store={gitBadges} cwd={badgeCwd} />}
             </span>
-          ) : groupMode === "dir" && badgeCwd ? <SidebarGitBadgeSlot store={gitBadges} cwd={badgeCwd} wrap /> : null)}
+          ) : null)}
           {/* 目录已删除（worktree 清理掉了）：不管按不按目录分组都要显示——点进去恢复不了，得先说。 */}
           {!noting && item.cwd_missing && (
             <span className="chat-sidebar-gone" data-tip={t.worktree.dirMissingTip} data-testid="sidebar-dir-missing">{t.worktree.dirMissing}</span>
