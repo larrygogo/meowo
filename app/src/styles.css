@@ -7511,7 +7511,10 @@ pre.chat-md-plain {
 .wt-opt-btn { height: 22px; padding: 0 var(--sp-8); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-sm); background: none; color: var(--cc-text-dim); font: inherit; font-size: var(--text-xs); cursor: pointer; white-space: nowrap; }
 .wt-opt-btn:hover:not(:disabled) { background: var(--fill-hover); color: var(--cc-text); }
 .wt-opt-btn:disabled { opacity: .5; cursor: default; }
-.wt-opt-btn.is-primary { border-color: var(--cc-accent); background: var(--cc-accent); color: var(--cc-accent-text); }
+.wt-opt-btn.is-primary { border-color: var(--cc-accent); background: var(--cc-accent); color: var(--cc-on-accent); }
+/* 蓝字压蓝底（--cc-accent-text）实测深色 1.22:1、浅色 1.51:1，字看不见（UI 调研 sys1）；且上面的
+   :hover:not(:disabled) 特异度更高，悬停会把主按钮刷回普通按钮，这里同特异度后写压回去。 */
+.wt-opt-btn.is-primary:hover:not(:disabled) { border-color: var(--cc-accent-dim); background: var(--cc-accent-dim); color: var(--cc-on-accent); }
 .wt-setup { margin: 0 var(--sp-14) var(--sp-6); padding: var(--sp-6) var(--sp-10); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-sm); font-size: var(--text-xs); color: var(--cc-text-dim); }
 .wt-setup.is-err { border-color: color-mix(in srgb, var(--cc-err) 45%, transparent); }
 .wt-setup.is-warn { border-color: color-mix(in srgb, var(--cc-warn) 45%, transparent); }
