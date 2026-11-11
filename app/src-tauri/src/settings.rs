@@ -932,6 +932,8 @@ pub(crate) async fn set_settings(
     let menu_app = app.clone();
     app.run_on_main_thread(move || apply_language(&menu_app, lang, chat_enabled))
         .map_err(|e| e.to_string())?;
+    // 改了外观：已开着的 Mica 窗口换成对应明暗的背板（否则深色界面垫着浅色材质）。
+    crate::material::sync_theme(&app, &settings.theme);
     // 通知贴纸窗口实时套用新设置。与 get_settings 同一出口收敛:事件载荷不含远程 token
     // （前端快照写回由 preserve_independently_managed_fields 兜底,不丢 token）。
     let _ = app.emit("settings-changed", without_remote_token(settings.clone()));

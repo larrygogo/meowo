@@ -103,6 +103,9 @@ export function installMocks(windowLabel = "main"): void {
     switch (cmd) {
       case "host_os":
         return "windows";
+      case "window_material":
+        // 演示页与截图 harness 跑在普通浏览器里，没有系统材质。
+        return "none";
       case "list_agents":
         // 后端 list_agents:agent 名单(展示名 + 安装态),前端 useAgents 取展示名并交叉过滤底栏配额。
         // demo 演示多 Agent:装了 Claude Code / Codex / Kimi / Gemini CLI（不独尊 Claude）。
