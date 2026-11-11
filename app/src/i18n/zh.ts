@@ -36,6 +36,8 @@ export const zh = {
     nothingSaid: "还没有回复",
     approvalInTerminal: "这条审批在终端里，进入现场处理",
     answerInScene: "它停在一个选择上，进入现场作答",
+    answerWithKeys: "它停在终端里的一个选择上。下面是终端此刻的画面，用按键作答",
+    approvalBackWithKeys: "这条审批已回到终端。下面是终端此刻的画面，用按键处理",
   },
   empty: {
     allTitle: "还没有会话",
@@ -666,6 +668,7 @@ export const zh = {
     remoteOpenKeys: "操作终端",
     remoteScreenLabel: "终端画面",
     remoteScreenEmpty: "正在读取终端画面…",
+    remoteScreenMoved: "画面刚刚变了，这一下没有发出。看清再按",
     remoteKeyEnter: "回车",
     remoteTypePlaceholder: "输入文字，发送到终端",
     remoteTypeSend: "发到终端",

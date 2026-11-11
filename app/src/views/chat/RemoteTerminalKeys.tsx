@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { managedTerminalScreen, writeManagedTerminal } from "../../api";
 import { useT } from "../../i18n";
 
@@ -19,14 +19,28 @@ const KEYS: { label: string; data: string }[] = [
   { label: "Esc", data: "\x1b" },
 ];
 
+/** 比对两份画面时的行分隔。 */
+const LINE_SEP = String.fromCharCode(10);
+
 /** 画面轮询间隔：按键后的回显要跟得上手指，又不至于把远程桥打满。 */
 const SCREEN_POLL_MS = 900;
 
-export function RemoteTerminalKeys({ sessionId }: { sessionId: number }) {
+export function RemoteTerminalKeys({ sessionId, checkScreen = false }: {
+  sessionId: number;
+  /**
+   * 发键前重取一次画面，和眼前这份不一样就不发，只把新画面换上来。主窗口名单行内用：那里的
+   * 会话不是正开着的那个，画面只靠 900ms 一次的轮询，人按下去时光标可能已经不在看到的那一项上。
+   * 手机页不开：它的画面和按键走同一条远程桥，多一次往返手感明显变钝。
+   */
+  checkScreen?: boolean;
+}) {
   const t = useT();
   const [lines, setLines] = useState<string[] | null>(null);
+  const linesRef = useRef(lines);
+  linesRef.current = lines;
   const [text, setText] = useState("");
   const [error, setError] = useState(false);
+  const [moved, setMoved] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -43,7 +57,25 @@ export function RemoteTerminalKeys({ sessionId }: { sessionId: number }) {
 
   const send = (data: string) => {
     setError(false);
-    void writeManagedTerminal(sessionId, data).catch(() => setError(true));
+    setMoved(false);
+    if (!checkScreen) {
+      void writeManagedTerminal(sessionId, data).catch(() => setError(true));
+      return;
+    }
+    const seen = (linesRef.current ?? []).join(LINE_SEP);
+    void managedTerminalScreen(sessionId)
+      .then((screen) => {
+        // 取不到画面（终端已不在 Meowo 手里）：无法确认按下去落在哪，不发。
+        if (!screen) { setError(true); return; }
+        if (screen.join(LINE_SEP) !== seen) {
+          // 画面变了：这一下不发。把新画面换上来，让人看清再按。
+          setLines(screen);
+          setMoved(true);
+          return;
+        }
+        return writeManagedTerminal(sessionId, data);
+      })
+      .catch(() => setError(true));
   };
 
   // 只留有字的行，并去掉首尾空行：终端满屏多是空白，手机上要省竖向空间。
@@ -82,6 +114,7 @@ export function RemoteTerminalKeys({ sessionId }: { sessionId: number }) {
         />
         <button type="submit" disabled={!text}>{t.chat.remoteTypeSend}</button>
       </form>
+      {moved && <span className="chat-remote-keys-moved" role="status">{t.chat.remoteScreenMoved}</span>}
       {error && <span className="chat-remote-keys-error" role="alert">{t.chat.remoteKeyFailed}</span>}
     </div>
   );

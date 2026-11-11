@@ -30,6 +30,8 @@ export const en: Dict = {
     nothingSaid: "No reply yet",
     approvalInTerminal: "This approval is in the terminal. Open the session to handle it.",
     answerInScene: "It stopped on a choice. Open the session to answer.",
+    answerWithKeys: "It stopped on a choice in the terminal. Below is the terminal right now. Answer with the keys.",
+    approvalBackWithKeys: "This approval went back to the terminal. Below is the terminal right now. Handle it with the keys.",
   },
   empty: {
     allTitle: "No sessions yet",
@@ -616,6 +618,7 @@ export const en: Dict = {
     remoteOpenKeys: "Use terminal",
     remoteScreenLabel: "Terminal screen",
     remoteScreenEmpty: "Reading the terminal screen…",
+    remoteScreenMoved: "The screen just changed, so this key was not sent. Check it, then press again.",
     remoteKeyEnter: "Enter",
     remoteTypePlaceholder: "Type text to send to the terminal",
     remoteTypeSend: "Send to terminal",

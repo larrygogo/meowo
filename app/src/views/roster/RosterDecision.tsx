@@ -9,6 +9,7 @@ import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
 import { BrokerApprovalCard } from "../chat/BrokerApprovalCard";
 import { LeadGateCard, useLeadTask } from "../chat/LeadPanel";
+import { RemoteTerminalKeys } from "../chat/RemoteTerminalKeys";
 import type { Item } from "../sticker/types";
 
 /** 展开期间多久再问一次后端。事件是主路径（pending-approval 全会话广播），轮询只兜事件错过的情况。 */
@@ -78,9 +79,19 @@ function ApprovalDecision({ item, fallback }: { item: Item; fallback: React.Reac
     );
   }
   // 问过后端、表里没有这条：审批不在 Meowo 手里（等过了时限回到终端，或这家 CLI 的提问是它自己画的）。
+  if (!asked) return <>{fallback}</>;
+  // Meowo 持有它的终端：把终端此刻的画面和一排按键摆在行内（手机页同一个兜底），不让人自己去找终端。
+  if (item.pty_managed) {
+    return (
+      <div className="roster-decision is-keys">
+        <p className="roster-note">{item.pending_review === "approval" ? t.roster.approvalBackWithKeys : t.roster.answerWithKeys}</p>
+        <RemoteTerminalKeys sessionId={id} checkScreen />
+      </div>
+    );
+  }
   return (
     <>
-      {asked && <p className="roster-note">{item.pending_review === "approval" ? t.roster.approvalInTerminal : t.roster.answerInScene}</p>}
+      <p className="roster-note">{item.pending_review === "approval" ? t.roster.approvalInTerminal : t.roster.answerInScene}</p>
       {fallback}
     </>
   );

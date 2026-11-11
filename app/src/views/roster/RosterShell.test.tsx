@@ -177,7 +177,7 @@ describe("名单外壳", () => {
   });
 
   it("审批不在 Meowo 手里（已回到终端）：行内如实说明，给进入现场", async () => {
-    sessions = [mk("甲"), mk("乙", (s) => { s.pending_review = "approval"; })];
+    sessions = [mk("甲"), mk("乙", (s) => { s.pending_review = "approval"; s.pty_managed = false; })];
     const base = invoke.getMockImplementation()!;
     invoke.mockImplementation((cmd: string, args?: unknown) => (
       cmd === "pending_interaction" ? Promise.resolve({ approval: null, question: null }) : base(cmd, args)
@@ -187,6 +187,20 @@ describe("名单外壳", () => {
     await screen.findByText("这条审批在终端里，进入现场处理");
     expect(screen.queryByRole("button", { name: "允许一次" })).toBeNull();
     expect(screen.getByRole("button", { name: "进入现场" })).toBeTruthy();
+  });
+
+  it("Meowo 持有终端的会话答不了时：行内给终端画面和按键，不让人去找终端", async () => {
+    sessions = [mk("甲"), mk("乙", (s) => { s.pending_review = "question"; s.pty_managed = true; })];
+    const base = invoke.getMockImplementation()!;
+    invoke.mockImplementation((cmd: string, args?: unknown) => (
+      cmd === "pending_interaction" ? Promise.resolve({ approval: null, question: null })
+        : cmd === "managed_terminal_screen" ? Promise.resolve(["Pick one", "1. Yes", "2. No"])
+          : base(cmd, args)
+    ));
+    render(<RosterShell />);
+    fireEvent.click(await screen.findByText("乙"));
+    await screen.findByText(/Pick one/);
+    expect(screen.getByRole("button", { name: "Esc" })).toBeTruthy();
   });
 
   it("界面上没有计数", async () => {
