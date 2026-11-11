@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { makeSession } from "../../demo/data";
 import type { Item } from "../sticker/types";
+import { islandCounts, islandTone } from "../Island";
 import { attentionFocus } from "./attention";
 
 function mk(patch: (s: Item) => void = () => {}): Item {
@@ -48,6 +49,13 @@ describe("attentionFocus", () => {
     const done = readDone();
     const p = pending();
     expect(attentionFocus([done, p], done.session.id).id).toBe(p.session.id);
+  });
+
+  it("和灵动岛同一个次序：同一组会话，岛的神态与黑轨的神态一致", () => {
+    const sets = [[errored(), pending()], [errored(), mk()], [pending(), mk()], [mk(), readDone()]];
+    for (const items of sets) {
+      expect(islandTone(islandCounts(items))).toBe(attentionFocus(items, null).tone);
+    }
   });
 
   it("断开的会话不叫眼睛", () => {

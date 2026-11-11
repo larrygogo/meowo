@@ -67,7 +67,9 @@ describe("islandCounts / islandTone", () => {
   });
 
   it("整体情绪：出错 > 待处理 > 在跑 > 等待输入 > 闲着", () => {
-    expect(islandTone({ pending: 1, error: 1, running: 1, waiting: 1 })).toBe("error");
+    // 待处理压过出错：与黑轨的眼睛、聚焦文字指的是同一个会话。
+    expect(islandTone({ pending: 1, error: 1, running: 1, waiting: 1 })).toBe("pending");
+    expect(islandTone({ pending: 0, error: 1, running: 1, waiting: 1 })).toBe("error");
     expect(islandTone({ pending: 1, error: 0, running: 3, waiting: 0 })).toBe("pending");
     expect(islandTone({ pending: 0, error: 0, running: 1, waiting: 2 })).toBe("running");
     expect(islandTone({ pending: 0, error: 0, running: 0, waiting: 2 })).toBe("waiting");

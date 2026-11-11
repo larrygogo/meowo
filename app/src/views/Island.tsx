@@ -85,10 +85,13 @@ export function menubarSegments(
   return [];
 }
 
-/// 岛的整体情绪：要人处理的优先（出错 > 待处理），其次在跑，再次跑完等输入。眼睛据此变色、变动作。
+/// 岛的整体情绪：要人处理的优先（待处理 > 出错），其次在跑，再次跑完等输入。眼睛据此变色、变动作。
+/// 待处理压过出错，与 cardTone、byUrgency、主窗口黑轨的 attentionFocus 同序（规格 .lead/20261111-roster）：
+/// 出错只是上一轮断了，审批挂着时 agent 正卡着等人。此前这里是出错优先，同一组会话岛上是 ✕✕、
+/// 聚焦文字和黑轨却指着待批准的那个。
 export function islandTone(counts: Counts): IslandTone {
-  if (counts.error > 0) return "error";
   if (counts.pending > 0) return "pending";
+  if (counts.error > 0) return "error";
   if (counts.running > 0) return "running";
   if (counts.waiting > 0) return "waiting";
   return "idle";
