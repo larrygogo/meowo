@@ -300,6 +300,22 @@ body.remote-ui .chat-window.is-remote-compact .chat-compose .chat-model-button {
   /* 关闭钮：命中面 44×44，叉本身落在面板右上角——负外边距把多出来的热区抵回去，标题行不被撑高，
      叉的右缘对齐下面分段控件的右缘。 */
   body.remote-ui .dock-work-close { width: 44px; height: 44px; margin: -10px -12px -10px 0; font-size: 20px; }
+  /* 钮本身已是 44×44：不再叠通用的 6px 外扩，免得热区压到下一行的分段筛选。 */
+  body.remote-ui .dock-work-close::after { inset: 0; }
+  /* 同类清扫（leader 2026-11-11 定的统一原则）：分段控件、页签组在手机上的视觉高度与桌面同档，
+     不被 `.chat-approval button { min-height: 36px }` 之类的通用触屏规则撑高；44px 的命中面一律靠
+     ::after 上下外扩，左右不扩——相邻两项就在交界处分界，不互相抢点。
+     · 问答卡的多题页签：36 → 28（凹槽 42 → 34）。
+     · 审批卡「命令」行的展开/复制：36 → 24，与标签同一行不再把这一行撑高。
+     · Lead 面板页签、模型菜单的思考档位：视觉不变，命中面从 35/36 补到 44。 */
+  body.remote-ui .chat-approval .chat-question-tabs button { min-height: 28px; }
+  body.remote-ui .chat-question-tabs button::after { inset: -8px 0; }
+  body.remote-ui .chat-approval .chat-approval-detail-tools button { min-height: 24px; }
+  body.remote-ui .chat-approval-detail-tools button::after { inset: -10px -6px; }
+  body.remote-ui .lead-tab::after { inset: -11px 0; }
+  /* 选项行上下相邻只隔 2px：通用的 6px 外扩会让相邻两行的热区叠 10px，改成各扩 1px 在中线分界。 */
+  body.remote-ui .chat-approval-options button::after { inset: -1px 0; }
+  body.remote-ui .chat-model-effort-seg button::after { inset: -10px 0; }
 
   /* ── 移动端字号标尺(2026-08 全量清单逐类抬升,2026-10 随桌面 Kimi 比例改版重校) ──
      桌面密度下 9–11.5px 的小字在手机上过小,而 16px 输入框(iOS 防缩放地板,降不得)
@@ -634,14 +650,15 @@ body.remote-ui .remote-session-list .chat-sidebar-empty { display: flex; flex-di
 .remote-settings-screen .remote-settings-label { font-size: 16px; line-height: 1.35; }
 .remote-settings-screen .remote-settings-desc { font-size: 13px; line-height: 1.4; }
 .remote-settings-screen .remote-settings-error { margin: 10px 4px 0; font-size: 13px; }
-/* 分段控件与开关在整屏里放到触屏尺寸：分段每格 36 高，开关 51×31（iOS 开关的尺寸）。
-   命中面：开关本身 31 高，靠触屏块 ::after 外扩 6px 到 43，再由所在行 56px 的留白隔开。 */
-.remote-settings-screen .seg { padding: 3px; border-radius: 10px; }
-.remote-settings-screen .seg-btn { min-height: 34px; padding: 0 12px; border-radius: 8px; font-size: 14px; }
+/* 分段控件的视觉高度与桌面同档（每格 28、凹槽 32），不靠把控件撑高来凑触屏尺寸——撑高后它比同屏的
+   文字行、开关都粗一圈（leader 2026-11-11 定的统一原则）；44px 的命中面靠 ::after 上下各扩 8px。
+   开关 51×31（iOS 开关的尺寸），靠触屏块 ::after 外扩 6px 到 43，再由所在行 56px 的留白隔开。 */
+.remote-settings-screen .seg { padding: 2px; border-radius: var(--radius-md); }
+.remote-settings-screen .seg-btn { min-height: 28px; padding: 0 12px; border-radius: var(--radius-sm); font-size: 14px; }
 .remote-settings-screen .pswitch { width: 51px; height: 31px; border-radius: var(--radius-full); }
 .remote-settings-screen .pswitch-knob { left: 2px; width: 27px; height: 27px; }
 .remote-settings-screen .pswitch.on .pswitch-knob { left: 22px; }
-:where(body.remote-ui) .remote-settings-screen .seg-btn::after { inset: -5px 0; }
+:where(body.remote-ui) .remote-settings-screen .seg-btn::after { inset: -8px 0; }
 
 /* 懒加载 ChatWindow 期间的占位(7M-1)。整屏同底色 + 一行说明:1.2MB 的 chunk 走
    中继要好几秒,白屏在手机上读起来就是「挂了」。 */
@@ -879,17 +896,22 @@ body.remote-ui .chat-window.is-remote-compact .chat-dock:has(> .lead-gate-card) 
 body.remote-ui .scm { overflow-x: hidden; }
 @media (pointer: coarse) {
   body.remote-ui .scm-repo::after { inset: -6px 0; }
-  /* 行内「放弃 / 暂存」原先外观 22px、命中 34px、彼此只隔 1px(SE 实测),放弃是破坏性动作。
-     按钮做到 36px、外扩 4px 合 44px;两钮隔 8px,外扩正好相接不重叠;行高同步到 44px,
-     上下两行的外扩也不互相压。 */
+  /* 行内「放弃 / 暂存」：视觉尺寸与桌面同档（22px 的格、图标 14，两个图标固定隔 8px）；44px 的命中面
+     全靠不可见的 ::after 外扩——上下各 10px（行高 44，上下两行的热区正好相接），两钮之间不外扩、
+     就在两格的交界（中线）分界，外侧各扩 22px。此前把按钮本身做到 36px、间距拉到 8px，图标又大又散，还跟着右边
+     统计的宽度逐行乱跳（leader 实拍 2026-11-11）；列对齐见 styles.css 的 .scm。
+     放弃是破坏性动作：热区不重叠，点了还有确认框。 */
   body.remote-ui .scm-row,
   body.remote-ui .scm-group-head { min-height: 44px; height: auto; }
-  body.remote-ui .scm-row-actions,
-  body.remote-ui .scm-group-actions { gap: 8px; }
-  body.remote-ui .scm-icon-btn,
-  body.remote-ui .chat-diff-layout button { min-width: 36px; min-height: 36px; }
-  body.remote-ui .scm-icon-btn::after,
-  body.remote-ui .chat-diff-layout button::after { inset: -4px; }
+  body.remote-ui .scm-icon-btn::after { inset: -10px 0; }
+  body.remote-ui .scm-icon-btn:first-child::after { left: -22px; }
+  body.remote-ui .scm-icon-btn:last-child::after { right: -22px; }
+  /* 列表/树切换：视觉上与搜索框等高（styles.css 的 .scm-tools 拉伸），不再撑到 36px；每格 36 宽，
+     命中面靠 ::after 上下各扩 11px（22 高补到 44），两格之间各扩 1px 在中线分界，左扩到搜索框间距的一半、右扩到面板边。 */
+  body.remote-ui .scm-tools .chat-diff-layout button { min-width: 36px; }
+  body.remote-ui .chat-diff-layout button::after { inset: -11px -1px; }
+  body.remote-ui .chat-diff-layout button:first-child::after { left: -3px; }
+  body.remote-ui .chat-diff-layout button:last-child::after { right: -10px; }
 }
 
 /* 刘海机横屏:左右安全区(验收 #28,调研 m6)。此前只处理了上下,横屏时返回钮、列表和「更改」行

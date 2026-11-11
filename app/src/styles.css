@@ -5165,21 +5165,30 @@ button.scm-check-name:hover { text-decoration: underline; }
 .scm-pr-draft { display: flex; align-items: center; gap: var(--sp-6); font-size: var(--text-sm); color: var(--cc-text-dim); cursor: pointer; }
 .scm-pr-body { min-height: 96px; resize: vertical; font: inherit; font-size: var(--text-sm); }
 
-.scm-tools { flex: 0 0 auto; display: flex; align-items: center; gap: var(--sp-6); padding: var(--sp-4) var(--sp-12) var(--sp-4) var(--sp-4); }
+/* 搜索框与右边的列表/树切换等高：切换组跟着搜索框拉伸（stretch），按钮填满组高——不各定各的高度，
+   否则触屏规则一放大，切换组就比搜索框高出一截（leader 手机实拍 2026-11-11）。 */
+.scm-tools { flex: 0 0 auto; display: flex; align-items: stretch; gap: var(--sp-6); padding: var(--sp-4) var(--sp-12) var(--sp-4) var(--sp-4); }
 .scm-tools .chat-diff-search { flex: 1; width: auto; min-width: 0; margin-right: 0; }
-.scm-tools .chat-diff-layout button { padding: 0 var(--sp-6); }
+.scm-tools .chat-diff-layout { box-sizing: border-box; margin: var(--sp-8) 0 var(--sp-4); }
+.scm-tools .chat-diff-layout button { height: auto; padding: 0 var(--sp-6); }
 
 .scm-groups { flex: 0 0 auto; display: flex; flex-direction: column; padding: 0 var(--sp-8); }
-.scm-group-head { display: flex; align-items: center; gap: var(--sp-4); height: 28px; padding-right: var(--sp-6); border-radius: var(--radius-md); }
+/* 行的右侧是表格式的三列，组头与各行共用同一套宽度，逐行严格对齐（leader 实拍：图标的横向位置
+   跟着 +N −M 的宽度逐行乱跳，组头的图标也和下面各行不在一条竖线上）：
+   ［动作格（放弃/暂存…，右对齐，每格 --scm-slot 宽、格距 --scm-slot-gap）］［统计 + 状态字母，
+   最小宽 --scm-stat-w、右对齐、等宽数字］。图标 14px 坐在 22px 的格里、格与格相接，两个图标之间固定隔 8px。组头的计数徽标坐在同宽的尾列里。文件名列吃剩余宽度。 */
+.scm { --scm-slot: 22px; --scm-slot-gap: 0px; --scm-stat-w: 92px; }
+@container diff-panel (max-width: 440px) { .scm { --scm-stat-w: 72px; } }
+.scm-group-head { display: flex; align-items: center; gap: var(--sp-2); height: 28px; padding-right: var(--sp-6); border-radius: var(--radius-md); }
 .scm-group-head:hover { background: var(--fill-hover); }
 .scm-group-toggle { flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--sp-4); height: 100%; padding: 0 var(--sp-4); border: 0; background: transparent; font: inherit; font-size: var(--text-xs); font-weight: 500; color: var(--cc-text-dim); text-align: left; cursor: pointer; }
 .scm-group-toggle > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .scm-chevron { flex: 0 0 auto; color: var(--cc-text-faint); transition: transform var(--dur-fast) var(--ease-in-out); }
 .scm-chevron.is-open { transform: rotate(90deg); }
 .scm-count { flex: 0 0 auto; min-width: 18px; height: 18px; padding: 0 var(--sp-5); box-sizing: border-box; display: inline-grid; place-items: center; border-radius: var(--radius-full); background: var(--fill-selected); color: var(--cc-text-dim); font-size: var(--text-2xs); font-variant-numeric: tabular-nums; }
-.scm-group-actions, .scm-row-actions { flex: 0 0 auto; display: none; align-items: center; gap: 1px; }
+.scm-group-actions, .scm-row-actions { order: 1; flex: 0 0 auto; display: none; align-items: center; justify-content: flex-end; gap: var(--scm-slot-gap); }
 .scm-group-head:hover .scm-group-actions, .scm-group-head:focus-within .scm-group-actions { display: inline-flex; }
-.scm-icon-btn { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-dim); cursor: pointer; }
+.scm-icon-btn { flex: 0 0 auto; display: grid; place-items: center; width: var(--scm-slot, 24px); height: 24px; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-dim); cursor: pointer; }
 .scm-icon-btn:hover:not(:disabled) { background: var(--fill-selected); color: var(--cc-text); }
 .scm-icon-btn:disabled { opacity: 0.4; cursor: default; }
 
@@ -5193,8 +5202,10 @@ button.scm-check-name:hover { text-decoration: underline; }
 .scm-row:hover .scm-row-actions, .scm-row:focus-within .scm-row-actions { display: inline-flex; }
 .scm-row .chat-diff-tree-more { position: static; transform: none; opacity: 0; display: none; }
 .scm-row:hover .chat-diff-tree-more, .scm-row:focus-within .chat-diff-tree-more, .scm-row .chat-diff-tree-more[aria-expanded="true"] { display: grid; opacity: 1; }
-.scm-letters { flex: 0 0 auto; display: inline-flex; align-items: center; gap: var(--sp-6); }
-.scm-status { width: 12px; text-align: center; font-size: var(--text-xs); font-weight: 600; font-family: var(--cc-mono); color: var(--cc-text-dim); }
+/* order：尾列永远排在动作格之后（行里的「更多」钮在 DOM 上夹在两者中间，留在前面，不挤进对齐的列）。 */
+.scm-letters { order: 2; flex: 0 0 auto; min-width: var(--scm-stat-w); box-sizing: border-box; padding-left: var(--sp-6); display: inline-flex; align-items: center; justify-content: flex-end; gap: var(--sp-6); white-space: nowrap; }
+.scm-letters .chat-diff-lines { margin-left: 0; font-variant-numeric: tabular-nums; }
+.scm-status { flex: 0 0 auto; width: 12px; text-align: center; font-size: var(--text-xs); font-weight: 600; font-family: var(--cc-mono); color: var(--cc-text-dim); }
 .scm-status.is-m, .scm-status.is-t { color: var(--cc-warn-text); }
 .scm-status.is-a, .scm-status.is-u { color: var(--cc-ok-text); }
 .scm-status.is-d, .scm-status.is-conflict { color: var(--cc-fail-text); }

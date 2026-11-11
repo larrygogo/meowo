@@ -422,7 +422,8 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
             <span>{title}</span>
           </button>
           {headActions && actionable(shown).length > 0 && <span className="scm-group-actions">{headActions(actionable(shown))}</span>}
-          <span className="scm-count">{changedFileCount(rows.map((row) => row.file))}</span>
+          {/* 计数徽标坐在与各行「统计 + 状态字母」同宽的尾列里：组头的放弃/暂存才能和各行的严格同列。 */}
+          <span className="scm-letters"><span className="scm-count">{changedFileCount(rows.map((row) => row.file))}</span></span>
         </div>
         {!isFolded && (shown.length === 0
           ? <div className="scm-empty">{query ? t.chat.diffSearchNoResults : scope === "turn" ? t.chat.diffNoTurnChanges : t.chat.diffNoSessionChanges}</div>
