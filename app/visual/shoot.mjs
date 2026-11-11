@@ -44,6 +44,15 @@ const DESKTOP_SCENES = [
   { scene: "settings-appearance", sel: ".settings" },
   { scene: "settings-account", sel: ".settings" },
   { scene: "settings-remote", sel: ".settings" },
+  { scene: "settings-sessions", sel: ".settings" },
+  { scene: "settings-shortcuts", sel: ".settings" },
+  { scene: "settings-network", sel: ".settings" },
+  { scene: "settings-extensions", sel: ".settings" },
+  { scene: "settings-about", sel: ".settings" },
+  { scene: "settings-search", sel: ".main-body.is-searching" },
+  { scene: "settings-noresults", sel: ".settings-noresults" },
+  { scene: "newsession-page", sel: ".nsp-composer" },
+  { scene: "newsession-page-wt", sel: ".wt-opt-body" },
   // 欢迎页插图已换成对话窗样张（UI 优化 #36），旧的 .obm-panel 不复存在。
   { scene: "onboarding", sel: ".obm-chat" },
 ];
@@ -88,6 +97,29 @@ const ISLAND_SCENES = [
   { scene: "island-alert-done", w: 700, h: 110, sel: ISLAND_SEL },
   { scene: "island-alert-menubar", w: 700, h: 110, sel: ISLAND_SEL },
 ];
+// 定尺寸的独立窗口：按 window.rs 里的真实窗口尺寸拍（设置 620×460、引导 460×600、更新 400×252 起、
+// 确认框 420×208 起再按内容收拢、新建会话 460×520）。上面桌面矩阵里的 settings-* / onboarding 是拉宽拉高的压力测试。
+const SETTINGS_SECTIONS = ["general", "sessions", "appearance", "shortcuts", "remote", "network", "account", "extensions", "about", "search", "noresults"];
+const PANE_SCENES = [
+  ...SETTINGS_SECTIONS.map((sec) => ({ scene: "settingswin-" + sec, w: 620, h: 460, sel: sec === "noresults" ? ".settings-noresults" : ".settings" })),
+  { scene: "onboarding-1", w: 460, h: 600, sel: ".obm-chat" },
+  { scene: "onboarding-2", w: 460, h: 600, sel: ".ob-agent" },
+  { scene: "onboarding-3", w: 460, h: 600, sel: ".ob-points" },
+  { scene: "onboarding-4", w: 460, h: 600, sel: ".obm-island" },
+  { scene: "updater-checking", w: 400, h: 252, sel: ".up-status" },
+  { scene: "updater-latest", w: 400, h: 252, sel: ".up-body .sbtn" },
+  { scene: "updater-error", w: 400, h: 252, sel: ".up-err" },
+  { scene: "updater-available", w: 400, h: 500, sel: ".up-notes-body" },
+  { scene: "updater-downloading", w: 400, h: 500, sel: ".up-prog" },
+  { scene: "updater-installing", w: 400, h: 500, sel: ".up-actions .btn-primary:disabled" },
+  { scene: "confirm", w: 420, h: 132, sel: ".app-confirm-actions" },
+  { scene: "confirm-danger", w: 420, h: 132, sel: ".app-confirm-actions .is-danger" },
+  { scene: "confirm-alert", w: 420, h: 132, sel: ".app-confirm-actions" },
+  { scene: "confirm-long", w: 420, h: 400, sel: ".app-confirm-actions" },
+  { scene: "newsession-window", w: 460, h: 520, sel: ".ns-agent" },
+  { scene: "newsession-window-full", w: 460, h: 520, sel: ".wt-opt-body" },
+  { scene: "crash", w: 620, h: 460, sel: ".app-crash" },
+];
 const MOBILE_SCENES = [
   { scene: "mobile-list", sel: ".remote-session-list" },
   { scene: "mobile-chat", sel: ".chat-approval-actions" },
@@ -106,6 +138,8 @@ function buildMatrix() {
     push({ ...sc, page: "desktop", lang: "zh", theme, w, h, dpr, mobile: false });
   for (const sc of ISLAND_SCENES) for (const lang of sc.langs ?? ["zh"]) for (const theme of THEMES) for (const dpr of DPRS)
     push({ ...sc, page: "desktop", lang, theme, dpr, mobile: false });
+  for (const sc of PANE_SCENES) for (const theme of THEMES) for (const dpr of DPRS)
+    push({ ...sc, page: "desktop", lang: "zh", theme, dpr, mobile: false });
   for (const sc of MOBILE_SCENES) for (const lang of EN_SCENES.has(sc.scene) ? ["zh", "en"] : ["zh"])
     for (const theme of THEMES) for (const { w, h } of PHONE) for (const dpr of DPRS)
       push({ ...sc, page: "mobile", lang, theme, w, h, dpr, mobile: true });

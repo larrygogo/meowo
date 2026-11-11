@@ -8,6 +8,7 @@ import { useAgents } from "../useAgents";
 import { openSettingsAt } from "../settingsNav";
 import { Segmented } from "./settings/widgets";
 import { Dropdown } from "./menu";
+import { AgentAppIcon } from "./chat/AgentAppIcon";
 import { useSettingsState } from "./settings/state";
 import logoUrl from "../../src-tauri/icons/128x128.png";
 import { useEscClose } from "../hooks/useEscClose";
@@ -19,46 +20,85 @@ type Dict = ReturnType<typeof useT>;
 // 平台判定与真实设置页一致（WKWebView 的 UA 含 "Mac"）。吸边要点仅 Windows 拼接。
 const IS_MAC = typeof navigator !== "undefined" && /Mac/i.test(navigator.userAgent);
 
-// ── 每步的「迷你界面示意图」：用 div 复刻真实界面的观感（状态色、侧栏、消息气泡）。
+// ── 每步的「迷你界面示意图」：用 div 复刻真实界面的观感（三层模型、状态色、青柠主按钮）。
 
-/** 欢迎页：迷你对话窗（侧栏会话列表 + 对话区）。原先画的是贴纸卡片列表，贴纸 2026-11-04/05
- *  已下线，首屏就教用户一个找不到的界面（UI 调研 shell #3）。 */
+/** 欢迎页：迷你对话窗。照三层模型画：窗口底上坐着侧栏，右边一张内容面，里面一张待批准卡和输入框。
+ *  原先画的是贴纸卡片列表，贴纸 2026-11-04/05 已下线，首屏就教用户一个找不到的界面（UI 调研 shell #3）。 */
 function HeroChat() {
   return (
-    <div className="obm-chat">
-      <div className="obm-chat-bar">
-        <img src={logoUrl} width={14} height={14} alt="" className="obm-logo" />
-        <b>Meowo</b>
+    <div className="obm-chat" aria-hidden>
+      <div className="obm-chat-side">
+        <div className="obm-chat-bar">
+          <img src={logoUrl} width={12} height={12} alt="" className="obm-logo" />
+          <b>Meowo</b>
+        </div>
+        <i className="obm-chat-item is-on"><i className="obm-island-dot is-wait" /><i className="obm-island-bar" /></i>
+        <i className="obm-chat-item"><i className="obm-island-dot is-run" /><i className="obm-island-bar" /></i>
+        <i className="obm-chat-item"><i className="obm-island-dot is-off" /><i className="obm-island-bar" /></i>
       </div>
-      <div className="obm-chat-body">
-        <div className="obm-chat-side">
-          <i className="obm-chat-item is-on"><i className="obm-island-dot is-run" /><i className="obm-island-bar" /></i>
-          <i className="obm-chat-item"><i className="obm-island-dot is-wait" /><i className="obm-island-bar" /></i>
-          <i className="obm-chat-item"><i className="obm-island-dot is-off" /><i className="obm-island-bar" /></i>
-        </div>
-        <div className="obm-chat-main">
-          <i className="obm-chat-msg is-user" />
+      <div className="obm-chat-main">
+        <i className="obm-chat-msg is-user" />
+        <i className="obm-chat-msg" />
+        <i className="obm-chat-msg is-short" />
+        <div className="obm-chat-approve">
+          <i className="obm-island-dot is-wait" />
           <i className="obm-chat-msg" />
-          <i className="obm-chat-msg is-short" />
-          <i className="obm-chat-input" />
+          <i className="obm-chat-btn" />
+          <i className="obm-chat-btn is-go" />
         </div>
+        <div className="obm-chat-input"><i className="obm-chat-send" /></div>
       </div>
     </div>
   );
 }
 
-/** Windows 的窗口示意：屏幕顶部的胶囊，下面是点开后的黑色面板。 */
+/** 「连接 AI CLI」：几家 CLI 的图标汇到灵动岛上。原先这一步没有图，标题顶着窗口上沿、下面空半屏。 */
+function HeroConnect() {
+  return (
+    <div className="obm-connect" aria-hidden>
+      <div className="obm-connect-agents">
+        {["claude", "codex", "kimi", "gemini", "opencode"].map((id) => (
+          <AgentAppIcon key={id} provider={id} className="obm-connect-agent" tiled />
+        ))}
+      </div>
+      <i className="obm-connect-link" />
+      <span className="obm-island-pill" style={{ borderRadius: 10 }}>
+        <span className="obm-island-eyes"><i /><i /></span>
+        <i className="obm-island-dot is-wait" />
+        <i className="obm-island-dot is-run" />
+      </span>
+    </div>
+  );
+}
+
+/** 「如何读到进度」：CLI 配置文件里多出来的那一段接入项，和旁边自动留的备份。文件名与正文要点里写的一致。 */
+function HeroHooks() {
+  return (
+    <div className="obm-hooks" aria-hidden>
+      <div className="obm-hooks-file">
+        <span className="obm-hooks-name">~/.claude/settings.json</span>
+        <span className="obm-hooks-line"><i className="obm-island-bar" /></span>
+        <span className="obm-hooks-line is-added">+ "hooks": meowo-reporter</span>
+        <span className="obm-hooks-line"><i className="obm-island-bar" style={{ width: 64 }} /></span>
+      </div>
+      <span className="obm-hooks-bak">settings.json.cckb-bak</span>
+    </div>
+  );
+}
+
+/** 灵动岛示意：屏幕顶边垂下的胶囊（青柠眼睛 + 状态点），下面是点开后的黑色面板。 */
 function HeroIsland() {
   return (
-    <div className="obm-desktop obm-desktop-island">
+    <div className="obm-desktop obm-desktop-island" aria-hidden>
       <div className="obm-island">
         <span className="obm-island-pill">
-          <i className="obm-island-dot is-run" />
+          <span className="obm-island-eyes"><i /><i /></span>
           <i className="obm-island-dot is-wait" />
+          <i className="obm-island-dot is-run" />
         </span>
         <span className="obm-island-panel">
+          <i className="obm-island-row"><i className="obm-island-dot is-wait" /><i className="obm-island-bar" /><i className="obm-island-btn" /></i>
           <i className="obm-island-row"><i className="obm-island-dot is-run" /><i className="obm-island-bar" /></i>
-          <i className="obm-island-row"><i className="obm-island-dot is-wait" /><i className="obm-island-bar" /></i>
           <i className="obm-island-row"><i className="obm-island-dot is-off" /><i className="obm-island-bar" /></i>
         </span>
       </div>
@@ -164,8 +204,8 @@ export function Onboarding() {
   // 「如何读到进度」同理（S-12）：hooks 改写 CLI 配置曾全程零告知，必须明写备份与移除方式。
   const steps: Step[] = [
     { hero: <HeroChat />, title: t.onboarding.welcome.title, desc: t.onboarding.welcome.desc, body: <WelcomeConfig t={t} /> },
-    { title: t.onboarding.connect.title, points: t.onboarding.connect.points, body: <AgentCheck t={t} /> },
-    { title: t.onboarding.progress.title, points: t.onboarding.progress.points },
+    { hero: <HeroConnect />, title: t.onboarding.connect.title, points: t.onboarding.connect.points, body: <AgentCheck t={t} /> },
+    { hero: <HeroHooks />, title: t.onboarding.progress.title, points: t.onboarding.progress.points },
     // 两个平台都是灵动岛（Windows 2026-11-04、macOS 2026-11-05 起替换贴纸），没有卡片了，
     // 「看板与卡片」「窗口与设置」两步合成这一步。macOS 的岛钉在刘海上或藏在菜单栏图标里，要点另一组。
     { hero: <HeroIsland />, title: t.onboarding.window.islandTitle, points: IS_MAC ? t.onboarding.window.macIslandPoints : t.onboarding.window.islandPoints },

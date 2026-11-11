@@ -1025,11 +1025,9 @@ export function AboutSection({
       <p className="about-blurb">{t.about.blurb}</p>
 
       <div className="about-foot">
-        {/* 样式原本挂在 `.about-foot a` 元素选择器上（styles.css 本轮不可改），
-            这里用内联 style 复刻外观（accent 色 + 手型 + 去掉按钮默认样式）。 */}
+        {/* 链接外观（去按钮默认样式、强调色、浅色主题的青柠下划线）在 styles.css 的 `.about-foot button`。 */}
         <button
           type="button"
-          style={{ appearance: "none", background: "none", border: "none", padding: 0, font: "inherit", color: "var(--cc-accent-text)", cursor: "pointer" }}
           onClick={() => openExt(REPO_URL + "/issues")}
         >
           {t.about.feedback}
@@ -1037,7 +1035,6 @@ export function AboutSection({
         <span className="dot">·</span>
         <button
           type="button"
-          style={{ appearance: "none", background: "none", border: "none", padding: 0, font: "inherit", color: "var(--cc-accent-text)", cursor: "pointer" }}
           onClick={() => openExt(REPO_URL + "/releases")}
         >
           {t.about.changelog}
