@@ -7958,6 +7958,8 @@ button.btn-primary:disabled { opacity: 1; background: var(--fill-selected); colo
 .roster-enter.is-quiet { height: 30px; padding: 0 12px; border: 0; border-radius: var(--radius-md); background: color-mix(in srgb, var(--cc-text) 8%, transparent); color: var(--cc-text); font: inherit; font-size: var(--text-xs); cursor: pointer; }
 .roster-enter.is-quiet:hover { background: color-mix(in srgb, var(--cc-text) 12%, transparent); }
 .roster-note { margin: 10px 0 0; font-size: var(--text-xs); color: var(--cc-text-faint); }
+.roster-jump { display: flex; align-items: center; gap: 12px; margin-top: 10px; }
+.roster-jump .roster-note { margin: 0; }
 /* 行内决定单：卡片本体是对话窗那一套，这里把它自己的外框拆掉——展开的行已经是一张卡，卡里不再套卡。
    待批准的那一圈琥珀环改画在行上（画面里唯一带彩色描边的东西）。 */
 .roster-decision { margin-top: 12px; }

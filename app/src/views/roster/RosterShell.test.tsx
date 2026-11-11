@@ -176,8 +176,27 @@ describe("名单外壳", () => {
     expect(invoke.mock.calls.some(([cmd]) => cmd === "resolve_pending_approval")).toBe(false);
   });
 
-  it("审批不在 Meowo 手里（已回到终端）：行内如实说明，给进入现场", async () => {
-    sessions = [mk("甲"), mk("乙", (s) => { s.pending_review = "approval"; s.pty_managed = false; })];
+  it("在外部终端里跑的会话：行内如实说明，给「跳到终端」和进入现场", async () => {
+    sessions = [mk("甲"), mk("乙", (s) => { s.pending_review = "approval"; s.pty_managed = false; s.pid = 4321; })];
+    const base = invoke.getMockImplementation()!;
+    invoke.mockImplementation((cmd: string, args?: unknown) => (
+      cmd === "pending_interaction" ? Promise.resolve({ approval: null, question: null })
+        : cmd === "focus_session" ? Promise.resolve("alive_but_not_found")
+          : base(cmd, args)
+    ));
+    render(<RosterShell />);
+    fireEvent.click(await screen.findByText("乙"));
+    await screen.findByText(/它在外部终端里运行/);
+    expect(screen.queryByRole("button", { name: "允许一次" })).toBeNull();
+    expect(screen.getByRole("button", { name: "进入现场" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "跳到终端" }));
+    expect(invoke).toHaveBeenCalledWith("focus_session", expect.objectContaining({ pid: 4321 }));
+    // 没切过去要说出来，不能点了没反应。
+    await screen.findByText("没找到那个终端窗口");
+  });
+
+  it("终端不在 Meowo 手里、进程也不在了：行内说明，给进入现场", async () => {
+    sessions = [mk("甲"), mk("乙", (s) => { s.pending_review = "approval"; s.pty_managed = false; s.pid = null; })];
     const base = invoke.getMockImplementation()!;
     invoke.mockImplementation((cmd: string, args?: unknown) => (
       cmd === "pending_interaction" ? Promise.resolve({ approval: null, question: null }) : base(cmd, args)
@@ -185,8 +204,14 @@ describe("名单外壳", () => {
     render(<RosterShell />);
     fireEvent.click(await screen.findByText("乙"));
     await screen.findByText("这条审批在终端里，进入现场处理");
-    expect(screen.queryByRole("button", { name: "允许一次" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "跳到终端" })).toBeNull();
     expect(screen.getByRole("button", { name: "进入现场" })).toBeTruthy();
+  });
+
+  it("MCP 工具名写成「服务 · 工具」，不摆双下划线原名", async () => {
+    sessions = [mk("甲", (s) => { s.current_activity = "mcp__kimi-cu__get_app_state"; }), mk("乙")];
+    render(<RosterShell />);
+    await screen.findByText("kimi-cu · get_app_state");
   });
 
   it("Meowo 持有终端的会话答不了时：行内给终端画面和按键，不让人去找终端", async () => {

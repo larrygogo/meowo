@@ -2,7 +2,8 @@
 // 卡片本体复用对话窗里的同一套（BrokerApprovalCard、LeadGateCard），行为一处维护；
 // 这里只管「不打开会话也拿到那条待处理」和「答完之后怎么收」。
 import { useCallback, useEffect, useRef, useState } from "react";
-import { pendingInteraction, resolvePendingApproval, type PendingApproval } from "../../api";
+import { invoke } from "@tauri-apps/api/core";
+import { pendingInteraction, resolvePendingApproval, type FocusSessionResult, type PendingApproval } from "../../api";
 import { useTauriEvent } from "../../hooks/useTauriEvent";
 import { useVisibleInterval } from "../../hooks/useVisibleInterval";
 import { useT } from "../../i18n";
@@ -89,11 +90,51 @@ function ApprovalDecision({ item, fallback }: { item: Item; fallback: React.Reac
       </div>
     );
   }
+  // 在外部终端里跑、进程还在：Meowo 没有它的终端，看不到画面也按不了键。如实说，给一条直达那个
+  // 终端的路；想留在 Meowo 里处理就进现场接管（接管会结束外部那个进程，确认在现场里做）。
+  // 这是「不让用户自己去终端」的例外（leader 2026-11-11 关卡 A 取舍 6）。
+  if (item.connected && item.pid && !item.background && !item.foreign) {
+    return (
+      <>
+        <p className="roster-note">{t.roster.externalTerminal}</p>
+        <ExternalTerminalJump item={item} />
+        {fallback}
+      </>
+    );
+  }
   return (
     <>
       <p className="roster-note">{item.pending_review === "approval" ? t.roster.approvalInTerminal : t.roster.answerInScene}</p>
       {fallback}
     </>
+  );
+}
+
+function ExternalTerminalJump({ item }: { item: Item }) {
+  const t = useT();
+  const [busy, setBusy] = useState(false);
+  const [missed, setMissed] = useState(false);
+  const jump = () => {
+    if (busy) return;
+    setBusy(true);
+    setMissed(false);
+    invoke<FocusSessionResult | undefined>("focus_session", {
+      pid: item.pid,
+      title: item.task_title,
+      cwd: item.cwd,
+      sessionId: item.session.cc_session_id,
+      provider: item.provider,
+    })
+      // 只有真切到了那个终端（或至少把它的宿主窗口提到前面）才算数；其余都说没找到。
+      .then((result) => { if (result && result !== "focused" && result !== "host_focused") setMissed(true); })
+      .catch(() => setMissed(true))
+      .finally(() => setBusy(false));
+  };
+  return (
+    <div className="roster-jump">
+      <button type="button" className="roster-enter is-quiet" disabled={busy} onClick={jump}>{t.roster.jumpToTerminal}</button>
+      {missed && <span className="roster-note" role="status">{t.roster.jumpMissed}</span>}
+    </div>
   );
 }
 

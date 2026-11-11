@@ -16,6 +16,7 @@ import { icSettings } from "../../icons/glyphs";
 import { icList } from "../../icons/glyphs.chat";
 import { remoteUi } from "../../remoteMode";
 import { ChatMarkdown } from "../ChatMarkdown";
+import { runningActivityView } from "../chat/RunningBar";
 import { ChatWindow, type ChatShellBridge } from "../ChatWindow";
 import { useSidebarGitBadges, type GitBadgeStore } from "../chat/SidebarGitBadge";
 import { AgentRing, Eyes } from "../island/islandParts";
@@ -232,6 +233,15 @@ function useWindowFront(): boolean {
   return front;
 }
 
+/** 「此刻在做什么」的那一步，洗成能读的样子：压缩中的哨兵换成文字、剥掉 cd 前缀（同对话窗运行条），
+ *  MCP 工具的 `mcp__服务__工具` 写成「服务 · 工具」（同对话窗工具行；真机实拍双下划线像乱码）。 */
+function activityText(activity: string | null | undefined, t: ReturnType<typeof useT>): string | null {
+  if (!activity) return null;
+  const { text } = runningActivityView(activity, t.chat.compacting, t.chat.running);
+  const mcp = /^mcp__(.+?)__(.+)$/.exec(text);
+  return mcp ? `${mcp[1]} · ${mcp[2]}` : text;
+}
+
 function title(item: Item, fallback: string): string {
   return item.task_title && item.task_title !== UNNAMED_SESSION_SENTINEL ? item.task_title : fallback;
 }
@@ -291,7 +301,7 @@ function RosterItem({ item, open, gitBadges, onToggle, onEnter }: {
   // 此刻在做什么：在跑的给它正在做的那一步；出错给错误；其余给它最后说的话。
   const now = tone === "error"
     ? item.error_label
-    : tone === "running" ? item.current_activity ?? item.preview : item.preview ?? item.last_ai_text ?? item.current_activity;
+    : tone === "running" ? activityText(item.current_activity, t) ?? item.preview : item.preview ?? item.last_ai_text ?? activityText(item.current_activity, t);
   const said = item.last_ai_text ?? item.preview;
   return (
     <div className={`roster-item is-${tone}${open ? " is-open" : ""}`} role="listitem" data-session-id={id}>
