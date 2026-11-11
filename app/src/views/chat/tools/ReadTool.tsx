@@ -24,7 +24,8 @@ export const ReadTool = memo(function ReadTool({ item, result }: { item: ToolUse
         <>
           <span className="chat-tool-verb" data-kind="read">{toolShortName(item.name, "read", t)}</span>
           <span className="chat-tool-summary">{toolSummary(item, cwd)}{range}</span>
-          {result && <span className="chat-tool-count">{t.chat.toolReadLines(lines)}</span>}
+          {/* 失败时回执是错误信息，按行数算会写成「读取了 1 行」，把失败说成成功（UI 调研 chat #11）。 */}
+          {result && <span className="chat-tool-count">{result.is_error ? t.chat.toolReadFailed : t.chat.toolReadLines(lines)}</span>}
         </>
       }
       body={

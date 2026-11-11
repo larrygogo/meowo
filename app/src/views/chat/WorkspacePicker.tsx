@@ -1,5 +1,5 @@
 import { CheckIcon, ChevronDownIcon } from "../sticker/icons";
-import { pathKey } from "../../paths";
+import { pathKey, tildePath } from "../../paths";
 import { useMenuPopup } from "../menu";
 import { useT } from "../../i18n";
 
@@ -69,7 +69,7 @@ export function WorkspacePicker({ cwd, dirs, onPick, onPickFolder }: {
                 <FolderIcon />
                 <span className="nsp-ws-text">
                   <span className="nsp-ws-item-name">{baseName(dir)}</span>
-                  <span className="nsp-ws-item-path">{dir}</span>
+                  <span className="nsp-ws-item-path path-tail" data-tip={dir}><bdi>{tildePath(dir)}</bdi></span>
                 </span>
                 {selected && <CheckIcon className="nsp-ws-check" />}
               </button>

@@ -1,4 +1,4 @@
-/// 侧栏「工作空间」页签（对照 Kimi Code 的 WorkspaceDirectory）：一行一个工作区，合上的文件夹
+/// 侧栏「工作区」页签（对照 Kimi Code 的 WorkspaceDirectory）：一行一个工作区，合上的文件夹
 /// 图标 + 名称，下面一行是路径；点一下就在这个工作区新建会话，悬停出现「⋯」，右键出同一个菜单。
 ///
 /// Meowo 没有单独的工作区登记表：工作区就是会话用过的目录（recent_cwds，最近用过的在前）。
@@ -6,14 +6,15 @@
 /// 只看这个工作区的会话（切回进行中并按它筛选）、打开文件夹（桌面）、从列表中移除（用户要求，
 /// 2026-11-09：只是不显示，磁盘不动；之后又在这里开会话会自动回来，见 hide_workspace）。
 
-import { useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { useEffect, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { useT } from "../../i18n";
-import { hideWorkspace, openNewSessionWindow, openProjectDir } from "../../api";
+import { hideWorkspace, openNewSessionWindow, openProjectDir, restoreWorkspace } from "../../api";
 import { remoteUi } from "../../remoteMode";
+import { tildePath } from "../../paths";
 import { useMenuPopup } from "../menu";
 
-/// 工作区菜单：工作空间页签的目录行与会话列表的分组头共用。「⋯」按钮在按钮下方打开，右键
+/// 工作区菜单：工作区页签的目录行与会话列表的分组头共用。「⋯」按钮在按钮下方打开，右键
 /// 在鼠标处打开（对照 Kimi 的 onContextmenu）。关闭（点外 / Esc / 滚动）走 useMenuPopup 的
 /// useDismissable，与其它弹层同一套。
 export function useWorkspaceMenu(cwd: string | null, onFilter: ((cwd: string) => void) | null, onHide: ((cwd: string) => void) | null = null) {
@@ -93,7 +94,9 @@ function WorkspaceRow({ cwd, label, onFilter, onHide }: { cwd: string; label: st
         </svg>
         <span className="chat-ws-dir-name">{label}</span>
       </div>
-      <div className="chat-ws-dir-sub">{cwd}</div>
+      {/* 尾部优先：同一 monorepo 下有区分度的是路径末尾（shell #10）。path-tail 用 rtl 让省略号落在开头，
+          bdi 保住路径本身的书写顺序；完整路径进 tip。 */}
+      <div className="chat-ws-dir-sub path-tail" data-tip={cwd}><bdi>{tildePath(cwd)}</bdi></div>
       {/* 「⋯」：点它不触发整行的新建会话。 */}
       <div className="chat-ws-dir-act">{menu.render(MORE)}</div>
     </div>
@@ -123,11 +126,27 @@ export function WorkspaceDirectory({ options, onFilter, onHidden }: {
   const t = useT();
   // 先在本地摘掉（点了立刻消失），后端失败再放回来。
   const [gone, setGone] = useState<ReadonlySet<string>>(new Set());
+  const unGone = (cwd: string) => setGone((prev) => { const next = new Set(prev); next.delete(cwd); return next; });
+  // 刚移除的那一个：底部撤销条 5 秒（UI 调研 shell #15：误点之后没有立即找回的办法；标记完成有 8 秒撤销，
+  // 这里只是「不显示」、代价更小，5 秒够）。后端照常立刻写入，撤销时再写一次 restore，不靠延迟提交——
+  // 窗口在 5 秒内关掉也不会丢掉这次移除。
+  const [undo, setUndo] = useState<string | null>(null);
+  useEffect(() => {
+    if (!undo) return;
+    const timer = window.setTimeout(() => setUndo(null), 5_000);
+    return () => window.clearTimeout(timer);
+  }, [undo]);
   const hide = (cwd: string) => {
     setGone((prev) => new Set(prev).add(cwd));
+    setUndo(cwd);
     hideWorkspace(cwd)
       .then(() => onHidden?.())
-      .catch(() => setGone((prev) => { const next = new Set(prev); next.delete(cwd); return next; }));
+      .catch(() => { unGone(cwd); setUndo(null); });
+  };
+  const restore = (cwd: string) => {
+    setUndo(null);
+    unGone(cwd);
+    restoreWorkspace(cwd).then(() => onHidden?.()).catch(() => {});
   };
   const shown = options.filter((option) => !gone.has(option.value));
   return (
@@ -141,6 +160,12 @@ export function WorkspaceDirectory({ options, onFilter, onHidden }: {
       {shown.length === 0
         ? <div className="chat-sidebar-empty">{t.chat.wsEmpty}</div>
         : shown.map((option) => <WorkspaceRow key={option.value} cwd={option.value} label={option.label} onFilter={onFilter} onHide={hide} />)}
+      {undo && (
+        <div className="chat-sidebar-error is-undo chat-ws-undo" role="status">
+          <span>{t.chat.wsHidden(options.find((o) => o.value === undo)?.label ?? undo)}</span>
+          <button type="button" onClick={() => restore(undo)}>{t.sticker.archiveUndo}</button>
+        </div>
+      )}
     </>
   );
 }

@@ -4,6 +4,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useShowWhenReady } from "../useShowWhenReady";
 import { languageOptions, useT } from "../i18n";
 import { type ThemeMode } from "../api";
+import { useAgents } from "../useAgents";
+import { openSettingsAt } from "../settingsNav";
 import { Segmented } from "./settings/widgets";
 import { Dropdown } from "./menu";
 import { useSettingsState } from "./settings/state";
@@ -15,52 +17,30 @@ type Dict = ReturnType<typeof useT>;
 // 平台判定与真实设置页一致（WKWebView 的 UA 含 "Mac"）。吸边要点仅 Windows 拼接。
 const IS_MAC = typeof navigator !== "undefined" && /Mac/i.test(navigator.userAgent);
 
-// ── 每步的「迷你界面示意图」：用 div 复刻贴纸真实观感（状态色、卡片、tab、底栏、菜单）。
+// ── 每步的「迷你界面示意图」：用 div 复刻真实界面的观感（状态色、侧栏、消息气泡）。
 
-function MiniCard({ variant, wide }: { variant: "run" | "wait" | "active" | "off"; wide?: boolean }) {
+/** 欢迎页：迷你对话窗（侧栏会话列表 + 对话区）。原先画的是贴纸卡片列表，贴纸 2026-11-04/05
+ *  已下线，首屏就教用户一个找不到的界面（UI 调研 shell #3）。 */
+function HeroChat() {
   return (
-    <div className="obm-card">
-      <span className={"obm-dot obm-" + variant} />
-      <div className="obm-lines">
-        <i className="obm-l1" />
-        <i className={"obm-l2" + (wide ? " wide" : "")} />
-      </div>
-    </div>
-  );
-}
-
-function HeroWelcome() {
-  return (
-    <div className="obm-panel">
-      <div className="obm-bar">
-        <img src={logoUrl} width={20} height={20} alt="" className="obm-logo" />
+    <div className="obm-chat">
+      <div className="obm-chat-bar">
+        <img src={logoUrl} width={14} height={14} alt="" className="obm-logo" />
         <b>Meowo</b>
       </div>
-      <MiniCard variant="run" wide />
-      <MiniCard variant="active" />
-    </div>
-  );
-}
-
-function HeroBoard({ t }: { t: Dict }) {
-  return (
-    <div className="obm-panel">
-      <div className="obm-tabs">
-        <b className="on">{t.tabs.all}</b>
-        <b>{t.tabs.waiting}</b>
-        <b>{t.tabs.running}</b>
-      </div>
-      <div className="obm-card">
-        <span className="obm-dot obm-run" />
-        <div className="obm-lines">
-          <i className="obm-l1" />
-          <div className="obm-bar-ctx">
-            <span style={{ width: "62%" }} />
-          </div>
+      <div className="obm-chat-body">
+        <div className="obm-chat-side">
+          <i className="obm-chat-item is-on"><i className="obm-island-dot is-run" /><i className="obm-island-bar" /></i>
+          <i className="obm-chat-item"><i className="obm-island-dot is-wait" /><i className="obm-island-bar" /></i>
+          <i className="obm-chat-item"><i className="obm-island-dot is-off" /><i className="obm-island-bar" /></i>
+        </div>
+        <div className="obm-chat-main">
+          <i className="obm-chat-msg is-user" />
+          <i className="obm-chat-msg" />
+          <i className="obm-chat-msg is-short" />
+          <i className="obm-chat-input" />
         </div>
       </div>
-      <MiniCard variant="wait" />
-      <MiniCard variant="off" />
     </div>
   );
 }
@@ -79,50 +59,6 @@ function HeroIsland() {
           <i className="obm-island-row"><i className="obm-island-dot is-wait" /><i className="obm-island-bar" /></i>
           <i className="obm-island-row"><i className="obm-island-dot is-off" /><i className="obm-island-bar" /></i>
         </span>
-      </div>
-    </div>
-  );
-}
-
-function HeroWindow() {
-  return (
-    <div className="obm-desktop">
-      <div className="obm-tray">
-        <span className="obm-tray-ico">
-          <img src={logoUrl} width={16} height={16} alt="" />
-        </span>
-        {/* 数字角标仅 macOS 菜单栏有（W-10：Windows 托盘不实现角标），Windows 上画了是在教不存在的东西。 */}
-        {IS_MAC && <span className="obm-tray-badge">2</span>}
-      </div>
-      <div className="obm-panel obm-panel-pinned">
-        <MiniCard variant="run" wide />
-        <MiniCard variant="wait" />
-        {/* 底栏操作条：左侧用量读数 + 右侧动作图标（新建/搜索/设置/置顶），与真实贴纸一致；
-            置顶图钉在最右、用高亮底片突出——它在底栏右下角，不在顶栏 */}
-        <div className="obm-footbar">
-          <span className="obm-usage">
-            <i className="obm-uchip" />
-            <i className="obm-uchip" />
-            <span className="obm-ubar"><span /></span>
-          </span>
-          <span className="obm-acts">
-            <i className="obm-act">+</i>
-            <i className="obm-act obm-act-search" />
-            {/* 第三个是设置齿轮：与真实贴纸同一枚 lucide settings 图标 */}
-            <span className="obm-act" aria-hidden>
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="3" />
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-              </svg>
-            </span>
-            <span className="obm-act obm-act-pin" aria-hidden>
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 17v5" />
-                <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
-              </svg>
-            </span>
-          </span>
-        </div>
       </div>
     </div>
   );
@@ -177,6 +113,30 @@ function WelcomeConfig({ t }: { t: Dict }) {
   );
 }
 
+/** 「连接 AI CLI」一步：当场列出各 agent 装没装，未装给「去安装」直达设置「账号与用量」。
+ *  原先只有三条文字、每条前面打对勾，一个 CLI 没装也像已完成（UI 调研 shell #4）；新建页早就有
+ *  「检测 + 去安装」（7T-8），引导反而落后。装完会收到 install-done，useAgents 自动重取。 */
+function AgentCheck({ t }: { t: Dict }) {
+  const { agents } = useAgents();
+  if (agents === null) return <p className="ob-agents-note">{t.newSession.detectingAgents}</p>;
+  const missing = agents.some((a) => !a.installed);
+  return (
+    <div className="ob-agents">
+      <ul className="ob-agent-list">
+        {agents.map((a) => (
+          <li key={a.id} className={"ob-agent" + (a.installed ? " is-ok" : "")}>
+            <span className="ob-agent-name">{a.display_name}</span>
+            <span className="ob-agent-state">{a.installed ? t.onboarding.connect.installed : t.onboarding.connect.missing}</span>
+          </li>
+        ))}
+      </ul>
+      {missing && (
+        <button type="button" className="sbtn" onClick={() => openSettingsAt("account")}>{t.newSession.goInstall}</button>
+      )}
+    </div>
+  );
+}
+
 type Step = {
   hero?: ReactNode;
   title: string;
@@ -201,8 +161,8 @@ export function Onboarding() {
   // 「连接 AI CLI」不能省：此前引导只字未提装 agent/登录，用户走完面对一块空看板。
   // 「如何读到进度」同理（S-12）：hooks 改写 CLI 配置曾全程零告知，必须明写备份与移除方式。
   const steps: Step[] = [
-    { hero: <HeroWelcome />, title: t.onboarding.welcome.title, desc: t.onboarding.welcome.desc, body: <WelcomeConfig t={t} /> },
-    { title: t.onboarding.connect.title, points: t.onboarding.connect.points },
+    { hero: <HeroChat />, title: t.onboarding.welcome.title, desc: t.onboarding.welcome.desc, body: <WelcomeConfig t={t} /> },
+    { title: t.onboarding.connect.title, points: t.onboarding.connect.points, body: <AgentCheck t={t} /> },
     { title: t.onboarding.progress.title, points: t.onboarding.progress.points },
     // 两个平台都是灵动岛（Windows 2026-11-04、macOS 2026-11-05 起替换贴纸），没有卡片了，
     // 「看板与卡片」「窗口与设置」两步合成这一步。macOS 的岛钉在刘海上或藏在菜单栏图标里，要点另一组。
@@ -250,11 +210,8 @@ export function Onboarding() {
           <ul className="ob-points">
             {cur.points.map((p, i) => (
               <li key={i}>
-                <span className="ob-tick" aria-hidden>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M5 12.5l4.5 4.5L19 7" />
-                  </svg>
-                </span>
+                {/* 说明条目用编号，不用对勾：对勾读起来是「已完成」，而这些是要用户去做或要知道的事（shell #4）。 */}
+                <span className="ob-num" aria-hidden>{i + 1}</span>
                 <span>{p}</span>
               </li>
             ))}

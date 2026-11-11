@@ -85,15 +85,15 @@ describe("Message 长用户消息", () => {
     const sh = Object.getOwnPropertyDescriptor(proto, "scrollHeight");
     const ch = Object.getOwnPropertyDescriptor(proto, "clientHeight");
     let tall = true;
-    Object.defineProperty(proto, "scrollHeight", { configurable: true, get() { return tall && this.classList.contains("chat-text") ? 900 : 0; } });
-    Object.defineProperty(proto, "clientHeight", { configurable: true, get() { return this.classList.contains("chat-text") ? 300 : 0; } });
+    Object.defineProperty(proto, "scrollHeight", { configurable: true, get() { return tall && this.classList.contains("chat-user-clip") ? 900 : 0; } });
+    Object.defineProperty(proto, "clientHeight", { configurable: true, get() { return this.classList.contains("chat-user-clip") ? 300 : 0; } });
     try {
       render(<Message item={{ type: "user_text", id: "long", timestamp: null, text: "很长的日志" }} />);
       const toggle = screen.getByRole("button", { name: "展开全部" });
       expect(document.querySelector(".chat-user-text.is-clamped")).toBeTruthy();
       fireEvent.click(toggle);
       expect(screen.getByRole("button", { name: "收起" })).toBeTruthy();
-      expect(document.querySelector(".chat-text.is-clampable")).toBeNull();
+      expect(document.querySelector(".chat-user-clip.is-clampable")).toBeNull();
       cleanup();
       tall = false;
       render(<Message item={{ type: "user_text", id: "short", timestamp: null, text: "短消息" }} />);

@@ -119,6 +119,8 @@ describe("ApprovalCommandDetail 长命令出口(C-10)", () => {
   };
 
   it("「展开全部」给详情挂上 is-expanded,再点收回", () => {
+    // 展开钮只在命令超出限高时出现（chat #9）：jsdom 无布局，伪造 pre 溢出。
+    const sh = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(400);
     const { container } = render(
       <ApprovalCard title="Agent 请求权限">
         <ApprovalCommandDetail command="very long command" {...labels} />
@@ -131,6 +133,7 @@ describe("ApprovalCommandDetail 长命令出口(C-10)", () => {
     // 展开后按钮文案换成「收起」。
     fireEvent.click(screen.getByRole("button", { name: "收起" }));
     expect(detail.className).not.toContain("is-expanded");
+    sh.mockRestore();
   });
 
   it("「复制命令」整段进剪贴板并给已复制反馈", async () => {

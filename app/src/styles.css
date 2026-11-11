@@ -1701,6 +1701,20 @@ button.stab {
 .obm-desktop .obm-panel-pinned { width: 200px; }
 /* Windows 引导的灵动岛示意：纯黑刘海贴顶，下面接展开面板（与真实岛同色，不跟主题变）。 */
 .obm-desktop-island { place-items: start center; }
+/* 欢迎页迷你对话窗：标题栏 + 左侧会话列表 + 右侧消息与输入框（替换已下线的贴纸卡片插图，shell #3）。 */
+.obm-chat { width: 240px; display: flex; flex-direction: column; border-radius: var(--radius-lg); background: rgba(var(--cc-bg-rgb), 1); border: 1px solid var(--cc-border); box-shadow: var(--shadow-lg); overflow: hidden; }
+.obm-chat-bar { display: flex; align-items: center; gap: var(--sp-6); padding: var(--sp-6) var(--sp-8); font-size: var(--text-2xs); font-weight: 600; color: var(--cc-text); border-bottom: 1px solid var(--line-subtle); }
+.obm-chat-bar .obm-logo { border-radius: var(--radius-xs); display: block; }
+.obm-chat-body { display: flex; height: 112px; }
+.obm-chat-side { width: 78px; flex: none; display: flex; flex-direction: column; gap: var(--sp-4); padding: var(--sp-6); background: var(--fill-hover); }
+.obm-chat-item { display: flex; align-items: center; gap: var(--sp-4); padding: var(--sp-4); border-radius: var(--radius-sm); }
+.obm-chat-item.is-on { background: var(--fill-selected); }
+.obm-chat-item .obm-island-bar { height: 4px; background: var(--cc-text-faint); opacity: 0.5; }
+.obm-chat-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-6); padding: var(--sp-8); }
+.obm-chat-msg { display: block; height: 5px; width: 86%; border-radius: var(--radius-xs); background: var(--cc-text-faint); opacity: 0.45; }
+.obm-chat-msg.is-user { align-self: flex-end; width: 46%; height: 12px; border-radius: var(--radius-sm); background: var(--fill-tab); opacity: 1; }
+.obm-chat-msg.is-short { width: 58%; }
+.obm-chat-input { display: block; margin-top: auto; height: 18px; border-radius: var(--radius-full); border: 1px solid var(--cc-border); background: var(--fill-hover); }
 .obm-island { display: flex; flex-direction: column; align-items: center; }
 .obm-island-pill {
   display: flex;
@@ -1834,17 +1848,30 @@ button.stab {
   line-height: 1.55;
   color: var(--cc-text-dim);
 }
-.ob-tick {
+/* 说明条目编号（原为对勾 .ob-tick：对勾读成「已完成」，UI 调研 shell #4）。 */
+.ob-num {
   flex: none;
   width: 20px;
   height: 20px;
   margin-top: 0.5px;
   display: grid;
   place-items: center;
-  border-radius: 50%;
-  background: var(--cc-accent-soft);
-  color: var(--cc-accent-text);
+  border-radius: var(--radius-full);
+  background: var(--fill-selected);
+  color: var(--cc-text-dim);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
+/* 「连接 AI CLI」一步的安装检测：一行一个 agent，右侧写已安装 / 未安装。 */
+.ob-agents { width: 100%; margin-top: var(--sp-12); display: flex; flex-direction: column; align-items: center; gap: var(--sp-10); }
+.ob-agents-note { margin: var(--sp-12) 0 0; font-size: var(--text-xs); color: var(--cc-text-faint); }
+.ob-agent-list { list-style: none; margin: 0; padding: 0; width: 100%; display: flex; flex-direction: column; gap: var(--sp-2); }
+.ob-agent { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-8); padding: var(--sp-4) var(--sp-10); border-radius: var(--radius-md); background: var(--fill-hover); font-size: var(--text-xs); }
+.ob-agent-name { color: var(--cc-text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ob-agent-state { flex: none; color: var(--cc-text-faint); }
+.ob-agent.is-ok .ob-agent-state { color: var(--cc-text-dim); }
+.ob-agent.is-ok .ob-agent-state::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: var(--sp-6); border-radius: var(--radius-full); background: var(--cc-ok-vivid); vertical-align: 1px; }
 .ob-reopen {
   margin: var(--sp-18) 0 0;
   font-size: var(--fs-11-5);
@@ -4011,6 +4038,10 @@ select.ns-input {
 .nsp-ws-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .nsp-ws-item-name { color: var(--cc-text); font-size: var(--text-sm); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nsp-ws-item-path { color: var(--cc-text-faint); font-size: var(--text-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 路径尾部优先截断：容器 rtl 让溢出与省略号落在开头，内层 <bdi> 隔离保住路径本身从左往右的顺序；
+   text-align:left 让没溢出时照常左对齐。同一 monorepo 下有区分度的是末尾（UI 调研 shell #10）。 */
+.path-tail { direction: rtl; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.path-tail > bdi { direction: ltr; unicode-bidi: isolate; }
 .nsp-ws-check { flex: none; color: var(--cc-text-dim); }
 .nsp-ws-sep { height: var(--hairline); margin: var(--sp-4) var(--sp-10); background: var(--cc-border); flex: none; }
 .nsp-ws-item.is-action .nsp-ws-item-name { color: var(--cc-text-dim); }
@@ -4367,6 +4398,9 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 /* 便签：一行截断（完整内容进 title）。写了看不见的备忘等于没写。 */
 .chat-sidebar-note { display: flex; align-items: center; gap: var(--sp-4); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cc-text-faint); font-size: var(--text-xs); }
 .chat-sidebar-note svg { flex: 0 0 auto; width: 10px; height: 10px; }
+/* 便签文字包一层再截断：flex 容器里的裸文本节点 text-overflow 管不到，原先被齐刷刷硬切（shell #11）。
+   与同条目的目录行一样用省略号。 */
+.chat-sidebar-note-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* 目录已删除：与看板卡片的虚线徽章同语汇（这里没有东西了），不抢标题的视觉权重。 */
 .chat-sidebar-gone { align-self: flex-start; margin-top: 2px; padding: 0 var(--sp-6); border: 1px dashed var(--cc-border); border-radius: var(--r-sm); color: var(--cc-text-faint); font-size: var(--text-xs); line-height: 1.5; white-space: nowrap; }
 /* 就地编辑（重命名/便签）：铺满文本列，视觉上顶掉原来那一行，不撑宽条目。 */
@@ -4484,6 +4518,8 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-ws-add { display: flex; align-items: center; gap: var(--sp-8); width: 100%; margin-bottom: var(--sp-4); padding: var(--sp-8) var(--sp-10) var(--sp-8) var(--sp-8); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-dim); font: inherit; font-size: var(--text-sm); text-align: left; cursor: pointer; }
 .chat-ws-add:hover { color: var(--cc-text); background: var(--fill-hover); }
 .chat-ws-add svg { flex: none; color: var(--cc-text-faint); }
+/* 移除工作区的撤销条：在列表滚动区里贴底，长列表滚到哪都看得见（shell #15）。 */
+.chat-ws-undo { position: sticky; bottom: 0; margin-top: var(--sp-6); border-radius: var(--radius-sm); background: rgba(var(--cc-bg-rgb), 1); box-shadow: 0 -1px 0 var(--line-subtle); }
 .chat-ws-dir { position: relative; display: block; padding: var(--sp-8) var(--sp-10) var(--sp-8) var(--sp-8); border-radius: var(--radius-sm); cursor: pointer; user-select: none; }
 .chat-ws-dir + .chat-ws-dir { margin-top: 2px; }
 .chat-ws-dir:hover, .chat-ws-dir.is-menu-open { background: var(--fill-hover); }
@@ -4492,7 +4528,7 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-ws-dir-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .chat-ws-dir-icon { flex: 0 0 16px; color: var(--cc-text-faint); }
 .chat-ws-dir-name { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; color: var(--cc-text); font-size: var(--text-sm); font-weight: 400; -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); }
-.chat-ws-dir-sub { margin: var(--sp-3) 0 0 calc(16px + 6px); overflow: hidden; white-space: nowrap; color: var(--cc-text-faint); font-size: var(--text-xs); -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); }
+.chat-ws-dir-sub { margin: var(--sp-3) 0 0 calc(16px + 6px); overflow: hidden; white-space: nowrap; color: var(--cc-text-faint); font-size: var(--text-xs); }
 .chat-ws-dir:hover .chat-ws-dir-name, .chat-ws-dir:hover .chat-ws-dir-sub, .chat-ws-dir.is-menu-open .chat-ws-dir-name { margin-right: calc(var(--icon-button-xs) + var(--sp-4)); }
 .chat-ws-dir-act { position: absolute; top: 0; bottom: 0; right: var(--sp-4); display: inline-flex; align-items: center; }
 .chat-ws-dir-act .chat-sidebar-item-menu { position: static; background: transparent; }
@@ -5252,7 +5288,7 @@ button.scm-check-name:hover { text-decoration: underline; }
   margin: 0 0 var(--sp-30) auto;
   padding: 0;
 }
-.chat-message.is-user .chat-text {
+.chat-message.is-user .chat-user-bubble {
   width: fit-content;
   margin-left: auto;
   padding: var(--sp-11) calc(15px * var(--cc-ui));
@@ -5262,17 +5298,14 @@ button.scm-check-name:hover { text-decoration: underline; }
   line-height: var(--leading-body);
 }
 /* 长用户消息收到 10 行（对照 Kimi 的 is-clamped）：底色在气泡本身上，直接 mask 会把气泡
-   底边也抹掉，改为叠一层同色渐变；「展开全部」压在渐隐区正中。行数按 lh 算，跟字号走。 */
+   底边也抹掉；原先叠一层「透明 → 气泡色」渐变，但深色气泡色是半透明 rgba，字照样透出来，
+   实拍没有渐隐（UI 调研 chat #13）。改成限高与 mask 都放在包住正文的内层 .chat-user-clip，
+   气泡底色不参与；「展开全部」压在渐隐区正中。行数按 lh 算，跟字号走。 */
 .chat-user-text { position: relative; display: flex; flex-direction: column; align-items: flex-end; }
-.chat-message.is-user .chat-text.is-clampable { max-height: calc(10lh + 2 * var(--sp-11)); overflow: hidden; }
-.chat-user-text.is-clamped .chat-text { position: relative; }
-.chat-user-text.is-clamped .chat-text::after {
-  content: "";
-  position: absolute;
-  inset: auto 0 0 0;
-  height: 4lh;
-  background: linear-gradient(to bottom, transparent, var(--cc-user-bubble) 70%);
-  pointer-events: none;
+.chat-user-clip.is-clampable { max-height: 10lh; overflow: hidden; }
+.chat-user-text.is-clamped .chat-user-clip {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 4lh), transparent calc(100% - 0.5lh));
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 4lh), transparent calc(100% - 0.5lh));
 }
 .chat-user-toggle {
   margin-top: var(--sp-4);
@@ -5392,6 +5425,10 @@ button.scm-check-name:hover { text-decoration: underline; }
 .chat-compact-summary { margin: calc(-1 * var(--sp-16)) 0 var(--sp-28); padding: var(--sp-12) var(--sp-16); max-height: 360px; overflow-y: auto; overscroll-behavior: contain; border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-lg); color: var(--cc-text-dim); font-size: var(--text-sm); }
 .chat-empty { min-height: 100%; display: grid; place-items: center; color: var(--cc-text-faint); font-size: var(--text-xs); text-align: center; }
 .chat-empty.is-error { color: var(--cc-err-text); }
+/* 读取失败的「立即重试」与连续失败原因（UI 调研 chat #13）：文字级按钮，跟在错误行后面。 */
+.chat-retry-now { margin-left: var(--sp-8); padding: var(--sp-2) var(--sp-8); border: 0; border-radius: var(--radius-sm); background: var(--fill-selected); color: var(--cc-text); font: inherit; font-size: var(--text-xs); cursor: pointer; }
+.chat-retry-now:hover { background: var(--fill-selected-hover); }
+.chat-load-reason { margin-top: var(--sp-6); color: var(--cc-text-faint); font-size: var(--text-xs); overflow-wrap: anywhere; }
 /* 注脚形态：上方已有兜底时间线（hook 落库的最近往来）时，「暂未提供结构化对话记录」
    降为一行说明，不再占满整屏居中。 */
 .chat-empty.is-note { min-height: 0; padding: var(--sp-14) 0 var(--sp-6); font-size: var(--text-xs); }
@@ -6594,7 +6631,12 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
    4em，内联代码不折行；整表放不下就横滑（table 已是 display:block + overflow-x:auto）。 */
 .chat-md th, .chat-md td { overflow-wrap: normal; word-break: normal; min-width: 4em; }
 .chat-md td code, .chat-md th code { white-space: nowrap; }
-.chat-md th { background: var(--fill-hover); }
+/* 长路径这类没有空格的单元格：normal 断不开，整列撑到路径全长，其余列被压成每行两三个字
+   （「改动/前」，UI 调研 chat #13 实拍）。td 放开任意处断行，靠上面的 min-width:4em 兜住短列；
+   表头只是短词，keep-all 让「改动前」这类中文短词不在字间折行（4em 装不下三个字加内边距）。 */
+.chat-md td { overflow-wrap: anywhere; }
+/* 表头左对齐：浏览器默认居中，和左对齐的单元格错开（chat #13）。 */
+.chat-md th { background: var(--fill-hover); text-align: start; word-break: keep-all; }
 .chat-md input[type="checkbox"] { margin-right: var(--sp-5); }
 /* 文件面板 markdown 预览的文档化排版：.chat-md 的标题与间距是按聊天气泡收敛的
    （标题≈正文、段距贴紧），整篇 README 照搬会失去层级、读着累。这里恢复文档比例：
@@ -6735,6 +6777,9 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 /* ? 快捷键速查表：双列 dl（组合键 / 描述）。 */
 .chat-shortcuts { width: min(420px, calc(100vw - 48px)); }
 .chat-shortcuts-list { display: flex; flex-direction: column; gap: var(--sp-6); margin: var(--sp-8) 0 0; }
+/* 分组标题「窗口 / 输入框」（i17：原先平铺丢了分组）。第二组起与上一组拉开间距。 */
+.chat-shortcuts-group + .chat-shortcuts-group { margin-top: var(--sp-14); }
+.chat-shortcuts-group-title { margin-top: var(--sp-8); color: var(--cc-text-faint); font-size: var(--text-xs); font-weight: 600; }
 /* 速查表底注:终端视图的快捷键让位说明。 */
 .chat-shortcuts-note { margin-top: var(--sp-9); font-size: var(--text-xs); color: var(--cc-text-faint); line-height: var(--leading-normal); }
 /* 文件拖入的落点遮罩:铺满对话窗、虚线框 + 居中提示,pointer-events 关掉不挡 drop。 */
@@ -7630,7 +7675,10 @@ pre.chat-md-plain {
 .wt-opt-btn { height: 22px; padding: 0 var(--sp-8); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-sm); background: none; color: var(--cc-text-dim); font: inherit; font-size: var(--text-xs); cursor: pointer; white-space: nowrap; }
 .wt-opt-btn:hover:not(:disabled) { background: var(--fill-hover); color: var(--cc-text); }
 .wt-opt-btn:disabled { opacity: .5; cursor: default; }
-.wt-opt-btn.is-primary { border-color: var(--cc-accent); background: var(--cc-accent); color: var(--cc-accent-text); }
+.wt-opt-btn.is-primary { border-color: var(--cc-accent); background: var(--cc-accent); color: var(--cc-on-accent); }
+/* 蓝字压蓝底（--cc-accent-text）实测深色 1.22:1、浅色 1.51:1，字看不见（UI 调研 sys1）；且上面的
+   :hover:not(:disabled) 特异度更高，悬停会把主按钮刷回普通按钮，这里同特异度后写压回去。 */
+.wt-opt-btn.is-primary:hover:not(:disabled) { border-color: var(--cc-accent-dim); background: var(--cc-accent-dim); color: var(--cc-on-accent); }
 .wt-setup { margin: 0 var(--sp-14) var(--sp-6); padding: var(--sp-6) var(--sp-10); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-sm); font-size: var(--text-xs); color: var(--cc-text-dim); }
 .wt-setup.is-err { border-color: color-mix(in srgb, var(--cc-err) 45%, transparent); }
 .wt-setup.is-warn { border-color: color-mix(in srgb, var(--cc-warn) 45%, transparent); }

@@ -33,6 +33,7 @@ import type { AgentModelCatalogArgs } from "./generated/contracts/bridge/AgentMo
 import type { AgentModelsArgs } from "./generated/contracts/bridge/AgentModelsArgs";
 import type { AnswerLeadGateArgs } from "./generated/contracts/bridge/AnswerLeadGateArgs";
 import type { CheckProviderHooksArgs } from "./generated/contracts/bridge/CheckProviderHooksArgs";
+import type { RepairProviderHooksArgs } from "./generated/contracts/bridge/RepairProviderHooksArgs";
 import type { FileMentionCandidatesArgs } from "./generated/contracts/bridge/FileMentionCandidatesArgs";
 import type { ForkSessionArgs } from "./generated/contracts/bridge/ForkSessionArgs";
 import type { GetChatHistoryArgs } from "./generated/contracts/bridge/GetChatHistoryArgs";
@@ -1407,9 +1408,14 @@ export function newSession(cwd: string, provider: AgentId, options?: Record<stri
 }
 
 /** 最近使用过的工作目录（新建面板快捷选择）。 */
-/// 从工作空间列表里移除（只是不显示；之后又在这里开会话会自动回来）。
+/// 从工作区列表里移除（只是不显示；之后又在这里开会话会自动回来）。
 export function hideWorkspace(cwd: string): Promise<void> {
   return invoke("hide_workspace", { cwd } satisfies HideWorkspaceArgs);
+}
+
+/// 撤销刚才的移除（侧栏 5 秒撤销条）。
+export function restoreWorkspace(cwd: string): Promise<void> {
+  return invoke("hide_workspace", { cwd, restore: true } satisfies HideWorkspaceArgs);
 }
 
 /// includeHidden：连「从列表里移除」过的也要（会话管理页按工作区筛会话用）。
@@ -1454,7 +1460,7 @@ export type RepairResult = { status: HooksStatus; reason: RepairReason | null };
 
 /** 手动修复某 provider 的 hooks：立即执行一次 setup::apply_provider，返回最新状态与失败原因。 */
 export function repairProviderHooks(provider: AgentId): Promise<RepairResult> {
-  return invoke("repair_provider_hooks", { provider });
+  return invoke("repair_provider_hooks", { provider } satisfies RepairProviderHooksArgs);
 }
 
 /** 一键安装某 agent（在终端跑官方安装脚本）。装完在窗口重新聚焦/手动刷新时重检安装状态。 */

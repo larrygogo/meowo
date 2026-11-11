@@ -7,7 +7,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { LogicalSize, PhysicalPosition } from "@tauri-apps/api/dpi";
 import { useT } from "../i18n";
 
-type Payload = { title: string; message: string; danger: boolean; confirm_label: string | null };
+// alert：单按钮提示（只有「知道了」），失败提示用；旧后端没有该字段按确认框处理。
+type Payload = { title: string; message: string; danger: boolean; confirm_label: string | null; alert?: boolean };
 
 /// 后端固定 208 高开窗(给两行消息留量);实际内容常常只有一行,正文与按钮之间会剩一大片
 /// 空白。收拢的下限护住「标题+一行+按钮」的最小形态,上限之外交给正文滚动区。
@@ -116,11 +117,16 @@ export function ConfirmWindow() {
         <span ref={messageRef}>{payload.message}</span>
       </p>
       <div className="app-confirm-actions">
+        {payload.alert ? (
+          // 提示没有「取消」可言：一个「知道了」，默认焦点就在它上面，Enter/Esc 都能关。
+          <button type="button" className="is-primary" autoFocus onClick={() => decide(true)}>{payload.confirm_label ?? t.dialog.gotIt}</button>
+        ) : (<>
         <button type="button" autoFocus onClick={() => decide(false)}>{t.dialog.cancel}</button>
         <button type="button" className={payload.danger ? "is-danger" : "is-primary"} onClick={() => decide(true)}>
           {/* 主按钮说清后果（「删除」「合并」），未指定才回退通用「确定」。 */}
           {payload.confirm_label ?? t.dialog.ok}
         </button>
+        </>)}
       </div>
     </div>
   );

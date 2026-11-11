@@ -148,6 +148,14 @@ body.remote-ui .chat-window.is-remote-compact .chat-compose .chat-model-button {
   body.remote-ui .chat-sidebar-search input,
   body.remote-ui .chat-sidebar-edit,
   body.remote-ui .ns-input { font-size: 16px; }
+  /* 逐个点名总有漏网：审批卡拒绝理由 13px（点「说明并拒绝」同时 autoFocus，一点就整页放大）、
+     「更改」提交框 13px、文件搜索 12px（UI 调研 m4）。放大后 main.tsx 停止同步 --app-height，
+     布局与键盘处理一起失效。点名补上，再加一条兜底：远程页任何文字输入框都不小于 16px。
+     兜底特异度 (0,1,2) 压得过 `.xxx input` 这类组件写法；更高特异度的组件规则自己负责。 */
+  body.remote-ui .chat-approval-reason input,
+  body.remote-ui .scm-commit-input,
+  body.remote-ui .chat-diff-search,
+  body.remote-ui :is(textarea, input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"], [type="file"])) { font-size: 16px; }
 
   /* 触屏上禁掉双击缩放的 300ms 等待(缩放本身仍由双指手势提供)。 */
   body.remote-ui button,

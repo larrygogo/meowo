@@ -6,7 +6,7 @@ export const zh = {
   // BCP-47 locale：日期/时刻格式化走 Intl（12/24 小时制、月日顺序随语言），不再手拼。
   locale: "zh-CN",
   // 应用内确认模态(confirm.tsx)的通用按钮。
-  dialog: { ok: "确定", cancel: "取消" },
+  dialog: { ok: "确定", cancel: "取消", gotIt: "知道了" },
   // 渲染崩溃兜底（ErrorBoundary.tsx）：窗口级整页替换时显示。
   crash: { title: "出错了", hint: "这个窗口遇到问题，重新加载即可恢复。", reload: "重新加载" },
   tabs: { all: "全部", waiting: "待交互", running: "运行中" },
@@ -190,13 +190,15 @@ export const zh = {
     up: "上一级",
     pickHere: "用这个目录",
     drives: "选择磁盘",
-    fixOnDesktop: "请在桌面端处理后再启动",
+    // 手机上做不了的两件事，说清为什么（UI 调研 m10：原先一律「请在桌面端处理」）。
+    loginOnHost: "登录要在电脑的浏览器里授权",
+    installOnHost: "安装要在运行 Meowo 的电脑上进行",
     noSubdirs: "没有子目录",
     agent: "Agent",
     cancel: "取消",
     launch: "启动",
     launching: "正在启动…",
-    hooksMissing: "该 Agent 尚未接入，新会话可能不会出现在看板",
+    hooksMissing: "该 Agent 尚未接入，新会话可能不显示状态",
     hooksUnknown: "无法确认该 Agent 的接入状态",
     noAgents: "未检测到已安装的 AI CLI，请先安装",
     goInstall: "去安装",
@@ -214,7 +216,7 @@ export const zh = {
     repairHooks: "修复连接",
     repairingHooks: "修复中…",
     // 按钮旁的说明（S-8：按钮凭空出现零解释）：它做什么 + 何时需要点。
-    repairHooksTip: "重写接入配置，新会话没上看板时点它",
+    repairHooksTip: "重写接入配置，新会话不显示状态时点它",
     // 修复在后端进程内完成，没有「终端里的修复日志」可看——指向真实可行的下一步。
     repairFailed: "修复未生效，请重试或重装该 Agent",
     repairNeedLogin: "请先在终端登录该 Agent，再点修复连接。",
@@ -375,13 +377,13 @@ export const zh = {
     subtitle: "管理所有会话，把任务完成的会话标记完成。旧会话按更新时间筛选，即可批量清理。",
     back: "返回",
     entry: "会话管理",
-    filterWorkspace: "工作空间",
+    filterWorkspace: "工作区",
     filterStatus: "状态",
     filterTime: "更新时间",
-    allWorkspaces: "全部工作空间",
+    allWorkspaces: "全部工作区",
     selectAll: "全选",
-    searchWorkspace: "搜索工作空间",
-    noWorkspaceMatch: "没有匹配的工作空间",
+    searchWorkspace: "搜索工作区",
+    noWorkspaceMatch: "没有匹配的工作区",
     removeTag: (name: string) => `移除 ${name}`,
     statusAll: "全部状态",
     statusOpen: "进行中",
@@ -392,7 +394,7 @@ export const zh = {
     reset: "重置",
     colStatus: "状态",
     colTitle: "会话名",
-    colWorkspace: "工作空间",
+    colWorkspace: "工作区",
     colPrompt: "最后一条 prompt",
     colUpdated: "最后更新",
     colCompleted: "完成时间",
@@ -448,6 +450,7 @@ export const zh = {
     // 「加载更早」失败行（此前 catch 静默吞掉，按钮只是默默复原）。
     loadEarlierFailed: "加载更早的对话失败，请重试",
     loadError: "读取对话失败，正在重试",
+    retryNow: "立即重试",
     loadingConversation: "正在加载对话…",
     // 同步中断（C-18）：轮询 IPC 连续失败才单列——它只说「窗口与后端的通道断了」，
     // 与状态徽标里的「已断开」（agent 进程没了）是两种事实，措辞故意分开。
@@ -657,7 +660,7 @@ export const zh = {
     remoteTypeSend: "发到终端",
     remoteKeyFailed: "按键没送达，请重试",
     // 远程启动久等（7M-8）：阻塞多半是桌面终端上的信任目录/登录询问。
-    startingOnDesktop: "启动等待中，请在桌面端确认",
+    startingStuckRemote: "启动被卡住，可直接操作终端",
     customAnswerPlaceholder: "输入其他回答",
     addCustomAnswer: "添加回答",
     submitAnswer: "提交选择",
@@ -691,7 +694,7 @@ export const zh = {
     denyConfirmEsc: "再按 Esc 确认拒绝",
     // 审批卡被别处结算/超时收卡时的去向说明——凭空消失像 bug。
     approvalClearedNotice: "该审批已在别处处理或已超时，如需继续请查看终端",
-    approvalClearedNoticeRemote: "该审批已在别处处理或已超时，请到桌面端查看",
+    approvalClearedNoticeRemote: "该审批已在别处处理或已超时",
     // 倒计时归零到后端结算事件到达之间的一拍空窗：徽章切这句，不留定格的 0:00。
     // 审批卡与题面卡共用（回落语义相同）。
     approvalTimedOut: "已超时，回落终端处理中",
@@ -854,6 +857,9 @@ export const zh = {
     shellNew: "新建终端",
     shortcutShell: "打开或收起面板终端",
     shortcutPanel: "打开或收起右侧面板",
+    shortcutDiff: "打开改动页签",
+    shortcutFiles: "打开或收起文件页签",
+    shortcutCycleTabs: "切换面板页签",
     shortcutNewBrowser: "新建浏览器页签",
     shortcutCloseTab: "关闭当前面板页签",
     panelNewTab: "新建页签",
@@ -903,7 +909,7 @@ export const zh = {
       other: "使用额外权限",
     } as Record<string, string>,
     browserPermissionBlocked: (host: string, what: string) => `已阻止 ${host} ${what}`,
-    browserPermissionWaiting: "网页在等你允许",
+    browserPermissionWaiting: "网页请求权限",
     browserPermissionRetry: "刷新重试",
     browserPermissionAllow: "允许",
     browserPermissionBlock: "阻止",
@@ -1019,7 +1025,7 @@ export const zh = {
     resumeSession: "恢复会话",
     terminalNeedsAttention: "Agent 在等启动确认，请先在交互卡片中选择，再重新发送。",
     // 拦住发送的是提问卡时用这句：「启动确认」对一个回合中途的提问是错的说法（用户实拍）。
-    questionNeedsAnswer: "Agent 在等你回答提问，答完再发送。",
+    questionNeedsAnswer: "Agent 有提问待回答，答完再发送。",
     sendEchoTimeout: "消息未进入终端，已撤回。请切到终端页确认状态后重试。",
     terminalStreamStalled: "终端画面卡住了，不会自行恢复。点「结束并恢复」即可，对话记录不受影响。",
     // 初始化 25s 超时（撤遮罩后的黑屏说明，见 ManagedTerminal 的 initTimedOut）。
@@ -1092,12 +1098,14 @@ export const zh = {
     taskNotification: "后台任务通知",
     changesUncommitted: "未提交",
     wsHide: "从列表中移除",
+    wsHidden: (name: string) => `已移除 ${name}`,
     wsHideTip: "只是不在这里显示，文件夹和其中的会话都不动；之后在这里新建会话会自动回来",
     changesCommitted: (base: string) => `已提交未合并 · 相对 ${base}`,
     scmRepos: "存储库",
     scmStaged: "暂存的更改",
     scmChanges: "更改",
     scmCommitted: (base: string) => `本分支已提交（未合入 ${base}）`,
+    scmCommitPlaceholderRemote: "提交信息",
     scmCommitPlaceholder: (branch: string | null) => (branch ? `消息（Ctrl+Enter 在“${branch}”提交）` : "消息（Ctrl+Enter 提交）"),
     scmCommit: "提交",
     scmCommitAll: "提交全部",
@@ -1142,8 +1150,9 @@ export const zh = {
     sidebarFoldAll: "全部折叠",
     sidebarScopeOnly: (name: string) => `只看 ${name}`,
     sidebarScopeClear: "取消筛选",
-    // 「工作空间」页签（对照 Kimi Code）：工作区就是会话用过的目录。
-    sidebarTabWorkspaces: "工作空间",
+    // 「工作区」页签（对照 Kimi Code）：工作区就是会话用过的目录。关卡 A 定案统一叫「工作区」，
+    // 原先页签写「工作空间」、下面小节写「工作区」同屏两种叫法（UI 调研 shell #9）。
+    sidebarTabWorkspaces: "工作区",
     sidebarWorkspaces: "工作区",
     wsNewHere: "在此工作区新建会话",
     wsAdd: "添加工作区…",
@@ -1208,6 +1217,7 @@ export const zh = {
     toolEditSummary: (added: number, removed: number) =>
       added && removed ? `新增 ${added} 行，删除 ${removed} 行` : removed ? `删除 ${removed} 行` : `新增 ${added} 行`,
     toolReadLines: (count: number) => `读取了 ${count} 行`,
+    toolReadFailed: "读取失败",
     toolFoundLines: (count: number) => `找到 ${count} 条结果`,
     model: "模型",
     switchModel: "切换模型",
@@ -1227,7 +1237,7 @@ export const zh = {
     menuBusy: "请等待当前任务结束后切换模型或模式。",
     modelSwitchUnconfirmed: "尚未确认模型已切换，未修改恢复配置。请到终端检查。",
     modelListUnavailable: (command: string) => `读不到模型清单，点这里到终端页用 ${command} 切换`,
-    modelListUnavailableRemote: (command: string) => `读不到模型清单，请在桌面端用 ${command} 切换`,
+    modelListUnavailableRemote: (command: string) => `读不到模型清单，可直接发送 ${command} 再选`,
     modelGoTerminal: "去终端页切换模型",
     modelListUnavailableShort: "读不到模型清单",
     // 就地模型菜单（对照 Kimi）：换模型的代价写在做决定的地方。
@@ -1431,12 +1441,11 @@ export const zh = {
     archivedLoadMore: "加载更多",
     archivedLoadFailed: "已完成会话加载失败",
     unarchiveFailed: "恢复进行中失败，请稍后再试",
-    cardsGroup: "卡片",
+    cardsGroup: "会话列表",
     // 设置页分组（对照 Kimi 设置的分节）。
     runGroup: "运行",
     launchDefaultDesc: (agent: string) => `新建 ${agent} 会话时预选，新建时改了也会记住`,
     notifyGroup: "通知",
-    stickerGroup: "贴纸",
     updateTag: "新版本",
     close: "关闭",
     autostart: "开机自启",
@@ -1462,14 +1471,8 @@ export const zh = {
     defaultAgentDesc: "点「新建会话」时默认选中的 AI CLI",
     language: "语言",
     languageDesc: "界面与系统通知的显示语言",
-    preview: "对话预览",
-    previewDesc: "在卡片显示最近一问一答",
     browserAgent: "允许 Agent 操作面板浏览器",
     browserAgentDesc: "Meowo 里托管的会话可以打开、读取、点击对话窗右侧面板里的浏览器。新启动或重新接管的会话生效。",
-    terminalOpen: "打开方式",
-    terminalOpenDesc: "点击卡片打开，或用单独的打开按钮",
-    openModeCard: "点击卡片",
-    openModeButton: "打开按钮",
     sessionOpenIn: "打开会话",
     sessionOpenInDesc: "用哪个界面打开会话",
     sessionOpenInChat: "对话窗口",
@@ -1486,11 +1489,11 @@ export const zh = {
     notifySound: "通知提示音",
     notifySoundDesc: "系统通知弹出时响一声",
     chatFeature: "对话窗口功能",
-    chatFeatureDesc: "关闭进入轻量模式：只保留看板，一切在终端进行",
-    cardMenu: "卡片菜单",
-    cardMenuDesc: "星标、便签等操作的打开方式",
+    chatFeatureDesc: "关闭进入轻量模式：只留灵动岛，会话在外部终端进行",
+    cardMenu: "会话菜单",
+    cardMenuDesc: "置顶、便签等操作的打开方式",
     cardMenuContext: "右键菜单",
-    cardMenuButton: "卡片按钮",
+    cardMenuButton: "⋯ 按钮",
     langAuto: "跟随系统",
     theme: "外观模式",
     themeDesc: "深色、浅色，或跟随系统",
@@ -1499,7 +1502,7 @@ export const zh = {
     themeSystem: "跟随系统",
     fontSize: "界面缩放",
     // 间距/徽标已随字号同比缩放（--sp/--fs 阶梯整梯乘 --cc-ui），叫「字体大小」名不副实。
-    fontSizeDesc: "调整看板与对话窗的字号与间距",
+    fontSizeDesc: "调整灵动岛与对话窗的字号与间距",
     fontSizeSmall: "小",
     fontSizeNormal: "中",
     fontSizeLarge: "大",
@@ -1510,12 +1513,8 @@ export const zh = {
     // 对照 Kimi「消息自动折叠」：回合结束后只留最终回答，过程收成「工作了 2m13s」一行。
     turnFolding: "消息自动折叠",
     turnFoldingDesc: "回合结束后收起工作过程，只留最终回答",
-    stickerStyle: "贴纸风格",
-    stickerStyleDesc: "卡片立体投影，或扁平描边",
     styleElevated: "立体感",
     styleFlat: "扁平",
-    stickerColor: "贴纸颜色",
-    stickerColorDesc: "贴纸背景的色调",
     islandGroup: "灵动岛",
     islandCompact: "收起时显示",
     islandCompactDesc: "灵动岛缩成胶囊时的内容",
@@ -1532,8 +1531,6 @@ export const zh = {
     islandAlertSecondsDesc: "提醒展开多久后缩回",
     islandSeconds: (n: number) => `${n} 秒`,
     colorNames: { neutral: "无色", classic: "经典", slate: "石青", moss: "苔绿", plum: "暮紫", rose: "玫粉", amber: "琥珀" } as Record<string, string>,
-    opacity: "贴纸不透明度",
-    opacityDesc: "贴纸背景的透明度",
     terminalGroup: "终端",
     termFontSize: "终端字号",
     termFontSizeDesc: "终端文字的大小",
@@ -1545,7 +1542,7 @@ export const zh = {
     lineNormal: "标准",
     lineRelaxed: "宽松",
     appearanceHint: "更改即时生效。",
-    showQuotaOnSticker: "在贴纸显示配额",
+    showQuotaOnSticker: "在灵动岛显示配额",
   },
   proxy: {
     desc: "代理写进 Agent 自己的配置，查用量和下载也用同一份。",
@@ -1803,8 +1800,8 @@ export const zh = {
     // Meowo 自己装进各家的状态上报（钩子 / opencode 插件）：合成一行，说明别删。
     managedName: "Meowo 状态上报",
     managedTag: "Meowo 自带",
-    managedHooksDesc: (n: number) => `挂在 ${n} 个事件上，看板靠它显示状态`,
-    managedDesc: "看板靠它显示会话状态",
+    managedHooksDesc: (n: number) => `挂在 ${n} 个事件上，用来上报会话状态`,
+    managedDesc: "用来上报会话状态",
     readOnlyHint: "这里只能查看。要增删，改各家自己的配置。",
   },
   updater: {
@@ -1930,13 +1927,15 @@ export const zh = {
       title: "欢迎使用 Meowo",
       desc: "常驻桌面，汇总各 CLI 的会话进度。谁在跑、谁在等待输入，一眼可见。",
     },
-    // 看板不会自己变出会话：得先装 agent 并登录。缺了这一步，用户走完引导面对的还是空看板。
+    // 会话列表不会自己变出会话：得先装 agent 并登录。缺了这一步，用户走完引导面对的还是空列表。
     connect: {
       title: "连接你的 AI CLI",
+      installed: "已安装",
+      missing: "未安装",
       points: [
         "在「设置 → 账号与用量」安装 Claude Code、Codex 等 Agent。",
         "装好后点「登录」，在弹出的终端里完成授权。",
-        "之后这些 CLI 启动的会话都会出现在看板上。",
+        "之后这些 CLI 启动的会话都会出现在灵动岛和会话列表里。",
       ],
     },
     // S-12：hooks 曾静默改写 ~/.claude/settings.json 全程零告知——明写改了什么、
@@ -1947,31 +1946,16 @@ export const zh = {
         "Meowo 会在各 CLI 的配置文件里写入接入项（如 ~/.claude/settings.json），用来上报会话状态。其余配置原样保留。",
         "首次写入前自动备份原文件（同目录的 .cckb-bak 文件）。",
         "不再使用时，删掉配置里的接入项，或用 .cckb-bak 备份还原。",
-        "首次启动会把最近 7 天的历史会话只读导入看板，不改动原数据。",
-      ],
-    },
-    board: {
-      title: "实时会话看板",
-      points: [
-        "每个会话一张卡片，颜色即状态：绿运行、黄待交互、灰已断开。",
-        "点卡片直达终端，已断开的点开即恢复。",
-        "会话需要你回复时归入「待交互」，并通知一次。",
-        "卡片右上角「⋯」菜单：置顶、便签、改名、标记完成。",
+        "首次启动会把最近 7 天的历史会话只读导入会话列表，不改动原数据。",
       ],
     },
     window: {
-      title: "窗口与设置",
-      points: [
-        "拖动贴纸自由摆放，松手即停。",
-        "点底栏图钉让贴纸始终置顶。",
-        "从托盘 / 菜单栏图标随时找回贴纸、打开设置。",
-      ],
       // Windows 用这组（贴纸已换成灵动岛，2026-11-04）：拖拽只能左右、恒置顶没有图钉、
-      // 托盘单击打开对话窗口，上面那组照搬会教错。看板那一步也合进来了（Windows 没有卡片）。
+      // 托盘单击打开对话窗口。原「看板」「贴纸窗口」两组随贴纸下线删掉（UI 调研 shell #3）。
       islandTitle: "灵动岛与对话窗口",
       islandPoints: [
         "灵动岛停在屏幕顶部，左右拖动换位置。",
-        "每个会话一个头像：绿弧在跑，黄点在等你。",
+        "每个会话一个头像：绿弧在跑，黄点在等待输入。",
         "点头像打开会话，点空白处展开面板。",
         "会话需要你时，岛会弹出提醒。",
         "单击托盘图标打开对话窗口，右键打开设置。",
@@ -1980,7 +1964,7 @@ export const zh = {
       macIslandPoints: [
         "有刘海的 Mac 上，灵动岛包住刘海。",
         "没有刘海时，菜单栏图标就是迷你岛，点它展开。",
-        "每个会话一个头像：绿弧在跑，黄点在等你。",
+        "每个会话一个头像：绿弧在跑，黄点在等待输入。",
         "点头像打开会话，点空白处展开面板。",
         "会话需要你时，岛会弹出提醒。",
       ],

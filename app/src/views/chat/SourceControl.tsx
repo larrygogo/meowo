@@ -460,8 +460,9 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
           className="scm-commit-input"
           rows={1}
           value={message}
-          placeholder={t.chat.scmCommitPlaceholder(repo.summary.branch)}
-          aria-label={t.chat.scmCommitPlaceholder(repo.summary.branch)}
+          // 手机上没有 Ctrl+Enter，占位符不写快捷键；分支名上一行已经有了（UI 调研 m12，SE 上还会折成两行被截）。
+          placeholder={remoteUi() ? t.chat.scmCommitPlaceholderRemote : t.chat.scmCommitPlaceholder(repo.summary.branch)}
+          aria-label={remoteUi() ? t.chat.scmCommitPlaceholderRemote : t.chat.scmCommitPlaceholder(repo.summary.branch)}
           onChange={(event) => setMessage(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && !event.nativeEvent.isComposing) {

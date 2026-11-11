@@ -49,7 +49,7 @@ import { QuestionPanels } from "./chat/QuestionPanels";
 import { RemoteTerminalKeys } from "./chat/RemoteTerminalKeys";
 import { peekSessionMeta, prefetchPending, recallHistory, rememberHistory, takePrefetch, trackPrefetch } from "./chat/historyCache";
 import { ChatTitleMenu, ChatTitlePlaceholder } from "./chat/TitleMenus";
-import { QuickSwitcher, RenameModal, ShortcutSheet } from "./chat/WindowModals";
+import { displayKeys, QuickSwitcher, RenameModal, ShortcutSheet, tipWithKeys, type PaletteCommand } from "./chat/WindowModals";
 import { buildPaletteCommands, OPEN_WITH_PREFIX } from "./chat/paletteCommands";
 import { openFolderWith, useFolderOpeners } from "./chat/TitleBarTools";
 import { attentionTone, nextAttentionSession } from "./chat/nextAttention";
@@ -273,6 +273,9 @@ export function ChatWindow() {
   // 抖动只配通用「读取失败，正在重试」。它与 tone 解耦：tone 讲 agent 进程（connected），
   // syncLost 只讲「窗口与后端的通道断了」，两种事实不再共用一套措辞。
   const [syncLost, setSyncLost] = useState(false);
+  // 最近一次读取失败的原因：连续失败（syncLost）时写在错误行下面，只说「正在重试」用户无从判断
+  // 是该等还是该做点什么（UI 调研 chat #13，参照 C-18 的分级）。
+  const [loadReason, setLoadReason] = useState<{ error: unknown } | null>(null);
   const failStreakRef = useRef(0);
   // 首读裁剪掉的更早消息：hasMore 只在首读那一发为 true，轮询会把它带回 false，
   // 所以单独存一份状态，别直接读 history.hasMore（提示会闪一下就没）。
@@ -1962,9 +1965,10 @@ export function ChatWindow() {
       setFailed(false);
       failStreakRef.current = 0;
       setSyncLost(false);
+      setLoadReason(null);
       // 存储恢复的会话加载成功:解除恢复标记,此后的瞬时失败按普通失败处理。
       if (restoredSessionId === sessionId) restoredSessionId = 0;
-    } catch {
+    } catch (error) {
       // 远程从 localStorage 恢复的会话可能已被删/归档:恒失败会卡在「读取失败」,
       // 空态与自动拉抽屉都进不去。首败即放弃恢复回「选会话」空态(误伤瞬时网络
       // 抖动可接受——抽屉在场,点回去即可);用户手选的会话不受此影响。
@@ -1981,12 +1985,16 @@ export function ChatWindow() {
       }
       setLoading(false);
       setFailed(true);
+      setLoadReason({ error });
       failStreakRef.current += 1;
       if (failStreakRef.current >= 3) setSyncLost(true);
     } finally {
       busyRef.current = false;
     }
   }, [sessionId]);
+
+  // 读取失败时的「立即重试」：轮询本来就在重试，但用户只能干等下一拍（UI 调研 chat #13）。
+  const retryNow = <button type="button" className="chat-retry-now" onClick={() => void refresh()}>{t.chat.retryNow}</button>;
 
   // C-14 收尾：流式刷新已事件驱动（托管会话 pty-output + 后端 transcript 文件 watch
   // 推送 chat-transcript，见下），本定时器降级为最终兜底——事件在窗口重挂间隙丢失、
@@ -3881,7 +3889,7 @@ export function ChatWindow() {
       type="button"
       className={"chat-sidebar-open" + (remoteBackMode ? " is-back" : "")}
       aria-label={remoteBackMode ? t.remote.backToSessions : sidebarVisible ? t.chat.sidebarCollapse : t.chat.sidebarExpand}
-      data-tip={remoteBackMode ? undefined : sidebarVisible ? t.chat.sidebarCollapse : t.chat.sidebarExpand}
+      data-tip={remoteBackMode ? undefined : remoteUi() ? (sidebarVisible ? t.chat.sidebarCollapse : t.chat.sidebarExpand) : tipWithKeys(sidebarVisible ? t.chat.sidebarCollapse : t.chat.sidebarExpand, "Ctrl+B")}
       aria-expanded={remoteBackMode ? undefined : sidebarVisible}
       onClick={remoteBackMode ? goBackToRemoteList : toggleSidebar}
     >
@@ -4109,8 +4117,8 @@ export function ChatWindow() {
             与 tone 讲的「agent 进程没了」是两种事实，措辞与样式都分开。 */}
         {failed && items.length > 0 && (
           syncLost
-            ? <div className="chat-sync-warn is-lost" role="alert">{t.chat.syncInterrupted}</div>
-            : <div className="chat-sync-warn" role="status">{t.chat.loadError}</div>
+            ? <div className="chat-sync-warn is-lost" role="alert">{t.chat.syncInterrupted}{retryNow}</div>
+            : <div className="chat-sync-warn" role="status">{t.chat.loadError}{retryNow}</div>
         )}
         {sessionId === 0 ? <div className="chat-empty">{t.chat.pickSession}</div>
           : loading ? (loadingShown
@@ -4119,7 +4127,13 @@ export function ChatWindow() {
                灰条在手机上像「内容就这样」，明说「正在加载」更不会被误读。 */
             ? <div className="chat-loading" role="status"><span className="chat-model-spinner" aria-hidden="true" /><span>{t.chat.loadingConversation}</span></div>
             : null)
-          : failed && items.length === 0 ? <div className="chat-empty is-error">{syncLost ? t.chat.syncInterrupted : t.chat.loadError}</div>
+          : failed && items.length === 0 ? (
+            <div className="chat-empty is-error">
+              {syncLost ? t.chat.syncInterrupted : t.chat.loadError}
+              {retryNow}
+              {syncLost && loadReason && <div className="chat-load-reason">{formatBackendError(loadReason.error, t.locale)}</div>}
+            </div>
+          )
           : history && !history.supported ? (
             /* 不提供结构化 transcript 的 agent：hook 落库的最近往来仍然是真实数据，先渲染它，
                「暂未提供结构化对话记录」降为其下的注脚——有什么就展示什么，而不是只报没有。 */
@@ -4145,12 +4159,14 @@ export function ChatWindow() {
                         /* 目的性跳转，不写视图偏好。 */
                         <button type="button" className="chat-empty-cta" onClick={() => setView("terminal")}>{t.chat.goTerminal}</button>
                       )}
-                      {/* 7M-8：远程连这个出口都被门掉，于是「正在启动…」永远转，一个字
-                          解释都没有。启动阻塞（信任目录询问/登录）只在桌面终端画面上，
-                          手机这头唯一能做的就是去桌面确认——那就把它说出来。 */}
-                      {startingSlow && remoteUi() && (
-                        <div className="chat-remote-hint">{t.chat.startingOnDesktop}</div>
-                      )}
+                      {/* 7M-8 曾在这里写「请在桌面端确认」，违反「不推用户去桌面端」（UI 调研 m3）。
+                          启动阻塞（信任目录询问/登录）就在 PTY 画面上，临时负 id 在后端能取屏、能写键
+                          （pty.rs screen_probe_snapshot 走 lookup 解析临时 id，issue #72），
+                          直接把终端画面和按键摆出来，手机上就地确认。 */}
+                      {startingSlow && remoteUi() && (<>
+                        <div className="chat-remote-hint">{t.chat.startingStuckRemote}</div>
+                        <RemoteTerminalKeys sessionId={sessionId} />
+                      </>)}
                     </div>
                   : welcomeInfo ? <WelcomePanel info={welcomeInfo} commands={welcomeCommands} mention={chatUi?.attachment_mention ?? false} onPick={pickStarter} />
                   : t.chat.empty}</div>
@@ -4888,9 +4904,14 @@ export function ChatWindow() {
               }
             }
             // ↑ 取回历史消息:空框(或已在浏览态)时 ↑ 往前翻,↓ 往回,翻回最新回到空框。
-            // 有草稿时 ↑ 保持原生光标语义,不抢多行编辑。
+            // 有草稿时 ↑ 保持原生光标语义,不抢多行编辑。浏览态下也只在光标位于首行时才翻上一条、
+            // 末行时才翻下一条（shell 与 Claude Code CLI 惯例）：召回一条多行提示词想改中间一行，
+            // 按 ↑ 就被换成另一条（UI 调研 chat #12）。按逻辑行（换行符）判，不按软换行。
+            const caret = event.currentTarget;
+            const onFirstLine = !caret.value.slice(0, caret.selectionStart).includes("\n");
+            const onLastLine = !caret.value.slice(caret.selectionEnd).includes("\n");
             if (event.key === "ArrowUp" && !event.nativeEvent.isComposing && userHistory.length > 0
-              && (historyNavRef.current !== null || !prompt.trim())) {
+              && (historyNavRef.current !== null || !prompt.trim()) && onFirstLine) {
               const at = historyNavRef.current?.index ?? userHistory.length;
               if (at > 0) {
                 event.preventDefault();
@@ -4904,7 +4925,7 @@ export function ChatWindow() {
               }
               return;
             }
-            if (event.key === "ArrowDown" && historyNavRef.current !== null && !event.nativeEvent.isComposing) {
+            if (event.key === "ArrowDown" && historyNavRef.current !== null && !event.nativeEvent.isComposing && onLastLine) {
               event.preventDefault();
               const next = historyNavRef.current.index + 1;
               if (next >= userHistory.length) {

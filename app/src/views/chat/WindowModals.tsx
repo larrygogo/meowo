@@ -251,6 +251,12 @@ export function displayKeys(keys: string, mac: boolean = isMac()): string {
   return mac ? keys.replace(/\bCtrl\b/g, "⌘").replace(/\bAlt\b/g, "⌥") : keys;
 }
 
+/// 按钮 tooltip 带上快捷键（「收起会话列表 Ctrl+B」）：工具栏开关原先只写名字，快捷键只能去速查表找（i17）。
+/// 只进 data-tip，不进 aria-label：读屏名保持干净，测试与语音控制按名字找按钮。
+export function tipWithKeys(label: string, keys: string): string {
+  return `${label} ${displayKeys(keys)}`;
+}
+
 /** 对话窗速查表与设置页共用同一份清单，避免新增快捷键只补到其中一处。 */
 /// 快捷键清单（唯一数据源）：`?` 速查表与设置页「快捷键」共用，分「窗口」「输入框」两组。
 export function shortcutGroups(t: ReturnType<typeof useT>, mac: boolean = isMac()): { title: string; rows: Array<[string, string]> }[] {
@@ -268,6 +274,10 @@ export function shortcutGroups(t: ReturnType<typeof useT>, mac: boolean = isMac(
         ["Alt+↑ / Alt+↓", t.chat.shortcutPrevNext],
         ["Alt+Shift+↓", t.chat.shortcutNextPending],
         ["Ctrl+Shift+B", t.chat.shortcutPanel],
+        // 面板页签的三组键 ChatWindow 早已实现，清单漏了（UI 调研 i17）。
+        ["Ctrl+Shift+G", t.chat.shortcutDiff],
+        ["Ctrl+Shift+E", t.chat.shortcutFiles],
+        ["Ctrl+Tab / Ctrl+Shift+Tab", t.chat.shortcutCycleTabs],
         ["Ctrl+`", t.chat.shortcutShell],
         ["Ctrl+T", t.chat.shortcutNewBrowser],
         ["Ctrl+W", t.chat.shortcutCloseTab],
@@ -305,19 +315,24 @@ export function KeyCombos({ keys }: { keys: string }) {
 
 export function ShortcutList() {
   const t = useT();
-  const rows = shortcutGroups(t).flatMap((group) => group.rows);
+  // 按组渲染并保留「窗口 / 输入框」标题：原先 flatMap 成一张平表，二十来行看不出哪些只在输入框里有效（i17）。
   return (
     <>
-      <dl className="chat-shortcuts-list">
-        {rows.map(([keys, desc]) => (
-          <div className="chat-shortcuts-row" key={keys}>
-            <dt>{keys.split(" / ").map((combo, i) => (
-              <span key={combo}>{i > 0 && " / "}<kbd>{combo}</kbd></span>
-            ))}</dt>
-            <dd>{desc}</dd>
-          </div>
-        ))}
-      </dl>
+      {shortcutGroups(t).map((group) => (
+        <section className="chat-shortcuts-group" key={group.title}>
+          <div className="chat-shortcuts-group-title">{group.title}</div>
+          <dl className="chat-shortcuts-list">
+            {group.rows.map(([keys, desc]) => (
+              <div className="chat-shortcuts-row" key={keys}>
+                <dt>{keys.split(" / ").map((combo, i) => (
+                  <span key={combo}>{i > 0 && " / "}<kbd>{combo}</kbd></span>
+                ))}</dt>
+                <dd>{desc}</dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+      ))}
       {/* 终端视图的让位说明:Ctrl+K/B/N/1/2 被应用导航占用、readline 编辑键失效——
           这些"静默失效"必须有一处写明,否则无从排查。 */}
       <div className="chat-shortcuts-note">{t.chat.shortcutTerminalNote(displayKeys("Ctrl"), isMac() ? "⌃" : "Ctrl")}</div>
