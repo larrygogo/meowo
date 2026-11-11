@@ -13,6 +13,7 @@ import { formatBackendError } from "../../i18n/errors";
 import { useVisibleInterval } from "../../hooks/useVisibleInterval";
 import { ChatMarkdown } from "../ChatMarkdown";
 import { ApprovalCard } from "./ApprovalCard";
+import { useTablist } from "../useTablist";
 
 /// 轮询间隔：任务文件由 agent 随手改写，没有推送通道；读的是本地几个小文件，开销可忽略。
 const POLL_MS = 4000;
@@ -107,10 +108,13 @@ const CHECK_ICONS = {
   waived: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M7 12h10" /></svg>,
 };
 
+const LEAD_SECTIONS = ["checks", "spec", "decisions", "progress"] as const;
+
 export const LeadPanel = memo(function LeadPanel({ task, onClose }: { task: LeadTaskDto; onClose: () => void }) {
   const t = useT();
   const { passed, total } = leadProgress(task);
-  const [section, setSection] = useState<"checks" | "spec" | "decisions" | "progress">("checks");
+  const [section, setSection] = useState<(typeof LEAD_SECTIONS)[number]>("checks");
+  const tabs = useTablist({ keys: LEAD_SECTIONS, active: section, onSelect: setSection });
   // 展开看全文的验收项（默认两行截断）。
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
   // 还要做的排前面，豁免的沉底：一眼看到剩下的事。
@@ -134,15 +138,15 @@ export const LeadPanel = memo(function LeadPanel({ task, onClose }: { task: Lead
           <button type="button" className="dock-work-close" aria-label={t.chat.close} onClick={onClose}>×</button>
         </span>
       </div>
-      <div className="lead-tabs" role="tablist">
-        {(["checks", "spec", "decisions", "progress"] as const).map((key) => (
-          <button key={key} type="button" role="tab" aria-selected={section === key}
+      <div className="lead-tabs" {...tabs.listProps}>
+        {LEAD_SECTIONS.map((key) => (
+          <button key={key} type="button" {...tabs.tabProps(key)}
             className={"lead-tab" + (section === key ? " is-active" : "")} onClick={() => setSection(key)}>
             {key === "checks" ? t.chat.leadSection.checks : t.chat.leadSection[key]}
           </button>
         ))}
       </div>
-      <div className="dock-work-body">
+      <div className="dock-work-body" {...tabs.panelProps}>
         {section === "checks" && (
           checks.length === 0
             ? <div className="chat-tasks-empty">{t.chat.leadChecksEmpty}</div>

@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type KeyboardE
 import { invoke } from "@tauri-apps/api/core";
 import { moveNextTo, orderKey, sidebarDirGroups, usePointerReorder, useSessionDrag, type DirGroup as SidebarDirGroup } from "./sidebarDrag";
 import { WorkspaceDirectory } from "./chat/WorkspaceDirectory";
+import { useTablist } from "./useTablist";
 import { confirmStopSession, getLiveSessionsPage, getSettings, moveSessionRank, setWorkspaceOrder as saveWorkspaceOrder, openNewSessionWindow, openProjectDir, recentCwds, renameSession, searchChatTranscripts, sessionTone, setArchived, setSessionNote, type CardMenuMode, type LiveSession, type SessionTone, type TranscriptSearchHit } from "../api";
 import { noteSessionMeta } from "./chat/historyCache";
 import { attentionTone } from "./chat/nextAttention";
@@ -26,6 +27,7 @@ import { ArchivedWorktreePrompt, WorktreeRemoveButton, runBatchCleanup, type Rem
 
 /** 每翻一页新增的会话数。滚到底自动加载下一页，直到后端带回 next_cursor = null 为止。 */
 const PAGE_LIMIT = 60;
+const SIDEBAR_TABS = ["open", "done", "workspaces"] as const;
 
 /** 目录下拉里最多列几个工作目录（后端按最近活跃排序，超出的靠搜索/滚动够不着的本就是冷目录）。 */
 const DIR_LIMIT = 24;
@@ -273,6 +275,12 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
   const [archivedView, setArchivedView] = useState(false);
   // 「工作空间」页签（对照 Kimi Code 的第三个页签）：列表换成工作区目录，不落盘。
   const [workspacesView, setWorkspacesView] = useState(false);
+  const sidebarTab = workspacesView ? "workspaces" : archivedView ? "done" : "open";
+  const selectSidebarTab = useCallback((key: (typeof SIDEBAR_TABS)[number]) => {
+    setWorkspacesView(key === "workspaces");
+    if (key !== "workspaces") setArchivedView(key === "done");
+  }, []);
+  const sidebarTabs = useTablist({ keys: SIDEBAR_TABS, active: sidebarTab, onSelect: selectSidebarTab });
   const archivedViewRef = useRef(archivedView);
   archivedViewRef.current = archivedView;
   const [dirs, setDirs] = useState<string[]>([]);
@@ -1248,24 +1256,16 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
       {/* 「进行中 / 已完成」两个标签页（对照 Kimi 的 tabOpen / tabDone）：已完成就是 archived，
           此前藏在「筛选 → 已归档会话」里、进去后还得靠一条状态条说明「换了一批会话」（7C-5）。
           做成常驻标签页，当前看的是哪一批一眼可见，取回也只要一击。 */}
-      <div className="chat-sidebar-tabs" role="tablist" aria-label={t.chat.sidebarTitle}>
-        {([false, true] as const).map((done) => (
+      <div className="chat-sidebar-tabs" {...sidebarTabs.listProps} aria-label={t.chat.sidebarTitle}>
+        {SIDEBAR_TABS.map((key) => (
           <button
-            key={String(done)}
+            key={key}
             type="button"
-            role="tab"
-            aria-selected={!workspacesView && archivedView === done}
-            className={!workspacesView && archivedView === done ? "is-active" : ""}
-            onClick={() => { setWorkspacesView(false); setArchivedView(done); }}
-          >{done ? t.chat.sidebarTabDone : t.chat.sidebarTabOpen}</button>
+            {...sidebarTabs.tabProps(key)}
+            className={sidebarTab === key ? "is-active" : ""}
+            onClick={() => selectSidebarTab(key)}
+          >{key === "done" ? t.chat.sidebarTabDone : key === "open" ? t.chat.sidebarTabOpen : t.chat.sidebarTabWorkspaces}</button>
         ))}
-        <button
-          type="button"
-          role="tab"
-          aria-selected={workspacesView}
-          className={workspacesView ? "is-active" : ""}
-          onClick={() => setWorkspacesView(true)}
-        >{t.chat.sidebarTabWorkspaces}</button>
       </div>
       {/* 「会话」小节标题（对照 Kimi Code）：右侧两个小图标——全部折叠 / 展开（分组时才有）、
           视图与排序。 */}
@@ -1304,7 +1304,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
         </div>
       )}
       {workspacesView ? (
-        <nav className="chat-sidebar-list" aria-label={t.chat.sidebarTabWorkspaces}>
+        <nav id={sidebarTabs.panelId} className="chat-sidebar-list" aria-label={t.chat.sidebarTabWorkspaces}>
           <WorkspaceDirectory
             options={workspaceOptions}
             onFilter={(cwd) => { setDirFilter(cwd); setArchivedView(false); setWorkspacesView(false); }}
@@ -1314,6 +1314,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
       ) : (
       <nav
         ref={listRef}
+        id={sidebarTabs.panelId}
         className="chat-sidebar-list"
         aria-label={t.chat.sidebarTitle}
         onScroll={onScroll}
