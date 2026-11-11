@@ -53,28 +53,33 @@ function SubagentTimeline({ sessionId, items, launchId }: { sessionId: number; i
 const SubagentAncestors = createContext<ReadonlySet<string>>(new Set());
 
 /// 结局统计 → 徽标。多个分支时报出数量，单个只说状态。
-/// waiting = 子代理停下来等自己派出的后台活儿（claude「is waiting on its own background work」，
-/// 做空第三轮 #7）：单独一档「等待后台」，不是完成，也不是运行中的转圈；之后的 finished 再变完成。
+/// background_running：子代理交了结论、它派出的后台活儿还在跑（claude「is waiting on its own background
+/// work」）。按完成算，另给次行小字 note；不算进行中——本机实拍 9 次里 4 次之后再无 finished（做空第二轮）。
 export function outcomeBadge(
-  outcome: { running: number; completed: number; failed: number; waiting?: number },
+  outcome: { running: number; completed: number; failed: number; background_running?: boolean },
+  t: ReturnType<typeof useT>,
+): { tone: string; text: string; note?: string } | null {
+  const badge = tallyBadge(outcome, t);
+  return badge && outcome.background_running ? { ...badge, note: t.chat.subagentBackgroundRunning } : badge;
+}
+
+function tallyBadge(
+  outcome: { running: number; completed: number; failed: number },
   t: ReturnType<typeof useT>,
 ): { tone: string; text: string } | null {
-  const waiting = outcome.waiting ?? 0;
-  const known = outcome.running + outcome.completed + outcome.failed + waiting;
+  const known = outcome.running + outcome.completed + outcome.failed;
   if (known === 0) return null;
   const one = (tone: string, single: string, many: (n: number) => string) =>
     ({ tone, text: known > 1 ? many(known) : single });
   if (outcome.failed === known) return one("failed", t.chat.subagentFailed, t.chat.subagentTallyFailed);
   if (outcome.completed === known) return one("completed", t.chat.subagentCompleted, t.chat.subagentTallyCompleted);
   if (outcome.running === known) return one("running", t.chat.subagentRunning, t.chat.subagentTallyRunning);
-  if (waiting === known) return one("waiting", t.chat.subagentWaiting, t.chat.subagentTallyWaiting);
   const parts = [
     outcome.completed && t.chat.subagentTallyCompleted(outcome.completed),
     outcome.failed && t.chat.subagentTallyFailed(outcome.failed),
     outcome.running && t.chat.subagentTallyRunning(outcome.running),
-    waiting && t.chat.subagentTallyWaiting(waiting),
   ].filter(Boolean);
-  return { tone: outcome.running ? "running" : waiting ? "waiting" : "failed", text: parts.join(" · ") };
+  return { tone: outcome.running ? "running" : "failed", text: parts.join(" · ") };
 }
 
 /// memo 理由同 Message；它还持有局部状态与展开时的 3s 轮询，白重渲染的代价更高。
@@ -184,7 +189,7 @@ function SubagentBlockBody({ sessionId, item, outcome, settled, finishedAt }: Su
       setOpen(next);
       if (next) load();
     }}>
-      <summary>
+      <summary className={summary?.note ? "has-note" : undefined}>
         {/* 在跑时图标本体脉冲:折叠状态下扫一眼就能看出「里面有活儿」,不必凑近读徽标小字。 */}
         <span className={"chat-subagent-icon" + (isRunning ? " is-running" : "")}>
           <Icon glyph={icAgents} size={16} />
@@ -197,6 +202,8 @@ function SubagentBlockBody({ sessionId, item, outcome, settled, finishedAt }: Su
         {duration && <span className="chat-subagent-time">{duration}</span>}
         {subagent?.agent_type && <span className="chat-subagent-type">{subagent.agent_type}</span>}
         <span className="chat-tool-chevron">›</span>
+        {/* 次行小字：结论已交、后台仍在运行（之后 finished 到了就没有了）。 */}
+        {summary?.note && <span className="chat-subagent-note">{summary.note}</span>}
       </summary>
       <div className="chat-subagent-body">
         {loading && <div className="chat-subagent-hint">{t.chat.subagentLoading}</div>}

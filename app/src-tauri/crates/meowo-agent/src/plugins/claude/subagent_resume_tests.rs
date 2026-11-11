@@ -109,11 +109,11 @@ fn waiting_queued(ts: &str) -> String {
     )
 }
 
-/// 委派 toolu_bg 最终结局里的 waiting 数（与 outcome_of 同一套路由）。
-fn waiting_of(main: &std::path::Path) -> u64 {
+/// 委派 toolu_bg 最终结局上有没有「后台仍在运行」标（与 outcome_of 同一套路由）。
+fn background_of(main: &std::path::Path) -> bool {
     let delta = read_chat_delta(&CLAUDE_TRANSCRIPT, main, 0, None);
     let mut owners = std::collections::HashMap::<String, String>::new();
-    let mut last = std::collections::HashMap::<String, u64>::new();
+    let mut last = std::collections::HashMap::<String, bool>::new();
     for item in &delta.items {
         let v = serde_json::to_value(item).unwrap();
         let (Some(tool), Some(sub)) = (v["tool_use_id"].as_str(), v.get("subagent").filter(|s| !s.is_null())) else {
@@ -123,30 +123,30 @@ fn waiting_of(main: &std::path::Path) -> u64 {
         if let Some(task) = sub["task_id"].as_str() {
             owner = owners.entry(task.to_string()).or_insert(owner).clone();
         }
-        last.insert(owner, sub["waiting"].as_u64().unwrap_or(0));
+        last.insert(owner, sub["background_running"].as_bool().unwrap_or(false));
     }
-    last.get("toolu_bg").copied().unwrap_or(0)
+    last.get("toolu_bg").copied().unwrap_or(false)
 }
 
-/// coordinator 11-11 定：徽标单独显示「等待后台」（不是完成、也不是运行中），后台计数照常减——
-/// 之后不一定还有 finished（本机一例再没通知），计数挂着会让会话永远不转「等待中」。
+/// 做空第二轮定：结论已交就按完成算，次行提示「后台仍在运行」；不算进行中——本机实拍 9 次里 4 次
+/// 之后再无 finished，挂进行中（或「等待后台」）会永远占着面板。后台计数照常减。
 #[test]
-fn waiting_on_own_background_work_shows_waiting_but_releases_busy() {
+fn waiting_on_own_background_work_is_done_with_background_note() {
     let (user, enqueue, queued) = (waiting_user("w1", "2026-11-10T10:05:00.000Z"), waiting_enqueue("2026-11-10T10:05:00.000Z"), waiting_queued("2026-11-10T10:05:00.000Z"));
-    // 送达形态（user 行 / queued_command）：徽标 = 等待后台，后台计数 0。
+    // 送达形态（user 行 / queued_command）：完成 + 后台仍在运行，后台计数 0；再无 finished 时就停在这里。
     for (name, line) in [("user", &user), ("queued", &queued)] {
         let main = write(&format!("waiting-{name}"), &[LAUNCH, line]);
-        assert_eq!(outcome_of(&main), (0, 0, 0), "{name} 形态不该判完成或运行中");
-        assert_eq!(waiting_of(&main), 1, "{name} 形态应显示等待后台");
+        assert_eq!(outcome_of(&main), (0, 1, 0), "{name} 形态按完成算");
+        assert!(background_of(&main), "{name} 形态带「后台仍在运行」");
         assert_eq!(analyze_transcript(main.to_str().unwrap()).busy_subagents, 0, "{name} 形态照常减后台计数");
     }
-    // 只有入队、再无送达也不再无 finished：会话不卡在「后台在跑」。
+    // 只有入队、再无送达也再无 finished：会话不卡在「后台在跑」。
     let main = write("waiting-enqueue-only", &[LAUNCH, &enqueue]);
     assert_eq!(analyze_transcript(main.to_str().unwrap()).busy_subagents, 0);
-    // 随后 finished 到了：完成。
+    // 随后 finished 到了：完成，次行消失。
     let main = write("waiting-then-done", &[LAUNCH, &enqueue, &user, DONE_USER]);
     assert_eq!(outcome_of(&main), (0, 1, 0));
-    assert_eq!(waiting_of(&main), 0);
+    assert!(!background_of(&main));
     assert_eq!(analyze_transcript(main.to_str().unwrap()).busy_subagents, 0);
 }
 
