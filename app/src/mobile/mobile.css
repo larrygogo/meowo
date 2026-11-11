@@ -543,6 +543,8 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
     padding: 14px;
     border-radius: var(--radius-xl);
   }
+  /* dock 里的卡不按 room 限高，否则自激闪烁（见 styles.css 的 .chat-dock > .chat-approval）。 */
+  body.remote-ui .chat-dock > .chat-approval { max-height: min(560px, 68dvh); }
   body.remote-ui .chat-approval-actions { gap: 10px; }
   body.remote-ui .chat-approval-actions .is-deny + .btn-primary { margin-inline-start: 4px; }
   body.remote-ui .chat-approval button { min-height: 36px; }

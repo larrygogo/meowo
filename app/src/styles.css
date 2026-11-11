@@ -5757,6 +5757,11 @@ button.scm-check-name:hover { text-decoration: underline; }
    输入框落在 594–702）；设 0 又会把卡压得比按钮行还矮，提交按钮伸出卡外、被输入框盖住
    （审查发现）。 */
 .chat-dock > .lead-gate-card { flex-shrink: 1; min-height: 104px; }
+/* dock 里的卡（Lead 关卡）不能按 --chat-overlay-room 限高：room = 消息区高度，而 dock 卡越高消息区
+   越矮，room 跟着缩、卡被压扁、消息区变高、room 又变大——ResizeObserver 来回自激，卡片在全高与
+   标题行之间每秒闪十来次（2026-11-11 leader 录屏；最小复现 104↔483px，1.5s 回调 94 次）。
+   room 只对浮层卡成立（浮层零高、不改变消息区），dock 卡回到改前的固定上限，靠 flex 收缩让位。 */
+.chat-dock > .chat-approval { max-height: min(70vh, 560px); }
 /* 浮层里有审批/提问卡时（agent 正卡在那张卡上，它比关卡急），关卡卡片放弃下限，把高度让给
    浮层卡（浮层卡按 --chat-overlay-room 限高，dock 越高它越矮），矮于按钮行时裁掉溢出，不让按钮
    叠到输入框上。当初的起因是浮层补白写在滚动区 padding 里、消息区缩不动，104px 下限在 iPhone SE
