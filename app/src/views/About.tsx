@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useAgentListRefresh } from "../useAgents";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { availableTerminals, exportDiagLog, leadWorkflowInstalled, setLeadWorkflow, getLiveSessionsPage, listAgents, agentName, setArchived, type AgentId, type AgentDescriptor, type LiveSession, type PageCursor, type ThemeMode, type ResumeTerminal, type TerminalOpenMode, type SessionOpenIn, type CardMenuMode, type StickerStyle, type TerminalLineHeight, type ChatContentWidth, type IslandCompactStyle } from "../api";
+import { availableTerminals, exportDiagLog, leadWorkflowInstalled, setLeadWorkflow, getLiveSessionsPage, listAgents, agentName, setArchived, type AgentId, type AgentDescriptor, type LiveSession, type PageCursor, type ThemeMode, type ResumeTerminal, type SessionOpenIn, type CardMenuMode, type StickerStyle, type TerminalLineHeight, type ChatContentWidth, type IslandCompactStyle } from "../api";
 import { folderName } from "../paths";
 import { fmtAgo } from "./sticker/helpers";
 import { useUpdate, type UpdateStatus } from "../useUpdate";
@@ -209,6 +209,7 @@ export function GeneralSection() {
   const autoUpdateOn = settings?.auto_update_enabled ?? true;
   const chatOn = settings?.chat_enabled ?? true;
   const keepAwakeOn = settings?.keep_awake_while_running ?? true;
+  const browserAgentOn = settings?.browser_agent ?? true;
   const leadAwakeOn = settings?.keep_awake_for_lead_gate ?? true;
   const toggleLeadAwake = () => patch({ keep_awake_for_lead_gate: !leadAwakeOn });
   const [leadOn, setLeadOn] = useState<boolean | null>(null);
@@ -283,6 +284,13 @@ export function GeneralSection() {
           </div>
           <Switch checked={keepAwakeOn} onChange={toggleKeepAwake} label={t.settings.keepAwake} />
         </div>}
+        <div className="row">
+          <div className="row-text">
+            <div className="row-label">{t.settings.browserAgent}</div>
+            <div className="row-desc">{t.settings.browserAgentDesc}</div>
+          </div>
+          <Switch checked={browserAgentOn} onChange={() => patch({ browser_agent: !browserAgentOn })} label={t.settings.browserAgent} />
+        </div>
       </div>
 
       {/* Lead 工作流（2026-11-09）：开关状态以「是否真的装着」为准。 */}
@@ -400,7 +408,7 @@ function LaunchDefaultRows({ agent }: { agent: AgentDescriptor }) {
   );
 }
 
-function SessionsSection() {
+export function SessionsSection() {
   const t = useT();
   const [settings, patch, patchError, clearPatchError] = useSettingsState();
   const [availTerms, setAvailTerms] = useState<ResumeTerminal[] | null>(null);
@@ -414,9 +422,6 @@ function SessionsSection() {
   };
   useEffect(reloadAgents, []);
   useAgentListRefresh(reloadAgents); // 装完新 agent 立刻反映
-  const previewOn = settings?.preview_enabled ?? true;
-  const togglePreview = () => patch({ preview_enabled: !previewOn });
-  const browserAgentOn = settings?.browser_agent ?? true;
   const chatOn = settings?.chat_enabled ?? true;
   // 终端选项按平台给，再用后端探测到的「本机实际可用」列表过滤（未装的不列出）。
   const platformOpts = IS_MAC ? RESUME_TERM_OPTIONS_MAC : resumeTermOptionsWin(t);
@@ -516,36 +521,11 @@ function SessionsSection() {
         )}
       </div>
 
+      {/* 原「卡片」组：「对话预览」「打开方式」只有已下线的贴纸在读（UI 调研 shell #2，拨了没反应），
+          关卡 A 定案删掉，字段留在 settings.json 照常读写；侧栏 ⋯ 仍用卡片菜单，组名改叫「会话列表」。
+          浏览器那项和卡片无关，挪去通用分区「运行」组。 */}
       <div className="sec-caption">{t.settings.cardsGroup}</div>
       <div className="row-card">
-        <div className="row">
-          <div className="row-text">
-            <div className="row-label">{t.settings.preview}</div>
-            <div className="row-desc">{t.settings.previewDesc}</div>
-          </div>
-          <Switch checked={previewOn} onChange={togglePreview} label={t.settings.preview} />
-        </div>
-        <div className="row">
-          <div className="row-text">
-            <div className="row-label">{t.settings.browserAgent}</div>
-            <div className="row-desc">{t.settings.browserAgentDesc}</div>
-          </div>
-          <Switch checked={browserAgentOn} onChange={() => patch({ browser_agent: !browserAgentOn })} label={t.settings.browserAgent} />
-        </div>
-        <div className="row">
-          <div className="row-text">
-            <div className="row-label">{t.settings.terminalOpen}</div>
-            <div className="row-desc">{t.settings.terminalOpenDesc}</div>
-          </div>
-          <Dropdown
-            value={settings?.terminal_open_mode ?? "card"}
-            options={[
-              { value: "card" as const, label: t.settings.openModeCard },
-              { value: "button" as const, label: t.settings.openModeButton },
-            ]}
-            onChange={(v: TerminalOpenMode) => patch({ terminal_open_mode: v })}
-          />
-        </div>
         <div className="row">
           <div className="row-text">
             <div className="row-label">{t.settings.cardMenu}</div>
