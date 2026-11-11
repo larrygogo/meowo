@@ -714,6 +714,9 @@ export const zh = {
     branchAhead: (n: number) => `领先远程 ${n} 个提交`,
     branchBehind: (n: number) => `落后远程 ${n} 个提交`,
     uncommitted: (files: number) => `${files} 个文件有未提交的改动`,
+    // 侧栏会话行的 PR / CI 状态点（UI 优化 #54），状态词沿用 prState 与 forge.checkState。
+    sidebarPr: (n: number, state: string) => `PR #${n} ${state}`,
+    sidebarCi: (state: string) => `CI ${state}`,
     terminalReady: "会话断开后可在这里恢复继续",
     terminalExternal: "会话在外部终端运行，这里只同步显示对话",
     terminalStart: "恢复会话",

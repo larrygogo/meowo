@@ -953,3 +953,6 @@ fn 目标判定_fork_工作流_认_gh_set_default_head_带_fork_owner() {
     let create = fake.calls.lock().unwrap().iter().find(|c| c.starts_with("pr create")).cloned().unwrap();
     assert!(create.ends_with("--base main --head larrygogo:meowo/drill --repo someone-else/meowo-pr-drill"), "{create}");
 }
+
+// 侧栏 PR / CI 与改动数的节流（UI 优化 #54），单独一个文件。
+mod badge;

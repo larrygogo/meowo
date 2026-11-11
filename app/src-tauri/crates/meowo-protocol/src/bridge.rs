@@ -81,6 +81,12 @@ bridged_args!(HideWorkspaceArgs { cwd: String });
 
 bridged_args!(GitDiffSummaryArgs { cwd: String });
 
+// 侧栏会话行的 PR / CI 与改动数（UI 优化 #54）：一次带上可见会话的全部工作目录（去重后）。
+bridged_args!(SidebarGitBadgesArgs {
+    #[cfg_attr(test, ts(type = "readonly string[]"))]
+    cwds: Vec<String>
+});
+
 bridged_args!(FileMentionCandidatesArgs {
     cwd: String,
     query: String

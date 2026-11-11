@@ -23,6 +23,9 @@ use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+pub(crate) mod badge;
+pub(crate) use badge::sidebar_git_badges_for;
+
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
