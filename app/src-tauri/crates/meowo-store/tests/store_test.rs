@@ -417,8 +417,8 @@ fn attachment_instruction_is_stripped_from_title() {
             sid,
             r"重点看这张
 请读取并结合以下本地附件完成任务（图片请使用图像读取能力）：
-- C:	mp.png
-- C:	mp.png",
+- C:\tmp\a.png
+- C:\tmp\b.png",
             300,
         )
         .unwrap();
@@ -435,7 +435,7 @@ fn attachment_only_prompt_keeps_placeholder_title() {
         .on_user_prompt(
             sid,
             r"请读取并结合以下本地附件完成任务（图片请使用图像读取能力）：
-- C:	mp.png",
+- C:\tmp\a.png",
             300,
         )
         .unwrap();

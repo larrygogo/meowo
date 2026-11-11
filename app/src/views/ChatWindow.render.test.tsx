@@ -1083,7 +1083,7 @@ describe("ChatWindow", () => {
       if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
       if (command === "agent_chat_ui") return Promise.resolve(chatUi("claude"));
       if (command === "list_agents") return Promise.resolve(descriptors(["claude"]));
-      if (command === "write_managed_terminal" && (args as { data?: string } | undefined)?.data === "[Z") {
+      if (command === "write_managed_terminal" && (args as { data?: string } | undefined)?.data === "\x1b[Z") {
         // CLI 收到 Shift+Tab 后重绘出新指示。
         out += screenText;
       }

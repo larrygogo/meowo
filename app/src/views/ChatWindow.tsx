@@ -816,7 +816,7 @@ export function ChatWindow() {
         // 同键开合（VS Code/Slack 惯例）：已开着时再按一次是「收起」，不是无操作。
         setSwitcherOpen((open) => !open);
       } else if (e.code === "KeyB") {
-        // 焦点在托管终端里的 Ctrl+B 归 claude（转后台），xterm 已经发了 ，这里不再收侧栏。
+        // 焦点在托管终端里的 Ctrl+B 归 claude（转后台），xterm 已经发了 \x02（Ctrl+B 的控制字节），这里不再收侧栏。
         if (!isSidebarToggleKey(e, document.activeElement)) return;
         e.preventDefault();
         toggleSidebarRef.current();
@@ -3660,7 +3660,7 @@ export function ChatWindow() {
     terminalMenuOpenRef.current = false;
     terminalMenuSeenRef.current = false;
     setTerminalMenuOpen(false);
-    void writeInterruptKeys((data) => writeManagedTerminal(sessionId, data), "", wanted.searched ? 2 : 1).catch(() => {});
+    void writeInterruptKeys((data) => writeManagedTerminal(sessionId, data), "\x1b", wanted.searched ? 2 : 1).catch(() => {});
     setSendError(message);
   };
   /// 菜单迟迟认不出（或搜索后没再画出来）：到点收尾并说清楚，不留一个永远转圈的按钮。
