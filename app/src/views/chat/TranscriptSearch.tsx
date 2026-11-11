@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { useDismissable } from "../../hooks/useDismissable";
 import { useT } from "../../i18n";
+import { Icon } from "../../icons/Icon";
+import { icChevronUp } from "../../icons/glyphs.chat";
+import { icChevronDown } from "../../icons/glyphs";
 
 /// 一次命中的全部矩形（视口坐标，画叠层时换算成宿主坐标）。
 type Match = { boxes: { top: number; left: number; width: number; height: number }[] };
@@ -183,10 +186,10 @@ export function TranscriptSearch({ scrollRef, onClose }: { scrollRef: RefObject<
         </span>
         {capped && <span className="chat-search-note">{t.chat.searchMarksCapped(MAX_MARKS)}</span>}
         <button type="button" className="chat-search-btn" aria-label={t.chat.searchPrev} data-tip={t.chat.searchPrev} onClick={() => step(-1)}>
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m18 15-6-6-6 6" /></svg>
+          <Icon glyph={icChevronUp} size={12} />
         </button>
         <button type="button" className="chat-search-btn" aria-label={t.chat.searchNext} data-tip={t.chat.searchNext} onClick={() => step(1)}>
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+          <Icon glyph={icChevronDown} size={12} />
         </button>
         <button type="button" className="chat-search-btn is-close" aria-label={t.chat.close} onClick={onClose}>×</button>
       </div>

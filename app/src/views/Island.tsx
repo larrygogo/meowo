@@ -15,6 +15,8 @@ import { AgentRing, Clock, Eyes, EYES_BLUSH_AFTER_MS, EYES_BUSY_AT, UsageRing, u
 
 export type { IslandTone } from "./island/islandParts";
 import type { IslandCompactStyle } from "../api";
+import { Icon } from "../icons/Icon";
+import { icCheck, icClose, icExclamation, icQuestion, icShieldAlert } from "../icons/glyphs";
 export type { IslandCompactStyle };
 
 /// 刘海两侧「耳朵」的宽度（逻辑像素）。窗口宽 = 刘海本体 + 2 × 耳朵。
@@ -186,18 +188,8 @@ export function sessionTitle(item: Item, fallback: string): string {
 
 /// 提醒左侧的状态图标：审批是盾牌、提问是问号、跑完是对勾、出错是感叹号。
 function AlertIcon({ kind }: { kind: string }) {
-  const path = kind === "question"
-    ? "M9.2 9a2.9 2.9 0 1 1 4.1 2.6c-.8.4-1.3 1-1.3 1.9v.5M12 17.2v.1"
-    : kind === "waiting"
-    ? "M5 12.5l4.2 4.2L19 7"
-    : kind === "error"
-    ? "M12 7v6M12 16.5v.1"
-    : "M12 3l8 4v5c0 4.5-3.3 8-8 9-4.7-1-8-4.5-8-9V7zM12 9v4M12 16.2v.1";
-  return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d={path} />
-    </svg>
-  );
+  const glyph = kind === "question" ? icQuestion : kind === "waiting" ? icCheck : kind === "error" ? icExclamation : icShieldAlert;
+  return <Icon glyph={glyph} size={14} />;
 }
 
 /** 极简模式的细条：宽度与高度（逻辑像素）。贴着屏幕顶边，鼠标甩到顶上就能点到。 */
@@ -536,7 +528,7 @@ export function Island({
                   stop(event);
                   onDismissAlert();
                 }}
-              ><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg></button>
+              ><Icon glyph={icClose} size={12} /></button>
             )}
           </>
         ) : compact()}

@@ -2,6 +2,9 @@ import { CheckIcon, ChevronDownIcon } from "../sticker/icons";
 import { pathKey, tildePath } from "../../paths";
 import { useMenuPopup } from "../menu";
 import { useT } from "../../i18n";
+import { Icon } from "../../icons/Icon";
+import { icFolder } from "../../icons/glyphs";
+import { icFolderPlus } from "../../icons/glyphs.chat";
 
 /// 新建会话页的工作区选择（对照 Kimi Code：输入框上方单独一个「📁 名字 ⌃」，菜单分
 /// 「最近的文件夹」一节——名字白、路径灰，选中项整行底色加灰勾——再隔一条线放「选择文件夹…」）。
@@ -12,10 +15,7 @@ const baseName = (dir: string) => dir.split(/[\\/]/).filter(Boolean).pop() ?? di
 
 function FolderIcon({ plus = false }: { plus?: boolean }) {
   return (
-    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
-      {plus && <path d="M12 10v6M9 13h6" />}
-    </svg>
+    <Icon glyph={plus ? icFolderPlus : icFolder} size={14} />
   );
 }
 

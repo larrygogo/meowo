@@ -4,6 +4,8 @@ import { folderName } from "../../paths";
 import { openProjectDir, openNewSessionWindow } from "../../api";
 import { remoteUi } from "../../remoteMode";
 import { useWorkspaceMenu } from "./WorkspaceDirectory";
+import { Icon } from "../../icons/Icon";
+import { icFolder, icPlus } from "../../icons/glyphs";
 
 /// 工作区分组头（对照 Kimi 的 WorkspaceHome）：工作区名 + 主目录 +
 /// 操作入口（打开目录、新建会话）。
@@ -46,7 +48,7 @@ export const WorkspaceHeader = memo(function WorkspaceHeader({ cwd, attention = 
             void openProjectDir(cwd).catch(() => {});
           }}
         >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 7v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-6l-2-2H5a2 2 0 0 0-2 2z" /></svg>
+          <Icon glyph={icFolder} size={12} />
         </button>
       )}
       {cwd && (
@@ -60,7 +62,7 @@ export const WorkspaceHeader = memo(function WorkspaceHeader({ cwd, attention = 
             void openNewSessionWindow({ cwd }).catch(() => {});
           }}
         >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M12 5v14M5 12h14" /></svg>
+          <Icon glyph={icPlus} size={12} />
         </button>
       )}
       {trailing}

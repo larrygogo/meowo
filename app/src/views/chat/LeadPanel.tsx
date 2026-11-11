@@ -14,6 +14,9 @@ import { useVisibleInterval } from "../../hooks/useVisibleInterval";
 import { ChatMarkdown } from "../ChatMarkdown";
 import { ApprovalCard } from "./ApprovalCard";
 import { useTablist } from "../useTablist";
+import { Icon } from "../../icons/Icon";
+import { icCircle, icFlag, icMinus } from "../../icons/glyphs.chat";
+import { icCheck } from "../../icons/glyphs";
 
 /// 轮询间隔：任务文件由 agent 随手改写，没有推送通道；读的是本地几个小文件，开销可忽略。
 const POLL_MS = 4000;
@@ -66,9 +69,7 @@ function checkRank(c: LeadTaskDto["checks"][number]): number {
 
 function LeadIcon({ className }: { className: string }) {
   return (
-    <svg className={className} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M4 21V4h11l-1.5 4L15 12H4" />
-    </svg>
+    <Icon glyph={icFlag} size={16} className={className} />
   );
 }
 
@@ -103,9 +104,9 @@ function LeadRing({ passed, total }: { passed: number; total: number }) {
 }
 
 const CHECK_ICONS = {
-  pass: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>,
-  pending: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><circle cx="12" cy="12" r="7.5" /></svg>,
-  waived: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><path d="M7 12h10" /></svg>,
+  pass: <Icon glyph={icCheck} size={14} />,
+  pending: <Icon glyph={icCircle} size={14} />,
+  waived: <Icon glyph={icMinus} size={14} />,
 };
 
 const LEAD_SECTIONS = ["checks", "spec", "decisions", "progress"] as const;

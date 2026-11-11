@@ -13,13 +13,14 @@ import { ArchiveIcon, CheckIcon, TopIcon } from "../sticker/icons";
 
 function MoreIcon() {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-      <circle cx="5" cy="12" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="19" cy="12" r="1.6" />
-    </svg>
+    <Icon glyph={icMore} size={16} />
   );
 }
 import { agentAssets, tintStyle } from "../../providers";
 import { folderName } from "../../paths";
+import { Icon } from "../../icons/Icon";
+import { icCopy, icGitBranch, icText } from "../../icons/glyphs.chat";
+import { icDownload, icFolder, icMore, icPencil, icSearch, icTerminal } from "../../icons/glyphs";
 
 /** 标题胶囊 + 会话动作菜单（Kimi 式）：标题本身是触发钮（▾），置顶/打开目录/重命名/
  *  归档都收进菜单——标题栏只留「正在看哪条 + 状态 + 视图切换」。重命名走独立 modal
@@ -51,14 +52,14 @@ export function ChatTitleMenu({ title, provider, cwd, archived, archiving, starr
 }) {
   const { open, setOpen, pos, ref, btnRef, menuRef, toggle, onKeyDown } = useMenuPopup({ align: "left" });
   const overflow = useContext(TitleOverflowContext);
-  const { Icon } = agentAssets(provider);
+  const { Icon: AgentIcon } = agentAssets(provider);
   // 先收菜单再执行动作：动作可能弹确认/切会话，菜单不该压在那些之上。
   const pick = (action: () => void) => { setOpen(false); btnRef.current?.focus(); action(); };
   return (
     <div className="dd chat-title-menu" ref={ref} onKeyDown={onKeyDown}>
       {/* 「项目 / 标题 ⋯」面包屑（对照 Kimi 标题栏）：标题与项目都是拖窗区，动作收在 ⋯ 里。
           前面留一枚 agent 小图标：Meowo 托管多家 CLI，正在跟谁说话要一眼可见（Kimi 只有一家）。 */}
-      <span className="chat-title-agent" style={tintStyle(provider, true)} aria-hidden="true" data-tauri-drag-region><Icon /></span>
+      <span className="chat-title-agent" style={tintStyle(provider, true)} aria-hidden="true" data-tauri-drag-region><AgentIcon /></span>
       {cwd && <>
         <span className="chat-title-project" data-tip={cwd} data-tauri-drag-region>{folderName(cwd)}</span>
         <span className="chat-title-sep" aria-hidden="true" data-tauri-drag-region>/</span>
@@ -95,7 +96,7 @@ export function ChatTitleMenu({ title, provider, cwd, archived, archiving, starr
           {onSearch && (
             <button type="button" role="menuitem" className="dd-item" onClick={() => pick(onSearch)}>
               <span className="chat-title-action-ico">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.5-3.5" /></svg>
+                <Icon glyph={icSearch} size={14} />
               </span>
               <span className="dd-label">{t.chat.searchTranscript}</span>
             </button>
@@ -106,21 +107,21 @@ export function ChatTitleMenu({ title, provider, cwd, archived, archiving, starr
             // 菜单内刻意用原生 title：TooltipLayer 对 .dd-menu 区域静默（自绘提示会糊在菜单上）。
             <button type="button" role="menuitem" className="dd-item" title={cwd} onClick={() => pick(() => void openProjectDir(cwd).catch(() => {}))}>
               <span className="chat-title-action-ico">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" /></svg>
+                <Icon glyph={icFolder} size={14} />
               </span>
               <span className="dd-label">{t.sticker.openProjectDir}</span>
             </button>
           )}
           <button type="button" role="menuitem" className="dd-item" onClick={() => pick(onRename)}>
             <span className="chat-title-action-ico">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z" /></svg>
+              <Icon glyph={icPencil} size={14} />
             </span>
             <span className="dd-label">{t.sticker.renameTitle}</span>
           </button>
           {onFork && (
             <button type="button" role="menuitem" className="dd-item" disabled={forkDisabled} title={forkDisabled ? t.chat.forkBusy : t.chat.forkTip} onClick={() => pick(onFork)}>
               <span className="chat-title-action-ico">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="6" cy="5" r="2" /><circle cx="18" cy="5" r="2" /><circle cx="6" cy="19" r="2" /><path d="M6 7v10" /><path d="M18 7c0 5-6 5-11.5 10" /></svg>
+                <Icon glyph={icGitBranch} size={14} />
               </span>
               <span className="dd-label">{t.chat.forkSession}</span>
             </button>
@@ -128,7 +129,7 @@ export function ChatTitleMenu({ title, provider, cwd, archived, archiving, starr
           {onCopyResume && (
             <button type="button" role="menuitem" className="dd-item" title={t.chat.resumeCommandTip} onClick={() => pick(onCopyResume)}>
               <span className="chat-title-action-ico">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m4 17 6-6-6-6" /><path d="M12 19h8" /></svg>
+                <Icon glyph={icTerminal} size={14} />
               </span>
               <span className="dd-label">{t.chat.copyResumeCommand}</span>
             </button>
@@ -136,7 +137,7 @@ export function ChatTitleMenu({ title, provider, cwd, archived, archiving, starr
           {onCopyConversation && (
             <button type="button" role="menuitem" className="dd-item" onClick={() => pick(onCopyConversation)}>
               <span className="chat-title-action-ico">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2" /></svg>
+                <Icon glyph={icCopy} size={14} />
               </span>
               <span className="dd-label">{t.chat.copyConversation}</span>
             </button>
@@ -144,7 +145,7 @@ export function ChatTitleMenu({ title, provider, cwd, archived, archiving, starr
           {onCopyFinalAnswer && (
             <button type="button" role="menuitem" className="dd-item" onClick={() => pick(onCopyFinalAnswer)}>
               <span className="chat-title-action-ico">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h7" /></svg>
+                <Icon glyph={icText} size={14} />
               </span>
               <span className="dd-label">{t.chat.copyFinalAnswer}</span>
             </button>
@@ -152,7 +153,7 @@ export function ChatTitleMenu({ title, provider, cwd, archived, archiving, starr
           {onExportConversation && (
             <button type="button" role="menuitem" className="dd-item" onClick={() => pick(onExportConversation)}>
               <span className="chat-title-action-ico">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 4v11M7.5 10.5 12 15l4.5-4.5M5 19h14" /></svg>
+                <Icon glyph={icDownload} size={14} />
               </span>
               <span className="dd-label">{t.chat.exportConversation}</span>
             </button>
@@ -170,10 +171,10 @@ export function ChatTitleMenu({ title, provider, cwd, archived, archiving, starr
 /** 首读回来之前的标题占位：与 ChatTitleMenu 同一套版式（agent 图标 + 标题 + 项目名），
  *  数据取自会话列表已知的信息。不可点——菜单里的动作要等会话数据到了才有意义。 */
 export function ChatTitlePlaceholder({ title, provider, cwd }: { title: string; provider: string; cwd: string | null }) {
-  const { Icon } = agentAssets(provider);
+  const { Icon: AgentIcon } = agentAssets(provider);
   return (
     <div className="dd chat-title-menu" aria-busy="true" data-tauri-drag-region>
-      <span className="chat-title-agent" style={tintStyle(provider, true)} aria-hidden="true" data-tauri-drag-region><Icon /></span>
+      <span className="chat-title-agent" style={tintStyle(provider, true)} aria-hidden="true" data-tauri-drag-region><AgentIcon /></span>
       {cwd && <>
         <span className="chat-title-project" data-tip={cwd} data-tauri-drag-region>{folderName(cwd)}</span>
         <span className="chat-title-sep" aria-hidden="true" data-tauri-drag-region>/</span>

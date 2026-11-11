@@ -12,6 +12,9 @@ import { runBatchCleanup } from "../../worktreeCleanup";
 import { folderName, pathKey } from "../../paths";
 import { useMenuPopup } from "../menu";
 import { CheckIcon } from "../sticker/icons";
+import { Icon } from "../../icons/Icon";
+import { icArrowUpRight, icChevronLeft, icUndo } from "../../icons/glyphs.chat";
+import { icChevronDown, icCircleCheck, icSearch } from "../../icons/glyphs";
 
 type Status = "all" | "open" | "done";
 type Filters = { workspaces: string[]; status: Status; days: number | null };
@@ -31,7 +34,7 @@ function fmtStamp(ms: number | null | undefined): string | null {
 }
 
 const Chev = () => (
-  <svg className="sa-select-chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+  <Icon glyph={icChevronDown} size={12} className="sa-select-chev" />
 );
 
 /// 单选下拉（状态 / 更新时间）：样式同 Kimi 的 .sa-select，菜单走 useMenuPopup（Esc / 点外关闭）。
@@ -123,7 +126,7 @@ function WorkspacePicker({ options, value, onChange }: {
       {open && (
         <div className="dd-menu sa-menu sa-ws-menu" role="listbox" aria-multiselectable="true" ref={menuRef} style={{ position: "fixed", top: pos.top, bottom: pos.bottom, left: pos.left }}>
           <div className="sa-search">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.3" /><path d="m15.5 15.5 4 4" /></svg>
+            <Icon glyph={icSearch} size={14} />
             <input className="sa-search-input" autoFocus value={query} placeholder={t.admin.searchWorkspace} aria-label={t.admin.searchWorkspace} onChange={(event) => setQuery(event.target.value)} />
           </div>
           {/* 多选：每项前一个复选框（与表格同款 .sa-cb），没选是空框、选中填色打勾——此前只在选中时
@@ -323,7 +326,7 @@ export function SessionAdmin({ onBack, onOpen, initialWorkspaces = [], initialSt
     <div className="session-admin">
       <header className="sa-head" data-tauri-drag-region>
         <button type="button" className="sa-back" onClick={onBack} aria-label={t.admin.back} data-tip={t.admin.back}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg>
+          <Icon glyph={icChevronLeft} size={16} />
         </button>
         <h1 className="sa-title">{t.admin.title}</h1>
       </header>
@@ -427,7 +430,7 @@ export function SessionAdmin({ onBack, onOpen, initialWorkspaces = [], initialSt
                         <td>
                           <span className="sa-act">
                             <button type="button" className="sa-icon-btn" aria-label={t.admin.open} data-tip={t.admin.open} onClick={() => onOpen(row.session.id)}>
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M7 17 17 7M9 7h8v8" /></svg>
+                              <Icon glyph={icArrowUpRight} size={14} />
                             </button>
                             <button
                               type="button"
@@ -437,8 +440,8 @@ export function SessionAdmin({ onBack, onOpen, initialWorkspaces = [], initialSt
                               onClick={() => void batch([row.session.id], !row.archived)}
                             >
                               {row.archived
-                                ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M9 14 4 9l5-5" /><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" /></svg>
-                                : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><path d="m8.5 12.2 2.4 2.4 4.6-5" /></svg>}
+                                ? <Icon glyph={icUndo} size={14} />
+                                : <Icon glyph={icCircleCheck} size={14} />}
                             </button>
                           </span>
                         </td>

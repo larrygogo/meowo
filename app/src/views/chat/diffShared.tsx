@@ -3,6 +3,9 @@
 import type { GitDiffSummaryDto, RepoChangesDto } from "../../api";
 import { folderName } from "../../paths";
 import { normPath } from "./gitDiff";
+import { Icon } from "../../icons/Icon";
+import { icFile } from "../../icons/glyphs.chat";
+import { icFolder } from "../../icons/glyphs";
 
 /** 本会话改过这个文件吗：仓库根是准的，严格按「根/相对路径」比（touchedByPath 允许面板目录在根下面，
  *  那是给单仓库子目录用的宽松规则，在多仓库里会把别的仓库的同名文件算进来，做空复现）。 */
@@ -39,16 +42,12 @@ export function LineCounts({ file }: { file: { additions: number | null; deletio
 
 export function FolderIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-    </svg>
+    <Icon glyph={icFolder} size={14} />
   );
 }
 
 export function FileIcon() {
   return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" />
-    </svg>
+    <Icon glyph={icFile} size={12} />
   );
 }

@@ -30,6 +30,9 @@ import { remoteUi } from "../../remoteMode";
 import { runWorktreeRemoval } from "../../worktreeCleanup";
 import { AppModal } from "../AppModal";
 import { normPath } from "./gitDiff";
+import { Icon } from "../../icons/Icon";
+import { icArrowUp, icClock, icMinus } from "../../icons/glyphs.chat";
+import { icCheck, icClose, icRefresh } from "../../icons/glyphs";
 
 /// 轮询间隔：每个仓库最多 60 秒查一次 GitHub。
 export const FORGE_POLL_MS = 60_000;
@@ -453,27 +456,18 @@ export function ForgeBar({ repo, sessionCwd, sessionId, active, onChanged }: {
 }
 
 function CheckStateIcon({ state, label }: { state: string; label: string }) {
-  const path = state === "pass" ? "M5 12.5l4.5 4.5L19 7.5" : state === "fail" ? "M6 6l12 12M18 6L6 18" : state === "skipped" ? "M5 12h14" : "M12 7v5l3 2";
-  return (
-    <svg className="scm-check-icon" role="img" aria-label={label} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-      {state === "pending" && <circle cx="12" cy="12" r="8.5" />}
-      <path d={path} />
-    </svg>
-  );
+  const glyph = state === "pass" ? icCheck : state === "fail" ? icClose : state === "skipped" ? icMinus : icClock;
+  return <Icon glyph={glyph} size={12} className="scm-check-icon" label={label} />;
 }
 
 function PushIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M12 19V5" /><path d="M6 11l6-6 6 6" />
-    </svg>
+    <Icon glyph={icArrowUp} size={14} />
   );
 }
 
 function RefreshIcon() {
   return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M20 11a8 8 0 1 0-2.3 5.7" /><path d="M20 4v7h-7" />
-    </svg>
+    <Icon glyph={icRefresh} size={12} />
   );
 }

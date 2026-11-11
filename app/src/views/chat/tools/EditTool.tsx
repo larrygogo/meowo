@@ -8,6 +8,8 @@ import { OutputBlock } from "../terminalText";
 import { stripAnsi, type ToolResultItem, type ToolUseItem } from "../shared";
 import { languageForPath } from "../highlight";
 import { copyPlainText } from "../clipboard";
+import { Icon } from "../../../icons/Icon";
+import { icCopy } from "../../../icons/glyphs.chat";
 
 /// Edit/Write 工具：收起时只有摘要行；展开后是「文件 + 增删 + 复制」卡片头与着色 diff。
 export const EditTool = memo(function EditTool({ item, result }: { item: ToolUseItem; result?: ToolResultItem }) {
@@ -42,7 +44,7 @@ export const EditTool = memo(function EditTool({ item, result }: { item: ToolUse
               <span className="chat-edit-card-path">{toolSummary(item, cwd)}</span>
               {deltaView}
               <button type="button" className="chat-edit-card-copy" aria-label={t.chat.codeCopy} data-tip={t.chat.codeCopy} onClick={() => void copyPlainText(path)}>
-                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="8" y="8" width="11" height="12" rx="2" /><path d="M15 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h2" /></svg>
+                <Icon glyph={icCopy} size={12} />
               </button>
             </div>
             {detail?.kind === "edit" && detail.replace_all && <div className="chat-tool-note">{t.chat.toolReplaceAll}</div>}

@@ -7,6 +7,8 @@ import { TodoBadge } from "./TodoBadge";
 import { Transcript } from "./Transcript";
 import { durationText, type ToolUseItem } from "./shared";
 import { useRememberedOpen } from "./foldMemory";
+import { Icon } from "../../icons/Icon";
+import { icAgents } from "../../icons/glyphs.chat";
 
 /// 一次子任务委派。子任务的过程不在主 transcript 里（住在 provider 的侧车流），
 /// 故这里只在**用户展开时**才去取——一个会话可能派出几十个子任务，跟着历史轮询一起读
@@ -180,10 +182,7 @@ function SubagentBlockBody({ sessionId, item, outcome, settled, finishedAt }: Su
       <summary>
         {/* 在跑时图标本体脉冲:折叠状态下扫一眼就能看出「里面有活儿」,不必凑近读徽标小字。 */}
         <span className={"chat-subagent-icon" + (isRunning ? " is-running" : "")}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="5" r="2.4" /><circle cx="5.5" cy="18.5" r="2.4" /><circle cx="18.5" cy="18.5" r="2.4" />
-            <path d="M12 7.4v3.2M12 10.6H5.5v5.5M12 10.6h6.5v5.5" />
-          </svg>
+          <Icon glyph={icAgents} size={16} />
         </span>
         <span className="chat-subagent-label">{count > 1 ? t.chat.subagentBatch(count) : t.chat.subagent}</span>
         <span className="chat-subagent-desc">{subagent?.description || item.summary}</span>
