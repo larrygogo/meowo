@@ -901,7 +901,7 @@ button.stab {
    急不急交给闪烁——待交互静止，待决策/审批闪。旧版给 pending 单配琥珀，两个暖色反而难分。 */
 .run-badge--waiting,
 .run-badge--pending {
-  --bc: #ffa126; /* 主色：与「等待」状态点同值，同样不随主题变暗 */
+  --bc: #ffb829; /* 主色：与「等待」状态点同值，同样不随主题变暗 */
   --bc-track: rgba(255, 161, 38, 0.22);
   --bc-fade: rgba(255, 161, 38, 0);
   --bc-text: #2a1d02;
@@ -7027,8 +7027,8 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
      和对话窗深色侧栏的状态点也对不上。在岛的作用域里重定义，下面 --isl-* 与组件里直接引用
      --cc-ok-vivid 的环（islandParts.tsx STATE_COLORS）都跟着取到这组。 */
   --cc-ok-vivid: #2fcfa0;
-  --cc-warn-vivid: #ffa126;
-  --cc-err-vivid: #ff5c57;
+  --cc-warn-vivid: #ffb829;
+  --cc-err-vivid: #ee4b55;
   --isl-ink: #000;
   --isl-text: #f1f2ec;
   --isl-text-2: #b8bab0;
@@ -7044,7 +7044,7 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
   --isl-on-lime: #1c2600;
   --isl-ok: var(--cc-ok-vivid);
   /* 额度警示（用到六成）单独一个变量，不表示会话状态。 */
-  --isl-warn: #ffa126;
+  --isl-warn: #ffb829;
   /* 会话状态「待处理」「等待输入」各一个变量，取值与对话窗侧栏状态点同源（.chat-sidebar-dot 都是
      --cc-warn-vivid，红绿灯语言：琥珀 = 要你，急不急靠闪烁）。同一行里环和字必须同色，
      否则像两个状态（i7 实拍 panel-7-zh-dpr2.png）。 */
