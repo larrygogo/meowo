@@ -4786,9 +4786,14 @@ export function ChatWindow() {
               }
             }
             // ↑ 取回历史消息:空框(或已在浏览态)时 ↑ 往前翻,↓ 往回,翻回最新回到空框。
-            // 有草稿时 ↑ 保持原生光标语义,不抢多行编辑。
+            // 有草稿时 ↑ 保持原生光标语义,不抢多行编辑。浏览态下也只在光标位于首行时才翻上一条、
+            // 末行时才翻下一条（shell 与 Claude Code CLI 惯例）：召回一条多行提示词想改中间一行，
+            // 按 ↑ 就被换成另一条（UI 调研 chat #12）。按逻辑行（换行符）判，不按软换行。
+            const caret = event.currentTarget;
+            const onFirstLine = !caret.value.slice(0, caret.selectionStart).includes("\n");
+            const onLastLine = !caret.value.slice(caret.selectionEnd).includes("\n");
             if (event.key === "ArrowUp" && !event.nativeEvent.isComposing && userHistory.length > 0
-              && (historyNavRef.current !== null || !prompt.trim())) {
+              && (historyNavRef.current !== null || !prompt.trim()) && onFirstLine) {
               const at = historyNavRef.current?.index ?? userHistory.length;
               if (at > 0) {
                 event.preventDefault();
@@ -4802,7 +4807,7 @@ export function ChatWindow() {
               }
               return;
             }
-            if (event.key === "ArrowDown" && historyNavRef.current !== null && !event.nativeEvent.isComposing) {
+            if (event.key === "ArrowDown" && historyNavRef.current !== null && !event.nativeEvent.isComposing && onLastLine) {
               event.preventDefault();
               const next = historyNavRef.current.index + 1;
               if (next >= userHistory.length) {
