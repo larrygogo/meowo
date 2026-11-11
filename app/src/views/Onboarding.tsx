@@ -11,6 +11,8 @@ import { Dropdown } from "./menu";
 import { useSettingsState } from "./settings/state";
 import logoUrl from "../../src-tauri/icons/128x128.png";
 import { useEscClose } from "../hooks/useEscClose";
+import { Icon } from "../icons/Icon";
+import { icClose, icContrast, icGlobe } from "../icons/glyphs";
 
 type Dict = ReturnType<typeof useT>;
 
@@ -64,13 +66,13 @@ function HeroIsland() {
   );
 }
 
-// 设置行前置图标：一眼分辨每项在调什么（尤其语言）。lucide 风格、17px、描边。
+// 设置行前置图标：一眼分辨每项在调什么（尤其语言）。lucide 风格、16px、描边。
 const SI = {
   lang: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><line x1="3" y1="12" x2="21" y2="12" /><path d="M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18z" /></svg>
+    <Icon glyph={icGlobe} size={16} />
   ),
   theme: (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor" stroke="none" /></svg>
+    <Icon glyph={icContrast} size={16} />
   ),
 };
 
@@ -194,10 +196,7 @@ export function Onboarding() {
         {/* reopen 提示贴跳过路径：页尾那句只有走完最后一步的人才看得到，跳过者只经过这里。 */}
         {!isLast && <span className="ob-reopen ob-reopen-bar">{t.onboarding.window.reopenHint}</span>}
         <button className="winclose" data-tip={t.settings.close} aria-label={t.settings.close} onClick={dismiss}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-            <line x1="6" y1="6" x2="18" y2="18" />
-            <line x1="18" y1="6" x2="6" y2="18" />
-          </svg>
+          <Icon glyph={icClose} size={14} />
         </button>
       </div>
 

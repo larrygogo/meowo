@@ -29,6 +29,9 @@ import { RemoteSettings } from "../mobile/RemoteSettings";
 import { reconcileRows, sameRefs, type RowCache } from "../rowCache";
 import type { Dict } from "../i18n/zh";
 import { ArchivedWorktreePrompt, WorktreeRemoveButton, runBatchCleanup, type RemovalOutcome } from "../worktreeCleanup";
+import { Icon, type Glyph } from "../icons/Icon";
+import { icChevronsDownUp, icChevronsUpDown, icClock, icFilter, icFolderTree, icGrip, icMenu, icMinus, icPlusCircle, icSidebarLeft, icSliders } from "../icons/glyphs.chat";
+import { icCheck, icFolder, icFolderOpen, icSearch, icSettings } from "../icons/glyphs";
 
 /** 每翻一页新增的会话数。滚到底自动加载下一页，直到后端带回 next_cursor = null 为止。 */
 const PAGE_LIMIT = 60;
@@ -87,17 +90,15 @@ function EditorInput({ initial, placeholder, onSubmit, onCancel }: {
 }
 
 /** 视图/排序菜单里每个选项前的图标（对照 Kimi Code 侧栏菜单：图标 + 文案 + 右侧勾选）。 */
-const SF_ICON_PATHS: Record<GroupMode | SortMode, string> = {
-  none: "M5 7h14M5 12h14M5 17h14",
-  dir: "M6 4v12a2 2 0 0 0 2 2h4M6 9h6M15 6.5h4v4h-4zM15 15.5h4v4h-4z",
-  recent: "M12 4a8 8 0 1 0 0 16a8 8 0 1 0 0-16M12 8v4l2.5 2",
-  manual: "M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01",
+const SF_ICON_PATHS: Record<GroupMode | SortMode, Glyph> = {
+  none: icMenu,
+  dir: icFolderTree,
+  recent: icClock,
+  manual: icGrip,
 };
 function SfIcon({ name }: { name: keyof typeof SF_ICON_PATHS }) {
   return (
-    <svg className="sf-ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d={SF_ICON_PATHS[name]} />
-    </svg>
+    <Icon glyph={SF_ICON_PATHS[name]} size={16} className="sf-ico" />
   );
 }
 
@@ -146,11 +147,7 @@ function SidebarFilterMenu({ groupMode, groupLabels, sortMode, sortLabels, onGro
         aria-expanded={open}
         onClick={toggle}
       >
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
-          <path d="M8 4v3.2M8 12.4v7.6M16 4v7.6M16 16.8V20" />
-          <circle cx="8" cy="9.8" r="2.2" />
-          <circle cx="16" cy="14.2" r="2.2" />
-        </svg>
+        <Icon glyph={icFilter} size={14} />
       </button>
       {open && (
         <div className="dd-menu sf-menu" role="menu" ref={menuRef} style={{ position: "fixed", top: pos.top, bottom: pos.bottom, right: pos.right }}>
@@ -161,7 +158,7 @@ function SidebarFilterMenu({ groupMode, groupLabels, sortMode, sortLabels, onGro
           {onAdmin && <>
             <div className="sf-sep" role="separator" />
             <button type="button" role="menuitem" className="dd-item sf-opt" onClick={() => { setOpen(false); onAdmin(); }}>
-              <svg className="sf-ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" aria-hidden="true"><path d="M4 7h9M17 7h3M4 17h3M11 17h9" /><circle cx="15" cy="7" r="2" /><circle cx="9" cy="17" r="2" /></svg>
+              <Icon glyph={icSliders} size={16} className="sf-ico" />
               <span className="dd-label">{t.admin.entry}</span>
             </button>
           </>}
@@ -968,10 +965,10 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
       >
         <span className="chat-sidebar-check" aria-hidden="true">
           {state === "true" && (
-            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round"><path d="M4.5 12.5l5 5 10-11" /></svg>
+            <Icon glyph={icCheck} size={12} />
           )}
           {state === "mixed" && (
-            <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.4" strokeLinecap="round"><path d="M6 12h12" /></svg>
+            <Icon glyph={icMinus} size={12} />
           )}
         </span>
       </button>
@@ -1218,7 +1215,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
           >
             <span className="chat-sidebar-check" aria-hidden="true">
               {selectedIds.has(item.session.id) && (
-                <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round"><path d="M4.5 12.5l5 5 10-11" /></svg>
+                <Icon glyph={icCheck} size={12} />
               )}
             </span>
           </span>
@@ -1257,10 +1254,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
             data-tip={tipWithKeys(t.chat.sidebarCollapse, "Ctrl+B")}
             onClick={onCollapse}
           >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round">
-              <rect x="3.5" y="4.5" width="17" height="15" rx="3" />
-              <path d="M9.5 4.5v15" />
-            </svg>
+            <Icon glyph={icSidebarLeft} size={14} />
           </button>
         </div>
       )}
@@ -1275,20 +1269,14 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
           aria-current={newSessionActive ? "page" : undefined}
           onClick={() => void openNewSessionWindow().catch(() => {})}
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round">
-            <circle cx="12" cy="12" r="8.5" />
-            <path d="M12 8.5v7M8.5 12h7" />
-          </svg>
+          <Icon glyph={icPlusCircle} size={16} />
           <span>{t.sticker.newSession}</span>
         </button>
         {remoteSettings && <RemoteSettings />}
       </div>
       {/* 会话搜索（Ctrl/Cmd+F 聚焦）：标题/仓库名下沉后端 LIKE，与看板同一条通道。 */}
       <div className="chat-sidebar-search">
-        <svg className="chat-sidebar-search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
-          <circle cx="10.8" cy="10.8" r="6.3" />
-          <path d="m15.5 15.5 4 4" />
-        </svg>
+        <Icon glyph={icSearch} size={14} className="chat-sidebar-search-icon" />
         <input
           ref={(el) => { if (searchInputRef) searchInputRef.current = el; }}
           value={search}
@@ -1342,9 +1330,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
             data-tip={allGroupsFolded ? t.chat.sidebarUnfoldAll : t.chat.sidebarFoldAll}
             onClick={toggleAllFolded}
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              {allGroupsFolded ? <path d="M8 9l4-4 4 4M8 15l4 4 4-4" /> : <path d="M8 5l4 4 4-4M8 19l4-4 4 4" />}
-            </svg>
+            <Icon glyph={allGroupsFolded ? icChevronsUpDown : icChevronsDownUp} size={14} />
           </button>
         )}
         {!workspacesView && <SidebarFilterMenu
@@ -1484,11 +1470,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
                       onToggle={() => { if (!groupDrag.swallowClick()) toggleFolded(group.key); }}
                       leading={
                         // 对照 Kimi 的分组头：文件夹图标代替折叠箭头，折着是合上的文件夹。
-                        <svg className="chat-workspace-folder" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                          {isFolded
-                            ? <path d="M3.5 7v10a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2V9.5a2 2 0 0 0-2-2h-6l-2-2.5h-5a2 2 0 0 0-2 2z" />
-                            : <path d="M3.5 17V7a2 2 0 0 1 2-2h5l2 2.5h6a2 2 0 0 1 2 2V11M3.5 17l2.2-5.2a1.5 1.5 0 0 1 1.4-.9H20a1 1 0 0 1 .9 1.4L18.6 18a1.5 1.5 0 0 1-1.4 1H5.5a2 2 0 0 1-2-2z" />}
-                        </svg>
+                        <Icon glyph={isFolded ? icFolder : icFolderOpen} size={16} className="chat-workspace-folder" />
                       }
                       summary={groupDot}
                       onFilter={setDirFilter}
@@ -1612,10 +1594,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
           className="chat-sidebar-settings"
           onClick={() => void invoke("open_settings").catch(() => {})}
         >
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
-            <circle cx="12" cy="12" r="3.2" />
-            <path d="M19.4 15a1.6 1.6 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.6 1.6 0 0 0-1.8-.3 1.6 1.6 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.6 1.6 0 0 0 9 19.4a1.6 1.6 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.6 1.6 0 0 0 .3-1.8 1.6 1.6 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.6 1.6 0 0 0 4.6 9a1.6 1.6 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.6 1.6 0 0 0 1.8.3H9a1.6 1.6 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.6 1.6 0 0 0 1 1.5 1.6 1.6 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.6 1.6 0 0 0-.3 1.8V9a1.6 1.6 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.6 1.6 0 0 0-1.5 1z" />
-          </svg>
+          <Icon glyph={icSettings} size={14} />
           <span>{t.sticker.openSettings}</span>
         </button>
       </div>

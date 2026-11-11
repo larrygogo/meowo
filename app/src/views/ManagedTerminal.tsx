@@ -42,6 +42,9 @@ import { remoteUi } from "../remoteMode";
 import { isMac } from "../platform";
 import { WINDOW_CLOSE_CANCELLED_EVENT } from "./chat/windowClose";
 import { isTerminalAppNavKey } from "./terminalKeys";
+import { Icon } from "../icons/Icon";
+import { icChevronUp } from "../icons/glyphs.chat";
+import { icChevronDown } from "../icons/glyphs";
 
 /** 远程模式补查周期（ms）。手机端收不到 pty-output 事件,靠定时补查增量快照喂满屏幕识别
  *  （AskUserQuestion 表单检测跑在这条通道上）。带 nextOffset 只取增量,不重传 backlog。 */
@@ -1841,10 +1844,10 @@ export function ManagedTerminal({ sessionId, status, reviewPending = false, back
             <span className="term-search-miss" role="status">{t.chat.termSearchWrapped(searchWrapped)}</span>
           )}
           <button type="button" className="term-search-btn" aria-label={t.chat.termSearchPrev} data-tip={t.chat.termSearchPrev} onClick={() => runSearch(searchQuery, "prev")}>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m18 15-6-6-6 6" /></svg>
+            <Icon glyph={icChevronUp} size={12} />
           </button>
           <button type="button" className="term-search-btn" aria-label={t.chat.termSearchNext} data-tip={t.chat.termSearchNext} onClick={() => runSearch(searchQuery, "next")}>
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6" /></svg>
+            <Icon glyph={icChevronDown} size={12} />
           </button>
           <button type="button" className="term-search-btn is-close" aria-label={t.chat.close} onClick={closeSearch}>×</button>
         </div>

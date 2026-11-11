@@ -4,6 +4,8 @@
 import { STICKER_COLORS, STICKER_COLOR_KEYS } from "../../appearance";
 import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
+import { Icon } from "../../icons/Icon";
+import { icAlert, icClose } from "../../icons/glyphs";
 
 /** 设置保存失败的统一错误行：patch 失败时开关会被回读「弹回去」，没有这一行用户
  *  只能看到界面自己变回去、零解释（S-3——曾只有网络分区把错误显示了出来）。
@@ -23,12 +25,10 @@ export function SettingsError({ error, onDismiss, preformatted }: {
   // 提示块而非一行红字：图标 + 文字 + 关闭钮，浅红底圆角（用户实拍「报错样式好丑」）。
   return (
     <div className="settings-error" role="alert">
-      <svg className="settings-error-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <circle cx="12" cy="12" r="9" /><path d="M12 7.5v5.5M12 16.5h.01" />
-      </svg>
+      <Icon glyph={icAlert} size={14} className="settings-error-icon" />
       <span className="settings-error-text">{preformatted ? error : formatBackendError(error, t.locale)}</span>
       <button type="button" className="settings-error-close" aria-label={t.settings.close} data-tip={t.settings.close} onClick={onDismiss}>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
+        <Icon glyph={icClose} size={12} />
       </button>
     </div>
   );

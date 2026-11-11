@@ -108,6 +108,9 @@ import { listAgents, type AgentDescriptor } from "../api";
 // 「切换引擎」分组的目标 agent 图标（前端资产表，未知 id 走中性兜底）。
 import { agentAssets, tintStyle } from "../providers";
 import appLogoUrl from "../../src-tauri/icons/64x64.png";
+import { Icon } from "../icons/Icon";
+import { icArrowLeftRight, icArrowUp, icChevronLeft, icCollapse, icExpand, icFile, icMessage, icShield, icSidebarLeft, icStop } from "../icons/glyphs.chat";
+import { icCheck, icChevronDown, icClose, icPencil } from "../icons/glyphs";
 
 
 /// 对话页意外退出说明附几行终端输出：够看出报错，不把输入框上方铺满。
@@ -3894,14 +3897,9 @@ export function ChatWindow() {
       onClick={remoteBackMode ? goBackToRemoteList : toggleSidebar}
     >
       {remoteBackMode ? (
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="m14.5 5-7 7 7 7" />
-        </svg>
+        <Icon glyph={icChevronLeft} size={16} />
       ) : (
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" aria-hidden="true">
-          <rect x="3.5" y="4.5" width="17" height="15" rx="3" />
-          <path d="M9.5 4.5v15" />
-        </svg>
+        <Icon glyph={icSidebarLeft} size={16} />
       )}
     </button>
   );
@@ -4618,7 +4616,7 @@ export function ChatWindow() {
                       aria-label={t.chat.sideQuestionClose}
                       onClick={() => setSideAnswers((prev) => prev.filter((item) => item.id !== entry.id))}
                     >
-                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+                      <Icon glyph={icClose} size={12} />
                     </button>
                   </div>
                   <div className={"chat-side-answer-body" + (entry.answer === null || entry.failed ? " is-muted" : "")} role="status">
@@ -4640,8 +4638,8 @@ export function ChatWindow() {
               onClick={() => { setComposerExpanded((v) => !v); promptInputRef.current?.focus(); }}
             >
               {composerExpanded
-                ? <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 14h6v6M20 10h-6V4M14 10l7-7M3 21l7-7" /></svg>
-                : <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" /></svg>}
+                ? <Icon glyph={icCollapse} size={14} />
+                : <Icon glyph={icExpand} size={14} />}
             </button>
           )}
         {/* T-14：外部终端连着同一 PTY 时输入无互斥——先把「可能交错」说在 composer
@@ -4757,9 +4755,7 @@ export function ChatWindow() {
           ))}
         </div>}
         {sessionReviewComments.length > 0 && <div className="chat-review-bar">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-          </svg>
+          <Icon glyph={icMessage} size={14} />
           <span className="chat-review-bar-label">{t.chat.reviewComments(sessionReviewComments.length)}</span>
           <button type="button" onClick={() => setSessionReviewComments(() => [])}>{t.chat.reviewCommentsClear}</button>
           <button type="button" className="is-primary" onClick={insertReviewComments}>{t.chat.reviewCommentsInsert}</button>
@@ -4773,16 +4769,13 @@ export function ChatWindow() {
               <button type="button" aria-label={`${t.chat.removeAttachment} ${file.name}`} onClick={() => setAttachments((items) => items.filter((item) => item.path !== file.path))}>×</button>
               {/* 已有的图也能补标注(粘贴进来的截图最常见):标完换成带框的那张。 */}
               {!remoteUi() && <button type="button" className="chat-attachment-annotate" aria-label={`${t.chat.annotate} ${file.name}`} data-tip={t.chat.annotate} onClick={() => setAnnotating({ path: file.path, replace: file.path })}>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" /></svg>
+                <Icon glyph={icPencil} size={12} />
               </button>}
             </div>
           ) : (
             <div className="chat-attachment" key={file.path} data-tip={file.path}>
               <span className="chat-file-icon" role="img" aria-label={t.chat.attachmentFile}>
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
-                  <path d="M14 3v5h5" />
-                </svg>
+                <Icon glyph={icFile} size={16} />
               </span>
               {/* 两行：文件名 + 「扩展名 · 大小」（大小仅粘贴来源有，见 Attachment.size）。 */}
               <span className="chat-file-info">
@@ -5075,14 +5068,14 @@ export function ChatWindow() {
                 >
                   {/* 权限 pill 的图标与短文案（对齐 Kimi 的 perm-pill）。同模型按钮：标签套 span 防挤压竖排。 */}
                   <span className="chat-mode-icon" aria-hidden="true">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>
+                    <Icon glyph={icShield} size={14} />
                   </span>
                   <span className="chat-model-label">{value}</span>
                   {options.length > 0
-                    ? <svg className="chat-model-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M6 9l6 6 6-6" /></svg>
+                    ? <Icon glyph={icChevronDown} size={12} className="chat-model-chevron" />
                     // 双向箭头而不是圆形箭头：后者在任何界面里都读作「刷新」，
                     // 而这里的语义是「在几个值之间轮换」。
-                    : canCycle && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m16 3 4 4-4 4M20 7H5M8 21l-4-4 4-4M4 17h15" /></svg>}
+                    : canCycle && <Icon glyph={icArrowLeftRight} size={12} />}
                 </button>
                 {/* 手机上换成底部面板（对照 Kimi 手机端的模式切换）：内容同一份，仍挂在 modeMenuUi.ref
                     容器里，点面板内不算「点外面」，Esc/点外关闭照旧由菜单负责。 */}
@@ -5123,7 +5116,7 @@ export function ChatWindow() {
                         <span className="chat-model-item-name">{option.label}</span>
                         {modeDesc(String(option.value)) && <span className="chat-model-item-desc" id={`chat-mode-desc-${dimension}-${option.value}`}>{modeDesc(String(option.value))}</span>}
                       </span>
-                      {active && <svg className="chat-model-check" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4.5 12.5l5 5 10-11" /></svg>}
+                      {active && <Icon glyph={icCheck} size={16} className="chat-model-check" />}
                     </button>;
                   })}
                 </div></SheetOnPhone>}
@@ -5176,7 +5169,7 @@ export function ChatWindow() {
               {/* 静默探测时把箭头换成转圈：这一下点击确实在做事，但做的事不在屏幕上。 */}
               {modelProbing || modelPicking
                 ? <span className="chat-model-spinner" aria-hidden="true" />
-                : (modelPresets.length > 0 || modelMenuCommand) && <svg className="chat-model-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"><path d="M6 9l6 6 6-6" /></svg>}
+                : (modelPresets.length > 0 || modelMenuCommand) && <Icon glyph={icChevronDown} size={12} className="chat-model-chevron" />}
             </button>
             {modelPickerOpen && (
               <ModelMenu
@@ -5231,7 +5224,7 @@ export function ChatWindow() {
             >
               {interrupting
                 ? <span className="chat-model-spinner" aria-hidden="true" />
-                : <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="4.5" /></svg>}
+                : <Icon glyph={icStop} size={16} />}
             </button>
           )}
           {/* 主圆钮双身份:回合运行中且输入框是空的 → 它就是停止键(黑圆方块,一按停当前
@@ -5255,10 +5248,10 @@ export function ChatWindow() {
             {stopMode
               ? interrupting
                 ? <span className="chat-model-spinner" aria-hidden="true" />
-                : <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="4.5" /></svg>
+                : <Icon glyph={icStop} size={16} />
               : sending
                 ? <span className="chat-model-spinner" aria-hidden="true" />
-                : <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 19V5M6.5 10.5 12 5l5.5 5.5" /></svg>}
+                : <Icon glyph={icArrowUp} size={16} />}
           </button>
         </div>
         {/* 整条横幅的显隐挂 needsTakeover 而不是 sendError：打字会清掉 sendError（见

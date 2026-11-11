@@ -13,6 +13,9 @@ import { latestPlan, PlanPanel } from "./PlanPanel";
 import { collectBackgroundTasks, TasksDockPanel } from "./TasksPanel";
 import { TodoListItems, type TodoRow } from "./TodoPanel";
 import { LeadGateCard, LeadPanel, LeadPill, useLeadTask } from "./LeadPanel";
+import { Icon } from "../../icons/Icon";
+import { icList, icSparkles, icTerminalBox } from "../../icons/glyphs.chat";
+import { icPencil } from "../../icons/glyphs";
 
 type Panel = "plan" | "todos" | "tasks" | "subagents" | "lead";
 
@@ -37,26 +40,18 @@ export function dockEntries({ items, plan, planMode, planPending }: {
 
 function TerminalPillIcon({ className }: { className: string }) {
   return (
-    <svg className={className} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <rect x="3" y="4" width="18" height="16" rx="2" /><path d="m7 9 3 3-3 3M12 15h5" />
-    </svg>
+    <Icon glyph={icTerminalBox} size={16} className={className} />
   );
 }
 
 function SparklesPillIcon({ className }: { className: string }) {
   return (
-    <svg className={className} width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M12 3l1.8 4.7L18.5 9.5l-4.7 1.8L12 16l-1.8-4.7L5.5 9.5l4.7-1.8z" /><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z" />
-    </svg>
+    <Icon glyph={icSparkles} size={16} className={className} />
   );
 }
 
-function TodosIcon({ className, size }: { className: string; size?: number }) {
-  return (
-    <svg className={className} width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01" />
-    </svg>
-  );
+function TodosIcon({ className }: { className: string }) {
+  return <Icon glyph={icList} size={16} className={className} />;
 }
 
 export function DockWork({ sessionId, cwd, ccSessionId, items, history, loading }: {
@@ -146,7 +141,7 @@ export function DockWork({ sessionId, cwd, ccSessionId, items, history, loading 
       {panel === "todos" && todos.length > 0 && (
         <div className="dock-work-panel panel-todos">
           <div className="dock-work-head">
-            <span className="dock-work-title"><TodosIcon className="dock-work-title-icon" size={16} />{t.chat.todoStripProgress(done, todos.length)}</span>
+            <span className="dock-work-title"><TodosIcon className="dock-work-title-icon" />{t.chat.todoStripProgress(done, todos.length)}</span>
           </div>
           <div className="dock-work-body"><TodoListItems todos={todos} /></div>
         </div>
@@ -162,9 +157,7 @@ export function DockWork({ sessionId, cwd, ccSessionId, items, history, loading 
           {leadTask && <LeadPill task={leadTask} active={panel === "lead"} onClick={() => toggle("lead")} />}
           {showPlan && (
             <button type="button" className={"ui-pill" + (panel === "plan" ? " is-active" : "")} onClick={() => toggle("plan")}>
-              <svg className="ui-pill-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" />
-              </svg>
+              <Icon glyph={icPencil} size={16} className="ui-pill-icon" />
               {t.chat.plan}
             </button>
           )}

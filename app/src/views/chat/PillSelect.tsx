@@ -1,5 +1,7 @@
 import { useState, type ReactElement } from "react";
 import { useMenuPopup } from "../menu";
+import { Icon } from "../../icons/Icon";
+import { icCheck, icChevronDown } from "../../icons/glyphs";
 
 /// 输入框底部的胶囊选择器 + 上弹菜单，长相与对话页 composer 的权限 / 模型胶囊同一套
 /// （.chat-model-button / .chat-model-menu）。新建会话页用它摆 Agent / 模型 / 权限：此前那里是
@@ -19,7 +21,7 @@ export type PillOption<T extends string> = {
 };
 
 const Chevron = () => (
-  <svg className="chat-model-chevron" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
+  <Icon glyph={icChevronDown} size={12} className="chat-model-chevron" />
 );
 
 export function PillSelect<T extends string>({ value, options, onChange, label, icon, variant = "mode", disabled, tip, testId }: {
@@ -79,7 +81,7 @@ export function PillSelect<T extends string>({ value, options, onChange, label, 
                   <span className="chat-model-item-name">{option.label}</span>
                   {option.desc && <span className="chat-model-item-desc">{option.desc}</span>}
                 </span>
-                {active && <svg className="chat-model-check" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M4.5 12.5l5 5 10-11" /></svg>}
+                {active && <Icon glyph={icCheck} size={16} className="chat-model-check" />}
               </button>
             );
           })}

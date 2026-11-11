@@ -15,6 +15,8 @@ import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
 import { Segmented, Switch } from "./widgets";
 import { Dropdown } from "../menu";
+import { Icon } from "../../icons/Icon";
+import { icChevronDown, icRefresh } from "../../icons/glyphs";
 
 type AccessMode = "official" | "relay";
 
@@ -239,9 +241,9 @@ function ModelPicker({
         onMouseDown={(e) => e.preventDefault()}
         onClick={() => { setOpen(true); onRefresh(); }}
       >
-        <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M13 4.5V1.8m0 2.7h-2.7M13 4.5A5.5 5.5 0 1 0 13.4 11" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
+        <Icon glyph={icRefresh} size={14} />
       </button>
-      <svg className="relay-model-chev" viewBox="0 0 12 12" width="12" height="12" aria-hidden="true"><path d="m3 4.5 3 3 3-3" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" /></svg>
+      <Icon glyph={icChevronDown} size={12} className="relay-model-chev" />
       {open && createPortal(
         <div
           className={`relay-model-menu${pos.opensUp ? " up" : ""}`}

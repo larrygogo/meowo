@@ -29,6 +29,10 @@ import { OpenIcon, PathContextMenu, RowMore } from "./pathMenu";
 // ChangesView 住在 GitDiffView 里，静态引会把整个改动面板并进 SidePanel / 对话窗 chunk（见 lazyDiff.tsx）。
 import { LazyChangesView as ChangesView } from "./lazyDiff";
 import { ForgeBar } from "./ForgeBar";
+import { Icon } from "../../icons/Icon";
+import { icGitBranch, icMenu, icMinus, icUndo } from "../../icons/glyphs.chat";
+import { icCheck, icPlus } from "../../icons/glyphs";
+import { icBan, icBook, icChevronRight, icTree } from "../../icons/glyphs.scm";
 
 /// 旧后端（手机页可能先于安装版更新）不下发两个新字段：按「全部是未暂存」处理。
 type ScmFile = GitChangedFileDto & { indexStatus?: string | null; worktreeStatus?: string | null; untrackedFiles?: number | null };
@@ -497,10 +501,10 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
         />
         <div className="chat-diff-layout" role="group" aria-label={t.chat.diffLayoutLabel}>
           <button type="button" aria-pressed={layout === "list"} aria-label={t.chat.diffLayoutList} data-tip={t.chat.diffLayoutList} onClick={() => setLayout("list")}>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M5 7h14M5 12h14M5 17h14" /></svg>
+            <Icon glyph={icMenu} size={12} />
           </button>
           <button type="button" aria-pressed={layout === "tree"} aria-label={t.chat.diffLayoutTree} data-tip={t.chat.diffLayoutTree} onClick={() => setLayout("tree")}>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="3" width="7" height="6" rx="1.5" /><rect x="14" y="10" width="7" height="5" rx="1.5" /><rect x="14" y="17" width="7" height="4" rx="1.5" /><path d="M6.5 9v9.5H14M6.5 12.5H14" /></svg>
+            <Icon glyph={icTree} size={12} />
           </button>
         </div>
       </div>
@@ -607,53 +611,42 @@ function VirtualRows({ items, scrollEl }: { items: readonly VRow[]; scrollEl: HT
 
 function IgnoreIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <circle cx="12" cy="12" r="8.5" /><path d="M6 18L18 6" />
-    </svg>
+    <Icon glyph={icBan} size={14} />
   );
 }
 
 function Chevron({ open }: { open: boolean }) {
   return (
-    <svg className={"scm-chevron" + (open ? " is-open" : "")} width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M9 6l6 6-6 6" />
-    </svg>
+    <Icon glyph={icChevronRight} size={12} className={"scm-chevron" + (open ? " is-open" : "")} />
   );
 }
 
 function PlusIcon() {
-  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>;
+  return <Icon glyph={icPlus} size={14} />;
 }
 
 function MinusIcon() {
-  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M5 12h14" /></svg>;
+  return <Icon glyph={icMinus} size={14} />;
 }
 
 function DiscardIcon() {
   return (
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M9 14L4 9l5-5" /><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />
-    </svg>
+    <Icon glyph={icUndo} size={14} />
   );
 }
 
 function CheckIcon() {
-  return <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>;
+  return <Icon glyph={icCheck} size={14} />;
 }
 
 function RepoIcon() {
   return (
-    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M4 19.5V5a2 2 0 0 1 2-2h13v15H6.5A2.5 2.5 0 0 0 4 20.5z" /><path d="M8 7h7" />
-    </svg>
+    <Icon glyph={icBook} size={12} />
   );
 }
 
 function BranchIcon() {
   return (
-    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <circle cx="6" cy="6" r="2.5" /><circle cx="6" cy="18" r="2.5" /><circle cx="18" cy="9" r="2.5" />
-      <path d="M6 8.5v7" /><path d="M18 11.5c0 4-4 4.5-9.2 4.6" />
-    </svg>
+    <Icon glyph={icGitBranch} size={12} />
   );
 }

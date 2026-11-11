@@ -2,6 +2,8 @@ import { memo } from "react";
 import type { ChatItem } from "../../api";
 import { useT } from "../../i18n";
 import { ChatMarkdown } from "../ChatMarkdown";
+import { Icon } from "../../icons/Icon";
+import { icPencil } from "../../icons/glyphs";
 
 /// 最近一份计划正文：transcript 里最后一次 ExitPlanMode 提交的优先，历史窗口外的由后端
 /// 保留的 fallback 兜底。入口显隐与面板正文共用这一份判定。
@@ -22,9 +24,7 @@ export const PlanPanel = memo(function PlanPanel({ plan, pending, onClose }: { p
     <div className="dock-work-panel panel-plan">
       <div className="dock-work-head">
         <span className="dock-work-title">
-          <svg className="dock-work-title-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z" />
-          </svg>
+          <Icon glyph={icPencil} size={16} className="dock-work-title-icon" />
           {t.chat.plan}
           {plan && <span className="dock-work-meta">{pending ? t.chat.planPending : t.chat.planApproved}</span>}
         </span>

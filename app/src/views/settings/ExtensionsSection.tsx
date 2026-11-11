@@ -12,6 +12,8 @@ import { useT } from "../../i18n";
 import { agentAssets } from "../../providers";
 import { Dropdown } from "../menu";
 import { SettingsError } from "./widgets";
+import { Icon } from "../../icons/Icon";
+import { icFolder } from "../../icons/glyphs";
 
 const PICKED_KEY = "meowo-extensions-agent";
 
@@ -141,9 +143,7 @@ export function ExtensionsSection() {
                         data-tip={t.extensions.reveal}
                         onClick={() => reveal(group.source, item.rel!)}
                       >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                          <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
-                        </svg>
+                        <Icon glyph={icFolder} size={14} />
                       </button>
                     )}
                   </div>

@@ -4,6 +4,8 @@ import { useT } from "../../i18n";
 import { toolKind } from "./ToolIcon";
 import { ChatCwdContext, editOutcome, relativize } from "./ToolActivity";
 import type { ToolResultItem, ToolUseItem } from "./shared";
+import { Icon } from "../../icons/Icon";
+import { icPencil } from "../../icons/glyphs";
 
 /// 折叠时露出的行数（Kimi 实拍：3 行 + 「还有 N 个文件」）。
 const PREVIEW_ROWS = 3;
@@ -49,7 +51,7 @@ export const TurnChanges = memo(function TurnChanges({ items }: { items: ChatIte
   return (
     <div className="chat-turn-changes">
       <div className="chat-turn-changes-head">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
+        <Icon glyph={icPencil} size={14} />
         <span>{t.chat.turnChangedFiles(files.length)}</span>
       </div>
       <ul className="chat-turn-changes-list">

@@ -36,28 +36,17 @@ function useContentWidth(ref: RefObject<HTMLElement | null>): number {
 }
 
 const PR_ICON = (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <circle cx="6" cy="6" r="2.2" /><circle cx="6" cy="18" r="2.2" /><circle cx="18" cy="18" r="2.2" />
-    <path d="M6 8.2v7.6M18 15.8V9a3 3 0 0 0-3-3h-4M13 3.5 10.5 6 13 8.5" />
-  </svg>
+  <Icon glyph={icPullRequest} size={14} />
 );
 const GIT_ICON = (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <circle cx="6" cy="5" r="2" /><circle cx="6" cy="19" r="2" /><circle cx="18" cy="7" r="2" />
-    <path d="M6 7v10" /><path d="M18 9c0 5-6 5-11.5 8" />
-  </svg>
+  <Icon glyph={icGitBranch} size={14} />
 );
-const terminalIcon = (size: number) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-    <rect x="3" y="4.5" width="18" height="15" rx="3" /><path d="m7.5 9.5 3 2.5-3 2.5M13 15h4" />
-  </svg>
-);
-const infoIcon = (size: number) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
-    <path d="M9 6h11" /><path d="M9 12h11" /><path d="M9 18h11" /><circle cx="4.5" cy="6" r="1" /><circle cx="4.5" cy="12" r="1" /><circle cx="4.5" cy="18" r="1" />
-  </svg>
-);
+const terminalIcon = (size: IconSize) => <Icon glyph={icTerminalBox} size={size} />;
+const infoIcon = (size: IconSize) => <Icon glyph={icList} size={size} />;
 import { tipWithKeys } from "./WindowModals";
+import { Icon, type IconSize } from "../../icons/Icon";
+import { icGitBranch, icList, icPullRequest, icSidebarRight, icTerminalBox } from "../../icons/glyphs.chat";
+import { icStopCircle } from "../../icons/glyphs";
 
 /// 当前分支的 PR（对照 Kimi 标题栏）：换目录 / 换分支时查一次，之后 3 分钟一次——gh 要联网，
 /// 不跟改动摘要的轮询走（后端另按目录缓存 60s）。手机不查：桌面专用命令，桥上不放行。
@@ -168,9 +157,7 @@ export function ChatTitleBar({
           aria-label={end.busy ? t.chat.terminalStopping : t.chat.endSession}
           data-tip={end.busy ? t.chat.terminalStopping : t.chat.endSession}
         >
-          <svg className="chat-end-ico" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true">
-            <circle cx="12" cy="12" r="8.5" /><rect x="9" y="9" width="6" height="6" rx="1" />
-          </svg>
+          <Icon glyph={icStopCircle} size={16} className="chat-end-ico" />
           <span className="chat-end-label">{end.busy ? t.chat.terminalStopping : t.chat.endSession}</span>
         </button>
       )}
@@ -216,9 +203,7 @@ export function ChatTitleBar({
           aria-pressed={panelOpen}
           onClick={onTogglePanel}
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinejoin="round" aria-hidden="true">
-            <rect x="3.5" y="4.5" width="17" height="15" rx="3" /><path d="M14.5 4.5v15" />
-          </svg>
+          <Icon glyph={icSidebarRight} size={16} />
           {panelWaiting
             ? <span className="chat-panel-waiting-dot" aria-hidden="true" />
             : panelAgentBusy && <span className="chat-panel-agent-dot" aria-hidden="true" />}

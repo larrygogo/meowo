@@ -13,6 +13,9 @@ import { hideWorkspace, openNewSessionWindow, openProjectDir, restoreWorkspace }
 import { remoteUi } from "../../remoteMode";
 import { tildePath } from "../../paths";
 import { useMenuPopup } from "../menu";
+import { Icon } from "../../icons/Icon";
+import { icFolderPlus } from "../../icons/glyphs.chat";
+import { icFolder, icMore } from "../../icons/glyphs";
 
 /// 工作区菜单：工作区页签的目录行与会话列表的分组头共用。「⋯」按钮在按钮下方打开，右键
 /// 在鼠标处打开（对照 Kimi 的 onContextmenu）。关闭（点外 / Esc / 滚动）走 useMenuPopup 的
@@ -70,7 +73,7 @@ export function useWorkspaceMenu(cwd: string | null, onFilter: ((cwd: string) =>
   return { open, onContextMenu, render };
 }
 
-const MORE = <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="6" cy="12" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="18" cy="12" r="1.6" /></svg>;
+const MORE = <Icon glyph={icMore} size={14} />;
 
 function WorkspaceRow({ cwd, label, onFilter, onHide }: { cwd: string; label: string; onFilter: (cwd: string) => void; onHide: (cwd: string) => void }) {
   const menu = useWorkspaceMenu(cwd, onFilter, onHide);
@@ -89,9 +92,7 @@ function WorkspaceRow({ cwd, label, onFilter, onHide }: { cwd: string; label: st
       }}
     >
       <div className="chat-ws-dir-row">
-        <svg className="chat-ws-dir-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="M3.5 7v10a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2V9.5a2 2 0 0 0-2-2h-6l-2-2.5h-5a2 2 0 0 0-2 2z" />
-        </svg>
+        <Icon glyph={icFolder} size={16} className="chat-ws-dir-icon" />
         <span className="chat-ws-dir-name">{label}</span>
       </div>
       {/* 尾部优先：同一 monorepo 下有区分度的是路径末尾（shell #10）。path-tail 用 rtl 让省略号落在开头，
@@ -152,9 +153,7 @@ export function WorkspaceDirectory({ options, onFilter, onHidden }: {
   return (
     <>
       <button type="button" className="chat-ws-add" onClick={() => void addWorkspace()}>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="M3.5 7v10a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2V9.5a2 2 0 0 0-2-2h-6l-2-2.5h-5a2 2 0 0 0-2 2z" /><path d="M12 11v5M9.5 13.5h5" />
-        </svg>
+        <Icon glyph={icFolderPlus} size={16} />
         <span>{t.chat.wsAdd}</span>
       </button>
       {shown.length === 0

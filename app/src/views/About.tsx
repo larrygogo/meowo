@@ -26,6 +26,9 @@ import { applySettingsFilter } from "./settings/searchFilter";
 import { useEscClose } from "../hooks/useEscClose";
 import { displayKeys, KeyCombos, shortcutGroups } from "./chat/WindowModals";
 import { SETTINGS_SECTION_KEY } from "../settingsNav";
+import { Icon } from "../icons/Icon";
+import { icClose, icContrast, icGlobe, icSearch, icSettings } from "../icons/glyphs";
+import { icBot, icCards, icInfo, icKeyboard, icPuzzle, icSmartphone } from "../icons/glyphs.settings";
 
 const REPO = "github.com/larrygogo/meowo";
 const REPO_URL = "https://github.com/larrygogo/meowo";
@@ -57,92 +60,60 @@ const resumeTermOptionsWin = (t: Dict): { value: ResumeTerminal; label: string }
 
 function IconGear() {
   return (
-    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="3" />
-      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-    </svg>
+    <Icon glyph={icSettings} size={16} />
   );
 }
 function IconInfo() {
   return (
-    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="9" />
-      <line x1="12" y1="11" x2="12" y2="16" />
-      <line x1="12" y1="8" x2="12" y2="8" />
-    </svg>
+    <Icon glyph={icInfo} size={16} />
   );
 }
 
 // 机器人徽标：这一分区管的是各家 AI Agent，比人像更贴切。
 function IconAgent() {
   return (
-    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M12 8V4H8" />
-      <rect x="4" y="8" width="16" height="12" rx="2.5" />
-      <path d="M2 14h2" />
-      <path d="M20 14h2" />
-      <path d="M9 13.5v2" />
-      <path d="M15 13.5v2" />
-    </svg>
+    <Icon glyph={icBot} size={16} />
   );
 }
 
 // 叠放的圆角卡片：会话分区管的是会话与看板卡片。
 function IconCards() {
   return (
-    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="3" y="3" width="13" height="13" rx="2.5" />
-      <path d="M8 21h10.5a2.5 2.5 0 0 0 2.5-2.5V8" />
-    </svg>
+    <Icon glyph={icCards} size={16} />
   );
 }
 
 // 半填充对比圆：外观/主题的经典图标。
 function IconAppearance() {
   return (
-    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="9" />
-      <path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor" stroke="none" />
-    </svg>
+    <Icon glyph={icContrast} size={16} />
   );
 }
 
 // 键盘：快捷键分区。
 function IconKeyboard() {
   return (
-    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="2" y="5" width="20" height="14" rx="2.5" />
-      <path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M6 13h.01M10 13h.01M14 13h.01M18 13h.01M8 16h8" />
-    </svg>
+    <Icon glyph={icKeyboard} size={16} />
   );
 }
 
 // 地球：网络/代理。
 function IconPhone() {
   return (
-    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-      <rect x="6.5" y="2.5" width="11" height="19" rx="2.5" />
-      <line x1="10.5" y1="18" x2="13.5" y2="18" />
-    </svg>
+    <Icon glyph={icSmartphone} size={16} />
   );
 }
 
 // 拼图块：扩展（技能 / MCP / 插件）。
 function IconPuzzle() {
   return (
-    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M15.4 4.6a2.4 2.4 0 1 0-4.8 0V6H7a1 1 0 0 0-1 1v3.6h1.4a2.4 2.4 0 1 1 0 4.8H6V19a1 1 0 0 0 1 1h3.6v-1.4a2.4 2.4 0 1 1 4.8 0V20H19a1 1 0 0 0 1-1v-3.6h-1.4a2.4 2.4 0 1 1 0-4.8H20V7a1 1 0 0 0-1-1h-3.6z" />
-    </svg>
+    <Icon glyph={icPuzzle} size={16} />
   );
 }
 
 function IconGlobe() {
   return (
-    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="9" />
-      <line x1="3" y1="12" x2="21" y2="12" />
-      <path d="M12 3a15 15 0 0 1 0 18a15 15 0 0 1 0-18z" />
-    </svg>
+    <Icon glyph={icGlobe} size={16} />
   );
 }
 
@@ -1170,10 +1141,7 @@ export function About() {
         {/* S-1：设置搜索入口。命中过滤分区与行（见 settings/searchFilter.ts）；
             输入框里的 Esc 先清词——useEscClose 对输入框让位，不会误关窗。 */}
         <div className="side-search">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-            <circle cx="11" cy="11" r="7" />
-            <line x1="21" y1="21" x2="16.5" y2="16.5" />
-          </svg>
+          <Icon glyph={icSearch} size={12} />
           <input
             ref={searchInputRef}
             value={query}
@@ -1255,10 +1223,7 @@ export function About() {
             搜索时各分区平铺，才由分区内的 .sec-title 当分隔。 */}
         <div className="main-bar" data-tauri-drag-region>
           <button className="winclose" data-tip={t.settings.close} onClick={close} aria-label={t.settings.close}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <line x1="6" y1="6" x2="18" y2="18" />
-              <line x1="18" y1="6" x2="6" y2="18" />
-            </svg>
+            <Icon glyph={icClose} size={14} />
           </button>
         </div>
         <div className={"main-body" + (searching ? " is-searching" : "")} ref={bodyRef}>

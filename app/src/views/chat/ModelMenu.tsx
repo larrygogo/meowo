@@ -1,6 +1,9 @@
 import type { ReactNode } from "react";
 import { useT } from "../../i18n";
 import { SheetOnPhone } from "./BottomSheet";
+import { Icon } from "../../icons/Icon";
+import { icMenu } from "../../icons/glyphs.chat";
+import { icCheck } from "../../icons/glyphs";
 
 /** group：分段标题（kimi 配置里的 provider，如 `managed:kimi-code`）；缺省归入引擎名那段。 */
 export type ModelMenuItem = { id: string; label: string; desc?: string; group?: string | null };
@@ -46,7 +49,7 @@ export function ModelMenu({ title, items, currentId, starred = [], effort, probi
   onClose: () => void;
 }) {
   const t = useT();
-  const check = <svg className="chat-model-check" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4.5 12.5l5 5 10-11" /></svg>;
+  const check = <Icon glyph={icCheck} size={16} className="chat-model-check" />;
   const sections: ReactNode[] = [];
   if (starred.length > 0) {
     sections.push(
@@ -145,7 +148,7 @@ export function ModelMenu({ title, items, currentId, starred = [], effort, probi
     sections.push(
       <div className="chat-model-quick-section" key="more">
         <button type="button" role="menuitem" className="chat-model-item chat-model-quick-more" onClick={onMore}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" /></svg>
+          <Icon glyph={icMenu} size={14} />
           <span className="chat-model-item-name">{t.chat.modelMore}</span>
         </button>
       </div>,

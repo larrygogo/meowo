@@ -13,6 +13,9 @@ import { isMac } from "../../platform";
 import { useMenuPopup } from "../menu";
 import { CheckIcon, ChevronDownIcon } from "../sticker/icons";
 import { changedFileCount } from "./gitDiff";
+import { Icon } from "../../icons/Icon";
+import { icCode, icGitBranch, icPullRequest } from "../../icons/glyphs.chat";
+import { icFolder } from "../../icons/glyphs";
 
 /** 上次选的打开方式（编辑器 id 或 "files"）。只是界面偏好，存本机即可。 */
 const OPENER_KEY = "meowo-folder-opener";
@@ -35,16 +38,12 @@ const loadEditors = () => (editorsOnce ??= listFolderEditors()
 
 function FolderGlyph() {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
-    </svg>
+    <Icon glyph={icFolder} size={16} />
   );
 }
 function CodeGlyph() {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="m8 7-5 5 5 5M16 7l5 5-5 5" />
-    </svg>
+    <Icon glyph={icCode} size={16} />
   );
 }
 export function OpenerIcon({ opener }: { opener: FileOpenerDto }) {
@@ -152,10 +151,7 @@ export function PullRequestChip({ pr }: { pr: PullRequestDto }) {
   const tip = t.chat.prOpenTip(pr.number, pr.title);
   return (
     <button type="button" className={`tb-pr is-${pr.state}`} aria-label={tip} data-tip={tip} onClick={() => void openLink(pr.url).catch(() => {})}>
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <circle cx="6" cy="6" r="2.2" /><circle cx="6" cy="18" r="2.2" /><circle cx="18" cy="18" r="2.2" />
-        <path d="M6 8.2v7.6M18 15.8V9a3 3 0 0 0-3-3h-4M13 3.5 10.5 6 13 8.5" />
-      </svg>
+      <Icon glyph={icPullRequest} size={14} />
       <span>#{pr.number}</span>
       <span className="tb-pr-state">{t.chat.prState[pr.state] ?? pr.state}</span>
     </button>
@@ -188,10 +184,7 @@ export function GitStatusChip({ summary, active, onToggle }: {
       data-tip={tip}
       onClick={onToggle}
     >
-      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-        <circle cx="6" cy="5" r="2" /><circle cx="6" cy="19" r="2" /><circle cx="18" cy="7" r="2" />
-        <path d="M6 7v10" /><path d="M18 9c0 5-6 5-11.5 8" />
-      </svg>
+      <Icon glyph={icGitBranch} size={14} />
       {summary.branch && <span className="tb-git-branch">{summary.branch}</span>}
       {ahead > 0 && <span className="tb-git-pill is-ahead">↑{ahead}</span>}
       {behind > 0 && <span className="tb-git-pill is-behind">↓{behind}</span>}

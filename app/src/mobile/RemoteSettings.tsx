@@ -6,6 +6,8 @@ import { useT } from "../i18n";
 import { REMOTE_SETTINGS_EVENT } from "../remoteMode";
 import { remoteTurnFolding, setRemoteTurnFolding } from "../remotePrefs";
 import { Segmented, Switch } from "../views/settings/widgets";
+import { Icon } from "../icons/Icon";
+import { icSettings } from "../icons/glyphs";
 
 /// 手机页的设置面板（列表页头右上角的齿轮）。只放人不在电脑前也用得上的几项：
 /// - 这台手机：明暗模式、消息自动折叠。只存手机浏览器里，不碰电脑。
@@ -65,10 +67,7 @@ export function RemoteSettings() {
         aria-haspopup="dialog"
         onClick={() => setOpen((v) => !v)}
       >
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <circle cx="12" cy="12" r="3" />
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-        </svg>
+        <Icon glyph={icSettings} size={20} />
       </button>
       {open && (
         <div className="remote-settings-panel" role="dialog" aria-label={t.remote.settingsLabel}>
