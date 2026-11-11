@@ -715,6 +715,24 @@ fn set_unread(session_id: i64, unread: bool) {
     }
 }
 
+/// 用户正看着的会话一律清未读，不论它是否还在运行。原先只在扫运行中会话的循环里清，
+/// 结束的会话被提前 continue 跳过：会话关了、点进去看过，侧栏蓝点照亮（2026-11-11 实拍）。
+fn clear_viewed_unread(chat_focused: bool, viewed: &std::collections::HashSet<i64>) {
+    if !chat_focused {
+        return;
+    }
+    for id in viewed {
+        set_unread(*id, false);
+    }
+}
+
+/// 会话结束即清未读：未读是「有新回复等你看」的提醒，会话关了就不再提醒（同一实拍）。
+fn clear_unread_on_end(ended: impl IntoIterator<Item = i64>) {
+    for id in ended {
+        set_unread(id, false);
+    }
+}
+
 /// 见 RESET_DECISION_RENOTIFY。仅 Windows/macOS 的通知点击路径调用。
 #[cfg_attr(not(any(target_os = "windows", target_os = "macos")), allow(dead_code))]
 pub(crate) fn request_decision_renotify() {
@@ -1008,6 +1026,7 @@ pub(crate) fn spawn_liveness_watch(
                 // pty.rs 的 finalize_exit 里已经处理；这里兜住其余结束路径（进程死了由本轮
                 // 收尾、外部终端里跑的会话等）：上一轮还活着、这一轮没了、库里已是 ended、
                 // 也没被本 GUI 托管着（就地重启中的不算）。
+                clear_unread_on_end(last.iter().copied().filter(|id| !alive.contains(id)));
                 for id in last.iter().filter(|id| !alive.contains(id)) {
                     let ended = store.get_session(*id).is_ok_and(|session| session.status == "ended");
                     if ended && !pty_live.contains(id) {
@@ -1055,6 +1074,7 @@ pub(crate) fn spawn_liveness_watch(
                     .try_state::<crate::AppState>()
                     .map(|state| state.ptys.viewed_session_ids())
                     .unwrap_or_default();
+                clear_viewed_unread(chat_focused, &viewed);
                 // 通知点击整清了已投递 toast（见 RESET_DECISION_RENOTIFY）：决策类指纹
                 // 重置后再扫，仍在等待审批/阻塞的会话本轮按 prev=None 补发入口。
                 if RESET_DECISION_RENOTIFY.swap(false, Ordering::Relaxed) {
@@ -1451,6 +1471,43 @@ mod first_import_notice_tests {
         std::fs::write(dir.join("imported.json"), r#"{"imported":0,"at":1}"#).unwrap();
         assert_eq!(take_first_import_notice(&dir), None);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod unread_tests {
+    use super::{clear_unread_on_end, clear_viewed_unread, is_unread, set_unread};
+    use std::collections::HashSet;
+
+    // UNREAD 是进程级静态集合，测试之间共享：每个用例用自己专属的会话 id，互不干扰。
+
+    /// 用户点进会话看过就清，哪怕会话已结束（实拍：会话关了、点进去看过，侧栏蓝点仍在）。
+    /// 旧逻辑只在扫「运行中」会话的循环里清，结束的会话被 continue 跳过，永远清不掉。
+    #[test]
+    fn viewing_clears_unread_even_for_ended_session() {
+        set_unread(900_001, true);
+        clear_viewed_unread(true, &HashSet::from([900_001]));
+        assert!(!is_unread(900_001));
+    }
+
+    /// 对话窗不在前台时不算看过（与通知抑制同一判据）。
+    #[test]
+    fn unfocused_window_does_not_clear() {
+        set_unread(900_002, true);
+        clear_viewed_unread(false, &HashSet::from([900_002]));
+        assert!(is_unread(900_002));
+        set_unread(900_002, false);
+    }
+
+    /// 会话结束时清：关掉的会话不再用蓝点提醒「有新回复」。
+    #[test]
+    fn ending_clears_unread() {
+        set_unread(900_003, true);
+        set_unread(900_004, true);
+        clear_unread_on_end([900_003]);
+        assert!(!is_unread(900_003));
+        assert!(is_unread(900_004), "只清结束的那条");
+        set_unread(900_004, false);
     }
 }
 
