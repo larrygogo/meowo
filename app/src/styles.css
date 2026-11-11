@@ -3959,6 +3959,9 @@ select.ns-input {
 .nsp-agent-mark { display: inline-flex; }
 /* 工作区选择：输入框上方左侧一枚小钮（对照 Kimi），菜单名字白、路径灰，选中整行底色加灰勾。 */
 .nsp-ws { align-self: flex-start; margin-left: var(--sp-10); }
+/* 「在新 worktree 里开」与上面的目录按钮、下面的「最近会话」同一条左边线（都缩进 --sp-10）；原先贴着输入框外沿，
+   比上下两行往左凸出一截（2026-11-11 leader 实拍）。 */
+.nsp-center > .wt-opt { margin-left: var(--sp-10); margin-right: var(--sp-10); }
 .nsp-ws-btn { display: inline-flex; align-items: center; gap: var(--sp-6); max-width: 360px; height: var(--btn-h-lg); padding: 0 var(--sp-10); border: 0; border-radius: var(--radius-md); color: var(--cc-text); background: var(--fill-hover); font: inherit; font-size: var(--text-sm); font-weight: 600; cursor: pointer; transition: background var(--dur-fast) var(--ease-in-out); }
 .nsp-ws-btn:hover, .nsp-ws-btn.open { background: var(--fill-selected); }
 .nsp-ws-btn.is-empty { color: var(--cc-text-dim); font-weight: 500; }
@@ -5776,13 +5779,12 @@ button.scm-check-name:hover { text-decoration: underline; }
    叠到输入框上。当初的起因是浮层补白写在滚动区 padding 里、消息区缩不动，104px 下限在 iPhone SE
    上把输入框挤出屏幕 48px；补白已改成内容末尾的占位块（UI 优化 c2），这条留下来管让位的优先级。 */
 .chat-main:has(> .chat-approval-overlay.is-active) > .chat-dock > .lead-gate-card { min-height: 0; overflow: hidden; }
-/* 矮屏（手机键盘态/横屏、620×480 小窗）再加一条：浮层卡在场时关卡卡片整张让出。空间本身不够，
-   压到最小的关卡（约 95px）仍把审批卡挤到 30px、按钮看不见（fix1 车道实测 667×375、375×376、
-   620×480 三档）。审批卡是 agent 正卡着等你的事，比关卡急；关卡没丢，底栏 Lead 入口的待拍板点一直亮，
-   审批处理完卡片自动回来。 */
-@media (max-height: 640px) {
-  .chat-main:has(> .chat-approval-overlay.is-active) > .chat-dock > .lead-gate-card { display: none; }
-}
+/* 浮层卡（审批/提问/终端兜底）在场时，dock 里的关卡整张让出，不分屏幕高矮。上一条的 min-height:0
+   不会真的让关卡变矮：消息区是 flex:1，总是它先让，dock 从不被挤，关卡保持自然高度（约 400px），
+   浮层卡按剩余高度只剩 30px、还向上盖住标题栏，按钮点不到。曾只在 max-height:640 断点让位，
+   做空第二轮实测 1280×720、1366×768、iPhone 竖屏 390×664/750 照样 30px。审批是 agent 正卡着等的事，
+   比关卡急；关卡没丢，底栏 Lead 入口的待拍板点一直亮，审批处理完卡片自动回来。 */
+.chat-main:has(> .chat-approval-overlay.is-active) > .chat-dock > .lead-gate-card { display: none; }
 /* composer 要保住自己的 z-index:9（压过审批 overlay 的 8 与「回到最新」的 sticky 5，
    见 .chat-compose 的注释）。上一条与它同特异性且写在后面，会把它降成 1——模型/斜杠菜单
    向上探出时就被「回到最新」浮钮压住（实拍）。 */

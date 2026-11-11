@@ -21,12 +21,13 @@ describe("dock 里的卡不按浮层剩余高度限高", () => {
     expect(body).toContain("max-height");
     expect(body).not.toContain("--chat-overlay-room");
   });
-  it("矮屏浮层卡在场时，dock 里的关卡整张让出（否则审批卡被挤到 30px）", () => {
+  it("浮层卡在场时，dock 里的关卡整张让出，不分屏幕高矮（否则审批卡被挤到 30px、压到标题栏上）", () => {
     const css = read("../../styles.css");
-    const at = css.indexOf("@media (max-height: 640px)");
-    expect(at).toBeGreaterThan(-1);
-    const block = css.slice(at, at + 300);
-    expect(block).toContain(".chat-approval-overlay.is-active");
-    expect(block).toContain(".lead-gate-card { display: none; }");
+    expect(css).toContain(".chat-main:has(> .chat-approval-overlay.is-active) > .chat-dock > .lead-gate-card { display: none; }");
+    // 曾只在 max-height:640 断点让位，1280×720、1366×768 照样挤坏（做空第二轮）：不许再套断点。
+    const at = css.indexOf(".lead-gate-card { display: none; }");
+    // 规则所在行之前最近的一段（到上一个规则结束为止）里不能有 @media。
+    const before = css.slice(Math.max(0, css.lastIndexOf("}", at - 2)), at);
+    expect(before).not.toContain("@media");
   });
 });
