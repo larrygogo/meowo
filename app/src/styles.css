@@ -16,15 +16,16 @@
   src: url("./assets/fonts/JetBrainsMono-Bold.woff2") format("woff2");
 }
 
-:root {
-  color-scheme: dark;
-  /* 中性近黑底 + 蓝强调（对齐 Kimi Code 桌面的 --color-* 板：bg #121212 / accent #1a88ff）。 */
-  /* 贴纸底色拆成 rgb + 不透明度，方便「外观设置」单独调透明度（仅影响走 --cc-bg 的贴纸/缩略条）。 */
+
+/* ===== 深色调色板（唯一一份）=====
+   根元素默认就是深色；终端页签不论主题恒为深色（xterm 画布是深底），同一块直接挂到
+   .chat-window.is-terminal 上，不再整组抄一遍（UI 调研 sys7：此前 :root、.chat-window、
+   .is-terminal 三处各写一份，0.5.15 起漏抄过状态色、语法色、面板底色，每次都是实拍才发现）。
+   放在所有 :root 块之前：几个守护测试按第一个「:root {」取深色值。
+   :where() 把终端那一支的特异度降到 0：对话窗的文字四档（.chat-window，0,1,0）照常压过这里的全局四档，
+   终端页签与对话页签同一套文字档。浅色值在 :root[data-theme="light"]，只作用在根元素，碰不到终端页签。 */
+:where(.chat-window.is-terminal), :root {
   --cc-bg-rgb: 18, 18, 18;
-  --cc-opacity: 1;
-  --cc-bg: rgba(var(--cc-bg-rgb), var(--cc-opacity));
-  /* 界面密度乘子：外观设置驱动（紧凑 0.9 / 标准 1 / 宽松 1.12）；默认 1，与原视觉逐像素一致。 */
-  --cc-ui: 1;
   --cc-border: rgba(255, 255, 255, 0.12);
   --cc-accent: #1a88ff;
   --cc-accent-dim: #258eff;
@@ -100,6 +101,27 @@
   --cc-tone-green: var(--cc-accent-text);
   --cc-tone-teal: var(--cc-syn-builtin);
   --cc-tool-verb-weight: 400;
+  --fill-hover: rgba(255, 255, 255, 0.05);
+  --fill-selected: rgba(255, 255, 255, 0.1);
+  --fill-selected-hover: rgba(255, 255, 255, 0.14);
+  --fill-tab: rgba(255, 255, 255, 0.18);
+  --line-subtle: rgba(255, 255, 255, 0.05);
+  --line-strong: rgba(255, 255, 255, 0.18);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.22), 0 1px 3px rgba(0, 0, 0, 0.18);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(0, 0, 0, 0.24);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.34), 0 4px 10px rgba(0, 0, 0, 0.28);
+  --shadow-xl: 0 24px 64px rgba(0, 0, 0, 0.42), 0 8px 20px rgba(0, 0, 0, 0.32);
+  --shadow-menu: 0 6px 18px rgba(0, 0, 0, 0.2), 0 3px 9px rgba(0, 0, 0, 0.24), 0 1px 1px rgba(0, 0, 0, 0.24);
+}
+
+:root {
+  color-scheme: dark;
+  /* 中性近黑底 + 蓝强调（对齐 Kimi Code 桌面的 --color-* 板：bg #121212 / accent #1a88ff）。 */
+  /* 贴纸底色拆成 rgb（见下方深色调色板）+ 不透明度，方便「外观设置」单独调透明度（仅影响走 --cc-bg 的贴纸/缩略条）。 */
+  --cc-opacity: 1;
+  --cc-bg: rgba(var(--cc-bg-rgb), var(--cc-opacity));
+  /* 界面密度乘子：外观设置驱动（紧凑 0.9 / 标准 1 / 宽松 1.12）；默认 1，与原视觉逐像素一致。 */
+  --cc-ui: 1;
   /* 间距阶梯：padding/margin/gap 的高频档按 px 值命名，≥3 处复用才立档。整梯乘 --cc-ui（同上）。
      负偏移（如 -8px）保留字面量——var() 不能直接取负，需 calc() 包一层反而更难读。 */
   --sp-1: calc(1px * var(--cc-ui));
@@ -207,18 +229,7 @@
      不是一段四分之一圆——输入框一长高，普通圆角四角鼓成半个胶囊（用户实拍「圆角奇怪」）。
      不支持 corner-shape 的内核忽略这条，退回普通圆角。 */
   --corner-shape-composer: superellipse(1.5);
-  --fill-hover: rgba(255, 255, 255, 0.05);
-  --fill-selected: rgba(255, 255, 255, 0.1);
-  --fill-selected-hover: rgba(255, 255, 255, 0.14);
-  --fill-tab: rgba(255, 255, 255, 0.18);
-  --line-subtle: rgba(255, 255, 255, 0.05);
-  --line-strong: rgba(255, 255, 255, 0.18);
   --hairline: 0.5px;
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.22), 0 1px 3px rgba(0, 0, 0, 0.18);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(0, 0, 0, 0.24);
-  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.34), 0 4px 10px rgba(0, 0, 0, 0.28);
-  --shadow-xl: 0 24px 64px rgba(0, 0, 0, 0.42), 0 8px 20px rgba(0, 0, 0, 0.32);
-  --shadow-menu: 0 6px 18px rgba(0, 0, 0, 0.2), 0 3px 9px rgba(0, 0, 0, 0.24), 0 1px 1px rgba(0, 0, 0, 0.24);
   --shadow-input: 0 5px 16px -4px rgba(0, 0, 0, 0.07);
   /* 字号只用 12/13/14 三档撑起全部界面（Kimi 实测这三档占九成以上），11 只给角标小字，
      16 只给少数标题；层级靠颜色档位与字重区分，不靠放大。整梯乘 --cc-ui，密度设置照常生效。 */
@@ -6200,67 +6211,13 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
   --cc-text-quaternary: var(--kt-light-4);
 }
 /* 终端视图强制深色：xterm 底色写死 #121212，浅色主题下会话页发白、切进终端观感割裂。
-   在窗口容器上整组重声明深色变量（= :root 的默认值），覆盖 light 主题的 root 覆写——
+   深色变量由文件开头的「深色调色板」共用块直接挂到窗口容器上，覆盖 light 主题的 root 覆写——
    标题栏 / 侧栏 / 输入框全部跟着变深，与终端底色连成一片。深色主题下本就是这些值，无副作用。 */
 .chat-window.is-terminal {
-  --cc-bg-rgb: 18, 18, 18;
-  /* 必须直接覆盖 --cc-window-bg / --cc-bg：它们已在 documentElement 被 light 主题算成
-     浅色实值并继承下来，只改 --cc-bg-rgb 不会让它们重算。取值 = :root 深色默认，
-     与对话视图同底（--cc-window-bg），切换对话/终端页签时底色不跳档。 */
-  --cc-window-bg: #121212;
+  /* 必须直接覆盖 --cc-window-bg / --cc-bg：--cc-bg 在根上按贴纸透明度算成带 alpha 的值，
+     终端底要不透明，与对话视图同底（--cc-window-bg），切换对话/终端页签时底色不跳档。
+     其余深色变量来自上方「深色调色板」共用块。 */
   --cc-bg: var(--cc-window-bg);
-  --cc-border: rgba(255, 255, 255, 0.12);
-  --cc-text: var(--kt-dark-1);
-  /* 终端视图强制深色，字色同深色主题——少了这几条，浅色主题切进终端页时会继承到
-     浅色的深字，压在这里的深底上不可读。 */
-  --cc-chat-text: var(--kt-dark-1);
-  --cc-text-dim: var(--kt-dark-2);
-  --cc-text-quaternary: var(--kt-dark-4);
-  /* Kimi 式设计变量同样压回深色值：浅色主题的悬停底/细线/阴影在深底上会消失。 */
-  --fill-hover: rgba(255, 255, 255, 0.05);
-  --fill-selected: rgba(255, 255, 255, 0.1);
-  --fill-selected-hover: rgba(255, 255, 255, 0.14);
-  --fill-tab: rgba(255, 255, 255, 0.18);
-  --line-subtle: rgba(255, 255, 255, 0.05);
-  --line-strong: rgba(255, 255, 255, 0.18);
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.22), 0 1px 3px rgba(0, 0, 0, 0.18);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(0, 0, 0, 0.24);
-  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.34), 0 4px 10px rgba(0, 0, 0, 0.28);
-  --shadow-xl: 0 24px 64px rgba(0, 0, 0, 0.42), 0 8px 20px rgba(0, 0, 0, 0.32);
-  --shadow-menu: 0 6px 18px rgba(0, 0, 0, 0.2), 0 3px 9px rgba(0, 0, 0, 0.24), 0 1px 1px rgba(0, 0, 0, 0.24);
-  --cc-text-faint: var(--kt-dark-3);
-  --cc-accent: #1a88ff;
-  /* --cc-on-accent 也得拨回深色默认:浅色主题把它覆成别的白字档,白字压蓝底仅 3.49:1
-     (见 :151 附近的对比度注释)。目前消费处不在终端页渲染,属存量隐患,一行封口。 */
-  --cc-on-accent: #04202e;
-  --cc-accent-text: #3d9bff;
-  --cc-claude: #d97757;
-  /* 弹层表面也得跟着变深：下拉菜单/筛选面板/标题菜单的底色都取 --cc-menu-bg，
-     漏掉它就是「终端页一片深色、下拉弹出来还是白的」（实拍反馈）。soft/border
-     强调色同理（选中态、开态描边）。 */
-  --cc-menu-bg: #292929;
-  --cc-accent-soft: rgba(26, 136, 255, 0.1);
-  --cc-accent-border: rgba(26, 136, 255, 0.28);
-  /* 浅色主题块重定义过、此前漏在这里同步的一组（状态色 + 语法高亮）：漏了就是
-     「终端页整窗深色、状态点/审批色/diff 增减底色/代码高亮还是浅色版」（0.5.15
-     排查实拍）。取值 = :root 深色默认。 */
-  --cc-ok-vivid: #3fb950;
-  --cc-warn-vivid: #d29922;
-  --cc-err-vivid: #f85149;
-  --cc-ok-text: #3fb950;
-  --cc-warn-text: #d29922;
-  --cc-fail-text: #ff7b72;
-  --cc-warn: #d29922;
-  --cc-err: #f85149;
-  --cc-accent-dim: #258eff;
-  --cc-syn-keyword: #c678dd;
-  --cc-syn-string: #98c379;
-  --cc-syn-number: #d19a66;
-  --cc-syn-comment: #7f848e;
-  --cc-syn-func: #61afef;
-  --cc-syn-type: #e5c07b;
-  --cc-syn-attr: #e06c75;
-  --cc-syn-builtin: #56b6c2;
   color: var(--cc-text);
   background: var(--cc-bg);
 }
