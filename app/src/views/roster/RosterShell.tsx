@@ -15,6 +15,7 @@ import { Icon } from "../../icons/Icon";
 import { icSettings } from "../../icons/glyphs";
 import { icList } from "../../icons/glyphs.chat";
 import { remoteUi } from "../../remoteMode";
+import { ChatMarkdown } from "../ChatMarkdown";
 import { ChatWindow, type ChatShellBridge } from "../ChatWindow";
 import { useSidebarGitBadges, type GitBadgeStore } from "../chat/SidebarGitBadge";
 import { AgentRing, Eyes } from "../island/islandParts";
@@ -313,7 +314,8 @@ function RosterItem({ item, open, gitBadges, onToggle, onEnter }: {
       </button>
       {open && (
         <div className="roster-sheet">
-          {said ? <p className="roster-said">{said}</p> : <p className="roster-said is-empty">{t.roster.nothingSaid}</p>}
+          {/* 它最后说的话是 Markdown 原文：照对话窗那样渲染，不把星号和反引号直接摆出来（真机实拍）。 */}
+          {said ? <div className="roster-said chat-md"><ChatMarkdown text={said} /></div> : <p className="roster-said is-empty">{t.roster.nothingSaid}</p>}
           {/* 轮到你的行：决定就在这里做（批准 / 拒绝 / 拍板）。答不了的由它说明原因。 */}
           {tone === "pending" && <RosterDecision item={item} fallback={null} />}
           <div className="roster-foot">
