@@ -20,6 +20,7 @@ import { useShowWhenReady } from "../useShowWhenReady";
 import { reduceChatEvents } from "../chat/reducer";
 import { ApprovalCard, ApprovalCommandDetail, isRiskyCommand } from "./chat/ApprovalCard";
 import { CardAnnouncer } from "./chat/cardAnnouncer";
+import { isSidebarToggleKey } from "./terminalKeys";
 import { copyPlainText } from "./chat/clipboard";
 import { readSideAnswer, sideQuestionText } from "./chat/sideQuestion";
 import { approvalChoiceForKey, BrokerApprovalCard, useBrokerResolver } from "./chat/BrokerApprovalCard";
@@ -796,6 +797,8 @@ export function ChatWindow() {
         // 同键开合（VS Code/Slack 惯例）：已开着时再按一次是「收起」，不是无操作。
         setSwitcherOpen((open) => !open);
       } else if (e.code === "KeyB") {
+        // 焦点在托管终端里的 Ctrl+B 归 claude（转后台），xterm 已经发了 ，这里不再收侧栏。
+        if (!isSidebarToggleKey(e, document.activeElement)) return;
         e.preventDefault();
         toggleSidebarRef.current();
       } else if (e.code === "Digit1") {

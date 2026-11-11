@@ -452,7 +452,7 @@ export const en: Dict = {
     shortcutSheet: "Open this cheat sheet",
     shortcutGroupWindow: "Window",
     shortcutGroupInput: "Input box",
-    shortcutTerminalNote: (mod: string) => `In terminal view, ${mod}+K/B/N/1/2 are taken by the app and ${mod}+F finds in the terminal`,
+    shortcutTerminalNote: (mod: string, ctrl = "Ctrl") => `In the terminal, ${mod}+K/N/1/2 belong to the app, so kill-to-end and next-history are unavailable. ${ctrl}+B goes to claude to run a task in the background. ${mod}+F finds`,
     termSearchPlaceholder: "Search terminal output",
     termSearchPrev: "Previous",
     termSearchNext: "Next",

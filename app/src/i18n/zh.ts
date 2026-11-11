@@ -479,7 +479,8 @@ export const zh = {
     shortcutGroupWindow: "窗口",
     shortcutGroupInput: "输入框",
     // 终端视图的让位说明（速查表底注）：静默失效的键必须有一处写明。
-    shortcutTerminalNote: (mod: string) => `终端视图中 ${mod}+K/B/N/1/2 由应用占用，${mod}+F 在终端里查找`,
+    // 被占用的键要写明原本的功能（调研 i4）：K 在 agent 输入框里是删到行尾，N 是下一条历史。
+    shortcutTerminalNote: (mod: string, ctrl = "Ctrl") => `终端里 ${mod}+K/N/1/2 归应用，删到行尾和下一条历史因此不可用。${ctrl}+B 交给 claude 转后台，${mod}+F 查找`,
     // 终端内搜索条（Ctrl+F，xterm addon-search）。
     termSearchPlaceholder: "搜索终端输出",
     termSearchPrev: "上一个",

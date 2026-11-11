@@ -40,6 +40,7 @@ import { terminalAttention, visibleTerminalText, type AttentionGrammar, type Ter
 import { remoteUi } from "../remoteMode";
 import { isMac } from "../platform";
 import { WINDOW_CLOSE_CANCELLED_EVENT } from "./chat/windowClose";
+import { isTerminalAppNavKey } from "./terminalKeys";
 
 /** 远程模式补查周期（ms）。手机端收不到 pty-output 事件,靠定时补查增量快照喂满屏幕识别
  *  （AskUserQuestion 表单检测跑在这条通道上）。带 nextOffset 只取增量,不重传 backlog。 */
@@ -744,14 +745,12 @@ export function ManagedTerminal({ sessionId, status, reviewPending = false, back
     copySelectionRef.current = copyTerminalSelection;
     terminal.attachCustomKeyEventHandler((event) => {
       if (event.type !== "keydown") return true;
-      // 应用级导航键（Ctrl/Cmd+K 切换器、B 收侧栏、1/2 切视图、N 新建）放行给窗口监听：
+      // 应用级导航键（Ctrl/Cmd+K 切换器、⌘B 收侧栏、1/2 切视图、N 新建）放行给窗口监听：
       // xterm 吃掉 keydown 会 stopPropagation，事件到不了 window，这些快捷键在终端视图
       // 全部失灵。放行 = xterm 不处理也不下发 PTY，事件自然冒泡（与粘贴键同一机制）。
-      // 代价：agent composer 的 readline 编辑键（如 Ctrl+K 删到行尾）在托管终端让位——
-      // 应用内导航的跨视图一致性优先。
-      const appNav = (event.ctrlKey || event.metaKey) && !event.altKey && !event.shiftKey
-        && ["KeyK", "KeyB", "KeyN", "Digit1", "Digit2"].includes(event.code);
-      if (appNav) return false;
+      // 代价：agent composer 的 readline 编辑键（如 Ctrl+K 删到行尾）在托管终端让位。
+      // Ctrl+B 例外，交给 PTY：它是 claude 的「转到后台」（关卡 A 定案，见 terminalKeys）。
+      if (isTerminalAppNavKey(event)) return false;
       // Ctrl/Cmd+F = 终端内搜索:拦下打开搜索条,不让 ^F(光标前移)落进 PTY。Ctrl+Shift+F 是
       // 同一动作的别名(二期 #8,对话视图同此)。窗口级的找字监听对 .managed-terminal 内的焦点已让位,互不抢。
       const findCombo = (event.ctrlKey || event.metaKey) && !event.altKey && event.code === "KeyF";
