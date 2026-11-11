@@ -23,7 +23,7 @@ describe("品牌色守护", () => {
   it("选中与强调不用左侧彩色竖条", () => {
     // leader 2026-11-11：「浅色下会话选中的时候为什么有个高亮边」；此前跨会话消息也定过不要左侧强调色条。
     const colored = "(--cc-accent|--cc-brand-line|--cc-on-accent|--isl-lime)";
-    expect(hits(new RegExp(`border-(left|inline-start)[^;]*var\(${colored}`))).toEqual([]);
-    expect(hits(new RegExp(`inset\s+-?[1-9][\d.]*px\s+0\s+0[^;,]*var\(${colored}`))).toEqual([]);
+    expect(hits(new RegExp(`border-(left|inline-start)[^;]*var\\(${colored}`))).toEqual([]);
+    expect(hits(new RegExp(`inset\\s+-?[1-9][\\d.]*px\\s+0\\s+0[^;,]*var\\(${colored}`))).toEqual([]);
   });
 });
