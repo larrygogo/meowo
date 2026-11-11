@@ -7,15 +7,15 @@ const src = (p: string) => readFileSync(resolve(__dirname, p), "utf8");
 
 describe("终端配色走品牌 token（UI 优化 #50）", () => {
   it("xterm 主题从 :root 的 --term-* 读取，读不到时回落到同值的兜底", () => {
-    document.documentElement.style.setProperty("--term-cursor", "#1a88ff");
-    document.documentElement.style.setProperty("--term-selection", "rgba(26, 136, 255, 0.3)");
+    document.documentElement.style.setProperty("--term-cursor", "#d4f64c");
+    document.documentElement.style.setProperty("--term-selection", "rgba(212, 246, 76, 0.25)");
     const theme = terminalTheme();
-    expect(theme.cursor).toBe("#1a88ff");
-    expect(theme.selectionBackground).toBe("rgba(26, 136, 255, 0.3)");
+    expect(theme.cursor).toBe("#d4f64c");
+    expect(theme.selectionBackground).toBe("rgba(212, 246, 76, 0.25)");
     document.documentElement.style.removeProperty("--term-cursor");
     document.documentElement.style.removeProperty("--term-selection");
     // jsdom 不加载 styles.css：兜底值必须是品牌蓝，不能回到旧翡翠绿。
-    expect(terminalTheme().cursor).toBe("#1a88ff");
+    expect(terminalTheme().cursor).toBe("#d4f64c");
   });
 
   it("两个终端组件与终端浮层样式里不再写死旧翡翠绿和绿调灰", () => {

@@ -25,8 +25,8 @@
    :where() 把终端那一支的特异度降到 0：对话窗的文字四档（.chat-window，0,1,0）照常压过这里的全局四档，
    终端页签与对话页签同一套文字档。浅色值在 :root[data-theme="light"]，只作用在根元素，碰不到终端页签。 */
 :where(.chat-window.is-terminal), :root {
-  --cc-bg-rgb: 18, 18, 18;
-  --cc-border: rgba(255, 255, 255, 0.12);
+  --cc-bg-rgb: 17, 18, 16;
+  --cc-border: rgba(244, 248, 230, 0.12);
   /* 控件墨色（UI 调研 sys7）：此前按「深色写白 alpha、浅色补一条黑 alpha 组件补丁」两头维护，
      收成 token 后浅色值写在浅色块里，终端页签随本块自动取深色值，不再需要「终端豁免」规则。 */
   --scrollbar-thumb: rgba(255, 255, 255, 0.16);
@@ -43,27 +43,27 @@
   /* 计数角标：深色淡蓝底配蓝字；浅色淡蓝底压在白卡上不显眼，换实心蓝底（原浅色补丁的取值）。 */
   --count-badge-bg: var(--cc-accent-soft);
   --count-badge-fg: var(--cc-accent-text);
-  --cc-accent: #1a88ff;
-  --cc-accent-dim: #258eff;
-  --cc-accent-soft: rgba(26, 136, 255, 0.1);
-  --cc-accent-border: rgba(26, 136, 255, 0.28);
+  --cc-accent: #d4f64c;
+  --cc-accent-dim: #c3e63a;
+  --cc-accent-soft: rgba(212, 246, 76, 0.1);
+  --cc-accent-border: rgba(212, 246, 76, 0.28);
   /* 强调色「当前景文字/图标」时用此色（需对比度）；当填充/高亮时用 --cc-accent（品牌色）。 */
   /* 比填充档再亮一级：#3d9bff 在最亮的卡面 raised #292929 上 5.08:1、panel 5.75:1、裸底 6.54:1，
      三档都过 4.5:1（Kimi 的 hover 档 #258eff 在 raised 只剩 4.43:1）。 */
-  --cc-accent-text: #3d9bff;
+  --cc-accent-text: #d4f64c;
   /* accent 填充上的文字/图标：白字压 #1a88ff 只有 3.49:1（小字不达 AA）；深墨 #04202e
      在 #1a88ff 上 4.80:1、在 hover 档 #258eff 上 5.11:1，两态都过 4.5:1。 */
-  --cc-on-accent: #04202e;
+  --cc-on-accent: #1c2600;
   /* Claude 品牌赤陶色：仅 provider 徽标(ClaudeMark)专用，独立于全局强调色，换主题色不受影响。 */
   --cc-claude: #d97757;
   /* 四级字色一律用白色 + alpha（Kimi Code 同法），随底色自动保持比值，不必每档另配 hex。 */
-  --cc-text: rgba(255, 255, 255, 0.9);
+  --cc-text: rgba(244, 248, 230, 0.92);
   /* 对话正文专用字色，比 --cc-text 暗一档：这是**深色主题专属**的取舍——近白字压在近黑底上会
      晕开（halation），中文细笔画尤其明显，长篇连读就是「看起来好累」的直接来源（实拍反馈）。
      .90 在卡面 13.58:1、.84 降到 11.91:1，仍远高于 WCAG AAA 的 7:1，只是不再刺眼。
      浅色主题不改：深字浅底不晕。 */
-  --cc-chat-text: rgba(255, 255, 255, 0.84);
-  --cc-text-dim: rgba(255, 255, 255, 0.64);
+  --cc-chat-text: rgba(244, 248, 230, 0.86);
+  --cc-text-dim: rgba(244, 248, 230, 0.66);
   /* 9–10.5px 小字也要 ≥4.5:1。校准面是**叠层后的卡面**而不是裸底（7G-1）：faint 的实际消费点
      几乎全在 .stk-card / 代码块 / tab 计数这类面上，最亮的是 raised #292929。
      alpha .50 在 raised 4.80:1、panel 5.10:1、裸底 5.32:1，三档都过线；Kimi 原档 .42
@@ -72,29 +72,29 @@
      高分屏 .52（#121212/#292929/#353535 上 5.66/5.06/4.58:1），低分屏 .54（同三面 6.02/5.34/4.81:1）；
      浅色根值 .62（白 6.19:1），对话窗浅色 .56/.58（白 4.95/5.33:1）。
      2026-11-11 按 WCAG 相对亮度公式复算（ui-lanes/ds/vars-dump.mjs 取实际计算值）。 */
-  --cc-text-faint: rgba(255, 255, 255, 0.5);
-  --cc-warn: #d29922;
-  --cc-err: #f85149;
+  --cc-text-faint: rgba(244, 248, 230, 0.52);
+  --cc-warn: #ffa126;
+  --cc-err: #ff5c57;
   /* 独立窗口底色（设置/引导/更新窗）：不能走 --cc-bg（带贴纸半透明度会透桌面），各窗统一取此。 */
-  --cc-window-bg: #121212;
+  --cc-window-bg: #111210;
   /* 工作区只分「外壳 / 内容 / 浮层」三层，避免每张卡各自混出相近却不同的灰色。 */
-  --cc-panel-bg: #1f1f1f;
-  --cc-panel-raised: #292929;
+  --cc-panel-bg: #191a17;
+  --cc-panel-raised: #232421;
   /* 浮层菜单/气泡底色（右键菜单/下拉/模型菜单/tooltip）：必须不透明，否则透出底下内容。 */
-  --cc-menu-bg: #292929;
+  --cc-menu-bg: #232421;
   /* 状态指示点的鲜亮色（缩略条/卡片小圆点）：与文字调色板解耦，浅色下不跟随变暗，保持醒目。 */
-  --cc-ok-vivid: #3fb950;
-  --cc-warn-vivid: #d29922;
-  --cc-err-vivid: #f85149;
+  --cc-ok-vivid: #2fcfa0;
+  --cc-warn-vivid: #ffa126;
+  --cc-err-vivid: #ff5c57;
   /* 状态色当文字用（CI 状态、文件状态字母、+N/-N、queued 标签）的文字档：鲜亮色只留给点、条、图标底。
      深色下与鲜亮色同值（#121212 上 7.37～7.42:1，调研实测无问题）；浅色另取深档。
      不复用 --cc-err-text：它是错误提示句的「错误色混正文色」，深色下发粉，CI 失败和 diff 删除
      要的是与红点同色相的字。 */
-  --cc-ok-text: #3fb950;
-  --cc-warn-text: #d29922;
+  --cc-ok-text: #5fe0bc;
+  --cc-warn-text: #ffb454;
   /* 红色比红点亮一档：#f85149 在标题栏悬停底 #2b2b2b 只有 4.22:1（.tb-git-del 实测 4.27），
      #ff7b72 在 #121212/#292929/#2b2b2b 上 7.43/5.77/5.62:1。 */
-  --cc-fail-text: #ff7b72;
+  --cc-fail-text: #ff8580;
   /* 语法高亮调色板（文件/更改面板，One Dark Pro 系——绿字符串沿用 One Dark 原色，与蓝色强调色错开）：
      只被 .chat-diff-panel 下的 .hljs-* 规则消费；与功能色（ok/err/warn）解耦，
      换主题色不影响代码着色。 */
@@ -111,8 +111,8 @@
      工具类型配色不另起调色板，直接复用上面的 --cc-syn-*（深浅两套已按 4.5:1 校准）。 */
   --cc-mono: "JetBrains Mono", ui-monospace, "Cascadia Code", Consolas, "Noto Sans SC Variable", "PingFang SC", "Microsoft YaHei", monospace;
   /* 代码块底取 bg 档（#121212）：卡面是 #1f1f1f，代码块要再沉一档才读得出层次。 */
-  --cc-code-bg: #121212;
-  --cc-user-bubble: rgba(26, 136, 255, 0.16);
+  --cc-code-bg: #111210;
+  --cc-user-bubble: #2d2f28;
   /* 工具时间线/命令着色的色调。深色直接取语法色；浅色在 light 块里另配低饱和的一套——
      语法色板是给代码高亮调的，拿来给工具名整行上色，在白底上一排彩虹（用户实拍「不协调」）。 */
   --cc-tone-blue: var(--cc-syn-func);
@@ -236,15 +236,15 @@
   /* 终端配色（托管终端、面板终端及其浮层）：终端恒为深底，深浅主题同值。xterm 主题经
      terminalTheme.ts 读这里；浮层文字/底色也只认这组，改版前写死的绿色光标、绿调灰选区与浮层灰
      已清掉（UI 调研 sys6：与品牌蓝对不上）。 */
-  --term-bg: #121212;
-  --term-bg-rgb: 18, 18, 18;
+  --term-bg: #111210;
+  --term-bg-rgb: 17, 18, 16;
   --term-fg: rgba(255, 255, 255, 0.9);
   --term-fg-2: rgba(255, 255, 255, 0.78);
   --term-fg-dim: rgba(255, 255, 255, 0.64);
   --term-fg-faint: rgba(255, 255, 255, 0.5);
-  --term-cursor: #1a88ff;
-  --term-selection: rgba(26, 136, 255, 0.3);
-  --term-warn: #d29922;
+  --term-cursor: #d4f64c;
+  --term-selection: rgba(212, 246, 76, 0.25);
+  --term-warn: #ffa126;
   --radius-xs: 4px;
   --radius-sm: 6px;
   --radius-md: 8px;
@@ -317,7 +317,7 @@
   --shadow-lg: 0 12px 32px rgba(16, 24, 40, 0.12), 0 4px 10px rgba(16, 24, 40, 0.08);
   --shadow-xl: 0 24px 64px rgba(16, 24, 40, 0.18), 0 8px 20px rgba(16, 24, 40, 0.1);
   --shadow-menu: 0 6px 18px rgba(0, 0, 0, 0.02), 0 3px 9px rgba(0, 0, 0, 0.04), 0 1px 1px rgba(0, 0, 0, 0.04);
-  --cc-bg-rgb: 255, 255, 255;
+  --cc-bg-rgb: 253, 253, 251;
   --scrollbar-thumb: rgba(0, 0, 0, 0.18);
   --scrollbar-thumb-hover: rgba(0, 0, 0, 0.3);
   --sticker-scroll: rgba(0, 0, 0, 0.3);
@@ -332,45 +332,45 @@
   --count-badge-bg: var(--cc-accent);
   --count-badge-fg: var(--cc-on-accent);
   /* 细线色对齐 Kimi Code 浅色板 line .13。 */
-  --cc-border: rgba(0, 0, 0, 0.13);
-  --cc-accent: #1783ff;
+  --cc-border: rgba(20, 24, 8, 0.13);
+  --cc-accent: #161813;
   /* hover 下沉色：与 accent 同值时主按钮 hover 零反馈，取同族更深一档。 */
-  --cc-accent-dim: #167ff7;
-  --cc-accent-soft: #e8f3ff;
-  --cc-accent-border: rgba(23, 131, 255, 0.25);
+  --cc-accent-dim: #2b2e25;
+  --cc-accent-soft: rgba(20, 24, 8, 0.06);
+  --cc-accent-border: rgba(20, 24, 8, 0.25);
   /* 当文字/图标前景用的强调色要单独压深：#1783ff 在白底只有约 3.7:1，#1266cc 在白底 5.53:1、
      在 #f5f5f5 面 5.07:1，两档都过 4.5:1。 */
-  --cc-accent-text: #1266cc;
+  --cc-accent-text: #1b1d17;
   /* accent 填充上的文字：深墨 #001a33（#1783ff 上 4.79:1、悬停 #167ff7 上 4.53:1，过 AA）。
      原取 Kimi 的白字（3.67:1，曾以「深墨发闷」实拍定案），2026-11-11 leader 在关卡
      Q-20261111-onaccent 改定深字：13px 按钮字不算大字，且与深色主题的深墨一致。
      正文级蓝字走 --cc-accent-text，不走这档。 */
-  --cc-on-accent: #001a33;
+  --cc-on-accent: #d4f64c;
   --cc-claude: #b0532f;
-  --cc-text: rgba(0, 0, 0, 0.9);
+  --cc-text: rgba(20, 24, 8, 0.92);
   /* 浅色主题无 halation 问题，对话正文与全局同色（见深色块里 --cc-chat-text 的说明）。 */
-  --cc-chat-text: rgba(0, 0, 0, 0.9);
-  --cc-text-dim: rgba(0, 0, 0, 0.68);
+  --cc-chat-text: rgba(20, 24, 8, 0.92);
+  --cc-text-dim: rgba(20, 24, 8, 0.7);
   /* 浅色同理按叠层后的卡面校（7G-1）：最亮的底是 #fff（外壳/浮层都是它），再次是 #f5f5f5
      （well/sunken）。rgba(0,0,0,.62) 在白底 6.19:1、在 #f5f5f5 面 6.04:1，两档都过线；
      Kimi 原档 .53 只剩约 4.35–4.42:1，故取其 muted 档以上的写法。 */
-  --cc-text-faint: rgba(0, 0, 0, 0.62);
-  --cc-warn: #84590c;
-  --cc-err: #cf4434;
+  --cc-text-faint: rgba(20, 24, 8, 0.62);
+  --cc-warn: #a85400;
+  --cc-err: #dc2f3c;
   /* 纯中性白外壳 + 浅灰 well（Kimi Code 浅色板：bg #ffffff、surface/well/deep #f5f5f5）。 */
-  --cc-window-bg: #ffffff;
-  --cc-panel-bg: #ffffff;
+  --cc-window-bg: #f3f4ef;
+  --cc-panel-bg: #fdfdfb;
   --cc-panel-raised: #ffffff;
   --cc-menu-bg: #ffffff;
   /* 圆点鲜亮色：浅色下用饱和中调（亮但在近白底上仍有存在感），不取文字用的暗色。 */
-  --cc-ok-vivid: #17ab77;
-  --cc-warn-vivid: #d99a1a;
-  --cc-err-vivid: #db453a;
+  --cc-ok-vivid: #0c9a86;
+  --cc-warn-vivid: #c86a00;
+  --cc-err-vivid: #dc2f3c;
   /* 浅色文字档：鲜亮色在白底只有 2.45～4.26:1（调研 i3）。这三档在白 / #f5f5f5 / 自身 18% 叠底上
      依次为 ok 5.86/5.37/4.87、warn 6.15/5.64/5.29、fail 5.98/5.49/4.70（ui-lanes/a11y/contrast-tokens.mjs）。 */
-  --cc-ok-text: #0d7350;
-  --cc-warn-text: #84590c;
-  --cc-fail-text: #bb2d22;
+  --cc-ok-text: #0a7a62;
+  --cc-warn-text: #a85400;
+  --cc-fail-text: #c4262e;
   /* 语法高亮调色板浅色版（One Light 同族、逐色压暗）：原版 One Light 的绿/蓝/黄
      在近白卡面只有 3–4:1，这里取同色相的深档，全部 ≥4.5:1。 */
   --cc-syn-keyword: #a626a4;
@@ -382,8 +382,8 @@
   --cc-syn-type: #a84d08;
   --cc-syn-attr: #b91c1c;
   --cc-syn-builtin: #0e7490;
-  --cc-code-bg: #f5f5f5;
-  --cc-user-bubble: #e8f3ff;
+  --cc-code-bg: #f3f4ef;
+  --cc-user-bubble: #f0f1ea;
   /* 浅色色调：GitHub 浅色系的中明度低饱和色，在近白卡面上都 ≥4.5:1；字重降一档，
      粗体彩字在白底上发黑发重、和正文抢视线。 */
   --cc-tone-blue: #0b5cad;
