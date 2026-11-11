@@ -109,6 +109,45 @@ describe("ApprovalCard 焦点归还(C-9 overlay)", () => {
   });
 });
 
+describe("限高的卡片正文：关键内容进首屏、被裁的一侧有提示", () => {
+  /// 做空审查 2026-11-11：620×480 下命令/选项被裁在折叠线下且毫无提示。jsdom 无布局，伪造溢出。
+  it("正文溢出时标出被裁的一侧，并让滚动区进 Tab 序；不溢出时两者都不挂", () => {
+    const { container, unmount } = render(<ApprovalCard title="Agent 请求权限"><span>说明</span></ApprovalCard>);
+    const plain = container.querySelector<HTMLElement>(".chat-approval-copy")!;
+    expect(plain.hasAttribute("data-clip")).toBe(false);
+    expect(plain.hasAttribute("tabindex")).toBe(false);
+    unmount();
+
+    const sh = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(400);
+    const ch = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(120);
+    const again = render(<ApprovalCard title="Agent 请求权限"><span>说明</span></ApprovalCard>);
+    const copy = again.container.querySelector<HTMLElement>(".chat-approval-copy")!;
+    expect(copy.getAttribute("data-clip")).toBe("bottom");
+    expect(copy.tabIndex).toBe(0);
+    // 滚到中段：上下都被裁。
+    copy.scrollTop = 100;
+    fireEvent.scroll(copy);
+    expect(copy.getAttribute("data-clip")).toBe("both");
+    copy.scrollTop = 280;
+    fireEvent.scroll(copy);
+    expect(copy.getAttribute("data-clip")).toBe("top");
+    sh.mockRestore();
+    ch.mockRestore();
+  });
+
+  it("「复制命令」是带无障碍名与悬停提示的图标钮，不再独占一行文字", () => {
+    render(
+      <ApprovalCard title="Agent 请求权限">
+        <ApprovalCommandDetail label="命令" command="echo hi" expandLabel="展开全部" collapseLabel="收起" copyLabel="复制命令" copiedLabel="已复制" />
+      </ApprovalCard>,
+    );
+    const button = screen.getByRole("button", { name: "复制命令" });
+    expect(button.textContent).toBe("");
+    expect(button.getAttribute("data-tip")).toBe("复制命令");
+    expect(button.querySelector("svg")).toBeTruthy();
+  });
+});
+
 describe("ApprovalCommandDetail 长命令出口(C-10)", () => {
   const labels = {
     label: "完整参数",

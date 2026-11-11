@@ -5508,7 +5508,18 @@ button.scm-check-name:hover { text-decoration: underline; }
 /* 正文限高：长命令/多问题再长也不能把卡片撑到盖住整个消息区，超出部分卡内滚动。
    min-height:0 让卡片级 max-height(矮窗兜底)能把它压小——flex 子项默认不肯缩到
    内容高以下,缺了它卡片限高会失效。 */
-.chat-approval-copy { min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: var(--sp-8); max-height: min(44vh, 420px); overflow-y: auto; }
+/* 左右各垫一段再用负边距抵回（--copy-bleed）：选项行的悬停底色要比文字宽出一圈，又不能让文字
+   相对题干缩进；滚动区会裁掉越界的部分，所以把滚动区自己放宽。 */
+.chat-approval-copy { --copy-bleed: var(--sp-8); min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: var(--sp-8); max-height: min(44vh, 420px); overflow-y: auto; padding-inline: var(--copy-bleed); margin-inline: calc(-1 * var(--copy-bleed)); }
+/* 正文被限高、还有内容没露出来时，被裁的一侧渐隐到卡面（data-clip 由 ApprovalCard 按滚动位置挂）：
+   此前内容被齐刷刷切在折叠线上，看不出下面还有命令或选项（做空审查）。用遮罩不用模糊。 */
+.chat-approval-copy[data-clip="bottom"] { -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 16px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 16px), transparent); }
+.chat-approval-copy[data-clip="top"] { -webkit-mask-image: linear-gradient(to bottom, transparent, #000 16px); mask-image: linear-gradient(to bottom, transparent, #000 16px); }
+.chat-approval-copy[data-clip="both"] { -webkit-mask-image: linear-gradient(to bottom, transparent, #000 16px, #000 calc(100% - 16px), transparent); mask-image: linear-gradient(to bottom, transparent, #000 16px, #000 calc(100% - 16px), transparent); }
+/* 被裁的正文自己进 Tab 序（键盘能滚到）。遮罩会把它自身的焦点环一起裁掉，环画在整张卡外面。 */
+:root[data-im="kbd"] .chat-window .chat-approval-copy:focus-visible { box-shadow: none; }
+.chat-approval-copy:focus-visible { outline: none; }
+:root[data-im="kbd"] .chat-approval:has(> .chat-approval-copy:focus-visible) { outline: 2px solid var(--cc-accent); outline-offset: 2px; }
 /* 卡片被限高时（手机键盘弹出、矮窗）让这一块自己滚，里面各行不许被压扁：命令框带 overflow，
    flex 里它的最小高度是 0，会先被压成一条 4px 的线，用户看不到要批准的是什么命令
    （visual 截图 qa-m-approval-kbd，375×476 实拍）。 */
@@ -5534,7 +5545,16 @@ button.scm-check-name:hover { text-decoration: underline; }
    伪元素，标题换行时点仍钉在第一行行首。 */
 .chat-approval-copy strong::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: var(--sp-8); border-radius: 50%; background: var(--cc-warn-vivid); vertical-align: middle; }
 .chat-approval-badge { flex: 0 0 auto; padding: 1px var(--sp-7); border-radius: var(--radius-full); background: color-mix(in srgb, var(--cc-warn-vivid) 14%, transparent); color: var(--cc-warn-text); font-variant-numeric: tabular-nums; font-size: var(--text-2xs); line-height: var(--leading-body); white-space: nowrap; }
-.chat-approval-copy > span { color: var(--cc-text-dim); font-size: var(--text-sm); line-height: var(--leading-normal); overflow-wrap: anywhere; }
+.chat-approval-copy > span, .chat-approval-desc { color: var(--cc-text-dim); font-size: var(--text-sm); line-height: var(--leading-normal); overflow-wrap: anywhere; }
+/* 次要信息组（请求工具、影响范围标签、说明）：工具与标签同一行，说明另起一行。 */
+.chat-approval-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-6) var(--sp-8); min-width: 0; }
+.chat-approval-meta:empty { display: none; }
+.chat-approval-desc { flex: 1 1 100%; min-width: 0; }
+/* 矮窗（.chat-main[data-short]，ChatWindow 按主列高度挂）：整组压成一行、说明截断，高度留给命令。 */
+.chat-main[data-short] .chat-approval-meta { flex-wrap: nowrap; }
+.chat-main[data-short] .chat-approval-tool > span { display: none; }
+.chat-main[data-short] .chat-approval-tool, .chat-main[data-short] .chat-approval-scope { flex: 0 0 auto; flex-wrap: nowrap; }
+.chat-main[data-short] .chat-approval-desc { flex: 1 1 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; }
 .chat-approval-tool { display: flex; align-items: center; gap: var(--sp-7); color: var(--cc-text-faint); font-size: var(--text-xs); }
 /* 影响范围标签（approvalScope.ts）：工作区外/删除/高风险用警示色，其余中性。 */
 .chat-approval-scope { display: flex; flex-wrap: wrap; gap: var(--sp-6); }
@@ -5544,18 +5564,21 @@ button.scm-check-name:hover { text-decoration: underline; }
 .chat-approval-tool code { padding: 1px var(--sp-6); border: 0; border-radius: var(--radius-sm); color: var(--cc-text); background: var(--fill-selected); font: var(--text-xs)/var(--leading-normal) var(--cc-mono); }
 /* 「完整参数 <命令>」排成一行起头而不是上下两块：命令本身才是要读的东西，标签退成
    同一行的前缀，省掉一次视线折返。flex-wrap 给详情工具行(展开/复制)让出整行。 */
-.chat-approval-detail { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-6) var(--sp-7); min-width: 0; }
+.chat-approval-detail { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-4) var(--sp-7); min-width: 0; }
 .chat-approval-detail > span { flex: 0 0 auto; color: var(--cc-text-faint); font-size: var(--text-xs); }
-.chat-approval-detail > pre { flex: 1 1 100%; min-width: 0; }
+.chat-approval-detail > pre { order: 2; flex: 1 1 100%; min-width: 0; }
 /* 「展开全部/复制命令」工具行:整行靠右的文字级小按钮,不披 .chat-approval button
    的 30px 灰底皮肤(那是给决定动作的视觉层级,工具动作不该同权重)。 */
-/* sticky 钉在正文滚动区底边:长命令把正文撑满时,这一行原本落在滚动区外,手机上只露
-   半截、被下方决定按钮挡住(用户实拍)。底色与卡片同色,盖住滚过去的命令文字。 */
-.chat-approval-detail-tools { flex: 1 1 100%; display: flex; justify-content: flex-end; gap: var(--sp-10); position: sticky; bottom: 0; z-index: var(--z-raised); padding-block: 0; background: var(--cc-panel-raised); }
+/* 工具钮与「命令」标签同一行、靠右（order 把它提到命令框之前，DOM 序不变）：原先在命令框下面
+   独占一行并 sticky 钉底，矮窗里正是这一行把命令挤到折叠线下、还压在命令上（做空审查 620×480、
+   150% 英文）。「复制」收成图标钮，「展开全部」只在命令超高时才有。 */
+.chat-approval-detail-tools { order: 1; flex: 0 0 auto; margin-left: auto; display: flex; align-items: center; gap: var(--sp-4); }
 /* 带 .chat-approval 前缀：后面那条通用的 `.chat-approval button` 皮肤同特异度且写在更后，
    不加前缀这两颗工具钮会被画成 32px 的灰底按钮（重设计前的实拍就是这样）。 */
 .chat-approval .chat-approval-detail-tools button { height: var(--btn-h-sm); padding: 0 var(--sp-6); border: 0; background: none; color: var(--cc-text-faint); font-size: var(--text-xs); }
 .chat-approval .chat-approval-detail-tools button:hover:not(:disabled) { background: var(--fill-hover); color: var(--cc-text); }
+/* 图标 14px 坐在 24px 的热区正中，右缘比命令框缩进 5px：负边距把图标本身对到命令框右缘。 */
+.chat-approval .chat-approval-detail-tools .chat-approval-copy-btn { width: var(--btn-h-sm); margin-right: -5px; padding: 0; justify-content: center; }
 /* 展开态摘掉 pre 的 160px 限高:嵌套两层滚动回到外层 copy 的单层滚动。 */
 .chat-approval-detail.is-expanded > pre { max-height: none; }
 /* 提交失败的卡内错误行(此前空 catch 完全静默)。前缀压过 `.chat-approval-copy > span`
@@ -5933,7 +5956,11 @@ button.scm-check-name:hover { text-decoration: underline; }
 .chat-task-spin { display: inline-block; width: 11px; height: 11px; border: 1.5px solid color-mix(in srgb, var(--cc-ok-vivid) 25%, transparent); border-top-color: var(--cc-ok-vivid); border-radius: 50%; animation: spin var(--dur-spin) linear infinite; }
 @media (prefers-reduced-motion: reduce) { .chat-task-spin { animation: none; } }
 /* 停靠面板是从胶囊弹出的 L2 浮层：与输入框同宽、圆角 12、不透明卡面 + 菜单阴影，不用模糊。 */
-.dock-work-panel { position: absolute; bottom: 100%; left: 50%; z-index: var(--z-dropdown); width: min(var(--chat-col), calc(100% - 48px)); max-height: min(300px, 50vh); transform: translateX(-50%); display: flex; flex-direction: column; overflow: hidden; margin-bottom: var(--sp-6); border: 0; border-radius: var(--radius-lg); background: var(--cc-menu-bg); box-shadow: 0 0 0 var(--hairline) var(--cc-border), var(--shadow-menu); }
+/* 面板挂在 .dock-work-anchor（胶囊行上方的零高锚点）上向上弹，高度钳在锚点到标题栏下沿之间
+   （--dock-panel-room，DockWork 量了回写）：原先挂 dock 上沿、只按 min(300px, 50vh) 限高，dock 里
+   有关卡卡片时面板整块盖住标题栏并伸出窗口顶（做空实测 1200×760：y=-94..96）。超出面板内滚动。 */
+.chat-dock > .dock-work-anchor { height: 0; z-index: var(--z-dropdown); }
+.dock-work-panel { position: absolute; bottom: 0; left: 50%; z-index: var(--z-dropdown); width: min(var(--chat-col), calc(100% - 48px)); max-height: min(300px, 50vh, calc(var(--dock-panel-room, 300px) - var(--sp-6))); transform: translateX(-50%); display: flex; flex-direction: column; overflow: hidden; margin-bottom: var(--sp-6); border: 0; border-radius: var(--radius-lg); background: var(--cc-menu-bg); box-shadow: 0 0 0 var(--hairline) var(--cc-border), var(--shadow-menu); }
 .dock-work-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-10); padding: var(--sp-12) var(--sp-12) 0 var(--sp-16); }
 .dock-work-title { display: inline-flex; align-items: center; gap: var(--sp-6); color: var(--cc-text); font-size: var(--text-sm); font-weight: 600; }
 .dock-work-title-icon { flex: 0 0 auto; color: var(--cc-text-dim); }
@@ -5989,11 +6016,22 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 /* 审批卡外壳里的按钮会被统一成按钮条，展开钮要保持成文字链接（实拍）。 */
 .chat-approval .lead-gate-more { width: auto; height: auto; padding: 0; border: 0; background: none; color: var(--cc-accent-text); text-decoration: underline 2px var(--link-line); text-underline-offset: 3px; font-size: var(--text-xs); font-weight: 400; }
 .lead-gate-more { margin: var(--sp-4) 0; padding: 0; border: 0; background: none; color: var(--cc-accent-text); text-decoration: underline 2px var(--link-line); text-underline-offset: 3px; font-size: var(--text-xs); cursor: pointer; }
-.lead-gate-options { display: flex; flex-direction: column; gap: var(--sp-4); margin: var(--sp-8) 0; }
-.lead-gate-option { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-8); padding: var(--sp-8) var(--sp-11); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); cursor: pointer; }
-.lead-gate-option.is-picked { border-color: var(--line-strong); background: var(--fill-selected); }
-.lead-gate-option input { margin: 0; }
-.lead-gate-option-detail { flex-basis: 100%; padding-left: 22px; color: var(--cc-text-dim); font-size: var(--text-xs); }
+/* 关卡选项同样是列表行（见 .chat-approval-options）：无描边无底，悬停/选中上 fill。 */
+.lead-gate-options { display: flex; flex-direction: column; gap: var(--sp-2); margin: var(--sp-8) calc(-1 * var(--copy-bleed, 0px)); }
+/* 左内边距多留一个「圆点 + 间距」（21px），圆点用负边距退回去：说明折到第二行时与选项名左对齐，
+   而不是掉到圆点底下。 */
+.lead-gate-option { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-8); padding: var(--sp-8) var(--copy-bleed, var(--sp-8)); padding-left: calc(var(--copy-bleed, var(--sp-8)) + 13px + var(--sp-8)); border: 0; border-radius: var(--radius-md); cursor: pointer; }
+.lead-gate-option:hover { background: var(--fill-hover); }
+.lead-gate-option.is-picked, .lead-gate-option.is-picked:hover { background: var(--fill-selected); }
+/* 矮窗：摘要收到两行、说明并到选项名同一行、意见框收成一行，三个选项先露出来（做空审查
+   620×480：只剩「提交」看不到选项）。 */
+.chat-main[data-short] .lead-gate-summary:not(.is-expanded) { max-height: 3.1em; }
+.chat-main[data-short] .lead-gate-options { margin-block: var(--sp-2); }
+.chat-main[data-short] .lead-gate-option { padding-block: var(--sp-5); }
+.chat-main[data-short] .lead-gate-option-detail { flex: 1 1 8em; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-main[data-short] .lead-gate-note { height: calc(1.5em + var(--sp-16) + 2px); min-height: 0; }
+.lead-gate-option input { width: 13px; height: 13px; flex: 0 0 auto; margin: 0 0 0 calc(-13px - var(--sp-8)); }
+.lead-gate-option-detail { flex-basis: 100%; color: var(--cc-text-dim); font-size: var(--text-xs); }
 .lead-gate-rec { padding: 0 var(--sp-6); border-radius: var(--radius-sm); background: var(--fill-selected); color: var(--cc-text-dim); font-size: var(--text-xs); }
 .lead-gate-note { width: 100%; box-sizing: border-box; padding: var(--sp-8); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); background: var(--cc-panel-raised); color: var(--cc-text); font: inherit; font-size: var(--text-sm); resize: vertical; }
 .lead-gate-error { margin-top: var(--sp-4); color: var(--cc-warn-text); font-size: var(--text-xs); }
@@ -6818,7 +6856,9 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .chat-attention-collapsed:hover { color: var(--cc-text); }
 /* 选项列表:交互选择器的带勾选格选项、启动/信任/菜单卡的纯文本选项共用。
    要盖掉 `.chat-approval button` 的 30px 单行按钮基线(同 specificity,靠出现在其后)。 */
-.chat-approval-options { display: grid; gap: var(--sp-6); }
+/* 选项是卡里的列表行，不是卡里的小卡（design.md 1：卡片里不再放带底色的卡片）：平时无底，
+   悬停/选中才上 fill，行间只留 2px。底色向两侧各宽出 --copy-bleed，圆点/方框与题干左对齐。 */
+.chat-approval-options { display: grid; gap: var(--sp-2); margin-inline: calc(-1 * var(--copy-bleed, 0px)); }
 /* 手机端的兜底作答面（RemoteTerminalKeys）：终端画面 + 按键排 + 文字输入。画面等宽、
    超宽行折行（手机竖屏读整行比横向滚动省事）；限高免得把卡片撑出屏幕。 */
 .chat-remote-keys { display: flex; flex-direction: column; gap: var(--sp-8); width: 100%; min-width: 0; }
@@ -6832,11 +6872,14 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .chat-remote-type button { min-height: 40px; padding: 0 var(--sp-12); border: 0; border-radius: var(--radius-md); background: var(--cc-text); color: rgb(var(--cc-bg-rgb)); cursor: pointer; }
 .chat-remote-type button:disabled { opacity: .4; cursor: default; }
 .chat-remote-keys-error { color: var(--cc-err-text); font-size: var(--text-xs); }
-.chat-approval-options button { width: 100%; height: auto; min-height: calc(44px * var(--cc-ui)); padding: var(--sp-10) var(--sp-12); display: flex; align-items: flex-start; gap: var(--sp-10); border: 0; border-radius: var(--radius-md); color: var(--cc-text); background: var(--fill-hover); text-align: left; white-space: normal; cursor: pointer; }
-.chat-approval-options button:hover:not(:disabled) { background: var(--fill-selected); }
+.chat-approval-options button { width: 100%; height: auto; min-height: calc(36px * var(--cc-ui)); padding: var(--sp-8) var(--copy-bleed, var(--sp-8)); display: flex; align-items: flex-start; gap: var(--sp-10); border: 0; border-radius: var(--radius-md); color: var(--cc-text); background: transparent; text-align: left; white-space: normal; cursor: pointer; }
+.chat-approval-options button:hover:not(:disabled) { background: var(--fill-hover); }
 /* 选中只用中性底（design.md 2）；「已选」由勾选格的 accent 填充交代。推荐项同一档底色，不再染绿——绿是运行态的颜色。 */
-.chat-approval-options button.is-selected, .chat-approval-options button.is-selected:hover:not(:disabled) { background: var(--fill-selected-hover); }
-.chat-approval-options button.is-recommended { background: var(--fill-selected); }
+.chat-approval-options button.is-selected, .chat-approval-options button.is-selected:hover:not(:disabled) { background: var(--fill-selected); }
+/* 没有勾选格的选项（终端菜单、计划审批的几条出路）去掉底色后只剩几行字，看不出能点：行间加细线，
+   读作一张可选的列表。带勾选格的有圆点/方框交代，不加线。 */
+.chat-approval-options button:not(:has(> i)) { position: relative; }
+.chat-approval-options button:not(:has(> i)) + button:not(:has(> i))::before { content: ""; position: absolute; top: calc(-1 * var(--sp-1)); left: var(--copy-bleed, var(--sp-8)); right: var(--copy-bleed, var(--sp-8)); height: var(--hairline); background: var(--line-subtle); pointer-events: none; }
 .chat-approval-options i { width: 16px; height: 16px; flex: 0 0 auto; display: grid; place-items: center; margin-top: var(--sp-2); border: 0; box-shadow: inset 0 0 0 1px var(--line-strong); border-radius: var(--radius-xs); color: transparent; background: transparent; font: normal var(--text-xs)/1 sans-serif; }
 .chat-approval-options .is-selected i { box-shadow: none; background: var(--cc-accent); color: var(--cc-on-accent); }
 .chat-approval-options.is-single i { border-radius: 50%; }
@@ -6846,7 +6889,12 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .chat-approval-options small { color: var(--cc-text-faint); font-size: var(--text-xs); line-height: var(--leading-normal); }
 /* 题面卡的只读选项（外部终端会话：GUI 不持有 PTY、写不进作答按键，题面仅供阅读）：
    与可点选项同一版式，但无按钮态、无 hover、无光标暗示——不承诺点了会发生什么。 */
-.chat-approval-option-static { min-height: calc(44px * var(--cc-ui)); padding: var(--sp-10) var(--sp-12); display: flex; align-items: flex-start; gap: var(--sp-10); border: 0; border-radius: var(--radius-md); background: var(--fill-hover); }
+.chat-approval-option-static { min-height: calc(36px * var(--cc-ui)); padding: var(--sp-8) var(--copy-bleed, var(--sp-8)); display: flex; align-items: flex-start; gap: var(--sp-10); border: 0; border-radius: var(--radius-md); }
+/* 矮窗：说明并到选项名同一行（放不下 8em 才折到下一行），行高收到 30，三个选项能同屏。 */
+.chat-main[data-short] .chat-approval-options button, .chat-main[data-short] .chat-approval-option-static { min-height: calc(30px * var(--cc-ui)); padding-block: var(--sp-5); }
+.chat-main[data-short] .chat-approval-options span { flex: 1 1 auto; flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 0 var(--sp-8); }
+.chat-main[data-short] .chat-approval-options small { flex: 1 1 8em; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-main[data-short] .chat-question-panel { gap: var(--sp-6); }
 .chat-approval-custom { display: flex; gap: var(--sp-7); }
 .chat-approval-custom input { min-width: 0; flex: 1; height: calc(32px * var(--cc-ui)); padding: 0 var(--sp-11); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); color: var(--cc-text); background: var(--cc-panel-raised); font: inherit; font-size: var(--text-sm); }
 .chat-approval-custom input::placeholder { color: var(--cc-text-faint); }

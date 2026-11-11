@@ -18,7 +18,7 @@ import { chatMock } from "../src/demo/chatData";
 import { panelMock } from "../src/demo/panelData";
 import { savePanel } from "../src/views/chat/panelTabs";
 import { NEW_SESSION_EVENT } from "../src/remoteMode";
-import { CHAT_SESSION_ID, FIXED_NOW, leadTask, markReady, MENTION_CANDIDATES, scmMock } from "./fixtures";
+import { CHAT_SESSION_ID, FIXED_NOW, leadTask, markReady, MENTION_CANDIDATES, questionInput, scmMock } from "./fixtures";
 import "../src/fonts";
 import "../src/styles.css";
 import "../src/mobile/mobile.css";
@@ -37,7 +37,8 @@ if (scene === "mobile-changes") {
   savePanel(CHAT_SESSION_ID, { tabs: [{ key: "diff", type: "diff" }], active: "diff", visible: true, expanded: false });
 }
 // mobile-idle：对话页但没有待批准的请求（拍补全、菜单用）；mobile-lead：再加一张 Lead 关卡卡。
-const inChat = scene === "mobile-chat" || scene === "mobile-changes" || scene === "mobile-idle" || scene === "mobile-lead";
+// mobile-question：审批卡换成 AskUserQuestion 问答卡（矮屏下选项可见性，与桌面 flow-question 同一份题面）。
+const inChat = scene === "mobile-chat" || scene === "mobile-changes" || scene === "mobile-idle" || scene === "mobile-lead" || scene === "mobile-question";
 const sid = inChat ? `&sessionId=${CHAT_SESSION_ID}` : "";
 window.history.replaceState({}, "", `${location.pathname}?${q.toString()}${sid}`);
 const chat = chatMock(lang);
@@ -59,6 +60,11 @@ setExtraMock((cmd, args) => {
   // 模型菜单要有切换命令才点得开；权限模式要有可选项才出菜单（与桌面补看场景同一份补丁）。
   if (cmd === "agent_chat_ui" && (scene === "mobile-idle" || scene === "mobile-lead")) return patchChatUi(demoChatUi());
   if (cmd === "lead_task_snapshot" && scene === "mobile-lead") return leadTask(lang);
+  if (scene === "mobile-question" && cmd === "pending_interaction") {
+    const base = (chat(cmd) as { approval: Record<string, unknown> }).approval;
+    return { approval: null, question: { ...base, requestId: "visual-question", toolName: "AskUserQuestion", description: null, input: questionInput(lang), answerable: true } };
+  }
+  if (scene === "mobile-question" && cmd === "get_chat_history") return { ...(chat(cmd) as object), pendingReview: "question" };
   if ((scene === "mobile-idle" || scene === "mobile-lead") && cmd === "pending_interaction") return { approval: null, question: null };
   if ((scene === "mobile-idle" || scene === "mobile-lead") && cmd === "get_chat_history") return { ...(chat(cmd) as object), pendingReview: null, status: "waiting" };
   // 列表的空态与首载失败。

@@ -4,7 +4,7 @@
 /// 显隐判定、四块面板、连同只有它用的任务列表重建，全摊在 ChatWindow 里。收拢后 ChatWindow
 /// 只交数据，入口何时出现（dockEntries）是可单测的纯函数。
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ChatItem, ChatHistory } from "../../api";
 import { buildTranscriptTodos, type TaskUpdateCache } from "../../chat/transcriptTodos";
 import { pushEscLayer } from "../../escLayers";
@@ -36,6 +36,12 @@ export function dockEntries({ items, plan, planMode, planPending }: {
     bashRunning: backgroundTasks.bash.filter((task) => task.state === "run").length,
     subagentsRunning: backgroundTasks.subagents.filter((task) => task.state === "run").length,
   };
+}
+
+/// 停靠面板的可用高度：锚点上沿到标题栏下沿，留 8px 缝；量不出来（jsdom、主列隐藏）时给 0，
+/// 由 CSS 的 min() 兜成不显示而不是越界。导出给单测。
+export function dockPanelRoom(anchorTop: number, ceiling: number): number {
+  return Math.max(0, Math.floor(anchorTop - ceiling - 8));
 }
 
 function TerminalPillIcon({ className }: { className: string }) {
@@ -128,30 +134,54 @@ export function DockWork({ sessionId, cwd, ccSessionId, items, history, loading 
     };
   }, [panel]);
 
+  // 面板能占的高度 = 锚点（胶囊行上沿）到标题栏下沿。面板是绝对定位的浮层，CSS 自己量不出这段：
+  // 原先挂在 dock 上沿、只按 min(300px, 50vh) 限高，dock 里有常驻的关卡卡片时 dock 上沿已经贴着
+  // 标题栏，面板整块盖到标题栏上、还伸出窗口顶（做空实测 1200×760：面板 y=-94..96）。
+  // 量的都是面板之外的东西（面板不占流），回写不会自激。
+  const anchorRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const anchor = anchorRef.current;
+    const main = anchor?.closest<HTMLElement>(".chat-main");
+    if (!panel || !anchor || !main) return;
+    const apply = () => {
+      const bar = main.querySelector(":scope > .chat-bar");
+      const ceiling = bar ? bar.getBoundingClientRect().bottom : main.getBoundingClientRect().top;
+      anchor.style.setProperty("--dock-panel-room", `${dockPanelRoom(anchor.getBoundingClientRect().top, ceiling)}px`);
+    };
+    apply();
+    if (typeof ResizeObserver === "undefined") return;
+    const sizes = new ResizeObserver(apply);
+    sizes.observe(main);
+    if (anchor.parentElement) sizes.observe(anchor.parentElement);
+    return () => sizes.disconnect();
+  }, [panel]);
+
   const done = todos.filter((todo) => todo.status === "completed").length;
   const close = () => setPanel(null);
+  const openPanel = panel === "lead" && leadTask ? <LeadPanel task={leadTask} onClose={close} />
+    : panel === "plan" && showPlan ? <PlanPanel plan={currentPlan} pending={planPending} onClose={close} />
+    : panel === "todos" && todos.length > 0 ? (
+      <div className="dock-work-panel panel-todos">
+        <div className="dock-work-head">
+          <span className="dock-work-title"><TodosIcon className="dock-work-title-icon" />{t.chat.todoStripProgress(done, todos.length)}</span>
+        </div>
+        <div className="dock-work-body"><TodoListItems todos={todos} /></div>
+      </div>
+    )
+    : panel === "tasks" && backgroundTasks.bash.length > 0
+      ? <TasksDockPanel key="bash" title={t.chat.tasksBackground} icon={<TerminalPillIcon className="dock-work-title-icon" />} tasks={backgroundTasks.bash} onClose={close} />
+    : panel === "subagents" && backgroundTasks.subagents.length > 0
+      ? <TasksDockPanel key="subagents" title={t.chat.tasksSubagents} icon={<SparklesPillIcon className="dock-work-title-icon" />} tasks={backgroundTasks.subagents} onClose={close} />
+    : null;
   return (
     <>
-      {panel === "lead" && leadTask && <LeadPanel task={leadTask} onClose={close} />}
       {/* 关卡在等 leader 时常驻显示（不必先点开 Lead 面板）：这是 leader 要做的决定。 */}
       {cwd && leadTask?.gate?.status === "pending" && (
         <LeadGateCard key={leadTask.gate.id} cwd={cwd} gate={leadTask.gate} onAnswered={refreshLead} />
       )}
-      {panel === "plan" && showPlan && <PlanPanel plan={currentPlan} pending={planPending} onClose={close} />}
-      {panel === "todos" && todos.length > 0 && (
-        <div className="dock-work-panel panel-todos">
-          <div className="dock-work-head">
-            <span className="dock-work-title"><TodosIcon className="dock-work-title-icon" />{t.chat.todoStripProgress(done, todos.length)}</span>
-          </div>
-          <div className="dock-work-body"><TodoListItems todos={todos} /></div>
-        </div>
-      )}
-      {panel === "tasks" && backgroundTasks.bash.length > 0 && (
-        <TasksDockPanel key="bash" title={t.chat.tasksBackground} icon={<TerminalPillIcon className="dock-work-title-icon" />} tasks={backgroundTasks.bash} onClose={close} />
-      )}
-      {panel === "subagents" && backgroundTasks.subagents.length > 0 && (
-        <TasksDockPanel key="subagents" title={t.chat.tasksSubagents} icon={<SparklesPillIcon className="dock-work-title-icon" />} tasks={backgroundTasks.subagents} onClose={close} />
-      )}
+      {/* 面板的锚点：零高、紧贴胶囊行上方（在关卡卡片之后），面板从这里向上弹，盖在关卡卡片上，
+          而不是顶到关卡卡片上面去。 */}
+      {panel && <div className="dock-work-anchor" ref={anchorRef}>{openPanel}</div>}
       {!loading && (
         <div className="dock-workbar">
           {leadTask && <LeadPill task={leadTask} active={panel === "lead"} onClick={() => toggle("lead")} />}

@@ -267,7 +267,7 @@ body.remote-ui .chat-window.is-remote-compact .chat-compose .chat-model-button {
   /* 审批/提问卡的正文是 overflow:auto 的滚动区，贴边的「展开全部」「复制命令」、选项行外扩
      6px 越界，卡里横竖各挂一条滚动条（手机仿真截图）。滚动区四周垫 6px 再用负边距抵回：
      版式不动，外扩落在垫出来的内边距里，命中面照样保留。 */
-  body.remote-ui .chat-approval-copy { padding: 6px; margin: -6px; }
+  body.remote-ui .chat-approval-copy { --copy-bleed: 6px; padding: 6px; margin: -6px; }
 
   /* 对照 Kimi 手机端的可展开行（tp-row.expandable 触屏 44px、ch-row 用 :active 反馈）：
      工作摘要、思考、工具行是手机上最常点的东西，34px 一行上下紧挨着，点「运行」常串到
@@ -807,15 +807,16 @@ body.remote-ui:has(.chat-approval-overlay.is-active) .chat-compose textarea {
 }
 /* 键盘弹出时（可视高度不到 560）审批卡只剩两百多像素，命令那一行排在卡片正文的最下面，正好被挤到
    折叠线以下：用户看得到「允许」却看不到要允许什么（visual 截图 qa-m-approval-kbd，375×476）。
-   这时把进度胶囊那一排和「复制命令」那一行收掉，腾出的约 70px 让命令露出来。
+   这时把进度胶囊那一排收掉，腾出的高度让命令露出来（「复制命令」已并进「命令」标签那一行，不再占行）。
    键盘不改布局视口，媒体查询认不出来，只能拿 --app-height 算：差值乘一个大数再夹到 [0, 上限]，
    可视高度够时是原高度，不够时是 0。 */
 body.remote-ui:has(.chat-approval-overlay.is-active) .chat-window.is-remote-compact .dock-workbar,
-body.remote-ui .chat-window.is-remote-compact .chat-approval-overlay.is-active .chat-approval-detail-tools {
+body.remote-ui .chat-window.is-remote-compact .chat-dock:has(> .lead-gate-card) .dock-workbar {
   max-height: clamp(0px, calc((var(--app-height, 100dvh) - 560px) * 999), 80px);
   overflow: hidden;
 }
-body.remote-ui:has(.chat-approval-overlay.is-active) .chat-window.is-remote-compact .dock-workbar {
+body.remote-ui:has(.chat-approval-overlay.is-active) .chat-window.is-remote-compact .dock-workbar,
+body.remote-ui .chat-window.is-remote-compact .chat-dock:has(> .lead-gate-card) .dock-workbar {
   margin-bottom: clamp(0px, calc((var(--app-height, 100dvh) - 560px) * 999), 6px);
 }
 

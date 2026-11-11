@@ -236,6 +236,9 @@ const EMPTY_MARKERS: string[] = [];
 
 /** 终端就绪等待超过这么多秒才上横幅（之前只有发送钮转圈，见横幅处注释）。 */
 const TERMINAL_WAIT_NOTICE_S = 20;
+/// 主列（标题栏 + 消息区 + 输入区）矮于这个高度（按 100% 缩放计）算「矮窗」，卡片走紧凑排法。
+/// 580 取自实测：620×760、1280×800@100% 主列 712/752 不算矮；620×480 是 432、1280×800@150% 折合 501。
+const SHORT_MAIN_HEIGHT = 580;
 
 /// 新建会话页发出的第一句话：回执编号、它落在哪个会话（临时 id → 认领后的真 id），以及
 /// 发完（成功/失败/过期）才放行的闸门——后面再发的消息排在它之后。
@@ -1677,6 +1680,13 @@ export function ChatWindow() {
       const ceiling = !scroll.hidden ? scroll.getBoundingClientRect().top : bar ? bar.getBoundingClientRect().bottom : host.getBoundingClientRect().top;
       const room = Math.max(0, Math.floor((anchor - ceiling) / Math.max(1, cards.length)));
       host.style.setProperty("--chat-overlay-room", `${room}px`);
+      // 主列矮（620×480、150% 缩放的 1280×800、手机键盘弹出）时挂 data-short：卡片把次要行压成一行、
+      // 选项说明并到同一行，高度留给命令与选项（做空审查：这些尺寸下关键内容被挤到折叠线下）。
+      // 判据只看主列自身高度与界面缩放——不看卡片、也不看 dock（关卡卡片就在 dock 里，
+      // 拿 room 判会和卡高互相牵动，重蹈 dockCardHeight 那次自激闪烁）。
+      const ui = parseFloat(getComputedStyle(host).getPropertyValue("--cc-ui")) || 1;
+      const mainHeight = host.getBoundingClientRect().height;
+      host.toggleAttribute("data-short", mainHeight > 0 && mainHeight < SHORT_MAIN_HEIGHT * ui);
       // 占位块变高不改变滚动容器自身的 border-box 尺寸，useStickToBottom 的尺寸观察者
       // 不一定接得到——已吸底的用户在这里自己钉回去（走 stickToBottom，裸写会被 smooth 动画化）。
       if (!scroll.hidden && followRef.current && !touchingRef.current) stickToBottom(scroll);
@@ -4386,9 +4396,12 @@ export function ChatWindow() {
           {commandAllowOnce && <button type="button" className={"btn-primary" + (commandApproval.command && isRiskyCommand(commandApproval.command) ? " is-danger" : "")} onClick={() => chooseTerminalOption(commandAllowOnce)}>{t.chat.allowOnce}</button>}
         </>}
       >
-        {commandApproval.tool && <div className="chat-approval-tool"><span>{t.chat.approvalTool}</span><code>{commandApproval.tool}</code></div>}
-        {commandApproval.command && <ApprovalScopeTags tool={commandApproval.tool} input={commandApproval.command} dirs={diffDirs} />}
-        {commandApproval.description && <span>{commandApproval.description}</span>}
+        {/* 次要信息收在一组，矮窗里压成一行，见 BrokerApprovalCard 同名容器。 */}
+        <div className="chat-approval-meta">
+          {commandApproval.tool && <div className="chat-approval-tool"><span>{t.chat.approvalTool}</span><code>{commandApproval.tool}</code></div>}
+          {commandApproval.command && <ApprovalScopeTags tool={commandApproval.tool} input={commandApproval.command} dirs={diffDirs} />}
+          {commandApproval.description && <span className="chat-approval-desc">{commandApproval.description}</span>}
+        </div>
         {commandApproval.question && <span>{commandApproval.question}</span>}
         {commandApproval.command && <ApprovalCommandDetail
           label={t.chat.approvalInput}
