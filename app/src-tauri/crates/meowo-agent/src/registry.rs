@@ -236,6 +236,11 @@ pub trait AgentPlugin: Sync {
         None
     }
 
+    /// 子代理视图的识别与切回键(见 chat_ui::SubagentView)。默认 None:未经取证不声明。
+    fn subagent_view(&self) -> Option<crate::chat_ui::SubagentView> {
+        None
+    }
+
     /// Ctrl/Shift+Enter 在 composer 里「插入换行」的注入序列(取证见 claude 插件)。
     /// 终端传统编码把带修饰的 Enter 与裸 Enter 同编成 `\r`(修饰信息不存在),用户按
     /// 「换行」CLI 收到的却是「提交」——声明此序列后 GUI 终端替用户注入。None = 未经
@@ -334,6 +339,7 @@ pub trait AgentPlugin: Sync {
                     .collect()
             },
             draft_stash: self.draft_stash(),
+            subagent_view: self.subagent_view(),
             version: ctx.version.map(str::to_string),
         }
     }

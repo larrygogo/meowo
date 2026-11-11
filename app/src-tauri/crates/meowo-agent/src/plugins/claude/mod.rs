@@ -679,6 +679,23 @@ impl AgentPlugin for Claude {
         })
     }
 
+    /// 子代理视图（2.1.322 真机取证 tests/probe_claude_subagent_view.rs，形态与键见
+    /// chat_ui::SubagentView）：占位 `Message @<类型>…` 出自源码 placeholder 的 viewingAgentName
+    /// 分支；面板首行 `main`，Footer 键位表 ↑/↓ 移动、回车打开、Esc 取消选中，main 行回车
+    /// 调用退出视图（footer:openSelected 在 coordinatorTaskIndex 为 0 时）。
+    fn subagent_view(&self) -> Option<crate::chat_ui::SubagentView> {
+        Some(crate::chat_ui::SubagentView {
+            placeholder_prefix: "Message @",
+            panel_main_label: "main",
+            panel_pointer: "❯",
+            panel_viewed_marker: "●",
+            down_input: "\x1b[B",
+            up_input: "\x1b[A",
+            open_input: "\r",
+            leave_panel_input: "\x1b",
+        })
+    }
+
     /// `/rewind` 打开回退菜单（2.1.314 真机取证，tests/probe_claude_rewind.rs）：只取「Restore
     /// conversation」——与 kimi 撤回同一语义，文件不动；有代码改动时它是第 2 项、没有时是
     /// 第 1 项，按文案找。回退零写入 transcript，下一条消息从回退点长出新分支（读取层按
