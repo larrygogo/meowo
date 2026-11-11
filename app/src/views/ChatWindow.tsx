@@ -4005,6 +4005,9 @@ export function ChatWindow() {
         onDoubleClick={resetSidebarWidth}
       />
       </>}
+      {/* L1 内容面：对话列、会话信息栏、右侧面板合成一张圆角面，压在窗口底（L0）上；
+          侧栏与顶栏留在面外。圆角、细线环和阴影都画在这一层，里面三栏只用细线分隔。 */}
+      <div className="chat-surface">
       {/* 会话管理页占据主列（对照 Kimi）；对话主列不卸载只藏起来，终端、草稿等状态切回来都在。 */}
       {adminOpen && (
         <div className="chat-main chat-admin-main">
@@ -5414,6 +5417,7 @@ export function ChatWindow() {
           </Suspense>
         </>
       )}
+      </div>
       </div>
       {annotating && (
         <ImageAnnotator
