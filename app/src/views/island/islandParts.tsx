@@ -540,7 +540,7 @@ export function AgentRing({ item, size = 32, tip }: { item: Item; size?: number;
 export const USAGE_FLIP_MS = 3_500;
 
 /// 额度显示「已用」：环越满越接近上限。曾改成显示剩余（像电量），用户又要回已用（2026-11-05），
-/// 别再改回剩余。颜色按已用：用到六成琥珀、八成五红，其余绿。
+/// 别再改回剩余。颜色按已用：用到六成琥珀、八成五红，其余是品牌青柠（绿留给「在跑」）。
 export function usedOf(usedPct: number): number {
   return Math.round(Math.min(100, Math.max(0, usedPct)));
 }
@@ -548,7 +548,7 @@ export function usedOf(usedPct: number): number {
 export function usedColor(used: number): string {
   if (used >= 85) return "var(--isl-err)";
   if (used >= 60) return "var(--isl-warn)";
-  return "var(--isl-ok)";
+  return "var(--isl-lime)";
 }
 
 /// 额度环（收起胶囊上的小环）：中间是已用百分比，右下角是哪家的 logo（与右边会话图标的角标同一种

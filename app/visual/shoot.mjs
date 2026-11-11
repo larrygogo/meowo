@@ -47,10 +47,32 @@ const DESKTOP_SCENES = [
   // 欢迎页插图已换成对话窗样张（UI 优化 #36），旧的 .obm-panel 不复存在。
   { scene: "onboarding", sel: ".obm-chat" },
 ];
+const ISLAND_SEL = "[data-visual-stage] > div > *";
+// 收起三种样式 ×（平时 / 没有会话 / 会话很多 / macOS 刘海两翼）、极简细条、面板（会话页 / 单页 / 空态 /
+// 额度页 / macOS 菜单栏落点）、提醒（审批 / 出错长文本 / 跑完 / 菜单栏落点）。
+// langs：岛默认只拍中文；标题行与提醒里文案最挤的几个另拍英文。
 const ISLAND_SCENES = [
-  { scene: "island-compact", w: 700, h: 80, sel: "[data-visual-stage] > div > *" },
-  { scene: "island-panel", w: 700, h: 300, sel: ".island-shell" },
-  { scene: "island-alert", w: 700, h: 110, sel: "[data-visual-stage] > div > *" },
+  { scene: "island-compact", w: 700, h: 80, sel: ISLAND_SEL },
+  { scene: "island-compact-calm", w: 700, h: 80, sel: ISLAND_SEL },
+  { scene: "island-compact-many", w: 700, h: 80, sel: ISLAND_SEL },
+  { scene: "island-compact-idle", w: 700, h: 80, sel: ISLAND_SEL },
+  { scene: "island-compact-notch", w: 700, h: 80, sel: ISLAND_SEL },
+  { scene: "island-focus", w: 700, h: 80, sel: ISLAND_SEL, langs: ["zh", "en"] },
+  { scene: "island-focus-idle", w: 700, h: 80, sel: ISLAND_SEL },
+  { scene: "island-focus-notch", w: 700, h: 80, sel: ISLAND_SEL },
+  { scene: "island-minimal", w: 700, h: 80, sel: ISLAND_SEL },
+  { scene: "island-minimal-many", w: 700, h: 80, sel: ISLAND_SEL },
+  { scene: "island-minimal-notch", w: 700, h: 80, sel: ISLAND_SEL },
+  { scene: "island-strip", w: 1000, h: 40, sel: ".isl-strip" },
+  { scene: "island-panel", w: 700, h: 300, sel: ".island-shell", langs: ["zh", "en"] },
+  { scene: "island-panel-single", w: 700, h: 300, sel: ".island-shell" },
+  { scene: "island-panel-empty", w: 700, h: 300, sel: ".island-shell" },
+  { scene: "island-panel-menubar", w: 700, h: 300, sel: ".island-shell" },
+  { scene: "island-usage", w: 700, h: 300, sel: ".island-shell", langs: ["zh", "en"] },
+  { scene: "island-alert", w: 700, h: 110, sel: ISLAND_SEL, langs: ["zh", "en"] },
+  { scene: "island-alert-error", w: 700, h: 110, sel: ISLAND_SEL },
+  { scene: "island-alert-done", w: 700, h: 110, sel: ISLAND_SEL },
+  { scene: "island-alert-menubar", w: 700, h: 110, sel: ISLAND_SEL },
 ];
 const MOBILE_SCENES = [
   { scene: "mobile-list", sel: ".remote-session-list" },
@@ -66,8 +88,8 @@ function buildMatrix() {
   for (const sc of DESKTOP_SCENES) for (const lang of EN_SCENES.has(sc.scene) ? ["zh", "en"] : ["zh"])
     for (const theme of THEMES) for (const { w, h } of DESKTOP) for (const dpr of DPRS)
       push({ ...sc, page: "desktop", lang, theme, w, h, dpr, mobile: false });
-  for (const sc of ISLAND_SCENES) for (const theme of THEMES) for (const dpr of DPRS)
-    push({ ...sc, page: "desktop", lang: "zh", theme, dpr, mobile: false });
+  for (const sc of ISLAND_SCENES) for (const lang of sc.langs ?? ["zh"]) for (const theme of THEMES) for (const dpr of DPRS)
+    push({ ...sc, page: "desktop", lang, theme, dpr, mobile: false });
   for (const sc of MOBILE_SCENES) for (const lang of EN_SCENES.has(sc.scene) ? ["zh", "en"] : ["zh"])
     for (const theme of THEMES) for (const { w, h } of PHONE) for (const dpr of DPRS)
       push({ ...sc, page: "mobile", lang, theme, w, h, dpr, mobile: true });
