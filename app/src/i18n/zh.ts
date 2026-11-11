@@ -442,6 +442,7 @@ export const zh = {
     // 「加载更早」失败行（此前 catch 静默吞掉，按钮只是默默复原）。
     loadEarlierFailed: "加载更早的对话失败，请重试",
     loadError: "读取对话失败，正在重试",
+    retryNow: "立即重试",
     loadingConversation: "正在加载对话…",
     // 同步中断（C-18）：轮询 IPC 连续失败才单列——它只说「窗口与后端的通道断了」，
     // 与状态徽标里的「已断开」（agent 进程没了）是两种事实，措辞故意分开。

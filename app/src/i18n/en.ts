@@ -415,6 +415,7 @@ export const en: Dict = {
     // "Load earlier" failure line (the catch used to be silent — the button just reset).
     loadEarlierFailed: "Could not load earlier messages — try again",
     loadError: "Could not read the conversation. Retrying…",
+    retryNow: "Retry now",
     loadingConversation: "Loading conversation…",
     // Sync interrupted (C-18): only after consecutive IPC poll failures — it means the
     // window lost its channel to the backend, NOT that the agent process died (that is

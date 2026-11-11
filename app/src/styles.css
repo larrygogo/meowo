@@ -5223,17 +5223,14 @@ button.scm-check-name:hover { text-decoration: underline; }
   line-height: var(--leading-body);
 }
 /* 长用户消息收到 10 行（对照 Kimi 的 is-clamped）：底色在气泡本身上，直接 mask 会把气泡
-   底边也抹掉，改为叠一层同色渐变；「展开全部」压在渐隐区正中。行数按 lh 算，跟字号走。 */
+   底边也抹掉；原先叠一层「透明 → 气泡色」渐变，但深色气泡色是半透明 rgba，字照样透出来，
+   实拍没有渐隐（UI 调研 chat #13）。改成限高与 mask 都放在包住正文的内层 .chat-user-clip，
+   气泡底色不参与；「展开全部」压在渐隐区正中。行数按 lh 算，跟字号走。 */
 .chat-user-text { position: relative; display: flex; flex-direction: column; align-items: flex-end; }
-.chat-message.is-user .chat-text.is-clampable { max-height: calc(10lh + 2 * var(--sp-11)); overflow: hidden; }
-.chat-user-text.is-clamped .chat-text { position: relative; }
-.chat-user-text.is-clamped .chat-text::after {
-  content: "";
-  position: absolute;
-  inset: auto 0 0 0;
-  height: 4lh;
-  background: linear-gradient(to bottom, transparent, var(--cc-user-bubble) 70%);
-  pointer-events: none;
+.chat-user-clip.is-clampable { max-height: 10lh; overflow: hidden; }
+.chat-user-text.is-clamped .chat-user-clip {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 4lh), transparent calc(100% - 0.5lh));
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 4lh), transparent calc(100% - 0.5lh));
 }
 .chat-user-toggle {
   margin-top: var(--sp-4);
@@ -5353,6 +5350,10 @@ button.scm-check-name:hover { text-decoration: underline; }
 .chat-compact-summary { margin: calc(-1 * var(--sp-16)) 0 var(--sp-28); padding: var(--sp-12) var(--sp-16); max-height: 360px; overflow-y: auto; overscroll-behavior: contain; border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-lg); color: var(--cc-text-dim); font-size: var(--text-sm); }
 .chat-empty { min-height: 100%; display: grid; place-items: center; color: var(--cc-text-faint); font-size: var(--text-xs); text-align: center; }
 .chat-empty.is-error { color: var(--cc-err-text); }
+/* 读取失败的「立即重试」与连续失败原因（UI 调研 chat #13）：文字级按钮，跟在错误行后面。 */
+.chat-retry-now { margin-left: var(--sp-8); padding: var(--sp-2) var(--sp-8); border: 0; border-radius: var(--radius-sm); background: var(--fill-selected); color: var(--cc-text); font: inherit; font-size: var(--text-xs); cursor: pointer; }
+.chat-retry-now:hover { background: var(--fill-selected-hover); }
+.chat-load-reason { margin-top: var(--sp-6); color: var(--cc-text-faint); font-size: var(--text-xs); overflow-wrap: anywhere; }
 /* 注脚形态：上方已有兜底时间线（hook 落库的最近往来）时，「暂未提供结构化对话记录」
    降为一行说明，不再占满整屏居中。 */
 .chat-empty.is-note { min-height: 0; padding: var(--sp-14) 0 var(--sp-6); font-size: var(--text-xs); }
@@ -6544,7 +6545,12 @@ button.scm-check-name:hover { text-decoration: underline; }
    4em，内联代码不折行；整表放不下就横滑（table 已是 display:block + overflow-x:auto）。 */
 .chat-md th, .chat-md td { overflow-wrap: normal; word-break: normal; min-width: 4em; }
 .chat-md td code, .chat-md th code { white-space: nowrap; }
-.chat-md th { background: var(--fill-hover); }
+/* 长路径这类没有空格的单元格：normal 断不开，整列撑到路径全长，其余列被压成每行两三个字
+   （「改动/前」，UI 调研 chat #13 实拍）。td 放开任意处断行，靠上面的 min-width:4em 兜住短列；
+   表头只是短词，keep-all 让「改动前」这类中文短词不在字间折行（4em 装不下三个字加内边距）。 */
+.chat-md td { overflow-wrap: anywhere; }
+/* 表头左对齐：浏览器默认居中，和左对齐的单元格错开（chat #13）。 */
+.chat-md th { background: var(--fill-hover); text-align: start; word-break: keep-all; }
 .chat-md input[type="checkbox"] { margin-right: var(--sp-5); }
 /* 文件面板 markdown 预览的文档化排版：.chat-md 的标题与间距是按聊天气泡收敛的
    （标题≈正文、段距贴紧），整篇 README 照搬会失去层级、读着累。这里恢复文档比例：

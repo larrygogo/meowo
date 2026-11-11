@@ -477,7 +477,9 @@ function UserBubbleText({ id, body }: { id: string; body: string }) {
   const clamped = !expanded;
   return (
     <div className={"chat-user-text" + (clamped && overflowing ? " is-clamped" : "")}>
-      <div ref={textRef} className={"chat-text" + (clamped ? " is-clampable" : "")}>{body}</div>
+      {/* 限高与渐隐落在内层：气泡底色在 .chat-text 上，深色主题是半透明的 rgba，
+          「渐变到气泡色」的遮罩盖不住字（UI 调研 chat #13 实拍无渐隐），只能对文字层 mask。 */}
+      <div className="chat-text"><div ref={textRef} className={"chat-user-clip" + (clamped ? " is-clampable" : "")}>{body}</div></div>
       {(overflowing || expanded) && (
         <button type="button" className="chat-user-toggle" aria-expanded={expanded} onClick={() => setExpanded(!expanded)}>
           {expanded ? t.chat.approvalCollapse : t.chat.approvalExpand}
