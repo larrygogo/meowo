@@ -571,6 +571,10 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                 // 且携带着后台委派的**真实结局**——主链上唯一的完成信号(启动回执只说
                 // launched,侧车 meta 不记结局)。转译成该 tool_use 的合成回执,
                 // 折叠徽标/进度面板的「进行中」由此翻转成完成/失败。
+                // 「被用户续上」的通知也长这样，但它不是结局（见 subagent_resume_tests），吞掉不计。
+                if super::subagent_prompt::resumed_task_id(text).is_some() {
+                    return Vec::new();
+                }
                 if let Some(event) = task_notification_result(text, base_id, timestamp.clone()) {
                     return vec![event];
                 }
@@ -859,6 +863,12 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
             // 这条 queued_command attachment(实拍:审查子任务完成于回合中途,通知经
             // enqueue → 本行送达)。不认它,该子任务的徽标就永远「运行中」,通知原文还会
             // 以一坨 XML 的样子出现在时间线里。与 user 行同款转译成合成回执。
+            // 「被用户续上」的通知走的也是这条（本机实拍 queued_command 形态），它不是结局：
+            // 送达行可能比子代理这一段的完成通知还晚落盘，记成在跑会永远挂着，只吞掉不计。
+            // 「又在跑」由入队那一行给出（见 subagent_prompt::resumed_agent_prompt）。
+            if super::subagent_prompt::resumed_task_id(&text).is_some() {
+                return Vec::new();
+            }
             if let Some(event) = task_notification_result(&text, base_id, timestamp.clone()) {
                 return vec![event];
             }
@@ -1120,6 +1130,11 @@ impl ParseState {
             Some("queue-operation") => {
                 if v.get("operation").and_then(|x| x.as_str()) == Some("enqueue") {
                     if let Some(text) = v.get("content").and_then(|x| x.as_str()) {
+                        // 被用户续上：入队这一刻子代理又在跑，重新入集，等这一段的完成通知出集。
+                        if let Some(id) = super::subagent_prompt::resumed_task_id(text) {
+                            self.running_tasks.insert(id.to_string());
+                            return;
+                        }
                         self.settle_from_notification(text);
                     }
                 }
@@ -1143,7 +1158,9 @@ impl ParseState {
     /// `<task-notification>` 正文 → 按 `<task-id>` 移除运行集。必须以标签开头才认——
     /// 用户/助手**引用**通知文案的消息不该误消(讨论这套机制的会话里真会出现)。
     fn settle_from_notification(&mut self, text: &str) {
-        if !text.trim_start().starts_with("<task-notification>") {
+        // 「被用户续上」不是结局：送达行（user / queued_command）可能晚于这一段的完成通知，
+        // 不能拿它出集，也不拿它入集（入集只认入队那一行，见 fold_task_signals）。
+        if !text.trim_start().starts_with("<task-notification>") || super::subagent_prompt::resumed_task_id(text).is_some() {
             return;
         }
         if let Some(id) = tag_text(text, "task-id") {
