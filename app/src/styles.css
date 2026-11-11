@@ -438,6 +438,9 @@
 @media (prefers-reduced-transparency: reduce), (forced-colors: active) {
   :root.mat-on { --cc-l0: var(--cc-window-bg); }
 }
+/* 材质生效时窗口本身是透明的，系统材质从页面底下透上来：html 与 body 不能有底色，
+   各窗口根容器的底统一走 var(--cc-l0)。 */
+:root.mat-on, :root.mat-on body { background: transparent; }
 * { box-sizing: border-box; }
 
 /* 焦点框只在键盘导航时显示：默认（指针/程序化聚焦）隐藏 UA 焦点框，仅 data-im="kbd" 时恢复。

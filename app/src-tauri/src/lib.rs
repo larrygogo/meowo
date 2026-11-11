@@ -49,6 +49,7 @@ mod wezterm;
 mod handoff;
 mod install;
 mod managed_terminal;
+mod material;
 mod proc;
 // pub：集成测试 `tests/profile_merge.rs` 要在**独立进程**里跑端到端合并（它会设
 // CLAUDE_CONFIG_DIR / MEOWO_DB 这类进程级环境变量，与 lib 单测并行跑会互相串味）。
@@ -1259,6 +1260,7 @@ pub fn run() {
             clipboard_text,
             open_chat_window,
             snap_layout::set_caption_overlay_rects,
+            material::window_material,
             start_managed_terminal,
             takeover_managed_terminal,
             fork_session,
