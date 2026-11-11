@@ -48,6 +48,12 @@ bun run visual:compare <基线目录> <新目录>
 | `onboarding` | 引导页第一步 | 620 / 1280 / 2560 |
 | `island-compact` / `-panel` / `-alert` | 灵动岛收起 / 展开面板 / 审批提醒，垫在固定灰底上 | 700 |
 | `mobile-list` / `-chat` / `-changes` | 手机远程页：会话列表 / 对话 + 审批卡 / 「更改」页 | 375 / 430 |
+| `flow-states` / `-mid` / `-top` | 对话流的各种条目：长用户消息渐隐、思考、编辑卡与命令卡（展开）、子任务、Markdown 全家桶、本轮改动、跨会话消息、压缩分隔条、回合报错、运行行；分别停在底部 / 中段 / 顶部 | 620 / 1280 |
+| `flow-question` | 问答卡（一道单选带说明 + 一道多选） | 620 / 1280 |
+| `flow-empty` | 空会话欢迎面板 | 620 / 1280 |
+| `pop-palette` / `pop-shortcuts` | 命令面板（Ctrl+K）、快捷键速查表（?） | 620 / 1280 |
+| `pop-add` / `pop-progress` | 输入框「+」菜单、停靠栏进度面板 | 620 / 1280 |
+| `panel-files` | 右侧面板「文件」页签 | 620 / 1280 |
 
 每个场景都拍深色、浅色两种主题，dpr 1 和 2。语言默认只拍中文，`chat` 与 `mobile-chat` 另加英文。
 

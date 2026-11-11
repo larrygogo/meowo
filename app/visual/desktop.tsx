@@ -37,7 +37,7 @@ async function boot(): Promise<React.ReactNode> {
     const chat = chatMock(lang);
     const panel = panelMock();
     if (scene.startsWith("panel-")) {
-      savePanel(CHAT_SESSION_ID, { tabs: [{ key: "diff", type: "diff" }, { key: "files", type: "files" }], active: "diff", visible: true, expanded: false });
+      savePanel(CHAT_SESSION_ID, { tabs: [{ key: "diff", type: "diff" }, { key: "files", type: "files" }], active: scene === "panel-files" ? "files" : "diff", visible: true, expanded: false });
     }
     setExtraMock((cmd, args) => {
       if (cmd === "get_chat_history") return scene.startsWith("chat") ? withLongItems(chat(cmd), lang) : chat(cmd);
@@ -123,12 +123,12 @@ async function boot(): Promise<React.ReactNode> {
         acted = true;
         if (scene === "pop-palette") key("k", { ctrlKey: true, code: "KeyK" });
         if (scene === "pop-shortcuts") { (document.activeElement as HTMLElement | null)?.blur(); key("?", { shiftKey: true, code: "Slash" }); }
-        if (scene === "pop-slash") {
-          ta.focus();
-          Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(ta, "/");
-          ta.setSelectionRange(1, 1);
-          ta.dispatchEvent(new InputEvent("input", { bubbles: true, data: "/", inputType: "insertText" }));
-        }
+        // 点一下就弹出的浮层：+ 菜单、进度面板。
+        const clickFor: Record<string, string> = {
+          "pop-add": ".chat-compose .chat-attach-button",
+          "pop-progress": ".dock-workbar .ui-pill",
+        };
+        if (clickFor[scene]) document.querySelector<HTMLElement>(clickFor[scene])?.click();
         return;
       }
       if (scene.startsWith("flow-states") && scroller) {

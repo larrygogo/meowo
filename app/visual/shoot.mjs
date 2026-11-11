@@ -57,7 +57,9 @@ const FLOW_SCENES = [
   { scene: "flow-empty", sel: ".chat-window textarea" },
   { scene: "pop-palette", sel: ".chat-window" },
   { scene: "pop-shortcuts", sel: ".chat-window" },
-  { scene: "pop-slash", sel: ".chat-window" },
+  { scene: "pop-add", sel: ".chat-window" },
+  { scene: "pop-progress", sel: ".chat-window" },
+  { scene: "panel-files", sel: ".chat-diff-panel" },
 ];
 const ISLAND_SCENES = [
   { scene: "island-compact", w: 700, h: 80, sel: "[data-visual-stage] > div > *" },
