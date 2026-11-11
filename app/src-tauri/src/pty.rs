@@ -1035,6 +1035,14 @@ impl PtyBroker {
     /// `pass`，提示回落到 agent 自己的审批界面——窗口起不来时 hook 不该压着 TUI
     /// 盲等满 300s。
     fn ensure_approval_window(&self, session_id: i64) -> ApprovalHold {
+        approval_hold_with_remote_roster(
+            self.ensure_desktop_approval_window(session_id),
+            self.has_remote_roster_consumer(),
+        )
+    }
+
+    /// 桌面这一侧的召唤与等待（手机名单租约不参与，见 [`approval_hold_with_remote_roster`]）。
+    fn ensure_desktop_approval_window(&self, session_id: i64) -> ApprovalHold {
         match approval_gate(
             self.has_fresh_remote_consumer(session_id),
             crate::settings::load_settings().chat_enabled,
@@ -2522,8 +2530,29 @@ impl PtyBroker {
         })
     }
 
-    /// 桌面主窗口是否持有名单租约。只认桌面：手机的名单租约要先解决「手机一在场桌面
-    /// 就全哑」（[`ApprovalGate::Claimable`]）才能放开，注册处已拒。
+    /// 手机端是否停在名单上（新鲜的 `remote:` 名单租约）。它不让桌面闭嘴：桌面该闪该召唤
+    /// 照旧，两端都能领、先答者生效；只在桌面这侧接不住时把请求留给手机（见
+    /// [`approval_hold_with_remote_roster`]）。带 TTL：手机锁屏 / 被杀后不能一直占着。
+    fn has_remote_roster_consumer(&self) -> bool {
+        let now = crate::now_ms();
+        self.attach.approval_consumers.lock().is_ok_and(|consumers| {
+            consumers.iter().any(|(id, lease)| {
+                lease.session_id == ROSTER_LEASE_SESSION
+                    && is_remote_consumer(id)
+                    && consumer_lease_fresh(id, lease.seen_ms, now)
+            })
+        })
+    }
+
+    /// 这条会话的审批此刻还有没有人能答：有人停在它上面，或者任一端停在名单上。
+    fn approval_answerable(&self, session_id: i64) -> bool {
+        self.has_approval_consumer(session_id)
+            || self.has_roster_consumer()
+            || self.has_remote_roster_consumer()
+    }
+
+    /// 桌面主窗口是否持有名单租约。只认桌面：它决定的是「桌面窗口要不要动」；手机的名单
+    /// 租约走 [`Self::has_remote_roster_consumer`]。
     fn has_roster_consumer(&self) -> bool {
         self.attach.approval_consumers.lock().is_ok_and(|consumers| {
             consumers.iter().any(|(id, lease)| {
@@ -2567,8 +2596,7 @@ impl PtyBroker {
         session_id: i64,
         consumer_id: String,
     ) -> Result<(), String> {
-        let roster = session_id == ROSTER_LEASE_SESSION && !is_remote_consumer(&consumer_id);
-        if (session_id <= 0 && !roster) || consumer_id.is_empty() || consumer_id.len() > 128 {
+        if session_id < ROSTER_LEASE_SESSION || consumer_id.is_empty() || consumer_id.len() > 128 {
             return Err("审批消费者无效".into());
         }
         self.attach
@@ -2605,8 +2633,8 @@ impl PtyBroker {
 
     /// 把没有任何新鲜消费者的会话的挂起审批交还各自 TUI。
     fn pass_approvals_without_consumer(&self) {
-        // 名单还开着：每一行的审批都还有地方答，一条都不交还。
-        if self.has_roster_consumer() {
+        // 名单还开着（桌面或手机）：每一行的审批都还有地方答，一条都不交还。
+        if self.has_roster_consumer() || self.has_remote_roster_consumer() {
             return;
         }
         let watched = self.viewed_session_ids();
@@ -2644,7 +2672,7 @@ impl PtyBroker {
                 // 的专属租约，这一步不能把它的审批交还终端。
                 let still_watched = consumers.iter().any(|(id, other)| {
                     (other.session_id == lease.session_id
-                        || (other.session_id == ROSTER_LEASE_SESSION && !is_remote_consumer(id)))
+                        || other.session_id == ROSTER_LEASE_SESSION)
                         && consumer_lease_fresh(id, other.seen_ms, now)
                 });
                 (!still_watched).then_some(lease.session_id)
@@ -3255,7 +3283,7 @@ impl PtyBroker {
                         .and_then(|s| s.session_pending_review(request.session_id).ok())
                         .map(|pending| pending.is_some())
                 },
-                || remote_only && !self.has_approval_consumer(request.session_id),
+                || remote_only && !self.approval_answerable(request.session_id),
             );
             if let Ok(mut approvals) = self.attach.approvals.lock() {
                 approvals.remove(&request.request_id);
@@ -3379,7 +3407,7 @@ impl PtyBroker {
                     .and_then(|s| s.session_pending_review(request.session_id).ok())
                     .map(|pending| pending.is_some())
             },
-            || remote_only && !self.has_approval_consumer(request.session_id),
+            || remote_only && !self.approval_answerable(request.session_id),
         );
         if let Ok(mut approvals) = self.attach.approvals.lock() {
             approvals.remove(&request.request_id);
@@ -3423,6 +3451,16 @@ fn approval_gate(remote_watching_target: bool, chat_enabled: bool) -> ApprovalGa
         ApprovalGate::FallbackTui
     } else {
         ApprovalGate::Desktop
+    }
+}
+
+/// 桌面这侧接不住（轻量模式、窗口召唤不出来）而手机停在名单上：请求留给手机领，
+/// 手机租约过期就放弃回落终端。桌面接得住时原样返回——手机名单不让桌面闭嘴。纯函数供单测。
+fn approval_hold_with_remote_roster(desktop: ApprovalHold, remote_roster: bool) -> ApprovalHold {
+    if desktop == ApprovalHold::Reject && remote_roster {
+        ApprovalHold::RemoteClaimable
+    } else {
+        desktop
     }
 }
 

@@ -790,9 +790,51 @@ fn roster_lease_is_desktop_only_and_rejects_other_non_positive_ids() {
     // 名单租约不冒充「正在看某条会话」:专属判定与通知抑制都不认它。
     assert!(!broker.has_approval_consumer(7));
     assert!(broker.viewed_session_ids().is_empty());
-    // 手机的名单租约本轮不放开;负数(启动占位 id)一律不收。
-    assert!(broker.register_approval_consumer(0, "remote:phone".into()).is_err());
+    // 负数(启动占位 id)一律不收。
     assert!(broker.register_approval_consumer(-3, "roster-b".into()).is_err());
+}
+
+/// 手机停在名单上:它的租约不算桌面的名单租约(桌面窗口该动还得动),但算「有人能答」。
+#[test]
+fn remote_roster_lease_keeps_approvals_answerable_without_silencing_desktop() {
+    let broker = PtyBroker::default();
+    broker.register_approval_consumer(0, "remote:phone".into()).unwrap();
+    assert!(!broker.has_roster_consumer(), "手机名单不冒充桌面名单");
+    assert!(broker.has_remote_roster_consumer());
+    assert!(broker.approval_answerable(7));
+    // 桌面关窗:手机名单还在,挂着的审批不交还终端。
+    let rx = seed_pending_approval(&broker, 7, "request-7");
+    broker.release_desktop_consumers();
+    assert!(matches!(rx.try_recv(), Err(mpsc::TryRecvError::Empty)));
+    // 手机租约过期(锁屏 / 被杀):不再算有人能答。
+    age_consumer_lease(&broker, "remote:phone", super::REMOTE_CONSUMER_TTL_MS + 1);
+    assert!(!broker.has_remote_roster_consumer());
+    assert!(!broker.approval_answerable(7));
+}
+
+/// 桌面接得住就按桌面的来;桌面接不住而手机在名单上,留给手机领。
+#[test]
+fn remote_roster_only_takes_over_when_desktop_cannot_hold() {
+    use super::{approval_hold_with_remote_roster, ApprovalHold};
+    assert_eq!(approval_hold_with_remote_roster(ApprovalHold::Desktop, true), ApprovalHold::Desktop);
+    assert_eq!(approval_hold_with_remote_roster(ApprovalHold::Reject, true), ApprovalHold::RemoteClaimable);
+    assert_eq!(approval_hold_with_remote_roster(ApprovalHold::Reject, false), ApprovalHold::Reject);
+    assert_eq!(
+        approval_hold_with_remote_roster(ApprovalHold::RemoteClaimable, false),
+        ApprovalHold::RemoteClaimable
+    );
+}
+
+/// 手机离开某条会话回到名单(注销专属租约):名单租约还在,它的审批不交还终端。
+#[test]
+fn phone_leaving_a_session_keeps_its_approval_while_on_roster() {
+    let broker = PtyBroker::default();
+    broker.register_approval_consumer(0, "remote:roster".into()).unwrap();
+    broker.register_approval_consumer(7, "remote:chat-7".into()).unwrap();
+    let rx = seed_pending_approval(&broker, 7, "request-7");
+    broker.unregister_approval_consumer("remote:chat-7");
+    assert!(matches!(rx.try_recv(), Err(mpsc::TryRecvError::Empty)));
+    assert!(broker.pending_approval(7).is_some());
 }
 
 /// 从某一行的现场退回名单会注销那条会话的专属租约。名单还开着,它的审批不能被交还终端。
