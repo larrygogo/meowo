@@ -16,7 +16,7 @@ import { panelMock } from "../src/demo/panelData";
 import { makeSession } from "../src/demo/data";
 import { savePanel } from "../src/views/chat/panelTabs";
 import { SETTINGS_SECTION_KEY } from "../src/settingsNav";
-import { CHAT_SESSION_ID, FIXED_NOW, markReady, scmMock, withLongItems } from "./fixtures";
+import { CHAT_SESSION_ID, FIXED_NOW, flowStateItems, markReady, questionInput, scmMock, withLongItems } from "./fixtures";
 import type { ProviderUsage } from "../src/api";
 import type { IslandAlertEvent } from "../src/generated/contracts/IslandAlertEvent";
 import "../src/fonts";
@@ -39,7 +39,7 @@ async function boot(): Promise<React.ReactNode> {
     const chat = chatMock(lang);
     const panel = panelMock();
     if (scene.startsWith("panel-")) {
-      savePanel(CHAT_SESSION_ID, { tabs: [{ key: "diff", type: "diff" }, { key: "files", type: "files" }], active: "diff", visible: true, expanded: false });
+      savePanel(CHAT_SESSION_ID, { tabs: [{ key: "diff", type: "diff" }, { key: "files", type: "files" }], active: scene === "panel-files" ? "files" : "diff", visible: true, expanded: false });
     }
     setExtraMock((cmd, args) => {
       if (cmd === "get_chat_history") return scene.startsWith("chat") ? withLongItems(chat(cmd), lang) : chat(cmd);
@@ -78,6 +78,72 @@ async function boot(): Promise<React.ReactNode> {
         if (row) { row.click(); window.clearInterval(timer); }
       }, 100);
     }
+    return <div className="demo-chat-frame" style={{ position: "fixed", inset: 0, overflow: "hidden" }}><ChatWindow /></div>;
+  }
+
+  // 重设计补的场景：对话流的各种条目、问答卡、空态，以及键盘唤出的弹层。都挂真实 ChatWindow，
+  // 只换 get_chat_history / pending_interaction 的返回值；弹层靠派发真实快捷键打开。
+  if (scene.startsWith("flow-") || scene.startsWith("pop-")) {
+    window.history.replaceState({}, "", `${location.pathname}?${q.toString()}&sessionId=${CHAT_SESSION_ID}`);
+    const chat = chatMock(lang);
+    const ts = new Date(FIXED_NOW).toISOString();
+    setExtraMock((cmd) => {
+      if (cmd === "pending_interaction") {
+        if (scene === "flow-question") {
+          const base = (chat(cmd) as { approval: Record<string, unknown> }).approval;
+          return { approval: null, question: { ...base, requestId: "visual-question", toolName: "AskUserQuestion", description: null, input: questionInput(lang), answerable: true } };
+        }
+        return { approval: null, question: null };
+      }
+      if (cmd === "get_chat_history") {
+        const h = chat(cmd) as Record<string, unknown>;
+        if (scene === "flow-empty") return { ...h, items: [], todos: [], pendingReview: null, status: "waiting", lastUserText: null, lastAiText: null };
+        if (scene === "flow-question") return { ...h, pendingReview: "question" };
+        if (scene.startsWith("pop-")) return { ...h, pendingReview: null, status: "waiting" };
+        return { ...h, items: flowStateItems(lang, ts), pendingReview: null };
+      }
+      if (cmd === "get_subagent_transcript") {
+        return [{ label: null, items: [
+          { type: "tool_use", id: "sa-t1", timestamp: ts, name: "Grep", summary: "loginSchema" },
+          { type: "tool_result", id: "sa-r1", timestamp: ts, tool_use_id: "sa-t1", text: "4 matches", is_error: false },
+          { type: "assistant_text", id: "sa-a1", timestamp: ts, text: lang === "zh" ? "边界情况都覆盖到了，只有加号别名没测。" : "Edge cases are covered except plus aliases." },
+        ] }];
+      }
+      return scmMock(cmd) ?? chat(cmd);
+    });
+    installMocks("chat");
+    bootAppearance({ scale: true });
+    const { ChatWindow } = await import("../src/views/ChatWindow");
+    const key = (k: string, init: KeyboardEventInit = {}) =>
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true, ...init }));
+    const started = performance.now();
+    let acted = false;
+    const timer = window.setInterval(() => {
+      const scroller = document.querySelector<HTMLElement>(".chat-scroll");
+      const ta = document.querySelector<HTMLTextAreaElement>(".chat-window textarea");
+      if (!acted && ta) {
+        acted = true;
+        if (scene === "pop-palette") key("k", { ctrlKey: true, code: "KeyK" });
+        if (scene === "pop-shortcuts") { (document.activeElement as HTMLElement | null)?.blur(); key("?", { shiftKey: true, code: "Slash" }); }
+        // 点一下就弹出的浮层：+ 菜单、进度面板。
+        const clickFor: Record<string, string> = {
+          "pop-add": ".chat-compose .chat-attach-button",
+          "pop-progress": ".dock-workbar .ui-pill",
+        };
+        if (clickFor[scene]) document.querySelector<HTMLElement>(clickFor[scene])?.click();
+        return;
+      }
+      if (scene.startsWith("flow-states") && scroller) {
+        // 把工具卡与子任务展开一次（只点还没开的），再按场景滚到顶或中段，默认留在底部。
+        scroller.querySelectorAll<HTMLElement>("details.chat-tool:not([open]) > summary, details.chat-subagent:not([open]) > summary").forEach((el) => {
+          if (!el.dataset.visualOpened) { el.dataset.visualOpened = "1"; el.click(); }
+        });
+        if (scene === "flow-states") scroller.scrollTop = scroller.scrollHeight;
+        if (scene === "flow-states-top") scroller.scrollTop = 0;
+        if (scene === "flow-states-mid") scroller.scrollTop = Math.round((scroller.scrollHeight - scroller.clientHeight) * 0.5);
+      }
+      if (performance.now() - started > 1500) window.clearInterval(timer);
+    }, 100);
     return <div className="demo-chat-frame" style={{ position: "fixed", inset: 0, overflow: "hidden" }}><ChatWindow /></div>;
   }
 

@@ -59,8 +59,8 @@ export const isDirEntry = (file: { path: string }) => file.path.endsWith("/");
 type DirState = { req: number; loading: boolean; error: string | null; files: readonly ScmFile[] };
 const dirKey = (root: string, path: string) => `${normPath(root).toLowerCase()}\u0000${path}`;
 
-/// 一行的高度：CSS 里 .scm-row 是 24px、提示行约 28px。虚拟列表按它估位置，再按实测修正（手机触屏样式可能更高）。
-const ROW_H = 24;
+/// 一行的高度：CSS 里 .scm-row 是 28px（与文件树、会话信息栏的行同高）。虚拟列表按它估位置，再按实测修正（手机触屏样式可能更高）。
+const ROW_H = 28;
 const NOTE_H = 28;
 type VRow = { key: string; size: number; node: ReactNode };
 

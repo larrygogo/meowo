@@ -47,6 +47,20 @@ const DESKTOP_SCENES = [
   // 欢迎页插图已换成对话窗样张（UI 优化 #36），旧的 .obm-panel 不复存在。
   { scene: "onboarding", sel: ".obm-chat" },
 ];
+// 重设计补的对话窗场景（desktop.tsx 的 flow-* / pop-*）：只拍中文、620 与 1280 两个宽度。
+const FLOW_SIZES = [{ w: 620, h: 760 }, { w: 1280, h: 800 }];
+const FLOW_SCENES = [
+  { scene: "flow-states", sel: ".chat-scroll" },
+  { scene: "flow-states-mid", sel: ".chat-scroll" },
+  { scene: "flow-states-top", sel: ".chat-scroll" },
+  { scene: "flow-question", sel: ".chat-scroll" },
+  { scene: "flow-empty", sel: ".chat-window textarea" },
+  { scene: "pop-palette", sel: ".chat-window" },
+  { scene: "pop-shortcuts", sel: ".chat-window" },
+  { scene: "pop-add", sel: ".chat-window" },
+  { scene: "pop-progress", sel: ".chat-window" },
+  { scene: "panel-files", sel: ".chat-diff-panel" },
+];
 const ISLAND_SEL = "[data-visual-stage] > div > *";
 // 收起三种样式 ×（平时 / 没有会话 / 会话很多 / macOS 刘海两翼）、极简细条、面板（会话页 / 单页 / 空态 /
 // 额度页 / macOS 菜单栏落点）、提醒（审批 / 出错长文本 / 跑完 / 菜单栏落点）。
@@ -88,6 +102,8 @@ function buildMatrix() {
   for (const sc of DESKTOP_SCENES) for (const lang of EN_SCENES.has(sc.scene) ? ["zh", "en"] : ["zh"])
     for (const theme of THEMES) for (const { w, h } of DESKTOP) for (const dpr of DPRS)
       push({ ...sc, page: "desktop", lang, theme, w, h, dpr, mobile: false });
+  for (const sc of FLOW_SCENES) for (const theme of THEMES) for (const { w, h } of FLOW_SIZES) for (const dpr of DPRS)
+    push({ ...sc, page: "desktop", lang: "zh", theme, w, h, dpr, mobile: false });
   for (const sc of ISLAND_SCENES) for (const lang of sc.langs ?? ["zh"]) for (const theme of THEMES) for (const dpr of DPRS)
     push({ ...sc, page: "desktop", lang, theme, dpr, mobile: false });
   for (const sc of MOBILE_SCENES) for (const lang of EN_SCENES.has(sc.scene) ? ["zh", "en"] : ["zh"])
