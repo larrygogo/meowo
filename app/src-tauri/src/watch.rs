@@ -733,6 +733,21 @@ fn clear_unread_on_end(ended: impl IntoIterator<Item = i64>) {
     }
 }
 
+/// 上一轮还活着、这一轮没了的会话里，哪些是真结束了：库里已是 ended，且不在本 GUI 托管的
+/// PTY 里（就地重启中、存活检测抖一下的不算）。关面板与清未读共用这一个判据——清未读曾经
+/// 只看「掉出 alive」，重启/抖动也会把蓝点误清掉（做空审查 2026-11-11 指出）。
+fn truly_ended(
+    last: &[i64],
+    alive: &[i64],
+    pty_live: &std::collections::HashSet<i64>,
+    is_ended_in_db: impl Fn(i64) -> bool,
+) -> Vec<i64> {
+    last.iter()
+        .copied()
+        .filter(|id| !alive.contains(id) && !pty_live.contains(id) && is_ended_in_db(*id))
+        .collect()
+}
+
 /// 见 RESET_DECISION_RENOTIFY。仅 Windows/macOS 的通知点击路径调用。
 #[cfg_attr(not(any(target_os = "windows", target_os = "macos")), allow(dead_code))]
 pub(crate) fn request_decision_renotify() {
@@ -1026,13 +1041,13 @@ pub(crate) fn spawn_liveness_watch(
                 // pty.rs 的 finalize_exit 里已经处理；这里兜住其余结束路径（进程死了由本轮
                 // 收尾、外部终端里跑的会话等）：上一轮还活着、这一轮没了、库里已是 ended、
                 // 也没被本 GUI 托管着（就地重启中的不算）。
-                clear_unread_on_end(last.iter().copied().filter(|id| !alive.contains(id)));
-                for id in last.iter().filter(|id| !alive.contains(id)) {
-                    let ended = store.get_session(*id).is_ok_and(|session| session.status == "ended");
-                    if ended && !pty_live.contains(id) {
-                        crate::browser_agent::close_session_panels(&app, *id);
-                    }
+                let ended_now = truly_ended(&last, &alive, &pty_live, |id| {
+                    store.get_session(id).is_ok_and(|session| session.status == "ended")
+                });
+                for id in &ended_now {
+                    crate::browser_agent::close_session_panels(&app, *id);
                 }
+                clear_unread_on_end(ended_now);
                 if alive != last || reaped > 0 || orphaned > 0 {
                     emit_board_changed(&app, "liveness");
                     last = alive;
@@ -1476,7 +1491,7 @@ mod first_import_notice_tests {
 
 #[cfg(test)]
 mod unread_tests {
-    use super::{clear_unread_on_end, clear_viewed_unread, is_unread, set_unread};
+    use super::{clear_unread_on_end, clear_viewed_unread, is_unread, set_unread, truly_ended};
     use std::collections::HashSet;
 
     // UNREAD 是进程级静态集合，测试之间共享：每个用例用自己专属的会话 id，互不干扰。
@@ -1497,6 +1512,15 @@ mod unread_tests {
         clear_viewed_unread(false, &HashSet::from([900_002]));
         assert!(is_unread(900_002));
         set_unread(900_002, false);
+    }
+
+    /// 只有真结束的才算：掉出 alive 但还在托管 PTY 里（就地重启）、或库里还没 ended（存活检测抖动）的不算。
+    #[test]
+    fn restart_or_flicker_is_not_an_end() {
+        let pty_live = HashSet::from([2]);
+        let ended_in_db = |id: i64| id != 3;
+        // 1 真结束；2 就地重启（PTY 还在）；3 库里没 ended（抖动）；4 仍活着。
+        assert_eq!(truly_ended(&[1, 2, 3, 4], &[4], &pty_live, ended_in_db), vec![1]);
     }
 
     /// 会话结束时清：关掉的会话不再用蓝点提醒「有新回复」。
