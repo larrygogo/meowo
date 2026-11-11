@@ -60,7 +60,7 @@ const ISLAND_ALERT_LINGER_MS = 3_000;
 /// 鼠标停在提醒上最多留多久（i5）：提醒压在最大化窗口的标题栏上，人想点底下的东西，光标一移上去
 /// 倒计时就停，提醒反而不走。到点照常缩回；要细看的有「打开」和对话窗。
 const ISLAND_ALERT_HOVER_MAX_MS = 15_000;
-/// 收回动画时长，与 styles.css 的 .island-shell.is-leaving 同源。
+/// 收回动画时长，与 styles.css 的 --dur-island（.island-shell.is-leaving 在用）同源。
 const ISLAND_LEAVE_MS = 180;
 
 const TAB_KEY = "meowo-tab";
