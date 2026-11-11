@@ -145,10 +145,11 @@ async function boot(): Promise<React.ReactNode> {
     const chat = chatMock(lang);
     const ts = new Date(FIXED_NOW).toISOString();
     // 原有的 flow-states* / flow-question / flow-empty / pop-* 走下面这张表；其余 flow-<名字> 是补看场景（qaFlow.ts）。
-    const legacy = scene.startsWith("pop-") || scene.startsWith("flow-states") || scene === "flow-question" || scene === "flow-empty";
+    // pop-idle 也归补看场景：它只是「没有待批准请求的对话窗」，菜单、弹层都从它点出来。
+    const legacy = (scene.startsWith("pop-") && scene !== "pop-idle") || scene.startsWith("flow-states") || scene === "flow-question" || scene === "flow-empty";
     const qa = qaFlowMock(scene, lang, chat);
     setExtraMock((cmd, args) => {
-      if (!legacy || (cmd !== "get_chat_history" && cmd !== "pending_interaction")) {
+      if (!legacy) {
         const hit = qa(cmd, args);
         if (hit !== undefined) return hit;
       }

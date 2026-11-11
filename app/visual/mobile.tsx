@@ -12,7 +12,8 @@ import { bootAppearance } from "../src/appearance";
 import { I18nProvider } from "../src/i18n";
 import { TooltipLayer } from "../src/Tooltip";
 import { installInputModality } from "../src/input-modality";
-import { installMocks, setExtraMock, store } from "../src/demo/mock";
+import { demoChatUi, installMocks, setExtraMock, store } from "../src/demo/mock";
+import { patchChatUi } from "./qaFlow";
 import { chatMock } from "../src/demo/chatData";
 import { panelMock } from "../src/demo/panelData";
 import { savePanel } from "../src/views/chat/panelTabs";
@@ -55,6 +56,8 @@ setExtraMock((cmd, args) => {
   }
   if (cmd === "managed_terminal_screen" && scene === "mobile-keys") return SCREEN;
   if (cmd === "file_mention_candidates") return MENTION_CANDIDATES;
+  // 模型菜单要有切换命令才点得开；权限模式要有可选项才出菜单（与桌面补看场景同一份补丁）。
+  if (cmd === "agent_chat_ui" && (scene === "mobile-idle" || scene === "mobile-lead")) return patchChatUi(demoChatUi());
   if (cmd === "lead_task_snapshot" && scene === "mobile-lead") return leadTask(lang);
   if ((scene === "mobile-idle" || scene === "mobile-lead") && cmd === "pending_interaction") return { approval: null, question: null };
   if ((scene === "mobile-idle" || scene === "mobile-lead") && cmd === "get_chat_history") return { ...(chat(cmd) as object), pendingReview: null, status: "waiting" };
