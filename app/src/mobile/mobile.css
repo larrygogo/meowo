@@ -481,14 +481,14 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
 }
 
 .remote-gate-brand { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 8px; }
-.remote-gate-brand img { border-radius: 12px; }
+.remote-gate-brand img { border-radius: var(--radius-lg); }
 .remote-gate-brand span { font-size: 18px; font-weight: 600; letter-spacing: -0.02em; }
 .remote-gate-card h1 { margin: 0; font-size: 20px; text-align: center; letter-spacing: -0.015em; }
 .remote-gate-card > p { text-align: center; }
 .remote-gate-card p { margin: 0; color: var(--cc-text-dim); font-size: 14px; line-height: 1.55; }
 .remote-gate-card .remote-gate-err {
   padding: 9px 11px;
-  border-radius: 9px;
+  border-radius: var(--radius-md);
   background: color-mix(in srgb, var(--cc-err) 9%, transparent);
   color: var(--cc-err);
   font-size: 13px;
@@ -532,7 +532,7 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
     width: calc(100% - 24px);
     margin-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
     padding: 11px 12px 10px;
-    border-radius: 14px;
+    border-radius: var(--radius-lg);
   }
   body.remote-ui .chat-compose textarea { min-height: 44px; padding-left: 4px; padding-right: 4px; }
   body.remote-ui .chat-compose-actions { gap: 6px; }
@@ -544,7 +544,7 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
        --chat-overlay-room 量的是布局后的真实位置，--app-height 跟着键盘缩，它也跟着缩。 */
     max-height: min(560px, calc(var(--chat-overlay-room, 68dvh) - 14px - 8px));
     padding: 14px;
-    border-radius: 16px;
+    border-radius: var(--radius-xl);
   }
   body.remote-ui .chat-approval-actions { gap: 10px; }
   body.remote-ui .chat-approval-actions .is-deny + .is-allow { margin-inline-start: 4px; }
@@ -596,7 +596,7 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
     height: min(520px, 100%);
     padding-top: 0;
     padding-bottom: 0;
-    border-radius: 12px;
+    border-radius: var(--radius-lg);
     box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
   }
 }
