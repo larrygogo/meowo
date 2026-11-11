@@ -1133,7 +1133,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
           )}
           {/* 便签写完要看得见，否则「添加便签」等于写进黑洞。编辑中的那条让位给输入框。 */}
           {!noting && item.note && (
-            <span className="chat-sidebar-note" data-tip={item.note}><NoteIcon />{item.note}</span>
+            <span className="chat-sidebar-note" data-tip={item.note}><NoteIcon /><span className="chat-sidebar-note-text">{item.note}</span></span>
           )}
           {noting && (
             <EditorInput

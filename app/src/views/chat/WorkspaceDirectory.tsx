@@ -11,6 +11,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { useT } from "../../i18n";
 import { hideWorkspace, openNewSessionWindow, openProjectDir, restoreWorkspace } from "../../api";
 import { remoteUi } from "../../remoteMode";
+import { tildePath } from "../../paths";
 import { useMenuPopup } from "../menu";
 
 /// 工作区菜单：工作区页签的目录行与会话列表的分组头共用。「⋯」按钮在按钮下方打开，右键
@@ -93,7 +94,9 @@ function WorkspaceRow({ cwd, label, onFilter, onHide }: { cwd: string; label: st
         </svg>
         <span className="chat-ws-dir-name">{label}</span>
       </div>
-      <div className="chat-ws-dir-sub">{cwd}</div>
+      {/* 尾部优先：同一 monorepo 下有区分度的是路径末尾（shell #10）。path-tail 用 rtl 让省略号落在开头，
+          bdi 保住路径本身的书写顺序；完整路径进 tip。 */}
+      <div className="chat-ws-dir-sub path-tail" data-tip={cwd}><bdi>{tildePath(cwd)}</bdi></div>
       {/* 「⋯」：点它不触发整行的新建会话。 */}
       <div className="chat-ws-dir-act">{menu.render(MORE)}</div>
     </div>

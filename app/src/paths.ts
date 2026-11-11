@@ -48,6 +48,14 @@ export function isHomeDir(cwd: string): boolean {
   return false;
 }
 
+/** 展示用：主目录前缀缩写成 `~`，其余原样（斜杠方向不动）。判据与 isHomeDir 同一套形状
+ *  （`<盘>:/Users/<名>`、`/Users/<名>`、`/home/<名>`），不依赖后端下发 home。工作区路径行
+ *  有区分度的是末尾，前面的 `C:/Users/<名>` 白占宽度（UI 调研 shell #10）。完整路径仍进 tip。 */
+export function tildePath(cwd: string): string {
+  const m = /^([A-Za-z]:[\\/]+Users[\\/]+[^\\/]+|\/Users\/[^/]+|\/home\/[^/]+)(?=[\\/]|$)/i.exec(cwd);
+  return m ? "~" + cwd.slice(m[0].length) : cwd;
+}
+
 /** cwd 末段目录名作展示，完整路径进 title。与贴纸 stk-repo 同款。
  *  主目录不取末段——那是用户名，当「仓库名」读毫无意义（7B-6）。 */
 export function folderName(cwd: string | null): string {

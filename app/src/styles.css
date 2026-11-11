@@ -3995,6 +3995,10 @@ select.ns-input {
 .nsp-ws-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
 .nsp-ws-item-name { color: var(--cc-text); font-size: var(--text-sm); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nsp-ws-item-path { color: var(--cc-text-faint); font-size: var(--text-xs); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 路径尾部优先截断：容器 rtl 让溢出与省略号落在开头，内层 <bdi> 隔离保住路径本身从左往右的顺序；
+   text-align:left 让没溢出时照常左对齐。同一 monorepo 下有区分度的是末尾（UI 调研 shell #10）。 */
+.path-tail { direction: rtl; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.path-tail > bdi { direction: ltr; unicode-bidi: isolate; }
 .nsp-ws-check { flex: none; color: var(--cc-text-dim); }
 .nsp-ws-sep { height: var(--hairline); margin: var(--sp-4) var(--sp-10); background: var(--cc-border); flex: none; }
 .nsp-ws-item.is-action .nsp-ws-item-name { color: var(--cc-text-dim); }
@@ -4341,6 +4345,9 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 /* 便签：一行截断（完整内容进 title）。写了看不见的备忘等于没写。 */
 .chat-sidebar-note { display: flex; align-items: center; gap: var(--sp-4); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cc-text-faint); font-size: var(--text-xs); }
 .chat-sidebar-note svg { flex: 0 0 auto; width: 10px; height: 10px; }
+/* 便签文字包一层再截断：flex 容器里的裸文本节点 text-overflow 管不到，原先被齐刷刷硬切（shell #11）。
+   与同条目的目录行一样用省略号。 */
+.chat-sidebar-note-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* 目录已删除：与看板卡片的虚线徽章同语汇（这里没有东西了），不抢标题的视觉权重。 */
 .chat-sidebar-gone { align-self: flex-start; margin-top: 2px; padding: 0 var(--sp-6); border: 1px dashed var(--cc-border); border-radius: var(--r-sm); color: var(--cc-text-faint); font-size: var(--text-xs); line-height: 1.5; white-space: nowrap; }
 /* 就地编辑（重命名/便签）：铺满文本列，视觉上顶掉原来那一行，不撑宽条目。 */
@@ -4464,7 +4471,7 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-ws-dir-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .chat-ws-dir-icon { flex: 0 0 16px; color: var(--cc-text-faint); }
 .chat-ws-dir-name { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; color: var(--cc-text); font-size: var(--text-sm); font-weight: 450; -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); }
-.chat-ws-dir-sub { margin: var(--sp-3) 0 0 calc(16px + 6px); overflow: hidden; white-space: nowrap; color: var(--cc-text-faint); font-size: var(--text-xs); -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); }
+.chat-ws-dir-sub { margin: var(--sp-3) 0 0 calc(16px + 6px); overflow: hidden; white-space: nowrap; color: var(--cc-text-faint); font-size: var(--text-xs); }
 .chat-ws-dir:hover .chat-ws-dir-name, .chat-ws-dir:hover .chat-ws-dir-sub, .chat-ws-dir.is-menu-open .chat-ws-dir-name { margin-right: calc(var(--icon-button-xs) + var(--sp-4)); }
 .chat-ws-dir-act { position: absolute; top: 0; bottom: 0; right: var(--sp-4); display: inline-flex; align-items: center; }
 .chat-ws-dir-act .chat-sidebar-item-menu { position: static; background: transparent; }
