@@ -6271,7 +6271,10 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .chat-sheet-empty { padding: var(--sp-16) var(--sp-12); color: var(--cc-text-faint); font-size: var(--text-sm); text-align: center; }
 @keyframes chat-sheet-fade { from { opacity: 0; } }
 @keyframes chat-sheet-rise { from { transform: translateY(102%); } }
-@media (prefers-reduced-motion: reduce) { .chat-sheet-scrim, .chat-sheet-panel { animation: none; } }
+/* 下滑关闭松手后的回弹 / 滑出（BottomSheet.tsx 切 is-settling；拖动中不挂，跟手无延迟）。 */
+.chat-sheet-panel.is-settling { transition: transform var(--dur-slow) var(--ease-out); }
+.chat-sheet-scrim.is-settling { transition: opacity var(--dur-slow) var(--ease-out); }
+@media (prefers-reduced-motion: reduce) { .chat-sheet-scrim, .chat-sheet-panel { animation: none; } .chat-sheet-scrim.is-settling, .chat-sheet-panel.is-settling { transition: none; } }
 .chat-slash-menu { position: absolute; bottom: calc(100% + var(--sp-8)); left: 0; width: 300px; max-height: 264px; overflow-y: auto; padding: var(--sp-6); border-radius: var(--radius-lg); }
 /* .chat-compose 前缀同模型菜单：压过 `.chat-compose button` 的 accent 皮肤。 */
 .chat-compose .chat-slash-item { display: flex; align-items: baseline; gap: var(--sp-12); width: 100%; height: auto; min-height: 0; padding: var(--sp-8) var(--sp-11); border: 0; border-radius: var(--radius-md); background: transparent; text-align: left; cursor: pointer; }

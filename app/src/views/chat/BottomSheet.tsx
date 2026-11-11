@@ -12,6 +12,10 @@ import { useT } from "../../i18n";
 const DISMISS_DISTANCE = 90;
 const DISMISS_VELOCITY = 0.5;
 
+function prefersReducedMotion(): boolean {
+  return typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
 export function BottomSheet({ title, onClose, children, ownsEscape = true }: {
   title: string;
   onClose: () => void;
@@ -54,12 +58,14 @@ export function BottomSheet({ title, onClose, children, ownsEscape = true }: {
     let velocity = 0;
     let tracking = false;
     let dragging = false;
+    // 松手后的回弹/滑出动画交给 CSS 的 .is-settling（时长、曲线走 --dur-slow / --ease-out，减少动效时
+    // 那里直接关掉过渡）。原先这里内联写死 ".22s cubic-bezier(…)"，减少动效的用户照样看到面板滑走。
     const setOffset = (dy: number, animate: boolean) => {
-      panel.style.transition = animate ? "transform .22s cubic-bezier(.2,.8,.2,1)" : "none";
+      panel.classList.toggle("is-settling", animate);
       panel.style.transform = dy > 0 ? `translateY(${dy}px)` : "";
       const scrim = scrimRef.current;
       if (scrim) {
-        scrim.style.transition = animate ? "opacity .22s" : "none";
+        scrim.classList.toggle("is-settling", animate);
         scrim.style.opacity = dy > 0 ? String(Math.max(0, 1 - dy / Math.max(1, panel.offsetHeight))) : "";
       }
     };
@@ -95,11 +101,14 @@ export function BottomSheet({ title, onClose, children, ownsEscape = true }: {
       if (!dragging) { tracking = false; return; }
       const dy = lastY - startY;
       tracking = dragging = false;
+      const reduced = prefersReducedMotion();
       if (dy > DISMISS_DISTANCE || velocity > DISMISS_VELOCITY) {
+        // 减少动效：不做滑出位移，直接关。
+        if (reduced) { onCloseRef.current(); return; }
         setOffset(panel.offsetHeight, true);
         window.setTimeout(() => onCloseRef.current(), 180);
       } else {
-        setOffset(0, true);
+        setOffset(0, !reduced);
       }
     };
     panel.addEventListener("touchstart", onStart, { passive: true });
