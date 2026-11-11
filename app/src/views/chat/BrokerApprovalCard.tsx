@@ -140,7 +140,7 @@ export function BrokerApprovalCard({ approval, countdown, timedOut, resolving, e
         <button type="button" className={"is-deny" + (escArmed ? " is-esc-armed" : "")} disabled={resolving} onClick={() => onDecide("deny")}>
           {escArmed ? t.chat.denyConfirmEsc : t.chat.deny}{kbd && <kbd aria-hidden="true">Esc</kbd>}
         </button>
-        <button type="button" className={"is-allow" + (isRiskyCommand(approval.input) ? " is-danger" : "")} disabled={resolving} onClick={() => onDecide("allow_once")}>
+        <button type="button" className={"btn-primary" + (isRiskyCommand(approval.input) ? " is-danger" : "")} disabled={resolving} onClick={() => onDecide("allow_once")}>
           {t.chat.allowOnce}{kbd && <kbd aria-hidden="true">1</kbd>}
         </button>
       </>}

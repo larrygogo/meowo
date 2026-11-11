@@ -4291,7 +4291,7 @@ export function ChatWindow() {
             <button type="button" disabled={!option.input} key={`${option.position}:${option.label}`} onClick={() => chooseInteractiveOption(option)}>{t.chat.chatAboutThis}</button>
           ))}
           {interactiveAttention.options?.filter((option) => option.kind === "submit").map((option) => (
-            <button type="button" disabled={!option.input} className="is-allow" key={`${option.position}:${option.label}`} onClick={() => chooseInteractiveOption(option)}>{t.chat.submitAnswer}</button>
+            <button type="button" disabled={!option.input} className="btn-primary" key={`${option.position}:${option.label}`} onClick={() => chooseInteractiveOption(option)}>{t.chat.submitAnswer}</button>
           ))}
         </>}
       >
@@ -4333,7 +4333,7 @@ export function ChatWindow() {
           </button>}
           {/* 危险命令的「允许一次」降级为红色警示主按钮(is-danger):rm -rf 与 ls 不该
               同一个视觉权重(判定见 isRiskyCommand,宁漏勿冤)。 */}
-          {commandAllowOnce && <button type="button" className={"is-allow" + (commandApproval.command && isRiskyCommand(commandApproval.command) ? " is-danger" : "")} onClick={() => chooseTerminalOption(commandAllowOnce)}>{t.chat.allowOnce}</button>}
+          {commandAllowOnce && <button type="button" className={"btn-primary" + (commandApproval.command && isRiskyCommand(commandApproval.command) ? " is-danger" : "")} onClick={() => chooseTerminalOption(commandAllowOnce)}>{t.chat.allowOnce}</button>}
         </>}
       >
         {commandApproval.tool && <div className="chat-approval-tool"><span>{t.chat.approvalTool}</span><code>{commandApproval.tool}</code></div>}
@@ -4376,7 +4376,7 @@ export function ChatWindow() {
               .then(() => setTerminalAttention(null))
               .catch((error) => setSendError(formatBackendError(error, t.locale)));
           }}>{t.chat.terminalPromptCancel}</button>
-          <button type="button" className="is-allow" onClick={() => {
+          <button type="button" className="btn-primary" onClick={() => {
             void writeManagedTerminal(sessionId, "\r")
               .then(() => setTerminalAttention(null))
               .catch((error) => setSendError(formatBackendError(error, t.locale)));
@@ -4395,7 +4395,7 @@ export function ChatWindow() {
           {terminalAttention.options!.map((option, index) => (
             // 走同一个 chooseTerminalOption：它还负责关掉菜单识别窗口、并在模型菜单
             // 选完后主动刷新模型（`/model` 切换不产生 Stop hook，不刷就一直显示旧值）。
-            <button type="button" className={index === 0 ? "is-primary" : ""} key={`${index}:${option.label}`} onClick={() => chooseTerminalOption(option)}>
+            <button type="button" className={index === 0 ? "is-recommended" : ""} key={`${index}:${option.label}`} onClick={() => chooseTerminalOption(option)}>
               <span><b>{option.label}</b></span>
             </button>
           ))}
@@ -4427,7 +4427,7 @@ export function ChatWindow() {
                 {view === "terminal" ? t.chat.questionAnswerInTerminal : t.chat.goTerminal}
               </button>
             )}
-          <button type="button" className="is-allow" disabled={resolvingApproval || !answerMap} onClick={() => void submitQuestionAnswers()}>{t.chat.submitAnswer}</button>
+          <button type="button" className="btn-primary" disabled={resolvingApproval || !answerMap} onClick={() => void submitQuestionAnswers()}>{t.chat.submitAnswer}</button>
         </>}
       >
         <QuestionPanels
@@ -4462,7 +4462,7 @@ export function ChatWindow() {
         title={t.chat.questionTitle}
         badge={t.chat.questionPending}
         sideActions={<button type="button" className="chat-attention-dismiss is-inline" data-tip={t.chat.attentionDismissTip} onClick={collapseQuestion}>{t.chat.attentionDismiss}</button>}
-        actions={view === "chat" && !remoteUi() && history?.ptyManaged && <button type="button" className="is-allow" onClick={() => setView("terminal")}>{t.chat.goTerminal}</button>}
+        actions={view === "chat" && !remoteUi() && history?.ptyManaged && <button type="button" className="btn-primary" onClick={() => setView("terminal")}>{t.chat.goTerminal}</button>}
       >
         {/* 可点选排队的条件：托管会话（GUI 持有 PTY 才写得进按键）+ 至少一题带选项。
             排队按问题 keyed：落键前先认屏幕上停的是第几题（题面原文反查，
@@ -4726,7 +4726,7 @@ export function ChatWindow() {
           {slashMatches.map((command, index) => (
             <button type="button" key={command.name} role="option" id={`chat-slash-option-${index}`} aria-selected={index === slashActive} className="chat-slash-item"
               // styles.css 不在本次改动范围：键盘高亮复用 hover 的同一条表面色变量。
-              style={index === slashActive ? { background: "var(--cc-surface-hover)" } : undefined}
+              style={index === slashActive ? { background: "var(--fill-selected)" } : undefined}
               onMouseEnter={() => setSlashIndex(index)}
               onClick={() => { setPrompt(command.name + " "); setSlashIndex(0); }}>
               <code>{command.name}</code>
@@ -4747,7 +4747,7 @@ export function ChatWindow() {
         {atFiles.length > 0 && atQuery !== null && <div className="dd-menu chat-slash-menu" role="listbox" id="chat-at-listbox">
           {atFiles.map((rel, index) => (
             <button type="button" key={rel} role="option" id={`chat-at-option-${index}`} aria-selected={index === atActive} className="chat-slash-item"
-              style={index === atActive ? { background: "var(--cc-surface-hover)" } : undefined}
+              style={index === atActive ? { background: "var(--fill-selected)" } : undefined}
               onMouseEnter={() => setAtIndex(index)}
               onClick={() => pickAtFile(rel)}>
               <code>@{rel}</code>
@@ -4758,7 +4758,7 @@ export function ChatWindow() {
           <Icon glyph={icMessage} size={14} />
           <span className="chat-review-bar-label">{t.chat.reviewComments(sessionReviewComments.length)}</span>
           <button type="button" onClick={() => setSessionReviewComments(() => [])}>{t.chat.reviewCommentsClear}</button>
-          <button type="button" className="is-primary" onClick={insertReviewComments}>{t.chat.reviewCommentsInsert}</button>
+          <button type="button" className="btn-primary" onClick={insertReviewComments}>{t.chat.reviewCommentsInsert}</button>
         </div>}
         {attachments.length > 0 && <div className="chat-attachments">
           {attachments.map((file) => file.image ? (

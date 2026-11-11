@@ -848,10 +848,10 @@ describe("AccountSection 登录", () => {
     fireDone("kimi", true);
     const loginBtn = await screen.findByTestId("agent-login-kimi");
     // 「装完 → 登录」串成一条链路：按钮升为 primary，而非埋在一堆次要按钮里。
-    expect(loginBtn.className).toContain("provider-card-action-primary");
+    expect(loginBtn.className).toContain("btn-primary");
     // 未经安装流程的 codex 则是普通次要按钮（切过去看）。
     await selectAgent("Codex");
-    expect((await screen.findByTestId("agent-login-codex")).className).not.toContain("provider-card-action-primary");
+    expect((await screen.findByTestId("agent-login-codex")).className).not.toContain("btn-primary");
   });
 });
 

@@ -44,15 +44,19 @@ describe("状态色当文字用走文字档", () => {
     const hits = styles.split("\n").filter((l) => /(?<![-\w])color:\s*var\(--cc-(ok|warn|err)-vivid\)/.test(l) && !ALLOW.some((a) => l.includes(a)));
     expect(hits).toEqual([]);
   });
-  it("文字档在深色、浅色、终端视图三处都有定义", () => {
+  // 终端视图与深色主题共用同一个调色板块（:where(.chat-window.is-terminal), :root），
+  // 所以是「深色共用块 + 浅色」两处，不再需要第三份抄写。
+  it("文字档在深色共用块（含终端视图）与浅色两处都有定义", () => {
+    expect(styles).toContain(":where(.chat-window.is-terminal), :root {");
     for (const tok of ["--cc-ok-text", "--cc-warn-text", "--cc-fail-text"]) {
       const n = styles.split("\n").filter((l) => l.trimStart().startsWith(tok + ":")).length;
-      expect(n, tok).toBe(3);
+      expect(n, tok).toBe(2);
     }
   });
   // 写死 #fff 压 #1a88ff 只有 3.49:1（调研 sys3）。
+  // 提交与会话管理的主按钮已并入 .btn-primary（buttonSystem.test.ts 守 tsx 组合关系）。
   it("提交与会话管理主按钮字色走 --cc-on-accent", () => {
-    for (const sel of [".scm-commit-btn", ".sa-btn-q--primary"]) {
+    for (const sel of [".btn-primary:is(button, a)"]) {
       const line = styles.split("\n").find((l) => l.startsWith(sel + " {")) ?? "";
       expect(line, sel).toMatch(/color: var\(--cc-on-accent\)/);
     }

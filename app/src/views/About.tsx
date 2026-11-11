@@ -976,7 +976,7 @@ export function AboutSection({
             <div className="row-label">{t.about.versionInfo}</div>
             <div className="row-desc">{verSub}</div>
           </div>
-          <button className={"sbtn" + (updateBtn.primary ? " primary" : "")} onClick={openUpdater}>
+          <button className={"sbtn" + (updateBtn.primary ? " btn-primary" : "")} onClick={openUpdater}>
             {updateBtn.label}
           </button>
         </div>

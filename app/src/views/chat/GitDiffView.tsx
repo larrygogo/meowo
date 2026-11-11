@@ -832,7 +832,7 @@ export function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedP
                       />
                       <div className="chat-diff-cmt-actions">
                         <button type="button" onClick={() => setEditing(null)}>{t.chat.diffCommentCancel}</button>
-                        <button type="button" className="is-primary" disabled={!commentDraft.trim()} onClick={saveComment}>{t.chat.diffCommentSave}</button>
+                        <button type="button" className="btn-primary" disabled={!commentDraft.trim()} onClick={saveComment}>{t.chat.diffCommentSave}</button>
                       </div>
                     </div>
                   )}

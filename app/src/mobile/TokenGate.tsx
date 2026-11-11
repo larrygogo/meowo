@@ -76,7 +76,7 @@ export function TokenGate({ children, onReady }: { children: ReactNode; onReady?
           placeholder={t.remote.gateTokenLabel}
           aria-label={t.remote.gateTokenLabel}
         />
-        <button onClick={submit} disabled={!manual.trim() || checking}>
+        <button className="btn-primary" onClick={submit} disabled={!manual.trim() || checking}>
           {checking ? t.remote.gateConnecting : t.remote.gateConnect}
         </button>
       </div>

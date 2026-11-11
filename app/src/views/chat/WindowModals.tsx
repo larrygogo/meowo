@@ -54,7 +54,7 @@ export function RenameModal({ initial, onSubmit, onClose, t }: {
       {error && <div className="chat-modal-error" role="alert">{error}</div>}
       <div className="chat-modal-actions">
         <button type="button" className="ns-btn" onClick={onClose}>{t.newSession.cancel}</button>
-        <button type="button" className="ns-btn is-primary" disabled={!value.trim() || saving} onClick={() => void submit()}>{t.chat.renameSave}</button>
+        <button type="button" className="ns-btn btn-primary" disabled={!value.trim() || saving} onClick={() => void submit()}>{t.chat.renameSave}</button>
       </div>
     </AppModal>
   );

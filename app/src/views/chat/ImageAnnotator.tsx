@@ -139,7 +139,7 @@ export function ImageAnnotator({ path, onDone, onClose }: {
       )}
       <div className="chat-modal-actions">
         <button type="button" className="ns-btn" onClick={onClose}>{t.chat.annotateCancel}</button>
-        <button type="button" className="ns-btn is-primary" disabled={!image || saving} onClick={() => void finish()}>
+        <button type="button" className="ns-btn btn-primary" disabled={!image || saving} onClick={() => void finish()}>
           {boxes.length > 0 ? t.chat.annotateDone : t.chat.annotateSkip}
         </button>
       </div>

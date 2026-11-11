@@ -212,7 +212,7 @@ export function BrowserPane({ info, visible, suggestions }: {
         <div className="browser-pane-notice is-permission" role="alert">
           <span className="browser-pane-notice-text">{permissionText(info.permission)}</span>
           <button type="button" disabled={answering} onClick={() => answer(false)}>{t.chat.browserPermissionBlock}</button>
-          <button type="button" className="is-primary" disabled={answering} onClick={() => answer(true)}>{t.chat.browserPermissionAllow}</button>
+          <button type="button" className="btn-primary" disabled={answering} onClick={() => answer(true)}>{t.chat.browserPermissionAllow}</button>
         </div>
       )}
       {/* 阻止之后同一页面不会再问，被拦的下载也悄无声息：留一条，刷新页面就能重新下载。 */}
