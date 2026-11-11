@@ -1064,6 +1064,10 @@ export const zh = {
     interjectedBadgeTip: "Agent 在干活途中读到了这条",
     toAgentBadge: (name: string) => `发给子代理「${name}」`,
     toAgentBadgeTip: "这条发给了子代理，不是主会话",
+    // 终端停在子代理视图且自动切不回(chat/subagentView)：发送会交给它，给一键切回。
+    subagentViewNotice: (name: string) => `终端停在子代理「${name}」，发送会交给它`,
+    subagentViewUnnamed: "未命名",
+    subagentViewBack: "切回主会话",
     queuedAttachmentOnly: "（附件）",
     interjectNow: "中断并处理",
     interjectNowTip: "停下当前回合，立刻处理这些消息",

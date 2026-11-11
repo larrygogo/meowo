@@ -364,6 +364,40 @@ pub struct SideQuestion {
     pub close_input: &'static str,
 }
 
+/// 子代理视图（claude 在提示框下方的子代理面板里「打开」某个子代理）：此时 composer 改发给
+/// 那个子代理，对话页（代表主会话）写进 PTY 的话会被它收走，主会话一个字也收不到。前端
+/// 发送前据此认出视图、按面板键选中主会话行并回车切回，确认回到主会话才写。
+///
+/// 屏幕形态（2.1.322 真机取证，tests/probe_claude_subagent_view.rs）：
+/// - composer 上边框右侧挂子代理描述 `──── probe-sleeper ─`，空 composer 的占位是
+///   `❯ Message @general-purpose…`（`placeholder_prefix`）；回到主会话后边框是整条横线、
+///   空 composer 只剩 `❯`。
+/// - composer 底边之下是子代理面板：`  ◯ main` / `❯ ● general-purpose  probe-sleeper  5s`。
+///   行首 `panel_pointer` = 面板选中项，`panel_viewed_marker` = 当前在看的那一行。
+///   在主会话时 main 行是 `●`，在看子代理时 main 行是 `◯`。
+/// - 键：composer 里 ↓ 进面板并落在 main 行；面板里 ↑/↓ 移动；main 行上回车 = 退出视图；
+///   打开子代理后面板保持焦点（指针在被看的那行）；Esc 取消选中、焦点回 composer。
+///
+/// 不用 Esc 直接退视图：视图里 composer 焦点下的 Esc 在被看的子代理还在跑时是「中断它的
+/// 工作」，只有它停了才退出视图（2.1.322 源码），按错就把用户的子任务掐了。面板里的 Esc
+/// 只取消选中（官方 sub-agents 文档「Observe and steer running forks」）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+pub struct SubagentView {
+    pub placeholder_prefix: &'static str,
+    pub panel_main_label: &'static str,
+    pub panel_pointer: &'static str,
+    pub panel_viewed_marker: &'static str,
+    /// 从 composer 把焦点移进面板、在面板里下移。
+    pub down_input: &'static str,
+    pub up_input: &'static str,
+    /// 打开选中行（选中主会话行 = 切回主会话）。
+    pub open_input: &'static str,
+    /// 面板有选中项时取消选中、焦点回 composer（面板没焦点时**不能**发：那是中断键）。
+    pub leave_panel_input: &'static str,
+}
+
 /// 对话页能力总装的结果，原样下发前端。
 #[derive(Debug, Clone, PartialEq, Serialize, Default)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -447,6 +481,8 @@ pub struct ChatUi {
     /// 发送前收起 composer 残留草稿的能力(见 [`DraftStash`])。None = 未取证,照旧直接写入
     /// ——残留会拼进消息,但盲按一个未验证的键可能触发对方的别的功能,宁缺勿滥。
     pub draft_stash: Option<DraftStash>,
+    /// 发送前切回主会话的能力(见 [`SubagentView`])。None = 该 agent 没有子代理视图或未取证。
+    pub subagent_view: Option<SubagentView>,
     /// 探测到的 CLI 版本，原样回传（展示/排障）。
     pub version: Option<String>,
 }
