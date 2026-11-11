@@ -19,6 +19,7 @@ const INTERJECTION_HEAD: &str = "The user sent a new message while you were work
 const INTERJECTION_TAIL: &str = "\n\nThis is how Claude Code surfaces messages the user sends mid-turn";
 const RESUMED_HEAD: &str = "Agent \"";
 const RESUMED_TAIL: &str = "\" was resumed by the user";
+const WAITING_TAIL: &str = "\" is waiting on its own background work";
 /// 侧车那行比主链通知早几毫秒落盘（实拍两例 4ms、5ms）。放宽到 5 秒，再早的是别的一次。
 const RESUME_WINDOW_MS: u64 = 5_000;
 
@@ -102,6 +103,26 @@ pub(super) fn resumed_agent_prompt(main_transcript: &Path, line: &str) -> Option
         agent,
     });
     Some(prompt.into_iter().chain(std::iter::once(running)).collect())
+}
+
+/// 这条 task-notification 是不是「不算结局」的：被用户续上，或子代理还在等自己派出的后台活儿。
+///
+/// 后者 2.1.322 实拍：`<status>completed</status>` + `<summary>Agent "…" is waiting on its own background work</summary>`，
+/// note 写「the result below may be interim」、同一 task-id 之后还会再通知；真正收尾的「… finished」晚约 8 分钟。
+/// 两种都不收尾：委派保持运行中、后台计数不减，等下一条 finished 再说。
+pub(super) fn not_a_result(content: &str) -> bool {
+    resumed_task_id(content).is_some() || waiting_task_id(content).is_some()
+}
+
+/// 「子代理还在等自己的后台活儿」的通知 → 它的 task-id。锚定方式同 [`resumed_task_id`]。
+fn waiting_task_id(content: &str) -> Option<&str> {
+    if !content.trim_start().starts_with("<task-notification>") {
+        return None;
+    }
+    super::transcript::tag_text(content, "summary")?
+        .strip_prefix(RESUMED_HEAD)?
+        .strip_suffix(WAITING_TAIL)?;
+    super::transcript::tag_text(content, "task-id").filter(|id| !id.is_empty())
 }
 
 /// 「子代理被用户续上」的通知（入队 content / 送达 prompt / user 行正文）→ 它的 task-id。

@@ -571,8 +571,9 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                 // 且携带着后台委派的**真实结局**——主链上唯一的完成信号(启动回执只说
                 // launched,侧车 meta 不记结局)。转译成该 tool_use 的合成回执,
                 // 折叠徽标/进度面板的「进行中」由此翻转成完成/失败。
-                // 「被用户续上」的通知也长这样，但它不是结局（见 subagent_resume_tests），吞掉不计。
-                if super::subagent_prompt::resumed_task_id(text).is_some() {
+                // 「被用户续上」「还在等自己的后台活儿」的通知也长这样，但都不是结局
+                // （见 subagent_resume_tests），吞掉不计。
+                if super::subagent_prompt::not_a_result(text) {
                     return Vec::new();
                 }
                 if let Some(event) = task_notification_result(text, base_id, timestamp.clone()) {
@@ -866,7 +867,8 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
             // 「被用户续上」的通知走的也是这条（本机实拍 queued_command 形态），它不是结局：
             // 送达行可能比子代理这一段的完成通知还晚落盘，记成在跑会永远挂着，只吞掉不计。
             // 「又在跑」由入队那一行给出（见 subagent_prompt::resumed_agent_prompt）。
-            if super::subagent_prompt::resumed_task_id(&text).is_some() {
+            // 「还在等自己的后台活儿」同理不是结局，等之后那条 finished 收尾。
+            if super::subagent_prompt::not_a_result(&text) {
                 return Vec::new();
             }
             if let Some(event) = task_notification_result(&text, base_id, timestamp.clone()) {
@@ -1160,7 +1162,9 @@ impl ParseState {
     fn settle_from_notification(&mut self, text: &str) {
         // 「被用户续上」不是结局：送达行（user / queued_command）可能晚于这一段的完成通知，
         // 不能拿它出集，也不拿它入集（入集只认入队那一行，见 fold_task_signals）。
-        if !text.trim_start().starts_with("<task-notification>") || super::subagent_prompt::resumed_task_id(text).is_some() {
+        // 「还在等自己的后台活儿」（status=completed，note 说结果可能是中间态）也不出集：
+        // 实拍真正的 finished 晚约 8 分钟，这期间会话还有后台活儿。
+        if !text.trim_start().starts_with("<task-notification>") || super::subagent_prompt::not_a_result(text) {
             return;
         }
         if let Some(id) = tag_text(text, "task-id") {

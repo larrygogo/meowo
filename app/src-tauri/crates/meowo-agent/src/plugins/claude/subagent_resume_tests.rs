@@ -83,3 +83,43 @@ fn quoted_resume_phrase_stays_user_text() {
     let delta = read_chat_delta(&CLAUDE_TRANSCRIPT, &main, 0, None);
     assert_eq!(serde_json::to_value(&delta.items[0]).unwrap()["type"], "user_text");
 }
+
+// ═══ 「还在等自己的后台活儿」不是收尾（做空第三轮 #7）═══
+// 本机实拍（2.1.322，脱敏）：子代理自己派了后台任务就停下时，主链收到 status=completed 的通知，
+// summary 是「Agent "…" is waiting on its own background work」，note 写明结果可能只是中间态、
+// 同一 task-id 之后还会再通知。真正收尾的是后来那条「… finished」（实拍晚约 8 分钟）。
+
+const WAITING_NOTE: &str = "This agent stopped with background work of its own still running. It may resume on its own when that work completes or reports, and the same task-id notifies again if it does; the result below may be interim.";
+
+fn waiting_user(uuid: &str, ts: &str) -> String {
+    format!(
+        r#"{{"type":"user","uuid":"{uuid}","timestamp":"{ts}","message":{{"role":"user","content":"<task-notification>\n<task-id>a6ca15</task-id>\n<tool-use-id>toolu_bg</tool-use-id>\n<status>completed</status>\n<summary>Agent \"做空验证\" is waiting on its own background work</summary>\n<note>{WAITING_NOTE}</note>\n<result>中间结论</result>\n</task-notification>"}}}}"#
+    )
+}
+
+fn waiting_enqueue(ts: &str) -> String {
+    format!(
+        r#"{{"type":"queue-operation","operation":"enqueue","timestamp":"{ts}","sessionId":"s","content":"<task-notification>\n<task-id>a6ca15</task-id>\n<status>completed</status>\n<summary>Agent \"做空验证\" is waiting on its own background work</summary>\n<note>{WAITING_NOTE}</note>\n</task-notification>"}}"#
+    )
+}
+
+fn waiting_queued(ts: &str) -> String {
+    format!(
+        r#"{{"parentUuid":"p","isSidechain":false,"attachment":{{"type":"queued_command","prompt":"<task-notification>\n<task-id>a6ca15</task-id>\n<status>completed</status>\n<summary>Agent \"做空验证\" is waiting on its own background work</summary>\n<note>{WAITING_NOTE}</note>\n</task-notification>","commandMode":"task-notification","origin":{{"kind":"task-notification"}},"timestamp":"{ts}"}},"type":"attachment","uuid":"wq","timestamp":"{ts}"}}"#
+    )
+}
+
+#[test]
+fn waiting_on_own_background_work_is_not_completion() {
+    // user 行、入队、送达三种形态都不能收尾。
+    let (user, enqueue, queued) = (waiting_user("w1", "2026-11-10T10:05:00.000Z"), waiting_enqueue("2026-11-10T10:05:00.000Z"), waiting_queued("2026-11-10T10:05:00.000Z"));
+    for (name, line) in [("user", &user), ("enqueue", &enqueue), ("queued", &queued)] {
+        let main = write(&format!("waiting-{name}"), &[LAUNCH, line]);
+        assert_eq!(outcome_of(&main), (1, 0, 0), "{name} 形态不该判完成");
+        assert_eq!(analyze_transcript(main.to_str().unwrap()).busy_subagents, 1, "{name} 形态不该减后台计数");
+    }
+    // 真正的完成通知到了才收尾。
+    let main = write("waiting-then-done", &[LAUNCH, &enqueue, &user, DONE_USER]);
+    assert_eq!(outcome_of(&main), (0, 1, 0));
+    assert_eq!(analyze_transcript(main.to_str().unwrap()).busy_subagents, 0);
+}
