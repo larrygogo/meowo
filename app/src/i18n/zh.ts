@@ -1059,6 +1059,8 @@ export const zh = {
     queuedAcceptedTip: "Agent 已收下，轮到时就处理",
     interjectedBadge: "回合中插入",
     interjectedBadgeTip: "Agent 在干活途中读到了这条",
+    toAgentBadge: (name: string) => `发给子代理「${name}」`,
+    toAgentBadgeTip: "这条发给了子代理，不是主会话",
     queuedAttachmentOnly: "（附件）",
     interjectNow: "中断并处理",
     interjectNowTip: "停下当前回合，立刻处理这些消息",

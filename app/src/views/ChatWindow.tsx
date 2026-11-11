@@ -2459,7 +2459,7 @@ export function ChatWindow() {
     const list = itemsRef.current;
     const index = list.findIndex((item) => item.id === id);
     if (index < 0) return;
-    const turns = list.slice(index).filter((item) => item.type === "user_text" && !item.interjected).length;
+    const turns = list.slice(index).filter((item) => item.type === "user_text" && !item.interjected && !item.to_agent).length;
     if (turns === 0) return;
     if (!control.count_arg && !control.menu && turns !== 1) return;
     const yes = await appConfirm(control.restores_files ? t.chat.undoConfirmFiles : t.chat.undoConfirm, { title: t.chat.undoTitle, danger: true, confirmLabel: t.chat.undoConfirmLabel });
@@ -2511,14 +2511,14 @@ export function ChatWindow() {
   undoFromRef.current = undoFrom;
   const sendTextRef = useRef(sendText);
   sendTextRef.current = sendText;
-  // 能撤回的用户消息：当前段（接续的前序段不在这个 CLI 进程的上下文里）、非插话，且空闲时
+  // 能撤回的用户消息：当前段（接续的前序段不在这个 CLI 进程的上下文里）、非插话、不是发给子代理的（不算主会话的一轮），且空闲时
   // （kimi 的 /undo 只在空闲可用）。运行中整个置空——流式期间 items 每轮都变，不必跟着重算。
   // 撤回命令不带轮数、也不是菜单式的（opencode）只能撤最近一轮，只挂最后一条。
   const undoAvailable = !!chatUi?.undo && tone !== "running" && view === "chat";
   const undoStepwise = chatUi?.undo ? !chatUi.undo.count_arg && !chatUi.undo.menu : false;
   const undoableIds = useMemo(() => {
     if (!undoAvailable) return undefined;
-    const ids = items.filter((item) => item.type === "user_text" && !item.interjected).map((item) => item.id);
+    const ids = items.filter((item) => item.type === "user_text" && !item.interjected && !item.to_agent).map((item) => item.id);
     return new Set(undoStepwise ? ids.slice(-1) : ids);
   }, [undoAvailable, undoStepwise, items]);
   // 给对话流里消息用的动作（出错卡「继续」、用户消息「撤回」）。引用保持稳定：用户消息

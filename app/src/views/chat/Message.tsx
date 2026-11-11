@@ -654,10 +654,13 @@ function MessageBody({ item, nextStamp = null, latest = false, compactSummary = 
       <article className={"chat-message is-user" + (images.length ? " has-images" : "")} data-msg-id={item.id}>
         {images.length > 0 && <ImageRow images={images} />}
         {body && <UserBubbleText id={item.id} body={body} />}
-        {(body || timeText || echoPhase || item.interjected) && <div className="chat-user-foot">
+        {(body || timeText || echoPhase || item.interjected || item.to_agent) && <div className="chat-user-foot">
           {/* 来源与送达是这条消息的事实，标在页脚：中途插入解释它为何出现在回复中间；
               未确认是回显超时仍不见落盘，照实说，不悄悄撤掉。 */}
           {item.interjected && <span className="chat-user-note" data-tip={t.chat.interjectedBadgeTip}>{t.chat.interjectedBadge}</span>}
+          {/* 发给子代理的话（Claude Code 里切到子代理视图发的）：正文只在子代理记录里，后端取回挂到主时间线。
+              标出去向，不然看着像对主会话说的，后面的回复也对不上（用户实拍 11-11）。 */}
+          {item.to_agent && <span className="chat-user-note" data-tip={t.chat.toAgentBadgeTip}>{t.chat.toAgentBadge(item.to_agent)}</span>}
           {echoPhase === "uncertain" && <EchoUncertainActions itemId={item.id} actions={echoActions} />}
           {/* 发出时以为空闲、其实 CLI 还在忙：它把这条收进了队列，照实说「已排队」。 */}
           {echoPhase === "accepted" && <span className="chat-user-note" data-tip={t.chat.echoQueuedTip}>{t.chat.echoQueued}</span>}

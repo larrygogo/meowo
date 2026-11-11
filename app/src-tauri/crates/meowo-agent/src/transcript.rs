@@ -105,6 +105,15 @@ pub enum TranscriptEvent {
         timestamp: Option<String>,
         text: String,
     },
+    /// 用户发给某个子代理的话（claude：切到子代理视图直接发）。正文在子代理侧车里，
+    /// 主链只有一条「被用户续上」的通知；插件按通知去侧车取回正文，挂回主时间线。
+    /// `agent` = 该子代理的任务描述，前端据此标「发给子代理 X」。
+    SubagentPrompt {
+        id: String,
+        timestamp: Option<String>,
+        text: String,
+        agent: String,
+    },
 }
 
 impl From<TranscriptEvent> for ChatItem {
@@ -120,6 +129,19 @@ impl From<TranscriptEvent> for ChatItem {
                 timestamp,
                 text,
                 interjected,
+                to_agent: None,
+            },
+            TranscriptEvent::SubagentPrompt {
+                id,
+                timestamp,
+                text,
+                agent,
+            } => Self::UserText {
+                id,
+                timestamp,
+                text,
+                interjected: false,
+                to_agent: Some(agent),
             },
             TranscriptEvent::AssistantMessage {
                 id,
@@ -961,6 +983,14 @@ fn fold_lines(spec: &dyn TranscriptSpec, path: &Path, base: u64, parsed: &[Parse
         }
         let mut prompt = false;
         for item in &line.items {
+            // 发给子代理的话不是主链的一轮：不参与双写判重，也不计进分叉判定的用户提示数，
+            // 否则主链下一条提示会被误判成「回退后重发」、把中间一段收掉。
+            if let ChatItem::UserText { to_agent: Some(_), .. } = item {
+                last_user = None;
+                user_state_unknown = false;
+                kept.push(true);
+                continue;
+            }
             if let ChatItem::UserText { text, timestamp, .. } = item {
                 // 窗口里的第一条消息就是用户消息：整读时它可能与窗口前一条双写判重被吞。
                 lead_user |= user_state_unknown;
@@ -1426,7 +1456,7 @@ fn within_double_write(prev: Option<&str>, next: Option<&str>) -> bool {
 
 /// `YYYY-MM-DDTHH:MM:SS(.fff)Z` 的当日毫秒数（日期另比）。只认 UTC `Z` 结尾的形态——
 /// 各插件落 ChatItem 时统一写这种；别的形态返回 None，调用方退回严格同戳。
-fn day_millis(ts: &str) -> Option<u64> {
+pub(crate) fn day_millis(ts: &str) -> Option<u64> {
     let time = ts.strip_suffix('Z')?.get(11..)?;
     let (hms, frac) = time.split_once('.').unwrap_or((time, ""));
     let mut parts = hms.split(':').map(|part| part.parse::<u64>().ok());

@@ -170,6 +170,12 @@ pub enum ChatItem {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         #[cfg_attr(test, ts(type = "boolean", optional))]
         interjected: bool,
+        /// 这句话是发给某个子代理的（claude：用户切到子代理视图直接发），值是它的任务描述。
+        /// 正文只记在子代理侧车里，主链没有这条（2.1.322 实拍），不标出来前端既找不到它
+        /// 判「未确认送达」，也说不清后面的回复是谁给的。None 不下发。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(type = "string", optional))]
+        to_agent: Option<String>,
     },
     AssistantText {
         id: String,
@@ -1272,9 +1278,9 @@ mod tests {
     /// interjected 只在为真时下发；缺字段（旧后端/旧缓存）按 false 读回。
     #[test]
     fn user_text_interjected_is_omitted_when_false() {
-        let plain = ChatItem::UserText { id: "u".into(), timestamp: None, text: "hi".into(), interjected: false };
+        let plain = ChatItem::UserText { id: "u".into(), timestamp: None, text: "hi".into(), interjected: false, to_agent: None };
         assert!(serde_json::to_value(&plain).unwrap().get("interjected").is_none());
-        let steered = ChatItem::UserText { id: "u".into(), timestamp: None, text: "hi".into(), interjected: true };
+        let steered = ChatItem::UserText { id: "u".into(), timestamp: None, text: "hi".into(), interjected: true, to_agent: None };
         assert_eq!(serde_json::to_value(&steered).unwrap()["interjected"], true);
         let old: ChatItem = serde_json::from_str(r#"{"type":"user_text","id":"u","timestamp":null,"text":"hi"}"#).unwrap();
         assert_eq!(old, plain);
