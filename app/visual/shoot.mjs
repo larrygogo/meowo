@@ -44,7 +44,7 @@ const DESKTOP_SCENES = [
   { scene: "settings-appearance", sel: ".settings" },
   { scene: "settings-account", sel: ".settings" },
   { scene: "settings-remote", sel: ".settings" },
-  { scene: "onboarding", sel: ".obm-panel" },
+  { scene: "onboarding", sel: ".obm-chat" },
 ];
 const ISLAND_SCENES = [
   { scene: "island-compact", w: 700, h: 80, sel: "[data-visual-stage] > div > *" },

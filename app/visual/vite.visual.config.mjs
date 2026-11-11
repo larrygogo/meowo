@@ -11,7 +11,8 @@ const appDir = fileURLToPath(new URL("..", import.meta.url));
 // 不把真实路径加进白名单，字体文件（@fontsource）会 403、静默回退到系统字体。
 const nodeModulesReal = realpathSync(join(appDir, "node_modules"));
 
-export const VISUAL_PORT = 5191;
+// 多个 worktree 并行拍图时各用各的端口（MEOWO_VISUAL_PORT），缓存目录也按端口分开，免得互相覆盖。
+export const VISUAL_PORT = Number(process.env.MEOWO_VISUAL_PORT) || 5191;
 
 export default defineConfig({
   root: appDir,
@@ -25,7 +26,7 @@ export default defineConfig({
   },
   // 依赖预构建缓存另放：app/node_modules 在 worktree 里常是指向主仓库的 junction，
   // 默认的 node_modules/.vite 会和主仓库正在跑的 tauri dev 互相覆盖。
-  cacheDir: join(tmpdir(), "meowo-visual-vite"),
+  cacheDir: join(tmpdir(), `meowo-visual-vite-${VISUAL_PORT}`),
   // 首屏就把两个 harness 的依赖扫全：否则第一张截图途中发现新依赖会触发整页重载。
   optimizeDeps: { entries: ["visual/desktop.html", "visual/mobile.html"] },
   server: {
