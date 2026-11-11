@@ -57,6 +57,9 @@ function isUrgentAlert(kind: string): boolean {
 const ISLAND_ALERT_YIELD_MS = 1_200;
 /// 鼠标从提醒上移开后，提醒再留多久才缩回。
 const ISLAND_ALERT_LINGER_MS = 3_000;
+/// 鼠标停在提醒上最多留多久（i5）：提醒压在最大化窗口的标题栏上，人想点底下的东西，光标一移上去
+/// 倒计时就停，提醒反而不走。到点照常缩回；要细看的有「打开」和对话窗。
+const ISLAND_ALERT_HOVER_MAX_MS = 15_000;
 /// 收回动画时长，与 styles.css 的 .island-shell.is-leaving 同源。
 const ISLAND_LEAVE_MS = 180;
 
@@ -513,8 +516,16 @@ export function App() {
     hostRef.current = next;
     setHostState(next);
   }, []);
+  // 岛压在前台最大化窗口的标题栏上（island.rs 每 1.5s 判一次，变了才发 island-titlebar）：自动收成
+  // 细条，光标靠近照样露出胶囊（关卡 A 定案，i6）。设置里可关（island_auto_strip，缺省开）。
+  // 不改用户自己的极简模式开关：最大化窗口一走就恢复胶囊。
+  const [titlebarCovered, setTitlebarCovered] = useState(false);
+  const [autoStripEnabled, setAutoStripEnabled] = useState(true);
+  const autoStrip = autoStripEnabled && titlebarCovered;
+  const autoStripRef = useRef(false);
+  autoStripRef.current = autoStrip;
   // 极简模式只在 Windows 有：刘海本身就是那条「细条」，菜单栏落点平时根本不显示。
-  const stripOn = islandStrip && host.kind === "floating";
+  const stripOn = (islandStrip || autoStrip) && host.kind === "floating";
   // 刘海挡住的那一截（摄像头）：提醒和面板的内容要从它下面开始画。
   const safeTopOf = (h: IslandHost) => (h.kind === "notch" ? h.notchHeight : 0);
   useEffect(() => {
@@ -526,6 +537,7 @@ export function App() {
   useSettingsEffect((settings) => {
     setChatEnabled(settings.chat_enabled ?? true);
     setIslandStrip(settings.island_strip ?? false);
+    setAutoStripEnabled(settings.island_auto_strip ?? true);
     if (settings.island_compact) setIslandCompact(settings.island_compact);
     if (Array.isArray(settings.sticker_quota_providers)) setQuotaProviders(settings.sticker_quota_providers);
     if (Array.isArray(settings.island_alerts)) islandAlertsRef.current = settings.island_alerts;
@@ -602,7 +614,7 @@ export function App() {
       await invoke("island_set_visible", { visible: false, focus: false });
       return;
     }
-    if (h.kind === "floating" && islandStripRef.current && !stripPeekRef.current) {
+    if (h.kind === "floating" && (islandStripRef.current || autoStripRef.current) && !stripPeekRef.current) {
       await layout(ISLAND_STRIP_SIZE.width, ISLAND_STRIP_SIZE.height, centerRatio, monitor);
       return;
     }
@@ -617,6 +629,16 @@ export function App() {
     if (!bootReady || islandModeRef.current !== "compact" || transitioningRef.current) return;
     layoutCompact().catch(() => {});
   }, [stripOn, stripPeek, bootReady, layoutCompact]);
+  // 细条撤掉（最大化窗口走了、关了极简模式）时把「临时露出」一起清掉，下次收细条从细条开始。
+  useEffect(() => {
+    if (!stripOn && stripPeekRef.current) setStripPeek(false);
+  }, [stripOn, setStripPeek]);
+  useEffect(() => {
+    const un = listen<boolean>("island-titlebar", (event) => setTitlebarCovered(event.payload === true));
+    return () => {
+      un.then((f) => f());
+    };
+  }, []);
 
   // 胶囊临时露出期间轮询真实光标，连续两次在窗口外才缩回细条。不用 DOM 的 pointerleave：
   // 细条长成胶囊时窗口在改尺寸，会误报一串假 leave/enter（展开态收回用轮询同一个理由）。
@@ -704,8 +726,11 @@ export function App() {
   // 提醒排队：一次只弹一条，弹完缩回再弹下一条。
   // 提醒到点缩回胶囊，再弹队列里的下一条。pumpAlert 经 ref 取，两者互相引用。
   const pumpAlertRef = useRef<() => void>(() => {});
+  // 鼠标是否停在提醒上：停着时倒计时换成 15s 上限，急事也不插队（人在看）。
+  const alertHoverRef = useRef(false);
   const finishAlert = useCallback(() => {
     alertTimerRef.current = null;
+    alertHoverRef.current = false;
     if (islandModeRef.current !== "alert") return;
     setAlert(null);
     islandModeRef.current = "compact";
@@ -729,6 +754,7 @@ export function App() {
     setAlertQueued(alertQueueRef.current.length);
     if (!next) return;
     shownAlertRef.current = { event: next, at: Date.now() };
+    alertHoverRef.current = false;
     setAlert(next);
     islandModeRef.current = "alert";
     setIslandMode("alert");
@@ -738,17 +764,26 @@ export function App() {
     armAlertTimer(islandAlertMsRef.current);
   }, [layout, armAlertTimer, showWhenPainted]);
   pumpAlertRef.current = pumpAlert;
-  // 鼠标停在提醒上：倒计时暂停，提醒一直留着；移开后再留 ISLAND_ALERT_LINGER_MS 给人去点。
-  // 此前停上去会触发「悬停展开」，提醒被换成面板，还没看完就没了（用户反馈）。
+  // 鼠标停在提醒上：倒计时换成 ISLAND_ALERT_HOVER_MAX_MS 上限，移开后再留 ISLAND_ALERT_LINGER_MS 给人去点。
+  // 此前停上去会触发「悬停展开」，提醒被换成面板，还没看完就没了（用户反馈）；之后改成无限暂停，
+  // 又成了「挡在标题栏上赶不走」（i5），所以设上限。
   const onAlertHover = useCallback((hovering: boolean) => {
     if (islandModeRef.current !== "alert") return;
-    if (hovering) {
-      if (alertTimerRef.current != null) window.clearTimeout(alertTimerRef.current);
-      alertTimerRef.current = null;
-    } else {
-      armAlertTimer(ISLAND_ALERT_LINGER_MS);
-    }
+    alertHoverRef.current = hovering;
+    armAlertTimer(hovering ? ISLAND_ALERT_HOVER_MAX_MS : ISLAND_ALERT_LINGER_MS);
   }, [armAlertTimer]);
+  // 提醒上的 ×：只关这一条，排队的照常接着弹（i5）。先撤倒计时：不撤的话旧定时器到点会把下一条提前收掉。
+  const dismissAlert = useCallback(() => {
+    if (islandModeRef.current !== "alert") return;
+    if (alertTimerRef.current != null) window.clearTimeout(alertTimerRef.current);
+    finishAlert();
+  }, [finishAlert]);
+  // 「全部忽略」：清空队列再关这一条。
+  const dismissAllAlerts = useCallback(() => {
+    alertQueueRef.current = [];
+    setAlertQueued(0);
+    dismissAlert();
+  }, [dismissAlert]);
 
   useEffect(() => {
     const un = listen<IslandAlertEvent>("island-alert", (event) => {
@@ -766,7 +801,7 @@ export function App() {
       setAlertQueued(alertQueueRef.current.length);
       // 正在显示「跑完」时让它提前让位。鼠标停在上面（倒计时已暂停）说明人在看，不打断。
       const shown = shownAlertRef.current;
-      if (urgent && islandModeRef.current === "alert" && alertTimerRef.current != null && shown && !isUrgentAlert(shown.event.kind)) {
+      if (urgent && islandModeRef.current === "alert" && alertTimerRef.current != null && !alertHoverRef.current && shown && !isUrgentAlert(shown.event.kind)) {
         const wait = Math.max(0, ISLAND_ALERT_YIELD_MS - (Date.now() - shown.at));
         if (Date.now() + wait < alertDueRef.current) armAlertTimer(wait);
       }
@@ -1096,7 +1131,8 @@ export function App() {
           onOpenSettings={() => panelAction(() => {
             invoke("open_settings").catch((err) => console.error("[island] 打开设置失败：", err));
           })}
-          strip={stripOn}
+          // 按钮只反映用户自己的极简模式开关；最大化窗口触发的自动细条不算（不然点一下「退出」反而打开了它）。
+          strip={islandStrip && host.kind === "floating"}
           onToggleStrip={host.kind === "floating" ? toggleStrip : undefined}
         />
       </div>
@@ -1124,6 +1160,8 @@ export function App() {
       onOpenSession={openSession}
       onPointerDownDrag={onPillPointerDown}
       onAlertHover={onAlertHover}
+      onDismissAlert={dismissAlert}
+      onDismissAllAlerts={dismissAllAlerts}
       notch={host.kind === "notch" ? { width: host.notchWidth, height: host.notchHeight } : undefined}
     />
   );

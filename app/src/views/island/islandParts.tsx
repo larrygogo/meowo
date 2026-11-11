@@ -8,6 +8,23 @@ import type { Item } from "../sticker/types";
 
 export type IslandTone = "error" | "pending" | "running" | "waiting" | "idle";
 
+const REDUCED_MOTION = "(prefers-reduced-motion: reduce)";
+/// 系统「减少动效」开着没有（i16）。styles.css 只关得掉 CSS 动画；眼睛跟鼠标、眨眼、小动作、额度环
+/// 轮播都是 JS 改状态，得在这里停。transition 被全局压成 0.01ms 后，瞳孔每 110ms 跳一格反而更晃。
+/// 跟着系统设置变（用户中途切换不用重启）。
+export function useReducedMotion(): boolean {
+  const query = () => (typeof window.matchMedia === "function" ? window.matchMedia(REDUCED_MOTION) : null);
+  const [reduced, setReduced] = useState(() => query()?.matches ?? false);
+  useEffect(() => {
+    const mql = query();
+    if (!mql || typeof mql.addEventListener !== "function") return;
+    const onChange = () => setReduced(mql.matches);
+    mql.addEventListener("change", onChange);
+    return () => mql.removeEventListener("change", onChange);
+  }, []);
+  return reduced;
+}
+
 /// 两只眼睛（Meowo 标志）。用户要求「做得有趣些」（2026-11-04），又要「更多可能性的表情」（2026-11-06）。
 /// 常驻的神态跟着整体状态走：
 /// - 在跑 / 闲着：白眼珠黑瞳孔，瞳孔跟着屏幕上的鼠标转，不定时眨眼（偶尔连眨两下）；在跑时旁边冒小「+」。
@@ -35,14 +52,16 @@ export function Eyes({ tone, small = false, cue = null, quotaPct = null, busy = 
   errors?: number;
 }) {
   const mode = useEyeMode({ tone, cue, quotaPct, busy, errors });
-  const fidget = useFidget(mode === "open", tone === "running");
+  // 减少动效：眼睛固定看正前方，不眨眼、不做小动作（神态仍随状态变，那是信息不是动效）。
+  const still = useReducedMotion();
+  const fidget = useFidget(!still && mode === "open", tone === "running");
   const winking = mode === "open" && (cue === "wink" || fidget === "wink");
   const curious = mode === "open" && fidget === "curious";
   const looking = mode === "open" || mode === "wide" || mode === "worried" || mode === "focus" || mode === "drowsy";
   const scripted = fidget === "glance" ? GLANCE_LOOK : fidget === "ponder" ? PONDER_LOOK : null;
-  const cursor = useCursorLook(looking && !scripted);
+  const cursor = useCursorLook(!still && looking && !scripted);
   const look = scripted ?? cursor;
-  const blink = useBlink(mode === "open" || mode === "worried" || mode === "focus" || mode === "drowsy");
+  const blink = useBlink(!still && (mode === "open" || mode === "worried" || mode === "focus" || mode === "drowsy"));
   const clip = useId().replace(/[^a-zA-Z0-9]/g, "");
   const lids = LIDS[mode];
   // 在跑时冒的小「+」只配睁眼和专注：发愁、蚊香圈旁边再冒「+」就乱了。
@@ -540,12 +559,14 @@ export function UsageRing({ entries, size = 32 }: {
   size?: number;
 }) {
   const [index, setIndex] = useState(0);
+  // 减少动效时不轮播，停在第一家（正在用的那家，见 orderIslandUsage）。
+  const still = useReducedMotion();
   useEffect(() => {
     setIndex(0);
-    if (entries.length < 2) return;
+    if (entries.length < 2 || still) return;
     const id = window.setInterval(() => setIndex((i) => i + 1), USAGE_FLIP_MS);
     return () => window.clearInterval(id);
-  }, [entries.length]);
+  }, [entries.length, still]);
   const entry = entries[index % Math.max(1, entries.length)] ?? entries[0];
   const provider = entry?.provider ?? "";
   const used = usedOf(entry?.pct ?? 0);

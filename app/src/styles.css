@@ -7036,11 +7036,13 @@ button.scm-check-name:hover { text-decoration: underline; }
   --isl-chip-hover: #2c2c2e;
   --isl-track: #3a3a3c;
   --isl-ok: #30d158;
-  --isl-ok-track: #123a1f;
+  /* 橙只给额度警示（用到六成），不再表示会话状态。 */
   --isl-warn: #ff9f0a;
-  --isl-warn-track: #40300a;
-  /* 待交互的会话图标与角标：Apple 系统黄。额度警示仍用上面的橙（--isl-warn）。 */
-  --isl-pending: #ffd60a;
+  /* 会话状态「待处理」「等待输入」各一个变量，取值与对话窗侧栏状态点同源（.chat-sidebar-dot 都是
+     --cc-warn-vivid，红绿灯语言：黄 = 要你，急不急靠闪烁）。此前岛上待处理一处黄一处橙、等待输入
+     琥珀/蓝/灰三套，同一行环黄字橙只有 1.46:1，像两个状态（i7 实拍 panel-7-zh-dpr2.png）。 */
+  --isl-pending: var(--cc-warn-vivid);
+  --isl-waiting: var(--cc-warn-vivid);
   --isl-err: #ff453a;
   --isl-err-track: #44150f;
   --isl-blue: #409cff;
@@ -7123,12 +7125,13 @@ button.scm-check-name:hover { text-decoration: underline; }
 /* 「+N」按折进去的会话里最急的状态上色（二期 #3），颜色与会话图标的角标同源。 */
 .isl-more.is-running { color: var(--isl-ok); }
 .isl-more.is-pending { color: var(--isl-pending); }
+.isl-more.is-waiting { color: var(--isl-waiting); }
 .isl-more.is-error { color: var(--isl-err); }
 .isl-dots { display: inline-flex; align-items: center; gap: 6px; }
 .isl-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--isl-faint); }
 .isl-dot.is-running { background: var(--isl-ok); animation: isl-pulse 1.2s ease-in-out infinite; }
-.isl-dot.is-pending { background: var(--isl-warn); animation: isl-pulse 1.4s ease-in-out infinite; }
-.isl-dot.is-waiting { background: var(--isl-text-2); }
+.isl-dot.is-pending { background: var(--isl-pending); animation: isl-pulse 1.4s ease-in-out infinite; }
+.isl-dot.is-waiting { background: var(--isl-waiting); }
 .isl-dot.is-error { background: var(--isl-err); }
 .isl-focus { display: inline-flex; align-items: center; gap: 10px; min-width: 0; }
 .isl-focus-title { max-width: 240px; overflow: hidden; text-overflow: ellipsis; font-size: 14px; font-weight: 600; }
@@ -7137,7 +7140,8 @@ button.scm-check-name:hover { text-decoration: underline; }
 /* 状态文字的颜色 */
 .isl-state { font-size: 12px; font-weight: 600; color: var(--isl-text-2); flex: none; }
 .isl-state.is-running { color: var(--isl-ok); }
-.isl-state.is-pending { color: var(--isl-warn); }
+.isl-state.is-pending { color: var(--isl-pending); }
+.isl-state.is-waiting { color: var(--isl-waiting); }
 .isl-state.is-error { color: var(--isl-err); }
 .isl-sep { color: var(--isl-faint); margin: 0 4px; }
 
@@ -7151,7 +7155,7 @@ button.scm-check-name:hover { text-decoration: underline; }
 .isl-eye-open { transform-box: fill-box; transform-origin: center; transition: transform 0.07s ease-in; }
 .isl-eye-open.is-blink { transform: scaleY(0.12); }
 /* 眼白任何状态都是白的（用户要求）；要处理靠睁大、弹跳和旁边的琥珀「!」表达。 */
-.isl-spark.is-warn { color: var(--isl-warn); font-size: 11px; top: -5px; }
+.isl-spark.is-warn { color: var(--isl-pending); font-size: 11px; top: -5px; }
 .isl-eyes[data-mode="wide"] .isl-eye-pair { animation: isl-bounce 1.1s ease-in-out infinite; }
 .isl-eyes[data-tone="error"] { color: var(--isl-err); }
 @keyframes isl-bounce { 0%, 100% { transform: translateY(0); } 40% { transform: translateY(-2px); } 60% { transform: translateY(0.5px); } }
@@ -7170,7 +7174,7 @@ button.scm-check-name:hover { text-decoration: underline; }
 .isl-eye-pop { transform-box: fill-box; transform-origin: center; animation: isl-pop 0.45s cubic-bezier(0.3, 1.6, 0.5, 1); }
 @keyframes isl-pop { from { transform: scale(0.4); } to { transform: scale(1); } }
 .isl-eyes[data-mode="star"] .isl-eye-pair { animation: isl-giggle 1.2s ease-in-out infinite; }
-.isl-spark.is-star { color: var(--isl-warn); font-size: 9px; animation: isl-twinkle 0.8s ease-in-out infinite; }
+.isl-spark.is-star { color: var(--isl-waiting); font-size: 9px; animation: isl-twinkle 0.8s ease-in-out infinite; }
 /* 抓狂（多个出错）：「> <」左右抖，旁边冒红色「#」。 */
 .isl-eyes[data-mode="frustrated"] .isl-eye-pair { animation: isl-shake 0.5s ease-in-out infinite; }
 @keyframes isl-shake { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-1px); } 75% { transform: translateX(1px); } }
@@ -7256,7 +7260,7 @@ button.scm-check-name:hover { text-decoration: underline; }
 /* 跑完在等你：右下角一个琥珀小点。与对话窗侧栏完全一样：侧栏连着的会话一跑完就是琥珀点（不看未读），
    岛上曾只给未读的亮蓝点，同一个会话两边颜色对不上（用户要求统一，2026-11-05）。
    绿色别用在这里：Meowo 里绿一直是在跑。 */
-.isl-agent-badge.is-waiting { min-width: 0; width: 10px; height: 10px; padding: 0; right: -2px; bottom: -2px; background: var(--cc-warn-vivid); }
+.isl-agent-badge.is-waiting { min-width: 0; width: 10px; height: 10px; padding: 0; right: -2px; bottom: -2px; background: var(--isl-waiting); }
 
 /* 提醒 */
 .isl-notch.is-alert {
@@ -7277,13 +7281,26 @@ button.scm-check-name:hover { text-decoration: underline; }
   to { clip-path: inset(0 0 0 0 round 0 0 24px 24px); }
 }
 .isl-alert-icon { width: 28px; height: 28px; border-radius: 9px; display: grid; place-items: center; flex: none; background: var(--isl-chip); color: var(--isl-text-2); }
-.isl-alert-icon.is-pending { background: var(--isl-warn-track); color: var(--isl-warn); }
+.isl-alert-icon.is-pending { background: color-mix(in srgb, var(--isl-pending) 22%, #000); color: var(--isl-pending); }
 .isl-alert-icon.is-error { background: var(--isl-err-track); color: var(--isl-err); }
-.isl-alert-icon.is-waiting { background: var(--isl-ok-track); color: var(--isl-ok); }
+.isl-alert-icon.is-waiting { background: color-mix(in srgb, var(--isl-waiting) 22%, #000); color: var(--isl-waiting); }
+/* 正文那块是按钮（Enter 打开会话），右边的「全部忽略」「打开」「×」是它的兄弟，不嵌在按钮里。 */
+.isl-alert-main { flex: 1; min-width: 0; align-self: stretch; display: flex; align-items: center; gap: 14px; border-radius: 12px; outline: none; }
+.isl-alert-main:focus-visible { box-shadow: inset 0 0 0 2px var(--isl-blue); }
+.isl-notch.is-alert { gap: 8px; }
+/* 关闭当前提醒（i5）：24px 见方的圆钮，满足 WCAG 2.5.8 的最小点击区。 */
+.isl-alert-close {
+  flex: none; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 50%;
+  display: grid; place-items: center; cursor: pointer;
+  background: transparent; color: var(--isl-dim);
+}
+.isl-alert-close:hover { background: var(--isl-chip-hover); color: var(--isl-text); }
 .isl-alert-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .isl-alert-title-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .isl-alert-title { font-size: 14px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .isl-alert-detail { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--isl-text-2); }
+/* 项目名先让详情：最多占四成，超长省略（i12）。 */
+.isl-alert-proj { flex: 0 0 auto; max-width: 40%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .isl-alert-more { flex: none; height: 18px; padding: 0 7px; border-radius: 9px; background: var(--isl-chip-hover); color: var(--isl-text-2); font-size: 11px; line-height: 18px; }
 .isl-alert-sub { display: flex; align-items: center; font-size: 12px; color: var(--isl-dim); white-space: nowrap; overflow: hidden; }
 
@@ -7318,7 +7335,8 @@ button.scm-check-name:hover { text-decoration: underline; }
 }
 .isl-panel-head { display: flex; align-items: center; gap: 10px; cursor: grab; }
 .isl-panel-title { flex: none; font-size: 15px; font-weight: 700; }
-.isl-accent { color: var(--isl-warn); }
+/* 标题强调色用蓝：橙/黄在岛上是状态色，标题染橙看着像在报「待处理」（i7）。 */
+.isl-accent { color: var(--isl-blue); }
 /* 标题行挤（新建、对话窗、设置三个按钮）：meta 可收缩，先省略日期，时间不缩。英文长星期加日期会挤出面板
    （审查 2026-11-09）。 */
 .isl-panel-meta { margin-left: auto; min-width: 0; display: flex; align-items: center; gap: 10px; font-size: 12px; color: var(--isl-dim); white-space: nowrap; }
@@ -7368,12 +7386,15 @@ button.scm-check-name:hover { text-decoration: underline; }
 .isl-usage-name { flex: 1; min-width: 0; max-width: 104px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--isl-dim); }
 .isl-usage-left { flex: none; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--isl-text); }
 .isl-usage-left small { font-size: 9px; font-weight: 500; color: var(--isl-dim); margin-left: 1px; }
-.isl-dots-nav { display: flex; justify-content: center; gap: 5px; margin-top: 10px; }
+/* 圆点视觉仍是 5px，按钮本身 24px 高、点间无缝（i15：原来按钮就是 5×5 的点，间距 5px，点不准）。
+   负外边距把多出来的高度吃回去，面板高度不变。 */
+.isl-dots-nav { display: flex; justify-content: center; gap: 0; margin: 0 0 -10px; }
 /* 左右翻页箭头（照参考图）：贴面板两侧、垂直居中的小圆钮。 */
 .isl-panel { position: relative; }
 .isl-page-arrow {
   position: absolute; top: 50%; transform: translateY(-50%);
-  width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%;
+  /* 24px：WCAG 2.5.8 最小点击区（i15，原 22px）。 */
+  width: 24px; height: 24px; padding: 0; border: 0; border-radius: 50%;
   background: var(--isl-chip-hover); color: var(--isl-text-2);
   font: 700 15px/1 system-ui, sans-serif;
   display: grid; place-items: center; cursor: pointer;
@@ -7385,15 +7406,24 @@ button.scm-check-name:hover { text-decoration: underline; }
 .isl-page-arrow.is-prev { left: 10px; }
 .isl-page-arrow.is-next { right: 10px; }
 .isl-dots-nav button {
-  width: 5px; height: 5px; padding: 0; border: 0; border-radius: 3px;
-  background: var(--isl-faint); cursor: pointer;
+  --isl-dot-c: var(--isl-faint);
+  width: 24px; height: 24px; padding: 0; border: 0; border-radius: 6px;
+  background: transparent; cursor: pointer;
+  display: grid; place-items: center;
+}
+.isl-dots-nav button::before {
+  content: ""; width: 5px; height: 5px; border-radius: 3px;
+  background: var(--isl-dot-c);
   transition: width 0.2s ease, background 0.2s ease;
 }
-.isl-dots-nav button.is-on { width: 16px; background: var(--isl-text-2); }
+.isl-dots-nav button:focus-visible { box-shadow: inset 0 0 0 2px var(--isl-blue); }
+.isl-dots-nav button.is-on { width: 28px; --isl-dot-c: var(--isl-text-2); }
+.isl-dots-nav button.is-on::before { width: 16px; }
 /* 分页圆点按该页最急状态上色；放在 is-on 之后，当前页也保留状态色、只靠变宽表示选中。 */
-.isl-dots-nav button.is-running { background: var(--isl-ok); }
-.isl-dots-nav button.is-pending { background: var(--isl-pending); }
-.isl-dots-nav button.is-error { background: var(--isl-err); }
+.isl-dots-nav button.is-running { --isl-dot-c: var(--isl-ok); }
+.isl-dots-nav button.is-pending { --isl-dot-c: var(--isl-pending); }
+.isl-dots-nav button.is-waiting { --isl-dot-c: var(--isl-waiting); }
+.isl-dots-nav button.is-error { --isl-dot-c: var(--isl-err); }
 
 /* 极简模式的细条：整个窗口就是一条黑边，底下一道状态色。 */
 .isl-strip {
@@ -7404,9 +7434,9 @@ button.scm-check-name:hover { text-decoration: underline; }
   cursor: pointer;
 }
 .isl-strip[data-tone="running"] { --isl-strip-tone: #30d158; }
-.isl-strip[data-tone="pending"] { --isl-strip-tone: #ff9f0a; }
+.isl-strip[data-tone="pending"] { --isl-strip-tone: var(--isl-pending); }
 .isl-strip[data-tone="error"] { --isl-strip-tone: #ff453a; }
-.isl-strip[data-tone="waiting"] { --isl-strip-tone: #409cff; }
+.isl-strip[data-tone="waiting"] { --isl-strip-tone: var(--isl-waiting); }
 
 /* macOS 没刘海：岛藏在菜单栏图标里，点开的面板按系统菜单栏弹出面板画（用户 2026-11-05 嫌贴着
    菜单栏的黑板「太丑」）：与菜单栏留缝（notch.rs 摆位）、四角圆、底下垫系统深色毛玻璃（notch.rs

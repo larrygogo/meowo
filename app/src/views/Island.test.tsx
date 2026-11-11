@@ -627,7 +627,7 @@ describe("IslandPanel 展开面板", () => {
     const { container } = renderPanel({ usage });
     expect(container.querySelector(".isl-big-val")).toBeNull();
     expect(container.querySelector(".isl-side")).toBeNull();
-    fireEvent.click(screen.getByRole("tab", { name: zh.island.page(2) }));
+    fireEvent.click(screen.getByRole("button", { name: zh.island.page(2) }));
     expect(container.querySelectorAll(".isl-usage-cell")).toHaveLength(2);
     expect(screen.getByText("Codex")).toBeTruthy();
   });
