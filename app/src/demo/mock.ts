@@ -39,6 +39,7 @@ export const store: Store = {
     sticker_color: "neutral",
     island_compact: "counts",
     island_strip: false,
+    island_auto_strip: true,
     island_alerts: ["waiting", "approval", "question", "error"],
     notify_kinds: ["waiting", "approval", "question", "error"],
     island_alert_seconds: 6,

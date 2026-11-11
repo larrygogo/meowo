@@ -1056,6 +1056,8 @@ export type Settings = {
   island_compact: IslandCompactStyle;
   /** 灵动岛极简模式：收起时只在屏幕顶边留一条细条。 */
   island_strip: boolean;
+  /** 灵动岛压在前台最大化窗口的标题栏上时自动收成细条（Windows）。缺省开。 */
+  island_auto_strip: boolean;
   /** 哪些事让灵动岛弹提醒：waiting / approval（含计划确认、屏幕上挂着交互）/ question / error。 */
   island_alerts: string[];
   /** 哪些事弹系统通知（总开关 notifications_enabled 之下再分种类），种类与 island_alerts 同一套。

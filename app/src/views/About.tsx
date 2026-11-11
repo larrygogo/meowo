@@ -791,6 +791,7 @@ function AppearanceSection() {
   const stickerStyle = settings?.sticker_style ?? SETTINGS_DEFAULTS.sticker_style;
   const islandCompact = settings?.island_compact ?? SETTINGS_DEFAULTS.island_compact;
   const islandStrip = settings?.island_strip ?? SETTINGS_DEFAULTS.island_strip;
+  const islandAutoStrip = settings?.island_auto_strip ?? SETTINGS_DEFAULTS.island_auto_strip;
   const islandAlerts = settings?.island_alerts ?? SETTINGS_DEFAULTS.island_alerts;
   const islandAlertSeconds = settings?.island_alert_seconds ?? SETTINGS_DEFAULTS.island_alert_seconds;
   const stickerColor = settings?.sticker_color ?? SETTINGS_DEFAULTS.sticker_color;
@@ -857,6 +858,14 @@ function AppearanceSection() {
               <div className="row-desc">{t.settings.islandStripDesc}</div>
             </div>
             <Switch checked={islandStrip} onChange={() => patch({ island_strip: !islandStrip })} label={t.settings.islandStrip} />
+          </div>}
+          {/* 最大化窗口在前台时自动收细条（关卡 A 定案，i6）。只有 Windows：macOS 岛钉在刘海/菜单栏，不挡标题栏。 */}
+          {IS_WIN && <div className="row">
+            <div className="row-text">
+              <div className="row-label">{t.settings.islandAutoStrip}</div>
+              <div className="row-desc">{t.settings.islandAutoStripDesc}</div>
+            </div>
+            <Switch checked={islandAutoStrip} onChange={() => patch({ island_auto_strip: !islandAutoStrip })} label={t.settings.islandAutoStrip} />
           </div>}
           <div className="row">
             <div className="row-text">
