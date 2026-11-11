@@ -6,6 +6,11 @@
  */
 export type SubagentOutcome = { running: number, completed: number, failed: number, 
 /**
+ * 停下来在等自己派出的后台活儿（claude「is waiting on its own background work」通知）：
+ * 不是完成也不是运行中，之后那条 finished 到了才算完成。0 时不下发，旧前端照旧。
+ */
+waiting?: number, 
+/**
  * 后台委派的任务 id（claude 启动回执里的 `agentId`）。后台子任务的真结局可能不走
  * task-notification，而是主 agent 用 `TaskOutput` 拉取——那条回执挂在 TaskOutput 自己的
  * 调用上，只有这个 id 能把它归回原委派。前端按「同 id 首见者为委派本体」路由。

@@ -832,7 +832,7 @@ export const zh = {
     tasksRunningCount: (count: number) => `${count} 运行中`,
     taskFilters: { recent: "最近", running: "进行中", done: "已完成", all: "全部" },
     taskEmpty: { recent: "暂无最近任务", running: "暂无运行中的任务", done: "暂无已完成的任务", all: "暂无任务" },
-    taskStates: { run: "运行中", done: "已完成", fail: "失败" },
+    taskStates: { run: "运行中", wait: "等待后台", done: "已完成", fail: "失败" },
     // 模型市场（Kimi ModelPicker）：搜索、收藏、空结果。
     modelSearchPlaceholder: "搜索模型或提供商…",
     modelStar: "收藏模型",
@@ -1009,6 +1009,9 @@ export const zh = {
     subagentTallyCompleted: (n: number) => `${n} 完成`,
     subagentTallyFailed: (n: number) => `${n} 失败`,
     subagentTallyRunning: (n: number) => `${n} 进行中`,
+    // 子代理停下来等自己派出的后台活儿：不是完成，也不是运行中。
+    subagentWaiting: "等待后台",
+    subagentTallyWaiting: (n: number) => `${n} 等待后台`,
     subagentDurationSec: (s: number) => `${s} 秒`,
     subagentDurationMin: (m: number, s: number) => `${m} 分 ${s} 秒`,
     subagentDurationHour: (h: number, m: number) => `${h} 小时 ${m} 分`,

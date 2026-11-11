@@ -84,6 +84,7 @@ pub(super) fn resumed_agent_prompt(main_transcript: &Path, line: &str) -> Option
             running: 1,
             completed: 0,
             failed: 0,
+            waiting: 0,
             task_id: Some(task_id.to_string()),
         }),
         patch: None,
@@ -105,17 +106,12 @@ pub(super) fn resumed_agent_prompt(main_transcript: &Path, line: &str) -> Option
     Some(prompt.into_iter().chain(std::iter::once(running)).collect())
 }
 
-/// 这条 task-notification 是不是「不算结局」的：被用户续上，或子代理还在等自己派出的后台活儿。
-///
-/// 后者 2.1.322 实拍：`<status>completed</status>` + `<summary>Agent "…" is waiting on its own background work</summary>`，
-/// note 写「the result below may be interim」、同一 task-id 之后还会再通知；真正收尾的「… finished」晚约 8 分钟。
-/// 两种都不收尾：委派保持运行中、后台计数不减，等下一条 finished 再说。
-pub(super) fn not_a_result(content: &str) -> bool {
-    resumed_task_id(content).is_some() || waiting_task_id(content).is_some()
-}
-
 /// 「子代理还在等自己的后台活儿」的通知 → 它的 task-id。锚定方式同 [`resumed_task_id`]。
-fn waiting_task_id(content: &str) -> Option<&str> {
+///
+/// 2.1.322 实拍：`<status>completed</status>` + `<summary>Agent "…" is waiting on its own background work</summary>`，
+/// note 写「the result below may be interim」、同一 task-id 之后还会再通知；真正收尾的「… finished」晚约 8 分钟，
+/// 也有再没通知的（本机一例）。徽标显示「等待后台」，后台计数照常减（见 settle_from_notification）。
+pub(super) fn waiting_task_id(content: &str) -> Option<&str> {
     if !content.trim_start().starts_with("<task-notification>") {
         return None;
     }

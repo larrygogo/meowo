@@ -53,23 +53,28 @@ function SubagentTimeline({ sessionId, items, launchId }: { sessionId: number; i
 const SubagentAncestors = createContext<ReadonlySet<string>>(new Set());
 
 /// 结局统计 → 徽标。多个分支时报出数量，单个只说状态。
-function outcomeBadge(
-  outcome: { running: number; completed: number; failed: number },
+/// waiting = 子代理停下来等自己派出的后台活儿（claude「is waiting on its own background work」，
+/// 做空第三轮 #7）：单独一档「等待后台」，不是完成，也不是运行中的转圈；之后的 finished 再变完成。
+export function outcomeBadge(
+  outcome: { running: number; completed: number; failed: number; waiting?: number },
   t: ReturnType<typeof useT>,
 ): { tone: string; text: string } | null {
-  const known = outcome.running + outcome.completed + outcome.failed;
+  const waiting = outcome.waiting ?? 0;
+  const known = outcome.running + outcome.completed + outcome.failed + waiting;
   if (known === 0) return null;
   const one = (tone: string, single: string, many: (n: number) => string) =>
     ({ tone, text: known > 1 ? many(known) : single });
   if (outcome.failed === known) return one("failed", t.chat.subagentFailed, t.chat.subagentTallyFailed);
   if (outcome.completed === known) return one("completed", t.chat.subagentCompleted, t.chat.subagentTallyCompleted);
   if (outcome.running === known) return one("running", t.chat.subagentRunning, t.chat.subagentTallyRunning);
+  if (waiting === known) return one("waiting", t.chat.subagentWaiting, t.chat.subagentTallyWaiting);
   const parts = [
     outcome.completed && t.chat.subagentTallyCompleted(outcome.completed),
     outcome.failed && t.chat.subagentTallyFailed(outcome.failed),
     outcome.running && t.chat.subagentTallyRunning(outcome.running),
+    waiting && t.chat.subagentTallyWaiting(waiting),
   ].filter(Boolean);
-  return { tone: outcome.running ? "running" : "failed", text: parts.join(" · ") };
+  return { tone: outcome.running ? "running" : waiting ? "waiting" : "failed", text: parts.join(" · ") };
 }
 
 /// memo 理由同 Message；它还持有局部状态与展开时的 3s 轮询，白重渲染的代价更高。

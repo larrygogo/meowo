@@ -13,13 +13,19 @@ export type BackgroundTask = {
   name: string;
   /** 次要信息：后台 Bash 是「$ 命令」，子代理没有。 */
   meta: string | null;
-  state: "run" | "done" | "fail";
+  /** wait = 子代理停下来等自己派出的后台活儿：未结束，但不是运行中的转圈。 */
+  state: "run" | "wait" | "done" | "fail";
   durationMs: number | null;
   /** 排序用：结束时刻优先，其次开始时刻（Kimi 的「最近」按完成先后排）。 */
   sortKey: string;
 };
 
 export type TaskFilter = "recent" | "running" | "done" | "all";
+
+/// 还没结束：运行中，或在等自己的后台活儿（之后还有 finished，不能算进「已完成」）。
+function isActive(state: BackgroundTask["state"]): boolean {
+  return state === "run" || state === "wait";
+}
 
 /// 后台 Bash 与子代理的任务清单。状态读委派回执上的结局统计（running/failed），
 /// 与对话流里子任务块同一份关联规则（collectSubagentReceipts），两处不会各说各话。
@@ -32,11 +38,13 @@ export function collectBackgroundTasks(items: ChatItem[]): { bash: BackgroundTas
     const isShell = isBackgroundShell(item, outcomes);
     if (!isShell && !isSubagentDelegation(item, outcomes)) continue;
     const outcome = outcomes.get(item.id);
-    const state = !outcome || outcome.running > 0 ? "run" : outcome.failed > 0 ? "fail" : "done";
+    const state: BackgroundTask["state"] = !outcome || outcome.running > 0 ? "run"
+      : (outcome.waiting ?? 0) > 0 ? "wait"
+      : outcome.failed > 0 ? "fail" : "done";
     const started = Date.parse(item.timestamp ?? "");
     const ended = Date.parse(finishedTs.get(item.id) ?? "");
-    const durationMs = state !== "run" && Number.isFinite(started) && Number.isFinite(ended) && ended >= started ? ended - started : null;
-    const sortKey = (state !== "run" ? finishedTs.get(item.id) : null) ?? item.timestamp ?? "";
+    const durationMs = !isActive(state) && Number.isFinite(started) && Number.isFinite(ended) && ended >= started ? ended - started : null;
+    const sortKey = (!isActive(state) ? finishedTs.get(item.id) : null) ?? item.timestamp ?? "";
     if (isShell) {
       const command = item.detail?.kind === "command" ? item.detail.command : item.summary;
       const description = item.detail?.kind === "command" ? item.detail.description?.trim() : null;
@@ -70,10 +78,10 @@ export function hasTaskItems(items: ChatItem[]): boolean {
 /// 筛选口径照 Kimi 的 TasksPane：「最近」= 全部运行中 + 最近结束的 5 条；其余按状态过滤。
 export function filterTasks(tasks: BackgroundTask[], filter: TaskFilter): BackgroundTask[] {
   if (filter === "all") return tasks;
-  if (filter === "running") return tasks.filter((task) => task.state === "run");
-  const finished = tasks.filter((task) => task.state !== "run").sort((a, b) => b.sortKey.localeCompare(a.sortKey));
+  if (filter === "running") return tasks.filter((task) => isActive(task.state));
+  const finished = tasks.filter((task) => !isActive(task.state)).sort((a, b) => b.sortKey.localeCompare(a.sortKey));
   if (filter === "done") return finished;
-  return [...tasks.filter((task) => task.state === "run"), ...finished.slice(0, 5)];
+  return [...tasks.filter((task) => isActive(task.state)), ...finished.slice(0, 5)];
 }
 
 const FILTERS: TaskFilter[] = ["recent", "running", "done", "all"];
@@ -105,6 +113,7 @@ export const TasksPanel = memo(function TasksPanel({ tasks, filter }: { tasks: B
         <li key={task.id} className={"chat-task-row is-" + task.state} title={task.meta ?? task.name}>
           <span className="chat-task-glyph" role="img" aria-label={t.chat.taskStates[task.state]}>
             {task.state === "run" ? <span className="chat-task-spin" aria-hidden="true" />
+              : task.state === "wait" ? <span className="chat-task-wait" aria-hidden="true" />
               : task.state === "done"
                 ? <Icon glyph={icCircleCheck} size={14} />
                 : <Icon glyph={icClose} size={14} />}
