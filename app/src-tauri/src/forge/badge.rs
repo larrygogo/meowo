@@ -43,6 +43,8 @@ const DIR_WORKERS: usize = 4;
 pub(crate) struct DiffCache {
     entries: Mutex<HashMap<String, (Instant, Option<DiffCounts>)>>,
     targets: Mutex<HashMap<String, TargetEntry>>,
+    /// 标题栏直查 gh 的结果，按目录缓存（forge 解析不出仓库的远端才走，见 [`title_pr_with`]）。
+    direct_prs: Mutex<HashMap<String, (Instant, Option<PullRequestDto>)>>,
 }
 
 /// 一个目录的 PR 去向：(缓存键, 仓库 owner/name, gh 认的 head)。没有 GitHub 远端、detached 时为 None。
@@ -98,13 +100,18 @@ fn pr_target(cache: &DiffCache, ctx: &Ctx, dir: &str) -> PrTarget {
     target
 }
 
-/// 一个目录当前分支的 PR。online=false 时只看缓存（不论新旧），绝不调 gh。
+/// 一个目录当前分支的 PR 徽标。
 fn pr_badge(ctx: &Ctx, target: PrTarget, dir: &str, online: bool) -> Option<SidebarPrBadgeDto> {
+    cached_pr(ctx, target, dir, online).as_ref().map(to_badge)
+}
+
+/// 一个目录当前分支的 PR，走 forge 的 PR 缓存（侧栏与标题栏共用）。online=false 时只看缓存（不论新旧），绝不调 gh。
+fn cached_pr(ctx: &Ctx, target: PrTarget, dir: &str, online: bool) -> Option<PullRequestDto> {
     let (key, slug, head) = target?;
     let cached = lock(&ctx.caches.prs).get(&key).cloned();
     if let Some((at, pr)) = &cached {
         if !online || at.elapsed() < PR_TTL {
-            return pr.as_ref().map(to_badge);
+            return pr.clone();
         }
     }
     if !online {
@@ -117,16 +124,59 @@ fn pr_badge(ctx: &Ctx, target: PrTarget, dir: &str, online: bool) -> Option<Side
     match view_pr(ctx.gh, ctx.caches, dir, Some(&slug), Some(&head)) {
         Ok(pr) => {
             lock(&ctx.caches.prs).insert(key, (Instant::now(), pr.clone()));
-            pr.as_ref().map(to_badge)
+            pr
         }
         // 断网、限流：沿用上一次的，状态点不会一闪而没；同时记下这次查询时间，60 秒内不再重打 gh。
         // 不记的话前端每轮（30 秒、目录变化、回前台）都会重查，限流时越查越限（做空审查第二轮指出）。
         Err(_) => {
             let previous = cached.and_then(|(_, pr)| pr);
             lock(&ctx.caches.prs).insert(key, (Instant::now(), previous.clone()));
-            previous.as_ref().map(to_badge)
+            previous
         }
     }
+}
+
+/// 标题栏的 PR（对话页「打开 Pull Request」）。与侧栏、「更改」面板共用 [`Caches::prs`](super::Caches) 与按目录
+/// 缓存的 PR 去向：以前标题栏按目录另存一份 60 秒缓存、自己调 `gh pr view`，同一仓库前台时每分钟可能多打
+/// 一次 gh（tests/title_pr.rs 计数）。标题栏只在窗口可见时轮询（ChatTitleBar），按在线处理。
+/// 回包只留号、状态、链接、标题：与以前的形状一致，检查与分支那些面板字段标题栏不用。
+///
+/// forge 解析不出仓库的远端（只认 github.com，企业版 `github.example.com` 这类认不出）照旧在目录里直接
+/// `gh pr view`、按目录缓存 60 秒：gh 自己认得企业版主机，以前标题栏能显示的 PR 不能因为共用缓存丢掉
+/// （coordinator 11-11 指出的回退，tests/title_pr.rs 企业版那条）。
+pub(crate) fn title_pr_with(ctx: &Ctx, diffs: &DiffCache, cwd: &str) -> Option<PullRequestDto> {
+    let dir = cwd.trim();
+    if dir.is_empty() || !std::path::Path::new(dir).is_dir() {
+        return None;
+    }
+    let pr = match pr_target(diffs, ctx, dir) {
+        Some(target) => cached_pr(ctx, Some(target), dir, true)?,
+        None => direct_pr(ctx, diffs, dir)?,
+    };
+    Some(PullRequestDto { number: pr.number, state: pr.state, url: pr.url, title: pr.title, ..Default::default() })
+}
+
+/// 以前标题栏的查法：在目录里跑 `gh pr view`（不带 --repo，由 gh 按当前分支和远端自己认），按目录缓存 60 秒。
+/// 不在仓库里（上级都没有 .git）就不起 gh。失败、没有 PR 都记成 None，60 秒内不重查。
+fn direct_pr(ctx: &Ctx, diffs: &DiffCache, dir: &str) -> Option<PullRequestDto> {
+    if !std::path::Path::new(dir).ancestors().any(|p| p.join(".git").exists()) {
+        return None;
+    }
+    if let Some((at, pr)) = lock(&diffs.direct_prs).get(dir) {
+        if at.elapsed() < PR_TTL {
+            return pr.clone();
+        }
+    }
+    let pr = (ctx.gh)(dir, &["pr", "view", "--json", "number,state,isDraft,url,title"])
+        .filter(|out| out.ok())
+        .and_then(|out| crate::git::parse_pull_request(&out.stdout));
+    lock(&diffs.direct_prs).insert(dir.to_string(), (Instant::now(), pr.clone()));
+    pr
+}
+
+/// 正式的标题栏查询：真 gh、进程内共用的缓存。
+pub(crate) fn title_pull_request(cwd: &str) -> Option<PullRequestDto> {
+    title_pr_with(&Ctx::real(), &DIFFS, cwd)
 }
 
 fn diff_counts(cache: &DiffCache, dir: &str, compute: &Compute<'_>) -> Option<DiffCounts> {

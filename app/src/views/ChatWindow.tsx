@@ -38,6 +38,8 @@ import { DockWork } from "./chat/DockWork";
 import { ANCHOR_PX, countsAsUnseen, stickToBottom, useStickToBottom } from "./chat/useStickToBottom";
 import { useSidebarLayout } from "./chat/useSidebarLayout";
 import { pasteImagesNatively, useInterrupt, writeInterruptKeys } from "./chat/terminalInput";
+import { leaveSubagentView } from "./chat/subagentView";
+import { SubagentViewNotice } from "./chat/SubagentViewNotice";
 import { clearPartialImageDraft, composerDraftText, createSendQueue, IMAGE_PASTE_LANDING_POLLS, LATE_IMAGE_GRACE_MS, RESUME_VERIFY_WINDOW_MS, stashComposerDraft, submitToTerminal, terminalInput, waitForTerminalReady, type TerminalReadyMessages, type TerminalStartupResult } from "./chat/terminalSubmit";
 import { BottomSheet, SheetOnPhone } from "./chat/BottomSheet";
 import { runningActivityView, RunningBar, SnakeSpinner, TurnAnnouncer, useCliStatusStore } from "./chat/RunningBar";
@@ -333,6 +335,10 @@ export function ChatWindow() {
   const [remoteKeysOpen, setRemoteKeysOpen] = useState(false);
   // 撤回成功的回执（「已撤回，原文已放回输入框」）：下一次发送或换会话即收。
   const [undoNotice, setUndoNotice] = useState(false);
+  // 终端停在子代理视图、自动切不回主会话(见 chat/subagentView):提示这条横幅给一键切回。
+  // 同一会话同一子代理提示过之后用户仍点发送 = 明知去向,照发(横幅文案已说明会交给它)。
+  const [subagentStuck, setSubagentStuck] = useState<{ sid: number; name: string | null } | null>(null);
+  const subagentStuckRef = useRef<{ sid: number; name: string | null } | null>(null);
   // 侧问（对照 Kimi「侧边聊天」）的问答卡：答案只在 CLI 屏幕覆盖层上、不进 transcript，
   // 读下来挂在 composer 上方。只存本页内存，换会话即清（Kimi 同样「关闭后对话无法恢复」）。
   const [sideAnswers, setSideAnswers] = useState<{ id: number; question: string; answer: string | null; failed?: boolean }[]>([]);
@@ -1759,6 +1765,8 @@ export function ChatWindow() {
     setNeedsTakeover(false);
     setSoftPromptNotice(false);
     setUndoNotice(false);
+    setSubagentStuck(null);
+    subagentStuckRef.current = null;
     setCopyNotice(null);
     setSideAnswers([]);
     setTerminalWaitSeconds(null);
@@ -2435,11 +2443,42 @@ export function ChatWindow() {
     ? blockedMessage() : null;
   /// 恢复/接管的完成时刻:险区窗口内(RESUME_VERIFY_WINDOW_MS)的发送做写后回显验证。
   const resumedAtRef = useRef(0);
+  /// 写正文前把终端从子代理视图切回主会话：对话页代表主会话，停在子代理视图时写进去的话
+  /// 会被子代理收走（用户实拍：输入框「Message @general-purpose…」，消息挂「未确认送达」）。
+  /// 返回 false = 切不回且这次还没提示过，调用方不写，消息退回输入框、横幅给一键切回。
+  /// 必须在暂存草稿之前：视图里的上边框挂着子代理描述，暂存认不出 composer。
+  /// strict：中断、撤回这类按键写入，看过提示也不照发——视图里 Esc 中断的是被看的子代理，
+  /// `/rewind` 进的是子代理的 composer（做空第二轮 B），切不回就一律不写。
+  const leaveSubagentViewBeforeWrite = async (strict = false): Promise<boolean> => {
+    const spec = chatUi?.subagent_view;
+    const composer = chatUi?.draft_stash;
+    if (!spec || !composer) return true;
+    const result = await leaveSubagentView({
+      screen: () => managedTerminalScreen(sessionId),
+      write: (data) => writeManagedTerminal(sessionId, data),
+    }, spec, composer);
+    const shown = subagentStuckRef.current;
+    if (result.ok) {
+      subagentStuckRef.current = null;
+      if (isCurrentOperation()) setSubagentStuck(null);
+      return true;
+    }
+    if (!strict && shown && shown.sid === sessionId && shown.name === result.name) return true;
+    subagentStuckRef.current = { sid: sessionId, name: result.name };
+    if (isCurrentOperation()) setSubagentStuck({ sid: sessionId, name: result.name });
+    return false;
+  };
+  /// 横幅上的「切回主会话」：再走一遍切回，成功即收起横幅。
+  const retryLeaveSubagentView = () => withSendGuard(async () => {
+    subagentStuckRef.current = null;
+    return leaveSubagentViewBeforeWrite();
+  });
   /// 发送一段文本到会话（消息正文与斜杠命令共用）。返回是否真的送达。
   const sendText = (content: string, submitInput = "\r", detached = false): Promise<boolean> => withSendGuard(async () => {
     const verify = Date.now() - resumedAtRef.current < RESUME_VERIFY_WINDOW_MS
       ? { message: t.chat.sendEchoTimeout }
       : undefined;
+    if (!await leaveSubagentViewBeforeWrite()) return false;
     if (chatUi?.draft_stash) await stashComposerDraft(sessionId, chatUi.draft_stash);
     await submitToTerminal(sessionId, content, detached ? detachedAbort : attentionAbort, verify, submitInput);
     return true;
@@ -2466,6 +2505,8 @@ export function ChatWindow() {
     if (!yes || !isCurrentOperation()) return;
     // 终端协议在 chat/undoTerminal；这里只管界面：收掉本地消息、原文放回输入框、按结局报错。
     await withSendGuard(async () => {
+      // `/rewind` 写进子代理视图会进子代理的 composer：先切回，切不回不撤（横幅说明）。
+      if (!await leaveSubagentViewBeforeWrite(true)) return false;
       const outcome = await performUndo({
         sessionId,
         control,
@@ -2538,6 +2579,7 @@ export function ChatWindow() {
     let fallbackSafe = false;
     const abort = detached ? detachedAbort : attentionAbort;
     const sent = await withSendGuard(async () => {
+      if (!await leaveSubagentViewBeforeWrite()) return false;
       if (chatUi?.draft_stash) await stashComposerDraft(sessionId, chatUi.draft_stash);
       // 原生贴图没确认上(占位符超时、剪贴板中途被占):清掉 composer 里贴了一半的残图,
       // 改走文本路径(附图片路径,agent 自己读图)把同一条消息发出去。用户要求「无感」:
@@ -2916,6 +2958,7 @@ export function ChatWindow() {
     const sideQuestion = sideSpec && attachments.length === 0 && !history?.background ? sideQuestionText(bare, sideSpec) : null;
     if (sideSpec && sideQuestion) {
       await withSendGuard(async () => {
+        if (!await leaveSubagentViewBeforeWrite()) return false;
         if (chatUi?.draft_stash) await stashComposerDraft(sessionId, chatUi.draft_stash);
         await submitToTerminal(sessionId, `${sideSpec.command} ${sideQuestion}`, attentionAbort);
         clearSubmittedDraft();
@@ -3059,6 +3102,8 @@ export function ChatWindow() {
     interruptLockRef.current = token;
     setSending(true);
     try {
+      // 子代理视图里 Esc 中断的是被看的子代理（见 SubagentView）：先切回，切不回不发（横幅说明）。
+      if (!await leaveSubagentViewBeforeWrite(true)) return;
       await writeInterrupt(interrupt);
       const deadline = Date.now() + 5_000;
       while (isCurrentOperation() && toneRef.current === "running" && Date.now() < deadline) {
@@ -3086,6 +3131,8 @@ export function ChatWindow() {
     input: chatUi?.interrupt_input,
     presses: chatUi?.interrupt_presses ?? 1,
     blocked: () => !!(sendLockRef.current || interruptLockRef.current || attentionAbort()),
+    // 子代理视图里 Esc 中断的是被看的子代理：先切回，切不回不发（横幅说明）。
+    prepare: () => leaveSubagentViewBeforeWrite(true),
     onError: (error) => setSendError(formatBackendError(error, t.locale)),
   });
   /// 手动移除一条排队回执。**只动 GUI 记账**:消息已经写进 PTY,CLI 队列里的它照常
@@ -5321,6 +5368,7 @@ export function ChatWindow() {
           <button type="button" className="chat-send-takeover" onClick={() => { setSoftPromptNotice(false); setRemoteKeysOpen(false); }}>{t.chat.slashMenuDismiss}</button>
           {remoteUi() && remoteKeysOpen && <RemoteTerminalKeys sessionId={sessionId} />}
         </div>}
+        {subagentStuck?.sid === sessionId && <SubagentViewNotice name={subagentStuck.name} busy={sending} onBack={() => void retryLeaveSubagentView()} />}
         {undoNotice && <div className="chat-send-error" role="status">
           <span>{t.chat.undoDone}</span>
           <button type="button" className="chat-send-takeover" onClick={() => setUndoNotice(false)}>{t.chat.slashMenuDismiss}</button>

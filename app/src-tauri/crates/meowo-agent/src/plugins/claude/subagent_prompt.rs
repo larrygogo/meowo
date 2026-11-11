@@ -11,7 +11,7 @@
 //! 只在通知行上读侧车：通知一次用户续上一次，读的次数跟着用户发的次数走，不进每轮轮询。
 //! 子代理**还在跑**时发给它的话主链是否留痕未取到样本，这条路径覆盖不到（见报告）。
 
-use crate::transcript::{day_millis, TranscriptEvent};
+use crate::transcript::{day_millis, SubagentOutcome, TranscriptEvent};
 use std::io::BufRead;
 use std::path::Path;
 
@@ -19,6 +19,7 @@ const INTERJECTION_HEAD: &str = "The user sent a new message while you were work
 const INTERJECTION_TAIL: &str = "\n\nThis is how Claude Code surfaces messages the user sends mid-turn";
 const RESUMED_HEAD: &str = "Agent \"";
 const RESUMED_TAIL: &str = "\" was resumed by the user";
+const WAITING_TAIL: &str = "\" is waiting on its own background work";
 /// 侧车那行比主链通知早几毫秒落盘（实拍两例 4ms、5ms）。放宽到 5 秒，再早的是别的一次。
 const RESUME_WINDOW_MS: u64 = 5_000;
 
@@ -45,6 +46,10 @@ pub(super) fn unwrap_interjection(v: &serde_json::Value) -> Option<String> {
 /// 主链上「子代理被用户续上」的排队通知 → 侧车里那句用户原话。
 /// None = 不是这种通知，调用方照常解析；Some(空) = 是通知但取不到正文（侧车已清理等），
 /// 通知本身不进时间线（与其他 task-notification 入队行一致）。
+///
+/// 另带一条「又在跑」的结局回执，按 task-id 归回原委派（同 SendMessage 续上，见 transcript 的
+/// resumed_agent_id）：收工后被续上，徽标翻回运行中，这一段的完成通知到了再翻成完成。只在入队
+/// 这一行给，送达行（queued_command）可能晚于完成通知落盘（见 subagent_resume_tests）。
 pub(super) fn resumed_agent_prompt(main_transcript: &Path, line: &str) -> Option<Vec<TranscriptEvent>> {
     // 绝大多数行连这句都没有，先按子串挡掉，省一次 JSON 解析。
     if !line.contains("was resumed by the user") {
@@ -66,25 +71,67 @@ pub(super) fn resumed_agent_prompt(main_transcript: &Path, line: &str) -> Option
         .to_string();
     let at = v.get("timestamp").and_then(|x| x.as_str())?;
     let task_id = super::transcript::tag_text(content, "task-id")?;
-    // id 要拼进路径：只收纯 id，不让通知正文把读取引出 subagents 目录。
-    if task_id.is_empty() || !task_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+    if task_id.is_empty() {
         return Some(Vec::new());
+    }
+    let running = TranscriptEvent::ToolResult {
+        id: format!("resumed:{task_id}:{at}"),
+        timestamp: Some(at.to_string()),
+        tool_call_id: Some(task_id.to_string()),
+        text: format!("{RESUMED_HEAD}{agent}{RESUMED_TAIL}"),
+        is_error: false,
+        subagent: Some(SubagentOutcome {
+            running: 1,
+            completed: 0,
+            failed: 0,
+            background_running: false,
+            task_id: Some(task_id.to_string()),
+        }),
+        patch: None,
+    };
+    // id 要拼进路径：只收纯 id，不让通知正文把读取引出 subagents 目录。
+    if !task_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+        return Some(vec![running]);
     }
     let sidecar = main_transcript
         .with_extension("")
         .join("subagents")
         .join(format!("agent-{task_id}.jsonl"));
-    Some(
-        find_prompt_before(&sidecar, at)
-            .map(|(id, timestamp, text)| TranscriptEvent::SubagentPrompt {
-                id,
-                timestamp: Some(timestamp),
-                text,
-                agent,
-            })
-            .into_iter()
-            .collect(),
-    )
+    let prompt = find_prompt_before(&sidecar, at).map(|(id, timestamp, text)| TranscriptEvent::SubagentPrompt {
+        id,
+        timestamp: Some(timestamp),
+        text,
+        agent,
+    });
+    Some(prompt.into_iter().chain(std::iter::once(running)).collect())
+}
+
+/// 「子代理还在等自己的后台活儿」的通知 → 它的 task-id。锚定方式同 [`resumed_task_id`]。
+///
+/// 2.1.322 实拍：`<status>completed</status>` + `<summary>Agent "…" is waiting on its own background work</summary>`，
+/// note 写「the result below may be interim」、同一 task-id 之后还会再通知；真正收尾的「… finished」晚约 8 分钟，
+/// 也有再没通知的（本机一例）。徽标显示「等待后台」，后台计数照常减（见 settle_from_notification）。
+pub(super) fn waiting_task_id(content: &str) -> Option<&str> {
+    if !content.trim_start().starts_with("<task-notification>") {
+        return None;
+    }
+    super::transcript::tag_text(content, "summary")?
+        .strip_prefix(RESUMED_HEAD)?
+        .strip_suffix(WAITING_TAIL)?;
+    super::transcript::tag_text(content, "task-id").filter(|id| !id.is_empty())
+}
+
+/// 「子代理被用户续上」的通知（入队 content / 送达 prompt / user 行正文）→ 它的 task-id。
+/// 行首锚定外壳，summary 首尾逐字对上才算（用户自己贴这句英文不受影响，见 transcript 引用污染）。
+/// 这种通知没有 `<status>`，不是结局：调用方不能把它当成一次完成。
+pub(super) fn resumed_task_id(content: &str) -> Option<&str> {
+    if !content.trim_start().starts_with("<task-notification>") {
+        return None;
+    }
+    super::transcript::tag_text(content, "summary")?
+        .strip_prefix(RESUMED_HEAD)?
+        .strip_suffix(RESUMED_TAIL)?;
+    super::transcript::tag_text(content, "task-id").filter(|id| !id.is_empty())
 }
 
 /// 侧车里紧挨在 `at` 之前（[`RESUME_WINDOW_MS`] 内）的那句用户插话：(uuid, 时间, 原话)。
@@ -175,7 +222,8 @@ mod tests {
     fn missing_sidecar_yields_nothing() {
         let main = session("missing", None);
         let delta = read_chat_delta(&CLAUDE_TRANSCRIPT, &main, 0, None);
-        assert!(delta.items.is_empty(), "{:?}", delta.items);
+        // 续上带的「又在跑」回执照出（见 subagent_resume_tests），用户消息一条都不能有。
+        assert!(delta.items.iter().all(|i| json(i)["type"] != "user_text"), "{:?}", delta.items);
     }
 
     /// 时间对不上的侧车消息不认：那是更早一次发给它的话，已经由当时那条通知带出来了。
@@ -184,7 +232,8 @@ mod tests {
         let old = SIDECAR_PROMPT.replace("04:38:44.141Z", "04:30:00.000Z");
         let main = session("stale", Some(&old));
         let delta = read_chat_delta(&CLAUDE_TRANSCRIPT, &main, 0, None);
-        assert!(delta.items.is_empty(), "{:?}", delta.items);
+        // 续上带的「又在跑」回执照出（见 subagent_resume_tests），用户消息一条都不能有。
+        assert!(delta.items.iter().all(|i| json(i)["type"] != "user_text"), "{:?}", delta.items);
     }
 
     /// task-id 拼进路径前必须是纯 id：不能借通知正文跳出 subagents 目录。
@@ -194,7 +243,8 @@ mod tests {
         let evil = RESUME_ENQUEUE.replace("<task-id>a0f1</task-id>", "<task-id>..\\\\a0f1</task-id>");
         std::fs::write(&main, format!("{evil}\n")).unwrap();
         let delta = read_chat_delta(&CLAUDE_TRANSCRIPT, &main, 0, None);
-        assert!(delta.items.is_empty(), "{:?}", delta.items);
+        // 续上带的「又在跑」回执照出（见 subagent_resume_tests），用户消息一条都不能有。
+        assert!(delta.items.iter().all(|i| json(i)["type"] != "user_text"), "{:?}", delta.items);
     }
 
     /// 子代理面板里这条显示用户原话，不是 CC 套给模型的英文说明。
@@ -221,3 +271,7 @@ mod tests {
         assert_eq!(json(&items[0])["text"], "The user sent a new message while you were working:\nx");
     }
 }
+
+#[cfg(test)]
+#[path = "subagent_resume_tests.rs"]
+mod resume_tests;

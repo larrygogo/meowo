@@ -982,6 +982,7 @@ impl SubagentSpec for KimiSubagents {
             running: 0,
             completed: 0,
             failed: 0,
+            background_running: false,
             // kimi 的结局直接写在委派自己的回执里，不存在需要跨调用路由的场景。
             task_id: None,
         };

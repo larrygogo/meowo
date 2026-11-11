@@ -1009,6 +1009,8 @@ export const zh = {
     subagentTallyCompleted: (n: number) => `${n} 完成`,
     subagentTallyFailed: (n: number) => `${n} 失败`,
     subagentTallyRunning: (n: number) => `${n} 进行中`,
+    // 子代理交了结论、它派出的后台活儿还在跑（徽标次行小字）。
+    subagentBackgroundRunning: "后台仍在运行",
     subagentDurationSec: (s: number) => `${s} 秒`,
     subagentDurationMin: (m: number, s: number) => `${m} 分 ${s} 秒`,
     subagentDurationHour: (h: number, m: number) => `${h} 小时 ${m} 分`,
@@ -1061,6 +1063,10 @@ export const zh = {
     interjectedBadgeTip: "Agent 在干活途中读到了这条",
     toAgentBadge: (name: string) => `发给子代理「${name}」`,
     toAgentBadgeTip: "这条发给了子代理，不是主会话",
+    // 终端停在子代理视图且自动切不回(chat/subagentView)：发送会交给它，给一键切回。
+    subagentViewNotice: (name: string) => `终端停在子代理「${name}」，发送会交给它`,
+    subagentViewUnnamed: "未命名",
+    subagentViewBack: "切回主会话",
     queuedAttachmentOnly: "（附件）",
     interjectNow: "中断并处理",
     interjectNowTip: "停下当前回合，立刻处理这些消息",

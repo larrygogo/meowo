@@ -14,6 +14,8 @@ export type BackgroundTask = {
   /** 次要信息：后台 Bash 是「$ 命令」，子代理没有。 */
   meta: string | null;
   state: "run" | "done" | "fail";
+  /** 子代理交了结论、它派出的后台活儿还在跑：仍按完成算，行里提示「后台仍在运行」。 */
+  backgroundRunning?: boolean;
   durationMs: number | null;
   /** 排序用：结束时刻优先，其次开始时刻（Kimi 的「最近」按完成先后排）。 */
   sortKey: string;
@@ -42,7 +44,9 @@ export function collectBackgroundTasks(items: ChatItem[]): { bash: BackgroundTas
       const description = item.detail?.kind === "command" ? item.detail.description?.trim() : null;
       bash.push({ id: item.id, name: description || `$ ${command}`, meta: description ? `$ ${command}` : null, state, durationMs, sortKey });
     } else {
-      subagents.push({ id: item.id, name: subagentName(item), meta: null, state, durationMs, sortKey });
+      // 结论已交、后台仍在运行：按完成算（不占「进行中」），行里提示一句（做空第二轮）。
+      const backgroundRunning = state === "done" && outcome?.background_running === true;
+      subagents.push({ id: item.id, name: subagentName(item), meta: null, state, durationMs, sortKey, backgroundRunning });
     }
   }
   return { bash, subagents };
@@ -111,6 +115,7 @@ export const TasksPanel = memo(function TasksPanel({ tasks, filter }: { tasks: B
           </span>
           <span className="chat-task-name">{task.name}</span>
           {task.meta && <span className="chat-task-meta">{task.meta}</span>}
+          {task.backgroundRunning && <span className="chat-task-meta">{t.chat.subagentBackgroundRunning}</span>}
           {task.durationMs !== null && <span className="chat-task-time">{durationText(task.durationMs, t)}</span>}
         </li>
       ))}

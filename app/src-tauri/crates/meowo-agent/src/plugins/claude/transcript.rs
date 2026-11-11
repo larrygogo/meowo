@@ -33,10 +33,12 @@ pub(super) fn tag_text<'a>(text: &'a str, tag: &str) -> Option<&'a str> {
 /// 于是后台 skill 的委派永远停在「运行中」——实拍:一条 11:36 就失败结束的审查,在会话
 /// 剩下的三个半小时里一直挂着运行中。
 ///
-/// 缺 tool-use-id 时改用 `task-id` 当回执的挂载点,并把它填进 `task_id`——前端
+/// 缺 tool-use-id 时改用 `task-id` 当回执的挂载点。`task-id` 一律填进 `task_id`——前端
 /// (`collectSubagentReceipts`)按 task_id 归属:启动回执早已用同一个 id 登记过属主
 /// (见 [`parse_events`] 给启动回执补 agentId 那段),这条结局便落回原委派。这与
 /// `TaskOutput` 拉取结局走的是同一条既有路由,不新增机制。
+/// tool-use-id 也不一定是委派本体：SendMessage 续上后那一段的完成通知指向 SendMessage 那次调用,
+/// 只有 task-id 能把它归回原委派(做空第三轮 #8,xbot 会话实拍)。
 ///
 /// 两者都缺则无从关联,返回 None,调用方按普通 user 文本处理。
 fn task_notification_result(
@@ -58,6 +60,10 @@ fn task_notification_result(
     // status 缺省按 completed:通知本身就意味着「结束了」,分不清成败时宁可少报失败。
     let failed = tag_text(text, "status").is_some_and(|s| s.eq_ignore_ascii_case("failed"));
     let summary = tag_text(text, "summary").unwrap_or("task completed").to_string();
+    // 「还在等自己的后台活儿」带 status=completed，结论已经交了，只是它派出的后台活儿还在跑：按完成算，
+    // 另标 background_running 让徽标次行提示「后台仍在运行」。不按进行中算：本机实拍 9 次里 4 次之后
+    // 再无 finished（做空第二轮），挂进行中会永远占着面板；有 finished 的那条到了就不再带这个标。
+    let waiting = !failed && super::subagent_prompt::waiting_task_id(text).is_some();
     Some(TranscriptEvent::ToolResult {
         id: base_id.to_string(),
         timestamp,
@@ -66,11 +72,14 @@ fn task_notification_result(
         is_error: failed,
         subagent: Some(SubagentOutcome {
             running: 0,
-            completed: if failed { 0 } else { 1 },
-            failed: if failed { 1 } else { 0 },
-            // 自带 tool-use-id 时直接落到原委派上,不必再路由;只有 task-id 的
-            // (forked skill)要靠它归属回启动回执登记的属主。
-            task_id: tool_use_id.is_none().then_some(task_id).flatten(),
+            completed: u32::from(!failed),
+            failed: u32::from(failed),
+            background_running: waiting,
+            // 一律带上 task-id,前端按「同 task-id 首见者为委派本体」归回原委派。以前有 tool-use-id
+            // 就不带:SendMessage 续上后那一段的完成通知,tool-use-id 指向的是 SendMessage 那次调用
+            // (xbot 会话实拍两次),结局记到 SendMessage 名下,原委派被续上回执翻回运行中后一直挂着
+            // (实拍 02:44 挂到 04:39)。常规委派的 tool-use-id 本来就是委派本体,带上 task-id 路由结果不变。
+            task_id,
         }),
         patch: None,
     })
@@ -117,6 +126,7 @@ fn peer_handback_result(
             running: 0,
             completed: 1,
             failed: 0,
+            background_running: false,
             task_id: Some(task_id),
         }),
         patch: None,
@@ -571,6 +581,10 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                 // 且携带着后台委派的**真实结局**——主链上唯一的完成信号(启动回执只说
                 // launched,侧车 meta 不记结局)。转译成该 tool_use 的合成回执,
                 // 折叠徽标/进度面板的「进行中」由此翻转成完成/失败。
+                // 「被用户续上」的通知也长这样，但它不是结局（见 subagent_resume_tests），吞掉不计。
+                if super::subagent_prompt::resumed_task_id(text).is_some() {
+                    return Vec::new();
+                }
                 if let Some(event) = task_notification_result(text, base_id, timestamp.clone()) {
                     return vec![event];
                 }
@@ -859,6 +873,12 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
             // 这条 queued_command attachment(实拍:审查子任务完成于回合中途,通知经
             // enqueue → 本行送达)。不认它,该子任务的徽标就永远「运行中」,通知原文还会
             // 以一坨 XML 的样子出现在时间线里。与 user 行同款转译成合成回执。
+            // 「被用户续上」的通知走的也是这条（本机实拍 queued_command 形态），它不是结局：
+            // 送达行可能比子代理这一段的完成通知还晚落盘，记成在跑会永远挂着，只吞掉不计。
+            // 「又在跑」由入队那一行给出（见 subagent_prompt::resumed_agent_prompt）。
+            if super::subagent_prompt::resumed_task_id(&text).is_some() {
+                return Vec::new();
+            }
             if let Some(event) = task_notification_result(&text, base_id, timestamp.clone()) {
                 return vec![event];
             }
@@ -1120,6 +1140,11 @@ impl ParseState {
             Some("queue-operation") => {
                 if v.get("operation").and_then(|x| x.as_str()) == Some("enqueue") {
                     if let Some(text) = v.get("content").and_then(|x| x.as_str()) {
+                        // 被用户续上：入队这一刻子代理又在跑，重新入集，等这一段的完成通知出集。
+                        if let Some(id) = super::subagent_prompt::resumed_task_id(text) {
+                            self.running_tasks.insert(id.to_string());
+                            return;
+                        }
                         self.settle_from_notification(text);
                     }
                 }
@@ -1143,7 +1168,12 @@ impl ParseState {
     /// `<task-notification>` 正文 → 按 `<task-id>` 移除运行集。必须以标签开头才认——
     /// 用户/助手**引用**通知文案的消息不该误消(讨论这套机制的会话里真会出现)。
     fn settle_from_notification(&mut self, text: &str) {
-        if !text.trim_start().starts_with("<task-notification>") {
+        // 「被用户续上」不是结局：送达行（user / queued_command）可能晚于这一段的完成通知，
+        // 不能拿它出集，也不拿它入集（入集只认入队那一行，见 fold_task_signals）。
+        // 「还在等自己的后台活儿」照常出集（coordinator 11-11 定）：之后不一定还有 finished（本机实拍
+        // 有一例再没通知），留在集里会让会话永远算「后台在跑」、看板不转等待中，比提前出集更伤。
+        // 徽标那边单独显示「等待后台」（task_notification_result）。
+        if !text.trim_start().starts_with("<task-notification>") || super::subagent_prompt::resumed_task_id(text).is_some() {
             return;
         }
         if let Some(id) = tag_text(text, "task-id") {
@@ -1932,6 +1962,7 @@ impl SubagentSpec for ClaudeSubagents {
                 running: 1,
                 completed: 0,
                 failed: 0,
+                background_running: false,
                 // 启动回执携带任务 id(`agentId: xxx …`),是 task_id → 委派 的映射来源。
                 task_id: launch_agent_id(output),
             });
@@ -1942,6 +1973,7 @@ impl SubagentSpec for ClaudeSubagents {
                 running: 1,
                 completed: 0,
                 failed: 0,
+                background_running: false,
                 task_id: Some(task_id),
             });
         }
@@ -1952,6 +1984,7 @@ impl SubagentSpec for ClaudeSubagents {
                 running: 0,
                 completed: 1,
                 failed: 0,
+                background_running: false,
                 task_id: Some(task_id),
             });
         }
@@ -1973,6 +2006,7 @@ impl SubagentSpec for ClaudeSubagents {
             running,
             completed,
             failed,
+            background_running: false,
             task_id: Some(task_id),
         })
     }
@@ -2077,6 +2111,7 @@ fn forked_skill_outcome(output: &str) -> Option<SubagentOutcome> {
         running,
         completed,
         failed,
+        background_running: false,
         // forked skill 的回执不带任务 id;委派靠 tool_use_id 直连,不需要 task_id 路由。
         task_id: None,
     })
@@ -4372,7 +4407,7 @@ c".into(), lines: 3, truncated: false })
         assert_eq!(outcome.task_id.as_deref(), Some("acb7f0cbde2eb991a"));
         assert!(is_error);
 
-        // 自带 tool-use-id 的(常规 Agent 委派)维持原语义:直连委派,不进 task_id 路由。
+        // 自带 tool-use-id 的(常规 Agent 委派)直连委派;task-id 也带上,归属结果相同。
         let direct = task_notification_result(
             "<task-notification>\n<task-id>a1</task-id>\n<tool-use-id>toolu_x</tool-use-id>\n<status>completed</status>\n</task-notification>",
             "u2",
@@ -4388,7 +4423,8 @@ c".into(), lines: 3, truncated: false })
             panic!("应是 ToolResult");
         };
         assert_eq!(tool_call_id.as_deref(), Some("toolu_x"));
-        assert_eq!(subagent.unwrap().task_id, None);
+        // 也带 task-id：SendMessage 续上后 tool-use-id 不再是委派本体，要靠它归回（subagent_resume_tests）。
+        assert_eq!(subagent.unwrap().task_id.as_deref(), Some("a1"));
 
         // 两个 id 都没有 → 无从关联,按普通用户消息处理。
         assert!(task_notification_result(
