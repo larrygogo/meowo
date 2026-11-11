@@ -44,7 +44,8 @@ const DESKTOP_SCENES = [
   { scene: "settings-appearance", sel: ".settings" },
   { scene: "settings-account", sel: ".settings" },
   { scene: "settings-remote", sel: ".settings" },
-  { scene: "onboarding", sel: ".obm-panel" },
+  // 欢迎页插图已换成对话窗样张（UI 优化 #36），旧的 .obm-panel 不复存在。
+  { scene: "onboarding", sel: ".obm-chat" },
 ];
 const ISLAND_SCENES = [
   { scene: "island-compact", w: 700, h: 80, sel: "[data-visual-stage] > div > *" },
