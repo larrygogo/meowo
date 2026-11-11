@@ -414,6 +414,30 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
 }
 .remote-session-list-head h1 { margin: 0; font-size: 30px; font-weight: 600; line-height: 1.2; letter-spacing: -0.02em; }
 .remote-session-list-head p { margin: 4px 0 0; color: var(--cc-text-faint); font-size: 13px; line-height: 1.4; }
+/* 标题右边的切换：名单 ⇄ 全部会话（搜索、已完成、工作区在后者里）。44px 的命中面靠内边距给。 */
+.remote-session-list-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.remote-session-list-switch { flex: none; min-height: 44px; margin: -6px -8px 0 0; padding: 0 12px; border: 0; border-radius: 12px; background: transparent; color: var(--cc-text-dim); font: inherit; font-size: 14px; }
+.remote-session-list-switch:active { background: var(--fill-hover); }
+/* 手机上的名单（views/roster/PhoneRoster）：左缘一条 32 宽的黑轨，眼睛站在轮到你的那一行旁边；
+   右边是名单行，和桌面同一种行、同一种行内决定单。末尾给浮动底栏让出位置。 */
+.roster-phone { flex: 1; min-height: 0; display: flex; }
+.roster-phone .roster-rail { width: 32px; padding: 0; justify-content: flex-start; }
+.roster-phone .roster-list { padding: 0 8px var(--remote-tabbar-clear) 4px; }
+/* 行：触屏上整行至少 56 高；头像、任务名、状态词三列（同桌面窄窗）。 */
+.roster-phone .roster-row { grid-template-columns: 36px minmax(0, 1fr) auto; column-gap: 12px; padding: 0 12px; min-height: 56px; }
+.roster-phone .roster-now, .roster-phone .roster-time, .roster-phone .roster-diff { display: none; }
+.roster-phone .roster-name b { font-size: 15px; line-height: 21px; }
+.roster-phone .roster-name i { font-size: 13px; line-height: 18px; }
+.roster-phone .roster-word { font-size: 13px; }
+/* 展开：内容和头像右边的文字左对齐太挤，手机上从行的左内边距起。按钮高 44。 */
+.roster-phone .roster-sheet { padding: 2px 12px 14px 12px; }
+.roster-phone .roster-said { font-size: 15px; }
+.roster-phone .roster-enter, .roster-phone .roster-decision .chat-approval-actions button { min-height: 44px; }
+.roster-phone .roster-enter { padding: 0 18px; font-size: 15px; }
+/* 行内决定单在手机上也拆掉卡片自己的外框和留白（手机样式给审批卡另设了宽度与内边距，这里压回去）。 */
+body.remote-ui .roster-decision .chat-approval { width: auto; max-width: none; max-height: none; margin: 0; padding: 0; background: transparent; box-shadow: none; }
+body.remote-ui .roster-decision .chat-approval-copy { padding: 0; margin: 0; }
+.roster-phone .roster-steps li { grid-template-columns: 40px 48px minmax(0, 1fr); column-gap: 8px; font-size: 13px; line-height: 24px; }
 .remote-session-list-pane { flex: 1; min-height: 0; display: flex; }
 .remote-session-list-pane[hidden] { display: none; }
 .remote-session-list .chat-sidebar {

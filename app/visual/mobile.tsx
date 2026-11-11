@@ -209,6 +209,10 @@ void (async () => {
       <TooltipLayer />
     </I18nProvider>,
   );
+  // 列表页默认是名单；空态、失败态是「全部会话」那一屏的，先切过去。
+  if (scene === "mobile-list-empty" || scene === "mobile-list-error" || scene === "mobile-list-all") clickWhenReady(() => document.querySelector<HTMLElement>(".remote-session-list-switch"));
+  // mobile-roster-open：点开名单第一行（行内决定单 / 近况）。
+  if (scene === "mobile-roster-open") clickWhenReady(() => document.querySelector<HTMLElement>(".roster-row"));
   if (scene === "mobile-settings") clickWhenReady(() => document.querySelectorAll<HTMLElement>(".remote-tabbar-item")[2]);
   if (scene === "mobile-new") clickWhenReady(() => document.querySelectorAll<HTMLElement>(".remote-tabbar-item")[1]);
   markReady();

@@ -88,6 +88,12 @@ afterEach(() => {
   localStorage.clear();
 });
 
+/** 手机首页是名单：点开「门控用例」那一行，再点「进入现场」。 */
+const enterFromRoster = async () => {
+  fireEvent.click(await screen.findByRole("button", { name: /门控用例/ }));
+  fireEvent.click(await screen.findByRole("button", { name: "进入现场" }));
+};
+
 describe("ChatWindow 远程门控", () => {
   // 有待回答的提问、却既没有 broker 题面也没认出终端表单：手机上没有终端页可去，
   // 卡里直接给终端画面和按键，不再写「请在桌面端作答」（用户实拍反馈）。
@@ -157,7 +163,9 @@ describe("ChatWindow 远程门控", () => {
     const item = await screen.findByRole("button", { name: /门控用例/ });
     expect(screen.getByText("继续桌面上的工作")).toBeTruthy();
     expect(document.querySelector(".chat-window.is-remote-list")).not.toBeNull();
+    // 手机首页是名单：点一行是展开，「进入现场」才进会话。
     fireEvent.click(item);
+    fireEvent.click(await screen.findByRole("button", { name: "进入现场" }));
     await screen.findByRole("combobox", { name: "发送消息给 Agent" });
     await waitFor(() => expect(localStorage.getItem("meowo-remote-last-session")).toBe("7"));
 
@@ -174,7 +182,7 @@ describe("ChatWindow 远程门控", () => {
     setNarrow(true);
     runningSessionWithRepo();
     render(<ChatWindow />);
-    fireEvent.click(await screen.findByRole("button", { name: /门控用例/ }));
+    await enterFromRoster();
     await screen.findByRole("combobox", { name: "发送消息给 Agent" });
     await waitFor(() => expect((window.history.state as { meowoChat?: boolean } | null)?.meowoChat).toBe(true));
     window.history.back();
@@ -189,13 +197,13 @@ describe("ChatWindow 远程门控", () => {
     setNarrow(true);
     runningSessionWithRepo();
     render(<ChatWindow />);
-    fireEvent.click(await screen.findByRole("button", { name: /门控用例/ }));
+    await enterFromRoster();
     await screen.findByText("在跑");
     fireEvent.click(screen.getByRole("button", { name: "返回会话列表" }));
     await screen.findByText("继续桌面上的工作");
     const fullReads = () => invoke.mock.calls.filter(([c, a]) => c === "get_chat_history" && (a as { offset: number }).offset === 0).length;
     const before = fullReads();
-    fireEvent.click(await screen.findByRole("button", { name: /门控用例/ }));
+    await enterFromRoster();
     // 同步可见：不经骨架屏、不等任何请求。
     expect(screen.getByText("在跑")).toBeTruthy();
     expect(document.querySelector(".chat-loading")).toBeNull();
@@ -213,9 +221,10 @@ describe("ChatWindow 远程门控", () => {
     const item = await screen.findByRole("button", { name: /门控用例/ });
     const fullReads = () => invoke.mock.calls.filter(([c, a]) => c === "get_chat_history" && (a as { sessionId: number; offset: number }).sessionId === 7 && (a as { offset: number }).offset === 0).length;
     expect(fullReads()).toBe(0);
-    fireEvent.pointerDown(item);
-    expect(fullReads()).toBe(1);
+    // 点开那一行即预取（它多半接下来要进现场）；行内的「最近几步」等这一发，不另读一份。
     fireEvent.click(item);
+    expect(fullReads()).toBe(1);
+    fireEvent.click(await screen.findByRole("button", { name: "进入现场" }));
     await screen.findByText("在跑");
     expect(fullReads()).toBe(1);
   });
@@ -229,7 +238,7 @@ describe("ChatWindow 远程门控", () => {
       return runningSessionImpl(command, args);
     });
     render(<ChatWindow />);
-    fireEvent.click(await screen.findByRole("button", { name: /门控用例/ }));
+    await enterFromRoster();
     await waitFor(() => expect(document.querySelector(".chat-bar .chat-title")?.textContent).toBe("门控用例"));
     expect(document.querySelector(".chat-bar .chat-title-menu")?.getAttribute("aria-busy")).toBe("true");
   });
@@ -240,7 +249,7 @@ describe("ChatWindow 远程门控", () => {
     setNarrow(true);
     runningSessionWithRepo();
     render(<ChatWindow />);
-    fireEvent.click(await screen.findByRole("button", { name: /门控用例/ }));
+    await enterFromRoster();
     await screen.findByText("在跑");
     const box = await screen.findByRole("combobox", { name: "发送消息给 Agent" });
     await waitFor(() => expect(box.getAttribute("placeholder")).not.toBe("发消息给 Agent"));
@@ -253,7 +262,7 @@ describe("ChatWindow 远程门控", () => {
     setNarrow(true);
     runningSessionWithRepo();
     render(<ChatWindow />);
-    fireEvent.click(await screen.findByRole("button", { name: /门控用例/ }));
+    await enterFromRoster();
     await screen.findByText("在跑");
     fireEvent.click(document.querySelector(".chat-bar .chat-title-btn") as HTMLElement);
     fireEvent.click(await screen.findByRole("menuitem", { name: "在对话中搜索" }));

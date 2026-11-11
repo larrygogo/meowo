@@ -5,6 +5,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { getChatHistory } from "../../api";
 import type { ChatItem } from "../../generated/contracts/ChatItem";
 import { useVisibleInterval } from "../../hooks/useVisibleInterval";
+import { remoteUi } from "../../remoteMode";
+import { prefetchPending, recallHistory } from "../chat/historyCache";
 import { useT } from "../../i18n";
 import { toolKind, toolShortName } from "../chat/ToolIcon";
 
@@ -12,6 +14,8 @@ import { toolKind, toolShortName } from "../chat/ToolIcon";
 const STEPS = 5;
 /** 展开期间多久刷新一次。它在跑的时候步骤在往前走，两秒一拍够跟上，又不至于每行都在抢后端。 */
 const REFRESH_MS = 2000;
+/** 手机端每次读都要过远程桥，放慢。 */
+const REMOTE_REFRESH_MS = 5000;
 
 type Step = { id: string; time: string; name: string; summary: string; failed: boolean };
 
@@ -32,17 +36,28 @@ export function lastSteps(items: readonly ChatItem[], count: number, label: (nam
 
 export function RosterGlance({ sessionId }: { sessionId: number }) {
   const t = useT();
-  const [items, setItems] = useState<readonly ChatItem[] | null>(null);
+  // 这条会话的首屏已经在缓存里（刚看过，或手机上点开时预取到了）就直接用，不再读一遍。
+  const [items, setItems] = useState<readonly ChatItem[] | null>(() => (recallHistory(sessionId)?.history.items as ChatItem[] | undefined) ?? null);
   const aliveRef = useRef(true);
+  const firstRef = useRef(true);
   useEffect(() => () => { aliveRef.current = false; }, []);
   const load = useCallback(() => {
+    // 预取正在路上：等它，不并发再读一份同样的东西。它回来后落进缓存，下一拍从缓存取。
+    if (prefetchPending(sessionId)) return;
+    const cached = recallHistory(sessionId);
+    if (cached && firstRef.current) {
+      firstRef.current = false;
+      setItems(cached.history.items as ChatItem[]);
+      return;
+    }
+    firstRef.current = false;
     getChatHistory(sessionId, 0)
       .then((history) => { if (aliveRef.current) setItems((history.items ?? []) as ChatItem[]); })
       // 读不到就不摆这一块：下面还有它最后说的话和「进入现场」，不为这个报错。
       .catch(() => {});
   }, [sessionId]);
   useEffect(load, [load]);
-  useVisibleInterval(load, REFRESH_MS);
+  useVisibleInterval(load, remoteUi() ? REMOTE_REFRESH_MS : REFRESH_MS);
 
   if (!items) return null;
   const clock = (iso: string | null) => {

@@ -123,6 +123,8 @@ const PANE_SCENES = [
 ];
 const MOBILE_SCENES = [
   { scene: "mobile-list", sel: ".remote-session-list" },
+  { scene: "mobile-list-all", sel: ".chat-sidebar" },
+  { scene: "mobile-roster-open", sel: ".roster-sheet" },
   { scene: "mobile-chat", sel: ".chat-approval-actions" },
   { scene: "mobile-changes", sel: ".scm-row" },
 ];

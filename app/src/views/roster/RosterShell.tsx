@@ -3,12 +3,10 @@
 //
 // 对话窗（ChatWindow）原样包在里面，名单只是盖在它的对话区上：回到名单时对话窗不卸载，
 // 审批租约、托管终端、输入框草稿都还在。
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { getLiveSessionsPage, registerApprovalConsumer, unregisterApprovalConsumer } from "../../api";
-import { useBoardRefresh } from "../../hooks/useBoardRefresh";
 import { useTauriEvent } from "../../hooks/useTauriEvent";
 import { useT } from "../../i18n";
 import { Icon } from "../../icons/Icon";
@@ -20,19 +18,15 @@ import { runningActivityView } from "../chat/RunningBar";
 import { ChatWindow, type ChatShellBridge } from "../ChatWindow";
 import { useSidebarGitBadges, type GitBadgeStore } from "../chat/SidebarGitBadge";
 import { AgentRing, Eyes } from "../island/islandParts";
-import { cardTone, fmtShortAgo, useStarred } from "../sticker/helpers";
+import { cardTone, fmtShortAgo } from "../sticker/helpers";
 import { UNNAMED_SESSION_SENTINEL, type Item } from "../sticker/types";
-import { attentionFocus } from "./attention";
 import { RosterComposer } from "./RosterComposer";
 import { RosterDecision } from "./RosterDecision";
 import { RosterGlance } from "./RosterGlance";
+import { useAttention, useEyesY, useRosterLease, useRosterRows } from "./useRoster";
 
-/** 名单一次取多少行。名单不翻页：超过这个数的老会话去「已完成 / 工作区」里找。 */
-const ROSTER_LIMIT = 200;
-/** 眼睛回轨顶时离轨顶边的距离（眼睛中心，px）。 */
-const EYES_HOME_Y = 20;
 /** 眼睛朝右看着那一行。 */
-const GAZE_ROW = { x: 1, y: 0 };
+export const GAZE_ROW = { x: 1, y: 0 };
 
 /** 手机远程页先不套壳（规格里程碑 5 再做同构）。 */
 export function RosterShell() {
@@ -48,30 +42,13 @@ function startsOnRoster(): boolean {
 
 function DesktopRoster() {
   const t = useT();
-  const [sessions, setSessions] = useState<Item[] | null>(null);
+  const { sessions, rows } = useRosterRows();
   const [view, setView] = useState<"roster" | "scene">(() => (startsOnRoster() ? "roster" : "scene"));
   const [expanded, setExpanded] = useState<number | null>(null);
   const [sceneId, setSceneId] = useState(0);
   const [request, setRequest] = useState<ChatShellBridge["request"]>(null);
   const [newSession, setNewSession] = useState<ChatShellBridge["newSession"]>(null);
 
-  const { starred } = useStarred();
-
-  const load = useCallback(() => {
-    // 手动顺序：没拖过就是创建时间倒序，任何事件都不改它（规格：顺序不随事件跳动）。
-    getLiveSessionsPage("all", null, null, ROSTER_LIMIT, null, false, false, "manual")
-      .then((page) => setSessions(page.items))
-      .catch(() => {});
-  }, []);
-  useBoardRefresh(load);
-  useEffect(load, [load]);
-
-  // 置顶的在前（人自己动的），其余保持后端给的顺序。
-  const rows = useMemo(() => {
-    if (!sessions) return [];
-    const pinned = sessions.filter((s) => starred.has(s.session.cc_session_id));
-    return pinned.length ? [...pinned, ...sessions.filter((s) => !starred.has(s.session.cc_session_id))] : sessions;
-  }, [sessions, starred]);
 
   const say = useCallback((id: number, draft: string) => {
     setRequest((prev) => ({ id, seq: (prev?.seq ?? 0) + 1, draft }));
@@ -100,73 +77,20 @@ function DesktopRoster() {
   }, []);
   useTauriEvent("chat-open-roster", backToRoster);
 
-  // 名单租约（后端 pty.rs ROSTER_LEASE_SESSION）：主窗口开着时，任何会话来了审批都留在表里等人答，
-  // 不把窗口切到那个会话；从某一行的现场退回名单，它挂着的审批也不会被交还终端。
-  // 外壳整个生命周期只注册一次；窗口销毁时后端自己清（release_desktop_consumers）。
-  useEffect(() => {
-    const consumerId = `roster-${Math.random().toString(36).slice(2)}`;
-    let disposed = false;
-    let timer = 0;
-    const register = (attempt: number) => {
-      registerApprovalConsumer(0, consumerId)
-        .then(() => { if (disposed) void unregisterApprovalConsumer(consumerId).catch(() => {}); })
-        .catch(() => {
-          // 注册失败不重试到底：没有名单租约只是退回旧行为（来审批时切会话），不会丢审批。
-          if (!disposed && attempt < 3) timer = window.setTimeout(() => register(attempt + 1), 500 * 2 ** attempt);
-        });
-    };
-    register(0);
-    return () => {
-      disposed = true;
-      window.clearTimeout(timer);
-      void unregisterApprovalConsumer(consumerId).catch(() => {});
-    };
-  }, []);
+  useRosterLease();
 
-  // 眼睛站谁那里。stickyRef 记着它此刻站的会话：它还需要你就不换（新来的不抢）。
-  const stickyRef = useRef<number | null>(null);
-  const attention = useMemo(() => attentionFocus(rows, stickyRef.current), [rows]);
-  stickyRef.current = attention.id;
-
+  // 名单里眼睛站在名单行旁边；现场里站在对话窗侧栏那一行（名单缩成的窄列）旁边。行被折叠或
+  // 滚出去时停在「回到名单」旁边、神态不变（取舍 4）。
+  const attention = useAttention(rows);
   const shellRef = useRef<HTMLDivElement>(null);
   const backRef = useRef<HTMLButtonElement>(null);
-  const [eyesY, setEyesY] = useState(EYES_HOME_Y);
-  const place = useCallback(() => {
-    const root = shellRef.current;
-    if (!root) return;
-    const top = root.getBoundingClientRect().top;
-    const centerOf = (el: Element | null | undefined) => {
-      if (!el) return null;
-      const r = el.getBoundingClientRect();
-      return r.height > 0 ? r.top - top + r.height / 2 : null;
-    };
-    let y: number | null = null;
-    if (attention.id != null) {
-      // 名单里是名单行；现场里是对话窗侧栏那一行（名单缩成的窄列）。行被折叠或滚出去时，
-      // 眼睛停在「回到名单」旁边、神态不变（取舍 4）。
-      const selector = view === "roster"
-        ? `.roster-item[data-session-id="${attention.id}"] .roster-row`
-        : `.chat-sidebar-item[data-session-id="${attention.id}"]`;
-      y = centerOf(root.querySelector(selector)) ?? centerOf(backRef.current);
-    }
-    const max = root.clientHeight - 96;
-    const next = Math.round(Math.max(EYES_HOME_Y, Math.min(y ?? EYES_HOME_Y, max)));
-    setEyesY((prev) => (prev === next ? prev : next));
-  }, [attention.id, view]);
-  useLayoutEffect(place);
-  useEffect(() => {
-    const root = shellRef.current;
-    if (!root) return;
-    // 老内核 / 测试环境没有 ResizeObserver：退化成只在渲染和滚动时重新量。
-    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(place);
-    observer?.observe(root);
-    // 名单或侧栏滚动时眼睛跟着那一行走（scroll 不冒泡，用捕获）。
-    root.addEventListener("scroll", place, true);
-    return () => {
-      observer?.disconnect();
-      root.removeEventListener("scroll", place, true);
-    };
-  }, [place]);
+  const eyesY = useEyesY(
+    shellRef,
+    attention.id == null ? null : view === "roster"
+      ? `.roster-item[data-session-id="${attention.id}"] .roster-row`
+      : `.chat-sidebar-item[data-session-id="${attention.id}"]`,
+    backRef,
+  );
 
   // 屏幕上只有一双眼睛：主窗口在前台时眼睛在黑轨上，岛收成细条（App.tsx 听 roster-front）；
   // 窗口不在前台时眼睛回到岛上，黑轨空着。
@@ -312,7 +236,9 @@ function RosterList({ rows, loaded, expanded, gitBadges, onToggle, onEnter, onSa
   );
 }
 
-function RosterItem({ item, open, gitBadges, onToggle, onEnter }: {
+export function RosterItem({ item, open, gitBadges, onToggle, onEnter, onPrefetch }: {
+  /** 这一行多半接下来要进现场：提前把它的首屏读起来（手机页用，点进去不用再等一次整读）。 */
+  onPrefetch?: (id: number) => void;
   item: Item;
   open: boolean;
   gitBadges: GitBadgeStore;
@@ -335,7 +261,7 @@ function RosterItem({ item, open, gitBadges, onToggle, onEnter }: {
         type="button"
         className="roster-row"
         aria-expanded={open}
-        onClick={() => onToggle(id)}
+        onClick={() => { if (!open) onPrefetch?.(id); onToggle(id); }}
         onDoubleClick={() => onEnter(id)}
       >
         <span className="roster-av"><AgentRing item={item} size={32} /></span>
