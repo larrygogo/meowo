@@ -498,6 +498,9 @@ html, body {
 :where(button, input, textarea, select) { font-family: inherit; }
 /* 原生复选框与单选的勾选色跟品牌走（UA 默认是系统蓝）。:where 零特异度，自绘的照常覆盖。 */
 :where(input[type="checkbox"], input[type="radio"]) { accent-color: var(--cc-accent); }
+/* 文字选区跟品牌走：UA 默认是系统蓝，新建会话窗一打开目录框就是全选状态，一整条蓝底
+   （newsession-window 实拍）。用青柠线条色兑透明，字色不变，深浅两套底上都读得清。 */
+::selection { background: color-mix(in srgb, var(--cc-brand-line) 38%, transparent); }
 /* 高度链路用 100% 而非 100vh：WebView2 下 100vh 可能比客户区高几像素，
    导致贴纸底部(含圆角)被窗口裁掉。逐级 100% 精确等于客户区高度。 */
 #root { height: 100%; }
@@ -2389,6 +2392,9 @@ button.stab {
   gap: var(--sp-6);
   margin-top: var(--sp-6);
 }
+/* 配对行里这一排可以折行：英文「Copy address」「Regenerate token」两颗并排比文字列宽，
+   第二颗伸到二维码底下被盖住半截（qa-set-en-remote 实拍）。Bark 那一行是输入框带按钮，不折。 */
+.remote-pair-row .remote-url-row { flex-wrap: wrap; }
 /* 7G-11：这颗钮此前引用的 --radius-sm / --cc-surface-2 / --cc-surface-3 / --cc-hover
    全项目都不存在，四处都在吃兜底值——background 落到 transparent，hover 落到另一个
    不存在的变量（等于没有 hover 反馈）。改吃真实 token。 */
@@ -7663,7 +7669,8 @@ pre.chat-md-plain {
 .wt-trust-body { display: flex; flex-direction: column; gap: var(--sp-8); }
 .wt-trust-title { margin: 0; font-size: var(--text-base); font-weight: 600; color: var(--cc-text); }
 .wt-trust-text { margin: 0; color: var(--cc-text-dim); font-size: var(--text-xs); }
-.wt-trust-script { max-height: 240px; margin: 0; padding: var(--sp-8) var(--sp-10); overflow: auto; border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-sm); color: var(--cc-text); font-family: var(--cc-mono); font-size: var(--text-xs); white-space: pre-wrap; overflow-wrap: anywhere; }
+/* 脚本是代码：用下沉的代码底，不用「对话框底色 + 描边」再画一张卡（卡里套卡，浅色下白框压白底）。 */
+.wt-trust-script { max-height: 240px; margin: 0; padding: var(--sp-8) var(--sp-10); overflow: auto; border: 0; border-radius: var(--radius-md); background: var(--cc-code-bg); color: var(--cc-text); font-family: var(--cc-mono); font-size: var(--text-xs); white-space: pre-wrap; overflow-wrap: anywhere; }
 .wt-trust-note { margin: 0; color: var(--cc-text-faint); font-size: var(--text-xs); }
 .wt-trust-actions { display: flex; justify-content: flex-end; gap: var(--sp-8); }
 .wt-trust-actions .wt-opt-btn { height: var(--btn-h-md); padding: 0 var(--sp-12); }

@@ -106,6 +106,15 @@ export const QA_SHOTS = [
   { name: "qa-set-en", scene: "settingswin-general", size: SETTINGS, sel: ".settings", langs: ["en"] },
   { name: "qa-set-en-remote", scene: "settingswin-remote", size: SETTINGS, sel: ".settings", langs: ["en"] },
   { name: "qa-set-en-sessions", scene: "settingswin-sessions", size: SETTINGS, sel: ".settings", langs: ["en"] },
+  // ── 定尺寸窗口的英文（文案最长）──
+  ...["shortcuts", "appearance", "network", "account", "extensions", "about"].map((sec) => ({ name: "qa-set-en-" + sec, scene: "settingswin-" + sec, size: SETTINGS, sel: ".settings", langs: ["en"], themes: ["light"] })),
+  ...[1, 2, 3, 4].map((n) => ({ name: "qa-onboarding-en-" + n, scene: "onboarding-" + n, size: [460, 600], langs: ["en"], themes: ["dark"] })),
+  { name: "qa-updater-en", scene: "updater-available", size: [400, 500], sel: ".up-notes-body", langs: ["en"], themes: ["light"] },
+  { name: "qa-updater-error-en", scene: "updater-error", size: [400, 252], sel: ".up-err", langs: ["en"], themes: ["dark"] },
+  { name: "qa-confirm-en", scene: "confirm-danger", size: [420, 132], langs: ["en"] },
+  { name: "qa-newsession-en", scene: "newsession-window-full", size: [460, 520], sel: ".wt-opt-body", langs: ["en"] },
+  { name: "qa-confirm-kbd", scene: "confirm-danger", size: [420, 132], steps: [["key", "Tab"]] },
+  { name: "qa-onboarding-hover", scene: "onboarding-1", size: [460, 600], themes: ["light"], steps: [["hover", ".onboarding .btn-primary"]] },
   // ── 其余状态维度：超宽、英文、键盘焦点 ──
   { name: "qa-flow-2560", scene: "flow-states", size: [2560, 1440] },
   { name: "qa-lead-2560", scene: "flow-lead", size: [2560, 1440], sel: ".lead-gate-card", themes: ["light"] },
@@ -134,6 +143,6 @@ export const QA_SHOTS = [
   { name: "qa-m-add", page: "mobile", scene: "mobile-idle", size: PHONE, steps: [["click", ".chat-attach-button"]], sel: ".chat-sheet" },
   { name: "qa-m-lead", page: "mobile", scene: "mobile-lead", size: PHONE, sel: ".lead-gate-card", langs: ["zh", "en"] },
   { name: "qa-m-lead-open", page: "mobile", scene: "mobile-lead", size: PHONE, sel: ".lead-gate-card", steps: [["click", ".lead-gate-more"], ["click", ".lead-gate-option >> nth=1"]] },
-  { name: "qa-m-approval-kbd", page: "mobile", scene: "mobile-chat", size: [375, 476], sel: ".chat-approval-actions", steps: [["click", TA], ["log", "(() => { const out = []; let el = document.querySelector('.chat-approval pre'); while (el && !el.classList.contains('chat-main')) { const cs = getComputedStyle(el); out.push([el.className || el.tagName, Math.round(el.getBoundingClientRect().height), cs.display, cs.flexShrink, cs.overflowY, cs.maxHeight]); el = el.parentElement; } return out; })()"]] },
+  { name: "qa-m-approval-kbd", page: "mobile", scene: "mobile-chat", size: [375, 476], sel: ".chat-approval-actions", steps: [["click", TA]] },
   { name: "qa-m-settings-on", page: "mobile", scene: "mobile-settings", params: "on=1", size: PHONE, sel: ".pswitch.on", langs: ["zh", "en"] },
 ];

@@ -28,6 +28,7 @@ bun run visual:compare <基线目录> <新目录>
 
 - `--filter <正则>`：只拍名字匹配的图，例如 `--filter "^chat__"`、`--filter "dark__w1280"`。对比时加 `--subset`，基线里多出来的图不算缺图。
 - `--list`：只列出会拍哪些图，不起 vite。
+- 补看场景的 `steps`（`click` / `rclick` / `hover` / `type` / `key` / `tick` / `log` …）是截图前替用户做的真实指针与键盘动作，见 `shoot.mjs` 的 `runSteps`；`?ui=1.5` 拍界面缩放。
 - `--jobs <n>`：并发页数，默认 4。
 - `--engine webkit`：换 WebKit 拍（默认 Chromium，对应 Windows 的 WebView2）。
 - `compare.mjs --tolerance <0~255>`：单通道允许的差值，默认 0（严格一致）；`--out <目录>` 指定差异图位置。
@@ -70,6 +71,7 @@ bun run visual:compare <基线目录> <新目录>
 | `panel-files` | 右侧面板「文件」页签 | 620 / 1280 |
 | `mobile-settings` / `-new` / `-gate*` / `-boot` / `-keys` / `-list-empty` / `-list-error` | 手机页其余状态：设置屏、新建会话浮层、配对门各态、加载占位、终端画面兜底、列表空态与首载失败（只拍 dpr 2） | 375（部分加 430） |
 | `mobile-*-kbd` / `-land` / `-ipad` / `-ipadland` | 同一场景换视口：键盘弹出（375×476、375×376）、横屏 812×375、iPad 820×1180 与 1180×820 | 见文件名 |
+| `qa-*` | 补看场景（`qa-scenes.mjs`）：要靠真实点击、悬停、键盘才出现的弹层与状态（斜杠菜单、@ 补全、模型菜单与模型市场、截图标注、重命名、Lead 关卡卡、Broker 审批、屏幕识别的五种交互卡、同步中断、worktree setup、排队消息、灯箱、区内搜索、侧栏各态、会话管理页、右侧面板的 Markdown / 浏览器 / 终端页签、托管终端页签、设置窗的更新状态 / 下拉 / 聚焦 / 保存失败、手机底部面板），以及缩放 150%、英文、2560 超宽。假数据在 `qaFlow.ts`（harness 场景名 `flow-<名字>`） | 见各条 `size` |
 
 每个场景都拍深色、浅色两种主题，dpr 1 和 2。语言默认只拍中文，`chat` 与 `mobile-chat` 另加英文。
 
