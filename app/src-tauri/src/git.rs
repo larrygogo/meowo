@@ -1225,7 +1225,9 @@ fn untracked_file_diff(dir: &str, path: &str) -> Result<GitFileDiffDto, String> 
     // cwd，`..` 能一路爬出工作目录。统一走 resolve_inside（canonicalize + 前缀校验），
     // 越界返回与文件页签同一句「路径超出工作目录」。tracked 分支不需要——那边 path
     // 是 git 的 pathspec，git 自己限定在仓库内。
-    let full_path = crate::fsutil::resolve_inside(dir, path)?;
+    // 路径相对仓库根（同 fill_line_counts）：会话开在子目录时拼到 cwd 上读不到（做空第三轮 #9）。
+    // resolve_inside 仍按工作树根挡住 `..` 与绝对路径逃逸。
+    let full_path = crate::fsutil::resolve_inside(&work_tree_root(dir), path)?;
     let file = std::fs::File::open(&full_path).map_err(|e| format!("无法读取文件：{e}"))?;
     let mut bytes = Vec::new();
     file.take((MAX_DIFF_BYTES + 1) as u64)

@@ -57,3 +57,18 @@ fn summary_counts_untracked_lines_from_subdir_session() {
         assert_eq!(lines("sub/new.txt"), Some(3), "cwd={cwd}");
     }
 }
+
+/// 做空第三轮 #9：点开未跟踪文件的 diff 与行数同一个毛病。面板退回按会话 cwd 列改动时，路径相对仓库根，
+/// 以前拼在子目录上读不到（报「路径不存在」）。
+#[test]
+fn untracked_file_diff_reads_from_subdir_session() {
+    let repo = subdir_repo("diff");
+    for cwd in cwd_forms(&repo.0.join("sub")) {
+        let diff = git_file_diff_blocking(&cwd, "sub/new.txt", true, None).unwrap_or_else(|e| panic!("cwd={cwd}: {e}"));
+        assert!(diff.diff.contains("+x\n+y\n+z"), "cwd={cwd}: {}", diff.diff);
+        let root_file = git_file_diff_blocking(&cwd, "root.txt", true, None).unwrap_or_else(|e| panic!("cwd={cwd}: {e}"));
+        assert!(root_file.diff.contains("+a\n+b"), "cwd={cwd}: {}", root_file.diff);
+        // 仍挡住爬出仓库根。
+        assert!(git_file_diff_blocking(&cwd, "../../outside.txt", true, None).is_err());
+    }
+}
