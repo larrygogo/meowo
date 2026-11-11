@@ -123,3 +123,20 @@ fn waiting_on_own_background_work_is_not_completion() {
     assert_eq!(outcome_of(&main), (0, 1, 0));
     assert_eq!(analyze_transcript(main.to_str().unwrap()).busy_subagents, 0);
 }
+
+// ═══ SendMessage 续上后的完成通知归回原委派（做空第三轮 #8）═══
+// 本机实拍（xbot 会话，脱敏）：SendMessage 续上收工的子代理后，那一段的完成通知 <tool-use-id> 指向
+// SendMessage 那次调用，不是最初的委派。以前有 tool-use-id 就不带 task_id，结局记到 SendMessage 名下，
+// 原委派被 SendMessage 回执翻回运行中后就一直挂着（实拍 02:44 挂到 04:39）。
+
+const SEND_RESUME: &str = r#"{"type":"user","uuid":"sm","timestamp":"2026-11-10T11:00:00.000Z","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_sm","content":[{"type":"text","text":"{\"success\":true,\"message\":\"Resuming agent a6ca15\",\"resumedAgentId\":\"a6ca15\"}"}]}]}}"#;
+const DONE_VIA_SEND: &str = r#"{"type":"user","uuid":"n3","timestamp":"2026-11-10T11:20:00.000Z","message":{"role":"user","content":"<task-notification>\n<task-id>a6ca15</task-id>\n<tool-use-id>toolu_sm</tool-use-id>\n<status>completed</status>\n<summary>Agent \"做空验证\" finished</summary>\n</task-notification>"}}"#;
+
+#[test]
+fn completion_after_send_message_resume_settles_original_delegation() {
+    let main = write("send-resume", &[LAUNCH, DONE_USER, SEND_RESUME]);
+    assert_eq!(outcome_of(&main), (1, 0, 0), "SendMessage 续上后原委派在跑");
+    let main = write("send-resume-done", &[LAUNCH, DONE_USER, SEND_RESUME, DONE_VIA_SEND]);
+    assert_eq!(outcome_of(&main), (0, 1, 0), "完成通知要归回原委派");
+    assert_eq!(analyze_transcript(main.to_str().unwrap()).busy_subagents, 0);
+}

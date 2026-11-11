@@ -33,10 +33,12 @@ pub(super) fn tag_text<'a>(text: &'a str, tag: &str) -> Option<&'a str> {
 /// 于是后台 skill 的委派永远停在「运行中」——实拍:一条 11:36 就失败结束的审查,在会话
 /// 剩下的三个半小时里一直挂着运行中。
 ///
-/// 缺 tool-use-id 时改用 `task-id` 当回执的挂载点,并把它填进 `task_id`——前端
+/// 缺 tool-use-id 时改用 `task-id` 当回执的挂载点。`task-id` 一律填进 `task_id`——前端
 /// (`collectSubagentReceipts`)按 task_id 归属:启动回执早已用同一个 id 登记过属主
 /// (见 [`parse_events`] 给启动回执补 agentId 那段),这条结局便落回原委派。这与
 /// `TaskOutput` 拉取结局走的是同一条既有路由,不新增机制。
+/// tool-use-id 也不一定是委派本体：SendMessage 续上后那一段的完成通知指向 SendMessage 那次调用,
+/// 只有 task-id 能把它归回原委派(做空第三轮 #8,xbot 会话实拍)。
 ///
 /// 两者都缺则无从关联,返回 None,调用方按普通 user 文本处理。
 fn task_notification_result(
@@ -68,9 +70,11 @@ fn task_notification_result(
             running: 0,
             completed: if failed { 0 } else { 1 },
             failed: if failed { 1 } else { 0 },
-            // 自带 tool-use-id 时直接落到原委派上,不必再路由;只有 task-id 的
-            // (forked skill)要靠它归属回启动回执登记的属主。
-            task_id: tool_use_id.is_none().then_some(task_id).flatten(),
+            // 一律带上 task-id,前端按「同 task-id 首见者为委派本体」归回原委派。以前有 tool-use-id
+            // 就不带:SendMessage 续上后那一段的完成通知,tool-use-id 指向的是 SendMessage 那次调用
+            // (xbot 会话实拍两次),结局记到 SendMessage 名下,原委派被续上回执翻回运行中后一直挂着
+            // (实拍 02:44 挂到 04:39)。常规委派的 tool-use-id 本来就是委派本体,带上 task-id 路由结果不变。
+            task_id,
         }),
         patch: None,
     })
@@ -4393,7 +4397,7 @@ c".into(), lines: 3, truncated: false })
         assert_eq!(outcome.task_id.as_deref(), Some("acb7f0cbde2eb991a"));
         assert!(is_error);
 
-        // 自带 tool-use-id 的(常规 Agent 委派)维持原语义:直连委派,不进 task_id 路由。
+        // 自带 tool-use-id 的(常规 Agent 委派)直连委派;task-id 也带上,归属结果相同。
         let direct = task_notification_result(
             "<task-notification>\n<task-id>a1</task-id>\n<tool-use-id>toolu_x</tool-use-id>\n<status>completed</status>\n</task-notification>",
             "u2",
@@ -4409,7 +4413,8 @@ c".into(), lines: 3, truncated: false })
             panic!("应是 ToolResult");
         };
         assert_eq!(tool_call_id.as_deref(), Some("toolu_x"));
-        assert_eq!(subagent.unwrap().task_id, None);
+        // 也带 task-id：SendMessage 续上后 tool-use-id 不再是委派本体，要靠它归回（subagent_resume_tests）。
+        assert_eq!(subagent.unwrap().task_id.as_deref(), Some("a1"));
 
         // 两个 id 都没有 → 无从关联,按普通用户消息处理。
         assert!(task_notification_result(
