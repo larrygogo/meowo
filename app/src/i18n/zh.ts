@@ -464,6 +464,12 @@ export const zh = {
     cmdViewChat: "切换到对话视图",
     cmdViewTerminal: "切换到终端视图",
     cmdShowShortcuts: "打开快捷键速查表",
+    // 面板页签、模型、权限模式、PR、打开方式（UI 优化 #53）：面板类优先复用速查表文案。
+    cmdOpenChanges: "打开改动页签",
+    cmdToggleFiles: "打开或收起文件页签",
+    cmdNextPanelTab: "切换到下一个面板页签",
+    cmdSwitchPermission: "切换权限模式",
+    cmdOpenPr: (n: number) => `打开 Pull Request #${n}`,
     shortcutsTitle: "键盘快捷键",
     shortcutSwitcher: "打开命令面板（搜索会话、执行窗口命令）",
     shortcutSidebar: "收起 / 展开侧栏",
@@ -714,6 +720,9 @@ export const zh = {
     branchAhead: (n: number) => `领先远程 ${n} 个提交`,
     branchBehind: (n: number) => `落后远程 ${n} 个提交`,
     uncommitted: (files: number) => `${files} 个文件有未提交的改动`,
+    // 侧栏会话行的 PR / CI 状态点（UI 优化 #54），状态词沿用 prState 与 forge.checkState。
+    sidebarPr: (n: number, state: string) => `PR #${n} ${state}`,
+    sidebarCi: (state: string) => `CI ${state}`,
     terminalReady: "会话断开后可在这里恢复继续",
     terminalExternal: "会话在外部终端运行，这里只同步显示对话",
     terminalStart: "恢复会话",

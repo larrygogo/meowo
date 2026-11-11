@@ -14,6 +14,7 @@ import { useMenuPopup } from "./menu";
 import { useDismissable } from "../hooks/useDismissable";
 import { CardContextMenu } from "./sticker/CardContextMenu";
 import { WorkspaceHeader } from "./chat/WorkspaceHeader";
+import { SidebarGitBadgeSlot, useSidebarGitBadges } from "./chat/SidebarGitBadge";
 import { editorKeyDown, fmtAgo, fmtShortAgo, fmtWaited, readSidebarGroupMode, readSidebarSortMode, SIDEBAR_GROUP_MODE_KEY, SIDEBAR_SORT_MODE_KEY, useStarred, type SidebarGroupMode, type SidebarSortMode } from "./sticker/helpers";
 import { UNNAMED_SESSION_SENTINEL } from "./sticker/types";
 import { CheckIcon, MoreIcon, NoteIcon, TopIcon } from "./sticker/icons";
@@ -732,6 +733,9 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps -- sortMode 是重排信号，切排序方式时按置顶再排一次，保留原行为
   }, [sessions, starred, sortMode]);
+  // 会话行的 PR / CI 与改动数（UI 优化 #54）：按已加载会话的工作目录批量取，同目录只算一次。
+  const loadedCwds = useMemo(() => (ordered ?? []).map((item) => item.cwd), [ordered]);
+  const gitBadges = useSidebarGitBadges(loadedCwds);
 
   const groups = useMemo(() => {
     if (!ordered || groupMode !== "dir") return null;
@@ -949,6 +953,8 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
     const awaitingApproval = approvalAwaitingIds.has(item.session.id);
     const editing = editingId === item.session.id;
     const noting = notingId === item.session.id;
+    // 目录已删的会话不挂（点进去也恢复不了，下面另有「目录已删除」）。
+    const badgeCwd = item.cwd && !item.cwd_missing ? item.cwd : null;
     // 条目从 <button> 改成 role=button 的 <div>：里面要放「⋯」按钮，button 套 button 是
     // 非法 HTML（浏览器会把内层拆出去）。键盘可达性靠 tabIndex + Enter/Space 补齐；
     // tabIndex 是 roving 的——只有 tabbableId 那条进 Tab 序，其余靠列表的 ↑↓ 到达（C-17）。
@@ -1094,17 +1100,20 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
               「哪条是刚才动的」只能靠猜。waiting 态改「已等待 X」警示色(与看板 B-3 同款,
               fmtWaited 复用 sticker/helpers):等待时长是召唤信号,「X 前」读不出急迫。 */}
           {/* 副行只在不按工作区分组时出现（对照 Kimi：平铺列表才在标题下写工作区名）。 */}
-          {!noting && dir && groupMode !== "dir" && (
+          {/* PR / CI 与改动数跟在工作区名（或 worktree 标）后面；分组视图没有副行时只为它开一行。 */}
+          {/* 摘要位自己订阅结果（SidebarGitBadgeSlot），回来时不重渲染整张列表。 */}
+          {!noting && (dir && groupMode !== "dir" ? (
             <span className="chat-sidebar-metaline">
               <span className="chat-sidebar-meta" data-tip={item.cwd ?? undefined}>{dir}</span>
+              {badgeCwd && <SidebarGitBadgeSlot store={gitBadges} cwd={badgeCwd} />}
             </span>
-          )}
-          {/* 包 5：按工作区分组时 worktree 会话归在原项目的组里，组内标出它开在哪个 worktree。 */}
-          {!noting && groupMode === "dir" && worktreeNameOf(item) && (
+          ) : groupMode === "dir" && worktreeNameOf(item) ? (
+            /* 包 5：按工作区分组时 worktree 会话归在原项目的组里，组内标出它开在哪个 worktree。 */
             <span className="chat-sidebar-metaline">
               <span className="chat-sidebar-wt" data-testid="sidebar-worktree-tag" data-tip={t.wtnew.tagTip(worktreeNameOf(item)!)}>{worktreeNameOf(item)}</span>
+              {badgeCwd && <SidebarGitBadgeSlot store={gitBadges} cwd={badgeCwd} />}
             </span>
-          )}
+          ) : groupMode === "dir" && badgeCwd ? <SidebarGitBadgeSlot store={gitBadges} cwd={badgeCwd} wrap /> : null)}
           {/* 目录已删除（worktree 清理掉了）：不管按不按目录分组都要显示——点进去恢复不了，得先说。 */}
           {!noting && item.cwd_missing && (
             <span className="chat-sidebar-gone" data-tip={t.worktree.dirMissingTip} data-testid="sidebar-dir-missing">{t.worktree.dirMissing}</span>

@@ -45,6 +45,8 @@ import type { ForgeChooseRepoArgs } from "./generated/contracts/bridge/ForgeChoo
 import type { GitChangesOverviewArgs } from "./generated/contracts/bridge/GitChangesOverviewArgs";
 import type { GitCommitArgs } from "./generated/contracts/bridge/GitCommitArgs";
 import type { GitDiffSummaryArgs } from "./generated/contracts/bridge/GitDiffSummaryArgs";
+import type { SidebarGitBadgesArgs } from "./generated/contracts/bridge/SidebarGitBadgesArgs";
+import type { SidebarGitBadgeDto } from "./generated/contracts/SidebarGitBadgeDto";
 import type { GitDirArgs } from "./generated/contracts/bridge/GitDirArgs";
 import type { GitFileDiffArgs } from "./generated/contracts/bridge/GitFileDiffArgs";
 import type { GitForgeStatusArgs } from "./generated/contracts/bridge/GitForgeStatusArgs";
@@ -731,6 +733,14 @@ export type { PullRequestDto };
 export function getGitDiffSummary(cwd: string): Promise<GitDiffSummaryDto> {
   return invoke("git_diff_summary", { cwd } satisfies GitDiffSummaryArgs);
 }
+
+/// 侧栏会话行的 PR / CI 与改动数（UI 优化 #54）。只回有 PR 或有改动的目录；PR 走 forge 缓存
+/// （每仓库 ≥60s 查一次 GitHub，调用方窗口隐藏时后端只读缓存）。传参改动须同步 meowo_protocol::bridge
+/// 的 SidebarGitBadgesArgs 与样例 payload 测试。
+export function getSidebarGitBadges(cwds: readonly string[]): Promise<SidebarGitBadgeDto[]> {
+  return invoke("sidebar_git_badges", { cwds } satisfies SidebarGitBadgesArgs);
+}
+export type { SidebarGitBadgeDto };
 
 /** 单个文件的 diff（untracked=true 时由后端读盘合成伪 diff，见 GitFileDiffDto 注释）。 */
 /// base：「已提交未合并」段的文件，看 base..HEAD。sessionCwd：cwd 不是会话目录本身（别的仓库、

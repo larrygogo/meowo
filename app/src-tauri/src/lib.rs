@@ -1323,6 +1323,7 @@ pub fn run() {
             forge::gh_pr_create,
             forge::gh_pr_merge,
             forge::forge_choose_repo,
+            forge::badge::sidebar_git_badges,
             list_dir_entries,
             read_file_text,
             read_image_preview,

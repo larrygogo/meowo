@@ -203,6 +203,8 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     "gh_pr_create",
     "gh_pr_merge",
     "forge_choose_repo",
+    // 侧栏会话行的 PR / CI 与改动数（UI 优化 #54）：只读，每个目录逐一过会话目录收口，不是的直接丢掉。
+    "sidebar_git_badges",
     // 输入框 `@` 补全（2026-11-04 用户决定放行）：只回文件/目录名，不读内容；目录收口同改动列表。
     "file_mention_candidates",
     // Lead 工作流（模块头「例外（2026-11-09）」）
@@ -954,6 +956,18 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
                 return reply::<()>(Err(e));
             }
             reply(crate::git::git_diff_summary(a.cwd).await)
+        }
+        "sidebar_git_badges" => {
+            let a = args!(SidebarGitBadgesArgs);
+            // 收口同 git_diff_summary：只算会话目录。不是的丢掉而不是整批拒绝——侧栏里一条旧会话
+            // 的目录对不上，不该让其他行的状态点全没了。
+            let mut cwds = Vec::new();
+            for cwd in a.cwds {
+                if ensure_session_dir(app, &cwd).await.is_ok() {
+                    cwds.push(cwd);
+                }
+            }
+            reply(crate::forge::sidebar_git_badges_for(cwds, true).await)
         }
         "lead_task_snapshot" => {
             let a = args!(LeadTaskSnapshotArgs);
@@ -2267,6 +2281,8 @@ mod tests {
             .map(|_| ()),
             // api.ts:502（gitDiffSummary）
             "git_diff_summary" => parse::<GitDiffSummaryArgs>(br#"{"cwd":"C:/repo"}"#).map(|_| ()),
+            // api.ts（getSidebarGitBadges）
+            "sidebar_git_badges" => parse::<SidebarGitBadgesArgs>(br#"{"cwds":["C:/repo","C:/repo-wt"]}"#).map(|_| ()),
             // api.ts:507（gitFileDiff）
             "git_file_diff" => parse::<GitFileDiffArgs>(
                 br#"{"cwd":"C:/repo-wt","path":"src/a.ts","untracked":false,"base":"0123abcd","sessionCwd":"C:/repo"}"#,

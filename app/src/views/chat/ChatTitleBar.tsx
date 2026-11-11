@@ -32,6 +32,7 @@ function usePullRequest(cwd: string | null, branch: string | null): PullRequestD
 export function ChatTitleBar({
   leading, title, archive, end, cwd, prCwd, gitSummary, changesOpen, panelOpen, terminalOn,
   onToggleChanges, onTogglePanel, onToggleTerminal, onError, panelAgentBusy = false, panelWaiting = false, info = null,
+  onPullRequest,
 }: {
   /** 标题前的侧栏开关（macOS 侧栏收起时 / 手机紧凑形态才有）。 */
   leading: ReactNode;
@@ -59,9 +60,12 @@ export function ChatTitleBar({
   panelWaiting?: boolean;
   /** 会话信息栏开关（面板收起时才有，同 Kimi Code 的「显示 / 隐藏会话信息」）。 */
   info?: { open: boolean; onToggle: () => void } | null;
+  /** 查到的 PR 报给对话窗：Ctrl+K 的「打开 PR」用同一份，不再多打一次 gh（UI 优化 #53）。 */
+  onPullRequest?: (pr: PullRequestDto | null) => void;
 }) {
   const t = useT();
   const pullRequest = usePullRequest(prCwd ?? cwd, gitSummary?.isRepo ? gitSummary.branch : null);
+  useEffect(() => { onPullRequest?.(pullRequest); }, [pullRequest, onPullRequest]);
   return (
     <header className="chat-bar" data-tauri-drag-region>
       {leading}

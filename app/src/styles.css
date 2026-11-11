@@ -7587,6 +7587,21 @@ pre.chat-md-plain {
 .wt-trust-actions .wt-opt-btn { height: 28px; padding: 0 var(--sp-12); }
 .chat-sidebar-wt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cc-text-faint); font-size: var(--text-xs); }
 .chat-sidebar-wt::before { content: "⑂ "; }
+/* 侧栏会话行的 PR / CI 与改动数（UI 优化 #54）：跟在工作区名后，工作区名先省略、它不让位。
+   PR 点用实心、CI 用空心环：两个记号并排也分得清，且都与行首 activityTone 的状态点不在一格。
+   PR 四态配色同标题栏 .tb-pr（开着绿、草稿灰、已合并紫、已关闭红）。 */
+.chat-sidebar-git { display: inline-flex; align-items: center; gap: var(--sp-4); flex: none; font-size: var(--text-xs); font-variant-numeric: tabular-nums; color: var(--cc-text-faint); }
+.chat-sidebar-pr { --pr-color: var(--cc-ok-vivid); width: 6px; height: 6px; border-radius: 50%; background: var(--pr-color); }
+.chat-sidebar-pr.is-draft { --pr-color: var(--cc-text-faint); }
+.chat-sidebar-pr.is-merged { --pr-color: #a371f7; }
+.chat-sidebar-pr.is-closed { --pr-color: var(--cc-err-vivid); }
+.chat-sidebar-ci { width: 7px; height: 7px; box-sizing: border-box; border: 1.5px solid currentColor; border-radius: 50%; }
+.chat-sidebar-ci.is-pass { color: var(--cc-ok-vivid); }
+.chat-sidebar-ci.is-fail { color: var(--cc-err-vivid); }
+.chat-sidebar-ci.is-pending { color: var(--cc-warn-vivid); }
+.chat-sidebar-diff { display: inline-flex; gap: var(--sp-2); }
+.chat-sidebar-add { color: var(--cc-ok-vivid); }
+.chat-sidebar-del { color: var(--cc-err-vivid); }
 .stk-wt { margin-left: var(--sp-4); color: var(--cc-text-faint); }
 .stk-wt::before { content: "· "; }
 .wt-prefix-input { width: 140px; height: 28px; }

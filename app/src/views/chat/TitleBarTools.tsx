@@ -52,7 +52,9 @@ function OpenerIcon({ opener }: { opener: FileOpenerDto }) {
   return opener.id === FILE_MANAGER ? <FolderGlyph /> : <CodeGlyph />;
 }
 
-export function OpenInEditor({ cwd, onError }: { cwd: string; onError: (message: string) => void }) {
+/// 「打开方式」清单：已装的编辑器 + 系统文件管理器。标题栏分体按钮与 Ctrl+K 命令面板共用
+/// （UI 优化 #53：窄窗时标题栏按钮被收起，命令面板里仍要能「用…打开」）。
+export function useFolderOpeners(): FileOpenerDto[] {
   const t = useT();
   const [editors, setEditors] = useState<FileOpenerDto[]>([]);
   useEffect(() => {
@@ -60,18 +62,26 @@ export function OpenInEditor({ cwd, onError }: { cwd: string; onError: (message:
     void loadEditors().then((list) => { if (alive) setEditors(list); });
     return () => { alive = false; };
   }, []);
-  const [preferred, setPreferred] = useState(readOpener);
-  const { open, setOpen, pos, ref, btnRef, menuRef, toggle, onKeyDown } = useMenuPopup({});
-  const options: FileOpenerDto[] = [
+  return [
     ...editors,
     { id: FILE_MANAGER, name: isMac() ? t.chat.fileManagerMac : t.chat.fileManager, icon: null },
   ];
+}
+
+/// 用指定的打开方式打开目录；失败交给 onError（已按界面语言格式化）。
+export function openFolderWith(cwd: string, id: string, onError: (message: string) => void, locale: string) {
+  const opening = id === FILE_MANAGER ? openProjectDir(cwd) : openFolderIn(cwd, id);
+  opening.catch((error) => onError(formatBackendError(error, locale)));
+}
+
+export function OpenInEditor({ cwd, onError }: { cwd: string; onError: (message: string) => void }) {
+  const t = useT();
+  const options = useFolderOpeners();
+  const [preferred, setPreferred] = useState(readOpener);
+  const { open, setOpen, pos, ref, btnRef, menuRef, toggle, onKeyDown } = useMenuPopup({});
   // 没选过（或选的那个已卸载）时默认第一个编辑器；一个都没装就是文件管理器。
   const current = options.find((option) => option.id === preferred) ?? options[0];
-  const openWith = (id: string) => {
-    const opening = id === FILE_MANAGER ? openProjectDir(cwd) : openFolderIn(cwd, id);
-    opening.catch((error) => onError(formatBackendError(error, t.locale)));
-  };
+  const openWith = (id: string) => openFolderWith(cwd, id, onError, t.locale);
   return (
     <div className="dd tb-open" ref={ref} onKeyDown={onKeyDown}>
       <button
