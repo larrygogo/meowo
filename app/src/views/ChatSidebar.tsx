@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject, type UIEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { moveNextTo, orderKey, sidebarDirGroups, usePointerReorder, useSessionDrag, type DirGroup as SidebarDirGroup } from "./sidebarDrag";
+import { dropNeighbors, moveNextTo, orderKey, sidebarDirGroups, usePointerReorder, useSessionDrag, type DirGroup as SidebarDirGroup } from "./sidebarDrag";
 import { WorkspaceDirectory } from "./chat/WorkspaceDirectory";
 import { useTablist } from "./useTablist";
 import { confirmStopSession, getLiveSessionsPage, getSettings, moveSessionRank, setWorkspaceOrder as saveWorkspaceOrder, openNewSessionWindow, openProjectDir, recentCwds, renameSession, searchChatTranscripts, sessionTone, setArchived, setSessionNote, type CardMenuMode, type LiveSession, type SessionTone, type TranscriptSearchHit } from "../api";
@@ -792,18 +792,37 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
     return { bucketOf, lists };
   }, [groups, ordered, starred]);
   // 拖拽（手动排序、非多选态；手机长按后拖）：落下即本地先挪，再写后端；写失败重取回真实顺序。
+  const moveSession = (id: number, above: number | null, below: number | null) => {
+    setSessions((prev) => (prev ? moveNextTo(prev, (item) => item.session.id, id, above, below) : prev));
+    moveSessionRank(id, above, below).catch(() => {
+      if (!mountedRef.current) return;
+      setActionError(t.chat.sidebarActionFailed);
+      void loadRef.current("refresh");
+    });
+  };
+  const reorderEnabled = sortMode === "manual" && selectedIds.size === 0;
+  // 键盘排序（调研 s8：原先只能鼠标拖）：焦点在条目上按 Ctrl/⌘+Shift+↑/↓ 在同一个桶里挪一位，
+  // 与拖拽同一条写回路径。不用 Alt：Alt+↑/↓ 切会话、Alt+Shift+↓ 跳到下一个待处理会话。
+  // 挪完 React 会搬动条目 DOM，焦点随之掉回 body，下一拍按 id 找回来。
+  const keyboardMove = (id: number, dir: -1 | 1): boolean => {
+    if (!reorderEnabled) return false;
+    const bucket = dragBuckets.bucketOf.get(id);
+    const list = bucket == null ? [] : dragBuckets.lists.get(bucket) ?? [];
+    const neighbor = list[list.indexOf(id) + dir];
+    if (neighbor === undefined) return true;
+    const neighbors = dropNeighbors(list, id, { id: neighbor, after: dir > 0 });
+    if (!neighbors) return true;
+    moveSession(id, neighbors.above, neighbors.below);
+    window.setTimeout(() => {
+      listRef.current?.querySelector<HTMLElement>(`.chat-sidebar-item[data-session-id="${id}"]`)?.focus();
+    }, 0);
+    return true;
+  };
   const drag = useSessionDrag({
-    enabled: sortMode === "manual" && selectedIds.size === 0,
+    enabled: reorderEnabled,
     bucketOf: (id) => dragBuckets.bucketOf.get(id) ?? null,
     listOf: (bucket) => dragBuckets.lists.get(bucket) ?? [],
-    onMove: (id, above, below) => {
-      setSessions((prev) => (prev ? moveNextTo(prev, (item) => item.session.id, id, above, below) : prev));
-      moveSessionRank(id, above, below).catch(() => {
-        if (!mountedRef.current) return;
-        setActionError(t.chat.sidebarActionFailed);
-        void loadRef.current("refresh");
-      });
-    },
+    onMove: moveSession,
     // 手机长按没挪就松手 = 开菜单（iOS 长按不派发 contextmenu，Android 的那次被拖拽吞掉了）。
     onHold: (id, x, y) => {
       const item = sessions?.find((entry) => entry.session.id === id);
@@ -1004,8 +1023,14 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
           }
           onSelect(item.session.id);
         }}
+        aria-keyshortcuts={reorderEnabled ? "Control+Shift+ArrowUp Control+Shift+ArrowDown" : undefined}
         onKeyDown={(event) => {
           if (event.target !== event.currentTarget) return; // 内部按钮/输入框自理
+          if ((event.ctrlKey || event.metaKey) && event.shiftKey && !event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
+            // 先拦住：列表上的 ↑/↓ roving 不看修饰键，冒泡上去会把焦点挪走。
+            if (keyboardMove(item.session.id, event.key === "ArrowUp" ? -1 : 1)) { event.preventDefault(); event.stopPropagation(); }
+            return;
+          }
           if (event.key !== "Enter" && event.key !== " ") return;
           event.preventDefault(); // 空格不要滚动列表
           if (editing || noting) { setEditingId(null); setNotingId(null); return; }
