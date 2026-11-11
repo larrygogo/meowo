@@ -71,7 +71,7 @@
   --cc-ok-vivid: #3fb950;
   --cc-warn-vivid: #d29922;
   --cc-err-vivid: #f85149;
-  /* 语法高亮调色板（文件/更改面板，One Dark Pro 系——绿字符串与全局翡翠强调色同族）：
+  /* 语法高亮调色板（文件/更改面板，One Dark Pro 系——绿字符串沿用 One Dark 原色，与蓝色强调色错开）：
      只被 .chat-diff-panel 下的 .hljs-* 规则消费；与功能色（ok/err/warn）解耦，
      换主题色不影响代码着色。 */
   --cc-syn-keyword: #c678dd;
@@ -205,6 +205,18 @@
    - 阴影只给浮在内容之上的东西（菜单/对话框/浮动胶囊/输入卡），常驻面板不靠阴影分层。
    旧的 --r-* / --cc-surface-hover 仍保留给尚未迁移的界面（贴纸/看板/设置）。 */
 :root {
+  /* 终端配色（托管终端、面板终端及其浮层）：终端恒为深底，深浅主题同值。xterm 主题经
+     terminalTheme.ts 读这里；浮层文字/底色也只认这组，改版前写死的绿色光标、绿调灰选区与浮层灰
+     已清掉（UI 调研 sys6：与品牌蓝对不上）。 */
+  --term-bg: #121212;
+  --term-bg-rgb: 18, 18, 18;
+  --term-fg: rgba(255, 255, 255, 0.9);
+  --term-fg-2: rgba(255, 255, 255, 0.78);
+  --term-fg-dim: rgba(255, 255, 255, 0.64);
+  --term-fg-faint: rgba(255, 255, 255, 0.5);
+  --term-cursor: #1a88ff;
+  --term-selection: rgba(26, 136, 255, 0.3);
+  --term-warn: #d29922;
   --radius-xs: 4px;
   --radius-sm: 6px;
   --radius-md: 8px;
@@ -3144,7 +3156,7 @@ button.stab {
 }
 
 /* 目录选择器：combobox 一体式——输入框 + 浏览按钮 + 最近项目列表包进一个面板，
-   整体 focus 时翡翠绿描边；输入实时过滤下方最近项。 */
+   整体 focus 时强调色描边；输入实时过滤下方最近项。 */
 .ns-picker {
   border: 1px solid var(--cc-border);
   border-radius: var(--r-md);
@@ -3222,7 +3234,7 @@ button.stab {
 /* 远程新建会话:hook/登录警告的动作位改成一句「去桌面处理」的次要说明。 */
 .ns-warn-remote { font-size: var(--fs-11); color: var(--cc-text-faint); flex: none; }
 
-/* 文本输入 / 下拉：统一的深色控件，focus 时翡翠绿描边。 */
+/* 文本输入 / 下拉：统一的深色控件，focus 时强调色描边。 */
 .ns-input {
   flex: 1;
   min-width: 0;
@@ -3322,7 +3334,7 @@ select.ns-input {
   white-space: nowrap;
 }
 
-/* Agent：横向紧凑条（图标+名一行），选中翡翠绿高亮。
+/* Agent：横向紧凑条（图标+名一行），选中强调色高亮。
    按内容自适应宽度、放不下自动换行——不做等宽平摊（flex: 1）：那会让每多装一个
    agent 都把整排卡挤瘦一截，agent 增多后名字先被压省略；换行则天然可扩展。 */
 .ns-agents { display: flex; flex-wrap: wrap; gap: var(--sp-8); }
@@ -3892,7 +3904,7 @@ select.ns-input {
 .chat-queued-tag { flex: 0 0 auto; color: var(--cc-ok-vivid); font-size: var(--text-xs); }
 /* 「打断并发送」:破坏性次级动作,琥珀描边与发送按钮区分,不抢主视觉。
    .chat-compose 前缀必须有:compose 里有一条 `.chat-compose button` 的 accent 皮肤
-   (38px 高、翡翠边框+填充,发送键专属),特异性盖过单类名——缺前缀时本按钮被刷成
+   (38px 高、强调色边框+填充,发送键专属),特异性盖过单类名——缺前缀时本按钮被刷成
    大绿块。height/min-height 一并重置回自然高度。 */
 
 /* 标题栏幽灵按钮的共同基样式:视图页签与「结束会话」是并排的视觉同类,尺寸/字号/圆角
@@ -4695,7 +4707,7 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-diff-tabs button.is-active { color: var(--cc-text); background: var(--cc-bg); box-shadow: var(--shadow-sm); }
 /* 面板里的终端占满面板剩余高度；退出提示贴底，不挡最后几行输出。 */
 .chat-diff-panel .shell-term { flex: 1; }
-.shell-term-exit { position: absolute; left: 12px; right: 12px; bottom: 8px; z-index: 2; padding: var(--sp-6) var(--sp-10); border-radius: var(--radius-sm); color: #9ba19e; background: rgba(31, 31, 31, 0.92); font-size: var(--text-xs); pointer-events: none; }
+.shell-term-exit { position: absolute; left: 12px; right: 12px; bottom: 8px; z-index: 2; padding: var(--sp-6) var(--sp-10); border-radius: var(--radius-sm); color: var(--term-fg-dim); background: rgba(31, 31, 31, 0.92); font-size: var(--text-xs); pointer-events: none; }
 .shell-term-exit.is-error { color: #f0a0a0; }
 /* 会话信息栏（同 Kimi Code 的 SessionInfoTabs）：面板收起时停靠在对话右侧，窄窗改成浮层。 */
 .session-info { display: flex; flex-direction: column; gap: var(--sp-14); padding: var(--sp-14) var(--sp-10); color: var(--cc-text); font-size: var(--text-xs); overflow-y: auto; }
@@ -6795,7 +6807,7 @@ button.scm-check-name:hover { text-decoration: underline; }
 .managed-terminal-host .xterm .xterm-scrollable-element > .scrollbar.horizontal {
   display: none !important;
 }
-.managed-terminal-cover { position: absolute; inset: 0; z-index: 3; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--sp-14); padding: var(--sp-30); color: #9ba19e; background: rgba(18, 18, 18, 0.94); font-size: var(--fs-12); text-align: center; }
+.managed-terminal-cover { position: absolute; inset: 0; z-index: 3; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--sp-14); padding: var(--sp-30); color: var(--term-fg-dim); background: rgba(18, 18, 18, 0.94); font-size: var(--fs-12); text-align: center; }
 .managed-terminal-cover.is-initializing { gap: var(--sp-12); background: #121212; }
 /* 已退出态：整层透明 + 指针穿透（终端最后的输出可滚可选），内容收进居中的醒目卡片
    ——「接管的框」要在用户熟悉的位置出现（曾降成底部窄横条：TUI 退出常清屏，黑屏 +
@@ -6809,7 +6821,7 @@ button.scm-check-name:hover { text-decoration: underline; }
   padding: var(--sp-14) var(--sp-18);
   border: 1px solid color-mix(in srgb, var(--cc-warn) 32%, rgba(255, 255, 255, 0.14));
   border-radius: var(--r-12);
-  background: rgba(21, 22, 23, 0.96);
+  background: rgba(var(--term-bg-rgb), 0.96);
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
   text-align: center;
 }
@@ -6819,14 +6831,14 @@ button.scm-check-name:hover { text-decoration: underline; }
 .managed-terminal-cover-msg { max-width: 380px; line-height: 1.6; }
 /* 权限下拉与动作按钮排成一行并等高（dd-btn 28px），窄窗允许换行仍居中。 */
 .managed-terminal-cover-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: var(--sp-8); }
-.managed-terminal-spinner { width: 20px; height: 20px; border: 2px solid rgba(255,255,255,.12); border-top-color: #c8cdca; border-radius: 50%; animation: managed-terminal-spin .75s linear infinite; }
+.managed-terminal-spinner { width: 20px; height: 20px; border: 2px solid rgba(255,255,255,.12); border-top-color: var(--term-fg-2); border-radius: 50%; animation: managed-terminal-spin .75s linear infinite; }
 @keyframes managed-terminal-spin { to { transform: rotate(360deg); } }
 /* 中性按钮：绿色是主题点缀（光标/状态点），成块的控件不刷主题色，保持清爽。
    只限直接子级——权限 Dropdown 的 dd-btn/dd-item 也是 button 且嵌在封面 DOM 里，
    面板级 `button` 选择器会把下拉菜单的每一项都刷成带框小盒子（真实翻车过）。 */
 .managed-terminal-cover > button,
 .managed-terminal-exit-card > button,
-.managed-terminal-cover-actions > button { padding: var(--sp-8) var(--sp-14); border: 1px solid rgba(255,255,255,.16); border-radius: var(--r-7); color: #e7e9e8; background: rgba(255,255,255,.06); cursor: pointer; font-size: var(--fs-11-5); }
+.managed-terminal-cover-actions > button { padding: var(--sp-8) var(--sp-14); border: 1px solid rgba(255,255,255,.16); border-radius: var(--r-7); color: var(--term-fg); background: rgba(255,255,255,.06); cursor: pointer; font-size: var(--fs-11-5); }
 /* 行内按钮等高对齐 dd-btn；排在基础规则之后靠源序取胜。 */
 .managed-terminal-cover-actions > button { height: calc(28px * var(--cc-ui)); padding: 0 var(--sp-14); }
 /* 并排两件套观感对齐：下拉跟按钮同圆角/字号/底色与边框亮度，读作同一条操作栏。
@@ -6840,29 +6852,29 @@ button.scm-check-name:hover { text-decoration: underline; }
 .managed-terminal-exit-card > button:disabled,
 .managed-terminal-cover-actions > button:disabled { opacity: .55; cursor: default; }
 .managed-terminal-actions { position: absolute; top: 8px; right: 20px; z-index: 4; display: flex; gap: var(--sp-6); opacity: 0; transition: opacity var(--dur-base); }
-.managed-terminal-error { position: absolute; left: 20px; right: 20px; bottom: 10px; z-index: 4; padding: var(--sp-6) var(--sp-10); border: 1px solid color-mix(in srgb, var(--cc-err) 40%, transparent); border-radius: var(--r-md); color: color-mix(in srgb, var(--cc-err) 70%, var(--cc-text)); background: rgba(21,22,23,.92); font-size: var(--fs-11); line-height: 1.35; text-align: left; overflow-wrap: anywhere; }
+.managed-terminal-error { position: absolute; left: 20px; right: 20px; bottom: 10px; z-index: 4; padding: var(--sp-6) var(--sp-10); border: 1px solid color-mix(in srgb, var(--cc-err) 40%, transparent); border-radius: var(--r-md); color: color-mix(in srgb, var(--cc-err) 70%, var(--cc-text)); background: rgba(var(--term-bg-rgb), .92); font-size: var(--fs-11); line-height: 1.35; text-align: left; overflow-wrap: anywhere; }
 /* 输出流停滞警示（ConPTY 管道疑似僵死，见 ManagedTerminal 的 terminalStreamStalled）：
    警示黄与错误红区分——它是诊断提示不是操作失败，且常驻到重启终端为止。 */
-.managed-terminal-error.is-stalled { border-color: color-mix(in srgb, var(--cc-warn, #d9a03f) 45%, transparent); color: color-mix(in srgb, var(--cc-warn, #d9a03f) 75%, var(--cc-text)); cursor: default; }
+.managed-terminal-error.is-stalled { border-color: color-mix(in srgb, var(--term-warn) 45%, transparent); color: color-mix(in srgb, var(--term-warn) 75%, var(--cc-text)); cursor: default; }
 /* 横幅内的动作组(结束会话/关闭):文案在左,按钮靠右排开——横幅不再只告知不给出口。 */
 .managed-terminal-error { display: flex; align-items: center; gap: var(--sp-8); }
 .managed-terminal-error > span { flex: 1 1 auto; }
 .managed-terminal-error button { flex: 0 0 auto; padding: var(--sp-3) var(--sp-8); border: 1px solid rgba(255,255,255,.14); border-radius: var(--r-5); color: inherit; background: rgba(255,255,255,.06); font-size: var(--fs-10); cursor: pointer; }
 .managed-terminal-error button:hover:not(:disabled) { background: rgba(255,255,255,.12); }
 .managed-terminal-error button:disabled { opacity: .55; cursor: default; }
-.managed-terminal-actions button { padding: var(--sp-4) var(--sp-8); border: 1px solid rgba(255,255,255,.12); border-radius: var(--r-5); color: #a7adaa; background: rgba(21,22,23,.82); font-size: var(--fs-10); cursor: pointer; }
+.managed-terminal-actions button { padding: var(--sp-4) var(--sp-8); border: 1px solid rgba(255,255,255,.12); border-radius: var(--r-5); color: var(--term-fg-dim); background: rgba(var(--term-bg-rgb), .82); font-size: var(--fs-10); cursor: pointer; }
 /* ── 终端内搜索条(Ctrl+F,ManagedTerminal):浮在终端右上角,深色底不遮 TUI 主体;
    z 高于 hover 才显形的操作条(managed-terminal-actions),同区不打架。 ── */
-.term-search { position: absolute; top: 8px; right: 20px; z-index: 6; display: flex; align-items: center; gap: var(--sp-4); padding: var(--sp-4) var(--sp-6); border: 1px solid rgba(255,255,255,.14); border-radius: var(--r-md); background: rgba(21,22,23,.94); box-shadow: 0 2px 10px rgba(0,0,0,.35); }
+.term-search { position: absolute; top: 8px; right: 20px; z-index: 6; display: flex; align-items: center; gap: var(--sp-4); padding: var(--sp-4) var(--sp-6); border: 1px solid rgba(255,255,255,.14); border-radius: var(--r-md); background: rgba(var(--term-bg-rgb), .94); box-shadow: 0 2px 10px rgba(0,0,0,.35); }
 /* broker 审批横幅在场时让位：两者同挂 top:8px、同 z——搜索条会正好压住横幅右端的
    「回对话页」按钮（横幅在 ChatWindow 里先渲染、DOM 在前，后写者盖上）。横幅约 30px
    高，搜索条下移到它底下。 */
 .chat-terminal-approval ~ * .term-search { top: 46px; }
-.term-search-input { width: 180px; border: 0; outline: none; background: transparent; color: #e7e9e8; font-size: var(--fs-11); padding: var(--sp-2) var(--sp-4); }
-.term-search-input::placeholder { color: #7d827f; }
-.term-search-miss { flex: 0 0 auto; color: #d9a03f; font-size: var(--fs-10); padding: 0 var(--sp-2); }
-.term-search-btn { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border: 0; border-radius: var(--r-5); color: #a7adaa; background: transparent; cursor: pointer; font-size: var(--fs-12); line-height: 1; }
-.term-search-btn:hover { color: #e7e9e8; background: rgba(255,255,255,.10); }
+.term-search-input { width: 180px; border: 0; outline: none; background: transparent; color: var(--term-fg); font-size: var(--fs-11); padding: var(--sp-2) var(--sp-4); }
+.term-search-input::placeholder { color: var(--term-fg-faint); }
+.term-search-miss { flex: 0 0 auto; color: var(--term-warn); font-size: var(--fs-10); padding: 0 var(--sp-2); }
+.term-search-btn { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border: 0; border-radius: var(--r-5); color: var(--term-fg-dim); background: transparent; cursor: pointer; font-size: var(--fs-12); line-height: 1; }
+.term-search-btn:hover { color: var(--term-fg); background: rgba(255,255,255,.10); }
 .term-search-btn.is-close { font-size: var(--fs-13); }
 .managed-terminal:hover .managed-terminal-actions { opacity: 1; }
 /* 悬停可点内容(URL/文件路径)时的操作提示(T-4):固定右下角、不吃指针,不挡画面。 */
@@ -6873,9 +6885,9 @@ button.scm-check-name:hover { text-decoration: underline; }
   z-index: 4;
   padding: var(--sp-3) var(--sp-8);
   border-radius: var(--r-5);
-  background: rgba(21,22,23,.92);
+  background: rgba(var(--term-bg-rgb), .92);
   border: 1px solid rgba(255,255,255,.14);
-  color: #a7adaa;
+  color: var(--term-fg-dim);
   font-size: var(--fs-10);
   pointer-events: none;
 }
@@ -6915,7 +6927,7 @@ button.scm-check-name:hover { text-decoration: underline; }
   .obm-run::after { border-color: var(--cc-ok-vivid); }
   .chat-todo-badge.is-in_progress { border-color: var(--cc-ok-vivid); }
   /* 终端初始化转圈：环色是固定灰白，不是 currentColor（复核指出漏网）。 */
-  .managed-terminal-spinner { border-color: #c8cdca; }
+  .managed-terminal-spinner { border-color: var(--term-fg-2); }
 }
 
 /* dev 构建角标（DevBadge，仅 vite dev 渲染）：幽灵胶囊——柔和琥珀填充 + 细边框，

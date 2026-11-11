@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as Rea
 import { listen } from "@tauri-apps/api/event";
 import { appConfirm } from "../confirm";
 import { Terminal } from "@xterm/xterm";
+import { terminalTheme } from "./terminalTheme";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { SearchAddon } from "@xterm/addon-search";
@@ -622,9 +623,9 @@ export function ManagedTerminal({ sessionId, status, reviewPending = false, back
       // 占位默认值,真实值由设置(terminal_scrollback)经 applyTermStyle 下发——挂载时读一次,
       // settings-changed 热应用。
       scrollback: 5000,
-      // 绿色只留给光标这一格宽的点缀；选区是成片色块，用低饱和灰绿保持清爽。
+      // 配色取自 --term-*（terminalTheme.ts）：光标用品牌蓝点缀，选区是成片色块，用淡蓝保持清爽。
       // 底色与对话视图同档（--cc-bg / --cc-window-bg = #121212），切页签时不跳色。
-      theme: { background: "#121212", foreground: "#e7e9e8", cursor: "#55d6ae", selectionBackground: "#31403a" },
+      theme: terminalTheme(),
     });
     const fit = new FitAddon();
     terminal.loadAddon(fit);
