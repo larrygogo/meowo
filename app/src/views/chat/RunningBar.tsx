@@ -2,7 +2,7 @@
 /// 小仓库、最近命令的展示清洗、贪吃蛇 spinner。从 ChatWindow 搬出：这是一块独立的展示
 /// 领域，状态行每秒刷新，放在五千行组件里只会让人误以为它和会话状态纠缠在一起。
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { COMPACTING_ACTIVITY } from "../../activity";
 import { useT } from "../../i18n";
 import { fmtElapsed, type CliRetry, type CliStatus } from "./cliStatus";
@@ -104,8 +104,11 @@ export function RunningBar({ store, turnStartedAt, override, fallbackVerb, activ
   // 自动重试压过一切说法（对照 Kimi 的 turnRetry 优先）：这是此刻「为什么没动静」的真正答案。
   const verb = retry ? t.chat.workingRetry(retry.attempt, retry.max) : override ?? fresh?.verb ?? fallbackVerb;
   const detail = fresh ? fresh.detail : turnStartedAt !== null ? fmtElapsed(now - turnStartedAt) : null;
+  // 不是 live region：动词每几秒换一个（Pondering / Cogitating…）、活动行每次工具调用都换，
+  // 放在 polite 区里读屏会被连续打断（调研 i10，与 G-16 状态点播报风暴同类）。
+  // 读屏播报交给常驻的 TurnAnnouncer，只说稳定的「工作中 / 回复完成」。
   return (
-    <div className="chat-running" role="status" aria-live="polite">
+    <div className="chat-running">
       <div className="chat-running-line">
         <SnakeSpinner />
         <span className="chat-running-verb">{verb}</span>
@@ -121,4 +124,21 @@ export function RunningBar({ store, turnStartedAt, override, fallbackVerb, activ
       )}
     </div>
   );
+}
+
+/// 回合状态的读屏播报：常驻节点（运行条随回合结束卸载，卸载的 live region 读屏不播），
+/// 只放稳定的状态句。进入运行播「工作中」，同一会话从运行到停下播一次「回复完成」，
+/// 切会话清空，不把上一个会话的结束算到新会话头上。
+export function TurnAnnouncer({ running, sessionId }: { running: boolean; sessionId: number }) {
+  const t = useT();
+  const [text, setText] = useState("");
+  const prev = useRef({ running, sessionId });
+  useEffect(() => {
+    const last = prev.current;
+    prev.current = { running, sessionId };
+    if (last.sessionId !== sessionId) { setText(running ? t.chat.liveWorking : ""); return; }
+    if (running && !last.running) setText(t.chat.liveWorking);
+    else if (!running && last.running) setText(t.chat.liveReplyDone);
+  }, [running, sessionId, t]);
+  return <div className="chat-sronly" role="status" aria-live="polite">{text}</div>;
 }

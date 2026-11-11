@@ -1,7 +1,8 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MutableRefObject, type UIEvent } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { moveNextTo, orderKey, sidebarDirGroups, usePointerReorder, useSessionDrag, type DirGroup as SidebarDirGroup } from "./sidebarDrag";
+import { dropNeighbors, moveNextTo, orderKey, sidebarDirGroups, usePointerReorder, useSessionDrag, type DirGroup as SidebarDirGroup } from "./sidebarDrag";
 import { WorkspaceDirectory } from "./chat/WorkspaceDirectory";
+import { useTablist } from "./useTablist";
 import { confirmStopSession, getLiveSessionsPage, getSettings, moveSessionRank, setWorkspaceOrder as saveWorkspaceOrder, openNewSessionWindow, openProjectDir, recentCwds, renameSession, searchChatTranscripts, sessionTone, setArchived, setSessionNote, type CardMenuMode, type LiveSession, type SessionTone, type TranscriptSearchHit } from "../api";
 import { noteSessionMeta } from "./chat/historyCache";
 import { attentionTone } from "./chat/nextAttention";
@@ -27,6 +28,7 @@ import { ArchivedWorktreePrompt, WorktreeRemoveButton, runBatchCleanup, type Rem
 
 /** 每翻一页新增的会话数。滚到底自动加载下一页，直到后端带回 next_cursor = null 为止。 */
 const PAGE_LIMIT = 60;
+const SIDEBAR_TABS = ["open", "done", "workspaces"] as const;
 
 /** 目录下拉里最多列几个工作目录（后端按最近活跃排序，超出的靠搜索/滚动够不着的本就是冷目录）。 */
 const DIR_LIMIT = 24;
@@ -274,6 +276,12 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
   const [archivedView, setArchivedView] = useState(false);
   // 「工作空间」页签（对照 Kimi Code 的第三个页签）：列表换成工作区目录，不落盘。
   const [workspacesView, setWorkspacesView] = useState(false);
+  const sidebarTab = workspacesView ? "workspaces" : archivedView ? "done" : "open";
+  const selectSidebarTab = useCallback((key: (typeof SIDEBAR_TABS)[number]) => {
+    setWorkspacesView(key === "workspaces");
+    if (key !== "workspaces") setArchivedView(key === "done");
+  }, []);
+  const sidebarTabs = useTablist({ keys: SIDEBAR_TABS, active: sidebarTab, onSelect: selectSidebarTab });
   const archivedViewRef = useRef(archivedView);
   archivedViewRef.current = archivedView;
   const [dirs, setDirs] = useState<string[]>([]);
@@ -788,18 +796,37 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
     return { bucketOf, lists };
   }, [groups, ordered, starred]);
   // 拖拽（手动排序、非多选态；手机长按后拖）：落下即本地先挪，再写后端；写失败重取回真实顺序。
+  const moveSession = (id: number, above: number | null, below: number | null) => {
+    setSessions((prev) => (prev ? moveNextTo(prev, (item) => item.session.id, id, above, below) : prev));
+    moveSessionRank(id, above, below).catch(() => {
+      if (!mountedRef.current) return;
+      setActionError(t.chat.sidebarActionFailed);
+      void loadRef.current("refresh");
+    });
+  };
+  const reorderEnabled = sortMode === "manual" && selectedIds.size === 0;
+  // 键盘排序（调研 s8：原先只能鼠标拖）：焦点在条目上按 Ctrl/⌘+Shift+↑/↓ 在同一个桶里挪一位，
+  // 与拖拽同一条写回路径。不用 Alt：Alt+↑/↓ 切会话、Alt+Shift+↓ 跳到下一个待处理会话。
+  // 挪完 React 会搬动条目 DOM，焦点随之掉回 body，下一拍按 id 找回来。
+  const keyboardMove = (id: number, dir: -1 | 1): boolean => {
+    if (!reorderEnabled) return false;
+    const bucket = dragBuckets.bucketOf.get(id);
+    const list = bucket == null ? [] : dragBuckets.lists.get(bucket) ?? [];
+    const neighbor = list[list.indexOf(id) + dir];
+    if (neighbor === undefined) return true;
+    const neighbors = dropNeighbors(list, id, { id: neighbor, after: dir > 0 });
+    if (!neighbors) return true;
+    moveSession(id, neighbors.above, neighbors.below);
+    window.setTimeout(() => {
+      listRef.current?.querySelector<HTMLElement>(`.chat-sidebar-item[data-session-id="${id}"]`)?.focus();
+    }, 0);
+    return true;
+  };
   const drag = useSessionDrag({
-    enabled: sortMode === "manual" && selectedIds.size === 0,
+    enabled: reorderEnabled,
     bucketOf: (id) => dragBuckets.bucketOf.get(id) ?? null,
     listOf: (bucket) => dragBuckets.lists.get(bucket) ?? [],
-    onMove: (id, above, below) => {
-      setSessions((prev) => (prev ? moveNextTo(prev, (item) => item.session.id, id, above, below) : prev));
-      moveSessionRank(id, above, below).catch(() => {
-        if (!mountedRef.current) return;
-        setActionError(t.chat.sidebarActionFailed);
-        void loadRef.current("refresh");
-      });
-    },
+    onMove: moveSession,
     // 手机长按没挪就松手 = 开菜单（iOS 长按不派发 contextmenu，Android 的那次被拖拽吞掉了）。
     onHold: (id, x, y) => {
       const item = sessions?.find((entry) => entry.session.id === id);
@@ -974,7 +1001,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
         onPointerDown={(event) => {
           if (selectedIds.size === 0 && !editing && !noting) onPrefetch?.(item.session.id);
           // 手动排序下按住拖动即调位置（行内按钮、编辑框不起拖）。
-          if (!editing && !noting && !(event.target as HTMLElement).closest("button, input, textarea")) drag.onPointerDown(event, item.session.id);
+          if (!editing && !noting && !(event.target as HTMLElement).closest("button, input, textarea, .chat-sidebar-item-menu, .chat-sidebar-check-btn")) drag.onPointerDown(event, item.session.id);
         }}
         onPointerEnter={(event) => {
           if (event.pointerType !== "mouse" || !onPrefetch) return;
@@ -1002,8 +1029,14 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
           }
           onSelect(item.session.id);
         }}
+        aria-keyshortcuts={reorderEnabled ? "Control+Shift+ArrowUp Control+Shift+ArrowDown" : undefined}
         onKeyDown={(event) => {
           if (event.target !== event.currentTarget) return; // 内部按钮/输入框自理
+          if ((event.ctrlKey || event.metaKey) && event.shiftKey && !event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
+            // 先拦住：列表上的 ↑/↓ roving 不看修饰键，冒泡上去会把焦点挪走。
+            if (keyboardMove(item.session.id, event.key === "ArrowUp" ? -1 : 1)) { event.preventDefault(); event.stopPropagation(); }
+            return;
+          }
           if (event.key !== "Enter" && event.key !== " ") return;
           event.preventDefault(); // 空格不要滚动列表
           if (editing || noting) { setEditingId(null); setNotingId(null); return; }
@@ -1144,12 +1177,13 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
         {selectedIds.size > 0 ? (
           /* 多选态:右侧换成勾选圈(未选空心/选中实心勾),点它增删不必按住 Ctrl。
              「⋯」菜单此间让位——多选时的动作在底部操作条上。 */
-          <button
-            type="button"
+          // 条目本身是 role=button，子元素对读屏是「纯展示」，嵌在里面的按钮本来就读不到；
+          // 哪怕 tabIndex=-1 + aria-hidden，可聚焦子元素仍被 axe 判 nested-interactive（serious）。
+          // 所以只做指针热区（span，不可聚焦）：选中状态由条目的 aria-pressed 播报，
+          // 键盘在条目上按 Enter/空格增删。
+          <span
             className="chat-sidebar-check-btn"
-            role="checkbox"
-            aria-checked={selectedIds.has(item.session.id)}
-            aria-label={item.task_title || t.sticker.waitingFirstInput}
+            aria-hidden="true"
             onClick={(event) => {
               event.stopPropagation();
               toggleSelected(item.session.id);
@@ -1160,21 +1194,21 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
                 <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round"><path d="M4.5 12.5l5 5 10-11" /></svg>
               )}
             </span>
-          </button>
+          </span>
         ) : menuMode === "button" && (
-          <button
-            type="button"
+          // 同上，只做指针热区。不占 Tab 停靠点：上百条会话每条一个 Tab 站等于列表无法
+          // traverse。键盘走菜单键/Shift+F10（onContextMenu，菜单挂载即聚焦首项），
+          // 读屏触屏走长按（onHold 开同一个菜单）。
+          <span
             className="chat-sidebar-item-menu"
-            // 不占 Tab 停靠点：上百条会话每条一个 Tab 站等于列表无法 traverse。键盘路径
-            // 由 CardContextMenu 承担（条目右键/聚焦后菜单挂载即聚焦首项）。
-            tabIndex={-1}
+            aria-hidden="true"
             aria-label={t.sticker.cardMenu}
             onClick={(event) => {
               event.stopPropagation(); // 点菜单不切会话
               const rect = event.currentTarget.getBoundingClientRect();
               openMenuAt(item, rect.right, rect.bottom + 4);
             }}
-          ><MoreIcon /></button>
+          ><MoreIcon /></span>
         )}
         </span>
       </div>
@@ -1257,24 +1291,16 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
       {/* 「进行中 / 已完成」两个标签页（对照 Kimi 的 tabOpen / tabDone）：已完成就是 archived，
           此前藏在「筛选 → 已归档会话」里、进去后还得靠一条状态条说明「换了一批会话」（7C-5）。
           做成常驻标签页，当前看的是哪一批一眼可见，取回也只要一击。 */}
-      <div className="chat-sidebar-tabs" role="tablist" aria-label={t.chat.sidebarTitle}>
-        {([false, true] as const).map((done) => (
+      <div className="chat-sidebar-tabs" {...sidebarTabs.listProps} aria-label={t.chat.sidebarTitle}>
+        {SIDEBAR_TABS.map((key) => (
           <button
-            key={String(done)}
+            key={key}
             type="button"
-            role="tab"
-            aria-selected={!workspacesView && archivedView === done}
-            className={!workspacesView && archivedView === done ? "is-active" : ""}
-            onClick={() => { setWorkspacesView(false); setArchivedView(done); }}
-          >{done ? t.chat.sidebarTabDone : t.chat.sidebarTabOpen}</button>
+            {...sidebarTabs.tabProps(key)}
+            className={sidebarTab === key ? "is-active" : ""}
+            onClick={() => selectSidebarTab(key)}
+          >{key === "done" ? t.chat.sidebarTabDone : key === "open" ? t.chat.sidebarTabOpen : t.chat.sidebarTabWorkspaces}</button>
         ))}
-        <button
-          type="button"
-          role="tab"
-          aria-selected={workspacesView}
-          className={workspacesView ? "is-active" : ""}
-          onClick={() => setWorkspacesView(true)}
-        >{t.chat.sidebarTabWorkspaces}</button>
       </div>
       {/* 「会话」小节标题（对照 Kimi Code）：右侧两个小图标——全部折叠 / 展开（分组时才有）、
           视图与排序。 */}
@@ -1313,7 +1339,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
         </div>
       )}
       {workspacesView ? (
-        <nav className="chat-sidebar-list" aria-label={t.chat.sidebarTabWorkspaces}>
+        <nav id={sidebarTabs.panelId} className="chat-sidebar-list" aria-label={t.chat.sidebarTabWorkspaces}>
           <WorkspaceDirectory
             options={workspaceOptions}
             onFilter={(cwd) => { setDirFilter(cwd); setArchivedView(false); setWorkspacesView(false); }}
@@ -1323,6 +1349,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
       ) : (
       <nav
         ref={listRef}
+        id={sidebarTabs.panelId}
         className="chat-sidebar-list"
         aria-label={t.chat.sidebarTitle}
         onScroll={onScroll}

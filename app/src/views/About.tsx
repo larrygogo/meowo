@@ -167,7 +167,7 @@ function ShortcutsSection() {
           </div>
         </Fragment>
       ))}
-      <div className="sec-hint">{t.chat.shortcutTerminalNote(displayKeys("Ctrl"))}</div>
+      <div className="sec-hint">{t.chat.shortcutTerminalNote(displayKeys("Ctrl"), IS_MAC ? "⌃" : "Ctrl")}</div>
     </>
   );
 }

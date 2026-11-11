@@ -41,6 +41,30 @@ export function moveNextTo<T, K = number>(items: readonly T[], idOf: (item: T) =
   return rest;
 }
 
+/// 拖到列表上下沿多近开始自动滚动、每帧最快滚多少。会话多时想从底拖到顶，原先只能边拖边滚轮
+/// （调研 s8）。40px 是 VS Code / Finder 列表拖拽的常见热区；14px/帧 ≈ 840px/s，扫过一屏不到半秒。
+const EDGE_ZONE = 40;
+const EDGE_MAX_STEP = 14;
+
+/// 指针纵坐标 → 本帧滚动量（负数往上）。离边越近越快，出了列表按最快速度。
+export function edgeScrollStep(y: number, top: number, bottom: number, zone = EDGE_ZONE, max = EDGE_MAX_STEP): number {
+  if (bottom - top <= zone * 2) return 0;
+  const fromTop = y - top;
+  const fromBottom = bottom - y;
+  if (fromTop < zone) return -Math.ceil(max * Math.min(1, (zone - Math.max(fromTop, 0)) / zone));
+  if (fromBottom < zone) return Math.ceil(max * Math.min(1, (zone - Math.max(fromBottom, 0)) / zone));
+  return 0;
+}
+
+/// 最近的可纵向滚动祖先（会话列表 .chat-sidebar-list）。
+function scrollParent(el: HTMLElement): HTMLElement | null {
+  for (let node = el.parentElement; node; node = node.parentElement) {
+    const overflow = getComputedStyle(node).overflowY;
+    if ((overflow === "auto" || overflow === "scroll") && node.scrollHeight > node.clientHeight) return node;
+  }
+  return null;
+}
+
 /// 按下后移动多少像素才算开始拖：小于它仍是点击。
 const DRAG_THRESHOLD = 4;
 /// 触屏长按多久起拖。比系统长按菜单（Android 约 500ms）短，拖起来之后再到的 contextmenu 一律拦掉。
@@ -89,6 +113,24 @@ export function usePointerReorder<K extends string | number>({ enabled, attr, pa
     let moved = false;
     let holdTimer = 0;
     let target: DropAt<K> | null = null;
+    let lastX = startX;
+    let lastY = startY;
+    let edgeFrame = 0;
+    const scroller = scrollParent(source);
+    // 拖动期间每帧看一次指针离列表边缘多近：指针停着不动也要接着滚，所以不能只在 pointermove 里滚。
+    const edgeTick = () => {
+      edgeFrame = window.requestAnimationFrame(edgeTick);
+      if (!scroller) return;
+      const rect = scroller.getBoundingClientRect();
+      const step = edgeScrollStep(lastY, rect.top, rect.bottom);
+      if (step === 0) return;
+      const before = scroller.scrollTop;
+      scroller.scrollTop = before + step;
+      if (scroller.scrollTop === before) return;
+      // 列表滚了，指针下面换了一行：落点跟着重算。
+      target = pick(lastX, lastY);
+      setDropAt(target);
+    };
     const pick = (x: number, y: number): DropAt<K> | null => {
       const row = document.elementFromPoint(x, y)?.closest<HTMLElement>(selector);
       const raw = row?.dataset[attr];
@@ -113,6 +155,7 @@ export function usePointerReorder<K extends string | number>({ enabled, attr, pa
       // 挂在侧栏里而不是 body 下：行样式多是 .chat-sidebar 下的后代选择器，挂出去就走样。
       (source.closest(".chat-sidebar") ?? document.body).appendChild(ghost);
       ghost.style.transform = `translate(${startX - grabX}px, ${startY - grabY}px)`;
+      if (scroller) edgeFrame = window.requestAnimationFrame(edgeTick);
     };
     const move = (e: PointerEvent) => {
       const far = (limit: number) => Math.abs(e.clientY - startY) >= limit || Math.abs(e.clientX - startX) >= limit;
@@ -126,6 +169,8 @@ export function usePointerReorder<K extends string | number>({ enabled, attr, pa
         begin();
       }
       if (far(DRAG_THRESHOLD)) moved = true;
+      lastX = e.clientX;
+      lastY = e.clientY;
       e.preventDefault();
       if (ghost) ghost.style.transform = `translate(${e.clientX - grabX}px, ${e.clientY - grabY}px)`;
       target = pick(e.clientX, e.clientY);
@@ -168,6 +213,7 @@ export function usePointerReorder<K extends string | number>({ enabled, attr, pa
     window.addEventListener("keydown", key, true);
     cleanupRef.current = () => {
       window.clearTimeout(holdTimer);
+      window.cancelAnimationFrame(edgeFrame);
       window.removeEventListener("touchmove", touchMove);
       // contextmenu 在松手后才派发的情况也要拦住，留到下一拍再放开。
       if (touch) window.setTimeout(() => { touchHoldRef.current = false; }, 0);

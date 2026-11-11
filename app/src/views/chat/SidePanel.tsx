@@ -428,9 +428,10 @@ function TabBar({ state, actions, title, onContextMenu, closeLabel, agentBusy, a
             {waiting(tab)
               ? <span className="side-panel-tab-waiting" title={waitingLabel} aria-label={waitingLabel} />
               : agentBusy(tab) && <span className="side-panel-tab-agent" title={agentLabel} aria-label={agentLabel} />}
+            {/* 关闭叉在页签按钮里面：按钮的子元素对读屏是「纯展示」，嵌套的 role=button 本来就
+                读不到（axe nested-interactive）。读屏/键盘关页签走右键菜单（菜单键同样触发）。 */}
             <span
-              role="button"
-              tabIndex={-1}
+              aria-hidden="true"
               className="side-panel-tab-close"
               aria-label={closeLabel}
               onPointerDown={(event) => event.stopPropagation()}

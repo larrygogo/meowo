@@ -19,6 +19,8 @@ import { formatBackendError } from "../i18n/errors";
 import { useShowWhenReady } from "../useShowWhenReady";
 import { reduceChatEvents } from "../chat/reducer";
 import { ApprovalCard, ApprovalCommandDetail, isRiskyCommand } from "./chat/ApprovalCard";
+import { CardAnnouncer } from "./chat/cardAnnouncer";
+import { isSidebarToggleKey } from "./terminalKeys";
 import { copyPlainText } from "./chat/clipboard";
 import { readSideAnswer, sideQuestionText } from "./chat/sideQuestion";
 import { approvalChoiceForKey, BrokerApprovalCard, useBrokerResolver } from "./chat/BrokerApprovalCard";
@@ -38,7 +40,7 @@ import { useSidebarLayout } from "./chat/useSidebarLayout";
 import { pasteImagesNatively, useInterrupt, writeInterruptKeys } from "./chat/terminalInput";
 import { clearPartialImageDraft, composerDraftText, createSendQueue, IMAGE_PASTE_LANDING_POLLS, LATE_IMAGE_GRACE_MS, RESUME_VERIFY_WINDOW_MS, stashComposerDraft, submitToTerminal, terminalInput, waitForTerminalReady, type TerminalReadyMessages, type TerminalStartupResult } from "./chat/terminalSubmit";
 import { BottomSheet, SheetOnPhone } from "./chat/BottomSheet";
-import { runningActivityView, RunningBar, SnakeSpinner, useCliStatusStore } from "./chat/RunningBar";
+import { runningActivityView, RunningBar, SnakeSpinner, TurnAnnouncer, useCliStatusStore } from "./chat/RunningBar";
 import { arrowPanelApprovalDetails, framedBoxApprovalDetails, proceedBoxApprovalDetails } from "./chat/terminalApprovalDetails";
 import { ModelPicker, readStarred, type ModelPickerItem } from "./chat/ModelPicker";
 import { currentPresetId } from "./chat/modelLabels";
@@ -804,6 +806,8 @@ export function ChatWindow() {
         // 同键开合（VS Code/Slack 惯例）：已开着时再按一次是「收起」，不是无操作。
         setSwitcherOpen((open) => !open);
       } else if (e.code === "KeyB") {
+        // 焦点在托管终端里的 Ctrl+B 归 claude（转后台），xterm 已经发了 ，这里不再收侧栏。
+        if (!isSidebarToggleKey(e, document.activeElement)) return;
         e.preventDefault();
         toggleSidebarRef.current();
       } else if (e.code === "Digit1") {
@@ -4160,6 +4164,10 @@ export function ChatWindow() {
         {/* 运行行是对话的最后一行（对照 Kimi 的 WorkingIndicator）：它说的是「接下来会出现
             什么」，该待在视线所在的对话末尾，而不是输入框上方的一条常驻栏；对话还没有任何
             内容时也照样出现。上翻历史时由「回到最新」钮上的运行记号接住这条信号。 */}
+        {/* 回合状态的读屏播报常驻在这里（运行条会随回合结束卸载）；loading 期间不算运行，
+            切会话时旧 tone 还没换掉的那一帧不会被当成「回复完成」。 */}
+        <TurnAnnouncer running={!loading && tone === "running"} sessionId={sessionId} />
+        <CardAnnouncer />
         {!loading && sessionId !== 0 && !(failed && items.length === 0) && tone === "running" && (
           <RunningBar
             store={cliStatusStore}

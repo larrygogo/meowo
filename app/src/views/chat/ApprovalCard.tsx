@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type FocusEvent, type ReactNode, type RefObject } from "react";
 import { remoteUi } from "../../remoteMode";
+import { announceCard } from "./cardAnnouncer";
 
 /// 审批/交互卡的统一外壳。对话页上四类卡——broker 审批(claude hook 劫走的请求)、
 /// 终端命令审批(claude/kimi 屏幕识别)、交互选择器(question/plan)、其他屏幕提示
@@ -53,6 +54,9 @@ export function ApprovalCard({ title, badge, className, children, sideActions, a
     if (!entry || entry.disabled || entry === event.target) return;
     entry.focus();
   };
+  // 出现即播报标题（polite，不动焦点）：卡片不获焦时 alertdialog 读屏不会主动念，见 cardAnnouncer。
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 只在出现那一刻播一次，标题后续变化（倒计时等）不重播
+  useEffect(() => { announceCard(title); }, []);
   // 焦点归还用 layout cleanup:被动 effect 的 cleanup 在 DOM 移除后才跑,那时
   // contains(activeElement) 已失效(焦点先掉回 body);layout cleanup 在移除前执行,
   // 还能认出「焦点在卡内」。归还本身推迟到宏任务:同一帧挂载的新卡会先接管焦点

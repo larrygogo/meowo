@@ -71,6 +71,15 @@
   --cc-ok-vivid: #3fb950;
   --cc-warn-vivid: #d29922;
   --cc-err-vivid: #f85149;
+  /* 状态色当文字用（CI 状态、文件状态字母、+N/-N、queued 标签）的文字档：鲜亮色只留给点、条、图标底。
+     深色下与鲜亮色同值（#121212 上 7.37～7.42:1，调研实测无问题）；浅色另取深档。
+     不复用 --cc-err-text：它是错误提示句的「错误色混正文色」，深色下发粉，CI 失败和 diff 删除
+     要的是与红点同色相的字。 */
+  --cc-ok-text: #3fb950;
+  --cc-warn-text: #d29922;
+  /* 红色比红点亮一档：#f85149 在标题栏悬停底 #2b2b2b 只有 4.22:1（.tb-git-del 实测 4.27），
+     #ff7b72 在 #121212/#292929/#2b2b2b 上 7.43/5.77/5.62:1。 */
+  --cc-fail-text: #ff7b72;
   /* 语法高亮调色板（文件/更改面板，One Dark Pro 系——绿字符串沿用 One Dark 原色，与蓝色强调色错开）：
      只被 .chat-diff-panel 下的 .hljs-* 规则消费；与功能色（ok/err/warn）解耦，
      换主题色不影响代码着色。 */
@@ -265,14 +274,20 @@
      深浅主题各一组、名字分开，终端页签在浅色主题下也能直接取到深色那组。 */
   --kt-dark-1: rgba(255, 255, 255, 0.84);
   --kt-dark-2: rgba(255, 255, 255, 0.56);
-  --kt-dark-3: rgba(255, 255, 255, 0.42);
+  /* 第三档是对话窗的 --cc-text-faint（时间、路径、小节标题这类正文级小字），必须过 4.5:1。
+     Kimi 原值 .42/.45 在 #121212 上 4.10:1、白底 3.35:1（axe color-contrast，2026-11-11 复测）；
+     .52 在 #121212/#292929/#353535 上 5.66/5.06/4.58:1，.56 在白/#f2f2f2/#ebebeb 上 4.94/4.80/4.72:1。 */
+  --kt-dark-3: rgba(255, 255, 255, 0.52);
   --kt-dark-4: rgba(255, 255, 255, 0.26);
   --kt-light-1: rgba(0, 0, 0, 0.9);
   --kt-light-2: rgba(0, 0, 0, 0.6);
-  --kt-light-3: rgba(0, 0, 0, 0.45);
+  --kt-light-3: rgba(0, 0, 0, 0.56);
   --kt-light-4: rgba(0, 0, 0, 0.3);
-  /* 键盘焦点环：3px 强调色柔光（只在 :focus-visible 出现，鼠标点击不显示）。 */
-  --focus-ring: 0 0 0 3px var(--cc-accent-soft);
+  /* 键盘焦点环：2px 实线强调色。原先是 3px accent-soft 柔光，合成后对底色只有 1.11:1（深）/
+     1.12:1（浅），WCAG 1.4.11 要求 ≥3:1（2026-11-11 调研 i2）。accent 实线实测：深色 #1a88ff 对
+     #121212 5.36:1、浅色 #1783ff 对白 3.67:1（ui-lanes/a11y/focus.cjs 逐个元素复测）。
+     柔光只适合做填充，不能当指示。 */
+  --focus-ring: 0 0 0 2px var(--cc-accent);
 }
 
 /* ===== 浅色主题：覆盖调色板 + 少量硬编码深色值（其余走 --cc-* 自动适配）。
@@ -331,6 +346,11 @@
   --cc-ok-vivid: #17ab77;
   --cc-warn-vivid: #d99a1a;
   --cc-err-vivid: #db453a;
+  /* 浅色文字档：鲜亮色在白底只有 2.45～4.26:1（调研 i3）。这三档在白 / #f5f5f5 / 自身 18% 叠底上
+     依次为 ok 5.86/5.37/4.87、warn 6.15/5.64/5.29、fail 5.98/5.49/4.70（ui-lanes/a11y/contrast-tokens.mjs）。 */
+  --cc-ok-text: #0d7350;
+  --cc-warn-text: #84590c;
+  --cc-fail-text: #bb2d22;
   /* 语法高亮调色板浅色版（One Light 同族、逐色压暗）：原版 One Light 的绿/蓝/黄
      在近白卡面只有 3–4:1，这里取同色相的深档，全部 ≥4.5:1。 */
   --cc-syn-keyword: #a626a4;
@@ -366,10 +386,10 @@
     --hairline: 1px;
     --kt-dark-1: rgba(255, 255, 255, 0.9);
     --kt-dark-2: rgba(255, 255, 255, 0.64);
-    --kt-dark-3: rgba(255, 255, 255, 0.5);
+    --kt-dark-3: rgba(255, 255, 255, 0.54);
     --kt-light-1: rgba(0, 0, 0, 0.95);
     --kt-light-2: rgba(0, 0, 0, 0.68);
-    --kt-light-3: rgba(0, 0, 0, 0.53);
+    --kt-light-3: rgba(0, 0, 0, 0.58);
   }
 }
 /* 浅色下把硬编码的白/黑叠层、纯黑选中、深色面板换成浅色等价物（其余规则吃变量自动适配）。 */
@@ -1128,7 +1148,7 @@ button.stab {
 }
 .needs-error::before {
   content: "!";
-  color: var(--cc-err-vivid);
+  color: var(--cc-fail-text);
   font-size: calc(14px * var(--cc-ui));
   font-weight: 800;
   line-height: 1;
@@ -1217,8 +1237,8 @@ button.stab {
 .ctx-item svg { display: block; flex: none; color: var(--cc-text-faint); }
 /* 「结束会话」：平时同普通项，hover/键盘聚焦才显破坏性的红（与对话窗标题栏 .chat-end
    同语汇）。:focus-visible 不能省：键盘导航/触屏没有 hover，破坏性语义不该只给鼠标看。 */
-.ctx-item-danger:hover, .ctx-item-danger:focus-visible { color: var(--cc-err-vivid); background: color-mix(in srgb, var(--cc-err-vivid) 10%, transparent); }
-.ctx-item-danger:hover svg, .ctx-item-danger:focus-visible svg { color: var(--cc-err-vivid); }
+.ctx-item-danger:hover, .ctx-item-danger:focus-visible { color: var(--cc-fail-text); background: color-mix(in srgb, var(--cc-err-vivid) 10%, transparent); }
+.ctx-item-danger:hover svg, .ctx-item-danger:focus-visible svg { color: var(--cc-fail-text); }
 .ctx-sep { height: 1px; margin: var(--sp-3) var(--sp-6); background: var(--cc-border); }
 /* 「删除 worktree」不可删时：aria-disabled 而不是 disabled（要能聚焦，读屏才念得到下面的原因），
    外观与 :disabled 一致；原因写在项下方，和菜单项文字左缘对齐（图标 14px + gap）。 */
@@ -2388,7 +2408,7 @@ button.stab {
   margin: var(--sp-24) var(--sp-2) var(--sp-4);
   color: var(--cc-text);
   font-size: var(--fs-13);
-  font-weight: 650;
+  font-weight: 600;
 }
 .relay-intro { margin-top: var(--sp-6); margin-bottom: var(--sp-12); }
 .provider-access {
@@ -3481,7 +3501,7 @@ select.ns-input {
   text-overflow: ellipsis;
 }
 .agent-install-error {
-  color: var(--cc-err-vivid);
+  color: var(--cc-fail-text);
 }
 /* 安装日志路径：次要信息，压小压淡；路径可能很长，允许折行而非撑破卡片。 */
 .agent-install-log {
@@ -3813,7 +3833,8 @@ select.ns-input {
 .tb-open-main, .tb-open-chev { display: grid; place-items: center; padding: 0; border: 0; background: transparent; color: var(--cc-text-dim); cursor: pointer; }
 .tb-open-main { width: calc(var(--icon-button-sm) + 4px); }
 .tb-open-main img { width: 16px; height: 16px; }
-.tb-open-chev { width: 20px; border-left: var(--hairline) solid var(--cc-border); }
+/* 24px：20px 时与左侧主按钮挨着，不满足 WCAG 2.5.8 的 24px 目标尺寸（axe target-size）。 */
+.tb-open-chev { width: 24px; border-left: var(--hairline) solid var(--cc-border); }
 .tb-open-main:hover, .tb-open-chev:hover, .tb-open-chev.open { color: var(--cc-text); background: var(--fill-hover); }
 .tb-open-menu { min-width: 200px; }
 .tb-open-menu .dd-ico img { width: 16px; height: 16px; }
@@ -3826,16 +3847,19 @@ select.ns-input {
 .tb-git-pill.is-ahead { color: var(--cc-warn); border-color: color-mix(in srgb, var(--cc-warn) 45%, transparent); }
 .tb-git-pill.is-behind { color: var(--cc-text-dim); }
 .tb-git-pill.is-diff { border-color: color-mix(in srgb, var(--cc-ok-vivid) 40%, transparent); }
-.tb-git-add { color: var(--cc-ok-vivid); }
+.tb-git-add { color: var(--cc-ok-text); }
 /* 当前分支 PR：编号 + 状态小字，按状态配色（GitHub 惯例：开着绿、草稿灰、已合并紫、已关闭红）。 */
-.tb-pr { --pr-color: var(--cc-ok-vivid); display: inline-flex; align-items: center; gap: var(--sp-4); flex: none; height: var(--icon-button-sm); padding: 0 var(--sp-8); border: 0; border-radius: var(--radius-md); background: transparent; color: var(--cc-text-dim); font: inherit; font-size: var(--text-sm); font-variant-numeric: tabular-nums; cursor: pointer; }
+/* --pr-color 给图标和底色，--pr-text 给状态小字：鲜亮绿/紫在浅色白底只有 2.95/3.35:1。 */
+.tb-pr { --pr-color: var(--cc-ok-vivid); --pr-text: var(--cc-ok-text); display: inline-flex; align-items: center; gap: var(--sp-4); flex: none; height: var(--icon-button-sm); padding: 0 var(--sp-8); border: 0; border-radius: var(--radius-md); background: transparent; color: var(--cc-text-dim); font: inherit; font-size: var(--text-sm); font-variant-numeric: tabular-nums; cursor: pointer; }
 .tb-pr:hover { color: var(--cc-text); background: var(--fill-hover); }
 .tb-pr svg { color: var(--pr-color); }
-.tb-pr-state { padding: 1px var(--sp-6); border-radius: 999px; font-size: var(--text-xs); color: var(--pr-color); background: color-mix(in srgb, var(--pr-color) 14%, transparent); }
-.tb-pr.is-draft { --pr-color: var(--cc-text-faint); }
-.tb-pr.is-merged { --pr-color: #a371f7; }
-.tb-pr.is-closed { --pr-color: var(--cc-err-vivid); }
-.tb-git-del { color: var(--cc-err-vivid); }
+.tb-pr-state { padding: 1px var(--sp-6); border-radius: 999px; font-size: var(--text-xs); color: var(--pr-text); background: color-mix(in srgb, var(--pr-color) 14%, transparent); }
+.tb-pr.is-draft { --pr-color: var(--cc-text-faint); --pr-text: var(--cc-text-faint); }
+/* 紫字取 GitHub 已合并的文字档：深 #bc8cff 在 14% 叠底上 ≥4.78:1、浅 #6f42c1 5.61:1。 */
+.tb-pr.is-merged { --pr-color: #a371f7; --pr-text: #bc8cff; }
+:root[data-theme="light"] .chat-window:not(.is-terminal) .tb-pr.is-merged { --pr-text: #6f42c1; }
+.tb-pr.is-closed { --pr-color: var(--cc-err-vivid); --pr-text: var(--cc-fail-text); }
+.tb-git-del { color: var(--cc-fail-text); }
 .chat-todo-btn { position: relative; width: var(--icon-button-sm); height: var(--icon-button-sm); display: grid; place-items: center; border: 0; border-radius: var(--radius-sm); color: var(--cc-text-dim); background: transparent; cursor: pointer; }
 /* 活动小点:面板里有任务/子任务在跑时挂在图标右上角脉冲——面板收着时入口上必须能看出
    「里面有活儿」(实拍反馈)。位置对齐 .chat-diff-btn-count 的角标语言,复用运行指示的脉冲。 */
@@ -3901,7 +3925,7 @@ select.ns-input {
 .chat-queued-bubble { min-width: 0; max-width: min(100%, 560px); padding: var(--sp-8) calc(15px * var(--cc-ui)); border-radius: var(--radius-xl) var(--radius-xl) var(--radius-sm) var(--radius-xl); background: var(--cc-user-bubble); color: var(--cc-chat-text); font-size: var(--text-base); line-height: var(--leading-body); white-space: pre-wrap; overflow-wrap: anywhere; opacity: .7; }
 .chat-queued-dismiss { flex: 0 0 auto; width: 18px; height: 18px; padding: 0; display: grid; place-items: center; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-faint); font: inherit; font-size: var(--text-xs); line-height: 1; cursor: pointer; }
 .chat-queued-dismiss:hover { color: var(--cc-text); background: var(--fill-selected); }
-.chat-queued-tag { flex: 0 0 auto; color: var(--cc-ok-vivid); font-size: var(--text-xs); }
+.chat-queued-tag { flex: 0 0 auto; color: var(--cc-ok-text); font-size: var(--text-xs); }
 /* 「打断并发送」:破坏性次级动作,琥珀描边与发送按钮区分,不抢主视觉。
    .chat-compose 前缀必须有:compose 里有一条 `.chat-compose button` 的 accent 皮肤
    (38px 高、强调色边框+填充,发送键专属),特异性盖过单类名——缺前缀时本按钮被刷成
@@ -3914,7 +3938,7 @@ select.ns-input {
 /* 「结束会话」：平时低调，hover 才显出破坏性的红——它常驻标题栏，不能一直红着抢戏。
    仅在本 GUI 托管该会话的 PTY 时渲染（ptyManaged）。 */
 .chat-end { white-space: nowrap; }
-.chat-end:hover:not(:disabled) { color: var(--cc-err-vivid); background: color-mix(in srgb, var(--cc-err-vivid) 10%, transparent); }
+.chat-end:hover:not(:disabled) { color: var(--cc-fail-text); background: color-mix(in srgb, var(--cc-err-vivid) 10%, transparent); }
 .chat-end:disabled { opacity: .6; cursor: default; }
 /* 「归档」：与看板卡片菜单同一动作，做成图标按钮——标题栏横向已被状态徽标、结束会话、
    视图页签占满，再加一个文字按钮会把标题挤没。归档后按钮留在原位并高亮（is-on），
@@ -4047,7 +4071,8 @@ select.ns-input {
 .sa-dot--done { background: var(--cc-accent); }
 .sa-btn-q { display: inline-flex; align-items: center; gap: var(--sp-5); height: 28px; padding: 0 var(--sp-10); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-sm); background: transparent; color: var(--cc-text); font: inherit; font-size: var(--text-sm); white-space: nowrap; cursor: pointer; }
 .sa-btn-q:hover { background: var(--fill-hover); }
-.sa-btn-q--primary { border-color: var(--cc-accent); background: var(--cc-accent); color: #fff; }
+/* 字色走 --cc-on-accent：写死 #fff 压深色 #1a88ff 只有 3.49:1（调研 sys3）。 */
+.sa-btn-q--primary { border-color: var(--cc-accent); background: var(--cc-accent); color: var(--cc-on-accent); }
 .sa-btn-q--primary:hover { background: color-mix(in srgb, var(--cc-accent) 88%, #fff); }
 .sa-batch { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-6); margin-bottom: var(--sp-8); }
 .sa-batch-count { margin-right: var(--sp-2); color: var(--cc-text-dim); font-size: var(--text-sm); white-space: nowrap; }
@@ -4075,7 +4100,7 @@ select.ns-input {
 .sa-cb svg { width: 11px; height: 11px; }
 .sa-cb-dash { width: 8px; height: 2px; border-radius: 1px; background: #fff; }
 .sa-st { display: inline-flex; align-items: center; gap: var(--sp-5); }
-.sa-st--open { color: var(--cc-ok-vivid); }
+.sa-st--open { color: var(--cc-ok-text); }
 .sa-st--done { color: var(--cc-accent); }
 .sa-title-cell { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cc-text); font-weight: 500; }
 .sa-ws { display: inline-flex; max-width: 100%; color: var(--cc-text-dim); }
@@ -4405,13 +4430,13 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-sidebar-lead { flex: 0 0 16px; height: calc(var(--text-sm) * 1.4); display: inline-flex; align-items: center; justify-content: center; }
 .chat-sidebar-lead .chat-sidebar-dot { position: static; width: 7px; height: 7px; box-shadow: none; }
 .chat-sidebar-lead .chat-sidebar-unread { margin: 0; }
-.chat-sidebar-name { font-weight: 450; line-height: 1.4; }
-.chat-sidebar-item.is-active .chat-sidebar-name { font-weight: 450; }
+.chat-sidebar-name { font-weight: 400; line-height: 1.4; }
+.chat-sidebar-item.is-active .chat-sidebar-name { font-weight: 400; }
 /* 标题吃满整行再做右端渐隐（Kimi 的 mask，不用省略号）：短标题的盒子同样铺满，渐隐只落在空白处。 */
 .chat-sidebar-name-text { flex: 1; text-overflow: clip; -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); }
 .chat-sidebar-metaline { margin-top: 2px; }
 .chat-sidebar-act { position: relative; flex: 0 0 auto; align-self: flex-start; display: inline-flex; align-items: center; justify-content: flex-end; min-width: 24px; height: calc(var(--text-sm) * 1.4); }
-.chat-sidebar-time { margin: 0; color: var(--cc-text-faint); font-size: var(--text-xs); font-weight: 475; font-variant-numeric: tabular-nums; white-space: nowrap; transition: opacity var(--dur-fast) var(--ease-out); }
+.chat-sidebar-time { margin: 0; color: var(--cc-text-faint); font-size: var(--text-xs); font-weight: 400; font-variant-numeric: tabular-nums; white-space: nowrap; transition: opacity var(--dur-fast) var(--ease-out); }
 /* 时间与「⋯」同一个触发条件互换：悬停，或键盘把焦点移到这一行（:focus-visible）。鼠标点过的那行
    焦点一直在（:focus-within），原先「⋯」随它常亮、时间却只在悬停时让位，两者叠在一起（用户实拍）。 */
 .chat-sidebar-item:is(:hover, :focus-visible) .chat-sidebar-act:has(.chat-sidebar-item-menu) .chat-sidebar-time { opacity: 0; visibility: hidden; }
@@ -4443,10 +4468,11 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-ws-dir { position: relative; display: block; padding: var(--sp-8) var(--sp-10) var(--sp-8) var(--sp-8); border-radius: var(--radius-sm); cursor: pointer; user-select: none; }
 .chat-ws-dir + .chat-ws-dir { margin-top: 2px; }
 .chat-ws-dir:hover, .chat-ws-dir.is-menu-open { background: var(--fill-hover); }
-.chat-ws-dir:focus-visible { outline: none; box-shadow: var(--focus-ring, 0 0 0 2px var(--cc-accent)); }
+.chat-ws-dir:focus-visible { outline: none; }
+:root[data-im="kbd"] .chat-ws-dir:focus-visible { box-shadow: var(--focus-ring); }
 .chat-ws-dir-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .chat-ws-dir-icon { flex: 0 0 16px; color: var(--cc-text-faint); }
-.chat-ws-dir-name { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; color: var(--cc-text); font-size: var(--text-sm); font-weight: 450; -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); }
+.chat-ws-dir-name { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; color: var(--cc-text); font-size: var(--text-sm); font-weight: 400; -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); }
 .chat-ws-dir-sub { margin: var(--sp-3) 0 0 calc(16px + 6px); overflow: hidden; white-space: nowrap; color: var(--cc-text-faint); font-size: var(--text-xs); -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); }
 .chat-ws-dir:hover .chat-ws-dir-name, .chat-ws-dir:hover .chat-ws-dir-sub, .chat-ws-dir.is-menu-open .chat-ws-dir-name { margin-right: calc(var(--icon-button-xs) + var(--sp-4)); }
 .chat-ws-dir-act { position: absolute; top: 0; bottom: 0; right: var(--sp-4); display: inline-flex; align-items: center; }
@@ -4456,7 +4482,7 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-ws-dir:focus-within .chat-ws-dir-act .chat-sidebar-item-menu { opacity: 1; visibility: visible; }
 .chat-ws-dir-act .chat-sidebar-item-menu:hover { background: var(--fill-hover); }
 /* 动作失败提示：贴在列表与底栏之间，红字但不占常驻高度（4s 后自行消失）。 */
-.chat-sidebar-error { flex: 0 0 auto; padding: var(--sp-6) var(--sp-10); color: var(--cc-err-vivid); font-size: var(--text-xs); }
+.chat-sidebar-error { flex: 0 0 auto; padding: var(--sp-6) var(--sp-10); color: var(--cc-fail-text); font-size: var(--text-xs); }
 /* G-16：全侧栏唯一的读屏汇总播报源——视觉隐藏但能被 live region 读到。
    状态点已全部降级为 role=img，N 条会话不再各自开播报。 */
 .chat-sidebar-sronly,
@@ -4518,9 +4544,13 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
    各卡片退到 calc(100% - 48px) 兜底，版式不需要第二套规则。 */
 :root { --chat-col: 720px; }
 :root[data-chat-width="full"] { --chat-col: 100%; }
-/* 对话窗统一的键盘焦点：只认 :focus-visible（鼠标点击不出环），用柔光环代替浏览器默认描边
-   （Kimi 的 --p-focus-ring 同法）。输入框/文本域有自己的聚焦样式，不套这一层。 */
-.chat-window :is(button, a, summary, [role="button"], [role="tab"], [role="menuitem"], [tabindex]):focus-visible { outline: none; box-shadow: var(--focus-ring); }
+/* 对话窗统一的键盘焦点：用实线环代替浏览器默认描边（Kimi 的 --p-focus-ring 同法）。
+   只在键盘模态（input-modality 的 data-im="kbd"）画：程序化移焦在 Chromium 会沿用上一次的
+   focus-visible 判定、在 WebKit 一律算 :focus-visible，单靠伪类挡不住，鼠标点完弹层后
+   首焦点会无端亮环（focus.cjs 修复前 chromium/webkit 指针模态 36/36 个元素画环）。
+   输入框/文本域有自己的聚焦样式，不套这一层。 */
+.chat-window :is(button, a, summary, [role="button"], [role="tab"], [role="menuitem"], [tabindex]):focus-visible { outline: none; }
+:root[data-im="kbd"] .chat-window :is(button, a, summary, [role="button"], [role="tab"], [role="menuitem"], [tabindex]):focus-visible { box-shadow: var(--focus-ring); }
 .chat-scroll::before { content: ""; display: block; height: var(--chat-section-gap); }
 /* 对话滚动区不画原生滚动条（用户要求）：定位交给右侧的消息目录竖条，两列竖线并排既重复又抢眼。
    滚轮/触控板/键盘滚动不受影响。 */
@@ -4556,8 +4586,8 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-turn-changes-dir { color: var(--cc-text-dim); }
 .chat-turn-changes-name { color: var(--cc-text); font-weight: 600; }
 .chat-turn-changes-row .is-add, .chat-turn-changes-row .is-del { flex: 0 0 auto; font-family: inherit; font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
-.chat-turn-changes-row .is-add { color: var(--cc-ok-vivid); }
-.chat-turn-changes-row .is-del { color: var(--cc-err-vivid); }
+.chat-turn-changes-row .is-add { color: var(--cc-ok-text); }
+.chat-turn-changes-row .is-del { color: var(--cc-fail-text); }
 .chat-turn-changes-more { display: flex; align-items: center; gap: var(--sp-6); width: 100%; padding: var(--sp-8) var(--sp-16); border: 0; border-top: var(--hairline) solid var(--cc-border); background: transparent; color: var(--cc-text); font: inherit; text-align: left; cursor: pointer; }
 .chat-turn-changes-more:hover { background: var(--fill-hover); }
 .chat-turn-changes-caret { color: var(--cc-text-faint); transform: rotate(90deg); transition: transform var(--dur-fast) var(--ease-out); }
@@ -4827,9 +4857,9 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 /* 状态字母徽章：M 黄 / A、U 绿 / D 红，与 diff 行配色同语义。 */
 /* 状态小方块（对照 Kimi 改动列表）：同色系浅底 + 符号，新增「+」、删除「−」、其余字母。 */
 .chat-diff-status { flex: 0 0 auto; width: 16px; height: 16px; display: inline-grid; place-items: center; border-radius: 4px; font-size: 11px; line-height: 1; font-weight: 700; font-family: ui-monospace, SFMono-Regular, "Cascadia Code", Consolas, "Roboto Mono", monospace; color: var(--cc-text-dim); background: var(--fill-hover); }
-.chat-diff-status.is-m, .chat-diff-status.is-t { color: var(--cc-warn-vivid); background: color-mix(in srgb, var(--cc-warn-vivid) 14%, transparent); }
-.chat-diff-status.is-a, .chat-diff-status.is-u { color: var(--cc-ok-vivid); background: color-mix(in srgb, var(--cc-ok-vivid) 14%, transparent); }
-.chat-diff-status.is-d { color: var(--cc-err-vivid); background: color-mix(in srgb, var(--cc-err-vivid) 14%, transparent); }
+.chat-diff-status.is-m, .chat-diff-status.is-t { color: var(--cc-warn-text); background: color-mix(in srgb, var(--cc-warn-vivid) 14%, transparent); }
+.chat-diff-status.is-a, .chat-diff-status.is-u { color: var(--cc-ok-text); background: color-mix(in srgb, var(--cc-ok-vivid) 14%, transparent); }
+.chat-diff-status.is-d { color: var(--cc-fail-text); background: color-mix(in srgb, var(--cc-err-vivid) 14%, transparent); }
 .chat-diff-status.is-r { color: var(--cc-accent-text); background: color-mix(in srgb, var(--cc-accent) 14%, transparent); }
 /* 头部省略（rtl 技巧）：挤压时「…」出现在开头，保住最有信息量的文件名尾段；树行的
    短名不截断、不受影响。路径是纯 LTR 字符（ASCII/CJK），RTL 基准方向只挪省略号位置、
@@ -4880,8 +4910,8 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-diff-text.is-wrap > .chat-diff-row, .chat-diff-text.is-wrap.is-code > div { display: flex; align-items: flex-start; }
 .chat-diff-text.is-wrap .chat-diff-ln, .chat-diff-text.is-wrap .chat-diff-sign { flex: none; }
 .chat-diff-text.is-wrap .chat-diff-code { flex: 1; min-width: 0; }
-.chat-diff-text .is-add .chat-diff-sign { color: var(--cc-ok-vivid); }
-.chat-diff-text .is-del .chat-diff-sign { color: var(--cc-err-vivid); }
+.chat-diff-text .is-add .chat-diff-sign { color: var(--cc-ok-text); }
+.chat-diff-text .is-del .chat-diff-sign { color: var(--cc-fail-text); }
 /* 行评论（diffComments.ts）：悬停行时左缘内边距里冒出「+」，平时不占位也不抢眼。 */
 .chat-diff-row { position: relative; }
 .chat-diff-cmt-add { position: absolute; left: 0; top: 50%; transform: translateY(-50%); width: 12px; height: 16px; padding: 0; border: 0; border-radius: var(--radius-xs); background: var(--cc-accent); color: var(--cc-window-bg); font: 600 11px/16px system-ui, sans-serif; text-align: center; cursor: pointer; opacity: 0; }
@@ -4924,14 +4954,14 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-diff-panel .hljs-subst { color: var(--cc-text); }
 .chat-diff-panel .hljs-link { color: var(--cc-syn-string); text-decoration: underline; }
 /* .patch/.diff 文件走 hljs diff 语言（非「更改」页签的自绘结构）时的增删行字色。 */
-.chat-diff-panel .hljs-addition { color: var(--cc-ok-vivid); }
-.chat-diff-panel .hljs-deletion { color: var(--cc-err-vivid); }
+.chat-diff-panel .hljs-addition { color: var(--cc-ok-text); }
+.chat-diff-panel .hljs-deletion { color: var(--cc-fail-text); }
 .chat-diff-panel .hljs-emphasis { font-style: italic; }
 .chat-diff-panel .hljs-strong { font-weight: 700; }
 .chat-diff-empty { flex: 1; display: grid; place-items: center; padding: var(--sp-24); color: var(--cc-text-dim); font-size: var(--text-xs); text-align: center; }
 .chat-diff-empty.is-error { color: var(--cc-err); }
 .chat-diff-clean { display: flex; flex-direction: column; align-items: center; gap: var(--sp-8); }
-.chat-diff-clean svg { color: var(--cc-ok-vivid); }
+.chat-diff-clean svg { color: var(--cc-ok-text); }
 .chat-diff-truncated { flex: 0 0 auto; padding: var(--sp-6) var(--sp-12); border-top: var(--hairline) solid var(--cc-border); color: var(--cc-warn); font-size: var(--text-xs); }
 /* 文件树形态：顶部搜索框（侧栏搜索同款幽灵形态），下面目录树。 */
 .chat-diff-search { flex: 0 0 auto; width: calc(100% - 2 * var(--sp-8)); margin: var(--sp-8) var(--sp-8) var(--sp-4); padding: var(--sp-4) var(--sp-8); border: var(--hairline) solid transparent; border-radius: var(--radius-sm); background: var(--fill-hover); color: var(--cc-text); font-size: var(--text-xs); outline: none; }
@@ -4944,8 +4974,8 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-diff-scope button[aria-pressed="true"] { background: var(--cc-surface); color: var(--cc-text); box-shadow: 0 0 0 1px var(--cc-border); }
 /* 文件行与分支行末尾的增删行数（git diff --numstat）。 */
 .chat-diff-lines { flex: none; margin-left: auto; display: flex; gap: var(--sp-4); font-family: var(--cc-mono); font-size: var(--text-xs); }
-.chat-diff-lines .is-add { color: var(--cc-ok-vivid); }
-.chat-diff-lines .is-del { color: var(--cc-err-vivid); }
+.chat-diff-lines .is-add { color: var(--cc-ok-text); }
+.chat-diff-lines .is-del { color: var(--cc-fail-text); }
 .chat-diff-lines + .chat-diff-cmt-count { margin-left: var(--sp-4); }
 .chat-diff-search:focus { border-color: var(--cc-border); background: var(--cc-surface); }
 /* 文件页：树（browse）与预览（preview）。窄面板逐级进出：选了文件只显示预览，没选只显示树；
@@ -5001,14 +5031,14 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .scm-repo-branch { flex: 0 1 auto; min-width: 0; margin-left: auto; display: inline-flex; align-items: center; gap: var(--sp-2); font-size: var(--text-xs); color: var(--cc-text-faint); overflow: hidden; white-space: nowrap; }
 .scm-repo-branch > span:first-of-type { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .scm-repo-branch > svg { flex: 0 0 auto; margin-right: 2px; }
-.scm-dirty { flex: 0 0 auto; color: var(--cc-warn-vivid); }
+.scm-dirty { flex: 0 0 auto; color: var(--cc-warn-text); }
 .scm-div { flex: 0 0 auto; font-style: normal; font-size: var(--text-xs); font-variant-numeric: tabular-nums; color: var(--cc-text-dim); }
 
 .scm-commit { flex: 0 0 auto; display: flex; flex-direction: column; gap: var(--sp-6); padding: var(--sp-8) var(--sp-8) var(--sp-4); }
 .scm-commit-input { width: 100%; min-height: 30px; max-height: 160px; resize: vertical; padding: var(--sp-6) var(--sp-8); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-sm); background: var(--cc-surface); color: var(--cc-text); font: inherit; font-size: var(--text-sm); line-height: 1.4; outline: none; field-sizing: content; }
 .scm-commit-input:focus { border-color: var(--cc-accent); }
 .scm-commit-input::placeholder { color: var(--cc-text-faint); }
-.scm-commit-btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-6); height: 28px; border: 0; border-radius: var(--radius-sm); background: var(--cc-accent); color: #fff; font: inherit; font-size: var(--text-sm); font-weight: 500; cursor: pointer; }
+.scm-commit-btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-6); height: 28px; border: 0; border-radius: var(--radius-sm); background: var(--cc-accent); color: var(--cc-on-accent); font: inherit; font-size: var(--text-sm); font-weight: 500; cursor: pointer; }
 .scm-commit-btn:hover:not(:disabled) { background: color-mix(in srgb, var(--cc-accent) 88%, #000); }
 .scm-commit-btn:disabled { opacity: 0.45; cursor: default; }
 .scm-error { color: var(--cc-err); font-size: var(--text-xs); overflow-wrap: anywhere; }
@@ -5024,19 +5054,19 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .scm-pr-head:hover .scm-pr-title { text-decoration: underline; }
 .scm-pr-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .scm-pr-state { flex: 0 0 auto; padding: 0 var(--sp-6); border-radius: 8px; background: var(--fill-selected); color: var(--cc-text-dim); font-size: 10px; line-height: 16px; }
-.scm-pr-head.is-open .scm-pr-state { background: color-mix(in srgb, var(--cc-ok-vivid) 18%, transparent); color: var(--cc-ok-vivid); }
-.scm-pr-head.is-merged .scm-pr-state { background: color-mix(in srgb, var(--cc-accent) 18%, transparent); color: var(--cc-accent); }
+.scm-pr-head.is-open .scm-pr-state { background: color-mix(in srgb, var(--cc-ok-vivid) 18%, transparent); color: var(--cc-ok-text); }
+.scm-pr-head.is-merged .scm-pr-state { background: color-mix(in srgb, var(--cc-accent) 18%, transparent); color: var(--cc-accent-text); }
 .scm-checks-line { display: flex; align-items: center; gap: var(--sp-4); font-size: var(--text-xs); color: var(--cc-text-dim); }
 .scm-checks-line > span { flex: 1; min-width: 0; }
-.scm-checks-line.is-pass { color: var(--cc-ok-vivid); }
-.scm-checks-line.is-fail { color: var(--cc-err-vivid); }
-.scm-checks-line.is-pending { color: var(--cc-warn-vivid); }
+.scm-checks-line.is-pass { color: var(--cc-ok-text); }
+.scm-checks-line.is-fail { color: var(--cc-fail-text); }
+.scm-checks-line.is-pending { color: var(--cc-warn-text); }
 .scm-checks { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; max-height: 180px; overflow-y: auto; }
 .scm-check { display: flex; align-items: center; gap: var(--sp-6); min-height: 22px; font-size: var(--text-xs); color: var(--cc-text); }
 .scm-check-icon { flex: 0 0 auto; color: var(--cc-text-faint); }
-.scm-check.is-pass .scm-check-icon { color: var(--cc-ok-vivid); }
-.scm-check.is-fail .scm-check-icon { color: var(--cc-err-vivid); }
-.scm-check.is-pending .scm-check-icon { color: var(--cc-warn-vivid); }
+.scm-check.is-pass .scm-check-icon { color: var(--cc-ok-text); }
+.scm-check.is-fail .scm-check-icon { color: var(--cc-fail-text); }
+.scm-check.is-pending .scm-check-icon { color: var(--cc-warn-text); }
 .scm-check-name { flex: 0 1 auto; min-width: 0; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 span.scm-check-name { cursor: default; }
 button.scm-check-name:hover { text-decoration: underline; }
@@ -5079,9 +5109,9 @@ button.scm-check-name:hover { text-decoration: underline; }
 .scm-row:hover .chat-diff-tree-more, .scm-row:focus-within .chat-diff-tree-more, .scm-row .chat-diff-tree-more[aria-expanded="true"] { display: grid; opacity: 1; }
 .scm-letters { flex: 0 0 auto; display: inline-flex; align-items: center; gap: var(--sp-6); }
 .scm-status { width: 12px; text-align: center; font-size: var(--text-xs); font-weight: 700; font-family: ui-monospace, SFMono-Regular, "Cascadia Code", Consolas, "Roboto Mono", monospace; color: var(--cc-text-dim); }
-.scm-status.is-m, .scm-status.is-t { color: var(--cc-warn-vivid); }
-.scm-status.is-a, .scm-status.is-u { color: var(--cc-ok-vivid); }
-.scm-status.is-d, .scm-status.is-conflict { color: var(--cc-err-vivid); }
+.scm-status.is-m, .scm-status.is-t { color: var(--cc-warn-text); }
+.scm-status.is-a, .scm-status.is-u { color: var(--cc-ok-text); }
+.scm-status.is-d, .scm-status.is-conflict { color: var(--cc-fail-text); }
 .scm-empty { padding: var(--sp-6) var(--sp-12); font-size: var(--text-xs); color: var(--cc-text-faint); }
 .scm-empty.is-clean { padding: var(--sp-16) var(--sp-12); text-align: center; }
 .scm-empty.is-error { color: var(--cc-err); overflow-wrap: anywhere; }
@@ -5176,7 +5206,7 @@ button.scm-check-name:hover { text-decoration: underline; }
   align-items: center;
   gap: var(--sp-6);
   margin-bottom: var(--sp-2);
-  color: var(--cc-err-vivid);
+  color: var(--cc-fail-text);
   font-size: var(--text-xs);
   font-weight: 600;
 }
@@ -5230,12 +5260,12 @@ button.scm-check-name:hover { text-decoration: underline; }
 .chat-user-text.is-clamped .chat-user-toggle { position: absolute; bottom: var(--sp-8); left: 50%; transform: translateX(-50%); margin-top: 0; }
 .chat-user-foot { display: flex; align-items: center; justify-content: flex-end; gap: var(--sp-6); min-height: 24px; margin-top: var(--sp-4); }
 .chat-user-note { color: var(--cc-text-faint); font-size: var(--text-xs); }
-.chat-user-note.is-warn { color: var(--cc-warn-vivid); }
+.chat-user-note.is-warn { color: var(--cc-warn-text); }
 /* 先上屏再发送：发送中的小圈与失败后的文字级出口（重发 / 放回输入框）。 */
 .chat-user-note.is-sending, .chat-queued-tag[role="status"] { display: inline-flex; align-items: center; gap: var(--sp-4); color: var(--cc-text-faint); }
 .chat-user-action { height: auto; padding: 0; border: 0; background: none; color: var(--cc-accent); font: inherit; font-size: var(--text-xs); cursor: pointer; }
 .chat-user-action:hover { text-decoration: underline; }
-.chat-queued-tag.is-warn { color: var(--cc-warn-vivid); }
+.chat-queued-tag.is-warn { color: var(--cc-warn-text); }
 /* 正文与 Kimi 同取 14px 基准；letter-spacing 归零，避免中文被光学收紧。 */
 .chat-text { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--cc-chat-text); font-size: var(--text-base); line-height: var(--leading-body); letter-spacing: 0; user-select: text; }
 /* 斜杠命令（/clear、/loop …）：transcript 里是一条 XML 包裹的用户消息，这里渲染成
@@ -5428,8 +5458,8 @@ button.scm-check-name:hover { text-decoration: underline; }
 /* 影响范围标签（approvalScope.ts）：工作区外/删除/高风险用警示色，其余中性。 */
 .chat-approval-scope { display: flex; flex-wrap: wrap; gap: var(--sp-6); }
 .chat-approval-scope span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 1px var(--sp-7); border-radius: var(--radius-sm); background: var(--fill-hover); color: var(--cc-text-dim); font-size: var(--text-xs); }
-.chat-approval-scope span.is-warn { background: color-mix(in srgb, var(--cc-err-vivid) 14%, transparent); color: var(--cc-err-vivid); }
-.chat-approval-scope span.is-ok { background: color-mix(in srgb, var(--cc-ok-vivid) 12%, transparent); color: var(--cc-ok-vivid); }
+.chat-approval-scope span.is-warn { background: color-mix(in srgb, var(--cc-err-vivid) 14%, transparent); color: var(--cc-fail-text); }
+.chat-approval-scope span.is-ok { background: color-mix(in srgb, var(--cc-ok-vivid) 12%, transparent); color: var(--cc-ok-text); }
 .chat-approval-tool code { padding: 1px var(--sp-6); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-sm); color: var(--cc-text); background: var(--fill-hover); font: var(--text-xs)/var(--leading-normal) var(--cc-mono); }
 /* 「完整参数 <命令>」排成一行起头而不是上下两块：命令本身才是要读的东西，标签退成
    同一行的前缀，省掉一次视线折返。flex-wrap 给详情工具行(展开/复制)让出整行。 */
@@ -5450,10 +5480,12 @@ button.scm-check-name:hover { text-decoration: underline; }
 .chat-approval-copy > span/* 附理由拒绝：卡内一行输入 + 提交（对照 Kimi「说明拒绝原因… / 提交并拒绝」）。 */
 .chat-approval-reason { display: flex; gap: var(--sp-8); width: 100%; }
 .chat-approval-reason input { flex: 1 1 auto; min-width: 0; height: 32px; padding: 0 var(--sp-10); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); background: transparent; color: var(--cc-text); font: inherit; font-size: var(--text-sm); }
-.chat-approval-reason input:focus { outline: none; border-color: var(--cc-accent); box-shadow: var(--focus-ring); }
+/* 输入框聚焦靠 accent 描边（≥3:1）指示，外圈保留原来的柔光，不跟 --focus-ring 改成实线：
+   打字时一圈 2px 实线太重。 */
+.chat-approval-reason input:focus { outline: none; border-color: var(--cc-accent); box-shadow: 0 0 0 3px var(--cc-accent-soft); }
 .chat-approval-reason button { height: 32px; padding: 0 var(--sp-12); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); background: transparent; color: var(--cc-err-text); font: inherit; font-size: var(--text-sm); cursor: pointer; }
 .chat-approval-reason button:hover:not(:disabled) { background: var(--fill-hover); }
-.chat-approval-error { color: var(--cc-err-vivid); }
+.chat-approval-error { color: var(--cc-fail-text); }
 .chat-approval-copy details { margin-top: var(--sp-5); color: var(--cc-text-faint); font-size: var(--text-xs); }
 /* 命令正文去掉了边框和底色：一张卡里套一个框，框内还有一层框，噪声比信息多。
    留 max-height + 滚动——真实命令能有好几百字符，不能让它把卡撑到满屏。 */
@@ -5487,7 +5519,7 @@ button.scm-check-name:hover { text-decoration: underline; }
 .chat-approval-actions .is-deny + .is-allow { margin-inline-start: var(--sp-8); }
 /* Esc 两段式确认:第一下把拒绝按钮点亮为警示态并换文案「再按 Esc 确认拒绝」,
    第二下才真拒(见 ChatWindow 的 denyViaEsc)。 */
-.chat-approval button.is-deny.is-esc-armed { border-color: color-mix(in srgb, var(--cc-err) 55%, transparent); color: var(--cc-err-vivid); background: color-mix(in srgb, var(--cc-err) 12%, transparent); }
+.chat-approval button.is-deny.is-esc-armed { border-color: color-mix(in srgb, var(--cc-err) 55%, transparent); color: var(--cc-fail-text); background: color-mix(in srgb, var(--cc-err) 12%, transparent); }
 /* 屏幕识别卡在场时 composer 整体锁定:inert(由 ChatWindow 经 ref 设置)负责挡键盘
    与焦点,这里管视觉降级 + 老 WebView 的指针兜底。不卸载的理由见 ChatWindow 注释。 */
 .chat-compose.is-locked { opacity: .55; pointer-events: none; }
@@ -5648,8 +5680,8 @@ button.scm-check-name:hover { text-decoration: underline; }
 .chat-flat-steps > .chat-tool > .chat-tool-body > * + pre { padding-top: var(--sp-8); border-top: 1px dashed var(--cc-border); }
 .chat-flat-steps > .chat-tool > .chat-tool-body > .chat-tool-result { padding-left: 0; font: var(--text-xs)/var(--leading-normal) var(--cc-mono); color: var(--cc-text-faint); }
 .chat-tool-delta { flex: 0 0 auto; display: inline-flex; gap: var(--sp-6); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
-.chat-tool-delta .is-add { color: var(--cc-ok-vivid); }
-.chat-tool-delta .is-del { color: var(--cc-err-vivid); }
+.chat-tool-delta .is-add { color: var(--cc-ok-text); }
+.chat-tool-delta .is-del { color: var(--cc-fail-text); }
 /* 编辑展开卡：文件头与 diff 同属一张卡，不再夹一行 Replaced 结果文案。 */
 .chat-edit-card-head { display: flex; align-items: center; gap: var(--sp-8); padding-bottom: var(--sp-8); margin-bottom: var(--sp-8); border-bottom: var(--hairline) solid var(--cc-border); }
 .chat-edit-card-path { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cc-text); font: var(--text-sm) var(--cc-mono); }
@@ -5666,7 +5698,7 @@ button.scm-check-name:hover { text-decoration: underline; }
 .chat-workspace-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; color: var(--cc-text); }
 /* 未读点：强调色小圆点（Kimi 的 unread-dot，属于强调色配额里的「小指示物」）。 */
 .chat-sidebar-unread { flex: 0 0 auto; width: 7px; height: 7px; margin-left: var(--sp-4); border-radius: 50%; background: var(--cc-accent); }
-.chat-workspace-attention { flex: 0 0 auto; color: var(--cc-warn-vivid); font-size: var(--text-xs); font-weight: 400; }
+.chat-workspace-attention { flex: 0 0 auto; color: var(--cc-warn-text); font-size: var(--text-xs); font-weight: 400; }
 .chat-workspace-action { flex: 0 0 auto; width: var(--icon-button-xs); height: var(--icon-button-xs); padding: 0; display: grid; place-items: center; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-faint); cursor: pointer; }
 .chat-workspace-action:hover { color: var(--cc-text); background: var(--fill-hover); }
 
@@ -5808,8 +5840,8 @@ button.scm-check-name:hover { text-decoration: underline; }
 .chat-task-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; }
 .chat-task-row { display: flex; align-items: center; gap: var(--sp-10); min-height: calc(32px * var(--cc-ui)); font-size: var(--text-base); }
 .chat-task-glyph { flex: 0 0 auto; width: 16px; display: inline-flex; align-items: center; justify-content: center; }
-.chat-task-row.is-done .chat-task-glyph { color: var(--cc-ok-vivid); }
-.chat-task-row.is-fail .chat-task-glyph { color: var(--cc-err-vivid); }
+.chat-task-row.is-done .chat-task-glyph { color: var(--cc-ok-text); }
+.chat-task-row.is-fail .chat-task-glyph { color: var(--cc-fail-text); }
 .chat-task-row .chat-task-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cc-text); font-weight: 500; }
 .chat-task-meta { flex: 1 1 0%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cc-text-dim); }
 .chat-task-time { flex: 0 0 auto; margin-left: auto; color: var(--cc-text-faint); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
@@ -5841,10 +5873,12 @@ button.scm-check-name:hover { text-decoration: underline; }
 .panel-lead .dock-work-body { padding-left: var(--sp-12); padding-right: var(--sp-12); }
 .lead-checks { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--sp-2); }
 .lead-check { display: grid; grid-template-columns: 16px 1fr; gap: var(--sp-8); align-items: start; padding: var(--sp-6) var(--sp-4); border-radius: var(--radius-md); color: var(--cc-text); font-size: var(--text-sm); line-height: 1.55; cursor: pointer; }
+/* 检查项是 <button>（键盘可展开）：去掉按钮外观，撑满整行、左对齐，与原 <li> 观感一致。 */
+button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; font: inherit; font-size: var(--text-sm); line-height: 1.55; text-align: left; }
 .lead-check:hover { background: var(--fill-hover); }
 .lead-check-mark { display: grid; place-items: center; height: 1.55em; color: var(--cc-text-faint); }
 .lead-check.is-pass { color: var(--cc-text-faint); }
-.lead-check.is-pass .lead-check-mark { color: var(--cc-ok-vivid); }
+.lead-check.is-pass .lead-check-mark { color: var(--cc-ok-text); }
 .lead-check.is-waived { color: var(--cc-text-faint); }
 .lead-check.is-waived .lead-check-text { text-decoration: line-through; text-decoration-color: var(--cc-text-faint); }
 .lead-check-body { min-width: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
@@ -5876,7 +5910,7 @@ button.scm-check-name:hover { text-decoration: underline; }
 .lead-gate-option.is-picked { border-color: var(--cc-accent); background: color-mix(in srgb, var(--cc-accent) 8%, transparent); }
 .lead-gate-option input { margin: 0; }
 .lead-gate-option-detail { flex-basis: 100%; padding-left: 22px; color: var(--cc-text-dim); font-size: var(--text-xs); }
-.lead-gate-rec { padding: 0 var(--sp-6, 6px); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--cc-ok-vivid) 16%, transparent); color: var(--cc-ok-vivid); font-size: var(--text-xs); }
+.lead-gate-rec { padding: 0 var(--sp-6, 6px); border-radius: var(--radius-sm); background: color-mix(in srgb, var(--cc-ok-vivid) 16%, transparent); color: var(--cc-ok-text); font-size: var(--text-xs); }
 .lead-gate-note { width: 100%; box-sizing: border-box; padding: var(--sp-8); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); background: transparent; color: var(--cc-text); font: inherit; font-size: var(--text-sm); resize: vertical; }
 .lead-gate-error { margin-top: var(--sp-4); color: var(--cc-warn); font-size: var(--text-xs); }
 .chat-plan-doc { font-size: var(--text-base); line-height: var(--leading-body); }
@@ -6044,7 +6078,7 @@ button.scm-check-name:hover { text-decoration: underline; }
    与进度面板同一套视觉语言(原脉冲点已随之退役)。 */
 .chat-subagent-status.is-completed {
   background: color-mix(in srgb, var(--cc-ok-vivid) 14%, transparent);
-  color: var(--cc-ok-vivid);
+  color: var(--cc-ok-text);
 }
 /* 7G-13：accent 混色的文字在**浅色**下只有 3.8～4.1:1（深色下 7.5:1 无事）——
    --cc-accent 是品牌填充色，浅色档它本就偏亮，再混进深文字也拉不回来。
@@ -6054,7 +6088,7 @@ button.scm-check-name:hover { text-decoration: underline; }
    .is-failed 的 (0,2,0)，浅色下失败胶囊变成红底绿字、运行中也变绿——那是回归。 */
 :root[data-theme="light"] .chat-subagent-icon { color: var(--cc-text-dim); }
 :root[data-theme="light"] .chat-subagent-type,
-:root[data-theme="light"] .chat-subagent-status.is-completed { color: var(--cc-ok-vivid); }
+:root[data-theme="light"] .chat-subagent-status.is-completed { color: var(--cc-ok-text); }
 .chat-subagent-status.is-failed {
   background: color-mix(in srgb, var(--cc-err) 16%, transparent);
   color: var(--cc-err-text);
@@ -6265,6 +6299,9 @@ button.scm-check-name:hover { text-decoration: underline; }
   --cc-ok-vivid: #3fb950;
   --cc-warn-vivid: #d29922;
   --cc-err-vivid: #f85149;
+  --cc-ok-text: #3fb950;
+  --cc-warn-text: #d29922;
+  --cc-fail-text: #ff7b72;
   --cc-warn: #d29922;
   --cc-err: #f85149;
   --cc-accent-dim: #258eff;
@@ -6468,8 +6505,8 @@ button.scm-check-name:hover { text-decoration: underline; }
 .chat-md .hljs-punctuation, .chat-md .hljs-operator, .chat-md .hljs-tag { color: var(--cc-text-dim); }
 .chat-md .hljs-subst { color: var(--cc-text); }
 .chat-md .hljs-link { color: var(--cc-syn-string); text-decoration: underline; }
-.chat-md .hljs-addition { color: var(--cc-ok-vivid); }
-.chat-md .hljs-deletion { color: var(--cc-err-vivid); }
+.chat-md .hljs-addition { color: var(--cc-ok-text); }
+.chat-md .hljs-deletion { color: var(--cc-fail-text); }
 .chat-md .hljs-emphasis { font-style: italic; }
 .chat-md .hljs-strong { font-weight: 700; }
 .chat-md > :first-child { margin-top: 0; }
@@ -6948,7 +6985,7 @@ button.scm-check-name:hover { text-decoration: underline; }
   z-index: 80;
   pointer-events: none;
   font-size: 8px;
-  font-weight: 650;
+  font-weight: 600;
   line-height: 1;
   letter-spacing: 0.1em;
   color: #f0a35e;
@@ -6958,7 +6995,8 @@ button.scm-check-name:hover { text-decoration: underline; }
   border-radius: var(--r-pill);
 }
 :root[data-theme="light"] .dev-badge {
-  color: #b4690e;
+  /* #b4690e 在自身 10% 叠底上只有 3.75:1（axe color-contrast），压深到 5.19:1。 */
+  color: #93540b;
   background: rgba(180, 105, 14, 0.1);
   border-color: rgba(180, 105, 14, 0.3);
 }
@@ -6986,7 +7024,7 @@ button.scm-check-name:hover { text-decoration: underline; }
 .chat-tool-code.is-del .chat-tool-line { background: color-mix(in srgb, var(--cc-err) 10%, transparent); }
 .chat-tool-code.is-del .chat-tool-ln { color: var(--cc-err-text); }
 .chat-tool-code.is-add .chat-tool-line { background: color-mix(in srgb, var(--cc-ok-vivid) 12%, transparent); }
-.chat-tool-code.is-add .chat-tool-ln { color: var(--cc-ok-vivid); }
+.chat-tool-code.is-add .chat-tool-ln { color: var(--cc-ok-text); }
 .chat-tool-diff { display: flex; flex-direction: column; gap: var(--sp-4); }
 /* 命令着色（terminalText.tsx 的手写分词）：命令名/参数/字符串/操作符/变量各一色，
    色相取语法高亮 token；正文用对话正文色而非纯白，命令不再像整段加粗。 */
@@ -6999,8 +7037,8 @@ button.scm-check-name:hover { text-decoration: underline; }
 .chat-cmd-env, .chat-cmd-var { color: var(--cc-tone-teal); }
 .chat-cmd-heredoc { color: var(--cc-text-dim); }
 /* 输出按行着色：diff 增删、段头、错误、警告。 */
-.chat-tool-output .is-add { color: var(--cc-ok-vivid); }
-.chat-tool-output .is-del { color: var(--cc-err-vivid); }
+.chat-tool-output .is-add { color: var(--cc-ok-text); }
+.chat-tool-output .is-del { color: var(--cc-fail-text); }
 .chat-tool-output .is-hunk { color: var(--cc-tone-blue); }
 .chat-tool-output .is-err { color: var(--cc-err-text); }
 .chat-tool-output .is-warn { color: var(--cc-warn); }
@@ -7596,12 +7634,12 @@ pre.chat-md-plain {
 .chat-sidebar-pr.is-merged { --pr-color: #a371f7; }
 .chat-sidebar-pr.is-closed { --pr-color: var(--cc-err-vivid); }
 .chat-sidebar-ci { width: 7px; height: 7px; box-sizing: border-box; border: 1.5px solid currentColor; border-radius: 50%; }
-.chat-sidebar-ci.is-pass { color: var(--cc-ok-vivid); }
-.chat-sidebar-ci.is-fail { color: var(--cc-err-vivid); }
-.chat-sidebar-ci.is-pending { color: var(--cc-warn-vivid); }
+.chat-sidebar-ci.is-pass { color: var(--cc-ok-text); }
+.chat-sidebar-ci.is-fail { color: var(--cc-fail-text); }
+.chat-sidebar-ci.is-pending { color: var(--cc-warn-text); }
 .chat-sidebar-diff { display: inline-flex; gap: var(--sp-2); }
-.chat-sidebar-add { color: var(--cc-ok-vivid); }
-.chat-sidebar-del { color: var(--cc-err-vivid); }
+.chat-sidebar-add { color: var(--cc-ok-text); }
+.chat-sidebar-del { color: var(--cc-fail-text); }
 .stk-wt { margin-left: var(--sp-4); color: var(--cc-text-faint); }
 .stk-wt::before { content: "· "; }
 .wt-prefix-input { width: 140px; height: 28px; }

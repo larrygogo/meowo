@@ -320,7 +320,7 @@ export function ShortcutList() {
       </dl>
       {/* 终端视图的让位说明:Ctrl+K/B/N/1/2 被应用导航占用、readline 编辑键失效——
           这些"静默失效"必须有一处写明,否则无从排查。 */}
-      <div className="chat-shortcuts-note">{t.chat.shortcutTerminalNote(displayKeys("Ctrl"))}</div>
+      <div className="chat-shortcuts-note">{t.chat.shortcutTerminalNote(displayKeys("Ctrl"), isMac() ? "⌃" : "Ctrl")}</div>
     </>
   );
 }

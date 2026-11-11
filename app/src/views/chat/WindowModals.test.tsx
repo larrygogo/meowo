@@ -205,7 +205,7 @@ describe("ShortcutSheet 快捷键速查表", () => {
       expect(dialog.textContent).toContain("⌘+F / ⌘+Shift+F");
       expect(dialog.textContent).toContain("⌥+Shift+↓");
       expect(dialog.textContent).not.toContain("Ctrl");
-      expect(dialog.textContent).toContain(zh.chat.shortcutTerminalNote("⌘"));
+      expect(dialog.textContent).toContain(zh.chat.shortcutTerminalNote("⌘", "⌃"));
     } finally {
       platform.mac = false;
     }
