@@ -7,7 +7,7 @@
 import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { pushEscLayer } from "../../escLayers";
 import { NEW_SESSION_EVENT } from "../../remoteMode";
-import { CHAT_MIN_WIDTH, SIDEBAR_MIN_WIDTH, sidebarDefaultWidth, sidebarMaxWidth, siblingWidth, useUiScale } from "./paneLayout";
+import { CHAT_MIN_WIDTH, SIDEBAR_MIN_WIDTH, sidebarDefaultWidth, sidebarMaxWidth, sidebarMinWidth, siblingWidth, useUiScale } from "./paneLayout";
 
 const SIDEBAR_COLLAPSED_KEY = "meowo-chat-sidebar-collapsed";
 /** 停靠侧栏宽度的持久化键。上下限与默认宽见 paneLayout：默认 240 乘界面缩放（关卡
@@ -25,11 +25,12 @@ export function useSidebarLayout() {
     const stored = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
     return Number.isFinite(stored) && stored >= SIDEBAR_MIN_WIDTH ? stored : null;
   });
-  const sidebarWidth = draggedWidth ?? sidebarDefaultWidth(ui);
+  const minWidth = sidebarMinWidth(ui);
+  const sidebarWidth = Math.max(minWidth, draggedWidth ?? sidebarDefaultWidth(ui));
   /** 拖拽 / 键盘调宽的上限：绝对上限与「.chat-body 减右侧面板减 320」取小（调研 s5/c4）。 */
   const maxIn = (body: Element | null) =>
     body
-      ? Math.max(SIDEBAR_MIN_WIDTH, Math.min(sidebarMaxWidth(ui), body.getBoundingClientRect().width - siblingWidth(body, ".chat-diff-panel") - CHAT_MIN_WIDTH))
+      ? Math.max(minWidth, Math.min(sidebarMaxWidth(ui), body.getBoundingClientRect().width - siblingWidth(body, ".chat-diff-panel") - CHAT_MIN_WIDTH))
       : sidebarMaxWidth(ui);
   // 窄窗（<880px）自动收起停靠侧栏：两列塞不下。此时开关切换的是**浮窗侧栏**（overlay，
   // 盖在主列上、不挤压布局），且不写收起偏好——窗口拉宽后回到用户原本的停靠选择。
@@ -109,7 +110,7 @@ export function useSidebarLayout() {
     // 按帧合流，一帧至多提交一次宽度（与 diff 分栏同一课）。
     let raf = 0;
     const onMove = (move: PointerEvent) => {
-      lastWidth = Math.min(Math.max(startWidth + (move.clientX - startX), SIDEBAR_MIN_WIDTH), maxWidth);
+      lastWidth = Math.min(Math.max(startWidth + (move.clientX - startX), minWidth), maxWidth);
       if (!raf) {
         raf = requestAnimationFrame(() => {
           raf = 0;
@@ -138,7 +139,7 @@ export function useSidebarLayout() {
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
     event.preventDefault();
     const maxWidth = maxIn(event.currentTarget.closest(".chat-body"));
-    const next = Math.min(Math.max(sidebarWidth + (event.key === "ArrowRight" ? 16 : -16), SIDEBAR_MIN_WIDTH), maxWidth);
+    const next = Math.min(Math.max(sidebarWidth + (event.key === "ArrowRight" ? 16 : -16), minWidth), maxWidth);
     setSidebarWidth(next);
     localStorage.setItem(SIDEBAR_WIDTH_KEY, String(Math.round(next)));
   };
@@ -151,6 +152,6 @@ export function useSidebarLayout() {
 
   return {
     sidebarCollapsed, sidebarWidth, resetSidebarWidth, uiScale: ui, narrow, overlaySidebar, setOverlaySidebar, drawerMounted, sidebarVisible,
-    toggleDocked, startSidebarResize, nudgeSidebarWidth, sidebarMinWidth: SIDEBAR_MIN_WIDTH,
+    toggleDocked, startSidebarResize, nudgeSidebarWidth, sidebarMinWidth: minWidth,
   };
 }

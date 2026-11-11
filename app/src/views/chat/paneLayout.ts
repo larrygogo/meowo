@@ -22,6 +22,8 @@ export const PANEL_DEFAULT_MAX = 560;
 /** 侧栏默认宽随界面缩放（关卡 A-20261111-ui-spec 第 1 条：推翻「列宽不随密度缩放」）。 */
 export const sidebarDefaultWidth = (ui: number) => Math.round(SIDEBAR_BASE_WIDTH * ui);
 export const sidebarMaxWidth = (ui: number) => Math.round(SIDEBAR_BASE_MAX * ui);
+/** 下限同样乘缩放：150% 下拖到 200，三段页签只剩省略号（脚本 t26 实测），等于 1.0 时的 133。 */
+export const sidebarMinWidth = (ui: number) => Math.round(SIDEBAR_MIN_WIDTH * ui);
 /** 面板默认宽：窗口宽减侧栏后的一半，夹在 [PANEL_MIN_WIDTH, PANEL_DEFAULT_MAX]。 */
 export const panelDefaultWidth = (windowWidth: number) =>
   Math.min(PANEL_DEFAULT_MAX, Math.max(PANEL_MIN_WIDTH, Math.round((windowWidth - 280) / 2)));
@@ -37,7 +39,7 @@ export function fitPanes(input: { body: number; sidebar: number | null; panel: n
   let sidebar = input.sidebar;
   if (sidebar != null) {
     const room = body - CHAT_MIN_WIDTH - (input.panel != null ? PANEL_MIN_WIDTH : 0);
-    sidebar = Math.max(SIDEBAR_MIN_WIDTH, Math.min(sidebar, sidebarMaxWidth(ui), room));
+    sidebar = Math.max(sidebarMinWidth(ui), Math.min(sidebar, sidebarMaxWidth(ui), room));
   }
   let panel = input.panel;
   if (panel != null) {

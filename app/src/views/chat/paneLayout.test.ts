@@ -86,8 +86,11 @@ describe("三栏宽度钳制", () => {
   it("侧栏默认宽乘界面缩放，拖过的宽度不跟着变", () => {
     document.documentElement.style.setProperty("--cc-ui", "1.5");
     expect(renderHook(() => useSidebarLayout()).result.current.sidebarWidth).toBe(360);
-    localStorage.setItem("meowo-chat-sidebar-width", "260");
-    expect(renderHook(() => useSidebarLayout()).result.current.sidebarWidth).toBe(260);
+    localStorage.setItem("meowo-chat-sidebar-width", "340");
+    expect(renderHook(() => useSidebarLayout()).result.current.sidebarWidth).toBe(340);
+    // 下限也乘缩放：150% 下拖过的 200 抬到 300，三段页签才放得下
+    localStorage.setItem("meowo-chat-sidebar-width", "200");
+    expect(renderHook(() => useSidebarLayout()).result.current.sidebarWidth).toBe(300);
   });
 
   it("面板默认宽封顶 560：2560 宽不再默认 1140", () => {

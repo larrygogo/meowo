@@ -4147,6 +4147,12 @@ select.ns-input {
    停靠形态的实际宽度由 ChatWindow 内联给出（paneLayout：用户拖过的宽度照旧保留，并按窗口钳制），
    这里的 calc 只是没有内联值时的兜底。 */
 .chat-sidebar { width: calc(240px * var(--cc-ui, 1)); flex: 0 0 auto; display: flex; flex-direction: column; border-right: var(--hairline) solid var(--cc-border); background: color-mix(in srgb, var(--cc-bg) 96%, var(--cc-text) 4%); }
+/* 侧栏图标随界面缩放（关卡 A-20261111-ui-spec 第 1 条）：文字和间距早已乘 --cc-ui，图标写死 px，
+   150% 下图标比文字小一圈（调研 c7）。图标尺寸有的写在 svg 属性、有的写在 CSS，用 zoom 一并放大，
+   不必逐个改；--cc-ui 未设（手机页、设置窗）时为 1，零影响。 */
+.chat-sidebar svg:not(.chat-sidebar-search-icon), .chat-sidebar-overlay-head svg { zoom: var(--cc-ui, 1); }
+/* 搜索图标是绝对定位的，zoom 会连 left/top 一起放大、图标跑出输入框，改直接放大宽高。 */
+.chat-sidebar .chat-sidebar-search-icon { width: calc(14px * var(--cc-ui, 1)); height: calc(14px * var(--cc-ui, 1)); }
 .chat-sidebar-head { padding: 0 1px var(--sp-4) var(--sp-8); display: flex; align-items: center; gap: var(--sp-6); flex: 0 0 auto; }
 .chat-sidebar-search { position: relative; flex: 0 0 auto; padding: 0 var(--sp-8) var(--sp-6); }
 .chat-sidebar-search-icon { position: absolute; left: calc(var(--sp-8) + var(--sp-9)); top: calc(50% - var(--sp-4)); transform: translateY(-50%); color: var(--cc-text-faint); pointer-events: none; }
@@ -4367,7 +4373,10 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-sidebar-search input:focus { background: var(--cc-surface); }
 .chat-sidebar-search input:focus::placeholder { color: var(--cc-text-faint); }
 .chat-sidebar-tabs { gap: 2px; margin: 0 var(--sp-8) var(--sp-10); padding: 3px; border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-lg); background: color-mix(in srgb, var(--cc-text) 3%, transparent); }
-.chat-sidebar-tabs button { flex: 1; padding: var(--sp-5) 0; border-radius: var(--radius-md); color: var(--cc-text-dim); font-weight: 500; }
+/* 按文字起步再均分剩余（flex 1 1 auto），左右各留 --sp-6：原 flex:1 等分且零内边距，英文
+   「Workspaces」在 240 宽下就贴着胶囊边框，缩放 124/150 时更挤（调研 s6，脚本 t26 量出贴边 0px）。
+   侧栏被拖到最窄 200 时放不下就省略号收尾，不顶出胶囊。 */
+.chat-sidebar-tabs button { flex: 1 1 auto; min-width: 0; padding: var(--sp-5) var(--sp-6); border-radius: var(--radius-md); color: var(--cc-text-dim); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-sidebar-tabs button.is-active { background: var(--fill-selected); }
 .chat-sidebar-tabs button.is-active::after { display: none; }
 .chat-sidebar-section { flex: 0 0 auto; display: flex; align-items: center; gap: 2px; padding: 0 var(--sp-8) 2px calc(var(--sp-8) + var(--sp-8)); }
