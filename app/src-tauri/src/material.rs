@@ -257,8 +257,43 @@ pub(crate) fn dress<'a>(
         if effects.is_some() { material } else { Material::None },
     );
     match effects {
-        Some(effects) => builder.transparent(true).effects(effects),
+        Some(effects) => pin_theme(builder.transparent(true).effects(effects), &theme),
         None => builder.background_color(crate::window::window_background_color(app)),
+    }
+}
+
+/// 应用主题固定深 / 浅时，钉进窗口的 tao 主题；跟随系统时不钉。
+///
+/// 为什么要钉：Mica 的明暗就是 `DWMWA_USE_IMMERSIVE_DARK_MODE`，而 tao 0.37.2 对没钉主题的窗口，
+/// **每一条** WM_SETTINGCHANGE（系统任何设置变了都会广播，不只是切明暗）都按系统主题重写一遍
+/// 这个属性（event_loop.rs `update_theme` → `try_window_theme`）。系统浅色、应用深色时，
+/// 窗口建出来的那一刻 tao 记的就是 Light，重写后主题没「变」，不发 ThemeChanged，
+/// `on_system_theme_changed` 纠正不到——背板就悄悄成了 MicaLight，深色界面底下透出浅灰
+/// （0.8.3 安装版实拍：侧栏 #807e7b，按 50% 染色层反推背板约 #f8f4ee）。
+/// 钉了主题后 tao 在 WM_SETTINGCHANGE 里直接跳过（`preferred_theme.is_some()`）。
+///
+/// 副作用可接受：钉住后 webview 的 prefers-color-scheme 跟着钉住的主题走，前端只在
+/// theme=system 时读它（appearance.ts `resolveTheme`），而那时不钉。
+#[cfg(any(target_os = "windows", test))]
+fn pinned_theme(app_theme: &str) -> Option<tauri::Theme> {
+    match app_theme {
+        "dark" => Some(tauri::Theme::Dark),
+        "light" => Some(tauri::Theme::Light),
+        _ => None,
+    }
+}
+
+/// 只在 Windows 钉：macOS 的材质明暗系统自己跟窗口外观翻，不受上面那条 tao 路径影响。
+fn pin_theme<'a>(
+    builder: tauri::WebviewWindowBuilder<'a, tauri::Wry, tauri::AppHandle>,
+    app_theme: &str,
+) -> tauri::WebviewWindowBuilder<'a, tauri::Wry, tauri::AppHandle> {
+    #[cfg(target_os = "windows")]
+    return builder.theme(pinned_theme(app_theme));
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = app_theme;
+        builder
     }
 }
 
@@ -277,6 +312,10 @@ pub(crate) fn sync_theme(app: &tauri::AppHandle, theme: &str) {
         for label in labels {
             // get_window 而不是 get_webview_window：对话窗开了浏览器页签后是多 webview 窗口。
             if let Some(window) = app.get_window(&label) {
+                // 先换钉住的主题（理由见 `pinned_theme`）；改回跟随系统时解钉，tao 会按系统
+                // 重算并发 ThemeChanged，webview 的明暗随之跟上。两条消息按序进主线程，
+                // 最后落地的是下面 set_effects 写的明暗。
+                let _ = window.set_theme(pinned_theme(theme));
                 let _ = window.set_effects(effects_config(Material::Mica, dark));
             }
         }
@@ -416,6 +455,14 @@ mod tests {
         // 认不出的值按跟随系统算，与 window::theme_is_dark 的兜底分档一致。
         assert!(backdrop_dark("", true));
         assert!(!backdrop_dark("auto", false));
+    }
+
+    #[test]
+    fn 固定主题才钉进窗口_跟随系统不钉() {
+        assert_eq!(pinned_theme("dark"), Some(tauri::Theme::Dark));
+        assert_eq!(pinned_theme("light"), Some(tauri::Theme::Light));
+        assert_eq!(pinned_theme("system"), None);
+        assert_eq!(pinned_theme("认不出"), None, "与 backdrop_dark 的分档一致：其余都跟系统");
     }
 
     #[test]
