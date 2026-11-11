@@ -979,6 +979,8 @@ export const en: Dict = {
     echoUncertainTip: "This message has not shown up in the transcript yet. Check the terminal view",
     interjectedBadge: "Sent mid-turn",
     interjectedBadgeTip: "The agent read this while it was working",
+    toAgentBadge: (name: string) => `To subagent "${name}"`,
+    toAgentBadgeTip: "Sent to a subagent, not the main session",
     queuedAttachmentOnly: "(attachment)",
     interjectNow: "Interrupt and process",
     interjectNowTip: "Stop this turn and process these messages now",

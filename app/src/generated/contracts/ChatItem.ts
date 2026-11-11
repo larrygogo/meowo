@@ -13,7 +13,13 @@ export type ChatItem = { "type": "user_text", id: string, timestamp: string | nu
  * 回合进行中被 CLI 插入的话（claude queued_command）。前端据此标「回合中插入」、
  * 结算插话回执。false 不下发，旧前端/旧缓存缺字段按 false。
  */
-interjected?: boolean, } | { "type": "assistant_text", id: string, timestamp: string | null, text: string, } | { "type": "assistant_delta", id: string, timestamp: string | null, text: string, } | { "type": "turn_error", id: string, timestamp: string | null, 
+interjected?: boolean, 
+/**
+ * 这句话是发给某个子代理的（claude：用户切到子代理视图直接发），值是它的任务描述。
+ * 正文只记在子代理侧车里，主链没有这条（2.1.322 实拍），不标出来前端既找不到它
+ * 判「未确认送达」，也说不清后面的回复是谁给的。None 不下发。
+ */
+to_agent?: string, } | { "type": "assistant_text", id: string, timestamp: string | null, text: string, } | { "type": "assistant_delta", id: string, timestamp: string | null, text: string, } | { "type": "turn_error", id: string, timestamp: string | null, 
 /**
  * 短中文标签（与看板卡片的 error_label 同源，见 claude 插件 classify_error）。
  */

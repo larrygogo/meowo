@@ -16,7 +16,7 @@ use std::path::{Path, PathBuf};
 
 /// 从 `<tag>值</tag>` 里抠值。task-notification 的格式是 CLI 固定生成的单层标签,
 /// 不需要真 XML 解析;取不到返回 None。
-fn tag_text<'a>(text: &'a str, tag: &str) -> Option<&'a str> {
+pub(super) fn tag_text<'a>(text: &'a str, tag: &str) -> Option<&'a str> {
     let open = format!("<{tag}>");
     let start = text.find(&open)? + open.len();
     let end = text[start..].find(&format!("</{tag}>"))? + start;
@@ -507,6 +507,16 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                 if let Some(event) = peer_handback_result(origin, base_id, timestamp.clone()) {
                     return vec![event];
                 }
+            }
+            // 回合中途用户发来的话被 CC 包一层英文说明再喂给模型（isMeta + origin.kind = "human"，
+            // 2.1.322 子代理侧车实拍）。剥回用户原话，不然子代理面板里是一大段英文。
+            if let Some(text) = super::subagent_prompt::unwrap_interjection(&v) {
+                return vec![TranscriptEvent::UserMessage {
+                    id: base_id.to_string(),
+                    timestamp,
+                    text,
+                    interjected: true,
+                }];
             }
             // 工具注入给模型的内容：Skill 调用后 CC 把整份技能说明以 user 行写回
             // （`isMeta` + `sourceToolUseID`，2.1.304 实测「Base directory for this skill…」），
@@ -2318,6 +2328,12 @@ impl TranscriptSpec for ClaudeTranscript {
 
     fn parse_transcript_line(&self, line: &str) -> Vec<TranscriptEvent> {
         parse_transcript_events(line)
+    }
+
+    /// 发给子代理的话正文不在主链上，要按「被用户续上」的通知去侧车取（见 subagent_prompt）。
+    fn parse_transcript_line_in(&self, path: &Path, line: &str) -> Vec<TranscriptEvent> {
+        super::subagent_prompt::resumed_agent_prompt(path, line)
+            .unwrap_or_else(|| parse_transcript_events(line))
     }
 
     fn agent_modes_from_line(&self, line: &str) -> Vec<crate::AgentMode> {

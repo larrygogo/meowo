@@ -103,6 +103,10 @@ fn render_header(out: &mut String, meta: &HandoffMeta) {
 /// 单条消息 → markdown 块（尾带一个换行；调用方再补一个空行）。None = 该变体不进交接。
 fn render_item(item: &ChatItem, meta: &HandoffMeta) -> Option<String> {
     match item {
+        // 发给子代理的话要标出去向：续接方读到它时不该当成对主 agent 的指令。
+        ChatItem::UserText { text, to_agent: Some(agent), .. } => {
+            Some(format!("## 用户（发给子代理「{agent}」）\n\n{text}\n"))
+        }
         ChatItem::UserText { text, .. } => Some(format!("## 用户\n\n{text}\n")),
         ChatItem::AssistantText { text, .. } => Some(format!(
             "## 助手（{}）\n\n{text}\n",
@@ -217,6 +221,7 @@ mod tests {
             timestamp: None,
             text: text.into(),
             interjected: false,
+            to_agent: None,
         }
     }
 

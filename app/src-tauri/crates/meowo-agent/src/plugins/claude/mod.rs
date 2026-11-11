@@ -28,6 +28,7 @@ mod screen;
 pub mod setup;
 pub mod telemetry;
 pub mod transcript;
+mod subagent_prompt;
 
 use crate::{
     auth::{AuthScheme, CredentialSource, OAuthRefresh},
