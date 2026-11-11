@@ -5908,37 +5908,37 @@ function op(e, t) {
     return () => window.clearTimeout(l);
   }, [e, t]), n;
 }
-const up = `:host {\r
-  \r
-  --cc-ok-vivid: #2fcfa0;\r
-  --cc-warn-vivid: #ffb829;\r
-  --cc-err-vivid: #ee4b55;\r
-  --isl-ink: #000;\r
-  --isl-text: #f1f2ec;\r
-  --isl-text-2: #b8bab0;\r
-  --isl-dim: #96988d;\r
-  --isl-faint: #5d5f56;\r
-  --isl-chip: #1a1b18;\r
-  --isl-chip-hover: #282a25;\r
-  --isl-track: #33352f;\r
-  --isl-line: rgba(244, 248, 230, 0.1);\r
-  \r
-  --isl-lime: #d4f64c;\r
-  --isl-lime-dim: #c3e63a;\r
-  --isl-on-lime: #1c2600;\r
-  --isl-ok: var(--cc-ok-vivid);\r
-  \r
-  --isl-warn: #ffb829;\r
-  \r
-  --isl-pending: var(--cc-warn-vivid);\r
-  --isl-waiting: var(--cc-warn-vivid);\r
-  --isl-err: var(--cc-err-vivid);\r
-  --isl-ear: 14px;\r
+const up = `:host {
+  
+  --cc-ok-vivid: #30d158;
+  --cc-warn-vivid: #ffb829;
+  --cc-err-vivid: #ff453a;
+  --isl-ink: #000;
+  --isl-text: #f5f5f7;
+  --isl-text-2: #b9b9be;
+  --isl-dim: #98989d;
+  --isl-faint: #5e5e62;
+  --isl-chip: #1c1c1e;
+  --isl-chip-hover: #2c2c2e;
+  --isl-track: #3a3a3c;
+  --isl-line: rgba(255, 255, 255, 0.1);
+  
+  --isl-lime: #d4f64c;
+  --isl-lime-dim: #c3e63a;
+  --isl-on-lime: #1c2600;
+  --isl-ok: var(--cc-ok-vivid);
+  
+  --isl-warn: #ffb829;
+  
+  --isl-pending: var(--cc-warn-vivid);
+  --isl-waiting: var(--cc-warn-vivid);
+  --isl-err: var(--cc-err-vivid);
+  --isl-ear: 14px;
 }
-.isl-eyes { position: relative; display: inline-flex; align-items: center; padding: 0 6px; flex: none; color: var(--isl-lime); }
+.isl-eyes { position: relative; display: inline-flex; align-items: center; padding: 0 6px; flex: none; color: #fff; }
 .isl-eyes.is-small { padding: 0; }
 .isl-eye-pair { display: block; overflow: visible; }
-.isl-sclera { fill: var(--isl-lime); }
+.isl-sclera { fill: #fff; }
 .isl-pupil { fill: #000; transition: transform var(--dur-base) var(--ease-out); }
 .isl-eye-open { transform-box: fill-box; transform-origin: center; transition: transform calc(var(--dur-fast) / 2) var(--ease-in); }
 .isl-eye-open.is-blink { transform: scaleY(0.12); }
@@ -5973,30 +5973,30 @@ const up = `:host {\r
 @keyframes isl-spin-plain { to { transform: rotate(360deg); } }
 .isl-sweat { position: absolute; right: 0; top: 0; z-index: var(--z-raised); width: 4px; height: 6px; border-radius: 50% 50% 50% 50% / 65% 65% 35% 35%; background: #8fd3ff; animation: isl-sweat var(--dur-idle) ease-in infinite; }
 @keyframes isl-sweat { 0% { opacity: 0; transform: translateY(-2px); } 20% { opacity: 0.95; } 80% { opacity: 0.9; transform: translateY(5px); } 100% { opacity: 0; transform: translateY(7px); } }
-@keyframes isl-look {\r
-  0%, 18% { transform: translateX(0); }\r
-  28%, 44% { transform: translateX(-2px); }\r
-  56%, 72% { transform: translateX(2px); }\r
-  82%, 100% { transform: translateX(0); }\r
+@keyframes isl-look {
+  0%, 18% { transform: translateX(0); }
+  28%, 44% { transform: translateX(-2px); }
+  56%, 72% { transform: translateX(2px); }
+  82%, 100% { transform: translateX(0); }
 }
-@keyframes isl-blink {\r
-  0%, 88% { transform: scaleY(1); }\r
-  90% { transform: scaleY(0.1); }\r
-  92% { transform: scaleY(1); }\r
-  94% { transform: scaleY(0.1); }\r
-  96%, 100% { transform: scaleY(1); }\r
+@keyframes isl-blink {
+  0%, 88% { transform: scaleY(1); }
+  90% { transform: scaleY(0.1); }
+  92% { transform: scaleY(1); }
+  94% { transform: scaleY(0.1); }
+  96%, 100% { transform: scaleY(1); }
 }
 @keyframes isl-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.45; } }
 @keyframes isl-twinkle { 0%, 100% { opacity: 0.25; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1); } }
 @keyframes isl-spin { from { transform: rotate(-90deg); } to { transform: rotate(270deg); } }
 @keyframes isl-sweep { from { stroke-dashoffset: var(--isl-c); } }
 @keyframes isl-fade-in { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
-@keyframes isl-grow {\r
-  from { clip-path: inset(0 28% 34% 28% round 0 0 22px 22px); }\r
-  to { clip-path: inset(0 0 0 0 round 0 0 24px 24px); }\r
+@keyframes isl-grow {
+  from { clip-path: inset(0 28% 34% 28% round 0 0 22px 22px); }
+  to { clip-path: inset(0 0 0 0 round 0 0 24px 24px); }
 }
 @media (prefers-reduced-motion: reduce) {
-.isl-notch.is-alert, .island-shell.is-entering, .island-shell.is-leaving,\r
+.isl-notch.is-alert, .island-shell.is-entering, .island-shell.is-leaving,
   .isl-eye-pair, .isl-zz, .isl-spark, .isl-eye-pop, .isl-spiral, .isl-sweat, .isl-eye-plead, .isl-eye-squeeze, .isl-cheeks, .isl-tear, .isl-dot, .isl-ring.is-spin > svg, .isl-ring-arc { animation: none !important; }
 .isl-agents .isl-agent, .isl-dots-nav button::before, .isl-pupil, .isl-eye-open { transition: none; }
 }`, Io = 38, cc = 16, Mn = { x: -1, y: -1 };

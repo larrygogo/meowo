@@ -318,8 +318,8 @@
   --kt-dark-1: rgba(255, 255, 255, 0.86);
   --kt-dark-2: rgba(255, 255, 255, 0.58);
   /* 第三档是对话窗的 --cc-text-faint（时间、路径、小节标题这类正文级小字），必须过 4.5:1。
-     墨色与全局文字同一组中性色（带一点暖绿，深 244,248,230 / 浅 20,24,8）：纯白纯黑 alpha 压在
-     新底色上偏冷，和侧栏、设置窗的文字不是一个色温。alpha 按「对比度不低于换色前」重取，
+     墨色与全局文字同一组纯中性色（深 255,255,255 / 浅 16,17,20；2026-11-11 用户嫌带暖调的灰「发黄」后改）。
+     alpha 按「对比度不低于换色前」重取，
      在内容面 / 卡片 / 用户气泡上依次为：深色 .86 → 12.15/11.00/9.69，.58 → 6.16/5.79/5.31，
      .54 → 5.51/5.22/4.82；浅色 .92 → 14.35/14.58/13.03，.66 → 5.76/5.81/5.51，.62 → 5.02/5.06/4.83
      （WCAG 相对亮度公式复算，2026-11-11；brandPalette.test 钉着 ≥4.5）。 */
@@ -6897,7 +6897,7 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
    悬浮在终端上缘居中，琥珀 = 与待审批状态色一致。 */
 /* 7G-3：横幅原是第三套橙（硬编码 #f0883e 系）。改吃 --cc-warn-vivid，与徽标/pill 同源。
    底色仍是深色的暖底——它浮在终端画面上，必须不透光。 */
-.chat-terminal-approval { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: calc(var(--z-sticky) + 1); display: flex; align-items: center; gap: var(--sp-10); max-width: calc(100% - 40px); padding: var(--sp-6) var(--sp-12); border: 0; border-radius: var(--radius-md); background: rgba(35, 36, 33, 0.96); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--term-warn) 70%, transparent), var(--shadow-menu); color: var(--term-fg); font-size: var(--text-xs); }
+.chat-terminal-approval { position: absolute; top: 8px; left: 50%; transform: translateX(-50%); z-index: calc(var(--z-sticky) + 1); display: flex; align-items: center; gap: var(--sp-10); max-width: calc(100% - 40px); padding: var(--sp-6) var(--sp-12); border: 0; border-radius: var(--radius-md); background: rgba(34, 35, 37, 0.96); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--term-warn) 70%, transparent), var(--shadow-menu); color: var(--term-fg); font-size: var(--text-xs); }
 .chat-terminal-approval button { flex: none; padding: var(--sp-3) var(--sp-10); min-height: var(--btn-h-sm); border: 0; border-radius: var(--radius-sm); background: rgba(255,255,255,.1); color: var(--term-fg); font-size: var(--text-xs); cursor: pointer; }
 .chat-terminal-approval button:hover { background: rgba(255,255,255,.14); }
 .chat-scroll[hidden] { display: none; }
@@ -7013,7 +7013,7 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
   padding: var(--sp-16);
   border: 0;
   border-radius: var(--radius-lg);
-  background: rgba(35, 36, 33, 0.96);
+  background: rgba(34, 35, 37, 0.96);
   /* 异常退出是要人处理的事：与待批准卡同一条规矩，一圈 1px 的琥珀环。 */
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--term-warn) 70%, transparent), var(--shadow-menu);
   text-align: center;
@@ -7045,7 +7045,7 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .managed-terminal-exit-card > button:disabled,
 .managed-terminal-cover-actions > button:disabled { opacity: .55; cursor: default; }
 .managed-terminal-actions { position: absolute; top: 8px; right: 20px; z-index: calc(var(--z-raised) + 3); display: flex; gap: var(--sp-6); opacity: 0; transition: opacity var(--dur-base) var(--ease-in-out); }
-.managed-terminal-error { position: absolute; left: 20px; right: 20px; bottom: 10px; z-index: calc(var(--z-raised) + 3); padding: var(--sp-6) var(--sp-10); border: 0; border-radius: var(--radius-md); color: #ff8580; background: rgba(35, 36, 33, 0.96); box-shadow: inset 0 0 0 1px rgba(255, 92, 87, 0.7); font-size: var(--text-xs); line-height: 1.35; text-align: left; overflow-wrap: anywhere; }
+.managed-terminal-error { position: absolute; left: 20px; right: 20px; bottom: 10px; z-index: calc(var(--z-raised) + 3); padding: var(--sp-6) var(--sp-10); border: 0; border-radius: var(--radius-md); color: #ff8580; background: rgba(34, 35, 37, 0.96); box-shadow: inset 0 0 0 1px rgba(255, 92, 87, 0.7); font-size: var(--text-xs); line-height: 1.35; text-align: left; overflow-wrap: anywhere; }
 /* 输出流停滞警示（ConPTY 管道疑似僵死，见 ManagedTerminal 的 terminalStreamStalled）：
    警示黄与错误红区分——它是诊断提示不是操作失败，且常驻到重启终端为止。 */
 .managed-terminal-error.is-stalled { color: #ffb454; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--term-warn) 70%, transparent); cursor: default; }
@@ -7055,10 +7055,10 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .managed-terminal-error button { flex: 0 0 auto; padding: var(--sp-3) var(--sp-8); border: 0; border-radius: var(--radius-sm); color: var(--term-fg); background: rgba(255,255,255,.1); font-size: var(--text-2xs); cursor: pointer; }
 .managed-terminal-error button:hover:not(:disabled) { background: rgba(255,255,255,.12); }
 .managed-terminal-error button:disabled { opacity: .55; cursor: default; }
-.managed-terminal-actions button { padding: var(--sp-4) var(--sp-8); border: var(--hairline) solid rgba(255, 255, 255, 0.17); border-radius: var(--radius-md); color: var(--term-fg-dim); background: rgba(35, 36, 33, 0.96); font-size: var(--text-2xs); cursor: pointer; }
+.managed-terminal-actions button { padding: var(--sp-4) var(--sp-8); border: var(--hairline) solid rgba(255, 255, 255, 0.17); border-radius: var(--radius-md); color: var(--term-fg-dim); background: rgba(34, 35, 37, 0.96); font-size: var(--text-2xs); cursor: pointer; }
 /* ── 终端内搜索条(Ctrl+F,ManagedTerminal):浮在终端右上角,深色底不遮 TUI 主体;
    z 高于 hover 才显形的操作条(managed-terminal-actions),同区不打架。 ── */
-.term-search { position: absolute; top: 8px; right: 20px; z-index: calc(var(--z-sticky) + 1); display: flex; align-items: center; gap: var(--sp-4); padding: var(--sp-4) var(--sp-6); border: 0; border-radius: var(--radius-lg); background: rgba(35, 36, 33, 0.96); box-shadow: 0 0 0 var(--hairline) rgba(255, 255, 255, 0.17), var(--shadow-menu); }
+.term-search { position: absolute; top: 8px; right: 20px; z-index: calc(var(--z-sticky) + 1); display: flex; align-items: center; gap: var(--sp-4); padding: var(--sp-4) var(--sp-6); border: 0; border-radius: var(--radius-lg); background: rgba(34, 35, 37, 0.96); box-shadow: 0 0 0 var(--hairline) rgba(255, 255, 255, 0.17), var(--shadow-menu); }
 /* broker 审批横幅在场时让位：两者同挂 top:8px、同 z——搜索条会正好压住横幅右端的
    「回对话页」按钮（横幅在 ChatWindow 里先渲染、DOM 在前，后写者盖上）。横幅约 30px
    高，搜索条下移到它底下。 */
@@ -7078,7 +7078,7 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
   z-index: calc(var(--z-raised) + 3);
   padding: var(--sp-3) var(--sp-8);
   border-radius: var(--radius-md);
-  background: rgba(35, 36, 33, 0.96);
+  background: rgba(34, 35, 37, 0.96);
   border: var(--hairline) solid rgba(255, 255, 255, 0.17);
   color: var(--term-fg-dim);
   font-size: var(--text-2xs);

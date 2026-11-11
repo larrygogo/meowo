@@ -6,7 +6,7 @@ import React from "react";
 import type { Lang } from "@/lib/i18n";
 
 const C = {
-  bg: "#232421",
+  bg: "#222325",
   border: "rgba(255,255,255,0.08)",
   text: "#eef1ef",
   dim: "#9aa39e",
