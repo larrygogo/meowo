@@ -1104,6 +1104,7 @@ export const en: Dict = {
         ? `${added} ${added === 1 ? "addition" : "additions"} and ${removed} ${removed === 1 ? "removal" : "removals"}`
         : removed ? `${removed} ${removed === 1 ? "removal" : "removals"}` : `${added} ${added === 1 ? "addition" : "additions"}`,
     toolReadLines: (count: number) => `Read ${count} ${count === 1 ? "line" : "lines"}`,
+    toolReadFailed: "Read failed",
     toolFoundLines: (count: number) => `Found ${count} ${count === 1 ? "result" : "results"}`,
     model: "Model",
     switchModel: "Switch model",

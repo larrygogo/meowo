@@ -1191,6 +1191,7 @@ export const zh = {
     toolEditSummary: (added: number, removed: number) =>
       added && removed ? `新增 ${added} 行，删除 ${removed} 行` : removed ? `删除 ${removed} 行` : `新增 ${added} 行`,
     toolReadLines: (count: number) => `读取了 ${count} 行`,
+    toolReadFailed: "读取失败",
     toolFoundLines: (count: number) => `找到 ${count} 条结果`,
     model: "模型",
     switchModel: "切换模型",

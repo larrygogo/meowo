@@ -101,6 +101,21 @@ export function ApprovalCommandDetail({ label, command, expandLabel, collapseLab
 }) {
   const [expanded, setExpanded] = useState(false);
   const [copied, setCopied] = useState(false);
+  // 只有命令真的超出 pre 的限高才给「展开全部」：一行的 git push 也挂着它、点了毫无变化，
+  // 还白占约 45px，而矮窗口里审批卡最缺的就是高度（UI 调研 chat #9）。判法照搬
+  // CrossMessageBlock：实测 scrollHeight，+4 容差防亚像素虚报，窗口宽度变化时复测。
+  const preRef = useRef<HTMLPreElement>(null);
+  const [overflowing, setOverflowing] = useState(false);
+  useEffect(() => {
+    const el = preRef.current;
+    if (!el) return;
+    const measure = () => setOverflowing(el.scrollHeight > el.clientHeight + 4);
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [command]);
   const copy = () => {
     if (!navigator.clipboard?.writeText) return;
     void navigator.clipboard.writeText(command).then(() => {
@@ -111,9 +126,12 @@ export function ApprovalCommandDetail({ label, command, expandLabel, collapseLab
   return (
     <div className={"chat-approval-detail" + (expanded ? " is-expanded" : "")}>
       <span>{label}</span>
-      <pre>{command}</pre>
+      <pre ref={preRef}>{command}</pre>
       <div className="chat-approval-detail-tools">
-        <button type="button" onClick={() => setExpanded((value) => !value)}>{expanded ? collapseLabel : expandLabel}</button>
+        {/* 展开后 pre 不再限高、量不出溢出，仍要留着「收起」。 */}
+        {(overflowing || expanded) && (
+          <button type="button" onClick={() => setExpanded((value) => !value)}>{expanded ? collapseLabel : expandLabel}</button>
+        )}
         <button type="button" onClick={copy}>{copied ? copiedLabel : copyLabel}</button>
       </div>
     </div>
