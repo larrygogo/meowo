@@ -467,12 +467,16 @@
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12), 0 2px 6px -2px rgba(0, 0, 0, 0.16);
 }
 :root.mat-on { --cc-l0: var(--mat-tint); }
-/* Windows 深色：底层不盖染色，让 Mica 原样露出来。按微软分层规范（Mica 所在的底层背景必须透明）
-   和 Windows Terminal 的深色 + Mica 做法（标签栏 #00000000，内容区更深）。
-   50% 黑染色时壁纸色调只剩 2/255，肉眼看不出材质（2026-11-11 实拍：侧栏 #161413，去掉染色后 #241f1a，
-   能看出壁纸暖色）。内容面 #18191b 因此比窗口底深，和 Terminal 一样是「外圈材质、中间更黑」。
-   macOS 玻璃会透出背后窗口，照旧保留染色；浅色未实测，不动。 */
-:root.mat-on.platform-windows:not([data-theme="light"]) { --mat-tint: transparent; }
+/* Windows 深色：染色层换成中性灰、只盖一半，不再用近黑去压。
+   三档实拍与取舍（2026-11-11/12，暖橙壁纸）：
+   - 近黑 50%（0.8.3 原值）：侧栏 #161413，壁纸色调只剩 2/255，材质等于没有；
+   - 全透明（微软分层规范、Windows Terminal 的做法）：#241f1a，用户反馈「边缘太黄」——壁纸的色相
+     和界面的冷中性灰、青柠强调色打架；
+   - 中性灰 50%（现值）：合成约 #201e1d，壁纸色相削到约三分之一，只留一点冷暖倾向。
+   取中性灰还有一个好处：窗口失焦时系统把 Mica 换成纯色 #202020，合成约 #1e1f20，和激活时几乎
+   一样，切焦点不跳色。窗口底仍比内容面 #18191b 亮一档，「外圈材质、中间更黑」的层次不变。
+   macOS 玻璃会透出背后窗口，照旧用上面的近黑染色；浅色未改。 */
+:root.mat-on.platform-windows:not([data-theme="light"]) { --mat-tint: rgba(28, 29, 31, 0.5); }
 /* 用户让系统少用透明或开了高对比度：回到不透明底，文字对比度不依赖壁纸。 */
 @media (prefers-reduced-transparency: reduce), (forced-colors: active) {
   :root.mat-on { --cc-l0: var(--cc-window-bg); }
