@@ -23,6 +23,7 @@ import { AgentRing, Eyes } from "../island/islandParts";
 import { cardTone, fmtShortAgo, useStarred } from "../sticker/helpers";
 import { UNNAMED_SESSION_SENTINEL, type Item } from "../sticker/types";
 import { attentionFocus } from "./attention";
+import { RosterComposer } from "./RosterComposer";
 import { RosterDecision } from "./RosterDecision";
 
 /** 名单一次取多少行。名单不翻页：超过这个数的老会话去「已完成 / 工作区」里找。 */
@@ -51,6 +52,8 @@ function DesktopRoster() {
   const [expanded, setExpanded] = useState<number | null>(null);
   const [sceneId, setSceneId] = useState(0);
   const [request, setRequest] = useState<ChatShellBridge["request"]>(null);
+  const [newSession, setNewSession] = useState<ChatShellBridge["newSession"]>(null);
+  const rowsRef = useRef<readonly Item[]>([]);
   const { starred } = useStarred();
 
   const load = useCallback(() => {
@@ -69,12 +72,19 @@ function DesktopRoster() {
     return pinned.length ? [...pinned, ...sessions.filter((s) => !starred.has(s.session.cc_session_id))] : sessions;
   }, [sessions, starred]);
 
-  // 只开了一个 agent（或一个都没有）：名单没有东西可列，直接是现场。
+  rowsRef.current = rows;
+  const latest = useCallback((id: number) => rowsRef.current.find((row) => row.session.id === id), []);
+  const askNewSession = useCallback((message: string) => {
+    setNewSession((prev) => ({ message, seq: (prev?.seq ?? 0) + 1 }));
+  }, []);
+
+  // 只开了一个 agent：名单只有一行，直接是它的现场。一个都没有时留在名单：空名单加输入框，
+  // 从这里派第一个 agent。
   const decidedRef = useRef(false);
   useEffect(() => {
     if (!sessions || decidedRef.current) return;
     decidedRef.current = true;
-    if (view === "roster" && sessions.length <= 1) setView("scene");
+    if (view === "roster" && sessions.length === 1) setView("scene");
   }, [sessions, view]);
 
   const enter = useCallback((id: number) => {
@@ -170,12 +180,15 @@ function DesktopRoster() {
         gitBadges={gitBadges}
         onToggle={(id) => setExpanded((prev) => (prev === id ? null : id))}
         onEnter={enter}
+        latest={latest}
+        onNewSession={askNewSession}
       />
     ) : null,
     request,
+    newSession,
     onSession: setSceneId,
     onReveal: () => setView("scene"),
-  }), [view, rows, sessions, expanded, gitBadges, enter, request]);
+  }), [view, rows, sessions, expanded, gitBadges, enter, request, newSession, latest, askNewSession]);
 
   return (
     <div ref={shellRef} className={`roster-shell is-${view}`}>
@@ -246,7 +259,9 @@ function title(item: Item, fallback: string): string {
   return item.task_title && item.task_title !== UNNAMED_SESSION_SENTINEL ? item.task_title : fallback;
 }
 
-function RosterList({ rows, loaded, expanded, gitBadges, onToggle, onEnter }: {
+function RosterList({ rows, loaded, expanded, gitBadges, onToggle, onEnter, latest, onNewSession }: {
+  latest: (id: number) => Item | undefined;
+  onNewSession: (message: string) => void;
   rows: readonly Item[];
   loaded: boolean;
   expanded: number | null;
@@ -255,6 +270,7 @@ function RosterList({ rows, loaded, expanded, gitBadges, onToggle, onEnter }: {
   onEnter: (id: number) => void;
 }) {
   const t = useT();
+  const target = expanded == null ? null : rows.find((row) => row.session.id === expanded) ?? null;
   return (
     <section className="roster" aria-label={t.roster.title}>
       <header className="roster-head" data-tauri-drag-region>
@@ -282,6 +298,13 @@ function RosterList({ rows, loaded, expanded, gitBadges, onToggle, onEnter }: {
           />
         ))}
       </div>
+      {/* 常驻、永远完整可见：名单自己滚，输入框不跟着滚走。 */}
+      <RosterComposer
+        target={target}
+        targetTitle={target ? title(target, t.sticker.waitingFirstInput) : ""}
+        latest={latest}
+        onNewSession={onNewSession}
+      />
     </section>
   );
 }

@@ -22,9 +22,11 @@ vi.mock("@tauri-apps/api/event", () => ({
     return Promise.resolve(() => {});
   }),
 }));
+const submitToTerminal = vi.hoisted(() => vi.fn((..._args: unknown[]) => Promise.resolve()));
+vi.mock("../chat/terminalSubmit", () => ({ submitToTerminal }));
 vi.mock("../ChatWindow", () => ({
   ChatWindow: ({ shell }: { shell?: ChatShellBridge }) => (
-    <div data-testid="chat" data-request={shell?.request?.id ?? ""}>
+    <div data-testid="chat" data-request={shell?.request?.id ?? ""} data-new-session={shell?.newSession?.message ?? ""}>
       {shell?.overlay}
       <button type="button" onClick={() => shell?.onReveal()}>reveal</button>
     </div>
@@ -51,6 +53,7 @@ describe("名单外壳", () => {
     boardHandlers.clear();
     invoke.mockReset();
     emit.mockClear();
+    submitToTerminal.mockClear();
     invoke.mockImplementation((cmd: string) => Promise.resolve(
       cmd === "get_live_sessions_page" ? { items: sessions, next_cursor: null } : cmd === "sidebar_git_badges" ? [] : undefined,
     ));
@@ -226,6 +229,55 @@ describe("名单外壳", () => {
     fireEvent.click(await screen.findByText("乙"));
     await screen.findByText(/Pick one/);
     expect(screen.getByRole("button", { name: "Esc" })).toBeTruthy();
+  });
+
+  it("输入框常驻；没有行展开时提交 = 带着这句话去派新 agent", async () => {
+    sessions = [mk("甲"), mk("乙")];
+    render(<RosterShell />);
+    await screen.findByText("甲");
+    const input = screen.getByPlaceholderText("交代一个结果，派一个 agent");
+    fireEvent.change(input, { target: { value: "把登录页的校验收进一个 schema" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(screen.getByTestId("chat").getAttribute("data-new-session")).toBe("把登录页的校验收进一个 schema");
+    expect(submitToTerminal).not.toHaveBeenCalled();
+  });
+
+  it("展开一行后输入框指向它并写明任务名；话发进那个会话，发回车前复核它没停到审批上", async () => {
+    sessions = [mk("甲"), mk("乙", (s) => { s.pty_managed = true; s.session.status = "waiting"; })];
+    const target = sessions[1].session.id;
+    render(<RosterShell />);
+    fireEvent.click(await screen.findByText("乙"));
+    const input = screen.getByPlaceholderText("对「乙」说");
+    fireEvent.change(input, { target: { value: "继续，先跑测试" } });
+    await act(async () => { fireEvent.keyDown(input, { key: "Enter" }); });
+    expect(submitToTerminal).toHaveBeenCalledTimes(1);
+    const [id, text, abortIf, verify] = submitToTerminal.mock.calls[0] as [number, string, () => string | null, { message: string }];
+    expect([id, text]).toEqual([target, "继续，先跑测试"]);
+    expect(verify.message).toContain("没有发出");
+    expect(abortIf()).toBeNull();
+    // 正文落下后它来了审批：这个回车不能发。
+    sessions = [sessions[0], { ...sessions[1], pending_review: "approval" }];
+    await act(async () => { boardHandlers.get("board-urgent")?.({ payload: null }); });
+    await flush();
+    expect(abortIf()).toContain("没有发出");
+    // 没有去新建页。
+    expect(screen.getByTestId("chat").getAttribute("data-new-session")).toBe("");
+  });
+
+  it("不能直接说话的行（外部终端 / 待处理）：输入框写明原因，不往终端里写字", async () => {
+    sessions = [mk("甲"), mk("乙", (s) => { s.pty_managed = false; })];
+    render(<RosterShell />);
+    fireEvent.click(await screen.findByText("乙"));
+    const input = screen.getByPlaceholderText("「乙」现在不能直接说话，进入现场处理") as HTMLTextAreaElement;
+    expect(input.disabled).toBe(true);
+    expect(submitToTerminal).not.toHaveBeenCalled();
+  });
+
+  it("一个会话都没有：空名单加输入框", async () => {
+    sessions = [];
+    render(<RosterShell />);
+    await screen.findByText("还没有会话");
+    expect(screen.getByPlaceholderText("交代一个结果，派一个 agent")).toBeTruthy();
   });
 
   it("界面上没有计数", async () => {

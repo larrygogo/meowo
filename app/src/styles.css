@@ -7975,6 +7975,15 @@ button.btn-primary:disabled { opacity: 1; background: var(--fill-selected); colo
 .roster-decision .chat-approval { width: auto; max-width: none; max-height: none; margin: 0; padding: 0; background: transparent; box-shadow: none; animation: none; overflow: visible; }
 .roster-item.is-open:has(.roster-decision) { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cc-warn-vivid) 70%, transparent); }
 .roster-item.is-open:has(.roster-decision) .roster-foot { justify-content: flex-start; margin-top: 10px; }
+/* 底部常驻输入框：不参与名单滚动。外观跟对话窗的输入框一路（卡片色、大圆角、圆形发送钮）。 */
+.roster-composer { flex: none; padding: 8px 20px 16px; display: flex; flex-direction: column; gap: 6px; }
+.roster-composer-box { display: flex; align-items: flex-end; gap: 8px; padding: 8px 8px 8px 16px; border-radius: var(--radius-xl); background: var(--cc-panel-raised); box-shadow: 0 0 0 var(--hairline) var(--cc-border); }
+.roster-composer-box:focus-within { box-shadow: 0 0 0 1px var(--cc-accent); }
+.roster-composer textarea { flex: 1; min-width: 0; min-height: 32px; max-height: 120px; padding: 6px 0; border: 0; outline: 0; resize: none; background: transparent; color: var(--cc-text); font: inherit; font-size: var(--text-sm); line-height: 20px; field-sizing: content; }
+.roster-composer textarea::placeholder { color: var(--cc-text-faint); }
+.roster-send { flex: none; min-width: 32px; height: 32px; padding: 0 8px; display: grid; place-items: center; border: 0; border-radius: 16px; background: var(--cc-accent); color: var(--cc-on-accent); font: inherit; font-size: var(--text-xs); font-weight: 600; cursor: pointer; }
+.roster-send:disabled { background: var(--fill-selected); color: var(--cc-text-faint); cursor: default; }
+.roster-composer-error { padding: 0 16px; font-size: var(--text-xs); color: var(--cc-err-text); }
 /* 窄窗：状态词之后的列让出来，只留头像、任务名、状态词。 */
 @media (max-width: 760px) {
   .roster-rail { width: 40px; }
@@ -7983,4 +7992,5 @@ button.btn-primary:disabled { opacity: 1; background: var(--fill-selected); colo
   .roster-row { grid-template-columns: 36px minmax(0, 1fr) auto; column-gap: 12px; padding: 0 12px; }
   .roster-now, .roster-time, .roster-diff { display: none; }
   .roster-sheet { padding-left: 60px; }
+  .roster-composer { padding: 6px 8px 10px; }
 }

@@ -7,7 +7,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTauriEvent } from "../../hooks/useTauriEvent";
 import { SELECT_SESSION_EVENT } from "../../remoteMode";
 
-type NewSessionPrefill = { cwd?: string | null; provider?: string | null };
+/** message：新建页输入框里先替用户填好的第一句话（主窗口名单底部的输入框带过来的）。 */
+type NewSessionPrefill = { cwd?: string | null; provider?: string | null; message?: string };
 type AdminStatus = "all" | "open" | "done";
 
 /** 后端带 ?newSession=1 开窗（贴纸等窗外入口的「新建会话」）时首屏直接是新建会话页。 */
@@ -83,6 +84,13 @@ export function useMainPages({ resetTo, closeOverlay }: {
     setNewSessionDrop(null);
     setNewSessionOpen({ cwd: event.payload?.cwd, provider: event.payload?.provider, nonce: Date.now() });
   });
+  /** 名单底部输入框「交代一个结果」：打开新建页，把那句话带进它的输入框。 */
+  const openNewSessionWith = useCallback((message: string) => {
+    closeOverlay();
+    setAdminOpen(false);
+    setNewSessionDrop(null);
+    setNewSessionOpen({ message, nonce: Date.now() });
+  }, [closeOverlay]);
   /** 新建页开着时拖进窗口的路径（是不是文件夹由新建页去核实）。 */
   const dropFolder = useCallback((path: string) => setNewSessionDrop({ path, nonce: Date.now() }), []);
 
@@ -100,6 +108,6 @@ export function useMainPages({ resetTo, closeOverlay }: {
 
   return {
     adminOpen, adminStatus, adminWorkspaces, newSessionOpen, newSessionDrop, newSessionOpenRef,
-    openAdmin, openAdminFromOverlay, openAdminFor, closeAdmin, leavePages, selectSession, selectFromOverlay, dropFolder,
+    openAdmin, openAdminFromOverlay, openAdminFor, closeAdmin, leavePages, selectSession, selectFromOverlay, dropFolder, openNewSessionWith,
   };
 }

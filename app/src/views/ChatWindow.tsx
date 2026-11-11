@@ -265,6 +265,8 @@ export type ChatShellBridge = {
   overlay: ReactNode | null;
   /** 名单要求切到某个会话。seq 每次请求加一，同一个 id 连点两次也算两次。 */
   request: { id: number; seq: number } | null;
+  /** 名单底部输入框「交代一个结果」：打开新建页并把这句话带进去。seq 同 request。 */
+  newSession: { message: string; seq: number } | null;
   /** 对话窗当前会话变了（含启动时的初值）。 */
   onSession: (id: number) => void;
   /** 对话窗被带去某个会话 / 新建页 / 管理页（点岛上的卡、通知、新会话启动）：名单让位。 */
@@ -1942,7 +1944,7 @@ export function ChatWindow({ shell }: { shell?: ChatShellBridge } = {}) {
   // 主区的新建会话页 / 会话管理页：开合、入口事件、选会话时让位（chat/useMainPages）。
   const {
     adminOpen, adminStatus, adminWorkspaces, newSessionOpen, newSessionDrop, newSessionOpenRef,
-    openAdmin, openAdminFromOverlay, openAdminFor, closeAdmin, leavePages, selectSession, selectFromOverlay, dropFolder,
+    openAdmin, openAdminFromOverlay, openAdminFor, closeAdmin, leavePages, selectSession, selectFromOverlay, dropFolder, openNewSessionWith,
   } = useMainPages({ resetTo, closeOverlay: closeOverlaySidebar });
   // 新建会话页 / 会话管理页盖住主区时，右侧面板跟着让位（用户实拍 2026-11-09：新建页还挂着上一个
   // 会话的「更改」）。只把可见性压成收起、不卸载：回到会话时终端、浏览器、打开的文件原样还在；
@@ -1955,6 +1957,11 @@ export function ChatWindow({ shell }: { shell?: ChatShellBridge } = {}) {
     if (shellRequest) selectSession(shellRequest.id);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- 只认 seq：同一个会话再点一次也要回到它
   }, [shellRequest?.seq]);
+  const shellNewSession = shell?.newSession ?? null;
+  useEffect(() => {
+    if (shellNewSession) openNewSessionWith(shellNewSession.message);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 只认 seq
+  }, [shellNewSession?.seq]);
   // 新建页 / 管理页都长在对话窗里：它们一打开，名单让位。
   useEffect(() => { if (pageCovered) shellRef.current?.onReveal(); }, [pageCovered]);
   const shownPanelState = useMemo(() => (pageCovered ? { ...panelState, visible: false } : panelState), [pageCovered, panelState]);
