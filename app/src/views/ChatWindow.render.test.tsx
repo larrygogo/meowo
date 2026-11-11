@@ -760,7 +760,9 @@ describe("ChatWindow", () => {
     });
     render(<ChatWindow />);
 
-    expect(await screen.findByRole("button", { name: "Yes, I trust this folder" })).toBeTruthy();
+    // 信任卡要经过 pending 启动登记 → 对话 UI → 终端快照 → 屏幕识别四次异步往返；单跑约 0.8s，
+    // 全量并发下偶发超过 findBy 默认的 1s（UI 优化集成分支实测一次），按本文件惯例放宽。
+    expect(await screen.findByRole("button", { name: "Yes, I trust this folder" }, { timeout: 5000 })).toBeTruthy();
     expect(screen.getByText("是否信任此文件夹？")).toBeTruthy();
   });
 
