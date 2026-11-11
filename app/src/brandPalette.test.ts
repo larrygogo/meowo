@@ -53,6 +53,19 @@ describe.each(["dark", "light"] as const)("%s 主题的可读性", (theme) => {
     }
   });
 
+  it("语法高亮、工具行着色、终端光标与青柠和三个状态色不撞色（两两 ΔE2000 ≥ 10）", () => {
+    // 语法色如果和状态色相近，diff 里的红绿、对话里的状态点会被代码着色冲淡。
+    const brand = [tok(theme, "--cc-brand-line"), ...["--cc-ok-vivid", "--cc-warn-vivid", "--cc-err-vivid", "--cc-ok-text", "--cc-warn-text", "--cc-fail-text"].map((n) => tok(theme, n))];
+    const names = ["keyword", "string", "number", "comment", "func", "type", "attr", "builtin"].map((n) => `--cc-syn-${n}`);
+    const tones = ["blue", "purple", "orange", "teal"].map((n) => `--cc-tone-${n}`);
+    for (const name of [...names, ...tones]) {
+      const v = raw(BLOCKS[theme], name);
+      if (v.startsWith("var(")) continue; // 深色的 tone 直接引用语法色，已随语法色一起查
+      for (const b of brand) expect(deltaE(parseColor(v), b), `${theme} ${name}`).toBeGreaterThanOrEqual(10);
+      for (const bg of [sheet, raised, tok(theme, "--cc-code-bg")]) expect(contrast(parseColor(v), bg), `${theme} ${name}`).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
   it("运行、等待、出错三色在正常与红绿色盲视觉下的可分度不低于换品牌前", () => {
     // 换品牌前实测的两两最小 ΔE2000（Machado 模拟）：深色 34.6 / 3.1 / 5.9，浅色 34.7 / 13.5 / 14.7。
     const before: Record<string, Record<Vision, number>> = {
