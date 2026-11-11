@@ -47,7 +47,7 @@ import { QuestionPanels } from "./chat/QuestionPanels";
 import { RemoteTerminalKeys } from "./chat/RemoteTerminalKeys";
 import { peekSessionMeta, prefetchPending, recallHistory, rememberHistory, takePrefetch, trackPrefetch } from "./chat/historyCache";
 import { ChatTitleMenu, ChatTitlePlaceholder } from "./chat/TitleMenus";
-import { displayKeys, QuickSwitcher, RenameModal, ShortcutSheet, type PaletteCommand } from "./chat/WindowModals";
+import { displayKeys, QuickSwitcher, RenameModal, ShortcutSheet, tipWithKeys, type PaletteCommand } from "./chat/WindowModals";
 import { attentionTone, nextAttentionSession } from "./chat/nextAttention";
 import { isBackgroundShell, isSubagentDelegation } from "./chat/shared";
 import { Transcript, type TranscriptAgent } from "./chat/Transcript";
@@ -3820,7 +3820,7 @@ export function ChatWindow() {
       type="button"
       className={"chat-sidebar-open" + (remoteBackMode ? " is-back" : "")}
       aria-label={remoteBackMode ? t.remote.backToSessions : sidebarVisible ? t.chat.sidebarCollapse : t.chat.sidebarExpand}
-      data-tip={remoteBackMode ? undefined : sidebarVisible ? t.chat.sidebarCollapse : t.chat.sidebarExpand}
+      data-tip={remoteBackMode ? undefined : remoteUi() ? (sidebarVisible ? t.chat.sidebarCollapse : t.chat.sidebarExpand) : tipWithKeys(sidebarVisible ? t.chat.sidebarCollapse : t.chat.sidebarExpand, "Ctrl+B")}
       aria-expanded={remoteBackMode ? undefined : sidebarVisible}
       onClick={remoteBackMode ? goBackToRemoteList : toggleSidebar}
     >

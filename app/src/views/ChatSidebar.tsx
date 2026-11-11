@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState, type KeyboardE
 import { invoke } from "@tauri-apps/api/core";
 import { moveNextTo, orderKey, sidebarDirGroups, usePointerReorder, useSessionDrag, type DirGroup as SidebarDirGroup } from "./sidebarDrag";
 import { WorkspaceDirectory } from "./chat/WorkspaceDirectory";
+import { tipWithKeys } from "./chat/WindowModals";
 import { confirmStopSession, getLiveSessionsPage, getSettings, moveSessionRank, setWorkspaceOrder as saveWorkspaceOrder, openNewSessionWindow, openProjectDir, recentCwds, renameSession, searchChatTranscripts, sessionTone, setArchived, setSessionNote, type CardMenuMode, type LiveSession, type SessionTone, type TranscriptSearchHit } from "../api";
 import { noteSessionMeta } from "./chat/historyCache";
 import { attentionTone } from "./chat/nextAttention";
@@ -1206,7 +1207,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
             type="button"
             className="chat-sidebar-toggle"
             aria-label={t.chat.sidebarCollapse}
-            data-tip={t.chat.sidebarCollapse}
+            data-tip={tipWithKeys(t.chat.sidebarCollapse, "Ctrl+B")}
             onClick={onCollapse}
           >
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round">

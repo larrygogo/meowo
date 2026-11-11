@@ -11,6 +11,7 @@ import { useT } from "../../i18n";
 import { remoteUi } from "../../remoteMode";
 import { ArchiveIcon } from "../sticker/icons";
 import { GitStatusChip, OpenInEditor, PullRequestChip } from "./TitleBarTools";
+import { tipWithKeys } from "./WindowModals";
 
 /// 当前分支的 PR（对照 Kimi 标题栏）：换目录 / 换分支时查一次，之后 3 分钟一次——gh 要联网，
 /// 不跟改动摘要的轮询走（后端另按目录缓存 60s）。手机不查：桌面专用命令，桥上不放行。
@@ -103,7 +104,7 @@ export function ChatTitleBar({
         <button
           type="button"
           className={"chat-todo-btn" + (terminalOn ? " is-active" : "")}
-          data-tip={t.chat.terminal}
+          data-tip={tipWithKeys(t.chat.terminal, terminalOn ? "Ctrl+1" : "Ctrl+2")}
           aria-label={t.chat.terminal}
           aria-pressed={terminalOn}
           onClick={onToggleTerminal}
@@ -133,7 +134,7 @@ export function ChatTitleBar({
         <button
           type="button"
           className={"chat-todo-btn chat-panel-toggle" + (panelOpen ? " is-active" : "")}
-          data-tip={panelWaiting ? `${t.chat.browserPermissionWaiting} · ${t.chat.togglePanel}` : panelAgentBusy ? `${t.chat.browserAgentBusyTip} · ${t.chat.togglePanel}` : t.chat.togglePanel}
+          data-tip={tipWithKeys(panelWaiting ? `${t.chat.browserPermissionWaiting} · ${t.chat.togglePanel}` : panelAgentBusy ? `${t.chat.browserAgentBusyTip} · ${t.chat.togglePanel}` : t.chat.togglePanel, "Ctrl+Shift+B")}
           aria-label={panelWaiting ? `${t.chat.browserPermissionWaiting} · ${t.chat.togglePanel}` : panelAgentBusy ? `${t.chat.browserAgentBusyTip} · ${t.chat.togglePanel}` : t.chat.togglePanel}
           aria-pressed={panelOpen}
           onClick={onTogglePanel}
