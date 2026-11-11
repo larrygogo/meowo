@@ -474,7 +474,7 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
 
 .remote-gate-brand { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 8px; }
 .remote-gate-brand img { border-radius: 12px; }
-.remote-gate-brand span { font-size: 18px; font-weight: 650; letter-spacing: -0.02em; }
+.remote-gate-brand span { font-size: 18px; font-weight: 600; letter-spacing: -0.02em; }
 .remote-gate-card h1 { margin: 0; font-size: 20px; text-align: center; letter-spacing: -0.015em; }
 .remote-gate-card > p { text-align: center; }
 .remote-gate-card p { margin: 0; color: var(--cc-text-dim); font-size: 14px; line-height: 1.55; }

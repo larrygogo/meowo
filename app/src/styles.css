@@ -2376,7 +2376,7 @@ button.stab {
   margin: var(--sp-24) var(--sp-2) var(--sp-4);
   color: var(--cc-text);
   font-size: var(--fs-13);
-  font-weight: 650;
+  font-weight: 600;
 }
 .relay-intro { margin-top: var(--sp-6); margin-bottom: var(--sp-12); }
 .provider-access {
@@ -4393,13 +4393,13 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-sidebar-lead { flex: 0 0 16px; height: calc(var(--text-sm) * 1.4); display: inline-flex; align-items: center; justify-content: center; }
 .chat-sidebar-lead .chat-sidebar-dot { position: static; width: 7px; height: 7px; box-shadow: none; }
 .chat-sidebar-lead .chat-sidebar-unread { margin: 0; }
-.chat-sidebar-name { font-weight: 450; line-height: 1.4; }
-.chat-sidebar-item.is-active .chat-sidebar-name { font-weight: 450; }
+.chat-sidebar-name { font-weight: 400; line-height: 1.4; }
+.chat-sidebar-item.is-active .chat-sidebar-name { font-weight: 400; }
 /* 标题吃满整行再做右端渐隐（Kimi 的 mask，不用省略号）：短标题的盒子同样铺满，渐隐只落在空白处。 */
 .chat-sidebar-name-text { flex: 1; text-overflow: clip; -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); }
 .chat-sidebar-metaline { margin-top: 2px; }
 .chat-sidebar-act { position: relative; flex: 0 0 auto; align-self: flex-start; display: inline-flex; align-items: center; justify-content: flex-end; min-width: 24px; height: calc(var(--text-sm) * 1.4); }
-.chat-sidebar-time { margin: 0; color: var(--cc-text-faint); font-size: var(--text-xs); font-weight: 475; font-variant-numeric: tabular-nums; white-space: nowrap; transition: opacity var(--dur-fast) var(--ease-out); }
+.chat-sidebar-time { margin: 0; color: var(--cc-text-faint); font-size: var(--text-xs); font-weight: 400; font-variant-numeric: tabular-nums; white-space: nowrap; transition: opacity var(--dur-fast) var(--ease-out); }
 /* 时间与「⋯」同一个触发条件互换：悬停，或键盘把焦点移到这一行（:focus-visible）。鼠标点过的那行
    焦点一直在（:focus-within），原先「⋯」随它常亮、时间却只在悬停时让位，两者叠在一起（用户实拍）。 */
 .chat-sidebar-item:is(:hover, :focus-visible) .chat-sidebar-act:has(.chat-sidebar-item-menu) .chat-sidebar-time { opacity: 0; visibility: hidden; }
@@ -4434,7 +4434,7 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-ws-dir:focus-visible { outline: none; box-shadow: var(--focus-ring, 0 0 0 2px var(--cc-accent)); }
 .chat-ws-dir-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .chat-ws-dir-icon { flex: 0 0 16px; color: var(--cc-text-faint); }
-.chat-ws-dir-name { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; color: var(--cc-text); font-size: var(--text-sm); font-weight: 450; -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); }
+.chat-ws-dir-name { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; color: var(--cc-text); font-size: var(--text-sm); font-weight: 400; -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); }
 .chat-ws-dir-sub { margin: var(--sp-3) 0 0 calc(16px + 6px); overflow: hidden; white-space: nowrap; color: var(--cc-text-faint); font-size: var(--text-xs); -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); }
 .chat-ws-dir:hover .chat-ws-dir-name, .chat-ws-dir:hover .chat-ws-dir-sub, .chat-ws-dir.is-menu-open .chat-ws-dir-name { margin-right: calc(var(--icon-button-xs) + var(--sp-4)); }
 .chat-ws-dir-act { position: absolute; top: 0; bottom: 0; right: var(--sp-4); display: inline-flex; align-items: center; }
@@ -6927,7 +6927,7 @@ button.scm-check-name:hover { text-decoration: underline; }
   z-index: 80;
   pointer-events: none;
   font-size: 8px;
-  font-weight: 650;
+  font-weight: 600;
   line-height: 1;
   letter-spacing: 0.1em;
   color: #f0a35e;
