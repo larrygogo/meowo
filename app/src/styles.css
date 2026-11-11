@@ -3759,16 +3759,19 @@ select.ns-input {
 @container chat-bar (max-width: 760px) {
   .chat-bar .tb-git-branch, .chat-bar .chat-title-project, .chat-bar .chat-title-sep { display: none; }
 }
-@container chat-bar (max-width: 640px) {
-  .chat-bar .tb-pr { display: none; }
-}
-@container chat-bar (max-width: 520px) {
-  .chat-bar .tb-open { display: none; }
-}
+/* PR、打开方式、改动、终端、会话信息这些「功能」不在这里收：曾在此 display:none，菜单里却
+   没有入口，拉窄就丢功能（调研 sys8/c8）。改由 titleOverflow.ts 的门限表决定放栏上还是 ⋯ 里。
+   「结束会话」在最窄一档只留图标（620 宽开面板时标题栏只剩 320，英文字样要 80px）。 */
+.chat-end { display: inline-flex; align-items: center; }
+.chat-end-ico { display: none; }
 @container chat-bar (max-width: 400px) {
-  .chat-bar .tb-git { display: none; }
+  .chat-bar .chat-end { padding: 0; width: 28px; height: 28px; justify-content: center; }
+  .chat-bar .chat-end-ico { display: block; }
+  .chat-bar .chat-end-label { display: none; }
 }
 .chat-title-actions { min-width: 200px; }
+.chat-title-actions-sep { height: var(--hairline); margin: var(--sp-4) var(--sp-6); background: var(--cc-border); }
+.chat-title-actions .dd-item .dd-check { margin-left: auto; }
 .chat-title-actions .dd-item { justify-content: flex-start; gap: var(--sp-8); padding: var(--sp-7) var(--sp-10); }
 .chat-title-actions .dd-item:disabled { opacity: .5; cursor: default; }
 .chat-title-action-ico { flex: 0 0 auto; display: inline-flex; color: var(--cc-text-faint); }

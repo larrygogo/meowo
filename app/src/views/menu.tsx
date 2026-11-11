@@ -117,7 +117,8 @@ export function useMenuPopup({
   // 而不是 aria-activedescendant——菜单里没有输入框，焦点落在哪项，Enter/Space 就激活哪项。
   const onKeyDown = (e: ReactKeyboardEvent) => {
     if (!open) return;
-    const items = Array.from(ref.current?.querySelectorAll<HTMLElement>('[role="menuitem"], [role="option"]') ?? []);
+    // menuitemcheckbox：标题 ⋯ 菜单里收进来的终端、改动等开关项（titleOverflow），漏掉就方向键跳不到。
+    const items = Array.from(ref.current?.querySelectorAll<HTMLElement>('[role="menuitem"], [role="menuitemcheckbox"], [role="option"]') ?? []);
     if (items.length === 0) return;
     const cur = items.indexOf(document.activeElement as HTMLElement);
     let next: number | null = null;

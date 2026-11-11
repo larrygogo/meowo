@@ -47,12 +47,21 @@ function CodeGlyph() {
     </svg>
   );
 }
-function OpenerIcon({ opener }: { opener: FileOpenerDto }) {
+export function OpenerIcon({ opener }: { opener: FileOpenerDto }) {
   if (opener.icon) return <img src={opener.icon} width={16} height={16} alt="" draggable={false} />;
   return opener.id === FILE_MANAGER ? <FolderGlyph /> : <CodeGlyph />;
 }
 
-export function OpenInEditor({ cwd, onError }: { cwd: string; onError: (message: string) => void }) {
+export type FolderOpeners = {
+  options: FileOpenerDto[];
+  current: FileOpenerDto;
+  /** 用指定方式打开并记成下次的默认（对照 Kimi：选了就记住）。 */
+  pick: (id: string) => void;
+};
+
+/** 打开方式的清单、当前默认与「打开」动作。标题栏的分体按钮和窄窗时的 ⋯ 菜单共用一份，
+ *  两处选过的默认才不会各记各的。 */
+export function useFolderOpeners(cwd: string, onError: (message: string) => void): FolderOpeners {
   const t = useT();
   const [editors, setEditors] = useState<FileOpenerDto[]>([]);
   useEffect(() => {
@@ -61,7 +70,6 @@ export function OpenInEditor({ cwd, onError }: { cwd: string; onError: (message:
     return () => { alive = false; };
   }, []);
   const [preferred, setPreferred] = useState(readOpener);
-  const { open, setOpen, pos, ref, btnRef, menuRef, toggle, onKeyDown } = useMenuPopup({});
   const options: FileOpenerDto[] = [
     ...editors,
     { id: FILE_MANAGER, name: isMac() ? t.chat.fileManagerMac : t.chat.fileManager, icon: null },
@@ -72,6 +80,19 @@ export function OpenInEditor({ cwd, onError }: { cwd: string; onError: (message:
     const opening = id === FILE_MANAGER ? openProjectDir(cwd) : openFolderIn(cwd, id);
     opening.catch((error) => onError(formatBackendError(error, t.locale)));
   };
+  const pick = (id: string) => {
+    setPreferred(id);
+    saveOpener(id);
+    openWith(id);
+  };
+  return { options, current, pick };
+}
+
+export function OpenInEditor({ cwd, onError, openers }: { cwd: string; onError: (message: string) => void; openers?: FolderOpeners }) {
+  const t = useT();
+  const own = useFolderOpeners(cwd, onError);
+  const { options, current, pick } = openers ?? own;
+  const { open, setOpen, pos, ref, btnRef, menuRef, toggle, onKeyDown } = useMenuPopup({});
   return (
     <div className="dd tb-open" ref={ref} onKeyDown={onKeyDown}>
       <button
@@ -79,7 +100,7 @@ export function OpenInEditor({ cwd, onError }: { cwd: string; onError: (message:
         className="tb-open-main"
         data-tip={t.chat.openWith(current.name)}
         aria-label={t.chat.openWith(current.name)}
-        onClick={() => openWith(current.id)}
+        onClick={() => pick(current.id)}
       >
         <OpenerIcon opener={current} />
       </button>
@@ -105,10 +126,8 @@ export function OpenInEditor({ cwd, onError }: { cwd: string; onError: (message:
               className="dd-item"
               onClick={() => {
                 // 选了就记住并直接打开（对照 Kimi）：下次点主钮就是它。
-                setPreferred(option.id);
-                saveOpener(option.id);
                 setOpen(false);
-                openWith(option.id);
+                pick(option.id);
               }}
             >
               <span className="dd-val">
