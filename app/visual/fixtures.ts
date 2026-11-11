@@ -101,3 +101,127 @@ export { CHAT_SESSION_ID };
 export function markReady(): void {
   (window as unknown as { __visualReady: boolean }).__visualReady = true;
 }
+
+/// ── 对话流各种状态（重设计时补的场景，scene=flow-*）────────────────────────────
+/// 一段会话里把 harness 原先拍不到的条目都摆出来：长用户消息（渐隐）、跨会话消息、思考、
+/// 带 diff 的编辑卡、带输出的命令卡、子任务、Markdown 全家桶、回合报错、压缩分隔条、排队消息。
+export function flowStateItems(lang: "zh" | "en", ts: string): unknown[] {
+  const zh = lang === "zh";
+  const longAsk = (zh
+    ? "把登录页的校验规则全部收进一个 schema。下面是我现在的想法，逐条看一下有没有问题：\n"
+    : "Move every login validation rule into one schema. My current thinking, check each point:\n")
+    + Array.from({ length: 14 }, (_, i) => (zh ? `${i + 1}. 第 ${i + 1} 条规则要保留原来的报错文案，并且补一条单测。` : `${i + 1}. Rule ${i + 1} keeps its original error copy and gets a unit test.`)).join("\n");
+  const cross = "Another Claude session sent a message:\n<cross-session-message from=\"uds:pipe\" from-name=\"" + (zh ? "复核会话" : "Review session") + "\" from-mode=\"bypass\">"
+    + (zh ? "复核完了：`login.ts` 第 12 行的正则漏了加号别名，其余没问题。" : "Review done: the regex on line 12 of `login.ts` misses plus aliases, the rest is fine.")
+    + "</cross-session-message>";
+  const md = [
+    zh ? "## 改动小结" : "## Summary",
+    "",
+    zh ? "规则收进了 `src/schemas/login.ts`，细节见 [PR #162](https://github.com/example/web-app/pull/162)。" : "Rules now live in `src/schemas/login.ts`, see [PR #162](https://github.com/example/web-app/pull/162).",
+    "",
+    zh ? "### 还要注意" : "### Watch out",
+    "",
+    zh ? "- **密码长度**下限从 6 提到 8\n- 邮箱校验改用 `z.string().email()`\n- [ ] 文档还没更新\n- [x] 单测已补" : "- **Password length** minimum raised from 6 to 8\n- Email check now uses `z.string().email()`\n- [ ] Docs not updated yet\n- [x] Unit tests added",
+    "",
+    fence + "ts",
+    "// 登录表单的唯一校验来源",
+    "export const loginSchema = z.object({",
+    "  email: z.string().email(),",
+    "  password: z.string().min(8).max(128),",
+    "  remember: z.boolean().default(false),",
+    "});",
+    "export type LoginInput = z.infer<typeof loginSchema>;",
+    fence,
+    "",
+    zh ? "> 旧的 `isEmail` 工具函数可以删，没有别处引用。" : "> The old `isEmail` helper can go, nothing else imports it.",
+    "",
+    "---",
+    "",
+    zh ? "| 文件 | 增 | 删 |\n|---|---:|---:|\n| login.ts | 18 | 0 |\n| LoginForm.tsx | 6 | 21 |" : "| File | Added | Removed |\n|---|---:|---:|\n| login.ts | 18 | 0 |\n| LoginForm.tsx | 6 | 21 |",
+  ].join("\n");
+  return [
+    { type: "user_text", id: "fs-u1", timestamp: ts, text: longAsk },
+    { type: "reasoning", id: "fs-th", timestamp: ts, text: zh ? "先确认三个组件里各自的规则有没有冲突，再决定 schema 的字段。" : "First check whether the three components disagree, then decide the schema fields." },
+    { type: "assistant_text", id: "fs-a1", timestamp: ts, text: zh ? "我先改 `LoginForm.tsx`，再跑一遍测试。" : "I'll edit `LoginForm.tsx` first, then run the tests." },
+    { type: "tool_use", id: "fs-t1", timestamp: ts, name: "Edit", summary: "src/components/LoginForm.tsx",
+      detail: { kind: "edit", path: "src/components/LoginForm.tsx", old: "const next: Errors = {};", new: "const result = validateLogin(values);", replace_all: false, truncated: false } },
+    { type: "tool_result", id: "fs-r1", timestamp: ts, tool_use_id: "fs-t1", text: "ok", is_error: false,
+      patch: [{ old_start: 5, new_start: 5, lines: [
+        " const submit = (values: FormValues) => {",
+        "-  const next: Errors = {};",
+        "-  if (!values.email.trim()) next.email = \"required\";",
+        "+  const result = validateLogin(values);",
+        "+  if (!result.ok) return setErrors(result.errors);",
+        "   onSubmit(result.data);",
+        " };",
+      ] }] },
+    { type: "tool_use", id: "fs-t2", timestamp: ts, name: "Bash", summary: "FORCE_COLOR=0 npx vitest run src/components --reporter=dot | tee \"out.log\"",
+      detail: { kind: "command", command: "FORCE_COLOR=0 npx vitest run src/components --reporter=dot | tee \"out.log\"", description: zh ? "跑组件测试" : "Run component tests" } },
+    { type: "tool_result", id: "fs-r2", timestamp: ts, tool_use_id: "fs-t2", text: " ✓ LoginForm.test.tsx (12)\n ✓ schema.test.ts (8)\n\n Test Files  2 passed (2)\n      Tests  20 passed (20)\nwarning: 1 deprecated API", is_error: false },
+    { type: "tool_use", id: "fs-t3", timestamp: ts, name: "Agent", summary: zh ? "复核 schema 的边界情况" : "Review schema edge cases",
+      subagent: { description: zh ? "复核 schema 的边界情况" : "Review schema edge cases", agent_type: "Explore", count: 1 } },
+    { type: "tool_result", id: "fs-r3", timestamp: ts, tool_use_id: "fs-t3", text: "done", is_error: false, subagent: { running: 0, completed: 1, failed: 0 } },
+    { type: "assistant_text", id: "fs-a2", timestamp: ts, text: md },
+    { type: "user_text", id: "fs-u2", timestamp: ts, text: cross },
+    { type: "meta", id: "fs-m1", timestamp: ts, kind: "compact", compaction: { trigger: "auto", pre_tokens: 182000, summary: null } },
+    { type: "user_text", id: "fs-u3", timestamp: ts, text: zh ? "顺手把文档也更新了。" : "Update the docs while you're at it." },
+    { type: "tool_use", id: "fs-t4", timestamp: ts, name: "Agent", summary: zh ? "更新 README 与迁移说明" : "Update README and migration notes",
+      subagent: { description: zh ? "更新 README 与迁移说明" : "Update README and migration notes", agent_type: "general-purpose", count: 2 } },
+    { type: "turn_error", id: "fs-e1", timestamp: ts, label: zh ? "服务过载" : "Overloaded", text: "API Error: 529 {\"type\":\"error\",\"error\":{\"type\":\"overloaded_error\",\"message\":\"Overloaded\"}}" },
+    { type: "prompt_queued", id: "fs-q1", timestamp: ts, text: zh ? "跑完之后再开一个 PR。" : "Open a PR after that finishes." },
+  ];
+}
+
+/// AskUserQuestion 题面（scene=flow-question）：一道单选带说明、一道多选。
+export function questionInput(lang: "zh" | "en"): string {
+  const zh = lang === "zh";
+  return JSON.stringify({ questions: [
+    { header: zh ? "校验库" : "Library", question: zh ? "schema 用哪个校验库？" : "Which validation library for the schema?", multiSelect: false, options: [
+      { label: "Zod", description: zh ? "项目里已经在用，类型推导最好" : "Already in the project, best type inference" },
+      { label: "Valibot", description: zh ? "体积更小，但要新增依赖" : "Smaller, but a new dependency" },
+      { label: "Yup", description: null },
+    ] },
+    { header: zh ? "范围" : "Scope", question: zh ? "哪些表单一起迁移？" : "Which forms should migrate too?", multiSelect: true, options: [
+      { label: zh ? "注册" : "Sign-up", description: null },
+      { label: zh ? "找回密码" : "Password reset", description: null },
+    ] },
+  ] });
+}
+
+/// ── 补看场景共用的假数据（qa-scenes.mjs 里的场景，桌面与手机 harness 都用）──────────────
+/// @ 补全的候选（file_mention_candidates）：目录以 / 结尾，带一条超长路径看省略。
+export const MENTION_CANDIDATES = [
+  "src/", "src/schemas/login.ts", "src/components/LoginForm.tsx", "src/components/LoginForm.test.tsx",
+  "packages/frontend/src/components/authentication/forms/LoginFormWithValidation.tsx", "README.md",
+];
+
+/// Lead 任务快照（lead_task_snapshot）：一张待作答的 B 类关卡，摘要够长（会出「展开」），三个选项带推荐。
+export function leadTask(lang: "zh" | "en"): unknown {
+  const zh = lang === "zh";
+  return {
+    slug: "login-schema", phase: "design", spec: "", decisions: "", progress: "",
+    checks: [
+      { id: "c1", check: zh ? "12 个测试全部通过" : "All 12 tests pass", passes: true, waived: null, leader: false },
+      { id: "c2", check: zh ? "PR 已开并通过 CI" : "PR opened and CI green", passes: false, waived: null, leader: true },
+    ],
+    gate: {
+      id: "g1", kind: "B", status: "pending", answer: null,
+      title: zh ? "校验规则放前端还是后端" : "Validate on the client or the server",
+      summary: zh
+        ? "三个表单各写了一份校验，规则已经对不上。两种收法：\n\n- **前端 schema 复用**：规则收进 `src/schemas/login.ts`，三个表单共用，改动小、今天能完\n- **后端统一校验**：前端只做格式提示，以接口返回为准，更稳但要改接口\n- **两边都做**：前端先拦一遍，后端兜底\n\n我的建议是先做前端复用，后端兜底另开一个任务。\n\n影响面：登录、注册、找回密码三个页面；不动接口契约。"
+        : "Three forms each carry their own validation and the rules have drifted. Options:\n\n- **Shared client schema**: move the rules into `src/schemas/login.ts`, small change, done today\n- **Server-side validation**: the client only hints, the API decides; sturdier but changes the API\n- **Both**: client first, server as the backstop\n\nI suggest the shared client schema now and a follow-up for the server.\n\nScope: sign-in, sign-up and password reset; the API contract stays.",
+      options: [
+        { id: "a", label: zh ? "前端 schema 复用" : "Shared client schema", detail: zh ? "改动小，今天能完" : "Small change, done today", recommended: true },
+        { id: "b", label: zh ? "后端统一校验" : "Server-side validation", detail: zh ? "更稳，但要改接口" : "Sturdier, but changes the API", recommended: false },
+        { id: "c", label: zh ? "两边都做" : "Both", detail: null, recommended: false },
+      ],
+    },
+  };
+}
+
+/// 权限模式有可选项时（agent_chat_ui.mode_controls 带屏幕标记），点权限按钮才出菜单而不是直接轮换。
+export const MODE_MARKERS = [
+  { marker: "accept edits on", value: "acceptEdits" },
+  { marker: "plan mode on", value: "plan" },
+  { marker: "bypass permissions on", value: "bypassPermissions" },
+];

@@ -19,7 +19,7 @@ vi.mock("./lazyDiff", () => ({
 
 import type { BrowserPaneInfo, GitDiffSummaryDto, ShellTerminalInfo } from "../../api";
 import type { PanelState } from "./panelTabs";
-import { SidePanel } from "./SidePanel";
+import { SidePanel, tabsCompact } from "./SidePanel";
 import type { PanelActions } from "./usePanel";
 
 afterEach(cleanup);
@@ -52,6 +52,21 @@ function renderPanel(state: PanelState = full) {
   );
   return actions;
 }
+
+describe("页签栏放不下名字时只留图标（tabsCompact）", () => {
+  it("按面板头宽度、页签数与界面缩放判定；量不出宽度时不收", () => {
+    // 620 宽的窗口开着面板，面板头约 284px：两个页签要 2×96+150=342，放不下。
+    expect(tabsCompact(284, 2, 1)).toBe(true);
+    // 1280 宽的窗口面板约 480px：两个页签放得下，五个放不下。
+    expect(tabsCompact(480, 2, 1)).toBe(false);
+    expect(tabsCompact(480, 5, 1)).toBe(true);
+    // 缩放 150%：同样 480px 只相当于 320px。
+    expect(tabsCompact(480, 2, 1.5)).toBe(true);
+    // jsdom / 面板隐藏时宽度为 0：保持带名字的默认形态。
+    expect(tabsCompact(0, 3, 1)).toBe(false);
+    expect(tabsCompact(300, 0, 1)).toBe(false);
+  });
+});
 
 describe("右侧面板", () => {
   it("改动、终端、浏览器同一排页签；终端和浏览器常驻挂载只切显隐", () => {

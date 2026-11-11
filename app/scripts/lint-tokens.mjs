@@ -60,8 +60,11 @@ for (const file of walk(SRC, [])) {
 }
 
 /**
- * 应用样式表（styles.css / mobile.css）另查三条（UI 调研 sys11 / sys12 / sys14）：
+ * 应用样式表（styles.css / mobile.css）另查四条（UI 调研 sys11 / sys12 / sys14）：
  * - transition 的每一段都要写 --ease-* 缓动：只写时长会落到浏览器默认 ease，同类动效节奏不一。
+ * - transition / animation（含 -duration / -delay）的时长与延迟只取 --dur-* / --delay-*（可 calc 乘除；
+ *   重设计验收 22）：收敛前同是转圈有 0.7/0.75/0.8/0.9s 四种、同是状态呼吸有 1.2~1.8s 四种。
+ *   0 不拦；var() 回退值里的字面时长也拦（回退生效时就是一个没人管的节奏）。
  * - z-index 只取 --z-* 档位（可 calc 加减）：写死数字时谁压谁只能靠全仓搜。
  * - 边框用 var(--hairline)：写死 1px 在高分屏是对话窗细线的两倍粗；确需 1px 的在同一行注明「保留 1px」。
  * 演示页 demo.css、海报 poster.css 不是应用界面，不查。
@@ -76,6 +79,12 @@ function checkAppCss(file, raw, text) {
       const s = seg.trim();
       if (s === "none" || s === "none !important" || s.includes("var(--ease-")) continue;
       out.push(`${name}:${at(m.index)}  transition 缺缓动 token：${s}`);
+    }
+  }
+  for (const m of text.matchAll(/(?<![-\w])(transition|animation)(?:-duration|-delay)?\s*:\s*([^;}]+)/g)) {
+    for (const t of m[2].matchAll(/(?<![\w.-])(\d*\.?\d+)(?:ms|s)\b/g)) {
+      if (Number(t[1]) === 0) continue;
+      out.push(`${name}:${at(m.index)}  ${m[1]} 时长写死 ${t[0]}：过渡用 --dur-fast/base/slow/slower，循环用 --dur-spin/orbit/pulse/pulse-slow/pulse-fast/indet/bounce/idle，延迟用 --delay-stagger，倍数写 calc(var(--dur-*) * n)`);
     }
   }
   for (const m of text.matchAll(/(?<![-\w])z-index\s*:\s*([^;}]+)/g)) {
@@ -107,7 +116,7 @@ function checkAppCss(file, raw, text) {
 
 if (problems.length) {
   console.error(problems.join("\n"));
-  console.error(`\n设计 token 检查失败：${problems.length} 处。旧档已删除，按本脚本顶部的对照换成 --radius-* / --text-* / --fill-* / --shadow-*；transition/z-index/边框规则见 checkAppCss 注释。`);
+  console.error(`\n设计 token 检查失败：${problems.length} 处。旧档已删除，按本脚本顶部的对照换成 --radius-* / --text-* / --fill-* / --shadow-*；transition/animation 时长、z-index、边框规则见 checkAppCss 注释。`);
   process.exit(1);
 }
 console.log("设计 token 检查通过");

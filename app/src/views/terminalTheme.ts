@@ -5,10 +5,10 @@ import type { ITheme } from "@xterm/xterm";
 // 改版前这里写死翡翠绿光标 #55d6ae 与绿调灰选区，和全局品牌蓝对不上（UI 调研 sys6）。
 // 兜底值与 styles.css 同值：jsdom 测试与样式未加载的瞬间也不回到旧配色。
 const FALLBACK = {
-  background: "#121212",
+  background: "#101112",
   foreground: "rgba(255, 255, 255, 0.9)",
-  cursor: "#1a88ff",
-  selectionBackground: "rgba(26, 136, 255, 0.3)",
+  cursor: "#d4f64c",
+  selectionBackground: "rgba(212, 246, 76, 0.25)",
 } as const;
 
 export function terminalTheme(): ITheme {

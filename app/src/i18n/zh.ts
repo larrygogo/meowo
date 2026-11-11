@@ -1631,6 +1631,9 @@ export const zh = {
     themeLabel: "外观",
     // 手机设置面板：分两组，让人一眼分清哪些只改这台手机、哪些改的是电脑。
     settingsLabel: "设置",
+    // 手机列表页底栏三项：会话（sessionListTitle）/ 新建 / 设置（settingsLabel）。
+    tabNew: "新建",
+    tabBarLabel: "导航",
     settingsPhone: "这台手机",
     settingsDesktop: "电脑",
     foldDesc: "只在这台手机上生效",

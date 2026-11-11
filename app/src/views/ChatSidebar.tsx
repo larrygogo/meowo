@@ -1195,6 +1195,14 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
         {/* 右侧：时间（对照 Kimi 的紧凑「3d」），等待中换成「已等待 X」警示色；悬停时让位给「⋯」。
             旧库/合成数据可能缺 last_event_at：NaN 会让 Intl 直接抛错炸掉整棵侧栏，缺失时不显示。 */}
         <span className="chat-sidebar-act">
+          {/* 手机列表卡把状态写成字（样张：标题右侧「待批准 / 运行中 / 出错了」）：触屏没有悬停提示，
+              只靠 7px 圆点的颜色分不清「等待输入」和「待处理」。文案与圆点的读屏名同源；圆点已有
+              读屏名，这里对读屏隐藏免得念两遍。桌面侧栏不渲染。 */}
+          {remoteUi() && selectedIds.size === 0 && (awaitingApproval || showDot) && (
+            <span className={"chat-sidebar-status is-" + (awaitingApproval ? "approval" : tone)} aria-hidden="true">
+              {awaitingApproval ? t.chat.sidebarApproval : t.chat.status[tone]}
+            </span>
+          )}
           {selectedIds.size === 0 && Number.isFinite(item.session.last_event_at) && (
             <span className={"chat-sidebar-time" + (tone === "waiting" ? " is-waited" : "")} data-tip={tone === "waiting" ? fmtWaited(item.session.last_event_at, t) : undefined}>
               {/* 等待中也用紧凑写法（「6m」），只换警示色：「已等待 6 分钟」在这一列太长（用户实拍），

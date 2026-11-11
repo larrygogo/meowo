@@ -145,9 +145,13 @@ export function BrokerApprovalCard({ approval, countdown, timedOut, resolving, e
         </button>
       </>}
     >
-      <div className="chat-approval-tool"><span>{t.chat.approvalTool}</span><code>{approval.toolName}</code></div>
-      <ApprovalScopeTags tool={approval.toolName} input={approval.input} dirs={dirs} />
-      {approval.description && <span>{approval.description}</span>}
+      {/* 次要信息（请求工具、影响范围、说明）收在一组：平时工具与标签同一行，矮窗里整组压成一行，
+          把高度让给命令（做空审查：620×480 下命令被挤到折叠线下）。 */}
+      <div className="chat-approval-meta">
+        <div className="chat-approval-tool"><span>{t.chat.approvalTool}</span><code>{approval.toolName}</code></div>
+        <ApprovalScopeTags tool={approval.toolName} input={approval.input} dirs={dirs} />
+        {approval.description && <span className="chat-approval-desc">{approval.description}</span>}
+      </div>
       {approval.input && <ApprovalCommandDetail
         label={command !== null ? t.chat.approvalCommand : t.chat.approvalInput}
         command={command ?? approval.input}

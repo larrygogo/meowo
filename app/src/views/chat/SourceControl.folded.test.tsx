@@ -162,7 +162,7 @@ describe("虚拟列表", () => {
   const scrollToBottom = (container: HTMLElement) => {
     const scroller = container.querySelector(".scm") as HTMLElement;
     act(() => {
-      scroller.scrollTop = 3000 * 24 * 2;
+      scroller.scrollTop = 3000 * 28 * 2;
       fireEvent.scroll(scroller);
     });
   };
@@ -198,7 +198,7 @@ describe("虚拟列表", () => {
     expect(container.querySelectorAll(".scm-row").length).toBeLessThan(200);
     act(() => {
       const scroller = container.querySelector(".scm") as HTMLElement;
-      scroller.scrollTop = 15001 * 24;
+      scroller.scrollTop = 15001 * 28;
       fireEvent.scroll(scroller);
     });
     await waitFor(() => expect(screen.getByText("f14999.js")).toBeTruthy());

@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ChatItem } from "../../api";
-import { DockWork, dockEntries } from "./DockWork";
+import { DockWork, dockEntries, dockPanelRoom } from "./DockWork";
 
 afterEach(cleanup);
 
@@ -27,6 +27,16 @@ describe("dockEntries", () => {
   });
 });
 
+describe("dockPanelRoom", () => {
+  /// 面板可用高度 = 锚点上沿到标题栏下沿再留 8px；锚点贴着甚至高过标题栏时是 0，不出负数。
+  it("锚点到标题栏下沿的距离扣 8px，不够时为 0", () => {
+    expect(dockPanelRoom(592, 84)).toBe(500);
+    expect(dockPanelRoom(96.6, 84)).toBe(4);
+    expect(dockPanelRoom(84, 84)).toBe(0);
+    expect(dockPanelRoom(0, 0)).toBe(0);
+  });
+});
+
 describe("DockWork", () => {
   const history = { plan: "# 计划\n- 第一步", agentModes: [], pendingReview: null, todos: [] };
 
@@ -35,6 +45,8 @@ describe("DockWork", () => {
     const pill = screen.getByRole("button", { name: /计划/ });
     fireEvent.click(pill);
     expect(document.querySelector(".dock-work-panel")).toBeTruthy();
+    // 面板挂在胶囊行上方的锚点里（从胶囊向上弹、不越过标题栏，见 dockCardHeight.test）。
+    expect(document.querySelector(".dock-work-anchor > .dock-work-panel")).toBeTruthy();
     fireEvent.click(pill);
     expect(document.querySelector(".dock-work-panel")).toBeNull();
 

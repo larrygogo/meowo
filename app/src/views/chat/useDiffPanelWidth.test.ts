@@ -8,7 +8,8 @@ afterEach(() => localStorage.clear());
 const key = (name: string) => ({
   key: name,
   preventDefault: () => {},
-  currentTarget: { parentElement: null },
+  // 分栏柄往上找 .chat-body（它在内容面里，不是 .chat-body 的直接子元素）；这里没有布局，找不到。
+  currentTarget: { parentElement: null, closest: () => null },
 }) as unknown as ReactKeyboardEvent<HTMLDivElement>;
 
 // 没调过宽度时默认占可用宽度的一半（窗口宽减左侧栏），不低于下限（照 Kimi Code）。

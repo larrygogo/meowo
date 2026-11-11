@@ -95,6 +95,36 @@ export function setExtraMock(fn: ExtraMock): void {
   extraMock = fn;
 }
 
+/// claude 对话页的能力表：内置命令 + 一条「项目里发现的自定义命令」，让补全菜单的两类来源都露脸。
+/// 单独导出：截图 harness 要在这份上补字段（屏幕识别规则、权限模式可选项）。
+export function demoChatUi(): Record<string, unknown> {
+  return {
+    slash_commands: [
+      ...["/clear", "/compact", "/config", "/cost", "/help", "/init", "/mcp", "/memory", "/model", "/resume", "/review", "/status"]
+        .map((name) => ({ name, description: null, source: "builtin" })),
+      { name: "/deploy", description: "部署到预发环境", source: "project" },
+    ].sort((a, b) => a.name.localeCompare(b.name)),
+    model_presets: [
+      { id: "fable", label: "Fable 5" },
+      { id: "opus", label: "Opus 5" },
+      { id: "sonnet", label: "Sonnet 5" },
+      { id: "haiku", label: "Haiku 4.5" },
+      { id: "opusplan", label: "Opus Plan" },
+    ],
+    mode_controls: [{ dimension: "permission", cycle_input: "\u001b[Z", options: [], screen_markers: [] }],
+    menu_slash_commands: ["/config", "/mcp", "/memory", "/model", "/resume"],
+    startup_attention_markers: ["do you trust the files in this folder", "do you trust the contents of this directory", "trust this folder", "workspace not trusted", "workspace trust dialog"],
+    selector_anchors: [{ marker: "type something", kind: "input" }, { marker: "chat about this", kind: "chat" }],
+    interrupt_input: "\x1b",
+    interrupt_presses: 1,
+    runtime_commands_pending: false,
+    attachment_mention: true,
+    clipboard_image_paste: "\\[Image #\\d",
+    clipboard_paste_input: "\x16",
+    version: "2.1.215 (Claude Code)",
+  };
+}
+
 export function installMocks(windowLabel = "main"): void {
   mockWindows(windowLabel);
   mockIPC((cmd, args) => {
@@ -103,6 +133,9 @@ export function installMocks(windowLabel = "main"): void {
     switch (cmd) {
       case "host_os":
         return "windows";
+      case "window_material":
+        // 演示页与截图 harness 跑在普通浏览器里，没有系统材质。
+        return "none";
       case "list_agents":
         // 后端 list_agents:agent 名单(展示名 + 安装态),前端 useAgents 取展示名并交叉过滤底栏配额。
         // demo 演示多 Agent:装了 Claude Code / Codex / Kimi / Gemini CLI（不独尊 Claude）。
@@ -112,36 +145,9 @@ export function installMocks(windowLabel = "main"): void {
           { id: "kimi", display_name: "Kimi Code", installed: true },
           { id: "gemini", display_name: "Gemini CLI", installed: true },
         ];
-      case "agent_chat_ui": {
-        // 对话页能力按会话查询（真实后端由安装实况组装）。demo 只演 claude 的对话窗：
-        // 内置表 + 一条「项目里发现的自定义命令」，让补全菜单的两类来源都露脸。
-        if ((args as { provider?: string })?.provider !== "claude") return null;
-        return {
-          slash_commands: [
-            ...["/clear", "/compact", "/config", "/cost", "/help", "/init", "/mcp", "/memory", "/model", "/resume", "/review", "/status"]
-              .map((name) => ({ name, description: null, source: "builtin" })),
-            { name: "/deploy", description: "部署到预发环境", source: "project" },
-          ].sort((a, b) => a.name.localeCompare(b.name)),
-          model_presets: [
-            { id: "fable", label: "Fable 5" },
-            { id: "opus", label: "Opus 5" },
-            { id: "sonnet", label: "Sonnet 5" },
-            { id: "haiku", label: "Haiku 4.5" },
-            { id: "opusplan", label: "Opus Plan" },
-          ],
-          mode_controls: [{ dimension: "permission", cycle_input: "\u001b[Z", options: [], screen_markers: [] }],
-          menu_slash_commands: ["/config", "/mcp", "/memory", "/model", "/resume"],
-          startup_attention_markers: ["do you trust the files in this folder", "do you trust the contents of this directory", "trust this folder", "workspace not trusted", "workspace trust dialog"],
-          selector_anchors: [{ marker: "type something", kind: "input" }, { marker: "chat about this", kind: "chat" }],
-          interrupt_input: "\x1b",
-          interrupt_presses: 1,
-          runtime_commands_pending: false,
-          attachment_mention: true,
-          clipboard_image_paste: "\\[Image #\\d",
-          clipboard_paste_input: "\x16",
-          version: "2.1.215 (Claude Code)",
-        };
-      }
+      case "agent_chat_ui":
+        // 对话页能力按会话查询（真实后端由安装实况组装）。demo 只演 claude 的对话窗。
+        return (args as { provider?: string })?.provider === "claude" ? demoChatUi() : null;
       case "get_settings":
         return store.settings;
       case "get_accounts": {

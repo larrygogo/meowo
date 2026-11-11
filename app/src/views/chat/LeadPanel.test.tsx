@@ -137,10 +137,13 @@ describe("关卡卡片", () => {
     let contentHeight = 100;
     const scroll = vi.spyOn(Element.prototype, "scrollHeight", "get").mockImplementation(() => contentHeight);
     const client = vi.spyOn(Element.prototype, "clientHeight", "get").mockImplementation(() => 100);
-    let resize = () => {};
+    // 卡片外壳（ApprovalCard）也有自己的尺寸观察者（正文被裁的提示），所以把每个观察者都叫一遍，
+    // 不能只记最后构造的那个。
+    const observers: Array<() => void> = [];
+    const resize = () => observers.forEach((fire) => fire());
     const original = globalThis.ResizeObserver;
     globalThis.ResizeObserver = class {
-      constructor(callback: ResizeObserverCallback) { resize = () => callback([], this as unknown as ResizeObserver); }
+      constructor(callback: ResizeObserverCallback) { observers.push(() => callback([], this as unknown as ResizeObserver)); }
       observe() {}
       unobserve() {}
       disconnect() {}

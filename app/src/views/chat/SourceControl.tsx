@@ -59,8 +59,8 @@ export const isDirEntry = (file: { path: string }) => file.path.endsWith("/");
 type DirState = { req: number; loading: boolean; error: string | null; files: readonly ScmFile[] };
 const dirKey = (root: string, path: string) => `${normPath(root).toLowerCase()}\u0000${path}`;
 
-/// 一行的高度：CSS 里 .scm-row 是 24px、提示行约 28px。虚拟列表按它估位置，再按实测修正（手机触屏样式可能更高）。
-const ROW_H = 24;
+/// 一行的高度：CSS 里 .scm-row 是 28px（与文件树、会话信息栏的行同高）。虚拟列表按它估位置，再按实测修正（手机触屏样式可能更高）。
+const ROW_H = 28;
 const NOTE_H = 28;
 type VRow = { key: string; size: number; node: ReactNode };
 
@@ -422,7 +422,8 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
             <span>{title}</span>
           </button>
           {headActions && actionable(shown).length > 0 && <span className="scm-group-actions">{headActions(actionable(shown))}</span>}
-          <span className="scm-count">{changedFileCount(rows.map((row) => row.file))}</span>
+          {/* 计数徽标坐在与各行「统计 + 状态字母」同宽的尾列里：组头的放弃/暂存才能和各行的严格同列。 */}
+          <span className="scm-letters"><span className="scm-count">{changedFileCount(rows.map((row) => row.file))}</span></span>
         </div>
         {!isFolded && (shown.length === 0
           ? <div className="scm-empty">{query ? t.chat.diffSearchNoResults : scope === "turn" ? t.chat.diffNoTurnChanges : t.chat.diffNoSessionChanges}</div>
