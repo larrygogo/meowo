@@ -518,6 +518,7 @@ export const zh = {
     codeRevealPath: "点击在文件夹中显示",
     codeOpenLink: "点击在浏览器中打开",
     codeWrap: "自动换行",
+    codeBlockLabel: (lang: string | null) => (lang ? `${lang} 代码` : "代码块"),
     codeUnwrap: "取消换行",
     tableCopy: "复制表格",
     copyMessage: "复制消息",

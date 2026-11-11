@@ -485,6 +485,7 @@ export const en: Dict = {
     codeRevealPath: "Click to show in folder",
     codeOpenLink: "Click to open in browser",
     codeWrap: "Wrap lines",
+    codeBlockLabel: (lang: string | null) => (lang ? `${lang} code` : "Code block"),
     codeUnwrap: "No wrap",
     tableCopy: "Copy table",
     copyMessage: "Copy message",

@@ -104,7 +104,8 @@
   --cc-syn-comment: #7f848e;
   --cc-syn-func: #61afef;
   --cc-syn-type: #e5c07b;
-  --cc-syn-attr: #e06c75;
+  /* 原 One Dark #e06c75 在 diff 新增行底（#222d23）上 4.47:1，axe serious（验收 #23 实测），同色相提亮一点到 ≥4.6。 */
+  --cc-syn-attr: #e57880;
   --cc-syn-builtin: #56b6c2;
   /* 对话页 A+B 改版：等宽栈（时间线标签/元数据/代码共用）、代码块底、用户气泡底。
      工具类型配色不另起调色板，直接复用上面的 --cc-syn-*（深浅两套已按 4.5:1 校准）。 */
@@ -377,7 +378,8 @@
   --cc-syn-number: #a16207;
   --cc-syn-comment: #6e7781;
   --cc-syn-func: #2563eb;
-  --cc-syn-type: #b45309;
+  /* 原 #b45309 在 diff 删除行底（#fceeed）上 4.44:1（验收 #23 axe 实测），同色相压暗到 ≈5:1。 */
+  --cc-syn-type: #a84d08;
   --cc-syn-attr: #b91c1c;
   --cc-syn-builtin: #0e7490;
   --cc-code-bg: #f5f5f5;
@@ -2604,7 +2606,9 @@ button.stab {
   transition: background var(--dur-base) var(--ease-in-out), color var(--dur-base) var(--ease-in-out);
 }
 .seg-btn:hover { color: var(--cc-text); }
-.seg-btn.on { background: var(--cc-accent-soft); color: var(--cc-accent-text); }
+/* 文字往正文色掺 15%：深色引导页里 accent-text 压在 accent-soft 上只有 4.48:1（验收 #23 axe 实测），
+   掺正文色两套主题都只会更高。 */
+.seg-btn.on { background: var(--cc-accent-soft); color: color-mix(in srgb, var(--cc-accent-text) 85%, var(--cc-text)); }
 
 /* 字体大小离散滑块：轨道 + 滑钮 + 底部标签（小/中/大）。 */
 .dslider {
@@ -6429,6 +6433,8 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .chat-md :not(pre) > code { padding: var(--sp-1) var(--sp-5); border-radius: var(--radius-sm); background: var(--fill-selected); color: var(--cc-text); font-family: var(--cc-mono); font-size: .88em; }
 /* 外框/底色归 .chat-md-pre 外壳（pre 恒由 CopyablePre 包着），这里只管内边距与横滚。 */
 .chat-md pre { margin: 0; padding: var(--sp-10) var(--sp-14); overflow-x: auto; }
+/* 溢出的代码块可 Tab 聚焦（ChatMarkdown）：外壳 overflow:hidden 会裁掉外扩的焦点环，往里收。 */
+.chat-md-pre > pre:focus-visible { outline-offset: -2px; }
 .chat-md pre code { padding: 0; background: transparent; font-family: var(--cc-mono); font-size: var(--text-sm); line-height: var(--leading-body); }
 /* 含框线字符的代码块（模型画的结构图）由 renderGrid 钉到字符网格：宽字符锁 2ch、
    歧义符号锁 1ch，ch 基准取自本块的等宽字体，对齐不依赖用户装了哪款 CJK 字体。
@@ -6559,17 +6565,18 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
    展开不再逐条拉 max-width：每条各自 0→220px 走同一条先快后慢的曲线，短标题一瞬到头、长标题
    慢慢长，看着快慢不一（用户实拍）。改为标题按自身宽度排好、左对齐成一列，整列用 clip-path 从
    竖条一侧整体揭开——所有标题同一速度、同一时刻露出。被裁掉的部分也不接指针，收起时不挡正文。 */
-.chat-msg-nav { position: absolute; z-index: calc(var(--z-sticky) + 1); display: flex; flex-direction: column; justify-content: center; pointer-events: none; opacity: 0.5; transition: opacity var(--dur-base) var(--ease-out); }
+.chat-msg-nav { position: absolute; z-index: calc(var(--z-sticky) + 1); display: flex; flex-direction: column; justify-content: center; pointer-events: none; --nav-rest: 0.5; }
 .chat-msg-nav.is-edge { right: 0; }
-.chat-msg-nav:hover, .chat-msg-nav:has(:focus-visible) { opacity: 1; }
-/* 整列变实也等悬停意图（Kimi 同款）：鼠标只是路过时一点不动，不是先亮一下再缩回去。 */
-.chat-msg-nav:hover:not(:has(:focus-visible)) { transition-delay: var(--dur-hover-intent); }
+/* 平时半透明只压竖条（--nav-rest 乘进竖条的 opacity），不再给整列 opacity:.5：标题文字收起时本就被
+   clip-path 裁掉看不见，整列半透明只会让 axe 按半透明算对比度（深色 2.91、浅色 2.37，验收 #23），
+   展开后的标题在过渡里也发灰。竖条的 opacity 自带过渡，悬停意图延迟见下方 transition-delay。 */
+.chat-msg-nav:hover, .chat-msg-nav:has(:focus-visible) { --nav-rest: 1; }
 /* --nav-peek：收起时露出的竖条带宽度（竖条 + 两侧一点余量），其余裁掉。 */
 .chat-msg-nav-list { --nav-peek: 12px; pointer-events: auto; display: flex; flex-direction: column; gap: 7px; max-height: calc(100% - 160px); padding: var(--sp-8) 0; overflow-y: auto; scrollbar-width: none; clip-path: inset(0 calc(100% - var(--nav-peek)) 0 0); transition: clip-path .22s var(--ease-out); }
 .chat-msg-nav-list::-webkit-scrollbar { display: none; }
 .chat-msg-nav:hover .chat-msg-nav-list, .chat-msg-nav:has(:focus-visible) .chat-msg-nav-list { clip-path: inset(0 0 0 0); }
 .chat-msg-nav-item { display: flex; align-items: center; gap: var(--sp-10); flex: none; height: 18px; padding: 0; border: 0; background: none; color: var(--cc-text-dim); font: inherit; font-size: var(--text-xs); text-align: left; white-space: nowrap; cursor: pointer; }
-.chat-msg-nav-bar { flex: none; width: 3px; height: 14px; border-radius: var(--radius-full); background: var(--cc-text); opacity: 0.25; transition: opacity var(--dur-fast) var(--ease-out), height var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out); }
+.chat-msg-nav-bar { flex: none; width: 3px; height: 14px; border-radius: var(--radius-full); background: var(--cc-text); opacity: calc(0.25 * var(--nav-rest)); transition: opacity var(--dur-fast) var(--ease-out), height var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out); }
 /* 标题最宽到滚动区右缘前（--nav-expand 由组件按实际空间量出，Kimi 的 240/12）。 */
 .chat-msg-nav-label { display: flex; align-items: center; gap: var(--sp-6); min-width: 0; max-width: min(220px, max(0px, calc(var(--nav-expand, 240px) - 13px))); overflow: hidden; transition: color var(--dur-fast) var(--ease-out); }
 .chat-msg-nav-label svg { flex: none; }
@@ -6582,7 +6589,7 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .chat-msg-nav.is-edge:hover .chat-msg-nav-list, .chat-msg-nav.is-edge:has(:focus-visible) .chat-msg-nav-list { clip-path: inset(0 0 0 0); background: var(--cc-menu-bg); border-color: var(--cc-border); }
 .chat-msg-nav.is-edge .chat-msg-nav-item { flex-direction: row-reverse; }
 .chat-msg-nav.is-edge .chat-msg-nav-label { flex: 1 1 auto; justify-content: flex-start; }
-.chat-msg-nav-item.is-active .chat-msg-nav-bar { height: 18px; opacity: 0.65; }
+.chat-msg-nav-item.is-active .chat-msg-nav-bar { height: 18px; opacity: calc(0.65 * var(--nav-rest)); }
 .chat-msg-nav-item.is-active .chat-msg-nav-label { color: var(--cc-text); }
 .chat-msg-nav-item:hover .chat-msg-nav-bar, .chat-msg-nav-item:focus-visible .chat-msg-nav-bar { background: var(--cc-accent); opacity: 1; }
 .chat-msg-nav-item:hover .chat-msg-nav-label, .chat-msg-nav-item:focus-visible .chat-msg-nav-label { color: var(--cc-accent-text); }
@@ -6590,7 +6597,7 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 /* 悬停意图延迟（Kimi 的 --duration-hover-intent）：揭开、底板、竖条变高都等 .25s 再一起动——
    鼠标只是路过时不展开。收起不等。键盘聚焦不延迟。 */
 .chat-msg-nav:hover:not(:has(:focus-visible)) .chat-msg-nav-list { transition-delay: var(--dur-hover-intent); }
-.chat-msg-nav:hover:not(:has(:focus-visible)) .chat-msg-nav-bar { transition-delay: 0s, var(--dur-hover-intent), 0s; }
+.chat-msg-nav:hover:not(:has(:focus-visible)) .chat-msg-nav-bar { transition-delay: var(--dur-hover-intent), var(--dur-hover-intent), 0s; }
 /* 展开只认悬停与键盘聚焦（:has(:focus-visible)）：用 :focus-within 的话鼠标点完一项按钮留着
    焦点，移开后标题一直摊在正文上（实测）。 */
 /* 跳转落点留白：气泡不贴着滚动区上沿。 */
