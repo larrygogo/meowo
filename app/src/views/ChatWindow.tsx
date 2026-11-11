@@ -47,7 +47,9 @@ import { QuestionPanels } from "./chat/QuestionPanels";
 import { RemoteTerminalKeys } from "./chat/RemoteTerminalKeys";
 import { peekSessionMeta, prefetchPending, recallHistory, rememberHistory, takePrefetch, trackPrefetch } from "./chat/historyCache";
 import { ChatTitleMenu, ChatTitlePlaceholder } from "./chat/TitleMenus";
-import { displayKeys, QuickSwitcher, RenameModal, ShortcutSheet, type PaletteCommand } from "./chat/WindowModals";
+import { QuickSwitcher, RenameModal, ShortcutSheet } from "./chat/WindowModals";
+import { buildPaletteCommands, OPEN_WITH_PREFIX } from "./chat/paletteCommands";
+import { openFolderWith, useFolderOpeners } from "./chat/TitleBarTools";
 import { attentionTone, nextAttentionSession } from "./chat/nextAttention";
 import { isBackgroundShell, isSubagentDelegation } from "./chat/shared";
 import { Transcript, type TranscriptAgent } from "./chat/Transcript";
@@ -89,6 +91,7 @@ import { useOutgoingUpkeep } from "./chat/useOutgoingUpkeep";
 import { SessionAdmin } from "./chat/SessionAdmin";
 import { NewSessionPage } from "./chat/NewSessionPage";
 import { ChatTitleBar } from "./chat/ChatTitleBar";
+import { openLink, type PullRequestDto } from "../api";
 import { WorktreeSetupBar } from "./chat/WorktreeSetupBar";
 import { useConversationExport } from "./chat/useConversationExport";
 import { useMainPages } from "./chat/useMainPages";
@@ -231,6 +234,12 @@ const TERMINAL_WAIT_NOTICE_S = 20;
 type FirstEcho = { tempId: number; realId: number | null; echoId: number; done: Promise<void>; release: () => void };
 /// 插件没声明贴图键时的兜底（Ctrl-V），与 sendPrompt 里同一个值。
 const CLIPBOARD_PASTE_FALLBACK = String.fromCharCode(0x16);
+
+/// 一颗按钮同时挂两个 ref（菜单 hook 的锚点 + 命令面板要点的那颗）。useRef 出来的 RefObject
+/// 在类型上只读，运行时就是普通对象。
+function assignRef<T>(ref: { readonly current: T | null }, node: T | null) {
+  (ref as { current: T | null }).current = node;
+}
 
 export function ChatWindow() {
   const t = useT();
@@ -834,6 +843,13 @@ export function ChatWindow() {
     open: modeMenu !== null,
     setOpen: (v) => { if (!v) setModeMenu(null); },
   });
+  // Ctrl+K「切换模型 / 切换权限模式」直接点底栏这两颗按钮（UI 优化 #53）：开菜单的逻辑写在按钮的
+  // onClick 里（探测、互斥、恢复态改选），命令面板复用它，不另抄一份。
+  const modelButtonRef = useRef<HTMLButtonElement | null>(null);
+  const permissionButtonRef = useRef<HTMLButtonElement | null>(null);
+  // 标题栏查到的 PR（ChatTitleBar 回报），命令面板的「打开 PR」用它。
+  const [titlePullRequest, setTitlePullRequest] = useState<PullRequestDto | null>(null);
+  const folderOpeners = useFolderOpeners();
   // 对话页能力由安装实况组装（基础命令 ∪ 用户/项目命令 ∪ 当前会话 runtime skill 清单），
   // 按 provider+cwd 查询——换会话、换项目都重取，装了新命令下次打开就见。
   // 未知 provider / 查询未回时为空：不补全、不给菜单，宁缺毋滥。
@@ -1577,6 +1593,11 @@ export function ChatWindow() {
     return () => window.clearTimeout(timer);
   }, [menuWatchUntil]);
   const modeControls = chatUi?.mode_controls ?? [];
+  // 底栏「权限模式」按钮对应的维度：插件声明的权限启动项优先，否则按维度名认（UI 优化 #53）。
+  const permissionDimension = permissionOption?.id
+    ?? [...modeControls.map((control) => control.dimension), ...(history?.agentModes ?? []).map((mode) => mode.dimension)]
+      .find((dimension) => dimension === "permission" || dimension === "approval")
+    ?? null;
   const offsetRef = useRef(0);
   // 轮询从 transcript 尾部累计读到的条目数，只增不减。「问题已了结」的收卡判定拿它
   // 判断有没有新内容落盘，不受「加载更早」前插旧历史影响（见 observeTranscriptForDismiss 调用处）。
@@ -2236,21 +2257,19 @@ export function ChatWindow() {
 
   // 面板终端里有程序在跑时先确认（标题栏按钮与系统原生关闭都经过这里，见 windowClose.ts）。
   const close = useGuardedWindowClose(t);
-  // Ctrl+K 命令面板的命令清单（U1-14）：每条都映射到窗口已有动作，不发明新能力。
-  // 扁平一个数组，按直觉频率排序：新建/切视图/侧栏/搜索在前，速查表与设置殿后。
-  const paletteCommands: PaletteCommand[] = [
-    { id: "new-session", label: t.chat.shortcutNewSession, keys: "Ctrl+N" },
-    { id: "view-chat", label: t.chat.cmdViewChat, keys: "Ctrl+1" },
-    { id: "view-terminal", label: t.chat.cmdViewTerminal, keys: "Ctrl+2" },
-    { id: "toggle-sidebar", label: t.chat.shortcutSidebar, keys: "Ctrl+B" },
-    // 搜会话没有单独的快捷键了：命令面板（Ctrl+K）本身就能搜会话（二期 #8）。
-    { id: "focus-search", label: t.chat.shortcutSearch },
-    { id: "search-transcript", label: t.chat.searchTranscript, keys: "Ctrl+F" },
-    { id: "jump-latest", label: t.chat.jumpLatest },
-    { id: "show-shortcuts", label: t.chat.cmdShowShortcuts, keys: "?" },
-    { id: "open-settings", label: t.sticker.openSettings },
-  ];
-  for (const cmd of paletteCommands) if (cmd.keys) cmd.keys = displayKeys(cmd.keys);
+  // Ctrl+K 命令面板的命令清单（U1-14，UI 优化 #53 补面板/模型/权限/PR/打开方式）：每条都映射到
+  // 窗口已有动作，不发明新能力。清单本身见 chat/paletteCommands（纯函数，单测钉住）。
+  const paletteCommands = buildPaletteCommands(t, {
+    remote: remoteUi(),
+    hasCwd: !!cwd,
+    isRepo: !!effectiveSummary?.isRepo,
+    panelVisible: panelState.visible,
+    // 与底栏模型按钮的可用条件同口径（见下方 .chat-model-select）。
+    canSwitchModel: modelPresets.length > 0 || !!modelMenuCommand || switchTargets.length > 0,
+    canSwitchPermission: !!permissionDimension,
+    pullRequest: titlePullRequest,
+    openers: folderOpeners,
+  });
   const runPaletteCommand = (id: string) => {
     switch (id) {
       case "new-session": void openNewSessionWindow().catch(() => {}); break;
@@ -2263,6 +2282,20 @@ export function ChatWindow() {
       case "jump-latest": jumpToLatest(); break;
       case "show-shortcuts": setShortcutsOpen(true); break;
       case "open-settings": void invoke("open_settings").catch(() => {}); break;
+      // 面板类与快捷键监听调同一组动作（见上方面板快捷键 useEffect）。
+      case "panel-toggle": panelActions.toggle(); break;
+      case "panel-changes": panelActions.openDiff(); break;
+      case "panel-files": panelActions.toggleFiles(); break;
+      case "panel-browser": panelActions.newBrowser(); break;
+      case "panel-terminal": panelActions.toggleTerminal(); break;
+      case "panel-next-tab": panelActions.cycle(1); break;
+      // 模型与权限：等于点一下底栏那颗按钮（开菜单、或无菜单时按一次轮换），语义与禁用态全随按钮走。
+      // 按钮在弹层关掉之后才点：AppModal 卸载时焦点已归还，菜单的焦点管理不被打断。
+      case "switch-model": modelButtonRef.current?.click(); break;
+      case "switch-permission": permissionButtonRef.current?.click(); break;
+      case "open-pr": if (titlePullRequest) void openLink(titlePullRequest.url).catch(() => {}); break;
+      default:
+        if (id.startsWith(OPEN_WITH_PREFIX) && cwd) openFolderWith(cwd, id.slice(OPEN_WITH_PREFIX.length), setSendError, t.locale);
     }
   };
   /// 发送类动作的公共守卫:sending 置位/清错 → 终端占用检查 → 确保可写终端 → 执行 body,
@@ -4004,6 +4037,7 @@ export function ChatWindow() {
         info={!remoteUi() && cwd && !panelState.visible ? { open: infoWide ? infoOn : infoFloating, onToggle: toggleInfo } : null}
         onToggleTerminal={() => { const next = view === "terminal" ? "chat" : "terminal"; rememberViewPref(next); setView(next); }}
         onError={setSendError}
+        onPullRequest={setTitlePullRequest}
       />
       {/* 包 5：在新 worktree 里开的会话，setup 后台跑的进度（看日志、跳过、重跑）。 */}
       <WorktreeSetupBar cwd={sessionId !== 0 ? cwd ?? null : null} />
@@ -4927,7 +4961,10 @@ export function ChatWindow() {
               const risky = riskOf(resumePick ? nextResume : state?.value);
               return <div className="chat-model" key={dimension} ref={modeMenu === dimension ? modeMenuUi.ref : undefined} onKeyDown={modeMenu === dimension ? modeMenuUi.onKeyDown : undefined}>
                 <button
-                  ref={modeMenu === dimension ? modeMenuUi.btnRef : undefined}
+                  ref={(node) => {
+                    if (modeMenu === dimension) assignRef(modeMenuUi.btnRef, node);
+                    if (dimension === permissionDimension) permissionButtonRef.current = node;
+                  }}
                   type="button"
                   className={"chat-model-button chat-mode-button" + (risky ? " is-risk" : "")}
                   disabled={!interactive || sending}
@@ -5009,7 +5046,7 @@ export function ChatWindow() {
           )}
           {(modelPresets.length > 0 || modelMenuCommand || history?.model || switchTargets.length > 0) && <div className="chat-model chat-model-select" ref={modelPickerOpenUi.ref} onKeyDown={modelPickerOpenUi.onKeyDown}>
             <button
-              ref={modelPickerOpenUi.btnRef}
+              ref={(node) => { assignRef(modelPickerOpenUi.btnRef, node); modelButtonRef.current = node; }}
               type="button"
               className="chat-model-button"
               disabled={modelPresets.length === 0 && !modelMenuCommand && switchTargets.length === 0}

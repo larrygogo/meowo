@@ -458,6 +458,12 @@ export const zh = {
     cmdViewChat: "切换到对话视图",
     cmdViewTerminal: "切换到终端视图",
     cmdShowShortcuts: "打开快捷键速查表",
+    // 面板页签、模型、权限模式、PR、打开方式（UI 优化 #53）：面板类优先复用速查表文案。
+    cmdOpenChanges: "打开改动页签",
+    cmdToggleFiles: "打开或收起文件页签",
+    cmdNextPanelTab: "切换到下一个面板页签",
+    cmdSwitchPermission: "切换权限模式",
+    cmdOpenPr: (n: number) => `打开 Pull Request #${n}`,
     shortcutsTitle: "键盘快捷键",
     shortcutSwitcher: "打开命令面板（搜索会话、执行窗口命令）",
     shortcutSidebar: "收起 / 展开侧栏",
