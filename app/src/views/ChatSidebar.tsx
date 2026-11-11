@@ -22,6 +22,7 @@ import { CheckIcon, MoreIcon, NoteIcon, TopIcon } from "./sticker/icons";
 import { useT } from "../i18n";
 import { formatBackendError } from "../i18n/errors";
 import { isMac } from "../platform";
+import { RemoteSettings } from "../mobile/RemoteSettings";
 import { reconcileRows, sameRefs, type RowCache } from "../rowCache";
 import type { Dict } from "../i18n/zh";
 import { ArchivedWorktreePrompt, WorktreeRemoveButton, runBatchCleanup, type RemovalOutcome } from "../worktreeCleanup";
@@ -202,7 +203,7 @@ export const ChatSidebar = memo(ChatSidebarImpl);
 const titleScrollAnims = new WeakMap<HTMLElement, Animation>();
 const titleScrollTimers = new WeakMap<HTMLElement, number>();
 
-function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visibleOrderRef, attentionIdsRef, searchInputRef, width, onSelect, onPrefetch, onCollapse, onOpenAdmin }: {
+function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visibleOrderRef, attentionIdsRef, searchInputRef, width, remoteSettings = false, onSelect, onPrefetch, onCollapse, onOpenAdmin }: {
   activeId: number;
   /** 主区正开着新建会话页：「新建会话」行高亮（对照 Kimi），会话行都不高亮。 */
   newSessionActive?: boolean;
@@ -220,6 +221,9 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
   /** 停靠形态的栏宽（分栏柄拖拽，ChatWindow 持久化）。抽屉形态不传：CSS 的
    *  width:100% 必须生效，内联值会盖掉它。 */
   width?: number;
+  /** 宽屏远程页（iPad 横屏、桌面浏览器）在侧栏头放手机设置齿轮：齿轮原本只在手机列表页头，
+   *  宽屏走停靠侧栏、不进列表页，主题和保持唤醒找不到入口（调研 m7）。 */
+  remoteSettings?: boolean;
   onSelect: (id: number) => void;
   /** 预取首屏（父层 historyCache）：手指按下、鼠标悬停片刻即触发，点进去时多半已有快照。 */
   onPrefetch?: (id: number) => void;
@@ -1254,6 +1258,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
           </svg>
           <span>{t.sticker.newSession}</span>
         </button>
+        {remoteSettings && <RemoteSettings />}
       </div>
       {/* 会话搜索（Ctrl/Cmd+F 聚焦）：标题/仓库名下沉后端 LIKE，与看板同一条通道。 */}
       <div className="chat-sidebar-search">

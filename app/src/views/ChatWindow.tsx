@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type SetStateAction } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 // 文件拖入走 Tauri 的 drag-drop 事件(webview 原生 drop 被拦截,DOM 拿不到 File;
@@ -99,6 +99,7 @@ import { useConversationExport } from "./chat/useConversationExport";
 import { useMainPages } from "./chat/useMainPages";
 import { AddMenu } from "./chat/AddMenu";
 import { DIFF_PANEL_MIN_WIDTH, useDiffPanelWidth } from "./chat/useDiffPanelWidth";
+import { fitPanes, useElementWidth } from "./chat/paneLayout";
 import { attachmentOf, base64OfBuffer, formatBytes, loadStoredDrafts, promptWithAttachments, saveStoredDraft, type Attachment } from "./chat/drafts";
 import { appendTerminalText, terminalAttention as detectTerminalAttention, visibleTerminalText, type AttentionGrammar, type TerminalAttention, type TerminalAttentionOption } from "../terminalAttention";
 import { Dropdown, useMenuPopup } from "./menu";
@@ -725,7 +726,10 @@ export function ChatWindow() {
   const {
     sidebarCollapsed, sidebarWidth, narrow, overlaySidebar, setOverlaySidebar,
     drawerMounted, sidebarVisible, toggleDocked, startSidebarResize, nudgeSidebarWidth, sidebarMinWidth,
+    resetSidebarWidth, uiScale,
   } = useSidebarLayout();
+  const chatBodyRef = useRef<HTMLDivElement>(null);
+  const chatBodyWidth = useElementWidth(chatBodyRef);
   const toggleSidebar = () => {
     if (narrow) {
       if (remoteUi()) {
@@ -853,7 +857,6 @@ export function ChatWindow() {
   const permissionButtonRef = useRef<HTMLButtonElement | null>(null);
   // 标题栏查到的 PR（ChatTitleBar 回报），命令面板的「打开 PR」用它。
   const [titlePullRequest, setTitlePullRequest] = useState<PullRequestDto | null>(null);
-  const folderOpeners = useFolderOpeners();
   // 对话页能力由安装实况组装（基础命令 ∪ 用户/项目命令 ∪ 当前会话 runtime skill 清单），
   // 按 provider+cwd 查询——换会话、换项目都重取，装了新命令下次打开就见。
   // 未知 provider / 查询未回时为空：不补全、不给菜单，宁缺毋滥。
@@ -877,6 +880,7 @@ export function ChatWindow() {
   const launchInfo = pendingLaunch?.sessionId === sessionId ? pendingLaunch : null;
   const provider = history?.provider ?? launchInfo?.provider;
   const cwd = history?.cwd ?? launchInfo?.cwd ?? null;
+  const folderOpeners = useFolderOpeners(cwd ?? "", setSendError).options;
   // 「文件」入口有 cwd 即可用；「改动」入口仅当后端确认 cwd 是 git 仓库时出现。
   // 两个入口共用同一停靠面板，activeTab 保证面板不卸载时也能直达对应页签。
   const [gitSummary, setGitSummary] = useState<GitDiffSummaryDto | null>(null);
@@ -3894,6 +3898,14 @@ export function ChatWindow() {
     </button>
   );
 
+  // 三栏宽度按 .chat-body 实测宽重新钳制（chat/paneLayout）：侧栏和面板互相扣、对话区保 320，
+  // 窗口缩小时跟着回收；存储里用户拖的宽度不动，窗口拉回宽时原样恢复。
+  const dockedSidebar = !narrow && !sidebarCollapsed;
+  const dockedPanel = !!cwd && !remoteUi() && shownPanelState.visible && !panelState.expanded;
+  const panes = fitPanes({ body: chatBodyWidth, sidebar: dockedSidebar ? sidebarWidth : null, panel: dockedPanel ? diffResize.width : null, ui: uiScale });
+  const shownSidebarWidth = panes.sidebar ?? sidebarWidth;
+  const shownPanelWidth = panes.panel ?? diffResize.width;
+
   return (
     <div className={"chat-window" + (view === "terminal" ? " is-terminal" : "") + (compactChrome ? " is-remote-compact" : "") + (remoteListMode ? " is-remote-list" : "") + (narrow || sidebarCollapsed ? " is-sidebar-undocked" : "")}>
       <DevBadge />
@@ -3930,7 +3942,9 @@ export function ChatWindow() {
       {narrow && drawerMounted && (
         <>
           <div className="chat-sidebar-scrim" hidden={!overlaySidebar} onClick={() => setOverlaySidebar(false)} />
-          <div className="chat-sidebar-overlay" hidden={!overlaySidebar}>
+          {/* 抽屉宽 = min(侧栏宽, 85vw)（CSS 读 --sidebar-w）：此前写死 244，宽窗拖宽过、调大缩放后
+              进窄窗又变回窄的（调研 s14）。 */}
+          <div className="chat-sidebar-overlay" hidden={!overlaySidebar} style={{ "--sidebar-w": `${Math.round(sidebarWidth)}px` } as CSSProperties}>
             {/* 与顶栏同样先摆 logo：开关钮才和顶栏里那颗对齐，抽屉展开时看起来原地不动。 */}
             <div className="chat-sidebar-overlay-head">{appLogo}{sidebarToggleButton}</div>
             <ChatSidebar
@@ -3948,7 +3962,12 @@ export function ChatWindow() {
           </div>
         </>
       )}
-      <div className={"chat-body" + (shownPanelState.visible && (panelState.expanded || remoteUi()) ? " is-diff-max" : "")}>
+      <div
+        ref={chatBodyRef}
+        className={"chat-body" + (shownPanelState.visible && (panelState.expanded || remoteUi()) ? " is-diff-max" : "")}
+        // CSS 兜底（.side-panel 的 max-width）也要扣掉常驻侧栏，JS 还没量到的首帧就不会超。
+        style={dockedSidebar ? { "--docked-sidebar-w": `${Math.round(shownSidebarWidth)}px` } as CSSProperties : undefined}
+      >
       {/* 停靠侧栏 + 分栏柄：柄落在侧栏与主列的缝隙里，拖拽调宽（用户要求：侧栏可拖）。
           窄窗抽屉形态与收起态不渲染（柄在停靠布局里才有意义）。键盘同规：separator
           可聚焦，←/→ 步进 16px 调宽（柄在侧栏右缘，与拖拽方向一致）。 */}
@@ -3960,7 +3979,8 @@ export function ChatWindow() {
         visibleOrderRef={sidebarOrderRef}
         attentionIdsRef={sidebarAttentionRef}
         searchInputRef={sidebarSearchRef}
-        width={sidebarWidth}
+        width={shownSidebarWidth}
+        remoteSettings={remoteUi()}
         onSelect={selectSession}
         onPrefetch={prefetchSession}
         onCollapse={collapseSidebar}
@@ -3972,10 +3992,11 @@ export function ChatWindow() {
         aria-orientation="vertical"
         aria-label={t.chat.diffResize}
         tabIndex={0}
-        aria-valuenow={Math.round(sidebarWidth)}
+        aria-valuenow={Math.round(shownSidebarWidth)}
         aria-valuemin={sidebarMinWidth}
         onKeyDown={nudgeSidebarWidth}
         onPointerDown={startSidebarResize}
+        onDoubleClick={resetSidebarWidth}
       />
       </>}
       {/* 会话管理页占据主列（对照 Kimi）；对话主列不卸载只藏起来，终端、草稿等状态切回来都在。 */}
@@ -5320,10 +5341,11 @@ export function ChatWindow() {
             aria-label={t.chat.diffResize}
             // 可聚焦：← 变宽、→ 变窄（见 useDiffPanelWidth）。
             tabIndex={0}
-            aria-valuenow={Math.round(diffResize.width)}
+            aria-valuenow={Math.round(shownPanelWidth)}
             aria-valuemin={DIFF_PANEL_MIN_WIDTH}
             onKeyDown={diffResize.onKeyDown}
             onPointerDown={diffResize.onPointerDown}
+            onDoubleClick={diffResize.reset}
           />}
           {/* fallback=null:桌面端已在挂载时预取 chunk,点开即到;真等到的话面板位置
               短暂空着比塞一个骨架更安静(分栏柄已经先渲染出来占位了)。 */}
@@ -5361,7 +5383,7 @@ export function ChatWindow() {
                 cwd={cwd}
                 summary={gitSummary}
                 repos={repoChanges}
-                width={diffResize.width}
+                width={shownPanelWidth}
                 comments={sessionReviewComments}
                 onAddComment={addReviewComment}
                 onRemoveComment={removeReviewComment}

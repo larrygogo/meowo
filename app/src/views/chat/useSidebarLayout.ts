@@ -7,24 +7,31 @@
 import { useEffect, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 import { pushEscLayer } from "../../escLayers";
 import { NEW_SESSION_EVENT } from "../../remoteMode";
+import { CHAT_MIN_WIDTH, SIDEBAR_MIN_WIDTH, sidebarDefaultWidth, sidebarMaxWidth, sidebarMinWidth, siblingWidth, useUiScale } from "./paneLayout";
 
 const SIDEBAR_COLLAPSED_KEY = "meowo-chat-sidebar-collapsed";
-/** 停靠侧栏宽度的持久化键与上下限。下限保列表可用；上限拖拽时按 .chat-body 实测宽
- *  给对话区留 360px（与 diff 分栏同一口径）。240 是版式默认宽（用户可拖，2026-10
- *  实拍反馈：208 偏窄，会话名普遍读不全）。 */
+/** 停靠侧栏宽度的持久化键。上下限与默认宽见 paneLayout：默认 240 乘界面缩放（关卡
+ *  A-20261111-ui-spec），拖拽上限扣掉右侧面板再给对话区留 320，另有绝对上限。 */
 const SIDEBAR_WIDTH_KEY = "meowo-chat-sidebar-width";
-const SIDEBAR_MIN_WIDTH = 200;
-const SIDEBAR_DEFAULT_WIDTH = 240;
 /** 窄窗门限：低于它停靠侧栏放不下（240px 侧栏 + 卡片最小可用宽），自动收起、开关改开浮窗。 */
 const SIDEBAR_NARROW_QUERY = "(max-width: 880px)";
 
 export function useSidebarLayout() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem(SIDEBAR_COLLAPSED_KEY) === "1");
   // 停靠侧栏宽随会话持久化（localStorage）；收起只藏不改宽，再展开原宽回来。
-  const [sidebarWidth, setSidebarWidth] = useState(() => {
+  // null = 用户没拖过：宽度跟着界面缩放走（设置里调缩放时实时变），拖过就照用户的。
+  const ui = useUiScale();
+  const [draggedWidth, setSidebarWidth] = useState<number | null>(() => {
     const stored = Number(localStorage.getItem(SIDEBAR_WIDTH_KEY));
-    return Number.isFinite(stored) && stored >= SIDEBAR_MIN_WIDTH ? stored : SIDEBAR_DEFAULT_WIDTH;
+    return Number.isFinite(stored) && stored >= SIDEBAR_MIN_WIDTH ? stored : null;
   });
+  const minWidth = sidebarMinWidth(ui);
+  const sidebarWidth = Math.max(minWidth, draggedWidth ?? sidebarDefaultWidth(ui));
+  /** 拖拽 / 键盘调宽的上限：绝对上限与「.chat-body 减右侧面板减 320」取小（调研 s5/c4）。 */
+  const maxIn = (body: Element | null) =>
+    body
+      ? Math.max(minWidth, Math.min(sidebarMaxWidth(ui), body.getBoundingClientRect().width - siblingWidth(body, ".chat-diff-panel") - CHAT_MIN_WIDTH))
+      : sidebarMaxWidth(ui);
   // 窄窗（<880px）自动收起停靠侧栏：两列塞不下。此时开关切换的是**浮窗侧栏**（overlay，
   // 盖在主列上、不挤压布局），且不写收起偏好——窗口拉宽后回到用户原本的停靠选择。
   // jsdom 没有 matchMedia，恒按宽窗走（测试语义不变）。
@@ -96,14 +103,14 @@ export function useSidebarLayout() {
     const startX = event.clientX;
     const sidebar = handle.previousElementSibling as HTMLElement | null;
     const startWidth = sidebar ? sidebar.getBoundingClientRect().width : sidebarWidth;
-    const maxWidth = Math.max(SIDEBAR_MIN_WIDTH, body.getBoundingClientRect().width - 360);
+    const maxWidth = maxIn(body);
     let lastWidth = startWidth;
     body.classList.add("is-sidebar-resizing");
     // pointermove 每次都 setState 会以指针事件频率重渲整栏（几百行会话列表），
     // 按帧合流，一帧至多提交一次宽度（与 diff 分栏同一课）。
     let raf = 0;
     const onMove = (move: PointerEvent) => {
-      lastWidth = Math.min(Math.max(startWidth + (move.clientX - startX), SIDEBAR_MIN_WIDTH), maxWidth);
+      lastWidth = Math.min(Math.max(startWidth + (move.clientX - startX), minWidth), maxWidth);
       if (!raf) {
         raf = requestAnimationFrame(() => {
           raf = 0;
@@ -131,15 +138,20 @@ export function useSidebarLayout() {
   const nudgeSidebarWidth = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
     event.preventDefault();
-    const body = event.currentTarget.closest(".chat-body");
-    const maxWidth = body ? Math.max(SIDEBAR_MIN_WIDTH, body.getBoundingClientRect().width - 360) : Number.MAX_SAFE_INTEGER;
-    const next = Math.min(Math.max(sidebarWidth + (event.key === "ArrowRight" ? 16 : -16), SIDEBAR_MIN_WIDTH), maxWidth);
+    const maxWidth = maxIn(event.currentTarget.closest(".chat-body"));
+    const next = Math.min(Math.max(sidebarWidth + (event.key === "ArrowRight" ? 16 : -16), minWidth), maxWidth);
     setSidebarWidth(next);
     localStorage.setItem(SIDEBAR_WIDTH_KEY, String(Math.round(next)));
   };
 
+  // 双击分栏柄恢复默认宽（跟回界面缩放）：拖坏了不必再一点点拖回来。
+  const resetSidebarWidth = () => {
+    localStorage.removeItem(SIDEBAR_WIDTH_KEY);
+    setSidebarWidth(null);
+  };
+
   return {
-    sidebarCollapsed, sidebarWidth, narrow, overlaySidebar, setOverlaySidebar, drawerMounted, sidebarVisible,
-    toggleDocked, startSidebarResize, nudgeSidebarWidth, sidebarMinWidth: SIDEBAR_MIN_WIDTH,
+    sidebarCollapsed, sidebarWidth, resetSidebarWidth, uiScale: ui, narrow, overlaySidebar, setOverlaySidebar, drawerMounted, sidebarVisible,
+    toggleDocked, startSidebarResize, nudgeSidebarWidth, sidebarMinWidth: minWidth,
   };
 }

@@ -2002,7 +2002,11 @@ button.stab {
   padding: var(--sp-9) var(--sp-11);
   cursor: pointer;
   transition: background var(--dur-base), color var(--dur-base);
+  /* button 默认居中：英文长项折行后按居中排，和其他项的左对齐错开（调研 s7）。英文导航名已改短，
+     再长也单行省略，不折行。 */
+  text-align: left;
 }
+.nav-item > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nav-item svg { color: var(--cc-text-faint); transition: color var(--dur-base); }
 .nav-item:hover { background: var(--cc-surface); color: var(--cc-text); }
 .nav-item.on { background: var(--cc-surface-hover); color: var(--cc-text); }
@@ -3791,16 +3795,19 @@ select.ns-input {
 @container chat-bar (max-width: 760px) {
   .chat-bar .tb-git-branch, .chat-bar .chat-title-project, .chat-bar .chat-title-sep { display: none; }
 }
-@container chat-bar (max-width: 640px) {
-  .chat-bar .tb-pr { display: none; }
-}
-@container chat-bar (max-width: 520px) {
-  .chat-bar .tb-open { display: none; }
-}
+/* PR、打开方式、改动、终端、会话信息这些「功能」不在这里收：曾在此 display:none，菜单里却
+   没有入口，拉窄就丢功能（调研 sys8/c8）。改由 titleOverflow.ts 的门限表决定放栏上还是 ⋯ 里。
+   「结束会话」在最窄一档只留图标（620 宽开面板时标题栏只剩 320，英文字样要 80px）。 */
+.chat-end { display: inline-flex; align-items: center; }
+.chat-end-ico { display: none; }
 @container chat-bar (max-width: 400px) {
-  .chat-bar .tb-git { display: none; }
+  .chat-bar .chat-end { padding: 0; width: 28px; height: 28px; justify-content: center; }
+  .chat-bar .chat-end-ico { display: block; }
+  .chat-bar .chat-end-label { display: none; }
 }
 .chat-title-actions { min-width: 200px; }
+.chat-title-actions-sep { height: var(--hairline); margin: var(--sp-4) var(--sp-6); background: var(--cc-border); }
+.chat-title-actions .dd-item .dd-check { margin-left: auto; }
 .chat-title-actions .dd-item { justify-content: flex-start; gap: var(--sp-8); padding: var(--sp-7) var(--sp-10); }
 .chat-title-actions .dd-item:disabled { opacity: .5; cursor: default; }
 .chat-title-action-ico { flex: 0 0 auto; display: inline-flex; color: var(--cc-text-faint); }
@@ -4164,7 +4171,8 @@ select.ns-input {
    透出正文）。头部行与顶栏同高同缩进，开关钮看起来原地不动。
    三段类选择器压过上面 non-mac 的透明底（同特异性、本组在后）。 */
 .chat-sidebar-scrim { position: absolute; inset: 0; z-index: 60; background: rgba(0, 0, 0, 0.18); }
-.chat-sidebar-overlay { position: absolute; top: 0; bottom: 0; left: 0; z-index: 61; display: flex; flex-direction: column; width: 244px; background: var(--cc-window-bg); border-right: var(--hairline) solid var(--cc-border); box-shadow: var(--shadow-lg); }
+/* 抽屉宽 = min(侧栏宽, 85vw)：--sidebar-w 由 ChatWindow 给（用户拖过的宽或 240×缩放），调研 s14。 */
+.chat-sidebar-overlay { position: absolute; top: 0; bottom: 0; left: 0; z-index: 61; display: flex; flex-direction: column; width: min(var(--sidebar-w, calc(244px * var(--cc-ui, 1))), 85vw); background: var(--cc-window-bg); border-right: var(--hairline) solid var(--cc-border); box-shadow: var(--shadow-lg); }
 /* 抽屉常驻挂载（首开后不卸载，消「每次打开都加载中」）：hidden 隐藏时本类的 display:flex
    会盖过 UA 的 [hidden]{display:none}，必须显式压回。 */
 .chat-sidebar-scrim[hidden],
@@ -4175,9 +4183,17 @@ select.ns-input {
 /* macOS：抽屉从窗口最顶展开，头部按钮必须给左上角的原生红绿灯让位（与其余 mac 头部同规）。 */
 :root.platform-macos .chat-sidebar-overlay-head { padding-left: 84px; }
 .chat-window .chat-sidebar-overlay .chat-sidebar { flex: 1; min-height: 0; width: 100%; background: transparent; border-right: 0; }
-/* 列宽不随密度缩放：240px 是默认值，停靠形态可由 .chat-sidebar-resizer 拖宽；
-   缩放只放大栏内文字/间距，长会话名由 .chat-sidebar-name-text 等的 ellipsis 消化。 */
-.chat-sidebar { width: 240px; flex: 0 0 auto; display: flex; flex-direction: column; border-right: var(--hairline) solid var(--cc-border); background: color-mix(in srgb, var(--cc-bg) 96%, var(--cc-text) 4%); }
+/* 列宽随界面缩放：默认 240px × --cc-ui（关卡 A-20261111-ui-spec 推翻了原「列宽不随密度缩放」：
+   125～150% 下文字放大、列宽不变，英文三段页签贴边、标题只剩一个词，调研 c7/s6）。
+   停靠形态的实际宽度由 ChatWindow 内联给出（paneLayout：用户拖过的宽度照旧保留，并按窗口钳制），
+   这里的 calc 只是没有内联值时的兜底。 */
+.chat-sidebar { width: calc(240px * var(--cc-ui, 1)); flex: 0 0 auto; display: flex; flex-direction: column; border-right: var(--hairline) solid var(--cc-border); background: color-mix(in srgb, var(--cc-bg) 96%, var(--cc-text) 4%); }
+/* 侧栏图标随界面缩放（关卡 A-20261111-ui-spec 第 1 条）：文字和间距早已乘 --cc-ui，图标写死 px，
+   150% 下图标比文字小一圈（调研 c7）。图标尺寸有的写在 svg 属性、有的写在 CSS，用 zoom 一并放大，
+   不必逐个改；--cc-ui 未设（手机页、设置窗）时为 1，零影响。 */
+.chat-sidebar svg:not(.chat-sidebar-search-icon), .chat-sidebar-overlay-head svg { zoom: var(--cc-ui, 1); }
+/* 搜索图标是绝对定位的，zoom 会连 left/top 一起放大、图标跑出输入框，改直接放大宽高。 */
+.chat-sidebar .chat-sidebar-search-icon { width: calc(14px * var(--cc-ui, 1)); height: calc(14px * var(--cc-ui, 1)); }
 .chat-sidebar-head { padding: 0 1px var(--sp-4) var(--sp-8); display: flex; align-items: center; gap: var(--sp-6); flex: 0 0 auto; }
 .chat-sidebar-search { position: relative; flex: 0 0 auto; padding: 0 var(--sp-8) var(--sp-6); }
 .chat-sidebar-search-icon { position: absolute; left: calc(var(--sp-8) + var(--sp-9)); top: calc(50% - var(--sp-4)); transform: translateY(-50%); color: var(--cc-text-faint); pointer-events: none; }
@@ -4398,7 +4414,10 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-sidebar-search input:focus { background: var(--cc-surface); }
 .chat-sidebar-search input:focus::placeholder { color: var(--cc-text-faint); }
 .chat-sidebar-tabs { gap: 2px; margin: 0 var(--sp-8) var(--sp-10); padding: 3px; border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-lg); background: color-mix(in srgb, var(--cc-text) 3%, transparent); }
-.chat-sidebar-tabs button { flex: 1; padding: var(--sp-5) 0; border-radius: var(--radius-md); color: var(--cc-text-dim); font-weight: 500; }
+/* 按文字起步再均分剩余（flex 1 1 auto），左右各留 --sp-6：原 flex:1 等分且零内边距，英文
+   「Workspaces」在 240 宽下就贴着胶囊边框，缩放 124/150 时更挤（调研 s6，脚本 t26 量出贴边 0px）。
+   侧栏被拖到最窄 200 时放不下就省略号收尾，不顶出胶囊。 */
+.chat-sidebar-tabs button { flex: 1 1 auto; min-width: 0; padding: var(--sp-5) var(--sp-6); border-radius: var(--radius-md); color: var(--cc-text-dim); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-sidebar-tabs button.is-active { background: var(--fill-selected); }
 .chat-sidebar-tabs button.is-active::after { display: none; }
 .chat-sidebar-section { flex: 0 0 auto; display: flex; align-items: center; gap: 2px; padding: 0 var(--sp-8) 2px calc(var(--sp-8) + var(--sp-8)); }
@@ -4756,7 +4775,9 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .session-info-row kbd, .session-info-diff { flex: none; color: var(--cc-text-faint); font: inherit; font-variant-numeric: tabular-nums; }
 /* 默认宽度是可用宽度的一半（useDiffPanelWidth），旧面板的 40vw 上限会把它压回去；
    改成给对话区留 320px。 */
-.chat-diff-panel.side-panel { max-width: calc(100% - 320px); }
+/* 兜底上限也扣常驻侧栏（--docked-sidebar-w 由 ChatWindow 设在 .chat-body 上）：只减 320 时侧栏
+   常驻能把对话区压到 80px（调研 c4）。正常情况下 JS 已按 paneLayout 钳过，这条只管首帧。 */
+.chat-diff-panel.side-panel { max-width: calc(100% - 320px - var(--docked-sidebar-w, 0px)); }
 /* 右侧面板的页签栏（照 Kimi Code：28px 高、最宽 168px、标题省略、横向滚动不显示滚动条）。 */
 .side-panel-tabs { position: relative; flex: 0 1 auto; min-width: 0; display: flex; align-items: center; gap: 2px; overflow-x: auto; scrollbar-width: none; }
 .side-panel-tabs::-webkit-scrollbar { display: none; }
@@ -4916,6 +4937,12 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-diff-row { position: relative; }
 .chat-diff-cmt-add { position: absolute; left: 0; top: 50%; transform: translateY(-50%); width: 12px; height: 16px; padding: 0; border: 0; border-radius: var(--radius-xs); background: var(--cc-accent); color: var(--cc-window-bg); font: 600 11px/16px system-ui, sans-serif; text-align: center; cursor: pointer; opacity: 0; }
 .chat-diff-row:hover .chat-diff-cmt-add, .chat-diff-cmt-add:focus-visible { opacity: 1; }
+/* 触屏没有悬停：「+」常显，并放大到 16×20（手机上再由 ::after 外扩到 28×32）。
+   原先只在 :hover 时出现、宽 12px，手机上行评论等于没有（调研 m13）。常显时去掉蓝底只留淡色
+   字形：每行一块蓝底在手机仿真截图里连成一整条蓝柱，压住旧行号。 */
+@media (hover: none) {
+  .chat-diff-cmt-add { width: 16px; height: 20px; line-height: 20px; background: transparent; color: var(--cc-accent); opacity: .6; }
+}
 /* 评论块插在被评论的行下面。pre 随最长行撑宽、横向会滚，评论块用 sticky + 100cqw
    钉在可视宽度内，不然长行文件里评论框会跟着代码一起被推到屏外。 */
 .chat-diff-scroll { container-type: inline-size; }
@@ -5021,6 +5048,9 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 /* 「更改」= VS Code 源代码管理样式（用户要求 2026-11-09，对照其截图）：存储库列表 → 提交框 → 分组平铺文件。 */
 /* position: relative：虚拟列表按 offsetTop 量各组在滚动内容里的起点，.scm 得是 offsetParent。 */
 .scm { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; overflow-y: auto; padding-bottom: var(--sp-8); }
+/* 面板拖宽或最大化后内容封顶居中：2560 宽最大化时提交框、「提交全部」拉成两千多 px 的横条，
+   文件名和增删数隔着半个屏幕，视线来回扫（调研 c6）。880 约是对话列 720 加两侧留白。 */
+.scm-repos, .scm-commit, .scm-forge, .scm-tools, .scm-groups { box-sizing: border-box; width: 100%; max-width: 880px; align-self: center; }
 .scm-section-title { padding: var(--sp-6) var(--sp-12) var(--sp-2); font-size: var(--text-xs); font-weight: 600; letter-spacing: 0.02em; color: var(--cc-text-faint); user-select: none; }
 .scm-repos { flex: 0 0 auto; display: flex; flex-direction: column; padding: 0 var(--sp-4) var(--sp-4); border-bottom: var(--hairline) solid var(--cc-border); }
 .scm-repo { display: flex; align-items: center; gap: var(--sp-6); min-width: 0; height: 26px; padding: 0 var(--sp-8); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-dim); font: inherit; font-size: var(--text-sm); text-align: left; cursor: pointer; }

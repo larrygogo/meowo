@@ -47,14 +47,27 @@ function CodeGlyph() {
     </svg>
   );
 }
-function OpenerIcon({ opener }: { opener: FileOpenerDto }) {
+export function OpenerIcon({ opener }: { opener: FileOpenerDto }) {
   if (opener.icon) return <img src={opener.icon} width={16} height={16} alt="" draggable={false} />;
   return opener.id === FILE_MANAGER ? <FolderGlyph /> : <CodeGlyph />;
 }
 
-/// 「打开方式」清单：已装的编辑器 + 系统文件管理器。标题栏分体按钮与 Ctrl+K 命令面板共用
-/// （UI 优化 #53：窄窗时标题栏按钮被收起，命令面板里仍要能「用…打开」）。
-export function useFolderOpeners(): FileOpenerDto[] {
+/// 用指定的打开方式打开目录；失败交给 onError（已按界面语言格式化）。Ctrl+K「用…打开」也走这里。
+export function openFolderWith(cwd: string, id: string, onError: (message: string) => void, locale: string) {
+  const opening = id === FILE_MANAGER ? openProjectDir(cwd) : openFolderIn(cwd, id);
+  opening.catch((error) => onError(formatBackendError(error, locale)));
+}
+
+export type FolderOpeners = {
+  options: FileOpenerDto[];
+  current: FileOpenerDto;
+  /** 用指定方式打开并记成下次的默认（对照 Kimi：选了就记住）。 */
+  pick: (id: string) => void;
+};
+
+/** 打开方式（已装的编辑器 + 系统文件管理器）的清单、当前默认与「打开」动作。标题栏分体按钮、
+ *  窄窗 ⋯ 菜单与 Ctrl+K 命令面板（UI 优化 #53）共用一份，几处选过的默认才不会各记各的。 */
+export function useFolderOpeners(cwd: string, onError: (message: string) => void): FolderOpeners {
   const t = useT();
   const [editors, setEditors] = useState<FileOpenerDto[]>([]);
   useEffect(() => {
@@ -62,26 +75,26 @@ export function useFolderOpeners(): FileOpenerDto[] {
     void loadEditors().then((list) => { if (alive) setEditors(list); });
     return () => { alive = false; };
   }, []);
-  return [
+  const [preferred, setPreferred] = useState(readOpener);
+  const options: FileOpenerDto[] = [
     ...editors,
     { id: FILE_MANAGER, name: isMac() ? t.chat.fileManagerMac : t.chat.fileManager, icon: null },
   ];
-}
-
-/// 用指定的打开方式打开目录；失败交给 onError（已按界面语言格式化）。
-export function openFolderWith(cwd: string, id: string, onError: (message: string) => void, locale: string) {
-  const opening = id === FILE_MANAGER ? openProjectDir(cwd) : openFolderIn(cwd, id);
-  opening.catch((error) => onError(formatBackendError(error, locale)));
-}
-
-export function OpenInEditor({ cwd, onError }: { cwd: string; onError: (message: string) => void }) {
-  const t = useT();
-  const options = useFolderOpeners();
-  const [preferred, setPreferred] = useState(readOpener);
-  const { open, setOpen, pos, ref, btnRef, menuRef, toggle, onKeyDown } = useMenuPopup({});
   // 没选过（或选的那个已卸载）时默认第一个编辑器；一个都没装就是文件管理器。
   const current = options.find((option) => option.id === preferred) ?? options[0];
-  const openWith = (id: string) => openFolderWith(cwd, id, onError, t.locale);
+  const pick = (id: string) => {
+    setPreferred(id);
+    saveOpener(id);
+    openFolderWith(cwd, id, onError, t.locale);
+  };
+  return { options, current, pick };
+}
+
+export function OpenInEditor({ cwd, onError, openers }: { cwd: string; onError: (message: string) => void; openers?: FolderOpeners }) {
+  const t = useT();
+  const own = useFolderOpeners(cwd, onError);
+  const { options, current, pick } = openers ?? own;
+  const { open, setOpen, pos, ref, btnRef, menuRef, toggle, onKeyDown } = useMenuPopup({});
   return (
     <div className="dd tb-open" ref={ref} onKeyDown={onKeyDown}>
       <button
@@ -89,7 +102,7 @@ export function OpenInEditor({ cwd, onError }: { cwd: string; onError: (message:
         className="tb-open-main"
         data-tip={t.chat.openWith(current.name)}
         aria-label={t.chat.openWith(current.name)}
-        onClick={() => openWith(current.id)}
+        onClick={() => pick(current.id)}
       >
         <OpenerIcon opener={current} />
       </button>
@@ -115,10 +128,8 @@ export function OpenInEditor({ cwd, onError }: { cwd: string; onError: (message:
               className="dd-item"
               onClick={() => {
                 // 选了就记住并直接打开（对照 Kimi）：下次点主钮就是它。
-                setPreferred(option.id);
-                saveOpener(option.id);
                 setOpen(false);
-                openWith(option.id);
+                pick(option.id);
               }}
             >
               <span className="dd-val">

@@ -3,11 +3,13 @@
  * - ChatTitleMenu：标题胶囊 + 会话动作菜单（置顶/打开目录/重命名/分叉/归档）。
  * 原标题栏任务进度入口（ChatTodoMenu）已按用户要求取消：待办走底部停靠栏，子任务在对话流里。
  */
+import { useContext } from "react";
 import { openProjectDir } from "../../api";
+import { TitleOverflowContext } from "./titleOverflow";
 import { remoteUi } from "../../remoteMode";
 import { useT } from "../../i18n";
 import { useMenuPopup } from "../menu";
-import { ArchiveIcon, TopIcon } from "../sticker/icons";
+import { ArchiveIcon, CheckIcon, TopIcon } from "../sticker/icons";
 
 function MoreIcon() {
   return (
@@ -48,6 +50,7 @@ export function ChatTitleMenu({ title, provider, cwd, archived, archiving, starr
   t: ReturnType<typeof useT>;
 }) {
   const { open, setOpen, pos, ref, btnRef, menuRef, toggle, onKeyDown } = useMenuPopup({ align: "left" });
+  const overflow = useContext(TitleOverflowContext);
   const { Icon } = agentAssets(provider);
   // 先收菜单再执行动作：动作可能弹确认/切会话，菜单不该压在那些之上。
   const pick = (action: () => void) => { setOpen(false); btnRef.current?.focus(); action(); };
@@ -68,6 +71,23 @@ export function ChatTitleMenu({ title, provider, cwd, archived, archiving, starr
         /* 不铺 pos.width：菜单宽随内容（.dd .dd-menu 的 min-width: max-content），
            只沿用左对齐与视口钳制。 */
         <div className="dd-menu chat-title-actions" role="menu" ref={menuRef} style={{ position: "fixed", top: pos.top, bottom: pos.bottom, left: pos.left }}>
+          {/* 标题栏放不下而收起的功能（见 titleOverflow），排在最前、和会话动作隔一条线。 */}
+          {overflow.map((item) => (
+            <button
+              key={item.key}
+              type="button"
+              role={item.checked == null ? "menuitem" : "menuitemcheckbox"}
+              aria-checked={item.checked}
+              className="dd-item"
+              data-overflow={item.group}
+              onClick={() => pick(item.onClick)}
+            >
+              <span className="chat-title-action-ico">{item.icon}</span>
+              <span className="dd-label">{item.label}</span>
+              {item.checked && <CheckIcon className="dd-check" />}
+            </button>
+          ))}
+          {overflow.length > 0 && <div className="chat-title-actions-sep" role="separator" />}
           <button type="button" role="menuitem" className="dd-item" onClick={() => pick(onToggleStar)}>
             <span className="chat-title-action-ico"><TopIcon /></span>
             <span className="dd-label">{starred ? t.sticker.unstar : t.sticker.star}</span>
@@ -81,7 +101,8 @@ export function ChatTitleMenu({ title, provider, cwd, archived, archiving, starr
             </button>
           )}
           {/* open_project_dir 开的是宿主文件管理器,/rpc 拒绝项——远程隐藏(侧栏同款动作同款门控)。 */}
-          {cwd && !remoteUi() && (
+          {/* 「打开方式」收进菜单时已带「用文件资源管理器打开」，同一动作不再列第二遍。 */}
+          {cwd && !remoteUi() && !overflow.some((item) => item.group === "open") && (
             // 菜单内刻意用原生 title：TooltipLayer 对 .dd-menu 区域静默（自绘提示会糊在菜单上）。
             <button type="button" role="menuitem" className="dd-item" title={cwd} onClick={() => pick(() => void openProjectDir(cwd).catch(() => {}))}>
               <span className="chat-title-action-ico">
