@@ -1,9 +1,13 @@
-import type { MutableRefObject } from "react";
+import { useState, type MutableRefObject } from "react";
 import { ChatSidebar } from "../views/ChatSidebar";
+import { openNewSessionWindow } from "../api";
 import { useT } from "../i18n";
-import { RemoteSettings } from "./RemoteSettings";
-import logoUrl from "../../src-tauri/icons/128x128@2x.png";
+import { RemoteSettingsScreen } from "./RemoteSettings";
+import { RemoteTabBar, type RemoteTab } from "./RemoteTabBar";
 
+/// 手机竖屏的首页：大标题 + 一屏内容 + 浮动胶囊底栏。底栏在「会话」「设置」两屏间切换，
+/// 「新建」打开新建会话浮层。切到设置时会话列表只是藏起来不卸载：搜索词、页签、滚动位置
+/// 都留着，切回来不用重新拉一遍。
 export function RemoteSessionList({ activeId, approvalAwaitingIds, visibleOrderRef, searchInputRef, onSelect, onPrefetch }: {
   activeId: number;
   approvalAwaitingIds: ReadonlySet<number>;
@@ -13,24 +17,32 @@ export function RemoteSessionList({ activeId, approvalAwaitingIds, visibleOrderR
   onPrefetch?: (id: number) => void;
 }) {
   const t = useT();
+  const [tab, setTab] = useState<RemoteTab>("sessions");
+  const settings = tab === "settings";
   return (
-    <section className="remote-session-list" aria-label={t.chat.sidebarTitle}>
+    <section className={"remote-session-list" + (settings ? " is-settings" : "")} aria-label={settings ? t.remote.settingsLabel : t.chat.sidebarTitle}>
       <header className="remote-session-list-head">
-        <img src={logoUrl} width="34" height="34" alt="" />
         <div>
-          <h1>{t.remote.sessionListTitle}</h1>
-          <p>{t.remote.sessionListSubtitle}</p>
+          <h1>{settings ? t.remote.settingsLabel : t.remote.sessionListTitle}</h1>
+          {!settings && <p>{t.remote.sessionListSubtitle}</p>}
         </div>
-        <RemoteSettings />
       </header>
-      <ChatSidebar
-        activeId={activeId}
-        approvalAwaitingIds={approvalAwaitingIds}
-        visibleOrderRef={visibleOrderRef}
-        searchInputRef={searchInputRef}
-        onSelect={onSelect}
-        onPrefetch={onPrefetch}
-        onCollapse={() => {}}
+      <div className="remote-session-list-pane" hidden={settings}>
+        <ChatSidebar
+          activeId={activeId}
+          approvalAwaitingIds={approvalAwaitingIds}
+          visibleOrderRef={visibleOrderRef}
+          searchInputRef={searchInputRef}
+          onSelect={onSelect}
+          onPrefetch={onPrefetch}
+          onCollapse={() => {}}
+        />
+      </div>
+      {settings && <RemoteSettingsScreen />}
+      <RemoteTabBar
+        tab={tab}
+        onTab={setTab}
+        onNew={() => void openNewSessionWindow().catch(() => {})}
       />
     </section>
   );

@@ -1493,6 +1493,8 @@ export const en: Dict = {
     sessionListSubtitle: "Pick up where you left off on desktop",
     themeLabel: "Appearance",
     settingsLabel: "Settings",
+    tabNew: "New",
+    tabBarLabel: "Navigation",
     settingsPhone: "This phone",
     settingsDesktop: "Computer",
     foldDesc: "Only on this phone",

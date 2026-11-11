@@ -68,6 +68,8 @@ bun run visual:compare <基线目录> <新目录>
 | `pop-palette` / `pop-shortcuts` | 命令面板（Ctrl+K）、快捷键速查表（?） | 620 / 1280 |
 | `pop-add` / `pop-progress` | 输入框「+」菜单、停靠栏进度面板 | 620 / 1280 |
 | `panel-files` | 右侧面板「文件」页签 | 620 / 1280 |
+| `mobile-settings` / `-new` / `-gate*` / `-boot` / `-keys` / `-list-empty` / `-list-error` | 手机页其余状态：设置屏、新建会话浮层、配对门各态、加载占位、终端画面兜底、列表空态与首载失败（只拍 dpr 2） | 375（部分加 430） |
+| `mobile-*-kbd` / `-land` / `-ipad` / `-ipadland` | 同一场景换视口：键盘弹出（375×476、375×376）、横屏 812×375、iPad 820×1180 与 1180×820 | 见文件名 |
 
 每个场景都拍深色、浅色两种主题，dpr 1 和 2。语言默认只拍中文，`chat` 与 `mobile-chat` 另加英文。
 
