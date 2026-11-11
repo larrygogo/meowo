@@ -142,6 +142,53 @@ describe("名单外壳", () => {
     expect(invoke).toHaveBeenCalledWith("unregister_approval_consumer", { consumerId: (call?.[1] as { consumerId: string }).consumerId });
   });
 
+  it("行内批准：不进那个会话，决定按它的会话号和请求号发出去", async () => {
+    sessions = [mk("甲"), mk("乙", (s) => { s.pending_review = "approval"; })];
+    const target = sessions[1].session.id;
+    const base = invoke.getMockImplementation()!;
+    invoke.mockImplementation((cmd: string, args?: { sessionId?: number }) => (
+      cmd === "pending_interaction"
+        ? Promise.resolve({ approval: args?.sessionId === target ? { sessionId: target, requestId: "req-9", provider: "claude", toolName: "Bash", description: null, input: JSON.stringify({ command: "git push" }), permissionSuggestions: [], answerable: false } : null, question: null })
+        : base(cmd, args)
+    ));
+    render(<RosterShell />);
+    fireEvent.click(await screen.findByText("乙"));
+    fireEvent.click(await screen.findByRole("button", { name: "允许一次" }));
+    expect(invoke).toHaveBeenCalledWith("resolve_pending_approval", { sessionId: target, requestId: "req-9", choice: "allow_once" });
+    // 没有切会话：对话窗没收到「去那个会话」的请求。
+    expect(screen.getByTestId("chat").getAttribute("data-request")).toBe("");
+  });
+
+  it("行内按 Esc 只收起这一行，不发任何决定", async () => {
+    sessions = [mk("甲"), mk("乙", (s) => { s.pending_review = "approval"; })];
+    const target = sessions[1].session.id;
+    const base = invoke.getMockImplementation()!;
+    invoke.mockImplementation((cmd: string, args?: { sessionId?: number }) => (
+      cmd === "pending_interaction"
+        ? Promise.resolve({ approval: { sessionId: target, requestId: "req-9", provider: "claude", toolName: "Bash", description: null, input: "{}", permissionSuggestions: [], answerable: false }, question: null })
+        : base(cmd, args)
+    ));
+    render(<RosterShell />);
+    fireEvent.click(await screen.findByText("乙"));
+    const deny = await screen.findByRole("button", { name: "拒绝" });
+    fireEvent.keyDown(deny, { key: "Escape" });
+    expect(document.querySelectorAll(".roster-sheet")).toHaveLength(0);
+    expect(invoke.mock.calls.some(([cmd]) => cmd === "resolve_pending_approval")).toBe(false);
+  });
+
+  it("审批不在 Meowo 手里（已回到终端）：行内如实说明，给进入现场", async () => {
+    sessions = [mk("甲"), mk("乙", (s) => { s.pending_review = "approval"; })];
+    const base = invoke.getMockImplementation()!;
+    invoke.mockImplementation((cmd: string, args?: unknown) => (
+      cmd === "pending_interaction" ? Promise.resolve({ approval: null, question: null }) : base(cmd, args)
+    ));
+    render(<RosterShell />);
+    fireEvent.click(await screen.findByText("乙"));
+    await screen.findByText("这条审批在终端里，进入现场处理");
+    expect(screen.queryByRole("button", { name: "允许一次" })).toBeNull();
+    expect(screen.getByRole("button", { name: "进入现场" })).toBeTruthy();
+  });
+
   it("界面上没有计数", async () => {
     sessions = [mk("甲", (s) => { s.pending_review = "approval"; }), mk("乙", (s) => { s.pending_review = "question"; })];
     render(<RosterShell />);

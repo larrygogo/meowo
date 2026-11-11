@@ -7951,6 +7951,19 @@ button.btn-primary:disabled { opacity: 1; background: var(--fill-selected); colo
 .roster-said { margin: 0; max-width: 72ch; font-size: var(--text-sm); line-height: 1.65; color: var(--cc-text); display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere; }
 .roster-said.is-empty { color: var(--cc-text-faint); }
 .roster-foot { display: flex; justify-content: flex-end; margin-top: 14px; }
+.roster-enter.is-quiet { height: 30px; padding: 0 12px; border: 0; border-radius: var(--radius-md); background: color-mix(in srgb, var(--cc-text) 8%, transparent); color: var(--cc-text); font: inherit; font-size: var(--text-xs); cursor: pointer; }
+.roster-enter.is-quiet:hover { background: color-mix(in srgb, var(--cc-text) 12%, transparent); }
+.roster-note { margin: 10px 0 0; font-size: var(--text-xs); color: var(--cc-text-faint); }
+/* 行内决定单：卡片本体是对话窗那一套，这里把它自己的外框拆掉——展开的行已经是一张卡，卡里不再套卡。
+   待批准的那一圈琥珀环改画在行上（画面里唯一带彩色描边的东西）。 */
+.roster-decision { margin-top: 12px; }
+/* 行已经写着「待批准」，卡片自己的标题行不再重复。行内也没有 Esc / 数字键这两个快捷键
+   （Esc 在名单上是收起这一行），按钮上的键位标记不显示。 */
+.roster-decision.is-approval .chat-approval-head { display: none; }
+.roster-decision kbd { display: none; }
+.roster-decision .chat-approval { width: auto; max-width: none; max-height: none; margin: 0; padding: 0; background: transparent; box-shadow: none; animation: none; overflow: visible; }
+.roster-item.is-open:has(.roster-decision) { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cc-warn-vivid) 70%, transparent); }
+.roster-item.is-open:has(.roster-decision) .roster-foot { justify-content: flex-start; margin-top: 10px; }
 /* 窄窗：状态词之后的列让出来，只留头像、任务名、状态词。 */
 @media (max-width: 760px) {
   .roster-rail { width: 40px; }

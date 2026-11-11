@@ -129,7 +129,13 @@ async function boot(): Promise<React.ReactNode> {
     const inScene = scene === "roster-scene";
     window.history.replaceState({}, "", `${location.pathname}?${q.toString()}&sessionId=${first}${inScene ? "" : "&roster=1"}`);
     const chat = chatMock(lang);
-    setExtraMock((cmd) => (cmd === "get_live_sessions_page" ? { items: store.sessions, next_cursor: null } : scmMock(cmd) ?? chat(cmd)));
+    // 第一行挂着一条 broker 审批：点开那一行就在行内批。别的会话没有待处理。
+    const approval = { sessionId: first, requestId: "roster-approval", provider: "claude", toolName: "Bash", description: lang === "en" ? "Run the migration" : "跑数据库迁移", input: JSON.stringify({ command: "pnpm prisma migrate deploy --schema services/pay/schema.prisma" }), permissionSuggestions: [], answerable: false };
+    setExtraMock((cmd, args) => {
+      if (cmd === "get_live_sessions_page") return { items: store.sessions, next_cursor: null };
+      if (cmd === "pending_interaction") return { approval: !quiet && (args as { sessionId?: number })?.sessionId === first ? approval : null, question: null };
+      return scmMock(cmd) ?? chat(cmd);
+    });
     installMocks("chat");
     bootAppearance({ scale: true });
     const { RosterShell } = await import("../src/views/roster/RosterShell");

@@ -34,6 +34,8 @@ export const zh = {
     back: "回到名单",
     enter: "进入现场",
     nothingSaid: "还没有回复",
+    approvalInTerminal: "这条审批在终端里，进入现场处理",
+    answerInScene: "它在终端里等你选择，进入现场作答",
   },
   empty: {
     allTitle: "还没有会话",

@@ -21,6 +21,7 @@ import { AgentRing, Eyes } from "../island/islandParts";
 import { cardTone, fmtShortAgo, useStarred } from "../sticker/helpers";
 import { UNNAMED_SESSION_SENTINEL, type Item } from "../sticker/types";
 import { attentionFocus } from "./attention";
+import { RosterDecision } from "./RosterDecision";
 
 /** 名单一次取多少行。名单不翻页：超过这个数的老会话去「已完成 / 工作区」里找。 */
 const ROSTER_LIMIT = 200;
@@ -206,7 +207,9 @@ function useWindowFront(): boolean {
   useEffect(() => {
     let alive = true;
     let un: (() => void) | undefined;
-    const tell = (focused: boolean) => {
+    const tell = (focused: unknown) => {
+      // 只认明确的布尔值：截图页和测试里的假窗口什么都不回，按「在前台」算。
+      if (typeof focused !== "boolean") return;
       if (alive) setFront(focused);
       emit("roster-front", focused).catch(() => {});
     };
@@ -246,7 +249,16 @@ function RosterList({ rows, loaded, expanded, gitBadges, onToggle, onEnter }: {
       <header className="roster-head" data-tauri-drag-region>
         <h1 className="roster-title">{t.roster.title}</h1>
       </header>
-      <div className="roster-list" role="list">
+      <div
+        className="roster-list"
+        role="list"
+        // Esc 在名单上只收起展开的那一行，绝不当成「拒绝」（对话窗里 Esc 两下是拒绝，这里没有）。
+        onKeyDown={(event) => {
+          if (event.key !== "Escape" || expanded == null) return;
+          event.stopPropagation();
+          onToggle(expanded);
+        }}
+      >
         {loaded && rows.length === 0 && <p className="roster-empty">{t.empty.allTitle}</p>}
         {rows.map((item) => (
           <RosterItem
@@ -302,8 +314,11 @@ function RosterItem({ item, open, gitBadges, onToggle, onEnter }: {
       {open && (
         <div className="roster-sheet">
           {said ? <p className="roster-said">{said}</p> : <p className="roster-said is-empty">{t.roster.nothingSaid}</p>}
+          {/* 轮到你的行：决定就在这里做（批准 / 拒绝 / 拍板）。答不了的由它说明原因。 */}
+          {tone === "pending" && <RosterDecision item={item} fallback={null} />}
           <div className="roster-foot">
-            <button type="button" className="btn-primary roster-enter" onClick={() => onEnter(id)}>{t.roster.enter}</button>
+            {/* 决定单自己有主按钮（允许一次 / 提交）时，「进入现场」退成次要按钮：一屏一个主按钮。 */}
+            <button type="button" className={tone === "pending" ? "roster-enter is-quiet" : "btn-primary roster-enter"} onClick={() => onEnter(id)}>{t.roster.enter}</button>
           </div>
         </div>
       )}
