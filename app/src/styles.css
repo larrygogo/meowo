@@ -25,9 +25,6 @@
   --cc-bg: rgba(var(--cc-bg-rgb), var(--cc-opacity));
   /* 界面密度乘子：外观设置驱动（紧凑 0.9 / 标准 1 / 宽松 1.12）；默认 1，与原视觉逐像素一致。 */
   --cc-ui: 1;
-  /* 叠层三档取自同一族：hover .05、选中 .1、按下/hover 选中 .14，逐级 +0.04 而不是各自取整。 */
-  --cc-surface: rgba(255, 255, 255, 0.05);
-  --cc-surface-hover: rgba(255, 255, 255, 0.1);
   --cc-border: rgba(255, 255, 255, 0.12);
   --cc-accent: #1a88ff;
   --cc-accent-dim: #258eff;
@@ -62,9 +59,6 @@
   /* 工作区只分「外壳 / 内容 / 浮层」三层，避免每张卡各自混出相近却不同的灰色。 */
   --cc-panel-bg: #1f1f1f;
   --cc-panel-raised: #292929;
-  --cc-selected: rgba(255, 255, 255, 0.14);
-  --cc-shadow-panel: 0 1px 3px rgba(0, 0, 0, 0.35), 0 6px 18px rgba(0, 0, 0, 0.4);
-  --cc-shadow-popup: 0 16px 40px rgba(0, 0, 0, 0.45);
   /* 浮层菜单/气泡底色（右键菜单/下拉/模型菜单/tooltip）：必须不透明，否则透出底下内容。 */
   --cc-menu-bg: #292929;
   /* 状态指示点的鲜亮色（缩略条/卡片小圆点）：与文字调色板解耦，浅色下不跟随变暗，保持醒目。 */
@@ -106,33 +100,6 @@
   --cc-tone-green: var(--cc-accent-text);
   --cc-tone-teal: var(--cc-syn-builtin);
   --cc-tool-verb-weight: 400;
-  /* 圆角规范(对齐 Claude Code / shadcn)：容器 rounded-lg=8，控件 rounded-md=6，小 rounded-sm=4 */
-  --r-lg: 8px;
-  --r-md: 6px;
-  --r-sm: 4px;
-  /* 圆角散点档：规范档(sm/md/lg)之外的实际用量阶梯，按 px 值命名，≥3 处复用才立档。
-     圆形徽标/圆点仍写 50%（自描述、无需换肤），胶囊形用 --r-pill；1–2 处的一次性值保留字面量。 */
-  --r-3: 3px;
-  --r-5: 5px;
-  --r-7: 7px;
-  --r-9: 9px;
-  --r-10: 10px;
-  --r-12: 12px;
-  --r-14: 14px;
-  --r-16: 16px;
-  --r-pill: 999px;
-  /* 字号对齐 Kimi 的基础阶梯：弱提示 11、常规小字 12、辅助文字 13、正文 14、标题 16。
-     名称保留旧档避免全库重写；整梯乘 --cc-ui，用户缩放设置仍然生效。 */
-  --fs-9: calc(11px * var(--cc-ui));
-  --fs-9-5: calc(11px * var(--cc-ui));
-  --fs-10: calc(11px * var(--cc-ui));
-  --fs-10-5: calc(12px * var(--cc-ui));
-  --fs-11: calc(12px * var(--cc-ui));
-  --fs-11-5: calc(12px * var(--cc-ui));
-  --fs-12: calc(12px * var(--cc-ui));
-  --fs-12-5: calc(13px * var(--cc-ui));
-  --fs-13: calc(14px * var(--cc-ui));
-  --fs-15: calc(16px * var(--cc-ui));
   /* 间距阶梯：padding/margin/gap 的高频档按 px 值命名，≥3 处复用才立档。整梯乘 --cc-ui（同上）。
      负偏移（如 -8px）保留字面量——var() 不能直接取负，需 calc() 包一层反而更难读。 */
   --sp-1: calc(1px * var(--cc-ui));
@@ -205,14 +172,15 @@
   --ind-face: #000;
 }
 
-/* ===== Kimi 式设计变量（对话窗先行迁移，其余界面逐步跟进）=====
+/* ===== Kimi 式设计变量（全应用唯一一套）=====
    取值逐项对照 Kimi Code 桌面的全局 token（style-*.css）：
    - 圆角按容器尺度递增：标签/复选 4 · 列表行/小按钮 6 · 按钮/输入/卡片 8 · 菜单/气泡 12 ·
      对话框 16 · 圆点/开关/徽标/浮动胶囊 full；停靠栏胶囊 10、输入框 32 是 Kimi 的专用档。
    - 交互底色固定四级（悬停/选中/选中再悬停/标签页），控件默认透明。
    - 分隔只用细线：高分屏 .5px（=1 个物理像素），低分屏（≤1.1dppx）退回 1px。
    - 阴影只给浮在内容之上的东西（菜单/对话框/浮动胶囊/输入卡），常驻面板不靠阴影分层。
-   旧的 --r-* / --cc-surface-hover 仍保留给尚未迁移的界面（贴纸/看板/设置）。 */
+   旧档 --r-* / --fs-* / --cc-surface* / --cc-selected / --cc-shadow-* 已全部迁走并删除，
+   scripts/lint-tokens.mjs 在 bun run lint 里拦截重新引用（UI 调研 sys2）。 */
 :root {
   /* 终端配色（托管终端、面板终端及其浮层）：终端恒为深底，深浅主题同值。xterm 主题经
      terminalTheme.ts 读这里；浮层文字/底色也只认这组，改版前写死的绿色光标、绿调灰选区与浮层灰
@@ -307,9 +275,7 @@
   --shadow-xl: 0 24px 64px rgba(16, 24, 40, 0.18), 0 8px 20px rgba(16, 24, 40, 0.1);
   --shadow-menu: 0 6px 18px rgba(0, 0, 0, 0.02), 0 3px 9px rgba(0, 0, 0, 0.04), 0 1px 1px rgba(0, 0, 0, 0.04);
   --cc-bg-rgb: 255, 255, 255;
-  /* 中性灰阶叠色（对齐 Kimi Code 浅色板：hover .03 / selected .05 / line .13）。 */
-  --cc-surface: rgba(0, 0, 0, 0.03);
-  --cc-surface-hover: rgba(0, 0, 0, 0.05);
+  /* 细线色对齐 Kimi Code 浅色板 line .13。 */
   --cc-border: rgba(0, 0, 0, 0.13);
   --cc-accent: #1783ff;
   /* hover 下沉色：与 accent 同值时主按钮 hover 零反馈，取同族更深一档。 */
@@ -338,9 +304,6 @@
   --cc-window-bg: #ffffff;
   --cc-panel-bg: #ffffff;
   --cc-panel-raised: #ffffff;
-  --cc-selected: rgba(0, 0, 0, 0.05);
-  --cc-shadow-panel: 0 1px 2px rgba(0, 0, 0, 0.035), 0 10px 26px rgba(0, 0, 0, 0.045);
-  --cc-shadow-popup: 0 16px 40px rgba(0, 0, 0, 0.14);
   --cc-menu-bg: #ffffff;
   /* 圆点鲜亮色：浅色下用饱和中调（亮但在近白底上仍有存在感），不取文字用的暗色。 */
   --cc-ok-vivid: #17ab77;
@@ -1197,7 +1160,7 @@ button.stab {
 .stk-badge-assumed-inner { display: inline-flex; pointer-events: none; }
 
 /* 卡片右键菜单：星标/便签/重命名/归档（替代原 hover 图标行）。不透明表面同 .dd-menu
-   （不用半透明 --cc-surface 以免透出卡片内容），fixed 定位由组件钳在窗口内。 */
+   （不用半透明的 --fill-hover 以免透出卡片内容），fixed 定位由组件钳在窗口内。 */
 .ctx-menu {
   position: fixed;
   min-width: calc(132px * var(--cc-ui)); /* 项字号吃密度，容器同步，否则文字撑大框不变 */
@@ -2483,7 +2446,7 @@ button.stab {
   transition: border-color var(--dur-base), box-shadow var(--dur-base), background var(--dur-base);
 }
 /* hover 用文字色调和：白字主题=提亮、黑字主题=压暗。写死白 10% 在浅色下比静息底
-   （--cc-surface-hover，黑 6.5%）还白，划过反而像失去了底色。 */
+   （当时的悬停底，黑 6.5%）还白，划过反而像失去了底色。 */
 .relay-model-picker:hover { background: color-mix(in srgb, var(--cc-text) 10%, transparent); }
 .relay-model-picker.open {
   border-color: var(--cc-accent-border);
@@ -3119,7 +3082,7 @@ button.stab {
 
 /* ===== 全局自定义提示框（替代原生 title）：主题表面色软框，圆角 + 细描边 + 柔阴影 + 淡入。
    由 Tooltip.tsx 控制位置，position:fixed 穿透 overflow。底色取不透明表面（同下拉菜单 .dd-menu），
-   不用半透明 --cc-surface 以免透出底下内容。 ===== */
+   不用半透明的 --fill-hover 以免透出底下内容。 ===== */
 .tip {
   position: fixed;
   z-index: 1000;
@@ -3743,11 +3706,6 @@ select.ns-input {
    随内容自然占位，不再 absolute 浮层，也无需 --compose-h 实测补偿。 */
 /* 左右骨架：全高侧栏 + 内容列（chat-main 自己是纵向的 header/正文/输入）。 */
 .chat-window {
-  /* 对话窗沿用全局 Kimi 字号阶梯，不再单独维护一套小字映射。 */
-  --fs-9: calc(11px * var(--cc-ui));
-  --fs-10: calc(11px * var(--cc-ui));
-  --fs-10-5: calc(12px * var(--cc-ui));
-  --fs-11: calc(12px * var(--cc-ui));
   height: 100vh;
   display: flex;
   /* 列向：顶部是独立顶栏行（Windows/Linux），其下 .chat-body 再横排 侧栏|主列。
@@ -3938,7 +3896,7 @@ select.ns-input {
    折成一行就读不清（2026-11-09 真机走查实拍）。没有换行的正文不受影响。 */
 .app-confirm p > span { white-space: pre-line; overflow-wrap: anywhere; }
 .app-confirm-actions { display: flex; justify-content: flex-end; gap: var(--sp-8); }
-/* --r-7 是真实存在的 token：此前写成不存在的 --r-8，border-radius 解析失败退成直角。 */
+/* 圆角必须引用存在的 token：此前写成不存在的 --r-8，border-radius 解析失败退成直角。 */
 .app-confirm-actions button { min-width: 76px; padding: var(--sp-6) var(--sp-12); border: 1px solid var(--cc-border); border-radius: var(--radius-md); background: transparent; color: var(--cc-text); font: inherit; font-size: var(--text-xs); cursor: pointer; }
 .app-confirm-actions button:hover { background: color-mix(in srgb, var(--cc-text) 6%, transparent); }
 /* 主按钮文字色同理不能取 --cc-bg(带贴纸透明度):反色文字压在实心 --cc-text 按钮上,
@@ -4189,7 +4147,7 @@ select.ns-input {
   border-top-left-radius: 0;
 }
 /* 终端页签：整窗切深色变量，卡片底随 xterm 的画布色（--cc-bg-rgb 18,18,18 之上叠一层
-   --cc-surface ≈ #1f1f1f），卡与终端画面之间不出现色阶接缝。light 主题的浅色卡片规则也被此处压回深色。 */
+   --fill-hover ≈ #1f1f1f），卡与终端画面之间不出现色阶接缝。light 主题的浅色卡片规则也被此处压回深色。 */
 :root:not(.platform-macos) .chat-window.is-terminal .chat-main,
 :root[data-theme="light"]:not(.platform-macos) .chat-window.is-terminal .chat-main {
   --chat-card-bg: #1f1f1f;
@@ -6326,8 +6284,6 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
      与对话视图同底（--cc-window-bg），切换对话/终端页签时底色不跳档。 */
   --cc-window-bg: #121212;
   --cc-bg: var(--cc-window-bg);
-  --cc-surface: rgba(255, 255, 255, 0.05);
-  --cc-surface-hover: rgba(255, 255, 255, 0.1);
   --cc-border: rgba(255, 255, 255, 0.12);
   --cc-text: var(--kt-dark-1);
   /* 终端视图强制深色，字色同深色主题——少了这几条，浅色主题切进终端页时会继承到
@@ -6685,7 +6641,7 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .chat-load-earlier button:disabled { opacity: .6; cursor: default; }
 
 /* 「回到最新」悬浮钮：sticky 钉在滚动视口底缘（贴底时组件不渲染，不占位）。
-   底色必须不透明：--cc-surface 是半透明表面色，浮层压在消息上会被正文穿透成一团花字
+   底色必须不透明：--fill-hover 是半透明表面色，浮层压在消息上会被正文穿透成一团花字
    （实拍反馈）。不透明基座 rgb(--cc-bg-rgb) + 表面色叠层，材质观感不变。 */
 /* bottom 抬到审批卡上缘之上（7C-3）：overlay 卡片 z-index 8 压过这颗 z-index 5 的
    浮钮，「回到最新 · N」在有卡时点不到。--chat-overlay-h 由 ChatWindow 的观察者写在
