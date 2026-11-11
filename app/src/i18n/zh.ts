@@ -1418,6 +1418,8 @@ export const zh = {
     // account 分区实际内容是账号/配额/登录/安装/中转——曾叫「Agent」，想「看额度还剩多少」
     // 「退出登录」的用户猜不到该点它（key 名 account 与显示名分裂也是自证）。
     nav: { general: "通用", sessions: "会话", appearance: "外观", shortcuts: "快捷键", remote: "手机远程", network: "网络", account: "账号与用量", extensions: "扩展", about: "关于" },
+    // 设置搜索额外匹配的词（不显示）：导航名为排版改短后，旧名里的词仍要能搜到对应分区。
+    navSearchExtra: { shortcuts: "键盘", account: "账号 用量" },
     searchPlaceholder: "搜索设置…",
     searchNoResults: "没有匹配的设置项",
     searchClear: "清除搜索",

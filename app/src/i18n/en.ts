@@ -1299,6 +1299,7 @@ export const en: Dict = {
   },
   settings: {
     nav: { general: "General", sessions: "Sessions", appearance: "Appearance", shortcuts: "Shortcuts", remote: "Phone access", network: "Network", account: "Accounts", extensions: "Extensions", about: "About" },
+    navSearchExtra: { shortcuts: "keyboard shortcuts", account: "accounts usage" },
     searchPlaceholder: "Search settings…",
     searchClear: "Clear search",
     searchNoResults: "No matching settings",

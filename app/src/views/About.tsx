@@ -1165,10 +1165,10 @@ export function About() {
       general: t.settings.nav.general,
       sessions: t.settings.nav.sessions,
       appearance: t.settings.nav.appearance,
-      shortcuts: t.settings.nav.shortcuts,
+      shortcuts: `${t.settings.nav.shortcuts} ${t.settings.navSearchExtra.shortcuts}`,
       remote: t.settings.nav.remote,
       network: t.settings.nav.network,
-      account: t.settings.nav.account,
+      account: `${t.settings.nav.account} ${t.settings.navSearchExtra.account}`,
       extensions: t.settings.nav.extensions,
       about: t.settings.nav.about,
     };
