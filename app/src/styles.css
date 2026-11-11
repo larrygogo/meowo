@@ -27,6 +27,22 @@
 :where(.chat-window.is-terminal), :root {
   --cc-bg-rgb: 18, 18, 18;
   --cc-border: rgba(255, 255, 255, 0.12);
+  /* 控件墨色（UI 调研 sys7）：此前按「深色写白 alpha、浅色补一条黑 alpha 组件补丁」两头维护，
+     收成 token 后浅色值写在浅色块里，终端页签随本块自动取深色值，不再需要「终端豁免」规则。 */
+  --scrollbar-thumb: rgba(255, 255, 255, 0.16);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.3);
+  --sticker-scroll: rgba(255, 255, 255, 0.32);
+  --sticker-scroll-hover: rgba(255, 255, 255, 0.45);
+  --grabber: rgba(255, 255, 255, 0.2);
+  --grabber-active: rgba(255, 255, 255, 0.34);
+  --control-hover: rgba(255, 255, 255, 0.13);
+  --caption-hover: rgba(255, 255, 255, 0.1);
+  --switch-off: rgba(255, 255, 255, 0.16);
+  --side-bg: rgba(0, 0, 0, 0.2);
+  --usage-track-bg: var(--fill-selected);
+  /* 计数角标：深色淡蓝底配蓝字；浅色淡蓝底压在白卡上不显眼，换实心蓝底（原浅色补丁的取值）。 */
+  --count-badge-bg: var(--cc-accent-soft);
+  --count-badge-fg: var(--cc-accent-text);
   --cc-accent: #1a88ff;
   --cc-accent-dim: #258eff;
   --cc-accent-soft: rgba(26, 136, 255, 0.1);
@@ -50,8 +66,12 @@
   --cc-text-dim: rgba(255, 255, 255, 0.64);
   /* 9–10.5px 小字也要 ≥4.5:1。校准面是**叠层后的卡面**而不是裸底（7G-1）：faint 的实际消费点
      几乎全在 .stk-card / 代码块 / tab 计数这类面上，最亮的是 raised #292929。
-     alpha .50 在 raised 4.80:1、panel 5.10:1、裸底 5.36:1，三档都过线；Kimi 原档 .42
-     在最亮卡面只剩 3.84:1，故取其亮一档的那组（同一板里另有的 .5）。 */
+     alpha .50 在 raised 4.80:1、panel 5.10:1、裸底 5.32:1，三档都过线；Kimi 原档 .42
+     在最亮卡面只剩 3.84:1，故取其亮一档的那组（同一板里另有的 .5）。
+     适用范围：贴纸、看板、设置等走根变量的界面。对话窗（含终端页签）另用 --kt-dark-3：
+     高分屏 .52（#121212/#292929/#353535 上 5.66/5.06/4.58:1），低分屏 .54（同三面 6.02/5.34/4.81:1）；
+     浅色根值 .62（白 6.19:1），对话窗浅色 .56/.58（白 4.95/5.33:1）。
+     2026-11-11 按 WCAG 相对亮度公式复算（ui-lanes/ds/vars-dump.mjs 取实际计算值）。 */
   --cc-text-faint: rgba(255, 255, 255, 0.5);
   --cc-warn: #d29922;
   --cc-err: #f85149;
@@ -291,6 +311,19 @@
   --shadow-xl: 0 24px 64px rgba(16, 24, 40, 0.18), 0 8px 20px rgba(16, 24, 40, 0.1);
   --shadow-menu: 0 6px 18px rgba(0, 0, 0, 0.02), 0 3px 9px rgba(0, 0, 0, 0.04), 0 1px 1px rgba(0, 0, 0, 0.04);
   --cc-bg-rgb: 255, 255, 255;
+  --scrollbar-thumb: rgba(0, 0, 0, 0.18);
+  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.3);
+  --sticker-scroll: rgba(0, 0, 0, 0.3);
+  --sticker-scroll-hover: rgba(0, 0, 0, 0.45);
+  --grabber: rgba(0, 0, 0, 0.16);
+  --grabber-active: rgba(0, 0, 0, 0.3);
+  --control-hover: rgba(0, 0, 0, 0.06);
+  --caption-hover: rgba(0, 0, 0, 0.07);
+  --switch-off: rgba(0, 0, 0, 0.16);
+  --side-bg: rgba(0, 0, 0, 0.035);
+  --usage-track-bg: rgba(0, 0, 0, 0.08);
+  --count-badge-bg: var(--cc-accent);
+  --count-badge-fg: var(--cc-on-accent);
   /* 细线色对齐 Kimi Code 浅色板 line .13。 */
   --cc-border: rgba(0, 0, 0, 0.13);
   --cc-accent: #1783ff;
@@ -372,11 +405,6 @@
   }
 }
 /* 浅色下把硬编码的白/黑叠层、纯黑选中、深色面板换成浅色等价物（其余规则吃变量自动适配）。 */
-:root[data-theme="light"] body { color: var(--cc-text); }
-:root[data-theme="light"] ::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.18); }
-:root[data-theme="light"] ::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.3); }
-:root[data-theme="light"] .stk-sb::before { background: rgba(0, 0, 0, 0.3); }
-:root[data-theme="light"] .stk-sb:hover::before { background: rgba(0, 0, 0, 0.45); }
 :root[data-theme="light"] .stk-act { background: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12), 0 2px 6px -2px rgba(0, 0, 0, 0.16); }
 :root[data-theme="light"] .stk-act:active,
 :root[data-theme="light"] .stk-pin-on,
@@ -398,18 +426,6 @@
   background: #fff;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12), 0 2px 6px -2px rgba(0, 0, 0, 0.16);
 }
-:root[data-theme="light"] .drag::after { background: rgba(0, 0, 0, 0.16); }
-:root[data-theme="light"] .drag:hover::after,
-:root[data-theme="light"] .win-dragging .drag::after { background: rgba(0, 0, 0, 0.3); }
-:root[data-theme="light"] .sbtn:not(.btn-primary):hover:not(:disabled),
-:root[data-theme="light"] .dd-btn:hover { background: rgba(0, 0, 0, 0.06); }
-:root[data-theme="light"] .winclose:hover { background: rgba(0, 0, 0, 0.07); }
-:root[data-theme="light"] .usage-track { background: rgba(0, 0, 0, 0.08); }
-:root[data-theme="light"] .settings { background: var(--cc-window-bg); }
-:root[data-theme="light"] .side { background: rgba(0, 0, 0, 0.035); }
-:root[data-theme="light"] .pswitch { background: rgba(0, 0, 0, 0.16); }
-/* 开启态强调色轨道必须比上面的 off 覆盖更具体，否则被盖成灰色 → 看不出开关。 */
-:root[data-theme="light"] .pswitch.on { background: var(--cc-accent); }
 * { box-sizing: border-box; }
 
 /* 焦点框只在键盘导航时显示：默认（指针/程序化聚焦）隐藏 UA 焦点框，仅 data-im="kbd" 时恢复。
@@ -432,13 +448,13 @@
 ::-webkit-scrollbar-button { display: none; } /* 去掉滚动条上下箭头按钮 */
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.16);
+  background: var(--scrollbar-thumb);
   border-radius: var(--radius-sm);
   /* 6px 轨道配 1px 透明衬边：可见滑块 4px。衬边再宽滑块就细成发丝、没法瞄准了。 */
   border: 1px solid transparent;
   background-clip: padding-box;
 }
-::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.3); background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); background-clip: padding-box; }
 ::-webkit-scrollbar-corner { background: transparent; }
 html, body {
   margin: 0;
@@ -551,6 +567,7 @@ button.stab {
 .stab-on .stab-n { color: var(--cc-accent-text); }
 /* tab 文字雕刻质感(同用量读数):上沿暗 / 下沿亮，刻入凹槽感。深浅各一套(text-shadow 继承到 .stab-n)。 */
 .stab { text-shadow: 0 1px 1px rgba(0, 0, 0, 0.5); }
+/* 浅色保留补丁：雕刻高光方向相反（白色下沿），不是同一个值换深浅，token 表达不了。 */
 :root[data-theme="light"] .stab { text-shadow: 0 1px 0 rgba(255, 255, 255, 0.9); }
 /* 底栏图标按钮(搜索 / 设置 / 固定-未激活)：物理按钮——常规凸起，按下凹陷；三者凸起态同色。 */
 .stk-act {
@@ -708,6 +725,7 @@ button.stab {
   background: rgba(0, 0, 0, 0.3);
   box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.55), inset 0 -1px 0 rgba(255, 255, 255, 0.06); /* 更深内陷 + 底沿微高光 */
 }
+/* 浅色保留补丁：贴纸用量屏是拟物凹槽，深浅两套的内阴影层数与高光方向不同。 */
 :root[data-theme="light"] .stk-uscreen { background: rgba(0, 0, 0, 0.09); box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.17), inset 0 -1px 0 rgba(255, 255, 255, 0.7); }
 .stk-urow { display: contents; font-size: var(--text-2xs); line-height: 1; } /* 行本身不占格，子元素直接进 .stk-uscreen 的网格 */
 .stk-ulabel { font-weight: 600; white-space: nowrap; }
@@ -719,6 +737,7 @@ button.stab {
   color: var(--cc-text-dim);
   text-shadow: 0 1px 1px rgba(0, 0, 0, 0.5);
 }
+/* 浅色保留补丁：刻字高光改白色下沿，理由同 .stab。 */
 :root[data-theme="light"] .stk-ulabel,
 :root[data-theme="light"] .stk-uval {
   text-shadow: 0 1px 0 rgba(255, 255, 255, 0.95);
@@ -729,6 +748,7 @@ button.stab {
   border-radius: var(--radius-xs); overflow: hidden;
   background: rgba(0, 0, 0, 0.3); box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.4);
 }
+/* 浅色保留补丁：用量条凹槽的内阴影深浅两套不同，理由同 .stk-uscreen。 */
 :root[data-theme="light"] .stk-utrack { background: rgba(0, 0, 0, 0.1); box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.12); }
 .stk-ufill { display: block; height: 100%; border-radius: var(--radius-xs); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35); transition: width 0.4s ease; }
 .stk-ufill.is-ok { background: var(--cc-ok-vivid); }
@@ -753,6 +773,7 @@ button.stab {
 .stk-utab::before { content: ""; position: absolute; inset: -5px; }
 .stk-utab.on { opacity: 1; background: rgba(255, 255, 255, 0.08); }
 .stk-utab:hover:not(.on) { opacity: 0.75; }
+/* 浅色保留补丁：贴纸拟物材质的选中凹面，与 .stk-uscreen 同一套深浅取值。 */
 :root[data-theme="light"] .stk-utab.on { background: rgba(0, 0, 0, 0.08); }
 /* 原生滚动条全程隐藏(width:0 不占布局 → 内容不会因滚动条出现/消失而抖动)；
    滚动条改由下面的 .stk-sb 自绘 overlay 承担(普通元素，opacity 显隐重绘可靠)。 */
@@ -778,12 +799,12 @@ button.stab {
   right: 4px;
   width: 4px;
   border-radius: var(--radius-xs);
-  background: rgba(255, 255, 255, 0.32);
+  background: var(--sticker-scroll);
 }
 .sticker:hover .stk-sb,
 .stk-sb.is-drag { opacity: 1; } /* 拖拽中即使鼠标移出贴纸也保持可见 */
 .stk-sb:hover::before,
-.stk-sb.is-drag::before { background: rgba(255, 255, 255, 0.45); }
+.stk-sb.is-drag::before { background: var(--sticker-scroll-hover); }
 /* 顶部拖拽区：全宽热区保证拖拽手感，中央画一条 Apple 风短横条（grabber）。 */
 .drag {
   height: 14px;
@@ -797,7 +818,7 @@ button.stab {
   width: 36px;
   height: 4px;
   border-radius: var(--radius-full);
-  background: rgba(255, 255, 255, 0.2);
+  background: var(--grabber);
   transition: background var(--dur-base), width var(--dur-base);
 }
 /* hover 与按下(拖拽中)都放大：拖拽时鼠标被窗口拖拽接管、可能移出热区失去 hover，
@@ -805,7 +826,7 @@ button.stab {
 .drag:hover::after,
 .win-dragging .drag::after {
   width: 44px;
-  background: rgba(255, 255, 255, 0.34);
+  background: var(--grabber-active);
 }
 .stk-empty {
   display: flex;
@@ -1476,7 +1497,6 @@ button.stab {
   -webkit-user-select: none;
   user-select: none;
 }
-:root[data-theme="light"] .updater { background: var(--cc-window-bg); }
 
 /* ===== 使用引导窗口（label "onboarding"）：首次启动自动弹，分步介绍核心用法与窗口/设置。
    固定 460×600，顶栏可拖动 + 关闭/跳过，中部每步一张迷你界面示意图 + 要点，底部圆点 + 上一步/下一步。 ===== */
@@ -1490,7 +1510,6 @@ button.stab {
   -webkit-user-select: none;
   user-select: none;
 }
-:root[data-theme="light"] .onboarding { background: var(--cc-window-bg); }
 .ob-bar {
   flex: none;
   height: 40px;
@@ -1977,7 +1996,7 @@ button.stab {
 .side {
   width: 168px;
   flex: none;
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--side-bg);
   display: flex;
   flex-direction: column;
 }
@@ -2105,7 +2124,7 @@ button.stab {
   cursor: pointer;
   transition: background var(--dur-base), color var(--dur-base);
 }
-.winclose:hover { background: rgba(255, 255, 255, 0.1); color: var(--cc-text); }
+.winclose:hover { background: var(--caption-hover); color: var(--cc-text); }
 
 /* Windows/Linux：对话窗右上角的标准窗口控制组（− □ ×，WindowControls.tsx）。
    融入 64px 顶栏行（Kimi 式），不另起原生标题栏条。macOS 组件不渲染（红绿灯在左上）。 */
@@ -2126,15 +2145,11 @@ button.stab {
 /* .is-hover：Windows 上最大化钮盖着 Snap 覆盖窗（snap_layout.rs），真实鼠标事件进不了
    WebView，:hover 永不触发——由后端 snap-max-hover 事件驱动同款样式。 */
 .wincaption button:hover,
-.wincaption button.is-hover { background: rgba(255, 255, 255, 0.1); color: var(--cc-text); }
-:root[data-theme="light"] .wincaption button:hover,
-:root[data-theme="light"] .wincaption button.is-hover { background: rgba(0, 0, 0, 0.07); }
+.wincaption button.is-hover { background: var(--caption-hover); color: var(--cc-text); }
 /* 关闭钮 hover 红底白字：Windows 系统惯例，两种主题同色（Win11 标准 #c42b1c）。
    .is-hover 与最大化钮同理——覆盖窗吃掉真实鼠标事件后由后端事件驱动。 */
 .wincaption .win-close:hover,
-.wincaption .win-close.is-hover,
-:root[data-theme="light"] .wincaption .win-close:hover,
-:root[data-theme="light"] .wincaption .win-close.is-hover { background: #c42b1c; color: #fff; }
+.wincaption .win-close.is-hover { background: #c42b1c; color: #fff; }
 
 .main-body {
   flex: 1;
@@ -2230,7 +2245,7 @@ button.stab {
   cursor: pointer;
   transition: background var(--dur-base), filter var(--dur-base);
 }
-.sbtn:not(.btn-primary):hover:not(:disabled) { background: rgba(255, 255, 255, 0.13); }
+.sbtn:not(.btn-primary):hover:not(:disabled) { background: var(--control-hover); }
 .sbtn:disabled { opacity: 0.55; cursor: default; }
 
 /* 自定义暗色下拉（替代原生 select，使下拉列表也跟随主题） */
@@ -2251,7 +2266,7 @@ button.stab {
   cursor: pointer;
   transition: background var(--dur-base), border-color var(--dur-base);
 }
-.dd-btn:hover { background: rgba(255, 255, 255, 0.13); }
+.dd-btn:hover { background: var(--control-hover); }
 .dd-btn.open { border-color: var(--cc-accent-border); }
 .dd-chev { flex: none; opacity: 0.65; transition: transform var(--dur-base); }
 /* 值区（可选徽标 + 文字）：文字过长时省略，徽标不被挤掉。 */
@@ -2534,7 +2549,7 @@ button.stab {
   height: 22px;
   border-radius: var(--radius-full);
   border: none;
-  background: rgba(255, 255, 255, 0.16);
+  background: var(--switch-off);
   cursor: pointer;
   transition: background var(--dur-base);
   padding: 0;
@@ -2873,7 +2888,6 @@ button.stab {
   border-top: 1px solid var(--cc-border);
   background: rgba(0, 0, 0, 0.02);
 }
-:root[data-theme="light"] .provider-usage { background: rgba(0, 0, 0, 0.015); }
 /* 多张卡片连续排列时补间距（未来多 AI 时每个 provider 各占一张卡）。 */
 .row-card + .row-card { margin-top: var(--sp-14); }
 .usage-bar-head { display: flex; align-items: center; margin-bottom: var(--sp-10); }
@@ -2902,7 +2916,7 @@ button.stab {
 .usage-track {
   height: 6px;
   border-radius: var(--radius-xs);
-  background: var(--fill-selected);
+  background: var(--usage-track-bg);
   overflow: hidden;
   margin: var(--sp-5) 0 var(--sp-3);
   box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.1);
@@ -3803,6 +3817,7 @@ select.ns-input {
 .tb-pr.is-draft { --pr-color: var(--cc-text-faint); --pr-text: var(--cc-text-faint); }
 /* 紫字取 GitHub 已合并的文字档：深 #bc8cff 在 14% 叠底上 ≥4.78:1、浅 #6f42c1 5.61:1。 */
 .tb-pr.is-merged { --pr-color: #a371f7; --pr-text: #bc8cff; }
+/* 浅色保留补丁：已合并紫字在白底上 #bc8cff 只有约 2.4:1，压深到 #6f42c1；终端页签恒深色不套用。 */
 :root[data-theme="light"] .chat-window:not(.is-terminal) .tb-pr.is-merged { --pr-text: #6f42c1; }
 .tb-pr.is-closed { --pr-color: var(--cc-err-vivid); --pr-text: var(--cc-fail-text); }
 .tb-git-del { color: var(--cc-fail-text); }
@@ -4092,12 +4107,8 @@ select.ns-input {
   border-left: 0;
   border-top-left-radius: 0;
 }
-/* 终端页签：整窗切深色变量，卡片底随 xterm 的画布色（--cc-bg-rgb 18,18,18 之上叠一层
-   --fill-hover ≈ #1f1f1f），卡与终端画面之间不出现色阶接缝。light 主题的浅色卡片规则也被此处压回深色。 */
-:root:not(.platform-macos) .chat-window.is-terminal .chat-main,
-:root[data-theme="light"]:not(.platform-macos) .chat-window.is-terminal .chat-main {
-  --chat-card-bg: #1f1f1f;
-}
+/* 终端页签的卡片底不另设：深色调色板共用块已挂在 .chat-window.is-terminal 上，
+   --cc-panel-bg 在终端页签恒为 #1f1f1f（= #121212 画布叠一层 --fill-hover），卡与终端画面之间无色阶接缝。 */
 /* 外壳统一底色：侧栏不再自带更深的混色与右分割线（卡片已承担分区语义）。 */
 :root:not(.platform-macos) .chat-sidebar { background: transparent; border-right: 0; }
 /* 窄窗（ChatWindow 的 matchMedia 880px 门限）浮窗侧栏：Kimi 式全高抽屉，挂在
@@ -4664,18 +4675,8 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
   border-left: var(--hairline) solid var(--cc-border);
   overflow: hidden;
 }
-/* 终端页签：.chat-window.is-terminal 在窗口作用域把整窗压成深色变量，
-   但 :root[data-theme="light"] 在根上依旧命中——浅色主题的终端视图里，对话卡有
-   专属压深规则（.chat-main 的 is-terminal 覆写）而面板没有，白卡戳在深色窗里（0.5.15 实拍）。
-   与 .chat-main 同规：终端视图下面板卡一律压回 #1f1f1f，停靠/最大化两态都盖。 */
-:root:not(.platform-macos) .chat-window.is-terminal .chat-diff-panel,
-:root[data-theme="light"]:not(.platform-macos) .chat-window.is-terminal .chat-diff-panel {
-  --chat-card-bg: #1f1f1f;
-}
-:root:not(.platform-macos) .chat-window.is-terminal .chat-body.is-diff-max .chat-diff-panel,
-:root[data-theme="light"]:not(.platform-macos) .chat-window.is-terminal .chat-body.is-diff-max .chat-diff-panel {
-  --cc-bg: #1f1f1f;
-}
+/* 终端页签下面板卡同样不另设（0.5.15 实拍过浅色主题里白卡戳在深色窗里）：
+   --cc-panel-bg 由深色调色板共用块在终端页签给出深色值，停靠/最大化两态都随之变深。 */
 /* 会话信息栏停靠时和右侧面板同一张卡：同底色、上边线（与顶栏分开）+ 左边线（与对话区分开）。
    之前只有左边线、用的窗口底色，和顶栏连成一片（实拍「这里需要有个边框」）。 */
 :root:not(.platform-macos) .session-info.is-docked {
@@ -4683,10 +4684,6 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
   background: var(--chat-card-bg);
   border-top: var(--hairline) solid var(--cc-border);
   border-left: var(--hairline) solid var(--cc-border);
-}
-:root:not(.platform-macos) .chat-window.is-terminal .session-info.is-docked,
-:root[data-theme="light"]:not(.platform-macos) .chat-window.is-terminal .session-info.is-docked {
-  --chat-card-bg: #1f1f1f;
 }
 /* --cc-syn-* 的终端压深已并入 .chat-window.is-terminal 统一变量块，面板不再单独特调。 */
 .chat-diff-head { flex: 0 0 auto; display: flex; align-items: center; gap: var(--sp-8); padding: var(--sp-8) var(--sp-10); border-bottom: var(--hairline) solid var(--cc-border); }
@@ -5142,8 +5139,7 @@ button.scm-check-name:hover { text-decoration: underline; }
 .chat-diff-btn { position: relative; }
 /* 计数徽标：深色主题用 soft 形态（半透明蓝底 + 蓝字，同选中态语言）——实心 #1a88ff
    在深色标题栏上太扎眼（0.5.15 实拍）；浅色主题相反，soft 发闷，用 iOS 式实心底 + on-accent 字。 */
-.chat-diff-btn-count { position: absolute; top: -5px; right: -8px; min-width: 16px; height: 16px; padding: 0 4px; display: grid; place-items: center; border-radius: var(--radius-full); background: var(--cc-accent-soft); color: var(--cc-accent-text); font-size: var(--text-xs); font-weight: 500; font-variant-numeric: tabular-nums; pointer-events: none; }
-:root[data-theme="light"] .chat-diff-btn-count { background: var(--cc-accent); color: var(--cc-on-accent); }
+.chat-diff-btn-count { position: absolute; top: -5px; right: -8px; min-width: 16px; height: 16px; padding: 0 4px; display: grid; place-items: center; border-radius: var(--radius-full); background: var(--count-badge-bg); color: var(--count-badge-fg); font-size: var(--text-xs); font-weight: 500; font-variant-numeric: tabular-nums; pointer-events: none; }
 /* 图片附件徽章（缩略图的降级形态）：文件名 + 小图标的胶囊，替代整行本地路径。 */
 .chat-image-chip { display: inline-flex; align-items: center; gap: var(--sp-5); max-width: 240px; padding: var(--sp-2) var(--sp-9); margin: var(--sp-2) var(--sp-2) var(--sp-2) 0; border-radius: var(--radius-sm); background: var(--fill-selected); color: var(--cc-text-dim); font-size: var(--text-xs); vertical-align: middle; }
 .chat-image-chip > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -6047,9 +6043,7 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
    已带 accent，--cc-accent-text 在上面只有 4.1:1，再压深 15% 到约 5.3:1。
    只点名这三处：复核发现裸 .chat-subagent-status 也被覆盖过，特异性 (0,3,0) 压过
    .is-failed 的 (0,2,0)，浅色下失败胶囊变成红底绿字、运行中也变绿——那是回归。 */
-:root[data-theme="light"] .chat-subagent-icon { color: var(--cc-text-dim); }
-:root[data-theme="light"] .chat-subagent-type,
-:root[data-theme="light"] .chat-subagent-status.is-completed { color: var(--cc-ok-text); }
+:root[data-theme="light"] .chat-subagent-type { color: var(--cc-ok-text); }
 .chat-subagent-status.is-failed {
   background: color-mix(in srgb, var(--cc-err) 16%, transparent);
   color: var(--cc-err-text);
@@ -6170,6 +6164,7 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
   border-color: color-mix(in srgb, var(--cc-err) 40%, transparent);
   color: var(--cc-err);
 }
+/* 门卡错误文案：同上，混色同病灶。 */
 :root[data-theme="light"] .chat-compose-gate-error { color: var(--cc-err); }
 /* 窄宽度统一一条 12px 边距（对照 Kimi 手机端：消息区、输入框、停靠栏同一条，横屏刘海再让出
    safe-area）。此前消息区 22px、输入框 12px、停靠胶囊约 40px，三者各对各的线。
@@ -6203,6 +6198,7 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
   --cc-text-quaternary: var(--kt-dark-4);
   color: var(--cc-text);
 }
+/* 浅色保留补丁：对话窗文字四档换成 Kimi 浅色那组；终端页签恒深色，排除。 */
 :root[data-theme="light"] .chat-window:not(.is-terminal) {
   --cc-text: var(--kt-light-1);
   --cc-chat-text: var(--kt-light-1);
@@ -6221,13 +6217,6 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
   color: var(--cc-text);
   background: var(--cc-bg);
 }
-/* 组件级浅色规则的终端豁免：这三条按 :root[data-theme="light"] 直接上浅色，绕开了
-   上面的变量层——浅色主题的终端视图下黑 hover 压在深底上不可见、实心绿徽标过亮。
-   特异性与浅色规则持平/略高且位置在后，稳定覆盖。 */
-.chat-window.is-terminal .wincaption button:hover,
-.chat-window.is-terminal .wincaption button.is-hover { background: rgba(255, 255, 255, 0.1); }
-.chat-window.is-terminal .dd-btn:hover { background: rgba(255, 255, 255, 0.13); }
-:root[data-theme="light"] .chat-window.is-terminal .chat-diff-btn-count { background: var(--cc-accent-soft); color: var(--cc-accent-text); }
 
 /* ——对话窗口的功能扩展件（晚于重设计段，可覆盖其同名样式）—— */
 /* align-self:flex-start 让按钮只占路径文字的宽度，而不是被 flex 纵向容器拉伸成整行——
@@ -6907,6 +6896,7 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
   padding: 2px 5px;
   border-radius: var(--radius-full);
 }
+/* 浅色保留补丁：DEV 角标是写死的琥珀色（不随品牌色），浅色底上要单独压深。 */
 :root[data-theme="light"] .dev-badge {
   /* #b4690e 在自身 10% 叠底上只有 3.75:1（axe color-contrast），压深到 5.19:1。 */
   color: #93540b;
