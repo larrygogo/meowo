@@ -180,6 +180,18 @@ const ATTENTION_PATTERNS: Record<string, { id: string; patterns: string[]; last:
  * `provider ===` 自带规则；现在规则由后端下发，**不传就等于该 agent 没声明规则**。
  * 用这个构造器而不是手写字面量，测试才与生产路径（chatUi 下发）走同一份数据。
  */
+/** claude 插件 subagent_view() 的同值镜像(见 plugins/claude/mod.rs)。 */
+export const SUBAGENT_VIEW: NonNullable<ChatUi["subagent_view"]> = {
+  placeholder_prefix: "Message @",
+  panel_main_label: "main",
+  panel_pointer: "❯",
+  panel_viewed_marker: "●",
+  down_input: "\u001b[B",
+  up_input: "\u001b[A",
+  open_input: "\r",
+  leave_panel_input: "\u001b",
+};
+
 export function grammar(
   provider: string,
   selectorAnchors: { marker: string; kind: "input" | "chat" }[] = [],
@@ -286,6 +298,8 @@ export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | 
           : null,
     // 与后端同源:草稿暂存键只有 claude 经真机取证(issue #72)。
     draft_stash: provider === "claude" ? { input: "\u0013", composer_prompt: "❯", composer_border: "─", stashed_marker: "› stashed" } : null,
+    // 与后端同源:子代理视图只有 claude 有(2.1.322 真机取证)。
+    subagent_view: provider === "claude" ? SUBAGENT_VIEW : null,
     // 与后端同源:仅 claude 取证过「TUI 权限框与 PermissionRequest hook 并行竞速」。
     permission_prompt_races_hook: provider === "claude",
     version: null,

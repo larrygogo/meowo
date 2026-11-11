@@ -6,6 +6,13 @@
  */
 export type SubagentOutcome = { running: number, completed: number, failed: number, 
 /**
+ * 已交结论、但它自己派出的后台活儿还在跑（claude「is waiting on its own background work」通知）。
+ * 按完成算（completed=1），徽标次行提示「后台仍在运行」；之后 finished 到了就不再带它。
+ * 不按「进行中」算：本机实拍 9 次里 4 次之后再无 finished，挂着进行中会永远占着面板（做空第二轮）。
+ * false 时不下发，旧前端照旧。
+ */
+background_running?: boolean, 
+/**
  * 后台委派的任务 id（claude 启动回执里的 `agentId`）。后台子任务的真结局可能不走
  * task-notification，而是主 agent 用 `TaskOutput` 拉取——那条回执挂在 TaskOutput 自己的
  * 调用上，只有这个 id 能把它归回原委派。前端按「同 id 首见者为委派本体」路由。

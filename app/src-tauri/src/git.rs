@@ -498,8 +498,12 @@ fn fill_line_counts(dir: &str, files: &mut [GitChangedFileDto]) {
         }
     }
     // 折叠的目录条目不是文件，不数（也不占 MAX_UNTRACKED_COUNTED 的名额）。
+    // status 的路径相对仓库根，读盘要拼到仓库根上：以前拼到 cwd，会话开在子目录时未跟踪文件
+    // 一个都读不到，侧栏徽标和「更改」面板的 +N 少算（git_subdir_line_count_tests 复现）。
+    let mut root: Option<String> = None;
     for file in files.iter_mut().filter(|file| file.status == "U" && file.untracked_files.is_none()).take(MAX_UNTRACKED_COUNTED) {
-        if let Some(lines) = untracked_line_count(dir, &file.path) {
+        let root = root.get_or_insert_with(|| work_tree_root(dir));
+        if let Some(lines) = untracked_line_count(root, &file.path) {
             file.additions = Some(lines);
             file.deletions = Some(0);
         }
@@ -520,6 +524,18 @@ fn parse_numstat_z(bytes: &[u8]) -> std::collections::HashMap<String, (u32, u32)
         }
     }
     counts
+}
+
+/// cwd 所在工作树的根。先往上找第一个有 `.git`（目录或 worktree 的 .git 文件）的目录，不起进程：
+/// 侧栏每 30 秒给每个目录算一遍，多一个 rev-parse 在 Windows 上约 40ms（bench_sidebar_badges_20_dirs）。
+/// 环境里指定了 GIT_DIR / GIT_WORK_TREE 时 `.git` 不说明问题，才问 git；问不出就退回 cwd。
+fn work_tree_root(dir: &str) -> String {
+    let by_env = std::env::var_os("GIT_DIR").is_some() || std::env::var_os("GIT_WORK_TREE").is_some();
+    let found = (!by_env)
+        .then(|| Path::new(dir).ancestors().find(|p| p.join(".git").exists()))
+        .flatten()
+        .map(|p| p.to_string_lossy().into_owned());
+    found.or_else(|| repo_root(dir)).unwrap_or_else(|| dir.to_string())
 }
 
 /// 未跟踪文件的行数：超过 diff 上限或像二进制就不数（那种文件 diff 里也看不全）。
@@ -1209,7 +1225,9 @@ fn untracked_file_diff(dir: &str, path: &str) -> Result<GitFileDiffDto, String> 
     // cwd，`..` 能一路爬出工作目录。统一走 resolve_inside（canonicalize + 前缀校验），
     // 越界返回与文件页签同一句「路径超出工作目录」。tracked 分支不需要——那边 path
     // 是 git 的 pathspec，git 自己限定在仓库内。
-    let full_path = crate::fsutil::resolve_inside(dir, path)?;
+    // 路径相对仓库根（同 fill_line_counts）：会话开在子目录时拼到 cwd 上读不到（做空第三轮 #9）。
+    // resolve_inside 仍按工作树根挡住 `..` 与绝对路径逃逸。
+    let full_path = crate::fsutil::resolve_inside(&work_tree_root(dir), path)?;
     let file = std::fs::File::open(&full_path).map_err(|e| format!("无法读取文件：{e}"))?;
     let mut bytes = Vec::new();
     file.take((MAX_DIFF_BYTES + 1) as u64)
@@ -1243,54 +1261,15 @@ fn untracked_file_diff(dir: &str, path: &str) -> Result<GitFileDiffDto, String> 
     })
 }
 
-/// 当前分支的 Pull Request（对话页标题栏，对照 Kimi 的「打开 Pull Request」）。走 `gh pr view`：
-/// 没装 gh、没登录、不是 GitHub 仓库、分支没有 PR 都是 None（不报错，前端不显示）。
-/// gh 要联网，按目录缓存 60s：标题栏每次重渲染不该打一次 GitHub API。
+/// 当前分支的 Pull Request（对话页标题栏，对照 Kimi 的「打开 Pull Request」）。没装 gh、没登录、
+/// 不是 GitHub 仓库、分支没有 PR 都是 None（不报错，前端不显示）。
+/// forge 认得的 GitHub 仓库走 forge 的 PR 缓存（与侧栏徽标、「更改」面板共用，同仓库同分支 60 秒内合计一次 gh）；
+/// 认不出的远端（企业版等）照旧直查、按目录缓存 60 秒。见 forge::badge::title_pr_with。
 #[tauri::command]
 pub(crate) async fn git_pull_request(cwd: String) -> Result<Option<PullRequestDto>, String> {
-    tauri::async_runtime::spawn_blocking(move || Ok(pull_request_cached(&cwd)))
+    tauri::async_runtime::spawn_blocking(move || Ok(crate::forge::badge::title_pull_request(&cwd)))
         .await
         .map_err(|e| e.to_string())?
-}
-
-const PR_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(60);
-
-type PrCache = std::collections::HashMap<String, (std::time::Instant, Option<PullRequestDto>)>;
-
-fn pull_request_cached(cwd: &str) -> Option<PullRequestDto> {
-    static CACHE: std::sync::OnceLock<std::sync::Mutex<PrCache>> = std::sync::OnceLock::new();
-    let cache = CACHE.get_or_init(Default::default);
-    let key = cwd.trim().to_string();
-    if let Some((at, value)) = cache.lock().ok().and_then(|map| map.get(&key).cloned()) {
-        if at.elapsed() < PR_CACHE_TTL {
-            return value;
-        }
-    }
-    let value = pull_request_blocking(&key);
-    if let Ok(mut map) = cache.lock() {
-        map.insert(key, (std::time::Instant::now(), value.clone()));
-    }
-    value
-}
-
-fn pull_request_blocking(dir: &str) -> Option<PullRequestDto> {
-    if dir.is_empty() || !Path::new(dir).is_dir() {
-        return None;
-    }
-    let mut command = Command::new("gh");
-    command
-        .current_dir(dir)
-        .args(["pr", "view", "--json", "number,state,isDraft,url,title"]);
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x08000000); // CREATE_NO_WINDOW，同 git_output
-    }
-    let output = command.output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    parse_pull_request(&String::from_utf8_lossy(&output.stdout))
 }
 
 /// `gh pr view --json number,state,isDraft,url,title` 的输出 → DTO。草稿是 OPEN + isDraft。
@@ -3252,7 +3231,7 @@ more
         let (counts, spawned) = spawns(&s(&conflict));
         assert_eq!(counts, Some(summed(&s(&conflict))));
         assert_eq!(spawned, 2, "冲突文件要跑 numstat");
-        // 子目录里开的会话：与摘要一致（未跟踪文件按子目录拼路径读，行数数不到，是摘要原有的口径，这里不改）。
+        // 子目录里开的会话：与摘要一致（行数按仓库根读盘，见 git_subdir_line_count_tests）。
         let sub = s(&dirty.join("sub"));
         std::fs::create_dir_all(dirty.join("sub")).unwrap();
         assert_eq!(counts_of(&sub), Some(summed(&sub)));
@@ -3422,3 +3401,7 @@ more
         assert_eq!(files.len(), 2);
     }
 }
+
+#[cfg(test)]
+#[path = "git_subdir_line_count_tests.rs"]
+mod subdir_line_count_tests;
