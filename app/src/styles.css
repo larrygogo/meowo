@@ -253,6 +253,7 @@
   --radius-md: 8px;
   --radius-lg: 12px;
   --radius-xl: 16px;
+  --radius-2xl: 20px;
   --radius-full: 999px;
   --radius-dock-pill: 10px;
   --radius-composer: 32px;
@@ -7706,6 +7707,8 @@ pre.chat-md-plain {
 .chat-review-bar button:hover:not(:disabled), .chat-diff-cmt-actions button:hover:not(:disabled) { background: var(--fill-hover); color: var(--cc-text); }
 /* 主按钮写在次级/幽灵之后：组合在 .chat-review-bar button 这类幽灵基类上时，同特异度靠后者赢。 */
 .btn-primary:is(button, a) { border-color: transparent; background: var(--cc-accent); color: var(--cc-on-accent); font-weight: 500; }
+/* 禁用的主按钮退回中性：浅色主题主按钮是墨底青柠字，靠降透明度表示禁用会变成灰底青柠字，读不清。 */
+button.btn-primary:disabled { opacity: 1; background: var(--fill-selected); color: var(--cc-text-faint); cursor: default; }
 .btn-primary:is(button, a):hover:not(:disabled) { background: var(--cc-accent-dim); }
 :is(.btn-primary, .btn-secondary, .btn-ghost):is(button, a), .ns-btn, .sbtn { transition: background var(--dur-fast) var(--ease-in-out), color var(--dur-fast) var(--ease-in-out), transform var(--dur-fast) var(--ease-in); }
 :is(.btn-primary, .btn-secondary, .btn-ghost):is(button, a):active:not(:disabled), .ns-btn:active:not(:disabled), .sbtn:active:not(:disabled) { transform: scale(0.98); }

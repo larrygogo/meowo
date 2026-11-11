@@ -34,4 +34,19 @@ describe("品牌色守护", () => {
     expect(css).toMatch(/\.chat-window \{[^}]*background: var\(--cc-l0\)/);
   });
 
+  it("模糊只用在手机浮动条上，内容层不做大面积模糊", () => {
+    // 性能预算：backdrop-filter 在三种 WebView 上都贵，透明窗口里还采样不到桌面。
+    // 放行的只有手机页的浮动底栏与浮动输入框，以及已下线、只剩演示页在用的贴纸（.sticker / .stk-*）。
+    const allow = [/^\.sticker\b/, /^\.stk-/, /\.remote-tabbar\b/, /\.is-remote-compact \.chat-compose\b/];
+    const bad: string[] = [];
+    for (const { f, lines } of files) {
+      let sel = "";
+      lines.forEach((l, i) => {
+        if (/^[^\s/@}][^{]*\{/.test(l) || /^\s+[.#:\w\[][^{;]*\{\s*$/.test(l) || /^\s*[^\s/][^{;]*\{.*backdrop-filter/.test(l)) sel = l.slice(0, l.indexOf("{")).trim();
+        if (/(?<![\w-])backdrop-filter\s*:/.test(l) && !/backdrop-filter\s*:\s*none/.test(l) && !/^\s*\/?\*/.test(l) && !allow.some((re) => re.test(sel))) bad.push(`${f}:${i + 1} ${sel}`);
+      });
+    }
+    expect(bad).toEqual([]);
+  });
+
 });
