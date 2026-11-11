@@ -39,6 +39,8 @@ cd app/src-tauri && cargo test       # 或按 crate：cargo test -p meowo-store 
 3. 推 main 等 CI 绿 → Actions 里手动运行 Release workflow（`gh workflow run release.yml`，必须从 main 触发）。它自己打 tag、并行构建 win + macOS(arm64 / x64 两个独立 dmg)、最后合并 latest.json，产 draft release。**别手工推 tag**：tag 引用上的 Rust 缓存谁也读不到，从 main 触发才能复用上次发版的缓存。
 4. macOS 真机按 `docs/macos-acceptance-checklist.md` 过一遍。
 
+**试用版（预发布）**：版本号带预发布后缀（如 `0.9.0-beta.1`）时，Release workflow 可以从分支触发（`gh workflow run release.yml --ref <分支>`），草稿自动标成预发布。预发布不进稳定版的自动更新（更新器只认 `/releases/latest`，GitHub 的 latest 不含预发布），winget 流程也跳过它。发布草稿时别把「预发布」的勾去掉。
+
 ## 多实例
 
 dev（debug 构建）与安装版共享 `~/.meowo`（数据目录刻意不隔离，用户要求）；dev 有独立 identifier（WebView2 数据/window-state 隔离）且不注册单实例插件——**验证用的 dev 实例用完要收掉**，别留僵尸进程。外库只读聚合（foreign，id+2^40）只在 `MEOWO_DB` 显式指开时激活。
