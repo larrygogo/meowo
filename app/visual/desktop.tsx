@@ -50,7 +50,7 @@ function whenReady<T extends Element>(selector: string, act: (el: T) => void): v
 
 // 带启动选项的 agent 名单：设置「会话」分区的默认值行、新建会话的权限 / 模型下拉都靠它才出现。
 const AGENTS_WITH_OPTIONS = [
-  { id: "claude", display_name: "Claude Code", installed: true, launch_options: [
+  { id: "claude", display_name: "Claude Code", installed: true, supports_profiles: true, launch_options: [
     { id: "permission", default: "default", choices: [
       { id: "default", label: "Default", args: [], risk: false },
       { id: "acceptEdits", label: "Accept edits", args: [], risk: false },
