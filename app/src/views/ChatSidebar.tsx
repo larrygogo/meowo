@@ -6,6 +6,8 @@ import { confirmStopSession, getLiveSessionsPage, getSettings, moveSessionRank, 
 import { noteSessionMeta } from "./chat/historyCache";
 import { attentionTone } from "./chat/nextAttention";
 import { remoteUi } from "../remoteMode";
+import { useAgents } from "../useAgents";
+import { openSettingsAt } from "../settingsNav";
 import { useBoardRefresh } from "../hooks/useBoardRefresh";
 import { useSessionActions } from "../hooks/useSessionActions";
 import { useSettingsEffect } from "../hooks/useSettings";
@@ -198,6 +200,26 @@ export const ChatSidebar = memo(ChatSidebarImpl);
 // 取消复位并因守卫返回，动画不间断，真正的离开才收拾干净。
 const titleScrollAnims = new WeakMap<HTMLElement, Animation>();
 const titleScrollTimers = new WeakMap<HTMLElement, number>();
+
+/** 空列表的下一步。没装任何 CLI 时给「去安装」（新建了也开不起来）；新建页已经开着时只留文字——
+ *  原先这里再放一个新建按钮，同屏三个新建入口（UI 调研 shell #16）。拆成子组件：只在空态挂载时
+ *  才去取 agent 名单，有会话的常态零开销。手机上没有设置窗（open_settings 远程返 null），不给去安装。 */
+function SidebarEmptyNext({ newSessionActive, t }: { newSessionActive: boolean; t: Dict }) {
+  const { agents } = useAgents();
+  // 名单没取到（旧后端/演示返回非数组）时按「装了」处理，照旧给新建入口。
+  const noCli = Array.isArray(agents) && !agents.some((a) => a.installed);
+  if (noCli && !remoteUi()) {
+    return <button type="button" className="chat-sidebar-retry" onClick={() => openSettingsAt("account")}>{t.newSession.goInstall}</button>;
+  }
+  if (newSessionActive || noCli) return null;
+  return (
+    <button
+      type="button"
+      className="chat-sidebar-retry"
+      onClick={() => void openNewSessionWindow().catch(() => {})}
+    >{t.sticker.newSession}</button>
+  );
+}
 
 function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visibleOrderRef, attentionIdsRef, searchInputRef, width, onSelect, onPrefetch, onCollapse, onOpenAdmin }: {
   activeId: number;
@@ -1354,13 +1376,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
             {search.trim() ? t.chat.sidebarEmptySearch : dirFilter ? t.chat.sidebarEmptyDir : archivedView ? t.chat.sidebarEmptyArchived : t.chat.sidebarEmpty}
             {/* 真正一条会话都没有时，空态本身给出下一步（对照 Kimi 空列表直接给新建入口），
                 筛选/搜索/归档视图下的空是「条件不中」，不该引导新建。 */}
-            {!search.trim() && !dirFilter && !archivedView && (
-              <button
-                type="button"
-                className="chat-sidebar-retry"
-                onClick={() => void openNewSessionWindow().catch(() => {})}
-              >{t.sticker.newSession}</button>
-            )}
+            {!search.trim() && !dirFilter && !archivedView && <SidebarEmptyNext newSessionActive={!!newSessionActive} t={t} />}
           </div>
         )}
         {/* 已完成页顶部：批量清理已合并 worktree。手机端只有侧栏没有会话管理页，批量入口放在这里
