@@ -2447,7 +2447,9 @@ export function ChatWindow() {
   /// 会被子代理收走（用户实拍：输入框「Message @general-purpose…」，消息挂「未确认送达」）。
   /// 返回 false = 切不回且这次还没提示过，调用方不写，消息退回输入框、横幅给一键切回。
   /// 必须在暂存草稿之前：视图里的上边框挂着子代理描述，暂存认不出 composer。
-  const leaveSubagentViewBeforeWrite = async (): Promise<boolean> => {
+  /// strict：中断、撤回这类按键写入，看过提示也不照发——视图里 Esc 中断的是被看的子代理，
+  /// `/rewind` 进的是子代理的 composer（做空第二轮 B），切不回就一律不写。
+  const leaveSubagentViewBeforeWrite = async (strict = false): Promise<boolean> => {
     const spec = chatUi?.subagent_view;
     const composer = chatUi?.draft_stash;
     if (!spec || !composer) return true;
@@ -2461,7 +2463,7 @@ export function ChatWindow() {
       if (isCurrentOperation()) setSubagentStuck(null);
       return true;
     }
-    if (shown && shown.sid === sessionId && shown.name === result.name) return true;
+    if (!strict && shown && shown.sid === sessionId && shown.name === result.name) return true;
     subagentStuckRef.current = { sid: sessionId, name: result.name };
     if (isCurrentOperation()) setSubagentStuck({ sid: sessionId, name: result.name });
     return false;
@@ -2503,6 +2505,8 @@ export function ChatWindow() {
     if (!yes || !isCurrentOperation()) return;
     // 终端协议在 chat/undoTerminal；这里只管界面：收掉本地消息、原文放回输入框、按结局报错。
     await withSendGuard(async () => {
+      // `/rewind` 写进子代理视图会进子代理的 composer：先切回，切不回不撤（横幅说明）。
+      if (!await leaveSubagentViewBeforeWrite(true)) return false;
       const outcome = await performUndo({
         sessionId,
         control,
@@ -3098,6 +3102,8 @@ export function ChatWindow() {
     interruptLockRef.current = token;
     setSending(true);
     try {
+      // 子代理视图里 Esc 中断的是被看的子代理（见 SubagentView）：先切回，切不回不发（横幅说明）。
+      if (!await leaveSubagentViewBeforeWrite(true)) return;
       await writeInterrupt(interrupt);
       const deadline = Date.now() + 5_000;
       while (isCurrentOperation() && toneRef.current === "running" && Date.now() < deadline) {
@@ -3125,6 +3131,8 @@ export function ChatWindow() {
     input: chatUi?.interrupt_input,
     presses: chatUi?.interrupt_presses ?? 1,
     blocked: () => !!(sendLockRef.current || interruptLockRef.current || attentionAbort()),
+    // 子代理视图里 Esc 中断的是被看的子代理：先切回，切不回不发（横幅说明）。
+    prepare: () => leaveSubagentViewBeforeWrite(true),
     onError: (error) => setSendError(formatBackendError(error, t.locale)),
   });
   /// 手动移除一条排队回执。**只动 GUI 记账**:消息已经写进 PTY,CLI 队列里的它照常

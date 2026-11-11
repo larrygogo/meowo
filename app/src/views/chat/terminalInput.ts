@@ -26,7 +26,7 @@ export async function writeInterruptKeys(write: (data: string) => Promise<void>,
 /// interrupting:写完中断键后 tone 要等下一轮历史轮询才变,期间按钮若维持可点形态,
 /// 用户以为没点上会连点——多个中断键连打进 PTY(claude 的双 Esc 另有历史回退语义)。
 /// 置忙态直到 tone 离开 running 或超时兜底,期间按钮禁用并转圈。
-export function useInterrupt({ sessionId, running, write, input, presses, blocked, onError }: {
+export function useInterrupt({ sessionId, running, write, input, presses, blocked, prepare, onError }: {
   sessionId: number;
   running: boolean;
   write: (data: string) => Promise<void>;
@@ -35,13 +35,18 @@ export function useInterrupt({ sessionId, running, write, input, presses, blocke
   presses: number;
   /** 此刻不该中断（发送/中断在途、交互提示在屏）。 */
   blocked: () => boolean;
+  /** 发中断键前的准备（如把终端从子代理视图切回主会话）；返回 false 就不发。 */
+  prepare?: () => Promise<boolean>;
   onError: (error: unknown) => void;
 }) {
   const [interrupting, setInterrupting] = useState(false);
   const interrupt = () => {
     if (!input || interrupting || blocked()) return;
     setInterrupting(true);
-    void writeInterruptKeys(write, input, presses).catch((error) => {
+    void (async () => {
+      if (prepare && !await prepare()) { setInterrupting(false); return; }
+      await writeInterruptKeys(write, input, presses);
+    })().catch((error) => {
       onError(error);
       setInterrupting(false);
     });
