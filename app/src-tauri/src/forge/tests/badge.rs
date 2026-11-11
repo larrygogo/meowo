@@ -42,6 +42,28 @@ fn 侧栏_同一仓库六十秒内只查一次_pr() {
 }
 
 #[test]
+fn 侧栏_gh_出错也按六十秒节流_不每轮重查() {
+    // 断网、限流时 gh pr view 失败：原先出错分支不写缓存时间，前端每 30 秒一轮（目录变化、回前台还会立刻再查）
+    // 都会重打一次 gh，限流时越查越限（做空审查第二轮指出）。出错也记下这次查询时间，60 秒内只读缓存。
+    let sb = Sandbox::new("badge-err-ttl");
+    let repo = github_repo(&sb);
+    let fake = FakeGh::new().views(vec![fail("HTTP 403: API rate limit exceeded for user")]);
+    let (caches, diffs) = (Caches::default(), DiffCache::default());
+    let prefs = sb.root.join("forge.json");
+    let cwds = vec![s(&repo)];
+    for _ in 0..6 {
+        let out = run(&fake, &caches, &diffs, &prefs, &cwds, true, DIRTY);
+        assert!(out[0].pr.is_none(), "出错时不显示 PR");
+    }
+    assert_eq!(fake.count("pr view"), 1, "出错后 60 秒内不再重查：{:?}", fake.calls.lock().unwrap());
+    for entry in lock(&caches.prs).values_mut() {
+        entry.0 = Instant::now().checked_sub(Duration::from_secs(61)).unwrap();
+    }
+    run(&fake, &caches, &diffs, &prefs, &cwds, true, DIRTY);
+    assert_eq!(fake.count("pr view"), 2, "过了 60 秒再试一次");
+}
+
+#[test]
 fn 侧栏_窗口隐藏时一次_gh_都不调() {
     let sb = Sandbox::new("badge-hidden");
     let repo = github_repo(&sb);

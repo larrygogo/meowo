@@ -119,8 +119,13 @@ fn pr_badge(ctx: &Ctx, target: PrTarget, dir: &str, online: bool) -> Option<Side
             lock(&ctx.caches.prs).insert(key, (Instant::now(), pr.clone()));
             pr.as_ref().map(to_badge)
         }
-        // 断网、限流：沿用上一次的，状态点不会一闪而没。
-        Err(_) => cached.and_then(|(_, pr)| pr).as_ref().map(to_badge),
+        // 断网、限流：沿用上一次的，状态点不会一闪而没；同时记下这次查询时间，60 秒内不再重打 gh。
+        // 不记的话前端每轮（30 秒、目录变化、回前台）都会重查，限流时越查越限（做空审查第二轮指出）。
+        Err(_) => {
+            let previous = cached.and_then(|(_, pr)| pr);
+            lock(&ctx.caches.prs).insert(key, (Instant::now(), previous.clone()));
+            previous.as_ref().map(to_badge)
+        }
     }
 }
 
