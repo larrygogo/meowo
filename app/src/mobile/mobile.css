@@ -407,7 +407,7 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
   border-radius: var(--radius-md);
   color: var(--cc-text);
   background: var(--cc-menu-bg);
-  box-shadow: var(--cc-shadow-popup);
+  box-shadow: var(--shadow-menu);
 }
 .remote-settings-group {
   margin-top: 10px;
@@ -477,7 +477,7 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
   border: 1px solid var(--cc-border);
   border-radius: 18px;
   background: var(--cc-panel-bg);
-  box-shadow: var(--cc-shadow-panel);
+  box-shadow: var(--shadow-md);
 }
 
 .remote-gate-brand { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 8px; }
@@ -597,7 +597,7 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
     padding-top: 0;
     padding-bottom: 0;
     border-radius: var(--radius-lg);
-    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
+    box-shadow: var(--shadow-xl);
   }
 }
 
