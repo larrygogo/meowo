@@ -25,9 +25,10 @@ export const BashTool = memo(function BashTool({ item, result }: { item: ToolUse
       }
       body={
         <>
-          {/* 预览行（头 3 行 +「还有 N 行」）只在跑着时留作计时：有结果后下面的 OutputBlock 就是全文，
-              再放预览就是前 3 行显示两遍，还自相矛盾地写「还有 57 行」（UI 调研 chat #10）。 */}
-          {!result && (
+          {/* 成功回执不再放预览行（头 3 行 +「还有 N 行」）：下面的 OutputBlock 就是全文，再放预览就是
+              前 3 行显示两遍，还自相矛盾地写「还有 57 行」（UI 调研 chat #10）。跑着时的计时、失败时的
+              首行报错只有一行，照旧留着当「⎿ 结果摘要」。 */}
+          {(!result || result.is_error) && (
             <div className="chat-tool-result">
               <span className="chat-tool-elbow" aria-hidden="true">⎿</span>
               <ToolResultLine item={item} result={result} kind="run" detail={detail} patch={null} />

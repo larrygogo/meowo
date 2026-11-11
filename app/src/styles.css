@@ -5213,7 +5213,7 @@ button.scm-check-name:hover { text-decoration: underline; }
   margin: 0 0 var(--sp-30) auto;
   padding: 0;
 }
-.chat-message.is-user .chat-text {
+.chat-message.is-user .chat-user-bubble {
   width: fit-content;
   margin-left: auto;
   padding: var(--sp-11) calc(15px * var(--cc-ui));

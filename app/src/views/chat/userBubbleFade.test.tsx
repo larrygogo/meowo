@@ -14,7 +14,7 @@ afterEach(cleanup);
 describe("用户长消息渐隐", () => {
   it("收起限高与渐隐落在包住正文的内层，不落在带气泡底色的 .chat-text 上", () => {
     render(<Message item={{ type: "user_text", id: "fade", timestamp: null, text: "很长的日志" }} />);
-    const clip = document.querySelector(".chat-text > .chat-user-clip.is-clampable");
+    const clip = document.querySelector(".chat-user-bubble > .chat-text.chat-user-clip.is-clampable");
     expect(clip?.textContent).toBe("很长的日志");
     expect(css).toMatch(/\.chat-user-text\.is-clamped \.chat-user-clip \{[^}]*mask-image/);
     // 不再用「渐变到气泡色」的遮罩层（半透明气泡色盖不住字）。

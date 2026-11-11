@@ -33,7 +33,7 @@ describe("终端式工具行", () => {
     expect(document.querySelector(".chat-tool-out.is-error")?.textContent).toBe("boom");
   });
 
-  it("命令描述不占行（进悬停提示）；输出露头 3 行，余下折成「还有 N 行」；着色码剥掉", () => {
+  it("命令描述不占行（进悬停提示）；成功输出只给全文、不再重复露头 3 行（chat #10）；着色码剥掉", () => {
     expect(stripAnsi(`${ESC}[2m Tests ${ESC}[22m ${ESC}[1m${ESC}[32m316 passed${ESC}[39m`)).toBe(" Tests  316 passed");
     expect(stripAnsi(`${ESC}]8;;https://x\u0007link${ESC}]8;;\u0007`)).toBe("link");
     expect(stripAnsi("纯文本")).toBe("纯文本");
@@ -44,7 +44,7 @@ describe("终端式工具行", () => {
     render(<ToolActivity item={item} result={result("t3", [`${ESC}[32ma${ESC}[39m`, "b", "c", "d", "e"].join("\n"))} />);
     expect(document.querySelector(".chat-tool-meta")).toBeNull();
     expect(document.querySelector(".chat-tool-summary")?.getAttribute("data-tip")).toBe("Run tests");
-    expect(document.querySelector(".chat-tool-out")?.textContent).toBe(["a", "b", "c", "… 还有 2 行"].join("\n"));
+    expect(document.querySelector(".chat-tool-out")).toBeNull();
     expect(document.querySelector(".chat-tool-body pre")?.textContent).toBe(["a", "b", "c", "d", "e"].join("\n"));
   });
 

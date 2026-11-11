@@ -177,7 +177,8 @@ describe("ShortcutSheet 快捷键速查表", () => {
     const onClose = vi.fn();
     render(<ShortcutSheet onClose={onClose} />);
     const dialog = screen.getByRole("dialog", { name: zh.chat.shortcutsTitle });
-    expect(dialog.querySelectorAll(".chat-shortcuts-row")).toHaveLength(18);
+    // 18 + 面板的改动 / 文件 / 切页签三行（UI 调研 i17）。
+    expect(dialog.querySelectorAll(".chat-shortcuts-row")).toHaveLength(21);
     expect(dialog.textContent).toContain("Ctrl+Shift+F");
     expect(dialog.textContent).toContain("Ctrl+`");
     expect(dialog.textContent).toContain(zh.chat.shortcutTerminalNote("Ctrl"));
