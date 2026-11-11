@@ -589,3 +589,23 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
     box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
   }
 }
+
+/* 「更改」面板(SourceControl)在手机上的命中面与横溢(验收 #13 #30,调研 m8/m9/m13)。
+   横溢:SE 上 .scm 的 scrollWidth 377 > 375,竖滑时带出横向橡皮筋。逐个元素量出来是仓库行
+   .scm-repo(贴右缘 4px)的触屏 ::after 外扩 6px 越界;它本来就是整行宽,左右不需要外扩。
+   面板本来就不该横滚,overflow-x 一并关掉兜底。 */
+body.remote-ui .scm { overflow-x: hidden; }
+@media (pointer: coarse) {
+  body.remote-ui .scm-repo::after { inset: -6px 0; }
+  /* 行内「放弃 / 暂存」原先外观 22px、命中 34px、彼此只隔 1px(SE 实测),放弃是破坏性动作。
+     按钮做到 36px、外扩 4px 合 44px;两钮隔 8px,外扩正好相接不重叠;行高同步到 44px,
+     上下两行的外扩也不互相压。 */
+  body.remote-ui .scm-row,
+  body.remote-ui .scm-group-head { min-height: 44px; height: auto; }
+  body.remote-ui .scm-row-actions,
+  body.remote-ui .scm-group-actions { gap: 8px; }
+  body.remote-ui .scm-icon-btn,
+  body.remote-ui .chat-diff-layout button { min-width: 36px; min-height: 36px; }
+  body.remote-ui .scm-icon-btn::after,
+  body.remote-ui .chat-diff-layout button::after { inset: -4px; }
+}

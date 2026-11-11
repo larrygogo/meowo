@@ -4874,6 +4874,12 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-diff-row { position: relative; }
 .chat-diff-cmt-add { position: absolute; left: 0; top: 50%; transform: translateY(-50%); width: 12px; height: 16px; padding: 0; border: 0; border-radius: var(--radius-xs); background: var(--cc-accent); color: var(--cc-window-bg); font: 600 11px/16px system-ui, sans-serif; text-align: center; cursor: pointer; opacity: 0; }
 .chat-diff-row:hover .chat-diff-cmt-add, .chat-diff-cmt-add:focus-visible { opacity: 1; }
+/* 触屏没有悬停：「+」常显，并放大到 16×20（手机上再由 ::after 外扩到 28×32）。
+   原先只在 :hover 时出现、宽 12px，手机上行评论等于没有（调研 m13）。常显时去掉蓝底只留淡色
+   字形：每行一块蓝底在手机仿真截图里连成一整条蓝柱，压住旧行号。 */
+@media (hover: none) {
+  .chat-diff-cmt-add { width: 16px; height: 20px; line-height: 20px; background: transparent; color: var(--cc-accent); opacity: .6; }
+}
 /* 评论块插在被评论的行下面。pre 随最长行撑宽、横向会滚，评论块用 sticky + 100cqw
    钉在可视宽度内，不然长行文件里评论框会跟着代码一起被推到屏外。 */
 .chat-diff-scroll { container-type: inline-size; }
