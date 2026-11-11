@@ -932,7 +932,7 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
             if let Err(e) = ensure_session_dir(app, &a.cwd).await {
                 return reply::<()>(Err(e));
             }
-            reply(crate::session_query::hide_workspace(a.cwd).await)
+            reply(crate::session_query::hide_workspace(a.cwd, a.restore).await)
         }
         "get_session_admin_page" => {
             let a = args!(GetSessionAdminPageArgs);

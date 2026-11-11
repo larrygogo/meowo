@@ -77,7 +77,12 @@ bridged_args!(RecentCwdsArgs {
     include_hidden: Option<bool>
 });
 
-bridged_args!(HideWorkspaceArgs { cwd: String });
+bridged_args!(HideWorkspaceArgs {
+    cwd: String,
+    /// true = 撤销刚才的移除（侧栏 5 秒撤销条，UI 调研 shell #15）；缺省 = 移除。
+    #[serde(default)]
+    restore: Option<bool>
+});
 
 bridged_args!(GitDiffSummaryArgs { cwd: String });
 

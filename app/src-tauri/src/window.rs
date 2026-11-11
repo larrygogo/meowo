@@ -632,7 +632,10 @@ pub(crate) fn open_latest_chat_window(app: &tauri::AppHandle) {
 fn latest_chat_target(latest: Option<i64>) -> ChatTarget {
     match latest {
         Some(session_id) => ChatTarget::Session(session_id),
-        None => ChatTarget::NewSession { cwd: None, provider: None },
+        None => ChatTarget::NewSession {
+            cwd: None,
+            provider: None,
+        },
     }
 }
 

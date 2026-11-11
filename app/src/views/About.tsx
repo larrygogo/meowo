@@ -11,7 +11,7 @@ import { useUpdate, type UpdateStatus } from "../useUpdate";
 import { useShowWhenReady } from "../useShowWhenReady";
 import { languageOptions, useT } from "../i18n";
 import { formatBackendError } from "../i18n/errors";
-import { appConfirm } from "../confirm";
+import { appAlert } from "../confirm";
 import logoUrl from "../../src-tauri/icons/128x128.png";
 import type { Dict } from "../i18n/zh";
 import { SETTINGS_DEFAULTS, useSettingsState } from "./settings/state";
@@ -929,7 +929,7 @@ function AppearanceSection() {
   );
 }
 
-function AboutSection({
+export function AboutSection({
   status,
   newVersion,
 }: {
@@ -949,7 +949,7 @@ function AboutSection({
   const openUpdater = () => invoke("open_update_window").catch((e) => {
     // 点了「检查更新」毫无反应是最糟的失败：console 留线索 + 兜底错误框（S-14 范式）。
     console.error("[about] 打开更新窗口失败：", e);
-    void appConfirm(formatBackendError(e, t.locale), { title: t.about.checkUpdate });
+    void appAlert(formatBackendError(e, t.locale), { title: t.about.checkUpdate });
   });
   const hasUpdate = status === "available" || status === "downloading" || status === "ready";
   // 7S-3：三个态此前都压成一句「发现新版本」+ 一颗「更新到 vX」——正在下载和已经下完
@@ -970,7 +970,7 @@ function AboutSection({
       setDiagExported(true);
       window.setTimeout(() => setDiagExported(false), 2_000);
     } catch (e) {
-      void appConfirm(formatBackendError(e, t.locale), { title: t.about.diagLog });
+      void appAlert(formatBackendError(e, t.locale), { title: t.about.diagLog });
     }
   };
 

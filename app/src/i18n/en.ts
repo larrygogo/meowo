@@ -4,7 +4,7 @@ import { attachmentInstructionEn } from "./attachmentInstruction";
 
 export const en: Dict = {
   locale: "en-US",
-  dialog: { ok: "OK", cancel: "Cancel" },
+  dialog: { ok: "OK", cancel: "Cancel", gotIt: "Got it" },
   crash: { title: "Something went wrong", hint: "This window ran into a problem. Reload to recover.", reload: "Reload" },
   tabs: { all: "All", waiting: "Waiting", running: "Running" },
   time: {
@@ -995,6 +995,7 @@ export const en: Dict = {
     taskNotification: "Task notification",
     changesUncommitted: "Uncommitted",
     wsHide: "Remove from list",
+    wsHidden: (name: string) => `Removed ${name}`,
     wsHideTip: "Only hides it here. The folder and its sessions stay; it comes back when you start a new session in it",
     changesCommitted: (base: string) => `Committed, not merged · vs ${base}`,
     scmRepos: "Repositories",

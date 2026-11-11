@@ -6,7 +6,7 @@ export const zh = {
   // BCP-47 locale：日期/时刻格式化走 Intl（12/24 小时制、月日顺序随语言），不再手拼。
   locale: "zh-CN",
   // 应用内确认模态(confirm.tsx)的通用按钮。
-  dialog: { ok: "确定", cancel: "取消" },
+  dialog: { ok: "确定", cancel: "取消", gotIt: "知道了" },
   // 渲染崩溃兜底（ErrorBoundary.tsx）：窗口级整页替换时显示。
   crash: { title: "出错了", hint: "这个窗口遇到问题，重新加载即可恢复。", reload: "重新加载" },
   tabs: { all: "全部", waiting: "待交互", running: "运行中" },
@@ -1073,6 +1073,7 @@ export const zh = {
     taskNotification: "后台任务通知",
     changesUncommitted: "未提交",
     wsHide: "从列表中移除",
+    wsHidden: (name: string) => `已移除 ${name}`,
     wsHideTip: "只是不在这里显示，文件夹和其中的会话都不动；之后在这里新建会话会自动回来",
     changesCommitted: (base: string) => `已提交未合并 · 相对 ${base}`,
     scmRepos: "存储库",

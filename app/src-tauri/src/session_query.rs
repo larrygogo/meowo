@@ -178,22 +178,40 @@ fn visible_workspaces(
         .collect()
 }
 
-/// 从工作空间列表里移除一个目录（只是不显示，磁盘上的目录和其中的会话都不动）。
+/// 从工作区列表里移除一个目录（只是不显示，磁盘上的目录和其中的会话都不动）。
+/// `restore = true` 撤销移除：侧栏移除后给 5 秒撤销条（UI 调研 shell #15，误点没法立刻找回）。
 #[tauri::command]
-pub(crate) async fn hide_workspace(cwd: String) -> Result<(), String> {
+pub(crate) async fn hide_workspace(cwd: String, restore: Option<bool>) -> Result<(), String> {
     let key = workspace_key(&cwd);
     if key.is_empty() {
         return Err("目录为空".into());
     }
+    let restore = restore.unwrap_or(false);
     tauri::async_runtime::spawn_blocking(move || {
         crate::settings::update_settings(|settings| {
-            settings.hidden_workspaces.insert(key, crate::now_ms());
+            set_workspace_hidden(&mut settings.hidden_workspaces, key, !restore);
             Ok(())
         })
     })
     .await
     .map_err(|error| error.to_string())?
 }
+
+fn set_workspace_hidden(
+    hidden: &mut std::collections::BTreeMap<String, i64>,
+    key: String,
+    hide: bool,
+) {
+    if hide {
+        hidden.insert(key, crate::now_ms());
+    } else {
+        hidden.remove(&key);
+    }
+}
+
+#[cfg(test)]
+#[path = "session_query_restore_tests.rs"]
+mod restore_workspace_tests;
 
 #[cfg(test)]
 mod hidden_workspace_tests {

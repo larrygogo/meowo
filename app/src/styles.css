@@ -4455,6 +4455,8 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-ws-add { display: flex; align-items: center; gap: var(--sp-8); width: 100%; margin-bottom: var(--sp-4); padding: var(--sp-8) var(--sp-10) var(--sp-8) var(--sp-8); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-dim); font: inherit; font-size: var(--text-sm); text-align: left; cursor: pointer; }
 .chat-ws-add:hover { color: var(--cc-text); background: var(--fill-hover); }
 .chat-ws-add svg { flex: none; color: var(--cc-text-faint); }
+/* 移除工作区的撤销条：在列表滚动区里贴底，长列表滚到哪都看得见（shell #15）。 */
+.chat-ws-undo { position: sticky; bottom: 0; margin-top: var(--sp-6); border-radius: var(--radius-sm); background: rgba(var(--cc-bg-rgb), 1); box-shadow: 0 -1px 0 var(--line-subtle); }
 .chat-ws-dir { position: relative; display: block; padding: var(--sp-8) var(--sp-10) var(--sp-8) var(--sp-8); border-radius: var(--radius-sm); cursor: pointer; user-select: none; }
 .chat-ws-dir + .chat-ws-dir { margin-top: 2px; }
 .chat-ws-dir:hover, .chat-ws-dir.is-menu-open { background: var(--fill-hover); }

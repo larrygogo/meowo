@@ -1395,9 +1395,14 @@ export function newSession(cwd: string, provider: AgentId, options?: Record<stri
 }
 
 /** 最近使用过的工作目录（新建面板快捷选择）。 */
-/// 从工作空间列表里移除（只是不显示；之后又在这里开会话会自动回来）。
+/// 从工作区列表里移除（只是不显示；之后又在这里开会话会自动回来）。
 export function hideWorkspace(cwd: string): Promise<void> {
   return invoke("hide_workspace", { cwd } satisfies HideWorkspaceArgs);
+}
+
+/// 撤销刚才的移除（侧栏 5 秒撤销条）。
+export function restoreWorkspace(cwd: string): Promise<void> {
+  return invoke("hide_workspace", { cwd, restore: true } satisfies HideWorkspaceArgs);
 }
 
 /// includeHidden：连「从列表里移除」过的也要（会话管理页按工作区筛会话用）。

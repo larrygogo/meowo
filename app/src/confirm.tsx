@@ -5,6 +5,26 @@
 /// 非 Tauri 环境(纯浏览器预览)invoke 抛错 → 按取消收场,绝不静默当同意。
 import { invoke } from "@tauri-apps/api/core";
 
+/** 单按钮提示（只有「知道了」），给失败提示用：借确认框会出现「取消 / 确定」两个按钮、
+ *  点哪个都一样（UI 调研 shell #13）。建窗失败同 appConfirm 走系统错误框兜底。 */
+export function appAlert(message: string, options: { title: string }): Promise<void> {
+  return invoke<boolean>("confirm_dialog", {
+    title: options.title,
+    message,
+    danger: false,
+    confirmLabel: null,
+    alert: true,
+  }).then(() => undefined, async (error: unknown) => {
+    console.error("[confirm] 提示框打开失败：", error);
+    try {
+      const { message: showMessage } = await import("@tauri-apps/plugin-dialog");
+      await showMessage(message, { title: options.title, kind: "error" });
+    } catch {
+      /* 非 Tauri 环境：至少有 console 线索 */
+    }
+  });
+}
+
 export function appConfirm(
   message: string,
   options: { title: string; danger?: boolean; confirmLabel?: string },
