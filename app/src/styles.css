@@ -56,7 +56,7 @@
   --link-line: transparent;
   /* 系统材质（Windows Mica、macOS 玻璃）生效时压在材质上的染色层；没有材质时不用。
      浓度按真机定：Windows 11 深色 Mica 的底约 #202020，染色层 80% 时合成出来和内容面 #18191b 分不开（2026-11-11 实拍，
-     侧栏 #191a18），所以取更深、更透的一档，让窗口底比内容面沉一级，也让壁纸的色调透得出来。 */
+     侧栏 #191a18），所以取更深、更透的一档，让窗口底比内容面沉一级。Windows 深色实际不用它（见 .platform-windows 那条规则）。 */
   --mat-tint: rgba(8, 9, 11, 0.5);
   /* accent 填充上的文字/图标：墨字压青柠 12.88:1（tokens.md 复算），悬停档同样过 4.5:1。 */
   --cc-on-accent: #1c2600;
@@ -467,6 +467,12 @@
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12), 0 2px 6px -2px rgba(0, 0, 0, 0.16);
 }
 :root.mat-on { --cc-l0: var(--mat-tint); }
+/* Windows 深色：底层不盖染色，让 Mica 原样露出来。按微软分层规范（Mica 所在的底层背景必须透明）
+   和 Windows Terminal 的深色 + Mica 做法（标签栏 #00000000，内容区更深）。
+   50% 黑染色时壁纸色调只剩 2/255，肉眼看不出材质（2026-11-11 实拍：侧栏 #161413，去掉染色后 #241f1a，
+   能看出壁纸暖色）。内容面 #18191b 因此比窗口底深，和 Terminal 一样是「外圈材质、中间更黑」。
+   macOS 玻璃会透出背后窗口，照旧保留染色；浅色未实测，不动。 */
+:root.mat-on.platform-windows:not([data-theme="light"]) { --mat-tint: transparent; }
 /* 用户让系统少用透明或开了高对比度：回到不透明底，文字对比度不依赖壁纸。 */
 @media (prefers-reduced-transparency: reduce), (forced-colors: active) {
   :root.mat-on { --cc-l0: var(--cc-window-bg); }
