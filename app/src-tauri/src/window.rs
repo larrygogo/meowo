@@ -537,6 +537,18 @@ pub(crate) fn open_chat_window_quiet(app: tauri::AppHandle, session_id: i64) {
     });
 }
 
+/// 只让已存在的对话窗无声显形，不切会话、不抢焦点。主窗口停在名单上时来了审批用：
+/// 那一行自己会亮，切会话反而把人从名单拽走。窗口不存在时什么都不做——名单租约
+/// 随窗口销毁清掉（release_desktop_consumers），走不到这里。最小化的留在任务栏，
+/// 理由同 open_chat_window_target 的安静分支。
+pub(crate) fn reveal_chat_window_quiet(app: &tauri::AppHandle) {
+    if let Some(w) = app.get_window("chat") {
+        if !w.is_visible().unwrap_or(false) {
+            show_window_no_activate(&w);
+        }
+    }
+}
+
 /// 对话窗此刻是否「在用户眼前」：存在、可见、且未最小化。审批/提问的召唤策略据此
 /// 分流——在眼前时窗口里必有用户正在看的会话，强行切会话是夺屏（实拍反馈：正在 A
 /// 会话里阅读/打字，B 会话一来审批就被瞬间拽走）；不在眼前（隐藏/最小化/未创建）时
