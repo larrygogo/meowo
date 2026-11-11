@@ -423,12 +423,10 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
   border-radius: var(--radius-lg);
   background: var(--fill-hover);
 }
-:root[data-theme="light"] .remote-session-list .chat-sidebar-tabs { background: var(--fill-selected); }
 .remote-session-list .chat-sidebar-tabs button { border-radius: 9px; font-size: 14px; color: var(--cc-text-dim); }
-/* 深色里凹槽（淡填充）已经比 L2 卡亮，选中块再用 L2 色会显得凹下去：深色用更亮一档的填充，
-   浅色用白块加一点阴影。 */
-.remote-session-list .chat-sidebar-tabs button.is-active { color: var(--cc-text); background: var(--fill-selected-hover); }
-:root[data-theme="light"] .remote-session-list .chat-sidebar-tabs button.is-active { background: var(--cc-panel-raised); box-shadow: var(--shadow-sm); }
+/* 凹槽用最淡一档填充、选中块用 L2 色加细线和一点阴影：深浅两套主题下选中块都比凹槽亮，
+   不需要按主题分写。 */
+.remote-session-list .chat-sidebar-tabs button.is-active { color: var(--cc-text); background: var(--cc-panel-raised); box-shadow: 0 0 0 var(--hairline) var(--cc-border), var(--shadow-sm); }
 /* 小节标题与右侧的筛选钮：左缘对齐大标题的 20px，右缘对齐卡片右缘 16px（钮 24 宽，图标居中，右让 2px）。 */
 .remote-session-list .chat-sidebar-section { padding: 0 14px 6px 20px; }
 .remote-session-list .chat-sidebar-section-label { font-size: 13px; }
@@ -451,14 +449,15 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
 .remote-session-list .chat-sidebar-item:active,
 .remote-session-list .chat-sidebar-item.is-active,
 .remote-session-list .chat-sidebar-item.is-checked { background: color-mix(in srgb, var(--cc-text) 6%, var(--cc-panel-raised)); }
+/* 下面几条字号带 body.remote-ui 前缀：触屏块里给宽屏侧栏定的 14/11px 特异度更高，不带压不过。 */
 /* 圆点列与标题首行同高（16px × 1.35），圆点才对得上标题的视觉中线。 */
 .remote-session-list .chat-sidebar-lead { flex-basis: 14px; height: calc(16px * 1.35); }
 .remote-session-list .chat-sidebar-lead .chat-sidebar-dot { width: 8px; height: 8px; }
-.remote-session-list .chat-sidebar-name { font-size: 16px; font-weight: 500; line-height: 1.35; }
+body.remote-ui .remote-session-list .chat-sidebar-name { font-size: 16px; font-weight: 500; line-height: 1.35; }
 .remote-session-list .chat-sidebar-item.is-active .chat-sidebar-name { font-weight: 500; }
 .remote-session-list .chat-sidebar-metaline { margin-top: 3px; }
-.remote-session-list .chat-sidebar-meta,
-.remote-session-list .chat-sidebar-note { font-size: 13px; }
+body.remote-ui .remote-session-list .chat-sidebar-meta,
+body.remote-ui .remote-session-list .chat-sidebar-note { font-size: 13px; }
 /* 右列两行：上面状态文字，下面时间和 ⋯。与左列的「标题 / 项目」两行逐行对齐。 */
 .remote-session-list .chat-sidebar-act {
   display: grid;
@@ -494,8 +493,13 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
 .remote-session-list .chat-sidebar-act .chat-sidebar-item-menu { position: static; transform: none; width: 22px; height: 18px; margin-right: -4px; opacity: 1; visibility: visible; color: var(--cc-text-faint); }
 .remote-session-list .chat-sidebar-act .chat-sidebar-check-btn { grid-row: 1 / span 2; grid-column: 1 / -1; align-self: center; }
 /* 分组头（按工作区分组、「工作区」页签）：不是卡片，是卡片组上方的一行小标题。 */
-.remote-session-list .chat-sidebar-group-head { padding-left: 4px; padding-right: 4px; min-height: 32px; font-size: 13px; }
-.remote-session-list .chat-sidebar-empty { padding: 48px 24px; font-size: 14px; }
+body.remote-ui .remote-session-list .chat-sidebar-group-head { padding-left: 4px; padding-right: 4px; min-height: 32px; font-size: 13px; }
+/* 空态 / 加载 / 首载失败：一句话居中，下一步（新建、重试）是它下面一颗 44px 的次按钮。 */
+body.remote-ui .remote-session-list .chat-sidebar-empty { display: flex; flex-direction: column; align-items: center; gap: 16px; padding: 56px 24px; font-size: 15px; line-height: 1.5; }
+.remote-session-list .chat-sidebar-retry { min-height: 44px; margin: 0; padding: 0 20px; border: 0; border-radius: var(--radius-lg); color: var(--cc-text); background: var(--fill-selected); font-size: 15px; font-weight: 500; }
+.remote-session-list .chat-sidebar-retry:active { background: var(--fill-selected-hover); }
+/* 搜索框聚焦（键盘弹出）时底栏先让开：可视高度只剩一半，底栏会盖住搜索结果。失焦即回来。 */
+.remote-session-list:has(.chat-sidebar-search input:focus) .remote-tabbar { opacity: 0; visibility: hidden; pointer-events: none; }
 /* 列表下方的状态条（撤销、出错、批量操作）出现时，由侧栏整体让出底栏的位置，列表自己不再留。 */
 .remote-session-list .chat-sidebar:has(> .chat-sidebar-error, > .chat-sidebar-batch) { padding-bottom: var(--remote-tabbar-clear); }
 .remote-session-list .chat-sidebar:has(> .chat-sidebar-error, > .chat-sidebar-batch) .chat-sidebar-list { padding-bottom: 12px; }
@@ -740,7 +744,7 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
   body.remote-ui .chat-approval button { min-height: 36px; }
   /* 按钮平分整行：英文下三个按钮一行放不下会折行，折下来的「Allow once」独占一行时铺满宽度，
      不缩在右下角一小块。 */
-  body.remote-ui .chat-window.is-remote-compact .chat-main .chat-approval-actions > button { flex: 1 1 auto; }
+  body.remote-ui .chat-window.is-remote-compact .chat-main .chat-approval-actions > button { flex: 1 1 auto; justify-content: center; text-align: center; }
 
   /* 新建会话浮层（手机竖屏整屏）：L0 底，输入与选项是 L2 卡，底部一排等宽的大按钮。 */
   .remote-new-session-overlay .ns-window { background: var(--cc-l0); }
@@ -896,9 +900,9 @@ body.remote-ui #root {
    按键一律 44px 高；「回车」是这块唯一的主动作，用强调色；「发到终端」是次按钮。 */
 body.remote-ui .chat-remote-screen { padding: 10px 12px; border-radius: var(--radius-md); background: var(--cc-code-bg); box-shadow: inset 0 0 0 var(--hairline) var(--cc-border); font-size: 12px; line-height: 1.5; }
 body.remote-ui .chat-remote-keyrow { gap: 8px; }
-body.remote-ui .chat-remote-keyrow button { min-width: 44px; min-height: 44px; border: 0; background: var(--fill-selected); font-size: 14px; }
+body.remote-ui .chat-remote-keyrow button { justify-content: center; min-width: 44px; min-height: 44px; border: 0; background: var(--fill-selected); font-size: 14px; }
 body.remote-ui .chat-remote-keyrow button:active { background: var(--fill-selected-hover); }
-body.remote-ui .chat-remote-keyrow button.is-enter { text-align: center; color: var(--cc-on-accent); background: var(--cc-accent); font-weight: 600; }
+body.remote-ui .chat-remote-keyrow button.is-enter { justify-content: center; text-align: center; color: var(--cc-on-accent); background: var(--cc-accent); font-weight: 600; }
 body.remote-ui .chat-remote-keyrow button.is-enter:active { background: var(--cc-accent-dim); }
 body.remote-ui .chat-remote-type { gap: 8px; }
 body.remote-ui .chat-remote-type input { min-height: 44px; padding: 0 12px; border: 0; background: var(--fill-hover); box-shadow: inset 0 0 0 var(--hairline) var(--cc-border); }

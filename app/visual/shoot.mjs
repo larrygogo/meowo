@@ -69,6 +69,8 @@ const MOBILE_EXTRA = [
   { scene: "mobile-gate-expired", sel: ".remote-gate-err", sizes: PHONE_SM },
   { scene: "mobile-boot", sel: ".remote-boot", sizes: PHONE_SM },
   { scene: "mobile-keys", sel: ".chat-remote-keyrow", sizes: PHONE_SM },
+  { scene: "mobile-list-empty", sel: ".chat-sidebar-empty", sizes: PHONE_SM },
+  { scene: "mobile-list-error", sel: ".chat-sidebar-empty.is-error", sizes: PHONE_SM },
   { scene: "mobile-list", tag: "en", sel: ".remote-tabbar", sizes: PHONE_SM, langs: ["en"] },
   // 键盘弹出：iPhone 竖屏键盘约占 336px，可视高度剩 476；SE 更矮（667-291=376）。
   { scene: "mobile-chat", tag: "kbd", sel: ".chat-approval-actions", sizes: [{ w: 375, h: 476 }, { w: 375, h: 376 }] },

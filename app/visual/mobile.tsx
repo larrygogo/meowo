@@ -2,7 +2,7 @@
 // visualViewport → --app-height、RemoteApp 结构），桥换成 src/demo/mock 的内存假数据，跳过配对闸门。
 // 场景：mobile-list（会话列表）/ mobile-chat（对话 + 审批卡）/ mobile-changes（「更改」页），
 // 以及 mobile-settings（底栏切到设置屏）/ mobile-new（新建会话浮层）/ mobile-gate*（配对门各态）/
-// mobile-boot（加载占位）/ mobile-keys（终端画面兜底）。横屏、iPad、键盘弹出复用 list/chat，只换视口（见 shoot.mjs）。
+// mobile-boot（加载占位）/ mobile-keys（终端画面兜底）/ mobile-list-empty、mobile-list-error（列表空态与首载失败）。横屏、iPad、键盘弹出复用 list/chat，只换视口（见 shoot.mjs）。
 import "../src/demo/isolatedStorage"; // 必须第一个
 import React from "react";
 import ReactDOM from "react-dom/client";
@@ -53,6 +53,9 @@ setExtraMock((cmd, args) => {
     return null;
   }
   if (cmd === "managed_terminal_screen" && scene === "mobile-keys") return SCREEN;
+  // 列表的空态与首载失败。
+  if (cmd === "get_live_sessions_page" && scene === "mobile-list-empty") return [];
+  if (cmd === "get_live_sessions_page" && scene === "mobile-list-error") throw new Error("offline");
   return scmMock(cmd) ?? panel(cmd, args) ?? chat(cmd);
 });
 installMocks("chat");
