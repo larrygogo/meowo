@@ -99,3 +99,15 @@ describe("三栏宽度钳制", () => {
     expect(panelDefaultWidth(620)).toBe(320);
   });
 });
+
+describe("窄窗门槛随界面缩放（做空审查第二轮：150% 缩放、900 宽开面板时面板被压到 261px）", async () => {
+  const { sidebarNarrowBreakpoint, sidebarDefaultWidth: dw, CHAT_MIN_WIDTH: chatMin, PANEL_MIN_WIDTH: panelMin } = await import("./paneLayout");
+  it("100% 时仍是 880，与改前一致", () => {
+    expect(sidebarNarrowBreakpoint(1)).toBe(880);
+  });
+  it("150% 时侧栏默认宽变大，门槛同步抬高，900 宽落进抽屉形态", () => {
+    expect(sidebarNarrowBreakpoint(1.5)).toBeGreaterThan(900);
+    // 刚过门槛的宽度：停靠侧栏 + 对话区下限仍放得下（开面板时面板由 fitPanes 让位）。
+    expect(sidebarNarrowBreakpoint(1.5) + 1 - dw(1.5)).toBeGreaterThanOrEqual(chatMin + panelMin);
+  });
+});

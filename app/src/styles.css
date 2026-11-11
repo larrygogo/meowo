@@ -4128,7 +4128,7 @@ select.ns-input {
    --cc-panel-bg 在终端页签恒为 #1f1f1f（= #121212 画布叠一层 --fill-hover），卡与终端画面之间无色阶接缝。 */
 /* 外壳统一底色：侧栏不再自带更深的混色与右分割线（卡片已承担分区语义）。 */
 :root:not(.platform-macos) .chat-sidebar { background: transparent; border-right: 0; }
-/* 窄窗（ChatWindow 的 matchMedia 880px 门限）浮窗侧栏：Kimi 式全高抽屉，挂在
+/* 窄窗（useSidebarLayout 的 matchMedia 门限，100% 缩放时 880px、随界面缩放抬高）浮窗侧栏：Kimi 式全高抽屉，挂在
    .chat-window（position:relative）上从最顶盖到最底——锚在 chat-body 会被顶栏截一刀。
    scrim 轻压暗承担点外关闭；面板不透明底 + 右缘阴影（停靠形态的透明底在浮窗下会
    透出正文）。头部行与顶栏同高同缩进，开关钮看起来原地不动。

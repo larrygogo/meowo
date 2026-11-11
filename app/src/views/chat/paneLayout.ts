@@ -24,6 +24,10 @@ export const sidebarDefaultWidth = (ui: number) => Math.round(SIDEBAR_BASE_WIDTH
 export const sidebarMaxWidth = (ui: number) => Math.round(SIDEBAR_BASE_MAX * ui);
 /** 下限同样乘缩放：150% 下拖到 200，三段页签只剩省略号（脚本 t26 实测），等于 1.0 时的 133。 */
 export const sidebarMinWidth = (ui: number) => Math.round(SIDEBAR_MIN_WIDTH * ui);
+/** 窄窗门槛：窗口宽 ≤ 它时停靠侧栏收成抽屉。原先固定 880 = 240 侧栏 + 640（对话区与面板下限之和），
+ *  侧栏默认宽随缩放变大后没跟上：150% 缩放、900 宽开面板时侧栏 300 + 对话 320 只给面板剩 261，
+ *  低于面板自己的下限（做空审查第二轮实测）。改成随侧栏默认宽一起抬，100% 时仍是 880。 */
+export const sidebarNarrowBreakpoint = (ui: number) => sidebarDefaultWidth(ui) + CHAT_MIN_WIDTH + PANEL_MIN_WIDTH;
 /** 面板默认宽：窗口宽减侧栏后的一半，夹在 [PANEL_MIN_WIDTH, PANEL_DEFAULT_MAX]。 */
 export const panelDefaultWidth = (windowWidth: number) =>
   Math.min(PANEL_DEFAULT_MAX, Math.max(PANEL_MIN_WIDTH, Math.round((windowWidth - 280) / 2)));
