@@ -19,6 +19,7 @@ import { formatBackendError } from "../i18n/errors";
 import { useShowWhenReady } from "../useShowWhenReady";
 import { reduceChatEvents } from "../chat/reducer";
 import { ApprovalCard, ApprovalCommandDetail, isRiskyCommand } from "./chat/ApprovalCard";
+import { CardAnnouncer } from "./chat/cardAnnouncer";
 import { copyPlainText } from "./chat/clipboard";
 import { readSideAnswer, sideQuestionText } from "./chat/sideQuestion";
 import { approvalChoiceForKey, BrokerApprovalCard, useBrokerResolver } from "./chat/BrokerApprovalCard";
@@ -4101,6 +4102,7 @@ export function ChatWindow() {
         {/* 回合状态的读屏播报常驻在这里（运行条会随回合结束卸载）；loading 期间不算运行，
             切会话时旧 tone 还没换掉的那一帧不会被当成「回复完成」。 */}
         <TurnAnnouncer running={!loading && tone === "running"} sessionId={sessionId} />
+        <CardAnnouncer />
         {!loading && sessionId !== 0 && !(failed && items.length === 0) && tone === "running" && (
           <RunningBar
             store={cliStatusStore}
