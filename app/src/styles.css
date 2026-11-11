@@ -396,7 +396,6 @@
 :root[data-theme="light"] .usage-track { background: rgba(0, 0, 0, 0.08); }
 :root[data-theme="light"] .settings { background: var(--cc-window-bg); }
 :root[data-theme="light"] .side { background: rgba(0, 0, 0, 0.035); }
-:root[data-theme="light"] .dd-menu { background: var(--cc-menu-bg); box-shadow: var(--shadow-menu); }
 :root[data-theme="light"] .pswitch { background: rgba(0, 0, 0, 0.16); }
 /* 开启态强调色轨道必须比上面的 off 覆盖更具体，否则被盖成灰色 → 看不出开关。 */
 :root[data-theme="light"] .pswitch.on { background: var(--cc-accent); }
@@ -1172,30 +1171,20 @@ button.stab {
   display: flex;
   flex-direction: column;
   gap: var(--sp-1);
-  padding: var(--sp-4);
-  background: var(--cc-menu-bg);
-  border: 1px solid var(--cc-border);
-  border-radius: var(--radius-sm);
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
   z-index: 60;
   animation: dd-pop 0.12s ease-out;
 }
-:root[data-theme="light"] .ctx-menu { background: var(--cc-menu-bg); box-shadow: 0 10px 28px rgba(0, 0, 0, 0.16); }
 .ctx-item {
   display: flex;
   align-items: center;
   gap: var(--sp-8);
-  padding: var(--sp-6) var(--sp-10);
   border: none;
   background: transparent;
-  border-radius: var(--radius-xs);
   color: var(--cc-text);
-  font-size: calc(11.5px * var(--cc-ui));
   font-family: inherit;
   cursor: pointer;
   text-align: left;
 }
-.ctx-item:hover { background: var(--fill-selected); }
 /* 置灰项（终端右键菜单的「复制/粘贴」按现场可用性定格）：不藏位、只降 opacity，
    菜单结构稳定，肌肉记忆不被打乱；禁用钮不吃 hover 高亮。 */
 .ctx-item:disabled { opacity: 0.4; cursor: default; }
@@ -2265,17 +2254,12 @@ button.stab {
   display: flex;
   flex-direction: column;
   gap: var(--sp-1);
-  padding: var(--sp-4);
   /* 限高内滚：长清单（如几十个目录的筛选）不该铺满整窗——上限之内还受
      视口裁切兜底约束（原 100vh-12px 的语义被 min 合并保留）。 */
   max-height: min(480px, calc(100vh - 12px));
   overflow-y: auto;
   /* 嵌在设置页的滚动区里：滚到底不再把整页带着跑。 */
   overscroll-behavior: contain;
-  background: var(--cc-menu-bg);
-  border: 1px solid color-mix(in srgb, var(--cc-border) 82%, transparent);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-menu);
   z-index: 50;
   animation: dd-pop var(--dur-base) cubic-bezier(0.2, 0.8, 0.2, 1);
 }
@@ -2299,15 +2283,12 @@ button.stab {
   border: none;
   background: transparent;
   color: var(--cc-text-dim);
-  font-size: var(--text-sm);
   text-align: left;
   white-space: nowrap;
-  padding: var(--sp-7) var(--sp-10);
-  border-radius: var(--radius-xs);
   cursor: pointer;
   transition: background var(--dur-fast), color var(--dur-fast);
 }
-.dd-item:hover { background: var(--fill-selected); color: var(--cc-text); }
+.dd-item:hover { color: var(--cc-text); }
 .dd-item.sel { color: var(--cc-accent-text); }
 /* 菜单宽被 max-width 夹住时，超长标签省略而不是硬截（右侧勾选图标不受影响）。 */
 .dd-item > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
@@ -2490,11 +2471,6 @@ button.stab {
   max-height: min(260px, calc(100vh - 12px));
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: var(--sp-5);
-  background: var(--cc-menu-bg);
-  border: 1px solid var(--cc-border);
-  border-radius: var(--radius-sm);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
   animation: dd-pop 0.12s ease-out;
 }
 .relay-model-menu.up { animation-name: relay-menu-pop-up; }
@@ -2502,23 +2478,20 @@ button.stab {
   from { opacity: 0; transform: translateY(4px); }
   to { opacity: 1; transform: translateY(0); }
 }
-:root[data-theme="light"] .relay-model-menu { background: var(--cc-menu-bg); box-shadow: 0 10px 28px rgba(0, 0, 0, 0.16); }
 .relay-model-option {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--sp-10);
   width: 100%;
-  padding: var(--sp-7) var(--sp-9);
   border: 0;
-  border-radius: var(--radius-xs);
   background: transparent;
   color: var(--cc-text-dim);
-  font-size: var(--text-sm);
   text-align: left;
   cursor: pointer;
 }
-.relay-model-option:hover, .relay-model-option.active { color: var(--cc-text); background: var(--fill-selected); }
+.relay-model-option:hover, .relay-model-option.active { color: var(--cc-text); }
+.relay-model-option.active { background: var(--fill-selected); }
 .relay-model-option.sel { color: var(--cc-accent-text); }
 .relay-model-option span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .relay-model-option em {
@@ -3077,20 +3050,12 @@ button.stab {
   pointer-events: none;
   max-width: 240px;
   padding: var(--sp-5) var(--sp-9);
-  border-radius: var(--radius-md);
   font-size: var(--text-xs);
   line-height: 1.45;
   color: var(--cc-text);
-  background: var(--cc-menu-bg);
-  border: 1px solid var(--cc-border);
-  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.4);
   white-space: normal;
   word-break: break-word;
   animation: tip-in 0.12s ease-out;
-}
-:root[data-theme="light"] .tip {
-  background: var(--cc-menu-bg);
-  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.16);
 }
 @keyframes tip-in {
   from { opacity: 0; transform: translateY(-2px); }
@@ -6392,14 +6357,14 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
    浅色主题下画环发暗发脏——实拍反馈）；与状态圆点同一套取色。 */
 .chat-context.is-warn .chat-context-ring-fg { stroke: var(--cc-warn-vivid); }
 .chat-context.is-full .chat-context-ring-fg { stroke: var(--cc-err-vivid); }
-.chat-compose .chat-slash-menu .dd-item { height: auto; min-height: 0; padding: var(--sp-7) var(--sp-10); border: 0; border-radius: var(--radius-xs); color: var(--cc-text-dim); background: transparent; }
-.chat-compose .chat-slash-menu .dd-item:hover { color: var(--cc-text); background: var(--fill-hover); }
+/* 输入区 :is(button) 通用样式会改按钮高度与底色，斜杠菜单条目压回菜单条目（尺寸、悬停底见文末「弹出菜单」）。 */
+.chat-compose .chat-slash-menu .dd-item { height: auto; border: 0; color: var(--cc-text-dim); background: transparent; }
+.chat-compose .chat-slash-menu .dd-item:hover { color: var(--cc-text); background: var(--fill-selected); }
 :is(.chat-compose, .nsp-composer) .chat-model-item { height: auto; min-height: 0; padding: var(--sp-9) var(--sp-11); border: 0; border-radius: var(--radius-md); color: inherit; background: transparent; }
-:is(.chat-compose, .nsp-composer) .chat-model-item:hover { background: var(--fill-hover); }
 /* 模型菜单：双行卡片项（名称 + 描述），当前模型右侧打勾。表面/阴影仍继承 .dd-menu。 */
-.chat-model-menu { position: absolute; bottom: calc(100% + var(--sp-8)); left: 0; min-width: 232px; padding: var(--sp-6); border-radius: var(--radius-lg); }
-.chat-model-item { display: flex; align-items: center; gap: var(--sp-14); width: 100%; padding: var(--sp-9) var(--sp-11); border: 0; border-radius: var(--radius-md); background: transparent; text-align: left; cursor: pointer; }
-.chat-model-item:hover { background: var(--fill-hover); }
+.chat-model-menu { position: absolute; bottom: calc(100% + var(--sp-8)); left: 0; min-width: 232px; }
+:is(.chat-compose, .nsp-composer) .chat-model-item:hover { background: var(--fill-selected); }
+.chat-model-item { display: flex; align-items: center; gap: var(--sp-14); width: 100%; padding: var(--sp-9) var(--sp-11); border: 0; background: transparent; text-align: left; cursor: pointer; }
 .chat-model-item-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
 .chat-model-item-name { color: var(--cc-text); font-size: var(--text-sm); font-weight: 500; }
 .chat-model-item-desc { color: var(--cc-text-faint); font-size: var(--text-xs); line-height: var(--leading-normal); }
@@ -6417,10 +6382,10 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .chat-model-quick-head { padding: var(--sp-8) var(--sp-12) var(--sp-4); color: var(--cc-text); font-size: var(--text-base); font-weight: 600; }
 /* 模型行比分组头缩进一级（Kimi 同款层级）、行高按 36px 给足点击面；当前模型整行铺底色，
    不只靠行尾一个勾——扫一眼就知道停在哪。 */
-.chat-model-quick .chat-model-item { min-height: 36px; padding: var(--sp-7) var(--sp-12) var(--sp-7) var(--sp-24); border-radius: 8px; }
+.chat-model-quick .chat-model-item { min-height: 36px; padding: var(--sp-7) var(--sp-12) var(--sp-7) var(--sp-24); border-radius: var(--radius-md); }
 /* 选中行：前景色 10% 的半透明底（Kimi 的 --color-selected），亮暗两套主题都成立。 */
 .chat-model-quick .chat-model-item.is-active { background: color-mix(in srgb, var(--cc-text) 10%, transparent); }
-.chat-model-quick .chat-model-item-name { font-size: var(--text-base); font-weight: 500; color: var(--cc-text); }
+.chat-model-quick .chat-model-item-name { font-size: var(--text-sm); font-weight: 500; color: var(--cc-text); }
 .chat-model-quick .chat-model-quick-more .chat-model-item-name { font-weight: 600; }
 .chat-model-quick .chat-model-item-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-model-item-detail { flex: none; color: var(--cc-text-faint); font-size: var(--text-xs); }
@@ -7632,6 +7597,28 @@ pre.chat-md-plain {
 .stk-wt { margin-left: var(--sp-4); color: var(--cc-text-faint); }
 .stk-wt::before { content: "· "; }
 .wt-prefix-input { width: 140px; height: 28px; }
+
+/* ===== 弹出菜单：一份外壳 + 一份条目（UI 调研 sys4）=====
+   此前对话窗里五种菜单各写一套：路径右键菜单 6px 圆角 + 11.5px 字 + 写死阴影，标题栏菜单 12px + 13px，
+   中转模型菜单 6px + 另一个写死阴影，tooltip 7px + 第四种阴影，挨着弹出时一眼看出不是一家的。
+   外壳：--radius-lg、细线边、--shadow-menu、不透明 --cc-menu-bg（浅色/终端页由 token 自己换值，
+   不再逐个写浅色补丁）。条目：13px、约 30px 高；圆角取外壳圆角减内边距（12 − 4 = 8），拐角同心。
+   放在文末：组件规则只留定位、尺寸上限与动画，靠后写统一压住外观。 */
+.ctx-menu, .dd-menu, .relay-model-menu, .tip {
+  border: var(--hairline) solid var(--cc-border);
+  border-radius: var(--radius-lg);
+  background: var(--cc-menu-bg);
+  box-shadow: var(--shadow-menu);
+}
+.ctx-menu, .dd-menu, .relay-model-menu { padding: var(--sp-4); }
+:where(.ctx-item, .dd-item, .relay-model-option, .chat-model-item) {
+  min-height: calc(30px * var(--cc-ui));
+  padding: var(--sp-6) var(--sp-10);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+}
+/* 条目规则用 :where() 降到零特异度：危险项、禁用项、双行模型卡片等变体的同名规则照常压过它。 */
+:where(.ctx-item, .dd-item, .relay-model-option, .chat-model-item):hover { background: var(--fill-selected); }
 
 /* ===== 按钮基件（UI 调研 sys3 / sys15）=====
    放在样式表末尾：组件基类常写成 `.容器 button`（特异度 0,1,1），角色类写成
