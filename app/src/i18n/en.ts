@@ -537,6 +537,8 @@ export const en: Dict = {
     compacting: "Compacting context…",
     requesting: "Requesting…",
     working: "Working…",
+    liveWorking: "Working",
+    liveReplyDone: "Reply finished",
     steerWaiting: "Your message goes in after this step",
     steerInjected: "Inserted. Continuing…",
     slashSheetTitle: "Commands",

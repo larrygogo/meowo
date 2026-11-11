@@ -573,6 +573,9 @@ export const zh = {
     // 插话的去向优先于它们，因为那是用户此刻最关心的那件事）
     requesting: "请求中…",
     working: "工作中…",
+    // 读屏播报的回合状态句（运行条本身不播报，见 RunningBar 的 TurnAnnouncer）。
+    liveWorking: "工作中",
+    liveReplyDone: "回复完成",
     steerWaiting: "等这一步完成后插入你的插话",
     steerInjected: "已插入，正在继续处理",
     // 手机上的底部面板（斜杠命令）
