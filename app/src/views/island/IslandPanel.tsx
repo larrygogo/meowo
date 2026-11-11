@@ -153,7 +153,13 @@ export function IslandPanel({
 
   return (
     <div className="isl-stage">
-      <div ref={panelRef} className={`isl-notch isl-panel${pages > 1 ? " is-paged" : ""}`}>
+      {/* region + 名字：岛窗口里只有这一块，读屏能按地标跳到它（axe region，embed-island 实扫）。 */}
+      <div
+        ref={panelRef}
+        className={`isl-notch isl-panel${pages > 1 ? " is-paged" : ""}`}
+        role="region"
+        aria-label={`Meowo ${onUsagePage ? t.island.panelUsage : t.island.panelSessions}`}
+      >
         <div className="isl-panel-head" onPointerDown={onPointerDownDrag}>
           <span className="isl-panel-title">
             Meowo <span className="isl-accent">{onUsagePage ? t.island.panelUsage : t.island.panelSessions}</span>
@@ -237,11 +243,16 @@ export function IslandPanel({
                     role="button"
                     tabIndex={0}
                     onClick={() => onOpenSession(item.session.id)}
-                    onKeyDown={(event) => { if (event.key === "Enter") onOpenSession(item.session.id); }}
+                    // 空格也算（i8）：role=button 的约定，原来只认 Enter。
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" && event.key !== " ") return;
+                      event.preventDefault();
+                      onOpenSession(item.session.id);
+                    }}
                   >
                     <AgentRing item={item} size={30} />
                     <span className="isl-row-text">
-                      <span className="isl-row-title">{sessionTitle(item, t.sticker.waitingFirstInput)}</span>
+                      <span className="isl-row-title" title={sessionTitle(item, t.sticker.waitingFirstInput)}>{sessionTitle(item, t.sticker.waitingFirstInput)}</span>
                       <span className="isl-row-sub">{detail}</span>
                     </span>
                     <span className={`isl-state is-${tone}`}>{t.island.toneLabel[tone] ?? ""}</span>
@@ -302,13 +313,15 @@ export function IslandPanel({
           </>
         )}
         {pages > 1 && (
-          <div className="isl-dots-nav" role="tablist">
+          // 分页圆点是普通按钮组、当前页标 aria-current（i8）。不用 tablist：这里是翻页，没有对应的
+          // tabpanel，冒充 tablist 却不支持方向键反而让读屏用户以为键盘坏了；按钮组每个点各占一个 Tab
+          // 停靠，最多 4 页，代价可接受，也不必等 a11y 车道的 useTablist。
+          <div className="isl-dots-nav" role="group" aria-label={t.island.pages}>
             {Array.from({ length: pages }, (_, i) => (
               <button
                 key={i}
                 type="button"
-                role="tab"
-                aria-selected={i === current}
+                aria-current={i === current ? "page" : undefined}
                 aria-label={t.island.page(i + 1)}
                 // 会话页的圆点按该页最急状态上色（二期 #3），用量页没有状态。
                 className={[
