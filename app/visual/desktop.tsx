@@ -32,6 +32,8 @@ const scene = q.get("scene") ?? "chat";
 Date.now = () => FIXED_NOW;
 store.settings.language = lang;
 store.settings.theme = theme;
+// ?ui=1.5：界面缩放（只有对话窗与灵动岛吃，设置等定尺寸窗口的 bootAppearance 不下发）。
+if (Number(q.get("ui")) > 0) store.settings.ui_scale = Math.round(Number(q.get("ui")) * 100);
 
 const noop = () => {};
 
