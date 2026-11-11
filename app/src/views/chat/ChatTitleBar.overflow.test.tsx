@@ -7,18 +7,14 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(() => Promise.resolve(nul
 import { ChatTitleBar } from "./ChatTitleBar";
 import { titleBarOverflow, TitleOverflowContext } from "./titleOverflow";
 
-// jsdom 没有布局：用一个假 ResizeObserver 把标题栏宽度报成指定值。
+// jsdom 没有布局：把标题栏的 clientWidth 报成指定值（标题栏自己量内容盒宽）。
 function fakeWidth(width: number) {
-  class FakeObserver {
-    constructor(private cb: ResizeObserverCallback) {}
-    observe() { this.cb([{ contentRect: { width } } as ResizeObserverEntry], this as unknown as ResizeObserver); }
-    unobserve() {}
-    disconnect() {}
-  }
-  vi.stubGlobal("ResizeObserver", FakeObserver);
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (this: HTMLElement) {
+    return this.classList.contains("chat-bar") ? width : 0;
+  });
 }
 
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
 /** 代替 ChatTitleMenu：只把上下文里的溢出项列出来。 */
 function OverflowList() {

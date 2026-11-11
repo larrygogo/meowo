@@ -4130,7 +4130,8 @@ select.ns-input {
    透出正文）。头部行与顶栏同高同缩进，开关钮看起来原地不动。
    三段类选择器压过上面 non-mac 的透明底（同特异性、本组在后）。 */
 .chat-sidebar-scrim { position: absolute; inset: 0; z-index: 60; background: rgba(0, 0, 0, 0.18); }
-.chat-sidebar-overlay { position: absolute; top: 0; bottom: 0; left: 0; z-index: 61; display: flex; flex-direction: column; width: 244px; background: var(--cc-window-bg); border-right: var(--hairline) solid var(--cc-border); box-shadow: var(--shadow-lg); }
+/* 抽屉宽 = min(侧栏宽, 85vw)：--sidebar-w 由 ChatWindow 给（用户拖过的宽或 240×缩放），调研 s14。 */
+.chat-sidebar-overlay { position: absolute; top: 0; bottom: 0; left: 0; z-index: 61; display: flex; flex-direction: column; width: min(var(--sidebar-w, calc(244px * var(--cc-ui, 1))), 85vw); background: var(--cc-window-bg); border-right: var(--hairline) solid var(--cc-border); box-shadow: var(--shadow-lg); }
 /* 抽屉常驻挂载（首开后不卸载，消「每次打开都加载中」）：hidden 隐藏时本类的 display:flex
    会盖过 UA 的 [hidden]{display:none}，必须显式压回。 */
 .chat-sidebar-scrim[hidden],
@@ -4141,9 +4142,11 @@ select.ns-input {
 /* macOS：抽屉从窗口最顶展开，头部按钮必须给左上角的原生红绿灯让位（与其余 mac 头部同规）。 */
 :root.platform-macos .chat-sidebar-overlay-head { padding-left: 84px; }
 .chat-window .chat-sidebar-overlay .chat-sidebar { flex: 1; min-height: 0; width: 100%; background: transparent; border-right: 0; }
-/* 列宽不随密度缩放：240px 是默认值，停靠形态可由 .chat-sidebar-resizer 拖宽；
-   缩放只放大栏内文字/间距，长会话名由 .chat-sidebar-name-text 等的 ellipsis 消化。 */
-.chat-sidebar { width: 240px; flex: 0 0 auto; display: flex; flex-direction: column; border-right: var(--hairline) solid var(--cc-border); background: color-mix(in srgb, var(--cc-bg) 96%, var(--cc-text) 4%); }
+/* 列宽随界面缩放：默认 240px × --cc-ui（关卡 A-20261111-ui-spec 推翻了原「列宽不随密度缩放」：
+   125～150% 下文字放大、列宽不变，英文三段页签贴边、标题只剩一个词，调研 c7/s6）。
+   停靠形态的实际宽度由 ChatWindow 内联给出（paneLayout：用户拖过的宽度照旧保留，并按窗口钳制），
+   这里的 calc 只是没有内联值时的兜底。 */
+.chat-sidebar { width: calc(240px * var(--cc-ui, 1)); flex: 0 0 auto; display: flex; flex-direction: column; border-right: var(--hairline) solid var(--cc-border); background: color-mix(in srgb, var(--cc-bg) 96%, var(--cc-text) 4%); }
 .chat-sidebar-head { padding: 0 1px var(--sp-4) var(--sp-8); display: flex; align-items: center; gap: var(--sp-6); flex: 0 0 auto; }
 .chat-sidebar-search { position: relative; flex: 0 0 auto; padding: 0 var(--sp-8) var(--sp-6); }
 .chat-sidebar-search-icon { position: absolute; left: calc(var(--sp-8) + var(--sp-9)); top: calc(50% - var(--sp-4)); transform: translateY(-50%); color: var(--cc-text-faint); pointer-events: none; }
@@ -4714,7 +4717,9 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .session-info-row kbd, .session-info-diff { flex: none; color: var(--cc-text-faint); font: inherit; font-variant-numeric: tabular-nums; }
 /* 默认宽度是可用宽度的一半（useDiffPanelWidth），旧面板的 40vw 上限会把它压回去；
    改成给对话区留 320px。 */
-.chat-diff-panel.side-panel { max-width: calc(100% - 320px); }
+/* 兜底上限也扣常驻侧栏（--docked-sidebar-w 由 ChatWindow 设在 .chat-body 上）：只减 320 时侧栏
+   常驻能把对话区压到 80px（调研 c4）。正常情况下 JS 已按 paneLayout 钳过，这条只管首帧。 */
+.chat-diff-panel.side-panel { max-width: calc(100% - 320px - var(--docked-sidebar-w, 0px)); }
 /* 右侧面板的页签栏（照 Kimi Code：28px 高、最宽 168px、标题省略、横向滚动不显示滚动条）。 */
 .side-panel-tabs { position: relative; flex: 0 1 auto; min-width: 0; display: flex; align-items: center; gap: 2px; overflow-x: auto; scrollbar-width: none; }
 .side-panel-tabs::-webkit-scrollbar { display: none; }
@@ -4985,6 +4990,9 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 /* 「更改」= VS Code 源代码管理样式（用户要求 2026-11-09，对照其截图）：存储库列表 → 提交框 → 分组平铺文件。 */
 /* position: relative：虚拟列表按 offsetTop 量各组在滚动内容里的起点，.scm 得是 offsetParent。 */
 .scm { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; overflow-y: auto; padding-bottom: var(--sp-8); }
+/* 面板拖宽或最大化后内容封顶居中：2560 宽最大化时提交框、「提交全部」拉成两千多 px 的横条，
+   文件名和增删数隔着半个屏幕，视线来回扫（调研 c6）。880 约是对话列 720 加两侧留白。 */
+.scm-repos, .scm-commit, .scm-forge, .scm-tools, .scm-groups { box-sizing: border-box; width: 100%; max-width: 880px; align-self: center; }
 .scm-section-title { padding: var(--sp-6) var(--sp-12) var(--sp-2); font-size: var(--text-xs); font-weight: 600; letter-spacing: 0.02em; color: var(--cc-text-faint); user-select: none; }
 .scm-repos { flex: 0 0 auto; display: flex; flex-direction: column; padding: 0 var(--sp-4) var(--sp-4); border-bottom: var(--hairline) solid var(--cc-border); }
 .scm-repo { display: flex; align-items: center; gap: var(--sp-6); min-width: 0; height: 26px; padding: 0 var(--sp-8); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-dim); font: inherit; font-size: var(--text-sm); text-align: left; cursor: pointer; }

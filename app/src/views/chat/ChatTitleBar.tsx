@@ -20,11 +20,15 @@ function useContentWidth(ref: RefObject<HTMLElement | null>): number {
   useLayoutEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const style = getComputedStyle(el);
-    const first = el.clientWidth - (parseFloat(style.paddingLeft) || 0) - (parseFloat(style.paddingRight) || 0);
-    if (first > 0) setWidth(Math.round(first));
+    // 每次自己量，不读回调参数：测试里的假 ResizeObserver 回调不带 entry。
+    const measure = () => {
+      const style = getComputedStyle(el);
+      const content = el.clientWidth - (parseFloat(style.paddingLeft) || 0) - (parseFloat(style.paddingRight) || 0);
+      setWidth(content > 0 ? Math.round(content) : 0);
+    };
+    measure();
     if (typeof ResizeObserver !== "function") return;
-    const observer = new ResizeObserver(([entry]) => setWidth(Math.round(entry.contentRect.width)));
+    const observer = new ResizeObserver(measure);
     observer.observe(el);
     return () => observer.disconnect();
   }, [ref]);
