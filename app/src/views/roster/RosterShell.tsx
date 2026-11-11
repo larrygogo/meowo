@@ -7,7 +7,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, use
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { getLiveSessionsPage } from "../../api";
+import { getLiveSessionsPage, registerApprovalConsumer, unregisterApprovalConsumer } from "../../api";
 import { useBoardRefresh } from "../../hooks/useBoardRefresh";
 import { useTauriEvent } from "../../hooks/useTauriEvent";
 import { useT } from "../../i18n";
@@ -83,6 +83,29 @@ function DesktopRoster() {
     setView("roster");
   }, []);
   useTauriEvent("chat-open-roster", backToRoster);
+
+  // 名单租约（后端 pty.rs ROSTER_LEASE_SESSION）：主窗口开着时，任何会话来了审批都留在表里等人答，
+  // 不把窗口切到那个会话；从某一行的现场退回名单，它挂着的审批也不会被交还终端。
+  // 外壳整个生命周期只注册一次；窗口销毁时后端自己清（release_desktop_consumers）。
+  useEffect(() => {
+    const consumerId = `roster-${Math.random().toString(36).slice(2)}`;
+    let disposed = false;
+    let timer = 0;
+    const register = (attempt: number) => {
+      registerApprovalConsumer(0, consumerId)
+        .then(() => { if (disposed) void unregisterApprovalConsumer(consumerId).catch(() => {}); })
+        .catch(() => {
+          // 注册失败不重试到底：没有名单租约只是退回旧行为（来审批时切会话），不会丢审批。
+          if (!disposed && attempt < 3) timer = window.setTimeout(() => register(attempt + 1), 500 * 2 ** attempt);
+        });
+    };
+    register(0);
+    return () => {
+      disposed = true;
+      window.clearTimeout(timer);
+      void unregisterApprovalConsumer(consumerId).catch(() => {});
+    };
+  }, []);
 
   // 眼睛站谁那里。stickyRef 记着它此刻站的会话：它还需要你就不换（新来的不抢）。
   const stickyRef = useRef<number | null>(null);

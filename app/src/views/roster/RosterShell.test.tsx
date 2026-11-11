@@ -132,6 +132,16 @@ describe("名单外壳", () => {
     expect(emit).toHaveBeenLastCalledWith("roster-front", false);
   });
 
+  it("挂载时注册名单租约（会话号 0），卸载时注销同一个", async () => {
+    sessions = [mk("甲"), mk("乙")];
+    const view = render(<RosterShell />);
+    await screen.findByText("甲");
+    const call = invoke.mock.calls.find(([cmd]) => cmd === "register_approval_consumer");
+    expect(call?.[1]).toMatchObject({ sessionId: 0 });
+    view.unmount();
+    expect(invoke).toHaveBeenCalledWith("unregister_approval_consumer", { consumerId: (call?.[1] as { consumerId: string }).consumerId });
+  });
+
   it("界面上没有计数", async () => {
     sessions = [mk("甲", (s) => { s.pending_review = "approval"; }), mk("乙", (s) => { s.pending_review = "question"; })];
     render(<RosterShell />);

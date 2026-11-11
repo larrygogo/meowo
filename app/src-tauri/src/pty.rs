@@ -1054,13 +1054,24 @@ impl PtyBroker {
             return ApprovalHold::Reject;
         };
         let roster = self.has_roster_consumer();
+        let on_target = self.has_approval_consumer(session_id);
         match approval_summon_action(
-            self.has_approval_consumer(session_id),
+            on_target,
             roster,
             self.has_any_approval_consumer(),
             crate::window::chat_window_in_view(&app),
         ) {
-            SummonAction::Ready => return ApprovalHold::Desktop,
+            SummonAction::Ready => {
+                // 靠名单租约就位的（用户没停在这条会话上）：窗口可见不等于人在看它，可能压在
+                // 别的应用后面。闪一下任务栏——窗口本来就在前台时系统不会闪，不打扰。
+                if !on_target {
+                    if let Some(window) = app.get_window("chat") {
+                        let _ =
+                            window.request_user_attention(Some(tauri::UserAttentionType::Critical));
+                    }
+                }
+                return ApprovalHold::Desktop;
+            }
             SummonAction::Hold => {
                 // 不切窗只召唤：请求已由调用方先入表，pending-approval 事件让前端
                 // 点亮侧栏徽标（approvalAwaitingIds），闪烁提醒有事发生。
