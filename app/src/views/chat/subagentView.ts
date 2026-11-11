@@ -61,7 +61,11 @@ export function readSubagentScreen(screen: string[] | null, spec: SubagentViewSp
   const main = rows.findIndex((row) => mainRow.test(row));
   const selected = rows.findIndex((row) => selectedRow.test(row));
   const mainMarker = main >= 0 ? mainRow.exec(rows[main])?.[1] : undefined;
-  const viewing = placeholder !== undefined || (label !== null && mainMarker !== undefined && mainMarker !== spec.panel_viewed_marker);
+  // 占位证据的限制：屏幕只给纯文本，占位的暗色认不出，用户自己打的「Message @…」草稿和占位一样。
+  // 面板画着且 main 行是「正在看」的记号时，这条证据作废（做空第二轮 D）；面板没画出来时仍会误判，
+  // 后果是这次发送先给横幅、再点一次照发，不会把话错发给别人。
+  const mainViewed = mainMarker === spec.panel_viewed_marker;
+  const viewing = (placeholder !== undefined && !mainViewed) || (label !== null && mainMarker !== undefined && !mainViewed);
   return { viewing, name: viewing ? label ?? placeholder ?? null : null, main, selected };
 }
 
