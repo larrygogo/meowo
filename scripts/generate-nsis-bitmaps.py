@@ -9,8 +9,9 @@ PANEL_TOP = "#1d1d20"
 PANEL_BOTTOM = "#0c0c0d"
 ICON_PANEL = "#151517"
 ICON_STROKE = "#2a2a2d"
-DOT_GREEN = "#4ec9a5"
-DOT_AMBER = "#e0a23c"
+# 眼睛与安装按钮都是品牌青柠（与 icon.svg 同色）；改这里要同步 installer.nsi 的 MEOWO_COL_LINK。
+DOT_GREEN = "#d4f64c"
+DOT_AMBER = "#d4f64c"
 TEXT_COLOR = "#f5f5f7"
 SUBTEXT_COLOR = "#a0a0a8"
 # 一键安装背景的分区底色。改这两个值必须同步 installer.nsi 里 SetCtlColors 的
@@ -70,10 +71,11 @@ def make_header():
         outline=ICON_STROKE,
         width=1,
     )
-    dot_r = 5
+    # 两只眼睛同色，中间要留缝才认得出是一双（半径 4、圆心距 12）。
+    dot_r = 4
     dot_cy = iy + icon_size // 2 - 2
-    paste_dot(img, ix + icon_size // 2 - 5, dot_cy, dot_r, DOT_GREEN)
-    paste_dot(img, ix + icon_size // 2 + 5, dot_cy, dot_r, DOT_AMBER)
+    paste_dot(img, ix + icon_size // 2 - 6, dot_cy, dot_r, DOT_GREEN)
+    paste_dot(img, ix + icon_size // 2 + 6, dot_cy, dot_r, DOT_AMBER)
 
     font = load_font("segoeui.ttf", 15)
     draw.text((14, (h - 15) // 2 + 1), "Meowo", fill=TEXT_COLOR, font=font)
@@ -98,9 +100,9 @@ def make_sidebar():
     )
 
     cx = ix + icon_size // 2
-    cy = iy + icon_size // 2 - 10
-    paste_dot(img, cx - 17, cy, 17, DOT_GREEN)
-    paste_dot(img, cx + 17, cy, 17, DOT_AMBER)
+    cy = iy + icon_size // 2 - 4
+    paste_dot(img, cx - 15, cy, 11, DOT_GREEN)
+    paste_dot(img, cx + 15, cy, 11, DOT_AMBER)
 
     title_font = load_font("segoeui.ttf", 17)
     sub_font = load_font("NotoSansSC-VF.ttf", 11)
@@ -156,7 +158,7 @@ def make_oneclick_bg():
 
     # 两个变体：主页/完成页用带胶囊按钮的（原生按钮白底在暗色下扎眼，NSIS 裸环境
     # 又做不了 owner-draw，圆角胶囊烙图、安装器叠一条同色可点文字带）；
-    # 进度页用不带胶囊的（那页没有按钮，绿胶囊悬在进度条后面很怪）。
+    # 进度页用不带胶囊的（那页没有按钮，青柠胶囊悬在进度条后面很怪）。
     # 胶囊几何必须与 installer.nsi 的按钮文字带对齐：320x52 逻辑 @2x = 640x104，
     # 圆角 24（=逻辑 12，文字带全宽落在直边区内，不会探出圆角）。
     img.save(OUT_DIR / "nsis-oneclick-bg.bmp", "BMP")

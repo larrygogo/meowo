@@ -17,6 +17,8 @@ import { makeSession } from "../src/demo/data";
 import { savePanel } from "../src/views/chat/panelTabs";
 import { SETTINGS_SECTION_KEY } from "../src/settingsNav";
 import { CHAT_SESSION_ID, FIXED_NOW, markReady, scmMock, withLongItems } from "./fixtures";
+import type { ProviderUsage } from "../src/api";
+import type { IslandAlertEvent } from "../src/generated/contracts/IslandAlertEvent";
 import "../src/fonts";
 import "../src/styles.css";
 
@@ -82,7 +84,7 @@ async function boot(): Promise<React.ReactNode> {
   if (scene.startsWith("island-")) {
     installMocks("main");
     bootAppearance({ scale: true, panel: true });
-    const { Island } = await import("../src/views/Island");
+    const { Island, IslandStrip } = await import("../src/views/Island");
     const { IslandPanel } = await import("../src/views/island/IslandPanel");
     const titles = lang === "en"
       ? ["Refactor login form validation", "Fix duplicate charge in payment callback", "Add tests for the export API", "Investigate the nightly build failure on the ARM64 runner"]
@@ -99,19 +101,58 @@ async function boot(): Promise<React.ReactNode> {
     // 岛在真机上是透明窗口浮在桌面上：给一块固定的中性灰底，深浅主题下都看得清边缘。
     const stage: React.CSSProperties = { position: "fixed", inset: 0, background: "#5b6b7a", display: "flex", justifyContent: "center", alignItems: "flex-start", paddingTop: 12 };
     let el: React.ReactNode;
-    if (scene === "island-panel") {
-      el = (
-        <div className="island-shell" style={{ width: 600, "--island-pill-w": "380px", "--island-pill-h": "46px" } as React.CSSProperties}>
-          <IslandPanel sessions={sessions} usage={{}} quotaProviders={[]} onOpenSession={noop} onMeasure={noop} onPointerDownDrag={noop} onNewSession={noop} onOpenChat={noop} onOpenSettings={noop} onToggleStrip={noop} />
+    // 落点：场景名以 -menubar 结尾的按 macOS 菜单栏弹出面板画（四角圆、底下是系统毛玻璃，这里垫一块渐变近似）。
+    const menubar = scene.endsWith("-menubar");
+    if (menubar) {
+      document.documentElement.classList.add("island-menubar", "platform-macos");
+      stage.background = "linear-gradient(135deg, #3a4654, #6b5a4c)";
+    }
+    // 额度页：两家、多档（含模型周限的长名字），一家快用完。
+    const lane = (kind: string, used_pct: number, label?: string) => ({ kind, used_pct, used: null, limit: null, unit: null, resets_at: null, label });
+    const usage = {
+      claude: { note: null, lanes: [lane("five_hour", 42), lane("seven_day", 68), lane("model_weekly", 91, "Fable")] },
+      codex: { note: null, lanes: [lane("five_hour", 12), lane("weekly", 35)] },
+    } as unknown as Record<string, ProviderUsage>;
+    const panelProps = { onOpenSession: noop, onMeasure: noop, onPointerDownDrag: noop, onNewSession: noop, onOpenChat: noop, onOpenSettings: noop, onToggleStrip: noop };
+    // 真机面板窗口宽 600 + 两只耳朵；菜单栏落点没有耳朵。
+    const shell = (node: React.ReactNode) => (
+      <div className="island-shell" style={{ width: menubar ? 600 : 628, "--island-pill-w": "380px", "--island-pill-h": "46px" } as React.CSSProperties}>{node}</div>
+    );
+    if (scene === "island-panel" || scene === "island-panel-menubar") {
+      el = shell(<IslandPanel sessions={sessions} usage={usage} quotaProviders={["claude", "codex"]} {...panelProps} />);
+    } else if (scene === "island-panel-single") {
+      // 只有一页、没有额度：不出翻页箭头与圆点。
+      el = shell(<IslandPanel sessions={sessions.slice(0, 2)} usage={{}} quotaProviders={[]} {...panelProps} />);
+    } else if (scene === "island-panel-empty") {
+      el = shell(<IslandPanel sessions={[]} usage={{}} quotaProviders={[]} {...panelProps} strip />);
+    } else if (scene === "island-usage") {
+      el = shell(<IslandPanel sessions={sessions} usage={usage} quotaProviders={["claude", "codex"]} initialPage={9} {...panelProps} />);
+    } else if (scene === "island-strip") {
+      // 极简细条：四种状态各一条，外加没有会话时的一条。真机上它贴着屏幕顶边。
+      stage.paddingTop = 0;
+      stage.gap = 24;
+      el = [0, 1, 2, 3, null].map((k) => (
+        <div key={String(k)} style={{ width: 160, height: 8 }}>
+          <IslandStrip sessions={k == null ? [] : [sessions[k]]} onPointerDownDrag={noop} onActivate={noop} />
         </div>
-      );
+      ));
     } else {
-      const alert = scene === "island-alert"
-        ? { sessionId: 1, kind: "approval", title: titles[0], project: "web-app", detail: null }
-        : null;
+      const alerts: Record<string, IslandAlertEvent> = {
+        "island-alert": { sessionId: 1, kind: "approval", title: titles[0], project: "web-app", detail: null },
+        "island-alert-menubar": { sessionId: 1, kind: "approval", title: titles[0], project: "web-app", detail: null },
+        "island-alert-error": { sessionId: 2, kind: "error", title: titles[3], project: "infrastructure-monorepo", detail: "API Error: 529 overloaded_error · the model is overloaded, please retry later" },
+        "island-alert-done": { sessionId: 4, kind: "waiting", title: titles[2], project: "api", detail: lang === "en" ? "All 12 tests pass. Pushed to the remote branch." : "12 个测试全部通过，已经推到远端分支。" },
+      };
+      const alert = alerts[scene] ?? null;
+      const compactStyle = scene.includes("focus") ? "focus" : scene.includes("minimal") ? "minimal" : "counts";
+      const clone = (base: number) => sessions.map((s, i) => ({ ...s, session: { ...s.session, id: base + i } }));
+      // -idle 没有会话；-calm 只有在跑和跑完的（眼睛是平时的青柠）；-many 十二个（折成 +N）。
+      const shown = scene.endsWith("-idle") ? [] : scene.endsWith("-calm") ? sessions.slice(2) : scene.endsWith("-many") ? [...sessions, ...clone(10), ...clone(20)] : sessions;
+      const usages = scene.endsWith("-idle") ? [] : [{ provider: "claude", pct: scene.endsWith("-calm") ? 38 : 72 }];
+      const notch = scene.endsWith("-notch") ? { width: 200, height: 34 } : undefined;
       el = (
-        <div style={alert ? { width: 548, height: 68 } : { height: 46 }}>
-          <Island sessions={sessions} compactStyle="counts" alert={alert} alertQueued={alert ? 2 : 0} usages={[{ provider: "claude", pct: 72 }]} onMeasure={noop} onActivate={noop} onOpenSession={noop} onPointerDownDrag={noop} />
+        <div style={alert ? { width: menubar ? 520 : 548, height: 68 } : { height: notch ? 34 : 46 }}>
+          <Island sessions={shown} compactStyle={compactStyle} alert={alert} alertQueued={alert && scene !== "island-alert-done" ? 2 : 0} usages={usages} onMeasure={noop} onActivate={noop} onOpenSession={noop} onPointerDownDrag={noop} onDismissAlert={noop} onDismissAllAlerts={noop} notch={notch} />
         </div>
       );
     }

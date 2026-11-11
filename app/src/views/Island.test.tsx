@@ -138,10 +138,10 @@ describe("额度", () => {
 
 describe("额度环", () => {
   // 用户 2026-11-05 要回「已用」（此前一度改成剩余）。
-  it("显示已用，颜色按已用：六成以下绿、六成起琥珀、八成五起红", () => {
+  it("显示已用，颜色按已用：六成以下品牌青柠、六成起琥珀、八成五起红", () => {
     expect(usedOf(4)).toBe(4);
     expect(usedOf(130)).toBe(100);
-    expect(usedColor(4)).toBe("var(--isl-ok)");
+    expect(usedColor(4)).toBe("var(--isl-lime)");
     expect(usedColor(60)).toBe("var(--isl-warn)");
     expect(usedColor(90)).toBe("var(--isl-err)");
   });
