@@ -33,7 +33,7 @@ import { parseUserText } from "./chat/localCommand";
 import { ChatActionsContext, type ChatActions } from "./chat/chatActions";
 import { anchorFrom, echoItemId, freshAnchor, EchoActionsContext, EchoPhaseContext, outgoingStore, useOutgoingPrompts, type PromptAck } from "./chat/outgoingPrompts";
 import { DockWork } from "./chat/DockWork";
-import { ANCHOR_PX, countsAsUnseen, useStickToBottom } from "./chat/useStickToBottom";
+import { ANCHOR_PX, countsAsUnseen, stickToBottom, useStickToBottom } from "./chat/useStickToBottom";
 import { useSidebarLayout } from "./chat/useSidebarLayout";
 import { pasteImagesNatively, useInterrupt, writeInterruptKeys } from "./chat/terminalInput";
 import { clearPartialImageDraft, composerDraftText, createSendQueue, IMAGE_PASTE_LANDING_POLLS, LATE_IMAGE_GRACE_MS, RESUME_VERIFY_WINDOW_MS, stashComposerDraft, submitToTerminal, terminalInput, waitForTerminalReady, type TerminalReadyMessages, type TerminalStartupResult } from "./chat/terminalSubmit";
@@ -1604,37 +1604,48 @@ export function ChatWindow() {
 
   // 7C-2：overlay 的卡片从锚点向上溢出，盖住 transcript 末尾约 500px——零位移的代价
   // 本来「可接受」，但计划审批时刚写完的计划正文正好落在这一段，滚到底也露不出来。
-  // 把卡片实高回写成 .chat-scroll 的额外 padding-bottom：文档流不动（overlay 仍 height:0），
-  // 滚动区却多出一段可滚空白，被盖住的内容能滚出卡片上缘。卡片高度随正文/按钮变，
-  // 所以观察每张卡（ResizeObserver）+ 卡片增删（MutationObserver）。
+  // 把卡片实高回写成 --chat-overlay-h，喂给滚动内容末尾的占位块（.chat-overlay-spacer）：
+  // 文档流不动（overlay 仍 height:0），滚动区却多出一段可滚空白，被盖住的内容能滚出卡片上缘。
+  // 占位块不能换回 padding-bottom：padding 是滚动区的最小高度，flex:1 压不到它以下，矮窗/手机
+  // 键盘态下 dock 被挤、输入框掉出窗口（UI 优化 c2/m2：620×480 输入 14 行时 composer 落在
+  // 377–489，SE 键盘态 341–449/376，Playwright layout.js 实测）。
+  // 同时回写 --chat-overlay-room = 卡片能占的高度（锚点到滚动区上沿，即标题栏之下、composer
+  // 之上那一段，多卡并存时均分），卡片按它限高、超出卡内滚动。它只取决于 dock 与窗口，
+  // 不随卡高变，回写不会自激。
+  // 卡片高度随正文/按钮变，所以观察每张卡（ResizeObserver）+ 卡片增删（MutationObserver）；
+  // 区域高度随窗口、键盘、composer 变，所以也观察滚动区和主列本身。
   const overlayRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = overlayRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
     const apply = () => {
       const scroll = scrollRef.current;
-      // 变量写在 overlay 的父容器（chat-window 根）上而不是滚动区自己：滚动区的
-      // padding、sticky 的「回到最新」浮钮、以及流里紧贴 composer 的排队回执/运行条
-      // 都要读它，它们互为兄弟，只有共同祖先能同时喂到（7C-2 / 7C-3）。
+      // 变量写在 overlay 的父容器（.chat-main）上而不是滚动区自己：滚动区里的占位块、
+      // sticky 的「回到最新」浮钮、卡片自身都要读它，只有共同祖先能同时喂到（7C-2 / 7C-3）。
       const host = el.parentElement;
       if (!scroll || !host) return;
-      // 锚点 = overlay 在流中的位置（零高，等于 composer 上沿）；卡片向上溢出到 top。
+      // 锚点 = overlay 在流中的位置（零高，等于 dock 上沿）；卡片向上溢出到 top。
       const anchor = el.getBoundingClientRect().bottom;
       let top = anchor;
-      for (const child of Array.from(el.children)) {
-        const rect = child.getBoundingClientRect();
-        if (rect.height > 0) top = Math.min(top, rect.top);
-      }
+      const cards = Array.from(el.children).filter((child) => child.getBoundingClientRect().height > 0);
+      for (const child of cards) top = Math.min(top, child.getBoundingClientRect().top);
       const height = Math.max(0, Math.round(anchor - top));
       host.style.setProperty("--chat-overlay-h", `${height}px`);
-      // padding 变化不改变滚动容器自身的 border-box 尺寸，上面那个 ResizeObserver 不会
-      // 触发——已吸底的用户在这里自己钉回去。
-      if (!scroll.hidden && followRef.current && !touchingRef.current) scroll.scrollTop = scroll.scrollHeight;
+      // 可用区上沿：对话视图取滚动区上沿；终端视图滚动区 display:none，取标题栏下沿。
+      const bar = host.querySelector(":scope > .chat-bar");
+      const ceiling = !scroll.hidden ? scroll.getBoundingClientRect().top : bar ? bar.getBoundingClientRect().bottom : host.getBoundingClientRect().top;
+      const room = Math.max(0, Math.floor((anchor - ceiling) / Math.max(1, cards.length)));
+      host.style.setProperty("--chat-overlay-room", `${room}px`);
+      // 占位块变高不改变滚动容器自身的 border-box 尺寸，useStickToBottom 的尺寸观察者
+      // 不一定接得到——已吸底的用户在这里自己钉回去（走 stickToBottom，裸写会被 smooth 动画化）。
+      if (!scroll.hidden && followRef.current && !touchingRef.current) stickToBottom(scroll);
     };
     const sizes = new ResizeObserver(apply);
     const rewatch = () => {
       sizes.disconnect();
       for (const child of Array.from(el.children)) sizes.observe(child);
+      if (scrollRef.current) sizes.observe(scrollRef.current);
+      if (el.parentElement) sizes.observe(el.parentElement);
       apply();
     };
     const children = new MutationObserver(rewatch);
@@ -2135,6 +2146,23 @@ export function ChatWindow() {
   // 终端页会把焦点交给 xterm（且 footer 整个卸载，回来的 textarea 是全新节点）；
   // 用户切回对话时把焦点还给输入框。只在「终端 → 对话」的切换沿触发——chat 内的
   // 普通重渲染不动焦点，不打断正在输入的人。
+  // 首焦点规则（UI 优化 c3）：开窗、切会话时焦点给 composer。此前焦点停在 body，审批卡挂载时
+  // 抢去「说明并拒绝」，开窗就打字的人一个空格点开理由框、回车即误拒。焦点已在别的输入框或
+  // 弹层里不动（命令面板、重命名框等自己管焦点）；终端视图焦点归 xterm；手机远程不移焦——
+  // 聚焦输入框会弹键盘，WebKit 还把程序化 focus 画成焦点环（mobile m11）。推迟一帧：
+  // 命令面板选中会话后先收起自己，再轮到这里判断。
+  useEffect(() => {
+    if (remoteUi() || sessionId === 0) return;
+    const frame = requestAnimationFrame(() => {
+      if (viewRef.current !== "chat") return;
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && active !== document.body
+        && (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.isContentEditable
+          || active.closest("[role=\"dialog\"], [aria-modal=\"true\"]"))) return;
+      promptInputRef.current?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [sessionId]);
   const prevViewRef = useRef(view);
   useEffect(() => {
     const prev = prevViewRef.current;
@@ -4143,6 +4171,9 @@ export function ChatWindow() {
             ))}
           </section>
         )}
+        {/* 审批卡的让位占位块（高度 = --chat-overlay-h，见 overlayRef 的观察者）：跟内容一起滚，
+            不抬高滚动区的最小高度。必须是滚动内容的最后一个子块。 */}
+        <div className="chat-overlay-spacer" aria-hidden="true" />
       </main>
       </EchoActionsContext.Provider>
       </EchoPhaseContext.Provider>
@@ -4429,7 +4460,15 @@ export function ChatWindow() {
       )}
       </div>
       {terminalMounted && (
-        <div className={`chat-terminal-pane${view !== "terminal" ? " is-background" : ""}`} aria-hidden={view !== "terminal"}>
+        // 对话视图下终端常驻在屏外，aria-hidden 只瞒得过读屏、瞒不过 Tab：xterm 的输入框仍在
+        // Tab 序列里，Tab 掉进去就出不来，Shift+Tab 写进 PTY 的 ESC[Z 会切走 claude 的权限模式
+        // （island-a11y trap.js 实测：6 次按键 5 次写进 write_managed_terminal）。inert 让整块
+        // 不可聚焦、不可交互；经 ref 设置的理由同 composer（React 18 不认 inert 属性）。
+        <div
+          ref={(el) => { el?.toggleAttribute("inert", view !== "terminal"); }}
+          className={`chat-terminal-pane${view !== "terminal" ? " is-background" : ""}`}
+          aria-hidden={view !== "terminal"}
+        >
           {/* broker 审批横幅——只给「hook 阻塞期间 TUI 不显示权限框」的 provider 挂
               （permission_prompt_races_hook=false，如 codex/未取证者）：那种终端视图下
               用户什么都看不到，agent 干等到 300s 超时，须领回对话页。claude 相反：官方

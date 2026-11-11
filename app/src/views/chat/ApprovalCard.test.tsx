@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApprovalCard, ApprovalCommandDetail, isRiskyCommand } from "./ApprovalCard";
@@ -26,7 +26,7 @@ describe("isRiskyCommand 风险分级(C-9)", () => {
 });
 
 describe("ApprovalCard 外壳(G-16)", () => {
-  it("role=alertdialog 且出现时把焦点交给第一个动作按钮", () => {
+  it("role=alertdialog,非模态", () => {
     render(
       <ApprovalCard
         title="Agent 请求权限"
@@ -37,8 +37,31 @@ describe("ApprovalCard 外壳(G-16)", () => {
     const dialog = screen.getByRole("alertdialog");
     expect(dialog.getAttribute("aria-label")).toBe("Agent 请求权限");
     expect(dialog.getAttribute("aria-modal")).toBe("false");
-    // 动作区第一个按钮获焦——role=alert 时代焦点进不来，用户听不到也摸不着。
-    expect(document.activeElement).toBe(screen.getByRole("button", { name: "允许一次" }));
+  });
+
+  // UI 优化 c3：挂载不再把焦点交给动作按钮（开窗就打字会误触「说明并拒绝」）。
+  // 焦点无处落脚时交给 composer，打字永远进输入框。
+  it("挂载不抢焦点：焦点在 body 时交给 returnFocusTo，不落到动作按钮", () => {
+    function Harness() {
+      const target = useRef<HTMLTextAreaElement>(null);
+      return (
+        <>
+          <textarea ref={target} aria-label="composer" />
+          <ApprovalCard title="Agent 请求权限" returnFocusTo={target} actions={<button type="button">允许一次</button>} />
+        </>
+      );
+    }
+    render(<Harness />);
+    expect(document.activeElement).toBe(screen.getByLabelText("composer"));
+  });
+
+  it("焦点已在别处时挂载不动它", () => {
+    const outside = document.createElement("button");
+    document.body.appendChild(outside);
+    outside.focus();
+    render(<ApprovalCard title="Agent 请求权限" actions={<button type="button">允许一次</button>} />);
+    expect(document.activeElement).toBe(outside);
+    outside.remove();
   });
 });
 
@@ -65,7 +88,8 @@ describe("ApprovalCard 焦点归还(C-9 overlay)", () => {
 
   it("焦点留在卡内时卸载，归还 returnFocusTo", async () => {
     render(<Harness />);
-    // G-16：挂载移焦动作区。
+    // 焦点先进卡（键盘用户 Tab 进来点的）。
+    act(() => { screen.getByRole("button", { name: "允许一次" }).focus(); });
     fireEvent.click(screen.getByRole("button", { name: "允许一次" }));
     expect(screen.queryByRole("alertdialog")).toBeNull();
     await vi.waitFor(() => {

@@ -5,7 +5,7 @@
 /// 拒绝」的表单状态靠 effect 在换请求时手动清零。这里把结算收成一个 hook，卡片按 requestId
 /// 挂载（key），卡内状态随请求自然重置，不再需要「记得清」。
 
-import { useState, type RefObject } from "react";
+import { useRef, useState, type RefObject } from "react";
 import { resolvePendingApproval, type PendingApproval } from "../../api";
 import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
@@ -107,6 +107,7 @@ export function BrokerApprovalCard({ approval, countdown, timedOut, resolving, e
   // 只有命令可看时摆命令本身（判定见 commandOfInput），否则照旧摆完整参数。
   const command = commandOfInput(approval.input);
   const [reasonOpen, setReasonOpen] = useState(false);
+  const reasonButtonRef = useRef<HTMLButtonElement>(null);
   const [reason, setReason] = useState("");
   // 远程没有键盘快捷键可言，kbd 徽章只在桌面挂。
   const kbd = !remoteUi();
@@ -133,7 +134,7 @@ export function BrokerApprovalCard({ approval, countdown, timedOut, resolving, e
       actions={<>
         {/* 右端两颗是「就这一次」的决定：拒绝（中性，也是 Esc 的落点）、允许一次（主按钮）。
             危险命令时允许钮降级为红色警示主按钮(is-danger,判定见 isRiskyCommand)。 */}
-        <button type="button" className="is-deny-reason" disabled={resolving} aria-expanded={reasonOpen} onClick={() => setReasonOpen((open) => !open)}>
+        <button ref={reasonButtonRef} type="button" className="is-deny-reason" disabled={resolving} aria-expanded={reasonOpen} onClick={() => setReasonOpen((open) => !open)}>
           {t.chat.denyWithReason}
         </button>
         <button type="button" className={"is-deny" + (escArmed ? " is-esc-armed" : "")} disabled={resolving} onClick={() => onDecide("deny")}>
@@ -172,7 +173,9 @@ export function BrokerApprovalCard({ approval, countdown, timedOut, resolving, e
             aria-label={t.chat.denyReasonPlaceholder}
             onChange={(event) => setReason(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setReasonOpen(false); }
+              // 收起时把焦点还给「说明并拒绝」：输入框随表单卸载，焦点会掉回 body，之后的按键
+              // 没有落点（UI 优化 c13，chat s13 实测 after esc → BODY）。
+              if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setReasonOpen(false); reasonButtonRef.current?.focus(); }
             }}
           />
           <button type="submit" disabled={resolving}>{t.chat.denyReasonSubmit}</button>

@@ -85,7 +85,9 @@ export function useStickToBottom({ scrollRef, visible, timelineItems, contentCou
     const observer = new ResizeObserver(() => {
       // hidden（终端视图）时 display:none，scrollHeight 恒 0，不能拿它改写滚动位置。
       if (el.hidden || !followRef.current || touchingRef.current) return;
-      el.scrollTop = el.scrollHeight;
+      // 走 stickToBottom 瞬移：裸写会被 .chat-scroll 的 smooth 动画化，动画途中的 scroll 事件把
+      // followRef 判成脱底（UI 优化 c1，s3/s4 实测长会话停在 437/1395）。
+      stickToBottom(el);
     });
     observer.observe(el);
     return () => observer.disconnect();

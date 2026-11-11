@@ -531,7 +531,10 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
   body.remote-ui .chat-compose .chat-model-button { padding-left: 7px; padding-right: 7px; }
   body.remote-ui .chat-approval {
     width: calc(100% - 24px);
-    max-height: min(68dvh, 560px);
+    /* 按实际剩余高度限高（见 styles.css 的 .chat-approval）：iOS 键盘弹出时 dvh 不变，
+       68dvh 在 SE 键盘态（视口 376）仍有 450px，卡片把输入框挤出屏幕（UI 优化 m2）。
+       --chat-overlay-room 量的是布局后的真实位置，--app-height 跟着键盘缩，它也跟着缩。 */
+    max-height: min(560px, calc(var(--chat-overlay-room, 68dvh) - 14px - 8px));
     padding: 14px;
     border-radius: 16px;
   }
