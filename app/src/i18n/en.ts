@@ -29,7 +29,7 @@ export const en: Dict = {
     enter: "Open session",
     nothingSaid: "No reply yet",
     approvalInTerminal: "This approval is in the terminal. Open the session to handle it.",
-    answerInScene: "It is waiting for your choice in the terminal. Open the session to answer.",
+    answerInScene: "It stopped on a choice. Open the session to answer.",
   },
   empty: {
     allTitle: "No sessions yet",
