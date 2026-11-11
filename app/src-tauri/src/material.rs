@@ -285,6 +285,52 @@ pub(crate) fn sync_theme(app: &tauri::AppHandle, theme: &str) {
     let _ = (app, theme);
 }
 
+/// 「应用主题设置 + 系统此刻的明暗 → Mica 背板该用深色吗」。固定 dark / light 时不看系统，
+/// 其余（system 与认不出的值）跟系统走，与 `window::theme_is_dark` 的分档一致。
+#[cfg(any(target_os = "windows", test))]
+fn backdrop_dark(app_theme: &str, system_dark: bool) -> bool {
+    match app_theme {
+        "dark" => true,
+        "light" => false,
+        _ => system_dark,
+    }
+}
+
+/// 系统切了明暗（`WindowEvent::ThemeChanged`，lib.rs 的 builder 上统一挂）：把这扇窗的 Mica
+/// 背板重新套成该有的明暗。
+///
+/// 为什么固定 dark / light 也要管：Mica 的明暗就是 `DWMWA_USE_IMMERSIVE_DARK_MODE` 这一个
+/// DWM 属性（window-vibrancy 0.8.1 `apply_mica`），而 tao 0.37.2 收到 WM_SETTINGCHANGE 时
+/// 会按系统主题把它重写一遍（`update_theme` → `refresh_titlebar_theme_color`），应用固定
+/// 深色、系统切到浅色，背板就被改成浅的了。
+///
+/// 不会成环：纠正走 `set_effects` 直接写 DWM 属性，不经 tao 的 `set_theme`，不动 tao 记的
+/// `current_theme`；而 ThemeChanged 只在 WM_SETTINGCHANGE 里 `current_theme` 变了才发。
+///
+/// 明暗取事件带来的这扇窗自己的新主题，不去问主窗口的 `theme()`：各窗各收各的
+/// WM_SETTINGCHANGE，主窗口那时可能还没更新。
+/// 事件回调在主线程：这里只读内存里的建窗记录，读设置文件挪进 blocking 池（线程纪律）。
+pub(crate) fn on_system_theme_changed(window: &tauri::Window, system_theme: tauri::Theme) {
+    #[cfg(target_os = "windows")]
+    {
+        if applied().get(window.label()).copied() != Some(Material::Mica) {
+            return;
+        }
+        let system_dark = system_theme == tauri::Theme::Dark;
+        let window = window.clone();
+        // 句柄不留：纠正失败（窗口已关）没有可补救的，下次切换或保存设置会再套一次。
+        tauri::async_runtime::spawn_blocking(move || {
+            let theme = crate::settings::load_settings().theme;
+            let dark = backdrop_dark(&theme, system_dark);
+            // `set_effects` 自己会切回主线程。
+            let _ = window.set_effects(effects_config(Material::Mica, dark));
+        });
+    }
+    // macOS 的材质明暗跟窗口外观走，系统自己会翻；Linux 没有材质。
+    #[cfg(not(target_os = "windows"))]
+    let _ = (window, system_theme);
+}
+
 /// 前端调用（main.tsx 启动时）：本窗口用上了哪种系统材质——`none` / `mica` / `glass` /
 /// `vibrancy`。非 `none` 时前端给根元素加 `mat-on`，页面底才换成半透明染色层。
 /// 只读内存里的建窗记录，同步命令在主线程跑没问题。不进远程桥白名单：手机页没有窗口材质。
@@ -354,6 +400,22 @@ mod tests {
         assert_eq!(dark.effects, vec![WindowEffect::MicaDark]);
         assert_eq!(light.effects, vec![WindowEffect::MicaLight]);
         assert_eq!(Material::Mica.as_str(), "mica");
+    }
+
+    #[test]
+    fn 背板明暗_跟随系统时看系统_固定主题时不被系统带跑() {
+        // system：系统切到哪边背板就翻到哪边。
+        assert!(backdrop_dark("system", true));
+        assert!(!backdrop_dark("system", false));
+        // 固定深色：系统切浅后仍要纠正回深色。
+        assert!(backdrop_dark("dark", true));
+        assert!(backdrop_dark("dark", false));
+        // 固定浅色：系统切深后仍要纠正回浅色。
+        assert!(!backdrop_dark("light", true));
+        assert!(!backdrop_dark("light", false));
+        // 认不出的值按跟随系统算，与 window::theme_is_dark 的兜底分档一致。
+        assert!(backdrop_dark("", true));
+        assert!(!backdrop_dark("auto", false));
     }
 
     #[test]
