@@ -6,33 +6,67 @@
  * 「标记完成」「结束会话」是 Meowo 自己的收尾动作，放在 Kimi 那组前面。
  */
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { flushSync } from "react-dom";
 import { getPullRequest, openLink, type GitDiffSummaryDto, type PullRequestDto } from "../../api";
 import { useT } from "../../i18n";
 import { remoteUi } from "../../remoteMode";
 import { ArchiveIcon } from "../sticker/icons";
 import { GitStatusChip, OpenerIcon, OpenInEditor, PullRequestChip, useFolderOpeners } from "./TitleBarTools";
-import { titleBarOverflow, TitleOverflowContext, type TitleOverflowItem } from "./titleOverflow";
+import { fitTitleBar, sameOverflow, TitleOverflowContext, type TitleOverflowItem, type TitleOverflowKey } from "./titleOverflow";
 
-/// 标题栏内容盒宽度：首帧在 layout effect 里同步量一次，之后跟 ResizeObserver。
-/// 0 = 没量到（jsdom 没有布局），调用方按「全部放得下」处理。
-function useContentWidth(ref: RefObject<HTMLElement | null>): number {
-  const [width, setWidth] = useState(0);
+const NO_OVERFLOW: ReadonlySet<TitleOverflowKey> = new Set();
+
+/// 量标题栏、算哪些项收进 ⋯（规则见 titleOverflow.fitTitleBar）。
+/// 收起的项不卸载，只加 aria-hidden 退出排版流、不可见（.chat-bar-slot[aria-hidden]），
+/// 所以每颗按钮的自然宽度随时量得到：不用「先全显示量一遍、再收、再量」，没有来回抖。
+/// 收起与否不改变任何被量的宽度（结束会话按钮只跟栏宽的容器查询走），结果收敛，
+/// 再次触发观察也只会算出同一组，setState 原样返回不重渲染。
+/// 首帧在 layout effect 里同步量；之后栏宽、各项尺寸（语言、--cc-ui 缩放、PR/改动数到达）
+/// 变化走 ResizeObserver，增删子项走 MutationObserver，都用 flushSync 赶在绘制前收好，
+/// 不让出界的一帧闪出来。jsdom 没有布局，宽度都是 0，按「全部放得下」处理。
+function useTitleBarOverflow(ref: RefObject<HTMLElement | null>, remote: boolean): ReadonlySet<TitleOverflowKey> {
+  const [hidden, setHidden] = useState<ReadonlySet<TitleOverflowKey>>(NO_OVERFLOW);
   useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    // 每次自己量，不读回调参数：测试里的假 ResizeObserver 回调不带 entry。
-    const measure = () => {
-      const style = getComputedStyle(el);
-      const content = el.clientWidth - (parseFloat(style.paddingLeft) || 0) - (parseFloat(style.paddingRight) || 0);
-      setWidth(content > 0 ? Math.round(content) : 0);
+    const bar = ref.current;
+    if (!bar) return;
+    const compute = () => {
+      const style = getComputedStyle(bar);
+      const available = bar.getBoundingClientRect().width - (parseFloat(style.paddingLeft) || 0) - (parseFloat(style.paddingRight) || 0);
+      const fixed: number[] = [];
+      const items: { key: TitleOverflowKey; width: number }[] = [];
+      let titleMin = 0;
+      for (const child of Array.from(bar.children) as HTMLElement[]) {
+        const key = child.dataset.overflowKey as TitleOverflowKey | undefined;
+        const width = child.getBoundingClientRect().width;
+        if (key) items.push({ key, width });
+        else if (child.classList.contains("chat-title-menu")) titleMin = parseFloat(getComputedStyle(child).minWidth) || 0;
+        else if (width > 0 && getComputedStyle(child).position !== "absolute") fixed.push(width);
+      }
+      const next = fitTitleBar({ available, gap: parseFloat(style.columnGap) || 0, titleMin, fixed, items }, remote);
+      return (prev: ReadonlySet<TitleOverflowKey>) => (sameOverflow(prev, next) ? prev : next);
     };
-    measure();
+    setHidden(compute());
     if (typeof ResizeObserver !== "function") return;
-    const observer = new ResizeObserver(measure);
-    observer.observe(el);
-    return () => observer.disconnect();
-  }, [ref]);
-  return width;
+    const update = () => { const apply = compute(); flushSync(() => setHidden(apply)); };
+    const resize = new ResizeObserver(update);
+    const observeAll = () => { resize.disconnect(); resize.observe(bar); for (const child of Array.from(bar.children)) resize.observe(child); };
+    observeAll();
+    const mutation = typeof MutationObserver === "function" ? new MutationObserver(() => { observeAll(); update(); }) : null;
+    mutation?.observe(bar, { childList: true });
+    return () => { resize.disconnect(); mutation?.disconnect(); };
+  }, [ref, remote]);
+  return hidden;
+}
+
+/** 可收起项的外壳：收起时留在 DOM 里照常排版量宽度，但退出排版流、不可见、不可聚焦
+ *  （inert：React 18 不认 inert prop，直写属性，同 AppModal）。 */
+function OverflowSlot({ k, hidden, children }: { k: TitleOverflowKey; hidden: ReadonlySet<TitleOverflowKey>; children: ReactNode }) {
+  const off = hidden.has(k);
+  return (
+    <span className="chat-bar-slot" data-overflow-key={k} aria-hidden={off || undefined} {...(off ? { inert: "" } : {})}>
+      {children}
+    </span>
+  );
 }
 
 const PR_ICON = (
@@ -103,11 +137,11 @@ export function ChatTitleBar({
   const pullRequest = usePullRequest(prCwd ?? cwd, gitSummary?.isRepo ? gitSummary.branch : null);
   useEffect(() => { onPullRequest?.(pullRequest); }, [pullRequest, onPullRequest]);
   const barRef = useRef<HTMLElement>(null);
-  const hidden = titleBarOverflow(useContentWidth(barRef), remoteUi());
+  const hidden = useTitleBarOverflow(barRef, remoteUi());
   const openers = useFolderOpeners(cwd ?? "", onError);
   const showOpen = !remoteUi() && !!cwd;
   const showGit = !!cwd && !!gitSummary?.isRepo;
-  // 放不下的项按栏上从左到右的顺序进 ⋯ 菜单（同一张门限表，见 titleOverflow）。
+  // 放不下的项按栏上从左到右的顺序进 ⋯ 菜单（与栏上读同一份 hidden，见 titleOverflow）。
   const overflow: TitleOverflowItem[] = [];
   if (showOpen && hidden.has("open")) {
     for (const option of openers.options) {
@@ -131,7 +165,8 @@ export function ChatTitleBar({
           也不放任务进度入口（用户要求取消）：待办走底部停靠栏的「当前进度」，子任务在对话流里。 */}
       {/* 「标记完成」直达钮（对照 Kimi 标题栏的 markSessionDone）：做完一件事就勾掉，
           是对话页最高频的收尾动作，不该藏在标题菜单的第二层。「恢复进行中」仍在标题菜单里（低频）。 */}
-      {archive && !hidden.has("archive") && (
+      {archive && (
+        <OverflowSlot k="archive" hidden={hidden}>
         <button
           type="button"
           className="chat-todo-btn chat-archive-btn"
@@ -143,6 +178,7 @@ export function ChatTitleBar({
           {/* 16px 与同排的文件/改动入口图标对齐（菜单里的同款是 13px）。 */}
           <ArchiveIcon archived={false} size={16} />
         </button>
+        </OverflowSlot>
       )}
       {/* endable 口径:托管 PTY 或进程仍活着的孤儿会话(后端按 pid 杀树兜底),见 ChatHistoryDto。
           远程不再隐藏:stop_managed_terminal 已进 /rpc 白名单(remote.rs 头注释记录了放行理由),
@@ -162,13 +198,14 @@ export function ChatTitleBar({
         </button>
       )}
       {/* 用编辑器打开会话目录（宿主执行类，远程隐藏）。 */}
-      {showOpen && cwd && !hidden.has("open") && <OpenInEditor cwd={cwd} onError={onError} openers={openers} />}
+      {showOpen && cwd && <OverflowSlot k="open" hidden={hidden}><OpenInEditor cwd={cwd} onError={onError} openers={openers} /></OverflowSlot>}
       {/* 分支 + 改动：点开 / 收起改动页签（远程放行改动列表，remote.rs 模块头「例外」）。 */}
-      {showGit && gitSummary && !hidden.has("git") && <GitStatusChip summary={gitSummary} active={changesOpen} onToggle={onToggleChanges} />}
-      {pullRequest && !hidden.has("pr") && <PullRequestChip pr={pullRequest} />}
+      {showGit && gitSummary && <OverflowSlot k="git" hidden={hidden}><GitStatusChip summary={gitSummary} active={changesOpen} onToggle={onToggleChanges} /></OverflowSlot>}
+      {pullRequest && <OverflowSlot k="pr" hidden={hidden}><PullRequestChip pr={pullRequest} /></OverflowSlot>}
       {/* 终端：对话与终端两个视图之间切换（原「对话 | 终端」页签收成一颗开关，对照 Kimi）。
           远程没有终端视图（见 ChatWindow 的 setView 说明），不给死按钮。 */}
-      {!remoteUi() && !hidden.has("terminal") && (
+      {!remoteUi() && (
+        <OverflowSlot k="terminal" hidden={hidden}>
         <button
           type="button"
           className={"chat-todo-btn chat-terminal-toggle" + (terminalOn ? " is-active" : "")}
@@ -179,10 +216,12 @@ export function ChatTitleBar({
         >
           {terminalIcon(16)}
         </button>
+        </OverflowSlot>
       )}
       {/* 侧边面板（文件 / 改动停靠面板）开合，回到上次看的页签；不是仓库就只有文件页。
           远程不放行文件页，面板只能经改动入口打开。 */}
-      {info && !hidden.has("info") && (
+      {info && (
+        <OverflowSlot k="info" hidden={hidden}>
         <button
           type="button"
           className={"chat-todo-btn chat-info-toggle" + (info.open ? " is-active" : "")}
@@ -193,6 +232,7 @@ export function ChatTitleBar({
         >
           {infoIcon(16)}
         </button>
+        </OverflowSlot>
       )}
       {!remoteUi() && cwd && (
         <button

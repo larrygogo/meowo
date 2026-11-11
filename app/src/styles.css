@@ -3741,6 +3741,11 @@ select.ns-input {
    分支胶囊不参与收缩，只给分支名按标题行宽度封顶（自带省略号）：曾让胶囊整体先收缩，
    长标题时它被压到 0 宽，改动数溢出盖在 PR 编号上，显示成「+4#38」（实拍）。 */
 .chat-title-menu { flex: 1 1 auto; min-width: 9em; }
+/* 可收起项的外壳（ChatTitleBar 的 OverflowSlot）：平时就是一个不伸缩的 flex 项。收起时不卸载，
+   改为绝对定位退出排版流、不可见不可点，自然宽度照样量得到，收起逻辑不必「先显示再量」
+   （titleOverflow.fitTitleBar；验收 #24 实测门限写死时 1440 宽 150% 缩放按钮出界）。 */
+.chat-bar-slot { flex: none; display: flex; align-items: center; }
+.chat-bar-slot[aria-hidden="true"] { position: absolute; top: 0; left: 0; visibility: hidden; pointer-events: none; }
 .chat-bar .tb-git { flex-shrink: 0; }
 .chat-bar .tb-git-branch { max-width: 14cqi; }
 /* 再窄就整项收起，按重要程度从低到高。档位用测试页按长短两种标题逐档截图定的：
