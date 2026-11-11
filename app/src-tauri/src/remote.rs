@@ -54,6 +54,13 @@
 //! 同日做空第二轮：多个 GitHub 远端时选 PR 开在哪个仓库（`forge_choose_repo`，只写 ~/.meowo/forge.json
 //! 里这个仓库的一条选择）放行，手机上也能选，不推用户回电脑或终端。
 //!
+//! 例外（2026-11-11 UI 优化，按「不推用户去桌面端」的定案）：`repair_provider_hooks` 放行。
+//! 它只做 Meowo 每次启动都会自动做的那件事——把 reporter 接入项写进已识别 agent 的配置
+//! （`setup::apply_provider`，首次写前备份、其余配置原样保留），provider 只认已注册的 agent id，
+//! 不接受路径或任意内容。比白名单里早已放行的 `write_managed_terminal`（等于任意命令）窄得多，
+//! 不扩大风险面；此前手机新建会话碰到「尚未接入」只能写「请在桌面端处理」（UI 调研 m10）。
+//! 登录（`login_agent`，要在宿主拉起终端与浏览器授权）、安装（`install_agent`）仍拒。
+//!
 //! 例外（2026-11-09 用户决定，Lead 工作流关卡 B）：`lead_task_snapshot` / `answer_lead_gate`
 //! 放行，供手机看任务进度、回答关卡。两道收口：目录先过 `ensure_session_dir`；后端只按约定
 //! 读 `.lead/active` 指向的任务目录（slug 只允许字母数字与 `.-_`，拒绝 `..`），只写该目录下的
@@ -181,6 +188,8 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     // 会话，参数只有会话 id 和终端尺寸，不给路径、不给 argv。
     "fork_session",
     "check_provider_hooks",
+    // 修复接入项（2026-11-11，收口见模块头「例外」一节）
+    "repair_provider_hooks",
     "list_subdirectories",
     // 改动列表（只读，收口见模块头「例外」一节）
     "git_diff_summary",
@@ -1429,6 +1438,10 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
             let a = args!(CheckProviderHooksArgs);
             reply(crate::install::check_provider_hooks(a.provider).await)
         }
+        "repair_provider_hooks" => {
+            let a = args!(RepairProviderHooksArgs);
+            reply(crate::install::repair_provider_hooks(a.provider).await)
+        }
         "list_subdirectories" => {
             let a = args!(ListSubdirectoriesArgs);
             reply(list_subdirectories(a.path).await)
@@ -2451,6 +2464,10 @@ mod tests {
             // api.ts:972
             "check_provider_hooks" => {
                 parse::<CheckProviderHooksArgs>(br#"{"provider":"claude"}"#).map(|_| ())
+            }
+            // api.ts repairProviderHooks
+            "repair_provider_hooks" => {
+                parse::<RepairProviderHooksArgs>(br#"{"provider":"claude"}"#).map(|_| ())
             }
             // api.ts:885（path 键恒发、无参发 null）
             "list_subdirectories" => {

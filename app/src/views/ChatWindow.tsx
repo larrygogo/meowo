@@ -4072,12 +4072,14 @@ export function ChatWindow() {
                         /* 目的性跳转，不写视图偏好。 */
                         <button type="button" className="chat-empty-cta" onClick={() => setView("terminal")}>{t.chat.goTerminal}</button>
                       )}
-                      {/* 7M-8：远程连这个出口都被门掉，于是「正在启动…」永远转，一个字
-                          解释都没有。启动阻塞（信任目录询问/登录）只在桌面终端画面上，
-                          手机这头唯一能做的就是去桌面确认——那就把它说出来。 */}
-                      {startingSlow && remoteUi() && (
-                        <div className="chat-remote-hint">{t.chat.startingOnDesktop}</div>
-                      )}
+                      {/* 7M-8 曾在这里写「请在桌面端确认」，违反「不推用户去桌面端」（UI 调研 m3）。
+                          启动阻塞（信任目录询问/登录）就在 PTY 画面上，临时负 id 在后端能取屏、能写键
+                          （pty.rs screen_probe_snapshot 走 lookup 解析临时 id，issue #72），
+                          直接把终端画面和按键摆出来，手机上就地确认。 */}
+                      {startingSlow && remoteUi() && (<>
+                        <div className="chat-remote-hint">{t.chat.startingStuckRemote}</div>
+                        <RemoteTerminalKeys sessionId={sessionId} />
+                      </>)}
                     </div>
                   : welcomeInfo ? <WelcomePanel info={welcomeInfo} commands={welcomeCommands} mention={chatUi?.attachment_mention ?? false} onPick={pickStarter} />
                   : t.chat.empty}</div>

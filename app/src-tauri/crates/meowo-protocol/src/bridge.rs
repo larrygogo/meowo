@@ -431,6 +431,8 @@ bridged_args!(NewSessionArgs {
 
 bridged_args!(CheckProviderHooksArgs { provider: String });
 
+bridged_args!(RepairProviderHooksArgs { provider: String });
+
 bridged_args!(ListSubdirectoriesArgs {
     #[serde(default)]
     path: Option<String>

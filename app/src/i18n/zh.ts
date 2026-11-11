@@ -184,7 +184,9 @@ export const zh = {
     up: "上一级",
     pickHere: "用这个目录",
     drives: "选择磁盘",
-    fixOnDesktop: "请在桌面端处理后再启动",
+    // 手机上做不了的两件事，说清为什么（UI 调研 m10：原先一律「请在桌面端处理」）。
+    loginOnHost: "登录要在电脑的浏览器里授权",
+    installOnHost: "安装要在运行 Meowo 的电脑上进行",
     noSubdirs: "没有子目录",
     agent: "Agent",
     cancel: "取消",
@@ -642,7 +644,7 @@ export const zh = {
     remoteTypeSend: "发到终端",
     remoteKeyFailed: "按键没送达，请重试",
     // 远程启动久等（7M-8）：阻塞多半是桌面终端上的信任目录/登录询问。
-    startingOnDesktop: "启动等待中，请在桌面端确认",
+    startingStuckRemote: "启动被卡住，可直接操作终端",
     customAnswerPlaceholder: "输入其他回答",
     addCustomAnswer: "添加回答",
     submitAnswer: "提交选择",
@@ -676,7 +678,7 @@ export const zh = {
     denyConfirmEsc: "再按 Esc 确认拒绝",
     // 审批卡被别处结算/超时收卡时的去向说明——凭空消失像 bug。
     approvalClearedNotice: "该审批已在别处处理或已超时，如需继续请查看终端",
-    approvalClearedNoticeRemote: "该审批已在别处处理或已超时，请到桌面端查看",
+    approvalClearedNoticeRemote: "该审批已在别处处理或已超时",
     // 倒计时归零到后端结算事件到达之间的一拍空窗：徽章切这句，不留定格的 0:00。
     // 审批卡与题面卡共用（回落语义相同）。
     approvalTimedOut: "已超时，回落终端处理中",
@@ -1216,7 +1218,7 @@ export const zh = {
     menuBusy: "请等待当前任务结束后切换模型或模式。",
     modelSwitchUnconfirmed: "尚未确认模型已切换，未修改恢复配置。请到终端检查。",
     modelListUnavailable: (command: string) => `读不到模型清单，点这里到终端页用 ${command} 切换`,
-    modelListUnavailableRemote: (command: string) => `读不到模型清单，请在桌面端用 ${command} 切换`,
+    modelListUnavailableRemote: (command: string) => `读不到模型清单，可直接发送 ${command} 再选`,
     modelGoTerminal: "去终端页切换模型",
     modelListUnavailableShort: "读不到模型清单",
     // 就地模型菜单（对照 Kimi）：换模型的代价写在做决定的地方。

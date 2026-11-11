@@ -33,6 +33,7 @@ import type { AgentModelCatalogArgs } from "./generated/contracts/bridge/AgentMo
 import type { AgentModelsArgs } from "./generated/contracts/bridge/AgentModelsArgs";
 import type { AnswerLeadGateArgs } from "./generated/contracts/bridge/AnswerLeadGateArgs";
 import type { CheckProviderHooksArgs } from "./generated/contracts/bridge/CheckProviderHooksArgs";
+import type { RepairProviderHooksArgs } from "./generated/contracts/bridge/RepairProviderHooksArgs";
 import type { FileMentionCandidatesArgs } from "./generated/contracts/bridge/FileMentionCandidatesArgs";
 import type { ForkSessionArgs } from "./generated/contracts/bridge/ForkSessionArgs";
 import type { GetChatHistoryArgs } from "./generated/contracts/bridge/GetChatHistoryArgs";
@@ -1447,7 +1448,7 @@ export type RepairResult = { status: HooksStatus; reason: RepairReason | null };
 
 /** 手动修复某 provider 的 hooks：立即执行一次 setup::apply_provider，返回最新状态与失败原因。 */
 export function repairProviderHooks(provider: AgentId): Promise<RepairResult> {
-  return invoke("repair_provider_hooks", { provider });
+  return invoke("repair_provider_hooks", { provider } satisfies RepairProviderHooksArgs);
 }
 
 /** 一键安装某 agent（在终端跑官方安装脚本）。装完在窗口重新聚焦/手动刷新时重检安装状态。 */
