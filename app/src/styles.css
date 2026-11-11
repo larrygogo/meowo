@@ -1669,6 +1669,20 @@ button.stab {
 .obm-desktop .obm-panel-pinned { width: 200px; }
 /* Windows 引导的灵动岛示意：纯黑刘海贴顶，下面接展开面板（与真实岛同色，不跟主题变）。 */
 .obm-desktop-island { place-items: start center; }
+/* 欢迎页迷你对话窗：标题栏 + 左侧会话列表 + 右侧消息与输入框（替换已下线的贴纸卡片插图，shell #3）。 */
+.obm-chat { width: 240px; display: flex; flex-direction: column; border-radius: var(--radius-lg); background: rgba(var(--cc-bg-rgb), 1); border: 1px solid var(--cc-border); box-shadow: var(--shadow-lg); overflow: hidden; }
+.obm-chat-bar { display: flex; align-items: center; gap: var(--sp-6); padding: var(--sp-6) var(--sp-8); font-size: var(--text-2xs); font-weight: 600; color: var(--cc-text); border-bottom: 1px solid var(--line-subtle); }
+.obm-chat-bar .obm-logo { border-radius: var(--radius-xs); display: block; }
+.obm-chat-body { display: flex; height: 112px; }
+.obm-chat-side { width: 78px; flex: none; display: flex; flex-direction: column; gap: var(--sp-4); padding: var(--sp-6); background: var(--fill-hover); }
+.obm-chat-item { display: flex; align-items: center; gap: var(--sp-4); padding: var(--sp-4); border-radius: var(--radius-sm); }
+.obm-chat-item.is-on { background: var(--fill-selected); }
+.obm-chat-item .obm-island-bar { height: 4px; background: var(--cc-text-faint); opacity: 0.5; }
+.obm-chat-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-6); padding: var(--sp-8); }
+.obm-chat-msg { display: block; height: 5px; width: 86%; border-radius: var(--radius-xs); background: var(--cc-text-faint); opacity: 0.45; }
+.obm-chat-msg.is-user { align-self: flex-end; width: 46%; height: 12px; border-radius: var(--radius-sm); background: var(--fill-tab); opacity: 1; }
+.obm-chat-msg.is-short { width: 58%; }
+.obm-chat-input { display: block; margin-top: auto; height: 18px; border-radius: var(--radius-full); border: 1px solid var(--cc-border); background: var(--fill-hover); }
 .obm-island { display: flex; flex-direction: column; align-items: center; }
 .obm-island-pill {
   display: flex;
@@ -1802,17 +1816,30 @@ button.stab {
   line-height: 1.55;
   color: var(--cc-text-dim);
 }
-.ob-tick {
+/* 说明条目编号（原为对勾 .ob-tick：对勾读成「已完成」，UI 调研 shell #4）。 */
+.ob-num {
   flex: none;
   width: 20px;
   height: 20px;
   margin-top: 0.5px;
   display: grid;
   place-items: center;
-  border-radius: 50%;
-  background: var(--cc-accent-soft);
-  color: var(--cc-accent-text);
+  border-radius: var(--radius-full);
+  background: var(--fill-selected);
+  color: var(--cc-text-dim);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
+/* 「连接 AI CLI」一步的安装检测：一行一个 agent，右侧写已安装 / 未安装。 */
+.ob-agents { width: 100%; margin-top: var(--sp-12); display: flex; flex-direction: column; align-items: center; gap: var(--sp-10); }
+.ob-agents-note { margin: var(--sp-12) 0 0; font-size: var(--text-xs); color: var(--cc-text-faint); }
+.ob-agent-list { list-style: none; margin: 0; padding: 0; width: 100%; display: flex; flex-direction: column; gap: var(--sp-2); }
+.ob-agent { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-8); padding: var(--sp-4) var(--sp-10); border-radius: var(--radius-md); background: var(--fill-hover); font-size: var(--text-xs); }
+.ob-agent-name { color: var(--cc-text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ob-agent-state { flex: none; color: var(--cc-text-faint); }
+.ob-agent.is-ok .ob-agent-state { color: var(--cc-text-dim); }
+.ob-agent.is-ok .ob-agent-state::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: var(--sp-6); border-radius: var(--radius-full); background: var(--cc-ok-vivid); vertical-align: 1px; }
 .ob-reopen {
   margin: var(--sp-18) 0 0;
   font-size: var(--fs-11-5);
