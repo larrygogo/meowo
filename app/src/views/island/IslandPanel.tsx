@@ -38,7 +38,7 @@ function shownLanes(usage: ProviderUsage | undefined): UsageLane[] {
 /// 固定色相，靠颜色把图例和圈对上。不再按用量变色：几圈都是绿的就分不清谁是谁。
 /// 快用完改由图例里的数字变色提示。最外圈是品牌青柠；其余避开琥珀、红和绿，那三个在 Meowo 里是
 /// 「要处理 / 出错 / 在跑」。
-const LANE_COLORS = ["var(--isl-lime)", "#6cc8ff", "#b592ff", "#8a8fff"];
+const LANE_COLORS = ["var(--isl-ok)", "#64d2ff", "#bf5af2", "#5e5ce6"];
 
 /// 叠环：一家一个，每档额度一圈，外大内小。用户要求（2026-11-05）：此前每档一个独立的环，
 /// 一家三档就横排三个环，面板挤、标签被截断（「Fable · 每周」只露一半）。

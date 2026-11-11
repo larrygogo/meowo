@@ -110,9 +110,9 @@ pub(crate) fn disable_browser_accelerators(webview: &tauri::Webview) {
 }
 
 /// 独立窗口原生底色的两档取值，必须与 styles.css 的 `--cc-window-bg` 逐位相同
-/// （深 #111210 / 浅 #f3f4ef）；本文件末尾的 window_bg_tests 把两边钉在一起。
-const WINDOW_BG_DARK: (u8, u8, u8) = (0x11, 0x12, 0x10);
-const WINDOW_BG_LIGHT: (u8, u8, u8) = (0xf3, 0xf4, 0xef);
+/// （深 #101112 / 浅 #f4f4f6）；本文件末尾的 window_bg_tests 把两边钉在一起。
+const WINDOW_BG_DARK: (u8, u8, u8) = (0x10, 0x11, 0x12);
+const WINDOW_BG_LIGHT: (u8, u8, u8) = (0xf4, 0xf4, 0xf6);
 
 /// 应用主题此刻是不是深色。theme=system 时借主窗口的 theme()（跟随 OS，本应用不调
 /// set_theme）判定明暗。原生底色与窗口材质（material.rs）共用这一处判定。

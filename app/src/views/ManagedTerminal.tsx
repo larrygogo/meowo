@@ -628,7 +628,7 @@ export function ManagedTerminal({ sessionId, status, reviewPending = false, back
       // settings-changed 热应用。
       scrollback: 5000,
       // 配色取自 --term-*（terminalTheme.ts）：光标用品牌蓝点缀，选区是成片色块，用淡蓝保持清爽。
-      // 底色与对话视图同档（--cc-bg / --cc-window-bg = #111210），切页签时不跳色。
+      // 底色与对话视图同档（--cc-bg / --cc-window-bg = #101112），切页签时不跳色。
       theme: terminalTheme(),
     });
     const fit = new FitAddon();
