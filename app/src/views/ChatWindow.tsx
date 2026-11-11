@@ -4728,7 +4728,7 @@ export function ChatWindow() {
           {slashMatches.map((command, index) => (
             <button type="button" key={command.name} role="option" id={`chat-slash-option-${index}`} aria-selected={index === slashActive} className="chat-slash-item"
               // styles.css 不在本次改动范围：键盘高亮复用 hover 的同一条表面色变量。
-              style={index === slashActive ? { background: "var(--cc-surface-hover)" } : undefined}
+              style={index === slashActive ? { background: "var(--fill-selected)" } : undefined}
               onMouseEnter={() => setSlashIndex(index)}
               onClick={() => { setPrompt(command.name + " "); setSlashIndex(0); }}>
               <code>{command.name}</code>
@@ -4749,7 +4749,7 @@ export function ChatWindow() {
         {atFiles.length > 0 && atQuery !== null && <div className="dd-menu chat-slash-menu" role="listbox" id="chat-at-listbox">
           {atFiles.map((rel, index) => (
             <button type="button" key={rel} role="option" id={`chat-at-option-${index}`} aria-selected={index === atActive} className="chat-slash-item"
-              style={index === atActive ? { background: "var(--cc-surface-hover)" } : undefined}
+              style={index === atActive ? { background: "var(--fill-selected)" } : undefined}
               onMouseEnter={() => setAtIndex(index)}
               onClick={() => pickAtFile(rel)}>
               <code>@{rel}</code>

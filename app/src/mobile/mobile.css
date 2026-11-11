@@ -395,7 +395,7 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
   color: var(--cc-text-dim);
   background: transparent;
 }
-.remote-settings-btn[aria-expanded="true"] { color: var(--cc-text); background: var(--cc-selected); }
+.remote-settings-btn[aria-expanded="true"] { color: var(--cc-text); background: var(--fill-selected-hover); }
 /* 面板从齿轮下方往左展开，宽度卡在屏宽内（两侧各留 16px）。 */
 .remote-settings-panel {
   position: absolute;
@@ -501,12 +501,12 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
   border-radius: 10px;
   border: 1px solid var(--cc-border);
   outline: none;
-  background: var(--cc-surface);
+  background: var(--fill-hover);
   color: inherit;
   font-size: 16px;
   transition: border-color var(--dur-fast), background var(--dur-fast);
 }
-.remote-gate-card input:focus { border-color: var(--cc-accent-border); background: var(--cc-surface-hover); }
+.remote-gate-card input:focus { border-color: var(--cc-accent-border); background: var(--fill-selected); }
 .remote-gate-card button {
   height: 46px;
   border: none;
