@@ -111,9 +111,8 @@ import { listAgents, type AgentDescriptor } from "../api";
 import { agentAssets, tintStyle } from "../providers";
 import appLogoUrl from "../../src-tauri/icons/64x64.png";
 import { Icon } from "../icons/Icon";
-import { icArrowLeftRight, icArrowUp, icChevronLeft, icCollapse, icExpand, icFile, icMessage, icShield, icSidebarLeft, icStop } from "../icons/glyphs.chat";
+import { icArrowLeftRight, icArrowUp, icChevronLeft, icCollapse, icExpand, icFile, icMessage, icShield, icSidebarLeft, icSparkles, icStop } from "../icons/glyphs.chat";
 import { icAlert, icCheck, icChevronDown, icClose, icPencil } from "../icons/glyphs";
-import { icBot } from "../icons/glyphs.settings";
 
 
 /// 对话页意外退出说明附几行终端输出：够看出报错，不把输入框上方铺满。
@@ -5243,7 +5242,7 @@ export function ChatWindow() {
                   标签套 span 才能省略号收尾：text-overflow 只作用于块容器，裸文本在
                   inline-flex 里挤压时会按 min-content（CJK=单字）竖排溢出（实拍）。 */}
               {/* 只在窄主列（data-narrow）显示，顶替被收掉的模型名。 */}
-              <span className="chat-model-narrow-icon" aria-hidden="true"><Icon glyph={icBot} size={14} /></span>
+              <span className="chat-model-narrow-icon" aria-hidden="true"><Icon glyph={icSparkles} size={14} /></span>
               <span className="chat-model-label">
                 {history?.model || t.chat.model}
                 {/* 「模型 · 档位」（对照 Kimi 的 K3.1 Pro · Max）：档位影响回答深度与耗时，常看常换。 */}

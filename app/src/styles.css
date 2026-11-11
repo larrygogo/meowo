@@ -5462,7 +5462,7 @@ button.scm-check-name:hover { text-decoration: underline; }
 /* 对话加载失败：错误色图标 + 错误色标题 + 原因 + 主按钮，成一组居中（design.md 2：出错是画面里
    对比最强的元素；此前只有一行 12px 小红字）。不铺红底。 */
 .chat-empty.is-error { row-gap: var(--sp-6); justify-items: center; color: var(--cc-text-dim); font-size: var(--text-sm); }
-.chat-empty-error-icon { margin-bottom: var(--sp-4); color: var(--cc-err-vivid); }
+.chat-empty-error-icon { margin-bottom: var(--sp-4); color: var(--cc-fail-text); }
 .chat-empty-error-title { color: var(--cc-fail-text); font-size: var(--text-base); font-weight: 600; line-height: var(--leading-tight); }
 .chat-empty.is-error .chat-load-reason { max-width: 420px; margin-top: 0; color: var(--cc-text-dim); font-size: var(--text-sm); }
 .chat-empty.is-error .chat-retry-now { margin: var(--sp-10) 0 0; height: var(--btn-h-lg); padding: 0 var(--sp-16); border-radius: var(--radius-md); background: var(--cc-accent); color: var(--cc-on-accent); font-size: var(--text-sm); font-weight: 500; }
@@ -7749,7 +7749,7 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
   text-align: center;
 }
 .app-crash p { margin: 0; max-width: 360px; }
-.app-crash-icon { margin-bottom: var(--sp-4); color: var(--cc-err-vivid); }
+.app-crash-icon { margin-bottom: var(--sp-4); color: var(--cc-fail-text); }
 .app-crash-title { font-size: var(--text-lg); font-weight: 600; line-height: 1.4; color: var(--cc-fail-text); }
 .app-crash-hint { font-size: var(--text-sm); line-height: 1.5; color: var(--cc-text-dim); }
 /* 这一页唯一的动作，就是主按钮（.btn-primary 给颜色，这里只管尺寸）。 */
