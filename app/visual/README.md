@@ -47,6 +47,11 @@ bun run visual:compare <基线目录> <新目录>
 | `settings-general` / `-appearance` / `-account` / `-remote` | 设置窗四个分区（远程分区开着，带二维码） | 620 / 1280 / 2560 |
 | `onboarding` | 引导页第一步 | 620 / 1280 / 2560 |
 | `island-compact` / `-panel` / `-alert` | 灵动岛收起 / 展开面板 / 审批提醒，垫在固定灰底上 | 700 |
+| `island-compact-calm` / `-many` / `-idle` / `-notch` | 收起（概览样式）：只有在跑和跑完的 / 十二个会话折成 +N / 没有会话 / macOS 刘海两翼 | 700 |
+| `island-focus` / `island-minimal`（各带 `-idle` / `-many` / `-notch`） | 收起的另外两种样式 | 700 |
+| `island-strip` | 极简细条：四种状态各一条，外加没有会话的一条 | 1000 |
+| `island-panel-single` / `-empty` / `-menubar`、`island-usage` | 面板：单页不出翻页 / 空态 / macOS 菜单栏落点 / 额度页 | 700 |
+| `island-alert-error` / `-done` / `-menubar` | 提醒：出错（长标题长详情）/ 跑完 / 菜单栏落点 | 700 |
 | `mobile-list` / `-chat` / `-changes` | 手机远程页：会话列表 / 对话 + 审批卡 / 「更改」页 | 375 / 430 |
 
 每个场景都拍深色、浅色两种主题，dpr 1 和 2。语言默认只拍中文，`chat` 与 `mobile-chat` 另加英文。

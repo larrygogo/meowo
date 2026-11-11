@@ -172,7 +172,7 @@ VIAddVersionKey "ProductVersion" "${VERSION}"
 !define MEOWO_COL_BAND "101012"
 !define MEOWO_COL_TEXT "f5f5f7"
 !define MEOWO_COL_SUB  "a0a0a8"
-!define MEOWO_COL_LINK "4ec9a5"
+!define MEOWO_COL_LINK "d4f64c"
 !define /ifndef SS_CENTER 0x1
 !define /ifndef SS_NOTIFY 0x100
 !define /ifndef SW_HIDE 0
@@ -504,7 +504,7 @@ Function MeowoMainPage
   ${MeowoScale} $5 22
   nsDialogs::CreateControl STATIC "${__NSD_Label_STYLE}|${SS_CENTER}|${SS_NOTIFY}" "${__NSD_Label_EXSTYLE}" $2 $3 $4 $5 "$(meowoOneClick)"
   Pop $7
-  SetCtlColors $7 "0c211b" "${MEOWO_COL_LINK}"
+  SetCtlColors $7 "1c2600" "${MEOWO_COL_LINK}"
   SendMessage $7 ${WM_SETFONT} $MeowoBtnFont 1
   ${NSD_OnClick} $7 MeowoOnInstallClick
 
@@ -818,7 +818,7 @@ Function MeowoDonePage
   ${MeowoScale} $5 22
   nsDialogs::CreateControl STATIC "${__NSD_Label_STYLE}|${SS_CENTER}|${SS_NOTIFY}" "${__NSD_Label_EXSTYLE}" $2 $3 $4 $5 "$(meowoLaunch)"
   Pop $7
-  SetCtlColors $7 "0c211b" "${MEOWO_COL_LINK}"
+  SetCtlColors $7 "1c2600" "${MEOWO_COL_LINK}"
   SendMessage $7 ${WM_SETFONT} $MeowoBtnFont 1
   ${NSD_OnClick} $7 MeowoOnLaunchClick
 

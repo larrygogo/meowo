@@ -1,14 +1,15 @@
 <svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <linearGradient id="panel" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#1d1d20"/>
-      <stop offset="1" stop-color="#0c0c0d"/>
+      <stop offset="0" stop-color="#1c1d19"/>
+      <stop offset="1" stop-color="#0b0c0a"/>
     </linearGradient>
   </defs>
 
   <rect x="24" y="24" width="976" height="976" rx="232" fill="url(#panel)"/>
-  <rect x="25" y="25" width="974" height="974" rx="231" fill="none" stroke="#ffffff" stroke-opacity="0.06" stroke-width="2"/>
+  <rect x="25" y="25" width="974" height="974" rx="231" fill="none" stroke="#f4f8e6" stroke-opacity="0.06" stroke-width="2"/>
 
-  <circle cx="362" cy="470" r="110" fill="#4ec9a5"/>
-  <circle cx="662" cy="470" r="110" fill="#e0a23c"/>
+  <!-- 一双猫眼青柠的眼睛，和灵动岛上的眼睛同色。改完跑 node app/scripts/gen-icons.mjs 重新出全套尺寸。 -->
+  <circle cx="362" cy="470" r="110" fill="#d4f64c"/>
+  <circle cx="662" cy="470" r="110" fill="#d4f64c"/>
 </svg>
