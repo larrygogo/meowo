@@ -32,7 +32,7 @@ bun run visual:compare <基线目录> <新目录>
 - `--engine webkit`：换 WebKit 拍（默认 Chromium，对应 Windows 的 WebView2）。
 - `compare.mjs --tolerance <0~255>`：单通道允许的差值，默认 0（严格一致）；`--out <目录>` 指定差异图位置。
 
-全量 164 张，本机约 50 秒。
+全量 384 张（`--list` 看确切数），本机三分钟左右。
 
 ## 场景矩阵
 
@@ -44,8 +44,17 @@ bun run visual:compare <基线目录> <新目录>
 | `chat-long` | 同上，滚到表格/代码块处并展开工具组（长输出、报错工具卡） | 620 / 1280 / 2560 |
 | `panel-changes` | 右侧面板「更改」：仓库、提交框、推送、PR 与 CI、文件清单 | 620 / 1280 / 2560 |
 | `panel-diff` | 「更改」里点开 `LoginForm.tsx` 的 diff | 620 / 1280 / 2560 |
-| `settings-general` / `-appearance` / `-account` / `-remote` | 设置窗四个分区（远程分区开着，带二维码） | 620 / 1280 / 2560 |
-| `onboarding` | 引导页第一步 | 620 / 1280 / 2560 |
+| `settings-<分区>` | 设置窗九个分区：`general` `sessions` `appearance` `shortcuts` `remote`（开着，带二维码）`network`（自定义代理）`account`（带多账号列表）`extensions` `about` | 620 / 1280 / 2560 |
+| `settings-search` / `-noresults` | 设置搜索：有命中（各分区平铺）/ 无结果 | 620 / 1280 / 2560 |
+| `onboarding` | 引导页第一步（拉宽拉高的压力测试） | 620 / 1280 / 2560 |
+| `newsession-page` / `-page-wt` | 对话窗里的新建会话页（只搭主列容器，不含侧栏与标题栏）；`-wt` 勾上「在新 worktree 里开」 | 620 / 1280 / 2560 |
+| `settingswin-<分区>` | 同 `settings-*`，按真实窗口尺寸拍 | 620×460 |
+| `onboarding-1` ～ `-4` | 引导四步，真实窗口尺寸 | 460×600 |
+| `updater-checking` / `-latest` / `-error` | 更新窗紧凑态：检查中 / 已最新 / 失败 | 400×252 |
+| `updater-available` / `-downloading` / `-installing` | 更新窗增高态：发现新版（带更新说明）/ 下载中 42% / 安装中 | 400×500 |
+| `confirm` / `-danger` / `-alert` / `-long` | 确认框：普通 / 危险 / 单按钮提示 / 多行长文 | 420×132（长文 420×400） |
+| `newsession-window` / `-window-full` | 新建会话独立窗；`-full` 带 worktree 选项、重名警告与接入项警告 | 460×520 |
+| `crash` | 窗口级崩溃兜底页 + DEV 角标 | 620×460 |
 | `island-compact` / `-panel` / `-alert` | 灵动岛收起 / 展开面板 / 审批提醒，垫在固定灰底上 | 700 |
 | `mobile-list` / `-chat` / `-changes` | 手机远程页：会话列表 / 对话 + 审批卡 / 「更改」页 | 375 / 430 |
 

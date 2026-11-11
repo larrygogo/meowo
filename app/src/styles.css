@@ -2326,7 +2326,8 @@ button.stab {
 /* 保存被后端拒绝的原因（如代理地址非法）：必须比普通 hint 显眼，否则用户只会看到输入框弹回去而不知为何。 */
 .sec-hint.proxy-err { color: var(--cc-err); opacity: 1; }
 /* 代理地址单占一整行：塞进 .row 右侧只剩半截宽度，连 placeholder 都显示不全。 */
-.proxy-url-row { padding-top: 0; }
+/* 它是上一行（默认代理）的延续，不是新的一行：不画分隔线，否则输入框顶着线。 */
+.row.proxy-url-row { padding-top: 0; border-top: 0; }
 .proxy-url-row .ns-input { width: 100%; }
 /* 模型名不换行（「Claude Code」曾被右侧控件挤成两行）。 */
 .proxy-agent-name { white-space: nowrap; }

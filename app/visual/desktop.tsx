@@ -180,6 +180,8 @@ async function boot(): Promise<React.ReactNode> {
     if (searchQuery) whenReady<HTMLInputElement>(".side-search input", (el) => typeInto(el, searchQuery));
     // 账号分区要版本探测、远程分区要配对信息：演示 mock 不管这几条，返回 null 会让分区崩掉。
     store.settings.remote_access_enabled = true;
+    // 网络分区拍「自定义代理」：地址输入行与各 Agent 的单独设置只在这一档出现。
+    if (section === "network") store.settings.proxy = { mode: "custom", url: "http://127.0.0.1:7890", per_agent: {} };
     setExtraMock((cmd) => {
       if (cmd === "installed_agent_versions" || cmd === "check_agent_updates") return [];
       if (cmd === "list_agents") return AGENTS_WITH_OPTIONS;
