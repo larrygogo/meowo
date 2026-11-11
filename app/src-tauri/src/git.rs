@@ -498,8 +498,12 @@ fn fill_line_counts(dir: &str, files: &mut [GitChangedFileDto]) {
         }
     }
     // 折叠的目录条目不是文件，不数（也不占 MAX_UNTRACKED_COUNTED 的名额）。
+    // status 的路径相对仓库根，读盘要拼到仓库根上：以前拼到 cwd，会话开在子目录时未跟踪文件
+    // 一个都读不到，侧栏徽标和「更改」面板的 +N 少算（git_subdir_line_count_tests 复现）。
+    let mut root: Option<String> = None;
     for file in files.iter_mut().filter(|file| file.status == "U" && file.untracked_files.is_none()).take(MAX_UNTRACKED_COUNTED) {
-        if let Some(lines) = untracked_line_count(dir, &file.path) {
+        let root = root.get_or_insert_with(|| work_tree_root(dir));
+        if let Some(lines) = untracked_line_count(root, &file.path) {
             file.additions = Some(lines);
             file.deletions = Some(0);
         }
@@ -520,6 +524,18 @@ fn parse_numstat_z(bytes: &[u8]) -> std::collections::HashMap<String, (u32, u32)
         }
     }
     counts
+}
+
+/// cwd 所在工作树的根。先往上找第一个有 `.git`（目录或 worktree 的 .git 文件）的目录，不起进程：
+/// 侧栏每 30 秒给每个目录算一遍，多一个 rev-parse 在 Windows 上约 40ms（bench_sidebar_badges_20_dirs）。
+/// 环境里指定了 GIT_DIR / GIT_WORK_TREE 时 `.git` 不说明问题，才问 git；问不出就退回 cwd。
+fn work_tree_root(dir: &str) -> String {
+    let by_env = std::env::var_os("GIT_DIR").is_some() || std::env::var_os("GIT_WORK_TREE").is_some();
+    let found = (!by_env)
+        .then(|| Path::new(dir).ancestors().find(|p| p.join(".git").exists()))
+        .flatten()
+        .map(|p| p.to_string_lossy().into_owned());
+    found.or_else(|| repo_root(dir)).unwrap_or_else(|| dir.to_string())
 }
 
 /// 未跟踪文件的行数：超过 diff 上限或像二进制就不数（那种文件 diff 里也看不全）。
@@ -3252,7 +3268,7 @@ more
         let (counts, spawned) = spawns(&s(&conflict));
         assert_eq!(counts, Some(summed(&s(&conflict))));
         assert_eq!(spawned, 2, "冲突文件要跑 numstat");
-        // 子目录里开的会话：与摘要一致（未跟踪文件按子目录拼路径读，行数数不到，是摘要原有的口径，这里不改）。
+        // 子目录里开的会话：与摘要一致（行数按仓库根读盘，见 git_subdir_line_count_tests）。
         let sub = s(&dirty.join("sub"));
         std::fs::create_dir_all(dirty.join("sub")).unwrap();
         assert_eq!(counts_of(&sub), Some(summed(&sub)));
@@ -3422,3 +3438,7 @@ more
         assert_eq!(files.len(), 2);
     }
 }
+
+#[cfg(test)]
+#[path = "git_subdir_line_count_tests.rs"]
+mod subdir_line_count_tests;
