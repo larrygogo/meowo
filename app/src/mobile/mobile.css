@@ -609,3 +609,38 @@ body.remote-ui .scm { overflow-x: hidden; }
   body.remote-ui .scm-icon-btn::after,
   body.remote-ui .chat-diff-layout button::after { inset: -4px; }
 }
+
+/* 刘海机横屏:左右安全区(验收 #28,调研 m6)。此前只处理了上下,横屏时返回钮、列表和「更改」行
+   会落到刘海下(左右各约 47~59px)。整个远程页内容统一内缩,竖屏 env() 为 0,零影响。
+   Playwright 模拟不了 env(),这条按代码核对。 */
+body.remote-ui #root {
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+  box-sizing: border-box;
+}
+
+/* 手机横屏的会话列表(验收 #28,调研 m5):页头 + 新建 + 搜索 + 页签加起来约 205px,393 高的
+   横屏只看得到 2 个会话。矮屏时页头压成一行(去副标题、缩 logo),各入口收紧,一屏能放 4 个。 */
+@media (max-height: 500px) and (orientation: landscape) {
+  .remote-session-list-head { padding: calc(4px + env(safe-area-inset-top, 0px)) 16px 2px; gap: 10px; }
+  .remote-session-list-head img { width: 24px; height: 24px; border-radius: 7px; }
+  .remote-session-list-head h1 { font-size: 16px; }
+  .remote-session-list-head p { display: none; }
+  .remote-session-list .chat-sidebar-head { padding-bottom: 2px; }
+  .remote-session-list .chat-sidebar-new { padding-top: 4px; padding-bottom: 4px; }
+  .remote-session-list .chat-sidebar-search { padding-bottom: 4px; }
+  .remote-session-list .chat-sidebar-search input { min-height: 0; padding-top: 4px; padding-bottom: 4px; }
+  .remote-session-list .chat-sidebar-tabs { margin-bottom: 4px; }
+  .remote-session-list .chat-sidebar-list { padding-top: 0; }
+  .remote-session-list .chat-sidebar-item { min-height: 48px; }
+}
+
+/* iPad 竖屏(≤880 走手机列表)时整宽行拉到 800px,行尾时间和 ⋯ 离标题很远(调研 m14)。
+   列表限 640 居中,和 Kimi 平板端的阅读宽一致;手机宽度本来就不到 640,不受影响。 */
+.remote-session-list > * { width: 100%; max-width: 640px; margin-inline: auto; box-sizing: border-box; }
+/* 宽屏远程页侧栏头里的设置齿轮(ChatSidebar remoteSettings):齿轮在侧栏右缘,面板照列表页
+   那样往左展开会出屏,改成往右展开、盖在对话区上。按钮跟侧栏头其他入口同高。 */
+.chat-sidebar-head:has(.remote-settings) { flex-direction: row; align-items: center; }
+.chat-sidebar-head:has(.remote-settings) .chat-sidebar-new { flex: 1 1 auto; }
+.chat-sidebar-head .remote-settings-btn { width: 32px; height: 32px; }
+.chat-sidebar-head .remote-settings-panel { right: auto; left: 0; }

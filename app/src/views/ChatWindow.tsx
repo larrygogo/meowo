@@ -3915,6 +3915,7 @@ export function ChatWindow() {
         attentionIdsRef={sidebarAttentionRef}
         searchInputRef={sidebarSearchRef}
         width={shownSidebarWidth}
+        remoteSettings={remoteUi()}
         onSelect={selectSession}
         onPrefetch={prefetchSession}
         onCollapse={collapseSidebar}
