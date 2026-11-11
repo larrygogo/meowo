@@ -1,10 +1,5 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
-
-/// 焦点是否落在用户正在打字的控件里（见 7C-1 的移焦让位）。
-function isTypingTarget(el: Element | null): boolean {
-  return el instanceof HTMLElement
-    && (el.tagName === "TEXTAREA" || el.tagName === "INPUT" || el.isContentEditable);
-}
+import { useEffect, useLayoutEffect, useRef, useState, type FocusEvent, type ReactNode, type RefObject } from "react";
+import { remoteUi } from "../../remoteMode";
 
 /// 审批/交互卡的统一外壳。对话页上四类卡——broker 审批(claude hook 劫走的请求)、
 /// 终端命令审批(claude/kimi 屏幕识别)、交互选择器(question/plan)、其他屏幕提示
@@ -28,21 +23,36 @@ export function ApprovalCard({ title, badge, className, children, sideActions, a
   returnFocusTo?: RefObject<HTMLElement | null>;
 }) {
   const ref = useRef<HTMLElement>(null);
-  // G-16：role=alert 只打断朗读、焦点却进不来，用户听不到也摸不着按钮。改 alertdialog
-  // 并在出现时把焦点交给第一个动作按钮（alertdialog 的惯例）；非模态， aria-modal=false。
-  //
-  // 7C-1：但用户正在 composer 里打插话时卡片弹出，抢焦点会把下一个空格/回车喂给
-  // 「拒绝」钮——一次误拒。U1-21 定的「不锁 composer」与这里的挂载移焦叠加出的输入
-  // 竞态，让位给正在进行的输入：焦点在可编辑控件里就不抢，读屏用户仍可用 Tab 进卡。
+  // 首焦点规则（UI 优化 c3/m11，取代 G-16 的「出现即把焦点交给第一个动作按钮」）：
+  // 卡片挂载不再抢焦点。窗口刚打开时焦点在 body，旧做法把它落到 DOM 序第一个动作钮——实际是
+  // 「说明并拒绝」，用户开窗就打字，空格点开理由框、后面的字进了理由框、回车即误拒（chat s13
+  // 实测）。现在：焦点无处落脚（body）时交给 composer（returnFocusTo），打字永远进输入框；
+  // 焦点已在别处一律不动。读屏/键盘用户用 Tab 进卡，进卡首个落点是「拒绝」（见 onFocus）。
+  // 手机远程不做挂载移焦：WebKit 把程序化 focus 画成焦点环，看着像推荐选项；聚焦输入框还会
+  // 弹键盘（mobile m11 实拍）。
   useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    if (isTypingTarget(document.activeElement)) return;
-    // 优先右组（本次决定）的第一个按钮；左组是「不作决定」的次要动作，不该先落焦。
-    (el.querySelector<HTMLElement>(".chat-approval-actions > button")
-      ?? el.querySelector<HTMLElement>(".chat-approval-actions button")
-      ?? el.querySelector<HTMLElement>("button"))?.focus();
+    if (remoteUi()) return;
+    const active = document.activeElement;
+    if (active && active !== document.body) return;
+    const composer = returnFocusTo?.current;
+    if (composer?.isConnected) composer.focus({ preventScroll: true });
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 只在挂载时判一次；returnFocusTo 是 ref 容器
   }, []);
+  // 键盘 Tab 从卡外进来时，首个落点改道到「拒绝」（.is-deny）：DOM 序里排在它前面的是
+  // 「展开全部/复制命令」、持久放行和「说明并拒绝」——落在「说明并拒绝」上随手一个空格就是
+  // 打开理由框。只认键盘模态（input-modality 的 data-im=kbd，Tab 按下即挂上）：鼠标点卡里
+  // 任何按钮都照常落在被点的那颗；进卡之后卡内移动（relatedTarget 在卡内）也不改道，
+  // Shift+Tab 回「说明并拒绝」照常可达。没有「拒绝」的卡（提问、Lead 关卡）保持 DOM 序。
+  const onFocus = (event: FocusEvent<HTMLElement>) => {
+    const card = ref.current;
+    if (!card) return;
+    const from = event.relatedTarget;
+    if (from instanceof Node && card.contains(from)) return;
+    if (document.documentElement.getAttribute("data-im") !== "kbd") return;
+    const entry = card.querySelector<HTMLButtonElement>(".chat-approval-actions > button.is-deny");
+    if (!entry || entry.disabled || entry === event.target) return;
+    entry.focus();
+  };
   // 焦点归还用 layout cleanup:被动 effect 的 cleanup 在 DOM 移除后才跑,那时
   // contains(activeElement) 已失效(焦点先掉回 body);layout cleanup 在移除前执行,
   // 还能认出「焦点在卡内」。归还本身推迟到宏任务:同一帧挂载的新卡会先接管焦点
@@ -62,7 +72,7 @@ export function ApprovalCard({ title, badge, className, children, sideActions, a
   // eslint-disable-next-line react-hooks/exhaustive-deps -- returnFocusTo 是父组件的 ref 容器，卸载时读它最新指向的元素；只在挂载卸载时跑，父组件重渲染不该重挂
   }, []);
   return (
-    <section ref={ref} className={"chat-approval" + (className ? ` ${className}` : "")} role="alertdialog" aria-modal="false" aria-label={title}>
+    <section ref={ref} className={"chat-approval" + (className ? ` ${className}` : "")} role="alertdialog" aria-modal="false" aria-label={title} onFocus={onFocus}>
       <div className="chat-approval-copy">
         <div className="chat-approval-head">
           <strong>{title}</strong>
