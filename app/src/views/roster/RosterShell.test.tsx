@@ -6,8 +6,17 @@ import type { ChatShellBridge } from "../ChatWindow";
 // 点具体会话进来不落名单。对话窗换成一个只回显接线的桩（它自己的行为由 ChatWindow.*.test 管）。
 const invoke = vi.hoisted(() => vi.fn());
 const boardHandlers = vi.hoisted(() => new Map<string, (event: { payload: unknown }) => void>());
+const emit = vi.hoisted(() => vi.fn(() => Promise.resolve()));
+const focus = vi.hoisted(() => ({ handler: (_event: { payload: boolean }) => {} }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
+vi.mock("@tauri-apps/api/window", () => ({
+  getCurrentWindow: () => ({
+    isFocused: () => Promise.resolve(true),
+    onFocusChanged: (handler: (event: { payload: boolean }) => void) => { focus.handler = handler; return Promise.resolve(() => {}); },
+  }),
+}));
 vi.mock("@tauri-apps/api/event", () => ({
+  emit,
   listen: vi.fn((name: string, handler: (event: { payload: unknown }) => void) => {
     boardHandlers.set(name, handler);
     return Promise.resolve(() => {});
@@ -41,6 +50,7 @@ describe("名单外壳", () => {
     localStorage.clear();
     boardHandlers.clear();
     invoke.mockReset();
+    emit.mockClear();
     invoke.mockImplementation((cmd: string) => Promise.resolve(
       cmd === "get_live_sessions_page" ? { items: sessions, next_cursor: null } : cmd === "sidebar_git_badges" ? [] : undefined,
     ));
@@ -109,6 +119,17 @@ describe("名单外壳", () => {
     await screen.findByText("甲");
     fireEvent.click(screen.getByRole("button", { name: "reveal" }));
     expect(document.querySelector(".roster")).toBeNull();
+  });
+
+  it("窗口在前台时黑轨上有眼睛并告诉岛；失焦后眼睛离开黑轨", async () => {
+    sessions = [mk("甲"), mk("乙")];
+    render(<RosterShell />);
+    await screen.findByText("甲");
+    expect(document.querySelectorAll(".roster-rail .isl-eyes")).toHaveLength(1);
+    expect(emit).toHaveBeenCalledWith("roster-front", true);
+    await act(async () => { focus.handler({ payload: false }); });
+    expect(document.querySelector(".roster-rail .isl-eyes")).toBeNull();
+    expect(emit).toHaveBeenLastCalledWith("roster-front", false);
   });
 
   it("界面上没有计数", async () => {

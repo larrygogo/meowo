@@ -11,6 +11,7 @@ let emitIslandAlert: (e: { payload: unknown }) => void = () => {};
 let emitRecallSticker: () => void = () => {};
 const unlisten = vi.fn();
 let emitTitlebar: (e: { payload: unknown }) => void = () => {};
+let emitRosterFront: (e: { payload: unknown }) => void = () => {};
 // 贴纸 2026-11-05 在两个平台都删了，App 只剩灵动岛。macOS 用例把 isMac 打开，落点由
 // island_host 的 mock 返回值决定（刘海 / 菜单栏）。
 let mac = false;
@@ -127,6 +128,7 @@ vi.mock("@tauri-apps/api/event", () => ({
     if (event === "recall-sticker") emitRecallSticker = cb as unknown as () => void;
     if (event === "island-alert") emitIslandAlert = cb;
     if (event === "island-titlebar") emitTitlebar = cb;
+    if (event === "roster-front") emitRosterFront = cb;
     return Promise.resolve(unlisten);
   },
   emit: vi.fn(() => Promise.resolve()),
@@ -246,6 +248,19 @@ describe("#31 提醒可关、可清空、悬停有上限", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("主窗口在前台时眼睛在它的黑轨上", () => {
+  it("名单外壳报「主窗口在前台」：岛收成细条（屏幕上只留一双眼睛）；失焦后恢复胶囊", async () => {
+    const { container } = render(<App />);
+    await booted();
+    await waitFor(() => expect(container.querySelector(".isl-notch.is-compact")).toBeTruthy());
+    await act(async () => { emitRosterFront({ payload: true }); });
+    await waitFor(() => expect(container.querySelector(".isl-strip")).toBeTruthy());
+    expect(container.querySelector(".isl-eyes")).toBeNull();
+    await act(async () => { emitRosterFront({ payload: false }); });
+    await waitFor(() => expect(container.querySelector(".isl-notch.is-compact")).toBeTruthy());
   });
 });
 

@@ -525,7 +525,11 @@ export function App() {
   const autoStripRef = useRef(false);
   autoStripRef.current = autoStrip;
   // 极简模式只在 Windows 有：刘海本身就是那条「细条」，菜单栏落点平时根本不显示。
-  const stripOn = (islandStrip || autoStrip) && host.kind === "floating";
+  // 主窗口（名单外壳）在前台：眼睛在它的黑轨上，岛收成细条，屏幕上只留一双眼睛
+  // （views/roster/RosterShell 广播 roster-front）。不受 island_auto_strip 管：那个开关说的是
+  // 「别挡最大化窗口的标题栏」，这里是眼睛换了地方站。
+  const [rosterFront, setRosterFront] = useState(false);
+  const stripOn = (islandStrip || autoStrip || rosterFront) && host.kind === "floating";
   // 刘海挡住的那一截（摄像头）：提醒和面板的内容要从它下面开始画。
   const safeTopOf = (h: IslandHost) => (h.kind === "notch" ? h.notchHeight : 0);
   useEffect(() => {
@@ -635,8 +639,10 @@ export function App() {
   }, [stripOn, setStripPeek]);
   useEffect(() => {
     const un = listen<boolean>("island-titlebar", (event) => setTitlebarCovered(event.payload === true));
+    const unFront = listen<boolean>("roster-front", (event) => setRosterFront(event.payload === true));
     return () => {
       un.then((f) => f());
+      unFront.then((f) => f());
     };
   }, []);
 

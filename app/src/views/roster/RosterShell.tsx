@@ -5,6 +5,8 @@
 // 审批租约、托管终端、输入框草稿都还在。
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { emit } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getLiveSessionsPage } from "../../api";
 import { useBoardRefresh } from "../../hooks/useBoardRefresh";
 import { useTauriEvent } from "../../hooks/useTauriEvent";
@@ -127,6 +129,10 @@ function DesktopRoster() {
     };
   }, [place]);
 
+  // 屏幕上只有一双眼睛：主窗口在前台时眼睛在黑轨上，岛收成细条（App.tsx 听 roster-front）；
+  // 窗口不在前台时眼睛回到岛上，黑轨空着。
+  const front = useWindowFront();
+
   const gitBadges = useSidebarGitBadges(useMemo(() => rows.map((row) => row.cwd), [rows]));
 
   const shell = useMemo<ChatShellBridge>(() => ({
@@ -148,9 +154,11 @@ function DesktopRoster() {
   return (
     <div ref={shellRef} className={`roster-shell is-${view}`}>
       <aside className="roster-rail" aria-label={t.roster.rail}>
-        <span className="roster-eyes" style={{ top: eyesY }} data-at={attention.id ?? "home"}>
-          <Eyes tone={attention.tone} gaze={attention.id != null ? GAZE_ROW : null} />
-        </span>
+        {front && (
+          <span className="roster-eyes" style={{ top: eyesY }} data-at={attention.id ?? "home"}>
+            <Eyes tone={attention.tone} gaze={attention.id != null ? GAZE_ROW : null} />
+          </span>
+        )}
         <div className="roster-rail-foot">
           {view === "scene" && rows.length > 1 && (
             <button ref={backRef} type="button" className="roster-rail-btn" aria-label={t.roster.back} data-tip={t.roster.back} onClick={backToRoster}>
@@ -167,6 +175,34 @@ function DesktopRoster() {
       </div>
     </div>
   );
+}
+
+/** 主窗口是否在前台，并把它广播给灵动岛窗口。查不到窗口（截图页、测试）时按在前台算。 */
+function useWindowFront(): boolean {
+  const [front, setFront] = useState(true);
+  useEffect(() => {
+    let alive = true;
+    let un: (() => void) | undefined;
+    const tell = (focused: boolean) => {
+      if (alive) setFront(focused);
+      emit("roster-front", focused).catch(() => {});
+    };
+    try {
+      const win = getCurrentWindow();
+      win.isFocused().then(tell).catch(() => {});
+      win.onFocusChanged((event) => tell(event.payload)).then((fn) => { if (alive) un = fn; else fn(); }).catch(() => {});
+    } catch { /* 不在 Tauri 窗口里 */ }
+    // 窗口被销毁时 effect 的清理未必跑得到，页面卸载再补一次：漏了岛会一直是细条。
+    const bye = () => { emit("roster-front", false).catch(() => {}); };
+    window.addEventListener("pagehide", bye);
+    return () => {
+      alive = false;
+      un?.();
+      window.removeEventListener("pagehide", bye);
+      bye();
+    };
+  }, []);
+  return front;
 }
 
 function title(item: Item, fallback: string): string {
