@@ -976,7 +976,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
         onPointerDown={(event) => {
           if (selectedIds.size === 0 && !editing && !noting) onPrefetch?.(item.session.id);
           // 手动排序下按住拖动即调位置（行内按钮、编辑框不起拖）。
-          if (!editing && !noting && !(event.target as HTMLElement).closest("button, input, textarea")) drag.onPointerDown(event, item.session.id);
+          if (!editing && !noting && !(event.target as HTMLElement).closest("button, input, textarea, .chat-sidebar-item-menu, .chat-sidebar-check-btn")) drag.onPointerDown(event, item.session.id);
         }}
         onPointerEnter={(event) => {
           if (event.pointerType !== "mouse" || !onPrefetch) return;
@@ -1143,12 +1143,13 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
         {selectedIds.size > 0 ? (
           /* 多选态:右侧换成勾选圈(未选空心/选中实心勾),点它增删不必按住 Ctrl。
              「⋯」菜单此间让位——多选时的动作在底部操作条上。 */
-          <button
-            type="button"
+          // 条目本身是 role=button，子元素对读屏是「纯展示」，嵌在里面的按钮本来就读不到；
+          // 哪怕 tabIndex=-1 + aria-hidden，可聚焦子元素仍被 axe 判 nested-interactive（serious）。
+          // 所以只做指针热区（span，不可聚焦）：选中状态由条目的 aria-pressed 播报，
+          // 键盘在条目上按 Enter/空格增删。
+          <span
             className="chat-sidebar-check-btn"
-            role="checkbox"
-            aria-checked={selectedIds.has(item.session.id)}
-            aria-label={item.task_title || t.sticker.waitingFirstInput}
+            aria-hidden="true"
             onClick={(event) => {
               event.stopPropagation();
               toggleSelected(item.session.id);
@@ -1159,21 +1160,21 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
                 <svg width="9" height="9" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round"><path d="M4.5 12.5l5 5 10-11" /></svg>
               )}
             </span>
-          </button>
+          </span>
         ) : menuMode === "button" && (
-          <button
-            type="button"
+          // 同上，只做指针热区。不占 Tab 停靠点：上百条会话每条一个 Tab 站等于列表无法
+          // traverse。键盘走菜单键/Shift+F10（onContextMenu，菜单挂载即聚焦首项），
+          // 读屏触屏走长按（onHold 开同一个菜单）。
+          <span
             className="chat-sidebar-item-menu"
-            // 不占 Tab 停靠点：上百条会话每条一个 Tab 站等于列表无法 traverse。键盘路径
-            // 由 CardContextMenu 承担（条目右键/聚焦后菜单挂载即聚焦首项）。
-            tabIndex={-1}
+            aria-hidden="true"
             aria-label={t.sticker.cardMenu}
             onClick={(event) => {
               event.stopPropagation(); // 点菜单不切会话
               const rect = event.currentTarget.getBoundingClientRect();
               openMenuAt(item, rect.right, rect.bottom + 4);
             }}
-          ><MoreIcon /></button>
+          ><MoreIcon /></span>
         )}
         </span>
       </div>

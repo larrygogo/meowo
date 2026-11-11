@@ -80,7 +80,7 @@ export function LeadPill({ task, active, onClick }: { task: LeadTaskDto; active:
       <LeadIcon className="ui-pill-icon" />
       {t.chat.leadEntry}
       <span className="ui-pill-meta">{total > 0 ? `${passed}/${total}` : t.chat.leadPhase(task.phase)}</span>
-      {gateWaiting(task) && <span className="lead-pill-dot" aria-label={t.chat.leadGateWaiting} />}
+      {gateWaiting(task) && <span className="lead-pill-dot" role="img" aria-label={t.chat.leadGateWaiting} />}
       {/* 已答复、agent 还没接手：答复已落盘，agent 醒来或会话被恢复后会接着做。会话没能自动恢复时
           （安装器杀了等待进程、外部终端会话），这就是界面上的降级提示（做空审查第二轮 M2）。 */}
       {task.gate?.status === "answered" && <span className="ui-pill-meta lead-pill-answered">{t.chat.leadGateAnswered}</span>}
@@ -156,16 +156,21 @@ export const LeadPanel = memo(function LeadPanel({ task, onClose }: { task: Lead
                   const state = c.passes ? "pass" : c.waived ? "waived" : "pending";
                   const label = state === "pass" ? t.chat.leadCheckPass : state === "waived" ? t.chat.leadCheckWaived : t.chat.leadCheckPending;
                   return (
-                    <li key={c.id} className={"lead-check is-" + state + (open.has(c.id) ? " is-open" : "")}
-                      title={state === "waived" ? `${c.check}
+                    // 展开靠 <button aria-expanded>：原先是 <li onClick>，键盘到不了、读屏不知道能展开，
+                    // 截断的全文键盘用户看不到（调研 i11）。图标 role="img" 才让 aria-label 生效。
+                    <li key={c.id}>
+                      <button type="button" className={"lead-check is-" + state + (open.has(c.id) ? " is-open" : "")}
+                        aria-expanded={open.has(c.id)}
+                        title={state === "waived" ? `${c.check}
 ${t.chat.leadCheckWaivedReason(c.waived ?? "")}` : c.check}
-                      onClick={() => setOpen((prev) => { const next = new Set(prev); if (next.has(c.id)) next.delete(c.id); else next.add(c.id); return next; })}>
-                      <span className="lead-check-mark" aria-label={label}>{CHECK_ICONS[state]}</span>
-                      <span className="lead-check-body">
-                        <span className="lead-check-text">{c.check}</span>
-                        {state === "waived" && <span className="lead-check-note">{t.chat.leadCheckWaivedReason(c.waived ?? "")}</span>}
-                        {!c.waived && !c.passes && c.leader && <span className="lead-check-note is-leader">{t.chat.leadCheckLeader}</span>}
-                      </span>
+                        onClick={() => setOpen((prev) => { const next = new Set(prev); if (next.has(c.id)) next.delete(c.id); else next.add(c.id); return next; })}>
+                        <span className="lead-check-mark" role="img" aria-label={label}>{CHECK_ICONS[state]}</span>
+                        <span className="lead-check-body">
+                          <span className="lead-check-text">{c.check}</span>
+                          {state === "waived" && <span className="lead-check-note">{t.chat.leadCheckWaivedReason(c.waived ?? "")}</span>}
+                          {!c.waived && !c.passes && c.leader && <span className="lead-check-note is-leader">{t.chat.leadCheckLeader}</span>}
+                        </span>
+                      </button>
                     </li>
                   );
                 })}

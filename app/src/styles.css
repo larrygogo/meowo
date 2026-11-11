@@ -262,11 +262,14 @@
      深浅主题各一组、名字分开，终端页签在浅色主题下也能直接取到深色那组。 */
   --kt-dark-1: rgba(255, 255, 255, 0.84);
   --kt-dark-2: rgba(255, 255, 255, 0.56);
-  --kt-dark-3: rgba(255, 255, 255, 0.42);
+  /* 第三档是对话窗的 --cc-text-faint（时间、路径、小节标题这类正文级小字），必须过 4.5:1。
+     Kimi 原值 .42/.45 在 #121212 上 4.10:1、白底 3.35:1（axe color-contrast，2026-11-11 复测）；
+     .52 在 #121212/#292929/#353535 上 5.66/5.06/4.58:1，.56 在白/#f2f2f2/#ebebeb 上 4.94/4.80/4.72:1。 */
+  --kt-dark-3: rgba(255, 255, 255, 0.52);
   --kt-dark-4: rgba(255, 255, 255, 0.26);
   --kt-light-1: rgba(0, 0, 0, 0.9);
   --kt-light-2: rgba(0, 0, 0, 0.6);
-  --kt-light-3: rgba(0, 0, 0, 0.45);
+  --kt-light-3: rgba(0, 0, 0, 0.56);
   --kt-light-4: rgba(0, 0, 0, 0.3);
   /* 键盘焦点环：2px 实线强调色。原先是 3px accent-soft 柔光，合成后对底色只有 1.11:1（深）/
      1.12:1（浅），WCAG 1.4.11 要求 ≥3:1（2026-11-11 调研 i2）。accent 实线实测：深色 #1a88ff 对
@@ -371,10 +374,10 @@
     --hairline: 1px;
     --kt-dark-1: rgba(255, 255, 255, 0.9);
     --kt-dark-2: rgba(255, 255, 255, 0.64);
-    --kt-dark-3: rgba(255, 255, 255, 0.5);
+    --kt-dark-3: rgba(255, 255, 255, 0.54);
     --kt-light-1: rgba(0, 0, 0, 0.95);
     --kt-light-2: rgba(0, 0, 0, 0.68);
-    --kt-light-3: rgba(0, 0, 0, 0.53);
+    --kt-light-3: rgba(0, 0, 0, 0.58);
   }
 }
 /* 浅色下把硬编码的白/黑叠层、纯黑选中、深色面板换成浅色等价物（其余规则吃变量自动适配）。 */
@@ -3818,7 +3821,8 @@ select.ns-input {
 .tb-open-main, .tb-open-chev { display: grid; place-items: center; padding: 0; border: 0; background: transparent; color: var(--cc-text-dim); cursor: pointer; }
 .tb-open-main { width: calc(var(--icon-button-sm) + 4px); }
 .tb-open-main img { width: 16px; height: 16px; }
-.tb-open-chev { width: 20px; border-left: var(--hairline) solid var(--cc-border); }
+/* 24px：20px 时与左侧主按钮挨着，不满足 WCAG 2.5.8 的 24px 目标尺寸（axe target-size）。 */
+.tb-open-chev { width: 24px; border-left: var(--hairline) solid var(--cc-border); }
 .tb-open-main:hover, .tb-open-chev:hover, .tb-open-chev.open { color: var(--cc-text); background: var(--fill-hover); }
 .tb-open-menu { min-width: 200px; }
 .tb-open-menu .dd-ico img { width: 16px; height: 16px; }
@@ -5850,6 +5854,8 @@ button.scm-check-name:hover { text-decoration: underline; }
 .panel-lead .dock-work-body { padding-left: var(--sp-12); padding-right: var(--sp-12); }
 .lead-checks { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: var(--sp-2); }
 .lead-check { display: grid; grid-template-columns: 16px 1fr; gap: var(--sp-8); align-items: start; padding: var(--sp-6) var(--sp-4); border-radius: var(--radius-md); color: var(--cc-text); font-size: var(--text-sm); line-height: 1.55; cursor: pointer; }
+/* 检查项是 <button>（键盘可展开）：去掉按钮外观，撑满整行、左对齐，与原 <li> 观感一致。 */
+button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; font: inherit; font-size: var(--text-sm); line-height: 1.55; text-align: left; }
 .lead-check:hover { background: var(--fill-hover); }
 .lead-check-mark { display: grid; place-items: center; height: 1.55em; color: var(--cc-text-faint); }
 .lead-check.is-pass { color: var(--cc-text-faint); }
