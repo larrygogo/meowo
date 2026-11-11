@@ -511,14 +511,11 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
   height: 46px;
   border: none;
   border-radius: 10px;
-  background: var(--cc-accent);
-  color: var(--cc-on-accent);
   font-size: 16px;
   font-weight: 600;
   cursor: pointer;
   transition: background var(--dur-fast), opacity var(--dur-fast);
 }
-.remote-gate-card button:hover:not(:disabled) { background: var(--cc-accent-dim); }
 .remote-gate-card button:disabled { opacity: 0.45; cursor: default; }
 
 @media (max-width: 699px) {
@@ -547,7 +544,7 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
     border-radius: var(--radius-xl);
   }
   body.remote-ui .chat-approval-actions { gap: 10px; }
-  body.remote-ui .chat-approval-actions .is-deny + .is-allow { margin-inline-start: 4px; }
+  body.remote-ui .chat-approval-actions .is-deny + .btn-primary { margin-inline-start: 4px; }
   body.remote-ui .chat-approval button { min-height: 36px; }
   .remote-new-session-overlay .ns-titlebar { padding: 14px 16px; }
   .remote-new-session-overlay .ns-body { padding: 16px; gap: 16px; }

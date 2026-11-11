@@ -40,7 +40,7 @@ export function WelcomePanel({ info, commands, mention, onPick }: {
       {(starters.length > 0 || mention || info.changes > 0) && (
         <div className="chat-welcome-chips">
           {info.changes > 0 && (
-            <button type="button" className="is-primary" onClick={() => onPick(t.chat.welcomeReviewPrompt)}>{t.chat.welcomeReview}</button>
+            <button type="button" className="is-featured" onClick={() => onPick(t.chat.welcomeReviewPrompt)}>{t.chat.welcomeReview}</button>
           )}
           {starters.map((name) => (
             <button type="button" key={name} onClick={() => onPick(`${name} `)}>

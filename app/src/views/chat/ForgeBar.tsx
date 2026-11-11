@@ -397,7 +397,7 @@ export function ForgeBar({ repo, sessionCwd, sessionId, active, onChanged }: {
           {unpushed > 0 && <div className="scm-discard-repo">{t.forge.prPushFirst(unpushed)}</div>}
           <div className="chat-modal-actions">
             <button type="button" className="ns-btn" onClick={() => setPrForm(null)}>{t.newSession.cancel}</button>
-            <button type="button" className="ns-btn is-primary" disabled={busy !== null || !prForm.title.trim()} onClick={() => void createPr()}>
+            <button type="button" className="ns-btn btn-primary" disabled={busy !== null || !prForm.title.trim()} onClick={() => void createPr()}>
               {busy === "pr" ? t.forge.prCreating : t.forge.prCreate}
             </button>
           </div>
@@ -419,7 +419,7 @@ export function ForgeBar({ repo, sessionCwd, sessionId, active, onChanged }: {
           <div className="scm-discard-repo">{t.forge.repoPickNote}</div>
           <div className="chat-modal-actions">
             <button type="button" className="ns-btn" onClick={() => setRepoDlg(null)}>{t.newSession.cancel}</button>
-            <button type="button" className="ns-btn is-primary" data-testid="repo-confirm" onClick={() => void chooseRepo()}>{t.forge.repoConfirm}</button>
+            <button type="button" className="ns-btn btn-primary" data-testid="repo-confirm" onClick={() => void chooseRepo()}>{t.forge.repoConfirm}</button>
           </div>
         </AppModal>
       )}
@@ -442,7 +442,7 @@ export function ForgeBar({ repo, sessionCwd, sessionId, active, onChanged }: {
           {mergeDlg.step === 2 && <div className="scm-discard-note" role="alert">{t.forge.mergeAgainNote}</div>}
           <div className="chat-modal-actions">
             <button type="button" className="ns-btn" autoFocus onClick={() => setMergeDlg(null)}>{t.newSession.cancel}</button>
-            <button type="button" className="ns-btn is-primary" data-testid="merge-confirm" disabled={!!mergeBlock(t, forge, mergeDlg.pr)} onClick={() => void doMerge()}>
+            <button type="button" className="ns-btn btn-primary" data-testid="merge-confirm" disabled={!!mergeBlock(t, forge, mergeDlg.pr)} onClick={() => void doMerge()}>
               {mergeDlg.step === 2 ? t.forge.mergeConfirmAgain : t.forge.merge}
             </button>
           </div>

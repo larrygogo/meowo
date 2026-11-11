@@ -1566,7 +1566,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
       {selectedIds.size > 0 && (
         <div className="chat-sidebar-batch" role="toolbar" aria-label={t.chat.selectedCount(selectedIds.size)}>
           <span data-tip={t.chat.selectRangeHint}>{t.chat.selectedCount(selectedIds.size)}</span>
-          <button type="button" className="is-primary" onClick={archiveSelected}>{t.chat.archiveSelected}</button>
+          <button type="button" className="btn-primary" onClick={archiveSelected}>{t.chat.archiveSelected}</button>
           <button type="button" onClick={() => setSelectedIds(new Set())}>{t.chat.cancelSelect}</button>
         </div>
       )}

@@ -240,7 +240,7 @@ export function Onboarding() {
               {t.onboarding.back}
             </button>
           )}
-          <button className="sbtn primary" onClick={next}>
+          <button className="sbtn btn-primary" onClick={next}>
             {isLast ? t.onboarding.done : t.onboarding.next}
           </button>
         </div>

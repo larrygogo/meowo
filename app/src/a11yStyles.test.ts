@@ -51,8 +51,9 @@ describe("状态色当文字用走文字档", () => {
     }
   });
   // 写死 #fff 压 #1a88ff 只有 3.49:1（调研 sys3）。
+  // 提交与会话管理的主按钮已并入 .btn-primary（buttonSystem.test.ts 守 tsx 组合关系）。
   it("提交与会话管理主按钮字色走 --cc-on-accent", () => {
-    for (const sel of [".scm-commit-btn", ".sa-btn-q--primary"]) {
+    for (const sel of [".btn-primary:is(button, a)"]) {
       const line = styles.split("\n").find((l) => l.startsWith(sel + " {")) ?? "";
       expect(line, sel).toMatch(/color: var\(--cc-on-accent\)/);
     }

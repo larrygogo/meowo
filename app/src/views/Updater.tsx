@@ -159,7 +159,7 @@ export function Updater() {
               </div>
             )}
             {status === "available" ? (
-              <button className="sbtn primary" onClick={() => void download()}>{t.updater.download}</button>
+              <button className="sbtn btn-primary" onClick={() => void download()}>{t.updater.download}</button>
             ) : status === "downloading" ? (
               <div className="up-dl">
                 {/* progress 为 null 时总大小未知：indeterminate 进度条按 ARIA 规范不给 aria-valuenow。 */}
@@ -191,7 +191,7 @@ export function Updater() {
                     「更新还在、随时可装」——并排给出两条路，主次分明。 */}
                 <div className="up-actions">
                   {!installing && <button className="sbtn" onClick={close}>{t.updater.later}</button>}
-                  <button className="sbtn primary" disabled={installing} onClick={() => void restartAndInstall()}>
+                  <button className="sbtn btn-primary" disabled={installing} onClick={() => void restartAndInstall()}>
                     {installing ? t.updater.installing : t.updater.restart}
                   </button>
                 </div>

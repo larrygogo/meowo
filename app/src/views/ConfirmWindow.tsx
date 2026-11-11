@@ -119,10 +119,10 @@ export function ConfirmWindow() {
       <div className="app-confirm-actions">
         {payload.alert ? (
           // 提示没有「取消」可言：一个「知道了」，默认焦点就在它上面，Enter/Esc 都能关。
-          <button type="button" className="is-primary" autoFocus onClick={() => decide(true)}>{payload.confirm_label ?? t.dialog.gotIt}</button>
+          <button type="button" className="btn-primary" autoFocus onClick={() => decide(true)}>{payload.confirm_label ?? t.dialog.gotIt}</button>
         ) : (<>
         <button type="button" autoFocus onClick={() => decide(false)}>{t.dialog.cancel}</button>
-        <button type="button" className={payload.danger ? "is-danger" : "is-primary"} onClick={() => decide(true)}>
+        <button type="button" className={payload.danger ? "is-danger" : "btn-primary"} onClick={() => decide(true)}>
           {/* 主按钮说清后果（「删除」「合并」），未指定才回退通用「确定」。 */}
           {payload.confirm_label ?? t.dialog.ok}
         </button>

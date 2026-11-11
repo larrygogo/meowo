@@ -471,7 +471,7 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
             }
           }}
         />
-        <button type="button" className="scm-commit-btn" disabled={!canCommit}
+        <button type="button" className="scm-commit-btn btn-primary" disabled={!canCommit}
           data-tip={commitBlockedByFilter ? t.chat.scmCommitFiltered : commitAll ? t.chat.scmCommitAllTip : undefined} onClick={commit}>
           <CheckIcon />
           {commitAll ? t.chat.scmCommitAll : t.chat.scmCommit}

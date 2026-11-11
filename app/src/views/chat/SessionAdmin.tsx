@@ -338,7 +338,7 @@ export function SessionAdmin({ onBack, onOpen, initialWorkspaces = [], initialSt
             <span className="sa-f-label">{t.admin.filterTime}</span>
             <SaSelect label={t.admin.filterTime} value={draft.days} options={dayOptions} onChange={(days) => setDraft((prev) => ({ ...prev, days }))} />
             <span className="sa-f-actions">
-              <button type="button" className="sa-btn-q sa-btn-q--primary" onClick={() => query(draft)}>{t.admin.query}</button>
+              <button type="button" className="sa-btn-q btn-primary" onClick={() => query(draft)}>{t.admin.query}</button>
               <button type="button" className="sa-btn-q" onClick={() => { setDraft(DEFAULT_FILTERS); query(DEFAULT_FILTERS); }}>{t.admin.reset}</button>
               {/* 只在看「已完成」时出现：清理对象就是已完成会话的 worktree。 */}
               {applied.status === "done" && (

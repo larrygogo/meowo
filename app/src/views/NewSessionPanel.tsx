@@ -400,7 +400,7 @@ export function NewSessionPanel({ onClose, prefill, onLaunched }: {
         </button>
         <button
           type="button"
-          className="ns-btn is-primary"
+          className="ns-btn btn-primary"
           data-testid="ns-launch"
           disabled={!canLaunch}
           onClick={launch}

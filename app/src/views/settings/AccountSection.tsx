@@ -586,7 +586,7 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsApiK
           ) : (
             <button
               type="button"
-              className="provider-card-action provider-card-action-primary"
+              className="provider-card-action btn-primary"
               data-testid={"agent-install-" + provider}
               onClick={startInstall}
             >
@@ -600,7 +600,7 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsApiK
         {isInstalled && !isLoggedIn && !relayEnabled && supportsAccount && (
           <button
             type="button"
-            className={"provider-card-action" + (justInstalled ? " provider-card-action-primary" : "")}
+            className={"provider-card-action" + (justInstalled ? " btn-primary" : "")}
             data-testid={"agent-login-" + provider}
             // 等待中不再是死按钮：终端可能已被关掉（用户手动关/崩溃），而后端只轮询账号文件，
             // 要 5 分钟才超时。点它即取消等待，立刻落回可点状态。
@@ -670,7 +670,7 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsApiK
             />
             <button
               type="button"
-              className="provider-card-action provider-card-action-primary"
+              className="provider-card-action btn-primary"
               data-testid={"agent-api-key-save-" + provider}
               disabled={apiKeyBusy || !apiKeyValue.trim()}
               onClick={saveApiKey}
@@ -1163,7 +1163,7 @@ function ProfileList({ provider, movesSessionsAcrossAccounts, onChanged, loginSt
           />
           <button
             type="button"
-            className="provider-card-action provider-card-action-primary"
+            className="provider-card-action btn-primary"
             data-testid={"profile-add-confirm-" + provider}
             disabled={busy || !name.trim()}
             onClick={add}

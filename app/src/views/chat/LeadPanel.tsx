@@ -244,7 +244,7 @@ export function LeadGateCard({ cwd, gate, onAnswered }: { cwd: string; gate: Lea
       title={`${t.chat.leadGateKind[gate.kind as keyof typeof t.chat.leadGateKind] ?? gate.kind} · ${gate.title}`}
       badge={t.chat.leadGateWaiting}
       actions={
-        <button type="button" className="is-allow" disabled={!choice || busy || (needsNote && !note.trim())} onClick={submit}>
+        <button type="button" className="btn-primary" disabled={!choice || busy || (needsNote && !note.trim())} onClick={submit}>
           {busy ? t.chat.leadGateSending : t.chat.leadGateSubmit}
         </button>
       }
