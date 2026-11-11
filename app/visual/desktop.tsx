@@ -99,6 +99,44 @@ const EXTENSIONS = [
 ];
 
 async function boot(): Promise<React.ReactNode> {
+  // 主窗口的名单外壳（views/roster）：roster = 五个会话各一种状态，眼睛站在待批准那一行；
+  // roster-open = 点开一行；roster-quiet = 没人需要你，眼睛回轨顶；roster-scene = 进了某一行的现场。
+  if (scene.startsWith("roster")) {
+    const quiet = scene === "roster-quiet";
+    const mk = (title: string, project: string, provider: "claude" | "codex" | "kimi" | "gemini" | "opencode", patch: (s: ReturnType<typeof makeSession>) => void, agoMin = 2) => {
+      const s = makeSession({ title, project, provider, agoMin, lastAi: null });
+      patch(s);
+      return s;
+    };
+    store.sessions = [
+      mk(lang === "en" ? "Fix duplicate charge in payment callback" : "修支付回调的重复扣款", "pay-service", "claude", (s) => {
+        if (quiet) { s.current_activity = "Bash: pnpm test payments"; return; }
+        s.pending_review = "approval";
+        s.last_ai_text = lang === "en" ? "The retry path charges twice when the webhook arrives late. I want to run the migration to add the idempotency key column." : "回调晚到时重试路径会扣两次。我要跑迁移加上幂等键这一列，需要你批准。";
+      }),
+      mk(lang === "en" ? "Migrate settings page to the new form kit" : "设置页迁到新表单组件", "meowo", "codex", (s) => { s.current_activity = "Edit: app/src/views/About.tsx"; }, 0),
+      mk(lang === "en" ? "Investigate flaky e2e on Windows" : "排查 Windows 上不稳定的 e2e", "meowo", "kimi", (s) => {
+        if (quiet) { s.session.status = "waiting"; s.preview = lang === "en" ? "Root cause found: the window opens before the store is ready." : "找到根因：窗口在库就绪前打开。"; return; }
+        s.errored = true; s.error_label = "API Error: 529 Overloaded";
+      }, 7),
+      mk(lang === "en" ? "Write release notes for 0.9.0" : "写 0.9.0 的发版说明", "meowo", "gemini", (s) => {
+        s.session.status = "waiting"; s.unread = !quiet;
+        s.preview = lang === "en" ? "Draft is ready in docs/release-notes/v0.9.0.md." : "草稿写好了，在 docs/release-notes/v0.9.0.md。";
+      }, 12),
+      mk(lang === "en" ? "Upgrade xterm and re-test the mobile terminal" : "升级 xterm 并复测手机终端", "meowo-mobile", "opencode", (s) => { s.current_activity = "Bash: bun run test"; }, 1),
+    ];
+    const first = store.sessions[0].session.id;
+    const inScene = scene === "roster-scene";
+    window.history.replaceState({}, "", `${location.pathname}?${q.toString()}&sessionId=${first}${inScene ? "" : "&roster=1"}`);
+    const chat = chatMock(lang);
+    setExtraMock((cmd) => (cmd === "get_live_sessions_page" ? { items: store.sessions, next_cursor: null } : scmMock(cmd) ?? chat(cmd)));
+    installMocks("chat");
+    bootAppearance({ scale: true });
+    const { RosterShell } = await import("../src/views/roster/RosterShell");
+    if (scene === "roster-open") whenReady<HTMLElement>(".roster-row", (el) => el.click());
+
+    return <div className="demo-chat-frame" style={{ position: "fixed", inset: 0, overflow: "hidden" }}><RosterShell /></div>;
+  }
   if (scene === "chat" || scene === "chat-long" || scene.startsWith("panel-")) {
     window.history.replaceState({}, "", `${location.pathname}?${q.toString()}&sessionId=${CHAT_SESSION_ID}`);
     const chat = chatMock(lang);

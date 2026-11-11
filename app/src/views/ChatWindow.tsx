@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type SetStateAction } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type Dispatch, type SetStateAction } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 // 文件拖入走 Tauri 的 drag-drop 事件(webview 原生 drop 被拦截,DOM 拿不到 File;
@@ -258,7 +258,20 @@ function assignRef<T>(ref: { readonly current: T | null }, node: T | null) {
   (ref as { current: T | null }).current = node;
 }
 
-export function ChatWindow() {
+/** 名单外壳（views/roster/RosterShell）与对话窗之间的接线。对话窗仍是单会话状态机，名单只做三件事：
+ *  盖一层名单在对话区上、点名让它切到某个会话、听它说「我被带去别处了」。 */
+export type ChatShellBridge = {
+  /** 盖在对话区上的名单。非空时对话区整块 inert + 不可见，但不卸载：审批租约、终端、草稿都留着。 */
+  overlay: ReactNode | null;
+  /** 名单要求切到某个会话。seq 每次请求加一，同一个 id 连点两次也算两次。 */
+  request: { id: number; seq: number } | null;
+  /** 对话窗当前会话变了（含启动时的初值）。 */
+  onSession: (id: number) => void;
+  /** 对话窗被带去某个会话 / 新建页 / 管理页（点岛上的卡、通知、新会话启动）：名单让位。 */
+  onReveal: () => void;
+};
+
+export function ChatWindow({ shell }: { shell?: ChatShellBridge } = {}) {
   const t = useT();
   // 窗口以 visible:false 创建（window.rs），首帧渲染后再显示，消除打开瞬间的白框闪烁。
   useShowWhenReady();
@@ -507,6 +520,8 @@ export function ChatWindow() {
   if (view === "terminal") terminalEverShownRef.current = true;
   const terminalMounted = terminalEverShownRef.current || terminalMonitorNeeded;
   const activeSessionRef = useRef(sessionId);
+  const shellRef = useRef(shell);
+  shellRef.current = shell;
   // 会话 A→B→A 也必须作废 A 的旧操作；只比 id 会让旧发送清掉返回 A 后的新草稿。
   const sessionEpochRef = useRef(0);
   const operationEpoch = sessionEpochRef.current;
@@ -1933,6 +1948,15 @@ export function ChatWindow() {
   // 会话的「更改」）。只把可见性压成收起、不卸载：回到会话时终端、浏览器、打开的文件原样还在；
   // 走 visible=false 而不是藏 DOM，面板里的浏览器是原生 webview，只有收起态才会把它藏掉。
   const pageCovered = adminOpen || !!newSessionOpen;
+  // 名单外壳的接线（见 ChatShellBridge）。回调经 ref 取最新的，effect 不因外壳重渲染而重跑。
+  useEffect(() => { shellRef.current?.onSession(sessionId); }, [sessionId]);
+  const shellRequest = shell?.request ?? null;
+  useEffect(() => {
+    if (shellRequest) selectSession(shellRequest.id);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 只认 seq：同一个会话再点一次也要回到它
+  }, [shellRequest?.seq]);
+  // 新建页 / 管理页都长在对话窗里：它们一打开，名单让位。
+  useEffect(() => { if (pageCovered) shellRef.current?.onReveal(); }, [pageCovered]);
   const shownPanelState = useMemo(() => (pageCovered ? { ...panelState, visible: false } : panelState), [pageCovered, panelState]);
 
   const refresh = useCallback(async () => {
@@ -2111,6 +2135,7 @@ export function ChatWindow() {
     listen<number>("chat-session-changed", (event) => {
       leavePages();
       resetTo(event.payload);
+      shellRef.current?.onReveal();
     }).then((fn) => {
       if (cancelled) fn(); else un = fn;
     }).catch(() => {});
@@ -3975,6 +4000,7 @@ export function ChatWindow() {
 
   // 三栏宽度按 .chat-body 实测宽重新钳制（chat/paneLayout）：侧栏和面板互相扣、对话区保 320，
   // 窗口缩小时跟着回收；存储里用户拖的宽度不动，窗口拉回宽时原样恢复。
+  const rosterOn = shell?.overlay != null;
   const dockedSidebar = !narrow && !sidebarCollapsed;
   const dockedPanel = !!cwd && !remoteUi() && shownPanelState.visible && !panelState.expanded;
   const panes = fitPanes({ body: chatBodyWidth, sidebar: dockedSidebar ? sidebarWidth : null, panel: dockedPanel ? diffResize.width : null, ui: uiScale, gutter: remoteUi() ? 0 : surfaceGutter(dockedSidebar) });
@@ -3982,7 +4008,7 @@ export function ChatWindow() {
   const shownPanelWidth = panes.panel ?? diffResize.width;
 
   return (
-    <div className={"chat-window" + (view === "terminal" ? " is-terminal" : "") + (compactChrome ? " is-remote-compact" : "") + (remoteListMode ? " is-remote-list" : "") + (narrow || sidebarCollapsed ? " is-sidebar-undocked" : "")}>
+    <div className={"chat-window" + (view === "terminal" ? " is-terminal" : "") + (compactChrome ? " is-remote-compact" : "") + (remoteListMode ? " is-remote-list" : "") + (narrow || sidebarCollapsed ? " is-sidebar-undocked" : "") + (rosterOn ? " is-roster" : "")}>
       <DevBadge />
       {/* 拖拽落点遮罩:文件悬在窗口上时给「松开以添加附件」的明确反馈。 */}
       {dragHover && (
@@ -4037,8 +4063,12 @@ export function ChatWindow() {
           </div>
         </>
       )}
+      {/* 名单盖在对话区上（顶栏留着：窗口按钮只有一套，原生覆盖子窗按它们的位置摆）。 */}
+      {rosterOn && <div className="chat-roster-layer">{shell?.overlay}</div>}
       <div
         ref={chatBodyRef}
+        // 名单在上面时对话区不接焦点、不进读屏：它只是没卸载，不是「在后面」。
+        {...(rosterOn ? { inert: "" } : null)}
         className={"chat-body" + (shownPanelState.visible && (panelState.expanded || remoteUi()) ? " is-diff-max" : "")}
         // CSS 兜底（.side-panel 的 max-width）也要扣掉常驻侧栏，JS 还没量到的首帧就不会超。
         style={dockedSidebar ? { "--docked-sidebar-w": `${Math.round(shownSidebarWidth)}px` } as CSSProperties : undefined}

@@ -22,6 +22,13 @@ export const en: Dict = {
     full: (what, pct) => `${what} · Context ${pct}% used`,
   },
   pending: { approval: "Approval", question: "Question", plan: "Review plan", gate: "Your call", blocked: "Needs action" },
+  roster: {
+    title: "In progress",
+    rail: "Status rail",
+    back: "Back to roster",
+    enter: "Open session",
+    nothingSaid: "No reply yet",
+  },
   empty: {
     allTitle: "No sessions yet",
     allHint: "Run an AI coding session in a terminal and progress shows up here",

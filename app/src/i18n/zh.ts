@@ -27,6 +27,14 @@ export const zh = {
   },
   // blocked：屏幕检测到 agent 停在审批/提问 UI 上但 hook 无对应事件（说不出具体哪一种）。
   pending: { approval: "待批准", question: "待回答", plan: "待批计划", gate: "待拍板", blocked: "待处理" },
+  // 主窗口的 agent 名单（黑轨 + 眼睛）。
+  roster: {
+    title: "进行中",
+    rail: "状态轨",
+    back: "回到名单",
+    enter: "进入现场",
+    nothingSaid: "还没有回复",
+  },
   empty: {
     allTitle: "还没有会话",
     allHint: "在终端运行 AI 编程会话，进度会自动出现在这里",

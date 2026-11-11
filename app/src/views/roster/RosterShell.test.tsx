@@ -1,0 +1,120 @@
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { ChatShellBridge } from "../ChatWindow";
+
+// 名单外壳自己的行为：顺序不随事件跳、展开只由人触发且一次一行、只有一个会话直接是现场、
+// 点具体会话进来不落名单。对话窗换成一个只回显接线的桩（它自己的行为由 ChatWindow.*.test 管）。
+const invoke = vi.hoisted(() => vi.fn());
+const boardHandlers = vi.hoisted(() => new Map<string, (event: { payload: unknown }) => void>());
+vi.mock("@tauri-apps/api/core", () => ({ invoke }));
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: vi.fn((name: string, handler: (event: { payload: unknown }) => void) => {
+    boardHandlers.set(name, handler);
+    return Promise.resolve(() => {});
+  }),
+}));
+vi.mock("../ChatWindow", () => ({
+  ChatWindow: ({ shell }: { shell?: ChatShellBridge }) => (
+    <div data-testid="chat" data-request={shell?.request?.id ?? ""}>
+      {shell?.overlay}
+      <button type="button" onClick={() => shell?.onReveal()}>reveal</button>
+    </div>
+  ),
+}));
+
+import { makeSession } from "../../demo/data";
+import type { Item } from "../sticker/types";
+import { RosterShell } from "./RosterShell";
+
+let sessions: Item[] = [];
+const mk = (title: string, patch: (s: Item) => void = () => {}) => {
+  const s = makeSession({ title, project: "p" });
+  patch(s);
+  return s;
+};
+const names = () => [...document.querySelectorAll(".roster-name b")].map((el) => el.textContent);
+const flush = () => act(async () => { await Promise.resolve(); await Promise.resolve(); });
+
+describe("名单外壳", () => {
+  afterEach(cleanup);
+  beforeEach(() => {
+    localStorage.clear();
+    boardHandlers.clear();
+    invoke.mockReset();
+    invoke.mockImplementation((cmd: string) => Promise.resolve(
+      cmd === "get_live_sessions_page" ? { items: sessions, next_cursor: null } : cmd === "sidebar_git_badges" ? [] : undefined,
+    ));
+    window.history.replaceState({}, "", "/?roster=1&sessionId=1");
+  });
+
+  it("首屏是名单；状态变化不改变行的顺序", async () => {
+    sessions = [mk("甲"), mk("乙"), mk("丙")];
+    render(<RosterShell />);
+    await screen.findByText("甲");
+    expect(names()).toEqual(["甲", "乙", "丙"]);
+    // 最后一行来了审批、第一行出错：行不动，只有眼睛走过去。
+    sessions = [
+      { ...sessions[0], errored: true },
+      sessions[1],
+      { ...sessions[2], pending_review: "approval", session: { ...sessions[2].session, last_event_at: Date.now() + 5000 } },
+    ];
+    await act(async () => { boardHandlers.get("board-urgent")?.({ payload: null }); });
+    await flush();
+    expect(names()).toEqual(["甲", "乙", "丙"]);
+    expect(document.querySelector(".roster-eyes")?.getAttribute("data-at")).toBe(String(sessions[2].session.id));
+  });
+
+  it("展开只由点击触发，同一时间只展开一行", async () => {
+    sessions = [mk("甲", (s) => { s.pending_review = "approval"; }), mk("乙")];
+    render(<RosterShell />);
+    await screen.findByText("甲");
+    // 有待批准的行也不自己展开。
+    expect(document.querySelectorAll(".roster-sheet")).toHaveLength(0);
+    fireEvent.click(screen.getByText("甲"));
+    fireEvent.click(screen.getByText("乙"));
+    expect(document.querySelectorAll(".roster-sheet")).toHaveLength(1);
+    expect(document.querySelector(".roster-item.is-open .roster-name b")?.textContent).toBe("乙");
+  });
+
+  it("「进入现场」把那个会话交给对话窗，名单让位", async () => {
+    sessions = [mk("甲"), mk("乙")];
+    render(<RosterShell />);
+    fireEvent.click(await screen.findByText("乙"));
+    fireEvent.click(screen.getByRole("button", { name: "进入现场" }));
+    expect(screen.getByTestId("chat").getAttribute("data-request")).toBe(String(sessions[1].session.id));
+    expect(document.querySelector(".roster")).toBeNull();
+    // 现场里能回到名单。
+    fireEvent.click(screen.getByRole("button", { name: "回到名单" }));
+    expect(names()).toEqual(["甲", "乙"]);
+  });
+
+  it("只开了一个会话：直接是现场，不出名单", async () => {
+    sessions = [mk("甲")];
+    render(<RosterShell />);
+    await flush();
+    expect(document.querySelector(".roster")).toBeNull();
+    expect(screen.queryByRole("button", { name: "回到名单" })).toBeNull();
+  });
+
+  it("冲着某个会话打开的窗口直接进现场；被带去别处时名单让位", async () => {
+    sessions = [mk("甲"), mk("乙")];
+    window.history.replaceState({}, "", "/?sessionId=1");
+    const first = render(<RosterShell />);
+    await flush();
+    expect(document.querySelector(".roster")).toBeNull();
+    first.unmount();
+
+    window.history.replaceState({}, "", "/?roster=1&sessionId=1");
+    render(<RosterShell />);
+    await screen.findByText("甲");
+    fireEvent.click(screen.getByRole("button", { name: "reveal" }));
+    expect(document.querySelector(".roster")).toBeNull();
+  });
+
+  it("界面上没有计数", async () => {
+    sessions = [mk("甲", (s) => { s.pending_review = "approval"; }), mk("乙", (s) => { s.pending_review = "question"; })];
+    render(<RosterShell />);
+    await screen.findByText("甲");
+    expect(document.querySelector(".roster-shell")?.textContent).not.toMatch(/\d+\s*个/);
+  });
+});

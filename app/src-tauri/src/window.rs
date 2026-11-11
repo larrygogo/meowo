@@ -661,7 +661,9 @@ pub(crate) fn open_latest_chat_window(app: &tauri::AppHandle) {
 /// （UI 调研 shell #1：全新 ~/.meowo 走完引导单击托盘弹出设置窗）。新建页自带「未检测到 CLI · 去安装」。
 fn latest_chat_target(latest: Option<i64>) -> ChatTarget {
     match latest {
-        Some(session_id) => ChatTarget::Session(session_id),
+        // 托盘入口没有「要看哪个会话」的意图，落在名单上（规格 .lead/20261111-roster：首屏是
+        // agent 名单）。会话号照带：只有一个会话时前端直接进它的现场。
+        Some(session_id) => ChatTarget::Roster(session_id),
         None => ChatTarget::NewSession {
             cwd: None,
             provider: None,
@@ -685,6 +687,8 @@ pub(crate) enum ChatTarget {
     },
     /// 会话管理页，预选「已完成」（设置页「已完成会话」的入口：那里不再自带一份列表）。
     AdminDone,
+    /// agent 名单（主窗口首屏）。带上最近活跃的会话号：只有一个会话时前端直接进它的现场。
+    Roster(i64),
 }
 
 impl ChatTarget {
@@ -709,6 +713,7 @@ impl ChatTarget {
                 url
             }
             ChatTarget::AdminDone => "index.html?admin=done".to_string(),
+            ChatTarget::Roster(id) => format!("index.html?sessionId={id}&roster=1"),
         }
     }
 }
@@ -760,6 +765,10 @@ pub(crate) fn open_chat_window_target(
             ChatTarget::AdminDone => w
                 .emit("chat-open-admin", "done")
                 .map_err(|e| format!("打开会话管理失败: {e}"))?,
+            // 窗口已开：不动当前会话，只请前端回到名单。
+            ChatTarget::Roster(_) => w
+                .emit("chat-open-roster", ())
+                .map_err(|e| format!("打开名单失败: {e}"))?,
         }
         if activate {
             let _ = w.show();
