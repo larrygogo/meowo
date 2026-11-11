@@ -5,14 +5,24 @@ import { useContext } from "react";
 
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(() => Promise.resolve(null)) }));
 import { ChatTitleBar } from "./ChatTitleBar";
-import { titleBarOverflow, TitleOverflowContext } from "./titleOverflow";
+import { TitleOverflowContext } from "./titleOverflow";
 
-// jsdom 没有布局：把标题栏的 clientWidth 报成指定值（标题栏自己量内容盒宽）。
+// jsdom 没有布局：标题栏报成指定宽，每个可收起项 40px、结束会话 72px、面板开关 28px，
+// 标题区保底宽按 0 算（jsdom 读不到 styles.css 的 min-width）。
 function fakeWidth(width: number) {
-  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (this: HTMLElement) {
-    return this.classList.contains("chat-bar") ? width : 0;
+  vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+    const w = this.classList.contains("chat-bar") ? width
+      : this.dataset.overflowKey ? 40
+      : this.classList.contains("chat-end") ? 72
+      : this.classList.contains("chat-panel-toggle") ? 28 : 0;
+    return { width: w, height: 28, top: 0, left: 0, right: w, bottom: 28, x: 0, y: 0, toJSON: () => ({}) } as DOMRect;
   });
 }
+
+const visible = (selector: string) => {
+  const el = document.querySelector(selector);
+  return !!el && !el.closest("[aria-hidden=true]");
+};
 
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
 
@@ -31,21 +41,14 @@ const props = {
 };
 
 describe("标题栏溢出进 ⋯ 菜单", () => {
-  it("门限表：没量到时全留栏上；320 宽收起终端、会话信息、改动、打开方式；手机上改动不收", () => {
-    expect([...titleBarOverflow(0, false)]).toEqual([]);
-    expect(titleBarOverflow(900, false).size).toBe(0);
-    expect([...titleBarOverflow(600, false)]).toEqual(["pr"]);
-    const narrow = titleBarOverflow(320, false);
-    for (const key of ["pr", "open", "git", "terminal", "info", "archive"]) expect(narrow.has(key as never)).toBe(true);
-    expect(titleBarOverflow(320, true).has("git")).toBe(false);
-  });
-
-  it("620 宽开着面板（标题栏 320）：终端等不在栏上，而在菜单里；面板开关和结束会话留在栏上", () => {
-    fakeWidth(320);
+  it("标题栏放不下（只够结束会话和面板开关）：终端等不在栏上，而在菜单里；面板开关和结束会话留在栏上", () => {
+    fakeWidth(100);
     render(<ChatTitleBar {...props} />);
     expect(screen.queryByRole("button", { name: "终端" })).toBeNull();
     expect(screen.queryByRole("button", { name: "显示会话信息" })).toBeNull();
-    expect(document.querySelector(".chat-bar .tb-git")).toBeNull();
+    expect(visible(".chat-bar .tb-git")).toBe(false);
+    // 收起的项留在 DOM 里量宽度，但不可聚焦
+    expect(document.querySelector('[data-overflow-key="terminal"]')?.hasAttribute("inert")).toBe(true);
     const groups = [...screen.getByTestId("overflow").querySelectorAll("li")].map((li) => li.textContent);
     expect(groups).toEqual(expect.arrayContaining(["open", "git", "terminal", "info"]));
     expect(document.querySelector(".chat-panel-toggle")).not.toBeNull();
@@ -56,7 +59,7 @@ describe("标题栏溢出进 ⋯ 菜单", () => {
     fakeWidth(1000);
     render(<ChatTitleBar {...props} />);
     expect(screen.getByRole("button", { name: "终端" })).toBeTruthy();
-    expect(document.querySelector(".chat-bar .tb-git")).not.toBeNull();
+    expect(visible(".chat-bar .tb-git")).toBe(true);
     expect(screen.getByTestId("overflow").children.length).toBe(0);
   });
 });

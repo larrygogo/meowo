@@ -181,7 +181,7 @@ fn claude_rewind_menu_and_transcript() {
         // 别让探针替用户同意；不取消的话下一条消息会被它吞掉。
         let dismiss_setup = || {
             if contents().contains("Teach auto mode about your environment?") {
-                send("");
+                send("\x1b");
                 std::thread::sleep(Duration::from_millis(1500));
             }
         };

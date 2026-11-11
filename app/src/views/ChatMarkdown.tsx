@@ -199,7 +199,9 @@ function CopyablePre({ children }: { children?: ReactNode }) {
         )}
         <button type="button" className="chat-md-pre-copy" onClick={copy}>{copied ? t.chat.codeCopied : t.chat.codeCopy}</button>
       </div>
-      <pre ref={preRef}>{children}</pre>
+      {/* 横向溢出时代码块是可滚动区域，键盘用户要能 Tab 进来用方向键滚（axe scrollable-region-focusable，
+          验收 #23）。不溢出时不进 Tab 序，免得每个短代码块都多停一下。 */}
+      <pre ref={preRef} {...(overflowing ? { tabIndex: 0, role: "region", "aria-label": t.chat.codeBlockLabel(lang) } : {})}>{children}</pre>
     </div>
   );
 }

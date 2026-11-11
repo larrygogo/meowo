@@ -1083,6 +1083,8 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
           const nameEl = event.currentTarget.querySelector<HTMLElement>(".chat-sidebar-name-text");
           const inner = nameEl?.querySelector<HTMLElement>(".chat-sidebar-name-inner");
           if (!nameEl || !inner || typeof inner.animate !== "function") return;
+          // 减少动效：不做跑马灯位移，完整标题看悬停提示（UI 优化 fix1 排查内联动画时一并补上）。
+          if (typeof window.matchMedia === "function" && window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
           const pendingLeave = titleScrollTimers.get(inner);
           if (pendingLeave) {
             window.clearTimeout(pendingLeave);
