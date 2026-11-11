@@ -747,14 +747,42 @@ fn common_key(common_dir: &Path) -> String {
 }
 
 fn repo_info(dir: &str, env: GitEnv, prefs: &Path) -> Option<RepoInfo> {
+    let (mut info, _, _) = repo_head(dir, env, prefs, false)?;
+    info.base = default_branch(dir, info.gh.base.as_ref().map(|b| b.remote.as_str()), env);
+    Some(info)
+}
+
+/// 不含默认分支（base 为 None）的 [`repo_info`]，另回 (公共 .git 目录, 本 worktree 的 .git 目录)。
+/// 侧栏只要 [`pr_key`]，键里没有 base；默认分支要再起 2～4 个 git 进程（远端 HEAD、main、master 逐个问）。
+/// head_file = 先直接读 .git/HEAD 拿分支名（侧栏用，省一个进程），读不懂再问 symbolic-ref。
+fn repo_head(dir: &str, env: GitEnv, prefs: &Path, head_file: bool) -> Option<(RepoInfo, PathBuf, PathBuf)> {
     let (common_dir, git_dir) = git_dirs(dir, env)?;
     let common = common_key(&common_dir);
-    let branch = git(dir, &["symbolic-ref", "--quiet", "--short", "HEAD"], env).filter(|b| !b.is_empty());
+    let branch = match head_file.then(|| branch_from_head_file(&git_dir)).flatten() {
+        Some(read) => read,
+        None => git(dir, &["symbolic-ref", "--quiet", "--short", "HEAD"], env).filter(|b| !b.is_empty()),
+    };
     let cfg = load_config(&common_dir, &git_dir, env);
     let target = branch.as_deref().and_then(|b| resolve(&cfg, &common_dir, b));
     let gh = resolve_gh_repo(&cfg, chosen_remote(prefs, &common).as_deref(), target.as_ref());
-    let base = default_branch(dir, gh.base.as_ref().map(|b| b.remote.as_str()), env);
-    Some(RepoInfo { common, branch, target, gh, has_remote: !cfg.remotes().is_empty(), base })
+    let info = RepoInfo { common, branch, target, gh, has_remote: !cfg.remotes().is_empty(), base: None };
+    Some((info, common_dir, git_dir))
+}
+
+/// 从 .git/HEAD 读当前分支：Some(Some(分支)) / Some(None) = detached；None = 读不懂，交给 symbolic-ref。
+/// reftable 仓库的 HEAD 是占位（`ref: refs/heads/.invalid`），一律交回 git。与 `symbolic-ref --short` 只在
+/// 分支名同时也是别的引用短名（歧义，git 会写成 heads/x）时不同，这时读出的是真分支名。
+fn branch_from_head_file(git_dir: &Path) -> Option<Option<String>> {
+    if git_dir.join("reftable").exists() {
+        return None;
+    }
+    let text = std::fs::read_to_string(git_dir.join("HEAD")).ok()?;
+    let text = text.trim();
+    if let Some(name) = text.strip_prefix("ref: refs/heads/") {
+        return (!name.is_empty()).then(|| Some(name.to_string()));
+    }
+    let detached = matches!(text.len(), 40 | 64) && text.bytes().all(|b| b.is_ascii_hexdigit());
+    detached.then_some(None)
 }
 
 /// 默认分支名：PR 所在远端的 HEAD 指向的，否则它的 main、master；再看 origin；最后本地的 main、master。

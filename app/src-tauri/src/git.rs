@@ -24,6 +24,36 @@ pub(crate) fn git_diff_summary_blocking(cwd: &str) -> Result<GitDiffSummaryDto, 
     summary_blocking(cwd, true)
 }
 
+/// 侧栏会话行的改动数 (增, 删, 文件数)：与 [`git_diff_summary_blocking`] 同一口径（同一条 status、同一套
+/// 折叠与行数），只是不要分支、上游、推送去向——那几样要多起 rev-parse / rev-list 进程，侧栏用不上。
+/// 不是仓库（或 git 不可用）返回 None。折叠的未跟踪目录按里面的文件数算。
+pub(crate) fn sidebar_diff_counts_blocking(cwd: &str) -> Option<(u32, u32, u32)> {
+    let dir = cwd.trim();
+    if dir.is_empty() || !Path::new(dir).is_dir() || !maybe_inside_repo(Path::new(dir)) {
+        return None;
+    }
+    // 不在工作树里（非仓库、.git 目录内、裸仓库）status 直接失败，等价于摘要里 is-inside-work-tree 那一问。
+    let status = git_output(dir, &["status", "--porcelain", "-z", "--no-renames", "-unormal"]).ok()?;
+    if !status.status.success() {
+        return None;
+    }
+    let mut files = fold_untracked_dirs(dir, parse_status_entries(&status.stdout)).ok()?;
+    fill_line_counts(dir, &mut files);
+    Some(files.iter().fold((0, 0, 0), |(add, del, count), file| {
+        (
+            add + file.additions.unwrap_or(0),
+            del + file.deletions.unwrap_or(0),
+            count + file.untracked_files.unwrap_or(1),
+        )
+    }))
+}
+
+/// 目录或它的某个上级有 `.git`（目录或 worktree 的 .git 文件），或环境里指定了 GIT_DIR，才可能在仓库里。
+/// 非仓库目录（会话开在桌面、下载目录）不必为了听一句「不是仓库」起一个 git 进程。
+fn maybe_inside_repo(dir: &Path) -> bool {
+    std::env::var_os("GIT_DIR").is_some() || dir.ancestors().any(|p| p.join(".git").exists())
+}
+
 /// counts = 补增删行数（`diff --numstat`，未跟踪文件还要逐个读盘数行）。仓库清单里没选中的仓库
 /// 不数，只要分支、↑↓、文件清单（见 RepoChangesDto::detailed）。
 fn summary_blocking(cwd: &str, counts: bool) -> Result<GitDiffSummaryDto, String> {
@@ -449,15 +479,21 @@ const MAX_UNTRACKED_COUNTED: usize = 200;
 /// 给变更清单补上增删行数（文件列表上的 `+12 −3`，对照 Codex/Claude 桌面版的改动面板）。
 /// 数不出来就留 None：行数只是辅助信息，任何一步失败都不能让摘要报错。
 fn fill_line_counts(dir: &str, files: &mut [GitChangedFileDto]) {
+    // 只有未跟踪文件（或干净）时 numstat 必然为空，省掉这个进程：侧栏每 30 秒给每个目录算一遍，
+    // Windows 上一个 git 进程约 40ms（bench_sidebar_badges_20_dirs 实测）。冲突条目 status 也是 "U"，
+    // 所以按 index/worktree 两位判未跟踪，不按 status。
+    let tracked = files.iter().any(|f| !(f.index_status.is_none() && f.worktree_status.as_deref() == Some("U")));
     // 仓库还没有任何提交时 HEAD 不存在，这条会失败，跟踪文件就都不显示行数。
-    if let Ok(output) = git_output(dir, &["diff", "HEAD", "--numstat", "-z", "--no-renames"]) {
-        if output.status.success() {
-            let counts = parse_numstat_z(&output.stdout);
-            for file in files.iter_mut() {
-                if let Some(&(added, deleted)) = counts.get(file.path.as_str()) {
-                    file.additions = Some(added);
-                    file.deletions = Some(deleted);
-                }
+    let numstat = tracked
+        .then(|| git_output(dir, &["diff", "HEAD", "--numstat", "-z", "--no-renames"]).ok())
+        .flatten()
+        .filter(|output| output.status.success());
+    if let Some(output) = numstat {
+        let counts = parse_numstat_z(&output.stdout);
+        for file in files.iter_mut() {
+            if let Some(&(added, deleted)) = counts.get(file.path.as_str()) {
+                file.additions = Some(added);
+                file.deletions = Some(deleted);
             }
         }
     }
@@ -1747,7 +1783,7 @@ fn classify_git_failure(output: &std::process::Output) -> String {
 
 /// 写操作之后清掉会让列表滞后的缓存：「下一层有改动的仓库」缓存 30 秒，提交 / 放弃之后某个仓库
 /// 可能已经干净了（或刚暂存的状态要立刻反映）。默认分支名的缓存不受写操作影响，不清。
-fn invalidate_caches() {
+pub(crate) fn invalidate_caches() {
     if let Ok(mut cache) = CHILD_CACHE.lock() {
         *cache = None;
     }
@@ -3155,6 +3191,87 @@ mod tests {
         let spawned = GIT_SPAWNS.with(|n| n.get());
         assert_eq!(folded_of(&summary.files), vec![("build/".to_string(), 60)]);
         assert!(spawned <= 4, "摘要起了 {spawned} 个 git 进程");
+    }
+
+    /// 侧栏改动数（bench_sidebar_badges_20_dirs 的优化）：与摘要同一口径——跟踪文件的增删、未跟踪文件的行数、
+    /// 折叠目录按文件数——但进程更少：干净 / 只有未跟踪文件只跑 status，有跟踪改动再加 numstat，
+    /// 有折叠目录多一个 ls-files；非仓库目录不起进程。
+    #[test]
+    fn sidebar_counts_match_summary_with_fewer_git_processes() {
+        let sb = Sandbox::new("sidebar-counts");
+        let summed = |dir: &str| {
+            let files = git_diff_summary_blocking(dir).unwrap().files;
+            files.iter().fold((0, 0, 0), |(a, d, n), f| {
+                (a + f.additions.unwrap_or(0), d + f.deletions.unwrap_or(0), n + f.untracked_files.unwrap_or(1))
+            })
+        };
+        let spawns = |dir: &str| {
+            invalidate_caches();
+            GIT_SPAWNS.with(|n| n.set(0));
+            let counts = sidebar_diff_counts_blocking(dir);
+            (counts, GIT_SPAWNS.with(|n| n.get()))
+        };
+        // 干净：一个 status。
+        let clean = sb.repo("clean");
+        assert_eq!(spawns(&s(&clean)), (Some((0, 0, 0)), 1));
+        // 只有未跟踪文件：numstat 必然为空，不跑；未跟踪文件的行数照数。
+        let untracked = sb.repo("untracked");
+        std::fs::write(untracked.join("new.txt"), "a
+b
+c
+").unwrap();
+        assert_eq!(spawns(&s(&untracked)), (Some((3, 0, 1)), 1));
+        assert_eq!(summed(&s(&untracked)), (3, 0, 1));
+        // 跟踪改动 + 未跟踪文件 + 60 个文件的未跟踪目录（折叠，按文件数算）：status、ls-files、numstat。
+        let dirty = sb.repo("dirty");
+        std::fs::write(dirty.join("README.md"), "changed
+more
+").unwrap();
+        std::fs::write(dirty.join("new.txt"), "x
+").unwrap();
+        std::fs::create_dir_all(dirty.join("build")).unwrap();
+        for i in 0..60 {
+            std::fs::write(dirty.join("build").join(format!("f{i}")), "x
+").unwrap();
+        }
+        let (counts, spawned) = spawns(&s(&dirty));
+        assert_eq!(counts, Some(summed(&s(&dirty))));
+        assert_eq!(counts, Some((3, 1, 62)));
+        assert_eq!(spawned, 3);
+        // 冲突条目的 status 也是 "U"：不能当成未跟踪而省掉 numstat。
+        let conflict = sb.repo("conflict");
+        sb.git(&conflict, &["switch", "-q", "-c", "side"]);
+        std::fs::write(conflict.join("README.md"), "side
+").unwrap();
+        sb.commit(&conflict, "side");
+        sb.git(&conflict, &["switch", "-q", "main"]);
+        std::fs::write(conflict.join("README.md"), "main
+").unwrap();
+        sb.commit(&conflict, "main");
+        let _ = git_output(&s(&conflict), &["-c", "user.name=t", "-c", "user.email=t@t", "merge", "-q", "side"]);
+        let (counts, spawned) = spawns(&s(&conflict));
+        assert_eq!(counts, Some(summed(&s(&conflict))));
+        assert_eq!(spawned, 2, "冲突文件要跑 numstat");
+        // 子目录里开的会话：与摘要一致（未跟踪文件按子目录拼路径读，行数数不到，是摘要原有的口径，这里不改）。
+        let sub = s(&dirty.join("sub"));
+        std::fs::create_dir_all(dirty.join("sub")).unwrap();
+        assert_eq!(counts_of(&sub), Some(summed(&sub)));
+        // 非仓库目录：None；上级没有 .git 时一个进程都不起。
+        let plain = sb.0.join("plain");
+        std::fs::create_dir_all(&plain).unwrap();
+        let (counts, spawned) = spawns(&s(&plain));
+        assert_eq!(counts, None);
+        if !plain.ancestors().any(|p| p.join(".git").exists()) {
+            assert_eq!(spawned, 0);
+        }
+        // .git 目录里面不是工作树：和摘要的 is_repo=false 一样不给数。
+        assert_eq!(sidebar_diff_counts_blocking(&s(&clean.join(".git"))), None);
+        assert_eq!(sidebar_diff_counts_blocking(&s(&sb.0.join("missing"))), None);
+    }
+
+    fn counts_of(dir: &str) -> Option<(u32, u32, u32)> {
+        invalidate_caches();
+        sidebar_diff_counts_blocking(dir)
     }
 
     #[test]
