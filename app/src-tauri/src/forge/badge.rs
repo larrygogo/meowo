@@ -98,13 +98,18 @@ fn pr_target(cache: &DiffCache, ctx: &Ctx, dir: &str) -> PrTarget {
     target
 }
 
-/// 一个目录当前分支的 PR。online=false 时只看缓存（不论新旧），绝不调 gh。
+/// 一个目录当前分支的 PR 徽标。
 fn pr_badge(ctx: &Ctx, target: PrTarget, dir: &str, online: bool) -> Option<SidebarPrBadgeDto> {
+    cached_pr(ctx, target, dir, online).as_ref().map(to_badge)
+}
+
+/// 一个目录当前分支的 PR，走 forge 的 PR 缓存（侧栏与标题栏共用）。online=false 时只看缓存（不论新旧），绝不调 gh。
+fn cached_pr(ctx: &Ctx, target: PrTarget, dir: &str, online: bool) -> Option<PullRequestDto> {
     let (key, slug, head) = target?;
     let cached = lock(&ctx.caches.prs).get(&key).cloned();
     if let Some((at, pr)) = &cached {
         if !online || at.elapsed() < PR_TTL {
-            return pr.as_ref().map(to_badge);
+            return pr.clone();
         }
     }
     if !online {
@@ -117,16 +122,34 @@ fn pr_badge(ctx: &Ctx, target: PrTarget, dir: &str, online: bool) -> Option<Side
     match view_pr(ctx.gh, ctx.caches, dir, Some(&slug), Some(&head)) {
         Ok(pr) => {
             lock(&ctx.caches.prs).insert(key, (Instant::now(), pr.clone()));
-            pr.as_ref().map(to_badge)
+            pr
         }
         // 断网、限流：沿用上一次的，状态点不会一闪而没；同时记下这次查询时间，60 秒内不再重打 gh。
         // 不记的话前端每轮（30 秒、目录变化、回前台）都会重查，限流时越查越限（做空审查第二轮指出）。
         Err(_) => {
             let previous = cached.and_then(|(_, pr)| pr);
             lock(&ctx.caches.prs).insert(key, (Instant::now(), previous.clone()));
-            previous.as_ref().map(to_badge)
+            previous
         }
     }
+}
+
+/// 标题栏的 PR（对话页「打开 Pull Request」）。与侧栏、「更改」面板共用 [`Caches::prs`](super::Caches) 与按目录
+/// 缓存的 PR 去向：以前标题栏按目录另存一份 60 秒缓存、自己调 `gh pr view`，同一仓库前台时每分钟可能多打
+/// 一次 gh（tests/title_pr.rs 计数）。标题栏只在窗口可见时轮询（ChatTitleBar），按在线处理。
+/// 回包只留号、状态、链接、标题：与以前的形状一致，检查与分支那些面板字段标题栏不用。
+pub(crate) fn title_pr_with(ctx: &Ctx, diffs: &DiffCache, cwd: &str) -> Option<PullRequestDto> {
+    let dir = cwd.trim();
+    if dir.is_empty() || !std::path::Path::new(dir).is_dir() {
+        return None;
+    }
+    let pr = cached_pr(ctx, pr_target(diffs, ctx, dir), dir, true)?;
+    Some(PullRequestDto { number: pr.number, state: pr.state, url: pr.url, title: pr.title, ..Default::default() })
+}
+
+/// 正式的标题栏查询：真 gh、进程内共用的缓存。
+pub(crate) fn title_pull_request(cwd: &str) -> Option<PullRequestDto> {
+    title_pr_with(&Ctx::real(), &DIFFS, cwd)
 }
 
 fn diff_counts(cache: &DiffCache, dir: &str, compute: &Compute<'_>) -> Option<DiffCounts> {

@@ -956,3 +956,5 @@ fn 目标判定_fork_工作流_认_gh_set_default_head_带_fork_owner() {
 
 // 侧栏 PR / CI 与改动数的节流（UI 优化 #54），单独一个文件。
 mod badge;
+
+mod title_pr;
