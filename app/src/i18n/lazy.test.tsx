@@ -30,9 +30,20 @@ describe("i18n 字典按需加载", () => {
     expect(loadedDict("en")).toBeNull();
     expect(loadedDict("zh")?.locale).toBe("zh-CN");
     localStorage.setItem("meowo-lang", "en");
+    // 英文内容插进 DOM 的那一刻就读 <html lang>：layout effect 与 DOM 插入同一次提交，此刻必须已写好。
+    // CI run 42949946113 上 lang 晚一拍（当时是被动 effect）导致最后一条断言偶发失败；本机没能稳定复现那一拍。
+    const langAtFirstPaint: string[] = [];
+    const observer = new MutationObserver(() => {
+      if (document.querySelector('[data-testid="probe"]') && langAtFirstPaint.length === 0) {
+        langAtFirstPaint.push(document.documentElement.lang);
+      }
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
     render(<I18nProvider><Probe /></I18nProvider>);
     expect(screen.queryByTestId("probe")).toBeNull();
     expect(await screen.findByTestId("probe")).toHaveProperty("textContent", "en-US");
+    observer.disconnect();
+    expect(langAtFirstPaint).toEqual(["en"]);
     expect(document.documentElement.lang).toBe("en");
   });
 
