@@ -20,3 +20,18 @@ describe("字重只用 400/500/600/700", () => {
     }
   });
 });
+
+describe("对话窗焦点环", () => {
+  // 柔光 accent-soft 合成后只有 1.11:1（调研 i2）；实线 accent 深 5.36:1、浅 3.67:1。
+  it("--focus-ring 是实线 accent，不用 accent-soft", () => {
+    const decl = styles.match(/--focus-ring:\s*([^;]+);/)?.[1] ?? "";
+    expect(decl).toMatch(/var\(--cc-accent\)/);
+    expect(decl).not.toMatch(/accent-soft/);
+  });
+  // 指针/触屏模态下程序化移焦不画环：画环的规则必须挂在 data-im="kbd" 下。
+  it("box-shadow 焦点环只在键盘模态生效", () => {
+    const lines = styles.split("\n").filter((l) => /:focus-visible[^{]*\{[^}]*box-shadow:\s*var\(--focus-ring/.test(l));
+    expect(lines.length).toBeGreaterThan(0);
+    for (const l of lines) expect(l).toMatch(/^:root\[data-im="kbd"\]/);
+  });
+});

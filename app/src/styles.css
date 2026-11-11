@@ -259,8 +259,11 @@
   --kt-light-2: rgba(0, 0, 0, 0.6);
   --kt-light-3: rgba(0, 0, 0, 0.45);
   --kt-light-4: rgba(0, 0, 0, 0.3);
-  /* 键盘焦点环：3px 强调色柔光（只在 :focus-visible 出现，鼠标点击不显示）。 */
-  --focus-ring: 0 0 0 3px var(--cc-accent-soft);
+  /* 键盘焦点环：2px 实线强调色。原先是 3px accent-soft 柔光，合成后对底色只有 1.11:1（深）/
+     1.12:1（浅），WCAG 1.4.11 要求 ≥3:1（2026-11-11 调研 i2）。accent 实线实测：深色 #1a88ff 对
+     #121212 5.36:1、浅色 #1783ff 对白 3.67:1（ui-lanes/a11y/focus.cjs 逐个元素复测）。
+     柔光只适合做填充，不能当指示。 */
+  --focus-ring: 0 0 0 2px var(--cc-accent);
 }
 
 /* ===== 浅色主题：覆盖调色板 + 少量硬编码深色值（其余走 --cc-* 自动适配）。
@@ -4431,7 +4434,8 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-ws-dir { position: relative; display: block; padding: var(--sp-8) var(--sp-10) var(--sp-8) var(--sp-8); border-radius: var(--radius-sm); cursor: pointer; user-select: none; }
 .chat-ws-dir + .chat-ws-dir { margin-top: 2px; }
 .chat-ws-dir:hover, .chat-ws-dir.is-menu-open { background: var(--fill-hover); }
-.chat-ws-dir:focus-visible { outline: none; box-shadow: var(--focus-ring, 0 0 0 2px var(--cc-accent)); }
+.chat-ws-dir:focus-visible { outline: none; }
+:root[data-im="kbd"] .chat-ws-dir:focus-visible { box-shadow: var(--focus-ring); }
 .chat-ws-dir-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .chat-ws-dir-icon { flex: 0 0 16px; color: var(--cc-text-faint); }
 .chat-ws-dir-name { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; color: var(--cc-text); font-size: var(--text-sm); font-weight: 400; -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 16px), transparent); }
@@ -4503,9 +4507,13 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
    各卡片退到 calc(100% - 48px) 兜底，版式不需要第二套规则。 */
 :root { --chat-col: 720px; }
 :root[data-chat-width="full"] { --chat-col: 100%; }
-/* 对话窗统一的键盘焦点：只认 :focus-visible（鼠标点击不出环），用柔光环代替浏览器默认描边
-   （Kimi 的 --p-focus-ring 同法）。输入框/文本域有自己的聚焦样式，不套这一层。 */
-.chat-window :is(button, a, summary, [role="button"], [role="tab"], [role="menuitem"], [tabindex]):focus-visible { outline: none; box-shadow: var(--focus-ring); }
+/* 对话窗统一的键盘焦点：用实线环代替浏览器默认描边（Kimi 的 --p-focus-ring 同法）。
+   只在键盘模态（input-modality 的 data-im="kbd"）画：程序化移焦在 Chromium 会沿用上一次的
+   focus-visible 判定、在 WebKit 一律算 :focus-visible，单靠伪类挡不住，鼠标点完弹层后
+   首焦点会无端亮环（focus.cjs 修复前 chromium/webkit 指针模态 36/36 个元素画环）。
+   输入框/文本域有自己的聚焦样式，不套这一层。 */
+.chat-window :is(button, a, summary, [role="button"], [role="tab"], [role="menuitem"], [tabindex]):focus-visible { outline: none; }
+:root[data-im="kbd"] .chat-window :is(button, a, summary, [role="button"], [role="tab"], [role="menuitem"], [tabindex]):focus-visible { box-shadow: var(--focus-ring); }
 .chat-scroll::before { content: ""; display: block; height: var(--chat-section-gap); }
 /* 对话滚动区不画原生滚动条（用户要求）：定位交给右侧的消息目录竖条，两列竖线并排既重复又抢眼。
    滚轮/触控板/键盘滚动不受影响。 */
@@ -5432,7 +5440,9 @@ button.scm-check-name:hover { text-decoration: underline; }
 .chat-approval-copy > span/* 附理由拒绝：卡内一行输入 + 提交（对照 Kimi「说明拒绝原因… / 提交并拒绝」）。 */
 .chat-approval-reason { display: flex; gap: var(--sp-8); width: 100%; }
 .chat-approval-reason input { flex: 1 1 auto; min-width: 0; height: 32px; padding: 0 var(--sp-10); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); background: transparent; color: var(--cc-text); font: inherit; font-size: var(--text-sm); }
-.chat-approval-reason input:focus { outline: none; border-color: var(--cc-accent); box-shadow: var(--focus-ring); }
+/* 输入框聚焦靠 accent 描边（≥3:1）指示，外圈保留原来的柔光，不跟 --focus-ring 改成实线：
+   打字时一圈 2px 实线太重。 */
+.chat-approval-reason input:focus { outline: none; border-color: var(--cc-accent); box-shadow: 0 0 0 3px var(--cc-accent-soft); }
 .chat-approval-reason button { height: 32px; padding: 0 var(--sp-12); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); background: transparent; color: var(--cc-err-text); font: inherit; font-size: var(--text-sm); cursor: pointer; }
 .chat-approval-reason button:hover:not(:disabled) { background: var(--fill-hover); }
 .chat-approval-error { color: var(--cc-err-vivid); }
