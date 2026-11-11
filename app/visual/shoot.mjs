@@ -57,6 +57,29 @@ const MOBILE_SCENES = [
   { scene: "mobile-chat", sel: ".chat-approval-actions" },
   { scene: "mobile-changes", sel: ".scm-row" },
 ];
+// 手机页的其余状态：只拍 dpr 2。tag 给同一场景的不同视口起名（键盘弹出、横屏、iPad）。
+const PHONE_SM = [{ w: 375, h: 812 }];
+const MOBILE_EXTRA = [
+  { scene: "mobile-settings", sel: ".remote-settings-screen .pswitch", sizes: PHONE, langs: ["zh", "en"] },
+  { scene: "mobile-new", sel: ".remote-new-session-overlay .ns-window", sizes: PHONE, langs: ["zh", "en"] },
+  { scene: "mobile-gate", sel: ".remote-gate-card", sizes: PHONE_SM, langs: ["zh", "en"] },
+  { scene: "mobile-gate-filled", sel: ".remote-gate-card", sizes: PHONE_SM },
+  { scene: "mobile-gate-invalid", sel: ".remote-gate-err", sizes: PHONE_SM },
+  { scene: "mobile-gate-unreachable", sel: ".remote-gate-err", sizes: PHONE_SM, langs: ["zh", "en"] },
+  { scene: "mobile-gate-expired", sel: ".remote-gate-err", sizes: PHONE_SM },
+  { scene: "mobile-boot", sel: ".remote-boot", sizes: PHONE_SM },
+  { scene: "mobile-keys", sel: ".chat-remote-keyrow", sizes: PHONE_SM },
+  { scene: "mobile-list", tag: "en", sel: ".remote-tabbar", sizes: PHONE_SM, langs: ["en"] },
+  // 键盘弹出：iPhone 竖屏键盘约占 336px，可视高度剩 476；SE 更矮（667-291=376）。
+  { scene: "mobile-chat", tag: "kbd", sel: ".chat-approval-actions", sizes: [{ w: 375, h: 476 }, { w: 375, h: 376 }] },
+  { scene: "mobile-list", tag: "land", sel: ".remote-tabbar", sizes: [{ w: 812, h: 375 }] },
+  { scene: "mobile-chat", tag: "land", sel: ".chat-approval-actions", sizes: [{ w: 812, h: 375 }] },
+  { scene: "mobile-list", tag: "ipad", sel: ".remote-tabbar", sizes: [{ w: 820, h: 1180 }] },
+  { scene: "mobile-settings", tag: "ipad", sel: ".remote-settings-screen .pswitch", sizes: [{ w: 820, h: 1180 }] },
+  { scene: "mobile-chat", tag: "ipad", sel: ".chat-approval-actions", sizes: [{ w: 820, h: 1180 }] },
+  // iPad 横屏走宽屏双栏：设置入口是侧栏头的齿轮。
+  { scene: "mobile-chat", tag: "ipadland", sel: ".chat-approval-actions", sizes: [{ w: 1180, h: 820 }] },
+];
 // 英文只挑两个文案最密的场景跑全矩阵，其余只拍中文。
 const EN_SCENES = new Set(["chat", "mobile-chat"]);
 
@@ -71,6 +94,10 @@ function buildMatrix() {
   for (const sc of MOBILE_SCENES) for (const lang of EN_SCENES.has(sc.scene) ? ["zh", "en"] : ["zh"])
     for (const theme of THEMES) for (const { w, h } of PHONE) for (const dpr of DPRS)
       push({ ...sc, page: "mobile", lang, theme, w, h, dpr, mobile: true });
+  for (const sc of MOBILE_EXTRA) for (const lang of sc.langs ?? ["zh"]) for (const theme of THEMES) for (const { w, h } of sc.sizes) {
+    const shot = { ...sc, page: "mobile", lang, theme, w, h, dpr: 2, mobile: true };
+    shots.push({ ...shot, name: `${sc.scene}${sc.tag ? "-" + sc.tag : ""}__${lang}__${theme}__w${w}${sc.tag ? "h" + h : ""}__dpr2` });
+  }
   return shots;
 }
 
