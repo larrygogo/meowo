@@ -5776,6 +5776,13 @@ button.scm-check-name:hover { text-decoration: underline; }
    叠到输入框上。当初的起因是浮层补白写在滚动区 padding 里、消息区缩不动，104px 下限在 iPhone SE
    上把输入框挤出屏幕 48px；补白已改成内容末尾的占位块（UI 优化 c2），这条留下来管让位的优先级。 */
 .chat-main:has(> .chat-approval-overlay.is-active) > .chat-dock > .lead-gate-card { min-height: 0; overflow: hidden; }
+/* 矮屏（手机键盘态/横屏、620×480 小窗）再加一条：浮层卡在场时关卡卡片整张让出。空间本身不够，
+   压到最小的关卡（约 95px）仍把审批卡挤到 30px、按钮看不见（fix1 车道实测 667×375、375×376、
+   620×480 三档）。审批卡是 agent 正卡着等你的事，比关卡急；关卡没丢，底栏 Lead 入口的待拍板点一直亮，
+   审批处理完卡片自动回来。 */
+@media (max-height: 640px) {
+  .chat-main:has(> .chat-approval-overlay.is-active) > .chat-dock > .lead-gate-card { display: none; }
+}
 /* composer 要保住自己的 z-index:9（压过审批 overlay 的 8 与「回到最新」的 sticky 5，
    见 .chat-compose 的注释）。上一条与它同特异性且写在后面，会把它降成 1——模型/斜杠菜单
    向上探出时就被「回到最新」浮钮压住（实拍）。 */

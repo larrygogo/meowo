@@ -21,4 +21,12 @@ describe("dock 里的卡不按浮层剩余高度限高", () => {
     expect(body).toContain("max-height");
     expect(body).not.toContain("--chat-overlay-room");
   });
+  it("矮屏浮层卡在场时，dock 里的关卡整张让出（否则审批卡被挤到 30px）", () => {
+    const css = read("../../styles.css");
+    const at = css.indexOf("@media (max-height: 640px)");
+    expect(at).toBeGreaterThan(-1);
+    const block = css.slice(at, at + 300);
+    expect(block).toContain(".chat-approval-overlay.is-active");
+    expect(block).toContain(".lead-gate-card { display: none; }");
+  });
 });
