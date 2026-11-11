@@ -1,6 +1,6 @@
 /* ============================================================
    Meowo 官网设计系统 v3 — dark-first
-   页面即产品：#0e100f 底 + 翡翠 #2dd4a7，hairline 分界，mono 点缀
+   页面即产品：#0e100f 底 + 青柠 #d4f64c，hairline 分界，mono 点缀
    ============================================================ */
 :root {
   /* 底与面 */
@@ -18,16 +18,16 @@
   /* 规范值 #6f7873 在 --bg 上只有约 4.2:1，微调到 #77817b 以满足小字 ≥4.5:1（实测约 4.7:1） */
   --text-faint: #77817b;
 
-  /* 品牌强调（翡翠，取自产品深色主题） */
-  --accent: #2dd4a7;
-  --on-accent: #06281f; /* accent 实底上的文字 */
-  --accent-text: #4adeb6; /* 深色底上的链接 / 文字 accent */
-  --accent-soft: rgba(45, 212, 167, 0.12);
-  --accent-line: rgba(45, 212, 167, 0.28);
+  /* 品牌强调（猫眼青柠，与产品深色主题同值；永远压在墨色上用） */
+  --accent: #d4f64c;
+  --on-accent: #1c2600; /* accent 实底上的文字 */
+  --accent-text: #d4f64c; /* 深色底上的链接 / 文字 accent */
+  --accent-soft: rgba(212, 246, 76, 0.12);
+  --accent-line: rgba(212, 246, 76, 0.28);
 
   /* 状态色（沿用产品） */
-  --warn: #e0a23c;
-  --err: #e0584c;
+  --warn: #ffb829;
+  --err: #ee4b55;
 
   /* 阴影（深色下克制，主要靠 border） */
   --shadow-pop: 0 16px 40px -16px rgba(0, 0, 0, 0.7);
@@ -85,7 +85,7 @@ img {
 }
 
 ::selection {
-  background: rgba(45, 212, 167, 0.28);
+  background: rgba(212, 246, 76, 0.28);
   color: var(--text);
 }
 
@@ -250,7 +250,7 @@ code.inline {
   padding: 8px 16px;
   font-size: 13px;
   color: var(--text-dim);
-  background: rgba(45, 212, 167, 0.07);
+  background: rgba(212, 246, 76, 0.07);
   border-bottom: 1px solid var(--hairline);
 }
 .lang-hint a {
@@ -442,7 +442,7 @@ code.inline {
   content: "";
   position: absolute;
   inset: 0;
-  background: radial-gradient(55% 38% at 50% -6%, rgba(45, 212, 167, 0.12), transparent 65%);
+  background: radial-gradient(55% 38% at 50% -6%, rgba(212, 246, 76, 0.12), transparent 65%);
   z-index: 0;
   pointer-events: none;
 }
@@ -481,7 +481,7 @@ code.inline {
   border: 1px solid var(--hairline);
   border-radius: var(--r-xl);
   background:
-    radial-gradient(70% 90% at 50% 0%, rgba(45, 212, 167, 0.1), transparent 62%),
+    radial-gradient(70% 90% at 50% 0%, rgba(212, 246, 76, 0.1), transparent 62%),
     var(--bg-sunken);
   overflow: hidden;
 }
@@ -1010,8 +1010,8 @@ code.inline {
   display: flex;
   gap: 12px;
   padding: 16px 18px;
-  background: rgba(45, 212, 167, 0.07);
-  border: 1px solid rgba(45, 212, 167, 0.22);
+  background: rgba(212, 246, 76, 0.07);
+  border: 1px solid rgba(212, 246, 76, 0.22);
   border-radius: var(--r-sm);
   margin: 0 0 20px;
   font-size: 14px;
@@ -1066,7 +1066,7 @@ code.inline {
   height: 10px;
   border-radius: 50%;
   background: var(--accent);
-  box-shadow: 0 0 0 4px rgba(45, 212, 167, 0.15);
+  box-shadow: 0 0 0 4px rgba(212, 246, 76, 0.15);
 }
 @media (max-width: 640px) {
   .rel-body {
@@ -1212,7 +1212,7 @@ code.inline {
   position: relative;
   overflow: hidden;
   background:
-    radial-gradient(60% 130% at 50% 0%, rgba(45, 212, 167, 0.13), transparent 62%),
+    radial-gradient(60% 130% at 50% 0%, rgba(212, 246, 76, 0.13), transparent 62%),
     var(--bg-raise);
 }
 .cta-band > * {
@@ -1241,7 +1241,7 @@ code.inline {
   content: "";
   position: absolute;
   inset: 0;
-  background: radial-gradient(55% 60% at 50% -20%, rgba(45, 212, 167, 0.08), transparent 62%);
+  background: radial-gradient(55% 60% at 50% -20%, rgba(212, 246, 76, 0.08), transparent 62%);
   z-index: 0;
 }
 .pagehead .container {
@@ -1438,7 +1438,7 @@ code.inline {
   margin-bottom: 30px;
   border-radius: 999px;
   background: #000;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.07), 0 24px 60px -24px rgba(45, 212, 167, 0.35);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.07), 0 24px 60px -24px rgba(212, 246, 76, 0.35);
 }
 .hero-agents {
   display: flex;

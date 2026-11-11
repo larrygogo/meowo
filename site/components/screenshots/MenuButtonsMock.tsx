@@ -6,13 +6,13 @@ import React from "react";
 import type { Lang } from "@/lib/i18n";
 
 const C = {
-  bg: "#212123",
+  bg: "#232421",
   border: "rgba(255,255,255,0.08)",
   text: "#eef1ef",
   dim: "#9aa39e",
   faint: "#8b918c",
-  accent: "#2dd4a7",
-  amber: "#e0a23c",
+  accent: "#d4f64c",
+  amber: "#ffb829",
 };
 
 const COPY = {
