@@ -3959,9 +3959,11 @@ select.ns-input {
 .nsp-agent-mark { display: inline-flex; }
 /* 工作区选择：输入框上方左侧一枚小钮（对照 Kimi），菜单名字白、路径灰，选中整行底色加灰勾。 */
 .nsp-ws { align-self: flex-start; margin-left: var(--sp-10); }
-/* 「在新 worktree 里开」与上面的目录按钮、下面的「最近会话」同一条左边线（都缩进 --sp-10）；原先贴着输入框外沿，
-   比上下两行往左凸出一截（2026-11-11 leader 实拍）。 */
-.nsp-center > .wt-opt { margin-left: var(--sp-10); margin-right: var(--sp-10); }
+/* 「在新 worktree 里开」对齐上面目录按钮里的内容，而不是按钮的浅色底板：方框对文件夹图标、文字对目录名。
+   只对齐底板时方框比图标凸出 10px、文字偏左 11px，眼睛看着仍是歪的（2026-11-11 leader 两次实拍，关卡 C 驳回）。
+   缩进 = 按钮外边距 + 内边距；方框做成与图标同宽 14px、间距同为 --sp-6，文字就落在目录名同一竖线上。 */
+.nsp-center > .wt-opt { margin-left: calc(var(--sp-10) * 2); margin-right: var(--sp-10); }
+.nsp-center > .wt-opt .wt-opt-toggle input { flex: none; width: 14px; height: 14px; }
 .nsp-ws-btn { display: inline-flex; align-items: center; gap: var(--sp-6); max-width: 360px; height: var(--btn-h-lg); padding: 0 var(--sp-10); border: 0; border-radius: var(--radius-md); color: var(--cc-text); background: var(--fill-hover); font: inherit; font-size: var(--text-sm); font-weight: 600; cursor: pointer; transition: background var(--dur-fast) var(--ease-in-out); }
 .nsp-ws-btn:hover, .nsp-ws-btn.open { background: var(--fill-selected); }
 .nsp-ws-btn.is-empty { color: var(--cc-text-dim); font-weight: 500; }
