@@ -77,8 +77,8 @@
      浅色根值 .62（白 6.19:1），对话窗浅色 .56/.58（白 4.95/5.33:1）。
      2026-11-11 按 WCAG 相对亮度公式复算（ui-lanes/ds/vars-dump.mjs 取实际计算值）。 */
   --cc-text-faint: rgba(244, 248, 230, 0.52);
-  --cc-warn: #ffa126;
-  --cc-err: #ff5c57;
+  --cc-warn: #ffb829;
+  --cc-err: #ee4b55;
   /* 独立窗口底色（设置/引导/更新窗）：不能走 --cc-bg（带贴纸半透明度会透桌面），各窗统一取此。 */
   --cc-window-bg: #111210;
   /* 工作区只分「外壳 / 内容 / 浮层」三层，避免每张卡各自混出相近却不同的灰色。 */
@@ -88,14 +88,14 @@
   --cc-menu-bg: #232421;
   /* 状态指示点的鲜亮色（缩略条/卡片小圆点）：与文字调色板解耦，浅色下不跟随变暗，保持醒目。 */
   --cc-ok-vivid: #2fcfa0;
-  --cc-warn-vivid: #ffa126;
-  --cc-err-vivid: #ff5c57;
+  --cc-warn-vivid: #ffb829;
+  --cc-err-vivid: #ee4b55;
   /* 状态色当文字用（CI 状态、文件状态字母、+N/-N、queued 标签）的文字档：鲜亮色只留给点、条、图标底。
      深色下与鲜亮色同值（#121212 上 7.37～7.42:1，调研实测无问题）；浅色另取深档。
      不复用 --cc-err-text：它是错误提示句的「错误色混正文色」，深色下发粉，CI 失败和 diff 删除
      要的是与红点同色相的字。 */
   --cc-ok-text: #5fe0bc;
-  --cc-warn-text: #ffb454;
+  --cc-warn-text: #ffc457;
   /* 红色比红点亮一档：#f85149 在标题栏悬停底 #2b2b2b 只有 4.22:1（.tb-git-del 实测 4.27），
      #ff7b72 在 #121212/#292929/#2b2b2b 上 7.43/5.77/5.62:1。 */
   --cc-fail-text: #ff8580;
@@ -250,7 +250,7 @@
   --term-fg-faint: rgba(255, 255, 255, 0.5);
   --term-cursor: #d4f64c;
   --term-selection: rgba(212, 246, 76, 0.25);
-  --term-warn: #ffa126;
+  --term-warn: #ffb829;
   --radius-xs: 4px;
   --radius-sm: 6px;
   --radius-md: 8px;
@@ -363,22 +363,22 @@
      （well/sunken）。rgba(0,0,0,.62) 在白底 6.19:1、在 #f5f5f5 面 6.04:1，两档都过线；
      Kimi 原档 .53 只剩约 4.35–4.42:1，故取其 muted 档以上的写法。 */
   --cc-text-faint: rgba(20, 24, 8, 0.62);
-  --cc-warn: #a85400;
-  --cc-err: #dc2f3c;
+  --cc-warn: #855800;
+  --cc-err: #a81c2e;
   /* 纯中性白外壳 + 浅灰 well（Kimi Code 浅色板：bg #ffffff、surface/well/deep #f5f5f5）。 */
   --cc-window-bg: #f3f4ef;
   --cc-panel-bg: #fdfdfb;
   --cc-panel-raised: #ffffff;
   --cc-menu-bg: #ffffff;
   /* 圆点鲜亮色：浅色下用饱和中调（亮但在近白底上仍有存在感），不取文字用的暗色。 */
-  --cc-ok-vivid: #0c9a86;
-  --cc-warn-vivid: #c86a00;
-  --cc-err-vivid: #dc2f3c;
+  --cc-ok-vivid: #0c8f7c;
+  --cc-warn-vivid: #ad7400;
+  --cc-err-vivid: #a81c2e;
   /* 浅色文字档：鲜亮色在白底只有 2.45～4.26:1（调研 i3）。这三档在白 / #f5f5f5 / 自身 18% 叠底上
      依次为 ok 5.86/5.37/4.87、warn 6.15/5.64/5.29、fail 5.98/5.49/4.70（ui-lanes/a11y/contrast-tokens.mjs）。 */
-  --cc-ok-text: #0a7a62;
-  --cc-warn-text: #a85400;
-  --cc-fail-text: #c4262e;
+  --cc-ok-text: #0a7362;
+  --cc-warn-text: #855800;
+  --cc-fail-text: #a81c2e;
   /* 语法高亮调色板浅色版（One Light 同族、逐色压暗）：原版 One Light 的绿/蓝/黄
      在近白卡面只有 3–4:1，这里取同色相的深档，全部 ≥4.5:1。 */
   --cc-syn-keyword: #a626a4;
