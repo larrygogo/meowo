@@ -4,6 +4,7 @@
 /// 显隐判定、四块面板、连同只有它用的任务列表重建，全摊在 ChatWindow 里。收拢后 ChatWindow
 /// 只交数据，入口何时出现（dockEntries）是可单测的纯函数。
 
+import { isShellCovered } from "./shellCover";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ChatItem, ChatHistory } from "../../api";
 import { buildTranscriptTodos, type TaskUpdateCache } from "../../chat/transcriptTodos";
@@ -115,6 +116,8 @@ export function DockWork({ sessionId, cwd, ccSessionId, items, history, loading 
     if (!panel) return;
     const popLayer = pushEscLayer();
     const onKey = (event: KeyboardEvent) => {
+      // 名单盖着对话窗时这里不接键（见 shellCover.ts）。
+      if (isShellCovered()) return;
       if (event.key !== "Escape") return;
       event.preventDefault();
       event.stopPropagation();

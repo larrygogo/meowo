@@ -28,8 +28,15 @@ import { WINDOW_CLOSE_CANCELLED_EVENT } from "./windowClose";
 /** 远程审批租约续约周期（ms）。须显著小于后端 REMOTE_CONSUMER_TTL_MS(60s),留足网络抖动余量。 */
 export const REMOTE_CONSUMER_HEARTBEAT_MS = 20_000;
 
-export function useApprovalChannel({ sessionId, activeSessionRef, viewRef, setView, setSendError }: {
+export function useApprovalChannel({ sessionId, covered = false, activeSessionRef, viewRef, setView, setSendError }: {
   sessionId: number;
+  /**
+   * 主窗口的名单正盖着对话窗：人看的是名单，不是这条会话。此时不持有它的专属租约——
+   * 后端拿专属租约当「用户正在看这条会话」（viewed_session_ids），会清它的未读、压掉它
+   * 「跑完了」的通知，名单上的眼睛也就不会为它走过去（做空审查 M2）。审批不受影响：
+   * 名单自己持有名单租约，任何会话的审批都留在表里。
+   */
+  covered?: boolean;
   /** 当前会话 id 的实时镜像（mount-once 监听里的闭包 state 是过期值）。 */
   activeSessionRef: MutableRefObject<number>;
   viewRef: MutableRefObject<"chat" | "terminal">;
@@ -93,7 +100,7 @@ export function useApprovalChannel({ sessionId, activeSessionRef, viewRef, setVi
   const [brokerOwnsReview, setBrokerOwnsReview] = useState(false);
 
   useEffect(() => {
-    if (sessionId <= 0) return;
+    if (sessionId <= 0 || covered) return;
     const consumerId = `chat-${sessionId}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
     let disposed = false;
     let retryTimer = 0;
@@ -130,7 +137,7 @@ export function useApprovalChannel({ sessionId, activeSessionRef, viewRef, setVi
       window.removeEventListener(WINDOW_CLOSE_CANCELLED_EVENT, onCloseCancelled);
       void unregisterApprovalConsumer(consumerId).catch(() => {});
     };
-  }, [sessionId]);
+  }, [sessionId, covered]);
 
   // push 通道健康证明：本窗口收到过 pending-approval / interactive-question 系事件
   // ⇒ emit 能到达本窗口，轮询只需低频保险。ref 而非 state：翻转不需要重渲染，

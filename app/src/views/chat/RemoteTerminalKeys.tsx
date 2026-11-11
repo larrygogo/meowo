@@ -55,25 +55,46 @@ export function RemoteTerminalKeys({ sessionId, checkScreen = false }: {
     return () => { cancelled = true; window.clearTimeout(timer); };
   }, [sessionId]);
 
+  /** 画面还是人看到的那一份吗。不开 checkScreen 恒为是。变了就换上新画面并提示，返回否。 */
+  const screenUnchanged = async (): Promise<boolean> => {
+    if (!checkScreen) return true;
+    const seen = (linesRef.current ?? []).join(LINE_SEP);
+    const screen = await managedTerminalScreen(sessionId);
+    // 取不到画面（终端已不在 Meowo 手里）：无法确认按下去落在哪，不发。
+    if (!screen) { setError(true); return false; }
+    if (screen.join(LINE_SEP) === seen) return true;
+    // 画面变了：这一下不发。把新画面换上来，让人看清再按。
+    setLines(screen);
+    setMoved(true);
+    return false;
+  };
   const send = (data: string) => {
     setError(false);
     setMoved(false);
+    // 不比对画面时当场就写（手机页）：多绕一个微任务也是手感上的延迟，现有测试也钉着这一点。
     if (!checkScreen) {
       void writeManagedTerminal(sessionId, data).catch(() => setError(true));
       return;
     }
-    const seen = (linesRef.current ?? []).join(LINE_SEP);
-    void managedTerminalScreen(sessionId)
-      .then((screen) => {
-        // 取不到画面（终端已不在 Meowo 手里）：无法确认按下去落在哪，不发。
-        if (!screen) { setError(true); return; }
-        if (screen.join(LINE_SEP) !== seen) {
-          // 画面变了：这一下不发。把新画面换上来，让人看清再按。
-          setLines(screen);
-          setMoved(true);
-          return;
-        }
-        return writeManagedTerminal(sessionId, data);
+    void screenUnchanged()
+      .then((ok) => (ok ? writeManagedTerminal(sessionId, data) : undefined))
+      .catch(() => setError(true));
+  };
+  /**
+   * 文字作答：文字与回车分两次写、中间隔一拍（同 ChatWindow 的 SUBMIT_GAP_MS：同一块里的回车
+   * 会被 TUI 当成粘贴内容的一部分，只换行不提交）。画面只在写文字之前比对一次，回车跟着文字走：
+   * 两次各比各的话，文字被拦下时回车会单独发出去，落在人没看过的新提示上；文字发出去了，它自己
+   * 的回显又会让回车被拦（做空审查 H2，两个方向都复现过）。
+   */
+  const sendLine = (line: string) => {
+    setError(false);
+    setMoved(false);
+    void screenUnchanged()
+      .then(async (ok) => {
+        if (!ok) return;
+        await writeManagedTerminal(sessionId, line);
+        await new Promise((resolve) => window.setTimeout(resolve, 250));
+        await writeManagedTerminal(sessionId, "\r");
       })
       .catch(() => setError(true));
   };
@@ -99,10 +120,7 @@ export function RemoteTerminalKeys({ sessionId, checkScreen = false }: {
         onSubmit={(event) => {
           event.preventDefault();
           if (!text) return;
-          // 文字与回车分两次写、中间隔一拍（同 ChatWindow 的 SUBMIT_GAP_MS）：同一块里的
-          // 回车会被 TUI 当成粘贴内容的一部分，只换行不提交。
-          send(text);
-          window.setTimeout(() => send("\r"), 250);
+          sendLine(text);
           setText("");
         }}
       >

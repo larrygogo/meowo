@@ -53,7 +53,7 @@ function DesktopRoster() {
   const [sceneId, setSceneId] = useState(0);
   const [request, setRequest] = useState<ChatShellBridge["request"]>(null);
   const [newSession, setNewSession] = useState<ChatShellBridge["newSession"]>(null);
-  const rowsRef = useRef<readonly Item[]>([]);
+
   const { starred } = useStarred();
 
   const load = useCallback(() => {
@@ -72,8 +72,10 @@ function DesktopRoster() {
     return pinned.length ? [...pinned, ...sessions.filter((s) => !starred.has(s.session.cc_session_id))] : sessions;
   }, [sessions, starred]);
 
-  rowsRef.current = rows;
-  const latest = useCallback((id: number) => rowsRef.current.find((row) => row.session.id === id), []);
+  const say = useCallback((id: number, draft: string) => {
+    setRequest((prev) => ({ id, seq: (prev?.seq ?? 0) + 1, draft }));
+    setView("scene");
+  }, []);
   const askNewSession = useCallback((message: string) => {
     setNewSession((prev) => ({ message, seq: (prev?.seq ?? 0) + 1 }));
   }, []);
@@ -180,7 +182,7 @@ function DesktopRoster() {
         gitBadges={gitBadges}
         onToggle={(id) => setExpanded((prev) => (prev === id ? null : id))}
         onEnter={enter}
-        latest={latest}
+        onSay={say}
         onNewSession={askNewSession}
       />
     ) : null,
@@ -188,7 +190,7 @@ function DesktopRoster() {
     newSession,
     onSession: setSceneId,
     onReveal: () => setView("scene"),
-  }), [view, rows, sessions, expanded, gitBadges, enter, request, newSession, latest, askNewSession]);
+  }), [view, rows, sessions, expanded, gitBadges, enter, request, newSession, say, askNewSession]);
 
   return (
     <div ref={shellRef} className={`roster-shell is-${view}`}>
@@ -259,8 +261,8 @@ function title(item: Item, fallback: string): string {
   return item.task_title && item.task_title !== UNNAMED_SESSION_SENTINEL ? item.task_title : fallback;
 }
 
-function RosterList({ rows, loaded, expanded, gitBadges, onToggle, onEnter, latest, onNewSession }: {
-  latest: (id: number) => Item | undefined;
+function RosterList({ rows, loaded, expanded, gitBadges, onToggle, onEnter, onSay, onNewSession }: {
+  onSay: (id: number, message: string) => void;
   onNewSession: (message: string) => void;
   rows: readonly Item[];
   loaded: boolean;
@@ -302,7 +304,7 @@ function RosterList({ rows, loaded, expanded, gitBadges, onToggle, onEnter, late
       <RosterComposer
         target={target}
         targetTitle={target ? title(target, t.sticker.waitingFirstInput) : ""}
-        latest={latest}
+        onSay={onSay}
         onNewSession={onNewSession}
       />
     </section>

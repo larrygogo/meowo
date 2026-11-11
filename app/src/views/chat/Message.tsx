@@ -1,3 +1,4 @@
+import { isShellCovered } from "./shellCover";
 import { memo, useContext, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { pushEscLayer } from "../../escLayers";
@@ -154,6 +155,8 @@ function Lightbox({ src, name, onClose }: { src: string; name: string; onClose: 
   useEffect(() => {
     const popLayer = pushEscLayer();
     const onKey = (event: KeyboardEvent) => {
+      // 名单盖着对话窗时这里不接键（见 shellCover.ts）。
+      if (isShellCovered()) return;
       if (event.key !== "Escape") return;
       event.stopPropagation();
       onClose();

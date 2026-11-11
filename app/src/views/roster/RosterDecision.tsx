@@ -29,7 +29,12 @@ function ApprovalDecision({ item, fallback }: { item: Item; fallback: React.Reac
   const t = useT();
   const id = item.session.id;
   const [approval, setApproval] = useState<PendingApproval | null>(null);
+  // broker 手里的提问（Claude 的 AskUserQuestion）：终端里此刻没有表单，题面在 Meowo 这边。
+  const [question, setQuestion] = useState(false);
   const [asked, setAsked] = useState(false);
+  // 刚在这里答掉了一条：名单要等下一次刷新才知道它不再待处理，这段时间不能把「已回到终端」
+  // 和一排终端按键摆出来——agent 已经在跑，那排 Esc 按下去是打断它（做空审查 M3）。
+  const [answered, setAnswered] = useState(false);
   const [resolving, setResolving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const aliveRef = useRef(true);
@@ -40,6 +45,8 @@ function ApprovalDecision({ item, fallback }: { item: Item; fallback: React.Reac
       .then((dto) => {
         if (!aliveRef.current) return;
         setApproval(dto.approval);
+        setQuestion(dto.question != null);
+        if (dto.approval) setAnswered(false);
         setAsked(true);
       })
       .catch(() => { if (aliveRef.current) setAsked(true); });
@@ -54,7 +61,7 @@ function ApprovalDecision({ item, fallback }: { item: Item; fallback: React.Reac
     setResolving(true);
     setError(null);
     resolvePendingApproval(id, approval.requestId, choice)
-      .then(() => { if (aliveRef.current) setApproval(null); })
+      .then(() => { if (aliveRef.current) { setApproval(null); setAnswered(true); } })
       .catch((raw) => { if (aliveRef.current) setError(formatBackendError(raw, t.locale)); })
       .finally(() => { if (aliveRef.current) setResolving(false); });
   }, [approval, resolving, id, t.locale]);
@@ -81,6 +88,10 @@ function ApprovalDecision({ item, fallback }: { item: Item; fallback: React.Reac
   }
   // 问过后端、表里没有这条：审批不在 Meowo 手里（等过了时限回到终端，或这家 CLI 的提问是它自己画的）。
   if (!asked) return <>{fallback}</>;
+  if (answered) return <><p className="roster-note" role="status">{t.roster.answered}</p>{fallback}</>;
+  // 题面在 Meowo 这边、终端里没有表单：给终端按键是错的（键会落进它的普通输入框，做空审查 M5）。
+  // 行内的题面卡还没做，先如实说进现场作答。
+  if (question) return <><p className="roster-note">{t.roster.answerInScene}</p>{fallback}</>;
   // Meowo 持有它的终端：把终端此刻的画面和一排按键摆在行内（手机页同一个兜底），不让人自己去找终端。
   if (item.pty_managed) {
     return (

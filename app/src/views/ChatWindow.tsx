@@ -72,6 +72,7 @@ import { ChatCwdContext } from "./chat/ToolActivity";
 import { WelcomePanel, type WelcomeInfo } from "./chat/WelcomePanel";
 import { parseCliRetry, parseCliStatus } from "./chat/cliStatus";
 import { ChatSidebar } from "./ChatSidebar";
+import { setShellCovered } from "./chat/shellCover";
 import { ChevronDownIcon } from "./sticker/icons";
 import { useStarred } from "./sticker/helpers";
 // 终端视图独立成 chunk：xterm 及其插件约 500KB，占对话窗 chunk 四成。手机远程页钉在对话页，
@@ -263,8 +264,10 @@ function assignRef<T>(ref: { readonly current: T | null }, node: T | null) {
 export type ChatShellBridge = {
   /** 盖在对话区上的名单。非空时对话区整块 inert + 不可见，但不卸载：审批租约、终端、草稿都留着。 */
   overlay: ReactNode | null;
-  /** 名单要求切到某个会话。seq 每次请求加一，同一个 id 连点两次也算两次。 */
-  request: { id: number; seq: number } | null;
+  /** 名单要求切到某个会话。seq 每次请求加一，同一个 id 连点两次也算两次。
+   *  draft：名单底部输入框里写给它的话，带进对话窗的输入框，由人在这里按发送——对话窗的发送
+   *  有一整套守卫（子代理视图、实时屏幕判定、草稿暂存、排队键、发送队列），名单不另写一份。 */
+  request: { id: number; seq: number; draft?: string } | null;
   /** 名单底部输入框「交代一个结果」：打开新建页并把这句话带进去。seq 同 request。 */
   newSession: { message: string; seq: number } | null;
   /** 对话窗当前会话变了（含启动时的初值）。 */
@@ -524,6 +527,7 @@ export function ChatWindow({ shell }: { shell?: ChatShellBridge } = {}) {
   const activeSessionRef = useRef(sessionId);
   const shellRef = useRef(shell);
   shellRef.current = shell;
+  useEffect(() => () => setShellCovered(false), []);
   // 会话 A→B→A 也必须作废 A 的旧操作；只比 id 会让旧发送清掉返回 A 后的新草稿。
   const sessionEpochRef = useRef(0);
   const operationEpoch = sessionEpochRef.current;
@@ -557,7 +561,7 @@ export function ChatWindow({ shell }: { shell?: ChatShellBridge } = {}) {
     approvalAwaitingIds, setApprovalAwaitingIds,
     brokerOwnsReview, setBrokerOwnsReview,
     lastInteractiveQuestionRef, collapsedQuestionIdRef,
-  } = useApprovalChannel({ sessionId, activeSessionRef, viewRef, setView, setSendError });
+  } = useApprovalChannel({ sessionId, covered: shell?.overlay != null, activeSessionRef, viewRef, setView, setSendError });
   interactionBlockedRef.current = !!(terminalAttention || dismissedAttention || approval || structuredQuestion || dismissedQuestion || terminalMenuOpenRef.current);
   // 拦住发送时的说明：只剩提问卡（展开或收起）在拦时说「在等你回答」，其余仍是交互卡通用说法。
   // 此前一律说「在等启动确认」，回合中途的提问也这么说，用户看不懂该做什么（用户实拍）。
@@ -1954,7 +1958,13 @@ export function ChatWindow({ shell }: { shell?: ChatShellBridge } = {}) {
   useEffect(() => { shellRef.current?.onSession(sessionId); }, [sessionId]);
   const shellRequest = shell?.request ?? null;
   useEffect(() => {
-    if (shellRequest) selectSession(shellRequest.id);
+    if (!shellRequest) return;
+    if (shellRequest.draft) {
+      // 已经在这条会话上：直接放进输入框。要切过去：先放进它的草稿，切换时照常恢复。
+      if (shellRequest.id === activeSessionRef.current) setPrompt(shellRequest.draft);
+      else draftsRef.current.set(shellRequest.id, { prompt: shellRequest.draft, attachments: [] });
+    }
+    selectSession(shellRequest.id);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- 只认 seq：同一个会话再点一次也要回到它
   }, [shellRequest?.seq]);
   const shellNewSession = shell?.newSession ?? null;
@@ -4008,6 +4018,9 @@ export function ChatWindow({ shell }: { shell?: ChatShellBridge } = {}) {
   // 三栏宽度按 .chat-body 实测宽重新钳制（chat/paneLayout）：侧栏和面板互相扣、对话区保 320，
   // 窗口缩小时跟着回收；存储里用户拖的宽度不动，窗口拉回宽时原样恢复。
   const rosterOn = shell?.overlay != null;
+  // 名单盖着时，本窗口挂在 window 上的快捷键一律不接（chat/shellCover.ts）：审批的数字键 1 和
+  // Esc 两段式拒绝都在其中。渲染时就同步置位，不等 effect：盖上的那一帧起就不能漏键。
+  setShellCovered(rosterOn);
   const dockedSidebar = !narrow && !sidebarCollapsed;
   const dockedPanel = !!cwd && !remoteUi() && shownPanelState.visible && !panelState.expanded;
   const panes = fitPanes({ body: chatBodyWidth, sidebar: dockedSidebar ? sidebarWidth : null, panel: dockedPanel ? diffResize.width : null, ui: uiScale, gutter: remoteUi() ? 0 : surfaceGutter(dockedSidebar) });

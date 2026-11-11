@@ -39,10 +39,17 @@ describe("attentionFocus", () => {
     expect(attentionFocus([readDone(), u], null)).toEqual({ id: u.session.id, tone: "waiting" });
   });
 
-  it("眼睛站着的那个还需要你：新来的更要紧的也不抢", () => {
+  it("眼睛站着的那个还需要你：同样要紧的新来的不抢", () => {
+    const a = pending();
+    const b = pending();
+    expect(attentionFocus([a, b], b.session.id).id).toBe(b.session.id);
+  });
+
+  it("站住不跨档：站在出错行时别的行来了审批，眼睛过去", () => {
     const e = errored();
     const p = pending();
-    expect(attentionFocus([p, e], e.session.id)).toEqual({ id: e.session.id, tone: "error" });
+    expect(attentionFocus([e, p], e.session.id)).toEqual({ id: p.session.id, tone: "pending" });
+    expect(attentionFocus([p, e], e.session.id)).toEqual({ id: p.session.id, tone: "pending" });
   });
 
   it("眼睛站着的那个处理完了：换到下一个", () => {

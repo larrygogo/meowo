@@ -529,6 +529,8 @@ export function App() {
   // （views/roster/RosterShell 广播 roster-front）。不受 island_auto_strip 管：那个开关说的是
   // 「别挡最大化窗口的标题栏」，这里是眼睛换了地方站。
   const [rosterFront, setRosterFront] = useState(false);
+  const rosterFrontRef = useRef(false);
+  rosterFrontRef.current = rosterFront;
   const stripOn = (islandStrip || autoStrip || rosterFront) && host.kind === "floating";
   // 刘海挡住的那一截（摄像头）：提醒和面板的内容要从它下面开始画。
   const safeTopOf = (h: IslandHost) => (h.kind === "notch" ? h.notchHeight : 0);
@@ -618,7 +620,7 @@ export function App() {
       await invoke("island_set_visible", { visible: false, focus: false });
       return;
     }
-    if (h.kind === "floating" && (islandStripRef.current || autoStripRef.current) && !stripPeekRef.current) {
+    if (h.kind === "floating" && (islandStripRef.current || autoStripRef.current || rosterFrontRef.current) && !stripPeekRef.current) {
       await layout(ISLAND_STRIP_SIZE.width, ISLAND_STRIP_SIZE.height, centerRatio, monitor);
       return;
     }

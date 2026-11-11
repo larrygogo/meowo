@@ -44,6 +44,32 @@ describe("RemoteTerminalKeys · 发键前比对画面", () => {
     expect(writes()).toHaveLength(1);
   });
 
+  it("文字作答、画面变了：文字和回车都不发（不能只剩一个裸回车落在新提示上）", async () => {
+    current = ["Do you want to proceed?"];
+    render(<RemoteTerminalKeys sessionId={7} checkScreen />);
+    await screen.findByText(/Do you want to proceed/);
+    current = ["Delete the branch?", "> 1. Yes, delete"];
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "先别动" } });
+    fireEvent.submit(screen.getByRole("textbox").closest("form")!);
+    await act(async () => { await new Promise((r) => setTimeout(r, 400)); });
+    expect(writes()).toHaveLength(0);
+  });
+
+  it("文字作答、画面没变：文字和回车都发出，回车不被文字自己的回显拦下", async () => {
+    current = ["Name the branch:"];
+    invoke.mockImplementation((cmd: string, args?: { data?: string }) => {
+      // 文字写进去后终端回显它：画面随之变化。
+      if (cmd === "write_managed_terminal" && args?.data && args.data !== "\r") current = ["Name the branch:", args.data];
+      return Promise.resolve(cmd === "managed_terminal_screen" ? current : undefined);
+    });
+    render(<RemoteTerminalKeys sessionId={7} checkScreen />);
+    await screen.findByText(/Name the branch/);
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "hello" } });
+    fireEvent.submit(screen.getByRole("textbox").closest("form")!);
+    await act(async () => { await new Promise((r) => setTimeout(r, 400)); });
+    expect(writes().map(([, a]) => (a as { data: string }).data)).toEqual(["hello", "\r"]);
+  });
+
   it("不开 checkScreen（手机页）：不多取一次画面，直接发", async () => {
     current = ["1. Yes"];
     render(<RemoteTerminalKeys sessionId={7} />);

@@ -22,9 +22,12 @@ function rank(item: Item): number {
 }
 
 /**
- * items 按名单顺序传入。stickyId 是眼睛此刻站着的会话：它还需要你，就站住不动，新来的
- * 不会把眼睛抢走（leader 2026-11-11 确认的取舍 2）；它不需要你了，才按要紧程度、再按名单
- * 从上到下找下一个。
+ * items 按名单顺序传入。stickyId 是眼睛此刻站着的会话：它还需要你，就站住不动，同样要紧的
+ * 新来的不会把眼睛抢走（leader 2026-11-11 确认的取舍 2）；它不需要你了，才按要紧程度、再按
+ * 名单从上到下找下一个。
+ *
+ * 站住不跨档：比它更要紧的来了要让。出错不会因为看过就消失，不让的话一个没处理的出错会把
+ * 眼睛钉死，之后所有审批都没人指（做空审查 M1）。
  */
 export function attentionFocus(items: readonly Item[], stickyId: number | null): Attention {
   let best: Item | null = null;
@@ -32,8 +35,8 @@ export function attentionFocus(items: readonly Item[], stickyId: number | null):
   for (const item of items) {
     const r = rank(item);
     if (r === 9) continue;
-    if (item.session.id === stickyId) { best = item; bestRank = r; break; }
-    if (r < bestRank) { best = item; bestRank = r; }
+    // 同档里站着的那个优先：r <= bestRank 让它压过排在前面的同档会话。
+    if (r < bestRank || (r === bestRank && item.session.id === stickyId)) { best = item; bestRank = r; }
   }
   if (best) {
     return { id: best.session.id, tone: bestRank === 0 ? "pending" : bestRank === 1 ? "error" : "waiting" };
