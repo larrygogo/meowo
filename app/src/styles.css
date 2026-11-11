@@ -50,6 +50,8 @@
   --cc-accent-text: #d4f64c;
   /* 青柠线条（链接下划线、进度弧）：浅色主题强调色是墨，白底上要露青柠只能走这档，且只画线不铺面。 */
   --cc-brand-line: #d4f64c;
+  /* 文字选区底色：深色主题青柠兑透明。 */
+  --cc-selection: color-mix(in srgb, var(--cc-brand-line) 38%, transparent);
   /* 链接下划线：深色链接是青柠字，不画线；浅色链接是墨字，靠 2px 青柠线和正文分开。 */
   --link-line: transparent;
   /* 系统材质（Windows Mica、macOS 玻璃）生效时压在材质上的染色层；没有材质时不用。
@@ -371,6 +373,8 @@
   /* 浅色下强调色文字就是墨色：青柠字在白底上读不清，青柠只走 --cc-brand-line 画线。 */
   --cc-accent-text: #1b1d17;
   --cc-brand-line: #a9cc1f;
+  /* 文字选区底色：浅色主题用墨色（即 --cc-accent）淡底，不把青柠铺到白底上。 */
+  --cc-selection: color-mix(in srgb, var(--cc-accent) 18%, transparent);
   --link-line: var(--cc-brand-line);
   --mat-tint: rgba(238, 240, 233, 0.5);
   /* accent 填充上的文字：浅色主题是墨底青柠字（13.84:1，tokens.md 复算）。
@@ -520,8 +524,9 @@ html, body {
 /* 原生复选框与单选的勾选色跟品牌走（UA 默认是系统蓝）。:where 零特异度，自绘的照常覆盖。 */
 :where(input[type="checkbox"], input[type="radio"]) { accent-color: var(--cc-accent); }
 /* 文字选区跟品牌走：UA 默认是系统蓝，新建会话窗一打开目录框就是全选状态，一整条蓝底
-   （newsession-window 实拍）。用青柠线条色兑透明，字色不变，深浅两套底上都读得清。 */
-::selection { background: color-mix(in srgb, var(--cc-brand-line) 38%, transparent); }
+   （newsession-window 实拍）。底色走 --cc-selection：深色是青柠淡底，浅色是墨色淡底——
+   青柠不在白底上铺面（design.md 2）。字色不变。 */
+::selection { background: var(--cc-selection); }
 /* 高度链路用 100% 而非 100vh：WebView2 下 100vh 可能比客户区高几像素，
    导致贴纸底部(含圆角)被窗口裁掉。逐级 100% 精确等于客户区高度。 */
 #root { height: 100%; }
@@ -3610,6 +3615,9 @@ body:not(.remote-ui) .ns-actions { position: relative; margin: 0 var(--sp-8) var
 .ext-link:hover { color: var(--cc-text); }
 /* 技能描述动辄一大段：两行就够认出是干什么的，全文在文件里。 */
 .ext-card .row-desc { -webkit-line-clamp: 2; }
+/* 安全提示不许截断：绑定「所有网卡」的明文风险说明在英文下有四行，三行钳制正好丢掉
+   「不可信网络请用 Tailscale」那半句（做空审查）。 */
+.row-desc.is-full { display: block; -webkit-line-clamp: unset; overflow: visible; }
 .ext-card .row { padding-top: var(--sp-10); padding-bottom: var(--sp-10); }
 .ext-meta { flex: none; display: flex; align-items: center; gap: var(--sp-6); }
 .ext-chip { display: inline-block; padding: 0 var(--sp-6); border-radius: var(--radius-full); background: var(--fill-selected); color: var(--cc-text-dim); font-size: var(--text-2xs); font-weight: 500; line-height: 18px; white-space: nowrap; }
@@ -3638,8 +3646,8 @@ body:not(.remote-ui) .ns-actions { position: relative; margin: 0 var(--sp-8) var
   transition: background var(--dur-fast) var(--ease-in-out);
 }
 .profile-row:hover:not(.profile-row-active, .profile-add-row) { background: var(--fill-hover); }
-/* 使用中的账号：只用中性选中底，不加彩色边；「使用中」徽章已经点明了它。 */
-.profile-row-active { background: var(--fill-selected); }
+/* 使用中的账号不再铺底色：行已经坐在分组卡（L2）里，再垫一层淡底就是卡里套卡（design.md 1）；
+   「使用中」徽章已经点明了它。 */
 /* 整行即「切到此账号」的点击区；已是活跃账号时禁用（disabled 时不给指针手势）。 */
 .profile-row-main {
   flex: 1;
@@ -4144,7 +4152,9 @@ body:not(.remote-ui) .ns-actions { position: relative; margin: 0 var(--sp-8) var
 .sa-check svg { width: 14px; height: 14px; }
 .sa-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; }
 .sa-dot--open { background: var(--cc-ok-vivid); }
-.sa-dot--done { background: var(--cc-accent); }
+/* 已完成是「没有在跑」的中性态：用弱字色的点。此前取强调色，深色下是一颗青柠点——品牌色不当状态色
+   （design.md 2），也容易读成「进行中」。 */
+.sa-dot--done { background: var(--cc-text-faint); }
 .sa-btn-q { display: inline-flex; align-items: center; gap: var(--sp-5); height: var(--btn-h-md); padding: 0 var(--sp-10); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-sm); background: transparent; color: var(--cc-text); font: inherit; font-size: var(--text-sm); white-space: nowrap; cursor: pointer; }
 .sa-btn-q:hover { background: var(--fill-hover); }
 .sa-batch { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-6); margin-bottom: var(--sp-8); }
@@ -4177,7 +4187,8 @@ body:not(.remote-ui) .ns-actions { position: relative; margin: 0 var(--sp-8) var
 .sa-cb-dash { width: 8px; height: 2px; border-radius: 1px; background: #fff; }
 .sa-st { display: inline-flex; align-items: center; gap: var(--sp-5); }
 .sa-st--open { color: var(--cc-ok-text); }
-.sa-st--done { color: var(--cc-accent); }
+/* 「已完成」文字同状态点：中性次要字色，不用强调色（深色下是青柠，品牌色不当状态色）。 */
+.sa-st--done { color: var(--cc-text-dim); }
 .sa-title-cell { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cc-text); font-weight: 500; }
 .sa-ws { display: inline-flex; max-width: 100%; color: var(--cc-text-dim); }
 .sa-ws span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -4831,6 +4842,12 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .side-panel-tab.is-active { color: var(--cc-text); background: var(--fill-selected); }
 .side-panel-tab svg { flex: none; }
 .side-panel-tab-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* 面板头放不下带名字的页签时（is-compact，SidePanel 的 tabsCompact 判）只留图标：名字在悬停提示与
+   无障碍名里；关闭叉只留给当前页签（其余走中键/右键菜单）。 */
+.side-panel-tabs.is-compact .side-panel-tab { flex: 0 0 auto; min-width: 0; padding: 0 var(--sp-7); gap: var(--sp-2); }
+.side-panel-tabs.is-compact .side-panel-tab-name { display: none; }
+.side-panel-tabs.is-compact .side-panel-tab:not(.is-active) .side-panel-tab-close { display: none; }
+.side-panel-tabs.is-compact .side-panel-tab.is-active { padding-right: var(--sp-4); }
 /* 叉号常显（同 Kimi），没激活的页签淡一点：之前悬停才显示，页签右侧白留一块空位。 */
 .side-panel-tab-close { flex: none; display: inline-flex; align-items: center; justify-content: center; width: var(--icon-button-xs); height: var(--icon-button-xs); border-radius: var(--radius-sm); opacity: 0.55; }
 .side-panel-tab:hover .side-panel-tab-close, .side-panel-tab.is-active .side-panel-tab-close { opacity: 1; }
@@ -5431,7 +5448,14 @@ button.scm-check-name:hover { text-decoration: underline; }
 .chat-compact-summary { margin: calc(-1 * var(--sp-16)) 0 var(--sp-28); padding: var(--sp-12) var(--sp-16); max-height: 360px; overflow-y: auto; overscroll-behavior: contain; border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-lg); color: var(--cc-text-dim); font-size: var(--text-sm); }
 /* align-content：失败态有「说明 / 重试 / 原因」三行，不收拢的话三行平分整屏高度，各隔一两百像素（qa-load-error 实拍）。 */
 .chat-empty { min-height: 100%; display: grid; place-items: center; align-content: center; row-gap: var(--sp-10); color: var(--cc-text-faint); font-size: var(--text-xs); text-align: center; }
-.chat-empty.is-error { color: var(--cc-err-text); }
+/* 对话加载失败：错误色图标 + 错误色标题 + 原因 + 主按钮，成一组居中（design.md 2：出错是画面里
+   对比最强的元素；此前只有一行 12px 小红字）。不铺红底。 */
+.chat-empty.is-error { row-gap: var(--sp-6); justify-items: center; color: var(--cc-text-dim); font-size: var(--text-sm); }
+.chat-empty-error-icon { margin-bottom: var(--sp-4); color: var(--cc-err-vivid); }
+.chat-empty-error-title { color: var(--cc-fail-text); font-size: var(--text-base); font-weight: 600; line-height: var(--leading-tight); }
+.chat-empty.is-error .chat-load-reason { max-width: 420px; margin-top: 0; color: var(--cc-text-dim); font-size: var(--text-sm); }
+.chat-empty.is-error .chat-retry-now { margin: var(--sp-10) 0 0; height: var(--btn-h-lg); padding: 0 var(--sp-16); border-radius: var(--radius-md); background: var(--cc-accent); color: var(--cc-on-accent); font-size: var(--text-sm); font-weight: 500; }
+.chat-empty.is-error .chat-retry-now:hover { background: var(--cc-accent-dim); }
 /* 读取失败的「立即重试」与连续失败原因（UI 调研 chat #13）：文字级按钮，跟在错误行后面。 */
 .chat-retry-now { margin-left: var(--sp-8); min-height: var(--btn-h-sm); padding: var(--sp-2) var(--sp-8); border: 0; border-radius: var(--radius-sm); background: var(--fill-selected); color: var(--cc-text); font: inherit; font-size: var(--text-xs); cursor: pointer; }
 .chat-retry-now:hover { background: var(--fill-selected-hover); }
@@ -5550,11 +5574,12 @@ button.scm-check-name:hover { text-decoration: underline; }
 .chat-approval-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-6) var(--sp-8); min-width: 0; }
 .chat-approval-meta:empty { display: none; }
 .chat-approval-desc { flex: 1 1 100%; min-width: 0; }
-/* 矮窗（.chat-main[data-short]，ChatWindow 按主列高度挂）：整组压成一行、说明截断，高度留给命令。 */
-.chat-main[data-short] .chat-approval-meta { flex-wrap: nowrap; }
+/* 矮窗（.chat-main[data-short]，ChatWindow 按主列高度挂）：「请求工具」字样收掉、说明并到标签后面，高度留给命令。 */
 .chat-main[data-short] .chat-approval-tool > span { display: none; }
 .chat-main[data-short] .chat-approval-tool, .chat-main[data-short] .chat-approval-scope { flex: 0 0 auto; flex-wrap: nowrap; }
-.chat-main[data-short] .chat-approval-desc { flex: 1 1 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; }
+/* 说明接在标签后面，剩余宽度不到 10em 才折到下一行（独占一行时仍单行省略）：硬塞在同一行，
+   窄列里只剩两三个字加省略号。 */
+.chat-main[data-short] .chat-approval-desc { flex: 1 1 10em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; overflow-wrap: normal; }
 .chat-approval-tool { display: flex; align-items: center; gap: var(--sp-7); color: var(--cc-text-faint); font-size: var(--text-xs); }
 /* 影响范围标签（approvalScope.ts）：工作区外/删除/高风险用警示色，其余中性。 */
 .chat-approval-scope { display: flex; flex-wrap: wrap; gap: var(--sp-6); }
@@ -5944,7 +5969,20 @@ button.scm-check-name:hover { text-decoration: underline; }
 .chat-task-filter { display: inline-flex; padding: 2px; border-radius: var(--radius-md); background: var(--fill-selected); }
 .chat-task-filter > button { padding: var(--sp-3) var(--sp-10); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-dim); font: inherit; font-size: var(--text-xs); cursor: pointer; }
 .chat-task-filter > button:hover { color: var(--cc-text); }
-.chat-task-filter > button.is-active { background: var(--cc-panel-raised); color: var(--cc-text); box-shadow: var(--shadow-sm); }
+.chat-task-filter > button.is-active { background: var(--seg-on-bg); color: var(--cc-text); box-shadow: var(--shadow-sm); }
+/* 面板窄（不到 480，即锚点不到 528）时头部排两行：第一行「标题 + 运行数 …… 关闭钮」，第二行整行
+   等宽的分段筛选。原先筛选和关闭钮挤在标题右边，放不下就整组折到第二行，关闭钮孤零零挂在
+   筛选右侧偏下、不在面板右上角（leader 手机实拍 2026-11-11）。
+   .dock-work-actions 用 display:contents 让出布局，筛选与关闭钮直接成为头部的 flex 子项再用 order 排位，
+   DOM 序（筛选在前、关闭在后）与 Tab 序不变。手机页不看宽度一律这样排，见 mobile.css。 */
+@container dock-anchor (max-width: 527px) {
+  .panel-tasks .dock-work-head { flex-wrap: wrap; row-gap: var(--sp-8); }
+  .panel-tasks .dock-work-actions { display: contents; }
+  .panel-tasks .dock-work-title { flex: 1 1 0; min-width: 0; }
+  .panel-tasks .dock-work-close { order: 1; }
+  .panel-tasks .chat-task-filter { order: 2; flex: 1 1 100%; display: flex; margin-right: var(--sp-4); }
+  .panel-tasks .chat-task-filter > button { flex: 1 1 0; min-width: 0; padding-left: 0; padding-right: 0; text-align: center; }
+}
 .chat-task-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; }
 .chat-task-row { display: flex; align-items: center; gap: var(--sp-10); min-height: calc(32px * var(--cc-ui)); font-size: var(--text-sm); }
 .chat-task-glyph { flex: 0 0 auto; width: 16px; display: inline-flex; align-items: center; justify-content: center; }
@@ -5959,7 +5997,7 @@ button.scm-check-name:hover { text-decoration: underline; }
 /* 面板挂在 .dock-work-anchor（胶囊行上方的零高锚点）上向上弹，高度钳在锚点到标题栏下沿之间
    （--dock-panel-room，DockWork 量了回写）：原先挂 dock 上沿、只按 min(300px, 50vh) 限高，dock 里
    有关卡卡片时面板整块盖住标题栏并伸出窗口顶（做空实测 1200×760：y=-94..96）。超出面板内滚动。 */
-.chat-dock > .dock-work-anchor { height: 0; z-index: var(--z-dropdown); }
+.chat-dock > .dock-work-anchor { height: 0; z-index: var(--z-dropdown); container-type: inline-size; container-name: dock-anchor; }
 .dock-work-panel { position: absolute; bottom: 0; left: 50%; z-index: var(--z-dropdown); width: min(var(--chat-col), calc(100% - 48px)); max-height: min(300px, 50vh, calc(var(--dock-panel-room, 300px) - var(--sp-6))); transform: translateX(-50%); display: flex; flex-direction: column; overflow: hidden; margin-bottom: var(--sp-6); border: 0; border-radius: var(--radius-lg); background: var(--cc-menu-bg); box-shadow: 0 0 0 var(--hairline) var(--cc-border), var(--shadow-menu); }
 .dock-work-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-10); padding: var(--sp-12) var(--sp-12) 0 var(--sp-16); }
 .dock-work-title { display: inline-flex; align-items: center; gap: var(--sp-6); color: var(--cc-text); font-size: var(--text-sm); font-weight: 600; }
@@ -6136,8 +6174,16 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 /* flex: 0 1 auto 而非 1：只收缩不拉伸——拉伸会把状态胶囊和 chevron 推到 720px 行末，
    一行小字又被摊成横幅；短描述时整行应当聚在左侧(与工具组行同一形态)。 */
 .chat-subagent-desc { min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 类型胶囊可以收缩并省略（最多让到 4em）：此前胶囊不收缩、行又裁溢出，150% 缩放下
+   `general-purpose` 被齐刷刷切掉一半、没有省略号（做空审查）。主列再窄（data-slim）就整颗收掉，
+   把宽度留给描述——类型是次要信息，展开子任务后仍看得到。 */
+.chat-main[data-slim] .chat-subagent-type { display: none; }
 .chat-subagent-type {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 4em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   padding: var(--sp-2) var(--sp-7);
   border-radius: var(--radius-full);
   background: var(--fill-selected);
@@ -6452,6 +6498,12 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
    标签 nowrap + 省略号，挤不下时横向收敛而不是竖向爆炸。 */
 .chat-model { position: relative; min-width: 0; }
 .chat-model-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 窄主列（.chat-main[data-narrow]）：模型、权限按钮只留图标，名字在悬停提示与 aria-label 里。
+   此前靠省略号硬挤，620 宽开右侧面板时只剩「O…」「权…」（做空审查）。 */
+.chat-model-narrow-icon { display: none; flex: 0 0 auto; align-items: center; color: var(--cc-text-dim); }
+.chat-main[data-narrow] .chat-compose .chat-model-narrow-icon { display: inline-flex; }
+.chat-main[data-narrow] .chat-compose .chat-model-label { display: none; }
+.chat-main[data-narrow] .chat-compose .chat-model-button { padding: 0 var(--sp-7); }
 /* 下面几组都带 .chat-compose 前缀：compose 里有一条 `.chat-compose button` 的 accent 皮肤
    （主题色边框+底色），那是发送按钮专属的，特异性却盖过单类名——菜单类控件必须
    用更高特异性重置回中性，否则整个菜单被刷成大片主题色。 */
@@ -7669,8 +7721,9 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
   .isl-agents .isl-agent:hover, .isl-btn:active { transform: none; }
 }
 
-/* 窗口级渲染崩溃兜底（ErrorBoundary.tsx 的 WindowCrash）：整窗同底色，居中两行字 + 一个按钮。
-   不铺图标、不放错误详情（详情在 console）；留白克制，与空态同一口吻。 */
+/* 窗口级渲染崩溃兜底（ErrorBoundary.tsx 的 WindowCrash）：整窗同底色，居中一组——错误色图标、
+   错误色标题、说明、主按钮。出错是画面里对比最强的元素（design.md 2），但不铺红底；
+   不放错误详情（详情在 console）。 */
 .app-crash {
   position: fixed;
   inset: 0;
@@ -7685,23 +7738,21 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
   text-align: center;
 }
 .app-crash p { margin: 0; max-width: 360px; }
-.app-crash-title { font-size: var(--text-base); font-weight: 600; line-height: 1.4; }
+.app-crash-icon { margin-bottom: var(--sp-4); color: var(--cc-err-vivid); }
+.app-crash-title { font-size: var(--text-lg); font-weight: 600; line-height: 1.4; color: var(--cc-fail-text); }
 .app-crash-hint { font-size: var(--text-sm); line-height: 1.5; color: var(--cc-text-dim); }
-/* 这一页唯一的动作，取次按钮的样子（中性填充）：出错页不放强调色。 */
+/* 这一页唯一的动作，就是主按钮（.btn-primary 给颜色，这里只管尺寸）。 */
 .app-crash-reload {
-  margin-top: var(--sp-8);
-  height: var(--btn-h-md);
-  padding: 0 var(--sp-14);
-  border: var(--hairline) solid var(--cc-border);
+  margin-top: var(--sp-12);
+  height: var(--btn-h-lg);
+  padding: 0 var(--sp-16);
+  border: 0;
   border-radius: var(--radius-md);
-  background: var(--fill-selected);
-  color: var(--cc-text);
   font: inherit;
   font-size: var(--text-sm);
   cursor: pointer;
   transition: background var(--dur-fast) var(--ease-in-out);
 }
-.app-crash-reload:hover { background: var(--fill-selected-hover); }
 
 /* markdown 降级/渲染失败时的原文显示（ChatMarkdown 的 PlainMarkdown）：保留换行、长行折行，
    字体随正文，不套代码块的框和底色——它是正文，只是没排版。 */

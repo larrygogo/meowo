@@ -38,7 +38,27 @@ if (scene === "mobile-changes") {
 }
 // mobile-idle：对话页但没有待批准的请求（拍补全、菜单用）；mobile-lead：再加一张 Lead 关卡卡。
 // mobile-question：审批卡换成 AskUserQuestion 问答卡（矮屏下选项可见性，与桌面 flow-question 同一份题面）。
-const inChat = scene === "mobile-chat" || scene === "mobile-changes" || scene === "mobile-idle" || scene === "mobile-lead" || scene === "mobile-question";
+// mobile-tasks：派过后台 Bash（一条在跑、三条跑完）和一个在跑的子代理，拍底栏胶囊与后台任务面板。
+const inChat = scene === "mobile-chat" || scene === "mobile-changes" || scene === "mobile-idle" || scene === "mobile-lead" || scene === "mobile-question" || scene === "mobile-tasks";
+/// 后台任务的假数据：判据是「回执带子任务结局」（与 TasksPanel 同口径），一条调用配一条回执。
+function taskItems(zh: boolean): unknown[] {
+  const at = (minutes: number) => new Date(FIXED_NOW - minutes * 60_000).toISOString();
+  const bash = (id: string, command: string, description: string, start: number, end: number | null) => [
+    { type: "tool_use", id, timestamp: at(start), name: "Bash", summary: command, detail: { kind: "command", command, description } },
+    { type: "tool_result", id: `r-${id}`, timestamp: at(end ?? start), tool_use_id: id, text: end === null ? "started" : "done", is_error: false,
+      subagent: end === null ? { running: 1, completed: 0, failed: 0, task_id: `task-${id}` } : { running: 0, completed: 1, failed: 0, task_id: `task-${id}` } },
+  ];
+  return [
+    { type: "user_text", id: "mt-u1", timestamp: at(30), text: zh ? "起开发服务，顺手把测试和类型检查跑一遍。" : "Start the dev server and run the tests and type check." },
+    ...bash("mt-b1", "bunx tsc --noEmit", zh ? "类型检查" : "Type check", 28, 27),
+    ...bash("mt-b2", "bun run test", zh ? "跑全量测试" : "Run all tests", 26, 22),
+    ...bash("mt-b3", "bun run lint", zh ? "跑 lint" : "Run lint", 21, 20),
+    ...bash("mt-b4", "bun run dev --host 127.0.0.1", zh ? "起开发服务" : "Start the dev server", 19, null),
+    { type: "tool_use", id: "mt-a1", timestamp: at(10), name: "Agent", summary: zh ? "复核 schema 的边界情况" : "Review schema edge cases",
+      subagent: { description: zh ? "复核 schema 的边界情况" : "Review schema edge cases", agent_type: "Explore", count: 1 } },
+    { type: "assistant_text", id: "mt-t1", timestamp: at(9), text: zh ? "开发服务已经起来了，子代理在复核边界情况。" : "The dev server is up; a subagent is reviewing the edge cases." },
+  ];
+}
 const sid = inChat ? `&sessionId=${CHAT_SESSION_ID}` : "";
 window.history.replaceState({}, "", `${location.pathname}?${q.toString()}${sid}`);
 const chat = chatMock(lang);
@@ -60,6 +80,12 @@ setExtraMock((cmd, args) => {
   // 模型菜单要有切换命令才点得开；权限模式要有可选项才出菜单（与桌面补看场景同一份补丁）。
   if (cmd === "agent_chat_ui" && (scene === "mobile-idle" || scene === "mobile-lead")) return patchChatUi(demoChatUi());
   if (cmd === "lead_task_snapshot" && scene === "mobile-lead") return leadTask(lang);
+  if (scene === "mobile-tasks") {
+    // 模型按钮带档位（「Fable 5.2 · Medium」）：要 effort 能力 + 历史里有模型与档位。
+    if (cmd === "agent_chat_ui") return patchChatUi(demoChatUi());
+    if (cmd === "pending_interaction") return { approval: null, question: null };
+    if (cmd === "get_chat_history") return { ...(chat(cmd) as object), items: taskItems(lang === "zh"), todos: [], pendingReview: null, status: "running", model: "Fable 5.2", effort: "medium" };
+  }
   if (scene === "mobile-question" && cmd === "pending_interaction") {
     const base = (chat(cmd) as { approval: Record<string, unknown> }).approval;
     return { approval: null, question: { ...base, requestId: "visual-question", toolName: "AskUserQuestion", description: null, input: questionInput(lang), answerable: true } };

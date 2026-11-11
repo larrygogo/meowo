@@ -143,6 +143,11 @@ export const QA_SHOTS = [
   { name: "qa-m-add", page: "mobile", scene: "mobile-idle", size: PHONE, steps: [["click", ".chat-attach-button"]], sel: ".chat-sheet" },
   { name: "qa-m-lead", page: "mobile", scene: "mobile-lead", size: PHONE, sel: ".lead-gate-card", langs: ["zh", "en"] },
   { name: "qa-m-lead-open", page: "mobile", scene: "mobile-lead", size: PHONE, sel: ".lead-gate-card", steps: [["click", ".lead-gate-more"], ["click", ".lead-gate-option >> nth=1"]] },
+  // 后台任务面板（一条在跑、三条跑完）：面板头两行（标题 + 关闭钮 / 整行分段筛选），转圈是运行绿。
+  { name: "qa-m-tasks", page: "mobile", scene: "mobile-tasks", size: PHONE, sel: ".panel-tasks", steps: [["click", ".dock-workbar .ui-pill >> nth=0"]], langs: ["zh", "en"] },
+  { name: "qa-m-tasks-430", page: "mobile", scene: "mobile-tasks", size: [430, 932], sel: ".panel-tasks", steps: [["click", ".dock-workbar .ui-pill >> nth=0"]] },
+  { name: "qa-m-tasks-done", page: "mobile", scene: "mobile-tasks", size: PHONE, sel: ".panel-tasks", steps: [["click", ".dock-workbar .ui-pill >> nth=0"], ["click", ".chat-task-filter button >> nth=2"]], themes: ["dark"] },
+  { name: "qa-m-subagents", page: "mobile", scene: "mobile-tasks", size: PHONE, sel: ".panel-tasks", steps: [["click", ".dock-workbar .ui-pill >> nth=1"]], themes: ["dark"] },
   { name: "qa-m-approval-kbd", page: "mobile", scene: "mobile-chat", size: [375, 476], sel: ".chat-approval-actions", steps: [["click", TA]] },
   { name: "qa-m-settings-on", page: "mobile", scene: "mobile-settings", params: "on=1", size: PHONE, sel: ".pswitch.on", langs: ["zh", "en"] },
 ];

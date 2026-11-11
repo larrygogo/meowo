@@ -277,6 +277,14 @@ export const SidePanel = memo(function SidePanel(props: Props) {
  *
  * 拖动用 pointer 事件自己做：对话窗开着 Tauri 的文件拖放，WebView2 上 HTML5 拖放会被它截走。
  */
+/// 页签栏要不要收成只留图标：面板头宽度装不下「每个页签 96px（图标 + 三四个字 + 关闭叉）+ 右侧
+/// 操作钮约 150px」就收。数值按 100% 缩放计，乘界面缩放。量不出宽度（jsdom、面板隐藏）时不收。
+/// 只读面板头宽度：页签自己变窄、「更多」钮出没都不改变结果，收放不会自激。
+export function tabsCompact(headWidth: number, tabs: number, ui: number): boolean {
+  if (headWidth <= 0 || tabs <= 0) return false;
+  return headWidth < (tabs * 96 + 150) * ui;
+}
+
 function TabBar({ state, actions, title, onContextMenu, closeLabel, agentBusy, agentLabel, waiting, waitingLabel, onOverflow }: {
   state: PanelState;
   actions: PanelActions;
@@ -300,6 +308,10 @@ function TabBar({ state, actions, title, onContextMenu, closeLabel, agentBusy, a
   // 放不下时：两端渐隐提示还有内容；竖向滚轮转成横向滚动（之前滚动条隐藏、滚轮又只会
   // 上下滚，后面的页签根本看不到，实拍反馈）。
   const [edges, setEdges] = useState({ left: false, right: false });
+  // 面板头放不下「每个页签都带名字」时收成只留图标（名字进悬停提示与无障碍名）：否则页签被压到
+  // 72px 下限，名字只剩一个字加省略号，还滚到面板操作钮底下（做空审查：620 宽开面板，名字可视宽
+  // 14～21px）。判据见 tabsCompact：只看面板头宽度，不看页签自身，收放不会来回跳。
+  const [compact, setCompact] = useState(false);
   const onOverflowRef = useRef(onOverflow);
   onOverflowRef.current = onOverflow;
   useEffect(() => {
@@ -310,6 +322,11 @@ function TabBar({ state, actions, title, onContextMenu, closeLabel, agentBusy, a
       const right = bar.scrollLeft + bar.clientWidth < bar.scrollWidth - 1;
       setEdges((prev) => (prev.left === left && prev.right === right ? prev : { left, right }));
       onOverflowRef.current(left || right);
+      const head = bar.parentElement;
+      if (head) {
+        const ui = parseFloat(getComputedStyle(head).getPropertyValue("--cc-ui")) || 1;
+        setCompact(tabsCompact(head.clientWidth, state.tabs.length, ui));
+      }
     };
     const wheel = (event: WheelEvent) => {
       if (bar.scrollWidth <= bar.clientWidth || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
@@ -319,6 +336,7 @@ function TabBar({ state, actions, title, onContextMenu, closeLabel, agentBusy, a
     measure();
     const resize = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
     resize?.observe(bar);
+    if (bar.parentElement) resize?.observe(bar.parentElement);
     bar.addEventListener("scroll", measure);
     bar.addEventListener("wheel", wheel, { passive: false });
     return () => {
@@ -397,7 +415,7 @@ function TabBar({ state, actions, title, onContextMenu, closeLabel, agentBusy, a
   };
 
   return (
-    <div ref={barRef} className={"side-panel-tabs" + (edges.left ? " has-left" : "") + (edges.right ? " has-right" : "")} role="tablist">
+    <div ref={barRef} className={"side-panel-tabs" + (edges.left ? " has-left" : "") + (edges.right ? " has-right" : "") + (compact ? " is-compact" : "")} role="tablist">
       {state.tabs.map((tab, index) => {
         const isActive = tab.key === state.active;
         const name = title(tab);
@@ -409,7 +427,10 @@ function TabBar({ state, actions, title, onContextMenu, closeLabel, agentBusy, a
             aria-selected={isActive}
             tabIndex={isActive ? 0 : -1}
             className={"side-panel-tab" + (isActive ? " is-active" : "") + (drag?.key === tab.key ? " is-dragging" : "")}
-            title={tab.type === "browser" ? tab.url : name}
+            // 只留图标时名字不可见：无障碍名显式给，悬停走应用内提示（data-tip），不再叠一个原生 title。
+            aria-label={name}
+            title={compact ? undefined : tab.type === "browser" ? tab.url : name}
+            data-tip={compact ? name : undefined}
             onClick={() => { if (!dragRef.current?.moved) actions.activate(tab.key); }}
             onAuxClick={(event) => { if (event.button === 1) { event.preventDefault(); actions.close(tab.key); } }}
             onContextMenu={(event) => { event.preventDefault(); onContextMenu(tab, event.clientX, event.clientY); }}

@@ -286,8 +286,20 @@ body.remote-ui .chat-window.is-remote-compact .chat-compose .chat-model-button {
   body.remote-ui .chat-model-menu { max-height: calc(var(--app-height, 100dvh) * 0.6); overflow-y: auto; }
   /* 停靠面板头的分段筛选与关闭钮：桌面 22~24px 高，手指点不准相邻的「运行中/已完成」。
      对照 Kimi 手机端 dock-work-head-actions 统一 44px 触控尺寸。 */
-  body.remote-ui .chat-task-filter > button { min-height: 44px; padding-left: 12px; padding-right: 12px; }
-  body.remote-ui .dock-work-close { width: 44px; height: 44px; }
+  /* 后台任务面板头在手机上固定排两行（leader 实拍 2026-11-11：筛选被 44px 触屏规则撑成一大块，关闭钮
+     挂在它右边偏下）：第一行「标题 + 运行数 …… 关闭钮」，第二行整行等宽的分段筛选——四项平分、
+     段高 28（凹槽 32），和侧栏「进行中/已完成/工作区」同一档紧凑；控件本身不撑高，44px 命中面靠
+     按钮通用的 ::after 上下各扩 8px（leader 追加：凹槽 56px 太突兀）。 */
+  body.remote-ui .panel-tasks .dock-work-head { flex-wrap: wrap; row-gap: 8px; }
+  body.remote-ui .panel-tasks .dock-work-actions { display: contents; }
+  body.remote-ui .panel-tasks .dock-work-title { flex: 1 1 0; min-width: 0; }
+  body.remote-ui .panel-tasks .dock-work-close { order: 1; }
+  body.remote-ui .panel-tasks .chat-task-filter { order: 2; flex: 1 1 100%; display: flex; margin-right: 4px; padding: 2px; }
+  body.remote-ui .chat-task-filter > button { flex: 1 1 0; min-width: 0; min-height: 28px; padding: 0; font-size: 13px; text-align: center; }
+  body.remote-ui .chat-task-filter > button::after { inset: -8px 0; }
+  /* 关闭钮：命中面 44×44，叉本身落在面板右上角——负外边距把多出来的热区抵回去，标题行不被撑高，
+     叉的右缘对齐下面分段控件的右缘。 */
+  body.remote-ui .dock-work-close { width: 44px; height: 44px; margin: -10px -12px -10px 0; font-size: 20px; }
 
   /* ── 移动端字号标尺(2026-08 全量清单逐类抬升,2026-10 随桌面 Kimi 比例改版重校) ──
      桌面密度下 9–11.5px 的小字在手机上过小,而 16px 输入框(iOS 防缩放地板,降不得)

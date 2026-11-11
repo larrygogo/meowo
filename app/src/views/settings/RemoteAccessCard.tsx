@@ -215,7 +215,7 @@ export function RemoteAccessCard() {
         <div className="row-text">
           <div className="row-label">{t.remote.bind}</div>
           {/* 选 all 时把明文风险顶到说明位——这是唯一把令牌暴露给整个同网段的模式。 */}
-          <div className="row-desc">{bind === "all" ? t.remote.bindWarnAll : t.remote.bindDesc}</div>
+          <div className="row-desc is-full">{bind === "all" ? t.remote.bindWarnAll : t.remote.bindDesc}</div>
         </div>
         <Dropdown value={bind} options={bindOptions} onChange={changeBind} />
       </div>

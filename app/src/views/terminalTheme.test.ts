@@ -14,7 +14,7 @@ describe("终端配色走品牌 token（UI 优化 #50）", () => {
     expect(theme.selectionBackground).toBe("rgba(212, 246, 76, 0.25)");
     document.documentElement.style.removeProperty("--term-cursor");
     document.documentElement.style.removeProperty("--term-selection");
-    // jsdom 不加载 styles.css：兜底值必须是品牌蓝，不能回到旧翡翠绿。
+    // jsdom 不加载 styles.css：兜底值必须是品牌色（猫眼青柠 #d4f64c），不能回到旧翡翠绿。
     expect(terminalTheme().cursor).toBe("#d4f64c");
   });
 

@@ -7,6 +7,8 @@
 // 两档都 console.error 记下错误与组件栈，排障有线索。
 import { Component, type ErrorInfo, type ReactNode } from "react";
 import { useT } from "./i18n";
+import { Icon } from "./icons/Icon";
+import { icAlert } from "./icons/glyphs";
 
 type Props = {
   children: ReactNode;
@@ -46,9 +48,10 @@ export function WindowCrash() {
   const t = useT();
   return (
     <div className="app-crash" role="alert" data-tauri-drag-region>
+      <Icon glyph={icAlert} size={20} className="app-crash-icon" />
       <p className="app-crash-title">{t.crash.title}</p>
       <p className="app-crash-hint">{t.crash.hint}</p>
-      <button type="button" className="app-crash-reload" onClick={() => window.location.reload()}>
+      <button type="button" className="app-crash-reload btn-primary" onClick={() => window.location.reload()}>
         {t.crash.reload}
       </button>
     </div>

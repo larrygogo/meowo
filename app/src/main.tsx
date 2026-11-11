@@ -53,6 +53,8 @@ if (/Mac/i.test(navigator.userAgent)) {
   document.documentElement.classList.add("platform-macos");
 } else if (/Windows/i.test(navigator.userAgent)) {
   // WebView2 的 UA 含 "Windows NT"。Linux 两个类都不加。
+  // 目前没有任何 CSS 用到这个类：Windows 的版式（标题行高 40、内容面右下各留 8）就是样式表的默认值，
+  // macOS 用 .platform-macos 覆盖。这里留着是给以后的 Windows 专属规则挂的钩子，别当死代码删。
   document.documentElement.classList.add("platform-windows");
 }
 

@@ -112,7 +112,8 @@ import { agentAssets, tintStyle } from "../providers";
 import appLogoUrl from "../../src-tauri/icons/64x64.png";
 import { Icon } from "../icons/Icon";
 import { icArrowLeftRight, icArrowUp, icChevronLeft, icCollapse, icExpand, icFile, icMessage, icShield, icSidebarLeft, icStop } from "../icons/glyphs.chat";
-import { icCheck, icChevronDown, icClose, icPencil } from "../icons/glyphs";
+import { icAlert, icCheck, icChevronDown, icClose, icPencil } from "../icons/glyphs";
+import { icBot } from "../icons/glyphs.settings";
 
 
 /// 对话页意外退出说明附几行终端输出：够看出报错，不把输入框上方铺满。
@@ -239,6 +240,12 @@ const TERMINAL_WAIT_NOTICE_S = 20;
 /// 主列（标题栏 + 消息区 + 输入区）矮于这个高度（按 100% 缩放计）算「矮窗」，卡片走紧凑排法。
 /// 580 取自实测：620×760、1280×800@100% 主列 712/752 不算矮；620×480 是 432、1280×800@150% 折合 501。
 const SHORT_MAIN_HEIGHT = 580;
+/// 主列窄于这个宽度（按 100% 缩放计）时输入框的模型、权限按钮只留图标。360 取自实测：620 宽开右侧
+/// 面板主列约 300；手机 375、1280×800@150% 开面板折合 368，名字都放得下，不算窄。
+const NARROW_MAIN_WIDTH = 360;
+/// 主列窄于这个宽度（按 100% 缩放计）时收掉子任务头的类型胶囊。620 宽的窗口主列 604：100% 下放得下，
+/// 124% 起折合不到 520，胶囊与描述抢位（做空实测 150% 下胶囊被硬裁一半）。
+const SLIM_MAIN_WIDTH = 520;
 
 /// 新建会话页发出的第一句话：回执编号、它落在哪个会话（临时 id → 认领后的真 id），以及
 /// 发完（成功/失败/过期）才放行的闸门——后面再发的消息排在它之后。
@@ -1687,6 +1694,12 @@ export function ChatWindow() {
       const ui = parseFloat(getComputedStyle(host).getPropertyValue("--cc-ui")) || 1;
       const mainHeight = host.getBoundingClientRect().height;
       host.toggleAttribute("data-short", mainHeight > 0 && mainHeight < SHORT_MAIN_HEIGHT * ui);
+      // 主列窄（620 宽开着右侧面板，只剩约 300px）时挂 data-narrow：输入框里的模型、权限按钮只留图标，
+      // 名字进悬停提示——否则被压成「O…」「权…」（做空审查）。同样只看主列自身宽度。
+      const mainWidth = host.getBoundingClientRect().width;
+      host.toggleAttribute("data-narrow", mainWidth > 0 && mainWidth < NARROW_MAIN_WIDTH * ui);
+      // 再宽一档的 data-slim：子任务头里的类型胶囊（general-purpose）让位给描述与状态。
+      host.toggleAttribute("data-slim", mainWidth > 0 && mainWidth < SLIM_MAIN_WIDTH * ui);
       // 占位块变高不改变滚动容器自身的 border-box 尺寸，useStickToBottom 的尺寸观察者
       // 不一定接得到——已吸底的用户在这里自己钉回去（走 stickToBottom，裸写会被 smooth 动画化）。
       if (!scroll.hidden && followRef.current && !touchingRef.current) stickToBottom(scroll);
@@ -4186,10 +4199,13 @@ export function ChatWindow() {
             ? <div className="chat-loading" role="status"><span className="chat-model-spinner" aria-hidden="true" /><span>{t.chat.loadingConversation}</span></div>
             : null)
           : failed && items.length === 0 ? (
+            /* 出错是所在画面里对比最强的元素（design.md 2）：错误色图标 + 标题 + 原因 + 主按钮成组，
+               不是一行 12px 的小红字（做空审查）。 */
             <div className="chat-empty is-error">
-              {syncLost ? t.chat.syncInterrupted : t.chat.loadError}
-              {retryNow}
+              <Icon glyph={icAlert} size={20} className="chat-empty-error-icon" />
+              <div className="chat-empty-error-title">{syncLost ? t.chat.syncInterrupted : t.chat.loadError}</div>
               {syncLost && loadReason && <div className="chat-load-reason">{formatBackendError(loadReason.error, t.locale)}</div>}
+              {retryNow}
             </div>
           )
           : history && !history.supported ? (
@@ -5120,7 +5136,8 @@ export function ChatWindow() {
                   // 两种交互要分开说：有 options 是「打开菜单挑一个」，只有 cycle_input 的
                   // （codex 的协作模式）是「按一次跳下一个」，没有直达某个值的办法。
                   // 休眠态的恢复改选另有一套说明（选了会记住，之后的恢复自动沿用）。
-                  data-tip={resumePick ? t.chat.resumePermissionTip : interactive ? (options.length > 0 ? t.chat.switchMode : t.chat.cycleMode) : undefined}
+                  // 提示里带上当前值：窄主列下按钮只留图标（data-narrow），当前是哪个模式只能从这里看。
+                  data-tip={resumePick ? t.chat.resumePermissionTip : interactive ? `${options.length > 0 ? t.chat.switchMode : t.chat.cycleMode}: ${value}` : undefined}
                   onClick={() => {
                     // 与模型菜单互斥：同时只开一个。
                     if (options.length > 0) { setModelPickerOpen(false); setModeMenu((open) => open === dimension ? null : dimension); }
@@ -5197,7 +5214,8 @@ export function ChatWindow() {
               disabled={modelPresets.length === 0 && !modelMenuCommand && switchTargets.length === 0}
               aria-label={t.chat.switchModel}
               aria-expanded={modelPickerOpen}
-              data-tip={menuWatching && !modelProbing ? t.chat.modelMenuOpen : modelPresets.length > 0 || modelMenuCommand || switchTargets.length > 0 ? t.chat.switchModel : undefined}
+              // 同权限按钮：提示里带上当前模型，窄主列只留图标时靠它看。
+              data-tip={menuWatching && !modelProbing ? t.chat.modelMenuOpen : modelPresets.length > 0 || modelMenuCommand || switchTargets.length > 0 ? (history?.model ? `${t.chat.switchModel}: ${history.model}` : t.chat.switchModel) : undefined}
               // 单一点击语义：恒为开/关菜单。探测中（转圈+取消）、读不到清单（去终端页）
               // 都改在菜单条目里表达——此前同一颗按钮隐形承担「开菜单/取消探测/跳终端/
               // 发起探测」四种动作，用户无从预判点下去会发生什么。
@@ -5224,6 +5242,8 @@ export function ChatWindow() {
                   Kimi 2026-10 版已去掉，名字本身就说明了这颗钮是什么（用户对照实拍）。
                   标签套 span 才能省略号收尾：text-overflow 只作用于块容器，裸文本在
                   inline-flex 里挤压时会按 min-content（CJK=单字）竖排溢出（实拍）。 */}
+              {/* 只在窄主列（data-narrow）显示，顶替被收掉的模型名。 */}
+              <span className="chat-model-narrow-icon" aria-hidden="true"><Icon glyph={icBot} size={14} /></span>
               <span className="chat-model-label">
                 {history?.model || t.chat.model}
                 {/* 「模型 · 档位」（对照 Kimi 的 K3.1 Pro · Max）：档位影响回答深度与耗时，常看常换。 */}
