@@ -19,6 +19,7 @@ import { makeSession } from "../src/demo/data";
 import { savePanel } from "../src/views/chat/panelTabs";
 import { SETTINGS_SECTION_KEY } from "../src/settingsNav";
 import { CHAT_SESSION_ID, FIXED_NOW, flowStateItems, markReady, questionInput, scmMock, withLongItems } from "./fixtures";
+import { qaFlowBoot, qaFlowMock } from "./qaFlow";
 import type { ProviderUsage } from "../src/api";
 import type { IslandAlertEvent } from "../src/generated/contracts/IslandAlertEvent";
 import "../src/fonts";
@@ -143,7 +144,14 @@ async function boot(): Promise<React.ReactNode> {
     window.history.replaceState({}, "", `${location.pathname}?${q.toString()}&sessionId=${CHAT_SESSION_ID}`);
     const chat = chatMock(lang);
     const ts = new Date(FIXED_NOW).toISOString();
-    setExtraMock((cmd) => {
+    // 原有的 flow-states* / flow-question / flow-empty / pop-* 走下面这张表；其余 flow-<名字> 是补看场景（qaFlow.ts）。
+    const legacy = scene.startsWith("pop-") || scene.startsWith("flow-states") || scene === "flow-question" || scene === "flow-empty";
+    const qa = qaFlowMock(scene, lang, chat);
+    setExtraMock((cmd, args) => {
+      if (!legacy || (cmd !== "get_chat_history" && cmd !== "pending_interaction")) {
+        const hit = qa(cmd, args);
+        if (hit !== undefined) return hit;
+      }
       if (cmd === "pending_interaction") {
         if (scene === "flow-question") {
           const base = (chat(cmd) as { approval: Record<string, unknown> }).approval;
@@ -168,6 +176,7 @@ async function boot(): Promise<React.ReactNode> {
       return scmMock(cmd) ?? chat(cmd);
     });
     installMocks("chat");
+    qaFlowBoot(scene, lang);
     bootAppearance({ scale: true });
     const { ChatWindow } = await import("../src/views/ChatWindow");
     const key = (k: string, init: KeyboardEventInit = {}) =>
@@ -291,7 +300,26 @@ async function boot(): Promise<React.ReactNode> {
     store.settings.remote_access_enabled = true;
     // 网络分区拍「自定义代理」：地址输入行与各 Agent 的单独设置只在这一档出现。
     if (section === "network") store.settings.proxy = { mode: "custom", url: "http://127.0.0.1:7890", per_agent: {} };
-    setExtraMock((cmd) => {
+    // ?upd=checking|error|available|downloading|ready：关于页的更新状态（设置窗开着 10 秒后自动查一次）。
+    // ?fail=1：保存设置失败（各分区的错误提示）；远程分区另报一条端口之外的启动错误。
+    const upd = q.get("upd");
+    const fail = !!q.get("fail");
+    setExtraMock((cmd, args) => {
+      if (upd && cmd === "check_update") {
+        if (upd === "checking") return new Promise(() => {});
+        if (upd === "error") throw new Error("network");
+        return { version: "0.7.0", body: "", downloadState: upd };
+      }
+      if (upd && cmd === "download_update") return upd === "available" ? "available" : upd;
+      if (upd === "downloading" && cmd === "plugin:event|listen") {
+        const a = args as { event?: string; handler?: number };
+        if (a.event === "update-download-progress" && a.handler != null) {
+          const internals = (window as unknown as { __TAURI_INTERNALS__?: { runCallback?: (id: number, data: unknown) => void } }).__TAURI_INTERNALS__;
+          window.setTimeout(() => internals?.runCallback?.(a.handler!, { event: a.event, id: 1, payload: { downloaded: 42, contentLength: 100 } }), 10_400);
+        }
+        return 1;
+      }
+      if (fail && cmd === "set_settings") throw new Error("settings/write_failed: C:\Users\demo\.meowo\settings.json is read-only");
       if (cmd === "installed_agent_versions" || cmd === "check_agent_updates") return [];
       if (cmd === "list_agents") return AGENTS_WITH_OPTIONS;
       if (cmd === "list_agent_extensions") return EXTENSIONS;
@@ -309,7 +337,7 @@ async function boot(): Promise<React.ReactNode> {
       }
       if (cmd === "remote_access_info") {
         return {
-          enabled: true, port: 18620, token: "visual-regression-token", lastError: null, boundPort: 18620,
+          enabled: true, port: 18620, token: "visual-regression-token", lastError: fail ? "remote/bind_failed: address not available" : null, boundPort: 18620,
           ips: [{ ip: "100.64.0.8", kind: "tailscale" }, { ip: "192.168.1.20", kind: "lan" }],
         };
       }

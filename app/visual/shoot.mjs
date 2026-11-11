@@ -282,6 +282,8 @@ async function shootOne(browser, base, shot, outDir, dryRun = false) {
         throw new Error(`动作没做成：${String(e?.message ?? e).slice(0, 240)}`);
       }
     }
+    // 动作可能把页面点崩（渲染报错后整页空白）：先报页面错误，别让它被「缺少关键元素」盖住。
+    if (errors.length) throw new Error(errors.slice(0, 3).join(" | "));
     if (!(await page.locator(shot.sel).first().count())) {
       // 留一张失败现场图，方便看场景到底挂成了什么样（不进输出目录，免得被当成基线）。
       const failDir = join(outDir, "_failed");
