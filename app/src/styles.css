@@ -50,6 +50,8 @@
   --cc-accent-text: #d4f64c;
   /* 青柠线条（链接下划线、进度弧）：浅色主题强调色是墨，白底上要露青柠只能走这档，且只画线不铺面。 */
   --cc-brand-line: #d4f64c;
+  /* 链接下划线：深色链接是青柠字，不画线；浅色链接是墨字，靠 2px 青柠线和正文分开。 */
+  --link-line: transparent;
   /* 系统材质（Windows Mica、macOS 玻璃）生效时压在材质上的染色层；没有材质时不用。 */
   --mat-tint: rgba(24, 25, 22, 0.8);
   /* accent 填充上的文字/图标：墨字压青柠 12.88:1（tokens.md 复算），悬停档同样过 4.5:1。 */
@@ -116,16 +118,18 @@
   --cc-user-bubble: #2d2f28;
   /* 工具时间线/命令着色的色调。深色直接取语法色；浅色在 light 块里另配低饱和的一套——
      语法色板是给代码高亮调的，拿来给工具名整行上色，在白底上一排彩虹（用户实拍「不协调」）。 */
-  /* tone-orange 沿用旧名（类名与消费点不动），取值已是粉：橙色会和「等待」琥珀撞。 */
+  /* 第三个色调是粉不是橙：橙色会和「等待」琥珀撞。 */
   --cc-tone-blue: var(--cc-syn-func);
   --cc-tone-purple: var(--cc-syn-keyword);
-  --cc-tone-orange: var(--cc-syn-number);
+  --cc-tone-pink: var(--cc-syn-number);
   --cc-tone-teal: var(--cc-syn-builtin);
   --cc-tool-verb-weight: 400;
   --fill-hover: rgba(255, 255, 255, 0.05);
   --fill-selected: rgba(255, 255, 255, 0.1);
   --fill-selected-hover: rgba(255, 255, 255, 0.14);
   --fill-tab: rgba(255, 255, 255, 0.18);
+  /* 分段控件与页签的选中块：深色是亮一档的填充，浅色是 L2 白块（都再加 --shadow-sm 浮在凹槽上）。 */
+  --seg-on-bg: var(--fill-tab);
   --line-subtle: rgba(255, 255, 255, 0.05);
   --line-strong: rgba(255, 255, 255, 0.18);
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.22), 0 1px 3px rgba(0, 0, 0, 0.18);
@@ -288,15 +292,18 @@
   --btn-h-lg: 32px;
   /* 文字四档（Kimi 原值，对话窗专用；贴纸/看板的小字另按卡面对比度校过，见 --cc-text-faint）。
      深浅主题各一组、名字分开，终端页签在浅色主题下也能直接取到深色那组。 */
-  --kt-dark-1: rgba(255, 255, 255, 0.84);
-  --kt-dark-2: rgba(255, 255, 255, 0.56);
+  --kt-dark-1: rgba(244, 248, 230, 0.86);
+  --kt-dark-2: rgba(244, 248, 230, 0.58);
   /* 第三档是对话窗的 --cc-text-faint（时间、路径、小节标题这类正文级小字），必须过 4.5:1。
-     Kimi 原值 .42/.45 在 #121212 上 4.10:1、白底 3.35:1（axe color-contrast，2026-11-11 复测）；
-     .52 在 #121212/#292929/#353535 上 5.66/5.06/4.58:1，.56 在白/#f2f2f2/#ebebeb 上 4.94/4.80/4.72:1。 */
-  --kt-dark-3: rgba(255, 255, 255, 0.52);
-  --kt-light-1: rgba(0, 0, 0, 0.9);
-  --kt-light-2: rgba(0, 0, 0, 0.6);
-  --kt-light-3: rgba(0, 0, 0, 0.56);
+     墨色与全局文字同一组中性色（带一点暖绿，深 244,248,230 / 浅 20,24,8）：纯白纯黑 alpha 压在
+     新底色上偏冷，和侧栏、设置窗的文字不是一个色温。alpha 按「对比度不低于换色前」重取，
+     在内容面 / 卡片 / 用户气泡上依次为：深色 .86 → 12.15/11.00/9.69，.58 → 6.16/5.79/5.31，
+     .54 → 5.51/5.22/4.82；浅色 .92 → 14.35/14.58/13.03，.66 → 5.76/5.81/5.51，.62 → 5.02/5.06/4.83
+     （WCAG 相对亮度公式复算，2026-11-11；brandPalette.test 钉着 ≥4.5）。 */
+  --kt-dark-3: rgba(244, 248, 230, 0.54);
+  --kt-light-1: rgba(20, 24, 8, 0.92);
+  --kt-light-2: rgba(20, 24, 8, 0.66);
+  --kt-light-3: rgba(20, 24, 8, 0.62);
   /* 键盘焦点环：2px 实线强调色。原先是 3px accent-soft 柔光，合成后对底色只有 1.11:1（深）/
      1.12:1（浅），WCAG 1.4.11 要求 ≥3:1（2026-11-11 调研 i2）。accent 实线在深浅两套底上都远高于 3:1
      （深色青柠对窗口底、浅色墨对白）。
@@ -313,6 +320,7 @@
   --fill-selected: rgba(0, 0, 0, 0.05);
   --fill-selected-hover: rgba(0, 0, 0, 0.08);
   --fill-tab: rgba(0, 0, 0, 0.12);
+  --seg-on-bg: var(--cc-panel-raised);
   --line-subtle: rgba(0, 0, 0, 0.05);
   --line-strong: rgba(0, 0, 0, 0.15);
   --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.05), 0 1px 3px rgba(16, 24, 40, 0.06);
@@ -342,6 +350,7 @@
   /* 浅色下强调色文字就是墨色：青柠字在白底上读不清，青柠只走 --cc-brand-line 画线。 */
   --cc-accent-text: #1b1d17;
   --cc-brand-line: #a9cc1f;
+  --link-line: var(--cc-brand-line);
   --mat-tint: rgba(244, 245, 240, 0.72);
   /* accent 填充上的文字：浅色主题是墨底青柠字（13.84:1，tokens.md 复算）。
      正文级强调字走 --cc-accent-text，不走这档。 */
@@ -387,7 +396,7 @@
      四色对状态色与青柠线条 CIEDE2000 ≥ 18.5，彼此 ≥ 15.1，九种底上 ≥ 4.68:1。 */
   --cc-tone-blue: #2a5f9e;
   --cc-tone-purple: #6a4fa6;
-  --cc-tone-orange: #93467e;
+  --cc-tone-pink: #93467e;
   --cc-tone-teal: #1f6878;
   --cc-tool-verb-weight: 400;
   /* 浅色下投影更淡、顶部高光用近白，模拟纸卡浮在暖白底上；底部一道极淡暗边强化厚度。 */
@@ -402,12 +411,12 @@
   /* 文字同步加深一档：低分屏上没有次像素细节，Kimi 原档的浅字会发虚。 */
   :root {
     --hairline: 1px;
-    --kt-dark-1: rgba(255, 255, 255, 0.9);
-    --kt-dark-2: rgba(255, 255, 255, 0.64);
-    --kt-dark-3: rgba(255, 255, 255, 0.54);
-    --kt-light-1: rgba(0, 0, 0, 0.95);
-    --kt-light-2: rgba(0, 0, 0, 0.68);
-    --kt-light-3: rgba(0, 0, 0, 0.58);
+    --kt-dark-1: rgba(244, 248, 230, 0.92);
+    --kt-dark-2: rgba(244, 248, 230, 0.66);
+    --kt-dark-3: rgba(244, 248, 230, 0.56);
+    --kt-light-1: rgba(20, 24, 8, 0.95);
+    --kt-light-2: rgba(20, 24, 8, 0.76);
+    --kt-light-3: rgba(20, 24, 8, 0.64);
   }
 }
 /* 浅色下把硬编码的白/黑叠层、纯黑选中、深色面板换成浅色等价物（其余规则吃变量自动适配）。 */
@@ -489,10 +498,6 @@ html, body {
 :where(button, input, textarea, select) { font-family: inherit; }
 /* 原生复选框与单选的勾选色跟品牌走（UA 默认是系统蓝）。:where 零特异度，自绘的照常覆盖。 */
 :where(input[type="checkbox"], input[type="radio"]) { accent-color: var(--cc-accent); }
-/* 链接：深色青柠字、不加下划线；浅色墨字 + 2px 青柠下划线（青柠字在白底上读不清）。
-   --link-line 是车道内的局部变量（深色透明、浅色 = --cc-brand-line），待并入调色板。 */
-:root, :where(.chat-window.is-terminal) { --link-line: transparent; }
-:root[data-theme="light"] { --link-line: var(--cc-brand-line); }
 /* 高度链路用 100% 而非 100vh：WebView2 下 100vh 可能比客户区高几像素，
    导致贴纸底部(含圆角)被窗口裁掉。逐级 100% 精确等于客户区高度。 */
 #root { height: 100%; }
@@ -2592,10 +2597,7 @@ button.stab {
   transition: background var(--dur-base) var(--ease-in-out), color var(--dur-base) var(--ease-in-out);
 }
 .seg-btn:hover { color: var(--cc-text); }
-/* 选中块浮在凹槽上：浅色是白块，深色是亮一档的填充；字用正文色，强调色留给主动作。
-   --seg-on-bg 是车道内的局部变量（深色 = --fill-tab，浅色 = L2 白），待并入调色板。 */
-:root, :where(.chat-window.is-terminal) { --seg-on-bg: var(--fill-tab); }
-:root[data-theme="light"] { --seg-on-bg: var(--cc-panel-raised); }
+/* 选中块浮在凹槽上（--seg-on-bg：浅色是白块，深色是亮一档的填充）；字用正文色，强调色留给主动作。 */
 .seg-btn.on { background: var(--seg-on-bg); color: var(--cc-text); font-weight: 500; box-shadow: var(--shadow-sm); }
 
 /* 字体大小离散滑块：轨道 + 滑钮 + 底部标签（小/中/大）。 */
@@ -2708,8 +2710,7 @@ button.stab {
   color: var(--cc-text-dim);
 }
 /* 底部链接：<a> 与 <button> 同式。深色是青柠字、不加下划线；浅色强调色是墨，和正文分不开，
-   补一道 2px 青柠下划线。--link-underline 尚未进调色板（待主会话统一加：深色 transparent、浅色 --cc-brand-line），
-   先用 light-dark() 顶上；两者都没有的内核退回与文字同色的下划线，仍看得出是链接。 */
+   补一道 2px 青柠下划线（--link-line，与对话正文里的链接同一档）。 */
 .about-foot a, .about-foot button {
   appearance: none;
   padding: 0;
@@ -2721,7 +2722,7 @@ button.stab {
   text-decoration: underline;
   text-decoration-thickness: 2px;
   text-underline-offset: 3px;
-  text-decoration-color: var(--link-underline, light-dark(var(--cc-brand-line), transparent));
+  text-decoration-color: var(--link-line);
 }
 .about-foot a:hover, .about-foot button:hover { text-decoration-color: currentColor; }
 .about-foot .dot { color: var(--cc-text-faint); }
@@ -7015,7 +7016,7 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .chat-cmd { color: var(--cc-chat-text); }
 .chat-cmd .chat-tool-ln { color: var(--cc-text-faint); }
 .chat-cmd-name { color: var(--cc-tone-blue); font-weight: 500; }
-.chat-cmd-flag { color: var(--cc-tone-orange); }
+.chat-cmd-flag { color: var(--cc-tone-pink); }
 .chat-cmd-str { color: var(--cc-syn-string); }
 .chat-cmd-op { color: var(--cc-tone-purple); }
 .chat-cmd-env, .chat-cmd-var { color: var(--cc-tone-teal); }

@@ -2,7 +2,7 @@
 ///
 /// 从 ChatWindow 拆出：这是一段只和分栏柄、面板宽度打交道的指针事件处理，和对话本身无关。
 
-import { CHAT_MIN_WIDTH, panelDefaultWidth, PANEL_MIN_WIDTH, siblingWidth } from "./paneLayout";
+import { CHAT_MIN_WIDTH, measuredGutter, panelDefaultWidth, PANEL_MIN_WIDTH, siblingWidth } from "./paneLayout";
 import { useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from "react";
 
 /** 改动/文件停靠面板的宽度持久化键（localStorage 既有 meowo-* 命名惯例）。 */
@@ -18,8 +18,11 @@ const KEY_STEP = 24;
  *  此前没扣侧栏，1440 宽侧栏常驻时能把对话区压到 80px（调研 c4）。 */
 const maxWidthIn = (body: Element | null) =>
   body
-    ? Math.max(DIFF_PANEL_MIN_WIDTH, body.getBoundingClientRect().width - siblingWidth(body, ".chat-sidebar") - CHAT_MIN_WIDTH)
+    ? Math.max(DIFF_PANEL_MIN_WIDTH, body.getBoundingClientRect().width - siblingWidth(body, ".chat-sidebar") - measuredGutter(body) - CHAT_MIN_WIDTH)
     : Number.MAX_SAFE_INTEGER;
+/** 分栏柄所在的 .chat-body。柄在内容面（.chat-surface）里面，不是 .chat-body 的直接子元素：
+ *  拖动态的类名（.chat-body.is-diff-resizing）和上限里要扣的侧栏都得从 .chat-body 找。 */
+const bodyOf = (handle: Element): HTMLElement | null => handle.closest<HTMLElement>(".chat-body") ?? handle.parentElement;
 const persist = (width: number) => {
   try { localStorage.setItem(DIFF_WIDTH_KEY, String(Math.round(width))); } catch { /* 存不下就只在内存里 */ }
 };
@@ -36,7 +39,7 @@ export function useDiffPanelWidth() {
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return;
     const handle = event.currentTarget;
-    const body = handle.parentElement;
+    const body = bodyOf(handle);
     if (!body) return;
     event.preventDefault();
     handle.setPointerCapture(event.pointerId);
@@ -79,7 +82,7 @@ export function useDiffPanelWidth() {
   const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
     event.preventDefault();
-    const next = Math.min(Math.max(width + (event.key === "ArrowLeft" ? KEY_STEP : -KEY_STEP), DIFF_PANEL_MIN_WIDTH), maxWidthIn(event.currentTarget.parentElement));
+    const next = Math.min(Math.max(width + (event.key === "ArrowLeft" ? KEY_STEP : -KEY_STEP), DIFF_PANEL_MIN_WIDTH), maxWidthIn(bodyOf(event.currentTarget)));
     setWidth(next);
     persist(next);
   };

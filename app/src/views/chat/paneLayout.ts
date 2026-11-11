@@ -18,6 +18,12 @@ export const PANEL_MIN_WIDTH = 320;
 /** 面板默认宽封顶：没封顶时 2560 宽下默认 1140px，提交框和「提交全部」拉成一千多 px 的横条，
  *  文件名和增删数隔着半个屏幕（调研 c6）。560 约等于 Kimi 面板的舒适宽。 */
 export const PANEL_DEFAULT_MAX = 560;
+/** 内容面（.chat-surface）四周露出窗口底的边距，与 styles.css 的 --sheet-gap 同值。
+ *  .chat-body 的宽里有它：侧栏停靠时只有右边一条，侧栏不停靠时左右各一条。
+ *  此前钳制没扣，对话列实际只剩 312 / 304（2026-11-11 重设计后在 620 宽截图上量出）。 */
+export const SURFACE_GAP = 8;
+/** 内容面左右边距之和：侧栏停靠时左边紧贴侧栏，只有右边一条。 */
+export const surfaceGutter = (sidebarDocked: boolean) => SURFACE_GAP * (sidebarDocked ? 1 : 2);
 
 /** 侧栏默认宽随界面缩放（关卡 A-20261111-ui-spec 第 1 条：推翻「列宽不随密度缩放」）。 */
 export const sidebarDefaultWidth = (ui: number) => Math.round(SIDEBAR_BASE_WIDTH * ui);
@@ -35,11 +41,14 @@ export const panelDefaultWidth = (windowWidth: number) =>
 /**
  * 按 .chat-body 实测宽钳制两侧宽度。sidebar / panel 传 null 表示该栏不在（收起、抽屉形态、
  * 面板最大化）。窗口变窄时面板先让（让到 PANEL_MIN_WIDTH），再让侧栏；最小窗口 620 开着
- * 面板时面板让到 300，对话区仍保 320。body 为 0 表示还没量到，原样返回。
+ * 面板时面板让到 284（620 − 两条边距 16 − 320），对话区仍保 320。gutter 是内容面左右边距之和
+ * （见 surfaceGutter；手机页内容面不留边，传 0）。body 为 0 表示还没量到，原样返回。
  */
-export function fitPanes(input: { body: number; sidebar: number | null; panel: number | null; ui?: number }): { sidebar: number | null; panel: number | null } {
-  const { body, ui = 1 } = input;
-  if (body <= 0) return { sidebar: input.sidebar, panel: input.panel };
+export function fitPanes(input: { body: number; sidebar: number | null; panel: number | null; ui?: number; gutter?: number }): { sidebar: number | null; panel: number | null } {
+  const { ui = 1, gutter = 0 } = input;
+  if (input.body <= 0) return { sidebar: input.sidebar, panel: input.panel };
+  // 三栏能分的宽：.chat-body 扣掉内容面的边距。
+  const body = input.body - gutter;
   let sidebar = input.sidebar;
   if (sidebar != null) {
     const room = body - CHAT_MIN_WIDTH - (input.panel != null ? PANEL_MIN_WIDTH : 0);
@@ -85,8 +94,16 @@ export function useElementWidth(ref: RefObject<HTMLElement | null>): number {
   return width;
 }
 
-/** 拖拽 / 键盘调宽时，另一栏在 .chat-body 里实际占的宽（不在就是 0）。 */
+/** 拖拽 / 键盘调宽时，另一栏在 .chat-body 里实际占的宽（不在就是 0）。
+ *  不限直接子元素：右侧面板在内容面（.chat-surface）里面，侧栏在外面。 */
 export function siblingWidth(body: Element | null, selector: string): number {
-  const el = body?.querySelector<HTMLElement>(`:scope > ${selector}`);
+  const el = body?.querySelector<HTMLElement>(selector);
   return el ? el.getBoundingClientRect().width : 0;
+}
+
+/** 内容面左右边距之和，按实测算（.chat-body 宽 − 侧栏 − 内容面）。量不到（jsdom、还没挂上）按 0。 */
+export function measuredGutter(body: Element | null): number {
+  const surface = body?.querySelector<HTMLElement>(".chat-surface");
+  if (!body || !surface) return 0;
+  return Math.max(0, Math.round(body.getBoundingClientRect().width - siblingWidth(body, ".chat-sidebar") - surface.getBoundingClientRect().width));
 }

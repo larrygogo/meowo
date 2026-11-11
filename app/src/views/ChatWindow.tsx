@@ -99,7 +99,7 @@ import { useConversationExport } from "./chat/useConversationExport";
 import { useMainPages } from "./chat/useMainPages";
 import { AddMenu } from "./chat/AddMenu";
 import { DIFF_PANEL_MIN_WIDTH, useDiffPanelWidth } from "./chat/useDiffPanelWidth";
-import { fitPanes, useElementWidth } from "./chat/paneLayout";
+import { fitPanes, surfaceGutter, useElementWidth } from "./chat/paneLayout";
 import { attachmentOf, base64OfBuffer, formatBytes, loadStoredDrafts, promptWithAttachments, saveStoredDraft, type Attachment } from "./chat/drafts";
 import { appendTerminalText, terminalAttention as detectTerminalAttention, visibleTerminalText, type AttentionGrammar, type TerminalAttention, type TerminalAttentionOption } from "../terminalAttention";
 import { Dropdown, useMenuPopup } from "./menu";
@@ -3908,7 +3908,7 @@ export function ChatWindow() {
   // 窗口缩小时跟着回收；存储里用户拖的宽度不动，窗口拉回宽时原样恢复。
   const dockedSidebar = !narrow && !sidebarCollapsed;
   const dockedPanel = !!cwd && !remoteUi() && shownPanelState.visible && !panelState.expanded;
-  const panes = fitPanes({ body: chatBodyWidth, sidebar: dockedSidebar ? sidebarWidth : null, panel: dockedPanel ? diffResize.width : null, ui: uiScale });
+  const panes = fitPanes({ body: chatBodyWidth, sidebar: dockedSidebar ? sidebarWidth : null, panel: dockedPanel ? diffResize.width : null, ui: uiScale, gutter: remoteUi() ? 0 : surfaceGutter(dockedSidebar) });
   const shownSidebarWidth = panes.sidebar ?? sidebarWidth;
   const shownPanelWidth = panes.panel ?? diffResize.width;
 

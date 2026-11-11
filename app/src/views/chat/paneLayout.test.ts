@@ -2,7 +2,7 @@
 import { act, renderHook } from "@testing-library/react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
 import { afterEach, describe, expect, it } from "vitest";
-import { CHAT_MIN_WIDTH, fitPanes, panelDefaultWidth, sidebarDefaultWidth, sidebarMaxWidth } from "./paneLayout";
+import { CHAT_MIN_WIDTH, fitPanes, measuredGutter, panelDefaultWidth, sidebarDefaultWidth, sidebarMaxWidth, surfaceGutter } from "./paneLayout";
 import { useDiffPanelWidth } from "./useDiffPanelWidth";
 import { useSidebarLayout } from "./useSidebarLayout";
 
@@ -11,19 +11,24 @@ afterEach(() => {
   document.documentElement.style.removeProperty("--cc-ui");
 });
 
-/** 假 .chat-body：宽 body，里面常驻侧栏 / 面板各占多宽（0 = 不在）。 */
-function fakeBody(body: number, kids: { sidebar?: number; panel?: number }) {
+/** 假 .chat-body：宽 body，里面常驻侧栏 / 面板各占多宽（0 = 不在）；gutter 是内容面左右边距之和
+ *  （给了才有 .chat-surface，宽 = body − 侧栏 − gutter）。 */
+function fakeBody(body: number, kids: { sidebar?: number; panel?: number; gutter?: number }) {
   const rect = (width: number) => ({ getBoundingClientRect: () => ({ width }) });
   return {
     getBoundingClientRect: () => ({ width: body }),
-    querySelector: (sel: string) => (sel.includes("chat-sidebar") ? (kids.sidebar ? rect(kids.sidebar) : null) : kids.panel ? rect(kids.panel) : null),
+    querySelector: (sel: string) => {
+      if (sel.includes("chat-surface")) return kids.gutter == null ? null : rect(body - (kids.sidebar ?? 0) - kids.gutter);
+      return sel.includes("chat-sidebar") ? (kids.sidebar ? rect(kids.sidebar) : null) : kids.panel ? rect(kids.panel) : null;
+    },
     closest: () => null,
   } as unknown as Element;
 }
 const key = (name: string, body: Element, via: "parent" | "closest") => ({
   key: name,
   preventDefault: () => {},
-  currentTarget: via === "parent" ? { parentElement: body } : { closest: () => body },
+  // parent：面板分栏柄在内容面里，.chat-body 是往上找到的祖先（找不到才退回父元素）。
+  currentTarget: via === "parent" ? { parentElement: null, closest: () => body } : { closest: () => body },
 }) as unknown as ReactKeyboardEvent<HTMLDivElement>;
 
 const chatLeft = (body: number, p: { sidebar: number | null; panel: number | null }) => body - (p.sidebar ?? 0) - (p.panel ?? 0);
@@ -49,6 +54,28 @@ describe("三栏宽度钳制", () => {
   it("最小窗口 620 开着面板：面板让到 300，对话区保 320", () => {
     const fit = fitPanes({ body: 620, sidebar: null, panel: 560 });
     expect(fit.panel).toBe(300);
+  });
+
+  it("内容面的边距也要扣：620 宽、侧栏不停靠时左右各 8，面板让到 284，对话列才真有 320", () => {
+    // .chat-body 的宽里含内容面（.chat-surface）露出窗口底的边距；不扣的话对话列实际只剩 304。
+    expect(surfaceGutter(false)).toBe(16);
+    expect(surfaceGutter(true)).toBe(8);
+    const fit = fitPanes({ body: 620, sidebar: null, panel: 560, gutter: surfaceGutter(false) });
+    expect(fit.panel).toBe(284);
+    expect(620 - 16 - fit.panel!).toBe(CHAT_MIN_WIDTH);
+    // 侧栏停靠：只有右边一条边距，侧栏的余量同样扣掉它。
+    const docked = fitPanes({ body: 900, sidebar: 440, panel: 320, gutter: surfaceGutter(true) });
+    expect(900 - 8 - docked.sidebar! - docked.panel!).toBeGreaterThanOrEqual(CHAT_MIN_WIDTH);
+  });
+
+  it("拖拽上限按实测边距扣：面板在内容面里也算得到，侧栏与面板互相让位", () => {
+    expect(measuredGutter(fakeBody(1440, { sidebar: 240, gutter: 8 }))).toBe(8);
+    expect(measuredGutter(fakeBody(1440, { sidebar: 240 }))).toBe(0);
+    localStorage.setItem("meowo-diff-panel-width", "600");
+    const { result } = renderHook(() => useDiffPanelWidth());
+    const body = fakeBody(1440, { sidebar: 240, gutter: 8 });
+    for (let i = 0; i < 60; i += 1) act(() => result.current.onKeyDown(key("ArrowLeft", body, "parent")));
+    expect(result.current.width).toBe(1440 - 240 - 8 - CHAT_MIN_WIDTH);
   });
 
   it("面板拖到底（键盘一路 ←）：上限扣掉常驻侧栏，1440 宽侧栏 240 时停在 880", () => {
