@@ -26,4 +26,12 @@ describe("品牌色守护", () => {
     expect(hits(new RegExp(`border-(left|inline-start)[^;]*var\\(${colored}`))).toEqual([]);
     expect(hits(new RegExp(`inset\\s+-?[1-9][\\d.]*px\\s+0\\s+0[^;,]*var\\(${colored}`))).toEqual([]);
   });
+  it("系统材质生效时窗口底换成染色层，少用透明或高对比度时退回不透明底", () => {
+    // 侧栏与标题行直接坐在 --cc-l0 上：材质透出壁纸时文字对比度不可控，所以用户要求少透明时必须有实色回退。
+    const css = readFileSync(resolve(__dirname, "styles.css"), "utf8").replace(/\s+/g, " ");
+    expect(css).toContain(":root.mat-on { --cc-l0: var(--mat-tint); }");
+    expect(css).toMatch(/@media \(prefers-reduced-transparency: reduce\), \(forced-colors: active\) \{ :root\.mat-on \{ --cc-l0: var\(--cc-window-bg\); \} \}/);
+    expect(css).toMatch(/\.chat-window \{[^}]*background: var\(--cc-l0\)/);
+  });
+
 });
