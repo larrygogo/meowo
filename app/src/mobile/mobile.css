@@ -558,6 +558,15 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
   .remote-new-session-overlay .ns-profile-hint { flex: 1; min-width: 0; }
 }
 
+/* 矮屏有审批/提问卡在场时给输入框封顶（超出在框内滚动）：卡片的限高是标题栏到 composer 之间的
+   剩余高度，composer 打到 6 行（150px）时 667×375、375×376 下卡片只剩约 50px，按钮只露半截
+   （做空审查 p3b）。实测卡片要约 94px 才放得下标题加一行按钮，按视口扣掉 280px 留给标题栏、
+   进度条和卡片：376 高时封在 96px（约 4 行），高屏 min 取回原 150px 不受影响；
+   --app-height 跟键盘缩（main.tsx），键盘态同样生效。 */
+body.remote-ui:has(.chat-approval-overlay.is-active) .chat-compose textarea {
+  max-height: max(44px, min(150px, calc(var(--app-height, 100dvh) - 280px)));
+}
+
 /* 新建会话浮层:桌面是独立窗口,远程改全屏 sheet 盖在会话列表上。
    注意 .ns-window 桌面态是 100vw/100vh 填满自己的 OS 窗,在这里必须双双改掉——
    之前只覆宽不覆高,sheet 恒撑 100vh(比手机可视区还高),底部按钮直接出屏。 */
