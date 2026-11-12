@@ -6368,6 +6368,9 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .chat-md code.chat-md-link-code { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
 .chat-md code.chat-md-link-code:hover, .chat-md code.chat-md-link-code:focus-visible { color: var(--cc-accent-text); text-decoration-style: solid; text-decoration-color: var(--cc-brand-line); outline: none; }
 .chat-md .chat-md-link-error { margin-left: 6px; font-size: 0.9em; color: var(--cc-err-text); }
+/* × 关掉链接打不开的提示（做空第一轮 #13）：提示不再自收，得有手动关的出口。 */
+.chat-md .chat-md-link-error-close { margin-left: var(--sp-4); padding: 0 var(--sp-4); border: 0; border-radius: var(--radius-xs); background: transparent; color: inherit; font: inherit; line-height: 1; cursor: pointer; }
+.chat-md .chat-md-link-error-close:hover { background: var(--fill-hover); }
 /* 表格外壳：表格自己横滚，「复制表格」压在右下角一行，弱色不抢正文。 */
 /* 贴表格的实际宽度：表格本身是 display:block（为了横向滚动），外壳原先铺满正文列，「复制表格」
    靠右对齐后离表格右端 256px（qa-md 实拍），面板越宽离得越远。 */
