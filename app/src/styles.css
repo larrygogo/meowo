@@ -7285,6 +7285,9 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .isl-panel-head > .isl-btn.isl-new { background: var(--isl-chip); margin-right: 4px; }
 .isl-panel-head > .isl-btn.isl-new:hover { background: var(--isl-chip-hover); }
 .isl-panel-body { display: flex; gap: 18px; margin-top: 10px; }
+/* 点会话「打开」失败的提示条（I-1/I-2，走查 2026-11-12）：标题行下、列表上，读完前不消失。 */
+.isl-panel-err { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 12px; min-width: 0; }
+.isl-panel-err-text { flex: 1; min-width: 0; display: flex; align-items: center; white-space: nowrap; overflow: hidden; }
 /* 有翻页时内容区至少三行会话高（行 54 = 8 + 19 + 2 + 17 + 8，行距 2）：额度页（约 164）和不满三条的末页
    都垫到同一个高度，翻页时底边和圆点不动。原来英文会话页 231、额度页 244，翻一页窗口伸缩 13px。
    窗口高度跟着面板实测高度走（IslandPanel 的 onMeasure），这里不变窗口就不变。 */
@@ -7328,6 +7331,12 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 /* 每家一栏：栏顶 logo + 名字，下面一个叠环（每档额度一圈）和图例；栏与栏之间一道细线。 */
 .isl-usage-group { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 0 20px; }
 .isl-usage-group + .isl-usage-group { border-left: 1px solid var(--isl-line); } /* 保留 1px：同上 */
+/* 刷新失败的旧额度：降饱和压暗，并在环下写上次更新时间（backlog 仍存在 #1，2026-11-12）。
+   不藏起来：旧值总比空着强，只是不能冒充现在的值。 */
+.isl-usage-group.is-stale .isl-usage-stack,
+.isl-usage-group.is-stale .isl-usage-lanes,
+.isl-usage-wrap.is-stale { filter: saturate(0.2); opacity: 0.6; }
+.isl-usage-stale { max-width: 100%; font-size: 11px; color: var(--isl-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .isl-usage-head { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--isl-text-2); }
 .isl-usage-head-logo { display: grid; place-items: center; width: 14px; height: 14px; }
 .isl-usage-head-logo svg, .isl-usage-head-logo img { width: 13px !important; height: 13px !important; }

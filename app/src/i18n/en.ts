@@ -52,6 +52,11 @@ export const en: Dict = {
     dismiss: "Dismiss alert",
     dismissAll: "Dismiss all",
     dismissAllCount: (n: number) => `Dismiss ${n}`,
+    openFailed: "Couldn't open the chat window",
+    liteNoChat: "Lite mode has no chat window. Turn it on in Settings.",
+    retry: "Retry",
+    openSettings: "Open Settings",
+    dismissError: "Dismiss",
   },
   sticker: {
     openChatWindow: "Open chat window",

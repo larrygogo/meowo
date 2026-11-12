@@ -20,6 +20,7 @@ import { type Item, type Tab } from "./views/sticker/types";
 import { Island, IslandStrip, ISLAND_ALERT_SIZE, ISLAND_EAR, ISLAND_PILL_HEIGHT, ISLAND_STRIP_SIZE } from "./views/Island";
 import { IslandPanel } from "./views/island/IslandPanel";
 import { liveIslandUsage, orderIslandUsage, useIslandUsage } from "./views/island/useIslandUsage";
+import { openIslandSession, type IslandOpenError } from "./views/island/openSession";
 import { byUrgency, islandCounts, islandTone, menubarSegments } from "./views/Island";
 import { EYES_BUSY_AT, useEyeCue, useEyeMode } from "./views/island/islandParts";
 import type { IslandAlertEvent } from "./generated/contracts/IslandAlertEvent";
@@ -152,6 +153,9 @@ export function App() {
   // 折叠条恒显示全部「连接中」会话（running + waiting），与当前选中 tab 无关——
   // 故独立于分页 items 单独加载（按状态查，覆盖旧但仍连接的会话，不受 tab/分页窗口影响）。
   const [stripSessions, setStripSessions] = useState<Item[]>([]);
+  // 灵动岛「打开」在轻量模式下按 pid 找外部终端（I-2），回调里同步读最新一份。
+  const stripSessionsRef = useRef<Item[]>([]);
+  stripSessionsRef.current = stripSessions;
   const stripRowCacheRef = useRef<RowCache>(new Map());
   const loadStrip = useCallback(() => {
     Promise.all([
@@ -497,6 +501,15 @@ export function App() {
   const islandAlertMsRef = useRef(ISLAND_ALERT_MS_DEFAULT);
   // 轻量模式（对话功能关闭）时面板不放「打开对话窗口」，与贴纸底栏、托盘菜单同一规则。
   const [chatEnabled, setChatEnabled] = useState(true);
+  // 回调里同步读（openSession 是稳定回调，闭包里的 state 会过期）。
+  const chatEnabledRef = useRef(true);
+  chatEnabledRef.current = chatEnabled;
+  // 「打开」失败（I-1/I-2，走查 2026-11-12）：留住提醒或面板，就地显示原因和下一步。
+  // 不自动消失：提醒的倒计时在点「打开」时就撤了，直到用户 ×、重试或收起。
+  const [openError, setOpenError] = useState<IslandOpenError | null>(null);
+  const openErrorRef = useRef<IslandOpenError | null>(null);
+  openErrorRef.current = openError;
+  const openingRef = useRef(false);
   // 极简模式：收起时只留顶边一条细条（用户 2026-11-05 要求）。ref 给布局回调同步读。
   const [islandStrip, setIslandStrip] = useState(false);
   const islandStripRef = useRef(false);
@@ -545,15 +558,15 @@ export function App() {
       islandAlertMsRef.current = Math.min(30, Math.max(2, settings.island_alert_seconds)) * 1000;
     }
   });
-  const usage = useIslandUsage();
+  const { usage, meta: usageMeta } = useIslandUsage();
   // 额度按「正在用的」排：在跑/要处理的会话的 agent 在前，再按设置顺序。
   const activeProviders = useMemo(
     () => byUrgency(stripSessions).map((item) => item.provider).filter((p, i, all) => all.indexOf(p) === i),
     [stripSessions],
   );
   const islandUsages = useMemo(
-    () => liveIslandUsage(usage, quotaProviders, activeProviders),
-    [usage, quotaProviders, activeProviders],
+    () => liveIslandUsage(usage, quotaProviders, activeProviders, usageMeta),
+    [usage, quotaProviders, activeProviders, usageMeta],
   );
   // macOS 菜单栏图标：眼睛的神态 + 右边的富文本（menubar.rs / tray_anim.rs / status_title.rs）。
   // 由这里推而不是后端自己数：这里看得到所有连着的会话（含另一个 Meowo 实例开的）和额度。
@@ -699,6 +712,7 @@ export function App() {
     alertQueueRef.current = [];
     setAlertQueued(0);
     setAlert(null);
+    setOpenError(null);
     // ref 先同步改：重渲染落地前到达的测量回调读到的就已经是新形态，不会去缩窗口。
     islandModeRef.current = mode;
     setIslandMode(mode);
@@ -733,6 +747,7 @@ export function App() {
     alertHoverRef.current = false;
     if (islandModeRef.current !== "alert") return;
     setAlert(null);
+    setOpenError(null);
     islandModeRef.current = "compact";
     setIslandMode("compact");
     layoutCompact()
@@ -770,6 +785,8 @@ export function App() {
   const onAlertHover = useCallback((hovering: boolean) => {
     if (islandModeRef.current !== "alert") return;
     alertHoverRef.current = hovering;
+    // 打开失败的提醒不再有倒计时（含原因和按钮的提示不在读完前消失，impl 准则 2026-11-12）。
+    if (openErrorRef.current) return;
     armAlertTimer(hovering ? ISLAND_ALERT_HOVER_MAX_MS : ISLAND_ALERT_LINGER_MS);
   }, [armAlertTimer]);
   // 提醒上的 ×：只关这一条，排队的照常接着弹（i5）。先撤倒计时：不撤的话旧定时器到点会把下一条提前收掉。
@@ -817,6 +834,7 @@ export function App() {
     const mode = islandModeRef.current;
     if (mode !== "expanded") return;
     lastCollapseRef.current = Date.now();
+    setOpenError(null);
     // 菜单栏落点：直接藏起窗口，不播收回动画。系统毛玻璃不跟着内容淡出，播动画就会剩一块空玻璃。
     if (hostRef.current.kind === "menubar") {
       islandModeRef.current = "compact";
@@ -1080,9 +1098,27 @@ export function App() {
   }, [islandMode, collapse]);
 
   // 打开某个会话的对话窗：提醒里点「打开」后缩回胶囊；面板里点会话后收起面板。
-  const openSession = useCallback((sessionId: number) => {
-    invoke("open_chat_window", { sessionId }).catch((err) => console.error("[island] 打开会话失败：", err));
+  // 等开窗结果再收（I-1，走查 2026-11-12）：此前先收再说，失败时提醒已经没了，用户点了毫无反应。
+  const openSession = useCallback(async (sessionId: number) => {
+    if (openingRef.current) return;
+    openingRef.current = true;
+    // 点了「打开」是明确意图：先撤提醒倒计时，免得等结果时提醒自己收走，错误无处可报。
+    if (islandModeRef.current === "alert" && alertTimerRef.current != null) {
+      window.clearTimeout(alertTimerRef.current);
+      alertTimerRef.current = null;
+    }
+    setOpenError(null);
+    const failure = await openIslandSession({
+      sessionId,
+      chatEnabled: chatEnabledRef.current,
+      item: stripSessionsRef.current.find((entry) => entry.session.id === sessionId),
+      locale: t.locale,
+    }).finally(() => { openingRef.current = false; });
     const mode = islandModeRef.current;
+    if (failure) {
+      if (mode === "expanded" || mode === "alert") setOpenError(failure);
+      return;
+    }
     if (mode === "expanded") {
       collapse();
       return;
@@ -1095,7 +1131,14 @@ export function App() {
     islandModeRef.current = "compact";
     setIslandMode("compact");
     layoutCompact().catch(() => {}).finally(() => pumpAlert());
-  }, [collapse, layoutCompact, pumpAlert]);
+  }, [collapse, layoutCompact, pumpAlert, t.locale]);
+  // 轻量模式失败时的「打开设置」：设置里有「对话窗口功能」开关。
+  const openSettingsFromError = useCallback(() => {
+    setOpenError(null);
+    invoke("open_settings").catch((err) => console.error("[island] 打开设置失败：", err));
+    if (islandModeRef.current === "expanded") collapse();
+    else if (islandModeRef.current === "alert") finishAlert();
+  }, [collapse, finishAlert]);
   openSessionRef.current = openSession;
 
   if (!bootReady) {
@@ -1118,8 +1161,14 @@ export function App() {
         <IslandPanel
           sessions={stripSessions}
           usage={usage}
+          usageMeta={usageMeta}
           quotaProviders={quotaProviders}
           onOpenSession={openSession}
+          openError={openError}
+          focusOnOpen={islandMode === "expanded"}
+          onRetryOpen={(id) => void openSession(id)}
+          onOpenSettingsFromError={openSettingsFromError}
+          onDismissOpenError={() => setOpenError(null)}
           onMeasure={onPanelMeasure}
           onPointerDownDrag={onPanelHeadPointerDown}
           onNewSession={() => panelAction(() => {
@@ -1158,6 +1207,8 @@ export function App() {
       onMeasure={onMeasure}
       onActivate={expand}
       onOpenSession={openSession}
+      openError={openError}
+      onOpenSettingsFromError={openSettingsFromError}
       onPointerDownDrag={onPillPointerDown}
       onAlertHover={onAlertHover}
       onDismissAlert={dismissAlert}

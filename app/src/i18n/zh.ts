@@ -60,6 +60,12 @@ export const zh = {
     dismissAll: "全部忽略",
     // 「全部忽略」钮上的字：n = 正在弹的这条 + 后面排着的。
     dismissAllCount: (n: number) => `忽略 ${n} 条`,
+    // 灵动岛「打开」失败（I-1/I-2，走查 2026-11-12）：留在岛上说清原因与下一步。
+    openFailed: "没能打开对话窗",
+    liteNoChat: "轻量模式没有对话窗，可在设置里开启",
+    retry: "重试",
+    openSettings: "打开设置",
+    dismissError: "关闭提示",
   },
   sticker: {
     openChatWindow: "打开对话窗口",
