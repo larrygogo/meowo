@@ -31,8 +31,6 @@
      收成 token 后浅色值写在浅色块里，终端页签随本块自动取深色值，不再需要「终端豁免」规则。 */
   --scrollbar-thumb: rgba(255, 255, 255, 0.16);
   --scrollbar-thumb-hover: rgba(255, 255, 255, 0.3);
-  --sticker-scroll: rgba(255, 255, 255, 0.32);
-  --sticker-scroll-hover: rgba(255, 255, 255, 0.45);
   --grabber: rgba(255, 255, 255, 0.2);
   --grabber-active: rgba(255, 255, 255, 0.34);
   --caption-hover: rgba(255, 255, 255, 0.1);
@@ -44,7 +42,6 @@
   --cc-accent: #d4f64c;
   --cc-accent-dim: #c3e63a;
   --cc-accent-soft: rgba(212, 246, 76, 0.1);
-  --cc-accent-border: rgba(212, 246, 76, 0.28);
   /* 强调色「当前景文字/图标」时用此色（需对比度）；当填充/高亮时用 --cc-accent（品牌色）。 */
   /* 深色下青柠当字用对比度充足，与填充档同值；浅色另取墨色（见浅色块）。 */
   --cc-accent-text: #d4f64c;
@@ -175,8 +172,6 @@
   --sp-28: calc(28px * var(--cc-ui));
   --sp-30: calc(30px * var(--cc-ui));
   /* 卡片立体投影：接触阴影(贴边) + 较深远投影(浮起) + 顶部内高光(受光面) + 底部内暗边(厚度)。 */
-  --card-elev: 0 1px 2px rgba(0, 0, 0, 0.3), 0 6px 16px -3px rgba(0, 0, 0, 0.5),
-    inset 0 1px 0 rgba(255, 255, 255, 0.11), inset 0 -1px 0 rgba(0, 0, 0, 0.22);
   --card-elev-hover: 0 3px 6px rgba(0, 0, 0, 0.34), 0 14px 30px -4px rgba(0, 0, 0, 0.6),
     inset 0 1px 0 rgba(255, 255, 255, 0.15), inset 0 -1px 0 rgba(0, 0, 0, 0.24);
   /* 动效时长：transition / animation 的时长与延迟只许从这一组取（scripts/lint-tokens.mjs 拦写死的非零时长）。
@@ -354,8 +349,6 @@
   --cc-bg-rgb: 253, 253, 254;
   --scrollbar-thumb: rgba(0, 0, 0, 0.18);
   --scrollbar-thumb-hover: rgba(0, 0, 0, 0.3);
-  --sticker-scroll: rgba(0, 0, 0, 0.3);
-  --sticker-scroll-hover: rgba(0, 0, 0, 0.45);
   --grabber: rgba(0, 0, 0, 0.16);
   --grabber-active: rgba(0, 0, 0, 0.3);
   --caption-hover: rgba(0, 0, 0, 0.07);
@@ -369,7 +362,6 @@
   /* hover 下沉色：与 accent 同值时主按钮 hover 零反馈，取同族更深一档。 */
   --cc-accent-dim: #2a2c31;
   --cc-accent-soft: rgba(16, 17, 20, 0.06);
-  --cc-accent-border: rgba(16, 17, 20, 0.25);
   /* 浅色下强调色文字就是墨色：青柠字在白底上读不清，青柠只走 --cc-brand-line 画线。 */
   --cc-accent-text: #1b1d17;
   --cc-brand-line: #a9cc1f;
@@ -425,8 +417,6 @@
   --cc-tone-teal: #1f6878;
   --cc-tool-verb-weight: 400;
   /* 浅色下投影更淡、顶部高光用近白，模拟纸卡浮在暖白底上；底部一道极淡暗边强化厚度。 */
-  --card-elev: 0 1px 2px rgba(0, 0, 0, 0.09), 0 6px 16px -3px rgba(0, 0, 0, 0.16),
-    inset 0 1px 0 rgba(255, 255, 255, 0.9), inset 0 -1px 0 rgba(0, 0, 0, 0.05);
   --card-elev-hover: 0 3px 6px rgba(0, 0, 0, 0.12), 0 14px 30px -4px rgba(0, 0, 0, 0.22),
     inset 0 1px 0 rgba(255, 255, 255, 1), inset 0 -1px 0 rgba(0, 0, 0, 0.06);
 }
@@ -2568,7 +2558,6 @@ button.stab {
 /* 卡片/底栏立体投影：直接清零驱动变量（含 hover）。双属性版盖过浅色主题对该变量的重定义。 */
 :root[data-sticker-style="flat"],
 :root[data-sticker-style="flat"][data-theme="light"] {
-  --card-elev: none;
   --card-elev-hover: none;
 }
 /* 状态槽底面 token（--ind-face）：.stk-ind 与 .run-mask 必须同底色——run-mask 是
