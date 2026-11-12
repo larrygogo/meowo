@@ -191,6 +191,9 @@ export const zh = {
     cancel: "取消",
     launch: "启动",
     launching: "正在启动…",
+    // 启动分步状态（N-2，走查 2026-11-12）：勾了 worktree 时先建 worktree 再起 agent。
+    phaseWorktree: "正在创建 worktree…",
+    phaseStarting: (agent: string) => `正在启动 ${agent}…`,
     hooksMissing: "该 Agent 尚未接入，新会话可能不显示状态",
     hooksUnknown: "无法确认该 Agent 的接入状态",
     noAgents: "未检测到已安装的 AI CLI，请先安装",
@@ -212,7 +215,8 @@ export const zh = {
     repairHooksTip: "重写接入配置，新会话不显示状态时点它",
     // 修复在后端进程内完成，没有「终端里的修复日志」可看——指向真实可行的下一步。
     repairFailed: "修复未生效，请重试或重装该 Agent",
-    repairNeedLogin: "请先在终端登录该 Agent，再点修复连接。",
+    // 不叫人「去终端登录」（2026-11-12 第三轮 #13）：登录入口就在同一块提示里的「登录」按钮。
+    repairNeedLogin: "该 Agent 还没登录，登录后再点修复连接。",
     repairNoReporter: "缺少组件 meowo-reporter，请重新安装 Meowo。",
     repairNotDetected: "未检测到该 Agent 的数据目录，请确认已安装。",
     newButton: "新建会话",

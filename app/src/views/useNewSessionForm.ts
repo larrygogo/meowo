@@ -55,6 +55,9 @@ export function useNewSessionForm(startCwd: string, startProvider: AgentId | nul
   const [recent, setRecent] = useState<string[]>([]);
   const [hooks, setHooks] = useState<Record<string, HooksStatus>>({});
   const [busy, setBusy] = useState(false);
+  // 启动进行到哪一步（N-2，走查 2026-11-12）：勾了 worktree 时先同步建 worktree（≤2s）再起 agent，
+  // 原先这段只有发送钮在转圈，看不出是在建 worktree 还是卡住了。null = 没在启动。
+  const [phase, setPhase] = useState<"worktree" | "starting" | null>(null);
   // state 要到下一次 render 才更新；同一事件批次里的双击必须用 ref 同步挡住第二次 IPC。
   const launchPendingRef = useRef(false);
   const [repairing, setRepairing] = useState(false);
@@ -201,9 +204,11 @@ export function useNewSessionForm(startCwd: string, startProvider: AgentId | nul
       // 选的是仓库子目录（repo/app）时会话开在 worktree 里同一子目录，后端给的 sessionCwd；
       // 旧后端没有这个字段时退回 worktree 根目录。
       if (worktree.enabled) {
+        setPhase("worktree");
         const wt = await worktree.create(dir, provider);
         dir = wt.sessionCwd || wt.path;
       }
+      setPhase("starting");
       const tempId = await newSession(dir, provider, opts);
       saveStoredOpts(provider, opts); // 启动成功才记：失败的组合不该成为下次的默认
       return { tempId };
@@ -211,6 +216,7 @@ export function useNewSessionForm(startCwd: string, startProvider: AgentId | nul
       launchPendingRef.current = false;
       setError(formatBackendError(e, t.locale));
       setBusy(false);
+      setPhase(null);
       return null;
     }
   }
@@ -267,7 +273,7 @@ export function useNewSessionForm(startCwd: string, startProvider: AgentId | nul
   const needLogin = loggedIn?.[provider] === false;
 
   return {
-    cwd, setCwd, provider, setProvider, recent, hooks, busy, repairing, error, setError,
+    cwd, setCwd, provider, setProvider, recent, hooks, busy, phase, repairing, error, setError,
     agents, avail, opts, setOpts, loggedIn, activeProfiles, relayPins, loginOperations,
     swappedFrom, launchOptions, canLaunch, launch, repairHooks, doLogin, cancelLoginWait, warn, needLogin,
     worktree,

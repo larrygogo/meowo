@@ -3614,9 +3614,10 @@ body:not(.remote-ui) .ns-actions .ns-btn { height: var(--btn-h-lg); min-width: 7
 .nsp-ws-item.is-action .nsp-ws-item-name { color: var(--cc-text-dim); }
 .nsp-ws-item.is-action:hover .nsp-ws-item-name { color: var(--cc-text); }
 .nsp-send { flex: none; width: var(--icon-button-md); height: var(--icon-button-md); padding: 0; display: grid; place-items: center; border: 0; border-radius: 50%; color: var(--cc-on-accent); background: var(--cc-accent); cursor: pointer; transition: background var(--dur-fast) var(--ease-in-out), transform var(--dur-fast) var(--ease-out); }
-.nsp-send:hover:not(:disabled) { background: var(--cc-accent-dim); }
-.nsp-send:active:not(:disabled) { transform: scale(.98); }
-.nsp-send:disabled { color: var(--cc-text-faint); background: var(--fill-selected); cursor: default; }
+.nsp-send:hover:not(:disabled):not([aria-disabled="true"]) { background: var(--cc-accent-dim); }
+.nsp-send:active:not(:disabled):not([aria-disabled="true"]) { transform: scale(.98); }
+/* 启动中/粘贴落盘中用 aria-disabled（N-1：真 disabled 会把焦点踢到 body），外观与 disabled 同。 */
+.nsp-send:disabled, .nsp-send[aria-disabled="true"] { color: var(--cc-text-faint); background: var(--fill-selected); cursor: default; }
 .nsp-spin { width: 14px; height: 14px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: nsp-spin var(--dur-spin) linear infinite; }
 @keyframes nsp-spin { to { transform: rotate(360deg); } }
 /* 新建页「最近会话」（对照 Kimi）：输入框下方一小列，行 = agent 图标 + 标题 + 紧凑时间，与侧栏会话行同语汇。 */

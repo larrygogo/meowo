@@ -104,7 +104,8 @@ describe("新建会话页（对话窗主区，对照 Kimi）", () => {
     fireEvent.change(input, { target: { value: "看图" } });
     await waitFor(() => expect(api.savePastedAttachment).toHaveBeenCalled());
     fireEvent.keyDown(input, { key: "Enter" });
-    expect((screen.getByTestId("nsp-send") as HTMLButtonElement).disabled).toBe(true);
+    // 落盘期间发送钮是 aria-disabled（N-1：不用 disabled 踢走焦点），回车/点击都被拦下。
+    expect(screen.getByTestId("nsp-send").getAttribute("aria-disabled")).toBe("true");
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(api.newSession).not.toHaveBeenCalled();
     finish("C:/tmp/meowo-paste/1-0/shot.png");
@@ -147,6 +148,37 @@ describe("新建会话页（对话窗主区，对照 Kimi）", () => {
     await screen.findByTestId("nsp-error");
     expect(onLaunched).not.toHaveBeenCalled();
     expect((screen.getByTestId("nsp-input") as HTMLTextAreaElement).value).toBe("你好");
+  });
+
+  /// N-1（走查 2026-11-12）：启动期间输入框原先 disabled，聚焦控件被禁用后焦点掉到 body，
+  /// 失败后要先点回输入框。兄弟场景：点发送钮启动（焦点在钮上）与回车启动（焦点在输入框）都测。
+  it("启动失败后焦点回到输入框，不掉到 body", async () => {
+    let reject: (reason: unknown) => void = () => {};
+    api.newSession.mockImplementation(() => new Promise((_, fail) => { reject = fail; }));
+    render(<NewSessionPage prefill={{}} onLaunched={vi.fn()} />);
+    await waitFor(() => expect(screen.getByTestId("nsp-workspace").textContent).toContain("meowo"));
+    const input = screen.getByTestId("nsp-input") as HTMLTextAreaElement;
+    fireEvent.change(input, { target: { value: "帮我修登录" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(api.newSession).toHaveBeenCalled());
+    // 启动中：只读而不是禁用，焦点还在。
+    expect(input.disabled).toBe(false);
+    expect(input.readOnly).toBe(true);
+    expect(document.activeElement).toBe(input);
+    reject("terminal/cwd_missing");
+    await screen.findByTestId("nsp-error");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(document.activeElement).toBe(input);
+    expect(input.value).toBe("帮我修登录");
+
+    // 点发送钮启动：钮在启动中保持可聚焦（aria-disabled），失败后同样回到输入框。
+    api.newSession.mockRejectedValue("terminal/cwd_missing");
+    const send = screen.getByTestId("nsp-send");
+    send.focus();
+    fireEvent.click(send);
+    await waitFor(() => expect(api.newSession).toHaveBeenCalledTimes(2));
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(document.activeElement).toBe(input);
   });
 
   it("拖进窗口的文件夹设为工作区，拖进文件则说明不是文件夹", async () => {
