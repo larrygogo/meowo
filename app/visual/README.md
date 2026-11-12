@@ -71,7 +71,7 @@ bun run visual:compare <基线目录> <新目录>
 | `panel-files` | 右侧面板「文件」页签 | 620 / 1280 |
 | `mobile-settings` / `-new` / `-gate*` / `-boot` / `-keys` / `-list-empty` / `-list-error` | 手机页其余状态：设置屏、新建会话浮层、配对门各态、加载占位、终端画面兜底、列表空态与首载失败（只拍 dpr 2） | 375（部分加 430） |
 | `mobile-question` / `mobile-tasks` | 手机对话页换成问答卡（矮屏下选项可见性，量测脚本用，不进矩阵）/ 派过后台 Bash（一条在跑、三条跑完）与一个在跑的子代理（`qa-m-tasks*`、`qa-m-subagents` 从它点开后台任务面板） | 375 / 430 |
-| `mobile-*-kbd` / `-land` / `-ipad` / `-ipadland` | 同一场景换视口：键盘弹出（375×476、375×376）、横屏 812×375、iPad 820×1180 与 1180×820 | 见文件名 |
+| `mobile-*-kbd` / `-land` / `-ipad` / `-ipadland` | 同一场景换视口：键盘弹出（375×476、375×376）、横屏 812×375、iPad 820×1180 与 1180×820。覆盖 `mobile-list` / `-chat` / `-changes` / `-settings`。**只拍 dpr 2**，文件名带高度（`w375h376`），按 `dpr1` 筛基础矩阵时看不到它们 | 见文件名 |
 | `qa-*` | 补看场景（`qa-scenes.mjs`）：要靠真实点击、悬停、键盘才出现的弹层与状态（斜杠菜单、@ 补全、模型菜单与模型市场、截图标注、重命名、Lead 关卡卡、Broker 审批、屏幕识别的五种交互卡、同步中断、worktree setup、排队消息、灯箱、区内搜索、侧栏各态、会话管理页、右侧面板的 Markdown / 浏览器 / 终端页签、托管终端页签、设置窗的更新状态 / 下拉 / 聚焦 / 保存失败、手机底部面板），以及缩放 150%、英文、2560 超宽。假数据在 `qaFlow.ts`（harness 场景名 `flow-<名字>`） | 见各条 `size` |
 
 每个场景都拍深色、浅色两种主题，dpr 1 和 2。语言默认只拍中文，`chat` 与 `mobile-chat` 另加英文。
@@ -87,6 +87,7 @@ bun run visual:compare <基线目录> <新目录>
 - 每张图都要连续两次截图字节完全一致才落盘，否则多推一步时钟重拍，6 次还不一致就报错。
 - 页面报错、资源 4xx/5xx（比如字体被拒）、缺少场景的关键元素，都按失败处理，不会把坏图拍进基线。失败现场图在 `<输出目录>/_failed/`。
 - 正式开拍前有一遍预热（每个场景用 800×600 的小视口各开一次，只为让 vite 把模块转译完）。预热不检查关键元素、也不留现场图：这个宽度下侧栏是收起的，找不到侧栏里的元素是正常的。
+- 安全区（刘海、home 横条）：Playwright 的设备模拟里 `env(safe-area-inset-*)` 恒为 0。场景上写 `safeArea: { top, bottom, left, right }`，`shoot.mjs` 用 Chromium 的 CDP（`Emulation.setSafeAreaInsetsOverride`）覆盖这组值，`qa-m-changes-safe` 就是这么拍的。只在 Chromium 下生效，`--engine webkit` 时跳过；这只验证 CSS 取到了值，不等于真机验证。
 - 桌面 harness 关掉了 WebGL，xterm 退回 DOM 渲染：WebGL 画布在截图那一帧是空的，托管终端场景（`qa-term*`）会整片漆黑。所以这些图验证的是终端的排版、配色、搜索命中与链接提示，不验证 WebGL 渲染器本身。
 
 ## 注意

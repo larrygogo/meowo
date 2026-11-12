@@ -150,6 +150,11 @@ const MOBILE_EXTRA = [
   { scene: "mobile-chat", tag: "ipad", sel: ".chat-approval-actions", sizes: [{ w: 820, h: 1180 }] },
   // iPad 横屏走宽屏双栏：设置入口是侧栏头的齿轮。
   { scene: "mobile-chat", tag: "ipadland", sel: ".chat-approval-actions", sizes: [{ w: 1180, h: 820 }] },
+  // 「更改」页与设置屏的横屏、iPad（2026-11-12 补：上一轮审查这两页只有竖屏图）。
+  { scene: "mobile-changes", tag: "land", sel: ".scm-row", sizes: [{ w: 812, h: 375 }] },
+  { scene: "mobile-changes", tag: "ipad", sel: ".scm-row", sizes: [{ w: 820, h: 1180 }] },
+  { scene: "mobile-changes", tag: "ipadland", sel: ".scm-row", sizes: [{ w: 1180, h: 820 }] },
+  { scene: "mobile-settings", tag: "land", sel: ".remote-settings-screen .pswitch", sizes: [{ w: 812, h: 375 }] },
 ];
 // 英文只挑两个文案最密的场景跑全矩阵，其余只拍中文。
 const EN_SCENES = new Set(["chat", "mobile-chat"]);
@@ -258,6 +263,12 @@ async function shootOne(browser, base, shot, outDir, dryRun = false) {
     await ctx.clock.install({ time: FIXED_NOW });
     await ctx.clock.pauseAt(FIXED_NOW + 1000);
     const page = await ctx.newPage();
+    // 安全区：Playwright 的设备模拟不带 env(safe-area-inset-*)，截图里恒为 0，刘海和 home 横条相关的规则拍不出来。
+    // Chromium 的 CDP 能覆盖这组值（场景上写 safeArea: { top, bottom, left, right }）；WebKit 没有对应接口，跳过。
+    if (shot.safeArea && browser.browserType().name() === "chromium") {
+      const cdp = await ctx.newCDPSession(page);
+      await cdp.send("Emulation.setSafeAreaInsetsOverride", { insets: shot.safeArea });
+    }
     page.on("pageerror", (e) => errors.push("pageerror: " + e.message));
     const warnings = [];
     page.on("console", (m) => { if (m.type() === "error") warnings.push("console: " + m.text()); });
