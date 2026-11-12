@@ -4981,10 +4981,11 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-diff-panel { --view-col: 1200px; --view-col-pad: max(0px, (100% - var(--view-col)) / 2); }
 /* --view-col-pad 里的 var() 在声明它的元素上就算完了，子元素继承到的是算好的 1200 版本，所以换列宽时两个变量要一起重写。 */
 .chat-files-preview:has(> .chat-diff-scroll > .chat-diff-mdview) { --view-col: 880px; --view-col-pad: max(0px, (100% - var(--view-col)) / 2); }
-.chat-diff-filehead { padding-inline: calc(var(--view-col-pad) + var(--sp-10)); }
+/* var() 都带 0px 兜底：这几条规则的元素万一渲染在 .chat-diff-panel 之外，变量取不到时整条声明会作废，头行连原有的内边距都丢。 */
+.chat-diff-filehead { padding-inline: calc(var(--view-col-pad, 0px) + var(--sp-10)); }
 /* Markdown 预览：头行的墨迹落在正文那一列上。正文左右内边距是 --sp-24；返回钮自带 --sp-6 的左内边距，
    所以左边少留 6，箭头正好压在正文左缘；「打开」的右缘压在正文右缘。 */
-.chat-files-preview:has(> .chat-diff-scroll > .chat-diff-mdview) > .chat-diff-filehead { padding-left: calc(var(--view-col-pad) + var(--sp-24) - var(--sp-6)); padding-right: calc(var(--view-col-pad) + var(--sp-24)); }
+.chat-files-preview:has(> .chat-diff-scroll > .chat-diff-mdview) > .chat-diff-filehead { padding-left: calc(var(--view-col-pad, 0px) + var(--sp-24) - var(--sp-6)); padding-right: calc(var(--view-col-pad, 0px) + var(--sp-24)); }
 .chat-diff-back { flex: 0 0 auto; display: inline-flex; align-items: center; gap: var(--sp-2); min-height: calc(var(--btn-h-sm) * var(--cc-ui)); padding: 0 var(--sp-6); border: 0; border-radius: var(--radius-md); background: transparent; color: var(--cc-text-dim); font-size: var(--text-xs); white-space: nowrap; cursor: pointer; }
 .chat-diff-back:hover { background: var(--fill-hover); color: var(--cc-text); }
 .chat-diff-filehead .chat-diff-path { font-family: var(--cc-mono); font-size: var(--text-xs); color: var(--cc-text-dim); }
@@ -5002,7 +5003,7 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-diff-scroll { flex: 1; min-height: 0; overflow: auto; }
 /* 正文跟头行走同一条内容列（见 .chat-diff-filehead 上的说明）：留白加在滚动容器上，pre 的
    min-width:100% 与增删行的底色于是只铺到列宽，不再拉成两千多 px 的色条；超长行照旧横向滚动。 */
-.chat-diff-scroll { padding-inline: var(--view-col-pad); }
+.chat-diff-scroll { padding-inline: var(--view-col-pad, 0px); }
 /* 代码字体栈与 .chat-md pre code 保持一致（Windows 落到 Cascadia Code/Consolas，
    含 CJK 回退）；裸 ui-monospace, monospace 在 Windows 会掉到点阵感的默认等宽。 */
 .chat-diff-text { margin: 0; width: max-content; min-width: 100%; padding: var(--sp-10) 0; font-family: var(--cc-mono); font-size: var(--text-xs); line-height: var(--leading-normal); color: var(--cc-text); }
@@ -5122,7 +5123,7 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
   .chat-files > .chat-files-preview, .chat-files:not(.has-selection) > .chat-files-preview { display: flex; }
   .chat-files .chat-files-preview .chat-diff-back { display: none; }
   /* 并排时返回钮藏了，Markdown 预览头行第一个是树面板开关（22px 的格、14px 图标，墨迹内缩 4px）：左边少留 4，图标压在正文左缘。 */
-  .chat-files-preview:has(> .chat-diff-scroll > .chat-diff-mdview) > .chat-diff-filehead { padding-left: calc(var(--view-col-pad) + var(--sp-24) - 4px); }
+  .chat-files-preview:has(> .chat-diff-scroll > .chat-diff-mdview) > .chat-diff-filehead { padding-left: calc(var(--view-col-pad, 0px) + var(--sp-24) - 4px); }
   .chat-files .chat-files-posbtn, .chat-files .chat-files-treetoggle { display: inline-flex; }
   /* 分隔条：一道细线，两侧各放宽 3px 好抓。 */
   .chat-files > .chat-files-resizer { display: block; flex: 0 0 var(--hairline); position: relative; z-index: var(--z-raised); background: var(--cc-border); cursor: col-resize; outline: none; }

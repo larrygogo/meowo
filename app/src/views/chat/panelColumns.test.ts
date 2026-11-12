@@ -15,8 +15,8 @@ describe("单文件视图：头行与正文同一条内容列", () => {
   // 2560 最大化时「返回」在 x=250、「打开」右缘在 x=2542，代码只到 x≈800；
   // Markdown 正文在 1102–1914，头行却在 474–2542。
   it("头行和滚动区都按 --view-col-pad 留白", () => {
-    expect(all(".chat-diff-filehead")).toContain("padding-inline: calc(var(--view-col-pad) + var(--sp-10))");
-    expect(all(".chat-diff-scroll")).toContain("padding-inline: var(--view-col-pad)");
+    expect(all(".chat-diff-filehead")).toContain("padding-inline: calc(var(--view-col-pad, 0px) + var(--sp-10))");
+    expect(all(".chat-diff-scroll")).toContain("padding-inline: var(--view-col-pad, 0px)");
   });
   it("Markdown 预览换列宽时两个变量一起重写，正文不再自带 max-width", () => {
     const md = rule(".chat-files-preview:has(> .chat-diff-scroll > .chat-diff-mdview)");
