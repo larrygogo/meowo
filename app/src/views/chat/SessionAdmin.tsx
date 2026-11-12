@@ -18,6 +18,7 @@ import { CheckIcon } from "../sticker/icons";
 import { Icon } from "../../icons/Icon";
 import { icArrowUpRight, icChevronLeft, icUndo } from "../../icons/glyphs.chat";
 import { icChevronDown, icCircleCheck, icSearch } from "../../icons/glyphs";
+import { busyProps } from "../../busyButton";
 
 type Status = "all" | "open" | "done";
 type Filters = { workspaces: string[]; status: Status; days: number | null };
@@ -372,7 +373,7 @@ export function SessionAdmin({ onBack, onOpen, initialWorkspaces = [], initialSt
               <button type="button" className="sa-btn-q" onClick={() => { setDraft(DEFAULT_FILTERS); query(DEFAULT_FILTERS); }}>{t.admin.reset}</button>
               {/* 只在看「已完成」时出现：清理对象就是已完成会话的 worktree。 */}
               {applied.status === "done" && (
-                <button type="button" className="sa-btn-q" disabled={cleaning} onClick={() => void cleanWorktrees()}>
+                <button type="button" className="sa-btn-q" {...busyProps(cleaning, () => void cleanWorktrees())}>
                   {cleaning ? t.worktree.batchScanning : t.worktree.batch}
                 </button>
               )}
@@ -382,7 +383,7 @@ export function SessionAdmin({ onBack, onOpen, initialWorkspaces = [], initialSt
             <div className="sa-batch" role="toolbar" aria-label={t.admin.batchSelected(selected.size)}>
               <span className="sa-batch-count">{allMatching ? t.admin.allMatchingSelected(selected.size) : t.admin.batchSelected(selected.size)}</span>
               {!allMatching && pageAllOn && total > pageRows.length && (
-                <button type="button" className="sa-batch-link" disabled={materializing} onClick={() => void selectAllMatching()}>
+                <button type="button" className="sa-batch-link" {...busyProps(materializing, () => void selectAllMatching())}>
                   {materializing ? t.admin.materializingAll : t.admin.selectAllMatching(total)}
                 </button>
               )}

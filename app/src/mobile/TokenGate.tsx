@@ -8,6 +8,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { getToken, setToken, clearToken, onAuthLost, parsePairingInput, probeToken, primeFileToken } from "./transport";
 import { useT } from "../i18n";
 import logoUrl from "../../src-tauri/icons/128x128@2x.png";
+import { busyProps } from "../busyButton";
 
 export function TokenGate({ children, onReady }: { children: ReactNode; onReady?: () => void }) {
   const t = useT();
@@ -76,7 +77,7 @@ export function TokenGate({ children, onReady }: { children: ReactNode; onReady?
           placeholder={t.remote.gateTokenLabel}
           aria-label={t.remote.gateTokenLabel}
         />
-        <button className="btn-primary" onClick={submit} disabled={!manual.trim() || checking}>
+        <button className="btn-primary" disabled={!manual.trim()} {...busyProps(checking, submit)}>
           {checking ? t.remote.gateConnecting : t.remote.gateConnect}
         </button>
       </div>

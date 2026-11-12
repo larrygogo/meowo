@@ -17,6 +17,7 @@ import { Segmented, Switch } from "./widgets";
 import { Dropdown } from "../menu";
 import { Icon } from "../../icons/Icon";
 import { icChevronDown, icRefresh } from "../../icons/glyphs";
+import { busyProps } from "../../busyButton";
 
 type AccessMode = "official" | "relay";
 
@@ -237,9 +238,8 @@ function ModelPicker({
         type="button"
         data-tip={refreshLabel}
         aria-label={refreshLabel}
-        disabled={loading}
         onMouseDown={(e) => e.preventDefault()}
-        onClick={() => { setOpen(true); onRefresh(); }}
+        {...busyProps(loading, () => { setOpen(true); onRefresh(); })}
       >
         <Icon glyph={icRefresh} size={14} />
       </button>

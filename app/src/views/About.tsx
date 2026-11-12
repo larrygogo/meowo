@@ -29,6 +29,7 @@ import { SETTINGS_SECTION_KEY } from "../settingsNav";
 import { Icon } from "../icons/Icon";
 import { icClose, icContrast, icGlobe, icSearch, icSettings } from "../icons/glyphs";
 import { icBot, icCards, icInfo, icKeyboard, icPuzzle, icSmartphone } from "../icons/glyphs.settings";
+import { busyProps } from "../busyButton";
 
 const REPO = "github.com/larrygogo/meowo";
 const REPO_URL = "https://github.com/larrygogo/meowo";
@@ -639,7 +640,7 @@ function ArchivedSessions() {
           ))}
           {cursor !== null && (
             <div className="row archived-more-row">
-              <button type="button" className="sbtn" disabled={loadingMore} onClick={() => loadPage(cursor)}>
+              <button type="button" className="sbtn" {...busyProps(loadingMore, () => loadPage(cursor))}>
                 {loadingMore ? t.chat.sidebarLoading : t.settings.archivedLoadMore}
               </button>
             </div>

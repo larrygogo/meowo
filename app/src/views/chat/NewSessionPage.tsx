@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { type AgentId, type LiveSession, agentName, getSessionAdminPage, listSubdirectories, savePastedAttachment } from "../../api";
@@ -21,6 +21,7 @@ import { WorkspacePicker } from "./WorkspacePicker";
 import { WorktreeOption } from "../WorktreeOption";
 import { Icon } from "../../icons/Icon";
 import { icArrowUp, icShield } from "../../icons/glyphs.chat";
+import { busyProps } from "../../busyButton";
 
 /// 对话窗里的新建会话页（对照 Kimi Code：新建会话不弹窗，主区就地换成一个输入框，
 /// 上方是工作区选择，下面一排 Agent / 启动选项的小下拉，写下第一句话发出去就开聊）。
@@ -171,12 +172,12 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched, onOpenSession
               {attachments.map((file) => (
                 <div className={"chat-attachment" + (file.image ? " is-image" : "")} key={file.path} data-tip={file.path}>
                   {file.image ? <ImageRef path={file.path} /> : <span className="chat-file-name">{file.name}</span>}
-                  <button type="button" data-attachment-remove="" aria-label={`${t.chat.removeAttachment} ${file.name}`} disabled={busy}
-                    onClick={(event) => {
+                  <button type="button" data-attachment-remove="" aria-label={`${t.chat.removeAttachment} ${file.name}`}
+                    {...busyProps(busy, (event: MouseEvent<HTMLButtonElement>) => {
                       // 同对话页 composer（走查 C-10 的兄弟场景）：焦点交给下一个「×」，没有了回输入框。
                       focusAfterRemoval(event.currentTarget, { list: ".chat-attachments", item: "[data-attachment-remove]", fallback: () => textRef.current });
                       setAttachments((items) => items.filter((item) => item.path !== file.path));
-                    }}>×</button>
+                    })}>×</button>
                 </div>
               ))}
             </div>
@@ -265,7 +266,7 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched, onOpenSession
           {avail && avail.length > 0 && warn && (
             <div className="nsp-note is-warn">
               <span>{hooks[provider] === "unknown" ? t.newSession.hooksUnknown : t.newSession.hooksMissing}</span>
-              <button type="button" className="nsp-note-btn" onClick={() => void form.repairHooks()} disabled={repairing}>
+              <button type="button" className="nsp-note-btn" {...busyProps(repairing, () => void form.repairHooks())}>
                 {repairing ? t.newSession.repairingHooks : t.newSession.repairHooks}
               </button>
             </div>

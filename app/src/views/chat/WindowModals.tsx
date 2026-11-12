@@ -12,6 +12,7 @@ import { formatBackendError } from "../../i18n/errors";
 import { parentSegment } from "../../paths";
 import { isMac } from "../../platform";
 import { AppModal } from "../AppModal";
+import { busyProps } from "../../busyButton";
 
 /** 重命名会话的独立 modal（用户指定，不做就地编辑）。Enter 保存、Esc/取消/点遮罩关闭；
  *  失败原因就地显示在弹层里，不静默吞。 */
@@ -54,7 +55,7 @@ export function RenameModal({ initial, onSubmit, onClose, t }: {
       {error && <div className="chat-modal-error" role="alert">{error}</div>}
       <div className="chat-modal-actions">
         <button type="button" className="ns-btn" onClick={onClose}>{t.newSession.cancel}</button>
-        <button type="button" className="ns-btn btn-primary" disabled={!value.trim() || saving} onClick={() => void submit()}>{t.chat.renameSave}</button>
+        <button type="button" className="ns-btn btn-primary" disabled={!value.trim()} {...busyProps(saving, () => void submit())}>{t.chat.renameSave}</button>
       </div>
     </AppModal>
   );

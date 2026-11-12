@@ -17,6 +17,7 @@ import { remoteUi } from "../remoteMode";
 import { WorktreeOption } from "./WorktreeOption";
 import { Icon } from "../icons/Icon";
 import { icFolder } from "../icons/glyphs";
+import { busyProps } from "../busyButton";
 
 function FolderIcon() {
   return (
@@ -383,8 +384,7 @@ export function NewSessionPanel({ onClose, prefill, onLaunched }: {
                 type="button"
                 className="ns-repair"
                 data-testid="ns-repair-hooks"
-                onClick={repairHooks}
-                disabled={repairing}
+                {...busyProps(repairing, repairHooks)}
               >
                 {repairing ? t.newSession.repairingHooks : t.newSession.repairHooks}
               </button>
@@ -439,8 +439,9 @@ export function NewSessionPanel({ onClose, prefill, onLaunched }: {
           type="button"
           className="ns-btn btn-primary"
           data-testid="ns-launch"
-          disabled={!canLaunch}
-          onClick={launch}
+          // 启动中只标 aria-disabled（做空第一轮 #4）：canLaunch 含 !busy，直接 disabled 会在点下的瞬间把焦点踢到 body。
+          disabled={!canLaunch && !busy}
+          {...busyProps(busy, launch)}
         >
           {busy ? t.newSession.launching : t.newSession.launch}
         </button>

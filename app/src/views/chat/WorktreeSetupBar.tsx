@@ -4,6 +4,7 @@ import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
 import { useTauriEvent } from "../../hooks/useTauriEvent";
 import { AppModal } from "../AppModal";
+import { busyProps } from "../../busyButton";
 
 /// 会话页顶部的 setup 进度条（包 5）：在新 worktree 里开的会话，setup 在后台跑，会话不等它。
 /// 这里能看日志、跳过、重跑；脚本没信任过时给「查看脚本」，在确认框里看原文后再跑。
@@ -111,7 +112,7 @@ export function WorktreeSetupBar({ cwd }: { cwd: string | null }) {
         {detail && <span className="wt-setup-detail">{detail}</span>}
         <span className="wt-setup-actions">
           {state === "needs_trust" && (
-            <button type="button" className="wt-opt-btn" data-testid="wt-setup-review" disabled={busy} onClick={() => setTrustOpen(true)}>{t.wtnew.review}</button>
+            <button type="button" className="wt-opt-btn" data-testid="wt-setup-review" {...busyProps(busy, () => setTrustOpen(true))}>{t.wtnew.review}</button>
           )}
           {state !== "needs_trust" && (
             <button type="button" className="wt-opt-btn" data-testid="wt-setup-log" onClick={() => { setLogOpen((open) => !open); void refresh(); }}>
@@ -119,10 +120,10 @@ export function WorktreeSetupBar({ cwd }: { cwd: string | null }) {
             </button>
           )}
           {canRerun && (
-            <button type="button" className="wt-opt-btn" data-testid="wt-setup-rerun" disabled={busy} onClick={() => void act("rerun")}>{t.wtnew.rerun}</button>
+            <button type="button" className="wt-opt-btn" data-testid="wt-setup-rerun" {...busyProps(busy, () => void act("rerun"))}>{t.wtnew.rerun}</button>
           )}
           {canSkip && (
-            <button type="button" className="wt-opt-btn" data-testid="wt-setup-skip" disabled={busy} onClick={() => void act("skip")}>{t.wtnew.skip}</button>
+            <button type="button" className="wt-opt-btn" data-testid="wt-setup-skip" {...busyProps(busy, () => void act("skip"))}>{t.wtnew.skip}</button>
           )}
           {settled && (
             <button type="button" className="wt-opt-btn" data-testid="wt-setup-dismiss" aria-label={t.wtnew.dismiss} data-tip={t.wtnew.dismiss} onClick={() => setDismissed(roundKey)}>×</button>
@@ -170,8 +171,8 @@ export function TrustDialog({ setup, busy, error, onRun, onSkip, onClose }: {
         <p className="wt-trust-note">{t.wtnew.trustNote}</p>
         {error && <p className="wt-setup-error" role="alert">{error}</p>}
         <div className="wt-trust-actions">
-          <button type="button" className="wt-opt-btn" data-testid="wt-trust-skip" disabled={busy} onClick={onSkip}>{t.wtnew.skip}</button>
-          <button type="button" className="wt-opt-btn btn-primary" data-testid="wt-trust-run" disabled={busy || !setup.configHash} onClick={onRun}>{t.wtnew.trustRun}</button>
+          <button type="button" className="wt-opt-btn" data-testid="wt-trust-skip" {...busyProps(busy, onSkip)}>{t.wtnew.skip}</button>
+          <button type="button" className="wt-opt-btn btn-primary" data-testid="wt-trust-run" disabled={!setup.configHash} {...busyProps(busy, onRun)}>{t.wtnew.trustRun}</button>
         </div>
       </div>
     </AppModal>

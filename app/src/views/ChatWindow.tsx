@@ -90,6 +90,7 @@ import { WindowControls } from "./WindowControls";
 import { DevBadge } from "./DevBadge";
 import { isMac } from "../platform";
 import { remoteUi, SELECT_SESSION_EVENT } from "../remoteMode";
+import { busyProps } from "../busyButton";
 import { REMOTE_PREFS_EVENT, remoteTurnFolding } from "../remotePrefs";
 import { RemoteSessionList } from "../mobile/RemoteSessionList";
 import { performUndo } from "./chat/undoTerminal";
@@ -4336,7 +4337,7 @@ export function ChatWindow() {
               {/* 顶部哨兵：零高度的观察条，滚到它附近就自动补一段更早的历史（见 effect）。 */}
               <div ref={earlierSentinelRef} className="chat-earlier-sentinel" aria-hidden="true" />
               <div className="chat-load-earlier">
-                <button type="button" onClick={() => void loadEarlier()} disabled={loadingEarlier}>
+                <button type="button" {...busyProps(loadingEarlier, () => void loadEarlier())}>
                   {loadingEarlier ? t.chat.loadingEarlier : t.chat.loadEarlier}
                 </button>
                 {/* 失败不静默：按钮本身即重试，旁边这句负责说清「刚才是失败了」。 */}
@@ -4874,8 +4875,7 @@ export function ChatWindow() {
             <button
               type="button"
               className="chat-send-takeover"
-              disabled={sending}
-              onClick={() => { if (externalRunning) void takeoverAndRetry(() => {}); else resumeForChat(); }}
+              {...busyProps(sending, () => { if (externalRunning) void takeoverAndRetry(() => {}); else resumeForChat(); })}
             >{externalRunning ? t.chat.terminalTakeover : t.chat.resumeSession}</button>
           </div>
         </div>}
@@ -5477,8 +5477,7 @@ export function ChatWindow() {
               type="button"
               className="chat-send-button is-stop chat-stop-secondary"
               aria-label={interrupting ? t.chat.interrupting : t.chat.interruptNow}
-              onClick={() => sendInterrupt()}
-              disabled={interrupting}
+              {...busyProps(interrupting, () => sendInterrupt())}
             >
               {interrupting
                 ? <span className="chat-model-spinner" aria-hidden="true" />
@@ -5574,8 +5573,7 @@ export function ChatWindow() {
             <button
               type="button"
               className="chat-send-takeover"
-              disabled={sending}
-              onClick={() => { const retry = retryRef.current; void takeoverAndRetry(() => retry?.()); }}
+              {...busyProps(sending, () => { const retry = retryRef.current; void takeoverAndRetry(() => retry?.()); })}
             >{t.chat.terminalTakeover}</button>
           </>}
         </div>}
