@@ -14,6 +14,7 @@ import { RosterDecision } from "./RosterDecision";
 
 let approval: unknown = null;
 let gate: unknown = null;
+let question: unknown = null;
 const pending = (patch: (s: Item) => void = () => {}) => {
   const s = makeSession({ title: "乙", project: "p" });
   s.pending_review = "approval";
@@ -28,9 +29,10 @@ describe("名单行内的决定单", () => {
   beforeEach(() => {
     approval = null;
     gate = null;
+    question = null;
     invoke.mockReset();
     invoke.mockImplementation((cmd: string) => {
-      if (cmd === "pending_interaction") return Promise.resolve({ approval, question: null });
+      if (cmd === "pending_interaction") return Promise.resolve({ approval, question });
       if (cmd === "lead_task_snapshot") return Promise.resolve(gate ? { gate } : null);
       return Promise.resolve(undefined);
     });
@@ -85,5 +87,32 @@ describe("名单行内的决定单", () => {
     fireEvent.click(await screen.findByText("确认，开工"));
     fireEvent.click(screen.getByRole("button", { name: "提交" }));
     expect(invoke).toHaveBeenCalledWith("answer_lead_gate", { cwd: "C:/repo", gateId: "A-1", choice: "confirm", note: "" });
+  });
+
+  const ask2 = (id: number, answerable: boolean) => ({
+    sessionId: id, requestId: "q-1", provider: "claude", toolName: "AskUserQuestion", description: null, permissionSuggestions: [], answerable,
+    input: JSON.stringify({ questions: [{ question: "先做哪个？", header: "顺序", multiSelect: false, options: [{ label: "登录", description: "先修登录" }, { label: "支付", description: "先修支付" }] }] }),
+  });
+
+  it("Claude 的提问：行内点一个选项提交，答案按题面原文回给它", async () => {
+    const item = pending((s) => { s.pending_review = "question"; s.pty_managed = true; });
+    question = ask2(item.session.id, true);
+    render(<RosterDecision item={item} fallback={null} />);
+    await screen.findByText("顺序 · 先做哪个？");
+    const submit = screen.getByRole("button", { name: "提交选择" }) as HTMLButtonElement;
+    expect(submit.disabled).toBe(true);
+    fireEvent.click(screen.getByText("支付"));
+    fireEvent.click(submit);
+    expect(decisions()).toEqual([{ sessionId: item.session.id, requestId: "q-1", choice: `answers:${JSON.stringify({ "先做哪个？": "支付" })}` }]);
+    await screen.findByText("已处理");
+  });
+
+  it("答不了的提问（broker 没挂着等代答）：不摆作答卡，也不摆终端按键，说进现场作答", async () => {
+    const item = pending((s) => { s.pending_review = "question"; s.pty_managed = true; });
+    question = ask2(item.session.id, false);
+    render(<RosterDecision item={item} fallback={null} />);
+    await screen.findByText("它停在一个选择上，进入现场作答");
+    expect(screen.queryByRole("button", { name: "提交选择" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Esc" })).toBeNull();
   });
 });

@@ -344,8 +344,9 @@ function RosterItemView({ item, open, gitBadges, onToggle, onEnter, onPrefetch }
       </button>
       {open && (
         <div className="roster-sheet">
-          {/* 最近几步在上、它最后说的话在下，顺着时间读。待处理的行不摆：那里要紧的是决定单。 */}
-          {tone !== "pending" && id > 0 && <Suspense fallback={null}><RosterGlance sessionId={id} /></Suspense>}
+          {/* 最近几步在上、它最后说的话在下，顺着时间读。待处理的行只摆三步：做决定要知道它是怎么走到
+              这一步的，但不能把决定单挤到屏幕外面（做空审查第二轮：终态要求「之前几步」在手边）。 */}
+          {id > 0 && <Suspense fallback={null}><RosterGlance sessionId={id} count={tone === "pending" ? 3 : undefined} /></Suspense>}
           {/* 出错的行把错误原文摆出来：行里那一句只是个短标签。 */}
           {tone === "error" && item.error_raw && <pre className="roster-error">{item.error_raw}</pre>}
           {/* 它最后说的话是 Markdown 原文：照对话窗那样渲染，不把星号和反引号直接摆出来（真机实拍）。 */}

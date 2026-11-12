@@ -37,7 +37,7 @@ export function lastSteps(items: readonly ChatItem[], count: number, label: (nam
   return steps.reverse();
 }
 
-export function RosterGlance({ sessionId }: { sessionId: number }) {
+export function RosterGlance({ sessionId, count = STEPS }: { sessionId: number; count?: number }) {
   const t = useT();
   // 这条会话的首屏已经在缓存里（刚看过，或手机上点开时预取到了）就直接用，不再读一遍。
   const [items, setItems] = useState<readonly ChatItem[] | null>(() => (recallHistory(sessionId)?.history.items as ChatItem[] | undefined) ?? null);
@@ -68,7 +68,7 @@ export function RosterGlance({ sessionId }: { sessionId: number }) {
     const at = new Date(iso);
     return Number.isNaN(at.getTime()) ? "" : new Intl.DateTimeFormat(t.locale, { hour: "2-digit", minute: "2-digit", hour12: false }).format(at);
   };
-  const steps = lastSteps(items, STEPS, (name) => toolShortName(name, toolKind(name), t), clock);
+  const steps = lastSteps(items, count, (name) => toolShortName(name, toolKind(name), t), clock);
   if (steps.length === 0) return null;
   return (
     <ol className="roster-steps" aria-label={t.roster.recentSteps}>

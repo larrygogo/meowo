@@ -7960,6 +7960,8 @@ button.btn-primary:disabled { opacity: 1; background: var(--fill-selected); colo
 .roster-sheet { padding: 2px 16px 14px 68px; }
 /* 最近几步：时间 · 动作 · 对象，一步一行不折行。报错的那一步对象标红。 */
 .roster-steps { list-style: none; margin: 0 0 10px; padding: 0; max-width: 72ch; }
+/* 矮窗里待处理的行不摆「最近几步」：命令和按钮要在首屏，步骤让给它们（620×480 截图实拍：三步把按钮挤到折叠线下）。 */
+@media (max-height: 640px) { .roster-item.is-pending .roster-steps { display: none; } }
 .roster-steps li { display: grid; grid-template-columns: 40px 64px minmax(0, 1fr); column-gap: 12px; font-size: var(--text-xs); line-height: 22px; color: var(--cc-text-dim); white-space: nowrap; }
 .roster-step-time { font-family: var(--cc-mono); color: var(--cc-text-faint); font-variant-numeric: tabular-nums; }
 .roster-step-name { color: var(--cc-text-faint); overflow: hidden; text-overflow: ellipsis; }

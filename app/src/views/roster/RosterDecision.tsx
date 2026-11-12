@@ -1,14 +1,17 @@
 // 名单行内的决定单：轮到你的那一行点开后，批准 / 拒绝 / 拍板就在原位做，不用先进那个会话。
 // 卡片本体复用对话窗里的同一套（BrokerApprovalCard、LeadGateCard），行为一处维护；
 // 这里只管「不打开会话也拿到那条待处理」和「答完之后怎么收」。
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { pendingInteraction, resolvePendingApproval, type FocusSessionResult, type PendingApproval } from "../../api";
 import { useTauriEvent } from "../../hooks/useTauriEvent";
 import { useVisibleInterval } from "../../hooks/useVisibleInterval";
 import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
+import { ApprovalCard } from "../chat/ApprovalCard";
+import { answersRepresentable, composeAnswers, parseAskUserQuestions, type QuestionAnswerDraft } from "../chat/askUserQuestion";
 import { BrokerApprovalCard } from "../chat/BrokerApprovalCard";
+import { QuestionPanels } from "../chat/QuestionPanels";
 import { LeadGateCard, useLeadTask } from "../chat/LeadPanel";
 import { RemoteTerminalKeys } from "../chat/RemoteTerminalKeys";
 import type { Item } from "../sticker/types";
@@ -30,7 +33,7 @@ function ApprovalDecision({ item, fallback, onEnter }: { item: Item; fallback: R
   const id = item.session.id;
   const [approval, setApproval] = useState<PendingApproval | null>(null);
   // broker 手里的提问（Claude 的 AskUserQuestion）：终端里此刻没有表单，题面在 Meowo 这边。
-  const [question, setQuestion] = useState(false);
+  const [question, setQuestion] = useState<PendingApproval | null>(null);
   const [asked, setAsked] = useState(false);
   // 刚在这里答掉了一条：名单要等下一次刷新才知道它不再待处理，这段时间不能把「已回到终端」
   // 和一排终端按键摆出来——agent 已经在跑，那排 Esc 按下去是打断它（做空审查 M3）。
@@ -46,8 +49,9 @@ function ApprovalDecision({ item, fallback, onEnter }: { item: Item; fallback: R
       .then((dto) => {
         if (!aliveRef.current) return;
         setApproval(dto.approval);
-        setQuestion(dto.question != null);
-        if (dto.approval) { setAnswered(false); setElsewhere(false); }
+        // 题面内容没变就留着原来那份：换引用会把人正在填的答案清掉。
+        setQuestion((prev) => (prev && dto.question && prev.requestId === dto.question.requestId && prev.answerable === dto.question.answerable ? prev : dto.question));
+        if (dto.approval || dto.question) { setAnswered(false); setElsewhere(false); }
         setAsked(true);
       })
       // 没问到就不下结论：当成「问过了、表里没有」会把还在 Meowo 手里的审批说成「已回到终端」，
@@ -106,7 +110,18 @@ function ApprovalDecision({ item, fallback, onEnter }: { item: Item; fallback: R
   if (!asked) return <>{fallback}</>;
   if (answered) return <><p className="roster-note" role="status">{elsewhere ? t.roster.answeredElsewhere : t.roster.answered}</p>{fallback}</>;
   // 题面在 Meowo 这边、终端里没有表单：给终端按键是错的（键会落进它的普通输入框，做空审查 M5）。
-  // 行内的题面卡还没做，先如实说进现场作答。
+  // 能在卡里答的（broker 挂着等代答、会话归 Meowo 托管、每题都有不重复的题面）就在行内答；
+  // 答不了的如实说进现场作答。
+  if (question && question.answerable && item.pty_managed !== false) {
+    return (
+      <QuestionDecision
+        key={question.requestId}
+        question={question}
+        fallback={<><p className="roster-note">{t.roster.answerInScene}</p>{fallback}</>}
+        onAnswered={(elsewhereAnswered) => { setQuestion(null); setElsewhere(elsewhereAnswered); setAnswered(true); }}
+      />
+    );
+  }
   if (question) return <><p className="roster-note">{t.roster.answerInScene}</p>{fallback}</>;
   // Meowo 持有它的终端：把终端此刻的画面和一排按键摆在行内（手机页同一个兜底），不让人自己去找终端。
   if (item.pty_managed) {
@@ -134,6 +149,70 @@ function ApprovalDecision({ item, fallback, onEnter }: { item: Item; fallback: R
       <p className="roster-note">{item.pending_review === "approval" ? t.roster.approvalInTerminal : t.roster.answerInScene}</p>
       {fallback}
     </>
+  );
+}
+
+/** Claude 的提问（AskUserQuestion）在行内作答：和对话窗里那张作答卡同一个题面组件、同一条提交路
+ *  （答案映射 → broker 回给 hook，agent 直接继续）。这里没有「去终端作答」：要走终端就进现场。 */
+function QuestionDecision({ question, fallback, onAnswered }: {
+  question: PendingApproval;
+  fallback: React.ReactNode;
+  onAnswered: (elsewhere: boolean) => void;
+}) {
+  const t = useT();
+  const questions = useMemo(() => parseAskUserQuestions(question.input), [question.input]);
+  const [answers, setAnswers] = useState<ReadonlyMap<number, QuestionAnswerDraft>>(new Map());
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const aliveRef = useRef(true);
+  useEffect(() => () => { aliveRef.current = false; }, []);
+  const edit = (index: number, change: (draft: QuestionAnswerDraft) => QuestionAnswerDraft) => {
+    setAnswers((current) => new Map(current).set(index, change(current.get(index) ?? { selected: [], custom: "" })));
+  };
+  const select = (index: number, label: string) => edit(index, (draft) => ({
+    ...draft,
+    // 单选点即换（再点取消），多选勾选切换：同对话窗的作答卡。
+    selected: draft.selected.includes(label) ? draft.selected.filter((entry) => entry !== label) : questions[index]?.multiSelect ? [...draft.selected, label] : [label],
+  }));
+  // 题面表达不成「问题原文 → 答案」的（空题面、同文重题）不给提交：送出去会错位。
+  if (!answersRepresentable(questions)) return <>{fallback}</>;
+  const answerMap = composeAnswers(questions, answers);
+  const unanswered = questions.filter((_, index) => { const draft = answers.get(index); return !(draft && (draft.selected.length > 0 || draft.custom.trim())); }).length;
+  const submit = () => {
+    if (busy || !answerMap) return;
+    setBusy(true);
+    setError(null);
+    resolvePendingApproval(question.sessionId, question.requestId, `answers:${JSON.stringify(answerMap)}`)
+      .then(() => { if (aliveRef.current) onAnswered(false); })
+      .catch((raw) => pendingInteraction(question.sessionId)
+        .then((dto) => {
+          if (!aliveRef.current) return;
+          // 这道题还挂着才是真的没答成；不在了就是别处（另一端、终端、超时）先了结了。
+          if (dto.question?.requestId === question.requestId) setError(formatBackendError(raw, t.locale));
+          else onAnswered(true);
+        })
+        .catch(() => { if (aliveRef.current) setError(formatBackendError(raw, t.locale)); }))
+      .finally(() => { if (aliveRef.current) setBusy(false); });
+  };
+  return (
+    <div className="roster-decision is-question">
+      <ApprovalCard
+        title={t.chat.questionTitle}
+        badge={t.chat.questionPending}
+        actions={<button type="button" className="btn-primary" disabled={busy || !answerMap} onClick={submit}>{t.chat.submitAnswer}</button>}
+      >
+        <QuestionPanels
+          mode="answer"
+          items={questions}
+          answers={answers}
+          onSelect={select}
+          onCustom={(index, text) => edit(index, (draft) => ({ ...draft, custom: text }))}
+          onSubmit={submit}
+        />
+        <span>{answerMap ? t.chat.questionAnswerReady : t.chat.questionAnswerIncomplete(unanswered)}</span>
+        {error && <span role="alert">{error}</span>}
+      </ApprovalCard>
+    </div>
   );
 }
 
