@@ -1922,7 +1922,9 @@ button.stab {
 .ob-dot:hover { background: var(--cc-text-faint); }
 .ob-dot.on { width: 18px; background: var(--cc-accent); }
 .ob-actions { display: flex; align-items: center; gap: var(--sp-8); }
-.ob-actions .sbtn { min-width: 74px; }
+/* 小窗底部按钮统一 --btn-h-lg（32px）：.sbtn 靠内边距撑高，中文 33px、英文 30px，同一个窗换语言都不一样高；
+   确认框 28、新建会话窗 35，四个小窗四档。只在各小窗自己的作用域里钉高度，不动 .sbtn 的基础定义（设置页也在用）。 */
+.ob-actions .sbtn { min-width: 74px; height: var(--btn-h-lg); padding-top: 0; padding-bottom: 0; }
 /* 标题条坐在 L0 上；下面的内容是一张 L1 内容面，左右下各留 8。 */
 .up-bar { flex: none; height: 32px; display: flex; align-items: center; justify-content: flex-end; padding: 0 var(--sp-4) 0 var(--sp-8); gap: var(--sp-6); }
 .up-bar .winclose { width: 28px; height: 28px; }
@@ -1963,7 +1965,7 @@ button.stab {
 .up-status { margin-top: var(--sp-12); font-size: var(--text-sm); line-height: 1.5; color: var(--cc-text-dim); text-align: center; }
 .up-status.up-err { color: var(--cc-fail-text); }
 .up-status.up-new { color: var(--cc-text); font-weight: 600; }
-.up-body .sbtn { margin-top: var(--sp-8); min-width: 108px; }
+.up-body .sbtn { margin-top: var(--sp-8); min-width: 108px; height: var(--btn-h-lg); padding-top: 0; padding-bottom: 0; }
 /* 「稍后 + 重启并更新」并排：主次分明，稍后收窄。 */
 .up-actions { display: flex; gap: var(--sp-8); justify-content: center; }
 .up-actions .sbtn { min-width: 88px; }
@@ -3561,6 +3563,8 @@ body:not(.remote-ui) .ns-title { font-size: var(--text-sm); letter-spacing: 0; }
 body:not(.remote-ui) .ns-close { width: 30px; height: 30px; }
 body:not(.remote-ui) .ns-body { position: relative; margin: 0 var(--sp-8); padding: var(--sp-16); gap: var(--sp-14); }
 body:not(.remote-ui) .ns-actions { position: relative; margin: 0 var(--sp-8) var(--sp-8); padding: var(--sp-12) var(--sp-16); }
+/* 底部按钮与引导、更新、确认框同一档高度（--btn-h-lg）：原来靠上下内边距撑，中文 35px、英文更矮，宽只有 54px。 */
+body:not(.remote-ui) .ns-actions .ns-btn { height: var(--btn-h-lg); min-width: 72px; padding: 0 var(--sp-14); }
 
 /* 活跃账号提示：启动按钮旁的一行小字，刻意低调（非警告），默认账号时根本不渲染。 */
 .ns-profile-hint {
@@ -4018,6 +4022,8 @@ body:not(.remote-ui) .ns-actions { position: relative; margin: 0 var(--sp-8) var
    折成一行就读不清（2026-11-09 真机走查实拍）。没有换行的正文不受影响。 */
 .app-confirm p > span { white-space: pre-line; overflow-wrap: anywhere; }
 .app-confirm-actions { flex: none; display: flex; justify-content: flex-end; gap: var(--sp-8); }
+/* 独立确认窗的按钮与其他小窗同一档（--btn-h-lg）；窗口高度按正文实高收拢（ConfirmWindow 的 fit），多出的 4px 它自己会算进去。 */
+.app-confirm.is-window .app-confirm-actions button { height: var(--btn-h-lg); }
 /* 按钮取常规档（28 高）：取消是次按钮（中性填充），确认是主按钮或危险按钮，三者同高同圆角。 */
 .app-confirm-actions button { min-width: 72px; height: var(--btn-h-md); padding: 0 var(--sp-12); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); background: var(--fill-selected); color: var(--cc-text); font: inherit; font-size: var(--text-sm); cursor: pointer; transition: background var(--dur-fast) var(--ease-in-out); }
 .app-confirm-actions button:hover { background: var(--fill-selected-hover); }
