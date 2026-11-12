@@ -2451,11 +2451,13 @@ button.stab {
    不存在的变量（等于没有 hover 反馈）。改吃真实 token。 */
 .remote-copy {
   flex: none;
-  min-height: var(--btn-h-md);
+  /* 高度与描边见文件里「设置窗行内控件同一档」那一段。 */
+  box-sizing: border-box;
+  height: var(--btn-h-lg);
   padding: 0 var(--sp-12);
   border-radius: var(--radius-md);
   font-size: var(--text-sm);
-  border: var(--hairline) solid var(--cc-border);
+  border: var(--hairline) solid transparent;
   background: var(--fill-selected);
   color: var(--cc-text);
   cursor: pointer;
@@ -2922,17 +2924,19 @@ button.stab {
   background: transparent;
   border-color: var(--cc-warn);
 }
-/* 卡片里的次按钮：与设置行右侧的按钮同一形态（28 高、圆角 8、中性填充），不再是胶囊。 */
+/* 卡片里的次按钮：与设置行右侧的按钮（.sbtn）同一形态（32 高、圆角 8、中性填充、不描边），不再是胶囊。 */
 .provider-card-action {
   flex: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: var(--sp-5);
-  min-height: var(--btn-h-md);
+  box-sizing: border-box;
+  height: var(--btn-h-lg);
   padding: 0 var(--sp-12);
   border-radius: var(--radius-md);
-  border: var(--hairline) solid var(--cc-border);
+  border: var(--hairline) solid transparent;
+  white-space: nowrap;
   background: var(--fill-selected);
   color: var(--cc-text);
   font-size: var(--text-sm);
@@ -2946,7 +2950,7 @@ button.stab {
 .provider-card-action:disabled { opacity: 0.55; cursor: default; }
 /* 版本行里的小型动作按钮（更新/取消安装）：与标题区小字同排，取行内小动作那一档。 */
 .provider-card-action-sm {
-  min-height: var(--btn-h-sm);
+  height: var(--btn-h-sm);
   padding: 0 var(--sp-8);
   border-radius: var(--radius-sm);
   font-size: var(--text-xs);
@@ -3634,7 +3638,7 @@ body:not(.remote-ui) .ns-actions { position: relative; margin: 0 var(--sp-8) var
 }
 .account-agent-switch .dd-btn {
   min-width: 190px;
-  padding: var(--sp-8) var(--sp-12);
+  padding: 0 var(--sp-12);
   /* 无边框：留 1px 透明边免得尺寸跳；open 态也不描边（否则展开时冒出一圈强调色）。 */
   border-color: transparent;
 }
@@ -3659,6 +3663,16 @@ body:not(.remote-ui) .ns-actions { position: relative; margin: 0 var(--sp-8) var
 .ext-chip.is-meowo { margin-left: var(--sp-6); vertical-align: 1px; }
 .ext-icon-btn { flex: none; display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-faint); cursor: pointer; }
 .ext-icon-btn:hover { color: var(--cc-text); background: var(--fill-selected); }
+
+/* ── 设置窗行内控件同一档：32px（--btn-h-lg）、中性填充、不描边 ──
+   此前同一个窗口里量到四种高度（dpr1）：.dd-btn / .sbtn / .seg / .ns-input 靠内边距撑到 33，
+   远程卡的 IP 下拉 30，「复制地址」「重新生成令牌」和账号卡的「登录」「退出登录」28，
+   账号 / 扩展页顶的 agent 切换 36；描边两种（.sbtn 无边，.remote-copy 与 .provider-card-action 一圈细线）。
+   .sbtn / .dd-btn / .seg / .ns-input 别的窗口也在用，这里只收设置窗里的；
+   .remote-copy、.provider-card-action、.profile-add-* 是设置窗专属类，直接改在各自定义上。 */
+.settings :is(.sbtn, .dd-btn, .ns-input) { box-sizing: border-box; height: var(--btn-h-lg); padding-top: 0; padding-bottom: 0; }
+.settings .seg { box-sizing: border-box; height: var(--btn-h-lg); }
+.settings .seg-btn { padding-top: 0; padding-bottom: 0; }
 /* 下拉菜单的文字与按钮里的文字同一条竖线：按钮是 边 + 12，菜单是 边 + 4（外壳内边距）+ 条目内边距，
    条目左内边距取 8；右侧同理取 6，勾选标记与按钮的箭头右缘对齐。
    实拍 qa-set-dropdown（dpr2）：按钮里「中文」起于 x≈995，菜单项起于 x≈1007，差 6 CSS px。 */
@@ -3748,7 +3762,7 @@ body:not(.remote-ui) .ns-actions { position: relative; margin: 0 var(--sp-8) var
 .profile-add-input {
   flex: 1;
   min-width: 0;
-  height: var(--btn-h-md);
+  height: var(--btn-h-lg);
   box-sizing: border-box;
   padding: 0 var(--sp-8);
   border-radius: var(--radius-md);
@@ -3761,7 +3775,8 @@ body:not(.remote-ui) .ns-actions { position: relative; margin: 0 var(--sp-8) var
 /* 「添加账号」：幽灵按钮（透明底 + 细线），不再用虚线框。 */
 .profile-add-btn {
   align-self: flex-start;
-  min-height: var(--btn-h-md);
+  box-sizing: border-box;
+  height: var(--btn-h-lg);
   margin-top: var(--sp-8);
   padding: 0 var(--sp-12);
   border-radius: var(--radius-md);
