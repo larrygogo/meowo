@@ -1,10 +1,13 @@
-import { useState, type MutableRefObject } from "react";
+import { lazy, Suspense, useState, type MutableRefObject } from "react";
 import { ChatSidebar } from "../views/ChatSidebar";
 import { openNewSessionWindow } from "../api";
 import { useT } from "../i18n";
 import { RemoteSettingsScreen } from "./RemoteSettings";
 import { RemoteTabBar, type RemoteTab } from "./RemoteTabBar";
-import { PhoneRoster } from "../views/roster/PhoneRoster";
+
+// 手机名单只有手机页用得上：按需加载，不压在桌面对话窗那一包里（打包实测卡在 3% 的预算线上）。
+// 取不到时这一屏空着，标题右边的「全部会话」还在，能切回原来的列表。
+const PhoneRoster = lazy(() => import("../views/roster/PhoneRoster").then((m) => ({ default: m.PhoneRoster })).catch(() => ({ default: (() => null) as unknown as typeof import("../views/roster/PhoneRoster").PhoneRoster })));
 
 /// 手机竖屏的首页：大标题 + 一屏内容 + 浮动胶囊底栏。底栏在「会话」「设置」两屏间切换，
 /// 「新建」打开新建会话浮层。切到设置时会话列表只是藏起来不卸载：搜索词、页签、滚动位置
@@ -36,7 +39,7 @@ export function RemoteSessionList({ activeId, approvalAwaitingIds, visibleOrderR
           </button>
         )}
       </header>
-      {!all && !settings && <PhoneRoster onEnter={onSelect} onPrefetch={onPrefetch} />}
+      {!all && !settings && <Suspense fallback={null}><PhoneRoster onEnter={onSelect} onPrefetch={onPrefetch} /></Suspense>}
       <div className="remote-session-list-pane" hidden={settings || !all}>
         <ChatSidebar
           activeId={activeId}

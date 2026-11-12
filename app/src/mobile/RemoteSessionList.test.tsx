@@ -26,14 +26,15 @@ describe("RemoteSessionList 底栏", () => {
 
   const renderList = () => render(<RemoteSessionList activeId={0} approvalAwaitingIds={new Set()} onSelect={() => {}} />);
 
-  it("默认在「会话」屏，底栏三项齐全", () => {
+  it("默认在「会话」屏，底栏三项齐全", async () => {
     renderList();
     const nav = screen.getByRole("navigation", { name: "导航" });
     expect(Array.from(nav.querySelectorAll("button")).map((b) => b.textContent)).toEqual(["会话", "新建", "设置"]);
     expect(screen.getByRole("button", { name: "会话" }).getAttribute("aria-current")).toBe("page");
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("会话");
     // 「会话」这一屏默认是名单；搜索、已完成、工作区在「全部会话」里，切过去才露出来，再切能回来。
-    expect(screen.getByTestId("roster")).toBeTruthy();
+    // 名单是按需加载的分包，晚一拍出来。
+    expect(await screen.findByTestId("roster")).toBeTruthy();
     expect(screen.getByTestId("sidebar").closest("[hidden]")).not.toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "全部会话" }));
     expect(screen.queryByTestId("roster")).toBeNull();
