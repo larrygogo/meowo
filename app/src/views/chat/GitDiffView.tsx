@@ -1,3 +1,4 @@
+import { isShellCovered } from "./shellCover";
 import {
   Fragment,
   createContext,
@@ -350,6 +351,8 @@ function GitDiffViewImpl({ cwd, summary, repos = null, width, collapsed, maximiz
     if (collapsed) return;
     const popLayer = pushEscLayer();
     const onKey = (event: KeyboardEvent) => {
+      // 名单盖着对话窗时这里不接键（见 shellCover.ts）。
+      if (isShellCovered()) return;
       if (event.key !== "Escape") return;
       // 页内弹层（AppModal：重命名、截图标注…）开着时 Esc 归弹层。这里挂在捕获段，
       // 不让开的话弹层收不到 Esc，按下去收起的是背后的面板。

@@ -25,8 +25,9 @@ const NewSessionPanel = React.lazy(() =>
 const Onboarding = React.lazy(() =>
   import("./views/Onboarding").then((m) => ({ default: m.Onboarding })),
 );
-const ChatWindow = React.lazy(() =>
-  import("./views/ChatWindow").then((m) => ({ default: m.ChatWindow })),
+// 对话窗套在名单外壳里（views/roster）：首屏是 agent 名单，进了某一行才是原来的对话窗。
+const RosterShell = React.lazy(() =>
+  import("./views/roster/RosterShell").then((m) => ({ default: m.RosterShell })),
 );
 const ConfirmWindow = React.lazy(() =>
   import("./views/ConfirmWindow").then((m) => ({ default: m.ConfirmWindow })),
@@ -93,7 +94,7 @@ void Promise.all([detectHostOs(), bootI18n(), bootWindowMaterial()]).then(() => 
             ) : label === "onboarding" ? (
               <Onboarding />
             ) : label === "chat" ? (
-              <ChatWindow />
+              <RosterShell />
             ) : label.startsWith("confirm-") ? (
               <ConfirmWindow />
             ) : (

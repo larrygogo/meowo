@@ -301,13 +301,12 @@ export function orderKey(groupKey: string): string {
   return groupKey.replace(/\\/g, "/");
 }
 
-/** 侧栏「按工作区分组」时的组序：手动排序时组序也归用户（对照 Kimi 可拖的分组头）；按最近活动时
- *  组序随组内会话的位置。侧栏和灵动岛共用这一份，岛上头像才和侧栏扁平下来的顺序一致。 */
+/** 侧栏「按工作区分组」时的组序归用户（对照 Kimi 可拖的分组头）。侧栏和灵动岛共用这一份，
+ *  岛上头像才和侧栏扁平下来的顺序一致。「按最近活动」排序已去掉（主窗口改成名单后顺序固定，
+ *  leader 2026-11-11 关卡 A 取舍 8），组序不再有「随组内会话位置」那一档。 */
 export function sidebarDirGroups<T extends { cwd: string | null; origin_root?: string | null }>(
   ordered: readonly T[],
-  sortMode: "manual" | "recent",
   workspaceOrder: readonly string[],
 ): DirGroup<T>[] {
-  const groups = groupByDir(ordered);
-  return sortMode === "manual" ? applyGroupOrder(groups, workspaceOrder, (group) => orderKey(group.key)) : groups;
+  return applyGroupOrder(groupByDir(ordered), workspaceOrder, (group) => orderKey(group.key));
 }

@@ -25,7 +25,6 @@ export const icFlag: Glyph = { body: <path d="M4 21V4h11l-1.5 4L15 12H4" /> };
 export const icFolderPlus: Glyph = { body: <><path d="M3.5 7v10a2 2 0 0 0 2 2h13a2 2 0 0 0 2-2V9.5a2 2 0 0 0-2-2h-6l-2-2.5h-5a2 2 0 0 0-2 2z" /><path d="M12 11v5M9.5 13.5h5" /></> };
 export const icFolderTree: Glyph = { body: <path d="M6 4v12a2 2 0 0 0 2 2h4M6 9h6M15 6.5h4v4h-4zM15 15.5h4v4h-4z" /> };
 export const icGitBranch: Glyph = { body: <><circle cx="6" cy="5" r="2" /><circle cx="6" cy="19" r="2" /><circle cx="18" cy="7" r="2" /><path d="M6 7v10" /><path d="M18 9c0 5-6 5-11.5 8" /></> };
-export const icGrip: Glyph = { body: <path d="M9 6h.01M15 6h.01M9 12h.01M15 12h.01M9 18h.01M15 18h.01" /> };
 export const icImage: Glyph = { body: <><rect x="3" y="5" width="18" height="14" rx="2" /><circle cx="9" cy="10" r="1.6" /><path d="m5 17 4.5-4.5L13 16l3-3 3 4" /></> };
 export const icLightbulb: Glyph = { body: <path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z" /> };
 export const icList: Glyph = { body: <><path d="M9 6h11" /><path d="M9 12h11" /><path d="M9 18h11" /><circle cx="4.5" cy="6" r="1" /><circle cx="4.5" cy="12" r="1" /><circle cx="4.5" cy="18" r="1" /></> };

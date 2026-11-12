@@ -761,14 +761,138 @@ fn held_questions_survive_the_ttl_until_settled() {
 #[test]
 fn summon_policy_never_yanks_a_watched_window() {
     use super::{approval_summon_action, SummonAction};
-    assert_eq!(approval_summon_action(true, true, true), SummonAction::Ready);
+    assert_eq!(approval_summon_action(true, false, true, true), SummonAction::Ready);
     // 在眼前与否不影响 Ready:请求靠事件+轮询送达已注册的消费者。
-    assert_eq!(approval_summon_action(true, true, false), SummonAction::Ready);
-    assert_eq!(approval_summon_action(false, true, true), SummonAction::Hold);
+    assert_eq!(approval_summon_action(true, false, true, false), SummonAction::Ready);
+    assert_eq!(approval_summon_action(false, false, true, true), SummonAction::Hold);
     // 租约还在但窗口收进托盘:徽标没人看得见,必须召唤。
-    assert_eq!(approval_summon_action(false, true, false), SummonAction::Summon);
-    assert_eq!(approval_summon_action(false, false, true), SummonAction::Summon);
-    assert_eq!(approval_summon_action(false, false, false), SummonAction::Summon);
+    assert_eq!(approval_summon_action(false, false, true, false), SummonAction::Summon);
+    assert_eq!(approval_summon_action(false, false, false, true), SummonAction::Summon);
+    assert_eq!(approval_summon_action(false, false, false, false), SummonAction::Summon);
+}
+
+/// 名单租约:窗口在眼前时任何会话的审批都是 Ready(行内可答,不闪不切);窗口收进托盘
+/// 时仍要 Summon——那一行亮了没人看得见。
+#[test]
+fn roster_lease_makes_any_session_ready_only_while_window_is_in_view() {
+    use super::{approval_summon_action, SummonAction};
+    assert_eq!(approval_summon_action(false, true, true, true), SummonAction::Ready);
+    assert_eq!(approval_summon_action(false, true, true, false), SummonAction::Summon);
+    // 进了某一行的现场(专属租约在)再来它的审批:与窗口在不在眼前无关,照旧 Ready。
+    assert_eq!(approval_summon_action(true, true, true, false), SummonAction::Ready);
+}
+
+#[test]
+fn roster_lease_is_desktop_only_and_rejects_other_non_positive_ids() {
+    let broker = PtyBroker::default();
+    broker.register_approval_consumer(0, "roster".into()).unwrap();
+    assert!(broker.has_roster_consumer());
+    // 名单租约不冒充「正在看某条会话」:专属判定与通知抑制都不认它。
+    assert!(!broker.has_approval_consumer(7));
+    assert!(broker.viewed_session_ids().is_empty());
+    // 负数(启动占位 id)一律不收。
+    assert!(broker.register_approval_consumer(-3, "roster-b".into()).is_err());
+}
+
+/// 手机停在名单上:它的租约不算桌面的名单租约(桌面窗口该动还得动),但算「有人能答」。
+#[test]
+fn remote_roster_lease_keeps_approvals_answerable_without_silencing_desktop() {
+    let broker = PtyBroker::default();
+    broker.register_approval_consumer(0, "remote:phone".into()).unwrap();
+    assert!(!broker.has_roster_consumer(), "手机名单不冒充桌面名单");
+    assert!(broker.has_remote_roster_consumer());
+    assert!(broker.approval_answerable(7));
+    // 桌面关窗:手机名单还在,挂着的审批不交还终端。
+    let rx = seed_pending_approval(&broker, 7, "request-7");
+    broker.release_desktop_consumers();
+    assert!(matches!(rx.try_recv(), Err(mpsc::TryRecvError::Empty)));
+    // 手机租约过期(锁屏 / 被杀):不再算有人能答。
+    age_consumer_lease(&broker, "remote:phone", super::REMOTE_CONSUMER_TTL_MS + 1);
+    assert!(!broker.has_remote_roster_consumer());
+    assert!(!broker.approval_answerable(7));
+}
+
+/// 留给手机领的审批:手机锁屏后不能被桌面的名单租约压着——桌面没被召唤过,没人知道它在那儿。
+#[test]
+fn desktop_roster_lease_does_not_hold_a_remote_claimable_approval_after_phone_is_gone() {
+    let broker = PtyBroker::default();
+    broker.register_approval_consumer(0, "roster-desktop".into()).unwrap();
+    broker.register_approval_consumer(7, "remote:chat-7".into()).unwrap();
+    assert!(broker.approval_answerable(7), "手机停在这条会话上");
+    age_consumer_lease(&broker, "remote:chat-7", super::REMOTE_CONSUMER_TTL_MS + 1);
+    assert!(broker.has_roster_consumer(), "桌面名单还开着");
+    assert!(!broker.approval_answerable(7), "手机没了就该放弃、回落终端");
+    // 桌面名单上点开了这一行(专属租约):有人在看,留着。
+    broker.register_approval_consumer(7, "roster-7-desktop".into()).unwrap();
+    assert!(broker.approval_answerable(7));
+}
+
+/// 桌面接得住就按桌面的来;桌面接不住而手机在名单上,留给手机领。
+#[test]
+fn remote_roster_only_takes_over_when_desktop_cannot_hold() {
+    use super::{approval_hold_with_remote_roster, ApprovalHold};
+    assert_eq!(approval_hold_with_remote_roster(ApprovalHold::Desktop, true), ApprovalHold::Desktop);
+    assert_eq!(approval_hold_with_remote_roster(ApprovalHold::Reject, true), ApprovalHold::RemoteClaimable);
+    assert_eq!(approval_hold_with_remote_roster(ApprovalHold::Reject, false), ApprovalHold::Reject);
+    assert_eq!(
+        approval_hold_with_remote_roster(ApprovalHold::RemoteClaimable, false),
+        ApprovalHold::RemoteClaimable
+    );
+}
+
+/// 手机离开某条会话回到名单(注销专属租约):名单租约还在,它的审批不交还终端。
+#[test]
+fn phone_leaving_a_session_keeps_its_approval_while_on_roster() {
+    let broker = PtyBroker::default();
+    broker.register_approval_consumer(0, "remote:roster".into()).unwrap();
+    broker.register_approval_consumer(7, "remote:chat-7".into()).unwrap();
+    let rx = seed_pending_approval(&broker, 7, "request-7");
+    broker.unregister_approval_consumer("remote:chat-7");
+    assert!(matches!(rx.try_recv(), Err(mpsc::TryRecvError::Empty)));
+    assert!(broker.pending_approval(7).is_some());
+}
+
+/// 从某一行的现场退回名单会注销那条会话的专属租约。名单还开着,它的审批不能被交还终端。
+#[test]
+fn leaving_a_session_keeps_its_approval_while_roster_lease_is_held() {
+    let broker = PtyBroker::default();
+    broker.register_approval_consumer(0, "roster".into()).unwrap();
+    broker.register_approval_consumer(7, "chat-7".into()).unwrap();
+    let rx = seed_pending_approval(&broker, 7, "request-7");
+
+    broker.unregister_approval_consumer("chat-7");
+
+    assert!(matches!(rx.try_recv(), Err(mpsc::TryRecvError::Empty)));
+    assert!(broker.pending_approval(7).is_some());
+}
+
+/// 名单租约自己注销(名单被卸载):只交还没有专属消费者的会话的审批。
+#[test]
+fn dropping_roster_lease_passes_only_unwatched_sessions() {
+    let broker = PtyBroker::default();
+    broker.register_approval_consumer(0, "roster".into()).unwrap();
+    broker.register_approval_consumer(7, "chat-7".into()).unwrap();
+    let watched_rx = seed_pending_approval(&broker, 7, "request-7");
+    let orphan_rx = seed_pending_approval(&broker, 8, "request-8");
+
+    broker.unregister_approval_consumer("roster");
+
+    assert!(matches!(watched_rx.try_recv(), Err(mpsc::TryRecvError::Empty)));
+    assert!(matches!(orphan_rx.recv().unwrap(), ApprovalDecision::Pass));
+    assert!(!broker.has_roster_consumer());
+}
+
+/// 关窗兜底连名单租约一起清:残留的名单租约会让之后每一条审批都入队空等 300s。
+#[test]
+fn destroying_chat_window_clears_roster_lease_and_passes_its_approvals() {
+    let broker = PtyBroker::default();
+    broker.register_approval_consumer(0, "roster".into()).unwrap();
+    let rx = seed_pending_approval(&broker, 9, "request-9");
+
+    broker.release_desktop_consumers();
+
+    assert!(!broker.has_roster_consumer());
+    assert!(matches!(rx.recv().unwrap(), ApprovalDecision::Pass));
 }
 
 /// 代答答案必须与挂起提问的题面一一对应：CC 按问题原文取答案，空键、多余键、漏题

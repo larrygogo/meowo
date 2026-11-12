@@ -520,6 +520,12 @@ pub(crate) fn register_approval_consumer(
         .register_approval_consumer(session_id, consumer_id)
 }
 
+/// 主窗口报告名单是否摆在眼前（只给桌面窗口用，不进远程桥）。
+#[tauri::command]
+pub(crate) fn set_roster_showing(state: State<'_, super::AppState>, showing: bool) {
+    state.ptys.set_roster_showing(showing);
+}
+
 #[tauri::command]
 pub(crate) fn unregister_approval_consumer(state: State<'_, super::AppState>, consumer_id: String) {
     state.ptys.unregister_approval_consumer(&consumer_id);

@@ -11,7 +11,6 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
 
 import { ChatSidebar } from "./ChatSidebar";
 import { edgeScrollStep, usePointerReorder } from "./sidebarDrag";
-import { SIDEBAR_SORT_MODE_KEY } from "./sticker/helpers";
 import type { LiveSession } from "../api";
 
 function session(id: number, title: string): LiveSession {
@@ -50,16 +49,16 @@ describe("键盘调整手动排序", () => {
     expect(order()).toEqual(["丙", "甲", "乙"]);
   });
 
-  it("到头不动、不写后端；按最近排序时不生效", async () => {
+  it("到头不动、不写后端；存着已去掉的「按最近排序」旧值时照常能挪", async () => {
     const { moves, row } = await setup();
     fireEvent.keyDown(await row("丙"), { key: "ArrowUp", ctrlKey: true, shiftKey: true });
     expect(moves).toEqual([]);
     cleanup();
-    localStorage.setItem(SIDEBAR_SORT_MODE_KEY, "recent");
+    // 旧版本存下的值：这一档排序已经去掉，侧栏按手动排序走，不能因为它把键盘排序关掉。
+    localStorage.setItem("meowo-chat-sidebar-sort-mode", "recent");
     const again = await setup();
-    // 按最近排序时排序键不是手动顺序，挪了也会被弹回去。
     fireEvent.keyDown(await again.row("乙"), { key: "ArrowUp", ctrlKey: true, shiftKey: true });
-    expect(again.moves).toEqual([]);
+    expect(again.moves).toHaveLength(1);
   });
 });
 

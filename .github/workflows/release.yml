@@ -1,6 +1,7 @@
 name: Release
 
-# 只从 main 手动触发，不再监听 tag push。原因是 GitHub Actions 缓存只对「同一引用或
+# 正式版只从 main 手动触发，不再监听 tag push。预发布版（版本号带「-」，如 0.9.0-beta.1）可以从
+# 别的分支触发：试用中的改版不必先合进 main，main 随时还能发不带它的稳定版修复（见下方的引用校验）。原因是 GitHub Actions 缓存只对「同一引用或
 # 默认分支」可见：跑在 refs/tags/vX 上的 run 存下的 Rust 缓存（每平台 ~800MB）之后
 # 没有任何 run 能读到——0.6.4～0.6.6 三次发版的缓存 last-access 全等于创建日，日志
 # 一律 "No cache found."，还把仓库 10GB 配额挤到 9.4GB、连带淘汰 main 上 CI 的缓存。
@@ -25,12 +26,6 @@ jobs:
       # 本 workflow 持有签名证书与 minisign 私钥，第三方 action 一律 pin 完整 SHA（同 ci.yml）。
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
-      - name: 只允许从 main 触发
-        if: github.ref != 'refs/heads/main'
-        run: |
-          echo "::error::Release 只能从 main 触发（当前 ${GITHUB_REF}）；别的引用上缓存不共享，且 tag 会打在非 main 提交上"
-          exit 1
-
       # Cargo.toml 是版本唯一真源（tauri.conf.json 无 version 字段），tag 由它推出。
       # 版本对应的 tag 已存在 = 忘了 bump，花钱构建前先拦下（否则会覆盖已发布版本的产物）。
       - name: 读取版本并校验 tag 未占用
@@ -43,8 +38,18 @@ jobs:
             echo "::error::tag $tag 已存在，先 bump app/src-tauri/Cargo.toml 的 version 再发"
             exit 1
           fi
+          # 版本号带「-」的是预发布（0.9.0-beta.1）。预发布不进稳定版的自动更新：更新器只认
+          # /releases/latest/download/latest.json，GitHub 的 latest 不含预发布；winget.yml 也跳过预发布。
+          case "$version" in *-*) prerelease=true ;; *) prerelease=false ;; esac
+          # 正式版只能从 main 发：别的引用上缓存不共享，tag 也会打在非 main 的提交上。
+          # 预发布放开这一条，代价是它的 Rust 缓存别的 run 读不到（每次冷编），可以接受。
+          if [ "$prerelease" = false ] && [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::正式版只能从 main 触发（当前 ${GITHUB_REF}）。要从分支发试用版，把版本号改成带预发布后缀的（如 0.9.0-beta.1）"
+            exit 1
+          fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
 
       # 发布说明与 tag 同生共死：docs/release-notes/vX.Y.Z.md 必须存在，Release 正文
       # 取自它（v0.6.5 曾靠手工补，此后不再发没有更新日志的版）。缺失时在花钱构建前拦下。
@@ -65,10 +70,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.meta.outputs.tag }}
+          PRERELEASE: ${{ steps.meta.outputs.prerelease }}
         run: |
           git tag "$TAG" "$GITHUB_SHA"
           git push origin "refs/tags/$TAG"
-          gh release create "$TAG" --draft --title "Meowo $TAG" \
+          # 预发布在建草稿时就标上：发布草稿的人不用记得再勾一次，漏勾会让它变成 latest，
+          # 稳定版用户下一次检查更新就会收到试用版。
+          flags=""
+          if [ "$PRERELEASE" = true ]; then flags="--prerelease"; fi
+          gh release create "$TAG" --draft $flags --title "Meowo $TAG" \
             --target "$GITHUB_SHA" --notes-file "docs/release-notes/$TAG.md"
           # draft 不能按 tag 走 releases/tags/ 接口，gh release view 内部会回退到列表查找。
           release_id="$(gh release view "$TAG" --json databaseId -q .databaseId)"

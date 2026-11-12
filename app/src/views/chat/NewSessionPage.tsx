@@ -29,7 +29,7 @@ import { icArrowUp, icShield } from "../../icons/glyphs.chat";
 const RECENT_LIMIT = 5;
 
 export function NewSessionPage({ prefill, droppedPath, onLaunched, onOpenSession, onMoreSessions }: {
-  prefill: { cwd?: string | null; provider?: string | null };
+  prefill: { cwd?: string | null; provider?: string | null; message?: string };
   /** 点「最近会话」里的一条：直接回到那条会话接着聊。 */
   onOpenSession?: (sessionId: number) => void;
   /** 「查看更多」：去会话管理页，预选当前工作区。 */
@@ -43,7 +43,7 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched, onOpenSession
   const form = useNewSessionForm(normalizePath(prefill.cwd ?? ""), (prefill.provider ?? null) as AgentId | null);
   const { cwd, setCwd, provider, setProvider, recent, hooks, busy, repairing, error, setError, agents, avail, opts, setOpts,
     activeProfiles, relayPins, loginOperations, swappedFrom, launchOptions, warn, needLogin } = form;
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useState(prefill.message ?? "");
   // 粘进来的截图/文件（用户反馈：新建页粘不了图，只能等会话起来再贴一次）。和对话页同一套
   // 落盘与附件形状，发出去后交给对话页的发送通道，原生贴图 / 附路径降级都在那边。
   const [attachments, setAttachments] = useState<Attachment[]>([]);

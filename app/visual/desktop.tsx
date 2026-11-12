@@ -98,7 +98,99 @@ const EXTENSIONS = [
   { provider: "codex", displayName: "Codex", dataDir: "C:\\Users\\demo\\.codex", groups: [] },
 ];
 
+/**
+ * ?perf=1：给 visual/perf-roster.mjs 用的量测入口。把会话换成 12 个在跑的，记下页面订阅 board-changed
+ * 的回调；window.__perfTick(i) 每调一次就让 12 个会话各换一句「此刻在做什么」并发一次 board-changed。
+ * 名单（scene=roster）和旧侧栏（scene=chat）吃的是同一份数据、同一个节奏。
+ */
+function installPerfHook(): void {
+  if (q.get("perf") !== "1") return;
+  type Internals = { invoke: (cmd: string, args?: Record<string, unknown>, opts?: unknown) => Promise<unknown>; runCallback?: (id: number, data: unknown) => void };
+  const internals = (window as unknown as { __TAURI_INTERNALS__: Internals }).__TAURI_INTERNALS__;
+  const providers = ["claude", "codex", "kimi", "gemini", "opencode"] as const;
+  const build = (tick: number) => Array.from({ length: 12 }, (_, i) => {
+    const s = makeSession({ title: `perf session ${i + 1}`, project: "meowo", provider: providers[i % providers.length], agoMin: 0, lastAi: null });
+    s.session.id = 9000 + i;
+    s.session.cc_session_id = `perf-${i}`;
+    s.current_activity = `Bash: step ${tick} of job ${i}`;
+    return s;
+  });
+  store.sessions = build(0);
+  const handlers: number[] = [];
+  const invoke = internals.invoke.bind(internals);
+  internals.invoke = (cmd, args, opts) => {
+    if (cmd === "plugin:event|listen" && args?.event === "board-changed") handlers.push(args.handler as number);
+    if (cmd === "get_live_sessions_page") return Promise.resolve({ items: store.sessions, next_cursor: null });
+    return invoke(cmd, args, opts);
+  };
+  (window as unknown as { __perfTick: (tick: number) => number }).__perfTick = (tick) => {
+    store.sessions = build(tick);
+    for (const id of handlers) internals.runCallback?.(id, { event: "board-changed", payload: "perf", id: 1 });
+    return handlers.length;
+  };
+}
+
 async function boot(): Promise<React.ReactNode> {
+  // 主窗口的名单外壳（views/roster）：roster = 五个会话各一种状态，眼睛站在待批准那一行；
+  // roster-open = 点开一行；roster-quiet = 没人需要你，眼睛回轨顶；roster-scene = 进了某一行的现场。
+  if (scene.startsWith("roster")) {
+    const quiet = scene === "roster-quiet";
+    const mk = (title: string, project: string, provider: "claude" | "codex" | "kimi" | "gemini" | "opencode", patch: (s: ReturnType<typeof makeSession>) => void, agoMin = 2) => {
+      const s = makeSession({ title, project, provider, agoMin, lastAi: null });
+      patch(s);
+      return s;
+    };
+    store.sessions = [
+      mk(lang === "en" ? "Fix duplicate charge in payment callback" : "修支付回调的重复扣款", "pay-service", "claude", (s) => {
+        if (quiet) { s.current_activity = "Bash: pnpm test payments"; return; }
+        s.pending_review = "approval";
+        s.last_ai_text = lang === "en" ? "The retry path charges twice when the webhook arrives late. I want to run the migration to add the idempotency key column." : "回调晚到时重试路径会扣两次。我要跑迁移加上幂等键这一列，需要你批准。";
+      }),
+      mk(lang === "en" ? "Migrate settings page to the new form kit" : "设置页迁到新表单组件", "meowo", "codex", (s) => { s.current_activity = "Edit: app/src/views/About.tsx"; }, 0),
+      mk(lang === "en" ? "Investigate flaky e2e on Windows" : "排查 Windows 上不稳定的 e2e", "meowo", "kimi", (s) => {
+        if (quiet) { s.session.status = "waiting"; s.preview = lang === "en" ? "Root cause found: the window opens before the store is ready." : "找到根因：窗口在库就绪前打开。"; return; }
+        s.errored = true; s.error_label = "API Error: 529 Overloaded";
+      }, 7),
+      mk(lang === "en" ? "Write release notes for 0.9.0" : "写 0.9.0 的发版说明", "meowo", "gemini", (s) => {
+        s.session.status = "waiting"; s.unread = !quiet;
+        s.preview = lang === "en" ? "Draft is ready in docs/release-notes/v0.9.0.md." : "草稿写好了，在 docs/release-notes/v0.9.0.md。";
+      }, 12),
+      mk(lang === "en" ? "Upgrade xterm and re-test the mobile terminal" : "升级 xterm 并复测手机终端", "meowo-mobile", "opencode", (s) => { s.current_activity = "Bash: bun run test"; }, 1),
+    ];
+    // ?n=0/1/12：会话数（默认就是上面五个）。12 个是把这五种状态再排两轮，标题带序号。
+    const wanted = q.get("n") == null ? store.sessions.length : Number(q.get("n"));
+    if (wanted < store.sessions.length) store.sessions = store.sessions.slice(0, wanted);
+    else {
+      const base = store.sessions.slice();
+      for (let i = base.length; i < wanted; i += 1) {
+        const from = base[i % base.length];
+        store.sessions.push(mk(`${from.task_title} ${i + 1}`, from.project_name ?? "meowo", from.provider as "claude", (s) => {
+          s.session.status = from.session.status; s.current_activity = from.current_activity; s.preview = from.preview;
+        }, i));
+      }
+    }
+    // roster-external = 第一行在外部终端里跑、停在审批上：Meowo 没有它的终端。
+    if (scene === "roster-external" && store.sessions[0]) { store.sessions[0].pty_managed = false; store.sessions[0].pid = 4321; store.sessions[0].connected = true; }
+    const first = store.sessions[0]?.session.id ?? 0;
+    const inScene = scene === "roster-scene";
+    window.history.replaceState({}, "", `${location.pathname}?${q.toString()}&sessionId=${first}${inScene ? "" : "&roster=1"}`);
+    const chat = chatMock(lang);
+    // 第一行挂着一条 broker 审批：点开那一行就在行内批。别的会话没有待处理。
+    const approval = { sessionId: first, requestId: "roster-approval", provider: "claude", toolName: "Bash", description: lang === "en" ? "Run the migration" : "跑数据库迁移", input: JSON.stringify({ command: "pnpm prisma migrate deploy --schema services/pay/schema.prisma" }), permissionSuggestions: [], answerable: false };
+    setExtraMock((cmd, args) => {
+      if (cmd === "get_live_sessions_page") return { items: store.sessions, next_cursor: null };
+      if (cmd === "pending_interaction") return { approval: !quiet && scene !== "roster-external" && (args as { sessionId?: number })?.sessionId === first ? approval : null, question: null };
+      return scmMock(cmd) ?? chat(cmd);
+    });
+    installMocks("chat");
+    bootAppearance({ scale: true });
+    const { RosterShell } = await import("../src/views/roster/RosterShell");
+    if (scene === "roster-open" || scene === "roster-external") whenReady<HTMLElement>(".roster-row", (el) => el.click());
+    // roster-glance = 点开一个在跑的行：最近几步 + 它最后说的话。
+    if (scene === "roster-glance") whenReady<HTMLElement>(".roster-item:nth-child(2) .roster-row", (el) => el.click());
+
+    return <div className="demo-chat-frame" style={{ position: "fixed", inset: 0, overflow: "hidden" }}><RosterShell /></div>;
+  }
   if (scene === "chat" || scene === "chat-long" || scene.startsWith("panel-")) {
     window.history.replaceState({}, "", `${location.pathname}?${q.toString()}&sessionId=${CHAT_SESSION_ID}`);
     const chat = chatMock(lang);
@@ -488,6 +580,7 @@ void (async () => {
   await detectHostOs();
   installInputModality();
   const node = await boot();
+  installPerfHook();
   ReactDOM.createRoot(document.getElementById("root")!).render(
     <I18nProvider initial={lang}>
       {node}

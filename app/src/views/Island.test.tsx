@@ -67,7 +67,9 @@ describe("islandCounts / islandTone", () => {
   });
 
   it("整体情绪：出错 > 待处理 > 在跑 > 等待输入 > 闲着", () => {
-    expect(islandTone({ pending: 1, error: 1, running: 1, waiting: 1 })).toBe("error");
+    // 待处理压过出错：与黑轨的眼睛、聚焦文字指的是同一个会话。
+    expect(islandTone({ pending: 1, error: 1, running: 1, waiting: 1 })).toBe("pending");
+    expect(islandTone({ pending: 0, error: 1, running: 1, waiting: 1 })).toBe("error");
     expect(islandTone({ pending: 1, error: 0, running: 3, waiting: 0 })).toBe("pending");
     expect(islandTone({ pending: 0, error: 0, running: 1, waiting: 2 })).toBe("running");
     expect(islandTone({ pending: 0, error: 0, running: 0, waiting: 2 })).toBe("waiting");
@@ -285,14 +287,14 @@ describe("岛上会话头像的顺序跟侧栏一致", () => {
     const pending = mk({ pending_review: "approval", manual_key: 100 } as Partial<Item>);
     const waiting = mk({ status: "waiting", manual_key: 200 } as Partial<Item>);
     const all = [pending, waiting, running];
-    expect(ids(sidebarOrder(all, new Set(), "manual"))).toEqual([running.session.id, waiting.session.id, pending.session.id]);
-    expect(ids(sidebarOrder(all, new Set([pending.session.cc_session_id]), "manual"))[0]).toBe(pending.session.id);
+    expect(ids(sidebarOrder(all, new Set()))).toEqual([running.session.id, waiting.session.id, pending.session.id]);
+    expect(ids(sidebarOrder(all, new Set([pending.session.cc_session_id])))[0]).toBe(pending.session.id);
   });
 
-  it("侧栏选了「最近活跃」就按最后动静排", () => {
+  it("不看最后动静：刚动过的不会跳到前面（「最近活跃」排序已去掉）", () => {
     const old = mk({ lastEventAt: 1_000, manual_key: 900 } as Partial<Item>);
     const fresh = mk({ lastEventAt: 9_000, manual_key: 100 } as Partial<Item>);
-    expect(ids(sidebarOrder([old, fresh], new Set(), "recent"))).toEqual([fresh.session.id, old.session.id]);
+    expect(ids(sidebarOrder([old, fresh], new Set()))).toEqual([old.session.id, fresh.session.id]);
   });
 
   it("侧栏手动排序 + 按工作区分组：先按拖出来的工作区顺序，再按组内顺序", () => {
@@ -300,23 +302,16 @@ describe("岛上会话头像的顺序跟侧栏一致", () => {
     const b1 = mk({ cwd: "/w/B", manual_key: 200 } as Partial<Item>);
     const a2 = mk({ cwd: "/w/A", manual_key: 50 } as Partial<Item>);
     // 工作区 A 拖到了 B 上面：b1 的排序键虽大，也排在 A 组之后。
-    expect(ids(sidebarOrder([b1, a1, a2], new Set(), "manual", "dir", ["/w/A", "/w/B"])))
+    expect(ids(sidebarOrder([b1, a1, a2], new Set(), "dir", ["/w/A", "/w/B"])))
       .toEqual([a1.session.id, a2.session.id, b1.session.id]);
     // 没拖过的工作区（不在顺序里）放最上面，与侧栏的 applyGroupOrder 同一规矩。
     const c1 = mk({ cwd: "/w/C", manual_key: 10 } as Partial<Item>);
-    expect(ids(sidebarOrder([b1, a1, c1], new Set(), "manual", "dir", ["/w/A", "/w/B"])))
+    expect(ids(sidebarOrder([b1, a1, c1], new Set(), "dir", ["/w/A", "/w/B"])))
       .toEqual([c1.session.id, a1.session.id, b1.session.id]);
     // 不分组时仍是扁平顺序。
-    expect(ids(sidebarOrder([b1, a1], new Set(), "manual", "none", ["/w/A", "/w/B"]))).toEqual([b1.session.id, a1.session.id]);
+    expect(ids(sidebarOrder([b1, a1], new Set(), "none", ["/w/A", "/w/B"]))).toEqual([b1.session.id, a1.session.id]);
   });
 
-  it("侧栏最近活动 + 按工作区分组：组序随组内第一条，不看拖出来的顺序", () => {
-    const x = mk({ cwd: "/w/A", lastEventAt: 9_000 } as Partial<Item>);
-    const y = mk({ cwd: "/w/B", lastEventAt: 5_000 } as Partial<Item>);
-    const z = mk({ cwd: "/w/A", lastEventAt: 1_000 } as Partial<Item>);
-    expect(ids(sidebarOrder([z, y, x], new Set(), "recent", "dir", ["/w/B", "/w/A"])))
-      .toEqual([x.session.id, z.session.id, y.session.id]);
-  });
 
   it("胶囊读侧栏存的分组方式和设置里的工作区顺序", async () => {
     const a1 = mk({ cwd: "/w/A", manual_key: 100 } as Partial<Item>);

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type SetStateAction } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type Dispatch, type SetStateAction } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 // 文件拖入走 Tauri 的 drag-drop 事件(webview 原生 drop 被拦截,DOM 拿不到 File;
@@ -72,6 +72,7 @@ import { ChatCwdContext } from "./chat/ToolActivity";
 import { WelcomePanel, type WelcomeInfo } from "./chat/WelcomePanel";
 import { parseCliRetry, parseCliStatus } from "./chat/cliStatus";
 import { ChatSidebar } from "./ChatSidebar";
+import { setShellCovered } from "./chat/shellCover";
 import { ChevronDownIcon } from "./sticker/icons";
 import { useStarred } from "./sticker/helpers";
 // 终端视图独立成 chunk：xterm 及其插件约 500KB，占对话窗 chunk 四成。手机远程页钉在对话页，
@@ -111,7 +112,7 @@ import { listAgents, type AgentDescriptor } from "../api";
 import { agentAssets, tintStyle } from "../providers";
 import appLogoUrl from "../../src-tauri/icons/64x64.png";
 import { Icon } from "../icons/Icon";
-import { icArrowLeftRight, icArrowUp, icChevronLeft, icCollapse, icExpand, icFile, icMessage, icShield, icSidebarLeft, icSparkles, icStop } from "../icons/glyphs.chat";
+import { icArrowLeftRight, icArrowUp, icChevronLeft, icCollapse, icExpand, icFile, icList, icMessage, icShield, icSidebarLeft, icSparkles, icStop } from "../icons/glyphs.chat";
 import { icAlert, icCheck, icChevronDown, icClose, icPencil } from "../icons/glyphs";
 
 
@@ -258,7 +259,39 @@ function assignRef<T>(ref: { readonly current: T | null }, node: T | null) {
   (ref as { current: T | null }).current = node;
 }
 
-export function ChatWindow() {
+/** 名单外壳（views/roster/RosterShell）与对话窗之间的接线。对话窗仍是单会话状态机，名单只做三件事：
+ *  盖一层名单在对话区上、点名让它切到某个会话、听它说「我被带去别处了」。 */
+/** 名单上直接说的话：切到那条会话后先等这么久再发，让屏幕识别和审批轮询各跑过一拍。 */
+const SHELL_SEND_SETTLE_MS = 1500;
+/** 等这么久那条会话还没就绪，就不在名单底下发了：让位给现场，话留在输入框里。 */
+const SHELL_SEND_GIVE_UP_MS = 15_000;
+
+export type ChatShellBridge = {
+  /** 盖在对话区上的名单。非空时对话区整块 inert + 不可见，但不卸载：审批租约、终端、草稿都留着。 */
+  overlay: ReactNode | null;
+  /** 名单要求切到某个会话。seq 每次请求加一，同一个 id 连点两次也算两次。
+   *  send：名单上直接对它说的话。对话窗在名单底下切到这条会话，等它读出来、屏幕识别跑过一拍，
+   *  用自己的发送（全部守卫都在）发出去；发不出去（停在审批上、要接管、出错）就让名单让位，
+   *  人看到的是现场里那条原因。resume：只把它恢复起来（出错行的「恢复」）。
+   *  draft：名单底部输入框里写给它的话，带进对话窗的输入框，由人在这里按发送——对话窗的发送
+   *  有一整套守卫（子代理视图、实时屏幕判定、草稿暂存、排队键、发送队列），名单不另写一份。 */
+  request: { id: number; seq: number; draft?: string; takeover?: boolean; send?: string; resume?: boolean } | null;
+  /** 名单底部输入框「交代一个结果」：打开新建页并把这句话带进去。seq 同 request。 */
+  newSession: { message: string; seq: number } | null;
+  /** 名单顶部的入口：搜索（命令面板）、已完成、会话管理。这些页和弹层本来就长在对话窗里，
+   *  名单只是点名让它打开，不另做一份。seq 同 request。 */
+  command: { name: "search" | "done" | "admin"; seq: number } | null;
+  /** 对话窗当前会话变了（含启动时的初值）。 */
+  onSession: (id: number) => void;
+  /** 管理页点了「返回」：从名单进去的回到名单，不落到一个没点过的现场里。 */
+  onPageBack: () => void;
+  /** 现场顶栏上的「回到名单」。null = 不摆（只有一个会话时名单就是它自己）。 */
+  onBack?: (() => void) | null;
+  /** 对话窗被带去某个会话 / 新建页 / 管理页（点岛上的卡、通知、新会话启动）：名单让位。 */
+  onReveal: () => void;
+};
+
+export function ChatWindow({ shell }: { shell?: ChatShellBridge } = {}) {
   const t = useT();
   // 窗口以 visible:false 创建（window.rs），首帧渲染后再显示，消除打开瞬间的白框闪烁。
   useShowWhenReady();
@@ -507,6 +540,15 @@ export function ChatWindow() {
   if (view === "terminal") terminalEverShownRef.current = true;
   const terminalMounted = terminalEverShownRef.current || terminalMonitorNeeded;
   const activeSessionRef = useRef(sessionId);
+  const shellRef = useRef(shell);
+  shellRef.current = shell;
+  const shellTakeoverRef = useRef<number | null>(null);
+  // 名单上直接说的话 / 要恢复的会话（见 ChatShellBridge.request.send）：等这条会话就绪再发。
+  const shellJobRef = useRef<{ id: number; text: string | null; at: number } | null>(null);
+  // 发出之后盯一会儿：发送守卫一旦拦下（错误条、要接管、原文退回输入框），名单让位给现场。
+  const shellWatchRef = useRef<{ id: number; text: string | null; until: number } | null>(null);
+  const [shellJobTick, setShellJobTick] = useState(0);
+  useEffect(() => () => setShellCovered(false), []);
   // 会话 A→B→A 也必须作废 A 的旧操作；只比 id 会让旧发送清掉返回 A 后的新草稿。
   const sessionEpochRef = useRef(0);
   const operationEpoch = sessionEpochRef.current;
@@ -540,7 +582,7 @@ export function ChatWindow() {
     approvalAwaitingIds, setApprovalAwaitingIds,
     brokerOwnsReview, setBrokerOwnsReview,
     lastInteractiveQuestionRef, collapsedQuestionIdRef,
-  } = useApprovalChannel({ sessionId, activeSessionRef, viewRef, setView, setSendError });
+  } = useApprovalChannel({ sessionId, covered: shell?.overlay != null, activeSessionRef, viewRef, setView, setSendError });
   interactionBlockedRef.current = !!(terminalAttention || dismissedAttention || approval || structuredQuestion || dismissedQuestion || terminalMenuOpenRef.current);
   // 拦住发送时的说明：只剩提问卡（展开或收起）在拦时说「在等你回答」，其余仍是交互卡通用说法。
   // 此前一律说「在等启动确认」，回合中途的提问也这么说，用户看不懂该做什么（用户实拍）。
@@ -1927,12 +1969,103 @@ export function ChatWindow() {
   // 主区的新建会话页 / 会话管理页：开合、入口事件、选会话时让位（chat/useMainPages）。
   const {
     adminOpen, adminStatus, adminWorkspaces, newSessionOpen, newSessionDrop, newSessionOpenRef,
-    openAdmin, openAdminFromOverlay, openAdminFor, closeAdmin, leavePages, selectSession, selectFromOverlay, dropFolder,
+    openAdmin, openAdminDone, openAdminFromOverlay, openAdminFor, closeAdmin, leavePages, selectSession, selectFromOverlay, dropFolder, openNewSessionWith,
   } = useMainPages({ resetTo, closeOverlay: closeOverlaySidebar });
   // 新建会话页 / 会话管理页盖住主区时，右侧面板跟着让位（用户实拍 2026-11-09：新建页还挂着上一个
   // 会话的「更改」）。只把可见性压成收起、不卸载：回到会话时终端、浏览器、打开的文件原样还在；
   // 走 visible=false 而不是藏 DOM，面板里的浏览器是原生 webview，只有收起态才会把它藏掉。
   const pageCovered = adminOpen || !!newSessionOpen;
+  // 名单外壳的接线（见 ChatShellBridge）。回调经 ref 取最新的，effect 不因外壳重渲染而重跑。
+  useEffect(() => { shellRef.current?.onSession(sessionId); }, [sessionId]);
+  const shellRequest = shell?.request ?? null;
+  useEffect(() => {
+    if (!shellRequest) return;
+    if (shellRequest.draft) {
+      // 已经在这条会话上：直接放进输入框。要切过去：先放进它的草稿，切换时照常恢复。
+      // 那边原来有没发出去的草稿（连同附件）：接在它后面，不盖掉（做空审查第二轮，问题 2）。
+      const said = shellRequest.draft;
+      const join = (kept: string) => (kept.trim() ? `${kept}\n\n${said}` : said);
+      if (shellRequest.id === activeSessionRef.current) setPrompt(join);
+      else {
+        const kept = draftsRef.current.get(shellRequest.id);
+        draftsRef.current.set(shellRequest.id, { ...kept, prompt: join(kept?.prompt ?? ""), attachments: kept?.attachments ?? [] });
+      }
+    }
+    selectSession(shellRequest.id);
+    shellJobRef.current = shellRequest.send != null || shellRequest.resume
+      ? { id: shellRequest.id, text: shellRequest.send ?? null, at: Date.now() }
+      : null;
+    // 「接管到 Meowo」：记下来，等这条会话读出来、确认它确实还在外部跑着，再把接管确认摆出来（见下）。
+    shellTakeoverRef.current = shellRequest.takeover ? shellRequest.id : null;
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 只认 seq：同一个会话再点一次也要回到它
+  }, [shellRequest?.seq]);
+  // 名单上点了「接管到 Meowo」：进到现场就把接管确认摆出来，人不用先发一句话才看到它
+  // （做空审查第二轮，问题 5）。接管要结束外部进程，这里只摆确认，不替人点。
+  useEffect(() => {
+    if (shellTakeoverRef.current !== sessionId || loading || history?.sessionId !== sessionId) return;
+    shellTakeoverRef.current = null;
+    if (externalRunning && history.ptyManaged === false && !history.background) setNeedsTakeover(true);
+  }, [sessionId, loading, history, externalRunning]);
+  // 名单上说的话：会话读出来、能力表到了、没有别的发送在途，再等屏幕识别和审批轮询跑过一拍
+  // （SHELL_SEND_SETTLE_MS）——刚切过来时卡片状态还是空的，守卫会以为终端是空闲的。等太久没就绪
+  // （SHELL_SEND_GIVE_UP_MS）就让名单让位，人自己在现场里发。
+  useEffect(() => {
+    const job = shellJobRef.current;
+    if (!job || job.id !== sessionId) return;
+    if (Date.now() - job.at > SHELL_SEND_GIVE_UP_MS) {
+      shellJobRef.current = null;
+      if (job.text) setPrompt((current) => current || job.text!);
+      shellRef.current?.onReveal();
+      return;
+    }
+    const retry = (ms: number) => {
+      const timer = window.setTimeout(() => setShellJobTick((n) => n + 1), ms);
+      return () => window.clearTimeout(timer);
+    };
+    if (loading || history?.sessionId !== sessionId || !chatUi || sending) return retry(500);
+    if (!history.supported) {
+      shellJobRef.current = null;
+      shellRef.current?.onReveal();
+      return;
+    }
+    const wait = job.at + SHELL_SEND_SETTLE_MS - Date.now();
+    if (wait > 0) return retry(wait);
+    shellJobRef.current = null;
+    shellWatchRef.current = { id: sessionId, text: job.text, until: Date.now() + 60_000 };
+    if (job.text == null) resumeForChat();
+    else void sendPrompt({ prompt: job.text, attachments: [] });
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- sendPrompt / resumeForChat 每次渲染都是新的，取当下那一份
+  }, [sessionId, loading, history, chatUi, sending, shellJobTick]);
+  useEffect(() => {
+    const watch = shellWatchRef.current;
+    if (!watch) return;
+    if (watch.id !== sessionId || Date.now() > watch.until) { shellWatchRef.current = null; return; }
+    if (sendError || needsTakeover || (watch.text != null && prompt === watch.text)) {
+      shellWatchRef.current = null;
+      shellRef.current?.onReveal();
+    }
+  }, [sendError, needsTakeover, prompt, sessionId]);
+  const shellNewSession = shell?.newSession ?? null;
+  useEffect(() => {
+    if (!shellNewSession) return;
+    openNewSessionWith(shellNewSession.message);
+    // 新建页 / 管理页本来就开在名单底下时（上次交代完又回了名单），下面那条「页面一打开名单让位」
+    // 不会再触发：这里补说一遍，不然话进了被盖住的页面、名单纹丝不动（做空审查第二轮，问题 1）。
+    if (pageCovered) shellRef.current?.onReveal();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 只认 seq
+  }, [shellNewSession?.seq]);
+  const shellCommand = shell?.command ?? null;
+  useEffect(() => {
+    if (!shellCommand) return;
+    if (shellCommand.name === "search") { setSwitcherOpen(true); return; }
+    if (shellCommand.name === "done") openAdminDone();
+    else openAdmin();
+    // 页面本来就开着时同理（见下面 newSession 那条的说明）。
+    if (pageCovered) shellRef.current?.onReveal();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 只认 seq
+  }, [shellCommand?.seq]);
+  // 新建页 / 管理页都长在对话窗里：它们一打开，名单让位。
+  useEffect(() => { if (pageCovered) shellRef.current?.onReveal(); }, [pageCovered]);
   const shownPanelState = useMemo(() => (pageCovered ? { ...panelState, visible: false } : panelState), [pageCovered, panelState]);
 
   const refresh = useCallback(async () => {
@@ -2111,6 +2244,7 @@ export function ChatWindow() {
     listen<number>("chat-session-changed", (event) => {
       leavePages();
       resetTo(event.payload);
+      shellRef.current?.onReveal();
     }).then((fn) => {
       if (cancelled) fn(); else un = fn;
     }).catch(() => {});
@@ -3956,6 +4090,12 @@ export function ChatWindow() {
   const compactChrome = remoteUi() && narrow;
   // 窗口左上角的应用 logo（用户要求）。只是标识，不可点；同样是拖拽区，按住它照样能拖窗。
   const appLogo = <img className="chat-app-logo" src={appLogoUrl} width={18} height={18} alt="" draggable={false} data-tauri-drag-region />;
+  // 现场里回名单的入口：摆在顶栏 logo 后面（macOS 摆在标题行最前）。名单盖着时不摆。
+  const backToRosterButton = shell?.onBack && !(shell.overlay != null) ? (
+    <button type="button" className="chat-sidebar-open chat-roster-back" aria-label={t.roster.back} data-tip={t.roster.back} onClick={shell.onBack}>
+      <Icon glyph={icList} size={16} />
+    </button>
+  ) : null;
   const sidebarToggleButton = (
     <button
       type="button"
@@ -3975,6 +4115,11 @@ export function ChatWindow() {
 
   // 三栏宽度按 .chat-body 实测宽重新钳制（chat/paneLayout）：侧栏和面板互相扣、对话区保 320，
   // 窗口缩小时跟着回收；存储里用户拖的宽度不动，窗口拉回宽时原样恢复。
+  const rosterOn = shell?.overlay != null;
+  // 名单盖着时，本窗口挂在 window 上的快捷键一律不接（chat/shellCover.ts）：审批的数字键 1 和
+  // Esc 两段式拒绝都在其中。渲染时就同步置位，不等 effect：盖上的那一帧起就不能漏键。
+  // 命令面板开着时放开：它是从名单上叫出来的，自己的方向键 / 回车 / Esc 要收得到。
+  setShellCovered(rosterOn && !switcherOpen);
   const dockedSidebar = !narrow && !sidebarCollapsed;
   const dockedPanel = !!cwd && !remoteUi() && shownPanelState.visible && !panelState.expanded;
   const panes = fitPanes({ body: chatBodyWidth, sidebar: dockedSidebar ? sidebarWidth : null, panel: dockedPanel ? diffResize.width : null, ui: uiScale, gutter: remoteUi() ? 0 : surfaceGutter(dockedSidebar) });
@@ -3982,7 +4127,7 @@ export function ChatWindow() {
   const shownPanelWidth = panes.panel ?? diffResize.width;
 
   return (
-    <div className={"chat-window" + (view === "terminal" ? " is-terminal" : "") + (compactChrome ? " is-remote-compact" : "") + (remoteListMode ? " is-remote-list" : "") + (narrow || sidebarCollapsed ? " is-sidebar-undocked" : "")}>
+    <div className={"chat-window" + (view === "terminal" ? " is-terminal" : "") + (compactChrome ? " is-remote-compact" : "") + (remoteListMode ? " is-remote-list" : "") + (narrow || sidebarCollapsed ? " is-sidebar-undocked" : "") + (rosterOn ? " is-roster" : "")}>
       <DevBadge />
       {/* 拖拽落点遮罩:文件悬在窗口上时给「松开以添加附件」的明确反馈。 */}
       {dragHover && (
@@ -4006,6 +4151,7 @@ export function ChatWindow() {
       {!isMac() && !compactChrome && !remoteListMode && (
         <header className="chat-topbar" data-tauri-drag-region>
           {appLogo}
+          {backToRosterButton}
           {sidebarToggleButton}
           {/* 最小化/最大化/关闭是桌面窗口能力,手机浏览器没有可控窗口——远程隐藏。 */}
           {!remoteUi() && <WindowControls onClose={close} />}
@@ -4037,8 +4183,12 @@ export function ChatWindow() {
           </div>
         </>
       )}
+      {/* 名单盖在对话区上（顶栏留着：窗口按钮只有一套，原生覆盖子窗按它们的位置摆）。 */}
+      {rosterOn && <div className="chat-roster-layer">{shell?.overlay}</div>}
       <div
         ref={chatBodyRef}
+        // 名单在上面时对话区不接焦点、不进读屏：它只是没卸载，不是「在后面」。
+        {...(rosterOn ? { inert: "" } : null)}
         className={"chat-body" + (shownPanelState.visible && (panelState.expanded || remoteUi()) ? " is-diff-max" : "")}
         // CSS 兜底（.side-panel 的 max-width）也要扣掉常驻侧栏，JS 还没量到的首帧就不会超。
         style={dockedSidebar ? { "--docked-sidebar-w": `${Math.round(shownSidebarWidth)}px` } as CSSProperties : undefined}
@@ -4080,7 +4230,7 @@ export function ChatWindow() {
       {/* 会话管理页占据主列（对照 Kimi）；对话主列不卸载只藏起来，终端、草稿等状态切回来都在。 */}
       {adminOpen && (
         <div className="chat-main chat-admin-main">
-          <SessionAdmin key={`${adminStatus}:${adminWorkspaces.join("|")}`} initialWorkspaces={adminWorkspaces} initialStatus={adminStatus} onBack={closeAdmin} onOpen={selectSession} />
+          <SessionAdmin key={`${adminStatus}:${adminWorkspaces.join("|")}`} initialWorkspaces={adminWorkspaces} initialStatus={adminStatus} onBack={() => { closeAdmin(); shellRef.current?.onPageBack(); }} onOpen={selectSession} />
         </div>
       )}
       {newSessionOpen && !adminOpen && (
@@ -4118,7 +4268,7 @@ export function ChatWindow() {
       )}
       <div className="chat-main" hidden={adminOpen || !!newSessionOpen}>
       <ChatTitleBar
-        leading={((isMac() && !sidebarVisible) || compactChrome) && sidebarToggleButton}
+        leading={<>{isMac() && backToRosterButton}{((isMac() && !sidebarVisible) || compactChrome) && sidebarToggleButton}</>}
         title={history ? (
           <ChatTitleMenu
             title={history.title || t.chat.title}
@@ -5518,8 +5668,9 @@ export function ChatWindow() {
         <QuickSwitcher
           activeId={sessionId}
           commands={paletteCommands}
-          onPick={selectSession}
-          onCommand={runPaletteCommand}
+          // 从名单上搜到的会话 / 命令都落在现场里：名单让位。
+          onPick={(id) => { selectSession(id); shellRef.current?.onReveal(); }}
+          onCommand={(id) => { shellRef.current?.onReveal(); runPaletteCommand(id); }}
           onClose={() => setSwitcherOpen(false)}
         />
       )}

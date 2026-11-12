@@ -123,6 +123,8 @@ const PANE_SCENES = [
 ];
 const MOBILE_SCENES = [
   { scene: "mobile-list", sel: ".remote-session-list" },
+  { scene: "mobile-list-all", sel: ".chat-sidebar" },
+  { scene: "mobile-roster-open", sel: ".roster-sheet" },
   { scene: "mobile-chat", sel: ".chat-approval-actions" },
   { scene: "mobile-changes", sel: ".scm-row" },
 ];
@@ -172,6 +174,19 @@ function buildMatrix() {
   for (const sc of MOBILE_EXTRA) for (const lang of sc.langs ?? ["zh"]) for (const theme of THEMES) for (const { w, h } of sc.sizes) {
     const shot = { ...sc, page: "mobile", lang, theme, w, h, dpr: 2, mobile: true };
     shots.push({ ...shot, name: `${sc.scene}${sc.tag ? "-" + sc.tag : ""}__${lang}__${theme}__w${w}${sc.tag ? "h" + h : ""}__dpr2` });
+  }
+  // 主窗口的名单外壳（desktop.tsx 的 roster*）：标准宽与最小窗口各一组。
+  for (const scene of ["roster", "roster-open", "roster-glance", "roster-quiet", "roster-scene"]) for (const [w, h] of [[1200, 760], [620, 480]]) for (const theme of THEMES) for (const lang of scene === "roster" ? ["zh", "en"] : ["zh"]) {
+    shots.push({ page: "desktop", scene, sel: ".roster-shell", lang, theme, w, h, dpr: 2, audit: "roster", name: `${scene}__${lang}__${theme}__w${w}__dpr2` });
+  }
+  // 最小窗口 + 150% 缩放下点开一行：输入框仍要完整露出。
+  for (const theme of THEMES) shots.push({ page: "desktop", scene: "roster-open", sel: ".roster-sheet", lang: "zh", theme, w: 620, h: 480, dpr: 2, audit: "roster", params: "ui=1.5", name: `roster-open-ui150__zh__${theme}__w620__dpr2` });
+  // 外部终端里的会话点开是什么样。
+  for (const theme of THEMES) shots.push({ page: "desktop", scene: "roster-external", sel: ".roster-sheet", lang: "zh", theme, w: 1200, h: 760, dpr: 2, audit: "roster", name: `roster-external__zh__${theme}__w1200__dpr2` });
+  // 名单的状态矩阵：中英文 × 深浅 × 缩放 100/124/150 × 窗口宽 620/1280/2560 × 会话数 0/1/5/12。
+  // 每张都过一遍排版量测（ROSTER_AUDIT）。名字以 roster-mx 开头，平时用 --filter 单独拍。
+  for (const lang of ["zh", "en"]) for (const theme of THEMES) for (const ui of [1, 1.24, 1.5]) for (const [w, h] of [[620, 480], [1280, 800], [2560, 1440]]) for (const n of [0, 1, 5, 12]) {
+    shots.push({ page: "desktop", scene: "roster", sel: ".roster-shell", lang, theme, w, h, dpr: 1, audit: "roster", params: `n=${n}&ui=${ui}`, name: `roster-mx__n${n}__ui${Math.round(ui * 100)}__${lang}__${theme}__w${w}` });
   }
   // 补看场景（qa-scenes.mjs）：要靠真实的点击、悬停、键盘才出得来的状态，以及缩放、超宽这些状态维度。
   for (const sc of QA_SHOTS) for (const lang of sc.langs ?? ["zh"]) for (const theme of sc.themes ?? THEMES) {
@@ -238,6 +253,46 @@ function trackNetwork(page) {
     }
   };
 }
+
+// 名单排版的量测（验收：各列逐行对齐、没有重叠、没有只剩省略号的截断、不溢出窗口、输入框完整可见）。
+// 在页面里跑，返回问题清单；空数组 = 没问题。现场（只有一个会话时）没有名单，直接算过。
+const ROSTER_AUDIT = () => {
+  const out = [];
+  const roster = document.querySelector(".roster");
+  if (!roster) return out;
+  const vw = window.innerWidth, vh = window.innerHeight;
+  if (document.documentElement.scrollWidth > vw) out.push(`页面横向溢出 ${document.documentElement.scrollWidth - vw}px`);
+  const shown = (el) => el && getComputedStyle(el).display !== "none" && el.getBoundingClientRect().width > 0;
+  const rows = [...document.querySelectorAll(".roster-row")];
+  const cols = [".roster-av", ".roster-name", ".roster-word", ".roster-now", ".roster-time", ".roster-diff"];
+  for (const col of cols) {
+    const xs = new Set(rows.map((row) => row.querySelector(col)).filter(shown).map((el) => Math.round((el.getBoundingClientRect().left - el.closest(".roster-row").getBoundingClientRect().left) * 100) / 100));
+    if (xs.size > 1) out.push(`${col} 各行没对齐：${[...xs].join(" / ")}`);
+  }
+  rows.forEach((row, i) => {
+    const box = row.getBoundingClientRect();
+    if (box.right > vw + 0.5 || box.left < -0.5) out.push(`第 ${i + 1} 行超出窗口`);
+    const cells = cols.map((col) => row.querySelector(col)).filter(shown);
+    cells.forEach((cell, k) => {
+      const r = cell.getBoundingClientRect();
+      if (r.right > box.right + 0.5) out.push(`第 ${i + 1} 行 ${cell.className} 超出行`);
+      const next = cells[k + 1]?.getBoundingClientRect();
+      if (next && r.right > next.left + 0.5) out.push(`第 ${i + 1} 行 ${cell.className} 压到下一列`);
+    });
+    const word = row.querySelector(".roster-word");
+    if (shown(word) && word.scrollWidth > word.clientWidth + 0.5) out.push(`第 ${i + 1} 行状态词被切掉（${word.textContent}）`);
+    const name = row.querySelector(".roster-name b");
+    if (name && name.scrollWidth > name.clientWidth && name.clientWidth < 3 * parseFloat(getComputedStyle(name).fontSize)) out.push(`第 ${i + 1} 行任务名只剩省略号（${name.clientWidth}px）`);
+  });
+  const composer = document.querySelector(".roster-composer")?.getBoundingClientRect();
+  if (!composer) out.push("没有输入框");
+  else if (composer.top < 0 || composer.bottom > vh + 0.5 || composer.left < 0 || composer.right > vw + 0.5) out.push(`输入框没有完整露出（${Math.round(composer.top)}–${Math.round(composer.bottom)} / 窗口高 ${vh}）`);
+  const head = [...document.querySelectorAll(".roster-head > *")].map((el) => el.getBoundingClientRect());
+  const headBox = document.querySelector(".roster-head")?.getBoundingClientRect();
+  if (headBox && head.some((r) => r.height > headBox.height + 0.5)) out.push("顶部一行折成了两行");
+  for (let k = 0; k + 1 < head.length; k += 1) if (head[k].right > head[k + 1].left + 0.5) out.push("顶部标题和入口重叠");
+  return out;
+};
 
 async function shootOne(browser, base, shot, outDir, dryRun = false) {
   const ctx = await browser.newContext({
@@ -318,6 +373,11 @@ async function shootOne(browser, base, shot, outDir, dryRun = false) {
       shotBuf = buf;
     }
     if (!dryRun) writeFileSync(join(outDir, shot.name + ".png"), shotBuf);
+    // 图先落盘再报排版问题：有问题时能对着图看。
+    if (!dryRun && shot.audit === "roster") {
+      const problems = await page.evaluate(ROSTER_AUDIT);
+      if (problems.length) throw new Error(`名单排版：${problems.slice(0, 6).join("；")}`);
+    }
     if (errors.length) throw new Error(errors.slice(0, 3).join(" | "));
     return { name: shot.name, errors: warnings };
   } finally {

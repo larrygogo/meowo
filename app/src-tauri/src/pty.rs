@@ -323,6 +323,9 @@ struct AttachState {
     /// 租约会压制桌面召唤并让审批静默空等 300s；桌面租约不设 TTL——窗口销毁
     /// 兜底（release_desktop_consumers）已覆盖它的残留形态，语义不动。
     approval_consumers: Mutex<HashMap<String, ConsumerLease>>,
+    /// 主窗口此刻显示的是名单（不是某一行的现场）。和名单租约分开：租约在窗口的整个生命周期里都在，
+    /// 这个只在名单真的摆在那里时为真。通知据此判断「名单在眼前」（规格取舍 9）。
+    roster_showing: std::sync::atomic::AtomicBool,
     /// 已自动放行、等用户处理的 AskUserQuestion 题面（session_id → (题面, 入表时刻)）。
     ///
     /// `interactive-question` 事件是 fire-and-forget：对话窗冷启动要 1~2s，而 emit
@@ -368,7 +371,13 @@ const REMOTE_CONSUMER_TTL_MS: i64 = 60_000;
 /// 伪造远端身份，远端也无法冒充桌面租约。
 pub(crate) const REMOTE_CONSUMER_PREFIX: &str = "remote:";
 
-/// 审批消费者租约：哪条会话 + 最近一次注册/续约时刻。
+/// 名单租约的会话号。主窗口首屏是 agent 名单（规格 .lead/20261111-roster）：任何一行的
+/// 审批都能在行内作答，所以它的租约不绑会话。真实会话 id 恒为正、启动占位恒为负，
+/// 0 两边都不占。
+const ROSTER_LEASE_SESSION: i64 = 0;
+
+/// 审批消费者租约：哪条会话（[`ROSTER_LEASE_SESSION`] = 名单，不绑会话）+ 最近一次
+/// 注册/续约时刻。
 struct ConsumerLease {
     session_id: i64,
     seen_ms: i64,
@@ -446,6 +455,7 @@ impl PtyBroker {
                 bindings: Mutex::new(HashMap::new()),
                 approvals: Mutex::new(HashMap::new()),
                 approval_consumers: Mutex::new(HashMap::new()),
+                roster_showing: std::sync::atomic::AtomicBool::new(false),
                 interactive_questions: Mutex::new(HashMap::new()),
                 app: Mutex::new(None),
             }),
@@ -1029,6 +1039,14 @@ impl PtyBroker {
     /// `pass`，提示回落到 agent 自己的审批界面——窗口起不来时 hook 不该压着 TUI
     /// 盲等满 300s。
     fn ensure_approval_window(&self, session_id: i64) -> ApprovalHold {
+        approval_hold_with_remote_roster(
+            self.ensure_desktop_approval_window(session_id),
+            self.has_remote_roster_consumer(),
+        )
+    }
+
+    /// 桌面这一侧的召唤与等待（手机名单租约不参与，见 [`approval_hold_with_remote_roster`]）。
+    fn ensure_desktop_approval_window(&self, session_id: i64) -> ApprovalHold {
         match approval_gate(
             self.has_fresh_remote_consumer(session_id),
             crate::settings::load_settings().chat_enabled,
@@ -1047,12 +1065,25 @@ impl PtyBroker {
         let Some(app) = self.attach.app.lock().ok().and_then(|app| app.clone()) else {
             return ApprovalHold::Reject;
         };
+        let roster = self.has_roster_consumer();
+        let on_target = self.has_approval_consumer(session_id);
         match approval_summon_action(
-            self.has_approval_consumer(session_id),
+            on_target,
+            roster,
             self.has_any_approval_consumer(),
             crate::window::chat_window_in_view(&app),
         ) {
-            SummonAction::Ready => return ApprovalHold::Desktop,
+            SummonAction::Ready => {
+                // 靠名单租约就位的（用户没停在这条会话上）：窗口可见不等于人在看它，可能压在
+                // 别的应用后面。闪一下任务栏——窗口本来就在前台时系统不会闪，不打扰。
+                if !on_target {
+                    if let Some(window) = app.get_window("chat") {
+                        let _ =
+                            window.request_user_attention(Some(tauri::UserAttentionType::Critical));
+                    }
+                }
+                return ApprovalHold::Desktop;
+            }
             SummonAction::Hold => {
                 // 不切窗只召唤：请求已由调用方先入表，pending-approval 事件让前端
                 // 点亮侧栏徽标（approvalAwaitingIds），闪烁提醒有事发生。
@@ -1062,6 +1093,15 @@ impl PtyBroker {
                 return ApprovalHold::Desktop;
             }
             SummonAction::Summon => {}
+        }
+        if roster {
+            // 名单租约在、窗口不在眼前：消费者已经就位，缺的只是窗口。让窗口无声显形并
+            // 闪任务栏，**不切会话**——名单上那一行自己会亮，切过去反而把人从名单拽走。
+            crate::window::reveal_chat_window_quiet(&app);
+            if let Some(window) = app.get_window("chat") {
+                let _ = window.request_user_attention(Some(tauri::UserAttentionType::Critical));
+            }
+            return ApprovalHold::Desktop;
         }
         // 切会话召唤：注册审批消费者的是对话页那套 useEffect，只有会话切过去了才会注册。
         //
@@ -2473,7 +2513,12 @@ impl PtyBroker {
                 consumers
                     .iter()
                     // 用更严的 viewing 判活(非 60s 租约):兜里的手机不该压住桌面 toast。
-                    .filter(|(id, lease)| consumer_lease_viewing(id, lease.seen_ms, now))
+                    // 名单租约不算「正在看某条会话」:名单在眼前时要不要压通知是另一件事
+                    // (规格取舍 9,未定),这里先不动通知的现有行为。
+                    .filter(|(id, lease)| {
+                        lease.session_id != ROSTER_LEASE_SESSION
+                            && consumer_lease_viewing(id, lease.seen_ms, now)
+                    })
                     .map(|(_, lease)| lease.session_id)
                     .collect()
             })
@@ -2485,6 +2530,50 @@ impl PtyBroker {
         self.attach.approval_consumers.lock().is_ok_and(|consumers| {
             consumers.iter().any(|(id, lease)| {
                 lease.session_id == session_id && consumer_lease_fresh(id, lease.seen_ms, now)
+            })
+        })
+    }
+
+    /// 手机端是否停在名单上（新鲜的 `remote:` 名单租约）。它不让桌面闭嘴：桌面该闪该召唤
+    /// 照旧，两端都能领、先答者生效；只在桌面这侧接不住时把请求留给手机（见
+    /// [`approval_hold_with_remote_roster`]）。带 TTL：手机锁屏 / 被杀后不能一直占着。
+    fn has_remote_roster_consumer(&self) -> bool {
+        let now = crate::now_ms();
+        self.attach.approval_consumers.lock().is_ok_and(|consumers| {
+            consumers.iter().any(|(id, lease)| {
+                lease.session_id == ROSTER_LEASE_SESSION
+                    && is_remote_consumer(id)
+                    && consumer_lease_fresh(id, lease.seen_ms, now)
+            })
+        })
+    }
+
+    /// 留给手机领的审批（`ApprovalHold::RemoteClaimable`）此刻还有没有人会来领：有人停在这条会话上，
+    /// 或者手机停在名单上。
+    ///
+    /// 桌面的名单租约**不算**：走到 RemoteClaimable 说明桌面没被召唤过（人在手机上，不夺屏），桌面
+    /// 那边没有任何提示。把它算进来的话，手机一锁屏，这条审批会被一个没人知道的桌面名单压满 300 秒
+    /// （提问是 7 天），正是「没人看见」（做空审查第二轮疑点 A）。手机没了就回落终端，和名单租约
+    /// 出现之前一样。桌面名单上点开了这一行的话它持有专属租约，算在第一项里。
+    fn approval_answerable(&self, session_id: i64) -> bool {
+        self.has_approval_consumer(session_id) || self.has_remote_roster_consumer()
+    }
+
+    /// 主窗口报告名单是否摆在眼前（进了现场 / 窗口销毁时为 false）。
+    pub(crate) fn set_roster_showing(&self, showing: bool) {
+        self.attach.roster_showing.store(showing, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub(crate) fn roster_showing(&self) -> bool {
+        self.attach.roster_showing.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// 桌面主窗口是否持有名单租约。只认桌面：它决定的是「桌面窗口要不要动」；手机的名单
+    /// 租约走 [`Self::has_remote_roster_consumer`]。
+    fn has_roster_consumer(&self) -> bool {
+        self.attach.approval_consumers.lock().is_ok_and(|consumers| {
+            consumers.iter().any(|(id, lease)| {
+                lease.session_id == ROSTER_LEASE_SESSION && !is_remote_consumer(id)
             })
         })
     }
@@ -2524,7 +2613,7 @@ impl PtyBroker {
         session_id: i64,
         consumer_id: String,
     ) -> Result<(), String> {
-        if session_id <= 0 || consumer_id.is_empty() || consumer_id.len() > 128 {
+        if session_id < ROSTER_LEASE_SESSION || consumer_id.is_empty() || consumer_id.len() > 128 {
             return Err("审批消费者无效".into());
         }
         self.attach
@@ -2561,6 +2650,10 @@ impl PtyBroker {
 
     /// 把没有任何新鲜消费者的会话的挂起审批交还各自 TUI。
     fn pass_approvals_without_consumer(&self) {
+        // 名单还开着（桌面或手机）：每一行的审批都还有地方答，一条都不交还。
+        if self.has_roster_consumer() || self.has_remote_roster_consumer() {
+            return;
+        }
         let watched = self.viewed_session_ids();
         let pending = self
             .attach
@@ -2592,13 +2685,21 @@ impl PtyBroker {
             .and_then(|mut consumers| {
                 let lease = consumers.remove(consumer_id)?;
                 // 只剩过期远端租约也算「没人看了」：它们不会来领卡，压着不放只会空等 300s。
+                // 名单租约在场时每条会话都还有人能答：从某一行的现场退回名单会注销该会话
+                // 的专属租约，这一步不能把它的审批交还终端。
                 let still_watched = consumers.iter().any(|(id, other)| {
-                    other.session_id == lease.session_id
+                    (other.session_id == lease.session_id
+                        || other.session_id == ROSTER_LEASE_SESSION)
                         && consumer_lease_fresh(id, other.seen_ms, now)
                 });
                 (!still_watched).then_some(lease.session_id)
             });
         let Some(session_id) = session_id else { return };
+        if session_id == ROSTER_LEASE_SESSION {
+            // 名单租约自己走了：只交还此刻没有任何专属消费者的会话的审批。
+            self.pass_approvals_without_consumer();
+            return;
+        }
         let pending = self
             .attach
             .approvals
@@ -3199,7 +3300,7 @@ impl PtyBroker {
                         .and_then(|s| s.session_pending_review(request.session_id).ok())
                         .map(|pending| pending.is_some())
                 },
-                || remote_only && !self.has_approval_consumer(request.session_id),
+                || remote_only && !self.approval_answerable(request.session_id),
             );
             if let Ok(mut approvals) = self.attach.approvals.lock() {
                 approvals.remove(&request.request_id);
@@ -3251,11 +3352,17 @@ impl PtyBroker {
                 if !self.has_fresh_remote_consumer(request.session_id)
                     && crate::settings::load_settings().chat_enabled
                 {
+                    let roster = self.has_roster_consumer();
                     match approval_summon_action(
                         self.has_approval_consumer(request.session_id),
+                        roster,
                         self.has_any_approval_consumer(),
                         crate::window::chat_window_in_view(&app),
                     ) {
+                        // 名单租约在场：只让窗口显形，不切会话（同 ensure_approval_window）。
+                        SummonAction::Summon if roster => {
+                            crate::window::reveal_chat_window_quiet(&app);
+                        }
                         SummonAction::Summon => {
                             crate::window::open_chat_window_quiet(app.clone(), request.session_id);
                         }
@@ -3317,7 +3424,7 @@ impl PtyBroker {
                     .and_then(|s| s.session_pending_review(request.session_id).ok())
                     .map(|pending| pending.is_some())
             },
-            || remote_only && !self.has_approval_consumer(request.session_id),
+            || remote_only && !self.approval_answerable(request.session_id),
         );
         if let Ok(mut approvals) = self.attach.approvals.lock() {
             approvals.remove(&request.request_id);
@@ -3364,6 +3471,16 @@ fn approval_gate(remote_watching_target: bool, chat_enabled: bool) -> ApprovalGa
     }
 }
 
+/// 桌面这侧接不住（轻量模式、窗口召唤不出来）而手机停在名单上：请求留给手机领，
+/// 手机租约过期就放弃回落终端。桌面接得住时原样返回——手机名单不让桌面闭嘴。纯函数供单测。
+fn approval_hold_with_remote_roster(desktop: ApprovalHold, remote_roster: bool) -> ApprovalHold {
+    if desktop == ApprovalHold::Reject && remote_roster {
+        ApprovalHold::RemoteClaimable
+    } else {
+        desktop
+    }
+}
+
 /// `ensure_approval_window` 的结果:决定 await 循环用哪种耐心等待。
 #[derive(Debug, PartialEq, Eq)]
 enum ApprovalHold {
@@ -3388,16 +3505,21 @@ enum SummonAction {
 }
 
 /// 召唤策略的纯决策（供单测）。参数依次是：目标会话是否已有消费者租约、
-/// 是否存在任何消费者租约、对话窗是否在用户眼前（可见且未最小化）。
+/// 桌面主窗口是否持有名单租约、是否存在任何桌面消费者租约、对话窗是否在用户眼前
+/// （可见且未最小化）。
+///
+/// 名单租约只在窗口在眼前时算 Ready：名单能原位作答任何一行，但窗口收进托盘时没人
+/// 看得见那一行亮了，必须先让窗口出来（Summon；调用方见到名单租约只显形不切会话）。
 ///
 /// 「有租约但窗口不在眼前」（隐藏到托盘：WebView 活着、租约未清）必须走 Summon——
 /// 那时不存在可打断的注视，而 Hold 的徽标没人看得见，等同把审批藏起来。
 fn approval_summon_action(
     has_target_consumer: bool,
+    has_roster_consumer: bool,
     has_any_consumer: bool,
     window_in_view: bool,
 ) -> SummonAction {
-    if has_target_consumer {
+    if has_target_consumer || (has_roster_consumer && window_in_view) {
         SummonAction::Ready
     } else if has_any_consumer && window_in_view {
         SummonAction::Hold

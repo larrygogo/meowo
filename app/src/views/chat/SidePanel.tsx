@@ -1,3 +1,4 @@
+import { isShellCovered } from "./shellCover";
 import { memo, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import type { BrowserPaneInfo, GitDiffSummaryDto, RepoChangesDto, ShellTerminalInfo } from "../../api";
 import { pushEscLayer } from "../../escLayers";
@@ -68,6 +69,8 @@ export const SidePanel = memo(function SidePanel(props: Props) {
     if (collapsed) return;
     const popLayer = pushEscLayer();
     const onKey = (event: KeyboardEvent) => {
+      // 名单盖着对话窗时这里不接键（见 shellCover.ts）。
+      if (isShellCovered()) return;
       if (event.key !== "Escape") return;
       const target = event.target instanceof Element ? event.target : null;
       if (target?.closest(".shell-term, .browser-pane-url")) return;

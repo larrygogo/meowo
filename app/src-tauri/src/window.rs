@@ -537,6 +537,18 @@ pub(crate) fn open_chat_window_quiet(app: tauri::AppHandle, session_id: i64) {
     });
 }
 
+/// 只让已存在的对话窗无声显形，不切会话、不抢焦点。主窗口停在名单上时来了审批用：
+/// 那一行自己会亮，切会话反而把人从名单拽走。窗口不存在时什么都不做——名单租约
+/// 随窗口销毁清掉（release_desktop_consumers），走不到这里。最小化的留在任务栏，
+/// 理由同 open_chat_window_target 的安静分支。
+pub(crate) fn reveal_chat_window_quiet(app: &tauri::AppHandle) {
+    if let Some(w) = app.get_window("chat") {
+        if !w.is_visible().unwrap_or(false) {
+            show_window_no_activate(&w);
+        }
+    }
+}
+
 /// 对话窗此刻是否「在用户眼前」：存在、可见、且未最小化。审批/提问的召唤策略据此
 /// 分流——在眼前时窗口里必有用户正在看的会话，强行切会话是夺屏（实拍反馈：正在 A
 /// 会话里阅读/打字，B 会话一来审批就被瞬间拽走）；不在眼前（隐藏/最小化/未创建）时
@@ -649,7 +661,9 @@ pub(crate) fn open_latest_chat_window(app: &tauri::AppHandle) {
 /// （UI 调研 shell #1：全新 ~/.meowo 走完引导单击托盘弹出设置窗）。新建页自带「未检测到 CLI · 去安装」。
 fn latest_chat_target(latest: Option<i64>) -> ChatTarget {
     match latest {
-        Some(session_id) => ChatTarget::Session(session_id),
+        // 托盘入口没有「要看哪个会话」的意图，落在名单上（规格 .lead/20261111-roster：首屏是
+        // agent 名单）。会话号照带：只有一个会话时前端直接进它的现场。
+        Some(session_id) => ChatTarget::Roster(session_id),
         None => ChatTarget::NewSession {
             cwd: None,
             provider: None,
@@ -673,6 +687,8 @@ pub(crate) enum ChatTarget {
     },
     /// 会话管理页，预选「已完成」（设置页「已完成会话」的入口：那里不再自带一份列表）。
     AdminDone,
+    /// agent 名单（主窗口首屏）。带上最近活跃的会话号：只有一个会话时前端直接进它的现场。
+    Roster(i64),
 }
 
 impl ChatTarget {
@@ -697,6 +713,7 @@ impl ChatTarget {
                 url
             }
             ChatTarget::AdminDone => "index.html?admin=done".to_string(),
+            ChatTarget::Roster(id) => format!("index.html?sessionId={id}&roster=1"),
         }
     }
 }
@@ -748,6 +765,10 @@ pub(crate) fn open_chat_window_target(
             ChatTarget::AdminDone => w
                 .emit("chat-open-admin", "done")
                 .map_err(|e| format!("打开会话管理失败: {e}"))?,
+            // 窗口已开：不动当前会话，只请前端回到名单。
+            ChatTarget::Roster(_) => w
+                .emit("chat-open-roster", ())
+                .map_err(|e| format!("打开名单失败: {e}"))?,
         }
         if activate {
             let _ = w.show();

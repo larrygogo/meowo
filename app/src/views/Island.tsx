@@ -8,7 +8,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { IslandAlertEvent } from "../generated/contracts/IslandAlertEvent";
 import { useT } from "../i18n";
 import { useSettingsEffect } from "../hooks/useSettings";
-import { cardTone, readSidebarGroupMode, readSidebarSortMode, useStarred, type SidebarGroupMode, type SidebarSortMode } from "./sticker/helpers";
+import { cardTone, readSidebarGroupMode, useStarred, type SidebarGroupMode } from "./sticker/helpers";
 import { sidebarDirGroups } from "./sidebarDrag";
 import { type Item, UNNAMED_SESSION_SENTINEL } from "./sticker/types";
 import { AgentRing, Clock, Eyes, EYES_BLUSH_AFTER_MS, EYES_BUSY_AT, UsageRing, useEyeCue, useNow, type IslandTone } from "./island/islandParts";
@@ -85,10 +85,13 @@ export function menubarSegments(
   return [];
 }
 
-/// 岛的整体情绪：要人处理的优先（出错 > 待处理），其次在跑，再次跑完等输入。眼睛据此变色、变动作。
+/// 岛的整体情绪：要人处理的优先（待处理 > 出错），其次在跑，再次跑完等输入。眼睛据此变色、变动作。
+/// 待处理压过出错，与 cardTone、byUrgency、主窗口黑轨的 attentionFocus 同序（规格 .lead/20261111-roster）：
+/// 出错只是上一轮断了，审批挂着时 agent 正卡着等人。此前这里是出错优先，同一组会话岛上是 ✕✕、
+/// 聚焦文字和黑轨却指着待批准的那个。
 export function islandTone(counts: Counts): IslandTone {
-  if (counts.error > 0) return "error";
   if (counts.pending > 0) return "pending";
+  if (counts.error > 0) return "error";
   if (counts.running > 0) return "running";
   if (counts.waiting > 0) return "waiting";
   return "idle";
@@ -150,18 +153,16 @@ export function byUrgency(items: readonly Item[]): Item[] {
 export function sidebarOrder(
   items: readonly Item[],
   starred: ReadonlySet<string>,
-  sortMode: SidebarSortMode,
   groupMode: SidebarGroupMode = "none",
   workspaceOrder: readonly string[] = [],
 ): Item[] {
-  const recent = sortMode === "recent";
-  const key = (item: Item) => (recent ? item.session.last_event_at : item.manual_key ?? item.session.started_at * 1024);
+  const key = (item: Item) => item.manual_key ?? item.session.started_at * 1024;
   const flat = byUrgency(items).sort((a, b) =>
     Number(starred.has(b.session.cc_session_id)) - Number(starred.has(a.session.cc_session_id))
     || key(b) - key(a)
     || b.session.id - a.session.id);
   if (groupMode !== "dir") return flat;
-  return sidebarDirGroups(flat, sortMode, workspaceOrder).flatMap((group) => group.items);
+  return sidebarDirGroups(flat, workspaceOrder).flatMap((group) => group.items);
 }
 
 /// 岛上按侧栏顺序排会话：收起的胶囊和展开面板共用（用户 2026-11-06：面板里的列表也要和侧栏一致）。
@@ -173,7 +174,7 @@ export function useSidebarOrder(sessions: readonly Item[]): Item[] {
   const [workspaceOrder, setWorkspaceOrder] = useState<readonly string[]>([]);
   useSettingsEffect((settings) => setWorkspaceOrder(settings?.workspace_order ?? []));
   return useMemo(
-    () => sidebarOrder(sessions, starred, readSidebarSortMode(), readSidebarGroupMode(), workspaceOrder),
+    () => sidebarOrder(sessions, starred, readSidebarGroupMode(), workspaceOrder),
     [sessions, starred, workspaceOrder],
   );
 }

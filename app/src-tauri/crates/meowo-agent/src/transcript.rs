@@ -2457,6 +2457,38 @@ mod tests {
         std::fs::remove_file(small).ok();
     }
 
+    /// 名单行展开的「最近几步」走「加载更早」的读法（read_chat_window，end 给到文件末尾）：只解析尾部
+    /// 一屏，不像首读那样还要扫一遍前缀找模式 / 计划标记（首读在同一个文件上实测 120–180ms）。
+    /// 预算 150ms（规格 .lead/20261111-roster 的性能预算）。要写一个 100MB 的临时文件，平时不跑：
+    /// `cargo test -p meowo-agent --release tail_first_page_on_100mb -- --ignored --nocapture`
+    #[test]
+    #[ignore]
+    fn tail_first_page_on_100mb_stays_within_budget() {
+        use crate::plugins::claude::transcript::CLAUDE_TRANSCRIPT;
+        let content = claude_session(95_000, &[(0, "default")], &[], &[]);
+        assert!(content.len() >= 100 << 20, "合成文件不到 100MB：{}", content.len());
+        let path = write_tmp("tail_claude_100mb", &content);
+        drop(content);
+        // 先读一遍热身（文件刚写完，页缓存是热的；真实场景里这个文件也是 agent 刚写过的）。
+        let warm = read_chat_window(&CLAUDE_TRANSCRIPT, &path, u64::MAX, 200).expect("读得到");
+        assert!(warm.start > 0 && !warm.items.is_empty(), "应该只留尾部一屏");
+        let mut worst = std::time::Duration::ZERO;
+        for _ in 0..10 {
+            let started = std::time::Instant::now();
+            let page = read_chat_window(&CLAUDE_TRANSCRIPT, &path, u64::MAX, 200).expect("读得到");
+            worst = worst.max(started.elapsed());
+            assert_eq!(page.items.len(), warm.items.len());
+        }
+        // 对照：对话窗首读（要扫前缀）在同一个文件上要多久。只打印，不设门槛。
+        let started = std::time::Instant::now();
+        let first = read_chat_delta_paged(&CLAUDE_TRANSCRIPT, &path, 0, None, 200);
+        let first_read = started.elapsed();
+        assert!(!first.items.is_empty());
+        std::fs::remove_file(&path).ok();
+        eprintln!("100MB 尾读一屏最慢一次：{worst:?}；对照：对话窗首读 {first_read:?}");
+        assert!(worst <= std::time::Duration::from_millis(150), "100MB 尾读 {worst:?}，超出 150ms 预算");
+    }
+
     /// /rewind 分叉：分叉点在窗口外（整读会把中间一大段收回）、在窗口边界附近、在窗口内，
     /// 尾读要么复现整读、要么自己退回整读——绝不给出不同的结果。
     #[test]

@@ -70,14 +70,11 @@ export function loadStarred(): Set<string> {
   }
 }
 
-/** 对话窗侧栏的排序方式（"manual" 手动/创建时间 | "recent" 最近活跃）的存储键。灵动岛照它排会话头像。 */
-export const SIDEBAR_SORT_MODE_KEY = "meowo-chat-sidebar-sort-mode";
 export const SIDEBAR_GROUP_MODE_KEY = "meowo-chat-sidebar-group-mode";
 /** 旧的布尔分组开关键（只有「按目录」一档时代的遗产）。只读不写：迁移到 SIDEBAR_GROUP_MODE_KEY。 */
 const SIDEBAR_GROUPED_LEGACY_KEY = "meowo-chat-sidebar-grouped";
 
 export type SidebarGroupMode = "none" | "dir";
-export type SidebarSortMode = "manual" | "recent";
 
 /** 侧栏与灵动岛共用的读法：岛窗口与对话窗同源，localStorage 是同一份，读同一个函数两边才不会
  *  对旧值（迁移档）各解释各的。读不到（隐私模式等）按默认处理。 */
@@ -93,14 +90,6 @@ export function readSidebarGroupMode(): SidebarGroupMode {
   }
 }
 
-export function readSidebarSortMode(): SidebarSortMode {
-  try {
-    // 旧版的「创建时间」并入手动排序（没拖过时两者顺序完全一样）；「按名称」已去掉，同样回到手动排序。
-    return localStorage.getItem(SIDEBAR_SORT_MODE_KEY) === "recent" ? "recent" : "manual";
-  } catch {
-    return "manual";
-  }
-}
 
 /** 置顶集变更的同窗口广播事件名。storage 事件只发给**其他**窗口（浏览器语义），
  *  同窗口内的会话侧栏 ↔ 对话窗标题菜单要靠它互相通知。 */

@@ -633,4 +633,5 @@ describe("App · macOS 灵动岛", () => {
     await new Promise((r) => setTimeout(r, 120));
     expect(visibleCalls()).toHaveLength(shown);
   });
+
 });

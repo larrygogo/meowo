@@ -27,6 +27,36 @@ export const zh = {
   },
   // blocked：屏幕检测到 agent 停在审批/提问 UI 上但 hook 无对应事件（说不出具体哪一种）。
   pending: { approval: "待批准", question: "待回答", plan: "待批计划", gate: "待拍板", blocked: "待处理" },
+  // 主窗口的 agent 名单（黑轨 + 眼睛）。
+  roster: {
+    title: "进行中",
+    back: "回到名单",
+    enter: "进入现场",
+    approvalInTerminal: "这条审批在终端里，进入现场处理",
+    answerInScene: "它停在一个选择上，进入现场作答",
+    externalTerminal: "它在外部终端里运行，Meowo 看不到那边的画面。可以跳到那个终端处理，或接管到 Meowo（会结束外部那个进程，进现场后确认）",
+    takeover: "接管到 Meowo",
+    jumpToTerminal: "跳到终端",
+    jumpMissed: "没找到那个终端窗口",
+    composeNew: "交代一个结果，派一个 agent",
+    composeTo: (title: string) => `对「${title}」说`,
+    composeToHint: "写下要说的话，回车发给它",
+    composeNewLabel: "派一个新 agent",
+    sayInScene: "发给它",
+    sentTo: (title: string) => `已发给「${title}」`,
+    continue: "继续",
+    continuePrompt: "继续",
+    resume: "恢复",
+    sendNew: "去新建会话",
+    answered: "已处理",
+    answeredElsewhere: "已在别处处理",
+    recentSteps: "最近几步",
+    allSessions: "全部会话",
+    more: "其他入口",
+    search: "搜索",
+    answerWithKeys: "它停在终端里的一个选择上。下面是终端此刻的画面，用按键作答",
+    approvalBackWithKeys: "这条审批已回到终端。下面是终端此刻的画面，用按键处理",
+  },
   empty: {
     allTitle: "还没有会话",
     allHint: "在终端运行 AI 编程会话，进度会自动出现在这里",
@@ -656,6 +686,7 @@ export const zh = {
     remoteOpenKeys: "操作终端",
     remoteScreenLabel: "终端画面",
     remoteScreenEmpty: "正在读取终端画面…",
+    remoteScreenMoved: "画面刚刚变了，这一下没有发出。看清再按",
     remoteKeyEnter: "回车",
     remoteTypePlaceholder: "输入文字，发送到终端",
     remoteTypeSend: "发到终端",
@@ -1094,9 +1125,8 @@ export const zh = {
     // 「取消」实发 Esc 的后果说明：与零副作用的「仅收起」是两回事，必须对用户说出来。
     terminalPromptCancelTip: "向终端发送 Esc，可能中断正在执行的回合",
     sidebarTitle: "会话",
-    sidebarFilterTip: "视图与排序",
+    sidebarFilterTip: "视图",
     sidebarFilterGroup: "视图",
-    sidebarFilterSort: "排序",
     sidebarCollapse: "收起会话列表",
     sidebarActionFailed: "操作失败，请稍后再试。",
     // 斜杠命令在 transcript 里是一条 XML 包裹的用户消息，渲染成徽章而非标签原文。
@@ -1200,9 +1230,7 @@ export const zh = {
     // 对照 Kimi Code 侧栏菜单的说法（平铺列表 / 按工作区分组 / 按最近活动）。
     groupNone: "平铺列表",
     groupByDir: "按工作区分组",
-    sortRecent: "按最近活动",
     // 手动排序：没拖过时就是创建时间倒序（新会话在最上面），桌面可拖动调整。
-    sortManual: "手动排序",
     // 非默认排序只作用于已加载条目（翻页新条目追加尾部），要向用户说明范围。
     dateToday: "今天",
     dateYesterday: "昨天",
