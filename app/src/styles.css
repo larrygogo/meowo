@@ -3868,7 +3868,9 @@ body:not(.remote-ui) .ns-actions { position: relative; margin: 0 var(--sp-8) var
 .chat-bar[data-compact~="endLabel"] .chat-end-label { position: absolute; top: 0; left: 0; visibility: hidden; pointer-events: none; }
 /* PR、打开方式、改动、终端、会话信息这些「功能」不在这里收：曾在此 display:none，菜单里却
    没有入口，拉窄就丢功能（调研 sys8/c8）。它们排在信息之后，放不下才进 ⋯。 */
-.chat-end { display: inline-flex; align-items: center; }
+/* 不收缩：它永远留在栏上，收纳是按它的实测宽度算的；可收缩时图标形态会被挤到 16～24px（实测），
+   算出来「放得下」其实已经出界。 */
+.chat-end { display: inline-flex; align-items: center; flex: none; }
 .chat-end-ico { display: none; }
 .chat-bar[data-compact~="endLabel"] .chat-end { padding: 0; width: 28px; height: 28px; justify-content: center; }
 .chat-bar[data-compact~="endLabel"] .chat-end-ico { display: block; }
