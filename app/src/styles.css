@@ -1610,6 +1610,11 @@ button.stab {
   font-family: inherit;
   font-size: var(--text-xs);
   height: var(--btn-h-sm);
+  /* 行高与左边那句提示（.ob-reopen 1.5）一致并显式居中：按钮默认行高跟字体走，中文回退字体把字压低，
+     量出来「跳过」的中线 21、提示 19.5，同一行两段同字号的字差 1.5px。 */
+  display: inline-flex;
+  align-items: center;
+  line-height: 1.5;
   padding: 0 var(--sp-8);
   border-radius: var(--radius-sm);
   cursor: pointer;
@@ -1628,9 +1633,16 @@ button.stab {
   align-items: center;
   text-align: center;
   margin: 0 var(--sp-8);
-  padding: var(--sp-16) var(--sp-24);
+  /* 上 24 下 8：标题钉在顶上要离内容面上沿远一点；最满的一步（英文「连接 AI CLI」）原来就一像素不剩，
+     多出的 8px 从底部留白里拿。 */
+  padding: var(--sp-24) var(--sp-24) var(--sp-8);
   animation: panel-fade var(--dur-base) var(--ease-out);
 }
+/* 标题（和它的说明）排到最上面，四步都在同一个位置；示意图与要点在剩下的空间里上下居中。
+   原来整块居中、示意图在标题上面，四张示意图高 164 / 70 / 86 / 132，翻页时标题顶在 276 / 160 / 224 / 255
+   之间跳（最多 116px）。把示意图槽统一成最高的 164 行不通：「连接 AI CLI」一步英文已经排满整页，再垫高就要滚动。
+   只调视觉顺序（order），DOM 顺序不变。 */
+.ob-body > .ob-title, .ob-body > .ob-desc { order: -1; }
 .ob-body > :first-child { margin-top: auto; }
 .ob-body > :last-child { margin-bottom: auto; }
 /* ── 每步的迷你界面示意图区 ── */
@@ -1639,6 +1651,8 @@ button.stab {
   width: 100%;
   display: grid;
   place-items: center;
+  /* 与上面标题（或说明）至少隔开这么多：示意图靠 margin-top:auto 居中，排满时 auto 归零。 */
+  padding-top: var(--sp-14);
 }
 /* 示意图共用的小零件：状态点与占位横条。 */
 .obm-island-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
@@ -1810,7 +1824,8 @@ button.stab {
 .ob-set-desc { font-size: var(--text-xs); color: var(--cc-text-dim); margin-top: var(--sp-2); line-height: 1.5; }
 
 .ob-title {
-  margin: var(--sp-18) 0 0;
+  flex: none;
+  margin: 0;
   font-size: 18px;
   font-weight: 600;
   line-height: 1.35;
@@ -1821,6 +1836,8 @@ button.stab {
   line-height: 1.6;
   color: var(--cc-text-dim);
   max-width: 340px;
+  /* 两行尽量等长：中文第一步原来第一行顶满 325px，第二行只剩「入，一眼可见。」81px，把「等待输入」从中间折断。 */
+  text-wrap: balance;
 }
 .ob-points {
   list-style: none;
@@ -1882,7 +1899,8 @@ button.stab {
   justify-content: space-between;
   gap: var(--sp-12);
   margin: 0 var(--sp-8) var(--sp-8);
-  padding: var(--sp-12) var(--sp-16) var(--sp-12) var(--sp-24);
+  /* 左右同为 24：原来右边 16，「下一步」右缘 436，比正文卡片右缘 428 凸出 8px。 */
+  padding: var(--sp-12) var(--sp-24);
   border-top: var(--hairline) solid var(--cc-border);
 }
 .ob-dots { display: flex; align-items: center; gap: var(--sp-7); }
