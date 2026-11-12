@@ -340,9 +340,12 @@ impl AgentPlugin for Opencode {
         .collect()
     }
 
+    /// 1.19.3 起 TUI 命令表里没有 `/share` 了（opencode.exe 内嵌 JS 的 slashName / slash 全表
+    /// 无 share，只剩 `command.session.share` 的翻译串；research-cli-drift O2，2026-11-12），
+    /// 补全给出它就是一条发出去没反应的命令。`/init` 来自服务端默认命令（`INIT:"init"`），仍在。
     fn slash_commands(&self) -> &'static [&'static str] {
         &[
-            "/compact", "/exit", "/help", "/init", "/models", "/new", "/share", "/undo",
+            "/compact", "/exit", "/help", "/init", "/models", "/new", "/undo",
         ]
     }
     /// 自定义命令：`<配置目录>/command/*.md`（我们的 data_dir 正是它的配置目录）+ 项目级

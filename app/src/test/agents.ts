@@ -94,7 +94,7 @@ const SLASH_COMMANDS: Record<string, string[]> = {
   codex: ["/clear", "/compact", "/diff", "/help", "/model", "/new", "/review", "/status"],
   kimi: ["/clear", "/compact", "/help", "/model", "/status"],
   gemini: ["/chat", "/clear", "/compress", "/help", "/mcp", "/memory", "/stats", "/tools"],
-  opencode: ["/compact", "/exit", "/help", "/init", "/models", "/new", "/share", "/undo"],
+  opencode: ["/compact", "/exit", "/help", "/init", "/models", "/new", "/undo"],
 };
 
 /**

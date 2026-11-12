@@ -1061,6 +1061,18 @@ mod tests {
             state_of(evaluate("opencode", &hint)),
             Some((ScreenState::Working, "interrupt_hint_working"))
         );
+        // 1.19.3 底栏：`esc ` + `interrupt`，按过一次 Esc 后 `esc again to interrupt`；关了动画时
+        // spinner 换成 `[⋯]`（opencode.exe 内嵌 JS，research-cli-drift O1，2026-11-12）。
+        for line in [
+            " [\u{22EF}] esc interrupt",
+            " [\u{22EF}] esc again to interrupt",
+        ] {
+            assert_eq!(
+                state_of(evaluate("opencode", &snap(&["  reading files", line]))),
+                Some((ScreenState::Working, "interrupt_hint_working")),
+                "应识别为运行中: {line:?}"
+            );
+        }
     }
 
     /// 所有内置规则的正则必须可编译。求值层遇到坏正则是「整条规则跳过」（不 panic），
