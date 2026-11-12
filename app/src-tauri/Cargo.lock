@@ -2639,6 +2639,7 @@ dependencies = [
  "base64 0.22.1",
  "memchr",
  "meowo-protocol",
+ "regex",
  "rusqlite",
  "serde",
  "serde_json",

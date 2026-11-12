@@ -14,6 +14,7 @@ cd app/src-tauri && cargo test       # 或按 crate：cargo test -p meowo-store 
 
 - E2E：`cd app && node e2e/run.mjs`——Node 22 或更新（CI 钉 26）。debug 构建共用 `~/.meowo`，本机有会话在跑时别跑，CI 上手动触发 CI workflow 即可跑 e2e。会构建 E2E 专用二进制（`--features e2e`），WDIO 权限文件临时拷入跑完即删。
 - 前端契约：`app/src/generated/contracts/` 由 ts-rs 在 `cargo test` 时生成，改了后端 DTO 要跑测试再提交生成物；CI 校验无 diff。
+- CLI 漂移检查：`node app/scripts/cli-drift.mjs`（CLI 升级后跑，扫本机已装 CLI 的程序文件，报 Meowo 依赖的文案找到/缺失与规则位置；清单由 `cargo test -p meowo-agent --lib` 从插件规则生成，正则规则的样例在各插件 `cli_text_deps`）。
 - i18n：`zh.ts` 是基准，`Dict = typeof zh` 编译期对齐——加键 zh/en 必须同步，有 key 集奇偶测试。
 
 ## 代码纪律

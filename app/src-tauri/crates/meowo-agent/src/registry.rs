@@ -176,6 +176,18 @@ pub trait AgentPlugin: Sync {
         None
     }
 
+    /// `model_select_command` 之后 CLI 回的确认/拒绝行（见 [`crate::chat_ui::CommandReply`]）。
+    fn model_select_reply(&self) -> Option<crate::chat_ui::CommandReply> {
+        None
+    }
+
+    /// 本插件依赖的 CLI 输出文案中，需要手工声明的部分（见 [`crate::cli_text`]）：正则规则的
+    /// 真实样例，以及运行时拼接、在程序文件里搜不到原样的字面量。插件里的字面量规则
+    /// （信任页、模式回显、屏幕规则的子串）由 `cli_text` 自动抽取，不必在这里重复。
+    fn cli_text_deps(&self) -> &'static [crate::cli_text::CliTextDep] {
+        &[]
+    }
+
     fn queue_input(&self) -> Option<&'static str> {
         None
     }
@@ -308,6 +320,7 @@ pub trait AgentPlugin: Sync {
             slash_commands: crate::chat_ui::merge_commands(self.slash_commands(), custom),
             model_presets: self.model_presets().to_vec(),
             model_select_command: self.model_select_command(),
+            model_select_reply: self.model_select_reply(),
             model_menu_command: self.model_menu_command(),
             mode_controls: self.mode_controls().to_vec(),
             menu_slash_commands,

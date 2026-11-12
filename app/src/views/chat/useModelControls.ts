@@ -14,6 +14,11 @@ import { appendTerminalText, modeFromScreen, visibleTerminalText } from "../../t
 import { currentPresetId } from "./modelLabels";
 import { stashComposerDraft, submitToTerminal } from "./terminalSubmit";
 
+/** 屏幕上 CLI 的一行回话：去掉命令输出前的 `⎿` 引线与首尾空白，原话转给用户。 */
+function cliLine(line: string): string {
+  return line.replace(/^[\s⎿]+/, "").trim();
+}
+
 export interface ModelControlsDeps {
   sessionId: number;
   chatUi: ChatUi | null | undefined;
@@ -48,27 +53,45 @@ export function useModelControls({
       let since = before.endOffset;
       let tail = "";
       const decoder = new TextDecoder();
-      let confirmed = false;
-      for (let attempt = 0; attempt < 12 && !confirmed; attempt += 1) {
+      // 确认/拒绝文案由插件声明（claude 2.1.322：确认 `Set model to …`，拒绝如 `Kept model as …`、
+      // `Model switch to … was blocked by a PreModelSwitch hook`，见 plugins/claude/mod.rs 的
+      // model_select_reply）。没声明的 CLI 用通用确认句兜底。
+      const reply = chatUi?.model_select_reply;
+      const confirmLine = new RegExp(reply?.confirm_pattern ?? "set model to|switched (?:the )?model to|model (?:changed|switched) to", "i");
+      const rejectLine = reply ? new RegExp(reply.reject_pattern, "i") : null;
+      // 比对时去掉 id 末尾的方括号变体（opus[1m] → opus）：Claude Code 2.1.322 起确认行只给显示名
+      //「Set model to `Opus 5.5` and saved as your default for new sessions」，整串 id「opus1m」在里面
+      // 永远找不到，于是 CLI 明明切过去了，这里却报未确认、也不记住选择（2026-11-12 leader 报
+      //「切模型无法生效」，transcript 实证）。仍要求家族名出现：CLI 有自动降档路径，降到别的家族时
+      // 也会打印「Set model to <实际模型>」，不比对就会把没生效的选择写进恢复配置（做空审查）。
+      const family = preset.id.replace(/\[[^\]]*\]$/, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+      let outcome: { kind: "ok" } | { kind: "rejected"; line: string } | null = null;
+      let otherModel: string | null = null;
+      for (let attempt = 0; attempt < 12 && outcome === null; attempt += 1) {
         await new Promise((resolve) => window.setTimeout(resolve, 200));
         if (!isCurrentOperation()) return false;
         const snapshot = await managedTerminalSnapshot(sessionId, since);
         if (!snapshot.active || snapshot.endOffset < since) break;
         since = snapshot.endOffset;
         tail = appendTerminalText(tail, snapshot.data, decoder);
-        // 只认本次命令之后 CLI 自己的确认行，菜单列表中出现模型名不算切换成功。
-        // 比对时去掉 id 末尾的方括号变体（opus[1m] → opus）：Claude Code 2.1.322 起确认行只给显示名
-        //「Set model to `Opus 5.5` and saved as your default for new sessions」，整串 id「opus1m」在里面
-        // 永远找不到，于是 CLI 明明切过去了，这里却报未确认、也不记住选择（2026-11-12 leader 报
-        //「切模型无法生效」，transcript 实证）。仍要求家族名出现：CLI 有自动降档路径，降到别的家族时
-        // 也会打印「Set model to <实际模型>」，不比对就会把没生效的选择写进恢复配置（做空审查）。
-        const family = preset.id.replace(/\[[^\]]*\]$/, "").toLowerCase().replace(/[^a-z0-9]/g, "");
-        confirmed = visibleTerminalText(tail).split(/\r?\n/).some((line) => {
-          if (!/set model to|switched (?:the )?model to|model (?:changed|switched) to/i.test(line)) return false;
-          return line.toLowerCase().replace(/[^a-z0-9]/g, "").includes(family);
-        });
+        // 只认本次命令之后 CLI 自己的回话，菜单列表中出现模型名不算切换成功。先整屏找确认行，
+        // 再找拒绝行：重绘可能把旧行与新行一起带进来，确认优先才不会被旧的拒绝行抢先。
+        const lines = visibleTerminalText(tail).split(/\r?\n/);
+        const confirmed = lines.filter((line) => confirmLine.test(line));
+        if (confirmed.some((line) => line.toLowerCase().replace(/[^a-z0-9]/g, "").includes(family))) { outcome = { kind: "ok" }; break; }
+        // 确认成了别的模型：先记下，继续等本家族的那一行（可能是重绘带进来的旧确认）。
+        if (confirmed.length > 0) otherModel = cliLine(confirmed[confirmed.length - 1]);
+        const rejected = rejectLine ? lines.find((line) => rejectLine.test(line)) : undefined;
+        if (rejected) outcome = { kind: "rejected", line: cliLine(rejected) };
       }
-      if (!confirmed) { setSendError(t.chat.modelSwitchUnconfirmed); return false; }
+      if (outcome?.kind !== "ok") {
+        // CLI 说了什么就转什么（2026-11-12 研究 C4：确认框被取消、hook 拦截、别名校验失败时
+        // 以前一律只报「未确认」，用户看不到原因）。
+        if (outcome?.kind === "rejected") setSendError(t.chat.modelSwitchRejected(outcome.line));
+        else if (otherModel) setSendError(t.chat.modelSwitchOther(otherModel));
+        else setSendError(t.chat.modelSwitchUnconfirmed);
+        return false;
+      }
       await setSessionLaunchSelection(sessionId, "model", preset.id);
       if (isCurrentOperation()) setStoredSelections((prev) => ({ ...prev, model: preset.id }));
       return true;
@@ -90,7 +113,10 @@ export function useModelControls({
         let since = before.endOffset;
         let tail = "";
         const decoder = new TextDecoder();
-        let outcome: "ok" | string | null = null;
+        // 确认/拒绝文案由插件声明（claude `Set effort level to X`、kimi `Thinking set to X.`）。
+        const confirm = new RegExp(chatUi.effort!.confirm_pattern, "i");
+        const reject = new RegExp(chatUi.effort!.reject_pattern, "i");
+        let outcome: { kind: "ok" } | { kind: "rejected"; line: string; actual: string | null } | null = null;
         for (let attempt = 0; attempt < 12 && outcome === null; attempt += 1) {
           await new Promise((resolve) => window.setTimeout(resolve, 200));
           if (!isCurrentOperation()) return false;
@@ -98,17 +124,25 @@ export function useModelControls({
           if (!snapshot.active || snapshot.endOffset < since) break;
           since = snapshot.endOffset;
           tail = appendTerminalText(tail, snapshot.data, decoder);
-          // 确认/拒绝文案由插件声明（claude `Set effort level to X`、kimi `Thinking set to X.`）。
-          const confirm = new RegExp(chatUi.effort!.confirm_pattern, "i");
-          const reject = new RegExp(chatUi.effort!.reject_pattern, "i");
-          for (const line of visibleTerminalText(tail).split(/\r?\n/)) {
-            const set = confirm.exec(line);
-            if (set && set[1].toLowerCase() === level) { outcome = "ok"; break; }
-            if (reject.test(line)) { outcome = line.trim(); break; }
+          const lines = visibleTerminalText(tail).split(/\r?\n/);
+          if (lines.some((line) => confirm.exec(line)?.[1]?.toLowerCase() === level)) { outcome = { kind: "ok" }; break; }
+          for (const line of lines) {
+            const hit = reject.exec(line);
+            // 捕获组 1 = CLI 实际改成的档位（claude 2.1.322 封顶：`… set to 'high' instead`）。
+            if (hit) { outcome = { kind: "rejected", line: cliLine(line), actual: hit[1]?.toLowerCase() ?? null }; break; }
           }
         }
         if (outcome === null) { setSendError(t.chat.effortUnconfirmed); return false; }
-        if (outcome !== "ok") { setSendError(t.chat.effortRejected(outcome)); return false; }
+        if (outcome.kind === "rejected") {
+          const actual = outcome.actual;
+          if (actual) {
+            if (isCurrentOperation()) setHistory((current) => current ? { ...current, effort: actual } : current);
+            setSendError(t.chat.effortCapped(outcome.line));
+          } else {
+            setSendError(t.chat.effortRejected(outcome.line));
+          }
+          return false;
+        }
         if (isCurrentOperation()) setHistory((current) => current ? { ...current, effort: level } : current);
         return true;
       });

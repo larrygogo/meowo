@@ -1242,7 +1242,12 @@ export const zh = {
     interruptTimeout: "尚未确认任务已中断，草稿已保留。请稍后重试。",
     busySendUnavailable: "当前 Agent 尚未验证运行中排队，请等待当前任务结束后发送。",
     menuBusy: "请等待当前任务结束后切换模型或模式。",
-    modelSwitchUnconfirmed: "尚未确认模型已切换，未修改恢复配置。请到终端检查。",
+    // 没等到 CLI 回话（2.4 秒内既无确认也无拒绝）：说清原因，不让用户去终端查（第三轮准则）。
+    modelSwitchUnconfirmed: "没等到 CLI 确认模型已切换，恢复配置未改",
+    // CLI 明确拒绝或放弃切换时转述原话（claude 2.1.322 `Kept model as …`、hook 拦截、别名校验失败）。
+    modelSwitchRejected: (line: string) => `模型未切换：${line}`,
+    // CLI 确认的是别的模型（降档等），所选模型没生效，恢复配置不写。
+    modelSwitchOther: (line: string) => `CLI 换成了别的模型：${line}`,
     modelListUnavailable: (command: string) => `读不到模型清单，点这里到终端页用 ${command} 切换`,
     modelListUnavailableRemote: (command: string) => `读不到模型清单，可直接发送 ${command} 再选`,
     modelGoTerminal: "去终端页切换模型",
@@ -1254,7 +1259,7 @@ export const zh = {
     modelPickNotFound: (name: string) => `终端的模型菜单里没找到 ${name}，请到终端页切换`,
     modelStarred: "已收藏",
     effortLabel: "思考",
-    effortUnconfirmed: "尚未确认思考程度已切换，请到终端检查",
+    effortUnconfirmed: "没等到 CLI 确认思考程度已切换",
     // 撤回（对照 Kimi 用户消息上的「撤回」）：这条及之后移出上下文，原文放回输入框
     undo: "撤回",
     undoTip: "撤回这条及之后的对话",
@@ -1299,6 +1304,8 @@ export const zh = {
     undoMenuMismatch: "撤回菜单与所选消息对不上，已取消",
     // CLI 拒绝某档位时原样带出它的说法（如当前模型不支持 Max）。
     effortRejected: (line: string) => `思考程度未切换：${line}`,
+    // 组织或设置封顶时 CLI 降到上限档（claude 2.1.322 `… set to 'high' instead`），显示值随之落到实际档位。
+    effortCapped: (line: string) => `思考程度按上限调整：${line}`,
     // 复制到其他引擎（原会话不动，另起一个带上下文的新会话）：模型下拉的分组标题与交接注入语。
     switchProvider: "复制到新会话",
     switchProviderDefaultModel: "默认模型",
