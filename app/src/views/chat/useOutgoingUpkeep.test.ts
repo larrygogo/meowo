@@ -1,6 +1,6 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import type { ChatUi } from "../../api";
+import type { ChatItem, ChatUi } from "../../api";
 
 const api = vi.hoisted(() => ({
   managedTerminalScreen: vi.fn<(sessionId: number) => Promise<string[] | null>>(),
@@ -68,5 +68,74 @@ describe("useOutgoingUpkeep：未确认送达时读终端画面", () => {
     mount([echo(4, "帮我看看这个报错")], {} as ChatUi);
     await act(async () => {});
     expect(api.managedTerminalScreen).not.toHaveBeenCalled();
+  });
+});
+
+/// 做空第二轮 N1（2026-11-12，复现 redteam2/new.rt.test.tsx）：发出后加载窗口只剩发送之后的 200 条
+/// assistant 记录，hook 记的是后发的另一句。这句看不见、不超时也不收起，修前一小时后仍挂着。
+/// 兄弟场景：回显与排队插话；认得出输入框（claude）与认不出（{}）；运行中与空闲；窗口看得见的未确认。
+describe("useOutgoingUpkeep：窗口看不见的消息由终端画面定去向", () => {
+  const sentAt = Date.now() - 3_600_000;
+  const items = Array.from({ length: 200 }, (_, i) => ({
+    type: "assistant", id: `b${i}`, text: "x", timestamp: new Date(sentAt + 5_000 + i * 1_000).toISOString(),
+  })) as unknown as ChatItem[];
+  const anchor = { lastItemId: "a0", lastItemAt: sentAt - 1_000, priorItemIds: new Set(["a0"]), priorUserText: "上一句" };
+  const add = (kind: "echo" | "queued", text = "请把 README 改成英文") =>
+    outgoingStore.add(7, { kind, text, attachmentOnly: false, anchor, at: sentAt });
+  const mountUnseen = (chatUi: ChatUi | null, running: { current: boolean } = { current: false }) => renderHook(() => useOutgoingUpkeep({
+    sessionId: 7, outgoing: outgoingStore.get(7), loading: false, items, acks: [], lastUserText: "第二句", ended: false,
+    chatUi, isActive: () => true, running: () => running.current, onError: () => {},
+  }));
+
+  it("回显：画面确认输入框里没有这句，当已送达收起", async () => {
+    api.managedTerminalScreen.mockResolvedValue(["● 回复", "─────────", "❯ ", "─────────"]);
+    add("echo");
+    mountUnseen(claudeUi);
+    await waitFor(() => expect(outgoingStore.get(7)).toHaveLength(0));
+  });
+
+  it("回显：还停在输入框里就照旧标未确认并给「提交」，不收起", async () => {
+    api.managedTerminalScreen.mockResolvedValue(["● 回复", "─────────", "❯ 请把 README 改成英文", "─────────"]);
+    const id = add("echo");
+    const { result } = mountUnseen(claudeUi);
+    await waitFor(() => expect(result.current.stuck.has(id)).toBe(true));
+    expect(outgoingStore.get(7).map((p) => p.phase)).toEqual(["uncertain"]);
+  });
+
+  it("回显：CLI 认不出输入框，没法核对也没有「提交」可给，当已送达收起", async () => {
+    add("echo");
+    mountUnseen({} as ChatUi);
+    await waitFor(() => expect(outgoingStore.get(7)).toHaveLength(0));
+    expect(api.managedTerminalScreen).not.toHaveBeenCalled();
+  });
+
+  it("排队插话：运行中留着，转空闲后输入框里没有就收起", async () => {
+    api.managedTerminalScreen.mockResolvedValue(["● 回复", "─────────", "❯ ", "─────────"]);
+    add("queued");
+    const running = { current: true };
+    const { rerender } = mountUnseen(claudeUi, running);
+    await act(async () => {});
+    expect(outgoingStore.get(7).map((p) => p.phase)).toEqual(["pending"]);
+    expect(api.managedTerminalScreen).not.toHaveBeenCalled();
+    running.current = false;
+    rerender();
+    await waitFor(() => expect(outgoingStore.get(7)).toHaveLength(0));
+  });
+
+  it("排队插话：空闲后还在输入框里（Esc 打断退回），转成未确认的回显并给「提交」", async () => {
+    api.managedTerminalScreen.mockResolvedValue(["● 回复", "─────────", "❯ 请把 README 改成英文", "─────────"]);
+    const id = add("queued");
+    const { result } = mountUnseen(claudeUi);
+    await waitFor(() => expect(result.current.stuck.has(id)).toBe(true));
+    expect(outgoingStore.get(7).map((p) => [p.kind, p.phase])).toEqual([["echo", "uncertain"]]);
+  });
+
+  it("窗口看得见的未确认回显：输入框空着也不收起（transcript 里确实没有这句）", async () => {
+    api.managedTerminalScreen.mockResolvedValue(["● 回复", "─────────", "❯ ", "─────────"]);
+    const id = outgoingStore.add(7, { kind: "echo", text: "帮我看看这个报错", attachmentOnly: false, anchor: anchorFrom([], null), phase: "uncertain" });
+    mount([echo(id, "帮我看看这个报错")]);
+    await waitFor(() => expect(api.managedTerminalScreen).toHaveBeenCalledTimes(1));
+    await act(async () => {});
+    expect(outgoingStore.get(7).map((p) => p.phase)).toEqual(["uncertain"]);
   });
 });

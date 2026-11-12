@@ -6,7 +6,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { managedTerminalScreen, writeManagedTerminal, type ChatItem, type ChatUi } from "../../api";
-import { ECHO_CONFIRM_MS, outgoingStore, type OutgoingPrompt, type PromptAck } from "./outgoingPrompts";
+import { ECHO_CONFIRM_MS, outgoingStore, unseenPending, type OutgoingPrompt, type PromptAck } from "./outgoingPrompts";
 import { composerDraftText } from "./terminalSubmit";
 import { undoneInputRows } from "./undoTerminal";
 
@@ -41,36 +41,58 @@ export function useOutgoingUpkeep({ sessionId, outgoing, loading, items, acks, l
   }, [outgoing.length]);
 
   // 未确认送达的回显：读一次终端画面，看这段话是不是还停在 CLI 输入框里（没按下回车）。
-  // 每条只读一次；认得出输入框的插件才判（claude 的 draft_stash、opencode 的撤回输入框规格），
-  // 认不出一律不算卡住，退回「重发 / 放回输入框」。
+  // 每条只读一次；认得出输入框的插件才判（claude 的 draft_stash、opencode 的撤回输入框规格）。
+  //
+  // 加载窗口看不见的那条（unseenPending）由这里定去向，做空第二轮 N1（2026-11-12）：对账对它
+  // 不超时也不收起，修前读一次画面、输入框是空的就什么都不做，发送一小时后回显仍挂在后续输出下、
+  // 排队区一直给「立即插话」。现在：还在输入框里照旧标未确认给「提交」；画面确认不在输入框里，
+  // 或这个 CLI 认不出输入框（没法核对，也没有「提交」可给），就当已送达收起。不退回做空第一轮 #5
+  // 之前「没证据就收起」：输入框里还有这句时绝不收起。窗口看得见的未确认回显不在此列，那里
+  // transcript 确实没有这句，认不出输入框照旧给「重发 / 放回输入框」。
+  // 排队的插话要等回合结束（CLI 转空闲）再判：跑着的时候排着队是正常的；空闲了还在输入框里
+  // （claude 被 Esc 打断时会把队列退回输入框），就转成回显并给「提交」，排队区没有这个出口。
   const [stuck, setStuck] = useState<ReadonlySet<number>>(() => new Set());
   const probedRef = useRef(new Set<number>());
   useEffect(() => {
     const stash = chatUi?.draft_stash;
     const clear = chatUi?.undo?.input_clear;
-    if (!stash && !clear) return;
+    const now = Date.now();
     for (const echo of outgoing) {
-      // 超时仍是 pending 的只有「窗口看不见」那一种（reconcileOutgoing 不判未确认）：同样读一次画面，
-      // 卡在输入框里就转未确认并给「提交」（做空第一轮 #5，2026-11-12）。
-      const overdue = echo.phase === "pending" && Date.now() - echo.at > ECHO_CONFIRM_MS;
-      if (echo.kind !== "echo" || (echo.phase !== "uncertain" && !overdue) || echo.attachmentOnly || probedRef.current.has(echo.id)) continue;
+      if (probedRef.current.has(echo.id)) continue;
+      const overdue = echo.phase === "pending" && now - echo.at > ECHO_CONFIRM_MS;
+      const unseen = overdue && unseenPending(echo, items);
+      const candidate = echo.kind === "echo"
+        ? echo.phase === "uncertain" || overdue
+        : unseen && !running();
+      if (!candidate) continue;
+      const head = echo.attachmentOnly ? "" : echo.text.split(/\r?\n/).map((line) => line.trim()).find(Boolean)?.slice(0, 12) ?? "";
+      if ((!stash && !clear) || !head) {
+        // 认不出输入框 / 纯附件（占位文案对不上画面）：没法核对。看不见的当已送达收起，其余照旧。
+        probedRef.current.add(echo.id);
+        if (unseen) outgoingStore.settle(echo.id, null);
+        continue;
+      }
       probedRef.current.add(echo.id);
       const sid = sessionId;
       void managedTerminalScreen(sid).catch(() => null).then((screen) => {
-        const head = echo.text.split(/\r?\n/).map((line) => line.trim()).find(Boolean)?.slice(0, 12) ?? "";
-        if (!head || !isActive(sid)) return;
+        // 读画面途中切走了：这次不算，回来再读。
+        if (!isActive(sid)) { probedRef.current.delete(echo.id); return; }
         const held = stash
           ? (composerDraftText(screen, stash) ?? "").startsWith(head)
           : clear != null && (undoneInputRows(screen, clear, echo.text) ?? 0) > 0;
-        if (!held) return;
+        if (!held) {
+          if (unseen) outgoingStore.settle(echo.id, null);
+          return;
+        }
         setStuck((prev) => new Set(prev).add(echo.id));
-        if (overdue) outgoingStore.settle(echo.id, { phase: "uncertain" });
+        if (echo.kind === "queued") outgoingStore.settle(echo.id, { kind: "echo", phase: "uncertain" });
+        else if (overdue) outgoingStore.settle(echo.id, { phase: "uncertain" });
       });
     }
-    // isActive 是读 ref 的稳定判断，不进依赖。tick 进依赖：看不见的 pending 超时时 outgoing 不变，
-    // 只有每秒的计时能让这里看到它过期。
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- isActive 读 ref，是稳定判断
-  }, [outgoing, chatUi, sessionId, tick]);
+    // isActive / running 是读 ref 的稳定判断，不进依赖。tick 进依赖：看不见的 pending 超时、回合结束时
+    // outgoing 不变，只有每秒的计时能让这里看到。
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- isActive / running 读 ref，是稳定判断
+  }, [outgoing, chatUi, sessionId, items, tick]);
 
   /// 「提交」：替用户在 CLI 输入框里按一次回车，回显转回「已写入」重新计时等落盘。
   const submit = (id: number) => {
