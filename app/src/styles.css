@@ -7112,7 +7112,12 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .managed-terminal-actions button { padding: var(--sp-4) var(--sp-8); border: var(--hairline) solid rgba(255, 255, 255, 0.17); border-radius: var(--radius-md); color: var(--term-fg-dim); background: rgba(34, 35, 37, 0.96); font-size: var(--text-2xs); cursor: pointer; }
 /* ── 终端内搜索条(Ctrl+F,ManagedTerminal):浮在终端右上角,深色底不遮 TUI 主体;
    z 高于 hover 才显形的操作条(managed-terminal-actions),同区不打架。 ── */
-.term-search { position: absolute; top: 8px; right: 20px; z-index: calc(var(--z-sticky) + 1); display: flex; align-items: center; gap: var(--sp-4); padding: var(--sp-4) var(--sp-6); border: 0; border-radius: var(--radius-lg); background: rgba(34, 35, 37, 0.96); box-shadow: 0 0 0 var(--hairline) rgba(255, 255, 255, 0.17), var(--shadow-menu); }
+.term-search { position: absolute; top: 8px; right: 20px; z-index: calc(var(--z-sticky) + 1); display: flex; align-items: center; gap: var(--sp-4); padding: var(--sp-4) var(--sp-6); border: 0; border-radius: var(--radius-lg); background: rgb(34, 35, 37); box-shadow: 0 0 0 var(--hairline) rgba(255, 255, 255, 0.17), var(--shadow-menu); }
+/* 搜索条和「在外部终端同步打开」同挂 top:8px / right:20px：搜索条虽然层级更高，但底色原先是 96%
+   不透明，按钮的字从上下箭头后面透出来（qa-term-search 实拍：搜索条 730–1012、按钮 895–1012，整个
+   按钮都压在搜索条底下）。搜索条开着时把那排按钮藏掉（它在 DOM 里排在搜索条后面），底色改成实色，
+   终端里的字也不再透上来。 */
+.term-search ~ .managed-terminal-actions { visibility: hidden; }
 /* broker 审批横幅在场时让位：两者同挂 top:8px、同 z——搜索条会正好压住横幅右端的
    「回对话页」按钮（横幅在 ChatWindow 里先渲染、DOM 在前，后写者盖上）。横幅约 30px
    高，搜索条下移到它底下。 */
