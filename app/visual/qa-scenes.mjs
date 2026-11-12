@@ -24,6 +24,12 @@ export const QA_SHOTS = [
   { name: "qa-chat-en-620", scene: "chat", size: W620, langs: ["en"] },
   { name: "qa-panel-en-620", scene: "panel-changes", size: W620, langs: ["en"] },
   { name: "qa-panel-ui150", scene: "panel-changes", params: "ui=1.5" },
+  // 面板最大化（占满整张内容面）：内容列封顶居中后，贴内容宽的小控件容易留在面板左缘没跟上
+  // （2026-11-12 用户截图：「全部 / 本会话 / 本轮」孤零零贴在最左边）。矩阵里原本没有这个状态。
+  { name: "qa-panel-max", scene: "panel-changes", params: "max=1", sel: ".scm-row" },
+  { name: "qa-panel-max-2560", scene: "panel-changes", params: "max=1", size: [2560, 1440], sel: ".scm-row" },
+  { name: "qa-diff-max-2560", scene: "panel-diff", params: "max=1", size: [2560, 1440], sel: ".chat-diff-code" },
+  { name: "qa-files-max-2560", scene: "panel-files", params: "max=1", size: [2560, 1440], sel: ".chat-diff-panel" },
   // ── 对话流里靠后端状态出现的东西（harness 见 qaFlow.ts）──
   { name: "qa-lead", scene: "flow-lead", sel: ".lead-gate-card", langs: ["zh", "en"] },
   { name: "qa-lead-open", scene: "flow-lead", sel: ".lead-gate-card", steps: [["click", ".lead-gate-more"], ["click", ".lead-gate-option >> nth=1"]] },

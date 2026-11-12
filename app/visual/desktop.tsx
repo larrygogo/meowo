@@ -104,10 +104,20 @@ async function boot(): Promise<React.ReactNode> {
     const chat = chatMock(lang);
     const panel = panelMock();
     if (scene.startsWith("panel-")) {
-      savePanel(CHAT_SESSION_ID, { tabs: [{ key: "diff", type: "diff" }, { key: "files", type: "files" }], active: scene === "panel-files" ? "files" : "diff", visible: true, expanded: false });
+      savePanel(CHAT_SESSION_ID, { tabs: [{ key: "diff", type: "diff" }, { key: "files", type: "files" }], active: scene === "panel-files" ? "files" : "diff", visible: true, expanded: q.get("max") === "1" });
     }
     setExtraMock((cmd, args) => {
-      if (cmd === "get_chat_history") return scene.startsWith("chat") ? withLongItems(chat(cmd), lang) : chat(cmd);
+      if (cmd === "get_chat_history") {
+        if (scene.startsWith("chat")) return withLongItems(chat(cmd), lang);
+        // 最大化场景要让「全部 / 本会话 / 本轮」出现：它只在本会话改过文件时才显示，
+        // 这里借一条现成的工具调用，改成对「更改」假数据里 LoginForm.tsx 的编辑。
+        if (q.get("max") === "1") {
+          const h = chat(cmd) as { items: { type: string; id?: string; detail?: unknown }[] };
+          const tool = h.items.find((item) => item.type === "tool_use");
+          if (tool) return { ...h, items: [...h.items, { ...tool, id: "visual-max-edit", detail: { kind: "edit", path: "C:/dev/web-app/src/components/LoginForm.tsx" } }] };
+        }
+        return chat(cmd);
+      }
       return scmMock(cmd) ?? panel(cmd, args) ?? chat(cmd);
     });
     installMocks("chat");
