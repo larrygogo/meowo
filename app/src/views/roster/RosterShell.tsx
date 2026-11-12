@@ -3,7 +3,7 @@
 //
 // 对话窗（ChatWindow）原样包在里面，名单只是盖在它的对话区上：回到名单时对话窗不卸载，
 // 审批租约、托管终端、输入框草稿都还在。
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -24,8 +24,11 @@ import { cardTone, fmtShortAgo } from "../sticker/helpers";
 import { UNNAMED_SESSION_SENTINEL, type Item } from "../sticker/types";
 import { RosterComposer } from "./RosterComposer";
 import { RosterDecision } from "./RosterDecision";
-import { RosterGlance } from "./RosterGlance";
 import { useAttention, useEyesY, useRosterLease, useRosterRows } from "./useRoster";
+
+// 速览只在点开一行之后才用得上，而且本来就要等一次读取：拆成单独的分包，不压在主窗口首屏的
+// 那一包里（打包实测：不拆时对话窗这一包比改前大 3.05%，预算是 3%）。
+const RosterGlance = lazy(() => import("./RosterGlance").then((m) => ({ default: m.RosterGlance })));
 
 /** 眼睛朝右看着那一行。 */
 export const GAZE_ROW = { x: 1, y: 0 };
@@ -315,7 +318,7 @@ export function RosterItem({ item, open, gitBadges, onToggle, onEnter, onPrefetc
       {open && (
         <div className="roster-sheet">
           {/* 最近几步在上、它最后说的话在下，顺着时间读。待处理的行不摆：那里要紧的是决定单。 */}
-          {tone !== "pending" && id > 0 && <RosterGlance sessionId={id} />}
+          {tone !== "pending" && id > 0 && <Suspense fallback={null}><RosterGlance sessionId={id} /></Suspense>}
           {/* 出错的行把错误原文摆出来：行里那一句只是个短标签。 */}
           {tone === "error" && item.error_raw && <pre className="roster-error">{item.error_raw}</pre>}
           {/* 它最后说的话是 Markdown 原文：照对话窗那样渲染，不把星号和反引号直接摆出来（真机实拍）。 */}
