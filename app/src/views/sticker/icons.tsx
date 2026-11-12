@@ -1,7 +1,7 @@
 // 贴纸看板与几处菜单共用的语义图标：形状在 icons/glyphs*，这里只给语义名和默认尺寸。纯展示，无状态。
 import type { Tab } from "./types";
 import { Icon, type IconSize } from "../../icons/Icon";
-import { icChat, icCheck, icChevronDown, icCircleCheck, icClose, icFolderOpen, icHand, icMonitor, icMore, icNote, icPencil, icPin, icPlus, icRefreshCw, icRotateCcw, icSearch, icSettings, icStopCircle, icTerminal, icToTop } from "../../icons/glyphs";
+import { icChat, icCheck, icChevronDown, icCircleCheck, icClose, icFolderOpen, icHand, icMonitor, icMore, icPencil, icPin, icPlus, icRefreshCw, icRotateCcw, icSearch, icSettings, icStopCircle, icTerminal, icToTop } from "../../icons/glyphs";
 
 /** 「标记完成 / 恢复进行中」的图标（底层仍是 archived 字段，名字沿用）。对照 Kimi 的
  *  state-done：未完成画圆圈对勾，已完成画回退箭头——此前是归档箱，和「标记完成」的文案对不上。 */
@@ -63,13 +63,6 @@ export function StopIcon() {
   // lucide circle-stop：右键菜单「结束会话」用
   return (
     <Icon glyph={icStopCircle} size={12} />
-  );
-}
-
-export function NoteIcon() {
-  // lucide sticky-note：折角便签纸，区别于 rename 的铅笔
-  return (
-    <Icon glyph={icNote} size={12} />
   );
 }
 

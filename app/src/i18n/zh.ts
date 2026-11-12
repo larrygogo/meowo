@@ -71,7 +71,6 @@ export const zh = {
     // 横条上的动作钮：点了开更新窗（安装确认在那扇窗里），动词与 updateReady 同一个。
     updateInstall: "安装",
     search: "搜索会话",
-    searchPlaceholder: "搜索标题 / 仓库 / 便签…",
     searchClose: "关闭搜索",
     pinOn: "取消窗口置顶",
     pinOff: "窗口置顶",
@@ -106,11 +105,6 @@ export const zh = {
     // 实际不混淆。存储键与内部标识仍叫 star（meowo-starred），改了会丢用户已有数据。
     star: "置顶",
     unstar: "取消置顶",
-    noteAdd: "添加便签",
-    noteEdit: "编辑便签",
-    notePlaceholder: "写点备忘…",
-    noteSave: "保存",
-    noteCancel: "取消",
     youPrefix: "你",
     aiPrefix: "AI",
     loading: "加载中…",
@@ -122,7 +116,6 @@ export const zh = {
     // 「全部」tab 里在线与历史会话的分界（7B-3）。
     historyDivider: (n: number) => `历史会话 · ${n}`,
     renameFailed: "重命名失败，请稍后再试。",
-    noteFailed: "便签保存失败，请稍后再试。",
     archiveFailed: "标记完成失败，请稍后再试。",
     archivedNotice: "已完成，可在「设置 → 会话」找回",
     archiveUndo: "撤销",
@@ -1505,7 +1498,7 @@ export const zh = {
     chatFeature: "对话窗口功能",
     chatFeatureDesc: "关闭进入轻量模式：只留灵动岛，会话在外部终端进行",
     cardMenu: "会话菜单",
-    cardMenuDesc: "置顶、便签等操作的打开方式",
+    cardMenuDesc: "置顶、重命名等操作的打开方式",
     cardMenuContext: "右键菜单",
     cardMenuButton: "⋯ 按钮",
     langAuto: "跟随系统",

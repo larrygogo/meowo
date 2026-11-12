@@ -17,7 +17,6 @@ export function makeSession(p: {
   todoDone?: number;
   todoTotal?: number;
   preview?: string | null;
-  note?: string | null;
   lastAi?: string | null;
   provider?: AgentId;
 }): Item {
@@ -57,7 +56,6 @@ export function makeSession(p: {
     error_label: null,
     error_raw: null,
     preview: p.preview ?? null,
-    note: p.note ?? null,
     context_pct: p.ctx ?? null,
     context_window: p.ctx != null ? 200_000 : null,
     pending_review: null,

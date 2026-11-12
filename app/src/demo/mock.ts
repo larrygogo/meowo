@@ -179,13 +179,6 @@ export function installMocks(windowLabel = "main"): void {
         notify();
         return null;
       }
-      case "set_session_note": {
-        const a = args as { sessionId: string; note: string };
-        const s = store.sessions.find((x) => x.session.cc_session_id === a.sessionId);
-        if (s) s.note = a.note;
-        notify();
-        return null;
-      }
       case "plugin:event|listen":
         return 1;
       default:

@@ -8,10 +8,10 @@ import { useEffect, useRef } from "react";
 import type { Lang } from "@/lib/i18n";
 
 /// 各段演示的设计尺寸。
-const SIZE = { island: [880, 600], demo: [880, 600], chat: [640, 780], panel: [1180, 760], mobile: [390, 780] } as const;
+const SIZE = { island: [880, 600], chat: [640, 780], panel: [1180, 760], mobile: [390, 780] } as const;
 
 /// page：嵌哪段演示。island = 灵动岛（首页与功能页顶部）；chat = 对话窗口（真实 ChatWindow +
-/// 假会话）；panel = 对话窗 + 右侧改动面板；mobile = 手机远程页；demo = 早期演示（官网已不引用）。
+/// 假会话）；panel = 对话窗 + 右侧改动面板；mobile = 手机远程页。
 /// scene：交给演示页的场景参数（目前只有灵动岛的 "alert"：定格在审批提醒，首页时间线用）。
 export default function DemoFrame({ lang, page = "island", scene }: { lang: Lang; page?: keyof typeof SIZE; scene?: string }) {
   const [dw, dh] = SIZE[page];

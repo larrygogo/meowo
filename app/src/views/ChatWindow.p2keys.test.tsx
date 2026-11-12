@@ -37,7 +37,7 @@ let rows: Row[] = [];
 const live = (row: Row, index: number) => ({
   session: { id: row.id, project_id: 1, cc_session_id: `cc-${row.id}`, status: row.status ?? "waiting", started_at: 0, last_event_at: 1000 - index, ended_at: null },
   project_name: "proj", task_title: row.title, current_activity: null, column: "doing", todo_done: 0, todo_total: 0, todos: [],
-  pid: 1, archived: false, archived_at: null, cwd: "C:/repo", context_pct: null, context_window: null, model: null, note: null,
+  pid: 1, archived: false, archived_at: null, cwd: "C:/repo", context_pct: null, context_window: null, model: null,
   pending_review: row.pending ?? null, last_ai_text: null, last_user_text: null, provider: "claude", profile: null, predecessor_id: null,
   // 侧栏默认手动排序：manual_key 越大越靠前，按 rows 的顺序给。
   manual_key: 10_000 - index,

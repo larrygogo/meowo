@@ -428,7 +428,6 @@ body.remote-ui .chat-window.is-remote-compact .chat-compose-actions > .chat-mode
   body.remote-ui .chat-sidebar-new { font-size: 13px; }
   body.remote-ui .chat-sidebar-name { font-size: 14px; }
   body.remote-ui .chat-sidebar-meta,
-  body.remote-ui .chat-sidebar-note,
   body.remote-ui .chat-sidebar-group-head,
   body.remote-ui .chat-sidebar-error,
   body.remote-ui .chat-sidebar-deep-head,
@@ -555,8 +554,7 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
 body.remote-ui .remote-session-list .chat-sidebar-name { font-size: 16px; font-weight: 500; line-height: 1.35; }
 .remote-session-list .chat-sidebar-item.is-active .chat-sidebar-name { font-weight: 500; }
 .remote-session-list .chat-sidebar-metaline { margin-top: 3px; }
-body.remote-ui .remote-session-list .chat-sidebar-meta,
-body.remote-ui .remote-session-list .chat-sidebar-note { font-size: 13px; }
+body.remote-ui .remote-session-list .chat-sidebar-meta { font-size: 13px; }
 /* 右列两行：上面状态文字，下面时间和 ⋯。与左列的「标题 / 项目」两行逐行对齐。 */
 .remote-session-list .chat-sidebar-act {
   display: grid;

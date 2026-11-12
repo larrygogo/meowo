@@ -339,7 +339,7 @@ describe("App", () => {
       session: { id: 77, cc_session_id: "s-77", status: "running", last_event_at: 1000, started_at: 0, ended_at: null, project_id: 1 },
       project_name: "p", task_title: "点我打开", current_activity: null, column: "todo", todo_done: 0, todo_total: 0,
       todos: [], pid: null, connected: true, archived: false, archived_at: null, cwd: "/p", errored: false,
-      error_label: null, error_raw: null, preview: null, note: null, context_pct: null, context_window: null,
+      error_label: null, error_raw: null, preview: null, context_pct: null, context_window: null,
       model: null, pending_review: null, last_ai_text: null, last_user_text: null, provider: "claude",
       screen_state: "working",
     };

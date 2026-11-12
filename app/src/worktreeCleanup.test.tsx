@@ -141,8 +141,8 @@ describe("已完成会话菜单里的「删除 worktree」", () => {
   const menu = (onWorktreeDone = vi.fn()) =>
     render(
       <CardContextMenu
-        x={0} y={0} starred={false} hasNote={false} archived
-        onStar={() => {}} onNote={() => {}} onRename={() => {}} onArchive={() => {}}
+        x={0} y={0} starred={false} archived
+        onStar={() => {}} onRename={() => {}} onArchive={() => {}}
         onOpenDir={null} onEndSession={null}
         worktreeSessionId={9} onWorktreeDone={onWorktreeDone} onClose={() => {}}
       />,
