@@ -2,7 +2,7 @@
 // 用真实 ChatWindow：它挂在 window 上的快捷键是这里要防的东西，换成桩就测不到。
 import { describe, expect, it } from "vitest";
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import { invoke } from "./chatWindow.harness";
+import { eventListeners, invoke } from "./chatWindow.harness";
 import { ChatWindow, type ChatShellBridge } from "./ChatWindow";
 import { chatUi } from "../test/agents";
 
@@ -93,5 +93,20 @@ describe("名单盖着时对话窗不接键盘", () => {
     fireEvent.keyDown(document.body, { key: "1" });
     await settle();
     expect(resolves()).toEqual([]);
+  });
+
+  it("盖着时侧栏不跟着 board-changed 白刷；名单让开的那一刻补一次", async () => {
+    setup(18);
+    const view = render(<ChatWindow shell={shellWith(true)} />);
+    await screen.findByRole("button", { name: "允许一次", hidden: true });
+    await settle();
+    const lists = () => invoke.mock.calls.filter(([c]) => c === "get_live_sessions_page").length;
+    const before = lists();
+    await act(async () => { eventListeners.get("board-changed")?.({ payload: "test" }); });
+    await settle();
+    expect(lists()).toBe(before);
+    view.rerender(<ChatWindow shell={shellWith(false)} />);
+    await settle();
+    expect(lists()).toBeGreaterThan(before);
   });
 });

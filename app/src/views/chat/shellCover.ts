@@ -15,8 +15,19 @@ export function isShellCovered(): boolean {
   return covered;
 }
 
+const uncoverListeners = new Set<() => void>();
+
 export function setShellCovered(next: boolean): void {
+  const was = covered;
   covered = next;
+  // 在渲染里被调用：通知放到微任务里，监听方可以放心 setState。
+  if (was && !next && uncoverListeners.size > 0) queueMicrotask(() => { for (const fn of [...uncoverListeners]) fn(); });
+}
+
+/** 名单让开、对话窗重新露出来的那一刻。被盖住期间停掉的刷新在这里补。返回取消订阅。 */
+export function onShellUncovered(fn: () => void): () => void {
+  uncoverListeners.add(fn);
+  return () => { uncoverListeners.delete(fn); };
 }
 
 if (typeof document !== "undefined") {

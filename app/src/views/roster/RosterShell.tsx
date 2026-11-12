@@ -3,7 +3,7 @@
 //
 // 对话窗（ChatWindow）原样包在里面，名单只是盖在它的对话区上：回到名单时对话窗不卸载，
 // 审批租约、托管终端、输入框草稿都还在。
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { createContext, lazy, memo, Suspense, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -121,20 +121,15 @@ function DesktopRoster() {
 
   const gitBadges = useSidebarGitBadges(useMemo(() => rows.map((row) => row.cwd), [rows]));
 
+  // 名单的数据经 context 送到盖在对话窗里的那一层，不放进 shell：shell 一变整个对话窗（五千多行的
+  // 状态机）就要重渲染一遍，而名单每次 board-changed 都在变。量测（visual/perf-roster.mjs，12 个在跑
+  // 的会话每 450ms 全部换一句话）：放进 shell 时每次刷新主线程约 6ms，是旧侧栏的 3 倍。
+  const toggle = useCallback((id: number) => setExpanded((prev) => (prev === id ? null : id)), []);
+  const list = useMemo<RosterListProps>(() => ({
+    rows, loaded: sessions != null, expanded, gitBadges, onToggle: toggle, onEnter: enter, onSay: say, onNewSession: askNewSession, onCommand: run,
+  }), [rows, sessions, expanded, gitBadges, toggle, enter, say, askNewSession, run]);
   const shell = useMemo<ChatShellBridge>(() => ({
-    overlay: view === "roster" ? (
-      <RosterList
-        rows={rows}
-        loaded={sessions != null}
-        expanded={expanded}
-        gitBadges={gitBadges}
-        onToggle={(id) => setExpanded((prev) => (prev === id ? null : id))}
-        onEnter={enter}
-        onSay={say}
-        onNewSession={askNewSession}
-        onCommand={run}
-      />
-    ) : null,
+    overlay: view === "roster" ? ROSTER_OVERLAY : null,
     request,
     newSession,
     command,
@@ -145,7 +140,9 @@ function DesktopRoster() {
       pageFromRosterRef.current = false;
       backToRoster();
     },
-  }), [view, rows, sessions, expanded, gitBadges, enter, request, newSession, command, say, askNewSession, run, backToRoster]);
+  }), [view, request, newSession, command, backToRoster]);
+  // 元素本身也要稳住：每次渲染新建一个 <ChatWindow> 元素，React 照样会重渲染它。
+  const chat = useMemo(() => <ChatWindow shell={shell} />, [shell]);
 
   return (
     <div ref={shellRef} className={`roster-shell is-${view}`}>
@@ -167,7 +164,7 @@ function DesktopRoster() {
         </div>
       </aside>
       <div className="roster-stage" data-scene-id={sceneId}>
-        <ChatWindow shell={shell} />
+        <RosterContext.Provider value={list}>{chat}</RosterContext.Provider>
       </div>
     </div>
   );
@@ -216,7 +213,7 @@ function title(item: Item, fallback: string): string {
   return item.task_title && item.task_title !== UNNAMED_SESSION_SENTINEL ? item.task_title : fallback;
 }
 
-function RosterList({ rows, loaded, expanded, gitBadges, onToggle, onEnter, onSay, onNewSession, onCommand }: {
+type RosterListProps = {
   onCommand: (name: "search" | "done" | "admin") => void;
   onSay: (id: number, message: string) => void;
   onNewSession: (message: string) => void;
@@ -226,7 +223,16 @@ function RosterList({ rows, loaded, expanded, gitBadges, onToggle, onEnter, onSa
   gitBadges: GitBadgeStore;
   onToggle: (id: number) => void;
   onEnter: (id: number) => void;
-}) {
+};
+const RosterContext = createContext<RosterListProps | null>(null);
+/** 盖在对话窗里的那一层：自己从 context 取名单数据，对话窗不知道名单变了。元素是模块级常量。 */
+function RosterOverlay() {
+  const props = useContext(RosterContext);
+  return props ? <RosterList {...props} /> : null;
+}
+const ROSTER_OVERLAY = <RosterOverlay />;
+
+function RosterList({ rows, loaded, expanded, gitBadges, onToggle, onEnter, onSay, onNewSession, onCommand }: RosterListProps) {
   const t = useT();
   const target = expanded == null ? null : rows.find((row) => row.session.id === expanded) ?? null;
   return (
@@ -277,7 +283,13 @@ function RosterList({ rows, loaded, expanded, gitBadges, onToggle, onEnter, onSa
   );
 }
 
-export function RosterItem({ item, open, gitBadges, onToggle, onEnter, onPrefetch }: {
+/** 一行。后端每次刷新给的都是新对象：按内容比，没变的行不重渲染（12 行里通常只有在跑的几行在变）。 */
+export const RosterItem = memo(RosterItemView, (a, b) => (
+  a.open === b.open && a.gitBadges === b.gitBadges && a.onToggle === b.onToggle && a.onEnter === b.onEnter && a.onPrefetch === b.onPrefetch
+  && (a.item === b.item || JSON.stringify(a.item) === JSON.stringify(b.item))
+));
+
+function RosterItemView({ item, open, gitBadges, onToggle, onEnter, onPrefetch }: {
   /** 这一行多半接下来要进现场：提前把它的首屏读起来（手机页用，点进去不用再等一次整读）。 */
   onPrefetch?: (id: number) => void;
   item: Item;

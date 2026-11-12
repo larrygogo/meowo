@@ -98,6 +98,38 @@ const EXTENSIONS = [
   { provider: "codex", displayName: "Codex", dataDir: "C:\\Users\\demo\\.codex", groups: [] },
 ];
 
+/**
+ * ?perf=1：给 visual/perf-roster.mjs 用的量测入口。把会话换成 12 个在跑的，记下页面订阅 board-changed
+ * 的回调；window.__perfTick(i) 每调一次就让 12 个会话各换一句「此刻在做什么」并发一次 board-changed。
+ * 名单（scene=roster）和旧侧栏（scene=chat）吃的是同一份数据、同一个节奏。
+ */
+function installPerfHook(): void {
+  if (q.get("perf") !== "1") return;
+  type Internals = { invoke: (cmd: string, args?: Record<string, unknown>, opts?: unknown) => Promise<unknown>; runCallback?: (id: number, data: unknown) => void };
+  const internals = (window as unknown as { __TAURI_INTERNALS__: Internals }).__TAURI_INTERNALS__;
+  const providers = ["claude", "codex", "kimi", "gemini", "opencode"] as const;
+  const build = (tick: number) => Array.from({ length: 12 }, (_, i) => {
+    const s = makeSession({ title: `perf session ${i + 1}`, project: "meowo", provider: providers[i % providers.length], agoMin: 0, lastAi: null });
+    s.session.id = 9000 + i;
+    s.session.cc_session_id = `perf-${i}`;
+    s.current_activity = `Bash: step ${tick} of job ${i}`;
+    return s;
+  });
+  store.sessions = build(0);
+  const handlers: number[] = [];
+  const invoke = internals.invoke.bind(internals);
+  internals.invoke = (cmd, args, opts) => {
+    if (cmd === "plugin:event|listen" && args?.event === "board-changed") handlers.push(args.handler as number);
+    if (cmd === "get_live_sessions_page") return Promise.resolve({ items: store.sessions, next_cursor: null });
+    return invoke(cmd, args, opts);
+  };
+  (window as unknown as { __perfTick: (tick: number) => number }).__perfTick = (tick) => {
+    store.sessions = build(tick);
+    for (const id of handlers) internals.runCallback?.(id, { event: "board-changed", payload: "perf", id: 1 });
+    return handlers.length;
+  };
+}
+
 async function boot(): Promise<React.ReactNode> {
   // 主窗口的名单外壳（views/roster）：roster = 五个会话各一种状态，眼睛站在待批准那一行；
   // roster-open = 点开一行；roster-quiet = 没人需要你，眼睛回轨顶；roster-scene = 进了某一行的现场。
@@ -548,6 +580,7 @@ void (async () => {
   await detectHostOs();
   installInputModality();
   const node = await boot();
+  installPerfHook();
   ReactDOM.createRoot(document.getElementById("root")!).render(
     <I18nProvider initial={lang}>
       {node}

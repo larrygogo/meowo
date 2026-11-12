@@ -11,6 +11,7 @@ import { remoteUi } from "../remoteMode";
 import { useAgents } from "../useAgents";
 import { openSettingsAt } from "../settingsNav";
 import { useBoardRefresh } from "../hooks/useBoardRefresh";
+import { isShellCovered, onShellUncovered } from "./chat/shellCover";
 import { useSessionActions } from "../hooks/useSessionActions";
 import { useSettingsEffect } from "../hooks/useSettings";
 import { folderName, parentSegment, pathKey, worktreeNameOf } from "../paths";
@@ -463,10 +464,20 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
 
   // board-changed 订阅 + 节流统一在 useBoardRefresh（订阅只建一次、不随 limit 重建：
   // unlisten → 新 listen 之间有异步空窗，恰落在空窗里的事件会被吞掉）。
+  // 名单盖着时侧栏看不见：不跟着每次 board-changed 白刷一遍（名单自己在刷同一份列表；量测见
+  // visual/perf-roster.mjs，12 个在跑的会话下这一份白刷占名单刷新开销的三分之一）。露出来的那一刻补一次。
+  const staleRef = useRef(false);
   useBoardRefresh(() => {
+    if (isShellCovered()) { staleRef.current = true; return; }
     void loadRef.current("refresh");
     refreshDirsRef.current();
   });
+  useEffect(() => onShellUncovered(() => {
+    if (!staleRef.current || !mountedRef.current) return;
+    staleRef.current = false;
+    void loadRef.current("refresh");
+    refreshDirsRef.current();
+  }), []);
   useEffect(() => {
     mountedRef.current = true;
     void loadRef.current("refresh");
