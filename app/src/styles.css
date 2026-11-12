@@ -5304,7 +5304,8 @@ button.scm-check-name:hover { text-decoration: underline; }
 .chat-message.is-turn-error {
   width: fit-content;
   max-width: 82%;
-  padding: var(--sp-12) var(--sp-14);
+  /* 左右 16：与审批卡、子任务卡同一条内容线（原 14，卡内文字比审批卡偏左 2）。 */
+  padding: var(--sp-12) var(--sp-16);
   border: 0;
   border-radius: var(--radius-lg);
   background: var(--cc-panel-raised);
@@ -5826,6 +5827,10 @@ button.scm-check-name:hover { text-decoration: underline; }
 .chat-flat-steps > .chat-tool { margin: 0; }
 .chat-flat-steps > .chat-tool > summary { position: relative; min-height: calc(34px * var(--cc-ui)); padding: var(--sp-6) var(--sp-12) var(--sp-6) 0; display: flex; align-items: center; gap: var(--sp-8); flex-wrap: nowrap; list-style: none; cursor: pointer; border-radius: var(--radius-md); color: var(--cc-text-dim); font-size: var(--text-base); }
 .chat-flat-steps > .chat-tool > summary:hover { background: var(--fill-hover); }
+/* 平铺行展开后不留底色，只转箭头：行的左内边距是 0（图标压在正文左轴上），一上底色图标就贴着
+   色条左缘（实拍离 4px），下面缩进的结果块又比色条左窄 28、右窄 12，两块错位。
+   通用的 .chat-tool[open] 底色是给带内边距的卡片式工具行的。 */
+.chat-flat-steps > .chat-tool[open] > summary:not(:hover) { background: transparent; }
 .chat-flat-steps > .chat-tool > summary::-webkit-details-marker { display: none; }
 .chat-flat-steps > .chat-tool > summary > .chat-tool-icon { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 20px; color: var(--cc-text-faint); }
 .chat-flat-steps > .chat-tool > summary > .chat-tool-verb { flex: 0 0 auto; color: var(--cc-text-dim); font-weight: var(--cc-tool-verb-weight); }
@@ -6172,7 +6177,8 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .chat-subagent > summary::-webkit-details-marker { display: none; }
 .chat-subagent > summary {
   min-height: calc(34px * var(--cc-ui));
-  padding: 0 var(--sp-12);
+  /* 左 13：图标是 18px 的盒子、墨迹从 2px 处起，这样图标墨迹和卡内正文落在同一条线上（原 12，同一张卡里差 2）。 */
+  padding: 0 var(--sp-12) 0 var(--sp-13);
   display: flex;
   align-items: center;
   gap: var(--sp-9);
@@ -6236,7 +6242,8 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
   letter-spacing: 0.02em;
 }
 /* 嵌套时间线自带外边距，容器只补两侧留白。 */
-.chat-subagent-body { padding: var(--sp-8) var(--sp-12) var(--sp-2); }
+/* 左右 16（扣掉卡自己的 1px 边框）：正文与审批卡文字同一条内容线（原 12，偏左 3）。 */
+.chat-subagent-body { padding: var(--sp-8) calc(var(--sp-16) - var(--hairline)) var(--sp-2); }
 .chat-subagent-hint { padding: var(--sp-8) var(--sp-4) var(--sp-12); color: var(--cc-text-faint); font-size: var(--text-xs); }
 /* 子任务时间线限高内滚：一个子任务可以有上百条，全铺开会把主对话推到几屏之外。
    50vh 留出足够上下文，又保证收起入口始终在同一屏内。 */
@@ -6694,7 +6701,8 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
    只留给链接与小指示物；等宽字形与底色已足够把路径/命令从正文里区分出来。 */
 .chat-md :not(pre) > code { padding: var(--sp-1) var(--sp-5); border-radius: var(--radius-sm); background: var(--fill-selected); color: var(--cc-text); font-family: var(--cc-mono); font-size: .88em; }
 /* 外框/底色归 .chat-md-pre 外壳（pre 恒由 CopyablePre 包着），这里只管内边距与横滚。 */
-.chat-md pre { margin: 0; padding: var(--sp-6) var(--sp-14) var(--sp-12); overflow-x: auto; }
+/* 左内边距 16（原 14）：代码与头行的语言名落在同一列各卡片的内容线上（卡片外缘 +16）。 */
+.chat-md pre { margin: 0; padding: var(--sp-6) var(--sp-14) var(--sp-12) var(--sp-16); overflow-x: auto; }
 /* 溢出的代码块可 Tab 聚焦（ChatMarkdown）：外壳 overflow:hidden 会裁掉外扩的焦点环，往里收。 */
 .chat-md-pre > pre:focus-visible { outline-offset: -2px; }
 .chat-md pre code { padding: 0; background: transparent; font-family: var(--cc-mono); font-size: var(--text-sm); line-height: var(--leading-body); }
@@ -6706,6 +6714,8 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .chat-md .chat-md-cell2 { display: inline-block; width: 2ch; text-align: center; }
 .chat-md .chat-md-cell1 { display: inline-block; width: 1ch; text-align: center; }
 .chat-md blockquote { margin: 0 0 var(--sp-12); padding: var(--sp-2) var(--sp-12); border-left: 2px solid var(--line-strong); color: var(--cc-text-dim); }
+/* 引用块里最后一段带着 .chat-md p 的 12px 下外边距，竖线下面比上面多出 12（实拍上 6 下 18）。 */
+.chat-md blockquote > :last-child { margin-bottom: 0; }
 .chat-md hr { margin: var(--sp-14) 0; border: 0; border-top: var(--hairline) solid var(--cc-border); }
 .chat-md a { color: var(--cc-accent-text); text-decoration: underline 2px var(--link-line); text-underline-offset: 3px; }
 .chat-md a:hover { text-decoration-color: var(--cc-brand-line); }
@@ -6721,6 +6731,8 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .chat-md table { margin: 0 0 var(--sp-12); border-collapse: collapse; font-size: .95em; display: block; overflow-x: auto; }
 .chat-md th, .chat-md td { padding: var(--sp-6) var(--sp-12); border: 0; border-bottom: var(--hairline) solid var(--cc-border); font-variant-numeric: tabular-nums; }
 .chat-md tbody tr:last-child td { border-bottom: 0; }
+/* 第一列左内边距 16：与同一列里各卡片的内容线对齐（原 12，表头比审批卡文字偏左 4）。 */
+.chat-md th:first-child, .chat-md td:first-child { padding-left: var(--sp-16); }
 /* 单元格不吃正文的「任意处断行」（.chat-text 的 overflow-wrap:anywhere）：窄屏上浏览器会把
    短列压到一个字宽，表头和提交号竖着排成一列（手机实拍）。改成只在词间断行、每列至少
    4em，内联代码不折行；整表放不下就横滑（table 已是 display:block + overflow-x:auto）。 */
@@ -6904,7 +6916,7 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 /* 代码块外壳（A+B 改版）：边框/圆角/底色归外壳，顶栏常驻「语言角标 + 复制」，pre 只管代码。
    顶栏在文档流里：此前绝对定位悬浮在右上角，触屏常显时压住首行代码（手机实拍）。 */
 .chat-md-pre { margin: 0 0 var(--sp-12); overflow: hidden; border: 0; border-radius: var(--radius-lg); background: var(--cc-code-bg); }
-.chat-md-pre-head { min-height: calc(32px * var(--cc-ui)); padding: var(--sp-4) var(--sp-6) 0 var(--sp-14); display: flex; align-items: center; gap: var(--sp-4); }
+.chat-md-pre-head { min-height: calc(32px * var(--cc-ui)); padding: var(--sp-4) var(--sp-6) 0 var(--sp-16); display: flex; align-items: center; gap: var(--sp-4); }
 .chat-md-lang { color: var(--cc-text-faint); font: var(--text-xs)/1.7 var(--cc-mono); text-transform: lowercase; }
 .chat-md-pre-head button { margin-left: auto; min-height: var(--btn-h-sm); padding: 0 var(--sp-8); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-faint); font-size: var(--text-xs); cursor: pointer; }
 .chat-md-pre-head button:hover { color: var(--cc-text); background: var(--fill-hover); }
