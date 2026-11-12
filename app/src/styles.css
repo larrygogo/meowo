@@ -6882,7 +6882,9 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 @media (hover: none), (max-width: 680px) { .chat-msg-nav { display: none; } }
 
 /* ? 快捷键速查表：双列 dl（组合键 / 描述）。 */
-.chat-shortcuts { width: min(460px, calc(100vw - 48px)); max-height: calc(100vh - 48px); box-sizing: border-box; overflow-y: auto; }
+/* 460 → 500：按键列加宽了 34（见 .chat-shortcuts-row dt），弹层跟着加宽，说明列保持原来的 270 左右，
+   最长的一条「打开命令面板（搜索会话、执行窗口命令）」不折行。 */
+.chat-shortcuts { width: min(500px, calc(100vw - 48px)); max-height: calc(100vh - 48px); box-sizing: border-box; overflow-y: auto; }
 .chat-shortcuts-list { display: flex; flex-direction: column; gap: var(--sp-8); margin: var(--sp-8) 0 0; }
 /* 分组标题「窗口 / 输入框」（i17：原先平铺丢了分组）。第二组起与上一组拉开间距。 */
 .chat-shortcuts-group + .chat-shortcuts-group { margin-top: var(--sp-14); }
@@ -6893,7 +6895,8 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .chat-drop-overlay { position: fixed; inset: 8px; z-index: var(--z-overlay); display: flex; align-items: center; justify-content: center; border: 2px dashed var(--line-strong); border-radius: var(--radius-lg); background: color-mix(in srgb, var(--cc-bg) 72%, transparent); pointer-events: none; }
 .chat-drop-overlay span { padding: var(--sp-8) var(--sp-11); border-radius: var(--radius-md); background: var(--cc-menu-bg); color: var(--cc-text); font-size: var(--text-xs); box-shadow: var(--shadow-md); }
 .chat-shortcuts-row { display: flex; align-items: baseline; gap: var(--sp-14); }
-.chat-shortcuts-row dt { flex: 0 0 156px; color: var(--cc-text-faint); margin: 0; text-align: right; }
+/* 156 → 190 并且不折行：最长的一组「Ctrl+Tab / Ctrl+Shift+Tab」约 180，原来折成两行而右边空着 195。 */
+.chat-shortcuts-row dt { flex: 0 0 190px; white-space: nowrap; color: var(--cc-text-faint); margin: 0; text-align: right; }
 .chat-shortcuts-row dd { flex: 1; margin: 0; color: var(--cc-text-dim); font-size: var(--text-sm); }
 .chat-shortcuts-row kbd { display: inline-block; min-width: 20px; box-sizing: border-box; padding: 1px var(--sp-5); border: 0; border-radius: var(--radius-xs); background: var(--fill-selected); text-align: center; line-height: 18px; color: var(--cc-text); font-size: var(--text-xs); font-family: inherit; }
 .settings-shortcuts { padding: var(--sp-14) var(--sp-16); }
