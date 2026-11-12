@@ -846,6 +846,16 @@ mod tests {
             evaluate("codex", &old),
             Some(Evaluation::Hold { rule_id: "transcript_viewer" })
         ));
+        // 做空第二轮 N6（2026-11-12）：0.166.0 codex.exe 里另有带空格的 `pgup / pgdn` 常量（机器码立即数
+        // `pgup / p` + `pgdn` 拼出，看不出属于哪个界面）。键间换成 ` / ` 照样认，三组按键都覆盖。
+        let spaced = snap(&[
+            "  user: run the tests",
+            "  \u{2191} / \u{2193} to scroll   pgup / pgdn to page   home / end to jump",
+        ]);
+        assert!(matches!(
+            evaluate("codex", &spaced),
+            Some(Evaluation::Hold { rule_id: "transcript_viewer" })
+        ));
     }
 
     /// 做空第一轮 #9（2026-11-12）：正文里同时出现 to scroll / to page / to jump（agent 在讲分页器、

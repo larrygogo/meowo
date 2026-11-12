@@ -70,6 +70,27 @@ pub(super) static DEPS: &[D] = &[
         "\u{2191}/\u{2193} to scroll   pgup/pgdn to page   home/end to jump",
         "0.166.0 codex.exe：三段紧挨 `tui\\src\\pager_overlay.rs`，相距 16 字节；按键名 pgup/pgdn 是内联常量",
     ),
+    // 规则同时要求每段连着按键字形（做空第一轮 #9），字形也会漂移，三段说明之外再查按键名（做空第二轮 N6，
+    // 2026-11-12）。字形来自 codex 的按键显示函数（tui key_hint）：pgup/pgdn 是它特判的内联常量（机器码里与
+    // `ente`(r)、`spac`(e) 同一个函数，pgup→pgdn 相距 77 字节）；home/end 走 crossterm 的 KeyCode Display
+    //（`…UpDownHomeEndPage UpPage Down…` 原样表）再转小写。方向键 ↑/↓ 是拆开的立即数（公共前缀 `e2 86`
+    // + 末字节 91/93 分开写），程序文件里没有可搜的整串，不查。
+    // 程序文件另有 `pgup / pgdn`（带空格，机器码里 `pgup / p` + `pgdn` 两条立即数拼出，11 字节），看不出属于哪个
+    // 界面；记录查看页三段说明后紧挨的是 `/` 常量，推断键间不带空格。规则正则 `\s*/\s*` 两种都认，测试两种都覆盖。
+    D::near(
+        "screen:transcript_viewer",
+        &["pgup", "pgdn"],
+        160,
+        "\u{2191}/\u{2193} to scroll   pgup/pgdn to page   home/end to jump",
+        "0.166.0 codex.exe：按键显示函数里 pgup→pgdn 相距 77 字节；另 3 处（按键名解析 12 字节、`pgup / pgdn` 14 字节、文本框帮助 `pgup/pgdn/⌃b` 5 字节）也在间距内",
+    ),
+    D::near(
+        "screen:transcript_viewer",
+        &["home", "end"],
+        8,
+        "\u{2191}/\u{2193} to scroll   pgup/pgdn to page   home/end to jump",
+        "0.166.0 codex.exe：crossterm KeyCode 名表 `HomeEnd` 3 处（Display 与 Debug），home→end 相距 4 字节；文本框帮助 `home/end` 3 处相距 5 字节",
+    ),
     // ── 自动抽取的字面量：旧版兼容 ──
     D::new(
         "literal:do you trust the files in this folder",

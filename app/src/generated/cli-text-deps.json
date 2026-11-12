@@ -1235,6 +1235,30 @@
           ],
           "rule": "screen:transcript_viewer",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:29"
+        },
+        {
+          "legacy": false,
+          "max_gap": 160,
+          "needle": "",
+          "note": "0.166.0 codex.exe：按键显示函数里 pgup→pgdn 相距 77 字节；另 3 处（按键名解析 12 字节、`pgup / pgdn` 14 字节、文本框帮助 `pgup/pgdn/⌃b` 5 字节）也在间距内",
+          "parts": [
+            "pgup",
+            "pgdn"
+          ],
+          "rule": "screen:transcript_viewer",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:29"
+        },
+        {
+          "legacy": false,
+          "max_gap": 8,
+          "needle": "",
+          "note": "0.166.0 codex.exe：crossterm KeyCode 名表 `HomeEnd` 3 处（Display 与 Debug），home→end 相距 4 字节；文本框帮助 `home/end` 3 处相距 5 字节",
+          "parts": [
+            "home",
+            "end"
+          ],
+          "rule": "screen:transcript_viewer",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:29"
         }
       ],
       "id": "codex",
