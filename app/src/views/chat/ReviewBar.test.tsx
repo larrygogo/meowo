@@ -43,6 +43,27 @@ describe("ReviewBar", () => {
     expect(screen.queryByTestId("review-cleared")).toBeNull();
   });
 
+  // 做空第一轮 #3（2026-11-12）：撤销条点 × 整条消失，焦点以前掉到 body；现在交给对话输入框。
+  it("撤销条点 × 关掉后焦点交给输入框", () => {
+    function WithInput() {
+      const [list, setList] = useState<readonly ReviewComment[]>([c("a")]);
+      return (
+        <>
+          <ReviewBar comments={list} onClear={() => setList([])} onRestore={setList} onInsert={() => {}}
+            onDismissFocus={() => document.querySelector<HTMLTextAreaElement>("textarea")?.focus()} />
+          <textarea aria-label="输入框" />
+        </>
+      );
+    }
+    render(<WithInput />);
+    fireEvent.click(screen.getByRole("button", { name: "清空" }));
+    const close = screen.getByRole("button", { name: "关闭" });
+    close.focus();
+    fireEvent.click(close);
+    expect(screen.queryByTestId("review-cleared")).toBeNull();
+    expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "输入框" }));
+  });
+
   it("「插入输入框」不留撤销条（评论已经进了输入框）", () => {
     const onInsert = vi.fn();
     render(<Harness initial={[c("a")]} onInsert={onInsert} />);

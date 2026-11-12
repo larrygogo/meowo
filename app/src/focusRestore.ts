@@ -43,3 +43,17 @@ export function restoreFocus(target: HTMLElement | null): boolean {
   }
   return false;
 }
+
+/** 把焦点交给 el 之前（文档顺序）最近一个拿得到焦点的控件，相当于替用户按一次 Shift+Tab。
+ *  用于提示条之类即将消失的元素：焦点在它里面时先挪出去，不然元素一卸载焦点就掉到 body
+ *  （做空第一轮 #3，2026-11-12：「更改」面板提示条点「撤销」「×」「重试」后焦点落到 body）。 */
+export function focusBefore(el: HTMLElement): boolean {
+  const all = Array.from(document.querySelectorAll<HTMLElement>(FOCUSABLE));
+  for (let i = all.length - 1; i >= 0; i -= 1) {
+    const item = all[i];
+    if (el.contains(item) || !(item.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING)) continue;
+    // 平时隐藏的行内按钮（display:none）拿不到焦点，跳过接着往前找。
+    if (tryFocus(item)) return true;
+  }
+  return false;
+}

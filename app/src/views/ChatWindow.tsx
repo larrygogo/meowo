@@ -4970,7 +4970,8 @@ export function ChatWindow() {
         </div>}
         {/* 「清空」可撤销（walkthrough P-7，见 ReviewBar.tsx）。key 按会话：撤销条不跟到别的会话去。 */}
         <ReviewBar key={sessionId} comments={sessionReviewComments} onClear={() => setSessionReviewComments(() => [])}
-          onRestore={(list) => setSessionReviewComments(() => list)} onInsert={insertReviewComments} />
+          onRestore={(list) => setSessionReviewComments(() => list)} onInsert={insertReviewComments}
+          onDismissFocus={() => promptInputRef.current?.focus({ preventScroll: true })} />
         {attachments.length > 0 && <div className="chat-attachments">
           {attachments.map((file) => file.image ? (
             /* 图片附件给真缩略图（点开进灯箱，与 transcript 图片同一套 ImageRef）；

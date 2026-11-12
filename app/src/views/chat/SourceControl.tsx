@@ -136,6 +136,14 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
   const [notice, setNotice] = useState<ScmNotice | null>(null);
   const [identityFor, setIdentityFor] = useState<(() => void) | null>(null);
   const focusPlan = useRef<FocusPlan | null>(null);
+  const commitInputRef = useRef<HTMLTextAreaElement>(null);
+  // 提示条消失时焦点交给提交框（做空第一轮 #3）：提示条就挂在提交框下面，是最近的输入位置。
+  const focusCommitInput = () => {
+    const box = commitInputRef.current;
+    if (!box?.isConnected) return false;
+    box.focus({ preventScroll: true });
+    return document.activeElement === box;
+  };
   const insertPrompt = useContext(PanelPromptContext);
   // 打开确认框时钉住仓库根与文件：确认前轮询可能把选中的 worktree 挤出列表，pickRepo 退回主仓库，
   // 按渲染时的 root 放弃就会删到主仓库的同名文件（做空复现）。
@@ -595,6 +603,7 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
 
       <div className="scm-commit">
         <textarea
+          ref={commitInputRef}
           className="scm-commit-input"
           rows={1}
           value={message}
@@ -616,15 +625,16 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
           {busy === "commit" ? t.chat.scmCommitting : commitAll ? t.chat.scmCommitAll : t.chat.scmCommit}
         </button>
         {busy && busy !== "commit" && <div className="scm-notice" role="status">{t.chat.scmRunning[busy]}</div>}
-        {error && <PanelMessage tone="error" text={error.text} actions={errorActions(error)} onDismiss={() => setError(null)} testId="scm-error" />}
+        {error && <PanelMessage tone="error" text={error.text} actions={errorActions(error)} onDismiss={() => setError(null)} testId="scm-error" focusAfter={focusCommitInput} />}
         {notice && (
-          <PanelMessage tone="notice" text={notice.text} testId="scm-notice"
+          <PanelMessage tone="notice" text={notice.text} testId="scm-notice" focusAfter={focusCommitInput}
             actions={notice.undo ? [{ label: t.chat.scmUndo, testId: "scm-undo", onClick: () => undoDiscard(notice.undo!) }] : []}
             onDismiss={notice.undo ? () => setNotice(null) : undefined} />
         )}
         {/* P-10：说清楚之后给按钮，不让人自己去找「全部」和搜索框。 */}
         {commitBlockedByFilter && !!message.trim() && (
-          <PanelMessage tone="notice" text={t.chat.scmCommitFiltered} actions={[{ label: t.chat.scmClearFilter, testId: "scm-clear-filter", onClick: clearFilter }]} />
+          <PanelMessage tone="notice" text={t.chat.scmCommitFiltered} focusAfter={focusCommitInput}
+            actions={[{ label: t.chat.scmClearFilter, testId: "scm-clear-filter", onClick: clearFilter }]} />
         )}
       </div>
       {/* 推送 / PR / CI / 合并（二期包 5）。key 按仓库：切仓库时轮询、表单、提示都换成那个仓库的。 */}

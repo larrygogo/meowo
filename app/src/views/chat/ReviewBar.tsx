@@ -11,11 +11,13 @@ import { icMessage } from "../../icons/glyphs.chat";
 import { icClose } from "../../icons/glyphs";
 import type { ReviewComment } from "./diffComments";
 
-export function ReviewBar({ comments, onClear, onRestore, onInsert }: {
+export function ReviewBar({ comments, onClear, onRestore, onInsert, onDismissFocus }: {
   comments: readonly ReviewComment[];
   onClear: () => void;
   onRestore: (list: readonly ReviewComment[]) => void;
   onInsert: () => void;
+  /** 撤销条点 × 关掉后焦点去哪（对话页给输入框）。不给的话整条消失、焦点掉到 body（做空第一轮 #3，2026-11-12）。 */
+  onDismissFocus?: () => void;
 }) {
   const t = useT();
   const [cleared, setCleared] = useState<readonly ReviewComment[] | null>(null);
@@ -45,7 +47,11 @@ export function ReviewBar({ comments, onClear, onRestore, onInsert }: {
           restored.current = true;
           onRestore(cleared);
         }}>{t.chat.reviewCommentsUndo}</button>
-        <button type="button" className="chat-review-bar-close" aria-label={t.chat.scmDismiss} data-tip={t.chat.scmDismiss} onClick={() => setCleared(null)}>
+        <button type="button" className="chat-review-bar-close" aria-label={t.chat.scmDismiss} data-tip={t.chat.scmDismiss} onClick={() => {
+          // 先把焦点交出去再卸载：条一消失，拿着焦点的 × 跟着没了。
+          onDismissFocus?.();
+          setCleared(null);
+        }}>
           <Icon glyph={icClose} size={12} />
         </button>
       </div>

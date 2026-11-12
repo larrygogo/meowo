@@ -77,7 +77,7 @@ describe("放弃可以撤销（P-5）", () => {
 // 做空第一轮 #1 / #2 / #3（2026-11-12）。兄弟场景：单个放弃与组头「全部放弃」走同一个 confirmAndDiscard；
 // 「更改」面板三种提示条（失败、结果、筛选拦提交）都挂 focusAfter；ForgeBar 走 PanelMessage 的默认落点
 //（ForgeBar.recovery.test）；ReviewBar 撤销条 × 交给输入框（ReviewBar.test）。手机页同一个 SourceControl。
-describe("做空第一轮：混合放弃、放弃到一半、撤销重试", () => {
+describe("做空第一轮：混合放弃、放弃到一半、撤销重试、提示条焦点", () => {
   const discardAll = () => {
     fireEvent.click(within(screen.getByTestId("scm-group-work")).getByRole("button", { name: "全部放弃" }));
     fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "放弃更改" }));
@@ -135,6 +135,39 @@ describe("做空第一轮：混合放弃、放弃到一半、撤销重试", () =
     fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "放弃更改" }));
     fireEvent.click(within(await screen.findByTestId("scm-notice")).getByTestId("scm-undo"));
     expect(within(await screen.findByRole("alert")).queryByTestId("scm-undo-retry")).toBeNull();
+  });
+
+  it("提示条上的「撤销」「×」点完焦点交给提交框，不掉到 body", async () => {
+    let locked = true;
+    handler = (command) => {
+      if (command === "git_discard") return "discard-1";
+      if (command === "git_stage" && locked) throw "git/locked";
+      return [];
+    };
+    renderScm([repo([file("a.ts", null, "M"), file("b.ts", null, "M")])]);
+    const input = screen.getByRole("textbox", { name: /^消息/ });
+    fireEvent.click(within(screen.getByTestId("scm-group-work")).getAllByRole("button", { name: "放弃更改" })[0]);
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "放弃更改" }));
+    const undo = within(await screen.findByTestId("scm-notice")).getByTestId("scm-undo");
+    undo.focus();
+    fireEvent.click(undo);
+    await waitFor(() => expect(screen.getByTestId("scm-notice").textContent).toBe("已撤销放弃"));
+    expect(document.activeElement).toBe(input);
+
+    fireEvent.click(within(screen.getByTestId("scm-group-work")).getAllByRole("button", { name: "暂存更改" })[0]);
+    const close = within(await screen.findByRole("alert")).getByRole("button", { name: "关闭" });
+    close.focus();
+    fireEvent.click(close);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(document.activeElement).toBe(input);
+
+    fireEvent.click(within(screen.getByTestId("scm-group-work")).getAllByRole("button", { name: "暂存更改" })[0]);
+    const retry = within(await screen.findByRole("alert")).getByRole("button", { name: "重试" });
+    locked = false;
+    retry.focus();
+    fireEvent.click(retry);
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    expect(document.activeElement).not.toBe(document.body);
   });
 });
 

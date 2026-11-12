@@ -79,6 +79,23 @@ describe("推送被拒的出路（P-1）", () => {
     expect(screen.queryByRole("alert")).toBeNull();
   });
 
+  // 做空第一轮 #3（2026-11-12）：「拉取并重试」「×」点完红字先被清掉，按钮跟着卸载，焦点以前掉到 body。
+  // 现在 PanelMessage 卸载前把焦点交给条前面最近的控件（这里是「开 PR」，没有它时是推送按钮）。
+  it("红字上的「拉取并重试」「×」点完焦点交给条前面的控件，不掉到 body", async () => {
+    handler = (command) => (command === "git_job_status" ? failed("git/push_rejected") : undefined);
+    renderBar();
+    fireEvent.click(await screen.findByTestId("forge-push"));
+    const retry = within(await screen.findByRole("alert")).getByTestId("forge-pull-retry");
+    retry.focus();
+    fireEvent.click(retry);
+    expect(document.activeElement).toBe(screen.getByTestId("forge-open-pr"));
+    const close = within(await screen.findByRole("alert")).getByRole("button", { name: "关闭" });
+    close.focus();
+    fireEvent.click(close);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(document.activeElement).toBe(screen.getByTestId("forge-open-pr"));
+  });
+
   it("拉取有冲突：说明没合并，给「交给 agent」，放进输入框的话里写明推到哪", async () => {
     handler = (command, args) => {
       if (command !== "git_job_status") return undefined;
