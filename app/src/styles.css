@@ -1610,6 +1610,11 @@ button.stab {
   font-family: inherit;
   font-size: var(--text-xs);
   height: var(--btn-h-sm);
+  /* 行高与左边那句提示（.ob-reopen 1.5）一致并显式居中：按钮默认行高跟字体走，中文回退字体把字压低，
+     量出来「跳过」的中线 21、提示 19.5，同一行两段同字号的字差 1.5px。 */
+  display: inline-flex;
+  align-items: center;
+  line-height: 1.5;
   padding: 0 var(--sp-8);
   border-radius: var(--radius-sm);
   cursor: pointer;
@@ -1628,9 +1633,16 @@ button.stab {
   align-items: center;
   text-align: center;
   margin: 0 var(--sp-8);
-  padding: var(--sp-16) var(--sp-24);
+  /* 上 24 下 8：标题钉在顶上要离内容面上沿远一点；最满的一步（英文「连接 AI CLI」）原来就一像素不剩，
+     多出的 8px 从底部留白里拿。 */
+  padding: var(--sp-24) var(--sp-24) var(--sp-8);
   animation: panel-fade var(--dur-base) var(--ease-out);
 }
+/* 标题（和它的说明）排到最上面，四步都在同一个位置；示意图与要点在剩下的空间里上下居中。
+   原来整块居中、示意图在标题上面，四张示意图高 164 / 70 / 86 / 132，翻页时标题顶在 276 / 160 / 224 / 255
+   之间跳（最多 116px）。把示意图槽统一成最高的 164 行不通：「连接 AI CLI」一步英文已经排满整页，再垫高就要滚动。
+   只调视觉顺序（order），DOM 顺序不变。 */
+.ob-body > .ob-title, .ob-body > .ob-desc { order: -1; }
 .ob-body > :first-child { margin-top: auto; }
 .ob-body > :last-child { margin-bottom: auto; }
 /* ── 每步的迷你界面示意图区 ── */
@@ -1639,6 +1651,8 @@ button.stab {
   width: 100%;
   display: grid;
   place-items: center;
+  /* 与上面标题（或说明）至少隔开这么多：示意图靠 margin-top:auto 居中，排满时 auto 归零。 */
+  padding-top: var(--sp-14);
 }
 /* 示意图共用的小零件：状态点与占位横条。 */
 .obm-island-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
@@ -1810,7 +1824,8 @@ button.stab {
 .ob-set-desc { font-size: var(--text-xs); color: var(--cc-text-dim); margin-top: var(--sp-2); line-height: 1.5; }
 
 .ob-title {
-  margin: var(--sp-18) 0 0;
+  flex: none;
+  margin: 0;
   font-size: 18px;
   font-weight: 600;
   line-height: 1.35;
@@ -1821,6 +1836,8 @@ button.stab {
   line-height: 1.6;
   color: var(--cc-text-dim);
   max-width: 340px;
+  /* 两行尽量等长：中文第一步原来第一行顶满 325px，第二行只剩「入，一眼可见。」81px，把「等待输入」从中间折断。 */
+  text-wrap: balance;
 }
 .ob-points {
   list-style: none;
@@ -1882,7 +1899,8 @@ button.stab {
   justify-content: space-between;
   gap: var(--sp-12);
   margin: 0 var(--sp-8) var(--sp-8);
-  padding: var(--sp-12) var(--sp-16) var(--sp-12) var(--sp-24);
+  /* 左右同为 24：原来右边 16，「下一步」右缘 436，比正文卡片右缘 428 凸出 8px。 */
+  padding: var(--sp-12) var(--sp-24);
   border-top: var(--hairline) solid var(--cc-border);
 }
 .ob-dots { display: flex; align-items: center; gap: var(--sp-7); }
@@ -1904,7 +1922,9 @@ button.stab {
 .ob-dot:hover { background: var(--cc-text-faint); }
 .ob-dot.on { width: 18px; background: var(--cc-accent); }
 .ob-actions { display: flex; align-items: center; gap: var(--sp-8); }
-.ob-actions .sbtn { min-width: 74px; }
+/* 小窗底部按钮统一 --btn-h-lg（32px）：.sbtn 靠内边距撑高，中文 33px、英文 30px，同一个窗换语言都不一样高；
+   确认框 28、新建会话窗 35，四个小窗四档。只在各小窗自己的作用域里钉高度，不动 .sbtn 的基础定义（设置页也在用）。 */
+.ob-actions .sbtn { min-width: 74px; height: var(--btn-h-lg); padding-top: 0; padding-bottom: 0; }
 /* 标题条坐在 L0 上；下面的内容是一张 L1 内容面，左右下各留 8。 */
 .up-bar { flex: none; height: 32px; display: flex; align-items: center; justify-content: flex-end; padding: 0 var(--sp-4) 0 var(--sp-8); gap: var(--sp-6); }
 .up-bar .winclose { width: 28px; height: 28px; }
@@ -1932,8 +1952,10 @@ button.stab {
   background: var(--cc-panel-bg);
   box-shadow: 0 0 0 var(--hairline) var(--cc-border), var(--shadow-sm);
 }
-/* 紧凑态（无更新说明）：内容整体垂直居中，不再顶着上沿留一屁股空白 */
-.up-body.up-compact { justify-content: center; padding-top: var(--sp-16); }
+/* 紧凑态（无更新说明）：从固定的上边距排起，不用 justify-content: center。居中时内容高度一变头部就跳：
+   检查中没有按钮，头部顶在 95；出结果后多一枚按钮，跳到 72（差 23px，窗口一打开就跳一下）；
+   英文报错折成两行时又跳到 63。40px 是「头部 + 一行状态 + 按钮」这一组在 212px 高的内容面里居中时的上边距。 */
+.up-body.up-compact { justify-content: flex-start; padding-top: calc(var(--sp-16) + var(--sp-24)); }
 /* 头部：图标 + 名称/版本横排，信息密度高于竖排大图标 */
 .up-head { display: flex; align-items: center; gap: var(--sp-12); }
 .up-logo { border-radius: var(--radius-lg); }
@@ -1943,7 +1965,7 @@ button.stab {
 .up-status { margin-top: var(--sp-12); font-size: var(--text-sm); line-height: 1.5; color: var(--cc-text-dim); text-align: center; }
 .up-status.up-err { color: var(--cc-fail-text); }
 .up-status.up-new { color: var(--cc-text); font-weight: 600; }
-.up-body .sbtn { margin-top: var(--sp-8); min-width: 108px; }
+.up-body .sbtn { margin-top: var(--sp-8); min-width: 108px; height: var(--btn-h-lg); padding-top: 0; padding-bottom: 0; }
 /* 「稍后 + 重启并更新」并排：主次分明，稍后收窄。 */
 .up-actions { display: flex; gap: var(--sp-8); justify-content: center; }
 .up-actions .sbtn { min-width: 88px; }
@@ -1980,7 +2002,18 @@ button.stab {
   -webkit-user-select: text;
   user-select: text;
 }
-/* 下载区：进度条 + 百分比 + 重启提示 */
+/* 更新说明按 Markdown 渲染（复用对话页的 ChatMarkdown，Updater.tsx 里懒加载）。卡片只有 336px 宽、字号小一档，
+   把标题、段落、列表的间距收紧：对话正文那套间距（标题上方 24px）在这里会把三行字撑成半屏。 */
+.up-notes-body.chat-md { white-space: normal; }
+.up-notes-body.chat-md :is(h1, h2, h3, h4, h5, h6) { margin: var(--sp-12) 0 var(--sp-4); font-size: var(--text-xs); }
+.up-notes-body.chat-md :is(p, ul, ol) { margin-bottom: var(--sp-6); }
+.up-notes-body.chat-md :is(ul, ol) { padding-left: var(--sp-16); }
+.up-notes-body.chat-md li { margin: var(--sp-2) 0; }
+.up-notes-body.chat-md > :first-child { margin-top: 0; }
+.up-notes-body.chat-md > :last-child { margin-bottom: 0; }
+/* 下载区：进度条 + 百分比 + 重启提示，最下面是取消按钮。
+   按钮放在最后一行：说明卡吃掉剩余高度，按钮以下的东西高度固定，所以「下载更新 → 取消下载 → 重启并更新」
+   三态的按钮都在同一个 y 上（原来取消钮在进度文字和提示之间，比另外两态高 24px）。 */
 .up-dl { width: 100%; display: flex; flex-direction: column; align-items: center; gap: var(--sp-6); margin-top: var(--sp-12); }
 .up-prog {
   width: 100%;
@@ -3257,7 +3290,9 @@ button.stab {
   overflow: hidden;
   transition: border-color var(--dur-fast) var(--ease-in-out);
 }
-.ns-picker:focus-within { border-color: var(--cc-accent); }
+/* 聚焦只加深细线（同新建页 .nsp-composer）：目录框一打开就带焦点，常亮一圈强调色太抢——
+   浅色下是一圈纯墨 #151618，旁边卡片的边线只有 #e0e0e1。 */
+.ns-picker:focus-within { border-color: var(--line-strong); }
 .ns-dir-row { display: flex; align-items: center; }
 .ns-picker .ns-input {
   border: none;
@@ -3265,6 +3300,9 @@ button.stab {
   border-radius: 0;
 }
 .ns-picker .ns-input:focus { background: transparent; }
+/* 独立窗框内内容左缘一条线：最近目录的图标、worktree 卡片的标签、Agent 钮的图标、权限 / 模型的标签都在 x=37
+   （外框 24 + 细线 1 + 12），只有路径文字在 35，比正下方的文件夹图标偏左 2px。手机页另有自己的内边距，不套。 */
+body:not(.remote-ui) .ns-picker .ns-input { padding-left: var(--sp-12); }
 .ns-browse {
   flex: none;
   border: none;
@@ -3557,6 +3595,8 @@ body:not(.remote-ui) .ns-title { font-size: var(--text-sm); letter-spacing: 0; }
 body:not(.remote-ui) .ns-close { width: 30px; height: 30px; }
 body:not(.remote-ui) .ns-body { position: relative; margin: 0 var(--sp-8); padding: var(--sp-16); gap: var(--sp-14); }
 body:not(.remote-ui) .ns-actions { position: relative; margin: 0 var(--sp-8) var(--sp-8); padding: var(--sp-12) var(--sp-16); }
+/* 底部按钮与引导、更新、确认框同一档高度（--btn-h-lg）：原来靠上下内边距撑，中文 35px、英文更矮，宽只有 54px。 */
+body:not(.remote-ui) .ns-actions .ns-btn { height: var(--btn-h-lg); min-width: 72px; padding: 0 var(--sp-14); }
 
 /* 活跃账号提示：启动按钮旁的一行小字，刻意低调（非警告），默认账号时根本不渲染。 */
 .ns-profile-hint {
@@ -4041,6 +4081,8 @@ body:not(.remote-ui) .ns-actions { position: relative; margin: 0 var(--sp-8) var
    折成一行就读不清（2026-11-09 真机走查实拍）。没有换行的正文不受影响。 */
 .app-confirm p > span { white-space: pre-line; overflow-wrap: anywhere; }
 .app-confirm-actions { flex: none; display: flex; justify-content: flex-end; gap: var(--sp-8); }
+/* 独立确认窗的按钮与其他小窗同一档（--btn-h-lg）；窗口高度按正文实高收拢（ConfirmWindow 的 fit），多出的 4px 它自己会算进去。 */
+.app-confirm.is-window .app-confirm-actions button { height: var(--btn-h-lg); }
 /* 按钮取常规档（28 高）：取消是次按钮（中性填充），确认是主按钮或危险按钮，三者同高同圆角。 */
 .app-confirm-actions button { min-width: 72px; height: var(--btn-h-md); padding: 0 var(--sp-12); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); background: var(--fill-selected); color: var(--cc-text); font: inherit; font-size: var(--text-sm); cursor: pointer; transition: background var(--dur-fast) var(--ease-in-out); }
 .app-confirm-actions button:hover { background: var(--fill-selected-hover); }
@@ -4109,9 +4151,17 @@ body:not(.remote-ui) .ns-actions { position: relative; margin: 0 var(--sp-8) var
 /* ── 会话管理页（对照 Kimi Code .session-admin / .sa-*，变量换成 Meowo 的）── */
 /* 新建会话页（对照 Kimi：主区正中一个输入框，下方一排工作区 / Agent / 启动选项小下拉）。
    输入框外观与对话页 composer 同一套（圆角、底色、阴影、黑白反相发送钮）。 */
-.nsp { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; min-width: 0; min-height: 0; height: 100%; overflow-y: auto; padding: var(--sp-24) var(--sp-24) 12vh; background: var(--cc-panel-bg); }
+/* 整列从顶部排，不用 justify-content: center：居中时内容一变高就整列上移——勾「在新 worktree 里开」
+   后勾选框从指针下跑掉 53px（1280×800 实测 y 292.6 → 240.1）；窗口矮到放不下时溢出还会平分到上方，
+   图标被裁到滚动区之外、滚不回来（1280×560 勾选后图标顶 y=-41，2026-11-12 用户实拍）。
+   默认状态的位置由 ::before 垫出来：它只看容器高度，不看内容多高，所以内容怎么变，上面的东西都不动。
+   44% 与 238px 是照原来的位置换算的（原来是「上 24、下 12vh 的内边距里居中」，默认内容高 494px），
+   窗口够高时默认状态与原来落在同一处（1280×800 图标顶 117）；不够高时垫片缩到 0、从顶部排起。
+   底部内边距随之由 12vh 收回 24：那 12vh 只是给居中用的偏移，留着会让刚好放得下的页面平白多出滚动条。 */
+.nsp { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; flex: 1; min-width: 0; min-height: 0; height: 100%; overflow-y: auto; padding: var(--sp-24); background: var(--cc-panel-bg); }
+.nsp::before { content: ""; flex: none; height: max(0px, calc(44% - 238px * var(--cc-ui))); }
 /* 固定阅读宽（对照 Kimi 约 700px）：不跟「对话宽度：铺满」走，铺满时输入框横贯整列、工作区钮孤悬左端（用户实拍「太丑」）。 */
-.nsp-center { width: min(680px, 100%); display: flex; flex-direction: column; gap: var(--sp-8); }
+.nsp-center { flex: none; width: min(680px, 100%); display: flex; flex-direction: column; gap: var(--sp-8); }
 .nsp-hero { display: flex; flex-direction: column; align-items: center; gap: var(--sp-6); margin-bottom: var(--sp-24); }
 /* 外框与图标排布走 .provider-card-icon（AgentAppIcon），这里只定尺寸。 */
 .provider-card-icon.nsp-hero-mark { width: 52px; height: 52px; border-radius: 14px; }
@@ -4124,6 +4174,10 @@ body:not(.remote-ui) .ns-actions { position: relative; margin: 0 var(--sp-8) var
 .nsp-bar { display: flex; align-items: center; gap: var(--sp-8); }
 .nsp-chips { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-4); }
 .nsp-agent-mark { display: inline-flex; }
+/* 第二条对齐线（图标后面的文字，量过）：目录名与勾选文字在 340，Agent 胶囊的名字原在 335.5、最近会话标题在 339/341/341
+   ——agent 图标有 11px 和 13px 两种宽，文字跟着错开。图标槽统一成 14px（与文件夹图标、勾选方框同宽），
+   图标靠左放（墨迹左缘仍在第一条线 320 上），槽后间距凑成 6px，文字都落到 340。 */
+.nsp-chips .chat-model-button .nsp-agent-mark { width: 14px; margin-right: var(--sp-2); }
 /* 工作区选择：输入框上方左侧一枚小钮（对照 Kimi），菜单名字白、路径灰，选中整行底色加灰勾。 */
 .nsp-ws { align-self: flex-start; margin-left: var(--sp-10); }
 /* 新建页的对齐线（按视觉内容算，visual/ 截图量过）：输入框与 worktree 卡片的外框同宽；
@@ -4170,15 +4224,17 @@ body:not(.remote-ui) .ns-actions { position: relative; margin: 0 var(--sp-8) var
 @keyframes nsp-spin { to { transform: rotate(360deg); } }
 /* 新建页「最近会话」（对照 Kimi）：输入框下方一小列，行 = agent 图标 + 标题 + 紧凑时间，与侧栏会话行同语汇。 */
 .nsp-recent { display: flex; flex-direction: column; gap: 1px; margin-top: var(--sp-16); }
-.nsp-recent-head { display: flex; align-items: center; justify-content: space-between; padding: 0 var(--sp-10) var(--sp-4) var(--nsp-inset); color: var(--cc-text-faint); font-size: var(--text-xs); font-weight: 600; }
+.nsp-recent-head { display: flex; align-items: center; justify-content: space-between; padding: 0 var(--nsp-inset) var(--sp-4); color: var(--cc-text-faint); font-size: var(--text-xs); font-weight: 600; }
 .nsp-recent-more { padding: 0; border: 0; background: none; color: var(--cc-text-faint); font: inherit; font-weight: 500; cursor: pointer; }
 .nsp-recent-more:hover { color: var(--cc-text); }
-.nsp-recent-row { display: flex; align-items: center; gap: var(--sp-8); width: 100%; height: 34px; padding: 0 var(--sp-10) 0 var(--nsp-inset); border: 0; border-radius: var(--radius-md); background: transparent; color: var(--cc-text-dim); font: inherit; font-size: var(--text-sm); text-align: left; cursor: pointer; }
+/* 右缘与左缘同一个内缩（--nsp-inset = 20px）：原来右边只缩 10px，「查看更多」和时间（右缘 970）比上面
+   worktree 卡片里的输入框（右缘 960）凸出 10px。 */
+.nsp-recent-row { display: flex; align-items: center; gap: var(--sp-6); width: 100%; height: 34px; padding: 0 var(--nsp-inset); border: 0; border-radius: var(--radius-md); background: transparent; color: var(--cc-text-dim); font: inherit; font-size: var(--text-sm); text-align: left; cursor: pointer; }
 .nsp-recent-row:hover { color: var(--cc-text); background: var(--fill-hover); }
-.nsp-recent-agent { flex: none; display: inline-flex; }
+.nsp-recent-agent { flex: none; display: inline-flex; width: 14px; }
 .nsp-recent-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nsp-recent-time { flex: none; color: var(--cc-text-faint); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
-.nsp-notes { display: flex; flex-direction: column; gap: var(--sp-4); padding: 0 var(--sp-10) 0 var(--nsp-inset); }
+.nsp-notes { display: flex; flex-direction: column; gap: var(--sp-4); padding: 0 var(--nsp-inset); }
 .nsp-note { display: flex; align-items: center; gap: var(--sp-8); flex-wrap: wrap; color: var(--cc-text-faint); font-size: var(--text-xs); line-height: var(--leading-normal); }
 .nsp-note.is-warn { color: var(--cc-text-dim); }
 .nsp-note.is-error { color: var(--cc-err-text); }
@@ -8029,6 +8085,11 @@ pre.chat-md-plain {
 .wt-opt-warn { display: flex; align-items: center; gap: var(--sp-8); flex-wrap: wrap; color: var(--cc-warn-text); }
 .wt-opt-btn { height: var(--btn-h-sm); padding: 0 var(--sp-8); border: var(--hairline) solid; border-radius: var(--radius-sm); font: inherit; font-size: var(--text-xs); cursor: pointer; white-space: nowrap; }
 .wt-opt-btn:disabled { opacity: .5; cursor: default; }
+/* 警告行里的修复动作（「改用 login-form-2」）是这条警告唯一的出路，给次级按钮的底色：
+   并进幽灵按钮规则后它是灰字、无底无边，比旁边的琥珀色警告还弱一档，看不出能点。
+   写成 button.xxx 是为了压过文件末尾幽灵按钮那条 .wt-opt-btn（同特异度靠后者赢）。 */
+.wt-opt-warn button.wt-opt-btn { background: var(--fill-selected); color: var(--cc-text); }
+.wt-opt-warn button.wt-opt-btn:hover:not(:disabled) { background: var(--fill-selected-hover); color: var(--cc-text); }
 /* 跟消息列走：它在 .chat-scroll 外面，左右外边距照抄滚动区的留白算式。原来是固定 14px，
    1280 宽时比消息列左右各凸出 22（254–1018 对 276–995），窗口越宽越长，2560 宽时横贯两千像素。
    内边距 16 与列内各卡片同一条内容线。 */

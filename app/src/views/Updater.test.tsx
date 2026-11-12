@@ -52,6 +52,43 @@ describe("Updater", () => {
     expect(screen.getByText(zh.updater.download)).toBeTruthy();
   });
 
+  // 更新说明是 Markdown：此前按纯文本显示，「## 新功能」「- xxx」原样露在卡片里。
+  it("更新说明按 Markdown 渲染：标题是标题、列表是列表，不露出 ## 和 - 源码", async () => {
+    mocks.checkImpl = async () => mkUpdate({ body: "## 新功能\n\n- 输入框永远完整可见\n- 长会话打开更快\n\n## 修复\n\n- 放弃更改进回收站" });
+    render(<Updater />);
+    const body = await screen.findByTestId("up-notes-body");
+    // ChatMarkdown 是懒加载的，取回来之前先按原文显示；等它渲染出来再断言。
+    await waitFor(() => expect(body.querySelectorAll("h2").length).toBe(2));
+    expect([...body.querySelectorAll("h2")].map((h) => h.textContent)).toEqual(["新功能", "修复"]);
+    expect([...body.querySelectorAll("li")].map((li) => li.textContent?.trim())).toEqual(["输入框永远完整可见", "长会话打开更快", "放弃更改进回收站"]);
+    expect(body.textContent).not.toContain("##");
+    expect(body.textContent).not.toContain("- ");
+  });
+
+  // 「取消下载」和「下载更新」在同一个位置（三态按钮不跳）：双击「下载更新」的第二下不能把刚开始的下载取消掉。
+  it("双击下载更新：第二下落在「取消下载」上也不取消；单独点一下才取消", async () => {
+    mocks.checkImpl = async () => mkUpdate();
+    mocks.downloadImpl = async () => await new Promise<"downloading" | "ready">(() => {});
+    render(<Updater />);
+    fireEvent.click(await screen.findByText(zh.updater.download), { detail: 1 });
+    const cancel = await screen.findByText(zh.updater.cancelDownload);
+    fireEvent.click(cancel, { detail: 2 });
+    await act(async () => {});
+    expect(mocks.cancelImpl).not.toHaveBeenCalled();
+    fireEvent.click(cancel, { detail: 1 });
+    await waitFor(() => expect(mocks.cancelImpl).toHaveBeenCalledTimes(1));
+  });
+
+  it("下载中：取消按钮排在进度与提示之后，和「下载更新」同处最后一行", async () => {
+    mocks.checkImpl = async () => mkUpdate();
+    mocks.downloadImpl = async () => await new Promise<"downloading" | "ready">(() => {});
+    const { container } = render(<Updater />);
+    fireEvent.click(await screen.findByText(zh.updater.download));
+    await screen.findByText(zh.updater.cancelDownload);
+    const dl = container.querySelector(".up-dl")!;
+    expect(dl.lastElementChild?.textContent).toBe(zh.updater.cancelDownload);
+  });
+
   it("release notes 为空时不渲染更新内容区", async () => {
     mocks.checkImpl = async () => mkUpdate({ body: "  " });
     render(<Updater />);

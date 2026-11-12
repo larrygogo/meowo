@@ -302,6 +302,13 @@ async function shootOne(browser, base, shot, outDir, dryRun = false) {
       await page.screenshot({ path: join(failDir, shot.name + ".png") }).catch(() => {});
       throw new Error(`缺少关键元素 ${shot.sel}（现场图：${join(failDir, shot.name + ".png")}）`);
     }
+    // 场景里的窗口自己申请了新尺寸（独立新建窗按表单高度加高，harness 记在 __visualWinSize）：照着改视口，
+    // 拍出来的才是用户看到的窗口；不改的话只能拍到「加高之前被挤掉一截」的样子。
+    const asked = dryRun ? null : await page.evaluate(() => window.__visualWinSize ?? null);
+    if (asked && (asked.w !== shot.w || asked.h !== shot.h)) {
+      await page.setViewportSize({ width: asked.w, height: asked.h });
+      for (let i = 0; i < 4; i++) { await ctx.clock.runFor(STEP_MS); await netIdle(60); }
+    }
     // 字体按 unicode-range 分片懒加载（@fontsource 的 Noto Sans SC 有上百片）：排版后才发请求，
     // 机器忙时 fonts.ready 可能在下一片开始加载前就 resolve，截到「回退字体 → 正式字体」换字前的
     // 一帧（实测「当前进度 3/4」胶囊宽了 1px）。所以等到连续两轮都没有 loading 中的字体才算稳。
