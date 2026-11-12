@@ -170,6 +170,13 @@ function windowStartsAfter(items: readonly ChatItem[], since: number | null): bo
   return earliest != null && earliest > since;
 }
 
+/// 已写进终端、加载窗口却看不见它的回显或插话（见 windowStartsAfter）。对账对它不判未确认也不收起，
+/// 去向交给 useOutgoingUpkeep 读终端画面定：还在输入框里就标未确认给「提交」，不在就当已送达收起
+/// （做空第二轮 N1，2026-11-12：修前它不超时不收起，发送后一小时仍挂在后续输出下）。
+export function unseenPending(prompt: OutgoingPrompt, items: readonly ChatItem[]): boolean {
+  return prompt.phase === "pending" && !prompt.anchor.fresh && windowStartsAfter(items, prompt.anchor.lastItemAt);
+}
+
 /// hook 记的最近一句（UserPromptSubmit 原话）属于哪条消息。它只记最近一句，一次只能确认一条：
 /// 原文完全相同的优先，其次是前缀（Meowo 在末尾追加了附件指令）；发送前就是这句的不算。
 /// hook 原话不经 CLI 改写，所以按前缀比，比落盘正文的「包含」严。
@@ -325,7 +332,9 @@ const EMPTY_ANCHOR: OutgoingAnchor = { lastItemId: null, lastItemAt: null, prior
 /// 本地记账（写入完成 / 写入失败 / 替用户按回车）推进回执。CLI 的记录已经把它推到
 /// received / accepted 之后，迟到的「写入完成」不能把它拨回 pending 重新计时，「写入失败」也
 /// 不能把 CLI 已收下的话标成失败（证据优先于记账，见文件头）。
-function advance(prompt: OutgoingPrompt, patch: Partial<Pick<OutgoingPrompt, "phase" | "at">>): OutgoingPrompt {
+type OutgoingPatch = Partial<Pick<OutgoingPrompt, "phase" | "at" | "kind">>;
+
+function advance(prompt: OutgoingPrompt, patch: OutgoingPatch): OutgoingPrompt {
   if (patch.phase === "pending" && prompt.phase !== "sending" && prompt.phase !== "uncertain") return prompt;
   if (patch.phase === "failed" && prompt.phase !== "sending") return prompt;
   return { ...prompt, ...patch };
@@ -396,7 +405,8 @@ export function createOutgoingStore() {
     },
     /// 按回执编号推进或撤掉（patch 为 null），不管它此刻挂在哪个会话下：编号全局唯一，
     /// 认领搬家后按会话找会落空。
-    settle(id: number, patch: Partial<Pick<OutgoingPrompt, "phase" | "at">> | null) {
+    /// kind 只在「排队的插话在空闲时仍停在输入框里」改成回显用：排队区没有「提交」，回显气泡有。
+    settle(id: number, patch: OutgoingPatch | null) {
       for (const [sessionId, list] of bySession) {
         if (!list.some((prompt) => prompt.id === id)) continue;
         put(sessionId, patch

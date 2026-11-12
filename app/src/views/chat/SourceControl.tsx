@@ -138,7 +138,10 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
   const focusPlan = useRef<FocusPlan | null>(null);
   const commitInputRef = useRef<HTMLTextAreaElement>(null);
   // 提示条消失时焦点交给提交框（做空第一轮 #3）：提示条就挂在提交框下面，是最近的输入位置。
+  // 手机远程不交给提交框：聚焦文本框会弹软键盘，点个 × 就顶起半屏键盘（做空第二轮 N3，2026-11-12）。
+  // 返回 false 让提示条退回「条前面最近的控件」（按钮，不弹键盘）。惯例同 ChatWindow 各处 if (!remoteUi())。
   const focusCommitInput = () => {
+    if (remoteUi()) return false;
     const box = commitInputRef.current;
     if (!box?.isConnected) return false;
     box.focus({ preventScroll: true });

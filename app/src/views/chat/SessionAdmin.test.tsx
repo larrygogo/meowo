@@ -225,6 +225,40 @@ describe("会话管理页（对照 Kimi Code）", () => {
       }
     });
 
+    // 做空第二轮 N5（2026-11-12）：确认前要先走网络现取状态，原先没有进行中锁，连点两下弹两个确认、
+    // 写两遍；单条按钮也逐页拉全部进行中会话。兄弟场景：批量「标记完成」「恢复进行中」与行内单条按钮共用一把锁。
+    it("N5 进行中连点不重入，按钮标 aria-disabled 但焦点留在原处；现取只查目标所在工作区", async () => {
+      withPage([row(2, "会话2", { cwd: "C:/w/reverse-bot-gui" }), row(3, "会话3")]);
+      const base = invoke.getMockImplementation()!;
+      const fetched: Query[] = [];
+      let release: () => void = () => {};
+      invoke.mockImplementation((command: string, args: unknown) => {
+        if (command === "get_session_admin_page" && (args as Query).status === "open") {
+          fetched.push(args as Query);
+          return new Promise((resolve) => { release = () => resolve(base(command, args)); });
+        }
+        return base(command, args);
+      });
+      render(<SessionAdmin onBack={() => {}} onOpen={() => {}} />);
+      const target = (await screen.findByText("会话2")).closest("tr")!;
+      const button = within(target).getByRole("button", { name: "标记完成" });
+      button.focus();
+      fireEvent.click(button);
+      await waitFor(() => expect(fetched).toHaveLength(1));
+      expect(fetched[0].workspaces).toEqual(["C:/w/reverse-bot-gui"]);
+      expect(button.getAttribute("aria-disabled")).toBe("true");
+      expect(document.activeElement).toBe(button);
+      fireEvent.click(button);
+      fireEvent.click(within(screen.getByText("会话3").closest("tr")!).getByRole("button", { name: "标记完成" }));
+      await new Promise((r) => setTimeout(r, 10));
+      expect(fetched).toHaveLength(1);
+      release();
+      await waitFor(() => expect(archivedCalls).toEqual([{ sessionId: 2, archived: true }]));
+      await new Promise((r) => setTimeout(r, 10));
+      expect(archivedCalls).toHaveLength(1);
+      await waitFor(() => expect(button.getAttribute("aria-disabled")).toBeNull());
+    });
+
     it("#14 失败提示带原因、不自动消失、× 关闭；加载失败给重试", async () => {
       withPage([row(2, "会话2")], (command) => { if (command === "set_archived") throw new Error("会话不存在"); });
       render(<SessionAdmin onBack={() => {}} onOpen={() => {}} />);
