@@ -74,4 +74,14 @@ describe("currentPresetId", () => {
     expect(currentPresetId(presets, "Haiku 4.5")).toBeNull();
     expect(currentPresetId(presets, null)).toBeNull();
   });
+  /// 1M 档（opus[1m]）的状态行名字和普通档一样（"Opus 5.5"），只能靠上下文窗口区分：
+  /// 改前勾永远落在普通档上，用户切到 1M 后菜单看着像没切过去（2026-11-12 leader 报「切模型无法生效」）。
+  it("上下文窗口是 100 万时勾在 [1m] 档，否则勾普通档", () => {
+    const withLong = [...presets, { id: "opus[1m]", label: "Opus 5 (1M)" }];
+    expect(currentPresetId(withLong, "Opus 5.5", 1_000_000)).toBe("opus[1m]");
+    expect(currentPresetId(withLong, "Opus 5.5", 200_000)).toBe("opus");
+    expect(currentPresetId(withLong, "Opus 5.5")).toBe("opus");
+    // 没有对应的 1M 档时照旧
+    expect(currentPresetId(withLong, "Sonnet 5", 1_000_000)).toBe("sonnet");
+  });
 });

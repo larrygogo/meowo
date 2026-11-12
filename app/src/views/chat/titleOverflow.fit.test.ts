@@ -1,6 +1,6 @@
 // 标题栏按实测宽度收进 ⋯（验收 #24，做空审查 p24/p24c：写死门限在开面板、缩放 124%/150% 时出界）。
 import { describe, expect, it } from "vitest";
-import { fitTitleBar, sameOverflow, TITLE_OVERFLOW_ORDER, type TitleBarLayout, type TitleOverflowKey } from "./titleOverflow";
+import { fitTitleBar, planTitleBar, sameOverflow, TITLE_COMPACT_ORDER, TITLE_OVERFLOW_ORDER, type TitleBarLayout, type TitleBarPlanLayout, type TitleOverflowKey } from "./titleOverflow";
 
 const items = (w: Partial<Record<TitleOverflowKey, number>> = {}) =>
   (["archive", "open", "git", "pr", "terminal", "info"] as const).map((key) => ({ key, width: w[key] ?? 28 }));
@@ -69,5 +69,73 @@ describe("fitTitleBar", () => {
   it("sameOverflow 判同组，供 setState 原样返回不重渲染", () => {
     expect(sameOverflow(new Set(["pr", "open"]), new Set(["open", "pr"]))).toBe(true);
     expect(sameOverflow(new Set(["pr"]), new Set(["open"]))).toBe(false);
+  });
+});
+
+// 标题最后才省略（界面打磨第二轮 chat-1 / chat-2 / panels-14）：纯信息排在功能之前收。
+// 数字取自实拍：1280 宽开面板带 PR 时标题栏内容盒 764px；改前这里一样没收，标题 69px、分支名 94px。
+describe("planTitleBar", () => {
+  const plan = (available: number, over: Partial<TitleBarPlanLayout> = {}): TitleBarPlanLayout => ({
+    available, gap: 6, titleMin: 156, titleWant: 300,
+    fixed: [72, 28],
+    items: items({ open: 56, git: 190, pr: 104 }),
+    savings: [
+      { step: "prState", owner: "pr", saving: 46 },
+      { step: "branch", owner: "git", saving: 100 },
+      { step: "project", owner: "title", saving: 80 },
+      { step: "endLabel", owner: "fixed", saving: 44 },
+    ],
+    ...over,
+  });
+  // 一档不收所需：300 + 72 + 28 + (28+56+190+104+28+28) + 6×8 = 882
+
+  it("放得下就什么都不收", () => {
+    const out = planTitleBar(plan(882.5), false);
+    expect(out.compact.size).toBe(0);
+    expect(out.hidden.size).toBe(0);
+  });
+
+  it("1280 宽开面板带 PR（内容盒 764）：收结束会话字样、PR 状态字和分支名，项目名与标题完整，功能一颗不少", () => {
+    const out = planTitleBar(plan(764), false);
+    expect([...out.compact]).toEqual(["endLabel", "prState", "branch"]);
+    expect(out.hidden.size).toBe(0);
+  });
+
+  it("信息按顺序收：结束会话只留图标 → PR 状态字 → 分支名 → 项目名", () => {
+    expect(TITLE_COMPACT_ORDER).toEqual(["endLabel", "prState", "branch", "project"]);
+    expect([...planTitleBar(plan(840), false).compact]).toEqual(["endLabel"]);
+    expect([...planTitleBar(plan(700), false).compact]).toEqual(["endLabel", "prState", "branch"]);
+    expect([...planTitleBar(plan(640), false).compact]).toEqual(TITLE_COMPACT_ORDER);
+  });
+
+  it("信息没收完之前，功能按钮不进 ⋯；收完还不够才按保底宽收功能", () => {
+    for (let w = 900; w >= 300; w -= 5) {
+      const out = planTitleBar(plan(w), false);
+      if (out.hidden.size > 0) expect(out.compact.size).toBe(TITLE_COMPACT_ORDER.length);
+    }
+    // 信息全收后其余共 28+28+28+56+90+58+28+28 + 6×8 = 392，加保底 156 = 548
+    expect(planTitleBar(plan(548.5), false).hidden.size).toBe(0);
+    expect([...planTitleBar(plan(540), false).hidden]).toEqual(["pr"]);
+  });
+
+  it("150% 缩放的 620 窗（内容盒 511、各项放大 1.5 倍）：结束会话收成图标，改前固定门限 400 进不去", () => {
+    const zoomed = plan(511, {
+      gap: 9, titleMin: 234, titleWant: 330, fixed: [107, 42],
+      items: items({ archive: 42, open: 84, git: 285, terminal: 42, info: 42 }).filter((item) => item.key !== "pr"),
+      savings: [{ step: "branch", owner: "git", saving: 150 }, { step: "endLabel", owner: "fixed", saving: 65 }],
+    });
+    const out = planTitleBar(zoomed, false);
+    expect(out.compact.has("endLabel")).toBe(true);
+    expect(out.compact.has("branch")).toBe(true);
+  });
+
+  it("短标题不为自己多争位置：按保底宽算", () => {
+    const out = planTitleBar(plan(764, { titleWant: 90 }), false);
+    expect(out.compact.size).toBe(0);
+  });
+
+  it("没量到（0 宽）时什么都不收", () => {
+    const out = planTitleBar(plan(0), false);
+    expect(out.compact.size + out.hidden.size).toBe(0);
   });
 });

@@ -8,7 +8,14 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve, join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { VISUAL_PORT } from "./vite.visual.config.mjs";
-import { QA_SHOTS } from "./qa-scenes.mjs";
+import { QA_SHOTS as QA_BUILTIN } from "./qa-scenes.mjs";
+import { pathToFileURL } from "node:url";
+
+// VISUAL_EXTRA=<仓库外的 .mjs>：临时追加一批补看场景（同样导出 QA_SHOTS）。量对齐用的 log 步骤、
+// 一次性的排查场景放那里，不用为了量一个数字改仓库里的 qa-scenes.mjs 再记得改回去。
+const QA_SHOTS = process.env.VISUAL_EXTRA
+  ? [...QA_BUILTIN, ...(await import(pathToFileURL(resolve(process.env.VISUAL_EXTRA)).href)).QA_SHOTS]
+  : QA_BUILTIN;
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXED_NOW = 1_780_000_000_000; // 与 fixtures.ts / src/demo 的冻结时刻一致
@@ -150,6 +157,11 @@ const MOBILE_EXTRA = [
   { scene: "mobile-chat", tag: "ipad", sel: ".chat-approval-actions", sizes: [{ w: 820, h: 1180 }] },
   // iPad 横屏走宽屏双栏：设置入口是侧栏头的齿轮。
   { scene: "mobile-chat", tag: "ipadland", sel: ".chat-approval-actions", sizes: [{ w: 1180, h: 820 }] },
+  // 「更改」页与设置屏的横屏、iPad（2026-11-12 补：上一轮审查这两页只有竖屏图）。
+  { scene: "mobile-changes", tag: "land", sel: ".scm-row", sizes: [{ w: 812, h: 375 }] },
+  { scene: "mobile-changes", tag: "ipad", sel: ".scm-row", sizes: [{ w: 820, h: 1180 }] },
+  { scene: "mobile-changes", tag: "ipadland", sel: ".scm-row", sizes: [{ w: 1180, h: 820 }] },
+  { scene: "mobile-settings", tag: "land", sel: ".remote-settings-screen .pswitch", sizes: [{ w: 812, h: 375 }] },
 ];
 // 英文只挑两个文案最密的场景跑全矩阵，其余只拍中文。
 const EN_SCENES = new Set(["chat", "mobile-chat"]);
@@ -258,6 +270,12 @@ async function shootOne(browser, base, shot, outDir, dryRun = false) {
     await ctx.clock.install({ time: FIXED_NOW });
     await ctx.clock.pauseAt(FIXED_NOW + 1000);
     const page = await ctx.newPage();
+    // 安全区：Playwright 的设备模拟不带 env(safe-area-inset-*)，截图里恒为 0，刘海和 home 横条相关的规则拍不出来。
+    // Chromium 的 CDP 能覆盖这组值（场景上写 safeArea: { top, bottom, left, right }）；WebKit 没有对应接口，跳过。
+    if (shot.safeArea && browser.browserType().name() === "chromium") {
+      const cdp = await ctx.newCDPSession(page);
+      await cdp.send("Emulation.setSafeAreaInsetsOverride", { insets: shot.safeArea });
+    }
     page.on("pageerror", (e) => errors.push("pageerror: " + e.message));
     const warnings = [];
     page.on("console", (m) => { if (m.type() === "error") warnings.push("console: " + m.text()); });
@@ -294,6 +312,13 @@ async function shootOne(browser, base, shot, outDir, dryRun = false) {
       mkdirSync(failDir, { recursive: true });
       await page.screenshot({ path: join(failDir, shot.name + ".png") }).catch(() => {});
       throw new Error(`缺少关键元素 ${shot.sel}（现场图：${join(failDir, shot.name + ".png")}）`);
+    }
+    // 场景里的窗口自己申请了新尺寸（独立新建窗按表单高度加高，harness 记在 __visualWinSize）：照着改视口，
+    // 拍出来的才是用户看到的窗口；不改的话只能拍到「加高之前被挤掉一截」的样子。
+    const asked = dryRun ? null : await page.evaluate(() => window.__visualWinSize ?? null);
+    if (asked && (asked.w !== shot.w || asked.h !== shot.h)) {
+      await page.setViewportSize({ width: asked.w, height: asked.h });
+      for (let i = 0; i < 4; i++) { await ctx.clock.runFor(STEP_MS); await netIdle(60); }
     }
     // 字体按 unicode-range 分片懒加载（@fontsource 的 Noto Sans SC 有上百片）：排版后才发请求，
     // 机器忙时 fonts.ready 可能在下一片开始加载前就 resolve，截到「回退字体 → 正式字体」换字前的

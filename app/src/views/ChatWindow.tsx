@@ -5259,7 +5259,7 @@ export function ChatWindow() {
                 items={modelPresets.length > 0
                   ? modelPresets.map((preset) => ({ id: preset.id, label: preset.label, desc: t.chat.modelDesc[preset.id] ?? undefined }))
                   : modelCatalog.map((entry) => ({ id: entry.id, label: entry.label, group: entry.group }))}
-                currentId={currentPresetId(modelPresets.length > 0 ? modelPresets : modelCatalog, history?.model)}
+                currentId={currentPresetId(modelPresets.length > 0 ? modelPresets : modelCatalog, history?.model, history?.contextWindow)}
                 effort={chatUi?.effort && history?.effort && effortLevels.length > 1 ? {
                   levels: effortLevels,
                   current: history.effort,

@@ -296,11 +296,6 @@ bridged_args!(SetKeepAwakeArgs { enabled: bool });
 
 bridged_args!(SetPushPausedArgs { paused: bool });
 
-bridged_args!(SetSessionNoteArgs {
-    session_id: String,
-    note: String
-});
-
 bridged_args!(StopManagedTerminalArgs {
     #[cfg_attr(test, ts(type = "number"))]
     session_id: i64

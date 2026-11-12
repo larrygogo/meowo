@@ -97,7 +97,7 @@ use managed_terminal::{
 };
 #[cfg(test)]
 use session_command::is_safe_id;
-use session_command::{move_session_rank, rename_session, set_archived, set_session_note};
+use session_command::{move_session_rank, rename_session, set_archived};
 use session_command::{session_launch_selections, set_session_launch_selection};
 use session_query::{get_live_sessions_counts, get_live_sessions_page, get_session_admin_page, hide_workspace, recent_cwds};
 #[cfg(test)]
@@ -1376,7 +1376,6 @@ pub fn run() {
             rename_session,
             set_archived,
             move_session_rank,
-            set_session_note,
             get_autostart,
             set_autostart,
             get_settings,

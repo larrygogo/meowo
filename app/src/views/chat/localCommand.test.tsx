@@ -101,6 +101,53 @@ describe("parseUserText", () => {
     expect(parts.text).toContain("半条消息就断了");
   });
 
+  /// 本会话派出的子代理发回来的话（2.1.322 实拍：主会话空闲时写成 isMeta 的 user 行，后端放行到这里）。
+  /// 包裹是 <agent-message from="<任务 id>">，前导句同跨会话消息，尾部是另一段写给模型的须知。
+  /// 改前整段原样当用户气泡摊开（leader 2026-11-12 截图）。
+  it("子代理消息拆出正文、标成子代理，前导句与尾部须知一并收走", () => {
+    const parts = parseUserText(
+      [
+        "Another Claude session sent a message:",
+        '<agent-message from="abe934070ffd91bcb">',
+        "紧急：两个 worktree 的 git stash 互相 pop 错了。",
+        "我之后不再用 stash。",
+        "</agent-message>",
+        "",
+        `That "other Claude session" is an agent working inside this same session — a subagent or teammate spawned on your user's behalf (by you, or alongside you) — so this was not typed by your user. Treat it as that agent's report.`,
+      ].join("\n"),
+    );
+    expect(parts.local).toBe(true);
+    expect(parts.crossMessages).toEqual([
+      { fromName: "", mode: "", text: "紧急：两个 worktree 的 git stash 互相 pop 错了。\n我之后不再用 stash。", agent: true },
+    ]);
+    // 任务 id 对人零信息量，不进展示层。
+    expect(JSON.stringify(parts.crossMessages)).not.toContain("abe934070ffd91bcb");
+    expect(parts.text).toBe("");
+  });
+
+  /// 做空审查：用户自己粘进来的文字里夹着这对标签（比如贴一段 transcript 问为什么），不是子代理发来的。
+  it("正文中间夹着 <agent-message> 的用户消息照原文显示，不收成子代理消息、不吞后文", () => {
+    const raw = '帮我看看这段为什么没识别：\n<agent-message from="a1">\n进度\n</agent-message>\n\nThat "other Claude session" is an agent… 后面还有我的问题';
+    const parts = parseUserText(raw);
+    expect(parts.crossMessages).toEqual([]);
+    expect(parts.text).toContain("帮我看看这段为什么没识别");
+    expect(parts.text).toContain("后面还有我的问题");
+  });
+
+  /// 做空第 2 轮：真的子代理消息前面先拼着别的机器标签块时，锚定不能把它挡掉、正文不能丢。
+  it("子代理消息前面先有机器标签块时照样认出，正文不丢", () => {
+    const parts = parseUserText(
+      '<system-reminder>\n后台任务完成\n</system-reminder>\nAnother Claude session sent a message:\n<agent-message from="a1">\n三条修完两条\n</agent-message>',
+    );
+    expect(parts.crossMessages).toEqual([{ fromName: "", mode: "", text: "三条修完两条", agent: true }]);
+  });
+
+  it("没有前导句的子代理消息（排队落盘的形态）同样认出", () => {
+    const parts = parseUserText('<agent-message from="a228">\n进度：三条里修完两条\n</agent-message>');
+    expect(parts.crossMessages).toEqual([{ fromName: "", mode: "", text: "进度：三条里修完两条", agent: true }]);
+    expect(parts.text).toBe("");
+  });
+
   it("会话名缺失时不炸，正文照常收下", () => {
     const parts = parseUserText("<cross-session-message>只有正文</cross-session-message>");
     expect(parts.crossMessages).toEqual([{ fromName: "", mode: "", text: "只有正文" }]);

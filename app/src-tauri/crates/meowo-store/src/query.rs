@@ -102,8 +102,6 @@ pub struct LiveSession {
     pub context_window: Option<i64>,
     /// 模型展示名（来自 Claude Code statusline 的 model.display_name，如 "Opus"）；无则 None。
     pub model: Option<String>,
-    /// 用户给会话挂的便签（手写备忘）；无便签为 None。
-    pub note: Option<String>,
     /// 待审批子态：NULL/approval/question/plan(回合中途等用户介入)。
     pub pending_review: Option<String>,
     /// 最近一条 AI 正文(锚 Stop hook 的 last_assistant_message)；无则 None,前端回退 transcript preview。
@@ -141,7 +139,7 @@ fn escape_like(s: &str) -> String {
 /// 会话卡列表的列（与 [`Store::run_live_query`] 的逐列映射一一对应）。看板分页与会话管理页共用。
 const LIVE_SELECT: &str = "SELECT s.id, s.project_id, s.cc_session_id, s.status, s.started_at, s.last_event_at, s.ended_at,
             p.name, t.id, t.title, t.current_activity, t.column_name, s.pid, s.archived, s.cwd, s.archived_at,
-            sc.used_pct, sc.window_size, sc.model, sn.note,
+            sc.used_pct, sc.window_size, sc.model,
             s.pending_review, s.last_ai_text, s.last_user_text, s.provider, s.profile, s.predecessor_id,
             COALESCE(s.manual_rank, s.started_at * 1024)
      FROM sessions s
@@ -150,8 +148,7 @@ const LIVE_SELECT: &str = "SELECT s.id, s.project_id, s.cc_session_id, s.status,
      -- 多卡，裸 JOIN t.session_id 会扇出重复行（列表重复卡、计数虚高）。与
      -- task_id_of_session 的「最新卡」口径一致；其余三处 tasks JOIN 同式同义。
      LEFT JOIN tasks t ON t.id = (SELECT MAX(t2.id) FROM tasks t2 WHERE t2.session_id = s.id)
-     LEFT JOIN session_context sc ON sc.cc_session_id = s.cc_session_id
-     LEFT JOIN session_notes sn ON sn.cc_session_id = s.cc_session_id";
+     LEFT JOIN session_context sc ON sc.cc_session_id = s.cc_session_id";
 
 /// 构造 [`Store::live_sessions_filtered`] 实际执行的 SQL 与参数。
 ///
@@ -203,16 +200,16 @@ fn build_live_sessions_sql(
         _ => {} // None 不过滤（仅测试取证用，生产两处调用都传 Some）
     }
 
-    // 搜索（当前 tab 内 AND 搜索词）：title / cwd / project 名 / 便签 / 最近往来任一命中。
-    // %/_/\ 转义成字面量。便签是用户亲手写的记忆锚点、最近往来是「上次聊到哪」的
-    // 第一线索——这两处搜不到时用户只能凭记忆逐个点开翻。
+    // 搜索（当前 tab 内 AND 搜索词）：title / cwd / project 名 / 最近往来任一命中。
+    // %/_/\ 转义成字面量。最近往来是「上次聊到哪」的第一线索——搜不到时用户只能凭记忆逐个点开翻。
+    // 便签功能已取消（2026-11-12 leader）：session_notes 表保留不读，这里也不再匹配，免得命中看不见的文字。
     if let Some(q) = search.map(str::trim).filter(|s| !s.is_empty()) {
         let pat = format!("%{}%", escape_like(q));
         conditions.push(
             "(t.title LIKE ? ESCAPE '\\' OR s.cwd LIKE ? ESCAPE '\\' OR p.name LIKE ? ESCAPE '\\' \
-             OR sn.note LIKE ? ESCAPE '\\' OR s.last_user_text LIKE ? ESCAPE '\\' OR s.last_ai_text LIKE ? ESCAPE '\\')".into(),
+             OR s.last_user_text LIKE ? ESCAPE '\\' OR s.last_ai_text LIKE ? ESCAPE '\\')".into(),
         );
-        for _ in 0..6 {
+        for _ in 0..5 {
             params.push(Value::Text(pat.clone()));
         }
     }
@@ -427,14 +424,13 @@ impl Store {
                 let context_pct: Option<i64> = r.get(16)?;
                 let context_window: Option<i64> = r.get(17)?;
                 let model: Option<String> = r.get(18)?;
-                let note: Option<String> = r.get(19)?;
-                let pending_review: Option<String> = r.get(20)?;
-                let last_ai_text: Option<String> = r.get(21)?;
-                let last_user_text: Option<String> = r.get(22)?;
-                let provider: Option<String> = r.get(23)?;
-                let profile: Option<String> = r.get(24)?;
-                let predecessor_id: Option<i64> = r.get(25)?;
-                let manual_key: i64 = r.get(26)?;
+                let pending_review: Option<String> = r.get(19)?;
+                let last_ai_text: Option<String> = r.get(20)?;
+                let last_user_text: Option<String> = r.get(21)?;
+                let provider: Option<String> = r.get(22)?;
+                let profile: Option<String> = r.get(23)?;
+                let predecessor_id: Option<i64> = r.get(24)?;
+                let manual_key: i64 = r.get(25)?;
                 Ok((
                     session,
                     project_name,
@@ -449,7 +445,6 @@ impl Store {
                     context_pct,
                     context_window,
                     model,
-                    note,
                     pending_review,
                     last_ai_text,
                     last_user_text,
@@ -479,7 +474,6 @@ impl Store {
             context_pct,
             context_window,
             model,
-            note,
             pending_review,
             last_ai_text,
             last_user_text,
@@ -516,7 +510,6 @@ impl Store {
                 context_pct,
                 context_window,
                 model,
-                note,
                 pending_review,
                 last_ai_text,
                 last_user_text,
@@ -851,7 +844,7 @@ mod tests {
         assert!(!p.contains("TEMP B-TREE"), "翻页退回排序: {p}");
     }
 
-    /// 搜索态额外 LIKE 六列(含 JOIN 来的便签/项目名),命中行必然要逐行过滤——
+    /// 搜索态额外 LIKE 五列(含 JOIN 来的项目名),命中行必然要逐行过滤——
     /// 但**排序**仍应由索引提供。这条钉住的是「搜索不该把分页顺序也一起赔掉」。
     #[test]
     fn search_still_orders_by_index() {

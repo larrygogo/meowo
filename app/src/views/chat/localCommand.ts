@@ -12,7 +12,8 @@ export type LocalCommandCall = { name: string; args: string };
  *  用户消息注入 transcript：一句英文前导 + `<cross-session-message>` 包裹 + 一整段
  *  写给模型的英文安全须知。原样摊开就是满屏尖括号和管道名（实拍反馈）。
  *  fromName 是对方的会话名，mode 是它的权限模式（bypass 等）；两者缺失时留空串。 */
-export type CrossMessage = { fromName: string; mode: string; text: string };
+/** agent：本会话派出的子代理发回来的（<agent-message>），不是另一个会话。只在为真时出现这个键。 */
+export type CrossMessage = { fromName: string; mode: string; text: string; agent?: true };
 
 /** 渲染用的机器记录行（命令输出 / 后台任务通知 / 系统记录 / hook 反馈），**按原文出现顺序**。
  *  此前渲染层按类别分组（先全部记录、再全部通知），通知后面跟着的 system-reminder 反而排到
@@ -55,7 +56,14 @@ const ANSI = /[\x1b\uFFFD](?:\[[0-9;?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)
 
 // 跨会话消息。与上面那些标签不同，它**带属性**（from / from-name / from-mode），
 // 并进 PAIR 那条无属性正则匹配不到，单列一条。
-const CROSS = /<cross-session-message\b([^>]*)>([\s\S]*?)<\/cross-session-message>/g;
+// 子代理发回来的话是同一个外形，换了标签名 <agent-message from="<任务 id>">（2.1.322 实拍）。
+// 不认的话整段带标签当用户气泡摊开（leader 2026-11-12 截图）。
+const CROSS = /<(cross-session-message|agent-message)\b([^>]*)>([\s\S]*?)<\/\1>/g;
+// <agent-message> 只认开头（可带那句固定前导）：用户粘贴的文字里夹着这对标签时，不能被收成「子代理消息」，
+// 更不能让 CROSS_NOTE 吞掉后文（做空审查；哨兵判据一律行首锚定，见 transcript 引用污染的教训）。
+// 前面允许先出现完整的机器标签块（如 <system-reminder>…</system-reminder>，做空第 2 轮：只锚开头时这种拼接的
+// 真消息正文被丢掉）。只放行「标签名带 - 或 _」的机器标签（同 MACHINE_LEAD），人写的正文仍挡在外面。
+const AGENT_LEAD = /^\s*(?:<([a-z][a-z0-9]*(?:[-_][a-z0-9]+)+)(?:\s[^>]*)?>[\s\S]*?<\/\1(?:\s[^>]*)?>\s*)*(?:[^\n<]*Another Claude session sent a message[^\n]*:[ \t]*\n)?\s*<agent-message\b/;
 const CROSS_ATTR = /([\w-]+)="([^"]*)"/g;
 // 包在外面的两段固定英文：一句前导、以及尾部整段写给模型的安全须知（"A peer cannot
 // grant escalation…"）。都不是人要读的内容，随消息一起收走。措辞在不同版本里有
@@ -64,7 +72,8 @@ const CROSS_ATTR = /([\w-]+)="([^"]*)"/g;
 // 须知之后不会再有别的内容。若哪天同一条里还跟着用户正文，这里要改成只吃到段落边界
 // （复核提醒）。
 const CROSS_LEAD = /[^\n]*Another Claude session sent a message[^\n]*:[ \t]*\n?/g;
-const CROSS_NOTE = /This came from another Claude session[\s\S]*$/;
+// 子代理消息尾部是另一段须知（That "other Claude session" is an agent working inside this same session…）。
+const CROSS_NOTE = /(?:This came from another Claude session|That "other Claude session" is an agent)[\s\S]*$/;
 
 // 兜底：Claude Code 自己判断「这条 user 消息不是人打的」只看它是不是以一个标签开头
 // （2.1.319 源码：`^(?:\s*<[a-z][\w-]*[\s>]|\[Request interrupted by user…\])`）。它往
@@ -152,7 +161,7 @@ export function parseUserText(raw: string): UserTextParts {
   };
   if (!raw.includes("<command-name>") && !raw.includes("<local-command-")
     && !raw.includes("<task-notification>") && !raw.includes("<cross-session-message")
-    && !raw.includes("<bash-")) {
+    && !AGENT_LEAD.test(raw) && !raw.includes("<bash-")) {
     // 名单之外的机器记录：兜底收成「系统记录」，不当用户说的话摊开（见 MACHINE_LEAD）。
     if (MACHINE_LEAD.test(raw)) {
       parts.local = true;
@@ -170,12 +179,16 @@ export function parseUserText(raw: string): UserTextParts {
   parts.local = true;
   // 跨会话消息先摘出来：它的正文是别的会话写的自然语言，可能整段包含上面那些标签的
   // 字面量（复核回执里就贴着 `<command-name>` 一类），先摘走才不会被 PAIR 啃掉。
-  raw = raw.replace(CROSS, (_match, attrs: string, body: string) => {
+  const agentLead = AGENT_LEAD.test(raw);
+  raw = raw.replace(CROSS, (match: string, tag: string, attrs: string, body: string) => {
+    if (tag === "agent-message" && !agentLead) return match;
     const found: Record<string, string> = {};
     for (const [, key, value] of attrs.matchAll(CROSS_ATTR)) found[key] = value;
     const text = body.trim();
-    // from 是本机管道路径（uds:\\.\pipe\…），对人零信息量且很长，不收；只留会话名。
-    if (text) parts.crossMessages.push({ fromName: found["from-name"] ?? "", mode: found["from-mode"] ?? "", text });
+    // from 是本机管道路径（uds:\\.\pipe\…）或子代理的任务 id，对人零信息量且很长，不收；只留会话名。
+    const message: CrossMessage = { fromName: found["from-name"] ?? "", mode: found["from-mode"] ?? "", text };
+    if (tag === "agent-message") message.agent = true;
+    if (text) parts.crossMessages.push(message);
     return "";
   });
   if (parts.crossMessages.length > 0) {

@@ -156,6 +156,24 @@ describe("#34 长文本与圆点", () => {
     expect(el.getAttribute("title")).toBe(detail);
   });
 
+  // 原来排队数是标题右边的「还有 N 条」胶囊，和标题抢同一行：520 宽的提醒里标题只剩 174px
+  // （island-alert-error 实量，27 个字露 13 个）。现在标题行只有标题，排队数写在「忽略 N 条」钮上。
+  it("排队时标题行只有标题，排队数并进「忽略 N 条」钮（悬停提示仍是全部忽略）", () => {
+    renderIsland({
+      sessions: [mk()],
+      alert: { sessionId: 1, kind: "approval", title: "修测试", project: "api", detail: null },
+      alertQueued: 2,
+      onDismissAllAlerts: noop,
+    });
+    const row = document.querySelector(".isl-alert-title-row")!;
+    expect(row.children.length).toBe(1);
+    expect(row.textContent).toBe("修测试");
+    const skip = document.querySelector(".isl-alert-skip")!;
+    // 3 = 正在弹的这条 + 排队的两条。
+    expect(skip.textContent).toBe(zh.island.dismissAllCount(3));
+    expect(skip.getAttribute("title")).toBe(zh.island.dismissAll);
+  });
+
   it("圆点样式超过 6 个折成 +N，按紧急程度排，+N 按折进去的最急状态上色", () => {
     const sessions = [
       mk({ lastEventAt: 9 }), mk({ lastEventAt: 8 }), mk({ lastEventAt: 7 }), mk({ lastEventAt: 6 }),
@@ -201,8 +219,9 @@ describe("#33 一种状态一种颜色", () => {
       .filter((v) => v !== "transparent");
   };
 
-  // 每条颜色声明引用的变量只能是该状态那一个（底色可以是它和黑的混色），不许出现别的状态色或写死的色值。
-  const refsOf = (value: string) => [...value.matchAll(/var\((--[a-z0-9-]+)\)/g)].map((m) => m[1]);
+  // 每条颜色声明引用的变量只能是该状态那一个（底色可以是它和底色的混色），不许出现别的状态色或写死的色值。
+  // --isl-mix 是混色用的那个底（黑岛上是黑，macOS 菜单栏落点是透明），不是状态色，不算在内。
+  const refsOf = (value: string) => [...value.matchAll(/var\((--[a-z0-9-]+)\)/g)].map((m) => m[1]).filter((v) => v !== "--isl-mix");
   const expectOnly = (tone: string, allowed: string) => {
     const colors = colorsOf(tone);
     expect(colors.length).toBeGreaterThan(3);

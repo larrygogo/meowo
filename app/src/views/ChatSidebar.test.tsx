@@ -924,23 +924,21 @@ describe("ChatSidebar", () => {
       });
     });
 
-    it("便签写完看得见，失败给出提示", async () => {
+    // 便签功能已取消（2026-11-12 leader）：右键菜单没有便签项，条目上也不再有便签块。
+    it("右键菜单没有便签项，条目不显示便签", async () => {
       invoke.mockImplementation((command: string) => {
-        if (command === "get_live_sessions_page") return Promise.resolve([session(2, "旧任务", { note: "先跑一遍测试" })]);
-        if (command === "set_session_note") return Promise.reject(new Error("db busy"));
+        if (command === "get_live_sessions_page") return Promise.resolve([session(2, "旧任务")]);
         if (command === "get_settings") return Promise.resolve({ card_menu_mode: "context" });
         return Promise.resolve();
       });
-      render(<ChatSidebar activeId={0} approvalAwaitingIds={new Set()} onSelect={() => {}} onCollapse={() => {}} />);
-      // 已有便签直接显示在条目里——写了看不见的备忘等于没写。
-      expect(await screen.findByText("先跑一遍测试")).toBeTruthy();
+      const { container } = render(<ChatSidebar activeId={0} approvalAwaitingIds={new Set()} onSelect={() => {}} onCollapse={() => {}} />);
+      await screen.findByRole("button", { name: /旧任务/ });
       await act(async () => {});
+      expect(container.querySelector(".chat-sidebar-note")).toBeNull();
       fireEvent.contextMenu(screen.getByRole("button", { name: /旧任务/ }));
-      fireEvent.click(await screen.findByRole("menuitem", { name: "编辑便签" }));
-      const input = screen.getByPlaceholderText("写点备忘…");
-      fireEvent.change(input, { target: { value: "改成先看日志" } });
-      fireEvent.keyDown(input, { key: "Enter" });
-      expect(await screen.findByText("便签保存失败，请稍后再试。")).toBeTruthy();
+      const items = (await screen.findAllByRole("menuitem")).map((item) => item.textContent ?? "");
+      expect(items.some((text) => /便签/.test(text))).toBe(false);
+      expect(items.some((text) => /重命名/.test(text))).toBe(true);
     });
 
     it("置顶与看板共用同一份存储（键沿用 meowo-starred）", async () => {

@@ -12,12 +12,14 @@ import { AgentRing, Ring, useNow, usedColor, usedOf } from "./islandParts";
 import { primaryLane } from "./useIslandUsage";
 import { ChatIcon, GearIcon } from "../sticker/icons";
 import { Icon } from "../../icons/Icon";
-import { icPlus, icStrip } from "../../icons/glyphs";
+import { icChevronDown, icPlus, icStrip } from "../../icons/glyphs";
 
 /** 极简模式图标：一条贴顶的细线。 */
 function StripIcon() {
+  // 14：这个字形在 24 格里只画到 2..22，按 12 画墨迹只有 10px，比旁边对话、设置两个图标（墨迹 12px）小一号
+  // （island-panel 实量）；对话图标也是 14。
   return (
-    <Icon glyph={icStrip} size={12} />
+    <Icon glyph={icStrip} size={14} />
   );
 }
 
@@ -60,7 +62,7 @@ function StackedRings({ lanes }: { lanes: UsageLane[] }) {
             stroke={STACK_STROKE}
             value={usedOf(lane.used_pct as number) / 100}
             color={color}
-            track={`color-mix(in srgb, ${color} 22%, #000)`}
+            track={`color-mix(in srgb, ${color} 22%, var(--isl-mix, #000))`}
           />
         );
       })}
@@ -296,6 +298,8 @@ export function IslandPanel({
           </div>
         )}
 
+        {/* 箭头用图标不用「‹ ›」字符：字符在行框里偏下（实量墨迹中线比钮的中线低 1.75px），
+            而且跟着系统字体走，Windows 和 macOS 偏的还不一样；图标在钮里是几何居中的。方向由样式旋转。 */}
         {pages > 1 && (
           <>
             <button
@@ -303,13 +307,13 @@ export function IslandPanel({
               className="isl-page-arrow is-prev"
               aria-label={t.island.prevPage}
               onClick={() => setPage((current + pages - 1) % pages)}
-            >‹</button>
+            ><Icon glyph={icChevronDown} size={12} /></button>
             <button
               type="button"
               className="isl-page-arrow is-next"
               aria-label={t.island.nextPage}
               onClick={() => setPage((current + 1) % pages)}
-            >›</button>
+            ><Icon glyph={icChevronDown} size={12} /></button>
           </>
         )}
         {pages > 1 && (

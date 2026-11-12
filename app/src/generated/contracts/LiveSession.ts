@@ -27,10 +27,6 @@ context_window: number | null,
  */
 model: string | null, 
 /**
- * 用户给会话挂的便签（手写备忘）；无便签为 None。
- */
-note: string | null, 
-/**
  * 待审批子态：NULL/approval/question/plan(回合中途等用户介入)。
  */
 pending_review: string | null, 

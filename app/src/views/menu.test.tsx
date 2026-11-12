@@ -24,6 +24,18 @@ function renderDropdown(
 }
 
 describe("Dropdown（统一菜单 primitive）", () => {
+  // qa-set-dropdown 实拍（dpr2）：右对齐的菜单只按内容定宽，x 976–1144，比按钮（968–1143）窄 4 CSS px。
+  it("默认右对齐的菜单也钉成按钮宽（内容更宽时由 CSS 的 min-width 放宽）", () => {
+    renderDropdown();
+    const btn = screen.getByRole("button");
+    btn.getBoundingClientRect = () => ({ left: 400, right: 520, top: 100, bottom: 132, width: 120, height: 32, x: 400, y: 100, toJSON: () => ({}) });
+    fireEvent.click(btn);
+    const menu = screen.getByRole("listbox");
+    expect(menu.style.width).toBe("120px");
+    expect(menu.style.right).toBe(`${window.innerWidth - 520}px`);
+    expect(menu.style.left).toBe("");
+  });
+
   it("点击打开，aria-expanded 同步；点选项后关闭并把焦点还给触发钮", () => {
     const onChange = vi.fn();
     renderDropdown(onChange);

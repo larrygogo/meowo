@@ -104,29 +104,6 @@ pub(crate) async fn set_archived(
     .map_err(|e| e.to_string())?
 }
 
-#[tauri::command]
-pub(crate) async fn set_session_note(
-    app: tauri::AppHandle,
-    state: State<'_, super::AppState>,
-    session_id: String,
-    note: String,
-) -> Result<(), String> {
-    if !is_safe_id(&session_id) {
-        return Err("无效 session_id".into());
-    }
-    let note: String = note.chars().take(500).collect();
-    let db_path = state.db_path.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        super::open_store(&db_path)?
-            .set_session_note(&session_id, &note, super::now_ms())
-            .map_err(|error| error.to_string())?;
-        super::watch::emit_board_changed(&app, "note");
-        Ok(())
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
 /// 对话页改选启动选项后的落库（合并单键写回）：模型/权限是**启动参数**，resume/接管
 /// 时回放（`terminal::splice_stored_launch_args`）——不落库的话每次重启都回默认档
 /// （用户实拍：会话里切到 1M 上下文档，重启后回落 200K）。
