@@ -5117,6 +5117,10 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 /* 面板拖宽或最大化后内容封顶居中：2560 宽最大化时提交框、「提交全部」拉成两千多 px 的横条，
    文件名和增删数隔着半个屏幕，视线来回扫（调研 c6）。880 约是对话列 720 加两侧留白。 */
 .scm-repos, .scm-commit, .scm-forge, .scm-tools, .scm-groups { box-sizing: border-box; width: 100%; max-width: 880px; align-self: center; }
+/* 范围切换（全部 / 本会话 / 本轮）是贴内容宽的小控件，不能像上面几块那样拉满再居中，
+   否则凹槽底会铺成一整行。改成左边距跟着居中列走：面板宽过 880 后它仍对齐搜索框和提交框的左缘
+   （两者都在列内 --sp-12 处），不留在面板最左边（用户截图：最大化时它贴在左侧，离内容列半个屏幕）。 */
+.scm > .chat-diff-scope { margin-left: calc(max(0px, (100% - 880px) / 2) + var(--sp-12)); }
 .scm-section-title { padding: var(--sp-10) var(--sp-16) var(--sp-4); font-size: var(--text-xs); font-weight: 500; color: var(--cc-text-faint); user-select: none; }
 .scm-repos { flex: 0 0 auto; display: flex; flex-direction: column; padding: 0 var(--sp-8) var(--sp-8); border-bottom: var(--hairline) solid var(--cc-border); }
 .scm-repo { display: flex; align-items: center; gap: var(--sp-6); min-width: 0; height: 28px; padding: 0 var(--sp-8); border: 0; border-radius: var(--radius-md); background: transparent; color: var(--cc-text-dim); font: inherit; font-size: var(--text-sm); text-align: left; cursor: pointer; }
