@@ -37,6 +37,9 @@ export const QA_SHOTS = [
   { name: "qa-panel-tree", scene: "panel-changes", sel: ".scm-row.is-dir", steps: [["click", ".scm-tools .chat-diff-layout button >> nth=1"]] },
   { name: "qa-files-ui150", scene: "panel-files", params: "ui=1.5", sel: ".chat-diff-tree-file" },
   // ── 对话流里靠后端状态出现的东西（harness 见 qaFlow.ts）──
+  // 子代理发回来的话（<agent-message>）：改前整段当用户气泡摊开（leader 2026-11-12 截图），改后是「子代理消息」块。
+  // 它在 flow-states 的中段偏下，滚到它露出来再拍。
+  { name: "qa-agent-msg", scene: "flow-states", sel: ".chat-crossmsg", langs: ["zh", "en"], steps: [["eval", "(() => { const t0 = performance.now(); const id = setInterval(() => { const el = [...document.querySelectorAll('.chat-crossmsg')].pop(); el && el.scrollIntoView({ block: 'center' }); if (performance.now() - t0 > 1200) clearInterval(id); }, 100); })()"], ["tick", 1500]] },
   { name: "qa-lead", scene: "flow-lead", sel: ".lead-gate-card", langs: ["zh", "en"] },
   { name: "qa-lead-open", scene: "flow-lead", sel: ".lead-gate-card", steps: [["click", ".lead-gate-more"], ["click", ".lead-gate-option >> nth=1"]] },
   { name: "qa-lead-620", scene: "flow-lead", sel: ".lead-gate-card", size: W620 },

@@ -1106,6 +1106,9 @@ export const zh = {
     // 跨会话消息（另一个 Claude 会话经 SendMessage 发来）的来源标注。
     crossMessage: "会话消息",
     crossMessageUnknown: "另一个会话",
+    // 本会话派出的子代理发回来的话（<agent-message>）：来源写「子代理」，标签写「子代理消息」。
+    agentMessageFrom: "子代理",
+    agentMessage: "子代理消息",
     taskNotification: "后台任务通知",
     changesUncommitted: "未提交",
     wsHide: "从列表中移除",

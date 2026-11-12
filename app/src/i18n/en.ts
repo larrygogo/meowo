@@ -1019,6 +1019,8 @@ export const en: Dict = {
     commandOutput: "Command output",
     crossMessage: "Session message",
     crossMessageUnknown: "Another session",
+    agentMessageFrom: "Subagent",
+    agentMessage: "Subagent message",
     taskNotification: "Task notification",
     changesUncommitted: "Uncommitted",
     wsHide: "Remove from list",

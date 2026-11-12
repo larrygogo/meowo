@@ -5586,7 +5586,9 @@ button.scm-check-name:hover { text-decoration: underline; }
    （实拍）。收起态限高 + 底部渐隐，点一下展开。 */
 .chat-crossmsg-body { position: relative; max-height: 220px; overflow: hidden; }
 .chat-crossmsg-body.is-expanded { max-height: none; }
-.chat-crossmsg-body:not(.is-expanded)::after {
+/* 渐隐只给真被截断的：原来无条件盖 48px，一两行的短消息（约 44px 高）整条被淡掉，
+   看着像没加载完（2026-11-12 截图实拍「复核完了…」一行和子代理消息两行都发灰）。 */
+.chat-crossmsg-body.is-clipped::after {
   content: "";
   position: absolute;
   left: 0;
