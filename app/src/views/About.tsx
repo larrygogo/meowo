@@ -650,7 +650,9 @@ function AlertKindSwitches({ value, onChange, caption }: { value: readonly strin
       {ISLAND_ALERT_KINDS.map((kind) => {
         const label = t.settings.islandAlertKinds[kind];
         return (
-          <div className="row" key={kind}>
+          // row-sub：表头行（「通知这些事」/「自动弹出提醒」）名下的子开关。样式上缩进、不加粗，
+          // 设置搜索按它把表头和子行当一组（见 settings/searchFilter.ts）。
+          <div className="row row-sub" key={kind}>
             <div className="row-text">
               <div className="row-label">{label}</div>
             </div>
@@ -1092,6 +1094,7 @@ export function About() {
   // MutationObserver 兜底异步内容（agent 名单/配额加载完成后新出现的行也要被过滤）。
   const [query, setQuery] = useState("");
   const searching = query.trim() !== "";
+  const navOn = (s: Section) => !searching && sec === s;
   // 7B-7：设置窗此前没有 Ctrl+F（贴纸窗有），搜索框只能用鼠标点到。
   const searchInputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
@@ -1172,40 +1175,42 @@ export function About() {
           )}
         </div>
         <nav className="side-nav">
-          {/* 搜索态点分区 = 清词并跳转（搜索结果已把各分区平铺，点导航即退出搜索）。 */}
-          <button className={"nav-item" + (sec === "general" ? " on" : "")} aria-current={sec === "general" ? "page" : undefined} onClick={() => { setQuery(""); pickSec("general"); }}>
+          {/* 搜索态点分区 = 清词并跳转（搜索结果已把各分区平铺，点导航即退出搜索）。
+              搜索态不高亮任何一项（navOn）：右侧是各分区平铺的结果或「没有匹配」，
+              这时还亮着进搜索前的那一项，和右侧内容对不上（实拍 settingswin-noresults）。 */}
+          <button className={"nav-item" + (navOn("general") ? " on" : "")} aria-current={navOn("general") ? "page" : undefined} onClick={() => { setQuery(""); pickSec("general"); }}>
             <IconGear />
             <span>{t.settings.nav.general}</span>
           </button>
-          <button className={"nav-item" + (sec === "sessions" ? " on" : "")} aria-current={sec === "sessions" ? "page" : undefined} onClick={() => { setQuery(""); pickSec("sessions"); }}>
+          <button className={"nav-item" + (navOn("sessions") ? " on" : "")} aria-current={navOn("sessions") ? "page" : undefined} onClick={() => { setQuery(""); pickSec("sessions"); }}>
             <IconCards />
             <span>{t.settings.nav.sessions}</span>
           </button>
-          <button className={"nav-item" + (sec === "appearance" ? " on" : "")} aria-current={sec === "appearance" ? "page" : undefined} onClick={() => { setQuery(""); pickSec("appearance"); }}>
+          <button className={"nav-item" + (navOn("appearance") ? " on" : "")} aria-current={navOn("appearance") ? "page" : undefined} onClick={() => { setQuery(""); pickSec("appearance"); }}>
             <IconAppearance />
             <span>{t.settings.nav.appearance}</span>
           </button>
-          <button className={"nav-item" + (sec === "shortcuts" ? " on" : "")} aria-current={sec === "shortcuts" ? "page" : undefined} onClick={() => { setQuery(""); pickSec("shortcuts"); }}>
+          <button className={"nav-item" + (navOn("shortcuts") ? " on" : "")} aria-current={navOn("shortcuts") ? "page" : undefined} onClick={() => { setQuery(""); pickSec("shortcuts"); }}>
             <IconKeyboard />
             <span>{t.settings.nav.shortcuts}</span>
           </button>
-          <button className={"nav-item" + (sec === "remote" ? " on" : "")} aria-current={sec === "remote" ? "page" : undefined} onClick={() => { setQuery(""); pickSec("remote"); }}>
+          <button className={"nav-item" + (navOn("remote") ? " on" : "")} aria-current={navOn("remote") ? "page" : undefined} onClick={() => { setQuery(""); pickSec("remote"); }}>
             <IconPhone />
             <span>{t.settings.nav.remote}</span>
           </button>
-          <button className={"nav-item" + (sec === "network" ? " on" : "")} aria-current={sec === "network" ? "page" : undefined} onClick={() => { setQuery(""); pickSec("network"); }}>
+          <button className={"nav-item" + (navOn("network") ? " on" : "")} aria-current={navOn("network") ? "page" : undefined} onClick={() => { setQuery(""); pickSec("network"); }}>
             <IconGlobe />
             <span>{t.settings.nav.network}</span>
           </button>
-          <button className={"nav-item" + (sec === "account" ? " on" : "")} aria-current={sec === "account" ? "page" : undefined} onClick={() => { setQuery(""); pickSec("account"); }}>
+          <button className={"nav-item" + (navOn("account") ? " on" : "")} aria-current={navOn("account") ? "page" : undefined} onClick={() => { setQuery(""); pickSec("account"); }}>
             <IconAgent />
             <span>{t.settings.nav.account}</span>
           </button>
-          <button className={"nav-item" + (sec === "extensions" ? " on" : "")} aria-current={sec === "extensions" ? "page" : undefined} onClick={() => { setQuery(""); pickSec("extensions"); }}>
+          <button className={"nav-item" + (navOn("extensions") ? " on" : "")} aria-current={navOn("extensions") ? "page" : undefined} onClick={() => { setQuery(""); pickSec("extensions"); }}>
             <IconPuzzle />
             <span>{t.settings.nav.extensions}</span>
           </button>
-          <button className={"nav-item" + (sec === "about" ? " on" : "")} aria-current={sec === "about" ? "page" : undefined} onClick={() => { setQuery(""); pickSec("about"); }}>
+          <button className={"nav-item" + (navOn("about") ? " on" : "")} aria-current={navOn("about") ? "page" : undefined} onClick={() => { setQuery(""); pickSec("about"); }}>
             <IconInfo />
             <span>{t.settings.nav.about}</span>
             {(status === "available" || status === "downloading" || status === "ready") && (

@@ -2704,6 +2704,13 @@ button.stab {
 
 /* 行内滑块（贴纸不透明度）：整行竖排，标签 + 数值在上，滑块铺满在下 */
 .row-col { flex-direction: column; align-items: stretch; gap: var(--sp-12); }
+/* 表头行名下的子开关（「通知这些事」「自动弹出提醒」下面的四个种类，AlertKindSwitches）：
+   缩进一级、常规字重、组内不画分隔线。此前表头与子行标签左缘同为 x=208、字重同为 500、
+   分隔线同样通栏（settings-appearance 实拍），表头看上去像一行缺了开关的设置。 */
+.row.row-sub { padding: var(--sp-6) var(--sp-16) var(--sp-6) calc(var(--sp-16) * 2); border-top: 0; }
+.row-sub .row-label { font-weight: 400; }
+.row-col:has(+ .row-sub) { padding-bottom: var(--sp-6); }
+.row-sub:not(:has(+ .row-sub)) { padding-bottom: var(--sp-12); }
 .row-head { display: flex; align-items: center; gap: var(--sp-13); }
 .row-val { flex: none; font-size: var(--text-sm); font-weight: 600; color: var(--cc-text); font-variant-numeric: tabular-nums; }
 /* 不写 outline:none：键盘模态下的全局 :focus-visible 兜底环就是它的焦点指示

@@ -109,6 +109,10 @@ export const QA_SHOTS = [
   { name: "qa-set-error-remote", scene: "settingswin-remote", params: "fail=1", size: SETTINGS, sel: ".settings-error" },
   { name: "qa-set-kbd", scene: "settingswin-appearance", size: SETTINGS, sel: ".settings", steps: [["keys", "Tab", 4]] },
   { name: "qa-set-hover", scene: "settingswin-general", size: SETTINGS, sel: ".settings", steps: [["hover", ".side-nav .nav-item >> nth=2"]] },
+  // 设置搜索的成组显隐：表头行（「自动弹出提醒」/「通知这些事」）和它名下的子开关同进退。
+  // 「提醒」命中外观分区的表头，「审批」只命中子行（两个分区各一行），都不该留下没有控件的空表头。
+  { name: "qa-set-search-alerts", scene: "settingswin-appearance", size: SETTINGS, sel: ".settings", steps: [["type", ".side-search input", "提醒"]] },
+  { name: "qa-set-search-sub", scene: "settingswin-general", size: SETTINGS, sel: ".settings", steps: [["type", ".side-search input", "审批"]] },
   { name: "qa-set-en", scene: "settingswin-general", size: SETTINGS, sel: ".settings", langs: ["en"] },
   { name: "qa-set-en-remote", scene: "settingswin-remote", size: SETTINGS, sel: ".settings", langs: ["en"] },
   { name: "qa-set-en-sessions", scene: "settingswin-sessions", size: SETTINGS, sel: ".settings", langs: ["en"] },
