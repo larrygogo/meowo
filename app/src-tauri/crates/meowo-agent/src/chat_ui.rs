@@ -189,6 +189,11 @@ pub enum AttentionDetails {
     /// （多选），数字键直接选中 / 勾选；末页是 `[1] Submit` / `[2] Cancel` 的确认页
     /// （kimi 2.4.1 AskUserQuestion 表单，2026-11-05 真机取证）。
     BracketForm,
+    /// 圆角外框里的提问表单：`│ Answer Questions` 头行 + 问句 + `│ ● 1.  选项` 编号行
+    /// （多选另有 `[ ]`/`[x]` 勾选框与无编号的 `Done` 行），末页 `Review your answers:`。
+    /// 以 ● 焦点做相对移动，回车选中（gemini 0.65 AskUserDialog 源码取证，2026-11-12，未实拍）。
+    /// 与 `FramedBox` 的区别在语义：这是提问，不是命令审批，前端出提问卡。
+    FramedForm,
 }
 
 /// 屏幕上**可操作**提示的识别规格：审批框、长会话确认这类需要用户当场决定的整句提示。

@@ -257,6 +257,16 @@ impl AgentPlugin for Gemini {
     /// 框被丢弃、紧随的回车选中 Keep trying 再撞一次额度——用户只看到「发不了消息」。
     /// 走通用卡（无结构化文法）：确认 = Enter = Keep trying，取消 = Esc = 「Request cancelled」
     /// 并还回输入框（两键均经 probe_tui_script 实测）。
+    ///
+    /// 以下三条是 0.65.0 的新形态（npm bundle 源码取证，2026-11-12，未实拍）：
+    /// - 高负载框：同一个 ProQuotaDialog，首行换成 `We are currently experiencing high demand
+    ///   for <模型>.`（useQuotaAndFallback），选项仍以 Keep trying 开头。只认额度耗尽时，
+    ///   高负载下发出的正文同样落进这个框被丢弃。
+    /// - 沙箱扩权审批：`To run [Shell], allow access to the following?` 下列 `• Network:` /
+    ///   `• Write:` / `• Read:`，选项同 Allow once 一套（ToolConfirmationMessage 的
+    ///   sandbox_expansion 分支）。只在开了沙箱时出现。
+    /// - 提问表单（ask_user，AskUserTool 默认注册）：绿框头行 `Answer Questions`
+    ///   （getConfirmationHeader），不识别时对话页不出卡，用户只能去终端回答。
     fn attention_patterns(&self) -> &'static [crate::chat_ui::AttentionPattern] {
         &[
             crate::chat_ui::AttentionPattern {
@@ -265,6 +275,7 @@ impl AgentPlugin for Gemini {
                     r"^\s*│\s*allow execution of [^\n]*\?",
                     r"^\s*│\s*apply this change\?",
                     r"^\s*│\s*do you want to proceed\?",
+                    r"^\s*│\s*to run \[[^\]\n]+\], allow access to the following\?",
                 ],
                 // 重绘不清屏，上一个确认框会残留在缓冲上方：取最后一次。
                 last: true,
@@ -272,9 +283,19 @@ impl AgentPlugin for Gemini {
             },
             crate::chat_ui::AttentionPattern {
                 id: "gemini:usage-limit",
-                patterns: &[r"^\s*│\s*usage limit reached\b"],
+                patterns: &[
+                    r"^\s*│\s*usage limit reached\b",
+                    r"^\s*│\s*we are currently experiencing high demand\b",
+                ],
                 last: true,
                 details: crate::chat_ui::AttentionDetails::None,
+            },
+            crate::chat_ui::AttentionPattern {
+                id: "gemini:question",
+                patterns: &[r"^\s*│\s*answer questions\b"],
+                // 多问题表单切页重绘，上一页残留在上方：取最后一次。
+                last: true,
+                details: crate::chat_ui::AttentionDetails::FramedForm,
             },
         ]
     }

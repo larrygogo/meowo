@@ -120,7 +120,7 @@ const MODEL_PRESETS: Record<string, ChatUi["model_presets"]> = {
  * 那边改了正则，这里也要跟上，否则前端测试测的是一套过期规则。
  * 未取证的 provider 为空（不做整句识别）。
  */
-const ATTENTION_PATTERNS: Record<string, { id: string; patterns: string[]; last: boolean; details: "none" | "proceed_box" | "arrow_panel" | "framed_box" | "bracket_form" }[]> = {
+const ATTENTION_PATTERNS: Record<string, { id: string; patterns: string[]; last: boolean; details: "none" | "proceed_box" | "arrow_panel" | "framed_box" | "bracket_form" | "framed_form" }[]> = {
   claude: [
     {
       id: "claude:long-session-resume",
@@ -162,11 +162,18 @@ const ATTENTION_PATTERNS: Record<string, { id: string; patterns: string[]; last:
         "^\\s*│\\s*allow execution of [^\\n]*\\?",
         "^\\s*│\\s*apply this change\\?",
         "^\\s*│\\s*do you want to proceed\\?",
+        "^\\s*│\\s*to run \\[[^\\]\\n]+\\], allow access to the following\\?",
       ],
       last: true,
       details: "framed_box",
     },
-    { id: "gemini:usage-limit", patterns: ["^\\s*│\\s*usage limit reached\\b"], last: true, details: "none" },
+    {
+      id: "gemini:usage-limit",
+      patterns: ["^\\s*│\\s*usage limit reached\\b", "^\\s*│\\s*we are currently experiencing high demand\\b"],
+      last: true,
+      details: "none",
+    },
+    { id: "gemini:question", patterns: ["^\\s*│\\s*answer questions\\b"], last: true, details: "framed_form" },
   ],
   opencode: [
     { id: "opencode:command-approval", patterns: ["△ permission required"], last: true, details: "none" },
@@ -300,7 +307,7 @@ export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | 
     // 与后端同源:kimi `/undo N`(2.4.0 包内取证);opencode `/undo` 一次一轮、还原文件、
     // 原文放回它的输入框(1.19.3 probe_opencode_undo);claude `/rewind` 菜单(2.1.314 probe_claude_rewind)。
     undo: provider === "kimi"
-      ? { command: "/undo", count_arg: true, restores_files: false, reject_pattern: String.raw`cannot undo while streaming|nothing to undo|failed to undo|run /undo again`, input_clear: null, menu: null }
+      ? { command: "/undo", count_arg: true, restores_files: false, reject_pattern: String.raw`cannot undo while streaming|cannot undo \d+ prompts?;|nothing to undo|failed to undo|run /undo again|usage: /undo|no active session`, input_clear: null, menu: null }
       : provider === "opencode"
         ? { command: "/undo", count_arg: false, restores_files: true, reject_pattern: null, input_clear: { inputs: ["\u0003"], composer: { kind: "block", row_prefix: "┃", bottom_prefix: "╹" } }, menu: null }
         : provider === "claude"

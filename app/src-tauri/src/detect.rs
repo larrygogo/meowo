@@ -1044,6 +1044,80 @@ mod tests {
         );
     }
 
+    /// kimi 2.5.1 的盲文 spinner 状态词改成 Unicode 省略号（包内 MoonLoader.updateDisplay
+    /// 拼 `${frame} ${label}` + ` · Tip: …`，label 是 `"Working…"` / `"Compacting…"`，
+    /// 2026-11-12 取证）。旧规则只认 `working...`，这行与输入框同屏时整屏判成空闲。
+    /// 旧版三个点的写法（上面 `kimi_spinners_are_working`）仍认。
+    #[test]
+    fn kimi_251_ellipsis_spinner_outranks_composer_prompt() {
+        for line in [
+            " \u{280B} Working\u{2026} \u{00B7} Tip: ! to run a shell command",
+            " \u{2834} Working\u{2026}",
+            " \u{2819} Compacting\u{2026}",
+        ] {
+            let s = snap(&["  output", line, "\u{2502} >      \u{2502}", "context: 12%"]);
+            assert_eq!(
+                state_of(evaluate("kimi", &s)),
+                Some((ScreenState::Working, "braille_spinner_working")),
+                "{line}"
+            );
+        }
+        let old = snap(&[" \u{280B} Working... 3s", "\u{2502} >      \u{2502}"]);
+        assert_eq!(
+            state_of(evaluate("kimi", &old)),
+            Some((ScreenState::Working, "braille_spinner_working"))
+        );
+    }
+
+    /// kimi 2.5.1 提问表单的确认页（包内 question-dialog.ts renderSubmitTab 原文拼出，2026-11-12）：
+    /// 没有 `? 问题` 行，修复前判成空闲。
+    #[test]
+    fn kimi_251_question_submit_page_is_blocked() {
+        let s = snap(&[
+            "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
+            " question",
+            "",
+            " (\u{2713}) Database  (\u{2713}) Features   Submit ",
+            "",
+            " Review your answer before submit",
+            "",
+            "  Q  Which database should we use?",
+            "  \u{2192}  SQLite",
+            "",
+            " Ready to submit your answers?",
+            "",
+            "  \u{2192} [1] Submit",
+            "    [2] Cancel",
+            "",
+            "  \u{2191}\u{2193} select  1/2 choose  \u{21B5} confirm  \u{2190}/\u{2192}/tab switch  esc cancel",
+            "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
+        ]);
+        assert_eq!(
+            state_of(evaluate("kimi", &s)),
+            Some((ScreenState::Blocked, "question_submit_panel"))
+        );
+    }
+
+    /// kimi 2.5.1 重试时月相 spinner 带 `Retrying (n/m) · <错误名>` 标签（包内
+    /// formatStepRetryLabel，2026-11-12 取证）。没有 `(n/m)` 计数的 retrying 是正文，不认。
+    #[test]
+    fn kimi_251_retry_spinner_is_working() {
+        let s = snap(&[
+            "  output",
+            " \u{1F318} Retrying (2/5) \u{00B7} RateLimitError \u{00B7} in 4s",
+            "\u{2502} >      \u{2502}",
+        ]);
+        assert_eq!(
+            state_of(evaluate("kimi", &s)),
+            Some((ScreenState::Working, "moon_word_status_working"))
+        );
+        let prose = snap(&["\u{1F318} retrying later is fine", "\u{2502} >      \u{2502}"]);
+        assert_eq!(
+            state_of(evaluate("kimi", &prose)),
+            Some((ScreenState::Idle, "composer_prompt_idle"))
+        );
+    }
+
     // -- gemini --
 
     #[test]
@@ -1082,6 +1156,60 @@ mod tests {
         assert_eq!(
             state_of(evaluate("gemini", &s)),
             Some((ScreenState::Working, "esc_cancel_working"))
+        );
+    }
+
+    /// gemini 0.65 提问表单（ask_user）。画面按 npm bundle 源码拼出（2026-11-12，未实拍）：
+    /// ToolConfirmationQueue 的绿框 StickyHeader 头行 `Answer Questions`，AskUserDialog 的
+    /// BaseSelectionList（`● 1.  选项`）与 DialogFooter（`Enter to select · ↑/↓ to navigate ·
+    /// Esc to cancel`）。修复前提示行的 `Esc to cancel` 让兜底规则判成运行中。
+    #[test]
+    fn gemini_065_ask_user_dialog_is_blocked() {
+        let s = snap(&[
+            "\u{280F} Waiting for user confirmation...",
+            "\u{256D}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{256E}",
+            "\u{2502} Answer Questions                                  \u{2502}",
+            "\u{2502}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2502}",
+            "\u{2502} Which database should we use?                     \u{2502}",
+            "\u{2502}                                                   \u{2502}",
+            "\u{2502} \u{25CF} 1.  PostgreSQL                                  \u{2502}",
+            "\u{2502}   2.  SQLite                                      \u{2502}",
+            "\u{2502}   3.  Enter a custom value                        \u{2502}",
+            "\u{2502}                                                   \u{2502}",
+            "\u{2502} Enter to select \u{00B7} \u{2191}/\u{2193} to navigate \u{00B7} Esc to cancel \u{2502}",
+            "\u{2570}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{256F}",
+        ]);
+        assert_eq!(
+            state_of(evaluate("gemini", &s)),
+            Some((ScreenState::Blocked, "ask_user_dialog"))
+        );
+        // 只剩头行（表单已答完、头行滚成残影）不算在等回答。
+        let stale = snap(&["\u{2502} Answer Questions   \u{2502}", "  plain output"]);
+        assert_ne!(
+            state_of(evaluate("gemini", &stale)).map(|(state, _)| state),
+            Some(ScreenState::Blocked)
+        );
+    }
+
+    /// gemini 0.65 沙箱扩权审批（ToolConfirmationMessage 的 sandbox_expansion 分支，源码取证
+    /// 2026-11-12）：问句 `To run [Shell], allow access to the following?` 在框内。
+    #[test]
+    fn gemini_065_sandbox_expansion_is_blocked() {
+        let s = snap(&[
+            "\u{2502} ? Shell  npm install                         \u{2502}",
+            "\u{2502} To run [Shell], allow access to the following? \u{2502}",
+            "\u{2502} \u{2022} Network: All Urls                        \u{2502}",
+            "\u{2502} \u{25CF} 1. Allow once                             \u{2502}",
+        ]);
+        assert_eq!(
+            state_of(evaluate("gemini", &s)),
+            Some((ScreenState::Blocked, "apply_or_allow_change"))
+        );
+        // 正文引用同一句（不在框里）不算。
+        let prose = snap(&["To run [Shell], allow access to the following?"]);
+        assert_eq!(
+            state_of(evaluate("gemini", &prose)),
+            Some((ScreenState::Idle, FALLBACK_RULE_ID))
         );
     }
 
@@ -1171,6 +1299,43 @@ mod tests {
             }
         }
         assert!(checked > 0, "应至少有一条规则用了正则");
+    }
+
+    /// kimi `/undo N` 的拒绝行：前端按插件声明的 reject_pattern（`i` 标志）逐行找，命中的整行
+    /// 原样转给用户，认不出就只报「未确认」。这里用产品里的那份正则（不是前端测试夹具）
+    /// 对 kimi 2.5.1 包内原文逐条核对（undo.ts 的 handleUndoCommand / formatUndoLimitMessage，
+    /// 2026-11-12 取证），旧版文案照认。放在这里是因为只有本 crate 依赖 regex。
+    #[test]
+    fn kimi_undo_reject_pattern_matches_251_wording() {
+        let pattern = meowo_agent::resolve(Some("kimi"))
+            .and_then(|plugin| plugin.undo_control())
+            .and_then(|control| control.reject_pattern)
+            .expect("kimi 声明了 /undo 拒绝规则");
+        let re = regex::RegexBuilder::new(pattern)
+            .case_insensitive(true)
+            .build()
+            .expect("拒绝规则可编译");
+        for line in [
+            // 2.5.1 新文案
+            "Cannot undo 3 prompts; only 1 can be undone in the active context.",
+            "Cannot undo 2 prompts; only 1 prompt can be undone in the active context after the last compaction.",
+            "Cannot undo 1 prompt; only 0 prompts can be undone in the active context.",
+            "Usage: /undo [count], where count is a positive integer.",
+            "No active session. Send a message to start one.",
+            "Cannot undo while streaming \u{2014} press Esc or Ctrl-C first.",
+            "Nothing to undo after the last compaction.",
+            "Loaded updates from another client. Review and run /undo again.",
+            "Failed to undo: session busy",
+            // 旧版文案
+            "Nothing to undo.",
+            "Cannot undo while streaming",
+        ] {
+            assert!(re.is_match(line), "应认出拒绝行：{line}");
+        }
+        // 普通正文里提到 undo 不能当成拒绝。
+        for line in ["Undid 1 prompt.", "我们可以 undo 一下吗", "cannot undo this, sorry"] {
+            assert!(!re.is_match(line), "不应当成拒绝：{line}");
+        }
     }
 
     /// 一次求值的开销必须远小于检测节拍（300ms），否则会话一多就会拖住 ticker 线程。

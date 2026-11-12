@@ -146,6 +146,13 @@ fn write_kimi_credentials_atomic(path: &std::path::Path, value: &Value) -> Resul
 ///
 /// 兜底：刷新失败（invalid_grant/网络错）→ 返回 None → 上层 usage 降级为 None；
 ///         不打印/日志 token 原文。
+///
+/// **刷新频率**（验收 #22，2026-11-12 核对）：只在 access_token 已过期或剩不到 60s 时刷新，
+/// 有效期内的轮询一律直接用现有 token。日志里每 15 分钟一次刷新是 token 本身的寿命
+/// （kimi 下发 `expires_in: 900`）——灵动岛每 5 分钟拉一次用量，三次里只有过期那一次刷新。
+/// kimi CLI 自己在用时，它在剩不到 `max(300, expires_in/2)` 秒（900 → 450s）时就先刷新并写回
+/// （kimi 2.5.1 包内 OAuthManager.shouldRefreshToken），Meowo 读到的总是有效 token，不会去刷。
+/// 只有 kimi 闲着、token 自然过期后，Meowo 才刷新，这时没有别的进程在用 refresh_token。
 fn ensure_valid_kimi_token(inst: &Installation, ports: &Ports) -> Option<String> {
     use std::sync::Mutex;
     // 串行化并发刷新：kimi refresh_token 单次使用后即失效，并发刷新会互相覆盖。
@@ -231,7 +238,11 @@ fn ensure_valid_kimi_token(inst: &Installation, ports: &Ports) -> Option<String>
             // invalid_client=client_id 不匹配（需按旧版适配）。
             let snippet: String = body.chars().take(200).collect();
             eprintln!("Meowo usage[kimi]: 刷新 token 返回 HTTP {code}，响应体：{snippet}");
-            return None;
+            // refresh_token 单次有效：同一时刻 kimi CLI 也在刷新时，服务端只认先到的一方。
+            // 输的若是 Meowo，kimi 已把新 token 写回文件——重读一次，换过了就直接用它
+            // （与 kimi 2.5.1 OAuthManager 被拒后重读存储的恢复逻辑同一做法）。
+            // 无论如何都不写文件：失败时动凭据只会把 kimi 刚写好的 token 冲掉。
+            return rotated_by_other(inst, &refresh_token);
         }
         Err(e) => {
             eprintln!("Meowo usage[kimi]: 刷新 token 网络错误：{e}");
@@ -271,6 +282,19 @@ fn ensure_valid_kimi_token(inst: &Installation, ports: &Ports) -> Option<String>
 
     eprintln!("Meowo usage[kimi]: token 刷新成功");
     Some(new_access.to_string())
+}
+
+/// 刷新被拒后重读凭据：refresh_token 已不是我们发出去的那个（别的进程刚轮换过），且新的
+/// access_token 仍有效，就用它。否则 None。只读不写。
+fn rotated_by_other(inst: &Installation, used_refresh_token: &str) -> Option<String> {
+    let creds = read_kimi_credentials(inst)?;
+    let refresh = creds.get("refresh_token").and_then(|v| v.as_str())?;
+    let access = creds.get("access_token").and_then(|v| v.as_str())?;
+    let expires_at = creds.get("expires_at").and_then(|v| v.as_i64()).unwrap_or(0);
+    if refresh == used_refresh_token || access.is_empty() || is_kimi_token_expired(expires_at, now_secs()) {
+        return None;
+    }
+    Some(access.to_string())
 }
 
 // ═══ 用量解析（纯函数） ═══
@@ -882,6 +906,125 @@ mod tests {
             "expires_at 必须是 now+86400（钳制后），实际 {expires_at}"
         );
 
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 记录每次刷新请求的假端点；`reject` 时模拟「refresh_token 已被 kimi CLI 抢先用掉」。
+    struct CountingRefresh {
+        calls: std::sync::atomic::AtomicU32,
+        reject: bool,
+        /// 刷新请求在途时 kimi CLI 写回的凭据（路径, 内容）：模拟两边同时刷新。
+        kimi_writes: Option<(std::path::PathBuf, String)>,
+    }
+    impl crate::ports::HttpPort for CountingRefresh {
+        fn send(&self, _req: &HttpRequest) -> Result<String, HttpError> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if let Some((path, body)) = &self.kimi_writes {
+                std::fs::write(path, body).unwrap();
+            }
+            if self.reject {
+                return Err(HttpError::Status(400, r#"{"error":"invalid_grant"}"#.to_string()));
+            }
+            Ok(r#"{"access_token":"meowo_access","refresh_token":"meowo_refresh","expires_in":900}"#
+                .to_string())
+        }
+        fn download(
+            &self,
+            _url: &str,
+            _dest: &std::path::Path,
+            _timeout: Duration,
+            _on_progress: &mut dyn FnMut(u64, Option<u64>),
+        ) -> Result<u64, HttpError> {
+            unreachable!("token 刷新不走下载")
+        }
+    }
+
+    fn kimi_profile(tag: &str) -> (std::path::PathBuf, Installation, std::path::PathBuf) {
+        let root = std::env::temp_dir().join(format!("meowo-kimi-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let inst = crate::by_id("kimi")
+            .unwrap()
+            .installation_for_profile(&root)
+            .expect("kimi 支持多账号");
+        let creds_path = inst.credentials_path().expect("kimi 变体有凭据路径");
+        std::fs::create_dir_all(creds_path.parent().unwrap()).unwrap();
+        (root, inst, creds_path)
+    }
+
+    /// 验收 #22：有效期内的轮询不刷新。本机凭据形制（2026-11-12，只看字段不看值）：
+    /// `expires_in: 900`，灵动岛每 5 分钟拉一次用量。还剩 2 分钟、刚刷过的 token 都直接用，
+    /// 一次刷新请求都不发、凭据文件不动；过期那一次才刷，刷完后的下一次轮询又直接用新 token。
+    #[test]
+    fn usage_polls_refresh_only_after_expiry() {
+        let (root, inst, creds_path) = kimi_profile("poll");
+        let http = CountingRefresh { calls: std::sync::atomic::AtomicU32::new(0), reject: false, kimi_writes: None };
+        let ports = Ports {
+            http: &http,
+            keychain: &crate::ports::NoKeychain,
+            local_cli: &crate::ports::NoLocalCli,
+        };
+        let valid = json!({"access_token":"kimi_access","refresh_token":"kimi_refresh",
+            "expires_at": now_secs() + 120, "expires_in": 900, "scope":"kimi-code", "token_type":"Bearer"});
+        std::fs::write(&creds_path, valid.to_string()).unwrap();
+        for _ in 0..3 {
+            assert_eq!(ensure_valid_kimi_token(&inst, &ports).as_deref(), Some("kimi_access"));
+        }
+        assert_eq!(http.calls.load(std::sync::atomic::Ordering::SeqCst), 0, "有效期内不该发刷新请求");
+        let untouched: Value =
+            serde_json::from_str(&std::fs::read_to_string(&creds_path).unwrap()).unwrap();
+        assert_eq!(untouched, valid, "有效期内不该写凭据文件");
+
+        // 过期：刷新一次并写回，其余字段原样保留。
+        let mut expired = valid.clone();
+        expired["expires_at"] = json!(now_secs() - 1);
+        std::fs::write(&creds_path, expired.to_string()).unwrap();
+        assert_eq!(ensure_valid_kimi_token(&inst, &ports).as_deref(), Some("meowo_access"));
+        assert_eq!(http.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        let written: Value =
+            serde_json::from_str(&std::fs::read_to_string(&creds_path).unwrap()).unwrap();
+        assert_eq!(written["refresh_token"], json!("meowo_refresh"));
+        assert_eq!(written["scope"], json!("kimi-code"));
+        // 接下来两次轮询（5、10 分钟后在真实节奏里）都用新 token，不再刷。
+        for _ in 0..2 {
+            assert_eq!(ensure_valid_kimi_token(&inst, &ports).as_deref(), Some("meowo_access"));
+        }
+        assert_eq!(http.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// kimi CLI 与 Meowo 同时刷新、Meowo 输了（服务端回 invalid_grant）：kimi 已把新 token
+    /// 写回，Meowo 重读后直接用它，且**绝不写文件**——写了就会把 kimi 刚换好的凭据冲掉。
+    /// 文件里还是我们发出去的那个 refresh_token（真失效）时返回 None，同样不写。
+    #[test]
+    fn refresh_rejected_reuses_token_rotated_by_kimi_and_never_writes() {
+        let (root, inst, creds_path) = kimi_profile("race");
+        let dead = json!({"access_token":"old","refresh_token":"old_refresh","expires_at":0,"expires_in":900});
+        let run = |kimi_writes: Option<String>| {
+            std::fs::write(&creds_path, dead.to_string()).unwrap();
+            let http = CountingRefresh {
+                calls: std::sync::atomic::AtomicU32::new(0),
+                reject: true,
+                kimi_writes: kimi_writes.map(|body| (creds_path.clone(), body)),
+            };
+            let ports = Ports {
+                http: &http,
+                keychain: &crate::ports::NoKeychain,
+                local_cli: &crate::ports::NoLocalCli,
+            };
+            let token = ensure_valid_kimi_token(&inst, &ports);
+            assert_eq!(http.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+            (token, std::fs::read_to_string(&creds_path).unwrap())
+        };
+        // 真失效：文件没被别人换过。返回 None，文件不动。
+        assert_eq!(run(None), (None, dead.to_string()));
+        // 请求在途时 kimi 抢先换好了：用 kimi 写回的 token，文件保持 kimi 写的样子。
+        let by_kimi = json!({"access_token":"kimi_new","refresh_token":"kimi_new_refresh",
+            "expires_at": now_secs() + 900, "expires_in": 900})
+        .to_string();
+        assert_eq!(run(Some(by_kimi.clone())), (Some("kimi_new".to_string()), by_kimi));
+        // kimi 写的是撤销墓碑（空 token，kimi 2.5.1 revokedTombstone）：不拿来用，也不覆盖。
+        let tombstone = json!({"access_token":"","refresh_token":"","expires_at":0,"expires_in":0}).to_string();
+        assert_eq!(run(Some(tombstone.clone())), (None, tombstone));
         let _ = std::fs::remove_dir_all(&root);
     }
 

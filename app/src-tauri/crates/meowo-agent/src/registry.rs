@@ -1227,6 +1227,11 @@ mod tests {
         let limit = by_id("gemini").unwrap().attention_patterns()[1];
         assert_eq!(limit.id, "gemini:usage-limit");
         assert_eq!(limit.details, crate::chat_ui::AttentionDetails::None);
+        // gemini 0.65 的 ask_user 提问表单走提问卡（框线表单文法），不是命令审批卡。
+        let question = by_id("gemini").unwrap().attention_patterns()[2];
+        assert_eq!(question.id, "gemini:question");
+        assert!(question.last);
+        assert_eq!(question.details, crate::chat_ui::AttentionDetails::FramedForm);
         // 运行中排队:opencode 的 Enter 即排队(QUEUED 标记)。
         assert_eq!(by_id("opencode").unwrap().queue_input(), Some("\r"));
         // gemini 空闲时 Tab 不提交，运行态又是推断：只能用两种状态都成立的回车。
