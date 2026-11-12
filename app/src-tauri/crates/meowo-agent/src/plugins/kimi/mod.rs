@@ -486,12 +486,17 @@ impl AgentPlugin for Kimi {
     /// `/undo N` 撤最近 N 轮（kimi.exe 包内 `src/tui/commands/undo.ts`：带参直接撤，不弹菜单；
     /// 只在空闲时可用）。撤回在 wire 里追加 `context.undo {count}`，解析层据此收回消息
     /// （见 telemetry 的 chat_line_mark）。拒绝文案同取自该文件。
+    ///
+    /// kimi 2.5.1 超出可撤范围改报 `Cannot undo 3 prompts; only 1 can be undone in the active
+    /// context.`（包内 formatUndoLimitMessage，压缩后再加 ` after the last compaction`），
+    /// 另有 `Usage: /undo [count]…`、`No active session…` 两种拒绝（2026-11-12 取证）。
+    /// 匹配到的整行原样转给用户，所以每种拒绝都要认，不然只报「未确认」。旧文案保留。
     fn undo_control(&self) -> Option<crate::chat_ui::UndoControl> {
         Some(crate::chat_ui::UndoControl {
             command: "/undo",
             count_arg: true,
             restores_files: false,
-            reject_pattern: Some(r"cannot undo while streaming|nothing to undo|failed to undo|run /undo again"),
+            reject_pattern: Some(UNDO_REJECT_PATTERN),
             input_clear: None,
             menu: None,
         })
@@ -752,6 +757,9 @@ fn with_off(mut entry: crate::ModelCatalogEntry, always_on: bool) -> crate::Mode
     }
     entry
 }
+
+/// `/undo` 的拒绝行（见 `undo_control` 注释的出处）。宿主按 `(?i)` 编译、逐行匹配。
+pub(crate) const UNDO_REJECT_PATTERN: &str = r"cannot undo while streaming|cannot undo \d+ prompts?;|nothing to undo|failed to undo|run /undo again|usage: /undo|no active session";
 
 #[cfg(test)]
 mod tests {
