@@ -206,6 +206,11 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     // 「更改」面板写操作：目录必须是会话目录或它的相关仓库。推送走后台任务（手机 RPC 等不了首推的
     // 几十秒），同步的 git_push 不放行。合并的「二次确认、CI 不全绿禁用」在界面上，后端合并前另外重判检查。
     "git_push_start",
+    // 推送被拒后的「拉取并重试」、提交缺身份时就地设置、放弃后撤销（2026-11-12 walkthrough P-1/P-5）：
+    // 手机上叫人去终端等于死路。收口同上面的写操作。
+    "git_pull_start",
+    "git_set_identity",
+    "git_discard_undo",
     "git_job_status",
     "git_forge_status",
     "gh_pr_create",
@@ -1111,6 +1116,27 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
                 return reply::<()>(Err(e));
             }
             reply(crate::forge::git_push_start(a.cwd).await)
+        }
+        "git_pull_start" => {
+            let a = args!(GitRepoArgs);
+            if let Err(e) = ensure_git_repo_dir(app, &a.cwd, a.session_cwd.as_deref()).await {
+                return reply::<()>(Err(e));
+            }
+            reply(crate::forge::git_pull_start(a.cwd).await)
+        }
+        "git_set_identity" => {
+            let a = args!(GitSetIdentityArgs);
+            if let Err(e) = ensure_git_repo_dir(app, &a.cwd, a.session_cwd.as_deref()).await {
+                return reply::<()>(Err(e));
+            }
+            reply(crate::forge::git_set_identity(a.cwd, a.name, a.email).await)
+        }
+        "git_discard_undo" => {
+            let a = args!(GitDiscardUndoArgs);
+            if let Err(e) = ensure_git_repo_dir(app, &a.cwd, a.session_cwd.as_deref()).await {
+                return reply::<()>(Err(e));
+            }
+            reply(crate::git::git_discard_undo(a.cwd, a.undo_id).await)
         }
         // 只认任务号（随机、只在本进程内有效），拿到的只是推送结果。
         "git_job_status" => {
@@ -2313,7 +2339,16 @@ mod tests {
             )
             .map(|_| ()),
             // api.ts（gitPushStart / gitJobStatus / getForgeStatus / ghPrCreate / ghPrMerge）
-            "git_push_start" => parse::<GitRepoArgs>(br#"{"cwd":"C:/work-wt","sessionCwd":"C:/work"}"#).map(|_| ()),
+            "git_push_start" | "git_pull_start" => parse::<GitRepoArgs>(br#"{"cwd":"C:/work-wt","sessionCwd":"C:/work"}"#).map(|_| ()),
+            // api.ts（gitSetIdentity / gitDiscardUndo）
+            "git_set_identity" => parse::<GitSetIdentityArgs>(
+                br#"{"cwd":"C:/work-wt","name":"Ada","email":"ada@example.com","sessionCwd":"C:/work"}"#,
+            )
+            .map(|_| ()),
+            "git_discard_undo" => parse::<GitDiscardUndoArgs>(
+                br#"{"cwd":"C:/work-wt","undoId":"discard-1a2b-0","sessionCwd":"C:/work"}"#,
+            )
+            .map(|_| ()),
             "git_job_status" => parse::<GitJobStatusArgs>(br#"{"jobId":"push-1a2b-0"}"#).map(|_| ()),
             "git_forge_status" => parse::<GitForgeStatusArgs>(
                 br#"{"cwd":"C:/work-wt","force":true,"sessionCwd":"C:/work"}"#,

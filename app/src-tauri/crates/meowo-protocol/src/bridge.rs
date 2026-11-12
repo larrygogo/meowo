@@ -172,6 +172,23 @@ bridged_args!(GitRepoArgs {
 
 bridged_args!(GitJobStatusArgs { job_id: String });
 
+// 撤销一次放弃（walkthrough P-5）：undoId 是 git_discard 的返回值，只在桌面端进程内有效。
+bridged_args!(GitDiscardUndoArgs {
+    cwd: String,
+    undo_id: String,
+    #[serde(default)]
+    session_cwd: Option<String>
+});
+
+// 提交 / 合并报 git/identity 时就地填名字和邮箱（walkthrough P-1），写全局 git 配置。
+bridged_args!(GitSetIdentityArgs {
+    cwd: String,
+    name: String,
+    email: String,
+    #[serde(default)]
+    session_cwd: Option<String>
+});
+
 bridged_args!(GitForgeStatusArgs {
     cwd: String,
     #[serde(default)]

@@ -54,6 +54,8 @@ import type { GitForgeStatusArgs } from "./generated/contracts/bridge/GitForgeSt
 import type { GitJobStatusArgs } from "./generated/contracts/bridge/GitJobStatusArgs";
 import type { GitPathsArgs } from "./generated/contracts/bridge/GitPathsArgs";
 import type { GitRepoArgs } from "./generated/contracts/bridge/GitRepoArgs";
+import type { GitDiscardUndoArgs } from "./generated/contracts/bridge/GitDiscardUndoArgs";
+import type { GitSetIdentityArgs } from "./generated/contracts/bridge/GitSetIdentityArgs";
 import type { HideWorkspaceArgs } from "./generated/contracts/bridge/HideWorkspaceArgs";
 import type { LeadTaskSnapshotArgs } from "./generated/contracts/bridge/LeadTaskSnapshotArgs";
 import type { ListSubdirectoriesArgs } from "./generated/contracts/bridge/ListSubdirectoriesArgs";
@@ -100,6 +102,7 @@ import type { ForgeStatusDto } from "./generated/contracts/ForgeStatusDto";
 import type { GitJobDto } from "./generated/contracts/GitJobDto";
 import type { MergeResultDto } from "./generated/contracts/MergeResultDto";
 import type { PushResultDto } from "./generated/contracts/PushResultDto";
+import type { PullResultDto } from "./generated/contracts/PullResultDto";
 import type { GitFileDiffDto } from "./generated/contracts/GitFileDiffDto";
 import type { RepoChangesDto } from "./generated/contracts/RepoChangesDto";
 import type { DirEntryDto } from "./generated/contracts/DirEntryDto";
@@ -762,9 +765,18 @@ export function gitStage(cwd: string, paths: readonly string[], sessionCwd?: str
 export function gitUnstage(cwd: string, paths: readonly string[], sessionCwd?: string | null): Promise<void> {
   return invoke("git_unstage", { cwd, paths, ...withSession(sessionCwd) } satisfies GitPathsArgs);
 }
-/// 放弃工作区改动：已跟踪的恢复到暂存区内容，未跟踪的删除。调用方负责先确认。
-export function gitDiscard(cwd: string, paths: readonly string[], sessionCwd?: string | null): Promise<void> {
-  return invoke("git_discard", { cwd, paths, ...withSession(sessionCwd) } satisfies GitPathsArgs);
+/// 放弃工作区改动：已跟踪的恢复到暂存区内容，未跟踪的移进回收站。调用方负责先确认。
+/// 返回撤销号（有已跟踪文件被放弃时；旧后端恒为 null），交给 gitDiscardUndo 写回放弃前的内容（walkthrough P-5）。
+export async function gitDiscard(cwd: string, paths: readonly string[], sessionCwd?: string | null): Promise<string | null> {
+  const id = await invoke<string | null | undefined>("git_discard", { cwd, paths, ...withSession(sessionCwd) } satisfies GitPathsArgs);
+  return typeof id === "string" ? id : null;
+}
+export function gitDiscardUndo(cwd: string, undoId: string, sessionCwd?: string | null): Promise<void> {
+  return invoke("git_discard_undo", { cwd, undoId, ...withSession(sessionCwd) } satisfies GitDiscardUndoArgs);
+}
+/// 提交 / 合并报 git/identity 时就地设置（写全局 git 配置，forge.rs set_identity_with）。
+export function gitSetIdentity(cwd: string, name: string, email: string, sessionCwd?: string | null): Promise<void> {
+  return invoke("git_set_identity", { cwd, name, email, ...withSession(sessionCwd) } satisfies GitSetIdentityArgs);
 }
 /// 折叠的未跟踪目录（path 以 / 结尾，见 GitChangedFileDto.untrackedFiles）里的文件：点开时才拉，不进 5 秒轮询。
 export function getUntrackedDirFiles(cwd: string, path: string, sessionCwd?: string | null): Promise<GitChangedFileDto[]> {
@@ -800,6 +812,17 @@ export async function gitPush(cwd: string, sessionCwd?: string | null, sleep: (m
   }
   throw "git/push_timeout";
 }
+/// 推送被拒后的「拉取并重试」：拉推送目标那条分支接到本地（forge.rs pull_with，有冲突不合并）。等法同 gitPush。
+export async function gitPull(cwd: string, sessionCwd?: string | null, sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms))): Promise<PullResultDto> {
+  const jobId = await invoke<string>("git_pull_start", { cwd, ...withSession(sessionCwd) } satisfies GitRepoArgs);
+  for (let waited = 0; waited < 130_000; waited += 1000) {
+    const job = await gitJobStatus(jobId);
+    if (job.state === "ok" && job.pull) return job.pull;
+    if (job.state === "failed") throw job.error ?? "git/pull_failed";
+    await sleep(1000);
+  }
+  throw "git/pull_timeout";
+}
 /// force：窗口重新聚焦 / 手动刷新，跳过后端 60s 缓存（后端最短仍隔 10s）。
 export function getForgeStatus(cwd: string, force: boolean, sessionCwd?: string | null): Promise<ForgeStatusDto> {
   return invoke("git_forge_status", { cwd, force, ...withSession(sessionCwd) } satisfies GitForgeStatusArgs);
@@ -816,7 +839,7 @@ export function ghPrMerge(cwd: string, number: number, method: string, expectedH
 export function forgeChooseRepo(cwd: string, remote: string, sessionCwd?: string | null): Promise<void> {
   return invoke("forge_choose_repo", { cwd, remote, ...withSession(sessionCwd) } satisfies ForgeChooseRepoArgs);
 }
-export type { ForgeStatusDto, GitJobDto, MergeResultDto, PushResultDto };
+export type { ForgeStatusDto, GitJobDto, MergeResultDto, PullResultDto, PushResultDto };
 
 /** 「文件」页签：列出 cwd 下 rel 目录的直接子条目（目录在前，后端已排序并跳过 .git）。 */
 export function listDirEntries(cwd: string, rel: string): Promise<DirEntryDto[]> {
