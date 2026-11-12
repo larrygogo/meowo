@@ -6,7 +6,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { managedTerminalScreen, writeManagedTerminal, type ChatItem, type ChatUi } from "../../api";
-import { outgoingStore, type OutgoingPrompt, type PromptAck } from "./outgoingPrompts";
+import { ECHO_CONFIRM_MS, outgoingStore, type OutgoingPrompt, type PromptAck } from "./outgoingPrompts";
 import { composerDraftText } from "./terminalSubmit";
 import { undoneInputRows } from "./undoTerminal";
 
@@ -50,7 +50,10 @@ export function useOutgoingUpkeep({ sessionId, outgoing, loading, items, acks, l
     const clear = chatUi?.undo?.input_clear;
     if (!stash && !clear) return;
     for (const echo of outgoing) {
-      if (echo.kind !== "echo" || echo.phase !== "uncertain" || echo.attachmentOnly || probedRef.current.has(echo.id)) continue;
+      // 超时仍是 pending 的只有「窗口看不见」那一种（reconcileOutgoing 不判未确认）：同样读一次画面，
+      // 卡在输入框里就转未确认并给「提交」（做空第一轮 #5，2026-11-12）。
+      const overdue = echo.phase === "pending" && Date.now() - echo.at > ECHO_CONFIRM_MS;
+      if (echo.kind !== "echo" || (echo.phase !== "uncertain" && !overdue) || echo.attachmentOnly || probedRef.current.has(echo.id)) continue;
       probedRef.current.add(echo.id);
       const sid = sessionId;
       void managedTerminalScreen(sid).catch(() => null).then((screen) => {
@@ -59,12 +62,15 @@ export function useOutgoingUpkeep({ sessionId, outgoing, loading, items, acks, l
         const held = stash
           ? (composerDraftText(screen, stash) ?? "").startsWith(head)
           : clear != null && (undoneInputRows(screen, clear, echo.text) ?? 0) > 0;
-        if (held) setStuck((prev) => new Set(prev).add(echo.id));
+        if (!held) return;
+        setStuck((prev) => new Set(prev).add(echo.id));
+        if (overdue) outgoingStore.settle(echo.id, { phase: "uncertain" });
       });
     }
-    // isActive 是读 ref 的稳定判断，不进依赖。
+    // isActive 是读 ref 的稳定判断，不进依赖。tick 进依赖：看不见的 pending 超时时 outgoing 不变，
+    // 只有每秒的计时能让这里看到它过期。
     // eslint-disable-next-line react-hooks/exhaustive-deps -- isActive 读 ref，是稳定判断
-  }, [outgoing, chatUi, sessionId]);
+  }, [outgoing, chatUi, sessionId, tick]);
 
   /// 「提交」：替用户在 CLI 输入框里按一次回车，回显转回「已写入」重新计时等落盘。
   const submit = (id: number) => {

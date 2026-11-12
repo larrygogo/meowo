@@ -41,6 +41,23 @@ describe("useOutgoingUpkeep：未确认送达时读终端画面", () => {
     expect(result.current.stuck.has(id)).toBe(false);
   });
 
+  /// 做空第一轮 #5（2026-11-12）：窗口看不见这句时对账不判未确认，回显停在 pending；超时后照样读一次
+  /// 画面，卡在输入框里就转未确认并给「提交」，否则这句会静默挂着没人发现。
+  it("超时仍是 pending（窗口看不见）也读画面，卡住就转未确认", async () => {
+    api.managedTerminalScreen.mockResolvedValue(["● 上一轮的回复", "─────────", "❯ 请把 README 改成英文", "─────────"]);
+    const id = outgoingStore.add(7, { kind: "echo", text: "请把 README 改成英文", attachmentOnly: false, anchor: anchorFrom([], null), at: 0 });
+    const { result } = mount([{ ...echo(id, "请把 README 改成英文"), phase: "pending" }]);
+    await waitFor(() => expect(result.current.stuck.has(id)).toBe(true));
+    expect(outgoingStore.get(7)[0].phase).toBe("uncertain");
+  });
+
+  it("没超时的 pending 不读画面", async () => {
+    const { result } = mount([{ ...echo(5, "刚发的"), phase: "pending", at: Date.now() }]);
+    await act(async () => {});
+    expect(api.managedTerminalScreen).not.toHaveBeenCalled();
+    expect(result.current.stuck.size).toBe(0);
+  });
+
   it("输入框是空的、或插件认不出输入框，都不算卡住", async () => {
     api.managedTerminalScreen.mockResolvedValue(["● 回复", "─────────", "❯ ", "─────────"]);
     const { result } = mount([echo(3, "帮我看看这个报错")]);

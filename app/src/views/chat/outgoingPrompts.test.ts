@@ -223,9 +223,32 @@ describe("送达对账：历次实拍回归", () => {
     const before = [stamped(user("u0", "继续"), "2026-11-01T08:00:00Z"), stamped(reply("a0"), "2026-11-01T08:00:01Z")];
     const list = [prompt("echo", "修一下这个", before, { at: 0 })];
     const page = Array.from({ length: 200 }, (_, i) => stamped(reply(`w${i}`), new Date(Date.UTC(2026, 10, 1, 8, 1, 0) + i * 1_000).toISOString()));
-    expect(reconcileOutgoing(list, ev(page, ECHO_CONFIRM_MS * 2))).toEqual([]);
+    // 看不见只是不判未确认：停在 pending（不挂提示），不当送达收起（做空第一轮 #5，2026-11-12）。
+    expect(reconcileOutgoing(list, ev(page, ECHO_CONFIRM_MS * 2))).toBe(list);
+    // hook 记下了这句（CLI 收下了）：有送达证据，看不见就收起。
+    const hooked = reconcileOutgoing(list, ev(page, ECHO_CONFIRM_MS * 2, { lastUserText: "修一下这个" }));
+    expect(hooked).toMatchObject([{ phase: "received" }]);
+    expect(reconcileOutgoing(hooked, ev(page, ECHO_CONFIRM_MS * 3))).toEqual([]);
     // 对照：窗口还包着发送前的记录、却没有这条话，照旧转未确认（真没送达的情形）。
     expect(reconcileOutgoing(list, ev(before, ECHO_CONFIRM_MS * 2))).toMatchObject([{ phase: "uncertain" }]);
+  });
+
+  /// 做空第一轮 #5（2026-11-12，复现 redteam1/outgoing.rt.test.tsx）：agent 还在跑上一回合，窗口里
+  /// 全是发送之后的 assistant 记录，没有任何用户消息，这句其实卡在 CLI 输入框没提交。
+  /// 修前 echo/queued 的 pending、uncertain 四种组合一律当送达收起（=> []）。
+  it("做空 #5 窗口全在发送之后、没有匹配的用户消息：pending/uncertain 不当送达收起", () => {
+    const before = [stamped(user("u0", "上一句"), "2026-11-12T10:00:00Z")];
+    const page = [1, 2, 3].map((i) => stamped(reply(`b${i}`), `2026-11-12T10:00:0${i}Z`));
+    for (const kind of ["echo", "queued"] as const) {
+      for (const phase of ["pending", "uncertain"] as const) {
+        const list = [prompt(kind, "请把 README 改成英文", before, { at: 0, phase })];
+        expect(reconcileOutgoing(list, ev(page, ECHO_CONFIRM_MS * 2))).toBe(list);
+      }
+    }
+    // 之后真有新的用户消息落盘：这条的去向被后续事实盖过，照旧收起（看不见的 pending 不会自己超时）。
+    const list = [prompt("echo", "请把 README 改成英文", before, { at: 0 })];
+    const later = [...page, stamped(user("u9", "另一句"), "2026-11-12T10:00:09Z")];
+    expect(reconcileOutgoing(list, ev(later, ECHO_CONFIRM_MS * 2))).toEqual([]);
   });
 
   /// 11-09 08:27（新建会话「侧边栏与变更列表滚动」）：带三张图的第一句话，CLI 落盘成
