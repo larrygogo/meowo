@@ -124,6 +124,12 @@ export const QA_SHOTS = [
   // ── 其余状态维度：超宽、英文、键盘焦点 ──
   { name: "qa-flow-2560", scene: "flow-states", size: [2560, 1440] },
   { name: "qa-lead-2560", scene: "flow-lead", size: [2560, 1440], sel: ".lead-gate-card", themes: ["light"] },
+  // 对话区顶部横幅在超宽窗里要跟消息列走（界面打磨第二轮 chat-5 / windows-5：setup 条原来按整块内容面撑开，
+  // 2560 宽时横贯两千像素，当时没有对应截图，是按规则推算的）。
+  { name: "qa-wt-running-2560", scene: "flow-wt-running", size: [2560, 1440], sel: ".wt-setup" },
+  { name: "qa-sync-2560", scene: "flow-sync", size: [2560, 1440], sel: ".chat-sync-warn", steps: [["tick", 9000]] },
+  // 英文审批卡带「允许并记住」的窄窗：一行放不下时掉行的该是左边的旁支，主按钮和「拒绝」不分开（chat-3）。
+  { name: "qa-broker-620", scene: "flow-broker", size: W620, sel: ".chat-approval-actions", langs: ["zh", "en"] },
   { name: "qa-flow-en", scene: "flow-states", langs: ["en"] },
   { name: "qa-flow-ui150", scene: "flow-states", params: "ui=1.5" },
   { name: "qa-question-ui150", scene: "flow-question", params: "ui=1.5", size: W620 },

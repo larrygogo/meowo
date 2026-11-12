@@ -6916,7 +6916,9 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 
 /* 同步中断的顶部细横幅：正文继续渲染缓存内容，只在上缘提示（整屏错误留给空列表）。
    基座同样取不透明 rgb(--cc-bg-rgb)——--cc-bg 带窗口不透明度，sticky 浮层会被穿透。 */
-.chat-sync-warn { position: sticky; top: 0; z-index: var(--z-sticky); margin: 0 var(--sp-14) var(--sp-8); padding: var(--sp-6) var(--sp-12); border: 0; border-radius: var(--radius-md); background: color-mix(in srgb, var(--cc-warn-vivid) 14%, var(--cc-bg)); color: var(--cc-warn-text); font-size: var(--text-xs); text-align: center; }
+/* 左右不再另加外边距：它在 .chat-scroll 里面，滚动区的左右留白已经是消息列（实拍多缩进 14，
+   横幅 x 290–982 而消息列 276–995）。 */
+.chat-sync-warn { position: sticky; top: 0; z-index: var(--z-sticky); margin: 0 0 var(--sp-8); padding: var(--sp-6) var(--sp-12); border: 0; border-radius: var(--radius-md); background: color-mix(in srgb, var(--cc-warn-vivid) 14%, var(--cc-bg)); color: var(--cc-warn-text); font-size: var(--text-xs); text-align: center; }
 /* 「同步中断」（C-18，轮询 IPC 连续失败）：比瞬时抖动的琥珀警告更重一档——通道断了，
    不是 agent 进程没了（那是状态徽标「已断开」的事），两者视觉也不共用。 */
 .chat-sync-warn.is-lost { background: color-mix(in srgb, var(--cc-err-vivid) 14%, var(--cc-bg)); color: var(--cc-fail-text); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cc-err-vivid) 70%, transparent); }
@@ -7830,7 +7832,11 @@ pre.chat-md-plain {
 .wt-opt-warn { display: flex; align-items: center; gap: var(--sp-8); flex-wrap: wrap; color: var(--cc-warn-text); }
 .wt-opt-btn { height: var(--btn-h-sm); padding: 0 var(--sp-8); border: var(--hairline) solid; border-radius: var(--radius-sm); font: inherit; font-size: var(--text-xs); cursor: pointer; white-space: nowrap; }
 .wt-opt-btn:disabled { opacity: .5; cursor: default; }
-.wt-setup { margin: 0 var(--sp-14) var(--sp-6); padding: var(--sp-8) var(--sp-12); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); font-size: var(--text-xs); color: var(--cc-text-dim); }
+/* 跟消息列走：它在 .chat-scroll 外面，左右外边距照抄滚动区的留白算式。原来是固定 14px，
+   1280 宽时比消息列左右各凸出 22（254–1018 对 276–995），窗口越宽越长，2560 宽时横贯两千像素。
+   内边距 16 与列内各卡片同一条内容线。 */
+.wt-setup { margin: 0 max(34px, calc((100% - var(--chat-col)) / 2)) var(--sp-6); padding: var(--sp-8) var(--sp-16); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); font-size: var(--text-xs); color: var(--cc-text-dim); }
+@media (max-width: 680px) { .wt-setup { margin-left: max(12px, env(safe-area-inset-left, 0px)); margin-right: max(12px, env(safe-area-inset-right, 0px)); } }
 .wt-setup.is-err { border-color: color-mix(in srgb, var(--cc-err-vivid) 70%, transparent); }
 .wt-setup.is-warn { border-color: color-mix(in srgb, var(--cc-warn-vivid) 70%, transparent); }
 .wt-setup-row { display: flex; align-items: center; gap: var(--sp-8); flex-wrap: wrap; }
