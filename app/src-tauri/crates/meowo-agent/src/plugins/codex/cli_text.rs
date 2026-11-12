@@ -54,6 +54,16 @@ pub(super) static DEPS: &[D] = &[
         r#"{"type":"session_meta","payload":{"history_mode":"paginated","history_base":"019a"}}"#,
         "0.163+ 回溯续写段的 session_meta（lineage.rs 拼接）；0.166.0 codex.exe 6 处",
     ),
+    // 记录查看页底栏：三段说明在 pager_overlay.rs 的常量里紧挨着存（`to scrollto pageto jump`），按三段
+    // 近邻查。` to page` 单搜是泛词（`Failed to page read-only thread history`），永远「找到」（做空第一轮
+    // #7）。规则本身要求每段连着按键字形（#9），样例按 codex.exe 的按键显示表拼出，非实拍。
+    D::near(
+        "screen:transcript_viewer",
+        &["to scroll", "to page", "to jump"],
+        48,
+        "\u{2191}/\u{2193} to scroll   pgup/pgdn to page   home/end to jump",
+        "0.166.0 codex.exe：三段紧挨 `tui\\src\\pager_overlay.rs`，相距 16 字节；按键名 pgup/pgdn 是内联常量",
+    ),
     // ── 自动抽取的字面量：旧版兼容 ──
     D::new(
         "literal:do you trust the files in this folder",
@@ -85,29 +95,6 @@ pub(super) static DEPS: &[D] = &[
     D::new("literal:allow command?", "allow command?", "Allow command?", "0.16x 之前审批框标题；0.166.0 里 0 处").legacy(),
     D::new("literal:yes (y)", "yes (y)", "Yes (y)", "早期审批选项写法（herdr 弱规则）；0.166.0 里 0 处").legacy(),
     // ── 自动抽取的字面量：运行时拼接，给能搜到的那一段 ──
-    // 记录查看页底栏三段在 pager_overlay.rs 的常量里紧挨着存（`to scrollto pageto jump`）。` to page` 单搜
-    // 是泛词（`Failed to page read-only thread history`），永远「找到」；改为三段近邻（做空第一轮 #7）。
-    D::near(
-        "literal: to scroll",
-        &["to scroll", "to page", "to jump"],
-        48,
-        "↑/↓ to scroll   pgup/pgdn to page   home/end to jump",
-        "0.166.0 codex.exe：三段紧挨 `tui\\src\\pager_overlay.rs`，相距 16 字节",
-    ),
-    D::near(
-        "literal: to page",
-        &["to scroll", "to page", "to jump"],
-        48,
-        "↑/↓ to scroll   pgup/pgdn to page   home/end to jump",
-        "同 to scroll；` to page` 单搜在 codex.exe 有 3 处，其中 2 处与记录查看页无关",
-    ),
-    D::near(
-        "literal: to jump",
-        &["to scroll", "to page", "to jump"],
-        48,
-        "↑/↓ to scroll   pgup/pgdn to page   home/end to jump",
-        "同 to scroll",
-    ),
     D::new(
         "literal:enter to submit answer",
         "submit answer",

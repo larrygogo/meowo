@@ -848,6 +848,39 @@ mod tests {
         ));
     }
 
+    /// 做空第一轮 #9（2026-11-12）：正文里同时出现 to scroll / to page / to jump（agent 在讲分页器、
+    /// 用户贴的 README），状态行还在 Working。修前三段子串同屏就判记录查看页并 hold，运行中被冻住。
+    /// 底栏样本按 0.166.0 codex.exe 的按键显示表与 pager_overlay 三段说明拼出（非实拍）。
+    #[test]
+    fn codex_prose_mentioning_pager_hints_is_not_transcript_viewer() {
+        let prose = snap(&[
+            "  The pager supports arrow keys to scroll, PgUp to page and Home to jump.",
+            "  Scroll down to page two; swipe to jump; drag to scroll.",
+            " \u{2022} Working (3m 12s \u{00B7} esc to interrupt)",
+        ]);
+        assert_eq!(
+            state_of(evaluate("codex", &prose)),
+            Some((ScreenState::Working, "screen_working_fallback"))
+        );
+        // 只有说明、没有按键字形的残片也不算。
+        let fragments = snap(&["  scroll  to scroll   to page   to jump"]);
+        assert!(!matches!(
+            evaluate("codex", &fragments),
+            Some(Evaluation::Hold { .. })
+        ));
+        // 窄窗把底栏折成三行，各段仍带按键：照样认。
+        let wrapped = snap(&[
+            "  user: run the tests",
+            "  \u{2191}/\u{2193} to scroll",
+            "  pgup/pgdn to page",
+            "  home/end to jump",
+        ]);
+        assert!(matches!(
+            evaluate("codex", &wrapped),
+            Some(Evaluation::Hold { rule_id: "transcript_viewer" })
+        ));
+    }
+
     #[test]
     fn codex_working_status_line_is_working() {
         let s = snap(&[

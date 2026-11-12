@@ -1100,113 +1100,74 @@
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:42"
         },
         {
-          "legacy": false,
-          "max_gap": 48,
-          "needle": "",
-          "note": "0.166.0 codex.exe：三段紧挨 `tui\\src\\pager_overlay.rs`，相距 16 字节",
-          "parts": [
-            "to scroll",
-            "to page",
-            "to jump"
-          ],
-          "rule": "literal: to scroll",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:48"
-        },
-        {
-          "legacy": false,
-          "max_gap": 48,
-          "needle": "",
-          "note": "同 to scroll；` to page` 单搜在 codex.exe 有 3 处，其中 2 处与记录查看页无关",
-          "parts": [
-            "to scroll",
-            "to page",
-            "to jump"
-          ],
-          "rule": "literal: to page",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:48"
-        },
-        {
-          "legacy": false,
-          "max_gap": 48,
-          "needle": "",
-          "note": "同 to scroll",
-          "parts": [
-            "to scroll",
-            "to page",
-            "to jump"
-          ],
-          "rule": "literal: to jump",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:48"
-        },
-        {
           "legacy": true,
           "needle": "press enter to confirm or esc to cancel",
           "note": "0.16x 之前审批框整句（herdr codex.toml）；0.166.0 改为按键分段拼出",
           "rule": "literal:press enter to confirm or esc to cancel",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:60"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:68"
         },
         {
           "legacy": false,
           "needle": "submit answer",
           "note": "0.166.0 提问表单底栏是按键 + `to submit answer`；程序文件里 `submit answer` 1 处",
           "rule": "literal:enter to submit answer",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:61"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:69"
         },
         {
           "legacy": false,
           "needle": "submit all",
           "note": "0.166.0 提问表单底栏是按键 + `to submit all`；程序文件里 `submit all` 1 处",
           "rule": "literal:enter to submit all",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:62"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:70"
         },
         {
           "legacy": true,
           "needle": "allow command?",
           "note": "0.16x 之前审批框标题；0.166.0 里 0 处",
           "rule": "literal:allow command?",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:63"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:71"
         },
         {
           "legacy": false,
           "needle": "no, and tell codex what to do differently",
           "note": "",
           "rule": "literal:no, and tell codex what to do differently",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:70"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:78"
         },
         {
           "legacy": false,
           "needle": "[y/n]",
           "note": "",
           "rule": "literal:[y/n]",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:85"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:93"
         },
         {
           "legacy": true,
           "needle": "yes (y)",
           "note": "早期审批选项写法（herdr 弱规则）；0.166.0 里 0 处",
           "rule": "literal:yes (y)",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:86"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:94"
         },
         {
           "legacy": false,
           "needle": "do you want to",
           "note": "",
           "rule": "literal:do you want to",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:88"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:96"
         },
         {
           "legacy": false,
           "needle": "would you like to",
           "note": "",
           "rule": "literal:would you like to",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:92"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:100"
         },
         {
           "legacy": false,
           "needle": "■ conversation interrupted",
           "note": "",
           "rule": "literal:■ conversation interrupted",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:111"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:119"
         },
         {
           "legacy": false,
@@ -1220,14 +1181,14 @@
           "needle": " to confirm",
           "note": "0.166.0 codex.exe：` to confirm` 14 处、` to cancel` 7 处，审批框底栏是按键 + 这两段拼出（research-cli-drift X7）",
           "rule": "screen:live_strong_blocker",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:53"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:61"
         },
         {
           "legacy": false,
           "needle": "to interrupt)",
           "note": "0.166.0 codex.exe：` to interrupt)` 1 处（紧挨 `fast_mode` 与 ` • ` 分隔符）；`working (` 0 处，运行时拼。状态行没有 0.166 实拍",
           "rule": "screen:screen_working_fallback",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:99"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:107"
         },
         {
           "legacy": false,
@@ -1256,6 +1217,19 @@
           "note": "0.163+ 回溯续写段的 session_meta（lineage.rs 拼接）；0.166.0 codex.exe 6 处",
           "rule": "record:history_base",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/lineage.rs:26"
+        },
+        {
+          "legacy": false,
+          "max_gap": 48,
+          "needle": "",
+          "note": "0.166.0 codex.exe：三段紧挨 `tui\\src\\pager_overlay.rs`，相距 16 字节；按键名 pgup/pgdn 是内联常量",
+          "parts": [
+            "to scroll",
+            "to page",
+            "to jump"
+          ],
+          "rule": "screen:transcript_viewer",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:29"
         }
       ],
       "id": "codex",
