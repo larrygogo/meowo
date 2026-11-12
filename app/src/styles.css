@@ -2221,8 +2221,8 @@ button.stab {
 .row-icon { flex: none; }
 .row-text { flex: 1; min-width: 0; }
 /* 下限写在 flex-basis 上而不是 min-width：basis 决定「这一行放不放得下」，放不下就折行；
-   折行后说明列独占一行，仍可缩到比 200 窄（min-width: 0），不会把卡片撑出横向滚动。 */
-.row > .row-text { flex: 1 1 200px; }
+   折行后说明列独占一行，仍可缩到比 140 窄（min-width: 0），不会把卡片撑出横向滚动。 */
+.row > .row-text { flex: 1 1 140px; }
 /* 只有一句标签、没有说明的行（扩展页的 MCP 行、子开关行）没有要保住的说明宽度：按标签自己的宽度算，
    否则「playwright」这样十个字母的标签也会把右侧的标签组挤到第二行。 */
 .row > .row-text:not(:has(.row-desc)) { flex-basis: auto; }
