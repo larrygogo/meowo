@@ -30,6 +30,12 @@ export const QA_SHOTS = [
   { name: "qa-panel-max-2560", scene: "panel-changes", params: "max=1", size: [2560, 1440], sel: ".scm-row" },
   { name: "qa-diff-max-2560", scene: "panel-diff", params: "max=1", size: [2560, 1440], sel: ".chat-diff-code" },
   { name: "qa-files-max-2560", scene: "panel-files", params: "max=1", size: [2560, 1440], sel: ".chat-diff-panel" },
+  // Markdown 预览最大化：正文封顶居中，头行（返回 / 文件名 / 预览·源码 / 打开）要跟着同一列走。
+  { name: "qa-md-max-2560", scene: "flow-md", params: "max=1", size: [2560, 1440], sel: ".chat-diff-mdview", steps: [["click", ".chat-diff-tree-file:has-text('README.md')"]] },
+  { name: "qa-md-max", scene: "flow-md", params: "max=1", sel: ".chat-diff-mdview", steps: [["click", ".chat-diff-tree-file:has-text('README.md')"]] },
+  // 「更改」的树状视图、缩放 150% 下的「文件」页签：行高与图标列要跟着缩放和层级走。
+  { name: "qa-panel-tree", scene: "panel-changes", sel: ".scm-row.is-dir", steps: [["click", ".scm-tools .chat-diff-layout button >> nth=1"]] },
+  { name: "qa-files-ui150", scene: "panel-files", params: "ui=1.5", sel: ".chat-diff-tree-file" },
   // ── 对话流里靠后端状态出现的东西（harness 见 qaFlow.ts）──
   { name: "qa-lead", scene: "flow-lead", sel: ".lead-gate-card", langs: ["zh", "en"] },
   { name: "qa-lead-open", scene: "flow-lead", sel: ".lead-gate-card", steps: [["click", ".lead-gate-more"], ["click", ".lead-gate-option >> nth=1"]] },
@@ -91,6 +97,9 @@ export const QA_SHOTS = [
   { name: "qa-browser-blank", scene: "flow-browser-blank", sel: ".browser-pane" },
   { name: "qa-shell", scene: "flow-shell", sel: ".shell-term" },
   // ── 托管终端页签 ──
+  // 浅色那张和深色那张除 DEV 角标外逐像素相同，这是产品定的：终端页签整窗恒为深色（styles.css
+  // 「终端视图强制深色」，xterm 底色写死深底，浅色主题下只变终端那一块会割裂）。浅色图留着当回归：
+  // 哪天有浅色规则漏进终端页签，两张图就会出现差异。
   { name: "qa-term", scene: "flow-term", sel: ".managed-terminal", steps: [["click", ".chat-terminal-toggle"], ["tick", 800]] },
   { name: "qa-term-search", scene: "flow-term", sel: ".term-search", steps: [["click", ".chat-terminal-toggle"], ["tick", 800], ["key", "Control+f"], ["type", ".term-search input", "Read"]] },
   { name: "qa-term-link", scene: "flow-term", sel: ".managed-terminal", steps: [["click", ".chat-terminal-toggle"], ["tick", 800], ["hover", ".managed-terminal .xterm-screen", { position: { x: 520, y: 118 } }], ["tick", 300]] },

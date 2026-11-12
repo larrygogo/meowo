@@ -19,6 +19,14 @@ afterEach(() => {
 const pane = (over: Partial<BrowserPaneInfo> = {}): BrowserPaneInfo => ({ id: 5, owner: 1, url: "http://localhost:5173/", title: "", loading: false, agentActive: false, agentPaused: false, zoom: 1, downloads: [], permission: null, blocked: null, ...over });
 
 describe("面板浏览器", () => {
+  // 三条提示条的文字要同一条左缘：权限条、拦截条原先没有前置图标，文字比下载条靠左 22px。
+  it("权限条与拦截条都带前置图标，和下载条同一格", () => {
+    const { container, rerender } = render(<BrowserPane info={pane({ permission: { id: 1, kind: "camera", host: "a.test" } })} visible suggestions={[]} />);
+    expect(container.querySelector(".browser-pane-notice.is-permission > svg.browser-pane-notice-icon")).toBeTruthy();
+    rerender(<BrowserPane info={pane({ blocked: { id: 2, kind: "camera", host: "a.test" } })} visible suggestions={[]} />);
+    expect(container.querySelector(".browser-pane-notice.is-blocked > svg.browser-pane-notice-icon")).toBeTruthy();
+  });
+
   it("页签名：标题优先，其次主机名，空白页叫新标签页", () => {
     expect(browserTabTitle(pane({ title: "Vite App" }), "新标签页")).toBe("Vite App");
     expect(browserTabTitle(pane(), "新标签页")).toBe("localhost:5173");

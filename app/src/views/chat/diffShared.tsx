@@ -48,6 +48,6 @@ export function FolderIcon() {
 
 export function FileIcon() {
   return (
-    <Icon glyph={icFile} size={12} />
+    <Icon glyph={icFile} size={12} className="chat-diff-fileicon" />
   );
 }

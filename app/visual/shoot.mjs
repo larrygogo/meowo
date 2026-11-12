@@ -8,7 +8,14 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve, join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { VISUAL_PORT } from "./vite.visual.config.mjs";
-import { QA_SHOTS } from "./qa-scenes.mjs";
+import { QA_SHOTS as QA_BUILTIN } from "./qa-scenes.mjs";
+import { pathToFileURL } from "node:url";
+
+// VISUAL_EXTRA=<仓库外的 .mjs>：临时追加一批补看场景（同样导出 QA_SHOTS）。量对齐用的 log 步骤、
+// 一次性的排查场景放那里，不用为了量一个数字改仓库里的 qa-scenes.mjs 再记得改回去。
+const QA_SHOTS = process.env.VISUAL_EXTRA
+  ? [...QA_BUILTIN, ...(await import(pathToFileURL(resolve(process.env.VISUAL_EXTRA)).href)).QA_SHOTS]
+  : QA_BUILTIN;
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXED_NOW = 1_780_000_000_000; // 与 fixtures.ts / src/demo 的冻结时刻一致

@@ -29,6 +29,8 @@ bun run visual:compare <基线目录> <新目录>
 - `--filter <正则>`：只拍名字匹配的图，例如 `--filter "^chat__"`、`--filter "dark__w1280"`。对比时加 `--subset`，基线里多出来的图不算缺图。
 - `--list`：只列出会拍哪些图，不起 vite。
 - 补看场景的 `steps`（`click` / `rclick` / `hover` / `type` / `key` / `tick` / `log` …）是截图前替用户做的真实指针与键盘动作，见 `shoot.mjs` 的 `runSteps`；`?ui=1.5` 拍界面缩放。
+- `VISUAL_EXTRA=<仓库外的 .mjs>`：临时追加一批补看场景（文件同样导出 `QA_SHOTS`）。量对齐用的 `log` 步骤、一次性的排查场景放那里，不用改仓库里的 `qa-scenes.mjs`。
+- `?max=1`：右侧面板最大化（`panel-*` 与 `flow-md` 等带面板的场景都认）。
 - `--jobs <n>`：并发页数，默认 4。
 - `--engine webkit`：换 WebKit 拍（默认 Chromium，对应 Windows 的 WebView2）。
 - `compare.mjs --tolerance <0~255>`：单通道允许的差值，默认 0（严格一致）；`--out <目录>` 指定差异图位置。
@@ -88,6 +90,7 @@ bun run visual:compare <基线目录> <新目录>
 - 页面报错、资源 4xx/5xx（比如字体被拒）、缺少场景的关键元素，都按失败处理，不会把坏图拍进基线。失败现场图在 `<输出目录>/_failed/`。
 - 正式开拍前有一遍预热（每个场景用 800×600 的小视口各开一次，只为让 vite 把模块转译完）。预热不检查关键元素、也不留现场图：这个宽度下侧栏是收起的，找不到侧栏里的元素是正常的。
 - 桌面 harness 关掉了 WebGL，xterm 退回 DOM 渲染：WebGL 画布在截图那一帧是空的，托管终端场景（`qa-term*`）会整片漆黑。所以这些图验证的是终端的排版、配色、搜索命中与链接提示，不验证 WebGL 渲染器本身。
+- 托管终端场景（`qa-term*`）的浅色图整窗是深色，不是 harness 没切主题：产品规定终端页签不论主题恒为深色（`styles.css` 的 `.chat-window.is-terminal`）。浅色图与深色图只差一个 DEV 角标。
 
 ## 注意
 
