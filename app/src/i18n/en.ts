@@ -42,7 +42,6 @@ export const en: Dict = {
     usageOther: "Usage",
     page: (n: number) => `Page ${n}`,
     pages: "Pages",
-    moreAlerts: (n: number) => `${n} more`,
     prevPage: "Previous page",
     nextPage: "Next page",
     stripOn: "Switch to minimal mode",
@@ -52,6 +51,7 @@ export const en: Dict = {
     alertAria: (title: string, state: string) => `${title}, ${state}. Press Enter to open`,
     dismiss: "Dismiss alert",
     dismissAll: "Dismiss all",
+    dismissAllCount: (n: number) => `Dismiss ${n}`,
   },
   sticker: {
     openChatWindow: "Open chat window",

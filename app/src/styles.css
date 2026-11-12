@@ -7500,7 +7500,7 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
    同一个会话两边颜色要对得上（用户要求统一，2026-11-05）。绿色别用在这里：Meowo 里绿一直是在跑。 */
 .isl-agent-badge.is-waiting { min-width: 0; width: 10px; height: 10px; padding: 0; right: -2px; bottom: -2px; background: var(--isl-waiting); }
 
-/* 提醒（548×68）：眼睛 · 状态图标 · 两行文字 ｜ 全部忽略 · 打开 · ×。画面里只有「打开」一个青柠主按钮。 */
+/* 提醒（548×68）：眼睛 · 状态图标 · 两行文字 ｜ 忽略 N 条 · 打开 · ×。画面里只有「打开」一个青柠主按钮。 */
 .isl-notch.is-alert {
   width: calc(100% - var(--isl-ear) * 2);
   height: 100%;
@@ -7523,7 +7523,9 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .isl-alert-icon.is-error { background: color-mix(in srgb, var(--isl-err) 22%, #000); color: var(--isl-err); }
 .isl-alert-icon.is-waiting { background: color-mix(in srgb, var(--isl-waiting) 20%, #000); color: var(--isl-waiting); }
 /* 正文那块是按钮（Enter 打开会话），右边的「全部忽略」「打开」「×」是它的兄弟，不嵌在按钮里。 */
-.isl-alert-main { flex: 1; min-width: 0; align-self: stretch; display: flex; align-items: center; gap: 12px; margin-right: 4px; border-radius: 12px; outline: none; }
+/* 间距与外层同一档 8px（原来这里是 12px，右边还多 4px 外边距）：提醒总宽固定 520，这 12px 让给文字列。
+   右边不再留外边距后，文字到「忽略 N 条」的字、字到「打开」都是 14px（8 间距 + 钮内 6）。 */
+.isl-alert-main { flex: 1; min-width: 0; align-self: stretch; display: flex; align-items: center; gap: 8px; border-radius: 12px; outline: none; }
 .isl-alert-main:focus-visible { box-shadow: inset 0 0 0 2px var(--isl-lime); }
 /* 关闭当前提醒（i5）：24px 见方的圆钮，满足 WCAG 2.5.8 的最小点击区。 */
 .isl-alert-close {
@@ -7538,9 +7540,11 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .isl-alert-title-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .isl-alert-title { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .isl-alert-detail { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--isl-text-2); }
-/* 项目名先让详情：最多占四成，超长省略（i12）。 */
-.isl-alert-proj { flex: 0 0 auto; max-width: 40%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.isl-alert-more { flex: none; height: 18px; padding: 0 7px; border-radius: 9px; background: var(--isl-chip-hover); color: var(--isl-text-2); font-size: 11px; line-height: 18px; font-variant-numeric: tabular-nums; }
+/* 项目名先让详情：最多占三成，超长省略（i12）。原来四成：排队时副行 242px，项目名占 97px、
+   出错详情只剩 94px（「API Error: 529 …」，island-alert-error 实量），详情才是这一行要说的事。 */
+.isl-alert-proj { flex: 0 0 auto; max-width: 30%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 「忽略 N 条」是没有底的幽灵钮，两侧 10px 内边距看不见却照占宽度；收到 6px，省下的 8px 给标题。 */
+.isl-btn.is-ghost.isl-alert-skip { padding: 0 6px; font-variant-numeric: tabular-nums; }
 .isl-alert-sub { display: flex; align-items: center; font-size: 12px; color: var(--isl-dim); white-space: nowrap; overflow: hidden; }
 
 /* 按钮：全是胶囊。主按钮青柠底墨字（每个形态最多一个）；其余是一档深灰底，幽灵钮平时没有底。 */

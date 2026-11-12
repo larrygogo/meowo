@@ -156,6 +156,24 @@ describe("#34 长文本与圆点", () => {
     expect(el.getAttribute("title")).toBe(detail);
   });
 
+  // 原来排队数是标题右边的「还有 N 条」胶囊，和标题抢同一行：520 宽的提醒里标题只剩 174px
+  // （island-alert-error 实量，27 个字露 13 个）。现在标题行只有标题，排队数写在「忽略 N 条」钮上。
+  it("排队时标题行只有标题，排队数并进「忽略 N 条」钮（悬停提示仍是全部忽略）", () => {
+    renderIsland({
+      sessions: [mk()],
+      alert: { sessionId: 1, kind: "approval", title: "修测试", project: "api", detail: null },
+      alertQueued: 2,
+      onDismissAllAlerts: noop,
+    });
+    const row = document.querySelector(".isl-alert-title-row")!;
+    expect(row.children.length).toBe(1);
+    expect(row.textContent).toBe("修测试");
+    const skip = document.querySelector(".isl-alert-skip")!;
+    // 3 = 正在弹的这条 + 排队的两条。
+    expect(skip.textContent).toBe(zh.island.dismissAllCount(3));
+    expect(skip.getAttribute("title")).toBe(zh.island.dismissAll);
+  });
+
   it("圆点样式超过 6 个折成 +N，按紧急程度排，+N 按折进去的最急状态上色", () => {
     const sessions = [
       mk({ lastEventAt: 9 }), mk({ lastEventAt: 8 }), mk({ lastEventAt: 7 }), mk({ lastEventAt: 6 }),

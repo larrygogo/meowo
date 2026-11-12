@@ -139,6 +139,8 @@ export const QA_SHOTS = [
   { name: "qa-island-compact-ui150", scene: "island-compact", params: "ui=1.5", size: [1000, 120], themes: ["dark"] },
   { name: "qa-island-panel-hover", scene: "island-panel", size: [700, 300], sel: ".island-shell", themes: ["dark"], steps: [["hover", ".island-shell [role=button], .island-shell button >> nth=1"]] },
   { name: "qa-island-panel-kbd", scene: "island-panel", size: [700, 300], sel: ".island-shell", themes: ["dark"], steps: [["keys", "Tab", 2]] },
+  // 出错提醒带排队的英文版：标题、项目名、详情三段都长，矩阵里只有中文。
+  { name: "qa-island-alert-error-en", scene: "island-alert-error", size: [700, 110], sel: ".isl-notch.is-alert", langs: ["en"] },
   // ── 手机页 ──
   { name: "qa-m-model", page: "mobile", scene: "mobile-idle", size: PHONE, sel: ".chat-sheet", steps: [["click", MODEL_BTN]] },
   { name: "qa-m-mode", page: "mobile", scene: "mobile-idle", size: PHONE, sel: ".chat-sheet", steps: [["click", ".chat-compose .chat-mode-button"]] },
