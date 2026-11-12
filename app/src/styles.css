@@ -7360,6 +7360,10 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .isl-notch.is-split .isl-agent-logo { width: 16px; height: 16px; }
 .isl-notch.is-split .isl-agent-logo svg, .isl-notch.is-split .isl-agent-logo img { width: 11px !important; height: 11px !important; }
 .isl-notch.is-split .isl-agent-badge.is-waiting { width: 7px; height: 7px; right: -1px; bottom: -1px; }
+/* 「!」「×」角标也要跟着环缩：两翼的环是 22px，角标还用普通态的 15px 就占掉直径的 68%，
+   11px 的徽标右下被盖掉约四分之一（island-compact-notch 实量）。按普通态 15 / 32 的比例缩到 11px，
+   再往外多挂 1px，只压到徽标的一个角。 */
+.isl-notch.is-split .isl-agent-badge:not(.is-waiting) { min-width: 11px; height: 11px; padding: 0 2px; border-width: 1.5px; font-size: 7px; right: -4px; bottom: -4px; }
 .isl-notch.is-split .isl-usage-val { font-size: 8px; }
 .isl-notch.is-split .isl-usage-badge { display: none; }
 .isl-clock { font-size: 20px; font-weight: 700; letter-spacing: 0.2px; font-variant-numeric: tabular-nums; }
