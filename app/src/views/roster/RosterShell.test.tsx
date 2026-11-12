@@ -340,4 +340,14 @@ describe("名单外壳", () => {
       vi.useRealTimers();
     }
   });
+
+  it("告诉后端名单是否摆在眼前：名单上为真，进了现场为假，卸载时收回", async () => {
+    sessions = [mk("甲"), mk("乙")];
+    const showing = () => invoke.mock.calls.filter(([cmd]) => cmd === "set_roster_showing").map(([, args]) => (args as { showing: boolean }).showing);
+    const view = render(<RosterShell />);
+    fireEvent.doubleClick(await screen.findByText("甲"));
+    expect(showing()).toEqual([true, false]);
+    view.unmount();
+    expect(showing().at(-1)).toBe(false);
+  });
 });

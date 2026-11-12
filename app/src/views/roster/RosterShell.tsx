@@ -7,6 +7,7 @@ import { createContext, lazy, memo, Suspense, useCallback, useContext, useEffect
 import { invoke } from "@tauri-apps/api/core";
 import { emit } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { setRosterShowing } from "../../api";
 import { useTauriEvent } from "../../hooks/useTauriEvent";
 import { useT } from "../../i18n";
 import { Icon } from "../../icons/Icon";
@@ -109,6 +110,11 @@ function DesktopRoster() {
   useTauriEvent("chat-open-roster", backToRoster);
 
   useRosterLease();
+  // 告诉后端名单是否摆在眼前（通知据此闭嘴，见 watch.rs suppressed_for）。卸载时收回。
+  useEffect(() => {
+    setRosterShowing(view === "roster").catch(() => {});
+  }, [view]);
+  useEffect(() => () => { setRosterShowing(false).catch(() => {}); }, []);
 
   // 名单里眼睛站在名单行旁边；现场里站在对话窗侧栏那一行（名单缩成的窄列）旁边。行被折叠或
   // 滚出去时停在「回到名单」旁边、神态不变（取舍 4）。

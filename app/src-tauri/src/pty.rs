@@ -323,6 +323,9 @@ struct AttachState {
     /// 租约会压制桌面召唤并让审批静默空等 300s；桌面租约不设 TTL——窗口销毁
     /// 兜底（release_desktop_consumers）已覆盖它的残留形态，语义不动。
     approval_consumers: Mutex<HashMap<String, ConsumerLease>>,
+    /// 主窗口此刻显示的是名单（不是某一行的现场）。和名单租约分开：租约在窗口的整个生命周期里都在，
+    /// 这个只在名单真的摆在那里时为真。通知据此判断「名单在眼前」（规格取舍 9）。
+    roster_showing: std::sync::atomic::AtomicBool,
     /// 已自动放行、等用户处理的 AskUserQuestion 题面（session_id → (题面, 入表时刻)）。
     ///
     /// `interactive-question` 事件是 fire-and-forget：对话窗冷启动要 1~2s，而 emit
@@ -452,6 +455,7 @@ impl PtyBroker {
                 bindings: Mutex::new(HashMap::new()),
                 approvals: Mutex::new(HashMap::new()),
                 approval_consumers: Mutex::new(HashMap::new()),
+                roster_showing: std::sync::atomic::AtomicBool::new(false),
                 interactive_questions: Mutex::new(HashMap::new()),
                 app: Mutex::new(None),
             }),
@@ -2553,6 +2557,15 @@ impl PtyBroker {
     /// 出现之前一样。桌面名单上点开了这一行的话它持有专属租约，算在第一项里。
     fn approval_answerable(&self, session_id: i64) -> bool {
         self.has_approval_consumer(session_id) || self.has_remote_roster_consumer()
+    }
+
+    /// 主窗口报告名单是否摆在眼前（进了现场 / 窗口销毁时为 false）。
+    pub(crate) fn set_roster_showing(&self, showing: bool) {
+        self.attach.roster_showing.store(showing, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub(crate) fn roster_showing(&self) -> bool {
+        self.attach.roster_showing.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// 桌面主窗口是否持有名单租约。只认桌面：它决定的是「桌面窗口要不要动」；手机的名单

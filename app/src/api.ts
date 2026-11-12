@@ -611,6 +611,10 @@ export function dismissInteractiveQuestion(sessionId: number): Promise<void> {
 export function registerApprovalConsumer(sessionId: number, consumerId: string): Promise<void> {
   return invoke("register_approval_consumer", { sessionId, consumerId } satisfies RegisterApprovalConsumerArgs);
 }
+/** 主窗口报告名单是否摆在眼前：名单在眼前且窗口聚焦时后端不弹系统通知（规格取舍 9）。只给桌面用。 */
+export function setRosterShowing(showing: boolean): Promise<void> {
+  return invoke("set_roster_showing", { showing });
+}
 export function unregisterApprovalConsumer(consumerId: string): Promise<void> {
   return invoke("unregister_approval_consumer", { consumerId } satisfies UnregisterApprovalConsumerArgs);
 }

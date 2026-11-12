@@ -664,6 +664,14 @@ pub(crate) fn suppressed_by_viewing(kind: NotifyKind, viewing: bool) -> bool {
     viewing && matches!(kind, NotifyKind::Waiting)
 }
 
+/// 加上「名单在眼前」之后的抑制判定。主窗口聚焦且摆着名单时，四类通知都不弹：名单上每一行都在
+/// 眼前，轮到谁眼睛就站到谁旁边，决定单点开就是，系统通知只是重复同一件事（leader 2026-11-11
+/// 关卡 A 取舍 9）。这推翻了上面「决策类永不抑制」的纪律，但只在名单这一种情形下：窗口不在前台、
+/// 或者进了某一行的现场，照旧按上面的规则走。纯函数，便于单测。
+pub(crate) fn suppressed_for(kind: NotifyKind, viewing: bool, roster_in_view: bool) -> bool {
+    roster_in_view || suppressed_by_viewing(kind, viewing)
+}
+
 /// 通知种类。只用于抑制判定，不参与文案（文案在各调用点按 i18n key 取）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum NotifyKind {
@@ -1090,6 +1098,11 @@ pub(crate) fn spawn_liveness_watch(
                     .map(|state| state.ptys.viewed_session_ids())
                     .unwrap_or_default();
                 clear_viewed_unread(chat_focused, &viewed);
+                // 名单在眼前（主窗口聚焦且摆着名单）：本轮所有通知都不弹，见 suppressed_for。
+                let roster_in_view = chat_focused
+                    && app
+                        .try_state::<crate::AppState>()
+                        .is_some_and(|state| state.ptys.roster_showing());
                 // 通知点击整清了已投递 toast（见 RESET_DECISION_RENOTIFY）：决策类指纹
                 // 重置后再扫，仍在等待审批/阻塞的会话本轮按 prev=None 补发入口。
                 if RESET_DECISION_RENOTIFY.swap(false, Ordering::Relaxed) {
@@ -1169,7 +1182,7 @@ pub(crate) fn spawn_liveness_watch(
                     // 错误通知（优先）。
                     if let Some(e) = &error {
                         let prev = notified.get(&sid).map(|s| s.as_str());
-                        let suppressed = suppressed_by_viewing(NotifyKind::Error, viewing);
+                        let suppressed = suppressed_for(NotifyKind::Error, viewing, roster_in_view);
                         let fired = seeded && should_notify(prev, Some(&e.fingerprint)) && !suppressed;
                         attention_fired |= fired;
                         if fired {
@@ -1208,7 +1221,7 @@ pub(crate) fn spawn_liveness_watch(
                     match pending_fingerprint(error.is_some(), s.pending_review.as_deref()) {
                         Some(fp) => {
                             let prev = notified_pending.get(&sid).map(|s| s.as_str());
-                            let suppressed = suppressed_by_viewing(NotifyKind::Pending, viewing);
+                            let suppressed = suppressed_for(NotifyKind::Pending, viewing, roster_in_view);
                             let fired = seeded && should_notify(prev, Some(&fp)) && !suppressed;
                             attention_fired |= fired;
                             let key = match s.pending_review.as_deref() {
@@ -1271,7 +1284,7 @@ pub(crate) fn spawn_liveness_watch(
                     ) {
                         Some(fp) => {
                             let prev = notified_blocked.get(&sid).map(|s| s.as_str());
-                            let suppressed = suppressed_by_viewing(NotifyKind::Blocked, viewing);
+                            let suppressed = suppressed_for(NotifyKind::Blocked, viewing, roster_in_view);
                             let fired = seeded && should_notify(prev, Some(&fp)) && !suppressed;
                             attention_fired |= fired;
                             if fired {
@@ -1322,7 +1335,7 @@ pub(crate) fn spawn_liveness_watch(
                             // 用户正看着这条会话时不弹「等待你回复」——他就在屏幕前
                             // （见 suppressed_by_viewing 的非对称说明）。任务栏注意力
                             // 随 fired 一起跳过：闪一个已在前台的窗口毫无意义。
-                            let suppressed = suppressed_by_viewing(NotifyKind::Waiting, viewing);
+                            let suppressed = suppressed_for(NotifyKind::Waiting, viewing, roster_in_view);
                             let fired = seeded && should_notify(prev, Some(&fp)) && !suppressed;
                             attention_fired |= fired;
                             if fired {

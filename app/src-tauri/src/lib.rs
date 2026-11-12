@@ -90,7 +90,7 @@ use managed_terminal::{
     managed_terminal_binding, managed_terminal_grid, managed_terminal_pending_launch,
     managed_terminal_screen, managed_terminal_snapshot, open_attached_terminal,
     pending_interaction, register_approval_consumer, register_terminal_viewer,
-    resize_managed_terminal, resolve_pending_approval, screen_detect_explain,
+    resize_managed_terminal, resolve_pending_approval, screen_detect_explain, set_roster_showing,
     screen_detect_explain_text, send_background_prompt, start_managed_terminal,
     stop_managed_terminal, unregister_approval_consumer, unregister_terminal_viewer,
     write_managed_terminal,
@@ -1290,6 +1290,7 @@ pub fn run() {
             unregister_terminal_viewer,
             register_approval_consumer,
             unregister_approval_consumer,
+            set_roster_showing,
             resolve_pending_approval,
             open_attached_terminal,
             attach_background_session,
@@ -1679,7 +1680,7 @@ mod tests {
     };
     use crate::watch::{
         is_viewing_session, pending_fingerprint, screen_blocked_fingerprint, should_notify,
-        suppressed_by_viewing, waiting_fingerprint, NotifyKind,
+        suppressed_by_viewing, suppressed_for, waiting_fingerprint, NotifyKind,
     };
 
     /// 通知抑制的非对称：用户正看着某会话时不弹它的「等待你回复」（他就在屏幕前），
@@ -1703,6 +1704,17 @@ mod tests {
         }
         // 没在看：什么都不抑制。
         assert!(!suppressed_by_viewing(NotifyKind::Waiting, false));
+    }
+
+    /// 名单在眼前（主窗口聚焦且摆着名单）：四类通知都不弹，轮到谁眼睛就站到谁旁边
+    /// （规格取舍 9）。名单不在眼前时退回上面的非对称规则。
+    #[test]
+    fn roster_in_view_suppresses_every_notification_kind() {
+        for kind in [NotifyKind::Error, NotifyKind::Pending, NotifyKind::Blocked, NotifyKind::Waiting] {
+            assert!(suppressed_for(kind, false, true), "{kind:?}：名单在眼前不弹");
+            assert_eq!(suppressed_for(kind, true, false), suppressed_by_viewing(kind, true));
+            assert_eq!(suppressed_for(kind, false, false), suppressed_by_viewing(kind, false));
+        }
     }
 
     /// 屏幕阻塞通知的让位与去重：错误/已有 pending_review 时不发（那两条各自会发），
