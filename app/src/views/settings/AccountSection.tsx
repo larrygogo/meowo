@@ -332,7 +332,7 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsApiK
         setPathGapDir(null);
         setPathMsg(t.account.pathAdded);
       })
-      .catch(() => setPathMsg(t.account.pathAddFailed))
+      .catch((error) => setPathMsg(t.account.pathAddFailed(formatBackendError(error, t.locale))))
       .finally(() => setAddingPath(false));
   };
 

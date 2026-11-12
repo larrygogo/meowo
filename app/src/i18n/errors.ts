@@ -144,7 +144,9 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "worktree/unlink_failed", tail: true, zh: "拆除目录里的链接失败", en: "Couldn't remove links inside the folder" },
   { m: "worktree/remove_failed", tail: true, zh: "删除目录失败（目录里的链接已拆掉，链接指向的内容没动）", en: "Couldn't delete the folder (links inside it were removed; what they pointed to is untouched)" },
   { m: "worktree/git_failed", tail: true, zh: "git 没能运行", en: "Couldn't run git" },
-  { m: "worktree/probe_restore", tail: true, zh: "目录临时改名后没能改回。现名以 .meowo-probe 加数字结尾", en: "The folder was renamed for a check and couldn't be renamed back. Its name now ends in .meowo-probe and a number" },
+  // 做空第二轮 R10（2026-11-12）：原句只说了现名，没说删除停在哪一步。改名试探在动任何文件之前（worktree.rs
+  // rename_probe），所以如实说「没删任何文件」，用户知道文件都在、只是换了名字。
+  { m: "worktree/probe_restore", tail: true, zh: "没删任何文件。检查占用时目录改名后没改回，现名以 .meowo-probe 加数字结尾", en: "Nothing was deleted. The folder was renamed for a lock check and couldn't be renamed back. Its name now ends in .meowo-probe and a number" },
   // ── 在新 worktree 里开会话（wtnew）。撞名时后缀是建议名，新建页会单独给「改用」按钮 ──
   { m: "worktree/dir_exists", tail: true, zh: "目录已存在，可改用", en: "The folder already exists. Try" },
   { m: "worktree/branch_exists", tail: true, zh: "分支已存在，可改用", en: "The branch already exists. Try" },
@@ -189,7 +191,9 @@ export const ENTRIES: ErrorEntry[] = [
   // tail:后缀有两种——「请先在终端页选择接管」(terminal.rs)与「不能重复接管」(managed_terminal.rs),
   // 都是可执行指引,裁掉就只剩一句干巴巴的现状陈述。
   { m: "会话仍在外部终端运行", tail: true, zh: "会话仍在外部终端运行", en: "The session is still running in an external terminal" },
-  { m: "外部终端已在线，但没能带到前台，请手动切换", exact: true, zh: "外部终端已在线，但没能带到前台，请手动切换", en: "External terminal is online but couldn't be focused; switch manually" },
+  // 后端（terminal.rs focus_online_external_viewer）按进程找不到窗口或置前失败。只说发生了什么，
+  // 不叫人「手动切换」（做空第二轮 R10）。用户是在 Meowo 终端页点的「在外部终端打开」，这里的终端照常可用。
+  { m: "外部终端已在线，但没能带到前台，请手动切换", exact: true, zh: "外部终端已经开着，但没能切到它的窗口", en: "The external terminal is already open, but Meowo couldn't switch to its window" },
   { m: "打开外部同步终端失败", zh: "打开外部终端失败", en: "Couldn't open the external terminal" },
   { m: "打开外部终端失败", zh: "无法打开外部终端", en: "Couldn't open the external terminal" },
   { m: "同步会话失败", tail: true, zh: "同步会话失败", en: "Couldn't sync the session" },
@@ -199,7 +203,9 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "该会话所属账号", zh: "会话所属账号已被删除，无法恢复", en: "This session's account was deleted; it can't be resumed" },
   { m: "请选择工作目录", exact: true, zh: "请选择工作目录", en: "Pick a working directory" },
   { m: "无法定位当前账号目录", exact: true, zh: "找不到当前账号的数据目录", en: "Couldn't locate the current account directory" },
-  { m: "内部状态异常", zh: "内部状态异常，重开 Meowo 可恢复", en: "Internal state error. Reopening Meowo fixes it" },
+  // 后端是锁中毒（lib.rs / pty.rs LOCK_POISONED：别的线程持锁时崩了）。「重开 Meowo 可恢复」仍是叫人重启
+  // （做空第二轮 R10，2026-11-12）。Meowo 里没有能修好它的按钮，如实说发生了什么、这次操作没执行。
+  { m: "内部状态异常", zh: "后台任务出错中断，这次操作没执行", en: "A background task crashed, so this action didn't run" },
   // ── 审批 ──
   { m: "审批请求已结束", exact: true, zh: "审批请求已结束", en: "The approval request has ended" },
   { m: "审批请求不属于该会话", exact: true, zh: "该审批属于另一条会话", en: "This approval belongs to another session" },

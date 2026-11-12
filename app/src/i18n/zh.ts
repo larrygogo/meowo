@@ -125,9 +125,7 @@ export const zh = {
     archivedNotice: "已完成，可在「设置 → 会话」找回",
     archiveUndo: "撤销",
     focusConnecting: "会话正在连接，请稍后再试。",
-    focusHostOnly: "已打开终端，请手动切到对应标签页。",
     focusNotFound: "会话仍在运行，但找不到对应的终端标签页。",
-    focusUnsupported: "该终端不支持自动跳转，请手动切换。",
     focusPermission: "请允许 Meowo 控制终端，才能自动跳转。",
     openSystemSettings: "打开系统设置",
     // attach/恢复成功的正反馈：窗口在别的虚拟桌面时聚焦「成功」了用户却什么都看不到，
@@ -1036,7 +1034,8 @@ export const zh = {
     terminalStartFailed: "Agent 终端未能启动",
     terminalReadyTimeout: "等待 Agent 终端就绪超时",
     // 就绪等待的进度横幅（waitForTerminalReady 报送整秒）：秒数 + 「去终端页看」。
-    terminalWaitingReady: (seconds: number) => `等待 Agent 终端就绪，已等 ${seconds} 秒`,
+    // 两位秒数时原句 21 字超出 ≤20 的规范（做空第二轮 R10，2026-11-12），先说已等多久再说现状。
+    terminalWaitingReady: (seconds: number) => `已等 ${seconds} 秒，Agent 终端未就绪`,
     // 一句说清现状与代价（用户实拍：两句长文把按钮挤到第二行）。点按钮后的确认框再写细节。
     sendNeedsTakeover: "会话在外部终端运行，接管会结束它",
     composerGateEnded: "会话已结束。恢复后即可继续对话。",
@@ -1370,7 +1369,8 @@ export const zh = {
       `请先完整阅读文件 ${path}，它是另一个 CLI 里一段会话的完整上下文。读完后接着其中的任务继续，不要复述文件内容。`,
     // 复制出来的会话开头，替代那条注入语显示。
     handoffCopied: "上下文从另一段会话复制而来",
-    handoffInjectFailed: "交接提示未自动发出，已放回输入框，请手动发送",
+    // 原句末尾「请手动发送」只是叫人自己来（做空第二轮 R10）。失败就是没写进终端，放回的输入框带发送键。
+    handoffInjectFailed: "交接提示没写进终端，已放回输入框",
     // 接续链的回看呈现：已被接替的旧段（禁发 + 引导去链尾）与新段的来历注脚。
     supersededBanner: "本会话已切换引擎，在新会话中继续。此处仅供回看",
     supersededGo: "前往新会话",
@@ -1673,7 +1673,7 @@ export const zh = {
     // T-1（2026-11-12）：失败此前被 .catch(() => {}) 吞掉，用户以为泄露的令牌已吊销。
     regenerateFailed: (reason: string) => `令牌没重新生成，旧令牌仍有效。${reason}`,
     regenerateDone: "已重新生成，旧手机要重新扫码",
-    noIp: "取不到局域网地址，请在手机浏览器手动输入本机 IP",
+    noIp: "取不到局域网地址，在手机浏览器输入本机 IP 也能连",
     offHint: "关闭时手机无法连接",
     // 手机推送（Bark）：远程页是 http，浏览器不给推送，改由电脑调 Bark 推到手机。
     pushLabel: "手机推送（Bark）",
@@ -1831,7 +1831,8 @@ export const zh = {
     addToPath: "加入 PATH",
     addingToPath: "写入中…",
     pathAdded: "已加入 PATH，请重开终端后生效",
-    pathAddFailed: "写入 PATH 失败，请手动添加",
+    // 带上后端原因（做空第二轮 R10）：原先只说「请手动添加」，看不出为什么失败。「加入 PATH」按钮还在，可直接重试。
+    pathAddFailed: (reason: string) => (reason ? `没能写入 PATH：${reason}` : "没能写入 PATH，可再点一次"),
     quota: "配额",
     relayBadge: "中转",
     relayActive: "正在使用 API 中转，官方配额不适用",
