@@ -21,11 +21,38 @@ pub(super) static DEPS: &[D] = &[
         "  enter to confirm   esc to cancel",
         "0.166.0 codex.exe：` to confirm` 14 处、` to cancel` 7 处，审批框底栏是按键 + 这两段拼出（research-cli-drift X7）",
     ),
+    // 状态行 `(… • esc to interrupt)`：按键运行时拼，结尾 ` to interrupt)` 是模板原样，全包仅 1 处
+    //（做空第一轮 #7，2026-11-12；此前标「不搜」）。
     D::new(
         "screen:screen_working_fallback",
-        "",
+        "to interrupt)",
         "\u{2022} Working (3m \u{00B7} esc to interrupt)",
-        "运行时拼接：0.166.0 codex.exe 里 `working (` 与 `esc to interrupt` 都是 0 处，只有 `to interrupt`；状态行没有 0.166 实拍，规则沿用 0.16x 写法，属于「有风险但没证据」",
+        "0.166.0 codex.exe：` to interrupt)` 1 处（紧挨 `fast_mode` 与 ` • ` 分隔符）；`working (` 0 处，运行时拼。状态行没有 0.166 实拍",
+    ),
+    // ── 记录格式：--version 首行与 rollout 字段（做空第一轮 #7，2026-11-12）──
+    D::record(
+        "record:codex-cli",
+        "codex-cli",
+        "codex-cli 0.166.0",
+        "0.166.0 `codex --version` 首行原样（带 `codex-cli ` 前缀，research-cli-drift X2）；codex.exe 19 处",
+    ),
+    D::record(
+        "record:ContextCompaction",
+        "ContextCompaction",
+        r#"{"type":"event_msg","payload":{"type":"item_completed","item":{"type":"ContextCompaction","id":"01a13e21"}}}"#,
+        "0.162.1 rollout 实样（已压缩分隔条，research-cli-drift X3）；0.166.0 codex.exe 33 处",
+    ),
+    D::record(
+        "record:approval_policy",
+        "approval_policy",
+        r#"{"type":"turn_context","payload":{"approval_policy":"on-request","sandbox_policy":{"type":"workspace-write"}}}"#,
+        "0.163 rollout 实样（运行中权限档，research-cli-drift X4）；0.166.0 codex.exe 55 处",
+    ),
+    D::record(
+        "record:history_base",
+        "history_base",
+        r#"{"type":"session_meta","payload":{"history_mode":"paginated","history_base":"019a"}}"#,
+        "0.163+ 回溯续写段的 session_meta（lineage.rs 拼接）；0.166.0 codex.exe 6 处",
     ),
     // ── 自动抽取的字面量：旧版兼容 ──
     D::new(
@@ -58,17 +85,28 @@ pub(super) static DEPS: &[D] = &[
     D::new("literal:allow command?", "allow command?", "Allow command?", "0.16x 之前审批框标题；0.166.0 里 0 处").legacy(),
     D::new("literal:yes (y)", "yes (y)", "Yes (y)", "早期审批选项写法（herdr 弱规则）；0.166.0 里 0 处").legacy(),
     // ── 自动抽取的字面量：运行时拼接，给能搜到的那一段 ──
-    D::new(
+    // 记录查看页底栏三段在 pager_overlay.rs 的常量里紧挨着存（`to scrollto pageto jump`）。` to page` 单搜
+    // 是泛词（`Failed to page read-only thread history`），永远「找到」；改为三段近邻（做空第一轮 #7）。
+    D::near(
         "literal: to scroll",
-        "to scroll",
-        "↑/↓ to scroll",
-        "0.166.0 记录查看页底栏是按键 + ` to scroll`；程序文件里 `to scroll` 1 处（紧挨 tui\\src\\pager_overlay.rs），前导空格在拼接处",
+        &["to scroll", "to page", "to jump"],
+        48,
+        "↑/↓ to scroll   pgup/pgdn to page   home/end to jump",
+        "0.166.0 codex.exe：三段紧挨 `tui\\src\\pager_overlay.rs`，相距 16 字节",
     ),
-    D::new(
+    D::near(
+        "literal: to page",
+        &["to scroll", "to page", "to jump"],
+        48,
+        "↑/↓ to scroll   pgup/pgdn to page   home/end to jump",
+        "同 to scroll；` to page` 单搜在 codex.exe 有 3 处，其中 2 处与记录查看页无关",
+    ),
+    D::near(
         "literal: to jump",
-        "to jump",
-        "home/end to jump",
-        "0.166.0 记录查看页底栏是按键 + ` to jump`；程序文件里 `to jump` 1 处",
+        &["to scroll", "to page", "to jump"],
+        48,
+        "↑/↓ to scroll   pgup/pgdn to page   home/end to jump",
+        "同 to scroll",
     ),
     D::new(
         "literal:enter to submit answer",

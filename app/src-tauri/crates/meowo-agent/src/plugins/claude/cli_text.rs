@@ -221,11 +221,13 @@ pub(super) static DEPS: &[D] = &[
         "/btw 这个函数为什么要加锁",
         "行首是用户自己打的 /btw 回显；CLI 文案部分 esc to close 由侧问 footer_marker 自动检查",
     ),
-    D::new(
+    // 按键提示由 `e(y,{chord:"c",action:"copy"})` 逐个拼：查三个动作名在同一段渲染代码里（做空第一轮 #7）。
+    D::near(
         "screen:btw_overlay_answered",
-        "",
+        &["\"copy\"", "\"fork\"", "\"close\""],
+        400,
         "  c to copy \u{b7} f to fork \u{b7} Esc to close",
-        "2.1.314 实拍（cc-btw-side-question 取证）；按键提示由 Y({chord,action}) 运行时拼，不搜",
+        "2.1.314 实拍（cc-btw-side-question 取证）；2.1.322 claude.exe 里 `action:\"copy\"/\"fork\"/\"close\"` 最近相距 142 字节",
     ),
     D::new(
         "screen:status_line_working",
@@ -310,11 +312,12 @@ pub(super) static DEPS: &[D] = &[
         "Enter to set as default \u{b7} s to use this session only \u{b7} Esc to cancel",
         "2.1.322 模型选择器 `Y({chord:\"enter\",action:N?\"set as default\":\"confirm\"})` 运行时拼，未实拍",
     ),
-    D::new(
+    D::near(
         "literal:tab to amend",
-        "",
+        &["\"tab\"", "\"amend\""],
+        40,
         "Esc to cancel \u{b7} Tab to amend",
-        "2.1.322 `Y({chord:\"tab\",action:\"amend\"})` 运行时拼（包内 5 处）；只搜 amend 会处处命中，不搜",
+        "2.1.322 `e(y,{chord:\"tab\",action:\"amend\"})` 运行时拼；两段相距 13 字节（做空第一轮 #7）",
     ),
     D::new(
         "literal:ctrl+e to explain",

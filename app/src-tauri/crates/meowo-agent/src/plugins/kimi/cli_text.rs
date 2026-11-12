@@ -96,23 +96,71 @@ pub(super) static DEPS: &[D] = &[
     // ── 自动抽取的字面量 ──
     D::new("literal:do you trust the files in this folder", "", "Do you trust the files in this folder?", TRUST_TABLE),
     D::new("literal:do you trust the contents of this directory", "", "Do you trust the contents of this directory?", TRUST_TABLE),
-    D::new(
+    // 提问提示行：`${numberHint} / ↵ ${question.multi_select ? "toggle" : "choose"}`，整串 0 处，按两段近邻查
+    //（做空第一轮 #7，2026-11-12）。
+    D::near(
         "literal:↵ choose",
-        "",
+        &[" / ↵ ", "\"choose\""],
+        120,
         "1-3 / ↵ choose",
-        "运行时拼接：2.5.1 提问提示行是 `1-${n} / ` 加 `↵ choose`，按键与说明分开存，整串 0 处",
+        "2.5.1 kimi.EXE：模板段 ` / ↵ ` 与 `\"choose\"` 相距 44 字节",
     ),
-    D::new(
+    D::near(
         "literal:↵ toggle",
-        "",
+        &[" / ↵ ", "\"toggle\""],
+        120,
         "1-3 / ↵ toggle",
-        "运行时拼接：同 ↵ choose（多选题的写法）",
+        "2.5.1 kimi.EXE：同 ↵ choose，`\"toggle\"` 相距 33 字节（多选题）",
     ),
+    // 审批提示行 `↑/↓ select · ${buildNumericHint(n)} choose · ↵ confirm`：数字段运行时生成，后半段是模板原样。
     D::new(
         "literal:1/2/3/4 choose",
-        "",
+        " choose · ↵ confirm",
         "↑/↓ select · 1/2/3/4 choose · ↵ confirm",
-        "运行时拼接：审批提示行的数字段按选项个数生成，整串 0 处；`↵ confirm` 能搜到",
+        "2.5.1 kimi.EXE：模板静态段 ` choose · ↵ confirm` 1 处（数字段由 buildNumericHint 生成）",
+    ),
+    // ── 记录格式：wire.jsonl 事件名与字段（解析器认的字符串，做空第一轮 #7，2026-11-12）──
+    D::record(
+        "record:plan_mode.cancel",
+        "plan_mode.cancel",
+        r#"{"type":"plan_mode.cancel","time":1784863258011}"#,
+        "2.5.1 wire.jsonl 实样（/plan off 与 Shift+Tab 关计划模式都写它，research-cli-drift K1）；kimi.EXE 6 处",
+    ),
+    D::record(
+        "record:plan_mode.enter",
+        "plan_mode.enter",
+        r#"{"type":"plan_mode.enter","time":1784863250000}"#,
+        "2.5.1 kimi.EXE 6 处（包内回放器 case）",
+    ),
+    D::record(
+        "record:token_counting.rebased",
+        "token_counting.rebased",
+        r#"{"type":"token_counting.rebased","agentId":"main","length":12,"tokens":34584,"measured":false,"time":1792043997330}"#,
+        "2.5.1 wire.jsonl 实样（压缩后 Context% 读它，research-cli-drift K4）；kimi.EXE 3 处",
+    ),
+    D::record(
+        "record:usageScope",
+        "usageScope",
+        r#"{"type":"usage.record","agentId":"main","usage":{"inputOther":263123},"usageScope":"session","time":1792043997320}"#,
+        "2.5.1 wire.jsonl 实样（压缩请求记 session 档，不能当上下文，research-cli-drift K4）；kimi.EXE 5 处",
+    ),
+    D::record(
+        "record:full_compaction.complete",
+        "full_compaction.complete",
+        r#"{"type":"full_compaction.complete","agentId":"main","time":1792043997331}"#,
+        "2.5.1 wire.jsonl 实样（已压缩分隔条）；kimi.EXE 2 处",
+    ),
+    D::record(
+        "record:permission.set_mode",
+        "permission.set_mode",
+        r#"{"type":"permission.set_mode","mode":"yolo"}"#,
+        "2.5.1 wire.jsonl 实样（权限档显示）；kimi.EXE 5 处",
+    ),
+    D::record(
+        "record:kimi-file://",
+        "kimi-file://",
+        r#"{"type":"image_url","imageUrl":{"url":"kimi-file://f_0a1b"}}"#,
+        "2.5.1 wire.jsonl 实样（粘贴图片的地址形态，research-cli-drift K3）；kimi.EXE 20 处",
     ),
     D::new("literal:thinking...", "thinking...", "Thinking...", "2.5.1 之前的三个点写法；2.5.1 改用省略号字符 `Thinking…`").legacy(),
     D::new("literal:working...", "working...", "Working...", "2.5.1 之前的三个点写法；2.5.1 改用省略号字符 `Working…`").legacy(),

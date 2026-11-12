@@ -3,12 +3,10 @@
 //! 取证：opencode 1.19.3 本机程序文件 `%APPDATA%/npm/node_modules/opencode-ai/bin/opencode.exe`
 //! 内嵌 JS 的字符串（按 UTF-8 小写搜），以及第三轮调研 research-cli-drift.md 的 O 系列结论，2026-11-12。
 //! opencode 的 TUI 把按键和说明分成两个文本节点渲染（如 `K("esc ")` 后接 `"interrupt"`），
-//! 屏幕上连在一起的「esc dismiss」「enter confirm」在程序文件里没有原样；这类写明理由、不搜。
+//! 屏幕上连在一起的「esc dismiss」「enter confirm」在程序文件里没有原样；这类按「分段都在且相距
+//! 很近」查（[`D::near`]，做空第一轮 #7，2026-11-12），间距取 1.19.3 实测值的余量。
 
 use crate::cli_text::CliTextDep as D;
-
-const KEY_LABEL_SPLIT: &str =
-    "运行时拼接：opencode 1.19.3 把按键与说明分成两个节点渲染（程序文件里 `\"esc \"` 8 处单独出现），整串没有原样";
 
 pub(super) static DEPS: &[D] = &[
     // ── 正则规则的样例 ──
@@ -55,12 +53,15 @@ pub(super) static DEPS: &[D] = &[
         "\u{25B3} Permission required",
         "1.19.3 opencode.exe：三角符号 `\\u25b3` 与 `permission required` 分开渲染，后者 4 处",
     ),
-    D::new("literal:esc dismiss", "", "esc dismiss", KEY_LABEL_SPLIT),
-    D::new("literal:enter confirm", "", "enter confirm", KEY_LABEL_SPLIT),
-    D::new("literal:enter submit", "", "enter submit", KEY_LABEL_SPLIT),
-    D::new("literal:enter toggle", "", "enter toggle", KEY_LABEL_SPLIT),
-    D::new("literal:↑↓ select", "", "↑↓ select", KEY_LABEL_SPLIT),
-    D::new("literal:⇆ tab", "", "⇆ tab", KEY_LABEL_SPLIT),
+    // 按键与说明分两个节点渲染：`r("esc "),…,z(n,r("dismiss"))`。间距是 1.19.3 opencode.exe 实测最近距离的余量。
+    D::near("literal:esc dismiss", &["\"esc \"", "\"dismiss\""], 200, "esc dismiss", "1.19.3：`r(\"esc \")` 与 `r(\"dismiss\")` 相距 47 字节"),
+    D::near("literal:enter confirm", &["\"enter \"", "\"confirm\""], 400, "enter confirm", "1.19.3：`r(\"enter \")` 与 `r(\"confirm\")` 相距 159 字节"),
+    // 提问表单的按键说明先算好（`if(H())return"submit";if(b()?.multiple)return"toggle";…`）再交给
+    // 底栏渲染，离 `"enter "` 约 4KB。
+    D::near("literal:enter submit", &["\"enter \"", "\"submit\""], 6000, "enter submit", "1.19.3：说明在 `C=R(()=>{…return\"submit\"…})` 里算好，与 `r(\"enter \")` 相距 3939 字节"),
+    D::near("literal:enter toggle", &["\"enter \"", "\"toggle\""], 6000, "enter toggle", "1.19.3：同 enter submit，`return\"toggle\"` 相距 3971 字节"),
+    D::near("literal:↑↓ select", &["\"↑↓ \"", "\"select\""], 200, "↑↓ select", "1.19.3：`r(\"\\u2191\\u2193 \")` 与 `r(\"select\")` 相距 56 字节"),
+    D::near("literal:⇆ tab", &["\"⇆ \"", "\"tab\""], 200, "⇆ tab", "1.19.3：`r(\"\\u21C6 \")` 与 `r(\"tab\")` 相距 49 字节"),
     D::new(
         "literal:esc to interrupt",
         "esc to interrupt",
@@ -76,10 +77,13 @@ pub(super) static DEPS: &[D] = &[
         "esc again to interrupt",
         "1.19.3：按过一次 Esc 后底栏是 `esc ` + `again to interrupt`，后者在程序文件里 2 处",
     ),
-    D::new(
+    // 运行中底栏：`DU=K("esc ")` 与 `kU.interrupt>0?"again to interrupt":"interrupt"` 之间隔着重试提示的
+    // 渲染代码。research-cli-drift O1 的漂移正是这一条（1.19.2 的 `esc to interrupt` 改成两段）。
+    D::near(
         "literal:esc interrupt",
-        "",
+        &["\"esc \"", "\"interrupt\""],
+        2500,
         "esc interrupt",
-        "运行时拼接：1.19.3 底栏是 `K(\"esc \")` 后接 `\"interrupt\"`（research-cli-drift O1）；`interrupt` 是通用词，搜它证明不了什么",
+        "1.19.3：`K(\"esc \")` 与 `\"interrupt\"` 相距 1677 字节（research-cli-drift O1）",
     ),
 ];

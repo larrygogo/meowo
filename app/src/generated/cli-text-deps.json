@@ -322,8 +322,13 @@
         },
         {
           "legacy": false,
+          "max_gap": 40,
           "needle": "",
-          "note": "2.1.322 `Y({chord:\"tab\",action:\"amend\"})` 运行时拼（包内 5 处）；只搜 amend 会处处命中，不搜",
+          "note": "2.1.322 `e(y,{chord:\"tab\",action:\"amend\"})` 运行时拼；两段相距 13 字节（做空第一轮 #7）",
+          "parts": [
+            "\"tab\"",
+            "\"amend\""
+          ],
           "rule": "literal:tab to amend",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:199"
         },
@@ -630,8 +635,14 @@
         },
         {
           "legacy": false,
+          "max_gap": 400,
           "needle": "",
-          "note": "2.1.314 实拍（cc-btw-side-question 取证）；按键提示由 Y({chord,action}) 运行时拼，不搜",
+          "note": "2.1.314 实拍（cc-btw-side-question 取证）；2.1.322 claude.exe 里 `action:\"copy\"/\"fork\"/\"close\"` 最近相距 142 字节",
+          "parts": [
+            "\"copy\"",
+            "\"fork\"",
+            "\"close\""
+          ],
           "rule": "screen:btw_overlay_answered",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/screen.rs:122"
         },
@@ -757,15 +768,25 @@
         },
         {
           "legacy": false,
+          "max_gap": 120,
           "needle": "",
-          "note": "运行时拼接：2.5.1 提问提示行是 `1-${n} / ` 加 `↵ choose`，按键与说明分开存，整串 0 处",
+          "note": "2.5.1 kimi.EXE：模板段 ` / ↵ ` 与 `\"choose\"` 相距 44 字节",
+          "parts": [
+            " / ↵ ",
+            "\"choose\""
+          ],
           "rule": "literal:↵ choose",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/screen.rs:50"
         },
         {
           "legacy": false,
+          "max_gap": 120,
           "needle": "",
-          "note": "运行时拼接：同 ↵ choose（多选题的写法）",
+          "note": "2.5.1 kimi.EXE：同 ↵ choose，`\"toggle\"` 相距 33 字节（多选题）",
+          "parts": [
+            " / ↵ ",
+            "\"toggle\""
+          ],
           "rule": "literal:↵ toggle",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/screen.rs:50"
         },
@@ -806,8 +827,8 @@
         },
         {
           "legacy": false,
-          "needle": "",
-          "note": "运行时拼接：审批提示行的数字段按选项个数生成，整串 0 处；`↵ confirm` 能搜到",
+          "needle": " choose · ↵ confirm",
+          "note": "2.5.1 kimi.EXE：模板静态段 ` choose · ↵ confirm` 1 处（数字段由 buildNumericHint 生成）",
           "rule": "literal:1/2/3/4 choose",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/screen.rs:79"
         },
@@ -950,6 +971,55 @@
           "note": "2.5.1 kimi.EXE：`ensureActivitySpinner(\"braille\",\"Working…\")`，省略号是单个字符；重试时为 `Retrying (n/m)`",
           "rule": "screen:moon_word_status_working",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/screen.rs:160"
+        },
+        {
+          "legacy": false,
+          "needle": "plan_mode.cancel",
+          "note": "2.5.1 wire.jsonl 实样（/plan off 与 Shift+Tab 关计划模式都写它，research-cli-drift K1）；kimi.EXE 6 处",
+          "rule": "record:plan_mode.cancel",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/telemetry.rs:1144"
+        },
+        {
+          "legacy": false,
+          "needle": "plan_mode.enter",
+          "note": "2.5.1 kimi.EXE 6 处（包内回放器 case）",
+          "rule": "record:plan_mode.enter",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/telemetry.rs:1139"
+        },
+        {
+          "legacy": false,
+          "needle": "token_counting.rebased",
+          "note": "2.5.1 wire.jsonl 实样（压缩后 Context% 读它，research-cli-drift K4）；kimi.EXE 3 处",
+          "rule": "record:token_counting.rebased",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/telemetry.rs:1513"
+        },
+        {
+          "legacy": false,
+          "needle": "usageScope",
+          "note": "2.5.1 wire.jsonl 实样（压缩请求记 session 档，不能当上下文，research-cli-drift K4）；kimi.EXE 5 处",
+          "rule": "record:usageScope",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/telemetry.rs:1524"
+        },
+        {
+          "legacy": false,
+          "needle": "full_compaction.complete",
+          "note": "2.5.1 wire.jsonl 实样（已压缩分隔条）；kimi.EXE 2 处",
+          "rule": "record:full_compaction.complete",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/telemetry.rs:596"
+        },
+        {
+          "legacy": false,
+          "needle": "permission.set_mode",
+          "note": "2.5.1 wire.jsonl 实样（权限档显示）；kimi.EXE 5 处",
+          "rule": "record:permission.set_mode",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/telemetry.rs:1134"
+        },
+        {
+          "legacy": false,
+          "needle": "kimi-file://",
+          "note": "2.5.1 wire.jsonl 实样（粘贴图片的地址形态，research-cli-drift K3）；kimi.EXE 20 处",
+          "rule": "record:kimi-file://",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/telemetry.rs:217"
         }
       ],
       "id": "kimi",
@@ -1031,22 +1101,40 @@
         },
         {
           "legacy": false,
-          "needle": "to scroll",
-          "note": "0.166.0 记录查看页底栏是按键 + ` to scroll`；程序文件里 `to scroll` 1 处（紧挨 tui\\src\\pager_overlay.rs），前导空格在拼接处",
+          "max_gap": 48,
+          "needle": "",
+          "note": "0.166.0 codex.exe：三段紧挨 `tui\\src\\pager_overlay.rs`，相距 16 字节",
+          "parts": [
+            "to scroll",
+            "to page",
+            "to jump"
+          ],
           "rule": "literal: to scroll",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:48"
         },
         {
           "legacy": false,
-          "needle": " to page",
-          "note": "",
+          "max_gap": 48,
+          "needle": "",
+          "note": "同 to scroll；` to page` 单搜在 codex.exe 有 3 处，其中 2 处与记录查看页无关",
+          "parts": [
+            "to scroll",
+            "to page",
+            "to jump"
+          ],
           "rule": "literal: to page",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:48"
         },
         {
           "legacy": false,
-          "needle": "to jump",
-          "note": "0.166.0 记录查看页底栏是按键 + ` to jump`；程序文件里 `to jump` 1 处",
+          "max_gap": 48,
+          "needle": "",
+          "note": "同 to scroll",
+          "parts": [
+            "to scroll",
+            "to page",
+            "to jump"
+          ],
           "rule": "literal: to jump",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:48"
         },
@@ -1136,10 +1224,38 @@
         },
         {
           "legacy": false,
-          "needle": "",
-          "note": "运行时拼接：0.166.0 codex.exe 里 `working (` 与 `esc to interrupt` 都是 0 处，只有 `to interrupt`；状态行没有 0.166 实拍，规则沿用 0.16x 写法，属于「有风险但没证据」",
+          "needle": "to interrupt)",
+          "note": "0.166.0 codex.exe：` to interrupt)` 1 处（紧挨 `fast_mode` 与 ` • ` 分隔符）；`working (` 0 处，运行时拼。状态行没有 0.166 实拍",
           "rule": "screen:screen_working_fallback",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:99"
+        },
+        {
+          "legacy": false,
+          "needle": "codex-cli",
+          "note": "0.166.0 `codex --version` 首行原样（带 `codex-cli ` 前缀，research-cli-drift X2）；codex.exe 19 处",
+          "rule": "record:codex-cli",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/setup.rs:351"
+        },
+        {
+          "legacy": false,
+          "needle": "ContextCompaction",
+          "note": "0.162.1 rollout 实样（已压缩分隔条，research-cli-drift X3）；0.166.0 codex.exe 33 处",
+          "rule": "record:ContextCompaction",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/telemetry.rs:188"
+        },
+        {
+          "legacy": false,
+          "needle": "approval_policy",
+          "note": "0.163 rollout 实样（运行中权限档，research-cli-drift X4）；0.166.0 codex.exe 55 处",
+          "rule": "record:approval_policy",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/telemetry.rs:464"
+        },
+        {
+          "legacy": false,
+          "needle": "history_base",
+          "note": "0.163+ 回溯续写段的 session_meta（lineage.rs 拼接）；0.166.0 codex.exe 6 处",
+          "rule": "record:history_base",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/lineage.rs:26"
         }
       ],
       "id": "codex",
@@ -1299,43 +1415,73 @@
         },
         {
           "legacy": false,
+          "max_gap": 200,
           "needle": "",
-          "note": "运行时拼接：opencode 1.19.3 把按键与说明分成两个节点渲染（程序文件里 `\"esc \"` 8 处单独出现），整串没有原样",
+          "note": "1.19.3：`r(\"esc \")` 与 `r(\"dismiss\")` 相距 47 字节",
+          "parts": [
+            "\"esc \"",
+            "\"dismiss\""
+          ],
           "rule": "literal:esc dismiss",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/screen.rs:27"
         },
         {
           "legacy": false,
+          "max_gap": 400,
           "needle": "",
-          "note": "运行时拼接：opencode 1.19.3 把按键与说明分成两个节点渲染（程序文件里 `\"esc \"` 8 处单独出现），整串没有原样",
+          "note": "1.19.3：`r(\"enter \")` 与 `r(\"confirm\")` 相距 159 字节",
+          "parts": [
+            "\"enter \"",
+            "\"confirm\""
+          ],
           "rule": "literal:enter confirm",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/screen.rs:28"
         },
         {
           "legacy": false,
+          "max_gap": 6000,
           "needle": "",
-          "note": "运行时拼接：opencode 1.19.3 把按键与说明分成两个节点渲染（程序文件里 `\"esc \"` 8 处单独出现），整串没有原样",
+          "note": "1.19.3：说明在 `C=R(()=>{…return\"submit\"…})` 里算好，与 `r(\"enter \")` 相距 3939 字节",
+          "parts": [
+            "\"enter \"",
+            "\"submit\""
+          ],
           "rule": "literal:enter submit",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/screen.rs:28"
         },
         {
           "legacy": false,
+          "max_gap": 6000,
           "needle": "",
-          "note": "运行时拼接：opencode 1.19.3 把按键与说明分成两个节点渲染（程序文件里 `\"esc \"` 8 处单独出现），整串没有原样",
+          "note": "1.19.3：同 enter submit，`return\"toggle\"` 相距 3971 字节",
+          "parts": [
+            "\"enter \"",
+            "\"toggle\""
+          ],
           "rule": "literal:enter toggle",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/screen.rs:28"
         },
         {
           "legacy": false,
+          "max_gap": 200,
           "needle": "",
-          "note": "运行时拼接：opencode 1.19.3 把按键与说明分成两个节点渲染（程序文件里 `\"esc \"` 8 处单独出现），整串没有原样",
+          "note": "1.19.3：`r(\"\\u2191\\u2193 \")` 与 `r(\"select\")` 相距 56 字节",
+          "parts": [
+            "\"↑↓ \"",
+            "\"select\""
+          ],
           "rule": "literal:↑↓ select",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/screen.rs:29"
         },
         {
           "legacy": false,
+          "max_gap": 200,
           "needle": "",
-          "note": "运行时拼接：opencode 1.19.3 把按键与说明分成两个节点渲染（程序文件里 `\"esc \"` 8 处单独出现），整串没有原样",
+          "note": "1.19.3：`r(\"\\u21C6 \")` 与 `r(\"tab\")` 相距 49 字节",
+          "parts": [
+            "\"⇆ \"",
+            "\"tab\""
+          ],
           "rule": "literal:⇆ tab",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/screen.rs:29"
         },
@@ -1369,8 +1515,13 @@
         },
         {
           "legacy": false,
+          "max_gap": 2500,
           "needle": "",
-          "note": "运行时拼接：1.19.3 底栏是 `K(\"esc \")` 后接 `\"interrupt\"`（research-cli-drift O1）；`interrupt` 是通用词，搜它证明不了什么",
+          "note": "1.19.3：`K(\"esc \")` 与 `\"interrupt\"` 相距 1677 字节（research-cli-drift O1）",
+          "parts": [
+            "\"esc \"",
+            "\"interrupt\""
+          ],
           "rule": "literal:esc interrupt",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/screen.rs:48"
         },
