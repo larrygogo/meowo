@@ -8,6 +8,7 @@
 //! 两者共用 TOML 格式与 stdin 载荷；事件集按实现区分，不能把新版事件写入旧 Python 配置。
 
 pub mod account;
+mod cli_text;
 mod screen;
 pub mod telemetry;
 
@@ -411,6 +412,10 @@ impl AgentPlugin for Kimi {
         ]
     }
 
+    /// CLI 漂移检查的手工声明部分（正则规则的样例、旧版兼容与运行时拼接的字面量），见 cli_text.rs。
+    fn cli_text_deps(&self) -> &'static [crate::cli_text::CliTextDep] {
+        cli_text::DEPS
+    }
     fn id(&self) -> AgentId {
         id::KIMI
     }

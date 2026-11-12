@@ -26,6 +26,7 @@
 //! `PreCompress` 没有完成配对，暂不写入「正在压缩」，避免手动压缩后永久挂起。
 
 pub mod account;
+mod cli_text;
 mod screen;
 pub mod telemetry;
 
@@ -166,6 +167,10 @@ impl AgentPlugin for Gemini {
         screen::RULES
     }
 
+    /// CLI 漂移检查的手工声明部分（正则规则的样例、旧版兼容与运行时拼接的字面量），见 cli_text.rs。
+    fn cli_text_deps(&self) -> &'static [crate::cli_text::CliTextDep] {
+        cli_text::DEPS
+    }
     fn id(&self) -> AgentId {
         id::GEMINI
     }

@@ -268,9 +268,9 @@ mod tests {
     use super::*;
     use std::path::{Path, PathBuf};
 
-    /// 声明已补全的插件：每条正则规则都必须有真实样例。其余插件的识别规则正由别组改动
-    /// （2026-11-12 第三轮），合并时补齐声明后加进来。
-    const COMPLETE: &[&str] = &["claude", "codex", "opencode"];
+    /// 声明已补全的插件：每条正则规则都必须有真实样例。新接入的插件补齐 cli_text_deps 后加进来
+    ///（2026-11-12 第三轮五家全部补齐）。
+    const COMPLETE: &[&str] = &["claude", "codex", "gemini", "kimi", "opencode"];
 
     fn compile(pattern: &str) -> regex::Regex {
         regex::RegexBuilder::new(pattern)

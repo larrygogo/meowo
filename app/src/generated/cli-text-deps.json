@@ -655,19 +655,19 @@
     },
     {
       "command": "kimi",
-      "declared_complete": false,
+      "declared_complete": true,
       "entries": [
         {
           "legacy": false,
-          "needle": "do you trust the files in this folder",
-          "note": "",
+          "needle": "",
+          "note": "通用信任表（chat_ui.rs）里的句子，给有信任页的 CLI 用；kimi 2.5.1 程序文件里 0 处，不搜",
           "rule": "literal:do you trust the files in this folder",
           "source": "app/src-tauri/crates/meowo-agent/src/chat_ui.rs:25"
         },
         {
           "legacy": false,
-          "needle": "do you trust the contents of this directory",
-          "note": "",
+          "needle": "",
+          "note": "通用信任表（chat_ui.rs）里的句子，给有信任页的 CLI 用；kimi 2.5.1 程序文件里 0 处，不搜",
           "rule": "literal:do you trust the contents of this directory",
           "source": "app/src-tauri/crates/meowo-agent/src/chat_ui.rs:27"
         },
@@ -757,15 +757,15 @@
         },
         {
           "legacy": false,
-          "needle": "↵ choose",
-          "note": "",
+          "needle": "",
+          "note": "运行时拼接：2.5.1 提问提示行是 `1-${n} / ` 加 `↵ choose`，按键与说明分开存，整串 0 处",
           "rule": "literal:↵ choose",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/screen.rs:50"
         },
         {
           "legacy": false,
-          "needle": "↵ toggle",
-          "note": "",
+          "needle": "",
+          "note": "运行时拼接：同 ↵ choose（多选题的写法）",
           "rule": "literal:↵ toggle",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/screen.rs:50"
         },
@@ -778,52 +778,178 @@
         },
         {
           "legacy": false,
+          "needle": "1/2 choose",
+          "note": "",
+          "rule": "literal:1/2 choose",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/screen.rs:64"
+        },
+        {
+          "legacy": false,
           "needle": "requesting approval",
           "note": "",
           "rule": "literal:requesting approval",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/screen.rs:61"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/screen.rs:77"
         },
         {
           "legacy": false,
           "needle": "approve once",
           "note": "",
           "rule": "literal:approve once",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/screen.rs:62"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/screen.rs:78"
         },
         {
           "legacy": false,
           "needle": "approve for this session",
           "note": "",
           "rule": "literal:approve for this session",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/screen.rs:62"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/screen.rs:78"
         },
         {
           "legacy": false,
-          "needle": "1/2/3/4 choose",
-          "note": "",
+          "needle": "",
+          "note": "运行时拼接：审批提示行的数字段按选项个数生成，整串 0 处；`↵ confirm` 能搜到",
           "rule": "literal:1/2/3/4 choose",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/screen.rs:63"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/screen.rs:79"
         },
         {
-          "legacy": false,
+          "legacy": true,
           "needle": "thinking...",
-          "note": "",
+          "note": "2.5.1 之前的三个点写法；2.5.1 改用省略号字符 `Thinking…`",
           "rule": "literal:thinking...",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/screen.rs:91"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/screen.rs:113"
         },
         {
-          "legacy": false,
+          "legacy": true,
           "needle": "working...",
-          "note": "",
+          "note": "2.5.1 之前的三个点写法；2.5.1 改用省略号字符 `Working…`",
           "rule": "literal:working...",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/screen.rs:91"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/screen.rs:114"
         },
         {
           "legacy": false,
           "needle": "using ",
           "note": "",
           "rule": "literal:using ",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/screen.rs:91"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/screen.rs:115"
+        },
+        {
+          "legacy": false,
+          "needle": "working…",
+          "note": "",
+          "rule": "literal:working…",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi"
+        },
+        {
+          "legacy": false,
+          "needle": "thinking…",
+          "note": "",
+          "rule": "literal:thinking…",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi"
+        },
+        {
+          "legacy": false,
+          "needle": "compacting…",
+          "note": "",
+          "rule": "literal:compacting…",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi"
+        },
+        {
+          "legacy": true,
+          "needle": "compacting...",
+          "note": "2.5.1 之前的三个点写法；2.5.1 改用省略号字符 `Compacting…`",
+          "rule": "literal:compacting...",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/screen.rs:119"
+        },
+        {
+          "legacy": false,
+          "needle": "thinking set to",
+          "note": "2.5.1 kimi.EXE：`Thinking set to ` 2 处（/effort 成功后的回话）",
+          "rule": "effort.confirm",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:487"
+        },
+        {
+          "legacy": false,
+          "needle": "unsupported thinking effort",
+          "note": "2.5.1 kimi.EXE：`unsupported thinking effort` 1 处；同一规则里的 `cannot switch models while streaming` 0 处，留作旧版兼容",
+          "rule": "effort.reject",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:488"
+        },
+        {
+          "legacy": false,
+          "needle": "cannot undo ",
+          "note": "2.5.1 kimi.EXE formatUndoLimitMessage：`Cannot undo ` 4 处，后面的数字与原因是运行时拼的",
+          "rule": "undo.reject",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:767"
+        },
+        {
+          "legacy": false,
+          "needle": "[image #",
+          "note": "2.5.1 kimi.EXE：`[image #` 2 处（输入框里的贴图占位）；`[image:` 1 处是旧形态",
+          "rule": "clipboard_image",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:564"
+        },
+        {
+          "legacy": false,
+          "needle": "←/→/tab switch",
+          "note": "2.5.1 kimi.EXE renderSubmitTab 的提示行；`←/→/tab switch` 2 处，`1-${n} / ↵ choose` 是运行时拼的",
+          "rule": "attention:kimi:question",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:392"
+        },
+        {
+          "legacy": false,
+          "needle": "run this command?",
+          "note": "2.5.1 kimi.EXE：`Run this command?` 在审批问句表里（与 Write this file? 等并列）",
+          "rule": "attention:kimi:command-approval",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:401"
+        },
+        {
+          "legacy": true,
+          "needle": "approve this command?",
+          "note": "0.29 实拍的审批框标题（旧证据）；2.5.1 改用 Run this command? 等分类问句",
+          "rule": "screen:current_approval_panel",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/screen.rs:15"
+        },
+        {
+          "legacy": false,
+          "needle": "",
+          "note": "题干由 agent 生成、表头是通用词 question，搜程序文件证明不了什么；同屏的 ←/→/tab switch 已由 attention:kimi:question 盯着",
+          "rule": "screen:question_panel",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/screen.rs:40"
+        },
+        {
+          "legacy": false,
+          "needle": "ready to submit your answers?",
+          "note": "2.5.1 kimi.EXE renderSubmitTab：`Ready to submit your answers?` 2 处（提问表单最后的确认页）",
+          "rule": "screen:question_submit_panel",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/screen.rs:59"
+        },
+        {
+          "legacy": true,
+          "needle": "agents running]",
+          "note": "2.5.1 之前状态行里的后台子代理计数；2.5.1 里 0 处，运行中改靠主 spinner 判断",
+          "rule": "screen:background_agent_status_working",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/screen.rs:84"
+        },
+        {
+          "legacy": true,
+          "needle": "running (",
+          "note": "2.5.1 之前的子代理运行行；2.5.1 里 0 处",
+          "rule": "screen:agent_running_status_working",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/screen.rs:129"
+        },
+        {
+          "legacy": false,
+          "needle": "· tip:",
+          "note": "2.5.1 kimi.EXE：月相 spinner 后接 ` · Tip:` 2 处",
+          "rule": "screen:moon_tip_status_working",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/screen.rs:140"
+        },
+        {
+          "legacy": false,
+          "needle": "working…",
+          "note": "2.5.1 kimi.EXE：`ensureActivitySpinner(\"braille\",\"Working…\")`，省略号是单个字符；重试时为 `Retrying (n/m)`",
+          "rule": "screen:moon_word_status_working",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/screen.rs:160"
         }
       ],
       "id": "kimi",
@@ -1021,7 +1147,7 @@
     },
     {
       "command": "gemini",
-      "declared_complete": false,
+      "declared_complete": true,
       "entries": [
         {
           "legacy": false,
@@ -1032,8 +1158,8 @@
         },
         {
           "legacy": false,
-          "needle": "do you trust the contents of this directory",
-          "note": "",
+          "needle": "",
+          "note": "通用信任表（chat_ui.rs）里的句子，给别的 CLI 用；gemini 0.65.0 的信任页是 `Do you trust the files in this folder`（能搜到），这句 0 处",
           "rule": "literal:do you trust the contents of this directory",
           "source": "app/src-tauri/crates/meowo-agent/src/chat_ui.rs:27"
         },
@@ -1046,45 +1172,87 @@
         },
         {
           "legacy": false,
-          "needle": "│ apply this change",
-          "note": "",
+          "needle": "apply this change",
+          "note": "0.65.0 bundle 里有这句；框线 `│` 是运行时画的边框，去掉框线再搜",
           "rule": "literal:│ apply this change",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/screen.rs:33"
         },
         {
           "legacy": false,
-          "needle": "│ allow execution",
-          "note": "",
+          "needle": "allow execution",
+          "note": "0.65.0 bundle 里有这句；框线 `│` 是运行时画的边框，去掉框线再搜",
           "rule": "literal:│ allow execution",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/screen.rs:34"
         },
         {
           "legacy": false,
-          "needle": "│ do you want to proceed",
-          "note": "",
+          "needle": "do you want to proceed",
+          "note": "0.65.0 bundle 里有这句；框线 `│` 是运行时画的边框，去掉框线再搜",
           "rule": "literal:│ do you want to proceed",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/screen.rs:42"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/screen.rs:45"
         },
         {
           "legacy": false,
           "needle": "do you want to proceed?",
           "note": "",
           "rule": "literal:do you want to proceed?",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/screen.rs:43"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/screen.rs:46"
         },
         {
           "legacy": false,
           "needle": "allow",
           "note": "",
           "rule": "literal:allow",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/screen.rs:49"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/screen.rs:52"
         },
         {
           "legacy": false,
           "needle": "esc to cancel",
           "note": "",
           "rule": "literal:esc to cancel",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/screen.rs:65"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/screen.rs:84"
+        },
+        {
+          "legacy": false,
+          "needle": "allow execution of",
+          "note": "0.65.0 bundle：`Allow execution of` 在工具确认框里；同规则还认 Apply this change? / Do you want to proceed? / 沙箱扩权 To run [Shell] …",
+          "rule": "attention:gemini:command-approval",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:278"
+        },
+        {
+          "legacy": false,
+          "needle": "usage limit reached",
+          "note": "0.65.0 bundle：`Usage limit reached`；高负载框 `We are currently experiencing high demand for ${model}.` 同规则",
+          "rule": "attention:gemini:usage-limit",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:290"
+        },
+        {
+          "legacy": false,
+          "needle": "answer questions",
+          "note": "0.65.0 bundle：ask_user 提问表单表头 `Answer Questions`",
+          "rule": "attention:gemini:question",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:299"
+        },
+        {
+          "legacy": false,
+          "needle": "(esc to cancel",
+          "note": "0.65.0 bundle：运行中 spinner 行尾 `(esc to cancel`",
+          "rule": "screen:spinner_line_working",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/screen.rs:16"
+        },
+        {
+          "legacy": false,
+          "needle": "allow once",
+          "note": "0.65.0 bundle：确认框首个选项 `Yes, allow once`；编号与圆点是运行时画的",
+          "rule": "screen:apply_or_allow_change",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/screen.rs:27"
+        },
+        {
+          "legacy": false,
+          "needle": "answer questions",
+          "note": "0.65.0 bundle：表头 `Answer Questions`，底部提示 `Enter to select` 各段以 ` \\xB7 ` 连接，整串搜不到原样",
+          "rule": "screen:ask_user_dialog",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/screen.rs:67"
         }
       ],
       "id": "gemini",
