@@ -478,9 +478,10 @@ export function Island({
               <Eyes tone={alertTone} cue={cue} small />
               <span className={`isl-alert-icon is-${alertTone}`}><AlertIcon kind={alert.kind} /></span>
               <span className="isl-alert-text">
+                {/* 标题独占一行。排队数原来是标题右边的「还有 N 条」胶囊（60px + 8px 间距），标题只剩 174px、
+                    27 个字的中文标题露 13 个字（island-alert-error 实量）；现在并进右边的「忽略 N 条」。 */}
                 <span className="isl-alert-title-row">
                   <span className="isl-alert-title" title={alertTitle}>{alertTitle}</span>
-                  {alertQueued > 0 && <span className="isl-alert-more">{t.island.moreAlerts(alertQueued)}</span>}
                 </span>
                 <span className="isl-alert-sub">
                   <span className={`isl-state is-${alertTone}`}>{alertLabel(alert)}</span>
@@ -493,18 +494,21 @@ export function Island({
                 </span>
               </span>
             </span>
-            {/* 「全部忽略」只在后面还排着的时候出现：只有一条时它和 × 是一回事（i5：排了 12 条只能一条条等）。 */}
+            {/* 「全部忽略」只在后面还排着的时候出现：只有一条时它和 × 是一回事（i5：排了 12 条只能一条条等）。
+                钮上直接写一共忽略几条（正在弹的这条 + 排队的），既是动作也是排队数，不另占标题行；
+                悬停提示仍是「全部忽略」。 */}
             {onDismissAllAlerts && alertQueued > 0 && (
               <button
                 type="button"
                 className="isl-btn is-ghost isl-alert-skip"
+                title={t.island.dismissAll}
                 onPointerDown={stop}
                 onKeyDown={stop}
                 onClick={(event) => {
                   stop(event);
                   onDismissAllAlerts();
                 }}
-              >{t.island.dismissAll}</button>
+              >{t.island.dismissAllCount(alertQueued + 1)}</button>
             )}
             <button
               type="button"

@@ -413,7 +413,7 @@ describe("App", () => {
     }
   });
 
-  it("几条提醒一起来：排队一条条弹、显示还剩几条；同一会话只保留最新的", async () => {
+  it("几条提醒一起来：排队一条条弹、「忽略 N 条」钮上写着一共几条；同一会话只保留最新的", async () => {
     render(<App />);
     await waitFor(() => expect(vi.mocked(invoke)).toHaveBeenCalledWith("island_layout", expect.anything()));
     const alertOf = (sessionId: number, title: string) =>
@@ -424,10 +424,10 @@ describe("App", () => {
       emitIslandAlert(alertOf(3, "第三条"));
     });
     expect(await screen.findByText("第一条")).toBeTruthy();
-    expect(screen.getByText(zh.island.moreAlerts(2))).toBeTruthy();
+    expect(screen.getByText(zh.island.dismissAllCount(3))).toBeTruthy();
     // 会话 2 又来一条：替换排队中的旧的，不再多排一条。
     act(() => { emitIslandAlert(alertOf(2, "第二条（新）")); });
-    expect(screen.getByText(zh.island.moreAlerts(2))).toBeTruthy();
+    expect(screen.getByText(zh.island.dismissAllCount(3))).toBeTruthy();
   });
 
   // 二期 #1（2026-11-10 定）：提醒在场时点正文 = 打开那条会话，与系统通知横幅一致；排在后面的提醒照常弹。
@@ -467,8 +467,8 @@ describe("App", () => {
       });
       await act(async () => { await vi.advanceTimersByTimeAsync(1_500); });
       expect(screen.getByText("要审批")).toBeTruthy();
-      // 被插队的跑完提醒没丢：审批后面还排着两条。
-      expect(screen.getByText(zh.island.moreAlerts(2))).toBeTruthy();
+      // 被插队的跑完提醒没丢：审批后面还排着两条（连审批一共三条）。
+      expect(screen.getByText(zh.island.dismissAllCount(3))).toBeTruthy();
     } finally {
       vi.useRealTimers();
     }

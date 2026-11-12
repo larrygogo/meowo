@@ -466,7 +466,7 @@ export function App() {
   const [closing, setClosing] = useState(false);
   const [alert, setAlert] = useState<IslandAlertEvent | null>(null);
   const alertQueueRef = useRef<IslandAlertEvent[]>([]);
-  // 队列里还排着几条（不含正在弹的那条），提醒卡片上显示「还有 N 条」。
+  // 队列里还排着几条（不含正在弹的那条），提醒卡片的「忽略 N 条」钮上显示（N = 这个数 + 正在弹的那条）。
   const [alertQueued, setAlertQueued] = useState(0);
   const alertTimerRef = useRef<number | null>(null);
   // 正在显示的提醒与它弹出的时刻、倒计时到点的时刻：急事插队要据此算「跑完」还该留多久，

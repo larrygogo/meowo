@@ -7321,7 +7321,15 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
   --cc-ok-vivid: #30d158;
   --cc-warn-vivid: #ffb829;
   --cc-err-vivid: #ff453a;
+  /* Claude 徽标色同理钉在深色板的值上：浅色主题的 #b0532f 是给白底加深过的，压在黑岛上
+     对比度只有 4.1:1（深色板 #d97757 是 6.7:1），岛在两套主题之间就差这一处（island-compact 浅色实量）。 */
+  --cc-claude: #d97757;
   --isl-ink: #000;
+  /* 「状态色混底色」的那个底：提醒图标底、环的底轨都拿状态色 / 品牌色往它上面混两成。黑岛上是黑；
+     macOS 菜单栏落点底下是毛玻璃，混黑会压出一块不透明的死色，那里改成混透明（见 island-menubar 段）。 */
+  --isl-mix: #000;
+  /* 角标外圈那道「把环切开」的描边：黑岛上和岛底同色。 */
+  --isl-badge-cut: var(--isl-ink);
   --isl-text: #f5f5f7;
   --isl-text-2: #b9b9be;
   --isl-dim: #98989d;
@@ -7415,6 +7423,10 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .isl-notch.is-split .isl-agent-logo { width: 16px; height: 16px; }
 .isl-notch.is-split .isl-agent-logo svg, .isl-notch.is-split .isl-agent-logo img { width: 11px !important; height: 11px !important; }
 .isl-notch.is-split .isl-agent-badge.is-waiting { width: 7px; height: 7px; right: -1px; bottom: -1px; }
+/* 「!」「×」角标也要跟着环缩：两翼的环是 22px，角标还用普通态的 15px 就占掉直径的 68%，
+   11px 的徽标右下被盖掉约四分之一（island-compact-notch 实量）。按普通态 15 / 32 的比例缩到 11px，
+   再往外多挂 1px，只压到徽标的一个角。 */
+.isl-notch.is-split .isl-agent-badge:not(.is-waiting) { min-width: 11px; height: 11px; padding: 0 2px; border-width: 1.5px; font-size: 7px; right: -4px; bottom: -4px; }
 .isl-notch.is-split .isl-usage-val { font-size: 8px; }
 .isl-notch.is-split .isl-usage-badge { display: none; }
 .isl-clock { font-size: 20px; font-weight: 700; letter-spacing: 0.2px; font-variant-numeric: tabular-nums; }
@@ -7447,6 +7459,10 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
    出错红叉，跑完 ^ ^，闲久了睡着冒 z。各形态在 islandParts.tsx 的 Eyes 里切，这里只管颜色与动作。 */
 .isl-eyes { position: relative; display: inline-flex; align-items: center; padding: 0 6px; flex: none; color: #fff; }
 .isl-eyes.is-small { padding: 0; }
+/* 眼睛打头（专注、极简、没有额度环的概览）时把左边那 6px 火花位和 svg 自带的 2px 空边收回去：
+   不收的话眼白到岛左缘 24px，右边内容到岛右缘 16px，整体偏右 4px（island-minimal 实量）。
+   火花是绝对定位，跟着眼睛一起挪，仍在岛内。刘海两翼的子元素是 .isl-wing，不受影响。 */
+.isl-notch.is-compact > .isl-eyes:first-child { margin-left: -8px; }
 .isl-eye-pair { display: block; overflow: visible; }
 .isl-sclera { fill: #fff; }
 .isl-pupil { fill: #000; transition: transform var(--dur-base) var(--ease-out); }
@@ -7545,7 +7561,7 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .isl-agent-badge {
   position: absolute; right: -4px; bottom: -4px;
   min-width: 15px; height: 15px; padding: 0 3px; box-sizing: border-box;
-  border-radius: 8px; border: 2px solid var(--isl-ink);
+  border-radius: 8px; border: 2px solid var(--isl-badge-cut);
   display: grid; place-items: center;
   font-size: 9px; font-weight: 600; line-height: 1; color: #000;
 }
@@ -7555,7 +7571,7 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
    同一个会话两边颜色要对得上（用户要求统一，2026-11-05）。绿色别用在这里：Meowo 里绿一直是在跑。 */
 .isl-agent-badge.is-waiting { min-width: 0; width: 10px; height: 10px; padding: 0; right: -2px; bottom: -2px; background: var(--isl-waiting); }
 
-/* 提醒（548×68）：眼睛 · 状态图标 · 两行文字 ｜ 全部忽略 · 打开 · ×。画面里只有「打开」一个青柠主按钮。 */
+/* 提醒（548×68）：眼睛 · 状态图标 · 两行文字 ｜ 忽略 N 条 · 打开 · ×。画面里只有「打开」一个青柠主按钮。 */
 .isl-notch.is-alert {
   width: calc(100% - var(--isl-ear) * 2);
   height: 100%;
@@ -7574,11 +7590,13 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
   to { clip-path: inset(0 0 0 0 round 0 0 24px 24px); }
 }
 .isl-alert-icon { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; flex: none; background: var(--isl-chip); color: var(--isl-text-2); }
-.isl-alert-icon.is-pending { background: color-mix(in srgb, var(--isl-pending) 20%, #000); color: var(--isl-pending); }
-.isl-alert-icon.is-error { background: color-mix(in srgb, var(--isl-err) 22%, #000); color: var(--isl-err); }
-.isl-alert-icon.is-waiting { background: color-mix(in srgb, var(--isl-waiting) 20%, #000); color: var(--isl-waiting); }
+.isl-alert-icon.is-pending { background: color-mix(in srgb, var(--isl-pending) 20%, var(--isl-mix)); color: var(--isl-pending); }
+.isl-alert-icon.is-error { background: color-mix(in srgb, var(--isl-err) 22%, var(--isl-mix)); color: var(--isl-err); }
+.isl-alert-icon.is-waiting { background: color-mix(in srgb, var(--isl-waiting) 20%, var(--isl-mix)); color: var(--isl-waiting); }
 /* 正文那块是按钮（Enter 打开会话），右边的「全部忽略」「打开」「×」是它的兄弟，不嵌在按钮里。 */
-.isl-alert-main { flex: 1; min-width: 0; align-self: stretch; display: flex; align-items: center; gap: 12px; margin-right: 4px; border-radius: 12px; outline: none; }
+/* 间距与外层同一档 8px（原来这里是 12px，右边还多 4px 外边距）：提醒总宽固定 520，这 12px 让给文字列。
+   右边不再留外边距后，文字到「忽略 N 条」的字、字到「打开」都是 14px（8 间距 + 钮内 6）。 */
+.isl-alert-main { flex: 1; min-width: 0; align-self: stretch; display: flex; align-items: center; gap: 8px; border-radius: 12px; outline: none; }
 .isl-alert-main:focus-visible { box-shadow: inset 0 0 0 2px var(--isl-lime); }
 /* 关闭当前提醒（i5）：24px 见方的圆钮，满足 WCAG 2.5.8 的最小点击区。 */
 .isl-alert-close {
@@ -7593,9 +7611,11 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .isl-alert-title-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .isl-alert-title { font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .isl-alert-detail { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--isl-text-2); }
-/* 项目名先让详情：最多占四成，超长省略（i12）。 */
-.isl-alert-proj { flex: 0 0 auto; max-width: 40%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.isl-alert-more { flex: none; height: 18px; padding: 0 7px; border-radius: 9px; background: var(--isl-chip-hover); color: var(--isl-text-2); font-size: 11px; line-height: 18px; font-variant-numeric: tabular-nums; }
+/* 项目名先让详情：最多占三成，超长省略（i12）。原来四成：排队时副行 242px，项目名占 97px、
+   出错详情只剩 94px（「API Error: 529 …」，island-alert-error 实量），详情才是这一行要说的事。 */
+.isl-alert-proj { flex: 0 0 auto; max-width: 30%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 「忽略 N 条」是没有底的幽灵钮，两侧 10px 内边距看不见却照占宽度；收到 6px，省下的 8px 给标题。 */
+.isl-btn.is-ghost.isl-alert-skip { padding: 0 6px; font-variant-numeric: tabular-nums; }
 .isl-alert-sub { display: flex; align-items: center; font-size: 12px; color: var(--isl-dim); white-space: nowrap; overflow: hidden; }
 
 /* 按钮：全是胶囊。主按钮青柠底墨字（每个形态最多一个）；其余是一档深灰底，幽灵钮平时没有底。 */
@@ -7625,6 +7645,10 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .isl-btn.is-ghost.is-icon { width: 26px; padding: 0; }
 /* 极简模式开着：钮留一档底色 + 正文色，和「选中只用中性底」同一口径。 */
 .isl-btn.is-ghost.is-icon.is-on { background: var(--isl-track); color: var(--isl-text); }
+/* 标题行最右的图标钮：看得见的是图标，不是 26px 的透明热区。往右挪 7px（热区 26 − 图标墨迹 12，各一半），
+   图标墨迹右缘就和行尾「打开」胶囊的右缘在一条线上（原来图标 597、胶囊 605，差 8px，island-panel 实量）。
+   悬停底会伸出内容列 7px，面板右内边距 22px（翻页时 44px）放得下。 */
+.isl-panel-head > .isl-btn.is-ghost.is-icon:last-of-type { margin-right: -7px; }
 
 /* 展开面板：标题行（标题 · 日期时间 ｜ 四个动作）+ 每页三条会话 / 额度页 + 分页圆点。 */
 .isl-panel {
@@ -7648,6 +7672,12 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .isl-panel-head > .isl-btn.isl-new { background: var(--isl-chip); margin-right: 4px; }
 .isl-panel-head > .isl-btn.isl-new:hover { background: var(--isl-chip-hover); }
 .isl-panel-body { display: flex; gap: 18px; margin-top: 10px; }
+/* 有翻页时内容区至少三行会话高（行 54 = 8 + 19 + 2 + 17 + 8，行距 2）：额度页（约 164）和不满三条的末页
+   都垫到同一个高度，翻页时底边和圆点不动。原来英文会话页 231、额度页 244，翻一页窗口伸缩 13px。
+   窗口高度跟着面板实测高度走（IslandPanel 的 onMeasure），这里不变窗口就不变。 */
+.isl-panel.is-paged .isl-panel-body { min-height: calc(3 * 54px + 2 * 2px); }
+/* 末页不满三条时空态 / 会话行靠上排，和前几页的第一行同一个位置；空态（只有额度页可翻时）上下居中。 */
+.isl-panel.is-paged .isl-empty { margin-block: auto; }
 /* 会话行没有底色，只在悬停 / 键盘聚焦时垫一档深灰：卡里不套卡。行往两侧各伸出 10px，
    环的左缘与标题对齐、行尾的「打开」与标题行最右的按钮对齐。 */
 .isl-rows { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; margin: 0 -10px; }
@@ -7663,8 +7693,13 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .isl-row:hover .isl-btn.is-dark { background: var(--isl-chip-hover); color: var(--isl-text); }
 .isl-row:focus-visible { background: var(--isl-chip); box-shadow: inset 0 0 0 2px var(--isl-lime); }
 .isl-row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.isl-row-title { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.isl-row-sub { font-size: 12px; color: var(--isl-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+/* 文字整体上提 1px：字在行框里偏下，按行框居中的话两行字的墨迹中线比环的中线低 0.75px（中文）、
+   1.25px（英文），状态字低 1.5px（island-panel dpr2 实量）。上提后都在 ±0.75px 以内。行高不变。 */
+.isl-row-text, .isl-row > .isl-state { position: relative; top: -1px; }
+/* 行高写死：line-height 不写时跟字体走，中文回退到 Noto Sans SC 是 19 / 17，英文 Inter 是 16 / 15，
+   同一套样式中文行高 54、英文 49（island-panel 实量），面板高度跟着语言变。取中文那一档。 */
+.isl-row-title { font-size: 13px; line-height: 19px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.isl-row-sub { font-size: 12px; line-height: 17px; color: var(--isl-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
 .isl-empty { margin: 0 10px; padding: 22px 0 18px; display: flex; flex-direction: column; align-items: center; gap: 14px; font-size: 13px; color: var(--isl-dim); }
 .isl-side {
   width: 124px; flex: none;
@@ -7695,13 +7730,16 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 /* 圆点视觉仍是 5px，按钮本身 24px 高、点间无缝（i15：原来按钮就是 5×5 的点，间距 5px，点不准）。
    负外边距把多出来的高度吃回去，面板高度不变。 */
 .isl-dots-nav { display: flex; justify-content: center; gap: 0; margin: 2px 0 -8px; }
-/* 左右翻页箭头：贴面板两侧、垂直居中的小圆钮，平时没有底，悬停才垫一档。 */
+/* 左右翻页箭头：贴面板两侧的小圆钮，平时没有底，悬停才垫一档。
+   垂直方向对着内容区（会话行 / 额度环）居中，不是对着整块面板：面板上面有 50px 标题区
+   （14 内边距 + 26 标题行 + 10 间距），下面只有 30px（圆点 18 + 12 内边距），按面板 50% 摆
+   箭头会比中间那行的中线高 10.5px（island-panel 实量）。上下各让出这两段，剩下的就是内容区。 */
 .isl-page-arrow {
-  position: absolute; top: 50%; transform: translateY(-50%);
+  position: absolute; margin-block: auto;
+  top: calc(14px + var(--isl-safe-top, 0px) + 26px + 10px); bottom: calc(18px + 12px);
   /* 24px：WCAG 2.5.8 最小点击区（i15，原 22px）。 */
   width: 24px; height: 24px; padding: 0; border: 0; border-radius: 50%;
   background: transparent; color: var(--isl-dim);
-  font: 600 15px/1 system-ui, sans-serif;
   display: grid; place-items: center; cursor: pointer;
   transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
@@ -7712,6 +7750,9 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .isl-panel.is-paged { padding-left: 44px; padding-right: 44px; }
 .isl-page-arrow.is-prev { left: 8px; }
 .isl-page-arrow.is-next { right: 8px; }
+/* 图标是朝下的箭头，转成朝左 / 朝右。 */
+.isl-page-arrow.is-prev > svg { transform: rotate(90deg); }
+.isl-page-arrow.is-next > svg { transform: rotate(-90deg); }
 .isl-dots-nav button {
   --isl-dot-c: var(--isl-faint);
   width: 24px; height: 24px; padding: 0; border: 0; border-radius: var(--radius-sm);
@@ -7764,7 +7805,17 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
   --isl-chip: rgba(255, 255, 255, 0.08);
   --isl-chip-hover: rgba(255, 255, 255, 0.14);
   --isl-track: rgba(255, 255, 255, 0.2);
+  /* 同一个道理，「状态色混黑」的块也换成混透明：提醒图标底原来是不透明的 (51,37,8)，压在玻璃上发死；
+     环的底轨是「品牌色两成混黑」，比玻璃还暗。角标外圈的黑描边换成透明。 */
+  --isl-mix: transparent;
+  --isl-badge-cut: transparent;
+  /* 未选中的翻页圆点、分隔点：#5e5e62 在黑岛上是 3.2:1，压在玻璃上只剩 1.8:1。换成半透明白，
+     对比度跟着底下的材质走（harness 的假玻璃上约 3:1）。 */
+  --isl-faint: rgba(255, 255, 255, 0.38);
 }
+/* 描边透明后底色只铺到描边里侧，角标看得见的大小和黑岛上一样（15px 的钮、11px 的色块）；
+   不加这条，状态色会铺满整个 15px，角标凭空大一圈（改的过程中实拍到）。 */
+:root.island-menubar .isl-agent-badge { background-clip: padding-box; }
 :root.island-menubar .isl-notch.is-alert,
 :root.island-menubar .island-shell.is-entering,
 :root.island-menubar .island-shell.is-leaving { animation: none; }

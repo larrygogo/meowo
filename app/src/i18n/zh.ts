@@ -48,7 +48,6 @@ export const zh = {
     usageOther: "用量",
     page: (n: number) => `第 ${n} 页`,
     pages: "翻页",
-    moreAlerts: (n: number) => `还有 ${n} 条`,
     prevPage: "上一页",
     nextPage: "下一页",
     stripOn: "切换到极简模式",
@@ -59,6 +58,8 @@ export const zh = {
     alertAria: (title: string, state: string) => `${title}，${state}，按 Enter 打开`,
     dismiss: "关闭提醒",
     dismissAll: "全部忽略",
+    // 「全部忽略」钮上的字：n = 正在弹的这条 + 后面排着的。
+    dismissAllCount: (n: number) => `忽略 ${n} 条`,
   },
   sticker: {
     openChatWindow: "打开对话窗口",
