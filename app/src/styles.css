@@ -7921,10 +7921,14 @@ button.btn-primary:disabled { opacity: 1; background: var(--fill-selected); colo
 .roster { --roster-bg: var(--cc-panel-bg); flex: 1; min-width: 0; display: flex; flex-direction: column; margin: 0 8px 8px 8px; border-radius: var(--radius-lg); background: var(--roster-bg); box-shadow: 0 0 0 var(--hairline) var(--cc-border), var(--shadow-sm); overflow: hidden; }
 :root.platform-macos .roster { margin-top: 8px; }
 .roster-head { flex: none; height: 44px; display: flex; align-items: center; padding: 0 36px; }
-.roster-title { margin: 0; font-size: var(--text-sm); font-weight: 600; color: var(--cc-text); }
+.roster-title { margin: 0; font-size: var(--text-sm); font-weight: 600; color: var(--cc-text); white-space: nowrap; }
+/* 状态词一列的宽度：跟着界面缩放走，英文的词长得多（Waiting for input），另给一档。截图量测实拍：
+   定死 68px 时 150% 缩放的英文被齐齐切掉尾巴。 */
+.roster, .roster-phone { --roster-word-w: calc(68px * var(--cc-ui, 1)); }
+:root[lang^="en"] .roster, :root[lang^="en"] .roster-phone { --roster-word-w: calc(112px * var(--cc-ui, 1)); }
 /* 顶部右端的入口：平时退在后面，悬停才提亮。拖拽区里的按钮要自己声明不拖。 */
 .roster-links { margin-left: auto; display: flex; align-items: center; gap: 4px; -webkit-app-region: no-drag; }
-.roster-links button { height: 28px; display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--cc-text-dim); font: inherit; font-size: var(--text-sm); cursor: pointer; }
+.roster-links button { white-space: nowrap; height: 28px; display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--cc-text-dim); font: inherit; font-size: var(--text-sm); cursor: pointer; }
 .roster-links button:hover { background: color-mix(in srgb, var(--cc-text) 6%, transparent); color: var(--cc-text); }
 .roster-links button:focus-visible { outline: 2px solid var(--cc-accent); outline-offset: -2px; }
 .roster-links kbd { font: inherit; font-size: var(--text-xs); color: var(--cc-text-faint); }
@@ -7935,7 +7939,7 @@ button.btn-primary:disabled { opacity: 1; background: var(--fill-selected); colo
 .roster-item { border-radius: var(--radius-lg); }
 .roster-item.is-open { --roster-bg: var(--cc-panel-raised); background: var(--roster-bg); }
 /* 行：头像 · 任务名与项目 · 状态词 · 此刻在做什么 · 时间 · 改动。列宽固定，各行逐列对齐。 */
-.roster-row { width: 100%; height: 56px; display: grid; grid-template-columns: 36px minmax(120px, 290px) 68px minmax(0, 1fr) 48px 92px; column-gap: 16px; align-items: center; padding: 0 16px; border: 0; border-radius: var(--radius-lg); background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.roster-row { width: 100%; height: 56px; display: grid; grid-template-columns: 36px minmax(120px, 290px) var(--roster-word-w) minmax(0, 1fr) 48px 92px; column-gap: 16px; align-items: center; padding: 0 16px; border: 0; border-radius: var(--radius-lg); background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .roster-item:not(.is-open) .roster-row:hover { background: color-mix(in srgb, var(--cc-text) 4%, transparent); }
 .roster-row:focus-visible { outline: 2px solid var(--cc-accent); outline-offset: -2px; }
 .roster-av { display: grid; place-items: center; }
@@ -8005,7 +8009,9 @@ button.btn-primary:disabled { opacity: 1; background: var(--fill-selected); colo
   .roster-rail { width: 40px; }
   .roster-head { padding: 0 24px; }
   .roster-list { padding: 4px 8px 12px; }
-  .roster-row { grid-template-columns: 36px minmax(0, 1fr) auto; column-gap: 12px; padding: 0 12px; }
+  /* 状态词这一列定宽（同宽窗那一档）：auto 的话各行按自己的字数收缩，左缘参差。 */
+  .roster-row { grid-template-columns: 36px minmax(0, 1fr) var(--roster-word-w); column-gap: 12px; padding: 0 12px; }
+  .roster-links kbd { display: none; }
   .roster-now, .roster-time, .roster-diff { display: none; }
   .roster-sheet { padding-left: 60px; }
   .roster-composer { padding: 6px 8px 10px; }

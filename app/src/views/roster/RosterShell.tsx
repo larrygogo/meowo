@@ -321,7 +321,7 @@ export function RosterItem({ item, open, gitBadges, onToggle, onEnter, onPrefetc
           {/* 它最后说的话是 Markdown 原文：照对话窗那样渲染，不把星号和反引号直接摆出来（真机实拍）。 */}
           {said ? <div className="roster-said chat-md"><ChatMarkdown text={said} /></div> : null}
           {/* 轮到你的行：决定就在这里做（批准 / 拒绝 / 拍板）。答不了的由它说明原因。 */}
-          {tone === "pending" && <RosterDecision item={item} fallback={null} />}
+          {tone === "pending" && <RosterDecision item={item} fallback={null} onEnter={onEnter} />}
           <div className="roster-foot">
             {/* 决定单自己有主按钮（允许一次 / 提交）时，「进入现场」退成次要按钮：一屏一个主按钮。 */}
             <button type="button" className={tone === "pending" ? "roster-enter is-quiet" : "btn-primary roster-enter"} onClick={() => onEnter(id)}>{t.roster.enter}</button>

@@ -424,7 +424,10 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
 .roster-phone .roster-rail { width: 32px; padding: 0; justify-content: flex-start; }
 .roster-phone .roster-list { padding: 0 8px var(--remote-tabbar-clear) 4px; }
 /* 行：触屏上整行至少 56 高；头像、任务名、状态词三列（同桌面窄窗）。 */
-.roster-phone .roster-row { grid-template-columns: 36px minmax(0, 1fr) auto; column-gap: 12px; padding: 0 12px; min-height: 56px; }
+/* 状态词一列定宽（字号 13px 的一档）：auto 时各行左缘参差。 */
+.roster-phone.roster-phone { --roster-word-w: 60px; }
+:root[lang^="en"] .roster-phone.roster-phone { --roster-word-w: 118px; }
+.roster-phone .roster-row { grid-template-columns: 36px minmax(0, 1fr) var(--roster-word-w); column-gap: 12px; padding: 0 12px; min-height: 56px; }
 .roster-phone .roster-now, .roster-phone .roster-time, .roster-phone .roster-diff { display: none; }
 .roster-phone .roster-name b { font-size: 15px; line-height: 21px; }
 .roster-phone .roster-name i { font-size: 13px; line-height: 18px; }

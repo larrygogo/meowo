@@ -198,6 +198,9 @@ describe("名单外壳", () => {
     expect(invoke).toHaveBeenCalledWith("focus_session", expect.objectContaining({ pid: 4321 }));
     // 没切过去要说出来，不能点了没反应。
     await screen.findByText("没找到那个终端窗口");
+    // 「接管到 Meowo」只把人带进它的现场，接管的确认在那里做。
+    fireEvent.click(screen.getByRole("button", { name: "接管到 Meowo" }));
+    expect(screen.getByTestId("chat").getAttribute("data-request")).toBe(String(sessions[1].session.id));
   });
 
   it("终端不在 Meowo 手里、进程也不在了：行内说明，给进入现场", async () => {

@@ -20,12 +20,12 @@ const POLL_MS = 1000;
  * 待处理的行展开后的内容。能原位答的给卡片；答不了的（审批已经回到终端、CLI 自己画的提问）
  * 如实说明，由调用方给「进入现场」。返回 null 的 fallback 由 children 承担。
  */
-export function RosterDecision({ item, fallback }: { item: Item; fallback: React.ReactNode }) {
+export function RosterDecision({ item, fallback, onEnter }: { item: Item; fallback: React.ReactNode; onEnter?: (id: number) => void }) {
   if (item.pending_review === "gate") return <GateDecision item={item} fallback={fallback} />;
-  return <ApprovalDecision item={item} fallback={fallback} />;
+  return <ApprovalDecision item={item} fallback={fallback} onEnter={onEnter} />;
 }
 
-function ApprovalDecision({ item, fallback }: { item: Item; fallback: React.ReactNode }) {
+function ApprovalDecision({ item, fallback, onEnter }: { item: Item; fallback: React.ReactNode; onEnter?: (id: number) => void }) {
   const t = useT();
   const id = item.session.id;
   const [approval, setApproval] = useState<PendingApproval | null>(null);
@@ -122,7 +122,7 @@ function ApprovalDecision({ item, fallback }: { item: Item; fallback: React.Reac
     return (
       <>
         <p className="roster-note">{t.roster.externalTerminal}</p>
-        <ExternalTerminalJump item={item} />
+        <ExternalTerminalJump item={item} onTakeover={onEnter} />
         {fallback}
       </>
     );
@@ -135,7 +135,7 @@ function ApprovalDecision({ item, fallback }: { item: Item; fallback: React.Reac
   );
 }
 
-function ExternalTerminalJump({ item }: { item: Item }) {
+function ExternalTerminalJump({ item, onTakeover }: { item: Item; onTakeover?: (id: number) => void }) {
   const t = useT();
   const [busy, setBusy] = useState(false);
   const [missed, setMissed] = useState(false);
@@ -158,6 +158,8 @@ function ExternalTerminalJump({ item }: { item: Item }) {
   return (
     <div className="roster-jump">
       <button type="button" className="roster-enter is-quiet" disabled={busy} onClick={jump}>{t.roster.jumpToTerminal}</button>
+      {/* 接管会结束外部那个进程：这里只把人带到现场，确认在那里的接管卡上做，不在名单上一键杀进程。 */}
+      {onTakeover && <button type="button" className="roster-enter is-quiet" onClick={() => onTakeover(item.session.id)}>{t.roster.takeover}</button>}
       {missed && <span className="roster-note" role="status">{t.roster.jumpMissed}</span>}
     </div>
   );

@@ -125,7 +125,21 @@ async function boot(): Promise<React.ReactNode> {
       }, 12),
       mk(lang === "en" ? "Upgrade xterm and re-test the mobile terminal" : "升级 xterm 并复测手机终端", "meowo-mobile", "opencode", (s) => { s.current_activity = "Bash: bun run test"; }, 1),
     ];
-    const first = store.sessions[0].session.id;
+    // ?n=0/1/12：会话数（默认就是上面五个）。12 个是把这五种状态再排两轮，标题带序号。
+    const wanted = q.get("n") == null ? store.sessions.length : Number(q.get("n"));
+    if (wanted < store.sessions.length) store.sessions = store.sessions.slice(0, wanted);
+    else {
+      const base = store.sessions.slice();
+      for (let i = base.length; i < wanted; i += 1) {
+        const from = base[i % base.length];
+        store.sessions.push(mk(`${from.task_title} ${i + 1}`, from.project_name ?? "meowo", from.provider as "claude", (s) => {
+          s.session.status = from.session.status; s.current_activity = from.current_activity; s.preview = from.preview;
+        }, i));
+      }
+    }
+    // roster-external = 第一行在外部终端里跑、停在审批上：Meowo 没有它的终端。
+    if (scene === "roster-external" && store.sessions[0]) { store.sessions[0].pty_managed = false; store.sessions[0].pid = 4321; store.sessions[0].connected = true; }
+    const first = store.sessions[0]?.session.id ?? 0;
     const inScene = scene === "roster-scene";
     window.history.replaceState({}, "", `${location.pathname}?${q.toString()}&sessionId=${first}${inScene ? "" : "&roster=1"}`);
     const chat = chatMock(lang);
@@ -133,13 +147,13 @@ async function boot(): Promise<React.ReactNode> {
     const approval = { sessionId: first, requestId: "roster-approval", provider: "claude", toolName: "Bash", description: lang === "en" ? "Run the migration" : "跑数据库迁移", input: JSON.stringify({ command: "pnpm prisma migrate deploy --schema services/pay/schema.prisma" }), permissionSuggestions: [], answerable: false };
     setExtraMock((cmd, args) => {
       if (cmd === "get_live_sessions_page") return { items: store.sessions, next_cursor: null };
-      if (cmd === "pending_interaction") return { approval: !quiet && (args as { sessionId?: number })?.sessionId === first ? approval : null, question: null };
+      if (cmd === "pending_interaction") return { approval: !quiet && scene !== "roster-external" && (args as { sessionId?: number })?.sessionId === first ? approval : null, question: null };
       return scmMock(cmd) ?? chat(cmd);
     });
     installMocks("chat");
     bootAppearance({ scale: true });
     const { RosterShell } = await import("../src/views/roster/RosterShell");
-    if (scene === "roster-open") whenReady<HTMLElement>(".roster-row", (el) => el.click());
+    if (scene === "roster-open" || scene === "roster-external") whenReady<HTMLElement>(".roster-row", (el) => el.click());
     // roster-glance = 点开一个在跑的行：最近几步 + 它最后说的话。
     if (scene === "roster-glance") whenReady<HTMLElement>(".roster-item:nth-child(2) .roster-row", (el) => el.click());
 
