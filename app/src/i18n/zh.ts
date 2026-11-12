@@ -702,6 +702,9 @@ export const zh = {
     questionAnswerStepwise: "转为逐题作答",
     questionNeedsStepwiseRemote: "这组问题无法在卡片内作答，请转为逐题作答",
     questionFormPendingRemote: "表单就绪后可在此作答，请稍候",
+    // 题面卡等了 8s，后端屏幕上也认不出终端表单（chat/useQuestionFormProbe）：说清楚，给出路。
+    questionFormMissing: "没认出终端里的表单，可在终端页直接选",
+    questionFormMissingRemote: "没认出终端里的表单，可用下方按键作答",
     close: "关闭",
     renameSave: "保存",
     minimize: "最小化",

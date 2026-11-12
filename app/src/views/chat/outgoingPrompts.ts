@@ -5,8 +5,25 @@
 /// 拿不准时直接删掉——用户看到的就是「我的消息不见了」。这里一条消息一个对象，状态在
 /// 它身上推进；对账是纯函数，可脱离五千行的组件单测；按会话分仓，切走再切回不丢。
 ///
-/// 证据只来自 CLI 落盘（PTY 写入没有回执，拿不到 Kimi 那样的 promptId），所以结算仍是
-/// 「水位线之后出现了这条话」。拿不准时进 uncertain 并照实显示，而不是悄悄消失。
+/// 证据只来自 CLI 自己的记录（PTY 写入没有回执，拿不到 Kimi 那样的 promptId）：transcript 里的
+/// 用户消息、claude 的入队行（queue-operation enqueue）、UserPromptSubmit hook 记下的原话。
+/// 拿不准时进 uncertain 并照实显示，而不是悄悄消失。
+///
+/// 送达状态误判的共同根因（leader 报过 5 次：11-01 两次、11-09 两次、11-11，调研 real-usage #1）：
+/// 状态由 Meowo 自己的记账推着走，CLI 的记录只在少数条件下才被采信。每次实拍都是记账的
+/// 一处盲区，此前逐处补洞：
+/// - 记账绑在会话编号上：写入途中临时编号换正式编号，「发送中」等不到结算（11-09 07:27）。
+///   transcript 里那条话早已以「回合中插入」落盘，只因发送中的回执不参与对账而被无视。
+/// - 记账绑在加载窗口上：切走再回来首读只给最新一屏（11-01），新会话第一句话被挤出尾部
+///   （11-09 08:27）。窗口里看不见不等于 CLI 没收到。
+/// - 文本必须原样出现：CLI 会改写落盘正文（斜杠命令包成 <command-name>、! 包成 <bash-input>、
+///   贴图插 [Image #N]），改写过的永远对不上。
+/// - hook 的 UserPromptSubmit 是「CLI 收下了」最直接的回执，却只在没有 transcript 时才认。
+///   transcript 不落盘的版本（CC 2.1.218 resume 静默不写，memory cc-resume-writer-bug）每条都报未确认。
+/// 现在的规则：CLI 的任何一种记录都优先于本地记账（发送中也照样对账，迟到的「写入完成」
+/// 不能把已确认的消息拨回去）；文本按 CLI 的改写规则归一后再比；看不见的窗口不下「未确认」
+/// 的结论；hook 回执单独成一档 received。只有 CLI 侧确实没有任何记录时才 uncertain，
+/// 并给出读终端画面得到的原因与就地出口（见 useOutgoingUpkeep）。
 
 import { createContext, useSyncExternalStore } from "react";
 import type { ChatItem } from "../../api";
@@ -20,8 +37,10 @@ export type OutgoingKind = "echo" | "queued";
 /// accepted：CLI 回了送达回执（它正忙，把这条收进了自己的队列，对照 Kimi 的 prompt:accepted），
 /// 还没轮到处理。有了这个回执就不会再判「未确认送达」——消息确实进了 CLI。
 /// inserted：queued 已被读到（短暂停留，让用户看见这一下状态变化再收起）。
+/// received：echo 已有 UserPromptSubmit 回执（CLI 收下并开工），只是正文还没落进 transcript。
+/// 不标任何提示，也不会再转 uncertain：CLI 确实收到了。
 /// uncertain：echo 超时仍无证据——可能根本没进 CLI 的输入框，照实标出来。
-export type OutgoingPhase = "sending" | "failed" | "pending" | "accepted" | "inserted" | "uncertain";
+export type OutgoingPhase = "sending" | "failed" | "pending" | "accepted" | "received" | "inserted" | "uncertain";
 
 export type OutgoingAnchor = {
   /// 入队时 transcript 窗口的最后一条：它之后的条目才算新证据。
@@ -72,8 +91,29 @@ export type OutgoingEvidence = {
 export const ECHO_CONFIRM_MS = 15_000;
 /// 「已插入」停留多久后收起。
 export const INSERTED_LINGER_MS = 2_500;
+/// 「发送中」最多挂多久：发送链路里最长的一段等待是第一句话的 60s 上限（ChatWindow deliver），
+/// 写入的 promise 再不落定就是卡死了。转 uncertain 给出口，不让气泡永远转圈（11-09 07:27 实拍）。
+export const SENDING_STALL_MS = 90_000;
 
-const collapse = (text: string) => text.replace(/\s+/g, " ").trim();
+/// 比对用的归一形态：按 CLI 落盘时的改写规则还原，再去掉全部空白。
+/// - 斜杠命令：`<command-name>/model</command-name>…<command-args>fable</command-args>` 还原成
+///   `/model fable`（本机 transcript 实拍 2.1.3xx；command-name 与 command-message 先后两种都有）。
+/// - bash 模式：`<bash-input> ssh-copy-id …</bash-input>` 还原成 `!ssh-copy-id …`（11-09 实拍）。
+/// - 贴图：CLI 在正文前插 `[Image #N]`（11-09 08:27 实拍「[Image #1] [Image #2] [Image #3]1. 新建会话…」）。
+/// 空白整个去掉：CLI 会裁首尾，换行在 PTY 里是 CRLF，`! cmd` 落盘成 `<bash-input> cmd`。
+/// 误配的代价由水位线兜住（只认发送之后的记录）。
+export function promptKey(text: string): string {
+  let body = text;
+  const command = /<command-name>\s*([^<]*?)\s*<\/command-name>/.exec(body);
+  if (command) {
+    const args = /<command-args>([\s\S]*?)<\/command-args>/.exec(body)?.[1] ?? "";
+    const name = command[1].startsWith("/") ? command[1] : `/${command[1]}`;
+    body = `${name} ${args}`;
+  }
+  const bash = /^\s*<bash-input>([\s\S]*?)<\/bash-input>/.exec(body);
+  if (bash) body = `!${bash[1]}`;
+  return body.replace(/\[Image #\d+\]/g, "").replace(/\s+/g, "");
+}
 
 const itemTime = (item: ChatItem): number | null => {
   const at = item.timestamp ? Date.parse(item.timestamp) : NaN;
@@ -116,12 +156,44 @@ function newUserTexts(items: readonly ChatItem[], anchor: OutgoingAnchor): UserT
   });
 }
 
+/// 加载窗口看不见这条话：窗口里最早的记录也晚于发送时的划线，说明首读（切走再回来、文件
+/// 重写后的整读）只给了发送之后的一屏，这条话即使落盘了也不在窗口里。CLI 在划线之后写了
+/// 记录，就是它收到了输入、开了工（11-01 实拍：切走期间 agent 干了几十步）。不能在看不见
+/// 的地方下「未确认」的结论。只在条目带时间戳时成立。
+function windowStartsAfter(items: readonly ChatItem[], since: number | null): boolean {
+  if (since == null) return false;
+  let earliest: number | null = null;
+  for (const item of items) {
+    const at = itemTime(item);
+    if (at != null && (earliest == null || at < earliest)) earliest = at;
+  }
+  return earliest != null && earliest > since;
+}
+
+/// hook 记的最近一句（UserPromptSubmit 原话）属于哪条消息。它只记最近一句，一次只能确认一条：
+/// 原文完全相同的优先，其次是前缀（Meowo 在末尾追加了附件指令）；发送前就是这句的不算。
+/// hook 原话不经 CLI 改写，所以按前缀比，比落盘正文的「包含」严。
+function hookReceiptTarget(prompts: readonly OutgoingPrompt[], lastUserText: string | null | undefined): number | null {
+  if (lastUserText == null) return null;
+  const hookKey = promptKey(lastUserText);
+  if (!hookKey) return null;
+  const open = prompts.filter((prompt) => (prompt.phase === "sending" || prompt.phase === "pending" || prompt.phase === "uncertain")
+    && hookKey !== promptKey(prompt.anchor.priorUserText ?? ""));
+  const exact = open.find((prompt) => !prompt.attachmentOnly && promptKey(prompt.text) === hookKey);
+  const prefix = exact ?? open.find((prompt) => prompt.attachmentOnly || hookKey.startsWith(promptKey(prompt.text)));
+  return prefix?.id ?? null;
+}
+
 /// 按证据推进每条消息的状态。纯函数；无变化时原样返回同一个数组（调用方据此短路）。
 ///
 /// 一条落盘消息只结算一条回执：连发两句相同的「ok」，第一句落盘不能把两张回执一起收走。
-/// 落盘文本会带附件指令和 TUI 的 [Image #N] 前缀，所以比对用归一化后的「包含」，
-/// 误配的代价由水位线兜住。lastUserText 只在没有 transcript 时算证据——claude 在插话
-/// 入队瞬间就触发 UserPromptSubmit，正文要到下一个工具边界才落盘，认它会提前收走回执。
+/// 落盘文本会带附件指令和 CLI 的改写（见 promptKey），所以比对用归一后的「包含」，
+/// 误配的代价由水位线兜住。lastUserText（UserPromptSubmit hook 记的原话）是「CLI 收下了」
+/// 的回执：没有 transcript 时它就是全部证据；有 transcript 时只推进到 received / accepted，
+/// 不当作已读到。claude 在插话入队瞬间就触发它，正文要到下一个工具边界才落盘。
+///
+/// 发送中的也参与对账：写入完成的通知可能迟到或丢（11-09 07:27 编号搬家），CLI 的记录先到
+/// 就按记录走。发送失败的不参与：那是用户还没处理的字，记录里出现同样的话也不是它。
 export function reconcileOutgoing(
   prompts: readonly OutgoingPrompt[],
   evidence: OutgoingEvidence,
@@ -137,42 +209,45 @@ export function reconcileOutgoing(
   // 已被认领的回执跨轮次保留在消息身上，这里先全部记为占用。
   const usedAcks = new Set(prompts.flatMap((prompt) => (prompt.ackId ? [prompt.ackId] : [])));
   const hookIsEvidence = evidence.items.length === 0;
+  const hookTarget = hookReceiptTarget(prompts, evidence.lastUserText);
   let changed = false;
   const next: OutgoingPrompt[] = [];
   for (const prompt of prompts) {
-    // 还没写完 / 没写进去的不参与对账：终端里没有它，记录里出现同样的话也不是它。
-    if (prompt.phase === "sending" || prompt.phase === "failed") { next.push(prompt); continue; }
+    if (prompt.phase === "failed") { next.push(prompt); continue; }
     if (prompt.phase === "inserted") {
       if (evidence.now - (prompt.settledAt ?? evidence.now) > INSERTED_LINGER_MS) { changed = true; continue; }
       next.push(prompt);
       continue;
     }
     const candidates = newUserTexts(evidence.items, prompt.anchor).filter((item) => !used.has(item.id));
-    const needle = collapse(prompt.text);
+    const needle = promptKey(prompt.text);
     const match = prompt.attachmentOnly
       ? candidates[0]
-      : candidates.find((item) => collapse(item.text).includes(needle));
-    const hookChanged = hookIsEvidence && evidence.lastUserText != null
-      && collapse(evidence.lastUserText) !== collapse(prompt.anchor.priorUserText ?? "");
-    const hookMatch = hookChanged && (prompt.attachmentOnly || collapse(evidence.lastUserText ?? "").includes(needle));
+      : candidates.find((item) => promptKey(item.text).includes(needle));
+    const hookHit = prompt.id === hookTarget;
+    const hookMatch = hookIsEvidence && hookHit;
     // 未确认的回显：后面又有新消息落盘，说明这条的去向已经被后续事实盖过，收起。
     // 新会话的第一句话：记录里出现任何用户消息就说明它已提交（会话从它开始），不必等超时；
     // 第一句被翻页挤出加载窗口时文本对不上，也照样收起，但不占用候选（留给后发的消息认领）。
-    const overtaken = (prompt.phase === "uncertain" || !!prompt.anchor.fresh) && candidates.length > 0;
-    if (match || hookMatch || overtaken) {
+    // received 同理：CLI 已收下，落盘的正文却对不上，那条就是它被改写后的样子。
+    const overtaken = (prompt.phase === "uncertain" || prompt.phase === "received" || !!prompt.anchor.fresh) && candidates.length > 0;
+    // 加载窗口整个落在发送之后：看不见这条话，但 CLI 在那之后开了工（见 windowStartsAfter）。
+    const unseen = prompt.phase !== "sending" && !prompt.anchor.fresh
+      && windowStartsAfter(evidence.items, prompt.anchor.lastItemAt);
+    if (match || hookMatch || overtaken || unseen) {
       if (match) used.add(match.id);
       changed = true;
       if (prompt.kind === "queued") next.push({ ...prompt, phase: "inserted", settledAt: evidence.now });
       continue;
     }
     // 送达回执：发出之后（按宿主机时钟晚于发送时窗口里最晚的一条）入队、正文对得上的那条。
-    if (prompt.phase === "pending" || prompt.phase === "uncertain") {
+    if (prompt.phase === "pending" || prompt.phase === "uncertain" || prompt.phase === "sending" || prompt.phase === "received") {
       const since = prompt.anchor.lastItemAt;
       const ack = (evidence.acks ?? []).find((entry) => {
         if (usedAcks.has(entry.id)) return false;
         const stamp = itemTime(entry);
         if (since != null && (stamp == null || stamp <= since)) return false;
-        return prompt.attachmentOnly || collapse(entry.text).includes(needle);
+        return prompt.attachmentOnly || promptKey(entry.text).includes(needle);
       });
       if (ack) {
         usedAcks.add(ack.id);
@@ -181,7 +256,18 @@ export function reconcileOutgoing(
         continue;
       }
     }
+    // hook 回执：CLI 收下了这句话。排队的标「已收到」，回显不再提示（它已在处理）。
+    if (hookHit) {
+      changed = true;
+      next.push({ ...prompt, phase: prompt.kind === "queued" ? "accepted" : "received" });
+      continue;
+    }
     if (prompt.kind === "echo" && prompt.phase === "pending" && evidence.now - prompt.at > ECHO_CONFIRM_MS) {
+      changed = true;
+      next.push({ ...prompt, phase: "uncertain" });
+      continue;
+    }
+    if (prompt.phase === "sending" && evidence.now - prompt.at > SENDING_STALL_MS) {
       changed = true;
       next.push({ ...prompt, phase: "uncertain" });
       continue;
@@ -227,6 +313,15 @@ function writeFailed(sessionId: number, list: readonly OutgoingPrompt[]) {
 
 /// 失败回执不参与对账，水位线用不上；恢复时给一个空的。
 const EMPTY_ANCHOR: OutgoingAnchor = { lastItemId: null, lastItemAt: null, priorItemIds: new Set(), priorUserText: null };
+
+/// 本地记账（写入完成 / 写入失败 / 替用户按回车）推进回执。CLI 的记录已经把它推到
+/// received / accepted 之后，迟到的「写入完成」不能把它拨回 pending 重新计时，「写入失败」也
+/// 不能把 CLI 已收下的话标成失败（证据优先于记账，见文件头）。
+function advance(prompt: OutgoingPrompt, patch: Partial<Pick<OutgoingPrompt, "phase" | "at">>): OutgoingPrompt {
+  if (patch.phase === "pending" && prompt.phase !== "sending" && prompt.phase !== "uncertain") return prompt;
+  if (patch.phase === "failed" && prompt.phase !== "sending") return prompt;
+  return { ...prompt, ...patch };
+}
 
 export function createOutgoingStore() {
   const bySession = new Map<number, readonly OutgoingPrompt[]>();
@@ -281,7 +376,7 @@ export function createOutgoingStore() {
     update(sessionId: number, id: number, patch: Partial<Pick<OutgoingPrompt, "phase" | "at">>) {
       const list = bySession.get(sessionId);
       if (!list?.some((prompt) => prompt.id === id)) return;
-      put(sessionId, list.map((prompt) => (prompt.id === id ? { ...prompt, ...patch } : prompt)));
+      put(sessionId, list.map((prompt) => (prompt.id === id ? advance(prompt, patch) : prompt)));
     },
     /// 临时负 id 认领成真 id：同一个 PTY 换了编号，回执跟着搬过去。新建会话页的第一句话
     /// 在认领前就上屏了，不搬的话认领那一刻气泡消失，等 transcript 落盘才又冒出来。
@@ -297,7 +392,7 @@ export function createOutgoingStore() {
       for (const [sessionId, list] of bySession) {
         if (!list.some((prompt) => prompt.id === id)) continue;
         put(sessionId, patch
-          ? list.map((prompt) => (prompt.id === id ? { ...prompt, ...patch } : prompt))
+          ? list.map((prompt) => (prompt.id === id ? advance(prompt, patch) : prompt))
           : list.filter((prompt) => prompt.id !== id));
         return;
       }

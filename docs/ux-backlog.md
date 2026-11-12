@@ -18,7 +18,8 @@
 > 同日第五轮：T-6/7(判重冒泡)/16、S-8/9/14 已修；W-10 托盘角标两轮实拍后定为「不采纳」
 > （图标回到发布版原样、dev 角标保留），W-11 补双击=打开对话窗消抖。
 > 同日第六轮：T-14/15、U0-11 尾（终端右键菜单）、W-8/12、W-4 尾已修；
-> W-12 的 panel.rs 为 cfg(macos) 未在本机编译验证（靠 CI）；T-15 降级通道 1.7s 叠加未做。
+> W-12 的 panel.rs 为 cfg(macos) 未在本机编译验证（靠 CI）；T-15 降级通道 1.7s 叠加未做
+> （2026-11-12 核对：同日收尾轮的 T-15 尾 board-urgent 高优通道已收口）。
 > 同日收尾轮：W-17（四套存储收敛 settings.json）、结构性 8（PTY 事件 app 级 emit）、
 > C-14（transcript watch push，兜底轮询降 2s）、T-15 尾（board-urgent 高优通道）、
 > T-12 尾（pending PTY 占位卡）、C-11 尾（按题 keyed 作答）、W-15 尾（UNUserNotificationCenter）、
@@ -92,15 +93,12 @@
 
 | # | 问题 | 位置 | 建议 | 状态 |
 |---|---|---|---|---|
-| U0-1 | 虚拟列表未传 `getItemKey`，默认按 index 复用测量与 DOM：列表重排（活跃会话跳顶）时高度抽搐、焦点错位、**误点打开错误会话的终端** | `Sticker.tsx:389-401,638` | `getItemKey: (i) => shown[i].session.id`，一行改动 | 已修 |
 | U0-2 | 切换到等待 AskUserQuestion 超过 3s 领养窗口的会话时，effect 链用新 sessionId 调 `dismissInteractiveQuestion` → 后端无条件清掉该会话题面，**题面卡永不出现** | `ChatWindow.tsx:1210-1229`、`managed_terminal.rs:365` | dismiss 只在本窗口显式收卡/答完时触发（`dismissTargetRef` 记 sessionId+requestId） | 已修 |
-| U0-3 | 偷看展开丢置顶：`snap_expand` 末尾强制置顶，Sticker 挂载后 pin effect 又 `setAlwaysOnTop(pinned)` 盖回去；pin=off 时展开的看板沉到活动窗口之下，表现为「悬停后闪一下就没了」 | `snap.rs:346` × `Sticker.tsx:210-217` | pin effect 加 `mode==="normal"` 守卫，或置顶所有权收归后端按 mode+pin 单点计算 | 已修 |
 | U0-4 | 缩略条状态点自写映射，忽略 `pending_review`/`screen_state`：待审批会话显示成绿色运行点，「有人在等你」信号被抹掉 | `CollapsedStrip.tsx:80-93` vs `api.ts:205-212` | 改调全局 `sessionTone()`，pending/blocked 加琥珀档 | 已修 |
 | U0-5 | 重启后已阻塞/待交互会话永不提醒：首轮扫描只播种不弹，blocked 指纹恒为 `"blocked"` 不再变化 | `watch.rs:504,344-347,761` | 首轮发现的 blocked/waiting 延迟一周期补发，或给一条「你有 N 个会话在等你」的启动摘要 | 已修 |
 | U0-6 | 重命名 modal 焦点在按钮上按 Esc → 不在 tagName 白名单、defaultPrevented 为 false → 窗口级监听**误拒 agent 的审批请求**，modal 还开着 | `ChatWindow.tsx:321,1953-1956` | Esc 挂 `.chat-modal` 容器 + stopPropagation；根治见 U3-2 escStack | 已修 |
 | U0-7 | 关闭自动更新后「关于」谎报「已是最新版本」（从未检查过） | `useUpdate.ts:126-129`、`About.tsx:519` | 未检查时状态为 unknown，只显示版本号 | 已修 |
 | U0-8 | 登录超时/取消文案指向「刷新」按钮，但该按钮只在已登录态渲染——未登录用户无路可走，只能重开设置窗 | `zh.ts:584,586` vs `AccountSection.tsx:605-631` | 窗口 focus 时一并 `loadAccounts()`；或未登录态给「我已登录，检查」按钮 | 已修 |
-| U0-9 | 折叠后搜索词残留：CollapsedStrip 卸载 Sticker 但不清 `search`，再展开时搜索框收起、列表仍被过滤，空态显示「还没有会话」——用户会认定会话全丢了 | `App.tsx:141,698-700`、`Sticker.tsx:170,591` | Sticker 卸载时清 search，或 `searchOpen` 提升到 App 与 search 同源 | 已修 |
 | U0-10 | Windows 上点连接中的托管会话不做 attach 去重（macOS 有），且全程无 in-flight 态防连点：每点一次多开一个镜像终端标签 | `terminal.rs:1855-1904` vs `:1870-1890`、`Sticker.tsx:289-323` | attach 握手已带 pid，按 pid 找已有镜像窗口 `force_foreground`；卡片点击加 pending 态 + 在飞去重 | 已修 |
 | U0-11 | 生产构建下托管终端**无法复制**：Ctrl+C 发 `^C` 中断 agent，Ctrl+Shift+C 被 devtools-guard 吃掉，右键菜单 PROD 全局禁用 | `ManagedTerminal.tsx:232-237`、`devtools-guard.ts:7,14-19` | 有选区时 Ctrl/Cmd+C 走 `getSelection()`+clipboard；devtools-guard 放行 Ctrl+Shift+C；补终端右键菜单 | 已修（复制快捷键此前已落地；本轮补应用内右键菜单：复制/粘贴/全选/搜索，TUI 鼠标上报让位规则保留，Esc 层/roving 复用 useDismissable） |
 | U0-12 | 「重启并更新」无确认直接 relaunch，退出时 `exit_ptys.shutdown()` 杀掉全部托管会话；`restartHint` 文案还在说「不会打断当前工作」 | `useUpdate.ts:55-64`、`lib.rs:1175-1177`、`zh.ts:650` | install 前查运行中会话数，n>0 走 `appConfirm`；订正文案 | 已修 |
@@ -112,57 +110,37 @@
 
 | # | 问题 | 位置 | 建议 | 状态 |
 |---|---|---|---|---|
-| U1-1 | 卡片长标题截断且无 tooltip（卡片级 `data-tip` 是「打开会话」占掉槽位） | `Sticker.tsx:706,688` | `.stk-title` 加 `data-tip={title}`（Tooltip 内层优先） | 已修 |
-| U1-2 | 重命名/便签非乐观更新：Enter 后显示旧值几百 ms~1s，用户以为没保存 | `Sticker.tsx:242-251,277-284` | 与归档对齐走乐观更新，失败用 focusNotice 回滚 | 已修 |
+| U1-2 | 重命名/便签非乐观更新：Enter 后显示旧值几百 ms~1s，用户以为没保存 | `Sticker.tsx:242-251,277-284` | 与归档对齐走乐观更新，失败用 focusNotice 回滚 | 已修；2026-11-12：便签已取消（6ae537fd），便签那一半作废 |
 | U1-3 | 对话输入框不随内容长高（`rows=1` + min-height 顶死，max-height:150px 是死代码），写 5 行提示词只能内部滚动 | `ChatWindow.tsx:2435-2438`、`styles.css:3454` | onChange 里 `scrollHeight` 自适应或 `field-sizing:content` | 已修 |
 | U1-4 | 发送后自己的消息不上屏，最长等 650ms 轮询，空闲态发送后 0.65~2s 零变化 | `ChatWindow.tsx:1567-1572,1049` | 本地乐观插入 `user_text`（pending 标记），transcript 出现后按排队回执水位线替换 | 已修 |
 | U1-5 | 用户上翻后无「回到底部/有新消息」出口，新消息静默追加 | `ChatWindow.tsx:1338-1341,2104-2135` | `followRef===false` 时渲染悬浮回底钮 + 未读计数 | 已修 |
 | U1-6 | 平滑滚动与吸底互相干扰：长消息到达时中途 scroll 事件把 `followRef` 置 false，吸底断掉（首帧已知此坑只堵了首帧） | `styles.css:3247`、`ChatWindow.tsx:1289,1338-1341` | 程序化吸底统一临时切 `scroll-behavior:auto` 或加 programmaticScrollRef | 已修 |
-| U1-7 | waiting tab 客户端过滤后为空时自动翻页卡死（守卫用 `shown.length` 而非 `data.length`），有下一页却显示空态 | `Sticker.tsx:406-412`、`helpers.ts:81` | 守卫改 `data.length === 0`，或 shown 空且 hasMore 时主动拉下一页 | 已修 |
 | U1-8 | connected-first 是 per-page 排序，loadMore 追加后第二页的已连接会话排在第一页断开会话之下 | `session_query.rs:546`、`App.tsx:260-267` | 下沉 SQL `ORDER BY connected DESC, last_event_at …` | 已修（改为前端合并后按 connected 稳定分区——connected 是运行时信息，SQL 层拿不到） |
-| U1-9 | 悬停缩略条零延迟展开（收回却有 ~360ms 容差）：屏幕边缘划过即弹出整块看板 | `CollapsedStrip.tsx:64`、`App.tsx:674-694` | 进入侧加 200-300ms hover-intent，进出对称 | 已修 |
-| U1-10 | 展开态自动收回不看交互状态：搜索/编辑便签时鼠标离窗 ~360ms 即折叠，Sticker 卸载草稿全丢 | `App.tsx:672-696` | activeElement 为输入类 / 有编辑态 / 菜单开着时暂停收回 | 已修 |
-| U1-11 | 缩略条不可拖（无 `data-tauri-drag-region`），README 承诺的「拖离恢复」做不到；引导也完全没教吸边 | `CollapsedStrip.tsx:59-72`、`zh.ts:704-713` | 缩略条加拖拽区（拖动即 `snap_restore`）；引导补「贴边收纳」一步 | 已修（缩略条可拖离恢复；引导「窗口与设置」步按平台追加吸边要点） |
-| U1-12 | 归档无撤销：菜单相邻误点后卡片瞬间消失，恢复入口藏在设置深处；归档失败也零提示（重命名/便签失败有 focusNotice） | `Sticker.tsx:866-872`、`CardContextMenu.tsx:101-108` | 原位留 3s「已归档 · 撤销」行；补 archiveFailed 文案 | 已修 |
 | U1-13 | 单次轮询失败整屏换成错误行（items 还在 state 里却被盖住），650ms 一发的 IPC 抖动就闪白屏 | `ChatWindow.tsx:1039-1041,2106` | failed 降级为顶部细横幅，连续 N 次才升整屏 | 已修 |
 | U1-14 | 侧栏无搜索（看板有，`getLiveSessionsPage` 已支持 search 位），会话上百条只能滚动翻页找 | `ChatSidebar.tsx:366,731-742` | 接入 search 参数，或做 Ctrl+K 命令面板 | 已修（侧栏搜索框 + Ctrl/Cmd+F 聚焦，下沉后端 search 通道；2026-08-31 Ctrl+K 命令面板落地：QuickSwitcher 扩展为会话+命令双组混合过滤，8 条命令扁平数组派发既有动作，跨组平面索引键盘导航，速查表文案同步） |
 | U1-15 | 新建面板启动选项零记忆（换 agent 即清空；恢复路径反而有持久化）；工作目录不预填 | `NewSessionPanel.tsx:70,162,339` vs `api.ts:244-251` | `{provider→选择}` 存 settings 回填；无 prefill 时默认 `recent[0]` | 已修 |
 | U1-16 | 切回终端 tab 无条件下发 resize（后端同值也照发），TUI 每次全屏重绘 | `ManagedTerminal.tsx:666-679`、`pty.rs:1331-1350` | 前后端各加同值短路 | 已修（回归修补：以前「切回即回底」是全屏重绘的副作用，短路后上翻的视口停在原地——实拍「终端没有回到底部」。现切回可见与进程退出写提示后均显式 `scrollToBottom()`，测试钉住） |
-| U1-17 | 首帧占位 ≠ 真实默认 ×4：menuMode(`context`→`button`)×2、sticker_style(`elevated`→`flat`)、opacity(94→100)，每次开窗闪一下；`About.tsx` 的 `??` 字面量盖掉了写对的 `SETTINGS_DEFAULTS` | `Sticker.tsx:181`、`ChatSidebar.tsx:476`、`About.tsx:398-400`、`state.ts:11` | 统一读 `SETTINGS_DEFAULTS`；加「与 Rust `Settings::default()` 逐字段一致」的单测 | 已修 |
+| U1-17 | 首帧占位 ≠ 真实默认 ×4：menuMode(`context`→`button`)×2、sticker_style(`elevated`→`flat`)、opacity(94→100)，每次开窗闪一下；`About.tsx` 的 `??` 字面量盖掉了写对的 `SETTINGS_DEFAULTS` | `Sticker.tsx:181`、`ChatSidebar.tsx:476`、`About.tsx:398-400`、`state.ts:11` | 统一读 `SETTINGS_DEFAULTS`；加「与 Rust `Settings::default()` 逐字段一致」的单测 | 已修；2026-11-12：sticker_style、opacity 两处随贴纸下线，余下 menuMode 两处不受影响 |
 | U1-18 | reduced-motion 白名单漏 4 个无限动画 + `scroll-behavior:smooth`；且减动效后 running/waiting/idle 状态点像素级同形 | `styles.css:4033-4047,3247,996-999` | 白名单改兜底通配 + 少数例外；减动效下用形状差异替代动画 | 已修（兜底通配）；减动效下的形状差异归 G-17 状态语言重设计 |
-| U1-19 | `fmtResetIn` 硬编码 24 小时制 + 中文月日顺序直接搬给英文；全仓零 `Intl` | `AccountSection.tsx:64-90` | 换 `Intl.DateTimeFormat(lang, …)` / `Intl.RelativeTimeFormat` | 已修（fmtResetIn 走 Intl + 字典加 locale 字段）；fmtAgo 相对时间暂保留手拼 |
+| U1-19 | `fmtResetIn` 硬编码 24 小时制 + 中文月日顺序直接搬给英文；全仓零 `Intl` | `AccountSection.tsx:64-90` | 换 `Intl.DateTimeFormat(lang, …)` / `Intl.RelativeTimeFormat` | 已修（fmtResetIn 走 Intl + 字典加 locale 字段；2026-11-12 核对：fmtAgo 也已走 Intl.RelativeTimeFormat，`views/sticker/helpers.ts` 15-23） |
 | U1-20 | 不透明度/字号滑杆逐像素触发全量写盘 + 读写 claude 配置 + 双事件广播（拖一次 = 75 轮完整流程） | `About.tsx:446-478`、`settings.rs:326-369` | 滑杆本地 state + onPointerUp 提交；或 set_settings 对代理字段未变短路 `apply_to_agent_configs` | 已修 |
 | U1-21 | Esc 徽章画在审批卡上但默认焦点几乎总在 textarea（被白名单跳过），按了没反应 | `ChatWindow.tsx:1955,2225,2358` | 审批卡出现时移焦到「拒绝」，或 textarea 空时放行 Esc=拒绝 | 已修 |
 | U1-22 | 审批/题面静默过期（300s/180s 只写在注释里），卡片凭空消失无终态 | `ChatWindow.tsx:2336,1231` | 徽章旁加剩余时间；过期切「已超时，已回落终端」终态 | 已修 |
 | U1-23 | 终端视图下 broker 审批完全不可见（审批被 hook 劫走、TUI 里不会出现选择框），只剩标题栏小点 | `ChatWindow.tsx:2179 等 5 处 view==="chat" 门控` | 终端视图渲染常驻横幅「有 1 条待授权 · 去处理」 | 已修 |
 | U1-24 | 通知被「正在看」抑制后也写进去重表，切走后永不补发 | `watch.rs:732-748` | suppressed 不写指纹，viewing 变 false 时补发 | 已修（随 U0-5 顺手） |
-| U1-25 | 搜索框无 IME 合成守卫，拼音中间态经 300ms 防抖打到后端 LIKE（卡片编辑框有守卫，搜索框没有） | `Sticker.tsx:948` vs `helpers.ts:9` | compositionend 后再上报 | 已修 |
-| U1-26 | 便签超 500 字后端静默截断，前端无 maxLength 无计数 | `session_command.rs:82`、`Sticker.tsx:75-82` | EditBox 加 maxLength=500 + 接近上限显示计数 | 已修 |
-| U1-27 | 有更新时贴纸齿轮被整个改成更新入口，期间贴纸上没有打开设置的入口 | `Sticker.tsx:985-994` | 齿轮保持=设置，更新做独立红点徽章 | 已修（实拍回退：独立成第 6 颗按钮后底栏放不下，置顶被挤出可视区。改两档：红点回齿轮角标做提示、齿轮点击恒为设置；`ready` 时才出一条横条直达更新窗，可关且离开 ready 复位） |
 | U1-28 | 代码块无复制按钮/语法高亮/语言角标——AI 输出里最高频「要拿走」的内容只能框选 | `ChatMarkdown.tsx:73-96`、`styles.css:3884-3885` | pre 包复制按钮容器 + language 角标；高亮可按需引 shiki/prism | 已修（hljs 模块化高亮：core + 24 个按需语言，只在懒加载的 ChatWindow chunk（主 bundle 无感）；未知/超大/框线块降级纯文本） |
 
 ## 三、按交互面的其余发现（中影响，按面分组）
 
 ### 看板主窗
 
+> 2026-11-12：看板主窗已下线，本组只留 B-10、B-11（侧栏 ⋯ 仍用 `sticker/CardContextMenu.tsx`
+> 的键盘导航），其余移到文末「归档」。
+
 | # | 问题 | 位置 | 建议 |
 |---|---|---|---|
-| B-1 | 状态槽三种视觉形态（36px 徽标 / 16px 虚线环 / 9px 点），扫读无统一锚线 | `Sticker.tsx:619-635`、`styles.css:572-783` | 已修（error/在线/断开与 RunBadge 统一为同一直径圆形徽标：红环+「!」/绿环绿芯/灰虚线环，不再是大黑槽浮 9px 小点；RunBadge 本身的 pending 形态语言不变） |
-| B-2 | `screen_state==="blocked"` 无 pill 无文案，waiting 黄与 pending 琥珀肉眼难分 | `Sticker.tsx:623,709` | 已修（blocked 也给「待操作」pill，不再只靠琥珀环色相） |
-| B-3 | waiting tab「等最久优先」的倒排无任何 UI 提示，像列表坏了 | `query.rs:203`、`Sticker.tsx:714` | 已修（waiting tab 时间改「已等待 X」+ 警示色，倒排排序自解释） |
-| B-4 | 切 tab/搜索不重置滚动位置；切 tab 中间态先渲染旧数据子集（waiting 的 ASC 到达后整列表翻转） | `App.tsx:351-379`、`Sticker.tsx:377-385` | 已修（滚动回顶此前已落地；切换期冻结旧列表灰化 + aria-busy 直到新数据就绪；清空搜索有缓存恢复时不灰化） |
-| B-5 | `context` 菜单模式下星标/便签/重命名/归档零可见入口、零提示 | `Sticker.tsx:680-686,728` | 已修（菜单按钮常渲染，context 模式下 hover 卡片/:focus-visible 时极淡 ⋯ 浮现，button 模式不变） |
-| B-6 | 每次 board-changed 整窗口重查（页越滚越大，500 条时每事件重查 500 行） | `App.tsx:292` | 已修（超过首页时只重查首页 + 尾部按 id 增量修补，connected 分区与游标不变量保持；归档失败回滚走整窗例外） |
-| B-7 | 搜索不含便签内容（用户亲手写的记忆锚点搜不到；JOIN 已在 SELECT 里） | `query.rs:184-191` | 已修（LIKE 条件已含 `sn.note`，store 层测试 `live_sessions_search_matches_note_and_recent_texts` 钉住） |
-| B-8 | 便签块无行数限制，500 字便签撑满窗口且与 82px 估高差 3.6 倍致滚动抽搐 | `styles.css:873-884`、`Sticker.tsx:392` | 已修（3 行 clamp + 点击展开再点击编辑；estimateSize 分档：带便签 144 / 普通 82） |
-| B-9 | 编辑中滚动列表虚拟化卸载 EditBox → 草稿静默丢失，滚回显示原文 | `Sticker.tsx:71,393` | 已修（草稿提升到 Sticker 层 `editDraftsRef` 按 sessionId 存，ref 不触发整板重渲染；提交/取消清草稿） |
 | B-10 | 卡片菜单键盘完全不可达（无 autofocus/方向键/焦点归还，DOM 挂在滚动区外 Tab 进不去）；项目自己的 `useMenuPopup` 有完整实现 | `CardContextMenu.tsx:57-131` vs `menu.tsx:146-171` | 已修（挂载聚焦首项 + ↑↓/Home/End/Enter + 关闭归还焦点，测试钉住） |
 | B-11 | 卡片 `role="button"` 内嵌 4 个可聚焦控件，100 张卡 = 200-400 次 Tab | `Sticker.tsx:650-653,715,729,794` | 已修（卡内控件 tabIndex=-1，整卡单 Tab 停靠点；卡片 ←/→ roving 搬 DOM 焦点，编辑态不抢键） |
-| B-12 | tablist 无方向键/`aria-controls`/tabpanel；无任何窗口级快捷键（Ctrl+F 搜索、Esc 三级回退） | `Sticker.tsx:548-576` | 已修（Ctrl+F + Esc 回退链；tablist ←/→/Home/End + roving tabindex + aria-controls/tabpanel 接线） |
-| B-13 | focus toast 无 Esc/点外关闭，带动作类型不自动消失且盖掉小窗列表下半部 | `Sticker.tsx:898-935`、`styles.css:384-393` | 已修（Esc 关闭 toast） |
-| B-14 | 自绘滚动条 4px 且仅悬停贴纸才显形，无点击轨道跳转 | `styles.css:478-490` | 已修（热区扩 12px 视觉不变，4px 视觉改 `::before` 绘制，溢出时 0.35 低透明常显；点击轨道跳转未做） |
-| B-15 | loadMore 的三点 loader 落在底部淡出遮罩里且不计入滚动高度 | `Sticker.tsx:839-845`、`styles.css:357-367` | 已修（loader 移出虚拟内层容器，作为 `.stk-scroll` 正常流子元素计入滚动高度） |
-| B-16 | tab 滑块宽度硬编码 1/3 与 TAB_KEYS 靠注释同步；星标后卡片瞬移无 FLIP 动画 | `styles.css:265-276`、`Sticker.tsx:863` | 已修（滑块按选中按钮实测定位 + ResizeObserver；星标 FLIP：重排前量可见卡位置、useLayoutEffect 补偿 180ms，尊重 reduced-motion） |
 
 ### 对话窗
 
@@ -186,6 +164,7 @@
 | C-16 | 超长粘贴固定 250ms 后回车，TUI 可能没消化完；`sessionLaunchSelections` 无 stale 守卫会把旧会话启动档落到新会话 | `ChatWindow.tsx:405-414,727-730` | 已修（submitGapMs 按长度动态间隔 250ms+50ms/KB 封顶 2s；stale 守卫此前已由 cancelled 标志补齐） |
 | C-17 | 快捷键体系整体缺位：无切会话/收展侧栏/切视图/新建/查找；侧栏平铺 tabindex 上百次 Tab | `ChatWindow.tsx:1948-1962`、`ChatSidebar.tsx:629-647` | 已修（Ctrl+K/B/1/2/N/F + ? 速查表全部落地；侧栏 roving tabindex + ↑↓/Home/End 导航） |
 | C-17 补记 | 2026-11-10 leader 改定：Ctrl+F 在对话与终端视图都是在当前内容里找字，搜会话交给 Ctrl+K，Ctrl+Shift+F 保留为找字别名；mac 速查表显示 ⌘/⌥ | `ChatWindow.tsx`、`chat/WindowModals.tsx` | 二期 #8 落地 |
+| C-17 补记二 | 2026-11-11 关卡 A 定案：焦点在托管终端时 Ctrl+B 交给 PTY（claude 的「转后台」），⌘B 与对话视图不受影响 | `views/terminalKeys.ts` | 不改回 | 已定论 |
 | C-18 | 断线语言缺失：分不出「agent 进程没了」和「IPC 通道断了」 | `zh.ts:153-160`、`ChatWindow.tsx:565` | 已修（轮询连续失败 ≥3 次升级「同步中断」横幅 role=alert 错误色，瞬时失败仍琥珀通用文案；与 tone 解耦） |
 | C-19 | 子任务展开后滚动，吸顶标题与视口顶之间有一条缝，内容从缝里透出 | `styles.css:3802`（`.chat-scroll` padding-top）+ `styles.css:4460`（sticky summary） | 已修（Chromium 里 sticky top:0 贴滚动容器内容盒上沿，padding-top 变成缝隙，Playwright 实测 24px；顶部留白改文档流内 `.chat-scroll::before` 占位，吸顶贴顶=0；`.chat-sync-warn` 同道受益） |
 | C-20 | 运行状态条（SnakeSpinner + currentActivity）非 Bash 工具只显示工具名，看不出在做什么 | `dispatch.rs:114` 兜底分支 | 已修（hook.rs 新增 `activity_detail()`：pattern→file_path→path→query→url→subject→description 逐键试，兼容 claude/kimi 字段名，截 120 字；有细节写「Grep: 个子任务」，无细节维持裸名；dispatch_test 钉死两种形态） |
@@ -205,7 +184,7 @@
 | T-9 | 对话页恢复/接管硬编码 100×30 起 PTY，首屏画完再 resize 重排一遍 | `ChatWindow.tsx:1435,1478` | 已修（gridRef 读当前 xterm cols/rows 作初始网格，未挂载时才退占位值） |
 | T-10 | 高风险启动档（bypassPermissions）与普通档同视觉零警示；契约无 description/risk 字段；未知 id 直接裸露 | `NewSessionPanel.tsx:336`、`LaunchOption.ts` | 已修（契约 `LaunchChoice.risk` 落地，四家 yolo/bypass 档标 true 并重生成 TS；下拉警示色 + 风险副标题） |
 | T-11 | relay 的 `--model` 静默压过用户在面板选的模型 | `terminal.rs:1704-1716` | 已修（relay 启用时 model 档置灰 + 行下注明「由中转固定为 X」，取不到固定值时宁可不置灰） |
-| T-12 | 启动后面板一闪而灭，无 toast 无占位卡（组件文档承诺的 emit 不存在，codex 到首 turn 才出卡） | `NewSessionPanel.tsx:45,180-181` | 已修（pending PTY 合成负 id 占位卡合入看板查询，按 provider/cwd 对账撤卡；占位卡取代 session-starting toast；只进 all/running tab，缩略条未纳入） |
+| T-12 | 启动后面板一闪而灭，无 toast 无占位卡（组件文档承诺的 emit 不存在，codex 到首 turn 才出卡） | `NewSessionPanel.tsx:45,180-181` | 已修（pending PTY 合成负 id 占位卡合入看板查询，按 provider/cwd 对账撤卡；占位卡取代 session-starting toast；只进 all/running tab，缩略条未纳入）；2026-11-12：缩略条已随贴纸下线，「缩略条未纳入」作废 |
 | T-13 | 临时 id→真实 id 重绑换 key 整只重挂终端，首屏清空重画 | `ChatWindow.tsx:1053-1062,2284` | 已修（删除 key 重挂，xterm 实例复用；binding 权威确认同一 PTY 时只换 viewer 注册，画面不闪不 reset） |
 | T-14 | 双视图同写同一 PTY：resize 无仲裁（两窗尺寸不同时 TUI 反复重排）、输入无互斥无提示 | `pty.rs:2046-2051,1307-1329` | 已修（失焦视图所有 resize 通道静默、重新聚焦仅真漂移才夺回主控；外部视图在线时对话页常驻提示「两边同时输入会交错」，pty-external-viewers 事件实时推送） |
 | T-15 | 外部会话角标回落 DB status 但与托管会话同呈现，无「不新鲜」区分；「运行中→空闲」四层节流叠加最坏 1.7s；fallback 规则命中时角标依然「很自信」 | `pty.rs:1636-1651`、`detect.rs:371-413`、`useBoardRefresh.ts:6` | 已修（弱化/fallback 中性点此前已落地；本轮降级转变（Working→Idle/Blocked）绕过合流直发 `board-urgent`，前端跳过 400ms 节流立即刷新，落地延迟 ~1.7s→~1.0s） |
@@ -220,7 +199,6 @@
 | S-2 | 切分区 `key={sec}` 整树重挂 + 重拉数据（含联网配额查询）；设置窗 620×460 不可缩放，长内容嵌套滚动陷阱 | `About.tsx:643,188-194`、`window.rs:113-115` | 已修（访问过的分区保持挂载 + hidden 隐藏，切回零重挂零重拉；设置窗放开纵向缩放，宽度仍钉 620） |
 | S-3 | 通用/会话/外观三分区保存失败完全静默（开关自己弹回去），只有网络分区显示错误 | `About.tsx:129-476` 各 patch 调用 | 已修（useSettingsState 暴露 lastError；通用/会话/外观/账号四分区渲染错误行，网络分区原有） |
 | S-4 | 设置窗不订阅 settings-changed（现成的 useSettingsEffect 没用），与 Onboarding 同开时整对象写回互相覆盖 | `state.ts:44-66` | 已修（state.ts 订阅 settings-changed） |
-| S-5 | 调不透明度/字号时设置窗自己纹丝不动（密度只在贴纸窗生效），等于闭眼调 | `appearance.ts:78-80`、`About.tsx:446-478` | 已修（外观分区顶部迷你贴纸预览卡，实时反映不透明度/界面缩放/贴纸色/主题/贴纸风格） |
 | S-6 | 配额无「更新于 X 分钟前」，设置页不自动刷新（贴纸 5 分钟刷）；对未登录 provider 也发配额查询 | `AccountSection.tsx:632-646,1082` | 已修（设置页 5 分钟自动刷新 + 「更新于 HH:MM」；挂载刷新过滤对齐贴纸——未登录/中转不再发请求） |
 | S-7 | 登录 pending 态零指引（不说在哪个终端开了窗、等多久）；「取消等待」英文译成裸 Cancel 生歧义 | `AccountSection.tsx:464-466`、`en.ts:569` | 已修（pending 显示「已在 {终端} 打开登录窗口…最长等待 5 分钟」，终端名取 resume_terminal；en 改 Stop waiting） |
 | S-8 | 安装是不可中断黑盒（无进度/耗时/取消）；失败日志路径纯文本不可点；「修复连接」按钮凭空出现零解释；修复失败指向不存在的「运行终端」 | `AccountSection.tsx:436-452,568-573,495-505`、`zh.ts:118` | 已修（耗时显示/日志可点此前已落地；本轮补取消安装（注册表+进程树强杀）、修复按钮 data-tip 说明、修复失败指向订正为「重试/重新安装」） |
@@ -236,24 +214,13 @@
 
 | # | 问题 | 位置 | 建议 |
 |---|---|---|---|
-| W-1 | 吸附阈值 20 物理像素（150% 缩放下等效 13 逻辑像素），高 DPI 手感随机；条厚度却按逻辑值乘 scale，两处口径不一 | `snap.rs:5,150-152` | 已修（阈值按 scale_factor 换算，与 STRIP_W_LOGICAL 同口径） |
-| W-2 | 吸附预览只有窗口自身 4px 发光条，无落点预览 | `App.tsx:705`、`styles.css:1003-1015` | 已修（候选边出现时画 `.snap-ghost` 虚线幽灵条：28px 厚度与真实缩略条一致、主轴按 stripExtent 计算。2026-08-31 原生预览窗落地：label=snap-preview 的透明置顶免焦点窗，几何由 snap.rs 纯函数 `preview_strip_rect` 与 snap_collapse 同公式计算；Moved 处理器每帧驱动显隐/跟随，左键按下门控防程序化移动误闪，READY 握手防首帧白框，事件泵内同步建窗会卡死故走子线程懒建；建窗失败熔断回退 ghost；松手/失焦/吸附落地四处幂等 hide。Windows 实拍验证，截图在 target-verify/tmp/） |
-| W-3 | 展开态点一下拖拽条（不移动）即意外折叠（陈旧 lastEdgeRef） | `App.tsx:557-558,462-484` | 已修（松手时位移 < 4px 视为纯点击，不做吸附/还原判定） |
-| W-4 | 折叠态启动闪「细条内容装在 360×440 大框」；展开过渡期看板在 28px 宽窗口内布局抖动 | `App.tsx:157-162,663-667`、`useShowWhenReady.ts:20-22` | 已修（折叠启动闪帧此前已消除；本轮展开过渡期渲染 `.snap-expanding` 纯色占位，snap_expand/snap_restore 落地后才挂载看板，悬停偷看与找回两条路径都覆盖） |
-| W-5 | 缩略条主轴无上限（60 会话超 1080p 工作区，溢出被裁无提示）；DPI/显示器变化不重算 | `App.tsx:55-57`、`snap.rs:251`、`CollapsedStrip.tsx:47-54` | 已修（按工作区主轴换算容量、溢出折「+N」徽章；onScaleChanged 重跑 snap_collapse；后端 clamp_strip_extent 兜底） |
-| W-6 | pin 状态折叠态不可见不可操作；「找回贴纸」强行永久改写 pin 偏好 | `Sticker.tsx:995-1005`、`App.tsx:415` | 已修（找回改临时置顶——`recall_center` 带 pinned 参数，不再改写 localStorage；缩略条 pin 标记加过又被实拍否掉（28px 细条占一格且噪音），已撤） |
 | W-7 | 贴纸首显走普通 `show()` 可能抢焦点（`show_window_no_activate` 已有只给对话窗用） | `useShowWhenReady.ts:25`、`window.rs:34-38,437-449` | 已修（新增 `show_sticker` 命令走 no-activate 路径；show_after_grace 的 focus=false 分支同步改） |
-| W-8 | 无点击穿透，opacity 可低至 25%：几乎看不见的置顶窗口 100% 吃鼠标 | `settings.rs:331`（无 set_ignore_cursor_events） | 已修（设置项 + set_ignore_cursor_events 热生效；按住 Alt 临时恢复交互（50ms 轮询 GetAsyncKeyState）；仅 Windows 实装） |
-| W-9 | 拖拽期间每个 Moved 全量枚举显示器 ×2 处并 emit | `lib.rs:1040-1063,775-800` | 已修（显示器工作区按世代缓存，WM_DISPLAYCHANGE/SETTINGCHANGE 才失效；snap-changed 只在吸附边变化时 emit） |
 | W-10 | Windows 托盘图标零状态表达（只有 tooltip），macOS 有彩色徽章——可见性差一个数量级；托盘计数把出错混进「待交互」 | `window.rs:634-641`、`watch.rs:611-619` | 不采纳（圆点/数字徽章两轮迭代均被实拍否掉，待交互角标已整体撤掉：状态表达维持 tooltip 摘要，dev 角标按用户要求保留原样；error 计数拆分若要做可在 tooltip 文案里体现） |
 | W-11 | 两平台托盘菜单构成与左键语义不一致（Win 无「打开对话窗」项，macOS 无「找回贴纸」）；Windows 无显示/隐藏开合 | `window.rs:596-664`、`menubar.rs:240-249` | 已修（菜单两平台同项同序；单击=开合主界面、**双击=打开对话窗**——初版单击语义直接替换旧「开对话窗」，双击变两次开合被实拍打回，加 300ms 世代消抖兼容两种习惯） |
-| W-12 | macOS 面板任何失焦即收起，无法常驻（pin 按钮也不渲染） | `panel.rs:65-72`、`Sticker.tsx:995` | 已修（复用 pin 按钮 + PIN_KEY：面板 pin 语义=失焦不自动收起，经 set_panel_keep_open 推送；⚠️ panel.rs 为 cfg(macos)，Windows 主机未编译验证靠 CI） |
 | W-13 | waiting/pending 指纹掺 `last_event_at` 会重复轰炸（blocked 已论证过并排除，结论只用了 1/3）；审批 toast 用默认 5s 时长无按钮 | `watch.rs:277-301,391-416` | 已修（指纹去时间戳此前已落地；本轮 Pending/Blocked 用 Duration::Long +「打开会话」按钮，winrt-notification 按钮与点正文汇入同一 on_activated） |
 | W-14 | 通知点击跳转失败静默丢弃返回值（focus_session_terminal 明明有分类结果）；标题不带项目名，多会话时通知中心一排同名 | `watch.rs:411-413,637-739` | 已修（标题带项目名；点击定位失败回退打开对话窗） |
 | W-15 | 关「通知」后任务栏仍闪（attention_flash 独立门控但文案不说明）；macOS 通知串行阻塞投递 + 废弃 API | `watch.rs:631-633,766-769`、`macos/notify.rs:30-79` | 已修（文案说明此前已落地；本轮换 UNUserNotificationCenter（objc2 系依赖现成），异步非阻塞投递 + 授权/前台 banner/点击路由；⚠️ cfg(macos) 本机未编译验证靠 CI） |
-| W-16 | 双屏内侧边也可吸附（鼠标必经之路 + 零延迟展开=必然误触）；非矩形排布包围盒留「死区」窗口可拖进去消失 | `lib.rs:1073-1081,748-799`、`snap.rs:38-53` | 已修（贴边检测改并集包围盒——只吸虚拟桌面外侧边；钳位改相交面积最大的显示器，死区进不去） |
-| W-17 | 位置/尺寸/吸附边/置顶分散四套存储无原子性（localStorage 清空即半吊子状态）；折叠态 min_size 放开是「尺寸毒化」根因 | `lib.rs:897-905`、`App.tsx:24-95`、`snap.rs:288-291` | 已修（四套存储收敛 settings.json 单一日志源 + localStorage 旧键一次性迁移；折叠态改禁 resizable，用户拖角缩吸附窗的通路物理关闭；window-state 插件对 main 加 denylist） |
-| W-18 | Linux 分支吸边「看起来支持实则坏掉」（两个原语恒返回假值） | `snap.rs:203-224` | 已修（Moved 处理器与 snap 常量收窄为 cfg(windows)，Linux 吸边流程整体休眠；macOS 空分支不变） |
+| W-17 | 位置/尺寸/吸附边/置顶分散四套存储无原子性（localStorage 清空即半吊子状态）；折叠态 min_size 放开是「尺寸毒化」根因 | `lib.rs:897-905`、`App.tsx:24-95`、`snap.rs:288-291` | 已修（四套存储收敛 settings.json 单一日志源 + localStorage 旧键一次性迁移；折叠态改禁 resizable，用户拖角缩吸附窗的通路物理关闭；window-state 插件对 main 加 denylist）；2026-11-12：吸边与折叠态部分随贴纸下线，settings.json 收敛仍有效 |
 
 ### 全局基础设施
 
@@ -276,7 +243,6 @@
 | G-15 | 悬停是若干功能唯一入口且无 hover:none 兜底（终端操作条、自绘滚动条）；Tooltip 无触摸/长按路径而它承载完整路径、账号全名等唯一信息 | `styles.css:4026-4029,478-490`、`Tooltip.tsx:77-79` | 已修（终端操作条 focus-within/hover:none + TooltipLayer 触屏长按 500ms 显示、抬手保留 1.2s） |
 | G-16 | 每个会话状态点都是 `role="status"` live region（N 条会话 = N 个播报源，状态秒级跳变播报风暴）；审批卡 `role="alert"` 包裹交互按钮打断朗读且焦点不入 | `ChatSidebar.tsx:663,794` 等、`ApprovalCard.tsx:22` | 已修（状态点改 role=img，全窗唯一视觉隐藏汇总播报；审批卡改 alertdialog + 挂载移焦动作区） |
 | G-17 | 状态三色灰度值几乎相同（159/160/169），waiting↔pending 对比 1.13:1，reduced-motion 下动效通道也没了——无第三通道 | `styles.css:566-591,3207-3212` | 已修（复核结论：8px 点阵的空心环/方块形状通道曾试曾撤——小尺寸渲染毛病多且破坏格式塔；最终通道=颜色+动效+pill 文字+卡槽环形徽标（B-1：红环+!/绿环绿芯/灰虚线环，24px 下环形成立） |
-| G-18 | `.stk-utab` 未选中 opacity 0.42 实测对比 1.90:1，看不出可点 | `styles.css:466-472` | 已修（0.42 → 0.6） |
 | G-19 | 设置分区不记忆（每次开窗回 general，最常用的外观永远多点一次） | `About.tsx:594` | 已修（分区选择落 localStorage） |
 
 ## 四、结构性收敛（一次投资，多面受益）
@@ -297,7 +263,7 @@
    app 级 emit + sessionId 过滤（前端已在过滤），解除窗口 label 耦合。~~ 已落地
    （pty-output/pty-exit/pty-external-viewers 全部 app.emit + 关窗 reset_viewer 兜底）。
 
-## 五、2026-09-02 第七轮新发现（六路读码 + 实拍，69 条，复核后 17 条部分待补）
+## 五、2026-09-02 第七轮新发现（六路读码 + 实拍，69 条，复核后 17 条部分，2026-11-12 核对后仅 7G-8 未收口）
 
 > 六轮关闭后的一轮新扫描。共同模式仍是「策略级修复的相邻路径漏网」：主面修了副本没跟上
 > （B-4 空列表切换、U1-13 看板刷新失败、S-7 跨平台默认终端、S-3 网络分区错误行、
@@ -310,7 +276,8 @@
 > --all-targets / cargo test 全绿）。三处有意的**行为变更**记在这里，别当回归改回去：
 > ① 按钮模式下卡片的 Enter 现在直接打开会话（7B-4，按钮模式防的是鼠标误点，键盘主键
 > 不该是空操作）；② 当前打开的会话所在的侧栏分组折不动（7C-6，日期桶键固定，折过一次
-> 会把用户正开着的会话一起藏掉）；③ 手机端输入控件恒 16px、viewport 去掉
+> 会把用户正开着的会话一起藏掉。2026-11-12 注：已按用户反馈翻转，当前组可以折，切到某个
+> 会话时自动展开一次，见 `ChatSidebar.tsx`、commit 37db0735，② 不再成立）；③ 手机端输入控件恒 16px、viewport 去掉
 > maximum-scale（7M-11，禁双指缩放是无障碍硬伤，换回可缩放 + 聚焦不跳字号）。
 > 未经本机验证：7T-1 的 macOS ⌥ 拖选、7T-7 的 ⌘ 文案（`cfg(macos)` 路径，按 xterm 6.0
 > 源码与 metaKey 处理器推导）；7M-2/3/9/11 的真机表现（iOS 安全区与软键盘）。
@@ -388,19 +355,7 @@
 
 ### 看板与贴纸
 
-| # | 问题 | 位置 | 建议 | 状态 |
-|---|---|---|---|---|
-| 7B-1 | 切 tab 时闪出错误 tab 的空态：从空「运行中」切「全部」，请求在途先看到「还没有会话 + 新建」（B-4 只冻结非空旧列表，旧列表为空时直接落 EmptyState） | `Sticker.tsx:1027-1046`、`App.tsx:107-111` | 空列表分支加 `switching` 判断显示加载态 | 已修 |
-| 7B-2 | board-changed 刷新失败后卡片陈旧却零提示，状态环/时间全是旧值（U1-13 只给了对话窗细横幅） | `App.tsx:334-341`、`Sticker.tsx:1031` | 非空列表顶部细横幅「刷新失败，显示的是缓存」+ 重试 | 已修 |
-| 7B-3 | 「全部」tab 在线与历史会话无分界，20+ 张卡滚到中段分不清这一片还是活的（U1-8 只做了排序） | `App.tsx:263,285`、`Sticker.tsx:1053-1436` | 最后一张 connected 卡后插分隔项「历史会话 · N」 | 已修 |
-| 7B-4 | 按钮模式下卡片仍 role=button 可聚焦，Enter 是空操作（B-11 保证能到达，未覆盖到达后主键无响应） | `Sticker.tsx:1192,1224` | buttonMode 下 Enter 直接 openTerminal，或焦点搬到 `.stk-open` | 已修 |
-| 7B-5 | 外库卡悬停提示「打开会话」，点下去却是「本窗口只读展示」toast（横切主题 5 新实例） | `Sticker.tsx:1239` vs `:564-575` | data-tip 先判 foreign / background | 已修 |
-| 7B-6 | 实拍：主目录启动的会话「仓库」栏显示成 `35122`（cwd basename） | `session_query.rs:501` | cwd 等于 home 时显示「主目录」或 `~` | 已修 |
-| 7B-7 | 搜索框已开、焦点在卡片时 Ctrl+F 无反应（B-12 只处理未开→开）；设置窗无 Ctrl+F 也无 × 清除（S-1 只做了搜索本身） | `Sticker.tsx:464-468`、`About.tsx:861-880` | 搜索框挂 ref，Ctrl+F 永远 focus+select；设置窗补同款与 × | 已修 |
-| 7B-8 | 底栏用量刷新失败后陈旧百分比当新鲜值展示（S-6 只给了设置页「更新于」） | `Sticker.tsx:873-875` | usageMap 带 fetchedAt，失败后降饱和 + tip 上次更新时间 | 部分（复核：getAccounts 预填 usageMap 的路径不写 usageMeta，启动即显示缓存、首次刷新失败仍不标陈旧；ProviderUsage 无 fetched_at） |
-| 7B-9 | 连续归档时撤销 toast 无上限堆叠，4 条盖住贴纸一半（U1-12/P1-2 为撤销互不相吞做独立条，未设上限） | `Sticker.tsx:429-438`、`styles.css:435-439` | ≥2 条合并「已归档 N 个 · 撤销全部」或上限 2 条 | 已修 |
-| 7B-10 | 模型胶囊无 max-width，中转长 model id 先挤没仓库名（G-12 未覆盖卡片元信息行） | `styles.css:815`、`Sticker.tsx:1367` | 复制 `.stk-profile` 的 max-width + ellipsis，全名进 tip | 已修 |
-| 7B-11 | 搜索占位符没说便签可搜（B-7 只改了后端 LIKE） | `zh.ts:40`、`en.ts:37` | 改「搜索标题 / 仓库 / 便签…」 | 已修 |
+> 2026-11-12：贴纸与看板已下线，7B-1～7B-11 整组移到文末「归档」。
 
 ### 对话窗
 
@@ -412,10 +367,10 @@
 | 7C-4 | 远程作答卡「去终端作答」未门控，点后题面交还桌面终端，手机降级为「请在桌面端作答」；另三处远程文案仍指向终端页（C-11 尾未做远程降级） | `ChatWindow.tsx:3712,3108-3119,1956`、`useApprovalChannel.ts:223`、`zh.ts:287` | 按钮按 `!remoteUi()` 门控；三条文案加 Remote 变体 | 已修 |
 | 7C-5 | 侧栏目录筛选/归档视图生效后无可见标记，列表只是「少了很多会话」 | `ChatSidebar.tsx:265-280,440,445` | 筛选钮 is-active 小点；归档视图在搜索框上方渲染可关闭状态条 | 已修 |
 | 7C-6 | 折叠组吞掉当前会话（日期分桶键固定 `date:today`，折过一次第二天新会话全藏）；activeId 在折叠组内时无条目带 tabIndex=0，Tab 进不了列表（C-17 roving 锚点指向未渲染节点） | `ChatSidebar.tsx:886-889,1244,815-820,184-189` | tabbableId 从实际渲染条目取；activeId 所在组强制展开；日期/状态分组折叠不落盘 | 已修 |
-| 7C-7 | 切终端再切回仍强制回底，阅读位置丢失（C-14 标已修但离开 chat 视图时仍重置 followRef/positionedRef） | `ChatWindow.tsx:2032-2045`、`styles.css:4990` | 离开前记 scrollTop/followRef 切回恢复，或隐藏改 content-visibility | 部分（复核：效果靠删掉旧的 followRef 重置成立；新写的 savedScrollRef 保存分支在 hidden 落 DOM 之后才跑、scrollHeight 恒 0，是死代码，注释「display:none 清零 scrollTop」经 Chromium 实测为假，需重做或删干净） |
+| 7C-7 | 切终端再切回仍强制回底，阅读位置丢失（C-14 标已修但离开 chat 视图时仍重置 followRef/positionedRef） | `ChatWindow.tsx:2032-2045`、`styles.css:4990` | 离开前记 scrollTop/followRef 切回恢复，或隐藏改 content-visibility | 已修（2026-11-12 核对：`views/chat/useStickToBottom.ts` 161-180 改用 onScroll 记下的 lastScrollTopRef，死代码已删） |
 | 7C-8 | 作答卡自定义回答按 Enter 无反应，屏幕识别卡同款输入框回车即提交 | `QuestionPanels.tsx:114-120` vs `ChatWindow.tsx:3614` | answer 形态 input 加 onKeyDown 提交 | 已修 |
-| 7C-9 | 工具组摘要中英混排（只本地化 Bash/Read/Write）；每条运行中工具行都是 role=status，并行时读屏被轮番打断（G-16 漏网副本） | `ToolActivity.tsx:5-11,44`、`Transcript.tsx:174-179` | friendlyToolName 补常见项；行级 aria-hidden，组头一处播报 | 部分（复核：工具名映射与行级 aria-hidden 已做；组头 Transcript.tsx:184 的 aria-label span 无 role 不会被读出，读屏现在完全听不到「运行中」） |
-| 7C-10 | markdown 图片无兜底：大图撑破 720px 列出横向滚动条，本地路径是破图标无说明（U1-28 只覆盖代码块） | `ChatMarkdown.tsx:154-198` | `.chat-md img { max-width:100% }`；非 http 源复用 chat-image-chip | 部分（复核：max-width 已做；C:\… / file:// 源被 react-markdown defaultUrlTransform 置空，chip 只剩图标无文件名，需自定义 urlTransform） |
+| 7C-9 | 工具组摘要中英混排（只本地化 Bash/Read/Write）；每条运行中工具行都是 role=status，并行时读屏被轮番打断（G-16 漏网副本） | `ToolActivity.tsx:5-11,44`、`Transcript.tsx:174-179` | friendlyToolName 补常见项；行级 aria-hidden，组头一处播报 | 已修（2026-11-12 核对：`views/chat/RunningBar.tsx` 131-143 常驻 TurnAnnouncer（role=status），开工播「工作中」、结束播「回复完成」） |
+| 7C-10 | markdown 图片无兜底：大图撑破 720px 列出横向滚动条，本地路径是破图标无说明（U1-28 只覆盖代码块） | `ChatMarkdown.tsx:154-198` | `.chat-md img { max-width:100% }`；非 http 源复用 chat-image-chip | 已修（2026-11-12 核对：`ChatMarkdown.tsx` 315-320 keepUrl 只挡 javascript/data/vbscript，366-371 本地图片 chip 带文件名） |
 
 ### 终端与新建会话
 
@@ -436,13 +391,13 @@
 
 | # | 问题 | 位置 | 建议 | 状态 |
 |---|---|---|---|---|
-| 7S-1 | Windows 默认档登录提示写「已在 Terminal 打开」，实际弹的是 Windows Terminal/PowerShell（S-7 只接了 resume_terminal 原值） | `AccountSection.tsx:245-254`、`settings.rs:21-23`、`terminal.rs:1638` | 存值不在本平台选项内时按后端同规则回退，或退回不带终端名文案 | 已修（复核遗留：存值 wt/wezterm 已卸载时仍念旧终端名，前端可接 availableTerminals() 对齐后端回退） |
+| 7S-1 | Windows 默认档登录提示写「已在 Terminal 打开」，实际弹的是 Windows Terminal/PowerShell（S-7 只接了 resume_terminal 原值） | `AccountSection.tsx:245-254`、`settings.rs:21-23`、`terminal.rs:1638` | 存值不在本平台选项内时按后端同规则回退，或退回不带终端名文案 | 已修（2026-11-12 核对：`settings/AccountSection.tsx` 255 已接 availableTerminals()，卸载后不再念旧名） |
 | 7S-2 | 「重启并更新」按下后无进行态，「稍后」/Esc 仍可用，安装器起来前数秒画面不动（U0-12/S-13 止步于确认与失败） | `Updater.tsx:186`、`useUpdate.ts:78-88` | installing 期间状态行与主按钮换「正在安装…」，later/Esc 让位 | 已修 |
-| 7S-3 | 更新已下载态在关于页与贴纸底部按钮都压成「有新版本」（U0-7/S-13 只修了 unknown/checking/error） | `About.tsx:711,721`、`zh.ts:38`、`App.tsx:958` | available / downloading / ready 分三条文案 | 已修（复核遗留：sticker.updateReady 与 about.updateReady 措辞不一，违背状态词唯一） |
-| 7S-4 | 搜索态账号分区只搜当前 agent，切换器被隐藏，搜「codex」无结果无入口（S-1 未覆盖同分区单卡） | `searchFilter.ts:74`、`AccountSection.tsx:1334` | 搜索态豁免 `.account-agent-switch`，或命中 agent 名自动 pickAgent | 部分（复核：只解决分区已可见时切换器被藏；搜「codex」仍无结果无入口，建议的自动 pickAgent 未做） |
+| 7S-3 | 更新已下载态在关于页与贴纸底部按钮都压成「有新版本」（U0-7/S-13 只修了 unknown/checking/error） | `About.tsx:711,721`、`zh.ts:38`、`App.tsx:958` | available / downloading / ready 分三条文案 | 已修（2026-11-12 核对：zh.ts 两处 updateReady 都是「更新已下载，可安装」） |
+| 7S-4 | 搜索态账号分区只搜当前 agent，切换器被隐藏，搜「codex」无结果无入口（S-1 未覆盖同分区单卡） | `searchFilter.ts:74`、`AccountSection.tsx:1334` | 搜索态豁免 `.account-agent-switch`，或命中 agent 名自动 pickAgent | 已修（2026-11-12 核对：`AccountSection.tsx` 1424 挂了视觉隐藏的 agent 名单，搜「codex」有结果） |
 | 7S-5 | 弹层内拖选文字松手在遮罩上会关闭弹层、草稿丢失（G-3 只做了焦点陷阱） | `AppModal.tsx:82` | onMouseDown 记起点，起终点都在遮罩上才 onClose | 已修 |
 | 7S-6 | 远程端口非法输入静默回退 18620，无说明 | `RemoteAccessCard.tsx:19-24` | 行内错误「端口须为 1 到 65535」，保留输入直到修正 | 已修（复核回归修补：说明行 flex-basis 100% 落在 nowrap 的 .row 里会把「端口」标签挤到 0 宽，加 .remote-port-row flex-wrap） |
-| 7S-7 | 网络分区与远程卡错误行无 × 无 role=alert，与其他四分区不一致（08-31 尾轮只补了账号分区） | `NetworkSection.tsx:325`、`RemoteAccessCard.tsx:146-152` | 改用 About.tsx 的 SettingsError | 已修（复核遗留：远程卡 startError 外再套 formatBackendError，英文界面双前缀） |
+| 7S-7 | 网络分区与远程卡错误行无 × 无 role=alert，与其他四分区不一致（08-31 尾轮只补了账号分区） | `NetworkSection.tsx:325`、`RemoteAccessCard.tsx:146-152` | 改用 About.tsx 的 SettingsError | 已修（2026-11-12 核对：`settings/RemoteAccessCard.tsx` 299 只 format 一次，双前缀已消） |
 | 7S-8 | 确认窗正文 11px + dim 色，危险后果句是整窗最小最淡的字（S-14 只改了按钮） | `styles.css:3490,3493` | 正文升 `--fs-12-5` + `--cc-text` | 已修 |
 | 7S-9 | 关于页「打开官网」是唯一 primary，有新版本时两个主按钮；「使用引导」副标写「欢迎使用 Meowo」 | `About.tsx:746,762` | 官网降级普通按钮；副标改「重看首次引导」 | 已修 |
 | 7S-10 | 英文 Appearance 分区第一行也叫 Appearance | `en.ts:599,649` | theme 改 Theme / Color scheme | 已修 |
@@ -451,22 +406,22 @@
 
 | # | 问题 | 位置 | 建议 | 状态 |
 |---|---|---|---|---|
-| 7G-1 | **faint 文字档按裸底校准，实际落在叠 surface 的卡面**：活动行/时间/tab 计数/代码块语言角标深色约 4.34:1、hover 3.8:1，浅色 4.0～4.23:1（估算；G-9 修的是 alpha/opacity 叠加） | `styles.css:44-45,157-158`、消费 `:715,825,803,353,4970` | faint 按叠层后的面重校（深约 #9aa09b、浅约 #636c67），或卡内 ≤10.5px 改 dim | 部分（复核实算：浅色 hover 卡面 4.39:1 仍不达标） |
+| 7G-1 | **faint 文字档按裸底校准，实际落在叠 surface 的卡面**：活动行/时间/tab 计数/代码块语言角标深色约 4.34:1、hover 3.8:1，浅色 4.0～4.23:1（估算；G-9 修的是 alpha/opacity 叠加） | `styles.css:44-45,157-158`、消费 `:715,825,803,353,4970` | faint 按叠层后的面重校（深约 #9aa09b、浅约 #636c67），或卡内 ≤10.5px 改 dim | 已被用户决策取代（2026-10-29 用户定 faint 改回 Kimi 原值，见 styles.css 注释；#5e6762 已不在，不是回归，不当待办） |
 | 7G-2 | 对话输入框占位符 color-mix 78% 透明，约 3.4:1，却是 Enter/Shift+Enter 约定唯一入口（绕回 G-9 同一坑） | `styles.css:4604` | 直接用 `--cc-text-faint` | 已修 |
 | 7G-3 | 同一张待批准卡两种橙：徽标琥珀黄、pill 橙红，终端横幅第三种（G-17/B-2 统一了徽标，pill 与横幅硬编码漏网） | `styles.css:879-886` vs `:642`、`:4987-4988` | `.pending-pill` 与终端横幅改吃 `--cc-warn-vivid` | 已修 |
 | 7G-4 | 悬停元素被移除后 tooltip 残留（运行状态条卸载不派发 mouseout），直到 Esc/点击 | `Tooltip.tsx:47-57,66-73`、`ChatWindow.tsx:3536` | show() 对无 tip 新目标先 hide；加 `anchor.isConnected` 检查 | 已修 |
-| 7G-5 | 「等你」造词回流：对话窗标题栏「等你输入」、终端横幅「Agent 在等你」、读屏汇总、引导「谁在等你」，与徽标「等待输入」不一致；en「Waiting for you」同病 | `zh.ts:207,263,516,973` vs `:19`、`en.ts:198` vs `:17` | 统一「等待输入」；263 改「有 1 条待批准的请求」 | 部分（复核：前端已清零；settings.rs:317 系统通知正文仍「等你」，en waitingTitle 与 zh 不对位） |
+| 7G-5 | 「等你」造词回流：对话窗标题栏「等你输入」、终端横幅「Agent 在等你」、读屏汇总、引导「谁在等你」，与徽标「等待输入」不一致；en「Waiting for you」同病 | `zh.ts:207,263,516,973` vs `:19`、`en.ts:198` vs `:17` | 统一「等待输入」；263 改「有 1 条待批准的请求」 | 已修（2026-11-12 核对：前后端用户可见文案已无「等你」，`copyTerms.test.ts` 钉住；en 通知 settings.rs 为「Waiting for your reply」） |
 | 7G-6 | 断开状态两套词：对话窗「未连接」vs 看板「已断开」，tip 还写「已断开/已停止」 | `zh.ts:208` vs `:48,101,998` | 208 改「已断开」，48 去「/已停止」 | 已修 |
-| 7G-7 | 可点的「未安装」下拉项 opacity .5 压成约 2.5:1，但它是安装入口不是禁用项 | `styles.css:1988`、`menu.tsx:219`、`AccountSection.tsx:1350` | opacity 只灰化图标，文字 dim + 「未安装」副文案 | 部分（复核：对比度已修；建议的「未安装」副文案未做，未装项现在只差半透明图标，信息更弱） |
+| 7G-7 | 可点的「未安装」下拉项 opacity .5 压成约 2.5:1，但它是安装入口不是禁用项 | `styles.css:1988`、`menu.tsx:219`、`AccountSection.tsx:1350` | opacity 只灰化图标，文字 dim + 「未安装」副文案 | 已修（2026-11-12 核对：`AccountSection.tsx` 1442 未装项带 `sub: t.account.notInstalled` 副文案） |
 | 7G-8 | 文案规范硬伤集中：分号 `zh.ts:164,166,226,657,659,863,890`；「——」`:362`；超 20 字 `:62,104,106,119,122,747,751,764,779,780,842,846,848,989`；黑话「后端」`:226`、「hooks」`:989,991` | 见左 | 分号拆句；362 改「已强制结束（退出码 X）。进程可能仍在后台，上方保留了终端输出」；hooks→接入 | 部分（复核：分号/破折号/黑话清零；zh.ts:1040 只换词没拆句仍 60 字，gateErr 两条 21～22 字擦线） |
-| 7G-9 | 同一动作多个动词：打断/中断、折叠/收起、跳过权限确认/检查、计划模式/计划；切终端页按钮四种标签（打开终端/终端/去终端作答/去终端页切换模型） | `zh.ts:245,457,400,185,584,183,581`、`ChatWindow.tsx:3494,3735,4184,4468` | 统一「中断」「收起」「跳过权限确认」「计划模式」「去终端页」，en 同步 | 部分（复核：zh.ts:506 仍「打断」；answerInTerminal / openTerminal 成死键） |
-| 7G-10 | 桌面端五处点击热区不足 24px：toast 关闭叉、卡片 ⋯、用量 provider 标签、引导步骤圆点 7px（G-15 从未审过尺寸） | `styles.css:470-474,948-951,524-526,1566-1579` | B-14 的 `::before` 扩热区手法，视觉不变 | 部分（复核：引导圆点 7+8×2=23px 差 1px，需 inset -9px） |
+| 7G-9 | 同一动作多个动词：打断/中断、折叠/收起、跳过权限确认/检查、计划模式/计划；切终端页按钮四种标签（打开终端/终端/去终端作答/去终端页切换模型） | `zh.ts:245,457,400,185,584,183,581`、`ChatWindow.tsx:3494,3735,4184,4468` | 统一「中断」「收起」「跳过权限确认」「计划模式」「去终端页」，en 同步 | 已修（2026-11-12 核对：「中断」已统一，两个死键已删；zh.ts 里「不打断它」是否定说法，不算同一动作两个词） |
+| 7G-10 | 桌面端五处点击热区不足 24px：toast 关闭叉、卡片 ⋯、用量 provider 标签、引导步骤圆点 7px（G-15 从未审过尺寸） | `styles.css:470-474,948-951,524-526,1566-1579` | B-14 的 `::before` 扩热区手法，视觉不变 | 已修（2026-11-12 核对：styles.css 引导圆点 `inset:-9px`，热区 25px） |
 | 7G-11 | 远程卡按钮引用不存在的 token（--radius-md/--cc-surface-2/--cc-surface-3），hover 零反馈 | `styles.css:2023,2044,2046,2050` | 改 `--cc-surface(-hover)` / `--r-md` / `--r-sm` | 已修 |
-| 7G-12 | 「上一任务」残留区整块 opacity .62，已完成项约 2.7:1（G-9 之后新增） | `styles.css:4417,4429` | 去容器 opacity，faint 单色 + 虚线容器 | 部分（复核：opacity 已去；进行中/待办项被 li.is-* 就地覆盖成与新清单同色，「弱化」只剩虚线边） |
+| 7G-12 | 「上一任务」残留区整块 opacity .62，已完成项约 2.7:1（G-9 之后新增） | `styles.css:4417,4429` | 去容器 opacity，faint 单色 + 虚线容器 | 已修（2026-11-12 核对：styles.css `.chat-todos.is-stale-only` 用 faint 加虚线弱化） |
 | 7G-13 | 浅色主题 color-mix 出的子任务胶囊约 3.96/4.1:1（深色 7.5:1 无事） | `styles.css:4502,4566` | 浅色改 `--cc-accent-text` | 已修（复核回归修补：原 :root[data-theme=light] .chat-subagent-status 特异性压过 .is-failed，浅色失败胶囊变红底绿字；现只覆盖图标与类型/已完成两个绿胶囊，胶囊文字压深 15% 到约 5.3:1） |
 | 7G-14 | Windows 中文界面 550/560/590 字重跳成 700，中英混排中文粗英文细 | `styles.css:4390,4399,4492,4753,4795,4799,5012` | 中间字重收到 500 或 600 | 已修 |
 | 7G-15 | en 大小写/标点不成对：agent vs the Agent、成对文案一条带句点一条不带、「1 entries」 | `en.ts:143,147,158-162` vs `:267,285`、`:154/155`、`:407` | Agent 统一大写；成对文案统一标点；单数分支 | 已修 |
-| 7G-16 | reduced-motion 下 4 个转圈定格成缺口环（U1-18 通配副作用，3452 只修了一处） | `styles.css:2194,5082,4188,1372-1380` | 同一 @media 块补 `border-*-color: currentColor` | 部分（复核：.managed-terminal-spinner 未补，静止仍是缺口环） |
+| 7G-16 | reduced-motion 下 4 个转圈定格成缺口环（U1-18 通配副作用，3452 只修了一处） | `styles.css:2194,5082,4188,1372-1380` | 同一 @media 块补 `border-*-color: currentColor` | 已修（2026-11-12 核对：styles.css 终端 spinner 已补 reduced-motion） |
 
 ### 手机远程页
 
@@ -497,3 +452,98 @@
 ## 工程侧勘误（顺手改）
 
 - consistency-backlog P0-2 状态应改「已修」：四处已全部走 `appConfirm`，全仓已无 plugin-dialog confirm 用法。
+
+## 归档：界面已下线（2026-11-12）
+
+> 贴纸（`Sticker.tsx` 已删）、看板主窗、便签（6ae537fd 取消）、缩略条（`CollapsedStrip.tsx` 只剩测试引用）
+> 与吸边（`snap.rs` 只剩几何工具函数）都已下线，主窗口现在是灵动岛加对话窗。下面的条目针对的界面
+> 已不存在，原样移到这里留作追溯，不再当待办。仍有效、留在原处的：B-10、B-11（侧栏 ⋯ 的键盘导航）、
+> W-7（灵动岛首显免抢焦点）。核对依据：research-backlog 2026-11-12。
+> 下线后的残留线索（代码卫生，不影响体验）：`views/About.tsx` 的 opacity、stickerStyle 死局部变量，
+> styles.css 里 9 个零引用的 `.stk-*` 类，`CollapsedStrip.tsx` 及其专用 i18n 键，后端 `click_through_enabled`
+> 设置项无消费者，`recall_sticker` 命名实际是展开灵动岛。
+
+### 原「一、P0 —— 正确性级缺陷（行为错误，不只是体验）」
+
+| # | 问题 | 位置 | 建议 | 状态 |
+|---|---|---|---|---|
+| U0-1 | 虚拟列表未传 `getItemKey`，默认按 index 复用测量与 DOM：列表重排（活跃会话跳顶）时高度抽搐、焦点错位、**误点打开错误会话的终端** | `Sticker.tsx:389-401,638` | `getItemKey: (i) => shown[i].session.id`，一行改动 | 已修 |
+| U0-3 | 偷看展开丢置顶：`snap_expand` 末尾强制置顶，Sticker 挂载后 pin effect 又 `setAlwaysOnTop(pinned)` 盖回去；pin=off 时展开的看板沉到活动窗口之下，表现为「悬停后闪一下就没了」 | `snap.rs:346` × `Sticker.tsx:210-217` | pin effect 加 `mode==="normal"` 守卫，或置顶所有权收归后端按 mode+pin 单点计算 | 已修 |
+| U0-9 | 折叠后搜索词残留：CollapsedStrip 卸载 Sticker 但不清 `search`，再展开时搜索框收起、列表仍被过滤，空态显示「还没有会话」——用户会认定会话全丢了 | `App.tsx:141,698-700`、`Sticker.tsx:170,591` | Sticker 卸载时清 search，或 `searchOpen` 提升到 App 与 search 同源 | 已修 |
+
+### 原「二、速赢（高收益 / 低成本，多数一行到几十行）」
+
+| # | 问题 | 位置 | 建议 | 状态 |
+|---|---|---|---|---|
+| U1-1 | 卡片长标题截断且无 tooltip（卡片级 `data-tip` 是「打开会话」占掉槽位） | `Sticker.tsx:706,688` | `.stk-title` 加 `data-tip={title}`（Tooltip 内层优先） | 已修 |
+| U1-7 | waiting tab 客户端过滤后为空时自动翻页卡死（守卫用 `shown.length` 而非 `data.length`），有下一页却显示空态 | `Sticker.tsx:406-412`、`helpers.ts:81` | 守卫改 `data.length === 0`，或 shown 空且 hasMore 时主动拉下一页 | 已修 |
+| U1-9 | 悬停缩略条零延迟展开（收回却有 ~360ms 容差）：屏幕边缘划过即弹出整块看板 | `CollapsedStrip.tsx:64`、`App.tsx:674-694` | 进入侧加 200-300ms hover-intent，进出对称 | 已修 |
+| U1-10 | 展开态自动收回不看交互状态：搜索/编辑便签时鼠标离窗 ~360ms 即折叠，Sticker 卸载草稿全丢 | `App.tsx:672-696` | activeElement 为输入类 / 有编辑态 / 菜单开着时暂停收回 | 已修 |
+| U1-11 | 缩略条不可拖（无 `data-tauri-drag-region`），README 承诺的「拖离恢复」做不到；引导也完全没教吸边 | `CollapsedStrip.tsx:59-72`、`zh.ts:704-713` | 缩略条加拖拽区（拖动即 `snap_restore`）；引导补「贴边收纳」一步 | 已修（缩略条可拖离恢复；引导「窗口与设置」步按平台追加吸边要点） |
+| U1-12 | 归档无撤销：菜单相邻误点后卡片瞬间消失，恢复入口藏在设置深处；归档失败也零提示（重命名/便签失败有 focusNotice） | `Sticker.tsx:866-872`、`CardContextMenu.tsx:101-108` | 原位留 3s「已归档 · 撤销」行；补 archiveFailed 文案 | 已修 |
+| U1-25 | 搜索框无 IME 合成守卫，拼音中间态经 300ms 防抖打到后端 LIKE（卡片编辑框有守卫，搜索框没有） | `Sticker.tsx:948` vs `helpers.ts:9` | compositionend 后再上报 | 已修 |
+| U1-26 | 便签超 500 字后端静默截断，前端无 maxLength 无计数 | `session_command.rs:82`、`Sticker.tsx:75-82` | EditBox 加 maxLength=500 + 接近上限显示计数 | 已修 |
+| U1-27 | 有更新时贴纸齿轮被整个改成更新入口，期间贴纸上没有打开设置的入口 | `Sticker.tsx:985-994` | 齿轮保持=设置，更新做独立红点徽章 | 已修（实拍回退：独立成第 6 颗按钮后底栏放不下，置顶被挤出可视区。改两档：红点回齿轮角标做提示、齿轮点击恒为设置；`ready` 时才出一条横条直达更新窗，可关且离开 ready 复位） |
+
+### 原「看板主窗」
+
+| # | 问题 | 位置 | 建议 |
+|---|---|---|---|
+| B-1 | 状态槽三种视觉形态（36px 徽标 / 16px 虚线环 / 9px 点），扫读无统一锚线 | `Sticker.tsx:619-635`、`styles.css:572-783` | 已修（error/在线/断开与 RunBadge 统一为同一直径圆形徽标：红环+「!」/绿环绿芯/灰虚线环，不再是大黑槽浮 9px 小点；RunBadge 本身的 pending 形态语言不变） |
+| B-2 | `screen_state==="blocked"` 无 pill 无文案，waiting 黄与 pending 琥珀肉眼难分 | `Sticker.tsx:623,709` | 已修（blocked 也给「待操作」pill，不再只靠琥珀环色相） |
+| B-3 | waiting tab「等最久优先」的倒排无任何 UI 提示，像列表坏了 | `query.rs:203`、`Sticker.tsx:714` | 已修（waiting tab 时间改「已等待 X」+ 警示色，倒排排序自解释） |
+| B-4 | 切 tab/搜索不重置滚动位置；切 tab 中间态先渲染旧数据子集（waiting 的 ASC 到达后整列表翻转） | `App.tsx:351-379`、`Sticker.tsx:377-385` | 已修（滚动回顶此前已落地；切换期冻结旧列表灰化 + aria-busy 直到新数据就绪；清空搜索有缓存恢复时不灰化） |
+| B-5 | `context` 菜单模式下星标/便签/重命名/归档零可见入口、零提示 | `Sticker.tsx:680-686,728` | 已修（菜单按钮常渲染，context 模式下 hover 卡片/:focus-visible 时极淡 ⋯ 浮现，button 模式不变） |
+| B-6 | 每次 board-changed 整窗口重查（页越滚越大，500 条时每事件重查 500 行） | `App.tsx:292` | 已修（超过首页时只重查首页 + 尾部按 id 增量修补，connected 分区与游标不变量保持；归档失败回滚走整窗例外） |
+| B-7 | 搜索不含便签内容（用户亲手写的记忆锚点搜不到；JOIN 已在 SELECT 里） | `query.rs:184-191` | 已修（LIKE 条件已含 `sn.note`，store 层测试 `live_sessions_search_matches_note_and_recent_texts` 钉住） |
+| B-8 | 便签块无行数限制，500 字便签撑满窗口且与 82px 估高差 3.6 倍致滚动抽搐 | `styles.css:873-884`、`Sticker.tsx:392` | 已修（3 行 clamp + 点击展开再点击编辑；estimateSize 分档：带便签 144 / 普通 82） |
+| B-9 | 编辑中滚动列表虚拟化卸载 EditBox → 草稿静默丢失，滚回显示原文 | `Sticker.tsx:71,393` | 已修（草稿提升到 Sticker 层 `editDraftsRef` 按 sessionId 存，ref 不触发整板重渲染；提交/取消清草稿） |
+| B-12 | tablist 无方向键/`aria-controls`/tabpanel；无任何窗口级快捷键（Ctrl+F 搜索、Esc 三级回退） | `Sticker.tsx:548-576` | 已修（Ctrl+F + Esc 回退链；tablist ←/→/Home/End + roving tabindex + aria-controls/tabpanel 接线） |
+| B-13 | focus toast 无 Esc/点外关闭，带动作类型不自动消失且盖掉小窗列表下半部 | `Sticker.tsx:898-935`、`styles.css:384-393` | 已修（Esc 关闭 toast） |
+| B-14 | 自绘滚动条 4px 且仅悬停贴纸才显形，无点击轨道跳转 | `styles.css:478-490` | 已修（热区扩 12px 视觉不变，4px 视觉改 `::before` 绘制，溢出时 0.35 低透明常显；点击轨道跳转未做） |
+| B-15 | loadMore 的三点 loader 落在底部淡出遮罩里且不计入滚动高度 | `Sticker.tsx:839-845`、`styles.css:357-367` | 已修（loader 移出虚拟内层容器，作为 `.stk-scroll` 正常流子元素计入滚动高度） |
+| B-16 | tab 滑块宽度硬编码 1/3 与 TAB_KEYS 靠注释同步；星标后卡片瞬移无 FLIP 动画 | `styles.css:265-276`、`Sticker.tsx:863` | 已修（滑块按选中按钮实测定位 + ResizeObserver；星标 FLIP：重排前量可见卡位置、useLayoutEffect 补偿 180ms，尊重 reduced-motion） |
+
+### 原「设置 / 账号 / 引导 / 更新」
+
+| # | 问题 | 位置 | 建议 |
+|---|---|---|---|
+| S-5 | 调不透明度/字号时设置窗自己纹丝不动（密度只在贴纸窗生效），等于闭眼调 | `appearance.ts:78-80`、`About.tsx:446-478` | 已修（外观分区顶部迷你贴纸预览卡，实时反映不透明度/界面缩放/贴纸色/主题/贴纸风格） |
+
+### 原「窗口管理与通知」
+
+| # | 问题 | 位置 | 建议 |
+|---|---|---|---|
+| W-1 | 吸附阈值 20 物理像素（150% 缩放下等效 13 逻辑像素），高 DPI 手感随机；条厚度却按逻辑值乘 scale，两处口径不一 | `snap.rs:5,150-152` | 已修（阈值按 scale_factor 换算，与 STRIP_W_LOGICAL 同口径） |
+| W-2 | 吸附预览只有窗口自身 4px 发光条，无落点预览 | `App.tsx:705`、`styles.css:1003-1015` | 已修（候选边出现时画 `.snap-ghost` 虚线幽灵条：28px 厚度与真实缩略条一致、主轴按 stripExtent 计算。2026-08-31 原生预览窗落地：label=snap-preview 的透明置顶免焦点窗，几何由 snap.rs 纯函数 `preview_strip_rect` 与 snap_collapse 同公式计算；Moved 处理器每帧驱动显隐/跟随，左键按下门控防程序化移动误闪，READY 握手防首帧白框，事件泵内同步建窗会卡死故走子线程懒建；建窗失败熔断回退 ghost；松手/失焦/吸附落地四处幂等 hide。Windows 实拍验证，截图在 target-verify/tmp/） |
+| W-3 | 展开态点一下拖拽条（不移动）即意外折叠（陈旧 lastEdgeRef） | `App.tsx:557-558,462-484` | 已修（松手时位移 < 4px 视为纯点击，不做吸附/还原判定） |
+| W-4 | 折叠态启动闪「细条内容装在 360×440 大框」；展开过渡期看板在 28px 宽窗口内布局抖动 | `App.tsx:157-162,663-667`、`useShowWhenReady.ts:20-22` | 已修（折叠启动闪帧此前已消除；本轮展开过渡期渲染 `.snap-expanding` 纯色占位，snap_expand/snap_restore 落地后才挂载看板，悬停偷看与找回两条路径都覆盖） |
+| W-5 | 缩略条主轴无上限（60 会话超 1080p 工作区，溢出被裁无提示）；DPI/显示器变化不重算 | `App.tsx:55-57`、`snap.rs:251`、`CollapsedStrip.tsx:47-54` | 已修（按工作区主轴换算容量、溢出折「+N」徽章；onScaleChanged 重跑 snap_collapse；后端 clamp_strip_extent 兜底） |
+| W-6 | pin 状态折叠态不可见不可操作；「找回贴纸」强行永久改写 pin 偏好 | `Sticker.tsx:995-1005`、`App.tsx:415` | 已修（找回改临时置顶——`recall_center` 带 pinned 参数，不再改写 localStorage；缩略条 pin 标记加过又被实拍否掉（28px 细条占一格且噪音），已撤） |
+| W-8 | 无点击穿透，opacity 可低至 25%：几乎看不见的置顶窗口 100% 吃鼠标 | `settings.rs:331`（无 set_ignore_cursor_events） | 已修（设置项 + set_ignore_cursor_events 热生效；按住 Alt 临时恢复交互（50ms 轮询 GetAsyncKeyState）；仅 Windows 实装） |
+| W-9 | 拖拽期间每个 Moved 全量枚举显示器 ×2 处并 emit | `lib.rs:1040-1063,775-800` | 已修（显示器工作区按世代缓存，WM_DISPLAYCHANGE/SETTINGCHANGE 才失效；snap-changed 只在吸附边变化时 emit） |
+| W-12 | macOS 面板任何失焦即收起，无法常驻（pin 按钮也不渲染） | `panel.rs:65-72`、`Sticker.tsx:995` | 已修（复用 pin 按钮 + PIN_KEY：面板 pin 语义=失焦不自动收起，经 set_panel_keep_open 推送；⚠️ panel.rs 为 cfg(macos)，Windows 主机未编译验证靠 CI） |
+| W-16 | 双屏内侧边也可吸附（鼠标必经之路 + 零延迟展开=必然误触）；非矩形排布包围盒留「死区」窗口可拖进去消失 | `lib.rs:1073-1081,748-799`、`snap.rs:38-53` | 已修（贴边检测改并集包围盒——只吸虚拟桌面外侧边；钳位改相交面积最大的显示器，死区进不去） |
+| W-18 | Linux 分支吸边「看起来支持实则坏掉」（两个原语恒返回假值） | `snap.rs:203-224` | 已修（Moved 处理器与 snap 常量收窄为 cfg(windows)，Linux 吸边流程整体休眠；macOS 空分支不变） |
+
+### 原「全局基础设施」
+
+| # | 问题 | 位置 | 建议 |
+|---|---|---|---|
+| G-18 | `.stk-utab` 未选中 opacity 0.42 实测对比 1.90:1，看不出可点 | `styles.css:466-472` | 已修（0.42 → 0.6） |
+
+### 原第七轮「看板与贴纸」
+
+| # | 问题 | 位置 | 建议 | 状态 |
+|---|---|---|---|---|
+| 7B-1 | 切 tab 时闪出错误 tab 的空态：从空「运行中」切「全部」，请求在途先看到「还没有会话 + 新建」（B-4 只冻结非空旧列表，旧列表为空时直接落 EmptyState） | `Sticker.tsx:1027-1046`、`App.tsx:107-111` | 空列表分支加 `switching` 判断显示加载态 | 已修 |
+| 7B-2 | board-changed 刷新失败后卡片陈旧却零提示，状态环/时间全是旧值（U1-13 只给了对话窗细横幅） | `App.tsx:334-341`、`Sticker.tsx:1031` | 非空列表顶部细横幅「刷新失败，显示的是缓存」+ 重试 | 已修 |
+| 7B-3 | 「全部」tab 在线与历史会话无分界，20+ 张卡滚到中段分不清这一片还是活的（U1-8 只做了排序） | `App.tsx:263,285`、`Sticker.tsx:1053-1436` | 最后一张 connected 卡后插分隔项「历史会话 · N」 | 已修 |
+| 7B-4 | 按钮模式下卡片仍 role=button 可聚焦，Enter 是空操作（B-11 保证能到达，未覆盖到达后主键无响应） | `Sticker.tsx:1192,1224` | buttonMode 下 Enter 直接 openTerminal，或焦点搬到 `.stk-open` | 已修 |
+| 7B-5 | 外库卡悬停提示「打开会话」，点下去却是「本窗口只读展示」toast（横切主题 5 新实例） | `Sticker.tsx:1239` vs `:564-575` | data-tip 先判 foreign / background | 已修 |
+| 7B-6 | 实拍：主目录启动的会话「仓库」栏显示成 `35122`（cwd basename） | `session_query.rs:501` | cwd 等于 home 时显示「主目录」或 `~` | 已修 |
+| 7B-7 | 搜索框已开、焦点在卡片时 Ctrl+F 无反应（B-12 只处理未开→开）；设置窗无 Ctrl+F 也无 × 清除（S-1 只做了搜索本身） | `Sticker.tsx:464-468`、`About.tsx:861-880` | 搜索框挂 ref，Ctrl+F 永远 focus+select；设置窗补同款与 × | 已修 |
+| 7B-8 | 底栏用量刷新失败后陈旧百分比当新鲜值展示（S-6 只给了设置页「更新于」） | `Sticker.tsx:873-875` | usageMap 带 fetchedAt，失败后降饱和 + tip 上次更新时间 | 部分（复核：getAccounts 预填 usageMap 的路径不写 usageMeta，启动即显示缓存、首次刷新失败仍不标陈旧；ProviderUsage 无 fetched_at） |
+| 7B-9 | 连续归档时撤销 toast 无上限堆叠，4 条盖住贴纸一半（U1-12/P1-2 为撤销互不相吞做独立条，未设上限） | `Sticker.tsx:429-438`、`styles.css:435-439` | ≥2 条合并「已归档 N 个 · 撤销全部」或上限 2 条 | 已修 |
+| 7B-10 | 模型胶囊无 max-width，中转长 model id 先挤没仓库名（G-12 未覆盖卡片元信息行） | `styles.css:815`、`Sticker.tsx:1367` | 复制 `.stk-profile` 的 max-width + ellipsis，全名进 tip | 已修 |
+| 7B-11 | 搜索占位符没说便签可搜（B-7 只改了后端 LIKE） | `zh.ts:40`、`en.ts:37` | 改「搜索标题 / 仓库 / 便签…」 | 已修 |
