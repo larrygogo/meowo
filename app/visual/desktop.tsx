@@ -435,7 +435,17 @@ async function boot(): Promise<React.ReactNode> {
     const variant = scene.slice("newsession-".length);
     const full = variant.endsWith("-full");
     const withWorktree = variant.endsWith("-wt") || full;
-    setExtraMock((cmd) => {
+    // 独立窗会按表单高度申请加高（NewSessionPanel 的 fitWindowHeight）。浏览器里没有真窗口：
+    // 把它申请的尺寸记到 __visualWinSize，shoot.mjs 截图前照着改视口，拍出来的就是加高后的窗口。
+    // 无头浏览器的 screen 只有视口那么大，按真实桌面给一个 1080 高的工作区，否则「屏幕里还剩多少地方」恒为 0。
+    if (variant.startsWith("window")) Object.defineProperty(window.screen, "availHeight", { value: 1080, configurable: true });
+    setExtraMock((cmd, args) => {
+      if (cmd === "plugin:window|set_size") {
+        const v = JSON.parse(JSON.stringify((args as { value?: unknown })?.value ?? null)) as { Logical?: { width: number; height: number }; width?: number; height?: number } | null;
+        const size = v?.Logical ?? v;
+        if (size?.width && size.height) (window as unknown as { __visualWinSize?: { w: number; h: number } }).__visualWinSize = { w: Math.round(size.width), h: Math.round(size.height) };
+        return null;
+      }
       if (cmd === "list_agents") return AGENTS_WITH_OPTIONS;
       if (cmd === "recent_cwds") return RECENT_DIRS;
       // -full：把警告条也拍出来（接入项没装、目录重名）。

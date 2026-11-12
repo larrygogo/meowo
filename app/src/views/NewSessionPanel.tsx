@@ -1,7 +1,8 @@
-import { type ReactElement, useEffect, useRef, useState } from "react";
+import { type ReactElement, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { LogicalSize } from "@tauri-apps/api/dpi";
 import { useShowWhenReady } from "../useShowWhenReady";
 import { type AgentId, agentName, listSubdirectories, type DirListing } from "../api";
 import { agentAssets, tintStyle } from "../providers";
@@ -21,6 +22,15 @@ function FolderIcon() {
   return (
     <Icon glyph={icFolder} size={14} />
   );
+}
+
+// 独立窗的初始高度，与 Rust 侧 open_new_session_window_impl 的 inner_size / min_inner_size 一致。
+const BASE_H = 520;
+
+/** 独立窗该有多高（CSS px）：表单放得下就是初始高度；放不下就加高到刚好放下，最多加到 cap（屏幕里还剩的地方）。
+ *  chrome 是表单以外的固定部分（标题条 + 底部操作栏），need 是表单内容的自然高度。 */
+export function fitWindowHeight(chrome: number, need: number, cap: number): number {
+  return Math.round(Math.min(Math.max(chrome + need, BASE_H), Math.max(cap, BASE_H)));
 }
 
 /** 独立窗口页（label="new-session"）：新建一个全新会话。成功后自关；
@@ -59,6 +69,37 @@ export function NewSessionPanel({ onClose, prefill, onLaunched }: {
     el.focus();
     if (el.value) el.select();
   }, []);
+  // 表单放不下时把窗口加高（只往下长，不重新居中）。窗口固定 460×520、不可拖大：勾上「在新 worktree 里开」
+  // 多出一张约 140px 的卡片，Agent、权限、模型被挤到底栏下面（实测 Agent 钮顶 y=454，底栏从 452 起），
+  // 没有任何提示说下面还有东西。不重新居中是因为那会让刚点的勾选框从指针下跑掉。
+  // 每次渲染后量一遍：表单高度只随本组件的状态变（勾选、重名警告、接入项警告、报错），量一次很便宜。
+  // 手机页内浮层（remoteUi）是整屏的，不归这里管。
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const requestedH = useRef<number | null>(null);
+  const resizing = useRef<Promise<void>>(Promise.resolve());
+  useLayoutEffect(() => {
+    if (remoteUi()) return;
+    const body = bodyRef.current;
+    const last = body?.lastElementChild as HTMLElement | null;
+    // clientHeight 为 0 = 还没排版（或测试环境没有排版），这时量出来的都是 0，不能据此缩窗。
+    if (!body || !last || body.clientHeight === 0) return;
+    const need = last.offsetTop + last.offsetHeight + (parseFloat(getComputedStyle(body).paddingBottom) || 0);
+    // 最多长到屏幕工作区的下沿（留 8px），再多就让表单自己滚动；量不到屏幕信息时不加高。
+    const scr = window.screen as Screen & { availTop?: number };
+    const room = (scr.availTop ?? 0) + scr.availHeight - window.screenY - (window.outerHeight - window.innerHeight) - 8;
+    const desired = fitWindowHeight(window.innerHeight - body.clientHeight, need, Number.isFinite(room) ? room : BASE_H);
+    if (Math.abs(desired - (requestedH.current ?? window.innerHeight)) <= 1) return;
+    requestedH.current = desired;
+    // Windows 上 resizable(false) 会把窗口 min/max 锁死成当前尺寸，setSize 被钳住，必须临时放开再锁回（同 Updater）。
+    // 排队执行：连续两次调整（勾上又马上取消）不能交错。
+    resizing.current = resizing.current.then(async () => {
+      const w = getCurrentWindow();
+      await w.setResizable(true);
+      await w.setSize(new LogicalSize(window.innerWidth, desired));
+      await w.setResizable(false);
+    }).catch(() => { /* 非 Tauri 环境（测试/浏览器）或调整失败：维持原尺寸，表单照旧可滚动 */ });
+  });
+
   // 窗口已开时从另一张卡片再点「新建会话」：后端发 ns-prefill 更新表单（不重开窗口）。
   useTauriEvent<{ cwd?: string | null; provider?: string | null }>("ns-prefill", (e) => {
     if (e.payload.cwd != null) setCwd(normalizePath(e.payload.cwd));
@@ -138,7 +179,7 @@ export function NewSessionPanel({ onClose, prefill, onLaunched }: {
         </button>
       </div>
 
-      <div className="ns-body">
+      <div className="ns-body" ref={bodyRef}>
         <label className="ns-field">
           <span className="ns-label">{t.newSession.dir}</span>
           <div className="ns-picker">
