@@ -134,6 +134,14 @@ describe("parseUserText", () => {
     expect(parts.text).toContain("后面还有我的问题");
   });
 
+  /// 做空第 2 轮：真的子代理消息前面先拼着别的机器标签块时，锚定不能把它挡掉、正文不能丢。
+  it("子代理消息前面先有机器标签块时照样认出，正文不丢", () => {
+    const parts = parseUserText(
+      '<system-reminder>\n后台任务完成\n</system-reminder>\nAnother Claude session sent a message:\n<agent-message from="a1">\n三条修完两条\n</agent-message>',
+    );
+    expect(parts.crossMessages).toEqual([{ fromName: "", mode: "", text: "三条修完两条", agent: true }]);
+  });
+
   it("没有前导句的子代理消息（排队落盘的形态）同样认出", () => {
     const parts = parseUserText('<agent-message from="a228">\n进度：三条里修完两条\n</agent-message>');
     expect(parts.crossMessages).toEqual([{ fromName: "", mode: "", text: "进度：三条里修完两条", agent: true }]);

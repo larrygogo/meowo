@@ -269,8 +269,8 @@ body.remote-ui .chat-window.is-remote-compact .chat-compose-actions > .chat-mode
   body.remote-ui .chat-compose-actions > .chat-model-select > .chat-model-button::after { right: -1px; }
   body.remote-ui .chat-compose-actions > .chat-model-select + .chat-send-button::after { left: -1px; }
   body.remote-ui .dock-workbar .ui-pill::after { inset: -8px -3px; }
-  /* 胶囊和输入框原来只隔 6，往下 8 的外扩有 2px 压在输入框上，命中只剩 42（2026-11-12 实测）。间距放到 8。 */
-  body.remote-ui .chat-window.is-remote-compact .dock-workbar { margin-bottom: 8px; }
+  /* 胶囊和输入框原来只隔 6，往下 8 的外扩有 2px 压在输入框上，命中只剩 42（2026-11-12 实测）。间距放到 9（输入框上边缘比外框多占 1px，8 时实测下沿 +7.5 已落到输入框上，命中 43）。 */
+  body.remote-ui .chat-window.is-remote-compact .dock-workbar { margin-bottom: 9px; }
   /* 消息下面的「复制」26px：外扩 6px 只有 38，补到 44（左右没有别的可点项）。 */
   body.remote-ui .chat-turn-copy::after { inset: -9px; }
   /* 设置屏的开关 31 高：外扩 6px 差 1px 到 44。 */
@@ -927,7 +927,7 @@ body.remote-ui .chat-window.is-remote-compact .chat-dock:has(> .lead-gate-card) 
 }
 body.remote-ui:has(.chat-approval-overlay.is-active) .chat-window.is-remote-compact .dock-workbar,
 body.remote-ui .chat-window.is-remote-compact .chat-dock:has(> .lead-gate-card) .dock-workbar {
-  margin-bottom: clamp(0px, calc((var(--app-height, 100dvh) - 560px) * 999), 8px);
+  margin-bottom: clamp(0px, calc((var(--app-height, 100dvh) - 560px) * 999), 9px);
 }
 /* 上面的 overflow: hidden 是为了键盘态把这一排收成 0，但平时也把胶囊 ::after 上下各 8px 的外扩裁掉了，
    有审批卡或 Lead 卡时胶囊命中只剩 28（2026-11-12 做空实测）。给这一排上下各垫 8px 内边距把外扩包进来，
@@ -938,7 +938,7 @@ body.remote-ui .chat-window.is-remote-compact .chat-dock:has(> .lead-gate-card) 
   padding-top: var(--dock-hit-room);
   padding-bottom: var(--dock-hit-room);
   margin-top: calc(-1 * var(--dock-hit-room));
-  margin-bottom: calc(clamp(0px, calc((var(--app-height, 100dvh) - 560px) * 999), 8px) - var(--dock-hit-room));
+  margin-bottom: calc(clamp(0px, calc((var(--app-height, 100dvh) - 560px) * 999), 9px) - var(--dock-hit-room));
   max-height: calc(clamp(0px, calc((var(--app-height, 100dvh) - 560px) * 999), 80px) + 2 * var(--dock-hit-room));
 }
 

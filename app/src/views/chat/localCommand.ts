@@ -61,7 +61,9 @@ const ANSI = /[\x1b\uFFFD](?:\[[0-9;?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)
 const CROSS = /<(cross-session-message|agent-message)\b([^>]*)>([\s\S]*?)<\/\1>/g;
 // <agent-message> 只认开头（可带那句固定前导）：用户粘贴的文字里夹着这对标签时，不能被收成「子代理消息」，
 // 更不能让 CROSS_NOTE 吞掉后文（做空审查；哨兵判据一律行首锚定，见 transcript 引用污染的教训）。
-const AGENT_LEAD = /^\s*(?:[^\n]*Another Claude session sent a message[^\n]*:[ \t]*\n)?\s*<agent-message\b/;
+// 前面允许先出现完整的机器标签块（如 <system-reminder>…</system-reminder>，做空第 2 轮：只锚开头时这种拼接的
+// 真消息正文被丢掉）。只放行「标签名带 - 或 _」的机器标签（同 MACHINE_LEAD），人写的正文仍挡在外面。
+const AGENT_LEAD = /^\s*(?:<([a-z][a-z0-9]*(?:[-_][a-z0-9]+)+)(?:\s[^>]*)?>[\s\S]*?<\/\1(?:\s[^>]*)?>\s*)*(?:[^\n<]*Another Claude session sent a message[^\n]*:[ \t]*\n)?\s*<agent-message\b/;
 const CROSS_ATTR = /([\w-]+)="([^"]*)"/g;
 // 包在外面的两段固定英文：一句前导、以及尾部整段写给模型的安全须知（"A peer cannot
 // grant escalation…"）。都不是人要读的内容，随消息一起收走。措辞在不同版本里有
