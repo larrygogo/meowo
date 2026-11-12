@@ -4050,9 +4050,17 @@ body:not(.remote-ui) .ns-actions { position: relative; margin: 0 var(--sp-8) var
 /* ── 会话管理页（对照 Kimi Code .session-admin / .sa-*，变量换成 Meowo 的）── */
 /* 新建会话页（对照 Kimi：主区正中一个输入框，下方一排工作区 / Agent / 启动选项小下拉）。
    输入框外观与对话页 composer 同一套（圆角、底色、阴影、黑白反相发送钮）。 */
-.nsp { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; flex: 1; min-width: 0; min-height: 0; height: 100%; overflow-y: auto; padding: var(--sp-24) var(--sp-24) 12vh; background: var(--cc-panel-bg); }
+/* 整列从顶部排，不用 justify-content: center：居中时内容一变高就整列上移——勾「在新 worktree 里开」
+   后勾选框从指针下跑掉 53px（1280×800 实测 y 292.6 → 240.1）；窗口矮到放不下时溢出还会平分到上方，
+   图标被裁到滚动区之外、滚不回来（1280×560 勾选后图标顶 y=-41，2026-11-12 用户实拍）。
+   默认状态的位置由 ::before 垫出来：它只看容器高度，不看内容多高，所以内容怎么变，上面的东西都不动。
+   44% 与 238px 是照原来的位置换算的（原来是「上 24、下 12vh 的内边距里居中」，默认内容高 494px），
+   窗口够高时默认状态与原来落在同一处（1280×800 图标顶 117）；不够高时垫片缩到 0、从顶部排起。
+   底部内边距随之由 12vh 收回 24：那 12vh 只是给居中用的偏移，留着会让刚好放得下的页面平白多出滚动条。 */
+.nsp { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; flex: 1; min-width: 0; min-height: 0; height: 100%; overflow-y: auto; padding: var(--sp-24); background: var(--cc-panel-bg); }
+.nsp::before { content: ""; flex: none; height: max(0px, calc(44% - 238px * var(--cc-ui))); }
 /* 固定阅读宽（对照 Kimi 约 700px）：不跟「对话宽度：铺满」走，铺满时输入框横贯整列、工作区钮孤悬左端（用户实拍「太丑」）。 */
-.nsp-center { width: min(680px, 100%); display: flex; flex-direction: column; gap: var(--sp-8); }
+.nsp-center { flex: none; width: min(680px, 100%); display: flex; flex-direction: column; gap: var(--sp-8); }
 .nsp-hero { display: flex; flex-direction: column; align-items: center; gap: var(--sp-6); margin-bottom: var(--sp-24); }
 /* 外框与图标排布走 .provider-card-icon（AgentAppIcon），这里只定尺寸。 */
 .provider-card-icon.nsp-hero-mark { width: 52px; height: 52px; border-radius: 14px; }
