@@ -425,30 +425,6 @@ impl Store {
             .query_row("PRAGMA data_version", [], |r| r.get(0))?)
     }
 
-    /// 写入/清除某会话的便签：trim 后非空则 upsert，空则删除该行（便签清空即移除）。
-    pub fn set_session_note(
-        &self,
-        cc_session_id: &str,
-        note: &str,
-        now_ms: i64,
-    ) -> Result<(), StoreError> {
-        let trimmed = note.trim();
-        if trimmed.is_empty() {
-            self.conn.execute(
-                "DELETE FROM session_notes WHERE cc_session_id = ?1",
-                [cc_session_id],
-            )?;
-        } else {
-            self.conn.execute(
-                "INSERT INTO session_notes (cc_session_id, note, updated_at)
-                 VALUES (?1, ?2, ?3)
-                 ON CONFLICT(cc_session_id) DO UPDATE SET note = excluded.note, updated_at = excluded.updated_at",
-                rusqlite::params![cc_session_id, trimmed, now_ms],
-            )?;
-        }
-        Ok(())
-    }
-
     pub fn list_projects(&self) -> Result<Vec<Project>, StoreError> {
         let mut stmt = self.conn.prepare(
             "SELECT id, root_path, name, created_at, updated_at FROM projects ORDER BY id",
@@ -2558,15 +2534,26 @@ mod debug_fingerprint_tests {
         let of = |store: &Store, table: &str| {
             store.debug_table_fingerprint().unwrap().into_iter().find(|(t, _)| t == table).map(|(_, v)| v)
         };
-        store.set_session_note("s1", "第一版", 1).unwrap();
+        // 便签功能已取消、Store 不再有写 session_notes 的方法；表保留，这里直接用 SQL 当「原地更新同一行」的写入方。
+        let note = |store: &Store, text: &str, at: i64| {
+            store
+                .conn
+                .execute(
+                    "INSERT INTO session_notes (cc_session_id, note, updated_at) VALUES ('s1', ?1, ?2)
+                     ON CONFLICT(cc_session_id) DO UPDATE SET note = excluded.note, updated_at = excluded.updated_at",
+                    rusqlite::params![text, at],
+                )
+                .unwrap()
+        };
+        note(&store, "第一版", 1);
         let a = of(&store, "session_notes").unwrap();
-        store.set_session_note("s1", "第二版", 2).unwrap();
+        note(&store, "第二版", 2);
         let b = of(&store, "session_notes").unwrap();
         assert_ne!(a, b);
         assert!(a.starts_with("1/") && b.starts_with("1/"), "{a} {b}");
         // 没写的表指纹不变
         let before = of(&store, "sessions");
-        store.set_session_note("s1", "第三版", 3).unwrap();
+        note(&store, "第三版", 3);
         assert_eq!(of(&store, "sessions"), before);
     }
 }
@@ -2587,10 +2574,10 @@ mod debug_fingerprint_watcher_tests {
         let writer = Store::open(&db).unwrap();
         let v0 = watcher.data_version().unwrap();
         watcher.debug_table_fingerprint().unwrap();
-        writer.set_session_note("s", "x", 1).unwrap();
+        writer.upsert_project_by_root("/x", "x", 1).unwrap();
         let v1 = watcher.data_version().unwrap();
         watcher.debug_table_fingerprint().unwrap();
-        writer.set_session_note("s", "y", 2).unwrap();
+        writer.upsert_project_by_root("/y", "y", 2).unwrap();
         let v2 = watcher.data_version().unwrap();
         assert!(v1 != v0 && v2 != v1, "v0={v0} v1={v1} v2={v2}");
         let _ = std::fs::remove_dir_all(&dir);

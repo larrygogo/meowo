@@ -39,7 +39,7 @@ fn default_terminal_open_mode() -> String {
 fn default_session_open_in() -> String {
     "terminal".to_string()
 }
-/// 卡片菜单（星标/便签/重命名/归档等）触发方式：button = 卡片上的常显菜单按钮（默认），
+/// 卡片菜单（星标/重命名/归档等）触发方式：button = 卡片上的常显菜单按钮（默认），
 /// context = 右键菜单，两者二选一。
 fn default_card_menu_mode() -> String {
     "button".to_string()

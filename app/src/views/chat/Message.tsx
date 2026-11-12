@@ -264,14 +264,14 @@ function CrossMessageBlock({ message }: { message: CrossMessage }) {
         <span className="chat-crossmsg-icon" aria-hidden="true">
           <Icon glyph={icSwap} size={12} />
         </span>
-        <span className="chat-crossmsg-from">{message.fromName || t.chat.crossMessageUnknown}</span>
+        <span className="chat-crossmsg-from">{message.fromName || (message.agent ? t.chat.agentMessageFrom : t.chat.crossMessageUnknown)}</span>
         {/* 权限模式只在**非默认**时显示：default 是常态，写出来只是噪声。 */}
         {message.mode && message.mode !== "default" && (
           <span className="chat-crossmsg-mode">{message.mode}</span>
         )}
-        <span className="chat-crossmsg-label">{t.chat.crossMessage}</span>
+        <span className="chat-crossmsg-label">{message.agent ? t.chat.agentMessage : t.chat.crossMessage}</span>
       </div>
-      <div ref={bodyRef} className={"chat-crossmsg-body" + (expanded ? " is-expanded" : "")}>
+      <div ref={bodyRef} className={"chat-crossmsg-body" + (expanded ? " is-expanded" : overflowing ? " is-clipped" : "")}>
         <div className="chat-text">{message.text}</div>
       </div>
       {/* 收起态只在真的超高时给按钮；展开后保留「收起」，长消息才收得回去。 */}

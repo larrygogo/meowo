@@ -188,3 +188,37 @@ describe("ApprovalCommandDetail 长命令出口(C-10)", () => {
     expect(await screen.findByRole("button", { name: "已复制" })).toBeTruthy();
   });
 });
+
+describe("标题行吸顶的卡（Lead 关卡）：关键内容排在标题下面", () => {
+  /// 手机 375×376 键盘态实测：标题吸顶后占掉可视区最上面一段，关键块「从第一行起」时第一个选项正好被标题压住。
+  /// jsdom 无布局：可视区 120、标题占 24、选项块在 200 处高 110——不算标题放得下（余 10），算上就放不下。
+  function mount(sticky: boolean) {
+    const style = document.createElement("style");
+    style.textContent = sticky ? ".lead-gate-card .chat-approval-head { position: sticky; top: 0; }" : "";
+    document.head.appendChild(style);
+    const sh = vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(400);
+    const ch = vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(120);
+    const rect = (top: number, height: number) => ({ top, bottom: top + height, height, left: 0, right: 300, width: 300, x: 0, y: top, toJSON: () => ({}) }) as DOMRect;
+    const br = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (this: HTMLElement) {
+      if (this.classList.contains("chat-approval-head")) return rect(0, 24);
+      if (this.classList.contains("lead-gate-options")) return rect(200, 110);
+      return rect(0, 120);
+    });
+    const { container } = render(
+      <ApprovalCard title="校验规则放前端还是后端" className="lead-gate-card">
+        <div className="lead-gate-options"><label>前端</label></div>
+      </ApprovalCard>,
+    );
+    const top = container.querySelector<HTMLElement>(".chat-approval-copy")!.scrollTop;
+    sh.mockRestore(); ch.mockRestore(); br.mockRestore(); style.remove();
+    return top;
+  }
+
+  it("标题不吸顶时照旧：选项块放得下，下沿贴住可视区（滚到 200）", () => {
+    expect(mount(false)).toBe(200);
+  });
+
+  it("标题吸顶时可用高度扣掉标题：放不下就从第一行起，并让出标题的高度（滚到 176 而不是 200）", () => {
+    expect(mount(true)).toBe(176);
+  });
+});

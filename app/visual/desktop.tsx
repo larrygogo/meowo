@@ -104,13 +104,19 @@ async function boot(): Promise<React.ReactNode> {
     const chat = chatMock(lang);
     const panel = panelMock();
     if (scene.startsWith("panel-")) {
-      savePanel(CHAT_SESSION_ID, { tabs: [{ key: "diff", type: "diff" }, { key: "files", type: "files" }], active: scene === "panel-files" ? "files" : "diff", visible: true, expanded: scene === "panel-changes-max" });
+      savePanel(CHAT_SESSION_ID, { tabs: [{ key: "diff", type: "diff" }, { key: "files", type: "files" }], active: scene === "panel-files" ? "files" : "diff", visible: true, expanded: q.get("max") === "1" });
     }
     setExtraMock((cmd, args) => {
       if (cmd === "get_chat_history") {
-        // panel-changes-max：面板最大化 + 对话里有编辑（「本会话 / 本轮」切换才出现），拍宽面板下的居中排版。
-        if (scene === "panel-changes-max") return { ...(chat(cmd) as object), items: flowStateItems(lang, new Date(FIXED_NOW).toISOString()), pendingReview: null };
-        return scene.startsWith("chat") ? withLongItems(chat(cmd), lang) : chat(cmd);
+        if (scene.startsWith("chat")) return withLongItems(chat(cmd), lang);
+        // 最大化场景要让「全部 / 本会话 / 本轮」出现：它只在本会话改过文件时才显示，
+        // 这里借一条现成的工具调用，改成对「更改」假数据里 LoginForm.tsx 的编辑。
+        if (q.get("max") === "1") {
+          const h = chat(cmd) as { items: { type: string; id?: string; detail?: unknown }[] };
+          const tool = h.items.find((item) => item.type === "tool_use");
+          if (tool) return { ...h, items: [...h.items, { ...tool, id: "visual-max-edit", detail: { kind: "edit", path: "C:/dev/web-app/src/components/LoginForm.tsx" } }] };
+        }
+        return chat(cmd);
       }
       return scmMock(cmd) ?? panel(cmd, args) ?? chat(cmd);
     });
@@ -269,6 +275,12 @@ async function boot(): Promise<React.ReactNode> {
       el = shell(<IslandPanel sessions={sessions.slice(0, 2)} usage={{}} quotaProviders={[]} {...panelProps} />);
     } else if (scene === "island-panel-empty") {
       el = shell(<IslandPanel sessions={[]} usage={{}} quotaProviders={[]} {...panelProps} strip />);
+    } else if (scene === "island-panel-last") {
+      // 末页不满三条：四个会话分两页，停在只有一条的第二页（后面还有额度页）。翻页前后面板高度要一样。
+      el = shell(<IslandPanel sessions={sessions} usage={usage} quotaProviders={["claude", "codex"]} initialPage={1} {...panelProps} />);
+    } else if (scene === "island-panel-empty-usage") {
+      // 没有会话但有额度：空态那一页也能翻到额度页，两页高度要一样。
+      el = shell(<IslandPanel sessions={[]} usage={usage} quotaProviders={["claude", "codex"]} {...panelProps} />);
     } else if (scene === "island-usage") {
       el = shell(<IslandPanel sessions={sessions} usage={usage} quotaProviders={["claude", "codex"]} initialPage={9} {...panelProps} />);
     } else if (scene === "island-strip") {
@@ -429,7 +441,17 @@ async function boot(): Promise<React.ReactNode> {
     const variant = scene.slice("newsession-".length);
     const full = variant.endsWith("-full");
     const withWorktree = variant.endsWith("-wt") || full;
-    setExtraMock((cmd) => {
+    // 独立窗会按表单高度申请加高（NewSessionPanel 的 fitWindowHeight）。浏览器里没有真窗口：
+    // 把它申请的尺寸记到 __visualWinSize，shoot.mjs 截图前照着改视口，拍出来的就是加高后的窗口。
+    // 无头浏览器的 screen 只有视口那么大，按真实桌面给一个 1080 高的工作区，否则「屏幕里还剩多少地方」恒为 0。
+    if (variant.startsWith("window")) Object.defineProperty(window.screen, "availHeight", { value: 1080, configurable: true });
+    setExtraMock((cmd, args) => {
+      if (cmd === "plugin:window|set_size") {
+        const v = JSON.parse(JSON.stringify((args as { value?: unknown })?.value ?? null)) as { Logical?: { width: number; height: number }; width?: number; height?: number } | null;
+        const size = v?.Logical ?? v;
+        if (size?.width && size.height) (window as unknown as { __visualWinSize?: { w: number; h: number } }).__visualWinSize = { w: Math.round(size.width), h: Math.round(size.height) };
+        return null;
+      }
       if (cmd === "list_agents") return AGENTS_WITH_OPTIONS;
       if (cmd === "recent_cwds") return RECENT_DIRS;
       // -full：把警告条也拍出来（接入项没装、目录重名）。

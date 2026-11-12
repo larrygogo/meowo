@@ -39,7 +39,8 @@ export function useMenuPopup({
 }: {
   /**
    * fixed 定位时的水平对齐：
-   * - `"right"`（默认）：菜单右边对齐按钮右边（设置页行尾控件），宽度随内容（受 `.dd .dd-menu` 钳制）。
+   * - `"right"`（默认）：菜单右边对齐按钮右边（设置页行尾控件），宽度不小于按钮宽，
+   *   内容更宽时向左放宽（`.dd .dd-menu` 的 min-width: max-content 钳制）。
    * - `"left"`：菜单左边对齐按钮左边、宽度钉成按钮宽（新建会话的整宽表单控件）。
    */
   align?: "left" | "right";
@@ -95,7 +96,9 @@ export function useMenuPopup({
     const menuW = menu.offsetWidth;
     setPos(align === "left"
       ? { ...vert, left: Math.max(6, Math.min(r.left, window.innerWidth - menuW - 6)), width: r.width }
-      : { ...vert, right: Math.max(6, Math.min(window.innerWidth - r.right, window.innerWidth - menuW - 6)) });
+      // 右对齐也带上按钮宽：只按内容定宽时，短选项的菜单比按钮窄，左缘缩在按钮里面
+      // （qa-set-dropdown 实拍，dpr2：按钮 x 968–1143，菜单 x 976–1144，窄 4 CSS px）。
+      : { ...vert, right: Math.max(6, Math.min(window.innerWidth - r.right, window.innerWidth - menuW - 6)), width: r.width });
   }, [open, cssPositioned, align]);
   useLayoutEffect(() => { relayout(); }, [relayout]);
 

@@ -519,7 +519,8 @@ function arcOf(tone: string): number | null | undefined {
 export function AgentRing({ item, size = 32, tip }: { item: Item; size?: number; tip?: string }) {
   const tone = cardTone(item);
   const color = ringColor(item, tone);
-  const track = `color-mix(in srgb, ${color} 22%, #000)`;
+  // 底轨 = 环色往底色上混两成。底色读 --isl-mix：黑岛上是黑，macOS 菜单栏落点是透明（混黑压在毛玻璃上发死）。
+  const track = `color-mix(in srgb, ${color} 22%, var(--isl-mix, #000))`;
   const arc = arcOf(tone);
   const { Icon } = agentAssets(item.provider);
   const badge = tone === "pending" ? "!" : tone === "error" ? "×" : null;

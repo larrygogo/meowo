@@ -90,7 +90,9 @@ export function qaFlowBoot(scene: string, lang: Lang): void {
   };
   if (panelTabs[scene]) {
     const tabs = [{ key: "diff", type: "diff" }, ...panelTabs[scene]] as never[];
-    savePanel(CHAT_SESSION_ID, { tabs, active: (tabs[1] as { key: string }).key, visible: true, expanded: false } as never);
+    // ?max=1：面板最大化（同 desktop.tsx 的 panel-* 场景），Markdown 预览最大化靠它拍。
+    const expanded = new URLSearchParams(location.search).get("max") === "1";
+    savePanel(CHAT_SESSION_ID, { tabs, active: (tabs[1] as { key: string }).key, visible: true, expanded } as never);
   }
   if (scene === "flow-queued") {
     // 排队消息只来自本地的 outgoingStore（history 里的 prompt_queued 只是回执）：发送中、已排队、失败各一条。

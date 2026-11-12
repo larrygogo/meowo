@@ -114,6 +114,10 @@ export function flowStateItems(lang: "zh" | "en", ts: string): unknown[] {
   const cross = "Another Claude session sent a message:\n<cross-session-message from=\"uds:pipe\" from-name=\"" + (zh ? "复核会话" : "Review session") + "\" from-mode=\"bypass\">"
     + (zh ? "复核完了：`login.ts` 第 12 行的正则漏了加号别名，其余没问题。" : "Review done: the regex on line 12 of `login.ts` misses plus aliases, the rest is fine.")
     + "</cross-session-message>";
+  // 本会话子代理发回来的话（<agent-message>，尾部带写给模型的须知）：改前整段当用户气泡摊开。
+  const agentMsg = "Another Claude session sent a message:\n<agent-message from=\"abe934070ffd91bcb\">\n"
+    + (zh ? "两个 worktree 的 git stash 互相取错了，我这边已恢复干净。\n建议所有并行任务改用补丁文件，不再用 stash。" : "Two worktrees popped each other's git stash. Mine is clean again.\nSuggest every parallel task switches to patch files instead of stash.")
+    + "\n</agent-message>\n\nThat \"other Claude session\" is an agent working inside this same session — a subagent or teammate spawned on your user's behalf.";
   const md = [
     zh ? "## 改动小结" : "## Summary",
     "",
@@ -163,6 +167,7 @@ export function flowStateItems(lang: "zh" | "en", ts: string): unknown[] {
     { type: "tool_result", id: "fs-r3", timestamp: ts, tool_use_id: "fs-t3", text: "done", is_error: false, subagent: { running: 0, completed: 1, failed: 0 } },
     { type: "assistant_text", id: "fs-a2", timestamp: ts, text: md },
     { type: "user_text", id: "fs-u2", timestamp: ts, text: cross },
+    { type: "user_text", id: "fs-u2b", timestamp: ts, text: agentMsg },
     { type: "meta", id: "fs-m1", timestamp: ts, kind: "compact", compaction: { trigger: "auto", pre_tokens: 182000, summary: null } },
     { type: "user_text", id: "fs-u3", timestamp: ts, text: zh ? "顺手把文档也更新了。" : "Update the docs while you're at it." },
     { type: "tool_use", id: "fs-t4", timestamp: ts, name: "Agent", summary: zh ? "更新 README 与迁移说明" : "Update README and migration notes",

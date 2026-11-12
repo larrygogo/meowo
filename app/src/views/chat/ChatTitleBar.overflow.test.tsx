@@ -53,6 +53,8 @@ describe("标题栏溢出进 ⋯ 菜单", () => {
     expect(groups).toEqual(expect.arrayContaining(["open", "git", "terminal", "info"]));
     expect(document.querySelector(".chat-panel-toggle")).not.toBeNull();
     expect(screen.getByRole("button", { name: "结束会话" })).toBeTruthy();
+    // 功能都开始收了，纯信息必须已经先收完：「结束会话」只留图标（名字还在读屏名里）。
+    expect(document.querySelector(".chat-bar")?.getAttribute("data-compact")).toBe("endLabel prState branch project");
   });
 
   it("宽标题栏：功能都在栏上，菜单不多出任何项", () => {
@@ -61,5 +63,6 @@ describe("标题栏溢出进 ⋯ 菜单", () => {
     expect(screen.getByRole("button", { name: "终端" })).toBeTruthy();
     expect(visible(".chat-bar .tb-git")).toBe(true);
     expect(screen.getByTestId("overflow").children.length).toBe(0);
+    expect(document.querySelector(".chat-bar")?.hasAttribute("data-compact")).toBe(false);
   });
 });

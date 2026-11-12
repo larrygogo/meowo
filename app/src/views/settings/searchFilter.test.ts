@@ -136,4 +136,53 @@ describe("applySettingsFilter（设置搜索过滤，S-1）", () => {
       expect(el.style.display).toBe("");
     }
   });
+  // 实拍 settingswin-search（620×460）：搜「通知」时「通知这些事」表头留了下来（42px 高、右侧 208–572 全空），
+  // 它管的四个开关行因为文字里没有「通知」全被藏掉，看上去像一行缺了开关的设置。
+  describe("表头行与子开关行（.row-sub）成组显隐", () => {
+    function buildGroup(): HTMLElement {
+      const body = document.createElement("div");
+      body.innerHTML = `
+        <div class="main-sec" data-sec="general">
+          <div class="row-card">
+            <div class="row" data-k="notify"><div class="row-label">桌面通知</div></div>
+            <div class="row row-col" data-k="head"><div class="row-label">通知这些事</div></div>
+            <div class="row row-sub" data-k="done"><div class="row-label">会话跑完</div></div>
+            <div class="row row-sub" data-k="approval"><div class="row-label">等待审批</div></div>
+            <div class="row" data-k="sound"><div class="row-label">通知提示音</div></div>
+            <div class="row" data-k="lang"><div class="row-label">语言</div></div>
+          </div>
+        </div>`;
+      return body;
+    }
+    const row = (body: HTMLElement, k: string) => body.querySelector(`[data-k="${k}"]`);
+
+    it("表头命中：子行一起显示，不留没有控件的空表头", () => {
+      const body = buildGroup();
+      expect(applySettingsFilter(body, "通知", NAV)).toBe(true);
+      expect(shown(row(body, "head"))).toBe(true);
+      expect(shown(row(body, "done"))).toBe(true);
+      expect(shown(row(body, "approval"))).toBe(true);
+      expect(shown(row(body, "notify"))).toBe(true);
+      expect(shown(row(body, "sound"))).toBe(true);
+      expect(shown(row(body, "lang"))).toBe(false);
+    });
+
+    it("只有子行命中：带上表头（否则分不清是哪一组的开关），没命中的兄弟子行仍隐藏", () => {
+      const body = buildGroup();
+      expect(applySettingsFilter(body, "审批", NAV)).toBe(true);
+      expect(shown(row(body, "head"))).toBe(true);
+      expect(shown(row(body, "approval"))).toBe(true);
+      expect(shown(row(body, "done"))).toBe(false);
+      expect(shown(row(body, "notify"))).toBe(false);
+    });
+
+    it("表头和子行都没命中：整组隐藏", () => {
+      const body = buildGroup();
+      expect(applySettingsFilter(body, "语言", NAV)).toBe(true);
+      expect(shown(row(body, "head"))).toBe(false);
+      expect(shown(row(body, "done"))).toBe(false);
+      expect(shown(row(body, "approval"))).toBe(false);
+      expect(shown(row(body, "lang"))).toBe(true);
+    });
+  });
 });

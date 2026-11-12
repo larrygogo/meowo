@@ -24,19 +24,26 @@ export const QA_SHOTS = [
   { name: "qa-chat-en-620", scene: "chat", size: W620, langs: ["en"] },
   { name: "qa-panel-en-620", scene: "panel-changes", size: W620, langs: ["en"] },
   { name: "qa-panel-ui150", scene: "panel-changes", params: "ui=1.5" },
-  // 面板最大化：「全部 / 本会话 / 本轮」切换要和搜索框、文件列表同在居中的 880px 栏里（2026-11-12 实拍跑到了左下角）。
-  { name: "qa-scm-max", scene: "panel-changes-max", sel: ".chat-diff-scope", size: [2560, 1440], themes: ["dark", "light"] },
-  { name: "qa-scm-max-1280", scene: "panel-changes-max", sel: ".chat-diff-scope" },
+  // 面板最大化（占满整张内容面）：内容列封顶居中后，贴内容宽的小控件容易留在面板左缘没跟上
+  // （2026-11-12 用户截图：「全部 / 本会话 / 本轮」孤零零贴在最左边）。矩阵里原本没有这个状态。
+  { name: "qa-panel-max", scene: "panel-changes", params: "max=1", sel: ".scm-row" },
+  { name: "qa-panel-max-2560", scene: "panel-changes", params: "max=1", size: [2560, 1440], sel: ".scm-row" },
+  { name: "qa-diff-max-2560", scene: "panel-diff", params: "max=1", size: [2560, 1440], sel: ".chat-diff-code" },
+  { name: "qa-files-max-2560", scene: "panel-files", params: "max=1", size: [2560, 1440], sel: ".chat-diff-panel" },
+  // Markdown 预览最大化：正文封顶居中，头行（返回 / 文件名 / 预览·源码 / 打开）要跟着同一列走。
+  { name: "qa-md-max-2560", scene: "flow-md", params: "max=1", size: [2560, 1440], sel: ".chat-diff-mdview", steps: [["click", ".chat-diff-tree-file:has-text('README.md')"]] },
+  { name: "qa-md-max", scene: "flow-md", params: "max=1", sel: ".chat-diff-mdview", steps: [["click", ".chat-diff-tree-file:has-text('README.md')"]] },
+  // 「更改」的树状视图、缩放 150% 下的「文件」页签：行高与图标列要跟着缩放和层级走。
+  { name: "qa-panel-tree", scene: "panel-changes", sel: ".scm-row.is-dir", steps: [["click", ".scm-tools .chat-diff-layout button >> nth=1"]] },
+  { name: "qa-files-ui150", scene: "panel-files", params: "ui=1.5", sel: ".chat-diff-tree-file" },
   // ── 对话流里靠后端状态出现的东西（harness 见 qaFlow.ts）──
+  // 子代理发回来的话（<agent-message>）：改前整段当用户气泡摊开（leader 2026-11-12 截图），改后是「子代理消息」块。
+  // 它在 flow-states 的中段偏下，滚到它露出来再拍。
+  { name: "qa-agent-msg", scene: "flow-states", sel: ".chat-crossmsg", langs: ["zh", "en"], steps: [["eval", "(() => { const t0 = performance.now(); const id = setInterval(() => { const el = [...document.querySelectorAll('.chat-crossmsg')].pop(); el && el.scrollIntoView({ block: 'center' }); if (performance.now() - t0 > 1200) clearInterval(id); }, 100); })()"], ["tick", 1500]] },
   { name: "qa-lead", scene: "flow-lead", sel: ".lead-gate-card", langs: ["zh", "en"] },
   { name: "qa-lead-open", scene: "flow-lead", sel: ".lead-gate-card", steps: [["click", ".lead-gate-more"], ["click", ".lead-gate-option >> nth=1"]] },
   { name: "qa-lead-620", scene: "flow-lead", sel: ".lead-gate-card", size: W620 },
   { name: "qa-lead-panel", scene: "flow-lead", sel: ".panel-lead", steps: [["click", ".dock-workbar .ui-pill"]] },
-  // 验收关卡：固定选项直接是按钮；点「驳回」展开必填意见框（2026-11-12 Lead 交互优化）。
-  { name: "qa-lead-c", scene: "flow-lead-c", sel: ".lead-gate-card", langs: ["zh", "en"] },
-  { name: "qa-lead-c-reject", scene: "flow-lead-c", sel: ".lead-gate-card", steps: [["click", ".lead-gate-card .is-deny"]] },
-  { name: "qa-lead-c-620", scene: "flow-lead-c", sel: ".lead-gate-card", size: W620 },
-  { name: "qa-lead-c-panel", scene: "flow-lead-c", sel: ".panel-lead", steps: [["click", ".dock-workbar .ui-pill"]], langs: ["zh", "en"] },
   { name: "qa-queued", scene: "flow-queued", sel: ".chat-queued-turn" },
   { name: "qa-sync", scene: "flow-sync", sel: ".chat-sync-warn", steps: [["tick", 9000]] },
   { name: "qa-load-error", scene: "flow-error", sel: ".chat-empty.is-error", steps: [["tick", 9000]] },
@@ -75,7 +82,7 @@ export const QA_SHOTS = [
   { name: "qa-context-tip", scene: "pop-idle", sel: ".tip", steps: [["hover", ".chat-context"], ["tick", 500]] },
   // ── 侧栏 ──
   { name: "qa-side-batch", scene: "pop-idle", sel: ".chat-sidebar-batch", steps: [["click", ".chat-sidebar-item >> nth=0", { modifiers: ["Control"] }], ["click", ".chat-sidebar-item >> nth=1", { modifiers: ["Control"] }]], langs: ["zh", "en"] },
-  { name: "qa-side-rename", scene: "pop-idle", sel: ".chat-sidebar-edit", steps: [["rclick", ".chat-sidebar-item >> nth=1"], ["click", ".ctx-menu .ctx-item >> nth=2"]] },
+  { name: "qa-side-rename", scene: "pop-idle", sel: ".chat-sidebar-edit", steps: [["rclick", ".chat-sidebar-item >> nth=1"], ["click", ".ctx-menu .ctx-item:has-text('重命名')"]] },
   { name: "qa-side-search", scene: "pop-idle", sel: ".chat-sidebar-deep-hit", steps: [["type", ".chat-sidebar-search input", "schema"], ["tick", 500], ["click", ".chat-sidebar-deep .chat-sidebar-more"]] },
   { name: "qa-side-empty", scene: "flow-side-empty", sel: ".chat-sidebar-empty" },
   { name: "qa-side-error", scene: "flow-side-error", sel: ".chat-sidebar-empty.is-error" },
@@ -93,6 +100,9 @@ export const QA_SHOTS = [
   { name: "qa-browser-blank", scene: "flow-browser-blank", sel: ".browser-pane" },
   { name: "qa-shell", scene: "flow-shell", sel: ".shell-term" },
   // ── 托管终端页签 ──
+  // 浅色那张和深色那张除 DEV 角标外逐像素相同，这是产品定的：终端页签整窗恒为深色（styles.css
+  // 「终端视图强制深色」，xterm 底色写死深底，浅色主题下只变终端那一块会割裂）。浅色图留着当回归：
+  // 哪天有浅色规则漏进终端页签，两张图就会出现差异。
   { name: "qa-term", scene: "flow-term", sel: ".managed-terminal", steps: [["click", ".chat-terminal-toggle"], ["tick", 800]] },
   { name: "qa-term-search", scene: "flow-term", sel: ".term-search", steps: [["click", ".chat-terminal-toggle"], ["tick", 800], ["key", "Control+f"], ["type", ".term-search input", "Read"]] },
   { name: "qa-term-link", scene: "flow-term", sel: ".managed-terminal", steps: [["click", ".chat-terminal-toggle"], ["tick", 800], ["hover", ".managed-terminal .xterm-screen", { position: { x: 520, y: 118 } }], ["tick", 300]] },
@@ -111,6 +121,10 @@ export const QA_SHOTS = [
   { name: "qa-set-error-remote", scene: "settingswin-remote", params: "fail=1", size: SETTINGS, sel: ".settings-error" },
   { name: "qa-set-kbd", scene: "settingswin-appearance", size: SETTINGS, sel: ".settings", steps: [["keys", "Tab", 4]] },
   { name: "qa-set-hover", scene: "settingswin-general", size: SETTINGS, sel: ".settings", steps: [["hover", ".side-nav .nav-item >> nth=2"]] },
+  // 设置搜索的成组显隐：表头行（「自动弹出提醒」/「通知这些事」）和它名下的子开关同进退。
+  // 「提醒」命中外观分区的表头，「审批」只命中子行（两个分区各一行），都不该留下没有控件的空表头。
+  { name: "qa-set-search-alerts", scene: "settingswin-appearance", size: SETTINGS, sel: ".settings", steps: [["type", ".side-search input", "提醒"]] },
+  { name: "qa-set-search-sub", scene: "settingswin-general", size: SETTINGS, sel: ".settings", steps: [["type", ".side-search input", "审批"]] },
   { name: "qa-set-en", scene: "settingswin-general", size: SETTINGS, sel: ".settings", langs: ["en"] },
   { name: "qa-set-en-remote", scene: "settingswin-remote", size: SETTINGS, sel: ".settings", langs: ["en"] },
   { name: "qa-set-en-sessions", scene: "settingswin-sessions", size: SETTINGS, sel: ".settings", langs: ["en"] },
@@ -126,6 +140,12 @@ export const QA_SHOTS = [
   // ── 其余状态维度：超宽、英文、键盘焦点 ──
   { name: "qa-flow-2560", scene: "flow-states", size: [2560, 1440] },
   { name: "qa-lead-2560", scene: "flow-lead", size: [2560, 1440], sel: ".lead-gate-card", themes: ["light"] },
+  // 对话区顶部横幅在超宽窗里要跟消息列走（界面打磨第二轮 chat-5 / windows-5：setup 条原来按整块内容面撑开，
+  // 2560 宽时横贯两千像素，当时没有对应截图，是按规则推算的）。
+  { name: "qa-wt-running-2560", scene: "flow-wt-running", size: [2560, 1440], sel: ".wt-setup" },
+  { name: "qa-sync-2560", scene: "flow-sync", size: [2560, 1440], sel: ".chat-sync-warn", steps: [["tick", 9000]] },
+  // 英文审批卡带「允许并记住」的窄窗：一行放不下时掉行的该是左边的旁支，主按钮和「拒绝」不分开（chat-3）。
+  { name: "qa-broker-620", scene: "flow-broker", size: W620, sel: ".chat-approval-actions", langs: ["zh", "en"] },
   { name: "qa-flow-en", scene: "flow-states", langs: ["en"] },
   { name: "qa-flow-ui150", scene: "flow-states", params: "ui=1.5" },
   { name: "qa-question-ui150", scene: "flow-question", params: "ui=1.5", size: W620 },
@@ -134,6 +154,9 @@ export const QA_SHOTS = [
   { name: "qa-hover-send", scene: "pop-idle", steps: [["type", TA, "hi"], ["hover", ".chat-send-button"]] },
   { name: "qa-nsp-focus", scene: "newsession-page", sel: ".nsp-composer", steps: [["click", ".nsp-input"]] },
   { name: "qa-nsp-en-620", scene: "newsession-page-wt", size: W620, sel: ".nsp-composer", langs: ["en"] },
+  // 矮窗口里勾上 worktree：内容比窗口高。整列垂直居中时图标会被裁到滚动区上方、滚不回来（2026-11-12 用户实拍 2000×855@2x）。
+  { name: "qa-nsp-wt-short", scene: "newsession-page-wt", size: [1280, 560], sel: ".wt-opt-body" },
+  { name: "qa-nsp-wt-short-1000", scene: "newsession-page-wt", size: [1000, 428], sel: ".wt-opt-body" },
   // ── 灵动岛：缩放 150%、悬停 ──
   { name: "qa-island-panel-ui150", scene: "island-panel", params: "ui=1.5", size: [1000, 460], sel: ".island-shell", langs: ["zh", "en"], themes: ["dark"] },
   { name: "qa-island-usage-ui150", scene: "island-usage", params: "ui=1.5", size: [1000, 460], sel: ".island-shell", themes: ["dark"] },
@@ -141,19 +164,21 @@ export const QA_SHOTS = [
   { name: "qa-island-compact-ui150", scene: "island-compact", params: "ui=1.5", size: [1000, 120], themes: ["dark"] },
   { name: "qa-island-panel-hover", scene: "island-panel", size: [700, 300], sel: ".island-shell", themes: ["dark"], steps: [["hover", ".island-shell [role=button], .island-shell button >> nth=1"]] },
   { name: "qa-island-panel-kbd", scene: "island-panel", size: [700, 300], sel: ".island-shell", themes: ["dark"], steps: [["keys", "Tab", 2]] },
+  // 翻页前后面板高度要一样：末页只有一条会话、没有会话只有额度页，和三条会话那页、额度页比高度。
+  { name: "qa-island-panel-last", scene: "island-panel-last", size: [700, 300], sel: ".island-shell", langs: ["zh", "en"] },
+  { name: "qa-island-panel-empty-usage", scene: "island-panel-empty-usage", size: [700, 300], sel: ".island-shell" },
+  // 出错提醒带排队的英文版：标题、项目名、详情三段都长，矩阵里只有中文。
+  { name: "qa-island-alert-error-en", scene: "island-alert-error", size: [700, 110], sel: ".isl-notch.is-alert", langs: ["en"] },
   // ── 手机页 ──
   { name: "qa-m-model", page: "mobile", scene: "mobile-idle", size: PHONE, sel: ".chat-sheet", steps: [["click", MODEL_BTN]] },
   { name: "qa-m-mode", page: "mobile", scene: "mobile-idle", size: PHONE, sel: ".chat-sheet", steps: [["click", ".chat-compose .chat-mode-button"]] },
-  { name: "qa-m-lead-kbd", page: "mobile", scene: "mobile-lead", size: [375, 476], sel: ".lead-gate-card", steps: [["click", ".lead-gate-add-note"]] },
+  { name: "qa-m-lead-kbd", page: "mobile", scene: "mobile-lead", size: [375, 476], sel: ".lead-gate-card", steps: [["click", ".lead-gate-note"]] },
   { name: "qa-m-list-hover", page: "mobile", scene: "mobile-list", size: PHONE, sel: ".remote-session-list", langs: ["en"] },
   { name: "qa-m-slash", page: "mobile", scene: "mobile-idle", size: PHONE, steps: [["type", TA, "/"]], sel: ".chat-sheet" },
   { name: "qa-m-at", page: "mobile", scene: "mobile-idle", size: PHONE, steps: [["type", TA, "@src"], ["tick", 400]], sel: "#chat-at-listbox" },
   { name: "qa-m-add", page: "mobile", scene: "mobile-idle", size: PHONE, steps: [["click", ".chat-attach-button"]], sel: ".chat-sheet" },
   { name: "qa-m-lead", page: "mobile", scene: "mobile-lead", size: PHONE, sel: ".lead-gate-card", langs: ["zh", "en"] },
   { name: "qa-m-lead-open", page: "mobile", scene: "mobile-lead", size: PHONE, sel: ".lead-gate-card", steps: [["click", ".lead-gate-more"], ["click", ".lead-gate-option >> nth=1"]] },
-  { name: "qa-m-lead-c", page: "mobile", scene: "mobile-lead-c", size: PHONE, sel: ".lead-gate-card", langs: ["zh", "en"] },
-  { name: "qa-m-lead-c-reject", page: "mobile", scene: "mobile-lead-c", size: PHONE, sel: ".lead-gate-card", steps: [["click", ".lead-gate-card .is-deny"]] },
-  { name: "qa-m-lead-panel", page: "mobile", scene: "mobile-lead-c", size: PHONE, sel: ".panel-lead", steps: [["click", ".dock-workbar .ui-pill"]] },
   // 后台任务面板（一条在跑、三条跑完）：面板头两行（标题 + 关闭钮 / 整行分段筛选），转圈是运行绿。
   { name: "qa-m-tasks", page: "mobile", scene: "mobile-tasks", size: PHONE, sel: ".panel-tasks", steps: [["click", ".dock-workbar .ui-pill >> nth=0"]], langs: ["zh", "en"] },
   { name: "qa-m-tasks-430", page: "mobile", scene: "mobile-tasks", size: [430, 932], sel: ".panel-tasks", steps: [["click", ".dock-workbar .ui-pill >> nth=0"]] },
@@ -161,4 +186,18 @@ export const QA_SHOTS = [
   { name: "qa-m-subagents", page: "mobile", scene: "mobile-tasks", size: PHONE, sel: ".panel-tasks", steps: [["click", ".dock-workbar .ui-pill >> nth=1"]], themes: ["dark"] },
   { name: "qa-m-approval-kbd", page: "mobile", scene: "mobile-chat", size: [375, 476], sel: ".chat-approval-actions", steps: [["click", TA]] },
   { name: "qa-m-settings-on", page: "mobile", scene: "mobile-settings", params: "on=1", size: PHONE, sel: ".pswitch.on", langs: ["zh", "en"] },
+  // Lead 关卡卡片的矮屏：SE 键盘态（375×376）正在写意见 / 焦点在输入框，以及横屏。标题吸顶、选项行 44。
+  { name: "qa-m-lead-kbd-se", page: "mobile", scene: "mobile-lead", size: [375, 376], sel: ".lead-gate-card", steps: [["click", ".lead-gate-note"]] },
+  { name: "qa-m-lead-se", page: "mobile", scene: "mobile-lead", size: [375, 376], sel: ".lead-gate-card", steps: [["click", TA]] },
+  { name: "qa-m-lead-land", page: "mobile", scene: "mobile-lead", size: [812, 375], sel: ".lead-gate-card" },
+  // 问答卡的矮屏（横屏）：选项行不被压到 44 以下。
+  { name: "qa-m-question-land", page: "mobile", scene: "mobile-question", size: [812, 375], sel: ".chat-approval-options" },
+  // 有任务在跑时的输入框底栏（多一个中断钮）：375 宽下权限模式文字要完整，中英各一。
+  { name: "qa-m-running", page: "mobile", scene: "mobile-tasks", size: PHONE, sel: ".chat-mode-button", langs: ["zh", "en"] },
+  // 「更改」页点开一个文件的 diff。
+  { name: "qa-m-diff", page: "mobile", scene: "mobile-changes", size: PHONE, sel: ".chat-diff-iconbtn", steps: [["click", ".scm-row-main"]] },
+  // 「更改」页滚到底 + 模拟安全区（上 47 下 34，iPhone 全面屏）：最后一行要停在 home 横条上方。
+  // 品红条是场景自己画的 home 横条区域（真机上是系统画的），只为在图上看清最后一行有没有被压住。
+  { name: "qa-m-changes-safe", page: "mobile", scene: "mobile-changes", size: PHONE, sel: ".scm-row", themes: ["dark"], safeArea: { top: 47, bottom: 34, left: 0, right: 0 },
+    steps: [["wait", ".scm-row"], ["eval", "(() => { const s = document.querySelector('.scm'); s.scrollTop = s.scrollHeight; const bar = document.createElement('div'); bar.style.cssText = 'position:fixed;left:0;right:0;bottom:0;height:34px;background:rgba(255,0,255,.35);pointer-events:none;z-index:99999'; document.body.appendChild(bar); })()"]] },
 ];

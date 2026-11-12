@@ -87,7 +87,18 @@ export function applyLearnedLabels<T extends { id: string; label: string }>(
  * （状态行是 "Opus 5.5"、菜单写 "Opus 5"，实拍），整串比对就一个都勾不上。先比规范化后的
  * 全名；不中再按「当前名包含别名」取最长的别名（与 applyLearnedLabels 同一口径）。
  */
-export function currentPresetId<T extends { id: string; label: string }>(presets: T[], current: string | null | undefined): string | null {
+export function currentPresetId<T extends { id: string; label: string }>(presets: T[], current: string | null | undefined, contextWindow?: number | null): string | null {
+  const id = matchPresetId(presets, current);
+  // 1M 档（opus[1m]）的状态行名字和普通档一样（"Opus 5.5"），名字比对只会落到普通档；上下文窗口是
+  // 100 万时换成对应的 [1m] 档。改前切到 1M 后菜单的勾仍在普通档，看着像没切过去（2026-11-12）。
+  if (id && !id.endsWith("[1m]") && (contextWindow ?? 0) >= 1_000_000) {
+    const long = presets.find((preset) => preset.id === `${id}[1m]`);
+    if (long) return long.id;
+  }
+  return id;
+}
+
+function matchPresetId<T extends { id: string; label: string }>(presets: T[], current: string | null | undefined): string | null {
   if (!current) return null;
   const wanted = normalize(current);
   const exact = presets.find((preset) => normalize(preset.label) === wanted || normalize(preset.id) === wanted);

@@ -1,12 +1,12 @@
-// 卡片右键/菜单按钮弹出的操作菜单：置顶/便签/重命名/归档/打开目录。
+// 卡片右键/菜单按钮弹出的操作菜单：置顶/重命名/归档/打开目录。
 // 不放「新建会话」（用户要求去掉）：新建入口在侧栏头部与看板标题栏，Ctrl+N 也在。
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useDismissable } from "../../hooks/useDismissable";
 import { useT } from "../../i18n";
 import { runWorktreeRemoval, useWorktreeStatus, worktreeApplicable, worktreeReasonText, type RemovalOutcome } from "../../worktreeCleanup";
-import { ArchiveIcon, CheckIcon, FolderIcon, NoteIcon, PencilIcon, StopIcon, TopIcon } from "./icons";
+import { ArchiveIcon, CheckIcon, FolderIcon, PencilIcon, StopIcon, TopIcon } from "./icons";
 
-// 卡片右键菜单：置顶/便签/重命名/归档收拢于此（替代原 hover 图标行，卡片标题行更干净）。
+// 卡片右键菜单：置顶/重命名/归档收拢于此（替代原 hover 图标行，卡片标题行更干净）。
 // fixed 定位 + useLayoutEffect 钳位：贴纸窗口小，菜单贴边时向内收、不被窗口边缘裁掉。
 // 关闭时机（useDismissable，G-1）：点菜单外任意处（拦截这次点击，不穿透到卡片）/
 // 他处右键 / Escape / 窗口失焦 / 菜单外滚动 / 任一菜单项执行后。
@@ -14,10 +14,8 @@ export function CardContextMenu({
   x,
   y,
   starred,
-  hasNote,
   archived,
   onStar,
-  onNote,
   onRename,
   onArchive,
   onSelectMode = null,
@@ -30,10 +28,8 @@ export function CardContextMenu({
   x: number;
   y: number;
   starred: boolean;
-  hasNote: boolean;
   archived: boolean;
   onStar: () => void;
-  onNote: () => void;
   onRename: () => void;
   onArchive: () => void;
   /** 进入多选（侧栏批量归档）；贴纸没有多选态，不传即隐藏。 */
@@ -76,7 +72,7 @@ export function CardContextMenu({
     closeOnScroll: true,
   });
   // 键盘可达：挂载即把焦点搬进首项（菜单 DOM 挂在列表滚动区之外，Tab 永远走不进来——
-  // 这曾让置顶/便签/重命名/归档对键盘用户完全不可达）；关闭时焦点仍在菜单内才归还给
+  // 这曾让置顶/重命名/归档对键盘用户完全不可达）；关闭时焦点仍在菜单内才归还给
   // 打开前的元素（鼠标用户点外部关闭时焦点已在别处，不抢；某项动作打开了编辑框时，
   // 编辑框的 autoFocus 在归还之后生效、优先级更高）。
   useEffect(() => {
@@ -117,10 +113,6 @@ export function CardContextMenu({
       <button type="button" role="menuitem" className="ctx-item" onClick={act(onStar)}>
         <TopIcon />
         {starred ? t.sticker.unstar : t.sticker.star}
-      </button>
-      <button type="button" role="menuitem" className="ctx-item" onClick={act(onNote)}>
-        <NoteIcon />
-        {hasNote ? t.sticker.noteEdit : t.sticker.noteAdd}
       </button>
       <button type="button" role="menuitem" className="ctx-item" onClick={act(onRename)}>
         <PencilIcon />

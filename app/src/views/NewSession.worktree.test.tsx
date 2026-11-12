@@ -22,10 +22,12 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
 vi.mock("@tauri-apps/api/core", async (orig) => ({ ...(await orig<typeof import("@tauri-apps/api/core")>()), convertFileSrc: (path: string) => `asset://${path}` }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: () => Promise.resolve(() => {}), emit: vi.fn() }));
 const closeMock = vi.hoisted(() => vi.fn());
-vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({ close: closeMock }) }));
+// winExtra：个别用例往窗口对象上补 setSize / setResizable（独立窗按表单高度加高）。
+const winExtra = vi.hoisted(() => ({}) as Record<string, unknown>);
+vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({ close: closeMock, ...winExtra }) }));
 
 import { NewSessionPage } from "./chat/NewSessionPage";
-import { NewSessionPanel } from "./NewSessionPanel";
+import { NewSessionPanel, fitWindowHeight } from "./NewSessionPanel";
 import { descriptors } from "../test/agents";
 import { zh } from "../i18n/zh";
 import { normalizePath } from "../paths";
@@ -175,5 +177,47 @@ describe("新建会话面板（独立窗、手机页内）：在新 worktree 里
     fireEvent.click(screen.getByTestId("ns-launch"));
     await waitFor(() => expect(api.newSession).toHaveBeenCalledWith("C:/work/meowo-fix-login", "claude", {}));
     expect(api.worktreeCreate).toHaveBeenCalledWith(expect.objectContaining({ repoCwd: "C:/proj" }));
+  });
+
+  // 独立窗固定 460×520：勾上后多出一张卡片，Agent、权限、模型被挤到底栏下面看不到（实拍 Agent 钮顶 y=454，底栏从 452 起）。
+  it("独立窗勾上后表单放不下：窗口加高到刚好放下；取消勾选收回初始高度", async () => {
+    const setSize = vi.fn(async (_size: { width: number; height: number }) => {});
+    Object.assign(winExtra, { setSize, setResizable: vi.fn(async () => {}) });
+    // jsdom 不排版，量到的尺寸手工给：表单区高 412（窗口 520 − 标题条与底栏 108），内容底边由 contentBottom 决定。
+    let contentBottom = 400;
+    const proto = HTMLElement.prototype;
+    const saved = ["clientHeight", "offsetTop", "offsetHeight"].map((k) => [k, Object.getOwnPropertyDescriptor(proto, k)] as const);
+    Object.defineProperty(proto, "clientHeight", { configurable: true, get(this: HTMLElement) { return this.classList.contains("ns-body") ? 412 : 0; } });
+    Object.defineProperty(proto, "offsetTop", { configurable: true, get(this: HTMLElement) { return this.parentElement?.classList.contains("ns-body") ? contentBottom : 0; } });
+    Object.defineProperty(proto, "offsetHeight", { configurable: true, get() { return 0; } });
+    const savedInner = window.innerHeight;
+    const savedAvail = Object.getOwnPropertyDescriptor(window.screen, "availHeight");
+    window.innerHeight = 520;
+    Object.defineProperty(window.screen, "availHeight", { configurable: true, value: 1080 });
+    try {
+      render(<NewSessionPanel />);
+      await screen.findByTestId("ns-dir");
+      expect(setSize).not.toHaveBeenCalled(); // 放得下：不动窗口
+      contentBottom = 527;
+      fireEvent.click(screen.getByTestId("wt-toggle"));
+      await waitFor(() => expect(setSize).toHaveBeenCalledTimes(1));
+      expect(setSize.mock.calls[0][0].height).toBe(635); // 108 + 527
+      contentBottom = 400;
+      fireEvent.click(screen.getByTestId("wt-toggle"));
+      await waitFor(() => expect(setSize).toHaveBeenCalledTimes(2));
+      expect(setSize.mock.calls[1][0].height).toBe(520);
+    } finally {
+      for (const [k, d] of saved) { if (d) Object.defineProperty(proto, k, d); else delete (proto as unknown as Record<string, unknown>)[k]; }
+      window.innerHeight = savedInner;
+      if (savedAvail) Object.defineProperty(window.screen, "availHeight", savedAvail); else delete (window.screen as unknown as Record<string, unknown>).availHeight;
+      for (const k of Object.keys(winExtra)) delete winExtra[k];
+    }
+  });
+
+  it("加高有上限：最多到屏幕里剩下的高度，且不低于初始高度", () => {
+    expect(fitWindowHeight(108, 527, 1000)).toBe(635);
+    expect(fitWindowHeight(108, 900, 700)).toBe(700); // 屏幕只剩 700：到此为止，剩下的表单自己滚
+    expect(fitWindowHeight(108, 300, 1000)).toBe(520); // 内容少也不缩到初始高度以下
+    expect(fitWindowHeight(108, 900, 300)).toBe(520); // 窗口已经贴着屏幕下沿：不加高
   });
 });

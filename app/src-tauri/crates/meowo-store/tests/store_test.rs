@@ -1722,7 +1722,8 @@ fn migrate_drops_the_unused_events_table() {
     // 其余表照常可用——迁移没把别的东西带走。
     let pid = store.upsert_project_by_root("/p", "p", 1).unwrap();
     let (sid, _) = store.start_session(pid, "s", 1).unwrap();
-    store.set_session_note("s", "便签还在", 2).unwrap();
+    // session_notes 也在这七张里：便签功能取消（2026-11-12）后表与旧数据保留不删，只是不再读写。
+    store.on_user_prompt(sid, "其余表照常可写", 2).unwrap();
     let live = store
         .live_sessions(Some("all"), None, None, None, 10)
         .unwrap();

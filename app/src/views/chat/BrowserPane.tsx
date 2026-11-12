@@ -5,7 +5,8 @@ import { formatBackendError } from "../../i18n/errors";
 import { PathMenu, type PathMenuItem } from "./pathMenu";
 import { Icon } from "../../icons/Icon";
 import { icDownload, icMore, icRefresh } from "../../icons/glyphs";
-import { icArrowLeft, icArrowRight, icExternal } from "../../icons/glyphs.scm";
+import { icArrowLeft, icArrowRight, icBan, icExternal } from "../../icons/glyphs.scm";
+import { icShield } from "../../icons/glyphs.chat";
 // 老调用方（测试）从这里拿；ChatWindow 直接引 localUrls，免得把面板浏览器拖进主 chunk。
 export { localUrlsIn } from "./localUrls";
 
@@ -210,6 +211,7 @@ export function BrowserPane({ info, visible, suggestions }: {
       )}
       {info.permission && (
         <div className="browser-pane-notice is-permission" role="alert">
+          <Icon glyph={icShield} size={14} className="browser-pane-notice-icon" />
           <span className="browser-pane-notice-text">{permissionText(info.permission)}</span>
           <button type="button" disabled={answering} onClick={() => answer(false)}>{t.chat.browserPermissionBlock}</button>
           <button type="button" className="btn-primary" disabled={answering} onClick={() => answer(true)}>{t.chat.browserPermissionAllow}</button>
@@ -218,6 +220,7 @@ export function BrowserPane({ info, visible, suggestions }: {
       {/* 阻止之后同一页面不会再问，被拦的下载也悄无声息：留一条，刷新页面就能重新下载。 */}
       {!info.permission && blocked && (
         <div className="browser-pane-notice is-blocked" role="status">
+          <Icon glyph={icBan} size={14} className="browser-pane-notice-icon" />
           <span className="browser-pane-notice-text">{permissionText(blocked, true)}</span>
           <button type="button" onClick={() => act("reload")}>{t.chat.browserPermissionRetry}</button>
           <button type="button" className="browser-pane-notice-close" aria-label={t.chat.browserDownloadDismiss} data-tip={t.chat.browserDownloadDismiss} data-tip-placement="top" onClick={() => setDismissedBlock(blocked.id)}>×</button>
