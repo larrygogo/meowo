@@ -7266,6 +7266,9 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
   --cc-ok-vivid: #30d158;
   --cc-warn-vivid: #ffb829;
   --cc-err-vivid: #ff453a;
+  /* Claude 徽标色同理钉在深色板的值上：浅色主题的 #b0532f 是给白底加深过的，压在黑岛上
+     对比度只有 4.1:1（深色板 #d97757 是 6.7:1），岛在两套主题之间就差这一处（island-compact 浅色实量）。 */
+  --cc-claude: #d97757;
   --isl-ink: #000;
   --isl-text: #f5f5f7;
   --isl-text-2: #b9b9be;
