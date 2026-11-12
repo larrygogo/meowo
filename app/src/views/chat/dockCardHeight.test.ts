@@ -37,7 +37,7 @@ describe("停靠面板不越过标题栏", () => {
 // （qa-lead-panel 1280×800：面板 y=436–626，卡片 159–618）。改成排进文档流、和卡片分高度。
 describe("有待拍板卡时停靠面板挤占而不是覆盖", () => {
   const css = read("../../styles.css");
-  const panel = rule(css, ".chat-dock:has(> .lead-gate-card) > .dock-work-anchor > .dock-work-panel");
+  const panel = rule(css, ".chat-main:not([data-short]) > .chat-dock:has(> .lead-gate-card) > .dock-work-anchor > .dock-work-panel");
   it("面板进文档流，限高不读 --dock-panel-room（进了流再读会自己影响自己）", () => {
     expect(panel).toContain("position: relative");
     expect(panel).toContain("bottom: auto");
@@ -45,7 +45,7 @@ describe("有待拍板卡时停靠面板挤占而不是覆盖", () => {
     expect(panel).not.toContain("--dock-panel-room");
   });
   it("锚点和面板都能被压缩，输入框不会被挤出窗口", () => {
-    const anchor = rule(css, ".chat-dock:has(> .lead-gate-card) > .dock-work-anchor");
+    const anchor = rule(css, ".chat-main:not([data-short]) > .chat-dock:has(> .lead-gate-card) > .dock-work-anchor");
     expect(anchor).toContain("height: auto");
     expect(anchor).toContain("min-height: 0");
     expect(anchor).toContain("flex-shrink: 1");

@@ -125,6 +125,15 @@ describe("parseUserText", () => {
     expect(parts.text).toBe("");
   });
 
+  /// 做空审查：用户自己粘进来的文字里夹着这对标签（比如贴一段 transcript 问为什么），不是子代理发来的。
+  it("正文中间夹着 <agent-message> 的用户消息照原文显示，不收成子代理消息、不吞后文", () => {
+    const raw = '帮我看看这段为什么没识别：\n<agent-message from="a1">\n进度\n</agent-message>\n\nThat "other Claude session" is an agent… 后面还有我的问题';
+    const parts = parseUserText(raw);
+    expect(parts.crossMessages).toEqual([]);
+    expect(parts.text).toContain("帮我看看这段为什么没识别");
+    expect(parts.text).toContain("后面还有我的问题");
+  });
+
   it("没有前导句的子代理消息（排队落盘的形态）同样认出", () => {
     const parts = parseUserText('<agent-message from="a228">\n进度：三条里修完两条\n</agent-message>');
     expect(parts.crossMessages).toEqual([{ fromName: "", mode: "", text: "进度：三条里修完两条", agent: true }]);

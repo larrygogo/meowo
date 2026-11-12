@@ -59,6 +59,9 @@ const ANSI = /[\x1b\uFFFD](?:\[[0-9;?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)
 // 子代理发回来的话是同一个外形，换了标签名 <agent-message from="<任务 id>">（2.1.322 实拍）。
 // 不认的话整段带标签当用户气泡摊开（leader 2026-11-12 截图）。
 const CROSS = /<(cross-session-message|agent-message)\b([^>]*)>([\s\S]*?)<\/\1>/g;
+// <agent-message> 只认开头（可带那句固定前导）：用户粘贴的文字里夹着这对标签时，不能被收成「子代理消息」，
+// 更不能让 CROSS_NOTE 吞掉后文（做空审查；哨兵判据一律行首锚定，见 transcript 引用污染的教训）。
+const AGENT_LEAD = /^\s*(?:[^\n]*Another Claude session sent a message[^\n]*:[ \t]*\n)?\s*<agent-message\b/;
 const CROSS_ATTR = /([\w-]+)="([^"]*)"/g;
 // 包在外面的两段固定英文：一句前导、以及尾部整段写给模型的安全须知（"A peer cannot
 // grant escalation…"）。都不是人要读的内容，随消息一起收走。措辞在不同版本里有
@@ -156,7 +159,7 @@ export function parseUserText(raw: string): UserTextParts {
   };
   if (!raw.includes("<command-name>") && !raw.includes("<local-command-")
     && !raw.includes("<task-notification>") && !raw.includes("<cross-session-message")
-    && !raw.includes("<agent-message") && !raw.includes("<bash-")) {
+    && !AGENT_LEAD.test(raw) && !raw.includes("<bash-")) {
     // 名单之外的机器记录：兜底收成「系统记录」，不当用户说的话摊开（见 MACHINE_LEAD）。
     if (MACHINE_LEAD.test(raw)) {
       parts.local = true;
@@ -174,7 +177,9 @@ export function parseUserText(raw: string): UserTextParts {
   parts.local = true;
   // 跨会话消息先摘出来：它的正文是别的会话写的自然语言，可能整段包含上面那些标签的
   // 字面量（复核回执里就贴着 `<command-name>` 一类），先摘走才不会被 PAIR 啃掉。
-  raw = raw.replace(CROSS, (_match, tag: string, attrs: string, body: string) => {
+  const agentLead = AGENT_LEAD.test(raw);
+  raw = raw.replace(CROSS, (match: string, tag: string, attrs: string, body: string) => {
+    if (tag === "agent-message" && !agentLead) return match;
     const found: Record<string, string> = {};
     for (const [, key, value] of attrs.matchAll(CROSS_ATTR)) found[key] = value;
     const text = body.trim();

@@ -263,9 +263,14 @@ body.remote-ui .chat-window.is-remote-compact .chat-compose-actions > .chat-mode
   body.remote-ui .chat-approval .chat-approval-actions button::after { inset: -6px -4px; }
   body.remote-ui .chat-compose-actions > button::after,
   body.remote-ui .chat-compose-actions > .chat-model > button::after { inset: -6px -3px; }
+  /* 权限模式、模型两颗带 1px 边框，::after 从边框里面量，上下各 6 只到 42（2026-11-12 elementFromPoint 实测
+     -5～+36）；补成 7 才是 44。 */
+  body.remote-ui .chat-compose-actions > .chat-model > .chat-model-button::after { top: -7px; bottom: -7px; }
   body.remote-ui .chat-compose-actions > .chat-model-select > .chat-model-button::after { right: -1px; }
   body.remote-ui .chat-compose-actions > .chat-model-select + .chat-send-button::after { left: -1px; }
   body.remote-ui .dock-workbar .ui-pill::after { inset: -8px -3px; }
+  /* 胶囊和输入框原来只隔 6，往下 8 的外扩有 2px 压在输入框上，命中只剩 42（2026-11-12 实测）。间距放到 8。 */
+  body.remote-ui .chat-window.is-remote-compact .dock-workbar { margin-bottom: 8px; }
   /* 消息下面的「复制」26px：外扩 6px 只有 38，补到 44（左右没有别的可点项）。 */
   body.remote-ui .chat-turn-copy::after { inset: -9px; }
   /* 设置屏的开关 31 高：外扩 6px 差 1px 到 44。 */
@@ -289,6 +294,10 @@ body.remote-ui .chat-window.is-remote-compact .chat-compose-actions > .chat-mode
      段高收到 28（凹槽内边距 2，合 32），命中面改成上下各扩 8px，仍是 44。 */
   body.remote-ui .chat-sidebar-tabs button { min-height: 28px; padding-top: 0; padding-bottom: 0; }
   body.remote-ui .chat-sidebar-tabs button::after { inset: -8px 0; }
+  /* 桌面规则给页签加了 overflow: hidden 做省略号（侧栏能拖到 200 宽），它把上面的 ::after 外扩一起裁掉，
+     手机上真实命中只剩 28～30（2026-11-12 做空用 elementFromPoint 实测，比改前 32 还小）。手机列表至少
+     343 宽，「进行中 / 已完成 / 工作区」和英文都放得下，不需要省略号。 */
+  body.remote-ui .chat-sidebar-tabs button { overflow: visible; }
 
   /* 7M-9 尾：桌面端「⋯」已改 hover 才显（2026-10 用户实拍：常显密密麻麻还挡标题），
      但远程端没有 hover——侧栏 ⋯ 是手机上星标/重命名/归档的唯一入口，必须常显。 */
@@ -721,6 +730,9 @@ body.remote-ui .remote-session-list .chat-sidebar-empty { display: flex; flex-di
 .remote-settings-screen .pswitch-knob { left: 2px; width: 27px; height: 27px; }
 .remote-settings-screen .pswitch.on .pswitch-knob { left: 22px; }
 :where(body.remote-ui) .remote-settings-screen .seg-btn::after { inset: -8px 0; }
+/* .seg-btn 的桌面规则带 overflow: hidden（省略号），会把上面的外扩裁掉，命中只剩 28（2026-11-12 做空实测）。
+   设置屏三个选项都是短词，手机宽度放得下。 */
+:where(body.remote-ui) .remote-settings-screen .seg-btn { overflow: visible; }
 
 /* 懒加载 ChatWindow 期间的占位(7M-1)。整屏同底色 + 一行说明:1.2MB 的 chunk 走
    中继要好几秒,白屏在手机上读起来就是「挂了」。 */
@@ -915,7 +927,19 @@ body.remote-ui .chat-window.is-remote-compact .chat-dock:has(> .lead-gate-card) 
 }
 body.remote-ui:has(.chat-approval-overlay.is-active) .chat-window.is-remote-compact .dock-workbar,
 body.remote-ui .chat-window.is-remote-compact .chat-dock:has(> .lead-gate-card) .dock-workbar {
-  margin-bottom: clamp(0px, calc((var(--app-height, 100dvh) - 560px) * 999), 6px);
+  margin-bottom: clamp(0px, calc((var(--app-height, 100dvh) - 560px) * 999), 8px);
+}
+/* 上面的 overflow: hidden 是为了键盘态把这一排收成 0，但平时也把胶囊 ::after 上下各 8px 的外扩裁掉了，
+   有审批卡或 Lead 卡时胶囊命中只剩 28（2026-11-12 做空实测）。给这一排上下各垫 8px 内边距把外扩包进来，
+   再用等量负外边距抵掉，排版不动；收起时垫子和抵消跟着归零。 */
+body.remote-ui:has(.chat-approval-overlay.is-active) .chat-window.is-remote-compact .dock-workbar,
+body.remote-ui .chat-window.is-remote-compact .chat-dock:has(> .lead-gate-card) .dock-workbar {
+  --dock-hit-room: clamp(0px, calc((var(--app-height, 100dvh) - 560px) * 999), 8px);
+  padding-top: var(--dock-hit-room);
+  padding-bottom: var(--dock-hit-room);
+  margin-top: calc(-1 * var(--dock-hit-room));
+  margin-bottom: calc(clamp(0px, calc((var(--app-height, 100dvh) - 560px) * 999), 8px) - var(--dock-hit-room));
+  max-height: calc(clamp(0px, calc((var(--app-height, 100dvh) - 560px) * 999), 80px) + 2 * var(--dock-hit-room));
 }
 
 /* @ 文件补全弹层贴着输入框往上长（底边离输入框 8px），进度胶囊那一排夹在两者之间、比弹层底边低 2px：

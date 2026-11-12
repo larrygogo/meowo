@@ -3303,6 +3303,10 @@ button.stab {
 /* 独立窗框内内容左缘一条线：最近目录的图标、worktree 卡片的标签、Agent 钮的图标、权限 / 模型的标签都在 x=37
    （外框 24 + 细线 1 + 12），只有路径文字在 35，比正下方的文件夹图标偏左 2px。手机页另有自己的内边距，不套。 */
 body:not(.remote-ui) .ns-picker .ns-input { padding-left: var(--sp-12); }
+/* 目录行（输入框 + 「浏览…」）原来靠内边距撑高，「浏览…」中文 33、英文 31（2026-11-12 做空实测），换语言跟着变。
+   钉成同一档，两个子项撑满行高。 */
+body:not(.remote-ui) .ns-window .ns-dir-row { height: var(--btn-h-lg); }
+body:not(.remote-ui) .ns-window .ns-dir-row > :is(.ns-input, .ns-browse) { box-sizing: border-box; height: 100%; padding-top: 0; padding-bottom: 0; }
 .ns-browse {
   flex: none;
   border: none;
@@ -3722,6 +3726,12 @@ body:not(.remote-ui) .ns-actions .ns-btn { height: var(--btn-h-lg); min-width: 7
 .settings :is(.sbtn, .dd-btn, .ns-input) { box-sizing: border-box; height: var(--btn-h-lg); padding-top: 0; padding-bottom: 0; }
 .settings .seg { box-sizing: border-box; height: var(--btn-h-lg); }
 .settings .seg-btn { padding-top: 0; padding-bottom: 0; }
+/* 引导窗的语言下拉、主题分段，新建会话窗的两个「默认」下拉：同一个病根（靠内边距撑高，中文回退字体行高大），
+   做空实测中文 33 / 29、英文 30 / 26，换语言就换高度。照设置窗钉同一档；新建会话窗的目录框
+  （.ns-picker 里的输入框 + 「浏览…」）是一体的复合控件，另由 .ns-picker 定高，不在这里动。 */
+.ob-set :is(.sbtn, .dd-btn), .ns-window .dd-btn { box-sizing: border-box; height: var(--btn-h-lg); padding-top: 0; padding-bottom: 0; }
+.ob-set .seg { box-sizing: border-box; height: var(--btn-h-lg); }
+.ob-set .seg-btn { padding-top: 0; padding-bottom: 0; }
 /* 下拉菜单的文字与按钮里的文字同一条竖线：按钮是 边 + 12，菜单是 边 + 4（外壳内边距）+ 条目内边距，
    条目左内边距取 8；右侧同理取 6，勾选标记与按钮的箭头右缘对齐。
    实拍 qa-set-dropdown（dpr2）：按钮里「中文」起于 x≈995，菜单项起于 x≈1007，差 6 CSS px。 */
@@ -4163,6 +4173,14 @@ body:not(.remote-ui) .ns-actions .ns-btn { height: var(--btn-h-lg); min-width: 7
 /* 固定阅读宽（对照 Kimi 约 700px）：不跟「对话宽度：铺满」走，铺满时输入框横贯整列、工作区钮孤悬左端（用户实拍「太丑」）。 */
 .nsp-center { flex: none; width: min(680px, 100%); display: flex; flex-direction: column; gap: var(--sp-8); }
 .nsp-hero { display: flex; flex-direction: column; align-items: center; gap: var(--sp-6); margin-bottom: var(--sp-24); }
+/* 窗口矮到 500 以下（leader 实际用的 1000×428）勾上 worktree 后，图标、标题、目录、worktree 设置排在输入框上面，
+   输入框被推到 346–478、发送钮在窗口外（2026-11-12 做空实测）。输入框必须完整可见：收掉 52px 的大图标、
+   收紧标题下方的间距，「新建会话」几个字留着交代这是哪一页。 */
+@media (max-height: 500px) {
+  .nsp { padding-top: var(--sp-16); }
+  .nsp-hero-mark { display: none; }
+  .nsp-hero { margin-bottom: var(--sp-12); }
+}
 /* 外框与图标排布走 .provider-card-icon（AgentAppIcon），这里只定尺寸。 */
 .provider-card-icon.nsp-hero-mark { width: 52px; height: 52px; border-radius: 14px; }
 .nsp-hero-title { margin: var(--sp-6) 0 0; color: var(--cc-text); font-size: 24px; font-weight: 600; line-height: 1.3; letter-spacing: -.01em; }
@@ -6220,13 +6238,24 @@ button.scm-check-name:hover { text-decoration: underline; }
 /* dock 里有待拍板卡时，面板不再浮在它上面，改成排在卡片和胶囊行之间、挤占高度：原先面板从胶囊行
    向上弹，正好盖住卡片的下半张（qa-lead-panel 1280×800：面板 y=436–626，卡片 159–618，后两个选项、
    意见框、「提交」全被盖住），想对着验收清单做决定时看不到选项。挤占之后卡片按既有规则自己缩小、
-   卡内滚动，「提交」在卡片底部的按钮行里始终可见；高度不够时卡片和面板按各自高度的比例一起缩
-   （卡片下限 104px，面板可以缩到 0），输入框不会被挤出窗口（1280×560、620×460 实测输入框完整）。
-   试过让卡片先缩到下限再轮到面板：矮窗里卡片只剩标题和按钮、选项全看不到，不如两边各让一些。
+   卡内滚动，「提交」在卡片底部的按钮行里始终可见；高度不够时谁先让见下面「让位顺序」。
    限高不再读 --dock-panel-room：那是给浮层量的（锚点到标题栏），
    面板进了文档流再读它会自己影响自己。没有待拍板卡时照旧是浮层。 */
-.chat-dock:has(> .lead-gate-card) > .dock-work-anchor { height: auto; min-height: 0; flex-shrink: 1; display: flex; flex-direction: column; align-items: center; }
-.chat-dock:has(> .lead-gate-card) > .dock-work-anchor > .dock-work-panel { position: relative; left: auto; bottom: auto; transform: none; flex: 0 1 auto; min-height: 0; max-height: min(300px, 50vh); }
+.chat-main:not([data-short]) > .chat-dock:has(> .lead-gate-card) > .dock-work-anchor { height: auto; min-height: 0; flex-shrink: 1; display: flex; flex-direction: column; align-items: center; }
+.chat-main:not([data-short]) > .chat-dock:has(> .lead-gate-card) > .dock-work-anchor > .dock-work-panel { position: relative; left: auto; bottom: auto; transform: none; flex: 0 1 auto; min-height: 0; max-height: min(300px, 50vh); }
+/* 让位顺序（2026-11-12 做空复测后改）：上面「卡片和面板按比例一起缩、对话区不设下限」在所有尺寸下都把
+   对话区压到 18px，只露半行被切开的字，看着像渲染坏了；1000×428 下卡片缩到 104、三个选项一个都看不到。
+   现在按要紧程度分先后：拍板的卡片最后让；Lead 面板先让，最少留它的标题行（38px，点一下能收起）；
+   对话区留 3～4 行（最多 88px，按窗口高度递减）。
+   只在主列不矮时这样挤占；矮窗见下一段。 */
+.chat-main:not([data-short]) > .chat-dock:has(> .lead-gate-card) > .dock-work-anchor:has(> .dock-work-panel) { flex-shrink: 8; min-height: calc(38px * var(--cc-ui)); }
+.chat-main:not([data-short]) > .chat-dock:has(> .lead-gate-card) > .dock-work-anchor > .dock-work-panel { min-height: calc(38px * var(--cc-ui)); }
+.chat-main:not([data-short]):has(> .chat-dock > .lead-gate-card):has(> .chat-dock > .dock-work-anchor > .dock-work-panel) > .chat-scroll { min-height: clamp(0px, calc(100vh - 480px), 88px); }
+/* 矮窗（主列不到 580，例如 1000×428）里卡片自己都只放得下标题、一个选项和按钮行，面板挤进来只剩一条没用的
+   标题行、卡片连那一个选项也丢掉（2026-11-12 实测 0/3）。这时面板回到浮层：盖在卡片上看全，关掉卡片原样还在。 */
+/* 矮窗里待拍板卡吃满后对话区只剩 18px，露出半行被切开的字，像渲染坏了（1000×428、620×460、1280×560 实测，
+   开不开面板都一样）。这么窄的一条读不了任何东西，留空比留半行干净。 */
+.chat-main[data-short]:has(> .chat-dock > .lead-gate-card) > .chat-scroll { visibility: hidden; }
 .dock-work-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-10); padding: var(--sp-12) var(--sp-12) 0 var(--sp-16); }
 .dock-work-title { display: inline-flex; align-items: center; gap: var(--sp-6); color: var(--cc-text); font-size: var(--text-sm); font-weight: 600; }
 .dock-work-title-icon { flex: 0 0 auto; color: var(--cc-text-dim); }
