@@ -2056,11 +2056,13 @@ button.stab {
 }
 
 /* 设置搜索框（S-1）：侧栏顶部，过滤 30+ 设置项的分区与行。
-   左内边距与导航项一致：放大镜和下面各项的图标落在同一条竖线上。 */
+   左内边距与导航项一致：放大镜和下面各项的图标落在同一条竖线上。
+   间距取 12 不取 8：放大镜 12px、导航图标 16px，同用 8 时框里的字比导航文字靠左 4px
+   （qa-set-search-focus 实拍，dpr2：占位字起于 x=73，导航文字起于 x=81）。 */
 .side-search {
   display: flex;
   align-items: center;
-  gap: var(--sp-8);
+  gap: var(--sp-12);
   height: 28px;
   flex: none;
   margin: 0 var(--sp-8) var(--sp-8);
@@ -3663,6 +3665,11 @@ body:not(.remote-ui) .ns-actions { position: relative; margin: 0 var(--sp-8) var
 .ext-chip.is-meowo { margin-left: var(--sp-6); vertical-align: 1px; }
 .ext-icon-btn { flex: none; display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-faint); cursor: pointer; }
 .ext-icon-btn:hover { color: var(--cc-text); background: var(--fill-selected); }
+/* 行尾的图标按钮按图标墨迹对齐卡片右缘，不按 26px 的底板：底板里图标左右各空 6px，
+   实拍（dpr1）文件夹墨迹右缘 x=564、「⋯」x=563，同列的开关 / 下拉 / 按钮 / 标签都在 571–572。
+   和上面刷新钮（.usage-bar-head .icon-btn:last-child）同一种收法；悬停底板因此探出内容列几 px。 */
+.ext-meta > .ext-icon-btn:last-child { margin-right: calc(var(--sp-7) * -1); }
+.profile-row > .dd:last-child > .icon-btn { margin-right: calc(var(--sp-8) * -1); }
 
 /* ── 设置窗行内控件同一档：32px（--btn-h-lg）、中性填充、不描边 ──
    此前同一个窗口里量到四种高度（dpr1）：.dd-btn / .sbtn / .seg / .ns-input 靠内边距撑到 33，
