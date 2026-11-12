@@ -2207,12 +2207,23 @@ button.stab {
 .row {
   display: flex;
   align-items: center;
-  gap: var(--sp-16);
+  /* 说明列放不下 200px 时，右侧控件折到下一行并仍贴右缘（控件列的右缘还是一条线）。
+     实拍 settingswin-remote（620 宽，卡内可用 364px）：230px 的「绑定网卡」下拉把说明挤成 100px、3 行；
+     英文同一行 110px、8 行、135px 高，比相邻行高一倍多；英文「Default proxy」94px、3 行。 */
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--sp-8) var(--sp-16);
   padding: var(--sp-12) var(--sp-16);
 }
 .row + .row { border-top: var(--hairline) solid var(--cc-border); }
 .row-icon { flex: none; }
 .row-text { flex: 1; min-width: 0; }
+/* 下限写在 flex-basis 上而不是 min-width：basis 决定「这一行放不放得下」，放不下就折行；
+   折行后说明列独占一行，仍可缩到比 200 窄（min-width: 0），不会把卡片撑出横向滚动。 */
+.row > .row-text { flex: 1 1 200px; }
+/* 只有一句标签、没有说明的行（扩展页的 MCP 行、子开关行）没有要保住的说明宽度：按标签自己的宽度算，
+   否则「playwright」这样十个字母的标签也会把右侧的标签组挤到第二行。 */
+.row > .row-text:not(:has(.row-desc)) { flex-basis: auto; }
 .row-label { font-size: var(--text-sm); font-weight: 500; line-height: 1.4; color: var(--cc-text); }
 .row-desc {
   font-size: var(--text-xs);
@@ -2253,6 +2264,10 @@ button.stab {
 .kbd-combos kbd { min-width: 22px; height: 22px; padding: 0 var(--sp-6); box-sizing: border-box; display: inline-grid; place-items: center; border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-sm); background: var(--fill-hover); color: var(--cc-text-dim); font-family: inherit; font-size: var(--text-2xs); font-weight: 500; line-height: 1; }
 /* 快捷键只是清单：行比开关行收紧，说明用常规字重。 */
 .shortcut-card .row { padding-top: var(--sp-8); padding-bottom: var(--sp-8); }
+/* 清单行只有一句短标签加键帽，没有要保住宽度的说明：不套 .row 的 200px 下限与折行
+   （套上后「在当前内容中查找」的三组键帽被挤到第二行，一列键帽断成两截）。 */
+.shortcut-card .row { flex-wrap: nowrap; }
+.shortcut-card .row > .row-text { flex-basis: 0; }
 .shortcut-card .row-label { font-weight: 400; }
 /* 分组标题：小一号的次要色，左缘与卡片外缘对齐（卡片外的一切文字都对这条线）。 */
 .sec-caption { margin: var(--sp-24) 0 var(--sp-8); font-size: var(--text-xs); font-weight: 600; line-height: 1.4; color: var(--cc-text-dim); }
@@ -2398,7 +2413,7 @@ button.stab {
 /* 非法端口（7S-6）：输入留在框里，边框转红 + 行内说明，不再静默弹回默认值。
    说明行占满一整行，得让这一 .row 可换行——.row 通用规则是 nowrap，复核发现
    flex-basis 100% 又 shrink 0 的说明行会把「端口」标签挤到 0 宽。 */
-.remote-port-row { flex-wrap: wrap; }
+.remote-port-row { flex-wrap: wrap; row-gap: 0; }
 .remote-port-input.is-invalid { border-color: var(--cc-err); }
 .remote-port-err { flex: 0 0 100%; margin-top: var(--sp-4); text-align: right; font-size: var(--text-xs); color: var(--cc-err-text); }
 /* 配对行:二维码钉在行右控件位,不随 .row 通用规则漂移(此前该类无定义,布局全靠
@@ -2703,7 +2718,9 @@ button.stab {
 }
 
 /* 行内滑块（贴纸不透明度）：整行竖排，标签 + 数值在上，滑块铺满在下 */
-.row-col { flex-direction: column; align-items: stretch; gap: var(--sp-12); }
+.row-col { flex-direction: column; flex-wrap: nowrap; justify-content: flex-start; align-items: stretch; gap: var(--sp-12); }
+/* 竖排行里 flex-basis 管的是高度：.row > .row-text 的 200px 下限不能带进来。 */
+.row-col > .row-text { flex: none; }
 /* 表头行名下的子开关（「通知这些事」「自动弹出提醒」下面的四个种类，AlertKindSwitches）：
    缩进一级、常规字重、组内不画分隔线。此前表头与子行标签左缘同为 x=208、字重同为 500、
    分隔线同样通栏（settings-appearance 实拍），表头看上去像一行缺了开关的设置。 */
