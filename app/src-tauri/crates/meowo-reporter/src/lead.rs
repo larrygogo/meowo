@@ -261,6 +261,11 @@ fn needs_leader(i: &Value) -> bool {
     i.get("by").and_then(Value::as_str).is_some_and(|by| by.trim().eq_ignore_ascii_case("leader"))
 }
 
+/// 只差环境实测或授权的原因；空串、非字符串不算。
+fn blocked(i: &Value) -> Option<&str> {
+    i.get("blocked").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty())
+}
+
 fn item_line(i: &Value) -> String {
     let id = i.get("id").map(|v| v.to_string()).unwrap_or_default();
     let check = i.get("check").and_then(Value::as_str).unwrap_or("");
@@ -731,6 +736,16 @@ fn stop(data: &Value, registry: &Path) -> Option<String> {
     let _ = std::fs::write(&state_f, Value::Object(state).to_string());
     let slug = task.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let list: Vec<String> = fail.iter().take(8).map(|i| item_line(i)).collect();
+    // 剩下的全是只差实测的：没有关卡挂着（上面已判过），说明还没向 leader 要授权。攒着不发正是要治的病
+    //（云端 Xbot 第三期：打算攒成一次开机批次，结果一直没发，面板停在 5/18）。照拦，但直接说该做什么。
+    if fail.iter().all(|i| blocked(i).is_some()) {
+        let reason = format!(
+            "[lead] 任务 {slug} 剩下 {} 条都只差环境实测或授权（blocked）：\n{}\n现在就按 lead skill 写 gate.json 发关卡 D，把这几条要的部署、真机或账号一次说清，然后结束本轮。不要等做空或攒批再发。",
+            fail.len(),
+            list.join("\n")
+        );
+        return Some(json!({"decision": "block", "reason": reason}).to_string());
+    }
     let reason = format!(
         "[lead] 任务 {slug} 还在{}阶段，有 {} 条验收未通过（本轮第 {blocks}/{MAX_BLOCKS} 次拦截）：\n{}\n继续推进下一条，并实际验证。在等后台子代理或后台命令回报：直接结束本轮，通知到了会唤醒你。某条做不到、要 leader 决定豁免，或者需要 leader 拍板、授权、亲手操作：现在就按 lead skill 写 gate.json（B 拍板单向门，D 授权或操作，Q 问豁免），然后结束本轮；不要用 AskUserQuestion，也不要自己加 waived 或 by:leader 来绕开拦截。确实卡住了：在 progress.md 写明原因，把 phase 改为 blocked。",
         if phase == "verify" { "验证" } else { "实施" },
@@ -898,6 +913,7 @@ pub fn snapshot_for(cwd: &str, session: Option<&str>) -> Option<LeadTaskDto> {
             passes: i.get("passes") == Some(&Value::Bool(true)),
             waived: waived(i).map(str::to_owned),
             leader: needs_leader(i),
+            blocked: blocked(i).map(str::to_owned),
         })
         .collect();
     Some(LeadTaskDto {

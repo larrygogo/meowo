@@ -934,3 +934,39 @@ fn worktree_session_sees_tasks_in_main_checkout() {
     // 普通仓库（.git 是目录）不受影响
     assert!(main_checkout(&main).is_none());
 }
+
+/// 只差环境实测的条目（blocked）：快照带给面板；剩下的全是这种、又没挂关卡时，提示直接说发关卡 D
+///（2026-11-12：云端 Xbot 第三期 11 条只差 beta 实测，agent 攒着没发关卡 D，面板停在 5/18）。
+#[test]
+fn blocked_items_reach_panel_and_prompt_gate_d() {
+    let e = env();
+    let root = e.d.join("blk");
+    fs::create_dir_all(root.join(".git")).unwrap();
+    let t = make(&root);
+    let prog = t.join("progress.md").to_string_lossy().into_owned();
+    claim_as(&e, &root, "A", "Edit", json!({"file_path": prog}));
+    let tr = transcript(&root, "b", "继续做", &[("Edit", json!({"file_path": prog}))]);
+    let work = json!({"session_id": "A", "transcript_path": tr});
+    let write_items = |items: Value| fs::write(t.join("acceptance.json"), items.to_string()).unwrap();
+
+    write_items(json!([{"id": 1, "check": "a", "passes": true},
+                       {"id": 2, "check": "beta 实发", "passes": false, "blocked": "要 beta 开机"},
+                       {"id": 3, "check": "c", "passes": false, "blocked": "  "},
+                       {"id": 4, "check": "d", "passes": false, "blocked": 7}]));
+    let snap = snapshot(&root.to_string_lossy()).unwrap();
+    let got: Vec<Option<&str>> = snap.checks.iter().map(|c| c.blocked.as_deref()).collect();
+    assert_eq!(got, vec![None, Some("要 beta 开机"), None, None]);
+    // 混有不是 blocked 的未通过项：照旧的提示
+    let reason = call(&e, "stop", work.clone()).unwrap()["reason"].as_str().unwrap().to_owned();
+    assert!(!reason.contains("发关卡 D，把这几条"), "{reason}");
+    // 全是 blocked：照拦，提示直接说发关卡 D
+    write_items(json!([{"id": 1, "check": "a", "passes": true},
+                       {"id": 2, "check": "beta 实发", "passes": false, "blocked": "要 beta 开机"}]));
+    let v = call(&e, "stop", work.clone()).unwrap();
+    assert_eq!(v["decision"], "block");
+    let reason = v["reason"].as_str().unwrap();
+    assert!(reason.contains("发关卡 D") && reason.contains("#2 beta 实发"), "{reason}");
+    // 关卡 D 挂上之后放行（在等 leader）
+    write_gate(&t, "D-1", "D", "pending");
+    assert!(!blocked(&e, work.clone()));
+}

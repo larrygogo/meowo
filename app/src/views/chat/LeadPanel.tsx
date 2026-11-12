@@ -15,7 +15,7 @@ import { ChatMarkdown } from "../ChatMarkdown";
 import { ApprovalCard } from "./ApprovalCard";
 import { useTablist } from "../useTablist";
 import { Icon } from "../../icons/Icon";
-import { icCircle, icFlag, icMinus } from "../../icons/glyphs.chat";
+import { icCircle, icClock, icFlag, icMinus } from "../../icons/glyphs.chat";
 import { icCheck } from "../../icons/glyphs";
 
 /// 轮询间隔：任务文件由 agent 随手改写，没有推送通道；读的是本地几个小文件，开销可忽略。
@@ -60,11 +60,17 @@ export function leadProgress(task: LeadTaskDto): { passed: number; total: number
   return { passed: live.filter((c) => c.passes).length, total: live.length };
 }
 
-/// 排序权重：还要 agent 做的 → 等 leader 验收的 → 已通过 → 已豁免。同组保持原顺序。
+/// 排序权重：还要 agent 做的 → 只差实测、等你授权的 → 等 leader 验收的 → 已通过 → 已豁免。同组保持原顺序。
 function checkRank(c: LeadTaskDto["checks"][number]): number {
-  if (c.passes) return 2;
-  if (c.waived) return 3;
-  return c.leader ? 1 : 0;
+  if (c.passes) return 3;
+  if (c.waived) return 4;
+  if (c.leader) return 2;
+  return c.blocked ? 1 : 0;
+}
+
+/// 只差环境实测或授权的条目数（已通过、已豁免的不算）。
+export function leadBlockedCount(task: LeadTaskDto): number {
+  return task.checks.filter((c) => !c.passes && !c.waived && c.blocked).length;
 }
 
 function LeadIcon({ className }: { className: string }) {
@@ -107,6 +113,7 @@ const CHECK_ICONS = {
   pass: <Icon glyph={icCheck} size={14} />,
   pending: <Icon glyph={icCircle} size={14} />,
   waived: <Icon glyph={icMinus} size={14} />,
+  blocked: <Icon glyph={icClock} size={14} />,
 };
 
 const LEAD_SECTIONS = ["checks", "spec", "decisions", "progress"] as const;
@@ -175,6 +182,9 @@ export const LeadPanel = memo(function LeadPanel({ task, onClose }: { task: Lead
   const checks = [...task.checks].sort((a, b) => checkRank(a) - checkRank(b));
   const title = leadTaskTitle(task);
   const latest = leadLatest(task.progress);
+  // 「5/18」只数实测过的。代码写完、只差实测的条目单独报个数，免得 leader 以为只做了三成
+  //（2026-11-12 leader 看云端 Xbot 第三期：「为什么都已经到了验证阶段进度却才 5/18」）。
+  const blockedCount = leadBlockedCount(task);
   return (
     <div className="dock-work-panel panel-lead">
       <div className="dock-work-head">
@@ -183,6 +193,7 @@ export const LeadPanel = memo(function LeadPanel({ task, onClose }: { task: Lead
           <span className="lead-title-text">{title}</span>
         </span>
         <span className="lead-head-end">
+          {blockedCount > 0 && <span className="lead-blocked-count">{t.chat.leadBlockedCount(blockedCount)}</span>}
           {total > 0 && (
             <span className="lead-progress" role="progressbar" aria-valuemin={0} aria-valuemax={total} aria-valuenow={passed}
               aria-label={t.chat.leadChecksProgress(passed, total)}>
@@ -212,8 +223,9 @@ export const LeadPanel = memo(function LeadPanel({ task, onClose }: { task: Lead
             : (
               <ul className="lead-checks">
                 {checks.map((c) => {
-                  const state = c.passes ? "pass" : c.waived ? "waived" : "pending";
-                  const label = state === "pass" ? t.chat.leadCheckPass : state === "waived" ? t.chat.leadCheckWaived : t.chat.leadCheckPending;
+                  const state = c.passes ? "pass" : c.waived ? "waived" : c.blocked ? "blocked" : "pending";
+                  const label = state === "pass" ? t.chat.leadCheckPass : state === "waived" ? t.chat.leadCheckWaived
+                    : state === "blocked" ? t.chat.leadCheckBlocked : t.chat.leadCheckPending;
                   return (
                     // 展开靠 <button aria-expanded>：原先是 <li onClick>，键盘到不了、读屏不知道能展开，
                     // 截断的全文键盘用户看不到（调研 i11）。图标 role="img" 才让 aria-label 生效。
@@ -227,6 +239,7 @@ ${t.chat.leadCheckWaivedReason(c.waived ?? "")}` : c.check}
                         <span className="lead-check-body">
                           <span className="lead-check-text">{c.check}</span>
                           {state === "waived" && <span className="lead-check-note">{t.chat.leadCheckWaivedReason(c.waived ?? "")}</span>}
+                          {state === "blocked" && <span className="lead-check-note is-blocked">{t.chat.leadCheckBlockedReason(c.blocked ?? "")}</span>}
                           {!c.waived && !c.passes && c.leader && <span className="lead-check-note is-leader">{t.chat.leadCheckLeader}</span>}
                         </span>
                       </button>

@@ -5682,6 +5682,10 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .lead-check-body { min-width: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
 .lead-check-note { color: var(--cc-text-faint); font-size: var(--text-xs); overflow-wrap: anywhere; }
 .lead-check-note.is-leader { color: var(--cc-text-dim); }
+/* 待实测：代码写完、只差环境实测或授权。和「还要做的」分开，图标是时钟，说明用正文弱色写清原因。 */
+.lead-check.is-blocked .lead-check-mark { color: var(--cc-text-dim); }
+.lead-check-note.is-blocked { color: var(--cc-text-dim); }
+.lead-blocked-count { color: var(--cc-text-dim); font-size: var(--text-xs); white-space: nowrap; }
 .lead-check-text { min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
 .lead-check.is-open .lead-check-text { display: block; -webkit-line-clamp: unset; }
 /* 卡片正文区 .chat-approval-copy 是限高（44vh）的纵向 flex 列，子项默认可收缩：摘要带
