@@ -495,7 +495,7 @@ const BACKGROUND_BASH_STALE_SECS: i64 = 45 * 60;
 ///   （2f8ca755 实测：只认 user 行时 25 个后台任务全都「从未回报」）。
 /// - 主动收尾：TaskOutput/TaskStop 调用（取过结果就不再发通知，见 memory cc-taskoutput-eats-notification）。
 ///
-/// 认不出的形态当作没有后台任务，回到原来的拦法。
+/// 常驻服务（is_service）不算。要求了后台、返回结构认不出时按 tool_use id 等通知，偏向放行。
 fn background_pending(tail: &str, now: i64) -> bool {
     struct Launch {
         task: Option<String>,
@@ -506,6 +506,8 @@ fn background_pending(tail: &str, now: i64) -> bool {
     let mut launched: Vec<Launch> = Vec::new();
     let mut resolved = std::collections::BTreeSet::new();
     let mut workflow_calls = std::collections::BTreeSet::new();
+    // 要求后台跑的 Agent / Bash 调用：tool_use id → 是不是常驻服务
+    let mut bg_calls: BTreeMap<String, bool> = BTreeMap::new();
     let resolve = |content: Option<&str>, resolved: &mut std::collections::BTreeSet<String>| {
         if let Some((task, tool_use)) = content.and_then(notified_ids) {
             resolved.extend(task.into_iter().chain(tool_use).map(str::to_owned));
@@ -527,20 +529,26 @@ fn background_pending(tail: &str, now: i64) -> bool {
                 }
                 let at = o.get("timestamp").and_then(Value::as_str).and_then(parse_ts);
                 let str_of = |v: Option<&Value>| v.and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_owned);
-                if let Some(r) = o.get("toolUseResult") {
-                    if r.get("status").and_then(Value::as_str) == Some("async_launched") {
-                        if let Some(id) = str_of(r.get("agentId")) {
-                            launched.push(Launch { task: Some(id), tool_use: None, at, ttl: BACKGROUND_STALE_SECS });
-                        }
-                    } else if let Some(id) = str_of(r.get("backgroundTaskId")) {
-                        launched.push(Launch { task: Some(id), tool_use: None, at, ttl: BACKGROUND_BASH_STALE_SECS });
-                    }
+                let res = match o.pointer("/message/content") {
+                    Some(Value::Array(arr)) => arr.iter().find(|x| x.get("type").and_then(Value::as_str) == Some("tool_result")),
+                    _ => None,
+                };
+                let tool_use = str_of(res.and_then(|r| r.get("tool_use_id")));
+                if res.and_then(|r| r.get("is_error")).and_then(Value::as_bool) == Some(true) {
+                    continue; // 调用失败，什么也没启动
                 }
-                // Workflow：调用没报错就算启动了，按 tool_use id 等它的通知
-                let Some(Value::Array(arr)) = o.pointer("/message/content") else { continue };
-                for r in arr.iter().filter(|x| x.get("type").and_then(Value::as_str) == Some("tool_result")) {
-                    let Some(id) = str_of(r.get("tool_use_id")) else { continue };
-                    if workflow_calls.contains(&id) && r.get("is_error").and_then(Value::as_bool) != Some(true) {
+                let r = o.get("toolUseResult");
+                let service = tool_use.as_ref().and_then(|id| bg_calls.get(id)).copied().unwrap_or(false);
+                if let Some(id) = r.filter(|r| r.get("status").and_then(Value::as_str) == Some("async_launched")).and_then(|r| str_of(r.get("agentId"))) {
+                    launched.push(Launch { task: Some(id), tool_use, at, ttl: BACKGROUND_STALE_SECS });
+                } else if let Some(id) = r.and_then(|r| str_of(r.get("backgroundTaskId"))) {
+                    if !service {
+                        launched.push(Launch { task: Some(id), tool_use, at, ttl: BACKGROUND_BASH_STALE_SECS });
+                    }
+                } else if let Some(id) = tool_use.filter(|id| workflow_calls.contains(id) || bg_calls.contains_key(id)) {
+                    // Workflow，或者要求了后台、返回结构却认不出（CC 改版）：按 tool_use id 等通知。认不出时
+                    // 算「在等」，与 SPEC「认不出就放行」一致（做空第 2 轮）。
+                    if !service {
                         launched.push(Launch { task: None, tool_use: Some(id), at, ttl: BACKGROUND_STALE_SECS });
                     }
                 }
@@ -552,6 +560,14 @@ fn background_pending(tail: &str, now: i64) -> bool {
                         Some("Workflow") => {
                             if let Some(id) = c.get("id").and_then(Value::as_str) {
                                 workflow_calls.insert(id.to_owned());
+                            }
+                        }
+                        Some(name @ ("Agent" | "Task" | "Bash" | "PowerShell"))
+                            if c.pointer("/input/run_in_background").and_then(Value::as_bool) == Some(true) =>
+                        {
+                            if let Some(id) = c.get("id").and_then(Value::as_str) {
+                                let cmd = c.pointer("/input/command").and_then(Value::as_str).unwrap_or("");
+                                bg_calls.insert(id.to_owned(), name != "Agent" && name != "Task" && is_service(cmd));
                             }
                         }
                         Some("TaskOutput" | "TaskStop") => {
@@ -573,6 +589,17 @@ fn background_pending(tail: &str, now: i64) -> bool {
         let done = [&l.task, &l.tool_use].into_iter().flatten().any(|id| resolved.contains(id));
         !done && l.at.is_none_or(|t| now - t < l.ttl)
     })
+}
+
+/// 后台命令是不是常驻服务（dev server、静态服务、watch）。服务永远不回报，agent 也不是在等它：算进
+/// 「在等」的话，起一个预览服务 hook 就失效 45 分钟，而且没有通知会来唤醒 agent（做空第 2 轮：历史 412 次
+/// 后台 Bash 里有 72 次是服务）。按词元判，`vitest` 不能被 `vite` 误伤。
+fn is_service(cmd: &str) -> bool {
+    let lower = cmd.to_ascii_lowercase();
+    let words: Vec<&str> = lower.split(|c: char| c.is_whitespace() || ";&|()".contains(c)).filter(|w| !w.is_empty()).collect();
+    let pair = |a: &str, b: &str| words.windows(2).any(|w| w[0] == a && w[1] == b);
+    words.iter().any(|w| matches!(*w, "serve" | "http.server" | "vite" | "preview" | "--watch" | "watch" | "live-server"))
+        || ["tauri", "run", "pnpm", "yarn", "next", "astro", "bun"].iter().any(|a| pair(a, "dev"))
 }
 
 /// 通知正文 `<task-notification>\n<task-id>X</task-id>\n<tool-use-id>Y</tool-use-id>…` 里的 (X, Y)；

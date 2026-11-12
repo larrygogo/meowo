@@ -844,6 +844,24 @@ fn background_work_pending_does_not_block() {
     assert!(!blocked(&e, write("wf", &[&user, &edit, &wf_call, &wf_ok])));
     assert!(blocked(&e, write("wf-done", &[&user, &edit, &wf_call, &wf_ok, &wf_done])));
     assert!(blocked(&e, write("wf-err", &[&user, &edit, &wf_call, &wf_err])));
+    // 常驻服务不算在等：起了 dev server 再停下，照常拦（做空第 2 轮）
+    let bg_cmd = |id: &str, cmd: &str| json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": id, "name": "Bash",
+        "input": {"command": cmd, "run_in_background": true}}]}});
+    let bg_res = |id: &str, task: &str| json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": id, "content": "bg"}]},
+        "toolUseResult": {"backgroundTaskId": task}});
+    for cmd in ["cd app && bun run tauri dev", "bunx serve dist -l 5173", "python -m http.server 8000", "npx vite --port 3000"] {
+        assert!(blocked(&e, write("svc", &[&user, &edit, &bg_cmd("toolu_s", cmd), &bg_res("toolu_s", "bs")])), "{cmd}");
+    }
+    for cmd in ["cargo test -p meowo-reporter", "bunx vitest run src/a.test.ts", "node e2e/run.mjs"] {
+        assert!(!blocked(&e, write("job", &[&user, &edit, &bg_cmd("toolu_j", cmd), &bg_res("toolu_j", "bj")])), "{cmd}");
+    }
+    // 要求了后台、返回结构认不出（CC 改版）：按 tool_use id 等通知，偏向放行；通知到了照拦
+    let unknown = json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_u", "content": "?"}]}, "toolUseResult": {"newShape": 1}});
+    let agent_bg = json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_u", "name": "Agent", "input": {"prompt": "x", "run_in_background": true}}]}});
+    assert!(!blocked(&e, write("unknown", &[&user, &edit, &agent_bg, &unknown])));
+    let unknown_done = json!({"type": "user", "origin": {"kind": "task-notification"}, "message": {"content": "<task-notification>
+<tool-use-id>toolu_u</tool-use-id>"}});
+    assert!(blocked(&e, write("unknown-done", &[&user, &edit, &agent_bg, &unknown, &unknown_done])));
     // 用户插话之前起的子代理还在跑：照样算在等（不只看本轮）
     assert!(!blocked(&e, write("cross-turn", &[&agent_launch, &user, &edit])));
     // TaskOutput 取过结果、TaskStop 停掉的：不会再有通知，不算在等
