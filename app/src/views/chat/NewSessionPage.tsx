@@ -9,6 +9,7 @@ import { fmtShortAgo } from "../sticker/helpers";
 import { agentAssets, tintStyle } from "../../providers";
 import { normalizePath, pathKey } from "../../paths";
 import { PillSelect } from "./PillSelect";
+import { focusAfterRemoval } from "./focusAfterRemoval";
 import { AgentAppIcon } from "./AgentAppIcon";
 
 function ShieldIcon() {
@@ -166,8 +167,12 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched, onOpenSession
               {attachments.map((file) => (
                 <div className={"chat-attachment" + (file.image ? " is-image" : "")} key={file.path} data-tip={file.path}>
                   {file.image ? <ImageRef path={file.path} /> : <span className="chat-file-name">{file.name}</span>}
-                  <button type="button" aria-label={`${t.chat.removeAttachment} ${file.name}`} disabled={busy}
-                    onClick={() => setAttachments((items) => items.filter((item) => item.path !== file.path))}>×</button>
+                  <button type="button" data-attachment-remove="" aria-label={`${t.chat.removeAttachment} ${file.name}`} disabled={busy}
+                    onClick={(event) => {
+                      // 同对话页 composer（走查 C-10 的兄弟场景）：焦点交给下一个「×」，没有了回输入框。
+                      focusAfterRemoval(event.currentTarget, { list: ".chat-attachments", item: "[data-attachment-remove]", fallback: () => textRef.current });
+                      setAttachments((items) => items.filter((item) => item.path !== file.path));
+                    }}>×</button>
                 </div>
               ))}
             </div>

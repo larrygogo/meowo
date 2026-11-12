@@ -300,7 +300,8 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "lead/gate_missing", exact: true, zh: "关卡已经不在了", en: "This gate no longer exists" },
   { m: "lead/gate_invalid", exact: true, zh: "关卡文件格式不对", en: "The gate file is malformed" },
   { m: "lead/gate_changed", exact: true, zh: "关卡已经更新，请看最新的卡片", en: "The gate has changed; check the latest card" },
-  { m: "lead/gate_bad_choice", exact: true, zh: "这个选项不属于当前关卡，请刷新后重选", en: "That option doesn't belong to this gate; refresh and pick again" },
+  // 卡片会在报这个错时自己重读关卡（LeadGateCard 的 STALE_GATE），不叫人去找对话窗里没有的「刷新」（走查 C-11）。
+  { m: "lead/gate_bad_choice", exact: true, zh: "选项不属于当前关卡，已重新读取，请重选", en: "That option isn't part of this gate. It was reloaded, so pick again." },
   { m: "lead/gate_closed", exact: true, zh: "这个关卡已经回答过了", en: "This gate has already been answered" },
   // ── 窗口 ──
   { m: "创建对话窗口失败", tail: true, zh: "打开对话窗口失败", en: "Couldn't open the chat window" },

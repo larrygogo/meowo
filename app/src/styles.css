@@ -5232,10 +5232,11 @@ button.scm-check-name:hover { text-decoration: underline; }
    不显式压回来它会比同行按钮矮一截。 */
 .chat-approval-actions-side .chat-attention-dismiss.is-inline { height: calc(var(--btn-h-lg) * var(--cc-ui)); margin-right: 0; padding: 0 var(--sp-11); font-size: var(--text-sm); }
 .chat-approval button { display: inline-flex; align-items: center; gap: var(--sp-6); height: calc(var(--btn-h-lg) * var(--cc-ui)); padding: 0 var(--sp-12); border: var(--hairline) solid transparent; border-radius: var(--radius-md); color: var(--cc-text); background: var(--fill-selected); font-size: var(--text-sm); cursor: pointer; white-space: nowrap; }
-.chat-approval button:hover:not(:disabled) { background: var(--fill-selected-hover); }
-.chat-approval button:disabled { opacity: .55; cursor: default; }
+.chat-approval button:hover:not(:disabled, [aria-disabled="true"]) { background: var(--fill-selected-hover); }
+/* 结算在途的按钮用 aria-disabled（焦点不被踢走，失败后可原地重按，走查 C-3），长相同 disabled。 */
+.chat-approval button:is(:disabled, [aria-disabled="true"]) { opacity: .55; cursor: default; }
 /* 主按钮的禁用态不靠半透明：青柠打五五折是一块发闷的橄榄绿。退成中性底 + 弱字，一眼读出「还不能点」。 */
-.chat-approval button.btn-primary:disabled { opacity: 1; background: var(--fill-selected); color: var(--cc-text-faint); }
+.chat-approval button.btn-primary:is(:disabled, [aria-disabled="true"]) { opacity: 1; background: var(--fill-selected); color: var(--cc-text-faint); }
 /* 按钮里的快捷键徽章。aria-hidden 在 JSX 那边加了：它是给眼睛的提示，不该混进
    按钮的可访问名（屏幕阅读器用户有自己的导航方式，读出「拒绝 Esc」只是噪音）。 */
 .chat-approval kbd { padding: 0 var(--sp-5); border-radius: var(--radius-sm); background: var(--fill-selected); color: var(--cc-text-dim); font: var(--text-2xs)/var(--leading-body) inherit; }
@@ -5954,7 +5955,9 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 /* 模型钮与发送钮紧挨成一组（对照 Kimi：模型下拉锚在发送钮左侧 4px）；两者都没有时发送钮自己靠右。 */
 .chat-compose-actions > .chat-model-select + .chat-send-button { margin-left: calc(var(--sp-4) - var(--sp-8)); }
 .chat-compose-actions:not(:has(> .chat-context, > .chat-model-select)) > .chat-send-button:not(.chat-send-button ~ .chat-send-button) { margin-left: auto; }
-.chat-compose .chat-attach-button:hover { background: var(--fill-selected); }
+.chat-compose .chat-attach-button:hover:not(:disabled) { background: var(--fill-selected); }
+/* 输入框被锁时「+」一并置灰（与模型/模式胶囊的禁用态同一档 .8 弱化之外再降一点：它没有文字，只剩图标）。 */
+.chat-compose .chat-attach-button:disabled { opacity: .5; cursor: default; }
 /* min-width:0 + ellipsis：缩放到上限时动作行容量临界，提示文字（「Enter 发送…」）横向
    截断让位，而不是把发送钮顶出 composer（同 .chat-model-label 的既有范式）。 */
 .chat-compose-hint { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cc-text-faint); font-size: var(--text-2xs); }
@@ -5971,9 +5974,10 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
   background: var(--cc-accent);
   transition: background var(--dur-fast) var(--ease-in-out), transform var(--dur-fast) var(--ease-out);
 }
-.chat-compose .chat-send-button:hover:not(:disabled) { background: var(--cc-accent-dim); }
-.chat-compose .chat-send-button:active:not(:disabled) { transform: scale(.94); }
-.chat-compose .chat-send-button:disabled { color: var(--cc-text-faint); background: var(--fill-selected); opacity: 1; }
+.chat-compose .chat-send-button:hover:not(:disabled, [aria-disabled="true"]) { background: var(--cc-accent-dim); }
+.chat-compose .chat-send-button:active:not(:disabled, [aria-disabled="true"]) { transform: scale(.94); }
+/* 发送中 / 中断中用 aria-disabled（焦点不被踢走），长相同 disabled。 */
+.chat-compose .chat-send-button:is(:disabled, [aria-disabled="true"]) { color: var(--cc-text-faint); background: var(--fill-selected); opacity: 1; }
 /* 远程有草稿时的独立停止钮(触屏无 Ctrl+Enter,主钮此时是发送):小一号,居于主钮左侧。 */
 .chat-compose .chat-send-button.chat-stop-secondary { width: 32px; height: 32px; }
 /* 停止态：主钮原地变成停止键，不换位置也不换形状——回合运行中输入框是空的时，右下角
@@ -5983,7 +5987,7 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
    还行，深色主题 --cc-text 是近白，混出来是一坨粉扑扑的淡粉（用户实拍反馈「很丑」）。 */
 /* 停止键不是主动作，退回中性反相（正文色底），不占青柠；悬停才亮出中止红，图标取卡面色保证对比度。 */
 .chat-compose .chat-send-button.is-stop { background: var(--cc-text); color: var(--cc-panel-raised); }
-.chat-compose .chat-send-button.is-stop:hover:not(:disabled) { background: var(--cc-err-vivid); color: var(--cc-panel-raised); }
+.chat-compose .chat-send-button.is-stop:hover:not(:disabled, [aria-disabled="true"]) { background: var(--cc-err-vivid); color: var(--cc-panel-raised); }
 /* 就地接管按钮：错误文案旁边直接给出出路，不必跨页去终端页找。
    .chat-compose 前缀压过 `.chat-compose button` 的 accent 皮肤：
    结束外部进程是破坏性动作，红描边小药丸，不该披发送键的大绿皮。 */
@@ -6163,8 +6167,8 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 /* 无描边（实拍反馈「不要圆框」）：静态是纯文字，hover 的胶囊底自己就是可点暗示。
    留 1px 透明边占位，hover 出现底色时尺寸不跳。 */
 :is(.chat-compose, .nsp-composer) .chat-model-button { display: inline-flex; align-items: center; gap: var(--sp-4); height: calc(32px * var(--cc-ui)); min-height: 0; max-width: 100%; padding: 0 var(--sp-10); border: var(--hairline) solid transparent; border-radius: var(--radius-md); color: var(--cc-text-dim); background: transparent; font-size: var(--text-base); cursor: pointer; }
-:is(.chat-compose, .nsp-composer) .chat-model-button:hover:not(:disabled) { color: var(--cc-text); background: var(--fill-hover); }
-:is(.chat-compose, .nsp-composer) .chat-model-button:disabled { cursor: default; opacity: .8; }
+:is(.chat-compose, .nsp-composer) .chat-model-button:hover:not(:disabled, [aria-disabled="true"]) { color: var(--cc-text); background: var(--fill-hover); }
+:is(.chat-compose, .nsp-composer) .chat-model-button:is(:disabled, [aria-disabled="true"]) { cursor: default; opacity: .8; }
 .chat-model-icon, .chat-mode-icon { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; color: var(--cc-text-dim); }
 /* 上下文用量：可见区域只留高亮圆环，详情在 tooltip。60% 起转黄、85% 起转红。 */
 .chat-context { display: inline-flex; align-items: center; flex: 0 0 auto; color: var(--cc-text-faint); }
@@ -6220,7 +6224,7 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .chat-model-effort-seg button { padding: var(--sp-4) var(--sp-9); border: 0; border-radius: calc(var(--radius-md) - 2px); background: transparent; color: var(--cc-text-dim); font-size: var(--text-sm); cursor: pointer; }
 .chat-model-effort-seg button:hover:not(:disabled) { color: var(--cc-text); }
 .chat-model-effort-seg button.is-active { background: var(--cc-panel-raised); color: var(--cc-text); box-shadow: var(--shadow-sm); }
-.chat-model-effort-seg button:disabled { cursor: progress; }
+.chat-model-effort-seg button:is(:disabled, [aria-disabled="true"]) { cursor: progress; }
 /* 模型钮里的档位用强调色，与模型名一眼分开（Kimi 同款）。 */
 .chat-model-pill-effort { color: var(--cc-text-dim); }
 /* 模型钮照 Kimi 的 model-pill：全圆角、正文色、中等字重；菜单开着时铺一层强调色浅底、箭头朝上——
@@ -6238,8 +6242,9 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 /* 「+」菜单：图标 + 名字 + 一行说明，与权限菜单同款项（对照 Kimi 的 addMenu）。 */
 .chat-add-menu { min-width: 240px; }
 .chat-add-ico { flex: 0 0 auto; width: 20px; height: 20px; display: grid; place-items: center; color: var(--cc-text-dim); }
-.chat-model-item:disabled { opacity: .5; cursor: default; }
-.chat-model-item:disabled:hover { background: transparent; }
+/* aria-disabled 与 disabled 同一副长相：运行中不可选的模型/档位要能被方向键走到、读屏念到（走查 C-8），故不用 disabled。 */
+.chat-model-item:is(:disabled, [aria-disabled="true"]) { opacity: .5; cursor: default; }
+.chat-model-item:is(:disabled, [aria-disabled="true"]):hover { background: transparent; }
 /* 「切换引擎」分组（跨 provider 切换）：分组标题 + agent 行（可展开二级模型档）。 */
 .chat-model-group { margin: var(--sp-6) 0 var(--sp-2); padding: var(--sp-4) var(--sp-11) 0; border-top: var(--hairline) solid var(--cc-border); color: var(--cc-text-faint); font-size: var(--text-xs); font-weight: 500; }
 .chat-switch-agent-ico { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 16px; }
