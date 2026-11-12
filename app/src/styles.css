@@ -2799,7 +2799,9 @@ button.stab {
   text-decoration-color: var(--link-line);
 }
 .about-foot a:hover, .about-foot button:hover { text-decoration-color: currentColor; }
-.about-foot .dot { color: var(--cc-text-faint); }
+/* 分隔点用 CSS 画，不用字体里的间隔号：「·」的墨迹位置随字体走，实拍（dpr2）中线比两侧文字低 5.5px、
+   只有 4px 大，浅色下落在链接下划线的高度，像句号。 */
+.about-foot .dot { flex: none; width: var(--sp-3); height: var(--sp-3); border-radius: var(--radius-full); background: var(--cc-text-faint); }
 .about-foot .copy {
   margin-left: auto;
   font-size: var(--text-xs);

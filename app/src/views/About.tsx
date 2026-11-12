@@ -1034,7 +1034,7 @@ export function AboutSection({
         >
           {t.about.feedback}
         </button>
-        <span className="dot">·</span>
+        <span className="dot" aria-hidden="true" />
         <button
           type="button"
           onClick={() => openExt(REPO_URL + "/releases")}
