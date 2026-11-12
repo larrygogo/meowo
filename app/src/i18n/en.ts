@@ -759,6 +759,8 @@ export const en: Dict = {
     leadGateNoteRequired: "What should change? (required)",
     leadGateNoteOptional: "Add a note (optional)",
     leadGateAddNote: "Add a note",
+    leadGateRemoveNote: "Drop the note",
+    leadPhaseOther: (phase: string) => (phase === "unknown" ? "Stage unknown" : `Stage: ${phase}`),
     leadGateCancel: "Cancel",
     leadGateSend: "Send",
     leadStagesLabel: "Workflow stages",

@@ -827,6 +827,8 @@ export const zh = {
     leadGateNoteRequired: "写下要改什么（必填）",
     leadGateNoteOptional: "附加意见（可选）",
     leadGateAddNote: "附加意见",
+    leadGateRemoveNote: "不写意见了",
+    leadPhaseOther: (phase: string) => (phase === "unknown" ? "阶段未知" : `阶段：${phase}`),
     leadGateCancel: "取消",
     leadGateSend: "发送",
     leadStagesLabel: "流程阶段",

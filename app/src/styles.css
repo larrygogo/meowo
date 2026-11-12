@@ -6045,7 +6045,7 @@ button.scm-check-name:hover { text-decoration: underline; }
 .lead-stage.is-done { color: var(--cc-text-dim); }
 .lead-stage.is-current { color: var(--cc-text); font-weight: 600; }
 .lead-stage.is-current::after { content: ""; order: -1; width: 6px; height: 6px; margin-right: var(--sp-4); border-radius: 50%; background: var(--cc-accent); }
-.lead-stage-flag { flex: 0 0 auto; padding: 0 var(--sp-6); border-radius: var(--radius-full); font-size: var(--text-2xs); line-height: var(--leading-body); }
+.lead-stage-flag { flex: 0 0 auto; padding: 0 var(--sp-6); border-radius: var(--radius-full); background: var(--fill-selected); color: var(--cc-text-dim); font-size: var(--text-2xs); line-height: var(--leading-body); }
 .lead-stage-flag.is-blocked { background: color-mix(in srgb, var(--cc-err) 14%, transparent); color: var(--cc-fail-text); }
 .lead-latest { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cc-text-dim); font-size: var(--text-xs); line-height: var(--leading-normal); }
 .lead-latest-label { color: var(--cc-text-faint); }

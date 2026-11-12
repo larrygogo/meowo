@@ -123,11 +123,22 @@ export function leadTaskTitle(task: Pick<LeadTaskDto, "spec" | "slug">): string 
   return title || task.slug;
 }
 
-/// agent 最近在做什么：progress.md 最后一条非空的行（去掉列表符号），跳过 `phase:` 行和标题行。
+/// agent 最近在做什么：progress.md 最后一条**顶层**的行（去掉列表符号和勾选框）。缩进的子条目是上一条的细节，
+/// 不是「最近在做什么」；`phase:`、标题、代码块围栏、表格行也跳过（做空审查：曾显示成子条目、``` 和 |---|）。
 export function leadLatest(progress: string): string | null {
-  const lines = progress.split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !/^phase\s*:/i.test(l) && !l.startsWith("#"));
-  const last = lines.at(-1);
-  return last ? last.replace(/^[-*+]\s+/, "").replace(/^\d+\.\s+/, "") : null;
+  let fenced = false;
+  const lines = progress.split(/\r?\n/).filter((l) => {
+    const t = l.trim();
+    if (t.startsWith("```")) {
+      fenced = !fenced;
+      return false;
+    }
+    return !fenced && t && !/^\s/.test(l) && !/^phase\s*:/i.test(t) && !t.startsWith("#") && !t.startsWith("|");
+  });
+  const last = lines.at(-1)?.trim();
+  if (!last) return null;
+  const text = last.replace(/^[-*+]\s+/, "").replace(/^\d+\.\s+/, "").replace(/^\[[ xX]\]\s+/, "").trim();
+  return text || null;
 }
 
 function LeadStages({ phase }: { phase: string }) {
@@ -147,6 +158,8 @@ function LeadStages({ phase }: { phase: string }) {
         })}
       </ol>
       {phase === "blocked" && <span className="lead-stage-flag is-blocked">{t.chat.leadPhase("blocked")}</span>}
+      {/* 解析不到、或 agent 写了约定外的阶段名：六段全灰会被看成「还没开始」，标出来（做空审查）。 */}
+      {phase !== "blocked" && at < 0 && <span className="lead-stage-flag">{t.chat.leadPhaseOther(phase)}</span>}
     </div>
   );
 }
@@ -291,15 +304,20 @@ export function LeadGateCard({ cwd, gate, onAnswered }: { cwd: string; gate: Lea
   useEffect(() => {
     if (showNote) noteRef.current?.focus({ preventScroll: true });
   }, [showNote]);
+  // 正在提交的那一项：一步提交的按钮也要显示「提交中」，手机中继慢时不然像没点上（做空审查）。
+  const [sending, setSending] = useState<string | null>(null);
   const send = (id: string) => {
     const want = choices.find((c) => c.id === id);
     if (busy || (want?.requiresNote && !note.trim())) return;
     setBusy(true);
+    setSending(id);
     setError(null);
-    answerLeadGate(cwd, gate.id, id, note.trim())
+    // 只发看得见的意见。意见框藏起来时（取消驳回后点通过、改选了不需要意见的项）文字还留在状态里，
+    // 原先照发：「通过 + 别合」「允许 + 别花钱」这种自相矛盾的答复会送到 agent（做空审查复现）。
+    answerLeadGate(cwd, gate.id, id, showNote ? note.trim() : "")
       .then(onAnswered)
       .catch((e) => setError(formatBackendError(e, t.locale)))
-      .finally(() => setBusy(false));
+      .finally(() => { setBusy(false); setSending(null); });
   };
   const placeholder = gate.kind === "Q" && needsNote ? t.chat.leadGateAnswerRequired : needsNote ? t.chat.leadGateNoteRequired : t.chat.leadGateNoteOptional;
   const kindLabel = t.chat.leadGateKind[gate.kind as keyof typeof t.chat.leadGateKind] ?? gate.kind;
@@ -313,7 +331,7 @@ export function LeadGateCard({ cwd, gate, onAnswered }: { cwd: string; gate: Lea
   } else if (writing && picked) {
     actions = (
       <>
-        <button type="button" disabled={busy} onClick={() => { setChoice(null); setError(null); }}>{t.chat.leadGateCancel}</button>
+        <button type="button" disabled={busy} onClick={() => { setChoice(null); setNote(""); setError(null); }}>{t.chat.leadGateCancel}</button>
         <button type="button" className="btn-primary" disabled={busy || (needsNote && !note.trim())} onClick={() => send(picked.id)}>
           {busy ? t.chat.leadGateSending : t.chat.leadGateSend}
         </button>
@@ -324,7 +342,7 @@ export function LeadGateCard({ cwd, gate, onAnswered }: { cwd: string; gate: Lea
       // 否定类挂 is-deny：键盘 Tab 进卡的首个落点是它（见 ApprovalCard），它只展开意见框，空格、回车都不会误提交。
       <button key={c.id} type="button" className={c.negative ? "is-deny" : c.primary ? "btn-primary" : undefined} disabled={busy}
         onClick={() => (c.negative ? setChoice(c.id) : send(c.id))}>
-        {c.label}
+        {sending === c.id ? t.chat.leadGateSending : c.label}
       </button>
     ));
   }
@@ -353,8 +371,14 @@ export function LeadGateCard({ cwd, gate, onAnswered }: { cwd: string; gate: Lea
         </div>
       )}
       {showNote ? (
-        <textarea ref={noteRef} className="lead-gate-note" rows={2} placeholder={placeholder} aria-label={placeholder}
-          value={note} onChange={(e) => setNote(e.target.value)} />
+        <>
+          <textarea ref={noteRef} className="lead-gate-note" rows={2} placeholder={placeholder} aria-label={placeholder}
+            value={note} onChange={(e) => setNote(e.target.value)} />
+          {/* 自己点开的可选意见可以收回（收回即清空，免得藏着的字被发出去）。 */}
+          {noteOpen && !needsNote && !writing && (
+            <button type="button" className="lead-gate-more lead-gate-add-note" onClick={() => { setNoteOpen(false); setNote(""); }}>{t.chat.leadGateRemoveNote}</button>
+          )}
+        </>
       ) : !direct && (
         <button type="button" className="lead-gate-more lead-gate-add-note" onClick={() => setNoteOpen(true)}>{t.chat.leadGateAddNote}</button>
       )}

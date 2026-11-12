@@ -253,6 +253,44 @@ describe("关卡卡片", () => {
     expect((screen.getByPlaceholderText("写下要改什么（必填）") as HTMLTextAreaElement).value).toBe("截图对不上");
   });
 
+  it("取消驳回后再点通过：藏起来的驳回意见不跟着发出去（做空审查复现）", async () => {
+    answer.mockResolvedValue();
+    for (const [kind, deny, ok, id] of [["C", "驳回", "验收通过", "accept"], ["D", "不允许", "允许", "approve"]] as const) {
+      answer.mockClear();
+      const { unmount } = render(<LeadGateCard cwd="C:/repo" gate={gate(kind)} onAnswered={() => {}} />);
+      fireEvent.click(screen.getByRole("button", { name: deny }));
+      fireEvent.change(screen.getByRole("textbox"), { target: { value: "别合" } });
+      fireEvent.click(screen.getByRole("button", { name: "取消" }));
+      await act(async () => { fireEvent.click(screen.getByRole("button", { name: ok })); });
+      expect(answer).toHaveBeenCalledWith("C:/repo", `${kind}-1`, id, "");
+      unmount();
+    }
+  });
+
+  it("Q 改选后，藏起来的回答不发；可选意见可以收回，收回即清空", async () => {
+    answer.mockResolvedValue();
+    render(<LeadGateCard cwd="C:/repo" gate={gate("Q")} onAnswered={() => {}} />);
+    fireEvent.click(screen.getByLabelText("其他（写在意见里）"));
+    fireEvent.change(screen.getByPlaceholderText("写下你的回答（必填）"), { target: { value: "按周统计" } });
+    fireEvent.click(screen.getByLabelText(/方案一/));
+    expect(screen.queryByRole("textbox")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "附加意见" }));
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "随便写写" } });
+    fireEvent.click(screen.getByRole("button", { name: "不写意见了" }));
+    expect(screen.queryByRole("textbox")).toBeNull();
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "提交" })); });
+    expect(answer).toHaveBeenCalledWith("C:/repo", "Q-1", "1", "");
+  });
+
+  it("一步提交的按钮在请求中显示「提交中…」", async () => {
+    let resolve = () => {};
+    answer.mockReturnValue(new Promise<void>((r) => { resolve = r; }));
+    render(<LeadGateCard cwd="C:/repo" gate={gate("C")} onAnswered={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "验收通过" }));
+    expect(screen.getByRole("button", { name: "提交中…" })).toBeTruthy();
+    await act(async () => { resolve(); });
+  });
+
   it("C：「验收通过」一步提交", async () => {
     answer.mockResolvedValue();
     render(<LeadGateCard cwd="C:/repo" gate={gate("C")} onAnswered={() => {}} />);
@@ -384,6 +422,11 @@ describe("Lead 面板概览", () => {
     expect(leadLatest("phase: implement\n# 进度\n")).toBeNull();
     expect(leadLatest("")).toBeNull();
     expect(leadLatest("1. 跑测试")).toBe("跑测试");
+    // 缩进的子条目、勾选框、代码块围栏、表格行都不算「最近」
+    expect(leadLatest("- 做空第 1 轮\n  - 缺口：留白偏大")).toBe("做空第 1 轮");
+    expect(leadLatest("- [x] 跑测试")).toBe("跑测试");
+    expect(leadLatest("- 写了脚本\n```\nbun test\n```")).toBe("写了脚本");
+    expect(leadLatest("- 对比结果\n| a | b |\n|---|---|")).toBe("对比结果");
   });
 
   it("阶段条六段：走过的标 is-done、当前 aria-current；done 全部走完；blocked 另标红签；unknown 不标当前", () => {
@@ -400,6 +443,9 @@ describe("Lead 面板概览", () => {
     expect(container.querySelector(".lead-stage-flag.is-blocked")?.textContent).toBe("卡住了");
     rerender(<LeadPanel task={task({ phase: "unknown", progress: "" })} onClose={() => {}} />);
     expect(container.querySelector('[aria-current="step"]')).toBeNull();
+    expect(container.querySelector(".lead-stage-flag")?.textContent).toBe("阶段未知");
+    rerender(<LeadPanel task={task({ phase: "review" })} onClose={() => {}} />);
+    expect(container.querySelector(".lead-stage-flag")?.textContent).toBe("阶段：review");
     expect(container.querySelector(".lead-latest")).toBeNull();
   });
 });
