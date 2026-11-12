@@ -6436,8 +6436,10 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
   .chat-scroll { padding-left: max(12px, env(safe-area-inset-left, 0px)); padding-right: max(12px, env(safe-area-inset-right, 0px)); }
   .chat-compose { margin-bottom: var(--sp-12); width: calc(100% - 24px); }
   .chat-approval { width: calc(100% - 24px); }
-  .dock-workbar { width: calc(100% - 24px); padding: 0 var(--sp-8); }
-  .dock-work-panel { width: calc(100% - 20px); }
+  /* 停靠条内边距保持 16：胶囊左缘落在审批卡文字那条线上（原来窄窗收成 8，胶囊 x=28，
+     输入框外缘 20、卡内文字 36，哪条都没对上）。面板与输入框同宽（原 100% - 20px，左右各宽出 2）。 */
+  .dock-workbar { width: calc(100% - 24px); }
+  .dock-work-panel { width: calc(100% - 24px); }
   .chat-message.is-user, .chat-queued-turn { max-width: 88%; }
   /* 后台任务行：窄屏上「说明 · $ 命令 · 耗时」挤一行，说明和命令都被截成几个字。命令换到
      说明下方独占一行、与说明左对齐（对照 Kimi 的 tp-meta 在 640px 下 order:10 / 整宽）。 */
