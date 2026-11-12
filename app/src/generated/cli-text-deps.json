@@ -831,28 +831,28 @@
     },
     {
       "command": "codex",
-      "declared_complete": false,
+      "declared_complete": true,
       "entries": [
         {
-          "legacy": false,
+          "legacy": true,
           "needle": "do you trust the files in this folder",
-          "note": "",
+          "note": "0.16x 之前的信任页标题；0.166.0 改为 `Trust this folder?`（codex.exe 里 `do you trust` 0 处）",
           "rule": "literal:do you trust the files in this folder",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:353"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:358"
         },
         {
-          "legacy": false,
+          "legacy": true,
           "needle": "do you trust the contents of this directory",
-          "note": "",
+          "note": "更早版本的信任页标题；0.166.0 已无",
           "rule": "literal:do you trust the contents of this directory",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:354"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:359"
         },
         {
           "legacy": false,
           "needle": "trust this folder?",
           "note": "",
           "rule": "literal:trust this folder?",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:355"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:360"
         },
         {
           "legacy": false,
@@ -862,51 +862,51 @@
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:17"
         },
         {
-          "legacy": false,
+          "legacy": true,
           "needle": "↑/↓ to scroll",
-          "note": "",
+          "note": "0.16x 之前记录查看页底栏（herdr codex.toml）；0.166.0 改为按键 + ` to scroll`",
           "rule": "literal:↑/↓ to scroll",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:37"
         },
         {
-          "legacy": false,
+          "legacy": true,
           "needle": "pgup/pgdn to",
-          "note": "",
+          "note": "0.16x 之前记录查看页底栏；0.166.0 已无",
           "rule": "literal:pgup/pgdn to",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:38"
         },
         {
-          "legacy": false,
+          "legacy": true,
           "needle": "home/end to jump",
-          "note": "",
+          "note": "0.16x 之前记录查看页底栏；0.166.0 改为按键 + ` to jump`",
           "rule": "literal:home/end to jump",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:39"
         },
         {
-          "legacy": false,
+          "legacy": true,
           "needle": "q to quit",
-          "note": "",
+          "note": "0.16x 之前记录查看页底栏；0.166.0 里 0 处",
           "rule": "literal:q to quit",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:40"
         },
         {
-          "legacy": false,
+          "legacy": true,
           "needle": "esc to edit prev",
-          "note": "",
+          "note": "0.16x 之前记录查看页底栏；0.166.0 里 0 处",
           "rule": "literal:esc to edit prev",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:42"
         },
         {
-          "legacy": false,
+          "legacy": true,
           "needle": "esc/← to edit prev",
-          "note": "",
+          "note": "0.16x 之前记录查看页底栏；0.166.0 里 0 处",
           "rule": "literal:esc/← to edit prev",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:42"
         },
         {
           "legacy": false,
-          "needle": " to scroll",
-          "note": "",
+          "needle": "to scroll",
+          "note": "0.166.0 记录查看页底栏是按键 + ` to scroll`；程序文件里 `to scroll` 1 处（紧挨 tui\\src\\pager_overlay.rs），前导空格在拼接处",
           "rule": "literal: to scroll",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:48"
         },
@@ -919,36 +919,36 @@
         },
         {
           "legacy": false,
-          "needle": " to jump",
-          "note": "",
+          "needle": "to jump",
+          "note": "0.166.0 记录查看页底栏是按键 + ` to jump`；程序文件里 `to jump` 1 处",
           "rule": "literal: to jump",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:48"
         },
         {
-          "legacy": false,
+          "legacy": true,
           "needle": "press enter to confirm or esc to cancel",
-          "note": "",
+          "note": "0.16x 之前审批框整句（herdr codex.toml）；0.166.0 改为按键分段拼出",
           "rule": "literal:press enter to confirm or esc to cancel",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:60"
         },
         {
           "legacy": false,
-          "needle": "enter to submit answer",
-          "note": "",
+          "needle": "submit answer",
+          "note": "0.166.0 提问表单底栏是按键 + `to submit answer`；程序文件里 `submit answer` 1 处",
           "rule": "literal:enter to submit answer",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:61"
         },
         {
           "legacy": false,
-          "needle": "enter to submit all",
-          "note": "",
+          "needle": "submit all",
+          "note": "0.166.0 提问表单底栏是按键 + `to submit all`；程序文件里 `submit all` 1 处",
           "rule": "literal:enter to submit all",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:62"
         },
         {
-          "legacy": false,
+          "legacy": true,
           "needle": "allow command?",
-          "note": "",
+          "note": "0.16x 之前审批框标题；0.166.0 里 0 处",
           "rule": "literal:allow command?",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:63"
         },
@@ -967,9 +967,9 @@
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:85"
         },
         {
-          "legacy": false,
+          "legacy": true,
           "needle": "yes (y)",
-          "note": "",
+          "note": "早期审批选项写法（herdr 弱规则）；0.166.0 里 0 处",
           "rule": "literal:yes (y)",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:86"
         },
@@ -993,6 +993,27 @@
           "note": "",
           "rule": "literal:■ conversation interrupted",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:111"
+        },
+        {
+          "legacy": false,
+          "needle": "[image #",
+          "note": "0.166.0 codex.exe 含 `- [Image #…]` 模板（附件占位，与输入框里的贴图占位同一写法）",
+          "rule": "clipboard_image",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:317"
+        },
+        {
+          "legacy": false,
+          "needle": " to confirm",
+          "note": "0.166.0 codex.exe：` to confirm` 14 处、` to cancel` 7 处，审批框底栏是按键 + 这两段拼出（research-cli-drift X7）",
+          "rule": "screen:live_strong_blocker",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:53"
+        },
+        {
+          "legacy": false,
+          "needle": "",
+          "note": "运行时拼接：0.166.0 codex.exe 里 `working (` 与 `esc to interrupt` 都是 0 处，只有 `to interrupt`；状态行没有 0.166 实拍，规则沿用 0.16x 写法，属于「有风险但没证据」",
+          "rule": "screen:screen_working_fallback",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:99"
         }
       ],
       "id": "codex",
@@ -1071,119 +1092,133 @@
     },
     {
       "command": "opencode",
-      "declared_complete": false,
+      "declared_complete": true,
       "entries": [
         {
           "legacy": false,
-          "needle": "do you trust the files in this folder",
-          "note": "",
+          "needle": "",
+          "note": "通用信任表（chat_ui.rs）里的句子；opencode 没有信任页，程序文件里本来就没有，不搜",
           "rule": "literal:do you trust the files in this folder",
           "source": "app/src-tauri/crates/meowo-agent/src/chat_ui.rs:25"
         },
         {
           "legacy": false,
-          "needle": "do you trust the contents of this directory",
-          "note": "",
+          "needle": "",
+          "note": "通用信任表（chat_ui.rs）里的句子；opencode 没有信任页，程序文件里本来就没有，不搜",
           "rule": "literal:do you trust the contents of this directory",
           "source": "app/src-tauri/crates/meowo-agent/src/chat_ui.rs:27"
         },
         {
           "legacy": false,
-          "needle": "build · ",
-          "note": "",
+          "needle": "",
+          "note": "运行时拼接：模式名与模型名在底栏分别渲染，中间点由模板插入；`build`、`plan` 在程序文件里是通用词，搜它们证明不了什么",
           "rule": "literal:build · ",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:282"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:283"
         },
         {
           "legacy": false,
-          "needle": "plan · ",
-          "note": "",
+          "needle": "",
+          "note": "运行时拼接：同 build · ",
           "rule": "literal:plan · ",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:286"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:287"
         },
         {
           "legacy": false,
-          "needle": "△ permission required",
-          "note": "",
+          "needle": "permission required",
+          "note": "1.19.3 opencode.exe：三角符号 `\\u25b3` 与 `permission required` 分开渲染，后者 4 处",
           "rule": "literal:△ permission required",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:234"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:235"
         },
         {
           "legacy": false,
-          "needle": "esc dismiss",
-          "note": "",
+          "needle": "",
+          "note": "运行时拼接：opencode 1.19.3 把按键与说明分成两个节点渲染（程序文件里 `\"esc \"` 8 处单独出现），整串没有原样",
           "rule": "literal:esc dismiss",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/screen.rs:27"
         },
         {
           "legacy": false,
-          "needle": "enter confirm",
-          "note": "",
+          "needle": "",
+          "note": "运行时拼接：opencode 1.19.3 把按键与说明分成两个节点渲染（程序文件里 `\"esc \"` 8 处单独出现），整串没有原样",
           "rule": "literal:enter confirm",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/screen.rs:28"
         },
         {
           "legacy": false,
-          "needle": "enter submit",
-          "note": "",
+          "needle": "",
+          "note": "运行时拼接：opencode 1.19.3 把按键与说明分成两个节点渲染（程序文件里 `\"esc \"` 8 处单独出现），整串没有原样",
           "rule": "literal:enter submit",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/screen.rs:28"
         },
         {
           "legacy": false,
-          "needle": "enter toggle",
-          "note": "",
+          "needle": "",
+          "note": "运行时拼接：opencode 1.19.3 把按键与说明分成两个节点渲染（程序文件里 `\"esc \"` 8 处单独出现），整串没有原样",
           "rule": "literal:enter toggle",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/screen.rs:28"
         },
         {
           "legacy": false,
-          "needle": "↑↓ select",
-          "note": "",
+          "needle": "",
+          "note": "运行时拼接：opencode 1.19.3 把按键与说明分成两个节点渲染（程序文件里 `\"esc \"` 8 处单独出现），整串没有原样",
           "rule": "literal:↑↓ select",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/screen.rs:29"
         },
         {
           "legacy": false,
-          "needle": "⇆ tab",
-          "note": "",
+          "needle": "",
+          "note": "运行时拼接：opencode 1.19.3 把按键与说明分成两个节点渲染（程序文件里 `\"esc \"` 8 处单独出现），整串没有原样",
           "rule": "literal:⇆ tab",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/screen.rs:29"
         },
         {
-          "legacy": false,
+          "legacy": true,
           "needle": "esc to interrupt",
-          "note": "",
+          "note": "1.19.2 之前的运行中底栏；1.19.3 里 0 处（改成 `esc ` + `interrupt`）",
           "rule": "literal:esc to interrupt",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/screen.rs:40"
         },
         {
-          "legacy": false,
+          "legacy": true,
           "needle": "ctrl+c to interrupt",
-          "note": "",
+          "note": "早期运行中底栏写法；1.19.3 里 0 处",
           "rule": "literal:ctrl+c to interrupt",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/screen.rs:41"
         },
         {
-          "legacy": false,
+          "legacy": true,
           "needle": "press esc to interrupt",
-          "note": "",
+          "note": "早期运行中底栏写法；1.19.3 里 0 处",
           "rule": "literal:press esc to interrupt",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/screen.rs:42"
         },
         {
           "legacy": false,
-          "needle": "esc again to interrupt",
-          "note": "",
+          "needle": "again to interrupt",
+          "note": "1.19.3：按过一次 Esc 后底栏是 `esc ` + `again to interrupt`，后者在程序文件里 2 处",
           "rule": "literal:esc again to interrupt",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/screen.rs:43"
         },
         {
           "legacy": false,
-          "needle": "esc interrupt",
-          "note": "",
+          "needle": "",
+          "note": "运行时拼接：1.19.3 底栏是 `K(\"esc \")` 后接 `\"interrupt\"`（research-cli-drift O1）；`interrupt` 是通用词，搜它证明不了什么",
           "rule": "literal:esc interrupt",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/screen.rs:48"
+        },
+        {
+          "legacy": false,
+          "needle": "[image ",
+          "note": "1.19.3 opencode.exe 内嵌 JS：`[image ${n+1}]`（与 `[pdf ${n+1}]` 并列的附件占位）",
+          "rule": "clipboard_image",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:308"
+        },
+        {
+          "legacy": false,
+          "needle": "permission required",
+          "note": "1.19.3 opencode.exe：`c(x,k(\"\\u25b3\")),c(j,k(\"permission required\"))`，三角符号与文字分开渲染",
+          "rule": "attention:opencode:command-approval",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:234"
         }
       ],
       "id": "opencode",

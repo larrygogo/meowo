@@ -22,6 +22,7 @@
 //! 因此 opencode 的会话收尾与 codex 一样靠 Stop + 判活，而不是一条可靠的 SessionEnd。
 
 pub mod account;
+mod cli_text;
 mod screen;
 mod store;
 mod telemetry;
@@ -305,6 +306,10 @@ impl AgentPlugin for Opencode {
     /// 测试图的颜色（probe_tui_script 实测 1.19.2）。粘贴键用默认的 Ctrl-V。
     fn clipboard_image_paste(&self, version: Option<&str>) -> Option<&'static str> {
         version.map(|_| r"\[Image \d")
+    }
+    /// CLI 漂移检查的手工声明部分（正则规则的样例、旧版兼容与运行时拼接的字面量），见 cli_text.rs。
+    fn cli_text_deps(&self) -> &'static [crate::cli_text::CliTextDep] {
+        cli_text::DEPS
     }
     /// opencode 的切模型命令是 `/models`（复数，弹选择器），没有 `/model`/`/status`/`/clear`
     /// ——清上下文对应 `/new`。此前前端的通用 fallback 把这三个都补给它了。

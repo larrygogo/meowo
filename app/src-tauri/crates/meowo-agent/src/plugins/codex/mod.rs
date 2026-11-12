@@ -14,6 +14,7 @@
 //! 接线还有一步**副作用**（往 `config.toml` 写 `[hooks.state]` 的 trusted_hash 预信任）——见 `setup.rs`。
 
 pub mod account;
+mod cli_text;
 mod lineage;
 mod screen;
 pub mod setup;
@@ -314,6 +315,10 @@ impl AgentPlugin for Codex {
     /// 未实测，ratatui 同为按格 diff 输出，按同一形态防）。
     fn clipboard_image_paste(&self, version: Option<&str>) -> Option<&'static str> {
         version.map(|_| r"\[Image ?#\d")
+    }
+    /// CLI 漂移检查的手工声明部分（正则规则的样例、旧版兼容与运行时拼接的字面量），见 cli_text.rs。
+    fn cli_text_deps(&self) -> &'static [crate::cli_text::CliTextDep] {
+        cli_text::DEPS
     }
     /// codex 的 `/model` 是交互式菜单（不接内联参数），故只列命令、不声明模型预设。
     /// Codex：自己的 `skills/`（跳过自带的 `.system`）与共享的 `~/.agents/skills`、

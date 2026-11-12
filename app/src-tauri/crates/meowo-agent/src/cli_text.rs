@@ -270,7 +270,7 @@ mod tests {
 
     /// 声明已补全的插件：每条正则规则都必须有真实样例。其余插件的识别规则正由别组改动
     /// （2026-11-12 第三轮），合并时补齐声明后加进来。
-    const COMPLETE: &[&str] = &["claude"];
+    const COMPLETE: &[&str] = &["claude", "codex", "opencode"];
 
     fn compile(pattern: &str) -> regex::Regex {
         regex::RegexBuilder::new(pattern)
