@@ -5545,7 +5545,10 @@ button.scm-check-name:hover { text-decoration: underline; }
    内容高以下,缺了它卡片限高会失效。 */
 /* 左右各垫一段再用负边距抵回（--copy-bleed）：选项行的悬停底色要比文字宽出一圈，又不能让文字
    相对题干缩进；滚动区会裁掉越界的部分，所以把滚动区自己放宽。 */
-.chat-approval-copy { --copy-bleed: var(--sp-8); min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: var(--sp-8); max-height: min(44vh, 420px); overflow-y: auto; padding-inline: var(--copy-bleed); margin-inline: calc(-1 * var(--copy-bleed)); }
+/* 正文区有个下限：小窗大缩放下卡片被压扁时，正文区曾缩到零，命令被滚出去、只剩三个按钮（矩阵截图
+   620×480 @150% 实拍），看不到命令就能点「允许一次」。下限至少露出「命令」和两行命令；放不下时整张卡滚动，
+   按钮落到下面，要滚一下才点得到。 */
+.chat-approval-copy { --copy-bleed: var(--sp-8); min-width: 0; min-height: min(calc(6 * var(--text-sm)), 44vh); display: flex; flex-direction: column; gap: var(--sp-8); max-height: min(44vh, 420px); overflow-y: auto; padding-inline: var(--copy-bleed); margin-inline: calc(-1 * var(--copy-bleed)); }
 /* 正文被限高、还有内容没露出来时，被裁的一侧渐隐到卡面（data-clip 由 ApprovalCard 按滚动位置挂）：
    此前内容被齐刷刷切在折叠线上，看不出下面还有命令或选项（做空审查）。用遮罩不用模糊。 */
 .chat-approval-copy[data-clip="bottom"] { -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 16px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 16px), transparent); }
