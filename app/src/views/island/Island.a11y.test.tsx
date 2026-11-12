@@ -219,8 +219,9 @@ describe("#33 一种状态一种颜色", () => {
       .filter((v) => v !== "transparent");
   };
 
-  // 每条颜色声明引用的变量只能是该状态那一个（底色可以是它和黑的混色），不许出现别的状态色或写死的色值。
-  const refsOf = (value: string) => [...value.matchAll(/var\((--[a-z0-9-]+)\)/g)].map((m) => m[1]);
+  // 每条颜色声明引用的变量只能是该状态那一个（底色可以是它和底色的混色），不许出现别的状态色或写死的色值。
+  // --isl-mix 是混色用的那个底（黑岛上是黑，macOS 菜单栏落点是透明），不是状态色，不算在内。
+  const refsOf = (value: string) => [...value.matchAll(/var\((--[a-z0-9-]+)\)/g)].map((m) => m[1]).filter((v) => v !== "--isl-mix");
   const expectOnly = (tone: string, allowed: string) => {
     const colors = colorsOf(tone);
     expect(colors.length).toBeGreaterThan(3);

@@ -62,7 +62,7 @@ function StackedRings({ lanes }: { lanes: UsageLane[] }) {
             stroke={STACK_STROKE}
             value={usedOf(lane.used_pct as number) / 100}
             color={color}
-            track={`color-mix(in srgb, ${color} 22%, #000)`}
+            track={`color-mix(in srgb, ${color} 22%, var(--isl-mix, #000))`}
           />
         );
       })}

@@ -7270,6 +7270,11 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
      对比度只有 4.1:1（深色板 #d97757 是 6.7:1），岛在两套主题之间就差这一处（island-compact 浅色实量）。 */
   --cc-claude: #d97757;
   --isl-ink: #000;
+  /* 「状态色混底色」的那个底：提醒图标底、环的底轨都拿状态色 / 品牌色往它上面混两成。黑岛上是黑；
+     macOS 菜单栏落点底下是毛玻璃，混黑会压出一块不透明的死色，那里改成混透明（见 island-menubar 段）。 */
+  --isl-mix: #000;
+  /* 角标外圈那道「把环切开」的描边：黑岛上和岛底同色。 */
+  --isl-badge-cut: var(--isl-ink);
   --isl-text: #f5f5f7;
   --isl-text-2: #b9b9be;
   --isl-dim: #98989d;
@@ -7501,7 +7506,7 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .isl-agent-badge {
   position: absolute; right: -4px; bottom: -4px;
   min-width: 15px; height: 15px; padding: 0 3px; box-sizing: border-box;
-  border-radius: 8px; border: 2px solid var(--isl-ink);
+  border-radius: 8px; border: 2px solid var(--isl-badge-cut);
   display: grid; place-items: center;
   font-size: 9px; font-weight: 600; line-height: 1; color: #000;
 }
@@ -7530,9 +7535,9 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
   to { clip-path: inset(0 0 0 0 round 0 0 24px 24px); }
 }
 .isl-alert-icon { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; flex: none; background: var(--isl-chip); color: var(--isl-text-2); }
-.isl-alert-icon.is-pending { background: color-mix(in srgb, var(--isl-pending) 20%, #000); color: var(--isl-pending); }
-.isl-alert-icon.is-error { background: color-mix(in srgb, var(--isl-err) 22%, #000); color: var(--isl-err); }
-.isl-alert-icon.is-waiting { background: color-mix(in srgb, var(--isl-waiting) 20%, #000); color: var(--isl-waiting); }
+.isl-alert-icon.is-pending { background: color-mix(in srgb, var(--isl-pending) 20%, var(--isl-mix)); color: var(--isl-pending); }
+.isl-alert-icon.is-error { background: color-mix(in srgb, var(--isl-err) 22%, var(--isl-mix)); color: var(--isl-err); }
+.isl-alert-icon.is-waiting { background: color-mix(in srgb, var(--isl-waiting) 20%, var(--isl-mix)); color: var(--isl-waiting); }
 /* 正文那块是按钮（Enter 打开会话），右边的「全部忽略」「打开」「×」是它的兄弟，不嵌在按钮里。 */
 /* 间距与外层同一档 8px（原来这里是 12px，右边还多 4px 外边距）：提醒总宽固定 520，这 12px 让给文字列。
    右边不再留外边距后，文字到「忽略 N 条」的字、字到「打开」都是 14px（8 间距 + 钮内 6）。 */
@@ -7745,7 +7750,17 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
   --isl-chip: rgba(255, 255, 255, 0.08);
   --isl-chip-hover: rgba(255, 255, 255, 0.14);
   --isl-track: rgba(255, 255, 255, 0.2);
+  /* 同一个道理，「状态色混黑」的块也换成混透明：提醒图标底原来是不透明的 (51,37,8)，压在玻璃上发死；
+     环的底轨是「品牌色两成混黑」，比玻璃还暗。角标外圈的黑描边换成透明。 */
+  --isl-mix: transparent;
+  --isl-badge-cut: transparent;
+  /* 未选中的翻页圆点、分隔点：#5e5e62 在黑岛上是 3.2:1，压在玻璃上只剩 1.8:1。换成半透明白，
+     对比度跟着底下的材质走（harness 的假玻璃上约 3:1）。 */
+  --isl-faint: rgba(255, 255, 255, 0.38);
 }
+/* 描边透明后底色只铺到描边里侧，角标看得见的大小和黑岛上一样（15px 的钮、11px 的色块）；
+   不加这条，状态色会铺满整个 15px，角标凭空大一圈（改的过程中实拍到）。 */
+:root.island-menubar .isl-agent-badge { background-clip: padding-box; }
 :root.island-menubar .isl-notch.is-alert,
 :root.island-menubar .island-shell.is-entering,
 :root.island-menubar .island-shell.is-leaving { animation: none; }
