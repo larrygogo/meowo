@@ -76,6 +76,16 @@ it("切模型：新版确认行只有显示名（1M 档）也算确认，并记�
   expect(selections()).toEqual({ model: "opus[1m]" });
 });
 
+// 做空审查：CLI 有自动降档路径，降到别的家族时也会打印「Set model to <实际模型>」，不能当成切换成功。
+it("切模型：确认行报的是别的家族（被降档）不算确认", async () => {
+  const { deps } = makeDeps();
+  pty.onWrite = (_sid, data) => { if (data === "/model opus[1m]") pty.out += "Set model to `Sonnet 5`\r\n"; };
+  const { result } = renderHook(() => useModelControls(deps));
+  await settle(result.current.selectModel({ id: "opus[1m]", label: "Opus 5.5 (1M)" }));
+  expect(deps.setSendError).toHaveBeenCalledWith(zh.chat.modelSwitchUnconfirmed);
+  expect(setSessionLaunchSelection).not.toHaveBeenCalled();
+});
+
 it("切模型：只有命令回显、没有确认行，仍报未确认", async () => {
   const { deps } = makeDeps();
   pty.onWrite = (_sid, data) => { pty.out += `${data}\r\n`; };

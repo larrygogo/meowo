@@ -57,12 +57,16 @@ export function useModelControls({
         since = snapshot.endOffset;
         tail = appendTerminalText(tail, snapshot.data, decoder);
         // 只认本次命令之后 CLI 自己的确认行，菜单列表中出现模型名不算切换成功。
-        // 不再要求确认行里带预设 id：Claude Code 2.1.322 起确认行只给显示名
-        //「Set model to `Opus 5.5` and saved as your default for new sessions」，1M 档（opus[1m]）的 id
-        // 在里面永远找不到，于是 CLI 明明切过去了，这里却报未确认、也不记住选择（2026-11-12 leader 报
-        //「切模型无法生效」，transcript 实证）。tail 只含本次命令之后的输出，CLI 只在应答 /model 时说这句；
-        // 认不出的模型名它回的是别的报错，不会出现这句。
-        confirmed = visibleTerminalText(tail).split(/\r?\n/).some((line) => /set model to|switched (?:the )?model to|model (?:changed|switched) to/i.test(line));
+        // 比对时去掉 id 末尾的方括号变体（opus[1m] → opus）：Claude Code 2.1.322 起确认行只给显示名
+        //「Set model to `Opus 5.5` and saved as your default for new sessions」，整串 id「opus1m」在里面
+        // 永远找不到，于是 CLI 明明切过去了，这里却报未确认、也不记住选择（2026-11-12 leader 报
+        //「切模型无法生效」，transcript 实证）。仍要求家族名出现：CLI 有自动降档路径，降到别的家族时
+        // 也会打印「Set model to <实际模型>」，不比对就会把没生效的选择写进恢复配置（做空审查）。
+        const family = preset.id.replace(/\[[^\]]*\]$/, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+        confirmed = visibleTerminalText(tail).split(/\r?\n/).some((line) => {
+          if (!/set model to|switched (?:the )?model to|model (?:changed|switched) to/i.test(line)) return false;
+          return line.toLowerCase().replace(/[^a-z0-9]/g, "").includes(family);
+        });
       }
       if (!confirmed) { setSendError(t.chat.modelSwitchUnconfirmed); return false; }
       await setSessionLaunchSelection(sessionId, "model", preset.id);

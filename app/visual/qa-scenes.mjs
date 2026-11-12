@@ -82,7 +82,7 @@ export const QA_SHOTS = [
   { name: "qa-context-tip", scene: "pop-idle", sel: ".tip", steps: [["hover", ".chat-context"], ["tick", 500]] },
   // ── 侧栏 ──
   { name: "qa-side-batch", scene: "pop-idle", sel: ".chat-sidebar-batch", steps: [["click", ".chat-sidebar-item >> nth=0", { modifiers: ["Control"] }], ["click", ".chat-sidebar-item >> nth=1", { modifiers: ["Control"] }]], langs: ["zh", "en"] },
-  { name: "qa-side-rename", scene: "pop-idle", sel: ".chat-sidebar-edit", steps: [["rclick", ".chat-sidebar-item >> nth=1"], ["click", ".ctx-menu .ctx-item >> nth=2"]] },
+  { name: "qa-side-rename", scene: "pop-idle", sel: ".chat-sidebar-edit", steps: [["rclick", ".chat-sidebar-item >> nth=1"], ["click", ".ctx-menu .ctx-item:has-text('重命名')"]] },
   { name: "qa-side-search", scene: "pop-idle", sel: ".chat-sidebar-deep-hit", steps: [["type", ".chat-sidebar-search input", "schema"], ["tick", 500], ["click", ".chat-sidebar-deep .chat-sidebar-more"]] },
   { name: "qa-side-empty", scene: "flow-side-empty", sel: ".chat-sidebar-empty" },
   { name: "qa-side-error", scene: "flow-side-error", sel: ".chat-sidebar-empty.is-error" },
