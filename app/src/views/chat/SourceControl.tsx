@@ -510,7 +510,9 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
         </div>
       </div>
       {hasSession && (
-        <div className="chat-diff-scope" role="group" aria-label={t.chat.diffScopeLabel}>
+        // 外面套一层进居中栏（.scm-scope 与 .scm-tools 同列限宽）：切换本身是 fit-content 的小控件，直接挂在
+        // .scm 下会贴着面板最左边，面板最大化时和搜索框、文件列表隔着半个屏幕（2026-11-12 实拍）。
+        <div className="scm-scope"><div className="chat-diff-scope" role="group" aria-label={t.chat.diffScopeLabel}>
           <button type="button" aria-pressed={scope === "all"} onClick={() => setScope("all")}>{t.chat.diffScopeAll}</button>
           <button type="button" aria-pressed={scope === "session"} data-tip={t.chat.diffOnlySessionTip} onClick={() => setScope("session")}>
             {t.chat.diffScopeSession(files.filter((file) => touchedInRoot(touchedPaths, root, file.path)).length)}
@@ -518,7 +520,7 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
           <button type="button" aria-pressed={scope === "turn"} data-tip={t.chat.diffOnlyTurnTip} onClick={() => setScope("turn")}>
             {t.chat.diffScopeTurn(files.filter((file) => touchedInRoot(turnTouchedPaths, root, file.path)).length)}
           </button>
-        </div>
+        </div></div>
       )}
 
       <div className="scm-groups">

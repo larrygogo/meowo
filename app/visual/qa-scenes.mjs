@@ -24,6 +24,9 @@ export const QA_SHOTS = [
   { name: "qa-chat-en-620", scene: "chat", size: W620, langs: ["en"] },
   { name: "qa-panel-en-620", scene: "panel-changes", size: W620, langs: ["en"] },
   { name: "qa-panel-ui150", scene: "panel-changes", params: "ui=1.5" },
+  // 面板最大化：「全部 / 本会话 / 本轮」切换要和搜索框、文件列表同在居中的 880px 栏里（2026-11-12 实拍跑到了左下角）。
+  { name: "qa-scm-max", scene: "panel-changes-max", sel: ".chat-diff-scope", size: [2560, 1440], themes: ["dark", "light"] },
+  { name: "qa-scm-max-1280", scene: "panel-changes-max", sel: ".chat-diff-scope" },
   // ── 对话流里靠后端状态出现的东西（harness 见 qaFlow.ts）──
   { name: "qa-lead", scene: "flow-lead", sel: ".lead-gate-card", langs: ["zh", "en"] },
   { name: "qa-lead-open", scene: "flow-lead", sel: ".lead-gate-card", steps: [["click", ".lead-gate-more"], ["click", ".lead-gate-option >> nth=1"]] },

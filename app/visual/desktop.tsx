@@ -104,10 +104,14 @@ async function boot(): Promise<React.ReactNode> {
     const chat = chatMock(lang);
     const panel = panelMock();
     if (scene.startsWith("panel-")) {
-      savePanel(CHAT_SESSION_ID, { tabs: [{ key: "diff", type: "diff" }, { key: "files", type: "files" }], active: scene === "panel-files" ? "files" : "diff", visible: true, expanded: false });
+      savePanel(CHAT_SESSION_ID, { tabs: [{ key: "diff", type: "diff" }, { key: "files", type: "files" }], active: scene === "panel-files" ? "files" : "diff", visible: true, expanded: scene === "panel-changes-max" });
     }
     setExtraMock((cmd, args) => {
-      if (cmd === "get_chat_history") return scene.startsWith("chat") ? withLongItems(chat(cmd), lang) : chat(cmd);
+      if (cmd === "get_chat_history") {
+        // panel-changes-max：面板最大化 + 对话里有编辑（「本会话 / 本轮」切换才出现），拍宽面板下的居中排版。
+        if (scene === "panel-changes-max") return { ...(chat(cmd) as object), items: flowStateItems(lang, new Date(FIXED_NOW).toISOString()), pendingReview: null };
+        return scene.startsWith("chat") ? withLongItems(chat(cmd), lang) : chat(cmd);
+      }
       return scmMock(cmd) ?? panel(cmd, args) ?? chat(cmd);
     });
     installMocks("chat");

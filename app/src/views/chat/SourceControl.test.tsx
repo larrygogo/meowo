@@ -1,3 +1,6 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { invoke } from "@tauri-apps/api/core";
@@ -170,6 +173,17 @@ describe("做空第 1 轮", () => {
   });
 
   /// 做空第 2 轮：筛选按钮没了（touchedPaths 变空）时还停在「本会话」，面板一片空又清不掉筛选。
+  /// 面板最大化时「全部 / 本会话 / 本轮」贴着面板最左边、和其余内容隔着半个屏幕（2026-11-12 实拍）。
+  /// 布局在 jsdom 里量不了：锁住结构和样式规则——切换包在 .scm-scope 里，而 .scm-scope 在限宽居中那条规则里。
+  it("范围切换和搜索框、文件列表在同一个居中栏里", () => {
+    renderScm([repo({ summary: summary([file("agent.ts", "M", null)]) })], { touchedPaths: ["C:/w/meowo/agent.ts"] });
+    const scope = document.querySelector(".chat-diff-scope");
+    expect(scope?.parentElement?.classList.contains("scm-scope")).toBe(true);
+    const css = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../../styles.css"), "utf8");
+    const column = css.split(/\r?\n/).find((line) => line.includes("max-width: 880px") && line.includes(".scm-tools"));
+    expect(column?.split("{")[0]).toContain(".scm-scope");
+  });
+
   it("筛选按钮消失时退回「全部」", () => {
     const props = { cwd: "C:/w/meowo", selectedRoot: null, onSelectRoot: () => {}, onChanged: () => {}, comments: [], turnTouchedPaths: [],
       onAddComment: () => {}, onRemoveComment: () => {}, escOverrideRef: { current: null } };
