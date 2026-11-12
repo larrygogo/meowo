@@ -649,14 +649,16 @@ describe("App · macOS 灵动岛", () => {
     await waitFor(() => expect(container.querySelector(".isl-notch.is-eyes-away")).toBeNull());
   });
 
+  // 只看最后一次推给菜单栏的状态：invoke 上还有别的命令在走，「最后一次调用」不一定是它（CI 上实测挂过）。
+  const lastMenubar = () => vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === "set_menubar_status").at(-1)?.[1];
   it("没刘海、主窗口在前台：菜单栏图标的眼睛闭上；退到后面再睁开", async () => {
     mac = true;
     seedHost({ kind: "menubar", notchWidth: 0, notchHeight: 0 });
     render(<App />);
     await waitFor(() => expect(vi.mocked(invoke)).toHaveBeenCalledWith("set_menubar_status", { tone: "idle", segments: [], mood: "open" }));
     await act(async () => { emitRosterFront({ payload: true }); });
-    await waitFor(() => expect(vi.mocked(invoke)).toHaveBeenLastCalledWith("set_menubar_status", { tone: "idle", segments: [], mood: "sleep" }));
+    await waitFor(() => expect(lastMenubar()).toEqual({ tone: "idle", segments: [], mood: "sleep" }));
     await act(async () => { emitRosterFront({ payload: false }); });
-    await waitFor(() => expect(vi.mocked(invoke)).toHaveBeenLastCalledWith("set_menubar_status", { tone: "idle", segments: [], mood: "open" }));
+    await waitFor(() => expect(lastMenubar()).toEqual({ tone: "idle", segments: [], mood: "open" }));
   });
 });
