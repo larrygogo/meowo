@@ -7597,6 +7597,12 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .isl-panel-head > .isl-btn.isl-new { background: var(--isl-chip); margin-right: 4px; }
 .isl-panel-head > .isl-btn.isl-new:hover { background: var(--isl-chip-hover); }
 .isl-panel-body { display: flex; gap: 18px; margin-top: 10px; }
+/* 有翻页时内容区至少三行会话高（行 54 = 8 + 19 + 2 + 17 + 8，行距 2）：额度页（约 164）和不满三条的末页
+   都垫到同一个高度，翻页时底边和圆点不动。原来英文会话页 231、额度页 244，翻一页窗口伸缩 13px。
+   窗口高度跟着面板实测高度走（IslandPanel 的 onMeasure），这里不变窗口就不变。 */
+.isl-panel.is-paged .isl-panel-body { min-height: calc(3 * 54px + 2 * 2px); }
+/* 末页不满三条时空态 / 会话行靠上排，和前几页的第一行同一个位置；空态（只有额度页可翻时）上下居中。 */
+.isl-panel.is-paged .isl-empty { margin-block: auto; }
 /* 会话行没有底色，只在悬停 / 键盘聚焦时垫一档深灰：卡里不套卡。行往两侧各伸出 10px，
    环的左缘与标题对齐、行尾的「打开」与标题行最右的按钮对齐。 */
 .isl-rows { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; margin: 0 -10px; }
@@ -7612,8 +7618,13 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .isl-row:hover .isl-btn.is-dark { background: var(--isl-chip-hover); color: var(--isl-text); }
 .isl-row:focus-visible { background: var(--isl-chip); box-shadow: inset 0 0 0 2px var(--isl-lime); }
 .isl-row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
-.isl-row-title { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.isl-row-sub { font-size: 12px; color: var(--isl-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+/* 文字整体上提 1px：字在行框里偏下，按行框居中的话两行字的墨迹中线比环的中线低 0.75px（中文）、
+   1.25px（英文），状态字低 1.5px（island-panel dpr2 实量）。上提后都在 ±0.75px 以内。行高不变。 */
+.isl-row-text, .isl-row > .isl-state { position: relative; top: -1px; }
+/* 行高写死：line-height 不写时跟字体走，中文回退到 Noto Sans SC 是 19 / 17，英文 Inter 是 16 / 15，
+   同一套样式中文行高 54、英文 49（island-panel 实量），面板高度跟着语言变。取中文那一档。 */
+.isl-row-title { font-size: 13px; line-height: 19px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.isl-row-sub { font-size: 12px; line-height: 17px; color: var(--isl-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
 .isl-empty { margin: 0 10px; padding: 22px 0 18px; display: flex; flex-direction: column; align-items: center; gap: 14px; font-size: 13px; color: var(--isl-dim); }
 .isl-side {
   width: 124px; flex: none;
@@ -7644,13 +7655,16 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 /* 圆点视觉仍是 5px，按钮本身 24px 高、点间无缝（i15：原来按钮就是 5×5 的点，间距 5px，点不准）。
    负外边距把多出来的高度吃回去，面板高度不变。 */
 .isl-dots-nav { display: flex; justify-content: center; gap: 0; margin: 2px 0 -8px; }
-/* 左右翻页箭头：贴面板两侧、垂直居中的小圆钮，平时没有底，悬停才垫一档。 */
+/* 左右翻页箭头：贴面板两侧的小圆钮，平时没有底，悬停才垫一档。
+   垂直方向对着内容区（会话行 / 额度环）居中，不是对着整块面板：面板上面有 50px 标题区
+   （14 内边距 + 26 标题行 + 10 间距），下面只有 30px（圆点 18 + 12 内边距），按面板 50% 摆
+   箭头会比中间那行的中线高 10.5px（island-panel 实量）。上下各让出这两段，剩下的就是内容区。 */
 .isl-page-arrow {
-  position: absolute; top: 50%; transform: translateY(-50%);
+  position: absolute; margin-block: auto;
+  top: calc(14px + var(--isl-safe-top, 0px) + 26px + 10px); bottom: calc(18px + 12px);
   /* 24px：WCAG 2.5.8 最小点击区（i15，原 22px）。 */
   width: 24px; height: 24px; padding: 0; border: 0; border-radius: 50%;
   background: transparent; color: var(--isl-dim);
-  font: 600 15px/1 system-ui, sans-serif;
   display: grid; place-items: center; cursor: pointer;
   transition: background-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
@@ -7661,6 +7675,9 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .isl-panel.is-paged { padding-left: 44px; padding-right: 44px; }
 .isl-page-arrow.is-prev { left: 8px; }
 .isl-page-arrow.is-next { right: 8px; }
+/* 图标是朝下的箭头，转成朝左 / 朝右。 */
+.isl-page-arrow.is-prev > svg { transform: rotate(90deg); }
+.isl-page-arrow.is-next > svg { transform: rotate(-90deg); }
 .isl-dots-nav button {
   --isl-dot-c: var(--isl-faint);
   width: 24px; height: 24px; padding: 0; border: 0; border-radius: var(--radius-sm);

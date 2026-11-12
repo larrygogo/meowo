@@ -275,6 +275,12 @@ async function boot(): Promise<React.ReactNode> {
       el = shell(<IslandPanel sessions={sessions.slice(0, 2)} usage={{}} quotaProviders={[]} {...panelProps} />);
     } else if (scene === "island-panel-empty") {
       el = shell(<IslandPanel sessions={[]} usage={{}} quotaProviders={[]} {...panelProps} strip />);
+    } else if (scene === "island-panel-last") {
+      // 末页不满三条：四个会话分两页，停在只有一条的第二页（后面还有额度页）。翻页前后面板高度要一样。
+      el = shell(<IslandPanel sessions={sessions} usage={usage} quotaProviders={["claude", "codex"]} initialPage={1} {...panelProps} />);
+    } else if (scene === "island-panel-empty-usage") {
+      // 没有会话但有额度：空态那一页也能翻到额度页，两页高度要一样。
+      el = shell(<IslandPanel sessions={[]} usage={usage} quotaProviders={["claude", "codex"]} {...panelProps} />);
     } else if (scene === "island-usage") {
       el = shell(<IslandPanel sessions={sessions} usage={usage} quotaProviders={["claude", "codex"]} initialPage={9} {...panelProps} />);
     } else if (scene === "island-strip") {

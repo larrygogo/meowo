@@ -12,7 +12,7 @@ import { AgentRing, Ring, useNow, usedColor, usedOf } from "./islandParts";
 import { primaryLane } from "./useIslandUsage";
 import { ChatIcon, GearIcon } from "../sticker/icons";
 import { Icon } from "../../icons/Icon";
-import { icPlus, icStrip } from "../../icons/glyphs";
+import { icChevronDown, icPlus, icStrip } from "../../icons/glyphs";
 
 /** 极简模式图标：一条贴顶的细线。 */
 function StripIcon() {
@@ -296,6 +296,8 @@ export function IslandPanel({
           </div>
         )}
 
+        {/* 箭头用图标不用「‹ ›」字符：字符在行框里偏下（实量墨迹中线比钮的中线低 1.75px），
+            而且跟着系统字体走，Windows 和 macOS 偏的还不一样；图标在钮里是几何居中的。方向由样式旋转。 */}
         {pages > 1 && (
           <>
             <button
@@ -303,13 +305,13 @@ export function IslandPanel({
               className="isl-page-arrow is-prev"
               aria-label={t.island.prevPage}
               onClick={() => setPage((current + pages - 1) % pages)}
-            >‹</button>
+            ><Icon glyph={icChevronDown} size={12} /></button>
             <button
               type="button"
               className="isl-page-arrow is-next"
               aria-label={t.island.nextPage}
               onClick={() => setPage((current + 1) % pages)}
-            >›</button>
+            ><Icon glyph={icChevronDown} size={12} /></button>
           </>
         )}
         {pages > 1 && (
