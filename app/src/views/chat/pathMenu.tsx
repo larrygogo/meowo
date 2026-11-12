@@ -14,6 +14,7 @@ import {
 } from "react";
 import { listFileOpeners, openPathWith, revealPathInFileManager, type FileOpenerDto } from "../../api";
 import { pushEscLayer } from "../../escLayers";
+import { restoreFocus, useFocusOrigin } from "../../focusRestore";
 import { useT } from "../../i18n";
 import type { Dict } from "../../i18n/zh";
 import { Icon } from "../../icons/Icon";
@@ -132,6 +133,8 @@ export function PathMenu({ x, y, items, onClose }: {
   onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  // 打开前的焦点（「更多操作」按钮）在渲染阶段记，同 AppModal（walkthrough P-2）。
+  const prev = useFocusOrigin();
   const [pos, setPos] = useState({ left: x, top: y });
   useLayoutEffect(() => {
     const el = ref.current;
@@ -177,15 +180,16 @@ export function PathMenu({ x, y, items, onClose }: {
     };
   }, [onClose]);
   useEffect(() => {
-    const prev = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     ref.current?.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
     return () => {
+      // 「更多操作」按钮在菜单收起后 display:none（行失去 focus-within、aria-expanded 变 false），直接 focus()
+      // 无效，焦点落到 body（walkthrough P-11，wk3b-rowmore）。restoreFocus 先点亮同一行再还给它。
       // eslint-disable-next-line react-hooks/exhaustive-deps -- 关闭时读当下的菜单节点判断焦点在不在菜单里；节点挂载期内不变，读当下值与挂载时快照等价
       if (document.activeElement === document.body || ref.current?.contains(document.activeElement)) {
-        prev?.focus();
+        restoreFocus(prev);
       }
     };
-  }, []);
+  }, [prev]);
   const onMenuKeyDown = (e: ReactKeyboardEvent) => {
     const nodes = Array.from(ref.current?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? []);
     if (nodes.length === 0) return;
