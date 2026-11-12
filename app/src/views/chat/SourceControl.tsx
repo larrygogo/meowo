@@ -16,7 +16,7 @@
 
 import { useContext, useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type MutableRefObject, type ReactNode } from "react";
 import { observeElementRect, useVirtualizer, type Virtualizer } from "@tanstack/react-virtual";
-import { getUntrackedDirFiles, gitCommit, gitDiscard, gitDiscardUndo, gitIgnoreDir, gitStage, gitUnstage, openPathWith, type RepoChangesDto } from "../../api";
+import { discardPartialOf, getUntrackedDirFiles, gitCommit, gitDiscard, gitDiscardUndo, gitIgnoreDir, gitStage, gitUnstage, openPathWith, type RepoChangesDto } from "../../api";
 import type { GitChangedFileDto } from "../../generated/contracts/GitChangedFileDto";
 import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
@@ -73,10 +73,16 @@ const NOTE_H = 28;
 type VRow = { key: string; size: number; node: ReactNode };
 /// 进行中的写操作（walkthrough P-4：提交、暂存、放弃进行中要有字，和推送的「正在推送…」一致）。
 type BusyKind = "commit" | "stage" | "unstage" | "discard" | "ignore" | "undo";
+/// 放弃的撤销号。trashed = 同一次放弃里进了回收站的未跟踪文件数：撤销只写回已跟踪的，回收站里的要说清
+/// 还在回收站（做空第一轮 #2，2026-11-12：混合放弃后撤销说「已撤销放弃」，new.txt 却还在回收站）。
+type UndoInfo = { root: string; id: string; trashed: number };
 /// 失败提示：retry 是「重做刚才那一步」（git/locked 给「重试」，补完身份后自动重做提交）。
-type ScmError = { text: string; code: string; retry?: () => void };
+/// undo：放弃到一半失败时后端带回的撤销号（git/discard_partial，做空第一轮 #1）。kind：哪一步失败的。
+type ScmError = { text: string; code: string; retry?: () => void; undo?: UndoInfo; kind?: BusyKind };
 /// 结果提示：undo 是放弃后的撤销号（git.rs undo_discard，walkthrough P-5）。
-type ScmNotice = { text: string; undo?: { root: string; id: string } };
+type ScmNotice = { text: string; undo?: UndoInfo };
+/// 未跟踪的条目（文件或折叠目录）：放弃时进回收站，不在撤销号里（同 git.rs discard_with_ops 的划分）。
+const isUntracked = (file: ScmFile) => file.worktreeStatus === "U";
 /// 写操作之后焦点去哪（walkthrough P-3）：行被挪到别的组或消失时，焦点掉到 body；记下原来在哪一组第几行，
 /// 行没了就落到同一位置的下一行。back = 从单文件 diff 返回，焦点回到刚打开的那一行。
 type FocusPlan = { kind: GroupKind; path: string; index: number; until: number; back?: boolean };
@@ -242,7 +248,7 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
     );
   }
 
-  const run = async (kind: BusyKind, action: () => Promise<unknown>, after?: (result: unknown) => void) => {
+  const run = async (kind: BusyKind, action: () => Promise<unknown>, after?: (result: unknown) => void, undoOf?: (id: string) => UndoInfo) => {
     if (busyRef.current) return;
     setBusy(kind);
     setError(null);
@@ -253,8 +259,14 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
     } catch (e) {
       const code = errorCode(e);
       // 「重试」= 原样再跑一次（git/locked：agent 跑完 git 就能成；git/identity：补完身份接着做）。
-      const retry = () => { void run(kind, action, after); };
-      setError({ text: formatBackendError(e, t.locale), code, retry });
+      const retry = () => { void run(kind, action, after, undoOf); };
+      // 放弃到一半失败：说「只放弃了一部分」加原因，给「撤销」把已放弃的写回去（不给重试：已放弃的文件
+      // 不在改动清单里了，原样重跑会报 git/not_in_changes）。
+      const partial = discardPartialOf(e);
+      const text = partial
+        ? [formatBackendError(code, t.locale), formatBackendError(partial.cause, t.locale)].join(t.locale.startsWith("zh") ? "" : " ")
+        : formatBackendError(e, t.locale);
+      setError({ text, code, retry, kind, undo: partial && undoOf ? undoOf(partial.undoId) : undefined });
     } finally {
       setBusy(null);
       // 点开的折叠目录里的文件可能刚被暂存 / 放弃：清掉让上面的 effect 重拉。
@@ -311,16 +323,21 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
     const target = pending.root;
     const targetCwd = target === cwd ? null : cwd;
     planFocus("work", pending.files.length === 1 ? pending.files[0].path : "");
+    // 已跟踪的能撤销、未跟踪的进回收站，提示分开数（做空第一轮 #2）：以前混合放弃说「已放弃 2 个文件的更改 · 撤销」，
+    // 撤销后说「已撤销放弃」，回收站里那个只字不提。
+    const trashed = changedFileCount(pending.files.filter(isUntracked));
+    const undoOf = (id: string): UndoInfo => ({ root: target, id, trashed });
     void run("discard", () => gitDiscard(target, pending.files.map((file) => file.path), targetCwd), (id) => {
       // 有已跟踪文件被放弃就给撤销（P-5）；只放弃了未跟踪的（进了回收站）只说去哪了。
-      const count = changedFileCount(pending.files);
+      const count = changedFileCount(pending.files.filter((file) => !isUntracked(file)));
       setNotice(typeof id === "string"
-        ? { text: t.chat.scmDiscarded(count), undo: { root: target, id } }
+        ? { text: trashed > 0 ? t.chat.scmDiscardedMixed(count, trashed) : t.chat.scmDiscarded(count), undo: undoOf(id) }
         : { text: t.chat.scmTrashed });
-    });
+    }, undoOf);
   };
-  const undoDiscard = (undo: { root: string; id: string }) => {
-    void run("undo", () => gitDiscardUndo(undo.root, undo.id, undo.root === cwd ? null : cwd), () => setNotice({ text: t.chat.scmUndone }));
+  const undoDiscard = (undo: UndoInfo) => {
+    void run("undo", () => gitDiscardUndo(undo.root, undo.id, undo.root === cwd ? null : cwd),
+      () => setNotice({ text: undo.trashed > 0 ? t.chat.scmUndoneMixed(undo.trashed) : t.chat.scmUndone }));
   };
   const message = messages.get(key) ?? "";
   const setMessage = (value: string) => setMessages((prev) => new Map(prev).set(key, value));
@@ -366,7 +383,13 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
   const errorActions = (err: ScmError): PanelAction[] => {
     if (err.code === "git/identity" && err.retry) return [{ label: t.forge.identitySet, testId: "scm-identity", onClick: () => setIdentityFor(() => err.retry!) }];
     if (err.code === "git/conflict" && insertPrompt) return [{ label: t.chat.scmAskAgent, onClick: () => insertPrompt(t.chat.scmConflictPrompt) }];
+    if (err.undo) return [{ label: t.chat.scmUndo, testId: "scm-undo", onClick: () => undoDiscard(err.undo!) }];
     if (err.code === "git/locked" && err.retry) return [{ label: t.chat.scmRetry, onClick: err.retry }];
+    // 撤销写到一半失败（文件被占用、只读）：后端把撤销号放回去了，给「重试」接着撤（做空第一轮 #1）。
+    // 文件之后又改过、撤销已过期是终局，不给。
+    if (err.kind === "undo" && err.retry && err.code !== "git/undo_changed" && err.code !== "git/undo_expired") {
+      return [{ label: t.chat.scmRetry, testId: "scm-undo-retry", onClick: err.retry }];
+    }
     return [];
   };
 

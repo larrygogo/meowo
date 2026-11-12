@@ -51,6 +51,9 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "git/not_in_changes", exact: true, zh: "文件已不在更改列表里", en: "The file is no longer in the change list" },
   // 放弃的撤销（git.rs undo_discard，walkthrough P-5）。
   { m: "git/backup_failed", tail: true, zh: "没能备份改动，没有放弃", en: "Couldn't back up the changes, so nothing was discarded" },
+  // 恢复到一半失败（git.rs discard_with_ops）：后面还跟着撤销号和原因，SourceControl 拆开后各自翻译，
+  // 这里只出主句，不带 tail（tail 会把撤销号露给用户）。做空第一轮 #1，2026-11-12。
+  { m: "git/discard_partial", zh: "只放弃了一部分。", en: "Only some changes were discarded." },
   { m: "git/undo_changed", exact: true, zh: "文件之后又改过，没有撤销", en: "The files changed since, so nothing was undone" },
   { m: "git/undo_expired", exact: true, zh: "撤销已过期", en: "This undo has expired" },
   // 放弃更改时未跟踪文件进回收站失败（git.rs trash_to_recycle_bin）。文件原样保留、不会永久删。

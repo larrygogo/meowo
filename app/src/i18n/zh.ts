@@ -1165,6 +1165,9 @@ export const zh = {
     scmTrashed: "已移到回收站",
     scmUndo: "撤销",
     scmUndone: "已撤销放弃",
+    // 混合放弃（已跟踪 + 未跟踪）：撤销只写回已跟踪的，未跟踪的在回收站（做空第一轮 #2，2026-11-12）。
+    scmDiscardedMixed: (n: number, trashed: number) => `已放弃 ${n} 个，${trashed} 个移到回收站`,
+    scmUndoneMixed: (trashed: number) => `已撤销放弃，${trashed} 个仍在回收站`,
     // 冲突的出路：把一句现成的话放进输入框交给 agent（用户自己点发送）。
     scmAskAgent: "交给 agent",
     scmConflictPrompt: "仓库里有未解决的合并冲突，请解决冲突后提交。",

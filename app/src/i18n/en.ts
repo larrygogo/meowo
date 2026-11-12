@@ -1064,6 +1064,8 @@ export const en: Dict = {
     scmTrashed: "Moved to the trash",
     scmUndo: "Undo",
     scmUndone: "Discard undone",
+    scmDiscardedMixed: (n: number, trashed: number) => `Discarded ${n}. ${trashed} moved to the trash`,
+    scmUndoneMixed: (trashed: number) => `Discard undone. ${trashed} still in the trash`,
     scmAskAgent: "Ask the agent",
     scmConflictPrompt: "The repository has unresolved merge conflicts. Please resolve them and commit.",
     scmRepoGone: (repo: string) => `${repo} is no longer listed. Nothing was discarded`,

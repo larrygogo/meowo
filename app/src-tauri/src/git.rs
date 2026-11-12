@@ -1444,7 +1444,24 @@ fn discard_blocking(cwd: &str, paths: &[String]) -> Result<Option<String>, Strin
     discard_with(cwd, paths, trash_to_recycle_bin)
 }
 
+/// 恢复已跟踪文件工作区的实现。抽成函数指针同 [`TrashFn`]：测试注入「恢复到一半失败」（分批、文件被占用、
+/// index.lock），真 git 很难稳定造出来。
+type RestoreFn = fn(&str, &[String]) -> Result<(), String>;
+
+/// --worktree 只恢复工作区（到暂存区的内容）：已暂存的那部分改动是用户挑好的，不跟着丢。
+fn restore_worktree(dir: &str, tracked: &[String]) -> Result<(), String> {
+    run_pathspec_batches(dir, &["restore", "--worktree"], tracked)
+}
+
+/// 恢复中途失败、但已经有文件被放弃时的错误：`git/discard_partial:<撤销号>:<原因>`。撤销号夹在中间带回前端
+/// （api.ts discardPartialOf 拆出来），提示上给「撤销」；原因是 run_pathspec_batches 归好类的 `git/…`。
+const DISCARD_PARTIAL: &str = "git/discard_partial";
+
 fn discard_with(cwd: &str, paths: &[String], trash: TrashFn) -> Result<Option<String>, String> {
+    discard_with_ops(cwd, paths, trash, restore_worktree)
+}
+
+fn discard_with_ops(cwd: &str, paths: &[String], trash: TrashFn, restore: RestoreFn) -> Result<Option<String>, String> {
     let dir = existing_dir(cwd)?;
     let files = listed_changes(dir, paths, |f| f.worktree_status.is_some())?;
     refuse_conflicts(&files)?;
@@ -1454,6 +1471,10 @@ fn discard_with(cwd: &str, paths: &[String], trash: TrashFn) -> Result<Option<St
     let result = (|| {
         // porcelain 的路径相对仓库根；cwd 按约定就是仓库根，保险起见还是以 git 认的根为准。
         let root = repo_root(dir).unwrap_or_else(|| dir.to_string());
+        // 备份放在最前面、任何文件被动之前（做空第一轮 #1，2026-11-12）：以前未跟踪的先进了回收站才备份，
+        // 备份失败报 git/backup_failed「没能备份改动，没有放弃」，可回收站里已经多了文件，提示与事实不符。
+        // 备份只往对象库写数据对象，不改工作区；失败时什么都没动，这句话才是真的。
+        let backup = if tracked.is_empty() { None } else { Some(backup_before_discard(&root, &tracked)?) };
         let mut to_trash = Vec::new();
         for file in untracked {
             if let Some(rel) = file.path.strip_suffix('/') {
@@ -1486,14 +1507,25 @@ fn discard_with(cwd: &str, paths: &[String], trash: TrashFn) -> Result<Option<St
             trash(&to_trash)?;
         }
         // 已跟踪的放在回收之后：回收失败时已跟踪文件一个都没动（以前先恢复、再回收，回收失败报错时
-        // 已跟踪的改动已经丢了，撤销号也带不回去）。恢复前先把当前内容写进对象库，撤销时写回（P-5）。
-        if tracked.is_empty() {
+        // 已跟踪的改动已经丢了，撤销号也带不回去）。恢复前的内容已在上面写进对象库，撤销时写回（P-5）。
+        let Some(backup) = backup else {
             return Ok(None);
+        };
+        // 先登记撤销号再恢复（做空第一轮 #1，2026-11-12）：以前 restore 用 `?` 直接返回，分批恢复到一半
+        // 失败（文件被占用、index.lock）时前几批已经放弃了，前端却只拿到错误、没有撤销号，那部分改动找不回来。
+        let id = register_discard_backup(backup);
+        let restored = restore(dir, &tracked);
+        let changed = record_discard_after(&id);
+        match restored {
+            Ok(()) => Ok(Some(id)),
+            // 已经有文件被放弃：撤销号随错误带回，前端给「撤销」。
+            Err(e) if changed => Err(format!("{DISCARD_PARTIAL}:{id}:{e}")),
+            // 一个都没动（第一批就失败）：撤销号没用，收回，照原样报错。
+            Err(e) => {
+                take_discard_backup(&id, None);
+                Err(e)
+            }
         }
-        let backup = backup_before_discard(&root, &tracked)?;
-        // --worktree 只恢复工作区（到暂存区的内容）：已暂存的那部分改动是用户挑好的，不跟着丢。
-        run_pathspec_batches(dir, &["restore", "--worktree"], &tracked)?;
-        Ok(Some(register_discard_backup(backup)))
     })();
     invalidate_caches();
     result
@@ -1573,21 +1605,11 @@ fn backup_before_discard(root: &str, tracked: &[String]) -> Result<DiscardBackup
     })
 }
 
-/// 放弃完：记下放弃后的内容（撤销时据此判断文件之后有没有被改过），登记并返回撤销号。
-/// 记不下放弃后的内容就记成「未知」，撤销时一律当作被改过、拒绝，宁可不撤也不盖掉新内容。
+/// 放弃前登记，返回撤销号。放弃后的内容此刻还不知道，先记成「未知」，恢复完由 [`record_discard_after`] 补上。
+/// 撤销号要等 discard_with_ops 返回才交给前端，「未知」这段时间里不会有人拿它来撤销。
 fn register_discard_backup(mut backup: DiscardBackup) -> String {
-    let paths: Vec<String> = backup.files.iter().map(|file| file.path.clone()).collect();
-    match hash_worktree_files(&backup.root, &paths, false) {
-        Ok(after) => {
-            for (file, after) in backup.files.iter_mut().zip(after) {
-                file.after = after;
-            }
-        }
-        Err(_) => {
-            for file in &mut backup.files {
-                file.after = Some(String::from("?"));
-            }
-        }
+    for file in &mut backup.files {
+        file.after = Some(String::from(UNKNOWN_AFTER));
     }
     use std::sync::atomic::{AtomicU64, Ordering};
     static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -1602,6 +1624,43 @@ fn register_discard_backup(mut backup: DiscardBackup) -> String {
     id
 }
 
+/// 放弃后的内容记不下来时的占位：任何真实对象号都不等于它，撤销时一律当作被改过、拒绝，宁可不撤也不盖掉新内容。
+const UNKNOWN_AFTER: &str = "?";
+
+/// 恢复完（成功或中途失败）：记下每个文件放弃后的内容，撤销时据此判断文件之后有没有被改过。
+/// 返回是否已有文件真的被放弃了（放弃后与放弃前不同）；记不下来按「有」算，让前端留着撤销入口。
+fn record_discard_after(id: &str) -> bool {
+    let (root, paths) = {
+        let list = DISCARD_BACKUPS.lock().unwrap_or_else(|e| e.into_inner());
+        let Some((_, backup)) = list.iter().find(|(entry, _)| entry == id) else {
+            return false;
+        };
+        (backup.root.clone(), backup.files.iter().map(|file| file.path.clone()).collect::<Vec<_>>())
+    };
+    let after = hash_worktree_files(&root, &paths, false).ok();
+    let mut list = DISCARD_BACKUPS.lock().unwrap_or_else(|e| e.into_inner());
+    let Some((_, backup)) = list.iter_mut().find(|(entry, _)| entry == id) else {
+        return false;
+    };
+    match after {
+        Some(after) => {
+            for (file, after) in backup.files.iter_mut().zip(after) {
+                file.after = after;
+            }
+            backup.files.iter().any(|file| file.after != file.before)
+        }
+        None => true,
+    }
+}
+
+/// 按撤销号取出登记（root 给了就还要求仓库对得上）。取出即作废：同一个撤销号同一时刻只有一个撤销在跑。
+fn take_discard_backup(id: &str, root: Option<&str>) -> Option<DiscardBackup> {
+    let mut list = DISCARD_BACKUPS.lock().unwrap_or_else(|e| e.into_inner());
+    list.retain(|(_, entry)| entry.at.elapsed() < UNDO_KEEP);
+    let index = list.iter().position(|(entry_id, entry)| entry_id == id && root.is_none_or(|root| same_dir(&entry.root, root)))?;
+    Some(list.remove(index).1)
+}
+
 fn same_dir(a: &str, b: &str) -> bool {
     let norm = |p: &str| p.trim().replace('\\', "/").trim_end_matches('/').to_lowercase();
     norm(a) == norm(b)
@@ -1611,15 +1670,27 @@ fn undo_discard(cwd: &str, undo_id: &str) -> Result<(), String> {
     let dir = existing_dir(cwd)?;
     let root = repo_root(dir).unwrap_or_else(|| dir.to_string());
     // 先取出来：同一个撤销号只能用一次，连点两下不会写两遍。仓库对不上（手机端传错目录）按过期处理。
-    let backup = {
-        let mut list = DISCARD_BACKUPS.lock().unwrap_or_else(|e| e.into_inner());
-        list.retain(|(_, entry)| entry.at.elapsed() < UNDO_KEEP);
-        let index = list.iter().position(|(id, entry)| id == undo_id && same_dir(&entry.root, &root)).ok_or("git/undo_expired")?;
-        list.remove(index).1
-    };
+    let backup = take_discard_backup(undo_id, Some(&root)).ok_or("git/undo_expired")?;
+    let result = write_back(&backup);
+    invalidate_caches();
+    // 写一半失败（文件被占用、只读、盘满）把撤销号放回去，用户点「重试」能接着撤（做空第一轮 #1，
+    // 2026-11-12：以前先取出再逐个写，写到一半失败撤销号已经没了，既不能重试，前半已写回的也不回滚）。
+    // 文件之后被改过、对象已不在库里的是终局，不放回。
+    if let Err(e) = &result {
+        if e != "git/undo_changed" && e != "git/undo_expired" {
+            let mut list = DISCARD_BACKUPS.lock().unwrap_or_else(|e| e.into_inner());
+            list.push((undo_id.to_string(), backup));
+        }
+    }
+    result
+}
+
+/// 把一次放弃前的内容写回工作区。可重入：上一次写到一半失败后重试，已写回的文件此刻等于放弃前的内容，
+/// 照样放行（再写一遍同样的字节），只有既不是放弃后、也不是放弃前的内容才算「之后又被改过」。
+fn write_back(backup: &DiscardBackup) -> Result<(), String> {
     let paths: Vec<String> = backup.files.iter().map(|file| file.path.clone()).collect();
     let now = hash_worktree_files(&backup.root, &paths, false)?;
-    if backup.files.iter().zip(&now).any(|(file, now)| file.after != *now) {
+    if backup.files.iter().zip(&now).any(|(file, now)| file.after != *now && file.before != *now) {
         return Err("git/undo_changed".into());
     }
     // 先把要写回的内容全部读出来，读不全就一个都不写（不留下撤了一半的工作区）。
@@ -1636,28 +1707,24 @@ fn undo_discard(cwd: &str, undo_id: &str) -> Result<(), String> {
             None => None,
         });
     }
-    let result = (|| {
-        for (file, content) in backup.files.iter().zip(contents) {
-            let full = Path::new(&backup.root).join(&file.path);
-            match content {
-                Some(bytes) => {
-                    if let Some(parent) = full.parent() {
-                        std::fs::create_dir_all(parent).map_err(|e| format!("git/failed: {e}"))?;
-                    }
-                    std::fs::write(&full, bytes).map_err(|e| format!("git/failed: {e}"))?;
+    for (file, content) in backup.files.iter().zip(contents) {
+        let full = Path::new(&backup.root).join(&file.path);
+        match content {
+            Some(bytes) => {
+                if let Some(parent) = full.parent() {
+                    std::fs::create_dir_all(parent).map_err(|e| format!("git/failed: {e}"))?;
                 }
-                // 放弃前文件就不在（工作区删除）：放弃把它恢复了出来，撤销就再删掉。
-                None => {
-                    if std::fs::symlink_metadata(&full).is_ok() {
-                        std::fs::remove_file(&full).map_err(|e| format!("git/failed: {e}"))?;
-                    }
+                std::fs::write(&full, bytes).map_err(|e| format!("git/failed: {e}"))?;
+            }
+            // 放弃前文件就不在（工作区删除）：放弃把它恢复了出来，撤销就再删掉。
+            None => {
+                if std::fs::symlink_metadata(&full).is_ok() {
+                    std::fs::remove_file(&full).map_err(|e| format!("git/failed: {e}"))?;
                 }
             }
         }
-        Ok(())
-    })();
-    invalidate_caches();
-    result
+    }
+    Ok(())
 }
 
 /// 整目录放弃前的检查，通过了返回要进回收站的绝对路径。
@@ -2566,6 +2633,109 @@ mod tests {
         let err = discard_with(&s(&repo), &["README.md".into(), "new2.txt".into()], fake_trash_fail).unwrap_err();
         assert!(err.starts_with("git/trash_failed"), "{err}");
         assert_eq!(std::fs::read_to_string(repo.join("README.md")).unwrap(), "keep\n", "回收失败时已跟踪的改动还在");
+    }
+
+    /// 假恢复：只恢复第一个文件就失败，模拟分批恢复到一半撞上 index.lock / 文件占用。
+    fn restore_first_then_fail(dir: &str, tracked: &[String]) -> Result<(), String> {
+        restore_worktree(dir, &tracked[..1])?;
+        Err("git/locked".into())
+    }
+    fn restore_fail_untouched(_: &str, _: &[String]) -> Result<(), String> {
+        Err("git/locked".into())
+    }
+
+    /// 做空第一轮 #1（2026-11-12）：恢复到一半失败时前面的文件已经放弃了，撤销号得随错误带回来，
+    /// 撤销能把它们写回去；一个都没动的失败照原样报错，不发没用的撤销号。
+    #[test]
+    fn discard_partial_failure_carries_undo_id() {
+        let sb = Sandbox::new("discard-partial");
+        let repo = sb.repo("r");
+        std::fs::write(repo.join("b.txt"), "b\n").unwrap();
+        sb.commit(&repo, "b");
+        std::fs::write(repo.join("README.md"), "mine a\n").unwrap();
+        std::fs::write(repo.join("b.txt"), "mine b\n").unwrap();
+        let paths = ["README.md".to_string(), "b.txt".to_string()];
+        let err = discard_with_ops(&s(&repo), &paths, fake_trash_fail, restore_first_then_fail).unwrap_err();
+        let rest = err.strip_prefix("git/discard_partial:").unwrap_or_else(|| panic!("要带撤销号：{err}"));
+        let (id, cause) = rest.split_once(':').unwrap();
+        assert_eq!(cause, "git/locked");
+        assert_eq!(statuses(&repo).len(), 1, "前一个已放弃、后一个还在");
+        undo_discard(&s(&repo), id).unwrap();
+        assert_eq!(std::fs::read_to_string(repo.join("README.md")).unwrap(), "mine a\n", "已放弃的写回来了");
+        assert_eq!(std::fs::read_to_string(repo.join("b.txt")).unwrap(), "mine b\n");
+
+        let err = discard_with_ops(&s(&repo), &paths, fake_trash_fail, restore_fail_untouched).unwrap_err();
+        assert_eq!(err, "git/locked", "一个都没动：照原样报错");
+    }
+
+    /// 做空第一轮 #1：备份失败时一个文件都没动，「没能备份改动，没有放弃」才是真话。以前未跟踪的先进了
+    /// 回收站才备份。造备份失败：已跟踪文件读不了（Windows 独占打开，Unix 去掉读权限）。
+    #[test]
+    fn discard_backup_failure_touches_nothing() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        static TRASHED: AtomicBool = AtomicBool::new(false);
+        fn recording_trash(paths: &[std::path::PathBuf]) -> Result<(), String> {
+            TRASHED.store(true, Ordering::SeqCst);
+            fake_trash_ok(paths)
+        }
+        let sb = Sandbox::new("discard-backup-fail");
+        let repo = sb.repo("r");
+        std::fs::write(repo.join("README.md"), "mine\n").unwrap();
+        std::fs::write(repo.join("new.txt"), "n\n").unwrap();
+        let readme = repo.join("README.md");
+        #[cfg(windows)]
+        let _lock = {
+            use std::os::windows::fs::OpenOptionsExt;
+            std::fs::OpenOptions::new().read(true).share_mode(0).open(&readme).unwrap()
+        };
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&readme, std::fs::Permissions::from_mode(0o000)).unwrap();
+            if std::fs::read(&readme).is_ok() {
+                return; // root 跑测试时权限拦不住读，造不出备份失败
+            }
+        }
+        let err = discard_with(&s(&repo), &["README.md".into(), "new.txt".into()], recording_trash).unwrap_err();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&readme, std::fs::Permissions::from_mode(0o644)).unwrap();
+        }
+        assert!(err.starts_with("git/backup_failed"), "{err}");
+        assert!(!TRASHED.load(Ordering::SeqCst), "备份失败前不该动回收站");
+        assert!(repo.join("new.txt").exists());
+    }
+
+    /// 做空第一轮 #1：撤销写到一半失败（文件只读 / 被占用），撤销号放回去，排除故障后重试能撤完。
+    #[test]
+    fn discard_undo_write_failure_can_retry() {
+        let sb = Sandbox::new("discard-undo-retry");
+        let repo = sb.repo("r");
+        std::fs::write(repo.join("b.txt"), "b\n").unwrap();
+        sb.commit(&repo, "b");
+        std::fs::write(repo.join("README.md"), "mine a\n").unwrap();
+        std::fs::write(repo.join("b.txt"), "mine b\n").unwrap();
+        let id = discard_with(&s(&repo), &["README.md".into(), "b.txt".into()], fake_trash_fail).unwrap().unwrap();
+        let blocked = repo.join("b.txt");
+        let mut perms = std::fs::metadata(&blocked).unwrap().permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(&blocked, perms.clone()).unwrap();
+        if std::fs::OpenOptions::new().write(true).open(&blocked).is_ok() {
+            #[allow(clippy::permissions_set_readonly_false)]
+            perms.set_readonly(false);
+            std::fs::set_permissions(&blocked, perms).unwrap();
+            return; // root 跑测试时只读拦不住写
+        }
+        let err = undo_discard(&s(&repo), &id).unwrap_err();
+        assert!(err.starts_with("git/failed"), "{err}");
+        #[allow(clippy::permissions_set_readonly_false)]
+        perms.set_readonly(false);
+        std::fs::set_permissions(&blocked, perms).unwrap();
+        undo_discard(&s(&repo), &id).unwrap();
+        assert_eq!(std::fs::read_to_string(repo.join("README.md")).unwrap(), "mine a\n");
+        assert_eq!(std::fs::read_to_string(repo.join("b.txt")).unwrap(), "mine b\n");
+        assert_eq!(undo_discard(&s(&repo), &id).unwrap_err(), "git/undo_expired", "撤完就作废");
     }
 
     /// 假回收站：直接删，模拟「回收成功、原路径消失」。

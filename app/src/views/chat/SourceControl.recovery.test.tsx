@@ -74,6 +74,70 @@ describe("放弃可以撤销（P-5）", () => {
   });
 });
 
+// 做空第一轮 #1 / #2 / #3（2026-11-12）。兄弟场景：单个放弃与组头「全部放弃」走同一个 confirmAndDiscard；
+// 「更改」面板三种提示条（失败、结果、筛选拦提交）都挂 focusAfter；ForgeBar 走 PanelMessage 的默认落点
+//（ForgeBar.recovery.test）；ReviewBar 撤销条 × 交给输入框（ReviewBar.test）。手机页同一个 SourceControl。
+describe("做空第一轮：混合放弃、放弃到一半、撤销重试", () => {
+  const discardAll = () => {
+    fireEvent.click(within(screen.getByTestId("scm-group-work")).getByRole("button", { name: "全部放弃" }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "放弃更改" }));
+  };
+
+  it("混合放弃：提示分开数已放弃的和进回收站的，撤销后说回收站里还有几个", async () => {
+    handler = (command) => (command === "git_discard" ? "discard-1" : []);
+    renderScm([repo([file("a.ts", null, "M"), file("new.txt", null, "U")])]);
+    discardAll();
+    const notice = await screen.findByTestId("scm-notice");
+    expect(notice.textContent).toContain("已放弃 1 个，1 个移到回收站");
+    fireEvent.click(within(notice).getByTestId("scm-undo"));
+    await waitFor(() => expect(screen.getByTestId("scm-notice").textContent).toBe("已撤销放弃，1 个仍在回收站"));
+  });
+
+  it("放弃到一半失败：说只放弃了一部分和原因，给「撤销」把已放弃的写回去", async () => {
+    handler = (command) => {
+      if (command === "git_discard") throw "git/discard_partial:discard-18a-3:git/locked";
+      return [];
+    };
+    renderScm([repo([file("a.ts", null, "M"), file("b.ts", null, "M")])]);
+    discardAll();
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("只放弃了一部分。另一个 git 操作正在进行");
+    expect(alert.textContent).not.toContain("discard-18a-3");
+    expect(within(alert).queryByRole("button", { name: "重试" })).toBeNull();
+    fireEvent.click(within(alert).getByTestId("scm-undo"));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("git_discard_undo", { cwd: "C:/w/meowo", undoId: "discard-18a-3" }));
+    await waitFor(() => expect(screen.getByTestId("scm-notice").textContent).toBe("已撤销放弃"));
+  });
+
+  it("撤销写一半失败：给「重试」再撤一次；文件之后改过的不给重试", async () => {
+    let undoFails = 1;
+    handler = (command) => {
+      if (command === "git_discard") return "discard-1";
+      if (command === "git_discard_undo" && undoFails-- > 0) throw "git/failed: 拒绝访问。 (os error 5)";
+      return [];
+    };
+    renderScm([repo([file("a.ts", null, "M")])]);
+    fireEvent.click(within(screen.getByTestId("scm-group-work")).getByRole("button", { name: "放弃更改" }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "放弃更改" }));
+    fireEvent.click(within(await screen.findByTestId("scm-notice")).getByTestId("scm-undo"));
+    fireEvent.click(within(await screen.findByRole("alert")).getByTestId("scm-undo-retry"));
+    await waitFor(() => expect(screen.getByTestId("scm-notice").textContent).toBe("已撤销放弃"));
+    expect(vi.mocked(invoke).mock.calls.filter(([c]) => c === "git_discard_undo")).toHaveLength(2);
+
+    cleanup();
+    handler = (command) => {
+      if (command === "git_discard") return "discard-2";
+      if (command === "git_discard_undo") throw "git/undo_changed";
+      return [];
+    };
+    renderScm([repo([file("a.ts", null, "M")])]);
+    fireEvent.click(within(screen.getByTestId("scm-group-work")).getByRole("button", { name: "放弃更改" }));
+    fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "放弃更改" }));
+    fireEvent.click(within(await screen.findByTestId("scm-notice")).getByTestId("scm-undo"));
+    expect(within(await screen.findByRole("alert")).queryByTestId("scm-undo-retry")).toBeNull();
+  });
+});
+
 describe("失败有出路（P-1 / P-14）", () => {
   it("缺 git 身份：「设置身份」就地填写，保存后自动重做提交", async () => {
     let identity = false;
