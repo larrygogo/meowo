@@ -584,11 +584,14 @@ export function App() {
       toneLabel: t.island.toneLabel,
       untitled: t.sticker.waitingFirstInput,
     });
-    const key = JSON.stringify([tone, segments, menubarMood]);
+    // 主窗口在前台时眼睛在它的黑轨上：菜单栏图标的眼睛闭上（关卡 A 取舍 10），右边的文字照旧。
+    // 未经 macOS 真机验证。
+    const mood = rosterFront ? "sleep" : menubarMood;
+    const key = JSON.stringify([tone, segments, mood]);
     if (key === menubarRef.current) return;
     menubarRef.current = key;
-    invoke("set_menubar_status", { tone, segments, mood: menubarMood }).catch(() => {});
-  }, [stripSessions, usage, quotaProviders, activeProviders, t, menubarMood]);
+    invoke("set_menubar_status", { tone, segments, mood }).catch(() => {});
+  }, [stripSessions, usage, quotaProviders, activeProviders, t, menubarMood, rosterFront]);
 
   // monitor 只在启动还原时有；平时不带，后端缺参即按窗口当前所在屏。
   const layout = useCallback((width: number, height: number, centerRatio: number | null = null, monitor: string | null = null) =>
@@ -1171,6 +1174,7 @@ export function App() {
       onDismissAlert={dismissAlert}
       onDismissAllAlerts={dismissAllAlerts}
       notch={host.kind === "notch" ? { width: host.notchWidth, height: host.notchHeight } : undefined}
+      eyesAway={rosterFront && host.kind === "notch"}
     />
   );
 }

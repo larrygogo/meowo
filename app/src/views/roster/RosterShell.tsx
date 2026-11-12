@@ -10,11 +10,13 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useTauriEvent } from "../../hooks/useTauriEvent";
 import { useT } from "../../i18n";
 import { Icon } from "../../icons/Icon";
-import { icSettings } from "../../icons/glyphs";
+import { icSearch, icSettings } from "../../icons/glyphs";
 import { icList } from "../../icons/glyphs.chat";
 import { remoteUi } from "../../remoteMode";
 import { ChatMarkdown } from "../ChatMarkdown";
 import { runningActivityView } from "../chat/RunningBar";
+import { isShellCovered } from "../chat/shellCover";
+import { displayKeys } from "../chat/WindowModals";
 import { ChatWindow, type ChatShellBridge } from "../ChatWindow";
 import { useSidebarGitBadges, type GitBadgeStore } from "../chat/SidebarGitBadge";
 import { AgentRing, Eyes } from "../island/islandParts";
@@ -48,7 +50,24 @@ function DesktopRoster() {
   const [sceneId, setSceneId] = useState(0);
   const [request, setRequest] = useState<ChatShellBridge["request"]>(null);
   const [newSession, setNewSession] = useState<ChatShellBridge["newSession"]>(null);
-
+  const [command, setCommand] = useState<ChatShellBridge["command"]>(null);
+  // 管理页是从名单进去的：点「返回」回名单。从现场里（侧栏菜单、设置页）进去的照旧回现场。
+  const pageFromRosterRef = useRef(false);
+  const run = useCallback((name: NonNullable<ChatShellBridge["command"]>["name"]) => {
+    if (name !== "search") pageFromRosterRef.current = true;
+    setCommand((prev) => ({ name, seq: (prev?.seq ?? 0) + 1 }));
+  }, []);
+  // Ctrl/Cmd+K 在名单上照样叫出搜索：对话窗自己的那个监听被名单盖住时收不到（chat/shellCover）。
+  // 面板已经开着时名单不盖键盘，同键收起由对话窗自己处理，这里不重复。
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (!isShellCovered() || event.code !== "KeyK" || !(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
+      event.preventDefault();
+      run("search");
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => document.removeEventListener("keydown", onKey, true);
+  }, [run]);
 
   const say = useCallback((id: number, draft: string) => {
     setRequest((prev) => ({ id, seq: (prev?.seq ?? 0) + 1, draft }));
@@ -68,6 +87,7 @@ function DesktopRoster() {
   }, [sessions, view]);
 
   const enter = useCallback((id: number) => {
+    pageFromRosterRef.current = false;
     setRequest((prev) => ({ id, seq: (prev?.seq ?? 0) + 1 }));
     setView("scene");
   }, []);
@@ -109,13 +129,20 @@ function DesktopRoster() {
         onEnter={enter}
         onSay={say}
         onNewSession={askNewSession}
+        onCommand={run}
       />
     ) : null,
     request,
     newSession,
+    command,
     onSession: setSceneId,
     onReveal: () => setView("scene"),
-  }), [view, rows, sessions, expanded, gitBadges, enter, request, newSession, say, askNewSession]);
+    onPageBack: () => {
+      if (!pageFromRosterRef.current) return;
+      pageFromRosterRef.current = false;
+      backToRoster();
+    },
+  }), [view, rows, sessions, expanded, gitBadges, enter, request, newSession, command, say, askNewSession, run, backToRoster]);
 
   return (
     <div ref={shellRef} className={`roster-shell is-${view}`}>
@@ -186,7 +213,8 @@ function title(item: Item, fallback: string): string {
   return item.task_title && item.task_title !== UNNAMED_SESSION_SENTINEL ? item.task_title : fallback;
 }
 
-function RosterList({ rows, loaded, expanded, gitBadges, onToggle, onEnter, onSay, onNewSession }: {
+function RosterList({ rows, loaded, expanded, gitBadges, onToggle, onEnter, onSay, onNewSession, onCommand }: {
+  onCommand: (name: "search" | "done" | "admin") => void;
   onSay: (id: number, message: string) => void;
   onNewSession: (message: string) => void;
   rows: readonly Item[];
@@ -202,6 +230,16 @@ function RosterList({ rows, loaded, expanded, gitBadges, onToggle, onEnter, onSa
     <section className="roster" aria-label={t.roster.title}>
       <header className="roster-head" data-tauri-drag-region>
         <h1 className="roster-title">{t.roster.title}</h1>
+        {/* 很轻的一排入口，不是页签：已完成和会话管理是另外的页，点了会离开名单。 */}
+        <nav className="roster-links" aria-label={t.roster.more}>
+          <button type="button" onClick={() => onCommand("done")}>{t.chat.sidebarTabDone}</button>
+          <button type="button" onClick={() => onCommand("admin")}>{t.admin.entry}</button>
+          <button type="button" className="roster-search" onClick={() => onCommand("search")}>
+            <Icon glyph={icSearch} size={14} />
+            <span>{t.roster.search}</span>
+            <kbd>{displayKeys("Ctrl+K")}</kbd>
+          </button>
+        </nav>
       </header>
       <div
         className="roster-list"

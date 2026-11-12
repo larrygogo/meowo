@@ -53,6 +53,8 @@ export function useMainPages({ resetTo, closeOverlay }: {
   }, []);
 
   const openAdmin = useCallback(() => showAdmin("all", []), [showAdmin]);
+  /** 名单顶部的「已完成」：管理页直接筛在已完成。 */
+  const openAdminDone = useCallback(() => showAdmin("done", []), [showAdmin]);
   const openAdminFromOverlay = useCallback(() => {
     closeOverlay();
     setNewSessionOpen(null);
@@ -108,6 +110,6 @@ export function useMainPages({ resetTo, closeOverlay }: {
 
   return {
     adminOpen, adminStatus, adminWorkspaces, newSessionOpen, newSessionDrop, newSessionOpenRef,
-    openAdmin, openAdminFromOverlay, openAdminFor, closeAdmin, leavePages, selectSession, selectFromOverlay, dropFolder, openNewSessionWith,
+    openAdmin, openAdminDone, openAdminFromOverlay, openAdminFor, closeAdmin, leavePages, selectSession, selectFromOverlay, dropFolder, openNewSessionWith,
   };
 }

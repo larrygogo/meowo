@@ -7378,6 +7378,8 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
    出错红叉，跑完 ^ ^，闲久了睡着冒 z。各形态在 islandParts.tsx 的 Eyes 里切，这里只管颜色与动作。 */
 .isl-eyes { position: relative; display: inline-flex; align-items: center; padding: 0 6px; flex: none; color: #fff; }
 .isl-eyes.is-small { padding: 0; }
+/* 主窗口在前台时眼睛站在它的黑轨上：刘海两翼不画眼睛，位置留着不让别的东西挪过来。 */
+.isl-notch.is-eyes-away .isl-eyes { visibility: hidden; }
 .isl-eye-pair { display: block; overflow: visible; }
 .isl-sclera { fill: #fff; }
 .isl-pupil { fill: #000; transition: transform var(--dur-base) var(--ease-out); }
@@ -7920,6 +7922,12 @@ button.btn-primary:disabled { opacity: 1; background: var(--fill-selected); colo
 :root.platform-macos .roster { margin-top: 8px; }
 .roster-head { flex: none; height: 44px; display: flex; align-items: center; padding: 0 36px; }
 .roster-title { margin: 0; font-size: var(--text-sm); font-weight: 600; color: var(--cc-text); }
+/* 顶部右端的入口：平时退在后面，悬停才提亮。拖拽区里的按钮要自己声明不拖。 */
+.roster-links { margin-left: auto; display: flex; align-items: center; gap: 4px; -webkit-app-region: no-drag; }
+.roster-links button { height: 28px; display: inline-flex; align-items: center; gap: 6px; padding: 0 8px; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--cc-text-dim); font: inherit; font-size: var(--text-sm); cursor: pointer; }
+.roster-links button:hover { background: color-mix(in srgb, var(--cc-text) 6%, transparent); color: var(--cc-text); }
+.roster-links button:focus-visible { outline: 2px solid var(--cc-accent); outline-offset: -2px; }
+.roster-links kbd { font: inherit; font-size: var(--text-xs); color: var(--cc-text-faint); }
 .roster-list { flex: 1; min-height: 0; overflow-y: auto; padding: 4px 20px 20px; }
 .roster-empty { margin: 48px 0 0; text-align: center; color: var(--cc-text-faint); font-size: var(--text-sm); }
 /* 头像环沿用岛上那一套组件，颜色换成窗口里的状态色（岛恒黑，那组色值压在浅色面上不对）。 */

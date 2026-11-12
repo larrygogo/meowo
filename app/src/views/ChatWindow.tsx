@@ -270,8 +270,13 @@ export type ChatShellBridge = {
   request: { id: number; seq: number; draft?: string } | null;
   /** 名单底部输入框「交代一个结果」：打开新建页并把这句话带进去。seq 同 request。 */
   newSession: { message: string; seq: number } | null;
+  /** 名单顶部的入口：搜索（命令面板）、已完成、会话管理。这些页和弹层本来就长在对话窗里，
+   *  名单只是点名让它打开，不另做一份。seq 同 request。 */
+  command: { name: "search" | "done" | "admin"; seq: number } | null;
   /** 对话窗当前会话变了（含启动时的初值）。 */
   onSession: (id: number) => void;
+  /** 管理页点了「返回」：从名单进去的回到名单，不落到一个没点过的现场里。 */
+  onPageBack: () => void;
   /** 对话窗被带去某个会话 / 新建页 / 管理页（点岛上的卡、通知、新会话启动）：名单让位。 */
   onReveal: () => void;
 };
@@ -1948,7 +1953,7 @@ export function ChatWindow({ shell }: { shell?: ChatShellBridge } = {}) {
   // 主区的新建会话页 / 会话管理页：开合、入口事件、选会话时让位（chat/useMainPages）。
   const {
     adminOpen, adminStatus, adminWorkspaces, newSessionOpen, newSessionDrop, newSessionOpenRef,
-    openAdmin, openAdminFromOverlay, openAdminFor, closeAdmin, leavePages, selectSession, selectFromOverlay, dropFolder, openNewSessionWith,
+    openAdmin, openAdminDone, openAdminFromOverlay, openAdminFor, closeAdmin, leavePages, selectSession, selectFromOverlay, dropFolder, openNewSessionWith,
   } = useMainPages({ resetTo, closeOverlay: closeOverlaySidebar });
   // 新建会话页 / 会话管理页盖住主区时，右侧面板跟着让位（用户实拍 2026-11-09：新建页还挂着上一个
   // 会话的「更改」）。只把可见性压成收起、不卸载：回到会话时终端、浏览器、打开的文件原样还在；
@@ -1972,6 +1977,14 @@ export function ChatWindow({ shell }: { shell?: ChatShellBridge } = {}) {
     if (shellNewSession) openNewSessionWith(shellNewSession.message);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- 只认 seq
   }, [shellNewSession?.seq]);
+  const shellCommand = shell?.command ?? null;
+  useEffect(() => {
+    if (!shellCommand) return;
+    if (shellCommand.name === "search") setSwitcherOpen(true);
+    else if (shellCommand.name === "done") openAdminDone();
+    else openAdmin();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 只认 seq
+  }, [shellCommand?.seq]);
   // 新建页 / 管理页都长在对话窗里：它们一打开，名单让位。
   useEffect(() => { if (pageCovered) shellRef.current?.onReveal(); }, [pageCovered]);
   const shownPanelState = useMemo(() => (pageCovered ? { ...panelState, visible: false } : panelState), [pageCovered, panelState]);
@@ -4020,7 +4033,8 @@ export function ChatWindow({ shell }: { shell?: ChatShellBridge } = {}) {
   const rosterOn = shell?.overlay != null;
   // 名单盖着时，本窗口挂在 window 上的快捷键一律不接（chat/shellCover.ts）：审批的数字键 1 和
   // Esc 两段式拒绝都在其中。渲染时就同步置位，不等 effect：盖上的那一帧起就不能漏键。
-  setShellCovered(rosterOn);
+  // 命令面板开着时放开：它是从名单上叫出来的，自己的方向键 / 回车 / Esc 要收得到。
+  setShellCovered(rosterOn && !switcherOpen);
   const dockedSidebar = !narrow && !sidebarCollapsed;
   const dockedPanel = !!cwd && !remoteUi() && shownPanelState.visible && !panelState.expanded;
   const panes = fitPanes({ body: chatBodyWidth, sidebar: dockedSidebar ? sidebarWidth : null, panel: dockedPanel ? diffResize.width : null, ui: uiScale, gutter: remoteUi() ? 0 : surfaceGutter(dockedSidebar) });
@@ -4130,7 +4144,7 @@ export function ChatWindow({ shell }: { shell?: ChatShellBridge } = {}) {
       {/* 会话管理页占据主列（对照 Kimi）；对话主列不卸载只藏起来，终端、草稿等状态切回来都在。 */}
       {adminOpen && (
         <div className="chat-main chat-admin-main">
-          <SessionAdmin key={`${adminStatus}:${adminWorkspaces.join("|")}`} initialWorkspaces={adminWorkspaces} initialStatus={adminStatus} onBack={closeAdmin} onOpen={selectSession} />
+          <SessionAdmin key={`${adminStatus}:${adminWorkspaces.join("|")}`} initialWorkspaces={adminWorkspaces} initialStatus={adminStatus} onBack={() => { closeAdmin(); shellRef.current?.onPageBack(); }} onOpen={selectSession} />
         </div>
       )}
       {newSessionOpen && !adminOpen && (
@@ -5568,8 +5582,9 @@ export function ChatWindow({ shell }: { shell?: ChatShellBridge } = {}) {
         <QuickSwitcher
           activeId={sessionId}
           commands={paletteCommands}
-          onPick={selectSession}
-          onCommand={runPaletteCommand}
+          // 从名单上搜到的会话 / 命令都落在现场里：名单让位。
+          onPick={(id) => { selectSession(id); shellRef.current?.onReveal(); }}
+          onCommand={(id) => { shellRef.current?.onReveal(); runPaletteCommand(id); }}
           onClose={() => setSwitcherOpen(false)}
         />
       )}

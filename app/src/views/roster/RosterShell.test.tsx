@@ -24,15 +24,17 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 vi.mock("../ChatWindow", () => ({
   ChatWindow: ({ shell }: { shell?: ChatShellBridge }) => (
-    <div data-testid="chat" data-request={shell?.request?.id ?? ""} data-draft={shell?.request?.draft ?? ""} data-new-session={shell?.newSession?.message ?? ""}>
+    <div data-testid="chat" data-request={shell?.request?.id ?? ""} data-draft={shell?.request?.draft ?? ""} data-new-session={shell?.newSession?.message ?? ""} data-command={shell?.command?.name ?? ""}>
       {shell?.overlay}
       <button type="button" onClick={() => shell?.onReveal()}>reveal</button>
+      <button type="button" onClick={() => shell?.onPageBack()}>page-back</button>
     </div>
   ),
 }));
 
 import { makeSession } from "../../demo/data";
 import type { Item } from "../sticker/types";
+import { setShellCovered } from "../chat/shellCover";
 import { RosterShell } from "./RosterShell";
 
 let sessions: Item[] = [];
@@ -273,5 +275,66 @@ describe("名单外壳", () => {
     render(<RosterShell />);
     await screen.findByText("甲");
     expect(document.querySelector(".roster-shell")?.textContent).not.toMatch(/\d+\s*个/);
+  });
+
+  it("顶部的「已完成」叫对话窗打开管理页；在那页点返回回到名单", async () => {
+    sessions = [mk("甲"), mk("乙")];
+    render(<RosterShell />);
+    await screen.findByText("甲");
+    fireEvent.click(screen.getByRole("button", { name: "已完成" }));
+    expect(screen.getByTestId("chat").dataset.command).toBe("done");
+    // 管理页打开时对话窗会说「我被带走了」，名单让位。
+    fireEvent.click(screen.getByRole("button", { name: "reveal" }));
+    expect(document.querySelector(".roster")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "page-back" }));
+    expect(names()).toEqual(["甲", "乙"]);
+  });
+
+  it("从现场里进的管理页点返回不会被拉回名单", async () => {
+    sessions = [mk("甲"), mk("乙")];
+    render(<RosterShell />);
+    fireEvent.doubleClick(await screen.findByText("甲"));
+    expect(document.querySelector(".roster")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "page-back" }));
+    expect(document.querySelector(".roster")).toBeNull();
+  });
+
+  it("名单上按 Ctrl+K 叫出搜索", async () => {
+    sessions = [mk("甲"), mk("乙")];
+    render(<RosterShell />);
+    await screen.findByText("甲");
+    // 对话窗是桩，不会自己置位「被名单盖着」。
+    setShellCovered(true);
+    try {
+      fireEvent.keyDown(document.body, { key: "k", code: "KeyK", ctrlKey: true });
+      expect(screen.getByTestId("chat").dataset.command).toBe("search");
+    } finally {
+      setShellCovered(false);
+    }
+  });
+
+  it("窗口隐藏时不轮询：名单、展开行的速览和决定单都停", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const hidden = vi.spyOn(document, "hidden", "get");
+    const visibility = vi.spyOn(document, "visibilityState", "get");
+    try {
+      sessions = [mk("甲"), mk("乙", (s) => { s.pending_review = "approval"; })];
+      render(<RosterShell />);
+      // 先后展开一条在跑的（速览 2 秒一拍）和一条待处理的（决定单 1 秒一拍），确认两种轮询都在转。
+      fireEvent.click(await screen.findByText("甲"));
+      await act(async () => { vi.advanceTimersByTime(2500); });
+      fireEvent.click(screen.getByText("乙"));
+      await act(async () => { vi.advanceTimersByTime(1500); });
+      expect(invoke.mock.calls.some(([cmd]) => cmd === "pending_interaction")).toBe(true);
+      hidden.mockReturnValue(true);
+      visibility.mockReturnValue("hidden");
+      invoke.mockClear();
+      await act(async () => { vi.advanceTimersByTime(30_000); });
+      expect(invoke.mock.calls.map(([cmd]) => cmd)).toEqual([]);
+    } finally {
+      hidden.mockRestore();
+      visibility.mockRestore();
+      vi.useRealTimers();
+    }
   });
 });

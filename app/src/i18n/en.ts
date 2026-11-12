@@ -42,6 +42,8 @@ export const en: Dict = {
     answeredElsewhere: "Handled elsewhere",
     recentSteps: "Recent steps",
     allSessions: "All sessions",
+    more: "More",
+    search: "Search",
     answerWithKeys: "It stopped on a choice in the terminal. Below is the terminal right now. Answer with the keys.",
     approvalBackWithKeys: "This approval went back to the terminal. Below is the terminal right now. Handle it with the keys.",
   },

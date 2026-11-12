@@ -6,9 +6,10 @@ import { invoke } from "./chatWindow.harness";
 import { ChatWindow, type ChatShellBridge } from "./ChatWindow";
 import { chatUi } from "../test/agents";
 
-const shellWith = (covered: boolean): ChatShellBridge => ({
+const shellWith = (covered: boolean, extra: Partial<ChatShellBridge> = {}): ChatShellBridge => ({
   overlay: covered ? <div data-testid="roster"><button type="button" className="roster-row">行</button></div> : null,
-  request: null, newSession: null, onSession: () => {}, onReveal: () => {},
+  request: null, newSession: null, command: null, onSession: () => {}, onReveal: () => {}, onPageBack: () => {},
+  ...extra,
 });
 const setup = (sid: number) => {
   window.history.replaceState({}, "", "/?sessionId=" + sid);
@@ -75,5 +76,22 @@ describe("名单盖着时对话窗不接键盘", () => {
     fireEvent.keyDown(document.body, { key: "1" });
     await settle();
     expect(resolves()).toEqual([{ sessionId: 16, requestId: "req-hidden", choice: "allow_once" }]);
+  });
+
+  it("名单叫出的搜索面板收得到自己的 Esc；面板关掉后数字键仍然批不了被盖住的审批", async () => {
+    setup(17);
+    const view = render(<ChatWindow shell={shellWith(true)} />);
+    await screen.findByRole("button", { name: "允许一次", hidden: true });
+    view.rerender(<ChatWindow shell={shellWith(true, { command: { name: "search", seq: 1 } })} />);
+    await settle();
+    const list = document.querySelector(".chat-switcher-list");
+    expect(list).not.toBeNull();
+    fireEvent.keyDown(list!.parentElement!.querySelector("input")!, { key: "Escape" });
+    await settle();
+    expect(document.querySelector(".chat-switcher-list")).toBeNull();
+    (document.activeElement as HTMLElement | null)?.blur();
+    fireEvent.keyDown(document.body, { key: "1" });
+    await settle();
+    expect(resolves()).toEqual([]);
   });
 });

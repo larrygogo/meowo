@@ -48,6 +48,8 @@ export const zh = {
     answeredElsewhere: "已在别处处理",
     recentSteps: "最近几步",
     allSessions: "全部会话",
+    more: "其他入口",
+    search: "搜索",
     answerWithKeys: "它停在终端里的一个选择上。下面是终端此刻的画面，用按键作答",
     approvalBackWithKeys: "这条审批已回到终端。下面是终端此刻的画面，用按键处理",
   },
