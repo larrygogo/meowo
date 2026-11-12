@@ -24,8 +24,9 @@ export type TerminalAttentionOption = {
 /// proceed_box = 「Do you want to proceed?」框式（光标移动选择、记住=持久规则）；
 /// arrow_panel = 「▶ 标题」面板式（数字键直选、记住=仅本会话）；
 /// framed_box = 圆角外框对话框式（● 焦点光标移动选择，选项行带框线）。
-/// bracket_form = 方括号编号表单（kimi 提问：`[1] 选项` / `[✓] 选项`，数字键直选）。缺省/none = 不做结构化拆解。
-export type AttentionDetailsStyle = "none" | "proceed_box" | "arrow_panel" | "framed_box" | "bracket_form";
+/// bracket_form = 方括号编号表单（kimi 提问：`[1] 选项` / `[✓] 选项`，数字键直选）。
+/// framed_form = 圆角外框提问表单（gemini 0.65 ask_user：● 焦点光标移动 + 回车）。缺省/none = 不做结构化拆解。
+export type AttentionDetailsStyle = "none" | "proceed_box" | "arrow_panel" | "framed_box" | "bracket_form" | "framed_form";
 export type TerminalAttention = { id: string; text: string; options?: TerminalAttentionOption[]; details?: AttentionDetailsStyle };
 
 export function visibleTerminalText(text: string): string {
@@ -390,6 +391,83 @@ function parseBracketForm(visible: string, matchIndex: number): { text: string; 
   return { text, options };
 }
 
+/// 圆角外框提问表单（gemini 0.65 的 ask_user，npm bundle 源码取证 2026-11-12，未实拍）。
+/// 命中行是绿框头行 `│ Answer Questions`，表单从它往下到外框底边 `╰`。三种页：
+///   选择题  问句 + `│ ● 1.  选项`（多选在编号后带 `[ ]`/`[x]`，末尾多一行无编号的 `Done`）
+///   文本题  问句 + `> ` 输入行，没有编号项
+///   确认页  `Review your answers:` + `题目 → 答案`，回车提交
+/// 选项是 BaseSelectionList：● 是焦点，回车选中（多选是勾选，`Done` 才提交），按钮从焦点做
+/// 相对移动（与审批框、/model 对话框同一套已实测的按键语义）。编号项的最后一项恒为自定义
+/// 答案（ChoiceQuestionView 总会追加 `other` 项，空时显示占位文字），要现场打字，与 kimi 的
+/// `Other` 一样不出按钮。文本题同理认不出可点的动作，返回 null。
+function parseFramedForm(visible: string, matchIndex: number): { text: string; options: TerminalAttentionOption[] } | null {
+  const all = visible.split("\n");
+  const matchedLine = visible.slice(0, matchIndex).split("\n").length - 1;
+  let bottom = matchedLine;
+  while (bottom < all.length - 1 && !/^\s*╰/.test(all[bottom])) bottom += 1;
+  const lines = all.slice(matchedLine + 1, bottom)
+    .filter((line) => /^\s*│/.test(line))
+    .map((line) => line.replace(/^\s*│ ?/, "").replace(/\s*│\s*$/, "").trimEnd())
+    // 头行下的分隔线、多问题的页签行（`← □ 题一 │ ≡ Review →`）、滚动箭头都不是正文。
+    .filter((line) => line.trim() && !/^[─\s]+$/.test(line) && !/^\s*←.*→\s*$/.test(line) && !/^\s*[▲▼]\s*$/.test(line));
+  const reviewAt = lines.findIndex((line) => /^\s*review your answers:?\s*$/i.test(line));
+  if (reviewAt >= 0) {
+    const answers = lines.slice(reviewAt + 1).filter((line) => line.includes(" → ")).map((line) => line.trim());
+    return {
+      text: [lines[reviewAt].trim(), ...answers].join("\n"),
+      options: [{ label: "Submit", input: "\r", kind: "submit", position: 0 }],
+    };
+  }
+  type Row = { label: string; focused: boolean; indent: number; checkbox?: string; numbered: boolean; description?: string };
+  const rows: Row[] = [];
+  let firstRow = -1;
+  lines.forEach((line, index) => {
+    const numbered = line.match(/^(\s*)(●?)\s*(\d+)\.\s+(?:\[([ xX])\]\s*)?(.*?)\s*$/);
+    if (numbered && Number(numbered[3]) === rows.filter((row) => row.numbered).length + 1) {
+      if (firstRow < 0) firstRow = index;
+      rows.push({ label: numbered[5], focused: numbered[2] === "●", indent: line.search(/\d/), checkbox: numbered[4], numbered: true });
+      return;
+    }
+    const done = rows.length > 0 ? line.match(/^\s*(●?)\s*done\s*$/i) : null;
+    if (done) {
+      rows.push({ label: "Done", focused: done[1] === "●", indent: 0, numbered: false });
+      return;
+    }
+    const last = rows.at(-1);
+    // 比选项更深的缩进行是它的描述；提示行等回到框边的行不并进去。
+    if (last?.numbered && (line.match(/^\s*/) as RegExpMatchArray)[0].length > last.indent) {
+      last.description = [last.description, line.trim()].filter(Boolean).join(" ");
+    }
+  });
+  const numberedCount = rows.filter((row) => row.numbered).length;
+  const focusedAt = rows.findIndex((row) => row.focused);
+  // 至少一个真选项 + 自定义项；找不到焦点就不接线（相对移动的起点未知，按钮会选错项）。
+  if (numberedCount < 2 || focusedAt < 0) return null;
+  const otherAt = rows.reduce((at, row, index) => (row.numbered ? index : at), -1);
+  const question = lines.slice(0, firstRow)
+    .filter((line) => !/^\s*\(select all that apply\)\s*$/i.test(line))
+    .map((line) => line.trim())
+    .join("\n");
+  const move = (position: number) => {
+    const delta = position - focusedAt;
+    return delta < 0 ? "\x1b[A".repeat(-delta) : "\x1b[B".repeat(delta);
+  };
+  const options: TerminalAttentionOption[] = rows.flatMap((row, position): TerminalAttentionOption[] => {
+    if (position === otherAt) return [];
+    if (!row.numbered) return [{ label: row.label, input: move(position) + "\r", kind: "submit", focused: row.focused, position }];
+    return [{
+      label: row.label,
+      description: row.description,
+      input: move(position) + "\r",
+      kind: "choice",
+      selected: row.checkbox !== undefined && row.checkbox !== " ",
+      focused: row.focused,
+      position,
+    }];
+  });
+  return { text: question, options };
+}
+
 function lastMatch(pattern: RegExp, text: string): (RegExpMatchArray & { index: number }) | null {
   let last: (RegExpMatchArray & { index: number }) | null = null;
   for (const match of text.matchAll(pattern)) {
@@ -590,6 +668,12 @@ export function terminalAttention(
     // 解析不出选项（表单还没画完）就不出卡：空卡只会收走输入框又给不了动作。
     // details 不往外带：这不是命令审批，走通用的终端提示卡（按钮 = 发对应按键）。
     return form ? { id: best.id, text: form.text, options: form.options } : null;
+  }
+  if (detailsStyle === "framed_form") {
+    const form = parseFramedForm(visible, best.index);
+    // 出的是可作答的提问卡（与 claude 屏幕上认出的选择器同一张卡：单选即答、多选勾选后
+    // 提交）。认不出可点的动作（文本题、表单没画完）就不出卡，空卡只会收走输入框。
+    return form ? { id: "interactive:numbered-selector", text: form.text, options: form.options } : null;
   }
   const approvalCard = detailsStyle !== "none";
   // 面板式的详情从标题行(▶ Run this command?)起取:best 可能命中面板底部的

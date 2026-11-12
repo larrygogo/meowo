@@ -1094,6 +1094,60 @@ mod tests {
         );
     }
 
+    /// gemini 0.65 提问表单（ask_user）。画面按 npm bundle 源码拼出（2026-11-12，未实拍）：
+    /// ToolConfirmationQueue 的绿框 StickyHeader 头行 `Answer Questions`，AskUserDialog 的
+    /// BaseSelectionList（`● 1.  选项`）与 DialogFooter（`Enter to select · ↑/↓ to navigate ·
+    /// Esc to cancel`）。修复前提示行的 `Esc to cancel` 让兜底规则判成运行中。
+    #[test]
+    fn gemini_065_ask_user_dialog_is_blocked() {
+        let s = snap(&[
+            "\u{280F} Waiting for user confirmation...",
+            "\u{256D}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{256E}",
+            "\u{2502} Answer Questions                                  \u{2502}",
+            "\u{2502}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2502}",
+            "\u{2502} Which database should we use?                     \u{2502}",
+            "\u{2502}                                                   \u{2502}",
+            "\u{2502} \u{25CF} 1.  PostgreSQL                                  \u{2502}",
+            "\u{2502}   2.  SQLite                                      \u{2502}",
+            "\u{2502}   3.  Enter a custom value                        \u{2502}",
+            "\u{2502}                                                   \u{2502}",
+            "\u{2502} Enter to select \u{00B7} \u{2191}/\u{2193} to navigate \u{00B7} Esc to cancel \u{2502}",
+            "\u{2570}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{256F}",
+        ]);
+        assert_eq!(
+            state_of(evaluate("gemini", &s)),
+            Some((ScreenState::Blocked, "ask_user_dialog"))
+        );
+        // 只剩头行（表单已答完、头行滚成残影）不算在等回答。
+        let stale = snap(&["\u{2502} Answer Questions   \u{2502}", "  plain output"]);
+        assert_ne!(
+            state_of(evaluate("gemini", &stale)).map(|(state, _)| state),
+            Some(ScreenState::Blocked)
+        );
+    }
+
+    /// gemini 0.65 沙箱扩权审批（ToolConfirmationMessage 的 sandbox_expansion 分支，源码取证
+    /// 2026-11-12）：问句 `To run [Shell], allow access to the following?` 在框内。
+    #[test]
+    fn gemini_065_sandbox_expansion_is_blocked() {
+        let s = snap(&[
+            "\u{2502} ? Shell  npm install                         \u{2502}",
+            "\u{2502} To run [Shell], allow access to the following? \u{2502}",
+            "\u{2502} \u{2022} Network: All Urls                        \u{2502}",
+            "\u{2502} \u{25CF} 1. Allow once                             \u{2502}",
+        ]);
+        assert_eq!(
+            state_of(evaluate("gemini", &s)),
+            Some((ScreenState::Blocked, "apply_or_allow_change"))
+        );
+        // 正文引用同一句（不在框里）不算。
+        let prose = snap(&["To run [Shell], allow access to the following?"]);
+        assert_eq!(
+            state_of(evaluate("gemini", &prose)),
+            Some((ScreenState::Idle, FALLBACK_RULE_ID))
+        );
+    }
+
     // -- opencode --
 
     #[test]

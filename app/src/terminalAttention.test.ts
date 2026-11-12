@@ -541,6 +541,168 @@ describe("terminalAttention", () => {
     expect(attention?.options).toBeUndefined();
   });
 
+  /// gemini 0.65 额度框的高负载形态(npm bundle useQuotaAndFallback 源码取证,2026-11-12):
+  /// 同一个 ProQuotaDialog,首行换成 `We are currently experiencing high demand for <模型>.`。
+  /// 旧版的 `Usage limit reached` 照认(上一条用例)。
+  it("recognizes Gemini 0.65's high-demand variant of the quota dialog", () => {
+    const screen = [
+      " > say hi",
+      "╭──────────────────────────────────────────────────────────╮",
+      "│                                                          │",
+      "│ We are currently experiencing high demand for gemini-3.8-pro. │",
+      "│ We apologize and appreciate your patience.               │",
+      "│ /model to switch models.                                 │",
+      "│                                                          │",
+      "│ ● 1. Keep trying                                         │",
+      "│   2. Switch to gemini-3.8-flash                          │",
+      "│   3. Stop                                                │",
+      "╰──────────────────────────────────────────────────────────╯",
+    ].join("\n");
+    const attention = terminalAttention(screen, [], false, false, grammar("gemini"));
+    expect(attention?.id).toBe("gemini:usage-limit");
+    expect(attention?.text).toContain("experiencing high demand");
+    // 模型正文里说一句 high demand(不在框里)不弹卡。
+    expect(terminalAttention("We are currently experiencing high demand for x.", [], false, false, grammar("gemini"))).toBeNull();
+  });
+
+  /// gemini 0.65 沙箱扩权审批(ToolConfirmationMessage 的 sandbox_expansion 分支,源码取证
+  /// 2026-11-12):问句 `To run [Shell], allow access to the following?`,选项同 Allow once 一套。
+  it("turns Gemini 0.65's sandbox expansion prompt into the framed approval card", () => {
+    const screen = [
+      "╭────────────────────────────────────────────────╮",
+      "│ ? Shell  npm install                           │",
+      "│ ╭────────────────────────────────────────────╮ │",
+      "│ │ npm install                                │ │",
+      "│ ╰────────────────────────────────────────────╯ │",
+      "│ To run [Shell], allow access to the following? │",
+      "│ • Network: All Urls                            │",
+      "│ • Write: C:\\repo\\node_modules                  │",
+      "│                                                │",
+      "│ ● 1. Allow once                                │",
+      "│   2. Allow for this session                    │",
+      "│   3. No, suggest changes (esc)                 │",
+      "╰────────────────────────────────────────────────╯",
+    ].join("\n");
+    const attention = terminalAttention(screen, [], false, false, grammar("gemini"));
+    expect(attention?.id).toBe("gemini:command-approval");
+    expect(attention?.details).toBe("framed_box");
+    expect(attention?.text).toContain("Network: All Urls");
+    expect(attention?.options?.map((option) => option.input)).toEqual(["\r", "\x1b[B\r", "\x1b[B\x1b[B\r"]);
+  });
+
+  /// gemini 0.65 提问表单(ask_user,AskUserTool 默认注册)。画面按 npm bundle 源码拼出
+  /// (2026-11-12,未实拍):ToolConfirmationQueue 绿框头行 `Answer Questions`、AskUserDialog 的
+  /// BaseSelectionList(`● 1.  选项`,描述缩进在下一行)、末项恒为自定义答案(占位
+  /// `Enter a custom value`)、DialogFooter 提示行。修复前认不出,对话页不出卡。
+  describe("Gemini 0.65 ask_user form", () => {
+    const frame = (body: string[]) => [
+      "⠏ Waiting for user confirmation...",
+      "╭──────────────────────────────────────────────────────╮",
+      "│ Answer Questions                                     │",
+      "│──────────────────────────────────────────────────────│",
+      ...body,
+      "╰──────────────────────────────────────────────────────╯",
+    ].join("\n");
+
+    it("single choice: focus-relative buttons, custom value left out, Enter answers", () => {
+      const screen = frame([
+        "│ Which database should we use?                        │",
+        "│                                                      │",
+        "│   1.  PostgreSQL                                     │",
+        "│         Relational, strong consistency               │",
+        "│ ● 2.  SQLite                                         │",
+        "│         Single file                                  │",
+        "│   3.  Enter a custom value                           │",
+        "│                                                      │",
+        "│ Enter to select · ↑/↓ to navigate · Esc to cancel    │",
+      ]);
+      const attention = terminalAttention(screen, [], false, false, grammar("gemini"));
+      // 与 claude 屏幕上认出的选择器同一张可作答的提问卡。
+      expect(attention?.id).toBe("interactive:numbered-selector");
+      expect(attention?.text).toBe("Which database should we use?");
+      expect(attention?.options?.map((option) => [option.label, option.description, option.kind, option.input])).toEqual([
+        ["PostgreSQL", "Relational, strong consistency", "choice", "\x1b[A\r"],
+        ["SQLite", "Single file", "choice", "\r"],
+      ]);
+      // 别家会话引用同一屏不弹 gemini 的卡。
+      expect(terminalAttention(screen, [], false, false, grammar("kimi"))?.id).not.toBe("interactive:numbered-selector");
+    });
+
+    it("multi select: checkboxes become toggles, Done is the submit button", () => {
+      const screen = frame([
+        "│ ← ✓ Database │ □ Features │ ≡ Review →               │",
+        "│ Which features do you want?                          │",
+        "│ (Select all that apply)                              │",
+        "│                                                      │",
+        "│ ● 1. [x] Auth                                        │",
+        "│   2. [ ] Billing                                     │",
+        "│   3. [ ] All of the above                            │",
+        "│         Select all options                           │",
+        "│   4. [ ] Enter a custom value                        │",
+        "│        Done                                          │",
+        "│         Finish selection                             │",
+        "│                                                      │",
+        "│ Enter to select · ←/→ to switch questions · Esc to cancel │",
+      ]);
+      const attention = terminalAttention(screen, [], false, false, grammar("gemini"));
+      expect(attention?.id).toBe("interactive:numbered-selector");
+      expect(attention?.text).toBe("Which features do you want?");
+      expect(attention?.options?.map((option) => [option.label, option.kind, option.selected ?? false, option.input, option.position])).toEqual([
+        ["Auth", "choice", true, "\r", 0],
+        ["Billing", "choice", false, "\x1b[B\r", 1],
+        ["All of the above", "choice", false, "\x1b[B\x1b[B\r", 2],
+        // 自定义项(位置 3)不出按钮,但 Done 的相对移动要把它算进去。
+        ["Done", "submit", false, "\x1b[B\x1b[B\x1b[B\x1b[B\r", 4],
+      ]);
+    });
+
+    it("review page submits with Enter", () => {
+      const screen = frame([
+        "│ ← ✓ Database │ ✓ Features │ ≡ Review →               │",
+        "│ Review your answers:                                 │",
+        "│                                                      │",
+        "│ Database → SQLite                                    │",
+        "│ Features → Auth, Billing                             │",
+        "│                                                      │",
+        "│ Enter to submit · Tab/Shift+Tab to edit answers · Esc to cancel │",
+      ]);
+      const attention = terminalAttention(screen, [], false, false, grammar("gemini"));
+      expect(attention?.id).toBe("interactive:numbered-selector");
+      expect(attention?.text).toBe("Review your answers:\nDatabase → SQLite\nFeatures → Auth, Billing");
+      expect(attention?.options).toEqual([{ label: "Submit", input: "\r", kind: "submit", position: 0 }]);
+    });
+
+    it("text question has nothing to click: no card instead of an empty one", () => {
+      const screen = frame([
+        "│ What should the release be called?                   │",
+        "│                                                      │",
+        "│ > Enter your response                                │",
+        "│                                                      │",
+        "│ Enter to submit · Esc to cancel                      │",
+      ]);
+      expect(terminalAttention(screen, [], false, false, grammar("gemini"))).toBeNull();
+    });
+
+    it("stale form above the active one: buttons follow the bottom form", () => {
+      const first = frame([
+        "│ Old question?                                        │",
+        "│ ● 1.  Stale A                                        │",
+        "│   2.  Enter a custom value                           │",
+        "│ Enter to select · ↑/↓ to navigate · Esc to cancel    │",
+      ]);
+      const second = frame([
+        "│ New question?                                        │",
+        "│   1.  Fresh A                                        │",
+        "│ ● 2.  Fresh B                                        │",
+        "│   3.  Enter a custom value                           │",
+        "│ Enter to select · ↑/↓ to navigate · Esc to cancel    │",
+      ]);
+      const attention = terminalAttention(`${first}\n${second}`, [], false, false, grammar("gemini"));
+      expect(attention?.text).toBe("New question?");
+      expect(attention?.options?.map((option) => option.label)).toEqual(["Fresh A", "Fresh B"]);
+    });
+  });
+
   /// kimi 审批面板(ApprovalPanel):面板形态与按键语义为官方源码取证
   /// (apps/kimi-code/src/tui/components/dialogs/approval-panel.ts @ 0.29)。
   /// PermissionRequest hook 是 observation-only,屏幕识别是 GUI 审批的唯一通道。
