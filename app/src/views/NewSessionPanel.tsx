@@ -54,7 +54,7 @@ export function NewSessionPanel({ onClose, prefill, onLaunched }: {
   // 窗口以 visible:false 创建（window.rs），首帧渲染后再显示，消除打开瞬间的白框闪烁。
   useShowWhenReady();
   const form = useNewSessionForm(startCwd, startProvider);
-  const { cwd, setCwd, provider, setProvider, recent, hooks, busy, repairing, error, setError, agents, avail, opts, setOpts,
+  const { cwd, setCwd, provider, setProvider, recent, hooks, busy, phase, repairing, error, setError, agents, avail, opts, setOpts,
     activeProfiles, relayPins, loginOperations, swappedFrom, launchOptions, canLaunch, repairHooks, doLogin, cancelLoginWait, warn, needLogin } = form;
   // 7T-5：面板打开时没有任何初始焦点——目录已经预填好了，回车却什么都不发生（键盘用户
   // 得先 Tab 若干次才摸到控件）。挂载即聚焦目录框；已有预填时连带全选，一次输入就能整段
@@ -412,6 +412,12 @@ export function NewSessionPanel({ onClose, prefill, onLaunched }: {
           )}
         </div>
 
+        {/* N-2 的兄弟场景（独立新建窗）：分步状态与新建页同一套文案。 */}
+        {busy && phase && (
+          <div className="ns-hint" role="status" data-testid="ns-phase">
+            {phase === "worktree" ? t.newSession.phaseWorktree : t.newSession.phaseStarting(agentName(agents ?? [], provider))}
+          </div>
+        )}
         {error && (
           <div className="ns-error" data-testid="ns-error" role="alert">
             {error}

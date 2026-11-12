@@ -7,7 +7,10 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { useT } from "../../i18n";
-import { getSessionAdminPage, recentCwds, setArchived, type LiveSession } from "../../api";
+import { getSessionAdminPage, recentCwds, sessionTone, setArchived, type LiveSession } from "../../api";
+import { formatBackendError } from "../../i18n/errors";
+import { confirmMarkDone, markDoneEndsWork } from "../../hooks/useSessionActions";
+import { useLingerTimer } from "../../hooks/useLingerTimer";
 import { runBatchCleanup } from "../../worktreeCleanup";
 import { folderName, pathKey } from "../../paths";
 import { useMenuPopup } from "../menu";
@@ -154,6 +157,13 @@ function WorkspacePicker({ options, value, onChange }: {
   );
 }
 
+/// 选中项记下的两件事：是否已完成（批量按钮按它分别计数），是否在干活（标记完成前要不要确认，S-1）。
+type Picked = { done: boolean; working: boolean };
+const pickOf = (row: LiveSession): Picked => ({
+  done: row.archived,
+  working: markDoneEndsWork(sessionTone(row.connected, row.session.status, row.pending_review, row.errored, row.busy_subagents, row.screen_state)),
+});
+
 /// 页码条：首页、末页、当前页前后各一页，其余折成「…」。
 function pageList(current: number, count: number): (number | "gap")[] {
   const keep = new Set([0, count - 1, current - 1, current, current + 1].filter((page) => page >= 0 && page < count));
@@ -202,10 +212,14 @@ export function SessionAdmin({ onBack, onOpen, initialWorkspaces = [], initialSt
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
   // 选中：id → 是否已完成（批量按钮按它分别计数）。跨页保留，换条件时清空。
-  const [selected, setSelected] = useState<ReadonlyMap<number, boolean>>(new Map());
+  const [selected, setSelected] = useState<ReadonlyMap<number, Picked>>(new Map());
   const [allMatching, setAllMatching] = useState(false);
   const [materializing, setMaterializing] = useState(false);
-  const [toast, setToast] = useState<{ text: string; undo: (() => void) | null } | null>(null);
+  // reason 有值 = 失败提示：不计时，等用户关（S-10/#14，2026-11-12）；只有「撤销」的成功提示计 8 秒，
+  // 悬停或焦点在条内时暂停（原先 6 秒一到就消失，键盘用户 Tab 不到「撤销」）。
+  const [toast, setToast] = useState<{ text: string; reason?: string; sticky?: boolean; undo: (() => void) | null } | null>(null);
+  const undoRef = useRef<HTMLButtonElement>(null);
+  const linger = useLingerTimer(toast, toast?.reason || toast?.sticky ? null : 8_000, () => setToast(null));
   const requestRef = useRef(0);
 
   const load = useCallback((filters: Filters, pageIndex: number, size: number) => {
@@ -223,9 +237,14 @@ export function SessionAdmin({ onBack, onOpen, initialWorkspaces = [], initialSt
   }, []);
   useEffect(() => { load(applied, page, pageSize); }, [load, applied, page, pageSize]);
 
+  // 批量操作条随选中清空而卸载、按「已完成/进行中」筛选时行也会被刷走，焦点掉到 body。
+  // 有「撤销」时把焦点交给它（S-10 的期望之一），键盘用户不必赶在 8 秒内 Tab 过去。
   useEffect(() => {
-    if (!toast) return;
-    const timer = window.setTimeout(() => setToast(null), 6000);
+    if (!toast?.undo) return;
+    const timer = window.setTimeout(() => {
+      const active = document.activeElement;
+      if (!active || active === document.body || !active.isConnected) undoRef.current?.focus();
+    }, 0);
     return () => window.clearTimeout(timer);
   }, [toast]);
 
@@ -243,7 +262,7 @@ export function SessionAdmin({ onBack, onOpen, initialWorkspaces = [], initialSt
     setAllMatching(false);
     setSelected((prev) => {
       const next = new Map(prev);
-      if (!next.delete(row.session.id)) next.set(row.session.id, row.archived);
+      if (!next.delete(row.session.id)) next.set(row.session.id, pickOf(row));
       return next;
     });
   };
@@ -253,7 +272,7 @@ export function SessionAdmin({ onBack, onOpen, initialWorkspaces = [], initialSt
       const next = new Map(prev);
       for (const row of pageRows) {
         if (pageAllOn) next.delete(row.session.id);
-        else next.set(row.session.id, row.archived);
+        else next.set(row.session.id, pickOf(row));
       }
       return next;
     });
@@ -262,32 +281,37 @@ export function SessionAdmin({ onBack, onOpen, initialWorkspaces = [], initialSt
   const selectAllMatching = async () => {
     setMaterializing(true);
     try {
-      const next = new Map<number, boolean>();
+      const next = new Map<number, Picked>();
       for (let index = 0; index * MATERIALIZE_PAGE < total; index += 1) {
         const result = await getSessionAdminPage({ workspaces: applied.workspaces, status: applied.status, updatedBeforeDays: applied.days, page: index, pageSize: MATERIALIZE_PAGE });
-        for (const row of result.items) next.set(row.session.id, row.archived);
+        for (const row of result.items) next.set(row.session.id, pickOf(row));
         if (result.items.length < MATERIALIZE_PAGE) break;
       }
       setSelected(next);
       setAllMatching(true);
-    } catch {
-      setToast({ text: t.admin.loadFailed, undo: null });
+    } catch (error) {
+      setToast({ text: t.admin.loadFailed, reason: formatBackendError(error, t.locale) || undefined, undo: null });
     } finally {
       setMaterializing(false);
     }
   };
-  const openIds = [...selected].filter(([, done]) => !done).map(([id]) => id);
-  const doneIds = [...selected].filter(([, done]) => done).map(([id]) => id);
+  const openIds = [...selected].filter(([, pick]) => !pick.done).map(([id]) => id);
+  const doneIds = [...selected].filter(([, pick]) => pick.done).map(([id]) => id);
 
   /// 批量标记完成 / 恢复进行中：逐条写（set_archived 标记完成时会结束会话，不并发），给结果提示和撤销。
-  const batch = async (ids: number[], done: boolean, undoable = true) => {
+  /// S-1（2026-11-12）：标记完成会结束在跑的会话，撤销只恢复标记、拉不回进程，所以目标里有在干活的先确认
+  /// （与侧栏、对话窗标题菜单同一个确认）。working 取自勾选时那一行的状态，单条按钮现算。
+  const batch = async (ids: number[], done: boolean, undoable = true, working: boolean[] = []) => {
+    if (done && undoable && !(await confirmMarkDone(ids.map((_, index) => ({ working: working[index] ?? false })), t))) return;
     let failed = 0;
+    let firstError: unknown;
     const succeeded: number[] = [];
     for (const id of ids) {
       try {
         await setArchived(id, done);
         succeeded.push(id);
-      } catch {
+      } catch (error) {
+        if (failed === 0) firstError = error;
         failed += 1;
       }
     }
@@ -297,6 +321,8 @@ export function SessionAdmin({ onBack, onOpen, initialWorkspaces = [], initialSt
     const head = done ? t.admin.batchDoneToast(succeeded.length) : t.admin.batchReopenedToast(succeeded.length);
     setToast({
       text: head + (failed > 0 ? t.admin.batchFailedSuffix(failed) : ""),
+      // 失败的带上首个原因（formatBackendError），原先只有「N 个失败」看不出为什么。
+      reason: failed > 0 ? formatBackendError(firstError, t.locale) || undefined : undefined,
       undo: undoable && succeeded.length > 0 ? () => { setToast(null); void batch(succeeded, !done, false); } : null,
     });
   };
@@ -309,7 +335,8 @@ export function SessionAdmin({ onBack, onOpen, initialWorkspaces = [], initialSt
     const text = await runBatchCleanup(t);
     setCleaning(false);
     load(applied, page, pageSize);
-    if (text) setToast({ text, undo: null });
+    // 清理结果可能逐行列出失败原因，读完才知道下一步：不计时，等用户关。
+    if (text) setToast({ text, sticky: true, undo: null });
   };
 
   const statusOptions = useMemo(() => [
@@ -361,7 +388,7 @@ export function SessionAdmin({ onBack, onOpen, initialWorkspaces = [], initialSt
               )}
               <button type="button" className="sa-batch-link" onClick={() => { setSelected(new Map()); setAllMatching(false); }}>{t.admin.clearSelection}</button>
               <span className="sa-batch-spacer" />
-              {openIds.length > 0 && <button type="button" className="sa-btn-q" onClick={() => void batch(openIds, true)}>{t.admin.markDoneCount(openIds.length)}</button>}
+              {openIds.length > 0 && <button type="button" className="sa-btn-q" onClick={() => void batch(openIds, true, true, openIds.map((id) => selected.get(id)?.working ?? false))}>{t.admin.markDoneCount(openIds.length)}</button>}
               {doneIds.length > 0 && <button type="button" className="sa-btn-q" onClick={() => void batch(doneIds, false)}>{t.admin.reopenCount(doneIds.length)}</button>}
             </div>
           )}
@@ -437,7 +464,7 @@ export function SessionAdmin({ onBack, onOpen, initialWorkspaces = [], initialSt
                               className="sa-icon-btn"
                               aria-label={row.archived ? t.admin.reopen : t.admin.markDone}
                               data-tip={row.archived ? t.admin.reopen : t.admin.markDone}
-                              onClick={() => void batch([row.session.id], !row.archived)}
+                              onClick={() => void batch([row.session.id], !row.archived, true, [pickOf(row).working])}
                             >
                               {row.archived
                                 ? <Icon glyph={icUndo} size={14} />
@@ -454,6 +481,8 @@ export function SessionAdmin({ onBack, onOpen, initialWorkspaces = [], initialSt
             {(!rows || rows.length === 0) && (
               <div className="sa-state">
                 <span className="sa-empty">{error ? t.admin.loadFailed : !rows ? t.admin.loading : t.admin.empty}</span>
+                {/* 加载失败给可点的下一步（#14）：原先只有一句「加载失败，请重试」，却没有能点的重试。 */}
+                {error && <button type="button" className="sa-btn-q" onClick={() => load(applied, page, pageSize)}>{t.chat.sidebarRetry}</button>}
               </div>
             )}
           </div>
@@ -478,9 +507,13 @@ export function SessionAdmin({ onBack, onOpen, initialWorkspaces = [], initialSt
         </div>
       </div>
       {toast && (
-        <div className="sa-toast" role="status">
-          <span>{toast.text}</span>
-          {toast.undo && <button type="button" className="sa-batch-link" onClick={toast.undo}>{t.admin.undo}</button>}
+        <div className={"sa-toast" + (toast.reason ? " is-fail" : "")} role={toast.reason ? "alert" : "status"} {...linger}>
+          <span>
+            {toast.text}
+            {toast.reason && <span className="sa-toast-reason">{toast.reason}</span>}
+          </span>
+          {toast.undo && <button ref={undoRef} type="button" className="sa-batch-link" onClick={toast.undo}>{t.admin.undo}</button>}
+          <button type="button" className="sa-batch-link sa-toast-x" aria-label={t.chat.close} data-tip={t.chat.close} onClick={() => setToast(null)}>×</button>
         </div>
       )}
     </div>

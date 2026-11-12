@@ -60,6 +60,12 @@ export const zh = {
     dismissAll: "全部忽略",
     // 「全部忽略」钮上的字：n = 正在弹的这条 + 后面排着的。
     dismissAllCount: (n: number) => `忽略 ${n} 条`,
+    // 灵动岛「打开」失败（I-1/I-2，走查 2026-11-12）：留在岛上说清原因与下一步。
+    openFailed: "没能打开对话窗",
+    liteNoChat: "轻量模式没有对话窗，可在设置里开启",
+    retry: "重试",
+    openSettings: "打开设置",
+    dismissError: "关闭提示",
   },
   sticker: {
     openChatWindow: "打开对话窗口",
@@ -115,7 +121,6 @@ export const zh = {
     usageStale: (time: string) => `用量刷新失败，上次更新 ${time}`,
     // 「全部」tab 里在线与历史会话的分界（7B-3）。
     historyDivider: (n: number) => `历史会话 · ${n}`,
-    renameFailed: "重命名失败，请稍后再试。",
     archiveFailed: "标记完成失败，请稍后再试。",
     archivedNotice: "已完成，可在「设置 → 会话」找回",
     archiveUndo: "撤销",
@@ -192,6 +197,9 @@ export const zh = {
     cancel: "取消",
     launch: "启动",
     launching: "正在启动…",
+    // 启动分步状态（N-2，走查 2026-11-12）：勾了 worktree 时先建 worktree 再起 agent。
+    phaseWorktree: "正在创建 worktree…",
+    phaseStarting: (agent: string) => `正在启动 ${agent}…`,
     hooksMissing: "该 Agent 尚未接入，新会话可能不显示状态",
     hooksUnknown: "无法确认该 Agent 的接入状态",
     noAgents: "未检测到已安装的 AI CLI，请先安装",
@@ -213,7 +221,8 @@ export const zh = {
     repairHooksTip: "重写接入配置，新会话不显示状态时点它",
     // 修复在后端进程内完成，没有「终端里的修复日志」可看——指向真实可行的下一步。
     repairFailed: "修复未生效，请重试或重装该 Agent",
-    repairNeedLogin: "请先在终端登录该 Agent，再点修复连接。",
+    // 不叫人「去终端登录」（2026-11-12 第三轮 #13）：登录入口就在同一块提示里的「登录」按钮。
+    repairNeedLogin: "该 Agent 还没登录，登录后再点修复连接。",
     repairNoReporter: "缺少组件 meowo-reporter，请重新安装 Meowo。",
     repairNotDetected: "未检测到该 Agent 的数据目录，请确认已安装。",
     newButton: "新建会话",
@@ -755,6 +764,8 @@ export const zh = {
     endSessionConfirm: "将终止正在运行的任务，对话记录保留。确定结束？",
     // 标记完成会顺带结束会话（后端 set_archived）。只在 Agent 正在干活时才拦一下。
     markDoneRunningConfirm: "Agent 还在运行，标记完成会结束它。",
+    // S-1（走查 2026-11-12）：侧栏/会话管理页批量标记完成里有在跑的会话时的确认。
+    markDoneRunningBatchConfirm: (n: number) => `其中 ${n} 个还在运行，标记完成会结束它们。`,
     terminalAttach: "在外部终端同步打开",
     // 悬停在终端里的链接/文件路径上时,右下角的操作提示(T-4:此前 Ctrl+点击无任何界面表达)。
     terminalLinkHint: "Ctrl+点击打开链接",
@@ -1095,7 +1106,19 @@ export const zh = {
     sidebarFilterGroup: "视图",
     sidebarFilterSort: "排序",
     sidebarCollapse: "收起会话列表",
-    sidebarActionFailed: "操作失败，请稍后再试。",
+    // 侧栏失败提示（走查 S-4/S-5，2026-11-12）：说清是哪个动作没成、结果停在哪，原因另起一行
+    // （formatBackendError 映射）。原先一律「操作失败，请稍后再试」，看不出是哪一步出的问题。
+    sidebarArchiveFailed: "没能标记完成，会话已放回列表",
+    sidebarReopenFailed: "没能恢复进行中",
+    sidebarRenameFailed: "没能重命名，新名字还在输入框里",
+    sidebarSearchFailed: "没能搜索对话内容",
+    sidebarReorderFailed: "顺序没保存，已恢复原来的顺序",
+    sidebarEndFailed: "没能结束会话",
+    // S-6：按最近活动排序时按 Ctrl+Shift+↑/↓，顺序由活动决定，手动挪不动。
+    sidebarReorderNeedsManual: "按最近活动排序时不能调整顺序",
+    sidebarSwitchToManual: "改用手动排序",
+    // S-7：键盘挪位后的读屏播报。
+    sidebarMoved: (n: number, total: number) => `已移到第 ${n} 位，共 ${total} 位`,
     // 斜杠命令在 transcript 里是一条 XML 包裹的用户消息，渲染成徽章而非标签原文。
     localCommand: "本地命令",
     commandOutput: "命令输出",
@@ -1109,7 +1132,7 @@ export const zh = {
     changesUncommitted: "未提交",
     wsHide: "从列表中移除",
     wsHidden: (name: string) => `已移除 ${name}`,
-    wsHideTip: "只是不在这里显示，文件夹和其中的会话都不动；之后在这里新建会话会自动回来",
+    wsHideTip: "只是不在这里显示，文件夹和会话都不动。在这里新建会话后会自动回来",
     changesCommitted: (base: string) => `已提交未合并 · 相对 ${base}`,
     scmRepos: "存储库",
     scmStaged: "暂存的更改",
@@ -1452,6 +1475,11 @@ export const zh = {
     searchPlaceholder: "搜索设置…",
     searchNoResults: "没有匹配的设置项",
     searchClear: "清除搜索",
+    // T-2（2026-11-12）：各分区保存失败统一一个主语（此前网络分区套「保存失败：」、其余只有原话）。
+    saveFailed: (e: string) => `设置没保存：${e}`,
+    // T-5：文本类设置回车提交后的轻量反馈（开关会自己翻，文本框提交没提交看不出来）。
+    saved: "已保存",
+    retry: "重试",
     archivedSessions: "已完成会话",
     archivedInAdmin: "在会话管理中查看",
     archivedInAdminDesc: "按工作区、时间筛选，批量恢复进行中",
@@ -1469,7 +1497,7 @@ export const zh = {
     close: "关闭",
     autostart: "开机自启",
     autostartDesc: "系统开机后自动启动",
-    autostartFailed: "开机自启设置失败，请重试",
+    autostartFailed: "开机自启没设置成功",
     notify: "桌面通知",
     notifyDesc: "会话需要你回复或出错时弹系统通知",
     // 系统通知分种类（二期 #6），种类与灵动岛的「自动弹出提醒」同一套。
@@ -1502,7 +1530,7 @@ export const zh = {
     keepAwakeDesc: "有会话在跑时电脑不睡，屏幕照常熄灭",
     leadGroup: "Lead 工作流",
     leadWorkflow: "Lead 工作流",
-    leadWorkflowDesc: "你只描述想要的结果，agent 访谈、写规格、出方案、实施并独立做空验证；只在确认规格、拍板、验收三个关卡找你。打开会装进 Claude Code，关闭会卸载干净",
+    leadWorkflowDesc: "你只描述想要的结果，agent 访谈、写规格、出方案、实施并独立做空验证。只在确认规格、拍板、验收三个关卡找你。打开会装进 Claude Code，关闭会卸载干净",
     leadKeepAwake: "关卡待拍板时防止休眠",
     leadKeepAwakeDesc: "有关卡待拍板时电脑不睡，方便在手机上作答",
     notifySound: "通知提示音",
@@ -1579,7 +1607,6 @@ export const zh = {
     followGlobal: "跟随默认",
     effective: (p: string) => `生效：${p}`,
     effectiveDirect: "生效：直连",
-    saveFailed: (e: string) => `保存失败：${e}`,
     // ——覆盖面：三家能力不同，必须如实告知，否则用户会以为哪儿都生效——
     coverageFull: "全部会话（含你自己在终端里敲的）",
     coverageFullWhy: "代理已写进它的配置文件，谁启动都生效",
@@ -1613,6 +1640,9 @@ export const zh = {
     copied: "已复制",
     regenerate: "重新生成令牌",
     regenerateConfirm: "重新生成后，已配对的手机需重新扫码。",
+    // T-1（2026-11-12）：失败此前被 .catch(() => {}) 吞掉，用户以为泄露的令牌已吊销。
+    regenerateFailed: (reason: string) => `令牌没重新生成，旧令牌仍有效。${reason}`,
+    regenerateDone: "已重新生成，旧手机要重新扫码",
     noIp: "取不到局域网地址，请在手机浏览器手动输入本机 IP",
     offHint: "关闭时手机无法连接",
     // 手机推送（Bark）：远程页是 http，浏览器不给推送，改由电脑调 Bark 推到手机。
@@ -1631,9 +1661,9 @@ export const zh = {
     gateConnect: "连接",
     gateConnecting: "正在连接…",
     gateLoading: "正在加载…",
-    gateErrExpired: "桌面端令牌已更换或失效，请重新扫码或粘贴新令牌",
+    gateErrExpired: "令牌已失效，请重新扫码或粘贴新令牌",
     gateErrInvalid: "令牌不对，请核对后重试",
-    gateErrUnreachable: "连不上桌面端，请检查网络或确认桌面端仍在运行",
+    gateErrUnreachable: "连不上桌面端，检查网络或桌面端是否开着",
     sessionListTitle: "会话",
     sessionListSubtitle: "继续桌面上的工作",
     // 手机页的明暗模式只存在这台手机上，与桌面设置无关。

@@ -556,12 +556,23 @@ pub(crate) fn load_settings() -> Settings {
 fn save_settings_unlocked(s: &Settings) -> Result<(), String> {
     let body = serde_json::to_string_pretty(s).map_err(|e| e.to_string())?;
     let path = settings_path();
+    // 写盘失败给结构化 reason（T-2，2026-11-12 走查）：此前是 `e.to_string()` 原话，设置页只显示
+    // 「拒绝访问。 (os error 5)」，没有主语，英文界面还会降级成「Operation failed: 拒绝访问…」。
+    // 前缀与前端 i18n/errors.ts 的 `settings/write_failed`（tail）约定，系统原话接在后面供排障。
     if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(dir).map_err(write_failed)?;
     }
     // 原子写：后台轮询线程每 5s 裸读本文件，直写可能被读到半截而回退默认值。
-    crate::fsutil::write_atomic(&path, &body).map_err(|e| e.to_string())
+    crate::fsutil::write_atomic(&path, &body).map_err(write_failed)
 }
+
+/// settings.json 写不进去时的统一 reason（见 [`save_settings_unlocked`]）。
+fn write_failed(e: impl std::fmt::Display) -> String {
+    format!("{SETTINGS_WRITE_FAILED}：{e}")
+}
+
+/// 与前端 errors.ts 约定的 sentinel，改这里必须同步那边。
+pub(crate) const SETTINGS_WRITE_FAILED: &str = "settings/write_failed";
 
 /// 在同一把锁内完成 settings 的读取、修改与落盘，防止并发命令互相覆盖整份文件。
 pub(crate) fn update_settings<T>(
@@ -1296,6 +1307,13 @@ mod tests {
         let json = serde_json::to_string(&out).unwrap();
         assert!(json.contains(r#""remote_access_token":"""#));
         assert!(!json.contains("deadbeef"));
+    }
+
+    #[test]
+    fn write_failed_reason_is_structured() {
+        // T-2（2026-11-12）：前端 errors.ts 按 `settings/write_failed` 前缀（tail）映射，系统原话接在后面。
+        let e = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "拒绝访问。 (os error 5)");
+        assert_eq!(write_failed(e), "settings/write_failed：拒绝访问。 (os error 5)");
     }
 
     /// 设置窗口回传的是打开时的整对象快照：由独立命令维护的字段必须以磁盘最新值为准，

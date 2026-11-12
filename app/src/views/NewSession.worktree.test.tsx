@@ -119,6 +119,23 @@ describe("新建会话页：在新 worktree 里开", () => {
     expect(api.newSession).toHaveBeenCalledWith("C:/work/meowo-fix-login", "claude", {});
   });
 
+  /// N-2（走查 2026-11-12）：建 worktree 的那段（≤2s）原先只有发送钮在转圈，看不出在干什么。
+  /// 兄弟场景：独立新建窗同一套分步状态（见下一组）。
+  it("启动时分步说明：先「正在创建 worktree」，再「正在启动 Claude Code」", async () => {
+    let created: (value: unknown) => void = () => {};
+    const result = await api.worktreeCreate();
+    api.worktreeCreate.mockImplementation(() => new Promise((resolve) => { created = resolve; }));
+    let started: (value: number) => void = () => {};
+    api.newSession.mockImplementation(() => new Promise((resolve) => { started = resolve; }));
+    await openPage();
+    fireEvent.click(screen.getByTestId("wt-toggle"));
+    fireEvent.click(screen.getByTestId("nsp-send"));
+    expect((await screen.findByTestId("nsp-phase")).textContent).toBe(zh.newSession.phaseWorktree);
+    created(result);
+    await waitFor(() => expect(screen.getByTestId("nsp-phase").textContent).toBe(zh.newSession.phaseStarting("Claude Code")));
+    started(-1);
+  });
+
   it("撞名时提示并给建议名，点一下就用建议名", async () => {
     api.worktreePreview.mockImplementation((_dir: string, slug: string | null) =>
       Promise.resolve(slug === "mine" ? preview({ slug: "mine", dirExists: true, suggestedSlug: "mine-2", suggestedBranch: "meowo/mine-2" }) : preview({ slug: slug ?? "x" })));

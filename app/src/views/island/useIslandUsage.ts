@@ -1,18 +1,38 @@
 // 灵动岛的额度数据。取法与贴纸底栏一致（Sticker.tsx 的用量 effect）：先用账号快照里的缓存
 // 预填，再对有账号、支持用量、没走中转的 provider 每 5 分钟刷新一次。岛常驻，贴纸只在展开
 // 完整列表时挂载，所以这里单独取，不依赖贴纸。
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { getAccounts, refreshUsage, type ProviderUsage } from "../../api";
+import { useTauriEvent } from "../../hooks/useTauriEvent";
 
 export type IslandUsage = {
   provider: string;
   /** 主泳道（5 小时窗口优先）的已用百分比。 */
   pct: number;
   kind: string;
+  /** 这家的数字不是刚取到的（刷新失败，显示的是缓存）。 */
+  stale?: boolean;
+  /** 上次成功取到的时刻（ms）；只有账号快照里的缓存、从没刷新成功过时为 null。 */
+  fetchedAt?: number | null;
 };
 
-export function useIslandUsage(): Record<string, ProviderUsage> {
+/** 每家额度的新鲜度（backlog 仍存在 #1，2026-11-12 核实：贴纸当年为 7B-8 做的 usageMeta 没搬到岛上，
+ *  `refreshUsage().catch(() => {})` 吞掉错误，网络一抖或 token 过期，岛上显示的就是几小时前的值，
+ *  且不会有任何提示）。failed = 最近一次刷新失败；fetchedAt = 上次成功刷新的时刻。 */
+export type IslandUsageMeta = { fetchedAt: number | null; failed: boolean };
+
+/** 账号可能变化的事件：登录完成、安装完成。岛常驻，原来只在挂载时读一次账号，之后新登录的
+ *  provider 进不了刷新列表，要重启 Meowo 才出额度（backlog 仍存在 #1）。 */
+export const USAGE_ACCOUNT_EVENTS = ["login-done", "install-done"] as const;
+
+export function useIslandUsage(): { usage: Record<string, ProviderUsage>; meta: Record<string, IslandUsageMeta> } {
   const [usage, setUsage] = useState<Record<string, ProviderUsage>>({});
+  const [meta, setMeta] = useState<Record<string, IslandUsageMeta>>({});
+  // 账号代数：登录/安装完成时加一，effect 重读账号、按新名单重排刷新定时器。
+  const [generation, setGeneration] = useState(0);
+  const bump = useCallback(() => setGeneration((g) => g + 1), []);
+  useTauriEvent(USAGE_ACCOUNT_EVENTS[0], bump);
+  useTauriEvent(USAGE_ACCOUNT_EVENTS[1], bump);
   useEffect(() => {
     let cancelled = false;
     const timers: number[] = [];
@@ -33,8 +53,16 @@ export function useIslandUsage(): Record<string, ProviderUsage> {
             const refresh = () => {
               if (cancelled) return;
               refreshUsage(provider)
-                .then((u) => { if (!cancelled) setUsage((m) => ({ ...m, [provider]: u })); })
-                .catch(() => {});
+                .then((u) => {
+                  if (cancelled) return;
+                  setUsage((m) => ({ ...m, [provider]: u }));
+                  setMeta((m) => ({ ...m, [provider]: { fetchedAt: Date.now(), failed: false } }));
+                })
+                .catch(() => {
+                  if (cancelled) return;
+                  // 旧值留着（总比空着强），但标成缓存：展示层降饱和并写上次更新时间。
+                  setMeta((m) => ({ ...m, [provider]: { fetchedAt: m[provider]?.fetchedAt ?? null, failed: true } }));
+                });
             };
             refresh();
             timers.push(window.setInterval(refresh, 5 * 60_000));
@@ -45,8 +73,8 @@ export function useIslandUsage(): Record<string, ProviderUsage> {
       cancelled = true;
       timers.forEach((id) => window.clearInterval(id));
     };
-  }, []);
-  return usage;
+  }, [generation]);
+  return { usage, meta };
 }
 
 /// 主泳道：5 小时窗口优先，其次周/7 天，再次第一条有百分比的。
@@ -68,15 +96,28 @@ export function orderIslandUsage(
   usage: Record<string, ProviderUsage>,
   providers: readonly string[],
   activeProviders: readonly string[] = [],
+  meta: Record<string, IslandUsageMeta> = {},
 ): IslandUsage[] {
   const ordered = [...activeProviders, ...providers, ...Object.keys(usage)]
     .filter((p, i, all) => all.indexOf(p) === i);
   const out: IslandUsage[] = [];
   for (const provider of ordered) {
     const lane = primaryLane(usage[provider]);
-    if (lane) out.push({ provider, ...lane });
+    if (!lane) continue;
+    const m = meta[provider];
+    out.push(m?.failed ? { provider, ...lane, stale: true, fetchedAt: m.fetchedAt } : { provider, ...lane });
   }
   return out;
+}
+
+/** 额度陈旧时的提示：知道上次成功时刻就写时间，否则只说显示的是缓存。 */
+export function usageStaleTip(
+  fetchedAt: number | null | undefined,
+  t: { locale: string; sticker: { usageStale: (time: string) => string; staleNotice: string } },
+): string {
+  if (fetchedAt == null) return t.sticker.staleNotice;
+  const time = new Date(fetchedAt).toLocaleTimeString(t.locale, { hour: "2-digit", minute: "2-digit", hour12: false });
+  return t.sticker.usageStale(time);
 }
 
 /// 收起胶囊上额度环轮换的那几家：只取岛上正有会话的 agent（用户要求，2026-11-04：岛上两个
@@ -85,6 +126,7 @@ export function liveIslandUsage(
   usage: Record<string, ProviderUsage>,
   providers: readonly string[],
   liveProviders: readonly string[],
+  meta: Record<string, IslandUsageMeta> = {},
 ): IslandUsage[] {
-  return orderIslandUsage(usage, providers, liveProviders).filter((u) => liveProviders.includes(u.provider));
+  return orderIslandUsage(usage, providers, liveProviders, meta).filter((u) => liveProviders.includes(u.provider));
 }

@@ -1,5 +1,32 @@
 import { useCallback } from "react";
-import { setArchived } from "../api";
+import { setArchived, type SessionTone } from "../api";
+import { appConfirm } from "../confirm";
+import type { Dict } from "../i18n/zh";
+
+/**
+ * 「标记完成」会不会打断正在干活的 Agent（S-1，走查 2026-11-12）。后端 set_archived(true)
+ * 顺带结束托管终端（session_command.rs end_session_for_done，用户定的「完成即结束」不翻案），
+ * 而「恢复进行中」只改标记、拉不回进程。在跑的（running）与卡在审批/提问上的（pending，回合
+ * 还没走完）结束了就丢了这一回合；停在提示符上的（waiting/空闲/已断开）勾掉就是勾掉，不打扰。
+ */
+export function markDoneEndsWork(tone: SessionTone): boolean {
+  return tone === "running" || tone === "pending";
+}
+
+/**
+ * 标记完成前的确认：只在目标里有在干活的会话时问一次（与「结束会话」同一个确认框 appConfirm，
+ * 危险样式、主按钮写动作名）。单条用对话窗标题菜单同一句文案，批量写明其中几个会被结束。
+ * 返回 false = 用户取消，调用方什么都别做。侧栏单条/批量、会话管理页单条/批量、对话窗标题菜单共用。
+ */
+export async function confirmMarkDone(
+  targets: { working: boolean }[],
+  t: Pick<Dict, "chat" | "sticker">,
+): Promise<boolean> {
+  const working = targets.filter((target) => target.working).length;
+  if (working === 0) return true;
+  const message = targets.length === 1 ? t.chat.markDoneRunningConfirm : t.chat.markDoneRunningBatchConfirm(working);
+  return appConfirm(message, { title: t.sticker.archive, danger: true, confirmLabel: t.sticker.archive });
+}
 
 /** 归档成功后在窗口上广播（detail.ids = 成功归档的会话）。侧栏据此提示「worktree 可以清理了」：
  *  归档入口有好几个（侧栏、对话窗标题菜单、批量），提示只放在侧栏一处（二期包 5「归档后提示清理」）。 */

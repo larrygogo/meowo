@@ -555,9 +555,11 @@ export function usedColor(used: number): string {
 /// 额度环（收起胶囊上的小环）：中间是已用百分比，右下角是哪家的 logo（与右边会话图标的角标同一种
 /// 做法）。几家都有额度时每隔几秒淡入淡出换下一家。尺寸、粗细与会话图标的环一致，底轨中性灰。
 /// 没有数据时不渲染（调用方判断）。
-export function UsageRing({ entries, size = 32 }: {
-  entries: readonly { provider: string; pct: number }[];
+export function UsageRing({ entries, size = 32, staleTip }: {
+  entries: readonly { provider: string; pct: number; stale?: boolean; fetchedAt?: number | null }[];
   size?: number;
+  /** 陈旧额度的提示文案（backlog 仍存在 #1，2026-11-12）。不给就不写 title。 */
+  staleTip?: (fetchedAt: number | null | undefined) => string;
 }) {
   const [index, setIndex] = useState(0);
   // 减少动效时不轮播，停在第一家（正在用的那家，见 orderIslandUsage）。
@@ -573,7 +575,12 @@ export function UsageRing({ entries, size = 32 }: {
   const used = usedOf(entry?.pct ?? 0);
   const { Icon } = agentAssets(provider);
   return (
-    <span className="isl-usage-wrap" data-provider={provider}>
+    // 刷新失败的旧值降饱和、悬停写上次更新时间：别把几小时前的数当成现在的（backlog 仍存在 #1）。
+    <span
+      className={`isl-usage-wrap${entry?.stale ? " is-stale" : ""}`}
+      data-provider={provider}
+      title={entry?.stale && staleTip ? staleTip(entry.fetchedAt) : undefined}
+    >
       {/* key 随家换：换家时整块重挂，淡入动画重播。 */}
       <span key={provider} className="isl-usage-swap">
         <Ring size={size} stroke={3} value={used / 100} color={usedColor(used)} track="var(--isl-track)" className="isl-usage">

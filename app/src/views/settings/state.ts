@@ -169,8 +169,10 @@ export function useSettingsState() {
         // 产出端统一过 formatBackendError：后端 sentinel 是中文，英文界面此前直出中文
         // 原文。各消费点（NetworkSection save / RelayAccess saveRule / SettingsError）
         // 拿到的都已是当前语言文案。
+        // 返回值给调用方自己套语境（RelayAccess 的「中转保存失败：」）；分区底部的公共错误行
+        // 统一冠「设置没保存：」（T-2，2026-11-12：此前只有网络分区有前缀，其余是没主语的原话）。
         const msg = formatBackendError(err, t.locale);
-        setLastError(msg);
+        setLastError(t.settings.saveFailed(msg));
         return msg;
       }
     });

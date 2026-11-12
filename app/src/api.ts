@@ -365,6 +365,18 @@ export type FocusSessionResult =
   | "unsupported_terminal"
   | "process_ended";
 
+/** 把会话所在的外部终端拉到前台（terminal.rs focus_session）。轻量模式没有对话窗，灵动岛的
+ *  「打开」走这里（I-2，走查 2026-11-12）。session_id 传 cc_session_id：后端据此核对 pid 仍属于这条会话。 */
+export function focusSessionTerminal(item: Pick<LiveSession, "pid" | "task_title" | "cwd" | "provider"> & { session: { cc_session_id: string } }): Promise<FocusSessionResult> {
+  return invoke("focus_session", {
+    pid: item.pid,
+    title: item.task_title || null,
+    cwd: item.cwd ?? null,
+    sessionId: item.session.cc_session_id,
+    provider: item.provider,
+  });
+}
+
 // 活动态阶梯住在 ./activity（无依赖模块，看板侧同源消费）。这里转出一份，历史调用点
 // 从 ./api 取它也仍然成立。
 export { activityTone };

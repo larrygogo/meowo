@@ -1,6 +1,7 @@
 // 设置窗口的通用 UI 组件：开关、分段选择、色板、离散滑块。
 // 纯展示、无业务耦合，供各 section 复用。
 // 弹层菜单（Dropdown / ActionMenu / useMenuPopup）已收敛到 ../menu——全项目只有那一份实现。
+import { useEffect, useRef, useState } from "react";
 import { STICKER_COLORS, STICKER_COLOR_KEYS } from "../../appearance";
 import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
@@ -13,9 +14,12 @@ import { icAlert, icClose } from "../../icons/glyphs";
  *  渲染点兜底过一遍 formatBackendError（产出端 state.ts 已格式化，这里是幂等双保险）。
  *  7S-7：本来长在 About.tsx 里、只有三处在用；网络与远程两处各写各的裸 div（无 ×、
  *  无 role=alert）。抽到这里供全部分区共用。 */
-export function SettingsError({ error, onDismiss, preformatted }: {
+export function SettingsError({ error, onDismiss, preformatted, action }: {
   error: string | null;
   onDismiss: () => void;
+  /// 有下一步时给一个能点的按钮（如「重试」）。2026-11-12 第三轮准则：失败提示有下一步就给按钮，
+  /// 而不是只写一句「请重试」让用户自己找入口（T-1 重新生成令牌失败出处）。
+  action?: { label: string; onClick: () => void };
   /// 调用方已经自己 format 过（并套了自己的语境句，如「启动失败：…」）：这里不再过一遍，
   /// 否则命中同一条 sentinel 会译出「启动失败：绑定端口…失败：…」这样的双前缀（7S-7）。
   preformatted?: boolean;
@@ -27,11 +31,35 @@ export function SettingsError({ error, onDismiss, preformatted }: {
     <div className="settings-error" role="alert">
       <Icon glyph={icAlert} size={14} className="settings-error-icon" />
       <span className="settings-error-text">{preformatted ? error : formatBackendError(error, t.locale)}</span>
+      {action && (
+        <button type="button" className="settings-error-action" onClick={action.onClick}>{action.label}</button>
+      )}
       <button type="button" className="settings-error-close" aria-label={t.settings.close} data-tip={t.settings.close} onClick={onDismiss}>
         <Icon glyph={icClose} size={12} />
       </button>
     </div>
   );
+}
+
+/** 文本类设置提交成功后的「已保存」轻提示（T-5，2026-11-12 走查）：开关拨了会自己翻，
+ *  文本框按回车之后什么都不变，用户分不清提交了没有。flash() 显示 2 秒；读屏经常驻的
+ *  role=status 播报（动态插入的 live region 读屏常不念，所以容器常驻、只换内容）。 */
+export function useSavedFlash() {
+  const [shown, setShown] = useState(false);
+  const timer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+  const flash = () => {
+    setShown(true);
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => setShown(false), 2000);
+  };
+  const hide = () => { window.clearTimeout(timer.current); setShown(false); };
+  return { shown, flash, hide };
+}
+
+export function SavedNote({ shown }: { shown: boolean }) {
+  const t = useT();
+  return <span className="settings-saved" role="status">{shown ? t.settings.saved : ""}</span>;
 }
 
 export function Switch({ checked, onChange, disabled, label }: { checked: boolean; onChange: () => void; disabled?: boolean; label: string }) {

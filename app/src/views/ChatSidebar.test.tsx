@@ -838,7 +838,8 @@ describe("ChatSidebar", () => {
       await renderList();
       fireEvent.contextMenu(screen.getByRole("button", { name: /旧任务/ }));
       fireEvent.click(await screen.findByRole("menuitem", { name: "标记完成" }));
-      expect(invoke).toHaveBeenCalledWith("set_archived", { sessionId: 2, archived: true });
+      // 标记完成先过一道「在跑的要确认」（S-1），不在跑的不弹框，但写入落在下一拍。
+      await waitFor(() => expect(invoke).toHaveBeenCalledWith("set_archived", { sessionId: 2, archived: true }));
       // 侧栏取的是 "all"（不含已归档）：点完当场消失，不等下一轮刷新。
       await waitFor(() => expect(screen.queryByRole("button", { name: /旧任务/ })).toBeNull());
       // 不再弹「已完成，可在侧栏『已完成』找回 · 撤销」条（用户要求）。
@@ -859,7 +860,7 @@ describe("ChatSidebar", () => {
       await act(async () => {});
       fireEvent.contextMenu(screen.getByRole("button", { name: /改侧栏/ }));
       fireEvent.click(await screen.findByRole("menuitem", { name: "标记完成" }));
-      expect(invoke).toHaveBeenCalledWith("set_archived", { sessionId: 1, archived: true });
+      await waitFor(() => expect(invoke).toHaveBeenCalledWith("set_archived", { sessionId: 1, archived: true }));
       expect(onSelect).toHaveBeenCalledWith(2);
       await waitFor(() => expect(screen.queryByRole("button", { name: /改侧栏/ })).toBeNull());
     });

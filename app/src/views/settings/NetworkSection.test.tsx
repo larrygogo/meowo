@@ -177,3 +177,30 @@ describe("覆盖面如实标注", () => {
     expect(screen.getByText(zh.proxy.updaterSocksHint)).toBeTruthy();
   });
 });
+
+// T-3 / T-5（2026-11-12 走查 walk/p4/set.mjs，log「input now=http://127.0.0.1:7890」）：
+// 保存被拒后输入框退回旧值，用户刚敲的地址被冲掉；回车用 blur() 提交，焦点掉到 body。
+// 兄弟场景（同改）：远程端口框、Bark 推送地址框、会话分区的 worktree 分支前缀框。
+describe("代理地址框的保存反馈", () => {
+  it("后端拒收时保留草稿并标红，原因贴在框下；回车后焦点留在框里；改对后提示已保存", async () => {
+    await mount({ mode: "custom", url: "http://127.0.0.1:7890", per_agent: {} }, { "": "http://127.0.0.1:7890" });
+    const input = (await screen.findByDisplayValue("http://127.0.0.1:7890")) as HTMLInputElement;
+    // 后端 proxy.rs 原话（proxy::ProxyConfig::validate）。
+    api.setSettings.mockRejectedValueOnce("代理地址不能含空格");
+    input.focus();
+    fireEvent.change(input, { target: { value: "http://bad proxy" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(await screen.findByText(zh.settings.saveFailed("代理地址不能含空格"))).toBeTruthy();
+    // 回读磁盘值后草稿仍在（改前：被同步回 http://127.0.0.1:7890）。
+    await waitFor(() => expect(api.getSettings.mock.calls.length).toBeGreaterThan(1));
+    expect(input.value).toBe("http://bad proxy");
+    expect(input.getAttribute("aria-invalid")).toBe("true");
+    expect(document.activeElement).toBe(input);
+
+    fireEvent.change(input, { target: { value: "http://127.0.0.1:7891" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(await screen.findByText(zh.settings.saved)).toBeTruthy();
+    expect(screen.queryByText(zh.settings.saveFailed("代理地址不能含空格"))).toBeNull();
+    expect(document.activeElement).toBe(input);
+  });
+});

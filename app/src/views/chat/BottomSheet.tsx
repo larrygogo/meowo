@@ -6,6 +6,8 @@
 
 import { useEffect, useRef, type ReactNode } from "react";
 import { pushEscLayer } from "../../escLayers";
+import { useHistoryLayer } from "../../hooks/useHistoryLayer";
+import { remoteUi } from "../../remoteMode";
 import { useT } from "../../i18n";
 
 /** 下滑关闭的判定：拖过这么远，或松手时往下甩得够快（px/ms），就关。 */
@@ -29,6 +31,8 @@ export function BottomSheet({ title, onClose, children, ownsEscape = true }: {
   const bodyRef = useRef<HTMLDivElement>(null);
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
+  // M-2（走查 2026-11-12）：手机右滑/返回键先关底部面板，而不是把整个对话退掉。只在远程页接历史。
+  useHistoryLayer(true, () => onCloseRef.current(), remoteUi());
 
   useEffect(() => {
     if (!ownsEscape) return;

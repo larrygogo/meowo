@@ -1579,6 +1579,7 @@ button.stab {
 .side-search-x::before { content: ""; position: absolute; inset: -4px; }
 /* 搜索零命中的提示行（此时各分区已被过滤隐藏，必须有一句解释，否则整页空白像故障）。 */
 .settings-noresults { padding: 72px 0; text-align: center; font-size: var(--text-sm); color: var(--cc-text-dim); }
+.settings-noresults { display: flex; flex-direction: column; align-items: center; gap: var(--sp-12); }
 
 /* 右内容 */
 .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
@@ -1720,6 +1721,13 @@ button.stab {
 .settings-error-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .settings-error-close { flex: none; width: 22px; height: 22px; display: grid; place-items: center; margin: -1px 0; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: inherit; opacity: .7; cursor: pointer; }
 .settings-error-close:hover { opacity: 1; background: color-mix(in srgb, var(--cc-err) 14%, transparent); }
+/* 失败提示里的下一步按钮（2026-11-12 第三轮 T-1：重新生成令牌失败要能就地重试）。 */
+.settings-error-action { flex: none; margin: -2px 0; padding: 1px var(--sp-8); border: var(--hairline) solid color-mix(in srgb, var(--cc-err) 45%, transparent); border-radius: var(--radius-sm); background: transparent; color: inherit; font: inherit; cursor: pointer; }
+/* 文本类设置回车提交成功的轻提示（T-5）：空内容时宽度为 0。不用 display:none 藏，读屏的 live region 要常驻才念。 */
+.settings-saved { flex: none; color: var(--cc-text-dim); font-size: var(--text-sm); white-space: nowrap; }
+/* 空着时脱离 flex 流：否则空项也吃一份 gap，把旁边的输入框挤歪。 */
+.settings-saved:empty { position: absolute; }
+.settings-error-action:hover { background: color-mix(in srgb, var(--cc-err) 14%, transparent); }
 /* 分区内的页标题只在搜索态显示（各分区平铺时当分隔）；平时不显示，由左栏高亮表明所在页。 */
 .sec-title { display: none; margin: 0 0 var(--sp-12); font-size: var(--text-base); font-weight: 600; color: var(--cc-text); }
 .main-body.is-searching .sec-title { display: block; }
@@ -1865,7 +1873,11 @@ button.stab {
 /* 代理地址单占一整行：塞进 .row 右侧只剩半截宽度，连 placeholder 都显示不全。 */
 /* 它是上一行（默认代理）的延续，不是新的一行：不画分隔线，否则输入框顶着线。 */
 .row.proxy-url-row { padding-top: 0; border-top: 0; }
-.proxy-url-row .ns-input { width: 100%; }
+.proxy-url-row .ns-input { width: auto; flex: 1; min-width: 0; }
+/* T-3：保存被拒时草稿留在框里标红、原因贴在框下（与端口框同款）。 */
+.row.proxy-url-row { flex-wrap: wrap; row-gap: 0; }
+.proxy-url-row .ns-input.is-invalid { border-color: var(--cc-err); }
+.proxy-url-row .remote-port-err { text-align: left; }
 /* 模型名不换行（「Claude Code」曾被右侧控件挤成两行）。 */
 .proxy-agent-name { white-space: nowrap; }
 /* 覆盖面：主句一行，理由弱化到次要色——三家能力不同是事实，但不该喧宾夺主。 */
@@ -3614,9 +3626,10 @@ body:not(.remote-ui) .ns-actions .ns-btn { height: var(--btn-h-lg); min-width: 7
 .nsp-ws-item.is-action .nsp-ws-item-name { color: var(--cc-text-dim); }
 .nsp-ws-item.is-action:hover .nsp-ws-item-name { color: var(--cc-text); }
 .nsp-send { flex: none; width: var(--icon-button-md); height: var(--icon-button-md); padding: 0; display: grid; place-items: center; border: 0; border-radius: 50%; color: var(--cc-on-accent); background: var(--cc-accent); cursor: pointer; transition: background var(--dur-fast) var(--ease-in-out), transform var(--dur-fast) var(--ease-out); }
-.nsp-send:hover:not(:disabled) { background: var(--cc-accent-dim); }
-.nsp-send:active:not(:disabled) { transform: scale(.98); }
-.nsp-send:disabled { color: var(--cc-text-faint); background: var(--fill-selected); cursor: default; }
+.nsp-send:hover:not(:disabled):not([aria-disabled="true"]) { background: var(--cc-accent-dim); }
+.nsp-send:active:not(:disabled):not([aria-disabled="true"]) { transform: scale(.98); }
+/* 启动中/粘贴落盘中用 aria-disabled（N-1：真 disabled 会把焦点踢到 body），外观与 disabled 同。 */
+.nsp-send:disabled, .nsp-send[aria-disabled="true"] { color: var(--cc-text-faint); background: var(--fill-selected); cursor: default; }
 .nsp-spin { width: 14px; height: 14px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: nsp-spin var(--dur-spin) linear infinite; }
 @keyframes nsp-spin { to { transform: rotate(360deg); } }
 /* 新建页「最近会话」（对照 Kimi）：输入框下方一小列，行 = agent 图标 + 标题 + 紧凑时间，与侧栏会话行同语汇。 */
@@ -3734,6 +3747,10 @@ body:not(.remote-ui) .ns-actions .ns-btn { height: var(--btn-h-lg); min-width: 7
 .sa-toast { position: absolute; left: 50%; bottom: var(--sp-16); transform: translateX(-50%); display: flex; align-items: center; gap: var(--sp-10); padding: var(--sp-8) var(--sp-14); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); background: var(--cc-menu-bg); box-shadow: var(--shadow-menu); color: var(--cc-text); font-size: var(--text-sm); white-space: nowrap; z-index: var(--z-float); }
 /* 批量清理 worktree 的结果要逐行列出失败项：多行时换行显示，限宽不撑出窗口。 */
 .sa-toast > span { white-space: pre-line; max-width: min(560px, 80vw); }
+/* 失败提示（走查 S-10/#14，2026-11-12）：原因另起一行、淡一档；右侧 × 关闭（失败提示不计时消失）。 */
+.sa-toast-reason { display: block; margin-top: var(--sp-2); color: var(--cc-text-dim); font-size: var(--text-xs); white-space: normal; overflow-wrap: anywhere; }
+.sa-toast.is-fail { align-items: flex-start; }
+.sa-toast-x { color: var(--cc-text-faint); }
 /* L1 内容面（.chat-surface）：对话列、会话信息栏、右侧面板合成一张圆角 12 的面，压在窗口底 L0 上。
    三个平台同一套：描边是 hairline 环（box-shadow，不占布局），外加 --shadow-sm；里面三栏只用细线分隔，
    各自不再有底色、圆角和上边线。右、下各留 8；侧栏不停靠（窄窗抽屉 / 手动收起）时左边也留 8，
@@ -4159,6 +4176,11 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 /* 批量清理 worktree 的结果：失败项逐行列出，按钮顶对齐不随多行居中。 */
 .chat-sidebar-error.is-multiline { align-items: flex-start; }
 .chat-sidebar-error.is-multiline span { flex: 1 1 auto; min-width: 0; white-space: pre-line; overflow-wrap: anywhere; }
+/* 侧栏失败/提示条（走查 S-5，2026-11-12）：不再 4 秒自动消失，右上角给 ×；原因另起一行、比结果句淡一档。 */
+.chat-sidebar-error.is-notice > span { color: var(--cc-text); }
+.chat-sidebar-error-reason { display: block; margin-top: var(--sp-2); color: var(--cc-text-dim); }
+.chat-sidebar-error.is-undo .chat-sidebar-error-x { min-height: var(--btn-h-sm); padding: 0 var(--sp-6); background: transparent; color: var(--cc-text-faint); }
+.chat-sidebar-error.is-undo .chat-sidebar-error-x:hover { background: var(--fill-hover); color: var(--cc-text); }
 /* 「已完成」页顶部的批量清理入口：轻量文字按钮，不和会话条目抢视觉。 */
 .chat-sidebar-cleanbar { display: flex; justify-content: flex-end; padding: var(--sp-4) var(--sp-10) var(--sp-2); }
 .chat-sidebar-cleanbar button { border: 0; border-radius: var(--radius-sm); padding: var(--sp-2) var(--sp-8); background: transparent; color: var(--cc-text-faint); font-size: var(--text-xs); cursor: pointer; }
@@ -7263,6 +7285,9 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .isl-panel-head > .isl-btn.isl-new { background: var(--isl-chip); margin-right: 4px; }
 .isl-panel-head > .isl-btn.isl-new:hover { background: var(--isl-chip-hover); }
 .isl-panel-body { display: flex; gap: 18px; margin-top: 10px; }
+/* 点会话「打开」失败的提示条（I-1/I-2，走查 2026-11-12）：标题行下、列表上，读完前不消失。 */
+.isl-panel-err { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 12px; min-width: 0; }
+.isl-panel-err-text { flex: 1; min-width: 0; display: flex; align-items: center; white-space: nowrap; overflow: hidden; }
 /* 有翻页时内容区至少三行会话高（行 54 = 8 + 19 + 2 + 17 + 8，行距 2）：额度页（约 164）和不满三条的末页
    都垫到同一个高度，翻页时底边和圆点不动。原来英文会话页 231、额度页 244，翻一页窗口伸缩 13px。
    窗口高度跟着面板实测高度走（IslandPanel 的 onMeasure），这里不变窗口就不变。 */
@@ -7306,6 +7331,12 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 /* 每家一栏：栏顶 logo + 名字，下面一个叠环（每档额度一圈）和图例；栏与栏之间一道细线。 */
 .isl-usage-group { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 0 20px; }
 .isl-usage-group + .isl-usage-group { border-left: 1px solid var(--isl-line); } /* 保留 1px：同上 */
+/* 刷新失败的旧额度：降饱和压暗，并在环下写上次更新时间（backlog 仍存在 #1，2026-11-12）。
+   不藏起来：旧值总比空着强，只是不能冒充现在的值。 */
+.isl-usage-group.is-stale .isl-usage-stack,
+.isl-usage-group.is-stale .isl-usage-lanes,
+.isl-usage-wrap.is-stale { filter: saturate(0.2); opacity: 0.6; }
+.isl-usage-stale { max-width: 100%; font-size: 11px; color: var(--isl-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .isl-usage-head { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--isl-text-2); }
 .isl-usage-head-logo { display: grid; place-items: center; width: 14px; height: 14px; }
 .isl-usage-head-logo svg, .isl-usage-head-logo img { width: 13px !important; height: 13px !important; }

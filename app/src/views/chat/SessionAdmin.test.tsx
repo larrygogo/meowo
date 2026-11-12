@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const invoke = vi.hoisted(() => vi.fn());
@@ -109,5 +109,102 @@ describe("会话管理页（对照 Kimi Code）", () => {
     expect(onOpen).toHaveBeenCalledWith(2);
     fireEvent.click(screen.getByRole("button", { name: "返回" }));
     expect(onBack).toHaveBeenCalled();
+  });
+
+  // 走查 2026-11-12：S-1（标记完成会结束在跑的会话，先确认）、S-10（撤销提示读完前不消失）、#14（失败带原因、可关、可重试）。
+  // 兄弟场景：侧栏单条/批量见 ChatSidebar.actions.test.tsx。
+  describe("走查修复", () => {
+    let confirms: string[];
+    let answer: boolean;
+    const running = (id: number) => row(id, `会话${id}`, { connected: true, session: { id, cc_session_id: `cc-${id}`, status: "running", started_at: 1, last_event_at: 1, ended_at: null } } as Partial<LiveSession>);
+    const withPage = (items: LiveSession[], extra?: (command: string, args: unknown) => unknown) => {
+      confirms = [];
+      answer = true;
+      invoke.mockImplementation((command: string, args: unknown) => {
+        if (command === "confirm_dialog") { confirms.push(String((args as { message: string }).message)); return Promise.resolve(answer); }
+        if (command === "set_archived") { archivedCalls.push(args as { sessionId: number; archived: boolean }); return Promise.resolve(extra?.(command, args)); }
+        if (command === "get_session_admin_page") return Promise.resolve({ items, total: items.length });
+        if (command === "recent_cwds") return Promise.resolve([]);
+        return Promise.resolve(extra?.(command, args));
+      });
+    };
+
+    it("S-1 批量里有在跑的先确认，取消则不动；单条在跑的同样确认", async () => {
+      withPage([running(1), row(2, "会话2")]);
+      render(<SessionAdmin onBack={() => {}} onOpen={() => {}} />);
+      await screen.findByText("会话2");
+      fireEvent.click(screen.getByRole("checkbox", { name: "会话1" }));
+      fireEvent.click(screen.getByRole("checkbox", { name: "会话2" }));
+      answer = false;
+      fireEvent.click(screen.getByRole("button", { name: "标记完成（2）" }));
+      await waitFor(() => expect(confirms).toEqual(["其中 1 个还在运行，标记完成会结束它们。"]));
+      await new Promise((r) => setTimeout(r, 10));
+      expect(archivedCalls).toEqual([]);
+      answer = true;
+      const first = screen.getByText("会话1").closest("tr")!;
+      fireEvent.click(within(first).getByRole("button", { name: "标记完成" }));
+      await waitFor(() => expect(archivedCalls).toEqual([{ sessionId: 1, archived: true }]));
+      expect(confirms[1]).toBe("Agent 还在运行，标记完成会结束它。");
+    });
+
+    it("S-1 不在跑的不弹确认", async () => {
+      withPage([row(2, "会话2")]);
+      render(<SessionAdmin onBack={() => {}} onOpen={() => {}} />);
+      const target = (await screen.findByText("会话2")).closest("tr")!;
+      fireEvent.click(within(target).getByRole("button", { name: "标记完成" }));
+      await waitFor(() => expect(archivedCalls).toEqual([{ sessionId: 2, archived: true }]));
+      expect(confirms).toEqual([]);
+    });
+
+    it("S-10 批量完成后焦点交给「撤销」，焦点在条内时 10 秒后仍在", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        withPage([row(2, "会话2"), row(3, "会话3")]);
+        render(<SessionAdmin onBack={() => {}} onOpen={() => {}} />);
+        await screen.findByText("会话2");
+        fireEvent.click(screen.getByRole("checkbox", { name: "会话2" }));
+        fireEvent.click(screen.getByRole("button", { name: "标记完成（1）" }));
+        await screen.findByText("已标记完成 1 个会话");
+        await act(async () => { vi.advanceTimersByTime(10); });
+        const undo = screen.getByRole("button", { name: "撤销" });
+        expect(document.activeElement).toBe(undo);
+        fireEvent.focus(undo);
+        await act(async () => { vi.advanceTimersByTime(10_000); });
+        expect(screen.getByText("已标记完成 1 个会话")).toBeTruthy();
+        // 焦点移出后计满 8 秒才收起。
+        fireEvent.blur(undo, { relatedTarget: document.body });
+        await act(async () => { vi.advanceTimersByTime(7_000); });
+        expect(screen.getByText("已标记完成 1 个会话")).toBeTruthy();
+        await act(async () => { vi.advanceTimersByTime(1_500); });
+        expect(screen.queryByText("已标记完成 1 个会话")).toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("#14 失败提示带原因、不自动消失、× 关闭；加载失败给重试", async () => {
+      withPage([row(2, "会话2")], (command) => { if (command === "set_archived") throw new Error("会话不存在"); });
+      render(<SessionAdmin onBack={() => {}} onOpen={() => {}} />);
+      const target = (await screen.findByText("会话2")).closest("tr")!;
+      fireEvent.click(within(target).getByRole("button", { name: "标记完成" }));
+      const alert = await screen.findByRole("alert");
+      expect(alert.textContent).toContain("1 个失败");
+      expect(alert.textContent).toContain("会话不存在");
+      await new Promise((r) => setTimeout(r, 50));
+      fireEvent.click(within(alert).getByRole("button", { name: "关闭" }));
+      expect(screen.queryByRole("alert")).toBeNull();
+      cleanup();
+
+      let fail = true;
+      invoke.mockImplementation((command: string) => {
+        if (command === "get_session_admin_page") return fail ? Promise.reject(new Error("x")) : Promise.resolve({ items: [row(5, "会话5")], total: 1 });
+        return Promise.resolve([]);
+      });
+      render(<SessionAdmin onBack={() => {}} onOpen={() => {}} />);
+      const retry = await screen.findByRole("button", { name: "重试" });
+      fail = false;
+      fireEvent.click(retry);
+      expect(await screen.findByText("会话5")).toBeTruthy();
+    });
   });
 });

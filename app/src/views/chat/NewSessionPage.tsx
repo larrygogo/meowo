@@ -41,7 +41,7 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched, onOpenSession
 }) {
   const t = useT();
   const form = useNewSessionForm(normalizePath(prefill.cwd ?? ""), (prefill.provider ?? null) as AgentId | null);
-  const { cwd, setCwd, provider, setProvider, recent, hooks, busy, repairing, error, setError, agents, avail, opts, setOpts,
+  const { cwd, setCwd, provider, setProvider, recent, hooks, busy, phase, repairing, error, setError, agents, avail, opts, setOpts,
     activeProfiles, relayPins, loginOperations, swappedFrom, launchOptions, warn, needLogin } = form;
   const [message, setMessage] = useState("");
   // 粘进来的截图/文件（用户反馈：新建页粘不了图，只能等会话起来再贴一次）。和对话页同一套
@@ -90,6 +90,9 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched, onOpenSession
     if (pasting > 0) return;
     if (!cwd.trim()) { setError(t.newSession.workspaceRequired); return; }
     const launched = await form.launch();
+    // N-1（走查 2026-11-12）：失败后焦点回到输入框，改完目录或 Agent 直接再按回车。启动期间输入框改成
+    // 只读而不是 disabled（被禁用的聚焦控件会把焦点踢到 body）；发送钮同理用 aria-disabled。
+    if (!launched) { window.setTimeout(() => textRef.current?.focus(), 0); return; }
     // 旧后端桌面命令不回临时 id（null）：会话照样起来、reveal 照样切过去，只是第一句话
     // 没法记到它身上——放回输入框不现实（页面随即关掉），宁可不清空让用户看见。
     if (launched?.tempId != null) onLaunched(launched.tempId, provider, message.trim(), attachments);
@@ -150,7 +153,8 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched, onOpenSession
             rows={3}
             value={message}
             placeholder={t.newSession.pagePlaceholder}
-            disabled={busy}
+            readOnly={busy}
+            aria-disabled={busy || undefined}
             onChange={(event) => setMessage(event.target.value)}
             onKeyDown={onKeyDown}
             onPaste={(event) => {
@@ -229,8 +233,11 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched, onOpenSession
               data-testid="nsp-send"
               aria-label={busy ? t.newSession.launching : t.newSession.start}
               data-tip={busy ? t.newSession.launching : t.newSession.start}
-              disabled={busy || pasting > 0 || (avail?.length ?? 0) === 0}
-              onClick={() => void submit()}
+              // 启动中用 aria-disabled 而不是 disabled：点完发送钮焦点就在它身上，disabled 会把焦点踢到 body（N-1）。
+              // 没装 agent 时仍真 disabled（那时焦点不会在它身上）。
+              disabled={(avail?.length ?? 0) === 0}
+              aria-disabled={busy || pasting > 0 || undefined}
+              onClick={() => { if (!busy && pasting === 0) void submit(); }}
             >
               {busy ? <span className="nsp-spin" aria-hidden="true" /> : (
                 <Icon glyph={icArrowUp} size={16} />
@@ -267,6 +274,12 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched, onOpenSession
             </div>
           )}
           {activeProfiles[provider] && <div className="nsp-note">{t.newSession.activeProfile(activeProfiles[provider]!)}</div>}
+          {/* N-2：分步状态，读屏经 role=status 念出来。 */}
+          {busy && phase && (
+            <div className="nsp-note" role="status" data-testid="nsp-phase">
+              {phase === "worktree" ? t.newSession.phaseWorktree : t.newSession.phaseStarting(agentName(agents ?? [], provider))}
+            </div>
+          )}
           {error && <div className="nsp-note is-error" role="alert" data-testid="nsp-error">{error}</div>}
         </div>
 

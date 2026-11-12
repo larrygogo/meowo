@@ -26,6 +26,12 @@ describe("字典用词", () => {
     const bad = strings(zh).filter(([, s]) => /看板|贴纸|等你|工作空间/.test(s));
     expect(bad).toEqual([]);
   });
+  // 文案规范（meowo-copy-style）禁分号，拆成两句。ux-backlog 7G-8 修过一轮，wsHideTip 与 leadWorkflowDesc
+  // 又带着「；」新加进来（research-backlog.md「仍存在」第 2 条，2026-11-12），故钉一条规则防再犯。
+  it("中文文案不用分号", () => {
+    const bad = strings(zh).filter(([, s]) => /[；;]/.test(s));
+    expect(bad).toEqual([]);
+  });
   it("英文不再说 board/sticker、不用 waiting on/for you", () => {
     const bad = strings(en).filter(([, s]) => /\bboard\b|sticker|waiting (on|for) you\b/i.test(s));
     expect(bad).toEqual([]);
