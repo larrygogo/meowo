@@ -4956,6 +4956,20 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-diff-path::before, .chat-diff-path::after { content: "\200e"; }
 /* 单文件形态的头行：返回钮 + 状态字母 + 完整路径。 */
 .chat-diff-filehead { flex: 0 0 auto; display: flex; align-items: center; gap: var(--sp-6); padding: var(--sp-6) var(--sp-10); border-bottom: var(--hairline) solid var(--cc-border); }
+/* 单文件视图的内容列：头行（返回、路径、工具、「打开」）和下面的正文共用同一条封顶居中的列。
+   原先只有 Markdown 正文封顶 860，头行和 diff 正文都铺满面板：2560 最大化时「返回」在 x=250、
+   「打开」右缘在 x=2542，中间隔 2282px，代码最长一行只到 x≈800；Markdown 预览正文在 1102–1914，
+   头行却在 474–2542（实拍 qa-diff-max-2560 / qa-md-max-2560）。和「更改」的范围切换贴边是同一类问题。
+   --view-col 是这条列的宽度：代码与 diff 取 1200（两列行号 + 120 列代码约 960，再留余量；比「更改」
+   清单的 880 宽），Markdown 预览取 880（与「更改」同值，原先单独写 860）。分隔线仍然通栏。
+   面板窄于列宽时 max() 归零，等于没有这条规则。 */
+.chat-diff-panel { --view-col: 1200px; --view-col-pad: max(0px, (100% - var(--view-col)) / 2); }
+/* --view-col-pad 里的 var() 在声明它的元素上就算完了，子元素继承到的是算好的 1200 版本，所以换列宽时两个变量要一起重写。 */
+.chat-files-preview:has(> .chat-diff-scroll > .chat-diff-mdview) { --view-col: 880px; --view-col-pad: max(0px, (100% - var(--view-col)) / 2); }
+.chat-diff-filehead { padding-inline: calc(var(--view-col-pad) + var(--sp-10)); }
+/* Markdown 预览：头行的墨迹落在正文那一列上。正文左右内边距是 --sp-24；返回钮自带 --sp-6 的左内边距，
+   所以左边少留 6，箭头正好压在正文左缘；「打开」的右缘压在正文右缘。 */
+.chat-files-preview:has(> .chat-diff-scroll > .chat-diff-mdview) > .chat-diff-filehead { padding-left: calc(var(--view-col-pad) + var(--sp-24) - var(--sp-6)); padding-right: calc(var(--view-col-pad) + var(--sp-24)); }
 .chat-diff-back { flex: 0 0 auto; display: inline-flex; align-items: center; gap: var(--sp-2); min-height: var(--btn-h-sm); padding: 0 var(--sp-6); border: 0; border-radius: var(--radius-md); background: transparent; color: var(--cc-text-dim); font-size: var(--text-xs); white-space: nowrap; cursor: pointer; }
 .chat-diff-back:hover { background: var(--fill-hover); color: var(--cc-text); }
 .chat-diff-filehead .chat-diff-path { font-family: var(--cc-mono); font-size: var(--text-xs); color: var(--cc-text-dim); }
@@ -4971,6 +4985,9 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 /* diff 内容：pre 宽随最长行（max-content）撑开，横向滚动由容器承担，
    行背景色因此能铺满可视宽而不是断在窗口边。 */
 .chat-diff-scroll { flex: 1; min-height: 0; overflow: auto; }
+/* 正文跟头行走同一条内容列（见 .chat-diff-filehead 上的说明）：留白加在滚动容器上，pre 的
+   min-width:100% 与增删行的底色于是只铺到列宽，不再拉成两千多 px 的色条；超长行照旧横向滚动。 */
+.chat-diff-scroll { padding-inline: var(--view-col-pad); }
 /* 代码字体栈与 .chat-md pre code 保持一致（Windows 落到 Cascadia Code/Consolas，
    含 CJK 回退）；裸 ui-monospace, monospace 在 Windows 会掉到点阵感的默认等宽。 */
 .chat-diff-text { margin: 0; width: max-content; min-width: 100%; padding: var(--sp-10) 0; font-family: var(--cc-mono); font-size: var(--text-xs); line-height: var(--leading-normal); color: var(--cc-text); }
@@ -5280,7 +5297,7 @@ button.scm-check-name:hover { text-decoration: underline; }
 .chat-diff-img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: var(--radius-xs); background: repeating-conic-gradient(color-mix(in srgb, var(--cc-text) 8%, transparent) 0% 25%, transparent 0% 50%) 0 0 / 16px 16px; }
 /* markdown 预览容器：阅读宽度 + 居中 + 内边距；排版基底复用对话区 .chat-md，
    文档化的覆盖（标题比例/间距）在 .chat-md 排版段之后，见 .chat-diff-mdview 覆盖段。 */
-.chat-diff-mdview { margin: 0 auto; padding: var(--sp-16) var(--sp-24) var(--sp-30); max-width: 860px; }
+.chat-diff-mdview { margin: 0 auto; padding: var(--sp-16) var(--sp-24) var(--sp-30); }
 .chat-diff-mdview img { max-width: 100%; }
 /* 预览里解析失败/加载中的图片占位：alt 文字小字灰底 chip。 */
 .chat-md-img-broken { display: inline-block; padding: 1px var(--sp-6); border-radius: var(--radius-xs); background: var(--fill-hover); color: var(--cc-text-faint); font-size: var(--text-xs); }
