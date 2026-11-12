@@ -1,4 +1,4 @@
-import { act, renderHook, waitFor } from "@testing-library/react";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ChatItem, ChatUi } from "../../api";
 
@@ -26,7 +26,8 @@ function mount(outgoing: OutgoingPrompt[], chatUi: ChatUi | null = claudeUi) {
   }));
 }
 
-afterEach(() => { vi.clearAllMocks(); outgoingStore.reset(); });
+// 卸载 hook：它每秒计时的 setInterval 不收掉，会在测试环境拆掉后触发（window is not defined）。
+afterEach(() => { cleanup(); vi.clearAllMocks(); outgoingStore.reset(); });
 
 describe("useOutgoingUpkeep：未确认送达时读终端画面", () => {
   it("这段话还停在 CLI 输入框里就标卡住，提交按一次回车并转回已写入", async () => {
