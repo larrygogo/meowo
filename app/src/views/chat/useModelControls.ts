@@ -13,6 +13,7 @@ import { useT } from "../../i18n";
 import { appendTerminalText, modeFromScreen, visibleTerminalText } from "../../terminalAttention";
 import { currentPresetId } from "./modelLabels";
 import { stashComposerDraft, submitToTerminal } from "./terminalSubmit";
+import type { SendErrorExit } from "./SendErrorExits";
 
 export interface ModelControlsDeps {
   sessionId: number;
@@ -28,7 +29,8 @@ export interface ModelControlsDeps {
   withSendGuard: (body: () => Promise<boolean>) => Promise<boolean>;
   attentionAbort: () => string | null;
   isCurrentOperation: () => boolean;
-  setSendError: (message: string) => void;
+  /** exit：错误条上的出路（重试 / 看终端画面），见 SendErrorExits。 */
+  setSendError: (message: string, exit?: SendErrorExit) => void;
   setHistory: Dispatch<SetStateAction<ChatHistory | null>>;
   setStoredSelections: Dispatch<SetStateAction<Record<string, string>>>;
 }
@@ -68,7 +70,9 @@ export function useModelControls({
           return line.toLowerCase().replace(/[^a-z0-9]/g, "").includes(family);
         });
       }
-      if (!confirmed) { setSendError(t.chat.modelSwitchUnconfirmed); return false; }
+      // 没等到 CLI 的确认行：切没切过去只有终端画面说得清。给「重试」与看终端画面两条出路，
+      // 不再只说「请到终端检查」（走查 C-4，手机上那句是死路）。
+      if (!confirmed) { setSendError(t.chat.modelSwitchUnconfirmed, { retry: () => void selectModel(preset), terminal: true }); return false; }
       await setSessionLaunchSelection(sessionId, "model", preset.id);
       if (isCurrentOperation()) setStoredSelections((prev) => ({ ...prev, model: preset.id }));
       return true;
@@ -107,7 +111,7 @@ export function useModelControls({
             if (reject.test(line)) { outcome = line.trim(); break; }
           }
         }
-        if (outcome === null) { setSendError(t.chat.effortUnconfirmed); return false; }
+        if (outcome === null) { setSendError(t.chat.effortUnconfirmed, { retry: () => void selectEffort(level), terminal: true }); return false; }
         if (outcome !== "ok") { setSendError(t.chat.effortRejected(outcome)); return false; }
         if (isCurrentOperation()) setHistory((current) => current ? { ...current, effort: level } : current);
         return true;

@@ -19,6 +19,9 @@ const stashComposerDraft = vi.hoisted(() => vi.fn(async () => {}));
 vi.mock("../../api", () => ({ managedTerminalSnapshot, writeManagedTerminal, setSessionLaunchSelection }));
 vi.mock("./terminalSubmit", () => ({ submitToTerminal, stashComposerDraft }));
 
+// 没等到确认时错误条带两条出路：重试（再走一遍同一个切换）与看终端画面（走查 C-4，不再只说「请到终端检查」）。
+const UNCONFIRMED_EXIT = { retry: expect.any(Function), terminal: true };
+
 beforeEach(() => { vi.useFakeTimers(); pty.out = ""; pty.onWrite = null; });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.clearAllMocks(); });
 
@@ -82,7 +85,7 @@ it("切模型：确认行报的是别的家族（被降档）不算确认", asyn
   pty.onWrite = (_sid, data) => { if (data === "/model opus[1m]") pty.out += "Set model to `Sonnet 5`\r\n"; };
   const { result } = renderHook(() => useModelControls(deps));
   await settle(result.current.selectModel({ id: "opus[1m]", label: "Opus 5.5 (1M)" }));
-  expect(deps.setSendError).toHaveBeenCalledWith(zh.chat.modelSwitchUnconfirmed);
+  expect(deps.setSendError).toHaveBeenCalledWith(zh.chat.modelSwitchUnconfirmed, UNCONFIRMED_EXIT);
   expect(setSessionLaunchSelection).not.toHaveBeenCalled();
 });
 
@@ -91,7 +94,7 @@ it("切模型：只有命令回显、没有确认行，仍报未确认", async (
   pty.onWrite = (_sid, data) => { pty.out += `${data}\r\n`; };
   const { result } = renderHook(() => useModelControls(deps));
   await settle(result.current.selectModel({ id: "opus[1m]", label: "Opus 5.5 (1M)" }));
-  expect(deps.setSendError).toHaveBeenCalledWith(zh.chat.modelSwitchUnconfirmed);
+  expect(deps.setSendError).toHaveBeenCalledWith(zh.chat.modelSwitchUnconfirmed, UNCONFIRMED_EXIT);
   expect(setSessionLaunchSelection).not.toHaveBeenCalled();
 });
 
@@ -100,7 +103,7 @@ it("切模型：菜单里出现模型名不算确认，超时报未确认且不�
   pty.onWrite = () => { pty.out += "  1. opus  2. sonnet\r\n"; };
   const { result } = renderHook(() => useModelControls(deps));
   await settle(result.current.selectModel({ id: "opus", label: "Opus" }));
-  expect(deps.setSendError).toHaveBeenCalledWith(zh.chat.modelSwitchUnconfirmed);
+  expect(deps.setSendError).toHaveBeenCalledWith(zh.chat.modelSwitchUnconfirmed, UNCONFIRMED_EXIT);
   expect(setSessionLaunchSelection).not.toHaveBeenCalled();
 });
 
@@ -144,7 +147,7 @@ it("切档位：确认行报的是别的档位不算数，超时报未确认", a
   pty.onWrite = () => { pty.out += "Set effort level to High\r\n"; };
   const { result } = renderHook(() => useModelControls(deps));
   await settle(result.current.selectEffort("max"));
-  expect(deps.setSendError).toHaveBeenCalledWith(zh.chat.effortUnconfirmed);
+  expect(deps.setSendError).toHaveBeenCalledWith(zh.chat.effortUnconfirmed, UNCONFIRMED_EXIT);
   expect(history().effort).toBe("low");
 });
 

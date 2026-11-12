@@ -658,7 +658,7 @@ describe("ChatWindow", () => {
     // 回显等满超时后:Ctrl-U 撤销、报错可见、输入框保留原文——唯独不能出现的是回车。
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 71, data: "\x15" }), { timeout: 5_000 });
     expect(invoke).not.toHaveBeenCalledWith("write_managed_terminal", { sessionId: 71, data: "\r" });
-    expect(await screen.findByText(/消息未进入终端/)).toBeTruthy();
+    expect(await screen.findByText(/消息没进入终端/)).toBeTruthy();
     // 先上屏再发送后，失败的原文退回输入框（人还在、输入框空着时）。
     await waitFor(() => expect(input.value).toBe("go on"));
   });
@@ -890,9 +890,13 @@ describe("ChatWindow", () => {
     fireEvent.click(screen.getByRole("option", { name: /^\/deploy\s*部署到测试环境/ }));
     expect(input.value).toBe("/deploy ");
     // 模型菜单：选择预设即向 PTY 发送 /model <id>。
+    // 回合在跑：菜单里先说原因、模型项不可选（走查 C-8），点了不往 PTY 写 /model。
     fireEvent.click(screen.getByRole("button", { name: "切换模型" }));
-    fireEvent.click(screen.getByRole("menuitem", { name: /^Sonnet/ }));
-    await screen.findByText(zh.chat.menuBusy);
+    const sonnet = screen.getByRole("menuitem", { name: /^Sonnet/ });
+    expect(sonnet.getAttribute("aria-disabled")).toBe("true");
+    expect(screen.getByText(zh.chat.menuBusyShort)).toBeTruthy();
+    fireEvent.click(sonnet);
+    await new Promise((resolve) => setTimeout(resolve, 50));
     expect(invoke).not.toHaveBeenCalledWith("write_managed_terminal", { sessionId: 31, data: "/model sonnet" });
   });
 
