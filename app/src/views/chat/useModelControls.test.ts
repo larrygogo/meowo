@@ -63,6 +63,28 @@ it("切模型：只认 CLI 确认行，确认后写恢复配置并更新已存�
   expect(deps.setSendError).not.toHaveBeenCalled();
 });
 
+// Claude Code 2.1.322 起确认行只给显示名、不带别名：「Set model to `Opus 5.5` and saved as your default for new sessions」。
+// 改前要求这一行里含预设 id（opus1m），1M 档永远判成未确认、也不记住选择（2026-11-12 leader 报「切模型无法生效」，
+// transcript 实证 CLI 其实已经切过去了）。
+it("切模型：新版确认行只有显示名（1M 档）也算确认，并记住这次选择", async () => {
+  const { deps, selections } = makeDeps();
+  pty.onWrite = (_sid, data) => { if (data === "/model opus[1m]") pty.out += "/model opus[1m]\r\n  L  Set model to `Opus 5.5` and saved as your default for new sessions\r\n"; };
+  const { result } = renderHook(() => useModelControls(deps));
+  await settle(result.current.selectModel({ id: "opus[1m]", label: "Opus 5.5 (1M)" }));
+  expect(deps.setSendError).not.toHaveBeenCalled();
+  expect(setSessionLaunchSelection).toHaveBeenCalledWith(1, "model", "opus[1m]");
+  expect(selections()).toEqual({ model: "opus[1m]" });
+});
+
+it("切模型：只有命令回显、没有确认行，仍报未确认", async () => {
+  const { deps } = makeDeps();
+  pty.onWrite = (_sid, data) => { pty.out += `${data}\r\n`; };
+  const { result } = renderHook(() => useModelControls(deps));
+  await settle(result.current.selectModel({ id: "opus[1m]", label: "Opus 5.5 (1M)" }));
+  expect(deps.setSendError).toHaveBeenCalledWith(zh.chat.modelSwitchUnconfirmed);
+  expect(setSessionLaunchSelection).not.toHaveBeenCalled();
+});
+
 it("切模型：菜单里出现模型名不算确认，超时报未确认且不改恢复配置", async () => {
   const { deps } = makeDeps();
   pty.onWrite = () => { pty.out += "  1. opus  2. sonnet\r\n"; };
