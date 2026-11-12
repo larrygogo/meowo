@@ -5118,6 +5118,14 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-diff-tree-dir, .chat-diff-tree-file { width: 100%; display: flex; align-items: center; gap: var(--sp-6); min-height: 28px; padding: 0 var(--sp-8); border: 0; border-radius: var(--radius-md); background: transparent; color: var(--cc-text-dim); font-size: var(--text-sm); line-height: var(--leading-normal); cursor: pointer; text-align: left; }
 .chat-diff-tree-dir svg { flex: 0 0 auto; }
 .chat-diff-tree-file svg { flex: 0 0 auto; }
+/* 文件行没有折叠箭头，补一个同宽的空位（箭头 12px，后面的间距由行的 gap 给）：文件图标和同层的
+   文件夹图标落在一列、名字也落在一列。原先文件图标顶在文件夹的箭头位上：同一层里图标差 18px、
+   名字差 20px（panel-files 1280 实拍：文件夹图标 807 / 名字 827，文件图标 789 / 名字 807）。
+   搜索结果里带命中行的文件自己有箭头，不再补；列表形态（is-flat）没有层级，也不补。 */
+.chat-diff-tree-file:not(.is-flat):not(:has(> .chat-diff-chev))::before { content: ""; flex: 0 0 12px; }
+/* 文件图标 12px、文件夹图标 14px：文件图标左右各让 1px，坐进同样 14px 的格里，两种图标同一条中线，
+   后面的名字起点也就相同（不让的话名字差 2px：文件夹 827、文件 825）。 */
+.chat-diff-tree-file > .chat-diff-fileicon { margin-inline: 1px; }
 /* 目录加载中/失败的行内占位（懒加载子目录时嵌在树里）。 */
 .chat-diff-tree-note { padding: var(--sp-4) var(--sp-8); color: var(--cc-text-dim); font-size: var(--text-xs); }
 .chat-diff-tree-note.is-error { color: var(--cc-fail-text); }
@@ -5138,9 +5146,19 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
    否则凹槽底会铺成一整行。改成左边距跟着居中列走：面板宽过 880 后它仍对齐搜索框和提交框的左缘
    （两者都在列内 --sp-12 处），不留在面板最左边（用户截图：最大化时它贴在左侧，离内容列半个屏幕）。 */
 .scm > .chat-diff-scope { margin-left: calc(max(0px, (100% - 880px) / 2) + var(--sp-12)); }
-.scm-section-title { padding: var(--sp-10) var(--sp-16) var(--sp-4); font-size: var(--text-xs); font-weight: 500; color: var(--cc-text-faint); user-select: none; }
-.scm-repos { flex: 0 0 auto; display: flex; flex-direction: column; padding: 0 var(--sp-8) var(--sp-8); border-bottom: var(--hairline) solid var(--cc-border); }
-.scm-repo { display: flex; align-items: center; gap: var(--sp-6); min-width: 0; height: 28px; padding: 0 var(--sp-8); border: 0; border-radius: var(--radius-md); background: transparent; color: var(--cc-text-dim); font: inherit; font-size: var(--text-sm); text-align: left; cursor: pointer; }
+/* 「更改」一列里只留两条左缘、一条右缘（改前量到四条左缘：仓库行底板 8、卡片 12、分组箭头 12、
+   文件图标 20、「存储库」24；右缘 8 / 12 两条，panel-changes 1280 与手机 375 / 430 都一样）：
+   - 底板（仓库行、提交框、按钮、PR 卡、搜索框、分组头与文件行的悬停底）左右都在 --sp-12；
+   - 图标列在 12 + --sp-10 = 22：「存储库」小标题、仓库图标、分组箭头、文件图标；
+   - 文字列在 22 + 图标 12 + --sp-6 = 40：仓库名、分组名、文件名；
+   - 右侧文字（分支与 ↑N、计数徽标、状态字母）都收在底板内 --sp-10。 */
+.scm-section-title { padding: var(--sp-10) var(--sp-10) var(--sp-4); font-size: var(--text-xs); font-weight: 500; color: var(--cc-text-faint); user-select: none; }
+.scm-repos { flex: 0 0 auto; display: flex; flex-direction: column; padding: 0 var(--sp-12); }
+/* 仓库区下面的分隔线画在内容列里，和上下的卡片等宽。原先是 .scm-repos 自己的 border-bottom：
+   面板封顶 880 居中后它成了一截悬空的短线，两头比仓库行各长 8px、比卡片各长 12px
+   （qa-panel-max 实拍：线 316–1195.5，卡片 328–1184）。 */
+.scm-repos::after { content: ""; flex: 0 0 var(--hairline); margin-top: var(--sp-8); background: var(--cc-border); }
+.scm-repo { display: flex; align-items: center; gap: var(--sp-6); min-width: 0; height: 28px; padding: 0 var(--sp-10); border: 0; border-radius: var(--radius-md); background: transparent; color: var(--cc-text-dim); font: inherit; font-size: var(--text-sm); text-align: left; cursor: pointer; }
 .scm-repo:hover { background: var(--fill-hover); color: var(--cc-text); }
 .scm-repo.is-selected { background: var(--fill-selected); color: var(--cc-text); }
 .scm-repo > svg { flex: 0 0 auto; color: var(--cc-text-faint); }
@@ -5203,16 +5221,16 @@ button.scm-check-name:hover { text-decoration: underline; }
 .scm-tools .chat-diff-layout { box-sizing: border-box; margin: var(--sp-8) 0 var(--sp-4); }
 .scm-tools .chat-diff-layout button { height: auto; padding: 0 var(--sp-6); }
 
-.scm-groups { flex: 0 0 auto; display: flex; flex-direction: column; padding: 0 var(--sp-8); }
+.scm-groups { flex: 0 0 auto; display: flex; flex-direction: column; padding: 0 var(--sp-12); }
 /* 行的右侧是表格式的三列，组头与各行共用同一套宽度，逐行严格对齐（leader 实拍：图标的横向位置
    跟着 +N −M 的宽度逐行乱跳，组头的图标也和下面各行不在一条竖线上）：
    ［动作格（放弃/暂存…，右对齐，每格 --scm-slot 宽、格距 --scm-slot-gap）］［统计 + 状态字母，
    最小宽 --scm-stat-w、右对齐、等宽数字］。图标 14px 坐在 22px 的格里、格与格相接，两个图标之间固定隔 8px。组头的计数徽标坐在同宽的尾列里。文件名列吃剩余宽度。 */
 .scm { --scm-slot: 22px; --scm-slot-gap: 0px; --scm-stat-w: 92px; }
 @container diff-panel (max-width: 440px) { .scm { --scm-stat-w: 72px; } }
-.scm-group-head { display: flex; align-items: center; gap: var(--sp-2); height: 28px; padding-right: var(--sp-6); border-radius: var(--radius-md); }
+.scm-group-head { display: flex; align-items: center; gap: var(--sp-2); height: 28px; padding-right: var(--sp-10); border-radius: var(--radius-md); }
 .scm-group-head:hover { background: var(--fill-hover); }
-.scm-group-toggle { flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--sp-4); height: 100%; padding: 0 var(--sp-4); border: 0; background: transparent; font: inherit; font-size: var(--text-xs); font-weight: 500; color: var(--cc-text-dim); text-align: left; cursor: pointer; }
+.scm-group-toggle { flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--sp-6); height: 100%; padding: 0 var(--sp-4) 0 var(--sp-10); border: 0; background: transparent; font: inherit; font-size: var(--text-xs); font-weight: 500; color: var(--cc-text-dim); text-align: left; cursor: pointer; }
 .scm-group-toggle > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .scm-chevron { flex: 0 0 auto; color: var(--cc-text-faint); transition: transform var(--dur-fast) var(--ease-in-out); }
 .scm-chevron.is-open { transform: rotate(90deg); }
@@ -5223,9 +5241,9 @@ button.scm-check-name:hover { text-decoration: underline; }
 .scm-icon-btn:hover:not(:disabled) { background: var(--fill-selected); color: var(--cc-text); }
 .scm-icon-btn:disabled { opacity: 0.4; cursor: default; }
 
-.scm-row { position: relative; display: flex; align-items: center; gap: var(--sp-2); min-height: 28px; padding-right: var(--sp-6); border-radius: var(--radius-md); }
+.scm-row { position: relative; display: flex; align-items: center; gap: var(--sp-2); min-height: 28px; padding-right: var(--sp-10); border-radius: var(--radius-md); }
 .scm-row:hover, .scm-row:focus-within { background: var(--fill-hover); }
-.scm-row-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--sp-6); height: 28px; padding: 0 var(--sp-4); border: 0; background: transparent; color: var(--cc-text); font: inherit; font-size: var(--text-sm); text-align: left; cursor: pointer; }
+.scm-row-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--sp-6); height: 28px; padding: 0 var(--sp-4) 0 var(--sp-10); border: 0; background: transparent; color: var(--cc-text); font: inherit; font-size: var(--text-sm); text-align: left; cursor: pointer; }
 .scm-row-main > svg { flex: 0 0 auto; color: var(--cc-text-faint); }
 .scm-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .scm-name.is-deleted { text-decoration: line-through; color: var(--cc-text-dim); }
@@ -5240,7 +5258,7 @@ button.scm-check-name:hover { text-decoration: underline; }
 .scm-status.is-m, .scm-status.is-t { color: var(--cc-warn-text); }
 .scm-status.is-a, .scm-status.is-u { color: var(--cc-ok-text); }
 .scm-status.is-d, .scm-status.is-conflict { color: var(--cc-fail-text); }
-.scm-empty { padding: var(--sp-6) var(--sp-12); font-size: var(--text-xs); color: var(--cc-text-faint); }
+.scm-empty { padding: var(--sp-6) var(--sp-10); font-size: var(--text-xs); color: var(--cc-text-faint); }
 .scm-empty.is-clean { padding: var(--sp-16) var(--sp-12); text-align: center; }
 .scm-empty.is-error { color: var(--cc-fail-text); overflow-wrap: anywhere; }
 /* 虚拟列表：容器撑出总高度，行按 translateY 摆位（SourceControl.tsx VirtualRows）。 */
