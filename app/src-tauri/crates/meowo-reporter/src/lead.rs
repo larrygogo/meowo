@@ -124,6 +124,30 @@ fn project_root(cwd: &Path) -> PathBuf {
     start
 }
 
+/// worktree 对应的主检出：`<wt>/.git` 是个文件，内容 `gitdir: <主检出>/.git/worktrees/<名>`，那个目录里的
+/// `commondir` 指回 `<主检出>/.git`。不是 worktree、或任何一步读不到，返回 None。
+fn main_checkout(root: &Path) -> Option<PathBuf> {
+    let dot_git = root.join(".git");
+    if !dot_git.is_file() {
+        return None;
+    }
+    let gitdir = read(&dot_git).trim().strip_prefix("gitdir:")?.trim().to_owned();
+    let gitdir = root.join(gitdir); // 相对路径相对 worktree 根，绝对路径 join 后不变
+    let common = read(&gitdir.join("commondir"));
+    let common = gitdir.join(common.trim()).canonicalize().map(strip_verbatim).ok()?;
+    let main = common.parent()?.to_path_buf();
+    (main != root && main.join(".lead").is_dir()).then_some(main)
+}
+
+/// 要找任务的 `.lead` 目录：项目自己的在前；在 worktree 里再加上主检出的。skill 规定任务目录一律放主检出
+///（worktree 删了任务记录不能跟着没），只看 worktree 根时，worktree 会话的 Lead 面板和手机关卡卡片都看不到
+/// 自己的任务（做空审查 2026-11-12 复现：snapshot_for 传 worktree 路径返回 None）。
+fn lead_dirs(cwd: &Path) -> Vec<PathBuf> {
+    let root = project_root(cwd);
+    let main = main_checkout(&root);
+    std::iter::once(root).chain(main).map(|r| r.join(".lead")).collect()
+}
+
 /// Windows 上 canonicalize 会带 `\\?\` 前缀（真机实测登记表里出现过），登记表和界面里都不该出现它。
 pub(crate) fn strip_verbatim(p: PathBuf) -> PathBuf {
     let s = p.to_string_lossy();
@@ -134,14 +158,12 @@ pub(crate) fn strip_verbatim(p: PathBuf) -> PathBuf {
 }
 
 fn find_task(cwd: Option<&str>) -> Option<PathBuf> {
-    let lead = project_root(Path::new(cwd?)).join(".lead");
-    let active = read(&lead.join("active"));
-    let slug = active.trim();
-    if !slug_ok(slug) {
-        return None;
-    }
-    let task = lead.join(slug);
-    task.is_dir().then_some(task)
+    lead_dirs(Path::new(cwd?)).into_iter().find_map(|lead| {
+        let active = read(&lead.join("active"));
+        let slug = active.trim();
+        let task = lead.join(slug);
+        (slug_ok(slug) && task.is_dir()).then_some(task)
+    })
 }
 
 /// Git Bash 写法 `/c/Users/...` 换成 `C:/Users/...`（只在 Windows）：agent 在 Windows 上多半跑在 Git Bash 里，
@@ -169,10 +191,10 @@ fn own_task(cwd: &str, sid: &str) -> Option<PathBuf> {
     if sid.is_empty() {
         return None;
     }
-    let lead = project_root(Path::new(cwd)).join(".lead");
-    std::fs::read_dir(&lead)
-        .ok()?
-        .flatten()
+    lead_dirs(Path::new(cwd))
+        .iter()
+        .filter_map(|lead| std::fs::read_dir(lead).ok())
+        .flat_map(|entries| entries.flatten())
         .map(|entry| entry.path())
         // 目录名过滤与 project_gates 一致（slug_ok 只挡非法字符，挡不住普通名字的子目录）。
         .filter(|task| task.file_name().and_then(|n| n.to_str()).is_some_and(slug_ok))
@@ -451,84 +473,120 @@ fn transcript_tail(transcript: Option<&str>) -> String {
 }
 
 /// 启动后超过这么久还没回报的后台任务不再算「在等」：会话被杀或恢复后，旧任务永远不会再发通知，
-/// 不设上限的话这个会话的 Stop hook 就永久失效。最长的后台活（e2e、发版构建、长调研）实测在一小时内。
+/// 不设上限的话这个会话的 Stop hook 就永久失效。子代理、Workflow 实测在一小时内回报。
 const BACKGROUND_STALE_SECS: i64 = 3 * 3600;
+/// 后台 Bash 的上限短得多：它常是 dev server、`http.server` 这类常驻服务，永远不回报（做空审查回放：历史
+/// 429 次后台启动里有跑了 149~1037 分钟的服务）。按 3 小时算，起一个预览服务就让 hook 失效 3 小时。
+/// 构建、测试这类后台命令实测在 45 分钟内结束。
+const BACKGROUND_BASH_STALE_SECS: i64 = 45 * 60;
 
-/// 有没有已启动、还没回报的后台任务（后台子代理、后台 Bash）。
+/// 有没有已启动、还没回报的后台任务（后台子代理、Workflow、后台 Bash）。
 ///
-/// 为什么要看：子代理在后台干活时，主 agent 什么也做不了，只能结束本轮等通知；Stop hook 照拦，agent 就
+/// 为什么要看：子代理在后台干活时，主 agent 多半没事可做，只能结束本轮等通知；Stop hook 照拦，agent 就
 /// 回一句「等子代理完成」再停，被拦满 5 次。25 个任务里 lead 拦截约 394 次，有 300 次是这种空转（2026-11-12
 /// 统计，任务 20261112-lead-optimize）。
 ///
 /// 只按 JSON 结构认，不搜字串：Read/Grep 的输出里常引用这些协议文本，按 contains 判会被喂出幽灵任务
-///（见 memory transcript-quote-poisoning）。启动 = user 行的 `toolUseResult`（子代理 `status:
-/// "async_launched"` + `agentId`，后台 Bash `backgroundTaskId`）；回报 = `origin.kind == "task-notification"`
-/// 的 user 行里的 `<task-id>`；主动收尾 = TaskOutput/TaskStop 调用（取过结果就不再发通知，见 memory
-/// cc-taskoutput-eats-notification）。认不出的形态当作没有后台任务，回到原来的拦法。
+///（见 memory transcript-quote-poisoning）。
+/// - 启动：user 行的 `toolUseResult`（子代理 `status: "async_launched"` + `agentId`，后台 Bash
+///   `backgroundTaskId`）；Workflow 本机没有真实样例，不猜返回结构，只记它的 tool_use id。
+/// - 回报：通知正文里的 `<task-id>` 或 `<tool-use-id>`，两个都认。通知有三种落盘形态：空闲时是
+///   `origin.kind == "task-notification"` 的 user 行；会话正忙时是 queued_command 附件，外加一条入队记录
+///   （2f8ca755 实测：只认 user 行时 25 个后台任务全都「从未回报」）。
+/// - 主动收尾：TaskOutput/TaskStop 调用（取过结果就不再发通知，见 memory cc-taskoutput-eats-notification）。
+///
+/// 认不出的形态当作没有后台任务，回到原来的拦法。
 fn background_pending(tail: &str, now: i64) -> bool {
-    let mut launched: BTreeMap<String, Option<i64>> = BTreeMap::new();
+    struct Launch {
+        task: Option<String>,
+        tool_use: Option<String>,
+        at: Option<i64>,
+        ttl: i64,
+    }
+    let mut launched: Vec<Launch> = Vec::new();
     let mut resolved = std::collections::BTreeSet::new();
+    let mut workflow_calls = std::collections::BTreeSet::new();
+    let resolve = |content: Option<&str>, resolved: &mut std::collections::BTreeSet<String>| {
+        if let Some((task, tool_use)) = content.and_then(notified_ids) {
+            resolved.extend(task.into_iter().chain(tool_use).map(str::to_owned));
+        }
+    };
     for line in tail.lines() {
         let Ok(o) = serde_json::from_str::<Value>(line) else { continue };
         match o.get("type").and_then(Value::as_str) {
-            // 会话正忙时到的通知不单独成一条 user 行，而是入队后作为 queued_command 附件送达（2f8ca755 实测：
-            // 只认 user 行时 25 个后台任务全都「从未回报」）。入队即表示任务已结束，两处都认。
             Some("queue-operation") if o.get("operation").and_then(Value::as_str) == Some("enqueue") => {
-                if let Some(id) = o.get("content").and_then(Value::as_str).and_then(notified_id) {
-                    resolved.insert(id.to_owned());
-                }
+                resolve(o.get("content").and_then(Value::as_str), &mut resolved);
             }
             Some("attachment") if o.pointer("/attachment/type").and_then(Value::as_str) == Some("queued_command") => {
-                if let Some(id) = o.pointer("/attachment/prompt").and_then(Value::as_str).and_then(notified_id) {
-                    resolved.insert(id.to_owned());
-                }
+                resolve(o.pointer("/attachment/prompt").and_then(Value::as_str), &mut resolved);
             }
             Some("user") => {
                 if o.pointer("/origin/kind").and_then(Value::as_str) == Some("task-notification") {
-                    if let Some(id) = o.pointer("/message/content").and_then(Value::as_str).and_then(notified_id) {
-                        resolved.insert(id.to_owned());
-                    }
+                    resolve(o.pointer("/message/content").and_then(Value::as_str), &mut resolved);
                     continue;
                 }
-                let Some(r) = o.get("toolUseResult") else { continue };
-                let id = if r.get("status").and_then(Value::as_str) == Some("async_launched") {
-                    r.get("agentId")
-                } else {
-                    r.get("backgroundTaskId")
-                };
-                if let Some(id) = id.and_then(Value::as_str).filter(|s| !s.is_empty()) {
-                    let at = o.get("timestamp").and_then(Value::as_str).and_then(parse_ts);
-                    launched.insert(id.to_owned(), at);
+                let at = o.get("timestamp").and_then(Value::as_str).and_then(parse_ts);
+                let str_of = |v: Option<&Value>| v.and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_owned);
+                if let Some(r) = o.get("toolUseResult") {
+                    if r.get("status").and_then(Value::as_str) == Some("async_launched") {
+                        if let Some(id) = str_of(r.get("agentId")) {
+                            launched.push(Launch { task: Some(id), tool_use: None, at, ttl: BACKGROUND_STALE_SECS });
+                        }
+                    } else if let Some(id) = str_of(r.get("backgroundTaskId")) {
+                        launched.push(Launch { task: Some(id), tool_use: None, at, ttl: BACKGROUND_BASH_STALE_SECS });
+                    }
+                }
+                // Workflow：调用没报错就算启动了，按 tool_use id 等它的通知
+                let Some(Value::Array(arr)) = o.pointer("/message/content") else { continue };
+                for r in arr.iter().filter(|x| x.get("type").and_then(Value::as_str) == Some("tool_result")) {
+                    let Some(id) = str_of(r.get("tool_use_id")) else { continue };
+                    if workflow_calls.contains(&id) && r.get("is_error").and_then(Value::as_bool) != Some(true) {
+                        launched.push(Launch { task: None, tool_use: Some(id), at, ttl: BACKGROUND_STALE_SECS });
+                    }
                 }
             }
             Some("assistant") => {
                 let Some(Value::Array(arr)) = o.pointer("/message/content") else { continue };
                 for c in arr.iter().filter(|c| c.get("type").and_then(Value::as_str) == Some("tool_use")) {
-                    if !matches!(c.get("name").and_then(Value::as_str), Some("TaskOutput" | "TaskStop")) {
-                        continue;
-                    }
-                    let input = c.get("input");
-                    for key in ["task_id", "shell_id", "agentId", "id"] {
-                        if let Some(id) = input.and_then(|i| i.get(key)).and_then(Value::as_str) {
-                            resolved.insert(id.to_owned());
+                    match c.get("name").and_then(Value::as_str) {
+                        Some("Workflow") => {
+                            if let Some(id) = c.get("id").and_then(Value::as_str) {
+                                workflow_calls.insert(id.to_owned());
+                            }
                         }
+                        Some("TaskOutput" | "TaskStop") => {
+                            let input = c.get("input");
+                            for key in ["task_id", "shell_id", "agentId", "id"] {
+                                if let Some(id) = input.and_then(|i| i.get(key)).and_then(Value::as_str) {
+                                    resolved.insert(id.to_owned());
+                                }
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
             _ => {}
         }
     }
-    launched
-        .iter()
-        .any(|(id, at)| !resolved.contains(id) && at.is_none_or(|t| now - t < BACKGROUND_STALE_SECS))
+    launched.iter().any(|l| {
+        let done = [&l.task, &l.tool_use].into_iter().flatten().any(|id| resolved.contains(id));
+        !done && l.at.is_none_or(|t| now - t < l.ttl)
+    })
 }
 
-/// 通知正文 `<task-notification>\n<task-id>X</task-id>…` 里的 X；必须以通知标签开头（行首锚定）。
-fn notified_id(content: &str) -> Option<&str> {
+/// 通知正文 `<task-notification>\n<task-id>X</task-id>\n<tool-use-id>Y</tool-use-id>…` 里的 (X, Y)；
+/// 必须以通知标签开头（行首锚定），两个都没有返回 None。
+fn notified_ids(content: &str) -> Option<(Option<&str>, Option<&str>)> {
     let rest = content.trim_start().strip_prefix("<task-notification>")?;
-    let start = rest.find("<task-id>")? + "<task-id>".len();
-    let len = rest[start..].find("</task-id>")?;
-    Some(rest[start..start + len].trim())
+    let tag = |name: &str| {
+        let (open, close) = (format!("<{name}>"), format!("</{name}>"));
+        let start = rest.find(&open)? + open.len();
+        let len = rest[start..].find(&close)?;
+        Some(rest[start..start + len].trim()).filter(|s| !s.is_empty())
+    };
+    let ids = (tag("task-id"), tag("tool-use-id"));
+    (ids.0.is_some() || ids.1.is_some()).then_some(ids)
 }
 
 /// transcript 时间戳（`2026-11-12T04:58:10.006Z`）→ Unix 秒。只认 UTC 的 Z 结尾，别的格式返回 None
@@ -840,10 +898,10 @@ pub fn task_dir(cwd: &str) -> Option<PathBuf> {
 /// 项目里**所有**任务目录下的关卡（不只 active）：新开一个任务会改写 active，但旧任务挂着的
 /// 关卡还在等 leader，不能因此从卡片、看板、防休眠里消失（做空审查 M4）。
 pub fn project_gates(cwd: &str) -> Vec<(PathBuf, LeadGateDto)> {
-    let lead = project_root(Path::new(cwd)).join(".lead");
-    let Ok(entries) = std::fs::read_dir(&lead) else { return vec![] };
-    let mut out: Vec<(PathBuf, LeadGateDto)> = entries
-        .flatten()
+    let mut out: Vec<(PathBuf, LeadGateDto)> = lead_dirs(Path::new(cwd))
+        .iter()
+        .filter_map(|lead| std::fs::read_dir(lead).ok())
+        .flat_map(|entries| entries.flatten())
         .map(|e| e.path())
         .filter(|p| p.is_dir() && p.file_name().is_some_and(|n| slug_ok(&n.to_string_lossy())))
         .filter_map(|t| read_gate(&t).map(|g| (t, g)))
