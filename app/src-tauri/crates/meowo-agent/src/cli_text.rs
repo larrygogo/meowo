@@ -100,6 +100,19 @@ impl CliTextDep {
         Self::new(rule, needle, sample, evidence)
     }
 
+    /// 记录格式依赖、但解析器认的片段在程序文件里是泛词（`codex-cli` 是 `codex-client\src\…` 包名路径的
+    /// 前缀，单搜永远「找到」，做空第二轮 N2，2026-11-12）：第一段是解析器认的片段（测试要求它在插件源码
+    /// 里），其余段是程序文件里紧挨着它、能证明命中的是那处输出模板的锚点。
+    pub const fn record_near(
+        rule: &'static str,
+        parts: &'static [&'static str],
+        max_gap: usize,
+        sample: &'static str,
+        evidence: &'static str,
+    ) -> Self {
+        Self::near(rule, parts, max_gap, sample, evidence)
+    }
+
     /// 标成旧版兼容。
     pub const fn legacy(mut self) -> Self {
         self.legacy = true;
@@ -382,7 +395,8 @@ mod tests {
                     }
                 }
                 if d.rule.starts_with("record:") {
-                    let needle = d.needle.to_lowercase();
+                    // 分段近邻的记录格式：第一段才是解析器认的片段，其余是程序文件里的位置锚点。
+                    let needle = d.parts.first().map_or(d.needle, |p| part_text(p)).to_lowercase();
                     assert!(
                         !needle.is_empty(),
                         "{} 的 `{}` 要给搜索片段",
@@ -495,7 +509,7 @@ mod tests {
         if rule.starts_with("record:") {
             // 指向解析器里认这个片段的那一行。
             let dep = p.cli_text_deps().iter().find(|d| d.rule == rule)?;
-            return Some(dep.needle.to_string());
+            return Some(dep.parts.first().map_or(dep.needle, |p| part_text(p)).to_string());
         }
         if let Some(l) = rule.strip_prefix("literal:") {
             return Some(format!("\"{l}\""));

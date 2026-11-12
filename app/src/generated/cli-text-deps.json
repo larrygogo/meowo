@@ -1192,8 +1192,13 @@
         },
         {
           "legacy": false,
-          "needle": "codex-cli",
-          "note": "0.166.0 `codex --version` 首行原样（带 `codex-cli ` 前缀，research-cli-drift X2）；codex.exe 19 处",
+          "max_gap": 20000,
+          "needle": "",
+          "note": "0.166.0 `codex --version` 首行原样（research-cli-drift X2）；codex.exe 里命令名 `codex-cli` 在 usage 模板后 10022 字节，其余 18 处离 usage 模板最近也有 29 万字节",
+          "parts": [
+            "codex-cli",
+            "codex [options] [prompt]"
+          ],
           "rule": "record:codex-cli",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/setup.rs:351"
         },
