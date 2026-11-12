@@ -838,14 +838,21 @@
           "needle": "do you trust the files in this folder",
           "note": "",
           "rule": "literal:do you trust the files in this folder",
-          "source": "app/src-tauri/crates/meowo-agent/src/chat_ui.rs:25"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:353"
         },
         {
           "legacy": false,
           "needle": "do you trust the contents of this directory",
           "note": "",
           "rule": "literal:do you trust the contents of this directory",
-          "source": "app/src-tauri/crates/meowo-agent/src/chat_ui.rs:27"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:354"
+        },
+        {
+          "legacy": false,
+          "needle": "trust this folder?",
+          "note": "",
+          "rule": "literal:trust this folder?",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:355"
         },
         {
           "legacy": false,
@@ -859,105 +866,133 @@
           "needle": "↑/↓ to scroll",
           "note": "",
           "rule": "literal:↑/↓ to scroll",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:35"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:37"
         },
         {
           "legacy": false,
           "needle": "pgup/pgdn to",
           "note": "",
           "rule": "literal:pgup/pgdn to",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:36"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:38"
         },
         {
           "legacy": false,
           "needle": "home/end to jump",
           "note": "",
           "rule": "literal:home/end to jump",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:37"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:39"
         },
         {
           "legacy": false,
           "needle": "q to quit",
           "note": "",
           "rule": "literal:q to quit",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:38"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:40"
         },
         {
           "legacy": false,
           "needle": "esc to edit prev",
           "note": "",
           "rule": "literal:esc to edit prev",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:40"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:42"
         },
         {
           "legacy": false,
           "needle": "esc/← to edit prev",
           "note": "",
           "rule": "literal:esc/← to edit prev",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:40"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:42"
+        },
+        {
+          "legacy": false,
+          "needle": " to scroll",
+          "note": "",
+          "rule": "literal: to scroll",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:48"
+        },
+        {
+          "legacy": false,
+          "needle": " to page",
+          "note": "",
+          "rule": "literal: to page",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:48"
+        },
+        {
+          "legacy": false,
+          "needle": " to jump",
+          "note": "",
+          "rule": "literal: to jump",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:48"
         },
         {
           "legacy": false,
           "needle": "press enter to confirm or esc to cancel",
           "note": "",
           "rule": "literal:press enter to confirm or esc to cancel",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:50"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:60"
         },
         {
           "legacy": false,
           "needle": "enter to submit answer",
           "note": "",
           "rule": "literal:enter to submit answer",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:51"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:61"
         },
         {
           "legacy": false,
           "needle": "enter to submit all",
           "note": "",
           "rule": "literal:enter to submit all",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:52"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:62"
         },
         {
           "legacy": false,
           "needle": "allow command?",
           "note": "",
           "rule": "literal:allow command?",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:53"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:63"
+        },
+        {
+          "legacy": false,
+          "needle": "no, and tell codex what to do differently",
+          "note": "",
+          "rule": "literal:no, and tell codex what to do differently",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:70"
         },
         {
           "legacy": false,
           "needle": "[y/n]",
           "note": "",
           "rule": "literal:[y/n]",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:68"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:85"
         },
         {
           "legacy": false,
           "needle": "yes (y)",
           "note": "",
           "rule": "literal:yes (y)",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:69"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:86"
         },
         {
           "legacy": false,
           "needle": "do you want to",
           "note": "",
           "rule": "literal:do you want to",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:71"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:88"
         },
         {
           "legacy": false,
           "needle": "would you like to",
           "note": "",
           "rule": "literal:would you like to",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:75"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:92"
         },
         {
           "legacy": false,
           "needle": "■ conversation interrupted",
           "note": "",
           "rule": "literal:■ conversation interrupted",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:94"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:111"
         }
       ],
       "id": "codex",
@@ -1142,6 +1177,13 @@
           "note": "",
           "rule": "literal:esc again to interrupt",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/screen.rs:43"
+        },
+        {
+          "legacy": false,
+          "needle": "esc interrupt",
+          "note": "",
+          "rule": "literal:esc interrupt",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/screen.rs:48"
         }
       ],
       "id": "opencode",
