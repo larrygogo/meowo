@@ -3105,7 +3105,9 @@ pub(crate) async fn restart_session_supported(
             .map_err(|e| e.to_string())?
             .ok_or("会话不存在")?;
         if store.session_pid(sid).map_err(|e| e.to_string())? != Some(pid) {
-            return Err("会话进程已变化，请刷新后重试".into());
+            // 界面拿着的进程号已过期（原进程退出或已被重开）。不自动换成新进程号重试：
+            // 结束进程要用户对眼前这个进程确认（第三轮 #13：原文案叫人「刷新后重试」）。
+            return Err("session/pid_changed".into());
         }
 
         // 先验证完整恢复计划，再动原进程；未知 provider/无恢复能力时必须保持原会话原样。

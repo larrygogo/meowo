@@ -180,7 +180,9 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "PTY 尺寸通道忙（可能已僵死），本次调整跳过", exact: true, en: "The PTY resize channel is busy (possibly wedged); this resize was skipped" },
   { m: "原会话仍在运行，未重新打开", exact: true, zh: "原会话仍在运行，未重新打开", en: "The original session is still running; nothing was reopened" },
   { m: "无法结束原会话进程", exact: true, zh: "无法结束原会话进程", en: "Couldn't stop the original session process" },
-  { m: "会话进程已变化，请刷新后重试", exact: true, zh: "会话进程已变化，请刷新后重试", en: "The session process changed; refresh and retry" },
+  // terminal.rs restart_session_supported：进程号已过期，什么都没动。侧栏几秒内自己更新进程号，
+  // 再点一次即可，不叫人「刷新」（第三轮 #13）。
+  { m: "session/pid_changed", exact: true, zh: "会话进程已变，没有结束它，请再试一次", en: "The session process changed, so nothing was stopped. Try again." },
   // tail:后缀有两种——「请先在终端页选择接管」(terminal.rs)与「不能重复接管」(managed_terminal.rs),
   // 都是可执行指引,裁掉就只剩一句干巴巴的现状陈述。
   { m: "会话仍在外部终端运行", tail: true, zh: "会话仍在外部终端运行", en: "The session is still running in an external terminal" },
