@@ -11,4 +11,9 @@ waived: string | null,
 /**
  * 要 leader 亲自验收：只看条目上的 `by: "leader"` 字段，不看 check 文字；关卡 C 接受时自动勾上。
  */
-leader: boolean, };
+leader: boolean, 
+/**
+ * 代码已完成、只差环境实测或 leader 授权（部署、真机、账号）：条目上 `blocked: "<原因>"`。面板单独标成
+ * 「待实测」，不和「还没做」混在一起（2026-11-12：云端 Xbot 第三期 11 条只差 beta 实测，面板只显示 5/18）。
+ */
+blocked: string | null, };
