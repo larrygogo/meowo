@@ -484,6 +484,8 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
 .remote-session-list-head p { margin: 4px 0 0; color: var(--cc-text-faint); font-size: 13px; line-height: 1.4; }
 .remote-session-list-pane { flex: 1; min-height: 0; display: flex; }
 .remote-session-list-pane[hidden] { display: none; }
+/* M-1：进对话时整张列表只藏不卸载（flex 会盖过 UA 的 [hidden]，显式压回）。 */
+.remote-session-list[hidden] { display: none; }
 .remote-session-list .chat-sidebar {
   flex: 1;
   min-height: 0;

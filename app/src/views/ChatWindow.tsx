@@ -14,6 +14,7 @@ import { useTauriEvent } from "../hooks/useTauriEvent";
 import { useVisibleInterval } from "../hooks/useVisibleInterval";
 import { useSettingsEffect } from "../hooks/useSettings";
 import { confirmMarkDone, markDoneEndsWork, useSessionActions } from "../hooks/useSessionActions";
+import { useHistoryLayer } from "../hooks/useHistoryLayer";
 import { useT } from "../i18n";
 import { formatBackendError } from "../i18n/errors";
 import { useShowWhenReady } from "../useShowWhenReady";
@@ -3945,8 +3946,13 @@ export function ChatWindow() {
     if (!remoteListMode) return;
     if ((window.history.state as { meowoChat?: boolean } | null)?.meowoChat === true) window.history.back();
   }, [remoteListMode]);
+  // M-2（走查 2026-11-12）：手机上「更改」页（全屏右侧面板）也压一条历史，右滑先关它回到对话，
+  // 原先一滑就连对话一起退回了会话列表。
+  useHistoryLayer(remoteBackMode && panelState.visible, panelActions.hide);
   const goBackToRemoteList = useCallback(() => {
-    if ((window.history.state as { meowoChat?: boolean } | null)?.meowoChat === true) window.history.back();
+    const state = window.history.state as { meowoChat?: boolean; meowoLayer?: string } | null;
+    // 栈顶是浮层记录（M-2）时退一步只会关掉浮层：直接回列表，浮层与对话两条记录由各自的收尾退掉。
+    if (state?.meowoChat === true && !state.meowoLayer) window.history.back();
     else showRemoteSessions();
   }, [showRemoteSessions]);
   // 手机远程用「列表 ↔ 对话」导航；其余平台保留侧栏折叠/展开按钮。
@@ -3988,8 +3994,11 @@ export function ChatWindow() {
           <span>{newSessionOpen ? t.newSession.dropToWorkspace : view === "terminal" ? t.chat.dropToTerminal : t.chat.dropToAttach}</span>
         </div>
       )}
-      {remoteListMode && (
+      {/* M-1（走查 2026-11-12）：进对话时列表只藏不卸载，返回时搜索词、页签、滚动位置都还在。
+          原先只在列表模式挂载，从对话返回一切重置。 */}
+      {remoteUi() && narrow && (
         <RemoteSessionList
+          hidden={!remoteListMode}
           activeId={sessionId}
           approvalAwaitingIds={approvalAwaitingIds}
           visibleOrderRef={sidebarOrderRef}
