@@ -5106,6 +5106,8 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
   .chat-files > .chat-files-browse, .chat-files.has-selection > .chat-files-browse { display: flex; flex: 0 0 var(--tree-w, 224px); max-width: 50%; }
   .chat-files > .chat-files-preview, .chat-files:not(.has-selection) > .chat-files-preview { display: flex; }
   .chat-files .chat-files-preview .chat-diff-back { display: none; }
+  /* 并排时返回钮藏了，Markdown 预览头行第一个是树面板开关（22px 的格、14px 图标，墨迹内缩 4px）：左边少留 4，图标压在正文左缘。 */
+  .chat-files-preview:has(> .chat-diff-scroll > .chat-diff-mdview) > .chat-diff-filehead { padding-left: calc(var(--view-col-pad) + var(--sp-24) - 4px); }
   .chat-files .chat-files-posbtn, .chat-files .chat-files-treetoggle { display: inline-flex; }
   /* 分隔条：一道细线，两侧各放宽 3px 好抓。 */
   .chat-files > .chat-files-resizer { display: block; flex: 0 0 var(--hairline); position: relative; z-index: var(--z-raised); background: var(--cc-border); cursor: col-resize; outline: none; }
