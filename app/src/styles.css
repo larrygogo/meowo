@@ -7865,6 +7865,11 @@ pre.chat-md-plain {
 .wt-opt-warn { display: flex; align-items: center; gap: var(--sp-8); flex-wrap: wrap; color: var(--cc-warn-text); }
 .wt-opt-btn { height: var(--btn-h-sm); padding: 0 var(--sp-8); border: var(--hairline) solid; border-radius: var(--radius-sm); font: inherit; font-size: var(--text-xs); cursor: pointer; white-space: nowrap; }
 .wt-opt-btn:disabled { opacity: .5; cursor: default; }
+/* 警告行里的修复动作（「改用 login-form-2」）是这条警告唯一的出路，给次级按钮的底色：
+   并进幽灵按钮规则后它是灰字、无底无边，比旁边的琥珀色警告还弱一档，看不出能点。
+   写成 button.xxx 是为了压过文件末尾幽灵按钮那条 .wt-opt-btn（同特异度靠后者赢）。 */
+.wt-opt-warn button.wt-opt-btn { background: var(--fill-selected); color: var(--cc-text); }
+.wt-opt-warn button.wt-opt-btn:hover:not(:disabled) { background: var(--fill-selected-hover); color: var(--cc-text); }
 .wt-setup { margin: 0 var(--sp-14) var(--sp-6); padding: var(--sp-8) var(--sp-12); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); font-size: var(--text-xs); color: var(--cc-text-dim); }
 .wt-setup.is-err { border-color: color-mix(in srgb, var(--cc-err-vivid) 70%, transparent); }
 .wt-setup.is-warn { border-color: color-mix(in srgb, var(--cc-warn-vivid) 70%, transparent); }
