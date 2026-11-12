@@ -28,6 +28,7 @@ vi.mock("../ChatWindow", () => ({
       {shell?.overlay}
       <button type="button" onClick={() => shell?.onReveal()}>reveal</button>
       <button type="button" onClick={() => shell?.onPageBack()}>page-back</button>
+      {shell?.onBack && !shell.overlay && <button type="button" onClick={shell.onBack}>back</button>}
     </div>
   ),
 }));
@@ -64,7 +65,7 @@ describe("名单外壳", () => {
     render(<RosterShell />);
     await screen.findByText("甲");
     expect(names()).toEqual(["甲", "乙", "丙"]);
-    // 最后一行来了审批、第一行出错：行不动，只有眼睛走过去。
+    // 最后一行来了审批、第一行出错：行不动，只有状态词变。
     sessions = [
       { ...sessions[0], errored: true },
       sessions[1],
@@ -73,7 +74,7 @@ describe("名单外壳", () => {
     await act(async () => { boardHandlers.get("board-urgent")?.({ payload: null }); });
     await flush();
     expect(names()).toEqual(["甲", "乙", "丙"]);
-    expect(document.querySelector(".roster-eyes")?.getAttribute("data-at")).toBe(String(sessions[2].session.id));
+    expect(document.querySelector(`.roster-item[data-session-id="${sessions[2].session.id}"] .roster-word`)?.textContent).toBe("待批准");
   });
 
   it("展开只由点击触发，同一时间只展开一行", async () => {
@@ -96,7 +97,7 @@ describe("名单外壳", () => {
     expect(screen.getByTestId("chat").getAttribute("data-request")).toBe(String(sessions[1].session.id));
     expect(document.querySelector(".roster")).toBeNull();
     // 现场里能回到名单。
-    fireEvent.click(screen.getByRole("button", { name: "回到名单" }));
+    fireEvent.click(screen.getByRole("button", { name: "back" }));
     expect(names()).toEqual(["甲", "乙"]);
   });
 
@@ -105,7 +106,7 @@ describe("名单外壳", () => {
     render(<RosterShell />);
     await flush();
     expect(document.querySelector(".roster")).toBeNull();
-    expect(screen.queryByRole("button", { name: "回到名单" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "back" })).toBeNull();
   });
 
   it("冲着某个会话打开的窗口直接进现场；被带去别处时名单让位", async () => {
@@ -123,15 +124,24 @@ describe("名单外壳", () => {
     expect(document.querySelector(".roster")).toBeNull();
   });
 
-  it("窗口在前台时黑轨上有眼睛并告诉岛；失焦后眼睛离开黑轨", async () => {
+  // leader 2026-11-12：主窗口上不放眼睛，眼睛只在灵动岛上；岛也不因主窗口在前台而收细条。
+  it("主窗口里没有眼睛，也不再告诉岛「主窗口在前台」", async () => {
     sessions = [mk("甲"), mk("乙")];
     render(<RosterShell />);
     await screen.findByText("甲");
-    expect(document.querySelectorAll(".roster-rail .isl-eyes")).toHaveLength(1);
-    expect(emit).toHaveBeenCalledWith("roster-front", true);
     await act(async () => { focus.handler({ payload: false }); });
-    expect(document.querySelector(".roster-rail .isl-eyes")).toBeNull();
-    expect(emit).toHaveBeenLastCalledWith("roster-front", false);
+    expect(document.querySelector(".isl-eyes")).toBeNull();
+    expect((emit.mock.calls as unknown[][]).some(([name]) => name === "roster-front")).toBe(false);
+  });
+
+  it("设置在名单顶部；进了现场「回到名单」由对话窗摆在顶栏上", async () => {
+    sessions = [mk("甲"), mk("乙")];
+    render(<RosterShell />);
+    fireEvent.click(await screen.findByRole("button", { name: "打开设置" }));
+    expect(invoke).toHaveBeenCalledWith("open_settings");
+    fireEvent.doubleClick(screen.getByText("甲"));
+    fireEvent.click(screen.getByRole("button", { name: "back" }));
+    expect(names()).toEqual(["甲", "乙"]);
   });
 
   it("挂载时注册名单租约（会话号 0），卸载时注销同一个", async () => {

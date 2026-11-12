@@ -40,9 +40,7 @@ export function useReducedMotion(): boolean {
 /// 一闪而过的表情由 cue 给（见 useEyeCue）：有会话刚跑完冒星星眼，新开了会话吓一跳，鼠标移上岛眨一只眼，
 /// 在岛上停一会儿就害羞脸红。从睡着里醒过来也吓一跳，睡着前打个哈欠。
 /// 睁眼时的随机小动作还有：一只眼睁大（好奇）、在跑时眼珠往上看（想事情）。
-export function Eyes({ tone, small = false, cue = null, quotaPct = null, busy = false, errors = 0, gaze = null }: {
-  /** 瞳孔固定朝向（-1..1）。给了就不跟鼠标：岛上的眼睛跟光标，主窗口黑轨上的眼睛看着某一行。 */
-  gaze?: { x: number; y: number } | null;
+export function Eyes({ tone, small = false, cue = null, quotaPct = null, busy = false, errors = 0 }: {
   tone: IslandTone;
   small?: boolean;
   cue?: EyeCue | null;
@@ -61,9 +59,8 @@ export function Eyes({ tone, small = false, cue = null, quotaPct = null, busy = 
   const curious = mode === "open" && fidget === "curious";
   const looking = mode === "open" || mode === "wide" || mode === "worried" || mode === "focus" || mode === "drowsy";
   const scripted = fidget === "glance" ? GLANCE_LOOK : fidget === "ponder" ? PONDER_LOOK : null;
-  const cursor = useCursorLook(!still && looking && !scripted && !gaze);
-  // gaze 压过随机小动作：主窗口黑轨上的眼睛看着轮到你的那一行，东张西望就读不出它在看谁了。
-  const look = gaze ?? scripted ?? cursor;
+  const cursor = useCursorLook(!still && looking && !scripted);
+  const look = scripted ?? cursor;
   const blink = useBlink(!still && (mode === "open" || mode === "worried" || mode === "focus" || mode === "drowsy"));
   const clip = useId().replace(/[^a-zA-Z0-9]/g, "");
   const lids = LIDS[mode];

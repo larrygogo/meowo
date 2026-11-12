@@ -246,7 +246,6 @@ export function Island({
   onDismissAllAlerts,
   alertQueued = 0,
   notch,
-  eyesAway = false,
 }: {
   sessions: readonly Item[];
   compactStyle: IslandCompactStyle;
@@ -272,9 +271,6 @@ export function Island({
   /** macOS 有刘海时刘海的宽高（逻辑点）。给了就把收起的内容分到刘海左右两翼，中间留空：
    *  刘海是摄像头，那块什么也画不出来。 */
   notch?: { width: number; height: number };
-  /** 眼睛此刻在主窗口的黑轨上（主窗口在前台）：收起态不画眼睛，位置留着，屏幕上只有一双。
-   *  只有刘海落点会用到：刘海没有细条形态可收。未经 macOS 真机验证。 */
-  eyesAway?: boolean;
 }) {
   const t = useT();
   const now = useNow();
@@ -427,7 +423,7 @@ export function Island({
     <div className="isl-stage">
       <div
         ref={notchRef}
-        className={`isl-notch ${alert ? "is-alert" : "is-compact"}${notch && !alert ? " is-split" : ""}${eyesAway && !alert ? " is-eyes-away" : ""}`}
+        className={`isl-notch ${alert ? "is-alert" : "is-compact"}${notch && !alert ? " is-split" : ""}`}
         style={notch && !alert
           ? { "--isl-notch-w": `${notch.width}px`, "--isl-notch-h": `${notch.height}px` } as React.CSSProperties
           : undefined}

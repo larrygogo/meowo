@@ -7248,7 +7248,7 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
    层级只有两层：黑底 + 一档深灰控件底（--isl-chip）。会话行自己没有底色，卡里不再套卡。
    字号写死 px 不走 --text-*：岛的窗口几何是固定的（46 高胶囊、548×68 提醒），跟着界面缩放放大会顶破窗口。
    .isl-strip 也在作用域里：极简细条由 App 直接渲染，不在 .isl-stage 里面，漏了它状态色变量全是未定义。 */
-.isl-stage, .island-shell, .isl-strip, .roster-rail {
+.isl-stage, .island-shell, .isl-strip {
   /* 岛恒黑，状态色钉在深色板的取值上：浅色主题的 vivid 三色是给白底加深过的，压在黑上发闷、
      和对话窗深色侧栏的状态点也对不上。在岛的作用域里重定义，下面 --isl-* 与组件里直接引用
      --cc-ok-vivid 的环（islandParts.tsx STATE_COLORS）都跟着取到这组。 */
@@ -7381,8 +7381,7 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
    出错红叉，跑完 ^ ^，闲久了睡着冒 z。各形态在 islandParts.tsx 的 Eyes 里切，这里只管颜色与动作。 */
 .isl-eyes { position: relative; display: inline-flex; align-items: center; padding: 0 6px; flex: none; color: #fff; }
 .isl-eyes.is-small { padding: 0; }
-/* 主窗口在前台时眼睛站在它的黑轨上：刘海两翼不画眼睛，位置留着不让别的东西挪过来。 */
-.isl-notch.is-eyes-away .isl-eyes { visibility: hidden; }
+
 .isl-eye-pair { display: block; overflow: visible; }
 .isl-sclera { fill: #fff; }
 .isl-pupil { fill: #000; transition: transform var(--dur-base) var(--ease-out); }
@@ -7897,21 +7896,11 @@ button.btn-primary:disabled { opacity: 1; background: var(--fill-selected); colo
 }
 
 /* ── 主窗口的名单外壳（views/roster，规格 .lead/20261111-roster）──────────────────────────
-   左缘一条和灵动岛同色的黑轨，眼睛站在上面；右边是原样的对话窗，名单盖在它的对话区上。
-   黑轨恒黑、不跟主题：它和屏幕顶上的岛是同一个东西（.roster-rail 挂在岛的变量作用域里）。 */
-.roster-shell { display: flex; height: 100vh; overflow: hidden; background: #000; }
-.roster-stage { flex: 1; min-width: 0; position: relative; }
-.roster-rail { position: relative; flex: none; width: 56px; background: #000; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; padding-bottom: 12px; }
-/* macOS 的红绿灯压在轨顶，眼睛的家让到它下面（未经本机实测）。 */
-:root.platform-macos .roster-rail { width: 78px; }
-:root.platform-macos .roster-eyes { margin-top: 32px; }
-/* 眼睛：top 是眼睛中心的高度（RosterShell 量出来的那一行的中线）。走位用一段缓动，不弹。 */
-.roster-eyes { position: absolute; left: 50%; transform: translate(-50%, -50%); line-height: 0; transition: top var(--dur-slow) var(--ease-out); }
-@media (prefers-reduced-motion: reduce) { .roster-eyes { transition: none; } }
-.roster-rail-foot { display: flex; flex-direction: column; align-items: center; gap: 4px; }
-.roster-rail-btn { width: 32px; height: 32px; display: grid; place-items: center; border: 0; border-radius: var(--radius-md); background: transparent; color: var(--isl-dim); cursor: pointer; }
-.roster-rail-btn:hover { background: var(--isl-chip); color: var(--isl-text); }
-.roster-rail-btn:focus-visible { outline: 2px solid var(--isl-lime); outline-offset: 1px; }
+   原样的对话窗，名单盖在它的对话区上。主窗口里不放眼睛（眼睛只在灵动岛上，leader 2026-11-12）。 */
+.roster-shell { height: 100vh; overflow: hidden; }
+.roster-stage { height: 100%; position: relative; }
+/* macOS 名单盖到窗口顶边（没有独立顶栏），红绿灯压在标题左边：标题让到它右边（未经本机实测）。 */
+:root.platform-macos .roster-head { padding-left: 88px; }
 
 /* 名单层：盖住对话区，顶栏（窗口按钮）留着。macOS 没有顶栏，从窗口顶开始。 */
 .chat-roster-layer { position: absolute; inset: 40px 0 0 0; display: flex; }
@@ -8009,7 +7998,6 @@ button.btn-primary:disabled { opacity: 1; background: var(--fill-selected); colo
 .roster-composer-to { padding: 0 16px; font-size: var(--text-xs); color: var(--cc-text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* 窄窗：状态词之后的列让出来，只留头像、任务名、状态词。 */
 @media (max-width: 760px) {
-  .roster-rail { width: 40px; }
   .roster-head { padding: 0 24px; }
   .roster-list { padding: 4px 8px 12px; }
   /* 状态词这一列定宽（同宽窗那一档）：auto 的话各行按自己的字数收缩，左缘参差。 */

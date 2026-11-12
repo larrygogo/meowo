@@ -1,4 +1,4 @@
-// 名单的数据与眼睛站位：桌面主窗口（RosterShell）和手机页（PhoneRoster）共用，两端是同一张名单。
+// 名单的数据与租约：桌面主窗口（RosterShell）和手机页（PhoneRoster）共用，两端是同一张名单。
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { getLiveSessionsPage, registerApprovalConsumer, unregisterApprovalConsumer } from "../../api";
 import { useBoardRefresh } from "../../hooks/useBoardRefresh";
@@ -8,12 +8,9 @@ import { noteSessionMeta } from "../chat/historyCache";
 import { REMOTE_CONSUMER_HEARTBEAT_MS } from "../chat/useApprovalChannel";
 import { useStarred } from "../sticker/helpers";
 import type { Item } from "../sticker/types";
-import { attentionFocus, type Attention } from "./attention";
 
 /** 名单一次取多少行。名单不翻页：超过这个数的老会话去「已完成 / 工作区」里找。 */
 const ROSTER_LIMIT = 200;
-/** 眼睛回轨顶时离轨顶边的距离（眼睛中心，px）。 */
-export const EYES_HOME_Y = 20;
 
 /** 名单的行。sessions 为 null = 还没取到第一份。刷新走 board-changed（手机端是 3 秒一次的轮询）。 */
 export function useRosterRows(): { sessions: Item[] | null; rows: readonly Item[] } {
@@ -89,60 +86,4 @@ export function useRosterClock(): number {
   return Math.floor(Date.now() / 30_000);
 }
 
-/** 眼睛站谁那里。记着它此刻站的会话：同样要紧的新来的不抢（见 attentionFocus）。 */
-export function useAttention(rows: readonly Item[], expanded: number | null = null): Attention {
-  const stickyRef = useRef<number | null>(null);
-  // 「跑完了你还没看」的行，点开就算看过：眼睛当场去下一行，不等后端把未读清掉（展开的行持有专属
-  // 租约，后端下一拍会清）。后端报它不再未读之后就从这里拿掉：以后它再跑完一轮，照样叫眼睛。
-  const seenRef = useRef(new Set<number>());
-  const seen = seenRef.current;
-  if (expanded != null) seen.add(expanded);
-  for (const id of [...seen]) {
-    if (id !== expanded && !rows.some((row) => row.session.id === id && row.unread)) seen.delete(id);
-  }
-  const seenKey = [...seen].join(",");
-  const attention = useMemo(
-    () => attentionFocus(seen.size ? rows.map((row) => (row.unread && seen.has(row.session.id) ? { ...row, unread: false } : row)) : rows, stickyRef.current),
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- seen 是 ref 里的集合，内容变化由 seenKey 代表
-    [rows, seenKey],
-  );
-  stickyRef.current = attention.id;
-  return attention;
-}
 
-/**
- * 眼睛中心的高度（相对 root 顶边）。selector 找到轮到你的那一行就站到它的中线；找不到（行被折叠、
- * 滚出去了）退到 fallback 旁边，神态不变；没人需要你回轨顶。root 尺寸变化、里面任何地方滚动都重新量。
- */
-export function useEyesY(root: RefObject<HTMLElement | null>, selector: string | null, fallback?: RefObject<HTMLElement | null>): number {
-  const [eyesY, setEyesY] = useState(EYES_HOME_Y);
-  const place = useCallback(() => {
-    const el = root.current;
-    if (!el) return;
-    const top = el.getBoundingClientRect().top;
-    const centerOf = (node: Element | null | undefined) => {
-      if (!node) return null;
-      const r = node.getBoundingClientRect();
-      return r.height > 0 ? r.top - top + r.height / 2 : null;
-    };
-    const y = selector ? centerOf(el.querySelector(selector)) ?? centerOf(fallback?.current) : null;
-    const max = el.clientHeight - 96;
-    const next = Math.round(Math.max(EYES_HOME_Y, Math.min(y ?? EYES_HOME_Y, max)));
-    setEyesY((prev) => (prev === next ? prev : next));
-  }, [root, selector, fallback]);
-  useLayoutEffect(place);
-  useEffect(() => {
-    const el = root.current;
-    if (!el) return;
-    // 老内核 / 测试环境没有 ResizeObserver：退化成只在渲染和滚动时重新量。
-    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(place);
-    observer?.observe(el);
-    // 名单或侧栏滚动时眼睛跟着那一行走（scroll 不冒泡，用捕获）。
-    el.addEventListener("scroll", place, true);
-    return () => {
-      observer?.disconnect();
-      el.removeEventListener("scroll", place, true);
-    };
-  }, [root, place]);
-  return eyesY;
-}

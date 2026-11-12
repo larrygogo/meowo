@@ -525,13 +525,7 @@ export function App() {
   const autoStripRef = useRef(false);
   autoStripRef.current = autoStrip;
   // 极简模式只在 Windows 有：刘海本身就是那条「细条」，菜单栏落点平时根本不显示。
-  // 主窗口（名单外壳）在前台：眼睛在它的黑轨上，岛收成细条，屏幕上只留一双眼睛
-  // （views/roster/RosterShell 广播 roster-front）。不受 island_auto_strip 管：那个开关说的是
-  // 「别挡最大化窗口的标题栏」，这里是眼睛换了地方站。
-  const [rosterFront, setRosterFront] = useState(false);
-  const rosterFrontRef = useRef(false);
-  rosterFrontRef.current = rosterFront;
-  const stripOn = (islandStrip || autoStrip || rosterFront) && host.kind === "floating";
+  const stripOn = (islandStrip || autoStrip) && host.kind === "floating";
   // 刘海挡住的那一截（摄像头）：提醒和面板的内容要从它下面开始画。
   const safeTopOf = (h: IslandHost) => (h.kind === "notch" ? h.notchHeight : 0);
   useEffect(() => {
@@ -584,14 +578,11 @@ export function App() {
       toneLabel: t.island.toneLabel,
       untitled: t.sticker.waitingFirstInput,
     });
-    // 主窗口在前台时眼睛在它的黑轨上：菜单栏图标的眼睛闭上（关卡 A 取舍 10），右边的文字照旧。
-    // 未经 macOS 真机验证。
-    const mood = rosterFront ? "sleep" : menubarMood;
-    const key = JSON.stringify([tone, segments, mood]);
+    const key = JSON.stringify([tone, segments, menubarMood]);
     if (key === menubarRef.current) return;
     menubarRef.current = key;
-    invoke("set_menubar_status", { tone, segments, mood }).catch(() => {});
-  }, [stripSessions, usage, quotaProviders, activeProviders, t, menubarMood, rosterFront]);
+    invoke("set_menubar_status", { tone, segments, mood: menubarMood }).catch(() => {});
+  }, [stripSessions, usage, quotaProviders, activeProviders, t, menubarMood]);
 
   // monitor 只在启动还原时有；平时不带，后端缺参即按窗口当前所在屏。
   const layout = useCallback((width: number, height: number, centerRatio: number | null = null, monitor: string | null = null) =>
@@ -623,7 +614,7 @@ export function App() {
       await invoke("island_set_visible", { visible: false, focus: false });
       return;
     }
-    if (h.kind === "floating" && (islandStripRef.current || autoStripRef.current || rosterFrontRef.current) && !stripPeekRef.current) {
+    if (h.kind === "floating" && (islandStripRef.current || autoStripRef.current) && !stripPeekRef.current) {
       await layout(ISLAND_STRIP_SIZE.width, ISLAND_STRIP_SIZE.height, centerRatio, monitor);
       return;
     }
@@ -644,10 +635,8 @@ export function App() {
   }, [stripOn, setStripPeek]);
   useEffect(() => {
     const un = listen<boolean>("island-titlebar", (event) => setTitlebarCovered(event.payload === true));
-    const unFront = listen<boolean>("roster-front", (event) => setRosterFront(event.payload === true));
     return () => {
       un.then((f) => f());
-      unFront.then((f) => f());
     };
   }, []);
 
@@ -1174,7 +1163,6 @@ export function App() {
       onDismissAlert={dismissAlert}
       onDismissAllAlerts={dismissAllAlerts}
       notch={host.kind === "notch" ? { width: host.notchWidth, height: host.notchHeight } : undefined}
-      eyesAway={rosterFront && host.kind === "notch"}
     />
   );
 }

@@ -1,5 +1,5 @@
 // 做空审查第二轮的复现（修后留作回归）。
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ChatShellBridge } from "../ChatWindow";
 
@@ -64,8 +64,8 @@ describe("名单", () => {
     vi.spyOn(Date, "now").mockReturnValue(t0 + 10 * 60_000);
     sessions = [quiet, { ...busy, current_activity: "Bash: b", session: { ...busy.session, last_event_at: t0 + 10 * 60_000 } }];
     await act(async () => { boardHandlers.get("board-urgent")?.({ payload: null }); });
-    await flush();
-    expect(timeOf("等审批的")).toBe("10m");
+    // 刷新要过一次后端往返才落地：等到它出来，不赌两个微任务够用（全量并发跑时偶发挂过）。
+    await waitFor(() => expect(timeOf("等审批的")).toBe("10m"));
   });
 
   it("R2 首次查询失败：托管会话的待批准行被说成「审批已回到终端」并摆出终端按键", async () => {

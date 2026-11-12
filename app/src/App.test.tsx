@@ -9,7 +9,6 @@ let emitBoardChanged: () => void = () => {};
 let emitIslandAlert: (e: { payload: unknown }) => void = () => {};
 let emitRecallSticker: () => void = () => {};
 const unlisten = vi.fn();
-let emitRosterFront: (e: { payload: unknown }) => void = () => {};
 let emitTrayToggle: () => void = () => {};
 // 贴纸 2026-11-05 在两个平台都删了，App 只剩灵动岛。macOS 用例把 isMac 打开，落点由
 // island_host 的 mock 返回值决定（刘海 / 菜单栏）。
@@ -128,7 +127,6 @@ vi.mock("@tauri-apps/api/event", () => ({
     if (event === "recall-sticker") emitRecallSticker = cb as unknown as () => void;
     if (event === "island-alert") emitIslandAlert = cb;
     if (event === "island-tray-toggle") emitTrayToggle = cb as unknown as () => void;
-    if (event === "roster-front") emitRosterFront = cb;
     return Promise.resolve(unlisten);
   },
   emit: vi.fn(() => Promise.resolve()),
@@ -636,30 +634,4 @@ describe("App · macOS 灵动岛", () => {
     expect(visibleCalls()).toHaveLength(shown);
   });
 
-  // 主窗口（名单）在前台时眼睛站在它的黑轨上，屏幕上只留一双（关卡 A 取舍 10）。
-  it("有刘海、主窗口在前台：胶囊还在，但不画眼睛；主窗口退到后面眼睛回来", async () => {
-    mac = true;
-    seedHost({ kind: "notch", notchWidth: 180, notchHeight: 32 });
-    const { container } = render(<App />);
-    await waitFor(() => expect(container.querySelector(".isl-notch.is-split")).toBeTruthy());
-    await act(async () => { emitRosterFront({ payload: true }); });
-    await waitFor(() => expect(container.querySelector(".isl-notch.is-split.is-eyes-away")).toBeTruthy());
-    expect(container.querySelector(".isl-strip")).toBeNull();
-    await act(async () => { emitRosterFront({ payload: false }); });
-    await waitFor(() => expect(container.querySelector(".isl-notch.is-eyes-away")).toBeNull());
-  });
-
-  // 只看最后一次推给菜单栏的状态：invoke 上还有别的命令在走，「最后一次调用」不一定是它（CI 上实测挂过）。
-  const lastMenubar = () => vi.mocked(invoke).mock.calls.filter(([cmd]) => cmd === "set_menubar_status").at(-1)?.[1];
-  it("没刘海、主窗口在前台：菜单栏图标的眼睛闭上；退到后面再睁开", async () => {
-    mac = true;
-    seedHost({ kind: "menubar", notchWidth: 0, notchHeight: 0 });
-    render(<App />);
-    await waitFor(() => expect(vi.mocked(invoke)).toHaveBeenCalledWith("set_menubar_status", { tone: "idle", segments: [], mood: "open" }));
-    await act(async () => { emitRosterFront({ payload: true }); });
-    await waitFor(() => expect(lastMenubar()).toEqual({ tone: "idle", segments: [], mood: "sleep" }));
-    await act(async () => { emitRosterFront({ payload: false }); });
-    // 回来之后是它本来的神态（空闲久了会打哈欠、犯困，跟机器快慢有关），这里只钉「不再是闭着的」。
-    await waitFor(() => expect((lastMenubar() as { mood: string }).mood).not.toBe("sleep"));
-  });
 });

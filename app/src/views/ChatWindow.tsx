@@ -112,7 +112,7 @@ import { listAgents, type AgentDescriptor } from "../api";
 import { agentAssets, tintStyle } from "../providers";
 import appLogoUrl from "../../src-tauri/icons/64x64.png";
 import { Icon } from "../icons/Icon";
-import { icArrowLeftRight, icArrowUp, icChevronLeft, icCollapse, icExpand, icFile, icMessage, icShield, icSidebarLeft, icSparkles, icStop } from "../icons/glyphs.chat";
+import { icArrowLeftRight, icArrowUp, icChevronLeft, icCollapse, icExpand, icFile, icList, icMessage, icShield, icSidebarLeft, icSparkles, icStop } from "../icons/glyphs.chat";
 import { icAlert, icCheck, icChevronDown, icClose, icPencil } from "../icons/glyphs";
 
 
@@ -285,6 +285,8 @@ export type ChatShellBridge = {
   onSession: (id: number) => void;
   /** 管理页点了「返回」：从名单进去的回到名单，不落到一个没点过的现场里。 */
   onPageBack: () => void;
+  /** 现场顶栏上的「回到名单」。null = 不摆（只有一个会话时名单就是它自己）。 */
+  onBack?: (() => void) | null;
   /** 对话窗被带去某个会话 / 新建页 / 管理页（点岛上的卡、通知、新会话启动）：名单让位。 */
   onReveal: () => void;
 };
@@ -4088,6 +4090,12 @@ export function ChatWindow({ shell }: { shell?: ChatShellBridge } = {}) {
   const compactChrome = remoteUi() && narrow;
   // 窗口左上角的应用 logo（用户要求）。只是标识，不可点；同样是拖拽区，按住它照样能拖窗。
   const appLogo = <img className="chat-app-logo" src={appLogoUrl} width={18} height={18} alt="" draggable={false} data-tauri-drag-region />;
+  // 现场里回名单的入口：摆在顶栏 logo 后面（macOS 摆在标题行最前）。名单盖着时不摆。
+  const backToRosterButton = shell?.onBack && !(shell.overlay != null) ? (
+    <button type="button" className="chat-sidebar-open chat-roster-back" aria-label={t.roster.back} data-tip={t.roster.back} onClick={shell.onBack}>
+      <Icon glyph={icList} size={16} />
+    </button>
+  ) : null;
   const sidebarToggleButton = (
     <button
       type="button"
@@ -4143,6 +4151,7 @@ export function ChatWindow({ shell }: { shell?: ChatShellBridge } = {}) {
       {!isMac() && !compactChrome && !remoteListMode && (
         <header className="chat-topbar" data-tauri-drag-region>
           {appLogo}
+          {backToRosterButton}
           {sidebarToggleButton}
           {/* 最小化/最大化/关闭是桌面窗口能力,手机浏览器没有可控窗口——远程隐藏。 */}
           {!remoteUi() && <WindowControls onClose={close} />}
@@ -4259,7 +4268,7 @@ export function ChatWindow({ shell }: { shell?: ChatShellBridge } = {}) {
       )}
       <div className="chat-main" hidden={adminOpen || !!newSessionOpen}>
       <ChatTitleBar
-        leading={((isMac() && !sidebarVisible) || compactChrome) && sidebarToggleButton}
+        leading={<>{isMac() && backToRosterButton}{((isMac() && !sidebarVisible) || compactChrome) && sidebarToggleButton}</>}
         title={history ? (
           <ChatTitleMenu
             title={history.title || t.chat.title}

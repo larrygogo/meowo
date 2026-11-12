@@ -30,7 +30,6 @@ export const zh = {
   // 主窗口的 agent 名单（黑轨 + 眼睛）。
   roster: {
     title: "进行中",
-    rail: "状态轨",
     back: "回到名单",
     enter: "进入现场",
     approvalInTerminal: "这条审批在终端里，进入现场处理",

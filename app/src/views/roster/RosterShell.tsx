@@ -1,18 +1,18 @@
-// 主窗口的名单外壳（规格 .lead/20261111-roster）：左缘一条黑轨，眼睛站在轮到你的那一行旁边；
-// 首屏是固定顺序的 agent 名单，点开一行看它的近况，「进入现场」才是完整的对话窗。
+// 主窗口的名单外壳（规格 .lead/20261111-roster）：首屏是固定顺序的 agent 名单，点开一行看它的近况、
+// 在原位做决定，「进入现场」才是完整的对话窗。
+//
+// 主窗口里不放眼睛：眼睛只在灵动岛上（leader 2026-11-12 Q-20261112-rail：「不希望在 ChatWindow 上面
+// 加眼睛，就留在灵动岛就好了」）。早先的左缘黑轨与站位眼睛已去掉，岛也不再因主窗口在前台而收细条。
 //
 // 对话窗（ChatWindow）原样包在里面，名单只是盖在它的对话区上：回到名单时对话窗不卸载，
 // 审批租约、托管终端、输入框草稿都还在。
 import { createContext, lazy, memo, Suspense, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { emit } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 import { setRosterShowing } from "../../api";
 import { useTauriEvent } from "../../hooks/useTauriEvent";
 import { useT } from "../../i18n";
 import { Icon } from "../../icons/Icon";
 import { icSearch, icSettings } from "../../icons/glyphs";
-import { icList } from "../../icons/glyphs.chat";
 import { remoteUi } from "../../remoteMode";
 import { ChatMarkdown } from "../ChatMarkdown";
 import { runningActivityView } from "../chat/RunningBar";
@@ -20,21 +20,18 @@ import { isShellCovered } from "../chat/shellCover";
 import { displayKeys } from "../chat/WindowModals";
 import { ChatWindow, type ChatShellBridge } from "../ChatWindow";
 import { useSidebarGitBadges, type GitBadgeStore } from "../chat/SidebarGitBadge";
-import { AgentRing, Eyes } from "../island/islandParts";
+import { AgentRing } from "../island/islandParts";
 import { cardTone, fmtShortAgo } from "../sticker/helpers";
 import { UNNAMED_SESSION_SENTINEL, type Item } from "../sticker/types";
 import { RosterComposer } from "./RosterComposer";
 import { RosterDecision } from "./RosterDecision";
-import { useApprovalLease, useAttention, useEyesY, useRosterClock, useRosterLease, useRosterRows } from "./useRoster";
+import { useApprovalLease, useRosterClock, useRosterLease, useRosterRows } from "./useRoster";
 
 // 速览只在点开一行之后才用得上，而且本来就要等一次读取：拆成单独的分包，不压在主窗口首屏的
 // 那一包里（打包实测：不拆时对话窗这一包比改前大 3.05%，预算是 3%）。
 // 分包拿不到（手机页走网络：资产陈旧、网络抖一下）就不摆这一块，下面的话和「进入现场」照常；
 // 不接住的话 React.lazy 把错误抛到窗口级错误页，点开一行整个窗口就没了（做空审查第二轮，问题 3）。
 const RosterGlance = lazy(() => import("./RosterGlance").then((m) => ({ default: m.RosterGlance })).catch(() => ({ default: () => null })));
-
-/** 眼睛朝右看着那一行。 */
-export const GAZE_ROW = { x: 1, y: 0 };
 
 /** 手机远程页先不套壳（规格里程碑 5 再做同构）。 */
 export function RosterShell() {
@@ -49,7 +46,6 @@ function startsOnRoster(): boolean {
 }
 
 function DesktopRoster() {
-  const t = useT();
   const { sessions, rows } = useRosterRows();
   const [view, setView] = useState<"roster" | "scene">(() => (startsOnRoster() ? "roster" : "scene"));
   const [expanded, setExpanded] = useState<number | null>(null);
@@ -123,22 +119,8 @@ function DesktopRoster() {
   }, [view]);
   useEffect(() => () => { setRosterShowing(false).catch(() => {}); }, []);
 
-  // 名单里眼睛站在名单行旁边；现场里站在对话窗侧栏那一行（名单缩成的窄列）旁边。行被折叠或
-  // 滚出去时停在「回到名单」旁边、神态不变（取舍 4）。
-  const attention = useAttention(rows, expanded);
-  const shellRef = useRef<HTMLDivElement>(null);
-  const backRef = useRef<HTMLButtonElement>(null);
-  const eyesY = useEyesY(
-    shellRef,
-    attention.id == null ? null : view === "roster"
-      ? `.roster-item[data-session-id="${attention.id}"] .roster-row`
-      : `.chat-sidebar-item[data-session-id="${attention.id}"]`,
-    backRef,
-  );
-
-  // 屏幕上只有一双眼睛：主窗口在前台时眼睛在黑轨上，岛收成细条（App.tsx 听 roster-front）；
-  // 窗口不在前台时眼睛回到岛上，黑轨空着。
-  const front = useWindowFront();
+  // 「回到名单」在现场的顶栏上（对话窗按 shell.onBack 摆）。只有一个会话时名单就是它自己，不摆。
+  const canGoBack = rows.length > 1;
 
   const gitBadges = useSidebarGitBadges(useMemo(() => rows.map((row) => row.cwd), [rows]));
 
@@ -156,34 +138,18 @@ function DesktopRoster() {
     command,
     onSession: setSceneId,
     onReveal: () => setView("scene"),
+    onBack: canGoBack ? backToRoster : null,
     onPageBack: () => {
       if (!pageFromRosterRef.current) return;
       pageFromRosterRef.current = false;
       backToRoster();
     },
-  }), [view, request, newSession, command, backToRoster, setSceneId]);
+  }), [view, request, newSession, command, backToRoster, setSceneId, canGoBack]);
   // 元素本身也要稳住：每次渲染新建一个 <ChatWindow> 元素，React 照样会重渲染它。
   const chat = useMemo(() => <ChatWindow shell={shell} />, [shell]);
 
   return (
-    <div ref={shellRef} className={`roster-shell is-${view}`}>
-      <aside className="roster-rail" aria-label={t.roster.rail}>
-        {front && (
-          <span className="roster-eyes" style={{ top: eyesY }} data-at={attention.id ?? "home"}>
-            <Eyes tone={attention.tone} gaze={attention.id != null ? GAZE_ROW : null} />
-          </span>
-        )}
-        <div className="roster-rail-foot">
-          {view === "scene" && rows.length > 1 && (
-            <button ref={backRef} type="button" className="roster-rail-btn" aria-label={t.roster.back} data-tip={t.roster.back} onClick={backToRoster}>
-              <Icon glyph={icList} size={16} />
-            </button>
-          )}
-          <button type="button" className="roster-rail-btn" aria-label={t.sticker.openSettings} data-tip={t.sticker.openSettings} onClick={() => { invoke("open_settings").catch(() => {}); }}>
-            <Icon glyph={icSettings} size={16} />
-          </button>
-        </div>
-      </aside>
+    <div className={`roster-shell is-${view}`}>
       <div className="roster-stage" data-scene-id={sceneId}>
         <RosterContext.Provider value={list}>{chat}</RosterContext.Provider>
       </div>
@@ -191,35 +157,6 @@ function DesktopRoster() {
   );
 }
 
-/** 主窗口是否在前台，并把它广播给灵动岛窗口。查不到窗口（截图页、测试）时按在前台算。 */
-function useWindowFront(): boolean {
-  const [front, setFront] = useState(true);
-  useEffect(() => {
-    let alive = true;
-    let un: (() => void) | undefined;
-    const tell = (focused: unknown) => {
-      // 只认明确的布尔值：截图页和测试里的假窗口什么都不回，按「在前台」算。
-      if (typeof focused !== "boolean") return;
-      if (alive) setFront(focused);
-      emit("roster-front", focused).catch(() => {});
-    };
-    try {
-      const win = getCurrentWindow();
-      win.isFocused().then(tell).catch(() => {});
-      win.onFocusChanged((event) => tell(event.payload)).then((fn) => { if (alive) un = fn; else fn(); }).catch(() => {});
-    } catch { /* 不在 Tauri 窗口里 */ }
-    // 窗口被销毁时 effect 的清理未必跑得到，页面卸载再补一次：漏了岛会一直是细条。
-    const bye = () => { emit("roster-front", false).catch(() => {}); };
-    window.addEventListener("pagehide", bye);
-    return () => {
-      alive = false;
-      un?.();
-      window.removeEventListener("pagehide", bye);
-      bye();
-    };
-  }, []);
-  return front;
-}
 
 /** 「此刻在做什么」的那一步，洗成能读的样子：压缩中的哨兵换成文字、剥掉 cd 前缀（同对话窗运行条），
  *  MCP 工具的 `mcp__服务__工具` 写成「服务 · 工具」（同对话窗工具行；真机实拍双下划线像乱码）。 */
@@ -272,6 +209,10 @@ function RosterList({ rows, loaded, expanded, gitBadges, onToggle, onEnter, onSa
             <Icon glyph={icSearch} size={14} />
             <span>{t.roster.search}</span>
             <kbd>{displayKeys("Ctrl+K")}</kbd>
+          </button>
+          {/* 设置原来在左缘黑轨底部；黑轨去掉后放在这一排的最右边。现场里的设置入口在侧栏底部。 */}
+          <button type="button" className="roster-settings" aria-label={t.sticker.openSettings} data-tip={t.sticker.openSettings} onClick={() => { invoke("open_settings").catch(() => {}); }}>
+            <Icon glyph={icSettings} size={14} />
           </button>
         </nav>
       </header>

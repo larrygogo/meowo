@@ -418,11 +418,9 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
 .remote-session-list-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
 .remote-session-list-switch { flex: none; min-height: 44px; margin: -6px -8px 0 0; padding: 0 12px; border: 0; border-radius: 12px; background: transparent; color: var(--cc-text-dim); font: inherit; font-size: 14px; }
 .remote-session-list-switch:active { background: var(--fill-hover); }
-/* 手机上的名单（views/roster/PhoneRoster）：左缘一条 32 宽的黑轨，眼睛站在轮到你的那一行旁边；
-   右边是名单行，和桌面同一种行、同一种行内决定单。末尾给浮动底栏让出位置。 */
+/* 手机上的名单（views/roster/PhoneRoster）：和桌面同一种行、同一种行内决定单。末尾给浮动底栏让出位置。 */
 .roster-phone { flex: 1; min-height: 0; display: flex; }
-.roster-phone .roster-rail { width: 32px; padding: 0; justify-content: flex-start; }
-.roster-phone .roster-list { padding: 0 8px var(--remote-tabbar-clear) 4px; }
+.roster-phone .roster-list { flex: 1; padding: 0 8px var(--remote-tabbar-clear); }
 /* 行：触屏上整行至少 56 高；头像、任务名、状态词三列（同桌面窄窗）。 */
 /* 状态词一列定宽（字号 13px 的一档）：auto 时各行左缘参差。 */
 .roster-phone.roster-phone { --roster-word-w: 60px; }

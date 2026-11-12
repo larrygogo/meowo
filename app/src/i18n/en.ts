@@ -24,7 +24,6 @@ export const en: Dict = {
   pending: { approval: "Approval", question: "Question", plan: "Review plan", gate: "Your call", blocked: "Needs action" },
   roster: {
     title: "In progress",
-    rail: "Status rail",
     back: "Back to roster",
     enter: "Open session",
     approvalInTerminal: "This approval is in the terminal. Open the session to handle it.",
