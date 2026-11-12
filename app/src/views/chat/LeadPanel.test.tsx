@@ -24,8 +24,8 @@ function task(over: Partial<LeadTaskDto> = {}): LeadTaskDto {
     phase: "implement",
     spec: "# SPEC\n目的：演示",
     checks: [
-      { id: "1", check: "测试全过", passes: true, waived: null, leader: false },
-      { id: "2", check: "手机能用", passes: false, waived: null, leader: false },
+      { id: "1", check: "测试全过", passes: true, waived: null, leader: false, blocked: null },
+      { id: "2", check: "手机能用", passes: false, waived: null, leader: false, blocked: null },
     ],
     decisions: "| 决策 |",
     progress: "phase: implement",
@@ -309,13 +309,13 @@ describe("纯函数", () => {
 
   it("豁免项不进进度分母（实测三个任务带着没通过的项收工）", () => {
     const checks = [
-      { id: "1", check: "a", passes: true, waived: null, leader: false },
-      { id: "2", check: "b", passes: false, waived: "leader 选了不做", leader: false },
-      { id: "3", check: "由 leader 验收", passes: false, waived: null, leader: true },
+      { id: "1", check: "a", passes: true, waived: null, leader: false, blocked: null },
+      { id: "2", check: "b", passes: false, waived: "leader 选了不做", leader: false, blocked: null },
+      { id: "3", check: "由 leader 验收", passes: false, waived: null, leader: true, blocked: null },
     ];
     expect(leadProgress(task({ checks }))).toEqual({ passed: 1, total: 2 });
     // 先豁免、后来又做完的条目按通过算（与后端一致）
-    const done = [{ id: "1", check: "a", passes: true, waived: "曾经不做", leader: false }];
+    const done = [{ id: "1", check: "a", passes: true, waived: "曾经不做", leader: false, blocked: null }];
     expect(leadProgress(task({ checks: done }))).toEqual({ passed: 1, total: 1 });
   });
 });
@@ -323,10 +323,10 @@ describe("纯函数", () => {
 describe("验收清单与新关卡", () => {
   it("豁免项沉底并显示原因，待 leader 验收的项有标签", () => {
     const checks = [
-      { id: "1", check: "已豁免的", passes: false, waived: "leader 选了不做", leader: false },
-      { id: "2", check: "已通过的", passes: true, waived: null, leader: false },
-      { id: "3", check: "视觉（由 leader 验收）", passes: false, waived: null, leader: true },
-      { id: "4", check: "还要做的", passes: false, waived: null, leader: false },
+      { id: "1", check: "已豁免的", passes: false, waived: "leader 选了不做", leader: false, blocked: null },
+      { id: "2", check: "已通过的", passes: true, waived: null, leader: false, blocked: null },
+      { id: "3", check: "视觉（由 leader 验收）", passes: false, waived: null, leader: true, blocked: null },
+      { id: "4", check: "还要做的", passes: false, waived: null, leader: false, blocked: null },
     ];
     const { container } = render(<LeadPanel task={task({ checks })} onClose={() => {}} />);
     const order = [...container.querySelectorAll(".lead-check-text")].map((n) => n.textContent);
@@ -447,5 +447,47 @@ describe("Lead 面板概览", () => {
     rerender(<LeadPanel task={task({ phase: "review" })} onClose={() => {}} />);
     expect(container.querySelector(".lead-stage-flag")?.textContent).toBe("阶段：review");
     expect(container.querySelector(".lead-latest")).toBeNull();
+  });
+});
+
+describe("待实测的条目", () => {
+  /// 2026-11-12 leader：「为什么都已经到了验证阶段进度却才 5/18」——11 条代码写完、只差 beta 实测，看着像没做。
+  it("blocked 条目单独标「待实测：原因」，排在还要做的之后；标题行报个数；已通过、已豁免的不受影响", () => {
+    const checks = [
+      { id: "1", check: "已通过的", passes: true, waived: null, leader: false, blocked: "旧原因" },
+      { id: "2", check: "等 beta", passes: false, waived: null, leader: false, blocked: "要 beta 开机" },
+      { id: "3", check: "还要做的", passes: false, waived: null, leader: false, blocked: null },
+      { id: "4", check: "不做了", passes: false, waived: "leader 定的", leader: false, blocked: "要真机" },
+    ];
+    const { container } = render(<LeadPanel task={task({ checks })} onClose={() => {}} />);
+    const order = [...container.querySelectorAll(".lead-check-text")].map((n) => n.textContent);
+    expect(order).toEqual(["还要做的", "等 beta", "已通过的", "不做了"]);
+    expect(screen.getByText("待实测：要 beta 开机")).toBeTruthy();
+    expect(screen.getByLabelText("待实测")).toBeTruthy();
+    expect(screen.queryByText("待实测：旧原因")).toBeNull();
+    expect(screen.queryByText("待实测：要真机")).toBeNull();
+    expect(container.querySelector(".lead-blocked-count")?.textContent).toBe("1 条待实测");
+    // 进度仍只数实测过的：分母不含豁免项
+    expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("1");
+  });
+
+  it("胶囊上也报待实测个数；要 leader 验收的条目以 leader 为准，不算待实测", async () => {
+    const checks = [
+      { id: "1", check: "a", passes: true, waived: null, leader: false, blocked: null },
+      { id: "2", check: "等 beta", passes: false, waived: null, leader: false, blocked: "要 beta 开机" },
+      { id: "3", check: "看体验", passes: false, waived: null, leader: true, blocked: "要真机" },
+    ];
+    snapshot.mockResolvedValue(task({ checks }));
+    render(<DockWork sessionId={1} cwd="C:/repo" ccSessionId="cc-1" items={[]} history={history} loading={false} />);
+    const pill = await screen.findByRole("button", { name: /Lead.*1\/3.*1 待实测/ });
+    fireEvent.click(pill);
+    expect(screen.getByText("待你验收")).toBeTruthy();
+    expect(screen.queryByText("待实测：要真机")).toBeNull();
+    expect(document.querySelector(".lead-blocked-count")?.textContent).toBe("1 条待实测");
+  });
+
+  it("没有待实测的条目时不显示个数", () => {
+    const { container } = render(<LeadPanel task={task()} onClose={() => {}} />);
+    expect(container.querySelector(".lead-blocked-count")).toBeNull();
   });
 });

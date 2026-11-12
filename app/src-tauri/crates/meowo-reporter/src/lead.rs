@@ -261,6 +261,11 @@ fn needs_leader(i: &Value) -> bool {
     i.get("by").and_then(Value::as_str).is_some_and(|by| by.trim().eq_ignore_ascii_case("leader"))
 }
 
+/// 只差环境实测或授权的原因；空串、非字符串不算。
+fn blocked(i: &Value) -> Option<&str> {
+    i.get("blocked").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty())
+}
+
 fn item_line(i: &Value) -> String {
     let id = i.get("id").map(|v| v.to_string()).unwrap_or_default();
     let check = i.get("check").and_then(Value::as_str).unwrap_or("");
@@ -731,8 +736,31 @@ fn stop(data: &Value, registry: &Path) -> Option<String> {
     let _ = std::fs::write(&state_f, Value::Object(state).to_string());
     let slug = task.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let list: Vec<String> = fail.iter().take(8).map(|i| item_line(i)).collect();
+    // 只差实测的条目（blocked）：没向 leader 要过授权就催发关卡 D。不只在「剩下的全是 blocked」时催：
+    // 起因那次正是混着几条没做完的，agent 打算等其余做完再攒批要授权，结果一直没发（云端 Xbot 第三期
+    // 面板停在 5/18；做空审查指出只在全是 blocked 时才催等于把攒批固化成默认节奏）。
+    // 关卡 D 已经答过了（consumed）就不再叫它重发：按答复去实测，leader 没允许的走豁免。
+    let waiting: Vec<String> = fail.iter().filter(|i| blocked(i).is_some()).map(|i| item_line(i)).collect();
+    let d_answered = read_gate(&task).is_some_and(|g| g.kind == "D" && g.status == "consumed");
+    let env_note = match (waiting.is_empty(), d_answered) {
+        (true, _) => String::new(),
+        (false, false) => format!(
+            "\n其中 {} 条只差环境实测或授权（blocked）：{}。现在就按 lead skill 写 gate.json 发关卡 D，把这几条要的部署、真机或账号一次说清，然后结束本轮；不要等其余条目做完或做空回来再攒批发。",
+            waiting.len(),
+            waiting.join("；")
+        ),
+        (false, true) => format!(
+            "\n其中 {} 条只差实测（blocked），关卡 D 已经答复：照答复去实测，通过后去掉 blocked 并勾上；leader 没允许的，发关卡 Q 问是否豁免，不要重发关卡 D。",
+            waiting.len()
+        ),
+    };
+    // 剩下的全是只差实测的：不用再说「继续推进下一条」，直接说该做什么。
+    if waiting.len() == fail.len() {
+        let reason = format!("[lead] 任务 {slug} 剩下 {} 条都只差环境实测或授权：\n{}{env_note}", fail.len(), list.join("\n"));
+        return Some(json!({"decision": "block", "reason": reason}).to_string());
+    }
     let reason = format!(
-        "[lead] 任务 {slug} 还在{}阶段，有 {} 条验收未通过（本轮第 {blocks}/{MAX_BLOCKS} 次拦截）：\n{}\n继续推进下一条，并实际验证。在等后台子代理或后台命令回报：直接结束本轮，通知到了会唤醒你。某条做不到、要 leader 决定豁免，或者需要 leader 拍板、授权、亲手操作：现在就按 lead skill 写 gate.json（B 拍板单向门，D 授权或操作，Q 问豁免），然后结束本轮；不要用 AskUserQuestion，也不要自己加 waived 或 by:leader 来绕开拦截。确实卡住了：在 progress.md 写明原因，把 phase 改为 blocked。",
+        "[lead] 任务 {slug} 还在{}阶段，有 {} 条验收未通过（本轮第 {blocks}/{MAX_BLOCKS} 次拦截）：\n{}\n继续推进下一条，并实际验证。在等后台子代理或后台命令回报：直接结束本轮，通知到了会唤醒你。某条做不到、要 leader 决定豁免，或者需要 leader 拍板、授权、亲手操作：现在就按 lead skill 写 gate.json（B 拍板单向门，D 授权或操作，Q 问豁免），然后结束本轮；不要用 AskUserQuestion，也不要自己加 waived 或 by:leader 来绕开拦截。确实卡住了：在 progress.md 写明原因，把 phase 改为 blocked。{env_note}",
         if phase == "verify" { "验证" } else { "实施" },
         fail.len(),
         list.join("\n")
@@ -898,6 +926,7 @@ pub fn snapshot_for(cwd: &str, session: Option<&str>) -> Option<LeadTaskDto> {
             passes: i.get("passes") == Some(&Value::Bool(true)),
             waived: waived(i).map(str::to_owned),
             leader: needs_leader(i),
+            blocked: blocked(i).map(str::to_owned),
         })
         .collect();
     Some(LeadTaskDto {

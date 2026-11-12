@@ -44,6 +44,11 @@ export const QA_SHOTS = [
   { name: "qa-lead-open", scene: "flow-lead", sel: ".lead-gate-card", steps: [["click", ".lead-gate-more"], ["click", ".lead-gate-option >> nth=1"]] },
   { name: "qa-lead-620", scene: "flow-lead", sel: ".lead-gate-card", size: W620 },
   { name: "qa-lead-panel", scene: "flow-lead", sel: ".panel-lead", steps: [["click", ".dock-workbar .ui-pill"]] },
+  // 验收关卡：固定选项直接是按钮；点「驳回」展开必填意见框（2026-11-12 Lead 交互优化）。面板里有一条「待实测」。
+  { name: "qa-lead-c", scene: "flow-lead-c", sel: ".lead-gate-card", langs: ["zh", "en"] },
+  { name: "qa-lead-c-reject", scene: "flow-lead-c", sel: ".lead-gate-card", steps: [["click", ".lead-gate-card .is-deny"]] },
+  { name: "qa-lead-c-620", scene: "flow-lead-c", sel: ".lead-gate-card", size: W620 },
+  { name: "qa-lead-c-panel", scene: "flow-lead-c", sel: ".panel-lead", steps: [["click", ".dock-workbar .ui-pill"]], langs: ["zh", "en"] },
   { name: "qa-queued", scene: "flow-queued", sel: ".chat-queued-turn" },
   { name: "qa-sync", scene: "flow-sync", sel: ".chat-sync-warn", steps: [["tick", 9000]] },
   { name: "qa-load-error", scene: "flow-error", sel: ".chat-empty.is-error", steps: [["tick", 9000]] },
@@ -172,13 +177,16 @@ export const QA_SHOTS = [
   // ── 手机页 ──
   { name: "qa-m-model", page: "mobile", scene: "mobile-idle", size: PHONE, sel: ".chat-sheet", steps: [["click", MODEL_BTN]] },
   { name: "qa-m-mode", page: "mobile", scene: "mobile-idle", size: PHONE, sel: ".chat-sheet", steps: [["click", ".chat-compose .chat-mode-button"]] },
-  { name: "qa-m-lead-kbd", page: "mobile", scene: "mobile-lead", size: [375, 476], sel: ".lead-gate-card", steps: [["click", ".lead-gate-note"]] },
+  { name: "qa-m-lead-kbd", page: "mobile", scene: "mobile-lead", size: [375, 476], sel: ".lead-gate-card", steps: [["click", ".lead-gate-add-note"]] },
   { name: "qa-m-list-hover", page: "mobile", scene: "mobile-list", size: PHONE, sel: ".remote-session-list", langs: ["en"] },
   { name: "qa-m-slash", page: "mobile", scene: "mobile-idle", size: PHONE, steps: [["type", TA, "/"]], sel: ".chat-sheet" },
   { name: "qa-m-at", page: "mobile", scene: "mobile-idle", size: PHONE, steps: [["type", TA, "@src"], ["tick", 400]], sel: "#chat-at-listbox" },
   { name: "qa-m-add", page: "mobile", scene: "mobile-idle", size: PHONE, steps: [["click", ".chat-attach-button"]], sel: ".chat-sheet" },
   { name: "qa-m-lead", page: "mobile", scene: "mobile-lead", size: PHONE, sel: ".lead-gate-card", langs: ["zh", "en"] },
   { name: "qa-m-lead-open", page: "mobile", scene: "mobile-lead", size: PHONE, sel: ".lead-gate-card", steps: [["click", ".lead-gate-more"], ["click", ".lead-gate-option >> nth=1"]] },
+  { name: "qa-m-lead-c", page: "mobile", scene: "mobile-lead-c", size: PHONE, sel: ".lead-gate-card", langs: ["zh", "en"] },
+  { name: "qa-m-lead-c-reject", page: "mobile", scene: "mobile-lead-c", size: PHONE, sel: ".lead-gate-card", steps: [["click", ".lead-gate-card .is-deny"]] },
+  { name: "qa-m-lead-panel", page: "mobile", scene: "mobile-lead-c", size: PHONE, sel: ".panel-lead", steps: [["click", ".dock-workbar .ui-pill"]] },
   // 后台任务面板（一条在跑、三条跑完）：面板头两行（标题 + 关闭钮 / 整行分段筛选），转圈是运行绿。
   { name: "qa-m-tasks", page: "mobile", scene: "mobile-tasks", size: PHONE, sel: ".panel-tasks", steps: [["click", ".dock-workbar .ui-pill >> nth=0"]], langs: ["zh", "en"] },
   { name: "qa-m-tasks-430", page: "mobile", scene: "mobile-tasks", size: [430, 932], sel: ".panel-tasks", steps: [["click", ".dock-workbar .ui-pill >> nth=0"]] },
@@ -187,7 +195,7 @@ export const QA_SHOTS = [
   { name: "qa-m-approval-kbd", page: "mobile", scene: "mobile-chat", size: [375, 476], sel: ".chat-approval-actions", steps: [["click", TA]] },
   { name: "qa-m-settings-on", page: "mobile", scene: "mobile-settings", params: "on=1", size: PHONE, sel: ".pswitch.on", langs: ["zh", "en"] },
   // Lead 关卡卡片的矮屏：SE 键盘态（375×376）正在写意见 / 焦点在输入框，以及横屏。标题吸顶、选项行 44。
-  { name: "qa-m-lead-kbd-se", page: "mobile", scene: "mobile-lead", size: [375, 376], sel: ".lead-gate-card", steps: [["click", ".lead-gate-note"]] },
+  { name: "qa-m-lead-kbd-se", page: "mobile", scene: "mobile-lead", size: [375, 376], sel: ".lead-gate-card", steps: [["click", ".lead-gate-add-note"]] },
   { name: "qa-m-lead-se", page: "mobile", scene: "mobile-lead", size: [375, 376], sel: ".lead-gate-card", steps: [["click", TA]] },
   { name: "qa-m-lead-land", page: "mobile", scene: "mobile-lead", size: [812, 375], sel: ".lead-gate-card" },
   // 问答卡的矮屏（横屏）：选项行不被压到 44 以下。

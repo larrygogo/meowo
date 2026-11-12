@@ -214,6 +214,9 @@ export function leadTask(lang: "zh" | "en", kind: "B" | "C" = "B"): unknown {
     checks: [
       { id: "c1", check: zh ? "12 个测试全部通过" : "All 12 tests pass", passes: true, waived: null, leader: false },
       { id: "c2", check: zh ? "PR 已开并通过 CI" : "PR opened and CI green", passes: false, waived: null, leader: true },
+      // 验收场景多一条只差实测的（blocked），看「待实测」的显示。
+      ...(verify ? [{ id: "c3", check: zh ? "beta 上用英文账户实发一条通知" : "Send a real notice to an English account on beta", passes: false, waived: null, leader: false,
+        blocked: zh ? "要 beta 开机实测" : "Needs a beta host" }] : []),
     ],
     gate: verify ? {
       id: "g2", kind: "C", status: "pending", answer: null, options: [],
