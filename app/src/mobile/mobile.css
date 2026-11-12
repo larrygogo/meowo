@@ -299,7 +299,8 @@ body.remote-ui .chat-window.is-remote-compact .chat-compose .chat-model-button {
   body.remote-ui .chat-task-filter > button::after { inset: -8px 0; }
   /* 关闭钮：命中面 44×44，叉本身落在面板右上角——负外边距把多出来的热区抵回去，标题行不被撑高，
      叉的右缘对齐下面分段控件的右缘。 */
-  body.remote-ui .dock-work-close { width: 44px; height: 44px; margin: -10px -12px -10px 0; font-size: 20px; }
+  /* 右外边距 -14：让叉的墨迹右缘落在下面分段控件的右缘上（-12 时实测叉 345.5、分段控件 347，靠里 1.5）。 */
+  body.remote-ui .dock-work-close { width: 44px; height: 44px; margin: -10px -14px -10px 0; font-size: 20px; }
   /* 钮本身已是 44×44：不再叠通用的 6px 外扩，免得热区压到下一行的分段筛选。 */
   body.remote-ui .dock-work-close::after { inset: 0; }
   /* 同类清扫（leader 2026-11-11 定的统一原则）：分段控件、页签组在手机上的视觉高度与桌面同档，

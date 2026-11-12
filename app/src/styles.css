@@ -3897,7 +3897,9 @@ body:not(.remote-ui) .ns-actions { position: relative; margin: 0 var(--sp-8) var
    不换行，按内容的最小宽度就是整条标题，长标题永远不省略，行尾按钮全被挤出去（测试页实测）。
    分支胶囊不参与收缩，只给分支名按标题行宽度封顶（自带省略号）：曾让胶囊整体先收缩，
    长标题时它被压到 0 宽，改动数溢出盖在 PR 编号上，显示成「+4#38」（实拍）。 */
-.chat-title-menu { flex: 1 1 auto; min-width: 9em; }
+/* 9em → 12em：9em 连图标与 ⋯ 只读得出 3～4 个字（实拍 150% 缩放的 620 窗「重构登…」），认不出是哪个会话。
+   12em 约 7 个汉字；不够时功能按钮进 ⋯ 菜单让位（titleOverflow.planTitleBar 读这个值）。 */
+.chat-title-menu { flex: 1 1 auto; min-width: 12em; }
 /* 可收起项的外壳（ChatTitleBar 的 OverflowSlot）：平时就是一个不伸缩的 flex 项。收起时不卸载，
    改为绝对定位退出排版流、不可见不可点，自然宽度照样量得到，收起逻辑不必「先显示再量」
    （titleOverflow.fitTitleBar；验收 #24 实测门限写死时 1440 宽 150% 缩放按钮出界）。 */
@@ -3905,26 +3907,28 @@ body:not(.remote-ui) .ns-actions { position: relative; margin: 0 var(--sp-8) var
 .chat-bar-slot[aria-hidden="true"] { position: absolute; top: 0; left: 0; visibility: hidden; pointer-events: none; }
 .chat-bar .tb-git { flex-shrink: 0; }
 .chat-bar .tb-git-branch { max-width: 14cqi; }
-/* 再窄就整项收起，按重要程度从低到高。档位用测试页按长短两种标题逐档截图定的：
-   每档收完后标题仍能读出前几个字，行尾按钮不被挤出。收起的 PR、分支在侧边面板的
-   改动页里都看得到，改动数一直留到最后一档。
-   选择器带 .chat-bar 前缀：.tb-pr 等的 display 声明写在本段之后，同特异性会盖掉这里。 */
-@container chat-bar (max-width: 900px) {
-  .chat-bar .tb-pr-state, .chat-bar .tb-git-pill.is-ahead, .chat-bar .tb-git-pill.is-behind { display: none; }
-}
-@container chat-bar (max-width: 760px) {
-  .chat-bar .tb-git-branch, .chat-bar .chat-title-project, .chat-bar .chat-title-sep { display: none; }
-}
+/* 标题显示不全时，先收纯信息，再收功能，标题最后才省略。收哪几档由 ChatTitleBar 按实测宽度算好
+   写在栏上的 data-compact 里（titleOverflow.planTitleBar），顺序：PR 状态字与领先/落后数 → 分支名
+   → 项目名 → 「结束会话」只留图标。原来是 @container chat-bar 的 900 / 760 / 400 三个固定门限，
+   不看栏上摆了什么也不乘界面缩放：实拍 1280 宽开面板带 PR 时标题栏 792px 一样没收，标题 69px 而
+   分支名 94px；150% 缩放的 620 窗标题只剩 3 个字而「结束会话」四个字占 71px。
+   收起不用 display:none：元素退出排版流但照常排版，自然宽度一直量得到，收不收都算出同一组结果。
+   选择器带 .chat-bar 前缀：.tb-pr 等的声明写在本段之后，同特异性会盖掉这里。 */
+.chat-bar[data-compact~="prState"] .tb-pr-state,
+.chat-bar[data-compact~="prState"] .tb-git-pill.is-ahead,
+.chat-bar[data-compact~="prState"] .tb-git-pill.is-behind,
+.chat-bar[data-compact~="branch"] .tb-git-branch,
+.chat-bar[data-compact~="project"] .chat-title-project,
+.chat-bar[data-compact~="project"] .chat-title-sep,
+.chat-bar[data-compact~="endLabel"] .chat-end-label { position: absolute; top: 0; left: 0; visibility: hidden; pointer-events: none; }
 /* PR、打开方式、改动、终端、会话信息这些「功能」不在这里收：曾在此 display:none，菜单里却
-   没有入口，拉窄就丢功能（调研 sys8/c8）。改由 titleOverflow.ts 的门限表决定放栏上还是 ⋯ 里。
-   「结束会话」在最窄一档只留图标（620 宽开面板时标题栏只剩 320，英文字样要 80px）。 */
-.chat-end { display: inline-flex; align-items: center; }
+   没有入口，拉窄就丢功能（调研 sys8/c8）。它们排在信息之后，放不下才进 ⋯。 */
+/* 不收缩：它永远留在栏上，收纳是按它的实测宽度算的；可收缩时图标形态会被挤到 16～24px（实测），
+   算出来「放得下」其实已经出界。 */
+.chat-end { display: inline-flex; align-items: center; flex: none; }
 .chat-end-ico { display: none; }
-@container chat-bar (max-width: 400px) {
-  .chat-bar .chat-end { padding: 0; width: 28px; height: 28px; justify-content: center; }
-  .chat-bar .chat-end-ico { display: block; }
-  .chat-bar .chat-end-label { display: none; }
-}
+.chat-bar[data-compact~="endLabel"] .chat-end { padding: 0; width: 28px; height: 28px; justify-content: center; }
+.chat-bar[data-compact~="endLabel"] .chat-end-ico { display: block; }
 .chat-title-actions { min-width: 200px; }
 .chat-title-actions-sep { height: var(--hairline); margin: var(--sp-4) var(--sp-6); background: var(--cc-border); }
 .chat-title-actions .dd-item .dd-check { margin-left: auto; }
@@ -5411,7 +5415,8 @@ button.scm-check-name:hover { text-decoration: underline; }
 .chat-message.is-turn-error {
   width: fit-content;
   max-width: 82%;
-  padding: var(--sp-12) var(--sp-14);
+  /* 左右 16：与审批卡、子任务卡同一条内容线（原 14，卡内文字比审批卡偏左 2）。 */
+  padding: var(--sp-12) var(--sp-16);
   border: 0;
   border-radius: var(--radius-lg);
   background: var(--cc-panel-raised);
@@ -5756,7 +5761,19 @@ button.scm-check-name:hover { text-decoration: underline; }
 /* 命令正文是这张卡里真正要读的东西：下沉的代码底（--cc-code-bg）+ 正文色等宽字，不描边。
    留 max-height + 滚动——真实命令能有好几百字符，不能让它把卡撑到满屏。 */
 .chat-approval-copy pre { max-height: 160px; margin: 0; padding: var(--sp-8) var(--sp-12); overflow: auto; border-radius: var(--radius-md); background: var(--cc-code-bg); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--cc-text); font: var(--text-xs)/var(--leading-normal) var(--cc-mono); user-select: text; }
-.chat-approval-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--sp-8); }
+/* 一行放不下时，掉行的必须是左边的旁支，不能是主按钮：正着排（row + wrap）是从左往右装，
+   装不下的是最后一颗，也就是主按钮自己掉到第二行（实拍英文带「Allow and remember…」的卡：
+   Allow once 宽 116 加 16 的间距放不下，独自靠右占一行，和「拒绝」分开了）。
+   倒着排：从右往左装（row-reverse），先装主按钮、拒绝，装不下的旁支折到上一行（wrap-reverse）。
+   order 把视觉顺序翻回和 DOM 一致（左起：旁支、说明并拒绝、拒绝、允许），Tab 顺序不变。
+   动作行最多五个子项（旁支组 + 四颗按钮），order 写到六个。 */
+.chat-approval-actions { display: flex; flex-direction: row-reverse; flex-wrap: wrap-reverse; align-items: center; justify-content: flex-start; gap: var(--sp-8); }
+.chat-approval-actions > :nth-last-child(1) { order: 1; }
+.chat-approval-actions > :nth-last-child(2) { order: 2; }
+.chat-approval-actions > :nth-last-child(3) { order: 3; }
+.chat-approval-actions > :nth-last-child(4) { order: 4; }
+.chat-approval-actions > :nth-last-child(5) { order: 5; }
+.chat-approval-actions > :nth-last-child(6) { order: 6; }
 /* 左侧组：作用域不是「这一次」的选项（零副作用的收起、持久放行）。margin-right:auto
    把本次决定推到右端，形成「旁支在左、决定在右」的固定落点。 */
 .chat-approval-actions-side { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-8); margin-right: auto; }
@@ -5790,7 +5807,10 @@ button.scm-check-name:hover { text-decoration: underline; }
 .chat-approval button.is-deny.is-esc-armed { border-color: color-mix(in srgb, var(--cc-err) 55%, transparent); color: var(--cc-fail-text); background: color-mix(in srgb, var(--cc-err) 12%, transparent); }
 /* 屏幕识别卡在场时 composer 整体锁定:inert(由 ChatWindow 经 ref 设置)负责挡键盘
    与焦点,这里管视觉降级 + 老 WebView 的指针兜底。不卸载的理由见 ChatWindow 注释。 */
-.chat-compose.is-locked { opacity: .55; pointer-events: none; }
+/* 降级只压工具行，不压文字区：整块 opacity .55 把那句告诉用户该做什么的提示一起压掉了
+   （实拍「终端正在等待选择，请先用上方卡片或终端页处理」深色 2.62:1、浅色 2.23:1；不锁时 5.88 / 5.66）。 */
+.chat-compose.is-locked { pointer-events: none; }
+.chat-compose.is-locked > :not(textarea) { opacity: .55; }
 .chat-compose {
   /* 文档流内的 footer：margin 居中限宽、底部留 18px。position:relative 是给内部的
      slash/模型弹出菜单（absolute、bottom: calc(100% + var(--sp-8))）做锚点，不能省。
@@ -5918,6 +5938,10 @@ button.scm-check-name:hover { text-decoration: underline; }
 .chat-flat-steps > .chat-tool { margin: 0; }
 .chat-flat-steps > .chat-tool > summary { position: relative; min-height: calc(34px * var(--cc-ui)); padding: var(--sp-6) var(--sp-12) var(--sp-6) 0; display: flex; align-items: center; gap: var(--sp-8); flex-wrap: nowrap; list-style: none; cursor: pointer; border-radius: var(--radius-md); color: var(--cc-text-dim); font-size: var(--text-base); }
 .chat-flat-steps > .chat-tool > summary:hover { background: var(--fill-hover); }
+/* 平铺行展开后不留底色，只转箭头：行的左内边距是 0（图标压在正文左轴上），一上底色图标就贴着
+   色条左缘（实拍离 4px），下面缩进的结果块又比色条左窄 28、右窄 12，两块错位。
+   通用的 .chat-tool[open] 底色是给带内边距的卡片式工具行的。 */
+.chat-flat-steps > .chat-tool[open] > summary:not(:hover) { background: transparent; }
 .chat-flat-steps > .chat-tool > summary::-webkit-details-marker { display: none; }
 .chat-flat-steps > .chat-tool > summary > .chat-tool-icon { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 20px; color: var(--cc-text-faint); }
 .chat-flat-steps > .chat-tool > summary > .chat-tool-verb { flex: 0 0 auto; color: var(--cc-text-dim); font-weight: var(--cc-tool-verb-weight); }
@@ -6275,7 +6299,8 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .chat-subagent > summary::-webkit-details-marker { display: none; }
 .chat-subagent > summary {
   min-height: calc(34px * var(--cc-ui));
-  padding: 0 var(--sp-12);
+  /* 左 13：图标是 18px 的盒子、墨迹从 2px 处起，这样图标墨迹和卡内正文落在同一条线上（原 12，同一张卡里差 2）。 */
+  padding: 0 var(--sp-12) 0 var(--sp-13);
   display: flex;
   align-items: center;
   gap: var(--sp-9);
@@ -6339,7 +6364,8 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
   letter-spacing: 0.02em;
 }
 /* 嵌套时间线自带外边距，容器只补两侧留白。 */
-.chat-subagent-body { padding: var(--sp-8) var(--sp-12) var(--sp-2); }
+/* 左右 16（扣掉卡自己的 1px 边框）：正文与审批卡文字同一条内容线（原 12，偏左 3）。 */
+.chat-subagent-body { padding: var(--sp-8) calc(var(--sp-16) - var(--hairline)) var(--sp-2); }
 .chat-subagent-hint { padding: var(--sp-8) var(--sp-4) var(--sp-12); color: var(--cc-text-faint); font-size: var(--text-xs); }
 /* 子任务时间线限高内滚：一个子任务可以有上百条，全铺开会把主对话推到几屏之外。
    50vh 留出足够上下文，又保证收起入口始终在同一屏内。 */
@@ -6532,8 +6558,10 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
   .chat-scroll { padding-left: max(12px, env(safe-area-inset-left, 0px)); padding-right: max(12px, env(safe-area-inset-right, 0px)); }
   .chat-compose { margin-bottom: var(--sp-12); width: calc(100% - 24px); }
   .chat-approval { width: calc(100% - 24px); }
-  .dock-workbar { width: calc(100% - 24px); padding: 0 var(--sp-8); }
-  .dock-work-panel { width: calc(100% - 20px); }
+  /* 停靠条内边距保持 16：胶囊左缘落在审批卡文字那条线上（原来窄窗收成 8，胶囊 x=28，
+     输入框外缘 20、卡内文字 36，哪条都没对上）。面板与输入框同宽（原 100% - 20px，左右各宽出 2）。 */
+  .dock-workbar { width: calc(100% - 24px); }
+  .dock-work-panel { width: calc(100% - 24px); }
   .chat-message.is-user, .chat-queued-turn { max-width: 88%; }
   /* 后台任务行：窄屏上「说明 · $ 命令 · 耗时」挤一行，说明和命令都被截成几个字。命令换到
      说明下方独占一行、与说明左对齐（对照 Kimi 的 tp-meta 在 640px 下 order:10 / 整宽）。 */
@@ -6797,7 +6825,8 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
    只留给链接与小指示物；等宽字形与底色已足够把路径/命令从正文里区分出来。 */
 .chat-md :not(pre) > code { padding: var(--sp-1) var(--sp-5); border-radius: var(--radius-sm); background: var(--fill-selected); color: var(--cc-text); font-family: var(--cc-mono); font-size: .88em; }
 /* 外框/底色归 .chat-md-pre 外壳（pre 恒由 CopyablePre 包着），这里只管内边距与横滚。 */
-.chat-md pre { margin: 0; padding: var(--sp-6) var(--sp-14) var(--sp-12); overflow-x: auto; }
+/* 左内边距 16（原 14）：代码与头行的语言名落在同一列各卡片的内容线上（卡片外缘 +16）。 */
+.chat-md pre { margin: 0; padding: var(--sp-6) var(--sp-14) var(--sp-12) var(--sp-16); overflow-x: auto; }
 /* 溢出的代码块可 Tab 聚焦（ChatMarkdown）：外壳 overflow:hidden 会裁掉外扩的焦点环，往里收。 */
 .chat-md-pre > pre:focus-visible { outline-offset: -2px; }
 .chat-md pre code { padding: 0; background: transparent; font-family: var(--cc-mono); font-size: var(--text-sm); line-height: var(--leading-body); }
@@ -6809,6 +6838,8 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .chat-md .chat-md-cell2 { display: inline-block; width: 2ch; text-align: center; }
 .chat-md .chat-md-cell1 { display: inline-block; width: 1ch; text-align: center; }
 .chat-md blockquote { margin: 0 0 var(--sp-12); padding: var(--sp-2) var(--sp-12); border-left: 2px solid var(--line-strong); color: var(--cc-text-dim); }
+/* 引用块里最后一段带着 .chat-md p 的 12px 下外边距，竖线下面比上面多出 12（实拍上 6 下 18）。 */
+.chat-md blockquote > :last-child { margin-bottom: 0; }
 .chat-md hr { margin: var(--sp-14) 0; border: 0; border-top: var(--hairline) solid var(--cc-border); }
 .chat-md a { color: var(--cc-accent-text); text-decoration: underline 2px var(--link-line); text-underline-offset: 3px; }
 .chat-md a:hover { text-decoration-color: var(--cc-brand-line); }
@@ -6826,6 +6857,8 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .chat-md table { margin: 0 0 var(--sp-12); border-collapse: collapse; font-size: .95em; display: block; overflow-x: auto; }
 .chat-md th, .chat-md td { padding: var(--sp-6) var(--sp-12); border: 0; border-bottom: var(--hairline) solid var(--cc-border); font-variant-numeric: tabular-nums; }
 .chat-md tbody tr:last-child td { border-bottom: 0; }
+/* 第一列左内边距 16：与同一列里各卡片的内容线对齐（原 12，表头比审批卡文字偏左 4）。 */
+.chat-md th:first-child, .chat-md td:first-child { padding-left: var(--sp-16); }
 /* 单元格不吃正文的「任意处断行」（.chat-text 的 overflow-wrap:anywhere）：窄屏上浏览器会把
    短列压到一个字宽，表头和提交号竖着排成一列（手机实拍）。改成只在词间断行、每列至少
    4em，内联代码不折行；整表放不下就横滑（table 已是 display:block + overflow-x:auto）。 */
@@ -6973,7 +7006,9 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 @media (hover: none), (max-width: 680px) { .chat-msg-nav { display: none; } }
 
 /* ? 快捷键速查表：双列 dl（组合键 / 描述）。 */
-.chat-shortcuts { width: min(460px, calc(100vw - 48px)); max-height: calc(100vh - 48px); box-sizing: border-box; overflow-y: auto; }
+/* 460 → 500：按键列加宽了 34（见 .chat-shortcuts-row dt），弹层跟着加宽，说明列保持原来的 270 左右，
+   最长的一条「打开命令面板（搜索会话、执行窗口命令）」不折行。 */
+.chat-shortcuts { width: min(500px, calc(100vw - 48px)); max-height: calc(100vh - 48px); box-sizing: border-box; overflow-y: auto; }
 .chat-shortcuts-list { display: flex; flex-direction: column; gap: var(--sp-8); margin: var(--sp-8) 0 0; }
 /* 分组标题「窗口 / 输入框」（i17：原先平铺丢了分组）。第二组起与上一组拉开间距。 */
 .chat-shortcuts-group + .chat-shortcuts-group { margin-top: var(--sp-14); }
@@ -6984,7 +7019,8 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .chat-drop-overlay { position: fixed; inset: 8px; z-index: var(--z-overlay); display: flex; align-items: center; justify-content: center; border: 2px dashed var(--line-strong); border-radius: var(--radius-lg); background: color-mix(in srgb, var(--cc-bg) 72%, transparent); pointer-events: none; }
 .chat-drop-overlay span { padding: var(--sp-8) var(--sp-11); border-radius: var(--radius-md); background: var(--cc-menu-bg); color: var(--cc-text); font-size: var(--text-xs); box-shadow: var(--shadow-md); }
 .chat-shortcuts-row { display: flex; align-items: baseline; gap: var(--sp-14); }
-.chat-shortcuts-row dt { flex: 0 0 156px; color: var(--cc-text-faint); margin: 0; text-align: right; }
+/* 156 → 190 并且不折行：最长的一组「Ctrl+Tab / Ctrl+Shift+Tab」约 180，原来折成两行而右边空着 195。 */
+.chat-shortcuts-row dt { flex: 0 0 190px; white-space: nowrap; color: var(--cc-text-faint); margin: 0; text-align: right; }
 .chat-shortcuts-row dd { flex: 1; margin: 0; color: var(--cc-text-dim); font-size: var(--text-sm); }
 .chat-shortcuts-row kbd { display: inline-block; min-width: 20px; box-sizing: border-box; padding: 1px var(--sp-5); border: 0; border-radius: var(--radius-xs); background: var(--fill-selected); text-align: center; line-height: 18px; color: var(--cc-text); font-size: var(--text-xs); font-family: inherit; }
 .settings-shortcuts { padding: var(--sp-14) var(--sp-16); }
@@ -7009,7 +7045,7 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 /* 代码块外壳（A+B 改版）：边框/圆角/底色归外壳，顶栏常驻「语言角标 + 复制」，pre 只管代码。
    顶栏在文档流里：此前绝对定位悬浮在右上角，触屏常显时压住首行代码（手机实拍）。 */
 .chat-md-pre { margin: 0 0 var(--sp-12); overflow: hidden; border: 0; border-radius: var(--radius-lg); background: var(--cc-code-bg); }
-.chat-md-pre-head { min-height: calc(32px * var(--cc-ui)); padding: var(--sp-4) var(--sp-6) 0 var(--sp-14); display: flex; align-items: center; gap: var(--sp-4); }
+.chat-md-pre-head { min-height: calc(32px * var(--cc-ui)); padding: var(--sp-4) var(--sp-6) 0 var(--sp-16); display: flex; align-items: center; gap: var(--sp-4); }
 .chat-md-lang { color: var(--cc-text-faint); font: var(--text-xs)/1.7 var(--cc-mono); text-transform: lowercase; }
 .chat-md-pre-head button { margin-left: auto; min-height: var(--btn-h-sm); padding: 0 var(--sp-8); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-faint); font-size: var(--text-xs); cursor: pointer; }
 .chat-md-pre-head button:hover { color: var(--cc-text); background: var(--fill-hover); }
@@ -7021,7 +7057,9 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 
 /* 同步中断的顶部细横幅：正文继续渲染缓存内容，只在上缘提示（整屏错误留给空列表）。
    基座同样取不透明 rgb(--cc-bg-rgb)——--cc-bg 带窗口不透明度，sticky 浮层会被穿透。 */
-.chat-sync-warn { position: sticky; top: 0; z-index: var(--z-sticky); margin: 0 var(--sp-14) var(--sp-8); padding: var(--sp-6) var(--sp-12); border: 0; border-radius: var(--radius-md); background: color-mix(in srgb, var(--cc-warn-vivid) 14%, var(--cc-bg)); color: var(--cc-warn-text); font-size: var(--text-xs); text-align: center; }
+/* 左右不再另加外边距：它在 .chat-scroll 里面，滚动区的左右留白已经是消息列（实拍多缩进 14，
+   横幅 x 290–982 而消息列 276–995）。 */
+.chat-sync-warn { position: sticky; top: 0; z-index: var(--z-sticky); margin: 0 0 var(--sp-8); padding: var(--sp-6) var(--sp-12); border: 0; border-radius: var(--radius-md); background: color-mix(in srgb, var(--cc-warn-vivid) 14%, var(--cc-bg)); color: var(--cc-warn-text); font-size: var(--text-xs); text-align: center; }
 /* 「同步中断」（C-18，轮询 IPC 连续失败）：比瞬时抖动的琥珀警告更重一档——通道断了，
    不是 agent 进程没了（那是状态徽标「已断开」的事），两者视觉也不共用。 */
 .chat-sync-warn.is-lost { background: color-mix(in srgb, var(--cc-err-vivid) 14%, var(--cc-bg)); color: var(--cc-fail-text); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cc-err-vivid) 70%, transparent); }
@@ -7081,7 +7119,9 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
    读作一张可选的列表。带勾选格的有圆点/方框交代，不加线。 */
 .chat-approval-options button:not(:has(> i)) { position: relative; }
 .chat-approval-options button:not(:has(> i)) + button:not(:has(> i))::before { content: ""; position: absolute; top: calc(-1 * var(--sp-1)); left: var(--copy-bleed, var(--sp-8)); right: var(--copy-bleed, var(--sp-8)); height: var(--hairline); background: var(--line-subtle); pointer-events: none; }
-.chat-approval-options i { width: 16px; height: 16px; flex: 0 0 auto; display: grid; place-items: center; margin-top: var(--sp-2); border: 0; box-shadow: inset 0 0 0 1px var(--line-strong); border-radius: var(--radius-xs); color: transparent; background: transparent; font: normal var(--text-xs)/1 sans-serif; }
+/* 没选中的圈、框用弱字色描边，不用分隔线色：--line-strong 是给分隔线的（浅色 15% 黑），
+   压在卡面上只有 1.37:1（浅）/ 1.69:1（深），看不出这里有个可以点的控件；可操作控件的轮廓要 3:1。 */
+.chat-approval-options i { width: 16px; height: 16px; flex: 0 0 auto; display: grid; place-items: center; margin-top: var(--sp-2); border: 0; box-shadow: inset 0 0 0 1px var(--cc-text-faint); border-radius: var(--radius-xs); color: transparent; background: transparent; font: normal var(--text-xs)/1 sans-serif; }
 .chat-approval-options .is-selected i { box-shadow: none; background: var(--cc-accent); color: var(--cc-on-accent); }
 .chat-approval-options.is-single i { border-radius: 50%; }
 .chat-approval-options.is-single .is-selected i::after { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--cc-on-accent); }
@@ -7989,7 +8029,11 @@ pre.chat-md-plain {
 .wt-opt-warn { display: flex; align-items: center; gap: var(--sp-8); flex-wrap: wrap; color: var(--cc-warn-text); }
 .wt-opt-btn { height: var(--btn-h-sm); padding: 0 var(--sp-8); border: var(--hairline) solid; border-radius: var(--radius-sm); font: inherit; font-size: var(--text-xs); cursor: pointer; white-space: nowrap; }
 .wt-opt-btn:disabled { opacity: .5; cursor: default; }
-.wt-setup { margin: 0 var(--sp-14) var(--sp-6); padding: var(--sp-8) var(--sp-12); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); font-size: var(--text-xs); color: var(--cc-text-dim); }
+/* 跟消息列走：它在 .chat-scroll 外面，左右外边距照抄滚动区的留白算式。原来是固定 14px，
+   1280 宽时比消息列左右各凸出 22（254–1018 对 276–995），窗口越宽越长，2560 宽时横贯两千像素。
+   内边距 16 与列内各卡片同一条内容线。 */
+.wt-setup { margin: 0 max(34px, calc((100% - var(--chat-col)) / 2)) var(--sp-6); padding: var(--sp-8) var(--sp-16); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); font-size: var(--text-xs); color: var(--cc-text-dim); }
+@media (max-width: 680px) { .wt-setup { margin-left: max(12px, env(safe-area-inset-left, 0px)); margin-right: max(12px, env(safe-area-inset-right, 0px)); } }
 .wt-setup.is-err { border-color: color-mix(in srgb, var(--cc-err-vivid) 70%, transparent); }
 .wt-setup.is-warn { border-color: color-mix(in srgb, var(--cc-warn-vivid) 70%, transparent); }
 .wt-setup-row { display: flex; align-items: center; gap: var(--sp-8); flex-wrap: wrap; }
