@@ -7915,8 +7915,6 @@ button.btn-primary:disabled { opacity: 1; background: var(--fill-selected); colo
 :root.platform-macos .chat-roster-layer { top: 0; }
 .chat-window.is-roster > .chat-body { visibility: hidden; }
 .chat-window.is-roster .chat-topbar .chat-sidebar-open { display: none; }
-/* 套了名单外壳后顶栏不再放应用图标：图标上也是一双眼睛，屏幕上只留黑轨上那一双。 */
-.roster-stage .chat-topbar .chat-app-logo { display: none; }
 /* 名单是一张 L1 内容面，和对话的内容面同一套外框。 */
 .roster { --roster-bg: var(--cc-panel-bg); flex: 1; min-width: 0; display: flex; flex-direction: column; margin: 0 8px 8px 8px; border-radius: var(--radius-lg); background: var(--roster-bg); box-shadow: 0 0 0 var(--hairline) var(--cc-border), var(--shadow-sm); overflow: hidden; }
 :root.platform-macos .roster { margin-top: 8px; }

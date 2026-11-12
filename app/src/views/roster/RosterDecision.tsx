@@ -20,12 +20,12 @@ const POLL_MS = 1000;
  * 待处理的行展开后的内容。能原位答的给卡片；答不了的（审批已经回到终端、CLI 自己画的提问）
  * 如实说明，由调用方给「进入现场」。返回 null 的 fallback 由 children 承担。
  */
-export function RosterDecision({ item, fallback, onEnter }: { item: Item; fallback: React.ReactNode; onEnter?: (id: number) => void }) {
+export function RosterDecision({ item, fallback, onEnter }: { item: Item; fallback: React.ReactNode; onEnter?: (id: number, takeover?: boolean) => void }) {
   if (item.pending_review === "gate") return <GateDecision item={item} fallback={fallback} />;
   return <ApprovalDecision item={item} fallback={fallback} onEnter={onEnter} />;
 }
 
-function ApprovalDecision({ item, fallback, onEnter }: { item: Item; fallback: React.ReactNode; onEnter?: (id: number) => void }) {
+function ApprovalDecision({ item, fallback, onEnter }: { item: Item; fallback: React.ReactNode; onEnter?: (id: number, takeover?: boolean) => void }) {
   const t = useT();
   const id = item.session.id;
   const [approval, setApproval] = useState<PendingApproval | null>(null);
@@ -50,7 +50,9 @@ function ApprovalDecision({ item, fallback, onEnter }: { item: Item; fallback: R
         if (dto.approval) { setAnswered(false); setElsewhere(false); }
         setAsked(true);
       })
-      .catch(() => { if (aliveRef.current) setAsked(true); });
+      // 没问到就不下结论：当成「问过了、表里没有」会把还在 Meowo 手里的审批说成「已回到终端」，
+      // 还摆出一排终端按键（做空审查第二轮，问题 4）。下一拍轮询再问。
+      .catch(() => {});
   }, [id]);
   useEffect(refresh, [refresh]);
   useVisibleInterval(refresh, POLL_MS);
@@ -135,7 +137,7 @@ function ApprovalDecision({ item, fallback, onEnter }: { item: Item; fallback: R
   );
 }
 
-function ExternalTerminalJump({ item, onTakeover }: { item: Item; onTakeover?: (id: number) => void }) {
+function ExternalTerminalJump({ item, onTakeover }: { item: Item; onTakeover?: (id: number, takeover?: boolean) => void }) {
   const t = useT();
   const [busy, setBusy] = useState(false);
   const [missed, setMissed] = useState(false);
@@ -158,8 +160,8 @@ function ExternalTerminalJump({ item, onTakeover }: { item: Item; onTakeover?: (
   return (
     <div className="roster-jump">
       <button type="button" className="roster-enter is-quiet" disabled={busy} onClick={jump}>{t.roster.jumpToTerminal}</button>
-      {/* 接管会结束外部那个进程：这里只把人带到现场，确认在那里的接管卡上做，不在名单上一键杀进程。 */}
-      {onTakeover && <button type="button" className="roster-enter is-quiet" onClick={() => onTakeover(item.session.id)}>{t.roster.takeover}</button>}
+      {/* 接管会结束外部那个进程：这里把人带到现场并把接管确认摆出来，确认在那里点，不在名单上一键杀进程。 */}
+      {onTakeover && <button type="button" className="roster-enter is-quiet" onClick={() => onTakeover(item.session.id, true)}>{t.roster.takeover}</button>}
       {missed && <span className="roster-note" role="status">{t.roster.jumpMissed}</span>}
     </div>
   );

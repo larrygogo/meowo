@@ -267,7 +267,7 @@ export type ChatShellBridge = {
   /** 名单要求切到某个会话。seq 每次请求加一，同一个 id 连点两次也算两次。
    *  draft：名单底部输入框里写给它的话，带进对话窗的输入框，由人在这里按发送——对话窗的发送
    *  有一整套守卫（子代理视图、实时屏幕判定、草稿暂存、排队键、发送队列），名单不另写一份。 */
-  request: { id: number; seq: number; draft?: string } | null;
+  request: { id: number; seq: number; draft?: string; takeover?: boolean } | null;
   /** 名单底部输入框「交代一个结果」：打开新建页并把这句话带进去。seq 同 request。 */
   newSession: { message: string; seq: number } | null;
   /** 名单顶部的入口：搜索（命令面板）、已完成、会话管理。这些页和弹层本来就长在对话窗里，
@@ -532,6 +532,7 @@ export function ChatWindow({ shell }: { shell?: ChatShellBridge } = {}) {
   const activeSessionRef = useRef(sessionId);
   const shellRef = useRef(shell);
   shellRef.current = shell;
+  const shellTakeoverRef = useRef<number | null>(null);
   useEffect(() => () => setShellCovered(false), []);
   // 会话 A→B→A 也必须作废 A 的旧操作；只比 id 会让旧发送清掉返回 A 后的新草稿。
   const sessionEpochRef = useRef(0);
@@ -1966,23 +1967,44 @@ export function ChatWindow({ shell }: { shell?: ChatShellBridge } = {}) {
     if (!shellRequest) return;
     if (shellRequest.draft) {
       // 已经在这条会话上：直接放进输入框。要切过去：先放进它的草稿，切换时照常恢复。
-      if (shellRequest.id === activeSessionRef.current) setPrompt(shellRequest.draft);
-      else draftsRef.current.set(shellRequest.id, { prompt: shellRequest.draft, attachments: [] });
+      // 那边原来有没发出去的草稿（连同附件）：接在它后面，不盖掉（做空审查第二轮，问题 2）。
+      const said = shellRequest.draft;
+      const join = (kept: string) => (kept.trim() ? `${kept}\n\n${said}` : said);
+      if (shellRequest.id === activeSessionRef.current) setPrompt(join);
+      else {
+        const kept = draftsRef.current.get(shellRequest.id);
+        draftsRef.current.set(shellRequest.id, { ...kept, prompt: join(kept?.prompt ?? ""), attachments: kept?.attachments ?? [] });
+      }
     }
     selectSession(shellRequest.id);
+    // 「接管到 Meowo」：记下来，等这条会话读出来、确认它确实还在外部跑着，再把接管确认摆出来（见下）。
+    shellTakeoverRef.current = shellRequest.takeover ? shellRequest.id : null;
   // eslint-disable-next-line react-hooks/exhaustive-deps -- 只认 seq：同一个会话再点一次也要回到它
   }, [shellRequest?.seq]);
+  // 名单上点了「接管到 Meowo」：进到现场就把接管确认摆出来，人不用先发一句话才看到它
+  // （做空审查第二轮，问题 5）。接管要结束外部进程，这里只摆确认，不替人点。
+  useEffect(() => {
+    if (shellTakeoverRef.current !== sessionId || loading || history?.sessionId !== sessionId) return;
+    shellTakeoverRef.current = null;
+    if (externalRunning && history.ptyManaged === false && !history.background) setNeedsTakeover(true);
+  }, [sessionId, loading, history, externalRunning]);
   const shellNewSession = shell?.newSession ?? null;
   useEffect(() => {
-    if (shellNewSession) openNewSessionWith(shellNewSession.message);
+    if (!shellNewSession) return;
+    openNewSessionWith(shellNewSession.message);
+    // 新建页 / 管理页本来就开在名单底下时（上次交代完又回了名单），下面那条「页面一打开名单让位」
+    // 不会再触发：这里补说一遍，不然话进了被盖住的页面、名单纹丝不动（做空审查第二轮，问题 1）。
+    if (pageCovered) shellRef.current?.onReveal();
   // eslint-disable-next-line react-hooks/exhaustive-deps -- 只认 seq
   }, [shellNewSession?.seq]);
   const shellCommand = shell?.command ?? null;
   useEffect(() => {
     if (!shellCommand) return;
-    if (shellCommand.name === "search") setSwitcherOpen(true);
-    else if (shellCommand.name === "done") openAdminDone();
+    if (shellCommand.name === "search") { setSwitcherOpen(true); return; }
+    if (shellCommand.name === "done") openAdminDone();
     else openAdmin();
+    // 页面本来就开着时同理（见下面 newSession 那条的说明）。
+    if (pageCovered) shellRef.current?.onReveal();
   // eslint-disable-next-line react-hooks/exhaustive-deps -- 只认 seq
   }, [shellCommand?.seq]);
   // 新建页 / 管理页都长在对话窗里：它们一打开，名单让位。

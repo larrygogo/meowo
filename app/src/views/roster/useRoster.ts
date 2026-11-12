@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { getLiveSessionsPage, registerApprovalConsumer, unregisterApprovalConsumer } from "../../api";
 import { useBoardRefresh } from "../../hooks/useBoardRefresh";
+import { useVisibleInterval } from "../../hooks/useVisibleInterval";
 import { remoteUi } from "../../remoteMode";
 import { noteSessionMeta } from "../chat/historyCache";
 import { REMOTE_CONSUMER_HEARTBEAT_MS } from "../chat/useApprovalChannel";
@@ -48,13 +49,18 @@ export function useRosterRows(): { sessions: Item[] | null; rows: readonly Item[
  * 一直占着），每 20 秒续一次。active=false 时不持有（手机进了某个会话，名单页不在眼前）。
  */
 export function useRosterLease(active = true): void {
+  useApprovalLease(0, active);
+}
+
+/** 持有一份审批租约。sessionId = 0 是名单租约（见上）；> 0 是「正在看这条会话」的专属租约。 */
+export function useApprovalLease(sessionId: number, active: boolean): void {
   useEffect(() => {
     if (!active) return;
-    const consumerId = `roster-${Math.random().toString(36).slice(2)}`;
+    const consumerId = `roster-${sessionId}-${Math.random().toString(36).slice(2)}`;
     let disposed = false;
     let timer = 0;
     const register = (attempt: number) => {
-      registerApprovalConsumer(0, consumerId)
+      registerApprovalConsumer(sessionId, consumerId)
         .then(() => { if (disposed) void unregisterApprovalConsumer(consumerId).catch(() => {}); })
         .catch(() => {
           // 注册失败不重试到底：没有名单租约只是退回旧行为（来审批时切会话），不会丢审批。
@@ -63,7 +69,7 @@ export function useRosterLease(active = true): void {
     };
     register(0);
     const heartbeat = remoteUi()
-      ? window.setInterval(() => { void registerApprovalConsumer(0, consumerId).catch(() => {}); }, REMOTE_CONSUMER_HEARTBEAT_MS)
+      ? window.setInterval(() => { void registerApprovalConsumer(sessionId, consumerId).catch(() => {}); }, REMOTE_CONSUMER_HEARTBEAT_MS)
       : 0;
     return () => {
       disposed = true;
@@ -71,13 +77,35 @@ export function useRosterLease(active = true): void {
       window.clearInterval(heartbeat);
       void unregisterApprovalConsumer(consumerId).catch(() => {});
     };
-  }, [active]);
+  }, [active, sessionId]);
+}
+
+/** 半分钟一格的钟。行按内容记忆，内容不变的行不重渲染，而「多久之前」是渲染时现算的：恰恰是停着
+ *  等你的行最需要它在走（做空审查第二轮，问题 7）。把这一格当作行的一个属性传下去，格子变了才重画。
+ *  名单每次刷新也会重新取一次，页面隐藏时不走。 */
+export function useRosterClock(): number {
+  const [, tick] = useState(0);
+  useVisibleInterval(() => tick((n) => n + 1), 30_000);
+  return Math.floor(Date.now() / 30_000);
 }
 
 /** 眼睛站谁那里。记着它此刻站的会话：同样要紧的新来的不抢（见 attentionFocus）。 */
-export function useAttention(rows: readonly Item[]): Attention {
+export function useAttention(rows: readonly Item[], expanded: number | null = null): Attention {
   const stickyRef = useRef<number | null>(null);
-  const attention = useMemo(() => attentionFocus(rows, stickyRef.current), [rows]);
+  // 「跑完了你还没看」的行，点开就算看过：眼睛当场去下一行，不等后端把未读清掉（展开的行持有专属
+  // 租约，后端下一拍会清）。后端报它不再未读之后就从这里拿掉：以后它再跑完一轮，照样叫眼睛。
+  const seenRef = useRef(new Set<number>());
+  const seen = seenRef.current;
+  if (expanded != null) seen.add(expanded);
+  for (const id of [...seen]) {
+    if (id !== expanded && !rows.some((row) => row.session.id === id && row.unread)) seen.delete(id);
+  }
+  const seenKey = [...seen].join(",");
+  const attention = useMemo(
+    () => attentionFocus(seen.size ? rows.map((row) => (row.unread && seen.has(row.session.id) ? { ...row, unread: false } : row)) : rows, stickyRef.current),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- seen 是 ref 里的集合，内容变化由 seenKey 代表
+    [rows, seenKey],
+  );
   stickyRef.current = attention.id;
   return attention;
 }

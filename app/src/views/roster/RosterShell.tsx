@@ -24,11 +24,13 @@ import { cardTone, fmtShortAgo } from "../sticker/helpers";
 import { UNNAMED_SESSION_SENTINEL, type Item } from "../sticker/types";
 import { RosterComposer } from "./RosterComposer";
 import { RosterDecision } from "./RosterDecision";
-import { useAttention, useEyesY, useRosterLease, useRosterRows } from "./useRoster";
+import { useApprovalLease, useAttention, useEyesY, useRosterClock, useRosterLease, useRosterRows } from "./useRoster";
 
 // 速览只在点开一行之后才用得上，而且本来就要等一次读取：拆成单独的分包，不压在主窗口首屏的
 // 那一包里（打包实测：不拆时对话窗这一包比改前大 3.05%，预算是 3%）。
-const RosterGlance = lazy(() => import("./RosterGlance").then((m) => ({ default: m.RosterGlance })));
+// 分包拿不到（手机页走网络：资产陈旧、网络抖一下）就不摆这一块，下面的话和「进入现场」照常；
+// 不接住的话 React.lazy 把错误抛到窗口级错误页，点开一行整个窗口就没了（做空审查第二轮，问题 3）。
+const RosterGlance = lazy(() => import("./RosterGlance").then((m) => ({ default: m.RosterGlance })).catch(() => ({ default: () => null })));
 
 /** 眼睛朝右看着那一行。 */
 export const GAZE_ROW = { x: 1, y: 0 };
@@ -50,7 +52,7 @@ function DesktopRoster() {
   const { sessions, rows } = useRosterRows();
   const [view, setView] = useState<"roster" | "scene">(() => (startsOnRoster() ? "roster" : "scene"));
   const [expanded, setExpanded] = useState<number | null>(null);
-  const [sceneId, setSceneId] = useState(0);
+  const [sceneId, setSceneIdState] = useState(0);
   const [request, setRequest] = useState<ChatShellBridge["request"]>(null);
   const [newSession, setNewSession] = useState<ChatShellBridge["newSession"]>(null);
   const [command, setCommand] = useState<ChatShellBridge["command"]>(null);
@@ -89,9 +91,15 @@ function DesktopRoster() {
     if (view === "roster" && sessions.length === 1) setView("scene");
   }, [sessions, view]);
 
-  const enter = useCallback((id: number) => {
+  // 对话窗换了会话（比如在管理页里点了一条）：人已经落在某个现场里，之后再开管理页点「返回」
+  // 该回那个现场，不是名单。
+  const setSceneId = useCallback((id: number) => {
     pageFromRosterRef.current = false;
-    setRequest((prev) => ({ id, seq: (prev?.seq ?? 0) + 1 }));
+    setSceneIdState(id);
+  }, []);
+  const enter = useCallback((id: number, takeover = false) => {
+    pageFromRosterRef.current = false;
+    setRequest((prev) => ({ id, seq: (prev?.seq ?? 0) + 1, ...(takeover ? { takeover: true } : null) }));
     setView("scene");
   }, []);
   const backToRoster = useCallback(() => {
@@ -104,7 +112,7 @@ function DesktopRoster() {
 
   // 名单里眼睛站在名单行旁边；现场里站在对话窗侧栏那一行（名单缩成的窄列）旁边。行被折叠或
   // 滚出去时停在「回到名单」旁边、神态不变（取舍 4）。
-  const attention = useAttention(rows);
+  const attention = useAttention(rows, expanded);
   const shellRef = useRef<HTMLDivElement>(null);
   const backRef = useRef<HTMLButtonElement>(null);
   const eyesY = useEyesY(
@@ -140,7 +148,7 @@ function DesktopRoster() {
       pageFromRosterRef.current = false;
       backToRoster();
     },
-  }), [view, request, newSession, command, backToRoster]);
+  }), [view, request, newSession, command, backToRoster, setSceneId]);
   // 元素本身也要稳住：每次渲染新建一个 <ChatWindow> 元素，React 照样会重渲染它。
   const chat = useMemo(() => <ChatWindow shell={shell} />, [shell]);
 
@@ -222,7 +230,7 @@ type RosterListProps = {
   expanded: number | null;
   gitBadges: GitBadgeStore;
   onToggle: (id: number) => void;
-  onEnter: (id: number) => void;
+  onEnter: (id: number, takeover?: boolean) => void;
 };
 const RosterContext = createContext<RosterListProps | null>(null);
 /** 盖在对话窗里的那一层：自己从 context 取名单数据，对话窗不知道名单变了。元素是模块级常量。 */
@@ -235,6 +243,7 @@ const ROSTER_OVERLAY = <RosterOverlay />;
 function RosterList({ rows, loaded, expanded, gitBadges, onToggle, onEnter, onSay, onNewSession, onCommand }: RosterListProps) {
   const t = useT();
   const target = expanded == null ? null : rows.find((row) => row.session.id === expanded) ?? null;
+  const clock = useRosterClock();
   return (
     <section className="roster" aria-label={t.roster.title}>
       <header className="roster-head" data-tauri-drag-region>
@@ -266,6 +275,7 @@ function RosterList({ rows, loaded, expanded, gitBadges, onToggle, onEnter, onSa
             key={item.session.id}
             item={item}
             open={expanded === item.session.id}
+            clock={clock}
             gitBadges={gitBadges}
             onToggle={onToggle}
             onEnter={onEnter}
@@ -285,18 +295,20 @@ function RosterList({ rows, loaded, expanded, gitBadges, onToggle, onEnter, onSa
 
 /** 一行。后端每次刷新给的都是新对象：按内容比，没变的行不重渲染（12 行里通常只有在跑的几行在变）。 */
 export const RosterItem = memo(RosterItemView, (a, b) => (
-  a.open === b.open && a.gitBadges === b.gitBadges && a.onToggle === b.onToggle && a.onEnter === b.onEnter && a.onPrefetch === b.onPrefetch
+  a.open === b.open && a.clock === b.clock && a.gitBadges === b.gitBadges && a.onToggle === b.onToggle && a.onEnter === b.onEnter && a.onPrefetch === b.onPrefetch
   && (a.item === b.item || JSON.stringify(a.item) === JSON.stringify(b.item))
 ));
 
 function RosterItemView({ item, open, gitBadges, onToggle, onEnter, onPrefetch }: {
+  /** 半分钟一格的钟（useRosterClock）：只为让「多久之前」跟着走，组件里不读它。 */
+  clock?: number;
   /** 这一行多半接下来要进现场：提前把它的首屏读起来（手机页用，点进去不用再等一次整读）。 */
   onPrefetch?: (id: number) => void;
   item: Item;
   open: boolean;
   gitBadges: GitBadgeStore;
   onToggle: (id: number) => void;
-  onEnter: (id: number) => void;
+  onEnter: (id: number, takeover?: boolean) => void;
 }) {
   const t = useT();
   const id = item.session.id;
@@ -308,6 +320,9 @@ function RosterItemView({ item, open, gitBadges, onToggle, onEnter, onPrefetch }
     ? item.error_label
     : tone === "running" ? activityText(item.current_activity, t) ?? item.preview : item.preview ?? item.last_ai_text ?? activityText(item.current_activity, t);
   const said = item.last_ai_text ?? item.preview;
+  // 展开着的这一行算「正在看」：持有它的专属租约，后端据此清掉「跑完没看」的未读（眼睛才会去下一行），
+  // 也不再为它弹系统通知——决定单就在眼前。收起即注销；名单租约还在，它挂着的审批不会被退回终端。
+  useApprovalLease(id, open && id > 0);
   return (
     <div className={`roster-item is-${tone}${open ? " is-open" : ""}`} role="listitem" data-session-id={id}>
       <button
