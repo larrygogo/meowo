@@ -7574,6 +7574,10 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .isl-btn.is-ghost.is-icon { width: 26px; padding: 0; }
 /* 极简模式开着：钮留一档底色 + 正文色，和「选中只用中性底」同一口径。 */
 .isl-btn.is-ghost.is-icon.is-on { background: var(--isl-track); color: var(--isl-text); }
+/* 标题行最右的图标钮：看得见的是图标，不是 26px 的透明热区。往右挪 7px（热区 26 − 图标墨迹 12，各一半），
+   图标墨迹右缘就和行尾「打开」胶囊的右缘在一条线上（原来图标 597、胶囊 605，差 8px，island-panel 实量）。
+   悬停底会伸出内容列 7px，面板右内边距 22px（翻页时 44px）放得下。 */
+.isl-panel-head > .isl-btn.is-ghost.is-icon:last-of-type { margin-right: -7px; }
 
 /* 展开面板：标题行（标题 · 日期时间 ｜ 四个动作）+ 每页三条会话 / 额度页 + 分页圆点。 */
 .isl-panel {

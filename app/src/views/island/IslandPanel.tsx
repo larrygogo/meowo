@@ -16,8 +16,10 @@ import { icChevronDown, icPlus, icStrip } from "../../icons/glyphs";
 
 /** 极简模式图标：一条贴顶的细线。 */
 function StripIcon() {
+  // 14：这个字形在 24 格里只画到 2..22，按 12 画墨迹只有 10px，比旁边对话、设置两个图标（墨迹 12px）小一号
+  // （island-panel 实量）；对话图标也是 14。
   return (
-    <Icon glyph={icStrip} size={12} />
+    <Icon glyph={icStrip} size={14} />
   );
 }
 
