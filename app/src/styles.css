@@ -4627,6 +4627,11 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
    按钮被撑高（qa-side-batch 英文实拍）：改成整段不折、放不下的按钮换到下一行。 */
 .chat-sidebar-batch { flex-wrap: wrap; row-gap: var(--sp-6); }
 .chat-sidebar-batch > * { white-space: nowrap; }
+/* 折行只是兜底，常见情况要一行放下：英文把「Exit selection」改成「Cancel」之后三段仍比 240 宽侧栏
+   多出 0.1px（量到需要 208.1px，可用 208px），第三个按钮照样掉到第二行。段间距和按钮左右内边距
+   各收一档（8→6），英文两位数的计数也放得下。 */
+.chat-sidebar-batch { column-gap: var(--sp-6); }
+.chat-sidebar-batch button { padding: 0 var(--sp-6); }
 /* 对话内容全文搜索区段(侧栏搜索的第二段)。 */
 .chat-sidebar-deep { border-top: var(--hairline) solid var(--line-subtle); margin-top: var(--sp-6); padding-top: var(--sp-4); }
 /* 「对话内容命中」小标题和「会话」小标题同一条左缘（16）；命中项的标题和上面会话行的标题同列：
@@ -6077,12 +6082,13 @@ button.scm-check-name:hover { text-decoration: underline; }
 /* dock 里有待拍板卡时，面板不再浮在它上面，改成排在卡片和胶囊行之间、挤占高度：原先面板从胶囊行
    向上弹，正好盖住卡片的下半张（qa-lead-panel 1280×800：面板 y=436–626，卡片 159–618，后两个选项、
    意见框、「提交」全被盖住），想对着验收清单做决定时看不到选项。挤占之后卡片按既有规则自己缩小、
-   卡内滚动，「提交」在卡片底部的按钮行里始终可见；卡片的收缩权重调大，先缩卡片，缩到下限（104px）
-   才轮到面板，输入框不会被挤出窗口。限高不再读 --dock-panel-room：那是给浮层量的（锚点到标题栏），
+   卡内滚动，「提交」在卡片底部的按钮行里始终可见；高度不够时卡片和面板按各自高度的比例一起缩
+   （卡片下限 104px，面板可以缩到 0），输入框不会被挤出窗口（1280×560、620×460 实测输入框完整）。
+   试过让卡片先缩到下限再轮到面板：矮窗里卡片只剩标题和按钮、选项全看不到，不如两边各让一些。
+   限高不再读 --dock-panel-room：那是给浮层量的（锚点到标题栏），
    面板进了文档流再读它会自己影响自己。没有待拍板卡时照旧是浮层。 */
 .chat-dock:has(> .lead-gate-card) > .dock-work-anchor { height: auto; min-height: 0; flex-shrink: 1; display: flex; flex-direction: column; align-items: center; }
 .chat-dock:has(> .lead-gate-card) > .dock-work-anchor > .dock-work-panel { position: relative; left: auto; bottom: auto; transform: none; flex: 0 1 auto; min-height: 0; max-height: min(300px, 50vh); }
-.chat-dock:has(> .dock-work-anchor) > .lead-gate-card { flex-shrink: 1000; }
 .dock-work-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-10); padding: var(--sp-12) var(--sp-12) 0 var(--sp-16); }
 .dock-work-title { display: inline-flex; align-items: center; gap: var(--sp-6); color: var(--cc-text); font-size: var(--text-sm); font-weight: 600; }
 .dock-work-title-icon { flex: 0 0 auto; color: var(--cc-text-dim); }
