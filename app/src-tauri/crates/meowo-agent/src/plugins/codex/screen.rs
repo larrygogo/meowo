@@ -44,8 +44,16 @@ pub(super) static RULES: &[ScreenRule] = &[
             // 0.166.0：pager_overlay.rs 的提示只剩按键 + ` to scroll` / ` to page` / ` to jump`
             // 三段（codex.exe 字符串紧挨 `tui\src\pager_overlay.rs`），`q to quit` 与
             // `esc to edit prev` 在二进制里 0 处（research-cli-drift X6，2026-11-12）。
-            // 三段同时出现才算，按键字形由运行时拼，不写进规则。
-            Matcher::Contains(&[" to scroll", " to page", " to jump"]),
+            // 每段都要连着按键字形：只认三段说明时，正文里同时出现 to scroll / to page / to jump
+            // 就被当成覆盖层（优先级 1000 带 hold，盖过运行中状态行），做空第一轮 #9，2026-11-12。
+            // 字形取自 codex.exe 的按键显示表（`ente`/`pgup`/`pgdn`/`spac` 内联常量，方向键是箭头，
+            // home/end 按小写名），键之间用 `/` 连（紧挨三段说明的 `/` 常量）。各段单独成行也认：
+            // 窄窗会把底栏折行。
+            Matcher::All(&[
+                Matcher::LineRegex(r"\x{2191}\s*/\s*\x{2193} to scroll\b"),
+                Matcher::LineRegex(r"\bpgup\s*/\s*pgdn to page\b"),
+                Matcher::LineRegex(r"\bhome\s*/\s*end to jump\b"),
+            ]),
         ]),
     )
     .hold(),

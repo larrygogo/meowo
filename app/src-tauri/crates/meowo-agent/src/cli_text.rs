@@ -11,6 +11,13 @@
 //!   由插件给一条真实输出样例和要搜的静态片段；运行时拼出来、程序文件里没有原样的字面量，
 //!   也在这里给替代片段或说明。测试保证每条声明都对得上现行规则（规则改了声明没改就失败），
 //!   并保证声明完整的插件每条正则规则都有样例。
+//! - **分段近邻**（[`CliTextDep::near`]）：运行时拼接、整句没有原样的文案，给几个静态片段和最大
+//!   间距，脚本要求它们在程序文件里相距不超过这个字节数。只搜一段泛词（`interrupt`、` to page`）
+//!   哪个程序文件都能命中，永远报「找到」；整句又搜不到，只好标「不搜」（做空第一轮 #7，
+//!   2026-11-12：26 条不搜里有 opencode `esc interrupt` 这类本轮正好漂移过的）。
+//! - **记录格式**（[`CliTextDep::record`]）：transcript / wire / rollout 的事件名与字段、
+//!   `--version` 首行格式。它们不是屏幕规则，却同样随 CLI 升级漂移（kimi `plan_mode.cancel`、
+//!   codex 版本行 `codex-cli` 前缀都是用户先撞上的，research-cli-drift K1/X2）。
 //!
 //! `cargo test -p meowo-agent --lib` 把清单写到 `app/src/generated/cli-text-deps.json`，
 //! CI 校验无 diff（与 ts-rs 契约同一套机制）。
@@ -37,6 +44,11 @@ pub struct CliTextDep {
     pub evidence: &'static str,
     /// 旧版兼容规则：当前版本程序文件里没有是正常的（老版本用户还在，规则不删）。
     pub legacy: bool,
+    /// 分段近邻：这些片段都在、且相距不超过 `max_gap` 字节才算找到（`needle` 此时为空）。
+    /// 片段两端可带 `"`，要求它是 JS 字符串字面量（`"esc "` 不会命中 `"escape"`）；去掉引号后
+    /// 每段都要出现在样例里。
+    pub parts: &'static [&'static str],
+    pub max_gap: usize,
 }
 
 impl CliTextDep {
@@ -52,7 +64,40 @@ impl CliTextDep {
             sample,
             evidence,
             legacy: false,
+            parts: &[],
+            max_gap: 0,
         }
+    }
+
+    /// 运行时拼接的文案：各段都在且相距不超过 `max_gap` 字节。间距取本机程序文件实测值的
+    /// 一倍余量（evidence 写明实测值），太宽就退化成「各自在」，失去意义。
+    pub const fn near(
+        rule: &'static str,
+        parts: &'static [&'static str],
+        max_gap: usize,
+        sample: &'static str,
+        evidence: &'static str,
+    ) -> Self {
+        Self {
+            rule,
+            needle: "",
+            sample,
+            evidence,
+            legacy: false,
+            parts,
+            max_gap,
+        }
+    }
+
+    /// 记录格式依赖：`rule` 写成 `record:<名字>`，`needle` 是 Meowo 解析时认的事件名/字段/前缀，
+    /// `sample` 是一行真实记录。测试要求 `needle` 确实出现在插件源码里（解析器还在用它）。
+    pub const fn record(
+        rule: &'static str,
+        needle: &'static str,
+        sample: &'static str,
+        evidence: &'static str,
+    ) -> Self {
+        Self::new(rule, needle, sample, evidence)
     }
 
     /// 标成旧版兼容。
@@ -71,6 +116,22 @@ pub struct ManifestEntry {
     pub legacy: bool,
     /// 取证出处或不搜的理由。
     pub note: String,
+    /// 分段近邻的片段与最大间距（字节）；空 = 按 `needle` 整串搜。
+    pub parts: Vec<String>,
+    pub max_gap: usize,
+}
+
+impl ManifestEntry {
+    fn from_dep(d: &CliTextDep) -> Self {
+        Self {
+            rule: d.rule.to_string(),
+            needle: d.needle.to_string(),
+            legacy: d.legacy,
+            note: d.evidence.to_string(),
+            parts: d.parts.iter().map(|p| p.to_string()).collect(),
+            max_gap: d.max_gap,
+        }
+    }
 }
 
 /// 一条规则的可检查形态。
@@ -241,25 +302,17 @@ pub fn manifest(p: &dyn crate::AgentPlugin) -> Vec<ManifestEntry> {
                 needle: literal.to_string(),
                 legacy: false,
                 note: String::new(),
+                parts: Vec::new(),
+                max_gap: 0,
             });
         }
-        for d in overrides {
-            out.push(ManifestEntry {
-                rule: d.rule.to_string(),
-                needle: d.needle.to_string(),
-                legacy: d.legacy,
-                note: d.evidence.to_string(),
-            });
-        }
+        out.extend(overrides.into_iter().map(ManifestEntry::from_dep));
     }
-    for d in deps.iter().filter(|d| !d.rule.starts_with("literal:")) {
-        out.push(ManifestEntry {
-            rule: d.rule.to_string(),
-            needle: d.needle.to_string(),
-            legacy: d.legacy,
-            note: d.evidence.to_string(),
-        });
-    }
+    out.extend(
+        deps.iter()
+            .filter(|d| !d.rule.starts_with("literal:"))
+            .map(ManifestEntry::from_dep),
+    );
     out
 }
 
@@ -287,10 +340,70 @@ mod tests {
         }
     }
 
+    /// 插件目录下的源码（不含声明文件本身），小写：记录格式依赖要在这里找到解析器在用的字符串。
+    fn plugin_source_lower(plugin: &str) -> String {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src/plugins")
+            .join(plugin);
+        let mut body = String::new();
+        for f in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            if f.file_name() != "cli_text.rs" {
+                body.push_str(&std::fs::read_to_string(f.path()).unwrap_or_default());
+            }
+        }
+        body.to_lowercase()
+    }
+
+    /// 片段去掉两端的 `"`（那只是要求它是 JS 字符串字面量），剩下的是样例里该有的文字。
+    fn part_text(part: &str) -> &str {
+        part.trim_matches('"')
+    }
+
     #[test]
     fn declared_deps_match_live_rules() {
         for p in crate::registry::all() {
             for d in p.cli_text_deps() {
+                if !d.parts.is_empty() {
+                    assert!(
+                        d.needle.is_empty() && d.max_gap > 0,
+                        "{} 的 `{}`：分段近邻不再给整串 needle，且要给最大间距",
+                        p.id(),
+                        d.rule
+                    );
+                    for part in d.parts {
+                        assert!(
+                            d.sample
+                                .to_lowercase()
+                                .contains(&part_text(part).to_lowercase()),
+                            "{} 的 `{}`：片段 {part:?} 不在样例里",
+                            p.id(),
+                            d.rule
+                        );
+                    }
+                }
+                if d.rule.starts_with("record:") {
+                    let needle = d.needle.to_lowercase();
+                    assert!(
+                        !needle.is_empty(),
+                        "{} 的 `{}` 要给搜索片段",
+                        p.id(),
+                        d.rule
+                    );
+                    assert!(
+                        d.sample.to_lowercase().contains(&needle),
+                        "{} 的 `{}`：片段不在样例里",
+                        p.id(),
+                        d.rule
+                    );
+                    assert!(
+                        plugin_source_lower(p.id().as_str()).contains(&needle),
+                        "{} 的 `{}`：插件源码里已不用 {:?}，解析器改了清单也要改",
+                        p.id(),
+                        d.rule,
+                        d.needle
+                    );
+                    continue;
+                }
                 let rule = resolve(*p, d.rule).unwrap_or_else(|| {
                     panic!(
                         "{} 的清单条目 `{}` 指向的规则已不存在：规则改了，清单也要改",
@@ -313,7 +426,7 @@ mod tests {
                     d.needle
                 );
                 assert!(!d.evidence.is_empty(), "{} 的 `{}` 缺出处", p.id(), d.rule);
-                if d.needle.is_empty() {
+                if d.needle.is_empty() && d.parts.is_empty() {
                     assert!(
                         d.evidence.len() > 8,
                         "{} 的 `{}` 不搜程序文件，要写明理由",
@@ -379,6 +492,11 @@ mod tests {
     }
 
     fn rule_text_for_location(p: &dyn crate::AgentPlugin, rule: &str) -> Option<String> {
+        if rule.starts_with("record:") {
+            // 指向解析器里认这个片段的那一行。
+            let dep = p.cli_text_deps().iter().find(|d| d.rule == rule)?;
+            return Some(dep.needle.to_string());
+        }
         if let Some(l) = rule.strip_prefix("literal:") {
             return Some(format!("\"{l}\""));
         }
@@ -407,10 +525,15 @@ mod tests {
                     let at = rule_text_for_location(*p, &e.rule)
                         .map(|t| locate(&src, id, &t))
                         .unwrap_or_else(|| locate(&src, id, "\u{0}"));
-                    serde_json::json!({
+                    let mut row = serde_json::json!({
                         "rule": e.rule, "needle": e.needle, "legacy": e.legacy,
                         "note": e.note, "source": at,
-                    })
+                    });
+                    if !e.parts.is_empty() {
+                        row["parts"] = serde_json::json!(e.parts);
+                        row["max_gap"] = serde_json::json!(e.max_gap);
+                    }
+                    row
                 })
                 .collect();
             agents.push(serde_json::json!({

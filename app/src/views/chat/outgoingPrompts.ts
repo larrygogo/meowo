@@ -230,11 +230,18 @@ export function reconcileOutgoing(
     // 新会话的第一句话：记录里出现任何用户消息就说明它已提交（会话从它开始），不必等超时；
     // 第一句被翻页挤出加载窗口时文本对不上，也照样收起，但不占用候选（留给后发的消息认领）。
     // received 同理：CLI 已收下，落盘的正文却对不上，那条就是它被改写后的样子。
-    const overtaken = (prompt.phase === "uncertain" || prompt.phase === "received" || !!prompt.anchor.fresh) && candidates.length > 0;
-    // 加载窗口整个落在发送之后：看不见这条话，但 CLI 在那之后开了工（见 windowStartsAfter）。
+    // 加载窗口整个落在发送之后：看不见这条话（见 windowStartsAfter）。看不见只说明「不能判未确认」，
+    // 不说明送达了：agent 还在跑上一回合时，窗口里全是发送之后的 assistant 记录，这句却可能还卡在
+    // CLI 输入框里没提交（做空第一轮 #5，2026-11-12：修前 pending/uncertain 一律当送达收起，
+    // useOutgoingUpkeep 的「停在终端输入框里」探测没机会触发）。所以只有已有送达证据的
+    // received / accepted 才在看不见时收起；pending 停住不计时，uncertain 照旧挂着。
     const unseen = prompt.phase !== "sending" && !prompt.anchor.fresh
       && windowStartsAfter(evidence.items, prompt.anchor.lastItemAt);
-    if (match || hookMatch || overtaken || unseen) {
+    const deliveredUnseen = unseen && (prompt.phase === "received" || prompt.phase === "accepted");
+    // 看不见的 pending 不会超时转 uncertain，后面又有新消息落盘时同样按「被后续事实盖过」收起。
+    const overtaken = (prompt.phase === "uncertain" || prompt.phase === "received" || !!prompt.anchor.fresh || unseen)
+      && candidates.length > 0;
+    if (match || hookMatch || overtaken || deliveredUnseen) {
       if (match) used.add(match.id);
       changed = true;
       if (prompt.kind === "queued") next.push({ ...prompt, phase: "inserted", settledAt: evidence.now });
@@ -262,7 +269,8 @@ export function reconcileOutgoing(
       next.push({ ...prompt, phase: prompt.kind === "queued" ? "accepted" : "received" });
       continue;
     }
-    if (prompt.kind === "echo" && prompt.phase === "pending" && evidence.now - prompt.at > ECHO_CONFIRM_MS) {
+    // 看不见的窗口不下「未确认」的结论（11-01 实拍）。是否卡在输入框由 useOutgoingUpkeep 读画面判。
+    if (prompt.kind === "echo" && prompt.phase === "pending" && !unseen && evidence.now - prompt.at > ECHO_CONFIRM_MS) {
       changed = true;
       next.push({ ...prompt, phase: "uncertain" });
       continue;

@@ -10,6 +10,14 @@
 // 规则生成（meowo-agent/src/cli_text.rs），不手抄。只读：除了 `<cli> --version`（Meowo 启动时
 // 也这样探版本）不运行任何 CLI。
 //
+// 三种条目：
+// - 整串（needle）：程序文件里有原样的文案。
+// - 分段近邻（parts + max_gap）：运行时拼接的文案，各段都在且相距不超过 max_gap 字节才算找到。
+//   单搜一段泛词（`interrupt`、` to page`）哪个程序文件都有，永远报「找到」；整串又没有原样，
+//   以前只能标「不搜」（做空第一轮 #7，2026-11-12）。片段带 `"` 表示要求它是 JS 字符串字面量。
+// - 记录格式（rule 以 record: 开头）：transcript / wire / rollout 的事件名与字段、--version 首行格式，
+//   同样按整串搜。
+//
 // 用法：node app/scripts/cli-drift.mjs [--only claude,codex] [--json]
 // 退出码：有非旧版条目缺失时为 1。
 
@@ -112,7 +120,7 @@ function lowerAscii(buf) {
 }
 
 /** 同一句文案在程序文件里可能的几种存法：UTF-8、UTF-16LE（bun 字节码常量表）、JS 转义、弯撇号。 */
-function needleVariants(needle) {
+function needleVariants(needle, encoding) {
   const lower = needle.toLowerCase();
   const forms = new Set([lower]);
   if (lower.includes("'")) { forms.add(lower.replaceAll("'", "’")); forms.add(lower.replaceAll("'", "\\u2019")); }
@@ -121,19 +129,61 @@ function needleVariants(needle) {
   forms.add([...lower].map((c) => (c.charCodeAt(0) > 127 ? `\\u${hex(c, 4)}` : c)).join(""));
   forms.add([...lower].map((c) => (c.charCodeAt(0) > 255 ? `\\u${hex(c, 4)}` : c.charCodeAt(0) > 127 ? `\\x${hex(c, 2)}` : c)).join(""));
   const out = [];
-  for (const f of forms) { out.push(Buffer.from(f, "utf8")); out.push(Buffer.from(f, "utf16le")); }
+  for (const f of forms) {
+    if (encoding !== "utf16le") out.push(Buffer.from(f, "utf8"));
+    if (encoding !== "utf8") out.push(Buffer.from(f, "utf16le"));
+  }
   return out;
+}
+
+/** 片段在 buf 里所有出现位置（升序）。 */
+function positions(buf, variants) {
+  const out = [];
+  for (const v of variants) {
+    for (let at = buf.indexOf(v); at >= 0; at = buf.indexOf(v, at + 1)) out.push(at);
+  }
+  return out.sort((a, b) => a - b);
+}
+
+/** 有序数组里离 x 最近的距离。 */
+function nearest(sorted, x) {
+  let lo = 0;
+  let hi = sorted.length;
+  while (lo < hi) { const mid = (lo + hi) >> 1; if (sorted[mid] < x) lo = mid + 1; else hi = mid; }
+  let best = Infinity;
+  if (lo < sorted.length) best = sorted[lo] - x;
+  if (lo > 0) best = Math.min(best, x - sorted[lo - 1]);
+  return best;
+}
+
+/**
+ * 分段近邻：存在第一段的某次出现，其余每段都有一次出现离它不超过 gap 字节。UTF-8 与 UTF-16LE
+ * 分开算（同一份文案不会两种编码混存），UTF-16 的间距按两倍算。
+ */
+function partsNear(buf, parts, gap) {
+  for (const [encoding, scale] of [["utf8", 1], ["utf16le", 2]]) {
+    const lists = parts.map((part) => positions(buf, needleVariants(part, encoding)));
+    if (lists.some((list) => list.length === 0)) continue;
+    const [first, ...rest] = lists;
+    if (first.some((at) => rest.every((list) => nearest(list, at) <= gap * scale))) return true;
+  }
+  return false;
 }
 
 function scan(files, entries) {
   const found = new Map(entries.map((e) => [e, false]));
   const wanted = entries.filter((e) => e.needle).map((e) => [e, needleVariants(e.needle)]);
+  const near = entries.filter((e) => !e.needle && e.parts?.length);
   for (const file of files) {
     let buf;
     try { buf = lowerAscii(fs.readFileSync(file)); } catch { continue; }
     for (const [entry, variants] of wanted) {
       if (found.get(entry)) continue;
       if (variants.some((v) => buf.indexOf(v) >= 0)) found.set(entry, true);
+    }
+    // 近邻按单个文件算：bundle 里分在两个 chunk 的片段不算挨着。
+    for (const entry of near) {
+      if (!found.get(entry) && partsNear(buf, entry.parts, entry.max_gap)) found.set(entry, true);
     }
   }
   return found;
@@ -150,7 +200,7 @@ for (const agent of manifest.agents) {
   const found = scan(target.files, agent.entries);
   const rows = agent.entries.map((e) => ({
     ...e,
-    status: !e.needle ? "skip" : found.get(e) ? "found" : e.legacy ? "legacy-missing" : "missing",
+    status: !e.needle && !e.parts?.length ? "skip" : found.get(e) ? "found" : e.legacy ? "legacy-missing" : "missing",
   }));
   missingTotal += rows.filter((r) => r.status === "missing").length;
   report.push({ id: agent.id, name: agent.name, installed: true, version: ver, scanned: target.kind === "bundle" ? `${target.root}（${target.files.length} 个 JS 文件）` : target.files[0], declaredComplete: agent.declared_complete, rows });
@@ -167,10 +217,14 @@ if (asJson) {
     console.log(`   扫描：${r.scanned}`);
     if (!r.declaredComplete) console.log("   提示：该插件的正则规则还没声明样例，下面只含自动抽取的字面量");
     const count = (s) => r.rows.filter((x) => x.status === s).length;
-    console.log(`   找到 ${count("found")}，缺失 ${count("missing")}，旧版兼容 ${count("legacy-missing")}，不搜 ${count("skip")}`);
+    const kinds = `其中分段近邻 ${r.rows.filter((x) => x.parts?.length).length}、记录格式 ${r.rows.filter((x) => x.rule.startsWith("record:")).length}`;
+    console.log(`   找到 ${count("found")}，缺失 ${count("missing")}，旧版兼容 ${count("legacy-missing")}，不搜 ${count("skip")}（${kinds}）`);
     for (const row of r.rows) {
       if (row.status === "found") continue;
-      console.log(`   [${label[row.status]}] ${row.rule}${row.needle && row.needle !== row.rule.replace(/^literal:/, "") ? `（搜「${row.needle}」）` : ""}`);
+      const how = row.parts?.length
+        ? `（搜${row.parts.map((p) => `「${p}」`).join("")}相距 ≤${row.max_gap} 字节）`
+        : row.needle && row.needle !== row.rule.replace(/^(literal|record):/, "") ? `（搜「${row.needle}」）` : "";
+      console.log(`   [${label[row.status]}] ${row.rule}${how}`);
       console.log(`       规则位置：${row.source}`);
       if (row.note) console.log(`       说明：${row.note}`);
     }

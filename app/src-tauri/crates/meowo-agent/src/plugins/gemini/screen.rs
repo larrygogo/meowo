@@ -63,6 +63,11 @@ pub(super) static RULES: &[ScreenRule] = &[
     // （文本题、确认页）。提示行里的 `Esc to cancel` 会让下面的兜底把在等回答的会话判成
     // 运行中，所以本条要压过它（npm bundle 源码取证，2026-11-12，未实拍）。头行与提示行
     // 两个都要：只有头行可能是滚走的残影，只有提示行可能是别的对话框。
+    // 提示行只要求行首的 `Enter to select/submit`：DialogFooter 把各段用 ` · ` 连成一个 Text，
+    // 多题时是 `Enter to select · ←/→ to switch questions · Esc to cancel`（57 列）、文本题是
+    // `Enter to submit · Tab/Shift+Tab to switch questions · Esc to cancel`（67 列），框窄于此
+    // Ink 就按词折行，`Esc to cancel` 落到下一行。要求整串单行时窄窗认不出，退回兜底判成运行中
+    // （做空第一轮 #8，2026-11-12；0.65.0 bundle 的 AskUserDialog keyboardHints 取证）。
     ScreenRule::new(
         "ask_user_dialog",
         ScreenState::Blocked,
@@ -70,7 +75,7 @@ pub(super) static RULES: &[ScreenRule] = &[
         Region::WholeScreen,
         Matcher::All(&[
             Matcher::LineRegex(r"^\s*│\s*answer questions\b"),
-            Matcher::LineRegex(r"^\s*│\s*enter to (?:select|submit) · .*esc to cancel"),
+            Matcher::LineRegex(r"^\s*│\s*enter to (?:select|submit)\b"),
         ]),
     )
     .visible(),

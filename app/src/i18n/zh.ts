@@ -222,7 +222,7 @@ export const zh = {
     // 修复在后端进程内完成，没有「终端里的修复日志」可看——指向真实可行的下一步。
     repairFailed: "修复未生效，请重试或重装该 Agent",
     // 不叫人「去终端登录」（2026-11-12 第三轮 #13）：登录入口就在同一块提示里的「登录」按钮。
-    repairNeedLogin: "该 Agent 还没登录，登录后再点修复连接。",
+    repairNeedLogin: "Agent 还没登录。登录后再修复连接",
     repairNoReporter: "缺少组件 meowo-reporter，请重新安装 Meowo。",
     repairNotDetected: "未检测到该 Agent 的数据目录，请确认已安装。",
     newButton: "新建会话",
@@ -492,7 +492,7 @@ export const zh = {
     shortcutInterruptSend: "中断当前回合并发送",
     shortcutDeny: "拒绝待审批请求（输入框为空时，按两次确认）",
     shortcutInterrupt: "中断当前回合（输入框为空时，按两次确认）",
-    shortcutApproveDigit: "允许待审批请求，2 起为持久放行（焦点不在输入框时）",
+    shortcutApproveDigit: "允许待审批（焦点在输入框外）。2 起持久放行",
     shortcutSlashComplete: "选中斜杠命令补全",
     shortcutHistory: "取回上一条消息（输入框为空时）",
     shortcutSheet: "打开本速查表",
@@ -619,7 +619,7 @@ export const zh = {
     inputPlaceholderRemoteSteer: "发送会插入当前回合，不打断它",
     inputPlaceholderRemoteQueue: "发送后排队，当前任务结束再发",
     inputUnavailable: "接管后才能在这里发送",
-    sendBackgroundSession: "后台会话由 Agent 自己托管，这里只能发消息和结束",
+    sendBackgroundSession: "后台会话由 Agent 托管。这里只能发消息和结束",
     sendBackgroundKeysMovedYou: "后台会话不接受终端按键，请在这里直接发消息。",
     sendBackgroundQueued: "已发给后台会话。若它未处理，内容还在输入框，可直接重发。",
     sendBackgroundNoAttachments: "后台会话暂不支持附件，请只发文字。",
@@ -1036,7 +1036,7 @@ export const zh = {
     terminalStartFailed: "Agent 终端未能启动",
     terminalReadyTimeout: "等待 Agent 终端就绪超时",
     // 就绪等待的进度横幅（waitForTerminalReady 报送整秒）：秒数 + 「去终端页看」。
-    terminalWaitingReady: (seconds: number) => `正在等待 Agent 终端就绪，已等 ${seconds} 秒`,
+    terminalWaitingReady: (seconds: number) => `等待 Agent 终端就绪，已等 ${seconds} 秒`,
     // 一句说清现状与代价（用户实拍：两句长文把按钮挤到第二行）。点按钮后的确认框再写细节。
     sendNeedsTakeover: "会话在外部终端运行，接管会结束它",
     composerGateEnded: "会话已结束。恢复后即可继续对话。",
