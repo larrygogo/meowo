@@ -1224,6 +1224,66 @@ mod tests {
         );
     }
 
+    /// 做空第一轮 #8（2026-11-12）：提示行按框宽折行时也要认出。样本按 0.65.0 bundle
+    /// （interactiveCli-*.js 的 AskUserDialog keyboardHints + DialogFooter 用 ` · ` 连接）拼出，非实拍：
+    /// 多题选择 `Enter to select · ←/→ to switch questions · Esc to cancel`，多题文本
+    /// `Enter to submit · Tab/Shift+Tab to switch questions · Esc to cancel`，确认页
+    /// `Enter to submit · Tab/Shift+Tab to edit answers · Esc to cancel`。修前要求整串单行，窄窗
+    /// 下 `Esc to cancel` 折到下一行就落回兜底判运行中。
+    #[test]
+    fn gemini_065_ask_user_dialog_wrapped_and_multi_question() {
+        let frame = |body: &[&str]| {
+            let mut lines = vec![
+                "\u{280F} Waiting for user confirmation...",
+                "\u{256D}\u{2500}\u{2500}\u{2500}\u{2500}\u{256E}",
+                "\u{2502} Answer Questions              \u{2502}",
+                "\u{2502}\u{2500}\u{2500}\u{2500}\u{2500}\u{2502}",
+            ];
+            lines.extend_from_slice(body);
+            lines.push("\u{2570}\u{2500}\u{2500}\u{2500}\u{2500}\u{256F}");
+            snap(&lines)
+        };
+        let cases = [
+            // 多题选择，40 列框：导航段与取消段折到第二、三行。
+            frame(&[
+                "\u{2502} \u{2190} Q1 \u{2502} Q2 \u{2192}                   \u{2502}",
+                "\u{2502} Which database should we use?  \u{2502}",
+                "\u{2502} \u{25CF} 1.  PostgreSQL                \u{2502}",
+                "\u{2502}   2.  SQLite                    \u{2502}",
+                "\u{2502} Enter to select \u{00B7} \u{2190}/\u{2192} to switch  \u{2502}",
+                "\u{2502} questions \u{00B7} Esc to cancel       \u{2502}",
+            ]),
+            // 多题文本题，提示行折成两行。
+            frame(&[
+                "\u{2502} What should the table be named? \u{2502}",
+                "\u{2502} > users                         \u{2502}",
+                "\u{2502} Enter to submit \u{00B7} Tab/Shift+Tab to \u{2502}",
+                "\u{2502} switch questions \u{00B7} Esc to cancel \u{2502}",
+            ]),
+            // 确认页（多题答完），不折行。
+            frame(&[
+                "\u{2502} Review your answers:            \u{2502}",
+                "\u{2502} Q1 PostgreSQL                   \u{2502}",
+                "\u{2502} Enter to submit \u{00B7} Tab/Shift+Tab to edit answers \u{00B7} Esc to cancel \u{2502}",
+            ]),
+        ];
+        for s in &cases {
+            assert_eq!(
+                state_of(evaluate("gemini", s)),
+                Some((ScreenState::Blocked, "ask_user_dialog"))
+            );
+        }
+        // 正文里出现 Enter to select（没在框里、行首也不是它）不算。
+        let prose = snap(&[
+            "\u{2502} Answer Questions   \u{2502}",
+            "  Press Enter to select a file (esc to cancel, 3s)",
+        ]);
+        assert_ne!(
+            state_of(evaluate("gemini", &prose)).map(|(state, _)| state),
+            Some(ScreenState::Blocked)
+        );
+    }
+
     /// gemini 0.65 沙箱扩权审批（ToolConfirmationMessage 的 sandbox_expansion 分支，源码取证
     /// 2026-11-12）：问句 `To run [Shell], allow access to the following?` 在框内。
     #[test]

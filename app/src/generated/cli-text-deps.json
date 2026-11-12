@@ -1300,7 +1300,7 @@
           "needle": "esc to cancel",
           "note": "",
           "rule": "literal:esc to cancel",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/screen.rs:84"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/screen.rs:89"
         },
         {
           "legacy": false,
@@ -1342,7 +1342,7 @@
           "needle": "answer questions",
           "note": "0.65.0 bundle：表头 `Answer Questions`，底部提示 `Enter to select` 各段以 ` \\xB7 ` 连接，整串搜不到原样",
           "rule": "screen:ask_user_dialog",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/screen.rs:67"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/screen.rs:72"
         }
       ],
       "id": "gemini",
