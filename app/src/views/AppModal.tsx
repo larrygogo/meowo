@@ -4,8 +4,7 @@
 // Esc 关、Tab 焦点循环、挂载初始焦点、卸载归还焦点、背景 inert。
 import { useEffect, useRef, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import { pushEscLayer } from "../escLayers";
-
-const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+import { FOCUSABLE, restoreFocus, useFocusOrigin } from "../focusRestore";
 
 export function AppModal({
   label,
@@ -27,6 +26,8 @@ export function AppModal({
   const dlgRef = useRef<HTMLDivElement>(null);
   // 这次点击是不是从遮罩上按下去的（7S-5）。
   const downOnOverlayRef = useRef(false);
+  // 打开前的焦点在渲染阶段记（walkthrough P-2）：effect 里读到的已经是子元素 autoFocus 后的弹层按钮。
+  const prev = useFocusOrigin();
   // 注册 Esc 层（escLayers.ts）：弹层存续期间窗口级「Esc=拒绝审批」让位。
   useEffect(() => pushEscLayer(), []);
   useEffect(() => {
@@ -41,7 +42,6 @@ export function AppModal({
     for (const el of siblings) el.setAttribute("inert", "");
     // 初始焦点：子树的 autoFocus 已生效则不动；否则落到第一个可聚焦元素，没有可聚焦
     // 元素（如纯展示的快捷键表）则聚焦对话框本体，保证 Esc/Tab 有落点。
-    const prev = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     if (!dlg.contains(document.activeElement)) {
       (dlg.querySelector<HTMLElement>(FOCUSABLE) ?? dlg).focus();
     }
@@ -49,10 +49,11 @@ export function AppModal({
       for (const el of siblings) el.removeAttribute("inert");
       // 焦点仍在弹层内（或被清到 body）才归还给打开前的元素；点遮罩关闭时焦点已在别处，不抢。
       if (document.activeElement === document.body || dlg.contains(document.activeElement)) {
-        prev?.focus();
+        restoreFocus(prev);
       }
     };
-  }, []);
+  // prev 来自 useState 的初值，整个生命周期不变，这个 effect 仍只跑一次。
+  }, [prev]);
 
   const handleKeyDown = (e: ReactKeyboardEvent) => {
     onKeyDown?.(e);

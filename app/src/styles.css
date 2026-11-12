@@ -4362,6 +4362,10 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .shell-term-exit { position: absolute; left: 12px; right: 12px; bottom: 8px; z-index: calc(var(--z-raised) + 1); padding: var(--sp-6) var(--sp-10); border-radius: var(--radius-md); color: var(--term-fg-dim); background: rgba(35, 36, 33, 0.94); font-size: var(--text-xs); pointer-events: none; }
 /* 终端恒为深底，错误字取深色板的错误文字档，不跟主题。 */
 .shell-term-exit.is-error { color: #ff8580; }
+/* 退出条带「重启」（walkthrough P-13）：按钮要能点，整条不再穿透。 */
+.shell-term-exit.is-exited { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-6); pointer-events: auto; }
+.shell-term-exit.is-exited .scm-link-btn { margin-left: 0; }
+.shell-term-exit-hint { color: var(--term-fg-dim); opacity: 0.7; }
 /* 会话信息栏（同 Kimi Code 的 SessionInfoTabs）：面板收起时停靠在对话右侧，窄窗改成浮层。 */
 .session-info { display: flex; flex-direction: column; gap: var(--sp-16); padding: var(--sp-12) var(--sp-8); color: var(--cc-text); font-size: var(--text-sm); overflow-y: auto; }
 /* 宽度跟界面缩放走：150% 时字大了一半，240 定宽里「新建浏览器」「3 个文件有未提交…」都只剩省略号。 */
@@ -4727,6 +4731,17 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .scm-commit-btn:disabled, .scm-commit-btn.btn-primary:disabled { opacity: 1; background: var(--fill-selected); color: var(--cc-text-faint); cursor: default; }
 .scm-error { color: var(--cc-fail-text); font-size: var(--text-xs); overflow-wrap: anywhere; }
 .scm-notice { color: var(--cc-text-dim); font-size: var(--text-xs); }
+/* 提示行（PanelMessage.tsx）：文字、能点的下一步、关闭，一行放不下就折行。 */
+.scm-msg { display: flex; flex-wrap: wrap; align-items: center; column-gap: var(--sp-2); row-gap: var(--sp-2); }
+.scm-msg-text { flex: 0 1 auto; min-width: 0; }
+.scm-msg-close { flex: 0 0 auto; display: grid; place-items: center; width: 20px; height: 20px; margin-left: auto; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-faint); cursor: pointer; }
+.scm-msg-close:hover { background: var(--fill-hover); color: var(--cc-text); }
+/* 进行中 / 不能点：aria-disabled 而不是 disabled（第三轮设计准则：disabled 会把焦点踢到 body），外观同禁用。 */
+.scm-commit-btn[aria-disabled="true"], .scm-commit-btn.btn-primary[aria-disabled="true"] { opacity: 1; background: var(--fill-selected); color: var(--cc-text-faint); cursor: default; }
+.scm-icon-btn[aria-disabled="true"] { opacity: 0.4; cursor: default; }
+.scm-forge-btn[aria-disabled="true"] { opacity: 0.45; cursor: default; }
+.scm-link-btn[aria-disabled="true"] { opacity: 0.45; cursor: default; }
+.ns-btn[aria-disabled="true"] { opacity: 0.4; cursor: not-allowed; }
 /* 推送 / PR / CI / 合并（ForgeBar.tsx）：提交框下面一段，按钮和提交按钮同高，次要动作用描边款。 */
 .scm-forge { flex: 0 0 auto; display: flex; flex-direction: column; gap: var(--sp-8); padding: var(--sp-4) var(--sp-12) var(--sp-12); }
 .scm-forge-btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-6); height: calc(var(--btn-h-md) * var(--cc-ui)); padding: 0 var(--sp-10); border: 0; border-radius: var(--radius-md); background: var(--fill-selected); color: var(--cc-text); font: inherit; font-size: var(--text-sm); cursor: pointer; }
@@ -5317,6 +5332,7 @@ button.scm-check-name:hover { text-decoration: underline; }
 .chat-review-bar { order: 0; flex: 0 0 100%; display: flex; align-items: center; gap: var(--sp-8); padding: var(--sp-2) var(--sp-2) var(--sp-4); color: var(--cc-text-dim); font-size: var(--text-xs); }
 .chat-review-bar svg { flex: none; color: var(--cc-text-dim); }
 .chat-review-bar-label { flex: 1; min-width: 0; }
+.chat-review-bar .chat-review-bar-close { display: grid; place-items: center; width: var(--btn-h-sm); padding: 0; }
 .chat-review-bar button { height: var(--btn-h-sm); padding: 0 var(--sp-8); border: 0; border-radius: var(--radius-sm); background: var(--fill-selected); color: var(--cc-text); font: inherit; cursor: pointer; }
 .chat-review-bar button:hover { background: var(--fill-selected-hover); }
 .chat-attachments { width: 100%; display: flex; gap: var(--sp-7); overflow-x: auto; padding-bottom: var(--sp-2); order: 0; flex: 0 0 100%; }

@@ -25,13 +25,22 @@ function decodeBase64(data: string): Uint8Array {
  * 外层沿用 .managed-terminal 的类名：对话窗里 Ctrl+F、Alt+↑↓ 这些窗口级快捷键都按它
  * 判断「焦点在终端里就让位」，普通 shell 同样需要把这些键留给自己。
  */
-export function ShellTerminal({ id, visible }: { id: number; visible: boolean }) {
+export function ShellTerminal({ id, visible, onRestart }: {
+  id: number;
+  visible: boolean;
+  /** 进程退出后「重启」：同一个目录再开一个（usePanel restartTerminal）。 */
+  onRestart?: () => void;
+}) {
   const t = useT();
   const hostRef = useRef<HTMLDivElement | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const [exitCode, setExitCode] = useState<number | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
+  // 键盘处理在终端建好时就注册了，读不到新的 state：退出与重启回调走 ref。
+  const exitedRef = useRef(false);
+  const restartRef = useRef(onRestart);
+  restartRef.current = onRestart;
 
   useEffect(() => {
     const host = hostRef.current;
@@ -97,9 +106,17 @@ export function ShellTerminal({ id, visible }: { id: number; visible: boolean })
     // 一串 `[?1;2c`（实拍：每切回一次页签多一串）。重放窗口里只剔应答，用户按键照发。
     let replaying = 0;
     const input = terminal.onData((data) => {
+      // 进程已退出：Enter 就是「重启」（退出条上写着），别的键不往已经没了的进程里写（只会再报一次红字）。
+      if (exitedRef.current) {
+        if (data === "\r") restartRef.current?.();
+        return;
+      }
       const payload = replaying > 0 ? stripTerminalReplies(data) : data;
       if (!payload) return;
-      void writeShellTerminal(id, payload).catch((e) => setError(formatBackendError(e, t.locale)));
+      void writeShellTerminal(id, payload)
+        // 写成功了就把上一次的写入失败红字收掉（walkthrough P-13：以前红字一直挂着）。
+        .then(() => setError(null))
+        .catch((e) => setError(formatBackendError(e, t.locale)));
     });
     const resize = terminal.onResize(({ cols, rows }) => {
       void resizeShellTerminal(id, cols, rows).catch(() => {});
@@ -111,7 +128,10 @@ export function ShellTerminal({ id, visible }: { id: number; visible: boolean })
         // write 的回调在这段解析完才触发，期间 xterm 同步发出的应答都落在窗口里。
         terminal.write(decodeBase64(event.data), () => { replaying -= 1; });
       } else if (event.kind === "output") terminal.write(decodeBase64(event.data));
-      else setExitCode(event.code);
+      else {
+        exitedRef.current = true;
+        setExitCode(event.code);
+      }
     })
       .then((gen) => {
         if (disposed) void detachShellTerminal(id, gen);
@@ -155,7 +175,15 @@ export function ShellTerminal({ id, visible }: { id: number; visible: boolean })
     <div className="managed-terminal shell-term" style={visible ? undefined : { display: "none" }}>
       <div ref={hostRef} className="managed-terminal-host" />
       {exitCode !== undefined && (
-        <div className="shell-term-exit">{t.chat.shellExited.replace("{code}", exitCode === null ? "?" : String(exitCode))}</div>
+        <div className="shell-term-exit is-exited" role="status">
+          <span>{t.chat.shellExited.replace("{code}", exitCode === null ? "?" : String(exitCode))}</span>
+          {onRestart && (
+            <>
+              <button type="button" className="scm-link-btn" data-testid="shell-restart" onClick={onRestart}>{t.chat.shellRestart}</button>
+              <span className="shell-term-exit-hint">{t.chat.shellRestartHint}</span>
+            </>
+          )}
+        </div>
       )}
       {error && <div className="shell-term-exit is-error">{error}</div>}
     </div>

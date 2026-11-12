@@ -15,7 +15,7 @@
 
 use crate::git_target::{resolve, GitConfig, PushTarget};
 use meowo_protocol::ipc::{
-    ForgeRepoChoiceDto, ForgeStatusDto, GitJobDto, MergeResultDto, PrCheckDto, PrDefaultsDto, PullRequestDto, PushResultDto,
+    ForgeRepoChoiceDto, ForgeStatusDto, GitJobDto, MergeResultDto, PrCheckDto, PrDefaultsDto, PullRequestDto, PullResultDto, PushResultDto,
 };
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -319,36 +319,47 @@ pub(crate) async fn git_push(cwd: String) -> Result<PushResultDto, String> {
 
 struct Job {
     at: Instant,
+    /// `push` / `pull`：同一个仓库同种任务在跑时复用任务号，推送和拉取互不顶替。
+    kind: &'static str,
     repo: String,
     dto: GitJobDto,
 }
 
 static JOBS: Mutex<Option<HashMap<String, Job>>> = Mutex::new(None);
 
-fn job_id() -> String {
+fn job_id(kind: &str) -> String {
     use std::sync::atomic::{AtomicU64, Ordering};
     static SEQ: AtomicU64 = AtomicU64::new(0);
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
         .unwrap_or_default();
-    format!("push-{:x}-{:x}", nanos, SEQ.fetch_add(1, Ordering::Relaxed))
+    format!("{kind}-{:x}-{:x}", nanos, SEQ.fetch_add(1, Ordering::Relaxed))
 }
 
 /// 起一个后台推送，立刻返回任务号。手机 RPC 有 20–90 秒的超时，首推大仓库会超过它（定案设计「五」）。
 /// 同一个仓库已经有推送在跑：返回那个任务号，手机上连点两下不会推两次。
 pub(crate) fn start_push_job(cwd: String, run: impl FnOnce(&str) -> Result<PushResultDto, String> + Send + 'static) -> String {
+    start_job("push", cwd, move |dir| run(dir).map(|push| GitJobDto { state: "ok".into(), push: Some(push), pull: None, error: None }))
+}
+
+/// 起一个后台拉取（推送被拒后的「拉取并重试」，walkthrough P-1）。联网同推送，手机 RPC 等不了，走同一套任务。
+pub(crate) fn start_pull_job(cwd: String, run: impl FnOnce(&str) -> Result<PullResultDto, String> + Send + 'static) -> String {
+    start_job("pull", cwd, move |dir| run(dir).map(|pull| GitJobDto { state: "ok".into(), push: None, pull: Some(pull), error: None }))
+}
+
+fn start_job(kind: &'static str, cwd: String, run: impl FnOnce(&str) -> Result<GitJobDto, String> + Send + 'static) -> String {
     let repo = cwd.trim().replace('\\', "/").to_lowercase();
     let mut guard = JOBS.lock().unwrap_or_else(|e| e.into_inner());
     let jobs = guard.get_or_insert_with(Default::default);
     jobs.retain(|_, job| job.dto.state == "running" || job.at.elapsed() < JOB_KEEP);
-    if let Some((id, _)) = jobs.iter().find(|(_, job)| job.repo == repo && job.dto.state == "running") {
+    if let Some((id, _)) = jobs.iter().find(|(_, job)| job.kind == kind && job.repo == repo && job.dto.state == "running") {
         return id.clone();
     }
-    let id = job_id();
+    let id = job_id(kind);
     jobs.insert(
         id.clone(),
-        Job { at: Instant::now(), repo, dto: GitJobDto { state: "running".into(), push: None, error: None } },
+        Job { at: Instant::now(), kind, repo, dto: GitJobDto { state: "running".into(), push: None, pull: None, error: None } },
     );
     drop(guard);
     let job = id.clone();
@@ -358,8 +369,8 @@ pub(crate) fn start_push_job(cwd: String, run: impl FnOnce(&str) -> Result<PushR
         if let Some(entry) = guard.get_or_insert_with(Default::default).get_mut(&job) {
             entry.at = Instant::now();
             entry.dto = match result {
-                Ok(push) => GitJobDto { state: "ok".into(), push: Some(push), error: None },
-                Err(error) => GitJobDto { state: "failed".into(), push: None, error: Some(error) },
+                Ok(dto) => dto,
+                Err(error) => GitJobDto { state: "failed".into(), push: None, pull: None, error: Some(error) },
             };
         }
     });
@@ -384,6 +395,160 @@ pub(crate) async fn git_push_start(cwd: String) -> Result<String, String> {
 #[tauri::command]
 pub(crate) async fn git_job_status(job_id: String) -> Result<GitJobDto, String> {
     job_status(&job_id)
+}
+
+// ═══ pull（推送被拒后的「拉取并重试」）═══
+//
+// walkthrough P-1（2026-11-12）：推送被拒只显示「远端有新提交，先拉取再推」，面板里没有拉取，用户只能
+// 去终端。这里补一个拉取：从推送目标（与推送同一个 git_target::resolve 判定）拉回那条分支并接到本地。
+// 底线：
+// - 有冲突不合并：分叉时先用 `merge-tree --write-tree` 在不碰工作区、不碰暂存区的前提下判一次，有冲突
+//   直接报 git/pull_conflict，仓库原样不动；老 git 不支持就照试，试出冲突立刻 --abort 退回。
+// - 不用 autostash：autostash 会往用户的 stash 列表里塞条目，冲突时还会留在那里（`--no-autostash`
+//   显式关掉，用户配了 merge.autoStash / rebase.autoStash 也不生效）。
+// - 照用户的 pull.rebase：配了变基就变基（要求已跟踪文件没有未提交的改动），否则合并（--no-edit）。
+
+/// 联网之外的各步也用同一套环境（LC_ALL=C 归类、不弹凭据框），另外不许开编辑器：GUI 后台没人关它。
+fn git_step(dir: &str, args: &[&str], env: GitEnv, timeout: Duration) -> Result<CmdOut, String> {
+    let mut cmd = git_net(dir, args, env);
+    cmd.env("GIT_EDITOR", "true").env("GIT_SEQUENCE_EDITOR", "true");
+    run_with_timeout(cmd, timeout).map_err(|e| format!("git/pull_failed: {e}"))
+}
+
+/// 拉取失败归类（LC_ALL=C 下 git 的英文输出）。联网失败与推送同一套判据，原因码单列（文案说的是拉取）。
+pub(crate) fn classify_pull_failure(out: &CmdOut) -> String {
+    if out.timed_out {
+        return "git/pull_timeout".into();
+    }
+    let both = out.both();
+    let low = both.to_lowercase();
+    let has = |needle: &str| low.contains(needle);
+    if has("index.lock") {
+        return "git/locked".into();
+    }
+    if has("would be overwritten") {
+        return "git/pull_dirty".into();
+    }
+    if has("please tell me who you are") || has("unable to auto-detect email") || has("empty ident") {
+        return "git/identity".into();
+    }
+    if has("conflict") || has("could not apply") {
+        return "git/pull_conflict".into();
+    }
+    if has("couldn't find remote ref") {
+        return "git/pull_no_branch".into();
+    }
+    match classify_push_failure(out).as_str() {
+        "git/push_auth" => "git/pull_auth".into(),
+        "git/push_network" => "git/pull_network".into(),
+        _ => format!("git/pull_failed: {}", tail(&both, 6)),
+    }
+}
+
+/// 拉取当前分支在推送目标上的那条远端分支，接到本地。返回拉下来几个提交、怎么接的。
+pub(crate) fn pull_with(cwd: &str, env: GitEnv, timeout: Duration) -> Result<PullResultDto, String> {
+    let dir = existing_dir(cwd)?;
+    let plan = plan_push(dir, env)?;
+    let src = format!("refs/heads/{}", plan.branch);
+    let fetched = git_step(dir, &["fetch", "--no-tags", &plan.remote, &src], env, timeout)?;
+    invalidate_after_write(dir);
+    if !fetched.ok() {
+        return Err(classify_pull_failure(&fetched));
+    }
+    // 立刻把 FETCH_HEAD 解成提交号：后面几步都对着这个提交，别处再 fetch 也不串。
+    let theirs = git(dir, &["rev-parse", "--verify", "--quiet", "FETCH_HEAD^{commit}"], env)
+        .filter(|sha| !sha.is_empty())
+        .ok_or_else(|| "git/pull_failed: FETCH_HEAD".to_string())?;
+    let count = |range: String| git(dir, &["rev-list", "--count", &range], env).and_then(|n| n.parse::<u32>().ok()).unwrap_or(0);
+    let pulled = count(format!("HEAD..{theirs}"));
+    let done = |mode: &str| PullResultDto { remote: plan.remote.clone(), branch: plan.branch.clone(), pulled, mode: mode.into() };
+    if pulled == 0 {
+        return Ok(done("none"));
+    }
+    let step = |args: &[&str]| git_step(dir, args, env, timeout);
+    if count(format!("{theirs}..HEAD")) == 0 {
+        // 本地没有远端以外的提交：快进。工作区里有会被覆盖的改动时 git 自己拒（would be overwritten），什么都不动。
+        let out = step(&["merge", "--ff-only", "--no-autostash", &theirs])?;
+        invalidate_after_write(dir);
+        return if out.ok() { Ok(done("ff")) } else { Err(classify_pull_failure(&out)) };
+    }
+    // 分叉了：先判冲突（不动工作区）。退出码 1 = 有冲突；0 = 干净；别的（git < 2.38 不认 --write-tree）照试。
+    let probe = step(&["merge-tree", "--write-tree", "--no-messages", "HEAD", &theirs])?;
+    if !probe.timed_out && probe.code == Some(1) {
+        return Err("git/pull_conflict".into());
+    }
+    // 合并 / 变基都要写提交：没配身份先说清楚，不让 git 半路失败。
+    for ident in ["GIT_COMMITTER_IDENT", "GIT_AUTHOR_IDENT"] {
+        if git(dir, &["var", ident], env).is_none() {
+            return Err("git/identity".into());
+        }
+    }
+    let rebase = git(dir, &["config", "--get", "pull.rebase"], env)
+        .map(|v| v.to_lowercase())
+        .is_some_and(|v| matches!(v.as_str(), "true" | "yes" | "on" | "1" | "merges" | "m" | "interactive" | "i"));
+    let result = if rebase {
+        // 变基要求已跟踪文件没有未提交的改动（git 自己也会拒，这里先拦，错误说得更清楚）。
+        let dirty = git(dir, &["status", "--porcelain", "--untracked-files=no"], env).is_none_or(|out| !out.trim().is_empty());
+        if dirty {
+            return Err("git/pull_dirty".into());
+        }
+        let out = step(&["rebase", "--no-autostash", &theirs])?;
+        if out.ok() {
+            Ok(done("rebase"))
+        } else {
+            // 变基停在半路（冲突、钩子）：退回变基前，不把仓库留在变基中间。
+            let _ = step(&["rebase", "--abort"]);
+            Err(classify_pull_failure(&out))
+        }
+    } else {
+        let message = format!("Merge branch '{}' of {}", plan.branch, plan.remote);
+        let out = step(&["merge", "--no-edit", "--no-autostash", "-m", &message, &theirs])?;
+        if out.ok() {
+            Ok(done("merge"))
+        } else {
+            // 合并停在半路（老 git 没探到的冲突、钩子失败）：退回合并前。合并开始前工作区就挡住了的
+            //（would be overwritten）git 根本没开始，没有 MERGE_HEAD，不用退。
+            if git(dir, &["rev-parse", "-q", "--verify", "MERGE_HEAD"], env).is_some() {
+                let _ = step(&["merge", "--abort"]);
+            }
+            Err(classify_pull_failure(&out))
+        }
+    };
+    invalidate_after_write(dir);
+    result
+}
+
+#[tauri::command]
+pub(crate) async fn git_pull_start(cwd: String) -> Result<String, String> {
+    existing_dir(&cwd)?;
+    Ok(start_pull_job(cwd, |dir| pull_with(dir, &[], PUSH_TIMEOUT)))
+}
+
+// ═══ git 身份（提交 / 合并时报 git/identity 的就地出路）═══
+
+/// 写全局的 user.name / user.email（git 自己提示的就是 `git config --global`）。walkthrough P-1：此前只叫人
+/// 「先在终端里运行 git config」，面板里没有出路。只收一行的名字和带 @ 的邮箱，别的不写。
+pub(crate) fn set_identity_with(cwd: &str, name: &str, email: &str, env: GitEnv) -> Result<(), String> {
+    let dir = existing_dir(cwd)?;
+    let (name, email) = (name.trim(), email.trim());
+    let bad = |text: &str| text.is_empty() || text.chars().any(char::is_control) || text.len() > 200;
+    if bad(name) || bad(email) || !email.contains('@') || email.contains(char::is_whitespace) {
+        return Err("git/identity_invalid".into());
+    }
+    for (key, value) in [("user.name", name), ("user.email", email)] {
+        let out = git_step(dir, &["config", "--global", key, value], env, Duration::from_secs(10))?;
+        if !out.ok() {
+            return Err(format!("git/failed: {}", tail(&out.both(), 4)));
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub(crate) async fn git_set_identity(cwd: String, name: String, email: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || set_identity_with(&cwd, &name, &email, &[]))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 // ═══ gh：找得到、登录了没 ═══

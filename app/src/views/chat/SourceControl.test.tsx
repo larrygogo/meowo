@@ -3,6 +3,8 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { invoke } from "@tauri-apps/api/core";
 import type { GitDiffSummaryDto, RepoChangesDto } from "../../api";
 import { pickRepo, SourceControl, stagedRows, workRows } from "./SourceControl";
+/** 不能点：进行中 / 条件不满足时用 aria-disabled，不用 disabled（walkthrough P-3，disabled 会把焦点踢到 body）。 */
+const isOff = (el: Element) => el.getAttribute("aria-disabled") === "true";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -116,7 +118,7 @@ describe("文件行与操作", () => {
     fireEvent.click(within(row).getByRole("button", { name: "放弃更改" }));
     const dialog = screen.getByRole("dialog");
     expect(within(dialog).getByText("new.txt")).toBeTruthy();
-    expect(within(dialog).getByText("已跟踪文件的改动无法恢复。未跟踪的文件移到回收站。")).toBeTruthy();
+    expect(within(dialog).getByText("放弃后可以撤销。未跟踪的文件移到回收站。")).toBeTruthy();
     fireEvent.keyDown(dialog, { key: "Escape" });
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(invoke).not.toHaveBeenCalledWith("git_discard", expect.anything());
@@ -153,10 +155,10 @@ describe("做空第 1 轮", () => {
   it("开着筛选时不能「提交全部」，并说明原因", () => {
     const { container } = renderScm([repo({ summary: summary([file("a.ts", null, "M"), file("secret.env", null, "U")]) })]);
     fireEvent.change(screen.getByRole("textbox", { name: /^消息/ }), { target: { value: "x" } });
-    expect((screen.getByRole("button", { name: /^提交/ }) as HTMLButtonElement).disabled).toBe(false);
+    expect(isOff(screen.getByRole("button", { name: /^提交/ }))).toBe(false);
     fireEvent.change(container.querySelector(".chat-diff-search")!, { target: { value: "a.ts" } });
-    expect((screen.getByRole("button", { name: /^提交/ }) as HTMLButtonElement).disabled).toBe(true);
-    expect(screen.getByText("筛选藏起了会被一起提交的文件。清除筛选后再提交")).toBeTruthy();
+    expect(isOff(screen.getByRole("button", { name: /^提交/ }))).toBe(true);
+    expect(screen.getByText("筛选藏起了会被一起提交的文件")).toBeTruthy();
   });
 
   /// 做空第 2 轮：筛选下点「提交」（有暂存），被筛掉的暂存文件也进了提交。
@@ -164,9 +166,9 @@ describe("做空第 1 轮", () => {
     renderScm([repo({ summary: summary([file("agent.ts", "M", null), file("secret.env", "A", null)]) })], { touchedPaths: ["C:/w/meowo/agent.ts", "C:/w/meowo/secret.env"], turnTouchedPaths: ["C:/w/meowo/agent.ts"] });
     fireEvent.change(screen.getByRole("textbox", { name: /^消息/ }), { target: { value: "x" } });
     fireEvent.click(screen.getByRole("button", { name: /本会话/ }));
-    expect((screen.getByRole("button", { name: /^提交/ }) as HTMLButtonElement).disabled).toBe(false);
+    expect(isOff(screen.getByRole("button", { name: /^提交/ }))).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: /本轮/ }));
-    expect((screen.getByRole("button", { name: /^提交/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect(isOff(screen.getByRole("button", { name: /^提交/ }))).toBe(true);
   });
 
   /// 做空第 2 轮：筛选按钮没了（touchedPaths 变空）时还停在「本会话」，面板一片空又清不掉筛选。
@@ -219,7 +221,7 @@ describe("做空第 1 轮", () => {
     renderScm([repo({ summary: summary([file("a.ts", "M", null)]) })]);
     fireEvent.change(screen.getByRole("textbox", { name: /^消息/ }), { target: { value: "x" } });
     fireEvent.click(screen.getByRole("button", { name: /^提交/ }));
-    expect(await screen.findByRole("alert")).toHaveProperty("textContent", "有未解决的合并冲突，先在终端或编辑器里解决再提交");
+    expect((await screen.findByRole("alert")).querySelector(".scm-msg-text")?.textContent).toBe("有未解决的合并冲突，解决后才能提交");
   });
 });
 
@@ -237,10 +239,10 @@ describe("提交框", () => {
     const { rerender } = renderScm([repo({ summary: summary([file("a.ts", null, "M")]) })]);
     const button = () => screen.getByRole("button", { name: /^提交/ });
     expect(button().textContent).toBe("提交全部");
-    expect((button() as HTMLButtonElement).disabled).toBe(true);
+    expect(isOff(button())).toBe(true);
     const input = screen.getByRole("textbox", { name: "消息（Ctrl+Enter 在“main”提交）" });
     fireEvent.change(input, { target: { value: "修好了" } });
-    expect((button() as HTMLButtonElement).disabled).toBe(false);
+    expect(isOff(button())).toBe(false);
     fireEvent.keyDown(input, { key: "Enter", ctrlKey: true });
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("git_commit", { cwd: "C:/w/meowo", message: "修好了", all: true, paths: ["a.ts"] }));
     await waitFor(() => expect((input as HTMLTextAreaElement).value).toBe(""));
@@ -260,7 +262,7 @@ describe("提交框", () => {
     renderScm([repo({ summary: summary([file("a.ts", "M", null)]) })]);
     fireEvent.change(screen.getByRole("textbox", { name: /^消息/ }), { target: { value: "x" } });
     fireEvent.click(screen.getByRole("button", { name: /^提交/ }));
-    expect(await screen.findByRole("alert")).toHaveProperty("textContent", "还没配置 git 用户名和邮箱，先在终端里运行 git config 设置");
+    expect((await screen.findByRole("alert")).querySelector(".scm-msg-text")?.textContent).toBe("还没配置 git 用户名和邮箱");
   });
 });
 

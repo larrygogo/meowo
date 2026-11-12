@@ -4,6 +4,8 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { invoke } from "@tauri-apps/api/core";
 import type { GitDiffSummaryDto, RepoChangesDto } from "../../api";
 import { SourceControl } from "./SourceControl";
+/** 不能点：进行中 / 条件不满足时用 aria-disabled，不用 disabled（walkthrough P-3，disabled 会把焦点踢到 body）。 */
+const isOff = (el: Element) => el.getAttribute("aria-disabled") === "true";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -232,7 +234,7 @@ describe("筛选下只露出一部分的折叠目录", () => {
     await openOut();
     fireEvent.change(screen.getByPlaceholderText("按名称搜索文件…"), { target: { value: "keep" } });
     fireEvent.change(document.querySelector("textarea") as HTMLTextAreaElement, { target: { value: "msg" } });
-    expect(commitButton().disabled).toBe(true);
+    expect(isOff(commitButton())).toBe(true);
     fireEvent.click(commitButton());
     expect(calls("git_commit")).toHaveLength(0);
   });
@@ -252,7 +254,7 @@ describe("筛选下只露出一部分的折叠目录", () => {
     renderWithTouched([repo([folded("out/", 60)])], ["C:/w/meowo/out/keep.js"]);
     fireEvent.click([...document.querySelectorAll("button")].find((b) => /^本会话/.test(b.textContent ?? "")) as HTMLButtonElement);
     fireEvent.change(document.querySelector("textarea") as HTMLTextAreaElement, { target: { value: "msg" } });
-    expect(commitButton().disabled).toBe(true);
+    expect(isOff(commitButton())).toBe(true);
     fireEvent.click(commitButton());
     expect(calls("git_commit")).toHaveLength(0);
   });
@@ -260,7 +262,7 @@ describe("筛选下只露出一部分的折叠目录", () => {
   it("没有筛选时，折叠目录照常整体提交", async () => {
     renderWithTouched([repo([folded("out/", 60)])], []);
     fireEvent.change(document.querySelector("textarea") as HTMLTextAreaElement, { target: { value: "msg" } });
-    expect(commitButton().disabled).toBe(false);
+    expect(isOff(commitButton())).toBe(false);
     fireEvent.click(commitButton());
     await waitFor(() => expect(calls("git_commit")).toHaveLength(1));
     expect((calls("git_commit")[0][1] as { paths: string[] }).paths).toEqual(["out/"]);
