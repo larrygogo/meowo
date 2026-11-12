@@ -783,6 +783,71 @@ mod tests {
         );
     }
 
+    /// codex 0.166.0 审批框：整句 `press enter to confirm or esc to cancel` / `allow command?`
+    /// 在二进制里已经没有，底栏由按键 + ` to confirm` / ` to cancel` 拼出，选项固定带
+    /// `No, and tell Codex what to do differently`（codex.exe 字符串，research-cli-drift X7，
+    /// 2026-11-12；行布局按 ratatui 选择列表推断，未实拍）。光标停在哪一项都要认。
+    #[test]
+    fn codex_0166_approval_overlay_is_blocked() {
+        let cursor_first = snap(&[
+            "\u{203A} run the tests",
+            "  Would you like to run the following command?",
+            "  $ cargo test",
+            "\u{203A} 1. Yes, just this once",
+            "  2. Yes, and don't ask again for commands that start with `cargo test`",
+            "  3. No, and tell Codex what to do differently",
+            "  Press enter to confirm or esc to cancel",
+        ]);
+        assert_eq!(
+            state_of(evaluate("codex", &cursor_first)),
+            Some((ScreenState::Blocked, "live_strong_blocker"))
+        );
+        // 光标在最后一项：选项行本身是提示符标记行、不在区域内，靠底栏两段认
+        let cursor_last = snap(&[
+            "  Would you like to make the following edits?",
+            "  1. Yes, proceed",
+            "\u{203A} 2. No, and tell Codex what to do differently",
+            "  enter to confirm \u{00B7} esc to cancel",
+        ]);
+        assert_eq!(
+            state_of(evaluate("codex", &cursor_last)),
+            Some((ScreenState::Blocked, "live_strong_blocker"))
+        );
+        // 已答过的审批留在历史里（最后一个 `›` 之前）不算
+        let answered = snap(&[
+            "  3. No, and tell Codex what to do differently",
+            "  enter to confirm \u{00B7} esc to cancel",
+            "\u{203A} next prompt",
+        ]);
+        assert_ne!(
+            state_of(evaluate("codex", &answered)).map(|(state, _)| state),
+            Some(ScreenState::Blocked)
+        );
+    }
+
+    /// codex 0.166.0 的 transcript 覆盖层（Ctrl+T）：`q to quit` / `esc to edit prev` 已不在
+    /// 二进制里，pager_overlay 只剩 ` to scroll` / ` to page` / ` to jump`（research-cli-drift X6）。
+    /// 老版本的整套提示仍认。
+    #[test]
+    fn codex_transcript_pager_holds_state_old_and_new() {
+        let new = snap(&[
+            "  user: run the tests",
+            "  \u{2191}/\u{2193} to scroll   pgup/pgdn to page   home/end to jump",
+        ]);
+        assert!(matches!(
+            evaluate("codex", &new),
+            Some(Evaluation::Hold { rule_id: "transcript_viewer" })
+        ));
+        let old = snap(&[
+            "  user: run the tests",
+            "  \u{2191}/\u{2193} to scroll   pgup/pgdn to page   home/end to jump   q to quit   esc to edit prev",
+        ]);
+        assert!(matches!(
+            evaluate("codex", &old),
+            Some(Evaluation::Hold { rule_id: "transcript_viewer" })
+        ));
+    }
+
     #[test]
     fn codex_working_status_line_is_working() {
         let s = snap(&[

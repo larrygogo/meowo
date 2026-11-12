@@ -30,14 +30,22 @@ pub(super) static RULES: &[ScreenRule] = &[
         ScreenState::Idle,
         1000,
         Region::AfterLastPromptMarker,
-        Matcher::All(&[
-            Matcher::Contains(&[
-                "↑/↓ to scroll",
-                "pgup/pgdn to",
-                "home/end to jump",
-                "q to quit",
+        Matcher::Any(&[
+            // 0.16x 之前（herdr codex.toml 原文）
+            Matcher::All(&[
+                Matcher::Contains(&[
+                    "↑/↓ to scroll",
+                    "pgup/pgdn to",
+                    "home/end to jump",
+                    "q to quit",
+                ]),
+                Matcher::AnyContains(&["esc to edit prev", "esc/← to edit prev"]),
             ]),
-            Matcher::AnyContains(&["esc to edit prev", "esc/← to edit prev"]),
+            // 0.166.0：pager_overlay.rs 的提示只剩按键 + ` to scroll` / ` to page` / ` to jump`
+            // 三段（codex.exe 字符串紧挨 `tui\src\pager_overlay.rs`），`q to quit` 与
+            // `esc to edit prev` 在二进制里 0 处（research-cli-drift X6，2026-11-12）。
+            // 三段同时出现才算，按键字形由运行时拼，不写进规则。
+            Matcher::Contains(&[" to scroll", " to page", " to jump"]),
         ]),
     )
     .hold(),
@@ -46,11 +54,20 @@ pub(super) static RULES: &[ScreenRule] = &[
         ScreenState::Blocked,
         900,
         Region::AfterLastPromptMarker,
-        Matcher::AnyContains(&[
-            "press enter to confirm or esc to cancel",
-            "enter to submit answer",
-            "enter to submit all",
-            "allow command?",
+        Matcher::Any(&[
+            // 0.16x 之前的整句（herdr codex.toml）；提问表单的两句 0.166 仍在
+            Matcher::AnyContains(&[
+                "press enter to confirm or esc to cancel",
+                "enter to submit answer",
+                "enter to submit all",
+                "allow command?",
+            ]),
+            // 0.166.0 的审批框：整句 `press enter to confirm…` 与 `allow command?` 在 codex.exe
+            // 里 0 处，底栏改成按键 + ` to confirm` / ` to cancel` 两段拼出（二进制里紧挨审批
+            // 选项文案）；审批选项固定带一条 `No, and tell Codex what to do differently`
+            // （research-cli-drift X7，2026-11-12）。两者都只在审批框里出现。
+            Matcher::LineRegex(r"enter to confirm.*esc to cancel"),
+            Matcher::AnyContains(&["no, and tell codex what to do differently"]),
         ]),
     )
     .visible(),
