@@ -7392,6 +7392,10 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
    出错红叉，跑完 ^ ^，闲久了睡着冒 z。各形态在 islandParts.tsx 的 Eyes 里切，这里只管颜色与动作。 */
 .isl-eyes { position: relative; display: inline-flex; align-items: center; padding: 0 6px; flex: none; color: #fff; }
 .isl-eyes.is-small { padding: 0; }
+/* 眼睛打头（专注、极简、没有额度环的概览）时把左边那 6px 火花位和 svg 自带的 2px 空边收回去：
+   不收的话眼白到岛左缘 24px，右边内容到岛右缘 16px，整体偏右 4px（island-minimal 实量）。
+   火花是绝对定位，跟着眼睛一起挪，仍在岛内。刘海两翼的子元素是 .isl-wing，不受影响。 */
+.isl-notch.is-compact > .isl-eyes:first-child { margin-left: -8px; }
 .isl-eye-pair { display: block; overflow: visible; }
 .isl-sclera { fill: #fff; }
 .isl-pupil { fill: #000; transition: transform var(--dur-base) var(--ease-out); }
