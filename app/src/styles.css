@@ -4899,13 +4899,16 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .browser-pane-notice.is-failed { color: var(--cc-err-text); }
 .browser-pane-notice-icon { flex: none; color: var(--cc-text-dim); }
 .browser-pane-notice-text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.browser-pane-notice button { flex: none; padding: 2px var(--sp-10); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-sm); color: var(--cc-text); background: var(--cc-bg); font: inherit; cursor: pointer; }
+/* 三条提示条共用一个 14px 的前置格（运行点 / 盾牌 / 禁止 / 下载图标），文字同一条左缘；按钮落到
+   最小一档按钮高（--btn-h-sm），跟着界面缩放走。原先文字起点是三个位置（799 / 783 / 805），
+   按钮 23px 高（qa-browser 实拍）。 */
+.browser-pane-notice button { flex: none; height: calc(var(--btn-h-sm) * var(--cc-ui)); padding: 0 var(--sp-10); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-sm); color: var(--cc-text); background: var(--cc-bg); font: inherit; cursor: pointer; }
 .browser-pane-notice button:disabled { opacity: .5; cursor: default; }
 .browser-pane-notice .browser-pane-notice-close { padding: 0 var(--sp-6); border: 0; background: transparent; color: var(--cc-text-faint); font-size: var(--text-base); line-height: 1; }
 .browser-pane-notice .browser-pane-notice-close:hover { color: var(--cc-text); }
-.browser-pane-agent-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--cc-ok-vivid); animation: browser-agent-pulse var(--dur-pulse) var(--ease-in-out) infinite; }
+.browser-pane-agent-dot { flex: none; margin-inline: 3px; width: 8px; height: 8px; border-radius: 50%; background: var(--cc-ok-vivid); animation: browser-agent-pulse var(--dur-pulse) var(--ease-in-out) infinite; }
 .browser-pane-agent.is-paused .browser-pane-agent-dot { animation: none; background: var(--cc-text-faint); }
-.browser-pane-agent button { margin-left: auto; padding: 2px var(--sp-10); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-sm); color: var(--cc-text); background: var(--cc-bg); font: inherit; cursor: pointer; }
+.browser-pane-agent button { margin-left: auto; height: calc(var(--btn-h-sm) * var(--cc-ui)); padding: 0 var(--sp-10); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-sm); color: var(--cc-text); background: var(--cc-bg); font: inherit; cursor: pointer; }
 .side-panel-tab-agent { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--cc-ok-vivid); animation: browser-agent-pulse var(--dur-pulse) var(--ease-in-out) infinite; }
 /* 呼吸只变颜色、不变透明度：灯压在图标上，半透明时会透出下面的线条（实拍）。
    暗相是强调色和底色按比例混出来的实色，始终不透明。 */
@@ -6752,7 +6755,9 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .chat-md code.chat-md-link-code:hover, .chat-md code.chat-md-link-code:focus-visible { color: var(--cc-accent-text); text-decoration-style: solid; text-decoration-color: var(--cc-brand-line); outline: none; }
 .chat-md .chat-md-link-error { margin-left: 6px; font-size: 0.9em; color: var(--cc-err-text); }
 /* 表格外壳：表格自己横滚，「复制表格」压在右下角一行，弱色不抢正文。 */
-.chat-md-table { margin: 0 0 var(--sp-12); display: flex; flex-direction: column; }
+/* 贴表格的实际宽度：表格本身是 display:block（为了横向滚动），外壳原先铺满正文列，「复制表格」
+   靠右对齐后离表格右端 256px（qa-md 实拍），面板越宽离得越远。 */
+.chat-md-table { margin: 0 0 var(--sp-12); display: flex; flex-direction: column; width: fit-content; max-width: 100%; }
 .chat-md-table > table { margin-bottom: var(--sp-4); }
 .chat-md-table-copy { align-self: flex-end; padding: var(--sp-2) var(--sp-6); border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-faint); font-size: var(--text-xs); cursor: pointer; }
 .chat-md-table-copy:hover { color: var(--cc-text); background: var(--fill-hover); }
