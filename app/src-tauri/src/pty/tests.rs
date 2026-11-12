@@ -812,6 +812,21 @@ fn remote_roster_lease_keeps_approvals_answerable_without_silencing_desktop() {
     assert!(!broker.approval_answerable(7));
 }
 
+/// 留给手机领的审批:手机锁屏后不能被桌面的名单租约压着——桌面没被召唤过,没人知道它在那儿。
+#[test]
+fn desktop_roster_lease_does_not_hold_a_remote_claimable_approval_after_phone_is_gone() {
+    let broker = PtyBroker::default();
+    broker.register_approval_consumer(0, "roster-desktop".into()).unwrap();
+    broker.register_approval_consumer(7, "remote:chat-7".into()).unwrap();
+    assert!(broker.approval_answerable(7), "手机停在这条会话上");
+    age_consumer_lease(&broker, "remote:chat-7", super::REMOTE_CONSUMER_TTL_MS + 1);
+    assert!(broker.has_roster_consumer(), "桌面名单还开着");
+    assert!(!broker.approval_answerable(7), "手机没了就该放弃、回落终端");
+    // 桌面名单上点开了这一行(专属租约):有人在看,留着。
+    broker.register_approval_consumer(7, "roster-7-desktop".into()).unwrap();
+    assert!(broker.approval_answerable(7));
+}
+
 /// 桌面接得住就按桌面的来;桌面接不住而手机在名单上,留给手机领。
 #[test]
 fn remote_roster_only_takes_over_when_desktop_cannot_hold() {

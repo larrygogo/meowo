@@ -2544,11 +2544,15 @@ impl PtyBroker {
         })
     }
 
-    /// 这条会话的审批此刻还有没有人能答：有人停在它上面，或者任一端停在名单上。
+    /// 留给手机领的审批（`ApprovalHold::RemoteClaimable`）此刻还有没有人会来领：有人停在这条会话上，
+    /// 或者手机停在名单上。
+    ///
+    /// 桌面的名单租约**不算**：走到 RemoteClaimable 说明桌面没被召唤过（人在手机上，不夺屏），桌面
+    /// 那边没有任何提示。把它算进来的话，手机一锁屏，这条审批会被一个没人知道的桌面名单压满 300 秒
+    /// （提问是 7 天），正是「没人看见」（做空审查第二轮疑点 A）。手机没了就回落终端，和名单租约
+    /// 出现之前一样。桌面名单上点开了这一行的话它持有专属租约，算在第一项里。
     fn approval_answerable(&self, session_id: i64) -> bool {
-        self.has_approval_consumer(session_id)
-            || self.has_roster_consumer()
-            || self.has_remote_roster_consumer()
+        self.has_approval_consumer(session_id) || self.has_remote_roster_consumer()
     }
 
     /// 桌面主窗口是否持有名单租约。只认桌面：它决定的是「桌面窗口要不要动」；手机的名单

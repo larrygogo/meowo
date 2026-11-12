@@ -1,6 +1,9 @@
 // 名单行展开后的「最近几步」：不钻进去也能看到它刚才做了什么、卡在哪一步。
-// 数据走对话窗首读的同一个接口（get_chat_history，offset=0）：后端只解析文件尾部够一屏的那段，
-// 不整文件读，长会话也是同一个量级。
+// 数据走对话窗「加载更早」的那条读法（get_chat_history 带 before）：before 给一个比文件还大的数，
+// 后端就取「文件末尾之前的最后一屏」。不用首读（offset=0）那条路，两个原因（做空审查第二轮）：
+// - 首读除了解析尾部一屏，还要把前面整个文件扫一遍找模式与计划标记，100MB 的会话上实测 120–180ms，
+//   速览两秒一拍用不起；带 before 的这条只读尾部（发布构建实测见 transcript.rs 的计时测试）。
+// - 首读会动后端按会话记的读取进度（offset / mtime），那是对话窗轮询用的；带 before 的不动。
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getChatHistory } from "../../api";
 import type { ChatItem } from "../../generated/contracts/ChatItem";
@@ -51,7 +54,7 @@ export function RosterGlance({ sessionId }: { sessionId: number }) {
       return;
     }
     firstRef.current = false;
-    getChatHistory(sessionId, 0)
+    getChatHistory(sessionId, 0, undefined, Number.MAX_SAFE_INTEGER)
       .then((history) => { if (aliveRef.current) setItems((history.items ?? []) as ChatItem[]); })
       // 读不到就不摆这一块：下面还有它最后说的话和「进入现场」，不为这个报错。
       .catch(() => {});
