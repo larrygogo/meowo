@@ -181,6 +181,13 @@ pub trait AgentPlugin: Sync {
         None
     }
 
+    /// 本插件依赖的 CLI 输出文案中，需要手工声明的部分（见 [`crate::cli_text`]）：正则规则的
+    /// 真实样例，以及运行时拼接、在程序文件里搜不到原样的字面量。插件里的字面量规则
+    /// （信任页、模式回显、屏幕规则的子串）由 `cli_text` 自动抽取，不必在这里重复。
+    fn cli_text_deps(&self) -> &'static [crate::cli_text::CliTextDep] {
+        &[]
+    }
+
     fn queue_input(&self) -> Option<&'static str> {
         None
     }

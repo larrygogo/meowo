@@ -22,6 +22,7 @@
 
 pub mod account;
 mod catalog;
+mod cli_text;
 pub mod fleet;
 pub mod install;
 mod screen;
@@ -826,6 +827,11 @@ impl AgentPlugin for Claude {
                 details: crate::chat_ui::AttentionDetails::None,
             },
         ]
+    }
+
+    /// CLI 漂移检查的手工声明部分（正则规则的样例、运行时拼接的字面量），见 cli_text.rs。
+    fn cli_text_deps(&self) -> &'static [crate::cli_text::CliTextDep] {
+        cli_text::DEPS
     }
 
     fn selector_anchors(&self) -> &'static [crate::chat_ui::SelectorAnchor] {
