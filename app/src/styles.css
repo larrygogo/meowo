@@ -5695,7 +5695,10 @@ button.scm-check-name:hover { text-decoration: underline; }
 .chat-approval button.is-deny.is-esc-armed { border-color: color-mix(in srgb, var(--cc-err) 55%, transparent); color: var(--cc-fail-text); background: color-mix(in srgb, var(--cc-err) 12%, transparent); }
 /* 屏幕识别卡在场时 composer 整体锁定:inert(由 ChatWindow 经 ref 设置)负责挡键盘
    与焦点,这里管视觉降级 + 老 WebView 的指针兜底。不卸载的理由见 ChatWindow 注释。 */
-.chat-compose.is-locked { opacity: .55; pointer-events: none; }
+/* 降级只压工具行，不压文字区：整块 opacity .55 把那句告诉用户该做什么的提示一起压掉了
+   （实拍「终端正在等待选择，请先用上方卡片或终端页处理」深色 2.62:1、浅色 2.23:1；不锁时 5.88 / 5.66）。 */
+.chat-compose.is-locked { pointer-events: none; }
+.chat-compose.is-locked > :not(textarea) { opacity: .55; }
 .chat-compose {
   /* 文档流内的 footer：margin 居中限宽、底部留 18px。position:relative 是给内部的
      slash/模型弹出菜单（absolute、bottom: calc(100% + var(--sp-8))）做锚点，不能省。
@@ -6973,7 +6976,9 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
    读作一张可选的列表。带勾选格的有圆点/方框交代，不加线。 */
 .chat-approval-options button:not(:has(> i)) { position: relative; }
 .chat-approval-options button:not(:has(> i)) + button:not(:has(> i))::before { content: ""; position: absolute; top: calc(-1 * var(--sp-1)); left: var(--copy-bleed, var(--sp-8)); right: var(--copy-bleed, var(--sp-8)); height: var(--hairline); background: var(--line-subtle); pointer-events: none; }
-.chat-approval-options i { width: 16px; height: 16px; flex: 0 0 auto; display: grid; place-items: center; margin-top: var(--sp-2); border: 0; box-shadow: inset 0 0 0 1px var(--line-strong); border-radius: var(--radius-xs); color: transparent; background: transparent; font: normal var(--text-xs)/1 sans-serif; }
+/* 没选中的圈、框用弱字色描边，不用分隔线色：--line-strong 是给分隔线的（浅色 15% 黑），
+   压在卡面上只有 1.37:1（浅）/ 1.69:1（深），看不出这里有个可以点的控件；可操作控件的轮廓要 3:1。 */
+.chat-approval-options i { width: 16px; height: 16px; flex: 0 0 auto; display: grid; place-items: center; margin-top: var(--sp-2); border: 0; box-shadow: inset 0 0 0 1px var(--cc-text-faint); border-radius: var(--radius-xs); color: transparent; background: transparent; font: normal var(--text-xs)/1 sans-serif; }
 .chat-approval-options .is-selected i { box-shadow: none; background: var(--cc-accent); color: var(--cc-on-accent); }
 .chat-approval-options.is-single i { border-radius: 50%; }
 .chat-approval-options.is-single .is-selected i::after { content: ""; width: 6px; height: 6px; border-radius: 50%; background: var(--cc-on-accent); }
