@@ -6064,6 +6064,15 @@ button.scm-check-name:hover { text-decoration: underline; }
    有关卡卡片时面板整块盖住标题栏并伸出窗口顶（做空实测 1200×760：y=-94..96）。超出面板内滚动。 */
 .chat-dock > .dock-work-anchor { height: 0; z-index: var(--z-dropdown); container-type: inline-size; container-name: dock-anchor; }
 .dock-work-panel { position: absolute; bottom: 0; left: 50%; z-index: var(--z-dropdown); width: min(var(--chat-col), calc(100% - 48px)); max-height: min(300px, 50vh, calc(var(--dock-panel-room, 300px) - var(--sp-6))); transform: translateX(-50%); display: flex; flex-direction: column; overflow: hidden; margin-bottom: var(--sp-6); border: 0; border-radius: var(--radius-lg); background: var(--cc-menu-bg); box-shadow: 0 0 0 var(--hairline) var(--cc-border), var(--shadow-menu); }
+/* dock 里有待拍板卡时，面板不再浮在它上面，改成排在卡片和胶囊行之间、挤占高度：原先面板从胶囊行
+   向上弹，正好盖住卡片的下半张（qa-lead-panel 1280×800：面板 y=436–626，卡片 159–618，后两个选项、
+   意见框、「提交」全被盖住），想对着验收清单做决定时看不到选项。挤占之后卡片按既有规则自己缩小、
+   卡内滚动，「提交」在卡片底部的按钮行里始终可见；卡片的收缩权重调大，先缩卡片，缩到下限（104px）
+   才轮到面板，输入框不会被挤出窗口。限高不再读 --dock-panel-room：那是给浮层量的（锚点到标题栏），
+   面板进了文档流再读它会自己影响自己。没有待拍板卡时照旧是浮层。 */
+.chat-dock:has(> .lead-gate-card) > .dock-work-anchor { height: auto; min-height: 0; flex-shrink: 1; display: flex; flex-direction: column; align-items: center; }
+.chat-dock:has(> .lead-gate-card) > .dock-work-anchor > .dock-work-panel { position: relative; left: auto; bottom: auto; transform: none; flex: 0 1 auto; min-height: 0; max-height: min(300px, 50vh); }
+.chat-dock:has(> .dock-work-anchor) > .lead-gate-card { flex-shrink: 1000; }
 .dock-work-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-10); padding: var(--sp-12) var(--sp-12) 0 var(--sp-16); }
 .dock-work-title { display: inline-flex; align-items: center; gap: var(--sp-6); color: var(--cc-text); font-size: var(--text-sm); font-weight: 600; }
 .dock-work-title-icon { flex: 0 0 auto; color: var(--cc-text-dim); }
@@ -6128,11 +6137,12 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .lead-gate-option.is-picked, .lead-gate-option.is-picked:hover { background: var(--fill-selected); }
 /* 矮窗：摘要收到两行、说明并到选项名同一行、意见框收成一行，三个选项先露出来（做空审查
    620×480：只剩「提交」看不到选项）。 */
-.chat-main[data-short] .lead-gate-summary:not(.is-expanded) { max-height: 3.1em; }
-.chat-main[data-short] .lead-gate-options { margin-block: var(--sp-2); }
-.chat-main[data-short] .lead-gate-option { padding-block: var(--sp-5); }
-.chat-main[data-short] .lead-gate-option-detail { flex: 1 1 8em; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chat-main[data-short] .lead-gate-note { height: calc(1.5em + var(--sp-16) + 2px); min-height: 0; }
+/* 停靠面板开着、和关卡卡片分同一段高度时（见 .dock-work-anchor），卡片用同一套紧凑排法，三个选项和「提交」先露出来。 */
+.chat-main[data-short] .lead-gate-summary:not(.is-expanded), .chat-dock:has(> .dock-work-anchor) > .lead-gate-card .lead-gate-summary:not(.is-expanded) { max-height: 3.1em; }
+.chat-main[data-short] .lead-gate-options, .chat-dock:has(> .dock-work-anchor) > .lead-gate-card .lead-gate-options { margin-block: var(--sp-2); }
+.chat-main[data-short] .lead-gate-option, .chat-dock:has(> .dock-work-anchor) > .lead-gate-card .lead-gate-option { padding-block: var(--sp-5); }
+.chat-main[data-short] .lead-gate-option-detail, .chat-dock:has(> .dock-work-anchor) > .lead-gate-card .lead-gate-option-detail { flex: 1 1 8em; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-main[data-short] .lead-gate-note, .chat-dock:has(> .dock-work-anchor) > .lead-gate-card .lead-gate-note { height: calc(1.5em + var(--sp-16) + 2px); min-height: 0; }
 .lead-gate-option input { width: 13px; height: 13px; flex: 0 0 auto; margin: 0 0 0 calc(-13px - var(--sp-8)); }
 .lead-gate-option-detail { flex-basis: 100%; color: var(--cc-text-dim); font-size: var(--text-xs); }
 .lead-gate-rec { padding: 0 var(--sp-6); border-radius: var(--radius-sm); background: var(--fill-selected); color: var(--cc-text-dim); font-size: var(--text-xs); }
