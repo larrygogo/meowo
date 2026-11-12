@@ -5640,7 +5640,26 @@ button.scm-check-name:hover { text-decoration: underline; }
 .lead-pill-dot { width: 6px; height: 6px; margin-left: var(--sp-4); border-radius: 50%; background: var(--cc-warn-vivid); }
 /* Lead 面板（用户选定 2026-11-09，对照 Kimi 的留白与对齐）：进度并进标题行右侧的小环；页签是
    分段控件；验收项无编号、细线图标，没通过的在前、正常亮度，已通过的变淡；长句两行截断、点开看全文。 */
-.lead-phase::before { content: "· "; }
+/* 面板标题是任务名，可能很长：单行省略，悬停看全名（title）。 */
+.lead-title { min-width: 0; }
+.lead-title-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 任务概览：流程阶段条 + agent 最近在做什么。leader 扫一眼就知道任务到哪了（2026-11-12 优化，此前只有「Lead · 阶段名」）。 */
+.lead-overview { display: flex; flex-direction: column; gap: var(--sp-6); margin: var(--sp-8) var(--sp-16) 0; }
+.lead-stages-row { display: flex; align-items: center; gap: var(--sp-8); min-width: 0; }
+/* 阶段之间用细箭头连，不画进度轨道：六段字本身就是轨道。已走过的中性弱色，当前阶段正文色加粗、前面一个
+   品牌色小圆点；没走到的最淡。品牌色只落在这一个点上（standards：品牌色只出现在强调处）。 */
+.lead-stages { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) 0; margin: 0; padding: 0; list-style: none; font-size: var(--text-xs); line-height: var(--leading-normal); color: var(--cc-text-faint); }
+.lead-stage { display: inline-flex; align-items: center; white-space: nowrap; }
+.lead-stage + .lead-stage::before { content: "›"; order: -2; margin: 0 var(--sp-6); color: var(--cc-text-faint); }
+.lead-stage.is-done { color: var(--cc-text-dim); }
+.lead-stage.is-current { color: var(--cc-text); font-weight: 600; }
+.lead-stage.is-current::after { content: ""; order: -1; width: 6px; height: 6px; margin-right: var(--sp-4); border-radius: 50%; background: var(--cc-accent); }
+.lead-stage-flag { flex: 0 0 auto; padding: 0 var(--sp-6); border-radius: var(--radius-full); background: var(--fill-selected); color: var(--cc-text-dim); font-size: var(--text-2xs); line-height: var(--leading-body); }
+.lead-stage-flag.is-blocked { background: color-mix(in srgb, var(--cc-err) 14%, transparent); color: var(--cc-fail-text); }
+.lead-latest { margin: 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cc-text-dim); font-size: var(--text-xs); line-height: var(--leading-normal); }
+.lead-latest-label { color: var(--cc-text-faint); }
+/* 「附加意见」入口与「展开全部」同一种文字链接；单独一行，不和选项挤在一起。 */
+.chat-approval .lead-gate-add-note { align-self: flex-start; margin-top: var(--sp-2); }
 .lead-head-end { display: inline-flex; align-items: center; gap: var(--sp-8); }
 .lead-progress { display: inline-flex; align-items: center; gap: var(--sp-4); color: var(--cc-text-dim); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
 .lead-ring circle:last-child { transition: stroke-dasharray var(--dur-slower) var(--ease-in-out); }

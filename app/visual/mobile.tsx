@@ -39,7 +39,7 @@ if (scene === "mobile-changes") {
 // mobile-idle：对话页但没有待批准的请求（拍补全、菜单用）；mobile-lead：再加一张 Lead 关卡卡。
 // mobile-question：审批卡换成 AskUserQuestion 问答卡（矮屏下选项可见性，与桌面 flow-question 同一份题面）。
 // mobile-tasks：派过后台 Bash（一条在跑、三条跑完）和一个在跑的子代理，拍底栏胶囊与后台任务面板。
-const inChat = scene === "mobile-chat" || scene === "mobile-changes" || scene === "mobile-idle" || scene === "mobile-lead" || scene === "mobile-question" || scene === "mobile-tasks";
+const inChat = scene === "mobile-chat" || scene === "mobile-changes" || scene === "mobile-idle" || scene === "mobile-lead" || scene === "mobile-lead-c" || scene === "mobile-question" || scene === "mobile-tasks";
 /// 后台任务的假数据：判据是「回执带子任务结局」（与 TasksPanel 同口径），一条调用配一条回执。
 function taskItems(zh: boolean): unknown[] {
   const at = (minutes: number) => new Date(FIXED_NOW - minutes * 60_000).toISOString();
@@ -78,8 +78,9 @@ setExtraMock((cmd, args) => {
   if (cmd === "managed_terminal_screen" && scene === "mobile-keys") return SCREEN;
   if (cmd === "file_mention_candidates") return MENTION_CANDIDATES;
   // 模型菜单要有切换命令才点得开；权限模式要有可选项才出菜单（与桌面补看场景同一份补丁）。
-  if (cmd === "agent_chat_ui" && (scene === "mobile-idle" || scene === "mobile-lead")) return patchChatUi(demoChatUi());
+  if (cmd === "agent_chat_ui" && (scene === "mobile-idle" || scene === "mobile-lead" || scene === "mobile-lead-c")) return patchChatUi(demoChatUi());
   if (cmd === "lead_task_snapshot" && scene === "mobile-lead") return leadTask(lang);
+  if (cmd === "lead_task_snapshot" && scene === "mobile-lead-c") return leadTask(lang, "C");
   if (scene === "mobile-tasks") {
     // 模型按钮带档位（「Fable 5.2 · Medium」）：要 effort 能力 + 历史里有模型与档位。
     if (cmd === "agent_chat_ui") return patchChatUi(demoChatUi());
@@ -91,8 +92,8 @@ setExtraMock((cmd, args) => {
     return { approval: null, question: { ...base, requestId: "visual-question", toolName: "AskUserQuestion", description: null, input: questionInput(lang), answerable: true } };
   }
   if (scene === "mobile-question" && cmd === "get_chat_history") return { ...(chat(cmd) as object), pendingReview: "question" };
-  if ((scene === "mobile-idle" || scene === "mobile-lead") && cmd === "pending_interaction") return { approval: null, question: null };
-  if ((scene === "mobile-idle" || scene === "mobile-lead") && cmd === "get_chat_history") return { ...(chat(cmd) as object), pendingReview: null, status: "waiting" };
+  if ((scene === "mobile-idle" || scene === "mobile-lead" || scene === "mobile-lead-c") && cmd === "pending_interaction") return { approval: null, question: null };
+  if ((scene === "mobile-idle" || scene === "mobile-lead" || scene === "mobile-lead-c") && cmd === "get_chat_history") return { ...(chat(cmd) as object), pendingReview: null, status: "waiting" };
   // 列表的空态与首载失败。
   if (cmd === "get_live_sessions_page" && scene === "mobile-list-empty") return [];
   if (cmd === "get_live_sessions_page" && scene === "mobile-list-error") throw new Error("offline");

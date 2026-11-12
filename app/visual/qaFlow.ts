@@ -176,6 +176,7 @@ export function qaFlowMock(scene: string, lang: Lang, chat: (cmd: string) => unk
     if (cmd === "open_attached_terminal" && kind === "term-error") throw new Error("terminal/spawn_failed: wt.exe not found");
     if (cmd === "agent_chat_ui" && (args as { provider?: string })?.provider === "claude") return patchChatUi(demoChatUi());
     if (cmd === "lead_task_snapshot" && (kind === "lead" || kind === "lead-panel")) return leadTask(lang);
+    if (cmd === "lead_task_snapshot" && kind === "lead-c") return leadTask(lang, "C");
     if (cmd === "worktree_setup" && kind.startsWith("wt-")) return worktreeSetup(kind === "wt-failed" ? "failed" : kind === "wt-trust" ? "needs_trust" : "running");
     if (cmd === "pending_interaction") {
       if (kind === "term-approval") return chat(cmd);

@@ -666,8 +666,10 @@ fn waived_and_leader_items_do_not_block() {
     let v = call(&e, "stop", work.clone()).unwrap();
     let reason = v["reason"].as_str().unwrap();
     assert!(reason.contains("gate.json") && !reason.contains("再提问") && reason.contains("实施阶段"), "{reason}");
-    // 旧条目只在文字里写了「由 leader 验收」：提示 agent 补上 by 字段
-    assert!(reason.contains(r#""by": "leader""#), "{reason}");
+    // 此前这里提示「加 by:leader 就不再拦你」，uiux-polish 照做给自己能验的条目（CSS 预算）补了 by:leader
+    // 绕开拦截（2026-11-12 复盘）。改成：要豁免就发关卡，不许自己加字段。
+    assert!(!reason.contains(r#""by": "leader""#) && reason.contains("不要自己加 waived 或 by:leader"), "{reason}");
+    assert!(reason.contains("后台子代理"), "{reason}");
     fs::write(t.join("progress.md"), "phase: verify
 ").unwrap();
     let reason = call(&e, "stop", work.clone()).unwrap()["reason"].as_str().unwrap().to_owned();
@@ -778,4 +780,157 @@ fn accepting_gate_c_marks_leader_checks() {
     fs::write(t.join("acceptance.json"), json!([{"id": 1, "check": "看视觉", "passes": false, "by": "leader"}]).to_string()).unwrap();
     answer_gate(&t, "c3", &ans("accept", "")).unwrap();
     assert_eq!(read_items()[0]["verified_by"], json!("leader"));
+}
+
+/// 等后台子代理 / 后台 Bash 回报时不拦：通知到了会自动唤醒，拦了只会空转（25 个任务里约 300 次）。
+/// 形态取自 CC 2.1.322 的真实 transcript：启动看 user 行的 toolUseResult，回报看 origin.kind=task-notification。
+#[test]
+fn background_work_pending_does_not_block() {
+    let e = env();
+    let root = e.d.join("bg");
+    fs::create_dir_all(root.join(".git")).unwrap();
+    let t = make(&root);
+    let prog = t.join("progress.md").to_string_lossy().into_owned();
+    claim_as(&e, &root, "A", "Edit", json!({"file_path": prog}));
+    // 启动行不带时间戳 = 当作刚启动。不能写死日期：stop() 用真实时钟，写死的时间过 3 小时测试就红
+    //（做空审查 2026-11-12 复现）。过期逻辑在 stale_background_launch_expires 里用注入的 now 单测。
+    let edit = json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Edit", "input": {"file_path": prog}}]}});
+    let agent_launch = json!({"type": "user",
+        "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_1", "content": [{"type": "text", "text": "Async agent launched successfully."}]}]},
+        "toolUseResult": {"isAsync": true, "status": "async_launched", "agentId": "a7ae0d"}});
+    let bash_launch = json!({"type": "user",
+        "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_2", "content": "Command running in background with ID: bh1x."}]},
+        "toolUseResult": {"stdout": "", "backgroundTaskId": "bh1x"}});
+    let notif = |id: &str| json!({"type": "user", "origin": {"kind": "task-notification"},
+        "message": {"content": format!("<task-notification>\n<task-id>{id}</task-id>\n<status>completed</status>")}});
+    let stop_tool = |name: &str, id: &str| json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": name, "input": {"task_id": id}}]}});
+    let user = json!({"type": "user", "message": {"content": "继续做"}});
+    let write = |name: &str, lines: &[&Value]| {
+        let p = root.join(format!("{name}.jsonl"));
+        fs::write(&p, lines.iter().map(|v| v.to_string()).collect::<Vec<_>>().join("\n") + "\n").unwrap();
+        json!({"session_id": "A", "transcript_path": p.to_string_lossy()})
+    };
+
+    // 对照：没有后台任务，照常拦
+    assert!(blocked(&e, write("none", &[&user, &edit])));
+    // 后台子代理没回报 → 放行；回报到了 → 照常拦
+    assert!(!blocked(&e, write("agent", &[&user, &edit, &agent_launch])));
+    assert!(blocked(&e, write("agent-done", &[&user, &edit, &agent_launch, &notif("a7ae0d")])));
+    // 后台 Bash 同理；两个都起了只回来一个，仍在等
+    assert!(!blocked(&e, write("bash", &[&user, &bash_launch, &edit])));
+    assert!(!blocked(&e, write("two", &[&user, &edit, &agent_launch, &bash_launch, &notif("bh1x")])));
+    // 会话正忙时到的通知：queued_command 附件或入队记录（2f8ca755 实测形态），都算回报
+    let queued = json!({"type": "attachment", "attachment": {"type": "queued_command",
+        "prompt": "<task-notification>\n<task-id>a7ae0d</task-id>\n<status>completed</status>"}});
+    assert!(blocked(&e, write("queued", &[&user, &edit, &agent_launch, &queued])));
+    let enq = json!({"type": "queue-operation", "operation": "enqueue", "content": "<task-notification>\n<task-id>bh1x</task-id>"});
+    assert!(blocked(&e, write("enqueued", &[&user, &bash_launch, &edit, &enq])));
+    // 用户自己排队的普通消息不算回报
+    let typed = json!({"type": "attachment", "attachment": {"type": "queued_command", "prompt": "顺便看下 <task-id>a7ae0d</task-id>"}});
+    assert!(!blocked(&e, write("typed", &[&user, &edit, &agent_launch, &typed])));
+    // 只带 <tool-use-id> 的通知也算回报
+    let by_tool_use = json!({"type": "user", "origin": {"kind": "task-notification"},
+        "message": {"content": "<task-notification>
+<tool-use-id>toolu_2</tool-use-id>"}});
+    assert!(!blocked(&e, write("tu-only-agent", &[&user, &edit, &agent_launch, &by_tool_use])));
+    // Workflow：不猜返回结构，按 tool_use id 对通知
+    let wf_call = json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_wf", "name": "Workflow", "input": {}}]}});
+    let wf_ok = json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_wf", "content": "started"}]}, "toolUseResult": {}});
+    let wf_err = json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_wf", "is_error": true, "content": "denied"}]}});
+    let wf_done = json!({"type": "attachment", "attachment": {"type": "queued_command",
+        "prompt": "<task-notification>
+<task-id>wf_abc</task-id>
+<tool-use-id>toolu_wf</tool-use-id>"}});
+    assert!(!blocked(&e, write("wf", &[&user, &edit, &wf_call, &wf_ok])));
+    assert!(blocked(&e, write("wf-done", &[&user, &edit, &wf_call, &wf_ok, &wf_done])));
+    assert!(blocked(&e, write("wf-err", &[&user, &edit, &wf_call, &wf_err])));
+    // 常驻服务不算在等：起了 dev server 再停下，照常拦（做空第 2 轮）
+    let bg_cmd = |id: &str, cmd: &str| json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": id, "name": "Bash",
+        "input": {"command": cmd, "run_in_background": true}}]}});
+    let bg_res = |id: &str, task: &str| json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": id, "content": "bg"}]},
+        "toolUseResult": {"backgroundTaskId": task}});
+    for cmd in ["cd app && bun run tauri dev", "bunx serve dist -l 5173", "python -m http.server 8000", "npx vite --port 3000"] {
+        assert!(blocked(&e, write("svc", &[&user, &edit, &bg_cmd("toolu_s", cmd), &bg_res("toolu_s", "bs")])), "{cmd}");
+    }
+    for cmd in ["cargo test -p meowo-reporter", "bunx vitest run src/a.test.ts", "node e2e/run.mjs"] {
+        assert!(!blocked(&e, write("job", &[&user, &edit, &bg_cmd("toolu_j", cmd), &bg_res("toolu_j", "bj")])), "{cmd}");
+    }
+    // 要求了后台、返回结构认不出（CC 改版）：按 tool_use id 等通知，偏向放行；通知到了照拦
+    let unknown = json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "toolu_u", "content": "?"}]}, "toolUseResult": {"newShape": 1}});
+    let agent_bg = json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": "toolu_u", "name": "Agent", "input": {"prompt": "x", "run_in_background": true}}]}});
+    assert!(!blocked(&e, write("unknown", &[&user, &edit, &agent_bg, &unknown])));
+    let unknown_done = json!({"type": "user", "origin": {"kind": "task-notification"}, "message": {"content": "<task-notification>
+<tool-use-id>toolu_u</tool-use-id>"}});
+    assert!(blocked(&e, write("unknown-done", &[&user, &edit, &agent_bg, &unknown, &unknown_done])));
+    // 用户插话之前起的子代理还在跑：照样算在等（不只看本轮）
+    assert!(!blocked(&e, write("cross-turn", &[&agent_launch, &user, &edit])));
+    // TaskOutput 取过结果、TaskStop 停掉的：不会再有通知，不算在等
+    assert!(blocked(&e, write("output", &[&user, &edit, &agent_launch, &stop_tool("TaskOutput", "a7ae0d")])));
+    assert!(blocked(&e, write("stopped", &[&user, &edit, &bash_launch, &stop_tool("TaskStop", "bh1x")])));
+
+    // 引用污染：用户消息、工具输出里出现这些协议文本，不能被当成启动或回报
+    let quoted_launch = json!({"type": "user", "message": {"content": [{"type": "tool_result", "content":
+        "{\"toolUseResult\":{\"status\":\"async_launched\",\"agentId\":\"zz\"}} Async agent launched"}]}});
+    assert!(blocked(&e, write("quote-launch", &[&user, &edit, &quoted_launch])));
+    // 没有 origin 的「通知」正文（比如 Read 出来的 transcript）不算回报
+    let fake_notif = json!({"type": "user", "message": {"content": "<task-notification>\n<task-id>a7ae0d</task-id>"}});
+    assert!(!blocked(&e, write("quote-notif", &[&user, &edit, &agent_launch, &fake_notif])));
+    // origin 对、正文不以通知标签开头：不认
+    let odd = json!({"type": "user", "origin": {"kind": "task-notification"}, "message": {"content": "引用 <task-notification><task-id>a7ae0d</task-id>"}});
+    assert!(!blocked(&e, write("odd-notif", &[&user, &edit, &agent_launch, &odd])));
+}
+
+/// 超过 3 小时没回报的后台任务不再算在等：会话被杀或恢复后旧任务永远不会发通知，不设上限 hook 就永久失效。
+#[test]
+fn stale_background_launch_expires() {
+    let launch_at = |ts: &str| json!({"type": "user", "timestamp": ts,
+        "toolUseResult": {"status": "async_launched", "agentId": "x"}}).to_string();
+    let now = parse_ts("2026-11-12T05:00:00.000Z").unwrap();
+    assert!(background_pending(&launch_at("2026-11-12T04:00:00.000Z"), now));
+    assert!(!background_pending(&launch_at("2026-11-12T01:59:59.000Z"), now));
+    // 后台 Bash 45 分钟就过期：常驻的 dev server 永远不回报，不能让 hook 失效 3 小时
+    let bash_at = |ts: &str| json!({"type": "user", "timestamp": ts, "toolUseResult": {"backgroundTaskId": "b"}}).to_string();
+    assert!(background_pending(&bash_at("2026-11-12T04:20:00.000Z"), now));
+    assert!(!background_pending(&bash_at("2026-11-12T04:10:00.000Z"), now));
+    // 没有时间戳或格式不认：偏向放行（当作刚启动）
+    assert!(background_pending(&json!({"type": "user", "toolUseResult": {"backgroundTaskId": "b"}}).to_string(), now));
+    assert!(background_pending(&launch_at("2026-11-12 04:00"), now));
+    // 日期换算：闰年、跨月
+    assert_eq!(parse_ts("1970-01-01T00:00:00Z"), Some(0));
+    assert_eq!(parse_ts("2024-02-29T12:00:00.5Z"), Some(1_709_208_000));
+    assert_eq!(parse_ts("2026-11-12T04:58:10.006Z"), Some(1_794_459_490));
+}
+
+/// 任务目录按规定放在主检出；在 worktree 里开的会话，面板、关卡、恢复注入都要找得到它（做空审查 2026-11-12）。
+#[test]
+fn worktree_session_sees_tasks_in_main_checkout() {
+    let e = env();
+    let main = e.d.join("main");
+    let t = make(&main);
+    let gitdir = main.join(".git/worktrees/wt");
+    fs::create_dir_all(&gitdir).unwrap();
+    fs::write(gitdir.join("commondir"), "../..
+").unwrap();
+    let wt = e.d.join("main-wt");
+    fs::create_dir_all(wt.join("src")).unwrap();
+    fs::write(wt.join(".git"), format!("gitdir: {}
+", gitdir.display())).unwrap();
+    let wt_s = wt.join("src").to_string_lossy().into_owned();
+
+    // 没认领：按主检出的 active 找到
+    assert_eq!(snapshot(&wt_s).map(|s| s.slug), Some(SLUG.to_owned()));
+    // 认领后：只给认领的会话看，worktree 里的会话照样看得到
+    claim_as(&e, &wt, "W", "Edit", json!({"file_path": t.join("progress.md")}));
+    assert_eq!(snapshot_for(&wt_s, Some("W")).map(|s| s.slug), Some(SLUG.to_owned()));
+    assert!(snapshot_for(&wt_s, Some("other")).is_none());
+    // 主检出的关卡在 worktree 里也列得出来
+    write_gate(&t, "Q-1", "Q", "pending");
+    assert_eq!(project_gates(&wt_s).len(), 1);
+    // worktree 自己有 .lead 时两边都看，worktree 的在前
+    let own = wt.join(".lead/20261112-own");
+    fs::create_dir_all(&own).unwrap();
+    fs::write(wt.join(".lead/active"), "20261112-own").unwrap();
+    assert_eq!(snapshot(&wt_s).map(|s| s.slug), Some("20261112-own".to_owned()));
+    // 普通仓库（.git 是目录）不受影响
+    assert!(main_checkout(&main).is_none());
 }
