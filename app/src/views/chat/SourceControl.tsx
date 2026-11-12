@@ -274,7 +274,7 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
       const text = partial
         ? [formatBackendError(code, t.locale), formatBackendError(partial.cause, t.locale)].join(t.locale.startsWith("zh") ? "" : " ")
         : formatBackendError(e, t.locale);
-      setError({ text, code, retry, kind, undo: partial && undoOf ? undoOf(partial.undoId) : undefined });
+      setError({ text, code, retry, kind, undo: partial?.undoId && undoOf ? undoOf(partial.undoId) : undefined });
     } finally {
       setBusy(null);
       // 点开的折叠目录里的文件可能刚被暂存 / 放弃：清掉让上面的 effect 重拉。

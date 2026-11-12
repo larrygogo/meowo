@@ -109,6 +109,20 @@ describe("做空第一轮：混合放弃、放弃到一半、撤销重试、提�
     await waitFor(() => expect(screen.getByTestId("scm-notice").textContent).toBe("已撤销放弃"));
   });
 
+  // 做空第二轮 N4（2026-11-12）：放弃后的内容记不下来时后端不带撤销号（git.rs discard_without_after_hash_gives_no_undo）。
+  it("放弃到一半失败且没有撤销号：照样说只放弃了一部分和原因，不给必失败的「撤销」", async () => {
+    handler = (command) => {
+      if (command === "git_discard") throw "git/discard_partial:git/locked";
+      return [];
+    };
+    renderScm([repo([file("a.ts", null, "M"), file("b.ts", null, "M")])]);
+    discardAll();
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("只放弃了一部分。另一个 git 操作正在进行");
+    expect(within(alert).queryByTestId("scm-undo")).toBeNull();
+    expect(within(alert).queryByRole("button", { name: "重试" })).toBeNull();
+  });
+
   it("撤销写一半失败：给「重试」再撤一次；文件之后改过的不给重试", async () => {
     let undoFails = 1;
     handler = (command) => {

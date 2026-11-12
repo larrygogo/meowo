@@ -785,10 +785,11 @@ export async function gitDiscard(cwd: string, paths: readonly string[], sessionC
 }
 /// 放弃到一半失败（git.rs DISCARD_PARTIAL，做空第一轮 #1，2026-11-12）：错误串是
 /// `git/discard_partial:<撤销号>:<原因>`，拆出撤销号（给「撤销」）和原因（`git/locked` 之类，照常翻译）。
-export function discardPartialOf(e: unknown): { undoId: string; cause: string } | null {
+/// 撤销号可以没有（`git/discard_partial:<原因>`）：放弃后的内容记不下来，撤销必然失败，后端不发（做空第二轮 N4）。
+export function discardPartialOf(e: unknown): { undoId: string | null; cause: string } | null {
   const raw = typeof e === "string" ? e : e instanceof Error ? e.message : "";
-  const m = /^git\/discard_partial:(discard-[0-9a-f]+-[0-9a-f]+):([\s\S]*)$/.exec(raw);
-  return m ? { undoId: m[1], cause: m[2].trim() } : null;
+  const m = /^git\/discard_partial:(?:(discard-[0-9a-f]+-[0-9a-f]+):)?([\s\S]*)$/.exec(raw);
+  return m ? { undoId: m[1] ?? null, cause: m[2].trim() } : null;
 }
 export function gitDiscardUndo(cwd: string, undoId: string, sessionCwd?: string | null): Promise<void> {
   return invoke("git_discard_undo", { cwd, undoId, ...withSession(sessionCwd) } satisfies GitDiscardUndoArgs);

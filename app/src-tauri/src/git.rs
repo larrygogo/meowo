@@ -1515,16 +1515,21 @@ fn discard_with_ops(cwd: &str, paths: &[String], trash: TrashFn, restore: Restor
         // 失败（文件被占用、index.lock）时前几批已经放弃了，前端却只拿到错误、没有撤销号，那部分改动找不回来。
         let id = register_discard_backup(backup);
         let restored = restore(dir, &tracked);
-        let changed = record_discard_after(&id);
-        match restored {
-            Ok(()) => Ok(Some(id)),
+        let after = record_discard_after(&id);
+        // 撤销号用不上就收回：一个都没动的没东西可撤；放弃后的内容记不下来的，撤销时必被判「之后改过」
+        //（做空第二轮 N4，2026-11-12：以前照发撤销号，前端给的「撤销」点了必失败）。
+        if after != AfterDiscard::Undoable {
+            take_discard_backup(&id, None);
+        }
+        match (restored, after) {
+            (Ok(()), AfterDiscard::Undoable) => Ok(Some(id)),
+            (Ok(()), _) => Ok(None),
             // 已经有文件被放弃：撤销号随错误带回，前端给「撤销」。
-            Err(e) if changed => Err(format!("{DISCARD_PARTIAL}:{id}:{e}")),
-            // 一个都没动（第一批就失败）：撤销号没用，收回，照原样报错。
-            Err(e) => {
-                take_discard_backup(&id, None);
-                Err(e)
-            }
+            (Err(e), AfterDiscard::Undoable) => Err(format!("{DISCARD_PARTIAL}:{id}:{e}")),
+            // 一个都没动（第一批就失败）：照原样报错。
+            (Err(e), AfterDiscard::Untouched) => Err(e),
+            // 不知道放弃了几个：照样说「只放弃了一部分」，不带撤销号（api.ts discardPartialOf 认这种形态）。
+            (Err(e), AfterDiscard::Unknown) => Err(format!("{DISCARD_PARTIAL}:{e}")),
         }
     })();
     invalidate_caches();
@@ -1627,30 +1632,42 @@ fn register_discard_backup(mut backup: DiscardBackup) -> String {
 /// 放弃后的内容记不下来时的占位：任何真实对象号都不等于它，撤销时一律当作被改过、拒绝，宁可不撤也不盖掉新内容。
 const UNKNOWN_AFTER: &str = "?";
 
+/// 恢复完之后撤销号还能不能用。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AfterDiscard {
+    /// 有文件真的被放弃了（放弃后与放弃前不同），撤销号可用。
+    Undoable,
+    /// 一个都没变（第一批就失败，或恢复前后字节一样）：没东西可撤。
+    Untouched,
+    /// 放弃后的内容记不下来（hash-object 失败、登记已被挤掉）：不知道放弃了几个，撤销也必然失败。
+    Unknown,
+}
+
 /// 恢复完（成功或中途失败）：记下每个文件放弃后的内容，撤销时据此判断文件之后有没有被改过。
-/// 返回是否已有文件真的被放弃了（放弃后与放弃前不同）；记不下来按「有」算，让前端留着撤销入口。
-fn record_discard_after(id: &str) -> bool {
+/// 放弃前后内容一样的文件（没轮到恢复就失败了）从登记里剔掉：撤销只管真被放弃的。以前它们留着，agent
+/// 之后改了其中一个，write_back 就判「之后改过」整次拒绝，真被放弃的那部分也撤不回（做空第二轮 N4，2026-11-12）。
+fn record_discard_after(id: &str) -> AfterDiscard {
     let (root, paths) = {
         let list = DISCARD_BACKUPS.lock().unwrap_or_else(|e| e.into_inner());
         let Some((_, backup)) = list.iter().find(|(entry, _)| entry == id) else {
-            return false;
+            return AfterDiscard::Unknown;
         };
         (backup.root.clone(), backup.files.iter().map(|file| file.path.clone()).collect::<Vec<_>>())
     };
     let after = hash_worktree_files(&root, &paths, false).ok();
     let mut list = DISCARD_BACKUPS.lock().unwrap_or_else(|e| e.into_inner());
     let Some((_, backup)) = list.iter_mut().find(|(entry, _)| entry == id) else {
-        return false;
+        return AfterDiscard::Unknown;
     };
-    match after {
-        Some(after) => {
-            for (file, after) in backup.files.iter_mut().zip(after) {
-                file.after = after;
-            }
-            backup.files.iter().any(|file| file.after != file.before)
-        }
-        None => true,
+    // 记不下来时 after 留着 UNKNOWN_AFTER：撤销号随后由调用方收回，不会拿去撤销。
+    let Some(after) = after else {
+        return AfterDiscard::Unknown;
+    };
+    for (file, after) in backup.files.iter_mut().zip(after) {
+        file.after = after;
     }
+    backup.files.retain(|file| file.after != file.before);
+    if backup.files.is_empty() { AfterDiscard::Untouched } else { AfterDiscard::Undoable }
 }
 
 /// 按撤销号取出登记（root 给了就还要求仓库对得上）。取出即作废：同一个撤销号同一时刻只有一个撤销在跑。
@@ -2666,6 +2683,92 @@ mod tests {
 
         let err = discard_with_ops(&s(&repo), &paths, fake_trash_fail, restore_fail_untouched).unwrap_err();
         assert_eq!(err, "git/locked", "一个都没动：照原样报错");
+    }
+
+    /// 做空第二轮 N4（2026-11-12）：恢复到一半失败，没轮到的文件放弃前后内容一样（实际没被放弃）。agent
+    /// 接着改了这个没被放弃的文件，撤销照样把已放弃的写回去，不碰 agent 刚改的那个。以前它留在备份里，
+    /// write_back 判「之后改过」整次拒绝（git/undo_changed），已放弃的那部分也撤不回。
+    #[test]
+    fn discard_partial_undo_ignores_untouched_files() {
+        let sb = Sandbox::new("discard-partial-untouched");
+        let repo = sb.repo("r");
+        std::fs::write(repo.join("b.txt"), "b\n").unwrap();
+        sb.commit(&repo, "b");
+        std::fs::write(repo.join("README.md"), "mine a\n").unwrap();
+        std::fs::write(repo.join("b.txt"), "mine b\n").unwrap();
+        let paths = ["README.md".to_string(), "b.txt".to_string()];
+        let err = discard_with_ops(&s(&repo), &paths, fake_trash_fail, restore_first_then_fail).unwrap_err();
+        let rest = err.strip_prefix("git/discard_partial:").unwrap_or_else(|| panic!("要带撤销号：{err}"));
+        let (id, _) = rest.split_once(':').unwrap();
+        std::fs::write(repo.join("b.txt"), "agent b\n").unwrap();
+        undo_discard(&s(&repo), id).unwrap();
+        assert_eq!(std::fs::read_to_string(repo.join("README.md")).unwrap(), "mine a\n", "已放弃的写回来了");
+        assert_eq!(std::fs::read_to_string(repo.join("b.txt")).unwrap(), "agent b\n", "没被放弃的文件不动");
+    }
+
+    /// 恢复完把第一个文件锁住（Windows 独占打开，Unix 去掉读权限），让 record_discard_after 的 hash-object
+    /// 读不了它。恢复函数是函数指针，锁放在静态变量里撑到断言之后。
+    static AFTER_HASH_LOCK: std::sync::Mutex<Option<std::fs::File>> = std::sync::Mutex::new(None);
+    fn lock_for_hash(full: &Path) {
+        #[cfg(windows)]
+        {
+            use std::os::windows::fs::OpenOptionsExt;
+            let file = std::fs::OpenOptions::new().read(true).share_mode(0).open(full).unwrap();
+            *AFTER_HASH_LOCK.lock().unwrap_or_else(|e| e.into_inner()) = Some(file);
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(full, std::fs::Permissions::from_mode(0o000)).unwrap();
+        }
+    }
+    #[cfg_attr(windows, allow(unused_variables))] // Windows 上放掉句柄即解锁，路径只有 Unix 改回权限要用
+    fn unlock_for_hash(full: &Path) {
+        AFTER_HASH_LOCK.lock().unwrap_or_else(|e| e.into_inner()).take();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(full, std::fs::Permissions::from_mode(0o644)).unwrap();
+        }
+    }
+    fn restore_then_lock(dir: &str, tracked: &[String]) -> Result<(), String> {
+        restore_worktree(dir, tracked)?;
+        lock_for_hash(&Path::new(dir).join(&tracked[0]));
+        Ok(())
+    }
+    fn restore_first_lock_then_fail(dir: &str, tracked: &[String]) -> Result<(), String> {
+        restore_worktree(dir, &tracked[..1])?;
+        lock_for_hash(&Path::new(dir).join(&tracked[0]));
+        Err("git/locked".into())
+    }
+
+    /// 做空第二轮 N4（2026-11-12）：恢复后算不出放弃后的内容，放弃后的对象号只能记成「未知」，撤销时每个已放弃的
+    /// 文件都会被判「之后改过」，撤销必然失败：不发撤销号，前端就不给点了必失败的「撤销」。恢复到一半失败的
+    /// 照样说「只放弃了一部分」加原因，只是不带撤销号（`git/discard_partial:<原因>`）。
+    #[test]
+    fn discard_without_after_hash_gives_no_undo() {
+        let sb = Sandbox::new("discard-after-hash-fail");
+        let repo = sb.repo("r");
+        let readme = repo.join("README.md");
+        std::fs::write(&readme, "mine\n").unwrap();
+        let paths = ["README.md".to_string()];
+        let ok = discard_with_ops(&s(&repo), &paths, fake_trash_fail, restore_then_lock);
+        let readable = std::fs::read(&readme).is_ok();
+        unlock_for_hash(&readme);
+        if readable {
+            return; // Unix 上 root 跑测试时权限拦不住读，造不出算哈希失败
+        }
+        assert_eq!(ok.unwrap(), None, "撤销必然失败就不给撤销号");
+        assert!(statuses(&repo).is_empty(), "放弃本身生效了");
+
+        std::fs::write(repo.join("b.txt"), "b\n").unwrap();
+        sb.commit(&repo, "b");
+        std::fs::write(&readme, "mine a\n").unwrap();
+        std::fs::write(repo.join("b.txt"), "mine b\n").unwrap();
+        let paths = ["README.md".to_string(), "b.txt".to_string()];
+        let err = discard_with_ops(&s(&repo), &paths, fake_trash_fail, restore_first_lock_then_fail);
+        unlock_for_hash(&readme);
+        assert_eq!(err.unwrap_err(), "git/discard_partial:git/locked");
     }
 
     /// 做空第一轮 #1：备份失败时一个文件都没动，「没能备份改动，没有放弃」才是真话。以前未跟踪的先进了
