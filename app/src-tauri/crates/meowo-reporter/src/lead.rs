@@ -438,16 +438,125 @@ fn claim(data: &Value, registry: &Path) {
 
 // ---------------- stop ----------------
 
-/// 返回（用户最近一条真正的输入，这之后 agent 发起的工具调用）。
-fn this_turn(transcript: Option<&str>) -> (String, Vec<Value>) {
+/// transcript 末尾一段（最多 TRANSCRIPT_TAIL 字节）；读不到为空串。
+fn transcript_tail(transcript: Option<&str>) -> String {
     use std::io::{Read, Seek, SeekFrom};
-    let Some(path) = transcript else { return (String::new(), vec![]) };
-    let Ok(mut f) = std::fs::File::open(path) else { return (String::new(), vec![]) };
+    let Some(path) = transcript else { return String::new() };
+    let Ok(mut f) = std::fs::File::open(path) else { return String::new() };
     let len = f.metadata().map(|m| m.len()).unwrap_or(0);
     let _ = f.seek(SeekFrom::Start(len.saturating_sub(TRANSCRIPT_TAIL)));
     let mut bytes = Vec::new();
     let _ = f.read_to_end(&mut bytes);
-    let text = String::from_utf8_lossy(&bytes);
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+/// 启动后超过这么久还没回报的后台任务不再算「在等」：会话被杀或恢复后，旧任务永远不会再发通知，
+/// 不设上限的话这个会话的 Stop hook 就永久失效。最长的后台活（e2e、发版构建、长调研）实测在一小时内。
+const BACKGROUND_STALE_SECS: i64 = 3 * 3600;
+
+/// 有没有已启动、还没回报的后台任务（后台子代理、后台 Bash）。
+///
+/// 为什么要看：子代理在后台干活时，主 agent 什么也做不了，只能结束本轮等通知；Stop hook 照拦，agent 就
+/// 回一句「等子代理完成」再停，被拦满 5 次。25 个任务里 lead 拦截约 394 次，有 300 次是这种空转（2026-11-12
+/// 统计，任务 20261112-lead-optimize）。
+///
+/// 只按 JSON 结构认，不搜字串：Read/Grep 的输出里常引用这些协议文本，按 contains 判会被喂出幽灵任务
+///（见 memory transcript-quote-poisoning）。启动 = user 行的 `toolUseResult`（子代理 `status:
+/// "async_launched"` + `agentId`，后台 Bash `backgroundTaskId`）；回报 = `origin.kind == "task-notification"`
+/// 的 user 行里的 `<task-id>`；主动收尾 = TaskOutput/TaskStop 调用（取过结果就不再发通知，见 memory
+/// cc-taskoutput-eats-notification）。认不出的形态当作没有后台任务，回到原来的拦法。
+fn background_pending(tail: &str, now: i64) -> bool {
+    let mut launched: BTreeMap<String, Option<i64>> = BTreeMap::new();
+    let mut resolved = std::collections::BTreeSet::new();
+    for line in tail.lines() {
+        let Ok(o) = serde_json::from_str::<Value>(line) else { continue };
+        match o.get("type").and_then(Value::as_str) {
+            // 会话正忙时到的通知不单独成一条 user 行，而是入队后作为 queued_command 附件送达（2f8ca755 实测：
+            // 只认 user 行时 25 个后台任务全都「从未回报」）。入队即表示任务已结束，两处都认。
+            Some("queue-operation") if o.get("operation").and_then(Value::as_str) == Some("enqueue") => {
+                if let Some(id) = o.get("content").and_then(Value::as_str).and_then(notified_id) {
+                    resolved.insert(id.to_owned());
+                }
+            }
+            Some("attachment") if o.pointer("/attachment/type").and_then(Value::as_str) == Some("queued_command") => {
+                if let Some(id) = o.pointer("/attachment/prompt").and_then(Value::as_str).and_then(notified_id) {
+                    resolved.insert(id.to_owned());
+                }
+            }
+            Some("user") => {
+                if o.pointer("/origin/kind").and_then(Value::as_str) == Some("task-notification") {
+                    if let Some(id) = o.pointer("/message/content").and_then(Value::as_str).and_then(notified_id) {
+                        resolved.insert(id.to_owned());
+                    }
+                    continue;
+                }
+                let Some(r) = o.get("toolUseResult") else { continue };
+                let id = if r.get("status").and_then(Value::as_str) == Some("async_launched") {
+                    r.get("agentId")
+                } else {
+                    r.get("backgroundTaskId")
+                };
+                if let Some(id) = id.and_then(Value::as_str).filter(|s| !s.is_empty()) {
+                    let at = o.get("timestamp").and_then(Value::as_str).and_then(parse_ts);
+                    launched.insert(id.to_owned(), at);
+                }
+            }
+            Some("assistant") => {
+                let Some(Value::Array(arr)) = o.pointer("/message/content") else { continue };
+                for c in arr.iter().filter(|c| c.get("type").and_then(Value::as_str) == Some("tool_use")) {
+                    if !matches!(c.get("name").and_then(Value::as_str), Some("TaskOutput" | "TaskStop")) {
+                        continue;
+                    }
+                    let input = c.get("input");
+                    for key in ["task_id", "shell_id", "agentId", "id"] {
+                        if let Some(id) = input.and_then(|i| i.get(key)).and_then(Value::as_str) {
+                            resolved.insert(id.to_owned());
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    launched
+        .iter()
+        .any(|(id, at)| !resolved.contains(id) && at.is_none_or(|t| now - t < BACKGROUND_STALE_SECS))
+}
+
+/// 通知正文 `<task-notification>\n<task-id>X</task-id>…` 里的 X；必须以通知标签开头（行首锚定）。
+fn notified_id(content: &str) -> Option<&str> {
+    let rest = content.trim_start().strip_prefix("<task-notification>")?;
+    let start = rest.find("<task-id>")? + "<task-id>".len();
+    let len = rest[start..].find("</task-id>")?;
+    Some(rest[start..start + len].trim())
+}
+
+/// transcript 时间戳（`2026-11-12T04:58:10.006Z`）→ Unix 秒。只认 UTC 的 Z 结尾，别的格式返回 None
+///（None 当作「刚启动」，偏向放行）。为一个字段不值得引 chrono。
+fn parse_ts(s: &str) -> Option<i64> {
+    let b = s.as_bytes();
+    if b.len() < 20 || !s.ends_with('Z') {
+        return None;
+    }
+    let num = |r: std::ops::Range<usize>| s.get(r)?.parse::<i64>().ok();
+    let (y, mo, d) = (num(0..4)?, num(5..7)?, num(8..10)?);
+    let (h, mi, sec) = (num(11..13)?, num(14..16)?, num(17..19)?);
+    // Howard Hinnant 的 days_from_civil。
+    let y = if mo <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * (if mo > 2 { mo - 3 } else { mo + 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146097 + doe - 719468;
+    Some(days * 86400 + h * 3600 + mi * 60 + sec)
+}
+
+fn now_secs() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+}
+
+/// 返回（用户最近一条真正的输入，这之后 agent 发起的工具调用）。
+fn this_turn(text: &str) -> (String, Vec<Value>) {
     let mut calls = Vec::new();
     for line in text.lines().rev() {
         let Ok(o) = serde_json::from_str::<Value>(line) else { continue };
@@ -514,12 +623,16 @@ fn stop(data: &Value, registry: &Path) -> Option<String> {
         }
         return None;
     }
-    let (user_text, calls) = this_turn(data.get("transcript_path").and_then(Value::as_str));
+    let tail = transcript_tail(data.get("transcript_path").and_then(Value::as_str));
+    let (user_text, calls) = this_turn(&tail);
     if contains_stop_word(&user_text) {
         return None; // 用户明确叫停
     }
     if !wrote_task(&calls, &task) {
         return None; // 这一轮没在推进任务（用户插话、提问），不拦
+    }
+    if background_pending(&tail, now_secs()) {
+        return None; // 在等后台子代理或后台命令回报，通知到了会自动唤醒，拦了只会空转
     }
     // stop_hook_active=true：同一轮被拦后再次停下；否则是新的一轮，重新计数。
     let same_turn = data.get("stop_hook_active").and_then(Value::as_bool) == Some(true);
@@ -534,7 +647,7 @@ fn stop(data: &Value, registry: &Path) -> Option<String> {
     let slug = task.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
     let list: Vec<String> = fail.iter().take(8).map(|i| item_line(i)).collect();
     let reason = format!(
-        "[lead] 任务 {slug} 还在{}阶段，有 {} 条验收未通过（本轮第 {blocks}/{MAX_BLOCKS} 次拦截）：\n{}\n继续推进下一条，并实际验证。需要 leader 拍板、授权或亲手操作：按 lead skill 写 gate.json（B 拍板、D 授权或操作），然后结束本轮，不要用 AskUserQuestion。确实卡住了：在 progress.md 写明原因，把 phase 改为 blocked。某条只能由 leader 验收：给它加 \"by\": \"leader\"，就不会再为它拦你。",
+        "[lead] 任务 {slug} 还在{}阶段，有 {} 条验收未通过（本轮第 {blocks}/{MAX_BLOCKS} 次拦截）：\n{}\n继续推进下一条，并实际验证。在等后台子代理或后台命令回报：直接结束本轮，通知到了会唤醒你。某条做不到、要 leader 决定豁免，或者需要 leader 拍板、授权、亲手操作：现在就按 lead skill 写 gate.json（B 拍板单向门，D 授权或操作，Q 问豁免），然后结束本轮；不要用 AskUserQuestion，也不要自己加 waived 或 by:leader 来绕开拦截。确实卡住了：在 progress.md 写明原因，把 phase 改为 blocked。",
         if phase == "verify" { "验证" } else { "实施" },
         fail.len(),
         list.join("\n")
