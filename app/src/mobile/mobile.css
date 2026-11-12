@@ -111,6 +111,15 @@ body.remote-ui .chat-window.is-remote-compact .tb-git-branch { display: none; }
    吃掉 60px(右推弹簧 .chat-compose-hint 宽 0 也占两份间距),间距与下拉钮内边距各收一档。 */
 body.remote-ui .chat-window.is-remote-compact .chat-compose-actions { gap: 6px; }
 body.remote-ui .chat-window.is-remote-compact .chat-compose .chat-model-button { padding: 0 6px; }
+/* 这一行挤不下时谁先让：权限模式不让，模型名让。量 375 宽、有任务在跑（多一个停止钮）：权限文字
+   52px 只剩 46（英文 76 剩 59），「跳过权限确认」这种带风险的档位被截断后认不出来；模型名
+   「Fable 5.2 · Medium」118 剩 109。权限那一格不收缩，缺的宽度全由模型钮（自带省略号）出。 */
+body.remote-ui .chat-window.is-remote-compact .chat-compose-actions > .chat-model:has(> .chat-mode-button) { flex-shrink: 0; }
+/* 模型钮先丢思考档位（「 · Medium」，约 56px），再截模型名：档位在点开的模型面板里有分段控件。
+   419 以下的手机这一行常年放不下（402 宽英文界面缺 12px，375 中文缺 15px）；428/430 一档放得下，照常显示。 */
+@media (max-width: 419px) {
+  body.remote-ui .chat-window.is-remote-compact .chat-compose .chat-model-pill-effort { display: none; }
+}
 
 /* 触屏专属调优。远程页也会被桌面浏览器打开(同一局域网的另一台电脑),鼠标环境必须
    按 1:1 桌面密度渲染——这些规则无条件套用时,16px 输入框会撑肥侧栏搜索框、禁选中
@@ -164,6 +173,16 @@ body.remote-ui .chat-window.is-remote-compact .chat-compose .chat-model-button {
   body.remote-ui .chat-approval-custom input { font-size: 16px; }
   /* Lead 关卡的意见框同理：小于 16px 时 iOS 聚焦会整页放大（做空审查第二轮 M6）。 */
   body.remote-ui .lead-gate-note { font-size: 16px; }
+  /* Lead 关卡的选项行在手机上一律不矮于 44px。矮屏（键盘弹出）时桌面规则把行压到 29px，行与行只隔 2px：
+     选项是 label，挂不上按钮通用的 ::after 外扩，相邻行也不能靠外扩互相压，只能行本身够高
+     （同下面 .turn-fold-head 那一组的做法）。 */
+  body.remote-ui .lead-gate-option { min-height: 44px; box-sizing: border-box; }
+  /* 问答卡的选项行同理：没有说明的短选项 36 高，矮屏（横屏 812×375）被压到 30。「其他回答」输入框 32 → 40
+     （与搜索框同档；input 挂不了 ::after）。特异度带上 .chat-approval 才压得过矮窗那条。 */
+  body.remote-ui .chat-approval .chat-approval-options button { min-height: 44px; }
+  body.remote-ui .chat-approval-custom input { min-height: 40px; }
+  /* 「展开全部」是 19px 高的文字链接：上面是摘要（不可点），下面离第一个选项 8px，上扩 17、下扩 8，合 44。 */
+  body.remote-ui .lead-gate-more::after { inset: -17px 0 -8px; }
   /* 对话内搜索条：同理钉 16px；桌面 22px 的上下条/关闭钮手指点不准，放到 36px。
      铺满宽度，窄屏上桌面那条右上角的浮条连输入框都挤不下。 */
   body.remote-ui .chat-search { left: var(--chat-strip-gap); padding: var(--sp-4) var(--sp-8); }
@@ -207,7 +226,6 @@ body.remote-ui .chat-window.is-remote-compact .chat-compose .chat-model-button {
   body.remote-ui .chat-sidebar-item-menu::after,
   body.remote-ui .chat-attention-dismiss::after,
   body.remote-ui .chat-sidebar-search-x::after,
-  body.remote-ui .chat-approval-actions .is-deny::after,
   /* 复核补：这三个也在 44px 以下——进度面板入口 38px、侧栏开关 40px、
      搜索清除 41px（前两个是远程端的常用入口，点偏就是另一个动作）。 */
   body.remote-ui .chat-todo-btn::after,
@@ -224,12 +242,53 @@ body.remote-ui .chat-window.is-remote-compact .chat-compose .chat-model-button {
   body.remote-ui .chat-diff-back::after {
     inset: -12px;
   }
+  /* 对话页标题栏：相邻按钮只隔一个 gap（手机 8px、宽屏 6px），通用的 6px 和上面点名的 12px 外扩都会
+     左右互相压。Playwright 量 375 宽：「标记完成」热区 189.3~239.3、「结束会话」229.3~262.3，叠 10px，
+     再往右「结束会话」与改动胶囊叠 4px；「标记完成」点了立即生效，点偏就是误操作。
+     左右只扩到相邻两钮的中线（gap 的一半），上下把 26px 的钮补满标题栏的 44px。
+     只点名栏上的直接按钮：标题菜单的菜单项也在 .chat-bar 里，它们的热区归 .dd-item 那条管。
+     返回钮（.chat-sidebar-open）左边没有邻居，仍用上面的 -12px。 */
+  body.remote-ui .chat-bar > button:not(.chat-sidebar-open)::after,
+  body.remote-ui .chat-bar > .chat-bar-slot > button::after,
+  body.remote-ui .chat-bar .chat-title-menu > .chat-title-btn::after {
+    inset: -9px calc(var(--chat-bar-gap, 6px) / -2);
+  }
+  /* 同一个根因的另外几排（2026-11-12 用脚本把各场景里所有可点项的热区两两求交量出来的）：
+     并排的按钮各自外扩 6px（「拒绝」12px），间距却只有 2~14px，热区互相压。一律改成左右只扩到间距的一半以内。
+     · 审批卡动作排：「说明并拒绝 / 拒绝」叠 8px、「拒绝 / 允许一次」叠 4px（间距 10 和 14）。按钮本身 44 高
+       （宽屏 36），不再需要「拒绝」单独的 12px。
+     · 输入框底栏：「+ / 权限模式」叠 6px（间距 6），「模型 / 发送或中断」叠 10px（间距 2）。
+     · 停靠栏的进度胶囊：「Lead / 当前进度」「后台 Bash / 子代理」叠 6px（间距 6）；顺带把 28 高的胶囊
+       上下外扩从 6 加到 8，命中高度 40 → 44。 */
+  body.remote-ui .chat-approval .chat-approval-actions button::after { inset: -6px -4px; }
+  body.remote-ui .chat-compose-actions > button::after,
+  body.remote-ui .chat-compose-actions > .chat-model > button::after { inset: -6px -3px; }
+  body.remote-ui .chat-compose-actions > .chat-model-select > .chat-model-button::after { right: -1px; }
+  body.remote-ui .chat-compose-actions > .chat-model-select + .chat-send-button::after { left: -1px; }
+  body.remote-ui .dock-workbar .ui-pill::after { inset: -8px -3px; }
+  /* 消息下面的「复制」26px：外扩 6px 只有 38，补到 44（左右没有别的可点项）。 */
+  body.remote-ui .chat-turn-copy::after { inset: -9px; }
+  /* 设置屏的开关 31 高：外扩 6px 差 1px 到 44。 */
+  body.remote-ui .remote-settings-screen .pswitch::after { inset: -7px -6px; }
+  /* 列表页的筛选钮 24px：外扩 6px 只有 36。上面离分段页签的热区、下面离第一张卡各 8px，上下扩到 8（合 40，
+     再多就压到邻居），左右扩到 10（合 44）。
+     筛选生效时（.is-active）::after 是右上角的提示点，不能动它。 */
+  body.remote-ui .remote-session-list .chat-sidebar-filter:not(.is-active)::after { inset: -8px -10px; }
+  /* 新建会话页：agent 选择钮之间隔 8px，各外扩 6px 会叠 4px；目录输入框右边的「浏览…」紧贴输入框，
+     左扩的 6px 盖在输入框上。 */
+  body.remote-ui .remote-new-session-overlay .ns-agent::after { inset: -4px; }
+  body.remote-ui .remote-new-session-overlay .ns-browse::after { left: 0; }
+  /* 宽屏侧栏头：「新建会话」和设置齿轮只隔 2px，各外扩 6px 叠 10px。两钮之间在中线分界。 */
+  body.remote-ui .chat-sidebar-head:has(.remote-settings) .chat-sidebar-new::after { right: -1px; }
+  body.remote-ui .chat-sidebar-head .remote-settings-btn::after { left: -1px; }
 
   /* 「进行中 / 已完成」页签文字只有 30px 高：给足 44px 的命中高度（不改字号）。 */
   /* 不直接把按钮撑到 44px：页签胶囊会变成一大块（2026-11 手机实拍嫌太大）。可见高度 32px，
      命中面靠 ::after 上下各外扩 6px 补到 44px。左右不外扩，相邻页签只隔 2px，外扩会互相抢点。 */
-  body.remote-ui .chat-sidebar-tabs button { min-height: 32px; padding-top: 0; padding-bottom: 0; }
-  body.remote-ui .chat-sidebar-tabs button::after { inset: -6px 0; }
+  /* 2026-11-12：段高 32 加上列表页凹槽的 3px 内边距，凹槽量出来 38，设置屏和后台任务面板的分段都是 32。
+     段高收到 28（凹槽内边距 2，合 32），命中面改成上下各扩 8px，仍是 44。 */
+  body.remote-ui .chat-sidebar-tabs button { min-height: 28px; padding-top: 0; padding-bottom: 0; }
+  body.remote-ui .chat-sidebar-tabs button::after { inset: -8px 0; }
 
   /* 7M-9 尾：桌面端「⋯」已改 hover 才显（2026-10 用户实拍：常显密密麻麻还挡标题），
      但远程端没有 hover——侧栏 ⋯ 是手机上星标/重命名/归档的唯一入口，必须常显。 */
@@ -447,7 +506,7 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
 /* 页签：分段控件。凹槽 + 选中块（L2 色加一点阴影），选中字用正文色。 */
 .remote-session-list .chat-sidebar-tabs {
   margin: 0 16px 14px;
-  padding: 3px;
+  padding: 2px;
   border: 0;
   border-radius: var(--radius-lg);
   background: var(--fill-hover);
@@ -456,8 +515,10 @@ body.remote-ui .chat-window.is-remote-list .chat-body { display: none; }
 /* 凹槽用最淡一档填充、选中块用 L2 色加细线和一点阴影：深浅两套主题下选中块都比凹槽亮，
    不需要按主题分写。 */
 .remote-session-list .chat-sidebar-tabs button.is-active { color: var(--cc-text); background: var(--cc-panel-raised); box-shadow: 0 0 0 var(--hairline) var(--cc-border), var(--shadow-sm); }
-/* 小节标题与右侧的筛选钮：左缘对齐大标题的 20px，右缘对齐卡片右缘 16px（钮 24 宽，图标居中，右让 2px）。 */
-.remote-session-list .chat-sidebar-section { padding: 0 14px 6px 20px; }
+/* 小节标题与右侧的筛选钮：左缘对齐大标题的 20px；右边让筛选图标和卡内内容（⋯、时间那一列）的右缘同线，
+   不对卡片外框（对齐按墨迹算）。量 375 宽：图标墨迹右缘 353，卡内 ⋯ 墨迹右缘 346.5，卡片外缘 359，
+   两条线都没对上；右内边距 14 → 21 后图标墨迹右缘落在 346.5，和 ⋯ 同线。 */
+.remote-session-list .chat-sidebar-section { padding: 0 21px 6px 20px; }
 .remote-session-list .chat-sidebar-section-label { font-size: 13px; }
 .remote-session-list .chat-sidebar-scope { margin: 0 16px 8px; }
 /* 会话卡：一张 L2 卡一条会话，卡间 8px。描边用内阴影细线，常驻卡片不加投影。
@@ -749,7 +810,14 @@ body.remote-ui .remote-session-list .chat-sidebar-empty { display: flex; flex-di
 
 @media (max-width: 699px) {
   body.remote-ui .chat-topbar { min-height: calc(48px + env(safe-area-inset-top, 0px)); }
-  body.remote-ui .chat-bar { height: 48px; padding: 0 12px; gap: 8px; }
+  /* --chat-bar-gap 与 gap 同值：触屏热区按它的一半外扩（见上面 pointer: coarse 块的标题栏那条）。 */
+  body.remote-ui .chat-bar { height: 48px; padding: 0 12px; gap: 8px; --chat-bar-gap: 8px; }
+  /* 「结束会话」在手机竖屏一律只留图标（名字在 aria-label 里）。桌面那条容器查询只在标题栏 ≤400 时收：
+     430 宽的手机标题栏有 406，四个字照摆（243~311），标题却只显示「重构登录页…」（9 字剩 5 字）。
+     手机上标题比这四个字要紧。钮宽与同排图标钮同档（26），430 宽时标题从 103px 放到 145px，整条显示。 */
+  body.remote-ui .chat-bar .chat-end { padding: 0; width: var(--icon-button-sm); height: var(--icon-button-sm); justify-content: center; }
+  body.remote-ui .chat-bar .chat-end-ico { display: block; }
+  body.remote-ui .chat-bar .chat-end-label { display: none; }
   body.remote-ui .chat-title { font-size: 16px; font-weight: 600; }
   body.remote-ui .chat-title-project { display: none; }
   body.remote-ui .chat-title-btn { padding-left: 6px; padding-right: 6px; margin-left: -6px; }
@@ -850,6 +918,11 @@ body.remote-ui .chat-window.is-remote-compact .chat-dock:has(> .lead-gate-card) 
   margin-bottom: clamp(0px, calc((var(--app-height, 100dvh) - 560px) * 999), 6px);
 }
 
+/* @ 文件补全弹层贴着输入框往上长（底边离输入框 8px），进度胶囊那一排夹在两者之间、比弹层底边低 2px：
+   弹层底下露出一条胶囊的边（qa-m-at 量：弹层底 684，胶囊 658~686）。弹层开着时胶囊反正被盖住，直接藏掉；
+   用 visibility 不用 display，停靠栏高度不变，弹层不跟着跳。 */
+body.remote-ui .chat-window.is-remote-compact .chat-dock:has(#chat-at-listbox, .chat-slash-menu) .dock-workbar { visibility: hidden; }
+
 /* 新建会话浮层:桌面是独立窗口,远程改全屏 sheet 盖在会话列表上。
    注意 .ns-window 桌面态是 100vw/100vh 填满自己的 OS 窗,在这里必须双双改掉——
    之前只覆宽不覆高,sheet 恒撑 100vh(比手机可视区还高),底部按钮直接出屏。 */
@@ -913,7 +986,42 @@ body.remote-ui .scm { overflow-x: hidden; }
   body.remote-ui .chat-diff-layout button::after { inset: -11px -1px; }
   body.remote-ui .chat-diff-layout button:first-child::after { left: -3px; }
   body.remote-ui .chat-diff-layout button:last-child::after { right: -10px; }
+  /* 提交、推送、合并这些整行按钮是这一页的主动作，桌面的 28px 在手机上太矮：外扩后命中面也只有 40，
+     「提交全部」（168~196）和「推送」（204~232）只隔 8px，两块热区在 198~202 叠 4px。按钮本身做到 44
+     （同审批卡的「拒绝 / 允许」），不再靠外扩，热区就是按钮自己，互不相压。 */
+  body.remote-ui .scm-commit-btn,
+  body.remote-ui .scm-forge-btn { height: 44px; border-radius: var(--radius-lg); }
+  body.remote-ui .scm-commit-btn::after,
+  body.remote-ui .scm-forge-btn::after { inset: 0; }
+  /* 文件搜索框 28 → 40，与会话列表页的搜索框同高（input 挂不了 ::after，只能本身够高）。
+     右边的列表/树切换是分段控件，不跟着拉高（分段凹槽不超过 32 是定论）：凹槽定在 28，对着搜索框垂直居中，
+     两格的命中面由上面的 ::after 上下各扩 11px 补到 44（格高仍是 22）。 */
+  body.remote-ui .scm-tools .chat-diff-search { min-height: 40px; }
+  body.remote-ui .scm-tools .chat-diff-layout { align-self: center; height: var(--btn-h-md); }
+  /* 同一页其余几样也不到 44：仓库行 28 高（外扩后 40，多仓库时行挨着行，热区上下各叠 6px）、
+     文件行里的主按钮 28（外扩后 40）、分组标题的折叠钮 17（外扩后 29）、PR 标题 19（外扩后 31）。
+     行本身已经或可以做到 44 的，让按钮撑满行高、不再外扩；PR 标题上下没有别的可点项，外扩补足。 */
+  body.remote-ui .scm-repo { height: 44px; }
+  body.remote-ui .scm-row-main,
+  body.remote-ui .scm-group-toggle { align-self: stretch; height: auto; }
+  body.remote-ui .scm-repo::after,
+  body.remote-ui .scm-row-main::after,
+  body.remote-ui .scm-group-toggle::after { inset: 0; }
+  body.remote-ui .scm-pr-head::after { inset: -13px 0; }
+  /* 文件 diff 页头的「自动换行 / 刷新」22px、只隔 2px：通用外扩让两块热区叠 10px、命中高度只有 34。
+     两钮之间在中线分界，上下补到 44，外侧各扩 10px。 */
+  body.remote-ui .chat-diff-iconbtn::after { inset: -11px -1px -11px -10px; }
+  body.remote-ui .chat-diff-iconbtn.chat-diff-refresh::after { inset: -11px -10px -11px -1px; }
+  /* 行号槽里的「评论这一行」每行一个、行距 18px：上下外扩会让相邻两行的热区叠 14px，点到的常是隔壁行。
+     上下不扩，只往右扩。 */
+  body.remote-ui .chat-diff-cmt-add::after { inset: 0 -6px 0 0; }
+  /* 面板头的返回钮和文件 diff 头的「‹ 文件」上下只隔 18.5px，各外扩 12px 叠 5.5px：在中线分界。 */
+  body.remote-ui .chat-diff-head .chat-diff-back::after { bottom: -9px; }
+  body.remote-ui .chat-diff-back:not(.chat-diff-head *)::after { top: -9px; }
 }
+/* 「更改」页滚到底时最后一行会落在 home 横条下面：滚动容器的下内边距只有 8px，没算底部安全区。
+   Chromium 模拟安全区（下 34px）量到 padding-bottom 仍是 8px；改成取两者较大的。未经真机验证。 */
+body.remote-ui .scm { padding-bottom: max(var(--sp-8), env(safe-area-inset-bottom, 0px)); }
 
 /* 刘海机横屏:左右安全区(验收 #28,调研 m6)。此前只处理了上下,横屏时返回钮、列表和「更改」行
    会落到刘海下(左右各约 47~59px)。整个远程页内容统一内缩,竖屏 env() 为 0,零影响。
@@ -934,6 +1042,8 @@ body.remote-ui #root {
   .remote-session-list .chat-sidebar-search input { min-height: 36px; }
   .remote-session-list .chat-sidebar-search-icon { top: calc(50% - 4px); }
   .remote-session-list .chat-sidebar-tabs { margin-bottom: 8px; }
+  /* 页签下边距收到 8 之后，页签热区（下扩 8）离筛选钮只剩 2px：筛选钮上面只扩 2px，不和「工作区」页签叠。 */
+  body.remote-ui .remote-session-list .chat-sidebar-filter:not(.is-active)::after { top: -2px; }
   .remote-session-list .chat-sidebar-item { min-height: 56px; padding-top: 9px; padding-bottom: 9px; }
   .remote-settings-screen .remote-settings-group:first-child { margin-top: 0; }
 }

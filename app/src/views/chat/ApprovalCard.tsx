@@ -40,12 +40,16 @@ function useKeyContentInView(copyRef: RefObject<HTMLDivElement | null>) {
         const box = copy.getBoundingClientRect();
         const rect = key.getBoundingClientRect();
         const keyTop = rect.top - box.top + copy.scrollTop;
+        // 标题行吸顶的卡（Lead 关卡，见 styles.css）：标题盖住可视区最上面一段，关键块能用的高度要扣掉它，
+        // 「从第一行起」也要排在它下面——否则 375×376 键盘态第一个选项正好被标题压住。
+        const head = copy.querySelector<HTMLElement>(".chat-approval-head");
+        const pinned = head && getComputedStyle(head).position === "sticky" ? Math.max(0, head.getBoundingClientRect().bottom - box.top) : 0;
         // 关键块放得下就让它的下沿贴住可视区下沿（上方的说明能多露就多露）；放不下就从它的第一行起。
         // 关键块下面还有内容时底边会渐隐（CLIP_FADE），有余量就再多滚这一段，别让最后一个选项落在渐隐里。
-        const slack = copy.clientHeight - rect.height;
+        const slack = copy.clientHeight - pinned - rect.height;
         const below = copy.scrollHeight - (keyTop + rect.height) > 1;
-        const target = slack >= 0 ? Math.max(0, keyTop + rect.height - copy.clientHeight + (below ? Math.min(CLIP_FADE, slack) : 0)) : keyTop;
-        if (Math.abs(copy.scrollTop - target) > 1) copy.scrollTop = Math.min(target, keyTop);
+        const target = slack >= 0 ? Math.max(0, keyTop + rect.height - copy.clientHeight + (below ? Math.min(CLIP_FADE, slack) : 0)) : keyTop - pinned;
+        if (Math.abs(copy.scrollTop - target) > 1) copy.scrollTop = Math.min(target, keyTop - pinned);
       }
       hints();
     };

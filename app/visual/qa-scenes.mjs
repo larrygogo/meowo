@@ -183,4 +183,18 @@ export const QA_SHOTS = [
   { name: "qa-m-subagents", page: "mobile", scene: "mobile-tasks", size: PHONE, sel: ".panel-tasks", steps: [["click", ".dock-workbar .ui-pill >> nth=1"]], themes: ["dark"] },
   { name: "qa-m-approval-kbd", page: "mobile", scene: "mobile-chat", size: [375, 476], sel: ".chat-approval-actions", steps: [["click", TA]] },
   { name: "qa-m-settings-on", page: "mobile", scene: "mobile-settings", params: "on=1", size: PHONE, sel: ".pswitch.on", langs: ["zh", "en"] },
+  // Lead 关卡卡片的矮屏：SE 键盘态（375×376）正在写意见 / 焦点在输入框，以及横屏。标题吸顶、选项行 44。
+  { name: "qa-m-lead-kbd-se", page: "mobile", scene: "mobile-lead", size: [375, 376], sel: ".lead-gate-card", steps: [["click", ".lead-gate-note"]] },
+  { name: "qa-m-lead-se", page: "mobile", scene: "mobile-lead", size: [375, 376], sel: ".lead-gate-card", steps: [["click", TA]] },
+  { name: "qa-m-lead-land", page: "mobile", scene: "mobile-lead", size: [812, 375], sel: ".lead-gate-card" },
+  // 问答卡的矮屏（横屏）：选项行不被压到 44 以下。
+  { name: "qa-m-question-land", page: "mobile", scene: "mobile-question", size: [812, 375], sel: ".chat-approval-options" },
+  // 有任务在跑时的输入框底栏（多一个中断钮）：375 宽下权限模式文字要完整，中英各一。
+  { name: "qa-m-running", page: "mobile", scene: "mobile-tasks", size: PHONE, sel: ".chat-mode-button", langs: ["zh", "en"] },
+  // 「更改」页点开一个文件的 diff。
+  { name: "qa-m-diff", page: "mobile", scene: "mobile-changes", size: PHONE, sel: ".chat-diff-iconbtn", steps: [["click", ".scm-row-main"]] },
+  // 「更改」页滚到底 + 模拟安全区（上 47 下 34，iPhone 全面屏）：最后一行要停在 home 横条上方。
+  // 品红条是场景自己画的 home 横条区域（真机上是系统画的），只为在图上看清最后一行有没有被压住。
+  { name: "qa-m-changes-safe", page: "mobile", scene: "mobile-changes", size: PHONE, sel: ".scm-row", themes: ["dark"], safeArea: { top: 47, bottom: 34, left: 0, right: 0 },
+    steps: [["wait", ".scm-row"], ["eval", "(() => { const s = document.querySelector('.scm'); s.scrollTop = s.scrollHeight; const bar = document.createElement('div'); bar.style.cssText = 'position:fixed;left:0;right:0;bottom:0;height:34px;background:rgba(255,0,255,.35);pointer-events:none;z-index:99999'; document.body.appendChild(bar); })()"]] },
 ];

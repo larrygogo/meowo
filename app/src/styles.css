@@ -6269,6 +6269,21 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
    意见框」都放不下，第二个选项落在滚动区底边外，看着像被裁掉。copy 自带 min-height:0，
    卡片到顶时由它收缩并滚动，提交按钮始终可见。 */
 .lead-gate-card .chat-approval-copy { max-height: none; }
+/* 标题行吸顶：关卡的题目是「在决定什么」，卡片被压矮（手机键盘弹出、矮窗）时正文会自动滚到选项，
+   题目跟着滚出去，只剩「展开全部」和三个选项，看不出在选什么（手机 375×476 实拍：标题 y=6，卡顶 y=62）。
+   吸住之后题目一直在；实底盖住滚上来的正文，左右补上正文区的出血，选项行的底色不从两侧露出来。
+   吸顶的标题会被上缘渐隐遮罩一起淡掉，所以关卡卡片不要上缘渐隐：内容从标题底下滚出去本身就说明上面还有。 */
+.lead-gate-card .chat-approval-head { position: sticky; top: 0; z-index: var(--z-raised); margin-inline: calc(-1 * var(--copy-bleed)); padding-inline: var(--copy-bleed); background: var(--cc-panel-raised); box-shadow: 0 calc(-1 * var(--copy-bleed)) 0 var(--cc-panel-raised); }
+/* 上面的 box-shadow：手机上正文区四周有 6px 内边距（mobile.css 的出血），Chromium 把标题吸在内边距以内，
+   标题上方那 6px 会露出滚上来的正文，用同色投影盖住；桌面正文区没有上内边距，投影落在滚动区外被裁掉。
+   标题下缘接一段 8px 的渐隐（正好是标题与下一块的间距，没滚动时压在空白上看不见），正文不是齐刷刷被切断。 */
+.lead-gate-card .chat-approval-head::after { content: ""; position: absolute; top: 100%; left: 0; right: 0; height: var(--sp-8); background: linear-gradient(to bottom, var(--cc-panel-raised), transparent); pointer-events: none; }
+.lead-gate-card .chat-approval-copy[data-clip="top"] { -webkit-mask-image: none; mask-image: none; }
+.lead-gate-card .chat-approval-copy[data-clip="both"] { -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 16px), transparent); mask-image: linear-gradient(to bottom, #000 calc(100% - 16px), transparent); }
+/* 正在写意见时不要底部渐隐：意见框排在正文最下面，聚焦时浏览器只把它滚到刚好贴住可视区底边，
+   离滚到底还差几像素，渐隐带正好压在框的下半截（量到框底 278.6、可视区底 278，底边 16px 被淡掉）。
+   scroll-margin 让聚焦时多滚一段、框底离可视区留出间距。 */
+.lead-gate-card .chat-approval-copy:has(.lead-gate-note:focus) { -webkit-mask-image: none; mask-image: none; }
 .lead-gate-summary { max-height: 7.5em; overflow: hidden; font-size: var(--text-sm); }
 .lead-gate-summary.is-expanded { max-height: none; }
 /* 审批卡的标题圆点挂在 .chat-approval-copy strong 上；摘要是 markdown，加粗不该带圆点（实拍）。 */
@@ -6298,7 +6313,9 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .lead-gate-option input { width: 13px; height: 13px; flex: 0 0 auto; margin: 0 0 0 calc(-13px - var(--sp-8)); }
 .lead-gate-option-detail { flex-basis: 100%; color: var(--cc-text-dim); font-size: var(--text-xs); }
 .lead-gate-rec { padding: 0 var(--sp-6); border-radius: var(--radius-sm); background: var(--fill-selected); color: var(--cc-text-dim); font-size: var(--text-xs); }
-.lead-gate-note { width: 100%; box-sizing: border-box; padding: var(--sp-8); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); background: var(--cc-panel-raised); color: var(--cc-text); font: inherit; font-size: var(--text-sm); resize: vertical; }
+.lead-gate-note { width: 100%; box-sizing: border-box; padding: var(--sp-8); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); background: var(--cc-panel-raised); color: var(--cc-text); font: inherit; font-size: var(--text-sm); resize: vertical; scroll-margin-block: var(--sp-8); }
+/* 占位字走主题变量：浏览器默认的 rgb(117,117,117) 压在深色卡面 rgb(34,35,37) 上对比度只有 3.41。 */
+.lead-gate-note::placeholder { color: var(--cc-text-faint); }
 .lead-gate-error { margin-top: var(--sp-4); color: var(--cc-warn-text); font-size: var(--text-xs); }
 .chat-plan-doc { font-size: var(--text-base); line-height: var(--leading-body); }
 .chat-plan-doc h1 { font-size: calc(20px * var(--cc-ui)); }
@@ -6695,7 +6712,8 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .chat-sheet-panel { position: relative; display: flex; flex-direction: column; min-height: 0; max-height: calc(var(--app-height, 100dvh) * 0.86); border: var(--hairline) solid var(--cc-border); border-bottom: 0; border-radius: var(--radius-xl) var(--radius-xl) 0 0; background: var(--cc-panel-raised, var(--cc-bg)); box-shadow: var(--shadow-xl); color: var(--cc-text); animation: chat-sheet-rise var(--dur-slow) var(--ease-out); }
 .chat-sheet-grab { flex: none; align-self: center; position: relative; width: 56px; height: 18px; margin-top: 4px; padding: 0; border: 0; background: none; cursor: pointer; }
 .chat-sheet-grab::after { content: ""; position: absolute; left: 50%; top: 7px; width: 38px; height: 5px; border-radius: var(--radius-full); background: var(--cc-border); transform: translateX(-50%); }
-.chat-sheet-head { flex: none; padding: var(--sp-6) var(--sp-16) var(--sp-10); }
+/* 左右 20 = 正文区内边距 8 + 列表行内边距 12：标题和下面列表行的文字同一条左缘（改前 16，标题比列表靠左 4px）。 */
+.chat-sheet-head { flex: none; padding: var(--sp-6) calc(var(--sp-8) + var(--sp-12)) var(--sp-10); }
 .chat-sheet-title { color: var(--cc-text); font-size: var(--text-base); font-weight: 500; }
 .chat-sheet-body { flex: 1; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 0 var(--sp-8) max(16px, env(safe-area-inset-bottom, 0px)); }
 /* 搜索框 16px：iOS 对 <16px 的输入框聚焦即整页放大（与 mobile.css 的输入控件同一条）。 */
