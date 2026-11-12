@@ -14,9 +14,9 @@
 /// 点开才拉其中的文件（不进 5 秒轮询）。列表做虚拟滚动：用户实测一个没进 .gitignore 的构建目录有
 /// 一万五千多个文件，整份平铺挂进 DOM 面板就卡死了。
 
-import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type MutableRefObject, type ReactNode } from "react";
+import { useContext, useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type MutableRefObject, type ReactNode } from "react";
 import { observeElementRect, useVirtualizer, type Virtualizer } from "@tanstack/react-virtual";
-import { getUntrackedDirFiles, gitCommit, gitDiscard, gitIgnoreDir, gitStage, gitUnstage, openPathWith, type RepoChangesDto } from "../../api";
+import { getUntrackedDirFiles, gitCommit, gitDiscard, gitDiscardUndo, gitIgnoreDir, gitStage, gitUnstage, openPathWith, type RepoChangesDto } from "../../api";
 import type { GitChangedFileDto } from "../../generated/contracts/GitChangedFileDto";
 import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
@@ -29,6 +29,10 @@ import { OpenIcon, PathContextMenu, RowMore } from "./pathMenu";
 // ChangesView 住在 GitDiffView 里，静态引会把整个改动面板并进 SidePanel / 对话窗 chunk（见 lazyDiff.tsx）。
 import { LazyChangesView as ChangesView } from "./lazyDiff";
 import { ForgeBar } from "./ForgeBar";
+import { IdentityDialog } from "./IdentityDialog";
+import { moveAmongRows } from "./listKeys";
+import { errorCode, PanelMessage, type PanelAction } from "./PanelMessage";
+import { PanelPromptContext } from "./panelPrompt";
 import { Icon } from "../../icons/Icon";
 import { icGitBranch, icMenu, icMinus, icUndo } from "../../icons/glyphs.chat";
 import { icCheck, icPlus } from "../../icons/glyphs";
@@ -67,6 +71,16 @@ const INDENT = 12;
 const indent = (depth: number) => (depth > 0 ? { paddingLeft: depth * INDENT } : undefined);
 const NOTE_H = 28;
 type VRow = { key: string; size: number; node: ReactNode };
+/// 进行中的写操作（walkthrough P-4：提交、暂存、放弃进行中要有字，和推送的「正在推送…」一致）。
+type BusyKind = "commit" | "stage" | "unstage" | "discard" | "ignore" | "undo";
+/// 失败提示：retry 是「重做刚才那一步」（git/locked 给「重试」，补完身份后自动重做提交）。
+type ScmError = { text: string; code: string; retry?: () => void };
+/// 结果提示：undo 是放弃后的撤销号（git.rs undo_discard，walkthrough P-5）。
+type ScmNotice = { text: string; undo?: { root: string; id: string } };
+/// 写操作之后焦点去哪（walkthrough P-3）：行被挪到别的组或消失时，焦点掉到 body；记下原来在哪一组第几行，
+/// 行没了就落到同一位置的下一行。back = 从单文件 diff 返回，焦点回到刚打开的那一行。
+type FocusPlan = { kind: GroupKind; path: string; index: number; until: number; back?: boolean };
+const ROW_MAIN = ".scm-row-main, .scm-group-toggle";
 
 /// 选中的仓库：记着的那个还在就用它，否则工作目录所在仓库，再否则第一个。
 export function pickRepo(repos: readonly RepoChangesDto[], selected: string | null): RepoChangesDto | null {
@@ -108,9 +122,15 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
   const [collapsedDirs, setCollapsedDirs] = useState<ReadonlySet<string>>(new Set());
   // 提交信息按仓库各记一份：切到别的 worktree 再回来，写了一半的不丢。
   const [messages, setMessages] = useState<ReadonlyMap<string, string>>(new Map());
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [busy, setBusyState] = useState<BusyKind | null>(null);
+  // 处理函数里拦重复点击用 ref：按钮进行中不 disabled（disabled 会把正拿着焦点的按钮的焦点踢到 body，P-3）。
+  const busyRef = useRef<BusyKind | null>(null);
+  const setBusy = (next: BusyKind | null) => { busyRef.current = next; setBusyState(next); };
+  const [error, setError] = useState<ScmError | null>(null);
+  const [notice, setNotice] = useState<ScmNotice | null>(null);
+  const [identityFor, setIdentityFor] = useState<(() => void) | null>(null);
+  const focusPlan = useRef<FocusPlan | null>(null);
+  const insertPrompt = useContext(PanelPromptContext);
   // 打开确认框时钉住仓库根与文件：确认前轮询可能把选中的 worktree 挤出列表，pickRepo 退回主仓库，
   // 按渲染时的 root 放弃就会删到主仓库的同名文件（做空复现）。
   const [confirmDiscard, setConfirmDiscard] = useState<{ root: string; name: string; files: readonly ScmFile[] } | null>(null);
@@ -141,6 +161,35 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
         .then((files) => settle({ loading: false, error: null, files }))
         .catch((e) => settle({ loading: false, error: formatBackendError(e, t.locale), files: [] }));
     }
+  });
+
+  // 写操作 / 返回之后把焦点放回列表（P-3）。每次渲染后看一眼：焦点已经掉到 body、原来那一行也不在了，
+  // 才接手（用户自己把焦点挪走了就不抢）。8 秒内没等到就作废。
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 刻意每次渲染后检查：行是在轮询拿到新清单的那次渲染里消失的
+  useLayoutEffect(() => {
+    const plan = focusPlan.current;
+    if (!plan || !scrollEl) return;
+    if (Date.now() > plan.until) {
+      focusPlan.current = null;
+      return;
+    }
+    const active = document.activeElement;
+    if (active && active !== document.body) return;
+    const group = scrollEl.querySelector(`[data-testid="scm-group-${plan.kind}"]`);
+    const rows = Array.from(group?.querySelectorAll<HTMLElement>(".scm-row-main") ?? []);
+    const same = rows.find((row) => row.dataset.path === plan.path);
+    if (plan.back) {
+      if (!same) return;
+      focusPlan.current = null;
+      same.focus();
+      return;
+    }
+    if (same) return;
+    focusPlan.current = null;
+    const next = rows[Math.min(plan.index, rows.length - 1)]
+      ?? group?.querySelector<HTMLElement>(".scm-group-toggle")
+      ?? scrollEl.querySelector<HTMLElement>(".scm-row-main, .scm-commit-input");
+    next?.focus();
   });
 
   if (!repo) return <p className="side-panel-empty">{t.chat.diffNoRepo}</p>;
@@ -176,7 +225,11 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
         diffBase={open.kind === "committed" ? repo.base : null}
         sessionCwd={sessionCwd}
         initialPath={open.path}
-        onBack={() => setOpen(null)}
+        onBack={() => {
+          // 返回后焦点回到刚打开的那一行（P-3：以前落到 body，搜索词还在、焦点却要从窗口顶上重新找）。
+          focusPlan.current = { kind: open.kind, path: open.path, index: 0, until: Date.now() + 8000, back: true };
+          setOpen(null);
+        }}
         onSelectPath={(path) => { if (path) setOpen({ root, kind: open.kind, path }); }}
         comments={repoComments}
         touchedPaths={touchedPaths}
@@ -189,26 +242,52 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
     );
   }
 
-  const run = async (action: () => Promise<unknown>, after?: (result: unknown) => void) => {
-    setBusy(true);
+  const run = async (kind: BusyKind, action: () => Promise<unknown>, after?: (result: unknown) => void) => {
+    if (busyRef.current) return;
+    setBusy(kind);
     setError(null);
     setNotice(null);
     try {
       const result = await action();
       after?.(result);
     } catch (e) {
-      setError(formatBackendError(e, t.locale));
+      const code = errorCode(e);
+      // 「重试」= 原样再跑一次（git/locked：agent 跑完 git 就能成；git/identity：补完身份接着做）。
+      const retry = () => { void run(kind, action, after); };
+      setError({ text: formatBackendError(e, t.locale), code, retry });
     } finally {
-      setBusy(false);
+      setBusy(null);
       // 点开的折叠目录里的文件可能刚被暂存 / 放弃：清掉让上面的 effect 重拉。
       setDirFiles(new Map());
       onChanged();
     }
   };
-  const stage = (rows: readonly Row[]) => run(() => gitStage(root, rows.map((row) => row.file.path), sessionCwd));
-  const unstage = (rows: readonly Row[]) => run(() => gitUnstage(root, rows.map((row) => row.file.path), sessionCwd));
-  const askDiscard = (list: readonly ScmFile[]) => setConfirmDiscard({ root, name: repo.name, files: list });
-  const ignoreDir = (path: string) => run(() => gitIgnoreDir(root, path));
+  // 行操作前记下焦点计划：这一行等会儿会挪到别的组（暂存 / 取消暂存）或消失（放弃），焦点落到原位置的下一行。
+  const planFocus = (kind: GroupKind, path: string) => {
+    const group = scrollEl?.querySelector(`[data-testid="scm-group-${kind}"]`);
+    const rows = Array.from(group?.querySelectorAll<HTMLElement>(".scm-row-main") ?? []);
+    const index = Math.max(0, rows.findIndex((row) => row.dataset.path === path));
+    focusPlan.current = { kind, path, index, until: Date.now() + 8000 };
+  };
+  const stage = (rows: readonly Row[], from?: string) => {
+    if (busyRef.current) return;
+    planFocus("work", from ?? "");
+    void run("stage", () => gitStage(root, rows.map((row) => row.file.path), sessionCwd));
+  };
+  const unstage = (rows: readonly Row[], from?: string) => {
+    if (busyRef.current) return;
+    planFocus("staged", from ?? "");
+    void run("unstage", () => gitUnstage(root, rows.map((row) => row.file.path), sessionCwd));
+  };
+  const askDiscard = (list: readonly ScmFile[]) => {
+    if (busyRef.current) return;
+    setConfirmDiscard({ root, name: repo.name, files: list });
+  };
+  const ignoreDir = (path: string) => {
+    if (busyRef.current) return;
+    planFocus("work", path);
+    void run("ignore", () => gitIgnoreDir(root, path));
+  };
   const toggleDirEntry = (path: string) => {
     const k = dirKey(root, path);
     setExpandedDirs((prev) => toggle(prev, k));
@@ -226,11 +305,22 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
     if (!pending) return;
     // 仓库已经不在列表里（worktree 被删、被挤出上限）：作废这次确认，不拿别的仓库顶上。
     if (!repos.some((item) => sameRoot(item.root, pending.root))) {
-      setError(t.chat.scmRepoGone(pending.name));
+      setError({ text: t.chat.scmRepoGone(pending.name), code: "" });
       return;
     }
     const target = pending.root;
-    void run(() => gitDiscard(target, pending.files.map((file) => file.path), target === cwd ? null : cwd));
+    const targetCwd = target === cwd ? null : cwd;
+    planFocus("work", pending.files.length === 1 ? pending.files[0].path : "");
+    void run("discard", () => gitDiscard(target, pending.files.map((file) => file.path), targetCwd), (id) => {
+      // 有已跟踪文件被放弃就给撤销（P-5）；只放弃了未跟踪的（进了回收站）只说去哪了。
+      const count = changedFileCount(pending.files);
+      setNotice(typeof id === "string"
+        ? { text: t.chat.scmDiscarded(count), undo: { root: target, id } }
+        : { text: t.chat.scmTrashed });
+    });
+  };
+  const undoDiscard = (undo: { root: string; id: string }) => {
+    void run("undo", () => gitDiscardUndo(undo.root, undo.id, undo.root === cwd ? null : cwd), () => setNotice({ text: t.chat.scmUndone }));
   };
   const message = messages.get(key) ?? "";
   const setMessage = (value: string) => setMessages((prev) => new Map(prev).set(key, value));
@@ -261,10 +351,23 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
   const canCommit = !busy && !!message.trim() && (staged.length > 0 || work.length > 0) && !commitBlockedByFilter;
   const commit = () => {
     if (!canCommit) return;
-    void run(() => gitCommit(root, message, commitAll, sessionCwd, commitAll ? work.map((row) => row.file.path) : undefined), (sha) => {
+    // 信息按提交时的那份记：钩子跑着的几十秒里用户可能又改了输入框。
+    const text = message;
+    void run("commit", () => gitCommit(root, text, commitAll, sessionCwd, commitAll ? work.map((row) => row.file.path) : undefined), (sha) => {
       setMessage("");
-      setNotice(t.chat.scmCommitted1(String(sha)));
+      setNotice({ text: t.chat.scmCommitted1(String(sha)) });
     });
+  };
+  const clearFilter = () => {
+    setScope("all");
+    setSearch("");
+  };
+  // 失败提示后面的出路（P-1 / P-14）：缺身份就地设置、冲突交给 agent、被锁可重试。
+  const errorActions = (err: ScmError): PanelAction[] => {
+    if (err.code === "git/identity" && err.retry) return [{ label: t.forge.identitySet, testId: "scm-identity", onClick: () => setIdentityFor(() => err.retry!) }];
+    if (err.code === "git/conflict" && insertPrompt) return [{ label: t.chat.scmAskAgent, onClick: () => insertPrompt(t.chat.scmConflictPrompt) }];
+    if (err.code === "git/locked" && err.retry) return [{ label: t.chat.scmRetry, onClick: err.retry }];
+    return [];
   };
 
   const commentCount = (path: string) => repoComments.filter((comment) => comment.path === path).length;
@@ -274,6 +377,8 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
     setCtxMenu({ x: event.clientX, y: event.clientY, rel: file.path });
   };
 
+  // 进行中：按钮照样可聚焦（aria-disabled），处理函数里拦（第三轮设计准则：不用 disabled 把焦点踢走）。
+  const busyAttr = busy ? true : undefined;
   const rowActions = (kind: GroupKind, row: Row) => {
     if (kind === "committed") return null;
     const deleted = row.letter === "D";
@@ -282,20 +387,20 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
     return (
       <span className="scm-row-actions">
         {!remoteUi() && !deleted && (
-          <button type="button" className="scm-icon-btn" aria-label={t.chat.scmOpenFile} data-tip={t.chat.scmOpenFile} disabled={busy}
+          <button type="button" className="scm-icon-btn" aria-label={t.chat.scmOpenFile} data-tip={t.chat.scmOpenFile}
             onClick={() => void openPathWith(root, row.file.path, "default").catch(() => {})}>
             <OpenIcon />
           </button>
         )}
         {kind === "work" && !conflict && (
-          <button type="button" className="scm-icon-btn" aria-label={t.chat.scmDiscard} data-tip={t.chat.scmDiscard} disabled={busy}
+          <button type="button" className="scm-icon-btn" aria-label={t.chat.scmDiscard} data-tip={busy ? t.chat.scmBusyTip : t.chat.scmDiscard} aria-disabled={busyAttr}
             onClick={() => askDiscard([row.file])}>
             <DiscardIcon />
           </button>
         )}
         {conflict ? null : kind === "work"
-          ? <button type="button" className="scm-icon-btn" aria-label={t.chat.scmStage} data-tip={t.chat.scmStage} disabled={busy} onClick={() => void stage([row])}><PlusIcon /></button>
-          : <button type="button" className="scm-icon-btn" aria-label={t.chat.scmUnstage} data-tip={t.chat.scmUnstage} disabled={busy} onClick={() => void unstage([row])}><MinusIcon /></button>}
+          ? <button type="button" className="scm-icon-btn" aria-label={t.chat.scmStage} data-tip={busy ? t.chat.scmBusyTip : t.chat.scmStage} aria-disabled={busyAttr} onClick={() => stage([row], row.file.path)}><PlusIcon /></button>
+          : <button type="button" className="scm-icon-btn" aria-label={t.chat.scmUnstage} data-tip={busy ? t.chat.scmBusyTip : t.chat.scmUnstage} aria-disabled={busyAttr} onClick={() => unstage([row], row.file.path)}><MinusIcon /></button>}
       </span>
     );
   };
@@ -308,7 +413,7 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
     const count = commentCount(row.file.path);
     return (
       <div key={`${kind}\u0000${row.file.path}`} className="scm-row" data-testid={`scm-row-${kind}`} style={indent(depth)}>
-        <button type="button" className="scm-row-main" data-tip={row.file.path}
+        <button type="button" className="scm-row-main" data-tip={row.file.path} data-path={row.file.path} data-depth={depth}
           onClick={() => setOpen({ root, kind, path: row.file.path })}
           onContextMenu={(event) => onRowContext(event, row.file)}>
           <FileIcon />
@@ -337,7 +442,7 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
     const count = row.file.untrackedFiles;
     return (
       <div className="scm-row is-folded" data-testid={`scm-row-${kind}`} style={indent(depth)}>
-        <button type="button" className="scm-row-main" data-tip={row.file.path} aria-expanded={isOpen}
+        <button type="button" className="scm-row-main" data-tip={row.file.path} data-path={row.file.path} data-depth={depth} aria-expanded={isOpen}
           onClick={() => toggleDirEntry(row.file.path)}>
           <FolderIcon />
           <span className="scm-name">{trimmed.slice(slash + 1)}/</span>
@@ -348,16 +453,16 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
           <span className="scm-row-actions">
             {/* 改的是仓库里的 .gitignore，手机端不给（remote.rs 拒绝名单）。 */}
             {!remoteUi() && (
-              <button type="button" className="scm-icon-btn" aria-label={t.chat.scmIgnoreDir} data-tip={t.chat.scmIgnoreDir} disabled={busy}
-                onClick={() => void ignoreDir(row.file.path)}>
+              <button type="button" className="scm-icon-btn" aria-label={t.chat.scmIgnoreDir} data-tip={busy ? t.chat.scmBusyTip : t.chat.scmIgnoreDir} aria-disabled={busyAttr}
+                onClick={() => ignoreDir(row.file.path)}>
                 <IgnoreIcon />
               </button>
             )}
-            <button type="button" className="scm-icon-btn" aria-label={t.chat.scmDiscard} data-tip={t.chat.scmDiscard} disabled={busy}
+            <button type="button" className="scm-icon-btn" aria-label={t.chat.scmDiscard} data-tip={busy ? t.chat.scmBusyTip : t.chat.scmDiscard} aria-disabled={busyAttr}
               onClick={() => askDiscard([row.file])}>
               <DiscardIcon />
             </button>
-            <button type="button" className="scm-icon-btn" aria-label={t.chat.scmStage} data-tip={t.chat.scmStage} disabled={busy} onClick={() => void stage([row])}><PlusIcon /></button>
+            <button type="button" className="scm-icon-btn" aria-label={t.chat.scmStage} data-tip={busy ? t.chat.scmBusyTip : t.chat.scmStage} aria-disabled={busyAttr} onClick={() => stage([row], row.file.path)}><PlusIcon /></button>
           </span>
         )}
         <span className="scm-letters">
@@ -396,7 +501,7 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
             size: ROW_H,
             node: (
               <div className="scm-row is-dir" style={indent(depth)}>
-                <button type="button" className="scm-row-main" aria-expanded={!closed} onClick={() => setCollapsedDirs((prev) => toggle(prev, id))}>
+                <button type="button" className="scm-row-main" data-depth={depth} aria-expanded={!closed} onClick={() => setCollapsedDirs((prev) => toggle(prev, id))}>
                   <FolderIcon />
                   <span className="scm-name">{node.name}</span>
                 </button>
@@ -481,14 +586,23 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
             }
           }}
         />
-        <button type="button" className="scm-commit-btn btn-primary" disabled={!canCommit}
+        {/* 不能提交时用 aria-disabled：提交成功后清空信息，按钮立刻变成不可提交，disabled 会把焦点踢到 body（P-3）。 */}
+        <button type="button" className="scm-commit-btn btn-primary" aria-disabled={!canCommit || undefined}
           data-tip={commitBlockedByFilter ? t.chat.scmCommitFiltered : commitAll ? t.chat.scmCommitAllTip : undefined} onClick={commit}>
           <CheckIcon />
-          {commitAll ? t.chat.scmCommitAll : t.chat.scmCommit}
+          {busy === "commit" ? t.chat.scmCommitting : commitAll ? t.chat.scmCommitAll : t.chat.scmCommit}
         </button>
-        {error && <div className="scm-error" role="alert">{error}</div>}
-        {notice && <div className="scm-notice" role="status">{notice}</div>}
-        {commitBlockedByFilter && !!message.trim() && <div className="scm-notice">{t.chat.scmCommitFiltered}</div>}
+        {busy && busy !== "commit" && <div className="scm-notice" role="status">{t.chat.scmRunning[busy]}</div>}
+        {error && <PanelMessage tone="error" text={error.text} actions={errorActions(error)} onDismiss={() => setError(null)} testId="scm-error" />}
+        {notice && (
+          <PanelMessage tone="notice" text={notice.text} testId="scm-notice"
+            actions={notice.undo ? [{ label: t.chat.scmUndo, testId: "scm-undo", onClick: () => undoDiscard(notice.undo!) }] : []}
+            onDismiss={notice.undo ? () => setNotice(null) : undefined} />
+        )}
+        {/* P-10：说清楚之后给按钮，不让人自己去找「全部」和搜索框。 */}
+        {commitBlockedByFilter && !!message.trim() && (
+          <PanelMessage tone="notice" text={t.chat.scmCommitFiltered} actions={[{ label: t.chat.scmClearFilter, testId: "scm-clear-filter", onClick: clearFilter }]} />
+        )}
       </div>
       {/* 推送 / PR / CI / 合并（二期包 5）。key 按仓库：切仓库时轮询、表单、提示都换成那个仓库的。 */}
       <ForgeBar key={key} repo={repo} sessionCwd={sessionCwd} sessionId={sessionId} active={visible} onChanged={onChanged} />
@@ -526,14 +640,14 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
         </div>
       )}
 
-      <div className="scm-groups">
+      <div className="scm-groups" onKeyDown={(event) => moveAmongRows(event, ROW_MAIN)}>
         {nothing && <div className="scm-empty is-clean">{t.chat.scmNoChanges}</div>}
         {group("staged", t.chat.scmStaged, staged, (shown) => (
-          <button type="button" className="scm-icon-btn" aria-label={t.chat.scmUnstageAll} data-tip={t.chat.scmUnstageAll} disabled={busy} onClick={() => void unstage(shown)}><MinusIcon /></button>
+          <button type="button" className="scm-icon-btn" aria-label={t.chat.scmUnstageAll} data-tip={busy ? t.chat.scmBusyTip : t.chat.scmUnstageAll} aria-disabled={busyAttr} onClick={() => unstage(shown)}><MinusIcon /></button>
         ))}
         {group("work", t.chat.scmChanges, work, (shown) => <>
-          <button type="button" className="scm-icon-btn" aria-label={t.chat.scmDiscardAll} data-tip={t.chat.scmDiscardAll} disabled={busy} onClick={() => askDiscard(shown.filter((row) => row.letter !== "!").map((row) => row.file))}><DiscardIcon /></button>
-          <button type="button" className="scm-icon-btn" aria-label={t.chat.scmStageAll} data-tip={t.chat.scmStageAll} disabled={busy} onClick={() => void stage(shown.filter((row) => row.letter !== "!"))}><PlusIcon /></button>
+          <button type="button" className="scm-icon-btn" aria-label={t.chat.scmDiscardAll} data-tip={busy ? t.chat.scmBusyTip : t.chat.scmDiscardAll} aria-disabled={busyAttr} onClick={() => askDiscard(shown.filter((row) => row.letter !== "!").map((row) => row.file))}><DiscardIcon /></button>
+          <button type="button" className="scm-icon-btn" aria-label={t.chat.scmStageAll} data-tip={busy ? t.chat.scmBusyTip : t.chat.scmStageAll} aria-disabled={busyAttr} onClick={() => stage(shown.filter((row) => row.letter !== "!"))}><PlusIcon /></button>
         </>)}
         {group("committed", t.chat.scmCommitted(repo.baseLabel ?? "main"), committed, null)}
         {/* 没选中过的仓库后端只给了文件清单：行数和「本分支已提交」正在拉。 */}
@@ -541,6 +655,14 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
       </div>
 
       {ctxMenu && <PathContextMenu cwd={root} rel={ctxMenu.rel} isDir={false} x={ctxMenu.x} y={ctxMenu.y} onClose={() => setCtxMenu(null)} />}
+      {identityFor && (
+        <IdentityDialog cwd={root} sessionCwd={sessionCwd} onClose={() => setIdentityFor(null)}
+          onSaved={() => {
+            const redo = identityFor;
+            setIdentityFor(null);
+            redo();
+          }} />
+      )}
       {confirmDiscard && (
         <AppModal label={t.chat.scmDiscardTitle(changedFileCount(confirmDiscard.files))} onClose={() => setConfirmDiscard(null)}>
           <div className="chat-modal-title">{t.chat.scmDiscardTitle(changedFileCount(confirmDiscard.files))}</div>

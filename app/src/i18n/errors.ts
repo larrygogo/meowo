@@ -40,11 +40,19 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "remote/port_in_use", exact: true, zh: "端口被其它程序占用，换个端口或关掉占用它的程序", en: "The port is in use; pick another or close the program using it" },
   // 「更改」面板的 git 写操作（git.rs git_stage / git_unstage / git_discard / git_commit）。
   { m: "git/locked", exact: true, zh: "另一个 git 操作正在进行（可能是 agent 在跑），稍后再试", en: "Another git operation is in progress (maybe the agent). Try again shortly." },
-  { m: "git/identity", exact: true, zh: "还没配置 git 用户名和邮箱，先在终端里运行 git config 设置", en: "Git user name and email aren't set. Run git config in a terminal first." },
-  { m: "git/conflict", exact: true, zh: "有未解决的合并冲突，先在终端或编辑器里解决再提交", en: "There are unresolved merge conflicts. Resolve them in a terminal or editor first." },
+  // walkthrough P-1（2026-11-12）：这两条以前叫人「先在终端里运行 git config」「在终端或编辑器里解决」，
+  // 面板里没有出路。现在面板在错误旁给按钮（设置身份 / 交给 agent），文案只说原因。
+  { m: "git/identity", exact: true, zh: "还没配置 git 用户名和邮箱", en: "Git user name and email aren't set" },
+  { m: "git/identity_invalid", exact: true, zh: "名字或邮箱格式不对", en: "The name or email doesn't look right" },
+  { m: "git/conflict", exact: true, zh: "有未解决的合并冲突，解决后才能提交", en: "There are unresolved merge conflicts. Resolve them before committing." },
   { m: "git/nothing_to_commit", exact: true, zh: "没有可提交的更改", en: "Nothing to commit" },
   { m: "git/empty_message", exact: true, zh: "请填写提交信息", en: "Enter a commit message" },
-  { m: "git/not_in_changes", exact: true, zh: "文件已不在更改列表里，刷新后再试", en: "The file is no longer in the change list. Refresh and try again." },
+  // 列表 5 秒自己重拉，不叫人「刷新」（walkthrough 共性：不许出现让用户刷新的文案）。
+  { m: "git/not_in_changes", exact: true, zh: "文件已不在更改列表里", en: "The file is no longer in the change list" },
+  // 放弃的撤销（git.rs undo_discard，walkthrough P-5）。
+  { m: "git/backup_failed", tail: true, zh: "没能备份改动，没有放弃", en: "Couldn't back up the changes, so nothing was discarded" },
+  { m: "git/undo_changed", exact: true, zh: "文件之后又改过，没有撤销", en: "The files changed since, so nothing was undone" },
+  { m: "git/undo_expired", exact: true, zh: "撤销已过期", en: "This undo has expired" },
   // 放弃更改时未跟踪文件进回收站失败（git.rs trash_to_recycle_bin）。文件原样保留、不会永久删。
   { m: "git/trash_failed", tail: true, zh: "没能移到回收站，文件已保留", en: "Couldn't move the file to the trash. It was kept." },
   // 整目录放弃（折叠的未跟踪目录，git.rs untracked_dir_to_trash）：里面有链接或嵌套仓库就不动。
@@ -61,7 +69,15 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "git/push_timeout", exact: true, zh: "推送超时", en: "Push timed out" },
   { m: "git/push_network", exact: true, zh: "连不上远端，检查网络", en: "Can't reach the remote. Check the network." },
   { m: "git/push_failed", tail: true, zh: "推送失败", en: "Push failed" },
-  { m: "git/job_not_found", exact: true, zh: "推送结果过期了，刷新看看", en: "The push result expired. Refresh to check." },
+  { m: "git/job_not_found", exact: true, zh: "结果已过期，列表会自己更新", en: "The result expired. The list updates on its own." },
+  // 拉取（forge.rs pull_with，推送被拒后的「拉取并重试」）。冲突与会覆盖改动时仓库原样不动，文案写明。
+  { m: "git/pull_conflict", exact: true, zh: "远端改动和本地冲突，没有合并", en: "Remote changes conflict with yours. Nothing was merged." },
+  { m: "git/pull_dirty", exact: true, zh: "未提交的改动会被覆盖，没有拉取", en: "Uncommitted changes would be overwritten. Nothing was pulled." },
+  { m: "git/pull_no_branch", exact: true, zh: "远端没有这个分支", en: "The remote doesn't have this branch" },
+  { m: "git/pull_auth", exact: true, zh: "拉取认证失败，检查 git 凭据", en: "Pull failed to sign in. Check your git credentials." },
+  { m: "git/pull_network", exact: true, zh: "连不上远端，检查网络", en: "Can't reach the remote. Check the network." },
+  { m: "git/pull_timeout", exact: true, zh: "拉取超时", en: "Pull timed out" },
+  { m: "git/pull_failed", tail: true, zh: "拉取失败", en: "Pull failed" },
   { m: "gh/not_installed", exact: true, zh: "没装 gh", en: "gh isn't installed" },
   { m: "gh/not_authed", exact: true, zh: "gh 没登录", en: "gh isn't signed in" },
   { m: "gh/too_old", exact: true, zh: "gh 版本太旧，升级后再合并", en: "gh is too old. Update it to merge." },

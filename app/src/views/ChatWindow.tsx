@@ -22,6 +22,7 @@ import { ApprovalCard, ApprovalCommandDetail, isRiskyCommand } from "./chat/Appr
 import { CardAnnouncer } from "./chat/cardAnnouncer";
 import { isSidebarToggleKey } from "./terminalKeys";
 import { copyPlainText } from "./chat/clipboard";
+import { ReviewBar } from "./chat/ReviewBar";
 import { readSideAnswer, sideQuestionText } from "./chat/sideQuestion";
 import { approvalChoiceForKey, BrokerApprovalCard, useBrokerResolver } from "./chat/BrokerApprovalCard";
 import { answersRepresentable, composeAnswers, matchFocusedQuestion, matchOptionByLabel, observeTranscriptForDismiss, parseAskUserQuestions, planQueuedChoiceWrites, type QuestionAnswerDraft, type QuestionDismissTracker, type StructuredQuestion } from "./chat/askUserQuestion";
@@ -111,7 +112,7 @@ import { listAgents, type AgentDescriptor } from "../api";
 import { agentAssets, tintStyle } from "../providers";
 import appLogoUrl from "../../src-tauri/icons/64x64.png";
 import { Icon } from "../icons/Icon";
-import { icArrowLeftRight, icArrowUp, icChevronLeft, icCollapse, icExpand, icFile, icMessage, icShield, icSidebarLeft, icSparkles, icStop } from "../icons/glyphs.chat";
+import { icArrowLeftRight, icArrowUp, icChevronLeft, icCollapse, icExpand, icFile, icShield, icSidebarLeft, icSparkles, icStop } from "../icons/glyphs.chat";
 import { icAlert, icCheck, icChevronDown, icClose, icPencil } from "../icons/glyphs";
 
 
@@ -1478,6 +1479,8 @@ export function ChatWindow() {
   insertIntoPromptRef.current = insertIntoPrompt;
   const mentionPrefix = chatUi?.attachment_mention ? "@" : "";
   const mentionPath = useCallback((rel: string) => insertIntoPromptRef.current(`${mentionPrefix}${rel} `), [mentionPrefix]);
+  // 「更改」面板的「交给 agent」（冲突、拉取冲突）：把现成的一句话放进输入框，用户看过再发。
+  const insertPanelPrompt = useCallback((text: string) => insertIntoPromptRef.current(text), []);
   const pickStarter = (text: string) => {
     setPrompt(text);
     // 预填后光标放到末尾:斜杠命令接着打参数,@ 接着触发文件补全。
@@ -4832,12 +4835,9 @@ export function ChatWindow() {
             </button>
           ))}
         </div>}
-        {sessionReviewComments.length > 0 && <div className="chat-review-bar">
-          <Icon glyph={icMessage} size={14} />
-          <span className="chat-review-bar-label">{t.chat.reviewComments(sessionReviewComments.length)}</span>
-          <button type="button" onClick={() => setSessionReviewComments(() => [])}>{t.chat.reviewCommentsClear}</button>
-          <button type="button" className="btn-primary" onClick={insertReviewComments}>{t.chat.reviewCommentsInsert}</button>
-        </div>}
+        {/* 「清空」可撤销（walkthrough P-7，见 ReviewBar.tsx）。key 按会话：撤销条不跟到别的会话去。 */}
+        <ReviewBar key={sessionId} comments={sessionReviewComments} onClear={() => setSessionReviewComments(() => [])}
+          onRestore={(list) => setSessionReviewComments(() => list)} onInsert={insertReviewComments} />
         {attachments.length > 0 && <div className="chat-attachments">
           {attachments.map((file) => file.image ? (
             /* 图片附件给真缩略图（点开进灯箱，与 transcript 图片同一套 ImageRef）；
@@ -5488,6 +5488,7 @@ export function ChatWindow() {
                 turnTouchedPaths={turnTouchedPaths}
                 browserSuggestions={browserSuggestions}
                 onMention={mentionPath}
+                onInsertPrompt={insertPanelPrompt}
                 selectedRoot={scmRoot}
                 onSelectRoot={setScmRoot}
                 onChanged={refreshChanges}

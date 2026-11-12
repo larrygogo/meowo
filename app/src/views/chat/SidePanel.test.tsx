@@ -40,7 +40,7 @@ const full: PanelState = {
 
 function renderPanel(state: PanelState = full) {
   const actions = {
-    activate: vi.fn(), move: vi.fn(), close: vi.fn(), openDiff: vi.fn(), openFiles: vi.fn(), newTerminal: vi.fn(), newBrowser: vi.fn(),
+    activate: vi.fn(), move: vi.fn(), close: vi.fn(), openDiff: vi.fn(), openFiles: vi.fn(), newTerminal: vi.fn(), restartTerminal: vi.fn(), newBrowser: vi.fn(),
     show: vi.fn(), hide: vi.fn(), toggle: vi.fn(), toggleExpanded: vi.fn(), cycle: vi.fn(), toggleFiles: vi.fn(), toggleTerminal: vi.fn(), openUrl: vi.fn(),
   } satisfies PanelActions;
   render(
@@ -128,7 +128,7 @@ describe("右侧面板", () => {
   /// 做空复现：工作目录不是仓库（会话开在 workspace）时，「更改」入口此前全没了。
   it("工作目录不是仓库、但会话改过别的仓库时，启动列表里有「更改」", () => {
     const actions = {
-      activate: vi.fn(), move: vi.fn(), close: vi.fn(), openDiff: vi.fn(), openFiles: vi.fn(), newTerminal: vi.fn(), newBrowser: vi.fn(),
+      activate: vi.fn(), move: vi.fn(), close: vi.fn(), openDiff: vi.fn(), openFiles: vi.fn(), newTerminal: vi.fn(), restartTerminal: vi.fn(), newBrowser: vi.fn(),
       show: vi.fn(), hide: vi.fn(), toggle: vi.fn(), toggleExpanded: vi.fn(), cycle: vi.fn(), toggleFiles: vi.fn(), toggleTerminal: vi.fn(), openUrl: vi.fn(),
     } satisfies PanelActions;
     render(
@@ -146,7 +146,7 @@ describe("右侧面板", () => {
   /// 用户要求（2026-11-09）：会话开在主目录、改动在 worktree 里时，「文件」跟着「更改」选中的仓库走。
   it("「文件」浏览「更改」里选中的 worktree；「更改」里点别的仓库会通知上层切换", () => {
     const actions = {
-      activate: vi.fn(), move: vi.fn(), close: vi.fn(), openDiff: vi.fn(), openFiles: vi.fn(), newTerminal: vi.fn(), newBrowser: vi.fn(),
+      activate: vi.fn(), move: vi.fn(), close: vi.fn(), openDiff: vi.fn(), openFiles: vi.fn(), newTerminal: vi.fn(), restartTerminal: vi.fn(), newBrowser: vi.fn(),
       show: vi.fn(), hide: vi.fn(), toggle: vi.fn(), toggleExpanded: vi.fn(), cycle: vi.fn(), toggleFiles: vi.fn(), toggleTerminal: vi.fn(), openUrl: vi.fn(),
     } satisfies PanelActions;
     const repos = [

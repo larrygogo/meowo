@@ -7,6 +7,7 @@ import type { ReviewComment } from "./diffComments";
 import { singleRepo } from "./diffShared";
 import { LazyFilesView as FilesView } from "./lazyDiff";
 import { PathMenu, PathMentionContext, type PathMenuItem } from "./pathMenu";
+import { PanelPromptContext } from "./panelPrompt";
 import { pickRepo, SourceControl } from "./SourceControl";
 
 const sameDir = (a: string, b: string) => a.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase() === b.replace(/\\/g, "/").replace(/\/+$/, "").toLowerCase();
@@ -38,6 +39,8 @@ type Props = {
   browserSuggestions: readonly string[];
   /** 文件/改动的路径菜单里「添加到对话」：把相对路径插进输入框。 */
   onMention?: (rel: string) => void;
+  /** 「更改」面板失败提示里的「交给 agent」：把一句现成的话放进输入框（panelPrompt.ts）。 */
+  onInsertPrompt?: (text: string) => void;
   /** 「更改」「文件」共用的选中仓库（会话开在主目录、改动在 worktree 里时两边一起切过去，用户要求 2026-11-09）。 */
   selectedRoot: string | null;
   onSelectRoot: (root: string) => void;
@@ -210,7 +213,8 @@ export const SidePanel = memo(function SidePanel(props: Props) {
         const visible = !collapsed && tab.key === state.active;
         if (tab.type === "term") {
           return tab.shellId !== null && shells.has(tab.shellId)
-            ? <ShellTerminal key={tab.key} id={tab.shellId} visible={visible} />
+            // key 带上进程号：「重启」换了新进程，退出码、红字这些组件状态跟着清掉（walkthrough P-13）。
+            ? <ShellTerminal key={`${tab.key}:${tab.shellId}`} id={tab.shellId} visible={visible} onRestart={() => actions.restartTerminal(tab.key)} />
             : visible ? <div key={tab.key} className="side-panel-pending" /> : null;
         }
         if (tab.type === "browser") {
@@ -222,6 +226,7 @@ export const SidePanel = memo(function SidePanel(props: Props) {
         return null;
       })}
       <PathMentionContext.Provider value={props.onMention ?? null}>
+      <PanelPromptContext.Provider value={props.onInsertPrompt ?? null}>
       {active?.type === "diff" && ((props.repos && props.repos.length > 0) || (summary?.isRepo)
         ? (
           <SourceControl
@@ -266,6 +271,7 @@ export const SidePanel = memo(function SidePanel(props: Props) {
           </>
         );
       })()}
+      </PanelPromptContext.Provider>
       </PathMentionContext.Provider>
     </aside>
   );
