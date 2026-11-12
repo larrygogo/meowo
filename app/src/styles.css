@@ -1932,8 +1932,10 @@ button.stab {
   background: var(--cc-panel-bg);
   box-shadow: 0 0 0 var(--hairline) var(--cc-border), var(--shadow-sm);
 }
-/* 紧凑态（无更新说明）：内容整体垂直居中，不再顶着上沿留一屁股空白 */
-.up-body.up-compact { justify-content: center; padding-top: var(--sp-16); }
+/* 紧凑态（无更新说明）：从固定的上边距排起，不用 justify-content: center。居中时内容高度一变头部就跳：
+   检查中没有按钮，头部顶在 95；出结果后多一枚按钮，跳到 72（差 23px，窗口一打开就跳一下）；
+   英文报错折成两行时又跳到 63。40px 是「头部 + 一行状态 + 按钮」这一组在 212px 高的内容面里居中时的上边距。 */
+.up-body.up-compact { justify-content: flex-start; padding-top: calc(var(--sp-16) + var(--sp-24)); }
 /* 头部：图标 + 名称/版本横排，信息密度高于竖排大图标 */
 .up-head { display: flex; align-items: center; gap: var(--sp-12); }
 .up-logo { border-radius: var(--radius-lg); }
@@ -1980,7 +1982,18 @@ button.stab {
   -webkit-user-select: text;
   user-select: text;
 }
-/* 下载区：进度条 + 百分比 + 重启提示 */
+/* 更新说明按 Markdown 渲染（复用对话页的 ChatMarkdown，Updater.tsx 里懒加载）。卡片只有 336px 宽、字号小一档，
+   把标题、段落、列表的间距收紧：对话正文那套间距（标题上方 24px）在这里会把三行字撑成半屏。 */
+.up-notes-body.chat-md { white-space: normal; }
+.up-notes-body.chat-md :is(h1, h2, h3, h4, h5, h6) { margin: var(--sp-12) 0 var(--sp-4); font-size: var(--text-xs); }
+.up-notes-body.chat-md :is(p, ul, ol) { margin-bottom: var(--sp-6); }
+.up-notes-body.chat-md :is(ul, ol) { padding-left: var(--sp-16); }
+.up-notes-body.chat-md li { margin: var(--sp-2) 0; }
+.up-notes-body.chat-md > :first-child { margin-top: 0; }
+.up-notes-body.chat-md > :last-child { margin-bottom: 0; }
+/* 下载区：进度条 + 百分比 + 重启提示，最下面是取消按钮。
+   按钮放在最后一行：说明卡吃掉剩余高度，按钮以下的东西高度固定，所以「下载更新 → 取消下载 → 重启并更新」
+   三态的按钮都在同一个 y 上（原来取消钮在进度文字和提示之间，比另外两态高 24px）。 */
 .up-dl { width: 100%; display: flex; flex-direction: column; align-items: center; gap: var(--sp-6); margin-top: var(--sp-12); }
 .up-prog {
   width: 100%;
