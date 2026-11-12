@@ -293,6 +293,9 @@ export function shortcutGroups(t: ReturnType<typeof useT>, mac: boolean = isMac(
         ["Tab / ↑↓", t.chat.shortcutSlashComplete],
         ["↑", t.chat.shortcutHistory],
         ["Esc", t.chat.shortcutDeny],
+        // 审批卡上的数字徽标与空框 Esc 中断（走查 C-5、C-9）：键在 ChatWindow 的输入框里绑上了，速查表得写明。
+        ["1 / 2", t.chat.shortcutApproveDigit],
+        ["Esc", t.chat.shortcutInterrupt],
       ],
     },
   ];
@@ -323,7 +326,8 @@ export function ShortcutList() {
           <div className="chat-shortcuts-group-title">{group.title}</div>
           <dl className="chat-shortcuts-list">
             {group.rows.map(([keys, desc]) => (
-              <div className="chat-shortcuts-row" key={keys}>
+              // 同一个键可以有两种用途（Esc：有审批时拒绝、没有时中断），键位本身当 key 会撞。
+              <div className="chat-shortcuts-row" key={`${keys} ${desc}`}>
                 <dt>{keys.split(" / ").map((combo, i) => (
                   <span key={combo}>{i > 0 && " / "}<kbd>{combo}</kbd></span>
                 ))}</dt>

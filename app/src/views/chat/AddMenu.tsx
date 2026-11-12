@@ -9,8 +9,11 @@ import { icPlus } from "../../icons/glyphs";
 /// 输入框左下角的「+」（对照 Kimi 的 addMenu：文件 / 命令 / 提及）。斜杠命令和 @ 提及此前只能靠
 /// 打字触发，不知道的人永远发现不了；收进「+」里给个入口，选了就把触发符放进输入框，后面照常
 /// 走补全菜单。只剩「文件」一项时（agent 没有命令、不支持提及）退回原来的一点即选文件。
-export function AddMenu({ phone, onFiles, onCommand, commandBlocked, onMention }: {
+export function AddMenu({ phone, onFiles, onCommand, commandBlocked, onMention, disabled = false }: {
   phone: boolean;
+  /** 输入框被锁（终端在等选择 / 外部占用 / 已结束 / 已被接替）时一并锁住：附件加了也发不出去
+   *  （backlog 仍存在第 3 条：此前 textarea 与发送钮锁了，「+」照样能点）。 */
+  disabled?: boolean;
   onFiles: () => void;
   /** 插入「/」打开命令补全；该 agent 没有可补全的命令时不传。 */
   onCommand?: () => void;
@@ -24,9 +27,15 @@ export function AddMenu({ phone, onFiles, onCommand, commandBlocked, onMention }
   const ui = useMenuPopup({ cssPositioned: true, open, setOpen });
   const plus = <Icon glyph={icPlus} size={20} />;
   if (!onCommand && !onMention) {
-    return <button type="button" className="chat-attach-button" aria-label={t.chat.attach} data-tip={t.chat.attach} onClick={onFiles}>{plus}</button>;
+    return <button type="button" className="chat-attach-button" aria-label={t.chat.attach} data-tip={t.chat.attach} disabled={disabled} onClick={onFiles}>{plus}</button>;
   }
-  const pick = (action: () => void) => { setOpen(false); action(); };
+  // 选完先把焦点还给「+」：菜单项随菜单卸载，不接住就掉到 body（走查 C-1 的兄弟场景）。
+  // 插入「/」「@」的动作随后会把焦点交给输入框，选文件则停在「+」上。手机是底部面板，不做。
+  const pick = (action: () => void) => {
+    if (!phone) ui.btnRef.current?.focus();
+    setOpen(false);
+    action();
+  };
   const items: { key: string; name: string; desc: string; icon: JSX.Element; action: () => void; disabled?: boolean; tip?: string }[] = [
     {
       key: "files", name: t.chat.addFiles, desc: t.chat.addFilesDesc, action: onFiles,
@@ -52,6 +61,7 @@ export function AddMenu({ phone, onFiles, onCommand, commandBlocked, onMention }
         data-tip={t.chat.addMenu}
         aria-haspopup="menu"
         aria-expanded={open}
+        disabled={disabled}
         onClick={() => setOpen(!open)}
       >
         {plus}

@@ -177,8 +177,10 @@ describe("ShortcutSheet 快捷键速查表", () => {
     const onClose = vi.fn();
     render(<ShortcutSheet onClose={onClose} />);
     const dialog = screen.getByRole("dialog", { name: zh.chat.shortcutsTitle });
-    // 18 + 面板的改动 / 文件 / 切页签三行（UI 调研 i17）。
-    expect(dialog.querySelectorAll(".chat-shortcuts-row")).toHaveLength(21);
+    // 18 + 面板的改动 / 文件 / 切页签三行（UI 调研 i17）+ 审批数字键、空框 Esc 中断两行（走查 C-5、C-9）。
+    expect(dialog.querySelectorAll(".chat-shortcuts-row")).toHaveLength(23);
+    expect(dialog.textContent).toContain(zh.chat.shortcutApproveDigit);
+    expect(dialog.textContent).toContain(zh.chat.shortcutInterrupt);
     expect(dialog.textContent).toContain("Ctrl+Shift+F");
     expect(dialog.textContent).toContain("Ctrl+`");
     expect(dialog.textContent).toContain(zh.chat.shortcutTerminalNote("Ctrl"));

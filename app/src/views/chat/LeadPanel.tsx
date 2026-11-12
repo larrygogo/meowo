@@ -6,7 +6,7 @@
 /// 关卡卡片的作答只写 gate.json（answer_lead_gate），答复由 agent 侧的 asyncRewake 后台
 /// hook 看到后唤醒模型——卡片不往终端写字，所以 Meowo 重启、手机断线都不会丢答复。
 
-import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import { answerLeadGate, leadTaskSnapshot, type LeadGateDto, type LeadTaskDto } from "../../api";
 import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
@@ -202,8 +202,21 @@ function gateChoices(gate: LeadGateDto, t: ReturnType<typeof useT>): GateChoice[
   return addOther ? [...own, { id: "other", label: t.chat.leadGateOther, requiresNote: true }] : own;
 }
 
+/// 提交被拒、且原因是「卡片已经过时」的几种：关卡改了、选项不属于它、关卡没了或已答过。
+/// 这时卡上的内容本身就是旧的，就地重读一次关卡，用户看到的就是最新的卡（走查 C-11：
+/// 此前 gate_bad_choice 只说「请刷新后重选」，可对话窗里没有刷新入口，F5 会重载整个窗口）。
+const STALE_GATE = /^lead\/gate_(?:changed|bad_choice|missing|closed)$/;
+
 /// 关卡卡片。修改 / 驳回必须写意见（agent 要知道改什么）；B 可选附意见。
-export function LeadGateCard({ cwd, gate, onAnswered }: { cwd: string; gate: LeadGateDto; onAnswered: () => void }) {
+/// returnFocusTo：提交成功、卡片随轮询收起时焦点的去处（输入框），同审批卡。
+/// onStale：提交被拒且原因是卡片过时（STALE_GATE），就地重读关卡。不复用 onAnswered：那是「答上了」。
+export function LeadGateCard({ cwd, gate, onAnswered, onStale, returnFocusTo }: {
+  cwd: string;
+  gate: LeadGateDto;
+  onAnswered: () => void;
+  onStale?: () => void;
+  returnFocusTo?: RefObject<HTMLElement | null>;
+}) {
   const t = useT();
   const [choice, setChoice] = useState<string | null>(null);
   const [note, setNote] = useState("");
@@ -230,22 +243,34 @@ export function LeadGateCard({ cwd, gate, onAnswered }: { cwd: string; gate: Lea
   const picked = choices.find((c) => c.id === choice);
   const needsNote = picked?.requiresNote === true;
   const answering = gate.kind === "Q" && needsNote;
+  // 重读后选中的那项已不在新卡上（gate_bad_choice 之后最常见）：清掉选择，提交钮随之回到不可用，
+  // 不让用户对着一个看不见的旧选项再提交一次。意见草稿保留。
+  useEffect(() => {
+    if (choice && !choices.some((c) => c.id === choice)) setChoice(null);
+  }, [choice, choices]);
   const submit = () => {
     if (!choice || busy || (needsNote && !note.trim())) return;
     setBusy(true);
     setError(null);
     answerLeadGate(cwd, gate.id, choice, note.trim())
       .then(onAnswered)
-      .catch((e) => setError(formatBackendError(e, t.locale)))
+      .catch((e) => {
+        setError(formatBackendError(e, t.locale));
+        if (STALE_GATE.test(e instanceof Error ? e.message : String(e ?? ""))) onStale?.();
+      })
       .finally(() => setBusy(false));
   };
   return (
     <ApprovalCard
+      returnFocusTo={returnFocusTo}
       className="lead-gate-card"
       title={`${t.chat.leadGateKind[gate.kind as keyof typeof t.chat.leadGateKind] ?? gate.kind} · ${gate.title}`}
       badge={t.chat.leadGateWaiting}
       actions={
-        <button type="button" className="btn-primary" disabled={!choice || busy || (needsNote && !note.trim())} onClick={submit}>
+        // 提交在途用 aria-disabled（走查 C-3：p2-lead-fail / p2-lead-ok 提交后 activeElement=BODY）：
+        // disabled 会把正聚焦的这颗钮的焦点踢走。失败时焦点留在这里可原地重按，成功则卡片收起、
+        // 焦点经 returnFocusTo 回输入框。没选项 / 缺意见时焦点本就不在这颗钮上，照旧 disabled。
+        <button type="button" className="btn-primary" disabled={!choice || (needsNote && !note.trim())} aria-disabled={busy || undefined} onClick={submit}>
           {busy ? t.chat.leadGateSending : t.chat.leadGateSubmit}
         </button>
       }

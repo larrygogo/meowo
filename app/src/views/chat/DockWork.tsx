@@ -4,7 +4,7 @@
 /// 显隐判定、四块面板、连同只有它用的任务列表重建，全摊在 ChatWindow 里。收拢后 ChatWindow
 /// 只交数据，入口何时出现（dockEntries）是可单测的纯函数。
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
 import type { ChatItem, ChatHistory } from "../../api";
 import { buildTranscriptTodos, type TaskUpdateCache } from "../../chat/transcriptTodos";
 import { pushEscLayer } from "../../escLayers";
@@ -60,8 +60,10 @@ function TodosIcon({ className }: { className: string }) {
   return <Icon glyph={icList} size={16} className={className} />;
 }
 
-export function DockWork({ sessionId, cwd, ccSessionId, items, history, loading }: {
+export function DockWork({ sessionId, cwd, ccSessionId, items, history, loading, returnFocusTo }: {
   sessionId: number;
+  /// 关卡卡片答完收起时焦点的去处（输入框）。
+  returnFocusTo?: RefObject<HTMLElement | null>;
   /// 会话工作目录：Lead 入口据此读 `.lead/active`（为空时不显示 Lead）。
   cwd?: string | null;
   /// 会话的 cc_session_id：Lead 任务只给认领它的会话看。
@@ -177,7 +179,7 @@ export function DockWork({ sessionId, cwd, ccSessionId, items, history, loading 
     <>
       {/* 关卡在等 leader 时常驻显示（不必先点开 Lead 面板）：这是 leader 要做的决定。 */}
       {cwd && leadTask?.gate?.status === "pending" && (
-        <LeadGateCard key={leadTask.gate.id} cwd={cwd} gate={leadTask.gate} onAnswered={refreshLead} />
+        <LeadGateCard key={leadTask.gate.id} cwd={cwd} gate={leadTask.gate} onAnswered={refreshLead} onStale={refreshLead} returnFocusTo={returnFocusTo} />
       )}
       {/* 面板的锚点：零高、紧贴胶囊行上方（在关卡卡片之后），面板从这里向上弹，盖在关卡卡片上，
           而不是顶到关卡卡片上面去。 */}

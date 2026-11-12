@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LeadGateDto, LeadTaskDto } from "../../api";
+import { zh } from "../../i18n/zh";
 
 const snapshot = vi.fn<(cwd: string, session?: string | null) => Promise<LeadTaskDto | null>>();
 const answer = vi.fn<(cwd: string, gateId: string, choice: string, note: string) => Promise<void>>();
@@ -203,6 +204,74 @@ describe("关卡卡片", () => {
     expect(answer).toHaveBeenCalledWith("C:/repo", "C-1", "reject", "截图对不上");
     expect((await screen.findByRole("alert")).textContent).toBe("这个关卡已经回答过了");
     expect(onAnswered).not.toHaveBeenCalled();
+  });
+});
+
+describe("关卡卡片：焦点与过时的卡", () => {
+  /// 走查 C-3（p2-lead-fail / p2-lead-ok：提交后 activeElement=BODY）：提交在途用 aria-disabled，焦点留在
+  /// 提交钮上；失败可原地重按。成功后卡片随轮询收起，焦点经 returnFocusTo 交回输入框（同审批卡）。
+  it("提交在途不失焦；失败后焦点仍在提交钮上，可以重按", async () => {
+    let reject!: (reason: unknown) => void;
+    answer.mockImplementationOnce(() => new Promise<void>((_, no) => { reject = no; }));
+    render(<LeadGateCard cwd="C:/repo" gate={gate("B")} onAnswered={() => {}} />);
+    fireEvent.click(screen.getByLabelText(/方案一/));
+    const submit = screen.getByRole("button", { name: "提交" }) as HTMLButtonElement;
+    submit.focus();
+    await act(async () => { fireEvent.click(submit); });
+    const busy = screen.getByRole("button", { name: zh.chat.leadGateSending }) as HTMLButtonElement;
+    expect(busy.disabled).toBe(false);
+    expect(busy.getAttribute("aria-disabled")).toBe("true");
+    expect(document.activeElement).toBe(busy);
+    fireEvent.click(busy);
+    expect(answer).toHaveBeenCalledTimes(1);
+    await act(async () => { reject("lead/gate_invalid"); });
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(document.activeElement).toBe(screen.getByRole("button", { name: "提交" }));
+  });
+
+  it("提交成功、卡片收起后焦点回输入框", async () => {
+    answer.mockResolvedValue();
+    const composer = document.createElement("textarea");
+    document.body.appendChild(composer);
+    const ref = { current: composer };
+    const { unmount } = render(<LeadGateCard cwd="C:/repo" gate={gate("A")} onAnswered={() => {}} returnFocusTo={ref} />);
+    fireEvent.click(screen.getByLabelText(zh.chat.leadGateConfirm));
+    const submit = screen.getByRole("button", { name: "提交" });
+    submit.focus();
+    await act(async () => { fireEvent.click(submit); });
+    unmount();
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(document.activeElement).toBe(composer);
+    composer.remove();
+  });
+
+  /// 走查 C-11：gate_bad_choice 原先只说「请刷新后重选」，对话窗里没有刷新入口。现在卡片就地重读关卡
+  /// （onStale），重读后已不在新卡上的选项被清掉，文案说「已重新读取」。gate_changed / missing / closed 同口径。
+  it("选项与关卡对不上：就地重读，旧选择作废，文案不叫人刷新", async () => {
+    answer.mockRejectedValueOnce("lead/gate_bad_choice");
+    const onStale = vi.fn();
+    const onAnswered = vi.fn();
+    const { rerender } = render(<LeadGateCard cwd="C:/repo" gate={gate("B")} onAnswered={onAnswered} onStale={onStale} />);
+    fireEvent.click(screen.getByLabelText(/方案二/));
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "提交" })); });
+    expect(onStale).toHaveBeenCalledTimes(1);
+    expect(onAnswered).not.toHaveBeenCalled();
+    const alert = (await screen.findByRole("alert")).textContent ?? "";
+    expect(alert).toContain("已重新读取");
+    expect(alert).not.toMatch(/刷新/);
+    // 重读回来的关卡只剩方案一：选中的方案二作废，提交钮回到不可用。
+    rerender(<LeadGateCard cwd="C:/repo" gate={gate("B", { options: [{ id: "1", label: "方案一", detail: "", recommended: true }] })} onAnswered={onAnswered} onStale={onStale} />);
+    expect((screen.getByRole("button", { name: "提交" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("与卡片过时无关的报错不重读", async () => {
+    answer.mockRejectedValueOnce("lead/gate_invalid");
+    const onStale = vi.fn();
+    render(<LeadGateCard cwd="C:/repo" gate={gate("A")} onAnswered={() => {}} onStale={onStale} />);
+    fireEvent.click(screen.getByLabelText(zh.chat.leadGateConfirm));
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "提交" })); });
+    await screen.findByRole("alert");
+    expect(onStale).not.toHaveBeenCalled();
   });
 });
 

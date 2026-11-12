@@ -13,6 +13,7 @@ import { useT } from "../../i18n";
 import { appendTerminalText, modeFromScreen, visibleTerminalText } from "../../terminalAttention";
 import { currentPresetId } from "./modelLabels";
 import { stashComposerDraft, submitToTerminal } from "./terminalSubmit";
+import type { SendErrorExit } from "./SendErrorExits";
 
 /** 屏幕上 CLI 的一行回话：去掉命令输出前的 `⎿` 引线与首尾空白，原话转给用户。 */
 function cliLine(line: string): string {
@@ -33,7 +34,8 @@ export interface ModelControlsDeps {
   withSendGuard: (body: () => Promise<boolean>) => Promise<boolean>;
   attentionAbort: () => string | null;
   isCurrentOperation: () => boolean;
-  setSendError: (message: string) => void;
+  /** exit：错误条上的出路（重试 / 看终端画面），见 SendErrorExits。 */
+  setSendError: (message: string, exit?: SendErrorExit) => void;
   setHistory: Dispatch<SetStateAction<ChatHistory | null>>;
   setStoredSelections: Dispatch<SetStateAction<Record<string, string>>>;
 }
@@ -89,7 +91,9 @@ export function useModelControls({
         // 以前一律只报「未确认」，用户看不到原因）。
         if (outcome?.kind === "rejected") setSendError(t.chat.modelSwitchRejected(outcome.line));
         else if (otherModel) setSendError(t.chat.modelSwitchOther(otherModel));
-        else setSendError(t.chat.modelSwitchUnconfirmed);
+        // 没等到任何回话：切没切过去只有终端画面说得清，给「重试」与看终端画面两条出路，
+        // 不再只说「请到终端检查」（走查 C-4，手机上那句是死路）。
+        else setSendError(t.chat.modelSwitchUnconfirmed, { retry: () => void selectModel(preset), terminal: true });
         return false;
       }
       await setSessionLaunchSelection(sessionId, "model", preset.id);
@@ -132,7 +136,7 @@ export function useModelControls({
             if (hit) { outcome = { kind: "rejected", line: cliLine(line), actual: hit[1]?.toLowerCase() ?? null }; break; }
           }
         }
-        if (outcome === null) { setSendError(t.chat.effortUnconfirmed); return false; }
+        if (outcome === null) { setSendError(t.chat.effortUnconfirmed, { retry: () => void selectEffort(level), terminal: true }); return false; }
         if (outcome.kind === "rejected") {
           const actual = outcome.actual;
           if (actual) {

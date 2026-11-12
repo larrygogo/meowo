@@ -1,6 +1,7 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ModelMenu } from "./ModelMenu";
+import { zh } from "../../i18n/zh";
 
 afterEach(cleanup);
 
@@ -78,7 +79,33 @@ describe("ModelMenu 思考程度", () => {
     expect(onPick).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("radio", { name: "Max" }));
     expect(onPick).toHaveBeenCalledWith("max");
+    // 切换在途：aria-disabled 而不是 disabled（走查 C-1 同类：disabled 会把正聚焦的档位钮的焦点踢到 body），
+    // 点了不再触发。
     rerender(<ModelMenu {...base} effort={{ levels: ["low", "high"], current: "high", busy: true, onPick }} />);
-    expect((screen.getByRole("radio", { name: "Low" }) as HTMLButtonElement).disabled).toBe(true);
+    const low = screen.getByRole("radio", { name: "Low" }) as HTMLButtonElement;
+    expect(low.getAttribute("aria-disabled")).toBe("true");
+    expect(low.disabled).toBe(false);
+    low.focus();
+    fireEvent.click(low);
+    expect(onPick).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(low);
+  });
+
+  it("回合在跑（busy）：本引擎的模型与档位标成不可选并说明原因，收藏的其他引擎照常可点（走查 C-8）", () => {
+    const onSelect = vi.fn();
+    const onPick = vi.fn();
+    render(<ModelMenu {...base} busy onSelect={onSelect}
+      items={[{ id: "opus", label: "Opus" }, { id: "sonnet", label: "Sonnet" }]} currentId="opus"
+      starred={[{ id: "provider:kimi", label: "默认模型", detail: "Kimi" }]}
+      effort={{ levels: ["low", "high"], current: "high", busy: false, onPick }} />);
+    expect(screen.getByRole("status").textContent).toBe(zh.chat.menuBusyShort);
+    const sonnet = screen.getByRole("menuitem", { name: "Sonnet" });
+    expect(sonnet.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(sonnet);
+    fireEvent.click(screen.getByRole("radio", { name: "Low" }));
+    expect(onSelect).not.toHaveBeenCalled();
+    expect(onPick).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("menuitem", { name: /默认模型/ }));
+    expect(onSelect).toHaveBeenCalledWith("provider:kimi");
   });
 });

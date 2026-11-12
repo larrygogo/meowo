@@ -350,10 +350,12 @@ describe("ChatWindow 适配回归", () => {
   /// opencode 撤回（1.19.3 probe_opencode_undo）：`/undo` 不带参、一次一轮，只挂最后一条；
   /// 确认框说清会还原文件；撤唯一一轮靠换代重导（reset 不带 undone）也要清屏；原文被 CLI
   /// 放回它自己的输入框，认出后按 Ctrl-C 清掉——认不出输入框则不按（空框 Ctrl-C 是退出）。
-  it.each(["cleared", "unrecognized"])("opencode 撤回消息：%s", async (mode) => {
+  // stubborn：认得出输入框，但第一次按清空键没清掉（CLI 重画慢），错误条的「清空终端输入框」再按一次就干净了。
+  it.each(["cleared", "unrecognized", "stubborn"])("opencode 撤回消息：%s", async (mode) => {
     const base = setup(515, "opencode");
     let submitted = false;
     let cleared = false;
+    let presses = 0;
     const items = [
       { type: "user_text", id: "u1", timestamp: null, text: "先做甲" },
       { type: "assistant_text", id: "a1", timestamp: null, text: "甲做完了" },
@@ -365,7 +367,7 @@ describe("ChatWindow 适配回归", () => {
         : { ...h, offset: 5, items });
       if (command === "confirm_dialog") { confirms.push(args); return Promise.resolve(true); }
       if (command === "write_managed_terminal" && args?.data === "\r") submitted = true;
-      if (command === "write_managed_terminal" && args?.data === "\u0003") cleared = true;
+      if (command === "write_managed_terminal" && args?.data === "\u0003") { presses += 1; cleared = mode !== "stubborn" || presses >= 2; }
       if (command === "managed_terminal_screen") return Promise.resolve(mode === "unrecognized"
         ? ["  先做甲"]
         : ["  ┃  先做甲", "  ┃", ...(submitted && !cleared ? ["  ┃  先做甲"] : ["  ┃"]), "  ┃  Build · model", "  ╹▀▀▀▀"]);
@@ -382,14 +384,27 @@ describe("ChatWindow 适配回归", () => {
     await waitFor(() => expect(screen.queryByText("甲做完了")).toBeNull(), { timeout: 4000 });
     // 旧消息消失与输入框回填是先后两步：CI 慢机器上断言落在两步之间就挂（v0.6.19 发版实遇）。
     await waitFor(() => expect(box().value).toBe("先做甲"), { timeout: 4000 });
+    const barButtons = () => [...document.querySelector(".chat-send-error")!.querySelectorAll("button")].map((button) => button.textContent);
     if (mode === "cleared") {
       await screen.findByText(zh.chat.undoDone, {}, { timeout: 4000 });
       expect(cleared).toBe(true);
+    } else if (mode === "unrecognized") {
+      // 认不出输入框：按清空键不安全（空框 Ctrl-C 是退出），写明原因，只给看终端画面，不给注定失败的重试。
+      await screen.findByText(zh.chat.undoInputUnreadable, {}, { timeout: 4000 });
+      expect(cleared).toBe(false);
+      expect(barButtons()).toEqual([zh.chat.goTerminal, zh.chat.slashMenuDismiss]);
     } else {
+      // 走查 C-4 / 用户 2026-11-10「不要让用户去终端去清除」：认得出却没清掉时，错误条上给
+      // 「清空终端输入框」（再按一次 CLI 的清空键）与看终端画面，不再叫人去终端清。
       await screen.findByText(zh.chat.undoInputResidue, {}, { timeout: 4000 });
       expect(cleared).toBe(false);
+      expect(barButtons()).toEqual([zh.chat.undoClearInput, zh.chat.goTerminal, zh.chat.slashMenuDismiss]);
+      fireEvent.click(screen.getByRole("button", { name: zh.chat.undoClearInput }));
+      await screen.findByText(zh.chat.undoDone, {}, { timeout: 4000 });
+      expect(cleared).toBe(true);
+      expect(presses).toBe(2);
     }
-  });
+  }, 15000);
 
   /// 思考程度（对照 Kimi 模型菜单的「思考」分段）：statusline 报了档位才显示；切换写
   /// `/effort <档位>`，只认 CLI 的确认行，被拒时把 CLI 原话带出来。

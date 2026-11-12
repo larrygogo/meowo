@@ -130,7 +130,8 @@ function ShortcutsSection() {
           <div className={"sec-caption" + (index === 0 ? " is-first" : "")}>{group.title}</div>
           <div className="row-card shortcut-card">
             {group.rows.map(([keys, desc]) => (
-              <div className="row" key={keys}>
+              // Esc 一键两用（有审批时拒绝、没有时中断），键位当 key 会撞。
+              <div className="row" key={`${keys} ${desc}`}>
                 <div className="row-text"><div className="row-label">{desc}</div></div>
                 <KeyCombos keys={keys} />
               </div>
