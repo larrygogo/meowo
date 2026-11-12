@@ -261,13 +261,21 @@ function assignRef<T>(ref: { readonly current: T | null }, node: T | null) {
 
 /** 名单外壳（views/roster/RosterShell）与对话窗之间的接线。对话窗仍是单会话状态机，名单只做三件事：
  *  盖一层名单在对话区上、点名让它切到某个会话、听它说「我被带去别处了」。 */
+/** 名单上直接说的话：切到那条会话后先等这么久再发，让屏幕识别和审批轮询各跑过一拍。 */
+const SHELL_SEND_SETTLE_MS = 1500;
+/** 等这么久那条会话还没就绪，就不在名单底下发了：让位给现场，话留在输入框里。 */
+const SHELL_SEND_GIVE_UP_MS = 15_000;
+
 export type ChatShellBridge = {
   /** 盖在对话区上的名单。非空时对话区整块 inert + 不可见，但不卸载：审批租约、终端、草稿都留着。 */
   overlay: ReactNode | null;
   /** 名单要求切到某个会话。seq 每次请求加一，同一个 id 连点两次也算两次。
+   *  send：名单上直接对它说的话。对话窗在名单底下切到这条会话，等它读出来、屏幕识别跑过一拍，
+   *  用自己的发送（全部守卫都在）发出去；发不出去（停在审批上、要接管、出错）就让名单让位，
+   *  人看到的是现场里那条原因。resume：只把它恢复起来（出错行的「恢复」）。
    *  draft：名单底部输入框里写给它的话，带进对话窗的输入框，由人在这里按发送——对话窗的发送
    *  有一整套守卫（子代理视图、实时屏幕判定、草稿暂存、排队键、发送队列），名单不另写一份。 */
-  request: { id: number; seq: number; draft?: string; takeover?: boolean } | null;
+  request: { id: number; seq: number; draft?: string; takeover?: boolean; send?: string; resume?: boolean } | null;
   /** 名单底部输入框「交代一个结果」：打开新建页并把这句话带进去。seq 同 request。 */
   newSession: { message: string; seq: number } | null;
   /** 名单顶部的入口：搜索（命令面板）、已完成、会话管理。这些页和弹层本来就长在对话窗里，
@@ -533,6 +541,11 @@ export function ChatWindow({ shell }: { shell?: ChatShellBridge } = {}) {
   const shellRef = useRef(shell);
   shellRef.current = shell;
   const shellTakeoverRef = useRef<number | null>(null);
+  // 名单上直接说的话 / 要恢复的会话（见 ChatShellBridge.request.send）：等这条会话就绪再发。
+  const shellJobRef = useRef<{ id: number; text: string | null; at: number } | null>(null);
+  // 发出之后盯一会儿：发送守卫一旦拦下（错误条、要接管、原文退回输入框），名单让位给现场。
+  const shellWatchRef = useRef<{ id: number; text: string | null; until: number } | null>(null);
+  const [shellJobTick, setShellJobTick] = useState(0);
   useEffect(() => () => setShellCovered(false), []);
   // 会话 A→B→A 也必须作废 A 的旧操作；只比 id 会让旧发送清掉返回 A 后的新草稿。
   const sessionEpochRef = useRef(0);
@@ -1977,6 +1990,9 @@ export function ChatWindow({ shell }: { shell?: ChatShellBridge } = {}) {
       }
     }
     selectSession(shellRequest.id);
+    shellJobRef.current = shellRequest.send != null || shellRequest.resume
+      ? { id: shellRequest.id, text: shellRequest.send ?? null, at: Date.now() }
+      : null;
     // 「接管到 Meowo」：记下来，等这条会话读出来、确认它确实还在外部跑着，再把接管确认摆出来（见下）。
     shellTakeoverRef.current = shellRequest.takeover ? shellRequest.id : null;
   // eslint-disable-next-line react-hooks/exhaustive-deps -- 只认 seq：同一个会话再点一次也要回到它
@@ -1988,6 +2004,45 @@ export function ChatWindow({ shell }: { shell?: ChatShellBridge } = {}) {
     shellTakeoverRef.current = null;
     if (externalRunning && history.ptyManaged === false && !history.background) setNeedsTakeover(true);
   }, [sessionId, loading, history, externalRunning]);
+  // 名单上说的话：会话读出来、能力表到了、没有别的发送在途，再等屏幕识别和审批轮询跑过一拍
+  // （SHELL_SEND_SETTLE_MS）——刚切过来时卡片状态还是空的，守卫会以为终端是空闲的。等太久没就绪
+  // （SHELL_SEND_GIVE_UP_MS）就让名单让位，人自己在现场里发。
+  useEffect(() => {
+    const job = shellJobRef.current;
+    if (!job || job.id !== sessionId) return;
+    if (Date.now() - job.at > SHELL_SEND_GIVE_UP_MS) {
+      shellJobRef.current = null;
+      if (job.text) setPrompt((current) => current || job.text!);
+      shellRef.current?.onReveal();
+      return;
+    }
+    const retry = (ms: number) => {
+      const timer = window.setTimeout(() => setShellJobTick((n) => n + 1), ms);
+      return () => window.clearTimeout(timer);
+    };
+    if (loading || history?.sessionId !== sessionId || !chatUi || sending) return retry(500);
+    if (!history.supported) {
+      shellJobRef.current = null;
+      shellRef.current?.onReveal();
+      return;
+    }
+    const wait = job.at + SHELL_SEND_SETTLE_MS - Date.now();
+    if (wait > 0) return retry(wait);
+    shellJobRef.current = null;
+    shellWatchRef.current = { id: sessionId, text: job.text, until: Date.now() + 60_000 };
+    if (job.text == null) resumeForChat();
+    else void sendPrompt({ prompt: job.text, attachments: [] });
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- sendPrompt / resumeForChat 每次渲染都是新的，取当下那一份
+  }, [sessionId, loading, history, chatUi, sending, shellJobTick]);
+  useEffect(() => {
+    const watch = shellWatchRef.current;
+    if (!watch) return;
+    if (watch.id !== sessionId || Date.now() > watch.until) { shellWatchRef.current = null; return; }
+    if (sendError || needsTakeover || (watch.text != null && prompt === watch.text)) {
+      shellWatchRef.current = null;
+      shellRef.current?.onReveal();
+    }
+  }, [sendError, needsTakeover, prompt, sessionId]);
   const shellNewSession = shell?.newSession ?? null;
   useEffect(() => {
     if (!shellNewSession) return;

@@ -75,9 +75,16 @@ function DesktopRoster() {
     return () => document.removeEventListener("keydown", onKey, true);
   }, [run]);
 
-  const say = useCallback((id: number, draft: string) => {
-    setRequest((prev) => ({ id, seq: (prev?.seq ?? 0) + 1, draft }));
-    setView("scene");
+  // 名单上直接对某个 agent 说话：不进现场，由名单底下的对话窗用它自己的发送发出去（见
+  // ChatShellBridge.request.send）。发不出去时对话窗让名单让位，人看到现场里的原因。
+  const [sent, setSent] = useState<{ id: number; seq: number } | null>(null);
+  const say = useCallback((id: number, message: string) => {
+    setRequest((prev) => ({ id, seq: (prev?.seq ?? 0) + 1, send: message }));
+    setSent((prev) => ({ id, seq: (prev?.seq ?? 0) + 1 }));
+  }, []);
+  // 出错行的「恢复」：CLI 已经退出的，在名单底下把它拉起来。
+  const resume = useCallback((id: number) => {
+    setRequest((prev) => ({ id, seq: (prev?.seq ?? 0) + 1, resume: true }));
   }, []);
   const askNewSession = useCallback((message: string) => {
     setNewSession((prev) => ({ message, seq: (prev?.seq ?? 0) + 1 }));
@@ -140,8 +147,8 @@ function DesktopRoster() {
   // 的会话每 450ms 全部换一句话）：放进 shell 时每次刷新主线程约 6ms，是旧侧栏的 3 倍。
   const toggle = useCallback((id: number) => setExpanded((prev) => (prev === id ? null : id)), []);
   const list = useMemo<RosterListProps>(() => ({
-    rows, loaded: sessions != null, expanded, gitBadges, onToggle: toggle, onEnter: enter, onSay: say, onNewSession: askNewSession, onCommand: run,
-  }), [rows, sessions, expanded, gitBadges, toggle, enter, say, askNewSession, run]);
+    rows, loaded: sessions != null, expanded, gitBadges, onToggle: toggle, onEnter: enter, onSay: say, onResume: resume, onNewSession: askNewSession, onCommand: run, sent,
+  }), [rows, sessions, expanded, gitBadges, toggle, enter, say, resume, askNewSession, run, sent]);
   const shell = useMemo<ChatShellBridge>(() => ({
     overlay: view === "roster" ? ROSTER_OVERLAY : null,
     request,
@@ -230,6 +237,9 @@ function title(item: Item, fallback: string): string {
 type RosterListProps = {
   onCommand: (name: "search" | "done" | "admin") => void;
   onSay: (id: number, message: string) => void;
+  onResume: (id: number) => void;
+  /** 刚在名单上发出去的那一句是给谁的（输入框上方报一声「已发给…」）。 */
+  sent: { id: number; seq: number } | null;
   onNewSession: (message: string) => void;
   rows: readonly Item[];
   loaded: boolean;
@@ -246,7 +256,7 @@ function RosterOverlay() {
 }
 const ROSTER_OVERLAY = <RosterOverlay />;
 
-function RosterList({ rows, loaded, expanded, gitBadges, onToggle, onEnter, onSay, onNewSession, onCommand }: RosterListProps) {
+function RosterList({ rows, loaded, expanded, gitBadges, onToggle, onEnter, onSay, onResume, onNewSession, onCommand, sent }: RosterListProps) {
   const t = useT();
   const target = expanded == null ? null : rows.find((row) => row.session.id === expanded) ?? null;
   const clock = useRosterClock();
@@ -285,6 +295,8 @@ function RosterList({ rows, loaded, expanded, gitBadges, onToggle, onEnter, onSa
             gitBadges={gitBadges}
             onToggle={onToggle}
             onEnter={onEnter}
+            onSay={onSay}
+            onResume={onResume}
           />
         ))}
       </div>
@@ -292,6 +304,7 @@ function RosterList({ rows, loaded, expanded, gitBadges, onToggle, onEnter, onSa
       <RosterComposer
         target={target}
         targetTitle={target ? title(target, t.sticker.waitingFirstInput) : ""}
+        sentTo={sent ? { seq: sent.seq, title: title(rows.find((row) => row.session.id === sent.id) ?? ({ task_title: null } as unknown as Item), t.sticker.waitingFirstInput) } : null}
         onSay={onSay}
         onNewSession={onNewSession}
       />
@@ -302,10 +315,15 @@ function RosterList({ rows, loaded, expanded, gitBadges, onToggle, onEnter, onSa
 /** 一行。后端每次刷新给的都是新对象：按内容比，没变的行不重渲染（12 行里通常只有在跑的几行在变）。 */
 export const RosterItem = memo(RosterItemView, (a, b) => (
   a.open === b.open && a.clock === b.clock && a.gitBadges === b.gitBadges && a.onToggle === b.onToggle && a.onEnter === b.onEnter && a.onPrefetch === b.onPrefetch
+  && a.onSay === b.onSay && a.onResume === b.onResume
   && (a.item === b.item || JSON.stringify(a.item) === JSON.stringify(b.item))
 ));
 
-function RosterItemView({ item, open, gitBadges, onToggle, onEnter, onPrefetch }: {
+function RosterItemView({ item, open, gitBadges, onToggle, onEnter, onPrefetch, onSay, onResume }: {
+  /** 出错行的「继续」：在名单上直接对它说一声继续。手机页不传，那里没有这两个按钮。 */
+  onSay?: (id: number, message: string) => void;
+  /** 出错行的「恢复」：CLI 已经退出的，把它拉起来。 */
+  onResume?: (id: number) => void;
   /** 半分钟一格的钟（useRosterClock）：只为让「多久之前」跟着走，组件里不读它。 */
   clock?: number;
   /** 这一行多半接下来要进现场：提前把它的首屏读起来（手机页用，点进去不用再等一次整读）。 */
@@ -360,8 +378,15 @@ function RosterItemView({ item, open, gitBadges, onToggle, onEnter, onPrefetch }
           {/* 轮到你的行：决定就在这里做（批准 / 拒绝 / 拍板）。答不了的由它说明原因。 */}
           {tone === "pending" && <RosterDecision item={item} fallback={null} onEnter={onEnter} />}
           <div className="roster-foot">
+            {/* 出错的行：还活着的给「继续」（对它说一声继续），CLI 已经退出的给「恢复」（关卡 A 取舍 3）。 */}
+            {tone === "error" && item.session.status === "ended" && onResume && (
+              <button type="button" className="btn-primary roster-enter" onClick={() => onResume(id)}>{t.roster.resume}</button>
+            )}
+            {tone === "error" && item.session.status !== "ended" && onSay && (
+              <button type="button" className="btn-primary roster-enter" onClick={() => onSay(id, t.roster.continuePrompt)}>{t.roster.continue}</button>
+            )}
             {/* 决定单自己有主按钮（允许一次 / 提交）时，「进入现场」退成次要按钮：一屏一个主按钮。 */}
-            <button type="button" className={tone === "pending" ? "roster-enter is-quiet" : "btn-primary roster-enter"} onClick={() => onEnter(id)}>{t.roster.enter}</button>
+            <button type="button" className={tone === "pending" || (tone === "error" && (onSay || onResume)) ? "roster-enter is-quiet" : "btn-primary roster-enter"} onClick={() => onEnter(id)}>{t.roster.enter}</button>
           </div>
         </div>
       )}

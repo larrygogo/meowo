@@ -24,7 +24,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 }));
 vi.mock("../ChatWindow", () => ({
   ChatWindow: ({ shell }: { shell?: ChatShellBridge }) => (
-    <div data-testid="chat" data-request={shell?.request?.id ?? ""} data-draft={shell?.request?.draft ?? ""} data-new-session={shell?.newSession?.message ?? ""} data-command={shell?.command?.name ?? ""}>
+    <div data-testid="chat" data-request={shell?.request?.id ?? ""} data-draft={shell?.request?.draft ?? ""} data-send={shell?.request?.send ?? ""} data-resume={shell?.request?.resume ? "1" : ""} data-new-session={shell?.newSession?.message ?? ""} data-command={shell?.command?.name ?? ""}>
       {shell?.overlay}
       <button type="button" onClick={() => shell?.onReveal()}>reveal</button>
       <button type="button" onClick={() => shell?.onPageBack()}>page-back</button>
@@ -246,7 +246,7 @@ describe("名单外壳", () => {
     expect(screen.getByTestId("chat").getAttribute("data-new-session")).toBe("把登录页的校验收进一个 schema");
   });
 
-  it("展开一行后输入框指向它并一直写明任务名；提交 = 带着这句话进它的现场，名单自己不往终端写", async () => {
+  it("展开一行后输入框指向它并一直写明任务名；提交 = 交给名单底下的对话窗发，人留在名单上，名单自己不往终端写", async () => {
     sessions = [mk("甲"), mk("乙", (s) => { s.pty_managed = true; s.session.status = "waiting"; })];
     const target = sessions[1].session.id;
     render(<RosterShell />);
@@ -260,9 +260,11 @@ describe("名单外壳", () => {
     fireEvent.keyDown(screen.getByLabelText("对「乙」说"), { key: "Enter" });
     const chat = screen.getByTestId("chat");
     expect(chat.getAttribute("data-request")).toBe(String(target));
-    expect(chat.getAttribute("data-draft")).toBe("继续，先跑测试");
+    expect(chat.getAttribute("data-send")).toBe("继续，先跑测试");
+    expect(chat.getAttribute("data-draft")).toBe("");
     expect(chat.getAttribute("data-new-session")).toBe("");
-    expect(document.querySelector(".roster")).toBeNull();
+    expect(document.querySelector(".roster")).not.toBeNull();
+    expect(document.querySelector(".roster-composer-to")?.textContent).toBe("已发给「乙」");
     expect(invoke.mock.calls.some(([cmd]) => cmd === "write_managed_terminal")).toBe(false);
   });
 
@@ -349,5 +351,25 @@ describe("名单外壳", () => {
     expect(showing()).toEqual([true, false]);
     view.unmount();
     expect(showing().at(-1)).toBe(false);
+  });
+
+  it("出错的行：还活着的给「继续」（在名单上对它说一声继续），CLI 已经退出的给「恢复」", async () => {
+    sessions = [
+      mk("甲", (s) => { s.errored = true; s.error_label = "API Error"; s.session.status = "waiting"; }),
+      mk("乙", (s) => { s.errored = true; s.error_label = "退出码 1"; s.session.status = "ended"; }),
+    ];
+    render(<RosterShell />);
+    fireEvent.click(await screen.findByText("甲"));
+    fireEvent.click(screen.getByRole("button", { name: "继续" }));
+    const chat = screen.getByTestId("chat");
+    expect(chat.getAttribute("data-request")).toBe(String(sessions[0].session.id));
+    expect(chat.getAttribute("data-send")).toBe("继续");
+    expect(screen.queryByRole("button", { name: "恢复" })).toBeNull();
+    fireEvent.click(screen.getByText("乙"));
+    fireEvent.click(screen.getByRole("button", { name: "恢复" }));
+    expect(chat.getAttribute("data-request")).toBe(String(sessions[1].session.id));
+    expect(chat.getAttribute("data-resume")).toBe("1");
+    // 两种都留在名单上。
+    expect(document.querySelector(".roster")).not.toBeNull();
   });
 });
