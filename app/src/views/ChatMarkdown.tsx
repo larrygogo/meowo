@@ -278,26 +278,24 @@ export function stripLineSuffix(path: string): string {
 function LinkCode({ text, kind }: { text: string; kind: "url" | "path" }) {
   const t = useT();
   // 点了打不开（路径已删、被移走）要说出来：这里没有 toast，静默吞掉就是「点了没反应」，
-  // 必然引来连点。错误就地跟在链接后面，几秒后自收。
+  // 必然引来连点。错误就地跟在链接后面。
+  // 带原因的提示不自动消失（做空第一轮 #13，2026-11-12）：原先 4 秒自收，「路径不存在」这类原因
+  // 还没读完就没了。现在停留到用户点 × 或下一次点开成功（设计准则「含原因的提示读完前不消失」）。
   const [failed, setFailed] = useState<string | null>(null);
-  const timerRef = useRef<number | undefined>(undefined);
-  useEffect(() => () => window.clearTimeout(timerRef.current), []);
+  const codeRef = useRef<HTMLElement>(null);
   const open = () => {
     // 拖选这段文字（想复制）松手时也会触发 click：有选区就当是在选字，不打开。
     if (window.getSelection()?.toString()) return;
     const value = text.trim();
     void (kind === "url" ? openLink(value) : revealTerminalPath("", stripLineSuffix(value))).then(
       () => setFailed(null),
-      (e) => {
-        setFailed(formatBackendError(e, t.locale));
-        window.clearTimeout(timerRef.current);
-        timerRef.current = window.setTimeout(() => setFailed(null), 4000);
-      },
+      (e) => setFailed(formatBackendError(e, t.locale)),
     );
   };
   return (
     <>
       <code
+        ref={codeRef}
         className="chat-md-link-code"
         role="link"
         tabIndex={0}
@@ -307,7 +305,14 @@ function LinkCode({ text, kind }: { text: string; kind: "url" | "path" }) {
           if (event.key === "Enter") open();
         }}
       >{text}</code>
-      {failed && <span className="chat-md-link-error" role="status">{failed}</span>}
+      {failed && (
+        <span className="chat-md-link-error">
+          <span role="status">{failed}</span>
+          {/* × 随提示卸载，焦点交还给这条链接，不掉到 body（设计准则「焦点」）。 */}
+          <button type="button" className="chat-md-link-error-close" aria-label={t.chat.close} data-tip={t.chat.close}
+            onClick={() => { setFailed(null); codeRef.current?.focus(); }}>×</button>
+        </span>
+      )}
     </>
   );
 }

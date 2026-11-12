@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } f
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { AppModal } from "../AppModal";
 import { useT } from "../../i18n";
+import { busyProps } from "../../busyButton";
 
 /** 一个框：坐标按原图像素记，画到屏幕上再按缩放比换算。 */
 type Box = { x: number; y: number; w: number; h: number; note: string };
@@ -139,7 +140,7 @@ export function ImageAnnotator({ path, onDone, onClose }: {
       )}
       <div className="chat-modal-actions">
         <button type="button" className="ns-btn" onClick={onClose}>{t.chat.annotateCancel}</button>
-        <button type="button" className="ns-btn btn-primary" disabled={!image || saving} onClick={() => void finish()}>
+        <button type="button" className="ns-btn btn-primary" disabled={!image} {...busyProps(saving, () => void finish())}>
           {boxes.length > 0 ? t.chat.annotateDone : t.chat.annotateSkip}
         </button>
       </div>

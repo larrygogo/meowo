@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn((_cmd: string, _args?: unknown) => Promise.resolve(null as unknown)) }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
-import { cleanup, fireEvent, render, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, waitFor } from "@testing-library/react";
 import { ChatMarkdown, codeLinkKind, stripLineSuffix } from "./ChatMarkdown";
 
 afterEach(() => {
@@ -49,7 +49,38 @@ describe("行内代码里的网址和路径", () => {
     invoke.mockImplementationOnce(() => Promise.reject("路径不存在"));
     const { container } = render(<ChatMarkdown text={"`C:\\gone\\a.exe`"} />);
     fireEvent.click(container.querySelector("code.chat-md-link-code")!);
-    await waitFor(() => expect(container.querySelector(".chat-md-link-error")?.textContent).toBe("路径不存在"));
+    await waitFor(() => expect(container.querySelector(".chat-md-link-error [role=status]")?.textContent).toBe("路径不存在"));
+  });
+
+  // 做空第一轮 #13（2026-11-12）：原先 4 秒自收，带原因的提示没读完就没了。现在停到用户关或下一次成功。
+  it("失败提示不自动消失：10 秒后仍在，× 关掉后焦点回链接", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      invoke.mockImplementationOnce(() => Promise.reject("路径不存在"));
+      const { container, getByRole } = render(<ChatMarkdown text={"`C:\\gone\\a.exe`"} />);
+      const code = container.querySelector<HTMLElement>("code.chat-md-link-code")!;
+      fireEvent.click(code);
+      await waitFor(() => expect(container.querySelector(".chat-md-link-error")).not.toBeNull());
+      await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+      expect(container.querySelector(".chat-md-link-error [role=status]")?.textContent).toBe("路径不存在");
+      const close = getByRole("button", { name: "关闭" });
+      close.focus();
+      fireEvent.click(close);
+      expect(container.querySelector(".chat-md-link-error")).toBeNull();
+      expect(document.activeElement).toBe(code);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("再点一次成功就收起失败提示", async () => {
+    invoke.mockImplementationOnce(() => Promise.reject("路径不存在"));
+    const { container } = render(<ChatMarkdown text={"`C:\\gone\\a.exe`"} />);
+    const code = container.querySelector<HTMLElement>("code.chat-md-link-code")!;
+    fireEvent.click(code);
+    await waitFor(() => expect(container.querySelector(".chat-md-link-error")).not.toBeNull());
+    fireEvent.click(code);
+    await waitFor(() => expect(container.querySelector(".chat-md-link-error")).toBeNull());
   });
 
   it("拖选文字松手不算点击", () => {

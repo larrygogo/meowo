@@ -18,6 +18,7 @@ import { CheckIcon } from "../sticker/icons";
 import { Icon } from "../../icons/Icon";
 import { icArrowUpRight, icChevronLeft, icUndo } from "../../icons/glyphs.chat";
 import { icChevronDown, icCircleCheck, icSearch } from "../../icons/glyphs";
+import { busyProps } from "../../busyButton";
 
 type Status = "all" | "open" | "done";
 type Filters = { workspaces: string[]; status: Status; days: number | null };
@@ -298,11 +299,32 @@ export function SessionAdmin({ onBack, onOpen, initialWorkspaces = [], initialSt
   const openIds = [...selected].filter(([, pick]) => !pick.done).map(([id]) => id);
   const doneIds = [...selected].filter(([, pick]) => pick.done).map(([id]) => id);
 
+  /// 执行前按 id 现取「是否在干活」（做空第一轮 #6，2026-11-12）：勾选时记下的 working、表格那一页的行
+  /// 都是加载那刻的快照，勾完会话开跑，批量标记完成就不弹确认直接结束了进程。这里重拉「进行中」全集
+  /// （逐页，找齐即停），拉不到的（别处已标完成）沿用快照；拉取失败按在干活算，宁可多问一次也不误杀。
+  const liveWorking = async (ids: number[], snapshot: ReadonlyMap<number, boolean>): Promise<boolean[]> => {
+    const want = new Set(ids);
+    const fresh = new Map<number, boolean>();
+    try {
+      for (let index = 0; fresh.size < want.size; index += 1) {
+        const result = await getSessionAdminPage({ workspaces: [], status: "open", updatedBeforeDays: null, page: index, pageSize: MATERIALIZE_PAGE });
+        for (const row of result.items) if (want.has(row.session.id)) fresh.set(row.session.id, pickOf(row).working);
+        if (result.items.length < MATERIALIZE_PAGE) break;
+      }
+    } catch {
+      return ids.map(() => true);
+    }
+    return ids.map((id) => fresh.get(id) ?? snapshot.get(id) ?? false);
+  };
+
   /// 批量标记完成 / 恢复进行中：逐条写（set_archived 标记完成时会结束会话，不并发），给结果提示和撤销。
   /// S-1（2026-11-12）：标记完成会结束在跑的会话，撤销只恢复标记、拉不回进程，所以目标里有在干活的先确认
-  /// （与侧栏、对话窗标题菜单同一个确认）。working 取自勾选时那一行的状态，单条按钮现算。
-  const batch = async (ids: number[], done: boolean, undoable = true, working: boolean[] = []) => {
-    if (done && undoable && !(await confirmMarkDone(ids.map((_, index) => ({ working: working[index] ?? false })), t))) return;
+  /// （与侧栏、对话窗标题菜单同一个确认）。是否在干活执行前现取（liveWorking），snapshot 只作取不到时的兜底。
+  const batch = async (ids: number[], done: boolean, undoable = true, snapshot: ReadonlyMap<number, boolean> = new Map()) => {
+    if (done && undoable) {
+      const working = await liveWorking(ids, snapshot);
+      if (!(await confirmMarkDone(working.map((value) => ({ working: value })), t))) return;
+    }
     let failed = 0;
     let firstError: unknown;
     const succeeded: number[] = [];
@@ -372,7 +394,7 @@ export function SessionAdmin({ onBack, onOpen, initialWorkspaces = [], initialSt
               <button type="button" className="sa-btn-q" onClick={() => { setDraft(DEFAULT_FILTERS); query(DEFAULT_FILTERS); }}>{t.admin.reset}</button>
               {/* 只在看「已完成」时出现：清理对象就是已完成会话的 worktree。 */}
               {applied.status === "done" && (
-                <button type="button" className="sa-btn-q" disabled={cleaning} onClick={() => void cleanWorktrees()}>
+                <button type="button" className="sa-btn-q" {...busyProps(cleaning, () => void cleanWorktrees())}>
                   {cleaning ? t.worktree.batchScanning : t.worktree.batch}
                 </button>
               )}
@@ -382,13 +404,13 @@ export function SessionAdmin({ onBack, onOpen, initialWorkspaces = [], initialSt
             <div className="sa-batch" role="toolbar" aria-label={t.admin.batchSelected(selected.size)}>
               <span className="sa-batch-count">{allMatching ? t.admin.allMatchingSelected(selected.size) : t.admin.batchSelected(selected.size)}</span>
               {!allMatching && pageAllOn && total > pageRows.length && (
-                <button type="button" className="sa-batch-link" disabled={materializing} onClick={() => void selectAllMatching()}>
+                <button type="button" className="sa-batch-link" {...busyProps(materializing, () => void selectAllMatching())}>
                   {materializing ? t.admin.materializingAll : t.admin.selectAllMatching(total)}
                 </button>
               )}
               <button type="button" className="sa-batch-link" onClick={() => { setSelected(new Map()); setAllMatching(false); }}>{t.admin.clearSelection}</button>
               <span className="sa-batch-spacer" />
-              {openIds.length > 0 && <button type="button" className="sa-btn-q" onClick={() => void batch(openIds, true, true, openIds.map((id) => selected.get(id)?.working ?? false))}>{t.admin.markDoneCount(openIds.length)}</button>}
+              {openIds.length > 0 && <button type="button" className="sa-btn-q" onClick={() => void batch(openIds, true, true, new Map(openIds.map((id) => [id, selected.get(id)?.working ?? false])))}>{t.admin.markDoneCount(openIds.length)}</button>}
               {doneIds.length > 0 && <button type="button" className="sa-btn-q" onClick={() => void batch(doneIds, false)}>{t.admin.reopenCount(doneIds.length)}</button>}
             </div>
           )}
@@ -464,7 +486,7 @@ export function SessionAdmin({ onBack, onOpen, initialWorkspaces = [], initialSt
                               className="sa-icon-btn"
                               aria-label={row.archived ? t.admin.reopen : t.admin.markDone}
                               data-tip={row.archived ? t.admin.reopen : t.admin.markDone}
-                              onClick={() => void batch([row.session.id], !row.archived, true, [pickOf(row).working])}
+                              onClick={() => void batch([row.session.id], !row.archived, true, new Map([[row.session.id, pickOf(row).working]]))}
                             >
                               {row.archived
                                 ? <Icon glyph={icUndo} size={14} />

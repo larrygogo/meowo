@@ -12,6 +12,7 @@ import logoUrl from "../../src-tauri/icons/128x128.png";
 import { useEscClose } from "../hooks/useEscClose";
 import { Icon } from "../icons/Icon";
 import { icClose } from "../icons/glyphs";
+import { busyProps } from "../busyButton";
 
 // 更新说明是 Markdown（release notes），按对话页同一套 ChatMarkdown 渲染，不另写解析。
 // 懒加载：react-markdown 那一坨（对话窗本来就要用的公共 chunk）只在真有更新说明要显示时才取，
@@ -145,7 +146,7 @@ export function Updater() {
             {errorKind === "download" ? (
               <button className="sbtn" onClick={() => void download()}>{t.updater.redownload}</button>
             ) : errorKind === "install" ? (
-              <button className="sbtn" disabled={installing} onClick={() => void restartAndInstall()}>{t.updater.retryInstall}</button>
+              <button className="sbtn" {...busyProps(installing, () => void restartAndInstall())}>{t.updater.retryInstall}</button>
             ) : (
               <button className="sbtn" onClick={() => void recheck()}>{t.updater.retry}</button>
             )}
@@ -202,7 +203,7 @@ export function Updater() {
                     「更新还在、随时可装」——并排给出两条路，主次分明。 */}
                 <div className="up-actions">
                   {!installing && <button className="sbtn" onClick={close}>{t.updater.later}</button>}
-                  <button className="sbtn btn-primary" disabled={installing} onClick={() => void restartAndInstall()}>
+                  <button className="sbtn btn-primary" {...busyProps(installing, () => void restartAndInstall())}>
                     {installing ? t.updater.installing : t.updater.restart}
                   </button>
                 </div>

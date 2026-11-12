@@ -18,6 +18,7 @@ import { openSettingsAt } from "../../settingsNav";
 import { Icon } from "../../icons/Icon";
 import { icCopy, icFile, icImage, icLightbulb, icSwap, icUndo } from "../../icons/glyphs.chat";
 import { icAlert, icCheck, icClose, icTerminal } from "../../icons/glyphs";
+import { busyProps } from "../../busyButton";
 
 export function MessageCopyButton({ text, className = "chat-message-copy" }: { text: string; className?: string }) {
   const t = useT();
@@ -430,11 +431,10 @@ function TurnErrorCard({ item, latest }: { item: Extract<ChatItem, { type: "turn
           <button
             type="button"
             className="chat-turn-error-continue"
-            disabled={busy}
-            onClick={() => {
+            {...busyProps(busy, () => {
               setBusy(true);
               void actions.sendText(t.chat.turnErrorContinueText).finally(() => setBusy(false));
-            }}
+            })}
           >
             {t.chat.turnErrorContinue}
           </button>

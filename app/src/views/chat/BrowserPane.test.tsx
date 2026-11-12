@@ -92,10 +92,13 @@ describe("面板浏览器", () => {
     fireEvent.click(screen.getByRole("button", { name: "允许" }));
     expect(invoke).toHaveBeenCalledWith("browser_pane_answer_permission", { id: 5, permission: 1, allow: true });
     // 后端还没推新状态前再点无效：后端每次答的是排在最前的一条，连点会误答下一条。
-    expect((screen.getByRole("button", { name: "阻止" }) as HTMLButtonElement).disabled).toBe(true);
+    // 锁用 aria-disabled 不用 disabled（做空第一轮 #4）：焦点留在按钮上，不被踢到 body。
+    expect(screen.getByRole("button", { name: "阻止" }).getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "阻止" }));
+    expect(invoke.mock.calls.filter(([command]) => command === "browser_pane_answer_permission")).toHaveLength(1);
     // 无关的状态推送（标题、加载状态变了）同一条请求仍锁着（做空审查：按对象引用会提前解锁）。
     rerender(<BrowserPane info={pane({ permission: { ...ask }, title: "x", loading: true })} visible suggestions={[]} />);
-    expect((screen.getByRole("button", { name: "阻止" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByRole("button", { name: "阻止" }).getAttribute("aria-disabled")).toBe("true");
     // 下一条请求（编号不同，哪怕内容相同）推来就解锁。
     rerender(<BrowserPane info={pane({ permission: { ...ask, id: 2 } })} visible suggestions={[]} />);
     fireEvent.click(screen.getByRole("button", { name: "阻止" }));

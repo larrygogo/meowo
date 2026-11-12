@@ -21,6 +21,7 @@ import { folderName } from "../../paths";
 import { Icon } from "../../icons/Icon";
 import { icCopy, icGitBranch, icText } from "../../icons/glyphs.chat";
 import { icDownload, icFolder, icMore, icPencil, icSearch, icTerminal } from "../../icons/glyphs";
+import { busyProps } from "../../busyButton";
 
 /** 标题胶囊 + 会话动作菜单（Kimi 式）：标题本身是触发钮（▾），置顶/打开目录/重命名/
  *  归档都收进菜单——标题栏只留「正在看哪条 + 状态 + 视图切换」。重命名走独立 modal
@@ -158,7 +159,7 @@ export function ChatTitleMenu({ title, provider, cwd, archived, archiving, starr
               <span className="dd-label">{t.chat.exportConversation}</span>
             </button>
           )}
-          <button type="button" role="menuitem" className="dd-item" disabled={archiving} onClick={() => pick(onToggleArchived)}>
+          <button type="button" role="menuitem" className="dd-item" {...busyProps(archiving, () => pick(onToggleArchived))}>
             <span className="chat-title-action-ico"><ArchiveIcon archived={archived} /></span>
             <span className="dd-label">{archived ? t.sticker.unarchive : t.sticker.archive}</span>
           </button>

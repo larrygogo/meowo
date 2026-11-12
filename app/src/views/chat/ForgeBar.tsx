@@ -37,6 +37,7 @@ import { PanelPromptContext } from "./panelPrompt";
 import { Icon } from "../../icons/Icon";
 import { icArrowUp, icClock, icMinus } from "../../icons/glyphs.chat";
 import { icCheck, icClose, icRefresh } from "../../icons/glyphs";
+import { busyProps } from "../../busyButton";
 
 /// 轮询间隔：每个仓库最多 60 秒查一次 GitHub。
 export const FORGE_POLL_MS = 60_000;
@@ -444,7 +445,7 @@ export function ForgeBar({ repo, sessionCwd, sessionId, active, onChanged }: {
       {cleanup && sessionId != null && (
         <div className="scm-notice scm-cleanup" role="status">
           <span>{t.forge.cleanupHint}</span>
-          <button type="button" className="scm-link-btn" disabled={cleanState === "busy"} onClick={clean}>
+          <button type="button" className="scm-link-btn" {...busyProps(cleanState === "busy", clean)}>
             {cleanState === "busy" ? t.worktree.removing : t.worktree.remove}
           </button>
         </div>

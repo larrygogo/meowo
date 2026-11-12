@@ -4,7 +4,7 @@
 // 走查原始日志：scratchpad/ux2/walk/p1/log3.txt（p3-model-kbd-pick、p3-mode-kbd-pick、p3-slash-click、
 // p3-att-remove 选完 / 点完 activeElement 均为 BODY）。
 // 夹具与 mock 见 chatWindow.harness.tsx（必须先于 ./ChatWindow 导入）。
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { chatUiReady, invoke, openDialog, pickAttachments, respondWithHistory } from "./chatWindow.harness";
 import { ChatWindow } from "./ChatWindow";
@@ -20,6 +20,19 @@ const box = () => screen.getByRole("combobox", { name: "发送消息给 Agent" }
 const writes = (sessionId: number) => invoke.mock.calls
   .filter(([command, args]) => command === "write_managed_terminal" && (args as { sessionId: number }).sessionId === sessionId)
   .map(([, args]) => (args as { data: string }).data);
+
+/**
+ * 把切模型的确认轮询快进完（做空第一轮 #12，2026-11-12）：useModelControls 等回话是 12×200ms 的真实
+ * setTimeout，原先用 findByText(…, { timeout: 4000 }) 干等，全量 vitest 并发吃满 CPU 时偶发超时。
+ * 只假 setTimeout 系列（rAF、Promise 不动），shouldAdvanceTime 让 waitFor 之类照常随真实时间走。
+ */
+function fakeTimers() {
+  vi.useFakeTimers({ shouldAdvanceTime: true, toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
+}
+async function fastForward(ms: number) {
+  await act(async () => { await vi.advanceTimersByTimeAsync(ms); });
+}
+afterEach(() => { vi.useRealTimers(); });
 
 describe("对话窗：焦点", () => {
   it("权限模式菜单选完一项，焦点回到模式钮（C-1）", async () => {
@@ -42,6 +55,7 @@ describe("对话窗：焦点", () => {
   });
 
   it("模型菜单选完焦点回模型钮；没等到确认时错误条给「重试」「去终端页」「收起」（C-1、C-4）", async () => {
+    fakeTimers();
     window.history.replaceState({}, "", "/?sessionId=802");
     respondWithHistory(idle(802));
     render(<ChatWindow />);
@@ -52,8 +66,9 @@ describe("对话窗：焦点", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "Sonnet" }));
     expect(document.activeElement).toBe(model);
     await waitFor(() => expect(writes(802).some((data) => data.includes("/model sonnet"))).toBe(true));
-    // 假终端从不回「Set model to」：12×200ms 后报未确认。
-    expect(await screen.findByText(zh.chat.modelSwitchUnconfirmed, {}, { timeout: 4000 })).toBeTruthy();
+    // 假终端从不回「Set model to」：12×200ms 后报未确认（快进，不干等真实时间）。
+    await fastForward(3_000);
+    expect(screen.getByText(zh.chat.modelSwitchUnconfirmed)).toBeTruthy();
     const bar = document.querySelector(".chat-send-error")!;
     const labels = [...bar.querySelectorAll("button")].map((button) => button.textContent);
     expect(labels).toEqual([zh.chat.errorRetry, zh.chat.goTerminal, zh.chat.slashMenuDismiss]);
@@ -62,25 +77,28 @@ describe("对话窗：焦点", () => {
     fireEvent.click(screen.getByRole("button", { name: zh.chat.slashMenuDismiss }));
     expect(document.querySelector(".chat-send-error")).toBeNull();
     expect(document.activeElement).toBe(box());
-  }, 10_000);
+  });
 
   it("错误条的「重试」就地再切一次，换了错误后旧的出路作废（C-4）", async () => {
+    fakeTimers();
     window.history.replaceState({}, "", "/?sessionId=803");
     respondWithHistory(idle(803));
     render(<ChatWindow />);
     await chatUiReady();
     fireEvent.click(await screen.findByRole("button", { name: "切换模型" }));
     fireEvent.click(screen.getByRole("menuitem", { name: "Sonnet" }));
-    await screen.findByText(zh.chat.modelSwitchUnconfirmed, {}, { timeout: 4000 });
+    await fastForward(3_000);
+    expect(screen.getByText(zh.chat.modelSwitchUnconfirmed)).toBeTruthy();
     const before = writes(803).filter((data) => data.includes("/model sonnet")).length;
     fireEvent.click(screen.getByRole("button", { name: zh.chat.errorRetry }));
     await waitFor(() => expect(writes(803).filter((data) => data.includes("/model sonnet")).length).toBe(before + 1));
     expect(document.activeElement).toBe(box());
     // 打字清掉错误：出路跟着那条错误一起走。
-    await screen.findByText(zh.chat.modelSwitchUnconfirmed, {}, { timeout: 4000 });
+    await fastForward(3_000);
+    expect(screen.getByText(zh.chat.modelSwitchUnconfirmed)).toBeTruthy();
     fireEvent.change(box(), { target: { value: "继续" } });
     expect(screen.queryByRole("button", { name: zh.chat.errorRetry })).toBeNull();
-  }, 12_000);
+  });
 
   it("斜杠菜单用鼠标点选：焦点留在输入框，光标停在命令后（C-2）", async () => {
     window.history.replaceState({}, "", "/?sessionId=804");

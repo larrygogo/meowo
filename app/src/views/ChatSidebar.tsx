@@ -32,6 +32,7 @@ import { ArchivedWorktreePrompt, WorktreeRemoveButton, runBatchCleanup, type Rem
 import { Icon, type Glyph } from "../icons/Icon";
 import { icChevronsDownUp, icChevronsUpDown, icClock, icFilter, icFolderTree, icGrip, icMenu, icMinus, icPlusCircle, icSidebarLeft, icSliders } from "../icons/glyphs.chat";
 import { icCheck, icFolder, icFolderOpen, icSearch, icSettings } from "../icons/glyphs";
+import { busyProps } from "../busyButton";
 
 /** 每翻一页新增的会话数。滚到底自动加载下一页，直到后端带回 next_cursor = null 为止。 */
 const PAGE_LIMIT = 60;
@@ -1515,15 +1516,14 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
           <div className="chat-sidebar-cleanbar">
             <button
               type="button"
-              disabled={cleaning}
-              onClick={() => {
+              {...busyProps(cleaning, () => {
                 setCleaning(true);
                 void runBatchCleanup(t).then((text) => {
                   setCleaning(false);
                   if (text) setCleanResult(text);
                   void loadRef.current("refresh");
                 });
-              }}
+              })}
             >{cleaning ? t.worktree.batchScanning : t.worktree.batch}</button>
           </div>
         )}
