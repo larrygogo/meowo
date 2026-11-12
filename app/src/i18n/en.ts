@@ -647,6 +647,8 @@ export const en: Dict = {
     questionAnswerStepwise: "Answer step by step",
     questionNeedsStepwiseRemote: "These questions can't be answered in the card. Answer step by step instead",
     questionFormPendingRemote: "You can answer here once the form is ready",
+    questionFormMissing: "Form not recognized. Choose in the terminal tab",
+    questionFormMissingRemote: "Form not recognized. Use the keys below",
     close: "Close",
     renameSave: "Save",
     minimize: "Minimize",

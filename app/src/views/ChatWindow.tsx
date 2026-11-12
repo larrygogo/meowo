@@ -92,6 +92,7 @@ import { REMOTE_PREFS_EVENT, remoteTurnFolding } from "../remotePrefs";
 import { RemoteSessionList } from "../mobile/RemoteSessionList";
 import { performUndo } from "./chat/undoTerminal";
 import { useOutgoingUpkeep } from "./chat/useOutgoingUpkeep";
+import { useQuestionFormProbe } from "./chat/useQuestionFormProbe";
 import { SessionAdmin } from "./chat/SessionAdmin";
 import { NewSessionPage } from "./chat/NewSessionPage";
 import { ChatTitleBar } from "./chat/ChatTitleBar";
@@ -3591,6 +3592,16 @@ export function ChatWindow() {
   // 作答卡（broker 挂起代答）：题面来自挂起路径且会话托管时，卡片就是作答面——
   // 多选/多问题/自定义输入全部可答，不再依赖屏幕识别与排队落键。
   const questionAnswerable = !!structuredQuestion?.answerable && history?.ptyManaged !== false;
+  // 展示形态的题面卡在等终端表单：除了 xterm 可视区，再读后端按 PTY 尺寸重建的屏幕认表单。
+  // xterm 网格漂移、可视区不在底部、手机上没有终端时，原先的识别永远等不到表单（11-03 实拍），
+  // 见 chat/useQuestionFormProbe。桌面与手机同一条路径。
+  const questionFormProbe = useQuestionFormProbe({
+    sessionId,
+    active: !!structuredQuestion && !questionAnswerable && history?.ptyManaged === true,
+    othersSeeForm: interactiveAttention != null,
+    grammar: () => attentionGrammarRef.current,
+    onAttention: revealTerminalAttention,
+  });
   // 题面卡在场、终端表单 8s 还没被屏幕识别接管：写一条诊断，带上识别看到的屏幕末尾。
   // 用户实拍过卡在这一步（卡上答不了、终端表单被盖住），当时没留下任何现场，只能等复现。
   // 每道题只记一次；手机端不写（远程桥不放行，写的也是宿主磁盘）。
@@ -4554,6 +4565,9 @@ export function ChatWindow() {
         />
         <span>{!history?.ptyManaged
           ? (remoteUi() ? t.chat.answerOnDesktop : t.chat.questionExternalHint)
+          // 后端屏幕上也认不出表单：照实说，不再一直写「就绪后自动作答」让人干等。
+          : questionFormProbe.missing
+          ? (remoteUi() ? t.chat.questionFormMissingRemote : t.chat.questionFormMissing)
           : !queueableInCard
           // 远程没有终端视图:托管会话的终端表单一就绪,屏幕识别的作答卡就会接替本卡出现在
           // 手机上(卡内有自定义输入),所以这里是「稍候」而不是「回桌面端」。
@@ -4561,6 +4575,8 @@ export function ChatWindow() {
           : queuedLabels.length > 0
           ? t.chat.queuedAnswerHint(queuedLabels.join("、"))
           : t.chat.questionFormLoading}</span>
+        {/* 手机上没有终端页：认不出表单时把终端画面和按键摆进卡里，就地作答（同降级审批卡）。 */}
+        {remoteUi() && history?.ptyManaged && questionFormProbe.missing && <RemoteTerminalKeys sessionId={sessionId} />}
       </ApprovalCard>}
       {/* broker 审批卡（claude hook 劫走的请求），本体与卡内状态见 chat/BrokerApprovalCard。
           按 requestId 挂载：换请求即新卡，「说明并拒绝」的草稿不串卡。 */}
