@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { modeFromScreen, terminalAttention, terminalNeedsAttention } from "./terminalAttention";
-import { grammar } from "./test/agents";
+import { chatUi, grammar } from "./test/agents";
 
 describe("terminalAttention", () => {
   it("returns the provider-declared trust screen for the GUI", () => {
@@ -9,6 +9,19 @@ describe("terminalAttention", () => {
     expect(attention?.id).toContain("provider:");
     expect(attention?.options?.map((option) => option.label)).toEqual(["Yes, I trust this folder", "No, exit"]);
     expect(terminalNeedsAttention(prompt, ["do you trust the contents of this directory"])).toBe(true);
+  });
+
+  it("recognizes the codex 0.166.0 trust screen and still the old directory title", () => {
+    // codex 0.166.0 信任屏标题原文（codex.exe 内嵌字符串，research-cli-drift X1，2026-11-12）。
+    // 选项文案同取自二进制：Trust and continue / Open restricted / Quit。折行按 80 列模拟。
+    const markers = chatUi("codex")!.startup_attention_markers;
+    const prompt = "\x1b[2J  Trust this folder? Codex can read, edit, and run files here, subject to your\r\n"
+      + "  permission settings.\r\n\r\n› Trust and continue\r\n  Open restricted\r\n  Quit";
+    expect(terminalAttention(prompt, markers)?.id).toBe("provider:trust this folder?");
+    // 旧版标题仍认（老版本用户还在）
+    expect(terminalNeedsAttention("Do you trust the contents of this directory?", markers)).toBe(true);
+    // 普通输出提到 trust this folder（无问号）不算
+    expect(terminalAttention("I will trust this folder layout", markers, false, false, grammar("codex"), false)).toBeNull();
   });
 
   it("reads the 2.1.304 trust screen: ST-terminated title OSC and CHA word gaps", () => {

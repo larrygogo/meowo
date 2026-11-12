@@ -242,7 +242,10 @@ export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | 
           : [],
     startup_attention_markers: provider === "claude"
       ? ["do you trust the files in this folder", "do you trust the contents of this directory", "trust this folder", "workspace not trusted", "workspace trust dialog"]
-      : ["do you trust the files in this folder", "do you trust the contents of this directory"],
+      : provider === "codex"
+        // 与后端 codex 插件同源：0.166.0 标题改成 "Trust this folder? ..."（research-cli-drift X1）。
+        ? ["do you trust the files in this folder", "do you trust the contents of this directory", "trust this folder?"]
+        : ["do you trust the files in this folder", "do you trust the contents of this directory"],
     // 与后端总装同源：claude 声明的五个 + 交互式 /model 型 CLI 并入的 model_menu_command。
     menu_slash_commands: provider === "claude"
       ? ["/config", "/mcp", "/memory", "/model", "/resume"]

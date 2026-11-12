@@ -343,6 +343,18 @@ impl AgentPlugin for Codex {
             "/clear", "/compact", "/diff", "/help", "/model", "/new", "/review", "/status",
         ]
     }
+    /// 目录信任屏。0.166.0 的标题改成 `Trust this folder? Codex can read, edit, and run files
+    /// here, ...`（codex.exe 内嵌字符串，research-cli-drift X1，2026-11-12 复核：二进制里
+    /// `do you trust` 0 处）。只认通用表的旧句，新目录首条消息会被信任屏吞掉、会话像卡住。
+    /// 带问号取前半句：整句会随终端宽度折行，问号让它不至于撞上普通对话里的「trust this folder」。
+    /// 通用表的两句保留，0.16x 之前的老版本用户还在。
+    fn startup_attention_markers(&self) -> &'static [&'static str] {
+        &[
+            "do you trust the files in this folder",
+            "do you trust the contents of this directory",
+            "trust this folder?",
+        ]
+    }
     fn mode_controls(&self) -> &'static [crate::ModeControl] {
         static MODES: [crate::ModeControl; 1] = [crate::ModeControl {
             menu_command: None,
@@ -517,6 +529,22 @@ mod tests {
     }
 
     use super::*;
+
+    /// codex 0.166.0 信任屏原文（codex.exe 内嵌字符串，research-cli-drift X1）。
+    #[test]
+    fn startup_markers_cover_trust_folder_screen_old_and_new() {
+        let screen = "Trust this folder? Codex can read, edit, and run files here, subject to \
+                      your permission settings."
+            .to_lowercase();
+        let markers = Codex.startup_attention_markers();
+        assert!(markers.iter().any(|m| screen.contains(m)));
+        // 旧版（< 0.16x）标题仍认
+        let old = "Do you trust the contents of this directory?".to_lowercase();
+        assert!(markers.iter().any(|m| old.contains(m)));
+        // 普通对话里提到这几个词不算
+        let chat = "you can trust this folder layout".to_lowercase();
+        assert!(!markers.iter().any(|m| chat.contains(m)));
+    }
 
     #[test]
     fn writes_session_token_before_first_prompt() {
