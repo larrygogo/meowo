@@ -695,13 +695,13 @@ describe("ChatWindow", () => {
     await waitFor(() => expect(started).toBe(true));
     // 过了旧阈值(2s)仍在等:等待条不出。
     await new Promise((resolve) => setTimeout(resolve, 3_000));
-    expect(screen.queryByText(/正在等待 Agent 终端就绪/)).toBeNull();
+    expect(screen.queryByText(/等待 Agent 终端就绪/)).toBeNull();
     // 放行就绪:等待条收起、消息送达。把在途链路走完再收工,别留轮询污染后面的用例
     // (与上一个用例的「等回车落地」同一纪律)。
     ready = true;
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 17, data: "继续" }), { timeout: 3_000 });
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 17, data: "\r" }), { timeout: 3_000 });
-    await waitFor(() => expect(screen.queryByText(/正在等待 Agent 终端就绪/)).toBeNull());
+    await waitFor(() => expect(screen.queryByText(/等待 Agent 终端就绪/)).toBeNull());
   });
 
   it("keeps the prompt and reports a managed terminal that exits during startup", async () => {

@@ -115,6 +115,6 @@ describe("useSettingsState", () => {
     const hook = renderHook(() => useSettingsState());
     await act(async () => {});
     await act(async () => { await hook.result.current[1]({ theme: "light" }); });
-    expect(hook.result.current[2]).toBe("设置没保存：配置文件写不进去，检查 .meowo 是否只读或被占用：拒绝访问。 (os error 5)");
+    expect(hook.result.current[2]).toBe("设置没保存：配置文件可能只读或被占用：拒绝访问。 (os error 5)");
   });
 });

@@ -33,7 +33,7 @@ describe("formatBackendError", () => {
     expect(formatBackendError("profile/has-live-sessions: 2", "zh-CN")).toContain("进行中的会话");
     expect(formatBackendError("profile/has-live-sessions: 2", "en-US")).toContain("live sessions");
     // 长前缀优先:unrestored 不被 delete-dir-failed 抢先命中
-    expect(formatBackendError("profile/delete-dir-failed-unrestored: io", "en-US")).toContain("restoring the entry also failed");
+    expect(formatBackendError("profile/delete-dir-failed-unrestored: io", "en-US")).toContain("Removed from the list");
     expect(formatBackendError("profile/delete-dir-failed: io", "zh-CN")).toContain("已恢复");
     // 英文界面不再漏中文
     expect(formatBackendError("profile/copy-failed: /tmp/x: io", "en-US")).not.toMatch(/[一-鿿]/);

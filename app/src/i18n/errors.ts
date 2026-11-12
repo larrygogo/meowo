@@ -94,7 +94,7 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "remote/bind_failed", tail: true, zh: "无法监听这个端口", en: "Couldn't listen on this port" },
   // ── 设置落盘（settings.rs save_settings_unlocked）──
   // T-2（2026-11-12）：写盘失败此前是系统原话（「拒绝访问。 (os error 5)」），没主语也没下一步。
-  { m: "settings/write_failed", tail: true, zh: "配置文件写不进去，检查 .meowo 是否只读或被占用", en: "Couldn't write the settings file. Check that .meowo isn't read-only or locked" },
+  { m: "settings/write_failed", tail: true, zh: "配置文件可能只读或被占用", en: "The settings file may be read-only or locked" },
   // ── 诊断日志（diaglog.rs）──
   { m: "diag/bad_extension", exact: true, zh: "只能导出成 .txt 或 .log 文件", en: "Export only to .txt or .log files" },
   { m: "diag/no_log", exact: true, zh: "还没有诊断日志，开发版不写日志", en: "No diagnostic log yet. Dev builds don't write one." },
@@ -137,11 +137,11 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "worktree/locked", exact: true, zh: "这个 worktree 被锁定了", en: "This worktree is locked" },
   { m: "worktree/target_changed", exact: true, zh: "目录和确认时看到的不一样了，没有删除，请重新检查", en: "The folder no longer matches what you confirmed. Nothing was deleted; check again." },
   { m: "worktree/partial_removed", tail: true, zh: "删到一半失败：目录里部分文件已经删掉，本地分支保留", en: "Deletion failed partway: some files in the folder were deleted; the local branch was kept" },
-  { m: "worktree/still_exists", exact: true, zh: "删完后目录还在，请手动检查", en: "The folder is still there after deleting; check it manually" },
+  { m: "worktree/still_exists", exact: true, zh: "文件已删，空目录被占用没能删掉", en: "Files removed, but the empty folder is in use and was left behind" },
   { m: "worktree/unlink_failed", tail: true, zh: "拆除目录里的链接失败", en: "Couldn't remove links inside the folder" },
   { m: "worktree/remove_failed", tail: true, zh: "删除目录失败（目录里的链接已拆掉，链接指向的内容没动）", en: "Couldn't delete the folder (links inside it were removed; what they pointed to is untouched)" },
   { m: "worktree/git_failed", tail: true, zh: "git 没能运行", en: "Couldn't run git" },
-  { m: "worktree/probe_restore", tail: true, zh: "检查占用时改名后没能改回，请手动检查目录", en: "The folder was renamed during the check and couldn't be restored; check it manually" },
+  { m: "worktree/probe_restore", tail: true, zh: "目录临时改名后没能改回。现名以 .meowo-probe 加数字结尾", en: "The folder was renamed for a check and couldn't be renamed back. Its name now ends in .meowo-probe and a number" },
   // ── 在新 worktree 里开会话（wtnew）。撞名时后缀是建议名，新建页会单独给「改用」按钮 ──
   { m: "worktree/dir_exists", tail: true, zh: "目录已存在，可改用", en: "The folder already exists. Try" },
   { m: "worktree/branch_exists", tail: true, zh: "分支已存在，可改用", en: "The branch already exists. Try" },
@@ -176,7 +176,7 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "单次 PTY 输入过大", exact: true, zh: "输入内容过大", en: "Input too large" },
   // pty.rs 的 INPUT_BACKLOGGED / RESIZE_BUSY 常量:attach 循环把它们当临时状态跳帧,
   // 但 broker 直返调用方时会落到 UI——不进映射的话英文界面降级出中文原文。
-  { m: "Agent 未在读取输入，输入已积压，请稍后重试", exact: true, en: "The agent isn't reading input; input has backed up — try again in a moment" },
+  { m: "Agent 未在读取输入，输入已积压，请稍后重试", exact: true, en: "The agent isn't reading input and it has backed up. Try again in a moment" },
   { m: "PTY 尺寸通道忙（可能已僵死），本次调整跳过", exact: true, en: "The PTY resize channel is busy (possibly wedged); this resize was skipped" },
   { m: "原会话仍在运行，未重新打开", exact: true, zh: "原会话仍在运行，未重新打开", en: "The original session is still running; nothing was reopened" },
   { m: "无法结束原会话进程", exact: true, zh: "无法结束原会话进程", en: "Couldn't stop the original session process" },
@@ -192,11 +192,11 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "同步会话失败", tail: true, zh: "同步会话失败", en: "Couldn't sync the session" },
   // tail 透传:后端秒退探测的报错带输出尾部(「…（退出码 N）：tail」),zh 必须原样保留;
   // 英文界面下该消息本就是英文,不会命中此中文前缀。
-  { m: "Agent 启动后立即退出", tail: true, zh: "Agent 启动后立即退出", en: "The agent exited right after starting; check the Terminal tab —" },
+  { m: "Agent 启动后立即退出", tail: true, zh: "Agent 启动后立即退出", en: "The agent exited right after starting" },
   { m: "该会话所属账号", zh: "会话所属账号已被删除，无法恢复", en: "This session's account was deleted; it can't be resumed" },
   { m: "请选择工作目录", exact: true, zh: "请选择工作目录", en: "Pick a working directory" },
   { m: "无法定位当前账号目录", exact: true, zh: "找不到当前账号的数据目录", en: "Couldn't locate the current account directory" },
-  { m: "内部状态异常", zh: "内部状态异常，请重启 Meowo", en: "Internal error — restart Meowo" },
+  { m: "内部状态异常", zh: "内部状态异常，重开 Meowo 可恢复", en: "Internal state error. Reopening Meowo fixes it" },
   // ── 审批 ──
   { m: "审批请求已结束", exact: true, zh: "审批请求已结束", en: "The approval request has ended" },
   { m: "审批请求不属于该会话", exact: true, zh: "该审批属于另一条会话", en: "This approval belongs to another session" },
@@ -241,8 +241,8 @@ export const ENTRIES: ErrorEntry[] = [
   // ── 多账号结构化 reason 码(profile/mod.rs 的 coded(),S-9)──
   // 前后端约定:错误串 = `profile/<code>: <detail>`,tail 把 detail(路径/错误原文)透传保留排障信息。
   // 长前缀在前:delete-dir-failed-unrestored 会被 delete-dir-failed 抢先命中。
-  { m: "profile/delete-dir-failed-unrestored", tail: true, zh: "删除账号目录失败，且恢复账号入口也失败，请手动检查账号列表", en: "Couldn't delete the account folder, and restoring the entry also failed — check the account list" },
-  { m: "profile/delete-dir-failed", tail: true, zh: "删除账号目录失败，账号入口已恢复，可关闭占用进程后重试", en: "Couldn't delete the account folder; the entry was restored — close whatever is using it and retry" },
+  { m: "profile/delete-dir-failed-unrestored", tail: true, zh: "账号已从列表移除，目录没能删掉", en: "Removed from the list, but its folder couldn't be deleted" },
+  { m: "profile/delete-dir-failed", tail: true, zh: "账号目录没能删掉，入口已恢复。关掉占用它的程序后重试", en: "Couldn't delete the account folder, so the entry was restored. Close whatever is using it and retry" },
   { m: "profile/has-live-sessions", tail: true, zh: "该账号还有进行中的会话，请先结束这些会话再合并；进行中会话数", en: "End this account's live sessions before merging; live sessions" },
   { m: "profile/create-dir-failed", tail: true, zh: "创建账号目录失败", en: "Couldn't create the account folder" },
   { m: "profile/read-dir-failed", tail: true, zh: "读取账号目录失败", en: "Couldn't read the account folder" },
@@ -281,7 +281,7 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "连接中转失败", anywhere: true, tail: true, en: "Couldn't reach the relay" },
   { m: "查询模型失败", tail: true, zh: "查询模型失败", en: "Couldn't fetch models" },
   // ── 代理 ──
-  { m: "已选「自定义代理」，但代理地址为空", exact: true, zh: "已选自定义代理，请填写代理地址", en: "Custom proxy selected — enter a proxy address" },
+  { m: "已选「自定义代理」，但代理地址为空", exact: true, zh: "已选自定义代理，请填写代理地址", en: "Custom proxy selected. Enter a proxy address" },
   { m: "代理地址为空", exact: true, zh: "代理地址为空", en: "Proxy address is empty" },
   { m: "代理地址不能含空格", exact: true, zh: "代理地址不能含空格", en: "Proxy address can't contain spaces" },
   // tail 带上「{scheme}」与可用协议列表,排障信息不丢(同「代理端口无效」的处理)。

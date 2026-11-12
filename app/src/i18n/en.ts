@@ -459,7 +459,7 @@ export const en: Dict = {
     shortcutInterruptSend: "Interrupt current turn and send",
     shortcutDeny: "Deny pending approval (empty input, press twice to confirm)",
     shortcutInterrupt: "Stop the current turn (empty input, press twice to confirm)",
-    shortcutApproveDigit: "Approve the pending request. 2 and up allow it for longer (input not focused)",
+    shortcutApproveDigit: "Approve the pending request (input not focused). 2 and up allow it for longer",
     shortcutSlashComplete: "Pick slash-command completion",
     shortcutHistory: "Recall your previous message (with empty input)",
     shortcutSheet: "Open this cheat sheet",

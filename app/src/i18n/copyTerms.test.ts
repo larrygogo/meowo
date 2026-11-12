@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { zh } from "./zh";
 import { en } from "./en";
+import { ENTRIES } from "./errors";
 
 // UI 调研 shell #3/#9/#12：界面早已换成灵动岛 + 对话窗，字典里还有「看板/贴纸」指向用户找不到的东西；
 // 「工作区/工作空间」同屏两种叫法（关卡 A 定案统一「工作区」）；用户否掉的「等你」造词回流。
@@ -31,6 +32,25 @@ describe("字典用词", () => {
   it("中文文案不用分号", () => {
     const bad = strings(zh).filter(([, s]) => /[；;]/.test(s));
     expect(bad).toEqual([]);
+  });
+  // 做空第一轮 #10（2026-11-12）：「请手动检查」「请重启 Meowo」「check the Terminal tab —」这类把人推出去
+  // 收拾的句式在验收 13 只扫 chat 命名空间时漏网（errors.ts 的 worktree / 账号 / 内部状态三处）。
+  // 这里全字典加后端错误映射一起扫。能在 Meowo 里做的给按钮，做不到的写原因（remote-no-desktop-deadend）。
+  // 「手动切换 / 手动排序 / 手动发送」是说清该做的动作，不在禁止之列。禁的是检查、清理、处理、重启、刷新重试。
+  const ZH_PUSH_OUT = /请?手动(?:检查|清理|处理|删除)|(?:到|去|切到|回到|在)(?:外部)?终端(?:页)?(?:里|中)?(?:检查|清理|清空|处理)|刷新后重试|请刷新|刷新再试|请重启/;
+  const EN_PUSH_OUT = /check (?:it|them|the [\w ]+?) manually|manually check|check the terminal|restart meowo|refresh (?:and|to) (?:retry|try)/i;
+  it("中英文案与后端错误都不叫人手动检查、去终端清理、刷新重试或重启", () => {
+    expect(strings(zh).filter(([, s]) => ZH_PUSH_OUT.test(s))).toEqual([]);
+    expect(strings(en).filter(([, s]) => EN_PUSH_OUT.test(s))).toEqual([]);
+    const errs = ENTRIES.flatMap((e) => [
+      ...(e.zh && ZH_PUSH_OUT.test(e.zh) ? [`${e.m} | ${e.zh}`] : []),
+      ...(EN_PUSH_OUT.test(e.en) ? [`${e.m} | ${e.en}`] : []),
+    ]);
+    expect(errs).toEqual([]);
+  });
+  // 规范禁破折号（meowo-copy-style）：英文错误映射里结尾挂 ` —` 的半截句（Agent 启动后立即退出，#10）。
+  it("后端错误映射不用破折号", () => {
+    expect(ENTRIES.filter((e) => /[—–]|——/.test(`${e.zh ?? ""}${e.en}`)).map((e) => e.m)).toEqual([]);
   });
   it("英文不再说 board/sticker、不用 waiting on/for you", () => {
     const bad = strings(en).filter(([, s]) => /\bboard\b|sticker|waiting (on|for) you\b/i.test(s));
