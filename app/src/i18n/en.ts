@@ -1221,6 +1221,7 @@ export const en: Dict = {
       untrusted: "Trusted commands only",
       "on-request": "On request",
       never: "Never ask",
+      granular: "Granular approval",
       "read-only": "Read only",
       "workspace-write": "Workspace write",
       "danger-full-access": "Full access",

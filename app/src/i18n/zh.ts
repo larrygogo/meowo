@@ -1335,6 +1335,8 @@ export const zh = {
       untrusted: "仅信任命令免审",
       "on-request": "按需审批",
       never: "从不询问",
+      // codex 0.163+ 的 approval_policy 对象形态（各类审批分开开关），见 codex telemetry approval_mode。
+      granular: "分类审批",
       "read-only": "只读",
       "workspace-write": "工作区可写",
       "danger-full-access": "完全访问",
