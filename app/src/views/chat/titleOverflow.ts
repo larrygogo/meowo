@@ -63,7 +63,10 @@ export function fitTitleBar(layout: TitleBarLayout, remote: boolean): Set<TitleO
  *  一样没收，标题只剩 69px 而分支名占 94px；150% 缩放的 620 窗标题栏 553px 进不了 400 那档，
  *  标题只剩 3 个字而「结束会话」四个字占 71px。 */
 export type TitleCompactKey = "prState" | "branch" | "project" | "endLabel";
-export const TITLE_COMPACT_ORDER: readonly TitleCompactKey[] = ["prState", "branch", "project", "endLabel"];
+// 顺序：「结束会话」字样最先收——收成图标后入口和名字都还在，丢的只是四个字；项目名最后收——它是
+// 「这是哪个仓库的会话」的上下文，比分支名、PR 状态更常用来认会话（2026-11-12 主会话定，
+// 子代理初版把项目名排在结束会话字样之前，英文 1280 开面板时 web-app 收了而 End session 还在）。
+export const TITLE_COMPACT_ORDER: readonly TitleCompactKey[] = ["endLabel", "prState", "branch", "project"];
 
 /** 标题文字最多按这么多 em 去争位置：再长的标题省略也读得出是哪个会话，
  *  不该为它在两千像素宽的栏上把分支名收掉。项目名同理，它本来就被 CSS 封顶在标题区的 30%。 */

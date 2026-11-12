@@ -54,7 +54,7 @@ describe("标题栏溢出进 ⋯ 菜单", () => {
     expect(document.querySelector(".chat-panel-toggle")).not.toBeNull();
     expect(screen.getByRole("button", { name: "结束会话" })).toBeTruthy();
     // 功能都开始收了，纯信息必须已经先收完：「结束会话」只留图标（名字还在读屏名里）。
-    expect(document.querySelector(".chat-bar")?.getAttribute("data-compact")).toBe("prState branch project endLabel");
+    expect(document.querySelector(".chat-bar")?.getAttribute("data-compact")).toBe("endLabel prState branch project");
   });
 
   it("宽标题栏：功能都在栏上，菜单不多出任何项", () => {

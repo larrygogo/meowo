@@ -95,16 +95,16 @@ describe("planTitleBar", () => {
     expect(out.hidden.size).toBe(0);
   });
 
-  it("1280 宽开面板带 PR（内容盒 764）：收 PR 状态字和分支名，标题完整，功能一颗不少", () => {
+  it("1280 宽开面板带 PR（内容盒 764）：收结束会话字样、PR 状态字和分支名，项目名与标题完整，功能一颗不少", () => {
     const out = planTitleBar(plan(764), false);
-    expect([...out.compact]).toEqual(["prState", "branch"]);
+    expect([...out.compact]).toEqual(["endLabel", "prState", "branch"]);
     expect(out.hidden.size).toBe(0);
   });
 
-  it("信息按顺序收：PR 状态字 → 分支名 → 项目名 → 结束会话只留图标", () => {
-    expect(TITLE_COMPACT_ORDER).toEqual(["prState", "branch", "project", "endLabel"]);
-    expect([...planTitleBar(plan(840), false).compact]).toEqual(["prState"]);
-    expect([...planTitleBar(plan(700), false).compact]).toEqual(["prState", "branch", "project"]);
+  it("信息按顺序收：结束会话只留图标 → PR 状态字 → 分支名 → 项目名", () => {
+    expect(TITLE_COMPACT_ORDER).toEqual(["endLabel", "prState", "branch", "project"]);
+    expect([...planTitleBar(plan(840), false).compact]).toEqual(["endLabel"]);
+    expect([...planTitleBar(plan(700), false).compact]).toEqual(["endLabel", "prState", "branch"]);
     expect([...planTitleBar(plan(640), false).compact]).toEqual(TITLE_COMPACT_ORDER);
   });
 
