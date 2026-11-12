@@ -20,7 +20,7 @@ import { useDismissable } from "../hooks/useDismissable";
 import { CardContextMenu } from "./sticker/CardContextMenu";
 import { WorkspaceHeader } from "./chat/WorkspaceHeader";
 import { SidebarGitBadgeSlot, useSidebarGitBadges } from "./chat/SidebarGitBadge";
-import { editorKeyDown, fmtAgo, fmtShortAgo, fmtWaited, readSidebarGroupMode, readSidebarSortMode, SIDEBAR_GROUP_MODE_KEY, SIDEBAR_SORT_MODE_KEY, useStarred, type SidebarGroupMode, type SidebarSortMode } from "./sticker/helpers";
+import { editorKeyDown, fmtAgo, fmtShortAgo, fmtWaited, readSidebarGroupMode, SIDEBAR_GROUP_MODE_KEY, useStarred, type SidebarGroupMode } from "./sticker/helpers";
 import { UNNAMED_SESSION_SENTINEL } from "./sticker/types";
 import { CheckIcon, MoreIcon, NoteIcon, TopIcon } from "./sticker/icons";
 import { useT } from "../i18n";
@@ -31,7 +31,7 @@ import { reconcileRows, sameRefs, type RowCache } from "../rowCache";
 import type { Dict } from "../i18n/zh";
 import { ArchivedWorktreePrompt, WorktreeRemoveButton, runBatchCleanup, type RemovalOutcome } from "../worktreeCleanup";
 import { Icon, type Glyph } from "../icons/Icon";
-import { icChevronsDownUp, icChevronsUpDown, icClock, icFilter, icFolderTree, icGrip, icMenu, icMinus, icPlusCircle, icSidebarLeft, icSliders } from "../icons/glyphs.chat";
+import { icChevronsDownUp, icChevronsUpDown, icFilter, icFolderTree, icMenu, icMinus, icPlusCircle, icSidebarLeft, icSliders } from "../icons/glyphs.chat";
 import { icCheck, icFolder, icFolderOpen, icSearch, icSettings } from "../icons/glyphs";
 
 /** 每翻一页新增的会话数。滚到底自动加载下一页，直到后端带回 next_cursor = null 为止。 */
@@ -42,7 +42,6 @@ const SIDEBAR_TABS = ["open", "done", "workspaces"] as const;
 const DIR_LIMIT = 24;
 
 const GROUP_MODE_KEY = SIDEBAR_GROUP_MODE_KEY;
-const SORT_MODE_KEY = SIDEBAR_SORT_MODE_KEY;
 const FOLDED_KEY = "meowo-chat-sidebar-folded-dirs";
 
 /** 分组方式（Claude Code 侧栏 Group by 同款）：不分组 / 按目录 / 按日期 / 按状态。 */
@@ -53,7 +52,6 @@ type GroupMode = SidebarGroupMode;
  *    桌面按住拖、手机长按后拖都能调位置（见 sidebarDrag）。
  *  - recent：最近活动，后端 connected-first + 时间倒序原样透传。
  *  - name：按名称，前端排**已加载的这一页**。 */
-type SortMode = SidebarSortMode;
 
 
 /** 组头汇总点的召唤强度序:待处理（Agent 正卡着等你决定）> 出错 > 在等 > 在跑（用户 2026-10-29
@@ -91,11 +89,9 @@ function EditorInput({ initial, placeholder, onSubmit, onCancel }: {
 }
 
 /** 视图/排序菜单里每个选项前的图标（对照 Kimi Code 侧栏菜单：图标 + 文案 + 右侧勾选）。 */
-const SF_ICON_PATHS: Record<GroupMode | SortMode, Glyph> = {
+const SF_ICON_PATHS: Record<GroupMode, Glyph> = {
   none: icMenu,
   dir: icFolderTree,
-  recent: icClock,
-  manual: icGrip,
 };
 function SfIcon({ name }: { name: keyof typeof SF_ICON_PATHS }) {
   return (
@@ -107,13 +103,10 @@ function SfIcon({ name }: { name: keyof typeof SF_ICON_PATHS }) {
  *  「排序」手动排序 / 按最近活动；每项图标 + 文案，选中项只在右侧打勾、文字不变色，选中即应用并收起。
  *  按日期 / 按状态分组、按名称排序、工作区筛选已去掉——筛选改由「工作空间」页签里的
  *  「只看这个工作区的会话」进入，生效时列表上方有一枚可关闭的标签。 */
-function SidebarFilterMenu({ groupMode, groupLabels, sortMode, sortLabels, onGroup, onSort, onAdmin, t }: {
+function SidebarFilterMenu({ groupMode, groupLabels, onGroup, onAdmin, t }: {
   groupMode: GroupMode;
   groupLabels: Record<GroupMode, string>;
-  sortMode: SortMode;
-  sortLabels: Record<SortMode, string>;
   onGroup: (mode: GroupMode) => void;
-  onSort: (mode: SortMode) => void;
   /// 分隔线下的「会话管理」（对照 Kimi）：打开会话管理页。
   onAdmin?: () => void;
   t: Dict;
@@ -154,8 +147,6 @@ function SidebarFilterMenu({ groupMode, groupLabels, sortMode, sortLabels, onGro
         <div className="dd-menu sf-menu" role="menu" ref={menuRef} style={{ position: "fixed", top: pos.top, bottom: pos.bottom, right: pos.right }}>
           <div className="sf-caption">{t.chat.sidebarFilterGroup}</div>
           {(["none", "dir"] as const).map((mode) => option(mode, groupMode === mode, groupLabels[mode], () => onGroup(mode), mode))}
-          <div className="sf-caption">{t.chat.sidebarFilterSort}</div>
-          {(["manual", "recent"] as const).map((mode) => option(mode, sortMode === mode, sortLabels[mode], () => onSort(mode), mode))}
           {onAdmin && <>
             <div className="sf-sep" role="separator" />
             <button type="button" role="menuitem" className="dd-item sf-opt" onClick={() => { setOpen(false); onAdmin(); }}>
@@ -249,7 +240,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
   /** 预取首屏（父层 historyCache）：手指按下、鼠标悬停片刻即触发，点进去时多半已有快照。 */
   onPrefetch?: (id: number) => void;
   onCollapse: () => void;
-  /** 打开会话管理页（视图与排序菜单底部的「会话管理」）。不传就不显示这一项。 */
+  /** 打开会话管理页（视图菜单底部的「会话管理」）。不传就不显示这一项。 */
   onOpenAdmin?: () => void;
 }) {
   const t = useT();
@@ -330,11 +321,8 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
   // 排序方式默认「创建时间」，同分组一样落盘。不默认「最近活跃」：几个会话同时在跑时，
   // 每来一条事件就换一次位置，列表顶部一直在跳，点都点不准（用户反馈）。按创建时间，
   // 新会话出现在顶上，之后位置不动。
-  const [sortMode, setSortMode] = useState<SortMode>(readSidebarSortMode);
-  // 「创建时间」交给后端分页（后端按 started_at 倒序扫），否则只能重排已加载的一页：
-  // 新建但一直没动的会话可能根本不在第一页。load 是稳定回调，读 ref。
-  const sortModeRef = useRef(sortMode);
-  sortModeRef.current = sortMode;
+  // 「按最近活动」这一档已经去掉（主窗口改成名单后顺序固定，leader 2026-11-11 关卡 A 取舍 8）：
+  // 侧栏只剩手动排序（没拖过就是创建时间倒序），由后端分页。存着旧值的自然落到这一种。
   // 折叠的组(按 pathKey)。侧栏收起时本组件整个卸载,不落盘的话回来全展开了。
   const [folded, setFolded] = useState<Set<string>>(readFolded);
 
@@ -381,12 +369,9 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
     // 靠滚动翻页找会话的路是断的,此前只能退回看板去搜。
     const q = searchRef.current.trim() || null;
     const arch = archivedViewRef.current;
-    const order = sortModeRef.current === "manual" ? "manual" : "activity";
-    return getLiveSessionsPage(arch ? "archived" : "all", q, null, lim, dir, false, false, order)
+    return getLiveSessionsPage(arch ? "archived" : "all", q, null, lim, dir, false, false, "manual")
       .then((page) => {
         if (!mountedRef.current) return;
-        // 排序切换期间发出的旧请求：装的是另一种顺序的首页，丢弃。
-        if ((sortModeRef.current === "manual" ? "manual" : "activity") !== order) return;
         // 切目录/改搜索词/切归档视图期间发出的旧请求回来了:它装的是旧条件的会话,
         // 原样落盘会让列表与筛选状态对不上。丢弃。
         if (dirFilterRef.current !== dir) return;
@@ -524,22 +509,6 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
     void loadRef.current("refresh");
   }, [dirFilter]);
 
-  // 在「手动排序」与其它排序之间切换 = 后端换了扫描顺序,首页内容可能完全不同:回到
-  // 首页重取(与切目录同一套重置语义)。最近活动 ↔ 按名称只是前端重排,不必重取。
-  const prevOrderRef = useRef(sortMode === "manual");
-  useEffect(() => {
-    const byCreated = sortMode === "manual";
-    if (prevOrderRef.current === byCreated) return;
-    prevOrderRef.current = byCreated;
-    prevLimitRef.current = PAGE_LIMIT;
-    limitRef.current = PAGE_LIMIT;
-    setLimit(PAGE_LIMIT);
-    setReachedEnd(false);
-    setLoadFailed(false);
-    growingRef.current = false;
-    setGrowing(false);
-    void loadRef.current("refresh");
-  }, [sortMode]);
 
   // 切换已归档视图 = 换数据源:与切目录同一套重置语义。
   const prevArchRef = useRef(false);
@@ -735,10 +704,6 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
     setGroupMode(mode);
     localStorage.setItem(GROUP_MODE_KEY, mode);
   };
-  const changeSortMode = (mode: SortMode) => {
-    setSortMode(mode);
-    localStorage.setItem(SORT_MODE_KEY, mode);
-  };
   // 只有**目录**分组的折叠值得记住：目录键是稳定的路径。日期桶（`date:today`）与状态桶
   // 的键固定、内容天天换，落盘等于「昨天折起来的今天照样折着」，新会话凭空消失（7C-6）。
   const toggleFolded = (key: string) => setFolded((prev) => {
@@ -774,21 +739,20 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
       if (star !== 0) return star;
       return 0;
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- sortMode 是重排信号，切排序方式时按置顶再排一次，保留原行为
-  }, [sessions, starred, sortMode]);
+  }, [sessions, starred]);
   // 会话行的 PR / CI 与改动数（UI 优化 #54）：按已加载会话的工作目录批量取，同目录只算一次。
   const loadedCwds = useMemo(() => (ordered ?? []).map((item) => item.cwd), [ordered]);
   const gitBadges = useSidebarGitBadges(loadedCwds);
 
   const groups = useMemo(() => {
     if (!ordered || groupMode !== "dir") return null;
-    return sidebarDirGroups(ordered, sortMode, workspaceOrder);
-  }, [groupMode, ordered, sortMode, workspaceOrder]);
+    return sidebarDirGroups(ordered, workspaceOrder);
+  }, [groupMode, ordered, workspaceOrder]);
   // 拖分组头调整工作区顺序（手动排序、按工作区分组、非多选态；手机长按后拖）。落下即本地先排，
   // 再把整份顺序写进设置；写失败报错并回到设置里原来的顺序。
   const groupKeys = useMemo(() => (groups ?? []).map((group) => group.key), [groups]);
   const groupDrag = usePointerReorder<string>({
-    enabled: sortMode === "manual" && groupMode === "dir" && selectedIds.size === 0,
+    enabled: groupMode === "dir" && selectedIds.size === 0,
     attr: "groupKey",
     parse: (raw) => raw || null,
     bucketOf: (key) => (groupKeys.includes(key) ? "groups" : null),
@@ -839,7 +803,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
       void loadRef.current("refresh");
     });
   };
-  const reorderEnabled = sortMode === "manual" && selectedIds.size === 0;
+  const reorderEnabled = selectedIds.size === 0;
   // 键盘排序（调研 s8：原先只能鼠标拖）：焦点在条目上按 Ctrl/⌘+Shift+↑/↓ 在同一个桶里挪一位，
   // 与拖拽同一条写回路径。不用 Alt：Alt+↑/↓ 切会话、Alt+Shift+↓ 跳到下一个待处理会话。
   // 挪完 React 会搬动条目 DOM，焦点随之掉回 body，下一拍按 id 找回来。
@@ -1284,7 +1248,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
       {/* 窗口无系统装饰，侧栏顶部也要能拖动窗口——与右列标题栏同为 drag region。
           头部即「新建会话」按钮（Kimi 式整宽 CTA），不再放「会话」标题 + 迷你加号。 */}
       {/* 顶部两行入口（对照 Kimi Code 侧栏）：「新建会话」「搜索」都是图标加文字的平铺行，
-          不再是整宽按钮加输入框。视图与排序挪到下面的「会话」小节标题。 */}
+          不再是整宽按钮加输入框。视图挪到下面的「会话」小节标题。 */}
       <div className="chat-sidebar-head" data-tauri-drag-region>
         <button
           type="button"
@@ -1342,7 +1306,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
         ))}
       </div>
       {/* 「会话」小节标题（对照 Kimi Code）：右侧两个小图标——全部折叠 / 展开（分组时才有）、
-          视图与排序。 */}
+          视图。 */}
       <div className="chat-sidebar-section">
         <span className="chat-sidebar-section-label">{workspacesView ? t.chat.sidebarWorkspaces : t.chat.sidebarTitle}</span>
         {!workspacesView && groups && groups.length > 0 && (
@@ -1359,10 +1323,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
         {!workspacesView && <SidebarFilterMenu
           groupMode={groupMode}
           groupLabels={{ none: t.chat.groupNone, dir: t.chat.groupByDir }}
-          sortMode={sortMode}
-          sortLabels={{ manual: t.chat.sortManual, recent: t.chat.sortRecent }}
           onGroup={changeGroupMode}
-          onSort={changeSortMode}
           onAdmin={onOpenAdmin}
           t={t}
         />}

@@ -8,7 +8,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { IslandAlertEvent } from "../generated/contracts/IslandAlertEvent";
 import { useT } from "../i18n";
 import { useSettingsEffect } from "../hooks/useSettings";
-import { cardTone, readSidebarGroupMode, readSidebarSortMode, useStarred, type SidebarGroupMode, type SidebarSortMode } from "./sticker/helpers";
+import { cardTone, readSidebarGroupMode, useStarred, type SidebarGroupMode } from "./sticker/helpers";
 import { sidebarDirGroups } from "./sidebarDrag";
 import { type Item, UNNAMED_SESSION_SENTINEL } from "./sticker/types";
 import { AgentRing, Clock, Eyes, EYES_BLUSH_AFTER_MS, EYES_BUSY_AT, UsageRing, useEyeCue, useNow, type IslandTone } from "./island/islandParts";
@@ -153,18 +153,16 @@ export function byUrgency(items: readonly Item[]): Item[] {
 export function sidebarOrder(
   items: readonly Item[],
   starred: ReadonlySet<string>,
-  sortMode: SidebarSortMode,
   groupMode: SidebarGroupMode = "none",
   workspaceOrder: readonly string[] = [],
 ): Item[] {
-  const recent = sortMode === "recent";
-  const key = (item: Item) => (recent ? item.session.last_event_at : item.manual_key ?? item.session.started_at * 1024);
+  const key = (item: Item) => item.manual_key ?? item.session.started_at * 1024;
   const flat = byUrgency(items).sort((a, b) =>
     Number(starred.has(b.session.cc_session_id)) - Number(starred.has(a.session.cc_session_id))
     || key(b) - key(a)
     || b.session.id - a.session.id);
   if (groupMode !== "dir") return flat;
-  return sidebarDirGroups(flat, sortMode, workspaceOrder).flatMap((group) => group.items);
+  return sidebarDirGroups(flat, workspaceOrder).flatMap((group) => group.items);
 }
 
 /// 岛上按侧栏顺序排会话：收起的胶囊和展开面板共用（用户 2026-11-06：面板里的列表也要和侧栏一致）。
@@ -176,7 +174,7 @@ export function useSidebarOrder(sessions: readonly Item[]): Item[] {
   const [workspaceOrder, setWorkspaceOrder] = useState<readonly string[]>([]);
   useSettingsEffect((settings) => setWorkspaceOrder(settings?.workspace_order ?? []));
   return useMemo(
-    () => sidebarOrder(sessions, starred, readSidebarSortMode(), readSidebarGroupMode(), workspaceOrder),
+    () => sidebarOrder(sessions, starred, readSidebarGroupMode(), workspaceOrder),
     [sessions, starred, workspaceOrder],
   );
 }

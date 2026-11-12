@@ -450,7 +450,7 @@ describe("ChatSidebar", () => {
     expect(screen.queryByRole("button", { name: /^scratch/ })).toBeNull();
 
     // 分组入口在筛选弹层里：单面板扁平化后选项直接内联,图标钮 → 选「按目录」。
-    fireEvent.click(screen.getByRole("button", { name: "视图与排序" }));
+    fireEvent.click(screen.getByRole("button", { name: "视图" }));
     fireEvent.click(screen.getByRole("option", { name: "按工作区分组" }));
     const list = screen.getByRole("navigation");
     const heads = within(list).getAllByRole("button").filter((b) => b.className.includes("group-head"));
@@ -551,10 +551,11 @@ describe("ChatSidebar", () => {
     expect(screen.queryByText(/已选/)).toBeNull();
   });
 
-  /** 排序入口在视图与排序弹层（对照 Kimi 只有两种）。默认「手动排序」：后端按手动键分页（没拖过 =
+  /** 排序入口在视图弹层（对照 Kimi 只有两种）。默认「手动排序」：后端按手动键分页（没拖过 =
    *  创建时间倒序），前端原样采用，在跑的会话不因新事件换位置（用户反馈列表顶部一直乱动）；
-   *  切到「按最近活动」后端换回活跃顺序，选择与分组一样落盘。 */
-  it("排序:默认手动排序交给后端,可切按最近活动,选择落盘", async () => {
+   *  「按最近活动」已去掉（主窗口改成名单后顺序固定）：菜单里只剩两种视图，存着旧值的照样按手动排序取。 */
+  it("排序:只有手动排序,交给后端;存着旧的「按最近活动」也按手动取", async () => {
+    localStorage.setItem("meowo-chat-sidebar-sort-mode", "recent");
     const orders: unknown[] = [];
     invoke.mockImplementation((command: string, args?: { order?: string }) => {
       if (command === "recent_cwds") return Promise.resolve([]);
@@ -580,13 +581,10 @@ describe("ChatSidebar", () => {
     expect(orders[0]).toBe("manual");
     expect(itemNames()).toEqual(["alpha", "等待首次输入", "beta"]);
 
-    fireEvent.click(screen.getByRole("button", { name: "视图与排序" }));
-    // 菜单照 Kimi：视图两种、排序两种。
-    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual(["平铺列表", "按工作区分组", "手动排序", "按最近活动"]);
-    fireEvent.click(screen.getByRole("option", { name: "按最近活动" }));
-    await waitFor(() => expect(orders.length).toBeGreaterThan(1));
-    expect(orders[orders.length - 1]).toBeUndefined();
-    expect(localStorage.getItem("meowo-chat-sidebar-sort-mode")).toBe("recent");
+    fireEvent.click(screen.getByRole("button", { name: "视图" }));
+    // 菜单里只有两种视图，没有排序选项。
+    expect(screen.getAllByRole("option").map((option) => option.textContent)).toEqual(["平铺列表", "按工作区分组"]);
+    expect(orders.every((order) => order === "manual")).toBe(true);
   });
 
   /** 「工作空间」页签（对照 Kimi Code）：列出会话用过的目录，点一行就在那里新建会话；

@@ -1122,9 +1122,8 @@ export const zh = {
     // 「取消」实发 Esc 的后果说明：与零副作用的「仅收起」是两回事，必须对用户说出来。
     terminalPromptCancelTip: "向终端发送 Esc，可能中断正在执行的回合",
     sidebarTitle: "会话",
-    sidebarFilterTip: "视图与排序",
+    sidebarFilterTip: "视图",
     sidebarFilterGroup: "视图",
-    sidebarFilterSort: "排序",
     sidebarCollapse: "收起会话列表",
     sidebarActionFailed: "操作失败，请稍后再试。",
     // 斜杠命令在 transcript 里是一条 XML 包裹的用户消息，渲染成徽章而非标签原文。
@@ -1228,9 +1227,7 @@ export const zh = {
     // 对照 Kimi Code 侧栏菜单的说法（平铺列表 / 按工作区分组 / 按最近活动）。
     groupNone: "平铺列表",
     groupByDir: "按工作区分组",
-    sortRecent: "按最近活动",
     // 手动排序：没拖过时就是创建时间倒序（新会话在最上面），桌面可拖动调整。
-    sortManual: "手动排序",
     // 非默认排序只作用于已加载条目（翻页新条目追加尾部），要向用户说明范围。
     dateToday: "今天",
     dateYesterday: "昨天",
