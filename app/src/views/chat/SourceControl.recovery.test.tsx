@@ -8,6 +8,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { GitDiffSummaryDto, RepoChangesDto } from "../../api";
 import { SourceControl } from "./SourceControl";
 import { PanelPromptContext } from "./panelPrompt";
+import { markRemoteUi } from "../../remoteMode";
 
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
@@ -167,6 +168,31 @@ describe("做空第一轮：混合放弃、放弃到一半、撤销重试、提�
     retry.focus();
     fireEvent.click(retry);
     await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+    expect(document.activeElement).not.toBe(document.body);
+  });
+});
+
+// 做空第二轮 N3（2026-11-12）：手机远程关提示条不聚焦提交框（会弹软键盘），退回条前面的按钮。
+describe("手机远程的提示条焦点", () => {
+  afterEach(() => {
+    (globalThis as Record<string, unknown>).__MEOWO_REMOTE__ = undefined;
+    document.body.classList.remove("remote-ui");
+  });
+  it("× 关掉失败提示后焦点不进提交框，也不掉到 body", async () => {
+    markRemoteUi();
+    handler = (command) => {
+      if (command === "git_stage") throw "git/locked";
+      return [];
+    };
+    renderScm([repo([file("a.ts", null, "M")])]);
+    const input = document.querySelector("textarea.scm-commit-input");
+    expect(input).not.toBeNull();
+    fireEvent.click(within(screen.getByTestId("scm-group-work")).getAllByRole("button", { name: "暂存更改" })[0]);
+    const close = within(await screen.findByRole("alert")).getByRole("button", { name: "关闭" });
+    close.focus();
+    fireEvent.click(close);
+    expect(screen.queryByRole("alert")).toBeNull();
+    expect(document.activeElement).not.toBe(input);
     expect(document.activeElement).not.toBe(document.body);
   });
 });

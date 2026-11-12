@@ -10,6 +10,7 @@ import { Icon } from "../../icons/Icon";
 import { icMessage } from "../../icons/glyphs.chat";
 import { icClose } from "../../icons/glyphs";
 import type { ReviewComment } from "./diffComments";
+import { remoteUi } from "../../remoteMode";
 
 export function ReviewBar({ comments, onClear, onRestore, onInsert, onDismissFocus }: {
   comments: readonly ReviewComment[];
@@ -49,7 +50,9 @@ export function ReviewBar({ comments, onClear, onRestore, onInsert, onDismissFoc
         }}>{t.chat.reviewCommentsUndo}</button>
         <button type="button" className="chat-review-bar-close" aria-label={t.chat.scmDismiss} data-tip={t.chat.scmDismiss} onClick={() => {
           // 先把焦点交出去再卸载：条一消失，拿着焦点的 × 跟着没了。
-          onDismissFocus?.();
+          // 手机远程不交：交给输入框会弹软键盘，点个 × 就顶起半屏键盘（做空第二轮 N3，2026-11-12；
+          // 惯例同 ChatWindow 各处 if (!remoteUi())）。
+          if (!remoteUi()) onDismissFocus?.();
           setCleared(null);
         }}>
           <Icon glyph={icClose} size={12} />

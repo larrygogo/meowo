@@ -4,6 +4,7 @@ import { useState } from "react";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { ReviewComment } from "./diffComments";
 import { ReviewBar } from "./ReviewBar";
+import { markRemoteUi } from "../../remoteMode";
 
 afterEach(cleanup);
 
@@ -62,6 +63,27 @@ describe("ReviewBar", () => {
     fireEvent.click(close);
     expect(screen.queryByTestId("review-cleared")).toBeNull();
     expect(document.activeElement).toBe(screen.getByRole("textbox", { name: "输入框" }));
+  });
+
+  // 做空第二轮 N3（2026-11-12）：手机远程点 × 不把焦点交给输入框，否则弹软键盘顶起半屏。
+  // 兄弟场景：「更改」面板提示条的 ×（SourceControl.recovery.test）；对话页其余 remoteUi 门控已有。
+  it("手机远程：撤销条点 × 不聚焦输入框（不弹软键盘）", () => {
+    markRemoteUi();
+    try {
+      const onDismissFocus = vi.fn();
+      function Remote() {
+        const [list, setList] = useState<readonly ReviewComment[]>([c("a")]);
+        return <ReviewBar comments={list} onClear={() => setList([])} onRestore={setList} onInsert={() => {}} onDismissFocus={onDismissFocus} />;
+      }
+      render(<Remote />);
+      fireEvent.click(screen.getByRole("button", { name: "清空" }));
+      fireEvent.click(screen.getByRole("button", { name: "关闭" }));
+      expect(screen.queryByTestId("review-cleared")).toBeNull();
+      expect(onDismissFocus).not.toHaveBeenCalled();
+    } finally {
+      (globalThis as Record<string, unknown>).__MEOWO_REMOTE__ = undefined;
+      document.body.classList.remove("remote-ui");
+    }
   });
 
   it("「插入输入框」不留撤销条（评论已经进了输入框）", () => {
