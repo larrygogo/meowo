@@ -1088,7 +1088,7 @@ export const en: Dict = {
     searchTranscriptsHits: "Conversation matches",
     selectedCount: (n: number) => `${n} selected`,
     archiveSelected: "Mark done",
-    cancelSelect: "Exit selection",
+    cancelSelect: "Cancel",
     selectMode: "Select",
     selectGroup: (name: string) => `Select all in "${name}"`,
     selectRangeHint: "Shift+click to select a range",

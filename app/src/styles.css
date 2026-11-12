@@ -4464,7 +4464,9 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 /* 目录已删除：与看板卡片的虚线徽章同语汇（这里没有东西了），不抢标题的视觉权重。 */
 .chat-sidebar-gone { align-self: flex-start; margin-top: 2px; padding: 0 var(--sp-6); border: 1px dashed var(--cc-border); border-radius: var(--radius-xs); color: var(--cc-text-faint); font-size: var(--text-xs); line-height: 1.5; white-space: nowrap; }
 /* 就地编辑（重命名/便签）：铺满文本列，视觉上顶掉原来那一行，不撑宽条目。 */
-.chat-sidebar-edit { width: 100%; min-width: 0; padding: var(--sp-2) var(--sp-5); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-sm); color: var(--cc-text); background: var(--cc-panel-raised); font: inherit; font-size: var(--text-xs); }
+/* 高度钉成标题那一行的行高（--text-sm × 1.4），上下不留内边距：原先输入框 21px 高，顶掉 18.2px 的
+   标题行，这一行变高 2.8px，下面的行跟着跳（qa-side-rename：第二行 53.2→56）。 */
+.chat-sidebar-edit { box-sizing: border-box; height: calc(var(--text-sm) * 1.4); width: 100%; min-width: 0; padding: 0 var(--sp-5); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-sm); color: var(--cc-text); background: var(--cc-panel-raised); font: inherit; font-size: var(--text-xs); }
 .chat-sidebar-edit:focus { outline: none; border-color: var(--cc-accent); }
 /* 「⋯」菜单按钮（仅 card_menu_mode=button 时渲染，见 ChatSidebar）。2026-10 用户实拍
    改决策：常显让每行标题尾部平白让出一块（「...」密密麻麻还很吵），改为 hover 条目才
@@ -4516,7 +4518,9 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-sidebar-tabs button.is-active { background: var(--seg-on-bg); box-shadow: var(--shadow-sm); }
 .chat-sidebar-tabs button.is-active::after { display: none; }
 .chat-sidebar-section { flex: 0 0 auto; display: flex; align-items: center; gap: 2px; padding: 0 var(--sp-8) 2px calc(var(--sp-8) + var(--sp-8)); }
-.chat-sidebar-section-label { flex: 1; min-width: 0; color: var(--cc-text-faint); font-size: var(--text-xs); font-weight: 500; user-select: none; }
+/* 小标题自己撑到筛选按钮的高度（24px）：「工作区」那一行右边没有按钮，行高只有 19px，
+   比「会话」矮 7px，字高出 3.5px，来回切页签时小标题上下跳（qa-side-ws：字的 y 169.5 对 166）。 */
+.chat-sidebar-section-label { display: flex; align-items: center; min-height: var(--btn-h-sm); flex: 1; min-width: 0; color: var(--cc-text-faint); font-size: var(--text-xs); font-weight: 500; user-select: none; }
 .chat-sidebar-section-btn,
 .chat-sidebar-section .chat-sidebar-filter { width: 24px; height: 24px; flex: 0 0 auto; display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--radius-sm); color: var(--cc-text-faint); background: transparent; cursor: pointer; }
 .chat-sidebar-section-btn:hover,
@@ -4625,8 +4629,11 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-sidebar-batch > * { white-space: nowrap; }
 /* 对话内容全文搜索区段(侧栏搜索的第二段)。 */
 .chat-sidebar-deep { border-top: var(--hairline) solid var(--line-subtle); margin-top: var(--sp-6); padding-top: var(--sp-4); }
-.chat-sidebar-deep-head { padding: var(--sp-4) var(--sp-10) var(--sp-2); font-size: var(--text-xs); color: var(--cc-text-faint); user-select: none; }
-.chat-sidebar-deep-hit { display: flex; flex-direction: column; gap: 2px; width: 100%; padding: var(--sp-6) var(--sp-10) var(--sp-6) var(--sp-8); border: 0; border-radius: var(--radius-md); background: transparent; color: var(--cc-text); text-align: left; cursor: pointer; }
+/* 「对话内容命中」小标题和「会话」小标题同一条左缘（16）；命中项的标题和上面会话行的标题同列：
+   会话行是 --sp-8 + 16px 的状态点格 + 6px 间距，命中项没有状态点，左边留出同样的宽度
+   （qa-side-search：小标题 18 对 16，命中标题 16 对 38）。 */
+.chat-sidebar-deep-head { padding: var(--sp-4) var(--sp-10) var(--sp-2) var(--sp-8); font-size: var(--text-xs); color: var(--cc-text-faint); user-select: none; }
+.chat-sidebar-deep-hit { display: flex; flex-direction: column; gap: 2px; width: 100%; padding: var(--sp-6) var(--sp-10) var(--sp-6) calc(var(--sp-8) + 16px + 6px); border: 0; border-radius: var(--radius-md); background: transparent; color: var(--cc-text); text-align: left; cursor: pointer; }
 .chat-sidebar-deep-hit:hover { background: var(--fill-hover); }
 .chat-sidebar-deep-title { display: flex; align-items: baseline; gap: var(--sp-6); min-width: 0; font-size: var(--text-xs); }
 .chat-sidebar-deep-excerpt { overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; color: var(--cc-text-dim); font-size: var(--text-xs); line-height: var(--leading-normal); overflow-wrap: anywhere; }
