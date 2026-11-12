@@ -801,6 +801,7 @@ export const zh = {
     leadCheckBlocked: "待实测",
     leadCheckBlockedReason: (reason: string) => `待实测：${reason}`,
     leadBlockedCount: (n: number) => `${n} 条待实测`,
+    leadPillBlocked: (n: number) => `· ${n} 待实测`,
     leadSection: { checks: "验收", spec: "规格", decisions: "决策", progress: "进度" },
     leadSectionEmpty: "暂无内容",
     leadGateWaiting: "待拍板",

@@ -471,6 +471,21 @@ describe("待实测的条目", () => {
     expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("1");
   });
 
+  it("胶囊上也报待实测个数；要 leader 验收的条目以 leader 为准，不算待实测", async () => {
+    const checks = [
+      { id: "1", check: "a", passes: true, waived: null, leader: false, blocked: null },
+      { id: "2", check: "等 beta", passes: false, waived: null, leader: false, blocked: "要 beta 开机" },
+      { id: "3", check: "看体验", passes: false, waived: null, leader: true, blocked: "要真机" },
+    ];
+    snapshot.mockResolvedValue(task({ checks }));
+    render(<DockWork sessionId={1} cwd="C:/repo" ccSessionId="cc-1" items={[]} history={history} loading={false} />);
+    const pill = await screen.findByRole("button", { name: /Lead.*1\/3.*1 待实测/ });
+    fireEvent.click(pill);
+    expect(screen.getByText("待你验收")).toBeTruthy();
+    expect(screen.queryByText("待实测：要真机")).toBeNull();
+    expect(document.querySelector(".lead-blocked-count")?.textContent).toBe("1 条待实测");
+  });
+
   it("没有待实测的条目时不显示个数", () => {
     const { container } = render(<LeadPanel task={task()} onClose={() => {}} />);
     expect(container.querySelector(".lead-blocked-count")).toBeNull();

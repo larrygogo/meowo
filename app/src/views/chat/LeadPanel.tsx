@@ -70,7 +70,8 @@ function checkRank(c: LeadTaskDto["checks"][number]): number {
 
 /// 只差环境实测或授权的条目数（已通过、已豁免的不算）。
 export function leadBlockedCount(task: LeadTaskDto): number {
-  return task.checks.filter((c) => !c.passes && !c.waived && c.blocked).length;
+  // 要 leader 亲自验收的以 leader 为准：hook 不为它催关卡 D，面板也只标「待你验收」（做空审查：两边都不管）。
+  return task.checks.filter((c) => !c.passes && !c.waived && !c.leader && c.blocked).length;
 }
 
 function LeadIcon({ className }: { className: string }) {
@@ -82,11 +83,14 @@ function LeadIcon({ className }: { className: string }) {
 export function LeadPill({ task, active, onClick }: { task: LeadTaskDto; active: boolean; onClick: () => void }) {
   const t = useT();
   const { passed, total } = leadProgress(task);
+  // 面板收起时 leader 先扫到的是这颗胶囊：只写「5/18」会被读成只做了三成，待实测的也报出来（做空审查）。
+  const blockedCount = leadBlockedCount(task);
   return (
     <button type="button" className={"ui-pill" + (active ? " is-active" : "")} onClick={onClick}>
       <LeadIcon className="ui-pill-icon" />
       {t.chat.leadEntry}
       <span className="ui-pill-meta">{total > 0 ? `${passed}/${total}` : t.chat.leadPhase(task.phase)}</span>
+      {blockedCount > 0 && <span className="ui-pill-meta">{t.chat.leadPillBlocked(blockedCount)}</span>}
       {gateWaiting(task) && <span className="lead-pill-dot" role="img" aria-label={t.chat.leadGateWaiting} />}
       {/* 已答复、agent 还没接手：答复已落盘，agent 醒来或会话被恢复后会接着做。会话没能自动恢复时
           （安装器杀了等待进程、外部终端会话），这就是界面上的降级提示（做空审查第二轮 M2）。 */}
@@ -223,7 +227,7 @@ export const LeadPanel = memo(function LeadPanel({ task, onClose }: { task: Lead
             : (
               <ul className="lead-checks">
                 {checks.map((c) => {
-                  const state = c.passes ? "pass" : c.waived ? "waived" : c.blocked ? "blocked" : "pending";
+                  const state = c.passes ? "pass" : c.waived ? "waived" : c.blocked && !c.leader ? "blocked" : "pending";
                   const label = state === "pass" ? t.chat.leadCheckPass : state === "waived" ? t.chat.leadCheckWaived
                     : state === "blocked" ? t.chat.leadCheckBlocked : t.chat.leadCheckPending;
                   return (

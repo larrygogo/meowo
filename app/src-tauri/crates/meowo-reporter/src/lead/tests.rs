@@ -956,9 +956,13 @@ fn blocked_items_reach_panel_and_prompt_gate_d() {
     let snap = snapshot(&root.to_string_lossy()).unwrap();
     let got: Vec<Option<&str>> = snap.checks.iter().map(|c| c.blocked.as_deref()).collect();
     assert_eq!(got, vec![None, Some("要 beta 开机"), None, None]);
-    // 混有不是 blocked 的未通过项：照旧的提示
+    // 混有没做完的：照旧的提示，但也要催发关卡 D（做空审查：只在全是 blocked 时才催，等于固化攒批）
     let reason = call(&e, "stop", work.clone()).unwrap()["reason"].as_str().unwrap().to_owned();
-    assert!(!reason.contains("发关卡 D，把这几条"), "{reason}");
+    assert!(reason.contains("继续推进下一条") && reason.contains("其中 1 条只差") && reason.contains("发关卡 D") && reason.contains("#2 beta 实发"), "{reason}");
+    // 没有 blocked 的条目：不提关卡 D
+    write_items(json!([{"id": 1, "check": "a", "passes": false}]));
+    let reason = call(&e, "stop", work.clone()).unwrap()["reason"].as_str().unwrap().to_owned();
+    assert!(!reason.contains("只差"), "{reason}");
     // 全是 blocked：照拦，提示直接说发关卡 D
     write_items(json!([{"id": 1, "check": "a", "passes": true},
                        {"id": 2, "check": "beta 实发", "passes": false, "blocked": "要 beta 开机"}]));
@@ -969,4 +973,8 @@ fn blocked_items_reach_panel_and_prompt_gate_d() {
     // 关卡 D 挂上之后放行（在等 leader）
     write_gate(&t, "D-1", "D", "pending");
     assert!(!blocked(&e, work.clone()));
+    // 关卡 D 答复过了（consumed）：照拦，但不再叫它重发关卡 D
+    write_gate(&t, "D-1", "D", "consumed");
+    let reason = call(&e, "stop", work.clone()).unwrap()["reason"].as_str().unwrap().to_owned();
+    assert!(reason.contains("关卡 D 已经答复") && reason.contains("不要重发关卡 D") && !reason.contains("现在就按 lead skill 写 gate.json 发关卡 D"), "{reason}");
 }

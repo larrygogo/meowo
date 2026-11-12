@@ -733,6 +733,7 @@ export const en: Dict = {
     leadCheckBlocked: "Awaiting test",
     leadCheckBlockedReason: (reason: string) => `Awaiting test: ${reason}`,
     leadBlockedCount: (n: number) => `${n} awaiting test`,
+    leadPillBlocked: (n: number) => `· ${n} to test`,
     leadSection: { checks: "Checks", spec: "Spec", decisions: "Decisions", progress: "Progress" },
     leadSectionEmpty: "Nothing here yet",
     leadGateWaiting: "Your call",
