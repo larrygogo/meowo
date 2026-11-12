@@ -195,16 +195,28 @@ export const MENTION_CANDIDATES = [
   "packages/frontend/src/components/authentication/forms/LoginFormWithValidation.tsx", "README.md",
 ];
 
-/// Lead 任务快照（lead_task_snapshot）：一张待作答的 B 类关卡，摘要够长（会出「展开」），三个选项带推荐。
-export function leadTask(lang: "zh" | "en"): unknown {
+/// Lead 任务快照（lead_task_snapshot）：默认一张待作答的 B 类关卡，摘要够长（会出「展开」），三个选项带推荐；
+/// kind=C 换成验收关卡（固定的「驳回 / 验收通过」两颗按钮）。SPEC 标题和进度给面板的任务名、最新进展用。
+export function leadTask(lang: "zh" | "en", kind: "B" | "C" = "B"): unknown {
   const zh = lang === "zh";
+  const verify = kind === "C";
   return {
-    slug: "login-schema", phase: "design", spec: "", decisions: "", progress: "",
+    slug: "login-schema", phase: verify ? "verify" : "design", decisions: "",
+    spec: zh ? "# 统一登录表单校验（login-schema）\n\n## 目的\n三个表单的校验规则对不上。" : "# Unify sign-in form validation (login-schema)\n\n## Goal\nThree forms drifted apart.",
+    progress: zh
+      ? `phase: ${verify ? "verify" : "design"}\n- 对比了三个表单的校验规则，差异记进 decisions.md\n- ${verify ? "做空第 2 轮：可以交付，两条低危已修" : "出了三个方案，做空在挑刺"}`
+      : `phase: ${verify ? "verify" : "design"}\n- Compared the three forms' rules; diffs are in decisions.md\n- ${verify ? "Red team round 2: ready to ship, two low findings fixed" : "Three options drafted; the red team is poking holes"}`,
     checks: [
       { id: "c1", check: zh ? "12 个测试全部通过" : "All 12 tests pass", passes: true, waived: null, leader: false },
       { id: "c2", check: zh ? "PR 已开并通过 CI" : "PR opened and CI green", passes: false, waived: null, leader: true },
     ],
-    gate: {
+    gate: verify ? {
+      id: "g2", kind: "C", status: "pending", answer: null, options: [],
+      title: zh ? "登录校验统一完成" : "Sign-in validation unified",
+      summary: zh
+        ? "**怎么上手试**\n- 构建：分支 `refactor/login-schema`，重启 dev 实例\n- 打开登录页，邮箱填 `a@`，点登录\n- 应该看到：输入框下方提示「邮箱格式不对」，三个页面文案一致\n\n**结果**：12 个测试全过，三个表单共用 `src/schemas/login.ts`。"
+        : "**How to try it**\n- Build: branch `refactor/login-schema`, restart the dev instance\n- Open sign-in, enter `a@`, press Sign in\n- Expect: \"Invalid email\" under the field, same copy on all three pages\n\n**Result**: all 12 tests pass; the three forms share `src/schemas/login.ts`.",
+    } : {
       id: "g1", kind: "B", status: "pending", answer: null,
       title: zh ? "校验规则放前端还是后端" : "Validate on the client or the server",
       summary: zh
