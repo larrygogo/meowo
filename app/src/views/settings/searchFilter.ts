@@ -108,3 +108,25 @@ export function applySettingsFilter(body: HTMLElement, q: string, navLabels: Rec
   }
   return query !== "" && anyVisible;
 }
+
+const FOCUSABLE = "button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])";
+
+/**
+ * 搜索后第一条命中行里的第一个可操作控件（T-4，2026-11-12 走查 log：Enter 与 ↓ 之后焦点都停在
+ * 搜索框，结果区在 DOM 里排在 9 个导航项和关闭钮之后，要按约 11 下 Tab 才进得去）。
+ * 只认过滤后仍显示的行：被 style.display=none 或 hidden 藏起来的祖先一律跳过。
+ */
+export function firstHitControl(body: HTMLElement): HTMLElement | null {
+  const visible = (el: HTMLElement) => {
+    for (let cur: HTMLElement | null = el; cur && cur !== body; cur = cur.parentElement) {
+      if (cur.hidden || cur.style.display === "none") return false;
+    }
+    return true;
+  };
+  for (const row of body.querySelectorAll<HTMLElement>(FILTER_ROW)) {
+    if (!visible(row)) continue;
+    const control = Array.from(row.querySelectorAll<HTMLElement>(FOCUSABLE)).find(visible);
+    if (control) return control;
+  }
+  return null;
+}

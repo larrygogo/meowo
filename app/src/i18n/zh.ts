@@ -1457,6 +1457,11 @@ export const zh = {
     searchPlaceholder: "搜索设置…",
     searchNoResults: "没有匹配的设置项",
     searchClear: "清除搜索",
+    // T-2（2026-11-12）：各分区保存失败统一一个主语（此前网络分区套「保存失败：」、其余只有原话）。
+    saveFailed: (e: string) => `设置没保存：${e}`,
+    // T-5：文本类设置回车提交后的轻量反馈（开关会自己翻，文本框提交没提交看不出来）。
+    saved: "已保存",
+    retry: "重试",
     archivedSessions: "已完成会话",
     archivedInAdmin: "在会话管理中查看",
     archivedInAdminDesc: "按工作区、时间筛选，批量恢复进行中",
@@ -1474,7 +1479,7 @@ export const zh = {
     close: "关闭",
     autostart: "开机自启",
     autostartDesc: "系统开机后自动启动",
-    autostartFailed: "开机自启设置失败，请重试",
+    autostartFailed: "开机自启没设置成功",
     notify: "桌面通知",
     notifyDesc: "会话需要你回复或出错时弹系统通知",
     // 系统通知分种类（二期 #6），种类与灵动岛的「自动弹出提醒」同一套。
@@ -1584,7 +1589,6 @@ export const zh = {
     followGlobal: "跟随默认",
     effective: (p: string) => `生效：${p}`,
     effectiveDirect: "生效：直连",
-    saveFailed: (e: string) => `保存失败：${e}`,
     // ——覆盖面：三家能力不同，必须如实告知，否则用户会以为哪儿都生效——
     coverageFull: "全部会话（含你自己在终端里敲的）",
     coverageFullWhy: "代理已写进它的配置文件，谁启动都生效",
@@ -1618,6 +1622,9 @@ export const zh = {
     copied: "已复制",
     regenerate: "重新生成令牌",
     regenerateConfirm: "重新生成后，已配对的手机需重新扫码。",
+    // T-1（2026-11-12）：失败此前被 .catch(() => {}) 吞掉，用户以为泄露的令牌已吊销。
+    regenerateFailed: (reason: string) => `令牌没重新生成，旧令牌仍有效。${reason}`,
+    regenerateDone: "已重新生成，旧手机要重新扫码",
     noIp: "取不到局域网地址，请在手机浏览器手动输入本机 IP",
     offHint: "关闭时手机无法连接",
     // 手机推送（Bark）：远程页是 http，浏览器不给推送，改由电脑调 Bark 推到手机。

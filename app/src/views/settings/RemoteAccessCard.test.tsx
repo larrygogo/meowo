@@ -8,8 +8,11 @@ const api = vi.hoisted(() => ({
   setSettings: vi.fn(),
   remoteAccessInfo: vi.fn(),
   testBarkPush: vi.fn(),
+  regenerateRemoteToken: vi.fn(),
 }));
 vi.mock("../../api", async (o) => ({ ...(await o<typeof import("../../api")>()), ...api }));
+// 重新生成前的确认框是原生小窗（confirm_dialog），测试里直接当用户点了「重新生成」。
+vi.mock("../../confirm", () => ({ appConfirm: () => Promise.resolve(true), appAlert: () => Promise.resolve() }));
 vi.mock("@tauri-apps/api/event", () => ({
   listen: () => Promise.resolve(() => {}),
 }));
@@ -116,5 +119,25 @@ describe("RemoteAccessCard", () => {
     // 无可达 IP → 回退手输提示,不出二维码。
     expect(await screen.findByText(zh.remote.noIp)).toBeTruthy();
     expect(document.querySelector(".remote-qr")).toBeNull();
+  });
+
+  // T-1（2026-11-12 走查）：重新生成失败此前被 .catch(() => {}) 吞掉，二维码不变、零提示，
+  // 用户会以为丢失手机上的旧令牌已被吊销。失败要说「旧令牌仍有效」并能就地重试；成功也要说一句。
+  // 兄弟场景：同卡的端口/开关/绑定模式保存失败已走 SettingsError（patchError），Bark 测试失败有原因。
+  it("重新生成令牌失败:明确说旧令牌仍有效,点重试再发一次,成功给确认", async () => {
+    api.getSettings.mockResolvedValue({ ...SETTINGS_DEFAULTS, remote_access_enabled: true, remote_access_token: TOKEN });
+    api.remoteAccessInfo.mockResolvedValue({
+      enabled: true, port: 18620, boundPort: 18620, token: TOKEN,
+      ips: [{ ip: "192.168.1.5", kind: "lan" }], lastError: null,
+    });
+    api.regenerateRemoteToken.mockRejectedValueOnce("拒绝访问。 (os error 5)").mockResolvedValueOnce(undefined);
+    render(<RemoteAccessCard />);
+    fireEvent.click(await screen.findByRole("button", { name: zh.remote.regenerate }));
+    const alert = await screen.findByText(zh.remote.regenerateFailed("拒绝访问。 (os error 5)"));
+    expect(alert.closest("[role=alert]")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: zh.settings.retry }));
+    expect(await screen.findByText(zh.remote.regenerateDone)).toBeTruthy();
+    expect(screen.queryByText(zh.remote.regenerateFailed("拒绝访问。 (os error 5)"))).toBeNull();
+    expect(api.regenerateRemoteToken).toHaveBeenCalledTimes(2);
   });
 });

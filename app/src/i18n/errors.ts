@@ -76,6 +76,9 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "gh/ambiguous_repo", exact: true, zh: "有多个 GitHub 远端，先选仓库", en: "Several GitHub remotes. Choose a repository first." },
   { m: "gh/failed", tail: true, zh: "gh 操作失败", en: "gh failed" },
   { m: "remote/bind_failed", tail: true, zh: "无法监听这个端口", en: "Couldn't listen on this port" },
+  // ── 设置落盘（settings.rs save_settings_unlocked）──
+  // T-2（2026-11-12）：写盘失败此前是系统原话（「拒绝访问。 (os error 5)」），没主语也没下一步。
+  { m: "settings/write_failed", tail: true, zh: "配置文件写不进去，检查 .meowo 是否只读或被占用", en: "Couldn't write the settings file. Check that .meowo isn't read-only or locked" },
   // ── 诊断日志（diaglog.rs）──
   { m: "diag/bad_extension", exact: true, zh: "只能导出成 .txt 或 .log 文件", en: "Export only to .txt or .log files" },
   { m: "diag/no_log", exact: true, zh: "还没有诊断日志，开发版不写日志", en: "No diagnostic log yet. Dev builds don't write one." },

@@ -10,13 +10,13 @@ import { appConfirm } from "../../confirm";
 import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
 import { useSettingsState } from "./state";
-import { Switch, SettingsError } from "./widgets";
+import { Switch, SettingsError, SavedNote, useSavedFlash } from "./widgets";
 import { Dropdown } from "../menu";
 
 /// 端口输入：本地草稿 + 失焦/回车提交（同 NetworkSection 的 UrlInput，避免每键一存打后端）。
 function PortInput({ value, onCommit, conflict }: {
   value: number;
-  onCommit: (port: number) => void;
+  onCommit: (port: number) => Promise<string | null>;
   /** 启动时这个端口被占用的说明：与「端口不合法」同一位置、同一红框（报错贴着出问题的那一项）。 */
   conflict?: string | null;
 }) {
@@ -25,6 +25,7 @@ function PortInput({ value, onCommit, conflict }: {
   // 7S-6：非法输入此前**静默**回退成磁盘值（默认 18620），用户看着自己敲的 70000
   // 变回 18620、没有一个字解释。改成留住输入 + 行内说明，直到改对或清空。
   const [invalid, setInvalid] = useState(false);
+  const saved = useSavedFlash();
   useEffect(() => { setText(String(value)); setInvalid(false); }, [value]);
   const commit = () => {
     const raw = text.trim();
@@ -32,7 +33,7 @@ function PortInput({ value, onCommit, conflict }: {
     const n = Number.parseInt(raw, 10);
     if (!Number.isInteger(n) || n < 1 || n > 65535 || String(n) !== raw) { setInvalid(true); return; }
     setInvalid(false);
-    if (n !== value) onCommit(n);
+    if (n !== value) void onCommit(n).then((err) => { if (!err) saved.flash(); });
   };
   return (
     <>
@@ -44,12 +45,14 @@ function PortInput({ value, onCommit, conflict }: {
         spellCheck={false}
         aria-invalid={invalid || !!conflict || undefined}
         value={text}
-        onChange={(e) => { setText(e.target.value); setInvalid(false); }}
+        onChange={(e) => { setText(e.target.value); setInvalid(false); saved.hide(); }}
         onBlur={commit}
         onKeyDown={(e) => {
-          if (e.key === "Enter") e.currentTarget.blur();
+          // T-5（2026-11-12）：回车提交、焦点留在框里；此前 blur() 让焦点掉到 body。
+          if (e.key === "Enter") commit();
         }}
       />
+      <SavedNote shown={saved.shown} />
       {invalid
         ? <div className="proxy-err remote-port-err" role="alert">{t.remote.portInvalid}</div>
         : conflict && <div className="proxy-err remote-port-err" role="alert">{conflict}</div>}
@@ -63,16 +66,17 @@ function PortInput({ value, onCommit, conflict }: {
 function BarkPushRow({ value, paused, onCommit, onTogglePaused }: {
   value: string;
   paused: boolean;
-  onCommit: (url: string) => void;
+  onCommit: (url: string) => Promise<string | null>;
   onTogglePaused: () => void;
 }) {
   const t = useT();
   const [text, setText] = useState(value);
   const [status, setStatus] = useState<{ kind: "testing" | "ok" } | { kind: "error"; message: string } | null>(null);
+  const saved = useSavedFlash();
   useEffect(() => { setText(value); }, [value]);
   const commit = () => {
     const next = text.trim();
-    if (next !== value) onCommit(next);
+    if (next !== value) void onCommit(next).then((err) => { if (!err) saved.flash(); });
   };
   const test = () => {
     if (!text.trim() || status?.kind === "testing") return;
@@ -95,11 +99,15 @@ function BarkPushRow({ value, paused, onCommit, onTogglePaused }: {
             placeholder={t.remote.pushPlaceholder}
             aria-label={t.remote.pushLabel}
             value={text}
-            onChange={(e) => { setText(e.target.value); setStatus(null); }}
+            onChange={(e) => { setText(e.target.value); setStatus(null); saved.hide(); }}
             onBlur={commit}
-            onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
+            // T-5：回车提交、焦点留在框里（同 PortInput）。
+            onKeyDown={(e) => { if (e.key === "Enter") commit(); }}
           />
-          <button type="button" className="remote-copy" disabled={!text.trim() || status?.kind === "testing"} onClick={test}>
+          <SavedNote shown={saved.shown} />
+          {/* 测试进行中不用 disabled：焦点就在这颗钮上，disabled 会把焦点踢到 body（第三轮焦点准则）。
+              test() 自己拦重复点击。 */}
+          <button type="button" className="remote-copy" disabled={!text.trim()} aria-disabled={status?.kind === "testing" || undefined} onClick={test}>
             {status?.kind === "testing" ? t.remote.pushTesting : t.remote.pushTest}
           </button>
         </div>
@@ -150,7 +158,9 @@ export function RemoteAccessCard() {
     void patch({ remote_access_enabled: !enabled }).then(refreshSettled);
   };
   const changePort = (next: number) => {
-    void patch({ remote_access_port: next }).then(refreshSettled);
+    const task = patch({ remote_access_port: next });
+    void task.then(refreshSettled);
+    return task;
   };
   // 换绑定模式同样走 apply 的差异比对热重启;tailscale 模式找不到接口会被后端拒启,
   // last_error 红字如实显示(不静默回退 0.0.0.0)。
@@ -171,6 +181,17 @@ export function RemoteAccessCard() {
         `http://${selectedIp}:${info.boundPort ?? info.port}/#token=${info.token}`
       : null;
   const svg = url ? renderSVG(url, { border: 2 }) : null;
+
+  // T-1（2026-11-12 走查，原代码 `.catch(() => {})`）：这颗钮的用途是吊销丢失/泄露手机上的令牌，
+  // 失败若不出声，用户会以为旧令牌已经作废，实际它照样能连。失败必须说清「旧令牌仍有效」并给重试；
+  // 成功也要说一句，否则只是二维码悄悄变了，用户不确定吊销是否生效。
+  const [regenState, setRegenState] = useState<{ kind: "done" } | { kind: "failed"; reason: string } | null>(null);
+  const regenerate = () => {
+    setRegenState(null);
+    regenerateRemoteToken()
+      .then(() => { setRegenState({ kind: "done" }); refreshSettled(); })
+      .catch((error: unknown) => setRegenState({ kind: "failed", reason: formatBackendError(error, t.locale) }));
+  };
 
   const copy = () => {
     if (!url) return;
@@ -256,14 +277,14 @@ export function RemoteAccessCard() {
                   className="remote-copy"
                   onClick={() => {
                     void appConfirm(t.remote.regenerateConfirm, { title: t.remote.regenerate, confirmLabel: t.remote.regenerate }).then((yes) => {
-                      if (!yes) return;
-                      void regenerateRemoteToken().then(refreshSettled).catch(() => {});
+                      if (yes) regenerate();
                     });
                   }}
                 >
                   {t.remote.regenerate}
                 </button>
               </div>
+              {regenState?.kind === "done" && <div className="row-desc" role="status">{t.remote.regenerateDone}</div>}
               {selectedKind && (
                 <div className="row-desc">
                   {selectedKind === "tailscale" ? t.remote.hintTailscale : t.remote.hintLan}
@@ -284,13 +305,21 @@ export function RemoteAccessCard() {
       <BarkPushRow
         value={settings?.bark_url ?? ""}
         paused={settings?.bark_paused ?? false}
-        onCommit={(url) => { void patch({ bark_url: url }); }}
+        onCommit={(url) => patch({ bark_url: url })}
         onTogglePaused={() => { void patch({ bark_paused: !(settings?.bark_paused ?? false) }); }}
       />
     </div>
     {/* 报错放在卡片外、紧跟其后（此前夹在卡片两行之间，用户实拍「位置不对」）。端口被占贴在端口行
         （portConflict），这里只剩保存失败与其余启动失败。7S-7：错误统一走 SettingsError（带 ×、role=alert）。 */}
-    <SettingsError error={patchError} onDismiss={clearPatchError} />
+    <SettingsError preformatted error={patchError} onDismiss={clearPatchError} />
+    {regenState?.kind === "failed" && (
+      <SettingsError
+        preformatted
+        error={t.remote.regenerateFailed(regenState.reason)}
+        action={{ label: t.settings.retry, onClick: regenerate }}
+        onDismiss={() => setRegenState(null)}
+      />
+    )}
     {/* 自己 format 一次再套语境句，并告诉 SettingsError 别再 format——两边都做的话，
         「启动失败：绑定端口 18620 失败：…」这种双前缀就出来了（复核指出）。 */}
     {info?.lastError && !portConflict && (

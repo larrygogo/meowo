@@ -1579,6 +1579,7 @@ button.stab {
 .side-search-x::before { content: ""; position: absolute; inset: -4px; }
 /* 搜索零命中的提示行（此时各分区已被过滤隐藏，必须有一句解释，否则整页空白像故障）。 */
 .settings-noresults { padding: 72px 0; text-align: center; font-size: var(--text-sm); color: var(--cc-text-dim); }
+.settings-noresults { display: flex; flex-direction: column; align-items: center; gap: var(--sp-12); }
 
 /* 右内容 */
 .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
@@ -1720,6 +1721,13 @@ button.stab {
 .settings-error-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .settings-error-close { flex: none; width: 22px; height: 22px; display: grid; place-items: center; margin: -1px 0; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: inherit; opacity: .7; cursor: pointer; }
 .settings-error-close:hover { opacity: 1; background: color-mix(in srgb, var(--cc-err) 14%, transparent); }
+/* 失败提示里的下一步按钮（2026-11-12 第三轮 T-1：重新生成令牌失败要能就地重试）。 */
+.settings-error-action { flex: none; margin: -2px 0; padding: 1px var(--sp-8); border: var(--hairline) solid color-mix(in srgb, var(--cc-err) 45%, transparent); border-radius: var(--radius-sm); background: transparent; color: inherit; font: inherit; cursor: pointer; }
+/* 文本类设置回车提交成功的轻提示（T-5）：空内容时宽度为 0。不用 display:none 藏，读屏的 live region 要常驻才念。 */
+.settings-saved { flex: none; color: var(--cc-text-dim); font-size: var(--text-sm); white-space: nowrap; }
+/* 空着时脱离 flex 流：否则空项也吃一份 gap，把旁边的输入框挤歪。 */
+.settings-saved:empty { position: absolute; }
+.settings-error-action:hover { background: color-mix(in srgb, var(--cc-err) 14%, transparent); }
 /* 分区内的页标题只在搜索态显示（各分区平铺时当分隔）；平时不显示，由左栏高亮表明所在页。 */
 .sec-title { display: none; margin: 0 0 var(--sp-12); font-size: var(--text-base); font-weight: 600; color: var(--cc-text); }
 .main-body.is-searching .sec-title { display: block; }
@@ -1865,7 +1873,11 @@ button.stab {
 /* 代理地址单占一整行：塞进 .row 右侧只剩半截宽度，连 placeholder 都显示不全。 */
 /* 它是上一行（默认代理）的延续，不是新的一行：不画分隔线，否则输入框顶着线。 */
 .row.proxy-url-row { padding-top: 0; border-top: 0; }
-.proxy-url-row .ns-input { width: 100%; }
+.proxy-url-row .ns-input { width: auto; flex: 1; min-width: 0; }
+/* T-3：保存被拒时草稿留在框里标红、原因贴在框下（与端口框同款）。 */
+.row.proxy-url-row { flex-wrap: wrap; row-gap: 0; }
+.proxy-url-row .ns-input.is-invalid { border-color: var(--cc-err); }
+.proxy-url-row .remote-port-err { text-align: left; }
 /* 模型名不换行（「Claude Code」曾被右侧控件挤成两行）。 */
 .proxy-agent-name { white-space: nowrap; }
 /* 覆盖面：主句一行，理由弱化到次要色——三家能力不同是事实，但不该喧宾夺主。 */

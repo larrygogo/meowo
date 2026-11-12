@@ -19,7 +19,7 @@
 //
 // 静默是这里最大的失败模式：代理没生效却不告诉用户为什么（SOCKS 不被支持 / 用户自己设过同名变量
 // 而我们没覆盖 / 只对部分场景生效），会让人对着「连不上」毫无线索地瞎试。
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import {
   listAgents,
   getEffectiveProxy,
@@ -31,7 +31,7 @@ import { useT } from "../../i18n";
 import { useTauriEvent } from "../../hooks/useTauriEvent";
 import { useAgentListRefresh } from "../../useAgents";
 import { SETTINGS_DEFAULTS, useSettingsState } from "./state";
-import { Segmented, Switch, SettingsError } from "./widgets";
+import { Segmented, Switch, SettingsError, SavedNote, useSavedFlash } from "./widgets";
 import { Dropdown } from "../menu";
 
 /// 每个模型行的模式，比全局多一个「跟随默认」（= per_agent 里没有该条目）。
@@ -54,6 +54,7 @@ const isSocks = (u: string) => /^socks[45]?h?:\/\//i.test(u.trim());
 
 /// 代理地址输入框：本地草稿 + 失焦/回车提交。
 /// 不做「每键一存」——每敲一个字符都打一次后端校验，非法中间态（如刚敲完 "h"）会疯狂报错。
+/// onCommit 返回保存结果（null = 成功，字符串 = 已格式化的失败原因）。
 function UrlInput({
   value,
   placeholder,
@@ -61,32 +62,51 @@ function UrlInput({
 }: {
   value: string;
   placeholder: string;
-  onCommit: (url: string) => void;
+  onCommit: (url: string) => Promise<string | null>;
 }) {
+  const t = useT();
   const [text, setText] = useState(value);
-  // 磁盘值变了（保存成功 / 保存失败回读）→ 同步草稿，保证 UI 与磁盘一致。
-  useEffect(() => setText(value), [value]);
+  const [error, setError] = useState<string | null>(null);
+  const saved = useSavedFlash();
+  // T-3（2026-11-12 走查，log「input now=http://127.0.0.1:7890」）：保存被拒后 patch 会回读磁盘，
+  // value 先变新值再变回旧值，下面的同步 effect 把用户刚敲的草稿冲掉，想改一个字也得重输。
+  // 失败后留住草稿（标红 + 原因贴在框下），直到下一次提交成功才重新跟磁盘值同步。
+  const keepDraftRef = useRef(false);
+  useEffect(() => { if (!keepDraftRef.current) setText(value); }, [value]);
   const commit = () => {
     const u = text.trim();
     // 「没改动」跳过;「改成空」照样提交——删空是明确的清空操作,此前被当成「还没填完」
     // 跳过,失焦后草稿又被磁盘值同步回来,旧代理原地复活。空串的落库语义由 onCommit
-    // 方决定(custom+空地址后端会拒,不能原样写)。
-    if (u !== value.trim()) onCommit(u);
+    // 方决定(custom+空地址后端会拒,不能原样写)。失败留着的草稿哪怕与磁盘值相同也不重发。
+    if (u === value.trim()) return;
+    keepDraftRef.current = true;
+    void onCommit(u).then((err) => {
+      if (err) { setError(err); saved.hide(); return; }
+      keepDraftRef.current = false;
+      setError(null);
+      saved.flash();
+    });
   };
   return (
-    <input
-      className="ns-input"
-      type="text"
-      autoComplete="off"
-      spellCheck={false}
-      value={text}
-      placeholder={placeholder}
-      onChange={(e) => setText(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") e.currentTarget.blur();
-      }}
-    />
+    <>
+      <input
+        className={"ns-input" + (error ? " is-invalid" : "")}
+        type="text"
+        autoComplete="off"
+        spellCheck={false}
+        aria-invalid={error ? true : undefined}
+        value={text}
+        placeholder={placeholder}
+        onChange={(e) => { setText(e.target.value); saved.hide(); }}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          // T-5：回车提交但焦点留在框里（此前 blur() 让焦点掉到 body，键盘用户得从页首重新 Tab）。
+          if (e.key === "Enter") commit();
+        }}
+      />
+      <SavedNote shown={saved.shown} />
+      {error && <div className="proxy-err remote-port-err" role="alert">{t.settings.saveFailed(error)}</div>}
+    </>
   );
 }
 
@@ -145,6 +165,15 @@ export function NetworkSection() {
     setErr(null);
     void patch({ proxy: next }).then(setErr);
   };
+  // 地址框的保存：失败原因贴在输入框下（T-3），不再同时出底部那条，免得一件事报两遍。
+  // 失败时把该行留在「自定义」（pending），否则磁盘值回读成 off/跟随默认后输入框整个卸载，草稿照样丢。
+  const saveUrl = (next: ProxySettings, key: string): Promise<string | null> => {
+    setErr(null);
+    return patch({ proxy: next }).then((e) => {
+      if (e) setPending((p) => ({ ...p, [key]: true }));
+      return e;
+    });
+  };
 
   // ── 全局默认 ──
   const globalMode: ProxyMode = pending[""] ? "custom" : proxy.mode;
@@ -181,18 +210,17 @@ export function NetworkSection() {
     save({ ...proxy, per_agent: per });
   };
 
-  const commitRowUrl = (id: string, url: string) => {
+  const commitRowUrl = (id: string, url: string): Promise<string | null> => {
     if (!url) {
       // 删空 = 撤掉该 agent 的自定义代理。后端拒绝 custom+空地址,不能原样落库;
       // 删掉条目即回到「跟随默认」,同时置 pending 让输入框留在原地等重填。
       const per = { ...proxy.per_agent };
       delete per[id];
       setPending((p) => ({ ...p, [id]: true }));
-      save({ ...proxy, per_agent: per });
-      return;
+      return saveUrl({ ...proxy, per_agent: per }, id);
     }
     setPending((p) => ({ ...p, [id]: false }));
-    save({ ...proxy, per_agent: { ...proxy.per_agent, [id]: { mode: "custom", url } } });
+    return saveUrl({ ...proxy, per_agent: { ...proxy.per_agent, [id]: { mode: "custom", url } } }, id);
   };
 
   const modeOptions: { value: ProxyMode; label: string }[] = [
@@ -241,11 +269,10 @@ export function NetworkSection() {
                   // 删空 = 清掉自定义代理。后端拒绝 custom+空地址,不能原样落库;存成
                   // 直连并清掉旧地址(防复活),置 pending 让输入框留在原地等重填。
                   setPending((p) => ({ ...p, "": true }));
-                  save({ ...proxy, mode: "off", url: "" });
-                  return;
+                  return saveUrl({ ...proxy, mode: "off", url: "" }, "");
                 }
                 setPending((p) => ({ ...p, "": false }));
-                save({ ...proxy, mode: "custom", url });
+                return saveUrl({ ...proxy, mode: "custom", url }, "");
               }}
             />
           </div>
@@ -322,7 +349,7 @@ export function NetworkSection() {
       )}
 
       {/* 7S-7：与其余分区统一——此前是裸 div，无 × 也无 role=alert。 */}
-      <SettingsError error={err ? t.proxy.saveFailed(err) : null} onDismiss={() => setErr(null)} />
+      <SettingsError preformatted error={err ? t.settings.saveFailed(err) : null} onDismiss={() => setErr(null)} />
       <div className="sec-hint">{t.proxy.desc}</div>
     </>
   );

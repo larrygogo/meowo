@@ -43,7 +43,7 @@ import { AgentAppIcon } from "../chat/AgentAppIcon";
 import { useT, repairFailMessage } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
 import type { Dict } from "../../i18n/zh";
-import { Switch } from "./widgets";
+import { Switch, SettingsError } from "./widgets";
 import { ActionMenu, Dropdown } from "../menu";
 import { useSettingsState } from "./state";
 import { RelayAccess } from "./RelayAccess";
@@ -1473,21 +1473,8 @@ export function AccountSection() {
         usageRefreshedAt={usageRefreshedAt[cur.id] ?? null}
         updateInfo={updateMap[cur.id] ?? null}
       />
-      {patchError && (
-        <div className="sec-hint proxy-err" role="alert">
-          {patchError}
-          {/* 同款内联 ×（About.tsx SettingsError）：错误不会自己消失（下一次成功才清），
-              用户看完得有办法关掉；复用 useSettingsState 的 clearError 通道。 */}
-          <button
-            type="button"
-            aria-label={t.settings.close}
-            style={{ appearance: "none", background: "none", border: "none", padding: 0, marginLeft: 6, font: "inherit", color: "inherit", cursor: "pointer" }}
-            onClick={clearPatchError}
-          >
-            ×
-          </button>
-        </div>
-      )}
+      {/* T-6 兄弟场景（2026-11-12）：此前是手写的红字 + 内联样式 ×，与其余分区的 SettingsError 两套样式。 */}
+      <SettingsError preformatted error={patchError} onDismiss={clearPatchError} />
     </>
   );
 }
