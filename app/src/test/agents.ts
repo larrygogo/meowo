@@ -192,6 +192,11 @@ export const SUBAGENT_VIEW: NonNullable<ChatUi["subagent_view"]> = {
   leave_panel_input: "\u001b",
 };
 
+/** claude 插件 effort_control().reject_pattern 的同值镜像（2.1.322 取证，见 plugins/claude/mod.rs）。 */
+export const CLAUDE_EFFORT_REJECT_PATTERN = String.raw`effort '[^']+' exceeds the cap(?:[^;]*; set to '(\w+)' instead)?|effort '[^']+' isn't|invalid argument: |failed to set effort level: |not applied: claude_code_effort_level=|claude_code_effort_level=\S+ overrides this session|is session-scoped and won't reach the remote process`;
+/** claude 插件 model_select_reply().reject_pattern 的同值镜像。 */
+export const CLAUDE_MODEL_REJECT_PATTERN = String.raw`^\s*(?:⎿\s*)?(?:kept model as |model switch cancelled|model switch (?:to .+ was )?blocked by a premodelswitch hook|model switch failed: |model '[^']+' is (?:restricted|not available|not currently available)|failed to validate model: |couldn't confirm model '|1m context is turned off|\S.* doesn['’]t have a 1m context window|'[^']+' isn['’]t available: the |(?:opus|sonnet) with 1m context is not available|\S.* isn['’]t available for your account yet)`;
+
 export function grammar(
   provider: string,
   selectorAnchors: { marker: string; kind: "input" | "chat" }[] = [],
@@ -213,6 +218,8 @@ export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | 
     attention_patterns: ATTENTION_PATTERNS[provider] ?? [],
     model_presets: MODEL_PRESETS[provider] ?? [],
     model_select_command: provider === "claude" ? "/model" : null,
+    // 与后端同源:claude 插件 model_select_reply(2.1.322 包内模板取证)。
+    model_select_reply: provider === "claude" ? { confirm_pattern: "set model to ", reject_pattern: CLAUDE_MODEL_REJECT_PATTERN } : null,
     queue_input: provider === "codex" ? "\t" : "\r",
     // 与后端插件声明同源：claude 边干边读，kimi 未取证，其余排到回合结束。
     queue_delivery: provider === "claude" ? "next_step" : provider === "kimi" ? null : "turn_end",
@@ -274,7 +281,7 @@ export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | 
     retry_line_pattern: provider === "claude" ? CLAUDE_RETRY_LINE_PATTERN : null,
     // 与后端同源:思考程度切换 claude(2.1.314)与 kimi(2.4.0)都是 /effort <档位>。
     effort: provider === "claude"
-      ? { command: "/effort", levels: ["low", "medium", "high", "xhigh", "max"], confirm_pattern: String.raw`set effort level to (\w+)`, reject_pattern: String.raw`effort '[^']+' isn't` }
+      ? { command: "/effort", levels: ["low", "medium", "high", "xhigh", "max"], confirm_pattern: String.raw`set effort level to (\w+)`, reject_pattern: CLAUDE_EFFORT_REJECT_PATTERN }
       // kimi 档位随模型（模型目录的 support_efforts），静态表留空。
       : provider === "kimi"
         ? { command: "/effort", levels: [], confirm_pattern: String.raw`(?:thinking set to|with thinking) (\w+)`, reject_pattern: String.raw`unsupported thinking effort|cannot switch models while streaming|failed to switch model` }

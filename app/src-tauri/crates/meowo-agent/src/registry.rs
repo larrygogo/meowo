@@ -176,6 +176,11 @@ pub trait AgentPlugin: Sync {
         None
     }
 
+    /// `model_select_command` 之后 CLI 回的确认/拒绝行（见 [`crate::chat_ui::CommandReply`]）。
+    fn model_select_reply(&self) -> Option<crate::chat_ui::CommandReply> {
+        None
+    }
+
     fn queue_input(&self) -> Option<&'static str> {
         None
     }
@@ -308,6 +313,7 @@ pub trait AgentPlugin: Sync {
             slash_commands: crate::chat_ui::merge_commands(self.slash_commands(), custom),
             model_presets: self.model_presets().to_vec(),
             model_select_command: self.model_select_command(),
+            model_select_reply: self.model_select_reply(),
             model_menu_command: self.model_menu_command(),
             mode_controls: self.mode_controls().to_vec(),
             menu_slash_commands,

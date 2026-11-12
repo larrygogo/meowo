@@ -535,15 +535,29 @@ impl AgentPlugin for Claude {
     fn retry_line_pattern(&self) -> Option<&'static str> {
         Some(r"· (?:Retrying in|retrying, waiting up to|next try in) [^·]{1,60}· attempt (\d+)/(\d+)(?: · [^·]{0,40})?\s*$")
     }
-    /// `/effort <档位>`（2.1.314 包内：immediate 命令，成功回 `Set effort level to <Level>: …`；
-    /// 档位全集 low/medium/high/xhigh/max，xhigh/max 只部分模型支持，不支持时 CLI 报
-    /// `Effort '<x>' isn't …`）。当前档位由 statusline 的 `effort.level` 上报。
+    /// `/effort <档位>`（immediate 命令，成功回 `Set effort level to <level> (…): …`）。
+    /// 档位全集 low/medium/high/xhigh/max。当前档位由 statusline 的 `effort.level` 上报。
+    ///
+    /// 拒绝行（2.1.322 包内 `/effort` 实现逐条取证，2026-11-12）：2.1.314 的
+    /// `Effort '<x>' isn't …` 已整句消失（全包 `' isn't` 模板 0 处），旧规则成了死规则，
+    /// 被拒时前端只能报「未确认」。现在的失败出口是：
+    /// - `Invalid argument: ${e}. Valid options are: …`
+    /// - `Failed to set effort level: ${S.message}`
+    /// - `Not applied: CLAUDE_CODE_EFFORT_LEVEL=${U} overrides effort this session, and …`
+    /// - `CLAUDE_CODE_EFFORT_LEVEL=${U} overrides this session — clear it and ${o} takes over`
+    ///   （设置写了，但本会话仍被环境变量钉住，等于没切）
+    /// - `${o} is session-scoped and won't reach the remote process. …`
+    /// - 封顶：`Effort '${e}' exceeds the cap for ${u} set by your settings or organization;
+    ///   set to '${o}' instead…`。这条 CLI 其实已改成 `${o}`，捕获组 1 让前端落到实际档位。
+    ///
+    /// 模型不支持 xhigh/max 时 2.1.322 不再报错（只按组织/设置上限截断），照常回
+    /// `Set effort level to max`。旧版那句仍保留：老版本用户还在。
     fn effort_control(&self) -> Option<crate::chat_ui::EffortControl> {
         Some(crate::chat_ui::EffortControl {
             command: "/effort",
             levels: &["low", "medium", "high", "xhigh", "max"],
             confirm_pattern: r"set effort level to (\w+)",
-            reject_pattern: r"effort '[^']+' isn't",
+            reject_pattern: r"effort '[^']+' exceeds the cap(?:[^;]*; set to '(\w+)' instead)?|effort '[^']+' isn't|invalid argument: |failed to set effort level: |not applied: claude_code_effort_level=|claude_code_effort_level=\S+ overrides this session|is session-scoped and won't reach the remote process",
         })
     }
     /// 家族别名 → 当前版本的显示名（`opus` → `Opus 5.5`），读装着的 claude 可执行里内嵌的
@@ -559,6 +573,30 @@ impl AgentPlugin for Claude {
     /// 别名与官方 CLI 一致（`opusplan`：规划用 Opus、执行用 Sonnet）。
     fn model_select_command(&self) -> Option<&'static str> {
         Some("/model")
+    }
+    /// `/model <别名>` 之后的回话（2.1.322 包内模板，2026-11-12 取证）。
+    ///
+    /// 确认：`var BTe="Set model to "` 拼 `${BTe}${显示名}${…}`，transcript 实样
+    /// ``Set model to `Opus 5.5` and saved as your default for new sessions``。
+    ///
+    /// 拒绝（以前只报「未确认」，用户看不到 CLI 说了什么）：
+    /// - `var ift="Kept model as "`：确认框（额度/1M 计费同意）被取消，模型没变；
+    /// - `Model switch cancelled`：PreModelSwitch hook 跑的时候按了 Esc；
+    /// - `Model switch to ${uT(e)} was blocked by a PreModelSwitch hook: …`、
+    ///   `Model switch blocked by a PreModelSwitch hook…`、`Model switch failed: …`；
+    /// - 别名校验失败（kje）：`Model '${n}' is restricted by your organization's settings.`、
+    ///   `Model '${n}' is not available. …`、`Model '${n}' is not currently available for your account.`、
+    ///   `Failed to validate model: …`、`Couldn't confirm model '${a}' is available (the check timed out)`、
+    ///   `1M context is turned off …`、`… doesn't have a 1M context window, so '${f}' isn't available.`、
+    ///   `Opus with 1M context is not available for your account.`。
+    ///
+    /// 锚在行首（允许命令输出前的 `⎿` 引线）：屏幕重绘可能把正文里引用的半句带进来，
+    /// 只有 CLI 自己的输出行以这些词开头。
+    fn model_select_reply(&self) -> Option<crate::chat_ui::CommandReply> {
+        Some(crate::chat_ui::CommandReply {
+            confirm_pattern: r"set model to ",
+            reject_pattern: r"^\s*(?:⎿\s*)?(?:kept model as |model switch cancelled|model switch (?:to .+ was )?blocked by a premodelswitch hook|model switch failed: |model '[^']+' is (?:restricted|not available|not currently available)|failed to validate model: |couldn't confirm model '|1m context is turned off|\S.* doesn['’]t have a 1m context window|'[^']+' isn['’]t available: the |(?:opus|sonnet) with 1m context is not available|\S.* isn['’]t available for your account yet)",
+        })
     }
 
     fn model_presets(&self) -> &'static [crate::ModelPreset] {

@@ -21,6 +21,9 @@ levels: Array<string>,
  */
 confirm_pattern: string, 
 /**
- * CLI 拒绝切换的屏幕行（整行原样带给用户）。
+ * CLI 拒绝切换的屏幕行（整行原样带给用户）。可带捕获组 1 = CLI 实际改成的档位：
+ * 组织/设置封顶时 claude 不拒绝而是降到上限（2.1.322 包内
+ * `Effort '${e}' exceeds the cap for ${u} …; set to '${o}' instead`），前端据此把显示值
+ * 落到实际档位，同时把原话告诉用户。
  */
 reject_pattern: string, };
