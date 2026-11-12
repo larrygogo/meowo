@@ -3842,7 +3842,9 @@ body:not(.remote-ui) .ns-actions { position: relative; margin: 0 var(--sp-8) var
    不换行，按内容的最小宽度就是整条标题，长标题永远不省略，行尾按钮全被挤出去（测试页实测）。
    分支胶囊不参与收缩，只给分支名按标题行宽度封顶（自带省略号）：曾让胶囊整体先收缩，
    长标题时它被压到 0 宽，改动数溢出盖在 PR 编号上，显示成「+4#38」（实拍）。 */
-.chat-title-menu { flex: 1 1 auto; min-width: 9em; }
+/* 9em → 12em：9em 连图标与 ⋯ 只读得出 3～4 个字（实拍 150% 缩放的 620 窗「重构登…」），认不出是哪个会话。
+   12em 约 7 个汉字；不够时功能按钮进 ⋯ 菜单让位（titleOverflow.planTitleBar 读这个值）。 */
+.chat-title-menu { flex: 1 1 auto; min-width: 12em; }
 /* 可收起项的外壳（ChatTitleBar 的 OverflowSlot）：平时就是一个不伸缩的 flex 项。收起时不卸载，
    改为绝对定位退出排版流、不可见不可点，自然宽度照样量得到，收起逻辑不必「先显示再量」
    （titleOverflow.fitTitleBar；验收 #24 实测门限写死时 1440 宽 150% 缩放按钮出界）。 */
@@ -3850,26 +3852,26 @@ body:not(.remote-ui) .ns-actions { position: relative; margin: 0 var(--sp-8) var
 .chat-bar-slot[aria-hidden="true"] { position: absolute; top: 0; left: 0; visibility: hidden; pointer-events: none; }
 .chat-bar .tb-git { flex-shrink: 0; }
 .chat-bar .tb-git-branch { max-width: 14cqi; }
-/* 再窄就整项收起，按重要程度从低到高。档位用测试页按长短两种标题逐档截图定的：
-   每档收完后标题仍能读出前几个字，行尾按钮不被挤出。收起的 PR、分支在侧边面板的
-   改动页里都看得到，改动数一直留到最后一档。
-   选择器带 .chat-bar 前缀：.tb-pr 等的 display 声明写在本段之后，同特异性会盖掉这里。 */
-@container chat-bar (max-width: 900px) {
-  .chat-bar .tb-pr-state, .chat-bar .tb-git-pill.is-ahead, .chat-bar .tb-git-pill.is-behind { display: none; }
-}
-@container chat-bar (max-width: 760px) {
-  .chat-bar .tb-git-branch, .chat-bar .chat-title-project, .chat-bar .chat-title-sep { display: none; }
-}
+/* 标题显示不全时，先收纯信息，再收功能，标题最后才省略。收哪几档由 ChatTitleBar 按实测宽度算好
+   写在栏上的 data-compact 里（titleOverflow.planTitleBar），顺序：PR 状态字与领先/落后数 → 分支名
+   → 项目名 → 「结束会话」只留图标。原来是 @container chat-bar 的 900 / 760 / 400 三个固定门限，
+   不看栏上摆了什么也不乘界面缩放：实拍 1280 宽开面板带 PR 时标题栏 792px 一样没收，标题 69px 而
+   分支名 94px；150% 缩放的 620 窗标题只剩 3 个字而「结束会话」四个字占 71px。
+   收起不用 display:none：元素退出排版流但照常排版，自然宽度一直量得到，收不收都算出同一组结果。
+   选择器带 .chat-bar 前缀：.tb-pr 等的声明写在本段之后，同特异性会盖掉这里。 */
+.chat-bar[data-compact~="prState"] .tb-pr-state,
+.chat-bar[data-compact~="prState"] .tb-git-pill.is-ahead,
+.chat-bar[data-compact~="prState"] .tb-git-pill.is-behind,
+.chat-bar[data-compact~="branch"] .tb-git-branch,
+.chat-bar[data-compact~="project"] .chat-title-project,
+.chat-bar[data-compact~="project"] .chat-title-sep,
+.chat-bar[data-compact~="endLabel"] .chat-end-label { position: absolute; top: 0; left: 0; visibility: hidden; pointer-events: none; }
 /* PR、打开方式、改动、终端、会话信息这些「功能」不在这里收：曾在此 display:none，菜单里却
-   没有入口，拉窄就丢功能（调研 sys8/c8）。改由 titleOverflow.ts 的门限表决定放栏上还是 ⋯ 里。
-   「结束会话」在最窄一档只留图标（620 宽开面板时标题栏只剩 320，英文字样要 80px）。 */
+   没有入口，拉窄就丢功能（调研 sys8/c8）。它们排在信息之后，放不下才进 ⋯。 */
 .chat-end { display: inline-flex; align-items: center; }
 .chat-end-ico { display: none; }
-@container chat-bar (max-width: 400px) {
-  .chat-bar .chat-end { padding: 0; width: 28px; height: 28px; justify-content: center; }
-  .chat-bar .chat-end-ico { display: block; }
-  .chat-bar .chat-end-label { display: none; }
-}
+.chat-bar[data-compact~="endLabel"] .chat-end { padding: 0; width: 28px; height: 28px; justify-content: center; }
+.chat-bar[data-compact~="endLabel"] .chat-end-ico { display: block; }
 .chat-title-actions { min-width: 200px; }
 .chat-title-actions-sep { height: var(--hairline); margin: var(--sp-4) var(--sp-6); background: var(--cc-border); }
 .chat-title-actions .dd-item .dd-check { margin-left: auto; }

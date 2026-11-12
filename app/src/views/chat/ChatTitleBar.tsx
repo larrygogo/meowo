@@ -12,50 +12,106 @@ import { useT } from "../../i18n";
 import { remoteUi } from "../../remoteMode";
 import { ArchiveIcon } from "../sticker/icons";
 import { GitStatusChip, OpenerIcon, OpenInEditor, PullRequestChip, useFolderOpeners } from "./TitleBarTools";
-import { fitTitleBar, sameOverflow, TitleOverflowContext, type TitleOverflowItem, type TitleOverflowKey } from "./titleOverflow";
+import { planTitleBar, PROJECT_WANT_EM, sameOverflow, TITLE_WANT_EM, TitleOverflowContext, type TitleCompactKey, type TitleCompactSaving, type TitleOverflowItem, type TitleOverflowKey } from "./titleOverflow";
 
-const NO_OVERFLOW: ReadonlySet<TitleOverflowKey> = new Set();
+const NO_PLAN: { hidden: ReadonlySet<TitleOverflowKey>; compact: ReadonlySet<TitleCompactKey> } = { hidden: new Set(), compact: new Set() };
 
-/// 量标题栏、算哪些项收进 ⋯（规则见 titleOverflow.fitTitleBar）。
-/// 收起的项不卸载，只加 aria-hidden 退出排版流、不可见（.chat-bar-slot[aria-hidden]），
-/// 所以每颗按钮的自然宽度随时量得到：不用「先全显示量一遍、再收、再量」，没有来回抖。
-/// 收起与否不改变任何被量的宽度（结束会话按钮只跟栏宽的容器查询走），结果收敛，
-/// 再次触发观察也只会算出同一组，setState 原样返回不重渲染。
+/** 各信息档对应栏上哪些元素（收起后绝对定位、不可见，宽度照样量得到，见 styles.css 的 data-compact 规则）。 */
+const COMPACT_PARTS: readonly { step: TitleCompactKey; selector: string }[] = [
+  { step: "prState", selector: ".tb-pr-state, .tb-git-pill.is-ahead, .tb-git-pill.is-behind" },
+  { step: "branch", selector: ".tb-git-branch" },
+];
+
+/// 量标题栏、算哪些信息先收、哪些功能进 ⋯（规则见 titleOverflow.planTitleBar）。
+/// 收起的东西都不卸载：功能项加 aria-hidden 退出排版流（.chat-bar-slot[aria-hidden]），
+/// 信息档由栏上的 data-compact 让对应元素退出排版流，所以每样东西的自然宽度随时量得到：
+/// 不用「先全显示量一遍、再收、再量」，没有来回抖。交给 planTitleBar 的宽度一律折回
+/// 「一档都没收」时的自然值，所以收不收都算出同一组，结果收敛，setState 原样返回不重渲染。
+/// 「结束会话」收成图标后内边距也换了，字样两侧的留白量不到，沿用上次带字时量到的差值。
 /// 首帧在 layout effect 里同步量；之后栏宽、各项尺寸（语言、--cc-ui 缩放、PR/改动数到达）
-/// 变化走 ResizeObserver，增删子项走 MutationObserver，都用 flushSync 赶在绘制前收好，
+/// 变化走 ResizeObserver，增删子项与改名走 MutationObserver，都用 flushSync 赶在绘制前收好，
 /// 不让出界的一帧闪出来。jsdom 没有布局，宽度都是 0，按「全部放得下」处理。
-function useTitleBarOverflow(ref: RefObject<HTMLElement | null>, remote: boolean): ReadonlySet<TitleOverflowKey> {
-  const [hidden, setHidden] = useState<ReadonlySet<TitleOverflowKey>>(NO_OVERFLOW);
+function useTitleBarOverflow(ref: RefObject<HTMLElement | null>, remote: boolean): typeof NO_PLAN {
+  const [plan, setPlan] = useState(NO_PLAN);
   useLayoutEffect(() => {
     const bar = ref.current;
     if (!bar) return;
+    // 「结束会话」带字时：按钮宽 - 字样宽；只剩图标时的按钮宽。两种形态各只能量到一个，互相记着。
+    const end = { extra: 0, icon: 0 };
     const compute = () => {
       const style = getComputedStyle(bar);
+      const applied = new Set((bar.dataset.compact ?? "").split(" ").filter(Boolean) as TitleCompactKey[]);
       const available = bar.getBoundingClientRect().width - (parseFloat(style.paddingLeft) || 0) - (parseFloat(style.paddingRight) || 0);
       const fixed: number[] = [];
       const items: { key: TitleOverflowKey; width: number }[] = [];
+      const savings: TitleCompactSaving[] = [];
       let titleMin = 0;
+      let titleWant = 0;
+      const widthOf = (el: Element) => el.getBoundingClientRect().width;
+      const gapOf = (el: Element | null) => (el ? parseFloat(getComputedStyle(el).columnGap) || 0 : 0);
       for (const child of Array.from(bar.children) as HTMLElement[]) {
         const key = child.dataset.overflowKey as TitleOverflowKey | undefined;
-        const width = child.getBoundingClientRect().width;
-        if (key) items.push({ key, width });
-        else if (child.classList.contains("chat-title-menu")) titleMin = parseFloat(getComputedStyle(child).minWidth) || 0;
-        else if (width > 0 && getComputedStyle(child).position !== "absolute") fixed.push(width);
+        let width = widthOf(child);
+        if (key) {
+          for (const part of COMPACT_PARTS) {
+            for (const el of Array.from(child.querySelectorAll(part.selector))) {
+              const w = widthOf(el);
+              if (!(w > 0)) continue; // display:none（手机上的分支名）：本来就不占位置
+              const saving = w + gapOf(el.parentElement);
+              savings.push({ step: part.step, owner: key, saving });
+              if (applied.has(part.step)) width += saving;
+            }
+          }
+          items.push({ key, width });
+        } else if (child.classList.contains("chat-title-menu")) {
+          titleMin = parseFloat(getComputedStyle(child).minWidth) || 0;
+          const gap = gapOf(child);
+          let count = 0;
+          for (const part of Array.from(child.children) as HTMLElement[]) {
+            const cls = part.classList;
+            const em = parseFloat(getComputedStyle(part).fontSize) || 0;
+            // scrollWidth 是整段文字的宽度，省略、收起都不影响；取整有 1px 误差，补上免得标题差半个像素出省略号。
+            const w = cls.contains("chat-title") ? Math.min(part.scrollWidth + 1, TITLE_WANT_EM * em)
+              : cls.contains("chat-title-project") ? Math.min(part.scrollWidth + 1, PROJECT_WANT_EM * em)
+              : cls.contains("chat-title-sep") || cls.contains("chat-title-agent") || cls.contains("chat-title-btn") ? widthOf(part)
+              : 0;
+            if (!(w > 0)) continue;
+            titleWant += w + (count++ > 0 ? gap : 0);
+            if (cls.contains("chat-title-project") || cls.contains("chat-title-sep")) savings.push({ step: "project", owner: "title", saving: w + gap });
+          }
+        } else if (child.classList.contains("chat-end")) {
+          const label = child.querySelector(".chat-end-label");
+          const labelWidth = label ? widthOf(label) : 0;
+          if (applied.has("endLabel")) { end.icon = width; width = labelWidth + end.extra; }
+          else end.extra = width - labelWidth;
+          // 还没见过图标形态时按按钮高度估（图标形态是正方形）；估偏了下一轮会用实测值再算一遍。
+          const icon = end.icon || child.getBoundingClientRect().height;
+          if (labelWidth > 0 && width > icon) savings.push({ step: "endLabel", owner: "fixed", saving: width - icon });
+          // 排在 fixed 最前：planTitleBar 把「结束会话」省下的宽度记在第一项上。
+          fixed.unshift(width);
+        } else if (width > 0 && getComputedStyle(child).position !== "absolute") fixed.push(width);
       }
-      const next = fitTitleBar({ available, gap: parseFloat(style.columnGap) || 0, titleMin, fixed, items }, remote);
-      return (prev: ReadonlySet<TitleOverflowKey>) => (sameOverflow(prev, next) ? prev : next);
+      const next = planTitleBar({ available, gap: parseFloat(style.columnGap) || 0, titleMin, titleWant, fixed, items, savings }, remote);
+      return (prev: typeof NO_PLAN) => (sameOverflow(prev.hidden, next.hidden) && sameOverflow(prev.compact, next.compact) ? prev : next);
     };
-    setHidden(compute());
+    setPlan(compute());
     if (typeof ResizeObserver !== "function") return;
-    const update = () => { const apply = compute(); flushSync(() => setHidden(apply)); };
+    const update = () => { const apply = compute(); flushSync(() => setPlan(apply)); };
     const resize = new ResizeObserver(update);
-    const observeAll = () => { resize.disconnect(); resize.observe(bar); for (const child of Array.from(bar.children)) resize.observe(child); };
+    // 标题、项目名自己也要看：没省略时改名会改它的宽度，而标题区（flex:1）的宽度不变。
+    const observeAll = () => {
+      resize.disconnect();
+      resize.observe(bar);
+      for (const child of Array.from(bar.children)) resize.observe(child);
+      for (const el of Array.from(bar.querySelectorAll(".chat-title, .chat-title-project"))) resize.observe(el);
+    };
     observeAll();
     const mutation = typeof MutationObserver === "function" ? new MutationObserver(() => { observeAll(); update(); }) : null;
-    mutation?.observe(bar, { childList: true });
+    // subtree + characterData：标题省略着的时候改名，谁的盒子都不变，只有文字节点变了。
+    mutation?.observe(bar, { childList: true, subtree: true, characterData: true });
     return () => { resize.disconnect(); mutation?.disconnect(); };
   }, [ref, remote]);
-  return hidden;
+  return plan;
 }
 
 /** 可收起项的外壳：收起时留在 DOM 里照常排版量宽度，但退出排版流、不可见、不可聚焦
@@ -137,7 +193,7 @@ export function ChatTitleBar({
   const pullRequest = usePullRequest(prCwd ?? cwd, gitSummary?.isRepo ? gitSummary.branch : null);
   useEffect(() => { onPullRequest?.(pullRequest); }, [pullRequest, onPullRequest]);
   const barRef = useRef<HTMLElement>(null);
-  const hidden = useTitleBarOverflow(barRef, remoteUi());
+  const { hidden, compact } = useTitleBarOverflow(barRef, remoteUi());
   const openers = useFolderOpeners(cwd ?? "", onError);
   const showOpen = !remoteUi() && !!cwd;
   const showGit = !!cwd && !!gitSummary?.isRepo;
@@ -157,7 +213,7 @@ export function ChatTitleBar({
   if (info && hidden.has("info")) overflow.push({ key: "info", group: "info", label: info.open ? t.chat.sessionInfoHide : t.chat.sessionInfoShow, icon: infoIcon(14), onClick: info.onToggle });
   return (
     <TitleOverflowContext.Provider value={overflow}>
-    <header className="chat-bar" data-tauri-drag-region ref={barRef}>
+    <header className="chat-bar" data-tauri-drag-region ref={barRef} data-compact={compact.size ? [...compact].join(" ") : undefined}>
       {leading}
       {title}
       {/* 标题栏刻意不放运行状态徽标（实拍反馈嫌吵）：运行态已有多处冗余信号——
@@ -183,7 +239,7 @@ export function ChatTitleBar({
       {/* endable 口径:托管 PTY 或进程仍活着的孤儿会话(后端按 pid 杀树兜底),见 ChatHistoryDto。
           远程不再隐藏:stop_managed_terminal 已进 /rpc 白名单(remote.rs 头注释记录了放行理由),
           确认框在手机上走 window.confirm(transport 的 confirm_dialog 替身)。 */}
-      {/* 标题栏窄到 ≤400 时只留图标（CSS 容器查询切换），名字由 aria-label 与提示给出。 */}
+      {/* 标题显示不全时只留图标（data-compact 的 endLabel 档），名字由 aria-label 与提示给出。 */}
       {end && (
         <button
           type="button"
