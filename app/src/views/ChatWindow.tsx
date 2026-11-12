@@ -13,7 +13,7 @@ import { hasEscLayers } from "../escLayers";
 import { useTauriEvent } from "../hooks/useTauriEvent";
 import { useVisibleInterval } from "../hooks/useVisibleInterval";
 import { useSettingsEffect } from "../hooks/useSettings";
-import { useSessionActions } from "../hooks/useSessionActions";
+import { confirmMarkDone, markDoneEndsWork, useSessionActions } from "../hooks/useSessionActions";
 import { useT } from "../i18n";
 import { formatBackendError } from "../i18n/errors";
 import { useShowWhenReady } from "../useShowWhenReady";
@@ -697,11 +697,9 @@ export function ChatWindow() {
     const next = !history.archived;
     // 标记完成会顺带结束会话（后端 set_archived，用户要求两步合一）。Agent 正在干活时
     // 先确认：这颗钮就挨着「结束会话」，那边点了要确认，这边误触却直接停掉一个跑到一半的任务。
-    // 停在提示符上的会话（等你/空闲）不拦，勾掉就是勾掉。
-    if (next && toneRef.current === "running") {
-      const yes = await appConfirm(t.chat.markDoneRunningConfirm, { title: t.sticker.archive, danger: true, confirmLabel: t.sticker.archive });
-      if (!yes) return;
-    }
+    // 停在提示符上的会话（等你/空闲）不拦，勾掉就是勾掉。口径与侧栏、会话管理页共用（S-1，
+    // 2026-11-12）：卡在审批上的（pending）回合也没走完，同样先问。
+    if (next && markDoneEndsWork(toneRef.current) && !(await confirmMarkDone([{ working: true }], t))) return;
     setArchiving(true);
     // 乐观翻转:IPC 往返 + 下一轮轮询才回真值,期间按钮维持旧文案会让人以为没点上。
     // 失败回滚并报错——静默失败等于骗用户「已归档」。

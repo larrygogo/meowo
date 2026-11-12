@@ -3734,6 +3734,10 @@ body:not(.remote-ui) .ns-actions .ns-btn { height: var(--btn-h-lg); min-width: 7
 .sa-toast { position: absolute; left: 50%; bottom: var(--sp-16); transform: translateX(-50%); display: flex; align-items: center; gap: var(--sp-10); padding: var(--sp-8) var(--sp-14); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); background: var(--cc-menu-bg); box-shadow: var(--shadow-menu); color: var(--cc-text); font-size: var(--text-sm); white-space: nowrap; z-index: var(--z-float); }
 /* 批量清理 worktree 的结果要逐行列出失败项：多行时换行显示，限宽不撑出窗口。 */
 .sa-toast > span { white-space: pre-line; max-width: min(560px, 80vw); }
+/* 失败提示（走查 S-10/#14，2026-11-12）：原因另起一行、淡一档；右侧 × 关闭（失败提示不计时消失）。 */
+.sa-toast-reason { display: block; margin-top: var(--sp-2); color: var(--cc-text-dim); font-size: var(--text-xs); white-space: normal; overflow-wrap: anywhere; }
+.sa-toast.is-fail { align-items: flex-start; }
+.sa-toast-x { color: var(--cc-text-faint); }
 /* L1 内容面（.chat-surface）：对话列、会话信息栏、右侧面板合成一张圆角 12 的面，压在窗口底 L0 上。
    三个平台同一套：描边是 hairline 环（box-shadow，不占布局），外加 --shadow-sm；里面三栏只用细线分隔，
    各自不再有底色、圆角和上边线。右、下各留 8；侧栏不停靠（窄窗抽屉 / 手动收起）时左边也留 8，
@@ -4159,6 +4163,11 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 /* 批量清理 worktree 的结果：失败项逐行列出，按钮顶对齐不随多行居中。 */
 .chat-sidebar-error.is-multiline { align-items: flex-start; }
 .chat-sidebar-error.is-multiline span { flex: 1 1 auto; min-width: 0; white-space: pre-line; overflow-wrap: anywhere; }
+/* 侧栏失败/提示条（走查 S-5，2026-11-12）：不再 4 秒自动消失，右上角给 ×；原因另起一行、比结果句淡一档。 */
+.chat-sidebar-error.is-notice > span { color: var(--cc-text); }
+.chat-sidebar-error-reason { display: block; margin-top: var(--sp-2); color: var(--cc-text-dim); }
+.chat-sidebar-error.is-undo .chat-sidebar-error-x { min-height: var(--btn-h-sm); padding: 0 var(--sp-6); background: transparent; color: var(--cc-text-faint); }
+.chat-sidebar-error.is-undo .chat-sidebar-error-x:hover { background: var(--fill-hover); color: var(--cc-text); }
 /* 「已完成」页顶部的批量清理入口：轻量文字按钮，不和会话条目抢视觉。 */
 .chat-sidebar-cleanbar { display: flex; justify-content: flex-end; padding: var(--sp-4) var(--sp-10) var(--sp-2); }
 .chat-sidebar-cleanbar button { border: 0; border-radius: var(--radius-sm); padding: var(--sp-2) var(--sp-8); background: transparent; color: var(--cc-text-faint); font-size: var(--text-xs); cursor: pointer; }

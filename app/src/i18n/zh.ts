@@ -115,7 +115,6 @@ export const zh = {
     usageStale: (time: string) => `用量刷新失败，上次更新 ${time}`,
     // 「全部」tab 里在线与历史会话的分界（7B-3）。
     historyDivider: (n: number) => `历史会话 · ${n}`,
-    renameFailed: "重命名失败，请稍后再试。",
     archiveFailed: "标记完成失败，请稍后再试。",
     archivedNotice: "已完成，可在「设置 → 会话」找回",
     archiveUndo: "撤销",
@@ -752,6 +751,8 @@ export const zh = {
     endSessionConfirm: "将终止正在运行的任务，对话记录保留。确定结束？",
     // 标记完成会顺带结束会话（后端 set_archived）。只在 Agent 正在干活时才拦一下。
     markDoneRunningConfirm: "Agent 还在运行，标记完成会结束它。",
+    // S-1（走查 2026-11-12）：侧栏/会话管理页批量标记完成里有在跑的会话时的确认。
+    markDoneRunningBatchConfirm: (n: number) => `其中 ${n} 个还在运行，标记完成会结束它们。`,
     terminalAttach: "在外部终端同步打开",
     // 悬停在终端里的链接/文件路径上时,右下角的操作提示(T-4:此前 Ctrl+点击无任何界面表达)。
     terminalLinkHint: "Ctrl+点击打开链接",
@@ -1092,7 +1093,19 @@ export const zh = {
     sidebarFilterGroup: "视图",
     sidebarFilterSort: "排序",
     sidebarCollapse: "收起会话列表",
-    sidebarActionFailed: "操作失败，请稍后再试。",
+    // 侧栏失败提示（走查 S-4/S-5，2026-11-12）：说清是哪个动作没成、结果停在哪，原因另起一行
+    // （formatBackendError 映射）。原先一律「操作失败，请稍后再试」，看不出是哪一步出的问题。
+    sidebarArchiveFailed: "没能标记完成，会话已放回列表",
+    sidebarReopenFailed: "没能恢复进行中",
+    sidebarRenameFailed: "没能重命名，新名字还在输入框里",
+    sidebarSearchFailed: "没能搜索对话内容",
+    sidebarReorderFailed: "顺序没保存，已恢复原来的顺序",
+    sidebarEndFailed: "没能结束会话",
+    // S-6：按最近活动排序时按 Ctrl+Shift+↑/↓，顺序由活动决定，手动挪不动。
+    sidebarReorderNeedsManual: "按最近活动排序时不能调整顺序",
+    sidebarSwitchToManual: "改用手动排序",
+    // S-7：键盘挪位后的读屏播报。
+    sidebarMoved: (n: number, total: number) => `已移到第 ${n} 位，共 ${total} 位`,
     // 斜杠命令在 transcript 里是一条 XML 包裹的用户消息，渲染成徽章而非标签原文。
     localCommand: "本地命令",
     commandOutput: "命令输出",
