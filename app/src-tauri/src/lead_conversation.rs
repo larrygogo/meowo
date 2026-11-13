@@ -201,6 +201,111 @@ pub(crate) fn reconcile_task(db: &Path, task: &Path, app: Option<tauri::AppHandl
     let _ = deliver(db, task, app, false);
 }
 
+/// 巡检里用的投递：挪到独立线程，不拖住巡检循环（做空 R10）。Codex 一次投递最坏要等握手宽限 + 稳定期
+/// 再加若干次 15 秒 RPC，服务卡住时同步调用会让所有会话的「待处理」标记与推送都停摆。
+///
+/// 同一个任务同时只有一个巡检投递在跑：上一轮还没回来就跳过这一轮，不让卡住的服务每 10 秒堆一个线程。
+/// 投递本身的互斥与 sending 占位不变——仍由各机制按投递键加锁（codex 的 key_lock + 跨进程 Claim、
+/// opencode 的 LOCK），手机作答与巡检并发时照旧只送一次，面板照旧看得到「正在送达」。
+pub(crate) fn reconcile_task_detached(db: PathBuf, task: PathBuf, app: Option<tauri::AppHandle>) {
+    spawn_reconcile(task.clone(), move || reconcile_task(&db, &task, app));
+}
+
+static RECONCILING: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<PathBuf>>> =
+    std::sync::LazyLock::new(Default::default);
+
+/// 返回是否真的起了线程（同任务上一轮还在跑时为 false）。
+fn spawn_reconcile(task: PathBuf, work: impl FnOnce() + Send + 'static) -> bool {
+    if !RECONCILING
+        .lock()
+        .is_ok_and(|mut running| running.insert(task.clone()))
+    {
+        return false;
+    }
+    // 线程结束（含 panic）时一定撤掉标记，否则这个任务以后再也不会被巡检投递。
+    struct Done(PathBuf);
+    impl Drop for Done {
+        fn drop(&mut self) {
+            if let Ok(mut running) = RECONCILING.lock() {
+                running.remove(&self.0);
+            }
+        }
+    }
+    let done = Done(task);
+    let spawned = std::thread::Builder::new()
+        .name("lead-deliver".into())
+        .spawn(move || {
+            let _done = done;
+            work();
+        });
+    spawned.is_ok()
+}
+
+#[cfg(test)]
+mod reconcile_tests {
+    use super::*;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    /// 做空 R10：巡检投递不在巡检线程里跑；同一任务上一轮没回来就不再起新线程，回来后恢复。
+    #[test]
+    fn patrol_delivery_runs_off_thread_and_never_piles_up() {
+        let task = std::env::temp_dir().join(format!(
+            "meowo-reconcile-{}",
+            crate::remote::generate_token().unwrap()
+        ));
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let (started_tx, started_rx) = mpsc::channel::<std::thread::ThreadId>();
+        let (done_tx, done_rx) = mpsc::channel::<()>();
+        assert!(spawn_reconcile(task.clone(), move || {
+            started_tx.send(std::thread::current().id()).unwrap();
+            // 模拟卡住的服务：直到测试放行才返回。
+            release_rx.recv().unwrap();
+            done_tx.send(()).unwrap();
+        }));
+        let worker = started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_ne!(worker, std::thread::current().id(), "不在调用方（巡检）线程里跑");
+        // 调用方没有被拖住：上面已经返回；同任务再巡检直接跳过。
+        assert!(!spawn_reconcile(task.clone(), || panic!("上一轮还在跑，不该再起")));
+        // 别的任务不受影响。
+        let other = task.with_extension("other");
+        let (other_tx, other_rx) = mpsc::channel::<()>();
+        assert!(spawn_reconcile(other, move || other_tx.send(()).unwrap()));
+        other_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        release_tx.send(()).unwrap();
+        done_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        // 标记在线程收尾时撤掉：稍等即可再次巡检。
+        let mut again = false;
+        for _ in 0..100 {
+            if spawn_reconcile(task.clone(), || {}) {
+                again = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(again);
+    }
+
+    /// 卡住的那一轮 panic 了也要撤标记，不然这个任务再也不会被巡检投递。
+    #[test]
+    fn panicking_delivery_releases_the_task() {
+        let task = std::env::temp_dir().join(format!(
+            "meowo-reconcile-panic-{}",
+            crate::remote::generate_token().unwrap()
+        ));
+        assert!(spawn_reconcile(task.clone(), || panic!("投递崩了")));
+        let mut again = false;
+        for _ in 0..100 {
+            if spawn_reconcile(task.clone(), || {}) {
+                again = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(again);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -800,7 +800,12 @@ pub(crate) fn spawn_gate_watcher(app: tauri::AppHandle) {
                     continue;
                 };
                 let want = scan_gate_states(&store, |task| {
-                    crate::lead_conversation::reconcile_task(&db_path, task, Some(app.clone()));
+                    // 投递挪到独立线程：服务卡住时最坏要等几十秒，别拖住所有会话的待处理标记与推送（做空 R10）。
+                    crate::lead_conversation::reconcile_task_detached(
+                        db_path.clone(),
+                        task.to_path_buf(),
+                        Some(app.clone()),
+                    );
                 });
                 let now = crate::now_ms();
                 let mut changed = false;
