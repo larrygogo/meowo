@@ -1300,6 +1300,14 @@ impl PtyBroker {
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
         command.env("FORCE_COLOR", "1");
+        // Lead 原生续跑（Codex）：在环境与 MCP 参数都定稿后，把配置覆盖交给每会话 app-server、
+        // TUI 改以 --remote 连它；条件不满足时原样内嵌启动（见 lead_native::codex_app_server）。
+        let codex_remote = crate::lead_native::codex_app_server::prepare_launch(
+            session_id,
+            provider,
+            env,
+            &mut command,
+        );
 
         // token 必须先于 spawn 登记（子进程一起来就可能 claim，reporter 不重试）；
         // 因此失败路径要反向吊销，不留「已登记但从未交付」的凭据。
@@ -1309,10 +1317,16 @@ impl PtyBroker {
                 if let Some(scoped) = &issued_scoped {
                     self.revoke_scoped_token(scoped);
                 }
+                if let Some(launch) = codex_remote {
+                    crate::lead_native::codex_app_server::abort(launch);
+                }
                 return Err(error.to_string());
             }
         };
         let child_pid = child.process_id();
+        if let Some(launch) = codex_remote {
+            crate::lead_native::codex_app_server::bind_tui(launch, child_pid);
+        }
         let pair_result = pair
             .master
             .try_clone_reader()
@@ -3105,7 +3119,10 @@ impl PtyBroker {
                 .ok()
                 .and_then(|sessions| sessions.get(&old_sid).and_then(|m| m.child_pid));
             if let Some(child) = child_pid {
-                if claim_outside_pty_tree(claim, child, &crate::proc::parent_map()) {
+                // Codex 远程模式下 hook 由 Meowo 为这个 TUI 起的 app-server 派生，不在 PTY 树里，但同属本会话。
+                if claim_outside_pty_tree(claim, child, &crate::proc::parent_map())
+                    && !crate::lead_native::codex_app_server::serves_tui(claim, child)
+                {
                     return Err(format!(
                         "拒绝换代：认领方 pid {claim} 不在旧会话 {old_sid} 的 PTY 进程树内（agent 守护进程派生的后台会话误认领）"
                     ));

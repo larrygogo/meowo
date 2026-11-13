@@ -2941,6 +2941,11 @@ pub(crate) fn session_agent_alive(store: &meowo_store::Store, sid: i64) -> Resul
     if !pid_alive_agent_quick(pid) {
         return Ok(false);
     }
+    // Meowo 为 Codex 原生 TUI 起的 app-server（hook 把它记成会话 pid）：以它的 TUI 死活为准。
+    // TUI 退出后服务还在等投递，不算「外部终端里的会话」，恢复时会被新一代顶替（lead_native::codex_app_server）。
+    if let Some(tui_alive) = crate::lead_native::codex_app_server::owned_server_tui_alive(pid) {
+        return Ok(tui_alive);
+    }
     // 进程活着还不够，pid 得仍归本会话：/clear 换代后旧行可能残留一个「活着但已被
     // 新会话认领」的 pid（end_session 清 pid 之前的存量数据）。拿它当「外部仍在运行」
     // 会误拒接管——而那个「外部终端」根本不存在；更糟的是 takeover 会照着它杀错新会话的进程。

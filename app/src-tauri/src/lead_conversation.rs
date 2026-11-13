@@ -137,7 +137,9 @@ fn deliver(
             gate_id: &gate.id,
             message: &message,
         };
-        let _ = force;
+        if force {
+            crate::lead_native::reset_failed(&target);
+        }
         return match crate::lead_native::deliver(&target, app.as_ref())? {
             crate::lead_native::NativeOutcome::Unsupported => Ok(false),
             _ => Ok(true),
@@ -184,6 +186,17 @@ pub(crate) fn delivery_status(db: &Path, cwd: &str, gate_id: &str) -> Option<Lea
     let native = owner(&task).ok()?;
     let id = store.find_session_id_pub(&native).ok()??;
     let Some(state) = store.managed_state(id).ok()? else {
+        // 宿主经服务投递的机制有真实送达记录（已接收 / 已排队 / 失败可重试），不再是笼统的手动提示。
+        let gate = meowo_reporter::lead::read_gate(&task).filter(|gate| gate.id == gate_id);
+        if gate.is_some_and(|gate| gate.status == "answered") {
+            let provider = store.session_provider(id).ok()?;
+            let session_cwd = store.session_cwd(id).ok().flatten().unwrap_or_else(|| cwd.to_owned());
+            if let Some(dto) = crate::lead_native::delivery_status(
+                db, &provider, id, session_cwd, &task, gate_id, &native,
+            ) {
+                return Some(dto);
+            }
+        }
         return native_session_status(&store, id, &task, gate_id, cwd);
     };
     let key = current_delivery_key(&store, id, delivery_id(&task, gate_id, &native)).ok()?;
@@ -501,7 +514,11 @@ mod tests {
         // claude 原生会话有自己的 wait hook 唤醒，面板不另挂投递条。
         assert!(delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe").is_none());
         // 其余 provider 的原生会话不会自行开新回合：如实告诉用户下一步，而不是什么都不显示（做空指出）。
-        for provider in ["codex", "kimi", "gemini", "opencode"] {
+        // codex 经宿主 app-server 投递，有真实送达记录：这里还没投（作答时会话不是 codex），显示「已保存」可重试。
+        store.set_session_provider(legacy, "codex").unwrap();
+        let status = delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe").unwrap();
+        assert_eq!((status.state.as_str(), status.can_retry), ("saved", true));
+        for provider in ["kimi", "gemini", "opencode"] {
             store.set_session_provider(legacy, provider).unwrap();
             let status = delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe").unwrap();
             assert_eq!(status.state, "native_manual", "{provider}");

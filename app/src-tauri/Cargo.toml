@@ -123,6 +123,9 @@ trash = "~5.2.9"
 # 远程目录浏览（remote.rs list_subdirectories）：std canonicalize 在 Windows 回 \\?\
 # 前缀路径，展示难看且回填 cwd 后部分 agent 不认。已在依赖树（tauri 传递），零新增。
 dunce = "1"
+# Lead 原生续跑：跨 Meowo 重启按 pid 认回自己起的 codex app-server 时核对命令行（防 pid 复用误杀）。
+# 与 meowo-reporter 同版本，已在依赖树里，不新增依赖。
+sysinfo = "0.32"
 # codex config.toml 的结构保持编辑（保注释与键序）。kimi 的已迁入 meowo-agent::config。
 # codex hook 预信任的 trusted_hash 计算（SHA-256）。
 
