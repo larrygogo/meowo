@@ -266,6 +266,8 @@ async fn check_update(
     {
         let handle = app.clone();
         builder = builder.on_before_exit(move || {
+            // Codex app-server 不在 TUI 的进程树里，收托管终端杀不到它（做空 R1）。
+            lead_native::codex_app_server::retire_all();
             handle.state::<AppState>().ptys.shutdown();
             // 面板里的普通终端平时靠对话窗 Destroyed 回调收（window.rs 关窗兜底的 kill_all），
             // 可插件直接 process::exit，窗口销毁事件同样不会来：pwsh 及其子孙（dev server
@@ -1817,6 +1819,9 @@ pub fn run() {
             // 一并残留）。同时删掉 approval-broker.json，否则下一个 reporter 会拿着已失效的
             // 端点去连一个可能已被回收的端口。
             if matches!(event, tauri::RunEvent::Exit) {
+                // Codex app-server 由 Meowo 直接 spawn、不在 ConPTY 里：不收就会带着正在跑的回合在后台
+                // 无人看着继续（做空 R1）。
+                lead_native::codex_app_server::retire_all();
                 exit_ptys.shutdown();
                 // 面板终端也在这里收：托盘「退出」走 app.exit(0)，tauri-runtime-wry 直接把事件循环
                 // 设成 ExitWithCode 再发 RunEvent::Exit，不给窗口发 Destroyed（做空审查读

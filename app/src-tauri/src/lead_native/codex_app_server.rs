@@ -575,8 +575,23 @@ fn reap_loop(dir: &Path) {
     }
 }
 
-/// 应用启动时调用：收掉上次运行遗留的服务（Meowo 退出时 TUI 随托管终端结束，但 app-server 不在
-/// ConPTY 里，会活下来）。TUI 还活着的不动：dev 版与安装版共用 ~/.meowo，那是另一个正在运行的
+/// Meowo 退出时调用（托盘退出的 RunEvent::Exit 与「重启并更新」的 on_before_exit 两条路径）：
+/// 收掉本进程起的全部服务。app-server 由 Meowo 直接 spawn，不在 TUI 的 ConPTY 进程树里，
+/// 收托管终端杀不到它；不收的话 TUI 正在跑的那一轮会在后台无人看着继续改文件、遇到审批没人能答，
+/// 服务与它的 MCP 子进程一直挂到下次启动（做空 R1）。只动内存里持有句柄的（本进程起的）：
+/// 盘上别的服务可能属于共库的另一个 Meowo 实例，由它自己收。
+pub(crate) fn retire_all() {
+    let dirs: Vec<PathBuf> = LIVE
+        .lock()
+        .map(|live| live.keys().cloned().collect())
+        .unwrap_or_default();
+    for dir in dirs {
+        retire(&dir);
+    }
+}
+
+/// 应用启动时调用：收掉上次运行遗留的服务（正常退出时 [`retire_all`] 已收，这里兜崩溃/被杀的情况：
+/// app-server 不在 ConPTY 里，会活下来）。TUI 还活着的不动：dev 版与安装版共用 ~/.meowo，那是另一个正在运行的
 /// Meowo 实例的服务，由它自己的看守线程管。
 pub(crate) fn sweep_on_startup() {
     let db = crate::db_path();
@@ -2144,6 +2159,43 @@ mod tests {
     }
 
     /// 旧版本写的 state.json（带 linger 时代的字段、没有 tui_handshaken）也能读，读作未确认握手。
+    /// 做空 R1：退出时收掉本进程持有句柄的全部服务（进程被杀、目录删除）。
+    #[test]
+    fn retire_all_kills_every_owned_server() {
+        let root = temp_root("retire-all");
+        let dir = root.join("servers").join("s1");
+        std::fs::create_dir_all(&dir).unwrap();
+        // 一个会一直活着的子进程代替 app-server（不调用真实 CLI）。
+        #[cfg(windows)]
+        let child = std::process::Command::new("cmd")
+            .args(["/C", "ping -n 60 127.0.0.1 >NUL"])
+            .spawn()
+            .unwrap();
+        #[cfg(not(windows))]
+        let child = std::process::Command::new("sleep").arg("60").spawn().unwrap();
+        let pid = child.id();
+        LIVE.lock().unwrap().insert(dir.clone(), child);
+        assert!(pid_alive(pid));
+        retire_all();
+        assert!(!LIVE.lock().unwrap().contains_key(&dir));
+        assert!(!dir.exists(), "目录（含 token）随服务删除");
+        assert!(!pid_alive(pid), "服务进程已被收掉");
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 两条退出路径都要收：托盘退出（RunEvent::Exit）与「重启并更新」（插件直接 process::exit，
+    /// RunEvent::Exit 不触发，只有 on_before_exit）。
+    #[test]
+    fn both_exit_paths_retire_codex_servers() {
+        let lib = include_str!("../lib.rs");
+        let before_exit = lib.find("on_before_exit(").unwrap();
+        let run_exit = lib.find("tauri::RunEvent::Exit)").unwrap();
+        for start in [before_exit, run_exit] {
+            let window = &lib[start..(start + 1500).min(lib.len())];
+            assert!(window.contains("codex_app_server::retire_all()"), "{}", &window[..80]);
+        }
+    }
+
     #[test]
     fn legacy_server_state_still_reads() {
         let legacy: ServerState = serde_json::from_str(
