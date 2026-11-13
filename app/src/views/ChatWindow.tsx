@@ -45,6 +45,7 @@ import { manualSendVerdict } from "./chat/composerConfirmation";
 import { useQuietTurn } from "./chat/useQuietTurn";
 import { managedTerminalFrame } from "../api";
 import { BottomSheet, SheetOnPhone } from "./chat/BottomSheet";
+import { ManagedPicker } from "./chat/ManagedPicker";
 import { runningActivityView, RunningBar, SnakeSpinner, TurnAnnouncer, useCliStatusStore } from "./chat/RunningBar";
 import { arrowPanelApprovalDetails, framedBoxApprovalDetails, proceedBoxApprovalDetails } from "./chat/terminalApprovalDetails";
 import { ModelPicker, readStarred, type ModelPickerItem } from "./chat/ModelPicker";
@@ -5228,12 +5229,16 @@ export function ChatWindow() {
             onMention={chatUi?.attachment_mention ? () => insertIntoPrompt("@") : undefined}
           />
           {managedConversation && <>
-            {(history?.managedModels?.length ?? 0) > 0 && <label className="chat-model chat-engine-picker is-model"><select aria-label={t.chat.engineModel} value={history?.model ?? ""} disabled={history?.managedPhase !== "ready"} onChange={(event) => { void managedConversationSetModel(sessionId, event.target.value).then(() => refreshRef.current()).catch((error) => setSendError(formatBackendError(error, t.locale))); }}>
-              <option value="" disabled>{history?.model ?? t.chat.engineChooseAnswer}</option>{history!.managedModels!.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
-            </select><Icon glyph={icChevronDown} size={12} className="chat-model-chevron" /></label>}
-            {(history?.managedModes?.length ?? 0) > 0 && history?.managedModeDimension && <label className="chat-model chat-engine-picker"><select aria-label={t.chat.engineMode} value={history?.agentModes.find((mode) => mode.dimension === history.managedModeDimension)?.value ?? ""} disabled={history.managedPhase !== "ready"} onChange={(event) => { void managedConversationSetMode(sessionId, history.managedModeDimension!, event.target.value).then(() => refreshRef.current()).catch((error) => setSendError(formatBackendError(error, t.locale))); }}>
-              <option value="" disabled>{t.chat.engineChooseAnswer}</option>{history.managedModes!.map((mode) => <option key={mode.id} value={mode.id}>{mode.label}</option>)}
-            </select><Icon glyph={icChevronDown} size={12} className="chat-model-chevron" /></label>}
+            {/* 顺序同原生会话：模式紧跟 +；模型放在上下文环之后、挨着发送键（见下方原生模型按钮处）。 */}
+            {(history?.managedModes?.length ?? 0) > 0 && history?.managedModeDimension && <ManagedPicker
+              label={t.chat.engineMode}
+              phone={compactChrome}
+              value={history.agentModes.find((mode) => mode.dimension === history.managedModeDimension)?.value}
+              fallback={t.chat.engineMode}
+              options={history.managedModes!.map((mode) => ({ id: mode.id, label: mode.label }))}
+              disabled={history.managedPhase !== "ready"}
+              onPick={(id) => { void managedConversationSetMode(sessionId, history.managedModeDimension!, id).then(() => refreshRef.current()).catch((error) => setSendError(formatBackendError(error, t.locale))); }}
+            />}
           </>}
           {!managedConversation && (() => {
             const states = history?.agentModes ?? [];
@@ -5388,6 +5393,16 @@ export function ChatWindow() {
           {history?.contextPct != null && (
             <ContextMeter pct={history.contextPct} window={history.contextWindow} t={t} />
           )}
+          {managedConversation && (history?.managedModels?.length ?? 0) > 0 && <ManagedPicker
+            label={t.chat.engineModel}
+            primary
+            phone={compactChrome}
+            value={history?.model}
+            fallback={history?.model || t.chat.model}
+            options={history!.managedModels!.map((model) => ({ id: model.id, label: model.label }))}
+            disabled={history?.managedPhase !== "ready"}
+            onPick={(id) => { void managedConversationSetModel(sessionId, id).then(() => refreshRef.current()).catch((error) => setSendError(formatBackendError(error, t.locale))); }}
+          />}
           {!managedConversation && (modelPresets.length > 0 || modelMenuCommand || history?.model || switchTargets.length > 0) && <div className="chat-model chat-model-select" ref={modelPickerOpenUi.ref} onKeyDown={modelPickerOpenUi.onKeyDown}>
             <button
               ref={(node) => { assignRef(modelPickerOpenUi.btnRef, node); modelButtonRef.current = node; }}

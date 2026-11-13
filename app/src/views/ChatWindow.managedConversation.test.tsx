@@ -83,10 +83,31 @@ describe("protocol managed ChatWindow",()=>{
  it("native catalogs switch model and mode through structured commands with no slash menu",async()=>{
   setup(904,"ready",{model:"native-one",agentModes:[{dimension:"mode",value:"normal"}],managedModeDimension:"mode",managedModels:[{id:"native-one",label:"One",kind:"model"},{id:"native-two",label:"Two",kind:"model"}],managedModes:[{id:"normal",label:"Normal",kind:"mode"},{id:"plan",label:"Plan",kind:"mode"}]});
   render(<ChatWindow/>);await screen.findByText("适配-904");
-  fireEvent.change(screen.getByRole("combobox",{name:zh.chat.engineModel}),{target:{value:"native-two"}});
-  fireEvent.change(screen.getByRole("combobox",{name:zh.chat.engineMode}),{target:{value:"plan"}});
+  // 2026-11-13 改为与原生会话同款的菜单（不再是系统 <select>，leader 截图嫌丑）：按钮显示当前项名字。
+  fireEvent.click(screen.getByRole("button",{name:`${zh.chat.engineModel}: One`}));
+  fireEvent.click(screen.getByRole("menuitem",{name:"Two"}));
+  fireEvent.click(screen.getByRole("button",{name:`${zh.chat.engineMode}: Normal`}));
+  fireEvent.click(screen.getByRole("menuitem",{name:"Plan"}));
   await waitFor(()=>expect(invoke).toHaveBeenCalledWith("managed_conversation_set_model",{sessionId:904,model:"native-two"}));
   expect(invoke).toHaveBeenCalledWith("managed_conversation_set_mode",{sessionId:904,dimension:"mode",mode:"plan"});expect(writes()).toEqual([]);
+ });
+ // 兄弟场景：当前值不在清单里时按钮显示原生报的模型名而不是「请选择」；点当前项不发命令；菜单 Esc 关闭。
+ it("model picker never shows a placeholder and re-picking the current item sends nothing",async()=>{
+  setup(907,"ready",{model:"unlisted-native",managedModels:[{id:"native-one",label:"One",kind:"model"}],managedModes:[]});
+  render(<ChatWindow/>);await screen.findByText("适配-907");
+  const button=screen.getByRole("button",{name:`${zh.chat.engineModel}: unlisted-native`});
+  expect(screen.queryByText(zh.chat.engineChooseAnswer)).toBeNull();
+  fireEvent.click(button);expect(screen.getByRole("menu",{name:zh.chat.engineModel})).toBeTruthy();
+  fireEvent.keyDown(screen.getByRole("menu",{name:zh.chat.engineModel}),{key:"Escape"});
+  await waitFor(()=>expect(screen.queryByRole("menu",{name:zh.chat.engineModel})).toBeNull());
+ });
+ it("picking the current model closes the menu without a native command",async()=>{
+  setup(909,"ready",{model:"native-one",managedModels:[{id:"native-one",label:"One",kind:"model"},{id:"native-two",label:"Two",kind:"model"}],managedModes:[]});
+  render(<ChatWindow/>);await screen.findByText("适配-909");
+  fireEvent.click(screen.getByRole("button",{name:`${zh.chat.engineModel}: One`}));
+  fireEvent.click(screen.getByRole("menuitem",{name:"One"}));
+  expect(screen.queryByRole("menu")).toBeNull();
+  expect(invoke.mock.calls.some(([command])=>command==="managed_conversation_set_model")).toBe(false);
  });
  it("cancel goes directly to the manager without terminal interrupt keys",async()=>{
   setup(905,"running");render(<ChatWindow/>);await screen.findByText("适配-905");

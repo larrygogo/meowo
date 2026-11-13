@@ -3501,15 +3501,6 @@ body:not(.remote-ui) .ns-actions .ns-btn { height: var(--btn-h-lg); min-width: 7
 .chat-engine-recovery-list { box-sizing: border-box; width: min(var(--chat-col), calc(100% - 48px)); max-height: 40vh; overflow: auto; margin: 0 auto var(--sp-8); padding: var(--sp-10) var(--sp-14); border-radius: var(--radius-md); background: var(--cc-panel-raised); box-shadow: inset 0 0 0 var(--hairline) var(--cc-border), var(--shadow-sm); font-size: var(--text-xs); }
 .chat-engine-recovery-meta { margin: var(--sp-4) 0; color: var(--cc-text-faint); }
 .chat-engine-recovery-role { margin: var(--sp-8) 0 var(--sp-2); color: var(--cc-text-dim); font-weight: 600; }
-/* 托管会话的模型/模式：保留原生 select（键盘、读屏直接可用），去掉系统皮肤，画成与 .chat-model-button
-   同高同形的胶囊，箭头复用 .chat-model-chevron。模型名正文色加粗（同 .chat-model-select），模式弱一档。 */
-.chat-compose .chat-engine-picker { display: inline-flex; align-items: center; height: calc(32px * var(--cc-ui)); max-width: 100%; border-radius: var(--radius-full); color: var(--cc-text-dim); }
-.chat-compose .chat-engine-picker.is-model { color: var(--cc-text); font-weight: 500; }
-.chat-compose .chat-engine-picker:hover:not(:has(select:disabled)) { background: var(--fill-hover); color: var(--cc-text); }
-.chat-compose .chat-engine-picker select { appearance: none; -webkit-appearance: none; height: 100%; min-width: 0; max-width: 220px; padding: 0 calc(var(--sp-10) + 14px) 0 var(--sp-10); border: 0; border-radius: inherit; background: transparent; color: inherit; font: inherit; font-size: var(--text-base); text-overflow: ellipsis; cursor: pointer; }
-.chat-compose .chat-engine-picker select:disabled { cursor: default; opacity: .8; }
-.chat-compose .chat-engine-picker option { background: var(--cc-panel-raised); color: var(--cc-text); font-weight: 400; }
-.chat-compose .chat-engine-picker .chat-model-chevron { position: absolute; right: var(--sp-10); pointer-events: none; }
 /* 「打断并发送」:破坏性次级动作,琥珀描边与发送按钮区分,不抢主视觉。
    .chat-compose 前缀必须有:compose 里有一条 `.chat-compose button` 的 accent 皮肤
    (38px 高、强调色边框+填充,发送键专属),特异性盖过单类名——缺前缀时本按钮被刷成
@@ -6226,7 +6217,13 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .chat-compose .chat-slash-menu .dd-item:hover { color: var(--cc-text); background: var(--fill-selected); }
 :is(.chat-compose, .nsp-composer) .chat-model-item { height: auto; min-height: 0; padding: var(--sp-9) var(--sp-11); border: 0; border-radius: var(--radius-md); color: inherit; background: transparent; }
 /* 模型菜单：双行卡片项（名称 + 描述），当前模型右侧打勾。表面/阴影仍继承 .dd-menu。 */
-.chat-model-menu { position: absolute; bottom: calc(100% + var(--sp-8)); left: 0; min-width: 232px; }
+/* 按内容定宽：浮层绝对定位在很窄的按钮容器里，只设 min-width 时长模型名会折成两行（托管会话截图，2026-11-13）。
+   上限防止超长名字把菜单撑出窗口，超出才省略。 */
+.chat-model-menu { position: absolute; bottom: calc(100% + var(--sp-8)); left: 0; min-width: 232px; width: max-content; max-width: min(360px, 80vw); }
+.chat-model-menu .chat-model-item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-model-menu .chat-model-item-text { min-width: 0; }
+/* 靠右的模型按钮（.chat-model-select）菜单右对齐向左展开，否则长名字把菜单推出输入框（托管会话截图）。 */
+.chat-model-select > .chat-model-menu { left: auto; right: 0; }
 :is(.chat-compose, .nsp-composer) .chat-model-item:hover { background: var(--fill-selected); }
 .chat-model-item { display: flex; align-items: center; gap: var(--sp-14); width: 100%; padding: var(--sp-9) var(--sp-11); border: 0; background: transparent; text-align: left; cursor: pointer; }
 .chat-model-item-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
