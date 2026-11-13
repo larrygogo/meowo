@@ -1673,9 +1673,13 @@ pub fn run() {
             std::thread::spawn(lead_native::codex_app_server::sweep_on_startup);
             // 已停用的「Meowo 托管」会话：驱动它们的 worker 已删除，还挂着运行/等待的收尾为已结束，
             // 否则看板上永远「运行中」。只改状态列，对话数据保留。后台线程，不卡启动。
+            // 用官方 CLI 恢复过、正在跑的（本实例刚启动没有 PTY，只可能在共库的另一个实例或外部终端里）
+            // 按进程事实判活，不收尾（做空 R8）。
             std::thread::spawn(|| {
                 if let Ok(store) = open_store(&db_path()) {
-                    let _ = store.end_retired_managed_sessions(now_ms());
+                    let _ = store.end_retired_managed_sessions(now_ms(), |sid| {
+                        crate::terminal::session_agent_alive(&store, sid).unwrap_or(true)
+                    });
                 }
             });
             // macOS：纯菜单栏 App（隐藏 Dock 图标），main 窗口转 NSPanel，托盘走 menubar 模块。

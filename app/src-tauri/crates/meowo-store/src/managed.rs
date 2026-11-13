@@ -103,15 +103,30 @@ impl Store {
     /// 事件把它们推进到终态，不收尾就会在看板上永远显示「运行中」。只改 sessions 的状态列，
     /// managed_* 表与对话数据原样保留。返回收尾的条数。
     ///
-    /// 已用「用官方 CLI 打开」恢复成原生会话的（独占 pid，pid_shared=0）不动：它们由原生
-    /// 存活判定管，这里一刀切会把正在跑的 CLI 会话误标成已结束。
-    pub fn end_retired_managed_sessions(&self, now: i64) -> Result<usize, StoreError> {
-        Ok(self.conn.execute(
-            "UPDATE sessions SET status='ended',pid=NULL,pid_shared=0,ended_at=COALESCE(ended_at,?1),pending_review=NULL \
-             WHERE status<>'ended' AND (pid IS NULL OR pid_shared=1) \
-             AND id IN (SELECT session_id FROM managed_conversations)",
-            params![now],
-        )?)
+    /// 已用「用官方 CLI 打开」恢复成原生会话、CLI 正在跑的不动：`running(session_id)` 由调用方按进程
+    /// 事实判定（PTY / 进程表）。不能按 pid_shared 判：Lead 下的 Codex 走 --remote，hook 记下的 pid 是
+    /// app-server、按 Shared 写成 pid_shared=1，旧判据会在共库的另一个 Meowo 实例启动时把正在跑的已恢复
+    /// 会话误改成已结束（做空 R8）。
+    pub fn end_retired_managed_sessions(
+        &self,
+        now: i64,
+        running: impl Fn(i64) -> bool,
+    ) -> Result<usize, StoreError> {
+        let candidates: Vec<i64> = self
+            .conn
+            .prepare(
+                "SELECT id FROM sessions WHERE status<>'ended'                  AND id IN (SELECT session_id FROM managed_conversations)",
+            )?
+            .query_map([], |r| r.get(0))?
+            .collect::<Result<_, _>>()?;
+        let mut ended = 0;
+        for id in candidates.into_iter().filter(|id| !running(*id)) {
+            ended += self.conn.execute(
+                "UPDATE sessions SET status='ended',pid=NULL,pid_shared=0,ended_at=COALESCE(ended_at,?1),pending_review=NULL                  WHERE id=?2 AND status<>'ended'",
+                params![now, id],
+            )?;
+        }
+        Ok(ended)
     }
 }
 
@@ -153,22 +168,33 @@ mod tests {
         assert_eq!(store.retired_managed(unbound).unwrap().unwrap().native_session_id, None);
         assert_eq!(store.retired_managed(native).unwrap(), None);
 
-        // 已恢复成原生 CLI 会话的（独占 pid）不收尾。
+        // 已恢复成原生 CLI 会话、CLI 正在跑的不收尾——不论 pid 是独占的，还是 Lead 下 Codex --remote 的
+        // app-server（pid_shared=1，做空 R8）。
         let (resumed, _) = store.start_session(project, "thread-resumed", 1).unwrap();
-        store
-            .conn
-            .execute(
-                "INSERT INTO managed_conversations(session_id,provider,cwd,native_session_id,phase,created_at,updated_at) VALUES(?1,'codex','C:/repo','thread-resumed','failed',1,1)",
-                [resumed],
-            )
-            .unwrap();
+        let (remote, _) = store.start_session(project, "thread-remote", 1).unwrap();
+        let (stale, _) = store.start_session(project, "thread-stale", 1).unwrap();
+        for (id, native_id) in [(resumed, "thread-resumed"), (remote, "thread-remote"), (stale, "thread-stale")] {
+            store
+                .conn
+                .execute(
+                    "INSERT INTO managed_conversations(session_id,provider,cwd,native_session_id,phase,created_at,updated_at) VALUES(?1,'codex','C:/repo',?2,'failed',1,1)",
+                    params![id, native_id],
+                )
+                .unwrap();
+        }
         store.set_session_pid(resumed, 4242, 2).unwrap();
+        store.set_session_shared_pid(remote, 4343, 2).unwrap();
+        // 旧托管 worker 留下的共享 pid，进程早没了：照常收尾。
+        store.set_session_shared_pid(stale, 4444, 2).unwrap();
+        let running = |id: i64| id == resumed || id == remote;
 
-        assert_eq!(store.end_retired_managed_sessions(5).unwrap(), 2);
+        assert_eq!(store.end_retired_managed_sessions(5, running).unwrap(), 3);
         assert_ne!(store.get_session(resumed).unwrap().status, "ended");
+        assert_ne!(store.get_session(remote).unwrap().status, "ended");
+        assert_eq!(store.get_session(stale).unwrap().status, "ended");
         assert_eq!(store.get_session(bound).unwrap().status, "ended");
         assert_ne!(store.get_session(native).unwrap().status, "ended");
-        assert_eq!(store.end_retired_managed_sessions(6).unwrap(), 0);
+        assert_eq!(store.end_retired_managed_sessions(6, running).unwrap(), 0);
         let events: i64 = store
             .conn
             .query_row("SELECT COUNT(*) FROM managed_events", [], |r| r.get(0))
