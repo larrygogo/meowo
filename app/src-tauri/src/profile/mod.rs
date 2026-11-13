@@ -556,6 +556,12 @@ fn merge_dir_no_overwrite(src: &std::path::Path, dst: &std::path::Path) -> Resul
         let name = entry.file_name();
         let from = entry.path();
         let to = dst.join(&name);
+        // 链接（junction / 符号链接）不合并：账号里的链接是共享 skill 时建的（见 [`share`]），
+        // 指向默认目录本身。活链接跟进去等于拿默认目录跟自己合并；死链接会走到下面的
+        // fs::copy，报「拒绝访问」，整个合并中止（做空审查问题 1）。
+        if entry.file_type().is_ok_and(|t| t.is_symlink()) {
+            continue;
+        }
         if from.is_dir() {
             if !to.exists() {
                 std::fs::create_dir_all(&to).map_err(|e| coded("profile/create-dir-failed", e))?;

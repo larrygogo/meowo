@@ -289,15 +289,16 @@ fn all_claude_dirs() -> Vec<PathBuf> {
 
 /// 开关落到每个目录：`reporter = Some` 安装，`None` 卸载。`dirs[0]` 是默认目录。
 ///
-/// 默认目录失败直接报（开关状态以它为准）；账号目录逐个做完再报第一个错，
-/// 免得一个账号出问题，其余账号跟着停在半路。登记表迁移只对默认目录做（初版只装在那里）。
+/// 默认目录失败直接报：开关显示的就是它的状态（[`installed_in`] 只看默认目录）。
+/// 账号目录失败只记日志、不报错：报了错前端会保持旧的开关状态，可默认目录已经改了，
+/// 开关就和实际相反（做空审查问题 2）。常见原因是账号里有用户自己放的同名文件，不覆盖。
+/// 登记表迁移只对默认目录做（初版只装在那里）。
 fn apply_to_dirs(dirs: &[PathBuf], reporter: Option<&str>, registry: Option<&Path>) -> Result<(), String> {
     let Some((home, profiles)) = dirs.split_first() else { return Ok(()) };
     match reporter {
         Some(r) => install_into(home, r, registry)?,
         None => uninstall_from(home)?,
     }
-    let mut first_error = None;
     for dir in profiles {
         let result = match reporter {
             Some(r) => install_into(dir, r, None),
@@ -305,10 +306,9 @@ fn apply_to_dirs(dirs: &[PathBuf], reporter: Option<&str>, registry: Option<&Pat
         };
         if let Err(e) = result {
             eprintln!("Lead 工作流（{}）: {e}", dir.display());
-            first_error.get_or_insert(e);
         }
     }
-    first_error.map_or(Ok(()), Err)
+    Ok(())
 }
 
 /// 默认目录装着 Lead 时，把它也装进某个账号的数据目录（新建账号时调）。没装或 dev 构建 → 不动。
@@ -543,6 +543,14 @@ mod install_tests {
             assert!(!installed_in(d), "{}", d.display());
             assert!(lead_cmds(&settings_of(d)).is_empty());
         }
+
+        // 账号里有用户自己的同名 skill：默认目录照装、整体不报错（开关状态跟默认目录走），
+        // 用户的文件不被覆盖。
+        std::fs::create_dir_all(prof.join("skills/lead")).unwrap();
+        std::fs::write(prof.join("skills/lead/SKILL.md"), "我自己的 lead").unwrap();
+        apply_to_dirs(&dirs, Some("C:/m/meowo-reporter.exe"), None).unwrap();
+        assert!(installed_in(&home));
+        assert_eq!(std::fs::read_to_string(prof.join("skills/lead/SKILL.md")).unwrap(), "我自己的 lead");
     }
 
     #[test]

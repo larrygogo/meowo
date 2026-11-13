@@ -40,7 +40,14 @@ pub(crate) fn share_skills(home_data: &Path, profile_data: &Path) -> Result<(), 
         if std::fs::symlink_metadata(&link).is_ok() {
             continue;
         }
-        if let Err(e) = make_dir_link(&link, &src.join(name)) {
+        let target = src.join(name);
+        if !safe_for_shell(&link) || !safe_for_shell(&target) {
+            // Windows 上建链接要经过 cmd，路径里的 & | ^ % 之类会被 cmd 解释：轻则建错链接，
+            // 重则执行 & 后面的命令（做空审查问题 3）。这种 skill 宁可不共享。
+            first_error.get_or_insert(format!("{}: 名字含命令行特殊字符，未共享", target.display()));
+            continue;
+        }
+        if let Err(e) = make_dir_link(&link, &target) {
             first_error.get_or_insert(format!("{}: {e}", link.display()));
         }
     }
@@ -50,7 +57,7 @@ pub(crate) fn share_skills(home_data: &Path, profile_data: &Path) -> Result<(), 
         for entry in entries.flatten() {
             let path = entry.path();
             let Some(target) = link_target(&path) else { continue };
-            if !target.starts_with(&src) {
+            if !path_starts_with(&target, &src) {
                 continue; // 用户自己建的、指向别处的链接
             }
             let name = entry.file_name();
@@ -86,6 +93,31 @@ fn shareable_skills(src: &Path) -> Vec<PathBuf> {
         .collect();
     names.sort();
     names
+}
+
+/// 路径前缀判断。Windows 文件系统不分大小写，junction 里记下的路径大小写可能和
+/// 现算的默认目录不同，按字面比较会让这条链接永远认不出是自己建的、永远清不掉。
+fn path_starts_with(path: &Path, prefix: &Path) -> bool {
+    #[cfg(windows)]
+    {
+        let lower = |p: &Path| PathBuf::from(p.to_string_lossy().to_lowercase());
+        lower(path).starts_with(lower(prefix))
+    }
+    #[cfg(not(windows))]
+    {
+        path.starts_with(prefix)
+    }
+}
+
+/// 路径能否原样交给 cmd（Windows 建 junction 用）。unix 上直接调系统接口，不经 shell。
+fn safe_for_shell(path: &Path) -> bool {
+    if cfg!(not(windows)) {
+        return true;
+    }
+    !path
+        .to_string_lossy()
+        .chars()
+        .any(|c| matches!(c, '&' | '|' | '<' | '>' | '^' | '%' | '!' | '"' | '(' | ')'))
 }
 
 /// `path` 是链接（junction / 符号链接）时返回它的目标，去掉 Windows 的 `\\?\` 前缀以便比较。
@@ -236,6 +268,32 @@ mod tests {
         assert!(std::fs::symlink_metadata(ps.join("gone")).is_err(), "死链接应被拆掉");
         assert!(is_link(&ps.join("keep")));
         assert!(moved.join("SKILL.md").is_file());
+    }
+
+    /// 名字里有 cmd 特殊字符的 skill 不共享，也不能让 & 后面的东西被当成命令执行；
+    /// 其余 skill 照常共享。
+    #[cfg(windows)]
+    #[test]
+    fn skips_names_cmd_would_interpret() {
+        let t = Tmp::new("shell");
+        let home = t.0.join("home");
+        let prof = t.0.join("profile");
+        let hs = home.join("skills");
+        // cmd 的工作目录是测试进程的当前目录：命令被执行的话，这里会多出一个目录。
+        let marker = std::env::current_dir().unwrap().join(format!("meowo-pwned-{}", std::process::id()));
+        let evil = format!("x&mkdir {}", marker.file_name().unwrap().to_string_lossy());
+        skill(&hs, &evil, "e");
+        skill(&hs, "caret^x", "c");
+        skill(&hs, "ok", "o");
+
+        assert!(share_skills(&home, &prof).is_err(), "跳过的条目要报出来");
+        let ps = prof.join("skills");
+        let executed = marker.exists();
+        let _ = std::fs::remove_dir(&marker);
+        assert!(!executed, "& 后面的命令不能被执行");
+        assert!(std::fs::symlink_metadata(ps.join(&evil)).is_err());
+        assert!(std::fs::symlink_metadata(ps.join("caretx")).is_err());
+        assert!(is_link(&ps.join("ok")));
     }
 
     #[test]
