@@ -30,6 +30,21 @@ describe("protocol managed ChatWindow",()=>{
   expect(typeof sendCalls[0].deliveryId).toBe("string");await waitFor(()=>expect(adapter.box().value).toBe(""));
   expect(writes()).toEqual([]);expect(terminalMounts.count).toBe(mounted);
  });
+ // 验收 #9「自动送达不覆盖草稿」：手机作答后的 Lead 答复由后端直接投进托管会话，用户正在输入框里写的
+ // 草稿必须原样保留，也不能被顺手发出去。兄弟场景：投递进入运行中、投递完成两次刷新都不动草稿。
+ it("a Lead answer delivered in the background never clears or sends the composer draft",async()=>{
+  const {frame,sendCalls}=setup(910);render(<ChatWindow/>);await screen.findByText("适配-910");
+  fireEvent.change(adapter.box(),{target:{value:"my unsent draft"}});
+  const lead={sessionId:910,deliveryId:"lead-1",ordinal:1,text:"[lead] leader 已在 Meowo 里回答关卡",origin:"user",attachments:[],gateRef:{taskDir:"C:/p/.lead/t",gateId:"Q-1"},state:"accepted",nativeMessageId:null,lastError:null,acceptedAt:1,consumedAt:null,completedAt:null,createdAt:1,updatedAt:1};
+  Object.assign(frame,{managedPhase:"running",managedDeliveries:[lead]});
+  const polls=()=>invoke.mock.calls.filter(([command])=>command==="get_chat_history").length;
+  const before=polls();await waitFor(()=>expect(polls()).toBeGreaterThan(before+1),{timeout:4000});
+  expect(adapter.box().value).toBe("my unsent draft");
+  Object.assign(frame,{managedPhase:"ready",managedDeliveries:[{...lead,state:"completed",consumedAt:2,completedAt:3}]});
+  const again=polls();await waitFor(()=>expect(polls()).toBeGreaterThan(again+1),{timeout:4000});
+  expect(adapter.box().value).toBe("my unsent draft");
+  expect(sendCalls).toEqual([]);expect(writes()).toEqual([]);
+ });
  it("a network retry of the same draft reuses its stable delivery ID",async()=>{
   setup(902);const original=invoke.getMockImplementation()!;let fails=true;
   invoke.mockImplementation((command,args)=>command==="managed_conversation_send"&&fails?(fails=false,Promise.reject("conversation/transport_error")):original(command,args));
