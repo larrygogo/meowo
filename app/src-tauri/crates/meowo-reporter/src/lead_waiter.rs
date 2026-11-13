@@ -98,19 +98,12 @@ pub fn mark_delivered(task: &Path, gate: &LeadGateDto) {
 
 /// 等待命令。session 只含 `[A-Za-z0-9_-]`（hook 层已校验），reporter 路径来自本进程，
 /// 命令里没有任何用户可控文本——关卡 id 也不放进去，等待器启动时自己读当前关卡。
-///
-/// - kimi 的 Bash 在 Windows 上是 Git Bash `sh -c`：路径用正斜杠，双引号包住。正斜杠还让
-///   permission 规则的 picomatch 模式里不出现反斜杠（它在 picomatch 里是转义符）。
-/// - gemini 在 Windows 上用 PowerShell 执行 shell 命令（getShellConfiguration）：`& '路径'`。
+/// 前缀与 Lead 安装写入的放行规则同源（[`meowo_agent::lead_install::waiter_command_prefix`]）。
 pub fn command(provider: &str, reporter: &str, session: &str) -> String {
-    let tail = format!("lead wait --provider {provider} --session {session}");
-    if provider == "gemini" && cfg!(windows) {
-        format!("& '{}' {tail}", reporter.replace('\'', "''"))
-    } else if provider == "gemini" {
-        format!("'{}' {tail}", reporter.replace('\'', r"'\''"))
-    } else {
-        format!("\"{}\" {tail}", reporter.replace('\\', "/"))
-    }
+    format!(
+        "{} --session {session}",
+        meowo_agent::lead_install::waiter_command_prefix(provider, reporter)
+    )
 }
 
 /// 本进程的路径（hook 与等待器是同一个 reporter）。
