@@ -120,29 +120,78 @@ fn fake_model(log: Arc<Mutex<Vec<Value>>>) -> u16 {
                 let mut body = vec![0; length];
                 let _ = reader.read_exact(&mut body);
                 let request: Value = serde_json::from_slice(&body).unwrap_or_default();
-                let last_user = request["input"]
-                    .as_array()
-                    .and_then(|items| items.iter().rev().find(|i| i["role"] == "user"))
+                let items = request["input"].as_array().cloned().unwrap_or_default();
+                let last_user = items
+                    .iter()
+                    .rev()
+                    .find(|i| i["role"] == "user")
                     .map(|i| i.to_string())
                     .unwrap_or_default();
-                let reply = nonce_re
-                    .find_iter(&last_user)
+                let last_is_tool_output = items
                     .last()
-                    .map(|m| m.as_str().to_owned())
-                    .unwrap_or_else(|| "OK".into());
+                    .is_some_and(|i| i["type"].as_str().is_some_and(|t| t.ends_with("_output")));
+                // 剧本：APPROVE_ME → 调一条要提权的命令（停在审批框）；SPAWN_SUB → 派子代理；
+                // SUB_TASK（子代理收到的任务）→ SUB_DONE；工具结果回来 → TOOL_DONE；其余回口令。
+                let call = |name: &str, namespace: Option<&str>, args: Value| {
+                    let mut item = json!({"type":"function_call","id":"fc","call_id":format!("call_{}", crate::remote::generate_token().unwrap()[..8].to_owned()),"name":name,"arguments":args.to_string()});
+                    if let Some(ns) = namespace {
+                        item["namespace"] = json!(ns);
+                    }
+                    item
+                };
+                let (reply, item) = if last_is_tool_output {
+                    ("TOOL_DONE".to_owned(), None)
+                } else if last_user.contains("APPROVE_ME") {
+                    (
+                        "<exec_command>".to_owned(),
+                        Some(call(
+                            "exec_command",
+                            None,
+                            json!({"cmd":"New-Item -ItemType File probe-approval.txt","sandbox_permissions":"require_escalated","justification":"probe approval"}),
+                        )),
+                    )
+                } else if last_user.contains("SPAWN_SUB") {
+                    (
+                        "<spawn_agent>".to_owned(),
+                        Some(call(
+                            "spawn_agent",
+                            Some("multi_agent_v1"),
+                            json!({"message":"SUB_TASK reply SUB_DONE only"}),
+                        )),
+                    )
+                } else if last_user.contains("SUB_TASK") {
+                    ("SUB_DONE".to_owned(), None)
+                } else {
+                    (
+                        nonce_re
+                            .find_iter(&last_user)
+                            .last()
+                            .map(|m| m.as_str().to_owned())
+                            .unwrap_or_else(|| "OK".into()),
+                        None,
+                    )
+                };
                 let header = |k: &str| headers.iter().find(|(h, _)| h == k).map(|(_, v)| v.clone());
                 let meta: Value = header("x-codex-turn-metadata")
                     .and_then(|m| serde_json::from_str(&m).ok())
+                    .unwrap_or_default();
+                let tools: Vec<Value> = request["tools"]
+                    .as_array()
+                    .map(|tools| tools.iter().map(|t| t["name"].clone()).collect())
                     .unwrap_or_default();
                 log.lock().unwrap().push(json!({
                     "reply": reply,
                     "originator": header("originator"),
                     "userAgent": header("user-agent"),
                     "turnTrigger": meta["turn_trigger"],
+                    "tools": tools,
+                    "toolsFull": if std::env::var("MEOWO_PROBE_DUMP_TOOLS").is_ok() { request["tools"].clone() } else { Value::Null },
+                    "lastInput": items.last().cloned(),
                 }));
+                let output = item.unwrap_or_else(|| json!({"type":"message","role":"assistant","id":"m","content":[{"type":"output_text","text":reply}]}));
                 let events = [
                     json!({"type":"response.created","response":{"id":"r"}}),
-                    json!({"type":"response.output_item.done","item":{"type":"message","role":"assistant","id":"m","content":[{"type":"output_text","text":reply}]}}),
+                    json!({"type":"response.output_item.done","item":output}),
                     json!({"type":"response.completed","response":{"id":"r","usage":{"input_tokens":1,"input_tokens_details":null,"output_tokens":1,"output_tokens_details":null,"total_tokens":2}}}),
                 ];
                 let sse: String = events
@@ -344,6 +393,139 @@ fn thread_of(db: &Path, first: &str) -> String {
     panic!("找不到主 thread：{loaded}");
 }
 
+/// 本机 reporter（hook 用）：MEOWO_PROBE_REPORTER 优先，否则当前 CARGO_TARGET_DIR 下的 debug 构建。
+fn reporter_path() -> String {
+    let exe = std::env::var("MEOWO_PROBE_REPORTER")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            std::env::var("CARGO_TARGET_DIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target"))
+                .join("debug/meowo-reporter.exe")
+        });
+    dunce::canonicalize(&exe)
+        .unwrap_or_else(|_| panic!("先 cargo build -p meowo-reporter：{}", exe.display()))
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// 服务上已加载的 thread：(id, 父 thread, 预览)。
+fn threads(db: &Path) -> Vec<(String, Option<String>, String)> {
+    let Some((dir, state)) = states(db).into_iter().next() else {
+        return Vec::new();
+    };
+    let token = std::fs::read_to_string(dir.join("token")).unwrap();
+    let mut client = ws::Client::connect(state.port, token.trim(), RPC_TIMEOUT).unwrap();
+    client
+        .call(
+            "initialize",
+            json!({"clientInfo": {"name": "meowo-probe", "version": "0"}}),
+            RPC_TIMEOUT,
+        )
+        .unwrap();
+    client.notify("initialized").unwrap();
+    let loaded = client
+        .call("thread/loaded/list", json!({}), RPC_TIMEOUT)
+        .unwrap();
+    loaded["data"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|id| {
+            let read = client
+                .call(
+                    "thread/read",
+                    json!({"threadId": id, "includeTurns": false}),
+                    RPC_TIMEOUT,
+                )
+                .ok()?;
+            Some((
+                id.as_str()?.to_owned(),
+                parent_of(&read["thread"]),
+                read["thread"]["preview"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+            ))
+        })
+        .collect()
+}
+
+fn rollouts(home: &Path) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    let mut stack = vec![home.join("sessions")];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else {
+                out.push(path);
+            }
+        }
+    }
+    out
+}
+
+/// 某个 thread 的 rollout 里有没有含口令的**用户**消息（答复有没有被投进这个 thread）。
+fn rollout_user_says(home: &Path, thread: &str, nonce: &str) -> bool {
+    rollouts(home)
+        .iter()
+        .filter(|p| p.to_string_lossy().contains(thread))
+        .any(|p| {
+            std::fs::read_to_string(p).is_ok_and(|body| {
+                body.lines()
+                    .any(|line| line.contains("\"role\":\"user\"") && line.contains(nonce))
+            })
+        })
+}
+
+/// 每个 rollout 的 session_meta.originator（计费归属：真实模型下抓不到请求头，以 rollout 为准）。
+fn rollout_originators(home: &Path) -> Vec<Value> {
+    rollouts(home)
+        .iter()
+        .filter_map(|p| {
+            let body = std::fs::read_to_string(p).ok()?;
+            let meta = body.lines().find_map(|line| {
+                let v: Value = serde_json::from_str(line).ok()?;
+                (v["type"] == "session_meta").then_some(v)
+            })?;
+            Some(json!({
+                "file": p.file_name()?.to_string_lossy(),
+                "id": meta.pointer("/payload/id"),
+                "originator": meta.pointer("/payload/originator"),
+                "source": meta.pointer("/payload/source"),
+            }))
+        })
+        .collect()
+}
+
+fn approval_shown(screen: &str) -> bool {
+    let lower = screen.to_lowercase();
+    lower.contains("would you like to run")
+        || lower.contains("yes, proceed")
+        || lower.contains("allow command")
+        || lower.contains("approve")
+}
+
+fn session_row(db: &Path, native: &str) -> Value {
+    let store = crate::open_store(db).unwrap();
+    match store.find_session_id_pub(native).unwrap() {
+        Some(id) => json!({"id": id, "pid": store.session_pid(id).ok().flatten(),
+                           "provider": store.session_provider(id).ok()}),
+        None => Value::Null,
+    }
+}
+
+fn save_evidence(out: &Path, evidence: &Value) {
+    std::fs::create_dir_all(out).unwrap();
+    std::fs::write(
+        out.join("result.json"),
+        serde_json::to_string_pretty(evidence).unwrap(),
+    )
+    .unwrap();
+}
+
 #[test]
 #[ignore = "拉起真实 codex（默认假模型；MEOWO_PROBE_REAL=1 用真实模型），手动复跑"]
 fn codex_remote_probe() {
@@ -402,6 +584,19 @@ fn codex_remote_probe() {
     config["projects"][work.to_string_lossy().as_ref()]["trust_level"] =
         toml_edit::value("trusted");
     std::fs::write(home.join("config.toml"), config.to_string()).unwrap();
+    // 装 Meowo 的通用 hook（SessionStart 等落库、pid=app-server），与生产同一接线；用于核实子代理
+    // thread 会不会单独入库（做空 redteam-2 N4 遗留）。hook 用本分支构建的 reporter，库是 MEOWO_DB。
+    let reporter = reporter_path();
+    let meowo_dir = root.join("meowo");
+    std::fs::create_dir_all(&meowo_dir).unwrap();
+    let wired = meowo_agent::by_id("codex")
+        .unwrap()
+        .wire(&meowo_agent::wiring::WiringContext {
+            cli_version: Some("0.167.2"),
+            fallback_reporter: Some(&reporter),
+            meowo_dir: &meowo_dir,
+        });
+    assert!(wired.is_none(), "hook 接线失败：{wired:?}");
     let env = vec![
         ("CODEX_HOME".to_owned(), home.to_string_lossy().into_owned()),
         ("FAKE_KEY".to_owned(), "x".to_owned()),
@@ -437,13 +632,25 @@ fn codex_remote_probe() {
         env,
         exe,
     };
+    let out = std::env::var("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target"))
+        .join("codex-remote-probe")
+        .join(format!(
+            "{}-{}",
+            crate::now_ms(),
+            if real { "real" } else { "fake" }
+        ));
     let mut evidence = json!({
         "real": real,
         "codex": String::from_utf8_lossy(&version.stdout).trim(),
     });
-    let policy: &[&str] = &["-a", "never", "-s", "read-only"];
+    // on-request：模型要提权时弹审批（C 步要一个挂着的审批）；其余回合不调工具。
+    let policy: &[&str] = &["-a", "on-request", "-s", "read-only"];
+    let steps = std::env::var("MEOWO_PROBE_STEPS").unwrap_or_else(|_| "A,C,D,E".into());
+    let step = |name: &str| steps.split(',').any(|s| s.trim() == name);
 
-    // ① TUI 在线：答复后同一会话自动开新回合，TUI 上看得到；输入框草稿不被覆盖。
+    // ---- A/B 在线：答复后同一会话自动开新回合，TUI 上看得到；输入框草稿不被覆盖。
     let (mut tui, server) = probe.launch(-1, policy);
     let first = nonce("FIRST");
     tui.send(&format!("只回复 {first} 这一个词，不要调用任何工具。"));
@@ -456,87 +663,210 @@ fn codex_remote_probe() {
     );
     let thread = thread_of(&probe.db, &first);
     let store = crate::open_store(&probe.db).unwrap();
-    let project = store
-        .upsert_project_by_root(&probe.work.to_string_lossy(), "probe", 1)
-        .unwrap();
-    let (sid, _) = store.start_session(project, &thread, 2).unwrap();
-    store.set_session_provider(sid, "codex").unwrap();
-    // 生产里这一步由 hook（owner_pid = app-server）完成；探针隔离目录没装 hook，照同一语义补上。
-    store
-        .set_session_shared_pid(sid, i64::from(server), 3)
-        .unwrap();
+    // hook 已把会话落库（pid=app-server）；没落上就照同一语义补一笔。
+    let hooked = session_row(&probe.db, &thread);
+    evidence["mainSessionRowFromHook"] = hooked.clone();
+    let sid = match store.find_session_id_pub(&thread).unwrap() {
+        Some(id) => id,
+        None => {
+            let project = store
+                .upsert_project_by_root(&probe.work.to_string_lossy(), "probe", 1)
+                .unwrap();
+            let (sid, _) = store.start_session(project, &thread, 2).unwrap();
+            store.set_session_provider(sid, "codex").unwrap();
+            sid
+        }
+    };
+    if store.session_pid(sid).ok().flatten().is_none() {
+        store
+            .set_session_shared_pid(sid, i64::from(server), 3)
+            .unwrap();
+    }
     let task = probe.gate("Q-online");
     std::fs::write(task.join(".owner"), &thread).unwrap();
-    let draft = format!("draft-{}", &crate::remote::generate_token().unwrap()[..6]);
-    tui.send(&draft);
-    std::thread::sleep(Duration::from_millis(800));
-    let online = nonce("LEAD");
-    let (result, status, answer_ms) = probe.answer("Q-online", &online);
-    let shown = tui.wait(180, |s| assistant_says(s, &online));
-    std::thread::sleep(Duration::from_secs(1));
-    let screen = tui.text();
-    evidence["online"] = json!({
-        "nonce": online, "answer": result, "status": status.state, "answerMs": answer_ms,
-        "tuiShowsReply": shown, "draftKept": screen.contains(&draft), "screen": screen,
-    });
-    assert_eq!(result, Ok(true));
-    assert_eq!(status.state, "accepted");
-    assert!(shown, "在线投递未在 TUI 显示：\n{screen}");
-    assert!(screen.contains(&draft), "草稿被覆盖：\n{screen}");
-    // 已送达的不重发：同一关卡再触发一次投递（巡检/重复作答）不应新增回合。
-    crate::lead_conversation::reconcile_task(&probe.db, &task, None);
+    if step("A") {
+        let draft = format!("draft-{}", &crate::remote::generate_token().unwrap()[..6]);
+        tui.send(&draft);
+        std::thread::sleep(Duration::from_millis(800));
+        let online = nonce("LEAD");
+        let (result, status, answer_ms) = probe.answer("Q-online", &online);
+        let started = Instant::now();
+        let shown = tui.wait(180, |s| assistant_says(s, &online));
+        let shown_ms = started.elapsed().as_millis() + answer_ms;
+        std::thread::sleep(Duration::from_secs(1));
+        let screen = tui.text();
+        evidence["A_online"] = json!({
+            "nonce": online, "answer": result, "status": status.state, "answerMs": answer_ms,
+            "replyOnScreenMs": shown_ms,
+            "tuiShowsReply": shown, "draftKept": screen.contains(&draft), "screen": screen,
+        });
+        save_evidence(&out, &evidence);
+        assert_eq!(result, Ok(true));
+        assert_eq!(status.state, "accepted");
+        assert!(shown, "在线投递未在 TUI 显示：\n{screen}");
+        assert!(screen.contains(&draft), "草稿被覆盖：\n{screen}");
+        // 已送达的不重发：同一关卡再触发一次投递（巡检/重复作答）不应新增回合。
+        crate::lead_conversation::reconcile_task(&probe.db, &task, None);
+        // 清掉草稿（Ctrl-U 清行）。
+        tui.send("\x15");
+        std::thread::sleep(Duration::from_millis(500));
+    }
 
-    // ② TUI 退出：服务随之收掉（不做离线续跑）；此时作答只保存、不调模型，记 waiting。
-    //    重开会话（resume）后 TUI 握手，巡检经在线 queue/add 送达，TUI 上看得到。
-    //    这一步 DB 里的会话 pid 还是上一代服务，握手证据只能来自连接表（N6 第 3 条）。
+    // ---- C 待批审批：模型挂着一个提权命令的审批时作答。审批框不能被答掉；答复排队，拒绝审批后送达。
+    if step("C") {
+        let ask = if real {
+            "用 exec_command 执行这条命令：New-Item -ItemType File probe-approval.txt ；参数 sandbox_permissions 设为 require_escalated（需要我批准）。不要做别的事，也不要换别的方式。".to_owned()
+        } else {
+            "APPROVE_ME".to_owned()
+        };
+        tui.send(&ask);
+        std::thread::sleep(Duration::from_millis(500));
+        tui.send("\r");
+        let pending = tui.wait(180, approval_shown);
+        let before = tui.text();
+        let gate_c = nonce("LEAD");
+        probe.gate("Q-approval");
+        std::fs::write(task.join(".owner"), &thread).unwrap();
+        let (result, status, answer_ms) = probe.answer("Q-approval", &gate_c);
+        std::thread::sleep(Duration::from_secs(5));
+        let during = tui.text();
+        let still_pending = approval_shown(&during);
+        let early = assistant_says(&during, &gate_c);
+        let file_created = probe.work.join("probe-approval.txt").exists();
+        // 手动处理审批：MEOWO_PROBE_APPROVAL=approve 按 y 批准；默认 Esc 拒绝（No, tell Codex what to do differently）。
+        let approve = std::env::var("MEOWO_PROBE_APPROVAL").as_deref() == Ok("approve");
+        let decided = Instant::now();
+        tui.send(if approve { "y" } else { "\x1b" });
+        let shown = tui.wait(120, |s| assistant_says(s, &gate_c));
+        let after = tui.text();
+        evidence["C_approval"] = json!({
+            "nonce": gate_c, "approvalShown": pending, "answer": result, "status": status.state,
+            "answerMs": answer_ms, "approvalStillPending5s": still_pending,
+            "replyBeforeDecision": early, "fileCreatedBeforeDecision": file_created,
+            "decision": if approve { "y(approve)" } else { "Esc(decline)" }, "replyAfterDecision": shown,
+            "replyAfterDecisionMs": decided.elapsed().as_millis(),
+            "fileCreatedAfter": probe.work.join("probe-approval.txt").exists(),
+            "screenBefore": before, "screenDuring": during, "screenAfter": after,
+        });
+        save_evidence(&out, &evidence);
+        if !shown {
+            // 拒绝后没自动送达：发一句普通消息看排队的答复是否随后送达（只记录，不判过）。
+            tui.send("继续");
+            std::thread::sleep(Duration::from_millis(500));
+            tui.send("\r");
+            let late = tui.wait(120, |s| assistant_says(s, &gate_c));
+            evidence["C_approval"]["replyAfterUserNudge"] = json!(late);
+            evidence["C_approval"]["screenAfterNudge"] = json!(tui.text());
+            save_evidence(&out, &evidence);
+        }
+        tui.send("\x15");
+        std::thread::sleep(Duration::from_secs(2));
+    }
+
+    // ---- D 子代理：.owner 是子代理 thread 时作答，答复进主 thread（主 TUI 可见），不进子代理。
+    if step("D") {
+        let ask = if real {
+            "调用 spawn_agent 派一个子代理，给它的任务是：用 exec_command 运行 Get-Location（只读命令），然后只回复 SUB_DONE 这一个词。派出后调用 wait_agent 等它结束，然后只回复 SPAWNED 一个词。不要做别的。".to_owned()
+        } else {
+            "SPAWN_SUB".to_owned()
+        };
+        tui.send(&ask);
+        std::thread::sleep(Duration::from_millis(500));
+        tui.send("\r");
+        let spawned = (0..120).find_map(|_| {
+            std::thread::sleep(Duration::from_secs(1));
+            threads(&probe.db)
+                .into_iter()
+                .find(|(_, parent, _)| parent.as_deref() == Some(thread.as_str()))
+        });
+        let settled = tui.wait(180, |s| {
+            s.lines().any(|l| {
+                l.trim_start().starts_with('•')
+                    && (l.contains("SPAWNED") || l.contains("TOOL_DONE"))
+            })
+        });
+        let mut d = json!({
+            "subagentSpawned": spawned.is_some(), "parentTurnSettled": settled,
+            "threads": threads(&probe.db).iter().map(|(id, p, pre)| json!({"id": id, "parent": p, "preview": pre})).collect::<Vec<_>>(),
+            "screenAfterSpawn": tui.text(),
+        });
+        if let Some((sub, _, _)) = spawned {
+            // 遗留核实：子代理 thread 是否单独入库、有没有进程号（hook 写的）。
+            std::thread::sleep(Duration::from_secs(3));
+            d["subagentThread"] = json!(sub);
+            d["subagentRowInDb"] = session_row(&probe.db, &sub);
+            let gate_d = nonce("LEAD");
+            probe.gate("Q-sub");
+            std::fs::write(task.join(".owner"), &sub).unwrap();
+            let (result, status, answer_ms) = probe.answer("Q-sub", &gate_d);
+            let started = Instant::now();
+            let shown = tui.wait(120, |s| assistant_says(s, &gate_d));
+            d["nonce"] = json!(gate_d);
+            d["answer"] = json!(result);
+            d["status"] = json!(status.state);
+            d["statusReason"] = json!(status.reason);
+            d["answerMs"] = json!(answer_ms);
+            d["mainTuiShowsReply"] = json!(shown);
+            d["replyMs"] = json!(started.elapsed().as_millis() + answer_ms);
+            d["deliveredToMainRollout"] = json!(rollout_user_says(&probe.home, &thread, &gate_d));
+            d["deliveredToSubRollout"] = json!(rollout_user_says(&probe.home, &sub, &gate_d));
+            d["screen"] = json!(tui.text());
+        }
+        evidence["D_subagent"] = d;
+        save_evidence(&out, &evidence);
+        std::fs::write(task.join(".owner"), &thread).unwrap();
+    }
+
+    // ---- E TUI 不在：服务随之收掉；作答只保存、不调模型、不起任何进程，记 waiting。
+    //      重开会话（resume）后 TUI 握手，巡检经在线 queue/add 送达，TUI 上看得到。
     tui.quit();
     assert!(!tui.alive(), "TUI 未退出");
     let started = Instant::now();
     while !states(&probe.db).is_empty() && started.elapsed() < Duration::from_secs(15) {
         std::thread::sleep(Duration::from_millis(200));
     }
-    assert!(states(&probe.db).is_empty(), "TUI 退出后服务没被收掉");
-    probe.gate("Q-reopen");
-    let reopen = nonce("LEAD");
-    let (result, status, _) = probe.answer("Q-reopen", &reopen);
-    assert_eq!(status.state, "waiting", "{status:?}");
-    assert!(
-        probe.wait_rollout(&reopen, 5).is_none(),
-        "会话没开时不应调用模型"
-    );
-    let (mut tui2, _) = probe.launch(sid, &[policy, &["resume", &thread]].concat());
-    let started = Instant::now();
-    let task = probe.work.join(".lead").join("probe");
-    crate::lead_conversation::reconcile_task(&probe.db, &task, None);
-    let shown = tui2.wait(180, |s| assistant_says(s, &reopen));
-    let status = crate::lead_conversation::delivery_status(
-        &probe.db,
-        &probe.work.to_string_lossy(),
-        "Q-reopen",
-    );
-    evidence["reopen"] = json!({
-        "nonce": reopen, "answer": result, "status": status.map(|s| s.state),
-        "deliveredMs": started.elapsed().as_millis(), "tuiShowsReply": shown, "screen": tui2.text(),
-    });
-    tui2.quit();
+    let server_retired = states(&probe.db).is_empty();
+    if step("E") {
+        probe.gate("Q-reopen");
+        std::fs::write(task.join(".owner"), &thread).unwrap();
+        let reopen = nonce("LEAD");
+        let marker = probe.root.to_string_lossy().into_owned();
+        let procs_before = super::super::probe_util::snapshot();
+        let (result, status, answer_ms) = probe.answer("Q-reopen", &reopen);
+        std::thread::sleep(Duration::from_secs(5));
+        let procs_after = super::super::probe_util::snapshot();
+        let spawned = super::super::probe_util::new_related(&procs_before, &procs_after, &marker);
+        let model_called = probe.wait_rollout(&reopen, 1).is_some();
+        let gate_after = meowo_reporter::lead::read_gate(&task).map(|g| g.status);
+        let (mut tui2, _) = probe.launch(sid, &[policy, &["resume", &thread]].concat());
+        let started = Instant::now();
+        crate::lead_conversation::reconcile_task(&probe.db, &task, None);
+        let shown = tui2.wait(180, |s| assistant_says(s, &reopen));
+        let delivered_ms = started.elapsed().as_millis();
+        let status2 = crate::lead_conversation::delivery_status(
+            &probe.db,
+            &probe.work.to_string_lossy(),
+            "Q-reopen",
+        );
+        evidence["E_offline"] = json!({
+            "serverRetiredAfterQuit": server_retired,
+            "nonce": reopen, "answer": result, "statusWhileClosed": status.state,
+            "answerMs": answer_ms, "newProcessesWhileClosed": spawned,
+            "procSnapshotOk": !procs_after.is_empty(),
+            "modelCalledWhileClosed": model_called, "gateWhileClosed": gate_after,
+            "statusAfterReopen": status2.map(|s| s.state),
+            "deliveredAfterReopenMs": delivered_ms, "tuiShowsReply": shown, "screen": tui2.text(),
+        });
+        tui2.quit();
+        save_evidence(&out, &evidence);
+        assert_eq!(status.state, "waiting", "{status:?}");
+        assert!(!model_called, "会话没开时不应调用模型");
+        assert!(shown, "重开会话后答复未送达");
+    }
+    evidence["F_originators"] = json!(rollout_originators(&probe.home));
     evidence["fakeModelRequests"] = json!(*fake_log.lock().unwrap());
-    let out = std::env::var("CARGO_TARGET_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target"))
-        .join("codex-remote-probe")
-        .join(format!(
-            "{}-{}",
-            crate::now_ms(),
-            if real { "real" } else { "fake" }
-        ));
-    std::fs::create_dir_all(&out).unwrap();
-    std::fs::write(
-        out.join("result.json"),
-        serde_json::to_string_pretty(&evidence).unwrap(),
-    )
-    .unwrap();
+    save_evidence(&out, &evidence);
     println!("证据：{}", out.display());
-    assert!(shown, "重开会话后答复未送达：\n{}", tui2.text());
     if !real {
         // 计费归属：所有模型请求的 originator 都是 codex-tui；排队投递 turn_trigger=queue。
         let log = fake_log.lock().unwrap();

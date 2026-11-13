@@ -243,6 +243,61 @@ fn tui_endpoint(db: &Path, pid: u32) -> Endpoint {
         .expect("TUI 启动后应登记端口与密码")
 }
 
+fn reporter_path() -> String {
+    let exe = std::env::var("MEOWO_PROBE_REPORTER")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            std::env::var("CARGO_TARGET_DIR")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target"))
+                .join("debug/meowo-reporter.exe")
+        });
+    dunce::canonicalize(&exe)
+        .unwrap_or_else(|_| panic!("先 cargo build -p meowo-reporter：{}", exe.display()))
+        .to_string_lossy()
+        .into_owned()
+}
+
+fn session_row(db: &Path, native: &str) -> Value {
+    let Ok(store) = crate::open_store(db) else {
+        return Value::Null;
+    };
+    match store.find_session_id_pub(native).ok().flatten() {
+        Some(id) => json!({"id": id, "pid": store.session_pid(id).ok().flatten(),
+                           "provider": store.session_provider(id).ok()}),
+        None => Value::Null,
+    }
+}
+
+/// 某会话里含口令的用户消息条数（答复投进了哪个会话）。
+fn user_says(client: &Client, session: &str, nonce: &str) -> usize {
+    client
+        .get(
+            &format!("/session/{session}/message"),
+            Duration::from_secs(10),
+        )
+        .ok()
+        .and_then(|v| v.as_array().cloned())
+        .unwrap_or_default()
+        .iter()
+        .filter(|m| m["info"]["role"] == "user" && m.to_string().contains(nonce))
+        .count()
+}
+
+fn permission_shown(screen: &str) -> bool {
+    let lower = screen.to_lowercase();
+    lower.contains("permission required")
+        || lower.contains("allow once")
+        || lower.contains("allow always")
+}
+
+fn clear_input(tui: &Tui, text: &str) {
+    for _ in 0..text.chars().count() + 2 {
+        tui.send("\x7f");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
 #[test]
 #[ignore = "真机：启动真实 OpenCode TUI 并调用模型；显式 MEOWO_RUN_OPENCODE_TUI_PROBE=1"]
 fn opencode_tui_lead_continuation_probe() {
@@ -257,6 +312,10 @@ fn opencode_tui_lead_continuation_probe() {
         "探针改进程环境变量，必须单线程独占运行"
     );
     use_bundled_conpty();
+    // 下面会摘掉进程里所有 MEOWO_ 变量（防探针认领外层会话）：探针自己的开关先读出来。
+    let keep_dirs = std::env::var("MEOWO_PROBE_KEEP").as_deref() == Ok("1");
+    let with_plugin = std::env::var("MEOWO_PROBE_OC_PLUGIN").as_deref() != Ok("0");
+    let reporter = reporter_path();
     let model = std::env::var("MEOWO_PROBE_OPENCODE_MODEL")
         .unwrap_or_else(|_| "opencode/deepseek-v4.1-flash-free".into());
     let source_home = std::env::var_os("USERPROFILE")
@@ -304,8 +363,9 @@ fn opencode_tui_lead_continuation_probe() {
         env.set(key, Some(dir.as_os_str()));
     }
     env.set("MEOWO_DB", Some(db.as_os_str()));
-    // 关掉 bash：探针只允许模型读写任务目录里的文件，不在本机执行命令。
-    let config = json!({"$schema":"https://opencode.ai/config.json","model":model,"small_model":model,"autoupdate":false,"share":"disabled","permission":{"edit":"allow","read":"allow","bash":"deny","webfetch":"deny"}});
+    // bash 只放 echo 为 ask（C 步要一个挂着的审批，探针最后拒绝它），其余命令一律拒绝：
+    // 全设 ask 时模型消费关卡会顺手 ls，审批挂住回合（第二轮首跑实测）。
+    let config = json!({"$schema":"https://opencode.ai/config.json","model":model,"small_model":model,"autoupdate":false,"share":"disabled","permission":{"edit":"allow","read":"allow","bash":{"*":"deny","echo *":"ask"},"webfetch":"deny"}});
     std::fs::write(
         home.join("opencode-config/opencode.json"),
         config.to_string(),
@@ -328,10 +388,26 @@ fn opencode_tui_lead_continuation_probe() {
         .unwrap();
         copied.push(format!("auth.json[{provider}]"));
     }
+    let mut log = serde_json::Map::new();
     let mut git = std::process::Command::new("git");
     git.args(["init", "--quiet"]).arg(&cwd);
     assert!(git.status().is_ok_and(|s| s.success()));
 
+    // 装 Meowo 通用上报插件（与生产同一接线）：核实子会话会不会单独入库、有没有进程号（redteam-2 遗留）。
+    let meowo_dir = root.join("meowo");
+    std::fs::create_dir_all(&meowo_dir).unwrap();
+    // MEOWO_PROBE_OC_PLUGIN=0 不装（排查用）。
+    if with_plugin {
+        let wired =
+            meowo_agent::by_id("opencode")
+                .unwrap()
+                .wire(&meowo_agent::wiring::WiringContext {
+                    cli_version: None,
+                    fallback_reporter: Some(&reporter),
+                    meowo_dir: &meowo_dir,
+                });
+        log.insert("reporterPluginWired".into(), json!(wired.is_none()));
+    }
     crate::lead_runtime::update_installation(&LeadProviderInstallationDto {
         provider: "opencode".into(),
         profile_id: None,
@@ -356,7 +432,6 @@ fn opencode_tui_lead_continuation_probe() {
         .unwrap_or_default();
 
     let mut tuis: Vec<Tui> = vec![];
-    let mut log = serde_json::Map::new();
     let save = |name: &str, text: &str| {
         let _ = std::fs::write(evidence.join(name), text);
     };
@@ -407,9 +482,19 @@ fn opencode_tui_lead_continuation_probe() {
         let project = store
             .upsert_project_by_root(&cwd_text, "probe", now_ms())
             .map_err(|e| e.to_string())?;
-        let (sid, _) = store
-            .start_session(project, &native, now_ms())
-            .map_err(|e| e.to_string())?;
+        let sid = match store
+            .find_session_id_pub(&native)
+            .map_err(|e| e.to_string())?
+        {
+            Some(id) => id,
+            None => {
+                store
+                    .start_session(project, &native, now_ms())
+                    .map_err(|e| e.to_string())?
+                    .0
+            }
+        };
+        log.insert("mainRowFromPlugin".into(), session_row(&db, &native));
         store
             .set_session_provider(sid, "opencode")
             .map_err(|e| e.to_string())?;
@@ -511,6 +596,153 @@ fn opencode_tui_lead_continuation_probe() {
             .filter(|m| m["info"]["role"] == "user")
             .count();
         log.insert("userMessagesAfterOnline".into(), json!(users_after));
+        clear_input(tui, &draft);
+        std::thread::sleep(Duration::from_secs(1));
+        let answer = |gate: &str, nonce: &str| {
+            let started = Instant::now();
+            let r = crate::lead_conversation::answer_and_deliver(
+                &db,
+                &cwd_text,
+                gate,
+                &LeadGateAnswerDto {
+                    choice: "go".into(),
+                    note: format!("After updating gate.json, reply with exactly {nonce}"),
+                },
+                None,
+            );
+            (r, started)
+        };
+
+        // ---- A-idle：模型空闲、停在等关卡时作答（草稿在输入框里）→ 同一会话立即开新回合。
+        let draft_idle = format!("DRAFT{}", token());
+        tui.send(&draft_idle);
+        tui.wait(Duration::from_secs(5), |s| s.contains(&draft_idle));
+        let gate_idle = format!("idle-{}", token().to_lowercase());
+        write_gate(&task, &native, &gate_idle);
+        let nonce_idle = format!("IDLE{}", token());
+        let (r, started) = answer(&gate_idle, &nonce_idle);
+        let accept_idle = started.elapsed().as_millis();
+        let state_idle =
+            crate::lead_conversation::delivery_status(&db, &cwd_text, &gate_idle).map(|s| s.state);
+        let seen = tui.wait(Duration::from_secs(240), |s| reply_line(s, &nonce_idle));
+        let seen_ms = started.elapsed().as_millis();
+        wait_idle(&client, &native, Duration::from_secs(120));
+        let screen = tui.text();
+        save("idle-final.txt", &screen);
+        log.insert(
+            "A_idle".into(),
+            json!({
+                "answer": r, "acceptMs": accept_idle, "deliveryState": state_idle,
+                "nonce": nonce_idle, "nonceOnTuiScreen": seen, "replyOnScreenMs": seen_ms,
+                "draftKept": screen.contains(&draft_idle), "gateStatus": gate_status(&task),
+            }),
+        );
+        clear_input(tui, &draft_idle);
+        std::thread::sleep(Duration::from_secs(1));
+
+        // ---- C 待批审批：模型挂着 bash 审批时作答。审批不能被答掉，答复排队；拒绝审批后看去向。
+        tui.send(
+            "Use the bash tool to run exactly this command: echo PROBE_APPROVAL . Do nothing else.",
+        );
+        std::thread::sleep(Duration::from_millis(500));
+        tui.send("\r");
+        let pending = tui.wait(Duration::from_secs(180), permission_shown);
+        let before = tui.text();
+        save("approval-before.txt", &before);
+        let gate_c = format!("approval-{}", token().to_lowercase());
+        write_gate(&task, &native, &gate_c);
+        let nonce_c = format!("APPROVAL{}", token());
+        let (r, started) = answer(&gate_c, &nonce_c);
+        let accept_c = started.elapsed().as_millis();
+        let state_c =
+            crate::lead_conversation::delivery_status(&db, &cwd_text, &gate_c).map(|s| s.state);
+        std::thread::sleep(Duration::from_secs(6));
+        let during = tui.text();
+        save("approval-during.txt", &during);
+        let perms = client
+            .get("/permission", Duration::from_secs(5))
+            .unwrap_or(Value::Null);
+        let still = permission_shown(&during);
+        let early = reply_line(&during, &nonce_c);
+        // 手动拒绝审批：Esc。
+        let decided = Instant::now();
+        tui.send("\x1b");
+        let after_seen = tui.wait(Duration::from_secs(180), |s| reply_line(s, &nonce_c));
+        let after_ms = decided.elapsed().as_millis();
+        wait_idle(&client, &native, Duration::from_secs(120));
+        let after = tui.text();
+        save("approval-after.txt", &after);
+        log.insert("C_approval".into(), json!({
+            "permissionShown": pending, "answer": r, "acceptMs": accept_c,
+            "deliveryState": state_c, "nonce": nonce_c, "permissionStillShown6s": still,
+            "pendingPermissionsApi": perms, "replyBeforeDecision": early,
+            "decision": "Esc(reject)", "replyAfterDecision": after_seen, "replyAfterDecisionMs": after_ms,
+            "nonceInModelReply": assistant_text(&client, &native).contains(&nonce_c),
+            "gateStatus": gate_status(&task),
+        }));
+
+        // ---- D 子代理：task 工具派子会话；.owner 指子会话时作答 → 应投主会话（主 TUI 可见），不进子会话。
+        tui.send("Use the task tool to launch a general subagent whose prompt is: reply with exactly SUB_DONE. After it finishes, reply with exactly SPAWNED.");
+        std::thread::sleep(Duration::from_millis(500));
+        tui.send("\r");
+        let child = (0..180).find_map(|_| {
+            std::thread::sleep(Duration::from_secs(1));
+            client
+                .get("/session", Duration::from_secs(5))
+                .ok()?
+                .as_array()?
+                .iter()
+                .find(|s| s["parentID"].as_str() == Some(native.as_str()))
+                .and_then(|s| s["id"].as_str().map(str::to_owned))
+        });
+        wait_idle(&client, &native, Duration::from_secs(240));
+        save("subagent-spawned.txt", &tui.text());
+        let mut d = json!({"childSession": child});
+        if let Some(child) = child {
+            std::thread::sleep(Duration::from_secs(3));
+            d["childRowInDb"] = session_row(&db, &child);
+            d["mainRowInDb"] = session_row(&db, &native);
+            let gate_d = format!("sub-{}", token().to_lowercase());
+            write_gate(&task, &child, &gate_d);
+            let nonce_d = format!("SUBOWNER{}", token());
+            let child_sid = store
+                .find_session_id_pub(&child)
+                .map_err(|e| e.to_string())?
+                .unwrap_or(-1);
+            // 遗留核实：子会话行若没有进程号，presence 会不会判成「TUI 不在」。
+            d["childPresenceIsGone"] = json!(matches!(
+                presence(
+                    &NativeTarget {
+                        db: &db,
+                        session_id: child_sid,
+                        provider: "opencode",
+                        native_session: &child,
+                        cwd: None,
+                        task: &task,
+                        gate_id: &gate_d,
+                        message: "",
+                        force: false,
+                    },
+                    None
+                ),
+                Ok(Presence::Gone)
+            ));
+            let (r, started) = answer(&gate_d, &nonce_d);
+            d["answer"] = json!(r);
+            d["acceptMs"] = json!(started.elapsed().as_millis());
+            let st = crate::lead_conversation::delivery_status(&db, &cwd_text, &gate_d);
+            d["deliveryState"] = json!(st.as_ref().map(|s| s.state.clone()));
+            d["deliveryReason"] = json!(st.as_ref().and_then(|s| s.reason.clone()));
+            let seen = tui.wait(Duration::from_secs(240), |s| reply_line(s, &nonce_d));
+            d["nonce"] = json!(nonce_d);
+            d["mainTuiShowsReply"] = json!(seen);
+            d["replyMs"] = json!(started.elapsed().as_millis());
+            wait_idle(&client, &native, Duration::from_secs(120));
+            d["userMsgsInMain"] = json!(user_says(&client, &native, &nonce_d));
+            d["userMsgsInChild"] = json!(user_says(&client, &child, &nonce_d));
+            save("subagent-after.txt", &tui.text());
+        }
+        log.insert("D_subagent".into(), d);
 
         // ---- 2. TUI 不在时作答：只保存、不起服务；重新打开会话后巡检送达。
         tuis.pop().unwrap().kill();
@@ -518,6 +750,8 @@ fn opencode_tui_lead_continuation_probe() {
         let gate2 = format!("offline-{}", token().to_lowercase());
         write_gate(&task, &native, &gate2);
         let nonce2 = format!("OFFLINE{}", token());
+        let procs_before = crate::lead_native::probe_util::snapshot();
+        let offline_started = Instant::now();
         let delivered = crate::lead_conversation::answer_and_deliver(
             &db,
             &cwd_text,
@@ -528,7 +762,15 @@ fn opencode_tui_lead_continuation_probe() {
             },
             None,
         )?;
+        let offline_answer_ms = offline_started.elapsed().as_millis();
         let status_saved = crate::lead_conversation::delivery_status(&db, &cwd_text, &gate2);
+        std::thread::sleep(Duration::from_secs(5));
+        let procs_after = crate::lead_native::probe_util::snapshot();
+        let new_procs = crate::lead_native::probe_util::new_related(
+            &procs_before,
+            &procs_after,
+            &root.to_string_lossy(),
+        );
         let endpoints_while_closed = Registry::load(&registry_path(&db)).endpoints.len();
         let plan = launch_plan("opencode", &resume, &[]).ok_or("launch plan missing")?;
         let tui = Tui::spawn(&resume, Some(&plan), &cwd)?;
@@ -539,10 +781,15 @@ fn opencode_tui_lead_continuation_probe() {
             .map_err(|e| e.to_string())?;
         let started = Instant::now();
         // 巡检每 10s 一次；这里紧凑地重复调用，直到服务接收。
+        let mut states_seen: Vec<String> = Vec::new();
         let accepted = (0..60).any(|_| {
             crate::lead_conversation::reconcile_task(&db, &task, None);
-            let state = crate::lead_conversation::delivery_status(&db, &cwd_text, &gate2)
-                .map(|s| s.state);
+            let state =
+                crate::lead_conversation::delivery_status(&db, &cwd_text, &gate2).map(|s| s.state);
+            let label = format!("{}ms:{state:?}", started.elapsed().as_millis());
+            if states_seen.last().map(|l| l.split(':').nth(1)) != Some(label.split(':').nth(1)) {
+                states_seen.push(label);
+            }
             if state.as_deref() == Some("accepted") {
                 return true;
             }
@@ -557,8 +804,13 @@ fn opencode_tui_lead_continuation_probe() {
             "deliveredReturned": delivered,
             "stateWhileClosed": status_saved.as_ref().map(|s| s.state.clone()),
             "servicesStartedWhileClosed": endpoints_while_closed,
+            "answerMs": offline_answer_ms,
+            "newProcessesWhileClosed": new_procs,
+            "procSnapshotOk": !procs_after.is_empty(),
+            "replyOnScreenMsAfterReopen": started.elapsed().as_millis(),
             "acceptedAfterReopen": accepted,
             "acceptMsAfterReopen": accept_ms,
+            "statesAfterReopen": states_seen,
             "nonce": nonce2,
             "nonceOnScreen": seen,
             "gateStatus": gate_status(&task),
@@ -578,8 +830,11 @@ fn opencode_tui_lead_continuation_probe() {
     for tui in tuis.drain(..) {
         tui.kill();
     }
-    remove_dir_retry(&home);
-    remove_dir_retry(&cwd);
+    // MEOWO_PROBE_KEEP=1 保留隔离目录排查（免费模型不复制凭据；复制了凭据时照删）。
+    if !keep_dirs || !copied.is_empty() {
+        remove_dir_retry(&home);
+        remove_dir_retry(&cwd);
+    }
     // 注册表里有本次服务的密码；进程都已结束，一并删掉。
     remove_dir_retry(&root.join("lead-native"));
     log.insert("opencodeVersion".into(), json!(version));

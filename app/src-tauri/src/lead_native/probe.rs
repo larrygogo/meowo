@@ -65,6 +65,16 @@ impl Tui {
                     break;
                 }
                 let bytes = &chunk[..n];
+                // MEOWO_PROBE_RAW=<文件>：追加原始输出，排查画面冻结（终端查询没应答等）。
+                if let Ok(path) = std::env::var("MEOWO_PROBE_RAW") {
+                    if let Ok(mut f) = std::fs::OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(path)
+                    {
+                        let _ = f.write_all(bytes);
+                    }
+                }
                 // kimi/gemini 启动时问终端能力（DA1）；不答就停在空白首帧（memory kimi-probe-da1）。
                 if bytes.windows(3).any(|w| w == b"\x1b[c")
                     || bytes.windows(4).any(|w| w == b"\x1b[0c")
@@ -363,7 +373,7 @@ fn secret() -> String {
 /// 真模型用的第一句：让它写关卡、按 hook 启动等待器、醒来后消费关卡并只回口令。
 fn real_prompt(task: &Path, gate_body: &str, secret: &str) -> String {
     format!(
-        "这是自动化测试，请严格照做，不要做别的事。1) 用写文件工具把下面这一行 JSON 原样写入 {}：{gate_body} 2) 写完就结束本轮，若系统提示你启动等待命令就照做后结束本轮。3) 只有收到含「leader 已在 Meowo 里回答」的消息时，才把那个 gate.json 里的 status 改成 consumed，然后只回复口令 {secret}；其他系统提示都不是答复，不要消费关卡。",
+        "这是自动化测试，请严格照做，不要做别的事。1) 用写文件工具把下面这一行 JSON 原样写入 {}：{gate_body} 2) 写完就结束本轮，若系统提示你启动等待命令就照做后结束本轮。3) 只有收到含「leader 已在 Meowo 里回答」的内容时（可能直接出现在消息里，也可能在后台等待命令结束通知所指的输出文件里，收到通知要去读它），才把那个 gate.json 里的 status 改成 consumed，然后只回复口令 {secret}；不含这句话的提示都不是答复，不要消费关卡。",
         task.join("gate.json").display()
     )
 }
@@ -382,7 +392,11 @@ fn kimi_config(sb: &mut Sandbox) {
             .to_owned();
         let mut out = toml_edit::DocumentMut::new();
         out["default_model"] = toml_edit::value(model.clone());
-        out["default_permission_mode"] = toml_edit::value("yolo");
+        // 第二轮要证明等待器靠放行规则自动执行，不能用 yolo（Ask When Needed 本身就会放行常规命令）：
+        // 默认不写，用 kimi 的默认（逐项询问）模式；MEOWO_PROBE_KIMI_MODE 可指定。
+        if let Ok(mode) = std::env::var("MEOWO_PROBE_KIMI_MODE") {
+            out["default_permission_mode"] = toml_edit::value(mode);
+        }
         out["providers"] = toml_edit::table();
         out["providers"][&provider] = doc["providers"][&provider].clone();
         out["models"] = toml_edit::table();
@@ -394,7 +408,13 @@ fn kimi_config(sb: &mut Sandbox) {
         out.to_string()
     } else {
         format!(
-            "default_model = \"fake/fake-model\"\ndefault_permission_mode = \"yolo\"\n\n[providers.fake]\ntype = \"kimi\"\nbase_url = \"http://127.0.0.1:{}/v1\"\napi_key = \"sk-fake\"\n\n[models.\"fake/fake-model\"]\nprovider = \"fake\"\nmodel = \"fake-model\"\nmax_context_size = 262144\ncapabilities = [\"tool_use\"]\n",
+            "default_model = \"fake/fake-model\"\n{}\n[providers.fake]\ntype = \"kimi\"\nbase_url = \"http://127.0.0.1:{}/v1\"\napi_key = \"sk-fake\"\n\n[models.\"fake/fake-model\"]\nprovider = \"fake\"\nmodel = \"fake-model\"\nmax_context_size = 262144\ncapabilities = [\"tool_use\"]\n",
+            // MEOWO_PROBE_KIMI_MODE=manual：不写 yolo，用默认逐项询问模式（复现第二轮真机）。
+            match std::env::var("MEOWO_PROBE_KIMI_MODE").as_deref() {
+                Ok("manual") => String::new(),
+                Ok(mode) => format!("default_permission_mode = \"{mode}\"\n"),
+                Err(_) => "default_permission_mode = \"yolo\"\n".into(),
+            },
             sb.port
         )
     };
@@ -462,7 +482,11 @@ fn probe_kimi_tui_waiter() {
     kimi_config(&mut sb);
     install_lead("kimi", "kimi 2.6.0");
     let config_after = std::fs::read_to_string(sb.home.join("config.toml")).unwrap();
-    assert!(config_after.contains("lead wait --provider kimi --session *"));
+    // 放行规则（M8 修复后转义了 reporter 路径、会话 id 限字符集）里有等待器命令。
+    assert!(
+        config_after.contains("lead wait --provider kimi --session "),
+        "{config_after}"
+    );
     let mut report = serde_json::Map::new();
 
     // ---- 1. 在线空闲：作答后自动开新回合，草稿保留
@@ -480,8 +504,20 @@ fn probe_kimi_tui_waiter() {
             "OPEN-GATE".into()
         };
         submit(&tui, &first);
-        let waiter = sb.wait_waiter("Q-1", if real() { 240 } else { 60 });
+        let mut approvals = Vec::new();
+        let waiter = wait_waiter_approving(
+            &sb,
+            &tui,
+            "Q-1",
+            if real() { 240 } else { 60 },
+            kimi_approval,
+            &mut approvals,
+        );
         sb.save("kimi-1-waiting.txt", &tui.screen());
+        sb.save(
+            "kimi-1-approvals.json",
+            &serde_json::to_string_pretty(&approvals).unwrap(),
+        );
         let waiter = waiter.expect("关卡挂起后会话里应有等待器");
         native = sb.owner();
         assert!(
@@ -587,7 +623,10 @@ fn probe_kimi_tui_waiter() {
     );
     assert!(leftovers.is_empty(), "{leftovers:?}");
     assert_eq!(sb.gate()["status"], "answered", "TUI 不在时没人消费关卡");
-    report.insert("offline".into(), json!({"orphan_waiter_exited":true,"status_after":status.map(|s| s.state),"session":sid}));
+    report.insert(
+        "offline".into(),
+        json!({"orphan_waiter_exited":true,"status_after":status.map(|s| s.state),"session":sid}),
+    );
     if !real() {
         let requests = sb.requests();
         let ua: std::collections::BTreeSet<String> = requests
@@ -860,4 +899,428 @@ fn probe_gemini_tui_waiter() {
         &serde_json::to_string_pretty(&Value::Object(report)).unwrap(),
     );
     eprintln!("[probe] gemini 证据：{}", sb.evidence.display());
+}
+
+// ---------------------------------------------------------------- 第二轮复跑（任务 20261113-lead-tui）
+
+/// 第二轮复跑的步骤开关：`MEOWO_PROBE_R2=A,C,D,E`（默认 A,C,E）。
+fn r2(name: &str) -> bool {
+    std::env::var("MEOWO_PROBE_R2")
+        .unwrap_or_else(|_| "A,C,E".into())
+        .split(',')
+        .any(|s| s.trim() == name)
+}
+
+fn kimi_approval(screen: &str) -> bool {
+    let s = screen.to_lowercase();
+    s.contains("↵ confirm")
+        && (s.contains("run this command?")
+            || s.contains("write this file?")
+            || s.contains("apply these edits?")
+            || s.contains("approve"))
+}
+
+fn gemini_approval(screen: &str) -> bool {
+    let s = screen.to_lowercase();
+    s.contains("allow once")
+        || s.contains("allow execution")
+        || s.contains("allow for this session")
+}
+
+fn snap_procs() -> std::collections::BTreeMap<u32, crate::lead_native::probe_util::Proc> {
+    crate::lead_native::probe_util::snapshot()
+}
+
+/// 等关卡的等待器登记。期间出现的审批：等待器自己的命令（含 `lead wait`）弹审批 = 放行规则没生效，
+/// 记下并判失败；其它审批（模型写 gate.json 等）代为批准一次并记录，与本功能无关。
+fn wait_waiter_approving(
+    sb: &Sandbox,
+    tui: &Tui,
+    gate: &str,
+    secs: u64,
+    is_approval: fn(&str) -> bool,
+    approvals: &mut Vec<Value>,
+) -> Option<meowo_reporter::lead_waiter::WaiterRecord> {
+    let deadline = Instant::now() + Duration::from_secs(secs);
+    while Instant::now() < deadline {
+        if let Some(record) = meowo_reporter::lead_waiter::live_waiter(&sb.task, gate) {
+            if record.gate == gate && sb.gate()["id"] == gate && sb.gate()["status"] == "pending" {
+                return Some(record);
+            }
+        }
+        let screen = tui.screen();
+        if is_approval(&screen) {
+            let waiter = screen.contains("lead wait") || screen.contains("lead_wait");
+            approvals.push(json!({"gate": gate, "waiterCommand": waiter, "screen": screen}));
+            if waiter {
+                sb.save(&format!("waiter-prompted-{gate}.txt"), &screen);
+                return None;
+            }
+            tui.send("\r");
+            std::thread::sleep(Duration::from_secs(2));
+        } else if screen.contains("Activate Skill") && screen.contains("Allow once") {
+            tui.send("\r");
+            std::thread::sleep(Duration::from_secs(1));
+        }
+        std::thread::sleep(Duration::from_millis(300));
+    }
+    None
+}
+
+/// 等画面满足条件；期间出现的审批（模型消费关卡要改 gate.json 等，默认询问模式下都要批）代批并记录。
+fn wait_approving(
+    tui: &Tui,
+    secs: u64,
+    is_approval: fn(&str) -> bool,
+    approvals: &mut Vec<Value>,
+    what: &str,
+    pred: impl Fn(&str) -> bool,
+) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(secs);
+    while Instant::now() < deadline {
+        let screen = tui.screen();
+        if pred(&screen) {
+            return true;
+        }
+        if is_approval(&screen) {
+            approvals.push(json!({"during": what, "screen": screen}));
+            tui.send("\r");
+            std::thread::sleep(Duration::from_secs(2));
+        }
+        std::thread::sleep(Duration::from_millis(300));
+    }
+    eprintln!("[probe] 等不到 {what}，末屏：\n{}", tui.screen());
+    false
+}
+
+/// 画面上是否挂着审批框（各家文案不同）。
+type ApprovalCheck = fn(&str) -> bool;
+
+/// 真模型第二轮（kimi / gemini 共用流程）：A 在线空闲 + B 草稿，C 待批审批，D 子代理，E TUI 不在 + 重开说继续。
+fn r2_flow(provider: &str) {
+    assert!(real(), "第二轮复跑只在真模型下有意义（MEOWO_PROBE_REAL=1）");
+    let mut sb = Sandbox::new(provider);
+    let (env, argv, is_approval): (Vec<(String, String)>, Vec<String>, ApprovalCheck) =
+        if provider == "kimi" {
+            let env = vec![
+                ("KIMI_CODE_HOME", sb.home.to_string_lossy().into_owned()),
+                ("KIMI_CODE_NO_AUTO_UPDATE", "1".into()),
+                ("MEOWO_DB", sb.db.to_string_lossy().into_owned()),
+            ];
+            set_env(&env);
+            kimi_config(&mut sb);
+            install_lead("kimi", "kimi 2.6.0");
+            let env: Vec<(String, String)> = env.into_iter().map(|(k, v)| (k.into(), v)).collect();
+            (env, kimi_argv(&[]), kimi_approval)
+        } else {
+            let env = gemini_setup(&mut sb);
+            for (key, value) in &env {
+                std::env::set_var(key, value);
+            }
+            install_lead("gemini", "0.68.0");
+            let argv = meowo_agent::by_id("gemini").unwrap().launch_argv();
+            (env, argv, gemini_approval)
+        };
+    let config_text = if provider == "kimi" {
+        std::fs::read_to_string(sb.home.join("config.toml")).unwrap_or_default()
+    } else {
+        std::fs::read_to_string(sb.home.join(".gemini/settings.json")).unwrap_or_default()
+    };
+    let mut report = serde_json::Map::new();
+    report.insert(
+        "permissionMode".into(),
+        json!(config_text
+            .lines()
+            .find(|l| l.contains("default_permission_mode") || l.contains("defaultApprovalMode"))),
+    );
+    let mut approvals: Vec<Value> = Vec::new();
+    let marker = sb.root.to_string_lossy().into_owned();
+    let start = |tui: &Tui| {
+        if provider == "kimi" {
+            pass_trust(tui);
+        } else {
+            assert!(tui.wait("gemini 输入框", 90, gemini_ready));
+        }
+    };
+    let mut tui = Tui::spawn(&argv, &sb.cwd, &env);
+    start(&tui);
+    let mut native = String::new();
+    let wait_secs = 300;
+
+    // 开一个关卡，等等待器起来；返回 (口令, 等待器 pid)。
+    let open_gate = |tui: &Tui, gate: &str, approvals: &mut Vec<Value>, native: &mut String| {
+        let secret = secret();
+        submit(
+            tui,
+            &real_prompt(&sb.task, &sb.gate_body(gate, "pending"), &secret),
+        );
+        let waiter = wait_waiter_approving(&sb, tui, gate, wait_secs, is_approval, approvals);
+        sb.save(&format!("{provider}-{gate}-waiting.txt"), &tui.screen());
+        let waiter = waiter
+            .unwrap_or_else(|| panic!("{gate}：等不到等待器（或等待器命令弹了审批），见证据"));
+        if native.is_empty() {
+            *native = sb.owner();
+            sb.register(provider, native);
+        }
+        let deadline = Instant::now() + Duration::from_secs(180);
+        while Instant::now() < deadline {
+            if is_approval(&tui.screen()) {
+                approvals.push(json!({"gate": gate, "afterWaiter": true, "screen": tui.screen()}));
+                tui.send("\r");
+                std::thread::sleep(Duration::from_secs(2));
+            } else if tui.settle(5, 10) {
+                break;
+            }
+        }
+        (secret, waiter.pid)
+    };
+
+    // ---- A/B：在线空闲作答，草稿保留
+    if r2("A") {
+        let (s1, pid) = open_gate(&tui, "Q-1", &mut approvals, &mut native);
+        tui.type_text("DRAFT-KEEP-1");
+        std::thread::sleep(Duration::from_secs(1));
+        let draft_before = tui.screen();
+        sb.save(&format!("{provider}-A-draft-before.txt"), &draft_before);
+        let answered_at = Instant::now();
+        let r = sb.answer("Q-1");
+        let mut samples = Vec::new();
+        for _ in 0..10 {
+            let record = meowo_reporter::lead_waiter::read_record(&sb.task);
+            samples.push(json!({
+                "ms": answered_at.elapsed().as_millis() as u64,
+                "gate": sb.gate()["status"],
+                "record": record.as_ref().map(|r| json!({"pid": r.pid, "gate": r.gate, "cli": r.cli_pid})),
+                "waiterAlive": meowo_reporter::lead_waiter::process_started(pid).is_some(),
+                "delivered": std::fs::read_to_string(sb.task.join(".delivered")).ok(),
+            }));
+            if sb.gate()["status"] == "consumed" {
+                break;
+            }
+            std::thread::sleep(Duration::from_secs(2));
+        }
+        let woke = wait_approving(
+            &tui,
+            wait_secs,
+            is_approval,
+            &mut approvals,
+            "在线空闲自动续跑",
+            |s| s.contains(&s1) && sb.gate()["status"] == "consumed",
+        );
+        let latency = answered_at.elapsed().as_millis() as u64;
+        tui.settle(4, 120);
+        let screen = tui.screen();
+        sb.save(&format!("{provider}-A-woke.txt"), &screen);
+        report.insert("A".into(), json!({"secret": s1, "answer": r, "waiter_pid": pid, "samples": samples,
+            "woke": woke, "latency_ms": latency, "draft_kept": screen.contains("DRAFT-KEEP-1"), "draft_visible_before": draft_before.contains("DRAFT-KEEP-1"), "native": native}));
+        sb.save(
+            "report.json",
+            &serde_json::to_string_pretty(&Value::Object(report.clone())).unwrap(),
+        );
+        for _ in 0.."DRAFT-KEEP-1".len() {
+            tui.send("\x7f");
+        }
+        tui.settle(5, 60);
+    }
+
+    // ---- C：待批审批时作答。审批框不被答掉、答复不丢；拒绝审批后看去向。
+    if r2("C") {
+        let (s2, _) = open_gate(&tui, "Q-2", &mut approvals, &mut native);
+        submit(
+            &tui,
+            "请用 shell 工具执行这条命令：echo PROBE_APPROVAL > approval.txt 。只做这一件事。",
+        );
+        let pending = tui.wait("审批框", 180, is_approval);
+        let before = tui.screen();
+        sb.save(&format!("{provider}-C-before.txt"), &before);
+        let answered_at = Instant::now();
+        let r = sb.answer("Q-2");
+        std::thread::sleep(Duration::from_secs(8));
+        let during = tui.screen();
+        sb.save(&format!("{provider}-C-during.txt"), &during);
+        let still = is_approval(&during);
+        let early = during.contains(&s2) && sb.gate()["status"] == "consumed";
+        let gate_during = sb.gate()["status"].clone();
+        let file_before = sb.cwd.join("approval.txt").exists();
+        // 手动拒绝审批：Esc。
+        let decided = Instant::now();
+        tui.send("\x1b");
+        let after = wait_approving(
+            &tui,
+            wait_secs,
+            is_approval,
+            &mut approvals,
+            "拒绝审批后续跑",
+            |s| s.contains(&s2) && sb.gate()["status"] == "consumed",
+        );
+        let after_ms = decided.elapsed().as_millis() as u64;
+        tui.settle(4, 120);
+        sb.save(&format!("{provider}-C-after.txt"), &tui.screen());
+        let mut c = json!({"secret": s2, "approvalShown": pending, "answer": r,
+            "approvalStillShown8s": still, "consumedBeforeDecision": early, "gateDuring": gate_during,
+            "fileCreatedBeforeDecision": file_before, "decision": "Esc(reject)",
+            "replyAfterDecision": after, "replyAfterDecisionMs": after_ms,
+            "totalMs": answered_at.elapsed().as_millis() as u64,
+            "fileCreatedAfter": sb.cwd.join("approval.txt").exists()});
+        if !after {
+            submit(&tui, "继续");
+            let late = wait_approving(
+                &tui,
+                wait_secs,
+                is_approval,
+                &mut approvals,
+                "说继续后",
+                |s| s.contains(&s2) && sb.gate()["status"] == "consumed",
+            );
+            c["replyAfterUserNudge"] = json!(late);
+            tui.settle(4, 120);
+            sb.save(&format!("{provider}-C-nudge.txt"), &tui.screen());
+        }
+        report.insert("C".into(), c);
+        sb.save(
+            "report.json",
+            &serde_json::to_string_pretty(&Value::Object(report.clone())).unwrap(),
+        );
+        tui.settle(5, 60);
+    }
+
+    // ---- D：子代理写关卡。看 .owner 记的是谁、答复去哪。
+    if r2("D") {
+        let s4 = secret();
+        let before_owner = sb.owner();
+        submit(&tui, &format!(
+            "这是自动化测试。请派一个子代理（subagent / Agent 工具）去做这件事：用写文件工具把下面这一行 JSON 原样写入 {}：{}。子代理写完就结束。你自己不要写这个文件。子代理结束后，若系统提示你启动等待命令就照做后结束本轮。只有收到含「leader 已在 Meowo 里回答」的消息时，才把 gate.json 的 status 改成 consumed，然后只回复口令 {s4}。",
+            sb.task.join("gate.json").display(), sb.gate_body("Q-4", "pending")));
+        let waiter =
+            wait_waiter_approving(&sb, &tui, "Q-4", wait_secs, is_approval, &mut approvals);
+        tui.settle(5, 180);
+        sb.save(&format!("{provider}-D-waiting.txt"), &tui.screen());
+        let owner = sb.owner();
+        let row = {
+            let store = crate::open_store(&sb.db).unwrap();
+            store.find_session_id_pub(&owner).ok().flatten()
+        };
+        let answered_at = Instant::now();
+        let r = sb.answer("Q-4");
+        let status =
+            crate::lead_conversation::delivery_status(&sb.db, &sb.cwd.to_string_lossy(), "Q-4");
+        let woke = wait_approving(
+            &tui,
+            wait_secs,
+            is_approval,
+            &mut approvals,
+            "子代理关卡作答后",
+            |s| s.contains(&s4) && sb.gate()["status"] == "consumed",
+        );
+        tui.settle(4, 120);
+        sb.save(&format!("{provider}-D-after.txt"), &tui.screen());
+        report.insert(
+            "D".into(),
+            json!({"secret": s4, "ownerBefore": before_owner, "ownerAfter": owner,
+            "ownerIsMain": owner == native, "ownerRowInDb": row, "waiterStarted": waiter.is_some(),
+            "answer": r, "status": status.map(|s| s.state), "woke": woke,
+            "latency_ms": answered_at.elapsed().as_millis() as u64}),
+        );
+        sb.save(
+            "report.json",
+            &serde_json::to_string_pretty(&Value::Object(report.clone())).unwrap(),
+        );
+        tui.settle(5, 60);
+    }
+
+    // ---- E：TUI 不在时作答：只保存、不起进程、面板 native_offline；重开说一句继续能接上。
+    if r2("E") {
+        let (s3, waiter_pid) = open_gate(&tui, "Q-3", &mut approvals, &mut native);
+        // 先等回合真正空闲（gemini 运行中输入会变成插话），再正常退出；退不掉就 Ctrl-C 两下，最后强杀
+        // （等同用户直接关掉 Meowo 里的终端标签）。
+        tui.settle(5, 120);
+        submit(&tui, if provider == "kimi" { "/exit" } else { "/quit" });
+        let mut quit_by = "command";
+        if !wait_until(20, || !tui.alive()) {
+            quit_by = "ctrl-c";
+            tui.send("\x03");
+            std::thread::sleep(Duration::from_millis(500));
+            tui.send("\x03");
+            if !wait_until(15, || !tui.alive()) {
+                quit_by = "kill";
+                tui.kill();
+            }
+        }
+        assert!(wait_until(10, || !tui.alive()), "TUI 应退出");
+        let orphan_gone = wait_until(15, || {
+            meowo_reporter::lead_waiter::process_started(waiter_pid).is_none()
+        });
+        tui.kill();
+        let before = snap_procs();
+        let answered_at = Instant::now();
+        let r = sb.answer("Q-3");
+        let answer_ms = answered_at.elapsed().as_millis() as u64;
+        let status =
+            crate::lead_conversation::delivery_status(&sb.db, &sb.cwd.to_string_lossy(), "Q-3");
+        std::thread::sleep(Duration::from_secs(5));
+        let after = snap_procs();
+        let spawned = crate::lead_native::probe_util::new_related(&before, &after, &marker);
+        let gate_closed = sb.gate()["status"].clone();
+        // 重开同一会话，说一句继续。
+        let reopen: Vec<String> = if provider == "kimi" {
+            kimi_argv(&["-S", &native])
+        } else {
+            let mut a = argv.clone();
+            a.extend(["--resume".to_owned(), native.clone()]);
+            a
+        };
+        let tui2 = Tui::spawn(&reopen, &sb.cwd, &env);
+        if provider == "kimi" {
+            tui2.wait("kimi 恢复会话", 60, |s| {
+                s.contains("Trust this folder") || s.contains("context:")
+            });
+            if tui2.screen().contains("Trust this folder") {
+                tui2.send("\r");
+            }
+            assert!(tui2.wait("kimi 恢复会话输入框", 60, |s| s.contains("context:")));
+        } else {
+            start(&tui2);
+        }
+        std::thread::sleep(Duration::from_secs(2));
+        let said = Instant::now();
+        submit(&tui2, "继续");
+        let resumed = wait_approving(
+            &tui2,
+            wait_secs,
+            is_approval,
+            &mut approvals,
+            "重开说继续",
+            |s| s.contains(&s3) && sb.gate()["status"] == "consumed",
+        );
+        let resume_ms = said.elapsed().as_millis() as u64;
+        tui2.settle(4, 120);
+        sb.save(&format!("{provider}-E-reopened.txt"), &tui2.screen());
+        report.insert(
+            "E".into(),
+            json!({"secret": s3, "orphanWaiterExited": orphan_gone,
+            "answer": r, "answerMs": answer_ms, "statusWhileClosed": status.map(|s| s.state),
+            "gateWhileClosed": gate_closed, "newProcessesWhileClosed": spawned,
+            "procSnapshotOk": !after.is_empty(), "resumedAfterContinue": resumed, "quitBy": quit_by,
+            "resumeMs": resume_ms, "reopenArgv": reopen[1..].to_vec()}),
+        );
+        drop(tui2);
+    }
+    report.insert("approvalsSeen".into(), json!(approvals));
+    sb.save(
+        "report.json",
+        &serde_json::to_string_pretty(&Value::Object(report)).unwrap(),
+    );
+    eprintln!("[probe] {provider} 第二轮证据：{}", sb.evidence.display());
+}
+
+#[test]
+#[ignore = "第二轮：真实 kimi TUI + 真模型（MEOWO_PROBE_REAL=1）；手动复跑"]
+fn probe_kimi_round2() {
+    r2_flow("kimi");
+}
+
+#[test]
+#[ignore = "第二轮：真实 gemini TUI + 真模型（MEOWO_PROBE_REAL=1）；手动复跑"]
+fn probe_gemini_round2() {
+    r2_flow("gemini");
 }

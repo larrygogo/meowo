@@ -12,6 +12,8 @@ pub(crate) mod codex_app_server;
 pub(crate) mod opencode_http;
 #[cfg(test)]
 mod probe;
+#[cfg(test)]
+pub(crate) mod probe_util;
 pub(crate) mod server;
 pub(crate) mod waiter;
 mod ws;
