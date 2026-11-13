@@ -5,7 +5,7 @@
 use crate::{
     lead_install::{
         waiter_command_prefix, LeadCap, LeadHook, LeadHookFormat, LeadInstallSpec, NativeContinue,
-        OfflineResume, WaiterShell, MANAGED_MARK, REVIEW,
+        WaiterShell, MANAGED_MARK, REVIEW,
     },
     variant::Installation,
 };
@@ -111,23 +111,9 @@ fn is_waiter_rule(item: &dyn toml_edit::TableLike) -> bool {
 impl LeadCap for KimiLead {
     /// 关卡挂起时 TUI 里后台 Bash 跑等待器（PreToolUse 拦下写挂起关卡、给出原样命令）；完成通知让空闲 TUI 自己开新回合
     /// （2.6.0 源码 completeDetached → loop.notify，research-kimi-gemini.md 假模型实测）。
-    ///
-    /// TUI 已退出时用 `-p` 续写同一会话：2026-11-13 假端点对照，`-p` 与 TUI 的请求头逐字一致
-    /// （UA kimi-code-cli/2.6.0、X-Msh-Platform kimi_code_cli、turn_trigger user），计费路径相同；
-    /// 但 `-p` 会把这一轮的权限模式强制成 auto（runV2Print → forceAuto，无条件），宿主据此只让它做
-    /// 「确认答复、消费关卡」这一步（lead_native::waiter）。为什么不像 gemini 那样交互式带首条消息
-    /// 重开 TUI：2.6.0 没有这个入口——根命令只有 `-p`（即 print 模式），`program.argument("[args...]")`
-    /// 遇到位置参数直接报 unknown command，`kimi session` 只有 list（2026-11-13 读 kimi.exe 内嵌源码
-    /// createProgram / validateOptions）。会话 id 已带 `session_` 前缀。
+    /// TUI 不在时不续写（leader 2026-11-13「不需要离线」）：答复只保存，用户回到会话说一句话时由 hook 交给模型。
     fn native_continue(&self) -> Option<NativeContinue> {
-        Some(NativeContinue::InSessionWaiter {
-            offline: OfflineResume::PrintMode {
-                args: &["-S", "{session}", "-p", "{prompt}"],
-                // 后台代跑不能顺手升级用户的 CLI（CLI 版本变了别回滚的教训：升级只能用户自己做）。
-                env: &[("KIMI_CODE_NO_AUTO_UPDATE", "1")],
-            },
-            shell: SHELL,
-        })
+        Some(NativeContinue::InSessionWaiter { shell: SHELL })
     }
     /// 后台任务完成通知（notify）、PreToolUse 拦截与等待器都只在 2.6.0 查证过；2.5.x 能装 Lead，
     /// 但续跑走手动提示（第一轮做空 M6）。

@@ -5,7 +5,7 @@
 use crate::{
     lead_install::{
         waiter_command_prefix, LeadCap, LeadHook, LeadHookFormat, LeadInstallSpec, NativeContinue,
-        OfflineResume, WaiterShell, MANAGED_MARK, REVIEW,
+        WaiterShell, MANAGED_MARK, REVIEW,
     },
     variant::Installation,
 };
@@ -122,13 +122,9 @@ pub(super) fn model_steering(data_dir: &std::path::Path) -> bool {
 
 impl LeadCap for GeminiLead {
     /// 关卡写入后 AfterTool 尾调用在后台启动等待器（不依赖模型），结束时 inject + modelSteering 让空闲
-    /// TUI 自己开新回合。TUI 已退出时在 Meowo 终端里 `--resume <id> -i <答复>` 重新打开：初始提示在
-    /// 初始化完成后自动提交（0.68 interactiveCli），正常交互模式与审批，不走 ACP。
+    /// TUI 自己开新回合。TUI 不在时不续写（leader 2026-11-13「不需要离线」），答复只保存。
     fn native_continue(&self) -> Option<NativeContinue> {
-        Some(NativeContinue::InSessionWaiter {
-            offline: OfflineResume::InteractiveInitialPrompt(&["-i", "{prompt}"]),
-            shell: SHELL,
-        })
+        Some(NativeContinue::InSessionWaiter { shell: SHELL })
     }
     /// backgroundCompletionBehavior=inject、空闲自动提交注入、AfterTool tailToolCallRequest 都是按
     /// 0.68.0 源码查证的；0.65–0.67 能装 Lead，但续跑走手动提示（第一轮做空 M6）。

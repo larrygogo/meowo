@@ -53,9 +53,9 @@ pub struct LeadConfigChange {
 pub enum NativeContinue {
     /// TUI 里有一个后台等待进程（`meowo-reporter lead wait`），答复落盘它就退出，CLI 在空闲时
     /// 收到「后台任务完成」自己开新回合（kimi 后台 Bash + notify；gemini 后台 shell + inject +
-    /// modelSteering）。在线时宿主不推送；TUI 已退出时按 `offline` 续写同一个会话。
+    /// modelSteering）。只在 TUI 开着时生效：TUI 不在时宿主只保存答复，不起任何后台进程
+    /// （leader 2026-11-13「不需要离线」），用户打开会话后说一句话由 hook 把答复交给模型。
     InSessionWaiter {
-        offline: OfflineResume,
         /// CLI 执行后台命令用的 shell：决定等待器命令怎么引用 reporter 路径（[`waiter_command_prefix`]）。
         shell: WaiterShell,
     },
@@ -71,20 +71,6 @@ pub enum WaiterShell {
     PosixDoubleQuoted,
     /// Windows 上用 PowerShell（gemini 0.68 getShellConfiguration）：`& '路径'`；其余平台 POSIX 单引号。
     PowerShellOnWindows,
-}
-
-/// TUI 已退出时把答复续写进同一会话的方式。argv 模板里 `{session}`、`{prompt}` 由宿主替换。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OfflineResume {
-    /// 非交互模式跑完一轮即退出；`args` 是 CLI 启动 argv 之后的全部参数（如 `-S {session} -p {prompt}`），
-    /// `env` 是这一轮额外要的环境变量（如关掉 CLI 自更新：后台代跑时不能顺手升级用户的 CLI）。
-    PrintMode {
-        args: &'static [&'static str],
-        env: &'static [(&'static str, &'static str)],
-    },
-    /// 在 Meowo 终端里重新打开交互 TUI，并把答复作为第一条消息自动提交；模板追加在宿主现成的
-    /// 恢复 argv（启动选项回放 + resume 子命令 + 会话 id）之后（如 `-i {prompt}`）。
-    InteractiveInitialPrompt(&'static [&'static str]),
 }
 
 /// 宿主管理的服务所用的协议（按协议区分，不按 provider 身份）。
@@ -318,10 +304,31 @@ pub fn waiter_command_prefix(shell: WaiterShell, provider: &str, reporter: &str)
     }
 }
 
-/// 该 provider 声明的等待器 shell；没有会话内等待器机制的返回 None（reporter 据此拒绝起等待器）。
+/// 该 provider 声明的等待器 shell（不看版本）；没有会话内等待器机制的返回 None。
+/// 只给「等待器已经起来了」的一侧用（`lead wait` 校验参数）：要不要**要求**模型启动等待器，
+/// 必须走带版本门的 [`waiter_shell_for`]。
 pub fn waiter_shell(provider: &str) -> Option<WaiterShell> {
-    match crate::by_id(provider)?.lead()?.native_continue()? {
-        NativeContinue::InSessionWaiter { shell, .. } => Some(shell),
+    shell_of(crate::by_id(provider)?.lead()?.native_continue()?)
+}
+
+/// 按本机 CLI 版本过滤后的等待器 shell。宿主（lead_native::mechanism → [`native_continue_for`]）与
+/// reporter（hook 里要求启动等待器）用同一个判定：做空 N5——原先 reporter 不看版本，kimi 2.5 /
+/// gemini 0.67 仍被 hook 要求起等待器，面板却按版本门说「手动继续」，两边对不上。
+pub fn waiter_shell_for(provider: &str, version: Option<&str>) -> Option<WaiterShell> {
+    shell_of(native_continue_for(crate::by_id(provider)?.lead()?, version)?)
+}
+
+/// 该 provider 的续跑机制设了版本门吗：没设就不必为它探测 CLI 版本（做空 N2：`--version` 曾进了
+/// 每次开终端的热路径，而 codex/opencode 根本没有版本门）。
+pub fn continue_needs_version(provider: &str) -> bool {
+    crate::by_id(provider)
+        .and_then(|plugin| plugin.lead())
+        .is_some_and(|cap| cap.native_continue_floor().is_some())
+}
+
+fn shell_of(mechanism: NativeContinue) -> Option<WaiterShell> {
+    match mechanism {
+        NativeContinue::InSessionWaiter { shell } => Some(shell),
         NativeContinue::ServerQueue(_) => None,
     }
 }

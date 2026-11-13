@@ -4,7 +4,7 @@
 //! 的真实路径写配置，在 PTY 里拉起真实 TUI，走与手机作答同一个后端入口（answer_and_deliver），验证：
 //! 1. 在线空闲：作答后同一会话自动开新回合输出口令，TUI 画面可见，输入框草稿不被覆盖；
 //! 2. 运行中作答：本回合结束后（或下一步）自动接着做；
-//! 3. TUI 退出：等待器随之退出（无孤儿）；作答后离线续写同一会话、关卡被消费，重新打开可见。
+//! 3. TUI 退出：等待器随之退出（无孤儿）；作答后只保存，不起后台进程，面板提示打开会话后说一句。
 //!
 //! 默认用本地假模型（probe_assets/fake_llm.py，不耗额度）；`MEOWO_PROBE_REAL=1` 时复制最小认证副本用真模型
 //! （gemini 用 gemini-3.5-flash-lite）。证据（屏幕、请求日志）留在 target/lead-provider-probes/tui-waiter/，
@@ -546,10 +546,10 @@ fn probe_kimi_tui_waiter() {
         report.insert("running".into(), json!({"secret":s2}));
     }
 
-    // ---- 3. TUI 退出：等待器自退；离线作答 → -p 续写同一会话并消费
+    // ---- 3. TUI 退出：等待器自退；离线作答只保存
     let s3 = secret();
     let gate3 = "Q-3";
-    sb.plan(json!({"phase":"Q-3","offline":true,"gate_path":gate_path,"gate_body":sb.gate_body(gate3,"pending"),"secret":s3,"consume":true,"consumed_body":sb.gate_body(gate3,"consumed")}));
+    sb.plan(json!({"phase":"Q-3","gate_path":gate_path,"gate_body":sb.gate_body(gate3,"pending"),"secret":s3}));
     let prompt3 = if real() {
         real_prompt(&sb.task, &sb.gate_body(gate3, "pending"), &s3)
     } else {
@@ -571,27 +571,24 @@ fn probe_kimi_tui_waiter() {
     });
     assert!(orphan_gone, "TUI 退出后等待器不能留成孤儿");
     assert_eq!(sb.answer(gate3), Ok(true));
-    let done = wait_until(if real() { 600 } else { 120 }, || {
-        crate::lead_native::waiter::offline_record(&sb.task, gate3)
-            .is_some_and(|r| r.state != "running")
-    });
-    let record = crate::lead_native::waiter::offline_record(&sb.task, gate3);
-    assert!(done, "离线续写应结束：{record:?}");
-    assert_eq!(record.as_ref().unwrap().state, "done", "{record:?}");
-    assert_eq!(sb.gate()["status"], "consumed", "离线续写后关卡应被消费");
+    // TUI 不在：只保存，不起任何后台进程（leader 2026-11-13「不需要离线」），面板提示打开会话后说一句。
     let status =
         crate::lead_conversation::delivery_status(&sb.db, &sb.cwd.to_string_lossy(), gate3);
-    // 重新打开 TUI：这一轮可见
-    let mut again = Tui::spawn(&kimi_argv(&["-r", &native]), &sb.cwd, &env);
-    pass_trust(&again);
-    let visible = again.wait("重新打开后可见", 30, |s| s.contains(&s3));
-    sb.save("kimi-3-reopened.txt", &again.screen());
-    again.send("/exit\r");
-    std::thread::sleep(Duration::from_secs(2));
-    again.kill();
+    let leftovers: Vec<String> = std::fs::read_dir(&sb.task)
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with(".native-offline"))
+        .collect();
     tui.kill();
-    assert!(visible, "离线续写的这一轮重新打开后应可见");
-    report.insert("offline".into(), json!({"secret":s3,"orphan_waiter_exited":true,"record":record,"status_after":status.map(|s| s.state),"session":sid}));
+    assert_eq!(
+        status.as_ref().map(|s| s.state.as_str()),
+        Some("native_offline"),
+        "{status:?}"
+    );
+    assert!(leftovers.is_empty(), "{leftovers:?}");
+    assert_eq!(sb.gate()["status"], "answered", "TUI 不在时没人消费关卡");
+    report.insert("offline".into(), json!({"orphan_waiter_exited":true,"status_after":status.map(|s| s.state),"session":sid}));
     if !real() {
         let requests = sb.requests();
         let ua: std::collections::BTreeSet<String> = requests
@@ -801,9 +798,10 @@ fn probe_gemini_tui_waiter() {
         report.insert("running".into(), json!({"secret":s2}));
     }
 
-    // ---- 3. 退出 → 等待器自退 → 离线作答 → 宿主同款 argv 重新打开（--resume <id> -i <答复>）
+    // ---- 3. 退出 → 等待器自退 → 离线作答只保存
     let s3 = secret();
-    sb.plan(json!({"phase":"Q-3","offline":true,"gate_path":gate_path,"gate_body":sb.gate_body("Q-3","pending"),"secret":s3,"consume":true,"consumed_body":sb.gate_body("Q-3","consumed")}));
+    let gate3 = "Q-3";
+    sb.plan(json!({"phase":"Q-3","gate_path":gate_path,"gate_body":sb.gate_body(gate3,"pending"),"secret":s3}));
     let prompt3 = if real() {
         real_prompt(&sb.task, &sb.gate_body("Q-3", "pending"), &s3)
     } else {
@@ -826,42 +824,27 @@ fn probe_gemini_tui_waiter() {
         .is_none()),
         "TUI 退出后等待器不能留成孤儿"
     );
-    // 没有 AppHandle 时宿主不开终端（等下一次带宿主的巡检）；这里按宿主同一模板拼 argv 自己开。
-    assert_eq!(sb.answer("Q-3"), Ok(true));
-    let gate = meowo_reporter::lead::read_gate(&sb.task).unwrap();
-    let message = meowo_reporter::lead::answer_message(&sb.task, &gate);
-    let Some(meowo_agent::lead_install::NativeContinue::InSessionWaiter {
-        offline: meowo_agent::lead_install::OfflineResume::InteractiveInitialPrompt(template),
-        ..
-    }) = crate::lead_native::mechanism("gemini")
-    else {
-        panic!("gemini 应声明 InteractiveInitialPrompt");
-    };
-    let mut resume = meowo_agent::by_id("gemini")
+    assert_eq!(sb.answer(gate3), Ok(true));
+    // TUI 不在：只保存，不起任何后台进程（leader 2026-11-13「不需要离线」），面板提示打开会话后说一句。
+    let status =
+        crate::lead_conversation::delivery_status(&sb.db, &sb.cwd.to_string_lossy(), gate3);
+    let leftovers: Vec<String> = std::fs::read_dir(&sb.task)
         .unwrap()
-        .resume_argv(&native)
-        .unwrap();
-    resume.extend(template.iter().map(|part| {
-        part.replace("{prompt}", &message)
-            .replace("{session}", &native)
-    }));
-    let mut again = Tui::spawn(&resume, &sb.cwd, &env);
-    let woke = again.wait(
-        "离线续写后可见",
-        if real() { 300 } else { 90 },
-        |s| s.contains(&s3),
-    );
-    sb.save("gemini-3-resumed.txt", &again.screen());
-    let consumed = wait_until(30, || sb.gate()["status"] == "consumed");
-    again.send("/quit\r");
-    std::thread::sleep(Duration::from_secs(3));
-    again.kill();
+        .filter_map(Result::ok)
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.starts_with(".native-offline"))
+        .collect();
     tui.kill();
-    assert!(woke, "重新打开后答复应自动提交，这一轮可见");
-    assert!(consumed, "关卡应被消费");
+    assert_eq!(
+        status.as_ref().map(|s| s.state.as_str()),
+        Some("native_offline"),
+        "{status:?}"
+    );
+    assert!(leftovers.is_empty(), "{leftovers:?}");
+    assert_eq!(sb.gate()["status"], "answered", "TUI 不在时没人消费关卡");
     report.insert(
         "offline".into(),
-        json!({"secret":s3,"orphan_waiter_exited":true,"consumed":true}),
+        json!({"orphan_waiter_exited":true,"status_after":status.map(|s| s.state)}),
     );
     // 安装写入的设置可卸载还原
     let plugin = meowo_agent::by_id("gemini").unwrap();
