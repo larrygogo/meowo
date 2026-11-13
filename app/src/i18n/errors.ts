@@ -75,7 +75,9 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "lead/codex_server_timeout", exact: true, zh: "Codex 会话服务超时，稍后自动重试", en: "The Codex session server timed out. Retrying soon." },
   { m: "lead/codex_server_closed", exact: true, zh: "Codex 会话服务断开，稍后自动重试", en: "The Codex session server disconnected. Retrying soon." },
   { m: "lead/codex_server_protocol", exact: true, zh: "Codex 会话服务返回了异常数据", en: "The Codex session server returned unexpected data." },
-  { m: "lead/codex_queue_failed", exact: true, zh: "未能放进 Codex 队列，请重试", en: "Couldn't add the answer to Codex's queue. Try again." },
+  // 不做离线续跑：会话开着但还没法安全投递时的等待原因（codex_app_server.rs waiting）。
+  { m: "lead/codex_tui_not_connected", exact: true, zh: "Codex 终端还没连上，连上后自动送达", en: "Codex in the terminal hasn't connected yet. The answer will be delivered once it does." },
+  { m: "lead/codex_thread_not_open", exact: true, zh: "Codex 终端不在这个对话，切回后自动送达", en: "Codex in the terminal is on a different conversation. The answer will be delivered when you switch back." },
   { m: "lead/codex_delivery_uncertain", exact: true, zh: "可能已送达，核对会话后再决定重试", en: "May have been delivered. Check the session before retrying." },
   // ── 远程桥(手机端) ──
   // 7M-7：远程传输层的错误此前是硬编码中文串、直接上屏，既不进这张表也不双语。

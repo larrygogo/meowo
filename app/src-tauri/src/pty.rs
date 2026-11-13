@@ -1321,16 +1321,6 @@ impl PtyBroker {
             env,
             &mut command,
         );
-        // 接上了仍在跑回合的旧 app-server：它派生的 hook/MCP 拿的是旧一代的 scoped token，
-        // 上面换发时已被吊销；重新登记给本会话，否则那一轮里的审批递不到 GUI。
-        if let Some(inherited) = codex_remote
-            .as_ref()
-            .and_then(|launch| launch.inherited_pty_token())
-        {
-            if let Ok(mut tokens) = self.attach.scoped_tokens.lock() {
-                tokens.insert(inherited.to_owned(), session_id);
-            }
-        }
 
         // token 必须先于 spawn 登记（子进程一起来就可能 claim，reporter 不重试）；
         // 因此失败路径要反向吊销，不留「已登记但从未交付」的凭据。

@@ -1,9 +1,12 @@
 //! Codex 原生 TUI 的自动续跑（路线 C1，任务 .lead/20261113-lead-tui）。
 //!
-//! 启动：Lead 已安装的 codex 会话由 Meowo 先起一个**只属于该会话**的 `codex app-server`
+//! 启动：Lead 已安装的 codex 会话由 Meowo 先起一个**只属于该 TUI** 的 `codex app-server`
 //! （ws://127.0.0.1:<端口> + capability token），再让托管终端里的 TUI 以 `--remote` 连上去。
+//! TUI 一退，服务随之收掉（leader 2026-11-13 定：不需要离线续跑）。
 //! 答复：宿主作为第二个客户端连同一个 app-server，用 `thread/queue/add` 把答复排进 TUI 正在用的
 //! thread——等于用户在 TUI 里按 Tab 排队，空闲时立刻开新回合，TUI 上看得到。
+//! TUI 不在（或还没握手、或不在那个 thread 上）时不投递，记成 waiting：答复已保存，
+//! 下次打开会话、TUI 握手后由关卡巡检经同一条在线路径送达。
 //!
 //! 为什么这样拆（codex 0.167.2 隔离实测，2026-11-13，假模型探针 + 真模型探针）：
 //! - TUI 带 `-c`/`--enable`/`--disable`/`-p`/`--search` 会被迫进入内嵌模式（警告原文
@@ -15,13 +18,11 @@
 //!   终端的整份环境（含 MEOWO_PTY_* 认领凭据）交给 app-server；MCP 子进程环境被 codex 过滤
 //!   （实测拿不到父环境），仍须靠 `-c mcp_servers.*.env=…` 显式下发——这些 `-c` 正好随迁。
 //! - originator（计费归属）由**第一个** initialize 的客户端决定：TUI 先握手时宿主连上来拿到的
-//!   userAgent 以 `codex-tui/` 开头，宿主先握手则变成 `meowo/`。宿主自报 clientInfo 名 meowo
-//!   （不冒充），连上后核对 userAgent 前缀，不对就不投递。queue 投递的请求头 originator 仍是
-//!   codex-tui，只有 UA 末尾客户端名与 turn_trigger=queue 不同。
+//!   userAgent 以 `codex-tui/` 开头，宿主先握手则变成 `meowo/`。所以宿主在确认 TUI 已握手之前
+//!   绝不 initialize（见 [`await_handshake`]）；连上后仍核对 userAgent 前缀，不对就不投递。
+//!   宿主自报 clientInfo 名 meowo（不冒充）；queue 投递的请求头 originator 仍是 codex-tui，
+//!   只有 UA 末尾客户端名与 turn_trigger=queue 不同。
 //! - 不用 `turn/start`：那是插话（打断/并入当前回合）；queue 不动输入框草稿（实测草稿原样保留）。
-//! - TUI 退出后 thread 仍在 app-server 里加载着，queue/add 会当场跑完这一轮，下次 resume 看得到；
-//!   app-server 也不在时，`codex queue --thread` 只把消息落进 `$CODEX_HOME/queue_1.sqlite`、
-//!   不调模型，下次 resume 由 TUI 消费（originator=codex-tui）。
 //! - 不走 ACP、不往 PTY 打字、不用 `codex exec`（originator=codex_exec，可能另算）。
 use super::ws;
 use super::{NativeOutcome, NativeTarget};
@@ -29,7 +30,7 @@ use meowo_protocol::ipc::LeadDeliveryDto;
 use portable_pty::CommandBuilder;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
@@ -37,17 +38,18 @@ use std::time::Duration;
 /// TUI 读 token 的环境变量名（`--remote-auth-token-env`）。不放进 app-server 的环境：
 /// hook/MCP 都是 app-server 的后代，没必要让它们拿到连回服务的凭据。
 const TOKEN_ENV: &str = "MEOWO_CODEX_REMOTE_TOKEN";
-/// TUI 退出后 app-server 继续存活多久（期间答复当场跑完，下次 resume 可见）。默认 2 小时：
-/// 手机上答关卡常在离开电脑之后；更久的由冷路径 `codex queue` 兜住，不靠常驻进程。
-const LINGER_ENV: &str = "MEOWO_CODEX_SERVER_LINGER_SECS";
-const DEFAULT_LINGER_SECS: u64 = 2 * 60 * 60;
-/// TUI 启动到完成 initialize 实测 <1s；宿主至少等这么久才连，避免抢先握手把 originator 变成 meowo。
+/// TUI 启动到完成 initialize 实测 <1s；宿主至少等这么久才去找握手证据。
 const TUI_HANDSHAKE_GRACE_MS: i64 = 5_000;
+/// 看到 TUI 已连上端口后再等这么久才认定它握过手：TUI 建好 WebSocket 后的第一条消息就是
+/// initialize（不经任何用户交互），1 秒远够；只看 TCP 已连通会在「刚连上还没发 initialize」的
+/// 瞬间抢先（N6）。
+const HANDSHAKE_SETTLE: Duration = Duration::from_secs(1);
 const RPC_TIMEOUT: Duration = Duration::from_secs(15);
-/// 只读探询（服务忙不忙）的单次时限：在启动会话的路径上，宁可判「查不了」也不能卡住开终端。
-const PROBE_TIMEOUT: Duration = Duration::from_secs(3);
-/// 自动重试（关卡巡检）的最小间隔，避免服务不可达时每轮巡检都刷一次。
+/// 确定没送出（failed）的自动重试最小间隔，避免服务不可达时每轮巡检都刷一次。
 const RETRY_COOLDOWN_MS: i64 = 20_000;
+/// 跨进程投递占位的过期时限：一次投递最长是握手等待 + 一次 RPC 时限（约 20s）；占位进程被杀、
+/// 或 pid 被别的进程复用时，过了这么久就当作无主，不让那个关卡永远卡在「另一个进程正在送」。
+const CLAIM_STALE_MS: i64 = 5 * 60_000;
 
 // ─── 启动参数拆分 ───────────────────────────────────────────────────────────
 
@@ -189,41 +191,30 @@ fn is_known_subcommand(arg: &str) -> bool {
     )
 }
 
-// ─── 每会话服务的状态（落盘，Meowo 重启后能重新发现） ─────────────────────────
+// ─── 每个 TUI 的服务（状态落盘：投递要按会话找到它，Meowo 重启后要能清掉遗留） ──────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct ServerState {
-    /// 最近一次接上它的会话 id（新建会话是临时负 id；投递按 DB 记的 app-server pid 找，不靠它）。
+    /// 接上它的会话 id（新建会话是临时负 id；投递按 DB 记的 app-server pid 找，不靠它）。
     launch_session: i64,
     server_pid: u32,
     port: u16,
     started_at_ms: i64,
     tui_pid: Option<u32>,
-    tui_exited_at_ms: Option<i64>,
-    /// 看守线程最后一次确认 TUI 还活着的时刻。Meowo 退出时 TUI 随托管终端结束，但来不及写
-    /// tui_exited_at_ms；重启后按它推算 linger 起点，过期的直接回收，而不是再白等一整个 linger。
+    /// 已确认 TUI 先于宿主握过手（originator 归 codex-tui）。一个服务进程的 originator 定了就不变，
+    /// 确认一次即可，后续投递不必再找证据。旧版本写的 state.json 没有此字段，读作 false。
     #[serde(default)]
-    tui_seen_at_ms: Option<i64>,
+    tui_handshaken: bool,
 }
 
-/// 内存里的活服务：持有 Child 句柄（结束时按句柄杀，不怕 pid 复用）。
-struct Live {
-    child: std::process::Child,
-    /// 起服务时托管终端发的 scoped token（hook/MCP 继承在服务环境里）。复用服务时要让它继续有效，
-    /// 否则新一代终端换发 token 后，服务派生的 hook 递审批会认证失败。
-    pty_token: Option<String>,
-}
+/// TUI 已退出、看守线程还没来得及收掉的服务 pid。看板判活用的进程快照要剔除它们，
+/// 否则会话卡片会短暂显示「运行中」（hook 把 app-server 记成了会话 pid）。
+static LINGERING: LazyLock<Mutex<HashSet<u32>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
 
-/// TUI 已退出、只在等投递的服务 pid。看板判活用的进程快照要剔除它们，否则会话卡片在 linger 期间
-/// 一直显示「运行中」（hook 把 app-server 记成了会话 pid）。由看守线程维护。
-static LINGERING: LazyLock<Mutex<std::collections::HashSet<u32>>> =
-    LazyLock::new(|| Mutex::new(std::collections::HashSet::new()));
+/// 已有看守线程的服务目录：避免重复起看守。
+static REAPING: LazyLock<Mutex<HashSet<PathBuf>>> = LazyLock::new(|| Mutex::new(HashSet::new()));
 
-/// 已有看守线程的服务目录：复用服务时 bind_tui 不再多起一个。
-static REAPING: LazyLock<Mutex<std::collections::HashSet<PathBuf>>> =
-    LazyLock::new(|| Mutex::new(std::collections::HashSet::new()));
-
-pub(crate) fn lingering_server_pids() -> std::collections::HashSet<u32> {
+pub(crate) fn lingering_server_pids() -> HashSet<u32> {
     LINGERING.lock().map(|set| set.clone()).unwrap_or_default()
 }
 
@@ -237,7 +228,9 @@ fn set_lingering(pid: u32, lingering: bool) {
     }
 }
 
-static LIVE: LazyLock<Mutex<HashMap<PathBuf, Live>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+/// 内存里的活服务：持有 Child 句柄（结束时按句柄杀，不怕 pid 复用）。
+static LIVE: LazyLock<Mutex<HashMap<PathBuf, std::process::Child>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 fn root_of(db: &Path) -> PathBuf {
     db.parent()
@@ -268,14 +261,6 @@ fn read_token(dir: &Path) -> Option<String> {
 
 fn now_ms() -> i64 {
     crate::now_ms()
-}
-
-fn linger_ms() -> i64 {
-    let secs = std::env::var(LINGER_ENV)
-        .ok()
-        .and_then(|v| v.trim().parse::<u64>().ok())
-        .unwrap_or(DEFAULT_LINGER_SECS);
-    i64::try_from(secs.saturating_mul(1000)).unwrap_or(i64::MAX)
 }
 
 /// pid 还活着且确实是我们起的那个 app-server（命令行里带着本会话的 token 文件路径）。
@@ -328,15 +313,28 @@ fn retire(dir: &Path) {
         set_lingering(state.server_pid, false);
     }
     let live = LIVE.lock().ok().and_then(|mut map| map.remove(dir));
-    if let Some(mut live) = live {
-        crate::proc::kill_descendants(live.child.id());
-        let _ = live.child.kill();
-        let _ = live.child.wait();
+    if let Some(mut child) = live {
+        crate::proc::kill_descendants(child.id());
+        let _ = child.kill();
+        let _ = child.wait();
     } else if let Some(state) = read_state(dir).filter(|state| server_alive(dir, state)) {
         crate::proc::kill_descendants(state.server_pid);
         crate::proc::kill_pid(state.server_pid);
     }
     let _ = std::fs::remove_dir_all(dir);
+}
+
+/// 收掉某会话名下的全部服务。重开会话时调用：服务随 TUI 生灭，正常情况下这里已经空了；
+/// 留下的只会是上一代 TUI 刚退、看守线程还没来得及收的那个。
+fn retire_session(db: &Path, session_id: i64) {
+    let pid = crate::open_store(db)
+        .ok()
+        .and_then(|store| store.session_pid(session_id).ok().flatten());
+    for (dir, state) in states(db) {
+        if state.launch_session == session_id || pid == Some(i64::from(state.server_pid)) {
+            retire(&dir);
+        }
+    }
 }
 
 fn free_port() -> Option<u16> {
@@ -401,36 +399,6 @@ fn wait_listening(port: u16, token: &str, child: &mut std::process::Child) -> bo
     false
 }
 
-/// 服务上是否还有回合在跑（或排着队）。只读：initialize + thread/loaded/list + thread/read +
-/// thread/queue/list，不发任何会开回合的请求。只用于 TUI 已经握过手的服务（originator 已定）。
-/// 字段出处：0.167.2 `codex app-server generate-ts --experimental`——`Thread.status: ThreadStatus`
-/// = notLoaded | idle | systemError | active{activeFlags}；`ThreadQueueListResponse.data`。
-fn server_busy(port: u16, token: &str, timeout: Duration) -> Result<bool, String> {
-    let mut client = ws::Client::connect(port, token, timeout)?;
-    client.call("initialize", meowo_client_info(), timeout)?;
-    client.notify("initialized")?;
-    let loaded = client.call("thread/loaded/list", json!({}), timeout)?;
-    for id in loaded_ids(&loaded) {
-        let read = client.call(
-            "thread/read",
-            json!({ "threadId": id, "includeTurns": false }),
-            timeout,
-        )?;
-        if read.pointer("/thread/status/type").and_then(Value::as_str) == Some("active") {
-            return Ok(true);
-        }
-        let queued = client.call("thread/queue/list", json!({ "threadId": id }), timeout)?;
-        if queued
-            .get("data")
-            .and_then(Value::as_array)
-            .is_some_and(|items| !items.is_empty())
-        {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
 fn loaded_ids(loaded: &Value) -> Vec<String> {
     loaded
         .get("data")
@@ -455,67 +423,6 @@ fn meowo_client_info() -> Value {
 pub(crate) struct Launch {
     dir: PathBuf,
     session_id: i64,
-    /// 接上的是已在跑的旧服务（有回合在后台跑），不是这次新起的。
-    reused: bool,
-    inherited_pty_token: Option<String>,
-}
-
-impl Launch {
-    /// 复用旧服务时，旧服务环境里那枚 scoped token：调用方须让它对本会话继续有效（pty.rs）。
-    pub(crate) fn inherited_pty_token(&self) -> Option<&str> {
-        self.inherited_pty_token.as_deref()
-    }
-}
-
-/// 同一会话已有自有服务时怎么办。
-#[derive(Debug, PartialEq, Eq)]
-enum Existing {
-    /// 服务上有回合在跑：新 TUI 用 --remote 接上它（同端口同 token），绝不杀。
-    Reuse,
-    /// 确认空闲（或已连不上）：收掉，按新一代参数重起（新 token、新 MCP 环境）。
-    Retire,
-}
-
-/// busy：Ok(true) 有回合在跑 / Ok(false) 空闲 / Err 查不了。查不了 = 握手都过不去，TUI 同样连不上，
-/// 留着也没用；但 originator 核对之类只读失败不该杀回合——那些在 server_busy 里都会返回 Ok。
-fn existing_action(busy: &Result<bool, String>) -> Existing {
-    match busy {
-        Ok(true) => Existing::Reuse,
-        Ok(false) | Err(_) => Existing::Retire,
-    }
-}
-
-/// H1：重开会话前先处理同一会话的旧服务。TUI 退出后服务还在 linger，手机作答可能正让它在后台
-/// 跑那一轮（记录已是 accepted，不会重发）；此时无条件收掉会把回合连同答复一起杀掉。
-/// 返回可复用的那个（目录、状态、token）；其余空闲的收掉。
-fn settle_existing(
-    db: &Path,
-    session_id: i64,
-    alive: impl Fn(&Path, &ServerState) -> bool,
-) -> Option<(PathBuf, ServerState, String)> {
-    let pid = crate::open_store(db)
-        .ok()
-        .and_then(|store| store.session_pid(session_id).ok().flatten());
-    let mut reuse = None;
-    for (dir, state) in states(db) {
-        if state.launch_session != session_id && pid != Some(i64::from(state.server_pid)) {
-            continue;
-        }
-        let token = read_token(&dir);
-        let busy = match (&token, alive(&dir, &state)) {
-            (Some(token), true) => server_busy(state.port, token, PROBE_TIMEOUT),
-            _ => Err("lead/codex_server_unreachable".into()),
-        };
-        match (existing_action(&busy), token) {
-            (Existing::Reuse, Some(token)) if reuse.is_none() => {
-                reuse = Some((dir, state, token));
-            }
-            // 第二个忙着的（不该出现）：也不杀，只是不接，等它自己跑完被看守线程收掉。
-            (Existing::Reuse, _) => {}
-            (Existing::Retire, _) => retire(&dir),
-        }
-    }
-    reuse
 }
 
 /// 托管 PTY spawn 前调用（pty.rs start_spawned）：条件满足就起 app-server 并把 `command` 改成
@@ -544,24 +451,8 @@ pub(crate) fn prepare_launch(
         .collect::<Option<_>>()?;
     let split = split_argv(&argv, |name| plugin.owns_process(name))?;
     let db = crate::db_path();
-    // 同一会话上一代的服务：空闲就收掉重起（它带着旧 scoped token 与旧 MCP 环境）；
-    // 有回合在跑就接上它，不杀（见 settle_existing）。
-    if let Some((dir, state, token)) = settle_existing(&db, session_id, server_alive) {
-        if verify_identity(state.port, &token) {
-            let inherited_pty_token = LIVE
-                .lock()
-                .ok()
-                .and_then(|live| live.get(&dir).and_then(|entry| entry.pty_token.clone()));
-            point_tui_at(command, split, state.port, &token);
-            return Some(Launch {
-                dir,
-                session_id,
-                reused: true,
-                inherited_pty_token,
-            });
-        }
-        // 端口上已不是它（不该出现）：不杀进程（可能仍在跑回合），只是不接，按新一代起。
-    }
+    // 服务只跟一代 TUI：上一代留下的（它带着旧 scoped token 与旧 MCP 环境）一律收掉，不复用。
+    retire_session(&db, session_id);
     let token = crate::remote::generate_token().ok()?;
     let port = free_port()?;
     // 目录名与 token 无关：目录路径会出现在 app-server 的命令行里（--ws-token-file），任何本机进程
@@ -594,11 +485,6 @@ pub(crate) fn prepare_launch(
             .collect(),
         cwd: command.get_cwd().map(PathBuf::from),
     };
-    let pty_token = spec
-        .env
-        .iter()
-        .find(|(key, _)| key == "MEOWO_PTY_TOKEN")
-        .map(|(_, value)| value.clone());
     let mut child = match spawn_server(&dir, &spec) {
         Ok(child) => child,
         Err(error) => {
@@ -623,20 +509,14 @@ pub(crate) fn prepare_launch(
             port,
             started_at_ms: now_ms(),
             tui_pid: None,
-            tui_exited_at_ms: None,
-            tui_seen_at_ms: None,
+            tui_handshaken: false,
         },
     );
     if let Ok(mut live) = LIVE.lock() {
-        live.insert(dir.clone(), Live { child, pty_token });
+        live.insert(dir.clone(), child);
     }
     point_tui_at(command, split, port, &token);
-    Some(Launch {
-        dir,
-        session_id,
-        reused: false,
-        inherited_pty_token: None,
-    })
+    Some(Launch { dir, session_id })
 }
 
 fn point_tui_at(command: &mut CommandBuilder, split: RemoteSplit, port: u16, token: &str) {
@@ -652,51 +532,20 @@ fn point_tui_at(command: &mut CommandBuilder, split: RemoteSplit, port: u16, tok
     command.env(TOKEN_ENV, token);
 }
 
-/// TUI 已 spawn：记下它的 pid，并起看守线程——TUI 退出后服务再活 linger 时长，到点收掉。
+/// TUI 已 spawn：记下它的 pid，并起看守线程——TUI 一退就收掉服务。
 pub(crate) fn bind_tui(launch: Launch, tui_pid: Option<u32>) {
     if let Some(mut state) = read_state(&launch.dir) {
         state.tui_pid = tui_pid;
-        state.tui_exited_at_ms = None;
-        state.tui_seen_at_ms = Some(now_ms());
         state.launch_session = launch.session_id;
         write_state(&launch.dir, &state);
-        set_lingering(state.server_pid, false);
     }
     spawn_reaper(launch.dir);
 }
 
-/// TUI 没起来：新起的服务没有用处，立即收掉；复用的旧服务还在跑回合，原样留给它的看守线程。
+/// TUI 没起来：服务没有用处，立即收掉。
 pub(crate) fn abort(launch: Launch) {
-    if !launch.reused {
-        retire(&launch.dir);
-    }
+    retire(&launch.dir);
 }
-
-/// 探针用：模拟「服务已到期被收掉」的冷路径场景。
-#[cfg(test)]
-fn retire_for_session(db: &Path, session_id: i64) {
-    let pid = crate::open_store(db)
-        .ok()
-        .and_then(|store| store.session_pid(session_id).ok().flatten());
-    for (dir, state) in states(db) {
-        if state.launch_session == session_id || pid == Some(i64::from(state.server_pid)) {
-            retire(&dir);
-        }
-    }
-}
-
-/// TUI 退出（或推算的退出时刻）起算，过了 linger 且服务空闲才收。有回合在跑就再等：
-/// 到点硬杀会把正在跑的答复回合一起杀掉，记录却已是 accepted、不会重发。
-fn linger_expired(state: &ServerState, now: i64, linger: i64) -> bool {
-    let since = state
-        .tui_exited_at_ms
-        .or(state.tui_seen_at_ms)
-        .unwrap_or(state.started_at_ms);
-    now.saturating_sub(since) >= linger
-}
-
-/// 心跳间隔：TUI 活着时多久落一次 tui_seen_at_ms（只为 Meowo 重启后推算退出时刻，粗一点无妨）。
-const HEARTBEAT_MS: i64 = 60_000;
 
 fn spawn_reaper(dir: PathBuf) {
     if !REAPING.lock().is_ok_and(|mut set| set.insert(dir.clone())) {
@@ -712,69 +561,34 @@ fn spawn_reaper(dir: PathBuf) {
 
 fn reap_loop(dir: &Path) {
     loop {
-        std::thread::sleep(Duration::from_secs(3));
-        let Some(mut state) = read_state(dir) else {
+        std::thread::sleep(Duration::from_secs(2));
+        let Some(state) = read_state(dir) else {
             return; // 已被收掉
         };
-        if !server_alive(dir, &state) {
-            retire(dir);
-            return;
-        }
-        let tui_alive = state.tui_pid.is_some_and(pid_alive);
-        set_lingering(state.server_pid, !tui_alive);
-        if tui_alive {
-            if now_ms().saturating_sub(state.tui_seen_at_ms.unwrap_or(0)) >= HEARTBEAT_MS {
-                state.tui_seen_at_ms = Some(now_ms());
-                write_state(dir, &state);
-            }
-            continue;
-        }
-        if state.tui_exited_at_ms.is_none() {
-            state.tui_exited_at_ms = Some(now_ms());
-            write_state(dir, &state);
-            continue;
-        }
-        if linger_expired(&state, now_ms(), linger_ms()) && !busy_now(dir, &state) {
+        // 不在 TUI 退出后保留服务：不做离线续跑（leader 2026-11-13），没写完的回合随 TUI 一起结束，
+        // 与内嵌模式下关掉 TUI 的效果一致。
+        if !server_alive(dir, &state) || !state.tui_pid.is_some_and(pid_alive) {
+            set_lingering(state.server_pid, true);
             retire(dir);
             return;
         }
     }
 }
 
-/// 只有确认在跑才算忙；查不了（连不上）按空闲处理——那样的服务连 TUI 也接不上，留着没用。
-fn busy_now(dir: &Path, state: &ServerState) -> bool {
-    read_token(dir)
-        .is_some_and(|token| server_busy(state.port, &token, PROBE_TIMEOUT).unwrap_or(false))
-}
-
-/// 应用启动时调用：上次运行留下的服务重新纳入看守，已死的清目录。
-/// Meowo 退出时 TUI 随托管终端结束，但 app-server 不在 ConPTY 里，会活下来——正好用于离线投递；
-/// 代价是 Meowo 不运行期间没人回收它（0.167.2 `codex app-server --help` 没有空闲自退参数）。
-/// 所以启动时按 TUI 最后在世的时刻补算 linger：已过期且空闲的当场收掉，不再白等一整个 linger。
+/// 应用启动时调用：收掉上次运行遗留的服务（Meowo 退出时 TUI 随托管终端结束，但 app-server 不在
+/// ConPTY 里，会活下来）。TUI 还活着的不动：dev 版与安装版共用 ~/.meowo，那是另一个正在运行的
+/// Meowo 实例的服务，由它自己的看守线程管。
 pub(crate) fn sweep_on_startup() {
     let db = crate::db_path();
-    for (dir, mut state) in states(&db) {
-        if !server_alive(&dir, &state) {
-            let _ = std::fs::remove_dir_all(&dir);
-            continue;
-        }
-        let tui_alive = state.tui_pid.is_some_and(pid_alive);
-        if !tui_alive && state.tui_exited_at_ms.is_none() {
-            // 上次运行没来得及记退出时刻：按最后一次心跳算，没有心跳就按服务启动时刻算。
-            state.tui_exited_at_ms = Some(state.tui_seen_at_ms.unwrap_or(state.started_at_ms));
-            write_state(&dir, &state);
-        }
-        if !tui_alive && linger_expired(&state, now_ms(), linger_ms()) && !busy_now(&dir, &state) {
+    for (dir, state) in states(&db) {
+        if !state.tui_pid.is_some_and(pid_alive) {
             retire(&dir);
-            continue;
         }
-        spawn_reaper(dir);
     }
 }
 
 /// 该 pid 若是 Meowo 为某个会话起的 app-server，返回它的 TUI 是否还活着；不是则 None。
-/// 「会话进程活着」的判定（看板、恢复守卫、离线推送）要看 TUI：TUI 一退，服务只是在等投递，
-/// 不是「外部终端里的会话」；恢复会话时空闲就被新一代顶替，忙就被新 TUI 接上（settle_existing）。
+/// 「会话进程活着」的判定（看板、恢复守卫）要看 TUI：TUI 一退，服务马上被收掉，不是「外部终端里的会话」。
 pub(crate) fn owned_server_tui_alive(pid: i64) -> Option<bool> {
     let db = crate::db_path();
     states(&db)
@@ -791,13 +605,143 @@ pub(crate) fn serves_tui(server_pid: u32, tui_pid: u32) -> bool {
         .any(|(_, state)| state.server_pid == server_pid && state.tui_pid == Some(tui_pid))
 }
 
+// ─── TUI 握手证据（N6） ──────────────────────────────────────────────────────
+
+/// 宿主能否 initialize：只有确认 TUI 已先握手才行，否则宿主会成为第一个握手的客户端，这个服务
+/// 之后所有回合的 originator 都变成 meowo（可能另算）。证据按代价从低到高：
+/// 1. state 里记过已确认（originator 一旦定了不会变）；
+/// 2. DB 里会话 pid 就是这个服务：hook 只在回合里触发（codex 要到首个 turn 才认领），而宿主在确认前
+///    从不排队，所以这个服务上跑过的回合只能是 TUI 发起的，TUI 必然已握手；
+/// 3. TUI（或它的子进程，npm 包装时真正连接的是 node 下面的 codex）对服务端口有一条已建立的 TCP
+///    连接，且隔 [`HANDSHAKE_SETTLE`] 后仍在。覆盖「刚恢复会话、还没发过消息」——此时没有 hook。
+///
+/// `connected` 查第 3 条（None = 本平台查不了），`sleep` 注入是为了测试不真等。
+fn await_handshake(
+    state: &ServerState,
+    db_pid: Option<i64>,
+    now: i64,
+    mut connected: impl FnMut() -> Option<bool>,
+    sleep: impl Fn(Duration),
+) -> bool {
+    if state.tui_handshaken || db_pid == Some(i64::from(state.server_pid)) {
+        return true;
+    }
+    let age = now.saturating_sub(state.started_at_ms);
+    if age < TUI_HANDSHAKE_GRACE_MS {
+        sleep(Duration::from_millis((TUI_HANDSHAKE_GRACE_MS - age) as u64));
+    }
+    if connected() != Some(true) {
+        return false;
+    }
+    sleep(HANDSHAKE_SETTLE);
+    connected() == Some(true)
+}
+
+/// TUI 进程树里是否有进程连着 127.0.0.1:`port`。None = 本平台查不了连接表。
+fn tui_connected(port: u16, tui_pid: u32) -> Option<bool> {
+    let peers = tcp_client_pids(port)?;
+    let mut tree = crate::proc::descendant_pids(&crate::proc::parent_map(), tui_pid);
+    tree.insert(tui_pid);
+    Some(!peers.is_disjoint(&tree))
+}
+
+/// 本机所有「对端是 127.0.0.1:`port`、已建立」的 TCP 连接的属主 pid。
+#[cfg(windows)]
+fn tcp_client_pids(port: u16) -> Option<HashSet<u32>> {
+    use windows_sys::Win32::NetworkManagement::IpHelper::{
+        GetExtendedTcpTable, MIB_TCPTABLE_OWNER_PID, MIB_TCP_STATE_ESTAB,
+        TCP_TABLE_OWNER_PID_CONNECTIONS,
+    };
+    const AF_INET: u32 = 2;
+    const ERROR_INSUFFICIENT_BUFFER: u32 = 122;
+    let mut size: u32 = 0;
+    // SAFETY: 传空缓冲区只为取所需大小。
+    unsafe {
+        GetExtendedTcpTable(
+            std::ptr::null_mut(),
+            &mut size,
+            0,
+            AF_INET,
+            TCP_TABLE_OWNER_PID_CONNECTIONS,
+            0,
+        );
+    }
+    for _ in 0..4 {
+        // u32 元素保证表结构所需的 4 字节对齐；两次调用之间连接数可能变多，不够就按新大小重来。
+        let mut buf = vec![0u32; (size as usize).div_ceil(4) + 1];
+        let mut len = (buf.len() * 4) as u32;
+        // SAFETY: buf 长度 len 字节，可写；API 只在其中写表。
+        let rc = unsafe {
+            GetExtendedTcpTable(
+                buf.as_mut_ptr().cast(),
+                &mut len,
+                0,
+                AF_INET,
+                TCP_TABLE_OWNER_PID_CONNECTIONS,
+                0,
+            )
+        };
+        if rc == ERROR_INSUFFICIENT_BUFFER {
+            size = len;
+            continue;
+        }
+        if rc != 0 {
+            return None;
+        }
+        // SAFETY: 成功时缓冲区开头是 MIB_TCPTABLE_OWNER_PID，后接 dwNumEntries 行（都在 len 之内）。
+        let rows = unsafe {
+            let table = &*(buf.as_ptr() as *const MIB_TCPTABLE_OWNER_PID);
+            std::slice::from_raw_parts(table.table.as_ptr(), table.dwNumEntries as usize)
+        };
+        // 地址与端口都是网络字节序：地址按内存字节比，端口取低 16 位再转主机序。
+        let loopback = u32::from_ne_bytes([127, 0, 0, 1]);
+        return Some(
+            rows.iter()
+                .filter(|row| {
+                    row.dwState == MIB_TCP_STATE_ESTAB as u32
+                        && row.dwRemoteAddr == loopback
+                        && u16::from_be(row.dwRemotePort as u16) == port
+                })
+                .map(|row| row.dwOwningPid)
+                .collect(),
+        );
+    }
+    None
+}
+
+/// macOS/Linux：借 lsof（macOS 自带）。没装 lsof 就返回 None，只靠前两条证据。
+/// lsof 的 `-i @addr:port` 两端都匹配，服务端自己接受的那条也会列出来——它不在 TUI 进程树里，无碍。
+#[cfg(not(windows))]
+fn tcp_client_pids(port: u16) -> Option<HashSet<u32>> {
+    let output = std::process::Command::new("lsof")
+        .args([
+            "-nP",
+            &format!("-iTCP@127.0.0.1:{port}"),
+            "-sTCP:ESTABLISHED",
+            "-Fp",
+        ])
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    // 没有匹配时 lsof 以 1 退出、输出为空：这是「没有连接」，不是「查不了」。
+    Some(
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter_map(|line| line.strip_prefix('p')?.parse().ok())
+            .collect(),
+    )
+}
+
 // ─── 投递 ──────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 struct DeliveryRecord {
     /// sending = 正在送（发送前先落的占位）；accepted = app-server 已排进 thread；
-    /// queued = 已落进 codex 的持久队列，下次恢复会话时消费；failed = 确定没送出（可自动重试）；
+    /// waiting = 没有可投的 TUI（会话没开 / TUI 还没握手 / 不在那个 thread 上），答复已保存，
+    /// 巡检每轮再试；failed = 确定没送出（冷却后自动重试）；
     /// uncertain = 请求已发出但没拿到确认，可能已送达（绝不自动重投，面板给手动重试）。
+    /// 旧版本还会写 queued（已落进 codex 持久队列），按已送出处理。
     state: String,
     reason: Option<String>,
     at_ms: i64,
@@ -807,15 +751,21 @@ struct DeliveryRecord {
     pid: Option<u32>,
 }
 
-/// 发送失败分两类：请求还没发出（可以放心自动重试）和已经发出（可能已送达）。
+/// 发送结果里不成功的三类：请求还没发出（可以放心自动重试）、已经发出（可能已送达）、
+/// 眼下没有可投的 TUI（等会话打开，reason 说明在等什么）。
 #[derive(Debug, PartialEq, Eq)]
 enum SendError {
     NotSent(String),
     MaybeSent(String),
+    Waiting(Option<String>),
 }
 
-/// 可能已送达、但没拿到确认（超时、断开、冷路径进程卡死）。
+/// 可能已送达、但没拿到确认（超时、断开）。
 const UNCERTAIN: &str = "lead/codex_delivery_uncertain";
+/// 会话开着但还认不出 TUI 已握手（或握手被抢、originator 不对）：宿主不连，等它。
+const TUI_NOT_CONNECTED: &str = "lead/codex_tui_not_connected";
+/// TUI 开着，但答复要去的 thread 没加载在它的服务上（TUI 里 /new 或切到了别的会话）。
+const THREAD_NOT_OPEN: &str = "lead/codex_thread_not_open";
 
 fn delivery_key(task: &Path, gate_id: &str, native: &str) -> String {
     use sha2::{Digest, Sha256};
@@ -849,9 +799,9 @@ fn write_record(db: &Path, key: &str, record: &DeliveryRecord) {
     }
 }
 
-/// 按投递键串行化：手机作答（answer_and_deliver）与关卡巡检（reconcile_task，每 10s）会并发调用
-/// deliver；读记录→发送→写记录之间不加锁，两边都读到「未送」就会 queue/add 两次（真开两轮）。
-/// 同 opencode_http.rs 的 LOCK，但按键分开：冷路径要起 codex 进程，别让不相干的关卡排队等。
+/// 按投递键串行化（进程内）：手机作答（answer_and_deliver）与关卡巡检（reconcile_task，每 10s）会并发
+/// 调用 deliver；读记录→发送→写记录之间不加锁，两边都读到「未送」就会 queue/add 两次（真开两轮）。
+/// 按键分开：别让不相干的关卡排队等。跨进程见 [`Claim`]。
 static INFLIGHT: LazyLock<Mutex<HashMap<String, std::sync::Arc<Mutex<()>>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
@@ -862,7 +812,79 @@ fn key_lock(key: &str) -> std::sync::Arc<Mutex<()>> {
         .unwrap_or_default()
 }
 
-/// 送出一次答复。投递失败不报错给作答方（答复已保存）：记成 failed/uncertain，面板显示原因与「继续送达」。
+/// N9：跨进程投递占位。dev 版与安装版共用 ~/.meowo（用户要求不隔离），两个进程的巡检会同时看到
+/// 同一个已作答关卡；进程内的锁管不到对方，读记录到写 sending 之间的窄窗口会双投。
+/// 用 create_new 建锁文件做原子占位（文件系统保证只有一个进程建得成），Drop 时删除。
+struct Claim(PathBuf);
+
+impl Drop for Claim {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+fn claim_path(db: &Path, key: &str) -> PathBuf {
+    root_of(db).join("deliveries").join(format!("{key}.lock"))
+}
+
+/// 锁文件内容 `<pid> <毫秒时刻>`；读不出按无主处理（写入途中被杀）。
+fn claim_owner(path: &Path) -> Option<(u32, i64)> {
+    let body = std::fs::read_to_string(path).ok()?;
+    let mut parts = body.split_whitespace();
+    Some((parts.next()?.parse().ok()?, parts.next()?.parse().ok()?))
+}
+
+/// 别的进程正持有这个键的占位（`foreign_alive` 认它、且没过期）。
+fn claim_held_elsewhere(path: &Path, now: i64, foreign_alive: impl Fn(u32) -> bool) -> bool {
+    match claim_owner(path) {
+        Some((pid, at)) => now.saturating_sub(at) < CLAIM_STALE_MS && foreign_alive(pid),
+        // 文件在、内容还读不出：多半是对方刚 create_new、还没写完 pid。刚建的当作有主，
+        // 否则会在这一瞬把对方的占位删掉抢走；放久了（写入途中被杀）才算无主。
+        None => std::fs::metadata(path)
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|modified| modified.elapsed().ok())
+            .is_some_and(|age| age < Duration::from_secs(10)),
+    }
+}
+
+/// 生产用的判定：占位 pid 不是本进程、且还活着。本进程自己的占位不算：进程内已有 key_lock 管着，
+/// 留在盘上的只会是上次 Drop 没删成的残留。
+fn foreign_alive(pid: u32) -> bool {
+    pid != std::process::id() && pid_alive(pid)
+}
+
+fn try_claim(db: &Path, key: &str, foreign_alive: impl Fn(u32) -> bool) -> Option<Claim> {
+    use std::io::Write;
+    let path = claim_path(db, key);
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    for _ in 0..2 {
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut file) => {
+                let _ = write!(file, "{} {}", std::process::id(), now_ms());
+                return Some(Claim(path));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                if claim_held_elsewhere(&path, now_ms(), &foreign_alive) {
+                    return None;
+                }
+                // 无主的旧占位（持有进程已死 / 过期 / 本进程残留）：删掉再抢一次。两个进程同时删、
+                // 同时建时，create_new 仍只让一个成功。
+                let _ = std::fs::remove_file(&path);
+            }
+            Err(_) => return None,
+        }
+    }
+    None
+}
+
+/// 送出一次答复。投递失败不报错给作答方（答复已保存）：记成 waiting/failed/uncertain，面板显示原因。
 pub(crate) fn deliver(target: &NativeTarget<'_>) -> Result<NativeOutcome, String> {
     deliver_with(target, send)
 }
@@ -874,13 +896,19 @@ fn deliver_with(
     let key = delivery_key(target.task, target.gate_id, target.native_session);
     let lock = key_lock(&key);
     let _guard = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    // 另一个 Meowo 进程正在送这一条：它会写结果，这里什么都不做。
+    let Some(_claim) = try_claim(target.db, &key, foreign_alive) else {
+        return Ok(NativeOutcome::Delivered);
+    };
     if let Some(record) = read_record(target.db, &key) {
         match record.state.as_str() {
-            // 已送出的绝不重发：queue 会真的再开一轮。
+            // 已送出的绝不重发：queue 会真的再开一轮。queued 是旧版本冷队列的记录，同样已送出。
             "accepted" | "queued" => return Ok(NativeOutcome::Delivered),
             // 可能已送达：只等用户在面板上手动重试（clear_failure 清掉记录后才会再走到这里）。
-            // 持锁时看到 sending = 上一个进程送到一半退出了，同样当作「可能已送达」。
+            // 拿到占位时看到 sending = 上一个进程送到一半退出了，同样当作「可能已送达」。
             "uncertain" | "sending" => return Ok(NativeOutcome::Delivered),
+            // 等会话打开：每轮巡检都再看一眼，TUI 一握手就送（不受失败冷却限制）。
+            "waiting" => {}
             _ if now_ms().saturating_sub(record.at_ms) < RETRY_COOLDOWN_MS => {
                 return Ok(NativeOutcome::Delivered)
             }
@@ -903,6 +931,7 @@ fn deliver_with(
         Ok((state, submission)) => (state, None, submission),
         Err(SendError::NotSent(reason)) => ("failed", Some(reason), None),
         Err(SendError::MaybeSent(reason)) => ("uncertain", Some(reason), None),
+        Err(SendError::Waiting(reason)) => ("waiting", reason, None),
     };
     write_record(
         target.db,
@@ -925,43 +954,58 @@ fn send(target: &NativeTarget<'_>, key: &str) -> Result<(&'static str, Option<St
         (pid == Some(i64::from(state.server_pid)) || state.launch_session == target.session_id)
             && server_alive(dir, state)
     });
-    let mut thread = target.native_session.to_owned();
-    if let Some((dir, state)) = live {
-        // 刚起的服务给 TUI 留出先握手的时间（originator 由第一个 initialize 的客户端决定）。
-        let age = now_ms().saturating_sub(state.started_at_ms);
-        if age < TUI_HANDSHAKE_GRACE_MS {
-            std::thread::sleep(Duration::from_millis((TUI_HANDSHAKE_GRACE_MS - age) as u64));
-        }
-        let token = read_token(&dir)
-            .ok_or_else(|| SendError::NotSent("lead/codex_server_unreachable".into()))?;
-        match queue_live(state.port, &token, target, key, RPC_TIMEOUT)? {
-            LiveOutcome::Queued(submission) => return Ok(("accepted", submission)),
-            // thread 不在这个服务里（TUI 里 /new 过、或服务刚重启还没 resume）：落持久队列。
-            LiveOutcome::NotLoaded { main } => thread = main,
-            // M4：宿主成了第一个握手的客户端（这个进程的请求都会记在 meowo 名下）。不投、也不重启
-            // 服务——重启会把 TUI 正在跑的回合一起杀掉，且 Meowo 重启后 LIVE 为空根本重启不了，
-            // 记录会永远停在这里。改走冷路径：只落 codex 的持久队列，由 TUI 下次恢复时消费。
-            LiveOutcome::OriginatorMismatch { main } => thread = main,
-        }
-    } else if let Some(main) = cold_main_thread(target) {
-        thread = main;
+    // 会话没开（或 TUI 刚退、服务正被收掉）：不投，等下次打开。
+    let Some((dir, mut state)) = live else {
+        return Err(SendError::Waiting(None));
+    };
+    let Some(tui_pid) = state.tui_pid.filter(|tui| pid_alive(*tui)) else {
+        return Err(SendError::Waiting(None));
+    };
+    let token = read_token(&dir)
+        .ok_or_else(|| SendError::NotSent("lead/codex_server_unreachable".into()))?;
+    let handshaken = await_handshake(
+        &state,
+        pid,
+        now_ms(),
+        || tui_connected(state.port, tui_pid),
+        std::thread::sleep,
+    );
+    if !handshaken {
+        return Err(SendError::Waiting(Some(TUI_NOT_CONNECTED.into())));
     }
-    queue_cold(target, &store, &thread).map(|submission| ("queued", submission))
+    match queue_live(state.port, &token, target, key, RPC_TIMEOUT)? {
+        LiveOutcome::Queued(submission) => {
+            remember_handshake(&dir, &mut state);
+            Ok(("accepted", submission))
+        }
+        // thread 不在这个服务里（TUI 里 /new 过、或切到了别的会话）：等 TUI 回到这个会话。
+        LiveOutcome::NotLoaded => {
+            remember_handshake(&dir, &mut state);
+            Err(SendError::Waiting(Some(THREAD_NOT_OPEN.into())))
+        }
+        // 证据判断失误、宿主成了第一个握手的客户端（不该出现）：这个服务的请求都会记在 meowo 名下，
+        // 不投也不重启服务（会杀掉 TUI 正在跑的回合）。TUI 下次重开会换新服务，届时再送。
+        LiveOutcome::OriginatorMismatch => Err(SendError::Waiting(Some(TUI_NOT_CONNECTED.into()))),
+    }
+}
+
+/// 宿主拿到的 userAgent 是 codex-tui：originator 已定，后续投递不必再找握手证据。
+fn remember_handshake(dir: &Path, state: &mut ServerState) {
+    if !state.tui_handshaken {
+        state.tui_handshaken = true;
+        write_state(dir, state);
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
 enum LiveOutcome {
     Queued(Option<String>),
-    /// 主线程没加载在这个服务上；main 是解析出的主线程 id（给冷路径用）。
-    NotLoaded {
-        main: String,
-    },
-    OriginatorMismatch {
-        main: String,
-    },
+    /// 主线程没加载在这个服务上。
+    NotLoaded,
+    OriginatorMismatch,
 }
 
-/// 经活着的 app-server 排队。
+/// 经活着的 app-server 排队。调用前必须已确认 TUI 握过手（[`await_handshake`]）。
 fn queue_live(
     port: u16,
     token: &str,
@@ -975,15 +1019,15 @@ fn queue_live(
         .call("initialize", meowo_client_info(), timeout)
         .map_err(not_sent)?;
     client.notify("initialized").map_err(not_sent)?;
-    let main = main_thread(&mut client, target.native_session, timeout);
     if !originator_is_tui(init.get("userAgent").and_then(Value::as_str)) {
-        return Ok(LiveOutcome::OriginatorMismatch { main });
+        return Ok(LiveOutcome::OriginatorMismatch);
     }
+    let main = main_thread(&mut client, target.native_session, timeout);
     let loaded = client
         .call("thread/loaded/list", json!({}), timeout)
         .map_err(not_sent)?;
     if !loaded_ids(&loaded).contains(&main) {
-        return Ok(LiveOutcome::NotLoaded { main });
+        return Ok(LiveOutcome::NotLoaded);
     }
     // 从这里起请求已写出：超时/断开都可能是「服务已收下、只是回执没到」，一律当可能已送达。
     let result = client
@@ -1046,47 +1090,6 @@ fn parent_of(thread: &Value) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// 冷路径没有服务可问：读该 thread rollout 首行的 session_meta，看 source 是不是子代理。
-/// rollout 用 codex core 的序列化（`source: {"subagent": {"thread_spawn": {"parent_thread_id": …}}}`），
-/// 与 app-server v2 的驼峰写法不同，两种都认。读不到就按原 id（与改动前一致）。
-fn rollout_parent(first_line: &str) -> Option<String> {
-    let value: Value = serde_json::from_str(first_line).ok()?;
-    if value.get("type")?.as_str()? != "session_meta" {
-        return None;
-    }
-    let source = value.pointer("/payload/source")?;
-    ["subagent", "subAgent", "sub_agent"]
-        .iter()
-        .find_map(|key| source.get(*key))
-        .and_then(|sub| sub.pointer("/thread_spawn/parent_thread_id"))
-        .and_then(Value::as_str)
-        .filter(|id| !id.is_empty())
-        .map(str::to_owned)
-}
-
-fn cold_main_thread(target: &NativeTarget<'_>) -> Option<String> {
-    use std::io::BufRead;
-    let spec = meowo_agent::by_id(target.provider)?
-        .telemetry()?
-        .transcript()?;
-    let mut current = target.native_session.to_owned();
-    let mut found = false;
-    for _ in 0..8 {
-        let Some(path) = spec.resolve_transcript_path(None, target.cwd, &current) else {
-            break;
-        };
-        let mut line = String::new();
-        let file = std::fs::File::open(path).ok()?;
-        std::io::BufReader::new(file).read_line(&mut line).ok()?;
-        let Some(parent) = rollout_parent(&line).filter(|parent| *parent != current) else {
-            break;
-        };
-        current = parent;
-        found = true;
-    }
-    found.then_some(current)
-}
-
 /// 只用 thread/queue/add：turn/start 等于插话（打断或并入当前回合），queue 才是「排到这一轮之后」，
 /// 且不碰 TUI 输入框里的草稿。clientUserMessageId 用投递键，便于在 codex 侧对账。
 /// 审批守卫：queue/add 是 client→server 的新请求，只往 thread 的排队区加一条用户消息；待批的审批是
@@ -1104,97 +1107,6 @@ fn originator_is_tui(user_agent: Option<&str>) -> bool {
     user_agent.is_some_and(|ua| ua.starts_with("codex-tui/"))
 }
 
-/// 冷路径进程的时限：`codex queue` 只写本地 sqlite，实测秒级；卡住时不能一直占着投递锁。
-const COLD_QUEUE_TIMEOUT: Duration = Duration::from_secs(60);
-
-/// 冷路径：`codex queue --thread <id> --message <答复>` 只写 codex 的持久队列、不调模型；
-/// 下次在 Meowo 里恢复这个会话时由 TUI 消费（隔离实测：resume 后答复被执行，originator=codex-tui）。
-fn queue_cold(
-    target: &NativeTarget<'_>,
-    store: &meowo_store::Store,
-    thread: &str,
-) -> Result<Option<String>, SendError> {
-    let plugin = meowo_agent::by_id(target.provider)
-        .ok_or_else(|| SendError::NotSent("lead/provider_missing".into()))?;
-    let profile = store.session_profile(target.session_id).ok().flatten();
-    let env = crate::terminal::launch_env_for_exact_profile(plugin, profile.as_deref());
-    let argv = plugin.launch_argv();
-    let mut command = std::process::Command::new(&argv[0]);
-    command
-        .args(&argv[1..])
-        .args(cold_queue_args(thread, target.message))
-        .envs(env)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null());
-    if let Some(cwd) = target.cwd.filter(|cwd| Path::new(cwd).is_dir()) {
-        command.current_dir(cwd);
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x0800_0000);
-    }
-    let failed = || SendError::NotSent("lead/codex_queue_failed".into());
-    let mut child = command.spawn().map_err(|_| failed())?;
-    let (status, stdout) = wait_output(&mut child, COLD_QUEUE_TIMEOUT)
-        // 进程已起、可能已写进队列：超时按可能已送达处理。
-        .ok_or_else(|| SendError::MaybeSent(UNCERTAIN.into()))?;
-    if !status.success() {
-        return Err(failed());
-    }
-    if !stdout.contains("Queued message") {
-        // 退出码成功但没打印回执：可能已入队，不能当没送。
-        return Err(SendError::MaybeSent(UNCERTAIN.into()));
-    }
-    Ok(stdout
-        .split_whitespace()
-        .skip_while(|word| *word != "message")
-        .nth(1)
-        .map(str::to_owned))
-}
-
-/// 等子进程结束并收 stdout；超时杀掉返回 None。stdout 在线程里读，免得管道写满把子进程卡住。
-fn wait_output(
-    child: &mut std::process::Child,
-    timeout: Duration,
-) -> Option<(std::process::ExitStatus, String)> {
-    use std::io::Read;
-    let mut pipe = child.stdout.take()?;
-    let reader = std::thread::spawn(move || {
-        let mut out = Vec::new();
-        let _ = pipe.read_to_end(&mut out);
-        String::from_utf8_lossy(&out).into_owned()
-    });
-    let deadline = std::time::Instant::now() + timeout;
-    let status = loop {
-        match child.try_wait() {
-            Ok(Some(status)) => break status,
-            Ok(None) if std::time::Instant::now() < deadline => {
-                std::thread::sleep(Duration::from_millis(100));
-            }
-            _ => {
-                crate::proc::kill_descendants(child.id());
-                let _ = child.kill();
-                let _ = child.wait();
-                return None;
-            }
-        }
-    };
-    Some((status, reader.join().unwrap_or_default()))
-}
-
-fn cold_queue_args(thread: &str, message: &str) -> Vec<String> {
-    // 不带 --resume：那会在本机共享 daemon 上直接跑这一轮，不经 TUI；留给用户恢复会话时由 TUI 执行。
-    vec![
-        "queue".into(),
-        "--thread".into(),
-        thread.into(),
-        "--message".into(),
-        message.into(),
-    ]
-}
-
 /// 面板上的送达状态。没有记录且关卡已作答 = 还没送（或保存后进程中断），给「继续送达」。
 pub(crate) fn status(
     db: &Path,
@@ -1209,14 +1121,19 @@ pub(crate) fn status(
         Some(record) => (record.state, record.reason),
         None => ("saved".to_owned(), None),
     };
-    // sending 只有本进程正持锁发送时才是真的「正在送」；否则是上次送到一半中断留下的，可能已送达。
-    if state == "sending" && key_lock(&key).try_lock().is_ok() {
+    // sending 只有某个进程正持占位发送时才是真的「正在送」（本进程看进程内锁，别的进程看锁文件）；
+    // 否则是上次送到一半中断留下的，可能已送达。
+    if state == "sending"
+        && key_lock(&key).try_lock().is_ok()
+        && !claim_held_elsewhere(&claim_path(db, &key), now_ms(), foreign_alive)
+    {
         state = "uncertain".into();
         reason = Some(UNCERTAIN.into());
     }
     LeadDeliveryDto {
         session_id,
         cwd,
+        // waiting 不给按钮：巡检每轮都在试，会话一打开就送，手动重试不会更快。
         can_retry: matches!(state.as_str(), "failed" | "saved" | "uncertain"),
         delivery_id: key,
         state,
@@ -1225,11 +1142,14 @@ pub(crate) fn status(
 }
 
 /// 面板「继续送达」：清掉失败/不确定记录，紧接着的 deliver 立即重投。已送出的不受影响。
-/// 持投递锁：正在发送的那次结束前不动记录，结束后若已 accepted 也就不清了。
+/// 持投递锁：正在发送的那次结束前不动记录，结束后若已 accepted 也就不清了；别的进程正在送时也不动。
 pub(crate) fn clear_failure(db: &Path, task: &Path, gate_id: &str, native: &str) {
     let key = delivery_key(task, gate_id, native);
     let lock = key_lock(&key);
     let _guard = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if claim_held_elsewhere(&claim_path(db, &key), now_ms(), foreign_alive) {
+        return;
+    }
     if read_record(db, &key)
         .is_some_and(|record| matches!(record.state.as_str(), "failed" | "uncertain" | "sending"))
     {
@@ -1377,12 +1297,11 @@ mod tests {
                 "initialize",
                 "thread/loaded/list",
                 "thread/queue/add",
-                "thread/queue/list",
                 "thread/read"
             ]
         );
-        // 冷路径同样只排队：不带 --resume（那会在共享 daemon 上不经 TUI 直接跑）。
-        assert!(!cold_queue_args("t", "m").iter().any(|a| a == "--resume"));
+        // 不做离线续跑（leader 2026-11-13）：冷排队路径（`codex queue`）已整条删除，不得复活。
+        assert!(!source.contains(concat!("fn queue_", "cold")));
     }
 
     #[test]
@@ -1668,7 +1587,7 @@ mod tests {
             Ok(LiveOutcome::Queued(Some("qs-1".into())))
         );
         assert_eq!(fake.params_of("thread/queue/add")[0]["threadId"], "main");
-        // 主线程没加载在服务上：交给冷路径，且带上解析出的主线程 id（不是子代理 id）。
+        // 主线程没加载在服务上（TUI 切到了别的会话）：不排进子代理，等 TUI 回到主线程。
         let fake = fake_server(
             |request| match request["method"].as_str().unwrap_or_default() {
                 "initialize" => vec![reply(request, json!({ "userAgent": TUI_UA }))],
@@ -1681,17 +1600,12 @@ mod tests {
                 _ => vec![reply(request, json!({}))],
             },
         );
-        assert_eq!(
-            live(&fake, "sub"),
-            Ok(LiveOutcome::NotLoaded {
-                main: "main".into()
-            })
-        );
+        assert_eq!(live(&fake, "sub"), Ok(LiveOutcome::NotLoaded));
         assert!(fake.params_of("thread/queue/add").is_empty());
     }
 
     #[test]
-    fn subagent_parent_fields_from_protocol_and_rollout() {
+    fn subagent_parent_fields_from_protocol() {
         // app-server v2（Thread.ts / SessionSource.ts / SubAgentSource.ts）。
         assert_eq!(
             parent_of(&json!({ "parentThreadId": "p" })).as_deref(),
@@ -1702,17 +1616,6 @@ mod tests {
         assert_eq!(parent_of(&spawned).as_deref(), Some("p2"));
         assert_eq!(
             parent_of(&json!({ "parentThreadId": null, "source": "cli" })),
-            None
-        );
-        // rollout 首行（codex core 序列化）。
-        let line = r#"{"type":"session_meta","payload":{"id":"s","source":{"subagent":{"thread_spawn":{"parent_thread_id":"m","depth":1}}}}}"#;
-        assert_eq!(rollout_parent(line).as_deref(), Some("m"));
-        assert_eq!(
-            rollout_parent(r#"{"type":"session_meta","payload":{"id":"m","source":"cli"}}"#),
-            None
-        );
-        assert_eq!(
-            rollout_parent(r#"{"type":"turn_context","payload":{}}"#),
             None
         );
     }
@@ -1775,12 +1678,7 @@ mod tests {
                 _ => vec![reply(request, json!({}))],
             },
         );
-        assert_eq!(
-            live(&fake, "main"),
-            Ok(LiveOutcome::OriginatorMismatch {
-                main: "main".into()
-            })
-        );
+        assert_eq!(live(&fake, "main"), Ok(LiveOutcome::OriginatorMismatch));
         assert!(fake.params_of("thread/queue/add").is_empty());
         let source = include_str!("codex_app_server.rs");
         assert!(!source.contains(concat!("fn restart_", "in_place")));
@@ -1828,7 +1726,7 @@ mod tests {
         let sends = AtomicUsize::new(0);
         let slow_send = |_: &NativeTarget<'_>, _: &str| -> SendResult {
             sends.fetch_add(1, Ordering::SeqCst);
-            // 模拟等 TUI 握手 / 冷路径起进程的那几秒。
+            // 模拟等 TUI 握手的那几秒。
             std::thread::sleep(Duration::from_millis(300));
             Ok(("accepted", Some("qs".to_owned())))
         };
@@ -1903,10 +1801,10 @@ mod tests {
         record.at_ms = 0;
         write_record(&db, &key, &record);
         deliver_with(&t, |_: &NativeTarget<'_>, _: &str| -> SendResult {
-            Ok(("queued", None))
+            Ok(("accepted", None))
         })
         .unwrap();
-        assert_eq!(read_record(&db, &key).unwrap().state, "queued");
+        assert_eq!(read_record(&db, &key).unwrap().state, "accepted");
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1939,77 +1837,279 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    /// H1：判忙只看服务真实状态（thread 状态 active 或队列非空），全程只读。
-    #[test]
-    fn server_busy_reads_thread_status_and_queue() {
-        let busy = codex_like(
-            vec![("sub", Some("main"), "idle"), ("main", None, "active")],
-            0,
-        );
-        assert_eq!(server_busy(busy.port, &busy.token, FAST), Ok(true));
-        let idle = codex_like(vec![("main", None, "idle")], 0);
-        assert_eq!(server_busy(idle.port, &idle.token, FAST), Ok(false));
-        let pending = codex_like(vec![("main", None, "idle")], 1);
-        assert_eq!(server_busy(pending.port, &pending.token, FAST), Ok(true));
-        for fake in [&busy, &idle, &pending] {
-            assert!(fake
-                .methods()
-                .iter()
-                .all(|m| !m.starts_with("turn/") && m != "thread/queue/add"));
-        }
-        assert!(server_busy(1, "x", FAST).is_err());
-        assert_eq!(existing_action(&Ok(true)), Existing::Reuse);
-        assert_eq!(existing_action(&Ok(false)), Existing::Retire);
-        assert_eq!(existing_action(&Err("x".into())), Existing::Retire);
-    }
-
-    fn plant_server(db: &Path, name: &str, session: i64, fake: &Fake) -> PathBuf {
+    fn plant_server(db: &Path, name: &str, session: i64, port: u16) -> PathBuf {
         let dir = servers_dir(db).join(name);
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("token"), &fake.token).unwrap();
+        std::fs::write(dir.join("token"), "t").unwrap();
         write_state(
             &dir,
             &ServerState {
                 launch_session: session,
                 // 不存在的 pid：retire 核身份失败就只删目录，不会误杀任何进程。
                 server_pid: 4_000_000_000,
-                port: fake.port,
+                port,
                 started_at_ms: 0,
                 tui_pid: None,
-                tui_exited_at_ms: Some(0),
-                tui_seen_at_ms: None,
+                tui_handshaken: false,
             },
         );
         dir
     }
 
-    /// H1：重开会话时，后台正在跑答复回合的旧服务被接上（同端口同 token），不被收掉；
-    /// 空闲的旧服务照旧收掉重起；别的会话的服务不动。
+    /// 服务只跟一代 TUI（不做离线续跑）：重开会话时上一代留下的服务一律收掉，不复用；
+    /// 别的会话的服务不动。
     #[test]
-    fn reopening_session_reuses_busy_server_and_retires_idle_one() {
-        let root = temp_root("h1");
+    fn reopening_session_retires_previous_servers() {
+        let root = temp_root("reopen");
         let db = root.join("board.db");
-        let busy = codex_like(vec![("main", None, "active")], 0);
-        let idle = codex_like(vec![("main", None, "idle")], 0);
-        let other = codex_like(vec![("x", None, "idle")], 0);
-        let busy_dir = plant_server(&db, "busy", 5, &busy);
-        let idle_dir = plant_server(&db, "idle", 5, &idle);
-        let other_dir = plant_server(&db, "other", 6, &other);
-        let reused = settle_existing(&db, 5, |_, _| true).expect("忙的服务应被复用");
-        assert_eq!(reused.0, busy_dir);
-        assert_eq!(
-            (reused.1.port, reused.2.as_str()),
-            (busy.port, busy.token.as_str())
-        );
-        assert!(busy_dir.exists(), "忙的服务被收掉了");
-        assert!(!idle_dir.exists(), "空闲的旧服务应收掉");
-        assert!(other_dir.exists());
-        assert!(other.methods().is_empty(), "不该探询别的会话的服务");
-        assert!(verify_identity(busy.port, &busy.token));
-        // 进程已不在的服务：只清目录。
-        assert!(settle_existing(&db, 5, |_, _| false).is_none());
-        assert!(!busy_dir.exists());
+        let old = plant_server(&db, "old", 5, 1);
+        let older = plant_server(&db, "older", 5, 2);
+        let other = plant_server(&db, "other", 6, 3);
+        retire_session(&db, 5);
+        assert!(!old.exists() && !older.exists());
+        assert!(other.exists());
+        let source = include_str!("codex_app_server.rs");
+        for gone in [
+            concat!("fn settle_", "existing"),
+            concat!("inherited_", "pty_token"),
+        ] {
+            assert!(!source.contains(gone), "{gone} 复活了");
+        }
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 会话没开 / TUI 没握手 / 不在那个 thread 上：记 waiting（答复已保存、不给重试按钮），
+    /// 巡检每轮都再试（不受失败冷却限制），TUI 一就绪就经在线 queue/add 送达。
+    #[test]
+    fn waiting_is_retried_every_patrol_until_tui_is_ready() {
+        let root = temp_root("waiting");
+        let db = root.join("board.db");
+        let task = root.join("task");
+        let t = target(&db, &task, "n", "Q-wait");
+        let key = delivery_key(&task, "Q-wait", "n");
+        let calls = AtomicUsize::new(0);
+        deliver_with(&t, |_: &NativeTarget<'_>, _: &str| -> SendResult {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Err(SendError::Waiting(None))
+        })
+        .unwrap();
+        let st = status(&db, 7, "c".into(), &task, "Q-wait", "n");
+        assert_eq!(
+            (st.state.as_str(), st.can_retry, st.reason.as_deref()),
+            ("waiting", false, None)
+        );
+        // 刚记下就再巡检：不等冷却，照样再试。
+        deliver_with(&t, |_: &NativeTarget<'_>, _: &str| -> SendResult {
+            calls.fetch_add(1, Ordering::SeqCst);
+            Err(SendError::Waiting(Some(TUI_NOT_CONNECTED.into())))
+        })
+        .unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        let st = status(&db, 7, "c".into(), &task, "Q-wait", "n");
+        assert_eq!(st.reason.as_deref(), Some(TUI_NOT_CONNECTED));
+        deliver_with(&t, |_: &NativeTarget<'_>, _: &str| -> SendResult {
+            Ok(("accepted", Some("qs".into())))
+        })
+        .unwrap();
+        assert_eq!(read_record(&db, &key).unwrap().state, "accepted");
+        // 旧版本冷队列留下的 queued 记录按已送出处理，不再投。
+        let key = delivery_key(&task, "Q-legacy", "n");
+        write_record(
+            &db,
+            &key,
+            &DeliveryRecord {
+                state: "queued".into(),
+                reason: None,
+                at_ms: 0,
+                submission: None,
+                pid: None,
+            },
+        );
+        deliver_with(
+            &target(&db, &task, "n", "Q-legacy"),
+            |_: &NativeTarget<'_>, _: &str| -> SendResult { panic!("queued 被重投") },
+        )
+        .unwrap();
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 一个活着的、不是本进程的 pid（测试进程的父进程：cargo / 测试驱动，测试期间一直在）。
+    fn foreign_live_pid() -> u32 {
+        let parents = crate::proc::parent_map();
+        let parent = parents[&std::process::id()];
+        assert!(pid_alive(parent));
+        parent
+    }
+
+    /// N9：dev 版与安装版共用 ~/.meowo，进程内锁管不到对方。另一个活着的进程持有占位时本进程不送、
+    /// 面板如实显示「正在送」；占位过期或持有者已死则视为无主；送完删掉占位。
+    #[test]
+    fn cross_process_claim_prevents_double_delivery() {
+        let root = temp_root("n9");
+        let db = root.join("board.db");
+        let task = root.join("task");
+        let key = delivery_key(&task, "Q", "n");
+        let lock = claim_path(&db, &key);
+        std::fs::create_dir_all(lock.parent().unwrap()).unwrap();
+        let other = foreign_live_pid();
+        // 另一进程已写 sending 占位、正在送。
+        std::fs::write(&lock, format!("{other} {}", now_ms())).unwrap();
+        write_record(
+            &db,
+            &key,
+            &DeliveryRecord {
+                state: "sending".into(),
+                reason: None,
+                at_ms: now_ms(),
+                submission: None,
+                pid: Some(other),
+            },
+        );
+        let t = target(&db, &task, "n", "Q");
+        deliver_with(&t, |_: &NativeTarget<'_>, _: &str| -> SendResult {
+            panic!("另一进程正在送，不该再送")
+        })
+        .unwrap();
+        let st = status(&db, 7, "c".into(), &task, "Q", "n");
+        assert_eq!((st.state.as_str(), st.can_retry), ("sending", false));
+        // 另一进程正在送时，面板重试也不能清掉它的记录。
+        clear_failure(&db, &task, "Q", "n");
+        assert_eq!(read_record(&db, &key).unwrap().state, "sending");
+
+        // 持有者已死：占位无主；但记录是 sending（送到一半）→ 按可能已送达，不自动重投。
+        std::fs::write(&lock, format!("4000000000 {}", now_ms())).unwrap();
+        deliver_with(&t, |_: &NativeTarget<'_>, _: &str| -> SendResult {
+            panic!("sending 记录不该自动重投")
+        })
+        .unwrap();
+        assert!(!lock.exists(), "用完的占位文件要删掉");
+        let st = status(&db, 7, "c".into(), &task, "Q", "n");
+        assert_eq!(st.state, "uncertain");
+
+        // 占位过期（持有 pid 可能已被复用）：接手发送。
+        let _ = std::fs::remove_file(record_path(&db, &key));
+        std::fs::write(&lock, format!("{other} {}", now_ms() - CLAIM_STALE_MS - 1)).unwrap();
+        deliver_with(&t, |_: &NativeTarget<'_>, _: &str| -> SendResult {
+            Ok(("accepted", None))
+        })
+        .unwrap();
+        assert_eq!(read_record(&db, &key).unwrap().state, "accepted");
+        assert!(!lock.exists());
+
+        // create_new 的原子性：8 个「进程」同时抢同一个键，只有一个拿到；其余都认出对方在送。
+        let key2 = delivery_key(&task, "Q2", "n");
+        let winners = Mutex::new(Vec::new());
+        let barrier = std::sync::Barrier::new(8);
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                scope.spawn(|| {
+                    barrier.wait();
+                    // alive 恒真：把同进程的其他线程也当成活着的外部进程。
+                    if let Some(claim) = try_claim(&db, &key2, |_| true) {
+                        winners.lock().unwrap().push(claim);
+                    }
+                });
+            }
+        });
+        let held = winners.into_inner().unwrap();
+        assert_eq!(held.len(), 1);
+        drop(held);
+        assert!(!claim_path(&db, &key2).exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// N6：宿主确认 TUI 已握手之前绝不 initialize。证据：记过 / hook 认领过这个服务 / TUI 进程树
+    /// 连着端口且隔一秒仍在。都没有就不连（记 waiting），不再「等 5 秒就上」。
+    #[test]
+    fn host_waits_for_tui_handshake_evidence() {
+        let state = |handshaken: bool, started: i64| ServerState {
+            launch_session: 1,
+            server_pid: 42,
+            port: 1,
+            started_at_ms: started,
+            tui_pid: Some(43),
+            tui_handshaken: handshaken,
+        };
+        let never = || -> Option<bool> { panic!("已有证据时不该再查连接") };
+        let no_sleep = |_: Duration| {};
+        assert!(await_handshake(
+            &state(true, 0),
+            None,
+            10_000,
+            never,
+            no_sleep
+        ));
+        // hook 认领了这个服务（会话 pid = 服务 pid）：服务上跑过回合，只能是 TUI 发起的。
+        assert!(await_handshake(
+            &state(false, 0),
+            Some(42),
+            10_000,
+            never,
+            no_sleep
+        ));
+        // 服务才起 1 秒：先补足 5 秒宽限；TUI 连着，隔 HANDSHAKE_SETTLE 复查仍连着。
+        let slept = Mutex::new(Vec::new());
+        assert!(await_handshake(
+            &state(false, 9_000),
+            Some(7),
+            10_000,
+            || Some(true),
+            |d| slept.lock().unwrap().push(d)
+        ));
+        assert_eq!(
+            *slept.lock().unwrap(),
+            [Duration::from_millis(4_000), HANDSHAKE_SETTLE]
+        );
+        // 只连通一瞬（可能还没发 initialize）、没连、查不了：一律不连。
+        let mut seq = [Some(true), Some(false)].into_iter();
+        assert!(!await_handshake(
+            &state(false, 0),
+            None,
+            10_000,
+            || seq.next().flatten(),
+            no_sleep
+        ));
+        assert!(!await_handshake(
+            &state(false, 0),
+            None,
+            10_000,
+            || Some(false),
+            no_sleep
+        ));
+        assert!(!await_handshake(
+            &state(false, 0),
+            None,
+            10_000,
+            || None,
+            no_sleep
+        ));
+    }
+
+    /// 连接表探测（N6 第 3 条证据）走真实系统接口：本进程连上一个本机端口，必须查得到本进程。
+    #[test]
+    fn tcp_table_sees_tui_connection_to_server_port() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let idle_port = free_port().unwrap();
+        let _client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        let _server_side = listener.accept().unwrap();
+        let me = std::process::id();
+        match tcp_client_pids(port) {
+            Some(pids) => {
+                assert!(pids.contains(&me), "{pids:?}");
+                assert_eq!(tui_connected(port, me), Some(true));
+                assert_eq!(tui_connected(idle_port, me), Some(false));
+                // 连着端口的进程不在 TUI 进程树里：不算（父进程不行——本进程是它的子孙）。
+                assert_eq!(tui_connected(port, 4_000_000_000), Some(false));
+                // 反过来，TUI 是包装进程、真正连接的是它的子孙（npm 包装时 node → codex）：算。
+                assert_eq!(tui_connected(port, foreign_live_pid()), Some(true));
+            }
+            // 只有没装 lsof 的 Linux 会到这里；Windows 必须查得到。
+            None => {
+                #[cfg(windows)]
+                panic!("Windows 连接表读取失败");
+            }
+        }
     }
 
     /// L4：端口上是别人的监听（不认 token 也回 101，或根本不是 WebSocket）不算我们的服务。
@@ -2043,34 +2143,14 @@ mod tests {
         );
     }
 
-    /// M5：Meowo 退出时没来得及记 TUI 退出时刻，重启后按最后一次心跳补算 linger，过期即回收。
+    /// 旧版本写的 state.json（带 linger 时代的字段、没有 tui_handshaken）也能读，读作未确认握手。
     #[test]
-    fn linger_counts_from_last_seen_when_exit_unrecorded() {
-        let mut state = ServerState {
-            launch_session: 1,
-            server_pid: 1,
-            port: 1,
-            started_at_ms: 0,
-            tui_pid: None,
-            tui_exited_at_ms: None,
-            tui_seen_at_ms: Some(1_000),
-        };
-        assert!(!linger_expired(&state, 1_500, 1_000));
-        assert!(linger_expired(&state, 2_000, 1_000));
-        state.tui_exited_at_ms = Some(5_000);
-        assert!(!linger_expired(&state, 5_500, 1_000));
-        state.tui_exited_at_ms = None;
-        state.tui_seen_at_ms = None;
-        assert!(
-            linger_expired(&state, 1_000, 1_000),
-            "无心跳按服务启动时刻算"
-        );
-        // 旧版本写的 state.json 没有 tui_seen_at_ms 也能读。
+    fn legacy_server_state_still_reads() {
         let legacy: ServerState = serde_json::from_str(
-            r#"{"launch_session":1,"server_pid":2,"port":3,"started_at_ms":4,"tui_pid":null,"tui_exited_at_ms":null}"#,
+            r#"{"launch_session":1,"server_pid":2,"port":3,"started_at_ms":4,"tui_pid":null,"tui_exited_at_ms":null,"tui_seen_at_ms":5}"#,
         )
         .unwrap();
-        assert_eq!(legacy.tui_seen_at_ms, None);
+        assert!(!legacy.tui_handshaken);
     }
 
     /// L1：服务目录名会出现在 app-server 命令行里（--ws-token-file），不得含 token 片段。

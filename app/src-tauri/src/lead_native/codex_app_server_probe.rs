@@ -1,4 +1,4 @@
-//! 真机探针：Codex 原生 TUI（--remote 连每会话 app-server）在三种状态下收到 Lead 关卡答复。
+//! 真机探针：Codex 原生 TUI（--remote 连每会话 app-server）在线时、以及退出后重开时收到 Lead 关卡答复。
 //! 走与手机作答完全相同的后端路径（lead_conversation::answer_and_deliver → lead_native → 本模块）。
 //!
 //! 默认用进程内假 Responses 服务（不花额度）；`MEOWO_PROBE_REAL=1` 时复制本机 auth.json 到隔离
@@ -365,7 +365,7 @@ fn codex_remote_probe() {
         .data_dir;
     // db_path() 由 MEOWO_DB 决定：服务状态与投递记录都落在临时目录，不碰 ~/.meowo。
     std::env::set_var("MEOWO_DB", &db);
-    // 冷路径的 `codex queue` 继承本进程环境：必须指向隔离目录，否则会写进用户真实的 ~/.codex。
+    // 本进程里起的 codex 进程都继承这个环境：必须指向隔离目录，否则会写进用户真实的 ~/.codex。
     std::env::set_var("CODEX_HOME", &home);
     let fake_log = Arc::new(Mutex::new(Vec::new()));
     let mut config = toml_edit::DocumentMut::new();
@@ -486,42 +486,39 @@ fn codex_remote_probe() {
     // 已送达的不重发：同一关卡再触发一次投递（巡检/重复作答）不应新增回合。
     crate::lead_conversation::reconcile_task(&probe.db, &task, None);
 
-    // ② TUI 退出、服务仍在：当场跑完这一轮，resume 时可见。
+    // ② TUI 退出：服务随之收掉（不做离线续跑）；此时作答只保存、不调模型，记 waiting。
+    //    重开会话（resume）后 TUI 握手，巡检经在线 queue/add 送达，TUI 上看得到。
+    //    这一步 DB 里的会话 pid 还是上一代服务，握手证据只能来自连接表（N6 第 3 条）。
     tui.quit();
     assert!(!tui.alive(), "TUI 未退出");
-    probe.gate("Q-linger");
-    let linger = nonce("LEAD");
-    let (result, status, _) = probe.answer("Q-linger", &linger);
-    let ran_ms = probe.wait_rollout(&linger, 180);
-    let (mut tui2, _) = probe.launch(sid, &[policy, &["resume", &thread]].concat());
-    let shown = tui2.wait(60, |s| assistant_says(s, &linger));
-    evidence["linger"] = json!({
-        "nonce": linger, "answer": result, "status": status.state, "headlessRunMs": ran_ms,
-        "resumeShowsReply": shown, "screen": tui2.text(),
-    });
-    assert_eq!(status.state, "accepted");
-    assert!(ran_ms.is_some(), "TUI 退出后服务未执行答复");
-    assert!(shown, "resume 后看不到离线回合：\n{}", tui2.text());
-
-    // ③ TUI 与服务都不在（如 Meowo 重启后服务已到期）：落持久队列，下次 resume 由 TUI 消费。
-    tui2.quit();
-    retire_for_session(&probe.db, sid);
-    assert!(states(&probe.db).is_empty());
-    probe.gate("Q-cold");
-    let cold = nonce("LEAD");
-    let (result, status, _) = probe.answer("Q-cold", &cold);
-    assert_eq!(status.state, "queued", "{status:?}");
+    let started = Instant::now();
+    while !states(&probe.db).is_empty() && started.elapsed() < Duration::from_secs(15) {
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    assert!(states(&probe.db).is_empty(), "TUI 退出后服务没被收掉");
+    probe.gate("Q-reopen");
+    let reopen = nonce("LEAD");
+    let (result, status, _) = probe.answer("Q-reopen", &reopen);
+    assert_eq!(status.state, "waiting", "{status:?}");
     assert!(
-        !rollout_assistant_says(&probe.home, &cold),
-        "冷队列不应自行调用模型"
+        probe.wait_rollout(&reopen, 5).is_none(),
+        "会话没开时不应调用模型"
     );
-    let (mut tui3, _) = probe.launch(sid, &[policy, &["resume", &thread]].concat());
-    let shown = tui3.wait(180, |s| assistant_says(s, &cold));
-    evidence["cold"] = json!({
-        "nonce": cold, "answer": result, "status": status.state,
-        "resumeConsumed": shown, "screen": tui3.text(),
+    let (mut tui2, _) = probe.launch(sid, &[policy, &["resume", &thread]].concat());
+    let started = Instant::now();
+    let task = probe.work.join(".lead").join("probe");
+    crate::lead_conversation::reconcile_task(&probe.db, &task, None);
+    let shown = tui2.wait(180, |s| assistant_says(s, &reopen));
+    let status = crate::lead_conversation::delivery_status(
+        &probe.db,
+        &probe.work.to_string_lossy(),
+        "Q-reopen",
+    );
+    evidence["reopen"] = json!({
+        "nonce": reopen, "answer": result, "status": status.map(|s| s.state),
+        "deliveredMs": started.elapsed().as_millis(), "tuiShowsReply": shown, "screen": tui2.text(),
     });
-    tui3.quit();
+    tui2.quit();
     evidence["fakeModelRequests"] = json!(*fake_log.lock().unwrap());
     let out = std::env::var("CARGO_TARGET_DIR")
         .map(PathBuf::from)
@@ -539,7 +536,7 @@ fn codex_remote_probe() {
     )
     .unwrap();
     println!("证据：{}", out.display());
-    assert!(shown, "冷队列 resume 后未消费：\n{}", tui3.text());
+    assert!(shown, "重开会话后答复未送达：\n{}", tui2.text());
     if !real {
         // 计费归属：所有模型请求的 originator 都是 codex-tui；排队投递 turn_trigger=queue。
         let log = fake_log.lock().unwrap();

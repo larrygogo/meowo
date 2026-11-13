@@ -3011,7 +3011,7 @@ pub(crate) fn session_agent_alive(store: &meowo_store::Store, sid: i64) -> Resul
         return Ok(false);
     }
     // Meowo 为 Codex 原生 TUI 起的 app-server（hook 把它记成会话 pid）：以它的 TUI 死活为准。
-    // TUI 退出后服务还在等投递，不算「外部终端里的会话」，恢复时空闲就被新一代顶替、有回合在跑就由新 TUI 接上（lead_native::codex_app_server）。
+    // TUI 一退服务就被收掉（不做离线续跑），收掉前的几秒不算「外部终端里的会话」（lead_native::codex_app_server）。
     if let Some(tui_alive) = crate::lead_native::codex_app_server::owned_server_tui_alive(pid) {
         return Ok(tui_alive);
     }
