@@ -734,6 +734,7 @@ export const en: Dict = {
     engineStopDismiss: "Stop and dismiss",
     engineStopRetryConfirm: "This will stop the current engine, then send the message again. It may already have run, so actions could be repeated. Continue?",
     engineStopDismissConfirm: "This will stop the current engine and dismiss this delivery. Other queued messages will be kept. Continue?",
+    engineQuiet: "No response for 45s. The service may be busy",
     engineAdoptionUnavailable: "Continue this session in its native CLI; transfer is not supported yet. Choose Meowo managed when creating a new session.",
     engineRecoveries: "Native recovery records (may include already displayed passages)",
     engineLoadRecoveries: "View native recovery records",

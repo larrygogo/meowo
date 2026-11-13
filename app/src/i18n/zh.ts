@@ -801,6 +801,7 @@ export const zh = {
     engineStopDismiss: "停止并忽略",
     engineStopRetryConfirm: "将先停止当前会话，再重新发送这条消息。消息可能已经执行，再次发送可能重复操作。确定继续吗？",
     engineStopDismissConfirm: "将先停止当前会话，再忽略这次投递；其他排队消息仍会保留。确定继续吗？",
+    engineQuiet: "45 秒没有回应，服务可能繁忙",
     engineAdoptionUnavailable: "此会话继续使用原生 CLI；暂不支持移交。新建会话时可选择 Meowo 托管。",
     engineRecoveries: "原生恢复记录（可能包含已显示片段）",
     engineLoadRecoveries: "查看原生恢复记录",

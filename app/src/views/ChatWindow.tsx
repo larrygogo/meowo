@@ -42,6 +42,7 @@ import { leaveSubagentView } from "./chat/subagentView";
 import { SubagentViewNotice } from "./chat/SubagentViewNotice";
 import { clearPartialImageDraft, composerDraftText, createSendQueue, IMAGE_PASTE_LANDING_POLLS, LATE_IMAGE_GRACE_MS, RESUME_VERIFY_WINDOW_MS, stashComposerDraft, submitToTerminal, terminalInput, waitForTerminalReady, type SubmitInput, type TerminalReadyMessages, type TerminalStartupResult } from "./chat/terminalSubmit";
 import { manualSendVerdict } from "./chat/composerConfirmation";
+import { useQuietTurn } from "./chat/useQuietTurn";
 import { managedTerminalFrame } from "../api";
 import { BottomSheet, SheetOnPhone } from "./chat/BottomSheet";
 import { runningActivityView, RunningBar, SnakeSpinner, TurnAnnouncer, useCliStatusStore } from "./chat/RunningBar";
@@ -3561,6 +3562,9 @@ export function ChatWindow() {
   // 否则 = 发送键。两个判定要用同一份口径,别在 JSX 里各算各的。
   const hasDraft = prompt.trim().length > 0 || attachments.length > 0;
   const canInterrupt = managedConversation ? ["running", "blocked"].includes(history?.managedPhase ?? "") : tone === "running" && !!chatUi?.interrupt_input;
+  // 托管回合久无内容（Gemini 503 静默重试等）时给一句说明，见 useQuietTurn。指纹读累积的 items。
+  const lastItem = items[items.length - 1] as { id?: string } | undefined;
+  const managedQuiet = useQuietTurn(managedConversation && history?.managedPhase === "running", `${sessionId}:${items.length}:${lastItem?.id ?? ""}`);
   const stopMode = canInterrupt && !hasDraft;
 
   // 屏幕上有活的选择器/提示时锁住 composer——**禁用而非卸载**:卸载会让 textarea 变成
@@ -4695,6 +4699,7 @@ export function ChatWindow() {
       {view === "chat" && managedConversation && <>
         <ManagedRecoveries key={sessionId} sessionId={sessionId} />
         {history?.managedError && <div className="chat-send-error" role="alert">{formatBackendError(history.managedError, t.locale)}</div>}
+        {managedQuiet && <div className="chat-remote-hint" role="status">{t.chat.engineQuiet}</div>}
         {(["stopped", "failed"].includes(history?.managedPhase ?? "")) && <div className="chat-send-gate"><span>{t.chat.engineStopped}</span><button type="button" className="sbtn" onClick={() => void managedControl("resume")}>{t.chat.engineResume}</button></div>}
         {(history?.managedDeliveries?.length ?? 0) > 0 && <ManagedDeliveryStatus deliveries={history!.managedDeliveries!} onRestore={managedRestore} engineLive={history?.endable === true} onRetry={(delivery) => void managedDeliveryAction(delivery, "retry")} onDismiss={(delivery) => void managedDeliveryAction(delivery, "dismiss")} />}
         {history?.managedInteraction && managedResolvedInteraction !== `${sessionId}:${history.managedInteraction.interactionId}` && <ManagedInteraction key={`${sessionId}:${history.managedInteraction.interactionId}`} sessionId={sessionId} interaction={history.managedInteraction} onResolved={() => { setManagedResolvedInteraction(`${sessionId}:${history.managedInteraction!.interactionId}`); void refreshRef.current(); }} />}
