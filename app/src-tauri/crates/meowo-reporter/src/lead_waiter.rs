@@ -108,11 +108,14 @@ pub fn mark_delivered(task: &Path, gate: &LeadGateDto) {
 /// 等待命令。session 只含 `[A-Za-z0-9_-]`（hook 层已校验），reporter 路径来自本进程，
 /// 命令里没有任何用户可控文本——关卡 id 也不放进去，等待器启动时自己读当前关卡。
 /// 前缀与 Lead 安装写入的放行规则同源（[`meowo_agent::lead_install::waiter_command_prefix`]）。
-pub fn command(provider: &str, reporter: &str, session: &str) -> String {
-    format!(
+/// shell 方言由插件声明（[`meowo_agent::lead_install::waiter_shell`]）；没有会话内等待器机制的
+/// provider 返回 None，调用方不提示启动等待器。
+pub fn command(provider: &str, reporter: &str, session: &str) -> Option<String> {
+    let shell = meowo_agent::lead_install::waiter_shell(provider)?;
+    Some(format!(
         "{} --session {session}",
-        meowo_agent::lead_install::waiter_command_prefix(provider, reporter)
-    )
+        meowo_agent::lead_install::waiter_command_prefix(shell, provider, reporter)
+    ))
 }
 
 /// 本进程的路径（hook 与等待器是同一个 reporter）。
@@ -161,7 +164,8 @@ pub fn wait(
         && session
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'));
-    if !valid || !matches!(provider, "kimi" | "gemini") {
+    // 只服务声明了会话内等待器机制的 provider（插件描述，不按身份硬编码，做空 M7）。
+    if !valid || meowo_agent::lead_install::waiter_shell(provider).is_none() {
         return say("[lead] 等待器参数无效，已退出。");
     }
     let Some(task) = lead::task_of_session(session, registry) else {
@@ -364,6 +368,12 @@ mod tests {
         assert!(out.stdout.unwrap().contains("没有找到"));
         let out = wait("kimi", "a b;rm", &fx.registry, P, M, || None);
         assert!(out.stdout.unwrap().contains("参数无效"));
+        // 没声明会话内等待器机制的 provider 不等（codex/opencode 走宿主服务投递）。
+        for provider in ["codex", "opencode", "claude", ""] {
+            let out = wait(provider, "session_abc", &fx.registry, P, M, || None);
+            assert!(out.stdout.unwrap().contains("参数无效"), "{provider}");
+            assert!(command(provider, "r", "s").is_none(), "{provider}");
+        }
         assert!(needs_waiter(&fx.task, "session_other").is_none());
         assert!(needs_waiter(&fx.task, "session_abc").is_some());
     }
@@ -481,9 +491,10 @@ mod tests {
             "kimi",
             r"C:\Program Files\Meowo\meowo-reporter.exe",
             "session_abc",
-        );
+        )
+        .unwrap();
         assert_eq!(kimi, "\"C:/Program Files/Meowo/meowo-reporter.exe\" lead wait --provider kimi --session session_abc");
-        let gemini = command("gemini", r"C:\Users\o'neil\meowo-reporter.exe", "abc-1");
+        let gemini = command("gemini", r"C:\Users\o'neil\meowo-reporter.exe", "abc-1").unwrap();
         if cfg!(windows) {
             assert_eq!(
                 gemini,

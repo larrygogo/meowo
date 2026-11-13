@@ -54,16 +54,34 @@ pub enum NativeContinue {
     /// TUI 里有一个后台等待进程（`meowo-reporter lead wait`），答复落盘它就退出，CLI 在空闲时
     /// 收到「后台任务完成」自己开新回合（kimi 后台 Bash + notify；gemini 后台 shell + inject +
     /// modelSteering）。在线时宿主不推送；TUI 已退出时按 `offline` 续写同一个会话。
-    InSessionWaiter { offline: OfflineResume },
+    InSessionWaiter {
+        offline: OfflineResume,
+        /// CLI 执行后台命令用的 shell：决定等待器命令怎么引用 reporter 路径（[`waiter_command_prefix`]）。
+        shell: WaiterShell,
+    },
     /// TUI 以客户端模式连在宿主管理的服务上，宿主经该服务把答复排进同一个会话。
     ServerQueue(ServerProtocol),
+}
+
+/// CLI 跑后台 shell 命令时用的 shell 方言。由插件声明，共享层不按 provider 身份猜。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WaiterShell {
+    /// 处处都是 POSIX `sh -c`（Windows 上是 Git Bash）：路径用正斜杠、双引号包住。正斜杠也让
+    /// kimi permission 规则（picomatch）里不出现反斜杠（它在 picomatch 里是转义符）。
+    PosixDoubleQuoted,
+    /// Windows 上用 PowerShell（gemini 0.68 getShellConfiguration）：`& '路径'`；其余平台 POSIX 单引号。
+    PowerShellOnWindows,
 }
 
 /// TUI 已退出时把答复续写进同一会话的方式。argv 模板里 `{session}`、`{prompt}` 由宿主替换。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OfflineResume {
-    /// 非交互模式跑完一轮即退出；模板是 CLI 启动 argv 之后的全部参数（如 `-S {session} -p {prompt}`）。
-    PrintMode(&'static [&'static str]),
+    /// 非交互模式跑完一轮即退出；`args` 是 CLI 启动 argv 之后的全部参数（如 `-S {session} -p {prompt}`），
+    /// `env` 是这一轮额外要的环境变量（如关掉 CLI 自更新：后台代跑时不能顺手升级用户的 CLI）。
+    PrintMode {
+        args: &'static [&'static str],
+        env: &'static [(&'static str, &'static str)],
+    },
     /// 在 Meowo 终端里重新打开交互 TUI，并把答复作为第一条消息自动提交；模板追加在宿主现成的
     /// 恢复 argv（启动选项回放 + resume 子命令 + 会话 id）之后（如 `-i {prompt}`）。
     InteractiveInitialPrompt(&'static [&'static str]),
@@ -115,6 +133,12 @@ pub trait LeadCap: Sync {
     }
     /// `ServerQueue` 机制下宿主连本机服务用的鉴权；不走服务的插件保持 None。
     fn server_auth(&self) -> Option<ServerAuth> {
+        None
+    }
+    /// [`Self::native_continue`] 查证过的最低 CLI 版本（含补丁号）。低于它（或版本读不出）时宿主
+    /// 当作做不到、走手动提示（[`native_continue_for`]）：Lead 安装的版本门比续跑机制宽，
+    /// 不能拿安装放行当续跑也成立。None = 不另设门槛。
+    fn native_continue_floor(&self) -> Option<(u32, u32, u32)> {
         None
     }
     fn spec(&self, installation: &Installation) -> Option<&'static LeadInstallSpec>;
@@ -211,9 +235,19 @@ pub fn version_at_least(line: Option<&str>, floor: (u32, u32, u32)) -> bool {
     parse_version(line).is_some_and(|v| v.0 == floor.0 && v >= floor)
 }
 
-/// 高于已实测版本：照常可用，但状态里如实标「未实测」，不冒充已验证。
+/// 不是实测过的那个版本：照常可用，但状态里如实标「未实测」，不冒充已验证。
+/// 低于已实测版本同样算（第一轮做空 M6：kimi 门放行 2.5.x 而 verified=2.6.0，原先只标高于的）。
 pub fn version_untested(line: Option<&str>, verified: (u32, u32, u32)) -> bool {
-    parse_version(line).is_some_and(|v| v > verified)
+    parse_version(line).is_some_and(|v| v != verified)
+}
+
+/// 按版本过滤后的续跑机制：插件声明了 [`LeadCap::native_continue_floor`] 时，版本不到（或读不出）
+/// 就返回 None，宿主走手动提示，而不是在没查证过的版本上起等待器、后台续写。
+pub fn native_continue_for(cap: &dyn LeadCap, version: Option<&str>) -> Option<NativeContinue> {
+    match cap.native_continue_floor() {
+        Some(floor) if !version_at_least(version, floor) => None,
+        _ => cap.native_continue(),
+    }
 }
 
 fn managed_file(path: &Path) -> bool {
@@ -270,17 +304,25 @@ pub fn windows_hook_command(
 /// 原生 TUI 关卡等待器命令的固定前缀（不含 `--session <id>`）。reporter 生成命令、插件生成放行规则
 /// 共用这一处，两边一字不差才能让规则命中。
 ///
-/// - kimi 的 Bash 在 Windows 上是 Git Bash `sh -c`：路径用正斜杠、双引号包住；正斜杠也让 kimi
-///   permission 规则（picomatch）里不出现反斜杠（它在 picomatch 里是转义符）。
-/// - gemini 在 Windows 上用 PowerShell 执行 shell 命令（0.68 getShellConfiguration）：`& '路径'`。
-pub fn waiter_command_prefix(provider: &str, reporter: &str) -> String {
+/// 引用方式由插件声明的 [`WaiterShell`] 决定，不按 provider 身份分支（第一轮做空 M7）。
+pub fn waiter_command_prefix(shell: WaiterShell, provider: &str, reporter: &str) -> String {
     let tail = format!("lead wait --provider {provider}");
-    if provider == "gemini" && cfg!(windows) {
-        format!("& '{}' {tail}", reporter.replace('\'', "''"))
-    } else if provider == "gemini" {
-        format!("'{}' {tail}", reporter.replace('\'', r"'\''"))
-    } else {
-        format!("\"{}\" {tail}", reporter.replace('\\', "/"))
+    match shell {
+        WaiterShell::PowerShellOnWindows if cfg!(windows) => {
+            format!("& '{}' {tail}", reporter.replace('\'', "''"))
+        }
+        WaiterShell::PowerShellOnWindows => {
+            format!("'{}' {tail}", reporter.replace('\'', r"'\''"))
+        }
+        WaiterShell::PosixDoubleQuoted => format!("\"{}\" {tail}", reporter.replace('\\', "/")),
+    }
+}
+
+/// 该 provider 声明的等待器 shell；没有会话内等待器机制的返回 None（reporter 据此拒绝起等待器）。
+pub fn waiter_shell(provider: &str) -> Option<WaiterShell> {
+    match crate::by_id(provider)?.lead()?.native_continue()? {
+        NativeContinue::InSessionWaiter { shell, .. } => Some(shell),
+        NativeContinue::ServerQueue(_) => None,
     }
 }
 

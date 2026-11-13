@@ -2026,6 +2026,15 @@ mod tests {
             ("conversation/transport.rs", include_str!("conversation/transport.rs")),
             ("conversation/spawn_unix.rs", include_str!("conversation/spawn_unix.rs")),
             ("conversation/spawn_windows.rs", include_str!("conversation/spawn_windows.rs")),
+            // 2026-11-13 补（第一轮做空 M7）：原生 TUI 续跑与账号共享。probe*.rs 是 #[cfg(test)] 的真机
+            // 探针模块（固件里写 provider 名是正常的），不在列。
+            ("lead_native/mod.rs", include_str!("lead_native/mod.rs")),
+            ("lead_native/server.rs", include_str!("lead_native/server.rs")),
+            ("lead_native/waiter.rs", include_str!("lead_native/waiter.rs")),
+            ("lead_native/ws.rs", include_str!("lead_native/ws.rs")),
+            ("lead_native/codex_app_server.rs", include_str!("lead_native/codex_app_server.rs")),
+            ("lead_native/opencode_http.rs", include_str!("lead_native/opencode_http.rs")),
+            ("profile/share.rs", include_str!("profile/share.rs")),
         ];
         for (name, source) in HOST_SOURCES {
             for (index, line) in production_lines(source) {

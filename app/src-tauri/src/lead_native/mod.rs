@@ -42,14 +42,41 @@ pub(crate) enum NativeOutcome {
     Unsupported,
 }
 
+/// 该 provider 此刻能用的续跑机制：插件声明 + 按本机 CLI 版本过滤（做空 M6：续跑只在查证过的
+/// 版本上启用，低于它走手动提示）。版本探测有缓存（probe_cli_version）。
 pub(crate) fn mechanism(provider: &str) -> Option<NativeContinue> {
-    meowo_agent::by_id(provider)?.lead()?.native_continue()
+    let plugin = meowo_agent::by_id(provider)?;
+    let cap = plugin.lead()?;
+    #[cfg(not(test))]
+    let version = Some(crate::probe_cli_version(plugin));
+    // 单测默认不探测真实 CLI（CI 上没装）：按已查证版本处理；版本门由 test_version 覆盖专门测。
+    #[cfg(test)]
+    let version = test_version::get();
+    match version {
+        Some(version) => meowo_agent::lead_install::native_continue_for(cap, version.as_deref()),
+        None => cap.native_continue(),
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod test_version {
+    use std::cell::RefCell;
+    thread_local! {
+        static VERSION: RefCell<Option<Option<String>>> = const { RefCell::new(None) };
+    }
+    /// 本线程里 [`super::mechanism`] 看到的 CLI 版本（Some(None) = 读不出版本）；None 恢复默认。
+    pub(crate) fn set(version: Option<Option<&str>>) {
+        VERSION.with(|v| *v.borrow_mut() = version.map(|inner| inner.map(str::to_owned)));
+    }
+    pub(super) fn get() -> Option<Option<String>> {
+        VERSION.with(|v| v.borrow().clone())
+    }
 }
 
 pub(crate) fn deliver(target: &NativeTarget<'_>, app: Option<&tauri::AppHandle>) -> Result<NativeOutcome, String> {
     match mechanism(target.provider) {
         None => Ok(NativeOutcome::Unsupported),
-        Some(NativeContinue::InSessionWaiter { offline }) => waiter::deliver(target, offline, app),
+        Some(NativeContinue::InSessionWaiter { offline, .. }) => waiter::deliver(target, offline, app),
         Some(NativeContinue::ServerQueue(protocol)) => server::deliver(target, protocol, app),
     }
 }
@@ -97,7 +124,9 @@ pub(crate) fn delivery_status(
                 session_id,
                 cwd,
                 delivery_id: String::new(),
-                can_retry: false,
+                // 离线续写失败（kimi -p / gemini 重开 TUI）不自动重试，面板给「重试」由人决定（做空 M3）：
+                // 重试走 lead_conversation::retry → deliver(force) → waiter 挪走失败记录重新占位。
+                can_retry: state == "failed",
                 state,
                 reason,
             })

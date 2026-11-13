@@ -246,8 +246,9 @@ fn native_session_status(
     // 按插件能力而非 provider 身份分（SPEC 约束）：声明了 LeadCap 且原生路径不能自动继续才提示
     // 手动下一步。没有 LeadCap 的 provider 由宿主自带的 Lead 流程负责原生唤醒（claude 的 wait hook）。
     // 有续跑机制的（经宿主投递或会话内等待器）由调用处的 lead_native::delivery_status 给真实状态。
-    let cap = meowo_agent::by_id(&provider)?.lead()?;
-    if cap.native_auto_continue() {
+    meowo_agent::by_id(&provider)?.lead()?;
+    // 按本机 CLI 版本过滤后的机制（做空 M6）：版本没到续跑查证线时这里给手动提示，而不是什么都不说。
+    if crate::lead_native::mechanism(&provider).is_some() {
         return None;
     }
     let gate = meowo_reporter::lead::read_gate(task)?;
@@ -547,10 +548,49 @@ mod tests {
         store.set_session_provider(legacy, "kimi").unwrap();
         std::fs::write(f.task.join(".delivered"), "Q-probe").unwrap();
         assert_eq!(delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe").unwrap().state, "consumed");
-        std::fs::write(f.task.join(".native-offline.json"), r#"{"gate":"Q-probe","state":"running","reason":null,"at":1}"#).unwrap();
+        std::fs::write(f.task.join(".native-offline-Q-probe.json"), r#"{"gate":"Q-probe","state":"running","reason":null,"at":1}"#).unwrap();
         assert_eq!(delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe").unwrap().state, "native_resuming");
-        std::fs::write(f.task.join(".native-offline.json"), r#"{"gate":"Q-probe","state":"failed","reason":"lead/native_resume_failed","at":1}"#).unwrap();
+        std::fs::write(f.task.join(".native-offline-Q-probe.json"), r#"{"gate":"Q-probe","state":"failed","reason":"lead/native_resume_failed","at":1}"#).unwrap();
         let failed = delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe").unwrap();
         assert_eq!((failed.state.as_str(), failed.reason.as_deref()), ("failed", Some("lead/native_resume_failed")));
+        // 失败不自动重试，但面板给「重试」（做空 M3）。
+        assert!(failed.can_retry);
+        std::fs::remove_file(f.task.join(".native-offline-Q-probe.json")).unwrap();
+
+        // 做空 M6：CLI 版本低于续跑机制查证过的版本时不起等待器/离线续写，面板如实给手动提示。
+        std::fs::remove_file(f.task.join(".delivered")).unwrap();
+        for (provider, old) in [("kimi", "2.5.3"), ("gemini", "0.67.0")] {
+            store.set_session_provider(legacy, provider).unwrap();
+            crate::lead_native::test_version::set(Some(Some(old)));
+            let status = delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe").unwrap();
+            assert_eq!(status.state, "native_manual", "{provider} {old}");
+            crate::lead_native::test_version::set(Some(None));
+            let status = delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe").unwrap();
+            assert_eq!(status.state, "native_manual", "{provider} 读不出版本");
+            crate::lead_native::test_version::set(None);
+        }
+    }
+
+    /// 做空 H3：`.owner` 指向子代理（或任何 DB 里没有的会话）时，答复只落盘，不起离线续写、不标送达。
+    #[test]
+    fn subagent_owner_never_triggers_native_offline_resume() {
+        let f = Fixture::new();
+        let store = f.store();
+        let project = store
+            .upsert_project_by_root(&f.root.to_string_lossy(), "external", 3)
+            .unwrap();
+        let (main, _) = store.start_session(project, "session_main", 4).unwrap();
+        store.set_session_provider(main, "kimi").unwrap();
+        // 子代理的会话 id 没有自己的 DB 会话。
+        std::fs::write(f.task.join(".owner"), "session_main-subagent-1").unwrap();
+        assert_eq!(f.answer(), Ok(false));
+        assert!(delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe").is_none());
+        let leftovers: Vec<_> = std::fs::read_dir(&f.task)
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with(".native-offline") || name == ".delivered")
+            .collect();
+        assert!(leftovers.is_empty(), "{leftovers:?}");
     }
 }

@@ -5,7 +5,7 @@
 use crate::{
     lead_install::{
         waiter_command_prefix, LeadCap, LeadHook, LeadHookFormat, LeadInstallSpec, NativeContinue,
-        OfflineResume, MANAGED_MARK, REVIEW,
+        OfflineResume, WaiterShell, MANAGED_MARK, REVIEW,
     },
     variant::Installation,
 };
@@ -15,7 +15,8 @@ pub(super) struct GeminiLead;
 const SPEC: LeadInstallSpec = LeadInstallSpec {
     provider: "gemini",
     version_family: (0, 65),
-    verified: (0, 65, 0),
+    // 续跑路线（inject + modelSteering、AfterTool 尾调用、--resume -i）按 0.68.0 源码查证并真机跑过。
+    verified: (0, 68, 0),
     skill_rel: "skills/lead/SKILL.md",
     reviewer_rel: "agents/lead-redteam.md",
     hook_rel: "settings.json",
@@ -68,6 +69,8 @@ const SETTINGS: [Setting; 2] = [
     }),
     ("/experimental", "modelSteering", || json!(true)),
 ];
+/// Windows 上 gemini 用 PowerShell 执行 shell 命令（0.68 getShellConfiguration）。
+const SHELL: WaiterShell = WaiterShell::PowerShellOnWindows;
 pub(super) const SAVED_REL: &str = "meowo-lead-settings.json";
 const POLICY_REL: &str = "policies/meowo-lead.toml";
 
@@ -124,7 +127,13 @@ impl LeadCap for GeminiLead {
     fn native_continue(&self) -> Option<NativeContinue> {
         Some(NativeContinue::InSessionWaiter {
             offline: OfflineResume::InteractiveInitialPrompt(&["-i", "{prompt}"]),
+            shell: SHELL,
         })
+    }
+    /// backgroundCompletionBehavior=inject、空闲自动提交注入、AfterTool tailToolCallRequest 都是按
+    /// 0.68.0 源码查证的；0.65–0.67 能装 Lead，但续跑走手动提示（第一轮做空 M6）。
+    fn native_continue_floor(&self) -> Option<(u32, u32, u32)> {
+        Some((0, 68, 0))
     }
     fn spec(&self, inst: &Installation) -> Option<&'static LeadInstallSpec> {
         (inst.variant_tag == "stable").then_some(&SPEC)
@@ -209,7 +218,7 @@ impl LeadCap for GeminiLead {
         if relative != POLICY_REL || reporter.is_empty() {
             return Err("lead/asset_path_invalid".into());
         }
-        let prefix = waiter_command_prefix("gemini", reporter);
+        let prefix = waiter_command_prefix(SHELL, SPEC.provider, reporter);
         let mut doc = toml_edit::DocumentMut::new();
         let mut rule = toml_edit::Table::new();
         rule.insert("toolName", toml_edit::value("run_shell_command"));
