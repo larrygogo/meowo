@@ -9,6 +9,8 @@
 
 // 临时：三路实现填入前 NativeTarget 字段与 Delivered/WaiterWillWake 尚未使用；实现完成后删除这行。
 #![allow(dead_code)]
+#[cfg(test)]
+mod probe;
 pub(crate) mod server;
 pub(crate) mod waiter;
 
