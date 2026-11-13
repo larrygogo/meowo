@@ -1,7 +1,5 @@
 pub mod error;
 pub mod managed;
-mod managed_chat;
-mod managed_recovery;
 pub mod migrations;
 pub mod models;
 pub mod query;

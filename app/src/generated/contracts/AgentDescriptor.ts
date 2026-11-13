@@ -12,10 +12,6 @@ display_name: string,
  */
 installed: boolean, 
 /**
- * 原生协议驱动已声明；启动时仍须以实际CLI版本和握手复核，失败不能回退成PTY猜键。
- */
-supports_managed_conversation: boolean, 
-/**
  * 这个 agent **能不能被套上代理**（＝插件是否声明了 `ProxySpec`）。
  *
  * 为 false 的 agent，设置页不给它代理行。没有这个字段时，前端只能给每个 agent 都画一行——

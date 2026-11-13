@@ -348,35 +348,26 @@ pub struct AgentModeDto {
     pub value: String,
 }
 
+/// 已停用的「Meowo 托管」会话的对话页提示。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct RetiredManagedDto {
+    /// 绑定过 CLI 自己的会话 id：可以走原生恢复路径用官方 CLI 打开；没绑定过只能看说明。
+    pub resumable: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
 #[serde(rename_all = "camelCase")]
 pub struct ChatHistoryDto {
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    #[cfg_attr(test, ts(type = "boolean", optional))]
-    pub managed_conversation: bool,
+    /// 已停用的「Meowo 托管」会话（PR #172 删除了托管路线，旧库里的这类会话只读保留）。
+    /// 前端据此把「会话已结束」换成「这种会话已停用」，有原生会话 id 时给「用官方 CLI 打开」。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
-    pub managed_phase: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(test, ts(optional))]
-    pub managed_error: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(test, ts(optional))]
-    pub managed_interaction: Option<crate::conversation::ManagedInteractionDto>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(test, ts(optional))]
-    pub managed_models: Option<Vec<crate::conversation::ManagedChoiceDto>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(test, ts(optional))]
-    pub managed_modes: Option<Vec<crate::conversation::ManagedChoiceDto>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(test, ts(optional))]
-    pub managed_mode_dimension: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(test, ts(optional))]
-    pub managed_deliveries: Option<Vec<crate::conversation::ManagedDeliveryDto>>,
+    pub retired_managed: Option<RetiredManagedDto>,
     #[cfg_attr(test, ts(type = "number"))]
     pub session_id: i64,
     /// CLI 侧会话 id：前端以它为键的动作（重命名 rename_session、置顶 STAR_KEY）

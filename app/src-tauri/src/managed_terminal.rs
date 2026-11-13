@@ -20,6 +20,15 @@ pub(crate) async fn start_managed_terminal(
         if !super::session_command::is_safe_id(&session.cc_session_id) {
             return Err("无效 session_id".into());
         }
+        // 已停用的「Meowo 托管」会话没绑定过 CLI 自己的会话 id 时，cc_session_id 是 Meowo 起的占位 id，
+        // 拿它 resume 只会让 CLI 报「找不到会话」或悄悄开个空会话。前端不给按钮，这里再兜一层。
+        if store
+            .retired_managed(session_id)
+            .map_err(|e| e.to_string())?
+            .is_some_and(|retired| retired.native_session_id.is_none())
+        {
+            return Err("session/managed_retired_unbound".into());
+        }
         #[cfg(any(target_os = "windows", target_os = "macos"))]
         {
             if super::terminal::session_agent_alive(&store, session_id)? {

@@ -5,6 +5,5 @@
 
 pub mod bridge;
 pub mod broker;
-pub mod conversation;
 pub mod ipc;
 pub mod wtnew;

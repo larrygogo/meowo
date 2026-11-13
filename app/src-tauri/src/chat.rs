@@ -193,14 +193,7 @@ fn load_chat_history(
             &header.cc_session_id,
         );
     let mut history = ChatHistory {
-        managed_conversation: false,
-        managed_phase: None,
-        managed_error: None,
-        managed_interaction: None,
-        managed_models: None,
-        managed_modes: None,
-        managed_mode_dimension: None,
-        managed_deliveries: None,
+        retired_managed: None,
         session_id,
         cc_session_id: header.cc_session_id.clone(),
         title: header
@@ -277,21 +270,15 @@ fn load_chat_history(
         predecessor_id: header.predecessor_id,
         superseded_by: header.superseded_by,
     };
-    if let Some(managed) = store
-        .managed_state(session_id)
+    // 已停用的「Meowo 托管」会话（PR #172 删除托管路线）：照常走原生记录读取——绑定过原生 id 的，
+    // cc_session_id 就是 CLI 自己的会话 id，对话页能看到 CLI 落盘的记录；前端据此换门卡文案。
+    if let Some(retired) = store
+        .retired_managed(session_id)
         .map_err(|error| error.to_string())?
     {
-        return load_managed_history(
-            db_path,
-            &store,
-            history,
-            managed,
-            ChatRead {
-                offset,
-                full,
-                before,
-            },
-        );
+        history.retired_managed = Some(meowo_protocol::ipc::RetiredManagedDto {
+            resumable: retired.native_session_id.is_some(),
+        });
     }
     // errored 与标题都和侧栏/贴纸走同一入口(session_query::analyze_transcript,同口径由代码保证)。
     // 5s 节流:agent 流式输出期间 transcript 每轮都在变,每轮全采样会对同一批新增字节
@@ -407,170 +394,6 @@ fn load_chat_history(
     history.has_more = full_read && delta.start > 0;
     history.earliest = if full_read { delta.start } else { 0 };
     history.items = items;
-    Ok(history)
-}
-
-/// 托管会话从本机物化投影与有界事件增量读取，避免轮询时重扫原生历史。
-fn load_managed_history(
-    db_path: &Path,
-    store: &meowo_store::Store,
-    mut history: ChatHistory,
-    managed: meowo_store::managed::ManagedSession,
-    read: ChatRead,
-) -> Result<ChatHistory, String> {
-    use meowo_agent::conversation::ConversationEvent as Event;
-    history.managed_conversation = true;
-    history.managed_phase = Some(managed.phase.clone());
-    history.managed_error = managed.last_error.clone();
-    history.supported = true;
-    history.pty_managed = false;
-    history.background = false;
-    history.connected =
-        managed.runtime_owner.is_some() && !matches!(managed.phase.as_str(), "stopped" | "failed");
-    history.endable = managed.runtime_owner.is_some();
-    history.errored = managed.last_error.is_some();
-    history.status = match managed.phase.as_str() {
-        "running" => "running",
-        "starting" => "running",
-        "blocked" => "running",
-        "stopping" => "running",
-        "ready" => "idle",
-        _ => "ended",
-    }
-    .into();
-    history.screen_state = Some(
-        match managed.phase.as_str() {
-            "running" | "starting" | "stopping" => "working",
-            "blocked" => "blocked",
-            _ => "idle",
-        }
-        .into(),
-    );
-    history.screen_assumed = false;
-    history.last_user_text = None;
-    history.last_ai_text = None;
-    if let Some(Event::Metadata { model, mode }) =
-        crate::conversation::metadata(db_path, history.session_id)?
-    {
-        if model.is_some() {
-            history.model = model;
-        }
-        if let Some(mode) = mode {
-            history.agent_modes = vec![AgentModeDto {
-                dimension: "mode".into(),
-                value: mode,
-            }];
-        }
-    }
-    if let Some(Event::Catalog {
-        models,
-        modes,
-        mode_dimension,
-    }) = crate::conversation::catalog(db_path, history.session_id)?
-    {
-        history.managed_models = Some(
-            serde_json::from_value(
-                serde_json::to_value(models)
-                    .map_err(|_| "conversation/persisted_payload_invalid")?,
-            )
-            .map_err(|_| "conversation/persisted_payload_invalid")?,
-        );
-        history.managed_modes = Some(
-            serde_json::from_value(
-                serde_json::to_value(modes)
-                    .map_err(|_| "conversation/persisted_payload_invalid")?,
-            )
-            .map_err(|_| "conversation/persisted_payload_invalid")?,
-        );
-        history.managed_mode_dimension = mode_dimension;
-        if let Some(dimension) = &history.managed_mode_dimension {
-            for mode in &mut history.agent_modes {
-                mode.dimension = dimension.clone();
-            }
-        }
-    }
-    history.managed_interaction =
-        match crate::conversation::interaction(db_path, history.session_id)? {
-            Some(Event::Interaction {
-                interaction_id,
-                title,
-                detail,
-                choices,
-                questions,
-            }) => Some(meowo_protocol::conversation::ManagedInteractionDto {
-                interaction_id,
-                title,
-                detail,
-                choices: serde_json::from_value(
-                    serde_json::to_value(choices)
-                        .map_err(|_| "conversation/persisted_payload_invalid")?,
-                )
-                .map_err(|_| "conversation/persisted_payload_invalid")?,
-                questions: serde_json::from_value(
-                    serde_json::to_value(questions)
-                        .map_err(|_| "conversation/persisted_payload_invalid")?,
-                )
-                .map_err(|_| "conversation/persisted_payload_invalid")?,
-            }),
-            _ => None,
-        };
-    if let Some(interaction) = &history.managed_interaction {
-        history.pending_review = Some(if interaction.questions.is_empty() {
-            PendingReviewKind::Approval
-        } else {
-            PendingReviewKind::Question
-        });
-    } else if history.pending_review != Some(PendingReviewKind::Gate) {
-        history.pending_review = None;
-    }
-    history.managed_deliveries = Some(crate::conversation::pending_deliveries(
-        db_path,
-        history.session_id,
-    )?);
-    let offset = i64::try_from(read.offset).map_err(|_| "conversation/invalid_offset")?;
-    let before = read
-        .before
-        .map(i64::try_from)
-        .transpose()
-        .map_err(|_| "conversation/invalid_offset")?;
-    let mut reset = read.full || offset == 0 || before.is_some();
-    if !reset {
-        let events = store
-            .managed_events_since(history.session_id, offset, 200)
-            .map_err(|error| error.to_string())?;
-        history.offset = events.last().map_or(read.offset, |row| row.sequence as u64);
-        for row in events {
-            let value: serde_json::Value = serde_json::from_str(&row.payload_json)
-                .map_err(|_| "conversation/persisted_payload_invalid")?;
-            if value.get("kind").and_then(serde_json::Value::as_str) == Some("history") {
-                reset = true;
-                break;
-            }
-            if let Ok(event) = serde_json::from_value::<Event>(value) {
-                if let Some(item) = crate::conversation::chat_item(&event, row.sequence) {
-                    history.items.push(item);
-                }
-            }
-        }
-    }
-    if reset {
-        // 正文与offset必须在同一WAL快照取得；不能全日志重放，也不能拿未来offset跳过尚未读到的正文。
-        let window = store
-            .managed_chat_window(history.session_id, before, if read.full { 200 } else { 30 })
-            .map_err(|error| error.to_string())?;
-        history.items = window
-            .items_json
-            .iter()
-            .map(|item| {
-                serde_json::from_str(item)
-                    .map_err(|_| "conversation/persisted_payload_invalid".to_string())
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        history.offset = window.offset as u64;
-        history.earliest = window.earliest as u64;
-        history.has_more = window.has_more;
-        history.reset = true;
-    }
     Ok(history)
 }
 
@@ -1320,42 +1143,37 @@ pub(crate) async fn search_chat_transcripts(
 mod tests {
     use super::*;
 
+    /// 已停用的「Meowo 托管」会话：照常走原生读取，只多带一个停用标记；有没有原生 id 决定能否用官方 CLI 打开。
     #[test]
-    fn managed_history_uses_materialized_pages_and_incremental_events_without_native_transcript() {
-        use meowo_agent::conversation::ConversationEvent as Event;
+    fn retired_managed_session_reads_natively_and_reports_resumability() {
         let dir = std::env::temp_dir().join(format!(
-            "meowo-managed-chat-{}",
+            "meowo-retired-chat-{}",
             crate::remote::generate_token().unwrap()
         ));
         std::fs::create_dir(&dir).unwrap();
         let db = dir.join("board.db");
         let store = super::super::open_store(&db).unwrap();
-        let id = store
-            .managed_create("kimi", &dir.to_string_lossy(), None, 1)
+        let project = store
+            .upsert_project_by_root(&dir.to_string_lossy(), "retired", 1)
             .unwrap();
-        let append = |index: usize| {
-            let event = Event::Output {
-                request_id: Some(format!("request_{index}")),
-                segment_id: format!("segment_{index}"),
-                text: format!("native output {index}"),
-                reasoning: false,
-            };
-            let item = crate::conversation::chat_item(&event, index as i64).unwrap();
-            store
-                .managed_record_event(
-                    id,
-                    &serde_json::to_string(&event).unwrap(),
-                    Some(&serde_json::to_string(&item).unwrap()),
-                    index as i64 + 2,
-                )
-                .unwrap();
-        };
-        for index in 0..35 {
-            append(index);
+        let (bound, _) = store.start_session(project, "thread-bound", 1).unwrap();
+        let (unbound, _) = store
+            .start_session(project, "meowo-managed-0000", 1)
+            .unwrap();
+        let (plain, _) = store.start_session(project, "plain-native", 1).unwrap();
+        // 旧版本写下的托管记录：本版本已没有写入口，直接按旧表结构插行模拟存量数据。
+        let raw = rusqlite::Connection::open(&db).unwrap();
+        for (id, native) in [(bound, Some("thread-bound")), (unbound, None)] {
+            raw.execute(
+                "INSERT INTO managed_conversations(session_id,provider,cwd,native_session_id,phase,created_at,updated_at) VALUES(?1,'codex',?2,?3,'failed',1,1)",
+                rusqlite::params![id, dir.to_string_lossy(), native],
+            )
+            .unwrap();
         }
+        drop(raw);
         let mtimes = Mutex::new(ChatMtimes::default());
         let cache = Mutex::new(meowo_agent::TranscriptCache::default());
-        let read = |request| {
+        let read = |id| {
             load_chat_history(
                 &db,
                 &mtimes,
@@ -1369,42 +1187,14 @@ mod tests {
                     screen_assumed: false,
                 },
                 id,
-                request,
+                ChatRead::default(),
             )
             .unwrap()
         };
-        let first = read(ChatRead::default());
-        assert!(first.managed_conversation && first.reset && first.has_more);
-        assert_eq!(first.items.len(), 30);
-        assert!(!first.pty_managed);
-        append(35);
-        let delta = read(ChatRead {
-            offset: first.offset,
-            ..Default::default()
-        });
-        assert!(!delta.reset);
-        assert_eq!(delta.items.len(), 1);
-        assert!(delta.offset > first.offset);
-        let earlier = read(ChatRead {
-            before: Some(first.earliest),
-            ..Default::default()
-        });
-        assert_eq!(earlier.items.len(), 5);
-        assert!(!earlier.has_more);
-        store
-            .managed_append_event(
-                id,
-                &serde_json::to_string(&Event::History { messages: vec![] }).unwrap(),
-                99,
-            )
-            .unwrap();
-        let reset = read(ChatRead {
-            offset: delta.offset,
-            ..Default::default()
-        });
-        assert!(reset.reset);
-        assert_eq!(reset.items.len(), 30);
-        assert!(mtimes.lock().unwrap().get(id).is_none());
+        let resumable = |id| read(id).retired_managed.map(|retired| retired.resumable);
+        assert_eq!(resumable(bound), Some(true));
+        assert_eq!(resumable(unbound), Some(false));
+        assert_eq!(resumable(plain), None);
         drop(store);
         std::fs::remove_dir_all(&dir).unwrap();
     }

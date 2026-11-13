@@ -7,8 +7,8 @@ use meowo_store::{
 fn open_in_memory_creates_tables() {
     let store = Store::open_in_memory().expect("open");
     let count: i64 = store.raw_table_count().expect("count tables");
-    // 基础七张表外，托管会话持久化还需要八张表：协议事件、投递幂等与恢复记录不能只留在内存，
-    // 否则进程重启会把待答审批或未确认投递静默丢掉。
+    // 基础七张表外还有已删除的「Meowo 托管」会话留下的八张 managed_* 表：托管路线已删，
+    // 表与旧数据刻意保留（删数据须用户另行同意，见 managed.rs），新库也照建以免同版本结构分叉。
     assert_eq!(count, 15);
 }
 
@@ -1749,7 +1749,7 @@ fn migrate_drops_the_unused_events_table() {
 
     // 表本身消失（不是「还在但空了」）。
     let left: i64 = store.raw_table_count().expect("count tables");
-    assert_eq!(left, 15, "events 之外的基础表与托管会话表应原样保留");
+    assert_eq!(left, 15, "events 之外的基础表与停用的托管会话表应原样保留");
 
     // 其余表照常可用——迁移没把别的东西带走。
     let pid = store.upsert_project_by_root("/p", "p", 1).unwrap();
