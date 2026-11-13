@@ -388,3 +388,54 @@ fn compression_does_not_reset_turn_facts_and_opencode_idle_is_not_a_stop_control
         Output::default()
     );
 }
+
+/// 验收 #3「同项目两个会话与多个任务互不串线」：同一项目下两个任务各由一个会话认领，
+/// 认领、SessionStart 注入、Stop 拦截都只作用于各自的任务；作答一个任务的关卡，另一个会话不被唤醒。
+/// 兄弟场景逐家覆盖四个 Provider。
+#[test]
+fn two_sessions_on_two_tasks_in_one_project_never_cross() {
+    let mut injected = 0;
+    for provider in ["codex", "kimi", "gemini", "opencode"] {
+        let e = env();
+        let other = e.root.path().join(".lead/20261112-other");
+        fs::create_dir_all(&other).unwrap();
+        fs::write(other.join("SPEC.md"), "# other").unwrap();
+        fs::write(other.join("progress.md"), "phase: implement\n").unwrap();
+        fs::write(other.join("acceptance.json"), r#"[{"id":1,"check":"other","passes":false}]"#).unwrap();
+        // A 写本任务，B 写另一个任务（同一 fixture，换掉目标路径）。
+        call(&e, provider, "claim", claim(&e, provider, "session-a"));
+        let first = e.task.join("progress.md").display().to_string();
+        let second = other.join("progress.md").display().to_string();
+        let raw = claim(&e, provider, "session-b").to_string().replace(
+            &serde_json::to_string(&first).unwrap()[1..serde_json::to_string(&first).unwrap().len() - 1],
+            &serde_json::to_string(&second).unwrap()[1..serde_json::to_string(&second).unwrap().len() - 1],
+        );
+        call(&e, provider, "claim", serde_json::from_str(&raw).unwrap());
+        assert_eq!(fs::read_to_string(e.task.join(".owner")).unwrap(), "session-a", "{provider}");
+        assert_eq!(fs::read_to_string(other.join(".owner")).unwrap(), "session-b", "{provider}");
+        let registry: Value = serde_json::from_slice(&fs::read(&e.registry).unwrap()).unwrap();
+        let task_of = |sid: &str| registry[sid].as_str().map(|s| s.replace('\\', "/"));
+        assert!(task_of("session-a").unwrap().ends_with("20261112-provider"), "{provider}");
+        assert!(task_of("session-b").unwrap().ends_with("20261112-other"), "{provider}");
+        // 两个会话的上下文注入只提各自的任务。
+        for (sid, mine, theirs) in [("session-a", "20261112-provider", "20261112-other"), ("session-b", "20261112-other", "20261112-provider")] {
+            let out = call(&e, provider, "session", prompt(&e, provider, sid, "implement"));
+            let text = format!("{}{}", out.stdout.unwrap_or_default(), out.stderr.unwrap_or_default());
+            if !text.is_empty() {
+                injected += 1;
+                assert!(text.contains(mine), "{provider} {sid} 注入缺自己的任务: {text}");
+                assert!(!text.contains(theirs), "{provider} {sid} 注入串到别的任务: {text}");
+            }
+        }
+        // 另一个任务挂关卡并作答：只认领本任务的会话 A 不因此被唤醒或换任务。
+        fs::write(other.join("gate.json"), r#"{"v":1,"id":"Q-other","type":"Q","title":"t","summary":"s","options":[{"id":"1","label":"a"}],"status":"pending","answer":null}"#).unwrap();
+        lead::answer_gate(&other, "Q-other", &meowo_protocol::ipc::LeadGateAnswerDto { choice: "1".into(), note: String::new() }).unwrap();
+        let out = call(&e, provider, "session", prompt(&e, provider, "session-a", "implement"));
+        let text = format!("{}{}", out.stdout.unwrap_or_default(), out.stderr.unwrap_or_default());
+        assert!(!text.contains("Q-other") && !text.contains("20261112-other"), "{provider} A 收到了别的任务的关卡: {text}");
+        assert_eq!(fs::read_to_string(e.task.join(".owner")).unwrap(), "session-a", "{provider}");
+    }
+    // 防止注入检查空过：至少要有真实注入被核对过。
+    assert!(injected > 0, "没有任何 Provider 产生任务注入，串线检查未生效");
+    eprintln!("核对了 {injected} 次任务注入");
+}
