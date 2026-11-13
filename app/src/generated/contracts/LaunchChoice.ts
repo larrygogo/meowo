@@ -27,7 +27,7 @@ traits: ModeTraits | null,
  */
 desc: string | null, 
 /**
- * [`crate::ModeSwitch::Server`] 时发给会话服务的设置片段（JSON 对象，合并进
- * `thread/settings/update` 参数）。字面量，不含用户输入。
+ * [`crate::ModeSwitch::Server`] 时发给会话服务的设置片段（JSON 对象，宿主合并后交给会话服务；
+ * 取值用 CLI 参数写法）。字面量，不含用户输入。
  */
 server: string | null, };

@@ -243,6 +243,8 @@ export const zh = {
       "permission.yolo": "按需询问（常规操作自动批准）",
       "work.default": "默认",
       "work.plan": "计划模式",
+      "collaboration.default": "默认",
+      "collaboration.plan": "计划模式",
     } as Record<string, string>,
     // 每档一行「什么自动做、什么仍会问你」（对照 Kimi 权限菜单的 *Desc）：档名只是代号，
     // 选档时真正要比较的是后果。键同 launchChoice；默认审批档 codex 与 gemini 语义不同，不配。
@@ -269,19 +271,27 @@ export const zh = {
   // Gemini yolo 都不问），界面按「改文件 / 跑命令要不要问、是否只出方案」三维说，原名放小字。
   // 一句话说明按各家官方帮助或文档原文提炼，出处见 research-kimi-gemini §5、research-codex-opencode §9。
   modes: {
+    // 改文件与跑命令同一档时合成一句（菜单宽度有限，实拍两段式被截断）。
+    both: {
+      always: "改文件和跑命令都先问你",
+      risky: "常规自动做，危险的才问",
+      never: "改文件和跑命令都不问",
+      blocked: "不改文件也不跑命令",
+      inherit: "问不问按权限档",
+    } as Record<string, string>,
     edits: {
-      always: "改文件先问你",
-      risky: "改文件危险时才问",
+      always: "改文件要问",
+      risky: "改文件危险才问",
       never: "改文件不问",
       blocked: "不改文件",
       inherit: "改文件按权限档",
     } as Record<string, string>,
     commands: {
-      always: "跑命令先问你",
-      risky: "跑命令危险时才问",
-      never: "跑命令不问",
+      always: "命令要问",
+      risky: "命令危险才问",
+      never: "命令不问",
       blocked: "不跑命令",
-      inherit: "跑命令按权限档",
+      inherit: "命令按权限档",
     } as Record<string, string>,
     planOnly: "只出方案",
     followConfig: (name: string) => `默认（${name}）`,
@@ -289,11 +299,11 @@ export const zh = {
     uncertain: "能否使用以账号为准",
     desc: {
       "kimi.permission.manual": "只自动读文件，其余都先问你",
-      "kimi.permission.yolo": "常规操作自动做，危险的仍会问",
+      "kimi.permission.yolo": "提问、计划和危险操作仍会问你",
       "kimi.permission.auto": "全部自动决定，只有计划要你审",
       "kimi.work.default": "按权限档执行",
       "kimi.work.plan": "先出计划，除计划文件外不改文件",
-      "gemini.approval.default": "改文件和多数命令都先问你",
+      "gemini.approval.default": "工作区内已知安全的命令不问",
       "gemini.approval.autoEdit": "自动改文件，跑命令仍先问",
       "gemini.approval.plan": "只读，只出方案，不能跑命令",
       "gemini.approval.yolo": "所有工具自动放行，含危险命令",

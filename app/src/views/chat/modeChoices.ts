@@ -23,7 +23,9 @@ export type ModeChoiceView = {
 
 /** 三维统一说法，如「改文件不问 · 跑命令危险时才问」「只出方案 · 不改文件 · 跑命令按权限档」。 */
 export function traitsSummary(t: Dict, traits: ModeTraits): string {
-  const parts = [t.modes.edits[traits.edits], t.modes.commands[traits.commands]];
+  const parts = traits.edits === traits.commands
+    ? [t.modes.both[traits.edits]]
+    : [t.modes.edits[traits.edits], t.modes.commands[traits.commands]];
   if (traits.plan_only) parts.unshift(t.modes.planOnly);
   return parts.filter(Boolean).join(" · ");
 }
@@ -42,7 +44,7 @@ export function modeChoiceViews(
     return id && id !== choice.id ? option.choices.find((candidate) => candidate.id === id && candidate.traits) : undefined;
   };
   const views = option.choices.map((choice): ModeChoiceView => {
-    const short = t.chat.modeShortNames[`${option.id}.${choice.id}`] ?? choice.label;
+    const short = t.chat.modeShortNames[`${option.id}.${choice.id}`] ?? t.newSession.launchChoice[`${option.id}.${choice.id}`] ?? choice.label;
     const effective = resolved(choice);
     if (choice.traits) {
       return {

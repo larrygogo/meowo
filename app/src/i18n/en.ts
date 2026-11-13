@@ -220,6 +220,8 @@ export const en: Dict = {
       "permission.yolo": "Ask when needed (auto-approve routine actions)",
       "work.default": "Default",
       "work.plan": "Plan mode",
+      "collaboration.default": "Default",
+      "collaboration.plan": "Plan mode",
     } as Record<string, string>,
     launchChoiceDesc: {
       "permission.default": "Reads run freely; edits and commands ask first",
@@ -239,6 +241,13 @@ export const en: Dict = {
     relayPinnedModel: (model: string) => `Pinned to ${model} by the API relay`,
   },
   modes: {
+    both: {
+      always: "Asks before edits and commands",
+      risky: "Routine work runs, risky asks",
+      never: "Edits and commands run freely",
+      blocked: "No edits, no commands",
+      inherit: "Follows the permission mode",
+    } as Record<string, string>,
     edits: {
       always: "Asks before edits",
       risky: "Asks before risky edits",
@@ -259,11 +268,11 @@ export const en: Dict = {
     uncertain: "Availability depends on your account",
     desc: {
       "kimi.permission.manual": "Reads on its own, everything else asks first",
-      "kimi.permission.yolo": "Routine work runs, risky actions still ask",
+      "kimi.permission.yolo": "Questions, plans and risky actions still ask",
       "kimi.permission.auto": "Decides everything, only plans wait for review",
       "kimi.work.default": "Works under the permission mode",
       "kimi.work.plan": "Plans first, edits nothing but the plan file",
-      "gemini.approval.default": "Prompts before edits and most commands",
+      "gemini.approval.default": "Known-safe commands in the workspace skip the prompt",
       "gemini.approval.autoEdit": "Auto-approves edits, commands still ask",
       "gemini.approval.plan": "Read-only planning, no shell",
       "gemini.approval.yolo": "Auto-approves all tools, risky ones too",

@@ -13,15 +13,15 @@ describe("模式统一说法", () => {
   it("Kimi yolo 是「危险时才问」，Gemini yolo 才是「都不问」：同名档不同说法", () => {
     const kimi = modeChoiceViews(zh, optionOf("kimi", "permission"));
     const gemini = modeChoiceViews(zh, optionOf("gemini", "approval"));
-    expect(kimi.find((view) => view.value === "yolo")?.label).toBe("改文件危险时才问 · 跑命令危险时才问");
-    expect(gemini.find((view) => view.value === "yolo")?.label).toBe("改文件不问 · 跑命令不问");
+    expect(kimi.find((view) => view.value === "yolo")?.label).toBe("常规自动做，危险的才问");
+    expect(gemini.find((view) => view.value === "yolo")?.label).toBe("改文件和跑命令都不问");
     // 小字是 CLI 原名，说明来自各家原文提炼。
     expect(kimi.find((view) => view.value === "yolo")?.detail).toBe("Ask When Needed");
     expect(kimi.find((view) => view.value === "auto")?.desc).toBe(zh.modes.desc["kimi.permission.auto"]);
   });
 
   it("只规划的档把「只出方案」放在最前", () => {
-    expect(traitsSummary(zh, { edits: "blocked", commands: "inherit", plan_only: true })).toBe("只出方案 · 不改文件 · 跑命令按权限档");
+    expect(traitsSummary(zh, { edits: "blocked", commands: "inherit", plan_only: true })).toBe("只出方案 · 不改文件 · 命令按权限档");
   });
 
   it("没有统一说法的「默认」档按 CLI 配置说：读得到配置就说成那一档", () => {
@@ -29,7 +29,7 @@ describe("模式统一说法", () => {
     const unknown = modeChoiceViews(zh, codex).find((view) => view.value === "default");
     expect(unknown?.label).toBe(zh.modes.desc["codex.approval.default"]);
     const resolved = modeChoiceViews(zh, codex, { model: null, choices: { approval: "readOnly" } }).find((view) => view.value === "default");
-    expect(resolved?.label).toBe(zh.modes.followConfig("改文件先问你 · 跑命令危险时才问"));
+    expect(resolved?.label).toBe(zh.modes.followConfig("改文件要问 · 命令危险才问"));
     expect(resolved?.short).toBe(zh.modes.followConfig("Read Only"));
   });
 
