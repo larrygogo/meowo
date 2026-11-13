@@ -278,6 +278,7 @@ export const en: Dict = {
     plan: (on: boolean) => (on ? "Plan: on" : "Plan: off"),
     followConfig: (name: string) => `Default (${name})`,
     followConfigUnknown: "Per CLI config",
+    configLocked: (name: string) => `CLI config defaults to "${name}". Change it to pick this`,
     uncertain: "Availability depends on your account",
     desc: {
       "kimi.permission.manual": "Reads on its own, everything else asks first",
@@ -478,6 +479,9 @@ export const en: Dict = {
     emptyStarting: "Starting session…",
     settingsDeferred: (name: string) => `Switches to ${name} after this turn`,
     settingsApplying: "Switching",
+    settingsComposerUnknown: "Couldn't read the terminal input box, so it wasn't restarted to keep your text",
+    settingsFirstTurn: "The first message is being handled. Switch after the session is created",
+    settingsNextOpen: "The session isn't running. This takes effect next time it opens",
     settingsNeedsNewSession: "Resumed sessions can only loosen permissions. Start a new session to tighten",
     settingsModeUnsupported: "This can't be switched inside this session",
     settingsUnconfirmed: "Switched. Will verify on the next message",

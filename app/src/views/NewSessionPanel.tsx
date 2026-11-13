@@ -385,6 +385,8 @@ export function NewSessionPanel({ onClose, prefill, onLaunched }: {
                         value: view.value,
                         label: view.label,
                         risky: view.risk,
+                        // 选不到的档置灰、说明原因；选了也不生效（onChange 里拦）。
+                        muted: view.disabled,
                         sub: [view.desc, view.detail].filter(Boolean).join(" · ") || undefined,
                       }))
                       : option.choices.map((choice) => ({
@@ -396,7 +398,10 @@ export function NewSessionPanel({ onClose, prefill, onLaunched }: {
                       sub: t.newSession.launchChoiceDesc[`${option.id}.${choice.id}`]
                         ?? (choice.risk ? t.newSession.riskyChoiceSub : undefined),
                     }))}
-                    onChange={(v) => setOpts((m) => ({ ...m, [option.id]: v }))}
+                    onChange={(v) => {
+                      if (modeChoiceViews(t, option, cliDefaults, dynamicChoices).some((view) => view.value === v && view.disabled)) return;
+                      setOpts((m) => ({ ...m, [option.id]: v }));
+                    }}
                   />
                   {pinned !== undefined && (
                     <span className="ns-option-note" data-testid="ns-option-pinned">{t.newSession.relayPinnedModel(pinned)}</span>

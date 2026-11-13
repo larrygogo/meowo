@@ -77,6 +77,16 @@ describe("模式统一说法", () => {
     expect(kimiPlan).toMatchObject({ short: "计划：开", desc: "只出方案 · 不改文件 · 命令按权限档" });
   });
 
+  /// 做空 M1：Kimi 没有改回「每步都问」的参数；CLI 配置默认是别的档时这一档选不到，说明原因。
+  it("配置默认档不是它时，无参数的明确档选不到", () => {
+    const kimi = modeChoiceViews(zh, optionOf("kimi", "permission"), { model: null, choices: { permission: "yolo" } });
+    expect(kimi.find((view) => view.value === "manual")).toMatchObject({ disabled: true, desc: zh.modes.configLocked("必要时询问") });
+    expect(kimi.find((view) => view.value === "yolo")?.disabled).toBeUndefined();
+    expect(modeChoiceViews(zh, optionOf("kimi", "permission"), { model: null, choices: { permission: "manual" } }).some((view) => view.disabled)).toBe(false);
+    // Gemini「每步都问」显式带 --approval-mode default，配置默认是什么都选得到。
+    expect(modeChoiceViews(zh, optionOf("gemini", "approval"), { model: null, choices: { approval: "autoEdit" } }).some((view) => view.disabled)).toBe(false);
+  });
+
   it("只规划的档把「只出方案」放在最前", () => {
     expect(traitsSummary(zh, { edits: "blocked", commands: "inherit", plan_only: true })).toBe("只出方案 · 不改文件 · 命令按权限档");
   });
@@ -109,5 +119,7 @@ describe("模式统一说法", () => {
     expect(screenShowsAny(["  Session:", "  No session yet — one will be created on your first message."], [marker])).toBe(true);
     expect(screenShowsAny(["  No session yet — one will be created", "  on your first message."], [marker])).toBe(true);
     expect(screenShowsAny(["  Session: session_abc"], [marker])).toBe(false);
+    // 行首锚定：对话正文里引用这句不算（做空 L1）。
+    expect(screenShowsAny(["  › 屏幕上写着 No session yet — one will be created on your first message."], [marker])).toBe(false);
   });
 });

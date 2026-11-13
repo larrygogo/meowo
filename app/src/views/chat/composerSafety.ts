@@ -7,6 +7,8 @@ export type ComposerCandidate = {
   inputRow?: number;
   inputCol?: number;
   isPlaceholder?: boolean;
+  /** 输入框里的正文（去掉提示符）；认不出时没有。重启前把草稿搬进对话页用（做空 H2）。 */
+  text?: string;
 };
 
 // empty 只是文字候选：占位与用户同文草稿可能完全一样，必须由确认层保守裁定，不能用按键后没动来放行。
@@ -63,6 +65,7 @@ export function composerCandidate(screen: readonly string[] | null, guard: Compo
       // 插件只声明实拍单宽前缀；不能拿灰色占位的首字位置当输入起点。
       inputCol: prefix[1].length,
       isPlaceholder: candidate && content !== "",
+      text: content,
     };
   } catch {
     return { state: "unknown" };

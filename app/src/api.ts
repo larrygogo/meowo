@@ -35,6 +35,8 @@ import type { AgentLaunchDefaultsArgs } from "./generated/contracts/bridge/Agent
 import type { AgentDynamicModeChoicesArgs } from "./generated/contracts/bridge/AgentDynamicModeChoicesArgs";
 import type { ApplySessionSettingsArgs } from "./generated/contracts/bridge/ApplySessionSettingsArgs";
 import type { SessionTuiState } from "./generated/contracts/bridge/SessionTuiState";
+import type { RecordSessionSettingsArgs } from "./generated/contracts/bridge/RecordSessionSettingsArgs";
+import type { QueueSessionSettingsArgs } from "./generated/contracts/bridge/QueueSessionSettingsArgs";
 import type { LaunchDefaults } from "./generated/contracts/LaunchDefaults";
 import type { DynamicModeChoice } from "./generated/contracts/DynamicModeChoice";
 import type { ModeTraits } from "./generated/contracts/ModeTraits";
@@ -1312,6 +1314,24 @@ export function agentDynamicModeChoices(provider: string, cwd?: string | null): 
     .then((choices) => choices ?? []);
 }
 
+/** 回合结束时读到的会话当前模型 / 模式写回存档（做空 M5），之后的恢复与重启按它回放。 */
+export function recordSessionSettings(sessionId: number, model: string | null, modes: Record<string, string>): Promise<void> {
+  return invoke<void>("record_session_settings", { sessionId, model, modes } satisfies RecordSessionSettingsArgs);
+}
+
+/** 「这一轮结束后切换」的队列存在宿主里、按会话记（做空 M3）：返回合并后的整份。 */
+export function queueSessionSettings(sessionId: number, request: unknown): Promise<unknown> {
+  return invoke<unknown>("queue_session_settings", { sessionId, request } satisfies QueueSessionSettingsArgs);
+}
+
+export function queuedSessionSettings(sessionId: number): Promise<unknown> {
+  return invoke<unknown>("queued_session_settings", { sessionId } satisfies SessionArg);
+}
+
+export function takeQueuedSessionSettings(sessionId: number): Promise<unknown> {
+  return invoke<unknown>("take_queued_session_settings", { sessionId } satisfies SessionArg);
+}
+
 /** 会话此刻的模型与模式（后端 session_settings::LiveSettings）：会话服务机制读 rollout 最新段，
  *  TUI 对话框机制读最后一条用户消息；带参重启的两家返回空（transcript 增量负责）。 */
 export type LiveSettings = { model: string | null; effort: string | null; modes: { dimension: string; value: string }[] };
@@ -1323,7 +1343,7 @@ export function sessionLiveSettings(sessionId: number): Promise<LiveSettings> {
 
 /** 会话里切模型 / 模式的结果（后端 session_settings::SettingsOutcome）。 */
 export type SettingsOutcome = {
-  kind: "applied" | "restarted" | "reopened" | "needs_new_session" | "unsupported" | "not_now";
+  kind: "applied" | "restarted" | "reopened" | "next_open" | "needs_new_session" | "unsupported" | "not_now";
   sessionId: number;
   confirmed: boolean;
   reason: string | null;

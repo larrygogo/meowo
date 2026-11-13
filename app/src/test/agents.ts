@@ -419,7 +419,7 @@ const LAUNCH_OPTIONS: Record<string, LaunchOption[]> = {
   ],
   gemini: [
     opt("approval", "default", [
-      ch("default", "default", [], false, { traits: tr("always", "always"), desc: "gemini.approval.default" }),
+      ch("default", "default", ["--approval-mode", "default"], false, { traits: tr("always", "always"), desc: "gemini.approval.default" }),
       ch("autoEdit", "auto_edit", ["--approval-mode", "auto_edit"], false, { traits: tr("never", "always"), desc: "gemini.approval.autoEdit" }),
       ch("plan", "plan", ["--approval-mode", "plan"], false, { traits: tr("blocked", "blocked", true), desc: "gemini.approval.plan" }),
       ch("yolo", "yolo", ["--yolo"], true, { traits: tr("never", "never"), desc: "gemini.approval.yolo" }),

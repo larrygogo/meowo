@@ -57,6 +57,30 @@ describe("ChatWindow 适配回归", () => {
     expect(writes(513).join("")).not.toContain("/model");
   });
 
+  /// 做空 H2：带参重启会杀掉 TUI 进程。终端输入框里没发的字先搬进对话页输入框，再重启。
+  it("kimi 重启前把终端输入框里的草稿搬进对话页", async () => {
+    const base = setup(514, "kimi");
+    const frame = emptyComposerFrame("kimi")!;
+    const body = frame.lines[1].slice(" │ ".length, -1);
+    const draftLine = ` │ ${"> 半句没发完的话".padEnd(body.length)}│`;
+    invoke.mockImplementation((command, args) => {
+      if (command === "managed_terminal_frame") return Promise.resolve({ ...frame, lines: [frame.lines[0], draftLine, frame.lines[2]] });
+      if (command === "apply_session_settings") return Promise.resolve({ kind: "restarted", sessionId: 514, confirmed: false, reason: null });
+      if (command === "agent_model_catalog") return Promise.resolve([
+        { id: "kimi-code/k3", label: "K3", group: "Kimi", efforts: [], default_effort: null, is_default: false, uncertain: false },
+      ]);
+      return base(command, args);
+    });
+    render(<ChatWindow />);
+    await screen.findByText("适配-514");
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("agent_model_catalog", expect.anything()));
+    await act(async () => { await Promise.resolve(); });
+    fireEvent.click(await screen.findByRole("button", { name: "切换模型" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "K3" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("apply_session_settings", expect.objectContaining({ sessionId: 514, tui: expect.objectContaining({ composerEmpty: true }) })));
+    await waitFor(() => expect([...document.querySelectorAll("textarea")].some((box) => box.value.includes("半句没发完的话"))).toBe(true));
+  });
+
   it("kimi 模型直接列出,点选后在 CLI 菜单里自动选中", async () => {
     const base = setup(511, "kimi");
     invoke.mockImplementation((command, args) => {

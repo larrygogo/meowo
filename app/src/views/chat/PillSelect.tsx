@@ -19,6 +19,8 @@ export type PillOption<T extends string> = {
   detail?: string;
   /** 分组头（模型按 provider 分段）：与上一项不同时在它前面插一行组名。 */
   group?: string;
+  /** 选不到（说明行写原因）。 */
+  disabled?: boolean;
   /** 高风险档：胶囊与菜单项用危险色（同对话页的 is-risk）。 */
   risk?: boolean;
   icon?: ReactElement;
@@ -76,6 +78,7 @@ export function PillSelect<T extends string>({ value, options, onChange, label, 
               type="button"
               role="menuitem"
               key={option.value}
+              disabled={option.disabled}
               // 说明行不进名字（同对话页），读屏名字只报档名。
               aria-label={option.desc ? option.label : undefined}
               className={"chat-model-item" + (active ? " is-active" : "") + (option.risk ? " is-risk" : "")}

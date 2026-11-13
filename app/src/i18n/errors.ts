@@ -28,6 +28,12 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "lead/opencode_http_identity", exact: true, zh: "回答已保存，端口被别的程序占用，重开会话后重试", en: "Answer saved. Another program took the session's port; reopen the session and retry." },
   { m: "lead/opencode_parent_unresolved", exact: true, zh: "回答已保存；找不到子任务所属的主会话，请打开会话发一句话继续", en: "Answer saved. The main session for this subtask was not found; open it and send any message to continue." },
   // 会话里切模型 / 模式（任务 20261114-tui-model-switch，src-tauri/src/session_settings.rs 与 lead_native 两个服务模块）。
+  { m: "settings/current_unknown", exact: true, zh: "读不到会话当前的模式，没有重启，打开模式菜单后再试", en: "Couldn't read the session's current mode, so it wasn't restarted. Open the mode menu and retry" },
+  { m: "settings/composer_not_empty", exact: true, zh: "终端输入框里还有字，没有重启", en: "The terminal input box still has text, so it wasn't restarted" },
+  { m: "settings/server_unreachable", exact: true, zh: "连不上会话服务，没有切换", en: "Couldn't reach the session server. Nothing was switched" },
+  { m: "settings/background_busy", exact: true, zh: "后台子任务还在跑，结束后再切", en: "Background subtasks are still running. Switch after they finish" },
+  { m: "terminal/restart_stuck", exact: true, zh: "原会话没能结束，没有重启", en: "The original session didn't stop, so it wasn't restarted" },
+  { m: "lead/opencode_choice_mismatch", exact: true, zh: "OpenCode 选中的不是这一项，请在终端核对", en: "OpenCode selected a different item. Check the terminal" },
   { m: "settings/model_unknown", exact: true, zh: "清单里没有这个模型，请重新打开菜单", en: "That model isn't in the list. Reopen the menu" },
   { m: "settings/mode_unknown", exact: true, zh: "这个模式不在可选范围内", en: "That mode isn't available" },
   { m: "settings/mode_launch_only", exact: true, zh: "这一项只能在新建会话时选", en: "This can only be chosen when starting a session" },

@@ -315,6 +315,8 @@ export const zh = {
     plan: (on: boolean): string => (on ? "计划：开" : "计划：关"),
     followConfig: (name: string) => `默认（${name}）`,
     followConfigUnknown: "按 CLI 配置",
+    // Kimi 没有改回「每步都问」的启动参数：CLI 配置默认是别的档时这一档选不到（做空 M1）。
+    configLocked: (name: string) => `CLI 配置默认是「${name}」，改配置才能选`,
     uncertain: "能否使用以账号为准",
     desc: {
       "kimi.permission.manual": "只自动读文件，其余都先问你",
@@ -520,6 +522,10 @@ export const zh = {
     // 切模型 / 模式（任务 20261114-tui-model-switch）：运行中或有待批审批时不写终端、不重启，排到这一轮之后。
     settingsDeferred: (name: string) => `这一轮结束后切换到 ${name}`,
     settingsApplying: "正在切换",
+    settingsComposerUnknown: "认不出终端输入框，为免丢字没有重启",
+    settingsFirstTurn: "第一条消息正在处理，会话建好后再切",
+    // 会话没在跑：选择记成下次打开的启动参数（做空 M4）。
+    settingsNextOpen: "会话没在运行，下次打开时生效",
     settingsNeedsNewSession: "接回会话只能放宽权限，收紧要新建会话",
     settingsModeUnsupported: "这个会话不能在对话里切这一项",
     settingsUnconfirmed: "已切换，下一条消息时核对",

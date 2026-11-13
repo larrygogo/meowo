@@ -128,11 +128,11 @@ const gemini: ComposerGuard = {
 };
 describe("无边框与水平边框的光标候选", () => {
  it("Codex 无边框从 prompt 到最后 footer 保留整段", () => {
-  expect(composerCandidate(moreCaptures.codexEmpty,codex)).toEqual({state:"empty",inputRow:0,inputCol:2,isPlaceholder:true});
+  expect(composerCandidate(moreCaptures.codexEmpty,codex)).toMatchObject({state:"empty",inputRow:0,inputCol:2,isPlaceholder:true});
   expect(composerCandidate(moreCaptures.codexDraft,codex).state).toBe("occupied");
  });
  it("Gemini 输入起点在 > 后，不能移到额外缩进的灰字首字", () => {
-  expect(composerCandidate(moreCaptures.geminiEmpty,gemini)).toEqual({state:"empty",inputRow:1,inputCol:3,isPlaceholder:true});
+  expect(composerCandidate(moreCaptures.geminiEmpty,gemini)).toMatchObject({state:"empty",inputRow:1,inputCol:3,isPlaceholder:true});
   expect(composerCandidate(moreCaptures.geminiDraft,gemini).state).toBe("occupied");
  });
  it("缺 prompt 或框内出现陌生形态不能跳到最后续行", () => {

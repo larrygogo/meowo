@@ -42,6 +42,7 @@ import { leaveSubagentView } from "./chat/subagentView";
 import { SubagentViewNotice } from "./chat/SubagentViewNotice";
 import { clearPartialImageDraft, composerDraftText, createSendQueue, IMAGE_PASTE_LANDING_POLLS, LATE_IMAGE_GRACE_MS, RESUME_VERIFY_WINDOW_MS, stashComposerDraft, submitToTerminal, terminalInput, waitForTerminalReady, type SubmitInput, type TerminalReadyMessages, type TerminalStartupResult } from "./chat/terminalSubmit";
 import { manualSendVerdict } from "./chat/composerConfirmation";
+import { composerCandidate } from "./chat/composerSafety";
 import { managedTerminalFrame } from "../api";
 import { BottomSheet, SheetOnPhone } from "./chat/BottomSheet";
 import { runningActivityView, RunningBar, SnakeSpinner, TurnAnnouncer, useCliStatusStore } from "./chat/RunningBar";
@@ -905,9 +906,10 @@ export function ChatWindow() {
     const tick = async () => {
       const lines = await managedTerminalScreen(sessionId).catch(() => null);
       if (stopped) return;
-      if (lines && screenShowsAny(lines, markers)) { setAwaitingFirstMessage(true); return; }
-      // 冷启动通常 1~3 秒画出首屏；认不出就停（交给 startingSlow 的兜底出口），不常驻轮询。
-      if (++tries < 60) timer = window.setTimeout(() => void tick(), 1_000);
+      // 每次按屏幕如实说：发了第一条消息、这句没了就复位，认领仍失败时 startingSlow 的兜底出口
+      // （去终端、手机按键）照常出现（做空 L1）。有限次读，不常驻轮询。
+      setAwaitingFirstMessage(!!lines && screenShowsAny(lines, markers));
+      if (++tries < 120) timer = window.setTimeout(() => void tick(), 1_000);
     };
     void tick();
     return () => { stopped = true; window.clearTimeout(timer); };
@@ -1670,7 +1672,39 @@ export function ChatWindow() {
     setHistory,
     setSendError,
     moveTo: (id) => resetToRef.current(id, true),
-    composerEmpty: async () => (await manualSendVerdict({ read: () => managedTerminalFrame(sessionId) }, chatUi?.composer_guard)) === "send",
+    // 重启前把 TUI 输入框里没发的字搬进对话页输入框（standards：Meowo 先把用户内容保住，做空 H2）。
+    rescueDraft: async () => {
+      // 与发送前的输入框判定同一来源（manualSendVerdict 读的 frame）。
+      const frame = await managedTerminalFrame(sessionId).catch(() => null);
+      const candidate = composerCandidate(frame?.lines ?? null, chatUi?.composer_guard);
+      if (candidate.state === "empty") return "empty";
+      const text = candidate.text?.trim();
+      if (candidate.state !== "occupied" || !text) return "unknown";
+      setPrompt((prev) => (prev.trim() ? `${prev}\n${text}` : text));
+      return "moved";
+    },
+    restarts: (request) => sessionId < 0
+      || (!!request.model && chatUi?.model_switch === "restart_resume")
+      || Object.keys(request.modes ?? {}).some((dimension) => agentsForOptions?.find((agent) => agent.id === provider)?.launch_options
+        ?.find((option) => option.id === dimension)?.switch === "restart"),
+    // 会话此刻的实际值：transcript 的模式、底栏原文认的模式（Gemini 审批模式只有这里有），当前模型的清单 id。
+    readCurrent: async () => {
+      const current: Record<string, string> = {};
+      for (const mode of history?.agentModes ?? []) current[mode.dimension] = mode.value;
+      const screenControls = modeControls.filter((control) => (control.screen_markers ?? []).length > 0);
+      if (screenControls.length > 0) {
+        const lines = await managedTerminalScreen(sessionId).catch(() => null);
+        for (const control of screenControls) {
+          const value = lines ? modeFromScreen(lines.join("\n"), control.screen_markers) : null;
+          if (value) current[control.dimension] = value;
+        }
+      }
+      const model = currentPresetId(modelCatalog, history?.model, history?.contextWindow);
+      if (model) current.model = model;
+      return current;
+    },
+    // 未认领会话里第一条消息已经发出：重开会掐掉第一轮，等会话建好再切（做空 L4）。
+    firstTurnPending: sessionId < 0 && timelineContentCount > 0,
     fallbackModel: pickViaTerminalMenu,
     // 够不着 TUI 服务时（外部终端、服务没起来），OpenCode agent 退回 Tab 循环到位。
     fallbackMode: (dimension, value) => {
@@ -5245,7 +5279,10 @@ export function ChatWindow() {
               }));
               // 三个来源（恢复档位/插件直达项/回显标记派生）统一带 label，渲染处不再各自查表。
               const options = resumeChoices ?? (viaSettings && views
-                ? views.map((view) => ({ value: view.value, label: view.label, inputs: [] as { data: string; submit: boolean }[] }))
+                ? views
+                  // 经会话服务切的栏不列没有服务端片段的档（Codex「按配置」会话里做不到，做空 M6）。
+                  .filter((view) => launchOption?.switch !== "server" || launchOption.choices.some((choice) => choice.id === view.value && choice.server))
+                  .map((view) => ({ value: view.value, label: view.label, inputs: [] as { data: string; submit: boolean }[] }))
                 : control?.options?.length
                   ? control.options.map((option) => ({ ...option, label: viewOf(option.value)?.label ?? modeName(option.value) }))
                   : control?.cycle_input ? derived : []);

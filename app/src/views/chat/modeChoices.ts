@@ -19,6 +19,8 @@ export type ModeChoiceView = {
   /** 小字：CLI 原名。 */
   detail?: string;
   risk: boolean;
+  /** 选不到：这一档没有启动参数、只靠 CLI 配置的默认档表达，而配置的默认档是别的（做空 M1）。 */
+  disabled?: boolean;
 };
 
 /** 三维统一说法，如「改文件不问 · 跑命令危险时才问」「只出方案 · 不改文件 · 跑命令按权限档」。 */
@@ -82,6 +84,16 @@ export function modeChoiceViews(
     // 菜单主文字 = 胶囊短名（同一家各档互不重复，一眼分得清「越界才问」与「自动审查」）；
     // 第二行写三维统一说法（≤20 字，不折出单字行）；CLI 原名是行尾小字（2026-11-14 截图复核）。
     if (choice.traits) {
+      // 不带参数的明确档（Kimi Always Ask：没有 --manual）只有在 CLI 配置的默认档就是它时才选得到；
+      // 配置默认是别的档时，不传参数实际会用配置那一档，界面说「每步都问」就是假的。
+      const configured = defaults?.choices[option.id];
+      const configuredChoice = configured && configured !== choice.id && choice.args.length === 0
+        ? option.choices.find((candidate) => candidate.id === configured && candidate.traits)
+        : undefined;
+      if (configuredChoice?.traits) {
+        const name = sharedShort(t, configuredChoice.traits, configuredChoice.desc) ?? configuredChoice.label;
+        return { value: choice.id, label: short, short, desc: t.modes.configLocked(name), detail: choice.label, risk: choice.risk, disabled: true };
+      }
       return { value: choice.id, label: short, short, desc: traitsSummary(t, choice.traits), detail: choice.label, risk: choice.risk };
     }
     // 「默认」档不传参数，行为由 CLI 配置决定：读得到配置就说成那一档；读不到用这档自己的说明
@@ -115,9 +127,12 @@ export function initialChoice(option: LaunchOption, stored: string | undefined, 
   return option.default;
 }
 
-/** 屏幕上是否出现了任一原文（宽度窄时 CLI 会折行：逐行拼接后去掉换行再比，空白归一）。 */
+/** 屏幕上是否有一行**以**某段原文开头（行首锚定，对话正文里引用这句不算；memory「哨兵行首锚定」）。
+ *  窄终端会折行：从这一行起把后续几行接上再比，空白归一。 */
 export function screenShowsAny(lines: readonly string[], markers: readonly string[]): boolean {
   const squash = (text: string) => text.replace(/\s+/g, " ").trim();
-  const joined = squash(lines.join(" "));
-  return markers.some((marker) => marker && joined.includes(squash(marker)));
+  return lines.some((_, index) => {
+    const from = squash(lines.slice(index, index + 4).join(" "));
+    return markers.some((marker) => marker && from.startsWith(squash(marker)));
+  });
 }

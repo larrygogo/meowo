@@ -24,6 +24,7 @@ import { useLoginOperations } from "../hooks/useLoginOperations";
 import { useT, repairFailMessage } from "../i18n";
 import { formatBackendError } from "../i18n/errors";
 import { useWorktreeChoice } from "./useWorktreeChoice";
+import { initialChoice } from "./chat/modeChoices";
 
 /// 新建会话的表单状态与动作（目录、agent、启动选项、hook / 登录检查、启动）。
 /// 独立窗口面板（NewSessionPanel，手机页内浮层与关闭对话功能时用）和对话窗里的
@@ -199,10 +200,13 @@ export function useNewSessionForm(startCwd: string, startProvider: AgentId | nul
     setModelCatalog([]);
     setDynamicChoices([]);
     const dir = cwd.trim() ? unquotePath(cwd) : null;
-    agentLaunchDefaults(provider, dir).then((value) => { if (!cancelled) setCliDefaults(value); }).catch(() => {});
-    agentModelCatalog(provider).then((value) => { if (!cancelled) setModelCatalog(value); }).catch(() => {});
-    agentDynamicModeChoices(provider, dir).then((value) => { if (!cancelled) setDynamicChoices(value); }).catch(() => {});
-    return () => { cancelled = true; };
+    // 目录框逐字输入时不每个字起一次进程（opencode agent list 约 1~2 秒）：停手 400ms 再读（做空 L6）。
+    const timer = window.setTimeout(() => {
+      agentLaunchDefaults(provider, dir).then((value) => { if (!cancelled) setCliDefaults(value); }).catch(() => {});
+      agentModelCatalog(provider).then((value) => { if (!cancelled) setModelCatalog(value); }).catch(() => {});
+      agentDynamicModeChoices(provider, dir).then((value) => { if (!cancelled) setDynamicChoices(value); }).catch(() => {});
+    }, 400);
+    return () => { cancelled = true; window.clearTimeout(timer); };
   }, [provider, cwd]);
   // 7T-6：Enter 与「启动」钮此前各判各的——按钮 disabled 含「一个 agent 都没装/还在
   // 检测」，Enter 路径只看目录和 busy，于是在没装 CLI 的机器上回车照样发 newSession，
@@ -228,7 +232,16 @@ export function useNewSessionForm(startCwd: string, startProvider: AgentId | nul
         const wt = await worktree.create(dir, provider);
         dir = wt.sessionCwd || wt.path;
       }
-      const tempId = await newSession(dir, provider, opts);
+      // 每栏显式回传界面上显示的那一档（含按 CLI 配置预选的）：「每步都问」现在是带参数的明确档，
+      // 不回传就会落到声明表的 default，与界面显示的配置默认档不一致（做空 M1）。
+      const sent: Record<string, string> = { ...opts };
+      for (const option of launchOptions) {
+        const shown = initialChoice(option, opts[option.id], cliDefaults);
+        const explicitDefault = option.choices.some((choice) => choice.id === option.default && choice.args.length > 0);
+        // 显示的就是声明表默认、而默认档本就不带参数时不必回传（等价），其余一律回传。
+        if (shown !== option.default || explicitDefault) sent[option.id] = shown;
+      }
+      const tempId = await newSession(dir, provider, sent);
       saveStoredOpts(provider, opts); // 启动成功才记：失败的组合不该成为下次的默认
       return { tempId };
     } catch (e) {
