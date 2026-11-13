@@ -744,7 +744,8 @@ fn gemini_waiter_started(raw: &Value, session: &str) -> Option<Output> {
     if !command.ends_with(&format!(" lead wait --provider gemini --session {session}")) {
         return None;
     }
-    let context = "[lead] 这是 Meowo 自动启动的关卡等待器，gate.json 已写好。现在直接结束本轮：不要重写 gate.json，不要轮询或读它的日志。leader 答复后它会结束，答复会自动送回本会话，届时按 lead skill 处理。";
+    // 不用 [lead] 开头：真模型把它当成了 leader 的答复，直接消费了关卡（2026-11-13 实测）。
+    let context = "[Meowo] 这是 Meowo 自动启动的关卡等待器（还没有答复），gate.json 已写好。现在直接结束本轮：不要重写 gate.json，不要轮询或读它的日志。leader 答复后它会结束，答复会自动送回本会话，届时按 lead skill 处理。";
     Some(Output {
         stdout: Some(
             json!({"hookSpecificOutput":{"hookEventName":"AfterTool","additionalContext":context}})

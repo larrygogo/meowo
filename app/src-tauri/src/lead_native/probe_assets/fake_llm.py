@@ -178,6 +178,14 @@ class H(BaseHTTPRequestHandler):
             self.wfile.write(b'{"totalTokens": 10}')
             return
         contents = body.get("contents", [])
+        # 与真 API 一致：contents 里出现 system 角色直接 400（Lead 的 BeforeModel 注入曾这样踩过）。
+        if any(c.get("role") not in ("user", "model") for c in contents):
+            log({"method": "POST", "path": self.path, "kind": "rejected_role", "roles": [c.get("role") for c in contents]})
+            self.send_response(400)
+            self.send_header("content-type", "application/json")
+            self.end_headers()
+            self.wfile.write(b'{"error":{"code":400,"message":"Role is not supported","status":"INVALID_ARGUMENT"}}')
+            return
         last = contents[-1] if contents else {}
         parts = last.get("parts", [])
         last_is_tool = any("functionResponse" in x for x in parts)

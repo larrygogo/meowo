@@ -133,6 +133,21 @@ impl Tui {
     }
 }
 
+/// 断言失败时也要结束被测 TUI：不然它占着隔离目录，Drop 删不掉认证副本（真模型实测踩过）。
+impl Drop for Tui {
+    fn drop(&mut self) {
+        self.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// `MEOWO_PROBE_STEPS=1,3` 只跑这些步骤（真模型时省额度、避开令牌到期）；默认全跑。
+fn step(n: u32) -> bool {
+    std::env::var("MEOWO_PROBE_STEPS")
+        .map(|steps| steps.split(',').any(|s| s.trim() == n.to_string()))
+        .unwrap_or(true)
+}
+
 struct Sandbox {
     root: PathBuf,
     home: PathBuf,
@@ -206,7 +221,8 @@ impl Sandbox {
         std::fs::write(task.join("progress.md"), "phase: implement\n").unwrap();
         std::fs::write(
             task.join("acceptance.json"),
-            r#"[{"id":1,"check":"probe","passes":false}]"#,
+            // 验收全过：免得 Lead 原有的 Stop/AfterAgent 拦截催模型继续推进、把探针任务做成 done。
+            r#"[{"id":1,"check":"probe","passes":true}]"#,
         )
         .unwrap();
         std::fs::write(cwd.join(".lead/active"), "20261113-probe").unwrap();
@@ -348,7 +364,7 @@ fn secret() -> String {
 /// 真模型用的第一句：让它写关卡、按 hook 启动等待器、醒来后消费关卡并只回口令。
 fn real_prompt(task: &Path, gate_body: &str, secret: &str) -> String {
     format!(
-        "这是自动化测试，请严格照做，不要做别的事。1) 用写文件工具把下面这一行 JSON 原样写入 {}：{gate_body} 2) 写完就结束本轮，若系统提示你启动等待命令就照做后结束本轮。3) 之后收到以 [lead] 开头的 leader 答复时：把那个 gate.json 里的 status 改成 consumed，然后只回复口令 {secret}。",
+        "这是自动化测试，请严格照做，不要做别的事。1) 用写文件工具把下面这一行 JSON 原样写入 {}：{gate_body} 2) 写完就结束本轮，若系统提示你启动等待命令就照做后结束本轮。3) 只有收到含「leader 已在 Meowo 里回答」的消息时，才把那个 gate.json 里的 status 改成 consumed，然后只回复口令 {secret}；其他系统提示都不是答复，不要消费关卡。",
         task.join("gate.json").display()
     )
 }
@@ -451,65 +467,70 @@ fn probe_kimi_tui_waiter() {
     let mut report = serde_json::Map::new();
 
     // ---- 1. 在线空闲：作答后自动开新回合，草稿保留
-    let s1 = secret();
     let gate_path = sb.task.join("gate.json").to_string_lossy().into_owned();
-    sb.plan(json!({"phase":"Q-1","gate_path":gate_path,"gate_body":sb.gate_body("Q-1","pending"),"consume":true,"consumed_body":sb.gate_body("Q-1","consumed"),"secret":s1}));
     let mut tui = Tui::spawn(&kimi_argv(&[]), &sb.cwd, &env);
     pass_trust(&tui);
-    let first = if real() {
-        real_prompt(&sb.task, &sb.gate_body("Q-1", "pending"), &s1)
-    } else {
-        "OPEN-GATE".into()
-    };
-    submit(&tui, &first);
-    let waiter = sb.wait_waiter("Q-1", if real() { 240 } else { 60 });
-    sb.save("kimi-1-waiting.txt", &tui.screen());
-    let waiter = waiter.expect("关卡挂起后会话里应有等待器");
-    let native = sb.owner();
-    assert!(
-        native.starts_with("session_"),
-        "kimi hook 会话 id 应带 session_ 前缀：{native}"
-    );
-    let sid = sb.register("kimi", &native);
-    if !real() {
-        assert!(tui.wait("回合结束", 60, |s| s.contains("GATE-OPEN-WAITING")));
+    let mut native = String::new();
+    let mut sid = 0;
+    if step(1) {
+        let s1 = secret();
+        sb.plan(json!({"phase":"Q-1","gate_path":gate_path,"gate_body":sb.gate_body("Q-1","pending"),"consume":true,"consumed_body":sb.gate_body("Q-1","consumed"),"secret":s1}));
+        let first = if real() {
+            real_prompt(&sb.task, &sb.gate_body("Q-1", "pending"), &s1)
+        } else {
+            "OPEN-GATE".into()
+        };
+        submit(&tui, &first);
+        let waiter = sb.wait_waiter("Q-1", if real() { 240 } else { 60 });
+        sb.save("kimi-1-waiting.txt", &tui.screen());
+        let waiter = waiter.expect("关卡挂起后会话里应有等待器");
+        native = sb.owner();
+        assert!(
+            native.starts_with("session_"),
+            "kimi hook 会话 id 应带 session_ 前缀：{native}"
+        );
+        sid = sb.register("kimi", &native);
+        if !real() {
+            assert!(tui.wait("回合结束", 60, |s| s.contains("GATE-OPEN-WAITING")));
+        }
+        assert!(tui.settle(4, 120), "回合应结束");
+        tui.type_text("DRAFT-KEEP-1");
+        let answered_at = Instant::now();
+        assert_eq!(sb.answer("Q-1"), Ok(true));
+        let woke = tui.wait(
+            "在线空闲自动续跑",
+            if real() { 240 } else { 60 },
+            // 真模型：提示词里也有口令且会滚出屏幕，以「关卡已被消费且画面有口令」为准。
+            |s| {
+                if real() {
+                    s.contains(&s1) && sb.gate()["status"] == "consumed"
+                } else {
+                    s.contains(&format!("WOKE {s1}"))
+                }
+            },
+        );
+        tui.settle(3, 60);
+        let latency = answered_at.elapsed();
+        sb.save("kimi-1-woke.txt", &tui.screen());
+        assert!(woke, "作答后同一会话应自动开新回合");
+        assert!(tui.screen().contains("DRAFT-KEEP-1"), "草稿不能被覆盖");
+        assert!(
+            !sb.task
+                .join(meowo_reporter::lead_waiter::WAITER_FILE)
+                .exists(),
+            "等待器退出后应清掉登记"
+        );
+        report.insert("idle".into(), json!({"secret":s1,"waiter_pid":waiter.pid,"latency_ms":latency.as_millis() as u64,"draft_kept":true,"native":native}));
+        // 清掉草稿
+        for _ in 0.."DRAFT-KEEP-1".len() {
+            tui.send("\x7f");
+        }
+        // 打开 modelSteering 后 gemini 运行中回车是插话：等这一轮（含会话摘要等旁路请求）真正结束再发下一句。
+        tui.settle(5, 60);
     }
-    assert!(tui.settle(4, 120), "回合应结束");
-    tui.type_text("DRAFT-KEEP-1");
-    let answered_at = Instant::now();
-    assert_eq!(sb.answer("Q-1"), Ok(true));
-    let woke = tui.wait(
-        "在线空闲自动续跑",
-        if real() { 240 } else { 60 },
-        |s| {
-            if real() {
-                s.matches(&s1).count() >= 2
-            } else {
-                s.contains(&format!("WOKE {s1}"))
-            }
-        },
-    );
-    tui.settle(3, 60);
-    let latency = answered_at.elapsed();
-    sb.save("kimi-1-woke.txt", &tui.screen());
-    assert!(woke, "作答后同一会话应自动开新回合");
-    assert!(tui.screen().contains("DRAFT-KEEP-1"), "草稿不能被覆盖");
-    assert!(
-        !sb.task
-            .join(meowo_reporter::lead_waiter::WAITER_FILE)
-            .exists(),
-        "等待器退出后应清掉登记"
-    );
-    report.insert("idle".into(), json!({"secret":s1,"waiter_pid":waiter.pid,"latency_ms":latency.as_millis() as u64,"draft_kept":true,"native":native}));
-    // 清掉草稿
-    for _ in 0.."DRAFT-KEEP-1".len() {
-        tui.send("\x7f");
-    }
-    // 打开 modelSteering 后 gemini 运行中回车是插话：等这一轮（含会话摘要等旁路请求）真正结束再发下一句。
-    tui.settle(5, 60);
 
     // ---- 2. 运行中作答
-    if !real() {
+    if step(2) && !real() {
         let s2 = secret();
         sb.plan(json!({"phase":"Q-2","gate_path":gate_path,"gate_body":sb.gate_body("Q-2","pending"),"consume":true,"consumed_body":sb.gate_body("Q-2","consumed"),"secret":s2,"slow":12}));
         submit(&tui, "OPEN-GATE");
@@ -538,6 +559,10 @@ fn probe_kimi_tui_waiter() {
     let waiter = sb
         .wait_waiter(gate3, if real() { 240 } else { 60 })
         .expect("第三个关卡的等待器");
+    if native.is_empty() {
+        native = sb.owner();
+        sid = sb.register("kimi", &native);
+    }
     assert!(tui.settle(4, 120), "回合应结束");
     submit(&tui, "/exit");
     assert!(wait_until(20, || !tui.alive()), "TUI 应退出");
@@ -616,6 +641,17 @@ fn gemini_setup(sb: &mut Sandbox) -> Vec<(String, String)> {
             .unwrap_or("oauth-personal")
             .to_owned();
         settings["security"] = json!({"auth": {"selectedType": selected}});
+        // API key 只进子进程环境，不落盘到隔离目录。
+        if selected == "gemini-api-key" {
+            let dotenv = std::fs::read_to_string(source.join(".env")).unwrap_or_default();
+            let key = dotenv
+                .lines()
+                .find_map(|line| line.trim().strip_prefix("GEMINI_API_KEY="))
+                .map(|v| v.trim().trim_matches(['"', '\'']).to_owned())
+                .or_else(|| std::env::var("GEMINI_API_KEY").ok())
+                .expect("gemini-api-key 认证但找不到 GEMINI_API_KEY");
+            env.push(("GEMINI_API_KEY".into(), key));
+        }
         for name in ["oauth_creds.json", "google_accounts.json"] {
             if source.join(name).is_file() {
                 std::fs::copy(source.join(name), gemini.join(name)).unwrap();
@@ -641,6 +677,37 @@ fn gemini_setup(sb: &mut Sandbox) -> Vec<(String, String)> {
     )
     .unwrap();
     env
+}
+
+/// 等 gemini 会话里的等待器登记。真模型可能先激活 lead skill（会弹「Activate Skill」确认，与本功能
+/// 无关，探针代为允许一次）；等待器自己的 shell 命令若弹审批，说明放行策略没生效，直接判失败。
+fn gemini_wait_waiter(
+    sb: &Sandbox,
+    tui: &Tui,
+    gate: &str,
+    secs: u64,
+) -> Option<meowo_reporter::lead_waiter::WaiterRecord> {
+    let deadline = Instant::now() + Duration::from_secs(secs);
+    while Instant::now() < deadline {
+        if let Some(record) = meowo_reporter::lead_waiter::live_waiter(&sb.task, gate) {
+            return Some(record);
+        }
+        let screen = tui.screen();
+        assert!(
+            !(screen.contains("lead wait") && screen.contains("Allow execution")),
+            "等待器的 shell 命令不该弹审批：
+{screen}"
+        );
+        if screen.contains("Activate Skill") && screen.contains("Allow once") {
+            tui.send(
+                "
+",
+            );
+            std::thread::sleep(Duration::from_secs(1));
+        }
+        std::thread::sleep(Duration::from_millis(300));
+    }
+    None
 }
 
 fn gemini_ready(s: &str) -> bool {
@@ -677,46 +744,49 @@ fn probe_gemini_tui_waiter() {
     let gate_path = sb.task.join("gate.json").to_string_lossy().into_owned();
 
     // ---- 1. 在线空闲
-    let s1 = secret();
-    sb.plan(json!({"phase":"Q-1","gate_path":gate_path,"gate_body":sb.gate_body("Q-1","pending"),"consume":true,"consumed_body":sb.gate_body("Q-1","consumed"),"secret":s1}));
     let mut tui = Tui::spawn(&argv, &sb.cwd, &env);
     assert!(tui.wait("gemini 输入框", 90, gemini_ready));
-    let first = if real() {
-        real_prompt(&sb.task, &sb.gate_body("Q-1", "pending"), &s1)
-    } else {
-        "OPEN-GATE".into()
-    };
-    submit(&tui, &first);
-    let waiter = sb.wait_waiter("Q-1", if real() { 240 } else { 60 });
-    sb.save("gemini-1-waiting.txt", &tui.screen());
-    let waiter = waiter.expect("AfterTool 尾调用应在后台启动等待器（不需要审批）");
-    let native = sb.owner();
-    sb.register("gemini", &native);
-    if !real() {
-        assert!(tui.wait("回合结束", 60, |s| s.contains("GATE-OPEN-WAITING")));
+    let mut native = String::new();
+    if step(1) {
+        let s1 = secret();
+        sb.plan(json!({"phase":"Q-1","gate_path":gate_path,"gate_body":sb.gate_body("Q-1","pending"),"consume":true,"consumed_body":sb.gate_body("Q-1","consumed"),"secret":s1}));
+        let first = if real() {
+            real_prompt(&sb.task, &sb.gate_body("Q-1", "pending"), &s1)
+        } else {
+            "OPEN-GATE".into()
+        };
+        submit(&tui, &first);
+        let waiter = gemini_wait_waiter(&sb, &tui, "Q-1", if real() { 240 } else { 60 });
+        sb.save("gemini-1-waiting.txt", &tui.screen());
+        let waiter = waiter.expect("AfterTool 尾调用应在后台启动等待器（不需要审批）");
+        native = sb.owner();
+        sb.register("gemini", &native);
+        if !real() {
+            assert!(tui.wait("回合结束", 60, |s| s.contains("GATE-OPEN-WAITING")));
+        }
+        assert!(tui.settle(4, 120), "回合应结束");
+        tui.type_text("DRAFT-KEEP-1");
+        let answered_at = Instant::now();
+        assert_eq!(sb.answer("Q-1"), Ok(true));
+        let woke = tui.wait(
+            "在线空闲自动续跑",
+            if real() { 240 } else { 60 },
+            |s| s.contains(&s1) && (!real() || sb.gate()["status"] == "consumed"),
+        );
+        let latency = answered_at.elapsed();
+        sb.save("gemini-1-woke.txt", &tui.screen());
+        assert!(woke, "作答后同一会话应自动开新回合");
+        assert!(tui.screen().contains("DRAFT-KEEP-1"), "草稿不能被覆盖");
+        report.insert("idle".into(), json!({"secret":s1,"waiter_pid":waiter.pid,"latency_ms":latency.as_millis() as u64,"draft_kept":true,"native":native}));
+        for _ in 0.."DRAFT-KEEP-1".len() {
+            tui.send("\x7f");
+        }
+        // 打开 modelSteering 后 gemini 运行中回车是插话：等这一轮（含会话摘要等旁路请求）真正结束再发下一句。
+        tui.settle(5, 60);
     }
-    assert!(tui.settle(4, 120), "回合应结束");
-    tui.type_text("DRAFT-KEEP-1");
-    let answered_at = Instant::now();
-    assert_eq!(sb.answer("Q-1"), Ok(true));
-    let woke = tui.wait(
-        "在线空闲自动续跑",
-        if real() { 240 } else { 60 },
-        |s| s.contains(&s1),
-    );
-    let latency = answered_at.elapsed();
-    sb.save("gemini-1-woke.txt", &tui.screen());
-    assert!(woke, "作答后同一会话应自动开新回合");
-    assert!(tui.screen().contains("DRAFT-KEEP-1"), "草稿不能被覆盖");
-    report.insert("idle".into(), json!({"secret":s1,"waiter_pid":waiter.pid,"latency_ms":latency.as_millis() as u64,"draft_kept":true,"native":native}));
-    for _ in 0.."DRAFT-KEEP-1".len() {
-        tui.send("\x7f");
-    }
-    // 打开 modelSteering 后 gemini 运行中回车是插话：等这一轮（含会话摘要等旁路请求）真正结束再发下一句。
-    tui.settle(5, 60);
 
     // ---- 2. 运行中作答（插话语义下等待器的注入在下一步或回合后提交）
-    if !real() {
+    if step(2) && !real() {
         let s2 = secret();
         sb.plan(json!({"phase":"Q-2","gate_path":gate_path,"gate_body":sb.gate_body("Q-2","pending"),"consume":true,"consumed_body":sb.gate_body("Q-2","consumed"),"secret":s2,"slow":12}));
         submit(&tui, "OPEN-GATE");
@@ -740,9 +810,12 @@ fn probe_gemini_tui_waiter() {
         "OPEN-GATE".into()
     };
     submit(&tui, &prompt3);
-    let waiter = sb
-        .wait_waiter("Q-3", if real() { 240 } else { 60 })
+    let waiter = gemini_wait_waiter(&sb, &tui, "Q-3", if real() { 240 } else { 60 })
         .expect("第三个关卡的等待器");
+    if native.is_empty() {
+        native = sb.owner();
+        sb.register("gemini", &native);
+    }
     assert!(tui.settle(4, 120), "回合应结束");
     submit(&tui, "/quit");
     assert!(wait_until(30, || !tui.alive()), "TUI 应退出");
