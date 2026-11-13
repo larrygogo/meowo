@@ -90,7 +90,7 @@ use std::path::{Path, PathBuf};
 const SKILL_MD: &str = include_str!("lead_assets/SKILL.md");
 const REDTEAM_MD: &str = include_str!("lead_assets/lead-redteam.md");
 /// 安装文件里的标记：卸载只删带它的文件，用户自己写的同名文件不碰。
-const MANAGED_MARK: &str = "由 Meowo 安装和管理";
+pub(crate) const MANAGED_MARK: &str = "由 Meowo 安装和管理";
 /// wait（asyncRewake）最多挂 7 天，hook timeout 设得更长一点，交给 reporter 自己按时退出。
 const WAIT_TIMEOUT_SECS: u64 = 8 * 24 * 3600;
 
@@ -172,6 +172,12 @@ fn write_settings(path: &Path, v: &Value) -> Result<(), String> {
 
 fn managed_file(path: &Path) -> bool {
     std::fs::read_to_string(path).is_ok_and(|t| t.contains(MANAGED_MARK))
+}
+
+/// 这个 skill 目录是不是 Meowo 托管的（Lead）。账号间共享 skill 时要跳过它：
+/// 它由本模块给每个账号单独装，见 [`all_claude_dirs`]。
+pub(crate) fn is_managed_skill_dir(dir: &Path) -> bool {
+    managed_file(&dir.join("SKILL.md"))
 }
 
 /// 安装到 claude 配置目录：skill、做空子代理、hook。可重复执行（先删旧条目再加）。
@@ -270,6 +276,54 @@ fn claude_dir() -> Option<PathBuf> {
     meowo_agent::home_dir().map(|h| h.join(".claude"))
 }
 
+/// Lead 要装进的所有 Claude 数据目录：默认目录在前，后面是每个已建的 Claude 账号目录。
+///
+/// 账号靠 `CLAUDE_CONFIG_DIR` 把整个数据目录搬走，Claude Code 只读那里的 skills/agents/
+/// settings.json——只装默认目录的话，在新账号下开的会话既看不到 lead skill，也没有 lead hook，
+/// 整个流程静默失效（用户报障：「你有 lead 模式吗」）。
+fn all_claude_dirs() -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = claude_dir().into_iter().collect();
+    dirs.extend(crate::profile::existing_data_dirs(meowo_agent::id::CLAUDE.as_str()));
+    dirs
+}
+
+/// 开关落到每个目录：`reporter = Some` 安装，`None` 卸载。`dirs[0]` 是默认目录。
+///
+/// 默认目录失败直接报（开关状态以它为准）；账号目录逐个做完再报第一个错，
+/// 免得一个账号出问题，其余账号跟着停在半路。登记表迁移只对默认目录做（初版只装在那里）。
+fn apply_to_dirs(dirs: &[PathBuf], reporter: Option<&str>, registry: Option<&Path>) -> Result<(), String> {
+    let Some((home, profiles)) = dirs.split_first() else { return Ok(()) };
+    match reporter {
+        Some(r) => install_into(home, r, registry)?,
+        None => uninstall_from(home)?,
+    }
+    let mut first_error = None;
+    for dir in profiles {
+        let result = match reporter {
+            Some(r) => install_into(dir, r, None),
+            None => uninstall_from(dir),
+        };
+        if let Err(e) = result {
+            eprintln!("Lead 工作流（{}）: {e}", dir.display());
+            first_error.get_or_insert(e);
+        }
+    }
+    first_error.map_or(Ok(()), Err)
+}
+
+/// 默认目录装着 Lead 时，把它也装进某个账号的数据目录（新建账号时调）。没装或 dev 构建 → 不动。
+pub(crate) fn install_into_profile_if_enabled(profile_dir: &Path) {
+    if !crate::setup::auto_wire_enabled() {
+        return;
+    }
+    let (Some(home), Some(reporter)) = (claude_dir(), crate::setup::sibling_reporter()) else { return };
+    if installed_in(&home) {
+        if let Err(e) = install_into(profile_dir, &reporter, None) {
+            eprintln!("Lead 工作流装进账号目录失败（{}）: {e}", profile_dir.display());
+        }
+    }
+}
+
 /// reporter lead 子命令用的登记表（与 board.db 同目录，见 meowo-reporter main.rs）。
 fn lead_registry() -> Option<PathBuf> {
     meowo_reporter::db_path().and_then(|p| p.parent().map(|d| d.join("lead-sessions.json")))
@@ -284,10 +338,14 @@ pub(crate) fn refresh_if_installed() {
     if !crate::setup::auto_wire_enabled() {
         return;
     }
-    let (Some(dir), Some(reporter)) = (claude_dir(), crate::setup::sibling_reporter()) else { return };
-    if installed_in(&dir) {
+    let (Some(home), Some(reporter)) = (claude_dir(), crate::setup::sibling_reporter()) else { return };
+    if !installed_in(&home) {
+        return;
+    }
+    // 账号目录也在这里对齐：开关打开之后才建的账号、以及本修复之前就有的老账号，都靠它补上。
+    for dir in all_claude_dirs() {
         if let Err(e) = install_into(&dir, &reporter, None) {
-            eprintln!("Lead 工作流启动时刷新失败: {e}");
+            eprintln!("Lead 工作流启动时刷新失败（{}）: {e}", dir.display());
         }
     }
 }
@@ -303,13 +361,13 @@ pub(crate) async fn lead_workflow_installed() -> Result<bool, String> {
 #[tauri::command]
 pub(crate) async fn set_lead_workflow(enabled: bool) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        let dir = claude_dir().ok_or("lead/claude_missing")?;
-        if enabled {
-            let reporter = crate::setup::sibling_reporter().ok_or("lead/reporter_missing")?;
-            install_into(&dir, &reporter, lead_registry().as_deref())
+        claude_dir().ok_or("lead/claude_missing")?;
+        let reporter = if enabled {
+            Some(crate::setup::sibling_reporter().ok_or("lead/reporter_missing")?)
         } else {
-            uninstall_from(&dir)
-        }
+            None
+        };
+        apply_to_dirs(&all_claude_dirs(), reporter.as_deref(), lead_registry().as_deref())
     })
     .await
     .map_err(|e| e.to_string())?
@@ -458,6 +516,33 @@ mod install_tests {
             }
         }
         out
+    }
+
+    /// 用户报障「你有 lead 模式吗」：在新加的账号下开会话，lead skill 和 hook 都不在。
+    /// 开关必须落到每个账号目录，关掉时也要一起卸。
+    #[test]
+    fn toggle_covers_every_profile_dir() {
+        let tmp = Tmp::new();
+        let home = tmp.path().join(".claude");
+        let prof = tmp.path().join("profiles/claude/work");
+        for d in [&home, &prof] {
+            std::fs::create_dir_all(d).unwrap();
+            write_settings(&d.join("settings.json"), &json!({})).unwrap();
+        }
+        let dirs = vec![home.clone(), prof.clone()];
+
+        apply_to_dirs(&dirs, Some("C:/m/meowo-reporter.exe"), None).unwrap();
+        for d in &dirs {
+            assert!(installed_in(d), "{}", d.display());
+            assert!(d.join("agents/lead-redteam.md").exists());
+            assert!(lead_cmds(&settings_of(d)).iter().any(|c| c.ends_with(" lead stop")));
+        }
+
+        apply_to_dirs(&dirs, None, None).unwrap();
+        for d in &dirs {
+            assert!(!installed_in(d), "{}", d.display());
+            assert!(lead_cmds(&settings_of(d)).is_empty());
+        }
     }
 
     #[test]

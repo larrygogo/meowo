@@ -12,6 +12,8 @@ use std::path::PathBuf;
 
 use meowo_agent::WiringContext;
 
+mod share;
+
 /// 一个自定义 profile。默认账号**不在**这个列表里。
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct Profile {
@@ -163,6 +165,34 @@ pub(crate) fn installation_of(
     meowo_agent::by_id(agent.as_str())?.installation_for_profile(&profile_root(agent.as_str(), id))
 }
 
+/// 某 agent 所有**已建且目录还在**的账号的数据目录（不含默认账号）。
+pub(crate) fn existing_data_dirs(agent: &str) -> Vec<PathBuf> {
+    let s = crate::settings::load_settings();
+    s.profiles
+        .get(agent)
+        .into_iter()
+        .flatten()
+        .filter_map(|p| data_dir(agent, Some(&p.id)))
+        .filter(|d| d.is_dir())
+        .collect()
+}
+
+/// 把默认账号里用户自己装的东西带进这个账号：skill（链接共享，见 [`share`]）与 Lead 工作流。
+///
+/// 建号时与每次启动（[`crate::setup`] 的 profile 接线）各调一次——后者负责补上老账号，
+/// 以及用户在默认目录里新装的 skill。best-effort：失败只留日志，不影响建号与接线。
+pub(crate) fn sync_user_extensions(agent: &str, id: &str) {
+    let (Some(home), Some(dir)) = (data_dir(agent, None), data_dir(agent, Some(id))) else {
+        return;
+    };
+    if let Err(e) = share::share_skills(&home, &dir) {
+        eprintln!("Meowo profile[{agent}/{id}]: 共享 skill 未完成：{e}");
+    }
+    if agent == meowo_agent::id::CLAUDE.as_str() {
+        crate::lead::install_into_profile_if_enabled(&dir);
+    }
+}
+
 /// 给某个 profile 的数据目录挂上 hooks。
 ///
 /// 与默认账号的接线走的是同一条 `wire_hooks`——只是 `data_dir` 换成了 profile 的。这也是为什么
@@ -294,6 +324,7 @@ pub(crate) async fn create_profile(provider: String, name: String) -> Result<Str
                     "Meowo profile[{provider}/{id}]: 接线未完成（{reason:?}），可稍后手动修复"
                 );
             }
+            sync_user_extensions(&provider, &id);
             let display = name.trim();
             existing.push(Profile {
                 id: id.clone(),
