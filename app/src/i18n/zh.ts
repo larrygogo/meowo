@@ -296,9 +296,9 @@ export const zh = {
     planOnly: "只出方案",
     // 胶囊上的短名（中文界面说中文，CLI 原名放菜单小字）。键同 desc。
     short: {
-      "kimi.permission.manual": "总是询问",
+      "kimi.permission.manual": "每步都问",
       "kimi.permission.yolo": "必要时询问",
-      "kimi.permission.auto": "从不询问",
+      "kimi.permission.auto": "都不问",
       "gemini.approval.default": "每次询问",
       "gemini.approval.autoEdit": "自动改文件",
       "gemini.approval.plan": "只出方案",

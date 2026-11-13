@@ -13,11 +13,12 @@ describe("模式统一说法", () => {
   it("Kimi yolo 是「危险时才问」，Gemini yolo 才是「都不问」：同名档不同说法", () => {
     const kimi = modeChoiceViews(zh, optionOf("kimi", "permission"));
     const gemini = modeChoiceViews(zh, optionOf("gemini", "approval"));
-    expect(kimi.find((view) => view.value === "yolo")?.label).toBe("常规自动做，危险的才问");
-    expect(gemini.find((view) => view.value === "yolo")?.label).toBe("改文件和跑命令都不问");
+    // 主文字是短名，第二行是三维统一说法。
+    expect(kimi.find((view) => view.value === "yolo")).toMatchObject({ label: "必要时询问", desc: "常规自动做，危险的才问" });
+    expect(gemini.find((view) => view.value === "yolo")).toMatchObject({ label: "全部放行", desc: "改文件和跑命令都不问" });
     // 小字是 CLI 原名，说明来自各家原文提炼。
     expect(kimi.find((view) => view.value === "yolo")?.detail).toBe("Ask When Needed");
-    expect(kimi.find((view) => view.value === "auto")?.desc).toBe(zh.modes.desc["kimi.permission.auto"]);
+    expect(kimi.find((view) => view.value === "auto")?.label).toBe("都不问");
   });
 
   it("胶囊短名说中文统一说法，CLI 原名只在小字；计划维度说开没开", () => {
@@ -31,6 +32,22 @@ describe("模式统一说法", () => {
     expect(modeChoiceViews(zh, optionOf("kimi", "work")).map((view) => view.short)).toEqual(["计划：关", "计划：开"]);
   });
 
+  /// 截图复核：Codex「Ask for approval」与「Approve for me」主文字曾都是「常规自动做，危险的才问」，分不清。
+  /// 同一家同一栏各档的短名必须互不重复；第二行说明 ≤20 字，菜单里不折出单字行。
+  it("同一家各档短名唯一，说明不超过 20 字", () => {
+    for (const agent of descriptors(["claude", "codex", "kimi", "gemini", "opencode"])) {
+      for (const option of agent.launch_options) {
+        const views = modeChoiceViews(zh, option, null, [{ option: option.id, id: "reviewer", label: "reviewer" }]);
+        const shorts = views.map((view) => view.short);
+        expect(new Set(shorts).size, `${agent.id}.${option.id}: ${shorts.join(" / ")}`).toBe(shorts.length);
+        for (const view of views) {
+          if (option.choices.some((choice) => choice.traits)) expect(view.label).toBe(view.short);
+          expect([...(view.desc ?? "")].length, `${agent.id}.${option.id}.${view.value}: ${view.desc}`).toBeLessThanOrEqual(20);
+        }
+      }
+    }
+  });
+
   it("只规划的档把「只出方案」放在最前", () => {
     expect(traitsSummary(zh, { edits: "blocked", commands: "inherit", plan_only: true })).toBe("只出方案 · 不改文件 · 命令按权限档");
   });
@@ -38,10 +55,9 @@ describe("模式统一说法", () => {
   it("没有统一说法的「默认」档按 CLI 配置说：读得到配置就说成那一档", () => {
     const codex = optionOf("codex", "approval");
     const unknown = modeChoiceViews(zh, codex).find((view) => view.value === "default");
-    expect(unknown?.label).toBe(zh.modes.desc["codex.approval.default"]);
+    expect(unknown).toMatchObject({ label: "按配置", desc: zh.modes.desc["codex.approval.default"] });
     const resolved = modeChoiceViews(zh, codex, { model: null, choices: { approval: "readOnly" } }).find((view) => view.value === "default");
-    expect(resolved?.label).toBe(zh.modes.followConfig("改文件要问 · 命令危险才问"));
-    expect(resolved?.short).toBe(zh.modes.followConfig("只读"));
+    expect(resolved).toMatchObject({ label: zh.modes.followConfig("只读"), short: zh.modes.followConfig("只读"), desc: "改文件要问 · 命令危险才问" });
   });
 
   it("OpenCode 自定义 agent 附在末尾，没有统一说法", () => {

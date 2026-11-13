@@ -264,7 +264,7 @@ export const en: Dict = {
     } as Record<string, string>,
     planOnly: "Plan only",
     short: {
-      "kimi.permission.manual": "Always ask",
+      "kimi.permission.manual": "Ask every step",
       "kimi.permission.yolo": "Ask when needed",
       "kimi.permission.auto": "Never ask",
       "gemini.approval.default": "Ask each time",

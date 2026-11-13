@@ -10,11 +10,11 @@ import type { Dict } from "../../i18n/zh";
 
 export type ModeChoiceView = {
   value: string;
-  /** 菜单里的名字：统一说法。 */
+  /** 菜单里的名字：与胶囊同一个短名。 */
   label: string;
   /** 胶囊上的短名：CLI 原名（已有短名表的沿用）。 */
   short: string;
-  /** 一句话说明。 */
+  /** 第二行：三维统一说法（改文件 / 跑命令要不要问、是否只出方案）。 */
   desc?: string;
   /** 小字：CLI 原名。 */
   detail?: string;
@@ -61,27 +61,24 @@ export function modeChoiceViews(
       : (choice.desc ? t.modes.short[choice.desc] : undefined)
         ?? t.chat.modeShortNames[`${option.id}.${choice.id}`] ?? t.newSession.launchChoice[`${option.id}.${choice.id}`] ?? choice.label;
     const effective = resolved(choice);
+    // 菜单主文字 = 胶囊短名（同一家各档互不重复，一眼分得清「越界才问」与「自动审查」）；
+    // 第二行写三维统一说法（≤20 字，不折出单字行）；CLI 原名是行尾小字（2026-11-14 截图复核）。
     if (choice.traits) {
-      return {
-        value: choice.id,
-        label: traitsSummary(t, choice.traits),
-        short,
-        desc: choice.desc ? t.modes.desc[choice.desc] : undefined,
-        detail: choice.label,
-        risk: choice.risk,
-      };
+      return { value: choice.id, label: short, short, desc: traitsSummary(t, choice.traits), detail: choice.label, risk: choice.risk };
     }
-    // 「默认」档不传参数，行为由 CLI 配置决定：读得到配置就说成那一档，读不到如实说「按 CLI 配置」。
-    // 读不到配置时，有说明的档直接用说明当名字（「按权限档执行」「按 Codex 配置文件的设置」）。
-    const plain = !effective && choice.desc ? t.modes.desc[choice.desc] : undefined;
-    if (plain) return { value: choice.id, label: plain, short, detail: choice.label, risk: choice.risk };
+    // 「默认」档不传参数，行为由 CLI 配置决定：读得到配置就说成那一档；读不到用这档自己的说明
+    // （「按权限档执行」「按 Codex 配置文件的设置」），连说明都没有才说「按 CLI 配置」。
+    if (effective?.traits) {
+      const name = t.modes.followConfig((effective.desc ? t.modes.short[effective.desc] : undefined) ?? effective.label);
+      return { value: choice.id, label: name, short: name, desc: traitsSummary(t, effective.traits), detail: choice.label, risk: choice.risk || effective.risk };
+    }
     return {
       value: choice.id,
-      label: t.modes.followConfig(effective ? traitsSummary(t, effective.traits!) : t.modes.followConfigUnknown),
-      short: effective ? t.modes.followConfig((effective.desc ? t.modes.short[effective.desc] : undefined) ?? effective.label) : short,
-      desc: choice.desc ? t.modes.desc[choice.desc] : undefined,
+      label: short,
+      short,
+      desc: choice.desc ? t.modes.desc[choice.desc] : t.modes.followConfigUnknown,
       detail: choice.label,
-      risk: choice.risk || !!effective?.risk,
+      risk: choice.risk,
     };
   });
   for (const extra of dynamic) {
