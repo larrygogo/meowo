@@ -21,8 +21,7 @@ const SPEC: LeadInstallSpec = LeadInstallSpec {
     hooks: &[],
     limitations: &[
         "lead/native_stop_unsupported",
-        "lead/auto_continue_unverified",
-        "lead/offline_resume_unverified",
+        // 自动继续与离线恢复已由宿主 HTTP 投递闭环（lead_native::opencode_http，1.19.5 隔离真机探针）。
         "lead/main_agent_identity_unverified",
         "lead/non_lead_io_unverified",
     ],
