@@ -56,67 +56,6 @@ pub fn run(mode: &str, raw: &str, registry: &Path) -> Output {
     std::panic::catch_unwind(|| run_inner(mode, raw, registry)).unwrap_or_default()
 }
 
-/// 协议worker已经验证root和成功工具事实；仍共用原生hook的写入判定与排他认领。
-pub fn managed_claim(cwd: &str, sid: &str, call: &Value, registry: &Path) -> bool {
-    if !call.to_string().contains(".lead") {
-        return false;
-    }
-    let Some(name) = call.get("name").and_then(Value::as_str) else {
-        return false;
-    };
-    let Some(input) = call.get("input") else {
-        return false;
-    };
-    if !is_write(name, input) {
-        return false;
-    }
-    let data = json!({"session_id":sid,"cwd":cwd,"tool_name":name,"tool_input":input});
-    let Some(task) = crate::lead_provider::claim_target(&data).map(strip_verbatim) else {
-        return false;
-    };
-    if !crate::lead_provider::reserve_owner(&task, sid) {
-        return false;
-    }
-    claim(&data, registry);
-    owner_of(&task) == sid && task_of_session(sid, registry).as_ref() == Some(&task)
-}
-
-/// 每次原生prompt前只携带本root已认领任务，恢复或压缩后无需依赖各CLI是否采纳hook输出。
-pub fn managed_context(cwd: &str, sid: &str, registry: &Path) -> Option<String> {
-    let task = claimed_task(Some(cwd), sid, registry)?;
-    let raw = session_context(&task, sid)?;
-    serde_json::from_str::<Value>(&raw)
-        .ok()?
-        .pointer("/hookSpecificOutput/additionalContext")?
-        .as_str()
-        .map(str::to_owned)
-}
-
-/// 内部续跑保留同一轮的重试预算，用户新消息则清零；业务消费仍由模型写gate.json。
-pub fn managed_stop(
-    cwd: &str,
-    sid: &str,
-    user_text: &str,
-    calls: &[Value],
-    continuation: bool,
-    registry: &Path,
-) -> Option<String> {
-    let evidence = TurnEvidence {
-        user_text: user_text.into(),
-        calls: calls.to_vec(),
-    };
-    let raw = stop_inner(
-        &json!({"session_id":sid,"cwd":cwd,"stop_hook_active":continuation}),
-        registry,
-        Some(&evidence),
-    )?;
-    serde_json::from_str::<Value>(&raw)
-        .ok()?
-        .get("reason")?
-        .as_str()
-        .map(str::to_owned)
-}
-
 fn run_inner(mode: &str, raw: &str, registry: &Path) -> Output {
     if mode == "claim" && !raw.contains(".lead") {
         return Output::default(); // 快速路径：绝大多数工具调用直接返回
@@ -1338,7 +1277,5 @@ pub fn wait(
     out
 }
 
-#[cfg(test)]
-mod managed_tests;
 #[cfg(test)]
 mod tests;

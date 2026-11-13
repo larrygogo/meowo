@@ -45,7 +45,6 @@ impl Tui {
         // 本会话由 Meowo/Claude 托管：别让被测 CLI 继承这些变量（嵌套污染接续链，见 memory）。
         for key in [
             "MEOWO_PTY_LAUNCH",
-            "MEOWO_PROTOCOL_MANAGED",
             "CLAUDE_CODE_CHILD_SESSION",
         ] {
             command.env_remove(key);

@@ -15,8 +15,6 @@ pub struct AgentDescriptor {
     pub display_name: String,
     /// 可执行是否装在本机（决定各处是否列出/可选它）。
     pub installed: bool,
-    /// 原生协议驱动已声明；启动时仍须以实际CLI版本和握手复核，失败不能回退成PTY猜键。
-    pub supports_managed_conversation: bool,
     /// 这个 agent **能不能被套上代理**（＝插件是否声明了 `ProxySpec`）。
     ///
     /// 为 false 的 agent，设置页不给它代理行。没有这个字段时，前端只能给每个 agent 都画一行——
@@ -90,9 +88,6 @@ impl AgentDescriptor {
             id: plugin.id().as_str().to_string(),
             display_name: plugin.display_name().to_string(),
             installed: plugin.is_installed(),
-            // 没有私有进程监管实现的平台不能把托管模式显示成可创建入口。
-            supports_managed_conversation: plugin.conversation().is_some()
-                && cfg!(any(target_os = "windows", target_os = "macos")),
             supports_proxy: plugin.proxy().is_some(),
             // 没声明 ProxySpec 的 agent 这两项无意义（前端也不会给它代理行）。
             proxy_covers_all_launches: plugin.proxy().is_some_and(|spec| spec.config_env),
@@ -108,30 +103,6 @@ impl AgentDescriptor {
             moves_sessions_across_accounts: plugin.cross_account_session().is_some(),
             launch_options: plugin.launch_options(),
             relay,
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn managed_conversation_capability_is_declared_and_described_for_all_target_providers() {
-        // 新 provider 若只接入后端协议、没同步下发描述符，前端会继续展示旧终端入口；
-        // 这条矩阵让四家托管能力必须从同一个插件声明源推导。
-        for id in ["codex", "kimi", "gemini", "opencode"] {
-            let plugin = crate::by_id(id).expect("目标 provider 必须注册");
-            assert!(
-                plugin.conversation().is_some(),
-                "{id} 缺少托管会话 capability，不能让前端假定它与 Claude 同形"
-            );
-            let descriptor = AgentDescriptor::of(plugin);
-            assert_eq!(
-                descriptor.supports_managed_conversation,
-                cfg!(any(target_os = "windows", target_os = "macos")),
-                "{id} 的前端入口必须服从宿主平台是否真的具备私有进程监管"
-            );
         }
     }
 }

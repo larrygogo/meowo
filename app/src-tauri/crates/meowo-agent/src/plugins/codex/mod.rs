@@ -14,7 +14,6 @@
 //! 接线还有一步**副作用**（往 `config.toml` 写 `[hooks.state]` 的 trusted_hash 预信任）——见 `setup.rs`。
 
 pub mod account;
-mod conversation;
 mod lead;
 mod lineage;
 mod screen;
@@ -238,10 +237,6 @@ impl AgentPlugin for Codex {
     fn lead(&self) -> Option<&'static dyn crate::lead_install::LeadCap> {
         Some(&lead::CAP)
     }
-    fn conversation(&self) -> Option<&'static dyn crate::conversation::ConversationCap> {
-        Some(&conversation::CAP)
-    }
-
     fn variants(&self) -> &'static [Variant] {
         &VARIANTS
     }

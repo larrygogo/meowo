@@ -8,7 +8,6 @@
 //! 两者共用 TOML 格式与 stdin 载荷；事件集按实现区分，不能把新版事件写入旧 Python 配置。
 
 pub mod account;
-mod conversation;
 mod lead;
 mod screen;
 pub mod telemetry;
@@ -448,10 +447,6 @@ impl AgentPlugin for Kimi {
     fn display_name(&self) -> &'static str {
         "Kimi Code"
     }
-    fn conversation(&self) -> Option<&'static dyn crate::conversation::ConversationCap> {
-        Some(&conversation::CAP)
-    }
-
     fn lead(&self) -> Option<&'static dyn crate::lead_install::LeadCap> {
         Some(&lead::CAP)
     }

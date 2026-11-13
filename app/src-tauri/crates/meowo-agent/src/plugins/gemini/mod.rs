@@ -26,7 +26,6 @@
 //! `PreCompress` 没有完成配对，暂不写入「正在压缩」，避免手动压缩后永久挂起。
 
 pub mod account;
-mod conversation;
 mod lead;
 /// 单测用：gemini 是否打开了 modelSteering（见 lead::model_steering）。
 #[cfg(test)]
@@ -208,10 +207,6 @@ impl AgentPlugin for Gemini {
     fn display_name(&self) -> &'static str {
         "Gemini CLI"
     }
-    fn conversation(&self) -> Option<&'static dyn crate::conversation::ConversationCap> {
-        Some(&conversation::CAP)
-    }
-
     fn lead(&self) -> Option<&'static dyn crate::lead_install::LeadCap> {
         Some(&lead::CAP)
     }

@@ -130,7 +130,7 @@ sysinfo = "0.32"
 # codex hook 预信任的 trusted_hash 计算（SHA-256）。
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_UI_WindowsAndMessaging", "Win32_Graphics_Dwm", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_Graphics_Gdi", "Win32_Foundation", "Win32_System_Threading", "Win32_System_JobObjects", "Win32_System_Pipes", "Win32_System_RemoteDesktop", "Win32_System_Power", "Win32_System_Diagnostics_ToolHelp", "Win32_NetworkManagement_IpHelper", "Win32_System_Diagnostics_Debug", "Win32_System_LibraryLoader", "Win32_Security_Cryptography", "Win32_System_DataExchange", "Win32_System_Console", "Wdk_System_Threading"] }
+windows-sys = { version = "0.59", features = ["Win32_UI_WindowsAndMessaging", "Win32_Graphics_Dwm", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_Graphics_Gdi", "Win32_Foundation", "Win32_System_Threading", "Win32_System_Power", "Win32_System_Diagnostics_ToolHelp", "Win32_NetworkManagement_IpHelper", "Win32_System_Diagnostics_Debug", "Win32_System_LibraryLoader", "Win32_Security_Cryptography", "Win32_System_DataExchange", "Win32_System_Console", "Wdk_System_Threading"] }
 uiautomation = "0.25"
 tauri-winrt-notification = "0.7"
 # 点击 toast 后从"通知中心"移除本应用的已投递通知（tauri-winrt-notification 本身不暴露历史清除）。
@@ -182,3 +182,5 @@ unexpected_cfgs = "allow"
 [dev-dependencies]
 # test-util：看门狗单测用 paused time 快进时钟，不真等 60 秒。
 tokio = { version = "1", features = ["test-util", "macros", "rt", "time"] }
+# 已停用的「Meowo 托管」会话的回归测试要按旧表结构直插存量行（本版本已无写入口）；store 已依赖它，不新增 crate。
+rusqlite = { workspace = true }

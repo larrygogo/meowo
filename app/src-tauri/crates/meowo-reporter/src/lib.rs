@@ -11,8 +11,6 @@ pub mod lead_waiter;
 pub mod proc;
 pub mod statusline;
 pub mod tabtitle;
-#[cfg(unix)]
-pub mod unix_supervisor;
 
 use std::path::PathBuf;
 

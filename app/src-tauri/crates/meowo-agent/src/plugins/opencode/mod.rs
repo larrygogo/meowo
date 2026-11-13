@@ -22,7 +22,6 @@
 //! 因此 opencode 的会话收尾与 codex 一样靠 Stop + 判活，而不是一条可靠的 SessionEnd。
 
 pub mod account;
-mod conversation;
 mod lead;
 mod screen;
 mod store;
@@ -186,10 +185,6 @@ impl AgentPlugin for Opencode {
     fn lead(&self) -> Option<&'static dyn crate::lead_install::LeadCap> {
         Some(&lead::CAP)
     }
-    fn conversation(&self) -> Option<&'static dyn crate::conversation::ConversationCap> {
-        Some(&conversation::CAP)
-    }
-
     fn variants(&self) -> &'static [Variant] {
         &VARIANTS
     }

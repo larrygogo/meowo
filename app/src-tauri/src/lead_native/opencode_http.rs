@@ -152,7 +152,7 @@ fn delivery_key(task: &Path, gate_id: &str, native: &str) -> String {
 }
 
 /// OpenCode 的 Identifier.ascending：`<前缀>_`、(毫秒时间戳 × 0x1000 + 计数) 的低 48 位十二位十六进制、
-/// 14 位 base62 三段相接。会话内消息按 id 字典序排序——托管会话用的 `msg_meowo_…` 在原生会话里会排到
+/// 14 位 base62 三段相接。会话内消息按 id 字典序排序——已删除的托管会话用过的 `msg_meowo_…` 在原生会话里会排到
 /// 所有 TUI 消息之后，打乱时间线，所以这里按原生格式生成。随机段由投递键派生，同一投递重试时
 /// messageID 与 part id 都不变，服务端按 id upsert，不会出现两条答复（1.19.3 实测：part id 也须稳定）。
 fn ascending_id(prefix: &str, ts_ms: i64, seed: &str) -> String {

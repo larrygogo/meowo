@@ -83,9 +83,6 @@ pub struct ModelCatalogEntry {
 
 /// 一个 agent 插件。**必填的只有身份、变体表与进程名**；其余都是能力槽，不声明即由框架降级。
 pub trait AgentPlugin: Sync {
-    fn conversation(&self) -> Option<&'static dyn crate::conversation::ConversationCap> {
-        None
-    }
     fn id(&self) -> AgentId;
     fn display_name(&self) -> &'static str;
 

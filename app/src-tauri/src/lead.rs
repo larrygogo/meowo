@@ -522,12 +522,10 @@ fn provider_installation_state(
     dto.assets_installed = state.assets_present;
     dto.hooks_installed = state.hooks_present;
     dto.installed = state.installed;
-    // 自动继续只在托管会话里成立（四家 2026-11-13 真机闭环通过，见 .lead/20261112-lead-providers）；
-    // 原生终端会话只保存答复不代投。能力随版本：当前版本起不了托管会话就如实说不能。
-    dto.automatic_continue = dto.installed
-        && plugin
-            .conversation()
-            .is_some_and(|conversation| conversation.spec(inst, version).is_ok());
+    // 自动继续 = 本机 CLI 版本上插件声明的原生续跑机制成立（任务 .lead/20261113-lead-tui：
+    // codex app-server / opencode HTTP / kimi·gemini 会话内等待器）。托管会话路线已删除。
+    dto.automatic_continue =
+        dto.installed && lead_install::native_continue_for(cap, version).is_some();
     // 身份策略仅是准入条件；模型等待、答复消费及离线恢复仍需各自闭环证据，不能从磁盘安装推导。
     dto.reason = if !dto.configured {
         Some("lead/provider_missing".into())
@@ -1210,8 +1208,19 @@ mod provider_install_tests {
                     && installed.assets_installed
                     && installed.hooks_installed
             );
-            // 托管会话能起来才算可自动继续（做空指出：此前写死 false，与真机闭环矛盾）。
-            assert!(installed.automatic_continue, "{}", plugin.id().as_str());
+            // 本机版本上原生续跑机制成立才算可自动继续（做空指出：此前写死 false，与真机闭环矛盾）。
+            // kimi 2.5.3 / gemini 0.65.0 低于会话内等待器的查证版本，只装 Lead、不自动继续。
+            let expected = matches!(plugin.id().as_str(), "codex" | "opencode");
+            assert_eq!(
+                installed.automatic_continue,
+                expected,
+                "{}",
+                plugin.id().as_str()
+            );
+            assert_eq!(
+                meowo_agent::lead_install::native_continue_for(cap, Some(version)).is_some(),
+                expected
+            );
             let unknown = provider_installation_state(
                 plugin,
                 Some(&inst),

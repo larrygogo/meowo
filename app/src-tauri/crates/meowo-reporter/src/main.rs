@@ -8,14 +8,6 @@ mod mcp;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    #[cfg(unix)]
-    if args
-        .first()
-        .is_some_and(|arg| arg == "conversation-supervisor")
-    {
-        let result = meowo_reporter::unix_supervisor::run(&args);
-        std::process::exit(if result.is_ok() { 0 } else { 1 });
-    }
     if args.first().is_some_and(|arg| arg == "lead-mcp") {
         meowo_reporter::lead_mcp::run();
         return;
@@ -29,10 +21,6 @@ fn main() {
     // Lead 工作流 hook（用户在设置里打开 Lead 后才装）。与下面的主路径分开：只有它会输出
     // 改变 CLI 行为的内容；仍然吞掉一切错误、以 0 退出。
     if args.first().is_some_and(|arg| arg == "lead") {
-        // 托管worker负责认领、上下文和继续推进，CLI的异步hook不得再启动第二条续跑链路。
-        if std::env::var("MEOWO_PROTOCOL_MANAGED").as_deref() == Ok("1") {
-            return;
-        }
         // 原生 TUI 的关卡等待器（kimi/gemini 在后台命令里跑）：身份全在参数里，且绝不读 stdin——
         // 后台命令的 stdin 可能是 TUI 的伪终端，读它会永远等不到 EOF。
         if args.get(1).map(String::as_str) == Some("wait") {
@@ -94,10 +82,6 @@ fn main() {
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
-    // 协议托管的生命周期和审批由唯一worker记录，原生hook再写会制造第二张会话卡/双重审批。
-    if std::env::var("MEOWO_PROTOCOL_MANAGED").as_deref() == Ok("1") {
-        return Ok(());
-    }
     let mut buf = String::new();
     std::io::stdin().read_to_string(&mut buf)?;
 

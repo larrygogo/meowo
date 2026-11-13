@@ -1,6 +1,6 @@
-//! 手机与桌面的Lead答复共用持久投递；只有任务文件的consumed才算业务接手，原生回执不能代签。
+//! 手机与桌面的 Lead 答复共用同一入口：先把答复写进任务文件，再按归属会话的插件声明交给原生续跑
+//! 机制（lead_native）。只有任务文件的 consumed 才算业务接手，送达回执不能代签。
 
-use meowo_protocol::conversation::ManagedGateRefDto;
 use meowo_protocol::ipc::{LeadDeliveryDto, LeadGateAnswerDto};
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -30,18 +30,8 @@ fn task_for(cwd: &str, gate_id: &str) -> Result<PathBuf, String> {
     dunce::canonicalize(task).map_err(|_| "lead/gate_missing".into())
 }
 
-fn delivery_id(task: &Path, gate_id: &str, native_owner: &str) -> String {
-    use sha2::{Digest, Sha256};
-    let mut hash = Sha256::new();
-    hash.update(task.to_string_lossy().as_bytes());
-    hash.update([0]);
-    hash.update(gate_id.as_bytes());
-    hash.update([0]);
-    hash.update(native_owner.as_bytes());
-    format!("lead-{:x}", hash.finalize())
-}
-
-/// true表示答复归协议托管会话；false只供旧Claude路径维持原有asyncRewake，不自动接管原生CLI。
+/// true 表示答复已交给归属会话的原生续跑机制（已送出 / 等待器接手 / 会话不在、已保存待打开后送达）；
+/// false 表示这家没有续跑机制（claude 走自己的 asyncRewake，其余面板提示手动继续）。
 pub(crate) fn answer_and_deliver(
     db: &Path,
     cwd: &str,
@@ -76,31 +66,6 @@ pub(crate) fn retry(
     Ok(())
 }
 
-fn paused(store: &meowo_store::Store, id: i64) -> Result<bool, String> {
-    Ok(store
-        .managed_latest_user_delivery(id)
-        .map_err(|e| e.to_string())?
-        .is_some_and(|item| meowo_reporter::lead::contains_stop_word(&item.text)))
-}
-
-fn current_delivery_key(
-    store: &meowo_store::Store,
-    id: i64,
-    initial: String,
-) -> Result<String, String> {
-    let mut key = initial;
-    for _ in 0..32 {
-        let Some(next) = store
-            .managed_delivery_replacement(id, &key)
-            .map_err(|e| e.to_string())?
-        else {
-            return Ok(key);
-        };
-        key = next;
-    }
-    Err("lead/delivery_chain_limit".into())
-}
-
 fn deliver(
     db: &Path,
     task: &Path,
@@ -119,67 +84,32 @@ fn deliver(
         // 归属会话不在库里：认不出它是哪家、哪个进程，不猜着投（面板见 owner_unknown_status）。
         return Ok(false);
     };
-    let Some(state) = store.managed_state(id).map_err(|e| e.to_string())? else {
-        // 原生 TUI 会话：按插件声明的机制自动续跑（lead_native）；做不到的返回 false，面板提示手动继续。
-        let gate = meowo_reporter::lead::read_gate(task).ok_or("lead/gate_missing")?;
-        if gate.status != "answered" {
-            return Ok(gate.status == "consumed");
-        }
-        let provider = store.session_provider(id).map_err(|e| e.to_string())?;
-        let cwd = store.session_cwd(id).map_err(|e| e.to_string())?;
-        let message = meowo_reporter::lead::answer_message(task, &gate);
-        let target = crate::lead_native::NativeTarget {
-            db,
-            session_id: id,
-            provider: &provider,
-            native_session: &native,
-            cwd: cwd.as_deref(),
-            task,
-            gate_id: &gate.id,
-            message: &message,
-            force,
-        };
-        if force {
-            crate::lead_native::reset_failed(&target);
-        }
-        return match crate::lead_native::deliver(&target, app.as_ref())? {
-            crate::lead_native::NativeOutcome::Unsupported => Ok(false),
-            _ => Ok(true),
-        };
-    };
-    if state.native_session_id.as_deref() != Some(native.as_str()) {
-        return Err("lead/owner_mismatch".into());
-    }
+    // 原生 TUI 会话：按插件声明的机制自动续跑（lead_native）；做不到的返回 false，面板提示手动继续。
     let gate = meowo_reporter::lead::read_gate(task).ok_or("lead/gate_missing")?;
-    if gate.status == "consumed" {
-        return Ok(true);
-    }
     if gate.status != "answered" {
-        return Err("lead/gate_not_answered".into());
+        return Ok(gate.status == "consumed");
     }
-    if !force && paused(&store, id)? {
-        return Err("lead/session_paused".into());
-    }
-    let key = current_delivery_key(&store, id, delivery_id(task, &gate.id, &native))?;
-    let mut message = meowo_reporter::lead::answer_message(task, &gate);
-    if let Some(existing) = store
-        .managed_delivery(id, &key)
-        .map_err(|e| e.to_string())?
-    {
-        match existing.state.as_str() {
-            "uncertain" => return Err("lead/delivery_uncertain".into()),
-            "failed" | "cancelled" => return Err("lead/delivery_failed".into()),
-            "completed" => return Ok(true),
-            _ => {}
-        }
-        message = existing.text;
-    }
-    let gate_ref = ManagedGateRefDto {
-        task_dir: task.to_string_lossy().into_owned(),
-        gate_id: gate.id.clone(),
+    let provider = store.session_provider(id).map_err(|e| e.to_string())?;
+    let cwd = store.session_cwd(id).map_err(|e| e.to_string())?;
+    let message = meowo_reporter::lead::answer_message(task, &gate);
+    let target = crate::lead_native::NativeTarget {
+        db,
+        session_id: id,
+        provider: &provider,
+        native_session: &native,
+        cwd: cwd.as_deref(),
+        task,
+        gate_id: &gate.id,
+        message: &message,
+        force,
     };
-    crate::conversation::send(db, id, &key, &message, &[], Some(&gate_ref), app)?;
-    Ok(true)
+    if force {
+        crate::lead_native::reset_failed(&target);
+    }
+    match crate::lead_native::deliver(&target, app.as_ref())? {
+        crate::lead_native::NativeOutcome::Unsupported => Ok(false),
+        _ => Ok(true),
+    }
 }
 
 pub(crate) fn delivery_status(db: &Path, cwd: &str, gate_id: &str) -> Option<LeadDeliveryDto> {
@@ -189,49 +119,18 @@ pub(crate) fn delivery_status(db: &Path, cwd: &str, gate_id: &str) -> Option<Lea
     let Some(id) = store.find_session_id_pub(&native).ok()? else {
         return owner_unknown_status(&task, gate_id, cwd);
     };
-    let Some(state) = store.managed_state(id).ok()? else {
-        // 宿主经服务投递的机制有真实送达记录（已接收 / 已排队 / 失败可重试），不再是笼统的手动提示。
-        let gate = meowo_reporter::lead::read_gate(&task).filter(|gate| gate.id == gate_id);
-        if gate.is_some_and(|gate| gate.status == "answered") {
-            let provider = store.session_provider(id).ok()?;
-            let session_cwd = store.session_cwd(id).ok().flatten().unwrap_or_else(|| cwd.to_owned());
-            if let Some(dto) = crate::lead_native::delivery_status(
-                db, &provider, id, session_cwd, &task, gate_id, &native,
-            ) {
-                return Some(dto);
-            }
+    // 宿主经服务投递的机制有真实送达记录（已接收 / 已排队 / 失败可重试），不再是笼统的手动提示。
+    let gate = meowo_reporter::lead::read_gate(&task).filter(|gate| gate.id == gate_id);
+    if gate.is_some_and(|gate| gate.status == "answered") {
+        let provider = store.session_provider(id).ok()?;
+        let session_cwd = store.session_cwd(id).ok().flatten().unwrap_or_else(|| cwd.to_owned());
+        if let Some(dto) = crate::lead_native::delivery_status(
+            db, &provider, id, session_cwd, &task, gate_id, &native,
+        ) {
+            return Some(dto);
         }
-        return native_session_status(&store, id, &task, gate_id, cwd);
-    };
-    let key = current_delivery_key(&store, id, delivery_id(&task, gate_id, &native)).ok()?;
-    let delivery = store.managed_delivery(id, &key).ok()?;
-    let (status, reason) = match delivery {
-        Some(item)
-            if matches!(state.phase.as_str(), "failed" | "stopped") && item.state == "queued" =>
-        {
-            ("failed".to_owned(), state.last_error.clone())
-        }
-        Some(item) => (item.state, item.last_error),
-        None if paused(&store, id).ok()? => {
-            ("paused".to_owned(), Some("lead/session_paused".into()))
-        }
-        None => ("saved".to_owned(), state.last_error.clone()),
-    };
-    let can_retry = matches!(status.as_str(), "saved" | "paused")
-        || (status == "failed"
-            && store
-                .managed_delivery(id, &key)
-                .ok()
-                .flatten()
-                .is_some_and(|item| item.state == "queued"));
-    Some(LeadDeliveryDto {
-        session_id: id,
-        cwd: state.cwd,
-        delivery_id: key,
-        can_retry,
-        state: status,
-        reason,
-    })
+    }
+    native_session_status(&store, id, &task, gate_id, cwd)
 }
 
 /// 关卡归原生终端会话时的送达状态。答复只保存、不代投（不猜按键、不接管）；
@@ -311,7 +210,6 @@ mod tests {
         root: PathBuf,
         task: PathBuf,
         db: PathBuf,
-        id: i64,
     }
     impl Fixture {
         fn new() -> Self {
@@ -323,14 +221,15 @@ mod tests {
             std::fs::create_dir_all(&task).unwrap();
             let db = root.join("board.db");
             let store = crate::open_store(&db).unwrap();
-            // 未注册的测试provider保证覆盖启动失败而绝不拉起真实CLI。
-            let id = store
-                .managed_create("fixture", &root.to_string_lossy(), None, 1)
+            // 未注册的测试 provider：没有续跑机制，保证绝不拉起真实 CLI。
+            let project = store
+                .upsert_project_by_root(&root.to_string_lossy(), "fixture", 1)
                 .unwrap();
-            store.managed_bind(id, "native-root", 2).unwrap();
+            let (id, _) = store.start_session(project, "native-root", 1).unwrap();
+            store.set_session_provider(id, "fixture").unwrap();
             std::fs::write(task.join(".owner"), "native-root").unwrap();
             std::fs::write(task.join("gate.json"), json!({"id":"Q-probe","type":"Q","title":"probe","status":"pending","options":[{"id":"go","label":"Continue"}]}).to_string()).unwrap();
-            Self { root, task, db, id }
+            Self { root, task, db }
         }
         fn answer(&self) -> Result<bool, String> {
             answer_and_deliver(
@@ -354,115 +253,23 @@ mod tests {
         }
     }
 
-    /// 验收 #4「已作答的关卡只交给归属会话」：同一项目里还有另一个托管会话（同 cwd、刚建、
-    /// 甚至更新），答复只进 .owner 指向的那个会话；改成指向另一个会话后，原会话也不再收到。
+    /// 没有续跑机制的归属会话：答复照样落盘（幂等，手机重复提交不报错），只是不自动送达。
     #[test]
-    fn answer_reaches_only_the_owner_among_sessions_in_the_same_project() {
+    fn answer_without_native_mechanism_is_saved_and_idempotent() {
         let f = Fixture::new();
-        let store = f.store();
-        let other = store
-            .managed_create("fixture", &f.root.to_string_lossy(), None, 3)
-            .unwrap();
-        store.managed_bind(other, "native-other", 4).unwrap();
-        assert_eq!(f.answer(), Ok(true));
-        assert_eq!(store.managed_deliveries(f.id).unwrap().len(), 1);
-        assert!(store.managed_deliveries(other).unwrap().is_empty(), "另一个会话收到了别人的关卡答复");
-        // 新关卡归另一个会话：答复只进它，原会话的投递不增加。
-        std::fs::write(f.task.join(".owner"), "native-other").unwrap();
-        std::fs::write(f.task.join("gate.json"), json!({"id":"Q-next","type":"Q","title":"next","status":"pending","options":[{"id":"go","label":"Continue"}]}).to_string()).unwrap();
-        assert_eq!(
-            answer_and_deliver(&f.db, &f.root.to_string_lossy(), "Q-next", &LeadGateAnswerDto { choice: "go".into(), note: String::new() }, None),
-            Ok(true)
-        );
-        assert_eq!(store.managed_deliveries(other).unwrap().len(), 1);
-        assert_eq!(store.managed_deliveries(f.id).unwrap().len(), 1);
-    }
-
-    #[test]
-    fn saved_answer_survives_start_failure_and_duplicate_phone_submission() {
-        let f = Fixture::new();
-        assert_eq!(f.answer(), Ok(true));
-        assert_eq!(f.answer(), Ok(true));
+        assert_eq!(f.answer(), Ok(false));
+        assert_eq!(f.answer(), Ok(false));
         let gate = meowo_reporter::lead::read_gate(&f.task).unwrap();
         assert_eq!(gate.status, "answered");
         assert_eq!(gate.answer.unwrap().note, "Continue safely");
-        let deliveries = f.store().managed_deliveries(f.id).unwrap();
-        assert_eq!(deliveries.len(), 1);
-        assert_eq!(deliveries[0].state, "queued");
-        let status = delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe").unwrap();
-        assert_eq!(status.state, "failed");
-        assert!(status.can_retry);
-    }
-
-    #[test]
-    fn paused_answer_is_saved_before_refusal_and_only_explicit_retry_enqueues() {
-        let f = Fixture::new();
-        f.store()
-            .managed_enqueue(f.id, "pause", "暂停", "[]", None, 3)
-            .unwrap();
-        assert_eq!(f.answer(), Err("lead/session_paused".into()));
-        assert_eq!(
-            meowo_reporter::lead::read_gate(&f.task).unwrap().status,
-            "answered"
-        );
-        reconcile_task(&f.db, &f.task, None);
-        assert_eq!(f.store().managed_deliveries(f.id).unwrap().len(), 1);
         assert_eq!(
             retry(&f.db, &f.root.to_string_lossy(), "Q-probe", None),
-            Ok(())
-        );
-        assert_eq!(f.store().managed_deliveries(f.id).unwrap().len(), 2);
-    }
-
-    #[test]
-    fn uncertain_answer_is_preserved_without_resend_or_fake_gate_consumption() {
-        let f = Fixture::new();
-        f.answer().unwrap();
-        let item = f.store().managed_deliveries(f.id).unwrap().remove(0);
-        let now = crate::now_ms() + 1;
-        assert!(f
-            .store()
-            .managed_set_delivery_state(
-                f.id,
-                &item.delivery_id,
-                "queued",
-                "sending",
-                None,
-                None,
-                now
-            )
-            .unwrap());
-        assert!(f
-            .store()
-            .managed_set_delivery_state(
-                f.id,
-                &item.delivery_id,
-                "sending",
-                "uncertain",
-                None,
-                None,
-                now + 1
-            )
-            .unwrap());
-        assert_eq!(f.answer(), Err("lead/delivery_uncertain".into()));
-        assert_eq!(
-            retry(&f.db, &f.root.to_string_lossy(), "Q-probe", None),
-            Err("lead/delivery_uncertain".into())
-        );
-        assert_eq!(f.store().managed_deliveries(f.id).unwrap().len(), 1);
-        assert_eq!(
-            meowo_reporter::lead::read_gate(&f.task).unwrap().status,
-            "answered"
-        );
-        assert!(
-            !delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe")
-                .unwrap()
-                .can_retry
+            Err("lead/owner_not_managed".into())
         );
     }
 
     #[test]
-    fn late_duplicate_after_business_consumption_never_enqueues_again() {
+    fn late_duplicate_after_business_consumption_is_accepted_but_a_new_decision_is_not() {
         let f = Fixture::new();
         f.answer().unwrap();
         let mut gate: serde_json::Value =
@@ -471,7 +278,6 @@ mod tests {
         gate["status"] = json!("consumed");
         std::fs::write(f.task.join("gate.json"), gate.to_string()).unwrap();
         assert_eq!(f.answer(), Ok(true));
-        assert_eq!(f.store().managed_deliveries(f.id).unwrap().len(), 1);
         assert_eq!(
             answer_and_deliver(
                 &f.db,
@@ -488,28 +294,6 @@ mod tests {
     }
 
     #[test]
-    fn status_follows_an_explicit_human_retry_without_another_delivery() {
-        let f = Fixture::new();
-        f.answer().unwrap();
-        let original = f.store().managed_deliveries(f.id).unwrap().remove(0);
-        f.store()
-            .managed_delivery_action(
-                f.id,
-                &original.delivery_id,
-                "retry",
-                Some("human-retry"),
-                crate::now_ms() + 1,
-            )
-            .unwrap();
-        let status = delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe").unwrap();
-        assert_eq!(status.delivery_id, "human-retry");
-        assert_eq!(status.state, "failed");
-        assert!(status.can_retry);
-        assert_eq!(f.answer(), Ok(true));
-        assert_eq!(f.store().managed_deliveries(f.id).unwrap().len(), 2);
-    }
-
-    #[test]
     fn duplicate_gate_ids_fail_before_writing_either_answer() {
         let f = Fixture::new();
         let second = f.root.join(".lead/other");
@@ -520,7 +304,6 @@ mod tests {
             meowo_reporter::lead::read_gate(&f.task).unwrap().status,
             "pending"
         );
-        assert!(f.store().managed_deliveries(f.id).unwrap().is_empty());
     }
 
     #[test]
@@ -531,7 +314,6 @@ mod tests {
             .upsert_project_by_root(&f.root.to_string_lossy(), "external", 3)
             .unwrap();
         let (legacy, _) = store.start_session(project, "external-root", 4).unwrap();
-        assert!(store.managed_state(legacy).unwrap().is_none());
         std::fs::write(f.task.join(".owner"), "external-root").unwrap();
 
         // 外部 TUI 没有可证明的协议投递语义；答复可安全落盘，但不能猜按键或偷偷接管它。
@@ -540,8 +322,6 @@ mod tests {
             meowo_reporter::lead::read_gate(&f.task).unwrap().status,
             "answered"
         );
-        assert!(store.managed_deliveries(f.id).unwrap().is_empty());
-        assert!(store.managed_state(legacy).unwrap().is_none());
         // claude 原生会话有自己的 wait hook 唤醒，面板不另挂投递条。
         assert!(delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe").is_none());
         // 其余 provider 的原生会话不会自行开新回合：如实告诉用户下一步，而不是什么都不显示（做空指出）。
@@ -609,7 +389,6 @@ mod tests {
             ("native_owner_unknown", false)
         );
         assert_eq!(status.cwd, f.root.to_string_lossy());
-        assert!(store.managed_deliveries(f.id).unwrap().is_empty(), "不猜着投给别的会话");
         let leftovers: Vec<_> = std::fs::read_dir(&f.task)
             .unwrap()
             .filter_map(Result::ok)

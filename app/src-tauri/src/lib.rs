@@ -8,7 +8,6 @@ mod browser_pane;
 mod browser_permission;
 mod chat;
 mod confirm;
-mod conversation;
 mod detect;
 mod diaglog;
 mod editors;
@@ -1453,18 +1452,6 @@ pub fn run() {
             ptys,
         })
         .invoke_handler(tauri::generate_handler![
-            conversation::commands::managed_conversation_create,
-            conversation::commands::managed_conversation_recoveries,
-            conversation::commands::managed_conversation_delivery_action,
-            conversation::commands::managed_conversation_adopt,
-            conversation::commands::managed_conversation_state,
-            conversation::commands::managed_conversation_send,
-            conversation::commands::managed_conversation_deliveries,
-            conversation::commands::managed_conversation_events,
-            conversation::commands::managed_conversation_control,
-            conversation::commands::managed_conversation_resolve,
-            conversation::commands::managed_conversation_set_model,
-            conversation::commands::managed_conversation_set_mode,
             get_live_sessions_counts,
             get_live_sessions_page,
             get_session_admin_page,
@@ -1684,6 +1671,13 @@ pub fn run() {
             approval_ptys.start_screen_detect();
             // 收掉上次运行遗留的 codex app-server（Lead 原生续跑，TUI 已不在）；放后台线程，不卡启动。
             std::thread::spawn(lead_native::codex_app_server::sweep_on_startup);
+            // 已停用的「Meowo 托管」会话：驱动它们的 worker 已删除，还挂着运行/等待的收尾为已结束，
+            // 否则看板上永远「运行中」。只改状态列，对话数据保留。后台线程，不卡启动。
+            std::thread::spawn(|| {
+                if let Ok(store) = open_store(&db_path()) {
+                    let _ = store.end_retired_managed_sessions(now_ms());
+                }
+            });
             // macOS：纯菜单栏 App（隐藏 Dock 图标），main 窗口转 NSPanel，托盘走 menubar 模块。
             #[cfg(target_os = "macos")]
             {
@@ -2012,18 +2006,10 @@ mod tests {
             ("macos/notify.rs", include_str!("macos/notify.rs")),
             ("macos/panel.rs", include_str!("macos/panel.rs")),
             ("macos/terminal.rs", include_str!("macos/terminal.rs")),
-            // 2026-11-13 补：Provider 兼容与托管会话新增的宿主文件（做空第二轮指出守卫没覆盖到）。
+            // 2026-11-13 补：Provider 兼容新增的宿主文件（做空第二轮指出守卫没覆盖到）。
             ("lead.rs", include_str!("lead.rs")),
             ("lead_conversation.rs", include_str!("lead_conversation.rs")),
             ("lead_runtime.rs", include_str!("lead_runtime.rs")),
-            ("conversation/commands.rs", include_str!("conversation/commands.rs")),
-            ("conversation/lead_runtime.rs", include_str!("conversation/lead_runtime.rs")),
-            ("conversation/mod.rs", include_str!("conversation/mod.rs")),
-            ("conversation/owner.rs", include_str!("conversation/owner.rs")),
-            ("conversation/preflight.rs", include_str!("conversation/preflight.rs")),
-            ("conversation/transport.rs", include_str!("conversation/transport.rs")),
-            ("conversation/spawn_unix.rs", include_str!("conversation/spawn_unix.rs")),
-            ("conversation/spawn_windows.rs", include_str!("conversation/spawn_windows.rs")),
             // 2026-11-13 补（第一轮做空 M7）：原生 TUI 续跑与账号共享。probe*.rs 是 #[cfg(test)] 的真机
             // 探针模块（固件里写 provider 名是正常的），不在列。
             ("lead_native/mod.rs", include_str!("lead_native/mod.rs")),

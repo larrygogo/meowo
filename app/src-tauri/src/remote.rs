@@ -118,18 +118,6 @@ const MAX_BODY_BYTES: usize = 48 * 1024 * 1024;
 /// 名单按对话页组件树的实际调用集合收敛（ChatWindow/ChatSidebar/NewSessionPanel
 /// /chat/*），不是「所有无害命令」——用不到就不开。
 pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
-    "managed_conversation_create",
-    "managed_conversation_recoveries",
-    "managed_conversation_delivery_action",
-    "managed_conversation_adopt",
-    "managed_conversation_state",
-    "managed_conversation_send",
-    "managed_conversation_deliveries",
-    "managed_conversation_events",
-    "managed_conversation_control",
-    "managed_conversation_resolve",
-    "managed_conversation_set_model",
-    "managed_conversation_set_mode",
     // 会话列表/侧栏
     "get_live_sessions_page",
     "get_live_sessions_counts",
@@ -907,16 +895,6 @@ async fn ensure_session_dir(app: &tauri::AppHandle, dir: &str) -> Result<(), Str
     }
 }
 
-async fn ensure_conversation_session(app: &tauri::AppHandle, id: i64) -> Result<(), String> {
-    let db = app.state::<crate::AppState>().db_path.clone();
-    let cwd = tauri::async_runtime::spawn_blocking(move || {
-        crate::conversation::commands::session_cwd(&db, id)
-    })
-    .await
-    .map_err(|_| "conversation/worker_join".to_owned())??;
-    ensure_session_dir(app, &cwd).await
-}
-
 /// 白名单命令 → 各 command 函数本体。参数结构体见上方模块级定义（camelCase +
 /// deny_unknown_fields），与 api.ts 的 invoke 传参逐名对齐。
 async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Response {
@@ -931,187 +909,6 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
 
     let state = app.state::<crate::AppState>();
     match command {
-        "managed_conversation_recoveries" => {
-            let a = args!(ManagedConversationRecoveriesArgs);
-            if let Err(error) = ensure_conversation_session(app, a.session_id).await {
-                return err_status(StatusCode::FORBIDDEN, &error);
-            }
-            reply(
-                crate::conversation::commands::managed_conversation_recoveries(
-                    state,
-                    a.session_id,
-                    a.cursor,
-                    a.limit,
-                )
-                .await,
-            )
-        }
-        "managed_conversation_delivery_action" => {
-            let a = args!(ManagedConversationDeliveryActionArgs);
-            if let Err(error) = ensure_conversation_session(app, a.session_id).await {
-                return err_status(StatusCode::FORBIDDEN, &error);
-            }
-            reply(
-                crate::conversation::commands::managed_conversation_delivery_action(
-                    state,
-                    a.session_id,
-                    a.delivery_id,
-                    a.action,
-                    a.replacement_delivery_id,
-                )
-                .await,
-            )
-        }
-        "managed_conversation_create" => {
-            let a = args!(ManagedConversationCreateArgs);
-            if let Some(requested) = &a.profile_id {
-                let provider = a.provider.clone();
-                let active = tauri::async_runtime::spawn_blocking(move || {
-                    crate::profile::active_id(&provider)
-                })
-                .await;
-                if !matches!(active, Ok(Some(ref id)) if id == requested) {
-                    return err_status(StatusCode::FORBIDDEN, "remote/profile_scope");
-                }
-            }
-            reply(
-                crate::conversation::commands::managed_conversation_create(
-                    app.clone(),
-                    state,
-                    a.provider,
-                    a.cwd,
-                    a.profile_id,
-                )
-                .await,
-            )
-        }
-        "managed_conversation_adopt" => {
-            let a = args!(ManagedConversationAdoptArgs);
-            if let Err(error) = ensure_conversation_session(app, a.session_id).await {
-                return err_status(StatusCode::FORBIDDEN, &error);
-            }
-            reply(
-                crate::conversation::commands::managed_conversation_adopt(
-                    app.clone(),
-                    state,
-                    a.session_id,
-                )
-                .await,
-            )
-        }
-        "managed_conversation_state" => {
-            let a = args!(SessionArg);
-            if let Err(error) = ensure_conversation_session(app, a.session_id).await {
-                return err_status(StatusCode::FORBIDDEN, &error);
-            }
-            reply(
-                crate::conversation::commands::managed_conversation_state(state, a.session_id)
-                    .await,
-            )
-        }
-        "managed_conversation_send" => {
-            let a = args!(ManagedConversationSendArgs);
-            if let Err(error) = ensure_conversation_session(app, a.session_id).await {
-                return err_status(StatusCode::FORBIDDEN, &error);
-            }
-            reply(
-                crate::conversation::commands::managed_conversation_send(
-                    app.clone(),
-                    state,
-                    a.session_id,
-                    a.delivery_id,
-                    a.text,
-                    a.attachments,
-                    a.gate_ref,
-                )
-                .await,
-            )
-        }
-        "managed_conversation_deliveries" => {
-            let a = args!(SessionArg);
-            if let Err(error) = ensure_conversation_session(app, a.session_id).await {
-                return err_status(StatusCode::FORBIDDEN, &error);
-            }
-            reply(
-                crate::conversation::commands::managed_conversation_deliveries(state, a.session_id)
-                    .await,
-            )
-        }
-        "managed_conversation_events" => {
-            let a = args!(ManagedConversationEventsArgs);
-            if let Err(error) = ensure_conversation_session(app, a.session_id).await {
-                return err_status(StatusCode::FORBIDDEN, &error);
-            }
-            reply(
-                crate::conversation::commands::managed_conversation_events(
-                    state,
-                    a.session_id,
-                    a.after,
-                    a.limit,
-                )
-                .await,
-            )
-        }
-        "managed_conversation_control" => {
-            let a = args!(ManagedConversationControlArgs);
-            if let Err(error) = ensure_conversation_session(app, a.session_id).await {
-                return err_status(StatusCode::FORBIDDEN, &error);
-            }
-            reply(
-                crate::conversation::commands::managed_conversation_control(
-                    app.clone(),
-                    state,
-                    a.session_id,
-                    a.action,
-                )
-                .await,
-            )
-        }
-        "managed_conversation_resolve" => {
-            let a = args!(ManagedConversationResolveArgs);
-            if let Err(error) = ensure_conversation_session(app, a.session_id).await {
-                return err_status(StatusCode::FORBIDDEN, &error);
-            }
-            reply(
-                crate::conversation::commands::managed_conversation_resolve(
-                    state,
-                    a.session_id,
-                    a.interaction_id,
-                    a.option_id,
-                    a.answers,
-                )
-                .await,
-            )
-        }
-        "managed_conversation_set_model" => {
-            let a = args!(ManagedConversationSetModelArgs);
-            if let Err(error) = ensure_conversation_session(app, a.session_id).await {
-                return err_status(StatusCode::FORBIDDEN, &error);
-            }
-            reply(
-                crate::conversation::commands::managed_conversation_set_model(
-                    state,
-                    a.session_id,
-                    a.model,
-                )
-                .await,
-            )
-        }
-        "managed_conversation_set_mode" => {
-            let a = args!(ManagedConversationSetModeArgs);
-            if let Err(error) = ensure_conversation_session(app, a.session_id).await {
-                return err_status(StatusCode::FORBIDDEN, &error);
-            }
-            reply(
-                crate::conversation::commands::managed_conversation_set_mode(
-                    state,
-                    a.session_id,
-                    a.dimension,
-                    a.mode,
-                )
-                .await,
-            )
-        }
         "get_live_sessions_page" => {
             let a = args!(GetLiveSessionsPageArgs);
             reply(
@@ -2547,18 +2344,6 @@ mod tests {
     #[cfg(test)]
     fn sample_payload_parse_check(cmd: &str) -> Result<(), String> {
         match cmd {
-            "managed_conversation_recoveries" => parse::<ManagedConversationRecoveriesArgs>(br#"{"sessionId":42,"cursor":{"sequence":12,"messageIndex":1,"textByteOffset":128},"limit":50}"#).map(|_|()),
-            "managed_conversation_delivery_action" => parse::<ManagedConversationDeliveryActionArgs>(br#"{"sessionId":42,"deliveryId":"old","action":"retry","replacementDeliveryId":"new"}"#).map(|_| ()),
-            "managed_conversation_create" => parse::<ManagedConversationCreateArgs>(br#"{"provider":"codex","cwd":"C:/repo","profileId":null}"#).map(|_| ()),
-            "managed_conversation_adopt" => parse::<ManagedConversationAdoptArgs>(br#"{"sessionId":42}"#).map(|_| ()),
-            "managed_conversation_state" => parse::<SessionArg>(br#"{"sessionId":42}"#).map(|_| ()),
-            "managed_conversation_send" => parse::<ManagedConversationSendArgs>(br#"{"sessionId":42,"deliveryId":"d-1","text":"continue","attachments":[],"gateRef":null}"#).map(|_| ()),
-            "managed_conversation_deliveries" => parse::<SessionArg>(br#"{"sessionId":42}"#).map(|_| ()),
-            "managed_conversation_events" => parse::<ManagedConversationEventsArgs>(br#"{"sessionId":42,"after":0,"limit":30}"#).map(|_| ()),
-            "managed_conversation_control" => parse::<ManagedConversationControlArgs>(br#"{"sessionId":42,"action":"stop"}"#).map(|_| ()),
-            "managed_conversation_resolve" => parse::<ManagedConversationResolveArgs>(br#"{"sessionId":42,"interactionId":"i-1","optionId":null,"answers":null}"#).map(|_| ()),
-            "managed_conversation_set_model" => parse::<ManagedConversationSetModelArgs>(br#"{"sessionId":42,"model":"known-model"}"#).map(|_| ()),
-            "managed_conversation_set_mode" => parse::<ManagedConversationSetModeArgs>(br#"{"sessionId":42,"dimension":"permission","mode":"default"}"#).map(|_| ()),
             // api.ts:566（getLiveSessionsPage：filter/limit 恒有，search/cwd/游标键恒发、
             // 空值发 null，includeForeign/includePending 恒发）
             "get_live_sessions_page" => parse::<GetLiveSessionsPageArgs>(
