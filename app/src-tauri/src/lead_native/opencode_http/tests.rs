@@ -129,15 +129,9 @@ fn register_tui(db: &Path, pid: u32, port: u16, password: &str) {
     let path = registry_path(db);
     let mut reg = Registry::load(&path);
     reg.endpoints.push(Endpoint {
-        kind: Kind::Tui,
         pid,
         port,
         password: password.into(),
-        native_session: None,
-        cwd: None,
-        attach_pid: None,
-        attach_pending_ms: None,
-        aliases: Vec::new(),
         started_ms: now_ms(),
     });
     reg.save(&path).unwrap();
@@ -209,11 +203,7 @@ fn running_tui_without_port_is_left_alone_and_reported_as_manual() {
         status(&db, &task, "gate-1", "ses_abc").state,
         "native_manual"
     );
-    let reg = Registry::load(&registry_path(&db));
-    assert!(
-        reg.endpoints.iter().all(|e| e.kind != Kind::Serve),
-        "没有起 serve"
-    );
+    assert!(Registry::load(&registry_path(&db)).endpoints.is_empty());
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -275,34 +265,10 @@ fn ascending_ids_match_opencode_shape_and_sort_after_older_messages() {
 }
 
 #[test]
-fn resume_argv_is_recognized_but_fork_is_not() {
-    let argv = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-    assert_eq!(
-        resumed_session(&argv(&["opencode", "--session", "ses_x1"])),
-        Some("ses_x1")
-    );
-    assert_eq!(
-        resumed_session(&argv(&["opencode", "--session", "ses_x1", "--fork"])),
-        None
-    );
-    assert_eq!(resumed_session(&argv(&["opencode"])), None);
-    assert_eq!(
-        resumed_session(&argv(&["opencode", "--session", "a b"])),
-        None
-    );
-}
-
-#[test]
-fn launch_plan_opens_password_protected_port_and_attaches_to_live_serve() {
+fn launch_plan_opens_password_protected_port() {
     let root = temp_root("plan");
     let db = root.join("board.db");
-    let argv = vec![
-        "opencode.exe".to_string(),
-        "--session".into(),
-        "ses_abc".into(),
-    ];
-    let plan = plan_for(&db, &argv).unwrap();
-    assert!(plan.argv.is_none());
+    let plan = plan_for(&db).unwrap();
     assert_eq!(plan.args[..3], ["--hostname", "127.0.0.1", "--port"]);
     assert_eq!(plan.env[0].0, "OPENCODE_SERVER_PASSWORD");
     assert!(plan.env[0].1.len() >= 32, "随机密码");
@@ -314,63 +280,115 @@ fn launch_plan_opens_password_protected_port_and_attaches_to_live_serve() {
     assert!(Registry::load(&registry_path(&db))
         .endpoints
         .iter()
-        .any(|e| e.kind == Kind::Tui && e.pid == 31337));
+        .any(|e| e.pid == 31337));
+    let _ = std::fs::remove_dir_all(root);
+}
 
-    // serve 正驱动该会话时，打开会话改为 attach 连上去，而不是再起一个 TUI 服务。
-    let (port, _seen) = fake_server("serve-pw", json!({}));
-    let path = registry_path(&db);
-    let mut reg = Registry::load(&path);
-    reg.endpoints.push(Endpoint {
-        kind: Kind::Serve,
-        pid: 777,
-        port,
-        password: "serve-pw".into(),
-        native_session: Some("ses_abc".into()),
-        cwd: None,
-        attach_pid: None,
-        attach_pending_ms: None,
-        aliases: Vec::new(),
-        started_ms: now_ms(),
-    });
-    reg.save(&path).unwrap();
-    let plan = plan_for(&db, &argv).unwrap();
-    let attach = plan.argv.clone().unwrap();
-    assert_eq!(
-        attach[1..],
-        [
-            "attach".to_string(),
-            format!("http://127.0.0.1:{port}"),
-            "--session".into(),
-            "ses_abc".into()
-        ]
-    );
-    assert_eq!(
-        plan.env,
-        vec![(
-            "OPENCODE_SERVER_PASSWORD".to_string(),
-            "serve-pw".to_string()
-        )]
-    );
-    plan.launched(Some(888));
-    let reg = Registry::load(&path);
-    assert_eq!(
-        reg.endpoints
-            .iter()
-            .find(|e| e.pid == 777)
-            .unwrap()
-            .attach_pid,
-        Some(888)
-    );
-    // 有活着的 serve 时投递走它（单一驱动者），即便会话库里记着 serve 的 pid。
-    let outcome = deliver_with(
-        &target(&db, &root.join("task"), false),
-        Presence::Elsewhere(777),
-    )
-    .unwrap();
+/// leader 2026-11-13「不需要离线」：TUI 不在时不另起服务、不投递，记为「等会话打开」（不计次）；
+/// 用户重新打开会话（TUI 带端口起来）后，下一次巡检经 prompt_async 送达。
+#[test]
+fn answer_waits_for_the_tui_to_reopen_then_patrol_delivers_it() {
+    let root = temp_root("reopen");
+    let db = root.join("board.db");
+    let task = root.join("task");
+    for _ in 0..3 {
+        let outcome = deliver_with(&target(&db, &task, false), Presence::Gone).unwrap();
+        assert_eq!(outcome, NativeOutcome::Saved);
+    }
+    let state = status(&db, &task, "gate-1", "ses_abc");
+    assert_eq!((state.state, state.can_retry), ("native_on_open", false));
+    let reg = Registry::load(&registry_path(&db));
+    assert!(reg.endpoints.is_empty(), "没有另起任何服务");
+    assert_eq!(reg.deliveries.values().next().unwrap().attempts, 0, "等待不计投递次数");
+
+    // TUI 刚起、服务还没监听：仍是等待，不进失败退避。
+    let closed = TcpListener::bind("127.0.0.1:0").unwrap();
+    let dead_port = closed.local_addr().unwrap().port();
+    drop(closed);
+    register_tui(&db, 6060, dead_port, "pw-reopen");
+    let outcome = deliver_with(&target(&db, &task, false), Presence::Managed(Some(6060))).unwrap();
+    assert_eq!(outcome, NativeOutcome::Saved);
+    assert_eq!(status(&db, &task, "gate-1", "ses_abc").state, "native_on_open");
+
+    // 服务起来了：巡检送达，只送一次。
+    let (port, seen) = fake_server("pw-reopen", json!({}));
+    register_tui(&db, 6161, port, "pw-reopen");
+    let outcome = deliver_with(&target(&db, &task, false), Presence::Managed(Some(6161))).unwrap();
     assert_eq!(outcome, NativeOutcome::Delivered);
+    deliver_with(&target(&db, &task, false), Presence::Managed(Some(6161))).unwrap();
+    assert_eq!(prompts(&seen).len(), 1);
+    assert_eq!(status(&db, &task, "gate-1", "ses_abc").state, "accepted");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// 来者不拒的服务替身：任何鉴权都回 200 健康（模拟抢到我们端口的别的服务，或没设密码的服务）。
+fn impostor_server() -> (u16, Arc<StdMutex<Seen>>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let seen = Arc::new(StdMutex::new(Seen::default()));
+    let log = seen.clone();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { break };
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut line = String::new();
+            if reader.read_line(&mut line).is_err() {
+                continue;
+            }
+            loop {
+                let mut header = String::new();
+                if reader.read_line(&mut header).is_err() || header.trim().is_empty() {
+                    break;
+                }
+            }
+            let mut parts = line.split_whitespace();
+            let method = parts.next().unwrap_or("").to_owned();
+            let path = parts.next().unwrap_or("").to_owned();
+            log.lock()
+                .unwrap()
+                .requests
+                .push((method, path, String::new()));
+            let payload = r#"{"healthy":true}"#;
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{payload}",
+                payload.len()
+            );
+        }
+    });
+    (port, seen)
+}
+
+/// 做空 L4：free_port 放开后端口被别的服务抢了——带我们的密码也 200，但诱饵密码同样 200，
+/// 认不出是自己的 TUI，不投递、记失败（可重试）。自己的服务：本密码 200、诱饵 401，照常投递。
+#[test]
+fn port_taken_by_another_service_is_never_delivered_to() {
+    let root = temp_root("l4");
+    let db = root.join("board.db");
+    let task = root.join("task");
+    let (port, seen) = impostor_server();
+    register_tui(&db, 7070, port, "pw-mine");
+    deliver_with(&target(&db, &task, false), Presence::Managed(Some(7070))).unwrap();
+    let state = status(&db, &task, "gate-1", "ses_abc");
+    assert_eq!(state.state, "failed");
+    assert_eq!(state.reason.as_deref(), Some("lead/opencode_http_identity"));
+    assert!(state.can_retry);
+    assert!(
+        seen.lock()
+            .unwrap()
+            .requests
+            .iter()
+            .all(|(m, p, _)| m == "GET" && p.starts_with("/global/health")),
+        "只做了身份核对，没碰会话"
+    );
+
+    let (port, _) = fake_server("pw-mine", json!({}));
+    let client = Client::new(port, "pw-mine");
+    assert_eq!(client.verify_identity(Duration::from_secs(3)), Ok(()));
+    let wrong = Client::new(port, "not-mine");
     assert_eq!(
-        status(&db, &root.join("task"), "gate-1", "ses_abc").state,
-        "accepted"
+        wrong.verify_identity(Duration::from_secs(3)),
+        Err("lead/opencode_http_unauthorized".into())
     );
     let _ = std::fs::remove_dir_all(root);
 }
@@ -431,25 +449,6 @@ fn posted_paths(seen: &Arc<StdMutex<Seen>>) -> Vec<String> {
         .collect()
 }
 
-fn serve_endpoint(pid: u32, port: u16, password: &str, native: &str) -> Endpoint {
-    Endpoint {
-        kind: Kind::Serve,
-        pid,
-        port,
-        password: password.into(),
-        native_session: Some(native.into()),
-        cwd: None,
-        attach_pid: None,
-        attach_pending_ms: None,
-        aliases: Vec::new(),
-        started_ms: now_ms(),
-    }
-}
-
-fn resume_argv(native: &str) -> Vec<String> {
-    vec!["opencode.exe".into(), "--session".into(), native.into()]
-}
-
 #[test]
 fn subagent_owner_answer_is_delivered_to_root_session() {
     // H3：.owner 记的是子代理会话（task 工具派出、parentID 非空）。答复投进子会话 TUI 主视图看不到，
@@ -507,34 +506,6 @@ fn broken_or_cyclic_parent_chain_fails_without_posting() {
 }
 
 #[test]
-fn serve_started_for_subagent_rebinds_to_root_so_opening_main_session_attaches() {
-    static CHAIN: &[(&str, Option<&str>)] = &[("ses_child", Some("ses_root")), ("ses_root", None)];
-    let root = temp_root("serve-root");
-    let db = root.join("board.db");
-    let task = root.join("task");
-    let (port, seen) = chain_server("serve-pw", CHAIN, "ses_root", json!({}));
-    let path = registry_path(&db);
-    let mut reg = Registry::load(&path);
-    reg.endpoints
-        .push(serve_endpoint(777, port, "serve-pw", "ses_child"));
-    reg.save(&path).unwrap();
-
-    deliver_with(&sub_target(&db, &task, "ses_child"), Presence::Gone).unwrap();
-    assert_eq!(posted_paths(&seen), ["/session/ses_root/prompt_async"]);
-    let reg = Registry::load(&path);
-    let serve = reg.endpoints.iter().find(|e| e.pid == 777).unwrap();
-    assert_eq!(serve.native_session.as_deref(), Some("ses_root"));
-    assert_eq!(serve.aliases, ["ses_child"]);
-    // 用户打开的是主会话：要 attach 到这个 serve，而不是另起一个普通 TUI 抢着驱动。
-    let plan = plan_for(&db, &resume_argv("ses_root")).unwrap();
-    assert_eq!(plan.argv.as_ref().unwrap()[1], "attach");
-    // 子会话 id 的后续投递仍认得同一个 serve（不再起第二个）。
-    assert!(live_serve(&Registry::load(&path), "ses_child").is_some());
-    drop(plan);
-    let _ = std::fs::remove_dir_all(root);
-}
-
-#[test]
 fn delivery_only_touches_session_endpoints_never_tui_input_or_permissions() {
     // 草稿与审批的不变量（1.19.5 源码核对，见 post_prompt 注释）：投递只用会话三端点。
     // 替身同时挂着一个待批 permission 和任意 /tui/* 端点，任何访问都会被记下来。
@@ -568,85 +539,5 @@ fn delivery_only_touches_session_endpoints_never_tui_input_or_permissions() {
     ]
     .map(|(m, p)| (m.to_owned(), p.to_owned()));
     assert_eq!(routes, expected);
-    let _ = std::fs::remove_dir_all(root);
-}
-
-#[test]
-fn attach_placeholder_stops_reaper_from_killing_serve_until_spawn_settles() {
-    // M5：plan_for 决定 attach 后、attach 进程 spawn 出来前，回收线程判定空闲也不能结束 serve。
-    let root = temp_root("attach-race");
-    let db = root.join("board.db");
-    let path = registry_path(&db);
-    let (port, _seen) = fake_server("serve-pw", json!({}));
-    let mut reg = Registry::load(&path);
-    reg.endpoints
-        .push(serve_endpoint(777, port, "serve-pw", "ses_abc"));
-    reg.save(&path).unwrap();
-    let killed = StdMutex::new(Vec::new());
-    let killer = |pid: u32| killed.lock().unwrap().push(pid);
-
-    // 1. 占位在：回收线程的结束请求被拒，serve 条目保留，没有结束任何进程。
-    let plan = plan_for(&db, &resume_argv("ses_abc")).unwrap();
-    assert!(plan.argv.is_some(), "serve 活着时应走 attach");
-    assert!(!stop_serve(&path, 777, true, killer));
-    assert!(killed.lock().unwrap().is_empty());
-    // 2. spawn 失败（方案没走到 launched 就被丢弃）：占位撤掉，serve 回到按空闲回收。
-    drop(plan);
-    assert!(Registry::load(&path).endpoints[0]
-        .attach_pending_ms
-        .is_none());
-    assert!(stop_serve(&path, 777, true, killer));
-    assert_eq!(*killed.lock().unwrap(), [777]);
-    // 3. serve 先被结束：同一把锁保证之后的打开看不到它，改起普通 TUI，而不是 attach 到死服务。
-    let plan = plan_for(&db, &resume_argv("ses_abc")).unwrap();
-    assert!(plan.argv.is_none());
-    let _ = std::fs::remove_dir_all(root);
-}
-
-#[test]
-fn launched_attach_replaces_placeholder_with_pid() {
-    let root = temp_root("attach-launched");
-    let db = root.join("board.db");
-    let path = registry_path(&db);
-    let (port, _seen) = fake_server("serve-pw", json!({}));
-    let mut reg = Registry::load(&path);
-    reg.endpoints
-        .push(serve_endpoint(777, port, "serve-pw", "ses_abc"));
-    reg.save(&path).unwrap();
-    let plan = plan_for(&db, &resume_argv("ses_abc")).unwrap();
-    assert!(Registry::load(&path).endpoints[0]
-        .attach_pending_ms
-        .is_some());
-    plan.launched(Some(9898));
-    let entry = Registry::load(&path).endpoints[0].clone();
-    assert_eq!(entry.attach_pid, Some(9898));
-    assert!(entry.attach_pending_ms.is_none());
-    let _ = std::fs::remove_dir_all(root);
-}
-
-#[test]
-fn startup_adopt_keeps_serves_and_clears_dead_tuis_and_stale_placeholders() {
-    // Meowo 不在时 serve 没有别的时限（opencode serve 无空闲自退参数），启动时必须全部接回回收。
-    let root = temp_root("adopt");
-    let db = root.join("board.db");
-    let path = registry_path(&db);
-    let mut reg = Registry::load(&path);
-    let mut serve = serve_endpoint(777, 1, "pw", "ses_abc");
-    serve.attach_pending_ms = Some(now_ms());
-    reg.endpoints.push(serve);
-    reg.save(&path).unwrap();
-    register_tui(&db, 4_000_000_001, 2, "pw-tui");
-
-    assert_eq!(adopt_scan(&db), [777]);
-    let reg = Registry::load(&path);
-    assert_eq!(
-        reg.endpoints.len(),
-        1,
-        "已退出的 TUI 条目（含其密码）被清掉"
-    );
-    assert!(
-        reg.endpoints[0].attach_pending_ms.is_none(),
-        "上个进程的 attach 占位作废"
-    );
     let _ = std::fs::remove_dir_all(root);
 }

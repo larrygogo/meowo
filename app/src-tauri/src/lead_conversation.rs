@@ -116,6 +116,7 @@ fn deliver(
         .find_session_id_pub(&native)
         .map_err(|e| e.to_string())?
     else {
+        // 归属会话不在库里：认不出它是哪家、哪个进程，不猜着投（面板见 owner_unknown_status）。
         return Ok(false);
     };
     let Some(state) = store.managed_state(id).map_err(|e| e.to_string())? else {
@@ -185,7 +186,9 @@ pub(crate) fn delivery_status(db: &Path, cwd: &str, gate_id: &str) -> Option<Lea
     let task = task_for(cwd, gate_id).ok()?;
     let store = crate::open_store(db).ok()?;
     let native = owner(&task).ok()?;
-    let id = store.find_session_id_pub(&native).ok()??;
+    let Some(id) = store.find_session_id_pub(&native).ok()? else {
+        return owner_unknown_status(&task, gate_id, cwd);
+    };
     let Some(state) = store.managed_state(id).ok()? else {
         // 宿主经服务投递的机制有真实送达记录（已接收 / 已排队 / 失败可重试），不再是笼统的手动提示。
         let gate = meowo_reporter::lead::read_gate(&task).filter(|gate| gate.id == gate_id);
@@ -265,6 +268,31 @@ fn native_session_status(
         delivery_id: String::new(),
         can_retry: false,
         state: "native_manual".into(),
+        reason: None,
+    })
+}
+
+/// `.owner` 记的会话在库里找不到时的面板状态（做空 N4：原先返回 None，手机上答完什么提示都没有）。
+///
+/// 什么时候会这样（2026-11-13 核实）：
+/// - kimi / gemini：认领走 hook，reporter 对带 agent_id / agentId≠main 的子代理载荷一律不处理
+///   （lead_provider::normalize），子代理当不了 owner；owner 不在库只会是会话本身没被 Meowo 记录
+///   （Meowo 的 hook 没装到那个账号、库被清过）。
+/// - opencode：认领看 `tool.execute.after` 的 sessionID，子代理（task 工具派出的子会话）改 .lead 时
+///   owner 就是子会话；通用上报插件对 `session.created` 不过滤 parentID，子会话一般也在库里，
+///   这时照常投递、由 opencode_http 沿 parentID 改投主会话。
+/// - codex：子代理 thread 的 hook 会认领（normalize 不认 codex 的子代理字段）；子代理 thread 是否
+///   单独入库没有取证，在库就由 codex_app_server 沿 parentThreadId 改投主线程。
+///
+/// 库里没有就不知道是哪家、哪个进程，宿主不猜着投；如实告诉用户回到主会话说一句话（hook 会带上答复）。
+fn owner_unknown_status(task: &Path, gate_id: &str, cwd: &str) -> Option<LeadDeliveryDto> {
+    let gate = meowo_reporter::lead::read_gate(task).filter(|gate| gate.id == gate_id)?;
+    (gate.status == "answered").then(|| LeadDeliveryDto {
+        session_id: 0,
+        cwd: cwd.to_owned(),
+        delivery_id: String::new(),
+        can_retry: false,
+        state: "native_owner_unknown".into(),
         reason: None,
     })
 }
@@ -527,16 +555,9 @@ mod tests {
         assert_ne!(status.state, "native_manual");
         for provider in ["kimi", "gemini"] {
             store.set_session_provider(legacy, provider).unwrap();
-            let Some(status) = delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe") else {
-                // 服务端投递路线（codex/opencode）由各自实现决定状态。
-                assert!(matches!(provider, "codex" | "opencode"), "{provider}");
-                continue;
-            };
-            let expected = match provider {
-                "kimi" | "gemini" => "saved",
-                _ => "native_manual",
-            };
-            assert_eq!(status.state, expected, "{provider}");
+            let status = delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe").unwrap();
+            // TUI 不在：只保存，提示打开会话后说一句（leader 2026-11-13「不需要离线」）。
+            assert_eq!(status.state, "native_offline", "{provider}");
             assert!(!status.can_retry, "{provider}");
             assert_eq!(status.session_id, legacy);
         }
@@ -548,16 +569,12 @@ mod tests {
         store.set_session_provider(legacy, "kimi").unwrap();
         std::fs::write(f.task.join(".delivered"), "Q-probe").unwrap();
         assert_eq!(delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe").unwrap().state, "consumed");
-        std::fs::write(f.task.join(".native-offline-Q-probe.json"), r#"{"gate":"Q-probe","state":"running","reason":null,"at":1}"#).unwrap();
-        assert_eq!(delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe").unwrap().state, "native_resuming");
-        std::fs::write(f.task.join(".native-offline-Q-probe.json"), r#"{"gate":"Q-probe","state":"failed","reason":"lead/native_resume_failed","at":1}"#).unwrap();
-        let failed = delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe").unwrap();
-        assert_eq!((failed.state.as_str(), failed.reason.as_deref()), ("failed", Some("lead/native_resume_failed")));
-        // 失败不自动重试，但面板给「重试」（做空 M3）。
-        assert!(failed.can_retry);
-        std::fs::remove_file(f.task.join(".native-offline-Q-probe.json")).unwrap();
+        // 作答入口对已退出的 TUI 不起任何后台进程，任务目录里不留续写记录。
+        assert_eq!(retry(&f.db, &f.root.to_string_lossy(), "Q-probe", None), Ok(()));
+        assert_eq!(delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe").unwrap().state, "consumed");
+        assert!(std::fs::read_dir(&f.task).unwrap().filter_map(Result::ok).all(|e| !e.file_name().to_string_lossy().starts_with(".native-offline")));
 
-        // 做空 M6：CLI 版本低于续跑机制查证过的版本时不起等待器/离线续写，面板如实给手动提示。
+        // 做空 M6：CLI 版本低于续跑机制查证过的版本时不起等待器，面板如实给手动提示。
         std::fs::remove_file(f.task.join(".delivered")).unwrap();
         for (provider, old) in [("kimi", "2.5.3"), ("gemini", "0.67.0")] {
             store.set_session_provider(legacy, provider).unwrap();
@@ -571,9 +588,10 @@ mod tests {
         }
     }
 
-    /// 做空 H3：`.owner` 指向子代理（或任何 DB 里没有的会话）时，答复只落盘，不起离线续写、不标送达。
+    /// 做空 H3 / N4：`.owner` 指向库里没有的会话（子代理、未被记录的会话）时，答复只落盘、不标送达，
+    /// 面板明确提示回到主会话说一句话，而不是什么都不显示。走生产入口 answer_and_deliver / reconcile。
     #[test]
-    fn subagent_owner_never_triggers_native_offline_resume() {
+    fn owner_missing_from_db_is_saved_and_reported_not_silent() {
         let f = Fixture::new();
         let store = f.store();
         let project = store
@@ -584,7 +602,14 @@ mod tests {
         // 子代理的会话 id 没有自己的 DB 会话。
         std::fs::write(f.task.join(".owner"), "session_main-subagent-1").unwrap();
         assert_eq!(f.answer(), Ok(false));
-        assert!(delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe").is_none());
+        reconcile_task(&f.db, &f.task, None);
+        let status = delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe").unwrap();
+        assert_eq!(
+            (status.state.as_str(), status.can_retry),
+            ("native_owner_unknown", false)
+        );
+        assert_eq!(status.cwd, f.root.to_string_lossy());
+        assert!(store.managed_deliveries(f.id).unwrap().is_empty(), "不猜着投给别的会话");
         let leftovers: Vec<_> = std::fs::read_dir(&f.task)
             .unwrap()
             .filter_map(Result::ok)

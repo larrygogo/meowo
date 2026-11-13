@@ -11,8 +11,8 @@
 //! 证据（屏幕文本、送达状态、口令）留在 `target/lead-provider-probes/opencode-tui/<随机>/evidence`。
 //!
 //! 覆盖：在线 O1（运行中作答 → TUI 显示 QUEUED 排队 → 同一会话新回合输出口令；输入框草稿保留；
-//! 关卡被消费）、离线 O2（TUI 退出后作答 → serve 执行；打开即 attach 看到这一轮；serve 空闲后回收；
-//! 再打开普通 TUI 可见且关卡已消费）。答复一律经 `answer_and_deliver`，与手机作答同一后端路径。
+//! 关卡被消费）、TUI 不在时作答（只保存、不起服务；重新打开会话后巡检经 prompt_async 送达，这一轮可见）。
+//! 答复一律经 `answer_and_deliver`，与手机作答同一后端路径。
 
 use super::*;
 use meowo_protocol::ipc::{LeadGateAnswerDto, LeadProviderInstallationDto};
@@ -20,6 +20,7 @@ use portable_pty::{native_pty_system, CommandBuilder, PtySize};
 use std::ffi::OsString;
 use std::io::{Read, Write};
 use std::sync::Arc;
+use std::time::Instant;
 
 const ROWS: u16 = 45;
 const COLS: u16 = 150;
@@ -65,7 +66,6 @@ impl Tui {
                 pixel_height: 0,
             })
             .map_err(|e| e.to_string())?;
-        let argv = plan.and_then(|p| p.argv.as_deref()).unwrap_or(argv);
         let mut command = CommandBuilder::new(&argv[0]);
         command.args(&argv[1..]);
         if let Some(plan) = plan {
@@ -239,7 +239,7 @@ fn tui_endpoint(db: &Path, pid: u32) -> Endpoint {
     Registry::load(&registry_path(db))
         .endpoints
         .into_iter()
-        .find(|e| e.kind == Kind::Tui && e.pid == pid)
+        .find(|e| e.pid == pid)
         .expect("TUI 启动后应登记端口与密码")
 }
 
@@ -356,7 +356,6 @@ fn opencode_tui_lead_continuation_probe() {
         .unwrap_or_default();
 
     let mut tuis: Vec<Tui> = vec![];
-    let mut serve_pids: Vec<u32> = vec![];
     let mut log = serde_json::Map::new();
     let save = |name: &str, text: &str| {
         let _ = std::fs::write(evidence.join(name), text);
@@ -367,7 +366,7 @@ fn opencode_tui_lead_continuation_probe() {
         // ---- 0. 建会话：经 Meowo 的启动计划起 TUI（带端口+密码），用它自己的服务建一个空会话。
         let plain = vec![exe.clone()];
         let plan = launch_plan("opencode", &plain, &[]).ok_or("launch plan missing")?;
-        if plan.argv.is_some() || !plan.args.contains(&"--port".to_string()) {
+        if !plan.args.contains(&"--port".to_string()) {
             return Err("新 TUI 应带 --port 启动".into());
         }
         let tui = Tui::spawn(&plain, Some(&plan), &cwd)?;
@@ -375,7 +374,7 @@ fn opencode_tui_lead_continuation_probe() {
         let endpoint = tui_endpoint(&db, tui.pid.ok_or("pid")?);
         let client = Client::of(&endpoint);
         let deadline = Instant::now() + Duration::from_secs(40);
-        while !client.healthy(Duration::from_secs(1)) {
+        while client.verify_identity(Duration::from_secs(1)).is_err() {
             if Instant::now() > deadline {
                 return Err("TUI 内置服务未就绪".into());
             }
@@ -421,9 +420,6 @@ fn opencode_tui_lead_continuation_probe() {
         // ---- 1. 在线 O1：恢复打开会话；先让模型跑一个长一点的回合，再在输入框里留草稿，然后作答。
         let resume = vec![exe.clone(), "--session".into(), native.clone()];
         let plan = launch_plan("opencode", &resume, &[]).ok_or("launch plan missing")?;
-        if plan.argv.is_some() {
-            return Err("没有 serve 时应以普通 TUI 打开".into());
-        }
         let tui = Tui::spawn(&resume, Some(&plan), &cwd)?;
         plan.launched(tui.pid);
         let tui_pid = tui.pid.ok_or("pid")?;
@@ -516,93 +512,71 @@ fn opencode_tui_lead_continuation_probe() {
             .count();
         log.insert("userMessagesAfterOnline".into(), json!(users_after));
 
-        // ---- 2. 离线 O2：TUI 退出后作答。
+        // ---- 2. TUI 不在时作答：只保存、不起服务；重新打开会话后巡检送达。
         tuis.pop().unwrap().kill();
         std::thread::sleep(Duration::from_secs(1));
         let gate2 = format!("offline-{}", token().to_lowercase());
         write_gate(&task, &native, &gate2);
         let nonce2 = format!("OFFLINE{}", token());
-        let started = Instant::now();
         let delivered = crate::lead_conversation::answer_and_deliver(
             &db,
             &cwd_text,
             &gate2,
             &LeadGateAnswerDto {
                 choice: "go".into(),
-                note: format!("First write the integers from 1 to 80 separated by spaces, then after updating gate.json reply with exactly {nonce2}"),
+                note: format!("After updating gate.json, reply with exactly {nonce2}"),
             },
             None,
         )?;
-        let accept_ms = started.elapsed().as_millis();
-        let serve = Registry::load(&registry_path(&db))
-            .endpoints
-            .into_iter()
-            .find(|e| e.kind == Kind::Serve && e.native_session.as_deref() == Some(&native))
-            .ok_or("离线投递应起 serve")?;
-        serve_pids.push(serve.pid);
-        let serve_client = Client::of(&serve);
-        let status2 = crate::lead_conversation::delivery_status(&db, &cwd_text, &gate2);
-        // 打开会话：应改为 attach 到 serve，而不是再起一个驱动者。
+        let status_saved = crate::lead_conversation::delivery_status(&db, &cwd_text, &gate2);
+        let endpoints_while_closed = Registry::load(&registry_path(&db)).endpoints.len();
         let plan = launch_plan("opencode", &resume, &[]).ok_or("launch plan missing")?;
-        let attach_argv = plan.argv.clone().ok_or("serve 在跑时打开应走 attach")?;
-        let attach = Tui::spawn(&resume, Some(&plan), &cwd)?;
-        plan.launched(attach.pid);
-        let attached_seen = attach.wait(Duration::from_secs(240), |s| reply_line(s, &nonce2));
-        save("offline-attach.txt", &attach.text());
-        let attach_pid_recorded = Registry::load(&registry_path(&db))
-            .endpoints
-            .iter()
-            .any(|e| e.pid == serve.pid && e.attach_pid == attach.pid);
-        attach.kill();
-        // 回收：会话空闲且 attach 已退出 → 结束 serve（单元测试里不跑回收线程，这里显式跑一遍）。
-        wait_idle(&serve_client, &native, Duration::from_secs(240));
-        let offline_reply = assistant_text(&serve_client, &native);
-        reap(&db, serve.pid);
-        let serve_reaped = !serve_client.healthy(Duration::from_secs(2))
-            && !Registry::load(&registry_path(&db))
-                .endpoints
-                .iter()
-                .any(|e| e.kind == Kind::Serve);
-        // 再打开：回到普通 TUI（O1），这一轮可见、关卡已消费。
-        let plan = launch_plan("opencode", &resume, &[]).ok_or("launch plan missing")?;
-        let reopened_plain = plan.argv.is_none();
         let tui = Tui::spawn(&resume, Some(&plan), &cwd)?;
         plan.launched(tui.pid);
-        let reopened_seen = tui.wait(Duration::from_secs(40), |s| reply_line(s, &nonce2));
+        let tui_pid = tui.pid.ok_or("pid")?;
+        store
+            .set_session_shared_pid(sid, i64::from(tui_pid), now_ms())
+            .map_err(|e| e.to_string())?;
+        let started = Instant::now();
+        // 巡检每 10s 一次；这里紧凑地重复调用，直到服务接收。
+        let accepted = (0..60).any(|_| {
+            crate::lead_conversation::reconcile_task(&db, &task, None);
+            let state = crate::lead_conversation::delivery_status(&db, &cwd_text, &gate2)
+                .map(|s| s.state);
+            if state.as_deref() == Some("accepted") {
+                return true;
+            }
+            std::thread::sleep(Duration::from_secs(1));
+            false
+        });
+        let accept_ms = started.elapsed().as_millis();
+        let seen = tui.wait(Duration::from_secs(240), |s| reply_line(s, &nonce2));
         save("offline-reopen.txt", &tui.text());
         tuis.push(tui);
         let offline = json!({
             "deliveredReturned": delivered,
-            "acceptMsIncludingServeStart": accept_ms,
-            "deliveryState": status2.as_ref().map(|s| s.state.clone()),
-            "attachArgvShape": attach_argv.iter().skip(1).take(1).collect::<Vec<_>>(),
-            "attachRecorded": attach_pid_recorded,
+            "stateWhileClosed": status_saved.as_ref().map(|s| s.state.clone()),
+            "servicesStartedWhileClosed": endpoints_while_closed,
+            "acceptedAfterReopen": accepted,
+            "acceptMsAfterReopen": accept_ms,
             "nonce": nonce2,
-            "nonceOnAttachScreen": attached_seen,
-            "nonceInModelReply": offline_reply.contains(&nonce2),
-            "serveReapedWhenIdle": serve_reaped,
-            "reopenedAsPlainTui": reopened_plain,
-            "nonceVisibleAfterReopen": reopened_seen,
+            "nonceOnScreen": seen,
             "gateStatus": gate_status(&task),
         });
         log.insert("offline".into(), offline.clone());
         if !(delivered
-            && attached_seen
-            && offline_reply.contains(&nonce2)
-            && serve_reaped
-            && reopened_plain
-            && reopened_seen)
+            && status_saved.as_ref().map(|s| s.state.as_str()) == Some("native_on_open")
+            && endpoints_while_closed == 0
+            && accepted
+            && seen)
         {
-            return Err(format!("离线验证未通过：{offline}"));
+            return Err(format!("TUI 不在时作答验证未通过：{offline}"));
         }
         Ok(())
     })();
 
     for tui in tuis.drain(..) {
         tui.kill();
-    }
-    for pid in serve_pids {
-        stop_serve(&registry_path(&db), pid, true, kill_tree);
     }
     remove_dir_retry(&home);
     remove_dir_retry(&cwd);

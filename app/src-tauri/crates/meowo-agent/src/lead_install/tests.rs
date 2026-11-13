@@ -498,3 +498,28 @@ fn waiter_shell_comes_from_the_plugin_description() {
     assert_eq!(waiter_shell("opencode"), None);
     assert_eq!(waiter_shell("nope"), None);
 }
+
+/// 做空 N5：reporter 要求启动等待器与宿主判定续跑走同一个版本门。版本不到（或读不出）时不要求
+/// 起等待器，与面板「手动继续」一致；已起来的等待器仍按插件声明认参数。
+#[test]
+fn waiter_requirement_uses_the_same_version_gate_as_the_host() {
+    for (provider, old, ok) in [("kimi", "2.5.3", "2.6.0"), ("gemini", "0.67.0", "0.68.0")] {
+        let cap = crate::by_id(provider).unwrap().lead().unwrap();
+        for version in [Some(old), Some(ok), None, Some("3.0.0"), Some("1.0.0")] {
+            assert_eq!(
+                waiter_shell_for(provider, version).is_some(),
+                native_continue_for(cap, version).is_some(),
+                "{provider} {version:?}"
+            );
+        }
+        assert!(waiter_shell_for(provider, Some(old)).is_none());
+        assert!(waiter_shell_for(provider, None).is_none());
+        assert_eq!(waiter_shell_for(provider, Some(ok)), waiter_shell(provider));
+        assert!(continue_needs_version(provider));
+    }
+    // 服务投递机制没有版本门：不需要探测版本，也没有等待器。
+    for provider in ["codex", "opencode", "nope"] {
+        assert!(!continue_needs_version(provider), "{provider}");
+        assert_eq!(waiter_shell_for(provider, Some("9.9.9")), None);
+    }
+}

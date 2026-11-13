@@ -1,9 +1,10 @@
 //! 关卡答复归**原生 TUI 会话**时，让同一个会话自动开新回合（任务 .lead/20261113-lead-tui）。
 //!
 //! 按插件声明的机制分发（[`meowo_agent::lead_install::NativeContinue`]），不按 provider 身份：
-//! - `InSessionWaiter`：TUI 里的后台等待进程自己读答复、退出、唤醒 CLI。在线时宿主不推送；
-//!   TUI 已退出时按插件给的离线方式续写（[`waiter`]）。
+//! - `InSessionWaiter`：TUI 里的后台等待进程自己读答复、退出、唤醒 CLI，宿主不推送（[`waiter`]）。
 //! - `ServerQueue`：TUI 连在宿主管理的服务上，宿主经服务投递（[`server`]）。
+//!
+//! TUI 不在时一律只保存答复、不起后台进程（leader 2026-11-13「不需要离线」），面板提示打开会话。
 //!
 //! 约束：不走 ACP（leader：Provider 会把 ACP 流量另算），不往 PTY 里打字（覆盖草稿、误答审批）。
 
@@ -34,25 +35,46 @@ pub(crate) struct NativeTarget<'a> {
     pub force: bool,
 }
 
-/// 结果：已送出 / 交给会话内等待器（宿主无需动作）/ 这家做不到（面板提示手动继续）。
+/// 结果：已送出 / 交给会话内等待器（宿主无需动作）/ 会话不在、答复已保存等打开后送达 /
+/// 这家做不到（面板提示手动继续）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum NativeOutcome {
     Delivered,
     WaiterWillWake,
+    Saved,
     Unsupported,
 }
 
 /// 该 provider 此刻能用的续跑机制：插件声明 + 按本机 CLI 版本过滤（做空 M6：续跑只在查证过的
 /// 版本上启用，低于它走手动提示）。版本探测有缓存（probe_cli_version）。
+///
+/// 只有声明了版本门（[`meowo_agent::lead_install::LeadCap::native_continue_floor`]）的机制才探测
+/// 版本（做空 N2）：codex/opencode 的服务投递没有版本门，而它们的 mechanism() 在每次开终端的启动
+/// 路径上（pty.rs → opencode_http::launch_plan / codex_app_server::prepare_launch），原先每次都
+/// 同步跑一遍 `<cli> --version`（缓存过期时最长 5 秒），没装 Lead 也一样。有版本门的 kimi/gemini
+/// 只在作答投递与面板状态里查询，不在启动路径上。
 pub(crate) fn mechanism(provider: &str) -> Option<NativeContinue> {
+    mechanism_with(provider, |_plugin| {
+        #[cfg(not(test))]
+        let version = Some(crate::probe_cli_version(_plugin));
+        // 单测默认不探测真实 CLI（CI 上没装）：按已查证版本处理；版本门由 test_version 覆盖专门测。
+        #[cfg(test)]
+        let version = test_version::get();
+        version
+    })
+}
+
+/// `probe` 返回 None = 不看版本（按插件声明）；Some(None) = 读不出版本。
+fn mechanism_with(
+    provider: &str,
+    probe: impl FnOnce(&'static dyn meowo_agent::AgentPlugin) -> Option<Option<String>>,
+) -> Option<NativeContinue> {
     let plugin = meowo_agent::by_id(provider)?;
     let cap = plugin.lead()?;
-    #[cfg(not(test))]
-    let version = Some(crate::probe_cli_version(plugin));
-    // 单测默认不探测真实 CLI（CI 上没装）：按已查证版本处理；版本门由 test_version 覆盖专门测。
-    #[cfg(test)]
-    let version = test_version::get();
-    match version {
+    if cap.native_continue_floor().is_none() {
+        return cap.native_continue();
+    }
+    match probe(plugin) {
         Some(version) => meowo_agent::lead_install::native_continue_for(cap, version.as_deref()),
         None => cap.native_continue(),
     }
@@ -76,7 +98,7 @@ pub(crate) mod test_version {
 pub(crate) fn deliver(target: &NativeTarget<'_>, app: Option<&tauri::AppHandle>) -> Result<NativeOutcome, String> {
     match mechanism(target.provider) {
         None => Ok(NativeOutcome::Unsupported),
-        Some(NativeContinue::InSessionWaiter { offline, .. }) => waiter::deliver(target, offline, app),
+        Some(NativeContinue::InSessionWaiter { .. }) => waiter::deliver(target),
         Some(NativeContinue::ServerQueue(protocol)) => server::deliver(target, protocol, app),
     }
 }
@@ -115,20 +137,18 @@ pub(crate) fn delivery_status(
                 reason: status.reason,
             })
         }
-        // kimi/gemini：会话内等待器，如实说答复走到了哪一步（已保存 / 模型已收到 / 离线续写中 / 失败）。
+        // kimi/gemini：会话内等待器，如实说答复走到了哪一步（已收到 / 发送中 / 在会话里说一句 / 打开会话后说一句）。
+        // TUI 不在时宿主不续写（leader 2026-11-13），没有可重试的宿主动作。
         NativeContinue::InSessionWaiter { .. } => {
             let store = crate::open_store(db).ok()?;
             let gate = meowo_reporter::lead::read_gate(task).filter(|gate| gate.id == gate_id)?;
-            let (state, reason) = waiter::status(&store, session_id, task, &gate, provider, native);
             Some(LeadDeliveryDto {
                 session_id,
                 cwd,
                 delivery_id: String::new(),
-                // 离线续写失败（kimi -p / gemini 重开 TUI）不自动重试，面板给「重试」由人决定（做空 M3）：
-                // 重试走 lead_conversation::retry → deliver(force) → waiter 挪走失败记录重新占位。
-                can_retry: state == "failed",
-                state,
-                reason,
+                can_retry: false,
+                state: waiter::status(&store, session_id, task, &gate, provider, native),
+                reason: None,
             })
         }
     }
@@ -138,5 +158,36 @@ pub(crate) fn delivery_status(
 pub(crate) fn reset_failed(target: &NativeTarget<'_>) {
     if mechanism(target.provider) == Some(NativeContinue::ServerQueue(ServerProtocol::CodexAppServer)) {
         codex_app_server::clear_failure(target.db, target.task, target.gate_id, target.native_session);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 做空 N2：没有版本门的机制（服务投递）不探测 CLI 版本——它们的 mechanism() 在开终端的
+    /// 启动路径上；有版本门的才探测，且探测结果决定是否续跑。
+    #[test]
+    fn only_version_gated_mechanisms_probe_the_cli() {
+        for provider in ["codex", "opencode"] {
+            assert!(
+                matches!(
+                    mechanism_with(provider, |_| panic!("{provider} 不该探测版本")),
+                    Some(NativeContinue::ServerQueue(_))
+                ),
+                "{provider}"
+            );
+        }
+        for (provider, old, ok) in [("kimi", "2.5.3", "2.6.0"), ("gemini", "0.67.0", "0.68.0")] {
+            let mut probed = 0;
+            let low = mechanism_with(provider, |_| {
+                probed += 1;
+                Some(Some(old.into()))
+            });
+            assert_eq!((low, probed), (None, 1), "{provider}");
+            assert!(mechanism_with(provider, |_| Some(Some(ok.into()))).is_some());
+            assert!(mechanism_with(provider, |_| Some(None)).is_none(), "读不出版本不续跑");
+        }
+        assert!(mechanism_with("claude", |_| panic!()).is_none());
     }
 }

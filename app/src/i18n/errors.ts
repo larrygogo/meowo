@@ -56,15 +56,12 @@ export const ENTRIES: ErrorEntry[] = [
   // OpenCode 原生 TUI 续跑（lead_native/opencode_http.rs）：答复已保存，经本机服务投递失败，可重试。
   { m: "lead/opencode_http_unauthorized", exact: true, zh: "回答已保存；OpenCode 本机服务拒绝了连接（密码不符），重新打开会话后重试", en: "Answer saved. The local OpenCode service rejected the connection (password mismatch); reopen the session and retry." },
   { m: "lead/native_session_missing", exact: true, zh: "回答已保存；OpenCode 里找不到这个会话，请在会话中核对后处理", en: "Answer saved. OpenCode cannot find this session; check the conversation before taking action." },
-  { m: "lead/session_cwd_missing", exact: true, zh: "回答已保存；会话的项目目录不存在，无法在后台续跑", en: "Answer saved. The session's project folder no longer exists, so it cannot continue in the background." },
   // 关卡归属是子代理会话，沿父链找不到主会话（父会话被删或数据成环）：重试没用，要人看。
+  // 端口上的服务不是 Meowo 带密码起的那个 TUI（端口被别的程序抢了，做空 L4）：不投递，重开会话会换端口。
+  { m: "lead/opencode_http_identity", exact: true, zh: "回答已保存，端口被别的程序占用，重开会话后重试", en: "Answer saved. Another program took the session's port; reopen the session and retry." },
   { m: "lead/opencode_parent_unresolved", exact: true, zh: "回答已保存；找不到子任务所属的主会话，请打开会话发一句话继续", en: "Answer saved. The main session for this subtask was not found; open it and send any message to continue." },
   { m: "lead/opencode_", zh: "回答已保存；暂时连不上 OpenCode 本机服务，稍后会自动重试，也可点重试", en: "Answer saved. The local OpenCode service is unreachable for now; it will retry automatically, or you can retry." },
   { m: "lead/delivery_failed", exact: true, zh: "回答已保存，本次投递未完成；请在会话中查看详情并处理", en: "Answer saved, but delivery did not complete. Check delivery details in the conversation." },
-  { m: "lead/native_resume_failed", exact: true, zh: "续写失败，打开会话发一句话即可继续", en: "Resuming the session failed. Open it and send any message to continue." },
-  { m: "lead/native_resume_timeout", exact: true, zh: "续写超时，打开会话核对后再继续", en: "Resuming the session timed out. Open it and check before continuing." },
-  { m: "lead/native_resume_spawn_failed", exact: true, zh: "无法启动 CLI，打开会话发一句话即可继续", en: "Could not start the CLI to resume. Open the session and send any message to continue." },
-  { m: "lead/native_resume_unavailable", exact: true, zh: "找不到 CLI，打开会话发一句话即可继续", en: "The CLI was not found. Open the session and send any message to continue." },
   { m: "lead/owner_not_managed", exact: true, zh: "此关卡归属原生终端会话，请从原终端继续", en: "This gate belongs to a native terminal session. Continue from its original terminal." },
   { m: "lead/owner_mismatch", exact: true, zh: "关卡归属与会话不一致，已停止送达", en: "Gate ownership does not match the conversation. Delivery stopped." },
   { m: "lead/owner_invalid", exact: true, zh: "关卡归属记录无效，回答已保留", en: "The gate ownership record is invalid. Your answer was preserved." },

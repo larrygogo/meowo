@@ -1239,13 +1239,9 @@ impl PtyBroker {
                 .copied();
             (pair, conhost)
         };
-        // Lead 原生续跑（OpenCode）：TUI 开放带密码的本机服务端口；会话正被 Meowo 的 serve 驱动时
-        // 改为 attach 连上去，保证同一会话只有一个驱动者（lead_native::opencode_http）。
+        // Lead 原生续跑（OpenCode）：TUI 开放带密码的本机服务端口，关卡答复经它送进同一会话
+        // （lead_native::opencode_http）。
         let lead_plan = crate::lead_native::opencode_http::launch_plan(provider, argv, env);
-        let argv = lead_plan
-            .as_ref()
-            .and_then(|plan| plan.argv.as_deref())
-            .unwrap_or(argv);
         let mut command = CommandBuilder::new(&argv[0]);
         command.args(&argv[1..]);
         if let Some(plan) = &lead_plan {
