@@ -3,6 +3,8 @@
 // 过滤粒度：
 // - 行：`.row`（设置项行）与 `.usage-sticker-row`（账号卡深处的「在贴纸显示配额」——
 //   埋在已登录账号卡里，经搜索可达即可，不必挪位）——标题+说明文本命中即保留；
+// - 组：表头行 + 紧跟其后的 `.row-sub` 子行（「通知这些事」和它管的四个开关）同进退——
+//   表头命中带出全部子行，只有子行命中则带上表头，都没命中才一起隐藏；
 // - 卡：`.row-card` 自身文本命中（如 agent 名「kimi」）整卡保留；否则有命中行才保留；
 // - 分组标题 `.sec-caption`：跟随其后（到下一个标题前）卡片的可见性；
 // - 分区 `.main-sec`：导航名命中（如「外观」）整区保留，否则无可见行/卡时整区隐藏；
@@ -42,11 +44,29 @@ export function applySettingsFilter(body: HTMLElement, q: string, navLabels: Rec
       for (const r of ownClone.querySelectorAll(FILTER_ROW)) r.remove();
       const cardHit = navHit || (ownClone.textContent ?? "").toLowerCase().includes(query);
       let cardVisible = cardHit;
-      for (const row of card.querySelectorAll<HTMLElement>(FILTER_ROW)) {
-        const rowHit = cardHit || (row.textContent ?? "").toLowerCase().includes(query);
-        setDisplay(row, rowHit);
-        if (rowHit) cardVisible = true;
+      const rows = Array.from(card.querySelectorAll<HTMLElement>(FILTER_ROW));
+      const hits = rows.map((row) => cardHit || (row.textContent ?? "").toLowerCase().includes(query));
+      // 表头行和它的 .row-sub 子行是一组，不能逐行各判各的。实拍 settingswin-search（620×460）：
+      // 搜「通知」留下一行 42px 高、右侧整段空着的「通知这些事」，它管的四个开关因为文字里
+      // 没有「通知」全被藏掉，看上去像一行缺了开关的设置。
+      for (let i = 0; i < rows.length; i++) {
+        if (rows[i]!.classList.contains("row-sub")) continue;
+        let end = i + 1;
+        while (end < rows.length && rows[end]!.classList.contains("row-sub") && rows[end]!.previousElementSibling === rows[end - 1]) end++;
+        if (end === i + 1) continue;
+        if (hits[i]) {
+          // 表头命中：子行就是它的内容，整组显示。
+          for (let k = i + 1; k < end; k++) hits[k] = true;
+        } else if (hits.slice(i + 1, end).some(Boolean)) {
+          // 只有子行命中：带上表头——两组开关的子行同名（会话跑完 / 等待审批…），没有表头分不清是哪一组。
+          hits[i] = true;
+        }
+        i = end - 1;
       }
+      rows.forEach((row, i) => {
+        setDisplay(row, hits[i]!);
+        if (hits[i]) cardVisible = true;
+      });
       setDisplay(card, cardVisible);
       if (cardVisible) secVisible = true;
     }

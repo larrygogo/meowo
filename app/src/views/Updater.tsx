@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { LogicalSize } from "@tauri-apps/api/dpi";
@@ -12,6 +12,11 @@ import logoUrl from "../../src-tauri/icons/128x128.png";
 import { useEscClose } from "../hooks/useEscClose";
 import { Icon } from "../icons/Icon";
 import { icClose } from "../icons/glyphs";
+
+// 更新说明是 Markdown（release notes），按对话页同一套 ChatMarkdown 渲染，不另写解析。
+// 懒加载：react-markdown 那一坨（对话窗本来就要用的公共 chunk）只在真有更新说明要显示时才取，
+// 「检查中 / 已最新」这种一秒就关的窗口不为它多等；取回来之前先按原文显示。
+const NotesMarkdown = lazy(() => import("./ChatMarkdown").then((m) => ({ default: m.ChatMarkdown })));
 
 // 紧凑高度（检查中/已最新/失败：只有状态行+按钮）与增高高度（发现新版：带更新说明滚动区）。
 // 与 Rust 侧 open_update_window_impl 的初始 inner_size 保持一致。
@@ -153,8 +158,13 @@ export function Updater() {
             {notes && (
               <div className="up-notes">
                 <div className="up-notes-title">{t.updater.notes}</div>
-                {/* release notes 是 Markdown 源文本,这里按纯文本保行渲染(不引 md 解析器) */}
-                <pre className="up-notes-body">{notes}</pre>
+                {/* release notes 是 Markdown：此前按纯文本显示，「## 新功能」「- xxx」原样露出来，标题没有层次。
+                    .chat-md 是 ChatMarkdown 的排版作用域（它自己不带外层容器）。 */}
+                <div className="up-notes-body chat-md" data-testid="up-notes-body">
+                  <Suspense fallback={<pre className="chat-md-plain">{notes}</pre>}>
+                    <NotesMarkdown text={notes} />
+                  </Suspense>
+                </div>
               </div>
             )}
             {status === "available" ? (
@@ -175,9 +185,11 @@ export function Updater() {
                 <div className="up-status-dl">
                   {progress != null ? t.updater.downloadingPct(progress) : t.updater.downloading}
                 </div>
-                {/* 下载可取消（S-13）：取消后回到「发现新版本」，可重新下载。 */}
-                <button className="sbtn" onClick={() => void cancelDownload()}>{t.updater.cancelDownload}</button>
                 <div className="up-hint">{t.updater.restartHint}</div>
+                {/* 下载可取消（S-13）：取消后回到「发现新版本」，可重新下载。
+                    按钮排在最后，和「下载更新」同一个位置（三态按钮不跳）。正因为同位，双击「下载更新」的
+                    第二下会落在它上面：连击的后几下（detail > 1）不算取消，免得刚开始下就被自己取消掉。 */}
+                <button className="sbtn" onClick={(event) => { if (event.detail > 1) return; void cancelDownload(); }}>{t.updater.cancelDownload}</button>
               </div>
             ) : (
               <>

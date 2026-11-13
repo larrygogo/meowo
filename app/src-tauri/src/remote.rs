@@ -141,7 +141,6 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     "hide_workspace",
     "rename_session",
     "set_archived",
-    "set_session_note",
     // 已合并 worktree 的清理（2026-11-09 用户决定手机端同样提供）：只收会话 id 不收路径，
     // 能删的只有某条会话自己的 worktree，判定（PR 已合并、无改动、无未推提交…）全在桌面端做，
     // 和桌面端同一套；占用进程要用户确认后才结束。
@@ -1475,13 +1474,6 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
                     .await,
             )
         }
-        "set_session_note" => {
-            let a = args!(SetSessionNoteArgs);
-            reply(
-                crate::session_command::set_session_note(app.clone(), state, a.session_id, a.note)
-                    .await,
-            )
-        }
         "get_chat_history" => {
             let a = args!(GetChatHistoryArgs);
             reply(
@@ -2680,10 +2672,6 @@ mod tests {
             // api.ts:390
             "stop_managed_terminal" => {
                 parse::<StopManagedTerminalArgs>(br#"{"sessionId":7}"#).map(|_| ())
-            }
-            // api.ts:461
-            "set_session_note" => {
-                parse::<SetSessionNoteArgs>(br#"{"sessionId":"cc-abc","note":"memo"}"#).map(|_| ())
             }
             // api.ts:182（full/before 可选——undefined 键被 JSON 丢弃，给了就须在结构体内）
             "get_chat_history" => parse::<GetChatHistoryArgs>(

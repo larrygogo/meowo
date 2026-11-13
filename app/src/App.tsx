@@ -60,7 +60,7 @@ const ISLAND_ALERT_LINGER_MS = 3_000;
 /// 鼠标停在提醒上最多留多久（i5）：提醒压在最大化窗口的标题栏上，人想点底下的东西，光标一移上去
 /// 倒计时就停，提醒反而不走。到点照常缩回；要细看的有「打开」和对话窗。
 const ISLAND_ALERT_HOVER_MAX_MS = 15_000;
-/// 收回动画时长，与 styles.css 的 .island-shell.is-leaving 同源。
+/// 收回动画时长，与 styles.css 的 --dur-island（.island-shell.is-leaving 在用）同源。
 const ISLAND_LEAVE_MS = 180;
 
 const TAB_KEY = "meowo-tab";
@@ -466,7 +466,7 @@ export function App() {
   const [closing, setClosing] = useState(false);
   const [alert, setAlert] = useState<IslandAlertEvent | null>(null);
   const alertQueueRef = useRef<IslandAlertEvent[]>([]);
-  // 队列里还排着几条（不含正在弹的那条），提醒卡片上显示「还有 N 条」。
+  // 队列里还排着几条（不含正在弹的那条），提醒卡片的「忽略 N 条」钮上显示（N = 这个数 + 正在弹的那条）。
   const [alertQueued, setAlertQueued] = useState(0);
   const alertTimerRef = useRef<number | null>(null);
   // 正在显示的提醒与它弹出的时刻、倒计时到点的时刻：急事插队要据此算「跑完」还该留多久，

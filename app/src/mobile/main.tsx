@@ -3,13 +3,14 @@
 //
 // 顺序要害:markRemoteUi + installRemoteTransport 必须先于任何会 invoke 的组件求值。故:
 //  - 这两个副作用在模块体最早期同步执行(它们的 import 无副作用);
-//  - ChatWindow / NewSessionPanel 用 React.lazy 延迟到渲染期加载,那时桥早已就位。
+//  - ChatWindow / NewSessionPanel 用 React.lazy 延迟到渲染期加载(RemoteApp.tsx),那时桥早已就位。
 import React, { useEffect } from "react";
 import ReactDOM from "react-dom/client";
-import { markRemoteUi, REMOTE_SETTINGS_EVENT, SELECT_SESSION_EVENT } from "../remoteMode";
-import { installRemoteTransport, NEW_SESSION_EVENT, getToken } from "./transport";
+import { markRemoteUi, REMOTE_SETTINGS_EVENT } from "../remoteMode";
+import { installRemoteTransport, getToken } from "./transport";
 import { getSettings } from "../api";
 import { TokenGate } from "./TokenGate";
+import { RemoteApp } from "./RemoteApp";
 import { bootI18n, I18nProvider, useT } from "../i18n";
 import { WindowErrorBoundary } from "../ErrorBoundary";
 import { TooltipLayer } from "../Tooltip";
@@ -75,47 +76,6 @@ window.setInterval(() => {
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden) pullSettings();
 });
-
-const ChatWindow = React.lazy(() =>
-  import("../views/ChatWindow").then((m) => ({ default: m.ChatWindow })),
-);
-const NewSessionPanel = React.lazy(() =>
-  import("../views/NewSessionPanel").then((m) => ({ default: m.NewSessionPanel })),
-);
-
-function RemoteApp() {
-  // 新建会话在桌面开独立窗;远程转页内事件,这里叠加渲染 NewSessionPanel(会话列表/对话仍在底层)。
-  // 事件 detail 里带卡片菜单的 cwd/provider 预填——桌面走 URL query / ns-prefill,远程两条都不通。
-  const [newSession, setNewSession] = React.useState<null | { cwd?: string | null; provider?: string | null }>(null);
-  React.useEffect(() => {
-    const open = (e: Event) => {
-      const d = (e as CustomEvent).detail as { cwd?: string | null; provider?: string | null } | undefined;
-      setNewSession({ cwd: d?.cwd, provider: d?.provider });
-    };
-    window.addEventListener(NEW_SESSION_EVENT, open);
-    return () => window.removeEventListener(NEW_SESSION_EVENT, open);
-  }, []);
-  return (
-    <>
-      <ChatWindow />
-      {newSession && (
-        <div className="remote-new-session-overlay">
-          <NewSessionPanel
-            onClose={() => setNewSession(null)}
-            prefill={newSession}
-            // 启动成功:临时负 id 经页内事件送 ChatWindow 选中新会话(侧栏点选的同一通道;
-            // 桥不 reveal,没有这一步用户会落回「去侧栏选会话」空态)。null 不导航。
-            onLaunched={(tempId) => {
-              if (typeof tempId === "number") {
-                window.dispatchEvent(new CustomEvent(SELECT_SESSION_EVENT, { detail: tempId }));
-              }
-            }}
-          />
-        </div>
-      )}
-    </>
-  );
-}
 
 /// 7M-1：ChatWindow 那个 chunk 有 1.2MB,走 Tailscale 中继要好几秒。fallback 是 null 时
 /// 这几秒是纯白屏——在手机上和「点了没反应/连挂了」无法区分。给一行同底色的加载态。

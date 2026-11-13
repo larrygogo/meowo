@@ -74,6 +74,7 @@ type BlockCache = {
   sessionId: number;
   t: Dict;
   foldTurns: boolean;
+  working: boolean;
   items: ChatItem[];
   blocks: BlockRec[];
   outcomes: Map<string, SubagentOutcomeInfo>;
@@ -105,7 +106,9 @@ export const Transcript = memo(function Transcript({ sessionId, items, working =
   const cache = cacheRef.current;
   let reuse: BlockRec[] = [];
   // 折叠开关一变,旧块里记的切点全部作废,整体重算(开关很少动,不值得做细)。
-  if (cache && cache.sessionId === sessionId && cache.t === t && cache.foldTurns === foldTurns && cache.blocks.length > 0) {
+  // 开着回合折叠时，是否折取决于 working（见下方 settled）：working 一变，早先块里记的折叠切点也要重算，
+  // 否则「运行中没折」的旧块在回合结束后被原样复用，永远不折。
+  if (cache && cache.sessionId === sessionId && cache.t === t && cache.foldTurns === foldTurns && (!foldTurns || cache.working === working) && cache.blocks.length > 0) {
     const common = Math.min(cache.items.length, items.length);
     let firstChanged = 0;
     while (firstChanged < common && cache.items[firstChanged] === items[firstChanged]) firstChanged += 1;
@@ -144,6 +147,14 @@ export const Transcript = memo(function Transcript({ sessionId, items, working =
       </div>,
     );
   };
+  // 最后一条「真正结束上一回合」的用户消息。回合中插话（interjected）和发给子代理的话（to_agent）不算：
+  // agent 读到插话后接着干同一回合。以前把插话当回合边界，运行中的回复一遇插话就被当成「已结束」折起来，
+  // 十几分钟的进度只剩「工作了 16m21s」一行（2026-11-12 用户实拍：这个会话的消息都没在对话里反馈出来）。
+  let lastTurnStart = -1;
+  for (let i = items.length - 1; i >= 0; i -= 1) {
+    const it = items[i];
+    if (it.type === "user_text" && !it.interjected && !it.to_agent) { lastTurnStart = i; break; }
+  }
   for (let index = resume ? resume.start : 0; index < items.length;) {
     const item = items[index];
     const previous = blocks[blocks.length - 1];
@@ -323,7 +334,8 @@ export const Transcript = memo(function Transcript({ sessionId, items, working =
       }
       // 回合级折叠(对照 Kimi):回复已结束(运行中不折,过程要看得见)、最后一段有正文、
       // 正文之前确实有东西可收(前面还有别的段,或本段有思考/工具)。
-      const settled = !(working && isLive);
+      // 运行中不折：这段回复在末尾，或者它后面只隔着插话、仍属于正在进行的回合。
+      const settled = !(working && (isLive || index > lastTurnStart));
       const finalText = bodyItems.some((entry) => (entry.type === "assistant_text" || entry.type === "assistant_delta") && entry.text.trim());
       const replyStart = record.reply ?? index;
       const hasEarlier = replyStart < index;
@@ -338,7 +350,7 @@ export const Transcript = memo(function Transcript({ sessionId, items, working =
     }
     index = next;
   }
-  cacheRef.current = { sessionId, t, foldTurns, items, blocks, outcomes, settledAt };
+  cacheRef.current = { sessionId, t, foldTurns, working, items, blocks, outcomes, settledAt };
   // 拼装:同一段回复的各块连在一起;最后一块带 fold 的,把它切点之前和前面各块的节点收进
   // ReplyFold。日期分隔条提到折叠外面:它标的是日期,收进去就看不出跨了天。
   const nodes: JSX.Element[] = [];

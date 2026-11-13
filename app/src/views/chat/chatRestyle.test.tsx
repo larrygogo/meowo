@@ -297,6 +297,35 @@ describe("回合级折叠", () => {
     expect(screen.queryByText("先看看")).toBeNull();
   });
 
+  it("回合中插话不算回合结束：运行中插了一句，前面的进度照样平铺；回合结束后才收起", () => {
+    // 2026-11-12 实拍：运行中插了一句话，前面 16 分钟的进度被收成「工作了 16m21s」，看着像消息没反馈出来。
+    const items: ChatItem[] = [
+      ...turn("mid"),
+      { type: "user_text", id: "mid-i", timestamp: "2026-11-02T10:03:00Z", text: "怎么样", interjected: true },
+      { type: "tool_use", id: "mid-t3", timestamp: "2026-11-02T10:03:05Z", name: "Bash", summary: "ls" },
+    ];
+    const { rerender } = render(<Transcript sessionId={35} items={items} agent={agent} working foldTurns />);
+    expect(replyFold()).toBeNull();
+    expect(screen.getByText("先看看")).toBeTruthy();
+    expect(screen.getByText("怎么样")).toBeTruthy();
+    const done = [...items, { type: "assistant_text" as const, id: "mid-a3", timestamp: "2026-11-02T10:04:00Z", text: "好了" }];
+    rerender(<Transcript sessionId={35} items={done} agent={agent} working={false} foldTurns />);
+    expect(replyFold()).not.toBeNull();
+    expect(screen.queryByText("先看看")).toBeNull();
+    expect(screen.getByText("怎么样")).toBeTruthy();
+  });
+
+  it("正常发的新消息才是回合边界：上一回合在新消息之前，运行中照样收起", () => {
+    const items: ChatItem[] = [
+      ...turn("prev"),
+      { type: "user_text", id: "next-u", timestamp: "2026-11-02T10:05:00Z", text: "下一个" },
+      { type: "tool_use", id: "next-t", timestamp: "2026-11-02T10:05:05Z", name: "Bash", summary: "ls" },
+    ];
+    render(<Transcript sessionId={36} items={items} agent={agent} working foldTurns />);
+    expect(replyFold()).not.toBeNull();
+    expect(screen.queryByText("先看看")).toBeNull();
+  });
+
   it("只有一句回答、前面什么过程都没有的回复不套折叠", () => {
     render(<Transcript sessionId={34} items={[user("plain-u"), reply("plain-a", "直接答")]} agent={agent} foldTurns />);
     expect(replyFold()).toBeNull();

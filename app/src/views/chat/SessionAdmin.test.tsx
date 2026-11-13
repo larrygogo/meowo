@@ -11,7 +11,7 @@ const row = (id: number, title: string, extra: Partial<LiveSession> = {}): LiveS
   session: { id, cc_session_id: `cc-${id}`, status: "ended", started_at: 1, last_event_at: Date.UTC(2026, 10, 1, 8, 30), ended_at: null },
   project_name: "p", task_title: title, current_activity: null, column: "todo", todo_done: 0, todo_total: 0, todos: [],
   pid: null, archived: false, archived_at: null, cwd: "C:/w/meowo", context_pct: null, context_window: null, model: null,
-  note: null, pending_review: null, last_ai_text: null, last_user_text: `${title}的最后一句`, provider: "claude", profile: null,
+  pending_review: null, last_ai_text: null, last_user_text: `${title}的最后一句`, provider: "claude", profile: null,
   predecessor_id: null, ...extra,
 } as LiveSession);
 

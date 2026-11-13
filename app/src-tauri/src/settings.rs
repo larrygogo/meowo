@@ -39,7 +39,7 @@ fn default_terminal_open_mode() -> String {
 fn default_session_open_in() -> String {
     "terminal".to_string()
 }
-/// 卡片菜单（星标/便签/重命名/归档等）触发方式：button = 卡片上的常显菜单按钮（默认），
+/// 卡片菜单（星标/重命名/归档等）触发方式：button = 卡片上的常显菜单按钮（默认），
 /// context = 右键菜单，两者二选一。
 fn default_card_menu_mode() -> String {
     "button".to_string()
@@ -932,6 +932,8 @@ pub(crate) async fn set_settings(
     let menu_app = app.clone();
     app.run_on_main_thread(move || apply_language(&menu_app, lang, chat_enabled))
         .map_err(|e| e.to_string())?;
+    // 改了外观：已开着的 Mica 窗口换成对应明暗的背板（否则深色界面垫着浅色材质）。
+    crate::material::sync_theme(&app, &settings.theme);
     // 通知贴纸窗口实时套用新设置。与 get_settings 同一出口收敛:事件载荷不含远程 token
     // （前端快照写回由 preserve_independently_managed_fields 兜底,不丢 token）。
     let _ = app.emit("settings-changed", without_remote_token(settings.clone()));

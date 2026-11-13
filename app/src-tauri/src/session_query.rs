@@ -781,7 +781,7 @@ fn cwd_basename(cwd: &str) -> &str {
 /// 只进「全部/运行中」两个 tab：占位会话连通且按运行中计（PTY 已起、屏幕检测尚未接管），
 /// 与 get_live_sessions_counts 的 +N 同口径——数字与列表不打架。过滤口径向真实会话看齐：
 /// 目录筛选按斜杠归一的精确比较（store 的 cwd 谓词），搜索按 cwd/目录名子串
-/// （SQL 对真实会话的 s.cwd / p.name LIKE）。占位卡没有标题/便签/往来正文可搜。
+/// （SQL 对真实会话的 s.cwd / p.name LIKE）。占位卡没有标题/往来正文可搜。
 fn pending_placeholder_items(
     pendings: &[(i64, super::pty::PendingLaunch)],
     filter: &str,
@@ -854,7 +854,6 @@ fn pending_placeholder_item(temp_id: i64, info: &super::pty::PendingLaunch) -> L
             context_pct: None,
             context_window: None,
             model: None,
-            note: None,
             pending_review: None,
             last_ai_text: None,
             last_user_text: None,
@@ -1936,7 +1935,7 @@ mod tests {
 
     /// 占位卡（pending PTY）的成形与过滤口径：负 id 保留、按运行中连通计、只进
     /// 全部/运行中两个 tab；目录筛选与搜索与真实会话同口径（斜杠归一精确比 /
-    /// cwd 与目录名子串），占位卡没有标题/便签/正文可搜。
+    /// cwd 与目录名子串），占位卡没有标题/正文可搜。
     #[test]
     fn pending_placeholders_follow_the_same_filter_rules_as_real_cards() {
         let pendings = vec![

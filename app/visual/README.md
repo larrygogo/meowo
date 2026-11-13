@@ -28,11 +28,14 @@ bun run visual:compare <基线目录> <新目录>
 
 - `--filter <正则>`：只拍名字匹配的图，例如 `--filter "^chat__"`、`--filter "dark__w1280"`。对比时加 `--subset`，基线里多出来的图不算缺图。
 - `--list`：只列出会拍哪些图，不起 vite。
+- 补看场景的 `steps`（`click` / `rclick` / `hover` / `type` / `key` / `tick` / `log` …）是截图前替用户做的真实指针与键盘动作，见 `shoot.mjs` 的 `runSteps`；`?ui=1.5` 拍界面缩放。
+- `VISUAL_EXTRA=<仓库外的 .mjs>`：临时追加一批补看场景（文件同样导出 `QA_SHOTS`）。量对齐用的 `log` 步骤、一次性的排查场景放那里，不用改仓库里的 `qa-scenes.mjs`。
+- `?max=1`：右侧面板最大化（`panel-*` 与 `flow-md` 等带面板的场景都认）。
 - `--jobs <n>`：并发页数，默认 4。
 - `--engine webkit`：换 WebKit 拍（默认 Chromium，对应 Windows 的 WebView2）。
 - `compare.mjs --tolerance <0~255>`：单通道允许的差值，默认 0（严格一致）；`--out <目录>` 指定差异图位置。
 
-全量 164 张，本机约 50 秒。
+全量 384 张（`--list` 看确切数），本机三分钟左右。
 
 ## 场景矩阵
 
@@ -44,10 +47,34 @@ bun run visual:compare <基线目录> <新目录>
 | `chat-long` | 同上，滚到表格/代码块处并展开工具组（长输出、报错工具卡） | 620 / 1280 / 2560 |
 | `panel-changes` | 右侧面板「更改」：仓库、提交框、推送、PR 与 CI、文件清单 | 620 / 1280 / 2560 |
 | `panel-diff` | 「更改」里点开 `LoginForm.tsx` 的 diff | 620 / 1280 / 2560 |
-| `settings-general` / `-appearance` / `-account` / `-remote` | 设置窗四个分区（远程分区开着，带二维码） | 620 / 1280 / 2560 |
-| `onboarding` | 引导页第一步 | 620 / 1280 / 2560 |
+| `settings-<分区>` | 设置窗九个分区：`general` `sessions` `appearance` `shortcuts` `remote`（开着，带二维码）`network`（自定义代理）`account`（带多账号列表）`extensions` `about` | 620 / 1280 / 2560 |
+| `settings-search` / `-noresults` | 设置搜索：有命中（各分区平铺）/ 无结果 | 620 / 1280 / 2560 |
+| `onboarding` | 引导页第一步（拉宽拉高的压力测试） | 620 / 1280 / 2560 |
+| `newsession-page` / `-page-wt` | 对话窗里的新建会话页（只搭主列容器，不含侧栏与标题栏）；`-wt` 勾上「在新 worktree 里开」 | 620 / 1280 / 2560 |
+| `settingswin-<分区>` | 同 `settings-*`，按真实窗口尺寸拍 | 620×460 |
+| `onboarding-1` ～ `-4` | 引导四步，真实窗口尺寸 | 460×600 |
+| `updater-checking` / `-latest` / `-error` | 更新窗紧凑态：检查中 / 已最新 / 失败 | 400×252 |
+| `updater-available` / `-downloading` / `-installing` | 更新窗增高态：发现新版（带更新说明）/ 下载中 42% / 安装中 | 400×500 |
+| `confirm` / `-danger` / `-alert` / `-long` | 确认框：普通 / 危险 / 单按钮提示 / 多行长文 | 420×132（长文 420×400） |
+| `newsession-window` / `-window-full` | 新建会话独立窗；`-full` 带 worktree 选项、重名警告与接入项警告 | 460×520 |
+| `crash` | 窗口级崩溃兜底页 + DEV 角标 | 620×460 |
 | `island-compact` / `-panel` / `-alert` | 灵动岛收起 / 展开面板 / 审批提醒，垫在固定灰底上 | 700 |
+| `island-compact-calm` / `-many` / `-idle` / `-notch` | 收起（概览样式）：只有在跑和跑完的 / 十二个会话折成 +N / 没有会话 / macOS 刘海两翼 | 700 |
+| `island-focus` / `island-minimal`（各带 `-idle` / `-many` / `-notch`） | 收起的另外两种样式 | 700 |
+| `island-strip` | 极简细条：四种状态各一条，外加没有会话的一条 | 1000 |
+| `island-panel-single` / `-empty` / `-menubar`、`island-usage` | 面板：单页不出翻页 / 空态 / macOS 菜单栏落点 / 额度页 | 700 |
+| `island-alert-error` / `-done` / `-menubar` | 提醒：出错（长标题长详情）/ 跑完 / 菜单栏落点 | 700 |
 | `mobile-list` / `-chat` / `-changes` | 手机远程页：会话列表 / 对话 + 审批卡 / 「更改」页 | 375 / 430 |
+| `flow-states` / `-mid` / `-top` | 对话流的各种条目：长用户消息渐隐、思考、编辑卡与命令卡（展开）、子任务、Markdown 全家桶、本轮改动、跨会话消息、压缩分隔条、回合报错、运行行；分别停在底部 / 中段 / 顶部 | 620 / 1280 |
+| `flow-question` | 问答卡（一道单选带说明 + 一道多选） | 620 / 1280 |
+| `flow-empty` | 空会话欢迎面板 | 620 / 1280 |
+| `pop-palette` / `pop-shortcuts` | 命令面板（Ctrl+K）、快捷键速查表（?） | 620 / 1280 |
+| `pop-add` / `pop-progress` | 输入框「+」菜单、停靠栏进度面板 | 620 / 1280 |
+| `panel-files` | 右侧面板「文件」页签 | 620 / 1280 |
+| `mobile-settings` / `-new` / `-gate*` / `-boot` / `-keys` / `-list-empty` / `-list-error` | 手机页其余状态：设置屏、新建会话浮层、配对门各态、加载占位、终端画面兜底、列表空态与首载失败（只拍 dpr 2） | 375（部分加 430） |
+| `mobile-question` / `mobile-tasks` | 手机对话页换成问答卡（矮屏下选项可见性，量测脚本用，不进矩阵）/ 派过后台 Bash（一条在跑、三条跑完）与一个在跑的子代理（`qa-m-tasks*`、`qa-m-subagents` 从它点开后台任务面板） | 375 / 430 |
+| `mobile-*-kbd` / `-land` / `-ipad` / `-ipadland` | 同一场景换视口：键盘弹出（375×476、375×376）、横屏 812×375、iPad 820×1180 与 1180×820。覆盖 `mobile-list` / `-chat` / `-changes` / `-settings`。**只拍 dpr 2**，文件名带高度（`w375h376`），按 `dpr1` 筛基础矩阵时看不到它们 | 见文件名 |
+| `qa-*` | 补看场景（`qa-scenes.mjs`）：要靠真实点击、悬停、键盘才出现的弹层与状态（斜杠菜单、@ 补全、模型菜单与模型市场、截图标注、重命名、Lead 关卡卡、Broker 审批、屏幕识别的五种交互卡、同步中断、worktree setup、排队消息、灯箱、区内搜索、侧栏各态、会话管理页、右侧面板的 Markdown / 浏览器 / 终端页签、托管终端页签、设置窗的更新状态 / 下拉 / 聚焦 / 保存失败、手机底部面板），以及缩放 150%、英文、2560 超宽。假数据在 `qaFlow.ts`（harness 场景名 `flow-<名字>`） | 见各条 `size` |
 
 每个场景都拍深色、浅色两种主题，dpr 1 和 2。语言默认只拍中文，`chat` 与 `mobile-chat` 另加英文。
 
@@ -61,6 +88,10 @@ bun run visual:compare <基线目录> <新目录>
 - Chromium 关 GPU 和 LCD 次像素抗锯齿，走软件光栅。
 - 每张图都要连续两次截图字节完全一致才落盘，否则多推一步时钟重拍，6 次还不一致就报错。
 - 页面报错、资源 4xx/5xx（比如字体被拒）、缺少场景的关键元素，都按失败处理，不会把坏图拍进基线。失败现场图在 `<输出目录>/_failed/`。
+- 正式开拍前有一遍预热（每个场景用 800×600 的小视口各开一次，只为让 vite 把模块转译完）。预热不检查关键元素、也不留现场图：这个宽度下侧栏是收起的，找不到侧栏里的元素是正常的。
+- 安全区（刘海、home 横条）：Playwright 的设备模拟里 `env(safe-area-inset-*)` 恒为 0。场景上写 `safeArea: { top, bottom, left, right }`，`shoot.mjs` 用 Chromium 的 CDP（`Emulation.setSafeAreaInsetsOverride`）覆盖这组值，`qa-m-changes-safe` 就是这么拍的。只在 Chromium 下生效，`--engine webkit` 时跳过；这只验证 CSS 取到了值，不等于真机验证。
+- 桌面 harness 关掉了 WebGL，xterm 退回 DOM 渲染：WebGL 画布在截图那一帧是空的，托管终端场景（`qa-term*`）会整片漆黑。所以这些图验证的是终端的排版、配色、搜索命中与链接提示，不验证 WebGL 渲染器本身。
+- 托管终端场景（`qa-term*`）的浅色图整窗是深色，不是 harness 没切主题：产品规定终端页签不论主题恒为深色（`styles.css` 的 `.chat-window.is-terminal`）。浅色图与深色图只差一个 DEV 角标。
 
 ## 注意
 

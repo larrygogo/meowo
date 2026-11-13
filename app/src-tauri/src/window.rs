@@ -109,16 +109,15 @@ pub(crate) fn disable_browser_accelerators(webview: &tauri::Webview) {
     let _ = webview;
 }
 
-/// 独立窗口的**原生**底色，与 styles.css 的 --cc-window-bg 对齐（dark #1c1c1e / light #f6f6f7）。
-///
-/// 隐藏创建 + 首帧后 show 只消除了「窗口先于首帧显示」的那类白框；show 的瞬间 WebView2
-/// 的合成帧仍可能没上屏（rAF 提交 ≠ 已呈现），这一两帧露出的是原生窗口底色——默认白，
-/// 于是还是闪。把原生底色设成与页面主题同色，即便露出来也是同色纯色帧，肉眼不可辨。
-/// theme=system 时借主窗口的 theme()（跟随 OS，本应用不调 set_theme）判定明暗。
-/// 全平台的独立窗口都用：macOS 的 Overlay 原生标题栏窗口是不透明的，同样要防闪白；
-/// 唯一例外是贴纸主窗（transparent + 原生毛玻璃，不经此函数）。
-pub(crate) fn window_background_color(app: &tauri::AppHandle) -> tauri::webview::Color {
-    let dark = match load_settings().theme.as_str() {
+/// 独立窗口原生底色的两档取值，必须与 styles.css 的 `--cc-window-bg` 逐位相同
+/// （深 #101112 / 浅 #f4f4f6）；本文件末尾的 window_bg_tests 把两边钉在一起。
+const WINDOW_BG_DARK: (u8, u8, u8) = (0x10, 0x11, 0x12);
+const WINDOW_BG_LIGHT: (u8, u8, u8) = (0xf4, 0xf4, 0xf6);
+
+/// 应用主题此刻是不是深色。theme=system 时借主窗口的 theme()（跟随 OS，本应用不调
+/// set_theme）判定明暗。原生底色与窗口材质（material.rs）共用这一处判定。
+pub(crate) fn theme_is_dark(app: &tauri::AppHandle, theme: &str) -> bool {
+    match theme {
         "light" => false,
         "dark" => true,
         _ => app
@@ -127,12 +126,24 @@ pub(crate) fn window_background_color(app: &tauri::AppHandle) -> tauri::webview:
             .map(|t| t == tauri::Theme::Dark)
             // 拿不到就按深色：应用默认主题即深色，闪浅不如闪深。
             .unwrap_or(true),
-    };
-    if dark {
-        tauri::webview::Color(0x1c, 0x1c, 0x1e, 0xff)
-    } else {
-        tauri::webview::Color(0xf6, 0xf6, 0xf7, 0xff)
     }
+}
+
+/// 独立窗口的**原生**底色，与 styles.css 的 --cc-window-bg 对齐（见 WINDOW_BG_DARK / LIGHT）。
+///
+/// 隐藏创建 + 首帧后 show 只消除了「窗口先于首帧显示」的那类白框；show 的瞬间 WebView2
+/// 的合成帧仍可能没上屏（rAF 提交 ≠ 已呈现），这一两帧露出的是原生窗口底色——默认白，
+/// 于是还是闪。把原生底色设成与页面主题同色，即便露出来也是同色纯色帧，肉眼不可辨。
+/// 全平台的独立窗口都用：macOS 的 Overlay 原生标题栏窗口是不透明的，同样要防闪白。
+/// 两类窗口不经此函数：贴纸主窗（transparent）与系统材质生效的窗口（transparent + 窗口
+/// 效果，露出来的是材质本身；分流在 material::dress）。
+pub(crate) fn window_background_color(app: &tauri::AppHandle) -> tauri::webview::Color {
+    let (r, g, b) = if theme_is_dark(app, &load_settings().theme) {
+        WINDOW_BG_DARK
+    } else {
+        WINDOW_BG_LIGHT
+    };
+    tauri::webview::Color(r, g, b, 0xff)
 }
 
 /// 打开（或聚焦）设置窗口。窗口 label 为 "about"（main.tsx 按此 label 路由到设置页）。
@@ -161,20 +172,24 @@ pub(crate) fn open_settings_window(app: &tauri::AppHandle) {
         // 隐藏创建，前端首帧后自行显示（见 show_after_grace 注释），消除白框闪烁。
         .visible(false)
         .center();
-        // 非 macOS：无边框 + 前端自绘标题栏（Windows 圆角由 DWM 处理，见 round_window_corners）；
-        // 原生底色对齐主题，show 瞬间合成帧未上屏也不露白（见 window_background_color）。
+        // 非 macOS：无边框 + 前端自绘标题栏（Windows 圆角由 DWM 处理，见 round_window_corners）。
+        // 窗口底交给 material::dress：Win11 上是 Mica（透明窗口 + DWM 背板），其余回退成
+        // 对齐主题的不透明原生底色，show 瞬间合成帧未上屏也不露白（见 window_background_color）。
         #[cfg(not(target_os = "macos"))]
-        let builder = builder
-            .decorations(false)
-            .background_color(window_background_color(app));
+        let builder =
+            crate::material::dress(builder.decorations(false), app, "about");
         // macOS：原生标题栏 Overlay——系统红绿灯在左上，符合平台惯例（前端按平台隐藏
         // 自绘 ✕ 并给红绿灯留位）；hidden_title 不画原生标题文字，标题仍由前端自绘。
-        // 原生窗口自带圆角与阴影，不再需要 transparent + CSS 圆角。
+        // 原生窗口自带圆角与阴影，不需要 CSS 圆角。窗口底同样交给 material::dress：
+        // 设置窗与对话窗垫系统材质（26+ Liquid Glass，旧版 Sidebar 材质），其余小窗不透明。
         #[cfg(target_os = "macos")]
-        let builder = builder
-            .title_bar_style(tauri::TitleBarStyle::Overlay)
-            .hidden_title(true)
-            .background_color(window_background_color(app));
+        let builder = crate::material::dress(
+            builder
+                .title_bar_style(tauri::TitleBarStyle::Overlay)
+                .hidden_title(true),
+            app,
+            "about",
+        );
         match builder.build() {
             Ok(_about_window) => {
                 round_window_corners(&_about_window);
@@ -239,14 +254,15 @@ pub(crate) fn open_onboarding_window(app: &tauri::AppHandle) {
     .center();
     // 平台分支的理由见 open_settings_window 的同款注释。
     #[cfg(not(target_os = "macos"))]
-    let builder = builder
-        .decorations(false)
-        .background_color(window_background_color(app));
+    let builder = crate::material::dress(builder.decorations(false), app, "onboarding");
     #[cfg(target_os = "macos")]
-    let builder = builder
-        .title_bar_style(tauri::TitleBarStyle::Overlay)
-        .hidden_title(true)
-        .background_color(window_background_color(app));
+    let builder = crate::material::dress(
+        builder
+            .title_bar_style(tauri::TitleBarStyle::Overlay)
+            .hidden_title(true),
+        app,
+        "onboarding",
+    );
     match builder.build() {
         Ok(_onboarding_window) => {
             round_window_corners(&_onboarding_window);
@@ -307,14 +323,15 @@ pub(crate) fn open_update_window_impl(app: &tauri::AppHandle) {
     .center();
     // 平台分支的理由见 open_settings_window 的同款注释。
     #[cfg(not(target_os = "macos"))]
-    let builder = builder
-        .decorations(false)
-        .background_color(window_background_color(app));
+    let builder = crate::material::dress(builder.decorations(false), app, "updater");
     #[cfg(target_os = "macos")]
-    let builder = builder
-        .title_bar_style(tauri::TitleBarStyle::Overlay)
-        .hidden_title(true)
-        .background_color(window_background_color(app));
+    let builder = crate::material::dress(
+        builder
+            .title_bar_style(tauri::TitleBarStyle::Overlay)
+            .hidden_title(true),
+        app,
+        "updater",
+    );
     match builder.build() {
         Ok(_update_window) => {
             round_window_corners(&_update_window);
@@ -426,14 +443,15 @@ pub(crate) fn open_new_session_window_impl(
             .center();
     // 平台分支的理由见 open_settings_window 的同款注释。
     #[cfg(not(target_os = "macos"))]
-    let builder = builder
-        .decorations(false)
-        .background_color(window_background_color(app));
+    let builder = crate::material::dress(builder.decorations(false), app, "new-session");
     #[cfg(target_os = "macos")]
-    let builder = builder
-        .title_bar_style(tauri::TitleBarStyle::Overlay)
-        .hidden_title(true)
-        .background_color(window_background_color(app));
+    let builder = crate::material::dress(
+        builder
+            .title_bar_style(tauri::TitleBarStyle::Overlay)
+            .hidden_title(true),
+        app,
+        "new-session",
+    );
     match builder.build() {
         Ok(_win) => {
             round_window_corners(&_win);
@@ -756,14 +774,15 @@ pub(crate) fn open_chat_window_target(
         .center();
     // 平台分支的理由见 open_settings_window 的同款注释。
     #[cfg(not(target_os = "macos"))]
-    let builder = builder
-        .decorations(false)
-        .background_color(window_background_color(app));
+    let builder = crate::material::dress(builder.decorations(false), app, "chat");
     #[cfg(target_os = "macos")]
-    let builder = builder
-        .title_bar_style(tauri::TitleBarStyle::Overlay)
-        .hidden_title(true)
-        .background_color(window_background_color(app));
+    let builder = crate::material::dress(
+        builder
+            .title_bar_style(tauri::TitleBarStyle::Overlay)
+            .hidden_title(true),
+        app,
+        "chat",
+    );
     let win = builder.build().map_err(|e| {
         // 同上:失败也要还激活策略计数,否则 Dock 图标永久常驻。
         #[cfg(target_os = "macos")]
@@ -1311,6 +1330,29 @@ mod quit_tests {
             async { Ok::<_, ()>(false) }
         })));
         assert!(!asked, "没什么要问时不该弹确认");
+    }
+}
+
+#[cfg(test)]
+mod window_bg_tests {
+    use super::{WINDOW_BG_DARK, WINDOW_BG_LIGHT};
+
+    /// 原生底色与页面底色差一点，show 瞬间与材质回退时就是一次可见的闪色。
+    /// styles.css 里 `--cc-window-bg` 只有两处定义：先深色（:root）后浅色（data-theme=light）。
+    #[test]
+    fn 原生底色与样式表的窗口底色两档一致() {
+        let css = include_str!("../../src/styles.css");
+        let defined: Vec<&str> = css
+            .lines()
+            .filter_map(|line| line.trim().strip_prefix("--cc-window-bg:"))
+            .map(|value| value.trim().trim_end_matches(';').trim())
+            .collect();
+        let hex = |(r, g, b): (u8, u8, u8)| format!("#{r:02x}{g:02x}{b:02x}");
+        assert_eq!(
+            defined,
+            vec![hex(WINDOW_BG_DARK), hex(WINDOW_BG_LIGHT)],
+            "styles.css 的 --cc-window-bg（深、浅）要与 window.rs 的 WINDOW_BG_DARK / LIGHT 同值"
+        );
     }
 }
 

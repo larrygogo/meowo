@@ -7,6 +7,7 @@ import { lockdownInProduction, suppressNativeFind } from "./devtools-guard";
 import { installInputModality } from "./input-modality";
 import { bootAppearance } from "./appearance";
 import { detectHostOs } from "./platform";
+import { bootWindowMaterial } from "./windowMaterial";
 import { bootI18n, I18nProvider } from "./i18n";
 import { WindowErrorBoundary } from "./ErrorBoundary";
 import "./fonts"; // 内置字体集的唯一入口(取舍理由见 fonts.ts;demo/poster 也走它,不再各自 import)
@@ -50,6 +51,11 @@ installInputModality();
 // 平台标记（同步，供 CSS 做平台差异，如 macOS 无边框设置窗需自行圆角）。WKWebView 的 UA 含 "Mac"。
 if (/Mac/i.test(navigator.userAgent)) {
   document.documentElement.classList.add("platform-macos");
+} else if (/Windows/i.test(navigator.userAgent)) {
+  // WebView2 的 UA 含 "Windows NT"。Linux 两个类都不加。
+  // 目前没有任何 CSS 用到这个类：Windows 的版式（标题行高 40、内容面右下各留 8）就是样式表的默认值，
+  // macOS 用 .platform-macos 覆盖。这里留着是给以后的 Windows 专属规则挂的钩子，别当死代码删。
+  document.documentElement.classList.add("platform-windows");
 }
 
 // 同一份前端按窗口 label 分流：about 窗口渲染设置页、updater 渲染更新页，其余渲染主贴纸。
@@ -69,7 +75,9 @@ bootAppearance({ scale: label === "main" || label === "chat", panel: label === "
 // detectHostOs 内部兜底（非 Tauri 环境立即落为 other），不会悬挂。
 // 同时把当前语言的字典取到手（非中文时是一次动态 import，见 i18n/index.tsx）：首帧就是对的
 // 语言。bootI18n 失败退回中文、不会 reject。
-void Promise.all([detectHostOs(), bootI18n()]).then(() => {
+// 窗口材质也在渲染前问到：mat-on 决定窗口底是实色还是半透明染色层，晚一拍就是一次闪色。
+// bootWindowMaterial 同样自带兜底，不会 reject。
+void Promise.all([detectHostOs(), bootI18n(), bootWindowMaterial()]).then(() => {
   ReactDOM.createRoot(document.getElementById("root")!).render(
     <React.StrictMode>
       <I18nProvider>

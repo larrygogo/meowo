@@ -52,6 +52,7 @@ mod wezterm;
 mod handoff;
 mod install;
 mod managed_terminal;
+mod material;
 mod proc;
 // pub：集成测试 `tests/profile_merge.rs` 要在**独立进程**里跑端到端合并（它会设
 // CLAUDE_CONFIG_DIR / MEOWO_DB 这类进程级环境变量，与 lib 单测并行跑会互相串味）。
@@ -102,7 +103,7 @@ use managed_terminal::{
 };
 #[cfg(test)]
 use session_command::is_safe_id;
-use session_command::{move_session_rank, rename_session, set_archived, set_session_note};
+use session_command::{move_session_rank, rename_session, set_archived};
 use session_command::{session_launch_selections, set_session_launch_selection};
 use session_query::{
     get_live_sessions_counts, get_live_sessions_page, get_session_admin_page, hide_workspace,
@@ -1398,6 +1399,13 @@ pub fn run() {
         // 生产构建关掉 WebView2 浏览器加速键（打印/刷新/另存/原生查找等整族，详见函数注释）。
         // on_page_load 是覆盖全部窗口（含后建的对话/确认窗）的唯一集中挂点。
         .on_page_load(|webview, _payload| window::disable_browser_accelerators(webview))
+        // 系统切换明暗后，已开着的 Mica 窗口背板要跟着重套（原因见 material.rs）。
+        // 挂在 builder 上才覆盖得到后建的对话/设置等窗口。
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::ThemeChanged(theme) = event {
+                material::on_system_theme_changed(window, *theme);
+            }
+        })
         // W-17：main（贴纸）窗口的几何整体移出本插件——尺寸/置顶统一由 settings.json 的
         // sticker_window 原子持有（settings.rs），位置由灵动岛按记住的中心比例自己摆（island.rs）。此前「位置靠插件、尺寸/吸附边/置顶靠三套
         // localStorage 键」四处分写无原子性，清空 WebView 存储即半吊子状态；且吸附态退出会把
@@ -1475,6 +1483,7 @@ pub fn run() {
             clipboard_text,
             open_chat_window,
             snap_layout::set_caption_overlay_rects,
+            material::window_material,
             start_managed_terminal,
             takeover_managed_terminal,
             fork_session,
@@ -1587,7 +1596,6 @@ pub fn run() {
             rename_session,
             set_archived,
             move_session_rank,
-            set_session_note,
             get_autostart,
             set_autostart,
             get_settings,

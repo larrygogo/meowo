@@ -8,6 +8,14 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { resolve, join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { VISUAL_PORT } from "./vite.visual.config.mjs";
+import { QA_SHOTS as QA_BUILTIN } from "./qa-scenes.mjs";
+import { pathToFileURL } from "node:url";
+
+// VISUAL_EXTRA=<仓库外的 .mjs>：临时追加一批补看场景（同样导出 QA_SHOTS）。量对齐用的 log 步骤、
+// 一次性的排查场景放那里，不用为了量一个数字改仓库里的 qa-scenes.mjs 再记得改回去。
+const QA_SHOTS = process.env.VISUAL_EXTRA
+  ? [...QA_BUILTIN, ...(await import(pathToFileURL(resolve(process.env.VISUAL_EXTRA)).href)).QA_SHOTS]
+  : QA_BUILTIN;
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const FIXED_NOW = 1_780_000_000_000; // 与 fixtures.ts / src/demo 的冻结时刻一致
@@ -44,18 +52,116 @@ const DESKTOP_SCENES = [
   { scene: "settings-appearance", sel: ".settings" },
   { scene: "settings-account", sel: ".settings" },
   { scene: "settings-remote", sel: ".settings" },
+  { scene: "settings-sessions", sel: ".settings" },
+  { scene: "settings-shortcuts", sel: ".settings" },
+  { scene: "settings-network", sel: ".settings" },
+  { scene: "settings-extensions", sel: ".settings" },
+  { scene: "settings-about", sel: ".settings" },
+  { scene: "settings-search", sel: ".main-body.is-searching" },
+  { scene: "settings-noresults", sel: ".settings-noresults" },
+  { scene: "newsession-page", sel: ".nsp-composer" },
+  { scene: "newsession-page-wt", sel: ".wt-opt-body" },
   // 欢迎页插图已换成对话窗样张（UI 优化 #36），旧的 .obm-panel 不复存在。
   { scene: "onboarding", sel: ".obm-chat" },
 ];
+// 重设计补的对话窗场景（desktop.tsx 的 flow-* / pop-*）：只拍中文、620 与 1280 两个宽度。
+const FLOW_SIZES = [{ w: 620, h: 760 }, { w: 1280, h: 800 }];
+const FLOW_SCENES = [
+  { scene: "flow-states", sel: ".chat-scroll" },
+  { scene: "flow-states-mid", sel: ".chat-scroll" },
+  { scene: "flow-states-top", sel: ".chat-scroll" },
+  { scene: "flow-question", sel: ".chat-scroll" },
+  { scene: "flow-empty", sel: ".chat-window textarea" },
+  { scene: "pop-palette", sel: ".chat-window" },
+  { scene: "pop-shortcuts", sel: ".chat-window" },
+  { scene: "pop-add", sel: ".chat-window" },
+  { scene: "pop-progress", sel: ".chat-window" },
+  { scene: "panel-files", sel: ".chat-diff-panel" },
+];
+const ISLAND_SEL = "[data-visual-stage] > div > *";
+// 收起三种样式 ×（平时 / 没有会话 / 会话很多 / macOS 刘海两翼）、极简细条、面板（会话页 / 单页 / 空态 /
+// 额度页 / macOS 菜单栏落点）、提醒（审批 / 出错长文本 / 跑完 / 菜单栏落点）。
+// langs：岛默认只拍中文；标题行与提醒里文案最挤的几个另拍英文。
 const ISLAND_SCENES = [
-  { scene: "island-compact", w: 700, h: 80, sel: "[data-visual-stage] > div > *" },
-  { scene: "island-panel", w: 700, h: 300, sel: ".island-shell" },
-  { scene: "island-alert", w: 700, h: 110, sel: "[data-visual-stage] > div > *" },
+  { scene: "island-compact", w: 700, h: 80, sel: ISLAND_SEL },
+  { scene: "island-compact-calm", w: 700, h: 80, sel: ISLAND_SEL },
+  { scene: "island-compact-many", w: 700, h: 80, sel: ISLAND_SEL },
+  { scene: "island-compact-idle", w: 700, h: 80, sel: ISLAND_SEL },
+  { scene: "island-compact-notch", w: 700, h: 80, sel: ISLAND_SEL },
+  { scene: "island-focus", w: 700, h: 80, sel: ISLAND_SEL, langs: ["zh", "en"] },
+  { scene: "island-focus-idle", w: 700, h: 80, sel: ISLAND_SEL },
+  { scene: "island-focus-notch", w: 700, h: 80, sel: ISLAND_SEL },
+  { scene: "island-minimal", w: 700, h: 80, sel: ISLAND_SEL },
+  { scene: "island-minimal-many", w: 700, h: 80, sel: ISLAND_SEL },
+  { scene: "island-minimal-notch", w: 700, h: 80, sel: ISLAND_SEL },
+  { scene: "island-strip", w: 1000, h: 40, sel: ".isl-strip" },
+  { scene: "island-panel", w: 700, h: 300, sel: ".island-shell", langs: ["zh", "en"] },
+  { scene: "island-panel-single", w: 700, h: 300, sel: ".island-shell" },
+  { scene: "island-panel-empty", w: 700, h: 300, sel: ".island-shell" },
+  { scene: "island-panel-menubar", w: 700, h: 300, sel: ".island-shell" },
+  { scene: "island-usage", w: 700, h: 300, sel: ".island-shell", langs: ["zh", "en"] },
+  { scene: "island-alert", w: 700, h: 110, sel: ISLAND_SEL, langs: ["zh", "en"] },
+  { scene: "island-alert-error", w: 700, h: 110, sel: ISLAND_SEL },
+  { scene: "island-alert-done", w: 700, h: 110, sel: ISLAND_SEL },
+  { scene: "island-alert-menubar", w: 700, h: 110, sel: ISLAND_SEL },
+];
+// 定尺寸的独立窗口：按 window.rs 里的真实窗口尺寸拍（设置 620×460、引导 460×600、更新 400×252 起、
+// 确认框 420×208 起再按内容收拢、新建会话 460×520）。上面桌面矩阵里的 settings-* / onboarding 是拉宽拉高的压力测试。
+const SETTINGS_SECTIONS = ["general", "sessions", "appearance", "shortcuts", "remote", "network", "account", "extensions", "about", "search", "noresults"];
+const PANE_SCENES = [
+  ...SETTINGS_SECTIONS.map((sec) => ({ scene: "settingswin-" + sec, w: 620, h: 460, sel: sec === "noresults" ? ".settings-noresults" : ".settings" })),
+  { scene: "onboarding-1", w: 460, h: 600, sel: ".obm-chat" },
+  { scene: "onboarding-2", w: 460, h: 600, sel: ".ob-agent" },
+  { scene: "onboarding-3", w: 460, h: 600, sel: ".ob-points" },
+  { scene: "onboarding-4", w: 460, h: 600, sel: ".obm-island" },
+  { scene: "updater-checking", w: 400, h: 252, sel: ".up-status" },
+  { scene: "updater-latest", w: 400, h: 252, sel: ".up-body .sbtn" },
+  { scene: "updater-error", w: 400, h: 252, sel: ".up-err" },
+  { scene: "updater-available", w: 400, h: 500, sel: ".up-notes-body" },
+  { scene: "updater-downloading", w: 400, h: 500, sel: ".up-prog" },
+  { scene: "updater-installing", w: 400, h: 500, sel: ".up-actions .btn-primary:disabled" },
+  { scene: "confirm", w: 420, h: 132, sel: ".app-confirm-actions" },
+  { scene: "confirm-danger", w: 420, h: 132, sel: ".app-confirm-actions .is-danger" },
+  { scene: "confirm-alert", w: 420, h: 132, sel: ".app-confirm-actions" },
+  { scene: "confirm-long", w: 420, h: 400, sel: ".app-confirm-actions" },
+  { scene: "newsession-window", w: 460, h: 520, sel: ".ns-agent" },
+  { scene: "newsession-window-full", w: 460, h: 520, sel: ".wt-opt-body" },
+  { scene: "crash", w: 620, h: 460, sel: ".app-crash" },
 ];
 const MOBILE_SCENES = [
   { scene: "mobile-list", sel: ".remote-session-list" },
   { scene: "mobile-chat", sel: ".chat-approval-actions" },
   { scene: "mobile-changes", sel: ".scm-row" },
+];
+// 手机页的其余状态：只拍 dpr 2。tag 给同一场景的不同视口起名（键盘弹出、横屏、iPad）。
+const PHONE_SM = [{ w: 375, h: 812 }];
+const MOBILE_EXTRA = [
+  { scene: "mobile-settings", sel: ".remote-settings-screen .pswitch", sizes: PHONE, langs: ["zh", "en"] },
+  { scene: "mobile-new", sel: ".remote-new-session-overlay .ns-window", sizes: PHONE, langs: ["zh", "en"] },
+  { scene: "mobile-gate", sel: ".remote-gate-card", sizes: PHONE_SM, langs: ["zh", "en"] },
+  { scene: "mobile-gate-filled", sel: ".remote-gate-card", sizes: PHONE_SM },
+  { scene: "mobile-gate-invalid", sel: ".remote-gate-err", sizes: PHONE_SM },
+  { scene: "mobile-gate-unreachable", sel: ".remote-gate-err", sizes: PHONE_SM, langs: ["zh", "en"] },
+  { scene: "mobile-gate-expired", sel: ".remote-gate-err", sizes: PHONE_SM },
+  { scene: "mobile-boot", sel: ".remote-boot", sizes: PHONE_SM },
+  { scene: "mobile-keys", sel: ".chat-remote-keyrow", sizes: PHONE_SM },
+  { scene: "mobile-list-empty", sel: ".chat-sidebar-empty", sizes: PHONE_SM },
+  { scene: "mobile-list-error", sel: ".chat-sidebar-empty.is-error", sizes: PHONE_SM },
+  { scene: "mobile-list", tag: "en", sel: ".remote-tabbar", sizes: PHONE_SM, langs: ["en"] },
+  // 键盘弹出：iPhone 竖屏键盘约占 336px，可视高度剩 476；SE 更矮（667-291=376）。
+  { scene: "mobile-chat", tag: "kbd", sel: ".chat-approval-actions", sizes: [{ w: 375, h: 476 }, { w: 375, h: 376 }] },
+  { scene: "mobile-list", tag: "land", sel: ".remote-tabbar", sizes: [{ w: 812, h: 375 }] },
+  { scene: "mobile-chat", tag: "land", sel: ".chat-approval-actions", sizes: [{ w: 812, h: 375 }] },
+  { scene: "mobile-list", tag: "ipad", sel: ".remote-tabbar", sizes: [{ w: 820, h: 1180 }] },
+  { scene: "mobile-settings", tag: "ipad", sel: ".remote-settings-screen .pswitch", sizes: [{ w: 820, h: 1180 }] },
+  { scene: "mobile-chat", tag: "ipad", sel: ".chat-approval-actions", sizes: [{ w: 820, h: 1180 }] },
+  // iPad 横屏走宽屏双栏：设置入口是侧栏头的齿轮。
+  { scene: "mobile-chat", tag: "ipadland", sel: ".chat-approval-actions", sizes: [{ w: 1180, h: 820 }] },
+  // 「更改」页与设置屏的横屏、iPad（2026-11-12 补：上一轮审查这两页只有竖屏图）。
+  { scene: "mobile-changes", tag: "land", sel: ".scm-row", sizes: [{ w: 812, h: 375 }] },
+  { scene: "mobile-changes", tag: "ipad", sel: ".scm-row", sizes: [{ w: 820, h: 1180 }] },
+  { scene: "mobile-changes", tag: "ipadland", sel: ".scm-row", sizes: [{ w: 1180, h: 820 }] },
+  { scene: "mobile-settings", tag: "land", sel: ".remote-settings-screen .pswitch", sizes: [{ w: 812, h: 375 }] },
 ];
 // 英文只挑两个文案最密的场景跑全矩阵，其余只拍中文。
 const EN_SCENES = new Set(["chat", "mobile-chat"]);
@@ -66,12 +172,50 @@ function buildMatrix() {
   for (const sc of DESKTOP_SCENES) for (const lang of EN_SCENES.has(sc.scene) ? ["zh", "en"] : ["zh"])
     for (const theme of THEMES) for (const { w, h } of DESKTOP) for (const dpr of DPRS)
       push({ ...sc, page: "desktop", lang, theme, w, h, dpr, mobile: false });
-  for (const sc of ISLAND_SCENES) for (const theme of THEMES) for (const dpr of DPRS)
+  for (const sc of FLOW_SCENES) for (const theme of THEMES) for (const { w, h } of FLOW_SIZES) for (const dpr of DPRS)
+    push({ ...sc, page: "desktop", lang: "zh", theme, w, h, dpr, mobile: false });
+  for (const sc of ISLAND_SCENES) for (const lang of sc.langs ?? ["zh"]) for (const theme of THEMES) for (const dpr of DPRS)
+    push({ ...sc, page: "desktop", lang, theme, dpr, mobile: false });
+  for (const sc of PANE_SCENES) for (const theme of THEMES) for (const dpr of DPRS)
     push({ ...sc, page: "desktop", lang: "zh", theme, dpr, mobile: false });
   for (const sc of MOBILE_SCENES) for (const lang of EN_SCENES.has(sc.scene) ? ["zh", "en"] : ["zh"])
     for (const theme of THEMES) for (const { w, h } of PHONE) for (const dpr of DPRS)
       push({ ...sc, page: "mobile", lang, theme, w, h, dpr, mobile: true });
+  for (const sc of MOBILE_EXTRA) for (const lang of sc.langs ?? ["zh"]) for (const theme of THEMES) for (const { w, h } of sc.sizes) {
+    const shot = { ...sc, page: "mobile", lang, theme, w, h, dpr: 2, mobile: true };
+    shots.push({ ...shot, name: `${sc.scene}${sc.tag ? "-" + sc.tag : ""}__${lang}__${theme}__w${w}${sc.tag ? "h" + h : ""}__dpr2` });
+  }
+  // 补看场景（qa-scenes.mjs）：要靠真实的点击、悬停、键盘才出得来的状态，以及缩放、超宽这些状态维度。
+  for (const sc of QA_SHOTS) for (const lang of sc.langs ?? ["zh"]) for (const theme of sc.themes ?? THEMES) {
+    const [w, h] = sc.size ?? [1280, 800];
+    shots.push({ sel: "body", ...sc, page: sc.page ?? "desktop", lang, theme, w, h, dpr: 2, mobile: sc.page === "mobile", name: `${sc.name}__${lang}__${theme}__w${w}__dpr2` });
+  }
   return shots;
+}
+
+// 截图前替用户做的动作（真实的指针与键盘事件，悬停态、焦点环、右键菜单都靠它）。
+// 每步之后推进假时钟：菜单进场、tooltip 延时、防抖都要它走。
+async function runSteps(page, ctx, steps, netIdle) {
+  for (const [op, a, b] of steps) {
+    const loc = () => page.locator(a).first();
+    if (op === "click") await loc().click({ timeout: 8000, ...(b ?? {}) });
+    else if (op === "rclick") await loc().click({ button: "right", timeout: 8000 });
+    else if (op === "dblclick") await loc().dblclick({ timeout: 8000 });
+    else if (op === "hover") await loc().hover({ timeout: 8000, ...(b ?? {}) });
+    else if (op === "focus") await loc().focus({ timeout: 8000 });
+    else if (op === "type") { await loc().click({ timeout: 8000 }); await page.keyboard.type(b); }
+    else if (op === "fill") await loc().fill(b, { timeout: 8000 });
+    else if (op === "key") await page.keyboard.press(a);
+    else if (op === "keys") for (let i = 0; i < (b ?? 1); i++) await page.keyboard.press(a);
+    else if (op === "eval") await page.evaluate(a);
+    // log：把页面里量到的东西打到终端（量对齐、查某个元素为什么被压扁）。
+    else if (op === "log") console.log("  · " + JSON.stringify(await page.evaluate(a)));
+    else if (op === "wait") await loc().waitFor({ state: "attached", timeout: 8000 }).catch(() => {});
+    else if (op === "tick") { await ctx.clock.runFor(a); await netIdle(60); continue; }
+    else if (op === "mouse") await page.mouse.move(a, b);
+    else throw new Error("未知动作：" + op);
+    for (let i = 0; i < 4; i++) { await ctx.clock.runFor(STEP_MS); await netIdle(60); }
+  }
 }
 
 // ── 冻结 ──────────────────────────────────────────────
@@ -126,13 +270,19 @@ async function shootOne(browser, base, shot, outDir, dryRun = false) {
     await ctx.clock.install({ time: FIXED_NOW });
     await ctx.clock.pauseAt(FIXED_NOW + 1000);
     const page = await ctx.newPage();
+    // 安全区：Playwright 的设备模拟不带 env(safe-area-inset-*)，截图里恒为 0，刘海和 home 横条相关的规则拍不出来。
+    // Chromium 的 CDP 能覆盖这组值（场景上写 safeArea: { top, bottom, left, right }）；WebKit 没有对应接口，跳过。
+    if (shot.safeArea && browser.browserType().name() === "chromium") {
+      const cdp = await ctx.newCDPSession(page);
+      await cdp.send("Emulation.setSafeAreaInsetsOverride", { insets: shot.safeArea });
+    }
     page.on("pageerror", (e) => errors.push("pageerror: " + e.message));
     const warnings = [];
     page.on("console", (m) => { if (m.type() === "error") warnings.push("console: " + m.text()); });
     // 资源 4xx/5xx（字体被拒、模块 404）会让画面悄悄变样，按失败处理，别把它拍进基线。
     page.on("response", (r) => { if (r.status() >= 400) errors.push(`HTTP ${r.status()} ${r.url()}`); });
     const netIdle = trackNetwork(page);
-    const url = `${base}/visual/${shot.page}.html?scene=${shot.scene}&lang=${shot.lang}&theme=${shot.theme}`;
+    const url = `${base}/visual/${shot.page}.html?scene=${shot.scene}&lang=${shot.lang}&theme=${shot.theme}${shot.params ? "&" + shot.params : ""}`;
     await page.goto(url, { waitUntil: "load" });
     await netIdle();
     for (let t = 0; t < ADVANCE_MS; t += STEP_MS) {
@@ -142,12 +292,33 @@ async function shootOne(browser, base, shot, outDir, dryRun = false) {
     if (errors.length) throw new Error(errors.slice(0, 3).join(" | "));
     const ready = await page.evaluate(() => window.__visualReady === true);
     if (!ready) throw new Error("harness 没有发出就绪信号");
-    if (!(await page.locator(shot.sel).first().count())) {
+    if (shot.steps) {
+      try { await runSteps(page, ctx, shot.steps, netIdle); } catch (e) {
+        // 预热那一遍（dryRun）用 800×600 的小视口，只为让 vite 把模块转译完：侧栏在这个宽度下是收起的，
+        // 找不到元素、动作点不成都正常，不留现场图——否则 _failed/ 里会多出几张「失败」图，
+        // 而正式那一遍其实一次拍成（qa-side-empty、qa-side-error 就是这样被误读成「首拍失败」的）。
+        if (dryRun) throw e;
+        const failDir = join(outDir, "_failed");
+        mkdirSync(failDir, { recursive: true });
+        await page.screenshot({ path: join(failDir, shot.name + ".png") }).catch(() => {});
+        throw new Error(`动作没做成：${String(e?.message ?? e).slice(0, 240)}`);
+      }
+    }
+    // 动作可能把页面点崩（渲染报错后整页空白）：先报页面错误，别让它被「缺少关键元素」盖住。
+    if (errors.length) throw new Error(errors.slice(0, 3).join(" | "));
+    if (!dryRun && !(await page.locator(shot.sel).first().count())) {
       // 留一张失败现场图，方便看场景到底挂成了什么样（不进输出目录，免得被当成基线）。
       const failDir = join(outDir, "_failed");
       mkdirSync(failDir, { recursive: true });
       await page.screenshot({ path: join(failDir, shot.name + ".png") }).catch(() => {});
       throw new Error(`缺少关键元素 ${shot.sel}（现场图：${join(failDir, shot.name + ".png")}）`);
+    }
+    // 场景里的窗口自己申请了新尺寸（独立新建窗按表单高度加高，harness 记在 __visualWinSize）：照着改视口，
+    // 拍出来的才是用户看到的窗口；不改的话只能拍到「加高之前被挤掉一截」的样子。
+    const asked = dryRun ? null : await page.evaluate(() => window.__visualWinSize ?? null);
+    if (asked && (asked.w !== shot.w || asked.h !== shot.h)) {
+      await page.setViewportSize({ width: asked.w, height: asked.h });
+      for (let i = 0; i < 4; i++) { await ctx.clock.runFor(STEP_MS); await netIdle(60); }
     }
     // 字体按 unicode-range 分片懒加载（@fontsource 的 Noto Sans SC 有上百片）：排版后才发请求，
     // 机器忙时 fonts.ready 可能在下一片开始加载前就 resolve，截到「回退字体 → 正式字体」换字前的

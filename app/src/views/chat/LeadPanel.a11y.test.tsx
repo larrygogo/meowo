@@ -11,9 +11,9 @@ function task(over: Partial<LeadTaskDto> = {}): LeadTaskDto {
   return {
     slug: "s", phase: "implement", spec: "", decisions: "", progress: "", gate: null,
     checks: [
-      { id: "1", check: "测试全过", passes: true, waived: null, leader: false },
-      { id: "2", check: "手机能用", passes: false, waived: null, leader: false },
-      { id: "3", check: "旧机型", passes: false, waived: "不再支持", leader: false },
+      { id: "1", check: "测试全过", passes: true, waived: null, leader: false, blocked: null },
+      { id: "2", check: "手机能用", passes: false, waived: null, leader: false, blocked: null },
+      { id: "3", check: "旧机型", passes: false, waived: "不再支持", leader: false, blocked: null },
     ],
     ...over,
   } as LeadTaskDto;

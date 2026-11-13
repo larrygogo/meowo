@@ -206,6 +206,30 @@ pub fn project_root(cwd: &Path) -> PathBuf {
     start
 }
 
+/// worktree 对应的主检出：`<wt>/.git` 是个文件，内容 `gitdir: <主检出>/.git/worktrees/<名>`，那个目录里的
+/// `commondir` 指回 `<主检出>/.git`。不是 worktree、或任何一步读不到，返回 None。
+fn main_checkout(root: &Path) -> Option<PathBuf> {
+    let dot_git = root.join(".git");
+    if !dot_git.is_file() {
+        return None;
+    }
+    let gitdir = read(&dot_git).trim().strip_prefix("gitdir:")?.trim().to_owned();
+    let gitdir = root.join(gitdir); // 相对路径相对 worktree 根，绝对路径 join 后不变
+    let common = read(&gitdir.join("commondir"));
+    let common = gitdir.join(common.trim()).canonicalize().map(strip_verbatim).ok()?;
+    let main = common.parent()?.to_path_buf();
+    (main != root && main.join(".lead").is_dir()).then_some(main)
+}
+
+/// 要找任务的 `.lead` 目录：项目自己的在前；在 worktree 里再加上主检出的。skill 规定任务目录一律放主检出
+///（worktree 删了任务记录不能跟着没），只看 worktree 根时，worktree 会话的 Lead 面板和手机关卡卡片都看不到
+/// 自己的任务（做空审查 2026-11-12 复现：snapshot_for 传 worktree 路径返回 None）。
+fn lead_dirs(cwd: &Path) -> Vec<PathBuf> {
+    let root = project_root(cwd);
+    let main = main_checkout(&root);
+    std::iter::once(root).chain(main).map(|r| r.join(".lead")).collect()
+}
+
 /// Windows 上 canonicalize 会带 `\\?\` 前缀（真机实测登记表里出现过），登记表和界面里都不该出现它。
 pub(crate) fn strip_verbatim(p: PathBuf) -> PathBuf {
     let s = p.to_string_lossy();
@@ -216,14 +240,12 @@ pub(crate) fn strip_verbatim(p: PathBuf) -> PathBuf {
 }
 
 fn find_task(cwd: Option<&str>) -> Option<PathBuf> {
-    let lead = project_root(Path::new(cwd?)).join(".lead");
-    let active = read(&lead.join("active"));
-    let slug = active.trim();
-    if !slug_ok(slug) {
-        return None;
-    }
-    let task = lead.join(slug);
-    task.is_dir().then_some(task)
+    lead_dirs(Path::new(cwd?)).into_iter().find_map(|lead| {
+        let active = read(&lead.join("active"));
+        let slug = active.trim();
+        let task = lead.join(slug);
+        (slug_ok(slug) && task.is_dir()).then_some(task)
+    })
 }
 
 /// Git Bash 写法 `/c/Users/...` 换成 `C:/Users/...`（只在 Windows）：agent 在 Windows 上多半跑在 Git Bash 里，
@@ -255,10 +277,10 @@ fn own_task(cwd: &str, sid: &str) -> Option<PathBuf> {
     if sid.is_empty() {
         return None;
     }
-    let lead = project_root(Path::new(cwd)).join(".lead");
-    std::fs::read_dir(&lead)
-        .ok()?
-        .flatten()
+    lead_dirs(Path::new(cwd))
+        .iter()
+        .filter_map(|lead| std::fs::read_dir(lead).ok())
+        .flat_map(|entries| entries.flatten())
         .map(|entry| entry.path())
         // 目录名过滤与 project_gates 一致（slug_ok 只挡非法字符，挡不住普通名字的子目录）。
         .filter(|task| {
@@ -353,6 +375,11 @@ fn needs_leader(i: &Value) -> bool {
     i.get("by")
         .and_then(Value::as_str)
         .is_some_and(|by| by.trim().eq_ignore_ascii_case("leader"))
+}
+
+/// 只差环境实测或授权的原因；空串、非字符串不算。
+fn blocked(i: &Value) -> Option<&str> {
+    i.get("blocked").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty())
 }
 
 fn item_line(i: &Value) -> String {
@@ -619,20 +646,188 @@ fn claim(data: &Value, registry: &Path) {
 
 // ---------------- stop ----------------
 
-/// 返回（用户最近一条真正的输入，这之后 agent 发起的工具调用）。
-fn this_turn(transcript: Option<&str>) -> (String, Vec<Value>) {
+/// transcript 末尾一段（最多 TRANSCRIPT_TAIL 字节）；读不到为空串。
+fn transcript_tail(transcript: Option<&str>) -> String {
     use std::io::{Read, Seek, SeekFrom};
-    let Some(path) = transcript else {
-        return (String::new(), vec![]);
-    };
-    let Ok(mut f) = std::fs::File::open(path) else {
-        return (String::new(), vec![]);
-    };
+    let Some(path) = transcript else { return String::new() };
+    let Ok(mut f) = std::fs::File::open(path) else { return String::new() };
     let len = f.metadata().map(|m| m.len()).unwrap_or(0);
     let _ = f.seek(SeekFrom::Start(len.saturating_sub(TRANSCRIPT_TAIL)));
     let mut bytes = Vec::new();
     let _ = f.read_to_end(&mut bytes);
-    let text = String::from_utf8_lossy(&bytes);
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+/// 启动后超过这么久还没回报的后台任务不再算「在等」：会话被杀或恢复后，旧任务永远不会再发通知，
+/// 不设上限的话这个会话的 Stop hook 就永久失效。子代理、Workflow 实测在一小时内回报。
+const BACKGROUND_STALE_SECS: i64 = 3 * 3600;
+/// 后台 Bash 的上限短得多：它常是 dev server、`http.server` 这类常驻服务，永远不回报（做空审查回放：历史
+/// 429 次后台启动里有跑了 149~1037 分钟的服务）。按 3 小时算，起一个预览服务就让 hook 失效 3 小时。
+/// 构建、测试这类后台命令实测在 45 分钟内结束。
+const BACKGROUND_BASH_STALE_SECS: i64 = 45 * 60;
+
+/// 有没有已启动、还没回报的后台任务（后台子代理、Workflow、后台 Bash）。
+///
+/// 为什么要看：子代理在后台干活时，主 agent 多半没事可做，只能结束本轮等通知；Stop hook 照拦，agent 就
+/// 回一句「等子代理完成」再停，被拦满 5 次。25 个任务里 lead 拦截约 394 次，有 300 次是这种空转（2026-11-12
+/// 统计，任务 20261112-lead-optimize）。
+///
+/// 只按 JSON 结构认，不搜字串：Read/Grep 的输出里常引用这些协议文本，按 contains 判会被喂出幽灵任务
+///（见 memory transcript-quote-poisoning）。
+/// - 启动：user 行的 `toolUseResult`（子代理 `status: "async_launched"` + `agentId`，后台 Bash
+///   `backgroundTaskId`）；Workflow 本机没有真实样例，不猜返回结构，只记它的 tool_use id。
+/// - 回报：通知正文里的 `<task-id>` 或 `<tool-use-id>`，两个都认。通知有三种落盘形态：空闲时是
+///   `origin.kind == "task-notification"` 的 user 行；会话正忙时是 queued_command 附件，外加一条入队记录
+///   （2f8ca755 实测：只认 user 行时 25 个后台任务全都「从未回报」）。
+/// - 主动收尾：TaskOutput/TaskStop 调用（取过结果就不再发通知，见 memory cc-taskoutput-eats-notification）。
+///
+/// 常驻服务（is_service）不算。要求了后台、返回结构认不出时按 tool_use id 等通知，偏向放行。
+fn background_pending(tail: &str, now: i64) -> bool {
+    struct Launch {
+        task: Option<String>,
+        tool_use: Option<String>,
+        at: Option<i64>,
+        ttl: i64,
+    }
+    let mut launched: Vec<Launch> = Vec::new();
+    let mut resolved = std::collections::BTreeSet::new();
+    let mut workflow_calls = std::collections::BTreeSet::new();
+    // 要求后台跑的 Agent / Bash 调用：tool_use id → 是不是常驻服务
+    let mut bg_calls: BTreeMap<String, bool> = BTreeMap::new();
+    let resolve = |content: Option<&str>, resolved: &mut std::collections::BTreeSet<String>| {
+        if let Some((task, tool_use)) = content.and_then(notified_ids) {
+            resolved.extend(task.into_iter().chain(tool_use).map(str::to_owned));
+        }
+    };
+    for line in tail.lines() {
+        let Ok(o) = serde_json::from_str::<Value>(line) else { continue };
+        match o.get("type").and_then(Value::as_str) {
+            Some("queue-operation") if o.get("operation").and_then(Value::as_str) == Some("enqueue") => {
+                resolve(o.get("content").and_then(Value::as_str), &mut resolved);
+            }
+            Some("attachment") if o.pointer("/attachment/type").and_then(Value::as_str) == Some("queued_command") => {
+                resolve(o.pointer("/attachment/prompt").and_then(Value::as_str), &mut resolved);
+            }
+            Some("user") => {
+                if o.pointer("/origin/kind").and_then(Value::as_str) == Some("task-notification") {
+                    resolve(o.pointer("/message/content").and_then(Value::as_str), &mut resolved);
+                    continue;
+                }
+                let at = o.get("timestamp").and_then(Value::as_str).and_then(parse_ts);
+                let str_of = |v: Option<&Value>| v.and_then(Value::as_str).filter(|s| !s.is_empty()).map(str::to_owned);
+                let res = match o.pointer("/message/content") {
+                    Some(Value::Array(arr)) => arr.iter().find(|x| x.get("type").and_then(Value::as_str) == Some("tool_result")),
+                    _ => None,
+                };
+                let tool_use = str_of(res.and_then(|r| r.get("tool_use_id")));
+                if res.and_then(|r| r.get("is_error")).and_then(Value::as_bool) == Some(true) {
+                    continue; // 调用失败，什么也没启动
+                }
+                let r = o.get("toolUseResult");
+                let service = tool_use.as_ref().and_then(|id| bg_calls.get(id)).copied().unwrap_or(false);
+                if let Some(id) = r.filter(|r| r.get("status").and_then(Value::as_str) == Some("async_launched")).and_then(|r| str_of(r.get("agentId"))) {
+                    launched.push(Launch { task: Some(id), tool_use, at, ttl: BACKGROUND_STALE_SECS });
+                } else if let Some(id) = r.and_then(|r| str_of(r.get("backgroundTaskId"))) {
+                    if !service {
+                        launched.push(Launch { task: Some(id), tool_use, at, ttl: BACKGROUND_BASH_STALE_SECS });
+                    }
+                } else if let Some(id) = tool_use.filter(|id| workflow_calls.contains(id) || bg_calls.contains_key(id)) {
+                    // Workflow，或者要求了后台、返回结构却认不出（CC 改版）：按 tool_use id 等通知。认不出时
+                    // 算「在等」，与 SPEC「认不出就放行」一致（做空第 2 轮）。
+                    if !service {
+                        launched.push(Launch { task: None, tool_use: Some(id), at, ttl: BACKGROUND_STALE_SECS });
+                    }
+                }
+            }
+            Some("assistant") => {
+                let Some(Value::Array(arr)) = o.pointer("/message/content") else { continue };
+                for c in arr.iter().filter(|c| c.get("type").and_then(Value::as_str) == Some("tool_use")) {
+                    match c.get("name").and_then(Value::as_str) {
+                        Some("Workflow") => {
+                            if let Some(id) = c.get("id").and_then(Value::as_str) {
+                                workflow_calls.insert(id.to_owned());
+                            }
+                        }
+                        Some(name @ ("Agent" | "Task" | "Bash" | "PowerShell"))
+                            if c.pointer("/input/run_in_background").and_then(Value::as_bool) == Some(true) =>
+                        {
+                            if let Some(id) = c.get("id").and_then(Value::as_str) {
+                                let cmd = c.pointer("/input/command").and_then(Value::as_str).unwrap_or("");
+                                bg_calls.insert(id.to_owned(), name != "Agent" && name != "Task" && is_service(cmd));
+                            }
+                        }
+                        Some("TaskOutput" | "TaskStop") => {
+                            let input = c.get("input");
+                            for key in ["task_id", "shell_id", "agentId", "id"] {
+                                if let Some(id) = input.and_then(|i| i.get(key)).and_then(Value::as_str) {
+                                    resolved.insert(id.to_owned());
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    launched.iter().any(|l| {
+        let done = [&l.task, &l.tool_use].into_iter().flatten().any(|id| resolved.contains(id));
+        !done && l.at.is_none_or(|t| now - t < l.ttl)
+    })
+}
+
+/// 后台命令是不是常驻服务（dev server、静态服务、watch）。服务永远不回报，agent 也不是在等它：算进
+/// 「在等」的话，起一个预览服务 hook 就失效 45 分钟，而且没有通知会来唤醒 agent（做空第 2 轮：历史 412 次
+/// 后台 Bash 里有 72 次是服务）。按词元判，`vitest` 不能被 `vite` 误伤。
+fn is_service(cmd: &str) -> bool {
+    let lower = cmd.to_ascii_lowercase();
+    let words: Vec<&str> = lower.split(|c: char| c.is_whitespace() || ";&|()".contains(c)).filter(|w| !w.is_empty()).collect();
+    let pair = |a: &str, b: &str| words.windows(2).any(|w| w[0] == a && w[1] == b);
+    words.iter().any(|w| matches!(*w, "serve" | "http.server" | "vite" | "preview" | "--watch" | "watch" | "live-server"))
+        || ["tauri", "run", "pnpm", "yarn", "next", "astro", "bun"].iter().any(|a| pair(a, "dev"))
+}
+
+/// 通知正文 `<task-notification>\n<task-id>X</task-id>\n<tool-use-id>Y</tool-use-id>…` 里的 (X, Y)；
+/// 必须以通知标签开头（行首锚定），两个都没有返回 None。
+fn notified_ids(content: &str) -> Option<(Option<&str>, Option<&str>)> {
+    let rest = content.trim_start().strip_prefix("<task-notification>")?;
+    let tag = |name: &str| {
+        let (open, close) = (format!("<{name}>"), format!("</{name}>"));
+        let start = rest.find(&open)? + open.len();
+        let len = rest[start..].find(&close)?;
+        Some(rest[start..start + len].trim()).filter(|s| !s.is_empty())
+    };
+    let ids = (tag("task-id"), tag("tool-use-id"));
+    (ids.0.is_some() || ids.1.is_some()).then_some(ids)
+}
+
+/// transcript 时间戳（`2026-11-12T04:58:10.006Z`）→ Unix 秒。只认 UTC 的 Z 结尾，别的格式返回 None
+///（None 当作「刚启动」，偏向放行）。为一个字段不值得引 chrono。
+fn parse_ts(s: &str) -> Option<i64> {
+    let b = s.as_bytes();
+    if b.len() < 20 || !s.ends_with('Z') {
+        return None;
+    }
+    let num = |r: std::ops::Range<usize>| s.get(r)?.parse::<i64>().ok();
+    let (y, mo, d) = (num(0..4)?, num(5..7)?, num(8..10)?);
+    let (h, mi, sec) = (num(11..13)?, num(14..16)?, num(17..19)?);
+    // Howard Hinnant 的 days_from_civil。
+    let y = if mo <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * (if mo > 2 { mo - 3 } else { mo + 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146097 + doe - 719468;
+    Some(days * 86400 + h * 3600 + mi * 60 + sec)
+}
+
+fn now_secs() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
+}
+
+/// 返回（用户最近一条真正的输入，这之后 agent 发起的工具调用）。
+fn this_turn(text: &str) -> (String, Vec<Value>) {
     let mut calls = Vec::new();
     for line in text.lines().rev() {
         let Ok(o) = serde_json::from_str::<Value>(line) else {
@@ -737,15 +932,21 @@ fn stop_inner(data: &Value, registry: &Path, evidence: Option<&TurnEvidence>) ->
         }
         return None;
     }
+    // 回合证据：四家 Provider 由各自的 hook 载荷正规化后传入；claude 从 transcript 尾部解析。
+    // tail 同时给后台任务判定用（claude 机制）；四家没有 claude 格式的 transcript，tail 为空、判为无后台任务。
+    let tail = transcript_tail(data.get("transcript_path").and_then(Value::as_str));
     let (user_text, calls) = match evidence {
         Some(evidence) => (evidence.user_text.clone(), evidence.calls.clone()),
-        None => this_turn(data.get("transcript_path").and_then(Value::as_str)),
+        None => this_turn(&tail),
     };
     if contains_stop_word(&user_text) {
         return None; // 用户明确叫停
     }
     if !wrote_task(&calls, &task) {
         return None; // 这一轮没在推进任务（用户插话、提问），不拦
+    }
+    if background_pending(&tail, now_secs()) {
+        return None; // 在等后台子代理或后台命令回报，通知到了会自动唤醒，拦了只会空转
     }
     // stop_hook_active=true：同一轮被拦后再次停下；否则是新的一轮，重新计数。
     let same_turn = data.get("stop_hook_active").and_then(Value::as_bool) == Some(true);
@@ -769,8 +970,31 @@ fn stop_inner(data: &Value, registry: &Path, evidence: Option<&TurnEvidence>) ->
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
     let list: Vec<String> = fail.iter().take(8).map(|i| item_line(i)).collect();
+    // 只差实测的条目（blocked）：没向 leader 要过授权就催发关卡 D。不只在「剩下的全是 blocked」时催：
+    // 起因那次正是混着几条没做完的，agent 打算等其余做完再攒批要授权，结果一直没发（云端 Xbot 第三期
+    // 面板停在 5/18；做空审查指出只在全是 blocked 时才催等于把攒批固化成默认节奏）。
+    // 关卡 D 已经答过了（consumed）就不再叫它重发：按答复去实测，leader 没允许的走豁免。
+    let waiting: Vec<String> = fail.iter().filter(|i| blocked(i).is_some()).map(|i| item_line(i)).collect();
+    let d_answered = read_gate(&task).is_some_and(|g| g.kind == "D" && g.status == "consumed");
+    let env_note = match (waiting.is_empty(), d_answered) {
+        (true, _) => String::new(),
+        (false, false) => format!(
+            "\n其中 {} 条只差环境实测或授权（blocked）：{}。现在就按 lead skill 写 gate.json 发关卡 D，把这几条要的部署、真机或账号一次说清，然后结束本轮；不要等其余条目做完或做空回来再攒批发。",
+            waiting.len(),
+            waiting.join("；")
+        ),
+        (false, true) => format!(
+            "\n其中 {} 条只差实测（blocked），关卡 D 已经答复：照答复去实测，通过后去掉 blocked 并勾上；leader 没允许的，发关卡 Q 问是否豁免，不要重发关卡 D。",
+            waiting.len()
+        ),
+    };
+    // 剩下的全是只差实测的：不用再说「继续推进下一条」，直接说该做什么。
+    if waiting.len() == fail.len() {
+        let reason = format!("[lead] 任务 {slug} 剩下 {} 条都只差环境实测或授权：\n{}{env_note}", fail.len(), list.join("\n"));
+        return Some(json!({"decision": "block", "reason": reason}).to_string());
+    }
     let reason = format!(
-        "[lead] 任务 {slug} 还在{}阶段，有 {} 条验收未通过（本轮第 {blocks}/{MAX_BLOCKS} 次拦截）：\n{}\n继续推进下一条，并实际验证。需要 leader 拍板、授权或亲手操作：按 lead skill 写 gate.json（B 拍板、D 授权或操作），然后结束本轮，不要用 AskUserQuestion。确实卡住了：在 progress.md 写明原因，把 phase 改为 blocked。某条只能由 leader 验收：给它加 \"by\": \"leader\"，就不会再为它拦你。",
+        "[lead] 任务 {slug} 还在{}阶段，有 {} 条验收未通过（本轮第 {blocks}/{MAX_BLOCKS} 次拦截）：\n{}\n继续推进下一条，并实际验证。在等后台子代理或后台命令回报：直接结束本轮，通知到了会唤醒你。某条做不到、要 leader 决定豁免，或者需要 leader 拍板、授权、亲手操作：现在就按 lead skill 写 gate.json（B 拍板单向门，D 授权或操作，Q 问豁免），然后结束本轮；不要用 AskUserQuestion，也不要自己加 waived 或 by:leader 来绕开拦截。确实卡住了：在 progress.md 写明原因，把 phase 改为 blocked。{env_note}",
         if phase == "verify" { "验证" } else { "实施" },
         fail.len(),
         list.join("\n")
@@ -989,6 +1213,7 @@ pub fn snapshot_for(cwd: &str, session: Option<&str>) -> Option<LeadTaskDto> {
             passes: i.get("passes") == Some(&Value::Bool(true)),
             waived: waived(i).map(str::to_owned),
             leader: needs_leader(i),
+            blocked: blocked(i).map(str::to_owned),
         })
         .collect();
     Some(LeadTaskDto {
@@ -1019,12 +1244,10 @@ pub fn task_dir(cwd: &str) -> Option<PathBuf> {
 /// 项目里**所有**任务目录下的关卡（不只 active）：新开一个任务会改写 active，但旧任务挂着的
 /// 关卡还在等 leader，不能因此从卡片、看板、防休眠里消失（做空审查 M4）。
 pub fn project_gates(cwd: &str) -> Vec<(PathBuf, LeadGateDto)> {
-    let lead = project_root(Path::new(cwd)).join(".lead");
-    let Ok(entries) = std::fs::read_dir(&lead) else {
-        return vec![];
-    };
-    let mut out: Vec<(PathBuf, LeadGateDto)> = entries
-        .flatten()
+    let mut out: Vec<(PathBuf, LeadGateDto)> = lead_dirs(Path::new(cwd))
+        .iter()
+        .filter_map(|lead| std::fs::read_dir(lead).ok())
+        .flat_map(|entries| entries.flatten())
         .map(|e| e.path())
         .filter(|p| p.is_dir() && p.file_name().is_some_and(|n| slug_ok(&n.to_string_lossy())))
         .filter_map(|t| read_gate(&t).map(|g| (t, g)))

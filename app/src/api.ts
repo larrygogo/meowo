@@ -84,7 +84,6 @@ import type { SetArchivedArgs } from "./generated/contracts/bridge/SetArchivedAr
 import type { SetKeepAwakeArgs } from "./generated/contracts/bridge/SetKeepAwakeArgs";
 import type { SetPushPausedArgs } from "./generated/contracts/bridge/SetPushPausedArgs";
 import type { SetSessionLaunchSelectionArgs } from "./generated/contracts/bridge/SetSessionLaunchSelectionArgs";
-import type { SetSessionNoteArgs } from "./generated/contracts/bridge/SetSessionNoteArgs";
 import type { SetWorkspaceOrderArgs } from "./generated/contracts/bridge/SetWorkspaceOrderArgs";
 import type { StartManagedTerminalArgs } from "./generated/contracts/bridge/StartManagedTerminalArgs";
 import type { StopManagedTerminalArgs } from "./generated/contracts/bridge/StopManagedTerminalArgs";
@@ -730,11 +729,6 @@ export function worktreeSetupTrust(path: string, hash: string): Promise<Worktree
   return invoke("worktree_setup_trust", { path, hash } satisfies WorktreeSetupTrustArgs);
 }
 export type { WorktreeCreateDto, WorktreePreviewDto, WorktreeSetupDto };
-
-/** 给会话挂 / 改便签（纯本地备忘，键为 cc_session_id）。 */
-export function setSessionNote(ccSessionId: string, note: string): Promise<void> {
-  return invoke("set_session_note", { sessionId: ccSessionId, note } satisfies SetSessionNoteArgs);
-}
 
 /** 在系统文件管理器里打开会话的工作目录。 */
 export function openProjectDir(cwd: string): Promise<void> {

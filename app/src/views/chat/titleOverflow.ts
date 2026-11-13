@@ -3,8 +3,8 @@
 /// 为什么单独一份：此前窄窗靠 styles.css 的 @container chat-bar 直接 display:none
 /// 收掉「打开方式」「PR」「改动」，菜单里却没有对应入口，拉窄窗口就丢功能（调研 sys8/c8：
 /// 620 宽开着面板时「终端」「侧边面板」还被面板盖住）。现在标题栏和 ⋯ 菜单读同一份收起结果，
-/// 一项要么在栏上、要么在菜单里，不会两头都没有。纯信息（PR 状态字、分支名、项目名）
-/// 仍由 CSS 容器查询收起，它们不是功能，点进改动页都看得到。
+/// 一项要么在栏上、要么在菜单里，不会两头都没有。纯信息（PR 状态字、分支名、项目名、
+/// 「结束会话」的字样）排在功能之前收，同样按实测宽度算（planTitleBar），只是不进菜单。
 import { createContext, type ReactNode } from "react";
 
 export type TitleOverflowKey = "pr" | "open" | "git" | "terminal" | "info" | "archive";
@@ -55,7 +55,68 @@ export function fitTitleBar(layout: TitleBarLayout, remote: boolean): Set<TitleO
   return out;
 }
 
-export function sameOverflow(a: ReadonlySet<TitleOverflowKey>, b: ReadonlySet<TitleOverflowKey>): boolean {
+/** 纯信息的收纳档：放不下时先收谁，排在前面的先收。它们不是功能（点不点都不丢入口），
+ *  所以排在所有功能按钮之前收，也不进 ⋯ 菜单：PR 状态字与领先/落后数、分支名在改动页都看得到，
+ *  项目名在侧栏分组上，「结束会话」收成图标后名字还在提示和读屏名里。
+ *  为什么从 CSS 容器查询搬到这里：原来是 @container chat-bar 的 900 / 760 / 400 三个固定门限，
+ *  不看栏上实际摆了什么、也不乘界面缩放。实拍 1280 宽开面板带 PR 时标题栏 792px，刚好在 760 以上，
+ *  一样没收，标题只剩 69px 而分支名占 94px；150% 缩放的 620 窗标题栏 553px 进不了 400 那档，
+ *  标题只剩 3 个字而「结束会话」四个字占 71px。 */
+export type TitleCompactKey = "prState" | "branch" | "project" | "endLabel";
+// 顺序：「结束会话」字样最先收——收成图标后入口和名字都还在，丢的只是四个字；项目名最后收——它是
+// 「这是哪个仓库的会话」的上下文，比分支名、PR 状态更常用来认会话（2026-11-12 主会话定，
+// 子代理初版把项目名排在结束会话字样之前，英文 1280 开面板时 web-app 收了而 End session 还在）。
+export const TITLE_COMPACT_ORDER: readonly TitleCompactKey[] = ["endLabel", "prState", "branch", "project"];
+
+/** 标题文字最多按这么多 em 去争位置：再长的标题省略也读得出是哪个会话，
+ *  不该为它在两千像素宽的栏上把分支名收掉。项目名同理，它本来就被 CSS 封顶在标题区的 30%。 */
+export const TITLE_WANT_EM = 16;
+export const PROJECT_WANT_EM = 8;
+
+export type TitleCompactSaving = {
+  step: TitleCompactKey;
+  /** 这一档省下的宽度记在谁头上：某个可收起项、不可收起项（结束会话）、还是标题区自己（项目名）。 */
+  owner: TitleOverflowKey | "fixed" | "title";
+  saving: number;
+};
+
+export type TitleBarPlanLayout = TitleBarLayout & {
+  /** 标题区完整显示（标题文字不省略，封顶 TITLE_WANT_EM）要的宽度；各宽度一律按「一档都没收」时的自然值给。 */
+  titleWant: number;
+  savings: readonly TitleCompactSaving[];
+};
+
+export type TitleBarPlan = { compact: Set<TitleCompactKey>; hidden: Set<TitleOverflowKey> };
+
+/** 标题栏的完整收纳顺序：标题最后才省略。
+ *  第一段：标题显示不全时，按 TITLE_COMPACT_ORDER 逐档收纯信息，收到标题能完整显示为止。
+ *  第二段：信息全收完，标题连保底宽都不够，才按 fitTitleBar 把功能按钮收进 ⋯。 */
+export function planTitleBar(layout: TitleBarPlanLayout, remote: boolean): TitleBarPlan {
+  const compact = new Set<TitleCompactKey>();
+  const hidden = new Set<TitleOverflowKey>();
+  if (!(layout.available > 0)) return { compact, hidden };
+  const others = layout.fixed.reduce((a, b) => a + b, 0) + layout.items.reduce((a, b) => a + b.width, 0)
+    + layout.gap * (layout.fixed.length + layout.items.length);
+  let title = Math.max(layout.titleMin, layout.titleWant);
+  let rest = others;
+  for (const step of TITLE_COMPACT_ORDER) {
+    if (Math.max(layout.titleMin, title) + rest <= layout.available - 0.5) return { compact, hidden };
+    compact.add(step);
+    for (const s of layout.savings) {
+      if (s.step !== step) continue;
+      if (s.owner === "title") title -= s.saving; else rest -= s.saving;
+    }
+  }
+  if (Math.max(layout.titleMin, title) + rest <= layout.available - 0.5) return { compact, hidden };
+  // 功能按钮按收完信息之后的宽度算：分支胶囊只剩图标和改动数，结束会话只剩图标。
+  const saved = (owner: TitleCompactSaving["owner"]) => layout.savings.reduce((a, s) => (s.owner === owner ? a + s.saving : a), 0);
+  const fixedSaved = saved("fixed");
+  const fixed = layout.fixed.map((w, i) => (i === 0 ? Math.max(0, w - fixedSaved) : w));
+  const items = layout.items.map((item) => ({ key: item.key, width: Math.max(0, item.width - saved(item.key)) }));
+  return { compact, hidden: fitTitleBar({ ...layout, fixed, items }, remote) };
+}
+
+export function sameOverflow<T>(a: ReadonlySet<T>, b: ReadonlySet<T>): boolean {
   if (a.size !== b.size) return false;
   for (const key of a) if (!b.has(key)) return false;
   return true;

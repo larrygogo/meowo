@@ -68,47 +68,6 @@ fn live_session_carries_project_name_title_and_progress() {
     assert_eq!(l.todos[0].content, "a");
 }
 
-#[test]
-fn session_note_upsert_delete_and_surfaces_in_live() {
-    let store = Store::open_in_memory().unwrap();
-    let pid = store.upsert_project_by_root("/p", "p", 100).unwrap();
-    let (s1, _) = store.start_session(pid, "sess-a", 100).unwrap();
-    store.on_user_prompt(s1, "标题", 110).unwrap();
-
-    // 初始无便签
-    assert_eq!(
-        store.live_sessions(None, None, None, None, 1000).unwrap()[0].note,
-        None
-    );
-
-    // 写入便签 → live_sessions 带出（前后空白被 trim）
-    store
-        .set_session_note("sess-a", "  记得 review  ", 120)
-        .unwrap();
-    assert_eq!(
-        store.live_sessions(None, None, None, None, 1000).unwrap()[0]
-            .note
-            .as_deref(),
-        Some("记得 review")
-    );
-
-    // upsert 覆盖旧便签
-    store.set_session_note("sess-a", "改主意了", 130).unwrap();
-    assert_eq!(
-        store.live_sessions(None, None, None, None, 1000).unwrap()[0]
-            .note
-            .as_deref(),
-        Some("改主意了")
-    );
-
-    // 清空（trim 后为空）→ 删除该行，回到 None
-    store.set_session_note("sess-a", "   ", 140).unwrap();
-    assert_eq!(
-        store.live_sessions(None, None, None, None, 1000).unwrap()[0].note,
-        None
-    );
-}
-
 // ===== Task 2: 过滤未命名空卡 =====
 
 #[test]
@@ -465,15 +424,21 @@ fn live_sessions_search_scoped_to_tab() {
     }
 }
 
-/// 搜索范围含便签与最近往来:便签是用户亲手写的记忆锚点,最近往来是「上次聊到哪」的
-/// 第一线索——只搜标题/目录时这两处的词搜不到,用户只能凭记忆逐个点开翻。
+/// 搜索范围含最近往来:它是「上次聊到哪」的第一线索——只搜标题/目录时搜不到,用户只能凭记忆逐个点开翻。
+/// 便签功能已取消(2026-11-12 leader):旧库 session_notes 里留着的便签不再参与搜索,免得命中看不见的文字。
 #[test]
-fn live_sessions_search_matches_note_and_recent_texts() {
-    let store = Store::open_in_memory().unwrap();
+fn live_sessions_search_matches_recent_texts_but_not_leftover_notes() {
+    let path = std::env::temp_dir().join(format!("meowo-search-notes-{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    let store = Store::open(&path).unwrap();
     let pid = store.upsert_project_by_root("/p", "p", 1).unwrap();
     let (a, _) = store.start_session(pid, "a", 100).unwrap();
     store.on_user_prompt(a, "无关标题", 110).unwrap();
-    store.set_session_note("a", "尾款发票相关", 120).unwrap();
+    // 模拟旧版本留下的便签:Store 已没有写便签的方法,直接写表。
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute("INSERT INTO session_notes (cc_session_id, note, updated_at) VALUES ('a', '尾款发票相关', 120)", [])
+        .unwrap();
     let (b, _) = store.start_session(pid, "b", 200).unwrap();
     store.on_user_prompt(b, "无关", 210).unwrap();
     store.set_last_ai_text(b, "方案走灰度发布", 220).unwrap();
@@ -483,8 +448,7 @@ fn live_sessions_search_matches_note_and_recent_texts() {
     let by_note = store
         .live_sessions(Some("all"), Some("发票"), None, None, 100)
         .unwrap();
-    assert!(by_note.iter().any(|l| l.session.cc_session_id == "a"));
-    assert_eq!(by_note.len(), 1, "便签命中只该有 a");
+    assert!(by_note.is_empty(), "只出现在旧便签里的词不该命中: {:?}", by_note.iter().map(|l| &l.session.cc_session_id).collect::<Vec<_>>());
 
     let by_ai = store
         .live_sessions(Some("all"), Some("灰度"), None, None, 100)
@@ -497,6 +461,8 @@ fn live_sessions_search_matches_note_and_recent_texts() {
         .live_sessions(Some("all"), Some("别的"), None, None, 100)
         .unwrap();
     assert!(by_user.iter().any(|l| l.session.cc_session_id == "c"));
+    drop(store);
+    let _ = std::fs::remove_file(&path);
 }
 
 #[test]

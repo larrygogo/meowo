@@ -151,13 +151,13 @@ fn blink(t: f32, period: f32) -> f32 {
     }
 }
 
-/// 眼睛的颜色：在跑绿、要你处理橙、出错红（与灵动岛同色）；空闲和跑完等你不上色，
+/// 眼睛的颜色：在跑绿、要你处理琥珀、出错红（取值与灵动岛的 --isl-ok / --isl-pending / --isl-err 相同，改色两边一起改）；空闲和跑完等你不上色，
 /// 用模板图跟菜单栏深浅色。
 pub(crate) fn tint(mood: Mood) -> Option<[u8; 3]> {
     match mood {
-        Mood::Running => Some([0x30, 0xd1, 0x58]),
-        Mood::Pending => Some([0xff, 0x9f, 0x0a]),
-        Mood::Error => Some([0xff, 0x45, 0x3a]),
+        Mood::Running => Some([0x2f, 0xcf, 0xa0]),
+        Mood::Pending => Some([0xff, 0xa1, 0x26]),
+        Mood::Error => Some([0xff, 0x5c, 0x57]),
         Mood::Idle | Mood::Waiting => None,
     }
 }

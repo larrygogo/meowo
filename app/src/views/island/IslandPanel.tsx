@@ -12,12 +12,14 @@ import { AgentRing, Ring, useNow, usedColor, usedOf } from "./islandParts";
 import { primaryLane } from "./useIslandUsage";
 import { ChatIcon, GearIcon } from "../sticker/icons";
 import { Icon } from "../../icons/Icon";
-import { icPlus, icStrip } from "../../icons/glyphs";
+import { icChevronDown, icPlus, icStrip } from "../../icons/glyphs";
 
 /** 极简模式图标：一条贴顶的细线。 */
 function StripIcon() {
+  // 14：这个字形在 24 格里只画到 2..22，按 12 画墨迹只有 10px，比旁边对话、设置两个图标（墨迹 12px）小一号
+  // （island-panel 实量）；对话图标也是 14。
   return (
-    <Icon glyph={icStrip} size={12} />
+    <Icon glyph={icStrip} size={14} />
   );
 }
 
@@ -36,7 +38,8 @@ function shownLanes(usage: ProviderUsage | undefined): UsageLane[] {
 
 /// 叠环里每一圈的颜色，按泳道排序后的位置取（最外圈第一个）。仿 Apple 健康的三环：每圈一个
 /// 固定色相，靠颜色把图例和圈对上。不再按用量变色：几圈都是绿的就分不清谁是谁。
-/// 快用完改由图例里的数字变色提示。避开琥珀和红，那两个在 Meowo 里是「要处理 / 出错」。
+/// 快用完改由图例里的数字变色提示。最外圈是品牌青柠；其余避开琥珀、红和绿，那三个在 Meowo 里是
+/// 「要处理 / 出错 / 在跑」。
 const LANE_COLORS = ["var(--isl-ok)", "#64d2ff", "#bf5af2", "#5e5ce6"];
 
 /// 叠环：一家一个，每档额度一圈，外大内小。用户要求（2026-11-05）：此前每档一个独立的环，
@@ -59,7 +62,7 @@ function StackedRings({ lanes }: { lanes: UsageLane[] }) {
             stroke={STACK_STROKE}
             value={usedOf(lane.used_pct as number) / 100}
             color={color}
-            track={`color-mix(in srgb, ${color} 22%, #000)`}
+            track={`color-mix(in srgb, ${color} 22%, var(--isl-mix, #000))`}
           />
         );
       })}
@@ -295,6 +298,8 @@ export function IslandPanel({
           </div>
         )}
 
+        {/* 箭头用图标不用「‹ ›」字符：字符在行框里偏下（实量墨迹中线比钮的中线低 1.75px），
+            而且跟着系统字体走，Windows 和 macOS 偏的还不一样；图标在钮里是几何居中的。方向由样式旋转。 */}
         {pages > 1 && (
           <>
             <button
@@ -302,13 +307,13 @@ export function IslandPanel({
               className="isl-page-arrow is-prev"
               aria-label={t.island.prevPage}
               onClick={() => setPage((current + pages - 1) % pages)}
-            >‹</button>
+            ><Icon glyph={icChevronDown} size={12} /></button>
             <button
               type="button"
               className="isl-page-arrow is-next"
               aria-label={t.island.nextPage}
               onClick={() => setPage((current + 1) % pages)}
-            >›</button>
+            ><Icon glyph={icChevronDown} size={12} /></button>
           </>
         )}
         {pages > 1 && (

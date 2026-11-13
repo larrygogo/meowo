@@ -198,7 +198,8 @@ describe("#31 提醒可关、可清空、悬停有上限", () => {
       emitIslandAlert(alertOf(3, "三"));
     });
     expect(await screen.findByText("一")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: zh.island.dismissAll }));
+    // 钮上写的是一共忽略几条（正在弹的 + 排队的两条）。
+    fireEvent.click(screen.getByRole("button", { name: zh.island.dismissAllCount(3) }));
     await waitFor(() => expect(screen.queryByText("一")).toBeNull());
     await new Promise((r) => setTimeout(r, 450));
     expect(screen.queryByText("二")).toBeNull();
@@ -212,7 +213,7 @@ describe("#31 提醒可关、可清空、悬停有上限", () => {
     act(() => { emitIslandAlert(alertOf(1, "独一条")); });
     expect(await screen.findByText("独一条")).toBeTruthy();
     expect(screen.getByRole("button", { name: zh.island.dismiss })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: zh.island.dismissAll })).toBeNull();
+    expect(document.querySelector(".isl-alert-skip")).toBeNull();
   });
 
   it("鼠标一直停在提醒上，最多留 15 秒", async () => {

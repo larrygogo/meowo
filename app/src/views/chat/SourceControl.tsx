@@ -59,8 +59,12 @@ export const isDirEntry = (file: { path: string }) => file.path.endsWith("/");
 type DirState = { req: number; loading: boolean; error: string | null; files: readonly ScmFile[] };
 const dirKey = (root: string, path: string) => `${normPath(root).toLowerCase()}\u0000${path}`;
 
-/// 一行的高度：CSS 里 .scm-row 是 24px、提示行约 28px。虚拟列表按它估位置，再按实测修正（手机触屏样式可能更高）。
-const ROW_H = 24;
+/// 一行的高度：CSS 里 .scm-row 是 28px（与文件树、会话信息栏的行同高）。虚拟列表按它估位置，再按实测修正（手机触屏样式可能更高）。
+const ROW_H = 28;
+// 行的内联样式只管层级缩进（每层 12px）。第 0 层的左边距在样式表里（.scm-row-main 的 --sp-10），
+// 和分组头的箭头同列、跟着界面缩放走；原先这里写死 8px，缩放不是 100% 时文件图标和箭头对不上。
+const INDENT = 12;
+const indent = (depth: number) => (depth > 0 ? { paddingLeft: depth * INDENT } : undefined);
 const NOTE_H = 28;
 type VRow = { key: string; size: number; node: ReactNode };
 
@@ -303,7 +307,7 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
     const dir = dirLabel ?? (slash > 0 ? row.file.path.slice(0, slash) : "");
     const count = commentCount(row.file.path);
     return (
-      <div key={`${kind}\u0000${row.file.path}`} className="scm-row" data-testid={`scm-row-${kind}`} style={{ paddingLeft: 8 + depth * 12 }}>
+      <div key={`${kind}\u0000${row.file.path}`} className="scm-row" data-testid={`scm-row-${kind}`} style={indent(depth)}>
         <button type="button" className="scm-row-main" data-tip={row.file.path}
           onClick={() => setOpen({ root, kind, path: row.file.path })}
           onContextMenu={(event) => onRowContext(event, row.file)}>
@@ -332,7 +336,7 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
     const isOpen = expandedDirs.has(dirKey(root, row.file.path));
     const count = row.file.untrackedFiles;
     return (
-      <div className="scm-row is-folded" data-testid={`scm-row-${kind}`} style={{ paddingLeft: 8 + depth * 12 }}>
+      <div className="scm-row is-folded" data-testid={`scm-row-${kind}`} style={indent(depth)}>
         <button type="button" className="scm-row-main" data-tip={row.file.path} aria-expanded={isOpen}
           onClick={() => toggleDirEntry(row.file.path)}>
           <FolderIcon />
@@ -370,7 +374,8 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
     const head: VRow = { key: id, size: ROW_H, node: dirRow(kind, row, depth, showDir) };
     const state = openDir(row);
     if (!expandedDirs.has(dirKey(root, row.file.path))) return [head];
-    const pad = { paddingLeft: 8 + (depth + 1) * 12 };
+    // 提示文字落在下一层的图标列上：.scm-row-main 的左内边距（--sp-10）加一层缩进。
+    const pad = { paddingLeft: `calc(var(--sp-10) + ${(depth + 1) * INDENT}px)` };
     if (!state || state.loading) return [head, { key: `${id}\u0000loading`, size: NOTE_H, node: <div className="scm-empty" style={pad}>{t.chat.scmDirLoading}</div> }];
     if (state.error) return [head, { key: `${id}\u0000error`, size: NOTE_H, node: <div className="scm-empty is-error" role="alert" style={pad}>{state.error}</div> }];
     return [head, ...shownKids(row).map((kid) => {
@@ -390,7 +395,7 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
             key: id,
             size: ROW_H,
             node: (
-              <div className="scm-row is-dir" style={{ paddingLeft: 8 + depth * 12 }}>
+              <div className="scm-row is-dir" style={indent(depth)}>
                 <button type="button" className="scm-row-main" aria-expanded={!closed} onClick={() => setCollapsedDirs((prev) => toggle(prev, id))}>
                   <FolderIcon />
                   <span className="scm-name">{node.name}</span>
@@ -422,7 +427,8 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
             <span>{title}</span>
           </button>
           {headActions && actionable(shown).length > 0 && <span className="scm-group-actions">{headActions(actionable(shown))}</span>}
-          <span className="scm-count">{changedFileCount(rows.map((row) => row.file))}</span>
+          {/* 计数徽标坐在与各行「统计 + 状态字母」同宽的尾列里：组头的放弃/暂存才能和各行的严格同列。 */}
+          <span className="scm-letters"><span className="scm-count">{changedFileCount(rows.map((row) => row.file))}</span></span>
         </div>
         {!isFolded && (shown.length === 0
           ? <div className="scm-empty">{query ? t.chat.diffSearchNoResults : scope === "turn" ? t.chat.diffNoTurnChanges : t.chat.diffNoSessionChanges}</div>

@@ -4,7 +4,7 @@ import { dropNeighbors, moveNextTo, orderKey, sidebarDirGroups, usePointerReorde
 import { WorkspaceDirectory } from "./chat/WorkspaceDirectory";
 import { useTablist } from "./useTablist";
 import { tipWithKeys } from "./chat/WindowModals";
-import { confirmStopSession, getLiveSessionsPage, getSettings, moveSessionRank, setWorkspaceOrder as saveWorkspaceOrder, openNewSessionWindow, openProjectDir, recentCwds, renameSession, searchChatTranscripts, sessionTone, setArchived, setSessionNote, type CardMenuMode, type LiveSession, type SessionTone, type TranscriptSearchHit } from "../api";
+import { confirmStopSession, getLiveSessionsPage, getSettings, moveSessionRank, setWorkspaceOrder as saveWorkspaceOrder, openNewSessionWindow, openProjectDir, recentCwds, renameSession, searchChatTranscripts, sessionTone, setArchived, type CardMenuMode, type LiveSession, type SessionTone, type TranscriptSearchHit } from "../api";
 import { noteSessionMeta } from "./chat/historyCache";
 import { attentionTone } from "./chat/nextAttention";
 import { remoteUi } from "../remoteMode";
@@ -21,7 +21,7 @@ import { WorkspaceHeader } from "./chat/WorkspaceHeader";
 import { SidebarGitBadgeSlot, useSidebarGitBadges } from "./chat/SidebarGitBadge";
 import { editorKeyDown, fmtAgo, fmtShortAgo, fmtWaited, readSidebarGroupMode, readSidebarSortMode, SIDEBAR_GROUP_MODE_KEY, SIDEBAR_SORT_MODE_KEY, useStarred, type SidebarGroupMode, type SidebarSortMode } from "./sticker/helpers";
 import { UNNAMED_SESSION_SENTINEL } from "./sticker/types";
-import { CheckIcon, MoreIcon, NoteIcon, TopIcon } from "./sticker/icons";
+import { CheckIcon, MoreIcon, TopIcon } from "./sticker/icons";
 import { useT } from "../i18n";
 import { formatBackendError } from "../i18n/errors";
 import { isMac } from "../platform";
@@ -350,7 +350,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
   // 一个每渲染同步的镜像 ref(本仓 xxxRef.current = xxx 惯例),回包时与它比即可。
   const searchLiveRef = useRef(search);
   searchLiveRef.current = search;
-  // 对话内容全文搜索(显式动作):LIKE 只覆盖标题/目录/便签/最近往来,正文要靠后端扫
+  // 对话内容全文搜索(显式动作):LIKE 只覆盖标题/目录/最近往来,正文要靠后端扫
   // transcript 文件——点「搜索对话内容」才发,不随击键。结果与词绑定,词一变即作废。
   const [deepHits, setDeepHits] = useState<TranscriptSearchHit[] | null>(null);
   const [deepSearching, setDeepSearching] = useState(false);
@@ -571,7 +571,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
   // Ctrl/Cmd+F 聚焦搜索框的监听在 ChatWindow（侧栏收起时本组件整体卸载，挂在这里的
   // 快捷键会跟着静默失效）；本组件只把搜索框句柄经 searchInputRef 交出去。
 
-  // 会话操作菜单:与看板卡片是同一个 CardContextMenu、同一批动作(置顶/便签/重命名/归档/
+  // 会话操作菜单:与看板卡片是同一个 CardContextMenu、同一批动作(置顶/重命名/归档/
   // 新建会话/打开目录/结束会话)。两处共用一个组件是刻意的——菜单项一旦各写一份,迟早
   // 会一边有、另一边没有。触发方式:条目右键,或条目上的「⋯」按钮。
   const [ctxMenu, setCtxMenu] = useState<{ sid: number; x: number; y: number } | null>(null);
@@ -587,16 +587,15 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
     setMenuMode(remoteUi() ? "button" : (s.card_menu_mode ?? "button"));
     setWorkspaceOrder(s.workspace_order ?? []);
   });
-  // 菜单内容按 id 现查:刷新后置顶/便签/归档态自动跟上,会话消失则菜单自然收起。
+  // 菜单内容按 id 现查:刷新后置顶/归档态自动跟上,会话消失则菜单自然收起。
   const ctxItem = ctxMenu ? (sessions ?? []).find((s) => s.session.id === ctxMenu.sid) ?? null : null;
   // 置顶与看板共用同一份 localStorage(键沿用 meowo-starred,改键会丢用户已有数据),
   // 两个界面看到的是同一批置顶会话,且都排到最前(见下方 ordered)。
   // 置顶集：与看板/对话窗标题菜单共用 useStarred（同一份写入口 + 双通道同步）。
   const { starred, toggleStar } = useStarred();
-  // 重命名 / 便签:与看板一样就地编辑(同一条会话上只开一个编辑器)。
+  // 重命名:与看板一样就地编辑。
   // 草稿文本不在这里——住在 EditorInput 的局部状态里,按键不触发侧栏整表重渲染。
   const [editingId, setEditingId] = useState<number | null>(null);
-  const [notingId, setNotingId] = useState<number | null>(null);
   // 动作失败必须可见:静默吞掉的话,用户点了「重命名」只会看到名字没变,以为是自己没点上。
   const [actionError, setActionError] = useState<string | null>(null);
   // 批量清理 worktree 的进行状态与结果（结果可能多行：失败项逐行列出），8s 后自动收起。
@@ -614,7 +613,6 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
   }, [actionError]);
 
   const startRename = (item: LiveSession) => {
-    setNotingId(null);
     setEditingId(item.session.id);
   };
   const submitRename = (item: LiveSession, draft: string) => {
@@ -624,17 +622,6 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
         .catch(() => setActionError(t.sticker.renameFailed));
     }
     setEditingId(null);
-  };
-  const startNote = (item: LiveSession) => {
-    setEditingId(null);
-    setNotingId(item.session.id);
-  };
-  const submitNote = (item: LiveSession, noteDraft: string) => {
-    if (noteDraft !== (item.note ?? "")) {
-      setSessionNote(item.session.cc_session_id, noteDraft)
-        .catch(() => setActionError(t.sticker.noteFailed));
-    }
-    setNotingId(null);
   };
   // 归档动作(单条/批量)与撤销条统一走 useSessionActions(C-13):与对话窗标题菜单同一条
   // set_archived、同一个「下一条」取序(按当前可见顺序取当前条之后的第一条)、同一个 8s 撤销窗。
@@ -1003,7 +990,6 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
     // 且不依附 connected——离线会话恢复的 agent 同样可能来要权限。
     const awaitingApproval = approvalAwaitingIds.has(item.session.id);
     const editing = editingId === item.session.id;
-    const noting = notingId === item.session.id;
     // 目录已删的会话不挂（点进去也恢复不了，下面另有「目录已删除」）。
     const badgeCwd = item.cwd && !item.cwd_missing ? item.cwd : null;
     // 条目从 <button> 改成 role=button 的 <div>：里面要放「⋯」按钮，button 套 button 是
@@ -1023,9 +1009,9 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
         aria-pressed={selectedIds.size > 0 ? selectedIds.has(item.session.id) : undefined}
         // 预取：触屏按下即读（到点击生效还有一百多毫秒），鼠标悬停 150ms 再读。多选态点行是勾选，不预取。
         onPointerDown={(event) => {
-          if (selectedIds.size === 0 && !editing && !noting) onPrefetch?.(item.session.id);
+          if (selectedIds.size === 0 && !editing) onPrefetch?.(item.session.id);
           // 手动排序下按住拖动即调位置（行内按钮、编辑框不起拖）。
-          if (!editing && !noting && !(event.target as HTMLElement).closest("button, input, textarea, .chat-sidebar-item-menu, .chat-sidebar-check-btn")) drag.onPointerDown(event, item.session.id);
+          if (!editing && !(event.target as HTMLElement).closest("button, input, textarea, .chat-sidebar-item-menu, .chat-sidebar-check-btn")) drag.onPointerDown(event, item.session.id);
         }}
         onPointerEnter={(event) => {
           if (event.pointerType !== "mouse" || !onPrefetch) return;
@@ -1037,7 +1023,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
           // 刚拖完松手的那次 click 不算点击，不然拖完会顺手打开会话。
           if (drag.swallowClick()) return;
           // 编辑态下点条目只用于收起编辑器，不切会话（输入框自身已 stopPropagation）。
-          if (editing || noting) { setEditingId(null); setNotingId(null); return; }
+          if (editing) { setEditingId(null); return; }
           // Ctrl/Cmd+点击 = 进入多选/增删(批量标记完成)。多选态下**普通点击整行也是增删**,
           // 不切会话:此前普通点击会退出多选并打开会话,只有右侧小勾选圈才增删——用户点行首
           // 想勾选却被带进了会话(用户反馈「多选的时候为什么点前面会直接进入会话」)。整行即
@@ -1063,7 +1049,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
           }
           if (event.key !== "Enter" && event.key !== " ") return;
           event.preventDefault(); // 空格不要滚动列表
-          if (editing || noting) { setEditingId(null); setNotingId(null); return; }
+          if (editing) { setEditingId(null); return; }
           // 与点击同口径：多选态下 Enter/空格是增删，不切会话。
           if (selectedIds.size > 0) { toggleSelected(item.session.id); return; }
           onSelect(item.session.id);
@@ -1152,7 +1138,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
                 <span className="chat-sidebar-name-inner">{item.task_title || t.sticker.waitingFirstInput}</span>
               </span>
               {/* 按工作区分组、本行没有副行（不是 worktree）时，PR/CI 与改动数跟在标题末尾，不单开一行。 */}
-              {!noting && groupMode === "dir" && !worktreeNameOf(item) && badgeCwd && <SidebarGitBadgeSlot store={gitBadges} cwd={badgeCwd} />}
+              {groupMode === "dir" && !worktreeNameOf(item) && badgeCwd && <SidebarGitBadgeSlot store={gitBadges} cwd={badgeCwd} />}
             </span>
           )}
           {/* 目录行 = 目录名 + 附加目录标(+N,与贴纸卡同款) + 最后活跃时间同排——前两者曾是
@@ -1163,7 +1149,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
           {/* 副行只在不按工作区分组时出现（对照 Kimi：平铺列表才在标题下写工作区名）。 */}
           {/* PR / CI 与改动数跟在工作区名（或 worktree 标）后面；分组视图没有副行时跟在标题行末尾（见上）。 */}
           {/* 摘要位自己订阅结果（SidebarGitBadgeSlot），回来时不重渲染整张列表。 */}
-          {!noting && (dir && groupMode !== "dir" ? (
+          {(dir && groupMode !== "dir" ? (
             <span className="chat-sidebar-metaline">
               <span className="chat-sidebar-meta" data-tip={item.cwd ?? undefined}>{dir}</span>
               {badgeCwd && <SidebarGitBadgeSlot store={gitBadges} cwd={badgeCwd} />}
@@ -1176,25 +1162,21 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
             </span>
           ) : null)}
           {/* 目录已删除（worktree 清理掉了）：不管按不按目录分组都要显示——点进去恢复不了，得先说。 */}
-          {!noting && item.cwd_missing && (
+          {item.cwd_missing && (
             <span className="chat-sidebar-gone" data-tip={t.worktree.dirMissingTip} data-testid="sidebar-dir-missing">{t.worktree.dirMissing}</span>
-          )}
-          {/* 便签写完要看得见，否则「添加便签」等于写进黑洞。编辑中的那条让位给输入框。 */}
-          {!noting && item.note && (
-            <span className="chat-sidebar-note" data-tip={item.note}><NoteIcon /><span className="chat-sidebar-note-text">{item.note}</span></span>
-          )}
-          {noting && (
-            <EditorInput
-              initial={item.note ?? ""}
-              placeholder={t.sticker.notePlaceholder}
-              onSubmit={(value) => submitNote(item, value)}
-              onCancel={() => setNotingId(null)}
-            />
           )}
         </span>
         {/* 右侧：时间（对照 Kimi 的紧凑「3d」），等待中换成「已等待 X」警示色；悬停时让位给「⋯」。
             旧库/合成数据可能缺 last_event_at：NaN 会让 Intl 直接抛错炸掉整棵侧栏，缺失时不显示。 */}
         <span className="chat-sidebar-act">
+          {/* 手机列表卡把状态写成字（样张：标题右侧「待批准 / 运行中 / 出错了」）：触屏没有悬停提示，
+              只靠 7px 圆点的颜色分不清「等待输入」和「待处理」。文案与圆点的读屏名同源；圆点已有
+              读屏名，这里对读屏隐藏免得念两遍。桌面侧栏不渲染。 */}
+          {remoteUi() && selectedIds.size === 0 && (awaitingApproval || showDot) && (
+            <span className={"chat-sidebar-status is-" + (awaitingApproval ? "approval" : tone)} aria-hidden="true">
+              {awaitingApproval ? t.chat.sidebarApproval : t.chat.status[tone]}
+            </span>
+          )}
           {selectedIds.size === 0 && Number.isFinite(item.session.last_event_at) && (
             <span className={"chat-sidebar-time" + (tone === "waiting" ? " is-waited" : "")} data-tip={tone === "waiting" ? fmtWaited(item.session.last_event_at, t) : undefined}>
               {/* 等待中也用紧凑写法（「6m」），只换警示色：「已等待 6 分钟」在这一列太长（用户实拍），
@@ -1546,7 +1528,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
       )}
       {/* 归档后所在 worktree 能清理就提示（二期包 5，不自动删）。 */}
       {!actionError && <ArchivedWorktreePrompt t={t} className="chat-sidebar-error is-undo" />}
-      {/* 动作失败的唯一出口（重命名/便签/归档）：4s 后自动消失。 */}
+      {/* 动作失败的唯一出口（重命名/归档）：4s 后自动消失。 */}
       {actionError && <div className="chat-sidebar-error" role="status">{actionError}</div>}
       {/* 批量归档操作条:多选态常驻底部(Ctrl+点击增删,Esc 退出)。 */}
       {selectedIds.size > 0 && (
@@ -1561,10 +1543,8 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
           x={ctxMenu.x}
           y={ctxMenu.y}
           starred={starred.has(ctxItem.session.cc_session_id)}
-          hasNote={!!ctxItem.note}
           archived={ctxItem.archived}
           onStar={() => toggleStar(ctxItem.session.cc_session_id)}
-          onNote={() => startNote(ctxItem)}
           onRename={() => startRename(ctxItem)}
           onArchive={() => toggleArchived(ctxItem)}
           // 多选入口:Ctrl+点击对鼠标用户不可发现,菜单里给一个显式的起点。

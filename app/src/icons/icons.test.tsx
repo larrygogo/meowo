@@ -22,7 +22,6 @@ const SVG_EXCEPTIONS: Record<string, string> = {
   "views/chat/ContextMeter.tsx": "上下文占用圆环：dasharray 随数据变化的进度图形",
   "views/chat/LeadPanel.tsx": "关卡进度圆环：dasharray 随数据变化的进度图形",
   "views/chat/TodoBadge.tsx": "实心圆徽章里的记号：尺寸跟徽章（8/10px）走，套 12px 会顶出圆框",
-  "demo/DemoStage.tsx": "演示页里模拟的鼠标指针：白底黑边的填充图形，不进应用包",
   "demo/IslandStage.tsx": "演示页里模拟的鼠标指针：白底黑边的填充图形，不进应用包",
 };
 
