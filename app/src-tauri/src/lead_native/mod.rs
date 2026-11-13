@@ -143,6 +143,10 @@ pub(crate) fn deliver(target: &NativeTarget<'_>, app: Option<&tauri::AppHandle>)
     }
 }
 
+/// 面板状态：答复已在会话队列里，但会话停下了（用户拒绝审批 / 打断），要在会话里发一句话
+/// （i18n leadDeliveryState 同名键；Codex 与 OpenCode 共用）。
+pub(crate) const QUEUED_STALLED: &str = "queued_stalled";
+
 /// opencode_http 内部用的送达状态（state 取 i18n leadDeliveryState 的键），由 [`delivery_status`] 转成面板 DTO。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct NativeStatus {

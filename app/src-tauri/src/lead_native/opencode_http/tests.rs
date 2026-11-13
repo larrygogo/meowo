@@ -541,3 +541,91 @@ fn delivery_only_touches_session_endpoints_never_tui_input_or_permissions() {
     assert_eq!(routes, expected);
     let _ = std::fs::remove_dir_all(root);
 }
+
+/// 第二轮 P2：用户按 Esc 拒绝审批后，排着的答复留在会话里不跑，面板原来一直「已接收」。
+/// 1.19.5 没有只让会话接着跑的接口，巡检认出「会话空闲、我们那条是最后一条用户消息、没有回复」
+/// 就如实改成 queued_stalled；会话忙、已有回复、用户之后又发过话都不算卡住。不发任何 POST。
+#[test]
+fn stalled_answer_is_reported_without_posting_anything() {
+    let root = temp_root("stall");
+    let db = root.join("board.db");
+    let task = root.join("task");
+    let key = delivery_key(&task, "gate-1", "ses_abc");
+    let ours = "msg_ours";
+    let scenario = Arc::new(StdMutex::new((json!({}), json!([]))));
+    let routes = scenario.clone();
+    let (port, seen) = fake_server_with("pw-stall", move |route| {
+        let (status, messages) = routes.lock().unwrap().clone();
+        match route {
+            "/session/ses_abc" => (200, r#"{"id":"ses_abc","directory":"C:\\proj"}"#.to_owned()),
+            "/session/status" => (200, status.to_string()),
+            "/session/ses_abc/message" => (200, messages.to_string()),
+            _ => (404, String::new()),
+        }
+    });
+    register_tui(&db, 4646, port, "pw-stall");
+    let accepted = |at_ms: i64| {
+        let path = registry_path(&db);
+        let mut reg = Registry::load(&path);
+        reg.deliveries.insert(
+            key.clone(),
+            Delivery {
+                state: "accepted".into(),
+                message_id: ours.into(),
+                part_id: "prt_ours".into(),
+                attempts: 1,
+                at_ms,
+                reason: None,
+                stalled: false,
+            },
+        );
+        reg.save(&path).unwrap();
+    };
+    let state = || status(&db, &task, "gate-1", "ses_abc").state;
+    let patrol = || deliver_with(&target(&db, &task, false), Presence::Managed(Some(4646))).unwrap();
+    let user = |id: &str| json!({"info":{"id":id,"role":"user"}});
+    let reply_to = |id: &str| json!({"info":{"id":"msg_r","role":"assistant","parentID":id}});
+    let stalled = json!([user("msg_old"), reply_to("msg_old"), user(ours)]);
+
+    // 刚接收（宽限期内）：不查。
+    accepted(now_ms());
+    *scenario.lock().unwrap() = (json!({}), stalled.clone());
+    patrol();
+    assert_eq!(state(), "accepted");
+    // 过了宽限期、会话空闲、我们那条没有回复：卡住。
+    accepted(now_ms() - STALL_GRACE_MS - 1);
+    patrol();
+    assert_eq!(state(), crate::lead_native::QUEUED_STALLED);
+    // 用户又发了一句、那一轮带上了它：不再算卡住。
+    let resumed = json!([user(ours), user("msg_user"), reply_to("msg_user")]);
+    *scenario.lock().unwrap() = (json!({}), resumed);
+    patrol();
+    assert_eq!(state(), "accepted");
+    // 会话忙（在 /session/status 里）或已有回复：都不算。
+    *scenario.lock().unwrap() = (json!({"ses_abc":{"type":"busy"}}), stalled);
+    patrol();
+    assert_eq!(state(), "accepted");
+    *scenario.lock().unwrap() = (json!({}), json!([user(ours), reply_to(ours)]));
+    patrol();
+    assert_eq!(state(), "accepted");
+    assert!(prompts(&seen).is_empty(), "核对卡住不能再投一遍");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// 第二轮 P4：TUI 退出后它的端口条目（带密码）不再留在登记表里；本次指着的那个保留。
+#[test]
+fn patrol_prunes_endpoints_of_exited_tuis() {
+    let root = temp_root("prune");
+    let db = root.join("board.db");
+    let task = root.join("task");
+    register_tui(&db, 4_294_000, 1, "gone"); // 不存在的进程
+    register_tui(&db, 4747, 2, "here");
+    let _ = deliver_with(&target(&db, &task, false), Presence::Managed(Some(4747)));
+    let pids: Vec<u32> = Registry::load(&registry_path(&db))
+        .endpoints
+        .iter()
+        .map(|e| e.pid)
+        .collect();
+    assert_eq!(pids, [4747]);
+    let _ = std::fs::remove_dir_all(root);
+}

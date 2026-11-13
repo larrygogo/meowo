@@ -86,6 +86,10 @@ struct Delivery {
     at_ms: i64,
     #[serde(default)]
     reason: Option<String>,
+    /// accepted 之后巡检看到「会话空闲、我们的消息是最后一条用户消息、却没有回复」：会话停下了
+    /// （用户按 Esc 拒绝审批或打断）。面板改说「在会话里发一句话」，不再一直「已接收」。
+    #[serde(default)]
+    stalled: bool,
 }
 
 #[derive(Serialize, Deserialize, Default, Debug)]
@@ -405,12 +409,38 @@ pub(crate) fn deliver_with(
     let _guard = LOCK.lock();
     let path = registry_path(target.db);
     let mut reg = Registry::load(&path);
+    // 巡检时顺手清掉进程已退出的 TUI 条目（第二轮 P4：TUI 退出后条目一直留着，带着旧密码）。
+    // 本次 presence 指着的那个不动：调用方已确认它在。
+    let here = match presence {
+        Presence::Managed(pid) => pid,
+        Presence::Elsewhere(pid) => Some(pid),
+        Presence::Gone => None,
+    };
+    let before = reg.endpoints.len();
+    reg.endpoints.retain(|e| Some(e.pid) == here || pid_alive(e.pid));
+    if reg.endpoints.len() != before {
+        let _ = reg.save(&path);
+    }
     let key = delivery_key(target.task, target.gate_id, target.native_session);
     let previous = reg.deliveries.get(&key).cloned();
     if let Some(previous) = &previous {
         match previous.state.as_str() {
-            // 已被服务接收：答复在会话里了，巡检再调也不重复送。
-            "accepted" => return Ok(NativeOutcome::Delivered),
+            // 已被服务接收：答复在会话里了，巡检再调也不重复送；只核对它是不是卡在了停下的会话里。
+            "accepted" => {
+                if now_ms() - previous.at_ms >= STALL_GRACE_MS {
+                    if let Route::Tui(endpoint) = resolve_endpoint(&reg, presence) {
+                        if let Ok(stalled) = queue_stalled(&endpoint, target, &previous.message_id) {
+                            if stalled != previous.stalled {
+                                if let Some(entry) = reg.deliveries.get_mut(&key) {
+                                    entry.stalled = stalled;
+                                }
+                                reg.save(&path)?;
+                            }
+                        }
+                    }
+                }
+                return Ok(NativeOutcome::Delivered);
+            }
             "failed"
                 if !target.force
                     && (previous.attempts >= MAX_AUTO_ATTEMPTS
@@ -443,6 +473,7 @@ pub(crate) fn deliver_with(
         attempts,
         at_ms: now_ms(),
         reason,
+        stalled: false,
     };
     let endpoint = match resolve_endpoint(&reg, presence) {
         Route::Tui(endpoint) => endpoint,
@@ -645,6 +676,54 @@ fn post_prompt(
     }
 }
 
+/// 接收后至少过这么久才核对是否卡住：prompt_async 立即返回，runner 起来前会话短暂仍是空闲。
+const STALL_GRACE_MS: i64 = 15_000;
+
+/// 答复是否卡在停下的会话里（第二轮真机 P2）。
+///
+/// 1.19.5 没有「不加新消息、只让会话接着跑」的正规接口：v1 会话路由里调用 SessionPrompt.loop 的只有
+/// prompt/prompt_async（会先建一条新用户消息）和 summarize（会先压缩上下文）；`/api/session/*`
+/// 的 v2 路由是另一套会话存储，TUI 不用。所以这里不触发，只如实提示。判据：会话不在
+/// `GET /session/status`（只列非空闲会话，SessionStatus.set 置 idle 时删除）里，我们那条消息是最后一条
+/// 用户消息，且没有 assistant 消息以它为 parentID。用户之后又发过话（我们的不再是最后一条）就不算卡住：
+/// 那一轮已经把它带上了（run-efc752c497 实测）。
+fn queue_stalled(
+    endpoint: &Endpoint,
+    target: &NativeTarget<'_>,
+    message_id: &str,
+) -> Result<bool, String> {
+    let client = Client::of(endpoint);
+    if !crate::session_command::is_safe_id(target.native_session) {
+        return Err("lead/owner_invalid".into());
+    }
+    let first = target.cwd.map(query);
+    let (native, info) = root_session(&client, target.native_session, &first)?;
+    let directory = info["directory"].as_str().map(query).or(first);
+    let busy = client.get(&scoped("/session/status".into(), &directory), Duration::from_secs(5))?;
+    if busy.get(&native).is_some() {
+        return Ok(false);
+    }
+    let messages = client.get(
+        &scoped(format!("/session/{native}/message?limit=50"), &directory),
+        Duration::from_secs(10),
+    )?;
+    Ok(answer_unanswered(&messages, message_id))
+}
+
+/// 消息列表里：我们那条是最后一条用户消息，且没有 assistant 以它为 parentID。
+fn answer_unanswered(messages: &Value, message_id: &str) -> bool {
+    let items = messages.as_array().map(Vec::as_slice).unwrap_or_default();
+    let last_user = items
+        .iter()
+        .rev()
+        .find(|m| m["info"]["role"] == "user")
+        .and_then(|m| m["info"]["id"].as_str());
+    last_user == Some(message_id)
+        && !items
+            .iter()
+            .any(|m| m["info"]["role"] == "assistant" && m["info"]["parentID"] == message_id)
+}
+
 // ---------------------------------------------------------------------------------------------
 // 面板状态
 
@@ -659,6 +738,11 @@ pub(crate) fn status(db: &Path, task: &Path, gate_id: &str, native: &str) -> sup
             can_retry: true,
         },
         Some(d) => match d.state.as_str() {
+            "accepted" if d.stalled => super::NativeStatus {
+                state: super::QUEUED_STALLED,
+                reason: None,
+                can_retry: false,
+            },
             "accepted" => super::NativeStatus {
                 state: "accepted",
                 reason: None,

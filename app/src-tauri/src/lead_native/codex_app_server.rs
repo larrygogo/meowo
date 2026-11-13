@@ -762,6 +762,11 @@ struct DeliveryRecord {
     /// 写 sending 占位的进程。Meowo 中途退出留下的 sending 由下一个进程按 uncertain 处理。
     #[serde(default)]
     pid: Option<u32>,
+    /// accepted 之后答复在队列里的去向（巡检用 [`kick_stalled`] 维护）：started = 回合停下了（拒绝审批
+    /// 视为中断），宿主用 thread/queue/start 让它开跑了；stalled = 开跑被服务拒绝，答复还在队列里，
+    /// 面板说「在会话里发一句话」；dispatched = 已离开队列（跑了或被用户删了），不再查。
+    #[serde(default)]
+    queue: Option<String>,
 }
 
 /// 发送结果里不成功的三类：请求还没发出（可以放心自动重试）、已经发出（可能已送达）、
@@ -909,9 +914,140 @@ pub(crate) fn deliver(
     target: &NativeTarget<'_>,
     app: Option<&tauri::AppHandle>,
 ) -> Result<NativeOutcome, String> {
-    deliver_with(target, |target, key| {
+    let outcome = deliver_with(target, |target, key| {
         send(target, key, || session_open(target, app))
-    })
+    })?;
+    if outcome == NativeOutcome::Delivered {
+        kick_stalled(target);
+    }
+    Ok(outcome)
+}
+
+/// 第二轮真机 P2（real/fake-decline）：用户按 Esc 拒绝待批审批时 codex 0.167.2 把这一回合记成
+/// interrupted，排在后面的答复**不会**自己跑（120s 实测），要等用户再发一句话。协议里有正规的
+/// 「把队列里这一条开跑」：`thread/queue/start {threadId, queuedSubmissionId}`（`generate-json-schema
+/// --experimental` 导出的 ClientRequest，回 Turn）。它和 queue/add 走同一个 app-server 进程，originator
+/// 仍由先握手的 TUI 决定（codex-tui），不是 turn/start（插话）。
+///
+/// 只在这三条同时成立时调用：我们的条目还在队列里；thread 空闲（不是 waitingOnApproval 之类的
+/// active）；最近一回合 interrupted / failed（正常 completed 时 codex 会自己接着跑队列，不插手）。
+///
+/// 拒绝审批和用户按 Esc 打断在协议里分不开：假模型探针（MEOWO_PROBE_STEPS=C，2026-11-13）拒绝后
+/// `thread/turns/list itemsView=full` 只剩一条 userMessage，被拒的命令条目不落盘，回合就是 interrupted。
+/// 两种情况都开跑：答复本来就排在「这一轮之后」，任务（.lead 关卡）要求答完自动继续；用户之后再打的字
+/// 照常排在它后面。queue/start 被拒时才把面板改成如实提示（stalled）。
+fn kick_stalled(target: &NativeTarget<'_>) {
+    let key = delivery_key(target.task, target.gate_id, target.native_session);
+    let lock = key_lock(&key);
+    let _guard = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let Some(_claim) = try_claim(target.db, &key, foreign_alive) else {
+        return;
+    };
+    let Some(mut record) = read_record(target.db, &key) else {
+        return;
+    };
+    if record.state != "accepted"
+        || matches!(record.queue.as_deref(), Some("started" | "dispatched"))
+    {
+        return;
+    }
+    let Some(submission) = record.submission.clone() else {
+        return;
+    };
+    let Ok(store) = crate::open_store(target.db) else {
+        return;
+    };
+    let pid = store.session_pid(target.session_id).ok().flatten();
+    let Some((dir, state)) = states(target.db).into_iter().find(|(dir, state)| {
+        (pid == Some(i64::from(state.server_pid)) || state.launch_session == target.session_id)
+            && server_alive(dir, state)
+            && state.tui_handshaken
+            && state.tui_pid.is_some_and(pid_alive)
+    }) else {
+        return;
+    };
+    let Some(token) = read_token(&dir) else {
+        return;
+    };
+    let next = match kick_live(state.port, &token, target.native_session, &submission, RPC_TIMEOUT) {
+        Ok(Kick::Started) => "started",
+        Ok(Kick::Stalled) => "stalled",
+        Ok(Kick::Gone) => "dispatched",
+        Ok(Kick::Wait) | Err(_) => return,
+    };
+    if record.queue.as_deref() != Some(next) {
+        record.queue = Some(next.into());
+        write_record(target.db, &key, &record);
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Kick {
+    /// 条目已不在队列里。
+    Gone,
+    /// 回合还在跑、在等审批，或刚正常结束（codex 会自己接着跑队列）：什么都不做。
+    Wait,
+    /// 回合停下了（拒绝审批 / 打断 / 出错），已用 queue/start 开跑。
+    Started,
+    /// queue/start 被服务拒绝：答复留在队列里等用户。
+    Stalled,
+}
+
+/// 最近一回合是不是停下了（interrupted / failed）。
+fn halted(turn: Option<&Value>) -> bool {
+    turn.is_some_and(|turn| matches!(turn["status"].as_str(), Some("interrupted" | "failed")))
+}
+
+fn kick_live(
+    port: u16,
+    token: &str,
+    native: &str,
+    submission: &str,
+    timeout: Duration,
+) -> Result<Kick, String> {
+    let mut client = ws::Client::connect(port, token, timeout)?;
+    let init = client.call("initialize", meowo_client_info(), timeout)?;
+    client.notify("initialized")?;
+    if !originator_is_tui(init.get("userAgent").and_then(Value::as_str)) {
+        return Ok(Kick::Wait);
+    }
+    let main = main_thread(&mut client, native, timeout);
+    let queued = client.call("thread/queue/list", json!({ "threadId": main }), timeout)?;
+    let still_queued = queued["data"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .any(|item| item["id"] == submission);
+    if !still_queued {
+        return Ok(Kick::Gone);
+    }
+    let read = client.call(
+        "thread/read",
+        json!({ "threadId": main, "includeTurns": false }),
+        timeout,
+    )?;
+    if read.pointer("/thread/status/type").and_then(Value::as_str) != Some("idle") {
+        return Ok(Kick::Wait);
+    }
+    // 最近一回合（默认倒序）的状态；条目用不上，不加载。
+    let turns = client.call(
+        "thread/turns/list",
+        json!({ "threadId": main, "limit": 1, "itemsView": "notLoaded" }),
+        timeout,
+    )?;
+    if !halted(turns["data"].as_array().and_then(|turns| turns.first())) {
+        return Ok(Kick::Wait);
+    }
+    match client.call(
+        "thread/queue/start",
+        json!({ "threadId": main, "queuedSubmissionId": submission }),
+        timeout,
+    ) {
+        Ok(_) => Ok(Kick::Started),
+        // 服务明确拒绝（比如这一条刚被别的客户端拿走）：不重试，如实提示在会话里发一句话。
+        Err(reason) if reason == "lead/codex_server_rejected" => Ok(Kick::Stalled),
+        Err(reason) => Err(reason),
+    }
 }
 
 /// 会话此刻有没有 CLI 在跑（托管终端里，或 Meowo 外的终端里）。只在找不到服务时才问：用来区分
@@ -976,6 +1112,7 @@ fn deliver_with(
             at_ms: now_ms(),
             submission: None,
             pid: Some(std::process::id()),
+            queue: None,
         },
     );
     let (state, reason, submission) = match send(target, &key) {
@@ -994,6 +1131,7 @@ fn deliver_with(
             at_ms: now_ms(),
             submission,
             pid: None,
+            queue: None,
         },
     );
     Ok(outcome_of(state))
@@ -1182,6 +1320,10 @@ pub(crate) fn status(
 ) -> LeadDeliveryDto {
     let key = delivery_key(task, gate_id, native);
     let (mut state, mut reason) = match read_record(db, &key) {
+        // 答复还在队列里、会话却停下了（用户打断）：如实说在会话里发一句话，而不是一直「已接收」。
+        Some(record) if record.state == "accepted" && record.queue.as_deref() == Some("stalled") => {
+            (super::QUEUED_STALLED.to_owned(), None)
+        }
         Some(record) => (record.state, record.reason),
         None => ("saved".to_owned(), None),
     };
@@ -1354,14 +1496,18 @@ mod tests {
             .collect();
         rpc_calls.sort_unstable();
         rpc_calls.dedup();
-        // 除 queue/add 外全是只读请求；绝不出现 turn/*（插话/打断）。
+        // 写操作只有 queue/add 与 queue/start（把我们排进去的那条开跑，见 kick_stalled），其余只读；
+        // 绝不出现 turn/*（插话/打断）。
         assert_eq!(
             rpc_calls,
             [
                 "initialize",
                 "thread/loaded/list",
                 "thread/queue/add",
-                "thread/read"
+                "thread/queue/list",
+                "thread/queue/start",
+                "thread/read",
+                "thread/turns/list"
             ]
         );
         // 不做离线续跑（leader 2026-11-13）：冷排队路径（`codex queue`）已整条删除，不得复活。
@@ -1401,6 +1547,7 @@ mod tests {
                 at_ms: 0,
                 submission: None,
                 pid: None,
+                queue: None,
             },
         );
         let st = status(&db, 7, "c".into(), &task, "Q", "n");
@@ -1419,6 +1566,7 @@ mod tests {
                 at_ms: 0,
                 submission: Some("s".into()),
                 pid: None,
+                queue: None,
             },
         );
         let target = NativeTarget {
@@ -1843,6 +1991,7 @@ mod tests {
                 at_ms: 0,
                 submission: None,
                 pid: Some(1),
+                queue: None,
             },
         );
         let t = target(&db, &task, "n", "Q-crash");
@@ -1987,6 +2136,7 @@ mod tests {
                 at_ms: 0,
                 submission: None,
                 pid: None,
+                queue: None,
             },
         );
         deliver_with(
@@ -2054,6 +2204,7 @@ mod tests {
                 at_ms: now_ms(),
                 submission: None,
                 pid: Some(other),
+                queue: None,
             },
         );
         let t = target(&db, &task, "n", "Q");
@@ -2286,5 +2437,107 @@ mod tests {
     fn server_dir_name_is_not_derived_from_token() {
         let source = include_str!("codex_app_server.rs");
         assert!(!source.contains(concat!("&tok", "en[..")));
+    }
+
+    /// 一台假服务：主线程 `main`，状态 `status`，队列里有 `queued`，最近一回合 `last_turn`；
+    /// `start_ok` = queue/start 是否成功。
+    fn stalled_like(status: Value, queued: Vec<&'static str>, last_turn: Value, start_ok: bool) -> Fake {
+        fake_server(move |request| {
+            let method = request["method"].as_str().unwrap_or_default();
+            match method {
+                "initialize" => vec![reply(request, json!({ "userAgent": TUI_UA }))],
+                "thread/read" => vec![reply(
+                    request,
+                    json!({ "thread": { "id": "main", "parentThreadId": null, "status": status } }),
+                )],
+                "thread/queue/list" => vec![reply(
+                    request,
+                    json!({ "data": queued.iter().map(|id| json!({"id": id})).collect::<Vec<_>>(), "nextCursor": null }),
+                )],
+                "thread/turns/list" => vec![reply(request, json!({ "data": [last_turn] }))],
+                "thread/queue/start" if start_ok => {
+                    vec![reply(request, json!({ "turn": { "id": "t2", "items": [], "status": "inProgress" } }))]
+                }
+                "thread/queue/start" => vec![rpc_error(request)],
+                _ => vec![],
+            }
+        })
+    }
+
+    /// 形状取自 0.167.2 假模型探针：Esc 拒绝提权命令后回合 interrupted，持久化的条目里只有 userMessage
+    /// （被拒的命令不落盘），所以拒绝审批与用户打断分不开。
+    fn interrupted_turn() -> Value {
+        json!({ "id": "t1", "status": "interrupted", "items": [], "itemsView": "notLoaded" })
+    }
+
+    fn kick(fake: &Fake) -> Result<Kick, String> {
+        kick_live(fake.port, &fake.token, "main", "qs-1", FAST)
+    }
+
+    /// 第二轮 P2：回合停下了（拒绝审批视为中断）、我们的答复还在队列里、thread 空闲 → 用 queue/start
+    /// 开跑那一条（带 queuedSubmissionId，只动我们自己的条目）；不出现 turn/*。
+    #[test]
+    fn halted_turn_starts_our_queued_answer() {
+        for status in ["interrupted", "failed"] {
+            let turn = json!({ "id": "t1", "status": status, "items": [] });
+            let fake = stalled_like(json!({ "type": "idle" }), vec!["qs-1"], turn, true);
+            assert_eq!(kick(&fake), Ok(Kick::Started), "{status}");
+            assert_eq!(
+                fake.params_of("thread/queue/start"),
+                [json!({ "threadId": "main", "queuedSubmissionId": "qs-1" })]
+            );
+            assert!(fake.methods().iter().all(|m| !m.starts_with("turn/")), "{:?}", fake.methods());
+        }
+        // 服务拒绝开跑：不重试，面板如实提示。
+        let fake = stalled_like(json!({ "type": "idle" }), vec!["qs-1"], interrupted_turn(), false);
+        assert_eq!(kick(&fake), Ok(Kick::Stalled));
+    }
+
+    /// 不该开跑的三种：回合还在等审批；条目已离队；回合正常结束（codex 自己会接着跑队列）。
+    #[test]
+    fn running_finished_or_dequeued_answers_are_left_alone() {
+        let waiting = json!({ "type": "active", "activeFlags": ["waitingOnApproval"] });
+        let fake = stalled_like(waiting, vec!["qs-1"], interrupted_turn(), true);
+        assert_eq!(kick(&fake), Ok(Kick::Wait));
+        assert!(fake.params_of("thread/queue/start").is_empty());
+
+        let fake = stalled_like(json!({ "type": "idle" }), vec!["someone-else"], interrupted_turn(), true);
+        assert_eq!(kick(&fake), Ok(Kick::Gone));
+        assert!(fake.params_of("thread/queue/start").is_empty());
+
+        let completed = json!({ "id": "t1", "status": "completed", "items": [] });
+        let fake = stalled_like(json!({ "type": "idle" }), vec!["qs-1"], completed, true);
+        assert_eq!(kick(&fake), Ok(Kick::Wait));
+        assert!(fake.params_of("thread/queue/start").is_empty());
+    }
+
+    /// 面板：答复卡在队列里、会话停下了 → queued_stalled（不再一直「已接收」）；开跑/离队后照旧 accepted。
+    #[test]
+    fn stalled_queue_is_reported_honestly() {
+        let root = temp_root("stall");
+        let (db, task) = (root.join("board.db"), root.join("task"));
+        let key = delivery_key(&task, "Q", "n");
+        for (queue, expected) in [
+            (Some("stalled"), crate::lead_native::QUEUED_STALLED),
+            (Some("started"), "accepted"),
+            (Some("dispatched"), "accepted"),
+            (None, "accepted"),
+        ] {
+            write_record(
+                &db,
+                &key,
+                &DeliveryRecord {
+                    state: "accepted".into(),
+                    reason: None,
+                    at_ms: 0,
+                    submission: Some("qs-1".into()),
+                    pid: None,
+                    queue: queue.map(str::to_owned),
+                },
+            );
+            let st = status(&db, 7, "c".into(), &task, "Q", "n");
+            assert_eq!((st.state.as_str(), st.can_retry), (expected, false), "{queue:?}");
+        }
+        let _ = std::fs::remove_dir_all(root);
     }
 }

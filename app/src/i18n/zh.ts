@@ -808,7 +808,7 @@ export const zh = {
     leadGateAnswered: "已答复·等 agent 接手",
     leadDeliveryHandled: "Agent 已接手关卡",
     leadDeliveryRetry: "继续送达",
-    leadDeliveryState: (state: string) => ({ saved: "回答已保存，等待送达", queued: "回答已排队", waiting: "回答已保存，打开会话后会自动送达", sending: "正在送达回答", accepted: "原生会话已接收，等待模型确认", consumed: "模型已收到回答，等待接手关卡", failed: "回答未送达", uncertain: "送达结果不确定，请在会话中核对后处理", native_manual: "回答已保存，在会话里发一句话即可继续", native_offline: "回答已保存，打开会话后说一句继续", native_on_open: "回答已保存，打开会话后会自动送达", native_owner_unknown: "回答已保存，回到主会话说一句继续" }[state] ?? state),
+    leadDeliveryState: (state: string) => ({ saved: "回答已保存，等待送达", queued: "回答已排队", waiting: "回答已保存，打开会话后会自动送达", sending: "正在送达回答", accepted: "原生会话已接收，等待模型确认", consumed: "模型已收到回答，等待接手关卡", failed: "回答未送达", uncertain: "送达结果不确定，请在会话中核对后处理", native_manual: "回答已保存，在会话里发一句话即可继续", native_offline: "回答已保存，打开会话后说一句继续", native_on_open: "回答已保存，打开会话后会自动送达", native_owner_unknown: "回答已保存，回到主会话说一句继续", queued_stalled: "回答在队列里，会话已停下，在会话里发一句话即可继续" }[state] ?? state),
     // 不出现 A/B/C/D/Q：那是 skill 内部的代号，leader 看卡片只需要知道要自己做什么（2026-11-12 优化）。
     leadGateKind: { A: "确认规格", B: "拍板", C: "验收", D: "授权或操作", Q: "回答问题" },
     leadGateConfirm: "确认，开工",
