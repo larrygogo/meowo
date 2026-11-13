@@ -16,8 +16,7 @@ use std::io::BufRead;
 use std::path::Path;
 
 const INTERJECTION_HEAD: &str = "The user sent a new message while you were working:\n";
-const INTERJECTION_TAIL: &str =
-    "\n\nThis is how Claude Code surfaces messages the user sends mid-turn";
+const INTERJECTION_TAIL: &str = "\n\nThis is how Claude Code surfaces messages the user sends mid-turn";
 const RESUMED_HEAD: &str = "Agent \"";
 const RESUMED_TAIL: &str = "\" was resumed by the user";
 const WAITING_TAIL: &str = "\" is waiting on its own background work";
@@ -51,10 +50,7 @@ pub(super) fn unwrap_interjection(v: &serde_json::Value) -> Option<String> {
 /// 另带一条「又在跑」的结局回执，按 task-id 归回原委派（同 SendMessage 续上，见 transcript 的
 /// resumed_agent_id）：收工后被续上，徽标翻回运行中，这一段的完成通知到了再翻成完成。只在入队
 /// 这一行给，送达行（queued_command）可能晚于完成通知落盘（见 subagent_resume_tests）。
-pub(super) fn resumed_agent_prompt(
-    main_transcript: &Path,
-    line: &str,
-) -> Option<Vec<TranscriptEvent>> {
+pub(super) fn resumed_agent_prompt(main_transcript: &Path, line: &str) -> Option<Vec<TranscriptEvent>> {
     // 绝大多数行连这句都没有，先按子串挡掉，省一次 JSON 解析。
     if !line.contains("was resumed by the user") {
         return None;
@@ -94,23 +90,18 @@ pub(super) fn resumed_agent_prompt(
         patch: None,
     };
     // id 要拼进路径：只收纯 id，不让通知正文把读取引出 subagents 目录。
-    if !task_id
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
-    {
+    if !task_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
         return Some(vec![running]);
     }
     let sidecar = main_transcript
         .with_extension("")
         .join("subagents")
         .join(format!("agent-{task_id}.jsonl"));
-    let prompt = find_prompt_before(&sidecar, at).map(|(id, timestamp, text)| {
-        TranscriptEvent::SubagentPrompt {
-            id,
-            timestamp: Some(timestamp),
-            text,
-            agent,
-        }
+    let prompt = find_prompt_before(&sidecar, at).map(|(id, timestamp, text)| TranscriptEvent::SubagentPrompt {
+        id,
+        timestamp: Some(timestamp),
+        text,
+        agent,
     });
     Some(prompt.into_iter().chain(std::iter::once(running)).collect())
 }
@@ -172,20 +163,14 @@ fn find_prompt_before(sidecar: &Path, at: &str) -> Option<(String, String, Strin
         };
         // 同一天、不晚于通知（留 1 秒时钟抖动）、早得不多于窗口。跨零点的极端情况不认。
         let close = ts.get(..10) == at.get(..10)
-            && day_millis(ts).is_some_and(|t| {
-                t <= anchor + 1_000 && anchor.saturating_sub(t) <= RESUME_WINDOW_MS
-            });
+            && day_millis(ts).is_some_and(|t| t <= anchor + 1_000 && anchor.saturating_sub(t) <= RESUME_WINDOW_MS);
         if !close {
             continue;
         }
         let Some(text) = unwrap_interjection(&v) else {
             continue;
         };
-        let id = v
-            .get("uuid")
-            .and_then(|x| x.as_str())
-            .unwrap_or(ts)
-            .to_string();
+        let id = v.get("uuid").and_then(|x| x.as_str()).unwrap_or(ts).to_string();
         // 窗口里有多条时取最后一条：离通知最近的那条才是触发续上的。
         found = Some((id, ts.to_string(), text));
     }
@@ -203,8 +188,7 @@ mod tests {
     const SIDECAR_PROMPT: &str = r#"{"parentUuid":"p0","isSidechain":true,"agentId":"a0f1","type":"user","message":{"role":"user","content":"The user sent a new message while you were working:\n两边都已经通过了\n\nThis is how Claude Code surfaces messages the user sends mid-turn — within the running turn, often alongside the next tool result, rather than as a separate conversation turn. Address the message above as you continue this turn."},"isMeta":true,"uuid":"side-u1","timestamp":"2026-11-11T04:38:44.141Z","origin":{"kind":"human"}}"#;
 
     fn session(name: &str, sidecar: Option<&str>) -> std::path::PathBuf {
-        let root =
-            std::env::temp_dir().join(format!("claude-subprompt-{name}-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("claude-subprompt-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let subagents = root.join("s/subagents");
         std::fs::create_dir_all(&subagents).unwrap();
@@ -226,12 +210,7 @@ mod tests {
     fn resumed_subagent_prompt_surfaces_in_main_chat_with_target() {
         let main = session("main", Some(SIDECAR_PROMPT));
         let delta = read_chat_delta(&CLAUDE_TRANSCRIPT, &main, 0, None);
-        let users: Vec<_> = delta
-            .items
-            .iter()
-            .map(json)
-            .filter(|v| v["type"] == "user_text")
-            .collect();
+        let users: Vec<_> = delta.items.iter().map(json).filter(|v| v["type"] == "user_text").collect();
         assert_eq!(users.len(), 1, "应有一条用户消息：{:?}", delta.items);
         assert_eq!(users[0]["text"], "两边都已经通过了");
         assert_eq!(users[0]["to_agent"], "拆分导入任务");
@@ -244,11 +223,7 @@ mod tests {
         let main = session("missing", None);
         let delta = read_chat_delta(&CLAUDE_TRANSCRIPT, &main, 0, None);
         // 续上带的「又在跑」回执照出（见 subagent_resume_tests），用户消息一条都不能有。
-        assert!(
-            delta.items.iter().all(|i| json(i)["type"] != "user_text"),
-            "{:?}",
-            delta.items
-        );
+        assert!(delta.items.iter().all(|i| json(i)["type"] != "user_text"), "{:?}", delta.items);
     }
 
     /// 时间对不上的侧车消息不认：那是更早一次发给它的话，已经由当时那条通知带出来了。
@@ -258,27 +233,18 @@ mod tests {
         let main = session("stale", Some(&old));
         let delta = read_chat_delta(&CLAUDE_TRANSCRIPT, &main, 0, None);
         // 续上带的「又在跑」回执照出（见 subagent_resume_tests），用户消息一条都不能有。
-        assert!(
-            delta.items.iter().all(|i| json(i)["type"] != "user_text"),
-            "{:?}",
-            delta.items
-        );
+        assert!(delta.items.iter().all(|i| json(i)["type"] != "user_text"), "{:?}", delta.items);
     }
 
     /// task-id 拼进路径前必须是纯 id：不能借通知正文跳出 subagents 目录。
     #[test]
     fn task_id_with_path_chars_is_rejected() {
         let main = session("traversal", Some(SIDECAR_PROMPT));
-        let evil =
-            RESUME_ENQUEUE.replace("<task-id>a0f1</task-id>", "<task-id>..\\\\a0f1</task-id>");
+        let evil = RESUME_ENQUEUE.replace("<task-id>a0f1</task-id>", "<task-id>..\\\\a0f1</task-id>");
         std::fs::write(&main, format!("{evil}\n")).unwrap();
         let delta = read_chat_delta(&CLAUDE_TRANSCRIPT, &main, 0, None);
         // 续上带的「又在跑」回执照出（见 subagent_resume_tests），用户消息一条都不能有。
-        assert!(
-            delta.items.iter().all(|i| json(i)["type"] != "user_text"),
-            "{:?}",
-            delta.items
-        );
+        assert!(delta.items.iter().all(|i| json(i)["type"] != "user_text"), "{:?}", delta.items);
     }
 
     /// 子代理面板里这条显示用户原话，不是 CC 套给模型的英文说明。
@@ -302,10 +268,7 @@ mod tests {
             .into_iter()
             .map(ChatItem::from)
             .collect();
-        assert_eq!(
-            json(&items[0])["text"],
-            "The user sent a new message while you were working:\nx"
-        );
+        assert_eq!(json(&items[0])["text"], "The user sent a new message while you were working:\nx");
     }
 }
 

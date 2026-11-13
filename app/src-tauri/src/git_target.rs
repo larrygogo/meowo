@@ -28,9 +28,7 @@ impl GitConfig {
         while let Some(raw) = lines.next() {
             let mut line = raw.trim_start().to_string();
             if line.starts_with('[') {
-                let Some(end) = header_end(&line) else {
-                    continue;
-                };
+                let Some(end) = header_end(&line) else { continue };
                 section = parse_header(&line[1..end]);
                 line = line[end + 1..].trim_start().to_string();
             }
@@ -45,16 +43,11 @@ impl GitConfig {
                     None => break,
                 }
             }
-            let Some((sec, sub)) = section.clone() else {
-                continue;
-            };
+            let Some((sec, sub)) = section.clone() else { continue };
             let (key, value) = match line.split_once('=') {
                 Some((k, v)) => (k.trim().to_ascii_lowercase(), unquote(v)),
                 // 只有键名 = 布尔 true。
-                None => (
-                    strip_comment(&line).trim().to_ascii_lowercase(),
-                    "true".to_string(),
-                ),
+                None => (strip_comment(&line).trim().to_ascii_lowercase(), "true".to_string()),
             };
             if !key.is_empty() {
                 cfg.entries.push((sec, sub, key, value));
@@ -91,11 +84,7 @@ impl GitConfig {
     /// 读一个仓库的有效配置：全局（GIT_CONFIG_GLOBAL，或 XDG 与 ~/.gitconfig）→ 公共 .git 目录的 config →
     /// 开了 extensions.worktreeConfig 时 worktree 自己的 config.worktree，后读的覆盖先读的（同 git 的优先级）。
     /// env：取环境变量（正式调用读进程环境，forge 的测试把全局配置隔离到空文件）。
-    pub(crate) fn load(
-        common_dir: &Path,
-        git_dir: Option<&Path>,
-        env: &dyn Fn(&str) -> Option<String>,
-    ) -> Self {
+    pub(crate) fn load(common_dir: &Path, git_dir: Option<&Path>, env: &dyn Fn(&str) -> Option<String>) -> Self {
         let mut cfg = GitConfig::default();
         for path in global_config_paths(env) {
             if let Ok(text) = std::fs::read_to_string(&path) {
@@ -106,10 +95,7 @@ impl GitConfig {
             cfg.extend(GitConfig::parse(&text));
         }
         if let Some(git_dir) = git_dir {
-            if cfg
-                .get("extensions", None, "worktreeconfig")
-                .is_some_and(is_true)
-            {
+            if cfg.get("extensions", None, "worktreeconfig").is_some_and(is_true) {
                 if let Ok(text) = std::fs::read_to_string(git_dir.join("config.worktree")) {
                     cfg.extend(GitConfig::parse(&text));
                 }
@@ -120,10 +106,7 @@ impl GitConfig {
 }
 
 fn is_true(value: &str) -> bool {
-    matches!(
-        value.to_ascii_lowercase().as_str(),
-        "true" | "yes" | "on" | "1"
-    )
+    matches!(value.to_ascii_lowercase().as_str(), "true" | "yes" | "on" | "1")
 }
 
 /// 节头的右括号位置（子节名在引号里，可能含 `]`）。
@@ -220,20 +203,12 @@ fn global_config_paths(env: &dyn Fn(&str) -> Option<String>) -> Vec<PathBuf> {
     if let Some(path) = env("GIT_CONFIG_GLOBAL") {
         return vec![PathBuf::from(path)];
     }
-    let home = env("HOME")
-        .or_else(|| env("USERPROFILE"))
-        .filter(|h| !h.is_empty())
-        .map(PathBuf::from);
+    let home = env("HOME").or_else(|| env("USERPROFILE")).filter(|h| !h.is_empty()).map(PathBuf::from);
     let xdg = env("XDG_CONFIG_HOME")
         .filter(|x| !x.is_empty())
         .map(|x| PathBuf::from(x).join("git").join("config"))
-        .or_else(|| {
-            home.as_ref()
-                .map(|h| h.join(".config").join("git").join("config"))
-        });
-    xdg.into_iter()
-        .chain(home.map(|h| h.join(".gitconfig")))
-        .collect()
+        .or_else(|| home.as_ref().map(|h| h.join(".config").join("git").join("config")));
+    xdg.into_iter().chain(home.map(|h| h.join(".gitconfig"))).collect()
 }
 
 /// 进程环境（正式调用）。
@@ -274,33 +249,21 @@ impl PushTarget {
     }
     /// 推送正是推到上游（↑ 就是未推数）。
     pub(crate) fn is_upstream(&self) -> bool {
-        self.upstream
-            .as_ref()
-            .is_some_and(|u| u.remote == self.remote && u.branch == self.branch)
+        self.upstream.as_ref().is_some_and(|u| u.remote == self.remote && u.branch == self.branch)
     }
 }
 
 /// 远端的默认分支：refs/remotes/<远端>/HEAD 指向的（clone / `git remote set-head` 写的符号引用，永远是散文件，
 /// 不进 packed-refs；reftable 格式的仓库读不到，退回 main/master 判定）。
 pub(crate) fn remote_head(common_dir: &Path, remote: &str) -> Option<String> {
-    let text = std::fs::read_to_string(
-        common_dir
-            .join("refs")
-            .join("remotes")
-            .join(remote)
-            .join("HEAD"),
-    )
-    .ok()?;
+    let text = std::fs::read_to_string(common_dir.join("refs").join("remotes").join(remote).join("HEAD")).ok()?;
     let target = text.trim().strip_prefix("ref:")?.trim();
-    target
-        .strip_prefix(&format!("refs/remotes/{remote}/"))
-        .map(str::to_string)
+    target.strip_prefix(&format!("refs/remotes/{remote}/")).map(str::to_string)
 }
 
 /// 是不是远端的默认分支：远端 HEAD 指向它，或者它叫 main / master（远端 HEAD 不在时也挡住，绝不推进默认分支）。
 pub(crate) fn is_default_branch(common_dir: &Path, remote: &str, branch: &str) -> bool {
-    matches!(branch, "main" | "master")
-        || remote_head(common_dir, remote).as_deref() == Some(branch)
+    matches!(branch, "main" | "master") || remote_head(common_dir, remote).as_deref() == Some(branch)
 }
 
 /// 推送去向。远端：branch.<b>.pushRemote → remote.pushDefault → 上游所在远端 → origin → 唯一 / 第一个远端
@@ -323,10 +286,7 @@ pub(crate) fn resolve(cfg: &GitConfig, common_dir: &Path, branch: &str) -> Optio
         .zip(cfg.get("branch", Some(branch), "merge"))
         .map(|(remote, merge)| Upstream {
             remote: remote.to_string(),
-            branch: merge
-                .strip_prefix("refs/heads/")
-                .unwrap_or(merge)
-                .to_string(),
+            branch: merge.strip_prefix("refs/heads/").unwrap_or(merge).to_string(),
         })
         .filter(|u| !u.branch.is_empty());
     let remote = cfg
@@ -337,24 +297,13 @@ pub(crate) fn resolve(cfg: &GitConfig, common_dir: &Path, branch: &str) -> Optio
         .or_else(|| upstream.as_ref().map(|u| u.remote.clone()))
         .or_else(|| remotes.iter().find(|r| *r == "origin").cloned())
         .or_else(|| remotes.first().cloned())?;
-    let same = |b: &str| PushTarget {
-        remote: remote.clone(),
-        branch: b.to_string(),
-        set_upstream: false,
-        upstream: upstream.clone(),
-    };
+    let same = |b: &str| PushTarget { remote: remote.clone(), branch: b.to_string(), set_upstream: false, upstream: upstream.clone() };
     Some(match &upstream {
-        None => PushTarget {
-            set_upstream: true,
-            ..same(branch)
-        },
+        None => PushTarget { set_upstream: true, ..same(branch) },
         Some(u) if u.branch == branch => same(branch),
-        Some(u) if is_default_branch(common_dir, &u.remote, &u.branch) => PushTarget {
-            remote: remote.clone(),
-            branch: branch.to_string(),
-            set_upstream: true,
-            upstream: None,
-        },
+        Some(u) if is_default_branch(common_dir, &u.remote, &u.branch) => {
+            PushTarget { remote: remote.clone(), branch: branch.to_string(), set_upstream: true, upstream: None }
+        }
         Some(u) if u.remote == remote => same(&u.branch),
         Some(_) => same(branch),
     })
@@ -379,10 +328,7 @@ mod tests {
         ));
         assert_eq!(c.remotes(), vec!["team/fork".to_string()]);
         assert_eq!(c.get("branch", Some("feat/a"), "remote"), Some("team/fork"));
-        assert_eq!(
-            c.get("branch", Some("feat/a"), "merge"),
-            Some("refs/heads/feat/a")
-        );
+        assert_eq!(c.get("branch", Some("feat/a"), "merge"), Some("refs/heads/feat/a"));
         assert_eq!(c.get("remote", None, "pushdefault"), Some("team/fork"));
         assert_eq!(c.get("branch", Some("old"), "remote"), Some("origin"));
         assert_eq!(c.get("core", None, "bare"), Some("true"));
@@ -396,65 +342,29 @@ mod tests {
         let t = |extra: &str, b: &str| resolve(&cfg(&format!("{base}{extra}")), &dir, b).unwrap();
         // 没上游
         let x = t("", "feat");
-        assert_eq!(
-            (x.label(), x.set_upstream, x.upstream),
-            ("origin/feat".into(), true, None)
-        );
+        assert_eq!((x.label(), x.set_upstream, x.upstream), ("origin/feat".into(), true, None));
         // 上游同名
-        let x = t(
-            "[branch \"feat\"]\nremote=origin\nmerge=refs/heads/feat\n",
-            "feat",
-        );
-        assert_eq!(
-            (x.label(), x.set_upstream, x.is_upstream()),
-            ("origin/feat".into(), false, true)
-        );
+        let x = t("[branch \"feat\"]\nremote=origin\nmerge=refs/heads/feat\n", "feat");
+        assert_eq!((x.label(), x.set_upstream, x.is_upstream()), ("origin/feat".into(), false, true));
         // 上游是默认分支
-        let x = t(
-            "[branch \"feat\"]\nremote=origin\nmerge=refs/heads/main\n",
-            "feat",
-        );
-        assert_eq!(
-            (x.label(), x.set_upstream, x.upstream),
-            ("origin/feat".into(), true, None)
-        );
+        let x = t("[branch \"feat\"]\nremote=origin\nmerge=refs/heads/main\n", "feat");
+        assert_eq!((x.label(), x.set_upstream, x.upstream), ("origin/feat".into(), true, None));
         // 本地就是 main
-        let x = t(
-            "[branch \"main\"]\nremote=origin\nmerge=refs/heads/main\n",
-            "main",
-        );
+        let x = t("[branch \"main\"]\nremote=origin\nmerge=refs/heads/main\n", "main");
         assert_eq!((x.label(), x.set_upstream), ("origin/main".into(), false));
         // 上游是别的功能分支
-        let x = t(
-            "[branch \"fix\"]\nremote=origin\nmerge=refs/heads/bugfix-123\n",
-            "fix",
-        );
-        assert_eq!(
-            (x.label(), x.set_upstream, x.is_upstream()),
-            ("origin/bugfix-123".into(), false, true)
-        );
+        let x = t("[branch \"fix\"]\nremote=origin\nmerge=refs/heads/bugfix-123\n", "fix");
+        assert_eq!((x.label(), x.set_upstream, x.is_upstream()), ("origin/bugfix-123".into(), false, true));
         // pushDefault 压过上游远端：同名推到 fork，上游照旧
-        let x = t(
-            "[remote]\npushDefault=fork\n[branch \"feat\"]\nremote=origin\nmerge=refs/heads/feat\n",
-            "feat",
-        );
-        assert_eq!(
-            (x.label(), x.set_upstream, x.is_upstream()),
-            ("fork/feat".into(), false, false)
-        );
+        let x = t("[remote]\npushDefault=fork\n[branch \"feat\"]\nremote=origin\nmerge=refs/heads/feat\n", "feat");
+        assert_eq!((x.label(), x.set_upstream, x.is_upstream()), ("fork/feat".into(), false, false));
         // pushRemote 压过 pushDefault；指向不存在的远端时忽略
-        let x = t(
-            "[remote]\npushDefault=origin\n[branch \"feat\"]\npushRemote=fork\n",
-            "feat",
-        );
+        let x = t("[remote]\npushDefault=origin\n[branch \"feat\"]\npushRemote=fork\n", "feat");
         assert_eq!(x.label(), "fork/feat");
         let x = t("[remote]\npushDefault=nope\n", "feat");
         assert_eq!(x.label(), "origin/feat");
         // 上游是本地分支（remote = .）不算
-        let x = t(
-            "[branch \"feat\"]\nremote=.\nmerge=refs/heads/main\n",
-            "feat",
-        );
+        let x = t("[branch \"feat\"]\nremote=.\nmerge=refs/heads/main\n", "feat");
         assert_eq!((x.label(), x.set_upstream), ("origin/feat".into(), true));
         // 没有远端
         assert!(resolve(&cfg(""), &dir, "feat").is_none());
@@ -462,17 +372,13 @@ mod tests {
 
     #[test]
     fn 远端默认分支_读远端_head_符号引用() {
-        let dir =
-            std::env::temp_dir().join(format!("meowo-git-target-head-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("meowo-git-target-head-{}", std::process::id()));
         let refs = dir.join("refs/remotes/team/fork");
         std::fs::create_dir_all(&refs).unwrap();
         std::fs::write(refs.join("HEAD"), "ref: refs/remotes/team/fork/develop\n").unwrap();
         assert_eq!(remote_head(&dir, "team/fork").as_deref(), Some("develop"));
         assert!(is_default_branch(&dir, "team/fork", "develop"));
-        assert!(
-            is_default_branch(&dir, "team/fork", "main"),
-            "main/master 一律当默认分支挡住"
-        );
+        assert!(is_default_branch(&dir, "team/fork", "main"), "main/master 一律当默认分支挡住");
         assert!(!is_default_branch(&dir, "team/fork", "bugfix-123"));
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -65,8 +65,8 @@ pub(crate) async fn copy_session_to_provider(
             title: header.title.as_deref(),
         };
         let body = meowo_agent::render_history(&delta.items, &meta);
-        let handoff_dir =
-            meowo_agent::fsutil::handoff_root().join(format!("{}-{}", crate::now_ms(), session_id));
+        let handoff_dir = meowo_agent::fsutil::handoff_root()
+            .join(format!("{}-{}", crate::now_ms(), session_id));
         std::fs::create_dir_all(&handoff_dir).map_err(|e| format!("创建交接目录失败: {e}"))?;
         let handoff_path = handoff_dir.join(HANDOFF_FILE);
         std::fs::write(&handoff_path, &body).map_err(|e| format!("写入交接文件失败: {e}"))?;
@@ -103,12 +103,7 @@ pub(crate) async fn copy_session_to_provider(
                 None,
             )
             // 原会话没动过，失败只需说清楚；交接文件留在盘上，路径随报错给出，可手动喂给新 agent。
-            .map_err(|e| {
-                format!(
-                    "启动新会话失败: {e}。交接文件已保留: {}",
-                    handoff_path.display()
-                )
-            })?;
+            .map_err(|e| format!("启动新会话失败: {e}。交接文件已保留: {}", handoff_path.display()))?;
         crate::watch::emit_board_changed(&app, "copy_to_provider");
         Ok(SwitchStartedDto {
             temp_id,

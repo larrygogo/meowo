@@ -16,33 +16,23 @@ mod common;
 
 /// 本次会话的 rollout：探针开始后新写、内容里出现临时目录名的那份。
 fn rollout(since: SystemTime, cwd: &Path) -> Option<PathBuf> {
-    let home = std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .ok()?;
+    let home = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).ok()?;
     let want = cwd.file_name()?.to_string_lossy().to_string();
     let mut stack = vec![PathBuf::from(home).join(".codex/sessions")];
     let mut best: Option<(SystemTime, PathBuf)> = None;
     while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
                 stack.push(path);
                 continue;
             }
-            let Ok(modified) = entry.metadata().and_then(|m| m.modified()) else {
-                continue;
-            };
+            let Ok(modified) = entry.metadata().and_then(|m| m.modified()) else { continue };
             if modified < since || best.as_ref().is_some_and(|(t, _)| modified <= *t) {
                 continue;
             }
-            let head: String = std::fs::read_to_string(&path)
-                .unwrap_or_default()
-                .chars()
-                .take(4000)
-                .collect();
+            let head: String = std::fs::read_to_string(&path).unwrap_or_default().chars().take(4000).collect();
             if head.contains(&want) {
                 best = Some((modified, path));
             }
@@ -58,20 +48,12 @@ fn summarize(path: &Path) -> Vec<String> {
         .map(|line| {
             let v: serde_json::Value = serde_json::from_str(line).unwrap_or_default();
             let payload = &v["payload"];
-            let text = payload
-                .get("message")
-                .or_else(|| payload.pointer("/item/content"))
-                .map(|m| m.to_string())
-                .unwrap_or_default();
+            let text = payload.get("message").or_else(|| payload.pointer("/item/content")).map(|m| m.to_string()).unwrap_or_default();
             format!(
                 "{}/{}{} {}",
                 v["type"].as_str().unwrap_or("?"),
                 payload["type"].as_str().unwrap_or("?"),
-                payload
-                    .pointer("/item/type")
-                    .and_then(|t| t.as_str())
-                    .map(|t| format!("/{t}"))
-                    .unwrap_or_default(),
+                payload.pointer("/item/type").and_then(|t| t.as_str()).map(|t| format!("/{t}")).unwrap_or_default(),
                 text.chars().take(60).collect::<String>(),
             )
         })
@@ -88,12 +70,7 @@ fn codex_backtrack_screen_and_rollout() {
     let started = SystemTime::now();
 
     let pair = native_pty_system()
-        .openpty(PtySize {
-            rows: 40,
-            cols: 120,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
+        .openpty(PtySize { rows: 40, cols: 120, pixel_width: 0, pixel_height: 0 })
         .unwrap();
     let mut command = common::agent_command(&argv[0], &cwd);
     command.args(&argv[1..]);
@@ -152,23 +129,12 @@ fn codex_backtrack_screen_and_rollout() {
     };
     let dump = |tag: &str| {
         let text = contents();
-        let lines: Vec<&str> = text
-            .lines()
-            .map(str::trim_end)
-            .filter(|l| !l.trim().is_empty())
-            .collect();
-        eprintln!(
-            "[probe] {tag} 屏幕:\n{}\n",
-            lines[lines.len().saturating_sub(26)..].join("\n")
-        );
+        let lines: Vec<&str> = text.lines().map(str::trim_end).filter(|l| !l.trim().is_empty()).collect();
+        eprintln!("[probe] {tag} 屏幕:\n{}\n", lines[lines.len().saturating_sub(26)..].join("\n"));
     };
     let completes = |n: usize| {
         rollout(started, &cwd).is_some_and(|path| {
-            std::fs::read_to_string(path)
-                .unwrap_or_default()
-                .matches("\"task_complete\"")
-                .count()
-                >= n
+            std::fs::read_to_string(path).unwrap_or_default().matches("\"task_complete\"").count() >= n
         })
     };
 
@@ -186,8 +152,7 @@ fn codex_backtrack_screen_and_rollout() {
         if !contents().contains("Ask Codex to do anything") {
             return Err("首屏不是输入框（可能是更新/登录选择器），不按任何键".into());
         }
-        for (index, prompt) in ["只回复一个字：好", "只回复一个字：行"].iter().enumerate()
-        {
+        for (index, prompt) in ["只回复一个字：好", "只回复一个字：行"].iter().enumerate() {
             submit(prompt);
             if !wait(180, &|| completes(index + 1)) {
                 dump(&format!("第 {} 轮", index + 1));
@@ -201,10 +166,7 @@ fn codex_backtrack_screen_and_rollout() {
         let steps = std::env::var("CX_STEPS").unwrap_or_else(|_| "esc,esc".into());
         for step in steps.split(',').map(str::trim).filter(|s| !s.is_empty()) {
             if let Some(text) = step.strip_prefix("say:") {
-                let n = std::fs::read_to_string(&path)
-                    .unwrap_or_default()
-                    .matches("\"task_complete\"")
-                    .count();
+                let n = std::fs::read_to_string(&path).unwrap_or_default().matches("\"task_complete\"").count();
                 submit(text);
                 wait(120, &|| completes(n + 1));
                 std::thread::sleep(Duration::from_secs(2));
@@ -225,11 +187,7 @@ fn codex_backtrack_screen_and_rollout() {
         }
         std::thread::sleep(Duration::from_secs(2));
         let lines = summarize(&path);
-        eprintln!(
-            "[probe] rollout {}\n[probe] 回溯后新增:\n{}\n",
-            path.display(),
-            lines[before.min(lines.len())..].join("\n")
-        );
+        eprintln!("[probe] rollout {}\n[probe] 回溯后新增:\n{}\n", path.display(), lines[before.min(lines.len())..].join("\n"));
         Ok(())
     })();
     let last_screen = contents();
@@ -237,9 +195,5 @@ fn codex_backtrack_screen_and_rollout() {
     let _ = child.wait();
     drop(pair.master);
     let _ = std::fs::remove_dir_all(&cwd);
-    assert!(
-        result.is_ok(),
-        "{}；末屏=\n{last_screen}",
-        result.unwrap_err()
-    );
+    assert!(result.is_ok(), "{}；末屏=\n{last_screen}", result.unwrap_err());
 }

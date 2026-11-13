@@ -80,10 +80,7 @@ fn to_badge(pr: &PullRequestDto) -> SidebarPrBadgeDto {
 }
 
 fn stamps(paths: &[PathBuf]) -> Vec<Option<SystemTime>> {
-    paths
-        .iter()
-        .map(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok())
-        .collect()
+    paths.iter().map(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok()).collect()
 }
 
 /// 目录的 PR 去向，按目录缓存。以前每轮都现算 repo_info（连默认分支一起，每个仓库 4～6 个 git 进程），
@@ -96,20 +93,9 @@ fn pr_target(cache: &DiffCache, ctx: &Ctx, dir: &str) -> PrTarget {
         }
     }
     let (info, common_dir, git_dir) = repo_head(dir, ctx.env, &ctx.prefs, true)?;
-    let target =
-        pr_key(&info).and_then(|key| Some((key, info.gh.slug()?.to_string(), info.head_ref()?)));
-    let watch = vec![
-        git_dir.join("HEAD"),
-        common_dir.join("config"),
-        git_dir.join("config.worktree"),
-        ctx.prefs.clone(),
-    ];
-    let entry = TargetEntry {
-        at: Instant::now(),
-        stamps: stamps(&watch),
-        watch,
-        target: target.clone(),
-    };
+    let target = pr_key(&info).and_then(|key| Some((key, info.gh.slug()?.to_string(), info.head_ref()?)));
+    let watch = vec![git_dir.join("HEAD"), common_dir.join("config"), git_dir.join("config.worktree"), ctx.prefs.clone()];
+    let entry = TargetEntry { at: Instant::now(), stamps: stamps(&watch), watch, target: target.clone() };
     lock(&cache.targets).insert(dir.to_string(), entry);
     target
 }
@@ -167,22 +153,13 @@ pub(crate) fn title_pr_with(ctx: &Ctx, diffs: &DiffCache, cwd: &str) -> Option<P
         Some(target) => cached_pr(ctx, Some(target), dir, true)?,
         None => direct_pr(ctx, diffs, dir)?,
     };
-    Some(PullRequestDto {
-        number: pr.number,
-        state: pr.state,
-        url: pr.url,
-        title: pr.title,
-        ..Default::default()
-    })
+    Some(PullRequestDto { number: pr.number, state: pr.state, url: pr.url, title: pr.title, ..Default::default() })
 }
 
 /// 以前标题栏的查法：在目录里跑 `gh pr view`（不带 --repo，由 gh 按当前分支和远端自己认），按目录缓存 60 秒。
 /// 不在仓库里（上级都没有 .git）就不起 gh。失败、没有 PR 都记成 None，60 秒内不重查。
 fn direct_pr(ctx: &Ctx, diffs: &DiffCache, dir: &str) -> Option<PullRequestDto> {
-    if !std::path::Path::new(dir)
-        .ancestors()
-        .any(|p| p.join(".git").exists())
-    {
+    if !std::path::Path::new(dir).ancestors().any(|p| p.join(".git").exists()) {
         return None;
     }
     if let Some((at, pr)) = lock(&diffs.direct_prs).get(dir) {
@@ -190,12 +167,9 @@ fn direct_pr(ctx: &Ctx, diffs: &DiffCache, dir: &str) -> Option<PullRequestDto> 
             return pr.clone();
         }
     }
-    let pr = (ctx.gh)(
-        dir,
-        &["pr", "view", "--json", "number,state,isDraft,url,title"],
-    )
-    .filter(|out| out.ok())
-    .and_then(|out| crate::git::parse_pull_request(&out.stdout));
+    let pr = (ctx.gh)(dir, &["pr", "view", "--json", "number,state,isDraft,url,title"])
+        .filter(|out| out.ok())
+        .and_then(|out| crate::git::parse_pull_request(&out.stdout));
     lock(&diffs.direct_prs).insert(dir.to_string(), (Instant::now(), pr.clone()));
     pr
 }
@@ -242,10 +216,7 @@ fn par_map<T: Sync, R: Send>(items: &[T], workers: usize, f: impl Fn(&T) -> R + 
         }
     });
     // scope 结束时所有线程都已跑完（有 panic 会在上面传出来），每格都有值。
-    slots
-        .into_iter()
-        .filter_map(|slot| slot.into_inner().unwrap_or_else(|e| e.into_inner()))
-        .collect()
+    slots.into_iter().filter_map(|slot| slot.into_inner().unwrap_or_else(|e| e.into_inner())).collect()
 }
 
 /// 批量算侧栏摘要。只回「有 PR 或有改动」的目录：干净且没有 PR 的会话行什么都不显示，回包也省了。
@@ -257,11 +228,7 @@ pub(crate) fn badges_with(
     compute: &Compute<'_>,
 ) -> Vec<SidebarGitBadgeDto> {
     let mut seen = HashSet::new();
-    let list: Vec<&String> = cwds
-        .iter()
-        .filter(|cwd| !cwd.trim().is_empty() && seen.insert(cwd.as_str()))
-        .take(MAX_CWDS)
-        .collect();
+    let list: Vec<&String> = cwds.iter().filter(|cwd| !cwd.trim().is_empty() && seen.insert(cwd.as_str())).take(MAX_CWDS).collect();
     // 本地 git（改动数、PR 去向）各目录互不相干，并行算；gh 留在下面串行：登录状态只问一次，
     // 联网查 PR 本来就每仓库 60 秒才一次。
     let local = par_map(&list, DIR_WORKERS, |cwd| {
@@ -277,13 +244,7 @@ pub(crate) fn badges_with(
         .filter_map(|(cwd, local)| {
             let ((additions, deletions, files), target) = local?;
             let pr = pr_badge(ctx, target, cwd.trim(), online);
-            (files > 0 || pr.is_some()).then(|| SidebarGitBadgeDto {
-                cwd: cwd.clone(),
-                additions,
-                deletions,
-                files,
-                pr,
-            })
+            (files > 0 || pr.is_some()).then(|| SidebarGitBadgeDto { cwd: cwd.clone(), additions, deletions, files, pr })
         })
         .collect()
 }
@@ -296,24 +257,16 @@ fn window_online(window: &tauri::WebviewWindow) -> bool {
 }
 
 #[tauri::command]
-pub(crate) async fn sidebar_git_badges(
-    window: tauri::WebviewWindow,
-    cwds: Vec<String>,
-) -> Result<Vec<SidebarGitBadgeDto>, String> {
+pub(crate) async fn sidebar_git_badges(window: tauri::WebviewWindow, cwds: Vec<String>) -> Result<Vec<SidebarGitBadgeDto>, String> {
     let online = window_online(&window);
     sidebar_git_badges_for(cwds, online).await
 }
 
 /// 手机桥与桌面命令共用。手机页自己只在页面可见时轮询，桥这边按在线处理。
-pub(crate) async fn sidebar_git_badges_for(
-    cwds: Vec<String>,
-    online: bool,
-) -> Result<Vec<SidebarGitBadgeDto>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        badges_with(&Ctx::real(), &DIFFS, &cwds, online, &real_diff_counts)
-    })
-    .await
-    .map_err(|e| e.to_string())
+pub(crate) async fn sidebar_git_badges_for(cwds: Vec<String>, online: bool) -> Result<Vec<SidebarGitBadgeDto>, String> {
+    tauri::async_runtime::spawn_blocking(move || badges_with(&Ctx::real(), &DIFFS, &cwds, online, &real_diff_counts))
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

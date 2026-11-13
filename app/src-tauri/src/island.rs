@@ -165,9 +165,7 @@ fn layout_floating(
     // （贴纸的 360×330 下限是给正常卡片的）。
     if !STYLE_SET.swap(true, Ordering::Relaxed) {
         window.set_resizable(false).map_err(|e| e.to_string())?;
-        window
-            .set_min_size(None::<tauri::LogicalSize<f64>>)
-            .map_err(|e| e.to_string())?;
+        window.set_min_size(None::<tauri::LogicalSize<f64>>).map_err(|e| e.to_string())?;
     }
     set_bounds(&window, x, y, phys_w.min(work.w), phys_h)?;
     if !window.is_always_on_top().map_err(|e| e.to_string())? {
@@ -183,17 +181,7 @@ fn set_bounds(window: &tauri::WebviewWindow, x: i32, y: i32, w: i32, h: i32) -> 
     use windows_sys::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOACTIVATE, SWP_NOZORDER};
     let hwnd = window.hwnd().map_err(|e| e.to_string())?;
     // SAFETY: hwnd 来自活着的 tauri 窗口；只改位置尺寸，不动 z 序、不抢焦点。
-    let ok = unsafe {
-        SetWindowPos(
-            hwnd.0 as _,
-            std::ptr::null_mut(),
-            x,
-            y,
-            w,
-            h,
-            SWP_NOZORDER | SWP_NOACTIVATE,
-        )
-    };
+    let ok = unsafe { SetWindowPos(hwnd.0 as _, std::ptr::null_mut(), x, y, w, h, SWP_NOZORDER | SWP_NOACTIVATE) };
     if ok == 0 {
         return Err("SetWindowPos failed".into());
     }
@@ -241,26 +229,14 @@ pub(crate) fn island_host(app: tauri::AppHandle) -> IslandHost {
         let _ = &app;
         let (notch, _) = crate::macos::notch::refresh();
         match notch {
-            Some(n) => IslandHost {
-                kind: "notch",
-                notch_width: n.width,
-                notch_height: n.height,
-            },
-            None => IslandHost {
-                kind: "menubar",
-                notch_width: 0.0,
-                notch_height: 0.0,
-            },
+            Some(n) => IslandHost { kind: "notch", notch_width: n.width, notch_height: n.height },
+            None => IslandHost { kind: "menubar", notch_width: 0.0, notch_height: 0.0 },
         }
     }
     #[cfg(not(target_os = "macos"))]
     {
         let _ = app;
-        IslandHost {
-            kind: "floating",
-            notch_width: 0.0,
-            notch_height: 0.0,
-        }
+        IslandHost { kind: "floating", notch_width: 0.0, notch_height: 0.0 }
     }
 }
 
@@ -288,12 +264,7 @@ pub(crate) fn set_menubar_status(
 /// 显示 / 隐藏岛（macOS 菜单栏落点：收起时藏起来，展开、提醒时再显示）。`focus` 见
 /// macos::panel::set_visible。Windows 岛恒可见，用不上，按普通窗口显隐处理。
 #[tauri::command]
-pub(crate) fn island_set_visible(
-    app: tauri::AppHandle,
-    window: tauri::WebviewWindow,
-    visible: bool,
-    focus: bool,
-) {
+pub(crate) fn island_set_visible(app: tauri::AppHandle, window: tauri::WebviewWindow, visible: bool, focus: bool) {
     #[cfg(target_os = "macos")]
     {
         let _ = window;
@@ -302,11 +273,7 @@ pub(crate) fn island_set_visible(
     #[cfg(not(target_os = "macos"))]
     {
         let _ = (app, focus);
-        let _ = if visible {
-            window.show()
-        } else {
-            window.hide()
-        };
+        let _ = if visible { window.show() } else { window.hide() };
     }
 }
 
@@ -402,11 +369,7 @@ struct ScreenScan {
 /// `titlebar` 是标题栏那一条的物理高度（含最大化时探出屏外的边框）。只要求最大化，不要求带
 /// WS_CAPTION：Chrome、VS Code、Office 都是自绘标题栏。
 #[cfg(any(target_os = "windows", test))]
-fn covers_maximized_titlebar(
-    under: Option<UnderWindow>,
-    island: windows_rect::Rect,
-    titlebar: i32,
-) -> bool {
+fn covers_maximized_titlebar(under: Option<UnderWindow>, island: windows_rect::Rect, titlebar: i32) -> bool {
     let Some(w) = under else { return false };
     w.maximized
         && island.left < w.rect.right
@@ -432,32 +395,19 @@ const TITLEBAR_BAND: f64 = 48.0 + 8.0;
 fn scan_island_screen(island: &tauri::WebviewWindow) -> ScreenScan {
     use windows_sys::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
     use windows_sys::Win32::Graphics::Dwm::{DwmGetWindowAttribute, DWMWA_CLOAKED};
-    use windows_sys::Win32::Graphics::Gdi::{
-        GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONULL,
-    };
-    use windows_sys::Win32::UI::Shell::{
-        SHQueryUserNotificationState, QUERY_USER_NOTIFICATION_STATE, QUNS_PRESENTATION_MODE,
-    };
+    use windows_sys::Win32::Graphics::Gdi::{GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONULL};
+    use windows_sys::Win32::UI::Shell::{SHQueryUserNotificationState, QUERY_USER_NOTIFICATION_STATE, QUNS_PRESENTATION_MODE};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetClassNameW, GetWindowLongW, GetWindowRect, IsIconic, IsWindowVisible,
-        IsZoomed, GWL_EXSTYLE, GWL_STYLE, WS_CAPTION, WS_EX_LAYERED, WS_EX_TOOLWINDOW,
-        WS_EX_TOPMOST, WS_EX_TRANSPARENT,
+        EnumWindows, GetClassNameW, GetWindowLongW, GetWindowRect, IsIconic, IsWindowVisible, IsZoomed, GWL_EXSTYLE,
+        GWL_STYLE, WS_CAPTION, WS_EX_LAYERED, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_EX_TRANSPARENT,
     };
 
     let mut state: QUERY_USER_NOTIFICATION_STATE = 0;
     // SAFETY: 传入有效的输出指针；失败时 state 不可信，按「不是演示模式」处理。
     if unsafe { SHQueryUserNotificationState(&mut state) } >= 0 && state == QUNS_PRESENTATION_MODE {
-        return ScreenScan {
-            fullscreen: true,
-            under: None,
-        };
+        return ScreenScan { fullscreen: true, under: None };
     }
-    let Ok(own) = island.hwnd() else {
-        return ScreenScan {
-            fullscreen: false,
-            under: None,
-        };
-    };
+    let Ok(own) = island.hwnd() else { return ScreenScan { fullscreen: false, under: None } };
     let own = own.0 as HWND;
 
     struct Scan {
@@ -471,13 +421,8 @@ fn scan_island_screen(island: &tauri::WebviewWindow) -> ScreenScan {
     fn shell_class(class: &str) -> bool {
         matches!(
             class,
-            "Progman"
-                | "WorkerW"
-                | "Shell_TrayWnd"
-                | "Shell_SecondaryTrayWnd"
-                | "Windows.UI.Core.CoreWindow"
-                | "XamlExplorerHostIslandWindow"
-                | "ApplicationFrameWindow_Placeholder"
+            "Progman" | "WorkerW" | "Shell_TrayWnd" | "Shell_SecondaryTrayWnd" | "Windows.UI.Core.CoreWindow"
+                | "XamlExplorerHostIslandWindow" | "ApplicationFrameWindow_Placeholder"
         )
     }
     unsafe extern "system" fn visit(hwnd: HWND, lparam: LPARAM) -> BOOL {
@@ -487,22 +432,13 @@ fn scan_island_screen(island: &tauri::WebviewWindow) -> ScreenScan {
             return 1;
         }
         let mut cloaked: u32 = 0;
-        if DwmGetWindowAttribute(
-            hwnd,
-            DWMWA_CLOAKED as u32,
-            (&mut cloaked as *mut u32).cast(),
-            4,
-        ) >= 0
-            && cloaked != 0
-        {
+        if DwmGetWindowAttribute(hwnd, DWMWA_CLOAKED as u32, (&mut cloaked as *mut u32).cast(), 4) >= 0 && cloaked != 0 {
             return 1;
         }
         let ex = GetWindowLongW(hwnd, GWL_EXSTYLE) as u32;
         // 工具窗不算；点击穿透的分层覆盖层（游戏/录屏的 HUD）铺满整屏也不是全屏程序，算了会让
         // 岛在那块屏上一直消失、用户找不到原因（做空复现）。
-        if ex & WS_EX_TOOLWINDOW != 0
-            || ex & (WS_EX_LAYERED | WS_EX_TRANSPARENT) == (WS_EX_LAYERED | WS_EX_TRANSPARENT)
-        {
+        if ex & WS_EX_TOOLWINDOW != 0 || ex & (WS_EX_LAYERED | WS_EX_TRANSPARENT) == (WS_EX_LAYERED | WS_EX_TRANSPARENT) {
             return 1;
         }
         let mut class = [0u16; 64];
@@ -531,18 +467,12 @@ fn scan_island_screen(island: &tauri::WebviewWindow) -> ScreenScan {
         }
         // 第一个普通窗口说了算：它铺满就是全屏，否则这块屏上最上层是个普通窗口。
         scan.found = full;
-        scan.under = Some(UnderWindow {
-            rect,
-            maximized: IsZoomed(hwnd) != 0,
-        });
+        scan.under = Some(UnderWindow { rect, maximized: IsZoomed(hwnd) != 0 });
         0
     }
     // SAFETY: 只读查询；回调里的指针在 EnumWindows 返回前一直有效。
     unsafe {
-        let none = ScreenScan {
-            fullscreen: false,
-            under: None,
-        };
+        let none = ScreenScan { fullscreen: false, under: None };
         let monitor = MonitorFromWindow(own, MONITOR_DEFAULTTONULL);
         if monitor.is_null() {
             return none;
@@ -552,18 +482,9 @@ fn scan_island_screen(island: &tauri::WebviewWindow) -> ScreenScan {
         if GetMonitorInfoW(monitor, &mut info) == 0 {
             return none;
         }
-        let mut scan = Scan {
-            own,
-            monitor,
-            screen: info.rcMonitor,
-            found: false,
-            under: None,
-        };
+        let mut scan = Scan { own, monitor, screen: info.rcMonitor, found: false, under: None };
         EnumWindows(Some(visit), &mut scan as *mut Scan as LPARAM);
-        ScreenScan {
-            fullscreen: scan.found,
-            under: if scan.found { None } else { scan.under },
-        }
+        ScreenScan { fullscreen: scan.found, under: if scan.found { None } else { scan.under } }
     }
 }
 
@@ -651,47 +572,25 @@ pub(crate) fn spawn_fullscreen_watch(app: tauri::AppHandle) {
 mod tests {
     use super::*;
 
-    const WORK: Work = Work {
-        x: 0,
-        y: 0,
-        w: 1920,
-        h: 1040,
-    };
+    const WORK: Work = Work { x: 0, y: 0, w: 1920, h: 1040 };
 
     #[test]
     fn fullscreen_hides_only_visible_island_and_restores_only_what_it_hid() {
         // 进全屏：岛可见就藏；本来就不可见（启动没就绪、用户关掉）不动。
         assert_eq!(fullscreen_action(true, false, true), FullscreenAction::Hide);
-        assert_eq!(
-            fullscreen_action(true, false, false),
-            FullscreenAction::Nothing
-        );
+        assert_eq!(fullscreen_action(true, false, false), FullscreenAction::Nothing);
         // 全屏中保持藏着。
-        assert_eq!(
-            fullscreen_action(true, true, false),
-            FullscreenAction::Nothing
-        );
+        assert_eq!(fullscreen_action(true, true, false), FullscreenAction::Nothing);
         // 退出全屏：只恢复我们藏的。
-        assert_eq!(
-            fullscreen_action(false, true, false),
-            FullscreenAction::Show
-        );
-        assert_eq!(
-            fullscreen_action(false, false, false),
-            FullscreenAction::Nothing
-        );
+        assert_eq!(fullscreen_action(false, true, false), FullscreenAction::Show);
+        assert_eq!(fullscreen_action(false, false, false), FullscreenAction::Nothing);
     }
 
     #[cfg(not(target_os = "macos"))]
     #[test]
     fn edge_island_returns_to_its_spot_after_a_wider_form() {
         // 拖到最右：胶囊 260 宽、中心 2430。展开成 628 宽会被钳进工作区，收起要回到 2430。
-        let work = Work {
-            x: 0,
-            y: 0,
-            w: 2560,
-            h: 1400,
-        };
+        let work = Work { x: 0, y: 0, w: 2560, h: 1400 };
         set_home(2430.0);
         let (panel_x, _) = place(work, home_center(work, 0.0), 628);
         assert_eq!(panel_x, 2560 - 628);
@@ -700,24 +599,14 @@ mod tests {
         let (pill_x, _) = place(work, home_center(work, panel_center), 260);
         assert_eq!(pill_x, 2300);
         // 本位不在窗口所在屏上（那块屏被拔了）：改用当前中心，不把岛钳到新屏边上。
-        let other = Work {
-            x: -1920,
-            y: 0,
-            w: 1920,
-            h: 1040,
-        };
+        let other = Work { x: -1920, y: 0, w: 1920, h: 1040 };
         assert_eq!(home_center(other, -960.0), -960.0);
         *HOME.lock().unwrap() = None;
     }
 
     #[test]
     fn fullscreen_means_covering_the_whole_monitor() {
-        let r = |left, top, right, bottom| windows_rect::Rect {
-            left,
-            top,
-            right,
-            bottom,
-        };
+        let r = |left, top, right, bottom| windows_rect::Rect { left, top, right, bottom };
         let screen = r(0, 0, 1920, 1080);
         assert!(covers(r(0, 0, 1920, 1080), screen));
         // 无边框全屏常比屏幕大几像素。
@@ -730,75 +619,33 @@ mod tests {
 
     #[test]
     fn maximized_window_under_the_island_means_titlebar_covered() {
-        let r = |left, top, right, bottom| windows_rect::Rect {
-            left,
-            top,
-            right,
-            bottom,
-        };
+        let r = |left, top, right, bottom| windows_rect::Rect { left, top, right, bottom };
         // 1920×1080、任务栏在下：最大化窗口每边比工作区多 8px，岛贴工作区顶边、在正中。
         let island = r(770, 0, 1150, 46);
-        let maxed = UnderWindow {
-            rect: r(-8, -8, 1928, 1048),
-            maximized: true,
-        };
+        let maxed = UnderWindow { rect: r(-8, -8, 1928, 1048), maximized: true };
         let band = 84; // (48 + 8) × 150%
         assert!(covers_maximized_titlebar(Some(maxed), island, band));
         // 收成细条后还在标题栏范围里：保持收起，不来回跳。
-        assert!(covers_maximized_titlebar(
-            Some(maxed),
-            r(880, 0, 1040, 8),
-            band
-        ));
+        assert!(covers_maximized_titlebar(Some(maxed), r(880, 0, 1040, 8), band));
         // 同样铺满但没最大化（普通窗口拖大了）：不收，那是用户自己摆的。
-        assert!(!covers_maximized_titlebar(
-            Some(UnderWindow {
-                maximized: false,
-                ..maxed
-            }),
-            island,
-            band
-        ));
+        assert!(!covers_maximized_titlebar(Some(UnderWindow { maximized: false, ..maxed }), island, band));
         // 岛底下没有普通窗口（桌面）：不收。
         assert!(!covers_maximized_titlebar(None, island, band));
         // 最大化窗口在任务栏顶置的屏上，标题栏往下挪：岛仍贴工作区顶边，照样在标题栏里。
-        let top_bar = UnderWindow {
-            rect: r(-8, 40, 1928, 1088),
-            maximized: true,
-        };
-        assert!(covers_maximized_titlebar(
-            Some(top_bar),
-            r(770, 48, 1150, 94),
-            band
-        ));
+        let top_bar = UnderWindow { rect: r(-8, 40, 1928, 1088), maximized: true };
+        assert!(covers_maximized_titlebar(Some(top_bar), r(770, 48, 1150, 94), band));
         // 岛横向不在窗口上（窗口最大化在副屏、岛矩形算在主屏坐标里）：不收。
-        let other = UnderWindow {
-            rect: r(1912, -8, 3848, 1048),
-            maximized: true,
-        };
-        assert!(!covers_maximized_titlebar(
-            Some(other),
-            r(100, 0, 480, 46),
-            band
-        ));
+        let other = UnderWindow { rect: r(1912, -8, 3848, 1048), maximized: true };
+        assert!(!covers_maximized_titlebar(Some(other), r(100, 0, 480, 46), band));
         // 岛在标题栏下面很远（理论上不会，岛总贴顶）：不收。
-        assert!(!covers_maximized_titlebar(
-            Some(maxed),
-            r(770, 300, 1150, 346),
-            band
-        ));
+        assert!(!covers_maximized_titlebar(Some(maxed), r(770, 300, 1150, 346), band));
     }
 
     #[test]
     fn place_centers_and_sticks_to_top() {
         assert_eq!(place(WORK, 960.0, 200), (860, 0));
         // 副屏在左、顶边不在 0：贴的是那块屏工作区的顶。
-        let left_screen = Work {
-            x: -1280,
-            y: 200,
-            w: 1280,
-            h: 984,
-        };
+        let left_screen = Work { x: -1280, y: 200, w: 1280, h: 984 };
         assert_eq!(place(left_screen, -640.0, 100), (-690, 200));
     }
 
@@ -817,26 +664,9 @@ mod tests {
         let ratio = center_ratio(WORK, left, 300);
         assert!((ratio - 0.25).abs() < 1e-9, "{ratio}");
         // 按比例还原到另一种分辨率，中心落在同样的相对位置。
-        let wide = Work {
-            x: 0,
-            y: 0,
-            w: 2560,
-            h: 1400,
-        };
+        let wide = Work { x: 0, y: 0, w: 2560, h: 1400 };
         let (left2, _) = place(wide, f64::from(wide.x) + ratio * f64::from(wide.w), 300);
         assert_eq!(left2, 640 - 150);
-        assert_eq!(
-            center_ratio(
-                Work {
-                    x: 0,
-                    y: 0,
-                    w: 0,
-                    h: 0
-                },
-                0,
-                10
-            ),
-            0.5
-        );
+        assert_eq!(center_ratio(Work { x: 0, y: 0, w: 0, h: 0 }, 0, 10), 0.5);
     }
 }

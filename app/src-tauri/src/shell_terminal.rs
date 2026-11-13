@@ -100,13 +100,7 @@ impl ShellBusy {
         let processes: Vec<String> = self
             .processes
             .iter()
-            .map(|p| {
-                format!(
-                    "{} (PID {})",
-                    if p.name.is_empty() { "?" } else { &p.name },
-                    p.pid
-                )
-            })
+            .map(|p| format!("{} (PID {})", if p.name.is_empty() { "?" } else { &p.name }, p.pid))
             .collect();
         format!("{} · {}", self.title, processes.join(", "))
     }
@@ -306,11 +300,7 @@ impl ShellTerminals {
         // 终端关掉时 ShellPty 连同 Sender 一起 drop，recv 失败，线程自己退出。
         std::thread::spawn(move || {
             while let Ok(bytes) = inbox.recv() {
-                if writer
-                    .write_all(&bytes)
-                    .and_then(|()| writer.flush())
-                    .is_err()
-                {
+                if writer.write_all(&bytes).and_then(|()| writer.flush()).is_err() {
                     break;
                 }
             }
@@ -450,11 +440,7 @@ impl ShellTerminals {
             .iter()
             .filter(|(id, _)| ids.is_none_or(|ids| ids.contains(id)))
             .filter_map(|(id, shell)| {
-                let exited = shell
-                    .output
-                    .lock()
-                    .map(|o| o.exit.is_some())
-                    .unwrap_or(true);
+                let exited = shell.output.lock().map(|o| o.exit.is_some()).unwrap_or(true);
                 if exited {
                     return None;
                 }
@@ -475,19 +461,12 @@ impl ShellTerminals {
     }
 }
 
-fn busy_from(
-    roots: Vec<(u32, u32, String)>,
-    table: &HashMap<u32, (u32, String)>,
-) -> Vec<ShellBusy> {
+fn busy_from(roots: Vec<(u32, u32, String)>, table: &HashMap<u32, (u32, String)>) -> Vec<ShellBusy> {
     roots
         .into_iter()
         .filter_map(|(id, pid, title)| {
             let processes = running_under(pid, table);
-            (!processes.is_empty()).then_some(ShellBusy {
-                id,
-                title,
-                processes,
-            })
+            (!processes.is_empty()).then_some(ShellBusy { id, title, processes })
         })
         .collect()
 }
@@ -513,9 +492,7 @@ pub(crate) fn shell_terminal_list(
 /// 只按当前会话列（shell_terminal_list）的话，「重新加载」后别的会话的终端不在它账上，关窗
 /// 就不弹确认、直接杀掉（做空审查）。
 #[tauri::command]
-pub(crate) fn shell_terminal_list_all(
-    state: tauri::State<'_, ShellTerminals>,
-) -> Vec<ShellTerminalInfo> {
+pub(crate) fn shell_terminal_list_all(state: tauri::State<'_, ShellTerminals>) -> Vec<ShellTerminalInfo> {
     state.list_all()
 }
 
@@ -524,10 +501,7 @@ impl ShellTerminals {
         let Ok(map) = self.shells.lock() else {
             return Vec::new();
         };
-        let mut list: Vec<ShellTerminalInfo> = map
-            .iter()
-            .map(|(id, shell)| Self::info(*id, shell))
-            .collect();
+        let mut list: Vec<ShellTerminalInfo> = map.iter().map(|(id, shell)| Self::info(*id, shell)).collect();
         list.sort_by_key(|info| info.id);
         list
     }
@@ -717,19 +691,10 @@ mod tests {
     impl StartupQueries {
         /// 新出现的查询各答一次。
         fn answers(&mut self, text: &str) -> Vec<&'static str> {
-            let (cursor, device) = (
-                text.matches("\x1b[6n").count(),
-                text.matches("\x1b[c").count(),
-            );
+            let (cursor, device) = (text.matches("\x1b[6n").count(), text.matches("\x1b[c").count());
             let mut out = Vec::new();
-            out.extend(std::iter::repeat_n(
-                "\x1b[1;1R",
-                cursor.saturating_sub(self.cursor),
-            ));
-            out.extend(std::iter::repeat_n(
-                "\x1b[?1;0c",
-                device.saturating_sub(self.device),
-            ));
+            out.extend(std::iter::repeat_n("\x1b[1;1R", cursor.saturating_sub(self.cursor)));
+            out.extend(std::iter::repeat_n("\x1b[?1;0c", device.saturating_sub(self.device)));
             (self.cursor, self.device) = (cursor.max(self.cursor), device.max(self.device));
             out
         }
@@ -751,8 +716,7 @@ mod tests {
                         // OSC：直到 BEL 或 ST（ESC \）。
                         Some(']') => {
                             while let Some(c) = chars.next() {
-                                if c == '\x07' || (c == '\x1b' && chars.next_if_eq(&'\\').is_some())
-                                {
+                                if c == '\x07' || (c == '\x1b' && chars.next_if_eq(&'\\').is_some()) {
                                     break;
                                 }
                             }
@@ -807,9 +771,7 @@ mod tests {
             if !typed && queries.settled(&text) {
                 // `$((6*7))` 在 PowerShell 和 POSIX shell 里都算出 42；回显的命令行里没有 42，
                 // 看到它就说明命令真被执行了。
-                shells
-                    .write(info.id, "echo meowo-shell-$((6*7))\r")
-                    .unwrap();
+                shells.write(info.id, "echo meowo-shell-$((6*7))\r").unwrap();
                 #[cfg(target_os = "windows")]
                 shells.write(info.id, "(Get-Location).Path\r").unwrap();
                 #[cfg(not(target_os = "windows"))]
@@ -823,11 +785,7 @@ mod tests {
             assert!(
                 std::time::Instant::now() < deadline,
                 "shell 没有输出预期内容（{}，已等 {:?}）：{text}",
-                if typed {
-                    "提示符出来后命令没跑出结果"
-                } else {
-                    "提示符一直没出来"
-                },
+                if typed { "提示符出来后命令没跑出结果" } else { "提示符一直没出来" },
                 started.elapsed()
             );
             std::thread::sleep(std::time::Duration::from_millis(100));

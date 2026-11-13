@@ -21,9 +21,7 @@ mod common;
 #[test]
 #[ignore = "拉起真实 claude、派一个后台子代理再进出它的视图；手动调研用"]
 fn claude_subagent_view_enter_and_leave() {
-    let home = std::env::var("USERPROFILE")
-        .or_else(|_| std::env::var("HOME"))
-        .unwrap();
+    let home = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).unwrap();
     let exe = format!("{home}/.local/bin/claude.exe");
     let root = std::env::temp_dir().join(format!("meowo-sv-probe-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
@@ -31,21 +29,12 @@ fn claude_subagent_view_enter_and_leave() {
     let config = root.join("config");
     std::fs::create_dir_all(&cwd).unwrap();
     std::fs::create_dir_all(&config).unwrap();
-    std::fs::copy(
-        format!("{home}/.claude/.credentials.json"),
-        config.join(".credentials.json"),
-    )
-    .unwrap();
+    std::fs::copy(format!("{home}/.claude/.credentials.json"), config.join(".credentials.json")).unwrap();
     std::fs::copy(format!("{home}/.claude.json"), config.join(".claude.json")).unwrap();
 
     let (rows, cols) = (40u16, 120u16);
     let pair = native_pty_system()
-        .openpty(PtySize {
-            rows,
-            cols,
-            pixel_width: 0,
-            pixel_height: 0,
-        })
+        .openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
         .unwrap();
     let mut command = common::agent_command(&exe, &cwd);
     command.arg("--no-chrome");
@@ -88,13 +77,8 @@ fn claude_subagent_view_enter_and_leave() {
         let screen = parser.screen();
         (0..rows)
             .filter_map(|row| {
-                let text: String = (0..cols)
-                    .filter_map(|col| screen.cell(row, col))
-                    .map(|c| c.contents())
-                    .collect();
-                let bold = (0..cols)
-                    .filter_map(|col| screen.cell(row, col))
-                    .any(|c| c.bold() && !c.contents().trim().is_empty());
+                let text: String = (0..cols).filter_map(|col| screen.cell(row, col)).map(|c| c.contents()).collect();
+                let bold = (0..cols).filter_map(|col| screen.cell(row, col)).any(|c| c.bold() && !c.contents().trim().is_empty());
                 (bold && !text.trim().is_empty()).then(|| format!("{row:>2}: {}", text.trim_end()))
             })
             .collect::<Vec<_>>()
@@ -118,11 +102,7 @@ fn claude_subagent_view_enter_and_leave() {
     let dump = |tag: &str| {
         let text = contents();
         let lines: Vec<&str> = text.lines().map(str::trim_end).collect();
-        eprintln!(
-            "[probe] {tag} 屏幕:\n{}\n[probe] 粗体行:\n{}\n",
-            lines.join("\n"),
-            bold_rows()
-        );
+        eprintln!("[probe] {tag} 屏幕:\n{}\n[probe] 粗体行:\n{}\n", lines.join("\n"), bold_rows());
     };
     let key = |name: &str, data: &str| {
         send(data);
@@ -137,9 +117,7 @@ fn claude_subagent_view_enter_and_leave() {
             std::thread::sleep(Duration::from_millis(500));
             send("\r");
         }
-        if !wait(30, &|| {
-            !contents().contains("Yes, I trust this folder") && contents().contains('❯')
-        }) {
+        if !wait(30, &|| !contents().contains("Yes, I trust this folder") && contents().contains('❯')) {
             dump("启动");
             return Err("30s 内没等到 composer".into());
         }
@@ -147,9 +125,7 @@ fn claude_subagent_view_enter_and_leave() {
         send("用 Agent 工具派一个 general-purpose 子代理，run_in_background 设为 true，description 写 probe-sleeper，prompt 让它用 Bash 执行 sleep 150 后只回复 done。派出后你只回复：已派出");
         std::thread::sleep(Duration::from_millis(500));
         send("\r");
-        if !wait(120, &|| {
-            contents().contains("probe-sleeper") && contents().contains("已派出")
-        }) {
+        if !wait(120, &|| contents().contains("probe-sleeper") && contents().contains("已派出")) {
             dump("派子代理");
             return Err("120s 内没看到子代理行".into());
         }
@@ -182,9 +158,5 @@ fn claude_subagent_view_enter_and_leave() {
     drop(pair.master);
     std::thread::sleep(Duration::from_millis(500));
     let _ = std::fs::remove_dir_all(&root);
-    assert!(
-        result.is_ok(),
-        "{}；末屏=\n{last_screen}",
-        result.unwrap_err()
-    );
+    assert!(result.is_ok(), "{}；末屏=\n{last_screen}", result.unwrap_err());
 }

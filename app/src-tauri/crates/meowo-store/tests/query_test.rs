@@ -28,14 +28,8 @@ fn live_sessions_includes_ended_sessions() {
     assert!(statuses.contains(&"running"));
     assert!(statuses.contains(&"waiting"));
     assert!(statuses.contains(&"ended"));
-    assert!(
-        !statuses.contains(&"stale"),
-        "stale 已废除,写侧应归一成 waiting"
-    );
-    let st = live
-        .iter()
-        .find(|l| l.session.cc_session_id == "st")
-        .unwrap();
+    assert!(!statuses.contains(&"stale"), "stale 已废除,写侧应归一成 waiting");
+    let st = live.iter().find(|l| l.session.cc_session_id == "st").unwrap();
     assert_eq!(st.session.status, "waiting");
 }
 
@@ -287,10 +281,7 @@ fn live_counts_split_totals_from_connectivity_candidates() {
         .into_iter()
         .find(|l| l.session.id == dead)
         .unwrap();
-    assert_eq!(
-        dead_row.pending_review, None,
-        "ended 行上的 pending 写入应被拒"
-    );
+    assert_eq!(dead_row.pending_review, None, "ended 行上的 pending 写入应被拒");
 
     // 列表口径外的两条：ping 探针（哪怕 running）与已结束的未命名空壳。
     // 它们都不会出现在列表里，totals / candidates 也必须数不到。
@@ -424,18 +415,9 @@ fn live_sessions_running_and_waiting_share_the_candidate_union() {
             .live_sessions(Some(filter), None, None, None, 100)
             .unwrap();
         let ids: std::collections::HashSet<i64> = page.iter().map(|l| l.session.id).collect();
-        assert!(
-            ids.contains(&waiting),
-            "{filter}: status=waiting 在候选并集里"
-        );
-        assert!(
-            ids.contains(&pending),
-            "{filter}: pending_review 在候选并集里"
-        );
-        assert!(
-            ids.contains(&running),
-            "{filter}: status=running 在候选并集里"
-        );
+        assert!(ids.contains(&waiting), "{filter}: status=waiting 在候选并集里");
+        assert!(ids.contains(&pending), "{filter}: pending_review 在候选并集里");
+        assert!(ids.contains(&running), "{filter}: status=running 在候选并集里");
         assert!(!ids.contains(&ended), "{filter}: 已结束的不进候选");
     }
 }
@@ -556,33 +538,19 @@ fn live_sessions_cwd_filter_normalizes_slashes_and_is_exact() {
     // 兄弟目录:名字是筛选目录的前缀延伸,子串语义会误命中。
     let (sibling, _) = store.start_session(pid, "sibling", 300).unwrap();
     store.on_user_prompt(sibling, "兄弟目录", 310).unwrap();
-    store
-        .set_session_cwd(sibling, "C:/work/proj2", 320)
-        .unwrap();
+    store.set_session_cwd(sibling, "C:/work/proj2", 320).unwrap();
     // 标题含目录字符串:目录筛选不该被标题命中污染。
     let (titled, _) = store.start_session(pid, "titled", 400).unwrap();
-    store
-        .on_user_prompt(titled, "讨论 C:/work/proj 的问题", 410)
-        .unwrap();
+    store.on_user_prompt(titled, "讨论 C:/work/proj 的问题", 410).unwrap();
     store.set_session_cwd(titled, "C:/elsewhere", 420).unwrap();
 
     for spelling in ["C:/work/proj", r"C:\work\proj", "C:/work/proj/"] {
         let hits = store
             .live_sessions_filtered(Some("all"), None, Some(spelling), None, None, 100)
             .unwrap();
-        let ids: Vec<&str> = hits
-            .iter()
-            .map(|l| l.session.cc_session_id.as_str())
-            .collect();
-        assert!(
-            ids.contains(&"fwd") && ids.contains(&"back"),
-            "写法 {spelling} 应命中两种存法: {ids:?}"
-        );
-        assert_eq!(
-            hits.len(),
-            2,
-            "写法 {spelling} 不得混入兄弟目录/标题命中: {ids:?}"
-        );
+        let ids: Vec<&str> = hits.iter().map(|l| l.session.cc_session_id.as_str()).collect();
+        assert!(ids.contains(&"fwd") && ids.contains(&"back"), "写法 {spelling} 应命中两种存法: {ids:?}");
+        assert_eq!(hits.len(), 2, "写法 {spelling} 不得混入兄弟目录/标题命中: {ids:?}");
     }
 }
 
@@ -821,56 +789,22 @@ fn live_sessions_scan_by_created_orders_and_paginates_on_started_at() {
     store.on_user_prompt(old, "老会话又动了", 500).unwrap();
 
     let ids = |rows: &[meowo_store::LiveSession]| -> Vec<String> {
-        rows.iter()
-            .map(|l| l.session.cc_session_id.clone())
-            .collect()
+        rows.iter().map(|l| l.session.cc_session_id.clone()).collect()
     };
     // 默认(最近活跃)不受影响。
-    let by_activity = store
-        .live_sessions_scan(Some("all"), None, None, None, None, ListOrder::Activity, 10)
-        .unwrap();
+    let by_activity = store.live_sessions_scan(Some("all"), None, None, None, None, ListOrder::Activity, 10).unwrap();
     assert_eq!(ids(&by_activity), ["old", "mid", "new"]);
     // 按创建时间:首页两条是 new、mid;游标 = 末条的 (started_at, id),续页拿到 old。
-    let first = store
-        .live_sessions_scan(Some("all"), None, None, None, None, ListOrder::Created, 2)
-        .unwrap();
+    let first = store.live_sessions_scan(Some("all"), None, None, None, None, ListOrder::Created, 2).unwrap();
     assert_eq!(ids(&first), ["new", "mid"]);
     let tail = &first[1].session;
     let rest = store
-        .live_sessions_scan(
-            Some("all"),
-            None,
-            None,
-            Some(tail.started_at),
-            Some(tail.id),
-            ListOrder::Created,
-            2,
-        )
+        .live_sessions_scan(Some("all"), None, None, Some(tail.started_at), Some(tail.id), ListOrder::Created, 2)
         .unwrap();
     assert_eq!(ids(&rest), ["old"]);
     // waiting tab 恒按等待时长:by_created 不改它的排序。
-    let waiting_a = store
-        .live_sessions_scan(
-            Some("waiting"),
-            None,
-            None,
-            None,
-            None,
-            ListOrder::Created,
-            10,
-        )
-        .unwrap();
-    let waiting_b = store
-        .live_sessions_scan(
-            Some("waiting"),
-            None,
-            None,
-            None,
-            None,
-            ListOrder::Activity,
-            10,
-        )
-        .unwrap();
+    let waiting_a = store.live_sessions_scan(Some("waiting"), None, None, None, None, ListOrder::Created, 10).unwrap();
+    let waiting_b = store.live_sessions_scan(Some("waiting"), None, None, None, None, ListOrder::Activity, 10).unwrap();
     assert_eq!(ids(&waiting_a), ids(&waiting_b));
 }
 
@@ -888,15 +822,9 @@ fn manual_order_defaults_to_created_and_follows_moves() {
         store.on_user_prompt(id, text, 400).unwrap();
     }
     let ids = |rows: &[meowo_store::LiveSession]| -> Vec<String> {
-        rows.iter()
-            .map(|l| l.session.cc_session_id.clone())
-            .collect()
+        rows.iter().map(|l| l.session.cc_session_id.clone()).collect()
     };
-    let manual = |store: &Store| {
-        ids(&store
-            .live_sessions_scan(Some("all"), None, None, None, None, ListOrder::Manual, 10)
-            .unwrap())
-    };
+    let manual = |store: &Store| ids(&store.live_sessions_scan(Some("all"), None, None, None, None, ListOrder::Manual, 10).unwrap());
     assert_eq!(manual(&store), ["d", "c", "b", "a"]);
 
     // 把 a 拖到 d 正下方。
@@ -912,21 +840,11 @@ fn manual_order_defaults_to_created_and_follows_moves() {
     }
     assert_eq!(manual(&store), ["b", "d", "c", "a"]);
     // 游标按手动键续页。
-    let first = store
-        .live_sessions_scan(Some("all"), None, None, None, None, ListOrder::Manual, 2)
-        .unwrap();
+    let first = store.live_sessions_scan(Some("all"), None, None, None, None, ListOrder::Manual, 2).unwrap();
     assert_eq!(ids(&first), ["b", "d"]);
     let tail = &first[1];
     let rest = store
-        .live_sessions_scan(
-            Some("all"),
-            None,
-            None,
-            Some(tail.manual_key),
-            Some(tail.session.id),
-            ListOrder::Manual,
-            10,
-        )
+        .live_sessions_scan(Some("all"), None, None, Some(tail.manual_key), Some(tail.session.id), ListOrder::Manual, 10)
         .unwrap();
     assert_eq!(ids(&rest), ["c", "a"]);
     // 新会话没拖过，出现在最上面。
@@ -956,59 +874,25 @@ fn session_admin_page_filters_pages_and_counts() {
     let _shell = make("shell", "C:/w/meowo", 400, None);
     let d = make("d", "C:/w/meowo", 500, Some("丁"));
     store.set_session_archived(a, true, 600).unwrap();
-    let ids = |rows: &[meowo_store::LiveSession]| {
-        rows.iter()
-            .map(|r| r.session.cc_session_id.clone())
-            .collect::<Vec<_>>()
-    };
+    let ids = |rows: &[meowo_store::LiveSession]| rows.iter().map(|r| r.session.cc_session_id.clone()).collect::<Vec<_>>();
     let page = |query: AdminQuery| {
-        let (rows, total) = store
-            .session_admin_page(&AdminQuery { limit: 10, ..query })
-            .unwrap();
+        let (rows, total) = store.session_admin_page(&AdminQuery { limit: 10, ..query }).unwrap();
         (ids(&rows), total)
     };
     // 全部：最后更新倒序，空壳不算。
-    assert_eq!(
-        page(AdminQuery::default()),
-        (vec!["d".into(), "c".into(), "b".into(), "a".into()], 4)
-    );
+    assert_eq!(page(AdminQuery::default()), (vec!["d".into(), "c".into(), "b".into(), "a".into()], 4));
     // 工作区：两种斜杠写法都命中。
-    let meowo = page(AdminQuery {
-        cwds: vec!["C:/w/meowo".into()],
-        ..Default::default()
-    });
+    let meowo = page(AdminQuery { cwds: vec!["C:/w/meowo".into()], ..Default::default() });
     assert_eq!(meowo.1, 3);
     // 状态 + 时间：进行中且最后更新早于 450。
-    assert_eq!(
-        page(AdminQuery {
-            archived: Some(false),
-            updated_before: Some(450),
-            ..Default::default()
-        }),
-        (vec!["c".into(), "b".into()], 2)
-    );
-    assert_eq!(
-        page(AdminQuery {
-            archived: Some(true),
-            ..Default::default()
-        }),
-        (vec!["a".into()], 1)
-    );
+    assert_eq!(page(AdminQuery { archived: Some(false), updated_before: Some(450), ..Default::default() }), (vec!["c".into(), "b".into()], 2));
+    assert_eq!(page(AdminQuery { archived: Some(true), ..Default::default() }), (vec!["a".into()], 1));
     // 分页：第二页从第 3 条起，总数不变。
-    let (rows, total) = store
-        .session_admin_page(&AdminQuery {
-            limit: 2,
-            offset: 2,
-            ..Default::default()
-        })
-        .unwrap();
+    let (rows, total) = store.session_admin_page(&AdminQuery { limit: 2, offset: 2, ..Default::default() }).unwrap();
     assert_eq!((ids(&rows), total), (vec!["b".into(), "a".into()], 4));
     // 排除的会话（agent 自建的后台会话，侧栏也不列）：不出现、也不计入总数。
     assert_eq!(
-        page(AdminQuery {
-            exclude_cc_ids: vec!["c".into(), "nobody".into()],
-            ..Default::default()
-        }),
+        page(AdminQuery { exclude_cc_ids: vec!["c".into(), "nobody".into()], ..Default::default() }),
         (vec!["d".into(), "b".into(), "a".into()], 3)
     );
     // 被接替的旧段不算。

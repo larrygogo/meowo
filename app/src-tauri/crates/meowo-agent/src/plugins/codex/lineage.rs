@@ -42,8 +42,7 @@ fn history_base(path: &Path) -> Option<(String, u64)> {
 
 /// `…/sessions`：rollout 所在的会话根（默认目录与受管 profile 各有一个）。
 fn sessions_root(path: &Path) -> Option<&Path> {
-    path.ancestors()
-        .find(|dir| dir.file_name().is_some_and(|name| name == "sessions"))
+    path.ancestors().find(|dir| dir.file_name().is_some_and(|name| name == "sessions"))
 }
 
 /// sessions 下最新的日期目录（`YYYY/MM/DD` 逐级取名字最大的）：续写段建在回溯当天。
@@ -69,9 +68,7 @@ fn rollout_files(dir: &Path) -> Vec<PathBuf> {
                 .filter(|path| {
                     path.file_name()
                         .and_then(|name| name.to_str())
-                        .is_some_and(|name| {
-                            name.starts_with("rollout-") && name.ends_with(".jsonl")
-                        })
+                        .is_some_and(|name| name.starts_with("rollout-") && name.ends_with(".jsonl"))
                 })
                 .collect()
         })
@@ -82,9 +79,7 @@ fn rollout_files(dir: &Path) -> Vec<PathBuf> {
 fn belongs_to(path: &Path, thread_id: &str) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
-        .is_some_and(|name| {
-            name.contains(&format!("-{thread_id}.")) || name.contains(&format!("-{thread_id}_"))
-        })
+        .is_some_and(|name| name.contains(&format!("-{thread_id}.")) || name.contains(&format!("-{thread_id}_")))
 }
 
 /// 该线程当前在写的那一段：已知文件所在目录与最新日期目录里，属于该线程、文件名（时间戳打头）
@@ -111,18 +106,9 @@ fn segment_path(child: &Path, segment_id: &str) -> Option<PathBuf> {
     let matches = |path: &Path| {
         path.file_name()
             .and_then(|name| name.to_str())
-            .is_some_and(|name| {
-                name.starts_with("rollout-")
-                    && (name.ends_with(&root_name) || name.ends_with(&child_name))
-            })
+            .is_some_and(|name| name.starts_with("rollout-") && (name.ends_with(&root_name) || name.ends_with(&child_name)))
     };
-    if let Some(found) = child
-        .parent()
-        .map(rollout_files)
-        .unwrap_or_default()
-        .into_iter()
-        .find(|p| matches(p))
-    {
+    if let Some(found) = child.parent().map(rollout_files).unwrap_or_default().into_iter().find(|p| matches(p)) {
         return Some(found);
     }
     let mut stack = vec![sessions_root(child)?.to_path_buf()];
@@ -141,9 +127,7 @@ fn segment_path(child: &Path, segment_id: &str) -> Option<PathBuf> {
 
 /// 截断点必须落在父段的行边界上（codex 写的是整行偏移）；不是就说明不是我们认识的格式。
 fn ends_on_line(path: &Path, end: u64) -> bool {
-    let Ok(mut file) = std::fs::File::open(path) else {
-        return false;
-    };
+    let Ok(mut file) = std::fs::File::open(path) else { return false };
     let len = file.metadata().map(|m| m.len()).unwrap_or(0);
     if end == 0 || end > len || file.seek(SeekFrom::Start(end - 1)).is_err() {
         return false;
@@ -208,9 +192,7 @@ fn compose(current: &Path, thread_id: &str) -> Option<PathBuf> {
 
     let current_len = std::fs::metadata(current).ok()?.len();
     let have = std::fs::metadata(&target).map(|m| m.len()).ok();
-    let copied = have
-        .and_then(|len| len.checked_sub(prefix_len))
-        .filter(|copied| *copied <= current_len);
+    let copied = have.and_then(|len| len.checked_sub(prefix_len)).filter(|copied| *copied <= current_len);
     let copied = match copied {
         Some(copied) => copied,
         None => {
@@ -218,20 +200,13 @@ fn compose(current: &Path, thread_id: &str) -> Option<PathBuf> {
             let mut out = std::fs::File::create(&target).ok()?;
             for (path, end) in &parents {
                 let mut part = Vec::with_capacity(*end as usize);
-                std::fs::File::open(path)
-                    .ok()?
-                    .take(*end)
-                    .read_to_end(&mut part)
-                    .ok()?;
+                std::fs::File::open(path).ok()?.take(*end).read_to_end(&mut part).ok()?;
                 out.write_all(&part).ok()?;
             }
             for entry in std::fs::read_dir(&dir).ok()?.flatten() {
                 let path = entry.path();
                 let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-                if path != target
-                    && name.starts_with(&format!("{safe}."))
-                    && name.ends_with(".jsonl")
-                {
+                if path != target && name.starts_with(&format!("{safe}.")) && name.ends_with(".jsonl") {
                     let _ = std::fs::remove_file(&path);
                 }
             }
@@ -242,15 +217,10 @@ fn compose(current: &Path, thread_id: &str) -> Option<PathBuf> {
         let mut file = std::fs::File::open(current).ok()?;
         file.seek(SeekFrom::Start(copied)).ok()?;
         let mut fresh = Vec::new();
-        file.take(current_len - copied)
-            .read_to_end(&mut fresh)
-            .ok()?;
+        file.take(current_len - copied).read_to_end(&mut fresh).ok()?;
         // 只搬完整行：半行留到下一轮，缓存文件始终整行结尾。
         if let Some(cut) = fresh.iter().rposition(|b| *b == b'\n') {
-            let mut out = std::fs::OpenOptions::new()
-                .append(true)
-                .open(&target)
-                .ok()?;
+            let mut out = std::fs::OpenOptions::new().append(true).open(&target).ok()?;
             out.write_all(&fresh[..=cut]).ok()?;
         }
     }
@@ -276,26 +246,14 @@ mod tests {
         let tid = "01a18c24-1440-78e3-a758-570b2095570d";
         let meta = |base: Option<(&str, usize)>| {
             let base = base.map(|(id, end)| serde_json::json!({"thread_id": id, "end_ordinal_exclusive": 1, "end_byte_offset": end}));
-            format!(
-                "{}\n",
-                serde_json::json!({"type": "session_meta", "payload": {"id": tid, "history_mode": "paginated", "history_base": base}})
-            )
+            format!("{}\n", serde_json::json!({"type": "session_meta", "payload": {"id": tid, "history_mode": "paginated", "history_base": base}}))
         };
-        let line = |text: &str| {
-            format!(
-                "{}\n",
-                serde_json::json!({"type": "event_msg", "payload": {"type": "user_message", "message": text}})
-            )
-        };
+        let line = |text: &str| format!("{}\n", serde_json::json!({"type": "event_msg", "payload": {"type": "user_message", "message": text}}));
         let root = day.join(format!("rollout-2026-10-30T17-28-57-{tid}.jsonl"));
         let kept = format!("{}{}", meta(None), line("先做甲"));
         std::fs::write(&root, format!("{kept}{}", line("再做乙"))).unwrap();
         let seg1 = day.join(format!("rollout-2026-10-30T17-29-17-{tid}_seg-1.jsonl"));
-        std::fs::write(
-            &seg1,
-            format!("{}{}", meta(Some((tid, kept.len()))), line("改做丙")),
-        )
-        .unwrap();
+        std::fs::write(&seg1, format!("{}{}", meta(Some((tid, kept.len()))), line("改做丙"))).unwrap();
 
         let current = current_rollout(&root, tid);
         assert_eq!(current, seg1);
@@ -304,29 +262,14 @@ mod tests {
         assert!(body.contains("先做甲") && body.contains("改做丙") && !body.contains("再做乙"));
 
         // 续写段增长 → 同一文件原地追加。
-        std::fs::OpenOptions::new()
-            .append(true)
-            .open(&seg1)
-            .unwrap()
-            .write_all(line("丙好了").as_bytes())
-            .unwrap();
+        std::fs::OpenOptions::new().append(true).open(&seg1).unwrap().write_all(line("丙好了").as_bytes()).unwrap();
         assert_eq!(chat_path(&seg1, tid), composed);
-        assert!(std::fs::read_to_string(&composed)
-            .unwrap()
-            .ends_with(&line("丙好了")));
+        assert!(std::fs::read_to_string(&composed).unwrap().ends_with(&line("丙好了")));
 
         // 再回溯一次：新续写段挂在 seg-1 下（截在「改做丙」之后）→ 换一代，旧代删除。
         let seg1_keep = format!("{}{}", meta(Some((tid, kept.len()))), line("改做丙"));
         let seg2 = day.join(format!("rollout-2026-10-30T17-35-00-{tid}_seg-2.jsonl"));
-        std::fs::write(
-            &seg2,
-            format!(
-                "{}{}",
-                meta(Some(("seg-1", seg1_keep.len()))),
-                line("最后做丁")
-            ),
-        )
-        .unwrap();
+        std::fs::write(&seg2, format!("{}{}", meta(Some(("seg-1", seg1_keep.len()))), line("最后做丁"))).unwrap();
         let current = current_rollout(&root, tid);
         assert_eq!(current, seg2);
         let next = chat_path(&current, tid);

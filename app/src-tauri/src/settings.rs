@@ -49,9 +49,7 @@ fn default_island_compact() -> String {
 }
 
 fn default_island_alerts() -> Vec<String> {
-    ["waiting", "approval", "question", "error"]
-        .map(String::from)
-        .to_vec()
+    ["waiting", "approval", "question", "error"].map(String::from).to_vec()
 }
 
 /// 提醒种类 → 设置里的开关键。计划确认、屏幕上挂着交互都算「等待审批」，用户分不出也不必分
@@ -662,12 +660,7 @@ mod load_tests {
             .unwrap()
             .filter_map(|e| e.ok())
             .map(|e| e.path())
-            .filter(|p| {
-                p.file_name()
-                    .unwrap()
-                    .to_string_lossy()
-                    .contains(".corrupt-")
-            })
+            .filter(|p| p.file_name().unwrap().to_string_lossy().contains(".corrupt-"))
             .collect()
     }
 
@@ -695,10 +688,7 @@ mod load_tests {
         assert!(!path.exists(), "原文件已被挪走，不会被默认值覆盖");
         let backups = corrupt_backups(&dir);
         assert_eq!(backups.len(), 1, "恰好一份隔离备份");
-        assert_eq!(
-            std::fs::read_to_string(&backups[0]).unwrap(),
-            "{broken json"
-        );
+        assert_eq!(std::fs::read_to_string(&backups[0]).unwrap(), "{broken json");
 
         // 再次加载：原文件已不在，按首启处理，不得重复备份。
         let _ = load_settings_from(&path);
@@ -814,10 +804,7 @@ fn sanitize_sticker_window(mut s: StickerWindowState) -> StickerWindowState {
         .filter(|e| matches!(e.as_str(), "left" | "right" | "top"));
     s.x = s.x.map(|v| v.clamp(-100_000, 100_000));
     s.y = s.y.map(|v| v.clamp(-100_000, 100_000));
-    s.island_center = s
-        .island_center
-        .filter(|v| v.is_finite())
-        .map(|v| v.clamp(0.0, 1.0));
+    s.island_center = s.island_center.filter(|v| v.is_finite()).map(|v| v.clamp(0.0, 1.0));
     s.island_monitor = s
         .island_monitor
         .map(|m| m.trim().to_string())
@@ -1180,7 +1167,8 @@ mod tests {
         let v: Settings = serde_json::from_str("{}").unwrap();
         assert!(v.keep_awake_while_running);
         assert!(Settings::default().keep_awake_while_running);
-        let off: Settings = serde_json::from_str(r#"{"keep_awake_while_running":false}"#).unwrap();
+        let off: Settings =
+            serde_json::from_str(r#"{"keep_awake_while_running":false}"#).unwrap();
         assert!(!off.keep_awake_while_running);
     }
 
@@ -1317,7 +1305,7 @@ mod tests {
             ..Default::default()
         };
         let mut current = Settings {
-            onboarding_seen: true,                           // 窗口打开期间完成了引导
+            onboarding_seen: true, // 窗口打开期间完成了引导
             remote_access_token: "freshly-generated".into(), // 期间生成了远程 token
             ..Default::default()
         };
@@ -1388,9 +1376,9 @@ mod tests {
     #[test]
     fn sticker_window_sanitize_rules() {
         let s = sanitize_sticker_window(StickerWindowState {
-            normal_width: Some(80.0),         // 细条毒化尺寸（< 最小宽）
-            normal_height: Some(f64::NAN),    // 非有限数
-            snap_edge: Some("bottom".into()), // 非法边
+            normal_width: Some(80.0),            // 细条毒化尺寸（< 最小宽）
+            normal_height: Some(f64::NAN),       // 非有限数
+            snap_edge: Some("bottom".into()),    // 非法边
             pinned: true,
             x: Some(9_999_999),
             y: Some(-9_999_999),
@@ -1434,11 +1422,7 @@ mod tests {
 
     #[test]
     fn island_settings_out_of_range_fall_back() {
-        let mut s = Settings {
-            island_alert_seconds: 999,
-            island_compact: "huge".into(),
-            ..Settings::default()
-        };
+        let mut s = Settings { island_alert_seconds: 999, island_compact: "huge".into(), ..Settings::default() };
         sanitize_island(&mut s);
         assert_eq!(s.island_alert_seconds, 30);
         assert_eq!(s.island_compact, "counts");
@@ -1454,13 +1438,8 @@ mod tests {
     #[test]
     fn notify_kinds_default_on_for_legacy_files() {
         let legacy: Settings = serde_json::from_str(r#"{"notifications_enabled":true}"#).unwrap();
-        for kind in [
-            "waiting", "approval", "plan", "blocked", "question", "error",
-        ] {
-            assert!(
-                notify_kind_enabled(&legacy, kind),
-                "老文件 {kind} 应照常通知"
-            );
+        for kind in ["waiting", "approval", "plan", "blocked", "question", "error"] {
+            assert!(notify_kind_enabled(&legacy, kind), "老文件 {kind} 应照常通知");
         }
         assert!(notify_kind_enabled(&Settings::default(), "waiting"));
     }

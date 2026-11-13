@@ -114,10 +114,7 @@ fn forward(reader: impl Read, current: &Path, previous: &Path) {
         }
         let stamp = format!("{} ", utc_stamp(std::time::SystemTime::now()));
         if let Some(f) = file.as_mut() {
-            if f.write_all(stamp.as_bytes())
-                .and_then(|_| f.write_all(&line))
-                .is_ok()
-            {
+            if f.write_all(stamp.as_bytes()).and_then(|_| f.write_all(&line)).is_ok() {
                 written += (stamp.len() + line.len()) as u64;
             }
         }
@@ -161,11 +158,7 @@ fn utc_stamp(at: std::time::SystemTime) -> String {
 #[tauri::command]
 pub(crate) async fn diag_log(scope: String, message: String) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        eprintln!(
-            "[ui:{}] {}",
-            one_line(&scope, 40),
-            one_line(&message, MAX_UI_MESSAGE_CHARS)
-        );
+        eprintln!("[ui:{}] {}", one_line(&scope, 40), one_line(&message, MAX_UI_MESSAGE_CHARS));
     })
     .await
     .map_err(|e| e.to_string())
@@ -183,11 +176,9 @@ fn one_line(text: &str, max_chars: usize) -> String {
 /// 设置 › 关于 的「导出诊断日志」：把上一份与当前日志合成一个文本文件写到用户选的位置。
 #[tauri::command]
 pub(crate) async fn export_diag_log(path: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        export_blocking(&path, &previous_log(), &current_log())
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || export_blocking(&path, &previous_log(), &current_log()))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 fn export_blocking(target: &str, previous: &Path, current: &Path) -> Result<(), String> {
@@ -243,11 +234,7 @@ mod tests {
         std::fs::write(&current, vec![b'x'; MAX_BYTES as usize]).unwrap();
         forward(&b"first line\nno newline at end"[..], &current, &previous);
         let rotated = std::fs::read(&previous).unwrap();
-        assert_eq!(
-            rotated.len(),
-            MAX_BYTES as usize,
-            "满了的那份整体挪成 .1，覆盖更早的"
-        );
+        assert_eq!(rotated.len(), MAX_BYTES as usize, "满了的那份整体挪成 .1，覆盖更早的");
         let text = std::fs::read_to_string(&current).unwrap();
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(lines.len(), 2);
@@ -268,10 +255,7 @@ mod tests {
         let (current, previous) = (dir.join("meowo.log"), dir.join("meowo.1.log"));
         let target = dir.join("out.txt");
         let target_str = target.to_str().unwrap();
-        assert_eq!(
-            export_blocking(target_str, &previous, &current),
-            Err("diag/no_log".into())
-        );
+        assert_eq!(export_blocking(target_str, &previous, &current), Err("diag/no_log".into()));
         std::fs::write(&previous, "old\n").unwrap();
         std::fs::write(&current, "new\n").unwrap();
         export_blocking(target_str, &previous, &current).unwrap();
