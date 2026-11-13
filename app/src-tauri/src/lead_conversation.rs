@@ -250,6 +250,30 @@ mod tests {
         }
     }
 
+    /// 验收 #4「已作答的关卡只交给归属会话」：同一项目里还有另一个托管会话（同 cwd、刚建、
+    /// 甚至更新），答复只进 .owner 指向的那个会话；改成指向另一个会话后，原会话也不再收到。
+    #[test]
+    fn answer_reaches_only_the_owner_among_sessions_in_the_same_project() {
+        let f = Fixture::new();
+        let store = f.store();
+        let other = store
+            .managed_create("fixture", &f.root.to_string_lossy(), None, 3)
+            .unwrap();
+        store.managed_bind(other, "native-other", 4).unwrap();
+        assert_eq!(f.answer(), Ok(true));
+        assert_eq!(store.managed_deliveries(f.id).unwrap().len(), 1);
+        assert!(store.managed_deliveries(other).unwrap().is_empty(), "另一个会话收到了别人的关卡答复");
+        // 新关卡归另一个会话：答复只进它，原会话的投递不增加。
+        std::fs::write(f.task.join(".owner"), "native-other").unwrap();
+        std::fs::write(f.task.join("gate.json"), json!({"id":"Q-next","type":"Q","title":"next","status":"pending","options":[{"id":"go","label":"Continue"}]}).to_string()).unwrap();
+        assert_eq!(
+            answer_and_deliver(&f.db, &f.root.to_string_lossy(), "Q-next", &LeadGateAnswerDto { choice: "go".into(), note: String::new() }, None),
+            Ok(true)
+        );
+        assert_eq!(store.managed_deliveries(other).unwrap().len(), 1);
+        assert_eq!(store.managed_deliveries(f.id).unwrap().len(), 1);
+    }
+
     #[test]
     fn saved_answer_survives_start_failure_and_duplicate_phone_submission() {
         let f = Fixture::new();
