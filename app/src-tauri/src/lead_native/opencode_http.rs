@@ -1221,3 +1221,5 @@ pub(crate) fn status(db: &Path, task: &Path, gate_id: &str, native: &str) -> sup
 mod probe;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tms_probe;

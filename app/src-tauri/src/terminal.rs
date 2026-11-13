@@ -3742,3 +3742,8 @@ mod settings_restart_tests {
         assert!(!super::replace_resume_args(&mut other, &["--resume"], &["--session-id"]));
     }
 }
+
+/// 真机探针：Kimi / Gemini 切模型、切模式（.lead/20261114-tui-model-switch）。挂在这里才能调到拼恢复 argv 的私有函数。
+#[cfg(test)]
+#[path = "tms_probe_restart.rs"]
+mod tms_probe_restart;
