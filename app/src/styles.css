@@ -3575,6 +3575,8 @@ body:not(.remote-ui) .ns-actions .ns-btn { height: var(--btn-h-lg); min-width: 7
    ——agent 图标有 11px 和 13px 两种宽，文字跟着错开。图标槽统一成 14px（与文件夹图标、勾选方框同宽），
    图标靠左放（墨迹左缘仍在第一条线 320 上），槽后间距凑成 6px，文字都落到 340。 */
 .nsp-chips .chat-model-button .nsp-agent-mark { width: 14px; margin-right: var(--sp-2); }
+/* 新建页输入框下方是空白，胶囊菜单向下展开：向上会盖住工作区选择器，只露出它顶边一截像个空胶囊（2026-11-14 实拍）。 */
+.nsp-chips .chat-model-menu { bottom: auto; top: calc(100% + var(--sp-8)); }
 /* 工作区选择：输入框上方左侧一枚小钮（对照 Kimi），菜单名字白、路径灰，选中整行底色加灰勾。 */
 .nsp-ws { align-self: flex-start; margin-left: var(--sp-10); }
 /* 新建页的对齐线（按视觉内容算，visual/ 截图量过）：输入框与 worktree 卡片的外框同宽；

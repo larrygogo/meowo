@@ -11,7 +11,7 @@
  * - 空闲 / 还没建会话：立刻执行。
  */
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
-import { applySessionSettings, type ChatHistory, type SessionTuiState, type SettingsOutcome } from "../../api";
+import { applySessionSettings, sessionLiveSettings, type ChatHistory, type SessionTuiState, type SettingsOutcome } from "../../api";
 import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
 
@@ -35,8 +35,12 @@ export interface SessionSettingsDeps {
   moveTo: (sessionId: number) => void;
   /** 读 TUI 输入框是否为空（OpenCode 对话框路线的调用约定）。 */
   composerEmpty: () => Promise<boolean>;
-  /** 会话够不着服务（Lead 未装、外部终端）时的模型兜底：旧的终端菜单路线。 */
+  /** 会话够不着服务（外部终端、服务没起来）时的模型兜底：旧的终端菜单路线。 */
   fallbackModel: (id: string) => void;
+  /** 同上，模式的兜底（OpenCode agent 退回 Tab 循环）；返回 false = 没有兜底。 */
+  fallbackMode: (dimension: string, value: string) => boolean;
+  /** 清单 id → 显示名（同步当前模型时用）。 */
+  modelLabel: (id: string) => string;
 }
 
 /** 在跑或有待批审批：不能动终端，也不能重启。 */
@@ -101,6 +105,8 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
         case "applied":
         case "restarted":
           optimistic(request);
+          // TUI 对话框路线：回车后底栏没认出新值（终端太窄被截断等）不算失败，下一条消息再核对。
+          if (outcome.kind === "applied" && !outcome.confirmed) depsRef.current.setSendError(t.chat.settingsUnconfirmed);
           break;
         case "reopened":
           depsRef.current.moveTo(outcome.sessionId);
@@ -110,7 +116,8 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
           break;
         case "unsupported":
           if (request.model) depsRef.current.fallbackModel(request.model.id);
-          else depsRef.current.setSendError(t.chat.settingsModeUnsupported);
+          const unhandled = Object.entries(request.modes ?? {}).filter(([dimension, value]) => !depsRef.current.fallbackMode(dimension, value));
+          if (unhandled.length > 0) depsRef.current.setSendError(t.chat.settingsModeUnsupported);
           break;
         case "not_now":
           // 服务端复核说此刻不能动（刚开始跑一轮、输入框有字…）：排到这一轮之后再试；
@@ -148,6 +155,38 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
   // eslint-disable-next-line react-hooks/exhaustive-deps -- apply 读 depsRef，只该由 tone / 会话变化触发
   }, [deps.tone, deps.sessionId, deferred]);
 
+  /// 读会话此刻的模型 / 模式（用户在 TUI 里自己切过的跟上）。回合结束与打开菜单时调，不定时轮询。
+  const syncLive = async () => {
+    const { sessionId } = depsRef.current;
+    if (sessionId <= 0) return;
+    const live = await sessionLiveSettings(sessionId).catch(() => null);
+    if (!live || depsRef.current.sessionId !== sessionId) return;
+    if (!live.model && live.modes.length === 0) return;
+    depsRef.current.setHistory((current) => {
+      if (!current || current.sessionId !== sessionId) return current;
+      const agentModes = [...current.agentModes];
+      for (const mode of live.modes) {
+        const index = agentModes.findIndex((existing) => existing.dimension === mode.dimension);
+        if (index >= 0) agentModes[index] = mode;
+        else agentModes.push(mode);
+      }
+      return {
+        ...current,
+        agentModes,
+        model: live.model ? depsRef.current.modelLabel(live.model) : current.model,
+        effort: live.effort ?? current.effort,
+      };
+    });
+  };
+  // 回合结束（running → 空闲）读一次。
+  const prevToneRef = useRef(deps.tone);
+  useEffect(() => {
+    const was = prevToneRef.current;
+    prevToneRef.current = deps.tone;
+    if (was === "running" && !mustDefer(deps.tone)) void syncLive();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- syncLive 读 depsRef，只由 tone 变化触发
+  }, [deps.tone]);
+
   const notice = deferred && deferred.sessionId === deps.sessionId ? t.chat.settingsDeferred(deferred.request.label) : null;
-  return { request, applying, notice, deferredRequest: deferred?.sessionId === deps.sessionId ? deferred.request : null };
+  return { request, applying, notice, syncLive, deferredRequest: deferred?.sessionId === deps.sessionId ? deferred.request : null };
 }

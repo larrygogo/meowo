@@ -2,7 +2,11 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const apply = vi.fn();
-vi.mock("../../api", () => ({ applySessionSettings: (...args: unknown[]) => apply(...args) }));
+const live = vi.fn();
+vi.mock("../../api", () => ({
+  applySessionSettings: (...args: unknown[]) => apply(...args),
+  sessionLiveSettings: (...args: unknown[]) => live(...args),
+}));
 
 import { mergeRequests, mustDefer, useSessionSettings, type SessionSettingsDeps } from "./useSessionSettings";
 import type { ChatHistory } from "../../api";
@@ -19,6 +23,8 @@ function deps(overrides: Partial<SessionSettingsDeps> = {}): SessionSettingsDeps
     moveTo: vi.fn(),
     composerEmpty: async () => true,
     fallbackModel: vi.fn(),
+    fallbackMode: () => false,
+    modelLabel: (id: string) => id,
     ...overrides,
   };
 }
@@ -69,6 +75,39 @@ describe("会话里切模型 / 模式的分派", () => {
     apply.mockResolvedValueOnce({ kind: "unsupported", sessionId: -3, confirmed: false, reason: null });
     await act(async () => result.current.request({ model: { id: "gpt-5.5", label: "GPT-5.5" }, label: "GPT-5.5" }));
     expect(fallbackModel).toHaveBeenCalledWith("gpt-5.5");
+  });
+
+  /// OpenCode 够不着 TUI 服务时 agent 退回 Tab 循环；对话框路线回车后底栏没认出新值，说「下一条消息时核对」。
+  it("模式兜底与未确认提示", async () => {
+    const fallbackMode = vi.fn(() => true);
+    const setSendError = vi.fn();
+    const current = deps({ fallbackMode, setSendError });
+    const { result } = renderHook(() => useSessionSettings(current));
+    apply.mockResolvedValueOnce({ kind: "unsupported", sessionId: 7, confirmed: false, reason: null });
+    await act(async () => result.current.request({ modes: { agent: "plan" }, label: "只出方案" }));
+    expect(fallbackMode).toHaveBeenCalledWith("agent", "plan");
+    expect(setSendError).not.toHaveBeenCalled();
+    apply.mockResolvedValueOnce({ kind: "applied", sessionId: 7, confirmed: false, reason: null });
+    await act(async () => result.current.request({ modes: { agent: "build" }, label: "构建" }));
+    expect(setSendError).toHaveBeenCalledWith("已切换，下一条消息时核对");
+  });
+
+  /// 回合结束（running → 空闲）读一次会话此刻的模型 / 模式：用户在 TUI 里自己切过的跟上，不轮询。
+  it("回合结束时同步当前模型与模式", async () => {
+    live.mockReset();
+    live.mockResolvedValue({ model: "gpt-5.5", effort: "high", modes: [{ dimension: "approval", value: "yolo" }] });
+    let state: ChatHistory | null = { ...history, sessionId: 7, effort: null } as unknown as ChatHistory;
+    const setHistory = vi.fn((update: ChatHistory | null | ((prev: ChatHistory | null) => ChatHistory | null)) => {
+      state = typeof update === "function" ? update(state) : update;
+    });
+    let current = deps({ tone: "running", setHistory, modelLabel: (id) => (id === "gpt-5.5" ? "GPT-5.5" : id) });
+    const { rerender } = renderHook(() => useSessionSettings(current));
+    expect(live).not.toHaveBeenCalled();
+    current = deps({ tone: "waiting", setHistory, modelLabel: (id) => (id === "gpt-5.5" ? "GPT-5.5" : id) });
+    rerender();
+    await waitFor(() => expect(live).toHaveBeenCalledWith(7));
+    await waitFor(() => expect(state?.model).toBe("GPT-5.5"));
+    expect(state?.agentModes).toEqual([{ dimension: "permission", value: "manual" }, { dimension: "approval", value: "yolo" }]);
   });
 
   it("后来的选择覆盖先前的", () => {

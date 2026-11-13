@@ -1312,6 +1312,15 @@ export function agentDynamicModeChoices(provider: string, cwd?: string | null): 
     .then((choices) => choices ?? []);
 }
 
+/** 会话此刻的模型与模式（后端 session_settings::LiveSettings）：会话服务机制读 rollout 最新段，
+ *  TUI 对话框机制读最后一条用户消息；带参重启的两家返回空（transcript 增量负责）。 */
+export type LiveSettings = { model: string | null; effort: string | null; modes: { dimension: string; value: string }[] };
+
+export function sessionLiveSettings(sessionId: number): Promise<LiveSettings> {
+  return invoke<LiveSettings | null>("session_live_settings", { sessionId } satisfies SessionArg)
+    .then((live) => live ?? { model: null, effort: null, modes: [] });
+}
+
 /** 会话里切模型 / 模式的结果（后端 session_settings::SettingsOutcome）。 */
 export type SettingsOutcome = {
   kind: "applied" | "restarted" | "reopened" | "needs_new_session" | "unsupported" | "not_now";

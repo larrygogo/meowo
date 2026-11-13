@@ -50,7 +50,7 @@ import { ModelPicker, readStarred, type ModelPickerItem } from "./chat/ModelPick
 import { currentPresetId } from "./chat/modelLabels";
 import { ModelMenu, effortLabel } from "./chat/ModelMenu";
 import { useSessionSettings } from "./chat/useSessionSettings";
-import { modeChoiceViews, screenShowsAny } from "./chat/modeChoices";
+import { modeChoiceViews, planToggle, screenShowsAny } from "./chat/modeChoices";
 import { QuestionPanels } from "./chat/QuestionPanels";
 import { RemoteTerminalKeys } from "./chat/RemoteTerminalKeys";
 import { peekSessionMeta, prefetchPending, recallHistory, rememberHistory, takePrefetch, trackPrefetch } from "./chat/historyCache";
@@ -115,7 +115,7 @@ import { listAgents, type AgentDescriptor } from "../api";
 import { agentAssets, tintStyle } from "../providers";
 import appLogoUrl from "../../src-tauri/icons/64x64.png";
 import { Icon } from "../icons/Icon";
-import { icArrowLeftRight, icArrowUp, icChevronLeft, icCollapse, icExpand, icFile, icMessage, icShield, icSidebarLeft, icSparkles, icStop } from "../icons/glyphs.chat";
+import { icArrowLeftRight, icArrowUp, icChevronLeft, icCollapse, icExpand, icAgents, icFile, icLightbulb, icMessage, icShield, icSidebarLeft, icSparkles, icStop } from "../icons/glyphs.chat";
 import { icAlert, icCheck, icChevronDown, icClose, icPencil } from "../icons/glyphs";
 
 
@@ -1672,6 +1672,14 @@ export function ChatWindow() {
     moveTo: (id) => resetToRef.current(id, true),
     composerEmpty: async () => (await manualSendVerdict({ read: () => managedTerminalFrame(sessionId) }, chatUi?.composer_guard)) === "send",
     fallbackModel: pickViaTerminalMenu,
+    // 够不着 TUI 服务时（外部终端、服务没起来），OpenCode agent 退回 Tab 循环到位。
+    fallbackMode: (dimension, value) => {
+      const control = modeControls.find((candidate) => candidate.dimension === dimension);
+      if (!control?.cycle_input) return false;
+      void cycleToMode(dimension, value, control.cycle_input, control.screen_markers ?? []);
+      return true;
+    },
+    modelLabel: (id) => modelCatalog.find((entry) => entry.id === id)?.label ?? id,
   });
   // 识别窗口是个时间点，不是布尔——过期后要真的停下来，故用一个到点自灭的计时器驱动重渲染。
   const [menuWatching, setMenuWatching] = useState(false);
@@ -5285,6 +5293,7 @@ export function ChatWindow() {
                       // 打开菜单时读一次当前值：Gemini 的审批模式 transcript 与 hook 都不带，只有底栏原文
                       // （research-kimi-gemini §3.5），按插件声明的屏幕标记认。不轮询。
                       const markers = control?.screen_markers ?? [];
+                      if (modeMenu !== dimension) void sessionSettings.syncLive();
                       if (markers.length > 0 && modeMenu !== dimension) {
                         void managedTerminalScreen(sessionId).then((lines) => {
                           const value = lines ? modeFromScreen(lines.join("\n"), markers) : null;
@@ -5298,8 +5307,9 @@ export function ChatWindow() {
                   }}
                 >
                   {/* 权限 pill 的图标与短文案（对齐 Kimi 的 perm-pill）。同模型按钮：标签套 span 防挤压竖排。 */}
+                  {/* 图标按维度分：计划开关是灯泡、Agent 是 Agent 图标，只有权限一类用盾牌——两颗同样的盾牌看不出谁是谁（实拍）。 */}
                   <span className="chat-mode-icon" aria-hidden="true">
-                    <Icon glyph={icShield} size={14} />
+                    <Icon glyph={launchOption && planToggle(launchOption) ? icLightbulb : dimension === "agent" ? icAgents : icShield} size={14} />
                   </span>
                   <span className="chat-model-label">{value}</span>
                   {options.length > 0
@@ -5382,8 +5392,8 @@ export function ChatWindow() {
                 setModeMenu(null);
                 const opening = !modelPickerOpen;
                 setModelPickerOpen(opening);
-                // 打开时重读 CLI 配置里的清单（用户在终端里改了配置，下次打开就跟上）。
-                if (opening) reloadCatalog();
+                // 打开时重读 CLI 配置里的清单与会话此刻的模型（用户在终端里改了，打开就跟上）。
+                if (opening) { reloadCatalog(); void sessionSettings.syncLive(); }
                 // 关菜单时若探测在途,一并取消(给 TUI 发 Esc 收掉菜单)——识别窗口开着时
                 // 绝不能重发命令,否则会打进菜单搜索框把候选全过滤掉。
                 if (!opening && modelProbing) { endSilentProbe(); return; }

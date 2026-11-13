@@ -76,7 +76,9 @@ describe("ChatWindow 适配回归", () => {
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("agent_model_catalog", expect.anything()));
     await act(async () => { await Promise.resolve(); });
     fireEvent.click(await screen.findByRole("button", { name: "切换模型" }));
-    expect(await screen.findByText("managed:kimi-code")).toBeTruthy();
+    // 只有一组时不写组名（组名就是当前引擎）。
+    expect(await screen.findByRole("menuitem", { name: "K3.1 Pro" })).toBeTruthy();
+    expect(screen.queryByText("managed:kimi-code")).toBeNull();
     expect(screen.queryByRole("menuitem", { name: "读取模型清单" })).toBeNull();
     fireEvent.click(screen.getByRole("menuitem", { name: "K3" }));
     await waitFor(() => expect(writes(511)).toContain("/model"));

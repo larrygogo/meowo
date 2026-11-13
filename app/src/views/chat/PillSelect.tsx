@@ -64,10 +64,11 @@ export function PillSelect<T extends string>({ value, options, onChange, label, 
       </button>
       {/* 分组的长清单（模型按 provider 分段）用模型菜单的限高外框、整块滚动，与对话页的模型菜单一致。 */}
       {open && (() => {
-        const grouped = options.some((option) => option.group);
+        // 两组以上才分段写组名：只有一组时组名就是当前引擎，不必再写。
+        const grouped = new Set(options.map((option) => option.group).filter(Boolean)).size > 1;
         const rows = options.map((option, index) => {
           const active = option.value === value;
-          const head = option.group && option.group !== options[index - 1]?.group
+          const head = grouped && option.group && option.group !== options[index - 1]?.group
             ? <div className="chat-model-quick-head" key={"head:" + option.group}>{option.group}</div>
             : null;
           return [head, (

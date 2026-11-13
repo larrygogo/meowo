@@ -30,6 +30,17 @@ export function traitsSummary(t: Dict, traits: ModeTraits): string {
   return parts.filter(Boolean).join(" · ");
 }
 
+/** 计划开关：两档里恰有一档「只出方案」，另一档不自带说法或「按权限档」（Kimi 工作模式、Codex 协作模式）。
+ *  返回开 / 关两档的 id；OpenCode 的 build / plan 各有自己的权限，不算开关。 */
+export function planToggle(option: LaunchOption): { on: string; off: string } | null {
+  if (option.choices.length !== 2) return null;
+  const on = option.choices.find((choice) => choice.traits?.plan_only);
+  const off = option.choices.find((choice) => choice !== on);
+  if (!on || !off) return null;
+  const plain = !off.traits || (off.traits.edits === "inherit" && off.traits.commands === "inherit");
+  return plain ? { on: on.id, off: off.id } : null;
+}
+
 /** 一栏启动选项的每档视图。`defaults` 是 CLI 配置里的默认档：没有统一说法的「默认」档按它来说。
  *  `dynamic` 是运行时才知道的档（OpenCode 自定义 agent），附在末尾。 */
 export function modeChoiceViews(
@@ -43,8 +54,12 @@ export function modeChoiceViews(
     const id = defaults?.choices[option.id];
     return id && id !== choice.id ? option.choices.find((candidate) => candidate.id === id && candidate.traits) : undefined;
   };
+  const toggle = planToggle(option);
   const views = option.choices.map((choice): ModeChoiceView => {
-    const short = t.chat.modeShortNames[`${option.id}.${choice.id}`] ?? t.newSession.launchChoice[`${option.id}.${choice.id}`] ?? choice.label;
+    // 胶囊短名：计划开关说开没开；其余用统一说法的短名（中文界面中文），CLI 原名只在菜单小字。
+    const short = toggle ? t.modes.plan(choice.id === toggle.on)
+      : (choice.desc ? t.modes.short[choice.desc] : undefined)
+        ?? t.chat.modeShortNames[`${option.id}.${choice.id}`] ?? t.newSession.launchChoice[`${option.id}.${choice.id}`] ?? choice.label;
     const effective = resolved(choice);
     if (choice.traits) {
       return {
@@ -63,7 +78,7 @@ export function modeChoiceViews(
     return {
       value: choice.id,
       label: t.modes.followConfig(effective ? traitsSummary(t, effective.traits!) : t.modes.followConfigUnknown),
-      short: effective ? t.modes.followConfig(effective.label) : short,
+      short: effective ? t.modes.followConfig((effective.desc ? t.modes.short[effective.desc] : undefined) ?? effective.label) : short,
       desc: choice.desc ? t.modes.desc[choice.desc] : undefined,
       detail: choice.label,
       risk: choice.risk || !!effective?.risk,

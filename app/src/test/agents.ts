@@ -296,7 +296,19 @@ export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | 
             dimension: "agent", menu_command: null, cycle_input: "\t", options: [],
             screen_markers: [{ marker: "build · ", value: "build" }, { marker: "plan · ", value: "plan" }],
           }]
-          : [],
+          // 与后端 kimi 插件（modern 变体）同源：plan 用 /plan on|off 直达，权限档开 /permission 菜单。
+          : provider === "kimi"
+            ? [
+              {
+                dimension: "work", menu_command: null, cycle_input: "\u001b[Z", screen_markers: [],
+                options: [
+                  { value: "default", inputs: [{ data: "/plan off", submit: true }] },
+                  { value: "plan", inputs: [{ data: "/plan on", submit: true }] },
+                ],
+              },
+              { dimension: "permission", menu_command: "/permission", cycle_input: null, options: [], screen_markers: [] },
+            ]
+            : [],
     startup_attention_markers: provider === "claude"
       ? ["do you trust the files in this folder", "do you trust the contents of this directory", "trust this folder", "workspace not trusted", "workspace trust dialog"]
       : ["do you trust the files in this folder", "do you trust the contents of this directory"],
@@ -428,7 +440,7 @@ const LAUNCH_OPTIONS: Record<string, LaunchOption[]> = {
     opt("agent", "build", [
       ch("build", "build", [], false, { traits: tr("risky", "risky"), desc: "opencode.agent.build" }),
       ch("plan", "plan", ["--agent", "plan"], false, { traits: tr("blocked", "risky", true), desc: "opencode.agent.plan" }),
-    ], { switch: "control" }),
+    ], { switch: "dialog" }),
   ],
 };
 

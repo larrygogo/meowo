@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { zh } from "../../i18n/zh";
 import { descriptors } from "../../test/agents";
-import { initialChoice, modeChoiceViews, screenShowsAny, traitsSummary } from "./modeChoices";
+import { initialChoice, modeChoiceViews, planToggle, screenShowsAny, traitsSummary } from "./modeChoices";
 
 const optionOf = (provider: string, id: string) => {
   const option = descriptors([provider]).find((agent) => agent.id === provider)?.launch_options.find((candidate) => candidate.id === id);
@@ -20,6 +20,17 @@ describe("模式统一说法", () => {
     expect(kimi.find((view) => view.value === "auto")?.desc).toBe(zh.modes.desc["kimi.permission.auto"]);
   });
 
+  it("胶囊短名说中文统一说法，CLI 原名只在小字；计划维度说开没开", () => {
+    const codex = modeChoiceViews(zh, optionOf("codex", "approval"));
+    expect(codex.find((view) => view.value === "ask")).toMatchObject({ short: "越界才问", detail: "Ask for approval" });
+    expect(planToggle(optionOf("kimi", "work"))).toEqual({ on: "plan", off: "default" });
+    expect(planToggle(optionOf("codex", "collaboration"))).toEqual({ on: "plan", off: "default" });
+    // OpenCode 的 build / plan 各有自己的权限，不是开关；Gemini 的 plan 是审批四档之一。
+    expect(planToggle(optionOf("opencode", "agent"))).toBeNull();
+    expect(planToggle(optionOf("gemini", "approval"))).toBeNull();
+    expect(modeChoiceViews(zh, optionOf("kimi", "work")).map((view) => view.short)).toEqual(["计划：关", "计划：开"]);
+  });
+
   it("只规划的档把「只出方案」放在最前", () => {
     expect(traitsSummary(zh, { edits: "blocked", commands: "inherit", plan_only: true })).toBe("只出方案 · 不改文件 · 命令按权限档");
   });
@@ -30,7 +41,7 @@ describe("模式统一说法", () => {
     expect(unknown?.label).toBe(zh.modes.desc["codex.approval.default"]);
     const resolved = modeChoiceViews(zh, codex, { model: null, choices: { approval: "readOnly" } }).find((view) => view.value === "default");
     expect(resolved?.label).toBe(zh.modes.followConfig("改文件要问 · 命令危险才问"));
-    expect(resolved?.short).toBe(zh.modes.followConfig("Read Only"));
+    expect(resolved?.short).toBe(zh.modes.followConfig("只读"));
   });
 
   it("OpenCode 自定义 agent 附在末尾，没有统一说法", () => {
