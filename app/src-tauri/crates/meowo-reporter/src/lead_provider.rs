@@ -478,7 +478,10 @@ fn run_inner(provider: &str, mode: &str, raw: &str, registry: &Path) -> Output {
         }
         let _ = save_state(&task, provider, &state);
         // 子代理写的关卡不给它起等待器（BeforeTool 本该已拦下，这里兜住没拦到的写法）。
-        if provider == Provider::Gemini && gate_written && !subagents_running(registry, &session) {
+        if provider == Provider::Gemini
+            && gate_written
+            && !gemini_subagent_running(registry, &session, &raw)
+        {
             if let Some(tail) = gemini_waiter_tail(&task, &session) {
                 return tail;
             }
@@ -552,6 +555,11 @@ fn run_inner(provider: &str, mode: &str, raw: &str, registry: &Path) -> Output {
                 }
                 Provider::OpenCode => json!({"additionalContext":context}),
                 Provider::Gemini if native.event == "BeforeModel" => {
+                    // 子代理在跑时这次请求多半是子代理发的：不改写。Lead 上下文叫模型「按 lead 流程推进」，
+                    // 子代理照做就会去写关卡；第三轮 run1 的两次 400 也都出在关卡被认领后改写过的请求上。
+                    if gemini_subagent_running(registry, &session, &raw) {
+                        return Output::default();
+                    }
                     let Some(mut request) =
                         raw.get("llm_request").cloned().filter(Value::is_object)
                     else {
@@ -574,6 +582,14 @@ fn run_inner(provider: &str, mode: &str, raw: &str, registry: &Path) -> Output {
                     match existing {
                         Some(message) => *message = json!({"role":"user","content":content}),
                         None => messages.push(json!({"role":"user","content":content})),
+                    }
+                    // 原样回写的消息也只许 user / model：0.68 fromHookLLMRequest 对非 model 的角色原样照抄进
+                    // contents（`role: message.role === "model" ? "model" : message.role`），而 toHookLLMRequest
+                    // 会把 contents 里的 system 原样交给 hook。不管上游为什么带了 system，经我们手的请求都不能带出去。
+                    for message in messages.iter_mut() {
+                        if message["role"] != "model" {
+                            message["role"] = json!("user");
+                        }
                     }
                     json!({"hookSpecificOutput":{"llm_request":request}})
                 }
@@ -769,7 +785,7 @@ fn gemini_gate_guard(
         subagent_enter(registry, session, raw);
         return None;
     }
-    if !subagents_running(registry, session) {
+    if !gemini_subagent_running(registry, session, raw) {
         return None;
     }
     let (target, body) = match name {
@@ -854,6 +870,63 @@ fn subagents_running(registry: &Path, session: &str) -> bool {
     subagents_dir(registry, session)
         .and_then(|dir| fs::read_dir(dir).ok())
         .is_some_and(|mut entries| entries.next().is_some())
+}
+
+/// gemini：这次 hook 是不是落在主会话的 invoke_agent 执行期间（即调用方多半是子代理）。两路证据任一成立就算：
+/// 1. invoke_agent 的 BeforeTool 建的标记（[`subagents_running`]）；
+/// 2. gemini 自己的会话记录（不依赖我们之前哪次 hook 跑没跑成）。
+///
+/// 为什么要第 2 路：第三轮真机 run1（2026-11-13，evidence/round3/gemini-subagent）整个子代理期间标记一次都没出现，
+/// 子代理把挂起关卡写进去了；同代码 run2 标记正常。单靠「上一次 hook 及时跑完」不可靠。
+/// 0.68 的会话记录（ChatRecordingService）：子代理一开跑就在 `<chats>/<主会话 id>/<子代理 id>.jsonl` 写文件头，
+/// 主会话的工具调用记录要等这一批工具全部结束才追加（run1/run2 记录：主会话 25.893 写完模型回复后，到 32.200
+/// 才追加 toolCalls 与 functionResponse，子代理文件头 26.753）。所以「有子代理文件比主会话记录新、且它还没
+/// complete_task 成功」就是子代理在跑。hook 载荷的 transcript_path 恒为主会话记录（子代理的 hook 也一样，run2 遥测）。
+fn gemini_subagent_running(registry: &Path, session: &str, raw: &Value) -> bool {
+    subagents_running(registry, session) || gemini_transcript_shows_subagent(raw, session)
+}
+
+fn gemini_transcript_shows_subagent(raw: &Value, session: &str) -> bool {
+    let Some(main) = string(raw, "transcript_path").map(PathBuf::from) else {
+        return false;
+    };
+    let modified = |path: &Path| fs::metadata(path).and_then(|m| m.modified()).ok();
+    let Some(main_at) = modified(&main) else {
+        return false;
+    };
+    let safe = !session.is_empty()
+        && session
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'));
+    let Some(dir) = main.parent().filter(|_| safe).map(|d| d.join(session)) else {
+        return false;
+    };
+    let Ok(entries) = fs::read_dir(dir) else {
+        return false;
+    };
+    entries.flatten().any(|entry| {
+        let path = entry.path();
+        path.extension().is_some_and(|e| e == "jsonl")
+            && modified(&path).is_some_and(|at| at > main_at)
+            && !subagent_completed(&path)
+    })
+}
+
+/// 子代理正常收尾时最后一条工具记录是 complete_task 成功（run2 子代理记录末尾）；之后它不会再调工具。
+/// 只读文件尾部：记录可能很长，判定只看最后几条。
+fn subagent_completed(path: &Path) -> bool {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut file) = fs::File::open(path) else {
+        return false;
+    };
+    let len = file.metadata().map(|m| m.len()).unwrap_or(0);
+    let _ = file.seek(SeekFrom::Start(len.saturating_sub(16 * 1024)));
+    let mut tail = Vec::new();
+    let _ = file.read_to_end(&mut tail);
+    let tail = String::from_utf8_lossy(&tail);
+    tail.lines().rev().find(|line| line.contains("\"toolCalls\"")).is_some_and(|line| {
+        line.contains("\"name\":\"complete_task\"") && line.contains("\"status\":\"success\"")
+    })
 }
 
 fn touches_gate(call: &Value) -> bool {

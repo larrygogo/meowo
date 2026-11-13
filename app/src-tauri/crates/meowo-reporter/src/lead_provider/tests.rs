@@ -595,3 +595,134 @@ fn gemini_subagent_cannot_write_a_pending_gate_while_invoke_agent_runs() {
     call(&e, "gemini", "stop", stop(&e, "gemini", "g-2", "开始"));
     assert_eq!(call(&e, "gemini", "gate", write), Output::default());
 }
+
+/// 第三轮真机 run1：子代理在跑期间 invoke_agent 的标记一次都没出现，子代理把挂起关卡写进去了。
+/// 不靠标记也要认出子代理：gemini 的会话记录里，子代理文件（`<chats>/<会话>/<子代理>.jsonl`）比主会话记录新、
+/// 且还没 complete_task 成功，就是子代理在跑。期间写挂起关卡拒绝、AfterTool 不起等待器、BeforeModel 不改写请求。
+#[test]
+fn gemini_subagent_is_recognised_from_the_transcript_even_without_the_marker() {
+    let e = env();
+    call(&e, "gemini", "session", prompt(&e, "gemini", "g-3", "开始"));
+    call(&e, "gemini", "claim", claim(&e, "gemini", "g-3"));
+    let chats = e.root.path().join("home/.gemini/tmp/cwd/chats");
+    fs::create_dir_all(chats.join("g-3")).unwrap();
+    let main = chats.join("session-2026-11-13T14-06-g-3.jsonl");
+    let sub = chats.join("g-3").join("sub-1.jsonl");
+    let at = |path: &Path, secs: u64| {
+        fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(secs))
+            .unwrap();
+    };
+    fs::write(&main, "{\"sessionId\":\"g-3\",\"kind\":\"main\"}\n").unwrap();
+    at(&main, 1_000);
+    fs::write(&sub, "{\"sessionId\":\"sub-1\",\"kind\":\"subagent\"}\n").unwrap();
+    at(&sub, 1_001);
+    let gate = e.task.join("gate.json");
+    let pending = r#"{"id":"Q-1","type":"Q","title":"t","status":"pending"}"#;
+    let write = json!({"hook_event_name":"BeforeTool","session_id":"g-3","cwd":e.root.path(),"transcript_path":main,"tool_name":"write_file","tool_input":{"file_path":gate,"content":pending}});
+    // 子代理文件比主会话记录新：拒绝，且不给等待命令。
+    let out: Value = serde_json::from_str(&call(&e, "gemini", "gate", write.clone()).stdout.unwrap()).unwrap();
+    assert_eq!(out["decision"], "deny");
+    assert!(!out["reason"].as_str().unwrap().contains("lead wait"));
+    // 写进去了也不起等待器，BeforeModel 不改写子代理的请求。
+    fs::write(&gate, r#"{"id":"Q-1","type":"Q","title":"t","status":"pending","options":[{"id":"go","label":"Go"}]}"#).unwrap();
+    let after = json!({"hook_event_name":"AfterTool","session_id":"g-3","cwd":e.root.path(),"transcript_path":main,"tool_name":"write_file","tool_input":{"file_path":gate,"content":"{}"},"tool_response":{"llmContent":"File written."}});
+    assert!(call(&e, "gemini", "claim", after.clone()).stdout.is_none_or(|t| !t.contains("tailToolCallRequest")));
+    let model = json!({"hook_event_name":"BeforeModel","session_id":"g-3","cwd":e.root.path(),"transcript_path":main,"llm_request":{"model":"m","messages":[{"role":"user","content":"hi"}]}});
+    assert_eq!(call(&e, "gemini", "session", model.clone()), Output::default());
+    // 子代理 complete_task 成功：不再算在跑。
+    let mut text = fs::read_to_string(&sub).unwrap();
+    text.push_str("{\"id\":\"x\",\"type\":\"gemini\",\"toolCalls\":[{\"id\":\"c\",\"name\":\"complete_task\",\"status\":\"success\"}]}\n{\"$set\":{\"summary\":\"done\"}}\n");
+    fs::write(&sub, text).unwrap();
+    at(&sub, 1_002);
+    assert_eq!(call(&e, "gemini", "gate", write.clone()), Output::default());
+    // 子代理报错中途退出（没有 complete_task），主会话随后追加了记录：主会话更新，放行。
+    let errored = chats.join("g-3").join("sub-2.jsonl");
+    fs::write(&errored, "{\"sessionId\":\"sub-2\",\"kind\":\"subagent\"}\n").unwrap();
+    at(&errored, 1_003);
+    assert_ne!(call(&e, "gemini", "gate", write.clone()), Output::default());
+    at(&main, 1_004);
+    assert_eq!(call(&e, "gemini", "gate", write), Output::default());
+    assert!(call(&e, "gemini", "claim", after).stdout.unwrap().contains("tailToolCallRequest"));
+    assert!(call(&e, "gemini", "session", model).stdout.unwrap().contains("[meowo-lead-context]"));
+}
+
+/// Gemini API 对 contents 里的 system 角色回 400「Role 'system' is not supported」（第三轮 run1 两次）。
+/// 0.68 把 BeforeModel 返回的 messages 按角色原样转成 contents，其余 hook 的 systemMessage 只上屏。
+/// 断言：每个 Gemini hook、各种输入下，我们的输出里都没有 system 角色，也没有 systemMessage 字段，也不写 stderr
+/// （stdout 为空时 0.68 拿 stderr 当纯文本输出，转成 systemMessage）；BeforeModel 回写的每条消息只会是 user / model。
+#[test]
+fn gemini_hook_outputs_never_carry_a_system_role() {
+    fn walk(value: &Value, hits: &mut Vec<String>) {
+        match value {
+            Value::Object(map) => {
+                for (key, v) in map {
+                    if key == "systemMessage" || (key == "role" && v != "user" && v != "model") {
+                        hits.push(format!("{key}={v}"));
+                    }
+                    walk(v, hits);
+                }
+            }
+            Value::Array(items) => items.iter().for_each(|v| walk(v, hits)),
+            _ => {}
+        }
+    }
+    let e = env();
+    let s = "g-4";
+    let root = e.root.path();
+    let gate = e.task.join("gate.json");
+    let pending = r#"{"id":"Q-1","type":"Q","title":"t","status":"pending","options":[{"id":"go","label":"Go"}]}"#;
+    let before_model = |messages: Value| json!({"hook_event_name":"BeforeModel","session_id":s,"cwd":root,"llm_request":{"model":"m","messages":messages,"config":{"temperature":1}}});
+    let steps: Vec<(&str, Value)> = vec![
+        ("session", json!({"hook_event_name":"SessionStart","session_id":s,"cwd":root,"source":"startup"})),
+        ("session", prompt(&e, "gemini", s, "开始")),
+        ("session", before_model(json!([{"role":"user","content":"hi"}]))),
+        ("claim", claim(&e, "gemini", s)),
+        ("session", prompt(&e, "gemini", s, "继续")),
+        ("session", before_model(json!([{"role":"user","content":"hi"},{"role":"model","content":"ok"}]))),
+        ("session", before_model(json!([{"role":"system","content":"sys"},{"role":"user","content":"hi"},{"role":"system","content":"[meowo-lead-context]\nold"}]))),
+        ("session", before_model(json!([{"role":"tool","content":"x"},{"content":"no role"}]))),
+        ("gate", json!({"hook_event_name":"BeforeTool","session_id":s,"cwd":root,"tool_name":"invoke_agent","tool_input":{"agent_name":"generalist","prompt":"p"}})),
+        ("gate", json!({"hook_event_name":"BeforeTool","session_id":s,"cwd":root,"tool_name":"write_file","tool_input":{"file_path":gate,"content":pending}})),
+        ("claim", json!({"hook_event_name":"AfterTool","session_id":s,"cwd":root,"tool_name":"invoke_agent","tool_input":{"agent_name":"generalist","prompt":"p"},"tool_response":{"llmContent":"done"}})),
+    ];
+    let mut checked = 0;
+    for (mode, raw) in steps {
+        let out = call(&e, "gemini", mode, raw.clone());
+        if let Some(text) = out.stdout {
+            let value: Value = serde_json::from_str(&text)
+                .unwrap_or_else(|_| panic!("gemini hook 输出必须是 JSON（纯文本会被当成 systemMessage）：{text}"));
+            let mut hits = Vec::new();
+            walk(&value, &mut hits);
+            assert!(hits.is_empty(), "{raw} → {hits:?}");
+            checked += 1;
+        }
+        assert!(out.stderr.is_none(), "gemini hook 不该写 stderr：{raw}");
+    }
+    // 关卡写入后的尾调用、等待器说明、AfterAgent 兜底。
+    fs::write(&gate, pending).unwrap();
+    let mut outputs = vec![call(&e, "gemini", "claim", json!({"hook_event_name":"AfterTool","session_id":s,"cwd":root,"tool_name":"write_file","tool_input":{"file_path":gate,"content":pending},"tool_response":{"llmContent":"ok"}}))];
+    let command = outputs[0]
+        .stdout
+        .as_deref()
+        .and_then(|t| serde_json::from_str::<Value>(t).ok())
+        .and_then(|v| {
+            v.pointer("/hookSpecificOutput/tailToolCallRequest/args/command")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .expect("尾调用");
+    outputs.push(call(&e, "gemini", "claim", json!({"hook_event_name":"AfterTool","session_id":s,"cwd":root,"tool_name":"run_shell_command","tool_input":{"command":command},"tool_response":{"llmContent":"bg"}})));
+    outputs.push(call(&e, "gemini", "stop", stop(&e, "gemini", s, "继续")));
+    for out in outputs {
+        let value: Value = serde_json::from_str(&out.stdout.unwrap()).unwrap();
+        let mut hits = Vec::new();
+        walk(&value, &mut hits);
+        assert!(hits.is_empty(), "{hits:?}");
+        checked += 1;
+    }
+    assert!(checked >= 7, "覆盖到的输出太少：{checked}");
+}
