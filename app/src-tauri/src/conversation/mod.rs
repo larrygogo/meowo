@@ -393,10 +393,26 @@ fn handle(db: &Path, id: i64) -> Result<Arc<Handle>, String> {
 }
 
 fn ensure_worker(db: &Path, id: i64, app: Option<tauri::AppHandle>) -> Result<(), String> {
+    let state = {
+        let workers = WORKERS.lock().map_err(|_| "conversation/lock_failed")?;
+        if workers.contains_key(&key(db, id)) {
+            return Ok(());
+        }
+        recovered_state(db, id)?
+    };
+    // 版本探测（CLI --version，最长约 5 秒）不持全局 WORKERS 锁：持锁期间所有托管会话的
+    // 发送/停止都得排队（做空指出）。放锁后重新加锁再查一次，并发调用最多各算一遍启动参数，
+    // 只有一个真正起进程。
+    let launch = launch(&state)?;
     let mut workers = WORKERS.lock().map_err(|_| "conversation/lock_failed")?;
     if workers.contains_key(&key(db, id)) {
         return Ok(());
     }
+    spawn_worker(db, id, launch, app, &mut workers)
+}
+
+/// 读托管会话状态；上一个运行方已退出时先回收它的运行权。调用方持 WORKERS 锁。
+fn recovered_state(db: &Path, id: i64) -> Result<ManagedSession, String> {
     let store = open(db)?;
     let mut state = store
         .managed_state(id)
@@ -416,8 +432,7 @@ fn ensure_worker(db: &Path, id: i64, app: Option<tauri::AppHandle>) -> Result<()
             .map_err(error)?
             .ok_or("conversation/session_missing")?;
     }
-    let launch = launch(&state)?;
-    spawn_worker(db, id, launch, app, &mut workers)
+    Ok(state)
 }
 
 fn spawn_worker(
