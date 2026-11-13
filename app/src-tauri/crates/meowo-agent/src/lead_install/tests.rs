@@ -346,6 +346,8 @@ fn known_version_family_and_managed_command_are_exact() {
     assert!(!version_at_least(Some("1.19.2"), (1, 19, 3)));
     assert!(version_untested(Some("codex-cli 0.167.3"), (0, 167, 2)));
     assert!(!version_untested(Some("codex-cli 0.167.2"), (0, 167, 2)));
+    // 低于实测版本也算未实测（做空 M6：kimi 2.5.x 过了版本门却没标）。
+    assert!(version_untested(Some("kimi 2.5.3"), (2, 6, 0)));
     assert!(managed_command(
         r#""C:/Program Files/meowo-reporter.exe" lead session --provider codex"#,
         "codex"
@@ -391,13 +393,13 @@ fn kimi_waiter_permission_rule_is_exact_and_reversible() {
     assert_eq!(rules.get(0).unwrap()["pattern"].as_str(), Some("Bash(rm *)"));
     let ours = rules.get(1).unwrap();
     assert_eq!(ours["decision"].as_str(), Some("allow"));
-    // picomatch 特殊字符逐个转义；`*` 只留给会话 id。
+    // picomatch 特殊字符与引号逐个转义；会话 id 只允许 [A-Za-z0-9_-]（不用 `*`，见 kimi::lead SESSION_GLOB）。
     assert_eq!(
         ours["pattern"].as_str(),
-        Some(r#"Bash("C:/Program Files \(x86\)/Meowo/meowo-reporter.exe" lead wait --provider kimi --session *)"#)
+        Some(r#"Bash(\"C:/Program Files \(x86\)/Meowo/meowo-reporter.exe\" lead wait --provider kimi --session +([A-Za-z0-9_-]))"#)
     );
     assert_eq!(
-        waiter_command_prefix("kimi", reporter),
+        waiter_command_prefix(WaiterShell::PosixDoubleQuoted, "kimi", reporter),
         r#""C:/Program Files (x86)/Meowo/meowo-reporter.exe" lead wait --provider kimi"#
     );
     uninstall(cap, &inst).unwrap();
@@ -436,7 +438,7 @@ fn gemini_auto_continue_settings_restore_user_values_on_uninstall() {
     let parsed: toml_edit::DocumentMut = policy.parse().unwrap();
     let rule = parsed["rule"].as_array_of_tables().unwrap().get(0).unwrap();
     assert_eq!(rule["toolName"].as_str(), Some("run_shell_command"));
-    assert_eq!(rule["commandPrefix"].as_str(), Some(waiter_command_prefix("gemini", reporter).as_str()));
+    assert_eq!(rule["commandPrefix"].as_str(), Some(waiter_command_prefix(WaiterShell::PowerShellOnWindows, "gemini", reporter).as_str()));
     // 刷新安装不改记下的原值。
     assert!(install(cap, &inst, Some("0.68.0"), "C:/Meowo Next/meowo-reporter.exe").unwrap().installed);
     uninstall(cap, &inst).unwrap();
@@ -448,4 +450,51 @@ fn gemini_auto_continue_settings_restore_user_values_on_uninstall() {
     assert!(!inst.data_dir.join("meowo-lead-settings.json").exists());
     assert!(!crate::plugins::gemini::lead_model_steering(&inst.data_dir));
     assert!(!managed_present(cap, &inst));
+}
+
+/// 第一轮做空 M6：续跑能力按机制查证的版本单独设门，低于它（或读不出版本）走手动提示；
+/// 2.5.x 照样能装 Lead，但状态里标未实测。
+#[test]
+fn native_continue_requires_the_version_its_mechanism_was_verified_on() {
+    let kimi = crate::plugins::kimi::Kimi;
+    let gemini = crate::plugins::gemini::Gemini;
+    let kimi_cap = AgentPlugin::lead(&kimi).unwrap();
+    let gemini_cap = AgentPlugin::lead(&gemini).unwrap();
+    assert!(native_continue_for(kimi_cap, Some("2.6.0")).is_some());
+    assert!(native_continue_for(kimi_cap, Some("kimi, version 2.6.3")).is_some());
+    assert!(native_continue_for(kimi_cap, Some("2.5.9")).is_none());
+    assert!(native_continue_for(kimi_cap, None).is_none(), "读不出版本不冒险");
+    assert!(native_continue_for(gemini_cap, Some("0.68.0")).is_some());
+    assert!(native_continue_for(gemini_cap, Some("0.67.2")).is_none());
+    assert!(native_continue_for(gemini_cap, Some("0.65.0")).is_none());
+    // 没声明门槛的（codex/opencode）不受影响。
+    for (plugin, _) in providers() {
+        let cap = plugin.lead().unwrap();
+        if cap.native_continue_floor().is_none() {
+            assert_eq!(native_continue_for(cap, None), cap.native_continue());
+        }
+    }
+
+    let fixture = Fixture::new();
+    let plugin: &dyn AgentPlugin = &kimi;
+    let inst = fixture.installation(plugin);
+    fs::write(inst.data_dir.join("config.toml"), "").unwrap();
+    let state = install(kimi_cap, &inst, Some("2.5.3"), "C:/Meowo/meowo-reporter.exe").unwrap();
+    assert!(state.installed);
+    assert!(state.limitations.iter().any(|l| l == "lead/version_untested"), "{state:?}");
+    let plugin: &dyn AgentPlugin = &gemini;
+    let inst = fixture.installation(plugin);
+    fs::write(inst.data_dir.join("settings.json"), "{}").unwrap();
+    let state = install(gemini_cap, &inst, Some("0.68.0"), "C:/Meowo/meowo-reporter.exe").unwrap();
+    assert!(!state.limitations.iter().any(|l| l == "lead/version_untested"), "{state:?}");
+}
+
+/// 共享层不按 provider 身份分支（做空 M7）：等待器 shell 由插件声明。
+#[test]
+fn waiter_shell_comes_from_the_plugin_description() {
+    assert_eq!(waiter_shell("kimi"), Some(WaiterShell::PosixDoubleQuoted));
+    assert_eq!(waiter_shell("gemini"), Some(WaiterShell::PowerShellOnWindows));
+    assert_eq!(waiter_shell("codex"), None);
+    assert_eq!(waiter_shell("opencode"), None);
+    assert_eq!(waiter_shell("nope"), None);
 }

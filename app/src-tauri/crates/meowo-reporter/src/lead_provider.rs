@@ -691,7 +691,7 @@ fn kimi_gate_guard(native: &Native, raw: &Value, session: &str, registry: &Path)
     }
     let _ = fs::write(&asked, session);
     let reporter = lead_waiter::reporter_path()?;
-    let command = lead_waiter::command("kimi", &reporter, session);
+    let command = lead_waiter::command("kimi", &reporter, session)?;
     Some(Output {
         stderr: Some(format!(
             "[lead] 写关卡前，先用 Bash 工具在后台启动 Meowo 的关卡等待命令（run_in_background=true，disable_timeout=true，description 写「等待 leader 答复」），命令：`{command}`。启动后再重新写这个 gate.json，然后结束本轮，不要轮询。leader 答复后它会结束、你会收到后台任务完成的通知，届时读它的输出和 gate.json，按 lead skill 处理答复。"
@@ -722,7 +722,7 @@ fn gemini_waiter_tail(task: &Path, session: &str) -> Option<Output> {
         return None;
     }
     let reporter = lead_waiter::reporter_path()?;
-    let command = lead_waiter::command("gemini", &reporter, session);
+    let command = lead_waiter::command("gemini", &reporter, session)?;
     Some(Output {
         stdout: Some(
             json!({"hookSpecificOutput":{"hookEventName":"AfterTool","tailToolCallRequest":{"name":"run_shell_command","args":{"command":command,"is_background":true,"description":"Meowo: wait for the leader's gate answer"}}}})
@@ -781,7 +781,7 @@ fn waiter_stop(
             save_state(task, provider, state)?;
         }
         let reporter = lead_waiter::reporter_path()?;
-        let command = lead_waiter::command(provider.id(), &reporter, session);
+        let command = lead_waiter::command(provider.id(), &reporter, session)?;
         let how = match provider {
             Provider::Kimi => "用 Bash 工具在后台启动它（run_in_background=true，disable_timeout=true，description 写「等待 leader 答复」）",
             _ => "用 run_shell_command 在后台启动它（is_background=true）",
