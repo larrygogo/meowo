@@ -214,7 +214,14 @@ fn cli_version(provider: &str) -> Option<String> {
         .resolve()
         .map_or_else(|| plugin.launch_argv(), |inst| inst.launch_argv());
     let cache = std::env::temp_dir().join(format!("meowo-cli-version-{provider}.json"));
-    cached_version(&cache, &version_key(&argv), || run_version(&argv))
+    cached_version(&cache, &version_key(&argv), now_ms(), || run_version(&argv))
+}
+
+#[cfg(not(test))]
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as i64)
 }
 
 /// 缓存键：argv 原文 + 其中真实存在的文件的大小与修改时间。
@@ -237,18 +244,31 @@ fn version_key(argv: &[String]) -> String {
 struct VersionCache {
     key: String,
     version: Option<String>,
+    /// 探测时刻（毫秒）。旧版本写的缓存没有此字段，读作 0：失败记录随即过期重探。
+    #[serde(default)]
+    at_ms: i64,
 }
 
-/// 命中同键缓存就用；否则探测并写回。读不出版本也缓存（键变了才重探），不然每个 hook 都白等 5 秒。
+/// 读不出版本（5 秒超时、输出解析不了）的缓存时效。成功结果按可执行文件身份缓存、文件不变就一直用；
+/// 失败只缓存这么久：一次偶发超时若被永久缓存，hook 就再也不要求启动等待器，而宿主 60 秒后
+/// 重探成功、面板仍说「在会话里发一句话」，自动继续静默失效（做空 R7）。npm 的 .cmd shim 升级后
+/// 不一定变，键也救不回来。一分钟内的 hook 仍复用失败结果，不至于每个都白等 5 秒。
+const FAILED_VERSION_TTL_MS: i64 = 60_000;
+
+/// 命中同键缓存就用；否则探测并写回。读不出版本只短时缓存（[`FAILED_VERSION_TTL_MS`]）。
 fn cached_version(
     cache: &Path,
     key: &str,
+    now: i64,
     probe: impl FnOnce() -> Option<String>,
 ) -> Option<String> {
     if let Some(hit) = std::fs::read(cache)
         .ok()
         .and_then(|bytes| serde_json::from_slice::<VersionCache>(&bytes).ok())
         .filter(|hit| hit.key == key)
+        .filter(|hit| {
+            hit.version.is_some() || now.saturating_sub(hit.at_ms) < FAILED_VERSION_TTL_MS
+        })
     {
         return hit.version;
     }
@@ -256,6 +276,7 @@ fn cached_version(
     if let Ok(text) = serde_json::to_string(&VersionCache {
         key: key.to_owned(),
         version: version.clone(),
+        at_ms: now,
     }) {
         let _ = meowo_agent::fsutil::write_atomic(cache, &text);
     }
@@ -717,15 +738,32 @@ mod tests {
         std::fs::write(&exe, "v1").unwrap();
         let argv = vec![exe.to_string_lossy().into_owned()];
         let key = version_key(&argv);
-        assert_eq!(cached_version(&cache, &key, || Some("2.6.0".into())), Some("2.6.0".into()));
-        // 同一个可执行文件：不再探测。
-        assert_eq!(cached_version(&cache, &key, || panic!("不该重探")), Some("2.6.0".into()));
-        // 读不出版本也缓存，免得每个 hook 都白等超时。
+        let t0 = 1_000_000;
+        assert_eq!(cached_version(&cache, &key, t0, || Some("2.6.0".into())), Some("2.6.0".into()));
+        // 同一个可执行文件：成功结果不过期，不再探测。
+        let much_later = t0 + 24 * 3_600_000;
+        assert_eq!(cached_version(&cache, &key, much_later, || panic!("不该重探")), Some("2.6.0".into()));
+        // 读不出版本只短时缓存：时效内不白等超时，过了时效重探（做空 R7）。
         std::fs::write(&exe, "upgraded binary").unwrap();
         let key2 = version_key(&argv);
         assert_ne!(key, key2, "CLI 升级后文件变了要重探");
-        assert_eq!(cached_version(&cache, &key2, || None), None);
-        assert_eq!(cached_version(&cache, &key2, || panic!("不该重探")), None);
+        assert_eq!(cached_version(&cache, &key2, t0, || None), None);
+        assert_eq!(cached_version(&cache, &key2, t0 + 1_000, || panic!("时效内不该重探")), None);
+        assert_eq!(
+            cached_version(&cache, &key2, t0 + FAILED_VERSION_TTL_MS, || Some("2.6.1".into())),
+            Some("2.6.1".into()),
+            "失败缓存过期后重探成功"
+        );
+        assert_eq!(cached_version(&cache, &key2, much_later, || panic!("成功后不再探")), Some("2.6.1".into()));
+    }
+
+    /// 旧版本写下的失败缓存没有时刻字段：读作已过期，立刻重探，不让历史上的一次超时永久生效。
+    #[test]
+    fn legacy_failed_version_cache_is_reprobed() {
+        let fx = Fx::new("pending");
+        let cache = fx.root.join("version.json");
+        std::fs::write(&cache, r#"{"key":"k","version":null}"#).unwrap();
+        assert_eq!(cached_version(&cache, "k", 5_000_000, || Some("0.68.0".into())), Some("0.68.0".into()));
     }
 
     /// 做空 M1 残留：等待器把答复交给 CLI 后、模型开新回合前 TUI 被杀，宿主能认出来（撤「已送达」，
