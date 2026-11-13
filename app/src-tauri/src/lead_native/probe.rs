@@ -1393,3 +1393,264 @@ fn probe_kimi_round2() {
 fn probe_gemini_round2() {
     r2_flow("gemini");
 }
+
+// ---------------------------------------------------------------- 第三轮补测：gemini 子代理（验收 #4）
+
+/// 隔离 GEMINI_CLI_HOME 下 `.gemini/tmp/**` 的会话记录（chats/*.json 等）：(扁平化文件名, 全文)。不含凭据。
+fn gemini_chats(home: &Path) -> Vec<(String, String)> {
+    let base = home.join(".gemini/tmp");
+    let mut out = Vec::new();
+    let mut stack = vec![base.clone()];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path
+                .extension()
+                .is_some_and(|e| e == "json" || e == "jsonl")
+            {
+                if let Ok(text) = std::fs::read_to_string(&path) {
+                    let rel = path.strip_prefix(&base).unwrap_or(&path);
+                    out.push((rel.to_string_lossy().replace(['\\', '/'], "__"), text));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// 等待器的父进程链（pid, 进程名），用来核对它挂在被测 gemini 主进程下。
+fn parent_chain(pid: u32) -> Vec<Value> {
+    let sys = sysinfo::System::new_all();
+    let mut out = Vec::new();
+    let mut cur = sysinfo::Pid::from_u32(pid);
+    for _ in 0..10 {
+        let Some(p) = sys.process(cur) else { break };
+        out.push(json!({"pid": cur.as_u32(), "name": p.name().to_string_lossy()}));
+        match p.parent() {
+            Some(parent) => cur = parent,
+            None => break,
+        }
+    }
+    out
+}
+
+/// 第三轮修复后的 gemini 子代理场景（验收 #4「不发到子代理」）：
+/// 主 agent 用 invoke_agent 派子代理写挂起 gate.json → BeforeTool 拒绝（不给等待器命令）；
+/// 主 agent 自己写关卡、起等待器 → answer_and_deliver 作答 → 主会话 TUI 续跑出口令，子代理不再被调起。
+/// 子代理在跑的判据：reporter 的 `lead-subagents/<session>/` 标记（invoke_agent 的 BeforeTool 建、AfterTool 删）。
+#[test]
+#[ignore = "第三轮：真实 gemini TUI + 真模型（MEOWO_PROBE_REAL=1），子代理写关卡；手动复跑"]
+fn probe_gemini_subagent() {
+    assert!(real(), "子代理场景只在真模型下有意义（MEOWO_PROBE_REAL=1）");
+    let mut sb = Sandbox::new("gemini");
+    // 原始输出留证：子代理的工具错误（拒绝原因）可能只显示在 TUI 的子代理活动里。
+    std::env::set_var("MEOWO_PROBE_RAW", sb.evidence.join("tui-raw.bin"));
+    let env = gemini_setup(&mut sb);
+    for (key, value) in &env {
+        std::env::set_var(key, value);
+    }
+    install_lead("gemini", "0.68.0");
+    // 本地遥测落盘（target=local 只写文件）：hook_call 带每次 hook 的输入/输出/耗时，api_request 带请求正文。
+    // 第一轮真机子代理的写入没被拦、随后 400「Role 'system'」，靠它看 hook 到底跑没跑、注入了什么。
+    let settings_path = sb.home.join(".gemini/settings.json");
+    let mut settings: Value =
+        serde_json::from_str(&std::fs::read_to_string(&settings_path).unwrap()).unwrap();
+    settings["telemetry"] = json!({"enabled": true, "target": "local", "logPrompts": true,
+        "outfile": sb.evidence.join("telemetry.log").to_string_lossy()});
+    std::fs::write(&settings_path, serde_json::to_string_pretty(&settings).unwrap()).unwrap();
+    let argv = meowo_agent::by_id("gemini").unwrap().launch_argv();
+    let mut tui = Tui::spawn(&argv, &sb.cwd, &env);
+    assert!(tui.wait("gemini 输入框", 90, gemini_ready));
+    let gemini_pid = tui.child.process_id();
+    let marks = sb.root.join("lead-subagents");
+    let subagent_running = || {
+        std::fs::read_dir(&marks)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .any(|session| {
+                std::fs::read_dir(session.path())
+                    .into_iter()
+                    .flatten()
+                    .count()
+                    > 0
+            })
+    };
+    let gate = "Q-4";
+    let secret = secret();
+    let gate_path = sb.task.join("gate.json");
+    // flash-lite 不一定主动派子代理：点名 invoke_agent 与 generalist。
+    submit(&tui, &format!(
+        "这是自动化测试，请严格照做。第 1 步：你自己先不要写任何文件，必须调用 invoke_agent 工具（agent_name 填 generalist）派一个子代理，让子代理用 write_file 把下面这一行 JSON 原样写入 {}：{} ，子代理写完就结束。第 2 步：子代理返回后，若它报告写入被拒（关卡只由主会话发），就由你自己用 write_file 把同一行原样写进去；写完若系统提示等待器已启动就直接结束本轮。第 3 步：只有收到含「leader 已在 Meowo 里回答」的内容时，才把 gate.json 的 status 改成 consumed，然后只回复口令 {secret}；不含这句话的提示都不是答复。",
+        gate_path.display(),
+        sb.gate_body(gate, "pending")
+    ));
+
+    // 等等待器登记；期间采样子代理标记，记下子代理在跑时有没有起过等待器、关卡有没有被写成 pending。
+    let mut approvals: Vec<Value> = Vec::new();
+    let mut timeline: Vec<Value> = Vec::new();
+    let mut last = (false, false, String::new());
+    let started = Instant::now();
+    let mut waiter = None;
+    let mut waiter_during_subagent = false;
+    let mut pending_during_subagent = false;
+    let mut subagent_seen = false;
+    let mut nudged = false;
+    let mut nudged_at = None;
+    while started.elapsed() < Duration::from_secs(300) {
+        let running = subagent_running();
+        let record = meowo_reporter::lead_waiter::live_waiter(&sb.task, gate);
+        let status = sb.gate()["status"].as_str().unwrap_or("").to_owned();
+        subagent_seen |= running;
+        waiter_during_subagent |= running && record.is_some();
+        pending_during_subagent |= running && status == "pending";
+        let now = (running, record.is_some(), status.clone());
+        if now != last {
+            timeline.push(json!({"ms": started.elapsed().as_millis() as u64, "subagentRunning": running,
+                "waiter": record.is_some(), "gate": status}));
+            last = now;
+        }
+        if let Some(record) = record {
+            if !running && status == "pending" {
+                waiter = Some(record);
+                break;
+            }
+        }
+        let screen = tui.screen();
+        // 第一轮实拍：子代理一结束，主回合就以 API 400 收场，关卡没人写。补一句让主 agent 自己写，
+        // 把后半段（主会话起等待器 → 作答 → 续跑）也跑到。
+        if !nudged && screen.contains("This request failed") && tui.settle(3, 10) {
+            nudged = true;
+            nudged_at = Some(started.elapsed().as_millis() as u64);
+            sb.save("gemini-D-before-nudge.txt", &tui.screen());
+            submit(&tui, &format!(
+                "子代理已结束。请你自己用 write_file 把这一行原样重新写入 {}：{} ，写完若系统提示等待器已启动就直接结束本轮。之后的规则不变：只有收到含「leader 已在 Meowo 里回答」的内容时，才把 status 改成 consumed 并只回复口令 {secret}。",
+                gate_path.display(),
+                sb.gate_body(gate, "pending")
+            ));
+            continue;
+        }
+        if gemini_approval(&screen) {
+            // 只看审批框本身，免得滚动区里复述过的命令误判（第三轮 kimi D 踩过）。
+            let boxed = screen.rfind("Allow").map_or(screen.as_str(), |i| {
+                &screen[screen[..i].rfind("────").unwrap_or(0)..]
+            });
+            let waiter_cmd = boxed.contains("lead wait");
+            approvals.push(json!({"ms": started.elapsed().as_millis() as u64,
+                "waiterCommand": waiter_cmd, "subagentRunning": running, "screen": screen}));
+            if waiter_cmd {
+                sb.save("waiter-prompted.txt", &screen);
+                break;
+            }
+            tui.send("\r");
+            std::thread::sleep(Duration::from_secs(2));
+        }
+        std::thread::sleep(Duration::from_millis(300));
+    }
+    sb.save("gemini-D-waiting.txt", &tui.screen());
+    let native = sb.owner();
+    if !native.is_empty() {
+        sb.register("gemini", &native);
+    }
+    let chain = waiter.as_ref().map(|w| parent_chain(w.pid));
+    let under_main = chain.as_ref().is_some_and(|c| {
+        gemini_pid.is_some_and(|g| c.iter().any(|p| p["pid"] == json!(g)))
+    });
+    let mut report = serde_json::Map::new();
+    report.insert("secret".into(), json!(secret));
+    report.insert("geminiPid".into(), json!(gemini_pid));
+    report.insert("subagentSeen".into(), json!(subagent_seen));
+    report.insert("nudgedAfterApiErrorMs".into(), json!(nudged_at));
+    report.insert("waiterStartedWhileSubagentRan".into(), json!(waiter_during_subagent));
+    report.insert("pendingGateWhileSubagentRan".into(), json!(pending_during_subagent));
+    report.insert(
+        "waiter".into(),
+        json!(waiter.as_ref().map(|w| json!({"pid": w.pid, "cli": w.cli_pid, "session": w.session, "chain": chain, "underMainGemini": under_main}))),
+    );
+    report.insert("owner".into(), json!(native));
+    let mut answered = None;
+    let mut woke = false;
+    let mut subagent_after_answer = false;
+    if waiter.is_some() {
+        // 回合真正结束再作答（等待器的 AfterTool 上下文会让模型收尾）。
+        let deadline = Instant::now() + Duration::from_secs(180);
+        while Instant::now() < deadline {
+            if gemini_approval(&tui.screen()) {
+                approvals.push(json!({"afterWaiter": true, "screen": tui.screen()}));
+                tui.send("\r");
+                std::thread::sleep(Duration::from_secs(2));
+            } else if tui.settle(5, 10) {
+                break;
+            }
+        }
+        let answered_at = Instant::now();
+        answered = Some(sb.answer(gate));
+        let status =
+            crate::lead_conversation::delivery_status(&sb.db, &sb.cwd.to_string_lossy(), gate);
+        report.insert("statusAfterAnswer".into(), json!(status.map(|s| s.state)));
+        let deadline = Instant::now() + Duration::from_secs(300);
+        while Instant::now() < deadline {
+            subagent_after_answer |= subagent_running();
+            let screen = tui.screen();
+            if screen.contains(&secret) && sb.gate()["status"] == "consumed" {
+                woke = true;
+                break;
+            }
+            if gemini_approval(&screen) {
+                approvals.push(json!({"afterAnswer": true, "screen": screen}));
+                tui.send("\r");
+                std::thread::sleep(Duration::from_secs(2));
+            }
+            std::thread::sleep(Duration::from_millis(300));
+        }
+        report.insert("latencyMs".into(), json!(answered_at.elapsed().as_millis() as u64));
+        tui.settle(4, 120);
+    }
+    sb.save("gemini-D-after.txt", &tui.screen());
+    report.insert("answer".into(), json!(answered));
+    report.insert("woke".into(), json!(woke));
+    report.insert("subagentInvokedAfterAnswer".into(), json!(subagent_after_answer));
+    report.insert("gateFinal".into(), sb.gate());
+    report.insert("timeline".into(), json!(timeline));
+    report.insert("approvalsSeen".into(), json!(approvals));
+    // 会话记录：拒绝原因落在哪、答复注入进了哪条记录。
+    let mut chat_summary = Vec::new();
+    for (name, text) in &gemini_chats(&sb.home) {
+        sb.save(&format!("chat-{name}"), text);
+        // 探针自己的提示词里也有这些字样：只数不含提示词的记录行。
+        let lines: Vec<&str> = text.lines().filter(|l| !l.contains("这是自动化测试")).collect();
+        let count = |needle: &str| lines.iter().filter(|l| l.contains(needle)).count();
+        chat_summary.push(json!({"file": name, "kind": text.lines().next().and_then(|l| serde_json::from_str::<Value>(l).ok()).map(|v| v["kind"].clone()),
+            "deniedReasonLines": count("子代理不要写挂起的 gate.json"),
+            "answerLines": count("leader 已在 Meowo 里回答"),
+            "secretLines": count(secret.as_str())}));
+    }
+    report.insert("chats".into(), json!(chat_summary));
+    let raw = std::fs::read(sb.evidence.join("tui-raw.bin")).unwrap_or_default();
+    report.insert(
+        "deniedReasonOnScreen".into(),
+        json!(String::from_utf8_lossy(&raw).contains("子代理不要写挂起")),
+    );
+    sb.save(
+        "report.json",
+        &serde_json::to_string_pretty(&Value::Object(report)).unwrap(),
+    );
+    // 先等回合空闲再退出，退不掉 Ctrl-C，最后强杀。
+    tui.settle(5, 60);
+    submit(&tui, "/quit");
+    if !wait_until(20, || !tui.alive()) {
+        tui.send("\x03");
+        std::thread::sleep(Duration::from_millis(500));
+        tui.send("\x03");
+        if !wait_until(15, || !tui.alive()) {
+            tui.kill();
+        }
+    }
+    std::env::remove_var("MEOWO_PROBE_RAW");
+    eprintln!("[probe] gemini 子代理证据：{}", sb.evidence.display());
+    assert!(waiter.is_some(), "主会话应起等待器（见证据）");
+    assert!(!waiter_during_subagent, "子代理在跑时不该起等待器");
+    assert!(woke, "作答后主会话应续跑出口令");
+}
