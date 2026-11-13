@@ -2339,22 +2339,19 @@ mod tests {
         let _client = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
         let _server_side = listener.accept().unwrap();
         let me = std::process::id();
-        match tcp_client_pids(port) {
-            Some(pids) => {
-                assert!(pids.contains(&me), "{pids:?}");
-                assert_eq!(tui_connected(port, me), Some(true));
-                assert_eq!(tui_connected(idle_port, me), Some(false));
-                // 连着端口的进程不在 TUI 进程树里：不算（父进程不行——本进程是它的子孙）。
-                assert_eq!(tui_connected(port, 4_000_000_000), Some(false));
-                // 反过来，TUI 是包装进程、真正连接的是它的子孙（npm 包装时 node → codex）：算。
-                assert_eq!(tui_connected(port, foreign_live_pid()), Some(true));
-            }
-            // 只有没装 lsof 的 Linux 会到这里；Windows 必须查得到。
-            None => {
-                #[cfg(windows)]
-                panic!("Windows 连接表读取失败");
-            }
-        }
+        // 只有没装 lsof 的 Linux 会读不到；Windows 必须查得到。
+        // 写成 let-else：macOS 上空的 None 分支会让 clippy 报 single_match（CI macOS 矩阵实测）。
+        let Some(pids) = tcp_client_pids(port) else {
+            assert!(!cfg!(windows), "Windows 连接表读取失败");
+            return;
+        };
+        assert!(pids.contains(&me), "{pids:?}");
+        assert_eq!(tui_connected(port, me), Some(true));
+        assert_eq!(tui_connected(idle_port, me), Some(false));
+        // 连着端口的进程不在 TUI 进程树里：不算（父进程不行——本进程是它的子孙）。
+        assert_eq!(tui_connected(port, 4_000_000_000), Some(false));
+        // 反过来，TUI 是包装进程、真正连接的是它的子孙（npm 包装时 node → codex）：算。
+        assert_eq!(tui_connected(port, foreign_live_pid()), Some(true));
     }
 
     /// L4：端口上是别人的监听（不认 token 也回 101，或根本不是 WebSocket）不算我们的服务。
