@@ -335,8 +335,17 @@ fn installation_follows_native_default_and_environment_roots() {
 #[test]
 fn known_version_family_and_managed_command_are_exact() {
     assert!(version_matches(Some("codex-cli 0.167.2"), (0, 167)));
-    assert!(!version_matches(Some("0.168.0"), (0, 167)));
+    // 2026-11-13 本机实际升级：一升级就拒绝会让 Lead 装不上，同主版本向前放行。
+    assert!(version_matches(Some("0.168.0"), (0, 167)));
+    assert!(version_matches(Some("0.68.0"), (0, 65)));
+    assert!(version_matches(Some("2.6.0"), (2, 5)));
+    assert!(!version_matches(Some("0.166.9"), (0, 167)));
+    assert!(!version_matches(Some("3.0.0"), (2, 5)));
     assert!(!version_matches(None, (0, 167)));
+    assert!(version_at_least(Some("1.19.5"), (1, 19, 3)));
+    assert!(!version_at_least(Some("1.19.2"), (1, 19, 3)));
+    assert!(version_untested(Some("codex-cli 0.167.3"), (0, 167, 2)));
+    assert!(!version_untested(Some("codex-cli 0.167.2"), (0, 167, 2)));
     assert!(managed_command(
         r#""C:/Program Files/meowo-reporter.exe" lead session --provider codex"#,
         "codex"

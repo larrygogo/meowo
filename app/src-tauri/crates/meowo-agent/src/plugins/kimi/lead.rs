@@ -11,6 +11,7 @@ pub(super) struct KimiLead;
 const SPEC: LeadInstallSpec = LeadInstallSpec {
     provider: "kimi",
     version_family: (2, 5),
+    verified: (2, 5, 3),
     skill_rel: "skills/lead/SKILL.md",
     reviewer_rel: "agents/lead-redteam.md",
     hook_rel: "config.toml",

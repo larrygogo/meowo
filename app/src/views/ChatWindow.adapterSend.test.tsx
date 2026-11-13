@@ -10,7 +10,9 @@ import { terminalAttention } from "../terminalAttention";
 describe("ChatWindow 适配回归", () => {
   const { history, snapshot, setup, box, writes } = adapter;
 
-  it("codex 原生占位符不能证明空框：运行中保留草稿且不发送 Tab", async () => {
+  // 2026-11-13 改定：认出输入框、只看到占位时照常发送（严格口径下 codex/gemini/opencode 永远
+  // 判不出空框，对话页就永远发不出去，main 上可发）。草稿与认不出画面的拦截见 manualSendVerdict 单测。
+  it("codex 原生只有占位符时照常发送", async () => {
     const base = setup(501, "codex", "running");
     invoke.mockImplementation((command, args) => command === "managed_terminal_frame" ? Promise.resolve(emptyComposerFrame("codex")) : base(command, args));
     render(<ChatWindow />);
@@ -18,10 +20,7 @@ describe("ChatWindow 适配回归", () => {
     await waitFor(() => expect(document.querySelector(".chat-model-label")).toBeTruthy());
     fireEvent.change(box(), { target: { value: "下一回合处理" } });
     fireEvent.keyDown(box(), { key: "Enter" });
-    await waitFor(() => expect(document.querySelector(".chat-send-error")).toBeTruthy());
-    expect(box().value).toBe("下一回合处理");
-    expect(writes(501)).toEqual([]);
-    expect(writes(501)).not.toContain("\r");
+    await waitFor(() => expect(writes(501).some((text) => String(text).includes("下一回合处理"))).toBe(true));
   });
 
   // 插话进了对话记录后，排队区不再挂它的回执：对话里已经有「回合中插入」的那条，
@@ -83,7 +82,7 @@ describe("ChatWindow 适配回归", () => {
   });
 
   // 状态空闲只能决定提交键，不能证明CLI输入框没有草稿；2026-11-12实拍占位符仍须保守拒发。
-  it("gemini 屏幕空闲但仅有占位符时不猜空框，不发回车或排队键", async () => {
+  it("gemini 屏幕空闲且仅有占位符时照常发送，不用 Tab", async () => {
     const base = setup(507, "gemini", "running", "idle");
     invoke.mockImplementation((command, args) => command === "managed_terminal_frame" ? Promise.resolve(emptyComposerFrame("gemini")) : base(command, args));
     render(<ChatWindow />);
@@ -91,15 +90,14 @@ describe("ChatWindow 适配回归", () => {
     await waitFor(() => expect(document.querySelector(".chat-model-label")).toBeTruthy());
     fireEvent.change(box(), { target: { value: "测试测试" } });
     fireEvent.keyDown(box(), { key: "Enter" });
-    await waitFor(() => expect(document.querySelector(".chat-send-error")).toBeTruthy());
-    expect(box().value).toBe("测试测试");
-    expect(writes(507)).toEqual([]);
+    await waitFor(() => expect(writes(507).some((text) => String(text).includes("测试测试"))).toBe(true));
     expect(writes(507)).not.toContain("\t");
   });
 
-  it("OpenCode 原生模型入口遇到未知输入框不发送 slash 或 Esc", async () => {
+  it("OpenCode 原生模型入口认不出输入框（画面是菜单）时不发送 slash 或 Esc", async () => {
     const base = setup(502, "opencode");
-    invoke.mockImplementation((command, args) => command === "managed_terminal_frame" ? Promise.resolve(emptyComposerFrame("opencode")) : command === "agent_models"
+    const menu = { lines: ["  Select model", "  > anthropic/claude-sonnet"], cursorRow: 1, cursorCol: 0, cursorVisible: false };
+    invoke.mockImplementation((command, args) => command === "managed_terminal_frame" ? Promise.resolve(menu) : command === "agent_models"
       ? Promise.resolve(["anthropic/claude-sonnet"]) : base(command, args));
     render(<ChatWindow />);
     await screen.findByText("适配-502");

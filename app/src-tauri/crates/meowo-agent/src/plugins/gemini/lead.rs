@@ -11,6 +11,7 @@ pub(super) struct GeminiLead;
 const SPEC: LeadInstallSpec = LeadInstallSpec {
     provider: "gemini",
     version_family: (0, 65),
+    verified: (0, 65, 0),
     skill_rel: "skills/lead/SKILL.md",
     reviewer_rel: "agents/lead-redteam.md",
     hook_rel: "settings.json",

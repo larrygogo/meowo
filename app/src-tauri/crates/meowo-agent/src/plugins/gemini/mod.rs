@@ -250,7 +250,7 @@ impl AgentPlugin for Gemini {
     /// 消息，按回车两种状态都对。
     /// 2026-11-12 隔离无模型实拍（target/lead-provider-probes/composer）：文字只给候选，发送仍须核验原生光标。
     fn composer_guard(&self, version: Option<&str>) -> Option<crate::chat_ui::ComposerGuard> {
-        if version != Some("0.65.0") {
+        if !crate::lead_install::version_at_least(version, (0, 65, 0)) {
             return None;
         }
         Some(crate::chat_ui::ComposerGuard {

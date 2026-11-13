@@ -25,9 +25,9 @@ impl ConversationCap for Cap {
         installation: &Installation,
         version: Option<&str>,
     ) -> Result<ConversationSpec, String> {
+        // 下限 = app-server 协议实测版本；更新的版本放行，理由见 lead_install::version_matches。
         if installation.variant_tag != "stable"
-            || version.map(|v| v.trim().strip_prefix("codex-cli ").unwrap_or(v.trim()))
-                != Some("0.167.2")
+            || !crate::lead_install::version_at_least(version, (0, 167, 2))
         {
             return Err("conversation/version_unverified".into());
         }

@@ -12,6 +12,7 @@ pub(super) struct CodexLead;
 const SPEC: LeadInstallSpec = LeadInstallSpec {
     provider: "codex",
     version_family: (0, 167),
+    verified: (0, 167, 2),
     skill_rel: "skills/lead/SKILL.md",
     reviewer_rel: "agents/lead-redteam.toml",
     hook_rel: "hooks.json",

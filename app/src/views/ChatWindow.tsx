@@ -41,7 +41,7 @@ import { pasteImagesNatively, useInterrupt, writeInterruptKeys } from "./chat/te
 import { leaveSubagentView } from "./chat/subagentView";
 import { SubagentViewNotice } from "./chat/SubagentViewNotice";
 import { clearPartialImageDraft, composerDraftText, createSendQueue, IMAGE_PASTE_LANDING_POLLS, LATE_IMAGE_GRACE_MS, RESUME_VERIFY_WINDOW_MS, stashComposerDraft, submitToTerminal, terminalInput, waitForTerminalReady, type SubmitInput, type TerminalReadyMessages, type TerminalStartupResult } from "./chat/terminalSubmit";
-import { confirmComposerEmpty } from "./chat/composerConfirmation";
+import { manualSendVerdict } from "./chat/composerConfirmation";
 import { managedTerminalFrame } from "../api";
 import { BottomSheet, SheetOnPhone } from "./chat/BottomSheet";
 import { runningActivityView, RunningBar, SnakeSpinner, TurnAnnouncer, useCliStatusStore } from "./chat/RunningBar";
@@ -2520,8 +2520,10 @@ export function ChatWindow() {
       await stashComposerDraft(sessionId, chatUi.draft_stash);
       if (partial.length && composerDraftText(await managedTerminalScreen(sessionId), chatUi.draft_stash) !== "") throw new Error("terminal/composer_partial");
     } else {
-      const safety = await confirmComposerEmpty({ read: () => managedTerminalFrame(sessionId) }, chatUi?.composer_guard);
-      if (safety !== "empty") throw new Error(safety === "occupied" ? "terminal/composer_occupied" : "terminal/composer_unknown");
+      // 用户亲手发送、人在场：认出有草稿或认不出输入框才拦，占位/空白照常发（判定口径见
+      // manualSendVerdict）。严格的 confirmComposerEmpty 会让 codex/gemini/opencode 永远发不出去。
+      const verdict = await manualSendVerdict({ read: () => managedTerminalFrame(sessionId) }, chatUi?.composer_guard);
+      if (verdict !== "send") throw new Error(verdict === "occupied" ? "terminal/composer_occupied" : "terminal/composer_unknown");
     }
     // 只解除“原生残稿仍在”的阻挡，不把空框当作模型已消费；原文回执继续独立对账。
     for (const entry of partial) outgoingStore.settle(entry.id, { bodyWritten: false });

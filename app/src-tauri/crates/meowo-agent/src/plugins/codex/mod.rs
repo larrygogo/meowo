@@ -316,7 +316,7 @@ impl AgentPlugin for Codex {
     /// (probe_tui_script,0.162.1,2026-10-16),运行态误判也不会卡住消息。
     /// 2026-11-12 隔离无模型实拍（target/lead-provider-probes/composer）：文字只给候选，发送仍须核验原生光标。
     fn composer_guard(&self, version: Option<&str>) -> Option<crate::chat_ui::ComposerGuard> {
-        if version != Some("0.167.2") {
+        if !crate::lead_install::version_at_least(version, (0, 167, 2)) {
             return None;
         }
         Some(crate::chat_ui::ComposerGuard {

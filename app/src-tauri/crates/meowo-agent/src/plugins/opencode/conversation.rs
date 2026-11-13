@@ -13,7 +13,10 @@ impl ConversationCap for Cap {
         installation: &Installation,
         version: Option<&str>,
     ) -> Result<ConversationSpec, String> {
-        if installation.variant_tag != "stable" || version.map(str::trim) != Some("1.19.3") {
+        // 下限 = HTTP/SSE 协议实测版本；更新的版本放行，理由见 lead_install::version_matches。
+        if installation.variant_tag != "stable"
+            || !crate::lead_install::version_at_least(version, (1, 19, 3))
+        {
             return Err("conversation/version_unverified".into());
         }
         Ok(ConversationSpec {

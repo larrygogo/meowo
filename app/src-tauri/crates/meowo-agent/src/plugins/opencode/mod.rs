@@ -262,7 +262,7 @@ impl AgentPlugin for Opencode {
     /// （probe_tui_script 实测，1.19.2）。
     /// 2026-11-12 隔离无模型 PTY 实拍（target/lead-provider-probes/composer）：只允许已验证空框，不清非空草稿。
     fn composer_guard(&self, version: Option<&str>) -> Option<crate::chat_ui::ComposerGuard> {
-        if version != Some("1.19.3") {
+        if !crate::lead_install::version_at_least(version, (1, 19, 3)) {
             return None;
         }
         Some(crate::chat_ui::ComposerGuard {

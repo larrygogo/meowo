@@ -1,7 +1,7 @@
 import { emptyComposerFrame } from "../chatWindow.harness";
 import { describe, expect, it, vi } from "vitest";
 import { chatUi } from "../../test/agents";
-import { confirmComposerEmpty } from "./composerConfirmation";
+import { confirmComposerEmpty, manualSendVerdict } from "./composerConfirmation";
 
 describe("原生 composer 的保守确认", () => {
   it("实拍非占位空框与原生光标起点一致才允许，不改变原帧", async () => {
@@ -60,5 +60,39 @@ describe("原生 composer 的保守确认", () => {
       expect(chatUi(provider)!.composer_guard).toBeDefined();
     }
     expect(emptyComposerFrame("unknown")).toBeNull();
+  });
+});
+
+// 2026-11-13 对话页亲手发送的判定（manualSendVerdict）：占位照常发、真实草稿拦、认不出输入框拦。
+// 兄弟场景逐家覆盖：四家原生空框、四家真实草稿、菜单/对话框画面、插件没有守卫。
+describe("manualSendVerdict", () => {
+  const drafts: Record<string, [RegExp, string]> = {
+    codex: [/Ask Codex to do anything/, "尚未提交的原稿"],
+    gemini: [/Type your message or @path\/to\/file/, "尚未提交的原稿"],
+    opencode: [/Ask anything… "Fix a TODO in the codebase"/, "尚未提交的原稿"],
+    kimi: [/> /, "> 尚未提交的原稿"],
+  };
+  it.each(Object.keys(drafts))("%s 只有占位或空白时照常发送", async (provider) => {
+    const guard = chatUi(provider)!.composer_guard;
+    expect(await manualSendVerdict({ read: async () => emptyComposerFrame(provider) }, guard)).toBe("send");
+  });
+  it.each(Object.keys(drafts))("%s 输入框里有真实草稿时拦住", async (provider) => {
+    const frame = emptyComposerFrame(provider)!;
+    const [placeholder, text] = drafts[provider];
+    frame.lines[frame.cursorRow] = frame.lines[frame.cursorRow].replace(placeholder, text);
+    const guard = chatUi(provider)!.composer_guard;
+    expect(await manualSendVerdict({ read: async () => frame }, guard)).toBe("occupied");
+  });
+  it("认不出输入框（菜单、对话框、布局漂移）时拦住，不往里按回车", async () => {
+    const guard = chatUi("gemini")!.composer_guard;
+    const menu = { lines: ["Select model", "● 1. gemini-2.5-pro", "  2. gemini-2.5-flash"], cursorRow: 1, cursorCol: 0, cursorVisible: false };
+    expect(await manualSendVerdict({ read: async () => menu }, guard)).toBe("unrecognized");
+    expect(await manualSendVerdict({ read: async () => null }, guard)).toBe("unrecognized");
+    expect(await manualSendVerdict({ read: async () => { throw new Error("x"); } }, guard)).toBe("unrecognized");
+  });
+  it("插件没声明守卫时与 main 一致：不读帧，照常发送", async () => {
+    const read = vi.fn(async () => null);
+    expect(await manualSendVerdict({ read }, undefined)).toBe("send");
+    expect(read).not.toHaveBeenCalled();
   });
 });

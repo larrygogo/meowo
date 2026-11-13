@@ -298,8 +298,13 @@ fn actual_isolated_handshakes_drive_each_native_plugin_and_mcp_forwarding() {
             cap.spec(&installation, Some(version)).unwrap().args,
             vec![arg]
         );
+        // 升级后的版本照常起托管会话（2026-11-13 本机 gemini 0.68.0、kimi 2.6.0），旧于实测下限的拒绝。
         if plugin.id() == crate::id::GEMINI {
-            assert!(cap.spec(&installation, Some("0.66.0")).is_err());
+            assert!(cap.spec(&installation, Some("0.68.0")).is_ok());
+            assert!(cap.spec(&installation, Some("0.64.9")).is_err());
+        } else {
+            assert!(cap.spec(&installation, Some("2.6.0")).is_ok());
+            assert!(cap.spec(&installation, Some("2.4.0")).is_err());
         }
         assert!(cap.spec(&installation, None).is_err());
         assert!(cap.spec(&installation, Some("999.999.0")).is_err());

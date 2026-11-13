@@ -11,6 +11,7 @@ pub(super) struct OpenCodeLead;
 const SPEC: LeadInstallSpec = LeadInstallSpec {
     provider: "opencode",
     version_family: (1, 19),
+    verified: (1, 19, 3),
     skill_rel: "skills/lead/SKILL.md",
     reviewer_rel: "agents/lead-redteam.md",
     hook_rel: "plugins/meowo-lead.ts",

@@ -28,7 +28,10 @@ pub struct LeadHook {
 
 pub struct LeadInstallSpec {
     pub provider: &'static str,
+    /// 已实测的最低版本（major, minor）：同主版本、不低于它即放行，见 [`version_matches`]。
     pub version_family: (u32, u32),
+    /// 实际跑过安装/hook 回归的版本；高于它照常可用，状态里标 `lead/version_untested`。
+    pub verified: (u32, u32, u32),
     pub skill_rel: &'static str,
     pub reviewer_rel: &'static str,
     pub hook_rel: &'static str,
@@ -86,7 +89,8 @@ pub struct LeadInstallState {
     pub reason: Option<String>,
 }
 
-pub fn version_matches(line: Option<&str>, family: (u32, u32)) -> bool {
+/// 从 `--version` 输出里取第一个 `x.y.z`（容忍 `codex-cli `、`v` 前缀和 `-beta`/`+build` 后缀）。
+pub fn parse_version(line: Option<&str>) -> Option<(u32, u32, u32)> {
     line.into_iter()
         .flat_map(str::split_whitespace)
         .find_map(|word| {
@@ -102,7 +106,26 @@ pub fn version_matches(line: Option<&str>, family: (u32, u32)) -> bool {
                     .ok()?,
             ))
         })
-        .is_some_and(|(major, minor, _)| (major, minor) == family)
+}
+
+/// 版本门：同主版本、且不低于已实测的最低版本即放行。
+///
+/// 为什么不卡精确版本：2026-11-13 一天内 gemini 0.65→0.68、kimi 2.5.3→2.6.0、
+/// opencode 1.19.3→1.19.5，精确匹配让用户一升级就装不上 Lead、托管会话起不来。
+/// 新版本破坏协议/布局靠 CLI 漂移扫描与回归测试提前发现，确认破坏时在插件里单独拒绝该版本。
+/// 低于下限的旧版本没有实测过协议形状，照旧拒绝。
+pub fn version_matches(line: Option<&str>, floor: (u32, u32)) -> bool {
+    parse_version(line).is_some_and(|(major, minor, _)| major == floor.0 && minor >= floor.1)
+}
+
+/// 精确到补丁号的下限版本门（托管协议只在某个补丁号实测过时用）。
+pub fn version_at_least(line: Option<&str>, floor: (u32, u32, u32)) -> bool {
+    parse_version(line).is_some_and(|v| v.0 == floor.0 && v >= floor)
+}
+
+/// 高于已实测版本：照常可用，但状态里如实标「未实测」，不冒充已验证。
+pub fn version_untested(line: Option<&str>, verified: (u32, u32, u32)) -> bool {
+    parse_version(line).is_some_and(|v| v > verified)
 }
 
 fn managed_file(path: &Path) -> bool {
@@ -546,7 +569,15 @@ pub fn inspect(
         installed: supported && assets_present && hooks_present && activation_issue.is_none(),
         assets_present,
         hooks_present,
-        limitations: spec.limitations.iter().map(|text| (*text).into()).collect(),
+        limitations: spec
+            .limitations
+            .iter()
+            .map(|text| (*text).into())
+            .chain(
+                (supported && version_untested(version, spec.verified))
+                    .then(|| "lead/version_untested".into()),
+            )
+            .collect(),
         reason: if !supported {
             Some("lead/version_unsupported".into())
         } else {

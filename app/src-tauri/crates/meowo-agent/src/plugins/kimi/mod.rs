@@ -567,7 +567,7 @@ impl AgentPlugin for Kimi {
     /// 同为确证级别。
     /// 2026-11-12 隔离无模型 PTY 实拍（target/lead-provider-probes/composer）：只允许已验证空框，不清非空草稿。
     fn composer_guard(&self, version: Option<&str>) -> Option<crate::chat_ui::ComposerGuard> {
-        if version != Some("2.5.3")
+        if !crate::lead_install::version_at_least(version, (2, 5, 3))
             || !self
                 .resolve()
                 .is_some_and(|inst| inst.variant_tag == "modern")
