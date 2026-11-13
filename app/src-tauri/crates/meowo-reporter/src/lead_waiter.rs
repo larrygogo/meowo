@@ -346,12 +346,75 @@ pub fn run_from_args(args: &[String], registry: &Path) -> Option<Output> {
     let provider = flag("--provider").unwrap_or_default();
     Some(
         std::panic::catch_unwind(|| {
-            wait(&provider, &session, registry, POLL, MAX, || {
-                crate::proc::owner_pid(&provider)
-            })
+            // 只有 kimi 的 hook 载荷分不出子代理（见 lead_kimi），要靠 wire 认启动者；gemini 的后台完成
+            // 注入是会话级广播，主界面空闲时一定收得到（0.68 InjectionService.addInjection），不需要。
+            let mut launcher = || {
+                (provider == "kimi")
+                    .then(|| crate::lead_kimi::launched_by_subagent(&session, &crate::lead_kimi::ancestors()))
+                    .flatten()
+            };
+            wait_guarded(
+                &provider,
+                &session,
+                registry,
+                POLL,
+                MAX,
+                || crate::proc::owner_pid(&provider),
+                Guards {
+                    launched_by_subagent: &mut launcher,
+                    launcher_grace: LAUNCHER_GRACE,
+                    parent: parent_process(),
+                },
+            )
         })
         .unwrap_or_default(),
     )
+}
+
+/// 等待器的直接父进程（启动它的 shell）与其启动时刻。
+fn parent_process() -> Option<(u32, u64)> {
+    use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
+    let me = Pid::from_u32(std::process::id());
+    let mut sys = System::new();
+    sys.refresh_processes_specifics(ProcessesToUpdate::Some(&[me]), false, ProcessRefreshKind::new());
+    let parent = sys.process(me)?.parent()?.as_u32();
+    Some((parent, process_started(parent)?))
+}
+
+/// 启动后认启动者最多等这么久：kimi 起后台任务后十几毫秒才把 `task.started` 写进 wire（run1 实测
+/// tool.call 472 → task.started 484）。等不到就先照常等，交付前再认一次。
+const LAUNCHER_GRACE: Duration = Duration::from_secs(3);
+
+/// 等待器自己的两道保险（第二轮真机复跑，2026-11-13）。
+pub struct Guards<'a> {
+    /// 启动我的是不是子代理：Some(true) 子代理，Some(false) 主 agent，None 认不出（照常等）。
+    /// kimi 子代理拿到等待命令后自己在后台跑了它，完成通知进了子代理的 loop、主会话没续跑（run5 D）。
+    pub launched_by_subagent: &'a mut dyn FnMut() -> Option<bool>,
+    pub launcher_grace: Duration,
+    /// 启动我的 shell 进程（pid，启动时刻）。它没了就退出：gemini 0.68 的 /quit 先杀后台 shell
+    /// （interactiveCli cleanupFn → ShellExecutionService.kill）再 process.exit，这段时间宿主 CLI 还活着，
+    /// 只看 CLI 时我们这个孙进程会多挂一阵、还挂在那个伪终端上。第二轮真机 E 里 /quit 20 秒没退出、
+    /// 按两次 Ctrl-C 才退；假模型复跑（2026-11-13）新旧 reporter 都在 0.6 秒内退出，没能复现，真模型下
+    /// 卡住是不是等待器所致未证实。用户在 gemini 里手动停掉这个后台任务时同理，等待器不该留成孤儿。
+    pub parent: Option<(u32, u64)>,
+}
+
+impl Guards<'_> {
+    fn by_subagent(&mut self, grace: Duration, poll: Duration) -> Option<bool> {
+        let start = std::time::Instant::now();
+        loop {
+            let found = (self.launched_by_subagent)();
+            if found.is_some() || start.elapsed() >= grace {
+                return found;
+            }
+            std::thread::sleep(poll.min(Duration::from_millis(200)));
+        }
+    }
+}
+
+/// 子代理启动的等待器不等、不交付：答复要回到主会话（SPEC 终态 2「不发到子代理」）。
+fn refuse_subagent() -> Output {
+    say("[lead] 关卡只由主会话等待和处理，子代理不要启动这个等待命令，也不要写挂起的 gate.json。直接结束，把需要 leader 决定的事写进交回主会话的结果里。")
 }
 
 fn say(text: impl Into<String>) -> Output {
@@ -370,6 +433,38 @@ pub fn wait(
     max: Duration,
     find_cli: impl FnOnce() -> Option<u32>,
 ) -> Output {
+    wait_guarded(
+        provider,
+        session,
+        registry,
+        poll,
+        max,
+        find_cli,
+        Guards {
+            launched_by_subagent: &mut || None,
+            launcher_grace: Duration::ZERO,
+            parent: None,
+        },
+    )
+}
+
+/// 关卡已作答且本会话还没收到过（`.delivered` 不是它）：等待器不论何时看到都交付。
+/// 不依赖亲眼看到 pending→answered 的变化——关卡刚写下就被答（一个轮询周期内）时那一刻根本看不到
+/// pending，旧逻辑一直没绑上关卡，10 分钟后以「没等到新的关卡」退出，面板停在「正在送达」（第二轮 P3）。
+fn deliverable(task: &Path, gate: &LeadGateDto) -> bool {
+    gate.status == "answered"
+        && std::fs::read_to_string(task.join(".delivered")).unwrap_or_default().trim() != gate.id
+}
+
+pub fn wait_guarded(
+    provider: &str,
+    session: &str,
+    registry: &Path,
+    poll: Duration,
+    max: Duration,
+    find_cli: impl FnOnce() -> Option<u32>,
+    mut guards: Guards<'_>,
+) -> Output {
     let valid = !session.is_empty()
         && session
             .chars()
@@ -381,13 +476,31 @@ pub fn wait(
     let Some(task) = lead::task_of_session(session, registry) else {
         return say("[lead] 没有找到本会话认领的 Lead 任务，等待器已退出，无需处理。");
     };
+    let mut launcher = guards.by_subagent(guards.launcher_grace, poll);
+    if launcher == Some(true) {
+        return refuse_subagent();
+    }
     let initial = lead::read_gate(&task);
     let cli_pid = find_cli();
     let cli_started = cli_pid.and_then(process_started);
     let cli = cli_pid.zip(cli_started);
-    if let Some(gate) = initial.as_ref().filter(|g| g.status == "answered") {
+    // 交付前再认一次启动者：刚启动时 wire 可能还没落盘（认不出），到交付时一定落了。
+    let mut hand_over = |gate: &LeadGateDto, guards: &mut Guards<'_>| {
+        if launcher.is_none() {
+            launcher = (guards.launched_by_subagent)();
+        }
+        if launcher == Some(true) {
+            return refuse_subagent();
+        }
         mark_handed(&task, gate, cli);
-        return say(lead::answer_message(&task, gate));
+        say(lead::answer_message(&task, gate))
+    };
+    if let Some(gate) = initial.as_ref().filter(|g| g.status == "answered") {
+        return if deliverable(&task, gate) {
+            hand_over(gate, &mut guards)
+        } else {
+            say("[lead] 答复已在本会话送达，本条无需处理。")
+        };
     }
     // 关卡还没写（或只剩上一轮已消费的旧关卡）：先登记、等下一个挂起关卡出现再绑定。
     let stale = initial
@@ -431,10 +544,21 @@ pub fn wait(
                 break Output::default(); // TUI 没了，没有人会读这条输出
             }
         }
+        if let Some((pid, started)) = guards.parent {
+            if !same_process(pid, started) {
+                break Output::default(); // 启动我的 shell 被 CLI 收掉了（/quit、用户停掉后台任务）
+            }
+        }
         if start.elapsed() > max {
             break say("[lead] 等待关卡答复超时，已退出。");
         }
         let gate = lead::read_gate(&task);
+        if let Some(g) = gate
+            .as_ref()
+            .filter(|g| stale.as_deref() != Some(g.id.as_str()) && deliverable(&task, g))
+        {
+            break hand_over(g, &mut guards);
+        }
         if record.gate.is_empty() {
             match gate {
                 Some(g) if g.status == "pending" && stale.as_deref() != Some(g.id.as_str()) => {
@@ -451,9 +575,9 @@ pub fn wait(
             continue;
         }
         match gate {
+            // 本关卡已作答、但别处（Stop hook）已经交过：不重复交。
             Some(g) if g.id == record.gate && g.status == "answered" => {
-                mark_handed(&task, &g, cli);
-                break say(lead::answer_message(&task, &g));
+                break say("[lead] 答复已在本会话送达，本条无需处理。");
             }
             Some(g) if g.id == record.gate && g.status == "pending" => misses = 0,
             Some(_) => break say("[lead] 关卡已更换或已处理，本条无需处理。"),
@@ -755,6 +879,149 @@ mod tests {
             "失败缓存过期后重探成功"
         );
         assert_eq!(cached_version(&cache, &key2, much_later, || panic!("成功后不再探")), Some("2.6.1".into()));
+    }
+
+    fn wait_for_record(task: &Path, pred: impl Fn(&WaiterRecord) -> bool) {
+        for _ in 0..400 {
+            if read_record(task).is_some_and(|r| pred(&r)) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        panic!("等待器没有登记");
+    }
+
+    /// 第二轮 P3：等待器先启动、关卡写下后一个轮询周期内就被答（从没看到 pending）——照样交付，
+    /// 不再一直挂着、10 分钟后以「没等到新的关卡」退出（复现：scratchpad/wtest，记录停在 gate=""）。
+    #[test]
+    fn gate_answered_before_the_waiter_ever_sees_it_pending_is_still_delivered() {
+        let fx = Fx::new("consumed");
+        let (task, registry) = (fx.task.clone(), fx.registry.clone());
+        // 轮询周期拉长到 400ms，写关卡 + 作答在同一个周期里完成。
+        let slow = Duration::from_millis(400);
+        let handle =
+            std::thread::spawn(move || wait("kimi", "session_abc", &registry, slow, M, || None));
+        wait_for_record(&task, |r| r.gate.is_empty());
+        std::fs::write(
+            fx.task.join("gate.json"),
+            json!({"id":"Q-2","type":"Q","title":"t","status":"pending","options":[{"id":"go","label":"Go"}]}).to_string(),
+        )
+        .unwrap();
+        lead::answer_gate(
+            &fx.task,
+            "Q-2",
+            &meowo_protocol::ipc::LeadGateAnswerDto {
+                choice: "go".into(),
+                note: String::new(),
+            },
+        )
+        .unwrap();
+        let out = handle.join().unwrap();
+        assert!(out.stdout.unwrap().contains("leader 已在 Meowo 里回答关卡 Q"));
+        assert_eq!(std::fs::read_to_string(fx.task.join(".delivered")).unwrap(), "Q-2");
+        // 上一轮已消费的旧关卡、别处已交过的答复都不再交。
+        let out = wait("kimi", "session_abc", &fx.registry, P, Duration::from_millis(300), || None);
+        assert!(!out.stdout.unwrap_or_default().contains("leader 已在 Meowo 里回答"));
+    }
+
+    /// 第二轮 run5 D：子代理启动的等待器不等、不交付，答复留给主会话。认得出就当场拒；
+    /// 刚启动时 wire 还没落盘（认不出）的，交付前再认一次。
+    #[test]
+    fn waiter_started_by_a_subagent_never_takes_the_answer() {
+        let fx = Fx::new("pending");
+        let out = wait_guarded(
+            "kimi",
+            "session_abc",
+            &fx.registry,
+            P,
+            M,
+            || None,
+            Guards {
+                launched_by_subagent: &mut || Some(true),
+                launcher_grace: Duration::ZERO,
+                parent: None,
+            },
+        );
+        assert!(out.stdout.unwrap().contains("关卡只由主会话等待"));
+        assert!(!waiter_path(&fx.task).exists(), "不登记：宿主不能以为会话里有人在等");
+        // 启动时认不出、交付前认出是子代理。
+        let (task, registry) = (fx.task.clone(), fx.registry.clone());
+        let handle = std::thread::spawn(move || {
+            let mut calls = 0;
+            let mut launcher = move || {
+                calls += 1;
+                (calls > 1).then_some(true)
+            };
+            wait_guarded(
+                "kimi",
+                "session_abc",
+                &registry,
+                P,
+                M,
+                || None,
+                Guards {
+                    launched_by_subagent: &mut launcher,
+                    launcher_grace: Duration::ZERO,
+                    parent: None,
+                },
+            )
+        });
+        wait_for_record(&task, |r| r.gate == "Q-1");
+        fx.answer();
+        assert!(handle.join().unwrap().stdout.unwrap().contains("关卡只由主会话等待"));
+        assert!(!fx.task.join(".delivered").exists(), "答复没交给子代理");
+        assert!(undelivered_answer(&fx.task, "session_abc").is_some(), "主会话回来时 hook 还会交");
+        // 主 agent 启动的照常交付。
+        let out = wait_guarded(
+            "kimi",
+            "session_abc",
+            &fx.registry,
+            P,
+            M,
+            || None,
+            Guards {
+                launched_by_subagent: &mut || Some(false),
+                launcher_grace: Duration::ZERO,
+                parent: None,
+            },
+        );
+        assert!(out.stdout.unwrap().contains("选择 go"));
+    }
+
+    /// 第二轮 P4：gemini /quit 先杀后台 shell 再退出，等待器若还活着退出就卡住。启动它的 shell
+    /// 没了就静默退出（宿主 CLI 此时还活着）。
+    #[test]
+    fn exits_silently_when_its_parent_shell_is_gone() {
+        let fx = Fx::new("pending");
+        let mut child = std::process::Command::new(if cfg!(windows) { "cmd" } else { "sh" })
+            .args(if cfg!(windows) {
+                ["/C", "ping -n 3 127.0.0.1 >NUL"]
+            } else {
+                ["-c", "sleep 2"]
+            })
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        let started = process_started(pid).unwrap();
+        let registry = fx.registry.clone();
+        let handle = std::thread::spawn(move || {
+            wait_guarded(
+                "gemini",
+                "session_abc",
+                &registry,
+                P,
+                M,
+                || None,
+                Guards {
+                    launched_by_subagent: &mut || None,
+                    launcher_grace: Duration::ZERO,
+                    parent: Some((pid, started)),
+                },
+            )
+        });
+        child.wait().unwrap();
+        assert_eq!(handle.join().unwrap(), Output::default());
+        assert!(!waiter_path(&fx.task).exists());
     }
 
     /// 旧版本写下的失败缓存没有时刻字段：读作已过期，立刻重探，不让历史上的一次超时永久生效。

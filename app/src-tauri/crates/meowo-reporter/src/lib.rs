@@ -5,6 +5,7 @@ pub mod dispatch;
 pub mod hook;
 pub mod import;
 pub mod lead;
+pub mod lead_kimi;
 pub mod lead_mcp;
 pub mod lead_provider;
 pub mod lead_waiter;
