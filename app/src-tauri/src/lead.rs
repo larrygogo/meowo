@@ -92,6 +92,10 @@ fn resume_owner_if_gone(app: &tauri::AppHandle, task: &std::path::Path) -> Resul
     else {
         return Ok(()); // 找不到会话：交给用户打开时注入
     };
+    let provider = store.session_provider(sid).map_err(|e| e.to_string())?;
+    if !auto_resume_on_answer(&provider) {
+        return Ok(()); // 答复已保存，面板提示打开会话后说一句继续
+    }
     if state.ptys.is_managed(sid) || crate::terminal::session_agent_alive(&store, sid)? {
         return Ok(()); // 进程还在，后台 wait 会唤醒
     }
@@ -102,7 +106,6 @@ fn resume_owner_if_gone(app: &tauri::AppHandle, task: &std::path::Path) -> Resul
             return Err("无效 session_id".into());
         }
         let cwd = store.session_cwd(sid).map_err(|e| e.to_string())?;
-        let provider = store.session_provider(sid).map_err(|e| e.to_string())?;
         crate::terminal::start_managed_resume_sized(
             app.clone(),
             state.ptys.clone(),
@@ -117,8 +120,31 @@ fn resume_owner_if_gone(app: &tauri::AppHandle, task: &std::path::Path) -> Resul
     }
     #[cfg(not(any(target_os = "windows", target_os = "macos")))]
     {
-        let _ = sid;
+        let _ = (sid, provider);
         Ok(())
+    }
+}
+
+/// 作答后会话不在时能否替用户把会话拉起来：只有宿主自带 Lead 流程的 provider（没有 LeadCap，
+/// 即 claude：恢复后 SessionStart 上的 wait hook 会立刻唤醒模型）。声明了 LeadCap 的 provider
+/// 一律不拉起——TUI 不在时不起任何进程（leader 2026-11-13「不需要离线」），而且版本门不通过、
+/// 投递返回 Unsupported 时拉起来也不会自动继续，只是白开一个终端（做空 R6）。面板走手动提示。
+fn auto_resume_on_answer(provider: &str) -> bool {
+    meowo_agent::resolve(Some(provider)).is_some_and(|plugin| plugin.lead().is_none())
+}
+
+#[cfg(test)]
+mod auto_resume_tests {
+    /// 做空 R6：claude（含没写过 provider 的老会话）照旧自动恢复；声明了 LeadCap 的 provider
+    /// （不论版本门是否通过）一律不拉起 TUI；不认识的 provider 不猜。
+    #[test]
+    fn only_providers_without_lead_cap_are_resumed_on_answer() {
+        assert!(super::auto_resume_on_answer("claude"));
+        assert!(super::auto_resume_on_answer(""));
+        for provider in ["codex", "kimi", "gemini", "opencode"] {
+            assert!(!super::auto_resume_on_answer(provider), "{provider}");
+        }
+        assert!(!super::auto_resume_on_answer("nope"));
     }
 }
 
