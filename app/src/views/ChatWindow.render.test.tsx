@@ -1107,13 +1107,15 @@ describe("ChatWindow", () => {
     // 空闲期：后续轮询不再带模式增量（真实后端普通增量的 agent_modes 就是空）。
     current = { ...base, agentModes: [] };
     // 只有 cycle 键的维度也给下拉：选项由屏幕回显标记派生，选中后循环按到位（cycleToMode）。
-    fireEvent.click(screen.getByRole("button", { name: "切换模式: 权限模式" }));
-    // 每档带一行后果说明（对照 Kimi 权限菜单）：启动项声明过的用启动说明，运行中才有的 auto 按值补。
-    // 说明不进名字，读屏名字仍只报档名。
-    expect(await screen.findByText("改文件自动，跑命令先问你")).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: "切换模式: 权限模式" }));
+    // 每档名字是统一说法（任务 20261114-tui-model-switch），下一行一句话说明，行尾小字 CLI 原名；
+    // 运行中才有的 auto 不在启动项里，按值补说明。说明不进名字，读屏名字只报统一说法。
+    expect(await screen.findByText("自动改文件，跑命令仍先问")).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "改文件不问 · 跑命令先问你" })).toBeTruthy();
+    expect(screen.getByText("Accept Edits")).toBeTruthy();
     const autoItem = screen.getByRole("menuitem", { name: "自动" });
     expect(document.getElementById(autoItem.getAttribute("aria-describedby") ?? "")?.textContent).toBe("安全操作自动，有风险的才问你");
-    fireEvent.click(screen.getByRole("menuitem", { name: /计划/ }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /只出方案/ }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 51, data: "\u001b[Z" }));
     // transcript 静默，但屏幕是 CLI 自己画的权威状态——标签应据它回显为「计划」。
     expect(await screen.findByText("计划模式")).toBeTruthy();

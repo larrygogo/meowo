@@ -408,9 +408,9 @@ fn apply_blocking(
             Err(codex::ControlError::Unsupported) => {
                 return Ok(SettingsOutcome::new("unsupported", session_id))
             }
-            Err(codex::ControlError::NotReady(reason) | codex::ControlError::Failed(reason)) => {
-                return Err(reason)
-            }
+            // 没握手 / 主线程不在：lead 那几个 reason 的文案是「答复稍后送达」，这里换成切换语境的。
+            Err(codex::ControlError::NotReady(_)) => return Err("settings/server_not_ready".into()),
+            Err(codex::ControlError::Failed(reason)) => return Err(reason),
         }
         persist(&store, session_id, &modes, model.as_deref());
     }

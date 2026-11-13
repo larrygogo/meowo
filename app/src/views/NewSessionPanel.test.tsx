@@ -174,28 +174,31 @@ describe("NewSessionPanel (独立窗口)", () => {
     fireEvent.click(within(await screen.findByTestId("ns-option-model")).getByRole("button"));
     fireEvent.click(screen.getByRole("option", { name: "Opus" }));
     fireEvent.click(within(screen.getByTestId("ns-option-permission")).getByRole("button"));
-    fireEvent.click(screen.getByRole("option", { name: "计划模式" }));
+    // 权限档的名字是统一说法（任务 20261114-tui-model-switch），CLI 原名在说明行末尾。
+    fireEvent.click(screen.getByRole("option", { name: /只出方案/ }));
     fireEvent.change(screen.getByTestId("ns-dir"), { target: { value: "C:/proj" } });
     fireEvent.click(screen.getByTestId("ns-launch"));
     // 只回传 choice id；翻译成 CLI flag 是后端按同一张声明表做的事。
     await waitFor(() => expect(api.newSession).toHaveBeenCalledWith(
       "C:/proj", "claude", { model: "opus", permission: "plan" },
     ));
-    // kimi 未声明启动选项 → 整块不渲染，也不会把 claude 的残留选择带过去。
+    // 换到 kimi：栏换成 kimi 自己声明的（权限 + 工作模式），claude 的模型栏与残留选择不带过去。
     fireEvent.click(screen.getByTestId("ns-agent-kimi"));
-    await waitFor(() => expect(screen.queryByTestId("ns-options")).toBeNull());
+    await waitFor(() => expect(screen.queryByTestId("ns-option-work")).toBeTruthy());
+    expect(screen.queryByTestId("ns-option-model")).toBeNull();
   });
 
   it("高风险启动档（契约 risk=true）渲染警示色与风险副标题", async () => {
     render(<NewSessionPanel />);
     fireEvent.click(within(await screen.findByTestId("ns-option-permission")).getByRole("button"));
-    const risky = screen.getByRole("option", { name: new RegExp(zh.newSession.launchChoice["permission.bypassPermissions"]) });
+    // 名字是统一说法，副标题是一句话说明 + CLI 原名（任务 20261114-tui-model-switch）。
+    const risky = screen.getByRole("option", { name: /改文件不问 · 跑命令不问/ });
     expect(risky.className).toContain("risk");
-    expect(within(risky).getByText(zh.newSession.launchChoiceDesc["permission.bypassPermissions"])).toBeTruthy();
+    expect(within(risky).getByText(`${zh.modes.desc["claude.permission.bypassPermissions"]} · Bypass Permissions`)).toBeTruthy();
     // 普通档不带警示样式，副标题是它自己的后果说明。
-    const plain = screen.getByRole("option", { name: new RegExp(zh.newSession.launchChoice["permission.plan"]) });
+    const plain = screen.getByRole("option", { name: /只出方案/ });
     expect(plain.className).not.toContain("risk");
-    expect(within(plain).getByText(zh.newSession.launchChoiceDesc["permission.plan"])).toBeTruthy();
+    expect(within(plain).getByText(`${zh.modes.desc["claude.permission.plan"]} · Plan`)).toBeTruthy();
   });
 
   it("relay 启用时 model 档置灰并注明「由中转固定为 X」，其余档不受影响", async () => {

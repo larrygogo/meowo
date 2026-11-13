@@ -35,10 +35,34 @@ describe("ChatWindow 适配回归", () => {
 
   /// 菜单型 CLI（kimi 的 /model 不接受参数）：模型目录直接读配置列出，不必先读清单；
   /// 点选后发 /model，菜单画出来就按第一列名称替用户选中——K3 不能落到 K3-256k 上。
+  /// 主路线（任务 20261114-tui-model-switch）：清单里的模型交给后端按机制切（Kimi 空闲时 -r <id> -m 重启接回），
+  /// 不往终端写 /model，也不开菜单识别。
+  it("kimi 点选清单里的模型走切换机制，不往终端敲 /model", async () => {
+    const base = setup(513, "kimi");
+    invoke.mockImplementation((command, args) => {
+      if (command === "managed_terminal_frame") return Promise.resolve(emptyComposerFrame("kimi"));
+      if (command === "apply_session_settings") return Promise.resolve({ kind: "restarted", sessionId: 513, confirmed: false, reason: null });
+      if (command === "agent_model_catalog") return Promise.resolve([
+        { id: "kimi-code/k3", label: "K3", group: "managed:kimi-code", efforts: [], default_effort: null, is_default: false, uncertain: false },
+      ]);
+      return base(command, args);
+    });
+    render(<ChatWindow />);
+    await screen.findByText("适配-513");
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("agent_model_catalog", expect.anything()));
+    await act(async () => { await Promise.resolve(); });
+    fireEvent.click(await screen.findByRole("button", { name: "切换模型" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: "K3" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("apply_session_settings", expect.objectContaining({ sessionId: 513, model: "kimi-code/k3" })));
+    expect(writes(513).join("")).not.toContain("/model");
+  });
+
   it("kimi 模型直接列出,点选后在 CLI 菜单里自动选中", async () => {
     const base = setup(511, "kimi");
     invoke.mockImplementation((command, args) => {
       if (command === "managed_terminal_frame") return Promise.resolve(emptyComposerFrame("kimi"));
+      // 会话够不着切换机制时（unsupported）退回旧的终端菜单路线：这里钉住兜底仍可用。
+      if (command === "apply_session_settings") return Promise.resolve({ kind: "unsupported", sessionId: 511, confirmed: false, reason: null });
       if (command === "agent_model_catalog") return Promise.resolve([
         { id: "kimi-code/k3-256k", label: "K3-256k", group: "managed:kimi-code", efforts: [] },
         { id: "kimi-code/k3.1-pro", label: "K3.1 Pro", group: "managed:kimi-code", efforts: ["low", "high", "max"] },
@@ -79,6 +103,7 @@ describe("ChatWindow 适配回归", () => {
     const base = setup(512, "kimi");
     invoke.mockImplementation((command, args) => {
       if (command === "managed_terminal_frame") return Promise.resolve(emptyComposerFrame("kimi"));
+      if (command === "apply_session_settings") return Promise.resolve({ kind: "unsupported", sessionId: 512, confirmed: false, reason: null });
       if (command === "agent_model_catalog") return Promise.resolve([
         { id: "反向推理/DeepSeek-V4.1-Flash-1017", label: "DeepSeek V4.1 Flash", group: "反向推理", efforts: [] },
       ]);

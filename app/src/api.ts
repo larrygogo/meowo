@@ -31,6 +31,14 @@ import type { SubagentRun as GeneratedSubagentRun } from "./generated/contracts/
 import type { AgentChatUiArgs } from "./generated/contracts/bridge/AgentChatUiArgs";
 import type { AgentModelCatalogArgs } from "./generated/contracts/bridge/AgentModelCatalogArgs";
 import type { AgentModelsArgs } from "./generated/contracts/bridge/AgentModelsArgs";
+import type { AgentLaunchDefaultsArgs } from "./generated/contracts/bridge/AgentLaunchDefaultsArgs";
+import type { AgentDynamicModeChoicesArgs } from "./generated/contracts/bridge/AgentDynamicModeChoicesArgs";
+import type { ApplySessionSettingsArgs } from "./generated/contracts/bridge/ApplySessionSettingsArgs";
+import type { SessionTuiState } from "./generated/contracts/bridge/SessionTuiState";
+import type { LaunchDefaults } from "./generated/contracts/LaunchDefaults";
+import type { DynamicModeChoice } from "./generated/contracts/DynamicModeChoice";
+import type { ModeTraits } from "./generated/contracts/ModeTraits";
+import type { Ask } from "./generated/contracts/Ask";
 import type { AnswerLeadGateArgs } from "./generated/contracts/bridge/AnswerLeadGateArgs";
 import type { RetryLeadGateDeliveryArgs } from "./generated/contracts/bridge/RetryLeadGateDeliveryArgs";
 import type { CheckProviderHooksArgs } from "./generated/contracts/bridge/CheckProviderHooksArgs";
@@ -144,7 +152,7 @@ export type AgentId = string;
 export type AgentDescriptor = Omit<AgentDescriptorDto, "id"> & { id: AgentId };
 
 // 启动选项 / 模型预设 / 斜杠命令 / 模式控制：全部由 ts-rs 生成，原名重导出。
-export type { LaunchChoice, LaunchOption, ModelPreset, ModelCatalogEntry, SlashCommand, ModeInput, ModeOption, ModeScreenMarker, ModeControl };
+export type { LaunchChoice, LaunchOption, ModelPreset, ModelCatalogEntry, SlashCommand, ModeInput, ModeOption, ModeScreenMarker, ModeControl, LaunchDefaults, DynamicModeChoice, ModeTraits, Ask, SessionTuiState };
 
 /**
  * 对话页能力，由**安装实况**组装：插件内置表 ∪ 用户/项目目录里发现的自定义命令 + CLI 版本。
@@ -1290,6 +1298,46 @@ export function agentChatUi(provider: AgentId, cwd: string | null, sessionId?: n
  */
 export function agentModelCatalog(provider: string, sessionId?: number): Promise<ModelCatalogEntry[]> {
   return invoke<ModelCatalogEntry[] | null>("agent_model_catalog", { provider, sessionId: sessionId ?? null } satisfies AgentModelCatalogArgs).then((models) => models ?? []);
+}
+
+/** 新建页默认值：CLI 自己配置里此刻的默认模型与各栏默认档（后端现读，不缓存）。 */
+export function agentLaunchDefaults(provider: string, cwd?: string | null): Promise<LaunchDefaults> {
+  return invoke<LaunchDefaults | null>("agent_launch_defaults", { provider, cwd: cwd ?? null } satisfies AgentLaunchDefaultsArgs)
+    .then((defaults) => defaults ?? { model: null, choices: {} });
+}
+
+/** 运行时才知道的模式选项（OpenCode 的自定义 agent，后端起 `opencode agent list`）。 */
+export function agentDynamicModeChoices(provider: string, cwd?: string | null): Promise<DynamicModeChoice[]> {
+  return invoke<DynamicModeChoice[] | null>("agent_dynamic_mode_choices", { provider, cwd: cwd ?? null } satisfies AgentDynamicModeChoicesArgs)
+    .then((choices) => choices ?? []);
+}
+
+/** 会话里切模型 / 模式的结果（后端 session_settings::SettingsOutcome）。 */
+export type SettingsOutcome = {
+  kind: "applied" | "restarted" | "reopened" | "needs_new_session" | "unsupported" | "not_now";
+  sessionId: number;
+  confirmed: boolean;
+  reason: string | null;
+};
+
+/** 切模型 / 模式：后端按插件声明的机制分派（会话服务 / 带参重启接回 / TUI 对话框 / 未建会话重开）。
+ *  运行中或有待批审批时不要调：调用方排到这一轮之后。 */
+export function applySessionSettings(args: {
+  sessionId: number;
+  model?: string | null;
+  effort?: string | null;
+  modes?: Record<string, string>;
+  current?: Record<string, string>;
+  tui?: SessionTuiState;
+}): Promise<SettingsOutcome> {
+  return invoke<SettingsOutcome>("apply_session_settings", {
+    sessionId: args.sessionId,
+    model: args.model ?? null,
+    effort: args.effort ?? null,
+    modes: args.modes ?? null,
+    current: args.current ?? null,
+    tui: args.tui ?? null,
+  } satisfies ApplySessionSettingsArgs);
 }
 
 export function agentModels(provider: string, sessionId?: number): Promise<string[]> {

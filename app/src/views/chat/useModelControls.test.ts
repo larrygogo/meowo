@@ -152,8 +152,8 @@ it("档位清单：插件静态表优先，否则取模型目录里当前模型�
   const claude = renderHook(() => useModelControls(makeDeps().deps));
   expect(claude.result.current.effortLevels).toEqual(["low", "medium", "high", "xhigh", "max"]);
   const catalog: ModelCatalogEntry[] = [
-    { id: "kimi-a", label: "Kimi A", group: null, efforts: ["low", "high"] },
-    { id: "kimi-b", label: "Kimi B", group: null, efforts: ["off"] },
+    { id: "kimi-a", label: "Kimi A", group: null, efforts: ["low", "high"], default_effort: null, is_default: false, uncertain: false },
+    { id: "kimi-b", label: "Kimi B", group: null, efforts: ["off"], default_effort: null, is_default: false, uncertain: false },
   ];
   const kimi = renderHook(() => useModelControls(makeDeps({ chatUi: chatUi("kimi"), model: "kimi-a", modelCatalog: catalog }).deps));
   expect(kimi.result.current.effortLevels).toEqual(["low", "high"]);

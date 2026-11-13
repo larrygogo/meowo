@@ -49,6 +49,8 @@ import { arrowPanelApprovalDetails, framedBoxApprovalDetails, proceedBoxApproval
 import { ModelPicker, readStarred, type ModelPickerItem } from "./chat/ModelPicker";
 import { currentPresetId } from "./chat/modelLabels";
 import { ModelMenu, effortLabel } from "./chat/ModelMenu";
+import { useSessionSettings } from "./chat/useSessionSettings";
+import { modeChoiceViews, screenShowsAny } from "./chat/modeChoices";
 import { QuestionPanels } from "./chat/QuestionPanels";
 import { RemoteTerminalKeys } from "./chat/RemoteTerminalKeys";
 import { peekSessionMeta, prefetchPending, recallHistory, rememberHistory, takePrefetch, trackPrefetch } from "./chat/historyCache";
@@ -105,7 +107,7 @@ import { AddMenu } from "./chat/AddMenu";
 import { DIFF_PANEL_MIN_WIDTH, useDiffPanelWidth } from "./chat/useDiffPanelWidth";
 import { fitPanes, surfaceGutter, useElementWidth } from "./chat/paneLayout";
 import { attachmentOf, base64OfBuffer, formatBytes, loadStoredDrafts, promptWithAttachments, saveStoredDraft, type Attachment } from "./chat/drafts";
-import { appendTerminalText, terminalAttention as detectTerminalAttention, visibleTerminalText, type AttentionGrammar, type TerminalAttention, type TerminalAttentionOption } from "../terminalAttention";
+import { appendTerminalText, modeFromScreen, terminalAttention as detectTerminalAttention, visibleTerminalText, type AttentionGrammar, type TerminalAttention, type TerminalAttentionOption } from "../terminalAttention";
 import { Dropdown, useMenuPopup } from "./menu";
 // 恢复时的权限改选需要 agent 的启动选项声明表（与新建会话面板同源）。
 import { listAgents, type AgentDescriptor } from "../api";
@@ -888,6 +890,28 @@ export function ChatWindow() {
   // 按 provider+cwd 查询——换会话、换项目都重取，装了新命令下次打开就见。
   // 未知 provider / 查询未回时为空：不补全、不给菜单，宁缺毋滥。
   const [chatUi, setChatUi] = useState<ChatUi | null>(null);
+  // Kimi 2.6 首条消息前不建会话、不触发 SessionStart（屏幕原文 `No session yet — one will be created on your
+  // first message.`，research-kimi-gemini §2.6），临时 id 永远等不到认领——这不是启动卡住。认出插件声明的原文就
+  // 如实说「已就绪，发第一条消息后开始」，不再 8 秒后报「启动被卡住」。首条消息后由 hook 认领成真 id。
+  const [awaitingFirstMessage, setAwaitingFirstMessage] = useState(false);
+  const awaitingMarkerKey = (chatUi?.awaiting_first_message_markers ?? []).join("\0");
+  useEffect(() => {
+    setAwaitingFirstMessage(false);
+    if (sessionId >= 0 || !awaitingMarkerKey) return;
+    const markers = awaitingMarkerKey.split("\0");
+    let stopped = false;
+    let timer = 0;
+    let tries = 0;
+    const tick = async () => {
+      const lines = await managedTerminalScreen(sessionId).catch(() => null);
+      if (stopped) return;
+      if (lines && screenShowsAny(lines, markers)) { setAwaitingFirstMessage(true); return; }
+      // 冷启动通常 1~3 秒画出首屏；认不出就停（交给 startingSlow 的兜底出口），不常驻轮询。
+      if (++tries < 60) timer = window.setTimeout(() => void tick(), 1_000);
+    };
+    void tick();
+    return () => { stopped = true; window.clearTimeout(timer); };
+  }, [sessionId, awaitingMarkerKey]);
   // 运行条状态行解析读它（handleScreen 在上方声明，ref 在此处 chatUi 就位后同步）。
   statusLinePatternRef.current = chatUi?.status_line_pattern ?? null;
   retryLinePatternRef.current = chatUi?.retry_line_pattern ?? null;
@@ -1370,8 +1394,9 @@ export function ChatWindow() {
   }, [history?.lastUserText, history?.lastAiText]);
   // 模型清单三来源(CLI 自举/学到的标签/插件别名)的合流在 useModelPresets.ts;
   // 静默探测与菜单编排(与 sendText、终端 attention 交织)仍在本组件。
-  const { modelPresets, modelCatalog, modelMenuCommand, modelDropdownReady, learnModelLabels } =
-    useModelPresets(history?.provider ?? null, chatUi, sessionId);
+  const { modelPresets, modelCatalog, modelMenuCommand, modelDropdownReady, learnModelLabels, reloadCatalog } =
+    // 临时 id 认领前也要有清单：Kimi 2.6 首条消息前不建会话，用户正是在这时先选模型（leader 实拍）。
+    useModelPresets(provider ?? null, chatUi, sessionId);
   // attention 处理(组件顶部的 handleAttention)在 render 前定义,经 ref 转接读它。
   learnModelLabelsRef.current = learnModelLabels;
   // 静默探测进行中：按钮显示为忙，不弹任何终端界面。
@@ -1514,10 +1539,29 @@ export function ChatWindow() {
       provider: agent.display_name,
     })),
   ];
+  /// 旧路线：往终端发 `/model` 再识别弹出的菜单替用户选中。只作兜底——清单为空、或会话够不着
+  /// CLI 的服务（Lead 未装的 Codex / OpenCode）时才走（任务 20261114-tui-model-switch）。
+  const pickViaTerminalMenu = (id: string) => {
+    const configured = modelCatalog.find((entry) => entry.id === id);
+    if (configured && modelMenuCommand) {
+      pendingModelPickRef.current = { id: configured.id, label: configured.label, at: Date.now() };
+      setModelPicking(true);
+      void openTerminalMenu(modelMenuCommand, true).then((sent) => {
+        if (!sent) { pendingModelPickRef.current = null; setModelPicking(false); return; }
+        armModelPickTimeout();
+      });
+    }
+  };
   const onModelPick = (id: string) => {
     setModelPickerOpen(false);
     setModelMarketOpen(false);
     const configured = modelCatalog.find((entry) => entry.id === id);
+    // 主路线：清单里的模型交给后端按插件声明的机制切（会话服务 / 带参重启接回 / TUI 对话框 / 未建会话重开），
+    // 在跑或有待批审批时排到这一轮之后（useSessionSettings）。
+    if (configured && chatUi?.model_switch) {
+      sessionSettings.request({ model: { id: configured.id, label: configured.label }, label: configured.label });
+      return;
+    }
     if (configured && modelMenuCommand) {
       pendingModelPickRef.current = { id: configured.id, label: configured.label, at: Date.now() };
       setModelPicking(true);
@@ -1618,6 +1662,17 @@ export function ChatWindow() {
   );
   // 前序内容没取到（或本来就没有）时的来历注脚；取到后由分隔条接力表达同一事实。
   const showHandoffNote = history?.predecessorId != null && prefixSegments.every((segment) => segment.items.length === 0);
+  // 切模型 / 模式（清单预先列好、选中按机制生效、在跑时排到这一轮之后，见 useSessionSettings）。
+  const sessionSettings = useSessionSettings({
+    sessionId,
+    tone,
+    history,
+    setHistory,
+    setSendError,
+    moveTo: (id) => resetToRef.current(id, true),
+    composerEmpty: async () => (await manualSendVerdict({ read: () => managedTerminalFrame(sessionId) }, chatUi?.composer_guard)) === "send",
+    fallbackModel: pickViaTerminalMenu,
+  });
   // 识别窗口是个时间点，不是布尔——过期后要真的停下来，故用一个到点自灭的计时器驱动重渲染。
   const [menuWatching, setMenuWatching] = useState(false);
   useEffect(() => {
@@ -1727,6 +1782,8 @@ export function ChatWindow() {
   /// claim=true:临时负 id 被认领成真 id。这不是换会话——同一个 PTY、同一个 CLI 进程,只是
   /// 换了编号。原先一律按换会话处理:输入框的字和已粘的图存进临时 id 名下、换上真 id 的
   /// 空草稿,认领那一刻全部消失(用户反馈「新会话无法粘贴图片」即此)。
+  // 切模型重开未建会话时要切到新的临时 id；resetTo 定义在后面，经 ref 取。
+  const resetToRef = useRef<(id: number, claim?: boolean) => void>(() => {});
   const resetTo = useCallback((id: number, claim = false) => {
     // 远程窄屏的 0 是真实的「会话列表」页面；桌面保留旧守卫，不会误入无会话空态。
     if (!Number.isSafeInteger(id) || (id === 0 && !remoteUi())) return;
@@ -1852,6 +1909,7 @@ export function ChatWindow() {
     setSessionId(id);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- 这些都是拆出去的 hook 里的 useState setter 或 useCallback，引用稳定
   }, []);
+  resetToRef.current = resetTo;
   // Alt+↑/↓ 切到侧栏里的上一条/下一条会话（对照 Kimi 的「上一条/下一条」）：按用户眼前的
   // 顺序走（分组、筛选、排序都算上，同归档跳转用的那份镜像），挨个过一遍在跑的会话不必摸鼠标。
   // 侧栏收起时镜像为空，不动。终端里让位给 shell 自己的 Alt 组合键；到头不循环。
@@ -4284,9 +4342,9 @@ export function ChatWindow() {
               /* 负数临时 id = 新会话认领前，CLI 正在冷启动：此时说「没有记录」是谎报。 */
               : <div className="chat-empty">{sessionId < 0
                   ? <div>
-                      <div>{t.chat.emptyStarting}</div>
+                      <div>{awaitingFirstMessage ? t.chat.awaitingFirstMessage : t.chat.emptyStarting}</div>
                       {/* 远程没有终端视图(setView 被无害化),不给死按钮。 */}
-                      {startingSlow && !remoteUi() && (
+                      {startingSlow && !awaitingFirstMessage && !remoteUi() && (
                         /* 目的性跳转，不写视图偏好。 */
                         <button type="button" className="chat-empty-cta" onClick={() => setView("terminal")}>{t.chat.goTerminal}</button>
                       )}
@@ -4294,7 +4352,7 @@ export function ChatWindow() {
                           启动阻塞（信任目录询问/登录）就在 PTY 画面上，临时负 id 在后端能取屏、能写键
                           （pty.rs screen_probe_snapshot 走 lookup 解析临时 id，issue #72），
                           直接把终端画面和按键摆出来，手机上就地确认。 */}
-                      {startingSlow && remoteUi() && (<>
+                      {startingSlow && !awaitingFirstMessage && remoteUi() && (<>
                         <div className="chat-remote-hint">{t.chat.startingStuckRemote}</div>
                         <RemoteTerminalKeys sessionId={sessionId} />
                       </>)}
@@ -4934,6 +4992,8 @@ export function ChatWindow() {
           ))}
         </div>}
         {attachmentNotice && <div className="chat-send-error" role="status"><span>{attachmentNotice}</span></div>}
+        {/* 在跑或有待批审批时选的模型 / 模式：不写终端、不重启，这一轮结束后自动切（useSessionSettings）。 */}
+        {sessionSettings.notice && <div className="chat-send-error" role="status"><span>{sessionSettings.notice}</span></div>}
         <textarea
           ref={promptInputRef}
           value={prompt}
@@ -5123,11 +5183,21 @@ export function ChatWindow() {
           {(() => {
             const states = history?.agentModes ?? [];
             const controls = new Map(modeControls.map((control) => [control.dimension, control]));
+            // 插件声明在会话里能切、且带统一说法的栏（任务 20261114-tui-model-switch）：Codex 权限 / 协作模式经
+            // 会话服务、Kimi 权限与 Gemini 审批带参重启接回。菜单每档是统一说法 + 一句话说明 + CLI 原名小字。
+            const switchable = (agentsForOptions?.find((agent) => agent.id === provider)?.launch_options ?? [])
+              .filter((option) => option.switch !== "launch_only" && option.choices.some((choice) => choice.traits));
             const dimensions = [...modeControls.map((control) => control.dimension)];
+            for (const option of switchable) if (!dimensions.includes(option.id)) dimensions.push(option.id);
             for (const state of states) if (!dimensions.includes(state.dimension)) dimensions.push(state.dimension);
             return dimensions.map((dimension) => {
               const control = controls.get(dimension);
               const state = states.find((mode) => mode.dimension === dimension);
+              const launchOption = switchable.find((option) => option.id === dimension);
+              const views = launchOption ? modeChoiceViews(t, launchOption) : null;
+              const viewOf = (value: string) => views?.find((view) => view.value === value);
+              // 会话服务 / 带参重启的栏交给 useSessionSettings；Control 型（Kimi /plan、OpenCode Tab）仍用直达输入。
+              const viaSettings = !!launchOption && launchOption.switch !== "control";
               // Kimi 2.2.0 的 auto/yolo 语义与通用模式名不同，运行中也须沿用启动项的校准文案。
               // 只认本 provider 启动项**声明过**的档位：Claude 运行时也有 auto，但启动项没有它，
               // 按维度名盲查会把它错标成 Kimi 的「永不询问」。
@@ -5138,10 +5208,10 @@ export function ChatWindow() {
               const shortChoice = (value: string) => permissionOption?.id === dimension
                 && permissionOption.choices.some((choice) => choice.id === value)
                 ? t.chat.modeShortNames[`${dimension}.${value}`] : undefined;
-              const modeName = (value: string) => shortChoice(value) ?? declaredChoice(value) ?? t.chat.modeNames[value] ?? value;
+              const modeName = (value: string) => viewOf(value)?.short ?? shortChoice(value) ?? declaredChoice(value) ?? t.chat.modeNames[value] ?? value;
               // 菜单项下的一行后果说明（对照 Kimi 权限菜单）：声明过的档用启动项说明，
               // Claude 运行中才有的 auto/dontAsk 按值补；其他维度不配。
-              const modeDesc = (value: string) => permissionOption?.id !== dimension ? undefined
+              const modeDesc = (value: string) => viewOf(value) ? viewOf(value)?.desc : permissionOption?.id !== dimension ? undefined
                 : permissionOption.choices.some((choice) => choice.id === value)
                   ? t.newSession.launchChoiceDesc[`${dimension}.${value}`]
                   : t.chat.modeDesc[value];
@@ -5162,13 +5232,15 @@ export function ChatWindow() {
               // 不是按几次快捷键。选中后由 cycleToMode 循环按到位（见它的注释）。
               const derived = (control?.screen_markers ?? []).map((marker) => ({
                 value: marker.value,
-                label: t.chat.modeNames[marker.value] ?? marker.value,
+                label: viewOf(marker.value)?.label ?? t.chat.modeNames[marker.value] ?? marker.value,
                 inputs: [],
               }));
               // 三个来源（恢复档位/插件直达项/回显标记派生）统一带 label，渲染处不再各自查表。
-              const options = resumeChoices ?? (control?.options?.length
-                ? control.options.map((option) => ({ ...option, label: modeName(option.value) }))
-                : control?.cycle_input ? derived : []);
+              const options = resumeChoices ?? (viaSettings && views
+                ? views.map((view) => ({ value: view.value, label: view.label, inputs: [] as { data: string; submit: boolean }[] }))
+                : control?.options?.length
+                  ? control.options.map((option) => ({ ...option, label: viewOf(option.value)?.label ?? modeName(option.value) }))
+                  : control?.cycle_input ? derived : []);
               const canCycle = Boolean(control?.cycle_input);
               const interactive = options.length > 0 || canCycle || !!control?.menu_command;
               const label = t.chat.modeDimensions[dimension] ?? dimension;
@@ -5207,7 +5279,19 @@ export function ChatWindow() {
                   data-tip={resumePick ? t.chat.resumePermissionTip : interactive ? `${options.length > 0 ? t.chat.switchMode : t.chat.cycleMode}: ${value}` : undefined}
                   onClick={() => {
                     // 与模型菜单互斥：同时只开一个。
-                    if (options.length > 0) { setModelPickerOpen(false); setModeMenu((open) => open === dimension ? null : dimension); }
+                    if (options.length > 0) {
+                      setModelPickerOpen(false);
+                      setModeMenu((open) => open === dimension ? null : dimension);
+                      // 打开菜单时读一次当前值：Gemini 的审批模式 transcript 与 hook 都不带，只有底栏原文
+                      // （research-kimi-gemini §3.5），按插件声明的屏幕标记认。不轮询。
+                      const markers = control?.screen_markers ?? [];
+                      if (markers.length > 0 && modeMenu !== dimension) {
+                        void managedTerminalScreen(sessionId).then((lines) => {
+                          const value = lines ? modeFromScreen(lines.join("\n"), markers) : null;
+                          if (value) setHistory((current) => current ? { ...current, agentModes: [...current.agentModes.filter((mode) => mode.dimension !== dimension), { dimension, value }] } : current);
+                        }).catch(() => {});
+                      }
+                    }
                     // 无 options 也无回显标记（纯盲切）时才退回「按一次跳下一个」。
                     else if (control?.menu_command) void openTerminalMenu(control.menu_command);
                     else if (control?.cycle_input) void changeMode(dimension, [{ data: control.cycle_input, submit: false }], undefined, control.screen_markers);
@@ -5251,6 +5335,10 @@ export function ChatWindow() {
                           return;
                         }
                         if (active) return; // 已经是这个模式，别白按一圈
+                        if (viaSettings) {
+                          sessionSettings.request({ modes: { [dimension]: String(option.value) }, label: viewOf(String(option.value))?.short ?? option.label });
+                          return;
+                        }
                         // 有直达输入的走它；只有 cycle 键的（派生项 inputs 为空）循环按到位。
                         if (option.inputs.length > 0) {
                           void changeMode(dimension, option.inputs, option.value, control?.screen_markers ?? []);
@@ -5263,6 +5351,7 @@ export function ChatWindow() {
                         <span className="chat-model-item-name">{option.label}</span>
                         {modeDesc(String(option.value)) && <span className="chat-model-item-desc" id={`chat-mode-desc-${dimension}-${option.value}`}>{modeDesc(String(option.value))}</span>}
                       </span>
+                      {!resumePick && viewOf(String(option.value))?.detail && <span className="chat-model-item-detail">{viewOf(String(option.value))?.detail}</span>}
                       {active && <Icon glyph={icCheck} size={16} className="chat-model-check" />}
                     </button>;
                   })}
@@ -5293,6 +5382,8 @@ export function ChatWindow() {
                 setModeMenu(null);
                 const opening = !modelPickerOpen;
                 setModelPickerOpen(opening);
+                // 打开时重读 CLI 配置里的清单（用户在终端里改了配置，下次打开就跟上）。
+                if (opening) reloadCatalog();
                 // 关菜单时若探测在途,一并取消(给 TUI 发 Esc 收掉菜单)——识别窗口开着时
                 // 绝不能重发命令,否则会打进菜单搜索框把候选全过滤掉。
                 if (!opening && modelProbing) { endSilentProbe(); return; }
@@ -5317,7 +5408,7 @@ export function ChatWindow() {
                 {chatUi?.effort && history?.effort && <span className="chat-model-pill-effort"> · {effortLabel(history.effort)}</span>}
               </span>
               {/* 静默探测时把箭头换成转圈：这一下点击确实在做事，但做的事不在屏幕上。 */}
-              {modelProbing || modelPicking
+              {modelProbing || modelPicking || sessionSettings.applying
                 ? <span className="chat-model-spinner" aria-hidden="true" />
                 : (modelPresets.length > 0 || modelMenuCommand) && <Icon glyph={icChevronDown} size={12} className="chat-model-chevron" />}
             </button>
@@ -5326,7 +5417,7 @@ export function ChatWindow() {
                 title={agentDisplayName ?? t.chat.model}
                 items={modelPresets.length > 0
                   ? modelPresets.map((preset) => ({ id: preset.id, label: preset.label, desc: t.chat.modelDesc[preset.id] ?? undefined }))
-                  : modelCatalog.map((entry) => ({ id: entry.id, label: entry.label, group: entry.group }))}
+                  : modelCatalog.map((entry) => ({ id: entry.id, label: entry.label, group: entry.group, desc: entry.uncertain ? t.modes.uncertain : undefined }))}
                 currentId={currentPresetId(modelPresets.length > 0 ? modelPresets : modelCatalog, history?.model, history?.contextWindow)}
                 effort={chatUi?.effort && history?.effort && effortLevels.length > 1 ? {
                   levels: effortLevels,

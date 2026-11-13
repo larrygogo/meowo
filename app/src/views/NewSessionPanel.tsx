@@ -8,6 +8,7 @@ import { type AgentId, agentName, listSubdirectories, type DirListing } from "..
 import { agentAssets, tintStyle } from "../providers";
 import { normalizePath, unquotePath } from "../paths";
 import { Dropdown } from "./menu";
+import { initialChoice, modeChoiceViews } from "./chat/modeChoices";
 import { useTauriEvent } from "../hooks/useTauriEvent";
 import { useT } from "../i18n";
 import { formatBackendError } from "../i18n/errors";
@@ -55,7 +56,7 @@ export function NewSessionPanel({ onClose, prefill, onLaunched }: {
   useShowWhenReady();
   const form = useNewSessionForm(startCwd, startProvider);
   const { cwd, setCwd, provider, setProvider, recent, hooks, busy, repairing, error, setError, agents, avail, opts, setOpts,
-    activeProfiles, relayPins, loginOperations, swappedFrom, launchOptions, canLaunch, repairHooks, doLogin, cancelLoginWait, warn, needLogin } = form;
+    activeProfiles, relayPins, loginOperations, swappedFrom, launchOptions, canLaunch, repairHooks, doLogin, cancelLoginWait, warn, needLogin, cliDefaults, modelCatalog, dynamicChoices } = form;
   // 7T-5：面板打开时没有任何初始焦点——目录已经预填好了，回车却什么都不发生（键盘用户
   // 得先 Tab 若干次才摸到控件）。挂载即聚焦目录框；已有预填时连带全选，一次输入就能整段
   // 改写，回车直接启动（Enter 与按钮共用 canLaunch 守卫，见 launch）。
@@ -338,8 +339,33 @@ export function NewSessionPanel({ onClose, prefill, onLaunched }: {
               {t.newSession.agentSwapped(agentName(agents ?? [], swappedFrom), agentName(agents ?? [], provider))}
             </div>
           )}
-          {launchOptions.length > 0 && (
+          {(launchOptions.length > 0 || modelCatalog.length > 0) && (
             <div className="ns-options" data-testid="ns-options">
+              {/* 模型清单来自 CLI 自己；默认档写成 CLI 配置里的那个模型，不选就不传 -m。 */}
+              {modelCatalog.length > 0 && (
+                <div className="ns-option" data-testid="ns-option-model">
+                  <span className="ns-option-label">{t.newSession.launchOption.model}</span>
+                  <Dropdown
+                    align="left"
+                    disabled={relayPins[provider] !== undefined}
+                    value={opts.model ?? ""}
+                    options={[
+                      { value: "", label: t.modes.followConfig(modelCatalog.find((entry) => entry.id === cliDefaults?.model)?.label ?? cliDefaults?.model ?? t.modes.followConfigUnknown) },
+                      ...modelCatalog.map((entry) => ({
+                        value: entry.id,
+                        label: entry.label,
+                        sub: [entry.group, entry.uncertain ? t.modes.uncertain : null].filter(Boolean).join(" · ") || undefined,
+                      })),
+                    ]}
+                    onChange={(v) => setOpts((m) => {
+                      const next = { ...m };
+                      if (v) next.model = String(v);
+                      else delete next.model;
+                      return next;
+                    })}
+                  />
+                </div>
+              )}
               {/* 启动选项由插件声明（选择 → CLI flag），未声明的 agent 没有这块。
                   choice 文案：i18n 按 `<option>.<choice>` 取，缺省回退后端的产品词 label。
                   用自绘 Dropdown 而非原生 select：WebView2 的原生下拉跟随系统主题画白底，
@@ -353,8 +379,15 @@ export function NewSessionPanel({ onClose, prefill, onLaunched }: {
                   <Dropdown
                     align="left"
                     disabled={pinned !== undefined}
-                    value={opts[option.id] ?? option.default}
-                    options={option.choices.map((choice) => ({
+                    value={initialChoice(option, opts[option.id], cliDefaults)}
+                    options={option.choices.some((choice) => choice.traits)
+                      ? modeChoiceViews(t, option, cliDefaults, dynamicChoices).map((view) => ({
+                        value: view.value,
+                        label: view.label,
+                        risky: view.risk,
+                        sub: [view.desc, view.detail].filter(Boolean).join(" · ") || undefined,
+                      }))
+                      : option.choices.map((choice) => ({
                       value: choice.id,
                       label: t.newSession.launchChoice[`${option.id}.${choice.id}`] ?? choice.label,
                       // 高风险档（契约 risk=true）警示色 + 副标题，与普通档拉开视觉。

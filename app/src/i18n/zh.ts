@@ -225,6 +225,8 @@ export const zh = {
       permission: "权限",
       approval: "审批",
       work: "工作模式",
+      collaboration: "协作模式",
+      agent: "Agent",
     } as Record<string, string>,
     launchChoice: {
       "model.default": "默认",
@@ -263,6 +265,54 @@ export const zh = {
   },
   // 会话管理页（对照 Kimi Code 的会话管理）。
   // 已合并 worktree 的清理（归档后的撤销条、已完成会话的菜单、会话管理页批量清理）。
+  // 模式的统一说法（任务 20261114-tui-model-switch）：各家原名不同、语义错位（Kimi yolo 危险仍问，
+  // Gemini yolo 都不问），界面按「改文件 / 跑命令要不要问、是否只出方案」三维说，原名放小字。
+  // 一句话说明按各家官方帮助或文档原文提炼，出处见 research-kimi-gemini §5、research-codex-opencode §9。
+  modes: {
+    edits: {
+      always: "改文件先问你",
+      risky: "改文件危险时才问",
+      never: "改文件不问",
+      blocked: "不改文件",
+      inherit: "改文件按权限档",
+    } as Record<string, string>,
+    commands: {
+      always: "跑命令先问你",
+      risky: "跑命令危险时才问",
+      never: "跑命令不问",
+      blocked: "不跑命令",
+      inherit: "跑命令按权限档",
+    } as Record<string, string>,
+    planOnly: "只出方案",
+    followConfig: (name: string) => `默认（${name}）`,
+    followConfigUnknown: "按 CLI 配置",
+    uncertain: "能否使用以账号为准",
+    desc: {
+      "kimi.permission.manual": "只自动读文件，其余都先问你",
+      "kimi.permission.yolo": "常规操作自动做，危险的仍会问",
+      "kimi.permission.auto": "全部自动决定，只有计划要你审",
+      "kimi.work.default": "按权限档执行",
+      "kimi.work.plan": "先出计划，除计划文件外不改文件",
+      "gemini.approval.default": "改文件和多数命令都先问你",
+      "gemini.approval.autoEdit": "自动改文件，跑命令仍先问",
+      "gemini.approval.plan": "只读，只出方案，不能跑命令",
+      "gemini.approval.yolo": "所有工具自动放行，含危险命令",
+      "codex.approval.default": "按 Codex 配置文件的设置",
+      "codex.approval.readOnly": "只读工作区，改文件或联网要问",
+      "codex.approval.ask": "工作区内自由改和跑，越界或联网要问",
+      "codex.approval.approveForMe": "越界操作先自动审查，判为危险才问",
+      "codex.approval.yolo": "可改工作区外文件和联网，不再问",
+      "codex.collaboration.default": "按权限档执行",
+      "codex.collaboration.plan": "只探索和出方案，不做改动",
+      "opencode.agent.build": "默认 agent，越出工作区才问",
+      "opencode.agent.plan": "不能用编辑工具，命令照常能跑",
+      "claude.permission.plan": "只读分析，最后给出方案",
+      "claude.permission.acceptEdits": "自动改文件，跑命令仍先问",
+      "claude.permission.bypassPermissions": "跳过所有权限确认",
+    } as Record<string, string>,
+    // 自定义 agent（opencode agent list）没有统一说法：权限由用户自己写。
+    customAgent: "自定义 agent，权限按你的配置",
+  },
   worktree: {
     remove: "删除 worktree",
     checking: "正在检查 worktree…",
@@ -438,6 +488,14 @@ export const zh = {
     // 会话 running 但 transcript 尚未落第一条时用它——此时说「没有记录」与运行指示自相矛盾。
     // 新建会话认领前（负数临时 id）：CLI 正在冷启动，说「没有记录」是谎报。
     emptyStarting: "会话正在启动…",
+    // 切模型 / 模式（任务 20261114-tui-model-switch）：运行中或有待批审批时不写终端、不重启，排到这一轮之后。
+    settingsDeferred: (name: string) => `这一轮结束后切换到 ${name}`,
+    settingsApplying: "正在切换",
+    settingsNeedsNewSession: "接回会话只能放宽权限，收紧要新建会话",
+    settingsModeUnsupported: "这个会话不能在对话里切这一项",
+    settingsUnconfirmed: "已切换，下一条消息时核对",
+    // Kimi 2.6 首条消息前不建会话（屏幕原文 No session yet），不是启动卡住。
+    awaitingFirstMessage: "已就绪，发第一条消息后开始",
     pickSession: "从侧栏选择一个会话",
     loadEarlier: "加载更早的对话",
     loadingEarlier: "正在加载…",
@@ -1364,6 +1422,7 @@ export const zh = {
     // launchChoice 的完整说明，这里只负责按钮上的一行字。
     modeShortNames: {
       "permission.yolo": "必要时询问",
+      "permission.manual": "总是询问",
       "permission.auto": "自动",
       "permission.default": "默认",
       "permission.plan": "计划模式",

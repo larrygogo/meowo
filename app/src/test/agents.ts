@@ -1,4 +1,4 @@
-import type { AgentDescriptor, ChatUi, LaunchOption, SlashCommand } from "../api";
+import type { AgentDescriptor, ChatUi, LaunchChoice, LaunchOption, SlashCommand } from "../api";
 
 /** 与 plugins/claude 的 status_line_pattern 同一串（改一边必须同步另一边）。 */
 export const CLAUDE_STATUS_LINE_PATTERN = String.raw`^\s*[✻✽✶✳✢·*✺✷✸✹]\s+([A-Z][A-Za-z'-]*(?: [A-Za-z'-]+){0,2}…)\s*(?:\((\d[^()]{0,160})\))?\s*$`;
@@ -273,6 +273,9 @@ export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | 
     // 只有 claude 的 `/model` 接受内联参数；其余几家是交互式菜单，靠这条命令打开。
     // opencode 的命令是 /models(复数)——与后端插件声明同源。
     model_menu_command: (MODEL_PRESETS[provider] ?? []).length > 0 ? null : provider === "opencode" ? "/models" : "/model",
+    // 切模型机制与后端插件声明同源（任务 20261114-tui-model-switch）。
+    model_switch: provider === "codex" ? "server_settings" : provider === "kimi" || provider === "gemini" ? "restart_resume" : provider === "opencode" ? "tui_dialog" : null,
+    awaiting_first_message_markers: provider === "kimi" ? ["No session yet — one will be created on your first message."] : [],
     mode_controls: provider === "claude"
       ? [{
         dimension: "permission", menu_command: null, cycle_input: "\u001b[Z", options: [],
@@ -365,53 +368,67 @@ export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | 
  * 启动选项。与后端 `AgentPlugin::launch_options()` 同源：claude 有模型+权限两栏，
  * codex/gemini 各一栏审批，kimi/opencode 未调研到稳定 flag、如实不声明。
  */
+type Traits = NonNullable<LaunchChoice["traits"]>;
+const tr = (edits: Traits["edits"], commands: Traits["commands"], plan_only = false): Traits => ({ edits, commands, plan_only });
+/** 夹具档位：不写的新字段（统一说法、说明键、服务端片段）按「无」补齐。 */
+const ch = (id: string, label: string, args: string[], risk = false, extra: Partial<LaunchChoice> = {}): LaunchChoice =>
+  ({ id, label, args, risk, traits: null, desc: null, server: null, ...extra });
+const opt = (id: string, def: string, choices: LaunchChoice[], extra: Partial<LaunchOption> = {}): LaunchOption =>
+  ({ id, default: def, choices, switch: "launch_only", resume_upgrade_only: false, in_session_only: false, ...extra });
 const LAUNCH_OPTIONS: Record<string, LaunchOption[]> = {
   claude: [
-    {
-      id: "model",
-      default: "default",
-      choices: [
-        { id: "default", label: "Default", args: [], risk: false },
-        { id: "fable", label: "Fable", args: ["--model", "fable"], risk: false },
-        { id: "opus", label: "Opus", args: ["--model", "opus"], risk: false },
-        { id: "sonnet", label: "Sonnet", args: ["--model", "sonnet"], risk: false },
-        { id: "haiku", label: "Haiku", args: ["--model", "haiku"], risk: false },
-        { id: "opusplan", label: "Opus Plan", args: ["--model", "opusplan"], risk: false },
-      ],
-    },
-    {
-      id: "permission",
-      default: "default",
-      choices: [
-        { id: "default", label: "Default", args: [], risk: false },
-        { id: "plan", label: "Plan", args: ["--permission-mode", "plan"], risk: false },
-        { id: "acceptEdits", label: "Accept Edits", args: ["--permission-mode", "acceptEdits"], risk: false },
-        { id: "bypassPermissions", label: "Bypass Permissions", args: ["--permission-mode", "bypassPermissions"], risk: true },
-      ],
-    },
+    opt("model", "default", [
+      ch("default", "Default", []),
+      ch("fable", "Fable", ["--model", "fable"]),
+      ch("opus", "Opus", ["--model", "opus"]),
+      ch("sonnet", "Sonnet", ["--model", "sonnet"]),
+      ch("haiku", "Haiku", ["--model", "haiku"]),
+      ch("opusplan", "Opus Plan", ["--model", "opusplan"]),
+    ]),
+    opt("permission", "default", [
+      ch("default", "Default", []),
+      ch("plan", "Plan", ["--permission-mode", "plan"], false, { traits: tr("blocked", "blocked", true), desc: "claude.permission.plan" }),
+      ch("acceptEdits", "Accept Edits", ["--permission-mode", "acceptEdits"], false, { traits: tr("never", "always"), desc: "claude.permission.acceptEdits" }),
+      ch("bypassPermissions", "Bypass Permissions", ["--permission-mode", "bypassPermissions"], true, { traits: tr("never", "never"), desc: "claude.permission.bypassPermissions" }),
+    ], { switch: "control" }),
   ],
   codex: [
-    {
-      id: "approval",
-      default: "default",
-      choices: [
-        { id: "default", label: "Default", args: [], risk: false },
-        { id: "readOnly", label: "Read Only", args: ["--sandbox", "read-only"], risk: false },
-        { id: "fullAuto", label: "Full Auto", args: ["--full-auto"], risk: false },
-        { id: "yolo", label: "YOLO", args: ["--dangerously-bypass-approvals-and-sandbox"], risk: true },
-      ],
-    },
+    opt("approval", "default", [
+      ch("default", "Default", [], false, { desc: "codex.approval.default" }),
+      ch("readOnly", "Read Only", ["--sandbox", "read-only"], false, { traits: tr("always", "risky"), desc: "codex.approval.readOnly", server: '{"approval":"on-request","approvalsReviewer":"user","sandbox":"read-only"}' }),
+      ch("ask", "Ask for approval", ["--sandbox", "workspace-write", "--ask-for-approval", "on-request"], false, { traits: tr("risky", "risky"), desc: "codex.approval.ask", server: '{"approval":"on-request","approvalsReviewer":"user","sandbox":"workspace-write"}' }),
+      ch("approveForMe", "Approve for me", ["--approve-for-me"], false, { traits: tr("risky", "risky"), desc: "codex.approval.approveForMe", server: '{"approval":"on-request","approvalsReviewer":"auto_review","sandbox":"workspace-write"}' }),
+      ch("yolo", "Full Access", ["--sandbox", "danger-full-access", "--ask-for-approval", "never"], true, { traits: tr("never", "never"), desc: "codex.approval.yolo", server: '{"approval":"never","approvalsReviewer":"user","sandbox":"danger-full-access"}' }),
+    ], { switch: "server" }),
+    opt("collaboration", "default", [
+      ch("default", "Default", [], false, { traits: tr("inherit", "inherit"), desc: "codex.collaboration.default", server: '{"collaboration":"default"}' }),
+      ch("plan", "Plan", [], false, { traits: tr("blocked", "inherit", true), desc: "codex.collaboration.plan", server: '{"collaboration":"plan"}' }),
+    ], { switch: "server", in_session_only: true }),
   ],
   gemini: [
-    {
-      id: "approval",
-      default: "default",
-      choices: [
-        { id: "default", label: "Default", args: [], risk: false },
-        { id: "autoEdit", label: "Auto Edit", args: ["--approval-mode", "auto_edit"], risk: false },
-        { id: "yolo", label: "YOLO", args: ["--yolo"], risk: true },
-      ],
-    },
+    opt("approval", "default", [
+      ch("default", "default", [], false, { traits: tr("always", "always"), desc: "gemini.approval.default" }),
+      ch("autoEdit", "auto_edit", ["--approval-mode", "auto_edit"], false, { traits: tr("never", "always"), desc: "gemini.approval.autoEdit" }),
+      ch("plan", "plan", ["--approval-mode", "plan"], false, { traits: tr("blocked", "blocked", true), desc: "gemini.approval.plan" }),
+      ch("yolo", "yolo", ["--yolo"], true, { traits: tr("never", "never"), desc: "gemini.approval.yolo" }),
+    ], { switch: "restart" }),
+  ],
+  kimi: [
+    opt("permission", "manual", [
+      ch("manual", "Always Ask", [], false, { traits: tr("always", "always"), desc: "kimi.permission.manual" }),
+      ch("yolo", "Ask When Needed", ["--yolo"], false, { traits: tr("risky", "risky"), desc: "kimi.permission.yolo" }),
+      ch("auto", "Never Ask", ["--auto"], true, { traits: tr("never", "never"), desc: "kimi.permission.auto" }),
+    ], { switch: "restart", resume_upgrade_only: true }),
+    opt("work", "default", [
+      ch("default", "Default", [], false, { desc: "kimi.work.default" }),
+      ch("plan", "Plan", ["--plan"], false, { traits: tr("blocked", "inherit", true), desc: "kimi.work.plan" }),
+    ], { switch: "control", resume_upgrade_only: true }),
+  ],
+  opencode: [
+    opt("agent", "build", [
+      ch("build", "build", [], false, { traits: tr("risky", "risky"), desc: "opencode.agent.build" }),
+      ch("plan", "plan", ["--agent", "plan"], false, { traits: tr("blocked", "risky", true), desc: "opencode.agent.plan" }),
+    ], { switch: "control" }),
   ],
 };
 

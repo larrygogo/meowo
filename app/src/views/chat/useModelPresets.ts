@@ -46,6 +46,9 @@ export function useModelPresets(provider: string | null, chatUi: ChatUi | null, 
   // 能内联选择的（claude）也读目录：不是为了列清单，是为了把内置标签换成装着的那一版的
   // 真实显示名（插件写着 Opus 5，CLI 早已是 Opus 5.5——用户实拍「模型名不准」）。
   const wantsCatalog = menuOnly || !!chatUi?.model_select_command;
+  // 打开模型菜单时重读一次（leader 2026-11-14：用户改了 CLI 配置后在合适时机跟上，不定时轮询）。
+  const [catalogNonce, setCatalogNonce] = useState(0);
+  const reloadCatalog = useCallback(() => setCatalogNonce((n) => n + 1), []);
   useEffect(() => {
     if (!provider || !wantsCatalog) return;
     let cancelled = false;
@@ -53,7 +56,7 @@ export function useModelPresets(provider: string | null, chatUi: ChatUi | null, 
       .then((models) => { if (!cancelled) setCatalog({ key: listKey, models }); })
       .catch(() => { if (!cancelled) setCatalog({ key: listKey, models: [] }); });
     return () => { cancelled = true; };
-  }, [provider, sessionId, listKey, wantsCatalog]);
+  }, [provider, sessionId, listKey, wantsCatalog, catalogNonce]);
   const modelPresets = useMemo<ModelPreset[]>(() => {
     if (listedModels.length > 0) return listedModels.map((id) => ({ id, label: id }));
     return applyCatalogLabels(
@@ -67,7 +70,7 @@ export function useModelPresets(provider: string | null, chatUi: ChatUi | null, 
   const modelDropdownReady = !!chatUi?.model_select_command && modelPresets.length > 0
     && (listedModels.length > 0 || learnedModelLabels !== null || !modelMenuCommand);
   // 目录只对菜单型 CLI 当清单用；能内联选择的已经折进 modelPresets 的标签里，再单列会重复。
-  return { modelPresets: chatUi?.model_select_command ? modelPresets : [], modelCatalog: menuOnly ? modelCatalog : [], modelMenuCommand, modelDropdownReady, learnModelLabels };
+  return { modelPresets: chatUi?.model_select_command ? modelPresets : [], modelCatalog: menuOnly ? modelCatalog : [], modelMenuCommand, modelDropdownReady, learnModelLabels, reloadCatalog };
 }
 
 /// 用目录里的家族显示名改写预设标签（claude：`opus` → `Opus 5.5`，`opus[1m]` → `Opus 5.5 (1M)`）。

@@ -15,6 +15,10 @@ export type PillOption<T extends string> = {
   short?: string;
   /** 菜单项下的一行后果说明。 */
   desc?: string;
+  /** 行尾小字（模式的 CLI 原名、模型清单「以账号为准」一类）。 */
+  detail?: string;
+  /** 分组头（模型按 provider 分段）：与上一项不同时在它前面插一行组名。 */
+  group?: string;
   /** 高风险档：胶囊与菜单项用危险色（同对话页的 is-risk）。 */
   risk?: boolean;
   icon?: ReactElement;
@@ -58,35 +62,44 @@ export function PillSelect<T extends string>({ value, options, onChange, label, 
         <span className="chat-model-label">{current?.short ?? current?.label ?? ""}</span>
         <Chevron />
       </button>
-      {open && (
-        <div className="dd-menu chat-model-menu" role="menu">
-          {options.map((option) => {
-            const active = option.value === value;
-            return (
-              <button
-                type="button"
-                role="menuitem"
-                key={option.value}
-                // 说明行不进名字（同对话页），读屏名字只报档名。
-                aria-label={option.desc ? option.label : undefined}
-                className={"chat-model-item" + (active ? " is-active" : "") + (option.risk ? " is-risk" : "")}
-                onClick={() => {
-                  setOpen(false);
-                  ui.btnRef.current?.focus();
-                  if (!active) onChange(option.value);
-                }}
-              >
-                {option.icon && <span className="chat-model-icon" aria-hidden="true">{option.icon}</span>}
-                <span className="chat-model-item-text">
-                  <span className="chat-model-item-name">{option.label}</span>
-                  {option.desc && <span className="chat-model-item-desc">{option.desc}</span>}
-                </span>
-                {active && <Icon glyph={icCheck} size={16} className="chat-model-check" />}
-              </button>
-            );
-          })}
-        </div>
-      )}
+      {/* 分组的长清单（模型按 provider 分段）用模型菜单的限高外框、整块滚动，与对话页的模型菜单一致。 */}
+      {open && (() => {
+        const grouped = options.some((option) => option.group);
+        const rows = options.map((option, index) => {
+          const active = option.value === value;
+          const head = option.group && option.group !== options[index - 1]?.group
+            ? <div className="chat-model-quick-head" key={"head:" + option.group}>{option.group}</div>
+            : null;
+          return [head, (
+            <button
+              type="button"
+              role="menuitem"
+              key={option.value}
+              // 说明行不进名字（同对话页），读屏名字只报档名。
+              aria-label={option.desc ? option.label : undefined}
+              className={"chat-model-item" + (active ? " is-active" : "") + (option.risk ? " is-risk" : "")}
+              onClick={() => {
+                setOpen(false);
+                ui.btnRef.current?.focus();
+                if (!active) onChange(option.value);
+              }}
+            >
+              {option.icon && <span className="chat-model-icon" aria-hidden="true">{option.icon}</span>}
+              <span className="chat-model-item-text">
+                <span className="chat-model-item-name">{option.label}</span>
+                {option.desc && <span className="chat-model-item-desc">{option.desc}</span>}
+              </span>
+              {option.detail && <span className="chat-model-item-detail">{option.detail}</span>}
+              {active && <Icon glyph={icCheck} size={16} className="chat-model-check" />}
+            </button>
+          )];
+        });
+        return (
+          <div className={"dd-menu chat-model-menu" + (grouped ? " chat-model-quick" : "")} role="menu">
+            {grouped ? <div className="chat-model-quick-section is-list">{rows}</div> : rows}
+          </div>
+        );
+      })()}
     </div>
   );
 }
