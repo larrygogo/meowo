@@ -207,7 +207,10 @@ fn native_session_status(
     project_cwd: &str,
 ) -> Option<LeadDeliveryDto> {
     let provider = store.session_provider(id).ok()?;
-    if meowo_agent::by_id(&provider).is_none() || provider == meowo_store::DEFAULT_PROVIDER {
+    // 按插件能力而非 provider 身份分（SPEC 约束）：声明了 LeadCap 且原生路径不能自动继续才提示
+    // 手动下一步。没有 LeadCap 的 provider 由宿主自带的 Lead 流程负责原生唤醒（claude 的 wait hook）。
+    let cap = meowo_agent::by_id(&provider)?.lead()?;
+    if cap.native_auto_continue() {
         return None;
     }
     let gate = meowo_reporter::lead::read_gate(task)?;

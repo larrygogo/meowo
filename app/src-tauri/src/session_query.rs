@@ -990,7 +990,15 @@ pub(crate) fn pending_review_live<'a>(
         {
             None
         }
-        Some("approval") if screen_working => None,
+        // 只校正审批不经 hook 决定的 provider：claude/codex 的真相在 broker（上一臂），broker 还压着
+        // 请求时屏幕 working 不能抹掉它——claude 的标题 spinner 规则优先于审批框（detect.rs
+        // braille_title_wins_as_working），并行子代理在跑时权限框也会判成 working（做空第二轮指出）。
+        Some("approval")
+            if screen_working
+                && !meowo_agent::by_id(provider).is_some_and(|p| p.permission_hook_decides()) =>
+        {
+            None
+        }
         other => other,
     }
 }
@@ -1560,6 +1568,11 @@ mod tests {
             assert_eq!(pending_review_live(provider, Some("approval"), false, false), Some("approval"), "{provider}");
             // 提问/计划不受屏幕在跑影响。
             assert_eq!(pending_review_live(provider, Some("question"), false, true), Some("question"), "{provider}");
+        }
+        // hook 决定权限的 provider：broker 还压着请求时，屏幕 working（标题 spinner 优先于审批框）
+        // 不能抹掉真实的待批（做空第二轮复现路径：detect.rs braille_title_wins_as_working）。
+        for provider in ["claude", "codex"] {
+            assert_eq!(pending_review_live(provider, Some("approval"), true, true), Some("approval"), "{provider}");
         }
     }
 

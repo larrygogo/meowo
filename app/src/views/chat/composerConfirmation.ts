@@ -27,7 +27,8 @@ export async function manualSendVerdict(io: ComposerConfirmationIo, guard: Compo
 }
 
 // 没有原生键消费回执，Right 不动不能证明空框；占位与同文草稿无法从当前 DTO 区分，必须拒绝。
-// 严格口径：给人不在场的自动送达用。
+// 严格口径。目前没有生产调用方：原生会话不做自动送达（答复只保存，见 lead_conversation 的
+// native_session_status）；保留给将来真要在人不在场时往原生输入框写入的路径，届时必须用它。
 export async function confirmComposerEmpty(io: ComposerConfirmationIo, guard: ComposerGuard | null | undefined): Promise<ComposerSafety> {
   if (!guard) return "unknown";
   try {

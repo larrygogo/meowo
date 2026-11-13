@@ -4706,7 +4706,6 @@ export function ChatWindow() {
         {(history?.managedDeliveries?.length ?? 0) > 0 && <ManagedDeliveryStatus deliveries={history!.managedDeliveries!} onRestore={managedRestore} engineLive={history?.endable === true} onRetry={(delivery) => void managedDeliveryAction(delivery, "retry")} onDismiss={(delivery) => void managedDeliveryAction(delivery, "dismiss")} />}
         {history?.managedInteraction && managedResolvedInteraction !== `${sessionId}:${history.managedInteraction.interactionId}` && <ManagedInteraction key={`${sessionId}:${history.managedInteraction.interactionId}`} sessionId={sessionId} interaction={history.managedInteraction} onResolved={() => { setManagedResolvedInteraction(`${sessionId}:${history.managedInteraction!.interactionId}`); void refreshRef.current(); }} />}
       </>}
-      {view === "chat" && !managedConversation && currentAgentDescriptor?.supports_managed_conversation && sessionId > 0 && <div className="chat-remote-hint">{t.chat.engineAdoptionUnavailable}</div>}
       {view === "chat" && !managedConversation && !terminalAttention && approval && (
         <BrokerApprovalCard
           key={approval.requestId}

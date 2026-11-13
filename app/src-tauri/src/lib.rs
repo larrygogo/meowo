@@ -2001,6 +2001,18 @@ mod tests {
             ("macos/notify.rs", include_str!("macos/notify.rs")),
             ("macos/panel.rs", include_str!("macos/panel.rs")),
             ("macos/terminal.rs", include_str!("macos/terminal.rs")),
+            // 2026-11-13 补：Provider 兼容与托管会话新增的宿主文件（做空第二轮指出守卫没覆盖到）。
+            ("lead.rs", include_str!("lead.rs")),
+            ("lead_conversation.rs", include_str!("lead_conversation.rs")),
+            ("lead_runtime.rs", include_str!("lead_runtime.rs")),
+            ("conversation/commands.rs", include_str!("conversation/commands.rs")),
+            ("conversation/lead_runtime.rs", include_str!("conversation/lead_runtime.rs")),
+            ("conversation/mod.rs", include_str!("conversation/mod.rs")),
+            ("conversation/owner.rs", include_str!("conversation/owner.rs")),
+            ("conversation/preflight.rs", include_str!("conversation/preflight.rs")),
+            ("conversation/transport.rs", include_str!("conversation/transport.rs")),
+            ("conversation/spawn_unix.rs", include_str!("conversation/spawn_unix.rs")),
+            ("conversation/spawn_windows.rs", include_str!("conversation/spawn_windows.rs")),
         ];
         for (name, source) in HOST_SOURCES {
             for (index, line) in production_lines(source) {

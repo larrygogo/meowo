@@ -332,7 +332,7 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "只支持 http/https 链接", exact: true, zh: "只支持 http/https 链接", en: "Only http/https links can be opened" },
   { m: "该文件类型没有关联应用", exact: true, zh: "该文件类型没有关联应用", en: "No app is associated with this file type" },
   { m: "该打开方式已不可用", exact: true, zh: "该打开方式已不可用", en: "That app is no longer available" },
-  { m: "terminal/process_not_exclusive", exact: true, zh: "这个进程还连着别的会话，Meowo 没有结束它，以免一起关掉。在原终端退出这个会话后再试", en: "This process also serves other sessions, so Meowo left it running to avoid closing them. Exit this session in its original terminal, then try again" },
+  { m: "terminal/process_not_exclusive", exact: true, zh: "这个进程可能还连着别的会话，或者认不出归属，Meowo 没有结束它，以免一起关掉。在原终端退出这个会话后再试", en: "This process may also serve other sessions, or its owner could not be confirmed, so Meowo left it running to avoid closing them. Exit this session in its original terminal, then try again" },
   { m: "terminal/composer_occupied", exact: true, zh: "终端输入框已有草稿，已原样保留。请先在终端发送或清空该草稿，再重试此消息", en: "The terminal already contains a draft, which was preserved. Send or clear it in the terminal, then retry this message" },
   { m: "terminal/composer_unknown", exact: true, zh: "无法确认终端输入框是否为空，消息原文已保留。请查看终端，确认输入框就绪后重试", en: "Could not confirm that the terminal input is empty. Your message was preserved; check the terminal input and retry when ready" },
   { m: "terminal/composer_partial", exact: true, zh: "上条消息的正文可能仍在终端输入框，暂未重复写入。请在终端检查并提交原有内容，消息原文已保留", en: "The previous message may still be in the terminal input. It was not written again. Check and submit the existing text in the terminal; your original message is preserved" },

@@ -60,6 +60,12 @@ pub trait LeadCap: Sync {
     fn binding_policy(&self) -> LeadBindingPolicy {
         LeadBindingPolicy::Unavailable
     }
+    /// 原生终端会话里，关卡答复能否不经用户输入就让模型开新回合。codex/kimi/gemini/opencode
+    /// 的原生 hook 都不能自行起新回合（2026-11-12/13 实测），默认 false；能做到的插件覆盖它。
+    /// 宿主据此决定是否提示「在会话里发一句话即可继续」，不按 provider 身份分支。
+    fn native_auto_continue(&self) -> bool {
+        false
+    }
     fn spec(&self, installation: &Installation) -> Option<&'static LeadInstallSpec>;
     fn reviewer(&self) -> String;
     fn activation_issue(&self, _installation: &Installation) -> Option<String> {

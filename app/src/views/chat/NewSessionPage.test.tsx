@@ -12,6 +12,7 @@ const api = vi.hoisted(() => ({
   listSubdirectories: vi.fn(),
   getSessionAdminPage: vi.fn(),
   savePastedAttachment: vi.fn(),
+  leadProviderInstallations: vi.fn(),
 }));
 vi.mock("../../api", async (orig) => ({ ...(await orig<typeof import("../../api")>()), ...api }));
 const dialog = vi.hoisted(() => ({ open: vi.fn() }));
@@ -31,6 +32,7 @@ beforeEach(() => {
   dialog.open.mockReset();
   api.recentCwds.mockResolvedValue(["C:/work/meowo", "C:/work/site"]);
   api.checkProviderHooks.mockResolvedValue("installed");
+  api.leadProviderInstallations.mockResolvedValue([]);
   api.getSettings.mockResolvedValue({ default_agent: "claude" });
   api.listAgents.mockResolvedValue(descriptors(["claude", "codex"]));
   api.getAccounts.mockResolvedValue([
@@ -84,6 +86,25 @@ describe("新建会话页（对话窗主区，对照 Kimi）", () => {
     expect((await screen.findByRole("checkbox",{name:zh.chat.engineManaged}) as HTMLInputElement).checked).toBe(false);
     fireEvent.click(screen.getByTestId("nsp-send"));
     await waitFor(()=>expect(api.newSession).toHaveBeenCalled());expect(api.managedConversationCreate).not.toHaveBeenCalled();
+  });
+
+  // 关卡 Q「完整闭环、不接受手动继续」：装了 Lead 且托管可自动继续的 provider 没选过时默认托管；
+  // 兄弟场景：装了但不能自动继续 → 原生；拉安装状态失败（手机桥不放行）→ 原生；用户选过原生 → 尊重选择。
+  it.each([
+    ["installed with automatic continue", [{ provider: "codex", automaticContinue: true }], undefined, true],
+    ["installed without automatic continue", [{ provider: "codex", automaticContinue: false }], undefined, false],
+    ["another provider has Lead", [{ provider: "kimi", automaticContinue: true }], undefined, false],
+    ["installations unavailable", "reject", undefined, false],
+    ["user chose native before", [{ provider: "codex", automaticContinue: true }], false, false],
+  ] as const)("Lead default: %s", async (_name, rows, stored, expected) => {
+    if (stored !== undefined) localStorage.setItem("meowo.newSession.managed", JSON.stringify({ codex: stored }));
+    if (rows === "reject") api.leadProviderInstallations.mockRejectedValue("remote/command_forbidden");
+    else api.leadProviderInstallations.mockResolvedValue(rows);
+    api.listAgents.mockResolvedValue(descriptors(["codex","kimi"]).map((agent)=>({...agent,supports_managed_conversation:true})));
+    render(<NewSessionPage prefill={{cwd:"C:/isolated",provider:"codex"}} onLaunched={vi.fn()}/>);
+    const box = await screen.findByRole("checkbox",{name:zh.chat.engineManaged}) as HTMLInputElement;
+    await waitFor(()=>expect(api.leadProviderInstallations).toHaveBeenCalled());
+    await waitFor(()=>expect(box.checked).toBe(expected));
   });
 
   it("remembers the managed choice per provider", async()=>{
