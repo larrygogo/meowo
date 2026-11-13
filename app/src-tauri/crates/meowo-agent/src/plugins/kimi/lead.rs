@@ -14,7 +14,7 @@ pub(super) struct KimiLead;
 const SPEC: LeadInstallSpec = LeadInstallSpec {
     provider: "kimi",
     version_family: (2, 5),
-    verified: (2, 5, 3),
+    verified: (2, 6, 0),
     skill_rel: "skills/lead/SKILL.md",
     reviewer_rel: "agents/lead-redteam.md",
     hook_rel: "config.toml",
@@ -28,6 +28,12 @@ const SPEC: LeadInstallSpec = LeadInstallSpec {
         LeadHook {
             event: "UserPromptSubmit",
             mode: "session",
+            timeout: 10,
+        },
+        // 写挂起关卡前要求会话里已有等待器（kimi 2.6.0 的 Stop hook 不触发，见 reporter kimi_gate_guard）。
+        LeadHook {
+            event: "PreToolUse",
+            mode: "gate",
             timeout: 10,
         },
         LeadHook {
@@ -89,7 +95,7 @@ fn is_waiter_rule(item: &dyn toml_edit::TableLike) -> bool {
 }
 
 impl LeadCap for KimiLead {
-    /// 关卡挂起时 TUI 里后台 Bash 跑等待器（Stop hook 给出原样命令）；完成通知让空闲的 TUI 自己开新回合
+    /// 关卡挂起时 TUI 里后台 Bash 跑等待器（PreToolUse 拦下写挂起关卡、给出原样命令）；完成通知让空闲 TUI 自己开新回合
     /// （2.6.0 源码 completeDetached → loop.notify，research-kimi-gemini.md 假模型实测）。
     /// TUI 已退出时用 `-p` 续写同一会话：2026-11-13 假端点对照，`-p` 与 TUI 的请求头逐字一致
     /// （UA kimi-code-cli/2.6.0、X-Msh-Platform kimi_code_cli、turn_trigger user），计费路径相同；

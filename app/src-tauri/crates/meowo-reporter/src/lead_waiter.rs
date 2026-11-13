@@ -27,6 +27,7 @@ pub struct WaiterRecord {
     pub pid: u32,
     /// 进程启动时刻（秒），防 pid 被系统回收复用后误判「还在等」。
     pub started: u64,
+    /// 在等的关卡；空串 = 已启动、还在等下一个挂起关卡写出来（kimi 先启动等待器再写关卡）。
     pub gate: String,
     pub session: String,
     pub provider: String,
@@ -39,6 +40,8 @@ pub const WAITER_FILE: &str = ".native-waiter.json";
 const POLL: Duration = Duration::from_secs(1);
 /// 与 Claude 的 wait 同上限：关卡最多等 7 天。
 const MAX: Duration = Duration::from_secs(7 * 24 * 3600);
+/// 先启动、后写关卡时，最多等关卡出现这么久（模型被拦下后通常几秒内重写 gate.json）。
+const AWAIT_GATE: Duration = Duration::from_secs(10 * 60);
 
 pub fn waiter_path(task: &Path) -> PathBuf {
     task.join(WAITER_FILE)
@@ -67,9 +70,15 @@ fn same_process(pid: u32, started: u64) -> bool {
     process_started(pid).is_some_and(|now| now.abs_diff(started) <= 1)
 }
 
-/// 这个关卡此刻有没有活着的等待器。
+/// 这个关卡此刻有没有活着的等待器（含「在等下一个关卡」的那种）。
 pub fn live_waiter(task: &Path, gate_id: &str) -> Option<WaiterRecord> {
-    read_record(task).filter(|r| r.gate == gate_id && same_process(r.pid, r.started))
+    read_record(task)
+        .filter(|r| (r.gate == gate_id || r.gate.is_empty()) && same_process(r.pid, r.started))
+}
+
+/// 任务里有没有活着的等待器，不论在等哪个关卡。
+pub fn any_live_waiter(task: &Path) -> bool {
+    read_record(task).is_some_and(|r| same_process(r.pid, r.started))
 }
 
 /// 关卡是否需要（再）启动等待器：任务归本会话、关卡挂起、没有活着的等待器。
@@ -158,41 +167,47 @@ pub fn wait(
     let Some(task) = lead::task_of_session(session, registry) else {
         return say("[lead] 没有找到本会话认领的 Lead 任务，等待器已退出，无需处理。");
     };
-    let Some(first) = lead::read_gate(&task) else {
-        return say("[lead] 任务里没有关卡，等待器已退出，无需处理。");
-    };
-    match first.status.as_str() {
-        "answered" => {
-            mark_delivered(&task, &first);
-            return say(lead::answer_message(&task, &first));
-        }
-        "pending" => {}
-        _ => return say("[lead] 关卡已经处理过，等待器已退出，无需处理。"),
+    let initial = lead::read_gate(&task);
+    if let Some(gate) = initial.as_ref().filter(|g| g.status == "answered") {
+        mark_delivered(&task, gate);
+        return say(lead::answer_message(&task, gate));
     }
+    // 关卡还没写（或只剩上一轮已消费的旧关卡）：先登记、等下一个挂起关卡出现再绑定。
+    let stale = initial
+        .as_ref()
+        .filter(|g| g.status != "pending")
+        .map(|g| g.id.clone());
     let me = std::process::id();
     let cli_pid = find_cli();
-    let record = WaiterRecord {
+    let mut record = WaiterRecord {
         pid: me,
         started: process_started(me).unwrap_or_default(),
-        gate: first.id.clone(),
+        gate: initial
+            .as_ref()
+            .filter(|g| g.status == "pending")
+            .map(|g| g.id.clone())
+            .unwrap_or_default(),
         session: session.into(),
         provider: provider.into(),
         cli_started: cli_pid.and_then(process_started),
         cli_pid,
     };
     let path = waiter_path(&task);
-    // 后来者接管：同一关卡重复启动时只留最新的那个，旧的看到记录不是自己就退出。
-    let Ok(text) = serde_json::to_string(&record) else {
-        return Output::default();
+    let publish = |record: &WaiterRecord| {
+        serde_json::to_string(record)
+            .ok()
+            .is_some_and(|text| meowo_agent::fsutil::write_atomic(&path, &text).is_ok())
     };
-    if meowo_agent::fsutil::write_atomic(&path, &text).is_err() {
+    // 后来者接管：同一任务重复启动时只留最新的那个，旧的看到记录不是自己就退出。
+    if !publish(&record) {
         return say("[lead] 等待器无法登记，已退出。在会话里发一句话即可继续。");
     }
+    let mine = |r: &WaiterRecord| r.pid == record.pid && r.started == record.started;
     let start = std::time::Instant::now();
     let mut misses = 0;
     let out = loop {
         std::thread::sleep(poll);
-        if read_record(&task).as_ref() != Some(&record) {
+        if !read_record(&task).as_ref().is_some_and(mine) {
             break say("[lead] 另一个等待器接手了这个关卡，本条无需处理，直接结束本轮。");
         }
         if let (Some(pid), Some(started)) = (record.cli_pid, record.cli_started) {
@@ -203,12 +218,28 @@ pub fn wait(
         if start.elapsed() > max {
             break say("[lead] 等待关卡答复超时，已退出。");
         }
-        match lead::read_gate(&task) {
-            Some(g) if g.id == first.id && g.status == "answered" => {
+        let gate = lead::read_gate(&task);
+        if record.gate.is_empty() {
+            match gate {
+                Some(g) if g.status == "pending" && stale.as_deref() != Some(g.id.as_str()) => {
+                    record.gate = g.id;
+                    if !publish(&record) {
+                        break say("[lead] 等待器无法登记，已退出。在会话里发一句话即可继续。");
+                    }
+                }
+                _ if start.elapsed() > AWAIT_GATE.min(max) => {
+                    break say("[lead] 没等到新的关卡，等待器已退出，无需处理。");
+                }
+                _ => {}
+            }
+            continue;
+        }
+        match gate {
+            Some(g) if g.id == record.gate && g.status == "answered" => {
                 mark_delivered(&task, &g);
                 break say(lead::answer_message(&task, &g));
             }
-            Some(g) if g.id == first.id && g.status == "pending" => misses = 0,
+            Some(g) if g.id == record.gate && g.status == "pending" => misses = 0,
             Some(_) => break say("[lead] 关卡已更换或已处理，本条无需处理。"),
             // 作答时的 rename、杀毒软件占用会偶发读失败，连续多次才当作关卡被撤掉。
             None => {
@@ -219,7 +250,7 @@ pub fn wait(
             }
         }
     };
-    if read_record(&task).as_ref() == Some(&record) {
+    if read_record(&task).as_ref().is_some_and(mine) {
         let _ = std::fs::remove_file(&path);
     }
     out
@@ -378,6 +409,47 @@ mod tests {
         )
         .unwrap();
         assert!(handle.join().unwrap().stdout.unwrap().contains("已更换"));
+    }
+
+    /// kimi 先启动等待器、后写关卡：上一轮已消费的旧关卡不算，等新挂起关卡出现再绑定。
+    #[test]
+    fn waiter_started_before_the_gate_binds_to_the_next_pending_gate() {
+        let fx = Fx::new("consumed");
+        let (task, registry) = (fx.task.clone(), fx.registry.clone());
+        let handle =
+            std::thread::spawn(move || wait("kimi", "session_abc", &registry, P, M, || None));
+        for _ in 0..200 {
+            if read_record(&task).is_some() {
+                break;
+            }
+            std::thread::sleep(P);
+        }
+        assert_eq!(read_record(&fx.task).unwrap().gate, "");
+        assert!(
+            live_waiter(&fx.task, "anything").is_some(),
+            "等下一个关卡时对任何关卡都算在等"
+        );
+        std::fs::write(
+            fx.task.join("gate.json"),
+            json!({"id":"Q-2","type":"Q","title":"t","status":"pending","options":[{"id":"go","label":"Go"}]}).to_string(),
+        )
+        .unwrap();
+        for _ in 0..200 {
+            if read_record(&fx.task).is_some_and(|r| r.gate == "Q-2") {
+                break;
+            }
+            std::thread::sleep(P);
+        }
+        lead::answer_gate(
+            &fx.task,
+            "Q-2",
+            &meowo_protocol::ipc::LeadGateAnswerDto {
+                choice: "go".into(),
+                note: String::new(),
+            },
+        )
+        .unwrap();
+        assert!(handle.join().unwrap().stdout.unwrap().contains("关卡 Q"));
     }
 
     /// TUI 退出后等待器不能变孤儿：宿主 CLI 进程没了就静默退出。

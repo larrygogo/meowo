@@ -284,7 +284,7 @@ pub fn managed_command(command: &str, provider: &str) -> bool {
     matches!(basename.as_str(), "meowo-reporter" | "meowo-reporter.exe")
         && args.len() == 4
         && args[0] == "lead"
-        && matches!(args[1].as_str(), "session" | "claim" | "stop")
+        && matches!(args[1].as_str(), "session" | "claim" | "stop" | "gate")
         && args[2] == "--provider"
         && args[3] == provider
 }

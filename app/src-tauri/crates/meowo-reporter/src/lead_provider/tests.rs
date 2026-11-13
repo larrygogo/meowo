@@ -500,3 +500,39 @@ fn gemini_gate_write_starts_waiter_by_tail_call_and_explains_it_to_the_model() {
     let second = call(&e, "gemini", "stop", stop(&e, "gemini", "g-1", "开始"));
     assert!(second.stdout.is_none_or(|text| !text.contains("is_background=true")));
 }
+
+/// kimi 2.6.0 的 Stop hook 不触发：写挂起关卡前在 PreToolUse 拦一次，给出原样命令；
+/// 已有等待器、消费关卡、别人的任务、无关文件都放行。
+#[test]
+fn kimi_pre_tool_use_requires_a_waiter_before_writing_a_pending_gate() {
+    let e = env();
+    call(&e, "kimi", "session", prompt(&e, "kimi", "session_k2", "开始"));
+    call(&e, "kimi", "claim", claim(&e, "kimi", "session_k2"));
+    let gate = e.task.join("gate.json");
+    let pre = |content: &str| json!({"hook_event_name":"PreToolUse","session_id":"session_k2","cwd":e.root.path(),"client_type":"kimi_code_cli","tool_name":"Write","tool_input":{"path":gate,"content":content}});
+    let pending = r#"{"id":"Q-9","type":"Q","title":"t","status":"pending"}"#;
+    let out = call(&e, "kimi", "gate", pre(pending));
+    assert_eq!(out.exit, 2);
+    let reason = out.stderr.unwrap();
+    assert!(reason.contains("lead wait --provider kimi --session session_k2`") && reason.contains("disable_timeout=true"), "{reason}");
+    // 消费关卡不拦。
+    assert_eq!(call(&e, "kimi", "gate", pre(&pending.replace("pending", "consumed"))), Output::default());
+    // 别的会话写这个任务的关卡不拦（任务已归 session_k2）。
+    let mut other = pre(pending);
+    other["session_id"] = json!("session_other");
+    assert_eq!(call(&e, "kimi", "gate", other), Output::default());
+    // 等待器已在等（先启动、等下一个关卡）：放行。
+    let record = crate::lead_waiter::WaiterRecord {
+        pid: std::process::id(),
+        started: crate::lead_waiter::process_started(std::process::id()).unwrap(),
+        gate: String::new(),
+        session: "session_k2".into(),
+        provider: "kimi".into(),
+        cli_pid: None,
+        cli_started: None,
+    };
+    fs::write(crate::lead_waiter::waiter_path(&e.task), serde_json::to_string(&record).unwrap()).unwrap();
+    assert_eq!(call(&e, "kimi", "gate", pre(pending)), Output::default());
+    // 不碰 gate.json 的调用走快速路径。
+    assert_eq!(call(&e, "kimi", "gate", json!({"hook_event_name":"PreToolUse","session_id":"session_k2","cwd":e.root.path(),"client_type":"kimi_code_cli","tool_name":"Bash","tool_input":{"command":"ls"}})), Output::default());
+}

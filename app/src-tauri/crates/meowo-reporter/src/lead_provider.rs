@@ -105,7 +105,12 @@ fn normalize(provider: Provider, raw: &Value) -> Option<Native> {
             ),
             Provider::Kimi => matches!(
                 event,
-                "SessionStart" | "UserPromptSubmit" | "PostToolUse" | "Stop" | "PostCompact"
+                "SessionStart"
+                    | "UserPromptSubmit"
+                    | "PreToolUse"
+                    | "PostToolUse"
+                    | "Stop"
+                    | "PostCompact"
             ),
             Provider::Gemini => matches!(
                 event,
@@ -375,10 +380,14 @@ pub fn run(provider: &str, mode: &str, raw: &str, registry: &Path) -> Output {
     if provider == "claude" {
         return lead::run(mode, raw, registry);
     }
-    if !matches!(mode, "session" | "claim" | "stop") {
+    if !matches!(mode, "session" | "claim" | "stop" | "gate") {
         return Output::default();
     }
     if mode == "claim" && !raw.contains(".lead") && !raw.contains("lead wait --provider gemini") {
+        return Output::default();
+    }
+    // PreToolUse 每次工具调用都会跑：不碰关卡文件的直接放行。
+    if mode == "gate" && !raw.contains("gate.json") {
         return Output::default();
     }
     std::panic::catch_unwind(|| run_inner(provider, mode, raw, registry)).unwrap_or_default()
@@ -398,6 +407,13 @@ fn run_inner(provider: &str, mode: &str, raw: &str, registry: &Path) -> Output {
         .as_str()
         .unwrap_or_default()
         .to_string();
+    if mode == "gate" {
+        return if provider == Provider::Kimi && native.event == "PreToolUse" {
+            kimi_gate_guard(&native, &raw, &session, registry).unwrap_or_default()
+        } else {
+            Output::default()
+        };
+    }
     if mode == "claim" {
         if provider == Provider::Gemini {
             if let Some(out) = gemini_waiter_started(&raw, &session) {
@@ -602,6 +618,80 @@ fn run_inner(provider: &str, mode: &str, raw: &str, registry: &Path) -> Output {
         }
         _ => Output::default(),
     }
+}
+
+/// kimi：写挂起关卡之前，会话里必须已有等待器。
+///
+/// 为什么拦在 PreToolUse：kimi 2.6.0 的 Stop hook 实际从不触发（onDidFinishStep 里检查
+/// hasPendingRequests()，而回合进行中 loop.state.status 不是 idle，恒为真；假模型实测普通回合也不调用），
+/// PostToolUse 又是 fire-and-forget、不读输出。PreToolUse 是同步、可拦截、原因会交给模型的唯一入口：
+/// 拦下写 gate.json（status 为 pending）的调用，原因里给出原样等待命令，模型后台启动它后重写关卡。
+/// 等待器先启动时会等下一个挂起关卡出现再绑定（lead_waiter）。只拦本会话的任务，别人的任务不管。
+fn kimi_gate_guard(native: &Native, raw: &Value, session: &str, registry: &Path) -> Option<Output> {
+    let name = string(raw, "tool_name")?;
+    let input = raw.get("tool_input")?;
+    let (target, body) = match name {
+        "Write" => (
+            string(input, "path").or_else(|| string(input, "file_path"))?,
+            string(input, "content").unwrap_or_default().to_owned(),
+        ),
+        "Edit" => (
+            string(input, "path").or_else(|| string(input, "file_path"))?,
+            input.to_string(),
+        ),
+        "Bash" => {
+            let command = string(input, "command")?;
+            if !lead::shell_writes(command) {
+                return None;
+            }
+            (command, command.to_owned())
+        }
+        _ => return None,
+    };
+    if !target.replace('\\', "/").contains("gate.json") || !body.contains("pending") {
+        return None; // 只管写出挂起关卡；消费关卡（改成 consumed）照常放行
+    }
+    let mut data = native.data.clone();
+    data["tool_name"] = json!(if name == "Bash" { "Bash" } else { "Write" });
+    data["tool_input"] = if name == "Bash" {
+        json!({"command": target})
+    } else {
+        json!({"file_path": target})
+    };
+    let task = claim_target(&data)?;
+    // 先认领：等待器按会话找任务，模型下一步就要启动它。
+    if !reserve_owner(&task, session) {
+        return None;
+    }
+    lead::run("claim", &data.to_string(), registry);
+    let task = lead::task_of_session(session, registry)?;
+    // 刚要求过启动等待器：它的进程可能还没起来登记（实测后台 Bash 起 reporter 要几百毫秒），
+    // 这时再拦一次会让模型起第二个，旧的被接手退出、又白白唤醒一回合。等它几秒。
+    let asked = task.join(".native-waiter-asked");
+    let recently_asked = fs::metadata(&asked)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.elapsed().ok())
+        .is_some_and(|age| age < std::time::Duration::from_secs(120));
+    let rounds = if recently_asked { 50 } else { 1 };
+    for round in 0..rounds {
+        if lead_waiter::any_live_waiter(&task) {
+            return None;
+        }
+        if round + 1 < rounds {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    }
+    let _ = fs::write(&asked, session);
+    let reporter = lead_waiter::reporter_path()?;
+    let command = lead_waiter::command("kimi", &reporter, session);
+    Some(Output {
+        stderr: Some(format!(
+            "[lead] 写关卡前，先用 Bash 工具在后台启动 Meowo 的关卡等待命令（run_in_background=true，disable_timeout=true，description 写「等待 leader 答复」），命令：`{command}`。启动后再重新写这个 gate.json，然后结束本轮，不要轮询。leader 答复后它会结束、你会收到后台任务完成的通知，届时读它的输出和 gate.json，按 lead skill 处理答复。"
+        )),
+        exit: 2,
+        stdout: None,
+    })
 }
 
 fn touches_gate(call: &Value) -> bool {
