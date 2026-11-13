@@ -1778,8 +1778,6 @@ pub fn run() {
             // 有会话在跑时防止电脑休眠（设置可关），见 power.rs。
             power::spawn_keep_awake(app.handle().clone());
             lead::spawn_gate_watcher(app.handle().clone());
-            // 接回上次留下的 Lead 答复 serve（OpenCode 离线续跑），由回收线程按空闲结束。
-            lead_native::opencode_http::adopt(path.clone());
             // 跨重启通知清场：上一进程残留的 toast 全是死链接（on_activated 是进程内闭包），
             // 在 liveness 补发新 toast 之前整清，保证通知中心里每条都可点（详见函数注释）。
             #[cfg(target_os = "windows")]

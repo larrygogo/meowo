@@ -22,7 +22,8 @@ const SPEC: LeadInstallSpec = LeadInstallSpec {
     hooks: &[],
     limitations: &[
         "lead/native_stop_unsupported",
-        // 自动继续与离线恢复已由宿主 HTTP 投递闭环（lead_native::opencode_http，1.19.5 隔离真机探针）。
+        // 在线自动继续由宿主 HTTP 投递闭环（lead_native::opencode_http，1.19.5 隔离真机探针）；
+        // TUI 不在时只保存答复，带端口重开后由巡检送达（leader 2026-11-13「不需要离线」）。
         "lead/main_agent_identity_unverified",
         "lead/non_lead_io_unverified",
     ],
@@ -34,7 +35,7 @@ impl LeadCap for OpenCodeLead {
         (inst.variant_tag == "stable").then_some(&SPEC)
     }
     /// 原生 TUI 本身是内置 HTTP 服务的客户端：宿主让 TUI 带密码开放端口，答复经 `prompt_async`
-    /// 排进同一会话；TUI 退出后宿主起 serve 投递、打开时 attach（任务 20261113-lead-tui，1.19.5 隔离真机验证）。
+    /// 排进同一会话（任务 20261113-lead-tui，1.19.5 隔离真机验证）。TUI 不在时不另起服务，答复等 TUI 重开再送。
     fn native_continue(&self) -> Option<NativeContinue> {
         Some(NativeContinue::ServerQueue(ServerProtocol::OpencodeHttp))
     }

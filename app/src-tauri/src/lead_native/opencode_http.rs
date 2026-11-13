@@ -6,11 +6,9 @@
 //!   `OPENCODE_SERVER_PASSWORD`（不设则服务无鉴权，同机任何进程都能驱动会话）。答复用
 //!   `POST /session/:id/prompt_async` 送进同一会话：空闲即开新回合，运行中 TUI 显示 QUEUED 排队，
 //!   输入框里的草稿不动。**不用** `/tui/append-prompt`、`/tui/submit-prompt`——它们改的就是输入框。
-//! - 离线 O2：TUI 已退出时 Meowo 起 `opencode serve`（同样带密码）投递，模型照常执行；
-//!   用户这时打开会话，托管终端改用 `opencode attach <url> --session <id>` 连上这个服务，
-//!   而不是再起一个普通 TUI——「普通 TUI + 另一个 serve」实测模型执行了但 TUI 看不见，
-//!   且两个进程并发驱动同一会话（research 已排除）。serve 在会话空闲且没有 attach 客户端时由
-//!   回收线程结束，此后再打开就回到普通 TUI（O1）。同一会话任一时刻只有一个服务在驱动。
+//! - TUI 不在时：不投递、不另起服务（leader 2026-11-13「不需要离线」：原先起 `opencode serve` 投递、
+//!   打开会话时 `attach` 上去，已删）。答复只保存、记为「等会话打开」；用户在 Meowo 里重新打开会话时
+//!   TUI 照常带端口启动，关卡巡检（每 10s）看到它在就经上面的 prompt_async 送达。
 //! - 计费：注入请求与 TUI 自发请求对上游的请求头逐字一致（research 实测）；这里只对本机服务做
 //!   Basic Auth，不给模型请求加任何自定义头。agent/model/variant 取自该会话最后一条用户消息，
 //!   与用户在 TUI 里接着发一句话时 TUI 自己会带的值一致（不按默认 build agent 跑，免得 plan 模式下
@@ -24,8 +22,12 @@
 //!   重新生成，能读到它的进程本来就以用户身份跑在同一个模型会话里。可能的缓解是在 Lead 插件里
 //!   加 `shell.env` hook 把它置空，未经真机验证不做。
 //!
-//! 端口与密码按服务进程持久化在 `<数据目录>/lead-native/opencode-http.json`（Meowo 重启后仍能找回
-//! 存活的 serve 并接着回收）；投递记录也在这里，保证巡检反复调用 deliver 时同一答复只送一次。
+//! - 端口身份（做空 L4）：free_port 先绑再放，TUI 随后才绑同一个端口，中间可能被别的进程抢走——
+//!   这时 TUI 起不来服务，连上的却是别人的服务。投递前核对身份：带本次密码必须 200、带诱饵密码必须
+//!   401，两条都成立才认是自己的 TUI（与 Codex 用诱饵 token 核身份同一思路）。
+//!
+//! 端口与密码按 TUI 进程持久化在 `<数据目录>/lead-native/opencode-http.json`（Meowo 重启后仍能找回
+//! 还开着的 TUI）；投递记录也在这里，保证巡检反复调用 deliver 时同一答复只送一次。
 
 use super::{NativeOutcome, NativeTarget};
 use meowo_agent::lead_install::{NativeContinue, ServerAuth, ServerProtocol};
@@ -34,11 +36,8 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-/// 「即将 attach」占位的有效期：plan_for 到 spawn 完成通常在秒级；Meowo 若在两者之间崩溃，
-/// 占位过期后回收线程照常结束 serve。
-const ATTACH_PENDING_TTL_MS: i64 = 60_000;
 /// 沿 parentID 上溯的层数上限：子代理再派子代理也远到不了这么深，超过视为数据异常（含环）。
 const MAX_PARENT_DEPTH: usize = 16;
 /// 投递记录上限：只需覆盖「答复已送、模型尚未接手关卡」这段窗口，留够余量即可。
@@ -46,9 +45,12 @@ const MAX_DELIVERIES: usize = 200;
 /// 失败后巡检自动重试的退避基数（手动重试不受限）。
 const RETRY_BACKOFF_MS: i64 = 30_000;
 const MAX_AUTO_ATTEMPTS: u32 = 5;
+/// TUI 刚启动、内置服务还没开始监听的宽限期：这段时间连不上不算投递失败（不计次、不退避），
+/// 下一次巡检再试——否则用户刚打开会话那几秒的巡检会把答复推进 30s 起步的退避。
+const TUI_STARTUP_GRACE_MS: i64 = 30_000;
 
 /// 注册表与投递记录的进程内互斥：手机作答（answer_and_deliver）与关卡巡检（reconcile_task）可能
-/// 同时对同一关卡调用 deliver，不串行化就会各起一个 serve、各送一次答复。
+/// 同时对同一关卡调用 deliver，不串行化就会各送一次答复。
 static LOCK: Mutex<()> = Mutex::new(());
 
 /// 本机服务鉴权取自声明了 OpencodeHttp 机制的插件（meowo-agent 的 LeadCap::server_auth），
@@ -64,56 +66,19 @@ fn server_auth() -> Option<ServerAuth> {
         .and_then(|lead| lead.server_auth())
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-enum Kind {
-    /// 托管终端里带 `--port` 的原生 TUI（O1）。
-    Tui,
-    /// Meowo 起的 `opencode serve`（O2）。
-    Serve,
-}
-
+/// 托管终端里带 `--port` 的原生 TUI。
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 struct Endpoint {
-    kind: Kind,
     pid: u32,
     port: u16,
     password: String,
-    /// serve 驱动的原生会话；TUI 启动时还不知道会话 id（新建会话首条消息后才有）。
-    #[serde(default)]
-    native_session: Option<String>,
-    #[serde(default)]
-    cwd: Option<String>,
-    /// 连在 serve 上的 `opencode attach` 进程（托管终端的子进程）。
-    #[serde(default)]
-    attach_pid: Option<u32>,
-    /// plan_for 已决定 attach、但进程还没 spawn 出来（attach_pid 未登记）的时刻。回收线程看到它
-    /// 就不结束 serve——否则用户恰在空闲判定到期时打开会话，会连到刚被杀掉的 serve（M5）。
-    #[serde(default)]
-    attach_pending_ms: Option<i64>,
-    /// 也路由到这个 serve 的其他原生会话 id：.owner 记的是子代理会话时答复改投主会话，serve 按主会话
-    /// 登记（打开主会话时 attach 认的是它），子会话 id 记在这里，后续投递仍复用这个 serve。
-    #[serde(default)]
-    aliases: Vec<String>,
     started_ms: i64,
-}
-
-impl Endpoint {
-    fn drives(&self, native: &str) -> bool {
-        self.native_session.as_deref() == Some(native) || self.aliases.iter().any(|a| a == native)
-    }
-    /// 有 attach 客户端连着，或即将连上：这时 serve 不能结束。
-    fn attach_active(&self, now: i64) -> bool {
-        self.attach_pid.is_some_and(pid_alive)
-            || self
-                .attach_pending_ms
-                .is_some_and(|at| now - at < ATTACH_PENDING_TTL_MS)
-    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 struct Delivery {
-    /// accepted = 服务已接收（204）；failed = 送达失败可重试；unsupported = 本次做不到（面板提示手动继续）。
+    /// accepted = 服务已接收（204）；failed = 送达失败可重试；unsupported = 本次做不到（面板提示手动继续）；
+    /// awaiting = TUI 不在，等会话打开后由巡检送达（不计投递次数）。
     state: String,
     message_id: String,
     part_id: String,
@@ -121,8 +86,6 @@ struct Delivery {
     at_ms: i64,
     #[serde(default)]
     reason: Option<String>,
-    #[serde(default)]
-    via: Option<Kind>,
 }
 
 #[derive(Serialize, Deserialize, Default, Debug)]
@@ -215,15 +178,18 @@ struct Client {
 
 impl Client {
     fn new(port: u16, password: &str) -> Self {
+        Self {
+            base: format!("http://127.0.0.1:{port}"),
+            auth: Self::basic(password),
+        }
+    }
+    fn basic(password: &str) -> String {
         use base64::Engine;
         // 取不到鉴权声明（插件被移除）时用户名留空：服务回 401，按投递失败处理，不会误连。
         let username = server_auth().map_or("", |auth| auth.username);
         let token =
             base64::engine::general_purpose::STANDARD.encode(format!("{username}:{password}"));
-        Self {
-            base: format!("http://127.0.0.1:{port}"),
-            auth: format!("Basic {token}"),
-        }
+        format!("Basic {token}")
     }
     fn of(endpoint: &Endpoint) -> Self {
         Self::new(endpoint.port, &endpoint.password)
@@ -253,11 +219,23 @@ impl Client {
             .map(|response| response.status())
             .map_err(http_reason)
     }
-    /// 健康检查同时证明「这个端口上是我们起的、密码对得上的服务」——pid 会被系统复用，端口会被别人占，
-    /// 唯有带密码的 200 能确认身份。
-    fn healthy(&self, timeout: Duration) -> bool {
-        self.get("/global/health", timeout)
-            .is_ok_and(|v| v.get("healthy").and_then(Value::as_bool) == Some(true))
+    /// 核对这个端口上是不是我们起的 TUI（做空 L4）：pid 会被系统复用，端口会被别人抢。带本次密码
+    /// 必须健康 200，带诱饵密码必须 401——不设鉴权、来者不拒的服务（或别人的服务）过不了第二条。
+    fn verify_identity(&self, timeout: Duration) -> Result<(), String> {
+        let ok = self.get("/global/health", timeout)?;
+        if ok.get("healthy").and_then(Value::as_bool) != Some(true) {
+            return Err("lead/opencode_http_identity".into());
+        }
+        let decoy = crate::remote::generate_token()?;
+        let other = Client {
+            base: self.base.clone(),
+            auth: Client::basic(&decoy),
+        };
+        match other.get("/global/health", timeout) {
+            Err(reason) if reason == "lead/opencode_http_unauthorized" => Ok(()),
+            Err(reason) if reason == "lead/opencode_http_unreachable" => Err(reason),
+            _ => Err("lead/opencode_http_identity".into()),
+        }
     }
 }
 
@@ -302,51 +280,15 @@ fn pid_alive(pid: u32) -> bool {
     }
 }
 
-fn kill_tree(pid: u32) {
-    // serve 会派生 LSP/MCP 子进程；只杀根进程会把它们留成孤儿。
-    crate::proc::kill_descendants(pid);
-    crate::proc::kill_pid(pid);
-}
-
 // ---------------------------------------------------------------------------------------------
 // 启动：托管终端里起 opencode 时由 pty.rs 调用
 
-/// 一次托管终端启动要追加/替换的东西。`argv` 为 Some 时整体替换（attach），否则在原 argv 后追加 `args`。
+/// 一次托管终端启动要在原 argv 后追加的参数与环境。
 pub(crate) struct LaunchPlan {
-    pub argv: Option<Vec<String>>,
     pub args: Vec<String>,
     pub env: Vec<(String, String)>,
     endpoint: Endpoint,
-    attach_to: Option<u32>,
     db: PathBuf,
-}
-
-/// 从恢复 argv 里认出原生会话 id（`--session <id>`；带 `--fork` 是分叉出新会话，不算）。
-fn resumed_session(argv: &[String]) -> Option<&str> {
-    if argv.iter().any(|a| a == "--fork") {
-        return None;
-    }
-    let at = argv.iter().position(|a| a == "--session" || a == "-s")?;
-    argv.get(at + 1)
-        .map(String::as_str)
-        .filter(|id| crate::session_command::is_safe_id(id))
-}
-
-/// 这个会话此刻是否正由 Meowo 起的 serve 驱动（活着且密码对得上）。
-fn live_serve(reg: &Registry, native: &str) -> Option<Endpoint> {
-    reg.endpoints
-        .iter()
-        .find(|e| e.kind == Kind::Serve && e.drives(native))
-        .filter(|e| Client::of(e).healthy(Duration::from_millis(1500)))
-        .cloned()
-}
-
-/// 恢复守卫用：该原生会话是否由 Meowo 自己的 serve 驱动。是的话「会话仍在外部运行」的拦截不适用——
-/// 那个进程就是我们的 serve，恢复会改走 attach 连上它，而不是另起一个驱动者。
-pub(crate) fn serving(native: &str) -> bool {
-    let _guard = LOCK.lock();
-    let reg = Registry::load(&registry_path(&crate::db_path()));
-    live_serve(&reg, native).is_some()
 }
 
 /// 只对声明了 OpencodeHttp 机制、且本会话启用了 Lead 的启动生效；其余原样返回 None，启动行为不变。
@@ -361,46 +303,14 @@ pub(crate) fn launch_plan(
     {
         return None;
     }
-    plan_for(&crate::db_path(), argv)
+    plan_for(&crate::db_path())
 }
 
-fn plan_for(db: &Path, argv: &[String]) -> Option<LaunchPlan> {
+fn plan_for(db: &Path) -> Option<LaunchPlan> {
     let password_env = server_auth()?.password_env;
-    let _guard = LOCK.lock();
-    let path = registry_path(db);
-    let mut reg = Registry::load(&path);
-    if let Some(serve) = resumed_session(argv).and_then(|native| live_serve(&reg, native)) {
-        // O2 → 打开：serve 还在驱动这个会话（多半正在跑注入的回合），TUI 以客户端连上去。
-        // 密码只走环境变量（attach 默认读服务端同名变量），不进可见命令行。
-        let native = serve.native_session.clone()?;
-        // 锁内先登记「即将 attach」：attach 进程要 spawn 之后才有 pid，这段空窗里回收线程若判定
-        // 空闲就会结束 serve（M5）。stop_serve 在同一把锁里复查这个占位。
-        let entry = reg
-            .endpoints
-            .iter_mut()
-            .find(|e| e.kind == Kind::Serve && e.pid == serve.pid)?;
-        entry.attach_pending_ms = Some(now_ms());
-        // 写不进占位也照样 attach：退回普通 TUI 会让两个进程同时驱动这个会话，比竞态更糟。
-        let _ = reg.save(&path);
-        return Some(LaunchPlan {
-            argv: Some(vec![
-                argv[0].clone(),
-                "attach".into(),
-                format!("http://127.0.0.1:{}", serve.port),
-                "--session".into(),
-                native,
-            ]),
-            args: vec![],
-            env: vec![(password_env.into(), serve.password.clone())],
-            attach_to: Some(serve.pid),
-            endpoint: serve,
-            db: db.to_path_buf(),
-        });
-    }
     let port = free_port().ok()?;
     let password = crate::remote::generate_token().ok()?;
     Some(LaunchPlan {
-        argv: None,
         args: vec![
             "--hostname".into(),
             "127.0.0.1".into(),
@@ -408,18 +318,11 @@ fn plan_for(db: &Path, argv: &[String]) -> Option<LaunchPlan> {
             port.to_string(),
         ],
         env: vec![(password_env.into(), password.clone())],
-        attach_to: None,
         db: db.to_path_buf(),
         endpoint: Endpoint {
-            kind: Kind::Tui,
             pid: 0,
             port,
             password,
-            native_session: None,
-            cwd: None,
-            attach_pid: None,
-            attach_pending_ms: None,
-            aliases: Vec::new(),
             started_ms: now_ms(),
         },
     })
@@ -427,31 +330,9 @@ fn plan_for(db: &Path, argv: &[String]) -> Option<LaunchPlan> {
 
 impl LaunchPlan {
     /// spawn 成功后登记进程。失败只丢失自动续跑能力（面板退回手动继续），不影响终端本身。
-    pub(crate) fn launched(mut self, child_pid: Option<u32>) {
+    pub(crate) fn launched(self, child_pid: Option<u32>) {
         let Some(pid) = child_pid else { return };
-        if record_launch(&self, pid).is_ok() {
-            // 占位已换成真 pid，Drop 不必再清。
-            self.attach_to = None;
-        }
-    }
-}
-
-/// 没走到 launched（spawn 失败提前返回）的 attach 方案：撤掉「即将 attach」占位，
-/// serve 立即回到按空闲回收，不必等占位过期。
-impl Drop for LaunchPlan {
-    fn drop(&mut self) {
-        let Some(serve) = self.attach_to else { return };
-        let _guard = LOCK.lock();
-        let path = registry_path(&self.db);
-        let mut reg = Registry::load(&path);
-        if let Some(entry) = reg
-            .endpoints
-            .iter_mut()
-            .find(|e| e.kind == Kind::Serve && e.pid == serve && e.attach_pending_ms.is_some())
-        {
-            entry.attach_pending_ms = None;
-            let _ = reg.save(&path);
-        }
+        let _ = record_launch(&self, pid);
     }
 }
 
@@ -460,24 +341,12 @@ fn record_launch(plan: &LaunchPlan, pid: u32) -> Result<(), String> {
     let path = registry_path(&plan.db);
     let mut reg = Registry::load(&path);
     // 顺手清掉已退出的 TUI 条目：TUI 退出时服务随之消失，留着只会让文件里的旧密码越积越多。
-    reg.endpoints
-        .retain(|e| e.kind != Kind::Tui || (e.pid != pid && pid_alive(e.pid)));
-    match plan.attach_to {
-        Some(serve) => {
-            if let Some(entry) = reg
-                .endpoints
-                .iter_mut()
-                .find(|e| e.kind == Kind::Serve && e.pid == serve)
-            {
-                entry.attach_pid = Some(pid);
-                entry.attach_pending_ms = None;
-            }
-        }
-        None => reg.endpoints.push(Endpoint {
-            pid,
-            ..plan.endpoint.clone()
-        }),
-    }
+    reg.endpoints.retain(|e| e.pid != pid && pid_alive(e.pid));
+    reg.endpoints.push(Endpoint {
+        pid,
+        started_ms: now_ms(),
+        ..plan.endpoint.clone()
+    });
     reg.save(&path)
 }
 
@@ -565,184 +434,80 @@ pub(crate) fn deliver_with(
         .unwrap_or_else(|| ascending_id("prt", first_ms, &key));
     let attempts = previous.as_ref().map_or(0, |p| p.attempts) + 1;
 
-    let resolved = resolve_endpoint(&mut reg, target, presence);
-    let record = |state: &str, reason: Option<String>, via: Option<Kind>| Delivery {
+    let record = |state: &str, reason: Option<String>, attempts: u32| Delivery {
         state: state.into(),
         message_id: message_id.clone(),
         part_id: part_id.clone(),
         attempts,
         at_ms: now_ms(),
         reason,
-        via,
     };
-    let endpoint = match resolved {
-        Ok(Some(endpoint)) => endpoint,
-        Ok(None) => {
+    let endpoint = match resolve_endpoint(&reg, presence) {
+        Route::Tui(endpoint) => endpoint,
+        Route::NoPort => {
             // 进程活着但没开端口（Lead 安装前启动的 TUI、外部终端里的 opencode）：不另起服务抢会话，
             // 如实告诉面板在会话里发一句话继续。
-            let entry = record("unsupported", None, None);
-            reg.deliveries.insert(key, entry);
+            reg.deliveries
+                .insert(key, record("unsupported", None, attempts));
             reg.save(&path)?;
             return Ok(NativeOutcome::Unsupported);
         }
-        Err(reason) => {
-            let entry = record("failed", Some(reason), None);
-            reg.deliveries.insert(key, entry);
+        Route::Awaiting => {
+            // TUI 不在（或刚起、服务还没监听）：只保存，不计次，等会话打开后的巡检送达。
+            reg.deliveries
+                .insert(key, record("awaiting", None, attempts - 1));
+            reg.save(&path)?;
+            return Ok(NativeOutcome::Saved);
+        }
+        Route::Failed(reason) => {
+            reg.deliveries
+                .insert(key, record("failed", Some(reason), attempts));
             reg.save(&path)?;
             return Ok(NativeOutcome::Delivered);
         }
     };
-    let result = post_prompt(&endpoint, target, &message_id, &part_id);
-    if let (Ok(root), Kind::Serve) = (&result, endpoint.kind) {
-        adopt_root(&mut reg, endpoint.pid, root);
-    }
-    let entry = match &result {
-        Ok(_) => record("accepted", None, Some(endpoint.kind)),
-        Err(reason) => record("failed", Some(reason.clone()), Some(endpoint.kind)),
+    let entry = match post_prompt(&endpoint, target, &message_id, &part_id) {
+        Ok(_) => record("accepted", None, attempts),
+        Err(reason) => record("failed", Some(reason), attempts),
     };
     reg.deliveries.insert(key, entry);
     reg.save(&path)?;
-    if endpoint.kind == Kind::Serve {
-        // 投递失败也要交给回收线程：空闲的 serve 不能一直挂着。
-        spawn_reaper(target.db.to_path_buf(), endpoint.pid);
-    }
     Ok(NativeOutcome::Delivered)
 }
 
-/// serve 按投递目标（可能是子会话）起，答复实际投给了主会话：改按主会话登记，用户打开主会话时
-/// plan_for 才认得出它、改走 attach；子会话 id 留作别名，后续投递仍复用这个 serve。
-fn adopt_root(reg: &mut Registry, pid: u32, root: &str) {
-    let Some(entry) = reg
-        .endpoints
-        .iter_mut()
-        .find(|e| e.kind == Kind::Serve && e.pid == pid)
-    else {
-        return;
-    };
-    if entry.native_session.as_deref() == Some(root) {
-        return;
-    }
-    if let Some(previous) = entry.native_session.replace(root.to_owned()) {
-        if !entry.aliases.contains(&previous) {
-            entry.aliases.push(previous);
-        }
-    }
-    entry.aliases.retain(|a| a != root);
+/// 这一刻投递该走哪条路。
+#[derive(Debug)]
+enum Route {
+    /// 托管终端里带端口的 TUI，已核过身份。
+    Tui(Endpoint),
+    /// 会话有进程在跑，但不是 Meowo 带端口起的：够不着，不能投递。
+    NoPort,
+    /// TUI 不在（或刚起还没监听）：等会话打开。
+    Awaiting,
+    /// 应能投递但失败（可重试）。
+    Failed(String),
 }
 
-/// Ok(None) = 会话有别的驱动者且我们够不着，不能投递；Err = 应能投递但失败（可重试）。
-fn resolve_endpoint(
-    reg: &mut Registry,
-    target: &NativeTarget<'_>,
-    presence: Presence,
-) -> Result<Option<Endpoint>, String> {
-    // 1. Meowo 的 serve 正驱动它（含 attach 中）：唯一合法的驱动者就是它。
-    if let Some(serve) = live_serve(reg, target.native_session) {
-        return Ok(Some(serve));
-    }
-    // 2. 有 TUI 在跑：只能经它自己的服务投递。找不到它的端口就放弃，绝不再起第二个驱动者。
-    let tui_pid = match presence {
+fn resolve_endpoint(reg: &Registry, presence: Presence) -> Route {
+    let pid = match presence {
         Presence::Managed(pid) => pid,
         Presence::Elsewhere(pid) => Some(pid),
-        Presence::Gone => None,
+        Presence::Gone => return Route::Awaiting,
     };
-    if presence != Presence::Gone {
-        let endpoint = tui_pid.and_then(|pid| {
-            reg.endpoints
-                .iter()
-                .find(|e| e.kind == Kind::Tui && e.pid == pid)
-                .cloned()
-        });
-        return match endpoint {
-            Some(e) if Client::of(&e).healthy(Duration::from_secs(3)) => Ok(Some(e)),
-            Some(_) => Err("lead/opencode_http_unreachable".into()),
-            None => Ok(None),
-        };
-    }
-    // 3. 没人在跑：起 serve（O2）。
-    start_serve(reg, target).map(Some)
-}
-
-fn start_serve(reg: &mut Registry, target: &NativeTarget<'_>) -> Result<Endpoint, String> {
-    let agent = meowo_agent::by_id(target.provider).ok_or("lead/provider_unknown")?;
-    let exe = agent
-        .launch_argv()
-        .into_iter()
-        .next()
-        .ok_or("lead/opencode_cli_missing")?;
-    let cwd = target
-        .cwd
-        .filter(|dir| Path::new(dir).is_dir())
-        .ok_or("lead/session_cwd_missing")?;
-    // 与这个会话原本的账号/代理/中转同一套环境：账号隔离变量决定读哪份会话库与凭据。
-    let store = crate::open_store(target.db)?;
-    let profile = store
-        .session_profile(target.session_id)
-        .map_err(|e| e.to_string())?;
-    let env = crate::terminal::launch_env_for_exact_profile(agent, profile.as_deref());
-    let password_env = agent
-        .lead()
-        .and_then(|lead| lead.server_auth())
-        .ok_or("lead/provider_unknown")?
-        .password_env;
-    let port = free_port()?;
-    let password = crate::remote::generate_token()?;
-    let mut command = std::process::Command::new(&exe);
-    command
-        .args([
-            "serve",
-            "--hostname",
-            "127.0.0.1",
-            "--port",
-            &port.to_string(),
-        ])
-        .current_dir(cwd)
-        .envs(env)
-        .env(password_env, &password)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        // CREATE_NO_WINDOW：后台服务不弹黑框。
-        command.creation_flags(0x0800_0000);
-    }
-    let mut child = command
-        .spawn()
-        .map_err(|_| "lead/opencode_serve_spawn_failed")?;
-    let pid = child.id();
-    let client = Client::new(port, &password);
-    let deadline = Instant::now() + Duration::from_secs(30);
-    loop {
-        if client.healthy(Duration::from_secs(1)) {
-            break;
-        }
-        if child.try_wait().ok().flatten().is_some() || Instant::now() >= deadline {
-            kill_tree(pid);
-            let _ = child.wait();
-            return Err("lead/opencode_serve_not_ready".into());
-        }
-        std::thread::sleep(Duration::from_millis(200));
-    }
-    let endpoint = Endpoint {
-        kind: Kind::Serve,
-        pid,
-        port,
-        password,
-        native_session: Some(target.native_session.to_owned()),
-        cwd: Some(cwd.to_owned()),
-        attach_pid: None,
-        attach_pending_ms: None,
-        aliases: Vec::new(),
-        started_ms: now_ms(),
+    let Some(endpoint) = pid.and_then(|pid| reg.endpoints.iter().find(|e| e.pid == pid).cloned())
+    else {
+        return Route::NoPort;
     };
-    reg.endpoints.push(endpoint.clone());
-    // 先落盘再投递：投递途中 Meowo 退出，重启后仍能按文件找回并回收这个 serve。
-    reg.save(&registry_path(target.db))?;
-    // Child 不在这里 wait：交给回收线程按「空闲 + 无 attach」结束；std 的 Child drop 不杀进程。
-    drop(child);
-    Ok(endpoint)
+    match Client::of(&endpoint).verify_identity(Duration::from_secs(3)) {
+        Ok(()) => Route::Tui(endpoint),
+        Err(reason)
+            if reason == "lead/opencode_http_unreachable"
+                && now_ms() - endpoint.started_ms < TUI_STARTUP_GRACE_MS =>
+        {
+            Route::Awaiting
+        }
+        Err(reason) => Route::Failed(reason),
+    }
 }
 
 /// 最后一条用户消息里的 agent / model / variant——用户在 TUI 里接着发话时 TUI 会带的就是这些。
@@ -879,163 +644,6 @@ fn post_prompt(
 }
 
 // ---------------------------------------------------------------------------------------------
-// serve 回收
-
-static REAPING: Mutex<Vec<u32>> = Mutex::new(Vec::new());
-const REAP_IDLE: Duration = Duration::from_secs(6);
-
-/// 会话空闲且没有 attach 客户端时结束 serve。等审批/提问时会话不是空闲态，serve 留着等用户打开作答——
-/// 不替用户答审批。
-fn spawn_reaper(db: PathBuf, pid: u32) {
-    // 单元测试里的 serve 是替身，pid 是编的；真回收会去结束一个无关进程。探针测真进程时显式调 reap。
-    if cfg!(test) {
-        return;
-    }
-    {
-        let Ok(mut reaping) = REAPING.lock() else {
-            return;
-        };
-        if reaping.contains(&pid) {
-            return;
-        }
-        reaping.push(pid);
-    }
-    let spawned = std::thread::Builder::new()
-        .name("lead-opencode-serve".into())
-        .spawn(move || {
-            reap(&db, pid);
-            if let Ok(mut reaping) = REAPING.lock() {
-                reaping.retain(|p| *p != pid);
-            }
-        });
-    if spawned.is_err() {
-        if let Ok(mut reaping) = REAPING.lock() {
-            reaping.retain(|p| *p != pid);
-        }
-    }
-}
-
-pub(super) fn reap(db: &Path, pid: u32) {
-    let path = registry_path(db);
-    let mut idle_since: Option<Instant> = None;
-    // 投递返回 204 到会话进入 busy 之间有短暂空窗，先等一下再开始判空闲。
-    std::thread::sleep(Duration::from_secs(2));
-    loop {
-        let endpoint = {
-            let _guard = LOCK.lock();
-            Registry::load(&path)
-                .endpoints
-                .into_iter()
-                .find(|e| e.kind == Kind::Serve && e.pid == pid)
-        };
-        let Some(endpoint) = endpoint else { return };
-        let client = Client::of(&endpoint);
-        let busy = if !client.healthy(Duration::from_secs(2)) {
-            None
-        } else if endpoint.attach_active(now_ms()) {
-            Some(true)
-        } else {
-            // 状态查不到时按忙处理：宁可多留一会儿 serve，也不在回合中途把它结束。
-            Some(
-                client
-                    .get("/session/status", Duration::from_secs(3))
-                    .map(|status| {
-                        endpoint
-                            .native_session
-                            .as_deref()
-                            .is_some_and(|native| status.get(native).is_some())
-                    })
-                    .unwrap_or(true),
-            )
-        };
-        match busy {
-            Some(true) => idle_since = None,
-            Some(false) => {
-                if idle_since.get_or_insert_with(Instant::now).elapsed() >= REAP_IDLE {
-                    if stop_serve(&path, pid, true, kill_tree) {
-                        return;
-                    }
-                    // 判定空闲之后、拿到锁之前有人要 attach：serve 留着，重新计空闲。
-                    idle_since = None;
-                }
-            }
-            // 健康检查失败：进程已经没了（或被外力结束），只清条目。此时 pid 可能已被系统复用，
-            // 绝不能再按它结束进程。
-            None => {
-                stop_serve(&path, pid, false, kill_tree);
-                return;
-            }
-        }
-        std::thread::sleep(Duration::from_secs(2));
-    }
-}
-
-/// 结束 serve 并移除条目；返回 false = 没结束（有人正要 attach 或已连上）。
-///
-/// 「空闲」是回收线程在锁外看到的，到这里可能已经过时：plan_for 在同一把锁里登记 attach 占位，
-/// 所以要在锁内复查（M5）。不复查时，用户恰在空闲判定到期那一刻打开会话，attach 会连到刚被
-/// 杀掉的 serve。只清条目（kill=false：进程已经没了）时不复查，死服务留着没有意义。
-/// `killer` 只为单测可替换：测试里的 pid 是编的，真去结束会误伤无关进程。
-fn stop_serve(path: &Path, pid: u32, kill: bool, killer: impl Fn(u32)) -> bool {
-    let _guard = LOCK.lock();
-    let mut reg = Registry::load(path);
-    let Some(at) = reg
-        .endpoints
-        .iter()
-        .position(|e| e.kind == Kind::Serve && e.pid == pid)
-    else {
-        return true;
-    };
-    if kill && reg.endpoints[at].attach_active(now_ms()) {
-        return false;
-    }
-    reg.endpoints.remove(at);
-    if kill {
-        killer(pid);
-    }
-    let _ = reg.save(path);
-    true
-}
-
-/// Meowo 启动时接回上次留下的 serve：活着就重新挂回收线程，死了就清条目。
-///
-/// 这是 Meowo 没运行期间 serve 唯一的时限：1.19.5 的 `opencode serve` 没有空闲自退参数
-/// （`serve --help` 只有 port/hostname/mdns/cors 等；内嵌源码里也没有 idle/timeout 类环境变量），
-/// 而 serve 刻意不随 Meowo 退出——注入的回合可能正在跑，Meowo 重启后要能接着 attach。
-/// 所以 Meowo 退出期间 serve 一直挂着，直到下次启动在这里交给回收线程按空闲结束。
-pub(crate) fn adopt(db: PathBuf) {
-    let _ = std::thread::Builder::new()
-        .name("lead-opencode-adopt".into())
-        .spawn(move || {
-            for pid in adopt_scan(&db) {
-                spawn_reaper(db.clone(), pid);
-            }
-        });
-}
-
-/// 清掉已退出的 TUI 条目和上一个 Meowo 进程留下的 attach 占位，返回要重新挂回收线程的 serve。
-/// 占位属于上个进程里没 spawn 完的 attach，那个进程已经没了，不清会让 serve 白挂到占位过期。
-fn adopt_scan(db: &Path) -> Vec<u32> {
-    let _guard = LOCK.lock();
-    let path = registry_path(db);
-    let mut reg = Registry::load(&path);
-    let before = reg.endpoints.clone();
-    reg.endpoints
-        .retain(|e| e.kind == Kind::Serve || pid_alive(e.pid));
-    for entry in &mut reg.endpoints {
-        entry.attach_pending_ms = None;
-    }
-    if reg.endpoints != before {
-        let _ = reg.save(&path);
-    }
-    reg.endpoints
-        .iter()
-        .filter(|e| e.kind == Kind::Serve)
-        .map(|e| e.pid)
-        .collect()
-}
-
-// ---------------------------------------------------------------------------------------------
 // 面板状态
 
 pub(crate) fn status(db: &Path, task: &Path, gate_id: &str, native: &str) -> super::NativeStatus {
@@ -1058,6 +666,12 @@ pub(crate) fn status(db: &Path, task: &Path, gate_id: &str, native: &str) -> sup
                 state: "native_manual",
                 reason: None,
                 can_retry: true,
+            },
+            // TUI 不在：打开会话后巡检自动送达，没有要人点的重试。
+            "awaiting" => super::NativeStatus {
+                state: "native_on_open",
+                reason: None,
+                can_retry: false,
             },
             _ => super::NativeStatus {
                 state: "failed",
