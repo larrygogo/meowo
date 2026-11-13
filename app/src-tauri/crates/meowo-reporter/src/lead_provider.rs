@@ -537,13 +537,20 @@ fn run_inner(provider: &str, mode: &str, raw: &str, registry: &Path) -> Output {
                     else {
                         return Output::default();
                     };
-                    messages.retain(|message| {
-                        !(message["role"] == "system"
-                            && message["content"]
-                                .as_str()
-                                .is_some_and(|text| text.starts_with("[meowo-lead-context]\n")))
+                    // role 只能是 user：0.68 把 hook 消息原样转成 contents，Gemini API 对 system 角色回
+                    // 400「Role 'system' is not supported」（2026-11-13 真模型实测，假模型测不出）。
+                    // 已有的旧上下文就地替换、不删除：fromHookLLMRequest 按下标把带文本的消息对回原
+                    // contents，删掉中间一条会让后面的消息全部错位。
+                    let content = format!("[meowo-lead-context]\n{context}");
+                    let existing = messages.iter_mut().find(|message| {
+                        message["content"]
+                            .as_str()
+                            .is_some_and(|text| text.starts_with("[meowo-lead-context]\n"))
                     });
-                    messages.push(json!({"role":"system","content":format!("[meowo-lead-context]\n{context}")}));
+                    match existing {
+                        Some(message) => *message = json!({"role":"user","content":content}),
+                        None => messages.push(json!({"role":"user","content":content})),
+                    }
                     json!({"hookSpecificOutput":{"llm_request":request}})
                 }
                 _ => {

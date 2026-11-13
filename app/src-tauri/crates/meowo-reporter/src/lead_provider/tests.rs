@@ -352,6 +352,9 @@ fn gemini_before_model_preserves_request_and_replaces_only_owned_context() {
         .as_str()
         .unwrap()
         .contains("SPEC.md"));
+    // Gemini API 不收 system 角色（真模型 400）：注入的上下文一律用 user。
+    assert_eq!(request["messages"][1]["role"], "user");
+    assert_eq!(request["messages"][0]["content"], "hello");
 }
 
 #[test]
