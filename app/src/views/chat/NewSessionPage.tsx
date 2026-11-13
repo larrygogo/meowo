@@ -190,10 +190,6 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched, onOpenSession
                   onChange={(value) => { setProvider(value); setError(null); }}
                 />
               )}
-          {form.managedAvailable && <div className="row">
-            <label><input type="checkbox" checked={form.managedMode} disabled={busy} onChange={(event) => form.setManagedRequested(event.target.checked)} />{t.chat.engineManaged}</label>
-            <div className="row-desc">{form.managedMode ? t.chat.engineManagedDesc : t.chat.engineManagedOffDesc}</div>
-          </div>}
               {launchOptions.map((option) => {
                 // relay 启用时 model 档由中转固定：置灰，悬停说明固定成了什么。
                 const pinned = option.id === "model" ? relayPins[provider] : undefined;

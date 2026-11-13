@@ -27,7 +27,6 @@ import { zh } from "../../i18n/zh";
 import { normalizePath } from "../../paths";
 
 beforeEach(() => {
-  localStorage.removeItem("meowo.newSession.managed");
   Object.values(api).forEach((m) => m.mockReset());
   dialog.open.mockReset();
   api.recentCwds.mockResolvedValue(["C:/work/meowo", "C:/work/site"]);
@@ -43,15 +42,20 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe("新建会话页（对话窗主区，对照 Kimi）", () => {
-  it("ticking Meowo managed creates a managed session with the account ID and hides CLI launch flags", async () => {
+  // 2026-11-13 改定（leader：「这个勾选有什么意义？」）：新建页不再让用户选托管还是原生。托管唯一的用处是
+  // Lead 关卡手机作答后自动继续，所以这家装了 Lead 且托管能自动继续就托管，否则原生 CLI。
+  const leadOn = (provider: string) => api.leadProviderInstallations.mockResolvedValue([{ provider, automaticContinue: true }]);
+
+  it("Lead-enabled provider creates a managed session with the account ID and hides CLI launch flags", async () => {
+    leadOn("codex");
     api.listAgents.mockResolvedValue(descriptors(["codex"]).map((agent) => ({ ...agent, supports_managed_conversation: agent.id === "codex" })));
     api.getSettings.mockResolvedValue({ default_agent: "codex", active_profile: { codex: "work" } });
     api.getAccounts.mockResolvedValue([{ provider: "codex", account: { login_label: "API Key" }, active_profile_name: "工作账号" }]);
     api.managedConversationCreate.mockResolvedValue({ sessionId: 407 });
     const onLaunched=vi.fn();render(<NewSessionPage prefill={{cwd:"C:/isolated",provider:"codex"}} onLaunched={onLaunched}/>);
-    fireEvent.click(await screen.findByRole("checkbox",{name:zh.chat.engineManaged}));
     await screen.findByText(zh.newSession.activeProfile("工作账号"));
-    expect(screen.queryByTestId("nsp-option-approval")).toBeNull();
+    await waitFor(()=>expect(screen.queryByTestId("nsp-option-approval")).toBeNull());
+    expect(screen.queryByRole("checkbox",{name:/托管/})).toBeNull();
     fireEvent.change(screen.getByTestId("nsp-input"),{target:{value:"  preserve exact first message  "}});
     fireEvent.click(screen.getByTestId("nsp-send"));
     await waitFor(()=>expect(api.managedConversationCreate).toHaveBeenCalledWith("codex",normalizePath("C:/isolated"),"work"));
@@ -59,16 +63,16 @@ describe("新建会话页（对话窗主区，对照 Kimi）", () => {
     await waitFor(()=>expect(onLaunched).toHaveBeenCalledWith(407,"codex","  preserve exact first message  ",[]));
   });
 
-  it.each(["codex", "kimi", "gemini", "opencode"])("%s uses descriptor-managed mode without a Claude-only fallback", async (provider) => {
-    api.listAgents.mockResolvedValue(
-      descriptors([provider]).map((agent) => ({ ...agent, supports_managed_conversation: agent.id === provider })),
-    );
+  it.each(["codex", "kimi", "gemini", "opencode"])("%s with Lead uses descriptor-managed mode without a Claude-only fallback", async (provider) => {
+    leadOn(provider);
+    api.listAgents.mockResolvedValue(descriptors([provider]).map((agent) => ({ ...agent, supports_managed_conversation: agent.id === provider })));
     api.getSettings.mockResolvedValue({ default_agent: provider });
     api.getAccounts.mockResolvedValue([]);
     api.managedConversationCreate.mockResolvedValue({ sessionId: 407 });
     const onLaunched = vi.fn();
     render(<NewSessionPage prefill={{ cwd: "C:/isolated", provider }} onLaunched={onLaunched} />);
-    fireEvent.click(await screen.findByRole("checkbox", { name: zh.chat.engineManaged }));
+    await waitFor(() => expect(api.leadProviderInstallations).toHaveBeenCalled());
+    await waitFor(() => expect(screen.queryByTestId("nsp-option-approval")).toBeNull());
     fireEvent.change(screen.getByTestId("nsp-input"), { target: { value: "managed first message" } });
     fireEvent.click(screen.getByTestId("nsp-send"));
     await waitFor(() => expect(api.managedConversationCreate).toHaveBeenCalledWith(provider, normalizePath("C:/isolated"), null));
@@ -76,55 +80,22 @@ describe("新建会话页（对话窗主区，对照 Kimi）", () => {
     await waitFor(() => expect(onLaunched).toHaveBeenCalledWith(407, provider, "managed first message", []));
   });
 
-  // 2026-11-13 改定：默认原生 CLI（与 main 一致，保留斜杠命令、撤销、终端视图与启动选项）；托管是勾选项，
-  // 按 provider 记住上次选择。兄弟场景：四家默认都是原生；勾过一次后同 provider 下次默认托管、别家不受影响。
-  it.each(["codex", "kimi", "gemini", "opencode"])("%s defaults to the native CLI with its original launch path", async(provider)=>{
-    api.listAgents.mockResolvedValue(descriptors([provider]).map((agent)=>({...agent,supports_managed_conversation:agent.id===provider})));
-    api.getSettings.mockResolvedValue({ default_agent: provider });
-    api.newSession.mockResolvedValue(-408);const onLaunched=vi.fn();
-    render(<NewSessionPage prefill={{cwd:"C:/isolated",provider}} onLaunched={onLaunched}/>);
-    expect((await screen.findByRole("checkbox",{name:zh.chat.engineManaged}) as HTMLInputElement).checked).toBe(false);
-    fireEvent.click(screen.getByTestId("nsp-send"));
-    await waitFor(()=>expect(api.newSession).toHaveBeenCalled());expect(api.managedConversationCreate).not.toHaveBeenCalled();
-  });
-
-  // 关卡 Q「完整闭环、不接受手动继续」：装了 Lead 且托管可自动继续的 provider 没选过时默认托管；
-  // 兄弟场景：装了但不能自动继续 → 原生；拉安装状态失败（手机桥不放行）→ 原生；用户选过原生 → 尊重选择。
+  // 兄弟场景：没装 Lead / 装了但不能自动继续 / 只有别家装了 / 拉安装状态失败（手机桥不放行）→ 原生 CLI，
+  // 启动选项照旧显示；四家都没有托管勾选。
   it.each([
-    ["installed with automatic continue", [{ provider: "codex", automaticContinue: true }], undefined, true],
-    ["installed without automatic continue", [{ provider: "codex", automaticContinue: false }], undefined, false],
-    ["another provider has Lead", [{ provider: "kimi", automaticContinue: true }], undefined, false],
-    ["installations unavailable", "reject", undefined, false],
-    ["user chose native before", [{ provider: "codex", automaticContinue: true }], false, false],
-  ] as const)("Lead default: %s", async (_name, rows, stored, expected) => {
-    if (stored !== undefined) localStorage.setItem("meowo.newSession.managed", JSON.stringify({ codex: stored }));
+    ["no Lead", [] as { provider: string; automaticContinue: boolean }[]],
+    ["Lead without automatic continue", [{ provider: "codex", automaticContinue: false }]],
+    ["only another provider has Lead", [{ provider: "kimi", automaticContinue: true }]],
+    ["installations unavailable", "reject" as const],
+  ])("%s → native CLI with its launch options", async (_name, rows) => {
     if (rows === "reject") api.leadProviderInstallations.mockRejectedValue("remote/command_forbidden");
     else api.leadProviderInstallations.mockResolvedValue(rows);
     api.listAgents.mockResolvedValue(descriptors(["codex","kimi"]).map((agent)=>({...agent,supports_managed_conversation:true})));
+    api.newSession.mockResolvedValue(-408);
     render(<NewSessionPage prefill={{cwd:"C:/isolated",provider:"codex"}} onLaunched={vi.fn()}/>);
-    const box = await screen.findByRole("checkbox",{name:zh.chat.engineManaged}) as HTMLInputElement;
     await waitFor(()=>expect(api.leadProviderInstallations).toHaveBeenCalled());
-    await waitFor(()=>expect(box.checked).toBe(expected));
-  });
-
-  it("remembers the managed choice per provider", async()=>{
-    api.listAgents.mockResolvedValue(descriptors(["codex","kimi"]).map((agent)=>({...agent,supports_managed_conversation:true})));
-    const first=render(<NewSessionPage prefill={{cwd:"C:/isolated",provider:"codex"}} onLaunched={vi.fn()}/>);
-    fireEvent.click(await screen.findByRole("checkbox",{name:zh.chat.engineManaged}));
-    first.unmount();
-    const again=render(<NewSessionPage prefill={{cwd:"C:/isolated",provider:"codex"}} onLaunched={vi.fn()}/>);
-    expect((await screen.findByRole("checkbox",{name:zh.chat.engineManaged}) as HTMLInputElement).checked).toBe(true);
-    again.unmount();
-    render(<NewSessionPage prefill={{cwd:"C:/isolated",provider:"kimi"}} onLaunched={vi.fn()}/>);
-    expect((await screen.findByRole("checkbox",{name:zh.chat.engineManaged}) as HTMLInputElement).checked).toBe(false);
-  });
-
-  it("native CLI keeps its launch options", async()=>{
-    api.listAgents.mockResolvedValue(descriptors(["codex"]).map((agent)=>({...agent,supports_managed_conversation:agent.id==="codex"})));
-    api.newSession.mockResolvedValue(-408);const onLaunched=vi.fn();
-    render(<NewSessionPage prefill={{cwd:"C:/isolated",provider:"codex"}} onLaunched={onLaunched}/>);
-    await screen.findByRole("checkbox",{name:zh.chat.engineManaged});
     expect(await screen.findByTestId("nsp-option-approval")).toBeTruthy();
+    expect(screen.queryByRole("checkbox",{name:/托管/})).toBeNull();
     fireEvent.click(screen.getByTestId("nsp-send"));
     await waitFor(()=>expect(api.newSession).toHaveBeenCalled());expect(api.managedConversationCreate).not.toHaveBeenCalled();
   });
@@ -132,8 +103,9 @@ describe("新建会话页（对话窗主区，对照 Kimi）", () => {
   it("an unverified native version reports an error and never silently falls back to a PTY",async()=>{
     api.listAgents.mockResolvedValue(descriptors(["codex"]).map((agent)=>({...agent,supports_managed_conversation:agent.id==="codex"})));
     api.managedConversationCreate.mockRejectedValue("conversation/version_unsupported");
+    leadOn("codex");
     render(<NewSessionPage prefill={{cwd:"C:/isolated",provider:"codex"}} onLaunched={vi.fn()}/>);
-    fireEvent.click(await screen.findByRole("checkbox",{name:zh.chat.engineManaged}));
+    await waitFor(()=>expect(screen.queryByTestId("nsp-option-approval")).toBeNull());
     fireEvent.change(screen.getByTestId("nsp-input"),{target:{value:"keep my draft"}});fireEvent.click(screen.getByTestId("nsp-send"));
     expect(await screen.findByRole("alert")).toBeTruthy();expect(api.newSession).not.toHaveBeenCalled();
     expect((screen.getByTestId("nsp-input") as HTMLTextAreaElement).value).toBe("keep my draft");

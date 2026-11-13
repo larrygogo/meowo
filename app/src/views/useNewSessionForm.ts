@@ -49,20 +49,6 @@ export function saveStoredOpts(provider: string, opts: Record<string, string>) {
   }
 }
 
-const MANAGED_CHOICE_KEY = "meowo.newSession.managed";
-function loadManagedChoice(provider: string): boolean | undefined {
-  try {
-    const value = (JSON.parse(localStorage.getItem(MANAGED_CHOICE_KEY) ?? "{}") as Record<string, unknown>)[provider];
-    return typeof value === "boolean" ? value : undefined;
-  } catch { return undefined; }
-}
-function saveManagedChoice(provider: string, value: boolean) {
-  try {
-    const all = JSON.parse(localStorage.getItem(MANAGED_CHOICE_KEY) ?? "{}") as Record<string, boolean>;
-    localStorage.setItem(MANAGED_CHOICE_KEY, JSON.stringify({ ...all, [provider]: value }));
-  } catch { /* 存不了就只在本次生效 */ }
-}
-
 export function useNewSessionForm(startCwd: string, startProvider: AgentId | null) {
   const t = useT();
   const [cwd, setCwd] = useState(startCwd);
@@ -202,8 +188,6 @@ export function useNewSessionForm(startCwd: string, startProvider: AgentId | nul
   // 默认原生 CLI（与 main 一致）：托管会话能在手机作答后自动继续，但没有斜杠命令、撤销、终端视图与
   // 启动选项，默认换成它是日常使用的退化，leader 也没定过（2026-11-13 做空指出）。按 provider 记住上次选择，
   // 常用 Lead 的人勾一次以后就是托管。
-  // 没选过时：这家装了 Lead 且托管能自动继续 → 默认托管（关卡 Q「完整闭环、不接受手动继续」：用 Lead
-  // 的人默认就该自动继续）；否则默认原生，不让不用 Lead 的人丢斜杠命令和终端视图（做空第二轮）。
   const [leadAuto, setLeadAuto] = useState<ReadonlySet<string>>(() => new Set());
   useEffect(() => {
     let live = true;
@@ -213,10 +197,10 @@ export function useNewSessionForm(startCwd: string, startProvider: AgentId | nul
       .catch(() => {});
     return () => { live = false; };
   }, []);
-  const [managedChoice, setManagedChoice] = useState(() => loadManagedChoice(provider));
-  useEffect(() => setManagedChoice(loadManagedChoice(provider)), [provider]);
-  const setManagedRequested = (value: boolean) => { setManagedChoice(value); saveManagedChoice(provider, value); };
-  const managedMode = managedAvailable && (managedChoice ?? leadAuto.has(provider));
+  // 托管与否不让用户选（2026-11-13 leader 看新建页的勾选：「这个勾选有什么意义？」）：托管唯一的用处是
+  // Lead 关卡在手机作答后自动继续，所以这家装了 Lead 且托管能自动继续就托管，否则原生 CLI（斜杠命令、
+  // 撤销、终端视图齐全）。想回原生，在设置里卸掉这家的 Lead。
+  const managedMode = managedAvailable && leadAuto.has(provider);
   // 7T-6：Enter 与「启动」钮此前各判各的——按钮 disabled 含「一个 agent 都没装/还在
   // 检测」，Enter 路径只看目录和 busy，于是在没装 CLI 的机器上回车照样发 newSession，
   // 拿一条后端错误回来。守卫抽出来，两条路径共用。
@@ -311,7 +295,7 @@ export function useNewSessionForm(startCwd: string, startProvider: AgentId | nul
   return {
     cwd, setCwd, provider, setProvider, recent, hooks, busy, repairing, error, setError,
     agents, avail, opts, setOpts, loggedIn, activeProfiles, relayPins, loginOperations,
-    swappedFrom, launchOptions: managedMode ? [] : launchOptions, managedAvailable, managedMode, setManagedRequested, canLaunch, launch, repairHooks, doLogin, cancelLoginWait, warn: !managedMode && warn, needLogin,
+    swappedFrom, launchOptions: managedMode ? [] : launchOptions, managedAvailable, managedMode, canLaunch, launch, repairHooks, doLogin, cancelLoginWait, warn: !managedMode && warn, needLogin,
     worktree,
   };
 }
