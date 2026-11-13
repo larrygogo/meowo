@@ -22,6 +22,7 @@ mod git_target;
 mod island;
 mod lead;
 mod lead_conversation;
+mod lead_native;
 mod lead_runtime;
 // 只有 macOS 的菜单栏用；放在 macos 模块外是为了 Windows 开发机上也能跑单测。
 #[cfg(target_os = "windows")]

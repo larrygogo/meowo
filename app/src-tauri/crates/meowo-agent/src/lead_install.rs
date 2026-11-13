@@ -48,6 +48,37 @@ pub struct LeadConfigChange {
     pub after: String,
 }
 
+/// 原生 TUI 会话的自动继续机制（见 [`LeadCap::native_continue`]）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NativeContinue {
+    /// TUI 里有一个后台等待进程（`meowo-reporter lead wait`），答复落盘它就退出，CLI 在空闲时
+    /// 收到「后台任务完成」自己开新回合（kimi 后台 Bash + notify；gemini 后台 shell + inject +
+    /// modelSteering）。在线时宿主不推送；TUI 已退出时按 `offline` 续写同一个会话。
+    InSessionWaiter { offline: OfflineResume },
+    /// TUI 以客户端模式连在宿主管理的服务上，宿主经该服务把答复排进同一个会话。
+    ServerQueue(ServerProtocol),
+}
+
+/// TUI 已退出时把答复续写进同一会话的方式。argv 模板里 `{session}`、`{prompt}` 由宿主替换。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OfflineResume {
+    /// 非交互模式跑完一轮即退出（如 `-S session_{session} -p {prompt}`）。
+    PrintMode(&'static [&'static str]),
+    /// 在 Meowo 终端里重新打开交互 TUI，并把答复作为第一条消息自动提交（如 `--resume {session} -i {prompt}`）。
+    InteractiveInitialPrompt(&'static [&'static str]),
+}
+
+/// 宿主管理的服务所用的协议（按协议区分，不按 provider 身份）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServerProtocol {
+    /// Codex app-server（WebSocket JSON-RPC + capability token）；TUI 以 `--remote` 连上来，
+    /// 投递用 `thread/queue/add`。宿主须等 TUI 先 initialize，originator 才是 codex-tui。
+    CodexAppServer,
+    /// OpenCode 内置 HTTP 服务（Basic Auth，OPENCODE_SERVER_PASSWORD）；TUI 以 `--port` 开放，
+    /// 投递用 `POST /session/:id/prompt_async`。
+    OpencodeHttp,
+}
+
 /// 只描述原生会话身份的可信来源，安装了资产不能自动获得绑定资格。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LeadBindingPolicy {
@@ -64,7 +95,13 @@ pub trait LeadCap: Sync {
     /// 的原生 hook 都不能自行起新回合（2026-11-12/13 实测），默认 false；能做到的插件覆盖它。
     /// 宿主据此决定是否提示「在会话里发一句话即可继续」，不按 provider 身份分支。
     fn native_auto_continue(&self) -> bool {
-        false
+        self.native_continue().is_some()
+    }
+    /// 原生 TUI 会话里，关卡答复靠什么机制让同一个会话自动开新回合（任务 20261113-lead-tui）。
+    /// 只描述机制，不描述 provider 身份；宿主按机制分发（lead_native）。None = 做不到，面板提示手动继续。
+    /// 一律不走 ACP（leader 2026-11-13：Provider 会把 ACP 流量另算），也不往 PTY 里打字。
+    fn native_continue(&self) -> Option<NativeContinue> {
+        None
     }
     fn spec(&self, installation: &Installation) -> Option<&'static LeadInstallSpec>;
     fn reviewer(&self) -> String;

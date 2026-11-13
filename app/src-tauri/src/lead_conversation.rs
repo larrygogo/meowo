@@ -119,7 +119,29 @@ fn deliver(
         return Ok(false);
     };
     let Some(state) = store.managed_state(id).map_err(|e| e.to_string())? else {
-        return Ok(false);
+        // 原生 TUI 会话：按插件声明的机制自动续跑（lead_native）；做不到的返回 false，面板提示手动继续。
+        let gate = meowo_reporter::lead::read_gate(task).ok_or("lead/gate_missing")?;
+        if gate.status != "answered" {
+            return Ok(gate.status == "consumed");
+        }
+        let provider = store.session_provider(id).map_err(|e| e.to_string())?;
+        let cwd = store.session_cwd(id).map_err(|e| e.to_string())?;
+        let message = meowo_reporter::lead::answer_message(task, &gate);
+        let target = crate::lead_native::NativeTarget {
+            db,
+            session_id: id,
+            provider: &provider,
+            native_session: &native,
+            cwd: cwd.as_deref(),
+            task,
+            gate_id: &gate.id,
+            message: &message,
+        };
+        let _ = force;
+        return match crate::lead_native::deliver(&target, app.as_ref())? {
+            crate::lead_native::NativeOutcome::Unsupported => Ok(false),
+            _ => Ok(true),
+        };
     };
     if state.native_session_id.as_deref() != Some(native.as_str()) {
         return Err("lead/owner_mismatch".into());
