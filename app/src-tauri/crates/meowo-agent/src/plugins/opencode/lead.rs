@@ -4,7 +4,8 @@
 //! 取证：https://raw.githubusercontent.com/anomalyco/opencode/v1.19.3/packages/plugin/src/index.ts
 use crate::{
     lead_install::{
-        LeadCap, LeadHookFormat, LeadInstallSpec, NativeContinue, ServerProtocol, REVIEW,
+        LeadCap, LeadHookFormat, LeadInstallSpec, NativeContinue, ServerAuth, ServerProtocol,
+        REVIEW,
     },
     variant::Installation,
 };
@@ -36,6 +37,14 @@ impl LeadCap for OpenCodeLead {
     /// 排进同一会话；TUI 退出后宿主起 serve 投递、打开时 attach（任务 20261113-lead-tui，1.19.5 隔离真机验证）。
     fn native_continue(&self) -> Option<NativeContinue> {
         Some(NativeContinue::ServerQueue(ServerProtocol::OpencodeHttp))
+    }
+    /// 1.19.5 内嵌源码 `@opencode/ServerAuthConfig`：密码只读 OPENCODE_SERVER_PASSWORD 环境变量，
+    /// 用户名默认 "opencode"（OPENCODE_SERVER_USERNAME 可改，宿主不设它）。没有从文件读密码的途径。
+    fn server_auth(&self) -> Option<ServerAuth> {
+        Some(ServerAuth {
+            username: "opencode",
+            password_env: "OPENCODE_SERVER_PASSWORD",
+        })
     }
     fn reviewer(&self) -> String {
         format!("---\ndescription: Independent adversarial review against the Lead specification.\nmode: subagent\npermission:\n  edit: deny\n  bash: ask\n---\n\n{REVIEW}")

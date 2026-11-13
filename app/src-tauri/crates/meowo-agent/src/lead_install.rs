@@ -80,6 +80,15 @@ pub enum ServerProtocol {
     OpencodeHttp,
 }
 
+/// 宿主管理服务的本机鉴权（Basic Auth）。由插件声明，宿主共享代码里不出现 provider 的身份串。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ServerAuth {
+    /// Basic Auth 用户名。
+    pub username: &'static str,
+    /// 服务端读取密码的环境变量名（服务进程与 TUI 内置服务都只认环境变量）。
+    pub password_env: &'static str,
+}
+
 /// 只描述原生会话身份的可信来源，安装了资产不能自动获得绑定资格。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LeadBindingPolicy {
@@ -102,6 +111,10 @@ pub trait LeadCap: Sync {
     /// 只描述机制，不描述 provider 身份；宿主按机制分发（lead_native）。None = 做不到，面板提示手动继续。
     /// 一律不走 ACP（leader 2026-11-13：Provider 会把 ACP 流量另算），也不往 PTY 里打字。
     fn native_continue(&self) -> Option<NativeContinue> {
+        None
+    }
+    /// `ServerQueue` 机制下宿主连本机服务用的鉴权；不走服务的插件保持 None。
+    fn server_auth(&self) -> Option<ServerAuth> {
         None
     }
     fn spec(&self, installation: &Installation) -> Option<&'static LeadInstallSpec>;
