@@ -7,10 +7,10 @@
 //!
 //! 约束：不走 ACP（leader：Provider 会把 ACP 流量另算），不往 PTY 里打字（覆盖草稿、误答审批）。
 
-// 临时：三路实现填入前 NativeTarget 字段与 Delivered/WaiterWillWake 尚未使用；实现完成后删除这行。
-#![allow(dead_code)]
 pub(crate) mod codex_app_server;
 pub(crate) mod opencode_http;
+#[cfg(test)]
+mod probe;
 pub(crate) mod server;
 pub(crate) mod waiter;
 mod ws;
@@ -88,7 +88,20 @@ pub(crate) fn delivery_status(
                 reason: status.reason,
             })
         }
-        _ => None,
+        // kimi/gemini：会话内等待器，如实说答复走到了哪一步（已保存 / 模型已收到 / 离线续写中 / 失败）。
+        NativeContinue::InSessionWaiter { .. } => {
+            let store = crate::open_store(db).ok()?;
+            let gate = meowo_reporter::lead::read_gate(task).filter(|gate| gate.id == gate_id)?;
+            let (state, reason) = waiter::status(&store, session_id, task, &gate, provider, native);
+            Some(LeadDeliveryDto {
+                session_id,
+                cwd,
+                delivery_id: String::new(),
+                can_retry: false,
+                state,
+                reason,
+            })
+        }
     }
 }
 

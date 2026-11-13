@@ -371,3 +371,81 @@ fn native_binding_is_only_declared_where_thread_metadata_is_verified() {
         assert_eq!(plugin.lead().unwrap().binding_policy(), expected);
     }
 }
+
+/// 任务 20261113-lead-tui：kimi 安装只加一条放行等待器的规则，用户自己的规则与顺序不动，卸载后还原。
+#[test]
+fn kimi_waiter_permission_rule_is_exact_and_reversible() {
+    let fixture = Fixture::new();
+    let plugin: &dyn AgentPlugin = &crate::plugins::kimi::Kimi;
+    let inst = fixture.installation(plugin);
+    let cap = plugin.lead().unwrap();
+    let config = inst.data_dir.join("config.toml");
+    let original = "default_model = 'keep'\n\n[[permission.rules]]\ndecision = 'deny'\npattern = 'Bash(rm *)'\n";
+    fs::write(&config, original).unwrap();
+    let reporter = r"C:\Program Files (x86)\Meowo\meowo-reporter.exe";
+    let state = install(cap, &inst, Some("kimi 2.6.0"), reporter).unwrap();
+    assert!(state.installed, "{state:?}");
+    let doc: toml_edit::DocumentMut = fs::read_to_string(&config).unwrap().parse().unwrap();
+    let rules = doc["permission"]["rules"].as_array_of_tables().unwrap();
+    assert_eq!(rules.len(), 2);
+    assert_eq!(rules.get(0).unwrap()["pattern"].as_str(), Some("Bash(rm *)"));
+    let ours = rules.get(1).unwrap();
+    assert_eq!(ours["decision"].as_str(), Some("allow"));
+    // picomatch 特殊字符逐个转义；`*` 只留给会话 id。
+    assert_eq!(
+        ours["pattern"].as_str(),
+        Some(r#"Bash("C:/Program Files \(x86\)/Meowo/meowo-reporter.exe" lead wait --provider kimi --session *)"#)
+    );
+    assert_eq!(
+        waiter_command_prefix("kimi", reporter),
+        r#""C:/Program Files (x86)/Meowo/meowo-reporter.exe" lead wait --provider kimi"#
+    );
+    uninstall(cap, &inst).unwrap();
+    let after = fs::read_to_string(&config).unwrap();
+    assert!(!after.contains("meowo-reporter"), "{after}");
+    assert!(after.contains("Bash(rm *)"));
+    // 只有 Meowo 规则时，卸载连空壳一起去掉。
+    fs::write(&config, "default_model = 'keep'\n").unwrap();
+    install(cap, &inst, Some("kimi 2.6.0"), reporter).unwrap();
+    uninstall(cap, &inst).unwrap();
+    assert_eq!(fs::read_to_string(&config).unwrap(), "default_model = 'keep'\n");
+}
+
+/// gemini：打开后台完成注入与 modelSteering、写放行策略；卸载还原用户原值、删策略与原值记录。
+#[test]
+fn gemini_auto_continue_settings_restore_user_values_on_uninstall() {
+    let fixture = Fixture::new();
+    let plugin: &dyn AgentPlugin = &crate::plugins::gemini::Gemini;
+    let inst = fixture.installation(plugin);
+    let cap = plugin.lead().unwrap();
+    let settings = inst.data_dir.join("settings.json");
+    fs::write(
+        &settings,
+        r#"{"theme":"keep","tools":{"shell":{"backgroundCompletionBehavior":"notify","enableInteractiveShell":true}}}"#,
+    )
+    .unwrap();
+    let reporter = r"C:\Users\o'neil\Meowo\meowo-reporter.exe";
+    assert!(install(cap, &inst, Some("0.68.0"), reporter).unwrap().installed);
+    let doc: Value = serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();
+    assert_eq!(doc.pointer("/tools/shell/backgroundCompletionBehavior"), Some(&json!("inject")));
+    assert_eq!(doc.pointer("/tools/shell/enableInteractiveShell"), Some(&json!(true)));
+    assert_eq!(doc.pointer("/experimental/modelSteering"), Some(&json!(true)));
+    assert!(crate::plugins::gemini::lead_model_steering(&inst.data_dir));
+    let policy = fs::read_to_string(inst.data_dir.join("policies/meowo-lead.toml")).unwrap();
+    assert!(policy.contains(MANAGED_MARK));
+    let parsed: toml_edit::DocumentMut = policy.parse().unwrap();
+    let rule = parsed["rule"].as_array_of_tables().unwrap().get(0).unwrap();
+    assert_eq!(rule["toolName"].as_str(), Some("run_shell_command"));
+    assert_eq!(rule["commandPrefix"].as_str(), Some(waiter_command_prefix("gemini", reporter).as_str()));
+    // 刷新安装不改记下的原值。
+    assert!(install(cap, &inst, Some("0.68.0"), "C:/Meowo Next/meowo-reporter.exe").unwrap().installed);
+    uninstall(cap, &inst).unwrap();
+    let doc: Value = serde_json::from_str(&fs::read_to_string(&settings).unwrap()).unwrap();
+    assert_eq!(doc.pointer("/tools/shell/backgroundCompletionBehavior"), Some(&json!("notify")));
+    assert_eq!(doc.pointer("/experimental"), None);
+    assert_eq!(doc["theme"], "keep");
+    assert!(!inst.data_dir.join("policies/meowo-lead.toml").exists());
+    assert!(!inst.data_dir.join("meowo-lead-settings.json").exists());
+    assert!(!crate::plugins::gemini::lead_model_steering(&inst.data_dir));
+    assert!(!managed_present(cap, &inst));
+}

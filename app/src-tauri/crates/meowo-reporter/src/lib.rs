@@ -7,6 +7,7 @@ pub mod import;
 pub mod lead;
 pub mod lead_mcp;
 pub mod lead_provider;
+pub mod lead_waiter;
 pub mod proc;
 pub mod statusline;
 pub mod tabtitle;

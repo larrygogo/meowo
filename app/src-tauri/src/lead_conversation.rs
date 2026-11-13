@@ -526,8 +526,16 @@ mod tests {
         assert_ne!(status.state, "native_manual");
         for provider in ["kimi", "gemini"] {
             store.set_session_provider(legacy, provider).unwrap();
-            let status = delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe").unwrap();
-            assert_eq!(status.state, "native_manual", "{provider}");
+            let Some(status) = delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe") else {
+                // 服务端投递路线（codex/opencode）由各自实现决定状态。
+                assert!(matches!(provider, "codex" | "opencode"), "{provider}");
+                continue;
+            };
+            let expected = match provider {
+                "kimi" | "gemini" => "saved",
+                _ => "native_manual",
+            };
+            assert_eq!(status.state, expected, "{provider}");
             assert!(!status.can_retry, "{provider}");
             assert_eq!(status.session_id, legacy);
         }
@@ -536,5 +544,13 @@ mod tests {
         let status = delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe").unwrap();
         assert_eq!(status.state, "saved");
         assert!(status.can_retry);
+        store.set_session_provider(legacy, "kimi").unwrap();
+        std::fs::write(f.task.join(".delivered"), "Q-probe").unwrap();
+        assert_eq!(delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe").unwrap().state, "consumed");
+        std::fs::write(f.task.join(".native-offline.json"), r#"{"gate":"Q-probe","state":"running","reason":null,"at":1}"#).unwrap();
+        assert_eq!(delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe").unwrap().state, "native_resuming");
+        std::fs::write(f.task.join(".native-offline.json"), r#"{"gate":"Q-probe","state":"failed","reason":"lead/native_resume_failed","at":1}"#).unwrap();
+        let failed = delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe").unwrap();
+        assert_eq!((failed.state.as_str(), failed.reason.as_deref()), ("failed", Some("lead/native_resume_failed")));
     }
 }

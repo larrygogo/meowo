@@ -168,7 +168,6 @@ struct Probe {
     db: PathBuf,
     env: Vec<(String, String)>,
     exe: Vec<String>,
-    real: bool,
 }
 
 impl Probe {
@@ -437,7 +436,6 @@ fn codex_remote_probe() {
         db,
         env,
         exe,
-        real,
     };
     let mut evidence = json!({
         "real": real,

@@ -28,6 +28,11 @@
 pub mod account;
 mod conversation;
 mod lead;
+/// 单测用：gemini 是否打开了 modelSteering（见 lead::model_steering）。
+#[cfg(test)]
+pub(crate) fn lead_model_steering(data_dir: &std::path::Path) -> bool {
+    lead::model_steering(data_dir)
+}
 mod screen;
 pub mod telemetry;
 mod transcript;
@@ -275,8 +280,19 @@ impl AgentPlugin for Gemini {
     }
 
     /// 运行中回车进 `Queued (press ↑ to edit)`，当前回答结束后才发出（probe_tui_script，0.64）。
+    /// 打开 `experimental.modelSteering` 后（Lead 安装会打开，leader 2026-11-13 同意）语义变了：
+    /// 运行中回车是「插话」，在下一步模型请求前插进当前回合；回合先结束就在空闲时自动提交
+    /// （0.68 interactiveCli handleFinalSubmit → injectionService，等审批时不提交）。按用户此刻的
+    /// 设置如实说，Lead 装与不装两种情况都对。
     fn queue_delivery(&self) -> Option<crate::chat_ui::QueueDelivery> {
-        Some(crate::chat_ui::QueueDelivery::TurnEnd)
+        let steering = self
+            .resolve()
+            .is_some_and(|inst| lead::model_steering(&inst.data_dir));
+        Some(if steering {
+            crate::chat_ui::QueueDelivery::NextStep
+        } else {
+            crate::chat_ui::QueueDelivery::TurnEnd
+        })
     }
 
     // https://geminicli.com/docs/reference/keyboard-shortcuts/：Shift-Tab 轮换审批模式。

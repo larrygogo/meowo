@@ -62,9 +62,10 @@ pub enum NativeContinue {
 /// TUI 已退出时把答复续写进同一会话的方式。argv 模板里 `{session}`、`{prompt}` 由宿主替换。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OfflineResume {
-    /// 非交互模式跑完一轮即退出（如 `-S session_{session} -p {prompt}`）。
+    /// 非交互模式跑完一轮即退出；模板是 CLI 启动 argv 之后的全部参数（如 `-S {session} -p {prompt}`）。
     PrintMode(&'static [&'static str]),
-    /// 在 Meowo 终端里重新打开交互 TUI，并把答复作为第一条消息自动提交（如 `--resume {session} -i {prompt}`）。
+    /// 在 Meowo 终端里重新打开交互 TUI，并把答复作为第一条消息自动提交；模板追加在宿主现成的
+    /// 恢复 argv（启动选项回放 + resume 子命令 + 会话 id）之后（如 `-i {prompt}`）。
     InteractiveInitialPrompt(&'static [&'static str]),
 }
 
@@ -119,6 +120,37 @@ pub trait LeadCap: Sync {
         _enabled: bool,
     ) -> Result<Vec<LeadConfigChange>, String> {
         Ok(Vec::new())
+    }
+    /// hook 编辑之后对同一个配置文件（`spec.hook_rel`）的附加编辑：打开自动续跑依赖的 CLI 设置
+    /// （kimi 的 permission 放行规则、gemini 的后台完成注入与 modelSteering）。只动 Meowo 自己的项，
+    /// 卸载时还原。`saved` 是首次安装时记下的原值（[`Self::saved_settings_rel`] 文件内容）；返回
+    /// （新文本，首次安装要记下的原值）。必须幂等：inspect 靠「再编辑一次不变」判断已安装。
+    fn edit_hook_file(
+        &self,
+        _installation: &Installation,
+        text: &str,
+        _reporter: &str,
+        _enabled: bool,
+        _saved: Option<&str>,
+    ) -> Result<(String, Option<String>), String> {
+        Ok((text.to_owned(), None))
+    }
+    /// 记录被 [`Self::edit_hook_file`] 改掉的用户原值的托管文件（相对 data_dir）。只在首次安装时写，
+    /// 卸载还原后删除；不参与「是否已安装」的比对（安装后已看不到原值，无法重算）。
+    fn saved_settings_rel(&self) -> Option<&'static str> {
+        None
+    }
+    /// 其余整文件托管的附加文件（相对 data_dir，如 gemini 的放行策略）。正文必须含 [`MANAGED_MARK`]。
+    fn managed_file_rels(&self) -> &'static [&'static str] {
+        &[]
+    }
+    fn managed_file_body(
+        &self,
+        _installation: &Installation,
+        _relative: &str,
+        _reporter: &str,
+    ) -> Result<String, String> {
+        Err("lead/asset_path_invalid".into())
     }
 }
 
@@ -222,6 +254,23 @@ pub fn windows_hook_command(
     }
     Ok(format!("powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \"& '{}' lead {mode} --provider {}\"", reporter.replace('\'',"''"),spec.provider))
 }
+/// 原生 TUI 关卡等待器命令的固定前缀（不含 `--session <id>`）。reporter 生成命令、插件生成放行规则
+/// 共用这一处，两边一字不差才能让规则命中。
+///
+/// - kimi 的 Bash 在 Windows 上是 Git Bash `sh -c`：路径用正斜杠、双引号包住；正斜杠也让 kimi
+///   permission 规则（picomatch）里不出现反斜杠（它在 picomatch 里是转义符）。
+/// - gemini 在 Windows 上用 PowerShell 执行 shell 命令（0.68 getShellConfiguration）：`& '路径'`。
+pub fn waiter_command_prefix(provider: &str, reporter: &str) -> String {
+    let tail = format!("lead wait --provider {provider}");
+    if provider == "gemini" && cfg!(windows) {
+        format!("& '{}' {tail}", reporter.replace('\'', "''"))
+    } else if provider == "gemini" {
+        format!("'{}' {tail}", reporter.replace('\'', r"'\''"))
+    } else {
+        format!("\"{}\" {tail}", reporter.replace('\\', "/"))
+    }
+}
+
 pub fn managed_command(command: &str, provider: &str) -> bool {
     let Some((path, args)) = crate::config::parse_hook_command(command) else {
         return false;
@@ -235,7 +284,7 @@ pub fn managed_command(command: &str, provider: &str) -> bool {
     matches!(basename.as_str(), "meowo-reporter" | "meowo-reporter.exe")
         && args.len() == 4
         && args[0] == "lead"
-        && matches!(args[1].as_str(), "session" | "claim" | "stop")
+        && matches!(args[1].as_str(), "session" | "claim" | "stop" | "gate")
         && args[2] == "--provider"
         && args[3] == provider
 }
@@ -403,6 +452,26 @@ fn hook_edit(
     }
 }
 
+/// hook 编辑 + 插件的附加编辑（同一文件）。
+fn full_edit(
+    cap: &dyn LeadCap,
+    installation: &Installation,
+    spec: &LeadInstallSpec,
+    before: &str,
+    reporter: &str,
+    enabled: bool,
+) -> Result<(String, Option<String>), String> {
+    let after = hook_edit(cap, spec, before, reporter, enabled)?;
+    if matches!(spec.format, LeadHookFormat::Plugin) {
+        return Ok((after, None));
+    }
+    let saved = match cap.saved_settings_rel() {
+        Some(relative) => read(&asset_path(&installation.data_dir, relative)?)?,
+        None => None,
+    };
+    cap.edit_hook_file(installation, &after, reporter, enabled, saved.as_deref())
+}
+
 struct WritePlan {
     path: PathBuf,
     before: Option<String>,
@@ -491,6 +560,23 @@ pub fn install(
             backup: false,
         });
     }
+    for relative in cap.managed_file_rels() {
+        let path = asset_path(&installation.data_dir, relative)?;
+        let before = read(&path)?;
+        if before
+            .as_ref()
+            .is_some_and(|text| !text.contains(MANAGED_MARK))
+        {
+            return Err("lead/user_file_exists".into());
+        }
+        let body = cap.managed_file_body(installation, relative, reporter)?;
+        plans.push(WritePlan {
+            path,
+            before,
+            after: Some(body),
+            backup: false,
+        });
+    }
     let path = asset_path(&installation.data_dir, spec.hook_rel)?;
     let existing = read(&path)?;
     if matches!(spec.format, LeadHookFormat::Plugin)
@@ -507,7 +593,19 @@ pub fn install(
             String::new()
         }
     });
-    let after = hook_edit(cap, spec, &before, reporter, true)?;
+    let (after, record) = full_edit(cap, installation, spec, &before, reporter, true)?;
+    if let (Some(record), Some(relative)) = (record, cap.saved_settings_rel()) {
+        let saved = asset_path(&installation.data_dir, relative)?;
+        // 原值只记第一次：重装/刷新时配置里已是 Meowo 写的值，再记就把用户原值冲掉了。
+        if read(&saved)?.is_none() {
+            plans.push(WritePlan {
+                path: saved,
+                before: None,
+                after: Some(record),
+                backup: false,
+            });
+        }
+    }
     let extra = cap.extra_config(installation, &before, &after, true)?;
     plans.push(WritePlan {
         path,
@@ -542,6 +640,17 @@ pub fn uninstall(cap: &dyn LeadCap, installation: &Installation) -> Result<(), S
             });
         }
     }
+    for relative in cap.managed_file_rels() {
+        let path = asset_path(&installation.data_dir, relative)?;
+        if managed_file(&path) {
+            plans.push(WritePlan {
+                before: read(&path)?,
+                path,
+                after: None,
+                backup: false,
+            });
+        }
+    }
     let path = asset_path(&installation.data_dir, spec.hook_rel)?;
     if let Some(before) = read(&path)? {
         if matches!(spec.format, LeadHookFormat::Plugin) {
@@ -554,7 +663,7 @@ pub fn uninstall(cap: &dyn LeadCap, installation: &Installation) -> Result<(), S
                 });
             }
         } else {
-            let after = hook_edit(cap, spec, &before, "", false)?;
+            let (after, _) = full_edit(cap, installation, spec, &before, "", false)?;
             for change in cap.extra_config(installation, &before, &after, false)? {
                 plans.push(WritePlan {
                     path: change.path,
@@ -568,6 +677,18 @@ pub fn uninstall(cap: &dyn LeadCap, installation: &Installation) -> Result<(), S
                 before: Some(before),
                 after: Some(after),
                 backup: true,
+            });
+        }
+    }
+    // 还原完原值才删记录：上面的编辑已在规划时读过它。
+    if let Some(relative) = cap.saved_settings_rel() {
+        let saved = asset_path(&installation.data_dir, relative)?;
+        if let Some(before) = read(&saved)? {
+            plans.push(WritePlan {
+                path: saved,
+                before: Some(before),
+                after: None,
+                backup: false,
             });
         }
     }
@@ -599,12 +720,22 @@ pub fn inspect(
         .ok()
         .flatten()
         .is_some_and(|before| {
-            hook_edit(cap, spec, &before, reporter, true).is_ok_and(|after| {
+            full_edit(cap, installation, spec, &before, reporter, true).is_ok_and(|(after, _)| {
                 after == before
                     && cap
                         .extra_config(installation, &before, &after, true)
                         .is_ok_and(|changes| changes.is_empty())
             })
+        })
+        && cap.managed_file_rels().iter().all(|relative| {
+            cap.managed_file_body(installation, relative, reporter)
+                .is_ok_and(|body| {
+                    read(&installation.data_dir.join(relative))
+                        .ok()
+                        .flatten()
+                        .as_ref()
+                        == Some(&body)
+                })
         });
     let activation_issue = cap.activation_issue(installation);
     LeadInstallState {
@@ -636,7 +767,11 @@ pub fn managed_present(cap: &dyn LeadCap, installation: &Installation) -> bool {
     };
     if [spec.skill_rel, spec.reviewer_rel]
         .iter()
+        .chain(cap.managed_file_rels())
         .any(|relative| managed_file(&installation.data_dir.join(relative)))
+        || cap
+            .saved_settings_rel()
+            .is_some_and(|relative| installation.data_dir.join(relative).is_file())
     {
         return true;
     }
@@ -645,7 +780,8 @@ pub fn managed_present(cap: &dyn LeadCap, installation: &Installation) -> bool {
     };
     match spec.format {
         LeadHookFormat::Plugin => before.contains(MANAGED_MARK),
-        _ => hook_edit(cap, spec, &before, "", false).is_ok_and(|after| after != before),
+        _ => full_edit(cap, installation, spec, &before, "", false)
+            .is_ok_and(|(after, _)| after != before),
     }
 }
 
