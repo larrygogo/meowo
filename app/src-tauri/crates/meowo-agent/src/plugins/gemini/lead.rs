@@ -37,6 +37,13 @@ const SPEC: LeadInstallSpec = LeadInstallSpec {
             mode: "session",
             timeout: 5000,
         },
+        // 子代理（invoke_agent 在跑期间）写挂起关卡时拦下（reporter gemini_gate_guard）：0.68 子代理
+        // 与主 agent 共用 hook 载荷，分不出谁在写，只能按 invoke_agent 的起止认。
+        LeadHook {
+            event: "BeforeTool",
+            mode: "gate",
+            timeout: 5000,
+        },
         LeadHook {
             event: "AfterTool",
             mode: "claim",

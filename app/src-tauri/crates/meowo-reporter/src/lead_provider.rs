@@ -114,7 +114,12 @@ fn normalize(provider: Provider, raw: &Value) -> Option<Native> {
             ),
             Provider::Gemini => matches!(
                 event,
-                "SessionStart" | "BeforeAgent" | "BeforeModel" | "AfterTool" | "AfterAgent"
+                "SessionStart"
+                    | "BeforeAgent"
+                    | "BeforeModel"
+                    | "BeforeTool"
+                    | "AfterTool"
+                    | "AfterAgent"
             ),
             Provider::OpenCode => false,
         };
@@ -383,11 +388,15 @@ pub fn run(provider: &str, mode: &str, raw: &str, registry: &Path) -> Output {
     if !matches!(mode, "session" | "claim" | "stop" | "gate") {
         return Output::default();
     }
-    if mode == "claim" && !raw.contains(".lead") && !raw.contains("lead wait --provider gemini") {
+    if mode == "claim"
+        && !raw.contains(".lead")
+        && !raw.contains("lead wait --provider gemini")
+        && !raw.contains(GEMINI_AGENT_TOOL)
+    {
         return Output::default();
     }
-    // PreToolUse 每次工具调用都会跑：不碰关卡文件的直接放行。
-    if mode == "gate" && !raw.contains("gate.json") {
+    // PreToolUse / BeforeTool 每次工具调用都会跑：不碰关卡文件、也不是派子代理的直接放行。
+    if mode == "gate" && !raw.contains("gate.json") && !raw.contains(GEMINI_AGENT_TOOL) {
         return Output::default();
     }
     std::panic::catch_unwind(|| run_inner(provider, mode, raw, registry)).unwrap_or_default()
@@ -407,15 +416,29 @@ fn run_inner(provider: &str, mode: &str, raw: &str, registry: &Path) -> Output {
         .as_str()
         .unwrap_or_default()
         .to_string();
+    if provider == Provider::Gemini && matches!(native.event.as_str(), "BeforeAgent" | "AfterAgent") {
+        // 主回合开始/结束时不可能有子代理在跑（gemini 子代理在主回合的 invoke_agent 调用里同步执行）：
+        // 清掉可能残留的标记（invoke_agent 被取消时不一定有 AfterTool）。这两个事件只由主客户端触发
+        // （0.68 GeminiClient.fireBeforeAgentHookSafe / fireAfterAgentHookSafe）。
+        subagents_clear(registry, &session);
+    }
     if mode == "gate" {
-        return if provider == Provider::Kimi && native.event == "PreToolUse" {
-            kimi_gate_guard(&native, &raw, &session, registry).unwrap_or_default()
-        } else {
-            Output::default()
+        return match (provider, native.event.as_str()) {
+            (Provider::Kimi, "PreToolUse") => {
+                kimi_gate_guard(&native, &raw, &session, registry).unwrap_or_default()
+            }
+            (Provider::Gemini, "BeforeTool") => {
+                gemini_gate_guard(&native, &raw, &session, registry).unwrap_or_default()
+            }
+            _ => Output::default(),
         };
     }
     if mode == "claim" {
         if provider == Provider::Gemini {
+            if string(&raw, "tool_name") == Some(GEMINI_AGENT_TOOL) {
+                subagent_leave(registry, &session, &raw);
+                return Output::default();
+            }
             if let Some(out) = gemini_waiter_started(&raw, &session) {
                 return out;
             }
@@ -454,7 +477,8 @@ fn run_inner(provider: &str, mode: &str, raw: &str, registry: &Path) -> Output {
             state.calls.remove(0);
         }
         let _ = save_state(&task, provider, &state);
-        if provider == Provider::Gemini && gate_written {
+        // 子代理写的关卡不给它起等待器（BeforeTool 本该已拦下，这里兜住没拦到的写法）。
+        if provider == Provider::Gemini && gate_written && !subagents_running(registry, &session) {
             if let Some(tail) = gemini_waiter_tail(&task, &session) {
                 return tail;
             }
@@ -635,6 +659,20 @@ fn run_inner(provider: &str, mode: &str, raw: &str, registry: &Path) -> Output {
 /// 拦下写 gate.json（status 为 pending）的调用，原因里给出原样等待命令，模型后台启动它后重写关卡。
 /// 等待器先启动时会等下一个挂起关卡出现再绑定（lead_waiter）。只拦本会话的任务，别人的任务不管。
 fn kimi_gate_guard(native: &Native, raw: &Value, session: &str, registry: &Path) -> Option<Output> {
+    kimi_gate_guard_with(native, raw, session, registry, crate::lead_kimi::writer_is_subagent)
+}
+
+/// 子代理写挂起关卡：直接拒绝并说明。不给等待命令——子代理拿到命令会自己在后台跑，答复就进了
+/// 子代理（第二轮真机 run5 D）。kimi 2.6 的载荷分不出子代理，判定见 [`crate::lead_kimi`]。
+const SUBAGENT_GATE_DENIED: &str = "[lead] 关卡只由主会话发：子代理不要写挂起的 gate.json，也不要启动关卡等待命令。把需要 leader 决定的问题写进你交回主会话的结果里，由主会话去发关卡。";
+
+fn kimi_gate_guard_with(
+    native: &Native,
+    raw: &Value,
+    session: &str,
+    registry: &Path,
+    writer_is_subagent: impl Fn(&str) -> bool,
+) -> Option<Output> {
     let name = string(raw, "tool_name")?;
     let input = raw.get("tool_input")?;
     let (target, body) = match name {
@@ -666,6 +704,14 @@ fn kimi_gate_guard(native: &Native, raw: &Value, session: &str, registry: &Path)
         json!({"file_path": target})
     };
     let task = claim_target(&data)?;
+    // 先认子代理、再认领：子代理不能借写关卡把任务认到自己名下（同一个 session_id）。
+    if writer_is_subagent(session) {
+        return Some(Output {
+            stderr: Some(SUBAGENT_GATE_DENIED.into()),
+            exit: 2,
+            stdout: None,
+        });
+    }
     // 先认领：等待器按会话找任务，模型下一步就要启动它。
     if !reserve_owner(&task, session) {
         return None;
@@ -699,6 +745,115 @@ fn kimi_gate_guard(native: &Native, raw: &Value, session: &str, registry: &Path)
         exit: 2,
         stdout: None,
     })
+}
+
+/// gemini 0.68 派子代理的唯一工具（agent-tool.js `AGENT_TOOL_NAME = "invoke_agent"`，Kind.Agent）。
+const GEMINI_AGENT_TOOL: &str = "invoke_agent";
+
+/// gemini：主 agent 的 invoke_agent 在跑期间，写挂起关卡的只能是子代理——拦下。
+///
+/// 为什么靠「invoke_agent 起止」认子代理：0.68 子代理（LocalAgentExecutor）与主 agent 共用同一个
+/// config 与 HookSystem，hook 载荷（createBaseInput：session_id / transcript_path / cwd）完全相同，
+/// 没有 agent 身份；子代理的工具表剔除了 Kind.Agent，不会再派孙代理；主 agent 调 invoke_agent 时
+/// 自己卡在这次调用里，不会并行写关卡。BeforeTool 在审批之前同步执行（scheduler evaluateBeforeToolHook），
+/// `decision: deny` 会把原因作为工具错误交给模型。
+fn gemini_gate_guard(
+    native: &Native,
+    raw: &Value,
+    session: &str,
+    registry: &Path,
+) -> Option<Output> {
+    let name = string(raw, "tool_name")?;
+    let input = raw.get("tool_input")?;
+    if name == GEMINI_AGENT_TOOL {
+        subagent_enter(registry, session, raw);
+        return None;
+    }
+    if !subagents_running(registry, session) {
+        return None;
+    }
+    let (target, body) = match name {
+        "write_file" => (
+            string(input, "file_path")?,
+            string(input, "content").unwrap_or_default().to_owned(),
+        ),
+        "replace" => (string(input, "file_path")?, input.to_string()),
+        "run_shell_command" => {
+            let command = string(input, "command")?;
+            if !lead::shell_writes(command) {
+                return None;
+            }
+            (command, command.to_owned())
+        }
+        _ => return None,
+    };
+    if !target.replace('\\', "/").contains("gate.json") || !body.contains("pending") {
+        return None;
+    }
+    let mut data = native.data.clone();
+    data["tool_input"] = if name == "run_shell_command" {
+        json!({"command": target})
+    } else {
+        json!({"file_path": target})
+    };
+    claim_target(&data)?;
+    Some(Output {
+        stdout: Some(json!({"decision":"deny","reason":SUBAGENT_GATE_DENIED}).to_string()),
+        ..Output::default()
+    })
+}
+
+/// 子代理在跑的标记：`<registry 目录>/lead-subagents/<session>/<调用指纹>`，一次 invoke_agent 一个文件
+/// （BeforeTool 建、AfterTool 删）。并行派多个子代理时各自独立，不用计数器、不怕并发 hook 互踩。
+/// 载荷里没有调用 id，指纹取参数（agent_name + prompt）的哈希；同参数的两次并行调用会共用一个，
+/// 先结束的那个会提前撤标记，只是少拦，不会误拦主 agent。
+fn subagents_dir(registry: &Path, session: &str) -> Option<PathBuf> {
+    let safe = !session.is_empty()
+        && session
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'));
+    safe.then(|| {
+        registry
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("lead-subagents")
+            .join(session)
+    })
+}
+
+fn call_fingerprint(raw: &Value) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    raw.get("tool_input")
+        .map(Value::to_string)
+        .unwrap_or_default()
+        .hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
+fn subagent_enter(registry: &Path, session: &str, raw: &Value) {
+    if let Some(dir) = subagents_dir(registry, session) {
+        let _ = fs::create_dir_all(&dir);
+        let _ = fs::write(dir.join(call_fingerprint(raw)), "");
+    }
+}
+
+fn subagent_leave(registry: &Path, session: &str, raw: &Value) {
+    if let Some(dir) = subagents_dir(registry, session) {
+        let _ = fs::remove_file(dir.join(call_fingerprint(raw)));
+    }
+}
+
+fn subagents_clear(registry: &Path, session: &str) {
+    if let Some(dir) = subagents_dir(registry, session) {
+        let _ = fs::remove_dir_all(dir);
+    }
+}
+
+fn subagents_running(registry: &Path, session: &str) -> bool {
+    subagents_dir(registry, session)
+        .and_then(|dir| fs::read_dir(dir).ok())
+        .is_some_and(|mut entries| entries.next().is_some())
 }
 
 fn touches_gate(call: &Value) -> bool {

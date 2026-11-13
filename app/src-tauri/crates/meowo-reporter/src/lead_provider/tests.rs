@@ -539,3 +539,59 @@ fn kimi_pre_tool_use_requires_a_waiter_before_writing_a_pending_gate() {
     // 不碰 gate.json 的调用走快速路径。
     assert_eq!(call(&e, "kimi", "gate", json!({"hook_event_name":"PreToolUse","session_id":"session_k2","cwd":e.root.path(),"client_type":"kimi_code_cli","tool_name":"Bash","tool_input":{"command":"ls"}})), Output::default());
 }
+
+/// 第二轮真机 run5 D：kimi 2.6 的子代理写挂起关卡时，hook 载荷与主 agent 一模一样（没有 agent 身份）。
+/// 认出是子代理（主 wire：前台子代理在跑）就直接拒绝，原因里不给等待命令，也不认领任务。
+#[test]
+fn kimi_subagent_writing_a_pending_gate_is_denied_without_a_waiter_command() {
+    let e = env();
+    let gate = e.task.join("gate.json");
+    let raw = json!({"hook_event_name":"PreToolUse","session_id":"session_k3","cwd":e.root.path(),"client_type":"kimi_code_cli","tool_name":"Write","tool_input":{"path":gate,"content":r#"{"id":"Q-1","type":"Q","title":"t","status":"pending"}"#}});
+    let native = normalize(Provider::Kimi, &raw).unwrap();
+    let out = kimi_gate_guard_with(&native, &raw, "session_k3", &e.registry, |_| true).unwrap();
+    assert_eq!(out.exit, 2);
+    let reason = out.stderr.unwrap();
+    assert!(reason.contains("关卡只由主会话发"), "{reason}");
+    assert!(!reason.contains("lead wait"), "不能把等待命令给子代理：{reason}");
+    assert!(!e.task.join(".owner").exists(), "子代理不能借写关卡认领任务");
+    // 主 agent 写：照旧要求先起等待器。
+    let out = kimi_gate_guard_with(&native, &raw, "session_k3", &e.registry, |_| false).unwrap();
+    assert!(out.stderr.unwrap().contains("lead wait --provider kimi --session session_k3"));
+}
+
+/// gemini 0.68 子代理与主 agent 共用 hook 载荷：按主 agent 的 invoke_agent 起止认。期间写挂起关卡被
+/// BeforeTool 拒绝、AfterTool 也不起等待器；invoke_agent 结束（或主回合起止）后主 agent 照常。
+#[test]
+fn gemini_subagent_cannot_write_a_pending_gate_while_invoke_agent_runs() {
+    let e = env();
+    call(&e, "gemini", "session", prompt(&e, "gemini", "g-2", "开始"));
+    call(&e, "gemini", "claim", claim(&e, "gemini", "g-2"));
+    let gate = e.task.join("gate.json");
+    let agent = |event: &str| json!({"hook_event_name":event,"session_id":"g-2","cwd":e.root.path(),"tool_name":"invoke_agent","tool_input":{"agent_name":"generalist","prompt":"写关卡"},"tool_response":{"llmContent":"done"}});
+    let write = json!({"hook_event_name":"BeforeTool","session_id":"g-2","cwd":e.root.path(),"tool_name":"write_file","tool_input":{"file_path":gate,"content":r#"{"id":"Q-1","type":"Q","title":"t","status":"pending"}"#}});
+    // 没有子代理：BeforeTool 放行。
+    assert_eq!(call(&e, "gemini", "gate", write.clone()), Output::default());
+    // 主 agent 派出子代理：期间写挂起关卡被拒，原因交给模型。
+    assert_eq!(call(&e, "gemini", "gate", agent("BeforeTool")), Output::default());
+    let out: Value = serde_json::from_str(&call(&e, "gemini", "gate", write.clone()).stdout.unwrap()).unwrap();
+    assert_eq!(out["decision"], "deny");
+    assert!(out["reason"].as_str().unwrap().contains("关卡只由主会话发"));
+    // 消费关卡、写别的文件不拦。
+    let mut consume = write.clone();
+    consume["tool_input"]["content"] = json!(r#"{"id":"Q-1","status":"consumed"}"#);
+    assert_eq!(call(&e, "gemini", "gate", consume), Output::default());
+    // 子代理以别的写法写进去了：AfterTool 不给它起等待器。
+    fs::write(&gate, r#"{"id":"Q-1","type":"Q","title":"t","status":"pending","options":[{"id":"go","label":"Go"}]}"#).unwrap();
+    let after = json!({"hook_event_name":"AfterTool","session_id":"g-2","cwd":e.root.path(),"tool_name":"write_file","tool_input":{"file_path":gate,"content":"{}"},"tool_response":{"llmContent":"File written."}});
+    let out = call(&e, "gemini", "claim", after.clone());
+    assert!(out.stdout.is_none_or(|text| !text.contains("tailToolCallRequest")));
+    // invoke_agent 结束：主 agent 写关卡照常（BeforeTool 放行、AfterTool 起等待器）。
+    assert_eq!(call(&e, "gemini", "claim", agent("AfterTool")), Output::default());
+    assert_eq!(call(&e, "gemini", "gate", write.clone()), Output::default());
+    assert!(call(&e, "gemini", "claim", after).stdout.unwrap().contains("tailToolCallRequest"));
+    // invoke_agent 被取消、没有 AfterTool：主回合起止清掉残留标记，不误拦主 agent。
+    call(&e, "gemini", "gate", agent("BeforeTool"));
+    assert_ne!(call(&e, "gemini", "gate", write.clone()), Output::default());
+    call(&e, "gemini", "stop", stop(&e, "gemini", "g-2", "开始"));
+    assert_eq!(call(&e, "gemini", "gate", write), Output::default());
+}

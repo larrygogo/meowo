@@ -12,13 +12,19 @@
 //! - kimi 2.6.0（kimi.exe 内嵌源码 agent loop）：后台任务结束走 completeDetached → drainDetachedCompletions，
 //!   把通知当一条 notify 提示排进**启动该任务的那个 agent loop** 的 mailbox（mailbox.queue），只在
 //!   canSchedule()（phase === "idle"、未 held、无待完成任务）时才开新回合。审批走权限服务，不读 mailbox；
-//!   回合挂在审批上时 phase 不是 idle，通知只排队。等待器只由主 agent 启动：reporter 的 hook 对带
-//!   agent_id / agentId≠main 的载荷一律不处理（lead_provider::normalize），子代理拿不到等待命令。
+//!   回合挂在审批上时 phase 不是 idle，通知只排队。
+//!   **子代理**：原先假设「hook 对带 agent_id 的载荷不处理，子代理拿不到等待命令」不成立——kimi 2.6 的
+//!   hook 载荷根本不带 agent 身份，子代理写挂起关卡时照样被要求启动等待器，答复通知进了子代理的 loop
+//!   （第二轮真机 run5 D）。现在两道闸：PreToolUse 按主 wire 认出子代理在写、直接拒绝并说明「关卡由主
+//!   会话发」（reporter lead_kimi / kimi_gate_guard）；等待器按自己的父进程链对各 agent wire 里的
+//!   task.started，认出是子代理启动的就不等、不交付（lead_waiter Guards）。
 //! - gemini 0.68.0（interactiveCli-ZJ2ZELJM.js:35141 起的空闲 effect）：只在 streamingState === idle、
 //!   MCP 就绪、且 !isToolAwaitingConfirmation(pendingHistoryItems) 时才把 background_completion 注入
 //!   提交成新回合；提交的是单独构造的提示，不动输入框缓冲（草稿保留，假模型实测）。注入服务是会话级，
-//!   只有主界面消费。**没有守卫的**：/settings、认证等对话框打开时它照样提交（同一 effect 不检查
-//!   对话框状态）；等待器在后台进程里看不到 TUI 画面、hook 也拿不到对话框状态，宿主侧做不到事前检测。
+//!   主界面空闲时一定消费（InjectionService 对所有监听者广播，在跑的子代理也会收到一份，但主界面不会漏）。
+//!   0.68 子代理与主 agent 共用 hook 载荷，同样分不出谁在写；改按主 agent 的 invoke_agent 起止认，
+//!   期间写挂起关卡的 BeforeTool 直接拒绝（reporter gemini_gate_guard）。
+//!   **没有守卫的**：/settings、认证等对话框打开时它照样提交（同一 effect 不检查对话框状态）；等待器在后台进程里看不到 TUI 画面、hook 也拿不到对话框状态，宿主侧做不到事前检测。
 use super::{NativeOutcome, NativeTarget};
 use std::path::{Path, PathBuf};
 
