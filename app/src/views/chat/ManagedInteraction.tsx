@@ -50,20 +50,35 @@ export function ManagedInteraction({ sessionId, interaction, onResolved }: {
   </ApprovalCard>;
 }
 
+/// 托管会话的投递回执，照原生排队区（chat-queued-*）的样子画在对话末尾：
+/// - 已发出（accepted/consumed/completed）：消息已作为气泡出现在对话里，不再重复挂一条；
+/// - 排队/送达中：淡一档的用户气泡 + 小灰字状态；
+/// - 结果未确认/失败：警示色状态 + 原因（悬停看）+ 小号次要按钮。
+/// 此前是一条裸文本 + 三个大按钮，正常处理中也常驻（leader 截图：「这个界面怎么这么丑」，2026-11-13）。
+const SETTLED = new Set(["accepted", "consumed", "completed", "cancelled"]);
 export function ManagedDeliveryStatus({ deliveries, engineLive, onRestore, onRetry, onDismiss }: {
   deliveries: ManagedDeliveryDto[]; engineLive?: boolean; onRestore: (delivery: ManagedDeliveryDto) => void; onRetry: (delivery: ManagedDeliveryDto) => void; onDismiss: (delivery: ManagedDeliveryDto) => void;
 }) {
   const t = useT();
-  return <div className="chat-queued-list">
-    {deliveries.map((delivery) => <div className="chat-queued-item" key={delivery.deliveryId}>
-      <div>{delivery.origin === "lead" ? t.chat.engineLeadContinuation : delivery.state === "consumed" ? "" : delivery.text || t.chat.queuedAttachmentOnly}</div>
-      <span>{t.chat.engineDeliveryState(delivery.state)}</span>
-      {delivery.lastError && <span className="is-error">{formatBackendError(delivery.lastError, t.locale)}</span>}
-      {(["uncertain", "failed", "consumed"].includes(delivery.state)) && <>
-        {delivery.origin !== "lead" && <button type="button" className="sbtn" onClick={() => onRestore(delivery)}>{t.chat.engineRestoreDraft}</button>}
-        <button type="button" className="sbtn" onClick={() => onRetry(delivery)}>{engineLive ? t.chat.engineStopRetry : t.chat.engineRetryDelivery}</button>
-        <button type="button" className="sbtn" onClick={() => onDismiss(delivery)}>{engineLive ? t.chat.engineStopDismiss : t.chat.engineDismissDelivery}</button>
-      </>}
-    </div>)}
-  </div>;
+  const shown = deliveries.filter((delivery) => !SETTLED.has(delivery.state));
+  if (shown.length === 0) return null;
+  return <section className="chat-queued-stack" aria-label={t.chat.queueLabel}>
+    {shown.map((delivery) => {
+      const problem = delivery.state === "uncertain" || delivery.state === "failed";
+      const reason = delivery.lastError ? formatBackendError(delivery.lastError, t.locale) : undefined;
+      return <div className={"chat-queued-turn" + (problem ? " is-failed" : "")} key={delivery.deliveryId}>
+        <span className={"chat-queued-tag" + (problem ? " is-warn" : "")} role={problem ? "alert" : "status"} data-tip={reason}>
+          {delivery.state === "sending" && <span className="chat-model-spinner" aria-hidden="true" />}
+          {problem && reason ? reason : t.chat.engineDeliveryState(delivery.state)}
+        </span>
+        {problem && <>
+          <button type="button" className="chat-user-action" onClick={() => onRetry(delivery)}>{engineLive ? t.chat.engineStopRetry : t.chat.engineRetryDelivery}</button>
+          {delivery.origin !== "lead" && <button type="button" className="chat-user-action" onClick={() => onRestore(delivery)}>{t.chat.engineRestoreDraft}</button>}
+        </>}
+        <div className="chat-queued-bubble">{delivery.origin === "lead" ? t.chat.engineLeadContinuation : delivery.text || t.chat.queuedAttachmentOnly}</div>
+        {/* 忽略同原生排队区：气泡右侧的 ×，不再是第三颗文字按钮。 */}
+        {problem && <button type="button" className="chat-queued-dismiss" aria-label={engineLive ? t.chat.engineStopDismiss : t.chat.engineDismissDelivery} data-tip={engineLive ? t.chat.engineStopDismiss : t.chat.engineDismissDelivery} onClick={() => onDismiss(delivery)}>×</button>}
+      </div>;
+    })}
+  </section>;
 }

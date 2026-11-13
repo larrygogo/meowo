@@ -41,6 +41,16 @@ export function ManagedRecoveries({ sessionId }: { sessionId: number }) {
   const pending = useRef(false);
   const mounted = useRef(false);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  // 恢复记录是排障入口、极少用到：先悄悄查一条，没有就整个不画（此前常驻一颗大按钮，
+  // 点开还用正文大字写「暂无原生恢复记录」，leader 截图嫌丑，2026-11-13）。查询失败同样不画。
+  const [hasAny, setHasAny] = useState(false);
+  useEffect(() => {
+    let live = true;
+    managedConversationRecoveries(sessionId, null, 1)
+      .then((page) => { if (live) setHasAny(page.chunks.length > 0); })
+      .catch(() => {});
+    return () => { live = false; };
+  }, [sessionId]);
   const load = async (restart = false) => {
     if (pending.current) return;
     pending.current = true; setBusy(true); setError(null);
@@ -53,19 +63,23 @@ export function ManagedRecoveries({ sessionId }: { sessionId: number }) {
     } catch (reason) { if (mounted.current) setError(formatBackendError(reason, t.locale)); }
     finally { pending.current = false; if (mounted.current) setBusy(false); }
   };
-  return <section className="chat-native-recoveries">
-    <button type="button" className="sbtn" aria-expanded={open} onClick={() => { setOpen((value) => !value); if (!open) void load(true); }}>{t.chat.engineRecoveries}</button>
-    {open && <div role="region" aria-label={t.chat.engineRecoveries}>
-      {error && <div role="alert" className="chat-send-error">{error}<button type="button" className="sbtn" disabled={busy} onClick={() => void load()}>{t.chat.retryNow}</button></div>}
-      {loaded && !messages.length && <p>{t.chat.engineNoRecoveries}</p>}
+  if (!hasAny && !open) return null;
+  return <section className="chat-engine-recoveries">
+    <div className="chat-engine-gate">
+      <span data-tip={t.chat.engineRecoveries}>{t.chat.engineRecoveriesFound}</span>
+      <button type="button" className="chat-queued-interrupt" aria-expanded={open} onClick={() => { setOpen((value) => !value); if (!open) void load(true); }}>{open ? t.chat.close : t.chat.engineOpenRecoveries}</button>
+    </div>
+    {open && <div className="chat-engine-recovery-list" role="region" aria-label={t.chat.engineRecoveries}>
+      {error && <div role="alert" className="chat-send-error">{error}<button type="button" className="chat-queued-interrupt" disabled={busy} onClick={() => void load()}>{t.chat.retryNow}</button></div>}
+      {loaded && !messages.length && <p className="chat-engine-recovery-meta">{t.chat.engineNoRecoveries}</p>}
       {messages.map((message, index) => <article key={`${message.sequence}:${message.messageIndex}`}>
-        {(index === 0 || messages[index - 1].sequence !== message.sequence) && <p>{new Date(message.createdAt).toLocaleString(t.locale)}</p>}
-        <strong>{t.chat.engineRecoveryRole(message.role)}</strong>
+        {(index === 0 || messages[index - 1].sequence !== message.sequence) && <p className="chat-engine-recovery-meta">{new Date(message.createdAt).toLocaleString(t.locale)}</p>}
+        <p className="chat-engine-recovery-role">{t.chat.engineRecoveryRole(message.role)}</p>
         <pre className="chat-approval-input">{message.text}</pre>
-        {!message.complete && <p>{t.chat.engineRecoveryIncomplete}</p>}
+        {!message.complete && <p className="chat-engine-recovery-meta">{t.chat.engineRecoveryIncomplete}</p>}
       </article>)}
-      {cursor !== null && <button type="button" className="sbtn" disabled={busy} onClick={() => void load()}>{t.chat.engineMoreRecoveries}</button>}
-      {busy && <span role="status">{t.chat.engineLoadingRecoveries}</span>}
+      {cursor !== null && <button type="button" className="chat-queued-interrupt" disabled={busy} onClick={() => void load()}>{t.chat.engineMoreRecoveries}</button>}
+      {busy && <span className="chat-engine-recovery-meta" role="status">{t.chat.engineLoadingRecoveries}</span>}
     </div>}
   </section>;
 }

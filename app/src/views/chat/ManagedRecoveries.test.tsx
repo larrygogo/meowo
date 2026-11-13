@@ -22,13 +22,30 @@ it("rejects gaps and conflicting pages while preserving existing text", () => {
   expect(first[0].text).toBe("中文");
 });
 
-it("loads only on request and follows the native cursor in a separate region", async () => {
+// 2026-11-13 改定：挂载时只探一条，没有记录就整个不画（此前常驻一颗大按钮，leader 截图嫌丑）。
+it("renders nothing when the session has no native recovery records", async () => {
+  api.managedConversationRecoveries.mockResolvedValue({ chunks: [], nextCursor: null });
+  const { container } = render(<ManagedRecoveries sessionId={9} />);
+  await waitFor(() => expect(api.managedConversationRecoveries).toHaveBeenCalledWith(9, null, 1));
+  expect(container.innerHTML).toBe("");
+  expect(screen.queryByRole("button")).toBeNull();
+});
+
+it("renders nothing when the probe fails", async () => {
+  api.managedConversationRecoveries.mockRejectedValue("conversation/session_missing");
+  const { container } = render(<ManagedRecoveries sessionId={9} />);
+  await waitFor(() => expect(api.managedConversationRecoveries).toHaveBeenCalled());
+  expect(container.innerHTML).toBe("");
+});
+
+it("probes one record, then loads full pages on request and follows the native cursor in a separate region", async () => {
   const cursor = { sequence: 7, messageIndex: 0, textByteOffset: 6 };
   api.managedConversationRecoveries.mockResolvedValueOnce({ chunks: [chunk("中文", 0, false)], nextCursor: cursor })
+    .mockResolvedValueOnce({ chunks: [chunk("中文", 0, false)], nextCursor: cursor })
     .mockResolvedValueOnce({ chunks: [chunk("tail", 6, true)], nextCursor: null });
   render(<ManagedRecoveries sessionId={9} />);
-  expect(api.managedConversationRecoveries).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole("button"));
+  await waitFor(() => expect(api.managedConversationRecoveries).toHaveBeenCalledWith(9, null, 1));
+  fireEvent.click(await screen.findByRole("button"));
   await waitFor(() => expect(api.managedConversationRecoveries).toHaveBeenCalledWith(9, null, 50));
   await screen.findByText("中文");
   const buttons = screen.getAllByRole("button");

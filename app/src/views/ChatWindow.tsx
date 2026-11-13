@@ -4451,6 +4451,8 @@ export function ChatWindow() {
         {/* 排队中的插话是对话的「下一轮」，就排在它将要出现的地方（对照 Kimi 的 q-stack：
             运行行之下、右对齐、淡一档的用户气泡）。不像 Kimi 那样给拖拽排序和编辑——
             消息已经写进 CLI，队列归它管，界面只说真话：状态、升级为中断、撤掉回执。 */}
+        {/* 托管会话的投递回执与原生排队区同位同形（chat-queued-*），见 ManagedDeliveryStatus。 */}
+        {!loading && managedConversation && (history?.managedDeliveries?.length ?? 0) > 0 && <ManagedDeliveryStatus deliveries={history!.managedDeliveries!} onRestore={managedRestore} engineLive={history?.endable === true} onRetry={(delivery) => void managedDeliveryAction(delivery, "retry")} onDismiss={(delivery) => void managedDeliveryAction(delivery, "dismiss")} />}
         {!loading && queuedShown.length > 0 && (
           <section className="chat-queued-stack" aria-label={t.chat.queueLabel}>
             <div className="chat-queued-head">
@@ -4732,9 +4734,8 @@ export function ChatWindow() {
       {view === "chat" && managedConversation && <>
         <ManagedRecoveries key={sessionId} sessionId={sessionId} />
         {history?.managedError && <div className="chat-send-error" role="alert">{formatBackendError(history.managedError, t.locale)}</div>}
-        {managedQuiet && <div className="chat-remote-hint" role="status">{t.chat.engineQuiet}</div>}
-        {(["stopped", "failed"].includes(history?.managedPhase ?? "")) && <div className="chat-send-gate"><span>{t.chat.engineStopped}</span><button type="button" className="sbtn" onClick={() => void managedControl("resume")}>{t.chat.engineResume}</button></div>}
-        {(history?.managedDeliveries?.length ?? 0) > 0 && <ManagedDeliveryStatus deliveries={history!.managedDeliveries!} onRestore={managedRestore} engineLive={history?.endable === true} onRetry={(delivery) => void managedDeliveryAction(delivery, "retry")} onDismiss={(delivery) => void managedDeliveryAction(delivery, "dismiss")} />}
+        {managedQuiet && <div className="chat-engine-gate" role="status"><span>{t.chat.engineQuiet}</span></div>}
+        {(["stopped", "failed"].includes(history?.managedPhase ?? "")) && <div className="chat-engine-gate" role="status"><span>{t.chat.engineStopped}</span><button type="button" className="chat-queued-interrupt" onClick={() => void managedControl("resume")}>{t.chat.engineResume}</button></div>}
         {history?.managedInteraction && managedResolvedInteraction !== `${sessionId}:${history.managedInteraction.interactionId}` && <ManagedInteraction key={`${sessionId}:${history.managedInteraction.interactionId}`} sessionId={sessionId} interaction={history.managedInteraction} onResolved={() => { setManagedResolvedInteraction(`${sessionId}:${history.managedInteraction!.interactionId}`); void refreshRef.current(); }} />}
       </>}
       {view === "chat" && !managedConversation && !terminalAttention && approval && (
@@ -5227,12 +5228,12 @@ export function ChatWindow() {
             onMention={chatUi?.attachment_mention ? () => insertIntoPrompt("@") : undefined}
           />
           {managedConversation && <>
-            {(history?.managedModels?.length ?? 0) > 0 && <label className="chat-model">{t.chat.engineModel}<select aria-label={t.chat.engineModel} value={history?.model ?? ""} disabled={history?.managedPhase !== "ready"} onChange={(event) => { void managedConversationSetModel(sessionId, event.target.value).then(() => refreshRef.current()).catch((error) => setSendError(formatBackendError(error, t.locale))); }}>
+            {(history?.managedModels?.length ?? 0) > 0 && <label className="chat-model chat-engine-picker is-model"><select aria-label={t.chat.engineModel} value={history?.model ?? ""} disabled={history?.managedPhase !== "ready"} onChange={(event) => { void managedConversationSetModel(sessionId, event.target.value).then(() => refreshRef.current()).catch((error) => setSendError(formatBackendError(error, t.locale))); }}>
               <option value="" disabled>{history?.model ?? t.chat.engineChooseAnswer}</option>{history!.managedModels!.map((model) => <option key={model.id} value={model.id}>{model.label}</option>)}
-            </select></label>}
-            {(history?.managedModes?.length ?? 0) > 0 && history?.managedModeDimension && <label className="chat-model">{t.chat.engineMode}<select aria-label={t.chat.engineMode} value={history?.agentModes.find((mode) => mode.dimension === history.managedModeDimension)?.value ?? ""} disabled={history.managedPhase !== "ready"} onChange={(event) => { void managedConversationSetMode(sessionId, history.managedModeDimension!, event.target.value).then(() => refreshRef.current()).catch((error) => setSendError(formatBackendError(error, t.locale))); }}>
+            </select><Icon glyph={icChevronDown} size={12} className="chat-model-chevron" /></label>}
+            {(history?.managedModes?.length ?? 0) > 0 && history?.managedModeDimension && <label className="chat-model chat-engine-picker"><select aria-label={t.chat.engineMode} value={history?.agentModes.find((mode) => mode.dimension === history.managedModeDimension)?.value ?? ""} disabled={history.managedPhase !== "ready"} onChange={(event) => { void managedConversationSetMode(sessionId, history.managedModeDimension!, event.target.value).then(() => refreshRef.current()).catch((error) => setSendError(formatBackendError(error, t.locale))); }}>
               <option value="" disabled>{t.chat.engineChooseAnswer}</option>{history.managedModes!.map((mode) => <option key={mode.id} value={mode.id}>{mode.label}</option>)}
-            </select></label>}
+            </select><Icon glyph={icChevronDown} size={12} className="chat-model-chevron" /></label>}
           </>}
           {!managedConversation && (() => {
             const states = history?.agentModes ?? [];

@@ -55,3 +55,26 @@ it("user uncertain delivery preserves original text for an explicit draft restor
  fireEvent.click(screen.getByRole("button", { name: zh.chat.engineRestoreDraft }));
  expect(restore).toHaveBeenCalledWith(user);
 });
+
+// 2026-11-13 改定（leader 截图嫌丑）：已发出的投递消息已在对话里，不再重复挂一条；出问题时照原生排队区画，
+// 状态处写具体原因。兄弟场景：四种已发出状态都不画；排队中只有状态没有操作；失败显示原因与两个操作 + ×。
+it.each(["accepted", "consumed", "completed", "cancelled"])("%s delivery is already in the transcript and renders nothing", (state) => {
+ const { container } = render(<ManagedDeliveryStatus deliveries={[{ ...delivery, origin: "user", state }]} onRestore={vi.fn()} onRetry={vi.fn()} onDismiss={vi.fn()}/>);
+ expect(container.innerHTML).toBe("");
+});
+
+it("queued delivery shows a faded bubble and status without actions", () => {
+ render(<ManagedDeliveryStatus deliveries={[{ ...delivery, origin: "user", text: "next", state: "queued" }]} onRestore={vi.fn()} onRetry={vi.fn()} onDismiss={vi.fn()}/>);
+ expect(screen.getByText("next")).toBeTruthy();
+ expect(screen.getByText(zh.chat.engineDeliveryState("queued"))).toBeTruthy();
+ expect(screen.queryByRole("button")).toBeNull();
+});
+
+it("failed delivery names the reason and offers retry, restore and dismiss", () => {
+ const dismiss = vi.fn();
+ render(<ManagedDeliveryStatus deliveries={[{ ...delivery, origin: "user", text: "hi", state: "failed", lastError: "conversation/native_busy" }]} onRestore={vi.fn()} onRetry={vi.fn()} onDismiss={dismiss}/>);
+ expect(screen.getByRole("alert").textContent).toContain("服务繁忙");
+ expect(screen.getAllByRole("button")).toHaveLength(3);
+ fireEvent.click(screen.getByRole("button", { name: zh.chat.engineDismissDelivery }));
+ expect(dismiss).toHaveBeenCalled();
+});

@@ -730,6 +730,8 @@ export const en: Dict = {
     engineQuiet: "No response for 45s. The service may be busy",
     engineRecoveries: "Native recovery records (may include already displayed passages)",
     engineLoadRecoveries: "View native recovery records",
+    engineRecoveriesFound: "This session has native recovery records",
+    engineOpenRecoveries: "View",
     engineMoreRecoveries: "Load more recovery content",
     engineRecoveryIncomplete: "This record is incomplete; load more to continue.",
     engineNoRecoveries: "No native recovery records",

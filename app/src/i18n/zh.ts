@@ -798,6 +798,8 @@ export const zh = {
     engineQuiet: "45 秒没有回应，服务可能繁忙",
     engineRecoveries: "原生恢复记录（可能包含已显示片段）",
     engineLoadRecoveries: "查看原生恢复记录",
+    engineRecoveriesFound: "这个会话有原生恢复记录",
+    engineOpenRecoveries: "查看",
     engineMoreRecoveries: "加载更多恢复内容",
     engineRecoveryIncomplete: "这段记录尚未读完，可继续加载。",
     engineNoRecoveries: "暂无原生恢复记录",

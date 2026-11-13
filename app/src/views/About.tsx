@@ -157,7 +157,8 @@ export function LeadProviderRows({ onInstalledChange }: { onInstalledChange?: (i
     const generation = ++request.current;
     const lifecycle = mounted.current;
     leadProviderInstallations().then((states) => {
-      if (lifecycle.active && generation === request.current) { setRows(states); setError(null); }
+      // 只认数组：旧后端或未知返回形状时按「没有」处理，不让设置窗整页渲染崩掉（合并 main 后的搜索测试暴露）。
+      if (lifecycle.active && generation === request.current) { setRows(Array.isArray(states) ? states : []); setError(null); }
     }).catch((reason) => {
       if (lifecycle.active && generation === request.current) setError(formatBackendError(reason, t.locale));
     });
