@@ -1709,6 +1709,10 @@ fn turn_context_settings(line: &str) -> Option<CodexSettings> {
 mod probe;
 
 #[cfg(test)]
+#[path = "tms_probe_codex.rs"]
+mod tms_probe_codex;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
