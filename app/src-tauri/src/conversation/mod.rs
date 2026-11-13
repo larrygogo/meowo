@@ -299,7 +299,10 @@ fn launch(state: &ManagedSession) -> Result<Launch, String> {
             meowo_agent::lead_install::inspect(cap, &installation, version.as_deref(), &reporter)
                 .installed
         });
-    let mut spec = cap.spec(&installation, version.as_deref())?;
+    let spec = cap.spec(&installation, version.as_deref())?;
+    // 只有测试编译需要改 spec；正式编译里 `let mut` 会触发 unused_mut（CI -D warnings）。
+    #[cfg(test)]
+    let mut spec = spec;
     #[cfg(test)]
     if plugin.id().as_str() == "gemini" {
         if let Some(model) =
