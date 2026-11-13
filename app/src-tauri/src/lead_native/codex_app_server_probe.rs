@@ -451,6 +451,30 @@ fn threads(db: &Path) -> Vec<(String, Option<String>, String)> {
         .collect()
 }
 
+/// 主 thread 最近一回合（完整条目），看拒绝审批后回合与命令条目记成什么状态。
+fn last_turn(db: &Path, thread: &str) -> Value {
+    let Some((dir, state)) = states(db).into_iter().next() else {
+        return Value::Null;
+    };
+    let token = std::fs::read_to_string(dir.join("token")).unwrap();
+    let mut client = ws::Client::connect(state.port, token.trim(), RPC_TIMEOUT).unwrap();
+    client
+        .call(
+            "initialize",
+            json!({"clientInfo": {"name": "meowo-probe", "version": "0"}}),
+            RPC_TIMEOUT,
+        )
+        .unwrap();
+    client.notify("initialized").unwrap();
+    client
+        .call(
+            "thread/turns/list",
+            json!({"threadId": thread, "limit": 1, "itemsView": "full"}),
+            RPC_TIMEOUT,
+        )
+        .unwrap_or(Value::Null)
+}
+
 fn rollouts(home: &Path) -> Vec<PathBuf> {
     let mut out = Vec::new();
     let mut stack = vec![home.join("sessions")];
@@ -737,8 +761,36 @@ fn codex_remote_probe() {
         let approve = std::env::var("MEOWO_PROBE_APPROVAL").as_deref() == Ok("approve");
         let decided = Instant::now();
         tui.send(if approve { "y" } else { "\x1b" });
-        let shown = tui.wait(120, |s| assistant_says(s, &gate_c));
+        // 模拟关卡巡检（生产每 10s 一次）：拒绝审批后由 kick_stalled 用 thread/queue/start 让排着的答复开跑。
+        let mut shown = false;
+        let mut patrols = 0;
+        let mut kicked_ms = None;
+        while decided.elapsed() < Duration::from_secs(120) {
+            if tui.wait(3, |s| assistant_says(s, &gate_c)) {
+                shown = true;
+                break;
+            }
+            crate::lead_conversation::reconcile_task(&probe.db, &task, None);
+            patrols += 1;
+            let key = delivery_key(&task, "Q-approval", &thread);
+            if kicked_ms.is_none()
+                && read_record(&probe.db, &key).is_some_and(|r| r.queue.as_deref() == Some("started"))
+            {
+                kicked_ms = Some(decided.elapsed().as_millis());
+            }
+        }
         let after = tui.text();
+        let queue_after = read_record(&probe.db, &delivery_key(&task, "Q-approval", &thread))
+            .and_then(|r| r.queue);
+        evidence["C_patrol"] = json!({
+            "lastTurn": last_turn(&probe.db, &thread),
+            "patrols": patrols, "kickedAtMs": kicked_ms, "queueState": queue_after,
+            "statusAfter": crate::lead_conversation::delivery_status(&probe.db, &probe.work.to_string_lossy(), "Q-approval").map(|s| s.state),
+            "fakeRequestsForNonce": fake_log.lock().unwrap().iter()
+                .filter(|r| r["reply"].as_str() == Some(gate_c.as_str()))
+                .map(|r| json!({"originator": r["originator"], "turnTrigger": r["turnTrigger"], "userAgent": r["userAgent"]}))
+                .collect::<Vec<_>>(),
+        });
         evidence["C_approval"] = json!({
             "nonce": gate_c, "approvalShown": pending, "answer": result, "status": status.state,
             "answerMs": answer_ms, "approvalStillPending5s": still_pending,

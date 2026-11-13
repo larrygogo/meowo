@@ -195,8 +195,12 @@ fn real() -> bool {
 }
 
 fn reporter() -> String {
-    let exe = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target-verify/debug/meowo-reporter.exe");
+    // 与 codex 探针同一取法：当前 CARGO_TARGET_DIR 下的 debug 构建。原先写死 `../../target-verify`
+    // 指到了仓库根，hook 全部跑不起来，随后的请求里多出一条 system 角色内容，假模型按真 API 回 400（2026-11-13）。
+    let exe = std::env::var("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target"))
+        .join("debug/meowo-reporter.exe");
     let exe = std::env::var("MEOWO_PROBE_REPORTER")
         .map(PathBuf::from)
         .unwrap_or(exe);
@@ -846,15 +850,22 @@ fn probe_gemini_tui_waiter() {
         "OPEN-GATE".into()
     };
     submit(&tui, &prompt3);
-    let waiter = gemini_wait_waiter(&sb, &tui, "Q-3", if real() { 240 } else { 60 })
-        .expect("第三个关卡的等待器");
+    let waiter = gemini_wait_waiter(&sb, &tui, "Q-3", if real() { 240 } else { 60 });
+    sb.save("gemini-3-waiting.txt", &tui.screen());
+    let waiter = waiter.expect("第三个关卡的等待器");
     if native.is_empty() {
         native = sb.owner();
         sb.register("gemini", &native);
     }
     assert!(tui.settle(4, 120), "回合应结束");
     submit(&tui, "/quit");
-    assert!(wait_until(30, || !tui.alive()), "TUI 应退出");
+    // 第二轮 P4：后台挂着等待器时 /quit 曾 20s 退不掉。记下退出耗时（等待器随启动它的 shell 被杀而退出）。
+    let quit_at = Instant::now();
+    let quit = wait_until(30, || !tui.alive());
+    let quit_ms = quit_at.elapsed().as_millis() as u64;
+    sb.save("gemini-3-quit.txt", &format!("quit_ms={quit_ms} exited={quit}\n{}", tui.screen()));
+    report.insert("quit".into(), json!({"quit_ms": quit_ms, "exited": quit}));
+    assert!(quit, "TUI 应退出");
     assert!(
         wait_until(15, || meowo_reporter::lead_waiter::process_started(
             waiter.pid
@@ -950,7 +961,12 @@ fn wait_waiter_approving(
         }
         let screen = tui.screen();
         if is_approval(&screen) {
-            let waiter = screen.contains("lead wait") || screen.contains("lead_wait");
+            // 只看审批框本身（最后一条分隔线之后）：上方滚动区里模型复述过等待命令，整屏匹配会把
+            // 「写 gate.json 要批」误判成等待器命令要批（第三轮 kimi D 实拍）。
+            let boxed = screen
+                .rfind("▶")
+                .map_or(screen.as_str(), |i| &screen[screen[..i].rfind("────").unwrap_or(0)..]);
+            let waiter = boxed.contains("lead wait") || boxed.contains("lead_wait");
             approvals.push(json!({"gate": gate, "waiterCommand": waiter, "screen": screen}));
             if waiter {
                 sb.save(&format!("waiter-prompted-{gate}.txt"), &screen);
@@ -997,6 +1013,47 @@ fn wait_approving(
 type ApprovalCheck = fn(&str) -> bool;
 
 /// 真模型第二轮（kimi / gemini 共用流程）：A 在线空闲 + B 草稿，C 待批审批，D 子代理，E TUI 不在 + 重开说继续。
+/// 等待器是在哪个 agent 的 wire 里以后台任务启动的（按 task.started 的 pid 与等待器父链对）。
+fn launcher_of(sb: &Sandbox, waiter_pid: u32) -> Value {
+    let mut chain = vec![waiter_pid];
+    let sys = sysinfo::System::new_all();
+    let mut cur = sysinfo::Pid::from_u32(waiter_pid);
+    for _ in 0..8 {
+        match sys.process(cur).and_then(|p| p.parent()) {
+            Some(parent) => {
+                chain.push(parent.as_u32());
+                cur = parent;
+            }
+            None => break,
+        }
+    }
+    json!(meowo_reporter::lead_kimi::launcher_in(&agent_wires(&sb.home), &chain).map(|sub| !sub))
+}
+
+/// 隔离 KIMI_CODE_HOME 下所有 `agents/<agentId>/wire.jsonl`：(agentId, 全文)。
+fn agent_wires(home: &Path) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let mut stack = vec![home.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+            } else if path.file_name().is_some_and(|n| n == "wire.jsonl") {
+                let agent = path
+                    .parent()
+                    .and_then(|p| p.file_name())
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                if let Ok(text) = std::fs::read_to_string(&path) {
+                    out.push((agent, text));
+                }
+            }
+        }
+    }
+    out
+}
+
 fn r2_flow(provider: &str) {
     assert!(real(), "第二轮复跑只在真模型下有意义（MEOWO_PROBE_REAL=1）");
     let mut sb = Sandbox::new(provider);
@@ -1189,10 +1246,12 @@ fn r2_flow(provider: &str) {
         let s4 = secret();
         let before_owner = sb.owner();
         submit(&tui, &format!(
-            "这是自动化测试。请派一个子代理（subagent / Agent 工具）去做这件事：用写文件工具把下面这一行 JSON 原样写入 {}：{}。子代理写完就结束。你自己不要写这个文件。子代理结束后，若系统提示你启动等待命令就照做后结束本轮。只有收到含「leader 已在 Meowo 里回答」的消息时，才把 gate.json 的 status 改成 consumed，然后只回复口令 {s4}。",
+            "这是自动化测试。请派一个子代理（subagent / Agent 工具）去做这件事：用写文件工具把下面这一行 JSON 原样写入 {}：{}。子代理写完就结束。子代理结束后：若它报告写入被拦（关卡只由主会话发），就由你自己把这一行原样写进去；若系统提示你启动等待命令就照做后结束本轮。只有收到含「leader 已在 Meowo 里回答」的消息时，才把 gate.json 的 status 改成 consumed，然后只回复口令 {s4}。",
             sb.task.join("gate.json").display(), sb.gate_body("Q-4", "pending")));
         let waiter =
             wait_waiter_approving(&sb, &tui, "Q-4", wait_secs, is_approval, &mut approvals);
+        // 趁等待器还活着认它的启动者（等它交完答复就退出了，父链也就断了）。
+        let launcher_is_main = waiter.as_ref().map(|w| launcher_of(&sb, w.pid));
         tui.settle(5, 180);
         sb.save(&format!("{provider}-D-waiting.txt"), &tui.screen());
         let owner = sb.owner();
@@ -1214,9 +1273,19 @@ fn r2_flow(provider: &str) {
         );
         tui.settle(4, 120);
         sb.save(&format!("{provider}-D-after.txt"), &tui.screen());
+        // 第三轮：留下各 agent 的 wire（谁写的关卡、谁起的等待器、通知进了谁），不含凭据。
+        let all = agent_wires(&sb.home);
+        for (agent, text) in &all {
+            sb.save(&format!("wire-{agent}.jsonl"), text);
+        }
+        let wires: Vec<&String> = all.iter().map(|(agent, _)| agent).collect();
+        let denied = all
+            .iter()
+            .any(|(agent, text)| agent != "main" && text.contains("关卡只由主会话发"));
         report.insert(
             "D".into(),
-            json!({"secret": s4, "ownerBefore": before_owner, "ownerAfter": owner,
+            json!({"secret": s4, "ownerBefore": before_owner, "ownerAfter": owner, "wires": wires,
+            "subagentDeniedInItsWire": denied, "waiterLauncherIsMain": launcher_is_main,
             "ownerIsMain": owner == native, "ownerRowInDb": row, "waiterStarted": waiter.is_some(),
             "answer": r, "status": status.map(|s| s.state), "woke": woke,
             "latency_ms": answered_at.elapsed().as_millis() as u64}),
