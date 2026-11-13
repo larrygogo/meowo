@@ -4810,7 +4810,8 @@ export function ChatWindow() {
             {resumePermissionPicker}
             <button
               type="button"
-              className="chat-send-takeover"
+              // 用官方 CLI 打开是正常主操作，用中性按钮（.sbtn）；红描边 .chat-send-takeover 留给接管这类破坏性动作。
+              className={retiredManaged ? "sbtn" : "chat-send-takeover"}
               disabled={sending}
               onClick={() => { if (externalRunning && !retiredManaged) void takeoverAndRetry(() => {}); else resumeForChat(); }}
             >{retiredManaged ? t.chat.managedRetiredOpenCli : externalRunning ? t.chat.terminalTakeover : t.chat.resumeSession}</button>
@@ -4953,7 +4954,10 @@ export function ChatWindow() {
           // 「尚未接管」占位只随 needsTakeover 翻：其它发送错误各有 sendError 条说明真实
           // 原因，占位符再跟着换成同一句话只会误导（此前任何错误都变「尚未接管」）。
           placeholder={
-            composerLocked
+            // 停用的托管会话：输入框锁着，占位直接说清楚还能怎么继续，别让它看起来能输入。
+            retiredManaged
+              ? (retiredManaged.resumable ? t.chat.managedRetiredInputResumable : t.chat.managedRetiredInputUnbound)
+              : composerLocked
               ? (remoteUi() ? t.chat.inputLockedRemote : t.chat.inputLocked)
               : needsTakeover && !history?.background
                 ? t.chat.inputUnavailable
@@ -5111,6 +5115,7 @@ export function ChatWindow() {
             onCommand={(chatUi?.slash_commands?.length ?? 0) > 0 ? () => insertIntoPrompt("/", true) : undefined}
             commandBlocked={prompt.trim().length > 0}
             onMention={chatUi?.attachment_mention ? () => insertIntoPrompt("@") : undefined}
+            disabled={retiredManaged != null}
           />
           {(() => {
             const states = history?.agentModes ?? [];

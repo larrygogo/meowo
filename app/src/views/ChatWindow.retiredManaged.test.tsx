@@ -61,7 +61,10 @@ describe("已停用的「Meowo 托管」会话", () => {
     render(<ChatWindow />);
     expect(await screen.findByText(zh.chat.managedRetired)).toBeTruthy();
     expect(screen.queryByText(zh.chat.composerGateEnded)).toBeNull();
+    expect((document.querySelector(".chat-compose textarea") as HTMLTextAreaElement).placeholder).toBe(zh.chat.managedRetiredInputResumable);
     const open = screen.getByRole("button", { name: zh.chat.managedRetiredOpenCli });
+    // 正常主操作用中性按钮，不用接管那种红描边。
+    expect(open.className).toBe("sbtn");
     fireEvent.click(open);
     await waitFor(() => expect(invoke.mock.calls.some(([command, args]) =>
       command === "start_managed_terminal" && (args as { sessionId: number }).sessionId === SESSION)).toBe(true));
@@ -73,7 +76,11 @@ describe("已停用的「Meowo 托管」会话", () => {
     expect(await screen.findByText(zh.chat.managedRetired)).toBeTruthy();
     expect(screen.queryByRole("button", { name: zh.chat.managedRetiredOpenCli })).toBeNull();
     expect(screen.queryByRole("button", { name: zh.chat.resumeSession })).toBeNull();
-    expect((document.querySelector(".chat-compose textarea") as HTMLTextAreaElement | null)?.disabled).toBe(true);
+    const input = document.querySelector(".chat-compose textarea") as HTMLTextAreaElement;
+    expect(input.disabled).toBe(true);
+    expect(input.placeholder).toBe(zh.chat.managedRetiredInputUnbound);
+    expect((document.querySelector(".chat-compose .chat-attach-button") as HTMLButtonElement).disabled).toBe(true);
+    expect((document.querySelector(".chat-compose .chat-send-button") as HTMLButtonElement).disabled).toBe(true);
     expect(invoke.mock.calls.some(([command]) => command === "start_managed_terminal")).toBe(false);
   });
 });

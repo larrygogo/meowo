@@ -1035,8 +1035,10 @@ export const zh = {
     sendNeedsTakeover: "会话在外部终端运行，接管会结束它",
     composerGateEnded: "会话已结束。恢复后即可继续对话。",
     // 已删除的「Meowo 托管」会话在旧库里只读保留（对话依托官方 CLI，leader 2026-11-13）。
-    managedRetired: "这种会话已停用",
+    managedRetired: "这种会话已停用，对话改用官方 CLI",
     managedRetiredOpenCli: "用官方 CLI 打开",
+    managedRetiredInputResumable: "已停用，用官方 CLI 打开后继续",
+    managedRetiredInputUnbound: "已停用，无法继续",
     // CLI 意外退出（二期 #7）：与后端 exit_report::crash_label 同文，灵动岛/通知里也是这句。
     agentCrashed: (code: number) => `Agent 意外退出（退出码 ${code}）`,
     resumeSession: "恢复会话",
