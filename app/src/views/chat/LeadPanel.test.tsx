@@ -66,6 +66,15 @@ describe("Lead 入口", () => {
     expect(screen.queryByRole("button", { name: "继续送达" })).toBeNull();
   });
 
+  // 做空指出：关卡归原生终端会话（codex/kimi/gemini/opencode）时，答复只保存不代投，面板此前什么都不显示。
+  it("原生终端会话的答复如实说下一步，不给看似能用的重试按钮", () => {
+    render(<LeadPanel task={task({ gate: gate("Q", { status: "answered" }), delivery: {
+      sessionId: 1, cwd: "C:/repo", deliveryId: "", state: "native_manual", reason: null, canRetry: false,
+    } })} onClose={() => {}} />);
+    expect(screen.getByText("回答已保存，在会话里发一句话即可继续")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "继续送达" })).toBeNull();
+  });
+
   it("暂停后显式继续使用关卡稳定标识，并展示恢复失败", async () => {
     retryDelivery.mockRejectedValue("conversation/previous_process_unverified");
     render(<LeadPanel task={task({ gate: gate("Q", { status: "answered" }), delivery: {

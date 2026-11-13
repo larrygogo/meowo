@@ -161,7 +161,9 @@ pub(crate) fn delivery_status(db: &Path, cwd: &str, gate_id: &str) -> Option<Lea
     let store = crate::open_store(db).ok()?;
     let native = owner(&task).ok()?;
     let id = store.find_session_id_pub(&native).ok()??;
-    let state = store.managed_state(id).ok()??;
+    let Some(state) = store.managed_state(id).ok()? else {
+        return native_session_status(&store, id, &task, gate_id, cwd);
+    };
     let key = current_delivery_key(&store, id, delivery_id(&task, gate_id, &native)).ok()?;
     let delivery = store.managed_delivery(id, &key).ok()?;
     let (status, reason) = match delivery {
@@ -190,6 +192,39 @@ pub(crate) fn delivery_status(db: &Path, cwd: &str, gate_id: &str) -> Option<Lea
         can_retry,
         state: status,
         reason,
+    })
+}
+
+/// 关卡归原生终端会话时的送达状态。答复只保存、不代投（不猜按键、不接管）；
+/// claude 的原生 wait hook 会自己唤醒模型，照旧不显示投递条。其余 provider 的原生 hook
+/// 不能自行开新回合（codex/kimi/gemini/opencode 实测），此前这里返回 None、面板什么都不说，
+/// 手机上答完的人以为模型会自己接着做（做空指出的静默降级）。如实说下一步：在会话里发一句话。
+fn native_session_status(
+    store: &meowo_store::Store,
+    id: i64,
+    task: &Path,
+    gate_id: &str,
+    project_cwd: &str,
+) -> Option<LeadDeliveryDto> {
+    let provider = store.session_provider(id).ok()?;
+    if meowo_agent::by_id(&provider).is_none() || provider == meowo_store::DEFAULT_PROVIDER {
+        return None;
+    }
+    let gate = meowo_reporter::lead::read_gate(task)?;
+    if gate.id != gate_id || gate.status != "answered" {
+        return None;
+    }
+    Some(LeadDeliveryDto {
+        session_id: id,
+        cwd: store
+            .session_cwd(id)
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| project_cwd.to_owned()),
+        delivery_id: String::new(),
+        can_retry: false,
+        state: "native_manual".into(),
+        reason: None,
     })
 }
 
@@ -438,5 +473,15 @@ mod tests {
         );
         assert!(store.managed_deliveries(f.id).unwrap().is_empty());
         assert!(store.managed_state(legacy).unwrap().is_none());
+        // claude 原生会话有自己的 wait hook 唤醒，面板不另挂投递条。
+        assert!(delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe").is_none());
+        // 其余 provider 的原生会话不会自行开新回合：如实告诉用户下一步，而不是什么都不显示（做空指出）。
+        for provider in ["codex", "kimi", "gemini", "opencode"] {
+            store.set_session_provider(legacy, provider).unwrap();
+            let status = delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe").unwrap();
+            assert_eq!(status.state, "native_manual", "{provider}");
+            assert!(!status.can_retry, "{provider}");
+            assert_eq!(status.session_id, legacy);
+        }
     }
 }
