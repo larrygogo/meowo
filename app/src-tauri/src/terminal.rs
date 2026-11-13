@@ -2804,6 +2804,11 @@ fn prepare_resume_launch(
     provider: &str,
     option_overrides: Option<&std::collections::HashMap<String, String>>,
 ) -> Result<ResumeLaunch, String> {
+    {
+        use tauri::Manager;
+        let store = open_store(&app.state::<crate::AppState>().db_path)?;
+        crate::managed_terminal::reject_retired_unbound(&store, sid)?;
+    }
     ensure_session_profile_available(provider, session_id)?;
     let (resolved, mut resume) = resolve_resume_plan(session_id, cwd, provider);
     if resume.is_empty() {
