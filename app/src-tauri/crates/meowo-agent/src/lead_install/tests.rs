@@ -62,6 +62,13 @@ fn native_install_refresh_and_uninstall_preserve_user_assets() {
         .unwrap();
         assert!(state.installed, "{} {:?}", plugin.id(), state);
         assert!(!state.limitations.is_empty());
+        // 离线续跑已删（leader 2026-11-13「不需要离线」），限制声明里不能再留它的死数据（做空 R9）。
+        assert!(
+            !state.limitations.iter().any(|l| l.contains("offline")),
+            "{} {:?}",
+            plugin.id(),
+            state.limitations
+        );
         let snapshot = fs::read_to_string(&hooks).unwrap();
         assert_eq!(
             install(

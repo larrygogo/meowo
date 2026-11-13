@@ -49,7 +49,6 @@ const SPEC: LeadInstallSpec = LeadInstallSpec {
     ],
     limitations: &[
         "lead/auto_continue_unverified",
-        "lead/offline_resume_unverified",
         "lead/main_agent_identity_unverified",
         "lead/compact_context_unverified",
         "lead/non_lead_io_unverified",
