@@ -812,3 +812,34 @@ fn live_segment_ids_do_not_collide_across_restored_codec_instances() {
     assert_ne!(one, two);
     assert!(two.contains("new_delivery_2"));
 }
+
+/// 2026-11-13 Gemini 0.68 真实托管回合：服务端繁忙时 prompt 以 JSON-RPC error 收场，原先一律
+/// native_error，用户看不出是等一等还是换账号。兄弟场景：限流、认证、网络，以及认不出的仍为笼统错误；
+/// 归类后的原因不含原文。
+#[test]
+fn prompt_errors_are_classified_without_leaking_native_text() {
+    for (message, expected) in [
+        ("This model is currently experiencing high demand. status UNAVAILABLE 503", "conversation/native_busy"),
+        ("Resource exhausted: quota exceeded (429)", "conversation/native_rate_limited"),
+        ("API key not valid. invalid api key AIzaSECRET", "conversation/native_auth_failed"),
+        ("error: fetch failed ECONNRESET", "conversation/native_network_failed"),
+        ("something unexpected", "conversation/native_error"),
+    ] {
+        let mut codec = ready(false);
+        let request = prompt(&mut codec);
+        let actions = events(
+            codec
+                .receive(json!({"jsonrpc":"2.0","id":request["id"],"error":{"code":-32603,"message":message}}))
+                .unwrap(),
+        );
+        let reason = actions
+            .iter()
+            .find_map(|event| match event {
+                ConversationEvent::Failed { reason, .. } => Some(reason.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no failure for {message}"));
+        assert_eq!(reason, expected, "{message}");
+        assert!(!reason.contains("SECRET"));
+    }
+}

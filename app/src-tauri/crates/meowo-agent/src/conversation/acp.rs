@@ -193,7 +193,13 @@ impl AcpCodec {
                 Some(-32000) => "conversation/auth_required",
                 Some(-32601) => "conversation/method_unsupported",
                 Some(-32602) => "conversation/params_invalid",
-                _ => "conversation/native_error",
+                // 其余错误按 message/data 归类（只在内存比对，不存原文）；认不出才是笼统错误。
+                _ => super::classify_native_fault(&format!(
+                    "{} {}",
+                    error.get("message").and_then(Value::as_str).unwrap_or(""),
+                    error.get("data").map(Value::to_string).unwrap_or_default()
+                ))
+                .unwrap_or("conversation/native_error"),
             };
             let request_id = if let Pending::Prompt(request_id) = pending {
                 self.active = None;

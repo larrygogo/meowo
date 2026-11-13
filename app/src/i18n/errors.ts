@@ -26,6 +26,7 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "conversation/auth_required", exact: true, zh: "原生会话尚未完成认证，请检查当前账号的 CLI 登录状态", en: "The native session is not authenticated. Check the CLI sign-in status for this account." },
   { m: "conversation/native_auth_failed", exact: true, zh: "原生 CLI 拒绝了认证，请检查当前账号或 API Key", en: "The native CLI rejected authentication. Check this account or API key." },
   { m: "conversation/native_rate_limited", exact: true, zh: "原生 Provider 已限流或配额不足，请稍后重试", en: "The native provider is rate-limited or out of quota. Try again later." },
+  { m: "conversation/native_busy", exact: true, zh: "服务繁忙，请稍后重试或换个模型", en: "The service is busy. Try again later or switch models." },
   { m: "conversation/native_network_failed", exact: true, zh: "原生 CLI 的网络请求失败，请检查网络或代理", en: "The native CLI network request failed. Check the network or proxy." },
   { m: "conversation/native_context_limit", exact: true, zh: "原生会话已达到上下文限制，请新建或压缩会话", en: "The native session reached its context limit. Start or compact a session." },
   { m: "conversation/client_persistence_failed", exact: true, zh: "无法保存发送回执，请允许本地存储后重试", en: "Could not save the delivery receipt. Allow local storage and try again." },

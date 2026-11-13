@@ -6,6 +6,31 @@ use serde_json::Value;
 pub(crate) mod acp;
 pub(crate) mod task_write;
 
+/// 把原生 CLI 的错误文字（stderr 或协议错误 message）归成固定的结构化原因。
+///
+/// 原文可能带路径、配置甚至凭据：只在内存里按固定短语比对，返回值永远是常量，不含原文。
+/// 「服务繁忙」单列：Gemini 默认模型 503 high demand 时用户该做的是等或换模型，
+/// 与限流（额度）、网络（代理）的处理方法不同（2026-11-13 本机 gemini -p 实测原文）。
+pub fn classify_native_fault(text: &str) -> Option<&'static str> {
+    let text = text.to_ascii_lowercase();
+    let any = |needles: &[&str]| needles.iter().any(|needle| text.contains(needle));
+    if any(&["401", "403", "unauthenticated", "invalid api key"]) {
+        Some("conversation/native_auth_failed")
+    } else if any(&["429", "resource exhausted", "rate limit", "quota exceeded"]) {
+        Some("conversation/native_rate_limited")
+    } else if any(&["high demand", "overloaded", "\"unavailable\""])
+        || (text.contains("error") && text.contains("503"))
+    {
+        Some("conversation/native_busy")
+    } else if any(&["context length", "token limit"]) {
+        Some("conversation/native_context_limit")
+    } else if text.contains("error") && any(&["enotfound", "econn", "etimedout", "fetch failed"]) {
+        Some("conversation/native_network_failed")
+    } else {
+        None
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConversationTransport {
     JsonLines,

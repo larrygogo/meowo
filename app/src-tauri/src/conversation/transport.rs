@@ -164,32 +164,8 @@ fn line(reader: &mut impl BufRead, max: usize) -> Result<Option<Vec<u8>>, ()> {
 }
 
 fn stderr_fault(bytes: &[u8]) -> Option<&'static str> {
-    // CLI 的stderr可能带配置、路径甚至凭据；只在内存中按固定短语归类，事件和日志都不保留原文。
-    let text = String::from_utf8_lossy(bytes).to_ascii_lowercase();
-    if ["401", "403", "unauthenticated", "invalid api key"]
-        .iter()
-        .any(|needle| text.contains(needle))
-    {
-        Some("conversation/native_auth_failed")
-    } else if ["429", "resource exhausted", "rate limit", "quota exceeded"]
-        .iter()
-        .any(|needle| text.contains(needle))
-    {
-        Some("conversation/native_rate_limited")
-    } else if ["context length", "token limit"]
-        .iter()
-        .any(|needle| text.contains(needle))
-    {
-        Some("conversation/native_context_limit")
-    } else if text.contains("error")
-        && ["enotfound", "econn", "etimedout", "fetch failed"]
-            .iter()
-            .any(|needle| text.contains(needle))
-    {
-        Some("conversation/native_network_failed")
-    } else {
-        None
-    }
+    // CLI 的stderr可能带配置、路径甚至凭据；归类规则与协议错误共用，返回值不含原文。
+    meowo_agent::conversation::classify_native_fault(&String::from_utf8_lossy(bytes))
 }
 
 impl Transport {
@@ -783,6 +759,11 @@ mod tests {
         assert_eq!(
             stderr_fault(b"Error: context length exceeds token limit"),
             Some("conversation/native_context_limit")
+        );
+        // 2026-11-13 Gemini 默认模型实测原文形状：服务繁忙单列，不并进限流或网络。
+        assert_eq!(
+            stderr_fault(b"Attempt 2 failed with status 503. Retrying with backoff... ApiError: This model is currently experiencing high demand"),
+            Some("conversation/native_busy")
         );
         assert_eq!(stderr_fault(b"warning: cache directory unavailable"), None);
     }
