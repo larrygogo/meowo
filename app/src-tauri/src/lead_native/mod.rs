@@ -9,6 +9,7 @@
 
 // 临时：三路实现填入前 NativeTarget 字段与 Delivered/WaiterWillWake 尚未使用；实现完成后删除这行。
 #![allow(dead_code)]
+pub(crate) mod opencode_http;
 pub(crate) mod server;
 pub(crate) mod waiter;
 
@@ -26,6 +27,8 @@ pub(crate) struct NativeTarget<'a> {
     pub gate_id: &'a str,
     /// 送给模型的答复正文（reporter::lead::answer_message）。
     pub message: &'a str,
+    /// 面板「重试」：跳过自动重试的退避。
+    pub force: bool,
 }
 
 /// 结果：已送出 / 交给会话内等待器（宿主无需动作）/ 这家做不到（面板提示手动继续）。
@@ -45,5 +48,30 @@ pub(crate) fn deliver(target: &NativeTarget<'_>, app: Option<&tauri::AppHandle>)
         None => Ok(NativeOutcome::Unsupported),
         Some(NativeContinue::InSessionWaiter { offline }) => waiter::deliver(target, offline, app),
         Some(NativeContinue::ServerQueue(protocol)) => server::deliver(target, protocol, app),
+    }
+}
+
+/// 面板上的送达状态（state 取 i18n leadDeliveryState 的键）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct NativeStatus {
+    pub state: &'static str,
+    pub reason: Option<String>,
+    pub can_retry: bool,
+}
+
+/// 原生会话关卡答复的真实送达状态；None = 该机制不经宿主投递（沿用原有面板逻辑）。
+pub(crate) fn delivery_status(
+    db: &Path,
+    provider: &str,
+    native_session: &str,
+    task: &Path,
+    gate_id: &str,
+) -> Option<NativeStatus> {
+    use meowo_agent::lead_install::ServerProtocol;
+    match mechanism(provider)? {
+        NativeContinue::ServerQueue(ServerProtocol::OpencodeHttp) => {
+            Some(opencode_http::status(db, task, gate_id, native_session))
+        }
+        _ => None,
     }
 }

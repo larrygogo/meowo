@@ -2035,7 +2035,11 @@ pub(crate) async fn resume_session(
                 .find_session_id_pub(&session_id)
                 .map_err(|e| e.to_string())?
                 .ok_or("会话不存在")?;
-            if session_agent_alive(&store, sid)? {
+            // 例外：活着的是 Meowo 为 Lead 答复起的 opencode serve——恢复会以 attach 连上它，
+            // 不另起驱动者（lead_native::opencode_http）。
+            if session_agent_alive(&store, sid)?
+                && !crate::lead_native::opencode_http::serving(&session_id)
+            {
                 return Err("会话仍在外部终端运行，请先在终端页选择接管".into());
             }
             // 外部终端偏好（含轻量模式）：进程直接落在用户的终端里，Meowo 不建 PTY、

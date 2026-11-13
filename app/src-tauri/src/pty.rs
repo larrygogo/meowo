@@ -1239,8 +1239,21 @@ impl PtyBroker {
                 .copied();
             (pair, conhost)
         };
+        // Lead 原生续跑（OpenCode）：TUI 开放带密码的本机服务端口；会话正被 Meowo 的 serve 驱动时
+        // 改为 attach 连上去，保证同一会话只有一个驱动者（lead_native::opencode_http）。
+        let lead_plan = crate::lead_native::opencode_http::launch_plan(provider, argv, env);
+        let argv = lead_plan
+            .as_ref()
+            .and_then(|plan| plan.argv.as_deref())
+            .unwrap_or(argv);
         let mut command = CommandBuilder::new(&argv[0]);
         command.args(&argv[1..]);
+        if let Some(plan) = &lead_plan {
+            command.args(&plan.args);
+            for (key, value) in &plan.env {
+                command.env(key, value);
+            }
+        }
         if let Some(cwd) = cwd.filter(|c| !c.trim().is_empty()) {
             command.cwd(cwd);
         }
@@ -1313,6 +1326,9 @@ impl PtyBroker {
             }
         };
         let child_pid = child.process_id();
+        if let Some(plan) = lead_plan {
+            plan.launched(child_pid);
+        }
         let pair_result = pair
             .master
             .try_clone_reader()
@@ -2106,6 +2122,15 @@ impl PtyBroker {
         self.sessions
             .lock()
             .is_ok_and(|sessions| sessions.contains_key(&session_id))
+    }
+
+    /// 托管会话的 PTY 子进程 pid（Lead 原生续跑按它找该 TUI 开放的本机服务端口）。
+    pub(crate) fn child_pid(&self, session_id: i64) -> Option<u32> {
+        self.sessions
+            .lock()
+            .ok()?
+            .get(&session_id)
+            .and_then(|managed| managed.child_pid)
     }
 
     /// 会话已退出时，取退出码与输出尾部的可读文本（诊断用）。仍在运行/从未运行 → None。

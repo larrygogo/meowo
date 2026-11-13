@@ -136,8 +136,8 @@ fn deliver(
             task,
             gate_id: &gate.id,
             message: &message,
+            force,
         };
-        let _ = force;
         return match crate::lead_native::deliver(&target, app.as_ref())? {
             crate::lead_native::NativeOutcome::Unsupported => Ok(false),
             _ => Ok(true),
@@ -184,7 +184,7 @@ pub(crate) fn delivery_status(db: &Path, cwd: &str, gate_id: &str) -> Option<Lea
     let native = owner(&task).ok()?;
     let id = store.find_session_id_pub(&native).ok()??;
     let Some(state) = store.managed_state(id).ok()? else {
-        return native_session_status(&store, id, &task, gate_id, cwd);
+        return native_session_status(db, &store, id, &task, gate_id, cwd);
     };
     let key = current_delivery_key(&store, id, delivery_id(&task, gate_id, &native)).ok()?;
     let delivery = store.managed_delivery(id, &key).ok()?;
@@ -222,6 +222,7 @@ pub(crate) fn delivery_status(db: &Path, cwd: &str, gate_id: &str) -> Option<Lea
 /// 不能自行开新回合（codex/kimi/gemini/opencode 实测），此前这里返回 None、面板什么都不说，
 /// 手机上答完的人以为模型会自己接着做（做空指出的静默降级）。如实说下一步：在会话里发一句话。
 fn native_session_status(
+    db: &Path,
     store: &meowo_store::Store,
     id: i64,
     task: &Path,
@@ -232,11 +233,28 @@ fn native_session_status(
     // 按插件能力而非 provider 身份分（SPEC 约束）：声明了 LeadCap 且原生路径不能自动继续才提示
     // 手动下一步。没有 LeadCap 的 provider 由宿主自带的 Lead 流程负责原生唤醒（claude 的 wait hook）。
     let cap = meowo_agent::by_id(&provider)?.lead()?;
-    if cap.native_auto_continue() {
-        return None;
-    }
     let gate = meowo_reporter::lead::read_gate(task)?;
     if gate.id != gate_id || gate.status != "answered" {
+        return None;
+    }
+    // 宿主经服务投递的机制（OpenCode HTTP）有真实送达记录，如实显示，不再一律「手动继续」。
+    if let Some(native) = owner(task).ok().and_then(|native| {
+        crate::lead_native::delivery_status(db, &provider, &native, task, gate_id)
+    }) {
+        return Some(LeadDeliveryDto {
+            session_id: id,
+            cwd: store
+                .session_cwd(id)
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| project_cwd.to_owned()),
+            delivery_id: String::new(),
+            can_retry: native.can_retry,
+            state: native.state.into(),
+            reason: native.reason,
+        });
+    }
+    if cap.native_auto_continue() {
         return None;
     }
     Some(LeadDeliveryDto {
