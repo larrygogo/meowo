@@ -21,15 +21,7 @@ fn main() {
         delta.reset,
         delta.items.len()
     );
-    for item in delta
-        .items
-        .iter()
-        .rev()
-        .take(6)
-        .collect::<Vec<_>>()
-        .iter()
-        .rev()
-    {
+    for item in delta.items.iter().rev().take(6).collect::<Vec<_>>().iter().rev() {
         let json = serde_json::to_string(item).unwrap_or_default();
         eprintln!("  {}", json.chars().take(140).collect::<String>());
     }

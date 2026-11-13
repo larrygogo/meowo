@@ -284,12 +284,7 @@ fn forked_skill_calls(main: &Path) -> Vec<(String, bool)> {
                         continue;
                     }
                     let head = result_text(block);
-                    let head = head
-                        .trim_start()
-                        .lines()
-                        .next()
-                        .unwrap_or_default()
-                        .to_string();
+                    let head = head.trim_start().lines().next().unwrap_or_default().to_string();
                     if !head.starts_with("Skill \"") || !head.contains("(forked execution") {
                         continue;
                     }
@@ -457,10 +452,7 @@ fn forked_skill_items_carry_what_the_progress_panel_needs() {
         with_outcome > 0,
         "{delegations} 条 Skill 回执全都没有结局统计——进度面板认不出 forked skill 委派"
     );
-    assert!(
-        slash_summary > 0,
-        "Skill 调用的摘要没有一条是 `/命令` 形态——面板行会没有标题"
-    );
+    assert!(slash_summary > 0, "Skill 调用的摘要没有一条是 `/命令` 形态——面板行会没有标题");
 }
 
 #[test]

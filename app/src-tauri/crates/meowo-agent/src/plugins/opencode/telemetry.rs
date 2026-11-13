@@ -10,10 +10,7 @@ use serde_json::Value;
 use crate::transcript::ChatItem;
 use crate::{
     caps::{HookContext, StopOutputs, TelemetryCap, TodoSnapshot},
-    transcript::{
-        ChatOnlyParser, CompactionDetail, ToolDetail, TranscriptEvent, TranscriptParser,
-        TranscriptSpec,
-    },
+    transcript::{ChatOnlyParser, CompactionDetail, ToolDetail, TranscriptEvent, TranscriptParser, TranscriptSpec},
 };
 
 use super::store;
@@ -122,10 +119,7 @@ fn parse_line(line: &str) -> Vec<TranscriptEvent> {
         Some("user") => user_events(msg, timestamp, value.get("parts")),
         Some("part") => {
             // 压缩产出的摘要消息（`summary: true`）是喂给模型的上下文，不是对用户说的话。
-            let summary = value
-                .get("summary")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
+            let summary = value.get("summary").and_then(Value::as_bool).unwrap_or(false);
             match value.get("part") {
                 Some(part) => part_events(key, part, timestamp, summary),
                 None => Vec::new(),
@@ -136,15 +130,8 @@ fn parse_line(line: &str) -> Vec<TranscriptEvent> {
     }
 }
 
-fn user_events(
-    msg: &str,
-    timestamp: Option<String>,
-    parts: Option<&Value>,
-) -> Vec<TranscriptEvent> {
-    let parts = parts
-        .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default();
+fn user_events(msg: &str, timestamp: Option<String>, parts: Option<&Value>) -> Vec<TranscriptEvent> {
+    let parts = parts.and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
     // /compact 落成一条带 `compaction` part 的用户消息：画成分隔条，不当用户的话。
     if let Some(part) = parts
         .iter()
@@ -227,12 +214,7 @@ fn persist_image(msg: &str, index: usize, part: &Value) -> Option<std::path::Pat
 }
 
 /// `key` 是导出时写在行上的 part id（库里的 part 正文不带 id），直接当稳定 id 用。
-fn part_events(
-    key: &str,
-    part: &Value,
-    timestamp: Option<String>,
-    summary: bool,
-) -> Vec<TranscriptEvent> {
+fn part_events(key: &str, part: &Value, timestamp: Option<String>, summary: bool) -> Vec<TranscriptEvent> {
     let text = || part.get("text").and_then(Value::as_str).unwrap_or_default();
     match part.get("type").and_then(Value::as_str) {
         // 回合间常有只含 "\n" 的文本 part（实测：每次工具调用前都有一个），不出空气泡。
@@ -412,18 +394,11 @@ fn tool_detail(name: &str, input: Option<&Value>) -> Option<ToolDetail> {
 }
 
 /// 回合错误。用户按 Esc 中断（`MessageAbortedError`）不是故障，不出错误气泡。
-fn error_events(
-    msg: &str,
-    timestamp: Option<String>,
-    error: Option<&Value>,
-) -> Vec<TranscriptEvent> {
+fn error_events(msg: &str, timestamp: Option<String>, error: Option<&Value>) -> Vec<TranscriptEvent> {
     let Some(error) = error else {
         return Vec::new();
     };
-    let name = error
-        .get("name")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
+    let name = error.get("name").and_then(Value::as_str).unwrap_or_default();
     if name == "MessageAbortedError" {
         return Vec::new();
     }
@@ -495,8 +470,7 @@ mod tests {
 
     #[test]
     fn whitespace_text_and_summary_text_are_dropped() {
-        let ws =
-            json!({"kind": "part", "msg": "m", "key": "p", "part": {"type": "text", "text": "\n"}});
+        let ws = json!({"kind": "part", "msg": "m", "key": "p", "part": {"type": "text", "text": "\n"}});
         assert!(parse_chat_items(&ws.to_string()).is_empty());
         let summary = json!({"kind": "part", "msg": "m", "key": "p", "summary": true,
             "part": {"type": "text", "text": "压缩摘要"}});
@@ -511,24 +485,12 @@ mod tests {
                       "output": "clean"}}})
         .to_string();
         match parse_chat_items(&line).as_slice() {
-            [ChatItem::ToolUse {
-                id,
-                name,
-                summary,
-                detail,
-                ..
-            }, ChatItem::ToolResult {
-                tool_use_id,
-                text,
-                is_error,
-                ..
-            }] => {
+            [ChatItem::ToolUse { id, name, summary, detail, .. }, ChatItem::ToolResult { tool_use_id, text, is_error, .. }] =>
+            {
                 assert_eq!(id, "call_1");
                 assert_eq!(name, "bash");
                 assert_eq!(summary, "git status");
-                assert!(
-                    matches!(detail, Some(ToolDetail::Command { command, .. }) if command == "git status")
-                );
+                assert!(matches!(detail, Some(ToolDetail::Command { command, .. }) if command == "git status"));
                 assert_eq!(tool_use_id.as_deref(), Some("call_1"));
                 assert_eq!(text, "clean");
                 assert!(!is_error);
@@ -565,28 +527,10 @@ mod tests {
     #[test]
     fn exported_lines_parse_into_a_conversation() {
         let conn = memory_db();
-        msg(
-            &conn,
-            "msg_1",
-            json!({"role": "user", "time": {"created": 1}}),
-        );
-        part(
-            &conn,
-            "prt_1",
-            "msg_1",
-            json!({"type": "text", "text": "hi"}),
-        );
-        msg(
-            &conn,
-            "msg_2",
-            json!({"role": "assistant", "time": {"created": 2, "completed": 3}}),
-        );
-        part(
-            &conn,
-            "prt_2",
-            "msg_2",
-            json!({"type": "text", "text": "你好", "time": {"start": 2, "end": 3}}),
-        );
+        msg(&conn, "msg_1", json!({"role": "user", "time": {"created": 1}}));
+        part(&conn, "prt_1", "msg_1", json!({"type": "text", "text": "hi"}));
+        msg(&conn, "msg_2", json!({"role": "assistant", "time": {"created": 2, "completed": 3}}));
+        part(&conn, "prt_2", "msg_2", json!({"type": "text", "text": "你好", "time": {"start": 2, "end": 3}}));
         let items: Vec<ChatItem> = lines(&conn, None)
             .iter()
             .flat_map(|line| parse_chat_items(line.trim_end()))

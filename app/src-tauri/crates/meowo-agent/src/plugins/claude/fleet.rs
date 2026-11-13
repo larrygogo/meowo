@@ -451,11 +451,7 @@ mod tests {
         )
         .unwrap();
         // sessions/ 里已经没有它了（进程退出，索引被删）。
-        write(
-            dir,
-            "1.json",
-            r#"{"pid":1,"sessionId":"other","kind":"interactive"}"#,
-        );
+        write(dir, "1.json", r#"{"pid":1,"sessionId":"other","kind":"interactive"}"#);
 
         let index = index_sessions(std::slice::from_ref(dir));
         let gone = index.get("gone").expect("作业目录还在，就仍算后台会话");
@@ -472,11 +468,7 @@ mod tests {
         let job = dir.join("jobs").join("abc");
         std::fs::create_dir_all(&job).unwrap();
         std::fs::write(job.join("state.json"), r#"{"sessionId":"s"}"#).unwrap();
-        write(
-            dir,
-            "9.json",
-            r#"{"pid":9,"sessionId":"s","kind":"interactive","updatedAt":5}"#,
-        );
+        write(dir, "9.json", r#"{"pid":9,"sessionId":"s","kind":"interactive","updatedAt":5}"#);
 
         assert!(!index_sessions(std::slice::from_ref(dir))["s"].background);
     }
@@ -513,11 +505,7 @@ mod tests {
             r#"{"sessionId":"s","state":"blocked","interactiveLineage":true}"#,
         )
         .unwrap();
-        write(
-            dir,
-            "9.json",
-            r#"{"pid":9,"sessionId":"s","kind":"bg","updatedAt":5}"#,
-        );
+        write(dir, "9.json", r#"{"pid":9,"sessionId":"s","kind":"bg","updatedAt":5}"#);
 
         let runtime = &index_sessions(std::slice::from_ref(dir))["s"];
         assert!(runtime.background);
@@ -540,16 +528,8 @@ mod tests {
                 "f64c2382":{"sessionId":"real-one","dispatch":{"source":"fleet"}}}}"#,
         )
         .unwrap();
-        write(
-            dir,
-            "1.json",
-            r#"{"pid":1,"sessionId":"idle-one","kind":"bg"}"#,
-        );
-        write(
-            dir,
-            "2.json",
-            r#"{"pid":2,"sessionId":"real-one","kind":"bg"}"#,
-        );
+        write(dir, "1.json", r#"{"pid":1,"sessionId":"idle-one","kind":"bg"}"#);
+        write(dir, "2.json", r#"{"pid":2,"sessionId":"real-one","kind":"bg"}"#);
 
         let index = index_sessions(std::slice::from_ref(dir));
         assert!(index["idle-one"].spare, "待命进程还没被派活");
@@ -573,11 +553,7 @@ mod tests {
                     "mode":"resume","fork":false,"sessionId":"self.jsonl"}}}}}"#,
         )
         .unwrap();
-        write(
-            dir,
-            "1.json",
-            r#"{"pid":1,"sessionId":"child","kind":"bg"}"#,
-        );
+        write(dir, "1.json", r#"{"pid":1,"sessionId":"child","kind":"bg"}"#);
         write(dir, "2.json", r#"{"pid":2,"sessionId":"self","kind":"bg"}"#);
 
         let index = index_sessions(std::slice::from_ref(dir));

@@ -345,10 +345,9 @@ impl BgPtyRegistry {
                 .lock()
                 .unwrap_or_else(|error| error.into_inner()) = Box::new(std::io::sink());
             // 回执条目留而不弃，但要封顶：不然每个自然结束的会话都永久躺一份 backlog。
-            worker.closed_seq.store(
-                CLOSED_SEQ.fetch_add(1, Ordering::Relaxed),
-                Ordering::Release,
-            );
+            worker
+                .closed_seq
+                .store(CLOSED_SEQ.fetch_add(1, Ordering::Relaxed), Ordering::Release);
             evict_closed(&table);
         });
         Ok(())
@@ -618,18 +617,16 @@ mod tests {
     fn detach_removes_the_entry_and_flags_the_reader() {
         let registry = BgPtyRegistry::default();
         let session = dummy_bg_session();
-        registry.sessions.lock().unwrap().insert(7, session.clone());
+        registry
+            .sessions
+            .lock()
+            .unwrap()
+            .insert(7, session.clone());
         assert!(registry.is_active(7));
         registry.detach(7);
         assert!(!registry.is_active(7), "摘表后不再活跃");
-        assert!(
-            registry.snapshot(7, 0).is_none(),
-            "快照落空,分发回落托管 PTY"
-        );
-        assert!(
-            session.detached.load(Ordering::Acquire),
-            "读线程收到退出旗标"
-        );
+        assert!(registry.snapshot(7, 0).is_none(), "快照落空,分发回落托管 PTY");
+        assert!(session.detached.load(Ordering::Acquire), "读线程收到退出旗标");
         // 未接入的 id:no-op 不 panic。
         registry.detach(999);
     }

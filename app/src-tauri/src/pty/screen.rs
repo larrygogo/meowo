@@ -17,8 +17,7 @@ pub(super) struct ModeTracker {
 impl ModeTracker {
     /// 位序即下标。1049 排第一不是巧合：前端按此序补写，`?1049h` 会清屏并切缓冲，
     /// 必须先于鼠标/粘贴模式生效（后者与缓冲无关，但顺序稳定便于测试与阅读）。
-    pub(super) const TRACKED: [u16; 10] =
-        [1049, 47, 1047, 1000, 1002, 1003, 1005, 1006, 1015, 2004];
+    pub(super) const TRACKED: [u16; 10] = [1049, 47, 1047, 1000, 1002, 1003, 1005, 1006, 1015, 2004];
     pub(super) const CARRY_MAX: usize = 24;
 
     pub(super) fn new() -> Self {

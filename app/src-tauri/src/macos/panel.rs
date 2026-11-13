@@ -3,7 +3,8 @@
 #![allow(deprecated, unexpected_cfgs)]
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_nspanel::{
-    cocoa::appkit::NSWindowCollectionBehavior, panel_delegate, ManagerExt, WebviewWindowExt,
+    cocoa::appkit::NSWindowCollectionBehavior,
+    panel_delegate, ManagerExt, WebviewWindowExt,
 };
 
 #[allow(non_upper_case_globals)]

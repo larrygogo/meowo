@@ -19,12 +19,7 @@ static MOOD: Mutex<crate::tray_anim::Mood> = Mutex::new(crate::tray_anim::Mood::
 static FACE: Mutex<crate::tray_anim::Face> = Mutex::new(crate::tray_anim::Face::Auto);
 
 /// 前端推来的整体状态与标题（一段段文字和 SF Symbol，前端拼好，status_title.rs 画成富文本）。
-pub fn set_status(
-    app: &AppHandle,
-    tone: &str,
-    mood: Option<&str>,
-    segments: &[crate::macos::status_title::Segment],
-) {
+pub fn set_status(app: &AppHandle, tone: &str, mood: Option<&str>, segments: &[crate::macos::status_title::Segment]) {
     *MOOD.lock().unwrap_or_else(|e| e.into_inner()) = crate::tray_anim::Mood::parse(tone);
     *FACE.lock().unwrap_or_else(|e| e.into_inner()) = crate::tray_anim::Face::parse(mood);
     crate::macos::status_title::apply(app, segments);
@@ -50,8 +45,7 @@ fn spawn_icon_animator(app: AppHandle) {
             let face = *FACE.lock().unwrap_or_else(|e| e.into_inner());
             // 在跑 / 要你处理 / 出错的眼睛上色（用户要「有颜色」），其余用模板图跟菜单栏深浅色。
             let tint = crate::tray_anim::tint(mood);
-            let frame =
-                crate::tray_anim::render_rgba(start.elapsed().as_secs_f32(), mood, face, tint);
+            let frame = crate::tray_anim::render_rgba(start.elapsed().as_secs_f32(), mood, face, tint);
             if frame == last {
                 continue;
             }
@@ -119,16 +113,10 @@ pub fn build_app_menu(app: &AppHandle, lang: &str) -> tauri::Result<tauri::menu:
                 .build(app)?,
         )
         .separator()
-        .item(&PredefinedMenuItem::services(
-            app,
-            Some(t("menu.services")),
-        )?)
+        .item(&PredefinedMenuItem::services(app, Some(t("menu.services")))?)
         .separator()
         .item(&PredefinedMenuItem::hide(app, Some(t("menu.hide")))?)
-        .item(&PredefinedMenuItem::hide_others(
-            app,
-            Some(t("menu.hideOthers")),
-        )?)
+        .item(&PredefinedMenuItem::hide_others(app, Some(t("menu.hideOthers")))?)
         .item(&PredefinedMenuItem::show_all(app, Some(t("menu.showAll")))?)
         .separator()
         .item(&PredefinedMenuItem::quit(app, Some(t("menu.quit")))?)
@@ -140,21 +128,12 @@ pub fn build_app_menu(app: &AppHandle, lang: &str) -> tauri::Result<tauri::menu:
         .item(&PredefinedMenuItem::cut(app, Some(t("menu.cut")))?)
         .item(&PredefinedMenuItem::copy(app, Some(t("menu.copy")))?)
         .item(&PredefinedMenuItem::paste(app, Some(t("menu.paste")))?)
-        .item(&PredefinedMenuItem::select_all(
-            app,
-            Some(t("menu.selectAll")),
-        )?)
+        .item(&PredefinedMenuItem::select_all(app, Some(t("menu.selectAll")))?)
         .build()?;
     let window_menu = SubmenuBuilder::new(app, t("menu.window"))
-        .item(&PredefinedMenuItem::minimize(
-            app,
-            Some(t("menu.minimize")),
-        )?)
+        .item(&PredefinedMenuItem::minimize(app, Some(t("menu.minimize")))?)
         .separator()
-        .item(&PredefinedMenuItem::close_window(
-            app,
-            Some(t("menu.close")),
-        )?)
+        .item(&PredefinedMenuItem::close_window(app, Some(t("menu.close")))?)
         .build()?;
     MenuBuilder::new(app)
         .items(&[&app_menu, &edit_menu, &window_menu])
@@ -176,11 +155,7 @@ pub fn setup_app_menu(app: &AppHandle, lang: &str) -> tauri::Result<()> {
 /// 创建 macOS 状态栏托盘：左键见 [`on_left_click`]，右键弹菜单。
 pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     let boot_settings = crate::load_settings();
-    let menu = build_tray_menu(
-        app,
-        crate::ui_lang(&boot_settings),
-        boot_settings.chat_enabled,
-    )?;
+    let menu = build_tray_menu(app, crate::ui_lang(&boot_settings), boot_settings.chat_enabled)?;
 
     // 菜单栏用单色模板图标（彩色 app 图标在菜单栏里偏花，且不随明暗反色）；Dock/设置页仍用彩色图标。
     let icon = tauri::image::Image::new(MENUBAR_ICON_RGBA, MENUBAR_ICON_SIZE, MENUBAR_ICON_SIZE);

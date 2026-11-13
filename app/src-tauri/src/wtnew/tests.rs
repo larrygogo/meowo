@@ -369,10 +369,7 @@ fn 在子目录里建_会话开在_worktree_的同一子目录_基点里没有�
     run(&fx.main, &["push", "-q", "origin", "main"]);
     let sub = fx.main.join("pkg").join("core");
     let p = preview(&sub, &req(Some("sub"), None), &fx.opts()).unwrap();
-    assert_eq!(
-        (p.sub_dir.as_deref(), p.sub_dir_missing),
-        (Some("pkg/core"), false)
-    );
+    assert_eq!((p.sub_dir.as_deref(), p.sub_dir_missing), (Some("pkg/core"), false));
     let dto = create(&sub, &req(Some("sub"), None), &fx.opts(), &never, quiet()).unwrap();
     assert_eq!(
         PathBuf::from(&dto.session_cwd),
@@ -386,31 +383,14 @@ fn 在子目录里建_会话开在_worktree_的同一子目录_基点里没有�
     std::fs::create_dir_all(&scratch).unwrap();
     std::fs::write(scratch.join("n.txt"), "n\n").unwrap();
     let p = preview(&scratch, &req(Some("scr"), None), &fx.opts()).unwrap();
-    assert_eq!(
-        (p.sub_dir.as_deref(), p.sub_dir_missing),
-        (Some("scratch"), true)
-    );
-    let dto = create(
-        &scratch,
-        &req(Some("scr"), None),
-        &fx.opts(),
-        &never,
-        quiet(),
-    )
-    .unwrap();
+    assert_eq!((p.sub_dir.as_deref(), p.sub_dir_missing), (Some("scratch"), true));
+    let dto = create(&scratch, &req(Some("scr"), None), &fx.opts(), &never, quiet()).unwrap();
     assert_eq!(dto.session_cwd, dto.path, "子目录不存在：退回根目录");
 
     // 在仓库根目录建：没有子目录，会话就在根目录。
     let p = preview(&fx.main, &req(Some("top"), None), &fx.opts()).unwrap();
     assert_eq!((p.sub_dir, p.sub_dir_missing), (None, false));
-    let dto = create(
-        &fx.main,
-        &req(Some("top"), None),
-        &fx.opts(),
-        &never,
-        quiet(),
-    )
-    .unwrap();
+    let dto = create(&fx.main, &req(Some("top"), None), &fx.opts(), &never, quiet()).unwrap();
     assert_eq!(dto.session_cwd, dto.path);
 }
 
@@ -419,36 +399,17 @@ fn 在子目录里建_会话开在_worktree_的同一子目录_基点里没有�
 #[test]
 fn 确认框带上配置里的_env_重跑按新配置的_env() {
     let fx = fixture("trust-env");
-    fx.config(
-        r#"{ "setup": "echo hi", "env": { "NODE_OPTIONS": "--require ./evil.js", "A": "1" } }"#,
-    );
-    let dto = create(
-        &fx.main,
-        &req(Some("te"), None),
-        &fx.opts(),
-        &never,
-        quiet(),
-    )
-    .unwrap();
+    fx.config(r#"{ "setup": "echo hi", "env": { "NODE_OPTIONS": "--require ./evil.js", "A": "1" } }"#);
+    let dto = create(&fx.main, &req(Some("te"), None), &fx.opts(), &never, quiet()).unwrap();
     assert_eq!(dto.setup.state, "needs_trust");
     assert_eq!(
         dto.setup.setup_env,
-        vec![
-            ("A".to_string(), "1".to_string()),
-            (
-                "NODE_OPTIONS".to_string(),
-                "--require ./evil.js".to_string()
-            )
-        ],
+        vec![("A".to_string(), "1".to_string()), ("NODE_OPTIONS".to_string(), "--require ./evil.js".to_string())],
     );
     let task = setup::find(Some(&dto.task_id), None).unwrap();
     fx.config(r#"{ "setup": "echo hi", "env": { "B": "2" } }"#);
     let again = setup_action(&task, "rerun", &fx.opts().shells, &never, quiet()).unwrap();
-    assert_eq!(
-        again.setup_env,
-        vec![("B".to_string(), "2".to_string())],
-        "改过配置后展示和要跑的是新那份"
-    );
+    assert_eq!(again.setup_env, vec![("B".to_string(), "2".to_string())], "改过配置后展示和要跑的是新那份");
     assert!(
         !task.env.iter().any(|(k, _)| k == "NODE_OPTIONS"),
         "配置里的 env 跟着配置走，不钉在建立那一刻"

@@ -318,7 +318,8 @@ mod sweep_tests {
     /// 只删「够老的」tmp:新鲜 tmp 可能是另一个实例正在飞的写入,删了就打断它的 rename。
     #[test]
     fn sweeps_only_aged_temp_files_and_never_real_files() {
-        let dir = std::env::temp_dir().join(format!("meowo-fsutil-sweep-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("meowo-fsutil-sweep-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 

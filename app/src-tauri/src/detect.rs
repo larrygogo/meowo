@@ -187,8 +187,7 @@ fn eval_matcher(matcher: &Matcher, region: &[String], title: &str) -> bool {
         }),
         Matcher::BraillePrefixed(keywords) => region.iter().any(|line| {
             let rest = line.trim_start();
-            let stripped =
-                rest.trim_start_matches(|ch: char| ('\u{2800}'..='\u{28FF}').contains(&ch));
+            let stripped = rest.trim_start_matches(|ch: char| ('\u{2800}'..='\u{28FF}').contains(&ch));
             stripped.len() != rest.len()
                 && keywords
                     .iter()
@@ -522,10 +521,7 @@ mod tests {
             state_of(evaluate("claude", &answering)),
             Some((ScreenState::Working, "btw_overlay_working"))
         );
-        let mut answered: Vec<String> = vec![
-            rule.clone(),
-            "    /btw \u{5217}\u{51FA} 1 \u{5230} 60".into(),
-        ];
+        let mut answered: Vec<String> = vec![rule.clone(), "    /btw \u{5217}\u{51FA} 1 \u{5230} 60".into()];
         answered.extend((1..=26).map(|n| format!("      {n}")));
         answered.push("    \u{2191}/\u{2193} to scroll \u{00B7} c to copy \u{00B7} f to fork \u{00B7} Esc to close".into());
         let answered = ScreenSnapshot::new(answered, Some("\u{2733} Claude Code".into()));
@@ -538,10 +534,7 @@ mod tests {
     /// 标题盲文 spinner 帧 → working（最高优先级，压过屏幕上的一切）。
     #[test]
     fn braille_title_wins_as_working() {
-        let s = snap_titled(
-            &["Do you want to proceed?", "\u{276F} 1. Yes"],
-            "\u{280B} Herding bits…",
-        );
+        let s = snap_titled(&["Do you want to proceed?", "\u{276F} 1. Yes"], "\u{280B} Herding bits…");
         assert_eq!(
             state_of(evaluate("claude", &s)),
             Some((ScreenState::Working, "osc_title_working"))
@@ -698,10 +691,7 @@ mod tests {
         let Some(Evaluation::Publish(det)) = evaluate("claude", &s) else {
             panic!("应有判定");
         };
-        assert_eq!(
-            (det.state, det.rule_id),
-            (ScreenState::Idle, "live_prompt_box")
-        );
+        assert_eq!((det.state, det.rule_id), (ScreenState::Idle, "live_prompt_box"));
         assert!(det.visible, "提示框是可见 idle 证据");
     }
 
@@ -735,9 +725,7 @@ mod tests {
         ]);
         assert!(matches!(
             evaluate("claude", &s),
-            Some(Evaluation::Hold {
-                rule_id: "transcript_viewer"
-            })
+            Some(Evaluation::Hold { rule_id: "transcript_viewer" })
         ));
     }
 
@@ -748,20 +736,14 @@ mod tests {
         let Some(Evaluation::Publish(det)) = evaluate("claude", &s) else {
             panic!("应有判定");
         };
-        assert_eq!(
-            (det.state, det.rule_id),
-            (ScreenState::Idle, FALLBACK_RULE_ID)
-        );
+        assert_eq!((det.state, det.rule_id), (ScreenState::Idle, FALLBACK_RULE_ID));
         assert!(!det.visible);
     }
 
     /// 空提示符行否决弱 blocked（legacy 规则的 not 门）。
     #[test]
     fn bare_prompt_line_vetoes_legacy_blocker() {
-        let s = snap(&[
-            "  do you want to refactor? yes we discussed it",
-            " \u{276F}",
-        ]);
+        let s = snap(&["  do you want to refactor? yes we discussed it", " \u{276F}"]);
         let got = state_of(evaluate("claude", &s));
         assert_ne!(got.map(|(state, _)| state), Some(ScreenState::Blocked));
     }
@@ -905,10 +887,7 @@ mod tests {
             state_of(evaluate("kimi", &agent)),
             Some((ScreenState::Working, "agent_running_status_working"))
         );
-        let tip = snap(&[
-            "  output",
-            " \u{1F318} \u{00B7} Tip: ! to run a shell command",
-        ]);
+        let tip = snap(&["  output", " \u{1F318} \u{00B7} Tip: ! to run a shell command"]);
         assert_eq!(
             state_of(evaluate("kimi", &tip)),
             Some((ScreenState::Working, "moon_tip_status_working"))
@@ -921,10 +900,7 @@ mod tests {
     /// 「待交互」（2026-08-31 实拍回归）。
     #[test]
     fn kimi_moon_glued_status_line_is_working() {
-        let s = snap(&[
-            "  output",
-            "\u{1F317}Working...  \u{2500}\u{2500}\u{2500}\u{2500}",
-        ]);
+        let s = snap(&["  output", "\u{1F317}Working...  \u{2500}\u{2500}\u{2500}\u{2500}"]);
         assert_eq!(
             state_of(evaluate("kimi", &s)),
             Some((ScreenState::Working, "moon_word_status_working"))
@@ -1069,10 +1045,7 @@ mod tests {
 
     #[test]
     fn opencode_progress_and_interrupt_are_working() {
-        let bar = snap(&[
-            "  building",
-            "  \u{25A0}\u{25A0}\u{25A0}\u{25A0}\u{25A0} 62%",
-        ]);
+        let bar = snap(&["  building", "  \u{25A0}\u{25A0}\u{25A0}\u{25A0}\u{25A0} 62%"]);
         assert_eq!(
             state_of(evaluate("opencode", &bar)),
             Some((ScreenState::Working, "progress_bar_working"))
@@ -1270,10 +1243,7 @@ mod tests {
     fn plain_idle_needs_confirmations_after_working() {
         let mut debounce = ScreenDebounce::default();
         let t0 = Instant::now();
-        assert_eq!(
-            debounce.observe(&working_det(), t0),
-            Some(ScreenState::Working)
-        );
+        assert_eq!(debounce.observe(&working_det(), t0), Some(ScreenState::Working));
         assert_eq!(debounce.observe(&plain_idle(), t0), None);
         assert!(debounce.pending());
         assert_eq!(debounce.observe(&plain_idle(), t0), None);
@@ -1300,10 +1270,7 @@ mod tests {
         let mut debounce = ScreenDebounce::default();
         let t0 = Instant::now();
         debounce.observe(&working_det(), t0);
-        assert_eq!(
-            debounce.observe(&visible_idle(), t0),
-            Some(ScreenState::Idle)
-        );
+        assert_eq!(debounce.observe(&visible_idle(), t0), Some(ScreenState::Idle));
     }
 
     #[test]
@@ -1323,12 +1290,7 @@ mod tests {
         let t0 = Instant::now();
         debounce.observe(&working_det(), t0);
         assert_eq!(
-            debounce.observe(
-                &Evaluation::Hold {
-                    rule_id: "transcript_viewer"
-                },
-                t0
-            ),
+            debounce.observe(&Evaluation::Hold { rule_id: "transcript_viewer" }, t0),
             None
         );
         assert_eq!(debounce.published(), Some(ScreenState::Working));
@@ -1368,10 +1330,7 @@ mod tests {
         assert_eq!(debounce.observe(&visible_idle(), t0), None);
         assert!(!debounce.published_is_fallback());
         // 回到 working 当然也不是 fallback。
-        assert_eq!(
-            debounce.observe(&working_det(), t0),
-            Some(ScreenState::Working)
-        );
+        assert_eq!(debounce.observe(&working_det(), t0), Some(ScreenState::Working));
         assert!(!debounce.published_is_fallback());
     }
 }

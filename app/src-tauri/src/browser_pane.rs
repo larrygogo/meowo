@@ -856,12 +856,7 @@ mod tests {
         assert_eq!(list[1].path.as_deref(), Some(Path::new("C:/dl/g.zip")));
 
         // 已经结束的不会再被改；对不上号返回 false。
-        assert!(!download_finished(
-            &mut list,
-            "https://a.test/f.txt",
-            None,
-            false
-        ));
+        assert!(!download_finished(&mut list, "https://a.test/f.txt", None, false));
         assert_eq!(list[0].state, DownloadState::Done);
     }
 
@@ -869,11 +864,7 @@ mod tests {
     fn same_url_downloaded_twice_finishes_the_latest_one() {
         let mut list = Vec::new();
         download_started(&mut list, "https://a.test/f.txt", Path::new("C:/dl/f.txt"));
-        download_started(
-            &mut list,
-            "https://a.test/f.txt",
-            Path::new("C:/dl/f (1).txt"),
-        );
+        download_started(&mut list, "https://a.test/f.txt", Path::new("C:/dl/f (1).txt"));
         download_finished(&mut list, "https://a.test/f.txt", None, true);
         assert_eq!(list[0].state, DownloadState::Progress);
         assert_eq!(list[1].state, DownloadState::Done);
@@ -887,10 +878,7 @@ mod tests {
         }
         assert_eq!(list.len(), MAX_DOWNLOADS);
         // 没有文件名时取网址最后一段。
-        assert_eq!(
-            list.last().unwrap().file_name,
-            format!("{}", MAX_DOWNLOADS + 2)
-        );
+        assert_eq!(list.last().unwrap().file_name, format!("{}", MAX_DOWNLOADS + 2));
         let ids: Vec<u32> = list.iter().map(|entry| entry.id).collect();
         assert!(ids.windows(2).all(|pair| pair[0] < pair[1]));
     }
@@ -951,9 +939,7 @@ mod tests {
         let json = serde_json::to_value(&list[0]).unwrap();
         assert_eq!(json["fileName"], "f.txt");
         assert_eq!(json["state"], "progress");
-        assert!(
-            json.get("url").is_none() && json.get("urlKey").is_none() && json.get("path").is_none()
-        );
+        assert!(json.get("url").is_none() && json.get("urlKey").is_none() && json.get("path").is_none());
     }
 
     #[test]

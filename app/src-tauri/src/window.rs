@@ -871,8 +871,7 @@ pub(crate) fn recall_sticker(app: &tauri::AppHandle) {
         let scale = w.scale_factor().unwrap_or(1.0);
         if let Ok(size) = w.outer_size() {
             let logical = size.to_logical::<f64>(scale);
-            if logical.width < crate::snap::STICKER_MIN_W
-                || logical.height < crate::snap::STICKER_MIN_H
+            if logical.width < crate::snap::STICKER_MIN_W || logical.height < crate::snap::STICKER_MIN_H
             {
                 let _ = w.set_size(tauri::LogicalSize::new(
                     crate::snap::STICKER_MIN_W,
@@ -1056,11 +1055,7 @@ pub(crate) fn setup_tray(app: &tauri::App) -> tauri::Result<()> {
         }
     }
     builder
-        .tooltip(if cfg!(debug_assertions) {
-            "Meowo (dev)"
-        } else {
-            "Meowo"
-        })
+        .tooltip(if cfg!(debug_assertions) { "Meowo (dev)" } else { "Meowo" })
         .menu(&menu)
         // 左键留给「开合主界面」，菜单仅在右键弹出（打开对话窗口/设置都在右键菜单里）。
         .show_menu_on_left_click(false)
@@ -1265,21 +1260,13 @@ pub(crate) fn request_quit(app: &tauri::AppHandle) {
 
 /// 托盘退出要问的话；None = 没有会话在跑、面板终端也都空闲，直接退。`busy_shells` 是
 /// 有程序在跑的面板终端（[`crate::shell_terminal::ShellBusy::describe`]），逐行列在说明下面。
-fn quit_confirm_message(
-    lang: &str,
-    running_sessions: i64,
-    busy_shells: &[String],
-) -> Option<String> {
+fn quit_confirm_message(lang: &str, running_sessions: i64, busy_shells: &[String]) -> Option<String> {
     let mut parts = Vec::new();
     if running_sessions > 0 {
         parts.push(tr(lang, "quit.confirmMessage").replace("{n}", &running_sessions.to_string()));
     }
     if !busy_shells.is_empty() {
-        parts.push(format!(
-            "{}\n\n{}",
-            tr(lang, "quit.shellBusy"),
-            busy_shells.join("\n")
-        ));
+        parts.push(format!("{}\n\n{}", tr(lang, "quit.shellBusy"), busy_shells.join("\n")));
     }
     (!parts.is_empty()).then(|| parts.join("\n\n"))
 }
@@ -1305,15 +1292,9 @@ mod quit_tests {
     fn quit_asks_when_panel_terminal_runs_a_program_even_without_sessions() {
         let busy = vec!["pwsh · node.exe (PID 42)".to_string()];
         let message = quit_confirm_message("zh", 0, &busy).expect("面板终端在跑程序要先问");
-        assert!(
-            message.contains("面板终端还有程序在跑") && message.contains("node.exe (PID 42)"),
-            "{message}"
-        );
+        assert!(message.contains("面板终端还有程序在跑") && message.contains("node.exe (PID 42)"), "{message}");
         let both = quit_confirm_message("en", 2, &busy).unwrap();
-        assert!(
-            both.contains("Sessions still running: 2") && both.contains("panel terminals"),
-            "{both}"
-        );
+        assert!(both.contains("Sessions still running: 2") && both.contains("panel terminals"), "{both}");
         assert_eq!(quit_confirm_message("zh", 0, &[]), None);
         assert!(quit_confirm_message("zh", 1, &[]).unwrap().contains('1'));
     }
@@ -1321,15 +1302,9 @@ mod quit_tests {
     #[test]
     fn quit_cancelled_keeps_running_and_nothing_to_ask_quits_without_prompt() {
         use tauri::async_runtime::block_on as block;
-        assert!(!block(confirm_quit(Some("q".into()), |_| async {
-            Ok::<_, ()>(false)
-        })));
-        assert!(block(confirm_quit(Some("q".into()), |_| async {
-            Ok::<_, ()>(true)
-        })));
-        assert!(block(confirm_quit(Some("q".into()), |_| async {
-            Err::<bool, _>(())
-        })));
+        assert!(!block(confirm_quit(Some("q".into()), |_| async { Ok::<_, ()>(false) })));
+        assert!(block(confirm_quit(Some("q".into()), |_| async { Ok::<_, ()>(true) })));
+        assert!(block(confirm_quit(Some("q".into()), |_| async { Err::<bool, _>(()) })));
         let mut asked = false;
         assert!(block(confirm_quit(None, |_| {
             asked = true;
@@ -1348,11 +1323,7 @@ mod chat_target_tests {
         assert_eq!(ChatTarget::Session(42).url(), "index.html?sessionId=42");
         assert_eq!(ChatTarget::AdminDone.url(), "index.html?admin=done");
         assert_eq!(
-            ChatTarget::NewSession {
-                cwd: None,
-                provider: None
-            }
-            .url(),
+            ChatTarget::NewSession { cwd: None, provider: None }.url(),
             "index.html?newSession=1"
         );
         assert_eq!(

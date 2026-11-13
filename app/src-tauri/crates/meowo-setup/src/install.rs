@@ -60,7 +60,9 @@ pub fn run_inner_gui() -> i32 {
             return EXIT_EMPTY_PAYLOAD;
         }
         Err(ExtractError::Io(e)) => {
-            message_box(&format!("写入临时文件失败，可能被杀毒软件拦截。\n\n{e}"));
+            message_box(&format!(
+                "写入临时文件失败，可能被杀毒软件拦截。\n\n{e}"
+            ));
             return EXIT_EXTRACT_FAILED;
         }
     };
@@ -77,18 +79,10 @@ pub fn run_inner_gui() -> i32 {
 fn message_box(text: &str) {
     use windows_sys::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
     let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
-    let title: Vec<u16> = "Meowo 安装"
-        .encode_utf16()
-        .chain(std::iter::once(0))
-        .collect();
+    let title: Vec<u16> = "Meowo 安装".encode_utf16().chain(std::iter::once(0)).collect();
     // SAFETY: 两个指针都指向本函数栈上的 NUL 结尾缓冲。
     unsafe {
-        MessageBoxW(
-            std::ptr::null_mut(),
-            wide.as_ptr(),
-            title.as_ptr(),
-            MB_OK | MB_ICONERROR,
-        );
+        MessageBoxW(std::ptr::null_mut(), wide.as_ptr(), title.as_ptr(), MB_OK | MB_ICONERROR);
     }
 }
 

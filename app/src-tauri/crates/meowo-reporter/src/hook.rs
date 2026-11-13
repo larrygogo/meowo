@@ -114,7 +114,9 @@ impl HookEvent {
             return Some(TodoDelta::Update {
                 external_id,
                 content: subject,
-                status: status_raw.filter(|_| !deleted).map(TodoStatus::from_str),
+                status: status_raw
+                    .filter(|_| !deleted)
+                    .map(TodoStatus::from_str),
                 deleted,
             });
         }
@@ -167,15 +169,7 @@ impl HookEvent {
     /// 都不命中返回 None，调用方退回只显示工具名。
     pub fn activity_detail(&self) -> Option<String> {
         let input = self.tool_input.as_ref()?;
-        for key in [
-            "pattern",
-            "file_path",
-            "path",
-            "query",
-            "url",
-            "subject",
-            "description",
-        ] {
+        for key in ["pattern", "file_path", "path", "query", "url", "subject", "description"] {
             if let Some(s) = input.get(key).and_then(|v| v.as_str()).map(str::trim) {
                 if !s.is_empty() {
                     // 细节只是状态条一行字：Agent 的 description 等字段没有长度约束，

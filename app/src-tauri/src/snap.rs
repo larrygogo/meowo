@@ -117,9 +117,7 @@ pub(crate) fn mouse_pressed_outside_window(window: tauri::WebviewWindow) -> bool
     {
         use windows_sys::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
         // VK_LBUTTON / VK_RBUTTON / VK_MBUTTON；返回值最高位为 1（i16 为负）= 此刻按着。
-        let pressed = [0x01, 0x02, 0x04]
-            .iter()
-            .any(|vk| unsafe { GetAsyncKeyState(*vk) } < 0);
+        let pressed = [0x01, 0x02, 0x04].iter().any(|vk| unsafe { GetAsyncKeyState(*vk) } < 0);
         pressed && !cursor_over_window(window)
     }
     #[cfg(target_os = "macos")]
@@ -157,11 +155,7 @@ pub(crate) fn cursor_over_window(window: tauri::WebviewWindow) -> bool {
     // macOS（2026-11-05 起也是灵动岛）走 tauri 的跨平台光标位置，与窗口物理矩形比。
     #[cfg(not(target_os = "windows"))]
     {
-        let (Ok(p), Ok(pos), Ok(sz)) = (
-            window.cursor_position(),
-            window.outer_position(),
-            window.outer_size(),
-        ) else {
+        let (Ok(p), Ok(pos), Ok(sz)) = (window.cursor_position(), window.outer_position(), window.outer_size()) else {
             return true;
         };
         p.x >= f64::from(pos.x)

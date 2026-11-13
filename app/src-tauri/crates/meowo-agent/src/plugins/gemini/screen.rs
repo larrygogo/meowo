@@ -43,7 +43,9 @@ pub(super) static RULES: &[ScreenRule] = &[
                     "do you want to proceed?",
                 ]),
                 Matcher::Any(&[
-                    Matcher::LineRegex(r"^\s*│?\s*(?:[\x{276F}\x{25CF}\x{25CB}]\s*)?\d+\.\s*yes\b"),
+                    Matcher::LineRegex(
+                        r"^\s*│?\s*(?:[\x{276F}\x{25CF}\x{25CB}]\s*)?\d+\.\s*yes\b",
+                    ),
                     Matcher::LineStartsWithContaining("\u{276F}", &["yes", "allow"]),
                 ]),
             ]),

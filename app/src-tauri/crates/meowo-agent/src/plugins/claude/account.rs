@@ -169,10 +169,7 @@ pub fn parse_usage(v: &serde_json::Value) -> Usage {
                         .and_then(|x| x.as_str())
                         .filter(|s| !s.is_empty())
                         .or_else(|| {
-                            model
-                                .get("id")
-                                .and_then(|x| x.as_str())
-                                .filter(|s| !s.is_empty())
+                            model.get("id").and_then(|x| x.as_str()).filter(|s| !s.is_empty())
                         })?
                         .to_string();
                     let utilization = e.get("percent").and_then(|x| x.as_f64())?;

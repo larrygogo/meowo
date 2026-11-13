@@ -176,7 +176,9 @@ pub(crate) fn descendant_pids(
 #[cfg(target_os = "windows")]
 pub(crate) fn kill_pid(pid: u32) -> bool {
     use windows_sys::Win32::Foundation::CloseHandle;
-    use windows_sys::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, TerminateProcess, PROCESS_TERMINATE,
+    };
     unsafe {
         let handle = OpenProcess(PROCESS_TERMINATE, 0, pid);
         if handle.is_null() {

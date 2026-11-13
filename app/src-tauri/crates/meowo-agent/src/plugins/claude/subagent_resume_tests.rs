@@ -23,11 +23,7 @@ fn write(name: &str, lines: &[&str]) -> std::path::PathBuf {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let main = dir.join("s.jsonl");
-    std::fs::write(
-        &main,
-        lines.iter().map(|l| format!("{l}\n")).collect::<String>(),
-    )
-    .unwrap();
+    std::fs::write(&main, lines.iter().map(|l| format!("{l}\n")).collect::<String>()).unwrap();
     main
 }
 
@@ -39,10 +35,7 @@ fn outcome_of(main: &std::path::Path) -> (u64, u64, u64) {
     let mut outcomes = std::collections::HashMap::<String, serde_json::Value>::new();
     for item in &delta.items {
         let v = serde_json::to_value(item).unwrap();
-        let (Some(tool), Some(sub)) = (
-            v["tool_use_id"].as_str(),
-            v.get("subagent").filter(|s| !s.is_null()),
-        ) else {
+        let (Some(tool), Some(sub)) = (v["tool_use_id"].as_str(), v.get("subagent").filter(|s| !s.is_null())) else {
             continue;
         };
         let mut owner = tool.to_string();
@@ -64,10 +57,7 @@ fn queued_resume_notification_is_not_completion() {
     // 通知原文也不能以用户消息冒出来。
     let delta = read_chat_delta(&CLAUDE_TRANSCRIPT, &main, 0, None);
     assert!(
-        delta
-            .items
-            .iter()
-            .all(|i| serde_json::to_value(i).unwrap()["type"] != "user_text"),
+        delta.items.iter().all(|i| serde_json::to_value(i).unwrap()["type"] != "user_text"),
         "{:?}",
         delta.items
     );
@@ -80,17 +70,7 @@ fn resume_after_finish_runs_again_until_next_completion() {
     assert_eq!(outcome_of(&main), (1, 0, 0));
     assert_eq!(analyze_transcript(main.to_str().unwrap()).busy_subagents, 1);
     // 本机实拍顺序：送达行比这一段的完成通知还晚。不能被它翻回运行中、永远挂着。
-    let main = write(
-        "late",
-        &[
-            LAUNCH,
-            DONE_USER,
-            RESUME_ENQUEUE,
-            DONE_AGAIN_ENQUEUE,
-            DONE_AGAIN_USER,
-            RESUME_QUEUED,
-        ],
-    );
+    let main = write("late", &[LAUNCH, DONE_USER, RESUME_ENQUEUE, DONE_AGAIN_ENQUEUE, DONE_AGAIN_USER, RESUME_QUEUED]);
     assert_eq!(outcome_of(&main), (0, 1, 0));
     assert_eq!(analyze_transcript(main.to_str().unwrap()).busy_subagents, 0);
 }
@@ -101,10 +81,7 @@ fn quoted_resume_phrase_stays_user_text() {
     let quoted = r#"{"type":"user","uuid":"u1","message":{"role":"user","content":"Agent \"x\" was resumed by the user 是什么意思"}}"#;
     let main = write("quoted", &[quoted]);
     let delta = read_chat_delta(&CLAUDE_TRANSCRIPT, &main, 0, None);
-    assert_eq!(
-        serde_json::to_value(&delta.items[0]).unwrap()["type"],
-        "user_text"
-    );
+    assert_eq!(serde_json::to_value(&delta.items[0]).unwrap()["type"], "user_text");
 }
 
 // ═══ 「还在等自己的后台活儿」不是收尾（做空第三轮 #7）═══
@@ -139,10 +116,7 @@ fn background_of(main: &std::path::Path) -> bool {
     let mut last = std::collections::HashMap::<String, bool>::new();
     for item in &delta.items {
         let v = serde_json::to_value(item).unwrap();
-        let (Some(tool), Some(sub)) = (
-            v["tool_use_id"].as_str(),
-            v.get("subagent").filter(|s| !s.is_null()),
-        ) else {
+        let (Some(tool), Some(sub)) = (v["tool_use_id"].as_str(), v.get("subagent").filter(|s| !s.is_null())) else {
             continue;
         };
         let mut owner = tool.to_string();
@@ -158,21 +132,13 @@ fn background_of(main: &std::path::Path) -> bool {
 /// 之后再无 finished，挂进行中（或「等待后台」）会永远占着面板。后台计数照常减。
 #[test]
 fn waiting_on_own_background_work_is_done_with_background_note() {
-    let (user, enqueue, queued) = (
-        waiting_user("w1", "2026-11-10T10:05:00.000Z"),
-        waiting_enqueue("2026-11-10T10:05:00.000Z"),
-        waiting_queued("2026-11-10T10:05:00.000Z"),
-    );
+    let (user, enqueue, queued) = (waiting_user("w1", "2026-11-10T10:05:00.000Z"), waiting_enqueue("2026-11-10T10:05:00.000Z"), waiting_queued("2026-11-10T10:05:00.000Z"));
     // 送达形态（user 行 / queued_command）：完成 + 后台仍在运行，后台计数 0；再无 finished 时就停在这里。
     for (name, line) in [("user", &user), ("queued", &queued)] {
         let main = write(&format!("waiting-{name}"), &[LAUNCH, line]);
         assert_eq!(outcome_of(&main), (0, 1, 0), "{name} 形态按完成算");
         assert!(background_of(&main), "{name} 形态带「后台仍在运行」");
-        assert_eq!(
-            analyze_transcript(main.to_str().unwrap()).busy_subagents,
-            0,
-            "{name} 形态照常减后台计数"
-        );
+        assert_eq!(analyze_transcript(main.to_str().unwrap()).busy_subagents, 0, "{name} 形态照常减后台计数");
     }
     // 只有入队、再无送达也再无 finished：会话不卡在「后台在跑」。
     let main = write("waiting-enqueue-only", &[LAUNCH, &enqueue]);
@@ -196,10 +162,7 @@ const DONE_VIA_SEND: &str = r#"{"type":"user","uuid":"n3","timestamp":"2026-11-1
 fn completion_after_send_message_resume_settles_original_delegation() {
     let main = write("send-resume", &[LAUNCH, DONE_USER, SEND_RESUME]);
     assert_eq!(outcome_of(&main), (1, 0, 0), "SendMessage 续上后原委派在跑");
-    let main = write(
-        "send-resume-done",
-        &[LAUNCH, DONE_USER, SEND_RESUME, DONE_VIA_SEND],
-    );
+    let main = write("send-resume-done", &[LAUNCH, DONE_USER, SEND_RESUME, DONE_VIA_SEND]);
     assert_eq!(outcome_of(&main), (0, 1, 0), "完成通知要归回原委派");
     assert_eq!(analyze_transcript(main.to_str().unwrap()).busy_subagents, 0);
 }

@@ -511,21 +511,12 @@ mod tests {
 
     #[test]
     fn claim_only_against_the_same_db() {
-        assert!(same_db(
-            r"C:\Users\me\.meowo\board.db",
-            "C:/Users/me/.meowo/board.db"
-        ));
+        assert!(same_db(r"C:\Users\me\.meowo\board.db", "C:/Users/me/.meowo/board.db"));
         // 会话内跑的测试 / 探针用 MEOWO_DB 指开的临时库：不认领。
-        assert!(!same_db(
-            r"C:\Temp\probe\board.db",
-            r"C:\Users\me\.meowo\board.db"
-        ));
+        assert!(!same_db(r"C:\Temp\probe\board.db", r"C:\Users\me\.meowo\board.db"));
         assert!(!same_db("", ""));
         #[cfg(windows)]
-        assert!(same_db(
-            r"c:\users\ME\.meowo\board.db",
-            r"C:\Users\me\.meowo\board.db"
-        ));
+        assert!(same_db(r"c:\users\ME\.meowo\board.db", r"C:\Users\me\.meowo\board.db"));
     }
 
     fn sample_request() -> ApprovalRequest {

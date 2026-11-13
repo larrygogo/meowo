@@ -288,10 +288,7 @@ mod tests {
                 "/Applications/My  Term.app/Contents/MacOS/term".to_string()
             ))
         );
-        assert_eq!(
-            parse_ps_line("77 1 /bin/zsh"),
-            Some((77, 1, "/bin/zsh".into()))
-        );
+        assert_eq!(parse_ps_line("77 1 /bin/zsh"), Some((77, 1, "/bin/zsh".into())));
         assert_eq!(parse_ps_line(""), None);
         assert_eq!(parse_ps_line("123"), None, "缺 ppid/comm → None");
         assert_eq!(parse_ps_line("abc def /bin/zsh"), None, "pid 非数字 → None");
@@ -326,10 +323,7 @@ mod tests {
         ];
         assert_eq!(
             viewer_host_entry(100, &dev),
-            Some((
-                80,
-                "/System/Applications/Utilities/Terminal.app".to_string()
-            ))
+            Some((80, "/System/Applications/Utilities/Terminal.app".to_string()))
         );
 
         // 自身 comm 为空的行被 ancestor_chain 丢弃、链首直接就是宿主（宿主直接 spawn
@@ -353,11 +347,7 @@ mod tests {
             (100, "meowo-reporter".to_string()),
             (90, "/bin/zsh".to_string()),
         ];
-        assert_eq!(
-            viewer_host_entry(100, &no_bundle),
-            None,
-            "无 .app 祖先 → None"
-        );
+        assert_eq!(viewer_host_entry(100, &no_bundle), None, "无 .app 祖先 → None");
     }
 
     /// bundle 截取规则：取首个后随 `Contents` 的 `.app` 组件（见 host_bundle_path）。

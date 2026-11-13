@@ -325,9 +325,7 @@ fn sub_dir_in_base(repo: &Repo, base_ref: &str, sub: &str) -> bool {
 
 /// worktree 里的同一子目录（逐段拼，Windows 上不留混着的 `/`）。
 fn join_sub(root: &Path, sub: &str) -> PathBuf {
-    sub.split('/')
-        .filter(|s| !s.is_empty())
-        .fold(root.to_path_buf(), |p, s| p.join(s))
+    sub.split('/').filter(|s| !s.is_empty()).fold(root.to_path_buf(), |p, s| p.join(s))
 }
 
 /// 新建会话页的实时预览。撞名不报错，只把标记带回去，界面上给提示和建议名。
@@ -339,9 +337,7 @@ pub(crate) fn preview(
     let repo = repo_of(dir)?;
     let (base_ref, base) = base_of(&repo);
     let sub_dir = sub_dir_of(dir);
-    let sub_dir_missing = sub_dir
-        .as_deref()
-        .is_some_and(|s| !sub_dir_in_base(&repo, &base_ref, s));
+    let sub_dir_missing = sub_dir.as_deref().is_some_and(|s| !sub_dir_in_base(&repo, &base_ref, s));
     let cfg = config::load(&repo.top);
     let has_setup = cfg
         .setup
@@ -581,11 +577,7 @@ fn arm(
     {
         let mut s = task.inner.lock().unwrap_or_else(|e| e.into_inner());
         s.script = script.clone();
-        s.config_env = cfg
-            .env
-            .iter()
-            .map(|(k, v)| (k.clone(), v.clone()))
-            .collect();
+        s.config_env = cfg.env.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
         s.hash = script.is_some().then(|| hash.clone());
         s.source = cfg.source.map(config::Source::as_str);
         s.timeout = std::time::Duration::from_secs(cfg.timeout_sec);

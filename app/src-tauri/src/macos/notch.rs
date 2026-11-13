@@ -206,26 +206,16 @@ pub(crate) fn layout(
     let scale = window.scale_factor().unwrap_or(2.0).max(0.1);
     let (x, y) = under_tray(app, window, width * scale, scale);
     window
-        .set_position(tauri::PhysicalPosition::new(
-            x.round() as i32,
-            y.round() as i32,
-        ))
+        .set_position(tauri::PhysicalPosition::new(x.round() as i32, y.round() as i32))
         .map_err(|e| e.to_string())
 }
 
 /// 菜单栏图标正下方、水平居中的左上角（物理像素），与菜单栏留一道缝，横向夹在图标所在屏里
 /// （图标靠右时 600 宽的面板居中会伸出屏幕）。图标位置取不到（刚启动、还没点过）时退到主屏右上角。
-fn under_tray(
-    app: &tauri::AppHandle,
-    window: &tauri::WebviewWindow,
-    phys_w: f64,
-    scale: f64,
-) -> (f64, f64) {
+fn under_tray(app: &tauri::AppHandle, window: &tauri::WebviewWindow, phys_w: f64, scale: f64) -> (f64, f64) {
     let gap = POPOVER_GAP * scale;
     let edge = POPOVER_EDGE * scale;
-    let rect = app
-        .tray_by_id("meowo-tray")
-        .and_then(|t| t.rect().ok().flatten());
+    let rect = app.tray_by_id("meowo-tray").and_then(|t| t.rect().ok().flatten());
     if let Some(rect) = rect {
         let pos = rect.position.to_physical::<f64>(scale);
         let size = rect.size.to_physical::<f64>(scale);
