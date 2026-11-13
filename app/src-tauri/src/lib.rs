@@ -1682,6 +1682,8 @@ pub fn run() {
             // 托管会话的屏幕状态检测（working/idle/blocked 角标）。在 set_app_handle 之后
             // 启动：状态变化要经 AppHandle 发看板刷新。
             approval_ptys.start_screen_detect();
+            // 上次运行留下的 codex app-server（Lead 原生续跑）重新纳入看守；放后台线程，不卡启动。
+            std::thread::spawn(lead_native::codex_app_server::sweep_on_startup);
             // macOS：纯菜单栏 App（隐藏 Dock 图标），main 窗口转 NSPanel，托盘走 menubar 模块。
             #[cfg(target_os = "macos")]
             {

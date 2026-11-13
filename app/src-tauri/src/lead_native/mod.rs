@@ -9,10 +9,13 @@
 
 // 临时：三路实现填入前 NativeTarget 字段与 Delivered/WaiterWillWake 尚未使用；实现完成后删除这行。
 #![allow(dead_code)]
+pub(crate) mod codex_app_server;
 pub(crate) mod server;
 pub(crate) mod waiter;
+mod ws;
 
-use meowo_agent::lead_install::NativeContinue;
+use meowo_agent::lead_install::{NativeContinue, ServerProtocol};
+use meowo_protocol::ipc::LeadDeliveryDto;
 use std::path::Path;
 
 /// 一次原生续跑的上下文。`native_session` 是 CLI 自己的会话 id（.owner 里那个）。
@@ -45,5 +48,30 @@ pub(crate) fn deliver(target: &NativeTarget<'_>, app: Option<&tauri::AppHandle>)
         None => Ok(NativeOutcome::Unsupported),
         Some(NativeContinue::InSessionWaiter { offline }) => waiter::deliver(target, offline, app),
         Some(NativeContinue::ServerQueue(protocol)) => server::deliver(target, protocol, app),
+    }
+}
+
+/// 原生会话的真实送达状态；None = 该机制没有宿主侧记录（沿用面板原有提示）。
+pub(crate) fn delivery_status(
+    db: &Path,
+    provider: &str,
+    session_id: i64,
+    cwd: String,
+    task: &Path,
+    gate_id: &str,
+    native: &str,
+) -> Option<LeadDeliveryDto> {
+    match mechanism(provider)? {
+        NativeContinue::ServerQueue(ServerProtocol::CodexAppServer) => Some(
+            codex_app_server::status(db, session_id, cwd, task, gate_id, native),
+        ),
+        _ => None,
+    }
+}
+
+/// 面板「继续送达」：清掉失败记录的冷却，紧接着的 deliver 会立即重投；已送出的不受影响。
+pub(crate) fn reset_failed(target: &NativeTarget<'_>) {
+    if mechanism(target.provider) == Some(NativeContinue::ServerQueue(ServerProtocol::CodexAppServer)) {
+        codex_app_server::clear_failure(target.db, target.task, target.gate_id, target.native_session);
     }
 }

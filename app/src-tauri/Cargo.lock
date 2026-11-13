@@ -2675,6 +2675,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "sys-locale",
+ "sysinfo",
  "tauri",
  "tauri-build",
  "tauri-nspanel",
