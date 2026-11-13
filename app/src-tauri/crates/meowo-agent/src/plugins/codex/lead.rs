@@ -40,8 +40,6 @@ const SPEC: LeadInstallSpec = LeadInstallSpec {
         },
     ],
     limitations: &[
-        "lead/auto_continue_unverified",
-        "lead/offline_resume_unverified",
         "lead/main_agent_identity_unverified",
         "lead/non_lead_io_unverified",
     ],
@@ -49,6 +47,14 @@ const SPEC: LeadInstallSpec = LeadInstallSpec {
     windows_override: true,
 };
 impl LeadCap for CodexLead {
+    /// 0.167.2 隔离实测（宿主 app-server + TUI --remote + thread/queue/add）：TUI 在线时答复后同一
+    /// thread 自动开新回合、草稿保留；TUI 退出后服务仍在则当场跑完、resume 可见；服务也不在时
+    /// `codex queue` 落持久队列，下次 resume 消费。实现见宿主 lead_native::codex_app_server。
+    fn native_continue(&self) -> Option<crate::lead_install::NativeContinue> {
+        Some(crate::lead_install::NativeContinue::ServerQueue(
+            crate::lead_install::ServerProtocol::CodexAppServer,
+        ))
+    }
     fn binding_policy(&self) -> crate::lead_install::LeadBindingPolicy {
         crate::lead_install::LeadBindingPolicy::NativeThreadMeta
     }
