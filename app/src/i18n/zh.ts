@@ -295,24 +295,21 @@ export const zh = {
     } as Record<string, string>,
     planOnly: "只出方案",
     // 胶囊上的短名（中文界面说中文，CLI 原名放菜单小字）。键同 desc。
+    // 共用短名表（胶囊与菜单主文字）：同一语义跨家同一个名字，按三维（改文件 / 跑命令要不要问、
+    // 是否只出方案）查表，见 modeChoices.ts sharedShort。只有三维确实不同的档才用不同短名。
+    shared: {
+      ask: "每步都问",
+      readOnly: "只读",
+      autoEdits: "自动改文件",
+      risky: "必要时询问",
+      never: "都不问",
+      plan: "计划",
+    } as Record<string, string>,
+    // 三维相同、但同一栏里必须分开的档（Codex Approve for me 与 Ask for approval 三维一样，差别在越界请求
+    // 先交自动审查，0.167.2 `--help`），以及读不到配置的默认档。键同 desc。
     short: {
-      "kimi.permission.manual": "每步都问",
-      "kimi.permission.yolo": "必要时询问",
-      "kimi.permission.auto": "都不问",
-      "gemini.approval.default": "每次询问",
-      "gemini.approval.autoEdit": "自动改文件",
-      "gemini.approval.plan": "只出方案",
-      "gemini.approval.yolo": "全部放行",
       "codex.approval.default": "按配置",
-      "codex.approval.readOnly": "只读",
-      "codex.approval.ask": "越界才问",
       "codex.approval.approveForMe": "自动审查",
-      "codex.approval.yolo": "完全放行",
-      "opencode.agent.build": "构建",
-      "opencode.agent.plan": "只出方案",
-      "claude.permission.plan": "计划模式",
-      "claude.permission.acceptEdits": "自动改文件",
-      "claude.permission.bypassPermissions": "跳过权限确认",
     } as Record<string, string>,
     // 计划开关（Kimi 工作模式、Codex 协作模式）：两档里一档只出方案，胶囊直接说开没开。
     plan: (on: boolean): string => (on ? "计划：开" : "计划：关"),

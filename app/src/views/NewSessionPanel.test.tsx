@@ -175,7 +175,7 @@ describe("NewSessionPanel (独立窗口)", () => {
     fireEvent.click(screen.getByRole("option", { name: "Opus" }));
     fireEvent.click(within(screen.getByTestId("ns-option-permission")).getByRole("button"));
     // 权限档的名字是统一说法（任务 20261114-tui-model-switch），CLI 原名在说明行末尾。
-    fireEvent.click(screen.getByRole("option", { name: /计划模式/ }));
+    fireEvent.click(screen.getByRole("option", { name: /^计划/ }));
     fireEvent.change(screen.getByTestId("ns-dir"), { target: { value: "C:/proj" } });
     fireEvent.click(screen.getByTestId("ns-launch"));
     // 只回传 choice id；翻译成 CLI flag 是后端按同一张声明表做的事。
@@ -192,11 +192,11 @@ describe("NewSessionPanel (独立窗口)", () => {
     render(<NewSessionPanel />);
     fireEvent.click(within(await screen.findByTestId("ns-option-permission")).getByRole("button"));
     // 名字是统一说法，副标题是一句话说明 + CLI 原名（任务 20261114-tui-model-switch）。
-    const risky = screen.getByRole("option", { name: /跳过权限确认/ });
+    const risky = screen.getByRole("option", { name: /^都不问/ });
     expect(risky.className).toContain("risk");
     expect(within(risky).getByText("改文件和跑命令都不问 · Bypass Permissions")).toBeTruthy();
     // 普通档不带警示样式，副标题是它自己的三维说法。
-    const plain = screen.getByRole("option", { name: /计划模式/ });
+    const plain = screen.getByRole("option", { name: /^计划/ });
     expect(plain.className).not.toContain("risk");
     expect(within(plain).getByText("只出方案 · 不改文件也不跑命令 · Plan")).toBeTruthy();
   });

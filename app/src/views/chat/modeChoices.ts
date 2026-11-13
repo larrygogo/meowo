@@ -30,6 +30,24 @@ export function traitsSummary(t: Dict, traits: ModeTraits): string {
   return parts.filter(Boolean).join(" · ");
 }
 
+/** 共用短名：按三维查表，同一语义跨家同一个名字（「统一解释」，2026-11-14 截图复核）。
+ *  三维相同、同一栏里又必须分开的档由 `t.modes.short[说明键]` 单独命名（Codex 自动审查）。
+ *  查不到的组合返回 undefined，调用方退回 CLI 原名。 */
+export function sharedShort(t: Dict, traits: ModeTraits, descKey?: string | null): string | undefined {
+  const own = descKey ? t.modes.short[descKey] : undefined;
+  if (own) return own;
+  if (traits.plan_only) return t.modes.shared.plan;
+  const key = `${traits.edits}/${traits.commands}`;
+  const table: Record<string, string> = {
+    "always/always": t.modes.shared.ask,
+    "always/risky": t.modes.shared.readOnly,
+    "never/always": t.modes.shared.autoEdits,
+    "risky/risky": t.modes.shared.risky,
+    "never/never": t.modes.shared.never,
+  };
+  return table[key];
+}
+
 /** 计划开关：两档里恰有一档「只出方案」，另一档不自带说法或「按权限档」（Kimi 工作模式、Codex 协作模式）。
  *  返回开 / 关两档的 id；OpenCode 的 build / plan 各有自己的权限，不算开关。 */
 export function planToggle(option: LaunchOption): { on: string; off: string } | null {
@@ -58,7 +76,7 @@ export function modeChoiceViews(
   const views = option.choices.map((choice): ModeChoiceView => {
     // 胶囊短名：计划开关说开没开；其余用统一说法的短名（中文界面中文），CLI 原名只在菜单小字。
     const short = toggle ? t.modes.plan(choice.id === toggle.on)
-      : (choice.desc ? t.modes.short[choice.desc] : undefined)
+      : (choice.traits ? sharedShort(t, choice.traits, choice.desc) : choice.desc ? t.modes.short[choice.desc] : undefined)
         ?? t.chat.modeShortNames[`${option.id}.${choice.id}`] ?? t.newSession.launchChoice[`${option.id}.${choice.id}`] ?? choice.label;
     const effective = resolved(choice);
     // 菜单主文字 = 胶囊短名（同一家各档互不重复，一眼分得清「越界才问」与「自动审查」）；
@@ -69,7 +87,7 @@ export function modeChoiceViews(
     // 「默认」档不传参数，行为由 CLI 配置决定：读得到配置就说成那一档；读不到用这档自己的说明
     // （「按权限档执行」「按 Codex 配置文件的设置」），连说明都没有才说「按 CLI 配置」。
     if (effective?.traits) {
-      const name = t.modes.followConfig((effective.desc ? t.modes.short[effective.desc] : undefined) ?? effective.label);
+      const name = t.modes.followConfig(sharedShort(t, effective.traits, effective.desc) ?? effective.label);
       return { value: choice.id, label: name, short: name, desc: traitsSummary(t, effective.traits), detail: choice.label, risk: choice.risk || effective.risk };
     }
     return {

@@ -1115,10 +1115,10 @@ describe("ChatWindow", () => {
     expect(screen.getByText("Accept Edits")).toBeTruthy();
     const autoItem = screen.getByRole("menuitem", { name: "自动" });
     expect(document.getElementById(autoItem.getAttribute("aria-describedby") ?? "")?.textContent).toBe("安全操作自动，有风险的才问你");
-    fireEvent.click(screen.getByRole("menuitem", { name: "计划模式" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "计划" }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 51, data: "\u001b[Z" }));
     // transcript 静默，但屏幕是 CLI 自己画的权威状态——标签应据它回显为「计划」。
-    expect(await screen.findByText("计划模式")).toBeTruthy();
+    await waitFor(() => expect(screen.getByRole("button", { name: "切换模式: 权限模式" }).textContent).toContain("计划"));
   });
 
   it("休眠会话的权限胶囊改卖「下一次恢复的权限」：选择只落启动参数，不碰终端", async () => {

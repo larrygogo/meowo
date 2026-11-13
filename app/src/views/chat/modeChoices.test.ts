@@ -15,7 +15,7 @@ describe("模式统一说法", () => {
     const gemini = modeChoiceViews(zh, optionOf("gemini", "approval"));
     // 主文字是短名，第二行是三维统一说法。
     expect(kimi.find((view) => view.value === "yolo")).toMatchObject({ label: "必要时询问", desc: "常规自动做，危险的才问" });
-    expect(gemini.find((view) => view.value === "yolo")).toMatchObject({ label: "全部放行", desc: "改文件和跑命令都不问" });
+    expect(gemini.find((view) => view.value === "yolo")).toMatchObject({ label: "都不问", desc: "改文件和跑命令都不问" });
     // 小字是 CLI 原名，说明来自各家原文提炼。
     expect(kimi.find((view) => view.value === "yolo")?.detail).toBe("Ask When Needed");
     expect(kimi.find((view) => view.value === "auto")?.label).toBe("都不问");
@@ -23,7 +23,8 @@ describe("模式统一说法", () => {
 
   it("胶囊短名说中文统一说法，CLI 原名只在小字；计划维度说开没开", () => {
     const codex = modeChoiceViews(zh, optionOf("codex", "approval"));
-    expect(codex.find((view) => view.value === "ask")).toMatchObject({ short: "越界才问", detail: "Ask for approval" });
+    expect(codex.find((view) => view.value === "ask")).toMatchObject({ short: "必要时询问", detail: "Ask for approval" });
+    expect(codex.find((view) => view.value === "approveForMe")?.short).toBe("自动审查");
     expect(planToggle(optionOf("kimi", "work"))).toEqual({ on: "plan", off: "default" });
     expect(planToggle(optionOf("codex", "collaboration"))).toEqual({ on: "plan", off: "default" });
     // OpenCode 的 build / plan 各有自己的权限，不是开关；Gemini 的 plan 是审批四档之一。
@@ -46,6 +47,34 @@ describe("模式统一说法", () => {
         }
       }
     }
+  });
+
+  /// 「统一解释」：三维相同的档跨家同一个短名（Kimi Never Ask / Codex Full Access / Gemini yolo 都是「都不问」）。
+  /// 例外只有同一栏里三维撞了、又必须分开的档（Codex 自动审查），它单独命名。
+  it("三维相同的档跨家短名相同", () => {
+    const byTraits = new Map<string, Set<string>>();
+    for (const agent of descriptors(["claude", "codex", "kimi", "gemini", "opencode"])) {
+      for (const option of agent.launch_options) {
+        if (planToggle(option)) continue; // 计划开关说开没开，另有测试
+        for (const choice of option.choices) {
+          if (!choice.traits || (choice.desc && zh.modes.short[choice.desc])) continue;
+          const key = JSON.stringify(choice.traits);
+          const short = modeChoiceViews(zh, option).find((view) => view.value === choice.id)!.short;
+          byTraits.set(key, new Set([...(byTraits.get(key) ?? []), short]));
+        }
+      }
+    }
+    for (const [traits, shorts] of byTraits) expect([...shorts], traits).toHaveLength(1);
+    const short = (provider: string, option: string, value: string) =>
+      modeChoiceViews(zh, optionOf(provider, option)).find((view) => view.value === value)?.short;
+    expect([short("kimi", "permission", "auto"), short("codex", "approval", "yolo"), short("gemini", "approval", "yolo")]).toEqual(["都不问", "都不问", "都不问"]);
+    expect([short("kimi", "permission", "manual"), short("gemini", "approval", "default")]).toEqual(["每步都问", "每步都问"]);
+    // Gemini plan 与 Kimi / Codex 的计划档同叫「计划」，第二行如实区分：Gemini 不能跑命令，Kimi 命令按权限档。
+    expect(short("gemini", "approval", "plan")).toBe("计划");
+    const geminiPlan = modeChoiceViews(zh, optionOf("gemini", "approval")).find((view) => view.value === "plan");
+    const kimiPlan = modeChoiceViews(zh, optionOf("kimi", "work")).find((view) => view.value === "plan");
+    expect(geminiPlan?.desc).toBe("只出方案 · 不改文件也不跑命令");
+    expect(kimiPlan).toMatchObject({ short: "计划：开", desc: "只出方案 · 不改文件 · 命令按权限档" });
   });
 
   it("只规划的档把「只出方案」放在最前", () => {
