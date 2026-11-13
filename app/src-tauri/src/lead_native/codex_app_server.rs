@@ -820,6 +820,10 @@ pub(crate) fn clear_failure(db: &Path, task: &Path, gate_id: &str, native: &str)
 }
 
 #[cfg(test)]
+#[path = "codex_app_server_probe.rs"]
+mod probe;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
