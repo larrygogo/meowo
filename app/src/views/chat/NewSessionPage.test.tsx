@@ -42,73 +42,27 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe("新建会话页（对话窗主区，对照 Kimi）", () => {
-  // 2026-11-13 改定（leader：「这个勾选有什么意义？」）：新建页不再让用户选托管还是原生。托管唯一的用处是
-  // Lead 关卡手机作答后自动继续，所以这家装了 Lead 且托管能自动继续就托管，否则原生 CLI。
-  const leadOn = (provider: string) => api.leadProviderInstallations.mockResolvedValue([{ provider, automaticContinue: true }]);
-
-  it("Lead-enabled provider creates a managed session with the account ID and hides CLI launch flags", async () => {
-    leadOn("codex");
-    api.listAgents.mockResolvedValue(descriptors(["codex"]).map((agent) => ({ ...agent, supports_managed_conversation: agent.id === "codex" })));
-    api.getSettings.mockResolvedValue({ default_agent: "codex", active_profile: { codex: "work" } });
-    api.getAccounts.mockResolvedValue([{ provider: "codex", account: { login_label: "API Key" }, active_profile_name: "工作账号" }]);
-    api.managedConversationCreate.mockResolvedValue({ sessionId: 407 });
-    const onLaunched=vi.fn();render(<NewSessionPage prefill={{cwd:"C:/isolated",provider:"codex"}} onLaunched={onLaunched}/>);
-    await screen.findByText(zh.newSession.activeProfile("工作账号"));
-    await waitFor(()=>expect(screen.queryByTestId("nsp-option-approval")).toBeNull());
-    expect(screen.queryByRole("checkbox",{name:/托管/})).toBeNull();
-    fireEvent.change(screen.getByTestId("nsp-input"),{target:{value:"  preserve exact first message  "}});
-    fireEvent.click(screen.getByTestId("nsp-send"));
-    await waitFor(()=>expect(api.managedConversationCreate).toHaveBeenCalledWith("codex",normalizePath("C:/isolated"),"work"));
-    expect(api.newSession).not.toHaveBeenCalled();
-    await waitFor(()=>expect(onLaunched).toHaveBeenCalledWith(407,"codex","  preserve exact first message  ",[]));
-  });
-
-  it.each(["codex", "kimi", "gemini", "opencode"])("%s with Lead uses descriptor-managed mode without a Claude-only fallback", async (provider) => {
-    leadOn(provider);
-    api.listAgents.mockResolvedValue(descriptors([provider]).map((agent) => ({ ...agent, supports_managed_conversation: agent.id === provider })));
+  // 2026-11-13 改定（leader：「我觉得还是得保留TUI」）：新建会话一律原生 TUI。Lead 关卡的自动继续由原生会话
+  // 自己完成（lead_native），不再为 Lead 开托管会话。兄弟场景：四家无论装没装 Lead 都走原生、保留启动选项，
+  // 新建页也不再查 Lead 安装状态。
+  it.each(["codex", "kimi", "gemini", "opencode"])("%s always starts a native TUI session with its launch options, Lead or not", async (provider) => {
+    api.leadProviderInstallations.mockResolvedValue([{ provider, automaticContinue: true }]);
+    api.listAgents.mockResolvedValue(descriptors([provider]).map((agent) => ({ ...agent, supports_managed_conversation: true })));
     api.getSettings.mockResolvedValue({ default_agent: provider });
-    api.getAccounts.mockResolvedValue([]);
-    api.managedConversationCreate.mockResolvedValue({ sessionId: 407 });
-    const onLaunched = vi.fn();
-    render(<NewSessionPage prefill={{ cwd: "C:/isolated", provider }} onLaunched={onLaunched} />);
-    await waitFor(() => expect(api.leadProviderInstallations).toHaveBeenCalled());
-    await waitFor(() => expect(screen.queryByTestId("nsp-option-approval")).toBeNull());
-    fireEvent.change(screen.getByTestId("nsp-input"), { target: { value: "managed first message" } });
-    fireEvent.click(screen.getByTestId("nsp-send"));
-    await waitFor(() => expect(api.managedConversationCreate).toHaveBeenCalledWith(provider, normalizePath("C:/isolated"), null));
-    expect(api.newSession).not.toHaveBeenCalled();
-    await waitFor(() => expect(onLaunched).toHaveBeenCalledWith(407, provider, "managed first message", []));
-  });
-
-  // 兄弟场景：没装 Lead / 装了但不能自动继续 / 只有别家装了 / 拉安装状态失败（手机桥不放行）→ 原生 CLI，
-  // 启动选项照旧显示；四家都没有托管勾选。
-  it.each([
-    ["no Lead", [] as { provider: string; automaticContinue: boolean }[]],
-    ["Lead without automatic continue", [{ provider: "codex", automaticContinue: false }]],
-    ["only another provider has Lead", [{ provider: "kimi", automaticContinue: true }]],
-    ["installations unavailable", "reject" as const],
-  ])("%s → native CLI with its launch options", async (_name, rows) => {
-    if (rows === "reject") api.leadProviderInstallations.mockRejectedValue("remote/command_forbidden");
-    else api.leadProviderInstallations.mockResolvedValue(rows);
-    api.listAgents.mockResolvedValue(descriptors(["codex","kimi"]).map((agent)=>({...agent,supports_managed_conversation:true})));
     api.newSession.mockResolvedValue(-408);
-    render(<NewSessionPage prefill={{cwd:"C:/isolated",provider:"codex"}} onLaunched={vi.fn()}/>);
-    await waitFor(()=>expect(api.leadProviderInstallations).toHaveBeenCalled());
-    expect(await screen.findByTestId("nsp-option-approval")).toBeTruthy();
-    expect(screen.queryByRole("checkbox",{name:/托管/})).toBeNull();
+    render(<NewSessionPage prefill={{ cwd: "C:/isolated", provider }} onLaunched={vi.fn()} />);
+    await screen.findByTestId("nsp-send");
+    expect(screen.queryByRole("checkbox", { name: /托管/ })).toBeNull();
     fireEvent.click(screen.getByTestId("nsp-send"));
-    await waitFor(()=>expect(api.newSession).toHaveBeenCalled());expect(api.managedConversationCreate).not.toHaveBeenCalled();
+    await waitFor(() => expect(api.newSession).toHaveBeenCalled());
+    expect(api.managedConversationCreate).not.toHaveBeenCalled();
+    expect(api.leadProviderInstallations).not.toHaveBeenCalled();
   });
 
-  it("an unverified native version reports an error and never silently falls back to a PTY",async()=>{
-    api.listAgents.mockResolvedValue(descriptors(["codex"]).map((agent)=>({...agent,supports_managed_conversation:agent.id==="codex"})));
-    api.managedConversationCreate.mockRejectedValue("conversation/version_unsupported");
-    leadOn("codex");
-    render(<NewSessionPage prefill={{cwd:"C:/isolated",provider:"codex"}} onLaunched={vi.fn()}/>);
-    await waitFor(()=>expect(screen.queryByTestId("nsp-option-approval")).toBeNull());
-    fireEvent.change(screen.getByTestId("nsp-input"),{target:{value:"keep my draft"}});fireEvent.click(screen.getByTestId("nsp-send"));
-    expect(await screen.findByRole("alert")).toBeTruthy();expect(api.newSession).not.toHaveBeenCalled();
-    expect((screen.getByTestId("nsp-input") as HTMLTextAreaElement).value).toBe("keep my draft");
+  it("codex keeps its approval launch option", async () => {
+    api.listAgents.mockResolvedValue(descriptors(["codex"]).map((agent) => ({ ...agent, supports_managed_conversation: true })));
+    render(<NewSessionPage prefill={{ cwd: "C:/isolated", provider: "codex" }} onLaunched={vi.fn()} />);
+    expect(await screen.findByTestId("nsp-option-approval")).toBeTruthy();
   });
 
   it("默认选中最近的工作区，写下第一句话回车即启动，并把这句话交回去", async () => {
