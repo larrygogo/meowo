@@ -2402,14 +2402,38 @@ fn sessions_off_active_profile(
         return Ok(Vec::new());
     }
     let target = crate::profile::active_id(provider);
-    let mut ids: Vec<i64> = broker.active_session_ids().into_iter().collect();
+    filter_sessions_off_profile(
+        broker.active_session_ids(),
+        store,
+        provider,
+        target.as_deref(),
+    )
+}
+
+/// [`sessions_off_active_profile`] 的判据本体：从托管会话 id 里挑出「属于该 agent、且不在
+/// `target` 账号上」的那些，升序返回。拆出来是为了不起 PtyBroker 也能单测。
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn filter_sessions_off_profile(
+    ids: impl IntoIterator<Item = i64>,
+    store: &meowo_store::Store,
+    provider: &str,
+    target: Option<&str>,
+) -> Result<Vec<i64>, String> {
+    let mut ids: Vec<i64> = ids.into_iter().collect();
     ids.sort_unstable();
     let mut pending = Vec::new();
     for sid in ids {
-        if store.session_provider(sid).map_err(|e| e.to_string())? != provider {
+        // 托管表里会有**还没写库**的会话：start_pending 的临时负 id（PTY 已起、CLI 尚未
+        // SessionStart 落库）。它没有会话行，也就无从「恢复」到新账号，只能跳过——此前这里
+        // 直接 `?`，一个正在启动的会话就让整次切换账号报「sqlite error: Query returned no rows」。
+        let Some(session_provider) = store.session_provider_opt(sid).map_err(|e| e.to_string())?
+        else {
+            continue;
+        };
+        if session_provider != provider {
             continue;
         }
-        if store.session_profile(sid).map_err(|e| e.to_string())? == target {
+        if store.session_profile(sid).map_err(|e| e.to_string())?.as_deref() == target {
             continue;
         }
         pending.push(sid);
@@ -3556,5 +3580,32 @@ mod proxy_env_tests {
                 "pid={pid} 应判为 Exited"
             );
         }
+    }
+}
+
+#[cfg(test)]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+mod sessions_off_profile_tests {
+    use super::filter_sessions_off_profile;
+    use meowo_store::Store;
+
+    /// 用户报障：有会话正在启动（托管表里是临时负 id、库里还没有行）时切换账号，
+    /// 整次切换报「sqlite error: Query returned no rows」。没落库的会话应被跳过。
+    #[test]
+    fn skips_sessions_not_yet_in_db() {
+        let store = Store::open_in_memory().unwrap();
+        let pid = store.upsert_project_by_root("C:/root", "root", 100).unwrap();
+        let (old, _) = store.start_session(pid, "s-old", 100).unwrap();
+        store.set_session_provider(old, "claude").unwrap();
+        store.set_session_profile(old, Some("work")).unwrap();
+        let (on_target, _) = store.start_session(pid, "s-new", 200).unwrap();
+        store.set_session_provider(on_target, "claude").unwrap();
+        let (other_agent, _) = store.start_session(pid, "s-codex", 300).unwrap();
+        store.set_session_provider(other_agent, "codex").unwrap();
+
+        // -7：start_pending 的临时 id；999999：库里不存在的真实 id。
+        let ids = [-7, old, on_target, other_agent, 999_999];
+        let got = filter_sessions_off_profile(ids, &store, "claude", None).unwrap();
+        assert_eq!(got, vec![old]);
     }
 }
