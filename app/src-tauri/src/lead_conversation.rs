@@ -136,6 +136,7 @@ fn deliver(
             task,
             gate_id: &gate.id,
             message: &message,
+            force,
         };
         if force {
             crate::lead_native::reset_failed(&target);
@@ -244,6 +245,7 @@ fn native_session_status(
     let provider = store.session_provider(id).ok()?;
     // 按插件能力而非 provider 身份分（SPEC 约束）：声明了 LeadCap 且原生路径不能自动继续才提示
     // 手动下一步。没有 LeadCap 的 provider 由宿主自带的 Lead 流程负责原生唤醒（claude 的 wait hook）。
+    // 有续跑机制的（经宿主投递或会话内等待器）由调用处的 lead_native::delivery_status 给真实状态。
     let cap = meowo_agent::by_id(&provider)?.lead()?;
     if cap.native_auto_continue() {
         return None;
@@ -518,12 +520,21 @@ mod tests {
         store.set_session_provider(legacy, "codex").unwrap();
         let status = delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe").unwrap();
         assert_eq!((status.state.as_str(), status.can_retry), ("saved", true));
-        for provider in ["kimi", "gemini", "opencode"] {
+        // opencode 经宿主 HTTP 服务投递，同样有真实送达记录（不再是「手动继续」）。
+        store.set_session_provider(legacy, "opencode").unwrap();
+        let status = delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe").unwrap();
+        assert_ne!(status.state, "native_manual");
+        for provider in ["kimi", "gemini"] {
             store.set_session_provider(legacy, provider).unwrap();
             let status = delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe").unwrap();
             assert_eq!(status.state, "native_manual", "{provider}");
             assert!(!status.can_retry, "{provider}");
             assert_eq!(status.session_id, legacy);
         }
+        // OpenCode 经宿主 HTTP 投递，面板显示真实送达状态：尚未投递 = 已保存待送达，可重试。
+        store.set_session_provider(legacy, "opencode").unwrap();
+        let status = delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe").unwrap();
+        assert_eq!(status.state, "saved");
+        assert!(status.can_retry);
     }
 }

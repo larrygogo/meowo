@@ -53,6 +53,11 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "lead/delivery_chain_limit", exact: true, zh: "这条回答已多次人工重试，请在会话中核对投递记录", en: "This answer has been retried many times. Review its delivery records in the conversation." },
   { m: "lead/session_paused", exact: true, zh: "回答已保存；会话已暂停，点击继续送达可恢复", en: "Answer saved. The session is paused; continue delivery to resume." },
   { m: "lead/delivery_uncertain", exact: true, zh: "回答已保存，送达结果不确定；请在会话中核对后处理", en: "Answer saved, but delivery is uncertain. Check the conversation before taking action." },
+  // OpenCode 原生 TUI 续跑（lead_native/opencode_http.rs）：答复已保存，经本机服务投递失败，可重试。
+  { m: "lead/opencode_http_unauthorized", exact: true, zh: "回答已保存；OpenCode 本机服务拒绝了连接（密码不符），重新打开会话后重试", en: "Answer saved. The local OpenCode service rejected the connection (password mismatch); reopen the session and retry." },
+  { m: "lead/native_session_missing", exact: true, zh: "回答已保存；OpenCode 里找不到这个会话，请在会话中核对后处理", en: "Answer saved. OpenCode cannot find this session; check the conversation before taking action." },
+  { m: "lead/session_cwd_missing", exact: true, zh: "回答已保存；会话的项目目录不存在，无法在后台续跑", en: "Answer saved. The session's project folder no longer exists, so it cannot continue in the background." },
+  { m: "lead/opencode_", zh: "回答已保存；暂时连不上 OpenCode 本机服务，稍后会自动重试，也可点重试", en: "Answer saved. The local OpenCode service is unreachable for now; it will retry automatically, or you can retry." },
   { m: "lead/delivery_failed", exact: true, zh: "回答已保存，本次投递未完成；请在会话中查看详情并处理", en: "Answer saved, but delivery did not complete. Check delivery details in the conversation." },
   { m: "lead/owner_not_managed", exact: true, zh: "此关卡归属原生终端会话，请从原终端继续", en: "This gate belongs to a native terminal session. Continue from its original terminal." },
   { m: "lead/owner_mismatch", exact: true, zh: "关卡归属与会话不一致，已停止送达", en: "Gate ownership does not match the conversation. Delivery stopped." },

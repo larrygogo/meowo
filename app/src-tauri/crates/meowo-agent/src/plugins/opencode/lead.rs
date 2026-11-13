@@ -3,7 +3,9 @@
 //! 取证：https://opencode.ai/v1/docs/agents/
 //! 取证：https://raw.githubusercontent.com/anomalyco/opencode/v1.19.3/packages/plugin/src/index.ts
 use crate::{
-    lead_install::{LeadCap, LeadHookFormat, LeadInstallSpec, REVIEW},
+    lead_install::{
+        LeadCap, LeadHookFormat, LeadInstallSpec, NativeContinue, ServerProtocol, REVIEW,
+    },
     variant::Installation,
 };
 pub(super) static CAP: OpenCodeLead = OpenCodeLead;
@@ -19,8 +21,7 @@ const SPEC: LeadInstallSpec = LeadInstallSpec {
     hooks: &[],
     limitations: &[
         "lead/native_stop_unsupported",
-        "lead/auto_continue_unverified",
-        "lead/offline_resume_unverified",
+        // 自动继续与离线恢复已由宿主 HTTP 投递闭环（lead_native::opencode_http，1.19.5 隔离真机探针）。
         "lead/main_agent_identity_unverified",
         "lead/non_lead_io_unverified",
     ],
@@ -30,6 +31,11 @@ const SPEC: LeadInstallSpec = LeadInstallSpec {
 impl LeadCap for OpenCodeLead {
     fn spec(&self, inst: &Installation) -> Option<&'static LeadInstallSpec> {
         (inst.variant_tag == "stable").then_some(&SPEC)
+    }
+    /// 原生 TUI 本身是内置 HTTP 服务的客户端：宿主让 TUI 带密码开放端口，答复经 `prompt_async`
+    /// 排进同一会话；TUI 退出后宿主起 serve 投递、打开时 attach（任务 20261113-lead-tui，1.19.5 隔离真机验证）。
+    fn native_continue(&self) -> Option<NativeContinue> {
+        Some(NativeContinue::ServerQueue(ServerProtocol::OpencodeHttp))
     }
     fn reviewer(&self) -> String {
         format!("---\ndescription: Independent adversarial review against the Lead specification.\nmode: subagent\npermission:\n  edit: deny\n  bash: ask\n---\n\n{REVIEW}")

@@ -950,6 +950,7 @@ mod tests {
             task: &task,
             gate_id: "Q-1",
             message: "answer",
+            force: false,
         };
         let params = queue_add_params(&target, "k");
         assert_eq!(params["threadId"], "019a-thread");
@@ -1030,6 +1031,7 @@ mod tests {
             task: &task,
             gate_id: "Q",
             message: "m",
+            force: false,
         };
         // 已 accepted：deliver 直接返回，不连服务、不改记录。
         assert_eq!(deliver(&target), Ok(NativeOutcome::Delivered));

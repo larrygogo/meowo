@@ -10,6 +10,7 @@
 // 临时：三路实现填入前 NativeTarget 字段与 Delivered/WaiterWillWake 尚未使用；实现完成后删除这行。
 #![allow(dead_code)]
 pub(crate) mod codex_app_server;
+pub(crate) mod opencode_http;
 pub(crate) mod server;
 pub(crate) mod waiter;
 mod ws;
@@ -29,6 +30,8 @@ pub(crate) struct NativeTarget<'a> {
     pub gate_id: &'a str,
     /// 送给模型的答复正文（reporter::lead::answer_message）。
     pub message: &'a str,
+    /// 面板「重试」：跳过自动重试的退避。
+    pub force: bool,
 }
 
 /// 结果：已送出 / 交给会话内等待器（宿主无需动作）/ 这家做不到（面板提示手动继续）。
@@ -51,7 +54,16 @@ pub(crate) fn deliver(target: &NativeTarget<'_>, app: Option<&tauri::AppHandle>)
     }
 }
 
-/// 原生会话的真实送达状态；None = 该机制没有宿主侧记录（沿用面板原有提示）。
+/// opencode_http 内部用的送达状态（state 取 i18n leadDeliveryState 的键），由 [`delivery_status`] 转成面板 DTO。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct NativeStatus {
+    pub state: &'static str,
+    pub reason: Option<String>,
+    pub can_retry: bool,
+}
+
+/// 原生会话关卡答复的真实送达状态，**唯一入口**：按机制分发，一律返回面板要的 DTO。
+/// None = 该机制没有宿主侧记录（调用方沿用原有面板提示）。
 pub(crate) fn delivery_status(
     db: &Path,
     provider: &str,
@@ -65,6 +77,17 @@ pub(crate) fn delivery_status(
         NativeContinue::ServerQueue(ServerProtocol::CodexAppServer) => Some(
             codex_app_server::status(db, session_id, cwd, task, gate_id, native),
         ),
+        NativeContinue::ServerQueue(ServerProtocol::OpencodeHttp) => {
+            let status = opencode_http::status(db, task, gate_id, native);
+            Some(LeadDeliveryDto {
+                session_id,
+                cwd,
+                delivery_id: String::new(),
+                can_retry: status.can_retry,
+                state: status.state.into(),
+                reason: status.reason,
+            })
+        }
         _ => None,
     }
 }
