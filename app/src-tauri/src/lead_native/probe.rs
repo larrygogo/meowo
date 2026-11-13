@@ -1436,6 +1436,134 @@ fn parent_chain(pid: u32) -> Vec<Value> {
     out
 }
 
+/// 假模型版子代理场景，连跑 `MEOWO_PROBE_RUNS` 轮（默认 10），每轮新沙箱、新 gemini 进程（复现首轮冷启动）。
+/// 假模型像第三轮真机那样让主会话并行调 update_topic + invoke_agent，子代理写挂起 gate.json 后 complete_task；
+/// 主会话看到子代理被拒就自己写。每轮记：子代理写入被拦没有、有没有 400（contents 出现非 user/model 角色）、
+/// 主会话等待器起来没有。统计写进 `<证据根>/subagent-fake-summary.json`。
+#[test]
+#[ignore = "第三轮修复：真实 gemini TUI + 假模型，子代理写关卡 ×N；手动复跑"]
+fn probe_gemini_subagent_fake() {
+    assert!(!real(), "这是假模型探针");
+    let runs: usize = std::env::var("MEOWO_PROBE_RUNS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(10);
+    let mut results = Vec::new();
+    for run in 0..runs {
+        let mut sb = Sandbox::new("gemini");
+        sb.start_fake_model();
+        let env = gemini_setup(&mut sb);
+        for (key, value) in &env {
+            std::env::set_var(key, value);
+        }
+        install_lead("gemini", "0.68.0");
+        // MEOWO_PROBE_DROP_GATE_HOOK=1：去掉 BeforeTool hook，模拟第三轮 run1「invoke_agent 的标记没建出来」。
+        if std::env::var("MEOWO_PROBE_DROP_GATE_HOOK").as_deref() == Ok("1") {
+            let path = sb.home.join(".gemini/settings.json");
+            let mut settings: Value =
+                serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            settings["hooks"].as_object_mut().unwrap().remove("BeforeTool");
+            std::fs::write(&path, serde_json::to_string_pretty(&settings).unwrap()).unwrap();
+        }
+        // MEOWO_PROBE_BREAK_HOOKS=1：hook 命令指向不存在的 reporter（第三轮 P4「hook 全部跑不起来」）。
+        if std::env::var("MEOWO_PROBE_BREAK_HOOKS").as_deref() == Ok("1") {
+            let path = sb.home.join(".gemini/settings.json");
+            let text = std::fs::read_to_string(&path).unwrap();
+            std::fs::write(&path, text.replace("meowo-reporter.exe", "meowo-reporter-missing.exe")).unwrap();
+        }
+        let gate = "Q-4";
+        let gate_path = sb.task.join("gate.json").to_string_lossy().into_owned();
+        sb.plan(json!({"phase":"sub","gate_path":gate_path,"gate_body":sb.gate_body(gate,"pending"),
+            "parallel_topic": std::env::var("MEOWO_PROBE_PARALLEL_TOPIC").as_deref() != Ok("0"),
+            "realistic": std::env::var("MEOWO_PROBE_REALISTIC").as_deref() == Ok("1")}));
+        let argv = meowo_agent::by_id("gemini").unwrap().launch_argv();
+        let tui = Tui::spawn(&argv, &sb.cwd, &env);
+        assert!(tui.wait("gemini 输入框", 90, gemini_ready));
+        let marks = sb.root.join("lead-subagents");
+        // MEOWO_PROBE_WIPE_MARKS=1：不停删掉 invoke_agent 的标记，模拟 run1「标记没建出来」，只剩会话记录这一路证据。
+        let wiping = Arc::new(std::sync::atomic::AtomicBool::new(
+            std::env::var("MEOWO_PROBE_WIPE_MARKS").as_deref() == Ok("1"),
+        ));
+        let wiper = {
+            let (wiping, marks) = (wiping.clone(), marks.clone());
+            std::thread::spawn(move || {
+                while wiping.load(std::sync::atomic::Ordering::Relaxed) {
+                    let _ = std::fs::remove_dir_all(&marks);
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+            })
+        };
+        submit(&tui, &std::env::var("MEOWO_PROBE_FIRST").unwrap_or_else(|_| "SUBAGENT-GATE".into()));
+        let started = Instant::now();
+        let mut mark_seen = false;
+        let mut pending_while_mark = false;
+        let mut waiter = None;
+        while started.elapsed() < Duration::from_secs(60) {
+            let running = std::fs::read_dir(&marks)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .any(|s| std::fs::read_dir(s.path()).into_iter().flatten().count() > 0);
+            mark_seen |= running;
+            pending_while_mark |= running && sb.gate()["status"] == "pending";
+            if let Some(record) = meowo_reporter::lead_waiter::live_waiter(&sb.task, gate) {
+                waiter = Some(record);
+                break;
+            }
+            // 「This request failed」不能当失败判据：AfterAgent 的 deny 也显示这句（假模型实测）。
+            // 只认子代理没被拦、或请求真的被 400（假模型记 rejected_role）。
+            if tui.screen().contains("SUBAGENT-NOT-BLOCKED")
+                || sb.requests().iter().any(|r| r["kind"] == "rejected_role")
+            {
+                tui.settle(2, 6);
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        wiping.store(false, std::sync::atomic::Ordering::Relaxed);
+        let _ = wiper.join();
+        let requests = sb.requests();
+        let rejected: Vec<&Value> = requests
+            .iter()
+            .filter(|r| r["kind"] == "rejected_role")
+            .collect();
+        let sub_writes: Vec<&Value> = requests
+            .iter()
+            .filter(|r| r["subagent"] == true && r["decision"][0] == "calls")
+            .collect();
+        let sub_blocked = sub_writes.iter().any(|r| {
+            r["decision"][1][0][1]["result"]["response"] == "SUB-BLOCKED"
+        });
+        sb.save("gemini-sub-screen.txt", &tui.screen());
+        let result = json!({"run": run, "evidence": sb.evidence.file_name().map(|n| n.to_string_lossy().into_owned()),
+            "markSeen": mark_seen, "subagentBlocked": sub_blocked, "pendingWhileSubagentRan": pending_while_mark,
+            "rejected400": rejected.len(), "mainWaiter": waiter.is_some(),
+            "elapsedMs": started.elapsed().as_millis() as u64});
+        eprintln!("[probe] run {run}: {result}");
+        sb.save("report.json", &serde_json::to_string_pretty(&result).unwrap());
+        results.push(result);
+        drop(tui);
+        // gemini 被杀后它起的等待器要过一会儿才因「父 shell 没了」退出，占着隔离目录；等它放手再删，
+        // 不然 10 轮跑完 Temp 里留一串沙箱（首轮实跑踩过）。
+        if std::env::var("MEOWO_PROBE_KEEP").as_deref() != Ok("1") {
+            wait_until(20, || {
+                let _ = std::fs::remove_dir_all(&sb.root);
+                !sb.root.exists()
+            });
+        }
+    }
+    let ok = results
+        .iter()
+        .filter(|r| r["subagentBlocked"] == true && r["rejected400"] == 0 && r["mainWaiter"] == true)
+        .count();
+    let summary = json!({"runs": runs, "ok": ok, "results": results});
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../target/lead-provider-probes/tui-waiter/subagent-fake-summary.json");
+    std::fs::write(&root, serde_json::to_string_pretty(&summary).unwrap()).unwrap();
+    eprintln!("[probe] 子代理假模型 {ok}/{runs}：{}", root.display());
+    assert_eq!(ok, runs, "{summary}");
+}
+
 /// 第三轮修复后的 gemini 子代理场景（验收 #4「不发到子代理」）：
 /// 主 agent 用 invoke_agent 派子代理写挂起 gate.json → BeforeTool 拒绝（不给等待器命令）；
 /// 主 agent 自己写关卡、起等待器 → answer_and_deliver 作答 → 主会话 TUI 续跑出口令，子代理不再被调起。
