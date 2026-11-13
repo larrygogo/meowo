@@ -629,3 +629,421 @@ fn patrol_prunes_endpoints_of_exited_tuis() {
     assert_eq!(pids, [4747]);
     let _ = std::fs::remove_dir_all(root);
 }
+
+// ---------------------------------------------------------------------------------------------
+// 会话设置（任务 20261114-tui-model-switch）
+
+/// 假 TUI 的可见状态：开着的对话框、搜索框内容、底栏。服务替身的 /tui/* 路由会改它，
+/// 宿主的写入回调（PTY）也改它，读屏回调按它画出画面（标题行与底栏取 oc4/oc5 画面原文）。
+#[derive(Default)]
+struct FakeTui {
+    dialog: Option<&'static str>,
+    search: String,
+    footer: String,
+    /// 回车能选中的名字（对话框里列着的项）。
+    choices: Vec<&'static str>,
+    /// 模拟对话框弹不出来（TUI 卡住、焦点被别的层抢走）。
+    stuck: bool,
+}
+
+type SharedTui = Arc<StdMutex<FakeTui>>;
+
+fn fake_tui(footer: &str, choices: Vec<&'static str>) -> SharedTui {
+    Arc::new(StdMutex::new(FakeTui {
+        footer: footer.into(),
+        choices,
+        ..Default::default()
+    }))
+}
+
+fn screen_of(tui: &SharedTui) -> String {
+    let tui = tui.lock().unwrap();
+    let mut screen = String::from("┃  hello one\n");
+    if let Some(title) = tui.dialog {
+        screen.push_str(&format!(
+            "                                            {title}                                     esc\n"
+        ));
+        screen.push_str(&format!("                                            {}\n", tui.search));
+    }
+    screen.push_str(&format!("┃  {}\n", tui.footer));
+    screen
+}
+
+/// 宿主的终端通道替身：记下每次写入，并像真 TUI 一样处理按键。
+fn io_for(tui: &SharedTui, writes: &Arc<StdMutex<Vec<String>>>) -> impl TuiIo {
+    let (t1, t2, log) = (tui.clone(), tui.clone(), writes.clone());
+    (
+        move |text: &str| -> Result<(), String> {
+            log.lock().unwrap().push(text.to_owned());
+            let mut tui = t1.lock().unwrap();
+            match (tui.dialog, text) {
+                (Some(_), "\x1b") => tui.dialog = None,
+                (Some(title), "\r") => {
+                    let search = tui.search.clone();
+                    let hit = tui
+                        .choices
+                        .iter()
+                        .find(|c| c.eq_ignore_ascii_case(&search))
+                        .copied();
+                    if let Some(hit) = hit {
+                        tui.footer = if title == "Select model" {
+                            format!("Build · {hit} Fake")
+                        } else {
+                            let mut name = hit.to_owned();
+                            name[..1].make_ascii_uppercase();
+                            format!("{name} · Fake One Fake")
+                        };
+                        tui.dialog = None;
+                    }
+                }
+                (Some(_), typed) => tui.search.push_str(typed),
+                // 对话框不在时字会落进输入框——测试里出现即说明守卫失效。
+                (None, typed) => panic!("对话框不在时往终端写了 {typed:?}"),
+            }
+            Ok(())
+        },
+        move || Some(screen_of(&t2)),
+    )
+}
+
+/// 服务替身：会话端点 + 待批列表 + 会话状态 + 两个开对话框的 /tui 端点（开框即改假 TUI）。
+fn control_server(
+    password: &str,
+    tui: SharedTui,
+    permissions: &'static str,
+    status: &'static str,
+) -> (u16, Arc<StdMutex<Seen>>) {
+    fake_server_with(password, move |route| match route {
+        "/permission" => (200, permissions.to_owned()),
+        "/question" => (200, "[]".to_owned()),
+        "/session/ses_abc" => (200, r#"{"id":"ses_abc","directory":"C:\\proj"}"#.to_owned()),
+        "/session/status" => (200, status.to_owned()),
+        "/session/ses_abc/message" => (
+            200,
+            json!([
+                {"info":{"role":"user","agent":"plan","model":{"providerID":"fake","modelID":"fake-model-2"},"variant":"high"}},
+                {"info":{"role":"assistant"}}
+            ])
+            .to_string(),
+        ),
+        // oc1 实测形状（截短）：只含已连接 provider，models 是对象，variants 是对象。
+        "/config/providers" => (
+            200,
+            json!({"providers":[{"id":"fake","name":"Fake","models":{
+                "fake-model":{"id":"fake-model","name":"Fake One"},
+                "fake-model-3":{"id":"fake-model-3","name":"Fake Three","variants":{"high":{"reasoningEffort":"high"}}},
+                "fake-model-2":{"id":"fake-model-2","name":"Fake Two"}}}],
+                "default":{"fake":"fake-model"}})
+            .to_string(),
+        ),
+        "/agent" => (
+            200,
+            json!([
+                {"name":"build","description":"The default agent.","mode":"primary","native":true,"permission":[]},
+                {"name":"plan","description":"Plan mode. Disallows all edit tools.","mode":"primary","native":true},
+                {"name":"explore","mode":"subagent","native":true},
+                {"name":"title","mode":"primary","native":true,"hidden":true},
+                {"name":"reviewer","mode":"all","native":false}
+            ])
+            .to_string(),
+        ),
+        "/tui/open-models" | "/tui/publish" => {
+            let mut tui = tui.lock().unwrap();
+            if !tui.stuck {
+                tui.dialog = Some(if route == "/tui/open-models" {
+                    "Select model"
+                } else {
+                    "Select agent"
+                });
+                tui.search.clear();
+            }
+            (200, "true".to_owned())
+        }
+        _ => (404, String::new()),
+    })
+}
+
+const READY: TuiState = TuiState {
+    idle: true,
+    composer_empty: true,
+    approval_pending: false,
+};
+
+fn switch_req(db: &Path, pid: u32, state: TuiState) -> DialogSwitch<'_> {
+    DialogSwitch {
+        db,
+        presence: Presence::Managed(Some(pid)),
+        native_session: "ses_abc",
+        cwd: Some("C:\\proj"),
+        state,
+    }
+}
+
+fn no_sleep(_: Duration) {}
+
+fn run_switch(
+    db: &Path,
+    pid: u32,
+    state: TuiState,
+    dialog: Dialog,
+    name: &str,
+    io: &mut dyn TuiIo,
+) -> Result<SwitchOutcome, ControlError> {
+    switch_via_dialog(&switch_req(db, pid, state), dialog, name, io, &no_sleep)
+}
+
+fn posts(seen: &Arc<StdMutex<Seen>>) -> Vec<(String, String)> {
+    seen.lock()
+        .unwrap()
+        .requests
+        .iter()
+        .filter(|(m, _, _)| m == "POST")
+        .map(|(_, p, b)| (p.split('?').next().unwrap_or("").to_owned(), b.clone()))
+        .collect()
+}
+
+#[test]
+fn catalog_agents_and_current_choice_come_from_the_tui_server() {
+    let root = temp_root("catalog");
+    let db = root.join("board.db");
+    let tui = fake_tui("Build · Fake One Fake", vec![]);
+    let (port, seen) = control_server("pw-cat", tui, "[]", "{}");
+    register_tui(&db, 5252, port, "pw-cat");
+    let here = Presence::Managed(Some(5252));
+    let catalog = list_models(&db, here, Some("C:\\proj")).unwrap();
+    assert_eq!(
+        catalog.defaults.get("fake").map(String::as_str),
+        Some("fake-model")
+    );
+    let fake = &catalog.providers[0];
+    assert_eq!((fake.id.as_str(), fake.name.as_str()), ("fake", "Fake"));
+    let names: Vec<&str> = fake.models.iter().map(|m| m.name.as_str()).collect();
+    assert_eq!(names, ["Fake One", "Fake Three", "Fake Two"]);
+    assert_eq!(fake.models[1].variants, ["high"]);
+    let agents: Vec<String> = list_agents(&db, here, None)
+        .unwrap()
+        .into_iter()
+        .map(|a| format!("{}:{}", a.name, a.mode))
+        .collect();
+    // subagent 与 hidden 的不进菜单；mode=all 的自定义 agent 可选。
+    assert_eq!(agents, ["build:primary", "plan:primary", "reviewer:all"]);
+    assert!(seen
+        .lock()
+        .unwrap()
+        .requests
+        .iter()
+        .any(|(_, p, _)| p == "/config/providers?directory=C%3A%5Cproj"));
+    // 会话当前值：主会话最后一条用户消息。
+    let choice = current_choice(&db, here, "ses_abc", Some("C:\\proj"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        choice,
+        OcChoice {
+            agent: Some("plan".into()),
+            provider_id: Some("fake".into()),
+            model_id: Some("fake-model-2".into()),
+            variant: Some("high".into()),
+        }
+    );
+    assert_eq!(choice_of(&json!({})), None);
+    assert!(posts(&seen).is_empty(), "列清单、读当前都只读");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn session_without_port_is_unsupported_and_closed_tui_is_not_ready() {
+    let root = temp_root("ctl-route");
+    let db = root.join("board.db");
+    assert_eq!(
+        list_models(&db, Presence::Elsewhere(999_999), None),
+        Err(ControlError::Unsupported)
+    );
+    assert_eq!(
+        list_agents(&db, Presence::Gone, None),
+        Err(ControlError::NotReady("lead/opencode_tui_not_ready".into()))
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// 切模型：服务端开模型对话框（/tui/open-models）→ 确认弹出后写显示名 → 回车 → 框关、底栏变。
+/// 不用服务端那几个 TUI 不认的「设置」接口，也不发消息。
+#[test]
+fn switch_model_opens_dialog_then_types_name_and_enter() {
+    let root = temp_root("sw-model");
+    let db = root.join("board.db");
+    let tui = fake_tui("Build · Fake One Fake", vec!["Fake One", "Fake Two"]);
+    let (port, seen) = control_server("pw-sw", tui.clone(), "[]", "{}");
+    register_tui(&db, 5353, port, "pw-sw");
+    let writes = Arc::new(StdMutex::new(Vec::new()));
+    let mut io = io_for(&tui, &writes);
+    // 走公开入口（真实等待节奏）。
+    let outcome = switch_model(&switch_req(&db, 5353, READY), "Fake Two", &mut io);
+    assert_eq!(outcome, Ok(SwitchOutcome { confirmed: true }));
+    assert_eq!(*writes.lock().unwrap(), ["Fake Two", "\r"]);
+    assert_eq!(tui.lock().unwrap().footer, "Build · Fake Two Fake");
+    let posted: Vec<String> = posts(&seen).into_iter().map(|(p, _)| p).collect();
+    assert_eq!(posted, ["/tui/open-models"]);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// 切 agent：`/tui/publish` 发 tui.command.execute agent.list 打开「Select agent」（oc5/oc6 实测；
+/// 走 /tui/execute-command 不弹框）。
+#[test]
+fn switch_agent_opens_agent_dialog_via_publish() {
+    let root = temp_root("sw-agent");
+    let db = root.join("board.db");
+    let tui = fake_tui("Build · Fake One Fake", vec!["build", "plan"]);
+    let (port, seen) = control_server("pw-ag", tui.clone(), "[]", "{}");
+    register_tui(&db, 5454, port, "pw-ag");
+    let writes = Arc::new(StdMutex::new(Vec::new()));
+    let mut io = io_for(&tui, &writes);
+    let outcome = switch_agent(&switch_req(&db, 5454, READY), "plan", &mut io);
+    assert_eq!(outcome, Ok(SwitchOutcome { confirmed: true }));
+    assert_eq!(tui.lock().unwrap().footer, "Plan · Fake One Fake");
+    let sent = posts(&seen);
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].0, "/tui/publish");
+    let body: Value = serde_json::from_str(&sent[0].1).unwrap();
+    assert_eq!(
+        body,
+        json!({"type":"tui.command.execute","properties":{"command":"agent.list"}})
+    );
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// 调用约定：运行中、输入框有草稿、有待批审批——宿主说的或服务端查到的——一律 NotNow，不写终端、
+/// 不开对话框。
+#[test]
+fn switch_refuses_when_tui_is_busy_drafting_or_awaiting_approval() {
+    let root = temp_root("sw-guard");
+    let db = root.join("board.db");
+    let tui = fake_tui("Build · Fake One Fake", vec!["Fake Two"]);
+    let (port, seen) = control_server("pw-guard", tui.clone(), "[]", "{}");
+    register_tui(&db, 5555, port, "pw-guard");
+    let writes = Arc::new(StdMutex::new(Vec::new()));
+    for (state, reason) in [
+        (TuiState { idle: false, ..READY }, "lead/opencode_busy"),
+        (
+            TuiState {
+                composer_empty: false,
+                ..READY
+            },
+            "lead/opencode_composer_not_empty",
+        ),
+        (
+            TuiState {
+                approval_pending: true,
+                ..READY
+            },
+            "lead/opencode_approval_pending",
+        ),
+    ] {
+        let mut io = io_for(&tui, &writes);
+        assert_eq!(
+            run_switch(&db, 5555, state, Dialog::Models, "Fake Two", &mut io),
+            Err(ControlError::NotNow(reason.into()))
+        );
+    }
+    assert!(
+        seen.lock().unwrap().requests.is_empty(),
+        "约定不满足时连服务都不碰"
+    );
+
+    // 宿主以为没有审批，服务端却有待批权限：同样不动手。
+    let (port, seen) = control_server(
+        "pw-perm",
+        tui.clone(),
+        r#"[{"id":"per_1","sessionID":"ses_abc","permission":"bash"}]"#,
+        "{}",
+    );
+    register_tui(&db, 5656, port, "pw-perm");
+    let mut io = io_for(&tui, &writes);
+    assert_eq!(
+        run_switch(&db, 5656, READY, Dialog::Models, "Fake Two", &mut io),
+        Err(ControlError::NotNow("lead/opencode_approval_pending".into()))
+    );
+    assert!(posts(&seen).is_empty());
+    // 宿主以为空闲，服务端说主会话在跑。
+    let (port, seen) = control_server(
+        "pw-busy",
+        tui.clone(),
+        "[]",
+        r#"{"ses_abc":{"type":"busy"}}"#,
+    );
+    register_tui(&db, 5757, port, "pw-busy");
+    let mut io = io_for(&tui, &writes);
+    assert_eq!(
+        run_switch(&db, 5757, READY, Dialog::Agents, "plan", &mut io),
+        Err(ControlError::NotNow("lead/opencode_busy".into()))
+    );
+    assert!(posts(&seen).is_empty());
+    assert!(writes.lock().unwrap().is_empty(), "不满足时一个键都没写");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// 对话框没弹出：一个字都不写（否则名字落进输入框、回车就成了一条消息）。
+/// 搜不到：回车后框还在，按 Esc 关掉，如实失败。名字里的控制字符：拒绝。
+#[test]
+fn switch_never_types_into_the_composer_and_cleans_up_misses() {
+    let root = temp_root("sw-miss");
+    let db = root.join("board.db");
+    let tui = fake_tui("Build · Fake One Fake", vec!["Fake Two"]);
+    tui.lock().unwrap().stuck = true;
+    let (port, _) = control_server("pw-miss", tui.clone(), "[]", "{}");
+    register_tui(&db, 5858, port, "pw-miss");
+    let writes = Arc::new(StdMutex::new(Vec::new()));
+    let mut io = io_for(&tui, &writes);
+    assert_eq!(
+        run_switch(&db, 5858, READY, Dialog::Models, "Fake Two", &mut io),
+        Err(ControlError::Failed("lead/opencode_dialog_not_open".into()))
+    );
+    assert!(writes.lock().unwrap().is_empty());
+
+    tui.lock().unwrap().stuck = false;
+    let mut io = io_for(&tui, &writes);
+    assert_eq!(
+        run_switch(&db, 5858, READY, Dialog::Models, "Fake Nine", &mut io),
+        Err(ControlError::Failed("lead/opencode_choice_not_found".into()))
+    );
+    assert_eq!(*writes.lock().unwrap(), ["Fake Nine", "\r", "\x1b"]);
+    assert_eq!(tui.lock().unwrap().dialog, None, "没搜到也要把框关掉");
+    assert_eq!(tui.lock().unwrap().footer, "Build · Fake One Fake");
+
+    writes.lock().unwrap().clear();
+    for bad in ["", "  ", "Fake\rTwo", "x\x1b[A"] {
+        let mut io = io_for(&tui, &writes);
+        assert_eq!(
+            run_switch(&db, 5858, READY, Dialog::Models, bad, &mut io),
+            Err(ControlError::Failed("lead/opencode_switch_invalid".into())),
+            "{bad:?}"
+        );
+    }
+    // 用户自己开着对话框：不叠一层、不往里写。
+    tui.lock().unwrap().dialog = Some("Select model");
+    let mut io = io_for(&tui, &writes);
+    assert_eq!(
+        run_switch(&db, 5858, READY, Dialog::Models, "Fake Two", &mut io),
+        Err(ControlError::NotNow("lead/opencode_dialog_open".into()))
+    );
+    assert!(writes.lock().unwrap().is_empty());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// 画面判定用 1.19.5 原文：对话框标题行、底栏（oc4 dialog_tail / f_picked、oc6 f_agent）。
+#[test]
+fn dialog_and_footer_match_real_screens() {
+    let dialog = "LSPs are disabled\n                                            Select model                                     esc\nSearch\n";
+    assert!(dialog_visible(Some(dialog), Dialog::Models));
+    assert!(!dialog_visible(Some(dialog), Dialog::Agents));
+    assert!(!dialog_visible(None, Dialog::Models));
+    // 对话里出现这几个字不算（没有右侧的 esc）。
+    assert!(!dialog_visible(
+        Some("┃  how do I Select model in opencode?"),
+        Dialog::Models
+    ));
+    assert!(footer_shows("┃  Build · Fake Two Fake", Dialog::Models, "Fake Two"));
+    assert!(!footer_shows("┃  Build · Fake One Fake", Dialog::Models, "Fake Two"));
+    assert!(footer_shows("┃  Plan · Fake One Fake", Dialog::Agents, "plan"));
+    assert!(!footer_shows("┃  Build · Fake One Fake", Dialog::Agents, "plan"));
+}
