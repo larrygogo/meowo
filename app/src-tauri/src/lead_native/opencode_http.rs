@@ -996,9 +996,17 @@ fn choice_of(choice: &Value) -> Option<OcChoice> {
 pub(crate) fn switch_model(
     req: &DialogSwitch<'_>,
     model_name: &str,
+    provider_name: Option<&str>,
     io: &mut dyn TuiIo,
 ) -> Result<SwitchOutcome, ControlError> {
-    switch_via_dialog(req, Dialog::Models, model_name, io, &std::thread::sleep)
+    // 底栏是 `Build · <模型名> <provider 名>`（oc4 原文 `Build · Fake Two Fake`）：确认时连 provider 一起比，
+    // 两家同名模型（Anthropic 与 Copilot 都有「Claude Sonnet 4」）或前缀相同的模型（GPT-5 / GPT-5 Mini）
+    // 选错时能认出来，不报成功（做空审查 M2）。
+    let footer = match provider_name.map(str::trim).filter(|p| !p.is_empty()) {
+        Some(provider) => format!("{} {provider}", model_name.trim()),
+        None => model_name.trim().to_string(),
+    };
+    switch_via_dialog(req, Dialog::Models, model_name, &footer, io, &std::thread::sleep)
 }
 
 /// 把 TUI 当前 agent 切成 `agent`（agent 名，同 `opencode agent list` 列的）。调用约定与阻塞同 [`switch_model`]。
@@ -1009,7 +1017,7 @@ pub(crate) fn switch_agent(
     agent: &str,
     io: &mut dyn TuiIo,
 ) -> Result<SwitchOutcome, ControlError> {
-    switch_via_dialog(req, Dialog::Agents, agent, io, &std::thread::sleep)
+    switch_via_dialog(req, Dialog::Agents, agent, agent, io, &std::thread::sleep)
 }
 
 fn not_now(reason: &str) -> ControlError {
@@ -1020,6 +1028,7 @@ fn switch_via_dialog(
     req: &DialogSwitch<'_>,
     dialog: Dialog,
     name: &str,
+    footer: &str,
     io: &mut dyn TuiIo,
     sleep: &dyn Fn(Duration),
 ) -> Result<SwitchOutcome, ControlError> {
@@ -1080,13 +1089,17 @@ fn switch_via_dialog(
         return Err(ControlError::Failed(format!("lead/opencode_http_status_{status}")));
     }
     if !wait_dialog(io, dialog, true, sleep) {
-        // 一个字都还没写：名字不会落进输入框。
+        // 一个字都还没写：名字不会落进输入框。对话框可能只是晚到——补一个 Esc 关掉它（Esc 在对话框里
+        // 只关框；框没出现时输入框是空的，空框上的 Esc 只是空闲时的无操作），不留一个开着的框（做空 L2）。
+        let _ = io.write("");
         return Err(ControlError::Failed("lead/opencode_dialog_not_open".into()));
     }
     io.write(name).map_err(fail)?;
     sleep(SEARCH_SETTLE);
     if !dialog_visible(io.screen().as_deref(), dialog) {
-        // 写字期间对话框没了（用户按了 Esc 等）：名字可能已进输入框，绝不回车。
+        // 写字期间对话框没了（用户按了 Esc 等）：名字可能已进输入框，绝不回车；按名字长度退格清掉
+        // （调用约定保证输入框原本是空的，多出来的退格在空框上无害；不用 Ctrl-C——空框上它是退出）。
+        let _ = io.write(&"".repeat(name.chars().count()));
         return Err(ControlError::Failed("lead/opencode_dialog_lost".into()));
     }
     io.write("\r").map_err(fail)?;
@@ -1095,9 +1108,14 @@ fn switch_via_dialog(
         let _ = io.write("\x1b");
         return Err(ControlError::Failed("lead/opencode_choice_not_found".into()));
     }
-    let confirmed = io
-        .screen()
-        .is_some_and(|screen| footer_shows(&screen, dialog, name));
+    let screen = io.screen();
+    let confirmed = screen
+        .as_deref()
+        .is_some_and(|screen| footer_shows(screen, dialog, footer));
+    // 底栏读得到、显示的却是别的：搜索选错了（同名 / 前缀相同），如实报失败。
+    if !confirmed && screen.as_deref().is_some_and(|screen| footer_line(screen).is_some()) {
+        return Err(ControlError::Failed("lead/opencode_choice_mismatch".into()));
+    }
     Ok(SwitchOutcome { confirmed })
 }
 
@@ -1130,10 +1148,14 @@ fn dialog_visible(screen: Option<&str>, dialog: Dialog) -> bool {
 /// 首字母大写，按不区分大小写比）。oc4/oc6 画面原文。
 fn footer_shows(screen: &str, dialog: Dialog, name: &str) -> bool {
     match dialog {
-        Dialog::Models => {
+        // 按词边界比：`· GPT-5` 不能算 `· GPT-5 Mini OpenAI` 命中，后面只能是行尾或分隔符。
+        Dialog::Models => footer_line(screen).is_some_and(|line| {
             let needle = format!("· {name}");
-            screen.lines().any(|line| line.contains(&needle))
-        }
+            line.match_indices(&needle).any(|(at, _)| {
+                let rest = &line[at + needle.len()..];
+                rest.trim().is_empty() || rest.starts_with("  ") || rest.trim_start().starts_with('·')
+            })
+        }),
         Dialog::Agents => {
             let needle = format!("{} · ", name.to_lowercase());
             screen
@@ -1141,6 +1163,14 @@ fn footer_shows(screen: &str, dialog: Dialog, name: &str) -> bool {
                 .any(|line| line.to_lowercase().contains(&needle))
         }
     }
+}
+
+/// 输入框下方的状态行（`┃  Build · Fake One Fake`，tail_pattern 同 composer_guard）。认不出返回 None。
+fn footer_line(screen: &str) -> Option<&str> {
+    screen.lines().rev().find(|line| {
+        let body = line.trim_start().trim_start_matches('┃').trim();
+        !body.is_empty() && body.contains(" · ") && line.trim_start().starts_with('┃')
+    })
 }
 
 // ---------------------------------------------------------------------------------------------

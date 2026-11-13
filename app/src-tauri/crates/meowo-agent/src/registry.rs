@@ -1424,8 +1424,10 @@ mod tests {
                     .iter()
                     .find(|c| c.id == opt.default)
                     .unwrap_or_else(|| panic!("{}::{} 的 default 不在 choices 里", p.id(), opt.id));
+                // 例外：带统一说法的默认档是一个明确的模式（Gemini `--approval-mode default`），不是「交给
+                // CLI 配置」——不传参数时 CLI 会用配置里的默认档，与界面说法相反（做空审查 M1）。
                 assert!(
-                    def.args.is_empty(),
+                    def.args.is_empty() || def.traits.is_some(),
                     "{}::{} 的默认项不该传 flag",
                     p.id(),
                     opt.id

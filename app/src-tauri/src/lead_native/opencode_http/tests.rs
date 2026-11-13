@@ -697,6 +697,8 @@ fn io_for(tui: &SharedTui, writes: &Arc<StdMutex<Vec<String>>>) -> impl TuiIo {
                     }
                 }
                 (Some(_), typed) => tui.search.push_str(typed),
+                // 空输入框上的 Esc 是空闲时的无操作（对话框没弹出时补的那一下）。
+                (None, "") => {}
                 // 对话框不在时字会落进输入框——测试里出现即说明守卫失效。
                 (None, typed) => panic!("对话框不在时往终端写了 {typed:?}"),
             }
@@ -789,7 +791,12 @@ fn run_switch(
     name: &str,
     io: &mut dyn TuiIo,
 ) -> Result<SwitchOutcome, ControlError> {
-    switch_via_dialog(&switch_req(db, pid, state), dialog, name, io, &no_sleep)
+    // 替身 TUI 的 provider 都叫「Fake」，底栏是 `· <模型> Fake`。
+    let footer = match dialog {
+        Dialog::Models => format!("{name} Fake"),
+        Dialog::Agents => name.to_owned(),
+    };
+    switch_via_dialog(&switch_req(db, pid, state), dialog, name, &footer, io, &no_sleep)
 }
 
 fn posts(seen: &Arc<StdMutex<Seen>>) -> Vec<(String, String)> {
@@ -871,7 +878,7 @@ fn switch_model_opens_dialog_then_types_name_and_enter() {
     let writes = Arc::new(StdMutex::new(Vec::new()));
     let mut io = io_for(&tui, &writes);
     // 走公开入口（真实等待节奏）。
-    let outcome = switch_model(&switch_req(&db, 5353, READY), "Fake Two", &mut io);
+    let outcome = switch_model(&switch_req(&db, 5353, READY), "Fake Two", Some("Fake"), &mut io);
     assert_eq!(outcome, Ok(SwitchOutcome { confirmed: true }));
     assert_eq!(*writes.lock().unwrap(), ["Fake Two", "\r"]);
     assert_eq!(tui.lock().unwrap().footer, "Build · Fake Two Fake");
@@ -991,7 +998,9 @@ fn switch_never_types_into_the_composer_and_cleans_up_misses() {
         run_switch(&db, 5858, READY, Dialog::Models, "Fake Two", &mut io),
         Err(ControlError::Failed("lead/opencode_dialog_not_open".into()))
     );
-    assert!(writes.lock().unwrap().is_empty());
+    // 一个名字都不写；只补一个 Esc，防对话框晚到后一直开着（做空 L2）。
+    assert_eq!(*writes.lock().unwrap(), [""]);
+    writes.lock().unwrap().clear();
 
     tui.lock().unwrap().stuck = false;
     let mut io = io_for(&tui, &writes);
@@ -1035,8 +1044,30 @@ fn dialog_and_footer_match_real_screens() {
         Some("┃  how do I Select model in opencode?"),
         Dialog::Models
     ));
-    assert!(footer_shows("┃  Build · Fake Two Fake", Dialog::Models, "Fake Two"));
+    // 只给模型名不算：后面还跟着 provider，宿主一律连 provider 一起比。
+    assert!(!footer_shows("┃  Build · Fake Two Fake", Dialog::Models, "Fake Two"));
+    // 做空 M2：按词边界、连 provider 一起比。前缀相同的模型与别家同名模型都不算命中。
+    assert!(footer_shows("┃  Build · Fake Two Fake", Dialog::Models, "Fake Two Fake"));
+    assert!(!footer_shows("┃  Build · GPT-5 Mini OpenAI", Dialog::Models, "GPT-5 OpenAI"));
+    assert!(!footer_shows("┃  Build · GPT-5 Mini OpenAI", Dialog::Models, "GPT-5"));
+    assert!(!footer_shows("┃  Build · Claude Sonnet 4 GitHub Copilot", Dialog::Models, "Claude Sonnet 4 Anthropic"));
     assert!(!footer_shows("┃  Build · Fake One Fake", Dialog::Models, "Fake Two"));
     assert!(footer_shows("┃  Plan · Fake One Fake", Dialog::Agents, "plan"));
     assert!(!footer_shows("┃  Build · Fake One Fake", Dialog::Agents, "plan"));
+}
+
+/// 做空 M2：回车后底栏显示的是别家的同名模型（搜索选中了另一项）：报失败，不报成功。
+#[test]
+fn switch_model_reports_mismatch_when_footer_shows_another_provider() {
+    let root = temp_root("sw-mismatch");
+    let db = root.join("board.db");
+    let tui = fake_tui("Build · Fake One Fake", vec!["Fake One", "Fake Two"]);
+    let (port, _seen) = control_server("pw-mm", tui.clone(), "[]", "{}");
+    register_tui(&db, 5656, port, "pw-mm");
+    let writes = Arc::new(StdMutex::new(Vec::new()));
+    let mut io = io_for(&tui, &writes);
+    // 期望的是 Anthropic 家的 Fake Two，替身 TUI 选中的是 provider「Fake」那一项。
+    let outcome = switch_model(&switch_req(&db, 5656, READY), "Fake Two", Some("Anthropic"), &mut io);
+    assert_eq!(outcome, Err(ControlError::Failed("lead/opencode_choice_mismatch".into())));
+    let _ = std::fs::remove_dir_all(root);
 }

@@ -129,15 +129,16 @@ pub struct DynamicModeChoice {
     pub label: String,
 }
 
-/// 模型 id 能不能进启动参数：只认清单里有的（防注入），且形态上不含空白与引号。
-/// 清单本身来自 CLI 配置或自带命令，但 id 会被拼进 argv，这里再兜一层字符集。
+/// 模型 id 能不能进启动参数：**必须精确等于清单里的某个 id**——清单来自 CLI 配置或自带命令，这就是
+/// 防注入的白名单；argv 逐参数传给 CreateProcessW / execve，不经 shell。字符上只再拦三样：控制字符
+/// （会变成按键、截断参数）、`-` 开头（会被当成另一个参数）、双引号（Windows 上有的 CLI 是 `.cmd`
+/// 包装，cmd 会拆坏引号，见 registry 的 McpAttach 注释）。不限 ASCII：leader 本机 Kimi 配置里就有
+/// `反向推理/DeepSeek-V4.1-Flash-1017` 这样的别名（做空审查 H3）。
 pub fn model_id_allowed(id: &str, catalog: &[crate::ModelCatalogEntry]) -> bool {
-    let shape_ok = !id.is_empty()
-        && id.len() <= 200
+    let shape_ok = !id.trim().is_empty()
+        && id.chars().count() <= 200
         && !id.starts_with('-')
-        && id
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/' | ':' | '@' | '[' | ']'));
+        && !id.chars().any(|c| c.is_control() || c == '"');
     shape_ok && catalog.iter().any(|entry| entry.id == id)
 }
 
@@ -202,8 +203,24 @@ mod tests {
         assert!(model_id_allowed("gemini-2.5-pro", &catalog));
         assert!(!model_id_allowed("gpt-x", &catalog), "不在清单里");
         assert!(!model_id_allowed("-rf", &catalog), "像参数的不收");
-        assert!(!model_id_allowed("a b", &[entry("a b")]));
         assert!(!model_id_allowed("a\"b", &[entry("a\"b")]));
+        assert!(!model_id_allowed("a\rb", &[entry("a\rb")]));
+        assert!(!model_id_allowed("a\u{1b}[A", &[entry("a\u{1b}[A")]));
+    }
+
+    /// 做空审查 H3：leader 本机 ~/.kimi-code/config.toml 里的两个自定义 provider 别名（第 175、182 行），
+    /// 非 ASCII、清单里有，必须能用；空格也只是普通字符（argv 逐参数传）。
+    #[test]
+    fn non_ascii_aliases_from_the_users_config_are_allowed() {
+        let catalog = [
+            entry("反向推理/DeepSeek-V4.1-Flash-1017"),
+            entry("反向推理/Qwen3.8-Flash-Next"),
+            entry("lmstudio/qwen 3 8b"),
+        ];
+        assert!(model_id_allowed("反向推理/DeepSeek-V4.1-Flash-1017", &catalog));
+        assert!(model_id_allowed("反向推理/Qwen3.8-Flash-Next", &catalog));
+        assert!(model_id_allowed("lmstudio/qwen 3 8b", &catalog));
+        assert!(!model_id_allowed("反向推理/别的", &catalog), "仍须在清单里");
     }
 
     #[test]

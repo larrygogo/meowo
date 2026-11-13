@@ -1135,9 +1135,13 @@ async fn agent_model_catalog(
                 header.cwd,
             ))
         });
+        // 没有会话（新建页）时按当前活跃账号的环境读：启动时校验用的也是它（做空 L3）。
         let (sid, env, cwd) = match session {
             Some((sid, env, cwd)) => (Some(sid), env, cwd),
-            None => (None, Vec::new(), None),
+            None => {
+                let active = profile::active_id(plugin.id().as_str());
+                (None, profile::env_of(plugin.id(), active.as_deref()), None)
+            }
         };
         session_settings::session_catalog(
             &db_path(),
@@ -1651,6 +1655,10 @@ pub fn run() {
             session_settings::agent_dynamic_mode_choices,
             session_settings::apply_session_settings,
             session_settings::session_live_settings,
+            session_settings::record_session_settings,
+            session_settings::queue_session_settings,
+            session_settings::queued_session_settings,
+            session_settings::take_queued_session_settings,
             agent_updates::check_agent_updates,
             agent_updates::installed_agent_versions,
             profile::list_profiles,

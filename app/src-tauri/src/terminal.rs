@@ -1988,6 +1988,13 @@ pub(crate) async fn new_session_inner(
     tauri::async_runtime::spawn_blocking(move || {
         // 动态的两类（清单里的模型 `-m`、opencode 自定义 agent）要现读清单校验，放 blocking 池里。
         let profile_env = crate::profile::env_of(agent.id(), active_profile.as_deref());
+        // 选了模型却进不了参数（清单里没有）要报错，不能静默按默认模型启动（做空 H3）。
+        crate::session_settings::check_model_selection(
+            agent,
+            &selections,
+            &profile_env,
+            Some(std::path::Path::new(&dir)),
+        )?;
         let mut argv = agent.launch_argv();
         argv.extend(crate::session_settings::args_for_selections(
             agent,
@@ -2484,7 +2491,8 @@ pub(crate) fn restart_session_with(
     // 等 broker 收掉 PTY 记录再起：`start` 的判重只看 sessions 表，没等到就会按
     // 「重复启动」收敛成 Ok(false)——账号一个都没换，还什么都不报。
     if !wait_pty_released(broker, sid) {
-        return Err("原会话仍在运行，未能切换到新账号".into());
+        // 账号切换与切模型 / 模式都走这里，原文说「账号」不对、也没进 i18n（做空 M8）。
+        return Err("terminal/restart_stuck".into());
     }
     let started = start_managed_resume_sized(
         app.clone(),
@@ -3699,7 +3707,7 @@ pub(crate) fn reopen_pending_with(
     let (cols, rows) = if cols == 0 || rows == 0 { (100, 30) } else { (cols, rows) };
     broker.stop(temp_id)?;
     if !wait_pty_released(broker, temp_id) {
-        return Err("原会话仍在运行，未能重开".into());
+        return Err("terminal/restart_stuck".into());
     }
     if let Some(dir) = launch.cwd.as_deref() {
         pretrust_workspace(&launch.provider, active_profile.as_deref(), dir);

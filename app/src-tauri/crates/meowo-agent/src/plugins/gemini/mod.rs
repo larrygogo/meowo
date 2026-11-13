@@ -323,7 +323,13 @@ impl AgentPlugin for Gemini {
     // 实测 gate-p2 被写入），不再作切换手段。保留维度只为屏幕回显：transcript 与 hook 都不带审批
     // 模式，底栏原文是唯一来源（§3.5：「auto-accept edits」「YOLO Ctrl+Y」「plan Shift+Tab to manual」）。
     fn mode_controls(&self) -> &'static [crate::ModeControl] {
-        static MARKERS: [crate::ModeScreenMarker; 3] = [
+        // default 档底栏只有「Shift+Tab to accept edits」（research §4.2），也认，才读得到「当前是每步都问」
+        // ——带参重启要按当前值拼参数，读不到就不重启（做空 H1）。
+        static MARKERS: [crate::ModeScreenMarker; 4] = [
+            crate::ModeScreenMarker {
+                marker: "shift+tab to accept edits",
+                value: "default",
+            },
             crate::ModeScreenMarker {
                 marker: "auto-accept edits",
                 value: "autoEdit",
@@ -440,8 +446,8 @@ impl AgentPlugin for Gemini {
     /// 启动选项（`gemini --help` 0.68）：审批模式四档。内部枚举 default / autoEdit / yolo / plan
     /// （G:273739），对外写法 default / auto_edit / yolo / plan（G:gemini-Q2FNZWQG.js 8876-8935）。
     /// 统一说法按 bundle/policies/*.toml 的策略优先级（research-kimi-gemini §5）。
-    /// default 不传参数（「默认」= 交给 CLI 自己的 settings），settings 的 defaultApprovalMode 是别的档时，
-    /// 新建页按 launch_defaults 预选那一档，界面说的就是实际会用的那档。
+    /// 四档都显式带参数：「每步都问」就是 `--approval-mode default`，不随 settings 的 defaultApprovalMode
+    /// 漂移；新建页按 launch_defaults 预选配置里的那一档并显式传它。
     fn launch_options(&self) -> &'static [crate::LaunchOption] {
         use crate::{Ask, LaunchChoice, LaunchOption, ModeSwitch, ModeTraits};
         static OPTIONS: [LaunchOption; 1] = [LaunchOption {
@@ -451,7 +457,9 @@ impl AgentPlugin for Gemini {
                 LaunchChoice {
                     id: "default",
                     label: "default",
-                    args: &[],
+                    // 显式传：不传时 CLI 用 settings 的 defaultApprovalMode（可能是 auto_edit / plan），
+                    // 界面说「每步都问」实际却不是（做空审查 M1）。
+                    args: &["--approval-mode", "default"],
                     risk: false,
                     // 「default (prompt for approval)」；工作区内已知安全的命令（isKnownSafeCommand）
                     // 不问，其余都问。

@@ -460,6 +460,22 @@ bridged_args!(ApplySessionSettingsArgs {
     tui: Option<SessionTuiState>
 });
 
+bridged_args!(RecordSessionSettingsArgs {
+    #[cfg_attr(test, ts(type = "number"))]
+    session_id: i64,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    modes: Option<std::collections::HashMap<String, String>>
+});
+
+bridged_args!(QueueSessionSettingsArgs {
+    #[cfg_attr(test, ts(type = "number"))]
+    session_id: i64,
+    #[cfg_attr(test, ts(type = "unknown"))]
+    request: serde_json::Value
+});
+
 bridged_args!(NewSessionArgs {
     cwd: String,
     provider: String,
