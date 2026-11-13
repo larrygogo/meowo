@@ -20,14 +20,38 @@ struct Seen {
 
 /// 最小的 OpenCode 服务替身：只实现投递用到的四个端点，记录收到的请求。
 fn fake_server(password: &str, last_user: Value) -> (u16, Arc<StdMutex<Seen>>) {
+    fake_server_with(password, move |route| {
+        if route == "/session/ses_abc" {
+            (200, r#"{"id":"ses_abc","directory":"C:\\proj"}"#.to_owned())
+        } else if route == "/session/ses_abc/message" {
+            (
+                200,
+                json!([{"info":{"role":"assistant"}}, last_user, {"info":{"role":"assistant"}}])
+                    .to_string(),
+            )
+        } else if route == "/session/ses_abc/prompt_async" {
+            (204, String::new())
+        } else {
+            (404, String::new())
+        }
+    })
+}
+
+/// 带路由的服务替身：鉴权与 /global/health 统一处理，其余路径交给 `route`。
+/// 期望的 Basic Auth 用户名取自插件声明（LeadCap::server_auth），顺带钉住这条取值链路。
+fn fake_server_with(
+    password: &str,
+    route_of: impl Fn(&str) -> (u16, String) + Send + 'static,
+) -> (u16, Arc<StdMutex<Seen>>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
     let seen = Arc::new(StdMutex::new(Seen::default()));
+    let username = server_auth().expect("插件声明了服务鉴权").username;
     let expected = {
         use base64::Engine;
         format!(
             "Basic {}",
-            base64::engine::general_purpose::STANDARD.encode(format!("opencode:{password}"))
+            base64::engine::general_purpose::STANDARD.encode(format!("{username}:{password}"))
         )
     };
     let log = seen.clone();
@@ -68,14 +92,8 @@ fn fake_server(password: &str, last_user: Value) -> (u16, Arc<StdMutex<Seen>>) {
                 (401, String::new())
             } else if route == "/global/health" {
                 (200, r#"{"healthy":true,"version":"1.19.5"}"#.to_owned())
-            } else if route == "/session/ses_abc" {
-                (200, r#"{"id":"ses_abc","directory":"C:\\proj"}"#.to_owned())
-            } else if route == "/session/ses_abc/message" {
-                (200, json!([{"info":{"role":"assistant"}}, last_user, {"info":{"role":"assistant"}}]).to_string())
-            } else if route == "/session/ses_abc/prompt_async" {
-                (204, String::new())
             } else {
-                (404, String::new())
+                route_of(route)
             };
             let reason = match status {
                 200 => "OK",
@@ -118,6 +136,8 @@ fn register_tui(db: &Path, pid: u32, port: u16, password: &str) {
         native_session: None,
         cwd: None,
         attach_pid: None,
+        attach_pending_ms: None,
+        aliases: Vec::new(),
         started_ms: now_ms(),
     });
     reg.save(&path).unwrap();
@@ -290,7 +310,7 @@ fn launch_plan_opens_password_protected_port_and_attaches_to_live_serve() {
         !plan.args.iter().any(|a| a == &plan.env[0].1),
         "密码不进命令行"
     );
-    record_launch(&db, plan, 31337).unwrap();
+    plan.launched(Some(31337));
     assert!(Registry::load(&registry_path(&db))
         .endpoints
         .iter()
@@ -308,6 +328,8 @@ fn launch_plan_opens_password_protected_port_and_attaches_to_live_serve() {
         native_session: Some("ses_abc".into()),
         cwd: None,
         attach_pid: None,
+        attach_pending_ms: None,
+        aliases: Vec::new(),
         started_ms: now_ms(),
     });
     reg.save(&path).unwrap();
@@ -329,7 +351,7 @@ fn launch_plan_opens_password_protected_port_and_attaches_to_live_serve() {
             "serve-pw".to_string()
         )]
     );
-    record_launch(&db, plan, 888).unwrap();
+    plan.launched(Some(888));
     let reg = Registry::load(&path);
     assert_eq!(
         reg.endpoints
@@ -358,4 +380,273 @@ fn last_user_choice_ignores_missing_fields() {
     assert_eq!(last_user_choice(&Value::Null), json!({}));
     let only_agent = json!([{"info":{"role":"user","agent":"build"}}]);
     assert_eq!(last_user_choice(&only_agent), json!({"agent":"build"}));
+}
+
+/// 父链替身：`sessions` 里每项是（id，parentID），`last_user` 只挂在主会话的消息列表上。
+fn chain_server(
+    password: &str,
+    sessions: &'static [(&'static str, Option<&'static str>)],
+    root: &'static str,
+    last_user: Value,
+) -> (u16, Arc<StdMutex<Seen>>) {
+    fake_server_with(password, move |route| {
+        let rest = route.strip_prefix("/session/").unwrap_or("");
+        let (id, tail) = rest.split_once('/').unwrap_or((rest, ""));
+        let Some((_, parent)) = sessions.iter().find(|(s, _)| *s == id) else {
+            return (404, String::new());
+        };
+        match tail {
+            "" => {
+                let mut info = json!({"id": id, "directory": "C:\\proj"});
+                if let Some(parent) = parent {
+                    info["parentID"] = json!(parent);
+                }
+                (200, info.to_string())
+            }
+            "message" if id == root => (200, json!([last_user]).to_string()),
+            "message" => (
+                200,
+                json!([{"info":{"role":"user","agent":"explore"}}]).to_string(),
+            ),
+            "prompt_async" => (204, String::new()),
+            _ => (404, String::new()),
+        }
+    })
+}
+
+fn sub_target<'a>(db: &'a Path, task: &'a Path, native: &'a str) -> NativeTarget<'a> {
+    NativeTarget {
+        native_session: native,
+        ..target(db, task, false)
+    }
+}
+
+fn posted_paths(seen: &Arc<StdMutex<Seen>>) -> Vec<String> {
+    seen.lock()
+        .unwrap()
+        .requests
+        .iter()
+        .filter(|(m, _, _)| m == "POST")
+        .map(|(_, p, _)| p.split('?').next().unwrap_or("").to_owned())
+        .collect()
+}
+
+fn serve_endpoint(pid: u32, port: u16, password: &str, native: &str) -> Endpoint {
+    Endpoint {
+        kind: Kind::Serve,
+        pid,
+        port,
+        password: password.into(),
+        native_session: Some(native.into()),
+        cwd: None,
+        attach_pid: None,
+        attach_pending_ms: None,
+        aliases: Vec::new(),
+        started_ms: now_ms(),
+    }
+}
+
+fn resume_argv(native: &str) -> Vec<String> {
+    vec!["opencode.exe".into(), "--session".into(), native.into()]
+}
+
+#[test]
+fn subagent_owner_answer_is_delivered_to_root_session() {
+    // H3：.owner 记的是子代理会话（task 工具派出、parentID 非空）。答复投进子会话 TUI 主视图看不到，
+    // 必须沿父链投给主会话，并沿用主会话（而不是子代理）的 agent。
+    static CHAIN: &[(&str, Option<&str>)] = &[
+        ("ses_child", Some("ses_mid")),
+        ("ses_mid", Some("ses_root")),
+        ("ses_root", None),
+    ];
+    let root = temp_root("subagent");
+    let db = root.join("board.db");
+    let task = root.join("task");
+    let last_user = json!({"info":{"role":"user","agent":"plan"}});
+    let (port, seen) = chain_server("pw-sub", CHAIN, "ses_root", last_user);
+    register_tui(&db, 4343, port, "pw-sub");
+
+    let outcome = deliver_with(
+        &sub_target(&db, &task, "ses_child"),
+        Presence::Managed(Some(4343)),
+    )
+    .unwrap();
+    assert_eq!(outcome, NativeOutcome::Delivered);
+    assert_eq!(posted_paths(&seen), ["/session/ses_root/prompt_async"]);
+    assert_eq!(prompts(&seen)[0]["agent"], "plan");
+    // 投递记录仍按 .owner 的会话记账，面板按它查状态。
+    assert_eq!(status(&db, &task, "gate-1", "ses_child").state, "accepted");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn broken_or_cyclic_parent_chain_fails_without_posting() {
+    static CYCLE: &[(&str, Option<&str>)] = &[("ses_a", Some("ses_b")), ("ses_b", Some("ses_a"))];
+    static ORPHAN: &[(&str, Option<&str>)] = &[("ses_c", Some("ses_gone"))];
+    for (tag, chain, owner) in [("cycle", CYCLE, "ses_a"), ("orphan", ORPHAN, "ses_c")] {
+        let root = temp_root(tag);
+        let db = root.join("board.db");
+        let task = root.join("task");
+        let (port, seen) = chain_server("pw-chain", chain, "ses_none", json!({}));
+        register_tui(&db, 4444, port, "pw-chain");
+        deliver_with(
+            &sub_target(&db, &task, owner),
+            Presence::Managed(Some(4444)),
+        )
+        .unwrap();
+        let state = status(&db, &task, "gate-1", owner);
+        assert_eq!(state.state, "failed", "{tag}");
+        assert_eq!(
+            state.reason.as_deref(),
+            Some("lead/opencode_parent_unresolved"),
+            "{tag}"
+        );
+        assert!(posted_paths(&seen).is_empty(), "{tag}：父链不通时不猜着投");
+        let _ = std::fs::remove_dir_all(root);
+    }
+}
+
+#[test]
+fn serve_started_for_subagent_rebinds_to_root_so_opening_main_session_attaches() {
+    static CHAIN: &[(&str, Option<&str>)] = &[("ses_child", Some("ses_root")), ("ses_root", None)];
+    let root = temp_root("serve-root");
+    let db = root.join("board.db");
+    let task = root.join("task");
+    let (port, seen) = chain_server("serve-pw", CHAIN, "ses_root", json!({}));
+    let path = registry_path(&db);
+    let mut reg = Registry::load(&path);
+    reg.endpoints
+        .push(serve_endpoint(777, port, "serve-pw", "ses_child"));
+    reg.save(&path).unwrap();
+
+    deliver_with(&sub_target(&db, &task, "ses_child"), Presence::Gone).unwrap();
+    assert_eq!(posted_paths(&seen), ["/session/ses_root/prompt_async"]);
+    let reg = Registry::load(&path);
+    let serve = reg.endpoints.iter().find(|e| e.pid == 777).unwrap();
+    assert_eq!(serve.native_session.as_deref(), Some("ses_root"));
+    assert_eq!(serve.aliases, ["ses_child"]);
+    // 用户打开的是主会话：要 attach 到这个 serve，而不是另起一个普通 TUI 抢着驱动。
+    let plan = plan_for(&db, &resume_argv("ses_root")).unwrap();
+    assert_eq!(plan.argv.as_ref().unwrap()[1], "attach");
+    // 子会话 id 的后续投递仍认得同一个 serve（不再起第二个）。
+    assert!(live_serve(&Registry::load(&path), "ses_child").is_some());
+    drop(plan);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn delivery_only_touches_session_endpoints_never_tui_input_or_permissions() {
+    // 草稿与审批的不变量（1.19.5 源码核对，见 post_prompt 注释）：投递只用会话三端点。
+    // 替身同时挂着一个待批 permission 和任意 /tui/* 端点，任何访问都会被记下来。
+    let root = temp_root("surface");
+    let db = root.join("board.db");
+    let task = root.join("task");
+    let (port, seen) = fake_server_with("pw-surface", |route| match route {
+        "/session/ses_abc" => (200, r#"{"id":"ses_abc","directory":"C:\\proj"}"#.to_owned()),
+        "/session/ses_abc/message" => (200, "[]".to_owned()),
+        "/session/ses_abc/prompt_async" => (204, String::new()),
+        "/permission" => (
+            200,
+            r#"[{"id":"per_1","sessionID":"ses_abc","permission":"bash"}]"#.to_owned(),
+        ),
+        _ => (200, "true".to_owned()),
+    });
+    register_tui(&db, 4545, port, "pw-surface");
+    deliver_with(&target(&db, &task, false), Presence::Managed(Some(4545))).unwrap();
+    let routes: Vec<(String, String)> = seen
+        .lock()
+        .unwrap()
+        .requests
+        .iter()
+        .map(|(m, p, _)| (m.clone(), p.split('?').next().unwrap_or("").to_owned()))
+        .filter(|(_, p)| p != "/global/health")
+        .collect();
+    let expected = [
+        ("GET", "/session/ses_abc"),
+        ("GET", "/session/ses_abc/message"),
+        ("POST", "/session/ses_abc/prompt_async"),
+    ]
+    .map(|(m, p)| (m.to_owned(), p.to_owned()));
+    assert_eq!(routes, expected);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn attach_placeholder_stops_reaper_from_killing_serve_until_spawn_settles() {
+    // M5：plan_for 决定 attach 后、attach 进程 spawn 出来前，回收线程判定空闲也不能结束 serve。
+    let root = temp_root("attach-race");
+    let db = root.join("board.db");
+    let path = registry_path(&db);
+    let (port, _seen) = fake_server("serve-pw", json!({}));
+    let mut reg = Registry::load(&path);
+    reg.endpoints
+        .push(serve_endpoint(777, port, "serve-pw", "ses_abc"));
+    reg.save(&path).unwrap();
+    let killed = StdMutex::new(Vec::new());
+    let killer = |pid: u32| killed.lock().unwrap().push(pid);
+
+    // 1. 占位在：回收线程的结束请求被拒，serve 条目保留，没有结束任何进程。
+    let plan = plan_for(&db, &resume_argv("ses_abc")).unwrap();
+    assert!(plan.argv.is_some(), "serve 活着时应走 attach");
+    assert!(!stop_serve(&path, 777, true, killer));
+    assert!(killed.lock().unwrap().is_empty());
+    // 2. spawn 失败（方案没走到 launched 就被丢弃）：占位撤掉，serve 回到按空闲回收。
+    drop(plan);
+    assert!(Registry::load(&path).endpoints[0]
+        .attach_pending_ms
+        .is_none());
+    assert!(stop_serve(&path, 777, true, killer));
+    assert_eq!(*killed.lock().unwrap(), [777]);
+    // 3. serve 先被结束：同一把锁保证之后的打开看不到它，改起普通 TUI，而不是 attach 到死服务。
+    let plan = plan_for(&db, &resume_argv("ses_abc")).unwrap();
+    assert!(plan.argv.is_none());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn launched_attach_replaces_placeholder_with_pid() {
+    let root = temp_root("attach-launched");
+    let db = root.join("board.db");
+    let path = registry_path(&db);
+    let (port, _seen) = fake_server("serve-pw", json!({}));
+    let mut reg = Registry::load(&path);
+    reg.endpoints
+        .push(serve_endpoint(777, port, "serve-pw", "ses_abc"));
+    reg.save(&path).unwrap();
+    let plan = plan_for(&db, &resume_argv("ses_abc")).unwrap();
+    assert!(Registry::load(&path).endpoints[0]
+        .attach_pending_ms
+        .is_some());
+    plan.launched(Some(9898));
+    let entry = Registry::load(&path).endpoints[0].clone();
+    assert_eq!(entry.attach_pid, Some(9898));
+    assert!(entry.attach_pending_ms.is_none());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn startup_adopt_keeps_serves_and_clears_dead_tuis_and_stale_placeholders() {
+    // Meowo 不在时 serve 没有别的时限（opencode serve 无空闲自退参数），启动时必须全部接回回收。
+    let root = temp_root("adopt");
+    let db = root.join("board.db");
+    let path = registry_path(&db);
+    let mut reg = Registry::load(&path);
+    let mut serve = serve_endpoint(777, 1, "pw", "ses_abc");
+    serve.attach_pending_ms = Some(now_ms());
+    reg.endpoints.push(serve);
+    reg.save(&path).unwrap();
+    register_tui(&db, 4_000_000_001, 2, "pw-tui");
+
+    assert_eq!(adopt_scan(&db), [777]);
+    let reg = Registry::load(&path);
+    assert_eq!(
+        reg.endpoints.len(),
+        1,
+        "已退出的 TUI 条目（含其密码）被清掉"
+    );
+    assert!(
+        reg.endpoints[0].attach_pending_ms.is_none(),
+        "上个进程的 attach 占位作废"
+    );
+    let _ = std::fs::remove_dir_all(root);
 }

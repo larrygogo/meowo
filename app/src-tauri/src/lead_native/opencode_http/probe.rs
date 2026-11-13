@@ -602,7 +602,7 @@ fn opencode_tui_lead_continuation_probe() {
         tui.kill();
     }
     for pid in serve_pids {
-        stop_serve(&registry_path(&db), pid, true);
+        stop_serve(&registry_path(&db), pid, true, kill_tree);
     }
     remove_dir_retry(&home);
     remove_dir_retry(&cwd);

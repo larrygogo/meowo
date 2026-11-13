@@ -57,6 +57,8 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "lead/opencode_http_unauthorized", exact: true, zh: "回答已保存；OpenCode 本机服务拒绝了连接（密码不符），重新打开会话后重试", en: "Answer saved. The local OpenCode service rejected the connection (password mismatch); reopen the session and retry." },
   { m: "lead/native_session_missing", exact: true, zh: "回答已保存；OpenCode 里找不到这个会话，请在会话中核对后处理", en: "Answer saved. OpenCode cannot find this session; check the conversation before taking action." },
   { m: "lead/session_cwd_missing", exact: true, zh: "回答已保存；会话的项目目录不存在，无法在后台续跑", en: "Answer saved. The session's project folder no longer exists, so it cannot continue in the background." },
+  // 关卡归属是子代理会话，沿父链找不到主会话（父会话被删或数据成环）：重试没用，要人看。
+  { m: "lead/opencode_parent_unresolved", exact: true, zh: "回答已保存；找不到子任务所属的主会话，请打开会话发一句话继续", en: "Answer saved. The main session for this subtask was not found; open it and send any message to continue." },
   { m: "lead/opencode_", zh: "回答已保存；暂时连不上 OpenCode 本机服务，稍后会自动重试，也可点重试", en: "Answer saved. The local OpenCode service is unreachable for now; it will retry automatically, or you can retry." },
   { m: "lead/delivery_failed", exact: true, zh: "回答已保存，本次投递未完成；请在会话中查看详情并处理", en: "Answer saved, but delivery did not complete. Check delivery details in the conversation." },
   { m: "lead/native_resume_failed", exact: true, zh: "续写失败，打开会话发一句话即可继续", en: "Resuming the session failed. Open it and send any message to continue." },
