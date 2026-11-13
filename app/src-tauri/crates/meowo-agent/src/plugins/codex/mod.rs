@@ -292,19 +292,41 @@ impl AgentPlugin for Codex {
     /// 用的那份缓存（0.163 实测：`models[].slug/display_name/visibility/supported_reasoning_levels`）。
     /// 只列 `visibility = "list"` 的——`hide` 的（内部审查模型等）codex 菜单里也不出现。
     fn model_catalog(&self, env: &[(String, String)]) -> Vec<crate::ModelCatalogEntry> {
-        let home = env
-            .iter()
-            .find(|(key, value)| key == "CODEX_HOME" && !value.is_empty())
-            .map(|(_, value)| std::path::PathBuf::from(value))
-            .or_else(|| crate::installation(crate::id::CODEX).map(|inst| inst.data_dir));
-        home.and_then(|home| std::fs::read_to_string(home.join("models_cache.json")).ok())
+        codex_home(env)
+            .and_then(|home| std::fs::read_to_string(home.join("models_cache.json")).ok())
             .map(|content| parse_models_cache(&content))
             .unwrap_or_default()
     }
-    /// `/model` 是交互式菜单（不接受内联参数，故无 model_presets）。声明它，GUI 就能
-    /// 发出这条命令再把弹出的菜单渲染成按钮——模型清单由 CLI 现给。
+    /// 没登录过（没有 models_cache.json）时用 CLI 内置目录：`--bundled` 跳过联网刷新（`--help`），
+    /// 实测 0.06s（research-codex-opencode §1）。
+    fn model_catalog_command(&self) -> Option<&'static [&'static str]> {
+        Some(&["debug", "models", "--bundled"])
+    }
+    fn parse_model_catalog_output(&self, output: &str) -> Vec<crate::ModelCatalogEntry> {
+        parse_debug_models(output)
+    }
+    /// 裸 `/model` 弹菜单，只作兜底（会话没有 app-server 时）。主路线是会话自带服务的
+    /// `thread/settings/update {model, effort}`：TUI 底栏立刻变、下一回合生效、草稿和待批审批都不动、
+    /// 不写 config.toml（research-codex-opencode §2 exp2/exp3）。恢复时不带 `-m`（会弹新模型推荐框，
+    /// 选 1 改写默认模型，§3）。
     fn model_menu_command(&self) -> Option<&'static str> {
         Some("/model")
+    }
+    fn model_switch(&self) -> Option<crate::ModelSwitch> {
+        Some(crate::ModelSwitch::ServerSettings)
+    }
+    fn model_launch_flag(&self) -> Option<&'static str> {
+        Some("-m")
+    }
+    fn launch_defaults(
+        &self,
+        env: &[(String, String)],
+        _cwd: Option<&std::path::Path>,
+    ) -> crate::LaunchDefaults {
+        codex_home(env)
+            .and_then(|home| std::fs::read_to_string(home.join("config.toml")).ok())
+            .map(|content| parse_config_defaults(&content))
+            .unwrap_or_default()
     }
     /// Esc 中断当前回合:codex 状态行自述 "esc to interrupt"(真机 capture 在档,
     /// 见 docs/research/tui-menu-captures-2026-07.md)。排队键 Tab 在空闲时同样直接提交
@@ -396,6 +418,8 @@ impl AgentPlugin for Codex {
             "trust this folder?",
         ]
     }
+    /// 协作模式：会话里经 app-server `thread/settings/update {collaborationMode}` 直接设（exp4 实测底栏
+    /// 出现 `Plan mode`），没有服务时退回 Shift+Tab 循环。回显随 rollout 的 turn_context。
     fn mode_controls(&self) -> &'static [crate::ModeControl] {
         static MODES: [crate::ModeControl; 1] = [crate::ModeControl {
             menu_command: None,
@@ -407,48 +431,124 @@ impl AgentPlugin for Codex {
         }];
         &MODES
     }
-    /// 启动选项（实测 `codex --help`）：审批/沙箱形态。模型**不声明**——codex 的模型名随
-    /// 版本频繁更迭，声明一份很快就过期的清单等于给出会启动失败的选项。
+    /// 启动选项按 0.167.2 TUI `/permissions` 的四档（Read Only / Ask for approval / Approve for me /
+    /// Full Access，exp6 `screen-permissions.txt` 原文，research-codex-opencode §9）。旧版的
+    /// 「Full Auto」（`-a never -s workspace-write`）不再是任何一档，存了它的老会话按默认档恢复。
+    /// 栏 id 仍叫 approval、Full Access 仍用 id `yolo`：老会话存的选择照旧对得上。
+    /// 会话里经 app-server 改（`server` 片段是 `thread/settings/update` 参数，字段名取自
+    /// `codex app-server generate-json-schema` 的 ThreadSettingsUpdateParams）。
+    /// 协作模式（Default / Plan）没有启动参数，只在会话里切。
     fn launch_options(&self) -> &'static [crate::LaunchOption] {
-        use crate::{LaunchChoice, LaunchOption};
-        static OPTIONS: [LaunchOption; 1] = [LaunchOption {
-            id: "approval",
-            default: "default",
-            choices: &[
-                LaunchChoice {
-                    id: "default",
-                    label: "Default",
-                    args: &[],
-                    risk: false,
-                },
-                LaunchChoice {
-                    id: "readOnly",
-                    label: "Read Only",
-                    args: &["--sandbox", "read-only"],
-                    risk: false,
-                },
-                LaunchChoice {
-                    id: "fullAuto",
-                    label: "Full Auto",
-                    // `--full-auto` 在 codex 0.16x 已移除（实测 0.162.1 `--help` 无此项，
-                    // 旧会话按残留选项启动即报 unexpected argument 直接退出）——它就是
-                    // `-a never -s workspace-write` 的速记，拆开写等价且新旧通吃。
-                    args: &[
-                        "--ask-for-approval",
-                        "never",
-                        "--sandbox",
-                        "workspace-write",
-                    ],
-                    risk: false,
-                },
-                LaunchChoice {
-                    id: "yolo",
-                    label: "YOLO",
-                    args: &["--dangerously-bypass-approvals-and-sandbox"],
-                    risk: true,
-                },
-            ],
-        }];
+        use crate::{Ask, LaunchChoice, LaunchOption, ModeSwitch, ModeTraits};
+        static OPTIONS: [LaunchOption; 2] = [
+            LaunchOption {
+                id: "approval",
+                default: "default",
+                choices: &[
+                    LaunchChoice {
+                        id: "default",
+                        label: "Default",
+                        args: &[],
+                        risk: false,
+                        traits: None,
+                        desc: Some("codex.approval.default"),
+                        server: None,
+                    },
+                    LaunchChoice {
+                        id: "readOnly",
+                        label: "Read Only",
+                        args: &["--sandbox", "read-only"],
+                        risk: false,
+                        // 「Read workspace files, with approval required for edits or internet access」
+                        traits: Some(ModeTraits::new(Ask::Always, Ask::Risky, false)),
+                        desc: Some("codex.approval.readOnly"),
+                        server: Some(
+                            r#"{"approvalPolicy":"on-request","approvalsReviewer":"user","sandboxPolicy":{"type":"readOnly"}}"#,
+                        ),
+                    },
+                    LaunchChoice {
+                        id: "ask",
+                        label: "Ask for approval",
+                        args: &[
+                            "--sandbox",
+                            "workspace-write",
+                            "--ask-for-approval",
+                            "on-request",
+                        ],
+                        risk: false,
+                        // 「Read and edit workspace files and run commands, with approval required for
+                        // internet access or edits outside the workspace」
+                        traits: Some(ModeTraits::new(Ask::Risky, Ask::Risky, false)),
+                        desc: Some("codex.approval.ask"),
+                        server: Some(
+                            r#"{"approvalPolicy":"on-request","approvalsReviewer":"user","sandboxPolicy":{"type":"workspaceWrite"}}"#,
+                        ),
+                    },
+                    LaunchChoice {
+                        id: "approveForMe",
+                        label: "Approve for me",
+                        args: &["--approve-for-me"],
+                        risk: false,
+                        // 「Only ask for actions detected as potentially unsafe」；越界先交自动审查。
+                        traits: Some(ModeTraits::new(Ask::Risky, Ask::Risky, false)),
+                        desc: Some("codex.approval.approveForMe"),
+                        server: Some(
+                            r#"{"approvalPolicy":"on-request","approvalsReviewer":"auto_review","sandboxPolicy":{"type":"workspaceWrite"}}"#,
+                        ),
+                    },
+                    LaunchChoice {
+                        id: "yolo",
+                        label: "Full Access",
+                        args: &[
+                            "--sandbox",
+                            "danger-full-access",
+                            "--ask-for-approval",
+                            "never",
+                        ],
+                        risk: true,
+                        // 「Use with caution: Codex can edit files outside this workspace and access the
+                        // internet without approval」
+                        traits: Some(ModeTraits::new(Ask::Never, Ask::Never, false)),
+                        desc: Some("codex.approval.yolo"),
+                        server: Some(
+                            r#"{"approvalPolicy":"never","approvalsReviewer":"user","sandboxPolicy":{"type":"dangerFullAccess"}}"#,
+                        ),
+                    },
+                ],
+                switch: ModeSwitch::Server,
+                resume_upgrade_only: false,
+                in_session_only: false,
+            },
+            LaunchOption {
+                id: "collaboration",
+                default: "default",
+                choices: &[
+                    LaunchChoice {
+                        id: "default",
+                        label: "Default",
+                        args: &[],
+                        risk: false,
+                        // 问不问由权限档决定。
+                        traits: Some(ModeTraits::new(Ask::Inherit, Ask::Inherit, false)),
+                        desc: Some("codex.collaboration.default"),
+                        server: Some(r#"{"collaborationMode":{"mode":"default"}}"#),
+                    },
+                    LaunchChoice {
+                        id: "plan",
+                        label: "Plan",
+                        args: &[],
+                        risk: false,
+                        // 「You must not perform mutating actions」：提示词约束，不是沙箱约束。
+                        traits: Some(ModeTraits::new(Ask::Blocked, Ask::Inherit, true)),
+                        desc: Some("codex.collaboration.plan"),
+                        server: Some(r#"{"collaborationMode":{"mode":"plan"}}"#),
+                    },
+                ],
+                switch: ModeSwitch::Server,
+                resume_upgrade_only: false,
+                in_session_only: true,
+            },
+        ];
         &OPTIONS
     }
     /// 自定义 prompt：`~/.codex/prompts/*.md` → `/<文件名>`。只有用户级（codex 无项目级目录），
@@ -540,14 +640,63 @@ fn parse_models_cache(content: &str) -> Vec<crate::ModelCatalogEntry> {
                         .collect()
                 })
                 .unwrap_or_default();
-            Some(crate::ModelCatalogEntry {
-                id,
-                label,
-                group: None,
-                efforts,
-            })
+            let mut entry = crate::ModelCatalogEntry::new(id, label);
+            entry.efforts = efforts;
+            entry.default_effort = model
+                .get("default_reasoning_level")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+            entry.is_default = model.get("is_default").and_then(|v| v.as_bool()) == Some(true);
+            Some(entry)
         })
         .collect()
+}
+
+/// `codex debug models --bundled` 的输出：与 models_cache.json 同形，前面可能夹一行 WARNING。
+fn parse_debug_models(output: &str) -> Vec<crate::ModelCatalogEntry> {
+    output
+        .find('{')
+        .map(|start| parse_models_cache(&output[start..]))
+        .unwrap_or_default()
+}
+
+/// 新建页默认值：`$CODEX_HOME/config.toml` 顶层的 `model`、`approval_policy`、`sandbox_mode`、
+/// `approvals_reviewer`（research-codex-opencode §7；`-p` 叠加的 profile 不读）。
+fn parse_config_defaults(content: &str) -> crate::LaunchDefaults {
+    let mut top = std::collections::HashMap::new();
+    for line in content.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            break;
+        }
+        if let Some((key, value)) = line.split_once('=') {
+            let value = value.trim();
+            let value = value.split(" #").next().unwrap_or(value).trim();
+            top.insert(key.trim().to_string(), value.trim_matches('"').to_string());
+        }
+    }
+    let mut out = crate::LaunchDefaults {
+        model: top.get("model").filter(|m| !m.is_empty()).cloned(),
+        ..Default::default()
+    };
+    let tier = telemetry::permission_tier(
+        top.get("approval_policy")
+            .map(String::as_str)
+            .or(Some("on-request")),
+        top.get("sandbox_mode").map(String::as_str),
+        top.get("approvals_reviewer").map(String::as_str),
+    );
+    if let Some(tier) = tier {
+        out.choices.insert("approval".into(), tier.into());
+    }
+    out
+}
+
+fn codex_home(env: &[(String, String)]) -> Option<std::path::PathBuf> {
+    env.iter()
+        .find(|(key, value)| key == "CODEX_HOME" && !value.is_empty())
+        .map(|(_, value)| std::path::PathBuf::from(value))
+        .or_else(|| crate::installation(crate::id::CODEX).map(|inst| inst.data_dir))
 }
 
 #[cfg(test)]
@@ -567,6 +716,27 @@ mod tests {
         assert_eq!(catalog[0].efforts, vec!["low", "max"]);
         assert_eq!(catalog[1].label, "gpt-5.6-luna");
         assert!(parse_models_cache("not json").is_empty());
+    }
+
+    /// `codex debug models --bundled` 前面会夹一行 WARNING（隔离 CODEX_HOME 实测 0.167.2）。
+    #[test]
+    fn debug_models_output_skips_leading_warning_and_reads_default_effort() {
+        let output = "WARNING: proceeding, even though we could not create PATH aliases\n{\"models\":[{\"slug\":\"gpt-6-astra\",\"display_name\":\"GPT-6-Astra\",\"default_reasoning_level\":\"low\",\"supported_reasoning_levels\":[{\"effort\":\"low\"}],\"visibility\":\"list\"}]}";
+        let catalog = super::parse_debug_models(output);
+        assert_eq!(catalog.len(), 1);
+        assert_eq!(catalog[0].default_effort.as_deref(), Some("low"));
+    }
+
+    #[test]
+    fn config_defaults_map_to_permission_tiers() {
+        let defaults = super::parse_config_defaults(
+            "model = \"gpt-5.5\"\napproval_policy = \"never\"\nsandbox_mode = \"danger-full-access\"\n[profiles.x]\nmodel = \"other\"\n",
+        );
+        assert_eq!(defaults.model.as_deref(), Some("gpt-5.5"));
+        assert_eq!(defaults.choices.get("approval").map(String::as_str), Some("yolo"));
+        let ro = super::parse_config_defaults("sandbox_mode = \"read-only\"\n");
+        assert_eq!(ro.choices.get("approval").map(String::as_str), Some("readOnly"));
+        assert!(super::parse_config_defaults("").choices.is_empty());
     }
 
     use super::*;

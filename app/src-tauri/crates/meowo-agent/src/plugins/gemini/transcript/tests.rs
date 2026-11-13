@@ -313,3 +313,16 @@ fn compatibility_gemini_materialization_benchmark() {
         let _ = fs::remove_dir_all(root);
     }
 }
+
+/// `/model set` 当场写的 info 行比下一条回复早，最近的那条为准（research-kimi-gemini §3.5）。
+#[test]
+fn model_follows_the_latest_reply_or_model_set_info_line() {
+    let tail = r#"{"type":"gemini","model":"gemini-2.5-pro","content":"hi"}
+{"type":"info","content":"Model set to gemini-3.8-flash"}
+"#;
+    assert_eq!(super::model_from_tail(tail).as_deref(), Some("gemini-3.8-flash"));
+    let later = format!("{tail}{}
+", r#"{"type":"gemini","model":"gemini-3.5-flash-lite","content":"ok"}"#);
+    assert_eq!(super::model_from_tail(&later).as_deref(), Some("gemini-3.5-flash-lite"));
+    assert_eq!(super::model_from_tail(r#"{"type":"info","content":"other"}"#), None);
+}

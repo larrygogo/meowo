@@ -1088,7 +1088,10 @@ impl TranscriptSpec for KimiTranscript {
                 .map(|mode| vec![crate::AgentMode::new("permission", mode)])
                 .unwrap_or_default(),
             "plan_mode.enter" => vec![crate::AgentMode::new("work", "plan")],
-            "plan_mode.exit" => vec![crate::AgentMode::new("work", "default")],
+            // 用户自己关 plan（`/plan off`、Shift+Tab）时 2.6 写的是 plan_mode.cancel；exit 只在计划
+            // 审阅通过后写（kimi.exe K:267415 PlanModeCancel，research-kimi-gemini §1.5 实测 wire）。
+            // 只认 exit 的话用户关了 plan，对话页仍显示 plan。
+            "plan_mode.exit" | "plan_mode.cancel" => vec![crate::AgentMode::new("work", "default")],
             _ => Vec::new(),
         }
     }
@@ -1113,7 +1116,12 @@ impl TranscriptSpec for KimiTranscript {
     /// （agent_modes_from_line），计划只来自工具调用的 `display.plan`，子串必在行内。
     fn tail_read(&self) -> Option<crate::transcript::TailRead> {
         Some(crate::transcript::TailRead {
-            mode_markers: &["permission.set_mode", "plan_mode.enter", "plan_mode.exit"],
+            mode_markers: &[
+                "permission.set_mode",
+                "plan_mode.enter",
+                "plan_mode.exit",
+                "plan_mode.cancel",
+            ],
             plan_markers: &["\"plan\""],
         })
     }
@@ -2006,6 +2014,17 @@ mod tests {
         );
         assert_eq!(
             KIMI_TRANSCRIPT.agent_modes_from_line(r#"{"type":"plan_mode.exit"}"#),
+            vec![crate::AgentMode::new("work", "default")]
+        );
+    }
+
+    /// 2.6 用户关 plan 写 plan_mode.cancel（research-kimi-gemini §1.5 实验 wire 原文）。
+    #[test]
+    fn plan_mode_cancel_returns_work_mode_to_default() {
+        assert_eq!(
+            KIMI_TRANSCRIPT.agent_modes_from_line(
+                r#"{"type":"plan_mode.cancel","agentId":"main","time":1763100000000}"#
+            ),
             vec![crate::AgentMode::new("work", "default")]
         );
     }

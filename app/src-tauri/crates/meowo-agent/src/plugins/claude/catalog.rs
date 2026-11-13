@@ -100,12 +100,7 @@ fn parse(window: &[u8]) -> Vec<crate::ModelCatalogEntry> {
                 return None;
             }
             let label = display_name(&window[..at], id)?;
-            Some(crate::ModelCatalogEntry {
-                id: family.to_string(),
-                label,
-                group: None,
-                efforts: Vec::new(),
-            })
+            Some(crate::ModelCatalogEntry::new(family, label))
         })
         .collect()
 }

@@ -451,15 +451,26 @@ pub(super) fn read_model(ctx: &crate::caps::HookContext<'_>) -> Option<String> {
     } else {
         &tail
     };
+    model_from_tail(tail)
+}
+
+/// 会话文件尾部最近的模型：回复行的 `model`，或 `/model set` 当场写的 info 行「Model set to X」
+/// （0.68 切换时立即写，回复要等下一轮，research-kimi-gemini §3.5）。取最后出现的那条。
+pub(super) fn model_from_tail(tail: &str) -> Option<String> {
     tail.lines()
         .rev()
         .filter_map(|line| serde_json::from_str::<Value>(line).ok())
-        .filter(|message| message["type"] == "gemini")
-        .find_map(|message| {
-            message
+        .find_map(|message| match message["type"].as_str() {
+            Some("gemini") => message
                 .get("model")
                 .and_then(Value::as_str)
-                .map(str::to_owned)
+                .map(str::to_owned),
+            Some("info") => content_text(message.get("content"))
+                .trim()
+                .strip_prefix("Model set to ")
+                .map(|model| model.trim().trim_end_matches('.').to_string())
+                .filter(|model| !model.is_empty()),
+            _ => None,
         })
 }
 

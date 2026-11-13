@@ -506,6 +506,10 @@ pub struct ChatUi {
     pub composer_guard: Option<ComposerGuard>,
     /// 发送前切回主会话的能力(见 [`SubagentView`])。None = 该 agent 没有子代理视图或未取证。
     pub subagent_view: Option<SubagentView>,
+    /// 会话里切模型的机制（见 [`crate::ModelSwitch`]）。None = 没有确定方式，前端退回终端菜单兜底。
+    pub model_switch: Option<crate::ModelSwitchKind>,
+    /// CLI 已起好、只是在等第一条消息才建会话的屏幕原文（见 `AgentPlugin::awaiting_first_message_markers`）。
+    pub awaiting_first_message_markers: Vec<&'static str>,
     /// 探测到的 CLI 版本，原样回传（展示/排障）。
     pub version: Option<String>,
 }

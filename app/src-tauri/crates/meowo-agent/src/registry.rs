@@ -79,6 +79,27 @@ pub struct ModelCatalogEntry {
     pub group: Option<String>,
     /// 该模型支持的思考档位（kimi `support_efforts`）；空 = 未声明。
     pub efforts: Vec<String>,
+    /// 选中该模型时 CLI 默认用的思考档（kimi `default_effort`、codex `defaultReasoningEffort`）。
+    pub default_effort: Option<String>,
+    /// CLI 配置里的默认模型（kimi `default_model`、codex `isDefault`）。新建页据此预选。
+    pub is_default: bool,
+    /// 这个模型能不能用要看服务端（Gemini 个人 Google 账号的预览模型取决于配额与实验开关，
+    /// 离线算不准，research-kimi-gemini §3.1），菜单如实标出。
+    pub uncertain: bool,
+}
+
+impl ModelCatalogEntry {
+    pub fn new(id: impl Into<String>, label: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            group: None,
+            efforts: Vec::new(),
+            default_effort: None,
+            is_default: false,
+            uncertain: false,
+        }
+    }
 }
 
 /// 一个 agent 插件。**必填的只有身份、变体表与进程名**；其余都是能力槽，不声明即由框架降级。
@@ -363,6 +384,8 @@ pub trait AgentPlugin: Sync {
             draft_stash: self.draft_stash(),
             composer_guard: self.composer_guard(ctx.version),
             subagent_view: self.subagent_view(),
+            model_switch: self.model_switch().map(crate::ModelSwitch::kind),
+            awaiting_first_message_markers: self.awaiting_first_message_markers().to_vec(),
             version: ctx.version.map(str::to_string),
         }
     }
@@ -506,6 +529,53 @@ pub trait AgentPlugin: Sync {
     /// 启动环境（多账号时数据目录由环境变量指向别处）。默认没有：配置格式未取证的 CLI 不猜。
     fn model_catalog(&self, _env: &[(String, String)]) -> Vec<ModelCatalogEntry> {
         Vec::new()
+    }
+
+    /// 配置文件读不出清单时，问 CLI 自己要完整目录的**离线**子命令（opencode `models --verbose`、
+    /// codex `debug models --bundled`）。输出交给 [`Self::parse_model_catalog_output`]。
+    fn model_catalog_command(&self) -> Option<&'static [&'static str]> {
+        None
+    }
+
+    fn parse_model_catalog_output(&self, _output: &str) -> Vec<ModelCatalogEntry> {
+        Vec::new()
+    }
+
+    /// 会话里切模型的机制（见 [`crate::ModelSwitch`]）。None = 没有确定的方式（退回终端菜单兜底）。
+    fn model_switch(&self) -> Option<crate::ModelSwitch> {
+        None
+    }
+
+    /// 新建会话时指定模型的启动参数（`-m`）。值只认清单里的 id（[`crate::model_id_allowed`]）。
+    /// 已在 [`Self::launch_options`] 里静态声明了 `model` 栏的 agent（claude）不必再声明。
+    fn model_launch_flag(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// 新建页默认值：读 CLI 自己的配置（打开新建页时现读，不缓存）。`cwd` 用于项目级配置。
+    fn launch_defaults(
+        &self,
+        _env: &[(String, String)],
+        _cwd: Option<&Path>,
+    ) -> crate::LaunchDefaults {
+        crate::LaunchDefaults::default()
+    }
+
+    /// 运行时才知道的模式选项（opencode 用户自定义 agent）：`(启动选项 id, 离线子命令, 启动参数)`。
+    fn dynamic_mode_choices(
+        &self,
+    ) -> Option<(&'static str, &'static [&'static str], &'static str)> {
+        None
+    }
+
+    fn parse_dynamic_mode_choices(&self, _output: &str) -> Vec<crate::DynamicModeChoice> {
+        Vec::new()
+    }
+
+    /// 屏幕上出现这些原文 = CLI 已起好、只是在等第一条消息才建会话（Kimi 2.6：首条消息前不建
+    /// 会话、不触发 SessionStart，research-kimi-gemini §2.6）。对话页据此不再显示「启动被卡住」。
+    fn awaiting_first_message_markers(&self) -> &'static [&'static str] {
+        &[]
     }
 
     /// PermissionRequest hook 的决策输出会被该 agent **采纳**（阻塞式审批，如 claude/codex 的
@@ -759,6 +829,61 @@ pub fn is_agent_process(name: &str) -> bool {
     let base = basename_lower(name);
     ALL.iter()
         .any(|p| p.process_names().contains(&base.as_str()))
+}
+
+/// 新建 / 恢复时由选择 map 拼启动参数：静态声明表（[`crate::resolve_launch_args`]）之外，
+/// 再按插件声明补上**动态**的两类——清单里的模型（`model_launch_flag`）与运行时才知道的模式选项
+/// （opencode 自定义 agent）。二者的值都只认传入的清单（防注入）。
+///
+/// `resuming`：恢复已有会话时，只有切模型机制是「带参重启」的 agent 才回放模型参数——
+/// codex 带 `-m` 恢复会弹新模型推荐框（选 1 改写用户默认模型）、多跑一次压缩、丢掉补设的权限
+/// （research-codex-opencode §3 exp3/exp4）；opencode `--session` 会用最后一条消息的模型盖掉 `-m`。
+pub fn resolve_session_args(
+    plugin: &dyn AgentPlugin,
+    selections: &std::collections::HashMap<String, String>,
+    catalog: &[ModelCatalogEntry],
+    dynamic: &[crate::DynamicModeChoice],
+    resuming: bool,
+) -> Vec<String> {
+    let options = plugin.launch_options();
+    let mut out = crate::resolve_launch_args(options, selections);
+    let static_model = options.iter().any(|option| option.id == "model");
+    let replay_model = !resuming
+        || matches!(plugin.model_switch(), Some(crate::ModelSwitch::RestartResume { .. }));
+    if let (false, true, Some(flag), Some(model)) = (
+        static_model,
+        replay_model,
+        plugin.model_launch_flag(),
+        selections.get("model"),
+    ) {
+        if crate::model_id_allowed(model, catalog) {
+            out.push(flag.to_string());
+            out.push(model.clone());
+        }
+    }
+    if let Some((option_id, _, flag)) = plugin.dynamic_mode_choices() {
+        if let Some(picked) = selections.get(option_id) {
+            let declared = options
+                .iter()
+                .find(|option| option.id == option_id)
+                .is_some_and(|option| option.choices.iter().any(|c| c.id == picked));
+            let known = dynamic
+                .iter()
+                .any(|choice| choice.option == option_id && &choice.id == picked);
+            // 静态档已由声明表处理；动态档要在 CLI 现列的清单里，且形态是普通名字。
+            if !declared
+                && known
+                && picked
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+                && !picked.starts_with('-')
+            {
+                out.push(flag.to_string());
+                out.push(picked.clone());
+            }
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -1326,15 +1451,20 @@ mod tests {
             opts("claude").iter().map(|o| o.id).collect::<Vec<_>>(),
             vec!["model", "permission"]
         );
+        // codex 按 0.167.2 `/permissions` 四档 + 只在会话里切的协作模式；opencode 是 `--agent`
+        // （research-codex-opencode §9）。
         assert_eq!(
             opts("codex").iter().map(|o| o.id).collect::<Vec<_>>(),
-            vec!["approval"]
+            vec!["approval", "collaboration"]
         );
         assert_eq!(
             opts("gemini").iter().map(|o| o.id).collect::<Vec<_>>(),
             vec!["approval"]
         );
-        assert!(opts("opencode").is_empty());
+        assert_eq!(
+            opts("opencode").iter().map(|o| o.id).collect::<Vec<_>>(),
+            vec!["agent"]
+        );
         // kimi 的表随变体而定（旧 Python kimi-cli 的 flag 不同），本机未装 modern 时为空。
         let kimi = opts("kimi");
         if !kimi.is_empty() {
@@ -1367,9 +1497,97 @@ mod tests {
         );
         assert_eq!(
             arg_of("codex", "approval", "yolo"),
-            vec!["--dangerously-bypass-approvals-and-sandbox"]
+            vec!["--sandbox", "danger-full-access", "--ask-for-approval", "never"]
         );
+        assert_eq!(arg_of("codex", "approval", "approveForMe"), vec!["--approve-for-me"]);
         assert_eq!(arg_of("gemini", "approval", "yolo"), vec!["--yolo"]);
+        assert_eq!(
+            arg_of("gemini", "approval", "plan"),
+            vec!["--approval-mode", "plan"]
+        );
+        assert_eq!(arg_of("opencode", "agent", "plan"), vec!["--agent", "plan"]);
+    }
+
+    /// 统一说法的不变量：会话里经服务切换的档必须带服务端片段（且是合法 JSON 对象）；
+    /// 有说明键的档说明键按 provider 起名；Kimi 的 yolo 不是「都不问」（research-kimi-gemini §5）。
+    #[test]
+    fn mode_traits_and_switch_declarations_are_consistent() {
+        for p in all() {
+            for opt in p.launch_options() {
+                for choice in opt.choices {
+                    if opt.switch == crate::ModeSwitch::Server && choice.traits.is_some() {
+                        let patch = choice.server.unwrap_or_else(|| {
+                            panic!("{}::{}::{} 缺服务端片段", p.id(), opt.id, choice.id)
+                        });
+                        let value: serde_json::Value = serde_json::from_str(patch).unwrap();
+                        assert!(value.is_object());
+                    }
+                    if let Some(desc) = choice.desc {
+                        assert!(
+                            desc.starts_with(&format!("{}.{}.", p.id(), opt.id)),
+                            "{desc}"
+                        );
+                    }
+                }
+            }
+        }
+        let traits = |id: &str, opt: &str, choice: &str| {
+            by_id(id)
+                .unwrap()
+                .launch_options()
+                .iter()
+                .find(|o| o.id == opt)
+                .and_then(|o| o.choices.iter().find(|c| c.id == choice))
+                .and_then(|c| c.traits)
+        };
+        if let Some(kimi_yolo) = traits("kimi", "permission", "yolo") {
+            assert_eq!(kimi_yolo.commands, crate::Ask::Risky, "Kimi yolo 危险仍问");
+            assert_eq!(traits("kimi", "permission", "auto").unwrap().commands, crate::Ask::Never);
+        }
+        assert_eq!(traits("gemini", "approval", "yolo").unwrap().commands, crate::Ask::Never);
+        assert!(traits("gemini", "approval", "plan").unwrap().plan_only);
+    }
+
+    /// 动态模型参数只认清单里的 id；恢复时只有「带参重启」机制的 agent 回放模型参数。
+    #[test]
+    fn session_args_whitelist_models_and_skip_model_on_server_resume() {
+        let catalog = vec![ModelCatalogEntry::new("gemini-2.5-pro", "gemini-2.5-pro")];
+        let mut sel = std::collections::HashMap::new();
+        sel.insert("model".to_string(), "gemini-2.5-pro".to_string());
+        sel.insert("approval".to_string(), "plan".to_string());
+        let gemini = by_id("gemini").unwrap();
+        assert_eq!(
+            resolve_session_args(gemini, &sel, &catalog, &[], true),
+            vec!["--approval-mode", "plan", "-m", "gemini-2.5-pro"]
+        );
+        sel.insert("model".to_string(), "gemini-2.5-pro; calc".to_string());
+        assert_eq!(
+            resolve_session_args(gemini, &sel, &catalog, &[], false),
+            vec!["--approval-mode", "plan"]
+        );
+        let codex = by_id("codex").unwrap();
+        let codex_catalog = vec![ModelCatalogEntry::new("gpt-5.5", "GPT-5.5")];
+        let mut codex_sel = std::collections::HashMap::new();
+        codex_sel.insert("model".to_string(), "gpt-5.5".to_string());
+        assert_eq!(
+            resolve_session_args(codex, &codex_sel, &codex_catalog, &[], false),
+            vec!["-m", "gpt-5.5"]
+        );
+        assert!(resolve_session_args(codex, &codex_sel, &codex_catalog, &[], true).is_empty());
+        let opencode = by_id("opencode").unwrap();
+        let dynamic = vec![crate::DynamicModeChoice {
+            option: "agent".into(),
+            id: "reviewer".into(),
+            label: "reviewer".into(),
+        }];
+        let mut oc_sel = std::collections::HashMap::new();
+        oc_sel.insert("agent".to_string(), "reviewer".to_string());
+        assert_eq!(
+            resolve_session_args(opencode, &oc_sel, &[], &dynamic, false),
+            vec!["--agent", "reviewer"]
+        );
+        oc_sel.insert("agent".to_string(), "hacker".to_string());
+        assert!(resolve_session_args(opencode, &oc_sel, &[], &dynamic, false).is_empty());
     }
 
     /// 能力槽的降级语义：不声明 telemetry 的 agent，调用方拿到 None 而不是一个空实现。

@@ -203,6 +203,32 @@ fn completed_item_events(
 /// turn_context 共 11 份全是这个形态；codex.exe 里枚举为 UnlessTrusted/OnRequest/Granular/Never；
 /// research-cli-drift X4，2026-11-12）。按 `as_str` 取会落空，按钮退回显示维度名。
 /// 五个开关全开等于「按需审批」，全关等于「从不询问」，其余如实报 `granular`（分类审批）。
+/// rollout 的审批策略 + 沙箱类型 → 权限档 id（codex 插件 launch_options 的 approval 栏）。
+/// 沙箱类型在 rollout 里是 kebab（`workspace-write`），在 app-server 里是驼峰（`workspaceWrite`），都认。
+pub(super) fn permission_tier(
+    approval: Option<&str>,
+    sandbox: Option<&str>,
+    reviewer: Option<&str>,
+) -> Option<&'static str> {
+    let sandbox: String = sandbox?
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect::<String>()
+        .to_ascii_lowercase();
+    match sandbox.as_str() {
+        "readonly" => Some("readOnly"),
+        "dangerfullaccess" => Some("yolo"),
+        "workspacewrite" if approval == Some("on-request") => Some(
+            if matches!(reviewer, Some("auto_review" | "guardian_subagent")) {
+                "approveForMe"
+            } else {
+                "ask"
+            },
+        ),
+        _ => None,
+    }
+}
+
 fn approval_mode(policy: &serde_json::Value) -> Option<&str> {
     if let Some(name) = policy.as_str() {
         return Some(name);
@@ -464,14 +490,19 @@ impl TranscriptSpec for CodexTranscript {
             {
                 modes.push(crate::AgentMode::new("collaboration", mode));
             }
-            if let Some(approval) = payload.get("approval_policy").and_then(approval_mode) {
-                modes.push(crate::AgentMode::new("approval", approval));
-            }
-            if let Some(sandbox) = payload
+            // 审批策略与沙箱合成 TUI `/permissions` 的一档（0.167.2 四档：Read Only / Ask for approval /
+            // Approve for me / Full Access，research-codex-opencode §9），与新建页、会话里的权限菜单
+            // 同一套 id。对不上任何一档（granular、旧的 never+workspace-write）时退回审批策略原值。
+            let approval = payload.get("approval_policy").and_then(approval_mode);
+            let sandbox = payload
                 .pointer("/sandbox_policy/type")
-                .and_then(|v| v.as_str())
-            {
-                modes.push(crate::AgentMode::new("sandbox", sandbox));
+                .and_then(|v| v.as_str());
+            let reviewer = payload
+                .get("approvals_reviewer")
+                .or_else(|| payload.get("approvalsReviewer"))
+                .and_then(|v| v.as_str());
+            if let Some(tier) = permission_tier(approval, sandbox, reviewer).or(approval) {
+                modes.push(crate::AgentMode::new("approval", tier));
             }
         } else if outer == "event_msg"
             && payload.get("type").and_then(|v| v.as_str()) == Some("task_started")
@@ -812,15 +843,16 @@ mod tests {
                 .find(|m| m.dimension == "approval")
                 .map(|m| m.value)
         };
+        // never + workspace-write（旧 Full Auto）不是 0.167 的任何一档：退回审批策略原值。
         assert_eq!(mode(r#""never""#).as_deref(), Some("never"));
-        assert_eq!(mode(r#""on-request""#).as_deref(), Some("on-request"));
+        assert_eq!(mode(r#""on-request""#).as_deref(), Some("ask"));
         assert_eq!(
             mode(r#"{"granular":{"sandbox_approval":false,"rules":false,"skill_approval":false,"request_permissions":true,"mcp_elicitations":true}}"#).as_deref(),
             Some("granular")
         );
         assert_eq!(
             mode(r#"{"granular":{"sandbox_approval":true,"rules":true,"skill_approval":true,"request_permissions":true,"mcp_elicitations":true}}"#).as_deref(),
-            Some("on-request")
+            Some("ask")
         );
         assert_eq!(
             mode(r#"{"granular":{"sandbox_approval":false,"rules":false,"skill_approval":false,"request_permissions":false,"mcp_elicitations":false}}"#).as_deref(),
@@ -918,9 +950,27 @@ mod tests {
             modes,
             vec![
                 crate::AgentMode::new("collaboration", "plan"),
-                crate::AgentMode::new("approval", "on-request"),
-                crate::AgentMode::new("sandbox", "workspace-write"),
+                crate::AgentMode::new("approval", "ask"),
             ]
+        );
+        let tier = |line: &str| {
+            CODEX_TRANSCRIPT
+                .agent_modes_from_line(line)
+                .into_iter()
+                .find(|m| m.dimension == "approval")
+                .map(|m| m.value)
+        };
+        assert_eq!(
+            tier(r#"{"type":"turn_context","payload":{"approval_policy":"on-request","sandbox_policy":{"type":"read-only"}}}"#).as_deref(),
+            Some("readOnly")
+        );
+        assert_eq!(
+            tier(r#"{"type":"turn_context","payload":{"approval_policy":"never","sandbox_policy":{"type":"danger-full-access"}}}"#).as_deref(),
+            Some("yolo")
+        );
+        assert_eq!(
+            tier(r#"{"type":"turn_context","payload":{"approval_policy":"on-request","approvals_reviewer":"auto_review","sandbox_policy":{"type":"workspace-write"}}}"#).as_deref(),
+            Some("approveForMe")
         );
         assert_eq!(
             CODEX_TRANSCRIPT.agent_modes_from_line(

@@ -27,6 +27,7 @@
 
 pub mod account;
 mod lead;
+mod models;
 /// 单测用：gemini 是否打开了 modelSteering（见 lead::model_steering）。
 #[cfg(test)]
 pub(crate) fn lead_model_steering(data_dir: &std::path::Path) -> bool {
@@ -244,11 +245,38 @@ impl AgentPlugin for Gemini {
     fn resume_args(&self) -> &'static [&'static str] {
         &["--resume"]
     }
-    /// `/model` 是交互式菜单（不接受内联参数，故无 model_presets）。声明它，GUI 就能
-    /// 发出这条命令再把弹出的菜单渲染成按钮——模型清单由 CLI 现给。
+    /// 裸 `/model` 弹对话框，只作清单为空时的兜底。0.68 其实有 `/model set <id>`，但它不校验模型名、
+    /// 运行中被拒的文字残留在输入框、有待批审批时打字会替用户批准（research-kimi-gemini §3.2/§3.4），
+    /// 所以主路线是空闲时 `--resume <uuid> -m <id>` 重启接回（§3.3 E3-A 实测 id 不变、历史完整、
+    /// 下一轮用新模型）。还没发过消息时会话文件退出即删，resume 报 Invalid session identifier，
+    /// 改用 `--session-id <同一 uuid>`（E3-D）。
     fn model_menu_command(&self) -> Option<&'static str> {
         Some("/model")
     }
+    fn model_switch(&self) -> Option<crate::ModelSwitch> {
+        Some(crate::ModelSwitch::RestartResume {
+            flag: "-m",
+            unsent_resume_args: Some(&["--session-id"]),
+        })
+    }
+    fn model_launch_flag(&self) -> Option<&'static str> {
+        Some("-m")
+    }
+    fn model_catalog(&self, _env: &[(String, String)]) -> Vec<crate::ModelCatalogEntry> {
+        self.resolve()
+            .map(|inst| models::catalog(&inst.data_dir, None))
+            .unwrap_or_default()
+    }
+    fn launch_defaults(
+        &self,
+        _env: &[(String, String)],
+        cwd: Option<&std::path::Path>,
+    ) -> crate::LaunchDefaults {
+        self.resolve()
+            .map(|inst| models::launch_defaults(&inst.data_dir, cwd))
+            .unwrap_or_default()
+    }
+
     /// 运行中排队用回车（probe_tui_script，0.64，2026-10-16）：回车与 Tab 运行中都会进
     /// `Queued (press ↑ to edit)`，但空闲时 Tab 不提交、正文停在输入框里。对话页的运行态
     /// 是推断（DB 启动即 running、hook 执行期屏幕无 esc to cancel），推断错了按 Tab 就丢
@@ -290,15 +318,31 @@ impl AgentPlugin for Gemini {
         })
     }
 
-    // https://geminicli.com/docs/reference/keyboard-shortcuts/：Shift-Tab 轮换审批模式。
-    // 未取证的屏幕标签不作乐观更新，避免把按键成功误当成某个权限档已经生效。
+    // 审批模式会话里改走带参重启（launch_options 的 switch: Restart）：Shift+Tab / Ctrl+Y 在有待批
+    // 审批时会**自动放行**挂起的调用（G:interactiveCli 29445-29478，research-kimi-gemini §3.4 e5-06
+    // 实测 gate-p2 被写入），不再作切换手段。保留维度只为屏幕回显：transcript 与 hook 都不带审批
+    // 模式，底栏原文是唯一来源（§3.5：「auto-accept edits」「YOLO Ctrl+Y」「plan Shift+Tab to manual」）。
     fn mode_controls(&self) -> &'static [crate::ModeControl] {
+        static MARKERS: [crate::ModeScreenMarker; 3] = [
+            crate::ModeScreenMarker {
+                marker: "auto-accept edits",
+                value: "autoEdit",
+            },
+            crate::ModeScreenMarker {
+                marker: "yolo ctrl+y",
+                value: "yolo",
+            },
+            crate::ModeScreenMarker {
+                marker: "shift+tab to manual",
+                value: "plan",
+            },
+        ];
         static MODES: [crate::ModeControl; 1] = [crate::ModeControl {
             dimension: "approval",
             menu_command: None,
-            cycle_input: Some("\x1b[Z"),
+            cycle_input: None,
             options: &[],
-            screen_markers: &[],
+            screen_markers: &MARKERS,
         }];
         &MODES
     }
@@ -393,33 +437,63 @@ impl AgentPlugin for Gemini {
             "/tools",
         ]
     }
-    /// 启动选项（实测 `gemini --help`）：审批形态。`auto_edit` 走 `--approval-mode`，
-    /// 全自动走更老且更稳的 `--yolo`。模型不声明——gemini 的模型名随版本更迭。
+    /// 启动选项（`gemini --help` 0.68）：审批模式四档。内部枚举 default / autoEdit / yolo / plan
+    /// （G:273739），对外写法 default / auto_edit / yolo / plan（G:gemini-Q2FNZWQG.js 8876-8935）。
+    /// 统一说法按 bundle/policies/*.toml 的策略优先级（research-kimi-gemini §5）。
+    /// default 不传参数（「默认」= 交给 CLI 自己的 settings），settings 的 defaultApprovalMode 是别的档时，
+    /// 新建页按 launch_defaults 预选那一档，界面说的就是实际会用的那档。
     fn launch_options(&self) -> &'static [crate::LaunchOption] {
-        use crate::{LaunchChoice, LaunchOption};
+        use crate::{Ask, LaunchChoice, LaunchOption, ModeSwitch, ModeTraits};
         static OPTIONS: [LaunchOption; 1] = [LaunchOption {
             id: "approval",
             default: "default",
             choices: &[
                 LaunchChoice {
                     id: "default",
-                    label: "Default",
+                    label: "default",
                     args: &[],
                     risk: false,
+                    // 「default (prompt for approval)」；工作区内已知安全的命令（isKnownSafeCommand）
+                    // 不问，其余都问。
+                    traits: Some(ModeTraits::new(Ask::Always, Ask::Always, false)),
+                    desc: Some("gemini.approval.default"),
+                    server: None,
                 },
                 LaunchChoice {
                     id: "autoEdit",
-                    label: "Auto Edit",
+                    label: "auto_edit",
                     args: &["--approval-mode", "auto_edit"],
                     risk: false,
+                    // 「auto_edit (auto-approve edit tools)」；工作区外的路径仍问，命令照 default。
+                    traits: Some(ModeTraits::new(Ask::Never, Ask::Always, false)),
+                    desc: Some("gemini.approval.autoEdit"),
+                    server: None,
+                },
+                LaunchChoice {
+                    id: "plan",
+                    label: "plan",
+                    args: &["--approval-mode", "plan"],
+                    risk: false,
+                    // 「plan (read-only mode)」；只能写 plans 目录下的 .md，shell 工具不可用
+                    // （实测 `Tool "run_shell_command" not found`）。
+                    traits: Some(ModeTraits::new(Ask::Blocked, Ask::Blocked, true)),
+                    desc: Some("gemini.approval.plan"),
+                    server: None,
                 },
                 LaunchChoice {
                     id: "yolo",
-                    label: "YOLO",
+                    label: "yolo",
                     args: &["--yolo"],
                     risk: true,
+                    // 「yolo (auto-approve all tools)」；危险命令也放行（yolo.toml 优先级 998）。
+                    traits: Some(ModeTraits::new(Ask::Never, Ask::Never, false)),
+                    desc: Some("gemini.approval.yolo"),
+                    server: None,
                 },
             ],
+            switch: ModeSwitch::Restart,
+            resume_upgrade_only: false,
+            in_session_only: false,
         }];
         &OPTIONS
     }

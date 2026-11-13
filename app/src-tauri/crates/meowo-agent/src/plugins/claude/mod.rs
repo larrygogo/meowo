@@ -408,7 +408,7 @@ impl AgentPlugin for Claude {
     /// <default|plan|acceptEdits|bypassPermissions>`。default 项一律不传 flag——CLI 的默认
     /// 行为由 CLI 自己决定，不替它猜。
     fn launch_options(&self) -> &'static [crate::LaunchOption] {
-        use crate::{LaunchChoice, LaunchOption};
+        use crate::{Ask, LaunchChoice, LaunchOption, ModeTraits};
         static OPTIONS: [LaunchOption; 2] = [
             LaunchOption {
                 id: "model",
@@ -419,6 +419,7 @@ impl AgentPlugin for Claude {
                         label: "Default",
                         args: &[],
                         risk: false,
+                        ..LaunchChoice::PLAIN
                     },
                     // 别名是 CLI 文档化的稳定契约（不带版本，由 CLI 解析到当期型号）；
                     // 这里的 label 只是**学到真实菜单之前的兜底**——GUI 会从 CLI 自己弹出的
@@ -429,30 +430,35 @@ impl AgentPlugin for Claude {
                         label: "Fable 5",
                         args: &["--model", "fable"],
                         risk: false,
+                        ..LaunchChoice::PLAIN
                     },
                     LaunchChoice {
                         id: "opus",
                         label: "Opus 5",
                         args: &["--model", "opus"],
                         risk: false,
+                        ..LaunchChoice::PLAIN
                     },
                     LaunchChoice {
                         id: "sonnet",
                         label: "Sonnet 5",
                         args: &["--model", "sonnet"],
                         risk: false,
+                        ..LaunchChoice::PLAIN
                     },
                     LaunchChoice {
                         id: "haiku",
                         label: "Haiku 4.5",
                         args: &["--model", "haiku"],
                         risk: false,
+                        ..LaunchChoice::PLAIN
                     },
                     LaunchChoice {
                         id: "opusplan",
                         label: "Opus Plan",
                         args: &["--model", "opusplan"],
                         risk: false,
+                        ..LaunchChoice::PLAIN
                     },
                     // `[m1]` 是字面方括号（CLI 文档化的 1M 上下文别名形式）。订阅计划下
                     // Fable/Opus 分 200K 与 1M 两档，裸别名落 200K 档——不提供这几个变体，
@@ -462,20 +468,24 @@ impl AgentPlugin for Claude {
                         label: "Fable 5 (1M)",
                         args: &["--model", "fable[1m]"],
                         risk: false,
+                        ..LaunchChoice::PLAIN
                     },
                     LaunchChoice {
                         id: "opus[1m]",
                         label: "Opus 5 (1M)",
                         args: &["--model", "opus[1m]"],
                         risk: false,
+                        ..LaunchChoice::PLAIN
                     },
                     LaunchChoice {
                         id: "sonnet[1m]",
                         label: "Sonnet 5 (1M)",
                         args: &["--model", "sonnet[1m]"],
                         risk: false,
+                        ..LaunchChoice::PLAIN
                     },
                 ],
+                ..LaunchOption::PLAIN
             },
             LaunchOption {
                 id: "permission",
@@ -486,26 +496,39 @@ impl AgentPlugin for Claude {
                         label: "Default",
                         args: &[],
                         risk: false,
+                        ..LaunchChoice::PLAIN
                     },
                     LaunchChoice {
                         id: "plan",
                         label: "Plan",
                         args: &["--permission-mode", "plan"],
                         risk: false,
+                        // 官方 permission-modes 文档：plan 只读、只出方案。
+                        traits: Some(ModeTraits::new(Ask::Blocked, Ask::Blocked, true)),
+                        desc: Some("claude.permission.plan"),
+                        ..LaunchChoice::PLAIN
                     },
                     LaunchChoice {
                         id: "acceptEdits",
                         label: "Accept Edits",
                         args: &["--permission-mode", "acceptEdits"],
                         risk: false,
+                        traits: Some(ModeTraits::new(Ask::Never, Ask::Always, false)),
+                        desc: Some("claude.permission.acceptEdits"),
+                        ..LaunchChoice::PLAIN
                     },
                     LaunchChoice {
                         id: "bypassPermissions",
                         label: "Bypass Permissions",
                         args: &["--permission-mode", "bypassPermissions"],
                         risk: true,
+                        traits: Some(ModeTraits::new(Ask::Never, Ask::Never, false)),
+                        desc: Some("claude.permission.bypassPermissions"),
+                        ..LaunchChoice::PLAIN
                     },
                 ],
+                switch: crate::ModeSwitch::Control,
+                ..LaunchOption::PLAIN
             },
         ];
         &OPTIONS

@@ -23,6 +23,7 @@
 
 pub mod account;
 mod lead;
+mod models;
 mod screen;
 mod store;
 mod telemetry;
@@ -227,6 +228,81 @@ impl AgentPlugin for Opencode {
     /// 2026-08-06 / 1.18.14）。不经 TUI 菜单、一问就有，还不打扰正在跑的会话。
     fn model_list_command(&self) -> Option<&'static [&'static str]> {
         Some(&["models"])
+    }
+    /// 带 `--verbose` 才有显示名与思考档（variants），离线可用（设了
+    /// OPENCODE_DISABLE_MODELS_FETCH=1 也能跑，research-codex-opencode §1）。
+    fn model_catalog_command(&self) -> Option<&'static [&'static str]> {
+        Some(&["models", "--verbose"])
+    }
+    fn parse_model_catalog_output(&self, output: &str) -> Vec<crate::ModelCatalogEntry> {
+        models::parse_models_verbose(output)
+    }
+    /// 1.19.5 没有「设 TUI 当前模型」的服务端接口：`/api/session/:id/model` 返回 204 但 TUI 底栏
+    /// 不变、下一条仍用旧模型（oc2/oc3 实测）。唯一确定的路是 `POST /tui/open-models` 打开 TUI 自己的
+    /// 模型对话框，再输入显示名回车（oc4 实测选中、底栏变、草稿保留）。恢复时 `--session` 会用最后一条
+    /// 用户消息的模型盖掉 `-m`，所以 `-m` 只用于新会话。
+    fn model_switch(&self) -> Option<crate::ModelSwitch> {
+        Some(crate::ModelSwitch::TuiDialog)
+    }
+    fn model_launch_flag(&self) -> Option<&'static str> {
+        Some("-m")
+    }
+    fn launch_defaults(
+        &self,
+        _env: &[(String, String)],
+        cwd: Option<&std::path::Path>,
+    ) -> crate::LaunchDefaults {
+        self.resolve()
+            .map(|inst| models::launch_defaults(&inst.data_dir, cwd))
+            .unwrap_or_default()
+    }
+    /// 用户自定义的 primary agent（`opencode agent list`），新建时以 `--agent <名>` 启动。
+    fn dynamic_mode_choices(
+        &self,
+    ) -> Option<(&'static str, &'static [&'static str], &'static str)> {
+        Some(("agent", &["agent", "list"], "--agent"))
+    }
+    fn parse_dynamic_mode_choices(&self, output: &str) -> Vec<crate::DynamicModeChoice> {
+        models::parse_agent_list(output)
+    }
+    /// 新建会话的 agent（`--agent`，`opencode --help` 1.19.5）。会话里沿用 Tab 轮换（mode_controls）。
+    /// 统一说法按 `GET /agent` 的权限规则（oc1 ev.json）与官方 agents 文档：build 规则 `* allow`，
+    /// 只有越出工作区与读 .env 才问；plan 规则 `edit * deny`（只放行 .opencode/plans/*.md），
+    /// 命令照样能跑。规则可被用户配置改写，这里说的是内置默认。
+    fn launch_options(&self) -> &'static [crate::LaunchOption] {
+        use crate::{Ask, LaunchChoice, LaunchOption, ModeSwitch, ModeTraits};
+        static OPTIONS: [LaunchOption; 1] = [LaunchOption {
+            id: "agent",
+            default: "build",
+            choices: &[
+                LaunchChoice {
+                    id: "build",
+                    label: "build",
+                    // 不传 --agent = 配置的 default_agent，缺省就是 build；配了别的时新建页按
+                    // launch_defaults 预选那一档。
+                    args: &[],
+                    risk: false,
+                    // 「The default agent. Executes tools based on configured permissions.」
+                    traits: Some(ModeTraits::new(Ask::Risky, Ask::Risky, false)),
+                    desc: Some("opencode.agent.build"),
+                    server: None,
+                },
+                LaunchChoice {
+                    id: "plan",
+                    label: "plan",
+                    args: &["--agent", "plan"],
+                    risk: false,
+                    // 「Plan mode. Disallows all edit tools.」
+                    traits: Some(ModeTraits::new(Ask::Blocked, Ask::Risky, true)),
+                    desc: Some("opencode.agent.plan"),
+                    server: None,
+                },
+            ],
+            switch: ModeSwitch::Control,
+            resume_upgrade_only: false,
+            in_session_only: false,
+        }];
+        &OPTIONS
     }
     /// Esc = opencode 默认 keybind `session_interrupt`（官方 keybinds 文档）。Windows 上它曾因
     /// 「ConPTY 输入整条不通」被停用，但那是探针的误判：输入框画出前就发键、没答 OpenConsole

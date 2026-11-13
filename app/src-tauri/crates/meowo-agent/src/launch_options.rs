@@ -23,6 +23,28 @@ pub struct LaunchChoice {
     /// 高风险档（跳过权限确认/拆沙箱一类）。true 时前端以警示色渲染并附风险副标题——
     /// 与普通档同视觉零警示的话，用户会把它当成无害的快捷档随手点上。
     pub risk: bool,
+    /// 统一说法（改文件/跑命令要不要问、是否只规划）。None = 这档的行为取决于 CLI 配置
+    /// （「默认」档），前端改按 [`crate::LaunchDefaults`] 解析出的那一档来说。
+    pub traits: Option<crate::ModeTraits>,
+    /// 一句话说明的 i18n 键（前端 `t.modes.desc[键]`）。按 provider 起名：同叫 yolo 的两档
+    /// 在 Kimi 与 Gemini 是两回事，不能共用一句。
+    pub desc: Option<&'static str>,
+    /// [`crate::ModeSwitch::Server`] 时发给会话服务的设置片段（JSON 对象，合并进
+    /// `thread/settings/update` 参数）。字面量，不含用户输入。
+    pub server: Option<&'static str>,
+}
+
+impl LaunchChoice {
+    /// 结构体更新语法的底子：只填 id/label/args/risk 的老写法用 `..LaunchChoice::PLAIN` 补齐其余字段。
+    pub const PLAIN: LaunchChoice = LaunchChoice {
+        id: "",
+        label: "",
+        args: &[],
+        risk: false,
+        traits: None,
+        desc: None,
+        server: None,
+    };
 }
 
 /// 一栏启动选项（单选）。
@@ -36,6 +58,25 @@ pub struct LaunchOption {
     pub choices: &'static [LaunchChoice],
     /// 默认选中的 choice id。
     pub default: &'static str,
+    /// 会话里怎么切这一栏（见 [`crate::ModeSwitch`]）。
+    pub switch: crate::ModeSwitch,
+    /// 重启接回时 CLI 以会话记住的档为准、参数只能放宽不能收紧（Kimi 2.6 K:558700
+    /// `applyStartupModesToResumedSession` 只处理 auto/yolo 与开启 plan）。前端据此在会话里
+    /// 把「收紧到不带参数的档」标成需要新会话，而不是假装切过去了。
+    pub resume_upgrade_only: bool,
+    /// 只在会话里能切、没有启动参数（Codex 协作模式 Default / Plan）：新建页不显示这一栏。
+    pub in_session_only: bool,
+}
+
+impl LaunchOption {
+    pub const PLAIN: LaunchOption = LaunchOption {
+        id: "",
+        choices: &[],
+        default: "default",
+        switch: crate::ModeSwitch::LaunchOnly,
+        resume_upgrade_only: false,
+        in_session_only: false,
+    };
 }
 
 /// 把前端传回的选择（option id → choice id）翻译成追加的 argv 片段。
@@ -78,14 +119,17 @@ mod tests {
                     label: "Default",
                     args: &[],
                     risk: false,
+                    ..LaunchChoice::PLAIN
                 },
                 LaunchChoice {
                     id: "opus",
                     label: "Opus",
                     args: &["--model", "opus"],
                     risk: false,
+                    ..LaunchChoice::PLAIN
                 },
             ],
+            ..LaunchOption::PLAIN
         },
         LaunchOption {
             id: "permission",
@@ -96,14 +140,17 @@ mod tests {
                     label: "Default",
                     args: &[],
                     risk: false,
+                    ..LaunchChoice::PLAIN
                 },
                 LaunchChoice {
                     id: "plan",
                     label: "Plan",
                     args: &["--permission-mode", "plan"],
                     risk: false,
+                    ..LaunchChoice::PLAIN
                 },
             ],
+            ..LaunchOption::PLAIN
         },
     ];
 
