@@ -33,6 +33,20 @@ fn main() {
         if std::env::var("MEOWO_PROTOCOL_MANAGED").as_deref() == Ok("1") {
             return;
         }
+        // 原生 TUI 的关卡等待器（kimi/gemini 在后台命令里跑）：身份全在参数里，且绝不读 stdin——
+        // 后台命令的 stdin 可能是 TUI 的伪终端，读它会永远等不到 EOF。
+        if args.get(1).map(String::as_str) == Some("wait") {
+            if let Some(registry) =
+                db_path().and_then(|p| p.parent().map(|d| d.join("lead-sessions.json")))
+            {
+                if let Some(out) = meowo_reporter::lead_waiter::run_from_args(&args, &registry) {
+                    if let Some(text) = out.stdout {
+                        println!("{text}");
+                    }
+                    std::process::exit(out.exit);
+                }
+            }
+        }
         // wait 模式（asyncRewake）用退出码 2 + stderr 唤醒模型；其余模式恒为 0。
         let mut raw = String::new();
         let mut code = 0;

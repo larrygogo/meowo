@@ -3,6 +3,7 @@
 //! MCP 工具参数不能提供会话身份；未知事件、工具、失败形状均放行且不认领。
 
 use crate::lead::{self, Output, TurnEvidence};
+use crate::lead_waiter;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
@@ -272,6 +273,9 @@ struct TurnState {
     user: String,
     calls: Vec<Value>,
     blocked: bool,
+    /// 本回合已经为哪个关卡要求过启动等待器（gemini 的 AfterAgent deny 不限次数，只问一次）。
+    #[serde(default)]
+    waiter_asked: Option<String>,
 }
 fn state_path(task: &Path, provider: Provider) -> PathBuf {
     task.join(format!(".provider-turn-{}.json", provider.id()))
@@ -374,7 +378,7 @@ pub fn run(provider: &str, mode: &str, raw: &str, registry: &Path) -> Output {
     if !matches!(mode, "session" | "claim" | "stop") {
         return Output::default();
     }
-    if mode == "claim" && !raw.contains(".lead") {
+    if mode == "claim" && !raw.contains(".lead") && !raw.contains("lead wait --provider gemini") {
         return Output::default();
     }
     std::panic::catch_unwind(|| run_inner(provider, mode, raw, registry)).unwrap_or_default()
@@ -395,6 +399,11 @@ fn run_inner(provider: &str, mode: &str, raw: &str, registry: &Path) -> Output {
         .unwrap_or_default()
         .to_string();
     if mode == "claim" {
+        if provider == Provider::Gemini {
+            if let Some(out) = gemini_waiter_started(&raw, &session) {
+                return out;
+            }
+        }
         let Some(call) = write_call(provider, &native, &raw) else {
             return Output::default();
         };
@@ -413,7 +422,7 @@ fn run_inner(provider: &str, mode: &str, raw: &str, registry: &Path) -> Output {
         let mut state = read_state(&task, provider, &session);
         if state.turn.is_some() && native.turn.is_some() && state.turn != native.turn {
             state = TurnState {
-                session,
+                session: session.clone(),
                 ..TurnState::default()
             };
         }
@@ -423,11 +432,17 @@ fn run_inner(provider: &str, mode: &str, raw: &str, registry: &Path) -> Output {
         if native.turn.is_some() {
             state.turn = native.turn;
         }
+        let gate_written = touches_gate(&call);
         state.calls.push(call);
         if state.calls.len() > 64 {
             state.calls.remove(0);
         }
         let _ = save_state(&task, provider, &state);
+        if provider == Provider::Gemini && gate_written {
+            if let Some(tail) = gemini_waiter_tail(&task, &session) {
+                return tail;
+            }
+        }
         return out;
     }
     let Some(task) = lead::task_of_session(&session, registry) else {
@@ -525,6 +540,13 @@ fn run_inner(provider: &str, mode: &str, raw: &str, registry: &Path) -> Output {
             }
         }
         "stop" => {
+            if matches!(provider, Provider::Kimi | Provider::Gemini)
+                && matches!(native.event.as_str(), "Stop" | "AfterAgent")
+            {
+                if let Some(out) = waiter_stop(provider, &task, &session, &mut state) {
+                    return out;
+                }
+            }
             if provider == Provider::OpenCode
                 || !matches!(native.event.as_str(), "Stop" | "AfterAgent")
                 || state.user.is_empty()
@@ -580,6 +602,108 @@ fn run_inner(provider: &str, mode: &str, raw: &str, registry: &Path) -> Output {
         }
         _ => Output::default(),
     }
+}
+
+fn touches_gate(call: &Value) -> bool {
+    let input = &call["input"];
+    string(input, "file_path")
+        .or_else(|| string(input, "command"))
+        .is_some_and(|text| text.replace('\\', "/").contains("gate.json"))
+}
+
+/// 这次关卡要不要（再）启动等待器：挂起或已作答未送达，且没有活着的等待器。
+fn waiter_wanted(task: &Path, session: &str) -> bool {
+    lead_waiter::needs_waiter(task, session).is_some()
+        || lead_waiter::undelivered_answer(task, session)
+            .is_some_and(|gate| lead_waiter::live_waiter(task, &gate.id).is_none())
+}
+
+/// Gemini：写 gate.json 的工具调用之后，用 AfterTool 的尾调用让 CLI 自己在后台启动等待器，
+/// 不依赖模型照 skill 去做（0.68 源码：tailToolCallRequest 替换原调用的结果，仍走审批策略）。
+fn gemini_waiter_tail(task: &Path, session: &str) -> Option<Output> {
+    if !waiter_wanted(task, session) {
+        return None;
+    }
+    let reporter = lead_waiter::reporter_path()?;
+    let command = lead_waiter::command("gemini", &reporter, session);
+    Some(Output {
+        stdout: Some(
+            json!({"hookSpecificOutput":{"hookEventName":"AfterTool","tailToolCallRequest":{"name":"run_shell_command","args":{"command":command,"is_background":true,"description":"Meowo: wait for the leader's gate answer"}}}})
+                .to_string(),
+        ),
+        ..Output::default()
+    })
+}
+
+/// 尾调用会替换写 gate.json 那次调用的结果，模型只看到「命令已转到后台」。在等待器自己的
+/// AfterTool 上补一句说明，免得模型以为写入失败去重写关卡、或开始轮询。
+fn gemini_waiter_started(raw: &Value, session: &str) -> Option<Output> {
+    if raw.get("hook_event_name").and_then(Value::as_str) != Some("AfterTool")
+        || raw.get("tool_name").and_then(Value::as_str) != Some("run_shell_command")
+    {
+        return None;
+    }
+    let command = raw.pointer("/tool_input/command").and_then(Value::as_str)?;
+    if !command.ends_with(&format!(" lead wait --provider gemini --session {session}")) {
+        return None;
+    }
+    let context = "[lead] 这是 Meowo 自动启动的关卡等待器，gate.json 已写好。现在直接结束本轮：不要重写 gate.json，不要轮询或读它的日志。leader 答复后它会结束，答复会自动送回本会话，届时按 lead skill 处理。";
+    Some(Output {
+        stdout: Some(
+            json!({"hookSpecificOutput":{"hookEventName":"AfterTool","additionalContext":context}})
+                .to_string(),
+        ),
+        ..Output::default()
+    })
+}
+
+/// 回合结束时的关卡兜底（kimi Stop / gemini AfterAgent）：
+/// - 答复已到、还没送达：直接把答复交给模型接着做（同一回合内，零等待）；
+/// - 关卡挂起、会话里没有等待器：要求模型在后台启动等待器。kimi 只能靠这里（它的 PostToolUse
+///   是 fire-and-forget，不读输出），且 CLI 每回合只认一次 Stop 拦截；gemini 是尾调用被拒或
+///   用 shell 写关卡时的兜底，自己记一次，避免 AfterAgent 无限续跑。
+fn waiter_stop(
+    provider: Provider,
+    task: &Path,
+    session: &str,
+    state: &mut TurnState,
+) -> Option<Output> {
+    let reason = if let Some(gate) = lead_waiter::undelivered_answer(task, session)
+        .filter(|gate| lead_waiter::live_waiter(task, &gate.id).is_none())
+    {
+        lead_waiter::mark_delivered(task, &gate);
+        lead::answer_message(task, &gate)
+    } else {
+        let gate = lead_waiter::needs_waiter(task, session)?;
+        if provider == Provider::Gemini {
+            if state.waiter_asked.as_deref() == Some(gate.id.as_str()) {
+                return None;
+            }
+            state.waiter_asked = Some(gate.id.clone());
+            save_state(task, provider, state)?;
+        }
+        let reporter = lead_waiter::reporter_path()?;
+        let command = lead_waiter::command(provider.id(), &reporter, session);
+        let how = match provider {
+            Provider::Kimi => "用 Bash 工具在后台启动它（run_in_background=true，disable_timeout=true，description 写「等待 leader 答复」）",
+            _ => "用 run_shell_command 在后台启动它（is_background=true）",
+        };
+        format!(
+            "[lead] 关卡 {} 在等 leader 答复，会话里还没有等待器。{how}，命令：`{command}`。启动后直接结束本轮，不要轮询；它结束时你会收到后台任务完成的通知，届时读它的输出和任务目录里的 gate.json，按 lead skill 处理答复。",
+            gate.id
+        )
+    };
+    Some(match provider {
+        Provider::Kimi => Output {
+            stderr: Some(reason),
+            exit: 2,
+            stdout: None,
+        },
+        _ => Output {
+            stdout: Some(json!({"decision":"deny","reason":reason}).to_string()),
+            ..Output::default()
+        },
+    })
 }
 
 #[cfg(test)]

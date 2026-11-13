@@ -439,3 +439,64 @@ fn two_sessions_on_two_tasks_in_one_project_never_cross() {
     assert!(injected > 0, "没有任何 Provider 产生任务注入，串线检查未生效");
     eprintln!("核对了 {injected} 次任务注入");
 }
+
+// ---------------- 原生 TUI 等待器（任务 20261113-lead-tui） ----------------
+
+fn open_gate(e: &Env, provider: &str, session: &str) {
+    call(e, provider, "session", prompt(e, provider, session, "开始"));
+    call(e, provider, "claim", claim(e, provider, session));
+    fs::write(
+        e.task.join("gate.json"),
+        r#"{"id":"Q-wait","type":"Q","title":"t","status":"pending","options":[{"id":"go","label":"Go"}]}"#,
+    )
+    .unwrap();
+}
+
+#[test]
+fn kimi_stop_asks_for_the_waiter_once_gate_is_open_and_hands_over_an_early_answer() {
+    let e = env();
+    open_gate(&e, "kimi", "session_k1");
+    let out = call(&e, "kimi", "stop", stop(&e, "kimi", "session_k1", "开始"));
+    assert_eq!(out.exit, 2);
+    let reason = out.stderr.unwrap();
+    assert!(reason.contains("run_in_background=true") && reason.contains("disable_timeout=true"), "{reason}");
+    assert!(reason.contains("lead wait --provider kimi --session session_k1`"), "{reason}");
+    // 别的会话停下不受影响。
+    assert_eq!(call(&e, "kimi", "stop", stop(&e, "kimi", "session_other", "开始")), Output::default());
+    // 答复在本回合结束前就到了：Stop 直接把答复交给模型，只送一次。
+    lead::answer_gate(&e.task, "Q-wait", &meowo_protocol::ipc::LeadGateAnswerDto { choice: "go".into(), note: String::new() }).unwrap();
+    let out = call(&e, "kimi", "stop", stop(&e, "kimi", "session_k1", "开始"));
+    assert!(out.stderr.unwrap().contains("leader 已在 Meowo 里回答关卡 Q"));
+    let again = call(&e, "kimi", "stop", stop(&e, "kimi", "session_k1", "开始"));
+    assert!(again.stderr.is_none_or(|text| !text.contains("leader 已在 Meowo 里回答")));
+}
+
+#[test]
+fn gemini_gate_write_starts_waiter_by_tail_call_and_explains_it_to_the_model() {
+    let e = env();
+    call(&e, "gemini", "session", prompt(&e, "gemini", "g-1", "开始"));
+    call(&e, "gemini", "claim", claim(&e, "gemini", "g-1"));
+    fs::write(
+        e.task.join("gate.json"),
+        r#"{"id":"Q-wait","type":"Q","title":"t","status":"pending","options":[{"id":"go","label":"Go"}]}"#,
+    )
+    .unwrap();
+    let write = json!({"hook_event_name":"AfterTool","session_id":"g-1","cwd":e.root.path(),"tool_name":"write_file","tool_input":{"file_path":e.task.join("gate.json"),"content":"{}"},"tool_response":{"llmContent":"File written."}});
+    let out: Value = serde_json::from_str(&call(&e, "gemini", "claim", write).stdout.unwrap()).unwrap();
+    let tail = &out["hookSpecificOutput"]["tailToolCallRequest"];
+    assert_eq!(tail["name"], "run_shell_command");
+    assert_eq!(tail["args"]["is_background"], true);
+    let command = tail["args"]["command"].as_str().unwrap().to_owned();
+    assert!(command.ends_with(" lead wait --provider gemini --session g-1"), "{command}");
+    // 尾调用自己的 AfterTool：补一句说明，叫模型结束本轮。
+    let started = json!({"hook_event_name":"AfterTool","session_id":"g-1","cwd":e.root.path(),"tool_name":"run_shell_command","tool_input":{"command":command,"is_background":true},"tool_response":{"llmContent":"Command moved to background (PID: 1)."}});
+    let out: Value = serde_json::from_str(&call(&e, "gemini", "claim", started).stdout.unwrap()).unwrap();
+    assert!(out["hookSpecificOutput"]["additionalContext"].as_str().unwrap().contains("直接结束本轮"));
+    // 写别的任务文件不触发尾调用。
+    assert_eq!(call(&e, "gemini", "claim", claim(&e, "gemini", "g-1")), Output::default());
+    // AfterAgent 兜底只问一次，避免无限续跑。
+    let first = call(&e, "gemini", "stop", stop(&e, "gemini", "g-1", "开始"));
+    assert!(first.stdout.unwrap().contains("is_background=true"));
+    let second = call(&e, "gemini", "stop", stop(&e, "gemini", "g-1", "开始"));
+    assert!(second.stdout.is_none_or(|text| !text.contains("is_background=true")));
+}
