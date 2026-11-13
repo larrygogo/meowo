@@ -1459,7 +1459,6 @@ pub(crate) fn list_models(db: &Path, session_id: i64) -> Result<Vec<CodexModel>,
 /// 改本会话（主线程）的模型/思考档/协作模式/审批/沙箱，从下一回合起生效；正在跑的回合不变，
 /// 草稿与待批审批不受影响，不写 config.toml。`native_session` 是 codex thread id；子代理 thread
 /// 沿父链改到主线程。会阻塞（同 [`list_models`]）。
-#[cfg_attr(not(test), allow(dead_code))] // 宿主分派（tms/main 另一路）接入前只有单测调用
 pub(crate) fn update_settings(
     db: &Path,
     session_id: i64,

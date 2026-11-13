@@ -900,7 +900,6 @@ fn control_endpoint(db: &Path, presence: Presence) -> Result<Endpoint, ControlEr
 
 /// 模型清单：`GET /config/providers`（oc1 实测形状，只含已连接 provider，带 variants 与每家默认）。
 /// `cwd` 给出时按该目录取配置（项目级 opencode.json 里的 provider 也在内）。
-#[cfg_attr(not(test), allow(dead_code))] // 宿主分派（tms/main 另一路）接入前只有单测调用
 pub(crate) fn list_models(
     db: &Path,
     presence: Presence,
@@ -1037,7 +1036,6 @@ fn choice_of(choice: &Value) -> Option<OcChoice> {
 /// **调用约定**：宿主须先确认 TUI 空闲、输入框为空、没有待批审批/问题，并通过 `req.state` 如实传入；
 /// 任一不满足返回 NotNow、不写终端。`io.write` 必须写到这个会话的托管终端（Meowo 现有 PTY 写入接口），
 /// `io.screen` 返回同一终端的当前画面。会阻塞约 2~5 秒（等对话框、等搜索），别在 UI 线程上调。
-#[cfg_attr(not(test), allow(dead_code))] // 宿主分派（tms/main 另一路）接入前只有单测调用
 pub(crate) fn switch_model(
     req: &DialogSwitch<'_>,
     model_name: &str,
@@ -1049,7 +1047,6 @@ pub(crate) fn switch_model(
 /// 把 TUI 当前 agent 切成 `agent`（[`OcAgent::name`]）。调用约定与阻塞同 [`switch_model`]。
 /// 会话还没起时用启动参数 `--agent`（恢复会话时 `--agent` 能挡住「最后一条消息的 agent」覆盖，
 /// research 第 3 节源码）。
-#[cfg_attr(not(test), allow(dead_code))] // 宿主分派（tms/main 另一路）接入前只有单测调用
 pub(crate) fn switch_agent(
     req: &DialogSwitch<'_>,
     agent: &str,

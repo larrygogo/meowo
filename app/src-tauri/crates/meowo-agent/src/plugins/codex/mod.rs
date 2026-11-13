@@ -435,8 +435,8 @@ impl AgentPlugin for Codex {
     /// Full Access，exp6 `screen-permissions.txt` 原文，research-codex-opencode §9）。旧版的
     /// 「Full Auto」（`-a never -s workspace-write`）不再是任何一档，存了它的老会话按默认档恢复。
     /// 栏 id 仍叫 approval、Full Access 仍用 id `yolo`：老会话存的选择照旧对得上。
-    /// 会话里经 app-server 改（`server` 片段是 `thread/settings/update` 参数，字段名取自
-    /// `codex app-server generate-json-schema` 的 ThreadSettingsUpdateParams）。
+    /// 会话里经 app-server 改：`server` 片段是宿主 CodexSettingsUpdate 的 JSON（取值用 CLI 参数写法，
+    /// 由 lead_native::codex_app_server 换成 `thread/settings/update` 参数，字段见 ThreadSettingsUpdateParams）。
     /// 协作模式（Default / Plan）没有启动参数，只在会话里切。
     fn launch_options(&self) -> &'static [crate::LaunchOption] {
         use crate::{Ask, LaunchChoice, LaunchOption, ModeSwitch, ModeTraits};
@@ -463,7 +463,7 @@ impl AgentPlugin for Codex {
                         traits: Some(ModeTraits::new(Ask::Always, Ask::Risky, false)),
                         desc: Some("codex.approval.readOnly"),
                         server: Some(
-                            r#"{"approvalPolicy":"on-request","approvalsReviewer":"user","sandboxPolicy":{"type":"readOnly"}}"#,
+                            r#"{"approval":"on-request","approvalsReviewer":"user","sandbox":"read-only"}"#,
                         ),
                     },
                     LaunchChoice {
@@ -481,7 +481,7 @@ impl AgentPlugin for Codex {
                         traits: Some(ModeTraits::new(Ask::Risky, Ask::Risky, false)),
                         desc: Some("codex.approval.ask"),
                         server: Some(
-                            r#"{"approvalPolicy":"on-request","approvalsReviewer":"user","sandboxPolicy":{"type":"workspaceWrite"}}"#,
+                            r#"{"approval":"on-request","approvalsReviewer":"user","sandbox":"workspace-write"}"#,
                         ),
                     },
                     LaunchChoice {
@@ -493,7 +493,7 @@ impl AgentPlugin for Codex {
                         traits: Some(ModeTraits::new(Ask::Risky, Ask::Risky, false)),
                         desc: Some("codex.approval.approveForMe"),
                         server: Some(
-                            r#"{"approvalPolicy":"on-request","approvalsReviewer":"auto_review","sandboxPolicy":{"type":"workspaceWrite"}}"#,
+                            r#"{"approval":"on-request","approvalsReviewer":"auto_review","sandbox":"workspace-write"}"#,
                         ),
                     },
                     LaunchChoice {
@@ -511,7 +511,7 @@ impl AgentPlugin for Codex {
                         traits: Some(ModeTraits::new(Ask::Never, Ask::Never, false)),
                         desc: Some("codex.approval.yolo"),
                         server: Some(
-                            r#"{"approvalPolicy":"never","approvalsReviewer":"user","sandboxPolicy":{"type":"dangerFullAccess"}}"#,
+                            r#"{"approval":"never","approvalsReviewer":"user","sandbox":"danger-full-access"}"#,
                         ),
                     },
                 ],
@@ -531,7 +531,7 @@ impl AgentPlugin for Codex {
                         // 问不问由权限档决定。
                         traits: Some(ModeTraits::new(Ask::Inherit, Ask::Inherit, false)),
                         desc: Some("codex.collaboration.default"),
-                        server: Some(r#"{"collaborationMode":{"mode":"default"}}"#),
+                        server: Some(r#"{"collaboration":"default"}"#),
                     },
                     LaunchChoice {
                         id: "plan",
@@ -541,7 +541,7 @@ impl AgentPlugin for Codex {
                         // 「You must not perform mutating actions」：提示词约束，不是沙箱约束。
                         traits: Some(ModeTraits::new(Ask::Blocked, Ask::Inherit, true)),
                         desc: Some("codex.collaboration.plan"),
-                        server: Some(r#"{"collaborationMode":{"mode":"plan"}}"#),
+                        server: Some(r#"{"collaboration":"plan"}"#),
                     },
                 ],
                 switch: ModeSwitch::Server,

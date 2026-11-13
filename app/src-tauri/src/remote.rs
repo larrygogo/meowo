@@ -183,6 +183,11 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     "agent_chat_ui",
     "agent_models",
     "agent_model_catalog",
+    // 会话设置（任务 20261114-tui-model-switch）：读 CLI 配置的默认值、列自定义 agent、切模型/模式。
+    // 切换的值只认插件清单里的 id，宿主不把用户输入拼进 argv；运行中/有审批时前端不调。
+    "agent_launch_defaults",
+    "agent_dynamic_mode_choices",
+    "apply_session_settings",
     "new_session",
     // 分叉会话（2026-11-04 用户决定放行）：与 new_session 同级——在原会话目录起一个新的托管
     // 会话，参数只有会话 id 和终端尺寸，不给路径、不给 argv。
@@ -1457,7 +1462,31 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
         }
         "agent_model_catalog" => {
             let a = args!(AgentModelCatalogArgs);
-            reply_ok(crate::agent_model_catalog(a.provider, a.session_id).await)
+            reply_ok(crate::agent_model_catalog(app.clone(), a.provider, a.session_id).await)
+        }
+        "agent_launch_defaults" => {
+            let a = args!(AgentLaunchDefaultsArgs);
+            reply_ok(crate::session_settings::agent_launch_defaults(a.provider, a.cwd).await)
+        }
+        "agent_dynamic_mode_choices" => {
+            let a = args!(AgentDynamicModeChoicesArgs);
+            reply_ok(crate::session_settings::agent_dynamic_mode_choices(a.provider, a.cwd).await)
+        }
+        "apply_session_settings" => {
+            let a = args!(ApplySessionSettingsArgs);
+            reply(
+                crate::session_settings::apply_session_settings(
+                    app.clone(),
+                    state,
+                    a.session_id,
+                    a.model,
+                    a.effort,
+                    a.modes,
+                    a.current,
+                    a.tui,
+                )
+                .await,
+            )
         }
         "new_session" => {
             let a = args!(NewSessionArgs);
@@ -2532,6 +2561,16 @@ mod tests {
             "agent_model_catalog" => {
                 parse::<AgentModelCatalogArgs>(br#"{"provider":"kimi","sessionId":41}"#).map(|_| ())
             }
+            "agent_launch_defaults" => {
+                parse::<AgentLaunchDefaultsArgs>(br#"{"provider":"kimi","cwd":null}"#).map(|_| ())
+            }
+            "agent_dynamic_mode_choices" => {
+                parse::<AgentDynamicModeChoicesArgs>(br#"{"provider":"opencode","cwd":"C:/repo"}"#).map(|_| ())
+            }
+            "apply_session_settings" => parse::<ApplySessionSettingsArgs>(
+                br#"{"sessionId":-3,"model":"kimi-code/k3","effort":null,"modes":{"permission":"yolo"},"current":{},"tui":{"idle":true,"composerEmpty":true,"approvalPending":false}}"#,
+            )
+            .map(|_| ()),
             // api.ts:941（options 可选、extraDirs 恒发——空也发 []，2026-08-31 事故的字段）
             // api.ts forkSession
             "fork_session" => parse::<ForkSessionArgs>(br#"{"sessionId":42,"cols":100,"rows":30}"#).map(|_| ()),

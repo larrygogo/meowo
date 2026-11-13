@@ -59,6 +59,7 @@ mod proc;
 pub mod profile;
 mod session_command;
 mod session_query;
+mod session_settings;
 mod shell_terminal;
 mod snap_layout;
 mod terminal;
@@ -748,7 +749,7 @@ async fn list_agent_extensions() -> Vec<meowo_agent::extensions::AgentExtensions
 /// 正常亚秒返回，但一个挂死的 CLI 不该把 blocking 线程一起挂死——过 deadline 即 kill。
 /// `probe_cli_version`（`--version`，5s）与 `agent_models`（模型清单，15s）共用；
 /// 必须在 blocking 池调用（spawn + sleep 轮询，见 CLAUDE.md 线程纪律）。
-fn run_cli_capture_in(
+pub(crate) fn run_cli_capture_in(
     plugin: &'static dyn meowo_agent::AgentPlugin,
     extra_args: &[&str],
     timeout: std::time::Duration,
@@ -1107,8 +1108,13 @@ async fn agent_models(provider: String, session_id: Option<i64>) -> Vec<String> 
 /// `AgentPlugin::model_catalog`）。对照 Kimi 桌面版：模型菜单一打开就列出，不必先往会话
 /// PTY 发 `/model` 弹一次菜单再靠屏幕识别读回来。读文件、不起进程，失败即空表。
 /// 多账号会话按其 profile 的环境找配置（kimi 的 `KIMI_CODE_HOME`）。
+///
+/// 2026-11-14 起清单是切模型的主路线（不再往终端敲 `/model` 识别菜单）：配置读不出时问 CLI 的离线子命令，
+/// TUI 对话框机制的会话有服务时用服务列的（见 session_settings::session_catalog）。打开菜单时现读，
+/// 用户改了 CLI 配置下次打开就跟上。
 #[tauri::command]
 async fn agent_model_catalog(
+    app: tauri::AppHandle,
     provider: String,
     session_id: Option<i64>,
 ) -> Vec<meowo_agent::ModelCatalogEntry> {
@@ -1116,18 +1122,31 @@ async fn agent_model_catalog(
         let Some(plugin) = meowo_agent::resolve(Some(&provider)) else {
             return Vec::new();
         };
-        let env = session_id
-            .and_then(|session_id| {
-                let store = open_store(&db_path()).ok()?;
-                let header = store.session_header(session_id).ok()?;
-                if header.provider != plugin.id().as_str() {
-                    return None;
-                }
-                let profile = store.session_profile(session_id).ok()?;
-                Some(profile::env_of(plugin.id(), profile.as_deref()))
-            })
-            .unwrap_or_default();
-        plugin.model_catalog(&env)
+        let session = session_id.filter(|id| *id > 0).and_then(|session_id| {
+            let store = open_store(&db_path()).ok()?;
+            let header = store.session_header(session_id).ok()?;
+            if header.provider != plugin.id().as_str() {
+                return None;
+            }
+            let profile = store.session_profile(session_id).ok()?;
+            Some((
+                session_id,
+                profile::env_of(plugin.id(), profile.as_deref()),
+                header.cwd,
+            ))
+        });
+        let (sid, env, cwd) = match session {
+            Some((sid, env, cwd)) => (Some(sid), env, cwd),
+            None => (None, Vec::new(), None),
+        };
+        session_settings::session_catalog(
+            &db_path(),
+            plugin,
+            sid,
+            &env,
+            cwd.as_deref(),
+            Some(&app),
+        )
     })
     .await
     .unwrap_or_default()
@@ -1628,6 +1647,9 @@ pub fn run() {
             agent_chat_ui,
             agent_models,
             agent_model_catalog,
+            session_settings::agent_launch_defaults,
+            session_settings::agent_dynamic_mode_choices,
+            session_settings::apply_session_settings,
             agent_updates::check_agent_updates,
             agent_updates::installed_agent_versions,
             profile::list_profiles,
@@ -1998,6 +2020,7 @@ mod tests {
             ("remote.rs", include_str!("remote.rs")),
             ("session_command.rs", include_str!("session_command.rs")),
             ("session_query.rs", include_str!("session_query.rs")),
+            ("session_settings.rs", include_str!("session_settings.rs")),
             ("shell_terminal.rs", include_str!("shell_terminal.rs")),
             ("settings.rs", include_str!("settings.rs")),
             ("snap.rs", include_str!("snap.rs")),

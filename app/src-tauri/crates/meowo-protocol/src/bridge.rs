@@ -419,6 +419,47 @@ bridged_args!(AgentModelCatalogArgs {
     session_id: Option<i64>
 });
 
+bridged_args!(AgentLaunchDefaultsArgs {
+    provider: String,
+    #[serde(default)]
+    cwd: Option<String>
+});
+
+bridged_args!(AgentDynamicModeChoicesArgs {
+    provider: String,
+    #[serde(default)]
+    cwd: Option<String>
+});
+
+/// 切换前对话页如实告知的会话状态（OpenCode 对话框路线的调用约定，宿主经服务端另做复核）。
+#[derive(Debug, Clone, Copy, Default, serde::Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(
+    test,
+    ts(export, export_to = "../../../../src/generated/contracts/bridge/")
+)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SessionTuiState {
+    pub idle: bool,
+    pub composer_empty: bool,
+    pub approval_pending: bool,
+}
+
+bridged_args!(ApplySessionSettingsArgs {
+    #[cfg_attr(test, ts(type = "number"))]
+    session_id: i64,
+    #[serde(default)]
+    model: Option<String>,
+    #[serde(default)]
+    effort: Option<String>,
+    #[serde(default)]
+    modes: Option<std::collections::HashMap<String, String>>,
+    #[serde(default)]
+    current: Option<std::collections::HashMap<String, String>>,
+    #[serde(default)]
+    tui: Option<SessionTuiState>
+});
+
 bridged_args!(NewSessionArgs {
     cwd: String,
     provider: String,

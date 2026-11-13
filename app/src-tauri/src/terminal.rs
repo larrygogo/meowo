@@ -1661,8 +1661,13 @@ fn splice_stored_launch_args(
     if selections.is_empty() {
         return;
     }
-    // 未知 option/choice 由 resolve_launch_args 兜底（忽略/落默认），用户输入进不了 argv。
-    let args = meowo_agent::resolve_launch_args(agent.launch_options(), &selections);
+    // 未知 option/choice 由声明表兜底（忽略/落默认），模型只认清单里的 id，用户输入进不了 argv。
+    // 模型参数只在「带参重启」机制的 agent 上回放（resolve_session_args 的 resuming）。
+    let env = crate::profile::env_of(
+        agent.id(),
+        store.session_profile(sid).ok().flatten().as_deref(),
+    );
+    let args = crate::session_settings::args_for_selections(agent, &selections, &env, None, true);
     if args.is_empty() {
         return;
     }
@@ -1970,12 +1975,6 @@ pub(crate) async fn new_session_inner(
     // resume/接管重启进程时经声明表翻译回放（权限模式等是启动参数，不回放每次重启都
     // 重置成 CLI 默认）。存选择而非 flag：接管时改权限只需按选项维度合并。
     let selections = options.unwrap_or_default();
-    let mut argv = agent.launch_argv();
-    argv.extend(meowo_agent::resolve_launch_args(
-        agent.launch_options(),
-        &selections,
-    ));
-    let argv = crate::relay::augment_argv(agent.id(), argv);
     // 代理 + 中转 **+ 当前活跃账号的隔离变量**（`CLAUDE_CONFIG_DIR` 等），三者都在
     // `launch_env_for_profile` 里。
     //
@@ -1987,6 +1986,17 @@ pub(crate) async fn new_session_inner(
     // PTY 冷启动与杀软扫描可能阻塞数秒，放 blocking 池；首次 SessionStart hook 会把临时 PTY
     // 认领为真实数据库 session。
     tauri::async_runtime::spawn_blocking(move || {
+        // 动态的两类（清单里的模型 `-m`、opencode 自定义 agent）要现读清单校验，放 blocking 池里。
+        let profile_env = crate::profile::env_of(agent.id(), active_profile.as_deref());
+        let mut argv = agent.launch_argv();
+        argv.extend(crate::session_settings::args_for_selections(
+            agent,
+            &selections,
+            &profile_env,
+            Some(std::path::Path::new(&dir)),
+            false,
+        ));
+        let argv = crate::relay::augment_argv(agent.id(), argv);
         // 预信任工作目录（与上面的 env 同一个账号），否则 kimi 会停在信任屏、hook 不来、会话不落库。
         pretrust_workspace(&provider, active_profile.as_deref(), &dir);
         broker.start_pending(
@@ -2322,7 +2332,7 @@ pub(crate) async fn apply_active_profile_to_sessions(
             let mut restarted = 0u32;
             let mut first_error: Option<String> = None;
             for sid in sessions_off_active_profile(&broker, &store, &provider)? {
-                match restart_session_onto_active_profile(&app, &broker, &store, sid, &provider) {
+                match restart_session_with(&app, &broker, &store, sid, &provider, None) {
                     Ok(true) => restarted += 1,
                     Ok(false) => {}
                     Err(error) => {
@@ -2437,15 +2447,19 @@ fn filter_sessions_off_profile(
     Ok(pending)
 }
 
-/// 把单个托管会话重启到当前活跃账号。`Ok(true)` = 真的重启了它；`Ok(false)` = 没动它
-/// （恰在此刻自己退出了 / start 判重收敛）。该不该动它由 [`sessions_off_active_profile`] 判。
+/// 把单个托管会话就地重启（停 → 等收掉 → 按恢复计划接回同一会话）。`Ok(true)` = 真的重启了它；
+/// `Ok(false)` = 没动它（恰在此刻自己退出了 / start 判重收敛）。
+/// - 切账号：`overrides = None`，账号随恢复计划迁到活跃账号（该不该动由 [`sessions_off_active_profile`] 判）。
+/// - 切模型 / 模式（session_settings 的 Restart 机制）：`overrides` 是要合并进启动选项的选择，
+///   Kimi `-r <id> -m <alias>`、Gemini `--resume <uuid> -m <id>`（research-kimi-gemini §2.3/§3.3）。
 #[cfg(any(target_os = "windows", target_os = "macos"))]
-fn restart_session_onto_active_profile(
+pub(crate) fn restart_session_with(
     app: &tauri::AppHandle,
     broker: &crate::pty::PtyBroker,
     store: &meowo_store::Store,
     sid: i64,
     provider: &str,
+    overrides: Option<std::collections::HashMap<String, String>>,
 ) -> Result<bool, String> {
     let session = store.get_session(sid).map_err(|e| e.to_string())?;
     let cwd = store.session_cwd(sid).map_err(|e| e.to_string())?;
@@ -2480,8 +2494,8 @@ fn restart_session_onto_active_profile(
         session.cc_session_id,
         provider.to_string(),
         terminal_size,
-        // 启动选项不在这里回放：`prepare_resume_launch` 会从 DB 取回这个会话自己存的那份。
-        None,
+        // 存的启动选项由 `prepare_resume_launch` 从 DB 取回；这里只带本次要改的。
+        overrides,
     )?;
     if started {
         // 画面在对话窗/终端页，而这条重启是设置窗发起的——它们无从知道进程换了代。
@@ -2499,7 +2513,7 @@ fn restart_session_onto_active_profile(
 /// 等 broker 把该会话的 PTY 记录收掉（waiter 的 finalize_exit）。`stop` 只负责发刀，
 /// 收尾是异步的；升级链最迟在 3s 那档强制 finalize，10s 的上限留足了余量。
 #[cfg(any(target_os = "windows", target_os = "macos"))]
-fn wait_pty_released(broker: &crate::pty::PtyBroker, sid: i64) -> bool {
+pub(crate) fn wait_pty_released(broker: &crate::pty::PtyBroker, sid: i64) -> bool {
     for _ in 0..200 {
         if !broker.is_active(sid) {
             return true;
@@ -2835,6 +2849,7 @@ fn prepare_resume_launch(
     }
     // 回放会话的启动选项（权限模式等；接管时的改选合并写回），恢复后的进程与选择同参。
     splice_stored_launch_args(&mut resume, provider, sid, option_overrides);
+    swap_unsent_resume(&mut resume, provider, session_id, resolved.as_deref());
     // takeover 在调用前已经结束旧进程；普通 resume 的旧进程本就不在。此刻复制能拿到
     // 完整的最后一帧 transcript，也不会与 Claude 正在追加同一个文件发生竞争。
     let target_profile = prepare_session_for_active_profile(provider, session_id)?;
@@ -3608,5 +3623,114 @@ mod sessions_off_profile_tests {
         let ids = [-7, old, on_target, other_agent, 999_999];
         let got = filter_sessions_off_profile(ids, &store, "claude", None).unwrap();
         assert_eq!(got, vec![old]);
+    }
+}
+
+/// 还没发过消息的会话：有的 CLI 退出时把会话文件删掉，按 id 恢复会报错（Gemini 0.68 `Invalid session
+/// identifier`，research-kimi-gemini §3.3 e3-05）。插件声明了替代参数时（Gemini `--session-id <同一 uuid>`，
+/// E3-D 实测 id 不变），找不到会话文件就换上它。找得到文件的照旧按 id 恢复。
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn swap_unsent_resume(resume: &mut [String], provider: &str, session_id: &str, cwd: Option<&str>) {
+    let Some(plugin) = meowo_agent::resolve(Some(provider)) else {
+        return;
+    };
+    let Some(meowo_agent::ModelSwitch::RestartResume {
+        unsent_resume_args: Some(unsent),
+        ..
+    }) = plugin.model_switch()
+    else {
+        return;
+    };
+    let exists = plugin
+        .telemetry()
+        .and_then(|t| t.transcript())
+        .and_then(|t| t.resolve_transcript_path(None, cwd, session_id))
+        .is_some_and(|path| path.is_file());
+    if !exists {
+        replace_resume_args(resume, plugin.resume_args(), unsent);
+    }
+}
+
+/// resume argv 末尾是「resume 子命令 + id」：把子命令换成另一组等长或不等长的参数（纯函数，便于单测）。
+fn replace_resume_args(resume: &mut [String], from: &[&str], to: &[&str]) -> bool {
+    let n = resume.len();
+    if n < from.len() + 1 || from.len() != to.len() {
+        return false;
+    }
+    let at = n - 1 - from.len();
+    if resume[at..n - 1].iter().map(String::as_str).ne(from.iter().copied()) {
+        return false;
+    }
+    for (offset, arg) in to.iter().enumerate() {
+        resume[at + offset] = (*arg).to_string();
+    }
+    true
+}
+
+/// 还没建会话的新会话（临时负 id）带新的启动选项重开：停掉临时 PTY、等它收掉，按合并后的选择
+/// 重新裸启动，返回新的临时 id（前端切过去，第一句话与草稿跟着走）。Kimi 2.6 首条消息前不建会话，
+/// 这时重开不丢任何东西（research-kimi-gemini §2.3 p7）。
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+pub(crate) fn reopen_pending_with(
+    app: &tauri::AppHandle,
+    broker: &crate::pty::PtyBroker,
+    temp_id: i64,
+    overrides: &std::collections::HashMap<String, String>,
+) -> Result<i64, String> {
+    let launch = broker
+        .pending_launch(temp_id)
+        .ok_or("settings/session_gone")?;
+    let agent = meowo_agent::resolve(Some(&launch.provider)).ok_or("未知 agent")?;
+    let mut selections = broker.pending_selections(temp_id);
+    selections.extend(overrides.clone());
+    let active_profile = crate::profile::active_id(agent.id().as_str());
+    let env = launch_env_for_profile(Some(&launch.provider), active_profile.as_deref());
+    let profile_env = crate::profile::env_of(agent.id(), active_profile.as_deref());
+    let mut argv = agent.launch_argv();
+    argv.extend(crate::session_settings::args_for_selections(
+        agent,
+        &selections,
+        &profile_env,
+        launch.cwd.as_deref().map(std::path::Path::new),
+        false,
+    ));
+    let argv = crate::relay::augment_argv(agent.id(), argv);
+    let (cols, rows) = broker.grid(temp_id);
+    let (cols, rows) = if cols == 0 || rows == 0 { (100, 30) } else { (cols, rows) };
+    broker.stop(temp_id)?;
+    if !wait_pty_released(broker, temp_id) {
+        return Err("原会话仍在运行，未能重开".into());
+    }
+    if let Some(dir) = launch.cwd.as_deref() {
+        pretrust_workspace(&launch.provider, active_profile.as_deref(), dir);
+    }
+    let new_id = broker.start_pending(
+        app.clone(),
+        &argv,
+        launch.cwd.as_deref(),
+        &env,
+        cols,
+        rows,
+        &launch.provider,
+        &selections,
+        None,
+    )?;
+    emit_board_changed(app, "reopen");
+    Ok(new_id)
+}
+
+#[cfg(test)]
+mod settings_restart_tests {
+    /// Gemini 没发过消息的会话：`--resume <id>` 换成 `--session-id <id>`，其余参数不动。
+    #[test]
+    fn unsent_resume_swaps_only_the_resume_subcommand() {
+        let mut argv: Vec<String> = ["gemini", "-m", "gemini-2.5-pro", "--resume", "u-1"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert!(super::replace_resume_args(&mut argv, &["--resume"], &["--session-id"]));
+        assert_eq!(argv, ["gemini", "-m", "gemini-2.5-pro", "--session-id", "u-1"]);
+        let mut other: Vec<String> = ["kimi", "-r", "s"].iter().map(|s| s.to_string()).collect();
+        assert!(!super::replace_resume_args(&mut other, &["--resume"], &["--session-id"]));
     }
 }

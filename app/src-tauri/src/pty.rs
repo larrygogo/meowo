@@ -1942,6 +1942,26 @@ impl PtyBroker {
             .unwrap_or_default()
     }
 
+    /// 临时会话启动时的选择 map（按临时 id 反查 launch token）。带新参数重开时在它上面合并改选，
+    /// 免得把新建时选的权限档等丢掉。
+    pub(crate) fn pending_selections(&self, temp_id: i64) -> HashMap<String, String> {
+        let token = self.attach.pending.lock().ok().and_then(|pending| {
+            pending
+                .iter()
+                .find(|(_, id)| **id == temp_id)
+                .map(|(token, _)| token.clone())
+        });
+        token
+            .and_then(|token| {
+                self.attach
+                    .pending_launch_args
+                    .lock()
+                    .ok()
+                    .and_then(|map| map.get(&token).cloned())
+            })
+            .unwrap_or_default()
+    }
+
     /// 单条版 [`Self::pending_launches`](对话窗按临时 id 取,不必整表拷贝)。
     pub(crate) fn pending_launch(&self, temp_id: i64) -> Option<PendingLaunch> {
         self.attach

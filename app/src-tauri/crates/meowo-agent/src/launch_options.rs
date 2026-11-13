@@ -29,8 +29,8 @@ pub struct LaunchChoice {
     /// 一句话说明的 i18n 键（前端 `t.modes.desc[键]`）。按 provider 起名：同叫 yolo 的两档
     /// 在 Kimi 与 Gemini 是两回事，不能共用一句。
     pub desc: Option<&'static str>,
-    /// [`crate::ModeSwitch::Server`] 时发给会话服务的设置片段（JSON 对象，合并进
-    /// `thread/settings/update` 参数）。字面量，不含用户输入。
+    /// [`crate::ModeSwitch::Server`] 时发给会话服务的设置片段（JSON 对象，宿主合并后交给会话服务；
+    /// 取值用 CLI 参数写法）。字面量，不含用户输入。
     pub server: Option<&'static str>,
 }
 
