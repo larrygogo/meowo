@@ -3154,7 +3154,9 @@ export function ChatWindow() {
       }
       const currentSubmit = async () => {
         // 读发起会话而非当前页：排队期间可能切了会话，toneRef此时属于另一条会话。
-        const latest = await getChatHistory(sid, 0);
+        // 只要状态字段：同一会话用已知的尾部偏移做增量读，不整段重读（长会话 transcript 可达几十 MB，
+        // 每次发送全量解析会卡住发送，做空指出）；排队期间切走了才退回整读。
+        const latest = await getChatHistory(sid, sid === activeSessionRef.current ? offsetRef.current : 0);
         if (latest.pendingReview && latest.pendingReview !== "gate") throw new Error(t.chat.terminalNeedsAttention);
         if (latest.screenState === "blocked") throw new Error(t.chat.terminalNeedsAttention);
         const currentTone = sessionTone(latest.connected, latest.status, latest.pendingReview, latest.errored, undefined, latest.screenState, latest.screenAssumed);

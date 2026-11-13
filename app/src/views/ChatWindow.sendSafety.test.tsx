@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { invoke, adapter } from "./chatWindow.harness";
+import { invoke, adapter, emptyComposerFrame } from "./chatWindow.harness";
 import { ChatWindow } from "./ChatWindow";
 import { zh } from "../i18n/zh";
 
@@ -17,6 +17,24 @@ describe("跨Provider发送保护", () => {
     await screen.findByText(zh.chat.terminalNeedsAttention);
     expect(adapter.writes(751)).toEqual([]);
     expect(adapter.box().value).toBe("不能误答审批");
+  });
+
+  // 审批已答、命令在跑时的过期 approval 标记由后端 pending_review_live 统一校正（四个消费点同源），
+  // 见 session_query::a_settled_permission_request_stops_claiming_the_agent_is_waiting。前端只要保证：
+  // 收到的标记仍在时一律拦住（屏幕挂着审批框，或屏幕状态只是回退猜测）。
+  it.each([["blocked", false], ["working", true]] as const)("待批标记在、屏幕 %s（回退=%s）时仍拦住", async (screenState, assumed) => {
+    const base = adapter.setup(762, "codex", "running", screenState);
+    invoke.mockImplementation((command, args) => {
+      if (command === "managed_terminal_frame") return Promise.resolve(emptyComposerFrame("codex"));
+      if (command === "get_chat_history") return Promise.resolve({ ...adapter.history(762, "codex", "running", screenState), pendingReview: "approval", screenAssumed: assumed });
+      return base(command, args);
+    });
+    render(<ChatWindow />);
+    await screen.findByText("适配-762");
+    fireEvent.change(adapter.box(), { target: { value: "不能误答审批" } });
+    fireEvent.keyDown(adapter.box(), { key: "Enter" });
+    await screen.findByText(zh.chat.terminalNeedsAttention);
+    expect(adapter.writes(762)).toEqual([]);
   });
 
   it("正文落下后从idle变running，落键时使用实时排队键", async () => {

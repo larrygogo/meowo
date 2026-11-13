@@ -168,13 +168,18 @@ pub struct Gemini;
 impl AgentPlugin for Gemini {
     fn process_scope(&self, argv: &[String]) -> crate::registry::ProcessScope {
         use crate::registry::ProcessScope;
-        let own = argv.iter().take(2).any(|arg| {
+        let is_gemini = |arg: &String| {
             let path = arg.replace('\\', "/").to_ascii_lowercase();
             matches!(
                 path.rsplit('/').next(),
                 Some("gemini" | "gemini.exe" | "gemini.cmd")
             ) || path.ends_with("/@google/gemini-cli/bundle/gemini.js")
-        });
+        };
+        // 入口是 argv[0]；node 启动时是 node 之后第一个非选项参数。0.68 会以
+        // `node --max-old-space-size=N … gemini.js` 重启自身（bundle/chunk-G62RLJX6.js:1927），
+        // gemini.js 不在前两项（做空复现）。
+        let script = argv.iter().skip(1).find(|arg| !arg.starts_with('-'));
+        let own = argv.first().is_some_and(is_gemini) || script.is_some_and(is_gemini);
         if !own {
             return ProcessScope::Unknown;
         }
@@ -538,6 +543,18 @@ mod tests {
         let mut acp = argv;
         acp.push("--acp=true".into());
         assert_eq!(Gemini.process_scope(&acp), ProcessScope::Shared);
+        // 0.68 重启自身的真实形态：node 选项在前，gemini.js 在第三项之后（做空复现，本机 63GB 内存）。
+        let relaunched: Vec<String> = vec![
+            "C:/Program Files/nodejs/node.exe".into(),
+            "--no-warnings=DEP0040".into(),
+            "--max-old-space-size=31553".into(),
+            "C:/Users/x/AppData/Roaming/npm/node_modules/@google/gemini-cli/bundle/gemini.js".into(),
+            "--resume".into(),
+        ];
+        assert_eq!(Gemini.process_scope(&relaunched), ProcessScope::Exclusive);
+        // node 选项后跟的不是 gemini.js，仍不认领。
+        let other: Vec<String> = vec!["node".into(), "--max-old-space-size=1".into(), "server.js".into(), "gemini.js".into()];
+        assert_eq!(Gemini.process_scope(&other), ProcessScope::Unknown);
     }
     use crate::RelayCap;
 

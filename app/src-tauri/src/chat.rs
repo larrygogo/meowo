@@ -220,6 +220,7 @@ fn load_chat_history(
             &header.provider,
             header.pending_review.as_deref(),
             live.broker_approval,
+            live.screen_state == Some("working") && !live.screen_assumed,
         )
         .and_then(PendingReviewKind::from_stored),
         model: context.model,

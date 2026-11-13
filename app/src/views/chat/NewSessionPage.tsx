@@ -191,8 +191,8 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched, onOpenSession
                 />
               )}
           {form.managedAvailable && <div className="row">
-            <label><input type="checkbox" checked={!form.managedMode} disabled={busy} onChange={(event) => form.setNativeRequested(event.target.checked)} />{t.chat.engineNative}</label>
-            <div className="row-desc">{form.managedMode ? t.chat.engineManagedDesc : t.chat.engineNativeDesc}</div>
+            <label><input type="checkbox" checked={form.managedMode} disabled={busy} onChange={(event) => form.setManagedRequested(event.target.checked)} />{t.chat.engineManaged}</label>
+            <div className="row-desc">{form.managedMode ? t.chat.engineManagedDesc : t.chat.engineManagedOffDesc}</div>
           </div>}
               {launchOptions.map((option) => {
                 // relay 启用时 model 档由中转固定：置灰，悬停说明固定成了什么。

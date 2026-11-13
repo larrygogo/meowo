@@ -48,6 +48,18 @@ export function saveStoredOpts(provider: string, opts: Record<string, string>) {
   }
 }
 
+const MANAGED_CHOICE_KEY = "meowo.newSession.managed";
+function loadManagedChoice(provider: string): boolean {
+  try { return (JSON.parse(localStorage.getItem(MANAGED_CHOICE_KEY) ?? "{}") as Record<string, boolean>)[provider] === true; }
+  catch { return false; }
+}
+function saveManagedChoice(provider: string, value: boolean) {
+  try {
+    const all = JSON.parse(localStorage.getItem(MANAGED_CHOICE_KEY) ?? "{}") as Record<string, boolean>;
+    localStorage.setItem(MANAGED_CHOICE_KEY, JSON.stringify({ ...all, [provider]: value }));
+  } catch { /* 存不了就只在本次生效 */ }
+}
+
 export function useNewSessionForm(startCwd: string, startProvider: AgentId | null) {
   const t = useT();
   const [cwd, setCwd] = useState(startCwd);
@@ -184,9 +196,13 @@ export function useNewSessionForm(startCwd: string, startProvider: AgentId | nul
   useEffect(() => setOpts(loadStoredOpts()[provider] ?? {}), [provider]);
   const launchOptions = agents?.find((a) => a.id === provider)?.launch_options ?? [];
   const managedAvailable = agents?.find((agent) => agent.id === provider)?.supports_managed_conversation === true;
-  const [nativeRequested, setNativeRequested] = useState(false);
-  useEffect(() => setNativeRequested(false), [provider]);
-  const managedMode = managedAvailable && !nativeRequested;
+  // 默认原生 CLI（与 main 一致）：托管会话能在手机作答后自动继续，但没有斜杠命令、撤销、终端视图与
+  // 启动选项，默认换成它是日常使用的退化，leader 也没定过（2026-11-13 做空指出）。按 provider 记住上次选择，
+  // 常用 Lead 的人勾一次以后就是托管。
+  const [managedRequested, setManagedRequestedState] = useState(() => loadManagedChoice(provider));
+  useEffect(() => setManagedRequestedState(loadManagedChoice(provider)), [provider]);
+  const setManagedRequested = (value: boolean) => { setManagedRequestedState(value); saveManagedChoice(provider, value); };
+  const managedMode = managedAvailable && managedRequested;
   // 7T-6：Enter 与「启动」钮此前各判各的——按钮 disabled 含「一个 agent 都没装/还在
   // 检测」，Enter 路径只看目录和 busy，于是在没装 CLI 的机器上回车照样发 newSession，
   // 拿一条后端错误回来。守卫抽出来，两条路径共用。
@@ -281,7 +297,7 @@ export function useNewSessionForm(startCwd: string, startProvider: AgentId | nul
   return {
     cwd, setCwd, provider, setProvider, recent, hooks, busy, repairing, error, setError,
     agents, avail, opts, setOpts, loggedIn, activeProfiles, relayPins, loginOperations,
-    swappedFrom, launchOptions: managedMode ? [] : launchOptions, managedAvailable, managedMode, setNativeRequested, canLaunch, launch, repairHooks, doLogin, cancelLoginWait, warn: !managedMode && warn, needLogin,
+    swappedFrom, launchOptions: managedMode ? [] : launchOptions, managedAvailable, managedMode, setManagedRequested, canLaunch, launch, repairHooks, doLogin, cancelLoginWait, warn: !managedMode && warn, needLogin,
     worktree,
   };
 }

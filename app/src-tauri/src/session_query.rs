@@ -560,6 +560,10 @@ fn counts_for_store(
             provider,
             candidate.pending_review.as_deref(),
             approvals.contains(&candidate.id),
+            screen_states
+                .get(&candidate.id)
+                .and_then(|sight| sight.confirmed_state())
+                == Some("working"),
         );
         match tab_class(
             connected,
@@ -968,10 +972,16 @@ pub(crate) fn session_connected(
 /// Question/Plan 不做这个校正：那两个工具本身就是「停下来等人」，无论提问此刻挂在
 /// broker 上（AskUserQuestion 的 PreToolUse 代答挂起）还是表单已落在终端里，等的期间
 /// DB 标记都正是对的；代答/作答后由 reporter（settled）与 resolve 命令当场清位。
+///
+/// **其余 provider（codex/kimi/gemini/opencode）**：审批框在屏幕上，approval 标记同样要等
+/// PostToolUse 才清。屏幕**确凿** working（`screen_working`，只传 confirmed_state，不含回退）
+/// 说明审批框已答、命令在跑，标记已过期：批完一条跑几分钟的构建，这期间不该挂「等审批」、
+/// 也不该拦对话页发送（2026-11-13 做空复现）。屏幕真挂着审批框时是 blocked，不会走到这里。
 pub(crate) fn pending_review_live<'a>(
     provider: &str,
     pending_review: Option<&'a str>,
     broker_holds_approval: bool,
+    screen_working: bool,
 ) -> Option<&'a str> {
     match pending_review {
         Some("approval")
@@ -980,6 +990,7 @@ pub(crate) fn pending_review_live<'a>(
         {
             None
         }
+        Some("approval") if screen_working => None,
         other => other,
     }
 }
@@ -1154,6 +1165,10 @@ pub(crate) fn live_sessions_blocking(
                 &session.provider,
                 session.pending_review.as_deref(),
                 live.approvals.contains(&session.session.id),
+                live.screen_states
+                    .get(&session.session.id)
+                    .and_then(|sight| sight.confirmed_state())
+                    == Some("working"),
             )
             .map(str::to_string);
             let scan_pos = PageCursor {
@@ -1426,7 +1441,12 @@ fn foreign_live_items(
         .into_iter()
         .filter_map(|mut session| {
             session.pending_review =
-                pending_review_live(&session.provider, session.pending_review.as_deref(), false)
+                pending_review_live(
+                    &session.provider,
+                    session.pending_review.as_deref(),
+                    false,
+                    false,
+                )
                     .map(str::to_string);
             let connected = session_connected(
                 &session.session.status,
@@ -1506,33 +1526,41 @@ mod tests {
     #[test]
     fn a_settled_permission_request_stops_claiming_the_agent_is_waiting() {
         // claude/codex 的 PermissionRequest hook 阻塞等决策：broker 空 = 已尘埃落定。
-        assert_eq!(pending_review_live("claude", Some("approval"), false), None);
-        assert_eq!(pending_review_live("codex", Some("approval"), false), None);
+        assert_eq!(pending_review_live("claude", Some("approval"), false, false), None);
+        assert_eq!(pending_review_live("codex", Some("approval"), false, false), None);
         // hook 还压着请求 = agent 真的停在那儿等你批。
         assert_eq!(
-            pending_review_live("claude", Some("approval"), true),
+            pending_review_live("claude", Some("approval"), true, false),
             Some("approval")
         );
         // Question/Plan 由 PreToolUse 落库、不经 broker，而那两个工具本身就是停下来等人。
         assert_eq!(
-            pending_review_live("claude", Some("question"), false),
+            pending_review_live("claude", Some("question"), false, false),
             Some("question")
         );
         assert_eq!(
-            pending_review_live("claude", Some("plan"), false),
+            pending_review_live("claude", Some("plan"), false, false),
             Some("plan")
         );
         // 不接管决策的 provider（kimi 的该事件 observation-only）：待批状态只有 DB 这一个
         // 来源，broker 空不代表已处理——照旧显示，卡片提示去终端处理。未知 provider 同理。
         assert_eq!(
-            pending_review_live("kimi", Some("approval"), false),
+            pending_review_live("kimi", Some("approval"), false, false),
             Some("approval")
         );
         assert_eq!(
-            pending_review_live("who-knows", Some("approval"), false),
+            pending_review_live("who-knows", Some("approval"), false, false),
             Some("approval")
         );
-        assert_eq!(pending_review_live("claude", None, false), None);
+        assert_eq!(pending_review_live("claude", None, false, false), None);
+        // 审批不经 hook 决定的 provider：屏幕确凿在跑 = 审批框已答、命令在跑，标记过期（做空复现）。
+        for provider in ["kimi", "gemini", "opencode"] {
+            assert_eq!(pending_review_live(provider, Some("approval"), false, true), None, "{provider}");
+            // 屏幕没确凿在跑（blocked/idle/回退）时照旧显示。
+            assert_eq!(pending_review_live(provider, Some("approval"), false, false), Some("approval"), "{provider}");
+            // 提问/计划不受屏幕在跑影响。
+            assert_eq!(pending_review_live(provider, Some("question"), false, true), Some("question"), "{provider}");
+        }
     }
 
     /// 空壳会话不能靠 transcript 里一行 `ai-title` 赖着不走：store 的计数按 **DB 标题**

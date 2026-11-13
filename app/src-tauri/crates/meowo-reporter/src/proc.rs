@@ -97,7 +97,12 @@ pub fn record_owner_pid(
             ProcessScope::Shared => {
                 store.set_session_shared_pid(session_id, i64::from(pid), now_ms)?
             }
-            ProcessScope::Unknown => {}
+            // 认不出作用域时仍要记下进程号：不记则判活失败，「接管」看不到原进程会再起一个
+            // 同会话进程（做空复现：gemini 带 --max-old-space-size 重启自身时）。按共享记，
+            // 判活照常、又不会被当成独占进程去结束或驱逐别的会话。
+            ProcessScope::Unknown => {
+                store.set_session_shared_pid(session_id, i64::from(pid), now_ms)?
+            }
         }
     }
     Ok(())

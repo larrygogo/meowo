@@ -1130,6 +1130,10 @@ pub(crate) fn spawn_liveness_watch(
                         &s.provider,
                         s.pending_review.as_deref(),
                         approvals.contains(&s.session.id),
+                        screen_states
+                            .get(&s.session.id)
+                            .and_then(|sight| sight.confirmed_state())
+                            == Some("working"),
                     )
                     .map(str::to_string);
                     if s.session.status == "ended" || !agent_pids.contains(&s.pid.unwrap_or(0)) {

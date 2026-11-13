@@ -298,8 +298,8 @@ export function NewSessionPanel({ onClose, prefill, onLaunched }: {
             </div>
           )}
           {form.managedAvailable && <div className="row">
-            <label><input type="checkbox" checked={!form.managedMode} disabled={busy} onChange={(event) => form.setNativeRequested(event.target.checked)} />{t.chat.engineNative}</label>
-            <div className="row-desc">{form.managedMode ? t.chat.engineManagedDesc : t.chat.engineNativeDesc}</div>
+            <label><input type="checkbox" checked={form.managedMode} disabled={busy} onChange={(event) => form.setManagedRequested(event.target.checked)} />{t.chat.engineManaged}</label>
+            <div className="row-desc">{form.managedMode ? t.chat.engineManagedDesc : t.chat.engineManagedOffDesc}</div>
           </div>}
           {launchOptions.length > 0 && (
             <div className="ns-options" data-testid="ns-options">

@@ -273,13 +273,17 @@ impl crate::RelayCap for ClaudeRelay {
 impl AgentPlugin for Claude {
     fn process_scope(&self, argv: &[String]) -> crate::registry::ProcessScope {
         use crate::registry::ProcessScope;
-        let own = argv.iter().take(2).any(|arg| {
+        let is_claude = |arg: &String| {
             let path = arg.replace('\\', "/").to_ascii_lowercase();
             matches!(
                 path.rsplit('/').next(),
                 Some("claude" | "claude.exe" | "claude.cmd")
             ) || path.ends_with("/@anthropic-ai/claude-code/cli.js")
-        });
+        };
+        // node 启动时脚本是 node 之后第一个非选项参数（`node --max-old-space-size=N cli.js`），
+        // 只看前两项会漏判（同 gemini 0.68 重启自身的做空复现）。
+        let script = argv.iter().skip(1).find(|arg| !arg.starts_with('-'));
+        let own = argv.first().is_some_and(is_claude) || script.is_some_and(is_claude);
         if !own {
             return ProcessScope::Unknown;
         }

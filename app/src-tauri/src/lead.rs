@@ -464,6 +464,12 @@ fn provider_installation_state(
     dto.assets_installed = state.assets_present;
     dto.hooks_installed = state.hooks_present;
     dto.installed = state.installed;
+    // 自动继续只在托管会话里成立（四家 2026-11-13 真机闭环通过，见 .lead/20261112-lead-providers）；
+    // 原生终端会话只保存答复不代投。能力随版本：当前版本起不了托管会话就如实说不能。
+    dto.automatic_continue = dto.installed
+        && plugin
+            .conversation()
+            .is_some_and(|conversation| conversation.spec(inst, version).is_ok());
     // 身份策略仅是准入条件；模型等待、答复消费及离线恢复仍需各自闭环证据，不能从磁盘安装推导。
     dto.reason = if !dto.configured {
         Some("lead/provider_missing".into())
@@ -1111,7 +1117,8 @@ mod provider_install_tests {
                     && installed.assets_installed
                     && installed.hooks_installed
             );
-            assert!(!installed.automatic_continue);
+            // 托管会话能起来才算可自动继续（做空指出：此前写死 false，与真机闭环矛盾）。
+            assert!(installed.automatic_continue, "{}", plugin.id().as_str());
             let unknown = provider_installation_state(
                 plugin,
                 Some(&inst),
@@ -1119,7 +1126,7 @@ mod provider_install_tests {
                 None,
                 Some("meowo-reporter.exe"),
             );
-            assert!(!unknown.supported && unknown.managed);
+            assert!(!unknown.supported && unknown.managed && !unknown.automatic_continue);
             assert_eq!(unknown.reason.as_deref(), Some("lead/version_unsupported"));
             meowo_agent::lead_install::uninstall(cap, &inst).unwrap();
             assert!(
