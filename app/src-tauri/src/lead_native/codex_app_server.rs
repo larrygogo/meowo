@@ -1363,6 +1363,501 @@ pub(crate) fn clear_failure(db: &Path, task: &Path, gate_id: &str, native: &str)
     }
 }
 
+// ─── 会话设置：列模型、切模型/模式、读当前值（任务 20261114-tui-model-switch） ──────────
+//
+// 为什么走 TUI 已连着的这个 app-server（research-codex-opencode.md 第 2、4、5 节，0.167.2 隔离实测）：
+// - `thread/settings/update` 设下后 TUI 底栏立刻变（exp2 `fake-model-2 high`、exp4 `Plan mode`、
+//   `/status` 显示 Full Access），从下一回合起生效、正在跑的回合不变；不经 PTY，草稿与待批审批框
+//   都不受影响（exp2 draft_kept、exp3 screen-04）；不写 config.toml（只改本会话）。
+// - 不用带 `-m` 的恢复：exp3/exp4 实测三个副作用——升级弹窗选 1 会改写 config.toml 默认模型、
+//   换模型后先多跑一次压缩回合、线程上的权限覆盖丢失（workspace-write 变回 read-only）。
+// - 只在用户切换/打开菜单时连一次、用完即断，不 `thread/resume` 常驻订阅（leader 关注计费）：
+//   宿主 initialize 后这个服务之后所有请求的 UA 末尾都变成 `(meowo; 0)`（exp5，进程级、断开不恢复，
+//   Lead 投递时已存在）；originator 仍由先握手的 TUI 决定（codex-tui）。所以与投递同样：
+//   握手证据不足不连、连上核对 userAgent 前缀，不对就什么都不做。
+// - 不调用任何 `turn/*`：turn/start 是插话，turn/settings/update 只改正在跑的这一回合。
+
+/// 切换/读取失败的三类。reason 是 `lead/...` 结构化键（前端经 formatBackendError 映射）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ControlError {
+    /// 这个会话此刻没有 Meowo 起的 app-server：内嵌模式（Lead 未装、argv 带 -p/--search、app-server
+    /// 没监听上降级）、会话没开、或 TUI 刚退服务正被收掉。宿主自行兜底（内联 `/model …` 等）。
+    Unsupported,
+    /// 服务在，但此刻不能动：TUI 还没握手（宿主先 initialize 会抢走 originator）、userAgent 不是
+    /// codex-tui、或主线程没加载在这个服务上（TUI 里 /new 或切走了）。稍后再试。
+    NotReady(String),
+    /// 连上了但请求失败：服务拒绝（参数不被接受）、超时、断开，或本地参数校验不过。
+    Failed(String),
+}
+
+/// `model/list` 的一项（ModelListResponse.json）。思考档就是 `supportedReasoningEfforts`。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CodexModel {
+    /// 传给 `thread/settings/update.model` 的 slug（协议里的 `model` 字段，缺时退 `id`）。
+    pub id: String,
+    pub display_name: String,
+    pub description: Option<String>,
+    pub is_default: bool,
+    pub default_effort: Option<String>,
+    pub efforts: Vec<CodexEffort>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CodexEffort {
+    pub effort: String,
+    pub description: Option<String>,
+}
+
+/// 会话（或配置）当前的模型与模式。取值统一用 CLI 参数里的写法：
+/// approval `on-request | never | untrusted | granular`，sandbox `read-only | workspace-write |
+/// danger-full-access`，collaboration `default | plan`，approvals_reviewer `user | auto_review`。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CodexSettings {
+    pub model: Option<String>,
+    pub effort: Option<String>,
+    pub collaboration: Option<String>,
+    pub approval: Option<String>,
+    pub sandbox: Option<String>,
+    pub approvals_reviewer: Option<String>,
+}
+
+/// 要改的项；None = 不动。取值同 [`CodexSettings`]（approval 只收 on-request / never，
+/// untrusted 已退役、granular 不由这里设）。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub(crate) struct CodexSettingsUpdate {
+    pub model: Option<String>,
+    pub effort: Option<String>,
+    pub collaboration: Option<String>,
+    pub approval: Option<String>,
+    pub sandbox: Option<String>,
+    pub approvals_reviewer: Option<String>,
+}
+
+/// 设置类请求按会话串行：用户连点两次、或菜单读取与切换同时发生时，别让两条连接交错 initialize。
+static CONTROL_LOCKS: LazyLock<Mutex<HashMap<i64, std::sync::Arc<Mutex<()>>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn control_lock(session_id: i64) -> std::sync::Arc<Mutex<()>> {
+    CONTROL_LOCKS
+        .lock()
+        .map(|mut map| map.entry(session_id).or_default().clone())
+        .unwrap_or_default()
+}
+
+/// 列出会话所用 app-server 的模型目录（`model/list`，不含 hidden）。0.167.2 实测不联网、走内置/缓存
+/// 目录（exp1 0.003s）；自定义 provider 的模型不在里面（exp1 注意项），宿主要把当前模型并进清单。
+/// 会阻塞：握手证据不足时最多等约 6 秒（[`await_handshake`]），别在 UI 线程上调。
+#[cfg_attr(not(test), allow(dead_code))] // 宿主分派（tms/main 另一路）接入前只有单测调用
+pub(crate) fn list_models(db: &Path, session_id: i64) -> Result<Vec<CodexModel>, ControlError> {
+    with_control(db, session_id, |client| models_live(client, RPC_TIMEOUT))
+}
+
+/// 改本会话（主线程）的模型/思考档/协作模式/审批/沙箱，从下一回合起生效；正在跑的回合不变，
+/// 草稿与待批审批不受影响，不写 config.toml。`native_session` 是 codex thread id；子代理 thread
+/// 沿父链改到主线程。会阻塞（同 [`list_models`]）。
+#[cfg_attr(not(test), allow(dead_code))] // 宿主分派（tms/main 另一路）接入前只有单测调用
+pub(crate) fn update_settings(
+    db: &Path,
+    session_id: i64,
+    native_session: &str,
+    update: &CodexSettingsUpdate,
+) -> Result<(), ControlError> {
+    // 参数先在本地校验：不合法就不连服务（连一次就会改 UA 后缀）。
+    settings_update_params("probe", update, None)?;
+    with_control(db, session_id, |client| {
+        settings_update_live(client, native_session, update, RPC_TIMEOUT)
+    })
+}
+
+/// 有服务时读 CLI 的生效配置（`config/read`，含项目层：传 `cwd` 时按该目录解析）。新建页默认值用；
+/// 没服务时用 [`config_defaults`]。会阻塞（同 [`list_models`]）。
+#[cfg_attr(not(test), allow(dead_code))] // 宿主分派（tms/main 另一路）接入前只有单测调用
+pub(crate) fn read_live_config(
+    db: &Path,
+    session_id: i64,
+    cwd: Option<&str>,
+) -> Result<CodexSettings, ControlError> {
+    with_control(db, session_id, |client| config_read_live(client, cwd, RPC_TIMEOUT))
+}
+
+/// 找到会话的服务 → 握手证据 → 连接并核对 originator → 交给 `op`。用完连接即断（Drop 发 close）。
+fn with_control<T>(
+    db: &Path,
+    session_id: i64,
+    op: impl FnOnce(&mut ws::Client) -> Result<T, ControlError>,
+) -> Result<T, ControlError> {
+    let lock = control_lock(session_id);
+    let _guard = lock.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let pid = crate::open_store(db)
+        .ok()
+        .and_then(|store| store.session_pid(session_id).ok().flatten());
+    let Some((dir, mut state)) = states(db).into_iter().find(|(dir, state)| {
+        (pid == Some(i64::from(state.server_pid)) || state.launch_session == session_id)
+            && server_alive(dir, state)
+    }) else {
+        return Err(ControlError::Unsupported);
+    };
+    let Some(tui_pid) = state.tui_pid.filter(|tui| pid_alive(*tui)) else {
+        return Err(ControlError::Unsupported);
+    };
+    let token = read_token(&dir)
+        .ok_or_else(|| ControlError::Failed("lead/codex_server_unreachable".into()))?;
+    if !await_handshake(
+        &state,
+        pid,
+        now_ms(),
+        || tui_connected(state.port, tui_pid),
+        std::thread::sleep,
+    ) {
+        return Err(ControlError::NotReady(TUI_NOT_CONNECTED.into()));
+    }
+    let mut client = connect_checked(state.port, &token, RPC_TIMEOUT)?;
+    remember_handshake(&dir, &mut state);
+    op(&mut client)
+}
+
+/// 连接 + initialize + 核对 userAgent：不是 codex-tui 开头（宿主成了第一个握手的客户端，不该出现）
+/// 就什么都不做——这个服务的请求已记在 meowo 名下，再发设置只会让人误以为切换走的是 TUI。
+fn connect_checked(port: u16, token: &str, timeout: Duration) -> Result<ws::Client, ControlError> {
+    let mut client = ws::Client::connect(port, token, timeout).map_err(ControlError::Failed)?;
+    let init = client
+        .call("initialize", meowo_client_info(), timeout)
+        .map_err(ControlError::Failed)?;
+    client.notify("initialized").map_err(ControlError::Failed)?;
+    if !originator_is_tui(init.get("userAgent").and_then(Value::as_str)) {
+        return Err(ControlError::NotReady(TUI_NOT_CONNECTED.into()));
+    }
+    Ok(client)
+}
+
+/// 分页取完（`nextCursor`），上限 16 页防服务端游标出错时死循环。
+fn models_live(client: &mut ws::Client, timeout: Duration) -> Result<Vec<CodexModel>, ControlError> {
+    let mut models = Vec::new();
+    let mut cursor: Option<String> = None;
+    for _ in 0..16 {
+        let page = client
+            .call(
+                "model/list",
+                json!({ "cursor": cursor, "includeHidden": false }),
+                timeout,
+            )
+            .map_err(ControlError::Failed)?;
+        models.extend(
+            page["data"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|m| m["hidden"].as_bool() != Some(true))
+                .filter_map(parse_model_entry),
+        );
+        cursor = page["nextCursor"].as_str().map(str::to_owned);
+        if cursor.is_none() {
+            break;
+        }
+    }
+    Ok(models)
+}
+
+fn parse_model_entry(entry: &Value) -> Option<CodexModel> {
+    let id = entry["model"]
+        .as_str()
+        .or_else(|| entry["id"].as_str())
+        .filter(|id| !id.is_empty())?
+        .to_owned();
+    let text = |v: &Value| v.as_str().filter(|s| !s.is_empty()).map(str::to_owned);
+    Some(CodexModel {
+        display_name: text(&entry["displayName"]).unwrap_or_else(|| id.clone()),
+        description: text(&entry["description"]),
+        is_default: entry["isDefault"].as_bool() == Some(true),
+        default_effort: text(&entry["defaultReasoningEffort"]),
+        efforts: entry["supportedReasoningEfforts"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|e| {
+                Some(CodexEffort {
+                    effort: text(&e["reasoningEffort"])?,
+                    description: text(&e["description"]),
+                })
+            })
+            .collect(),
+        id,
+    })
+}
+
+/// 本地校验 + 组 `thread/settings/update` 参数（ThreadSettingsUpdateParams.json）。
+/// `current` = 主线程现在的（模型, 思考档）：协作模式的 settings.model 是必填项，调用方没给模型时
+/// 沿用线程当前模型（exp4 的 Plan 切换就是带着当前 gpt-5.5 high 设的）。
+fn settings_update_params(
+    thread: &str,
+    update: &CodexSettingsUpdate,
+    current: Option<(Option<String>, Option<String>)>,
+) -> Result<Value, ControlError> {
+    let invalid = || ControlError::Failed("lead/codex_settings_invalid".into());
+    let mut params = json!({ "threadId": thread });
+    let nonempty = |v: &Option<String>| v.as_deref().filter(|s| !s.trim().is_empty()).map(str::to_owned);
+    let model = nonempty(&update.model);
+    let effort = nonempty(&update.effort);
+    if let Some(model) = &model {
+        params["model"] = json!(model);
+    }
+    if let Some(effort) = &effort {
+        params["effort"] = json!(effort);
+    }
+    if let Some(approval) = update.approval.as_deref() {
+        // untrusted 已退役（research 第 6 节），granular 是对象、不从菜单设。
+        if !matches!(approval, "on-request" | "never") {
+            return Err(invalid());
+        }
+        params["approvalPolicy"] = json!(approval);
+    }
+    if let Some(sandbox) = update.sandbox.as_deref() {
+        params["sandboxPolicy"] = match sandbox {
+            "read-only" => json!({ "type": "readOnly" }),
+            // 完整字段与 exp4 实测发送的一致（各项即协议默认值）。
+            "workspace-write" => json!({ "type": "workspaceWrite", "writableRoots": [],
+                "networkAccess": false, "excludeTmpdirEnvVar": false, "excludeSlashTmp": false }),
+            "danger-full-access" => json!({ "type": "dangerFullAccess" }),
+            _ => return Err(invalid()),
+        };
+    }
+    if let Some(reviewer) = update.approvals_reviewer.as_deref() {
+        if !matches!(reviewer, "user" | "auto_review") {
+            return Err(invalid());
+        }
+        params["approvalsReviewer"] = json!(reviewer);
+    }
+    if let Some(mode) = update.collaboration.as_deref() {
+        if !matches!(mode, "plan" | "default") {
+            return Err(invalid());
+        }
+        // 只做本地校验时（current = None）不需要模型。
+        if let Some((thread_model, thread_effort)) = current {
+            let model = model
+                .clone()
+                .or(thread_model)
+                .ok_or_else(|| ControlError::Failed("lead/codex_model_unknown".into()))?;
+            // developer_instructions: null = 用该模式内置的说明（schema 原文）。
+            params["collaborationMode"] = json!({
+                "mode": mode,
+                "settings": {
+                    "model": model,
+                    "reasoning_effort": effort.clone().or(thread_effort),
+                    "developer_instructions": null,
+                },
+            });
+        }
+    }
+    // 只有 threadId、也没要切协作模式 = 什么都没改：不连服务。
+    if update.collaboration.is_none() && params.as_object().is_some_and(|map| map.len() == 1) {
+        return Err(invalid());
+    }
+    Ok(params)
+}
+
+fn settings_update_live(
+    client: &mut ws::Client,
+    native: &str,
+    update: &CodexSettingsUpdate,
+    timeout: Duration,
+) -> Result<(), ControlError> {
+    let main = main_thread(client, native, timeout);
+    let loaded = client
+        .call("thread/loaded/list", json!({}), timeout)
+        .map_err(ControlError::Failed)?;
+    if !loaded_ids(&loaded).contains(&main) {
+        return Err(ControlError::NotReady(THREAD_NOT_OPEN.into()));
+    }
+    let current = if update.collaboration.is_some() {
+        // Thread.model / reasoningEffort（ThreadReadResponse.json）：协作模式必须带模型。
+        let read = client
+            .call(
+                "thread/read",
+                json!({ "threadId": main, "includeTurns": false }),
+                timeout,
+            )
+            .map_err(ControlError::Failed)?;
+        let text = |p: &str| read.pointer(p).and_then(Value::as_str).map(str::to_owned);
+        Some((text("/thread/model"), text("/thread/reasoningEffort")))
+    } else {
+        Some((None, None))
+    };
+    let params = settings_update_params(&main, update, current)?;
+    client
+        .call("thread/settings/update", params, timeout)
+        .map(|_| ())
+        .map_err(ControlError::Failed)
+}
+
+fn config_read_live(
+    client: &mut ws::Client,
+    cwd: Option<&str>,
+    timeout: Duration,
+) -> Result<CodexSettings, ControlError> {
+    let read = client
+        .call("config/read", json!({ "cwd": cwd }), timeout)
+        .map_err(ControlError::Failed)?;
+    // exp4 config_read_sample：{config:{model, model_reasoning_effort, approval_policy, sandbox_mode…}}。
+    let config = &read["config"];
+    let text = |key: &str| config[key].as_str().filter(|s| !s.is_empty()).map(str::to_owned);
+    Ok(CodexSettings {
+        model: text("model"),
+        effort: text("model_reasoning_effort"),
+        collaboration: None,
+        approval: approval_name(&config["approval_policy"]),
+        sandbox: text("sandbox_mode").map(|s| sandbox_name(&s)),
+        approvals_reviewer: text("approvals_reviewer"),
+    })
+}
+
+/// 审批策略 → 统一写法。0.163 起 rollout 默认写 granular 对象：五个开关全开 = on-request、
+/// 全关 = never，其余如实报 granular（与 meowo-agent codex telemetry 的 approval_mode 同一口径）。
+fn approval_name(policy: &Value) -> Option<String> {
+    if let Some(name) = policy.as_str().filter(|s| !s.is_empty()) {
+        return Some(name.to_owned());
+    }
+    let flags: Vec<bool> = policy
+        .get("granular")?
+        .as_object()?
+        .values()
+        .filter_map(Value::as_bool)
+        .collect();
+    Some(
+        if !flags.is_empty() && flags.iter().all(|f| *f) {
+            "on-request"
+        } else if !flags.is_empty() && flags.iter().all(|f| !*f) {
+            "never"
+        } else {
+            "granular"
+        }
+        .to_owned(),
+    )
+}
+
+/// 沙箱 → CLI 写法。rollout 写 kebab（`read-only`），app-server 协议写 camel（`readOnly`）。
+fn sandbox_name(kind: &str) -> String {
+    match kind {
+        "readOnly" => "read-only".into(),
+        "workspaceWrite" => "workspace-write".into(),
+        "dangerFullAccess" => "danger-full-access".into(),
+        "externalSandbox" => "external-sandbox".into(),
+        other => other.to_owned(),
+    }
+}
+
+/// 离线读会话当前设置：rollout 里**最后一条** `turn_context`（每回合开始时写，exp3/exp4 实测含
+/// model、effort、approval_policy、sandbox_policy、collaboration_mode、approvals_reviewer）。
+/// TUI 里刚切、还没开新回合的值要到下一回合才进 rollout——在线时以 thread/settings/updated 为准。
+/// `path` 传会话当前的 rollout 段（有回溯续写段时传最新段）。先读尾部 256KB，没有再整份流式扫。
+#[cfg_attr(not(test), allow(dead_code))] // 宿主分派（tms/main 另一路）接入前只有单测调用
+pub(crate) fn read_rollout_settings(path: &Path) -> Option<CodexSettings> {
+    use std::io::{BufRead, Read, Seek, SeekFrom};
+    const TAIL: u64 = 256 * 1024;
+    let mut file = std::fs::File::open(path).ok()?;
+    let size = file.metadata().ok()?.len();
+    file.seek(SeekFrom::Start(size.saturating_sub(TAIL))).ok()?;
+    let mut tail = Vec::new();
+    file.take(TAIL).read_to_end(&mut tail).ok()?;
+    if let Some(found) = parse_rollout_settings(&String::from_utf8_lossy(&tail)) {
+        return Some(found);
+    }
+    if size <= TAIL {
+        return None;
+    }
+    let reader = std::io::BufReader::new(std::fs::File::open(path).ok()?);
+    reader
+        .lines()
+        .map_while(Result::ok)
+        .filter(|line| line.contains("\"turn_context\""))
+        .filter_map(|line| turn_context_settings(&line))
+        .last()
+}
+
+/// 文本里最后一条 turn_context 的设置（逐行独立解析，首个半截行自然跳过）。
+fn parse_rollout_settings(text: &str) -> Option<CodexSettings> {
+    text.lines().rev().find_map(turn_context_settings)
+}
+
+fn turn_context_settings(line: &str) -> Option<CodexSettings> {
+    let value: Value = serde_json::from_str(line).ok()?;
+    if value["type"] != "turn_context" {
+        return None;
+    }
+    let p = &value["payload"];
+    let text = |v: &Value| v.as_str().filter(|s| !s.is_empty()).map(str::to_owned);
+    Some(CodexSettings {
+        model: text(&p["model"]),
+        // 顶层 effort 为空时 codex 不写这个键（exp3：首轮无 effort），协作模式里的设置是同一个值。
+        effort: text(&p["effort"])
+            .or_else(|| text(&p["collaboration_mode"]["settings"]["reasoning_effort"])),
+        collaboration: text(&p["collaboration_mode"]["mode"]),
+        approval: approval_name(&p["approval_policy"]),
+        sandbox: text(&p["sandbox_policy"]["type"]).map(|s| sandbox_name(&s)),
+        approvals_reviewer: text(&p["approvals_reviewer"]),
+    })
+}
+
+/// 没有服务时读 CLI 配置文件里的默认值（新建页用）：`$CODEX_HOME/config.toml` 顶层键，`profile`
+/// 给出时再叠 `$CODEX_HOME/<name>.config.toml`（0.167.2 `--help`：「Layer $CODEX_HOME/<name>.config.toml
+/// on top of the base user config」）。不解析项目层（`.codex/config.toml`）——要项目层用
+/// [`read_live_config`]。读不到的项为 None。
+#[cfg_attr(not(test), allow(dead_code))] // 宿主分派（tms/main 另一路）接入前只有单测调用
+pub(crate) fn config_defaults(codex_home: &Path, profile: Option<&str>) -> CodexSettings {
+    let mut settings = CodexSettings::default();
+    let mut layers = vec![codex_home.join("config.toml")];
+    if let Some(name) = profile.filter(|n| !n.is_empty() && !n.contains(['/', '\\', '.'])) {
+        layers.push(codex_home.join(format!("{name}.config.toml")));
+    }
+    for layer in layers {
+        let Some(doc) = std::fs::read_to_string(&layer)
+            .ok()
+            .and_then(|body| body.parse::<toml_edit::DocumentMut>().ok())
+        else {
+            continue;
+        };
+        let text = |key: &str| {
+            doc.get(key)
+                .and_then(|item| item.as_str())
+                .filter(|s| !s.is_empty())
+                .map(str::to_owned)
+        };
+        if let Some(model) = text("model") {
+            settings.model = Some(model);
+        }
+        if let Some(effort) = text("model_reasoning_effort") {
+            settings.effort = Some(effort);
+        }
+        if let Some(sandbox) = text("sandbox_mode") {
+            settings.sandbox = Some(sandbox);
+        }
+        if let Some(reviewer) = text("approvals_reviewer") {
+            settings.approvals_reviewer = Some(reviewer);
+        }
+        if let Some(approval) = doc.get("approval_policy").and_then(toml_policy) {
+            settings.approval = Some(approval);
+        }
+    }
+    settings
+}
+
+/// approval_policy 可能是字符串，也可能是 `{ granular = { … } }` 表：转成 JSON 交给同一套判定。
+fn toml_policy(item: &toml_edit::Item) -> Option<String> {
+    if let Some(name) = item.as_str() {
+        return Some(name.to_owned());
+    }
+    let table = item.as_table_like()?;
+    let granular = table.get("granular")?.as_table_like()?;
+    let flags: serde_json::Map<String, Value> = granular
+        .iter()
+        .filter_map(|(k, v)| Some((k.to_owned(), json!(v.as_bool()?))))
+        .collect();
+    approval_name(&json!({ "granular": flags }))
+}
+
 #[cfg(test)]
 #[path = "codex_app_server_probe.rs"]
 mod probe;
@@ -1499,17 +1994,21 @@ mod tests {
             .collect();
         rpc_calls.sort_unstable();
         rpc_calls.dedup();
-        // 写操作只有 queue/add 与 queue/start（把我们排进去的那条开跑，见 kick_stalled），其余只读；
-        // 绝不出现 turn/*（插话/打断）。
+        // 写操作只有 queue/add、queue/start（把我们排进去的那条开跑，见 kick_stalled）与
+        // settings/update（用户在 Meowo 里切模型/模式），其余只读；绝不出现 turn/*（插话/打断），
+        // 也没有 thread/resume（常驻订阅会让这个会话之后所有请求都带 meowo UA 后缀，leader 关注计费）。
         assert_eq!(
             rpc_calls,
             [
+                "config/read",
                 "initialize",
+                "model/list",
                 "thread/loaded/list",
                 "thread/queue/add",
                 "thread/queue/list",
                 "thread/queue/start",
                 "thread/read",
+                "thread/settings/update",
                 "thread/turns/list"
             ]
         );
@@ -2541,5 +3040,330 @@ mod tests {
             assert_eq!((st.state.as_str(), st.can_retry), (expected, false), "{queue:?}");
         }
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    // ─── 会话设置（任务 20261114-tui-model-switch） ─────────────────────────────
+
+    /// 一台「TUI 先握手过」的假服务：主线程 main（当前模型 gpt-5.5 high）、子代理 sub；
+    /// `loaded` 是服务上加载着的 thread；model/list 分两页；config/read 回 exp4 形状。
+    fn settings_like(ua: &'static str, loaded: &'static [&'static str]) -> Fake {
+        fake_server(move |request| {
+            let method = request["method"].as_str().unwrap_or_default();
+            let params = &request["params"];
+            match method {
+                "initialize" => vec![reply(request, json!({ "userAgent": ua }))],
+                "thread/read" if params["threadId"] == "sub" => vec![reply(
+                    request,
+                    json!({ "thread": { "id": "sub", "parentThreadId": "main" } }),
+                )],
+                "thread/read" => vec![reply(
+                    request,
+                    json!({ "thread": { "id": "main", "parentThreadId": null,
+                                        "model": "gpt-5.5", "reasoningEffort": "high" } }),
+                )],
+                "thread/loaded/list" => vec![reply(request, json!({ "data": loaded }))],
+                "thread/settings/update" => vec![reply(request, json!({}))],
+                // 形状取自 exp1 model_list（0.167.2）；第二页带一个 hidden 模型。
+                "model/list" if params["cursor"].is_null() => vec![reply(
+                    request,
+                    json!({ "data": [{
+                        "id": "gpt-6.1-sol", "model": "gpt-6.1-sol", "displayName": "GPT-6.1-Sol",
+                        "description": "Latest workhorse model", "hidden": false, "isDefault": true,
+                        "defaultReasoningEffort": "low",
+                        "supportedReasoningEfforts": [
+                            { "reasoningEffort": "low", "description": "Fast responses" },
+                            { "reasoningEffort": "ultra", "description": "Maximum reasoning" }
+                        ]
+                    }], "nextCursor": "p2" }),
+                )],
+                "model/list" => vec![reply(
+                    request,
+                    json!({ "data": [
+                        { "id": "gpt-5.5", "model": "gpt-5.5", "displayName": "GPT-5.5", "hidden": false,
+                          "isDefault": false, "defaultReasoningEffort": "medium",
+                          "supportedReasoningEfforts": [{ "reasoningEffort": "xhigh" }] },
+                        { "id": "gpt-reserve", "model": "gpt-reserve", "hidden": true }
+                    ], "nextCursor": null }),
+                )],
+                "config/read" => vec![reply(
+                    request,
+                    json!({ "config": { "model": "fake-model", "model_reasoning_effort": "high",
+                        "approval_policy": "never", "sandbox_mode": "workspace-write",
+                        "model_provider": "fake", "profile": null }, "origins": {} }),
+                )],
+                _ => vec![rpc_error(request)],
+            }
+        })
+    }
+
+    fn switch(fake: &Fake, native: &str, update: &CodexSettingsUpdate) -> Result<(), ControlError> {
+        let mut client = connect_checked(fake.port, &fake.token, FAST)?;
+        settings_update_live(&mut client, native, update, FAST)
+    }
+
+    /// 切模型/思考档/权限：只发 thread/settings/update（参数与 exp2/exp4 实测一致），宿主自报 meowo、
+    /// 不冒充；不调用任何 turn/*，不 thread/resume（不常驻订阅），子代理 thread 改到主线程。
+    #[test]
+    fn settings_switch_goes_through_thread_settings_update_only() {
+        let fake = settings_like(TUI_UA, &["main", "sub"]);
+        let update = CodexSettingsUpdate {
+            model: Some("gpt-6.1-sol".into()),
+            effort: Some("ultra".into()),
+            approval: Some("never".into()),
+            sandbox: Some("danger-full-access".into()),
+            ..Default::default()
+        };
+        assert_eq!(switch(&fake, "sub", &update), Ok(()));
+        assert_eq!(
+            fake.params_of("thread/settings/update"),
+            [json!({ "threadId": "main", "model": "gpt-6.1-sol", "effort": "ultra",
+                     "approvalPolicy": "never", "sandboxPolicy": { "type": "dangerFullAccess" } })]
+        );
+        let methods = fake.methods();
+        assert!(
+            methods.iter().all(|m| !m.starts_with("turn/") && m != "thread/resume"),
+            "{methods:?}"
+        );
+        assert_eq!(
+            fake.params_of("initialize")[0]["clientInfo"]["name"],
+            "meowo",
+            "宿主自报 meowo，不冒充 codex-tui"
+        );
+    }
+
+    /// 切到 Plan：协作模式的 settings.model 必填，没给模型就沿用主线程当前模型与思考档（exp4 形状）。
+    #[test]
+    fn plan_mode_carries_current_thread_model() {
+        let fake = settings_like(TUI_UA, &["main"]);
+        let update = CodexSettingsUpdate {
+            collaboration: Some("plan".into()),
+            ..Default::default()
+        };
+        assert_eq!(switch(&fake, "main", &update), Ok(()));
+        assert_eq!(
+            fake.params_of("thread/settings/update"),
+            [json!({ "threadId": "main", "collaborationMode": { "mode": "plan", "settings": {
+                "model": "gpt-5.5", "reasoning_effort": "high", "developer_instructions": null } } })]
+        );
+        // 同时给了模型：协作模式里用新模型。
+        let fake = settings_like(TUI_UA, &["main"]);
+        let update = CodexSettingsUpdate {
+            model: Some("gpt-6.1-sol".into()),
+            collaboration: Some("default".into()),
+            ..Default::default()
+        };
+        assert_eq!(switch(&fake, "main", &update), Ok(()));
+        let sent = &fake.params_of("thread/settings/update")[0];
+        assert_eq!(sent["model"], "gpt-6.1-sol");
+        assert_eq!(sent["collaborationMode"]["settings"]["model"], "gpt-6.1-sol");
+        assert_eq!(sent["collaborationMode"]["mode"], "default");
+    }
+
+    /// originator 不是 codex-tui（宿主抢先握了手，不该出现）：什么都不改；主线程没加载在服务上
+    /// （TUI 切走了）：不改，等它回来。
+    #[test]
+    fn settings_switch_refuses_wrong_originator_or_unloaded_thread() {
+        let update = CodexSettingsUpdate {
+            model: Some("gpt-5.5".into()),
+            ..Default::default()
+        };
+        let fake = settings_like("meowo/0.167.2 (Windows)", &["main"]);
+        assert_eq!(
+            switch(&fake, "main", &update),
+            Err(ControlError::NotReady(TUI_NOT_CONNECTED.into()))
+        );
+        assert!(fake.params_of("thread/settings/update").is_empty());
+        let fake = settings_like(TUI_UA, &["other"]);
+        assert_eq!(
+            switch(&fake, "main", &update),
+            Err(ControlError::NotReady(THREAD_NOT_OPEN.into()))
+        );
+        assert!(fake.params_of("thread/settings/update").is_empty());
+        // 服务拒绝（比如模型不支持这个思考档）：如实失败。
+        let rejecting = fake_server(|request| match request["method"].as_str().unwrap_or_default() {
+            "initialize" => vec![reply(request, json!({ "userAgent": TUI_UA }))],
+            "thread/read" => vec![reply(request, json!({ "thread": { "id": "main" } }))],
+            "thread/loaded/list" => vec![reply(request, json!({ "data": ["main"] }))],
+            _ => vec![rpc_error(request)],
+        });
+        assert_eq!(
+            switch(&rejecting, "main", &update),
+            Err(ControlError::Failed("lead/codex_server_rejected".into()))
+        );
+    }
+
+    /// 本地校验：不合法的取值、或什么都没改，都不连服务（连一次就会改 UA 后缀）。
+    #[test]
+    fn settings_update_params_validate_locally() {
+        let invalid = Err(ControlError::Failed("lead/codex_settings_invalid".into()));
+        for update in [
+            CodexSettingsUpdate::default(),
+            CodexSettingsUpdate { model: Some(" ".into()), ..Default::default() },
+            CodexSettingsUpdate { approval: Some("untrusted".into()), ..Default::default() },
+            CodexSettingsUpdate { sandbox: Some("full".into()), ..Default::default() },
+            CodexSettingsUpdate { collaboration: Some("pair".into()), ..Default::default() },
+            CodexSettingsUpdate { approvals_reviewer: Some("x".into()), ..Default::default() },
+        ] {
+            assert_eq!(settings_update_params("t", &update, None), invalid, "{update:?}");
+        }
+        let ws = CodexSettingsUpdate {
+            sandbox: Some("workspace-write".into()),
+            approval: Some("on-request".into()),
+            approvals_reviewer: Some("auto_review".into()),
+            ..Default::default()
+        };
+        // 与 exp4 host_perm_after_resume 实测发送的参数逐字一致。
+        assert_eq!(
+            settings_update_params("t", &ws, None),
+            Ok(json!({ "threadId": "t", "approvalPolicy": "on-request", "approvalsReviewer": "auto_review",
+                "sandboxPolicy": { "type": "workspaceWrite", "writableRoots": [], "networkAccess": false,
+                    "excludeTmpdirEnvVar": false, "excludeSlashTmp": false } }))
+        );
+        // 只切协作模式也算有改动；线程没有模型可沿用时如实失败。
+        let plan = CodexSettingsUpdate { collaboration: Some("plan".into()), ..Default::default() };
+        assert!(settings_update_params("t", &plan, None).is_ok());
+        assert_eq!(
+            settings_update_params("t", &plan, Some((None, None))),
+            Err(ControlError::Failed("lead/codex_model_unknown".into()))
+        );
+    }
+
+    /// model/list：翻页取完、滤掉 hidden，思考档取 supportedReasoningEfforts。
+    #[test]
+    fn model_list_pages_and_parses_efforts() {
+        let fake = settings_like(TUI_UA, &["main"]);
+        let mut client = connect_checked(fake.port, &fake.token, FAST).unwrap();
+        let models = models_live(&mut client, FAST).unwrap();
+        let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids, ["gpt-6.1-sol", "gpt-5.5"]);
+        let sol = &models[0];
+        assert_eq!(sol.display_name, "GPT-6.1-Sol");
+        assert!(sol.is_default);
+        assert_eq!(sol.default_effort.as_deref(), Some("low"));
+        assert_eq!(
+            sol.efforts.iter().map(|e| e.effort.as_str()).collect::<Vec<_>>(),
+            ["low", "ultra"]
+        );
+        assert_eq!(models[1].display_name, "GPT-5.5");
+        assert_eq!(fake.params_of("model/list")[1]["cursor"], "p2");
+        assert!(fake.methods().iter().all(|m| !m.starts_with("turn/")));
+    }
+
+    #[test]
+    fn live_config_read_maps_to_cli_names() {
+        let fake = settings_like(TUI_UA, &["main"]);
+        let mut client = connect_checked(fake.port, &fake.token, FAST).unwrap();
+        let settings = config_read_live(&mut client, Some("C:\\proj"), FAST).unwrap();
+        assert_eq!(
+            settings,
+            CodexSettings {
+                model: Some("fake-model".into()),
+                effort: Some("high".into()),
+                collaboration: None,
+                approval: Some("never".into()),
+                sandbox: Some("workspace-write".into()),
+                approvals_reviewer: None,
+            }
+        );
+        assert_eq!(fake.params_of("config/read")[0]["cwd"], "C:\\proj");
+    }
+
+    /// 没有 Meowo 起的 app-server（内嵌模式 / 会话没开）：明确返回 Unsupported，不连任何东西。
+    #[test]
+    fn session_without_own_server_is_unsupported() {
+        let root = temp_root("ctl-none");
+        let db = root.join("board.db");
+        let update = CodexSettingsUpdate { model: Some("gpt-5.5".into()), ..Default::default() };
+        assert_eq!(update_settings(&db, 7, "main", &update), Err(ControlError::Unsupported));
+        assert_eq!(list_models(&db, 7), Err(ControlError::Unsupported));
+        assert_eq!(read_live_config(&db, 7, None), Err(ControlError::Unsupported));
+        // 服务目录在、但进程早没了（pid 不存在）：同样不支持。
+        plant_server(&db, "dead", 7, 1);
+        assert_eq!(list_models(&db, 7), Err(ControlError::Unsupported));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 离线读当前设置：取最后一条 turn_context。行样本取自 0.167.2 exp4 rollout（截短 developer_instructions）
+    /// 与 exp3（顶层 effort）；尾部 256KB 里没有 turn_context 时整份扫。
+    #[test]
+    fn rollout_settings_take_latest_turn_context() {
+        let first = r##"{"timestamp":"t","type":"turn_context","payload":{"approval_policy":"on-request","approvals_reviewer":"user","sandbox_policy":{"type":"read-only"},"model":"gpt-5.6-terra","collaboration_mode":{"mode":"default","settings":{"model":"gpt-5.6-terra","reasoning_effort":null,"developer_instructions":"# Collaboration Mode: Default"}}}}"##;
+        let latest = r#"{"type":"turn_context","payload":{"model":"gpt-5.5","effort":"medium","approval_policy":{"granular":{"sandbox_approval":true,"rules":true,"mcp_elicitations":true}},"sandbox_policy":{"type":"workspace-write"},"collaboration_mode":{"mode":"plan","settings":{"model":"gpt-5.5","reasoning_effort":"medium"}}}}"#;
+        let text = format!("{first}\n{{\"type\":\"event_msg\",\"payload\":{{}}}}\n{latest}\n");
+        assert_eq!(
+            parse_rollout_settings(&text),
+            Some(CodexSettings {
+                model: Some("gpt-5.5".into()),
+                effort: Some("medium".into()),
+                collaboration: Some("plan".into()),
+                approval: Some("on-request".into()),
+                sandbox: Some("workspace-write".into()),
+                approvals_reviewer: None,
+            })
+        );
+        let only_first = parse_rollout_settings(first).unwrap();
+        assert_eq!(only_first.model.as_deref(), Some("gpt-5.6-terra"));
+        assert_eq!(only_first.effort, None);
+        assert_eq!(only_first.approvals_reviewer.as_deref(), Some("user"));
+        assert_eq!(only_first.sandbox.as_deref(), Some("read-only"));
+
+        let root = temp_root("rollout");
+        let path = root.join("rollout.jsonl");
+        // turn_context 在开头，尾部 256KB 全是别的事件（一回合很长）：退回整份扫描。
+        let filler = format!(
+            "{{\"type\":\"event_msg\",\"payload\":{{\"text\":\"{}\"}}}}\n",
+            "x".repeat(1000)
+        );
+        std::fs::write(&path, format!("{latest}\n{}", filler.repeat(400))).unwrap();
+        assert_eq!(
+            read_rollout_settings(&path).unwrap().model.as_deref(),
+            Some("gpt-5.5")
+        );
+        std::fs::write(&path, filler.repeat(3)).unwrap();
+        assert_eq!(read_rollout_settings(&path), None);
+        assert_eq!(read_rollout_settings(&root.join("missing.jsonl")), None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// config.toml 顶层默认值；`-p <name>` 叠 `<name>.config.toml`；approval 的 granular 表按同一口径判定。
+    #[test]
+    fn config_defaults_layer_profile_over_base() {
+        let root = temp_root("cfg");
+        std::fs::write(
+            root.join("config.toml"),
+            "model = \"gpt-5.5\"\nmodel_reasoning_effort = \"high\"\nsandbox_mode = \"read-only\"\n\
+             [approval_policy.granular]\nsandbox_approval = false\nrules = false\nmcp_elicitations = false\n\
+             [projects.'C:\\x']\ntrust_level = \"trusted\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("work.config.toml"),
+            "model = \"gpt-6.1-sol\"\napproval_policy = \"on-request\"\n",
+        )
+        .unwrap();
+        let base = config_defaults(&root, None);
+        assert_eq!(
+            base,
+            CodexSettings {
+                model: Some("gpt-5.5".into()),
+                effort: Some("high".into()),
+                collaboration: None,
+                approval: Some("never".into()),
+                sandbox: Some("read-only".into()),
+                approvals_reviewer: None,
+            }
+        );
+        let work = config_defaults(&root, Some("work"));
+        assert_eq!(work.model.as_deref(), Some("gpt-6.1-sol"));
+        assert_eq!(work.effort.as_deref(), Some("high"), "没覆盖的项沿用基础层");
+        assert_eq!(work.approval.as_deref(), Some("on-request"));
+        // 不存在的 profile、路径穿越的名字：只读基础层。
+        assert_eq!(config_defaults(&root, Some("nope")), base);
+        assert_eq!(config_defaults(&root, Some("../work")), base);
+        assert_eq!(
+            config_defaults(&root.join("missing"), None),
+            CodexSettings::default()
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 }
