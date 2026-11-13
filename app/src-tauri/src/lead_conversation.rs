@@ -519,12 +519,17 @@ mod tests {
         // claude 原生会话有自己的 wait hook 唤醒，面板不另挂投递条。
         assert!(delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe").is_none());
         // 其余 provider 的原生会话不会自行开新回合：如实告诉用户下一步，而不是什么都不显示（做空指出）。
-        for provider in ["codex", "kimi", "gemini", "opencode"] {
+        for provider in ["codex", "kimi", "gemini"] {
             store.set_session_provider(legacy, provider).unwrap();
             let status = delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe").unwrap();
             assert_eq!(status.state, "native_manual", "{provider}");
             assert!(!status.can_retry, "{provider}");
             assert_eq!(status.session_id, legacy);
         }
+        // OpenCode 经宿主 HTTP 投递，面板显示真实送达状态：尚未投递 = 已保存待送达，可重试。
+        store.set_session_provider(legacy, "opencode").unwrap();
+        let status = delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe").unwrap();
+        assert_eq!(status.state, "saved");
+        assert!(status.can_retry);
     }
 }
