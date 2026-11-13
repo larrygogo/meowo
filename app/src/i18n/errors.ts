@@ -22,7 +22,6 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "conversation/previous_process_unverified", exact: true, zh: "尚未确认上次会话进程已退出，已暂停恢复", en: "The previous session process has not been confirmed stopped. Recovery is paused." },
   { m: "conversation/exit_unverified", exact: true, zh: "尚未确认会话的全部进程已退出，请重启 Meowo 后再恢复", en: "Some session processes have not been confirmed stopped. Restart Meowo before resuming." },
   { m: "conversation/adoption_unverified", exact: true, zh: "无法确认原生会话已交出控制权，请先在原终端结束会话", en: "Control of the native session could not be verified. End it in its original terminal first." },
-  { m: "conversation/recovery_payload_invalid", exact: true, zh: "原生恢复记录分块无效，请重新打开会话重试", en: "A native recovery record chunk is invalid. Reopen the conversation and try again." },
   { m: "conversation/auth_required", exact: true, zh: "原生会话尚未完成认证，请检查当前账号的 CLI 登录状态", en: "The native session is not authenticated. Check the CLI sign-in status for this account." },
   { m: "conversation/native_auth_failed", exact: true, zh: "原生 CLI 拒绝了认证，请检查当前账号或 API Key", en: "The native CLI rejected authentication. Check this account or API key." },
   { m: "conversation/native_rate_limited", exact: true, zh: "原生 Provider 已限流或配额不足，请稍后重试", en: "The native provider is rate-limited or out of quota. Try again later." },

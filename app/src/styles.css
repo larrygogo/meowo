@@ -3492,15 +3492,11 @@ body:not(.remote-ui) .ns-actions .ns-btn { height: var(--btn-h-lg); min-width: 7
 .chat-queued-dismiss { flex: 0 0 auto; width: 18px; height: 18px; padding: 0; display: grid; place-items: center; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-faint); font: inherit; font-size: var(--text-xs); line-height: 1; cursor: pointer; }
 .chat-queued-dismiss:hover { color: var(--cc-text); background: var(--fill-selected); }
 .chat-queued-tag { flex: 0 0 auto; color: var(--cc-text-faint); font-size: var(--text-xs); }
-/* 托管会话：输入框上方的中性提示条（会话已停止、久无回应、有恢复记录）。与 .chat-attention-collapsed
+/* 托管会话：输入框上方的中性提示条（会话已停止、久无回应）。与 .chat-attention-collapsed
    同宽同圆角，但不加警示描边：停止不是告警，只是告诉你下一步（leader 截图嫌裸文本 + 系统按钮丑，2026-11-13）。 */
 .chat-engine-gate { box-sizing: border-box; width: min(var(--chat-col), calc(100% - 48px)); margin: 0 auto var(--sp-8); padding: var(--sp-6) var(--sp-8) var(--sp-6) var(--sp-14); display: flex; align-items: center; gap: var(--sp-8); border-radius: var(--radius-md); background: var(--cc-panel-raised); box-shadow: inset 0 0 0 var(--hairline) var(--cc-border), var(--shadow-sm); color: var(--cc-text-dim); font-size: var(--text-xs); line-height: var(--leading-body); }
 .chat-engine-gate > span { flex: 1 1 auto; min-width: 0; }
 .chat-engine-gate > button { flex: 0 0 auto; }
-.chat-engine-recoveries { display: flex; flex-direction: column; }
-.chat-engine-recovery-list { box-sizing: border-box; width: min(var(--chat-col), calc(100% - 48px)); max-height: 40vh; overflow: auto; margin: 0 auto var(--sp-8); padding: var(--sp-10) var(--sp-14); border-radius: var(--radius-md); background: var(--cc-panel-raised); box-shadow: inset 0 0 0 var(--hairline) var(--cc-border), var(--shadow-sm); font-size: var(--text-xs); }
-.chat-engine-recovery-meta { margin: var(--sp-4) 0; color: var(--cc-text-faint); }
-.chat-engine-recovery-role { margin: var(--sp-8) 0 var(--sp-2); color: var(--cc-text-dim); font-weight: 600; }
 /* 「打断并发送」:破坏性次级动作,琥珀描边与发送按钮区分,不抢主视觉。
    .chat-compose 前缀必须有:compose 里有一条 `.chat-compose button` 的 accent 皮肤
    (38px 高、强调色边框+填充,发送键专属),特异性盖过单类名——缺前缀时本按钮被刷成

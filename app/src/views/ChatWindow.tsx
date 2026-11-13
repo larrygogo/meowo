@@ -97,7 +97,6 @@ import { RemoteSessionList } from "../mobile/RemoteSessionList";
 import { performUndo } from "./chat/undoTerminal";
 import { useOutgoingUpkeep } from "./chat/useOutgoingUpkeep";
 import { SessionAdmin } from "./chat/SessionAdmin";
-import { ManagedRecoveries } from "./chat/ManagedRecoveries";
 import { ManagedInteraction, ManagedDeliveryStatus } from "./chat/ManagedInteraction";
 import { NewSessionPage } from "./chat/NewSessionPage";
 import { ChatTitleBar } from "./chat/ChatTitleBar";
@@ -4733,7 +4732,6 @@ export function ChatWindow() {
       {/* broker 审批卡（claude hook 劫走的请求），本体与卡内状态见 chat/BrokerApprovalCard。
           按 requestId 挂载：换请求即新卡，「说明并拒绝」的草稿不串卡。 */}
       {view === "chat" && managedConversation && <>
-        <ManagedRecoveries key={sessionId} sessionId={sessionId} />
         {history?.managedError && <div className="chat-send-error" role="alert">{formatBackendError(history.managedError, t.locale)}</div>}
         {managedQuiet && <div className="chat-engine-gate" role="status"><span>{t.chat.engineQuiet}</span></div>}
         {(["stopped", "failed"].includes(history?.managedPhase ?? "")) && <div className="chat-engine-gate" role="status"><span>{t.chat.engineStopped}</span><button type="button" className="chat-queued-interrupt" onClick={() => void managedControl("resume")}>{t.chat.engineResume}</button></div>}
