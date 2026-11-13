@@ -297,9 +297,11 @@ pub(crate) fn launch_plan(
     argv: &[String],
     env: &[(String, String)],
 ) -> Option<LaunchPlan> {
-    if super::mechanism(provider) != Some(NativeContinue::ServerQueue(ServerProtocol::OpencodeHttp))
-        || !crate::lead_runtime::enabled(provider, env)
-        || argv.is_empty()
+    // 不直接调 mechanism()：它对有版本门的 provider 会同步探测 CLI 版本，而每个会话启动都经过这里（做空 R2）。
+    if argv.is_empty()
+        || !super::launches_server(provider, ServerProtocol::OpencodeHttp, || {
+            crate::lead_runtime::enabled(provider, env)
+        })
     {
         return None;
     }

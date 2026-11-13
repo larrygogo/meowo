@@ -49,19 +49,46 @@ pub(crate) enum NativeOutcome {
 /// 版本上启用，低于它走手动提示）。版本探测有缓存（probe_cli_version）。
 ///
 /// 只有声明了版本门（[`meowo_agent::lead_install::LeadCap::native_continue_floor`]）的机制才探测
-/// 版本（做空 N2）：codex/opencode 的服务投递没有版本门，而它们的 mechanism() 在每次开终端的启动
-/// 路径上（pty.rs → opencode_http::launch_plan / codex_app_server::prepare_launch），原先每次都
-/// 同步跑一遍 `<cli> --version`（缓存过期时最长 5 秒），没装 Lead 也一样。有版本门的 kimi/gemini
-/// 只在作答投递与面板状态里查询，不在启动路径上。
+/// 版本（做空 N2），且只在作答投递与面板状态里调用。开终端的启动路径不调用它，改用
+/// [`launches_server`]：每个会话启动都会经过 opencode_http::launch_plan 与
+/// codex_app_server::prepare_launch，直接调 mechanism() 会让 kimi/gemini 每次开终端都同步跑一遍
+/// `<cli> --version`（缓存过期时最长 5 秒），没装 Lead 也一样（做空 R2）。
 pub(crate) fn mechanism(provider: &str) -> Option<NativeContinue> {
-    mechanism_with(provider, |_plugin| {
-        #[cfg(not(test))]
-        let version = Some(crate::probe_cli_version(_plugin));
-        // 单测默认不探测真实 CLI（CI 上没装）：按已查证版本处理；版本门由 test_version 覆盖专门测。
-        #[cfg(test)]
-        let version = test_version::get();
-        version
-    })
+    mechanism_with(provider, probe_version)
+}
+
+fn probe_version(_plugin: &'static dyn meowo_agent::AgentPlugin) -> Option<Option<String>> {
+    #[cfg(not(test))]
+    let version = Some(crate::probe_cli_version(_plugin));
+    // 单测默认不探测真实 CLI（CI 上没装）：按已查证版本处理；版本门由 test_version 覆盖专门测。
+    #[cfg(test)]
+    let version = test_version::get();
+    version
+}
+
+/// 开终端的启动路径用：这次启动要不要为 `protocol` 起服务端口。先看插件**声明**的机制（不探测
+/// 版本），不是这个协议的 provider（claude、kimi/gemini 的会话内等待器）直接放行、零代价；再看本会话
+/// 账号装没装 Lead（`enabled`）；两者都满足才走带版本门的 [`mechanism`]（目前 ServerQueue 机制都
+/// 没有版本门，不会真的探测）。
+pub(crate) fn launches_server(
+    provider: &str,
+    protocol: ServerProtocol,
+    enabled: impl FnOnce() -> bool,
+) -> bool {
+    launches_server_with(provider, protocol, enabled, probe_version)
+}
+
+fn launches_server_with(
+    provider: &str,
+    protocol: ServerProtocol,
+    enabled: impl FnOnce() -> bool,
+    probe: impl FnOnce(&'static dyn meowo_agent::AgentPlugin) -> Option<Option<String>>,
+) -> bool {
+    let wanted = Some(NativeContinue::ServerQueue(protocol));
+    let declared = meowo_agent::by_id(provider)
+        .and_then(|plugin| plugin.lead())
+        .and_then(|cap| cap.native_continue());
+    declared == wanted && enabled() && mechanism_with(provider, probe) == wanted
 }
 
 /// `probe` 返回 None = 不看版本（按插件声明）；Some(None) = 读不出版本。
@@ -91,7 +118,18 @@ pub(crate) mod test_version {
         VERSION.with(|v| *v.borrow_mut() = version.map(|inner| inner.map(str::to_owned)));
     }
     pub(super) fn get() -> Option<Option<String>> {
+        PROBES.with(|n| n.set(n.get() + 1));
         VERSION.with(|v| v.borrow().clone())
+    }
+    thread_local! {
+        static PROBES: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    }
+    /// 本线程里 [`super::mechanism`] 被要求看版本的次数（启动路径不该有）。
+    pub(super) fn probes() -> u32 {
+        PROBES.with(|n| n.get())
+    }
+    pub(super) fn reset_probes() {
+        PROBES.with(|n| n.set(0));
     }
 }
 
@@ -189,5 +227,46 @@ mod tests {
             assert!(mechanism_with(provider, |_| Some(None)).is_none(), "读不出版本不续跑");
         }
         assert!(mechanism_with("claude", |_| panic!()).is_none());
+    }
+
+    /// 做空 R2：开终端的启动判定对任何 provider 都不探测版本、对非本协议的 provider 也不读 Lead 安装状态；
+    /// 只有声明了该协议且装了 Lead 的 provider 才会起服务。
+    #[test]
+    fn launch_gate_never_probes_cli_version() {
+        use ServerProtocol::{CodexAppServer, OpencodeHttp};
+        for provider in ["claude", "codex", "kimi", "gemini", "opencode", "nope"] {
+            for protocol in [CodexAppServer, OpencodeHttp] {
+                let mut enabled_asked = false;
+                let launches = launches_server_with(
+                    provider,
+                    protocol,
+                    || {
+                        enabled_asked = true;
+                        true
+                    },
+                    |_| panic!("{provider} 启动路径不该探测版本"),
+                );
+                let ours = matches!(
+                    (provider, protocol),
+                    ("codex", CodexAppServer) | ("opencode", OpencodeHttp)
+                );
+                assert_eq!(launches, ours, "{provider} {protocol:?}");
+                assert_eq!(enabled_asked, ours, "{provider} {protocol:?}：别的协议不必读 Lead 安装状态");
+            }
+        }
+        assert!(!launches_server_with("codex", CodexAppServer, || false, |_| panic!()));
+    }
+
+    /// 启动入口本身（不只判定函数）在 kimi/gemini 上不触发版本探测：mechanism() 的单测探针计数为 0。
+    #[test]
+    fn launch_entries_do_not_probe_for_waiter_providers() {
+        test_version::reset_probes();
+        for provider in ["kimi", "gemini", "claude"] {
+            let argv = vec![provider.to_owned()];
+            assert!(opencode_http::launch_plan(provider, &argv, &[]).is_none());
+            let mut command = portable_pty::CommandBuilder::new(provider);
+            assert!(codex_app_server::prepare_launch(1, provider, &[], &mut command).is_none());
+        }
+        assert_eq!(test_version::probes(), 0);
     }
 }

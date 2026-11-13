@@ -433,14 +433,12 @@ pub(crate) fn prepare_launch(
     env: &[(String, String)],
     command: &mut CommandBuilder,
 ) -> Option<Launch> {
-    use meowo_agent::lead_install::{NativeContinue, ServerProtocol};
-    if super::mechanism(provider)
-        != Some(NativeContinue::ServerQueue(ServerProtocol::CodexAppServer))
-    {
-        return None;
-    }
+    use meowo_agent::lead_install::ServerProtocol;
     // 只给装了 Lead 的账号改形态：没有关卡就用不到投递通道，不必多一个常驻进程。
-    if !crate::lead_runtime::enabled(provider, env) {
+    // 不直接调 mechanism()：它对有版本门的 provider 会同步探测 CLI 版本，而每个会话启动都经过这里（做空 R2）。
+    if !super::launches_server(provider, ServerProtocol::CodexAppServer, || {
+        crate::lead_runtime::enabled(provider, env)
+    }) {
         return None;
     }
     let plugin = meowo_agent::by_id(provider)?;
