@@ -158,6 +158,18 @@ struct ChatRead {
     before: Option<u64>,
 }
 
+/// 停用标记只在会话没有活着的进程时成立：「用官方 CLI 打开」后原生 PTY（或外部终端里的 CLI）在跑，
+/// 它就是普通原生会话，再下发停用标记会让对话页一直显示「已停用」、+ 菜单置灰（做空 R4）。
+/// `resumable` = 库里有停用记录时是否绑定过原生 id；None = 不是停用会话。
+fn retired_marker(
+    resumable: Option<bool>,
+    running: bool,
+) -> Option<meowo_protocol::ipc::RetiredManagedDto> {
+    resumable
+        .filter(|_| !running)
+        .map(|resumable| meowo_protocol::ipc::RetiredManagedDto { resumable })
+}
+
 fn load_chat_history(
     db_path: &Path,
     chat_mtimes: &Mutex<ChatMtimes>,
@@ -272,14 +284,14 @@ fn load_chat_history(
     };
     // 已停用的「Meowo 托管」会话（PR #172 删除托管路线）：照常走原生记录读取——绑定过原生 id 的，
     // cc_session_id 就是 CLI 自己的会话 id，对话页能看到 CLI 落盘的记录；前端据此换门卡文案。
-    if let Some(retired) = store
-        .retired_managed(session_id)
-        .map_err(|error| error.to_string())?
-    {
-        history.retired_managed = Some(meowo_protocol::ipc::RetiredManagedDto {
-            resumable: retired.native_session_id.is_some(),
-        });
-    }
+    let running = super::session_query::process_alive(header.pid, &live.alive, live.pty_live);
+    history.retired_managed = retired_marker(
+        store
+            .retired_managed(session_id)
+            .map_err(|error| error.to_string())?
+            .map(|retired| retired.native_session_id.is_some()),
+        running,
+    );
     // errored 与标题都和侧栏/贴纸走同一入口(session_query::analyze_transcript,同口径由代码保证)。
     // 5s 节流:agent 流式输出期间 transcript 每轮都在变,每轮全采样会对同一批新增字节
     // 做两遍解析(分析器 + 下面的聊天增量各一遍)且解析持共享缓存锁;错误徽标容忍 ~5s 延迟。
@@ -1173,14 +1185,14 @@ mod tests {
         drop(raw);
         let mtimes = Mutex::new(ChatMtimes::default());
         let cache = Mutex::new(meowo_agent::TranscriptCache::default());
-        let read = |id| {
+        let read_with = |id, pty_live| {
             load_chat_history(
                 &db,
                 &mtimes,
                 &cache,
                 LiveSignals {
                     alive: Default::default(),
-                    pty_live: false,
+                    pty_live,
                     broker_approval: false,
                     runtimes: Default::default(),
                     screen_state: None,
@@ -1191,10 +1203,12 @@ mod tests {
             )
             .unwrap()
         };
-        let resumable = |id| read(id).retired_managed.map(|retired| retired.resumable);
+        let resumable = |id| read_with(id, false).retired_managed.map(|retired| retired.resumable);
         assert_eq!(resumable(bound), Some(true));
         assert_eq!(resumable(unbound), Some(false));
         assert_eq!(resumable(plain), None);
+        // 做空 R4：用官方 CLI 恢复后原生 PTY 在跑，它就是普通原生会话，不再带停用标记。
+        assert_eq!(read_with(bound, true).retired_managed, None);
         drop(store);
         std::fs::remove_dir_all(&dir).unwrap();
     }

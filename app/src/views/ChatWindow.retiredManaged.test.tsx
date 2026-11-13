@@ -83,4 +83,21 @@ describe("已停用的「Meowo 托管」会话", () => {
     expect((document.querySelector(".chat-compose .chat-send-button") as HTMLButtonElement).disabled).toBe(true);
     expect(invoke.mock.calls.some(([command]) => command === "start_managed_terminal")).toBe(false);
   });
+
+  // 做空 R4：「用官方 CLI 打开」之后它就是普通原生会话。后端在原生 PTY 活着时不再下发停用标记；
+  // 前端也只在门卡还挂着时用停用文案，两层都要守住——任何一层漏掉，+ 菜单就永久置灰、占位还说「已停用」。
+  it.each([
+    ["后端已撤掉停用标记", { retiredManaged: null }],
+    ["停用标记还残留（旧后端/轮询竞态）", { retiredManaged: { resumable: true } }],
+  ])("用官方 CLI 恢复后（%s）：占位与 + 菜单恢复正常", async (_label, extra) => {
+    history = { status: "running", connected: true, ptyManaged: true, ...extra };
+    render(<ChatWindow />);
+    await waitFor(() => expect(document.querySelector(".chat-compose textarea")).toBeTruthy());
+    const input = document.querySelector(".chat-compose textarea") as HTMLTextAreaElement;
+    await waitFor(() => expect(input.placeholder).not.toBe(""));
+    expect(screen.queryByText(zh.chat.managedRetired)).toBeNull();
+    expect(input.disabled).toBe(false);
+    expect([zh.chat.managedRetiredInputResumable, zh.chat.managedRetiredInputUnbound]).not.toContain(input.placeholder);
+    expect((document.querySelector(".chat-compose .chat-attach-button") as HTMLButtonElement).disabled).toBe(false);
+  });
 });

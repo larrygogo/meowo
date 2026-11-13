@@ -3507,6 +3507,9 @@ export function ChatWindow() {
   //（退出码非 0、不是用户结束、不在重启窗口内）就把「会话已结束」换成退出码 + 最后几行输出。
   // since 给最大值：只要退出信息，不要整段 1MiB 的输出回放。
   const endedHere = composerGated && !externalRunning && sessionId > 0;
+  // 停用说明只在门卡还挂着时生效：「用官方 CLI 打开」之后 ptyManaged 翻 true，它就是普通原生会话，
+  // 占位文字与 + 菜单（附件/斜杠/@）必须恢复（做空 R4：此前恢复后仍显示「已停用」、+ 永久置灰）。
+  const retiredGate = composerGated ? retiredManaged : null;
   const [crash, setCrash] = useState<{ id: number; code: number; tail: string | null } | null>(null);
   useEffect(() => {
     if (!endedHere) return;
@@ -4955,8 +4958,8 @@ export function ChatWindow() {
           // 原因，占位符再跟着换成同一句话只会误导（此前任何错误都变「尚未接管」）。
           placeholder={
             // 停用的托管会话：输入框锁着，占位直接说清楚还能怎么继续，别让它看起来能输入。
-            retiredManaged
-              ? (retiredManaged.resumable ? t.chat.managedRetiredInputResumable : t.chat.managedRetiredInputUnbound)
+            retiredGate
+              ? (retiredGate.resumable ? t.chat.managedRetiredInputResumable : t.chat.managedRetiredInputUnbound)
               : composerLocked
               ? (remoteUi() ? t.chat.inputLockedRemote : t.chat.inputLocked)
               : needsTakeover && !history?.background
@@ -5115,7 +5118,7 @@ export function ChatWindow() {
             onCommand={(chatUi?.slash_commands?.length ?? 0) > 0 ? () => insertIntoPrompt("/", true) : undefined}
             commandBlocked={prompt.trim().length > 0}
             onMention={chatUi?.attachment_mention ? () => insertIntoPrompt("@") : undefined}
-            disabled={retiredManaged != null}
+            disabled={retiredGate != null}
           />
           {(() => {
             const states = history?.agentModes ?? [];
