@@ -132,9 +132,19 @@ mod tests {
     #[test]
     fn parses_latest_display_name_per_family() {
         let entries = parse(SAMPLE);
-        let labels: Vec<(&str, &str)> = entries.iter().map(|e| (e.id.as_str(), e.label.as_str())).collect();
+        let labels: Vec<(&str, &str)> = entries
+            .iter()
+            .map(|e| (e.id.as_str(), e.label.as_str()))
+            .collect();
         // sonnet 在 models[] 里找不到条目：宁缺勿猜，不给。
-        assert_eq!(labels, vec![("fable", "Fable 5.1"), ("opus", "Opus 5.5"), ("haiku", "Haiku 5.5")]);
+        assert_eq!(
+            labels,
+            vec![
+                ("fable", "Fable 5.1"),
+                ("opus", "Opus 5.5"),
+                ("haiku", "Haiku 5.5")
+            ]
+        );
     }
 
     /// 真机探针（默认跳过）：读本机装的 claude 可执行，打印各家族显示名与耗时。
@@ -165,7 +175,9 @@ mod tests {
         bytes.extend_from_slice(SAMPLE);
         std::fs::write(&exe, &bytes).unwrap();
         let entries = family_catalog(&exe);
-        assert!(entries.iter().any(|e| e.id == "opus" && e.label == "Opus 5.5"));
+        assert!(entries
+            .iter()
+            .any(|e| e.id == "opus" && e.label == "Opus 5.5"));
         assert!(family_catalog(&dir.join("missing.exe")).is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }

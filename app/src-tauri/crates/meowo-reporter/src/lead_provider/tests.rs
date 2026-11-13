@@ -1,0 +1,390 @@
+use super::*;
+
+#[test]
+fn installed_skill_gate_example_is_read_and_answered_by_the_real_protocol() {
+    let e = env();
+    let skill = meowo_agent::lead_install::SKILL.replace('\r', "");
+    let example = skill
+        .split("```json\n")
+        .nth(1)
+        .unwrap()
+        .split("```")
+        .next()
+        .unwrap()
+        .trim();
+    fs::write(e.task.join("gate.json"), example).unwrap();
+    let gate = lead::read_gate(&e.task).expect("安装的 skill 示例必须符合 reporter 的真实关卡协议");
+    assert_eq!(gate.kind, "A");
+    assert_eq!(gate.status, "pending");
+    lead::answer_gate(
+        &e.task,
+        &gate.id,
+        &meowo_protocol::ipc::LeadGateAnswerDto {
+            choice: "confirm".into(),
+            note: String::new(),
+        },
+    )
+    .unwrap();
+    assert_eq!(lead::read_gate(&e.task).unwrap().status, "answered");
+}
+
+struct Env {
+    root: tempfile::TempDir,
+    task: PathBuf,
+    registry: PathBuf,
+}
+fn env() -> Env {
+    let root = tempfile::tempdir().unwrap();
+    let task = root.path().join(".lead/20261112-provider");
+    fs::create_dir_all(&task).unwrap();
+    fs::write(task.join("SPEC.md"), "# task").unwrap();
+    fs::write(task.join("progress.md"), "phase: implement\n").unwrap();
+    fs::write(
+        task.join("acceptance.json"),
+        r#"[{"id":1,"check":"finish","passes":false}]"#,
+    )
+    .unwrap();
+    let registry = root.path().join("sessions.json");
+    Env {
+        root,
+        task,
+        registry,
+    }
+}
+// 字段形态逐项取自模块头官方来源；这些是协议 fixture，不冒充真实模型闭环探针。
+fn claim(e: &Env, provider: &str, session: &str) -> Value {
+    let file = e.task.join("progress.md");
+    match provider {
+        "codex" => {
+            json!({"hook_event_name":"PostToolUse","session_id":session,"cwd":e.root.path(),"turn_id":"t1","tool_name":"apply_patch","tool_input":{"command":format!("*** Begin Patch\n*** Update File: {}\n@@\n-old\n+new\n*** End Patch",file.display())},"tool_response":"Success. Updated the following files:\nM progress.md"})
+        }
+        "kimi" => {
+            json!({"hook_event_name":"PostToolUse","session_id":session,"cwd":e.root.path(),"client_type":"kimi_code_cli","tool_name":"Write","tool_input":{"path":file,"content":"new"}})
+        }
+        "gemini" => {
+            json!({"hook_event_name":"AfterTool","session_id":session,"cwd":e.root.path(),"tool_name":"write_file","tool_input":{"file_path":file,"content":"new"},"tool_response":{"llmContent":"File written."}})
+        }
+        "opencode" => {
+            json!({"hook_event_name":"tool.execute.after","cwd":e.root.path(),"input":{"sessionID":session,"tool":"write","callID":"c1","args":{"filePath":file,"content":"new"}},"output":{"title":"write","output":"ok","metadata":{}}})
+        }
+        _ => unreachable!(),
+    }
+}
+fn call(e: &Env, provider: &str, mode: &str, value: Value) -> Output {
+    run(provider, mode, &value.to_string(), &e.registry)
+}
+fn prompt(e: &Env, provider: &str, session: &str, text: &str) -> Value {
+    match provider {
+        "gemini" => {
+            json!({"hook_event_name":"BeforeAgent","session_id":session,"cwd":e.root.path(),"prompt":text})
+        }
+        "opencode" => {
+            json!({"hook_event_name":"chat.message","cwd":e.root.path(),"input":{"sessionID":session},"output":{"parts":[{"type":"text","text":text}]}})
+        }
+        _ => {
+            json!({"hook_event_name":"UserPromptSubmit","session_id":session,"client_type":if provider == "kimi" { "kimi_code_cli" } else { "codex" },"cwd":e.root.path(),"turn_id":"t1","prompt":text})
+        }
+    }
+}
+fn stop(e: &Env, provider: &str, session: &str, text: &str) -> Value {
+    json!({"hook_event_name":if provider == "gemini" { "AfterAgent" } else { "Stop" },"session_id":session,"client_type":if provider == "kimi" { "kimi_code_cli" } else { "other" },"cwd":e.root.path(),"turn_id":"t1","prompt":text,"stop_hook_active":false})
+}
+
+#[test]
+fn native_write_fixtures_claim_only_the_native_session() {
+    for provider in ["codex", "kimi", "gemini", "opencode"] {
+        let e = env();
+        let mut raw = claim(&e, provider, "owner-123");
+        if provider == "opencode" {
+            raw["input"]["args"]["sessionID"] = json!("victim");
+        } else {
+            raw["tool_input"]["session_id"] = json!("victim");
+        }
+        assert_eq!(call(&e, provider, "claim", raw), Output::default());
+        assert_eq!(
+            fs::read_to_string(e.task.join(".owner")).unwrap(),
+            "owner-123",
+            "{provider}"
+        );
+    }
+}
+
+#[test]
+fn reads_failed_unknown_and_mcp_identity_do_not_claim() {
+    for provider in ["codex", "kimi", "gemini", "opencode"] {
+        let e = env();
+        let mut raw = claim(&e, provider, "owner");
+        if provider == "opencode" {
+            raw["input"]["tool"] = json!("read");
+        } else {
+            raw["tool_name"] = json!("Read");
+        }
+        call(&e, provider, "claim", raw);
+        let mut raw = claim(&e, provider, "owner");
+        if provider == "opencode" {
+            raw["output"]["error"] = json!("failed");
+        } else {
+            raw["tool_response"] = json!({"error":"failed","exit_code":1});
+        }
+        call(&e, provider, "claim", raw);
+        call(
+            &e,
+            provider,
+            "claim",
+            json!({"hook_event_name":"PostToolUse","tool_input":{"session_id":"owner","path":e.task.join("progress.md")}}),
+        );
+        assert!(!e.task.join(".owner").exists(), "{provider}");
+    }
+    let e = env();
+    assert_eq!(
+        run("unknown", "claim", "not json", &e.registry),
+        Output::default()
+    );
+    assert_eq!(
+        run("kimi", "claim", r#"{"tool_name":"Read"}"#, &e.registry),
+        Output::default()
+    );
+    assert!(!e.registry.exists());
+}
+
+#[test]
+fn another_sessions_owner_is_not_stolen() {
+    for provider in ["codex", "kimi", "gemini", "opencode"] {
+        let e = env();
+        fs::write(e.task.join(".owner"), "original-owner").unwrap();
+        call(&e, provider, "claim", claim(&e, provider, "new-owner"));
+        assert_eq!(
+            fs::read_to_string(e.task.join(".owner")).unwrap(),
+            "original-owner"
+        );
+    }
+}
+
+#[test]
+fn parallel_native_claims_reserve_one_owner() {
+    let e = env();
+    std::thread::scope(|scope| {
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(6));
+        for index in 0..6 {
+            let barrier = barrier.clone();
+            let e = &e;
+            scope.spawn(move || {
+                barrier.wait();
+                call(
+                    e,
+                    "kimi",
+                    "claim",
+                    claim(e, "kimi", &format!("owner-{index}")),
+                );
+            });
+        }
+    });
+    let owner = fs::read_to_string(e.task.join(".owner")).unwrap();
+    let registry: Value = serde_json::from_slice(&fs::read(&e.registry).unwrap()).unwrap();
+    assert_eq!(registry.as_object().unwrap().len(), 1);
+    assert!(registry.get(&owner).is_some());
+}
+
+#[test]
+fn malformed_success_responses_and_unverified_kimi_variants_are_noops() {
+    for provider in ["codex", "kimi", "gemini", "opencode"] {
+        let e = env();
+        let mut raw = claim(&e, provider, "owner");
+        match provider {
+            "codex" => raw["tool_response"] = json!("unknown output"),
+            "kimi" => raw["client_type"] = json!("kimi_cli"),
+            "gemini" => raw["tool_response"] = json!({}),
+            _ => raw["output"] = json!({}),
+        }
+        call(&e, provider, "claim", raw);
+        assert!(!e.task.join(".owner").exists(), "{provider}");
+    }
+}
+
+#[test]
+fn new_runtime_and_new_turn_drop_previous_write_facts() {
+    let e = env();
+    call(&e, "codex", "claim", claim(&e, "codex", "owner"));
+    call(
+        &e,
+        "codex",
+        "session",
+        prompt(&e, "codex", "owner", "implement"),
+    );
+    call(&e, "codex", "claim", claim(&e, "codex", "owner"));
+    let mut changed = stop(&e, "codex", "owner", "implement");
+    changed["turn_id"] = json!("t2");
+    assert_eq!(call(&e, "codex", "stop", changed), Output::default());
+    call(
+        &e,
+        "codex",
+        "session",
+        json!({"hook_event_name":"SessionStart","session_id":"owner","cwd":e.root.path(),"source":"resume"}),
+    );
+    assert_eq!(
+        call(&e, "codex", "stop", stop(&e, "codex", "owner", "implement")),
+        Output::default()
+    );
+}
+
+#[test]
+fn native_stop_protocols_reuse_rules_and_respect_pause_unrelated_and_retry_bound() {
+    for provider in ["codex", "kimi", "gemini"] {
+        let e = env();
+        call(&e, provider, "claim", claim(&e, provider, "owner"));
+        call(
+            &e,
+            provider,
+            "session",
+            prompt(&e, provider, "owner", "implement"),
+        );
+        call(&e, provider, "claim", claim(&e, provider, "owner"));
+        let mut blocked = 0;
+        for _ in 0..6 {
+            let out = call(
+                &e,
+                provider,
+                "stop",
+                stop(&e, provider, "owner", "implement"),
+            );
+            if out != Output::default() {
+                blocked += 1;
+                match provider {
+                    "kimi" => {
+                        assert_eq!(out.exit, 2);
+                        assert!(out.stderr.unwrap().contains("[lead]"));
+                    }
+                    "gemini" => assert_eq!(
+                        serde_json::from_str::<Value>(&out.stdout.unwrap()).unwrap()["decision"],
+                        "deny"
+                    ),
+                    _ => assert_eq!(
+                        serde_json::from_str::<Value>(&out.stdout.unwrap()).unwrap()["decision"],
+                        "block"
+                    ),
+                }
+            }
+        }
+        assert_eq!(blocked, 5, "{provider}");
+        call(
+            &e,
+            provider,
+            "session",
+            prompt(&e, provider, "owner", "what is README?"),
+        );
+        assert_eq!(
+            call(
+                &e,
+                provider,
+                "stop",
+                stop(&e, provider, "owner", "what is README?")
+            ),
+            Output::default()
+        );
+        call(
+            &e,
+            provider,
+            "session",
+            prompt(&e, provider, "owner", "pause"),
+        );
+        call(&e, provider, "claim", claim(&e, provider, "owner"));
+        assert_eq!(
+            call(&e, provider, "stop", stop(&e, provider, "owner", "pause")),
+            Output::default()
+        );
+    }
+}
+
+#[test]
+fn context_uses_native_output_and_does_not_inject_kimi_observation_events() {
+    for provider in ["codex", "kimi", "gemini", "opencode"] {
+        let e = env();
+        call(&e, provider, "claim", claim(&e, provider, "owner"));
+        let out = call(
+            &e,
+            provider,
+            "session",
+            prompt(&e, provider, "owner", "implement"),
+        );
+        assert!(
+            out.stdout
+                .as_ref()
+                .is_some_and(|text| text.contains("SPEC.md")),
+            "{provider}"
+        );
+        if provider == "kimi" {
+            for event in ["SessionStart", "PostCompact"] {
+                assert_eq!(
+                    call(
+                        &e,
+                        provider,
+                        "session",
+                        json!({"hook_event_name":event,"session_id":"owner","cwd":e.root.path()})
+                    ),
+                    Output::default()
+                );
+            }
+        }
+        assert_eq!(
+            call(
+                &e,
+                provider,
+                "stop",
+                stop(&e, provider, "different-owner", "implement")
+            ),
+            Output::default()
+        );
+    }
+}
+
+#[test]
+fn gemini_before_model_preserves_request_and_replaces_only_owned_context() {
+    let e = env();
+    call(&e, "gemini", "claim", claim(&e, "gemini", "owner"));
+    let raw = json!({"hook_event_name":"BeforeModel","session_id":"owner","cwd":e.root.path(),"llm_request":{"model":"native-model","messages":[{"role":"user","content":"hello"},{"role":"system","content":"[meowo-lead-context]\nstale"}],"config":{"temperature":0.1}}});
+    let out = call(&e, "gemini", "session", raw);
+    let value: Value = serde_json::from_str(&out.stdout.unwrap()).unwrap();
+    let request = &value["hookSpecificOutput"]["llm_request"];
+    assert_eq!(request["model"], "native-model");
+    assert_eq!(request["config"]["temperature"], 0.1);
+    assert_eq!(request["messages"].as_array().unwrap().len(), 2);
+    assert!(request["messages"][1]["content"]
+        .as_str()
+        .unwrap()
+        .contains("SPEC.md"));
+}
+
+#[test]
+fn compression_does_not_reset_turn_facts_and_opencode_idle_is_not_a_stop_control() {
+    let e = env();
+    call(&e, "codex", "claim", claim(&e, "codex", "owner"));
+    call(
+        &e,
+        "codex",
+        "session",
+        prompt(&e, "codex", "owner", "implement"),
+    );
+    call(&e, "codex", "claim", claim(&e, "codex", "owner"));
+    call(
+        &e,
+        "codex",
+        "session",
+        json!({"hook_event_name":"SessionStart","session_id":"owner","cwd":e.root.path(),"source":"compact"}),
+    );
+    assert!(
+        call(&e, "codex", "stop", stop(&e, "codex", "owner", "implement"))
+            .stdout
+            .is_some()
+    );
+    let e = env();
+    call(&e, "opencode", "claim", claim(&e, "opencode", "owner"));
+    assert_eq!(
+        call(
+            &e,
+            "opencode",
+            "stop",
+            json!({"hook_event_name":"session.idle","event":{"type":"session.idle","properties":{"sessionID":"owner"}},"cwd":e.root.path()})
+        ),
+        Output::default()
+    );
+}

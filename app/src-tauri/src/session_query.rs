@@ -162,7 +162,10 @@ pub(crate) async fn recent_cwds(
 
 /// 工作空间的归一键：斜杠统一、去尾斜杠、不分大小写（Windows 路径；库里历史数据斜杠方向不一）。
 pub(crate) fn workspace_key(cwd: &str) -> String {
-    cwd.trim().replace('\\', "/").trim_end_matches('/').to_lowercase()
+    cwd.trim()
+        .replace('\\', "/")
+        .trim_end_matches('/')
+        .to_lowercase()
 }
 
 /// 去掉移除之后再没用过的目录：最近一次活跃不晚于移除时刻就不显示。纯函数便于单测。
@@ -172,7 +175,11 @@ fn visible_workspaces(
     limit: usize,
 ) -> Vec<String> {
     rows.into_iter()
-        .filter(|(cwd, last)| hidden.get(&workspace_key(cwd)).is_none_or(|hidden_at| last > hidden_at))
+        .filter(|(cwd, last)| {
+            hidden
+                .get(&workspace_key(cwd))
+                .is_none_or(|hidden_at| last > hidden_at)
+        })
         .map(|(cwd, _)| cwd)
         .take(limit)
         .collect()
@@ -221,14 +228,33 @@ mod hidden_workspace_tests {
     fn hidden_workspace_stays_hidden_until_used_again() {
         let mut hidden = std::collections::BTreeMap::new();
         hidden.insert(workspace_key("C:\\Work\\Old\\"), 100);
-        let rows = vec![("C:/work/old".to_string(), 90), ("C:/work/new".to_string(), 80)];
+        let rows = vec![
+            ("C:/work/old".to_string(), 90),
+            ("C:/work/new".to_string(), 80),
+        ];
         // 移除之后没再用过：不显示；大小写、斜杠方向、尾斜杠不同也认得。
-        assert_eq!(visible_workspaces(rows, &hidden, 10), vec!["C:/work/new".to_string()]);
+        assert_eq!(
+            visible_workspaces(rows, &hidden, 10),
+            vec!["C:/work/new".to_string()]
+        );
         // 之后又在这个目录开了会话：回来。
-        let rows = vec![("C:/work/old".to_string(), 150), ("C:/work/new".to_string(), 80)];
-        assert_eq!(visible_workspaces(rows, &hidden, 10), vec!["C:/work/old".to_string(), "C:/work/new".to_string()]);
+        let rows = vec![
+            ("C:/work/old".to_string(), 150),
+            ("C:/work/new".to_string(), 80),
+        ];
+        assert_eq!(
+            visible_workspaces(rows, &hidden, 10),
+            vec!["C:/work/old".to_string(), "C:/work/new".to_string()]
+        );
         // 过滤后再按 limit 截。
-        assert_eq!(visible_workspaces(vec![("a".into(), 1), ("b".into(), 2)], &Default::default(), 1), vec!["a".to_string()]);
+        assert_eq!(
+            visible_workspaces(
+                vec![("a".into(), 1), ("b".into(), 2)],
+                &Default::default(),
+                1
+            ),
+            vec!["a".to_string()]
+        );
     }
 
     /// 包 5：worktree 会话在侧栏归到原项目下，但「隐藏工作区」仍按会话自己的 cwd 记。
@@ -237,11 +263,20 @@ mod hidden_workspace_tests {
     fn hiding_a_worktree_workspace_keeps_the_main_checkout() {
         let mut hidden = std::collections::BTreeMap::new();
         hidden.insert(workspace_key("C:/w/app-feat"), 100);
-        let rows = vec![("C:/w/app-feat".to_string(), 90), ("C:/w/app".to_string(), 80)];
-        assert_eq!(visible_workspaces(rows.clone(), &hidden, 10), vec!["C:/w/app".to_string()]);
+        let rows = vec![
+            ("C:/w/app-feat".to_string(), 90),
+            ("C:/w/app".to_string(), 80),
+        ];
+        assert_eq!(
+            visible_workspaces(rows.clone(), &hidden, 10),
+            vec!["C:/w/app".to_string()]
+        );
         let mut hidden = std::collections::BTreeMap::new();
         hidden.insert(workspace_key("C:/w/app"), 100);
-        assert_eq!(visible_workspaces(rows, &hidden, 10), vec!["C:/w/app-feat".to_string()]);
+        assert_eq!(
+            visible_workspaces(rows, &hidden, 10),
+            vec!["C:/w/app-feat".to_string()]
+        );
     }
 }
 
@@ -275,7 +310,7 @@ pub(crate) struct LiveItem {
     screen_state: Option<&'static str>,
     /// screen_state 是否来自无规则命中的回退（detect.rs FALLBACK_RULE_ID）：回退 idle
     /// 是「什么都没认出来」而非「确认空闲」，前端据此把角标从自信的「等你」降级为
-    /// 中性点（T-15）。tab 归属/通知等判定不消费它——行为口径仍只看 screen_state。
+    /// 中性点（T-15）。活动态与 tab 归属必须忽略这种未知屏幕，回落可靠的运行记录。
     screen_assumed: bool,
     /// 还在跑的后台子任务数（transcript 分析，见 TranscriptInfo::busy_subagents）。
     /// 前端卡片状态环与 tab 分组按它把「主回合停了但后台在干活」的会话画成运行中——
@@ -300,11 +335,7 @@ pub(crate) struct LiveItem {
 }
 
 /// profile id → 展示名。查不到（profile 已删）回退 id 本身。纯函数便于单测。
-fn resolve_profile_name(
-    settings: &super::settings::Settings,
-    provider: &str,
-    id: &str,
-) -> String {
+fn resolve_profile_name(settings: &super::settings::Settings, provider: &str, id: &str) -> String {
     settings
         .profiles
         .get(provider)
@@ -381,7 +412,9 @@ pub(crate) async fn get_session_admin_page(
             limit,
         };
         let store = super::open_store(&db_path)?;
-        let (mut items, total) = store.session_admin_page(&query).map_err(|e| e.to_string())?;
+        let (mut items, total) = store
+            .session_admin_page(&query)
+            .map_err(|e| e.to_string())?;
         for session in &mut items {
             if !super::agent_resolves_transcript_title(&session.provider) {
                 continue;
@@ -532,7 +565,9 @@ fn counts_for_store(
             connected,
             &candidate.status,
             pending_review,
-            screen_states.get(&candidate.id).map(|sight| sight.state),
+            screen_states
+                .get(&candidate.id)
+                .and_then(|sight| sight.confirmed_state()),
             || {
                 subagents_busy(
                     tx_cache,
@@ -670,16 +705,10 @@ pub(crate) async fn get_live_sessions_page(
         )?;
         // 「正在启动」占位卡只进首页(无游标):占位不属于 SQL 扫描,翻页游标语义不变。
         // 插到页首——它们 connected 且最新,stable sort(外库合并处)会保持其在连接组最前。
-        if include_pending.unwrap_or(false)
-            && before_id.is_none()
-            && before_last_event_at.is_none()
+        if include_pending.unwrap_or(false) && before_id.is_none() && before_last_event_at.is_none()
         {
-            let placeholders = pending_placeholder_items(
-                &pendings,
-                &filter,
-                search.as_deref(),
-                cwd.as_deref(),
-            );
+            let placeholders =
+                pending_placeholder_items(&pendings, &filter, search.as_deref(), cwd.as_deref());
             if !placeholders.is_empty() {
                 page.items.splice(0..0, placeholders);
             }
@@ -688,9 +717,7 @@ pub(crate) async fn get_live_sessions_page(
         // 始终属于本库。稳定排序把外库卡排到各 connected 组的尾部——观察性信息不与
         // 本库的活动卡抢位置。外库卡的屏幕状态恒 None(本地 broker 不托管它们),
         // tab 归属由 foreign_live_items 按同一 tab_class 裁定。
-        if include_foreign.unwrap_or(false)
-            && before_id.is_none()
-            && before_last_event_at.is_none()
+        if include_foreign.unwrap_or(false) && before_id.is_none() && before_last_event_at.is_none()
         {
             let foreign = foreign_live_items(
                 &db_path,
@@ -703,7 +730,8 @@ pub(crate) async fn get_live_sessions_page(
             );
             if !foreign.is_empty() {
                 page.items.extend(foreign);
-                page.items.sort_by_key(|item| std::cmp::Reverse(item.connected));
+                page.items
+                    .sort_by_key(|item| std::cmp::Reverse(item.connected));
             }
         }
         Ok(page)
@@ -788,10 +816,7 @@ fn pending_placeholder_items(
 /// 单张占位卡：负 id 即「这是占位」的全部契约——前端凭它走纯展示分支（不可点、无菜单），
 /// 并在同 provider+cwd 的真实会话出现时撤卡对账。connected=true / status=running：
 /// PTY 已起进程必在，tab 归属（前端 match / cardTone 与后端 counts）据此都落在运行中。
-fn pending_placeholder_item(
-    temp_id: i64,
-    info: &super::pty::PendingLaunch,
-) -> LiveItem {
+fn pending_placeholder_item(temp_id: i64, info: &super::pty::PendingLaunch) -> LiveItem {
     let cwd = info.cwd.clone();
     let project_name = info
         .cwd
@@ -850,7 +875,10 @@ fn pending_placeholder_item(
         unread: false,
         foreign: false,
         cwd_missing: false,
-        origin_root: info.cwd.as_deref().and_then(crate::wtnew::origin::origin_root_cached),
+        origin_root: info
+            .cwd
+            .as_deref()
+            .and_then(crate::wtnew::origin::origin_root_cached),
     }
 }
 
@@ -963,7 +991,7 @@ pub(crate) fn pending_review_live<'a>(
 /// 的会话就会顶着黄环（等你）待在「运行中」tab 里，用户以为状态坏了（实拍反馈）。
 ///
 /// 入参约定：`pending_review` 传**存活校正后**的值（[`pending_review_live`]），
-/// `screen_state` 传 broker 的实时屏幕状态（"working"|"idle"|"blocked"，非托管为 None）。
+/// `screen_state` 只传 broker 已确认的屏幕状态；无规则命中的回退与非托管均传 None。
 /// `background_busy` 是「后台还有子任务在跑」的**懒**判定（要读 transcript，只在裁到
 /// 「等待中」边缘时才调用；mtime 缓存下稳态零 IO）。列表（live_sessions_blocking /
 /// foreign_live_items）与角标（counts_for_store）三处必须喂完全相同的原料——任何一端
@@ -997,12 +1025,20 @@ pub(crate) fn tab_class(
         Some("working") => return Some("running"),
         Some("blocked") => return Some("waiting"),
         Some("idle") => {
-            return Some(if background_busy() { "running" } else { "waiting" });
+            return Some(if background_busy() {
+                "running"
+            } else {
+                "waiting"
+            });
         }
         _ => {}
     }
     if status == "waiting" {
-        return Some(if background_busy() { "running" } else { "waiting" });
+        return Some(if background_busy() {
+            "running"
+        } else {
+            "waiting"
+        });
     }
     (status == "running").then_some("running")
 }
@@ -1082,7 +1118,11 @@ pub(crate) fn live_sessions_blocking(
     // Some = 页满/到达扫描上限时的续扫位置；None = 已扫到底。
     let mut next_cursor: Option<PageCursor> = None;
     // waiting tab 恒按等待时长排（store 里同样忽略 order），游标位要跟 SQL 的排序键一致。
-    let order = if filter == "waiting" { meowo_store::ListOrder::Activity } else { page.order };
+    let order = if filter == "waiting" {
+        meowo_store::ListOrder::Activity
+    } else {
+        page.order
+    };
     let sort_key = |session: &LiveSession| match order {
         meowo_store::ListOrder::Created => session.session.started_at,
         meowo_store::ListOrder::Manual => session.manual_key,
@@ -1090,7 +1130,15 @@ pub(crate) fn live_sessions_blocking(
     };
     'fill: loop {
         let sessions = store
-            .live_sessions_scan(Some(filter), search, cwd, cursor_ts, cursor_id, order, batch_limit)
+            .live_sessions_scan(
+                Some(filter),
+                search,
+                cwd,
+                cursor_ts,
+                cursor_id,
+                order,
+                batch_limit,
+            )
             .map_err(|e| e.to_string())?;
         let raw_len = sessions.len();
         let batch_tail = sessions
@@ -1130,7 +1178,7 @@ pub(crate) fn live_sessions_blocking(
                     connected,
                     &session.session.status,
                     session.pending_review.as_deref(),
-                    screen_state,
+                    screen_sight.and_then(|sight| sight.confirmed_state()),
                     || {
                         subagents_busy(
                             tx_cache,
@@ -1264,7 +1312,10 @@ fn enrich(
     let origin_root = if cwd_missing {
         None
     } else {
-        session.cwd.as_deref().and_then(crate::wtnew::origin::origin_root_cached)
+        session
+            .cwd
+            .as_deref()
+            .and_then(crate::wtnew::origin::origin_root_cached)
     };
     Some(LiveItem {
         inner: session,
@@ -1322,7 +1373,9 @@ fn foreign_db_path(own: &Path) -> Option<std::path::PathBuf> {
     let home = std::env::var("USERPROFILE")
         .or_else(|_| std::env::var("HOME"))
         .ok()?;
-    let path = std::path::PathBuf::from(home).join(".meowo").join("board.db");
+    let path = std::path::PathBuf::from(home)
+        .join(".meowo")
+        .join("board.db");
     if !path.is_file() {
         return None;
     }
@@ -1415,6 +1468,29 @@ fn foreign_live_items(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn fallback_screen_does_not_override_running_records() {
+        let unknown = super::super::pty::ScreenSight {
+            state: "idle",
+            fallback: true,
+        };
+        let idle = super::super::pty::ScreenSight {
+            state: "idle",
+            fallback: false,
+        };
+        assert_eq!(
+            super::tab_class(true, "running", None, unknown.confirmed_state(), || false),
+            Some("running")
+        );
+        assert_eq!(
+            super::tab_class(true, "running", None, idle.confirmed_state(), || false),
+            Some("waiting")
+        );
+        assert_eq!(
+            super::tab_class(true, "waiting", None, unknown.confirmed_state(), || false),
+            Some("waiting")
+        );
+    }
     use super::*;
 
     #[test]
@@ -1860,7 +1936,10 @@ mod tests {
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].inner.session.id, -1);
         // 搜索：cwd / 目录名子串命中；provider 等其它字段无可搜内容。
-        assert_eq!(pending_placeholder_items(&pendings, "all", Some("proj"), None).len(), 1);
+        assert_eq!(
+            pending_placeholder_items(&pendings, "all", Some("proj"), None).len(),
+            1
+        );
         assert!(pending_placeholder_items(&pendings, "all", Some("codex"), None).is_empty());
     }
 
@@ -1952,7 +2031,11 @@ mod tests {
                 .map(|item| item.endable)
         };
         assert_eq!(endable_of(orphan_sid), Some(true), "孤儿会话必须可结束");
-        assert_eq!(endable_of(dead_sid), Some(false), "死进程会话不该亮结束入口");
+        assert_eq!(
+            endable_of(dead_sid),
+            Some(false),
+            "死进程会话不该亮结束入口"
+        );
         let _ = std::fs::remove_file(&db);
     }
 }

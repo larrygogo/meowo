@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor, cleanup } from "@testing-library/re
 
 const api = vi.hoisted(() => ({
   newSession: vi.fn(),
+  managedConversationCreate: vi.fn(),
   recentCwds: vi.fn(),
   checkProviderHooks: vi.fn(),
   getSettings: vi.fn(),
@@ -39,6 +40,59 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe("新建会话页（对话窗主区，对照 Kimi）", () => {
+  it("protocol-capable providers default to a managed session, use the account ID, and hide CLI launch flags", async () => {
+    api.listAgents.mockResolvedValue(descriptors(["codex"]).map((agent) => ({ ...agent, supports_managed_conversation: agent.id === "codex" })));
+    api.getSettings.mockResolvedValue({ default_agent: "codex", active_profile: { codex: "work" } });
+    api.getAccounts.mockResolvedValue([{ provider: "codex", account: { login_label: "API Key" }, active_profile_name: "工作账号" }]);
+    api.managedConversationCreate.mockResolvedValue({ sessionId: 407 });
+    const onLaunched=vi.fn();render(<NewSessionPage prefill={{cwd:"C:/isolated",provider:"codex"}} onLaunched={onLaunched}/>);
+    await screen.findByRole("checkbox",{name:zh.chat.engineNative});
+    await screen.findByText(zh.newSession.activeProfile("工作账号"));
+    expect(screen.queryByTestId("nsp-option-approval")).toBeNull();
+    fireEvent.change(screen.getByTestId("nsp-input"),{target:{value:"  preserve exact first message  "}});
+    fireEvent.click(screen.getByTestId("nsp-send"));
+    await waitFor(()=>expect(api.managedConversationCreate).toHaveBeenCalledWith("codex",normalizePath("C:/isolated"),"work"));
+    expect(api.newSession).not.toHaveBeenCalled();
+    await waitFor(()=>expect(onLaunched).toHaveBeenCalledWith(407,"codex","  preserve exact first message  ",[]));
+  });
+
+  it.each(["codex", "kimi", "gemini", "opencode"])("%s uses descriptor-managed mode without a Claude-only fallback", async (provider) => {
+    api.listAgents.mockResolvedValue(
+      descriptors([provider]).map((agent) => ({ ...agent, supports_managed_conversation: agent.id === provider })),
+    );
+    api.getSettings.mockResolvedValue({ default_agent: provider });
+    api.getAccounts.mockResolvedValue([]);
+    api.managedConversationCreate.mockResolvedValue({ sessionId: 407 });
+    const onLaunched = vi.fn();
+    render(<NewSessionPage prefill={{ cwd: "C:/isolated", provider }} onLaunched={onLaunched} />);
+    await screen.findByRole("checkbox", { name: zh.chat.engineNative });
+    fireEvent.change(screen.getByTestId("nsp-input"), { target: { value: "managed first message" } });
+    fireEvent.click(screen.getByTestId("nsp-send"));
+    await waitFor(() => expect(api.managedConversationCreate).toHaveBeenCalledWith(provider, normalizePath("C:/isolated"), null));
+    expect(api.newSession).not.toHaveBeenCalled();
+    await waitFor(() => expect(onLaunched).toHaveBeenCalledWith(407, provider, "managed first message", []));
+  });
+
+  it("native CLI is an explicit alternative with its original launch path", async()=>{
+    api.listAgents.mockResolvedValue(descriptors(["codex"]).map((agent)=>({...agent,supports_managed_conversation:agent.id==="codex"})));
+    api.newSession.mockResolvedValue(-408);const onLaunched=vi.fn();
+    render(<NewSessionPage prefill={{cwd:"C:/isolated",provider:"codex"}} onLaunched={onLaunched}/>);
+    fireEvent.click(await screen.findByRole("checkbox",{name:zh.chat.engineNative}));
+    expect(await screen.findByTestId("nsp-option-approval")).toBeTruthy();
+    fireEvent.click(screen.getByTestId("nsp-send"));
+    await waitFor(()=>expect(api.newSession).toHaveBeenCalled());expect(api.managedConversationCreate).not.toHaveBeenCalled();
+  });
+
+  it("an unverified native version reports an error and never silently falls back to a PTY",async()=>{
+    api.listAgents.mockResolvedValue(descriptors(["codex"]).map((agent)=>({...agent,supports_managed_conversation:agent.id==="codex"})));
+    api.managedConversationCreate.mockRejectedValue("conversation/version_unsupported");
+    render(<NewSessionPage prefill={{cwd:"C:/isolated",provider:"codex"}} onLaunched={vi.fn()}/>);
+    await screen.findByRole("checkbox",{name:zh.chat.engineNative});
+    fireEvent.change(screen.getByTestId("nsp-input"),{target:{value:"keep my draft"}});fireEvent.click(screen.getByTestId("nsp-send"));
+    expect(await screen.findByRole("alert")).toBeTruthy();expect(api.newSession).not.toHaveBeenCalled();
+    expect((screen.getByTestId("nsp-input") as HTMLTextAreaElement).value).toBe("keep my draft");
+  });
+
   it("默认选中最近的工作区，写下第一句话回车即启动，并把这句话交回去", async () => {
     api.newSession.mockResolvedValue(-7);
     const onLaunched = vi.fn();

@@ -7,7 +7,7 @@
 /// hook 看到后唤醒模型——卡片不往终端写字，所以 Meowo 重启、手机断线都不会丢答复。
 
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { answerLeadGate, leadTaskSnapshot, type LeadGateDto, type LeadTaskDto } from "../../api";
+import { answerLeadGate, leadTaskSnapshot, retryLeadGateDelivery, type LeadGateDto, type LeadTaskDto } from "../../api";
 import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
 import { useVisibleInterval } from "../../hooks/useVisibleInterval";
@@ -118,6 +118,17 @@ export const LeadPanel = memo(function LeadPanel({ task, onClose }: { task: Lead
   const tabs = useTablist({ keys: LEAD_SECTIONS, active: section, onSelect: setSection });
   // 展开看全文的验收项（默认两行截断）。
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
+  const [retrying, setRetrying] = useState(false);
+  const [deliveryError, setDeliveryError] = useState<string | null>(null);
+  useEffect(() => setDeliveryError(null), [task.slug, task.gate?.id]);
+  const retryDelivery = async () => {
+    if (!task.delivery || !task.gate || retrying) return;
+    setRetrying(true);
+    setDeliveryError(null);
+    try { await retryLeadGateDelivery(task.delivery.cwd, task.gate.id); }
+    catch (error) { setDeliveryError(formatBackendError(error, t.locale)); }
+    finally { setRetrying(false); }
+  };
   // 还要做的排前面，豁免的沉底：一眼看到剩下的事。
   const checks = [...task.checks].sort((a, b) => checkRank(a) - checkRank(b));
   return (
@@ -139,6 +150,14 @@ export const LeadPanel = memo(function LeadPanel({ task, onClose }: { task: Lead
           <button type="button" className="dock-work-close" aria-label={t.chat.close} onClick={onClose}>×</button>
         </span>
       </div>
+      {task.delivery && task.gate?.status !== "pending" && (
+        <div className="lead-delivery" role="status">
+          <span>{task.gate?.status === "consumed" ? t.chat.leadDeliveryHandled : t.chat.leadDeliveryState(task.delivery.state)}</span>
+          {task.gate?.status !== "consumed" && task.delivery.reason && <div>{formatBackendError(task.delivery.reason, t.locale)}</div>}
+          {task.gate?.status !== "consumed" && task.delivery.canRetry && <button type="button" disabled={retrying} onClick={() => void retryDelivery()}>{t.chat.leadDeliveryRetry}</button>}
+          {deliveryError && <div role="alert">{deliveryError}</div>}
+        </div>
+      )}
       <div className="lead-tabs" {...tabs.listProps}>
         {LEAD_SECTIONS.map((key) => (
           <button key={key} type="button" {...tabs.tabProps(key)}
@@ -235,9 +254,9 @@ export function LeadGateCard({ cwd, gate, onAnswered }: { cwd: string; gate: Lea
     setBusy(true);
     setError(null);
     answerLeadGate(cwd, gate.id, choice, note.trim())
-      .then(onAnswered)
       .catch((e) => setError(formatBackendError(e, t.locale)))
-      .finally(() => setBusy(false));
+      // 送达失败前答复可能已经保存，刷新才能让手机显示真实的恢复入口。
+      .finally(() => { setBusy(false); onAnswered(); });
   };
   return (
     <ApprovalCard

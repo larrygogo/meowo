@@ -199,6 +199,60 @@ export function grammar(
   return { provider, selectorAnchors, attentionPatterns: ATTENTION_PATTERNS[provider] ?? [] };
 }
 
+// 与四家已实拍版本的 ComposerGuard 同值；未声明不表示终端可以直接写入。
+const COMPOSER_VERSIONS: Record<string, string> = {
+  "codex": "0.167.2",
+  "kimi": "2.5.3",
+  "gemini": "0.65.0",
+  "opencode": "1.19.3"
+};
+const COMPOSER_GUARDS: Record<string, NonNullable<ChatUi["composer_guard"]>> = {
+  "codex": {
+    "prompt_footer": true,
+    "input_start_pattern": "^(› )",
+    "top_pattern": "^› ",
+    "bottom_pattern": "^  [A-Za-z0-9][^\\r\\n]* · .+$",
+    "row_pattern": "^(?:› |  )(.*)$",
+    "prompt_prefix": "",
+    "tail_rows": 0,
+    "tail_pattern": null,
+    "empty_pattern": "^(?:Ask Codex to do anything)?$"
+  },
+  "kimi": {
+    "prompt_footer": false,
+    "input_start_pattern": "^(\\s*│ > )",
+    "top_pattern": "^\\s*╭─+╮\\s*$",
+    "bottom_pattern": "^\\s*╰─+╯\\s*$",
+    "row_pattern": "^\\s*│(.*)│\\s*$",
+    "prompt_prefix": ">",
+    "tail_rows": 0,
+    "tail_pattern": null,
+    "empty_pattern": "^$"
+  },
+  "gemini": {
+    "prompt_footer": false,
+    "input_start_pattern": "^(\\s*> )",
+    "top_pattern": "^─+$",
+    "bottom_pattern": "^─+$",
+    "row_pattern": "^ (.*)$",
+    "prompt_prefix": ">",
+    "tail_rows": 0,
+    "tail_pattern": null,
+    "empty_pattern": "^(?:Type your message or @path/to/file)?$"
+  },
+  "opencode": {
+    "prompt_footer": false,
+    "input_start_pattern": "^(\\s*┃  )",
+    "top_pattern": "^\\s*┃\\s*$",
+    "bottom_pattern": "^\\s*╹▀+\\s*$",
+    "row_pattern": "^\\s*┃(.*)$",
+    "prompt_prefix": "",
+    "tail_rows": 2,
+    "tail_pattern": "^\\s*┃\\s+\\S.* · .+$",
+    "empty_pattern": "^Ask anything…(?: \"[^\"\\r\\n]*\")?$"
+  }
+};
+
 export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | null {
   const builtins = SLASH_COMMANDS[provider];
   if (!builtins) return null;
@@ -302,7 +356,8 @@ export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | 
     subagent_view: provider === "claude" ? SUBAGENT_VIEW : null,
     // 与后端同源:仅 claude 取证过「TUI 权限框与 PermissionRequest hook 并行竞速」。
     permission_prompt_races_hook: provider === "claude",
-    version: null,
+    composer_guard: COMPOSER_GUARDS[provider],
+    version: COMPOSER_VERSIONS[provider] ?? null,
   };
 }
 
@@ -379,6 +434,8 @@ export function descriptors(installed: string[]): AgentDescriptor[] {
     supports_profiles: SUPPORTS_PROFILES.has(id),
     supports_context: SUPPORTS_CONTEXT.has(id),
     supports_chat_export: SUPPORTS_CHAT_EXPORT.has(id),
+    // 旧用例明确覆盖原生CLI路径；协议托管用例需单独开启能力并给真实结构化历史。
+    supports_managed_conversation: false,
     // 与后端事实对齐:claude/codex/kimi 声明了 CrossAccountSession(会话能搬去另一个账号);
     // opencode 的会话存储没取证过,gemini 压根不支持多账号。
     moves_sessions_across_accounts: MOVES_SESSIONS_ACROSS_ACCOUNTS.has(id),

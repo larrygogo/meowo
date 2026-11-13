@@ -869,7 +869,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
     if (!attentionIdsRef) return;
     attentionIdsRef.current = new Set((ordered ?? [])
       .filter((item) => approvalAwaitingIds.has(item.session.id)
-        || attentionTone(sessionTone(item.connected, item.session.status, item.pending_review, item.errored, item.busy_subagents, item.screen_state)))
+        || attentionTone(sessionTone(item.connected, item.session.status, item.pending_review, item.errored, item.busy_subagents, item.screen_state, item.screen_assumed)))
       .map((item) => item.session.id));
   }, [ordered, approvalAwaitingIds, attentionIdsRef]);
   useEffect(() => () => { if (attentionIdsRef) attentionIdsRef.current = new Set(); }, [attentionIdsRef]);
@@ -983,7 +983,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
     let approval = 0, waiting = 0, error = 0;
     for (const item of ordered) {
       if (approvalAwaitingIds.has(item.session.id)) approval += 1;
-      const tone = sessionTone(item.connected, item.session.status, item.pending_review, item.errored, item.busy_subagents, item.screen_state);
+      const tone = sessionTone(item.connected, item.session.status, item.pending_review, item.errored, item.busy_subagents, item.screen_state, item.screen_assumed);
       if (tone === "waiting") waiting += 1;
       else if (tone === "error") error += 1;
     }
@@ -997,7 +997,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
     // 与对话窗标题栏同一套口径(sessionTone,含 errored——贴纸的错误优先级由此
     // 对齐,不再出现「贴纸报错、侧栏亮绿点」)。offline/ended 不加点——图标置灰
     // (is-off)已表达「不活跃」,再叠一个灰点是噪声。
-    const tone = sessionTone(item.connected, item.session.status, item.pending_review, item.errored, item.busy_subagents, item.screen_state);
+    const tone = sessionTone(item.connected, item.session.status, item.pending_review, item.errored, item.busy_subagents, item.screen_state, item.screen_assumed);
     const showDot = tone === "running" || tone === "pending" || tone === "waiting" || tone === "error";
     // 待授权徽标优先于状态点：授权在等用户决策，比「在跑/待处理」都紧急；
     // 且不依附 connected——离线会话恢复的 agent 同样可能来要权限。
@@ -1434,7 +1434,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
               // 组头汇总点:折起来时它是这一组唯一的状态出口,取组内最强的召唤。
               const approval = group.items.some((item) => approvalAwaitingIds.has(item.session.id));
               const tone = group.items
-                .map((item) => sessionTone(item.connected, item.session.status, item.pending_review, item.errored, item.busy_subagents, item.screen_state))
+                .map((item) => sessionTone(item.connected, item.session.status, item.pending_review, item.errored, item.busy_subagents, item.screen_state, item.screen_assumed))
                 .reduce<SessionTone | null>((best, cur) => (best && TONE_RANK[best] >= TONE_RANK[cur] ? best : cur), null);
               const showDot = !!tone && TONE_RANK[tone] > 0;
               // 未读排在出错之后、等待/运行之前（对照 Kimi 分组汇总：审批 > 提问 > 失败 > 未读）：
@@ -1449,7 +1449,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
                   : showDot && <i className={`chat-sidebar-dot is-${tone}`} role="img" aria-label={t.chat.status[tone]} data-tip={t.chat.status[tone]} />;
               // 目录分组的组头汇总「N 项待处理」（对照 Kimi 的 attentionTitle）：组折起来也知道里面有几件要你决定。
               const attention = group.items.filter((item) => approvalAwaitingIds.has(item.session.id)
-                || sessionTone(item.connected, item.session.status, item.pending_review, item.errored, item.busy_subagents, item.screen_state) === "pending").length;
+                || sessionTone(item.connected, item.session.status, item.pending_review, item.errored, item.busy_subagents, item.screen_state, item.screen_assumed) === "pending").length;
               return (
                 <div
                   key={group.key}

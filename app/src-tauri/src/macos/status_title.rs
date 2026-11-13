@@ -38,7 +38,8 @@ unsafe fn color(name: &str) -> *mut AnyObject {
 unsafe fn build(segments: &[Segment]) -> *mut AnyObject {
     let out: *mut AnyObject = msg_send![class!(NSMutableAttributedString), new];
     // 等宽数字的系统字体，字重 Medium（NSFontWeightMedium = 0.23）：数字变化时宽度不跳。
-    let font: *mut AnyObject = msg_send![class!(NSFont), monospacedDigitSystemFontOfSize: 12.0f64, weight: 0.23f64];
+    let font: *mut AnyObject =
+        msg_send![class!(NSFont), monospacedDigitSystemFontOfSize: 12.0f64, weight: 0.23f64];
     let font_key = NSString::from_str("NSFont");
     let color_key = NSString::from_str("NSColor");
     for seg in segments {
@@ -57,7 +58,8 @@ unsafe fn build(segments: &[Segment]) -> *mut AnyObject {
                 ];
                 let s = NSString::from_str(text);
                 let piece: *mut AnyObject = msg_send![class!(NSAttributedString), alloc];
-                let piece: *mut AnyObject = msg_send![piece, initWithString: &*s, attributes: attrs];
+                let piece: *mut AnyObject =
+                    msg_send![piece, initWithString: &*s, attributes: attrs];
                 let _: () = msg_send![out, appendAttributedString: piece];
                 let _: () = msg_send![piece, release];
             }
@@ -81,15 +83,15 @@ unsafe fn build(segments: &[Segment]) -> *mut AnyObject {
                     class!(NSImageSymbolConfiguration),
                     configurationWithHierarchicalColor: color(c)
                 ];
-                let config: *mut AnyObject = msg_send![size, configurationByApplyingConfiguration: tint];
+                let config: *mut AnyObject =
+                    msg_send![size, configurationByApplyingConfiguration: tint];
                 let image: *mut AnyObject = msg_send![image, imageWithSymbolConfiguration: config];
                 if image.is_null() {
                     continue;
                 }
                 let attachment: *mut AnyObject = msg_send![class!(NSTextAttachment), new];
                 let _: () = msg_send![attachment, setImage: image];
-                let piece: *mut AnyObject =
-                    msg_send![class!(NSAttributedString), attributedStringWithAttachment: attachment];
+                let piece: *mut AnyObject = msg_send![class!(NSAttributedString), attributedStringWithAttachment: attachment];
                 let _: () = msg_send![out, appendAttributedString: piece];
                 let _: () = msg_send![attachment, release];
             }

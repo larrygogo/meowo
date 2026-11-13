@@ -8,6 +8,18 @@ mod mcp;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    #[cfg(unix)]
+    if args
+        .first()
+        .is_some_and(|arg| arg == "conversation-supervisor")
+    {
+        let result = meowo_reporter::unix_supervisor::run(&args);
+        std::process::exit(if result.is_ok() { 0 } else { 1 });
+    }
+    if args.first().is_some_and(|arg| arg == "lead-mcp") {
+        meowo_reporter::lead_mcp::run();
+        return;
+    }
     // agent 拉起的 MCP 服务器（面板浏览器工具）。长驻读 stdin，必须在 run() 一次性读完
     // stdin 之前分流。
     if args.first().is_some_and(|arg| arg == "mcp") {
@@ -17,13 +29,28 @@ fn main() {
     // Lead 工作流 hook（用户在设置里打开 Lead 后才装）。与下面的主路径分开：只有它会输出
     // 改变 CLI 行为的内容；仍然吞掉一切错误、以 0 退出。
     if args.first().is_some_and(|arg| arg == "lead") {
+        // 托管worker负责认领、上下文和继续推进，CLI的异步hook不得再启动第二条续跑链路。
+        if std::env::var("MEOWO_PROTOCOL_MANAGED").as_deref() == Ok("1") {
+            return;
+        }
         // wait 模式（asyncRewake）用退出码 2 + stderr 唤醒模型；其余模式恒为 0。
         let mut raw = String::new();
         let mut code = 0;
         if std::io::stdin().read_to_string(&mut raw).is_ok() {
-            if let Some(registry) = db_path().and_then(|p| p.parent().map(|d| d.join("lead-sessions.json"))) {
+            if let Some(registry) =
+                db_path().and_then(|p| p.parent().map(|d| d.join("lead-sessions.json")))
+            {
                 let mode = args.get(1).map(String::as_str).unwrap_or("");
-                let out = meowo_reporter::lead::run(mode, &raw, &registry);
+                let provider = args
+                    .windows(2)
+                    .find(|pair| pair[0] == "--provider")
+                    .map(|pair| pair[1].as_str());
+                let out = match provider {
+                    Some(provider) => {
+                        meowo_reporter::lead_provider::run(provider, mode, &raw, &registry)
+                    }
+                    None => meowo_reporter::lead::run(mode, &raw, &registry),
+                };
                 if let Some(text) = out.stdout {
                     print!("{text}");
                 }
@@ -53,6 +80,10 @@ fn main() {
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
+    // 协议托管的生命周期和审批由唯一worker记录，原生hook再写会制造第二张会话卡/双重审批。
+    if std::env::var("MEOWO_PROTOCOL_MANAGED").as_deref() == Ok("1") {
+        return Ok(());
+    }
     let mut buf = String::new();
     std::io::stdin().read_to_string(&mut buf)?;
 
@@ -378,7 +409,10 @@ mod tests {
         let (output, settled) =
             pretooluse_outcome(ApprovalDecision::DenyWith("旧答案".into()), Some(&input));
         assert!(settled);
-        assert_eq!(output.unwrap()["hookSpecificOutput"]["permissionDecision"], "deny");
+        assert_eq!(
+            output.unwrap()["hookSpecificOutput"]["permissionDecision"],
+            "deny"
+        );
 
         for decision in [
             ApprovalDecision::Allow,

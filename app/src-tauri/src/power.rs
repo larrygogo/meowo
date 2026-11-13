@@ -27,7 +27,12 @@ pub(crate) fn spawn_keep_awake(app: tauri::AppHandle) {
                     .unwrap_or(false);
                 // 关卡只在开关打开时才去扫（读几个小文件），关着就不碰磁盘。
                 let gate = settings.keep_awake_for_lead_gate && lead_gate_pending(&app);
-                let wanted = wants_awake(settings.keep_awake_while_running, running, settings.keep_awake_for_lead_gate, gate);
+                let wanted = wants_awake(
+                    settings.keep_awake_while_running,
+                    running,
+                    settings.keep_awake_for_lead_gate,
+                    gate,
+                );
                 awake.set(wanted);
                 std::thread::sleep(POLL);
             }
@@ -47,20 +52,26 @@ fn wants_awake(keep_running: bool, running: bool, keep_gate: bool, gate_pending:
 fn lead_gate_pending(app: &tauri::AppHandle) -> bool {
     use tauri::Manager;
     let db_path = app.state::<crate::AppState>().db_path.clone();
-    let Ok(store) = crate::open_store(&db_path) else { return false };
-    let Ok(cwds) = store.recent_cwds(20) else { return false };
+    let Ok(store) = crate::open_store(&db_path) else {
+        return false;
+    };
+    let Ok(cwds) = store.recent_cwds(20) else {
+        return false;
+    };
     // 挂了一天还没人答的关卡多半已被遗弃（agent 中途放弃、在终端答了却没改状态），不再为它拦休眠，
     // 否则电脑会一直睡不着（做空审查 L5）。
     const STALE: std::time::Duration = std::time::Duration::from_secs(24 * 3600);
     cwds.iter().any(|cwd| {
-        meowo_reporter::lead::project_gates(cwd).iter().any(|(task, g)| {
-            g.status == "pending"
-                && std::fs::metadata(task.join("gate.json"))
-                    .and_then(|m| m.modified())
-                    .ok()
-                    .and_then(|t| t.elapsed().ok())
-                    .is_some_and(|age| age < STALE)
-        })
+        meowo_reporter::lead::project_gates(cwd)
+            .iter()
+            .any(|(task, g)| {
+                g.status == "pending"
+                    && std::fs::metadata(task.join("gate.json"))
+                        .and_then(|m| m.modified())
+                        .ok()
+                        .and_then(|t| t.elapsed().ok())
+                        .is_some_and(|age| age < STALE)
+            })
     })
 }
 
@@ -121,10 +132,19 @@ mod tests {
     #[test]
     fn keep_awake_for_running_or_pending_gate() {
         assert!(wants_awake(true, true, true, false));
-        assert!(!wants_awake(true, false, true, false), "没在跑、没关卡 → 放开");
+        assert!(
+            !wants_awake(true, false, true, false),
+            "没在跑、没关卡 → 放开"
+        );
         assert!(wants_awake(true, false, true, true), "有关卡在等 → 拦");
-        assert!(wants_awake(false, false, true, true), "关了「运行时防休眠」也不影响关卡防休眠");
-        assert!(!wants_awake(true, false, false, true), "关掉关卡防休眠 → 恢复原行为");
+        assert!(
+            wants_awake(false, false, true, true),
+            "关了「运行时防休眠」也不影响关卡防休眠"
+        );
+        assert!(
+            !wants_awake(true, false, false, true),
+            "关掉关卡防休眠 → 恢复原行为"
+        );
         assert!(!wants_awake(false, true, false, true));
     }
 }

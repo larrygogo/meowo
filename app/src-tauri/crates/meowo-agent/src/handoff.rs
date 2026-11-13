@@ -104,9 +104,11 @@ fn render_header(out: &mut String, meta: &HandoffMeta) {
 fn render_item(item: &ChatItem, meta: &HandoffMeta) -> Option<String> {
     match item {
         // 发给子代理的话要标出去向：续接方读到它时不该当成对主 agent 的指令。
-        ChatItem::UserText { text, to_agent: Some(agent), .. } => {
-            Some(format!("## 用户（发给子代理「{agent}」）\n\n{text}\n"))
-        }
+        ChatItem::UserText {
+            text,
+            to_agent: Some(agent),
+            ..
+        } => Some(format!("## 用户（发给子代理「{agent}」）\n\n{text}\n")),
         ChatItem::UserText { text, .. } => Some(format!("## 用户\n\n{text}\n")),
         ChatItem::AssistantText { text, .. } => Some(format!(
             "## 助手（{}）\n\n{text}\n",
@@ -157,7 +159,11 @@ fn reduce(items: &[ChatItem]) -> Vec<ChatItem> {
     let mut out: Vec<ChatItem> = Vec::new();
     for item in items {
         match item {
-            ChatItem::AssistantDelta { id, timestamp, text } => {
+            ChatItem::AssistantDelta {
+                id,
+                timestamp,
+                text,
+            } => {
                 if let Some(ChatItem::AssistantText { text: prev, .. }) = out.last_mut() {
                     prev.push_str(text);
                 } else {
@@ -168,7 +174,11 @@ fn reduce(items: &[ChatItem]) -> Vec<ChatItem> {
                     });
                 }
             }
-            ChatItem::ReasoningDelta { id, timestamp, text } => {
+            ChatItem::ReasoningDelta {
+                id,
+                timestamp,
+                text,
+            } => {
                 if let Some(ChatItem::Reasoning { text: prev, .. }) = out.last_mut() {
                     prev.push_str(text);
                 } else {

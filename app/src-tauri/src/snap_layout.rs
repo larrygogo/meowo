@@ -63,18 +63,29 @@ mod imp {
         TrackMouseEvent, TME_LEAVE, TME_NONCLIENT, TRACKMOUSEEVENT,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        CreateWindowExW, DefWindowProcW, DestroyWindow, FindWindowExW, GetWindowLongPtrW,
-        IsZoomed, LoadCursorW, RegisterClassW, SendMessageW, SetCursor, SetWindowLongPtrW,
-        SetWindowPos, GWLP_USERDATA, HTCLOSE, HTMAXBUTTON, HTMINBUTTON, HWND_TOP, IDC_ARROW,
-        SC_CLOSE, SC_MAXIMIZE, SC_MINIMIZE, SC_RESTORE, SWP_NOACTIVATE, SWP_SHOWWINDOW,
-        WM_DESTROY, WM_NCHITTEST, WM_NCLBUTTONDOWN, WM_NCLBUTTONUP, WM_NCMOUSELEAVE,
-        WM_SETCURSOR, WM_SYSCOMMAND, WNDCLASSW, WS_CHILD, WS_VISIBLE,
+        CreateWindowExW, DefWindowProcW, DestroyWindow, FindWindowExW, GetWindowLongPtrW, IsZoomed,
+        LoadCursorW, RegisterClassW, SendMessageW, SetCursor, SetWindowLongPtrW, SetWindowPos,
+        GWLP_USERDATA, HTCLOSE, HTMAXBUTTON, HTMINBUTTON, HWND_TOP, IDC_ARROW, SC_CLOSE,
+        SC_MAXIMIZE, SC_MINIMIZE, SC_RESTORE, SWP_NOACTIVATE, SWP_SHOWWINDOW, WM_DESTROY,
+        WM_NCHITTEST, WM_NCLBUTTONDOWN, WM_NCLBUTTONUP, WM_NCMOUSELEAVE, WM_SETCURSOR,
+        WM_SYSCOMMAND, WNDCLASSW, WS_CHILD, WS_VISIBLE,
     };
 
     /// "MeowoCaption\0"（UTF-16）。类名同时是 FindWindowExW 枚举既有覆盖窗的钥匙。
     static CLASS_NAME: [u16; 13] = [
-        b'M' as u16, b'e' as u16, b'o' as u16, b'w' as u16, b'o' as u16, b'C' as u16,
-        b'a' as u16, b'p' as u16, b't' as u16, b'i' as u16, b'o' as u16, b'n' as u16, 0,
+        b'M' as u16,
+        b'e' as u16,
+        b'o' as u16,
+        b'w' as u16,
+        b'o' as u16,
+        b'C' as u16,
+        b'a' as u16,
+        b'p' as u16,
+        b't' as u16,
+        b'i' as u16,
+        b'o' as u16,
+        b'n' as u16,
+        0,
     ];
 
     /// 按钮种类 → 命中码 / 点击的系统命令。
@@ -162,9 +173,7 @@ mod imp {
         let rects = rects.unwrap_or_default();
         unsafe {
             for kind in [Kind::Min, Kind::Max, Kind::Close] {
-                let rect = rects
-                    .iter()
-                    .find(|r| Kind::parse(&r.kind) == Some(kind));
+                let rect = rects.iter().find(|r| Kind::parse(&r.kind) == Some(kind));
                 let existing = find_overlay(parent, kind);
                 let Some(r) = rect else {
                     if !existing.is_null() {
@@ -174,7 +183,15 @@ mod imp {
                 };
                 if !existing.is_null() {
                     // HWND_TOP：必须压在 WebView2 兄弟子窗之上，否则命中测试又回到 WebView。
-                    SetWindowPos(existing, HWND_TOP, r.x, r.y, r.w, r.h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+                    SetWindowPos(
+                        existing,
+                        HWND_TOP,
+                        r.x,
+                        r.y,
+                        r.w,
+                        r.h,
+                        SWP_NOACTIVATE | SWP_SHOWWINDOW,
+                    );
                     continue;
                 }
                 register_class_once();
@@ -255,7 +272,11 @@ mod imp {
                     let cmd = match (*state).kind {
                         Kind::Min => SC_MINIMIZE,
                         Kind::Max => {
-                            if IsZoomed(parent) != 0 { SC_RESTORE } else { SC_MAXIMIZE }
+                            if IsZoomed(parent) != 0 {
+                                SC_RESTORE
+                            } else {
+                                SC_MAXIMIZE
+                            }
                         }
                         Kind::Close => SC_CLOSE,
                     };

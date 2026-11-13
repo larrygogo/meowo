@@ -2,7 +2,9 @@
 //! 不经 shell 直接 spawn git（路径作为独立 argv，无注入面）；子进程可能被杀软拖慢，
 //! 统一走 spawn_blocking，不进主线程（同类教训见 terminal.rs open_project_dir 的注释）。
 
-use meowo_protocol::ipc::{GitChangedFileDto, GitDiffSummaryDto, GitFileDiffDto, PullRequestDto, RepoChangesDto};
+use meowo_protocol::ipc::{
+    GitChangedFileDto, GitDiffSummaryDto, GitFileDiffDto, PullRequestDto, RepoChangesDto,
+};
 use std::path::Path;
 use std::process::Command;
 
@@ -33,7 +35,11 @@ pub(crate) fn sidebar_diff_counts_blocking(cwd: &str) -> Option<(u32, u32, u32)>
         return None;
     }
     // 不在工作树里（非仓库、.git 目录内、裸仓库）status 直接失败，等价于摘要里 is-inside-work-tree 那一问。
-    let status = git_output(dir, &["status", "--porcelain", "-z", "--no-renames", "-unormal"]).ok()?;
+    let status = git_output(
+        dir,
+        &["status", "--porcelain", "-z", "--no-renames", "-unormal"],
+    )
+    .ok()?;
     if !status.status.success() {
         return None;
     }
@@ -75,7 +81,15 @@ fn summary_blocking(cwd: &str, counts: bool) -> Result<GitDiffSummaryDto, String
     // spawn 失败（git 未安装/被拦）不算错误——前端只是不显示按钮。
     // 顺带要公共 .git 目录与本 worktree 的 .git 目录：推送去向靠直接读它们的 config 判定
     // （git_target::resolve），不再多起 `git remote` / `git config` 进程。
-    let inside = match git_output(dir, &["rev-parse", "--is-inside-work-tree", "--git-common-dir", "--git-dir"]) {
+    let inside = match git_output(
+        dir,
+        &[
+            "rev-parse",
+            "--is-inside-work-tree",
+            "--git-common-dir",
+            "--git-dir",
+        ],
+    ) {
         Ok(output) => output,
         Err(_) => return Ok(unavailable()),
     };
@@ -98,8 +112,18 @@ fn summary_blocking(cwd: &str, counts: bool) -> Result<GitDiffSummaryDto, String
     // porcelain 格式下这一行不随语言设置翻译（wt-status.c 的 wt_porcelain_print 置 no_gettext）。
     // 二期实测（release，bench_summary_with_15000_untracked_files，同轮对照）：改前 -uall 182ms，折叠后冷态
     // 从 199ms 降到 146ms（Windows 上每个 git 进程固定约 30ms）。
-    let status = git_output(dir, &["status", "--porcelain", "-z", "--no-renames", "-unormal", "--branch"])
-        .map_err(|e| e.to_string())?;
+    let status = git_output(
+        dir,
+        &[
+            "status",
+            "--porcelain",
+            "-z",
+            "--no-renames",
+            "-unormal",
+            "--branch",
+        ],
+    )
+    .map_err(|e| e.to_string())?;
     if !status.status.success() {
         return Err("git status 执行失败".into());
     }
@@ -112,12 +136,20 @@ fn summary_blocking(cwd: &str, counts: bool) -> Result<GitDiffSummaryDto, String
     // 推送去向与 forge::push_with 同一个判定（git_target::resolve，做空第二轮）：远端名原样从
     // branch.<b>.remote 取，带斜杠（team/fork）也不拆；pushRemote / pushDefault 优先；上游是远端默认分支
     // 而本地不是它时按没上游处理（第一轮做空：照 origin/main 推，提交进了远端 main）。
-    let path_line = |line: Option<&str>| line.map(str::trim).filter(|l| !l.is_empty()).map(|l| Path::new(dir).join(l));
+    let path_line = |line: Option<&str>| {
+        line.map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(|l| Path::new(dir).join(l))
+    };
     let common = path_line(inside_lines.next());
     let git_dir = path_line(inside_lines.next());
     let target = match (&common, &head.branch) {
         (Some(common), Some(branch)) => {
-            let config = crate::git_target::GitConfig::load(common, git_dir.as_deref(), &crate::git_target::process_env);
+            let config = crate::git_target::GitConfig::load(
+                common,
+                git_dir.as_deref(),
+                &crate::git_target::process_env,
+            );
             crate::git_target::resolve(&config, common, branch)
         }
         _ => None,
@@ -200,7 +232,10 @@ pub(crate) fn parse_branch_header(line: &str) -> BranchHeader {
     if initial {
         return BranchHeader::default();
     }
-    let mut head = BranchHeader { branch: Some(branch.to_string()).filter(|b| !b.is_empty()), ..Default::default() };
+    let mut head = BranchHeader {
+        branch: Some(branch.to_string()).filter(|b| !b.is_empty()),
+        ..Default::default()
+    };
     if tracking == Some("gone") {
         return head;
     }
@@ -224,18 +259,30 @@ pub(crate) fn parse_branch_header(line: &str) -> BranchHeader {
 
 /// 有几个提交还不在这个远端上（`rev-list --count HEAD --not --remotes=<远端>`）。
 fn unpushed_to_remote(dir: &str, remote: &str) -> Option<u32> {
-    let output = git_output(dir, &["rev-list", "--count", "HEAD", "--not", &format!("--remotes={remote}")])
-        .ok()
-        .filter(|o| o.status.success())?;
+    let output = git_output(
+        dir,
+        &[
+            "rev-list",
+            "--count",
+            "HEAD",
+            "--not",
+            &format!("--remotes={remote}"),
+        ],
+    )
+    .ok()
+    .filter(|o| o.status.success())?;
     stdout_text(&output.stdout).trim().parse().ok()
 }
 
 /// 相对上游的 (领先, 落后) 提交数：`rev-list --left-right --count HEAD...@{upstream}` 输出
 /// 「左侧独有 右侧独有」。没设上游、detached HEAD 都会失败，返回 None（前端不显示）。
 fn upstream_divergence(dir: &str) -> Option<(u32, u32)> {
-    let output = git_output(dir, &["rev-list", "--left-right", "--count", "HEAD...@{upstream}"])
-        .ok()
-        .filter(|output| output.status.success())?;
+    let output = git_output(
+        dir,
+        &["rev-list", "--left-right", "--count", "HEAD...@{upstream}"],
+    )
+    .ok()
+    .filter(|output| output.status.success())?;
     let text = stdout_text(&output.stdout);
     let mut counts = text.split_whitespace().map(str::parse::<u32>);
     Some((counts.next()?.ok()?, counts.next()?.ok()?))
@@ -277,7 +324,10 @@ fn fold_cache_key(dir: &str, path: &str) -> String {
 /// 把目录条目换成「逐个文件」或「一条折叠目录」，其余条目原样、顺序不变（porcelain 按路径排好了）。
 /// 只含嵌套仓库、一个文件都没有的目录不出现：-uall 时代嵌套仓库（`.claude/worktrees/x/`）就不列，
 /// 列出来「暂存」会把它当 gitlink 加进去（commit_all_skips_untracked_nested_repo）。
-fn fold_untracked_dirs(dir: &str, entries: Vec<StatusEntry>) -> Result<Vec<GitChangedFileDto>, String> {
+fn fold_untracked_dirs(
+    dir: &str,
+    entries: Vec<StatusEntry>,
+) -> Result<Vec<GitChangedFileDto>, String> {
     let dirs: Vec<&str> = entries
         .iter()
         .filter_map(|entry| match entry {
@@ -297,7 +347,11 @@ fn fold_untracked_dirs(dir: &str, entries: Vec<StatusEntry>) -> Result<Vec<GitCh
             }
         }
     }
-    let to_list: Vec<String> = dirs.iter().filter(|path| !cached.contains_key(**path)).map(|path| path.to_string()).collect();
+    let to_list: Vec<String> = dirs
+        .iter()
+        .filter(|path| !cached.contains_key(**path))
+        .map(|path| path.to_string())
+        .collect();
     let mut buckets = bucket_by_dir(&to_list, &untracked_listing(dir, &to_list)?);
     let mut out = Vec::with_capacity(entries.len());
     let mut fresh: Vec<(String, usize)> = Vec::new();
@@ -306,13 +360,22 @@ fn fold_untracked_dirs(dir: &str, entries: Vec<StatusEntry>) -> Result<Vec<GitCh
             StatusEntry::File(file) => out.push(file),
             StatusEntry::UntrackedDir(path) => {
                 if let Some(&count) = cached.get(&path) {
-                    out.push(untracked_dto(path, Some(u32::try_from(count).unwrap_or(u32::MAX))));
+                    out.push(untracked_dto(
+                        path,
+                        Some(u32::try_from(count).unwrap_or(u32::MAX)),
+                    ));
                     continue;
                 }
-                let files = buckets.remove(&path).map(|bucket| bucket.files).unwrap_or_default();
+                let files = buckets
+                    .remove(&path)
+                    .map(|bucket| bucket.files)
+                    .unwrap_or_default();
                 if files.len() > UNTRACKED_FOLD_MIN {
                     fresh.push((path.clone(), files.len()));
-                    out.push(untracked_dto(path, Some(u32::try_from(files.len()).unwrap_or(u32::MAX))));
+                    out.push(untracked_dto(
+                        path,
+                        Some(u32::try_from(files.len()).unwrap_or(u32::MAX)),
+                    ));
                 } else {
                     out.extend(files.into_iter().map(|file| untracked_dto(file, None)));
                 }
@@ -339,12 +402,22 @@ struct DirBucket {
 }
 
 /// ls-files 的结果按所属目录条目分桶。status 给出的目录条目互不嵌套，按路径前缀找第一个命中的即可。
-fn bucket_by_dir(dirs: &[String], listing: &[String]) -> std::collections::HashMap<String, DirBucket> {
-    let mut buckets: std::collections::HashMap<String, DirBucket> =
-        dirs.iter().map(|path| (path.clone(), DirBucket::default())).collect();
+fn bucket_by_dir(
+    dirs: &[String],
+    listing: &[String],
+) -> std::collections::HashMap<String, DirBucket> {
+    let mut buckets: std::collections::HashMap<String, DirBucket> = dirs
+        .iter()
+        .map(|path| (path.clone(), DirBucket::default()))
+        .collect();
     for item in listing {
-        let owner = item.match_indices('/').map(|(at, _)| &item[..=at]).find(|prefix| buckets.contains_key(*prefix));
-        let Some(owner) = owner.map(str::to_string) else { continue };
+        let owner = item
+            .match_indices('/')
+            .map(|(at, _)| &item[..=at])
+            .find(|prefix| buckets.contains_key(*prefix));
+        let Some(owner) = owner.map(str::to_string) else {
+            continue;
+        };
         let bucket = buckets.get_mut(&owner).expect("owner 来自 buckets 的键");
         if item.ends_with('/') {
             bucket.nested_repo = true;
@@ -362,7 +435,14 @@ fn untracked_listing(dir: &str, paths: &[String]) -> Result<Vec<String>, String>
     let mut out = Vec::new();
     let specs: Vec<String> = paths.iter().map(|p| format!(":(top,literal){p}")).collect();
     for batch in pathspec_batches(&specs) {
-        let mut argv: Vec<&str> = vec!["ls-files", "--others", "--exclude-standard", "--full-name", "-z", "--"];
+        let mut argv: Vec<&str> = vec![
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+            "--full-name",
+            "-z",
+            "--",
+        ];
         argv.extend(batch.iter().map(String::as_str));
         let output = git_output(dir, &argv).map_err(|e| format!("git/failed: {e}"))?;
         if !output.status.success() {
@@ -382,7 +462,10 @@ fn untracked_listing(dir: &str, paths: &[String]) -> Result<Vec<String>, String>
 /// 「更改」面板点开一个折叠目录：列出其中的未跟踪文件（用户点开时才跑一次，不进 5 秒轮询）。
 /// path 必须逐字是此刻 status 里的一个未跟踪目录条目（手机端传什么都进得来，同 listed_changes）。
 #[tauri::command]
-pub(crate) async fn git_untracked_dir_files(cwd: String, path: String) -> Result<Vec<GitChangedFileDto>, String> {
+pub(crate) async fn git_untracked_dir_files(
+    cwd: String,
+    path: String,
+) -> Result<Vec<GitChangedFileDto>, String> {
     tauri::async_runtime::spawn_blocking(move || untracked_dir_files_blocking(&cwd, &path))
         .await
         .map_err(|e| e.to_string())?
@@ -407,12 +490,19 @@ fn require_untracked_dir(dir: &str, path: &str) -> Result<(), String> {
     let listed = status_entries(dir)?
         .iter()
         .any(|entry| matches!(entry, StatusEntry::UntrackedDir(d) if d == path));
-    if listed { Ok(()) } else { Err("git/not_in_changes".into()) }
+    if listed {
+        Ok(())
+    } else {
+        Err("git/not_in_changes".into())
+    }
 }
 
 fn status_entries(dir: &str) -> Result<Vec<StatusEntry>, String> {
-    let status = git_output(dir, &["status", "--porcelain", "-z", "--no-renames", "-unormal"])
-        .map_err(|e| format!("git/failed: {e}"))?;
+    let status = git_output(
+        dir,
+        &["status", "--porcelain", "-z", "--no-renames", "-unormal"],
+    )
+    .map_err(|e| format!("git/failed: {e}"))?;
     if !status.status.success() {
         return Err(classify_git_failure(&status));
     }
@@ -442,7 +532,11 @@ fn ignore_dir_blocking(cwd: &str, path: &str) -> Result<(), String> {
         Err(e) => return Err(format!("git/failed: {e}")),
     };
     let bare = line.trim_end_matches('/');
-    if text.lines().map(str::trim_end).any(|existing| existing == line || existing == bare) {
+    if text
+        .lines()
+        .map(str::trim_end)
+        .any(|existing| existing == line || existing == bare)
+    {
         return Ok(());
     }
     // 换行跟着原文件走：原来是 CRLF 就 CRLF；原来末尾没有换行，追加后末尾也不加。
@@ -454,7 +548,8 @@ fn ignore_dir_blocking(cwd: &str, path: &str) -> Result<(), String> {
     } else {
         format!("{text}{eol}{line}")
     };
-    let result = meowo_agent::fsutil::write_atomic(&file, &body).map_err(|e| format!("git/failed: {e}"));
+    let result =
+        meowo_agent::fsutil::write_atomic(&file, &body).map_err(|e| format!("git/failed: {e}"));
     invalidate_caches();
     result
 }
@@ -482,7 +577,9 @@ fn fill_line_counts(dir: &str, files: &mut [GitChangedFileDto]) {
     // 只有未跟踪文件（或干净）时 numstat 必然为空，省掉这个进程：侧栏每 30 秒给每个目录算一遍，
     // Windows 上一个 git 进程约 40ms（bench_sidebar_badges_20_dirs 实测）。冲突条目 status 也是 "U"，
     // 所以按 index/worktree 两位判未跟踪，不按 status。
-    let tracked = files.iter().any(|f| !(f.index_status.is_none() && f.worktree_status.as_deref() == Some("U")));
+    let tracked = files
+        .iter()
+        .any(|f| !(f.index_status.is_none() && f.worktree_status.as_deref() == Some("U")));
     // 仓库还没有任何提交时 HEAD 不存在，这条会失败，跟踪文件就都不显示行数。
     let numstat = tracked
         .then(|| git_output(dir, &["diff", "HEAD", "--numstat", "-z", "--no-renames"]).ok())
@@ -501,7 +598,11 @@ fn fill_line_counts(dir: &str, files: &mut [GitChangedFileDto]) {
     // status 的路径相对仓库根，读盘要拼到仓库根上：以前拼到 cwd，会话开在子目录时未跟踪文件
     // 一个都读不到，侧栏徽标和「更改」面板的 +N 少算（git_subdir_line_count_tests 复现）。
     let mut root: Option<String> = None;
-    for file in files.iter_mut().filter(|file| file.status == "U" && file.untracked_files.is_none()).take(MAX_UNTRACKED_COUNTED) {
+    for file in files
+        .iter_mut()
+        .filter(|file| file.status == "U" && file.untracked_files.is_none())
+        .take(MAX_UNTRACKED_COUNTED)
+    {
         let root = root.get_or_insert_with(|| work_tree_root(dir));
         if let Some(lines) = untracked_line_count(root, &file.path) {
             file.additions = Some(lines);
@@ -516,7 +617,8 @@ fn parse_numstat_z(bytes: &[u8]) -> std::collections::HashMap<String, (u32, u32)
     for entry in bytes.split(|b| *b == 0) {
         let text = String::from_utf8_lossy(entry);
         let mut parts = text.splitn(3, '\t');
-        let (Some(added), Some(deleted), Some(path)) = (parts.next(), parts.next(), parts.next()) else {
+        let (Some(added), Some(deleted), Some(path)) = (parts.next(), parts.next(), parts.next())
+        else {
             continue;
         };
         if let (Ok(added), Ok(deleted)) = (added.parse(), deleted.parse()) {
@@ -530,12 +632,15 @@ fn parse_numstat_z(bytes: &[u8]) -> std::collections::HashMap<String, (u32, u32)
 /// 侧栏每 30 秒给每个目录算一遍，多一个 rev-parse 在 Windows 上约 40ms（bench_sidebar_badges_20_dirs）。
 /// 环境里指定了 GIT_DIR / GIT_WORK_TREE 时 `.git` 不说明问题，才问 git；问不出就退回 cwd。
 fn work_tree_root(dir: &str) -> String {
-    let by_env = std::env::var_os("GIT_DIR").is_some() || std::env::var_os("GIT_WORK_TREE").is_some();
+    let by_env =
+        std::env::var_os("GIT_DIR").is_some() || std::env::var_os("GIT_WORK_TREE").is_some();
     let found = (!by_env)
         .then(|| Path::new(dir).ancestors().find(|p| p.join(".git").exists()))
         .flatten()
         .map(|p| p.to_string_lossy().into_owned());
-    found.or_else(|| repo_root(dir)).unwrap_or_else(|| dir.to_string())
+    found
+        .or_else(|| repo_root(dir))
+        .unwrap_or_else(|| dir.to_string())
 }
 
 /// 未跟踪文件的行数：超过 diff 上限或像二进制就不数（那种文件 diff 里也看不全）。
@@ -566,7 +671,8 @@ fn count_lines(bytes: &[u8]) -> u32 {
 /// 工作目录下一层最多看这么多个子目录（找有改动的仓库，见 changes_overview_blocking）。
 const MAX_CHILD_SCAN: usize = 200;
 /// 按目录缓存、带写入时刻的小缓存（过期由读的一方按各自的 TTL 判断）。
-type TtlCache<T> = std::sync::Mutex<Option<std::collections::HashMap<String, (std::time::Instant, T)>>>;
+type TtlCache<T> =
+    std::sync::Mutex<Option<std::collections::HashMap<String, (std::time::Instant, T)>>>;
 /// touched 里最多为这么多个不同目录查所属仓库（见 changes_overview_blocking）。
 const MAX_ROOT_LOOKUPS: usize = 24;
 /// 「下一层有改动的仓库」粗筛结果的缓存时长。
@@ -591,7 +697,12 @@ pub(crate) async fn git_changes_overview(
     detail: Option<String>,
 ) -> Result<Vec<RepoChangesDto>, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        changes_overview_detail(&cwd, &touched, commands.as_deref().unwrap_or_default(), detail.as_deref())
+        changes_overview_detail(
+            &cwd,
+            &touched,
+            commands.as_deref().unwrap_or_default(),
+            detail.as_deref(),
+        )
     })
     .await
     .map_err(|e| e.to_string())?
@@ -628,7 +739,9 @@ pub(crate) fn changes_overview_detail(
         if looked.len() >= MAX_ROOT_LOOKUPS {
             break;
         }
-        let Some(start) = existing_dir_of(path) else { continue };
+        let Some(start) = existing_dir_of(path) else {
+            continue;
+        };
         if looked.iter().any(|seen| same_path(seen, &start)) {
             continue;
         }
@@ -651,11 +764,19 @@ pub(crate) fn changes_overview_detail(
     }
     let mut list: Vec<(String, bool)> = roots
         .iter()
-        .map(|root| (root.clone(), cwd_root.as_deref().is_some_and(|c| same_path(c, root))))
+        .map(|root| {
+            (
+                root.clone(),
+                cwd_root.as_deref().is_some_and(|c| same_path(c, root)),
+            )
+        })
         .collect();
     let fallback = list.is_empty() && cwd_root.is_none();
     if fallback {
-        list = changed_children(dir).into_iter().map(|root| (root, false)).collect();
+        list = changed_children(dir)
+            .into_iter()
+            .map(|root| (root, false))
+            .collect();
     }
     // 要算完整内容的那一个：点名的在清单里就用它，否则工作目录所在仓库，再否则第一个（与前端 pickRepo 一致）。
     let full_at = detail.map(|want| {
@@ -705,7 +826,9 @@ fn changed_children(dir: &str) -> Vec<String> {
         })
         .collect();
     if let Ok(mut cache) = CHILD_CACHE.lock() {
-        cache.get_or_insert_with(Default::default).insert(key, (std::time::Instant::now(), changed.clone()));
+        cache
+            .get_or_insert_with(Default::default)
+            .insert(key, (std::time::Instant::now(), changed.clone()));
     }
     changed
 }
@@ -772,12 +895,17 @@ fn command_mentioned_roots(cwd: &str, candidates: &[String], commands: &[String]
     let cwd_forms: Vec<String> = {
         let raw = fold(&norm_slashes(cwd));
         let real = fold(&real_path(cwd));
-        if raw == real { vec![raw] } else { vec![raw, real] }
+        if raw == real {
+            vec![raw]
+        } else {
+            vec![raw, real]
+        }
     };
     // 值：(候选下标, 是不是裸目录名)。裸目录名（`backend`，不带 ./、../、也不含 /）在命令里常常只是
     // 个普通词（`git commit -m "fix backend"`、`npm run backend`），单独出现不算，要有路径的样子：
     // 前一个词是 cd / -C 这类，或者后面跟着 `/`（用户 2026-11-09：只列本会话用过的，误认等于混进别的）。
-    let mut needles: std::collections::HashMap<String, (usize, bool)> = std::collections::HashMap::new();
+    let mut needles: std::collections::HashMap<String, (usize, bool)> =
+        std::collections::HashMap::new();
     for (index, root) in candidates.iter().enumerate() {
         let mut roots = vec![fold(&norm_slashes(root))];
         let real = fold(&real_path(root));
@@ -802,11 +930,28 @@ fn command_mentioned_roots(cwd: &str, candidates: &[String], commands: &[String]
         }
     }
     let path_verb = |word: &str| {
-        matches!(word, "cd" | "pushd" | "-c" | "-C" | "--prefix" | "--cwd" | "--dir" | "--work-tree" | "--git-dir" | "--manifest-path")
+        matches!(
+            word,
+            "cd" | "pushd"
+                | "-c"
+                | "-C"
+                | "--prefix"
+                | "--cwd"
+                | "--dir"
+                | "--work-tree"
+                | "--git-dir"
+                | "--manifest-path"
+        )
     };
     let mut hits: Vec<usize> = Vec::new();
     // 词的左边界：空白、引号、shell 运算符、`=`（`--dir=x`）、括号。右边界同理，外加 `/` 处截断。
-    let is_delim = |c: char| c.is_whitespace() || matches!(c, '"' | '\'' | '`' | ';' | '&' | '|' | '(' | ')' | '<' | '>' | '=' | ',');
+    let is_delim = |c: char| {
+        c.is_whitespace()
+            || matches!(
+                c,
+                '"' | '\'' | '`' | ';' | '&' | '|' | '(' | ')' | '<' | '>' | '=' | ','
+            )
+    };
     for command in commands {
         let text = fold(command);
         let words: Vec<&str> = text.split(is_delim).filter(|w| !w.is_empty()).collect();
@@ -815,7 +960,8 @@ fn command_mentioned_roots(cwd: &str, candidates: &[String], commands: &[String]
             let slash_after = word.len() < raw.len();
             let after_verb = at > 0 && path_verb(words[at - 1]);
             // 从长到短试：候选之间可能嵌套（仓库里的 `.claude/worktrees/x`），取最具体的那个。
-            let mut prefixes = std::iter::once(word).chain(word.rmatch_indices('/').map(|(cut, _)| &word[..cut]));
+            let mut prefixes =
+                std::iter::once(word).chain(word.rmatch_indices('/').map(|(cut, _)| &word[..cut]));
             let hit = prefixes.find_map(|prefix| {
                 let (index, bare) = *needles.get(prefix)?;
                 // 裸目录名：整词就是它时要前面有 cd 这类、或后面带 `/`；作为前缀命中（`backend/src/a.rs`）本身就是路径。
@@ -829,7 +975,9 @@ fn command_mentioned_roots(cwd: &str, candidates: &[String], commands: &[String]
             }
         }
     }
-    hits.into_iter().map(|index| candidates[index].clone()).collect()
+    hits.into_iter()
+        .map(|index| candidates[index].clone())
+        .collect()
 }
 
 /// 一个仓库根（已 fold 过的绝对路径）在命令里可能的写法。
@@ -838,12 +986,20 @@ fn path_spellings(abs: &str, cwd: &str) -> Vec<String> {
     // `C:/x` ↔ Git Bash 的 `/c/x`。
     let bytes = abs.as_bytes();
     if bytes.len() >= 3 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':' && bytes[2] == b'/' {
-        out.push(format!("/{}{}", (bytes[0] as char).to_ascii_lowercase(), &abs[2..]));
+        out.push(format!(
+            "/{}{}",
+            (bytes[0] as char).to_ascii_lowercase(),
+            &abs[2..]
+        ));
     }
     // 相对 cwd：数公共前缀段，剩下的 cwd 段各算一个 `..`。不在同一个盘上就没有相对写法。
     let root_segs: Vec<&str> = abs.split('/').collect();
     let cwd_segs: Vec<&str> = cwd.split('/').collect();
-    let common = root_segs.iter().zip(&cwd_segs).take_while(|(a, b)| a == b).count();
+    let common = root_segs
+        .iter()
+        .zip(&cwd_segs)
+        .take_while(|(a, b)| a == b)
+        .count();
     // Unix 路径首段是空串（根 `/`），只共享根不算「附近」，不给相对写法。
     let min_common = if root_segs[0].is_empty() { 2 } else { 1 };
     if common >= min_common {
@@ -868,7 +1024,9 @@ pub(crate) fn is_related_root(session_dir: &str, root: &str) -> bool {
     // 按真实路径比：git / worktree 记录给的是长名、解开软链的路径，会话目录可能是 8.3 短名
     //（CI 的 C:/Users/RUNNER~1）或软链（macOS 的 /var → /private/var），逐字比对不上（CI 复现）。
     let root = real_path(root);
-    related_roots(session_dir).iter().any(|known| same_path(known, root.as_str()) || same_path(&real_path(known), &root))
+    related_roots(session_dir)
+        .iter()
+        .any(|known| same_path(known, root.as_str()) || same_path(&real_path(known), &root))
 }
 
 /// 文件系统里的真实路径（解开软链、8.3 短名），正斜杠、去掉 Windows 的 `\\?\` 前缀。拿不到（不存在）
@@ -877,7 +1035,10 @@ fn real_path(path: &str) -> String {
     match std::fs::canonicalize(path) {
         Ok(real) => {
             let text = real.to_string_lossy();
-            let text = text.strip_prefix(r"\\?\UNC\").map(|rest| format!(r"\\{rest}")).unwrap_or_else(|| text.strip_prefix(r"\\?\").unwrap_or(&text).to_owned());
+            let text = text
+                .strip_prefix(r"\\?\UNC\")
+                .map(|rest| format!(r"\\{rest}"))
+                .unwrap_or_else(|| text.strip_prefix(r"\\?\").unwrap_or(&text).to_owned());
             norm_slashes(&text)
         }
         Err(_) => norm_slashes(path),
@@ -940,7 +1101,10 @@ fn repo_changes_light(root: &str, is_cwd_repo: bool) -> Option<RepoChangesDto> {
 /// 基准（没有自己的提交）时返回 None。
 fn default_base(root: &str, branch: Option<&str>) -> Option<(String, String)> {
     let base_ref = default_base_ref(root)?;
-    let label = base_ref.strip_prefix("origin/").unwrap_or(&base_ref).to_string();
+    let label = base_ref
+        .strip_prefix("origin/")
+        .unwrap_or(&base_ref)
+        .to_string();
     if branch == Some(label.as_str()) {
         return None;
     }
@@ -969,7 +1133,9 @@ fn default_base_ref(root: &str) -> Option<String> {
     }
     let found = resolve_default_base_ref(root);
     if let Ok(mut cache) = CACHE.lock() {
-        cache.get_or_insert_with(Default::default).insert(key, (std::time::Instant::now(), found.clone()));
+        cache
+            .get_or_insert_with(Default::default)
+            .insert(key, (std::time::Instant::now(), found.clone()));
     }
     found
 }
@@ -988,21 +1154,35 @@ fn resolve_default_base_ref(root: &str) -> Option<String> {
         }
     }
     candidates.into_iter().find(|name| {
-        git_output(root, &["rev-parse", "--verify", "--quiet", &format!("{name}^{{commit}}")])
-            .is_ok_and(|o| o.status.success())
+        git_output(
+            root,
+            &[
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("{name}^{{commit}}"),
+            ],
+        )
+        .is_ok_and(|o| o.status.success())
     })
 }
 
 /// `git diff --name-status base HEAD` 加行数。
 fn committed_files(root: &str, base: &str) -> Vec<GitChangedFileDto> {
-    let Ok(output) = git_output(root, &["diff", "--name-status", "-z", "--no-renames", base, "HEAD"]) else {
+    let Ok(output) = git_output(
+        root,
+        &["diff", "--name-status", "-z", "--no-renames", base, "HEAD"],
+    ) else {
         return Vec::new();
     };
     if !output.status.success() {
         return Vec::new();
     }
     let mut files = parse_name_status_z(&output.stdout);
-    if let Ok(numstat) = git_output(root, &["diff", "--numstat", "-z", "--no-renames", base, "HEAD"]) {
+    if let Ok(numstat) = git_output(
+        root,
+        &["diff", "--numstat", "-z", "--no-renames", base, "HEAD"],
+    ) {
         if numstat.status.success() {
             let counts = parse_numstat_z(&numstat.stdout);
             for file in files.iter_mut() {
@@ -1076,7 +1256,10 @@ fn child_repos(dir: &str) -> Vec<String> {
         }
         // 第二层：大项目常把仓库放在 apps/、services/、packages/ 下，主目录本身不是仓库
         //（用户 2026-11-09：前后端分仓的大项目）。只看不是仓库的目录，仓库里面不再往下扫。
-        let skip = path.file_name().and_then(|n| n.to_str()).is_none_or(skip_scan);
+        let skip = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_none_or(skip_scan);
         if skip {
             continue;
         }
@@ -1093,21 +1276,34 @@ fn child_repos(dir: &str) -> Vec<String> {
 
 /// 目录下的子目录（最多 MAX_CHILD_SCAN 个）。
 fn scan_dirs(dir: &str) -> Vec<std::path::PathBuf> {
-    let Ok(entries) = std::fs::read_dir(dir) else { return Vec::new() };
-    entries.flatten().take(MAX_CHILD_SCAN).map(|entry| entry.path()).filter(|path| path.is_dir()).collect()
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries
+        .flatten()
+        .take(MAX_CHILD_SCAN)
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir())
+        .collect()
 }
 
 /// 找仓库时不往里钻的目录：隐藏目录、依赖、构建产物。里面要么没有用户的仓库，要么是装进来的第三方
 /// 仓库（node_modules 里带 .git 的包），列出来只会混淆。
 fn skip_scan(name: &str) -> bool {
-    name.starts_with('.') || matches!(name, "node_modules" | "target" | "dist" | "build" | "vendor" | "out")
+    name.starts_with('.')
+        || matches!(
+            name,
+            "node_modules" | "target" | "dist" | "build" | "vendor" | "out"
+        )
 }
 
 /// 仓库自己的 linked worktree 根目录：读 `.git/worktrees/<名字>/gitdir`（里面是 worktree 的 `.git`
 /// 文件路径），不起 git 进程——会话开在大项目主目录时子仓库几十个，5 秒一轮每个都跑 git 太贵。
 fn linked_worktrees(repo: &str) -> Vec<String> {
     let admin = Path::new(repo).join(".git").join("worktrees");
-    let Ok(entries) = std::fs::read_dir(admin) else { return Vec::new() };
+    let Ok(entries) = std::fs::read_dir(admin) else {
+        return Vec::new();
+    };
     entries
         .flatten()
         .filter_map(|entry| std::fs::read_to_string(entry.path().join("gitdir")).ok())
@@ -1124,7 +1320,11 @@ fn norm_slashes(path: &str) -> String {
 /// path 在 root 目录里（或就是它）。按斜杠归一、Windows 不分大小写比较。
 pub(crate) fn path_under(path: &str, root: &str) -> bool {
     let (p, r) = (norm_slashes(path), norm_slashes(root));
-    let (p, r) = if cfg!(target_os = "windows") { (p.to_lowercase(), r.to_lowercase()) } else { (p, r) };
+    let (p, r) = if cfg!(target_os = "windows") {
+        (p.to_lowercase(), r.to_lowercase())
+    } else {
+        (p, r)
+    };
     p == r || p.starts_with(&format!("{r}/"))
 }
 
@@ -1154,9 +1354,11 @@ pub(crate) async fn git_file_diff(
     untracked: bool,
     base: Option<String>,
 ) -> Result<GitFileDiffDto, String> {
-    tauri::async_runtime::spawn_blocking(move || git_file_diff_blocking(&cwd, &path, untracked, base.as_deref()))
-        .await
-        .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || {
+        git_file_diff_blocking(&cwd, &path, untracked, base.as_deref())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// 基准只认完整或缩写的提交 SHA：它会拼进 git 的参数里，不能让 `--output=…` 这类东西混进来。
@@ -1164,7 +1366,12 @@ fn is_commit_sha(value: &str) -> bool {
     (7..=64).contains(&value.len()) && value.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-fn git_file_diff_blocking(cwd: &str, path: &str, untracked: bool, base: Option<&str>) -> Result<GitFileDiffDto, String> {
+fn git_file_diff_blocking(
+    cwd: &str,
+    path: &str,
+    untracked: bool,
+    base: Option<&str>,
+) -> Result<GitFileDiffDto, String> {
     let dir = cwd.trim();
     if dir.is_empty() || !Path::new(dir).is_dir() {
         return Err("目录不存在".into());
@@ -1339,15 +1546,25 @@ pub(crate) async fn git_discard(cwd: String, paths: Vec<String>) -> Result<(), S
 ///
 /// `paths`：「提交全部」时界面上显示的那些文件。带了就只暂存它们（还得都在此刻的改动清单里），
 /// 列表是几秒前轮询的，agent 正在写的、还没显示出来的文件不跟着进提交（做空第 2 轮）。不带 = 此刻全部。
-pub(crate) async fn git_commit(cwd: String, message: String, all: bool, paths: Option<Vec<String>>) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || commit_blocking(&cwd, &message, all, paths.as_deref(), &[]))
-        .await
-        .map_err(|e| e.to_string())?
+pub(crate) async fn git_commit(
+    cwd: String,
+    message: String,
+    all: bool,
+    paths: Option<Vec<String>>,
+) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        commit_blocking(&cwd, &message, all, paths.as_deref(), &[])
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// 冲突文件不许暂存 / 放弃：要先在终端或编辑器里解决（见 split_porcelain_xy 的 "!"）。
 fn refuse_conflicts(files: &[GitChangedFileDto]) -> Result<(), String> {
-    if files.iter().any(|f| f.worktree_status.as_deref() == Some("!")) {
+    if files
+        .iter()
+        .any(|f| f.worktree_status.as_deref() == Some("!"))
+    {
         return Err("git/conflict".into());
     }
     Ok(())
@@ -1357,7 +1574,8 @@ fn stage_blocking(cwd: &str, paths: &[String]) -> Result<(), String> {
     let dir = existing_dir(cwd)?;
     let files = listed_changes(dir, paths, |f| f.worktree_status.is_some())?;
     refuse_conflicts(&files)?;
-    let result = stage_paths(dir, &files).and_then(|specs| run_pathspec_batches(dir, &["add"], &specs));
+    let result =
+        stage_paths(dir, &files).and_then(|specs| run_pathspec_batches(dir, &["add"], &specs));
     invalidate_caches();
     result
 }
@@ -1365,10 +1583,15 @@ fn stage_blocking(cwd: &str, paths: &[String]) -> Result<(), String> {
 fn unstage_blocking(cwd: &str, paths: &[String]) -> Result<(), String> {
     let dir = existing_dir(cwd)?;
     listed_changes(dir, paths, |f| f.index_status.is_some())?;
-    let has_head = git_output(dir, &["rev-parse", "--verify", "--quiet", "HEAD"]).is_ok_and(|o| o.status.success());
+    let has_head = git_output(dir, &["rev-parse", "--verify", "--quiet", "HEAD"])
+        .is_ok_and(|o| o.status.success());
     // 没有 HEAD 时 restore --staged 无处可恢复会报错。rm --cached 只动暂存区、不碰工作区文件；
     // -f 是因为「已暂存又改过」（AM）的文件暂存区和工作区、HEAD 都不一样，不加会被拒。
-    let args: &[&str] = if has_head { &["restore", "--staged"] } else { &["rm", "--cached", "-q", "-f"] };
+    let args: &[&str] = if has_head {
+        &["restore", "--staged"]
+    } else {
+        &["rm", "--cached", "-q", "-f"]
+    };
     let result = run_pathspec_batches(dir, args, paths);
     invalidate_caches();
     result
@@ -1409,7 +1632,10 @@ fn trash_to_recycle_bin(paths: &[std::path::PathBuf]) -> Result<(), String> {
     }
     // 防御：IFileOperation 只靠 GetAnyOperationsAborted 报失败，trash 自己也注明拿不到具体
     // 原因（windows.rs:111）。落地逐个再核一次，免得界面说放弃成功、文件其实还在。
-    if paths.iter().any(|path| std::fs::symlink_metadata(path).is_ok()) {
+    if paths
+        .iter()
+        .any(|path| std::fs::symlink_metadata(path).is_ok())
+    {
         return Err("git/trash_failed: file still exists".into());
     }
     Ok(())
@@ -1437,8 +1663,9 @@ fn discard_with(cwd: &str, paths: &[String], trash: TrashFn) -> Result<(), Strin
     let dir = existing_dir(cwd)?;
     let files = listed_changes(dir, paths, |f| f.worktree_status.is_some())?;
     refuse_conflicts(&files)?;
-    let (untracked, tracked): (Vec<_>, Vec<_>) =
-        files.iter().partition(|f| f.worktree_status.as_deref() == Some("U"));
+    let (untracked, tracked): (Vec<_>, Vec<_>) = files
+        .iter()
+        .partition(|f| f.worktree_status.as_deref() == Some("U"));
     let tracked: Vec<String> = tracked.iter().map(|f| f.path.clone()).collect();
     let result = (|| {
         // --worktree 只恢复工作区（到暂存区的内容）：已暂存的那部分改动是用户挑好的，不跟着丢。
@@ -1524,13 +1751,21 @@ fn untracked_dir_to_trash(root: &str, rel: &str) -> Result<std::path::PathBuf, S
     Ok(current)
 }
 
-fn commit_blocking(cwd: &str, message: &str, all: bool, shown: Option<&[String]>, env: GitEnv) -> Result<String, String> {
+fn commit_blocking(
+    cwd: &str,
+    message: &str,
+    all: bool,
+    shown: Option<&[String]>,
+    env: GitEnv,
+) -> Result<String, String> {
     let dir = existing_dir(cwd)?;
     let message = message.trim();
     if message.is_empty() {
         return Err("git/empty_message".into());
     }
-    let run = |args: &[&str], stdin: Option<&[u8]>| git_run(dir, args, env, stdin).map_err(|e| format!("git/failed: {e}"));
+    let run = |args: &[&str], stdin: Option<&[u8]>| {
+        git_run(dir, args, env, stdin).map_err(|e| format!("git/failed: {e}"))
+    };
     // 「提交全部」替用户暂存的文件：提交没成（没配身份、钩子失败……）就原样退回，不留下用户没做过的暂存。
     let mut staged_by_us: Vec<String> = Vec::new();
     let result = (|| {
@@ -1549,7 +1784,10 @@ fn commit_blocking(cwd: &str, message: &str, all: bool, shown: Option<&[String]>
             let files = match shown {
                 Some(shown) => listed_changes(dir, shown, |f| f.worktree_status.is_some())?,
                 None => {
-                    let status = run(&["status", "--porcelain", "-z", "--no-renames", "-uall"], None)?;
+                    let status = run(
+                        &["status", "--porcelain", "-z", "--no-renames", "-uall"],
+                        None,
+                    )?;
                     if !status.status.success() {
                         return Err(classify_git_failure(&status));
                     }
@@ -1557,7 +1795,10 @@ fn commit_blocking(cwd: &str, message: &str, all: bool, shown: Option<&[String]>
                 }
             };
             refuse_conflicts(&files)?;
-            let files: Vec<GitChangedFileDto> = files.into_iter().filter(|f| f.worktree_status.is_some()).collect();
+            let files: Vec<GitChangedFileDto> = files
+                .into_iter()
+                .filter(|f| f.worktree_status.is_some())
+                .collect();
             // 折叠的未跟踪目录同「暂存」：整目录加，有嵌套仓库就换成其中的文件（stage_paths）。
             let paths = stage_paths(dir, &files)?;
             staged_by_us = files
@@ -1574,7 +1815,9 @@ fn commit_blocking(cwd: &str, message: &str, all: bool, shown: Option<&[String]>
         match staged.status.code() {
             Some(1) => {}
             Some(0) => {
-                let merging = run(&["rev-parse", "-q", "--verify", "MERGE_HEAD"], None)?.status.success();
+                let merging = run(&["rev-parse", "-q", "--verify", "MERGE_HEAD"], None)?
+                    .status
+                    .success();
                 if !merging {
                     return Err("git/nothing_to_commit".into());
                 }
@@ -1597,9 +1840,14 @@ fn commit_blocking(cwd: &str, message: &str, all: bool, shown: Option<&[String]>
     })();
     if result.is_err() && !staged_by_us.is_empty() {
         // 退回失败不覆盖原来的错误：用户要看的是提交为什么没成。
-        let has_head = git_output(dir, &["rev-parse", "--verify", "--quiet", "HEAD"]).is_ok_and(|o| o.status.success());
+        let has_head = git_output(dir, &["rev-parse", "--verify", "--quiet", "HEAD"])
+            .is_ok_and(|o| o.status.success());
         // -r：退回的可能是整个目录（折叠的未跟踪目录），rm 不带 -r 拒绝目录。
-        let args: &[&str] = if has_head { &["restore", "--staged"] } else { &["rm", "--cached", "-q", "-f", "-r"] };
+        let args: &[&str] = if has_head {
+            &["restore", "--staged"]
+        } else {
+            &["rm", "--cached", "-q", "-f", "-r"]
+        };
         let _ = run_pathspec_batches(dir, args, &staged_by_us);
     }
     invalidate_caches();
@@ -1661,7 +1909,11 @@ fn listed_changes(
         .zip(out)
         .map(|(path, found)| {
             found
-                .or_else(|| confirmed.contains(path).then(|| untracked_dto(path.clone(), None)))
+                .or_else(|| {
+                    confirmed
+                        .contains(path)
+                        .then(|| untracked_dto(path.clone(), None))
+                })
                 .filter(want)
                 .ok_or_else(|| "git/not_in_changes".to_string())
         })
@@ -1671,14 +1923,21 @@ fn listed_changes(
 /// 手机桥看单文件 diff 的收口：path 是此刻清单里一个未跟踪的文件（含折叠目录里的），不是目录。
 pub(crate) fn untracked_file_listed(cwd: &str, path: &str) -> bool {
     !path.ends_with('/')
-        && listed_changes(cwd.trim(), &[path.to_string()], |f| f.worktree_status.as_deref() == Some("U")).is_ok()
+        && listed_changes(cwd.trim(), &[path.to_string()], |f| {
+            f.worktree_status.as_deref() == Some("U")
+        })
+        .is_ok()
 }
 
 /// 暂存用的路径：未跟踪目录条目原样交给 `git add -- dir/`（一万五千个文件一次加完），但目录里有嵌套
 /// 仓库时换成其中的文件逐个加：`git add dir/` 会把嵌套仓库当 gitlink 加进去（同
 /// commit_all_skips_untracked_nested_repo 那条做空结论）。
 fn stage_paths(dir: &str, files: &[GitChangedFileDto]) -> Result<Vec<String>, String> {
-    let dirs: Vec<String> = files.iter().filter(|f| f.path.ends_with('/')).map(|f| f.path.clone()).collect();
+    let dirs: Vec<String> = files
+        .iter()
+        .filter(|f| f.path.ends_with('/'))
+        .map(|f| f.path.clone())
+        .collect();
     if dirs.is_empty() {
         return Ok(files.iter().map(|f| f.path.clone()).collect());
     }
@@ -1747,15 +2006,26 @@ fn classify_git_failure(output: &std::process::Output) -> String {
     if both.contains("index.lock") {
         return "git/locked".into();
     }
-    if both.contains("Please tell me who you are") || both.contains("user.email") || both.contains("unable to auto-detect email") {
+    if both.contains("Please tell me who you are")
+        || both.contains("user.email")
+        || both.contains("unable to auto-detect email")
+    {
         return "git/identity".into();
     }
     if both.contains("nothing to commit") || both.contains("no changes added to commit") {
         return "git/nothing_to_commit".into();
     }
     // 钩子失败的输出可能只在 stdout（lint 工具多半打 stdout）。只带最后几行，错误提示别撑爆界面。
-    let source = if stderr.trim().is_empty() { &stdout } else { &stderr };
-    let lines: Vec<&str> = source.lines().map(str::trim_end).filter(|l| !l.trim().is_empty()).collect();
+    let source = if stderr.trim().is_empty() {
+        &stdout
+    } else {
+        &stderr
+    };
+    let lines: Vec<&str> = source
+        .lines()
+        .map(str::trim_end)
+        .filter(|l| !l.trim().is_empty())
+        .collect();
     let tail = lines[lines.len().saturating_sub(6)..].join("\n");
     format!("git/failed: {tail}")
 }
@@ -1784,7 +2054,12 @@ fn git_output(dir: &str, args: &[&str]) -> std::io::Result<std::process::Output>
 
 /// spawn git 的唯一出口。stdin 给了就喂进去（提交信息），用单独线程写：提交钩子先跑、git 后读
 /// stdin，信息又长时，同步写满管道会和钩子写满 stdout 互相等死。
-fn git_run(dir: &str, args: &[&str], env: GitEnv, stdin: Option<&[u8]>) -> std::io::Result<std::process::Output> {
+fn git_run(
+    dir: &str,
+    args: &[&str],
+    env: GitEnv,
+    stdin: Option<&[u8]>,
+) -> std::io::Result<std::process::Output> {
     use std::process::Stdio;
     #[cfg(test)]
     GIT_SPAWNS.with(|n| n.set(n.get() + 1));
@@ -1805,7 +2080,10 @@ fn git_run(dir: &str, args: &[&str], env: GitEnv, stdin: Option<&[u8]>) -> std::
     let Some(input) = stdin else {
         return command.output();
     };
-    command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
     let mut child = command.spawn()?;
     let mut pipe = child.stdin.take();
     let input = input.to_vec();
@@ -2003,7 +2281,8 @@ mod tests {
         assert!(diff_is_binary(added));
         // 正常文本 diff 不误判(即便正文里恰好有以 Binary files 开头的一行,也不以
         //  differ 收尾)。
-        let text = "diff --git a/a.rs b/a.rs\n@@ -1 +1 @@\n-old\n+Binary files list differ here, ok\n";
+        let text =
+            "diff --git a/a.rs b/a.rs\n@@ -1 +1 @@\n-old\n+Binary files list differ here, ok\n";
         assert!(!diff_is_binary(text));
         assert!(!diff_is_binary(""));
     }
@@ -2064,16 +2343,43 @@ mod tests {
         std::fs::create_dir_all(&origin).unwrap();
         let run = |dir: &Path, args: &[&str]| {
             let output = git_output(dir.to_str().unwrap(), args).unwrap();
-            assert!(output.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&output.stderr));
+            assert!(
+                output.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         };
         let commit = |dir: &Path, message: &str| {
-            run(dir, &["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-q", "-m", message]);
+            run(
+                dir,
+                &[
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@t",
+                    "-c",
+                    "commit.gpgsign=false",
+                    "commit",
+                    "--allow-empty",
+                    "-q",
+                    "-m",
+                    message,
+                ],
+            );
         };
         run(&origin, &["init", "-q"]);
         commit(&origin, "base");
         assert_eq!(upstream_divergence(origin.to_str().unwrap()), None);
         let clone = root.join("clone");
-        run(&root, &["clone", "-q", origin.to_str().unwrap(), clone.to_str().unwrap()]);
+        run(
+            &root,
+            &[
+                "clone",
+                "-q",
+                origin.to_str().unwrap(),
+                clone.to_str().unwrap(),
+            ],
+        );
         assert_eq!(upstream_divergence(clone.to_str().unwrap()), Some((0, 0)));
         commit(&clone, "local");
         commit(&origin, "remote");
@@ -2088,14 +2394,19 @@ mod tests {
     struct Sandbox(std::path::PathBuf);
     impl Sandbox {
         fn new(tag: &str) -> Self {
-            let root = std::env::temp_dir().join(format!("meowo-multi-{tag}-{}", std::process::id()));
+            let root =
+                std::env::temp_dir().join(format!("meowo-multi-{tag}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&root);
             std::fs::create_dir_all(&root).unwrap();
             Sandbox(root)
         }
         fn git(&self, dir: &Path, args: &[&str]) {
             let output = git_output(dir.to_str().unwrap(), args).unwrap();
-            assert!(output.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&output.stderr));
+            assert!(
+                output.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
         fn repo(&self, name: &str) -> std::path::PathBuf {
             let dir = self.0.join(name);
@@ -2107,7 +2418,21 @@ mod tests {
         }
         fn commit(&self, dir: &Path, message: &str) {
             self.git(dir, &["add", "-A"]);
-            self.git(dir, &["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "-m", message]);
+            self.git(
+                dir,
+                &[
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@t",
+                    "-c",
+                    "commit.gpgsign=false",
+                    "commit",
+                    "-q",
+                    "-m",
+                    message,
+                ],
+            );
         }
     }
     impl Drop for Sandbox {
@@ -2128,11 +2453,17 @@ mod tests {
         std::fs::write(b.join("x.txt"), "changed\n").unwrap();
         let parent = s(&sb.0);
         let repos = changes_overview_blocking(&parent, &[], &[]).unwrap();
-        assert_eq!(repos.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["b"]);
+        assert_eq!(
+            repos.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+            ["b"]
+        );
         assert!(!repos[0].is_cwd_repo);
         let touched = [s(&a.join("README.md"))];
         let repos = changes_overview_blocking(&parent, &touched, &[]).unwrap();
-        assert_eq!(repos.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["a"]);
+        assert_eq!(
+            repos.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+            ["a"]
+        );
     }
 
     /// 会话开在主仓库，agent 新开 worktree 去改：主仓库排第一，worktree 一组显示新分支。
@@ -2141,7 +2472,17 @@ mod tests {
         let sb = Sandbox::new("wt");
         let main = sb.repo("meowo");
         let wt = sb.0.join("meowo-feat");
-        sb.git(&main, &["worktree", "add", "-q", "-b", "feat/x", wt.to_str().unwrap()]);
+        sb.git(
+            &main,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "feat/x",
+                wt.to_str().unwrap(),
+            ],
+        );
         std::fs::write(wt.join("new.rs"), "fn main() {}\n").unwrap();
         let repos = changes_overview_blocking(&s(&main), &[s(&wt.join("new.rs"))], &[]).unwrap();
         assert_eq!(repos.len(), 2);
@@ -2149,7 +2490,15 @@ mod tests {
         assert_eq!(repos[0].name, "meowo");
         assert_eq!(repos[1].name, "meowo-feat");
         assert_eq!(repos[1].summary.branch.as_deref(), Some("feat/x"));
-        assert_eq!(repos[1].summary.files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), ["new.rs"]);
+        assert_eq!(
+            repos[1]
+                .summary
+                .files
+                .iter()
+                .map(|f| f.path.as_str())
+                .collect::<Vec<_>>(),
+            ["new.rs"]
+        );
         // 相关仓库（手机远程页的放行清单）同样认得这个 worktree。
         assert!(is_related_root(&s(&main), &s(&wt)));
         assert!(!is_related_root(&s(&main), &s(&sb.0)));
@@ -2163,11 +2512,32 @@ mod tests {
         std::fs::write(main.join(".gitignore"), ".claude/worktrees/\n").unwrap();
         sb.commit(&main, "ignore");
         let wt = main.join(".claude").join("worktrees").join("feat");
-        sb.git(&main, &["worktree", "add", "-q", "-b", "feat/x", wt.to_str().unwrap()]);
+        sb.git(
+            &main,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "feat/x",
+                wt.to_str().unwrap(),
+            ],
+        );
         std::fs::write(wt.join("a.ts"), "x\n").unwrap();
         let repos = changes_overview_blocking(&s(&main), &[s(&wt.join("a.ts"))], &[]).unwrap();
-        assert_eq!(repos.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(), ["main", "feat"]);
-        assert_eq!(repos[1].summary.files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), ["a.ts"]);
+        assert_eq!(
+            repos.iter().map(|r| r.name.as_str()).collect::<Vec<_>>(),
+            ["main", "feat"]
+        );
+        assert_eq!(
+            repos[1]
+                .summary
+                .files
+                .iter()
+                .map(|f| f.path.as_str())
+                .collect::<Vec<_>>(),
+            ["a.ts"]
+        );
     }
 
     /// 文件名里的方括号不当通配符。
@@ -2183,7 +2553,9 @@ mod tests {
         for dir in ["[id]", "i", "d"] {
             std::fs::write(repo.join("app").join(dir).join("page.tsx"), "b\n").unwrap();
         }
-        let diff = git_file_diff_blocking(&s(&repo), "app/[id]/page.tsx", false, None).unwrap().diff;
+        let diff = git_file_diff_blocking(&s(&repo), "app/[id]/page.tsx", false, None)
+            .unwrap()
+            .diff;
         assert_eq!(diff.matches("diff --git").count(), 1, "{diff}");
     }
 
@@ -2202,8 +2574,23 @@ mod tests {
         let changes = repo_changes(&s(&repo), true).unwrap();
         assert_eq!(changes.base_label.as_deref(), Some("main"));
         assert!(changes.base.as_deref().is_some_and(is_commit_sha));
-        assert_eq!(changes.committed.iter().map(|f| (f.path.as_str(), f.status.as_str(), f.additions)).collect::<Vec<_>>(), [("done.txt", "A", Some(2))]);
-        assert_eq!(changes.summary.files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(), ["wip.txt"]);
+        assert_eq!(
+            changes
+                .committed
+                .iter()
+                .map(|f| (f.path.as_str(), f.status.as_str(), f.additions))
+                .collect::<Vec<_>>(),
+            [("done.txt", "A", Some(2))]
+        );
+        assert_eq!(
+            changes
+                .summary
+                .files
+                .iter()
+                .map(|f| f.path.as_str())
+                .collect::<Vec<_>>(),
+            ["wip.txt"]
+        );
     }
 
     /// 已提交段的单文件 diff 看 base..HEAD；base 不是 SHA 一律拒绝（会拼进 git 参数）。
@@ -2218,8 +2605,14 @@ mod tests {
         let diff = git_file_diff_blocking(&s(&repo), "README.md", false, Some(&base)).unwrap();
         assert!(diff.diff.contains("+more"), "{}", diff.diff);
         // 没 base 时这份改动已经提交，相对 HEAD 是空的。
-        assert!(git_file_diff_blocking(&s(&repo), "README.md", false, None).unwrap().diff.is_empty());
-        assert_eq!(git_file_diff_blocking(&s(&repo), "README.md", false, Some("--output=x")).unwrap_err(), "git/bad_base");
+        assert!(git_file_diff_blocking(&s(&repo), "README.md", false, None)
+            .unwrap()
+            .diff
+            .is_empty());
+        assert_eq!(
+            git_file_diff_blocking(&s(&repo), "README.md", false, Some("--output=x")).unwrap_err(),
+            "git/bad_base"
+        );
     }
 
     // ─── 写操作 ───
@@ -2235,27 +2628,55 @@ mod tests {
             ("USERPROFILE", Some(s(&sb.0))),
             ("EMAIL", None),
         ];
-        for key in ["GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"] {
-            env.push((key, identity.then(|| if key.ends_with("EMAIL") { "t@t".into() } else { "t".into() })));
+        for key in [
+            "GIT_AUTHOR_NAME",
+            "GIT_AUTHOR_EMAIL",
+            "GIT_COMMITTER_NAME",
+            "GIT_COMMITTER_EMAIL",
+        ] {
+            env.push((
+                key,
+                identity.then(|| {
+                    if key.ends_with("EMAIL") {
+                        "t@t".into()
+                    } else {
+                        "t".into()
+                    }
+                }),
+            ));
         }
         env
     }
 
-    fn commit_isolated(sb: &Sandbox, dir: &Path, message: &str, all: bool, identity: bool) -> Result<String, String> {
+    fn commit_isolated(
+        sb: &Sandbox,
+        dir: &Path,
+        message: &str,
+        all: bool,
+        identity: bool,
+    ) -> Result<String, String> {
         let env = isolated_env(sb, identity);
         let env: Vec<(&str, Option<&str>)> = env.iter().map(|(k, v)| (*k, v.as_deref())).collect();
         commit_blocking(&s(dir), message, all, None, &env)
     }
 
     fn statuses(dir: &Path) -> Vec<(String, Option<String>, Option<String>)> {
-        let output = git_output(&s(dir), &["status", "--porcelain", "-z", "--no-renames", "-uall"]).unwrap();
+        let output = git_output(
+            &s(dir),
+            &["status", "--porcelain", "-z", "--no-renames", "-uall"],
+        )
+        .unwrap();
         parse_porcelain_z(&output.stdout)
             .into_iter()
             .map(|f| (f.path, f.index_status, f.worktree_status))
             .collect()
     }
 
-    fn st(path: &str, index: Option<&str>, worktree: Option<&str>) -> (String, Option<String>, Option<String>) {
+    fn st(
+        path: &str,
+        index: Option<&str>,
+        worktree: Option<&str>,
+    ) -> (String, Option<String>, Option<String>) {
         (path.into(), index.map(Into::into), worktree.map(Into::into))
     }
 
@@ -2266,7 +2687,14 @@ mod tests {
             .into_iter()
             .map(|f| (f.path, f.status, f.index_status, f.worktree_status))
             .collect();
-        let row = |p: &str, s: &str, i: Option<&str>, w: Option<&str>| (p.to_string(), s.to_string(), i.map(Into::into), w.map(Into::into));
+        let row = |p: &str, s: &str, i: Option<&str>, w: Option<&str>| {
+            (
+                p.to_string(),
+                s.to_string(),
+                i.map(Into::into),
+                w.map(Into::into),
+            )
+        };
         assert_eq!(
             got,
             vec![
@@ -2292,7 +2720,13 @@ mod tests {
         std::fs::write(repo.join("README.md"), "two\n").unwrap();
         let summary = git_diff_summary_blocking(&s(&repo)).unwrap();
         let file = &summary.files[0];
-        assert_eq!((file.index_status.as_deref(), file.worktree_status.as_deref()), (Some("M"), Some("M")));
+        assert_eq!(
+            (
+                file.index_status.as_deref(),
+                file.worktree_status.as_deref()
+            ),
+            (Some("M"), Some("M"))
+        );
     }
 
     #[test]
@@ -2304,16 +2738,44 @@ mod tests {
         std::fs::write(repo.join("dir").join("new.txt"), "n\n").unwrap();
         let dir = s(&repo);
         stage_blocking(&dir, &["README.md".into(), "dir/new.txt".into()]).unwrap();
-        assert_eq!(statuses(&repo), vec![st("README.md", Some("M"), None), st("dir/new.txt", Some("A"), None)]);
+        assert_eq!(
+            statuses(&repo),
+            vec![
+                st("README.md", Some("M"), None),
+                st("dir/new.txt", Some("A"), None)
+            ]
+        );
         // 已暂存、没有工作区改动的文件不能再「暂存」，也不能「放弃」（清单里它只在暂存组）。
-        assert_eq!(stage_blocking(&dir, &["README.md".into()]).unwrap_err(), "git/not_in_changes");
-        assert_eq!(discard_blocking(&dir, &["README.md".into()]).unwrap_err(), "git/not_in_changes");
+        assert_eq!(
+            stage_blocking(&dir, &["README.md".into()]).unwrap_err(),
+            "git/not_in_changes"
+        );
+        assert_eq!(
+            discard_blocking(&dir, &["README.md".into()]).unwrap_err(),
+            "git/not_in_changes"
+        );
         unstage_blocking(&dir, &["README.md".into(), "dir/new.txt".into()]).unwrap();
-        assert_eq!(statuses(&repo), vec![st("README.md", None, Some("M")), st("dir/new.txt", None, Some("U"))]);
+        assert_eq!(
+            statuses(&repo),
+            vec![
+                st("README.md", None, Some("M")),
+                st("dir/new.txt", None, Some("U"))
+            ]
+        );
         // 放弃：已跟踪的恢复，未跟踪的挪走（目录留着）。用假回收站，单测不往本机回收站塞东西。
-        discard_with(&dir, &["README.md".into(), "dir/new.txt".into()], fake_trash_ok).unwrap();
+        discard_with(
+            &dir,
+            &["README.md".into(), "dir/new.txt".into()],
+            fake_trash_ok,
+        )
+        .unwrap();
         assert!(statuses(&repo).is_empty());
-        assert_eq!(std::fs::read_to_string(repo.join("README.md")).unwrap().trim(), "hi");
+        assert_eq!(
+            std::fs::read_to_string(repo.join("README.md"))
+                .unwrap()
+                .trim(),
+            "hi"
+        );
         assert!(!repo.join("dir").join("new.txt").exists());
         assert!(repo.join("dir").is_dir());
     }
@@ -2327,7 +2789,12 @@ mod tests {
         stage_blocking(&s(&repo), &["README.md".into()]).unwrap();
         std::fs::write(repo.join("README.md"), "later\n").unwrap();
         discard_blocking(&s(&repo), &["README.md".into()]).unwrap();
-        assert_eq!(std::fs::read_to_string(repo.join("README.md")).unwrap().replace("\r\n", "\n"), "staged\n");
+        assert_eq!(
+            std::fs::read_to_string(repo.join("README.md"))
+                .unwrap()
+                .replace("\r\n", "\n"),
+            "staged\n"
+        );
         assert_eq!(statuses(&repo), vec![st("README.md", Some("M"), None)]);
     }
 
@@ -2335,7 +2802,11 @@ mod tests {
     fn fake_trash_ok(paths: &[std::path::PathBuf]) -> Result<(), String> {
         for path in paths {
             // 整目录放弃交来的是目录本身。
-            let removed = if path.is_dir() { std::fs::remove_dir_all(path) } else { std::fs::remove_file(path) };
+            let removed = if path.is_dir() {
+                std::fs::remove_dir_all(path)
+            } else {
+                std::fs::remove_file(path)
+            };
             removed.map_err(|e| format!("git/trash_failed: {e}"))?;
         }
         Ok(())
@@ -2350,12 +2821,19 @@ mod tests {
     fn discard_keeps_untracked_file_when_trash_fails() {
         let sb = Sandbox::new("discard-trash-fail");
         let repo = sb.repo("r");
-        std::fs::write(repo.join("new.txt"), "keep me
-").unwrap();
+        std::fs::write(
+            repo.join("new.txt"),
+            "keep me
+",
+        )
+        .unwrap();
         let err = discard_with(&s(&repo), &["new.txt".into()], fake_trash_fail).unwrap_err();
         assert!(err.starts_with("git/trash_failed"), "{err}");
-        assert_eq!(std::fs::read_to_string(repo.join("new.txt")).unwrap(), "keep me
-");
+        assert_eq!(
+            std::fs::read_to_string(repo.join("new.txt")).unwrap(),
+            "keep me
+"
+        );
         assert_eq!(statuses(&repo), vec![st("new.txt", None, Some("U"))]);
     }
 
@@ -2364,8 +2842,12 @@ mod tests {
     fn discard_trashes_untracked_file() {
         let sb = Sandbox::new("discard-trash-ok");
         let repo = sb.repo("r");
-        std::fs::write(repo.join("new.txt"), "n
-").unwrap();
+        std::fs::write(
+            repo.join("new.txt"),
+            "n
+",
+        )
+        .unwrap();
         discard_with(&s(&repo), &["new.txt".into()], fake_trash_ok).unwrap();
         assert!(std::fs::symlink_metadata(repo.join("new.txt")).is_err());
         assert!(statuses(&repo).is_empty());
@@ -2415,8 +2897,12 @@ mod tests {
         let sb = Sandbox::new("discard-symlink");
         let repo = sb.repo("r");
         let target = sb.0.join("target.txt");
-        std::fs::write(&target, "precious
-").unwrap();
+        std::fs::write(
+            &target,
+            "precious
+",
+        )
+        .unwrap();
         #[cfg(windows)]
         let made = std::os::windows::fs::symlink_file(&target, repo.join("link.txt")).is_ok();
         #[cfg(unix)]
@@ -2427,8 +2913,11 @@ mod tests {
         }
         discard_with(&s(&repo), &["link.txt".into()], fake_trash_fail).unwrap();
         assert!(std::fs::symlink_metadata(repo.join("link.txt")).is_err());
-        assert_eq!(std::fs::read_to_string(&target).unwrap(), "precious
-");
+        assert_eq!(
+            std::fs::read_to_string(&target).unwrap(),
+            "precious
+"
+        );
     }
 
     /// 真回收站：放弃的未跟踪文件必须能在回收站里找回，而不是永久删掉。
@@ -2457,7 +2946,9 @@ mod tests {
             let ours: Vec<_> = trash::os_limited::list()
                 .unwrap()
                 .into_iter()
-                .filter(|item| item.name == name.as_str() && dunce::simplified(&item.original_parent) == parent)
+                .filter(|item| {
+                    item.name == name.as_str() && dunce::simplified(&item.original_parent) == parent
+                })
                 .collect();
             let found = !ours.is_empty();
             let _ = trash::os_limited::purge_all(ours);
@@ -2477,9 +2968,21 @@ mod tests {
         let dir = s(&repo);
         let abs = s(&sb.0.join("outside.txt"));
         for path in ["README.md", "../outside.txt", abs.as_str(), "nope.txt", ""] {
-            assert_eq!(discard_blocking(&dir, &[path.into()]).unwrap_err(), "git/not_in_changes", "{path}");
-            assert_eq!(stage_blocking(&dir, &[path.into()]).unwrap_err(), "git/not_in_changes", "{path}");
-            assert_eq!(unstage_blocking(&dir, &[path.into()]).unwrap_err(), "git/not_in_changes", "{path}");
+            assert_eq!(
+                discard_blocking(&dir, &[path.into()]).unwrap_err(),
+                "git/not_in_changes",
+                "{path}"
+            );
+            assert_eq!(
+                stage_blocking(&dir, &[path.into()]).unwrap_err(),
+                "git/not_in_changes",
+                "{path}"
+            );
+            assert_eq!(
+                unstage_blocking(&dir, &[path.into()]).unwrap_err(),
+                "git/not_in_changes",
+                "{path}"
+            );
         }
         assert!(sb.0.join("outside.txt").exists());
         assert!(repo.join("README.md").exists());
@@ -2506,9 +3009,15 @@ mod tests {
         let repo = sb.repo("r");
         std::fs::write(repo.join("README.md"), "edited\n").unwrap();
         std::fs::write(repo.join("new.txt"), "n\n").unwrap();
-        assert_eq!(commit_isolated(&sb, &repo, "  \n ", false, true).unwrap_err(), "git/empty_message");
+        assert_eq!(
+            commit_isolated(&sb, &repo, "  \n ", false, true).unwrap_err(),
+            "git/empty_message"
+        );
         // 没暂存、不是「全部」：没东西可提交。
-        assert_eq!(commit_isolated(&sb, &repo, "x", false, true).unwrap_err(), "git/nothing_to_commit");
+        assert_eq!(
+            commit_isolated(&sb, &repo, "x", false, true).unwrap_err(),
+            "git/nothing_to_commit"
+        );
         // 只提交暂存的那一个，未跟踪的留着。
         stage_blocking(&s(&repo), &["README.md".into()]).unwrap();
         let sha = commit_isolated(&sb, &repo, "第一行\n\n第二段 \"引号\"", false, true).unwrap();
@@ -2519,7 +3028,10 @@ mod tests {
         // 提交全部：未跟踪的也进去。
         commit_isolated(&sb, &repo, "all", true, true).unwrap();
         assert!(statuses(&repo).is_empty());
-        assert_eq!(commit_isolated(&sb, &repo, "again", true, true).unwrap_err(), "git/nothing_to_commit");
+        assert_eq!(
+            commit_isolated(&sb, &repo, "again", true, true).unwrap_err(),
+            "git/nothing_to_commit"
+        );
     }
 
     #[test]
@@ -2529,7 +3041,10 @@ mod tests {
         // useConfigOnly：不许 git 拿系统用户名 / 主机名凑一个身份（CI 机器的主机名可能带域名，凑得出来）。
         sb.git(&repo, &["config", "user.useConfigOnly", "true"]);
         std::fs::write(repo.join("README.md"), "edited\n").unwrap();
-        assert_eq!(commit_isolated(&sb, &repo, "x", true, false).unwrap_err(), "git/identity");
+        assert_eq!(
+            commit_isolated(&sb, &repo, "x", true, false).unwrap_err(),
+            "git/identity"
+        );
     }
 
     /// 做空复现：「提交全部」先暂存再提交，提交没成时暂存不能留下（用户没做过这个暂存）。
@@ -2541,7 +3056,10 @@ mod tests {
         std::fs::write(repo.join("README.md"), "edited\n").unwrap();
         std::fs::write(repo.join("new.txt"), "n\n").unwrap();
         let before = statuses(&repo);
-        assert_eq!(commit_isolated(&sb, &repo, "x", true, false).unwrap_err(), "git/identity");
+        assert_eq!(
+            commit_isolated(&sb, &repo, "x", true, false).unwrap_err(),
+            "git/identity"
+        );
         assert_eq!(statuses(&repo), before);
     }
 
@@ -2560,13 +3078,28 @@ mod tests {
         std::fs::write(repo.join("README.md"), "mine\n").unwrap();
         git(&["commit", "-qam", "mine"]);
         assert!(!git(&["merge", "-q", "other"]).status.success());
-        assert_eq!(commit_isolated(&sb, &repo, "x", true, true).unwrap_err(), "git/conflict");
-        assert_eq!(commit_isolated(&sb, &repo, "x", false, true).unwrap_err(), "git/conflict");
+        assert_eq!(
+            commit_isolated(&sb, &repo, "x", true, true).unwrap_err(),
+            "git/conflict"
+        );
+        assert_eq!(
+            commit_isolated(&sb, &repo, "x", false, true).unwrap_err(),
+            "git/conflict"
+        );
         // 做空第 2 轮复现：先点「暂存」，git 就当冲突已解决，之后的提交检查拦不住。暂存 / 放弃都要拒。
         assert_eq!(statuses(&repo), vec![st("README.md", None, Some("!"))]);
-        assert_eq!(stage_blocking(&s(&repo), &["README.md".into()]).unwrap_err(), "git/conflict");
-        assert_eq!(discard_blocking(&s(&repo), &["README.md".into()]).unwrap_err(), "git/conflict");
-        assert_eq!(commit_isolated(&sb, &repo, "x", false, true).unwrap_err(), "git/conflict");
+        assert_eq!(
+            stage_blocking(&s(&repo), &["README.md".into()]).unwrap_err(),
+            "git/conflict"
+        );
+        assert_eq!(
+            discard_blocking(&s(&repo), &["README.md".into()]).unwrap_err(),
+            "git/conflict"
+        );
+        assert_eq!(
+            commit_isolated(&sb, &repo, "x", false, true).unwrap_err(),
+            "git/conflict"
+        );
     }
 
     /// 做空第 2 轮：「提交全部」按界面上显示的文件收口，列表外（agent 刚写出、还没轮询到）的不进提交。
@@ -2578,11 +3111,19 @@ mod tests {
         std::fs::write(repo.join("late.log"), "x\n").unwrap();
         let env = isolated_env(&sb, true);
         let env: Vec<(&str, Option<&str>)> = env.iter().map(|(k, v)| (*k, v.as_deref())).collect();
-        commit_blocking(&s(&repo), "shown", true, Some(&["README.md".to_string()]), &env).unwrap();
+        commit_blocking(
+            &s(&repo),
+            "shown",
+            true,
+            Some(&["README.md".to_string()]),
+            &env,
+        )
+        .unwrap();
         assert_eq!(statuses(&repo), vec![st("late.log", None, Some("U"))]);
         // 列表里的文件已经不在改动清单里（被别人提交了）：拒绝，前端刷新后再来。
         assert_eq!(
-            commit_blocking(&s(&repo), "x", true, Some(&["README.md".to_string()]), &env).unwrap_err(),
+            commit_blocking(&s(&repo), "x", true, Some(&["README.md".to_string()]), &env)
+                .unwrap_err(),
             "git/not_in_changes"
         );
     }
@@ -2612,8 +3153,14 @@ mod tests {
         let repo = sb.repo("r");
         std::fs::write(repo.join("README.md"), "edited\n").unwrap();
         std::fs::write(repo.join(".git").join("index.lock"), "").unwrap();
-        assert_eq!(stage_blocking(&s(&repo), &["README.md".into()]).unwrap_err(), "git/locked");
-        assert_eq!(commit_isolated(&sb, &repo, "x", true, true).unwrap_err(), "git/locked");
+        assert_eq!(
+            stage_blocking(&s(&repo), &["README.md".into()]).unwrap_err(),
+            "git/locked"
+        );
+        assert_eq!(
+            commit_isolated(&sb, &repo, "x", true, true).unwrap_err(),
+            "git/locked"
+        );
         std::fs::remove_file(repo.join(".git").join("index.lock")).unwrap();
     }
 
@@ -2631,7 +3178,10 @@ mod tests {
         }
         std::fs::write(repo.join("README.md"), "edited\n").unwrap();
         let err = commit_isolated(&sb, &repo, "x", true, true).unwrap_err();
-        assert!(err.starts_with("git/failed: ") && err.contains("lint broke"), "{err}");
+        assert!(
+            err.starts_with("git/failed: ") && err.contains("lint broke"),
+            "{err}"
+        );
     }
 
     /// 命令里提到的 worktree 上榜：主仓库 + 两个 worktree，只有命令里出现过的 wt1 进清单；
@@ -2642,19 +3192,29 @@ mod tests {
         let main_dir = sb.repo("main");
         for name in ["wt1", "wt2", "wt1x"] {
             let path = sb.0.join(name);
-            sb.git(&main_dir, &["worktree", "add", "-q", "-b", name, path.to_str().unwrap()]);
+            sb.git(
+                &main_dir,
+                &["worktree", "add", "-q", "-b", name, path.to_str().unwrap()],
+            );
         }
         // 用 git 自己认的根当 cwd 和命令里的路径（macOS 临时目录有 /private 软链，两种写法不一样）。
         let main = repo_root(&s(&main_dir)).unwrap();
         let wt1 = repo_root(&s(&sb.0.join("wt1"))).unwrap();
         let names = |commands: &[&str]| -> Vec<String> {
             let commands: Vec<String> = commands.iter().map(|c| c.to_string()).collect();
-            changes_overview_blocking(&main, &[], &commands).unwrap().into_iter().map(|r| r.name).collect()
+            changes_overview_blocking(&main, &[], &commands)
+                .unwrap()
+                .into_iter()
+                .map(|r| r.name)
+                .collect()
         };
         assert_eq!(names(&[]), ["main"]);
         assert_eq!(names(&["cargo test"]), ["main"]);
         let back = wt1.replace('/', "\\");
-        assert_eq!(names(&[&format!("cd {wt1} && cargo test")]), ["main", "wt1"]);
+        assert_eq!(
+            names(&[&format!("cd {wt1} && cargo test")]),
+            ["main", "wt1"]
+        );
         assert_eq!(names(&[&format!("cd \"{back}\"; ls")]), ["main", "wt1"]);
         assert_eq!(names(&["git -C ../wt1 status"]), ["main", "wt1"]);
         assert_eq!(names(&["cat ../wt1/src/a.rs"]), ["main", "wt1"]);
@@ -2667,7 +3227,10 @@ mod tests {
             // Git Bash 写法：C:/Users/... → /c/Users/...（大小写不敏感）。
             let bash = format!("/{}{}", wt1[..1].to_ascii_lowercase(), &wt1[2..]);
             assert_eq!(names(&[&format!("cd {bash}")]), ["main", "wt1"]);
-            assert_eq!(names(&[&format!("cd {}", wt1.to_uppercase())]), ["main", "wt1"]);
+            assert_eq!(
+                names(&[&format!("cd {}", wt1.to_uppercase())]),
+                ["main", "wt1"]
+            );
         }
     }
 
@@ -2679,10 +3242,17 @@ mod tests {
         std::fs::write(main_dir.join(".gitignore"), ".claude/\n").unwrap();
         sb.commit(&main_dir, "ignore");
         let wt = main_dir.join(".claude").join("worktrees").join("x");
-        sb.git(&main_dir, &["worktree", "add", "-q", "-b", "x", wt.to_str().unwrap()]);
+        sb.git(
+            &main_dir,
+            &["worktree", "add", "-q", "-b", "x", wt.to_str().unwrap()],
+        );
         let main = repo_root(&s(&main_dir)).unwrap();
         let names = |command: &str| -> Vec<String> {
-            changes_overview_blocking(&main, &[], &[command.to_string()]).unwrap().into_iter().map(|r| r.name).collect()
+            changes_overview_blocking(&main, &[], &[command.to_string()])
+                .unwrap()
+                .into_iter()
+                .map(|r| r.name)
+                .collect()
         };
         assert_eq!(names("cd .claude/worktrees/x && git status"), ["main", "x"]);
         assert_eq!(names("cd ./.claude/worktrees/x"), ["main", "x"]);
@@ -2712,17 +3282,26 @@ mod tests {
         std::fs::write(frontend.join(".gitignore"), ".claude/\n").unwrap();
         sb.commit(&frontend, "ignore");
         let wt = frontend.join(".claude").join("worktrees").join("x");
-        sb.git(&frontend, &["worktree", "add", "-q", "-b", "x", wt.to_str().unwrap()]);
+        sb.git(
+            &frontend,
+            &["worktree", "add", "-q", "-b", "x", wt.to_str().unwrap()],
+        );
         let cwd = s(&proj);
         let names = |command: &str| -> Vec<String> {
-            let mut got: Vec<String> =
-                changes_overview_blocking(&cwd, &[], &[command.to_string()]).unwrap().into_iter().map(|r| r.name).collect();
+            let mut got: Vec<String> = changes_overview_blocking(&cwd, &[], &[command.to_string()])
+                .unwrap()
+                .into_iter()
+                .map(|r| r.name)
+                .collect();
             got.sort();
             got
         };
         let none: Vec<String> = Vec::new();
         assert_eq!(names("cd apps/web && npm test"), ["web"]);
-        assert_eq!(names("cd frontend/.claude/worktrees/x && git status"), ["x"]);
+        assert_eq!(
+            names("cd frontend/.claude/worktrees/x && git status"),
+            ["x"]
+        );
         assert_eq!(names("git -C backend status"), ["backend"]);
         assert_eq!(names("cat backend/src/a.rs"), ["backend"]);
         assert_eq!(names("cd backend"), ["backend"]);
@@ -2750,8 +3329,12 @@ mod tests {
             let dir = ws.join(format!("p{i:02}"));
             std::fs::create_dir_all(&dir).unwrap();
             sb.git(&dir, &["init", "-q", "-b", "main"]);
-            std::fs::write(dir.join("a.txt"), "x
-").unwrap();
+            std::fs::write(
+                dir.join("a.txt"),
+                "x
+",
+            )
+            .unwrap();
         }
         let repos = changes_overview_blocking(&s(&ws), &[], &[]).unwrap();
         assert_eq!(repos.len(), 11);
@@ -2769,27 +3352,65 @@ mod tests {
         let frontend = real.join("frontend");
         std::fs::create_dir_all(&frontend).unwrap();
         sb.git(&frontend, &["init", "-q", "-b", "main"]);
-        std::fs::write(frontend.join("README.md"), "hi
-").unwrap();
+        std::fs::write(
+            frontend.join("README.md"),
+            "hi
+",
+        )
+        .unwrap();
         sb.commit(&frontend, "init");
-        std::fs::write(frontend.join(".gitignore"), ".claude/
-").unwrap();
+        std::fs::write(
+            frontend.join(".gitignore"),
+            ".claude/
+",
+        )
+        .unwrap();
         sb.commit(&frontend, "ignore");
         let wt = frontend.join(".claude").join("worktrees").join("x");
-        sb.git(&frontend, &["worktree", "add", "-q", "-b", "x", wt.to_str().unwrap()]);
+        sb.git(
+            &frontend,
+            &["worktree", "add", "-q", "-b", "x", wt.to_str().unwrap()],
+        );
         let alias = sb.0.join("alias");
         let made = std::process::Command::new("cmd")
-            .args(["/C", "mklink", "/J", alias.to_str().unwrap(), real.to_str().unwrap()])
+            .args([
+                "/C",
+                "mklink",
+                "/J",
+                alias.to_str().unwrap(),
+                real.to_str().unwrap(),
+            ])
             .output()
             .unwrap();
-        assert!(made.status.success(), "{}", String::from_utf8_lossy(&made.stderr));
+        assert!(
+            made.status.success(),
+            "{}",
+            String::from_utf8_lossy(&made.stderr)
+        );
         let cwd = s(&alias);
         let names = |command: &str| -> Vec<String> {
-            changes_overview_blocking(&cwd, &[], &[command.to_string()]).unwrap().into_iter().map(|r| r.name).collect()
+            changes_overview_blocking(&cwd, &[], &[command.to_string()])
+                .unwrap()
+                .into_iter()
+                .map(|r| r.name)
+                .collect()
         };
-        assert_eq!(names("cd frontend/.claude/worktrees/x && git status"), ["x"]);
-        assert_eq!(names(&format!("cd {}/frontend/.claude/worktrees/x", cwd)), ["x"]);
-        assert!(is_related_root(&cwd, &s(&alias.join("frontend").join(".claude").join("worktrees").join("x"))));
+        assert_eq!(
+            names("cd frontend/.claude/worktrees/x && git status"),
+            ["x"]
+        );
+        assert_eq!(
+            names(&format!("cd {}/frontend/.claude/worktrees/x", cwd)),
+            ["x"]
+        );
+        assert!(is_related_root(
+            &cwd,
+            &s(&alias
+                .join("frontend")
+                .join(".claude")
+                .join("worktrees")
+                .join("x"))
+        ));
         assert!(is_related_root(&cwd, &s(&wt)));
         // 只拆联接，不进去删（联接里是真目录）。
         std::fs::remove_dir(&alias).unwrap();
@@ -2816,14 +3437,26 @@ mod tests {
         };
         let row = |n: &str, d: bool| (n.to_string(), d, d);
         // 不带 detail（旧前端）：全算。
-        assert_eq!(shape(None), [row("a", true), row("b", true), row("c", true)]);
+        assert_eq!(
+            shape(None),
+            [row("a", true), row("b", true), row("c", true)]
+        );
         // 空串：默认第一个（工作目录不是仓库）。
-        assert_eq!(shape(Some("")), [row("a", true), row("b", false), row("c", false)]);
+        assert_eq!(
+            shape(Some("")),
+            [row("a", true), row("b", false), row("c", false)]
+        );
         // 点名 b：只有 b 算，其余照样列出（分支、文件清单都在）。
         let b = s(&ws.join("b"));
-        assert_eq!(shape(Some(&b)), [row("a", false), row("b", true), row("c", false)]);
+        assert_eq!(
+            shape(Some(&b)),
+            [row("a", false), row("b", true), row("c", false)]
+        );
         // 点名的已不在清单里：退回默认。
-        assert_eq!(shape(Some("C:/gone")), [row("a", true), row("b", false), row("c", false)]);
+        assert_eq!(
+            shape(Some("C:/gone")),
+            [row("a", true), row("b", false), row("c", false)]
+        );
     }
 
     #[test]
@@ -2832,7 +3465,10 @@ mod tests {
         assert!(forms.contains(&"/c/w/meowo-wt".to_string()), "{forms:?}");
         assert!(forms.contains(&"../meowo-wt".to_string()), "{forms:?}");
         let forms = path_spellings("c:/w/meowo/.claude/worktrees/x", "c:/w/meowo");
-        assert!(forms.contains(&".claude/worktrees/x".to_string()) && forms.contains(&"./.claude/worktrees/x".to_string()));
+        assert!(
+            forms.contains(&".claude/worktrees/x".to_string())
+                && forms.contains(&"./.claude/worktrees/x".to_string())
+        );
         // 不同盘没有相对写法。
         assert_eq!(path_spellings("d:/x", "c:/w").len(), 2);
         // Unix 只共享根 `/` 不给相对写法。
@@ -2864,7 +3500,10 @@ mod tests {
     }
 
     fn folded_of(files: &[GitChangedFileDto]) -> Vec<(String, u32)> {
-        files.iter().filter_map(|f| f.untracked_files.map(|n| (f.path.clone(), n))).collect()
+        files
+            .iter()
+            .filter_map(|f| f.untracked_files.map(|n| (f.path.clone(), n)))
+            .collect()
     }
 
     /// 摘要里：多于 50 个文件的未跟踪目录折成一条（带文件数），不多于 50 个的照旧逐个文件；
@@ -2892,19 +3531,42 @@ mod tests {
         std::fs::write(nested.join("x.txt"), "x\n").unwrap();
 
         let files = git_diff_summary_blocking(&s(&repo)).unwrap().files;
-        assert_eq!(folded_of(&files), vec![("big dir/".to_string(), 60), ("src/gen/".to_string(), 51)]);
+        assert_eq!(
+            folded_of(&files),
+            vec![("big dir/".to_string(), 60), ("src/gen/".to_string(), 51)]
+        );
         // 折叠行仍是未跟踪的「更改」（在「更改」组，能暂存 / 放弃），不数行数。
         let big = files.iter().find(|f| f.path == "big dir/").unwrap();
-        assert_eq!((big.status.as_str(), big.worktree_status.as_deref(), big.additions), ("U", Some("U"), None));
-        let expanded: Vec<&str> = files.iter().filter(|f| f.untracked_files.is_none()).map(|f| f.path.as_str()).collect();
+        assert_eq!(
+            (
+                big.status.as_str(),
+                big.worktree_status.as_deref(),
+                big.additions
+            ),
+            ("U", Some("U"), None)
+        );
+        let expanded: Vec<&str> = files
+            .iter()
+            .filter(|f| f.untracked_files.is_none())
+            .map(|f| f.path.as_str())
+            .collect();
         assert_eq!(expanded.len(), 50 + 3, "{expanded:?}");
         assert!(expanded.contains(&"fifty/d4/deep/f49.js"));
         assert!(expanded.contains(&"小目录/a.txt") && expanded.contains(&"小目录/子/b.txt"));
         assert!(expanded.contains(&"src/new/one.txt"));
         // 展开的文件不是目录条目，也没有嵌套仓库、被忽略的文件。
-        assert!(expanded.iter().all(|p| !p.ends_with('/') && !p.starts_with("nest") && !p.ends_with(".log")));
+        assert!(expanded
+            .iter()
+            .all(|p| !p.ends_with('/') && !p.starts_with("nest") && !p.ends_with(".log")));
         // 展开的未跟踪文件照旧有行数。
-        assert_eq!(files.iter().find(|f| f.path == "src/new/one.txt").unwrap().additions, Some(1));
+        assert_eq!(
+            files
+                .iter()
+                .find(|f| f.path == "src/new/one.txt")
+                .unwrap()
+                .additions,
+            Some(1)
+        );
     }
 
     /// 折叠行上的数字缓存着（轮询不必每轮扫整个目录），写操作之后立刻对上。缓存命中本身不在这里断言：
@@ -2915,11 +3577,17 @@ mod tests {
         let repo = sb.repo("r");
         fill(&repo.join("out"), 60);
         let dir = s(&repo);
-        assert_eq!(folded_of(&git_diff_summary_blocking(&dir).unwrap().files), vec![("out/".to_string(), 60)]);
+        assert_eq!(
+            folded_of(&git_diff_summary_blocking(&dir).unwrap().files),
+            vec![("out/".to_string(), 60)]
+        );
         std::fs::write(repo.join("out").join("more.js"), "x\n").unwrap();
         std::fs::write(repo.join("README.md"), "edited\n").unwrap();
         stage_blocking(&dir, &["README.md".into()]).unwrap();
-        assert_eq!(folded_of(&git_diff_summary_blocking(&dir).unwrap().files), vec![("out/".to_string(), 61)]);
+        assert_eq!(
+            folded_of(&git_diff_summary_blocking(&dir).unwrap().files),
+            vec![("out/".to_string(), 61)]
+        );
     }
 
     /// 点开折叠目录：按需列出其中的文件；只认此刻清单里的未跟踪目录条目。
@@ -2936,12 +3604,30 @@ mod tests {
         let dir = s(&repo);
         let listed = untracked_dir_files_blocking(&dir, "big dir/").unwrap();
         assert_eq!(listed.len(), 60);
-        assert!(listed.iter().all(|f| f.path.starts_with("big dir/d") && f.worktree_status.as_deref() == Some("U") && f.untracked_files.is_none()));
-        for bad in ["README.md", "big dir", "nope/", "../big dir/", "big dir/d0/", ""] {
-            assert_eq!(untracked_dir_files_blocking(&dir, bad).unwrap_err(), "git/not_in_changes", "{bad}");
+        assert!(listed.iter().all(|f| f.path.starts_with("big dir/d")
+            && f.worktree_status.as_deref() == Some("U")
+            && f.untracked_files.is_none()));
+        for bad in [
+            "README.md",
+            "big dir",
+            "nope/",
+            "../big dir/",
+            "big dir/d0/",
+            "",
+        ] {
+            assert_eq!(
+                untracked_dir_files_blocking(&dir, bad).unwrap_err(),
+                "git/not_in_changes",
+                "{bad}"
+            );
         }
         // 从仓库子目录调用（会话 cwd 不是仓库根）路径也相对仓库根。
-        assert_eq!(untracked_dir_files_blocking(&s(&repo.join("sub")), "big dir/").unwrap().len(), 60);
+        assert_eq!(
+            untracked_dir_files_blocking(&s(&repo.join("sub")), "big dir/")
+                .unwrap()
+                .len(),
+            60
+        );
     }
 
     /// 折叠行整目录暂存 / 放弃，展开后的文件逐个暂存 / 放弃。
@@ -2959,13 +3645,19 @@ mod tests {
         assert!(statuses(&repo).contains(&st("a b/d0/deep/f0.js", Some("A"), None)));
         // 整目录暂存：60 个都进暂存区。
         stage_blocking(&dir, &["gen/".into()]).unwrap();
-        let staged = statuses(&repo).into_iter().filter(|(p, i, _)| p.starts_with("gen/") && i.as_deref() == Some("A")).count();
+        let staged = statuses(&repo)
+            .into_iter()
+            .filter(|(p, i, _)| p.starts_with("gen/") && i.as_deref() == Some("A"))
+            .count();
         assert_eq!(staged, 60);
         // 整目录放弃：目录一次进回收站（假回收站收到的是目录本身，一条）。
         use std::sync::atomic::{AtomicUsize, Ordering};
         static DIRS: AtomicUsize = AtomicUsize::new(0);
         fn dir_trash(paths: &[std::path::PathBuf]) -> Result<(), String> {
-            DIRS.fetch_add(paths.iter().filter(|p| p.is_dir()).count(), Ordering::SeqCst);
+            DIRS.fetch_add(
+                paths.iter().filter(|p| p.is_dir()).count(),
+                Ordering::SeqCst,
+            );
             fake_trash_ok(paths)
         }
         // 「a b/」里还剩 58 个未跟踪文件，仍是折叠的目录条目吗？不是：有一个已暂存，整个目录不再是
@@ -2975,7 +3667,10 @@ mod tests {
         assert_eq!(DIRS.load(Ordering::SeqCst), 1);
         assert!(!repo.join("trash me").exists());
         // 已暂存的目录不再是未跟踪目录条目：整目录放弃被拒。
-        assert_eq!(discard_with(&dir, &["gen/".into()], fake_trash_ok).unwrap_err(), "git/not_in_changes");
+        assert_eq!(
+            discard_with(&dir, &["gen/".into()], fake_trash_ok).unwrap_err(),
+            "git/not_in_changes"
+        );
     }
 
     /// 未跟踪目录下面的路径也要逐个核对：被忽略的、不存在的、带 `..` 的一律拒，文件不动。
@@ -2988,9 +3683,23 @@ mod tests {
         fill(&repo.join("out"), 60);
         std::fs::write(repo.join("out").join("keep.log"), "keep\n").unwrap();
         let dir = s(&repo);
-        for path in ["out/keep.log", "out/nope.js", "out/../README.md", "out/d0/", "out"] {
-            assert_eq!(discard_with(&dir, &[path.into()], fake_trash_ok).unwrap_err(), "git/not_in_changes", "{path}");
-            assert_eq!(stage_blocking(&dir, &[path.into()]).unwrap_err(), "git/not_in_changes", "{path}");
+        for path in [
+            "out/keep.log",
+            "out/nope.js",
+            "out/../README.md",
+            "out/d0/",
+            "out",
+        ] {
+            assert_eq!(
+                discard_with(&dir, &[path.into()], fake_trash_ok).unwrap_err(),
+                "git/not_in_changes",
+                "{path}"
+            );
+            assert_eq!(
+                stage_blocking(&dir, &[path.into()]).unwrap_err(),
+                "git/not_in_changes",
+                "{path}"
+            );
         }
         assert!(repo.join("out").join("keep.log").exists());
         assert!(!untracked_file_listed(&dir, "out/keep.log"));
@@ -3009,13 +3718,22 @@ mod tests {
         sb.git(&inner, &["init", "-q"]);
         std::fs::write(inner.join("v.txt"), "v\n").unwrap();
         let dir = s(&repo);
-        assert_eq!(folded_of(&git_diff_summary_blocking(&dir).unwrap().files), vec![("pkg/".to_string(), 60)]);
-        assert_eq!(discard_with(&dir, &["pkg/".into()], fake_trash_ok).unwrap_err(), "git/dir_has_repo");
+        assert_eq!(
+            folded_of(&git_diff_summary_blocking(&dir).unwrap().files),
+            vec![("pkg/".to_string(), 60)]
+        );
+        assert_eq!(
+            discard_with(&dir, &["pkg/".into()], fake_trash_ok).unwrap_err(),
+            "git/dir_has_repo"
+        );
         assert!(inner.join("v.txt").exists());
         stage_blocking(&dir, &["pkg/".into()]).unwrap();
         let index = git_output(&dir, &["ls-files", "-s"]).unwrap();
         let index = stdout_text(&index.stdout);
-        assert!(!index.contains("160000"), "嵌套仓库被当 gitlink 暂存了：{index}");
+        assert!(
+            !index.contains("160000"),
+            "嵌套仓库被当 gitlink 暂存了：{index}"
+        );
         assert_eq!(index.lines().filter(|l| l.contains("pkg/d")).count(), 60);
     }
 
@@ -3048,12 +3766,31 @@ mod tests {
         fill(&repo.join("out"), 60);
         let link = repo.join("out").join("d3").join("link");
         assert!(make_dir_link(&outside, &link), "建不了 junction / 目录链接");
-        assert!(std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink(), "junction 的 is_symlink 不为 true");
+        assert!(
+            std::fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "junction 的 is_symlink 不为 true"
+        );
         let dir = s(&repo);
-        assert!(folded_of(&git_diff_summary_blocking(&dir).unwrap().files).iter().any(|(p, _)| p == "out/"));
-        assert_eq!(discard_with(&dir, &["out/".into()], fake_trash_ok).unwrap_err(), "git/dir_has_links");
-        assert!(repo.join("out").join("d0").join("deep").join("f0.js").exists());
-        assert_eq!(std::fs::read_to_string(outside.join("data.txt")).unwrap(), "precious\n");
+        assert!(folded_of(&git_diff_summary_blocking(&dir).unwrap().files)
+            .iter()
+            .any(|(p, _)| p == "out/"));
+        assert_eq!(
+            discard_with(&dir, &["out/".into()], fake_trash_ok).unwrap_err(),
+            "git/dir_has_links"
+        );
+        assert!(repo
+            .join("out")
+            .join("d0")
+            .join("deep")
+            .join("f0.js")
+            .exists());
+        assert_eq!(
+            std::fs::read_to_string(outside.join("data.txt")).unwrap(),
+            "precious\n"
+        );
         // 拆掉链接本身（不进入），沙盒清理时 remove_dir_all 才不会顺着 junction 删到外面。
         #[cfg(windows)]
         std::fs::remove_dir(&link).unwrap();
@@ -3079,8 +3816,16 @@ mod tests {
             return;
         }
         let dir = s(&repo);
-        assert_eq!(discard_with(&dir, &["out/".into()], fake_trash_ok).unwrap_err(), "git/dir_has_links");
-        assert!(repo.join("out").join("d0").join("deep").join("f0.js").exists());
+        assert_eq!(
+            discard_with(&dir, &["out/".into()], fake_trash_ok).unwrap_err(),
+            "git/dir_has_links"
+        );
+        assert!(repo
+            .join("out")
+            .join("d0")
+            .join("deep")
+            .join("f0.js")
+            .exists());
         assert_eq!(std::fs::read_to_string(&target).unwrap(), "precious\n");
     }
 
@@ -3094,8 +3839,16 @@ mod tests {
         let link = repo.join("linked");
         assert!(make_dir_link(&outside, &link), "建不了 junction / 目录链接");
         // git 不穿过链接列文件，清单里不会有 linked/build/；直接拿底层检查验证上级链接也会被拒。
-        assert_eq!(untracked_dir_to_trash(&s(&repo), "linked/build").unwrap_err(), "git/dir_has_links");
-        assert!(outside.join("build").join("d0").join("deep").join("f0.js").exists());
+        assert_eq!(
+            untracked_dir_to_trash(&s(&repo), "linked/build").unwrap_err(),
+            "git/dir_has_links"
+        );
+        assert!(outside
+            .join("build")
+            .join("d0")
+            .join("deep")
+            .join("f0.js")
+            .exists());
         #[cfg(windows)]
         std::fs::remove_dir(&link).unwrap();
         #[cfg(unix)]
@@ -3113,7 +3866,12 @@ mod tests {
         fill(&repo.join("big dir"), 60);
         ignore_dir_blocking(&dir, "big dir/").unwrap();
         assert_eq!(std::fs::read_to_string(&gi).unwrap(), "/big dir/\n");
-        let paths: Vec<String> = git_diff_summary_blocking(&dir).unwrap().files.into_iter().map(|f| f.path).collect();
+        let paths: Vec<String> = git_diff_summary_blocking(&dir)
+            .unwrap()
+            .files
+            .into_iter()
+            .map(|f| f.path)
+            .collect();
         assert_eq!(paths, vec![".gitignore".to_string()]);
 
         // CRLF、末尾没有换行：照原样续上。嵌套目录写完整路径；方括号转义成字面量。
@@ -3123,9 +3881,20 @@ mod tests {
         sb.commit(&repo, "src");
         fill(&repo.join("src").join("a[1]"), 3);
         ignore_dir_blocking(&dir, "src/a[1]/").unwrap();
-        assert_eq!(std::fs::read_to_string(&gi).unwrap(), "/big dir/\r\n*.log\r\n/src/a\\[1]/");
-        let paths: Vec<String> = git_diff_summary_blocking(&dir).unwrap().files.into_iter().map(|f| f.path).collect();
-        assert!(paths.iter().all(|p| !p.starts_with("src/a[1]")), "{paths:?}");
+        assert_eq!(
+            std::fs::read_to_string(&gi).unwrap(),
+            "/big dir/\r\n*.log\r\n/src/a\\[1]/"
+        );
+        let paths: Vec<String> = git_diff_summary_blocking(&dir)
+            .unwrap()
+            .files
+            .into_iter()
+            .map(|f| f.path)
+            .collect();
+        assert!(
+            paths.iter().all(|p| !p.starts_with("src/a[1]")),
+            "{paths:?}"
+        );
 
         // 已有同一行（后面被 ! 规则反选，所以目录还在清单里）：不再追加。
         std::fs::write(&gi, "/gen/\n!/gen/\n").unwrap();
@@ -3135,7 +3904,11 @@ mod tests {
 
         // 清单外的一律拒：已跟踪文件、文件、不带斜杠、`..`。
         for bad in ["README.md", "gen", "gen/d0/deep/f0.js", "../gen/", "nope/"] {
-            assert_eq!(ignore_dir_blocking(&dir, bad).unwrap_err(), "git/not_in_changes", "{bad}");
+            assert_eq!(
+                ignore_dir_blocking(&dir, bad).unwrap_err(),
+                "git/not_in_changes",
+                "{bad}"
+            );
         }
     }
 
@@ -3149,7 +3922,10 @@ mod tests {
                 StatusEntry::UntrackedDir(d) => format!("dir:{d}"),
             })
             .collect();
-        assert_eq!(got, vec!["dir:target-check/", "file:src/new.rs", "file:a.rs"]);
+        assert_eq!(
+            got,
+            vec!["dir:target-check/", "file:src/new.rs", "file:a.rs"]
+        );
     }
 
     /// 摘要起的 git 进程数（二期 #28）：Windows 上每个 git 进程固定约 30ms，冷态 15000 个未跟踪文件
@@ -3181,7 +3957,11 @@ mod tests {
         let summed = |dir: &str| {
             let files = git_diff_summary_blocking(dir).unwrap().files;
             files.iter().fold((0, 0, 0), |(a, d, n), f| {
-                (a + f.additions.unwrap_or(0), d + f.deletions.unwrap_or(0), n + f.untracked_files.unwrap_or(1))
+                (
+                    a + f.additions.unwrap_or(0),
+                    d + f.deletions.unwrap_or(0),
+                    n + f.untracked_files.unwrap_or(1),
+                )
             })
         };
         let spawns = |dir: &str| {
@@ -3195,23 +3975,39 @@ mod tests {
         assert_eq!(spawns(&s(&clean)), (Some((0, 0, 0)), 1));
         // 只有未跟踪文件：numstat 必然为空，不跑；未跟踪文件的行数照数。
         let untracked = sb.repo("untracked");
-        std::fs::write(untracked.join("new.txt"), "a
+        std::fs::write(
+            untracked.join("new.txt"),
+            "a
 b
 c
-").unwrap();
+",
+        )
+        .unwrap();
         assert_eq!(spawns(&s(&untracked)), (Some((3, 0, 1)), 1));
         assert_eq!(summed(&s(&untracked)), (3, 0, 1));
         // 跟踪改动 + 未跟踪文件 + 60 个文件的未跟踪目录（折叠，按文件数算）：status、ls-files、numstat。
         let dirty = sb.repo("dirty");
-        std::fs::write(dirty.join("README.md"), "changed
+        std::fs::write(
+            dirty.join("README.md"),
+            "changed
 more
-").unwrap();
-        std::fs::write(dirty.join("new.txt"), "x
-").unwrap();
+",
+        )
+        .unwrap();
+        std::fs::write(
+            dirty.join("new.txt"),
+            "x
+",
+        )
+        .unwrap();
         std::fs::create_dir_all(dirty.join("build")).unwrap();
         for i in 0..60 {
-            std::fs::write(dirty.join("build").join(format!("f{i}")), "x
-").unwrap();
+            std::fs::write(
+                dirty.join("build").join(format!("f{i}")),
+                "x
+",
+            )
+            .unwrap();
         }
         let (counts, spawned) = spawns(&s(&dirty));
         assert_eq!(counts, Some(summed(&s(&dirty))));
@@ -3220,14 +4016,33 @@ more
         // 冲突条目的 status 也是 "U"：不能当成未跟踪而省掉 numstat。
         let conflict = sb.repo("conflict");
         sb.git(&conflict, &["switch", "-q", "-c", "side"]);
-        std::fs::write(conflict.join("README.md"), "side
-").unwrap();
+        std::fs::write(
+            conflict.join("README.md"),
+            "side
+",
+        )
+        .unwrap();
         sb.commit(&conflict, "side");
         sb.git(&conflict, &["switch", "-q", "main"]);
-        std::fs::write(conflict.join("README.md"), "main
-").unwrap();
+        std::fs::write(
+            conflict.join("README.md"),
+            "main
+",
+        )
+        .unwrap();
         sb.commit(&conflict, "main");
-        let _ = git_output(&s(&conflict), &["-c", "user.name=t", "-c", "user.email=t@t", "merge", "-q", "side"]);
+        let _ = git_output(
+            &s(&conflict),
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "merge",
+                "-q",
+                "side",
+            ],
+        );
         let (counts, spawned) = spawns(&s(&conflict));
         assert_eq!(counts, Some(summed(&s(&conflict))));
         assert_eq!(spawned, 2, "冲突文件要跑 numstat");
@@ -3245,7 +4060,10 @@ more
         }
         // .git 目录里面不是工作树：和摘要的 is_repo=false 一样不给数。
         assert_eq!(sidebar_diff_counts_blocking(&s(&clean.join(".git"))), None);
-        assert_eq!(sidebar_diff_counts_blocking(&s(&sb.0.join("missing"))), None);
+        assert_eq!(
+            sidebar_diff_counts_blocking(&s(&sb.0.join("missing"))),
+            None
+        );
     }
 
     fn counts_of(dir: &str) -> Option<(u32, u32, u32)> {
@@ -3259,16 +4077,31 @@ more
         type Want<'a> = (Option<&'a str>, Option<&'a str>, Option<u32>, Option<u32>);
         let cases: [(&str, Want); 11] = [
             ("main", (Some("main"), None, None, None)),
-            ("main...origin/main", (Some("main"), Some("origin/main"), Some(0), Some(0))),
-            ("main...origin/main [ahead 3]", (Some("main"), Some("origin/main"), Some(3), Some(0))),
-            ("main...origin/main [behind 2]", (Some("main"), Some("origin/main"), Some(0), Some(2))),
+            (
+                "main...origin/main",
+                (Some("main"), Some("origin/main"), Some(0), Some(0)),
+            ),
+            (
+                "main...origin/main [ahead 3]",
+                (Some("main"), Some("origin/main"), Some(3), Some(0)),
+            ),
+            (
+                "main...origin/main [behind 2]",
+                (Some("main"), Some("origin/main"), Some(0), Some(2)),
+            ),
             (
                 "feat/a.b...origin/feat/a.b [ahead 1, behind 12]",
                 (Some("feat/a.b"), Some("origin/feat/a.b"), Some(1), Some(12)),
             ),
-            ("main...origin/main [gone]", (Some("main"), None, None, None)),
+            (
+                "main...origin/main [gone]",
+                (Some("main"), None, None, None),
+            ),
             // aheadBehind 关掉时只说「不同」：上游在，数字未知，由调用方退回 rev-list。
-            ("main...origin/main [different]", (Some("main"), Some("origin/main"), None, None)),
+            (
+                "main...origin/main [different]",
+                (Some("main"), Some("origin/main"), None, None),
+            ),
             ("HEAD (no branch)", (None, None, None, None)),
             ("No commits yet on main", (None, None, None, None)),
             ("Initial commit on main", (None, None, None, None)),
@@ -3284,7 +4117,10 @@ more
             assert_eq!(parse_branch_header(header), want, "{header}");
         }
         let (header, rest) = split_branch_header(b"## main...o/main [ahead 1]  M a.rs ");
-        assert_eq!((header.as_deref(), rest), (Some("main...o/main [ahead 1]"), &b" M a.rs "[..]));
+        assert_eq!(
+            (header.as_deref(), rest),
+            (Some("main...o/main [ahead 1]"), &b" M a.rs "[..])
+        );
         assert_eq!(split_branch_header(b" M a.rs "), (None, &b" M a.rs "[..]));
     }
 
@@ -3295,9 +4131,34 @@ more
         let sb = Sandbox::new("branch-ab");
         let origin = sb.repo("origin");
         let clone = sb.0.join("clone");
-        sb.git(&sb.0, &["clone", "-q", "-b", "main", origin.to_str().unwrap(), clone.to_str().unwrap()]);
+        sb.git(
+            &sb.0,
+            &[
+                "clone",
+                "-q",
+                "-b",
+                "main",
+                origin.to_str().unwrap(),
+                clone.to_str().unwrap(),
+            ],
+        );
         let empty_commit = |dir: &Path, message: &str| {
-            sb.git(dir, &["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "--allow-empty", "-q", "-m", message]);
+            sb.git(
+                dir,
+                &[
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@t",
+                    "-c",
+                    "commit.gpgsign=false",
+                    "commit",
+                    "--allow-empty",
+                    "-q",
+                    "-m",
+                    message,
+                ],
+            );
         };
         let check = |dir: &Path, label: &str| {
             let d = s(dir);
@@ -3320,16 +4181,40 @@ more
         sb.git(&clone, &["fetch", "-q"]);
         assert_eq!(check(&clone, "领先且落后"), Some((1, 1)));
         // 上游不是同名分支（跟踪 origin/main）：推送不会推到它，↑↓ 不按它算（做空审查：以前照它推进了 main）。
-        sb.git(&clone, &["checkout", "-q", "-b", "feature/x.y", "--track", "origin/main"]);
+        sb.git(
+            &clone,
+            &[
+                "checkout",
+                "-q",
+                "-b",
+                "feature/x.y",
+                "--track",
+                "origin/main",
+            ],
+        );
         let mismatched = git_diff_summary_blocking(&s(&clone)).unwrap();
-        assert_eq!((mismatched.upstream, mismatched.ahead, mismatched.push_target.as_deref()), (None, None, Some("origin/feature/x.y")), "上游不同名");
+        assert_eq!(
+            (
+                mismatched.upstream,
+                mismatched.ahead,
+                mismatched.push_target.as_deref()
+            ),
+            (None, None, Some("origin/feature/x.y")),
+            "上游不同名"
+        );
         sb.git(&origin, &["branch", "-q", "feature/x.y"]);
         sb.git(&clone, &["fetch", "-q"]);
-        sb.git(&clone, &["branch", "-q", "--set-upstream-to=origin/feature/x.y"]);
+        sb.git(
+            &clone,
+            &["branch", "-q", "--set-upstream-to=origin/feature/x.y"],
+        );
         assert_eq!(check(&clone, "带斜杠和点的分支名"), Some((0, 0)));
         sb.git(&origin, &["branch", "-q", "gone"]);
         sb.git(&clone, &["fetch", "-q"]);
-        sb.git(&clone, &["checkout", "-q", "-b", "g", "--track", "origin/gone"]);
+        sb.git(
+            &clone,
+            &["checkout", "-q", "-b", "g", "--track", "origin/gone"],
+        );
         sb.git(&origin, &["branch", "-q", "-D", "gone"]);
         sb.git(&clone, &["fetch", "-q", "--prune"]);
         assert_eq!(check(&clone, "上游已删"), None);
@@ -3352,7 +4237,11 @@ more
         fn before(dir: &str) -> Vec<GitChangedFileDto> {
             let _ = git_output(dir, &["rev-parse", "--is-inside-work-tree"]).unwrap();
             let _ = git_output(dir, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
-            let status = git_output(dir, &["status", "--porcelain", "-z", "--no-renames", "-uall"]).unwrap();
+            let status = git_output(
+                dir,
+                &["status", "--porcelain", "-z", "--no-renames", "-uall"],
+            )
+            .unwrap();
             let mut files = parse_porcelain_z(&status.stdout);
             fill_line_counts(dir, &mut files);
             let _ = upstream_divergence(dir);
@@ -3360,7 +4249,10 @@ more
         }
         let sb = Sandbox::new("fold-bench");
         let repo = sb.repo("r");
-        let size: usize = std::env::var("MEOWO_BENCH_FILE_BYTES").ok().and_then(|v| v.parse().ok()).unwrap_or(2);
+        let size: usize = std::env::var("MEOWO_BENCH_FILE_BYTES")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(2);
         let body = "x".repeat(size.saturating_sub(1)) + "\n";
         for i in 0..15000 {
             let sub = repo.join("target-x").join(format!("d{}", i / 100));
@@ -3382,7 +4274,10 @@ more
                 entries = files.len();
                 bytes = serde_json::to_vec(&files).unwrap().len();
             }
-            eprintln!("{label}: 最快 {:.1} ms，{entries} 条，JSON {bytes} 字节", best.as_secs_f64() * 1000.0);
+            eprintln!(
+                "{label}: 最快 {:.1} ms，{entries} 条，JSON {bytes} 字节",
+                best.as_secs_f64() * 1000.0
+            );
             best
         };
         let old = time("改前 -uall", &|| before(&dir));
@@ -3390,7 +4285,9 @@ more
             invalidate_caches();
             git_diff_summary_blocking(&dir).unwrap().files
         });
-        let warm = time("改后（轮询，数字走缓存）", &|| git_diff_summary_blocking(&dir).unwrap().files);
+        let warm = time("改后（轮询，数字走缓存）", &|| {
+            git_diff_summary_blocking(&dir).unwrap().files
+        });
         eprintln!(
             "改后/改前：冷 {:.2}，热 {:.2}",
             cold.as_secs_f64() / old.as_secs_f64(),

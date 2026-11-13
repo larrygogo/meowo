@@ -1,3 +1,12 @@
+import type { ManagedConversationRecoveriesArgs } from "./generated/contracts/bridge/ManagedConversationRecoveriesArgs";
+import type { ManagedConversationDeliveryActionArgs } from "./generated/contracts/bridge/ManagedConversationDeliveryActionArgs";
+import type { ManagedConversationAdoptArgs } from "./generated/contracts/bridge/ManagedConversationAdoptArgs";
+import type { ManagedConversationControlArgs } from "./generated/contracts/bridge/ManagedConversationControlArgs";
+import type { ManagedConversationCreateArgs } from "./generated/contracts/bridge/ManagedConversationCreateArgs";
+import type { ManagedConversationResolveArgs } from "./generated/contracts/bridge/ManagedConversationResolveArgs";
+import type { ManagedConversationSendArgs } from "./generated/contracts/bridge/ManagedConversationSendArgs";
+import type { ManagedConversationSetModeArgs } from "./generated/contracts/bridge/ManagedConversationSetModeArgs";
+import type { ManagedConversationSetModelArgs } from "./generated/contracts/bridge/ManagedConversationSetModelArgs";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { activityTone } from "./activity";
 import { appConfirm } from "./confirm";
@@ -32,6 +41,7 @@ import type { AgentChatUiArgs } from "./generated/contracts/bridge/AgentChatUiAr
 import type { AgentModelCatalogArgs } from "./generated/contracts/bridge/AgentModelCatalogArgs";
 import type { AgentModelsArgs } from "./generated/contracts/bridge/AgentModelsArgs";
 import type { AnswerLeadGateArgs } from "./generated/contracts/bridge/AnswerLeadGateArgs";
+import type { RetryLeadGateDeliveryArgs } from "./generated/contracts/bridge/RetryLeadGateDeliveryArgs";
 import type { CheckProviderHooksArgs } from "./generated/contracts/bridge/CheckProviderHooksArgs";
 import type { RepairProviderHooksArgs } from "./generated/contracts/bridge/RepairProviderHooksArgs";
 import type { FileMentionCandidatesArgs } from "./generated/contracts/bridge/FileMentionCandidatesArgs";
@@ -87,6 +97,8 @@ import type { WorktreeSetupTrustArgs } from "./generated/contracts/bridge/Worktr
 import type { WorktreeStatusArgs } from "./generated/contracts/bridge/WorktreeStatusArgs";
 import type { WriteManagedTerminalArgs } from "./generated/contracts/bridge/WriteManagedTerminalArgs";
 import type { SubagentProbeDto } from "./generated/contracts/SubagentProbeDto";
+import type { TerminalScreenFrameDto } from "./generated/contracts/TerminalScreenFrameDto";
+export type { TerminalScreenFrameDto };
 import type { ManagedTerminalSnapshotDto } from "./generated/contracts/ManagedTerminalSnapshotDto";
 import type { LineageEntryDto } from "./generated/contracts/LineageEntryDto";
 import type { PendingApprovalDto } from "./generated/contracts/PendingApprovalDto";
@@ -378,9 +390,10 @@ export function sessionTone(
   errored?: boolean,
   busySubagents?: number,
   screenState?: string | null,
+  screenAssumed?: boolean,
 ): SessionTone {
   if (!connected) return status === "ended" ? "ended" : "offline";
-  const activity = activityTone({ status, pendingReview, screenState, busySubagents });
+  const activity = activityTone({ status, pendingReview, screenState, screenAssumed, busySubagents });
   // 需要人做决定的（审批/提问/屏幕阻塞）压过出错（对照 Kimi 的优先级：待审批 > 待回答 > 失败）：
   // 出错只是「上一轮断了」，而审批挂着时 Agent 正卡在那里等你，先处理它才能继续。
   if (activity === "pending") return activity;
@@ -445,6 +458,10 @@ export function managedTerminalPendingLaunch(sessionId: number): Promise<Pending
   return invoke("managed_terminal_pending_launch", { sessionId } satisfies SessionArg);
 }
 /** 托管 PTY 仿真后的整屏文本（自上而下）；null = 该会话无屏幕仿真。 */
+export function managedTerminalFrame(sessionId: number): Promise<TerminalScreenFrameDto | null> {
+  return invoke("managed_terminal_frame", { sessionId } satisfies SessionArg);
+}
+
 export function managedTerminalScreen(sessionId: number): Promise<string[] | null> {
   return invoke("managed_terminal_screen", { sessionId } satisfies SessionArg);
 }
@@ -852,6 +869,55 @@ export function fileMentionCandidates(cwd: string, query: string): Promise<strin
 export type { LeadTaskDto } from "./generated/contracts/LeadTaskDto";
 export type { LeadGateDto } from "./generated/contracts/LeadGateDto";
 export type { LeadCheckDto } from "./generated/contracts/LeadCheckDto";
+export type { LeadProviderInstallationDto } from "./generated/contracts/LeadProviderInstallationDto";
+
+export type { ManagedConversationDto } from "./generated/contracts/ManagedConversationDto";
+export type { ManagedDeliveryDto } from "./generated/contracts/ManagedDeliveryDto";
+export type { ManagedAttachmentDto } from "./generated/contracts/ManagedAttachmentDto";
+export type { ManagedInteractionDto } from "./generated/contracts/ManagedInteractionDto";
+export type { ManagedChoiceDto } from "./generated/contracts/ManagedChoiceDto";
+
+export function managedConversationCreate(provider: string, cwd: string, profileId: string | null = null): Promise<import("./generated/contracts/ManagedConversationDto").ManagedConversationDto> {
+  return invoke("managed_conversation_create", { provider, cwd, profileId } satisfies ManagedConversationCreateArgs);
+}
+export function managedConversationAdopt(sessionId: number): Promise<import("./generated/contracts/ManagedConversationDto").ManagedConversationDto> {
+  return invoke("managed_conversation_adopt", { sessionId } satisfies ManagedConversationAdoptArgs);
+}
+export function managedConversationState(sessionId: number): Promise<import("./generated/contracts/ManagedConversationDto").ManagedConversationDto | null> {
+  return invoke("managed_conversation_state", { sessionId } satisfies SessionArg);
+}
+export function managedConversationSend(sessionId: number, deliveryId: string, text: string, attachments: import("./generated/contracts/ManagedAttachmentDto").ManagedAttachmentDto[] = [], gateRef: import("./generated/contracts/ManagedGateRefDto").ManagedGateRefDto | null = null): Promise<import("./generated/contracts/ManagedDeliveryDto").ManagedDeliveryDto> {
+  return invoke("managed_conversation_send", { sessionId, deliveryId, text, attachments, gateRef } satisfies ManagedConversationSendArgs);
+}
+export function managedConversationRecoveries(sessionId: number, cursor: import("./generated/contracts/ManagedNativeRecoveryCursorDto").ManagedNativeRecoveryCursorDto | null = null, limit = 50): Promise<import("./generated/contracts/ManagedNativeRecoveryPageDto").ManagedNativeRecoveryPageDto> {
+  return invoke("managed_conversation_recoveries", { sessionId, cursor, limit } satisfies ManagedConversationRecoveriesArgs);
+}
+export function managedConversationDeliveries(sessionId: number): Promise<import("./generated/contracts/ManagedDeliveryDto").ManagedDeliveryDto[]> {
+  return invoke("managed_conversation_deliveries", { sessionId } satisfies SessionArg);
+}
+export function managedConversationDeliveryAction(sessionId: number, deliveryId: string, action: "dismiss" | "retry", replacementDeliveryId: string | null = null): Promise<import("./generated/contracts/ManagedDeliveryDto").ManagedDeliveryDto> {
+  return invoke("managed_conversation_delivery_action", { sessionId, deliveryId, action, replacementDeliveryId } satisfies ManagedConversationDeliveryActionArgs);
+}
+export function managedConversationControl(sessionId: number, action: "resume" | "cancel" | "stop"): Promise<import("./generated/contracts/ManagedConversationDto").ManagedConversationDto> {
+  return invoke("managed_conversation_control", { sessionId, action } satisfies ManagedConversationControlArgs);
+}
+export function managedConversationResolve(sessionId: number, interactionId: string, optionId: string | null, answers: unknown = null): Promise<void> {
+  return invoke("managed_conversation_resolve", { sessionId, interactionId, optionId, answers } satisfies ManagedConversationResolveArgs);
+}
+export function managedConversationSetModel(sessionId: number, model: string): Promise<void> {
+  return invoke("managed_conversation_set_model", { sessionId, model } satisfies ManagedConversationSetModelArgs);
+}
+export function managedConversationSetMode(sessionId: number, dimension: string, mode: string): Promise<void> {
+  return invoke("managed_conversation_set_mode", { sessionId, dimension, mode } satisfies ManagedConversationSetModeArgs);
+}
+
+export function leadProviderInstallations(): Promise<import("./generated/contracts/LeadProviderInstallationDto").LeadProviderInstallationDto[]> {
+  return invoke("lead_provider_installations");
+}
+
+export function setLeadProviderEnabled(provider: string, profileId: string | null, enabled: boolean): Promise<import("./generated/contracts/LeadProviderInstallationDto").LeadProviderInstallationDto> {
+  return invoke("set_lead_provider_enabled", { args: { provider, profileId, enabled } satisfies import("./generated/contracts/SetLeadProviderEnabledArgs").SetLeadProviderEnabledArgs });
+}
 
 /// Lead 工作流：会话 cwd 所在项目的任务快照；没有任务为 null（入口据此隐藏）。
 /// 手机端经远程桥放行（remote.rs 模块头「例外（2026-11-09）」），参数改动须同步 AnswerLeadGateArgs 等桥臂结构体。
@@ -872,6 +938,10 @@ export function setLeadWorkflow(enabled: boolean): Promise<void> {
 /// 回答关卡：A 用 confirm/revise，C 用 accept/reject，B 用方案 id；note 为附加意见。
 export function answerLeadGate(cwd: string, gateId: string, choice: string, note: string): Promise<void> {
   return invoke("answer_lead_gate", { cwd, gateId, choice, note } satisfies AnswerLeadGateArgs);
+}
+
+export function retryLeadGateDelivery(cwd: string, gateId: string): Promise<void> {
+  return invoke("retry_lead_gate_delivery", { cwd, gateId } satisfies RetryLeadGateDeliveryArgs);
 }
 
 /** 文件面板「打开」菜单：能打开该文件的应用清单（Windows 为系统「打开方式」推荐列表，
@@ -1013,6 +1083,8 @@ export type TerminalLineHeight = "compact" | "normal" | "relaxed";
 export type ChatContentWidth = "fixed" | "full";
 
 export type Settings = {
+  /** 原生账号ID用于协议会话启动；展示名不能作为目录身份。 */
+  active_profile?: Partial<Record<AgentId, string>>;
   /** 桌面通知总开关（待交互 + 错误）。 */
   notifications_enabled: boolean;
   /** 需要关注且 Meowo 都不在前台时,请求任务栏注意力(Windows 任务栏闪烁)。 */

@@ -41,7 +41,11 @@ pub(crate) fn normalize_bark_url(raw: &str) -> Result<String, String> {
         .path_segments()
         .and_then(|mut segments| segments.find(|segment| !segment.is_empty()))
         .ok_or_else(|| "push/missing_key".to_string())?;
-    let mut base = format!("{}://{}", parsed.scheme(), parsed.host_str().unwrap_or_default());
+    let mut base = format!(
+        "{}://{}",
+        parsed.scheme(),
+        parsed.host_str().unwrap_or_default()
+    );
     if let Some(port) = parsed.port() {
         base.push_str(&format!(":{port}"));
     }
@@ -69,7 +73,10 @@ fn session_link(settings: &crate::settings::Settings, session_id: i64) -> Option
         return None;
     }
     let ip = crate::remote::preferred_ip(&settings.remote_access_bind)?;
-    Some(format!("http://{ip}:{}/?sessionId={session_id}", settings.remote_access_port))
+    Some(format!(
+        "http://{ip}:{}/?sessionId={session_id}",
+        settings.remote_access_port
+    ))
 }
 
 fn send(url: &str, body: &serde_json::Value) -> Result<(), String> {
@@ -110,7 +117,11 @@ pub(crate) fn push_session(settings: &crate::settings::Settings, message: PushMe
     let Ok(url) = normalize_bark_url(&settings.bark_url) else {
         return;
     };
-    if !should_push(message.session_id, &format!("{}\n{}", message.title, message.body), Instant::now()) {
+    if !should_push(
+        message.session_id,
+        &format!("{}\n{}", message.title, message.body),
+        Instant::now(),
+    ) {
         return;
     }
     let settings = settings.clone();
@@ -152,8 +163,14 @@ mod tests {
             normalize_bark_url("https://api.day.app/AbCdEf123/这里改成你自己的推送内容").unwrap(),
             "https://api.day.app/AbCdEf123"
         );
-        assert_eq!(normalize_bark_url(" https://api.day.app/key/ ").unwrap(), "https://api.day.app/key");
-        assert_eq!(normalize_bark_url("http://10.0.0.2:8080/key").unwrap(), "http://10.0.0.2:8080/key");
+        assert_eq!(
+            normalize_bark_url(" https://api.day.app/key/ ").unwrap(),
+            "https://api.day.app/key"
+        );
+        assert_eq!(
+            normalize_bark_url("http://10.0.0.2:8080/key").unwrap(),
+            "http://10.0.0.2:8080/key"
+        );
     }
 
     #[test]
@@ -165,12 +182,23 @@ mod tests {
 
     #[test]
     fn payload_marks_decisions_time_sensitive_and_carries_link() {
-        let message = PushMessage { title: "t".into(), body: "b".into(), session_id: 3, urgent: true };
+        let message = PushMessage {
+            title: "t".into(),
+            body: "b".into(),
+            session_id: 3,
+            urgent: true,
+        };
         let body = payload(&message, Some("http://100.1.2.3:18620/?sessionId=3"));
         assert_eq!(body["level"], "timeSensitive");
         assert_eq!(body["group"], "Meowo");
         assert_eq!(body["url"], "http://100.1.2.3:18620/?sessionId=3");
-        let calm = payload(&PushMessage { urgent: false, ..message }, None);
+        let calm = payload(
+            &PushMessage {
+                urgent: false,
+                ..message
+            },
+            None,
+        );
         assert_eq!(calm["level"], "active");
         assert!(calm.get("url").is_none());
     }
@@ -181,6 +209,10 @@ mod tests {
         assert!(should_push(-901, "a", now));
         assert!(!should_push(-901, "a", now + Duration::from_secs(60)));
         assert!(should_push(-901, "b", now + Duration::from_secs(61)));
-        assert!(should_push(-901, "b", now + DEDUPE_WINDOW + Duration::from_secs(62)));
+        assert!(should_push(
+            -901,
+            "b",
+            now + DEDUPE_WINDOW + Duration::from_secs(62)
+        ));
     }
 }

@@ -2,7 +2,7 @@
 // 夹具与 mock 见 chatWindow.harness.tsx（必须先于 ./ChatWindow 导入）。
 import { describe, expect, it } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { invoke, openDialog, setTitleMock, terminalProps, pickAttachments, b64utf8, respondWithHistory } from "./chatWindow.harness";
+import { emptyComposerFrame, invoke, openDialog, setTitleMock, terminalProps, pickAttachments, b64utf8, respondWithHistory } from "./chatWindow.harness";
 import { ChatWindow } from "./ChatWindow";
 import { zh } from "../i18n/zh";
 import { chatUi, descriptors } from "../test/agents";
@@ -238,6 +238,7 @@ describe("ChatWindow", () => {
     ].join("\r\n");
     let sentMenuCommand = false;
     invoke.mockImplementation((command: string, args: Record<string, unknown>) => {
+      if (command === "managed_terminal_frame") return Promise.resolve(emptyComposerFrame("kimi"));
       if (command === "get_chat_history") return Promise.resolve({
         sessionId: 18, title: "换模型", status: "waiting", provider: "kimi", cwd: "C:/repo",
         supported: true, offset: 0, reset: false, pendingReview: null, items: [], model: "K3",
@@ -405,6 +406,7 @@ describe("ChatWindow", () => {
     window.history.replaceState({}, "", "/?sessionId=77");
     let failSend: (() => void) | null = null;
     invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "managed_terminal_frame") return Promise.resolve(emptyComposerFrame("kimi"));
       if (command === "get_chat_history") return Promise.resolve({
         sessionId: 77, title: "换模型", status: "running", provider: "kimi", cwd: "C:/repo",
         supported: true, offset: 0, reset: false, pendingReview: null, items: [], model: "K3",
@@ -436,6 +438,7 @@ describe("ChatWindow", () => {
   it("菜单已打开时再点不重发命令（否则会打进搜索框把候选全过滤掉）", async () => {
     window.history.replaceState({}, "", "/?sessionId=19");
     invoke.mockImplementation((command: string) => {
+      if (command === "managed_terminal_frame") return Promise.resolve(emptyComposerFrame("kimi"));
       if (command === "get_chat_history") return Promise.resolve({
         sessionId: 19, title: "换模型", status: "running", provider: "kimi", cwd: "C:/repo",
         supported: true, offset: 0, reset: false, pendingReview: null, items: [], model: "K3",
@@ -571,7 +574,7 @@ describe("ChatWindow", () => {
   it("sends selected images and files through the managed PTY", async () => {
     window.history.replaceState({}, "", "/?sessionId=11");
     respondWithHistory({
-      sessionId: 11, title: "附件", status: "running", provider: "codex", cwd: "C:/repo",
+      sessionId: 11, title: "附件", status: "running", provider: "claude", cwd: "C:/repo",
       supported: true, offset: 0, reset: false, pendingReview: null, items: [],
     });
     openDialog.mockResolvedValue(["C:/tmp/design.png", "C:/tmp/spec.pdf"]);
@@ -598,6 +601,7 @@ describe("ChatWindow", () => {
     let started = false;
     let wrote = false;
     invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "agent_chat_ui") return Promise.resolve(chatUi("claude"));
       if (command === "get_chat_history") return Promise.resolve(history);
       if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
       if (command === "start_managed_terminal") { started = true; return Promise.resolve(); }
@@ -627,7 +631,7 @@ describe("ChatWindow", () => {
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 13, data: "\r" }), { timeout: 2_000 });
   });
 
-  it("恢复后发送:正文没有回显时撤销发送、绝不发回车", async () => {
+  it("恢复后发送:正文未回显时不发回车并保留未确认回执", async () => {
     // 实拍回归:接管长会话后 claude 弹 resume 确认选择器,而「可见+安静」的就绪判定
     // 认不出它——正文被选择器吞掉,旧逻辑的无条件回车还会替用户按下默认项:消息蒸发、
     // 恢复继续、没有任何报错(transcript 里根本没有那条 user 消息)。
@@ -639,6 +643,7 @@ describe("ChatWindow", () => {
     respondWithHistory(history);
     let started = false;
     invoke.mockImplementation((command: string) => {
+      if (command === "agent_chat_ui") return Promise.resolve(chatUi("claude"));
       if (command === "get_chat_history") return Promise.resolve(history);
       if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
       if (command === "start_managed_terminal") { started = true; return Promise.resolve(); }
@@ -659,8 +664,10 @@ describe("ChatWindow", () => {
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 71, data: "\x15" }), { timeout: 5_000 });
     expect(invoke).not.toHaveBeenCalledWith("write_managed_terminal", { sessionId: 71, data: "\r" });
     expect(await screen.findByText(/消息未进入终端/)).toBeTruthy();
-    // 先上屏再发送后，失败的原文退回输入框（人还在、输入框空着时）。
-    await waitFor(() => expect(input.value).toBe("go on"));
+    // 已写正文不能谎称确定未发：保留原文回执，由用户核对后恢复草稿或重发。
+    expect(await screen.findByText(zh.chat.echoUncertain)).toBeTruthy();
+    expect(screen.getByText("go on")).toBeTruthy();
+    expect(input.value).toBe("");
   });
 
   it("opens a non-Claude startup trust prompt in the terminal without typing the chat message into it", async () => {
@@ -1025,16 +1032,18 @@ describe("ChatWindow", () => {
       contextPct: null, contextWindow: null, currentActivity: null, hasMore: false, items: [],
     };
     invoke.mockImplementation((command: string) => {
+      if (command === "managed_terminal_frame") return Promise.resolve(emptyComposerFrame("kimi"));
       if (command === "get_chat_history") return Promise.resolve(history);
       if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
       if (command === "managed_terminal_snapshot") {
         return Promise.resolve({ sessionId: 41, active: true, managed: true, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
       }
       if (command === "agent_chat_ui") return Promise.resolve({
+        ...chatUi("kimi"),
         // 与 ChatUi 真实形状对齐(必填字段全给):此前缺 menu_slash_commands 等新字段,
         // 全靠生产码的可选链兜底侥幸通过,是唯一漏网的 mock。取值保持中性(空表/null),
         // 不引入本用例无关的菜单行为。
-        slash_commands: [], model_presets: [], model_select_command: null, queue_input: "\r", version: "2.2.0",
+        slash_commands: [], model_presets: [], model_select_command: null, queue_input: "\r", version: "2.5.3",
         model_menu_command: null, menu_slash_commands: [],
         startup_attention_markers: [], selector_anchors: [], interrupt_input: null, runtime_commands_pending: false,
         attachment_mention: false, clipboard_image_paste: null, clipboard_paste_input: null,

@@ -45,7 +45,10 @@ impl Pty {
                     out.extend_from_slice(b"\x1b[?1;2c");
                 }
                 if !out.is_empty() {
-                    let _ = self.writer.write_all(&out).and_then(|_| self.writer.flush());
+                    let _ = self
+                        .writer
+                        .write_all(&out)
+                        .and_then(|_| self.writer.flush());
                 }
                 self.parser.process(&c);
             }
@@ -59,14 +62,23 @@ impl Pty {
     /// composer 区域：从末尾往上取非空行。
     fn screen(&self) -> String {
         let contents = self.parser.screen().contents();
-        let lines: Vec<&str> = contents.lines().map(str::trim_end).filter(|l| !l.is_empty()).collect();
+        let lines: Vec<&str> = contents
+            .lines()
+            .map(str::trim_end)
+            .filter(|l| !l.is_empty())
+            .collect();
         lines[lines.len().saturating_sub(8)..].join("\n")
     }
 }
 
 fn spawn(exe: &str, cwd: &std::path::Path) -> Pty {
     let pair = native_pty_system()
-        .openpty(PtySize { rows: 30, cols: 100, pixel_width: 0, pixel_height: 0 })
+        .openpty(PtySize {
+            rows: 30,
+            cols: 100,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
         .unwrap();
     let mut cmd = common::agent_command(exe, cwd);
     // 不弹 Chrome 集成确认框（它挡在 composer 前，按 Esc 会改用户配置）。全程不回车，不产生对话。
@@ -84,13 +96,21 @@ fn spawn(exe: &str, cwd: &std::path::Path) -> Pty {
             }
         }
     });
-    Pty { child, writer, rx, parser: vt100::Parser::new(30, 100, 0), _master: pair.master }
+    Pty {
+        child,
+        writer,
+        rx,
+        parser: vt100::Parser::new(30, 100, 0),
+        _master: pair.master,
+    }
 }
 
 #[test]
 #[ignore = "拉起真实 claude 进程；手动调研用"]
 fn probe_claude_draft_kill_yank() {
-    let home = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).unwrap();
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .unwrap();
     let exe = format!("{home}/.local/bin/claude.exe");
     // 用已信任的仓库目录启动，避开首次信任确认框。
     let cwd = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -115,7 +135,10 @@ fn probe_claude_draft_kill_yank() {
         ("T2 空 composer 时 Ctrl-S → Draft restored", b"\x13"),
         ("T3 再 Ctrl-S（收回）", b"\x13"),
         ("T4 有暂存时键入 hi 再 Ctrl-S → 覆盖旧暂存", b"hi\x13"),
-        ("T5 空 composer Ctrl-S → 恢复出 hi，line1/line2 已丢", b"\x13"),
+        (
+            "T5 空 composer Ctrl-S → 恢复出 hi，line1/line2 已丢",
+            b"\x13",
+        ),
     ];
     for (label, bytes) in steps {
         pty.send(bytes, 1.2);

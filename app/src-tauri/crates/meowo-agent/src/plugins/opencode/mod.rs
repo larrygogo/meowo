@@ -22,6 +22,8 @@
 //! 因此 opencode 的会话收尾与 codex 一样靠 Stop + 判活，而不是一条可靠的 SessionEnd。
 
 pub mod account;
+mod conversation;
+mod lead;
 mod screen;
 mod store;
 mod telemetry;
@@ -158,6 +160,7 @@ static VARIANTS: [Variant; 1] = [Variant {
     tag: "stable",
     data_dir: DataDirSpec {
         env: Some("OPENCODE_CONFIG_DIR"),
+        env_suffix: "",
         // `~/.opencode` 也在 opencode 的配置目录搜索链上（`config/paths.ts`），作次选。
         candidates: &[".config/opencode", ".opencode"],
     },
@@ -180,6 +183,13 @@ impl AgentPlugin for Opencode {
     fn display_name(&self) -> &'static str {
         "OpenCode"
     }
+    fn lead(&self) -> Option<&'static dyn crate::lead_install::LeadCap> {
+        Some(&lead::CAP)
+    }
+    fn conversation(&self) -> Option<&'static dyn crate::conversation::ConversationCap> {
+        Some(&conversation::CAP)
+    }
+
     fn variants(&self) -> &'static [Variant] {
         &VARIANTS
     }
@@ -189,6 +199,18 @@ impl AgentPlugin for Opencode {
         &["opencode", "opencode.exe"]
     }
     /// `opencode --session <id>`（`--continue` 是「续最近一个」，不接 id，表达不了「恢复指定会话」）。
+    /// 原生 TUI 同进程也启动 HTTP server，attach/API 可让多个 session 并行；
+    /// 不能仅因命令行没有 serve 就推断此进程只属于当前卡片（opencode 1.19.3 server/attach 设计）。
+    fn process_scope(&self, argv: &[String]) -> crate::registry::ProcessScope {
+        if !argv
+            .first()
+            .is_some_and(|executable| self.owns_process(executable))
+        {
+            crate::registry::ProcessScope::Unknown
+        } else {
+            crate::registry::ProcessScope::Shared
+        }
+    }
     fn resume_args(&self) -> &'static [&'static str] {
         &["--session"]
     }
@@ -238,6 +260,23 @@ impl AgentPlugin for Opencode {
     }
     /// 运行中按 Enter 即排队：消息带 QUEUED 标记挂在输入区上方，当前回合结束后自动执行
     /// （probe_tui_script 实测，1.19.2）。
+    /// 2026-11-12 隔离无模型 PTY 实拍（target/lead-provider-probes/composer）：只允许已验证空框，不清非空草稿。
+    fn composer_guard(&self, version: Option<&str>) -> Option<crate::chat_ui::ComposerGuard> {
+        if version != Some("1.19.3") {
+            return None;
+        }
+        Some(crate::chat_ui::ComposerGuard {
+            prompt_footer: false,
+            input_start_pattern: r"^(\s*┃  )",
+            top_pattern: r"^\s*┃\s*$",
+            bottom_pattern: r"^\s*╹▀+\s*$",
+            row_pattern: r"^\s*┃(.*)$",
+            prompt_prefix: "",
+            tail_rows: 2,
+            tail_pattern: Some(r"^\s*┃\s+\S.* · .+$"),
+            empty_pattern: r#"^Ask anything…(?: "[^"\r\n]*")?$"#,
+        })
+    }
     fn queue_input(&self) -> Option<&'static str> {
         Some("\r")
     }
@@ -342,7 +381,7 @@ impl AgentPlugin for Opencode {
 
     fn slash_commands(&self) -> &'static [&'static str] {
         &[
-            "/compact", "/exit", "/help", "/init", "/models", "/new", "/share", "/undo",
+            "/compact", "/exit", "/help", "/init", "/models", "/new", "/undo",
         ]
     }
     /// 自定义命令：`<配置目录>/command/*.md`（我们的 data_dir 正是它的配置目录）+ 项目级

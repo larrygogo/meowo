@@ -96,13 +96,23 @@ fn tool_detail(name: &str, input: Option<&serde_json::Value>) -> Option<ToolDeta
     let input = input?;
     let text = |key: &str| input.get(key).and_then(|v| v.as_str()).map(str::to_string);
     let path = || text("path").or_else(|| text("file_path"));
-    let num = |key: &str| input.get(key).and_then(|v| v.as_u64()).map(|v| v.min(u32::MAX as u64) as u32);
+    let num = |key: &str| {
+        input
+            .get(key)
+            .and_then(|v| v.as_u64())
+            .map(|v| v.min(u32::MAX as u64) as u32)
+    };
     match name {
         "Write" => {
             let full = text("content")?;
             let lines = full.lines().count() as u32;
             let (content, truncated) = clip_detail(&full);
-            Some(ToolDetail::Write { path: path()?, content, lines, truncated })
+            Some(ToolDetail::Write {
+                path: path()?,
+                content,
+                lines,
+                truncated,
+            })
         }
         "Edit" => {
             let (old, old_cut) = clip_detail(&text("old_string")?);
@@ -111,13 +121,27 @@ fn tool_detail(name: &str, input: Option<&serde_json::Value>) -> Option<ToolDeta
                 path: path()?,
                 old,
                 new,
-                replace_all: input.get("replace_all").and_then(|v| v.as_bool()).unwrap_or(false),
+                replace_all: input
+                    .get("replace_all")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
                 truncated: old_cut || new_cut,
             })
         }
-        "Bash" => Some(ToolDetail::Command { command: text("command")?, description: text("description") }),
-        "Read" => Some(ToolDetail::Read { path: path()?, offset: num("offset"), limit: num("limit") }),
-        "Grep" | "Glob" => Some(ToolDetail::Search { pattern: text("pattern")?, path: path(), glob: text("glob") }),
+        "Bash" => Some(ToolDetail::Command {
+            command: text("command")?,
+            description: text("description"),
+        }),
+        "Read" => Some(ToolDetail::Read {
+            path: path()?,
+            offset: num("offset"),
+            limit: num("limit"),
+        }),
+        "Grep" | "Glob" => Some(ToolDetail::Search {
+            pattern: text("pattern")?,
+            path: path(),
+            glob: text("glob"),
+        }),
         _ => None,
     }
 }
@@ -200,11 +224,7 @@ fn persist_image_url(
         let bytes = base64::engine::general_purpose::STANDARD
             .decode(data.as_bytes())
             .ok()?;
-        return crate::fsutil::persist_paste_bytes(
-            &format!("kimi-{safe_id}-{index}"),
-            ext,
-            &bytes,
-        );
+        return crate::fsutil::persist_paste_bytes(&format!("kimi-{safe_id}-{index}"), ext, &bytes);
     }
     None
 }
@@ -310,6 +330,15 @@ fn parse_events(line: &str, wire_dir: Option<&Path>) -> Vec<TranscriptEvent> {
         None => chat_id(prefix, line),
     };
     match value.get("type").and_then(|v| v.as_str()).unwrap_or("") {
+        "turn.ended" => failure(&value)
+            .map(|error| TranscriptEvent::TurnError {
+                id: chat_id("error", line),
+                timestamp,
+                label: error.label,
+                text: error.raw,
+            })
+            .into_iter()
+            .collect(),
         "turn.prompt" => {
             let id = chat_id("user", line);
             // turn.prompt 也承载非用户输入（真机 main wire 统计：origin 为 task 的后台任务完成
@@ -544,7 +573,9 @@ fn chat_line_mark(line: &str) -> Option<crate::ChatLineMark> {
         "turn.prompt" => {
             let origin = value.get("origin");
             let kind = origin.and_then(|o| o.get("kind")).and_then(|v| v.as_str());
-            let trigger = origin.and_then(|o| o.get("trigger")).and_then(|v| v.as_str());
+            let trigger = origin
+                .and_then(|o| o.get("trigger"))
+                .and_then(|v| v.as_str());
             let anchor = match kind {
                 None | Some("user") => true,
                 Some("skill_activation" | "plugin_command") => trigger == Some("user-slash"),
@@ -1104,8 +1135,8 @@ impl TranscriptSpec for KimiTranscript {
 /// 这条分析路径，此前 `supports_analysis` 关着，兜底根本没接上。
 ///
 /// 其余字段留空是**故意**的，不是没写完：
-/// - `title` / `error`：kimi 的标题由 hook 落库，wire 里也没有 claude 那套 synthetic 错误
-///   标记，硬猜只会误标红。
+/// - `title`：标题仍从原生 state.json 读取；错误仅信任主 agent 的 turn.ended 结构化失败，
+///   不从正文或重试提示猜测，避免把短暂重试也标成最终失败。
 /// - `busy_subagents`：那是给「主回合停了但后台还在跑」用的。kimi 的 `AgentSwarm` 是主
 ///   agent 阻塞等结果，委派期间主回合本就是 working，不存在这个错判窗口。
 #[derive(Default)]
@@ -1114,10 +1145,94 @@ struct KimiParser {
     /// 同一条消息的块共享 id——换 id 即换消息，从头累积。
     chunk_id: Option<String>,
     text: String,
+    error: Option<crate::transcript::TurnError>,
+}
+
+// 2.5.3 隔离探针在连接失败时写下 turn.ended/error；按结构判断，避免正文提到错误时误报。
+fn failure(value: &serde_json::Value) -> Option<crate::transcript::TurnError> {
+    if value.get("reason").and_then(|v| v.as_str()) != Some("failed")
+        || value
+            .get("agentId")
+            .and_then(|v| v.as_str())
+            .is_some_and(|id| id != "main")
+    {
+        return None;
+    }
+    let error = value.get("error")?;
+    let code = error
+        .get("code")
+        .and_then(|v| v.as_str())
+        .unwrap_or("provider.error");
+    let raw = error
+        .get("message")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())?;
+    let label = if code.contains("connection") {
+        "无法连接 API"
+    } else if code.contains("auth") {
+        "认证失败"
+    } else {
+        "API 请求出错"
+    };
+    Some(crate::transcript::TurnError {
+        label: label.into(),
+        raw: raw.into(),
+        fingerprint: format!("kimi:{code}"),
+    })
+}
+
+#[cfg(test)]
+mod compatibility_errors {
+    use super::*;
+
+    #[test]
+    fn compatibility_kimi_failure_is_reported_then_cleared() {
+        let mut parser = KimiParser::default();
+        parser.fold_line(r#"{"type":"turn.ended","agentId":"main","reason":"failed","error":{"code":"provider.connection_error","message":"Connection error.","name":"APIConnectionError","retryable":true}}"#);
+        assert!(parser.to_info().error.is_some());
+        parser.fold_line(r#"{"type":"turn.prompt","input":[{"type":"text","text":"retry"}]}"#);
+        assert!(parser.to_info().error.is_none());
+        parser.fold_line(r#"{"type":"turn.ended","agentId":"main","reason":"failed","error":{"code":"provider.rate_limit","message":"limit"}}"#);
+        assert!(parser.to_info().error.is_some());
+        parser.fold_line(r#"{"type":"turn.ended","agentId":"main","reason":"finished"}"#);
+        assert!(parser.to_info().error.is_none());
+    }
+
+    #[test]
+    fn compatibility_kimi_retry_text_and_subagent_failure_do_not_mark_main_failed() {
+        let mut parser = KimiParser::default();
+        parser.fold_line(r#"{"type":"turn.step.retrying","error_name":"APIConnectionError","error_message":"Connection error."}"#);
+        parser.fold_line(r#"{"type":"turn.ended","agentId":"agent-1","reason":"failed","error":{"code":"provider.connection_error","message":"Connection error."}}"#);
+        assert!(parser.to_info().error.is_none());
+        assert!(parse_events(r#"{"type":"turn.ended","agentId":"agent-1","reason":"failed","error":{"code":"provider.connection_error","message":"Connection error."}}"#, None).is_empty());
+        let events = parse_events(
+            r#"{"type":"turn.ended","agentId":"main","reason":"failed","error":{"code":"provider.connection_error","message":"Connection error."}}"#,
+            None,
+        );
+        assert!(
+            matches!(events.as_slice(), [TranscriptEvent::TurnError { label, .. }] if label == "无法连接 API")
+        );
+    }
 }
 
 impl TranscriptParser for KimiParser {
     fn fold_line(&mut self, line: &str) {
+        if line.contains("turn.ended") || line.contains("turn.prompt") {
+            if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
+                match value.get("type").and_then(|v| v.as_str()) {
+                    Some("turn.prompt") => self.error = None,
+                    Some("turn.ended")
+                        if value
+                            .get("agentId")
+                            .and_then(|v| v.as_str())
+                            .is_none_or(|id| id == "main") =>
+                    {
+                        self.error = failure(&value)
+                    }
+                    _ => {}
+                }
+            }
+        }
         // 廉价预筛：AI 正文块只可能来自 `content.part` 事件，其余行不值得整行 serde 解析
         // （wire.jsonl 里工具调用/结果占绝大多数，且看板每轮轮询都要 fold 增量）。
         // kimi 若改了事件名，这里会**静默**失效——预览为空时先来核对这个字面量。
@@ -1141,6 +1256,7 @@ impl TranscriptParser for KimiParser {
     fn to_info(&self) -> TranscriptInfo {
         TranscriptInfo {
             preview: preview_text(&self.text),
+            error: self.error.clone(),
             ..TranscriptInfo::default()
         }
     }
@@ -1354,7 +1470,9 @@ pub fn read_summary(session_id: &str) -> Option<WireSummary> {
         .join("wire.jsonl");
     let size = std::fs::metadata(&wire).ok()?.len();
     if size <= FULL_READ_CAP {
-        return Some(with_display_name(parse_wire(&std::fs::read_to_string(&wire).ok()?)));
+        return Some(with_display_name(parse_wire(
+            &std::fs::read_to_string(&wire).ok()?,
+        )));
     }
     let head = read_range(&wire, 0, HEAD_BYTES).unwrap_or_default();
     let tail = read_range(&wire, size.saturating_sub(TAIL_BYTES), TAIL_BYTES).unwrap_or_default();
@@ -1979,14 +2097,12 @@ mod tests {
     /// 回溯不破坏「取最后一次」语义：尾部窗口里有更新的快照时，不能被更靠前的旧快照顶掉。
     #[test]
     fn read_todos_prefers_newest_snapshot_when_backtracking() {
-        let dir = std::env::temp_dir().join(format!("meowo-kimi-todos-newest-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("meowo-kimi-todos-newest-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let wire = dir.join("wire.jsonl");
-        let mut s = pad_wire(
-            format!("{}\n", todo_line("旧的", "pending")),
-            600 * 1024,
-        );
+        let mut s = pad_wire(format!("{}\n", todo_line("旧的", "pending")), 600 * 1024);
         s.push_str(&todo_line("新的", "in_progress"));
         s.push('\n');
         std::fs::write(&wire, s).unwrap();
@@ -2001,7 +2117,8 @@ mod tests {
     /// TodoList 在回溯上限（BACKTRACK_CHUNKS 块）之外 → 同样 None，不为找它变相全量读。
     #[test]
     fn read_todos_none_when_missing_or_beyond_backtrack_limit() {
-        let dir = std::env::temp_dir().join(format!("meowo-kimi-todos-none-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("meowo-kimi-todos-none-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
@@ -2013,10 +2130,7 @@ mod tests {
         let too_far = dir.join("wire-far.jsonl");
         std::fs::write(
             &too_far,
-            pad_wire(
-                format!("{}\n", todo_line("太远的", "done")),
-                1_300_000,
-            ),
+            pad_wire(format!("{}\n", todo_line("太远的", "done")), 1_300_000),
         )
         .unwrap();
         assert!(read_todos_from_wire(&too_far).is_none());
@@ -2093,13 +2207,20 @@ mod tests {
     #[test]
     fn full_read_drops_double_written_user_prompt() {
         let wire = concat!(
-            r#"{"type":"turn.prompt","input":[{"type":"text","text":"改一下"}],"origin":{"kind":"user"},"time":1793243645616}"#, "\n",
-            r#"{"type":"context.append_message","message":{"role":"user","content":[{"type":"text","text":"改一下"}],"origin":{"kind":"user"}},"time":1793243645617}"#, "\n",
-            r#"{"type":"context.append_loop_event","event":{"type":"content.part","part":{"type":"text","text":"好"}},"time":1793243646000}"#, "\n",
-            r#"{"type":"turn.prompt","input":"继续","time":1793243700000}"#, "\n",
-            r#"{"type":"context.append_message","message":{"role":"user","content":"继续"},"time":1793243700001}"#, "\n",
-            r#"{"type":"turn.prompt","input":"继续","time":1793243705000}"#, "\n",
-            r#"{"type":"context.append_message","message":{"role":"user","content":"继续"},"time":1793243705000}"#, "\n",
+            r#"{"type":"turn.prompt","input":[{"type":"text","text":"改一下"}],"origin":{"kind":"user"},"time":1793243645616}"#,
+            "\n",
+            r#"{"type":"context.append_message","message":{"role":"user","content":[{"type":"text","text":"改一下"}],"origin":{"kind":"user"}},"time":1793243645617}"#,
+            "\n",
+            r#"{"type":"context.append_loop_event","event":{"type":"content.part","part":{"type":"text","text":"好"}},"time":1793243646000}"#,
+            "\n",
+            r#"{"type":"turn.prompt","input":"继续","time":1793243700000}"#,
+            "\n",
+            r#"{"type":"context.append_message","message":{"role":"user","content":"继续"},"time":1793243700001}"#,
+            "\n",
+            r#"{"type":"turn.prompt","input":"继续","time":1793243705000}"#,
+            "\n",
+            r#"{"type":"context.append_message","message":{"role":"user","content":"继续"},"time":1793243705000}"#,
+            "\n",
         );
         let dir = std::env::temp_dir().join(format!("meowo-kimi-dup-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -2126,23 +2247,34 @@ mod tests {
         let turn = |text: &str, time: u64| {
             format!(
                 concat!(
-                    r#"{{"type":"turn.prompt","input":[{{"type":"text","text":"{t}"}}],"origin":{{"kind":"user"}},"time":{a}}}"#, "\n",
-                    r#"{{"type":"context.append_message","message":{{"role":"user","content":[{{"type":"text","text":"{t}"}}],"origin":{{"kind":"user"}}}},"time":{b}}}"#, "\n",
-                    r#"{{"type":"context.append_loop_event","event":{{"type":"content.part","uuid":"p{a}","part":{{"type":"text","text":"答{t}"}}}},"time":{c}}}"#, "\n",
+                    r#"{{"type":"turn.prompt","input":[{{"type":"text","text":"{t}"}}],"origin":{{"kind":"user"}},"time":{a}}}"#,
+                    "\n",
+                    r#"{{"type":"context.append_message","message":{{"role":"user","content":[{{"type":"text","text":"{t}"}}],"origin":{{"kind":"user"}}}},"time":{b}}}"#,
+                    "\n",
+                    r#"{{"type":"context.append_loop_event","event":{{"type":"content.part","uuid":"p{a}","part":{{"type":"text","text":"答{t}"}}}},"time":{c}}}"#,
+                    "\n",
                 ),
-                t = text, a = time, b = time + 1, c = time + 500,
+                t = text,
+                a = time,
+                b = time + 1,
+                c = time + 500,
             )
         };
         let steer = concat!(
-            r#"{"type":"turn.steer","input":"顺便看看","time":1793243720000}"#, "\n",
-            r#"{"type":"context.append_message","message":{"role":"user","content":"顺便看看","origin":{"kind":"user","inTurn":true}},"time":1793243720001}"#, "\n",
+            r#"{"type":"turn.steer","input":"顺便看看","time":1793243720000}"#,
+            "\n",
+            r#"{"type":"context.append_message","message":{"role":"user","content":"顺便看看","origin":{"kind":"user","inTurn":true}},"time":1793243720001}"#,
+            "\n",
         );
         let undo = |count: u32| {
             format!(
                 concat!(
-                    r#"{{"type":"agent.switched","agentId":"main","branch":"b1","reason":"undo","turns":{n},"time":1}}"#, "\n",
-                    r#"{{"type":"context.undo","agentId":"main","count":{n},"time":1}}"#, "\n",
-                    r#"{{"type":"context.undone","agentId":"main","turns":{n},"time":1}}"#, "\n",
+                    r#"{{"type":"agent.switched","agentId":"main","branch":"b1","reason":"undo","turns":{n},"time":1}}"#,
+                    "\n",
+                    r#"{{"type":"context.undo","agentId":"main","count":{n},"time":1}}"#,
+                    "\n",
+                    r#"{{"type":"context.undone","agentId":"main","turns":{n},"time":1}}"#,
+                    "\n",
                 ),
                 n = count,
             )
@@ -2151,7 +2283,9 @@ mod tests {
             items
                 .iter()
                 .filter_map(|item| match item {
-                    ChatItem::UserText { text, interjected, .. } => Some((text.clone(), *interjected)),
+                    ChatItem::UserText {
+                        text, interjected, ..
+                    } => Some((text.clone(), *interjected)),
                     _ => None,
                 })
                 .collect()
@@ -2159,34 +2293,48 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("meowo-kimi-undo-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("wire.jsonl");
-        let mut wire = format!("{}{}{steer}", turn("甲", 1793243600000), turn("乙", 1793243700000));
+        let mut wire = format!(
+            "{}{}{steer}",
+            turn("甲", 1793243600000),
+            turn("乙", 1793243700000)
+        );
         std::fs::write(&path, &wire).unwrap();
         let first = crate::transcript::read_chat_delta(&KIMI_TRANSCRIPT, &path, 0, None);
         assert_eq!(
             users(&first.items),
-            vec![("甲".into(), false), ("乙".into(), false), ("顺便看看".into(), true)]
+            vec![
+                ("甲".into(), false),
+                ("乙".into(), false),
+                ("顺便看看".into(), true)
+            ]
         );
         assert!(!first.undone);
 
         // 撤 1 轮：乙连同回合中的插话一起收回，甲那一轮原样保留。
         wire.push_str(&undo(1));
         std::fs::write(&path, &wire).unwrap();
-        let delta = crate::transcript::read_chat_delta(&KIMI_TRANSCRIPT, &path, first.offset, first.mtime);
+        let delta =
+            crate::transcript::read_chat_delta(&KIMI_TRANSCRIPT, &path, first.offset, first.mtime);
         assert!(delta.reset && delta.undone, "增量里出现撤回必须整读重灌");
         assert_eq!(users(&delta.items), vec![("甲".into(), false)]);
         // 回答正文跟着各自那一轮走（正文块的条目形态不在本测试关心范围，按内容判）。
         let shown = format!("{:?}", delta.items);
-        assert!(shown.contains("答甲") && !shown.contains("答乙"), "items={shown}");
+        assert!(
+            shown.contains("答甲") && !shown.contains("答乙"),
+            "items={shown}"
+        );
 
         // 撤回后接着聊，再把剩下的全撤：结果为空也带 undone（前端据此放行空 reset）。
         wire.push_str(&turn("丙", 1793243800000));
         std::fs::write(&path, &wire).unwrap();
-        let next = crate::transcript::read_chat_delta(&KIMI_TRANSCRIPT, &path, delta.offset, delta.mtime);
+        let next =
+            crate::transcript::read_chat_delta(&KIMI_TRANSCRIPT, &path, delta.offset, delta.mtime);
         assert!(!next.reset);
         assert_eq!(users(&next.items), vec![("丙".into(), false)]);
         wire.push_str(&undo(2));
         std::fs::write(&path, &wire).unwrap();
-        let empty = crate::transcript::read_chat_delta(&KIMI_TRANSCRIPT, &path, next.offset, next.mtime);
+        let empty =
+            crate::transcript::read_chat_delta(&KIMI_TRANSCRIPT, &path, next.offset, next.mtime);
         assert!(empty.reset && empty.undone);
         assert!(empty.items.is_empty(), "items={:?}", empty.items);
         let _ = std::fs::remove_dir_all(&dir);
@@ -2196,14 +2344,30 @@ mod tests {
     #[test]
     fn turn_start_mark_follows_kimi_undo_anchor_rule() {
         use crate::ChatLineMark::TurnStart;
-        let mark = |origin: &str| chat_line_mark(&format!(r#"{{"type":"turn.prompt","input":"x","origin":{origin}}}"#));
+        let mark = |origin: &str| {
+            chat_line_mark(&format!(
+                r#"{{"type":"turn.prompt","input":"x","origin":{origin}}}"#
+            ))
+        };
         assert_eq!(mark(r#"{"kind":"user"}"#), Some(TurnStart));
-        assert_eq!(chat_line_mark(r#"{"type":"turn.prompt","input":"x"}"#), Some(TurnStart));
-        assert_eq!(mark(r#"{"kind":"skill_activation","trigger":"user-slash"}"#), Some(TurnStart));
-        assert_eq!(mark(r#"{"kind":"skill_activation","trigger":"model"}"#), None);
+        assert_eq!(
+            chat_line_mark(r#"{"type":"turn.prompt","input":"x"}"#),
+            Some(TurnStart)
+        );
+        assert_eq!(
+            mark(r#"{"kind":"skill_activation","trigger":"user-slash"}"#),
+            Some(TurnStart)
+        );
+        assert_eq!(
+            mark(r#"{"kind":"skill_activation","trigger":"model"}"#),
+            None
+        );
         assert_eq!(mark(r#"{"kind":"task"}"#), None);
         assert_eq!(chat_line_mark(r#"{"type":"context.undo","count":0}"#), None);
-        assert_eq!(chat_line_mark(r#"{"type":"context.append_message","message":{"role":"user"}}"#), None);
+        assert_eq!(
+            chat_line_mark(r#"{"type":"context.append_message","message":{"role":"user"}}"#),
+            None
+        );
     }
 
     #[test]
@@ -2286,9 +2450,15 @@ mod tests {
     #[test]
     fn chat_parser_strips_image_compression_note() {
         let line = r#"{"type":"turn.prompt","origin":{"kind":"user"},"input":[{"type":"text","text":"还有为什么会显示这个<system>Image compressed to fit model limits: original 2025x218 image/png (63 KB) -> sent 2000x215 image/png (75 KB). Fine detail may be lost.</system>"},{"type":"text","text":"，能不能不要显示"}]}"#;
-        assert_eq!(user_texts(line), vec!["还有为什么会显示这个，能不能不要显示"]);
+        assert_eq!(
+            user_texts(line),
+            vec!["还有为什么会显示这个，能不能不要显示"]
+        );
         // 没有闭合标签、或不是压缩提示的 <system> 段，原样保留。
-        for text in ["看 <system>Image compressed 没闭合", "<system>别的</system>"] {
+        for text in [
+            "看 <system>Image compressed 没闭合",
+            "<system>别的</system>",
+        ] {
             assert_eq!(strip_image_compression_notes(text), text);
         }
     }
@@ -2320,9 +2490,15 @@ mod tests {
     fn line_time_epoch_ms_becomes_iso_timestamp() {
         assert_eq!(iso_from_epoch_ms(0), "1970-01-01T00:00:00.000Z");
         // 闰日边界。
-        assert_eq!(iso_from_epoch_ms(951_867_296_789), "2000-02-29T23:34:56.789Z");
+        assert_eq!(
+            iso_from_epoch_ms(951_867_296_789),
+            "2000-02-29T23:34:56.789Z"
+        );
         // 实档取样值。
-        assert_eq!(iso_from_epoch_ms(1_786_678_632_036), "2026-08-14T03:37:12.036Z");
+        assert_eq!(
+            iso_from_epoch_ms(1_786_678_632_036),
+            "2026-08-14T03:37:12.036Z"
+        );
 
         let line = r#"{"type":"turn.prompt","input":"hi","time":1786678632036}"#;
         assert!(matches!(
@@ -2398,9 +2574,7 @@ mod tests {
 
         // 无目录上下文（旧调用形态）时图片解析不出、退化不显示，但文字不丢。
         let items = parse_chat_items(&line);
-        assert!(
-            matches!(&items[0], ChatItem::UserText { text, .. } if text == " 做成类似这样的")
-        );
+        assert!(matches!(&items[0], ChatItem::UserText { text, .. } if text == " 做成类似这样的"));
 
         let _ = std::fs::remove_file(&path1);
         let _ = std::fs::remove_file(&path2);
@@ -2457,10 +2631,7 @@ mod tests {
         let ChatItem::UserText { text, .. } = &items[0] else {
             panic!("应解析成用户消息");
         };
-        assert_eq!(
-            text,
-            &format!("看图\n[Image: source: {}]", path.display())
-        );
+        assert_eq!(text, &format!("看图\n[Image: source: {}]", path.display()));
         assert_eq!(std::fs::read(&path).unwrap(), b"inline-png-bytes");
 
         let _ = std::fs::remove_file(&path);
@@ -2486,7 +2657,14 @@ mod tests {
     fn edit_call_carries_diff_detail() {
         let line = r#"{"type":"context.append_loop_event","event":{"type":"tool.call","toolCallId":"edit-1","name":"Edit","args":{"path":"src/auth.rs","old_string":"let a = 1;","new_string":"let a = 1;\nlet b = 2;","replace_all":false}}}"#;
         let ChatItem::ToolUse {
-            detail: Some(ToolDetail::Edit { path, old, new, replace_all, truncated }),
+            detail:
+                Some(ToolDetail::Edit {
+                    path,
+                    old,
+                    new,
+                    replace_all,
+                    truncated,
+                }),
             ..
         } = &parse_chat_items(line)[0]
         else {
@@ -2502,7 +2680,10 @@ mod tests {
     #[test]
     fn exit_plan_mode_carries_plan_document() {
         let line = r##"{"type":"context.append_loop_event","event":{"type":"tool.call","toolCallId":"plan-1","name":"ExitPlanMode","args":{},"display":{"kind":"plan_review","plan":"# 改造计划\n\n## 第一步"}}}"##;
-        let ChatItem::ToolUse { plan: Some(plan), .. } = &parse_chat_items(line)[0] else {
+        let ChatItem::ToolUse {
+            plan: Some(plan), ..
+        } = &parse_chat_items(line)[0]
+        else {
             panic!("ExitPlanMode 应保留完整计划文档");
         };
         assert_eq!(plan, "# 改造计划\n\n## 第一步");

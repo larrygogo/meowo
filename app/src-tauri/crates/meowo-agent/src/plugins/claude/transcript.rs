@@ -8,8 +8,9 @@
 #[cfg(test)]
 use crate::transcript::ChatItem;
 use crate::transcript::{
-    preview_text, DiffHunk, CompactionDetail, SubagentOutcome, SubagentRef, SubagentSpec, SubagentStream, ToolDetail,
-    TranscriptEvent, TranscriptInfo, TranscriptParser, TranscriptSpec, TurnError,
+    preview_text, CompactionDetail, DiffHunk, SubagentOutcome, SubagentRef, SubagentSpec,
+    SubagentStream, ToolDetail, TranscriptEvent, TranscriptInfo, TranscriptParser, TranscriptSpec,
+    TurnError,
 };
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
@@ -59,7 +60,9 @@ fn task_notification_result(
     let anchor = tool_use_id.clone().or_else(|| task_id.clone())?;
     // status 缺省按 completed:通知本身就意味着「结束了」,分不清成败时宁可少报失败。
     let failed = tag_text(text, "status").is_some_and(|s| s.eq_ignore_ascii_case("failed"));
-    let summary = tag_text(text, "summary").unwrap_or("task completed").to_string();
+    let summary = tag_text(text, "summary")
+        .unwrap_or("task completed")
+        .to_string();
     // 「还在等自己的后台活儿」带 status=completed，结论已经交了，只是它派出的后台活儿还在跑：按完成算，
     // 另标 background_running 让徽标次行提示「后台仍在运行」。不按进行中算：本机实拍 9 次里 4 次之后
     // 再无 finished（做空第二轮），挂进行中会永远占着面板；有 finished 的那条到了就不再带这个标。
@@ -236,13 +239,23 @@ fn clip_detail(text: &str) -> (String, bool) {
 fn tool_detail(name: &str, input: Option<&serde_json::Value>) -> Option<ToolDetail> {
     let input = input?;
     let text = |key: &str| input.get(key).and_then(|v| v.as_str()).map(str::to_string);
-    let num = |key: &str| input.get(key).and_then(|v| v.as_u64()).map(|v| v.min(u32::MAX as u64) as u32);
+    let num = |key: &str| {
+        input
+            .get(key)
+            .and_then(|v| v.as_u64())
+            .map(|v| v.min(u32::MAX as u64) as u32)
+    };
     match name {
         "Write" => {
             let full = text("content")?;
             let lines = full.lines().count() as u32;
             let (content, truncated) = clip_detail(&full);
-            Some(ToolDetail::Write { path: text("file_path")?, content, lines, truncated })
+            Some(ToolDetail::Write {
+                path: text("file_path")?,
+                content,
+                lines,
+                truncated,
+            })
         }
         "Edit" => {
             let (old, old_cut) = clip_detail(&text("old_string")?);
@@ -251,13 +264,27 @@ fn tool_detail(name: &str, input: Option<&serde_json::Value>) -> Option<ToolDeta
                 path: text("file_path")?,
                 old,
                 new,
-                replace_all: input.get("replace_all").and_then(|v| v.as_bool()).unwrap_or(false),
+                replace_all: input
+                    .get("replace_all")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false),
                 truncated: old_cut || new_cut,
             })
         }
-        "Bash" | "PowerShell" => Some(ToolDetail::Command { command: text("command")?, description: text("description") }),
-        "Read" => Some(ToolDetail::Read { path: text("file_path")?, offset: num("offset"), limit: num("limit") }),
-        "Grep" | "Glob" => Some(ToolDetail::Search { pattern: text("pattern")?, path: text("path"), glob: text("glob") }),
+        "Bash" | "PowerShell" => Some(ToolDetail::Command {
+            command: text("command")?,
+            description: text("description"),
+        }),
+        "Read" => Some(ToolDetail::Read {
+            path: text("file_path")?,
+            offset: num("offset"),
+            limit: num("limit"),
+        }),
+        "Grep" | "Glob" => Some(ToolDetail::Search {
+            pattern: text("pattern")?,
+            path: text("path"),
+            glob: text("glob"),
+        }),
         _ => None,
     }
 }
@@ -413,7 +440,9 @@ fn is_image_scale_note(v: &serde_json::Value, content: Option<&serde_json::Value
 fn is_hook_feedback(text: &str) -> bool {
     text.trim_start()
         .split_once(" hook feedback:")
-        .is_some_and(|(event, _)| !event.is_empty() && event.chars().all(|c| c.is_ascii_alphanumeric() || c == ':'))
+        .is_some_and(|(event, _)| {
+            !event.is_empty() && event.chars().all(|c| c.is_ascii_alphanumeric() || c == ':')
+        })
 }
 
 /// CC 把粘贴的文本按原样落盘，但前后各套一行 `<pasted_content id="6bad">` /
@@ -693,13 +722,10 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                     .collect::<Vec<_>>()
                     .join("\n");
                 // 挂到最后一条用户正文上；纯贴图无正文时单独成条（id 取首张图的块序号，稳定）。
-                match events
-                    .iter_mut()
-                    .rev()
-                    .find_map(|e| match e {
-                        TranscriptEvent::UserMessage { text, .. } => Some(text),
-                        _ => None,
-                    }) {
+                match events.iter_mut().rev().find_map(|e| match e {
+                    TranscriptEvent::UserMessage { text, .. } => Some(text),
+                    _ => None,
+                }) {
                     Some(text) => {
                         text.push('\n');
                         text.push_str(&refs);
@@ -718,72 +744,78 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
             // model=<synthetic> 是 CC 对「非模型产出的系统插入文案」的官方标记（API 错误
             // 全走它）。命中错误分类的 text 块降级为 TurnError——前端渲染成错误气泡；
             // 非错误的 synthetic 文案（如「No response requested.」）仍按普通正文显示。
-            let synthetic = v
-                .pointer("/message/model")
-                .and_then(|x| x.as_str())
-                == Some("<synthetic>");
+            let synthetic =
+                v.pointer("/message/model").and_then(|x| x.as_str()) == Some("<synthetic>");
             content
-            .and_then(|x| x.as_array())
-            .into_iter()
-            .flatten()
-            .enumerate()
-            .filter_map(
-                |(i, block)| match block.get("type").and_then(|x| x.as_str()) {
-                    Some("text") => block
-                        .get("text")
-                        .and_then(|x| x.as_str())
-                        .filter(|s| !s.trim().is_empty())
-                        .map(|text| {
-                            if let Some(label) =
-                                synthetic.then(|| classify_error(text, true)).flatten()
-                            {
-                                return TranscriptEvent::TurnError {
+                .and_then(|x| x.as_array())
+                .into_iter()
+                .flatten()
+                .enumerate()
+                .filter_map(
+                    |(i, block)| match block.get("type").and_then(|x| x.as_str()) {
+                        Some("text") => block
+                            .get("text")
+                            .and_then(|x| x.as_str())
+                            .filter(|s| !s.trim().is_empty())
+                            .map(|text| {
+                                if let Some(label) =
+                                    synthetic.then(|| classify_error(text, true)).flatten()
+                                {
+                                    return TranscriptEvent::TurnError {
+                                        id: format!("{base_id}:{i}"),
+                                        timestamp: timestamp.clone(),
+                                        label: label.to_string(),
+                                        text: text.to_string(),
+                                    };
+                                }
+                                TranscriptEvent::AssistantMessage {
                                     id: format!("{base_id}:{i}"),
                                     timestamp: timestamp.clone(),
-                                    label: label.to_string(),
                                     text: text.to_string(),
-                                };
-                            }
-                            TranscriptEvent::AssistantMessage {
-                                id: format!("{base_id}:{i}"),
+                                }
+                            }),
+                        Some("thinking") => block
+                            .get("thinking")
+                            .and_then(|x| x.as_str())
+                            .filter(|s| !s.trim().is_empty())
+                            .map(|text| {
+                                let id = format!("{base_id}:{i}");
+                                let timestamp = timestamp.clone();
+                                let text = text.to_string();
+                                if is_narration_block(block) {
+                                    TranscriptEvent::AssistantMessage {
+                                        id,
+                                        timestamp,
+                                        text,
+                                    }
+                                } else {
+                                    TranscriptEvent::Reasoning {
+                                        id,
+                                        timestamp,
+                                        text,
+                                    }
+                                }
+                            }),
+                        Some("tool_use") => {
+                            let name = block.get("name").and_then(|x| x.as_str()).unwrap_or("Tool");
+                            Some(TranscriptEvent::ToolCall {
+                                id: block
+                                    .get("id")
+                                    .and_then(|x| x.as_str())
+                                    .unwrap_or(base_id)
+                                    .to_string(),
                                 timestamp: timestamp.clone(),
-                                text: text.to_string(),
-                            }
-                        }),
-                    Some("thinking") => block
-                        .get("thinking")
-                        .and_then(|x| x.as_str())
-                        .filter(|s| !s.trim().is_empty())
-                        .map(|text| {
-                            let id = format!("{base_id}:{i}");
-                            let timestamp = timestamp.clone();
-                            let text = text.to_string();
-                            if is_narration_block(block) {
-                                TranscriptEvent::AssistantMessage { id, timestamp, text }
-                            } else {
-                                TranscriptEvent::Reasoning { id, timestamp, text }
-                            }
-                        }),
-                    Some("tool_use") => {
-                        let name = block.get("name").and_then(|x| x.as_str()).unwrap_or("Tool");
-                        Some(TranscriptEvent::ToolCall {
-                            id: block
-                                .get("id")
-                                .and_then(|x| x.as_str())
-                                .unwrap_or(base_id)
-                                .to_string(),
-                            timestamp: timestamp.clone(),
-                            name: name.to_string(),
-                            summary: tool_summary(name, block.get("input")),
-                            subagent: CLAUDE_SUBAGENTS.detect_call(name, block.get("input")),
-                            detail: tool_detail(name, block.get("input")),
-                            plan: None,
-                        })
-                    }
-                    _ => None,
-                },
-            )
-            .collect()
+                                name: name.to_string(),
+                                summary: tool_summary(name, block.get("input")),
+                                subagent: CLAUDE_SUBAGENTS.detect_call(name, block.get("input")),
+                                detail: tool_detail(name, block.get("input")),
+                                plan: None,
+                            })
+                        }
+                        _ => None,
+                    },
+                )
+                .collect()
         }
         "system" if v.get("subtype").and_then(|x| x.as_str()) == Some("compact_boundary") => {
             // compactMetadata 带触发方式与压缩前 token（2.1.312 实拍
@@ -793,7 +825,9 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                 .and_then(|m| m.get("trigger"))
                 .and_then(|x| x.as_str())
                 .map(str::to_string);
-            let pre_tokens = meta.and_then(|m| m.get("preTokens")).and_then(|x| x.as_u64());
+            let pre_tokens = meta
+                .and_then(|m| m.get("preTokens"))
+                .and_then(|x| x.as_u64());
             let detail = (trigger.is_some() || pre_tokens.is_some()).then_some(CompactionDetail {
                 trigger,
                 pre_tokens,
@@ -814,7 +848,9 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
         // 记录粘贴图片的形制一致，前端现成的缩略图链路直接接住。
         "attachment" => {
             let attachment = v.get("attachment");
-            if attachment.and_then(|a| a.get("type")).and_then(|x| x.as_str())
+            if attachment
+                .and_then(|a| a.get("type"))
+                .and_then(|x| x.as_str())
                 != Some("queued_command")
             {
                 return Vec::new();
@@ -905,12 +941,19 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                 return Vec::new();
             };
             let head = raw.trim_start();
-            if head.is_empty() || head.starts_with("<agent-message") || head.starts_with("<task-notification>") {
+            if head.is_empty()
+                || head.starts_with("<agent-message")
+                || head.starts_with("<task-notification>")
+            {
                 return Vec::new();
             }
             let text = strip_pasted_content_tags(raw.trim()).trim().to_string();
             vec![TranscriptEvent::PromptQueued {
-                id: format!("queued:{}:{}", timestamp.as_deref().unwrap_or(""), raw.len()),
+                id: format!(
+                    "queued:{}:{}",
+                    timestamp.as_deref().unwrap_or(""),
+                    raw.len()
+                ),
                 timestamp,
                 text,
             }]
@@ -1173,7 +1216,9 @@ impl ParseState {
         // 「还在等自己的后台活儿」照常出集（coordinator 11-11 定）：之后不一定还有 finished（本机实拍
         // 有一例再没通知），留在集里会让会话永远算「后台在跑」、看板不转等待中，比提前出集更伤。
         // 徽标那边单独显示「等待后台」（task_notification_result）。
-        if !text.trim_start().starts_with("<task-notification>") || super::subagent_prompt::resumed_task_id(text).is_some() {
+        if !text.trim_start().starts_with("<task-notification>")
+            || super::subagent_prompt::resumed_task_id(text).is_some()
+        {
             return;
         }
         if let Some(id) = tag_text(text, "task-id") {
@@ -1344,7 +1389,11 @@ fn title_scan_backward(
     let mut buf = Vec::new();
     // 逐条处理（自后向前）：custom-title 一出现即是答案；ai-title 只记第一次见到的（即最后一条）。
     let consider = |line: &[u8], ai: &mut Option<String>| -> Option<String> {
-        let finder = if ai.is_some() { &custom_only } else { &any_title };
+        let finder = if ai.is_some() {
+            &custom_only
+        } else {
+            &any_title
+        };
         finder.find(line)?;
         match title_record(line)? {
             (true, title) => Some(title),
@@ -1380,7 +1429,11 @@ fn title_scan_backward(
         let body_start = if start == 0 { 0 } else { first_nl + 1 };
         let body = &buf[body_start.min(last_nl)..last_nl];
         // 只对子串命中的行求行界，自后向前处理；同一行多处命中只处理一次。
-        let finder = if ai.is_some() { &custom_only } else { &any_title };
+        let finder = if ai.is_some() {
+            &custom_only
+        } else {
+            &any_title
+        };
         let mut hits: Vec<usize> = finder.find_iter(body).collect();
         hits.reverse();
         let mut done_before = usize::MAX; // 已处理行的起点：命中位置 ≥ 它的属于已处理行
@@ -1602,9 +1655,12 @@ fn resolve_path_polled(cwd: Option<&str>, session_id: &str) -> Option<std::path:
     if let Some(p) = cwd.and_then(|cwd| reconstruct_transcript_path(cwd, session_id)) {
         return Some(p);
     }
-    find_with_missing_cache(&MISSING_TRANSCRIPTS, session_id, std::time::Instant::now(), || {
-        find_transcript_by_session(session_id)
-    })
+    find_with_missing_cache(
+        &MISSING_TRANSCRIPTS,
+        session_id,
+        std::time::Instant::now(),
+        || find_transcript_by_session(session_id),
+    )
 }
 
 /// 从 transcript JSONL 里读出会话工作目录(cwd)：取第一条带非空 "cwd" 字段的记录。
@@ -2242,7 +2298,11 @@ impl ClaudeSubagents {
     /// 只认结构：tool_result 的 tool_use_id 对得上、且 `toolUseResult.status == "forked"`，
     /// 会话正文里引用同样的字串不算（Read/Grep 读到协议串会喂出幽灵任务，有前科）。id 要拼进文件名，
     /// 只收字母数字，防路径穿越。
-    fn forked_stream_by_agent_id(main_transcript: &Path, dir: &Path, tool_use_id: &str) -> Option<PathBuf> {
+    fn forked_stream_by_agent_id(
+        main_transcript: &Path,
+        dir: &Path,
+        tool_use_id: &str,
+    ) -> Option<PathBuf> {
         let text = std::fs::read_to_string(main_transcript).ok()?;
         for line in text.lines() {
             if !line.contains(tool_use_id) || !line.contains("\"agentId\"") {
@@ -2264,7 +2324,8 @@ impl ClaudeSubagents {
                 .is_some_and(|blocks| {
                     blocks.iter().any(|block| {
                         block.get("type").and_then(|v| v.as_str()) == Some("tool_result")
-                            && block.get("tool_use_id").and_then(|v| v.as_str()) == Some(tool_use_id)
+                            && block.get("tool_use_id").and_then(|v| v.as_str())
+                                == Some(tool_use_id)
                     })
                 });
             if !answers_call {
@@ -2307,10 +2368,9 @@ impl ClaudeSubagents {
                 {
                     continue;
                 }
-                let (Some(id), Some(input)) = (
-                    block.get("id").and_then(|v| v.as_str()),
-                    block.get("input"),
-                ) else {
+                let (Some(id), Some(input)) =
+                    (block.get("id").and_then(|v| v.as_str()), block.get("input"))
+                else {
                     continue;
                 };
                 let Some(skill) = input.get("skill").and_then(|v| v.as_str()) else {
@@ -2622,7 +2682,9 @@ mod tests {
         ));
         let with_prompt = r#"{"type":"user","uuid":"i3","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","is_error":true,"content":"The user doesn't want to proceed."},{"type":"text","text":"[Request interrupted by user for tool use]\n"},{"type":"text","text":"插话在对话里做了吗"}]}}"#;
         let events = parse_transcript_events(with_prompt);
-        assert!(events.iter().any(|e| matches!(e, TranscriptEvent::Metadata { kind, .. } if kind == "interrupted")));
+        assert!(events
+            .iter()
+            .any(|e| matches!(e, TranscriptEvent::Metadata { kind, .. } if kind == "interrupted")));
         assert!(events.iter().any(|e| matches!(e, TranscriptEvent::UserMessage { text, .. } if text == "插话在对话里做了吗")));
         let quoted = r#"{"type":"user","uuid":"i4","message":{"role":"user","content":"为什么会出现 [Request interrupted by user]"}}"#;
         assert!(matches!(
@@ -2666,7 +2728,9 @@ mod tests {
             r#"{"type":"user","uuid":"h3","isMeta":true,"message":{"role":"user","content":"看下 Stop hook feedback: 这行"}}"#,
         ] {
             match parse_transcript_events(line).as_slice() {
-                [TranscriptEvent::UserMessage { text, .. }] => assert!(!text.contains("<hook-feedback>")),
+                [TranscriptEvent::UserMessage { text, .. }] => {
+                    assert!(!text.contains("<hook-feedback>"))
+                }
                 other => panic!("{other:?}"),
             }
         }
@@ -2717,19 +2781,28 @@ mod tests {
         ]}}"#.replace('\n', "");
         let items = parse_chat_items(&line);
         assert_eq!(items.len(), 3);
-        assert!(matches!(&items[0], ChatItem::AssistantText { text, .. } if text == "GUI 进程已随终端退出"));
-        assert!(matches!(&items[1], ChatItem::Reasoning { text, .. } if text == "有字的真 thinking"));
+        assert!(
+            matches!(&items[0], ChatItem::AssistantText { text, .. } if text == "GUI 进程已随终端退出")
+        );
+        assert!(
+            matches!(&items[1], ChatItem::Reasoning { text, .. } if text == "有字的真 thinking")
+        );
         assert!(matches!(&items[2], ChatItem::Reasoning { text, .. } if text == "无签名的旧格式"));
     }
 
     #[test]
     fn powershell_tool_is_summarized_like_bash() {
         let line = r#"{"type":"assistant","uuid":"a1","message":{"content":[{"type":"tool_use","id":"ps1","name":"PowerShell","input":{"command":"Get-Process -Id 1","description":"查进程"}}]}}"#;
-        let ChatItem::ToolUse { summary, detail, .. } = &parse_chat_items(line)[0] else {
+        let ChatItem::ToolUse {
+            summary, detail, ..
+        } = &parse_chat_items(line)[0]
+        else {
             panic!("应解析出工具调用");
         };
         assert_eq!(summary, "Get-Process -Id 1");
-        assert!(matches!(detail, Some(ToolDetail::Command { command, .. }) if command == "Get-Process -Id 1"));
+        assert!(
+            matches!(detail, Some(ToolDetail::Command { command, .. }) if command == "Get-Process -Id 1")
+        );
     }
 
     #[test]
@@ -2749,13 +2822,19 @@ mod tests {
 
         // 编辑回执的 structuredPatch 原样搬成统一 diff（对话页按真实行号渲染）；空数组不搬。
         let edited = r#"{"type":"user","uuid":"u2","message":{"content":[{"type":"tool_result","tool_use_id":"tool-2","content":"ok"}]},"toolUseResult":{"structuredPatch":[{"oldStart":26,"oldLines":2,"newStart":26,"newLines":2,"lines":[" keep","-old","+new"]}]}}"#;
-        let ChatItem::ToolResult { patch: Some(patch), .. } = &parse_chat_items(edited)[0] else {
+        let ChatItem::ToolResult {
+            patch: Some(patch), ..
+        } = &parse_chat_items(edited)[0]
+        else {
             panic!("应带上 structuredPatch");
         };
         assert_eq!((patch[0].old_start, patch[0].new_start), (26, 26));
         assert_eq!(patch[0].lines, [" keep", "-old", "+new"]);
         let empty = r#"{"type":"user","uuid":"u3","message":{"content":[{"type":"tool_result","tool_use_id":"tool-3","content":"ok"}]},"toolUseResult":{"structuredPatch":[]}}"#;
-        assert!(matches!(&parse_chat_items(empty)[0], ChatItem::ToolResult { patch: None, .. }));
+        assert!(matches!(
+            &parse_chat_items(empty)[0],
+            ChatItem::ToolResult { patch: None, .. }
+        ));
 
         let sidechain = r#"{"type":"assistant","uuid":"sub","isSidechain":true,"message":{"content":[{"type":"text","text":"hidden"}]}}"#;
         assert!(parse_chat_items(sidechain).is_empty());
@@ -2772,7 +2851,10 @@ mod tests {
         );
         assert!(matches!(
             &parse_chat_items(&answered)[0],
-            ChatItem::ToolResult { is_error: false, .. }
+            ChatItem::ToolResult {
+                is_error: false,
+                ..
+            }
         ));
 
         let failed = r#"{"type":"user","uuid":"u2","message":{"content":[{"type":"tool_result","tool_use_id":"tool-2","content":"command not found","is_error":true}]}}"#;
@@ -2793,11 +2875,23 @@ mod tests {
         let items = parse_chat_items(handback);
         assert_eq!(items.len(), 1, "{items:?}");
         match &items[0] {
-            ChatItem::ToolResult { tool_use_id, text, subagent, .. } => {
+            ChatItem::ToolResult {
+                tool_use_id,
+                text,
+                subagent,
+                ..
+            } => {
                 assert_eq!(tool_use_id.as_deref(), Some("a228"));
                 assert_eq!(text, "## 规格\n\n- 第一条");
                 let outcome = subagent.as_ref().expect("结局统计");
-                assert_eq!((outcome.running, outcome.completed, outcome.task_id.as_deref()), (0, 1, Some("a228")));
+                assert_eq!(
+                    (
+                        outcome.running,
+                        outcome.completed,
+                        outcome.task_id.as_deref()
+                    ),
+                    (0, 1, Some("a228"))
+                );
             }
             other => panic!("应为子任务回执: {other:?}"),
         }
@@ -2812,7 +2906,9 @@ mod tests {
         assert!(parse_chat_items(chatter).is_empty());
         // 用户自己排队的插话（origin.kind = "human"）照旧是用户消息。
         let human = r#"{"type":"attachment","uuid":"p3","attachment":{"type":"queued_command","prompt":"继续","commandMode":"prompt","origin":{"kind":"human"}}}"#;
-        assert!(matches!(parse_chat_items(human).as_slice(), [ChatItem::UserText { text, .. }] if text == "继续"));
+        assert!(
+            matches!(parse_chat_items(human).as_slice(), [ChatItem::UserText { text, .. }] if text == "继续")
+        );
     }
 
     /// CLI 正忙时用户的话先入队：enqueue 行解析成送达回执，子代理回报、后台通知与出队记账不算。
@@ -2821,7 +2917,12 @@ mod tests {
         let human = r#"{"type":"queue-operation","operation":"enqueue","timestamp":"2026-11-01T04:16:55.516Z","sessionId":"s","content":"<pasted_content id=\"7436\">\n为什么会重复\n</pasted_content id=\"7436\">"}"#;
         let items = parse_chat_items(human);
         assert_eq!(items.len(), 1);
-        let ChatItem::PromptQueued { id, timestamp, text } = &items[0] else {
+        let ChatItem::PromptQueued {
+            id,
+            timestamp,
+            text,
+        } = &items[0]
+        else {
             panic!("应为 PromptQueued：{items:?}");
         };
         assert_eq!(text, "为什么会重复");
@@ -2846,12 +2947,18 @@ mod tests {
         let queued = r#"{"type":"attachment","uuid":"p4","attachment":{"type":"queued_command","prompt":"顺便加个测试","commandMode":"prompt","origin":{"kind":"human"}}}"#;
         assert!(matches!(
             parse_chat_items(queued).as_slice(),
-            [ChatItem::UserText { interjected: true, .. }]
+            [ChatItem::UserText {
+                interjected: true,
+                ..
+            }]
         ));
         let plain = r#"{"type":"user","uuid":"u5","message":{"role":"user","content":"开始吧"}}"#;
         assert!(matches!(
             parse_chat_items(plain).as_slice(),
-            [ChatItem::UserText { interjected: false, .. }]
+            [ChatItem::UserText {
+                interjected: false,
+                ..
+            }]
         ));
     }
 
@@ -2870,7 +2977,10 @@ mod tests {
             .join("q1-test-image-1.png");
         assert_eq!(
             text,
-            &format!("这里还要再加一个排序\n[Image: source: {}]", expected_path.display())
+            &format!(
+                "这里还要再加一个排序\n[Image: source: {}]",
+                expected_path.display()
+            )
         );
         assert!(expected_path.exists());
         // 幂等：重解析同一行不重写、结果一致。
@@ -2971,31 +3081,49 @@ mod tests {
             items
                 .iter()
                 .filter_map(|item| match item {
-                    crate::ChatItem::UserText { text, .. } | crate::ChatItem::AssistantText { text, .. } => Some(text.clone()),
+                    crate::ChatItem::UserText { text, .. }
+                    | crate::ChatItem::AssistantText { text, .. } => Some(text.clone()),
                     _ => None,
                 })
                 .collect::<Vec<_>>()
         };
         let head = concat!(
-            r#"{"type":"user","uuid":"u1","parentUuid":null,"message":{"content":"先做甲"}}"#, "\n",
-            r#"{"type":"assistant","uuid":"a1","parentUuid":"u1","message":{"content":[{"type":"text","text":"甲好了"}]}}"#, "\n",
-            r#"{"type":"system","subtype":"turn_duration","uuid":"d1","parentUuid":"a1"}"#, "\n",
-            r#"{"type":"user","uuid":"u2","parentUuid":"d1","message":{"content":"再做乙"}}"#, "\n",
+            r#"{"type":"user","uuid":"u1","parentUuid":null,"message":{"content":"先做甲"}}"#,
+            "\n",
+            r#"{"type":"assistant","uuid":"a1","parentUuid":"u1","message":{"content":[{"type":"text","text":"甲好了"}]}}"#,
+            "\n",
+            r#"{"type":"system","subtype":"turn_duration","uuid":"d1","parentUuid":"a1"}"#,
+            "\n",
+            r#"{"type":"user","uuid":"u2","parentUuid":"d1","message":{"content":"再做乙"}}"#,
+            "\n",
             // 同一轮里的 sidechain 与跳接（只隔了附件）不算分叉。
-            r#"{"type":"assistant","uuid":"s1","parentUuid":"zz","isSidechain":true,"message":{"content":[{"type":"text","text":"子任务"}]}}"#, "\n",
-            r#"{"type":"attachment","uuid":"t2","parentUuid":"u2"}"#, "\n",
-            r#"{"type":"assistant","uuid":"a2","parentUuid":"u2","message":{"content":[{"type":"text","text":"乙好了"}]}}"#, "\n",
+            r#"{"type":"assistant","uuid":"s1","parentUuid":"zz","isSidechain":true,"message":{"content":[{"type":"text","text":"子任务"}]}}"#,
+            "\n",
+            r#"{"type":"attachment","uuid":"t2","parentUuid":"u2"}"#,
+            "\n",
+            r#"{"type":"assistant","uuid":"a2","parentUuid":"u2","message":{"content":[{"type":"text","text":"乙好了"}]}}"#,
+            "\n",
         );
         let path = write_tmp("rewind-fork", head);
         let first = crate::read_chat_delta(&CLAUDE_TRANSCRIPT, &path, 0, None);
-        assert_eq!(texts(&first.items), ["先做甲", "甲好了", "再做乙", "乙好了"]);
+        assert_eq!(
+            texts(&first.items),
+            ["先做甲", "甲好了", "再做乙", "乙好了"]
+        );
         assert!(!first.undone);
 
         let fork = concat!(
-            r#"{"type":"file-history-snapshot","messageId":"x"}"#, "\n",
-            r#"{"type":"user","uuid":"u3","parentUuid":"d1","message":{"content":"改做丙"}}"#, "\n",
+            r#"{"type":"file-history-snapshot","messageId":"x"}"#,
+            "\n",
+            r#"{"type":"user","uuid":"u3","parentUuid":"d1","message":{"content":"改做丙"}}"#,
+            "\n",
         );
-        std::fs::OpenOptions::new().append(true).open(&path).unwrap().write_all(fork.as_bytes()).unwrap();
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap()
+            .write_all(fork.as_bytes())
+            .unwrap();
         let next = crate::read_chat_delta(&CLAUDE_TRANSCRIPT, &path, first.offset, first.mtime);
         assert!(next.reset && next.undone);
         assert_eq!(texts(&next.items), ["先做甲", "甲好了", "改做丙"]);
@@ -3015,11 +3143,17 @@ mod tests {
     fn classify_matches_stuck_errors() {
         // 鉴权类不依赖 synthetic 标记（老 transcript 无 model 字段也要能判）。
         assert_eq!(
-            classify_error("The model's tool call could not be parsed (retry also failed).", false),
+            classify_error(
+                "The model's tool call could not be parsed (retry also failed).",
+                false
+            ),
             Some("工具调用解析失败")
         );
         assert_eq!(
-            classify_error("Please run /login · API Error: 403 Request not allowed", false),
+            classify_error(
+                "Please run /login · API Error: 403 Request not allowed",
+                false
+            ),
             Some("需要重新登录")
         );
         assert_eq!(
@@ -3054,7 +3188,10 @@ mod tests {
             Some("API 请求出错")
         );
         assert_eq!(
-            classify_error("API Error: upstream stream disconnected: unexpected EOF", true),
+            classify_error(
+                "API Error: upstream stream disconnected: unexpected EOF",
+                true
+            ),
             Some("API 请求出错")
         );
         assert_eq!(
@@ -3083,11 +3220,20 @@ mod tests {
         // 门外：模型正文聊到「API Error」字样绝不能标红——这正是当年放过 5xx 的原因，
         // 现在由 synthetic 标记承担零误报，门外维持 None。
         assert_eq!(
-            classify_error("API Error: 529 Overloaded. This is a server-side issue", false),
+            classify_error(
+                "API Error: 529 Overloaded. This is a server-side issue",
+                false
+            ),
             None
         );
-        assert_eq!(classify_error("API Error: 500 status code (no body)", false), None);
-        assert_eq!(classify_error("Unable to connect to API (ECONNRESET)", false), None);
+        assert_eq!(
+            classify_error("API Error: 500 status code (no body)", false),
+            None
+        );
+        assert_eq!(
+            classify_error("Unable to connect to API (ECONNRESET)", false),
+            None
+        );
     }
 
     #[test]
@@ -3757,7 +3903,10 @@ mod tests {
             panic!("应解析成工具回执");
         };
         let outcome = subagent.as_ref().expect("启动回执应标 running");
-        assert_eq!((outcome.running, outcome.completed, outcome.failed), (1, 0, 0));
+        assert_eq!(
+            (outcome.running, outcome.completed, outcome.failed),
+            (1, 0, 0)
+        );
         // 任务 id 是 TaskOutput 回执归回原委派的唯一外键。
         assert_eq!(outcome.task_id.as_deref(), Some("a9b726e3a088bafea"));
 
@@ -3803,7 +3952,10 @@ mod tests {
         let waiting = CLAUDE_SUBAGENTS
             .detect_result("<retrieval_status>timeout</retrieval_status>\n\n<task_id>ad39aeb81d8552d59</task_id>\n\n<task_type>local_agent</task_type>\n\n<status>running</status>")
             .expect("timeout 拉取也应带回执");
-        assert_eq!((waiting.running, waiting.completed, waiting.failed), (1, 0, 0));
+        assert_eq!(
+            (waiting.running, waiting.completed, waiting.failed),
+            (1, 0, 0)
+        );
 
         // failed 变体。
         let failed = CLAUDE_SUBAGENTS
@@ -3816,7 +3968,9 @@ mod tests {
             .detect_result("<retrieval_status>error</retrieval_status>\nNo such task")
             .is_none());
         // 普通工具结果碰巧含尖括号不受影响。
-        assert!(CLAUDE_SUBAGENTS.detect_result("cat 输出:<status>completed</status>").is_none());
+        assert!(CLAUDE_SUBAGENTS
+            .detect_result("cat 输出:<status>completed</status>")
+            .is_none());
     }
 
     /// `<task-notification>` user 消息是后台任务的完成通知,不是用户说的话:
@@ -3839,11 +3993,17 @@ mod tests {
         assert_eq!(text, "Background agent done");
         assert!(!is_error);
         let outcome = subagent.as_ref().expect("合成回执应带结局统计");
-        assert_eq!((outcome.running, outcome.completed, outcome.failed), (0, 1, 0));
+        assert_eq!(
+            (outcome.running, outcome.completed, outcome.failed),
+            (0, 1, 0)
+        );
 
         // failed 变体:统计与错误位都翻转。
         let failed = line.replace("<status>completed</status>", "<status>failed</status>");
-        let ChatItem::ToolResult { is_error, subagent, .. } = &parse_chat_items(&failed)[0] else {
+        let ChatItem::ToolResult {
+            is_error, subagent, ..
+        } = &parse_chat_items(&failed)[0]
+        else {
             panic!("failed 通知也应转译成合成回执");
         };
         assert!(is_error);
@@ -3851,11 +4011,17 @@ mod tests {
 
         // 缺 tool-use-id 关联不上 → 保持普通用户文本,宁可显示原文也不造孤儿回执。
         let orphan = r#"{"type":"user","uuid":"n2","message":{"content":"<task-notification>坏格式</task-notification>"}}"#;
-        assert!(matches!(&parse_chat_items(orphan)[0], ChatItem::UserText { .. }));
+        assert!(matches!(
+            &parse_chat_items(orphan)[0],
+            ChatItem::UserText { .. }
+        ));
 
         // 普通用户消息不受影响。
         let plain = r#"{"type":"user","uuid":"n3","message":{"content":"帮我看看这个"}}"#;
-        assert!(matches!(&parse_chat_items(plain)[0], ChatItem::UserText { .. }));
+        assert!(matches!(
+            &parse_chat_items(plain)[0],
+            ChatItem::UserText { .. }
+        ));
     }
 
     /// 侧车流按 meta.json 的 toolUseId 外键定位；流内每行都是 sidechain，
@@ -3955,7 +4121,12 @@ mod tests {
     fn queued_task_notification_becomes_synthetic_receipt() {
         let line = r#"{"type":"attachment","uuid":"qn1","timestamp":"2026-08-18T05:22:59Z","isSidechain":false,"attachment":{"type":"queued_command","prompt":"<task-notification>\n<task-id>a83e4da9cafca253c</task-id>\n<tool-use-id>toolu_q</tool-use-id>\n<status>completed</status>\n<summary>审查完成</summary>\n</task-notification>"}}"#;
         let items = parse_chat_items(line);
-        let ChatItem::ToolResult { tool_use_id, subagent, .. } = &items[0] else {
+        let ChatItem::ToolResult {
+            tool_use_id,
+            subagent,
+            ..
+        } = &items[0]
+        else {
             panic!("排队通知应转译成合成回执,实际:{items:?}");
         };
         assert_eq!(tool_use_id.as_deref(), Some("toolu_q"));
@@ -3966,9 +4137,11 @@ mod tests {
     /// 回执文案取自本机 transcript 实拍（2026-10-20）。
     #[test]
     fn pending_wakeup_counts_as_background_work_until_due() {
-        let receipt = |ts: &str, text: &str| format!(
-            r#"{{"type":"user","timestamp":"{ts}","message":{{"content":[{{"type":"tool_result","tool_use_id":"t_w","content":"{text}"}}]}}}}"#
-        );
+        let receipt = |ts: &str, text: &str| {
+            format!(
+                r#"{{"type":"user","timestamp":"{ts}","message":{{"content":[{{"type":"tool_result","tool_use_id":"t_w","content":"{text}"}}]}}}}"#
+            )
+        };
         let scheduled = receipt(
             "2026-10-20T14:53:06.714Z",
             "Next wakeup scheduled for 23:14:00 (in 1253s). If you owe the user a status update this tick, write it now as ordinary response text; then end the turn.",
@@ -3977,7 +4150,11 @@ mod tests {
         let mut st = ParseState::default();
         st.fold_line(&scheduled);
         assert_eq!(st.to_info_at(at + 1_000).busy_subagents, 1, "到点前算在跑");
-        assert_eq!(st.to_info_at(at + 1_253_000 + 1).busy_subagents, 0, "过了到点自然失效");
+        assert_eq!(
+            st.to_info_at(at + 1_253_000 + 1).busy_subagents,
+            0,
+            "过了到点自然失效"
+        );
 
         // stop 回执清掉。
         st.fold_line(&receipt(
@@ -3988,7 +4165,10 @@ mod tests {
 
         // 引用回执文案的工具输出（不以前缀开头）不误设；缺时间戳的行不设。
         let mut st = ParseState::default();
-        st.fold_line(&receipt("2026-10-20T14:53:06.714Z", "     1	Next wakeup scheduled for 23:14:00 (in 1253s)."));
+        st.fold_line(&receipt(
+            "2026-10-20T14:53:06.714Z",
+            "     1	Next wakeup scheduled for 23:14:00 (in 1253s).",
+        ));
         st.fold_line(&scheduled.replace(r#""timestamp":"2026-10-20T14:53:06.714Z","#, ""));
         assert_eq!(st.to_info_at(at + 1_000).busy_subagents, 0);
     }
@@ -3998,9 +4178,11 @@ mod tests {
     /// 标成「等待中」。
     #[test]
     fn analyzer_tracks_busy_background_subagents() {
-        let launch = |id: &str, agent: &str| format!(
-            r#"{{"type":"user","uuid":"{id}","message":{{"content":[{{"type":"tool_result","tool_use_id":"t_{id}","content":[{{"type":"text","text":"Async agent launched successfully.\nagentId: {agent} (internal ID - do not mention to user.)"}}]}}]}}}}"#
-        );
+        let launch = |id: &str, agent: &str| {
+            format!(
+                r#"{{"type":"user","uuid":"{id}","message":{{"content":[{{"type":"tool_result","tool_use_id":"t_{id}","content":[{{"type":"text","text":"Async agent launched successfully.\nagentId: {agent} (internal ID - do not mention to user.)"}}]}}]}}}}"#
+            )
+        };
         // 两个后台委派在跑。
         let mut content = format!("{}\n{}\n", launch("l1", "aaa111"), launch("l2", "bbb222"));
         let p = write_tmp("busy_track", &content);
@@ -4084,14 +4266,21 @@ mod tests {
     #[test]
     fn send_message_resume_marks_subagent_running_again() {
         let resume = r#"{"success":true,"message":"Resuming agent a872837","resumedAgentId":"a8728370da5331a1f","pin":{"id":"a8728370da5331a1f","name":"a8728370da5331a1f","ref":"6212ac"}}"#;
-        let outcome = CLAUDE_SUBAGENTS.detect_result(resume).expect("续上应产出结局");
-        assert_eq!((outcome.running, outcome.completed, outcome.failed), (1, 0, 0));
+        let outcome = CLAUDE_SUBAGENTS
+            .detect_result(resume)
+            .expect("续上应产出结局");
+        assert_eq!(
+            (outcome.running, outcome.completed, outcome.failed),
+            (1, 0, 0)
+        );
         assert_eq!(outcome.task_id.as_deref(), Some("a8728370da5331a1f"));
         // 子代理还在跑时的消息只是排队,没有 resumedAgentId,不认;引用这段 JSON 的输出不认。
         let queued = r#"{"success":true,"message":"Message queued for delivery to a8728370da5331a1f at its next tool round.","pin":{"id":"a8728370da5331a1f"}}"#;
         assert!(CLAUDE_SUBAGENTS.detect_result(queued).is_none());
         assert!(CLAUDE_SUBAGENTS
-            .detect_result(r#"12  {"message":"Resuming agent a872837","resumedAgentId":"a8728370da5331a1f"}"#)
+            .detect_result(
+                r#"12  {"message":"Resuming agent a872837","resumedAgentId":"a8728370da5331a1f"}"#
+            )
             .is_none());
 
         // 后端计数:启动 → 完成通知出集 → 续上重新入集 → 再次完成通知出集。
@@ -4129,8 +4318,13 @@ mod tests {
     fn task_stop_receipt_settles_background_task() {
         // 真机回执原文(CC 把 JSON 串当工具回执正文)。
         let stop = r#"{"message":"Successfully stopped task: bvokc4arn (bunx vite --port 5199)","task_id":"bvokc4arn","task_type":"local_bash","command":"bunx vite --port 5199"}"#;
-        let outcome = CLAUDE_SUBAGENTS.detect_result(stop).expect("停成功应产出结局");
-        assert_eq!((outcome.running, outcome.completed, outcome.failed), (0, 1, 0));
+        let outcome = CLAUDE_SUBAGENTS
+            .detect_result(stop)
+            .expect("停成功应产出结局");
+        assert_eq!(
+            (outcome.running, outcome.completed, outcome.failed),
+            (0, 1, 0)
+        );
         // task_id 是前端把这条回执归回原后台调用的外键。
         assert_eq!(outcome.task_id.as_deref(), Some("bvokc4arn"));
         // 引用这句话的源码/日志不认(行首锚定)。
@@ -4183,12 +4377,14 @@ mod tests {
         // forked skill 的回执不带任务 id:委派靠 tool_use_id 直连。
         assert_eq!(launched.task_id, None);
 
-        let done = forked_skill_outcome("Skill \"code-review\" completed (forked execution).\n\nResult:\n…")
-            .expect("完成回执应认出");
+        let done = forked_skill_outcome(
+            "Skill \"code-review\" completed (forked execution).\n\nResult:\n…",
+        )
+        .expect("完成回执应认出");
         assert_eq!((done.running, done.completed), (0, 1));
 
-        let failed = forked_skill_outcome("Skill \"x\" failed (forked execution).")
-            .expect("失败回执应认出");
+        let failed =
+            forked_skill_outcome("Skill \"x\" failed (forked execution).").expect("失败回执应认出");
         assert_eq!(failed.failed, 1);
     }
 
@@ -4217,42 +4413,80 @@ b
 c"});
         assert_eq!(
             tool_detail("Write", Some(&write)),
-            Some(ToolDetail::Write { path: "src/a.ts".into(), content: "a
+            Some(ToolDetail::Write {
+                path: "src/a.ts".into(),
+                content: "a
 b
-c".into(), lines: 3, truncated: false })
+c"
+                .into(),
+                lines: 3,
+                truncated: false
+            })
         );
         let edit = serde_json::json!({"file_path": "x.rs", "old_string": "foo", "new_string": "bar", "replace_all": true});
         assert_eq!(
             tool_detail("Edit", Some(&edit)),
-            Some(ToolDetail::Edit { path: "x.rs".into(), old: "foo".into(), new: "bar".into(), replace_all: true, truncated: false })
+            Some(ToolDetail::Edit {
+                path: "x.rs".into(),
+                old: "foo".into(),
+                new: "bar".into(),
+                replace_all: true,
+                truncated: false
+            })
         );
         let bash = serde_json::json!({"command": "cargo test", "description": "跑测试"});
         assert_eq!(
             tool_detail("Bash", Some(&bash)),
-            Some(ToolDetail::Command { command: "cargo test".into(), description: Some("跑测试".into()) })
+            Some(ToolDetail::Command {
+                command: "cargo test".into(),
+                description: Some("跑测试".into())
+            })
         );
         let read = serde_json::json!({"file_path": "a.md", "offset": 10, "limit": 20});
         assert_eq!(
             tool_detail("Read", Some(&read)),
-            Some(ToolDetail::Read { path: "a.md".into(), offset: Some(10), limit: Some(20) })
+            Some(ToolDetail::Read {
+                path: "a.md".into(),
+                offset: Some(10),
+                limit: Some(20)
+            })
         );
         let grep = serde_json::json!({"pattern": "fn main", "path": "src", "glob": "*.rs"});
         assert_eq!(
             tool_detail("Grep", Some(&grep)),
-            Some(ToolDetail::Search { pattern: "fn main".into(), path: Some("src".into()), glob: Some("*.rs".into()) })
+            Some(ToolDetail::Search {
+                pattern: "fn main".into(),
+                path: Some("src".into()),
+                glob: Some("*.rs".into())
+            })
         );
         // MCP / harness 内部工具不认，前端退回摘要。
-        assert_eq!(tool_detail("TaskCreate", Some(&serde_json::json!({"subject": "x"}))), None);
+        assert_eq!(
+            tool_detail("TaskCreate", Some(&serde_json::json!({"subject": "x"}))),
+            None
+        );
         assert_eq!(tool_detail("Write", None), None);
     }
 
     /// 行数按完整正文数、正文本身截到上限并打标——前端只做预览，但「写了多少行」得是真的。
     #[test]
     fn tool_detail_write_keeps_full_line_count_when_content_is_clipped() {
-        let body: String = (0..2_000).map(|i| format!("line {i}
-")).collect();
+        let body: String = (0..2_000)
+            .map(|i| {
+                format!(
+                    "line {i}
+"
+                )
+            })
+            .collect();
         let write = serde_json::json!({"file_path": "big.txt", "content": body});
-        let Some(ToolDetail::Write { lines, content, truncated, .. }) = tool_detail("Write", Some(&write)) else {
+        let Some(ToolDetail::Write {
+            lines,
+            content,
+            truncated,
+            ..
+        }) = tool_detail("Write", Some(&write))
+        else {
             panic!("应识别为 Write 详情");
         };
         assert_eq!(lines, 2_000);
@@ -4263,7 +4497,10 @@ c".into(), lines: 3, truncated: false })
     #[test]
     fn skill_summary_is_the_slash_command() {
         let input = serde_json::json!({"skill":"code-review","args":"1692 高强度"});
-        assert_eq!(tool_summary("Skill", Some(&input)), "/code-review 1692 高强度");
+        assert_eq!(
+            tool_summary("Skill", Some(&input)),
+            "/code-review 1692 高强度"
+        );
         // 无 args / 空 args 只留命令本体。
         let bare = serde_json::json!({"skill":"run"});
         assert_eq!(tool_summary("Skill", Some(&bare)), "/run");
@@ -4300,7 +4537,10 @@ c".into(), lines: 3, truncated: false })
         // agentId 里带路径字符：拒收，不拼文件名。
         let evil = receipt.replace("a108ba9414fa60d87", "..\\..\\x");
         std::fs::write(&main, format!("{call}\n{evil}\n")).unwrap();
-        assert_eq!(ClaudeSubagents::forked_stream_by_agent_id(&main, &dir, "t_cr"), None);
+        assert_eq!(
+            ClaudeSubagents::forked_stream_by_agent_id(&main, &dir, "t_cr"),
+            None
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -4313,7 +4553,11 @@ c".into(), lines: 3, truncated: false })
         // 主链:同一条命令跑两次,中间夹一次别的命令。
         let main = root.join("sess.jsonl");
         let mut content = String::new();
-        for (id, args) in [("t_a", "1692 高强度"), ("t_b", "1719 高强度"), ("t_c", "1692 高强度")] {
+        for (id, args) in [
+            ("t_a", "1692 高强度"),
+            ("t_b", "1719 高强度"),
+            ("t_c", "1692 高强度"),
+        ] {
             content.push_str(&format!(
                 r#"{{"type":"assistant","message":{{"content":[{{"type":"tool_use","id":"{id}","name":"Skill","input":{{"skill":"code-review","args":"{args}"}}}}]}}}}"#
             ));
@@ -4500,22 +4744,52 @@ c".into(), lines: 3, truncated: false })
             format!("{}\n{}\n{}\n", ai("头部"), user("a"), user("b")).into_bytes(),
             format!("{}\n{}\n{}\n", user("a"), user("b"), ai("尾部")).into_bytes(),
             // custom 比 ai 早：custom 仍然胜出。
-            format!("{}\n{}\n{}\n{}\n", custom("早的自定义"), user("a"), ai("晚的 AI"), user("b")).into_bytes(),
+            format!(
+                "{}\n{}\n{}\n{}\n",
+                custom("早的自定义"),
+                user("a"),
+                ai("晚的 AI"),
+                user("b")
+            )
+            .into_bytes(),
             // 交替：取最后一条 custom。
             format!(
                 "{}\n{}\n{}\n{}\n{}\n{}\n",
-                ai("ai1"), custom("c1"), ai("ai2"), custom("c2"), ai("ai3"), user("x")
+                ai("ai1"),
+                custom("c1"),
+                ai("ai2"),
+                custom("c2"),
+                ai("ai3"),
+                user("x")
             )
             .into_bytes(),
             // 最后一条 custom 为空白：跳过它取更早的有效 custom。
             format!("{}\n{}\n{}\n", custom("c1"), ai("ai1"), custom("   ")).into_bytes(),
             format!("{}\n{}\n", ai(" "), ai("")).into_bytes(),
             // 普通消息里引用了标题串（type 不对）不算。
-            format!("{}\n{}\n", ai("真"), user(r#"{\"type\":\"custom-title\",\"customTitle\":\"假\"}"#)).into_bytes(),
+            format!(
+                "{}\n{}\n",
+                ai("真"),
+                user(r#"{\"type\":\"custom-title\",\"customTitle\":\"假\"}"#)
+            )
+            .into_bytes(),
             // 无结尾换行、CRLF。
-            format!("{}\r\n{}\r\n{}", user("a"), ai("crlf"), custom("末行无换行")).into_bytes(),
+            format!(
+                "{}\r\n{}\r\n{}",
+                user("a"),
+                ai("crlf"),
+                custom("末行无换行")
+            )
+            .into_bytes(),
             // 超长单行夹在标题之间。
-            format!("{}\n{}\n{}\n{}\n", ai("前"), user(&long), custom(&format!("长{long}")), user(&long)).into_bytes(),
+            format!(
+                "{}\n{}\n{}\n{}\n",
+                ai("前"),
+                user(&long),
+                custom(&format!("长{long}")),
+                user(&long)
+            )
+            .into_bytes(),
             // 坏 JSON 与非法 UTF-8 行只跳过本行。
             [
                 format!("{}\n", custom("有效")).into_bytes(),
@@ -4558,7 +4832,11 @@ c".into(), lines: 3, truncated: false })
             return;
         };
         let (mut n, mut old_ms, mut new_ms) = (0, 0f64, 0f64);
-        for dir in std::fs::read_dir(root).unwrap().flatten().filter(|e| e.path().is_dir()) {
+        for dir in std::fs::read_dir(root)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.path().is_dir())
+        {
             for file in std::fs::read_dir(dir.path()).unwrap().flatten() {
                 let path = file.path();
                 if path.extension().is_none_or(|x| x != "jsonl") {
@@ -4586,7 +4864,8 @@ c".into(), lines: 3, truncated: false })
     #[test]
     fn missing_cache_rediscovers_transcript_after_ttl() {
         let cache = std::sync::Mutex::new(MissingCache::default());
-        let file = std::env::temp_dir().join(format!("cc_missing_ttl_{}.jsonl", std::process::id()));
+        let file =
+            std::env::temp_dir().join(format!("cc_missing_ttl_{}.jsonl", std::process::id()));
         let _ = std::fs::remove_file(&file);
         let scans = std::cell::Cell::new(0);
         let scan = || {
@@ -4603,7 +4882,10 @@ c".into(), lines: 3, truncated: false })
         assert_eq!(scans.get(), 1);
         // 过了一个 TTL：重新扫盘并发现它。
         let later = t0 + MISSING_TTL + std::time::Duration::from_millis(1);
-        assert_eq!(find_with_missing_cache(&cache, "sid", later, scan).as_deref(), Some(file.as_path()));
+        assert_eq!(
+            find_with_missing_cache(&cache, "sid", later, scan).as_deref(),
+            Some(file.as_path())
+        );
         assert_eq!(scans.get(), 2);
         assert!(!cache.lock().unwrap().entries.contains_key("sid"));
         // 已找到的 id 不受缓存影响，每次都实测（文件被删也能当场反映）。
@@ -4645,8 +4927,14 @@ c".into(), lines: 3, truncated: false })
         let old_db = std::env::var("MEOWO_DB").ok();
         std::env::set_var("USERPROFILE", &home);
         std::env::set_var("MEOWO_DB", home.join(".meowo").join("board.db"));
-        assert_eq!(CLAUDE_TRANSCRIPT.resolve_transcript_path_polled(None, &sid), None);
-        assert_eq!(CLAUDE_TRANSCRIPT.resolve_transcript_path_polled(Some(r"C:\real\proj"), &sid), None);
+        assert_eq!(
+            CLAUDE_TRANSCRIPT.resolve_transcript_path_polled(None, &sid),
+            None
+        );
+        assert_eq!(
+            CLAUDE_TRANSCRIPT.resolve_transcript_path_polled(Some(r"C:\real\proj"), &sid),
+            None
+        );
         let transcript = proj.join(format!("{sid}.jsonl"));
         std::fs::write(&transcript, "{}\n").unwrap();
         let by_cwd = CLAUDE_TRANSCRIPT.resolve_transcript_path_polled(Some(r"C:\real\proj"), &sid);
@@ -4711,7 +4999,11 @@ pub(crate) mod perf_bench {
             );
             let mut lines = Vec::new();
             if turn.is_multiple_of(50) {
-                let mode = if turn.is_multiple_of(100) { "default" } else { "auto" };
+                let mode = if turn.is_multiple_of(100) {
+                    "default"
+                } else {
+                    "auto"
+                };
                 lines.push(format!(
                     r#"{{"type":"permission-mode","permissionMode":"{mode}","sessionId":"s"}}"#
                 ));
@@ -4721,7 +5013,11 @@ pub(crate) mod perf_bench {
                     r#"{{"type":"ai-title","aiTitle":"第 {turn} 轮标题","sessionId":"s"}}"#
                 ));
             }
-            let parent = if prev == "null" { prev.clone() } else { format!("\"{prev}\"") };
+            let parent = if prev == "null" {
+                prev.clone()
+            } else {
+                format!("\"{prev}\"")
+            };
             lines.push(format!(r#"{{"parentUuid":{parent},"isSidechain":false,"type":"user","message":{{"role":"user","content":"第 {turn} 轮提示"}},"uuid":"u{turn}","timestamp":"{ts}","permissionMode":"auto"}}"#));
             lines.push(format!(r#"{{"parentUuid":"u{turn}","isSidechain":false,"type":"assistant","message":{{"id":"m{turn}a","role":"assistant","content":[{{"type":"text","text":"好的，第 {turn} 轮"}}]}},"uuid":"a{turn}","timestamp":"{ts}"}}"#));
             lines.push(format!(r#"{{"parentUuid":"a{turn}","isSidechain":false,"type":"assistant","message":{{"id":"m{turn}b","role":"assistant","content":[{{"type":"tool_use","id":"toolu_{turn}","name":"Bash","input":{{"command":"ls {turn}"}}}}]}},"uuid":"t{turn}","timestamp":"{ts}"}}"#));
@@ -4746,7 +5042,10 @@ pub(crate) mod perf_bench {
             out = f();
             best = best.min(at.elapsed());
         }
-        println!("[perf] {label}: best of {runs} = {:.2} ms", best.as_secs_f64() * 1e3);
+        println!(
+            "[perf] {label}: best of {runs} = {:.2} ms",
+            best.as_secs_f64() * 1e3
+        );
         out
     }
 
@@ -4764,7 +5063,10 @@ pub(crate) mod perf_bench {
         }
         for profile in ["work", "alt"] {
             for i in 0..10 {
-                let dir = home.join(".meowo/profiles/claude").join(profile).join("projects");
+                let dir = home
+                    .join(".meowo/profiles/claude")
+                    .join(profile)
+                    .join("projects");
                 std::fs::create_dir_all(dir.join(format!("C--p-{i}"))).unwrap();
             }
         }
@@ -4815,14 +5117,20 @@ pub(crate) mod perf_bench {
     fn bench_title_tail() {
         let dir = bench_dir("title");
         let ai = dir.join("ai.jsonl");
-        synth_claude_transcript(&ai, 100 << 20, "{\"type\":\"ai-title\",\"aiTitle\":\"尾部 AI 标题\"}\n");
+        synth_claude_transcript(
+            &ai,
+            100 << 20,
+            "{\"type\":\"ai-title\",\"aiTitle\":\"尾部 AI 标题\"}\n",
+        );
         let custom = dir.join("custom.jsonl");
         synth_claude_transcript(
             &custom,
             100 << 20,
             "{\"type\":\"custom-title\",\"customTitle\":\"尾部自定义标题\"}\n",
         );
-        let t = time("title ai-tail 100MB", 5, || title_from_transcript(ai.to_str().unwrap()));
+        let t = time("title ai-tail 100MB", 5, || {
+            title_from_transcript(ai.to_str().unwrap())
+        });
         assert_eq!(t.as_deref(), Some("尾部 AI 标题"));
         let t = time("title custom-tail 100MB", 5, || {
             title_from_transcript(custom.to_str().unwrap())
@@ -4864,7 +5172,10 @@ pub(crate) mod perf_bench {
         let single = std::sync::Mutex::new(crate::transcript::TranscriptCache::new());
         let at = Instant::now();
         crate::transcript::TranscriptCache::analyze_shared(&single, &CLAUDE_TRANSCRIPT, &paths[0]);
-        println!("[perf] cold analyze_shared 1x12MB: {:.2} ms", at.elapsed().as_secs_f64() * 1e3);
+        println!(
+            "[perf] cold analyze_shared 1x12MB: {:.2} ms",
+            at.elapsed().as_secs_f64() * 1e3
+        );
         for round in 0..3 {
             let cache = std::sync::Mutex::new(crate::transcript::TranscriptCache::new());
             let at = Instant::now();
@@ -4872,7 +5183,11 @@ pub(crate) mod perf_bench {
                 for p in &paths {
                     let cache = &cache;
                     scope.spawn(move || {
-                        crate::transcript::TranscriptCache::analyze_shared(cache, &CLAUDE_TRANSCRIPT, p)
+                        crate::transcript::TranscriptCache::analyze_shared(
+                            cache,
+                            &CLAUDE_TRANSCRIPT,
+                            p,
+                        )
                     });
                 }
             });

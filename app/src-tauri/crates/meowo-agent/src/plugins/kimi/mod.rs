@@ -8,6 +8,8 @@
 //! 两者共用 TOML 格式与 stdin 载荷；事件集按实现区分，不能把新版事件写入旧 Python 配置。
 
 pub mod account;
+mod conversation;
+mod lead;
 mod screen;
 pub mod telemetry;
 
@@ -200,6 +202,7 @@ static VARIANTS: [Variant; 2] = [
             // transcript/上下文/改名全部静默落空。legacy 变体沿用 KIMI_SHARE_DIR 不动——
             // 那是旧 Python 版的世界，本机无从取证，且 profile 走不到它。
             env: Some("KIMI_CODE_HOME"),
+            env_suffix: "",
             candidates: &[".kimi-code"],
         },
         hooks: &HOOKS,
@@ -211,6 +214,7 @@ static VARIANTS: [Variant; 2] = [
         tag: "legacy",
         data_dir: DataDirSpec {
             env: Some("KIMI_SHARE_DIR"),
+            env_suffix: "",
             candidates: &[".kimi"],
         },
         hooks: &LEGACY_HOOKS,
@@ -370,6 +374,33 @@ fn modern_launch_options() -> &'static [crate::LaunchOption] {
 }
 
 impl AgentPlugin for Kimi {
+    fn process_scope(&self, argv: &[String]) -> crate::registry::ProcessScope {
+        use crate::registry::ProcessScope;
+        let own = argv.first().is_some_and(|arg| {
+            matches!(
+                arg.replace('\\', "/")
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or("")
+                    .to_ascii_lowercase()
+                    .as_str(),
+                "kimi" | "kimi.exe" | "kimi.cmd"
+            )
+        });
+        if !own {
+            return ProcessScope::Unknown;
+        }
+        // 服务可承载多个会话；即使参数位置不确定，也不能拿它当单会话进程结束。
+        if argv
+            .iter()
+            .skip(1)
+            .any(|arg| matches!(arg.as_str(), "web" | "server" | "rc" | "remote" | "acp"))
+        {
+            ProcessScope::Shared
+        } else {
+            ProcessScope::Exclusive
+        }
+    }
     fn screen_rules(&self) -> &'static [crate::screen::ScreenRule] {
         screen::RULES
     }
@@ -382,32 +413,32 @@ impl AgentPlugin for Kimi {
     /// 按键提示行是面板的稳定签名；提示行被裁掉时退回标题行。
     fn attention_patterns(&self) -> &'static [crate::chat_ui::AttentionPattern] {
         &[
-        // 提问表单（AskUserQuestion，kimi 2.4.1 真机取证 2026-11-05）。底部按键提示行是签名，
-        // 三种页各一种：单选题 `1-3 / ↵ choose`、多选题 `1-4 / ↵ toggle`、确认页
-        // `1/2 choose  ↵ confirm`，后面都跟 `←/→/tab switch`（多页签表单独有）。注意和审批面板
-        // 的提示行不同：审批是 `↑/↓ select · … · ↵ confirm`（带斜杠与圆点），不会串。
-        // 此前 kimi 只声明了审批，提问在对话页不出卡片（用户实拍）。
-        crate::chat_ui::AttentionPattern {
-            id: "kimi:question",
-            patterns: &[
-                r"↑↓ select\s+(?:1-\d+ / ↵ (?:choose|toggle)|1/2 choose\s+↵ confirm)\s+←/→/tab switch",
-            ],
-            // kimi 重绘不清屏，上一页的表单残留在上方：取最后一次。
-            last: true,
-            details: crate::chat_ui::AttentionDetails::BracketForm,
-        },
-        crate::chat_ui::AttentionPattern {
-            id: "kimi:command-approval",
-            patterns: &[
-                r"↑/↓ select · [\d/]+ choose · ↵ confirm",
-                r"^\s*▶\s*(?:run this command|write this file|apply these edits|stop this task|ready to build with this plan|approve [^\n?]+)\?",
-            ],
-            // 必须取最后一次：kimi 重绘也不清屏，上一条命令的面板残留在缓冲上方。
-            // 取首个匹配会把标题/命令锁在残影上，而数字键打给的是屏幕最下方的活动
-            // 面板——用户看着 A 批准了 B。
-            last: true,
-            details: crate::chat_ui::AttentionDetails::ArrowPanel,
-        },
+            // 提问表单（AskUserQuestion，kimi 2.4.1 真机取证 2026-11-05）。底部按键提示行是签名，
+            // 三种页各一种：单选题 `1-3 / ↵ choose`、多选题 `1-4 / ↵ toggle`、确认页
+            // `1/2 choose  ↵ confirm`，后面都跟 `←/→/tab switch`（多页签表单独有）。注意和审批面板
+            // 的提示行不同：审批是 `↑/↓ select · … · ↵ confirm`（带斜杠与圆点），不会串。
+            // 此前 kimi 只声明了审批，提问在对话页不出卡片（用户实拍）。
+            crate::chat_ui::AttentionPattern {
+                id: "kimi:question",
+                patterns: &[
+                    r"↑↓ select\s+(?:1-\d+ / ↵ (?:choose|toggle)|1/2 choose\s+↵ confirm)\s+←/→/tab switch",
+                ],
+                // kimi 重绘不清屏，上一页的表单残留在上方：取最后一次。
+                last: true,
+                details: crate::chat_ui::AttentionDetails::BracketForm,
+            },
+            crate::chat_ui::AttentionPattern {
+                id: "kimi:command-approval",
+                patterns: &[
+                    r"↑/↓ select · [\d/]+ choose · ↵ confirm",
+                    r"^\s*▶\s*(?:run this command|write this file|apply these edits|stop this task|ready to build with this plan|approve [^\n?]+)\?",
+                ],
+                // 必须取最后一次：kimi 重绘也不清屏，上一条命令的面板残留在缓冲上方。
+                // 取首个匹配会把标题/命令锁在残影上，而数字键打给的是屏幕最下方的活动
+                // 面板——用户看着 A 批准了 B。
+                last: true,
+                details: crate::chat_ui::AttentionDetails::ArrowPanel,
+            },
         ]
     }
 
@@ -417,6 +448,14 @@ impl AgentPlugin for Kimi {
     fn display_name(&self) -> &'static str {
         "Kimi Code"
     }
+    fn conversation(&self) -> Option<&'static dyn crate::conversation::ConversationCap> {
+        Some(&conversation::CAP)
+    }
+
+    fn lead(&self) -> Option<&'static dyn crate::lead_install::LeadCap> {
+        Some(&lead::CAP)
+    }
+
     fn variants(&self) -> &'static [Variant] {
         &VARIANTS
     }
@@ -491,7 +530,9 @@ impl AgentPlugin for Kimi {
             command: "/undo",
             count_arg: true,
             restores_files: false,
-            reject_pattern: Some(r"cannot undo while streaming|nothing to undo|failed to undo|run /undo again"),
+            reject_pattern: Some(
+                r"cannot undo while streaming|nothing to undo|failed to undo|run /undo again",
+            ),
             input_clear: None,
             menu: None,
         })
@@ -524,6 +565,27 @@ impl AgentPlugin for Kimi {
     /// 「打断并发送」→ Esc 确实停下当前回合)。自动探针抓不到证据(kimi.exe 的 launcher
     /// shim 在 ConPTY 下即退),故走真机人工确认——与 claude(官方文档)/codex(状态行)
     /// 同为确证级别。
+    /// 2026-11-12 隔离无模型 PTY 实拍（target/lead-provider-probes/composer）：只允许已验证空框，不清非空草稿。
+    fn composer_guard(&self, version: Option<&str>) -> Option<crate::chat_ui::ComposerGuard> {
+        if version != Some("2.5.3")
+            || !self
+                .resolve()
+                .is_some_and(|inst| inst.variant_tag == "modern")
+        {
+            return None;
+        }
+        Some(crate::chat_ui::ComposerGuard {
+            prompt_footer: false,
+            input_start_pattern: r"^(\s*│ > )",
+            top_pattern: r"^\s*╭─+╮\s*$",
+            bottom_pattern: r"^\s*╰─+╯\s*$",
+            row_pattern: r"^\s*│(.*)│\s*$",
+            prompt_prefix: ">",
+            tail_rows: 0,
+            tail_pattern: None,
+            empty_pattern: r"^$",
+        })
+    }
     fn queue_input(&self) -> Option<&'static str> {
         Some("\r")
     }
@@ -756,6 +818,26 @@ fn with_off(mut entry: crate::ModelCatalogEntry, always_on: bool) -> crate::Mode
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compatibility_process_scope_preserves_multisession_services() {
+        use crate::registry::ProcessScope;
+        assert_eq!(Kimi.process_scope(&[]), ProcessScope::Unknown);
+        assert_eq!(
+            Kimi.process_scope(&["node".into(), "other.js".into()]),
+            ProcessScope::Unknown
+        );
+        assert_eq!(
+            Kimi.process_scope(&["C:/bin/kimi.exe".into(), "--session".into(), "sid".into()]),
+            ProcessScope::Exclusive
+        );
+        for service in ["web", "server", "acp", "rc", "remote"] {
+            assert_eq!(
+                Kimi.process_scope(&["kimi.exe".into(), service.into()]),
+                ProcessScope::Shared
+            );
+        }
+    }
     use crate::variant::Installation;
     use std::path::Path;
 

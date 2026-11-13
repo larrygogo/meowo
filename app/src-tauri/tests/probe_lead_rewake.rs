@@ -51,7 +51,10 @@ fn strip_ansi(bytes: &[u8]) -> String {
 #[test]
 #[ignore = "拉起真实 claude 交互进程并等待数分钟；手动调研用"]
 fn probe_async_rewake_wakes_idle_tui() {
-    let secs: u64 = std::env::var("REWAKE_SECS").ok().and_then(|s| s.parse().ok()).unwrap_or(90);
+    let secs: u64 = std::env::var("REWAKE_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(90);
     // claude 的信任记录在 ~/.claude.json，别的 claude 进程会同时改写它，探针不碰。改为把目录放在
     // 已信任目录之下（PROBE_PARENT，例如主检出的 target/，已被 gitignore），看信任是否随父目录继承。
     // 信任不随父目录继承（实测），按方向键过信任屏也不稳（ESC 被当成「取消」直接退出）。
@@ -59,8 +62,13 @@ fn probe_async_rewake_wakes_idle_tui() {
     // 不往那个目录写任何东西；临时文件全在 dir 里。
     let dir = std::env::temp_dir().join(format!("meowo-rewake-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let work = std::env::var("PROBE_CWD").map(std::path::PathBuf::from).unwrap_or_else(|_| dir.clone());
-    let marker = dir.join("rewake.marker").to_string_lossy().replace('\\', "/");
+    let work = std::env::var("PROBE_CWD")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| dir.clone());
+    let marker = dir
+        .join("rewake.marker")
+        .to_string_lossy()
+        .replace('\\', "/");
     let reversed: String = SECRET.chars().rev().collect();
     // 只用系统自带的 PowerShell，不引入额外依赖。
     let ps = format!(
@@ -76,10 +84,21 @@ fn probe_async_rewake_wakes_idle_tui() {
         } ] } ] }
     });
     let settings_file = dir.join("probe-settings.json");
-    std::fs::write(&settings_file, serde_json::to_string_pretty(&settings).unwrap()).unwrap();
+    std::fs::write(
+        &settings_file,
+        serde_json::to_string_pretty(&settings).unwrap(),
+    )
+    .unwrap();
 
     let pty = native_pty_system();
-    let pair = pty.openpty(PtySize { rows: 40, cols: 140, pixel_width: 0, pixel_height: 0 }).unwrap();
+    let pair = pty
+        .openpty(PtySize {
+            rows: 40,
+            cols: 140,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .unwrap();
     let mut cmd = common::agent_command("claude", &work);
     cmd.env("MEOWO_DB", dir.join("board.db")); // 不往工作目录里写 board.db
     cmd.arg("--settings");
@@ -120,7 +139,10 @@ fn probe_async_rewake_wakes_idle_tui() {
         }
         if ready_at.is_none() && s.contains("READY") {
             ready_at = Some(start.elapsed());
-            println!("[probe] 首轮完成 READY @ {:?}，等待后台 hook 唤醒（{secs}s）", start.elapsed());
+            println!(
+                "[probe] 首轮完成 READY @ {:?}，等待后台 hook 唤醒（{secs}s）",
+                start.elapsed()
+            );
         }
         if s.contains(SECRET) {
             break true;
@@ -131,9 +153,20 @@ fn probe_async_rewake_wakes_idle_tui() {
     };
     let elapsed = start.elapsed();
     let _ = child.kill();
-    let tail: String = screen().chars().rev().take(1500).collect::<Vec<_>>().into_iter().rev().collect();
-    println!("[probe] 结果：{} @ {:?}（首轮 READY @ {:?}）\n----- 屏幕末尾 -----\n{tail}",
-             if woke { "已唤醒" } else { "未唤醒" }, elapsed, ready_at);
+    let tail: String = screen()
+        .chars()
+        .rev()
+        .take(1500)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    println!(
+        "[probe] 结果：{} @ {:?}（首轮 READY @ {:?}）\n----- 屏幕末尾 -----\n{tail}",
+        if woke { "已唤醒" } else { "未唤醒" },
+        elapsed,
+        ready_at
+    );
     let _ = std::fs::remove_dir_all(&dir);
     assert!(ready_at.is_some(), "首轮没有完成，探针无效");
     assert!(woke, "asyncRewake 没有在交互式 TUI 空闲时唤醒模型");

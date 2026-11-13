@@ -77,7 +77,8 @@ pub(crate) fn decode_text_bytes(bytes: &[u8]) -> String {
     }
     // 截断也可能把 GBK 双字节字符切半（错误只在最后一字节）：去尾重试一次。
     if !bytes.is_empty() {
-        let (text, had_errors) = encoding_rs::GBK.decode_without_bom_handling(&bytes[..bytes.len() - 1]);
+        let (text, had_errors) =
+            encoding_rs::GBK.decode_without_bom_handling(&bytes[..bytes.len() - 1]);
         if !had_errors {
             return text.into_owned();
         }
@@ -108,8 +109,16 @@ fn list_dir_entries_blocking(cwd: &str, rel: &str) -> Result<Vec<DirEntryDto>, S
             continue;
         }
         let is_dir = entry.file_type().map_err(|e| e.to_string())?.is_dir();
-        let rel_path = if base.is_empty() { name.clone() } else { format!("{base}/{name}") };
-        entries.push(DirEntryDto { name, rel_path, is_dir });
+        let rel_path = if base.is_empty() {
+            name.clone()
+        } else {
+            format!("{base}/{name}")
+        };
+        entries.push(DirEntryDto {
+            name,
+            rel_path,
+            is_dir,
+        });
     }
     entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then_with(|| a.name.cmp(&b.name)));
     Ok(entries)
@@ -161,7 +170,10 @@ const IMAGE_PREVIEW_MAX_BYTES: u64 = 8 * 1024 * 1024;
 /// 「文件」页签的图片预览：按扩展名识别格式，读盘转 data URL（CSP 已放行 img-src data:；
 /// 不走 asset 协议——其 scope 只覆盖图片缓存目录，项目文件不该为预览开全盘白名单）。
 #[tauri::command]
-pub(crate) async fn read_image_preview(cwd: String, rel: String) -> Result<ImagePreviewDto, String> {
+pub(crate) async fn read_image_preview(
+    cwd: String,
+    rel: String,
+) -> Result<ImagePreviewDto, String> {
     tauri::async_runtime::spawn_blocking(move || read_image_preview_blocking(&cwd, &rel))
         .await
         .map_err(|e| e.to_string())?
@@ -176,11 +188,17 @@ fn read_image_preview_blocking(cwd: &str, rel: &str) -> Result<ImagePreviewDto, 
     let mime = image_mime(rel).ok_or_else(|| "不是支持的图片格式".to_string())?;
     let size = path.metadata().map_err(|e| e.to_string())?.len();
     if size > IMAGE_PREVIEW_MAX_BYTES {
-        return Ok(ImagePreviewDto { data_url: None, too_large: true });
+        return Ok(ImagePreviewDto {
+            data_url: None,
+            too_large: true,
+        });
     }
     let bytes = std::fs::read(&path).map_err(|e| format!("无法读取文件：{e}"))?;
     let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
-    Ok(ImagePreviewDto { data_url: Some(format!("data:{mime};base64,{encoded}")), too_large: false })
+    Ok(ImagePreviewDto {
+        data_url: Some(format!("data:{mime};base64,{encoded}")),
+        too_large: false,
+    })
 }
 
 /// 扩展名 → 预览 MIME。SVG 也走 <img> + data URL 渲染：img 上下文不执行脚本，无注入面。
@@ -213,7 +231,15 @@ const SEARCH_PREVIEW_CHARS: usize = 200;
 /// 搜索跳过的目录名：依赖/构建产物量大且几乎不是用户要找的东西。
 /// 目录树浏览不受此限制——树里仍能点进去看。
 const SEARCH_SKIP_DIRS: [&str; 10] = [
-    ".git", "node_modules", "target", "dist", ".venv", "venv", "__pycache__", ".next", ".nuxt",
+    ".git",
+    "node_modules",
+    "target",
+    "dist",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".next",
+    ".nuxt",
     ".cache",
 ];
 
@@ -234,7 +260,10 @@ fn search_project_files_blocking(cwd: &str, query: &str) -> Result<SearchResultD
     // 单字节查询（单个 ASCII 字符）内容命中噪声太大，直接返回空；
     // CJK 单字 UTF-8 至少 3 字节，不受此限。
     if needle.len() < 2 {
-        return Ok(SearchResultDto { files: Vec::new(), truncated: false });
+        return Ok(SearchResultDto {
+            files: Vec::new(),
+            truncated: false,
+        });
     }
     let mut files: Vec<SearchFileHitDto> = Vec::new();
     let mut visited = 0usize;
@@ -244,7 +273,9 @@ fn search_project_files_blocking(cwd: &str, query: &str) -> Result<SearchResultD
     // 结果顺序最终由收尾的整体排序决定。
     let mut stack: Vec<(PathBuf, String)> = vec![(root, String::new())];
     'walk: while let Some((dir, rel_base)) = stack.pop() {
-        let Ok(read) = std::fs::read_dir(&dir) else { continue };
+        let Ok(read) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         let mut entries: Vec<_> = read.flatten().collect();
         entries.sort_by_key(|e| e.file_name());
         for entry in entries {
@@ -259,7 +290,9 @@ fn search_project_files_blocking(cwd: &str, query: &str) -> Result<SearchResultD
             }
             let name = entry.file_name().to_string_lossy().into_owned();
             // DirEntry::file_type 不跟随符号链接：链接目录 is_dir=false，天然不入栈（防环）。
-            let Ok(file_type) = entry.file_type() else { continue };
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
             let rel_path = if rel_base.is_empty() {
                 name.clone()
             } else {
@@ -318,7 +351,10 @@ const MENTION_MAX: usize = 8;
 /// composerCompletion 一致：含 `/` 或不足 2 字符时浏览对应目录、末段做前缀过滤；否则按名称
 /// 子串跨目录搜。含空白的路径剔除（claude 的提及解析在空白处截断）。
 #[tauri::command]
-pub(crate) async fn file_mention_candidates(cwd: String, query: String) -> Result<Vec<String>, String> {
+pub(crate) async fn file_mention_candidates(
+    cwd: String,
+    query: String,
+) -> Result<Vec<String>, String> {
     tauri::async_runtime::spawn_blocking(move || file_mention_candidates_blocking(&cwd, &query))
         .await
         .map_err(|e| e.to_string())?
@@ -350,8 +386,16 @@ fn file_mention_candidates_blocking(cwd: &str, query: &str) -> Result<Vec<String
         return Ok(entries
             .into_iter()
             .map(|(is_dir, name)| {
-                let rel = if dir_part.is_empty() { name } else { format!("{dir_part}/{name}") };
-                if is_dir { format!("{rel}/") } else { rel }
+                let rel = if dir_part.is_empty() {
+                    name
+                } else {
+                    format!("{dir_part}/{name}")
+                };
+                if is_dir {
+                    format!("{rel}/")
+                } else {
+                    rel
+                }
             })
             .filter(|rel| usable(rel))
             .take(MENTION_MAX)
@@ -364,7 +408,9 @@ fn file_mention_candidates_blocking(cwd: &str, query: &str) -> Result<Vec<String
     let mut visited = 0usize;
     let mut stack: Vec<(PathBuf, String)> = vec![(root, String::new())];
     'walk: while let Some((dir, rel_base)) = stack.pop() {
-        let Ok(read) = std::fs::read_dir(&dir) else { continue };
+        let Ok(read) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         let mut entries: Vec<_> = read.flatten().collect();
         entries.sort_by_key(|e| e.file_name());
         for entry in entries {
@@ -373,8 +419,14 @@ fn file_mention_candidates_blocking(cwd: &str, query: &str) -> Result<Vec<String
                 break 'walk;
             }
             let name = entry.file_name().to_string_lossy().into_owned();
-            let Ok(file_type) = entry.file_type() else { continue };
-            let rel = if rel_base.is_empty() { name.clone() } else { format!("{rel_base}/{name}") };
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            let rel = if rel_base.is_empty() {
+                name.clone()
+            } else {
+                format!("{rel_base}/{name}")
+            };
             if file_type.is_dir() {
                 if !SEARCH_SKIP_DIRS.contains(&name.as_str()) {
                     stack.push((entry.path(), rel));
@@ -395,11 +447,15 @@ fn file_mention_candidates_blocking(cwd: &str, query: &str) -> Result<Vec<String
 /// 单个文件的问题不该让整次搜索失败。
 fn search_file_content(path: &Path, needle: &str) -> (Vec<SearchLineHitDto>, u32) {
     const NONE: (Vec<SearchLineHitDto>, u32) = (Vec::new(), 0);
-    let Ok(meta) = path.metadata() else { return NONE };
+    let Ok(meta) = path.metadata() else {
+        return NONE;
+    };
     if meta.len() > SEARCH_MAX_CONTENT_BYTES {
         return NONE;
     }
-    let Ok(bytes) = std::fs::read(path) else { return NONE };
+    let Ok(bytes) = std::fs::read(path) else {
+        return NONE;
+    };
     if bytes[..bytes.len().min(BINARY_SNIFF_BYTES)].contains(&0) {
         return NONE;
     }
@@ -455,7 +511,11 @@ fn build_preview(line: &str, needle: &str) -> String {
     let trimmed = line.trim();
     let lower = trimmed.to_lowercase();
     // to_lowercase 对个别字符会变长（如 İ），字节偏移就对不上原文——长度一致才用。
-    let pos = if lower.len() == trimmed.len() { lower.find(needle).unwrap_or(0) } else { 0 };
+    let pos = if lower.len() == trimmed.len() {
+        lower.find(needle).unwrap_or(0)
+    } else {
+        0
+    };
     let (window, prefixed) = if pos > KEEP_HEAD {
         let mut start = pos - CONTEXT_BEFORE;
         while !trimmed.is_char_boundary(start) {
@@ -466,7 +526,11 @@ fn build_preview(line: &str, needle: &str) -> String {
         (trimmed, false)
     };
     let body: String = window.chars().take(SEARCH_PREVIEW_CHARS).collect();
-    if prefixed { format!("…{body}") } else { body }
+    if prefixed {
+        format!("…{body}")
+    } else {
+        body
+    }
 }
 
 /// 已知编辑器探测表（非 Windows 用）：id → 菜单展示名。Windows 走 openwith.rs 的
@@ -533,7 +597,9 @@ fn editor_launcher(id: &str) -> Option<PathBuf> {
         _ => return None,
     };
     let path_var = std::env::var_os("PATH")?;
-    std::env::split_paths(&path_var).map(|dir| dir.join(exe)).find(|p| p.is_file())
+    std::env::split_paths(&path_var)
+        .map(|dir| dir.join(exe))
+        .find(|p| p.is_file())
 }
 
 /// canonicalize 在 Windows 返回 `\\?\` 扩展前缀路径，explorer/Shell 解析器与多数
@@ -893,11 +959,23 @@ mod tests {
         std::fs::create_dir_all(cwd.0.join("src")).unwrap();
         let cwd_s = cwd.path();
         let abs = other.0.join("setup.exe");
-        assert_eq!(resolve_terminal_path(cwd_s, abs.to_str().unwrap()).unwrap(), abs);
-        assert_eq!(resolve_terminal_path(cwd_s, "src").unwrap(), cwd.0.join("src"));
-        let up = format!("../{}/setup.exe", other.0.file_name().unwrap().to_str().unwrap());
+        assert_eq!(
+            resolve_terminal_path(cwd_s, abs.to_str().unwrap()).unwrap(),
+            abs
+        );
+        assert_eq!(
+            resolve_terminal_path(cwd_s, "src").unwrap(),
+            cwd.0.join("src")
+        );
+        let up = format!(
+            "../{}/setup.exe",
+            other.0.file_name().unwrap().to_str().unwrap()
+        );
         assert_eq!(resolve_terminal_path(cwd_s, &up).unwrap(), abs);
-        assert_eq!(resolve_terminal_path(cwd_s, "不存在.txt").unwrap_err(), "路径不存在");
+        assert_eq!(
+            resolve_terminal_path(cwd_s, "不存在.txt").unwrap_err(),
+            "路径不存在"
+        );
         assert_eq!(resolve_terminal_path("", "src").unwrap_err(), "目录不存在");
     }
 
@@ -911,10 +989,19 @@ mod tests {
             expand_terminal_path("~/.claude/settings.json", Some(home)),
             home.join(".claude/settings.json")
         );
-        assert_eq!(expand_terminal_path("~\\.claude", Some(home)), home.join(".claude"));
-        assert_eq!(expand_terminal_path("~bob/x", Some(home)), PathBuf::from("~bob/x"));
+        assert_eq!(
+            expand_terminal_path("~\\.claude", Some(home)),
+            home.join(".claude")
+        );
+        assert_eq!(
+            expand_terminal_path("~bob/x", Some(home)),
+            PathBuf::from("~bob/x")
+        );
         assert_eq!(expand_terminal_path("~/x", None), PathBuf::from("~/x"));
-        assert_eq!(expand_terminal_path("src/a.ts", Some(home)), PathBuf::from("src/a.ts"));
+        assert_eq!(
+            expand_terminal_path("src/a.ts", Some(home)),
+            PathBuf::from("src/a.ts")
+        );
     }
 
     /// Git Bash 风格 `/c/Users/…` 在 Windows 上按盘符改写，不再被拼成 `C:\c\Users\…`。
@@ -1034,7 +1121,13 @@ mod tests {
             .files
             .iter()
             .map(|f| {
-                (f.rel_path.as_str(), f.is_dir, f.name_match, f.lines.len(), f.total_line_matches)
+                (
+                    f.rel_path.as_str(),
+                    f.is_dir,
+                    f.name_match,
+                    f.lines.len(),
+                    f.total_line_matches,
+                )
             })
             .collect();
         assert_eq!(
@@ -1054,7 +1147,10 @@ mod tests {
         let tmp = TempDir::new();
         let root = Path::new(tmp.path());
         std::fs::write(root.join("a.txt"), "你好世界").unwrap();
-        assert!(search_project_files_blocking(tmp.path(), "a").unwrap().files.is_empty());
+        assert!(search_project_files_blocking(tmp.path(), "a")
+            .unwrap()
+            .files
+            .is_empty());
         let cjk = search_project_files_blocking(tmp.path(), "好").unwrap();
         assert_eq!(cjk.files.len(), 1);
         assert_eq!(cjk.files[0].lines[0].line, 1);
@@ -1078,13 +1174,18 @@ mod tests {
         assert!(preview.starts_with('…'));
         assert!(preview.contains("needle"));
         // 行首附近命中不动窗口。
-        assert_eq!(build_preview("  let needle = 1;", "needle"), "let needle = 1;");
+        assert_eq!(
+            build_preview("  let needle = 1;", "needle"),
+            "let needle = 1;"
+        );
     }
 
     #[test]
     fn list_file_openers_empty_for_dirs() {
         let tmp = TempDir::new();
-        assert!(list_file_openers_blocking(tmp.path(), "").unwrap().is_empty());
+        assert!(list_file_openers_blocking(tmp.path(), "")
+            .unwrap()
+            .is_empty());
     }
 
     /// 三级解码口径：严格 UTF-8 → GBK → lossy；截断切半的多字节字符只丢尾巴。

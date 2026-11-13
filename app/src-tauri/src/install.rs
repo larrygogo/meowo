@@ -1017,10 +1017,7 @@ pub(crate) async fn install_agent(app: tauri::AppHandle, provider: String) -> Re
                     // 找不到条目、不发事件，这里看到标志位保持静默，前端由 cancel() 本地清态；
                     // 反序则会出现 cancelled 与正常 done 双发。
                     finish_install(id, &handle);
-                    if handle
-                        .cancelled
-                        .load(std::sync::atomic::Ordering::SeqCst)
-                    {
+                    if handle.cancelled.load(std::sync::atomic::Ordering::SeqCst) {
                         return;
                     }
                     let log_path = logged

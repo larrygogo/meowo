@@ -30,7 +30,9 @@ fn frame(kind: u8, payload: &[u8]) -> Vec<u8> {
 
 fn main() {
     let mut args = std::env::args().skip(1);
-    let session_id = args.next().expect("用法: probe_bg_input <session-id> [按键]");
+    let session_id = args
+        .next()
+        .expect("用法: probe_bg_input <session-id> [按键]");
     let keys = args.next().unwrap_or_else(|| "zzz".into());
 
     let endpoint = meowo_agent::plugins::claude::fleet::CLAUDE_RUNTIME
@@ -55,7 +57,10 @@ fn main() {
         pipe.write_all(format!("{request}\n").as_bytes()).unwrap();
         let mut reply = [0u8; 4096];
         let n = pipe.read(&mut reply).unwrap_or(0);
-        println!("ATTACH 回应: {}", String::from_utf8_lossy(&reply[..n]).trim());
+        println!(
+            "ATTACH 回应: {}",
+            String::from_utf8_lossy(&reply[..n]).trim()
+        );
     }
 
     let file = std::fs::OpenOptions::new()
@@ -158,7 +163,9 @@ fn main() {
     }
     if let Some(token) = endpoint.auth.as_deref() {
         let auth = format!(r#"{{"t":"auth","token":"{token}"}}"#);
-        writer.write_all(&frame(KIND_CTRL, auth.as_bytes())).unwrap();
+        writer
+            .write_all(&frame(KIND_CTRL, auth.as_bytes()))
+            .unwrap();
         println!("已发认证（token 前 8 位 {}）", &token[..8.min(token.len())]);
     } else {
         println!("这个 worker 没设 ptyAuth，服务端对输入 fail-open");
@@ -167,7 +174,9 @@ fn main() {
 
     // DUMP=1：只连上看一屏，不发任何按键。用来事后核对上一轮按键有没有真的进到输入框。
     println!("--- 发按键 {keys:?} ---");
-    writer.write_all(&frame(KIND_DATA, keys.as_bytes())).unwrap();
+    writer
+        .write_all(&frame(KIND_DATA, keys.as_bytes()))
+        .unwrap();
     writer.flush().unwrap();
     println!("写入返回了（没阻塞）");
 
@@ -175,7 +184,10 @@ fn main() {
     let end = std::time::Instant::now() + std::time::Duration::from_secs(2);
     let mut frames = 0;
     while std::time::Instant::now() < end {
-        if rx.recv_timeout(std::time::Duration::from_millis(200)).is_ok() {
+        if rx
+            .recv_timeout(std::time::Duration::from_millis(200))
+            .is_ok()
+        {
             frames += 1;
         }
     }

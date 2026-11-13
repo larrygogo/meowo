@@ -6,6 +6,7 @@
 import { afterEach, expect, vi } from "vitest";
 import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { chatUi } from "../test/agents";
+import type { TerminalScreenFrameDto } from "../api";
 import { outgoingStore } from "./chat/outgoingPrompts";
 
 const invoke = vi.hoisted(() => vi.fn());
@@ -138,3 +139,54 @@ const adapterHelpers = () => {
 export const adapter = adapterHelpers();
 
 export { invoke, openDialog, saveDialog, eventListeners, setTitleMock, terminalMounts, terminalProps };
+
+// 2026-11-12 真实空框裁图，光标坐标随裁图平移；不替未知 API 默认返回“安全空框”。
+const NATIVE_EMPTY_FRAMES: Record<string, TerminalScreenFrameDto> = {
+  "kimi": {
+    "lines": [
+      " ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮",
+      " │ >                                                                                                                  │",
+      " ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯"
+    ],
+    "cursorRow": 1,
+    "cursorCol": 5,
+    "cursorVisible": true
+  },
+  "opencode": {
+    "lines": [
+      "                       ┃                                                                                                ",
+      "                       ┃  Ask anything… \"Fix a TODO in the codebase\"                                                    ",
+      "                       ┃                                                                                                ",
+      "                       ┃  Build · Claude Sonnet 4.6 GitHub Copilot                                                      ",
+      "                       ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                      "
+    ],
+    "cursorRow": 1,
+    "cursorCol": 26,
+    "cursorVisible": true
+  },
+  "codex": {
+    "lines": [
+      "› Ask Codex to do anything",
+      "",
+      "  GPT-6.1-Sol default · ~\\Desktop\\workspace\\meowo\\target\\provider-compat-lead\\target\\lead-provider-probes\\composer\\runs…",
+      "  ← for agents · ? for shortcuts"
+    ],
+    "cursorRow": 0,
+    "cursorCol": 2,
+    "cursorVisible": true
+  },
+  "gemini": {
+    "lines": [
+      "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+      " >   Type your message or @path/to/file",
+      "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────"
+    ],
+    "cursorRow": 1,
+    "cursorCol": 3,
+    "cursorVisible": true
+  }
+};
+export function emptyComposerFrame(provider: string): TerminalScreenFrameDto | null {
+  const frame = NATIVE_EMPTY_FRAMES[provider];
+  return frame ? { ...frame, lines: [...frame.lines] } : null;
+}

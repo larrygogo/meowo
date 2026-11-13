@@ -27,7 +27,9 @@ mod common;
 
 /// 本次会话的 transcript：探针开始后新写、首行 cwd 是临时目录的 jsonl。
 fn transcript(since: SystemTime, cwd: &Path) -> Option<PathBuf> {
-    let home = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).ok()?;
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .ok()?;
     let root = PathBuf::from(home).join(".claude/projects");
     let want = cwd.file_name()?.to_string_lossy().to_string();
     let mut best: Option<(SystemTime, PathBuf)> = None;
@@ -40,7 +42,9 @@ fn transcript(since: SystemTime, cwd: &Path) -> Option<PathBuf> {
             if path.extension().is_none_or(|e| e != "jsonl") {
                 continue;
             }
-            let Ok(modified) = entry.metadata().and_then(|m| m.modified()) else { continue };
+            let Ok(modified) = entry.metadata().and_then(|m| m.modified()) else {
+                continue;
+            };
             if modified >= since && best.as_ref().is_none_or(|(t, _)| modified > *t) {
                 best = Some((modified, path));
             }
@@ -55,19 +59,34 @@ fn summarize(path: &Path) -> Vec<String> {
     body.lines()
         .map(|line| {
             let v: serde_json::Value = serde_json::from_str(line).unwrap_or_default();
-            let short = |key: &str| v[key].as_str().map(|s| s.chars().take(8).collect::<String>()).unwrap_or_else(|| "-".into());
+            let short = |key: &str| {
+                v[key]
+                    .as_str()
+                    .map(|s| s.chars().take(8).collect::<String>())
+                    .unwrap_or_else(|| "-".into())
+            };
             let text = v.pointer("/message/content").map(|c| match c {
                 serde_json::Value::String(s) => s.clone(),
                 other => other.to_string(),
             });
-            let extra = v["subtype"].as_str().map(|s| format!(" subtype={s}")).unwrap_or_default();
-            let keys: Vec<&str> = v.as_object().map(|o| o.keys().map(String::as_str).collect()).unwrap_or_default();
+            let extra = v["subtype"]
+                .as_str()
+                .map(|s| format!(" subtype={s}"))
+                .unwrap_or_default();
+            let keys: Vec<&str> = v
+                .as_object()
+                .map(|o| o.keys().map(String::as_str).collect())
+                .unwrap_or_default();
             format!(
                 "{} uuid={} parent={}{extra} | {} | keys={keys:?}",
                 v["type"].as_str().unwrap_or("?"),
                 short("uuid"),
                 short("parentUuid"),
-                text.unwrap_or_default().chars().take(60).collect::<String>().replace('\n', "⏎"),
+                text.unwrap_or_default()
+                    .chars()
+                    .take(60)
+                    .collect::<String>()
+                    .replace('\n', "⏎"),
             )
         })
         .collect()
@@ -76,7 +95,9 @@ fn summarize(path: &Path) -> Vec<String> {
 #[test]
 #[ignore = "拉起真实 claude、发两条消息再 /rewind；手动调研用"]
 fn claude_rewind_menu_and_transcript() {
-    let home = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).unwrap();
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .unwrap();
     let exe = format!("{home}/.local/bin/claude.exe");
     let cwd = std::env::temp_dir().join(format!("meowo-cr-probe-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&cwd);
@@ -84,7 +105,12 @@ fn claude_rewind_menu_and_transcript() {
     let started = SystemTime::now();
 
     let pair = native_pty_system()
-        .openpty(PtySize { rows: 40, cols: 120, pixel_width: 0, pixel_height: 0 })
+        .openpty(PtySize {
+            rows: 40,
+            cols: 120,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
         .unwrap();
     let mut command = common::agent_command(&exe, &cwd);
     // Chrome 集成确认框挡在 composer 前（probe_draft_residual）；嵌套 claude 别继承本会话的
@@ -145,14 +171,24 @@ fn claude_rewind_menu_and_transcript() {
     };
     let dump = |tag: &str| {
         let text = contents();
-        let lines: Vec<&str> = text.lines().map(str::trim_end).filter(|l| !l.trim().is_empty()).collect();
-        eprintln!("[probe] {tag} 屏幕:\n{}\n", lines[lines.len().saturating_sub(42)..].join("\n"));
+        let lines: Vec<&str> = text
+            .lines()
+            .map(str::trim_end)
+            .filter(|l| !l.trim().is_empty())
+            .collect();
+        eprintln!(
+            "[probe] {tag} 屏幕:\n{}\n",
+            lines[lines.len().saturating_sub(42)..].join("\n")
+        );
     };
     // 回合结束：屏幕不再有运行提示，且 transcript 里助手回复数达到 n。
     let replies = |n: usize| {
         transcript(started, &cwd).is_some_and(|path| {
             let body = std::fs::read_to_string(path).unwrap_or_default();
-            body.lines().filter(|l| l.contains("\"type\":\"assistant\"") && l.contains("\"text\"")).count() >= n
+            body.lines()
+                .filter(|l| l.contains("\"type\":\"assistant\"") && l.contains("\"text\""))
+                .count()
+                >= n
         }) && !contents().to_lowercase().contains("esc to interrupt")
     };
 
@@ -164,16 +200,24 @@ fn claude_rewind_menu_and_transcript() {
             std::thread::sleep(Duration::from_millis(500));
             send("\r");
         }
-        if !wait(30, &|| !contents().contains("Yes, I trust this folder") && contents().contains('❯')) {
+        if !wait(30, &|| {
+            !contents().contains("Yes, I trust this folder") && contents().contains('❯')
+        }) {
             dump("启动");
             return Err("30s 内没等到 composer".into());
         }
         std::thread::sleep(Duration::from_secs(2));
         // 第二轮写文件且是多行（ESC+CR = composer 换行）：看有代码改动时确认菜单的选项、只恢复
         // 对话时文件留不留、多行原文回 composer 后怎么清。
-        let rounds = std::env::var("CR_ROUNDS").map(|v| v == "3").unwrap_or(false);
+        let rounds = std::env::var("CR_ROUNDS")
+            .map(|v| v == "3")
+            .unwrap_or(false);
         let prompts: &[&str] = if rounds {
-            &["只回复一个字：好", "用 Write 工具创建 probe.txt，内容为 hi。\x1b\r完成后只回复一个字：好", "只回复一个字：行"]
+            &[
+                "只回复一个字：好",
+                "用 Write 工具创建 probe.txt，内容为 hi。\x1b\r完成后只回复一个字：好",
+                "只回复一个字：行",
+            ]
         } else {
             &["只回复一个字：好", "只回复一个字：行"]
         };
@@ -197,8 +241,15 @@ fn claude_rewind_menu_and_transcript() {
         }
         std::thread::sleep(Duration::from_secs(1));
         let path = transcript(started, &cwd).ok_or("找不到 transcript")?;
-        let before = std::fs::read_to_string(&path).unwrap_or_default().lines().count();
-        eprintln!("[probe] transcript {}\n[probe] 撤回前 {before} 行:\n{}\n", path.display(), summarize(&path).join("\n"));
+        let before = std::fs::read_to_string(&path)
+            .unwrap_or_default()
+            .lines()
+            .count();
+        eprintln!(
+            "[probe] transcript {}\n[probe] 撤回前 {before} 行:\n{}\n",
+            path.display(),
+            summarize(&path).join("\n")
+        );
 
         // `CR_CMD` 换掉 /rewind（如 `/btw <问题>` 取证侧问是否落盘）。
         let command = std::env::var("CR_CMD").unwrap_or_else(|_| "/rewind".into());
@@ -211,8 +262,11 @@ fn claude_rewind_menu_and_transcript() {
         for step in steps.split(',').map(str::trim).filter(|s| !s.is_empty()) {
             // `say:<文本>` = 提交一条消息并等回合结束（看撤回后的下一条怎么挂回 transcript）。
             if let Some(text) = step.strip_prefix("say:") {
-                let n = std::fs::read_to_string(&path).unwrap_or_default().lines()
-                    .filter(|l| l.contains("\"type\":\"assistant\"") && l.contains("\"text\"")).count();
+                let n = std::fs::read_to_string(&path)
+                    .unwrap_or_default()
+                    .lines()
+                    .filter(|l| l.contains("\"type\":\"assistant\"") && l.contains("\"text\""))
+                    .count();
                 submit(text);
                 wait(120, &|| replies(n + 1));
                 std::thread::sleep(Duration::from_secs(3));
@@ -225,7 +279,8 @@ fn claude_rewind_menu_and_transcript() {
                 let digit = screen_text.lines().find_map(|row| {
                     let row = row.trim().trim_start_matches('❯').trim();
                     let (number, rest) = row.split_once(". ")?;
-                    (rest.trim() == label && number.chars().all(|c| c.is_ascii_digit())).then(|| number.to_string())
+                    (rest.trim() == label && number.chars().all(|c| c.is_ascii_digit()))
+                        .then(|| number.to_string())
                 });
                 eprintln!("[probe] pick {label} → {digit:?}");
                 if let Some(digit) = digit {
@@ -271,7 +326,11 @@ fn claude_rewind_menu_and_transcript() {
         }
         std::thread::sleep(Duration::from_secs(2));
         let lines = summarize(&path);
-        eprintln!("[probe] 撤回后 {} 行，新增:\n{}\n", lines.len(), lines[before.min(lines.len())..].join("\n"));
+        eprintln!(
+            "[probe] 撤回后 {} 行，新增:\n{}\n",
+            lines.len(),
+            lines[before.min(lines.len())..].join("\n")
+        );
         Ok(())
     })();
     let last_screen = contents();
@@ -279,5 +338,9 @@ fn claude_rewind_menu_and_transcript() {
     let _ = child.wait();
     drop(pair.master);
     let _ = std::fs::remove_dir_all(&cwd);
-    assert!(result.is_ok(), "{}；末屏=\n{last_screen}", result.unwrap_err());
+    assert!(
+        result.is_ok(),
+        "{}；末屏=\n{last_screen}",
+        result.unwrap_err()
+    );
 }

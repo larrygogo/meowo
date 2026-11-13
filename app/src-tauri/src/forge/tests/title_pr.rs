@@ -4,9 +4,20 @@
 use super::super::badge::{badges_with, title_pr_with, DiffCache};
 use super::*;
 
-fn title(fake: &FakeGh, caches: &Caches, diffs: &DiffCache, prefs: &Path, cwd: &Path) -> Option<PullRequestDto> {
+fn title(
+    fake: &FakeGh,
+    caches: &Caches,
+    diffs: &DiffCache,
+    prefs: &Path,
+    cwd: &Path,
+) -> Option<PullRequestDto> {
     let gh = |dir: &str, args: &[&str]| fake.run(dir, args);
-    let ctx = Ctx { gh: &gh, caches, prefs: prefs.to_path_buf(), env: &[] };
+    let ctx = Ctx {
+        gh: &gh,
+        caches,
+        prefs: prefs.to_path_buf(),
+        env: &[],
+    };
     title_pr_with(&ctx, diffs, &s(cwd))
 }
 
@@ -23,16 +34,50 @@ fn 标题栏_侧栏_面板_同仓库同分支六十秒内合计只查一次_pr()
 
     let pr = title(&fake, &caches, &diffs, &prefs, &sub).expect("标题栏有 PR");
     let gh = |dir: &str, args: &[&str]| fake.run(dir, args);
-    let ctx = Ctx { gh: &gh, caches: &caches, prefs: prefs.clone(), env: &[] };
+    let ctx = Ctx {
+        gh: &gh,
+        caches: &caches,
+        prefs: prefs.clone(),
+        env: &[],
+    };
     badges_with(&ctx, &diffs, &[s(&sub)], true, &|_| Some((1, 0, 1)));
     status(&fake, &caches, &prefs, &repo, false);
     title(&fake, &caches, &diffs, &prefs, &sub);
-    assert_eq!(fake.count("pr view"), 1, "三处 60 秒内合计只打一次 gh pr view：{:?}", fake.calls.lock().unwrap());
+    assert_eq!(
+        fake.count("pr view"),
+        1,
+        "三处 60 秒内合计只打一次 gh pr view：{:?}",
+        fake.calls.lock().unwrap()
+    );
 
     // 标题栏回的形状不变：只有号、状态、链接、标题，检查与分支等面板字段不带。
-    let panel = status(&fake, &caches, &prefs, &repo, false).pr.expect("面板有 PR");
-    assert_eq!((pr.number, pr.state.as_str(), pr.url.as_str(), pr.title.as_str()), (panel.number, panel.state.as_str(), panel.url.as_str(), panel.title.as_str()));
-    assert_eq!(pr, PullRequestDto { number: pr.number, state: pr.state.clone(), url: pr.url.clone(), title: pr.title.clone(), ..Default::default() });
+    let panel = status(&fake, &caches, &prefs, &repo, false)
+        .pr
+        .expect("面板有 PR");
+    assert_eq!(
+        (
+            pr.number,
+            pr.state.as_str(),
+            pr.url.as_str(),
+            pr.title.as_str()
+        ),
+        (
+            panel.number,
+            panel.state.as_str(),
+            panel.url.as_str(),
+            panel.title.as_str()
+        )
+    );
+    assert_eq!(
+        pr,
+        PullRequestDto {
+            number: pr.number,
+            state: pr.state.clone(),
+            url: pr.url.clone(),
+            title: pr.title.clone(),
+            ..Default::default()
+        }
+    );
 }
 
 #[test]
@@ -46,7 +91,10 @@ fn 标题栏_没有_pr_或不是仓库_返回空() {
     let plain = sb.root.join("plain");
     std::fs::create_dir_all(&plain).unwrap();
     assert_eq!(title(&fake, &caches, &diffs, &prefs, &plain), None);
-    assert_eq!(title(&fake, &caches, &diffs, &prefs, &sb.root.join("missing")), None);
+    assert_eq!(
+        title(&fake, &caches, &diffs, &prefs, &sb.root.join("missing")),
+        None
+    );
 }
 
 /// 回退修复（coordinator 11-11）：forge 只认 github.com，企业版这类远端解析不出仓库。标题栏以前照样能
@@ -55,16 +103,37 @@ fn 标题栏_没有_pr_或不是仓库_返回空() {
 fn 标题栏_企业版远端_照旧直查_六十秒只调一次() {
     let sb = Sandbox::new("title-pr-ghe");
     let repo = sb.repo("ghe");
-    sb.git(&repo, &["remote", "add", "origin", "git@github.example.com:o/r.git"]);
+    sb.git(
+        &repo,
+        &["remote", "add", "origin", "git@github.example.com:o/r.git"],
+    );
     sb.git(&repo, &["switch", "-q", "-c", "feat"]);
     let fake = FakeGh::new().views(vec![ok(&fixture("pr_checkrun_fail.json"))]);
     let (caches, diffs) = (Caches::default(), DiffCache::default());
     let prefs = sb.root.join("forge.json");
     let pr = title(&fake, &caches, &diffs, &prefs, &repo).expect("企业版远端也要拿到 PR");
-    assert_eq!(pr, PullRequestDto { number: pr.number, state: pr.state.clone(), url: pr.url.clone(), title: pr.title.clone(), ..Default::default() });
+    assert_eq!(
+        pr,
+        PullRequestDto {
+            number: pr.number,
+            state: pr.state.clone(),
+            url: pr.url.clone(),
+            title: pr.title.clone(),
+            ..Default::default()
+        }
+    );
     for _ in 0..3 {
         assert!(title(&fake, &caches, &diffs, &prefs, &repo).is_some());
     }
-    assert_eq!(fake.count("pr view"), 1, "60 秒内只调一次：{:?}", fake.calls.lock().unwrap());
-    assert_eq!(fake.count("auth status"), 0, "直查这一支与以前一样不先问登录状态");
+    assert_eq!(
+        fake.count("pr view"),
+        1,
+        "60 秒内只调一次：{:?}",
+        fake.calls.lock().unwrap()
+    );
+    assert_eq!(
+        fake.count("auth status"),
+        0,
+        "直查这一支与以前一样不先问登录状态"
+    );
 }

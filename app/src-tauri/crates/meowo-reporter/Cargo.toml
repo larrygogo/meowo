@@ -12,6 +12,9 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 sysinfo = "0.32"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 # 仅 Windows：hook 时往本会话标签的 ConPTY 写 OSC 标题(CONOUT$ + WriteConsoleW)，见 tabtitle.rs。
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Console"] }

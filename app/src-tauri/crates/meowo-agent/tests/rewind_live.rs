@@ -17,9 +17,13 @@ fn claude_transcripts() -> Vec<PathBuf> {
         return Vec::new();
     };
     let mut out = Vec::new();
-    let Ok(dirs) = std::fs::read_dir(home.join(".claude/projects")) else { return out };
+    let Ok(dirs) = std::fs::read_dir(home.join(".claude/projects")) else {
+        return out;
+    };
     for dir in dirs.flatten() {
-        let Ok(files) = std::fs::read_dir(dir.path()) else { continue };
+        let Ok(files) = std::fs::read_dir(dir.path()) else {
+            continue;
+        };
         out.extend(
             files
                 .flatten()
@@ -43,7 +47,9 @@ fn real_transcripts_fork_retractions_are_rewinds() {
             items
                 .iter()
                 .filter_map(|item| match item {
-                    ChatItem::UserText { text, .. } => Some(text.chars().take(30).collect::<String>()),
+                    ChatItem::UserText { text, .. } => {
+                        Some(text.chars().take(30).collect::<String>())
+                    }
                     _ => None,
                 })
                 .collect::<Vec<_>>()
@@ -62,7 +68,12 @@ fn real_transcripts_fork_retractions_are_rewinds() {
         let body = std::fs::read_to_string(path).unwrap_or_default();
         let naive: Vec<String> = body
             .lines()
-            .flat_map(|line| CLAUDE_TRANSCRIPT.parse_transcript_line(line).into_iter().map(ChatItem::from))
+            .flat_map(|line| {
+                CLAUDE_TRANSCRIPT
+                    .parse_transcript_line(line)
+                    .into_iter()
+                    .map(ChatItem::from)
+            })
             .filter_map(|item| match item {
                 ChatItem::UserText { text, .. } => Some(text.chars().take(30).collect::<String>()),
                 _ => None,
@@ -75,13 +86,21 @@ fn real_transcripts_fork_retractions_are_rewinds() {
                 gone.remove(i);
             }
         }
-        eprintln!("[fork] {}\n       保留 {} 条，收回 {:?}", path.display(), kept.len(), gone);
+        eprintln!(
+            "[fork] {}\n       保留 {} 条，收回 {:?}",
+            path.display(),
+            kept.len(),
+            gone
+        );
         assert!(!kept.is_empty(), "整读把用户消息收光了：{}", path.display());
     }
     // 判分叉的额外开销：每行多一次轻量反序列化（只取 uuid/parentUuid/isSidechain）。
     let body = std::fs::read_to_string(&slowest.1).unwrap_or_default();
     let started = Instant::now();
-    let links = body.lines().filter_map(|line| CLAUDE_TRANSCRIPT.chat_line_mark(line)).count();
+    let links = body
+        .lines()
+        .filter_map(|line| CLAUDE_TRANSCRIPT.chat_line_mark(line))
+        .count();
     eprintln!("[fork] {} 份里判出分叉 {forked} 份；最慢整读 {}ms {}，其中判分叉的节点解析 {}ms（{links} 个节点，{} 字节）",
         files.len(), slowest.0, slowest.1.display(), started.elapsed().as_millis(), body.len());
 }
@@ -91,12 +110,17 @@ fn real_transcripts_fork_retractions_are_rewinds() {
 #[ignore = "读本机真实 rollout；手动核对用"]
 fn real_codex_rollbacks_retract_the_right_turns() {
     use meowo_agent::plugins::codex::telemetry::CODEX_TRANSCRIPT;
-    let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")).map(PathBuf::from) else {
+    let Some(home) = std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(PathBuf::from)
+    else {
         return;
     };
     let mut stack = vec![home.join(".codex/sessions")];
     while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
@@ -116,15 +140,30 @@ fn real_codex_rollbacks_retract_the_right_turns() {
                     })
                     .collect()
             };
-            let naive = users(body.lines().flat_map(|line| CODEX_TRANSCRIPT.parse_transcript_line(line).into_iter().map(ChatItem::from)).collect());
-            let kept = users(meowo_agent::read_chat_delta_paged(&CODEX_TRANSCRIPT, &path, 0, None, 0).items);
+            let naive = users(
+                body.lines()
+                    .flat_map(|line| {
+                        CODEX_TRANSCRIPT
+                            .parse_transcript_line(line)
+                            .into_iter()
+                            .map(ChatItem::from)
+                    })
+                    .collect(),
+            );
+            let kept = users(
+                meowo_agent::read_chat_delta_paged(&CODEX_TRANSCRIPT, &path, 0, None, 0).items,
+            );
             let mut gone = naive.clone();
             for text in &kept {
                 if let Some(i) = gone.iter().position(|g| g == text) {
                     gone.remove(i);
                 }
             }
-            eprintln!("[codex] {}\n        保留 {} 条，收回 {gone:?}", path.display(), kept.len());
+            eprintln!(
+                "[codex] {}\n        保留 {} 条，收回 {gone:?}",
+                path.display(),
+                kept.len()
+            );
         }
     }
 }
@@ -135,12 +174,17 @@ fn real_codex_rollbacks_retract_the_right_turns() {
 #[ignore = "读本机真实 rollout；手动核对用"]
 fn real_codex_continuation_segments_compose() {
     use meowo_agent::plugins::codex::telemetry::CODEX_TRANSCRIPT;
-    let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")).map(PathBuf::from) else {
+    let Some(home) = std::env::var_os("USERPROFILE")
+        .or_else(|| std::env::var_os("HOME"))
+        .map(PathBuf::from)
+    else {
         return;
     };
     let mut stack = vec![home.join(".codex/sessions")];
     while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
@@ -149,20 +193,38 @@ fn real_codex_continuation_segments_compose() {
             }
             let name = path.file_name().unwrap().to_string_lossy().to_string();
             // 根段文件名：rollout-<19 位时间>-<线程id>.jsonl；有同线程续写段的才看。
-            let Some(tid) = name.strip_prefix("rollout-").and_then(|n| n.get(20..)).and_then(|n| n.strip_suffix(".jsonl")) else { continue };
-            if tid.contains('_') || !std::fs::read_dir(&dir).unwrap().flatten().any(|e| e.file_name().to_string_lossy().contains(&format!("-{tid}_"))) {
+            let Some(tid) = name
+                .strip_prefix("rollout-")
+                .and_then(|n| n.get(20..))
+                .and_then(|n| n.strip_suffix(".jsonl"))
+            else {
+                continue;
+            };
+            if tid.contains('_')
+                || !std::fs::read_dir(&dir).unwrap().flatten().any(|e| {
+                    e.file_name()
+                        .to_string_lossy()
+                        .contains(&format!("-{tid}_"))
+                })
+            {
                 continue;
             }
-            let resolved = CODEX_TRANSCRIPT.resolve_transcript_path(Some(&path.to_string_lossy()), None, tid).unwrap();
-            let users: Vec<String> = meowo_agent::read_chat_delta_paged(&CODEX_TRANSCRIPT, &resolved, 0, None, 0)
-                .items
-                .into_iter()
-                .filter_map(|item| match item {
-                    ChatItem::UserText { text, .. } => Some(text.chars().take(30).collect()),
-                    _ => None,
-                })
-                .collect();
-            eprintln!("[segment] {name}\n          → {}\n          用户消息 {users:?}", resolved.display());
+            let resolved = CODEX_TRANSCRIPT
+                .resolve_transcript_path(Some(&path.to_string_lossy()), None, tid)
+                .unwrap();
+            let users: Vec<String> =
+                meowo_agent::read_chat_delta_paged(&CODEX_TRANSCRIPT, &resolved, 0, None, 0)
+                    .items
+                    .into_iter()
+                    .filter_map(|item| match item {
+                        ChatItem::UserText { text, .. } => Some(text.chars().take(30).collect()),
+                        _ => None,
+                    })
+                    .collect();
+            eprintln!(
+                "[segment] {name}\n          → {}\n          用户消息 {users:?}",
+                resolved.display()
+            );
         }
     }
 }

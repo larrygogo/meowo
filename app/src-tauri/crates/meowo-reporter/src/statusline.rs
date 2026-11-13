@@ -84,9 +84,20 @@ mod tests {
         let store = Store::open_in_memory().unwrap();
         let pid = store.upsert_project_by_root("/p", "p", 1).unwrap();
         let _ = store.start_session(pid, "s-eff", 1).unwrap();
-        record(&store, r#"{"session_id":"s-eff","model":{"display_name":"Opus 5.5"},"effort":{"level":"high"}}"#, 100);
-        assert_eq!(store.session_context("s-eff").unwrap().effort.as_deref(), Some("high"));
-        record(&store, r#"{"session_id":"s-eff","model":{"display_name":"Haiku 4.5"}}"#, 200);
+        record(
+            &store,
+            r#"{"session_id":"s-eff","model":{"display_name":"Opus 5.5"},"effort":{"level":"high"}}"#,
+            100,
+        );
+        assert_eq!(
+            store.session_context("s-eff").unwrap().effort.as_deref(),
+            Some("high")
+        );
+        record(
+            &store,
+            r#"{"session_id":"s-eff","model":{"display_name":"Haiku 4.5"}}"#,
+            200,
+        );
         assert_eq!(store.session_context("s-eff").unwrap().effort, None);
     }
 

@@ -362,17 +362,39 @@ fn capture_approval_panel() {
     };
     // echo 带随机串，避开用户配置里可能存在的 Bash 放行规则，确保面板一定弹。
     let probe = format!("echo meowo-approval-probe-{}", std::process::id());
-    send(&mut writer, format!("请立即用 Bash 工具执行 `{probe}`，不要做任何其他事。").as_bytes());
+    send(
+        &mut writer,
+        format!("请立即用 Bash 工具执行 `{probe}`，不要做任何其他事。").as_bytes(),
+    );
     std::thread::sleep(Duration::from_millis(400));
     send(&mut writer, b"\r");
     // 模型应答 + 工具调用 + 面板渲染，给足时间。
-    let panel = read_answering_dsr(&rx, &mut writer, Duration::from_millis(3000), Duration::from_secs(90));
-    eprintln!("=== 审批面板(可见文本,尾部) ===\n{}", tail_lines(&visible(&panel), 30));
-    eprintln!("=== 审批面板原始字节(尾 1500,看光标/编号/样式序列) ===\n{:?}", tail(&panel, 1500));
+    let panel = read_answering_dsr(
+        &rx,
+        &mut writer,
+        Duration::from_millis(3000),
+        Duration::from_secs(90),
+    );
+    eprintln!(
+        "=== 审批面板(可见文本,尾部) ===\n{}",
+        tail_lines(&visible(&panel), 30)
+    );
+    eprintln!(
+        "=== 审批面板原始字节(尾 1500,看光标/编号/样式序列) ===\n{:?}",
+        tail(&panel, 1500)
+    );
     // 数字键直接选中(官方文档:1/2/3 直选)。按 1 批准后应看到命令真的跑了。
     send(&mut writer, b"1");
-    let after = read_answering_dsr(&rx, &mut writer, Duration::from_millis(2500), Duration::from_secs(30));
-    eprintln!("=== 按 1 之后(可见文本,尾部) ===\n{}", tail_lines(&visible(&after), 15));
+    let after = read_answering_dsr(
+        &rx,
+        &mut writer,
+        Duration::from_millis(2500),
+        Duration::from_secs(30),
+    );
+    eprintln!(
+        "=== 按 1 之后(可见文本,尾部) ===\n{}",
+        tail_lines(&visible(&after), 15)
+    );
     let _ = child.kill();
     let _ = std::fs::remove_dir_all(&cwd);
 }

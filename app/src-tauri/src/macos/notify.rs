@@ -66,10 +66,8 @@ define_class!(
             _notification: &UNNotification,
             completion_handler: &DynBlock<dyn Fn(UNNotificationPresentationOptions)>,
         ) {
-            completion_handler.call((
-                UNNotificationPresentationOptions::Banner
-                    | UNNotificationPresentationOptions::Sound,
-            ));
+            completion_handler.call((UNNotificationPresentationOptions::Banner
+                | UNNotificationPresentationOptions::Sound,));
         }
 
         // SAFETY: 签名与协议声明一致。
@@ -226,9 +224,10 @@ pub async fn notification_authorization_status() -> Result<String, String> {
 /// 「请去系统设置开启」让用户自己翻。
 #[tauri::command]
 pub fn open_notification_settings() -> Result<(), String> {
-    crate::fsutil::spawn_detached(std::process::Command::new("open").arg(
-        "x-apple.systempreferences:com.apple.preference.notifications",
-    ))
+    crate::fsutil::spawn_detached(
+        std::process::Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.preference.notifications"),
+    )
 }
 
 /// 投递一条通知（非阻塞）。调度到主线程执行：UNUserNotificationCenter 文档允许任意线程

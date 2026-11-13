@@ -905,7 +905,7 @@ pub(crate) fn pretrust_workspace(provider: &str, profile: Option<&str>, cwd: &st
     }
 }
 
-fn launch_env_for_exact_profile(
+pub(crate) fn launch_env_for_exact_profile(
     agent: &'static dyn meowo_agent::AgentPlugin,
     profile: Option<&str>,
 ) -> Vec<(String, String)> {
@@ -1038,9 +1038,10 @@ pub(crate) async fn focus_session(
 pub(crate) fn open_automation_settings() -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        crate::fsutil::spawn_detached(std::process::Command::new("open").arg(
-            "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation",
-        ))
+        crate::fsutil::spawn_detached(
+            std::process::Command::new("open")
+                .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Automation"),
+        )
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -1457,7 +1458,8 @@ fn resume_session_ghostty(cwd: Option<&str>, argv: &[String], env_prefix: &str) 
     };
     // spawn_detached：拉起后后台 wait 回收，常驻进程下不留 <defunct> 僵尸。
     crate::fsutil::spawn_detached(
-        std::process::Command::new("open").args(["-na", "Ghostty", "--args", "-e", "/bin/sh", "-lc", &cmd]),
+        std::process::Command::new("open")
+            .args(["-na", "Ghostty", "--args", "-e", "/bin/sh", "-lc", &cmd]),
     )
     .is_ok()
 }
@@ -1611,8 +1613,12 @@ fn splice_stored_launch_args(
     sid: i64,
     overrides: Option<&std::collections::HashMap<String, String>>,
 ) {
-    let Some(agent) = meowo_agent::resolve(Some(provider)) else { return };
-    let Ok(store) = open_store(&db_path()) else { return };
+    let Some(agent) = meowo_agent::resolve(Some(provider)) else {
+        return;
+    };
+    let Ok(store) = open_store(&db_path()) else {
+        return;
+    };
     let mut selections: std::collections::HashMap<String, String> = store
         .session_launch_args(sid)
         .ok()
@@ -1890,7 +1896,10 @@ pub(crate) fn spawn_in_terminal(
 /// 只剥成对的:单边引号在 Unix 上是合法文件名字符,剥掉会造出一个不存在的路径。
 fn strip_paired_quotes(dir: &str) -> &str {
     for quote in ['"', '\''] {
-        if let Some(inner) = dir.strip_prefix(quote).and_then(|rest| rest.strip_suffix(quote)) {
+        if let Some(inner) = dir
+            .strip_prefix(quote)
+            .and_then(|rest| rest.strip_suffix(quote))
+        {
             return inner.trim();
         }
     }
@@ -2153,9 +2162,8 @@ pub(crate) async fn fork_session(
             if argv.is_empty() {
                 return Err("该 Agent 不支持恢复会话，无法分叉".into());
             }
-            let dir = validate_new_session_cwd(
-                &resolved.ok_or("会话缺少工作目录，无法在原目录分叉")?,
-            )?;
+            let dir =
+                validate_new_session_cwd(&resolved.ok_or("会话缺少工作目录，无法在原目录分叉")?)?;
             splice_stored_launch_args(&mut argv, &provider, session_id, None);
             argv.truncate(argv.len().saturating_sub(plugin.resume_args().len() + 1));
             let mut argv = crate::relay::augment_argv(plugin.id(), argv);
@@ -2250,7 +2258,9 @@ fn run_fork_command(
         use std::os::windows::process::CommandExt as _;
         command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     }
-    let mut child = command.spawn().map_err(|e| format!("分叉命令启动失败: {e}"))?;
+    let mut child = command
+        .spawn()
+        .map_err(|e| format!("分叉命令启动失败: {e}"))?;
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
     loop {
         if child.try_wait().map_err(|e| e.to_string())?.is_some() {
@@ -2276,7 +2286,11 @@ fn run_fork_command(
         .and_then(|caps| caps.get(1))
         .map(|m| m.as_str().to_string())
         .ok_or_else(|| {
-            let line = output.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("无输出");
+            let line = output
+                .lines()
+                .map(str::trim)
+                .find(|l| !l.is_empty())
+                .unwrap_or("无输出");
             format!("分叉失败：{line}")
         })
 }
@@ -2930,9 +2944,11 @@ pub(crate) fn session_agent_alive(store: &meowo_store::Store, sid: i64) -> Resul
     // 进程活着还不够，pid 得仍归本会话：/clear 换代后旧行可能残留一个「活着但已被
     // 新会话认领」的 pid（end_session 清 pid 之前的存量数据）。拿它当「外部仍在运行」
     // 会误拒接管——而那个「外部终端」根本不存在；更糟的是 takeover 会照着它杀错新会话的进程。
-    if store
-        .pid_held_by_other_live(sid, pid)
-        .map_err(|e| e.to_string())?
+    if meowo_reporter::proc::process_scope(pid as u32)
+        != meowo_agent::registry::ProcessScope::Shared
+        && store
+            .pid_held_by_other_live(sid, pid)
+            .map_err(|e| e.to_string())?
     {
         return Ok(false);
     }
@@ -3023,6 +3039,13 @@ pub(crate) fn terminate_agent_for_restart(pid: i64) -> Result<(), String> {
     if !pid_alive_agent_quick(pid) {
         return Ok(());
     }
+    // Codex 0.167.2 默认 daemon 与 OpenCode server 可承载多个主会话；
+    // 旧 DB 也必须现场核对命令行，不能按名字白名单把共享引擎整进程结束。
+    if meowo_reporter::proc::process_scope(pid as u32)
+        != meowo_agent::registry::ProcessScope::Exclusive
+    {
+        return Err("terminal/process_not_exclusive".into());
+    }
     // Windows：校验后立刻持句柄钉住进程身份（见 AgentProcessHandle），之后的 terminate 与
     // 退出等待全走句柄、不按 pid 重开。进程名白名单复核不收反升：改在句柄钉住的进程对象上
     // 取镜像路径复核（open_verified）。
@@ -3036,6 +3059,13 @@ pub(crate) fn terminate_agent_for_restart(pid: i64) -> Result<(), String> {
         // pid 被非 agent 进程复用：白名单拦截，什么都不杀。
         AgentProcessOpen::NotAgent => return Err("无法结束原会话进程".into()),
     };
+    // 句柄钉住之后再查一次：检查命令行与 OpenProcess 之间 PID 可能已被新的共享服务复用。
+    #[cfg(target_os = "windows")]
+    if meowo_reporter::proc::process_scope(pid as u32)
+        != meowo_agent::registry::ProcessScope::Exclusive
+    {
+        return Err("terminal/process_not_exclusive".into());
+    }
     #[cfg(target_os = "windows")]
     let kill = |force: bool| {
         // Windows 只有 TerminateProcess 一档（与旧 sysinfo kill 相同），无 TERM/KILL 之分。
@@ -3180,9 +3210,18 @@ mod corrected_model_choice_tests {
 
     #[test]
     fn opusplan_and_unknown_choices_are_left_alone() {
-        assert_eq!(corrected_model_choice("opusplan", Some("Opus 5"), Some(1_000_000)), None);
-        assert_eq!(corrected_model_choice("default", Some("Opus 5"), Some(1_000_000)), None);
-        assert_eq!(corrected_model_choice("custom-x", Some("Opus 5"), Some(1_000_000)), None);
+        assert_eq!(
+            corrected_model_choice("opusplan", Some("Opus 5"), Some(1_000_000)),
+            None
+        );
+        assert_eq!(
+            corrected_model_choice("default", Some("Opus 5"), Some(1_000_000)),
+            None
+        );
+        assert_eq!(
+            corrected_model_choice("custom-x", Some("Opus 5"), Some(1_000_000)),
+            None
+        );
     }
 }
 
@@ -3347,7 +3386,10 @@ mod proxy_env_tests {
         ];
         let prefix = env_source_prefix_windows(&secrets).unwrap();
         // 前缀里只有清理语句、文件路径与读取命令,没有任何密钥。
-        assert!(!prefix.contains("sk-secret-123"), "密钥泄漏进命令串:{prefix}");
+        assert!(
+            !prefix.contains("sk-secret-123"),
+            "密钥泄漏进命令串:{prefix}"
+        );
         assert!(!prefix.contains("u:p@"), "代理凭据泄漏进命令串:{prefix}");
         assert!(prefix.starts_with("$env:HTTPS_PROXY=$null; "));
         assert!(prefix.contains("Get-Content -LiteralPath '"));
@@ -3391,7 +3433,10 @@ mod proxy_env_tests {
             assert!(wrapped.contains(mode), "收回清单缺 {mode}：{wrapped}");
         }
         // ESC 走 [char]27：双引号插值里 `$e[` 会被 PowerShell 当成索引解析。
-        assert!(wrapped.contains("[char]27"), "ESC 必须用 [char]27：{wrapped}");
+        assert!(
+            wrapped.contains("[char]27"),
+            "ESC 必须用 [char]27：{wrapped}"
+        );
         assert!(!wrapped.contains("\"$e["), "不得用双引号插值：{wrapped}");
     }
 
@@ -3414,7 +3459,10 @@ mod proxy_env_tests {
         assert!(decoded.starts_with("$env:HTTPS_PROXY=$null; "));
         // 值走临时文件,命令串里只有读取语句(见 wt_env_values_live_in_a_file_not_on_the_command_line)。
         assert!(decoded.contains("Get-Content -LiteralPath '"));
-        assert!(!decoded.contains("127.0.0.1:7890"), "代理值不该出现在命令串里");
+        assert!(
+            !decoded.contains("127.0.0.1:7890"),
+            "代理值不该出现在命令串里"
+        );
         assert!(decoded.contains("codex.exe"), "原命令必须还在：{decoded}");
         // 环境变量赋值在 try 外（要对退出后手敲的命令继续生效），agent 命令在 try 内，
         // 终端模式收回在 finally（见 wrap_with_terminal_restore）。

@@ -17,6 +17,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     last_event_at INTEGER NOT NULL,
     ended_at      INTEGER,
     pid           INTEGER,
+    -- 共享引擎的 PID 可同时服务多个 session，不能驱逐同 PID 的其他行。
+    pid_shared    INTEGER NOT NULL DEFAULT 0,
     cwd           TEXT,
     archived      INTEGER NOT NULL DEFAULT 0,
     archived_at   INTEGER,

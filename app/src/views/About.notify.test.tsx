@@ -6,6 +6,7 @@ const api = vi.hoisted(() => ({
   getSettings: vi.fn(),
   setSettings: vi.fn(),
   leadWorkflowInstalled: vi.fn(),
+  leadProviderInstallations: vi.fn(),
 }));
 vi.mock("../api", async (o) => ({ ...(await o<typeof import("../api")>()), ...api }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: vi.fn(() => Promise.resolve(false)) }));
@@ -16,6 +17,7 @@ import { zh } from "../i18n/zh";
 
 beforeEach(() => {
   api.leadWorkflowInstalled.mockResolvedValue(false);
+  api.leadProviderInstallations.mockResolvedValue([]);
   api.setSettings.mockResolvedValue(undefined);
 });
 afterEach(() => {

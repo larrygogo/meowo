@@ -297,6 +297,10 @@ export function NewSessionPanel({ onClose, prefill, onLaunched }: {
               {t.newSession.agentSwapped(agentName(agents ?? [], swappedFrom), agentName(agents ?? [], provider))}
             </div>
           )}
+          {form.managedAvailable && <div className="row">
+            <label><input type="checkbox" checked={!form.managedMode} disabled={busy} onChange={(event) => form.setNativeRequested(event.target.checked)} />{t.chat.engineNative}</label>
+            <div className="row-desc">{form.managedMode ? t.chat.engineManagedDesc : t.chat.engineNativeDesc}</div>
+          </div>}
           {launchOptions.length > 0 && (
             <div className="ns-options" data-testid="ns-options">
               {/* 启动选项由插件声明（选择 → CLI flag），未声明的 agent 没有这块。

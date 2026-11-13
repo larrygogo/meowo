@@ -80,7 +80,10 @@ fn todo_delta_reads_task_number_from_block_shaped_responses() {
         );
         let ev = HookEvent::parse(&json).expect("parse");
         match ev.todo_delta() {
-            Some(meowo_store::TodoDelta::Create { external_id, content }) => {
+            Some(meowo_store::TodoDelta::Create {
+                external_id,
+                content,
+            }) => {
                 assert_eq!(external_id, "7", "resp={resp}");
                 assert_eq!(content, "x");
             }
@@ -332,15 +335,36 @@ fn claude_task_delta_accumulates_into_todos() {
     )
     .unwrap();
     // 两条 TaskCreate：编号在结果文本里（真实 transcript 取证的格式）。
-    disp(&store, &ev(r#"{"hook_event_name":"PostToolUse","session_id":"s1","tool_name":"TaskCreate",
+    disp(
+        &store,
+        &ev(
+            r#"{"hook_event_name":"PostToolUse","session_id":"s1","tool_name":"TaskCreate",
         "tool_input":{"subject":"生成基线迁移","description":"…"},
-        "tool_response":"Task #1 created successfully: 生成基线迁移"}"#), 200).unwrap();
-    disp(&store, &ev(r#"{"hook_event_name":"PostToolUse","session_id":"s1","tool_name":"TaskCreate",
+        "tool_response":"Task #1 created successfully: 生成基线迁移"}"#,
+        ),
+        200,
+    )
+    .unwrap();
+    disp(
+        &store,
+        &ev(
+            r#"{"hook_event_name":"PostToolUse","session_id":"s1","tool_name":"TaskCreate",
         "tool_input":{"subject":"删除旧迁移"},
-        "tool_response":"Task #2 created successfully: 删除旧迁移"}"#), 300).unwrap();
+        "tool_response":"Task #2 created successfully: 删除旧迁移"}"#,
+        ),
+        300,
+    )
+    .unwrap();
     // TaskUpdate：taskId 数字/字符串两种形态都得认。
-    disp(&store, &ev(r#"{"hook_event_name":"PostToolUse","session_id":"s1","tool_name":"TaskUpdate",
-        "tool_input":{"taskId":"1","status":"in_progress"}}"#), 400).unwrap();
+    disp(
+        &store,
+        &ev(
+            r#"{"hook_event_name":"PostToolUse","session_id":"s1","tool_name":"TaskUpdate",
+        "tool_input":{"taskId":"1","status":"in_progress"}}"#,
+        ),
+        400,
+    )
+    .unwrap();
 
     let sid = store.find_session_id_pub("s1").unwrap().unwrap();
     let tid = store.task_id_of_session_pub(sid).unwrap();
@@ -355,19 +379,40 @@ fn claude_task_delta_accumulates_into_todos() {
     assert_eq!(store.get_task(tid).unwrap().column, "doing");
 
     // 完成 + 删除：completed 落状态，deleted 是删行而不是一种状态。
-    disp(&store, &ev(r#"{"hook_event_name":"PostToolUse","session_id":"s1","tool_name":"TaskUpdate",
-        "tool_input":{"taskId":1,"status":"completed"}}"#), 500).unwrap();
-    disp(&store, &ev(r#"{"hook_event_name":"PostToolUse","session_id":"s1","tool_name":"TaskUpdate",
-        "tool_input":{"taskId":"2","status":"deleted"}}"#), 600).unwrap();
+    disp(
+        &store,
+        &ev(
+            r#"{"hook_event_name":"PostToolUse","session_id":"s1","tool_name":"TaskUpdate",
+        "tool_input":{"taskId":1,"status":"completed"}}"#,
+        ),
+        500,
+    )
+    .unwrap();
+    disp(
+        &store,
+        &ev(
+            r#"{"hook_event_name":"PostToolUse","session_id":"s1","tool_name":"TaskUpdate",
+        "tool_input":{"taskId":"2","status":"deleted"}}"#,
+        ),
+        600,
+    )
+    .unwrap();
     let todos = store.list_todos(tid).unwrap();
     assert_eq!(todos.len(), 1);
     assert_eq!(todos[0].status.as_str(), "completed");
     assert_eq!(store.get_task(tid).unwrap().column, "done");
 
     // 重放同一条 Create（hook 重复投递）不长重复行。
-    disp(&store, &ev(r#"{"hook_event_name":"PostToolUse","session_id":"s1","tool_name":"TaskCreate",
+    disp(
+        &store,
+        &ev(
+            r#"{"hook_event_name":"PostToolUse","session_id":"s1","tool_name":"TaskCreate",
         "tool_input":{"subject":"生成基线迁移(改名)"},
-        "tool_response":"Task #1 created successfully: 生成基线迁移(改名)"}"#), 700).unwrap();
+        "tool_response":"Task #1 created successfully: 生成基线迁移(改名)"}"#,
+        ),
+        700,
+    )
+    .unwrap();
     let todos = store.list_todos(tid).unwrap();
     assert_eq!(todos.len(), 1);
     assert_eq!(todos[0].content, "生成基线迁移(改名)");
@@ -385,8 +430,15 @@ fn claude_task_create_without_parsable_response_lands_placeholder_then_rebinds()
     )
     .unwrap();
     // 结果文案改了抠不出编号：占位落行，不丢这条待办，也不报错冒泡。
-    disp(&store, &ev(r#"{"hook_event_name":"PostToolUse","session_id":"s1","tool_name":"TaskCreate",
-        "tool_input":{"subject":"x"},"tool_response":"格式变了"}"#), 200).unwrap();
+    disp(
+        &store,
+        &ev(
+            r#"{"hook_event_name":"PostToolUse","session_id":"s1","tool_name":"TaskCreate",
+        "tool_input":{"subject":"x"},"tool_response":"格式变了"}"#,
+        ),
+        200,
+    )
+    .unwrap();
     let sid = store.find_session_id_pub("s1").unwrap().unwrap();
     let tid = store.task_id_of_session_pub(sid).unwrap();
     let todos = store.list_todos(tid).unwrap();
@@ -395,15 +447,29 @@ fn claude_task_create_without_parsable_response_lands_placeholder_then_rebinds()
     assert_eq!(todos[0].status.as_str(), "pending");
 
     // TaskUpdate 带回真编号与同一 subject：占位行换绑到真编号，不长重复行。
-    disp(&store, &ev(r#"{"hook_event_name":"PostToolUse","session_id":"s1","tool_name":"TaskUpdate",
-        "tool_input":{"taskId":"1","subject":"x","status":"in_progress"}}"#), 300).unwrap();
+    disp(
+        &store,
+        &ev(
+            r#"{"hook_event_name":"PostToolUse","session_id":"s1","tool_name":"TaskUpdate",
+        "tool_input":{"taskId":"1","subject":"x","status":"in_progress"}}"#,
+        ),
+        300,
+    )
+    .unwrap();
     let todos = store.list_todos(tid).unwrap();
     assert_eq!(todos.len(), 1, "换绑而不是另起一行");
     assert_eq!(todos[0].status.as_str(), "in_progress");
 
     // 换绑后按真编号的后续更新（不再带 subject）也能命中同一行。
-    disp(&store, &ev(r#"{"hook_event_name":"PostToolUse","session_id":"s1","tool_name":"TaskUpdate",
-        "tool_input":{"taskId":"1","status":"completed"}}"#), 400).unwrap();
+    disp(
+        &store,
+        &ev(
+            r#"{"hook_event_name":"PostToolUse","session_id":"s1","tool_name":"TaskUpdate",
+        "tool_input":{"taskId":"1","status":"completed"}}"#,
+        ),
+        400,
+    )
+    .unwrap();
     let todos = store.list_todos(tid).unwrap();
     assert_eq!(todos.len(), 1);
     assert_eq!(todos[0].status.as_str(), "completed");
@@ -939,12 +1005,18 @@ fn straggler_posttooluse_after_session_end_does_not_resurrect() {
     // SessionEnd 后 300ms 才被排队放行的回合尾巴。
     disp(
         &store,
-        &ev(r#"{"hook_event_name":"PostToolUse","session_id":"zz1","cwd":"/p","tool_name":"Read"}"#),
+        &ev(
+            r#"{"hook_event_name":"PostToolUse","session_id":"zz1","cwd":"/p","tool_name":"Read"}"#,
+        ),
         500,
     )
     .unwrap();
     let sid = store.find_session_id_pub("zz1").unwrap().unwrap();
-    assert_eq!(store.get_session(sid).unwrap().status, "ended", "尾巴不得诈尸");
+    assert_eq!(
+        store.get_session(sid).unwrap().status,
+        "ended",
+        "尾巴不得诈尸"
+    );
 }
 
 /// M3:SessionEnd 后排队迟到的 Stop 尾巴同样不得诈尸——它绕过活动类 touch,走的是
@@ -1055,14 +1127,19 @@ fn straggler_posttooluse_after_stop_keeps_waiting_fingerprint() {
     .unwrap();
     disp(
         &store,
-        &ev(r#"{"hook_event_name":"PostToolUse","session_id":"fp1","cwd":"/p","tool_name":"Read"}"#),
+        &ev(
+            r#"{"hook_event_name":"PostToolUse","session_id":"fp1","cwd":"/p","tool_name":"Read"}"#,
+        ),
         450,
     )
     .unwrap();
     let sid = store.find_session_id_pub("fp1").unwrap().unwrap();
     let s = store.get_session(sid).unwrap();
     assert_eq!(s.status, "waiting", "回合尾巴不得顶回 running");
-    assert_eq!(s.last_event_at, 200, "通知指纹(last_event_at)不得被尾巴推进");
+    assert_eq!(
+        s.last_event_at, 200,
+        "通知指纹(last_event_at)不得被尾巴推进"
+    );
 }
 
 #[test]
@@ -1184,7 +1261,10 @@ fn compact_session_start_still_fills_cwd_on_fresh_row() {
     )
     .unwrap();
     let sid = store.find_session_id_pub("cw2").unwrap().unwrap();
-    assert_eq!(store.session_cwd(sid).unwrap().as_deref(), Some("/repo/sub"));
+    assert_eq!(
+        store.session_cwd(sid).unwrap().as_deref(),
+        Some("/repo/sub")
+    );
 }
 
 /// 新回合（UserPromptSubmit）把现有待办标成「上一任务」残留：任务 A 的清单不能在
@@ -1202,15 +1282,28 @@ fn new_prompt_marks_todos_stale_and_next_snapshot_clears() {
     let sid = store.find_session_id_pub("st1").unwrap().unwrap();
     let tid = store.task_id_of_session_pub(sid).unwrap();
     // 任务 A：两条待办全部完成。
-    disp(&store, &ev(r#"{"hook_event_name":"UserPromptSubmit","session_id":"st1","prompt":"任务A"}"#), 200).unwrap();
+    disp(
+        &store,
+        &ev(r#"{"hook_event_name":"UserPromptSubmit","session_id":"st1","prompt":"任务A"}"#),
+        200,
+    )
+    .unwrap();
     disp(&store, &ev(r#"{"hook_event_name":"PostToolUse","session_id":"st1","tool_name":"TodoWrite","tool_input":{"todos":[{"content":"a","status":"completed"},{"content":"b","status":"completed"}]}}"#), 300).unwrap();
     assert!(store.list_todos(tid).unwrap().iter().all(|t| !t.stale));
 
     // 用户下发任务 B：旧清单标成残留，但行还在（完成记录留得下来）。
-    disp(&store, &ev(r#"{"hook_event_name":"UserPromptSubmit","session_id":"st1","prompt":"任务B"}"#), 400).unwrap();
+    disp(
+        &store,
+        &ev(r#"{"hook_event_name":"UserPromptSubmit","session_id":"st1","prompt":"任务B"}"#),
+        400,
+    )
+    .unwrap();
     let todos = store.list_todos(tid).unwrap();
     assert_eq!(todos.len(), 2);
-    assert!(todos.iter().all(|t| t.stale), "新回合应把旧待办标成上一任务残留");
+    assert!(
+        todos.iter().all(|t| t.stale),
+        "新回合应把旧待办标成上一任务残留"
+    );
 
     // 任务 B 的第一份快照到达：整份重插,残留清零。
     disp(&store, &ev(r#"{"hook_event_name":"PostToolUse","session_id":"st1","tool_name":"TodoWrite","tool_input":{"todos":[{"content":"c","status":"in_progress"}]}}"#), 500).unwrap();
@@ -1244,7 +1337,10 @@ fn todowrite_without_todos_key_keeps_list_but_explicit_empty_clears() {
 
     // 显式空数组：agent 明确清空，合法语义。
     disp(&store, &ev(r#"{"hook_event_name":"PostToolUse","session_id":"s1","tool_name":"TodoWrite","tool_input":{"todos":[]}}"#), 400).unwrap();
-    assert!(store.list_todos(tid).unwrap().is_empty(), "显式空数组应清表");
+    assert!(
+        store.list_todos(tid).unwrap().is_empty(),
+        "显式空数组应清表"
+    );
 }
 
 /// PreCompact = 压缩确定开始（可能由 /compact 裸命令发起、没带 prompt）：走 lookup_or_create
@@ -1383,22 +1479,44 @@ fn owner_repo_follows_worktree_git_file_to_the_common_config() {
     // linked worktree：gitdir 绝对路径，commondir 相对（git 默认写 ../..）。
     let wt = tmp.path().join("app-feat");
     std::fs::create_dir_all(wt.join("src")).unwrap();
-    std::fs::write(wt.join(".git"), format!("gitdir: {}\n", git.join("worktrees").join("feat").display())).unwrap();
-    std::fs::write(git.join("worktrees").join("feat").join("commondir"), "../..\n").unwrap();
-    let (root, name) = meowo_reporter::dispatch::project_root_and_name_pub(wt.join("src").to_str().unwrap());
+    std::fs::write(
+        wt.join(".git"),
+        format!("gitdir: {}\n", git.join("worktrees").join("feat").display()),
+    )
+    .unwrap();
+    std::fs::write(
+        git.join("worktrees").join("feat").join("commondir"),
+        "../..\n",
+    )
+    .unwrap();
+    let (root, name) =
+        meowo_reporter::dispatch::project_root_and_name_pub(wt.join("src").to_str().unwrap());
     assert_eq!(root, wt.to_string_lossy());
     assert_eq!(name, "acme/rocket");
     // gitdir 写成相对路径（worktree.useRelativePaths）。
     std::fs::write(wt.join(".git"), "gitdir: ../app/.git/worktrees/feat\n").unwrap();
-    assert_eq!(meowo_reporter::dispatch::project_root_and_name_pub(wt.to_str().unwrap()).1, "acme/rocket");
+    assert_eq!(
+        meowo_reporter::dispatch::project_root_and_name_pub(wt.to_str().unwrap()).1,
+        "acme/rocket"
+    );
     // 子模块：.git 文件指向 .git/modules/sub，没有 commondir，config 就在 gitdir 里。
     let sub = main.join("sub");
     let modules = git.join("modules").join("sub");
     std::fs::create_dir_all(&modules).unwrap();
     std::fs::create_dir_all(&sub).unwrap();
     std::fs::write(sub.join(".git"), "gitdir: ../.git/modules/sub\n").unwrap();
-    std::fs::write(modules.join("config"), "[remote \"origin\"]\n\turl = git@github.com:acme/engine.git\n").unwrap();
-    assert_eq!(meowo_reporter::dispatch::project_root_and_name_pub(sub.to_str().unwrap()).1, "acme/engine");
+    std::fs::write(
+        modules.join("config"),
+        "[remote \"origin\"]\n\turl = git@github.com:acme/engine.git\n",
+    )
+    .unwrap();
+    assert_eq!(
+        meowo_reporter::dispatch::project_root_and_name_pub(sub.to_str().unwrap()).1,
+        "acme/engine"
+    );
     // 主检出照旧。
-    assert_eq!(meowo_reporter::dispatch::project_root_and_name_pub(main.to_str().unwrap()).1, "acme/rocket");
+    assert_eq!(
+        meowo_reporter::dispatch::project_root_and_name_pub(main.to_str().unwrap()).1,
+        "acme/rocket"
+    );
 }

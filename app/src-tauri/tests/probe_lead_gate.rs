@@ -61,7 +61,12 @@ struct Tui {
 impl Tui {
     fn spawn(work: &Path, db: &Path, settings: &Path, args: &[String]) -> Tui {
         let pair = native_pty_system()
-            .openpty(PtySize { rows: 40, cols: 160, pixel_width: 0, pixel_height: 0 })
+            .openpty(PtySize {
+                rows: 40,
+                cols: 160,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
             .unwrap();
         let mut cmd = common::agent_command("claude", work);
         cmd.env_remove("CLAUDE_CODE_CHILD_SESSION");
@@ -90,7 +95,11 @@ impl Tui {
         });
         // 保住 master，PTY 才不会提前关
         std::mem::forget(pair.master);
-        Tui { child, buf, _writer: writer }
+        Tui {
+            child,
+            buf,
+            _writer: writer,
+        }
     }
 
     fn screen(&self) -> String {
@@ -99,7 +108,13 @@ impl Tui {
 
     fn tail(&self) -> String {
         let s = self.screen();
-        s.chars().rev().take(800).collect::<Vec<_>>().into_iter().rev().collect()
+        s.chars()
+            .rev()
+            .take(800)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect()
     }
 }
 
@@ -115,13 +130,21 @@ fn write_gate(task: &Path, id: &str) {
 /// 以 transcript 为准等 agent 的回复（抓屏不可靠：--resume 后会重绘历史，30 分钟版本里抓屏误判过一次
 /// 「已唤醒」并提前杀掉了进程）。返回该回复在 assistant 消息里出现的次数。
 fn transcript_count(sid: &str, needle: &str) -> u32 {
-    let home = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).unwrap_or_default();
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .unwrap_or_default();
     let mut n = 0;
-    let Ok(dirs) = std::fs::read_dir(PathBuf::from(home).join(".claude/projects")) else { return 0 };
+    let Ok(dirs) = std::fs::read_dir(PathBuf::from(home).join(".claude/projects")) else {
+        return 0;
+    };
     for d in dirs.flatten() {
-        let Ok(text) = std::fs::read_to_string(d.path().join(format!("{sid}.jsonl"))) else { continue };
+        let Ok(text) = std::fs::read_to_string(d.path().join(format!("{sid}.jsonl"))) else {
+            continue;
+        };
         for line in text.lines() {
-            let Ok(o) = serde_json::from_str::<serde_json::Value>(line) else { continue };
+            let Ok(o) = serde_json::from_str::<serde_json::Value>(line) else {
+                continue;
+            };
             if o["type"] == "assistant" && o["message"]["content"].to_string().contains(needle) {
                 n += 1;
             }
@@ -151,7 +174,10 @@ fn registry_sid(db: &Path) -> Option<String> {
 #[ignore = "拉起真实 claude 交互进程并等待数分钟；手动调研用"]
 fn probe_gate_delivery_hold_and_after_restart() {
     let reporter = std::env::var("REPORTER").expect("REPORTER=meowo-reporter.exe 的路径");
-    let hang: u64 = std::env::var("GATE_HANG_SECS").ok().and_then(|s| s.parse().ok()).unwrap_or(120);
+    let hang: u64 = std::env::var("GATE_HANG_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(120);
     let dir = std::env::temp_dir().join(format!("meowo-gate-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let proj = dir.join("proj");
@@ -161,9 +187,14 @@ fn probe_gate_delivery_hold_and_after_restart() {
     std::fs::write(proj.join(".lead/active"), "20261109-gateprobe").unwrap();
     std::fs::write(task.join("SPEC.md"), "# SPEC\n目的：演示关卡送达").unwrap();
     std::fs::write(task.join("progress.md"), "phase: design\n").unwrap();
-    std::fs::write(task.join("acceptance.json"), r#"[{"id":1,"check":"x","passes":false}]"#).unwrap();
+    std::fs::write(
+        task.join("acceptance.json"),
+        r#"[{"id":1,"check":"x","passes":false}]"#,
+    )
+    .unwrap();
     write_gate(&task, "B-1");
-    let work = PathBuf::from(std::env::var("PROBE_CWD").expect("PROBE_CWD=一个已信任、没有 .lead 的目录"));
+    let work =
+        PathBuf::from(std::env::var("PROBE_CWD").expect("PROBE_CWD=一个已信任、没有 .lead 的目录"));
     let db = dir.join("board.db");
     let cmd = |m: &str| format!("\"{reporter}\" lead {m}");
     let settings = serde_json::json!({"hooks": {
@@ -179,13 +210,22 @@ fn probe_gate_delivery_hold_and_after_restart() {
     }});
     let settings_file = dir.join("settings.json");
     std::fs::write(&settings_file, settings.to_string()).unwrap();
-    let prog = task.join("progress.md").to_string_lossy().replace('\\', "/");
-    let rule = "收到 [lead] 开头的消息时，只回复一行：已收到关卡答复，选择=<选择的编号>。不要做别的。";
+    let prog = task
+        .join("progress.md")
+        .to_string_lossy()
+        .replace('\\', "/");
+    let rule =
+        "收到 [lead] 开头的消息时，只回复一行：已收到关卡答复，选择=<选择的编号>。不要做别的。";
 
     // ---------- 第一段：挂起后作答 ----------
-    let tui = Tui::spawn(&work, &db, &settings_file, &[format!(
-        "用 Bash 执行：echo 等关卡 >> \"{prog}\" 。然后只回复 OK 并结束。{rule}"
-    )]);
+    let tui = Tui::spawn(
+        &work,
+        &db,
+        &settings_file,
+        &[format!(
+            "用 Bash 执行：echo 等关卡 >> \"{prog}\" 。然后只回复 OK 并结束。{rule}"
+        )],
+    );
     let claimed = {
         let start = Instant::now();
         loop {
@@ -200,10 +240,22 @@ fn probe_gate_delivery_hold_and_after_restart() {
     std::thread::sleep(Duration::from_secs(10)); // 让本轮结束、后台 wait 起来
     println!("[probe] 关卡挂起 {hang}s …");
     std::thread::sleep(Duration::from_secs(hang));
-    meowo_reporter::lead::answer_gate(&task, "B-1", &LeadGateAnswerDto { choice: "2".into(), note: String::new() }).unwrap();
+    meowo_reporter::lead::answer_gate(
+        &task,
+        "B-1",
+        &LeadGateAnswerDto {
+            choice: "2".into(),
+            note: String::new(),
+        },
+    )
+    .unwrap();
     let sid = claimed.clone().unwrap();
     let woke1 = wait_transcript(&sid, "选择=2", Duration::from_secs(120));
-    println!("[probe] 第一段（挂 {hang}s 后作答）：{}\n{}", if woke1 { "已唤醒" } else { "未唤醒" }, tui.tail());
+    println!(
+        "[probe] 第一段（挂 {hang}s 后作答）：{}\n{}",
+        if woke1 { "已唤醒" } else { "未唤醒" },
+        tui.tail()
+    );
 
     // ---------- 第二段：进程死后作答 ----------
     write_gate(&task, "B-2");
@@ -211,17 +263,40 @@ fn probe_gate_delivery_hold_and_after_restart() {
     let mut tui = tui;
     let _ = tui.child.kill();
     std::thread::sleep(Duration::from_secs(3));
-    meowo_reporter::lead::answer_gate(&task, "B-2", &LeadGateAnswerDto { choice: "1".into(), note: String::new() }).unwrap();
-    let tui2 = Tui::spawn(&work, &db, &settings_file, &["--resume".into(), sid.clone()]);
+    meowo_reporter::lead::answer_gate(
+        &task,
+        "B-2",
+        &LeadGateAnswerDto {
+            choice: "1".into(),
+            note: String::new(),
+        },
+    )
+    .unwrap();
+    let tui2 = Tui::spawn(
+        &work,
+        &db,
+        &settings_file,
+        &["--resume".into(), sid.clone()],
+    );
     let woke2 = wait_transcript(&sid, "选择=1", Duration::from_secs(180));
     // 再等一会儿：确认之后的 Stop 不会把同一个答复再送一次
     std::thread::sleep(Duration::from_secs(20));
-    println!("[probe] 第二段（进程死后作答，--resume 恢复）：{}\n{}", if woke2 { "已唤醒" } else { "未唤醒" }, tui2.tail());
+    println!(
+        "[probe] 第二段（进程死后作答，--resume 恢复）：{}\n{}",
+        if woke2 { "已唤醒" } else { "未唤醒" },
+        tui2.tail()
+    );
     let mut tui2 = tui2;
     let _ = tui2.child.kill();
     std::thread::sleep(Duration::from_secs(2));
-    let replies = (transcript_count(&sid, "选择=2"), transcript_count(&sid, "选择=1"));
-    println!("[probe] transcript 里的答复次数：选择=2 ×{}，选择=1 ×{}", replies.0, replies.1);
+    let replies = (
+        transcript_count(&sid, "选择=2"),
+        transcript_count(&sid, "选择=1"),
+    );
+    println!(
+        "[probe] transcript 里的答复次数：选择=2 ×{}，选择=1 ×{}",
+        replies.0, replies.1
+    );
     let _ = std::fs::remove_dir_all(&dir);
     assert!(woke1, "挂起后作答没有唤醒");
     assert!(woke2, "进程死后作答、恢复会话后没有唤醒");

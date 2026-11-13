@@ -26,8 +26,11 @@
 //! `PreCompress` 没有完成配对，暂不写入「正在压缩」，避免手动压缩后永久挂起。
 
 pub mod account;
+mod conversation;
+mod lead;
 mod screen;
 pub mod telemetry;
+mod transcript;
 
 use crate::{
     auth::{AuthScheme, CredentialSource},
@@ -149,8 +152,9 @@ static PROXY: crate::proxy::ProxySpec = crate::proxy::ProxySpec {
 static VARIANTS: [Variant; 1] = [Variant {
     tag: "stable",
     data_dir: DataDirSpec {
-        // Gemini CLI 未见「数据目录」级别的环境变量覆盖（`GEMINI_API_KEY` 之类只管鉴权），故不声明。
-        env: None,
+        // 0.65 Storage.getGlobalGeminiDir 在覆盖的 home 下拼 .gemini，不能直接把变量当数据根。
+        env: Some("GEMINI_CLI_HOME"),
+        env_suffix: ".gemini",
         candidates: &[".gemini"],
     },
     hooks: &HOOKS,
@@ -162,6 +166,28 @@ static VARIANTS: [Variant; 1] = [Variant {
 pub struct Gemini;
 
 impl AgentPlugin for Gemini {
+    fn process_scope(&self, argv: &[String]) -> crate::registry::ProcessScope {
+        use crate::registry::ProcessScope;
+        let own = argv.iter().take(2).any(|arg| {
+            let path = arg.replace('\\', "/").to_ascii_lowercase();
+            matches!(
+                path.rsplit('/').next(),
+                Some("gemini" | "gemini.exe" | "gemini.cmd")
+            ) || path.ends_with("/@google/gemini-cli/bundle/gemini.js")
+        });
+        if !own {
+            return ProcessScope::Unknown;
+        }
+        if argv.iter().any(|arg| {
+            matches!(arg.as_str(), "--acp" | "--experimental-acp")
+                || arg.starts_with("--acp=")
+                || arg.starts_with("--experimental-acp=")
+        }) {
+            ProcessScope::Shared
+        } else {
+            ProcessScope::Exclusive
+        }
+    }
     fn screen_rules(&self) -> &'static [crate::screen::ScreenRule] {
         screen::RULES
     }
@@ -172,6 +198,14 @@ impl AgentPlugin for Gemini {
     fn display_name(&self) -> &'static str {
         "Gemini CLI"
     }
+    fn conversation(&self) -> Option<&'static dyn crate::conversation::ConversationCap> {
+        Some(&conversation::CAP)
+    }
+
+    fn lead(&self) -> Option<&'static dyn crate::lead_install::LeadCap> {
+        Some(&lead::CAP)
+    }
+
     fn variants(&self) -> &'static [Variant] {
         &VARIANTS
     }
@@ -214,6 +248,23 @@ impl AgentPlugin for Gemini {
     /// `Queued (press ↑ to edit)`，但空闲时 Tab 不提交、正文停在输入框里。对话页的运行态
     /// 是推断（DB 启动即 running、hook 执行期屏幕无 esc to cancel），推断错了按 Tab 就丢
     /// 消息，按回车两种状态都对。
+    /// 2026-11-12 隔离无模型实拍（target/lead-provider-probes/composer）：文字只给候选，发送仍须核验原生光标。
+    fn composer_guard(&self, version: Option<&str>) -> Option<crate::chat_ui::ComposerGuard> {
+        if version != Some("0.65.0") {
+            return None;
+        }
+        Some(crate::chat_ui::ComposerGuard {
+            prompt_footer: false,
+            input_start_pattern: r"^(\s*> )",
+            top_pattern: r"^─+$",
+            bottom_pattern: r"^─+$",
+            row_pattern: r"^ (.*)$",
+            prompt_prefix: ">",
+            tail_rows: 0,
+            tail_pattern: None,
+            empty_pattern: r"^(?:Type your message or @path/to/file)?$",
+        })
+    }
     fn queue_input(&self) -> Option<&'static str> {
         Some("\r")
     }
@@ -400,8 +451,7 @@ impl AgentPlugin for Gemini {
     fn relay(&self) -> Option<&'static dyn crate::RelayCap> {
         Some(&RELAY)
     }
-    /// **上下文占用不支持**：Gemini 的 hook 负载里不带 token 计数（实测 0.50——`AfterAgent` 只给
-    /// `prompt_response` 正文），而为了一个百分比去解析它的会话文件不划算。见 telemetry.rs。
+    /// 0.65 日志有 token 计数，但没有可靠的模型窗口容量；不能把计数冒充占用百分比。
     fn provides_context(&self) -> bool {
         false
     }
@@ -471,6 +521,24 @@ impl crate::RelayCap for GeminiRelay {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compatibility_process_scope_rejects_unknown_and_acp() {
+        use crate::registry::ProcessScope;
+        assert_eq!(Gemini.process_scope(&[]), ProcessScope::Unknown);
+        assert_eq!(
+            Gemini.process_scope(&["node".into(), "unrelated.js".into()]),
+            ProcessScope::Unknown
+        );
+        let argv = vec![
+            "node".into(),
+            "C:/npm/node_modules/@google/gemini-cli/bundle/gemini.js".into(),
+        ];
+        assert_eq!(Gemini.process_scope(&argv), ProcessScope::Exclusive);
+        let mut acp = argv;
+        acp.push("--acp=true".into());
+        assert_eq!(Gemini.process_scope(&acp), ProcessScope::Shared);
+    }
     use crate::RelayCap;
 
     /// 代理：HTTP 走 HTTPS_PROXY/HTTP_PROXY；gemini **支持 SOCKS**（socks-proxy-agent），

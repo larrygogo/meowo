@@ -169,10 +169,19 @@ mod tests {
     #[test]
     fn iso8601_to_unix_ms_inverts_and_reads_millis() {
         assert_eq!(iso8601_to_unix_ms("1970-01-01T00:00:00Z"), Some(0));
-        assert_eq!(iso8601_to_unix_ms("2024-02-29T00:00:00Z"), Some(1_709_164_800_000));
-        assert_eq!(iso8601_to_unix_ms("2000-03-01T00:00:00.5Z"), Some(951_868_800_500));
+        assert_eq!(
+            iso8601_to_unix_ms("2024-02-29T00:00:00Z"),
+            Some(1_709_164_800_000)
+        );
+        assert_eq!(
+            iso8601_to_unix_ms("2000-03-01T00:00:00.5Z"),
+            Some(951_868_800_500)
+        );
         // CC transcript 实拍形态。
-        assert_eq!(iso8601_to_unix_ms("2026-10-20T14:53:06.714Z"), Some(1_792_507_986_714));
+        assert_eq!(
+            iso8601_to_unix_ms("2026-10-20T14:53:06.714Z"),
+            Some(1_792_507_986_714)
+        );
         for ts in [0, 951_868_800, 1_709_164_800, 1_792_507_986] {
             assert_eq!(iso8601_to_unix_ms(&unix_to_iso8601(ts)), Some(ts * 1000));
         }

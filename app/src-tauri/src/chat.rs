@@ -140,6 +140,7 @@ struct LiveSignals {
     runtimes: std::sync::Arc<super::session_query::SessionRuntimeIndex>,
     /// 托管 PTY 的屏幕状态(见 ChatHistoryDto.screen_state),纯内存查表。
     screen_state: Option<&'static str>,
+    screen_assumed: bool,
 }
 
 /// transcript 采样(错误徽标 + agent 起的标题)的重采样间隔:分析走共享 mtime 缓存,但 agent
@@ -165,7 +166,11 @@ fn load_chat_history(
     session_id: i64,
     read: ChatRead,
 ) -> Result<ChatHistory, String> {
-    let ChatRead { offset, full, before } = read;
+    let ChatRead {
+        offset,
+        full,
+        before,
+    } = read;
     let prev = chat_mtimes
         .lock()
         .ok()
@@ -188,6 +193,14 @@ fn load_chat_history(
             &header.cc_session_id,
         );
     let mut history = ChatHistory {
+        managed_conversation: false,
+        managed_phase: None,
+        managed_error: None,
+        managed_interaction: None,
+        managed_models: None,
+        managed_modes: None,
+        managed_mode_dimension: None,
+        managed_deliveries: None,
         session_id,
         cc_session_id: header.cc_session_id.clone(),
         title: header
@@ -225,6 +238,7 @@ fn load_chat_history(
             super::now_ms(),
         ),
         screen_state: live.screen_state.map(str::to_string),
+        screen_assumed: live.screen_assumed,
         // 待办由 hook 落库（快照式待办工具），与 transcript 解析无关，故所有 provider 都取。
         todos: store
             .task_id_of_session_pub(session_id)
@@ -262,6 +276,22 @@ fn load_chat_history(
         predecessor_id: header.predecessor_id,
         superseded_by: header.superseded_by,
     };
+    if let Some(managed) = store
+        .managed_state(session_id)
+        .map_err(|error| error.to_string())?
+    {
+        return load_managed_history(
+            db_path,
+            &store,
+            history,
+            managed,
+            ChatRead {
+                offset,
+                full,
+                before,
+            },
+        );
+    }
     // errored 与标题都和侧栏/贴纸走同一入口(session_query::analyze_transcript,同口径由代码保证)。
     // 5s 节流:agent 流式输出期间 transcript 每轮都在变,每轮全采样会对同一批新增字节
     // 做两遍解析(分析器 + 下面的聊天增量各一遍)且解析持共享缓存锁;错误徽标容忍 ~5s 延迟。
@@ -317,7 +347,9 @@ fn load_chat_history(
     // 「加载更早」向上翻页：before = 当前已加载窗口的首行字节（首读/上一屏响应里的
     // earliest）。只解析 [0, before) 这一段并取其尾部一屏，长会话反复上翻不再是
     // 整文件重读 × 页数。尾部增量的记账（offset/mtime）不在这条路径上动，轮询不受影响。
-    if let Some(end) = before {
+    // Gemini快照重写或跨账号恢复后，旧页的字节上界同样失效；不能先按before读取再检查路径。
+    let path_changed = prev.as_ref().is_some_and(|entry| entry.path != path);
+    if let Some(end) = before.filter(|_| !path_changed) {
         if let Some(window) = meowo_agent::read_chat_window(spec, &path, end, FIRST_PAGE_ITEMS) {
             history.items = window.items;
             history.has_more = window.has_more;
@@ -327,7 +359,6 @@ fn load_chat_history(
     }
     // 路径切换(跨 profile 恢复后解析到另一个数据目录里的延续文件):前端的字节偏移
     // 是对旧文件的记账,对新文件无意义——从头重读并向前端标记 reset,清空重灌。
-    let path_changed = prev.as_ref().is_some_and(|entry| entry.path != path);
     let (base_offset, base_mtime) = if path_changed {
         (0, None)
     } else {
@@ -340,16 +371,17 @@ fn load_chat_history(
         base_mtime,
         if full { 0 } else { FIRST_PAGE_ITEMS },
     );
-    if path_changed && offset > 0 {
+    if path_changed && (offset > 0 || before.is_some()) {
         delta.reset = true;
     }
     // 只有从头重读能判定「计划已不存在」；普通增量没带计划只表示没有新计划。
     let plan = if base_offset == 0 || delta.reset {
         delta.plan.clone()
     } else {
-        delta.plan.clone().or_else(|| {
-            prev.as_ref().and_then(|entry| entry.plan.clone())
-        })
+        delta
+            .plan
+            .clone()
+            .or_else(|| prev.as_ref().and_then(|entry| entry.plan.clone()))
     };
     if let (Ok(mut seen), Some(mtime)) = (chat_mtimes.lock(), delta.mtime) {
         seen.put_if_current(session_id, prev_version, mtime, path.clone(), plan.clone());
@@ -377,8 +409,170 @@ fn load_chat_history(
     Ok(history)
 }
 
-/// 读取一次子任务委派的完整时间线（用户在对话页展开时按需调用）。
-///
+/// 托管会话从本机物化投影与有界事件增量读取，避免轮询时重扫原生历史。
+fn load_managed_history(
+    db_path: &Path,
+    store: &meowo_store::Store,
+    mut history: ChatHistory,
+    managed: meowo_store::managed::ManagedSession,
+    read: ChatRead,
+) -> Result<ChatHistory, String> {
+    use meowo_agent::conversation::ConversationEvent as Event;
+    history.managed_conversation = true;
+    history.managed_phase = Some(managed.phase.clone());
+    history.managed_error = managed.last_error.clone();
+    history.supported = true;
+    history.pty_managed = false;
+    history.background = false;
+    history.connected =
+        managed.runtime_owner.is_some() && !matches!(managed.phase.as_str(), "stopped" | "failed");
+    history.endable = managed.runtime_owner.is_some();
+    history.errored = managed.last_error.is_some();
+    history.status = match managed.phase.as_str() {
+        "running" => "running",
+        "starting" => "running",
+        "blocked" => "running",
+        "stopping" => "running",
+        "ready" => "idle",
+        _ => "ended",
+    }
+    .into();
+    history.screen_state = Some(
+        match managed.phase.as_str() {
+            "running" | "starting" | "stopping" => "working",
+            "blocked" => "blocked",
+            _ => "idle",
+        }
+        .into(),
+    );
+    history.screen_assumed = false;
+    history.last_user_text = None;
+    history.last_ai_text = None;
+    if let Some(Event::Metadata { model, mode }) =
+        crate::conversation::metadata(db_path, history.session_id)?
+    {
+        if model.is_some() {
+            history.model = model;
+        }
+        if let Some(mode) = mode {
+            history.agent_modes = vec![AgentModeDto {
+                dimension: "mode".into(),
+                value: mode,
+            }];
+        }
+    }
+    if let Some(Event::Catalog {
+        models,
+        modes,
+        mode_dimension,
+    }) = crate::conversation::catalog(db_path, history.session_id)?
+    {
+        history.managed_models = Some(
+            serde_json::from_value(
+                serde_json::to_value(models)
+                    .map_err(|_| "conversation/persisted_payload_invalid")?,
+            )
+            .map_err(|_| "conversation/persisted_payload_invalid")?,
+        );
+        history.managed_modes = Some(
+            serde_json::from_value(
+                serde_json::to_value(modes)
+                    .map_err(|_| "conversation/persisted_payload_invalid")?,
+            )
+            .map_err(|_| "conversation/persisted_payload_invalid")?,
+        );
+        history.managed_mode_dimension = mode_dimension;
+        if let Some(dimension) = &history.managed_mode_dimension {
+            for mode in &mut history.agent_modes {
+                mode.dimension = dimension.clone();
+            }
+        }
+    }
+    history.managed_interaction =
+        match crate::conversation::interaction(db_path, history.session_id)? {
+            Some(Event::Interaction {
+                interaction_id,
+                title,
+                detail,
+                choices,
+                questions,
+            }) => Some(meowo_protocol::conversation::ManagedInteractionDto {
+                interaction_id,
+                title,
+                detail,
+                choices: serde_json::from_value(
+                    serde_json::to_value(choices)
+                        .map_err(|_| "conversation/persisted_payload_invalid")?,
+                )
+                .map_err(|_| "conversation/persisted_payload_invalid")?,
+                questions: serde_json::from_value(
+                    serde_json::to_value(questions)
+                        .map_err(|_| "conversation/persisted_payload_invalid")?,
+                )
+                .map_err(|_| "conversation/persisted_payload_invalid")?,
+            }),
+            _ => None,
+        };
+    if let Some(interaction) = &history.managed_interaction {
+        history.pending_review = Some(if interaction.questions.is_empty() {
+            PendingReviewKind::Approval
+        } else {
+            PendingReviewKind::Question
+        });
+    } else if history.pending_review != Some(PendingReviewKind::Gate) {
+        history.pending_review = None;
+    }
+    history.managed_deliveries = Some(crate::conversation::pending_deliveries(
+        db_path,
+        history.session_id,
+    )?);
+    let offset = i64::try_from(read.offset).map_err(|_| "conversation/invalid_offset")?;
+    let before = read
+        .before
+        .map(i64::try_from)
+        .transpose()
+        .map_err(|_| "conversation/invalid_offset")?;
+    let mut reset = read.full || offset == 0 || before.is_some();
+    if !reset {
+        let events = store
+            .managed_events_since(history.session_id, offset, 200)
+            .map_err(|error| error.to_string())?;
+        history.offset = events.last().map_or(read.offset, |row| row.sequence as u64);
+        for row in events {
+            let value: serde_json::Value = serde_json::from_str(&row.payload_json)
+                .map_err(|_| "conversation/persisted_payload_invalid")?;
+            if value.get("kind").and_then(serde_json::Value::as_str) == Some("history") {
+                reset = true;
+                break;
+            }
+            if let Ok(event) = serde_json::from_value::<Event>(value) {
+                if let Some(item) = crate::conversation::chat_item(&event, row.sequence) {
+                    history.items.push(item);
+                }
+            }
+        }
+    }
+    if reset {
+        // 正文与offset必须在同一WAL快照取得；不能全日志重放，也不能拿未来offset跳过尚未读到的正文。
+        let window = store
+            .managed_chat_window(history.session_id, before, if read.full { 200 } else { 30 })
+            .map_err(|error| error.to_string())?;
+        history.items = window
+            .items_json
+            .iter()
+            .map(|item| {
+                serde_json::from_str(item)
+                    .map_err(|_| "conversation/persisted_payload_invalid".to_string())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        history.offset = window.offset as u64;
+        history.earliest = window.earliest as u64;
+        history.has_more = window.has_more;
+        history.reset = true;
+    }
+    Ok(history)
+}
+
 /// 不走 [`load_chat_history`] 的增量路径：侧车流是已经写完的独立文件，整读一次即可，
 /// 也不该让历史轮询顺带承担它的成本。
 fn load_subagent_transcript(
@@ -602,11 +796,7 @@ pub(crate) async fn get_chat_history(
     let runtimes = state.session_runtimes.clone();
     let pty_live = state.ptys.is_active(session_id);
     let broker_approval = state.ptys.pending_approval(session_id).is_some();
-    let screen_state = state
-        .ptys
-        .screen_states()
-        .get(&session_id)
-        .map(|sight| sight.state);
+    let screen_sight = state.ptys.screen_states().get(&session_id).copied();
     tauri::async_runtime::spawn_blocking(move || {
         load_chat_history(
             &db_path,
@@ -617,7 +807,8 @@ pub(crate) async fn get_chat_history(
                 pty_live,
                 runtimes: runtimes.snapshot(),
                 broker_approval,
-                screen_state,
+                screen_state: screen_sight.map(|sight| sight.state),
+                screen_assumed: screen_sight.is_some_and(|sight| sight.fallback),
             },
             session_id,
             ChatRead {
@@ -750,7 +941,9 @@ pub(crate) fn spawn_paste_cleanup() {
 /// 按 mtime 清掉 `root` 下过期的条目：一次性目录（`{时间戳}-…`）整目录删，
 /// 长期目录（paste 的 `queued/`）逐文件清。两个临时根的结构约定一致，共用这一份。
 fn cleanup_expired_under(root: &Path) {
-    let Ok(entries) = std::fs::read_dir(root) else { return };
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
     let now = std::time::SystemTime::now();
     let expired = |meta: &std::fs::Metadata| {
         meta.modified()
@@ -762,7 +955,9 @@ fn cleanup_expired_under(root: &Path) {
         // queued/ 是长期目录（transcript 图片按内容名幂等复用，新旧文件混住）：
         // 按整目录 mtime 删会把仍在被回读的新图连坐，按单个文件逐个清。
         if entry.file_name() == "queued" {
-            let Ok(files) = std::fs::read_dir(entry.path()) else { continue };
+            let Ok(files) = std::fs::read_dir(entry.path()) else {
+                continue;
+            };
             for file in files.flatten() {
                 if file.metadata().is_ok_and(|meta| expired(&meta)) {
                     let _ = std::fs::remove_file(file.path());
@@ -893,9 +1088,18 @@ fn capture_screen_region_blocking(generation: u64) -> Result<Option<String>, Str
             continue;
         }
         // 截图层往剪贴板里分几次写格式，序号一变就读可能还没有位图：读不到接着等。
-        let Ok(mut clipboard) = arboard::Clipboard::new() else { continue };
-        let Ok(image) = clipboard.get_image() else { continue };
-        return save_capture_png(image.width as u32, image.height as u32, image.bytes.into_owned()).map(Some);
+        let Ok(mut clipboard) = arboard::Clipboard::new() else {
+            continue;
+        };
+        let Ok(image) = clipboard.get_image() else {
+            continue;
+        };
+        return save_capture_png(
+            image.width as u32,
+            image.height as u32,
+            image.bytes.into_owned(),
+        )
+        .map(Some);
     }
     Ok(None)
 }
@@ -943,11 +1147,10 @@ fn save_capture_png(width: u32, height: u32, rgba: Vec<u8>) -> Result<String, St
 #[tauri::command]
 pub(crate) async fn clipboard_restore() -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(|| {
-        let snapshot = CLIPBOARD_SNAPSHOT
-            .lock()
-            .map_err(|e| e.to_string())?
-            .take();
-        let Some(snapshot) = snapshot else { return Ok(()) };
+        let snapshot = CLIPBOARD_SNAPSHOT.lock().map_err(|e| e.to_string())?.take();
+        let Some(snapshot) = snapshot else {
+            return Ok(());
+        };
         let mut clipboard = arboard::Clipboard::new().map_err(|e| e.to_string())?;
         if let Some(image) = snapshot.image {
             clipboard.set_image(image).map_err(|e| e.to_string())?;
@@ -1117,6 +1320,95 @@ mod tests {
     use super::*;
 
     #[test]
+    fn managed_history_uses_materialized_pages_and_incremental_events_without_native_transcript() {
+        use meowo_agent::conversation::ConversationEvent as Event;
+        let dir = std::env::temp_dir().join(format!(
+            "meowo-managed-chat-{}",
+            crate::remote::generate_token().unwrap()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let db = dir.join("board.db");
+        let store = super::super::open_store(&db).unwrap();
+        let id = store
+            .managed_create("kimi", &dir.to_string_lossy(), None, 1)
+            .unwrap();
+        let append = |index: usize| {
+            let event = Event::Output {
+                request_id: Some(format!("request_{index}")),
+                segment_id: format!("segment_{index}"),
+                text: format!("native output {index}"),
+                reasoning: false,
+            };
+            let item = crate::conversation::chat_item(&event, index as i64).unwrap();
+            store
+                .managed_record_event(
+                    id,
+                    &serde_json::to_string(&event).unwrap(),
+                    Some(&serde_json::to_string(&item).unwrap()),
+                    index as i64 + 2,
+                )
+                .unwrap();
+        };
+        for index in 0..35 {
+            append(index);
+        }
+        let mtimes = Mutex::new(ChatMtimes::default());
+        let cache = Mutex::new(meowo_agent::TranscriptCache::default());
+        let read = |request| {
+            load_chat_history(
+                &db,
+                &mtimes,
+                &cache,
+                LiveSignals {
+                    alive: Default::default(),
+                    pty_live: false,
+                    broker_approval: false,
+                    runtimes: Default::default(),
+                    screen_state: None,
+                    screen_assumed: false,
+                },
+                id,
+                request,
+            )
+            .unwrap()
+        };
+        let first = read(ChatRead::default());
+        assert!(first.managed_conversation && first.reset && first.has_more);
+        assert_eq!(first.items.len(), 30);
+        assert!(!first.pty_managed);
+        append(35);
+        let delta = read(ChatRead {
+            offset: first.offset,
+            ..Default::default()
+        });
+        assert!(!delta.reset);
+        assert_eq!(delta.items.len(), 1);
+        assert!(delta.offset > first.offset);
+        let earlier = read(ChatRead {
+            before: Some(first.earliest),
+            ..Default::default()
+        });
+        assert_eq!(earlier.items.len(), 5);
+        assert!(!earlier.has_more);
+        store
+            .managed_append_event(
+                id,
+                &serde_json::to_string(&Event::History { messages: vec![] }).unwrap(),
+                99,
+            )
+            .unwrap();
+        let reset = read(ChatRead {
+            offset: delta.offset,
+            ..Default::default()
+        });
+        assert!(reset.reset);
+        assert_eq!(reset.items.len(), 30);
+        assert!(mtimes.lock().unwrap().get(id).is_none());
+        drop(store);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn pasted_attachment_roundtrip_keeps_name_and_content() {
         use base64::Engine;
         let data = base64::engine::general_purpose::STANDARD.encode(b"png-bytes");
@@ -1214,7 +1506,10 @@ mod tests {
         cache.put_if_current(7, version_b, newer, any_path(), Some("计划".into()));
         cache.put_if_current(7, version_a, base, any_path(), None);
         assert_eq!(cache.get(7).map(|entry| entry.mtime), Some(newer));
-        assert_eq!(cache.get(7).and_then(|entry| entry.plan).as_deref(), Some("计划"));
+        assert_eq!(
+            cache.get(7).and_then(|entry| entry.plan).as_deref(),
+            Some("计划")
+        );
     }
 
     /// 改名不该吃 5 秒节流：DB 标题一变，缓存里的旧 transcript 标题就得作废，
@@ -1230,7 +1525,9 @@ mod tests {
         cache.put_sample(7, 1_000, sample);
         let hit = cache.sample_cached(7, 1_000 + TRANSCRIPT_SAMPLE_MS - 1, Some("首条 prompt"));
         assert_eq!(hit.and_then(|s| s.title).as_deref(), Some("ai 起的"));
-        assert!(cache.sample_cached(7, 1_000 + TRANSCRIPT_SAMPLE_MS, Some("首条 prompt")).is_none());
+        assert!(cache
+            .sample_cached(7, 1_000 + TRANSCRIPT_SAMPLE_MS, Some("首条 prompt"))
+            .is_none());
         assert!(cache.sample_cached(7, 1_001, Some("新名字")).is_none());
         assert!(cache.sample_cached(7, 1_001, None).is_none());
     }

@@ -51,15 +51,22 @@ fn newest_wire(root: &Path, since: SystemTime) -> Option<PathBuf> {
     let mut best: Option<(SystemTime, PathBuf)> = None;
     let mut stack = vec![root.to_path_buf()];
     while let Some(dir) = stack.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
                 stack.push(path);
             } else if path.file_name().is_some_and(|n| n == "wire.jsonl")
-                && path.parent().and_then(|p| p.file_name()).is_some_and(|n| n == "main")
+                && path
+                    .parent()
+                    .and_then(|p| p.file_name())
+                    .is_some_and(|n| n == "main")
             {
-                let Ok(modified) = entry.metadata().and_then(|m| m.modified()) else { continue };
+                let Ok(modified) = entry.metadata().and_then(|m| m.modified()) else {
+                    continue;
+                };
                 if modified >= since && best.as_ref().is_none_or(|(t, _)| modified > *t) {
                     best = Some((modified, path));
                 }
@@ -82,7 +89,12 @@ fn kimi_undo_appends_context_undo_and_retracts_turn() {
     let started = SystemTime::now();
 
     let pair = native_pty_system()
-        .openpty(PtySize { rows: 40, cols: 120, pixel_width: 0, pixel_height: 0 })
+        .openpty(PtySize {
+            rows: 40,
+            cols: 120,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
         .unwrap();
     let mut cmd = common::agent_command(&argv[0], &cwd);
     cmd.args(&argv[1..]);
@@ -100,7 +112,11 @@ fn kimi_undo_appends_context_undo_and_retracts_turn() {
     });
     let mut raw = Vec::new();
     // 抽干输出并应答终端查询（DSR / DA1，见 probe_kimi_workspace_trust），直到 `until` 成立或超时。
-    let pump = |writer: &mut Box<dyn Write + Send>, raw: &mut Vec<u8>, secs: u64, until: &dyn Fn(&str) -> bool| -> bool {
+    let pump = |writer: &mut Box<dyn Write + Send>,
+                raw: &mut Vec<u8>,
+                secs: u64,
+                until: &dyn Fn(&str) -> bool|
+     -> bool {
         let deadline = Instant::now() + Duration::from_secs(secs);
         let from = raw.len();
         while Instant::now() < deadline {
@@ -109,7 +125,9 @@ fn kimi_undo_appends_context_undo_and_retracts_turn() {
                     let _ = writer.write_all(b"\x1b[1;1R").and_then(|_| writer.flush());
                 }
                 if chunk.windows(3).any(|w| w == b"\x1b[c") {
-                    let _ = writer.write_all(b"\x1b[?62;22c").and_then(|_| writer.flush());
+                    let _ = writer
+                        .write_all(b"\x1b[?62;22c")
+                        .and_then(|_| writer.flush());
                 }
                 raw.extend_from_slice(&chunk);
             }
@@ -120,13 +138,17 @@ fn kimi_undo_appends_context_undo_and_retracts_turn() {
         false
     };
     let submit = |writer: &mut Box<dyn Write + Send>, text: &str| {
-        let _ = writer.write_all(text.as_bytes()).and_then(|_| writer.flush());
+        let _ = writer
+            .write_all(text.as_bytes())
+            .and_then(|_| writer.flush());
         std::thread::sleep(Duration::from_millis(150));
         let _ = writer.write_all(b"\r").and_then(|_| writer.flush());
     };
 
     // 新临时目录必弹信任屏：回车确认。没弹也无妨（等到输入框即可）。
-    if pump(&mut writer, &mut raw, 30, &|s| s.to_lowercase().contains("trust")) {
+    if pump(&mut writer, &mut raw, 30, &|s| {
+        s.to_lowercase().contains("trust")
+    }) {
         std::thread::sleep(Duration::from_millis(800));
         let _ = writer.write_all(b"\r").and_then(|_| writer.flush());
     }
@@ -147,7 +169,10 @@ fn kimi_undo_appends_context_undo_and_retracts_turn() {
     }
     let wire = wire.expect("90s 内没等到本次会话的 wire.jsonl");
     std::thread::sleep(Duration::from_millis(1500));
-    let spec = kimi.telemetry().and_then(|t| t.transcript()).expect("kimi 有 transcript 规格");
+    let spec = kimi
+        .telemetry()
+        .and_then(|t| t.transcript())
+        .expect("kimi 有 transcript 规格");
     let before = meowo_agent::read_chat_delta(spec, &wire, 0, None);
     let users = |items: &[meowo_agent::ChatItem]| {
         items
@@ -155,7 +180,12 @@ fn kimi_undo_appends_context_undo_and_retracts_turn() {
             .filter(|item| matches!(item, meowo_agent::ChatItem::UserText { .. }))
             .count()
     };
-    eprintln!("[probe] wire {}；撤回前 {} 条，其中用户消息 {}", wire.display(), before.items.len(), users(&before.items));
+    eprintln!(
+        "[probe] wire {}；撤回前 {} 条，其中用户消息 {}",
+        wire.display(),
+        before.items.len(),
+        users(&before.items)
+    );
     assert_eq!(users(&before.items), 1);
 
     submit(&mut writer, "/undo 1");
@@ -166,19 +196,42 @@ fn kimi_undo_appends_context_undo_and_retracts_turn() {
         undone = std::fs::read_to_string(&wire).is_ok_and(|s| s.contains("\"context.undo\""));
     }
     let tail = strip_ansi(&raw);
-    let lines: Vec<&str> = tail.lines().map(str::trim_end).filter(|l| !l.trim().is_empty()).collect();
-    eprintln!("[probe] /undo 后画面末 15 行:\n{}", lines[lines.len().saturating_sub(15)..].join("\n"));
+    let lines: Vec<&str> = tail
+        .lines()
+        .map(str::trim_end)
+        .filter(|l| !l.trim().is_empty())
+        .collect();
+    eprintln!(
+        "[probe] /undo 后画面末 15 行:\n{}",
+        lines[lines.len().saturating_sub(15)..].join("\n")
+    );
     let body = std::fs::read_to_string(&wire).unwrap_or_default();
-    for line in body.lines().filter(|l| l.contains("undo") || l.contains("agent.switched")) {
+    for line in body
+        .lines()
+        .filter(|l| l.contains("undo") || l.contains("agent.switched"))
+    {
         eprintln!("[probe] 撤回记录: {line}");
     }
     let _ = child.kill();
     let _ = child.wait();
     let _ = std::fs::remove_dir_all(&cwd);
-    assert!(undone, "20s 内 wire 没出现 context.undo——/undo N 的行为可能变了");
+    assert!(
+        undone,
+        "20s 内 wire 没出现 context.undo——/undo N 的行为可能变了"
+    );
 
     let after = meowo_agent::read_chat_delta(spec, &wire, before.offset, before.mtime);
-    eprintln!("[probe] 增量读：reset={} undone={} 剩 {} 条", after.reset, after.undone, after.items.len());
+    eprintln!(
+        "[probe] 增量读：reset={} undone={} 剩 {} 条",
+        after.reset,
+        after.undone,
+        after.items.len()
+    );
     assert!(after.reset && after.undone);
-    assert_eq!(users(&after.items), 0, "被撤的那一轮应全部收回：{:?}", after.items);
+    assert_eq!(
+        users(&after.items),
+        0,
+        "被撤的那一轮应全部收回：{:?}",
+        after.items
+    );
 }

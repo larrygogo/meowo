@@ -2689,6 +2689,7 @@ dependencies = [
  "tauri-plugin-window-state",
  "tauri-winrt-notification",
  "tokio",
+ "toml_edit 0.22.27",
  "trash",
  "uiautomation",
  "ureq",
@@ -2717,6 +2718,7 @@ version = "0.1.0"
 dependencies = [
  "crossterm",
  "filetime",
+ "libc",
  "meowo-agent",
  "meowo-protocol",
  "meowo-store",

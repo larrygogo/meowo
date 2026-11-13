@@ -43,7 +43,9 @@ fn latest_source(id: meowo_agent::AgentId) -> Option<LatestSource> {
     Some(match id.as_str() {
         // claude 的安装通道是 downloads.claude.ai 直下二进制（见 install.rs），latest 也取同一
         // 渠道的纯文本版本号文件——若走 npm registry，npm 发布滞后时更新提示就跟着滞后。
-        "claude" => LatestSource::PlainText("https://downloads.claude.ai/claude-code-releases/latest"),
+        "claude" => {
+            LatestSource::PlainText("https://downloads.claude.ai/claude-code-releases/latest")
+        }
         "codex" => LatestSource::Npm("@openai/codex"),
         "gemini" => LatestSource::Npm("@google/gemini-cli"),
         "opencode" => LatestSource::Npm("opencode-ai"),
@@ -173,9 +175,7 @@ fn probe_one(plugin: &'static dyn meowo_agent::AgentPlugin) -> AgentUpdateInfo {
     let installed_version = crate::probe_cli_version(plugin);
     let latest_version = fetch_latest(plugin.id());
     let update_available = match (installed_version.as_deref(), latest_version.as_deref()) {
-        (Some(i), Some(l)) => {
-            compare_versions(i, l).is_some_and(|o| o == std::cmp::Ordering::Less)
-        }
+        (Some(i), Some(l)) => compare_versions(i, l).is_some_and(|o| o == std::cmp::Ordering::Less),
         _ => false,
     };
     let info = AgentUpdateInfo {
@@ -302,7 +302,8 @@ mod tests {
     fn claude_latest_source_is_direct_release_channel() {
         // 与 install.rs 的直下安装同一渠道（downloads.claude.ai 的纯文本版本号），
         // 不走 npm——npm 发布滞后时，更新提示不该跟着滞后。
-        let src = latest_source(meowo_agent::AgentId::new("claude")).expect("claude 应有 latest 源");
+        let src =
+            latest_source(meowo_agent::AgentId::new("claude")).expect("claude 应有 latest 源");
         let LatestSource::PlainText(url) = src else {
             panic!("claude 的 latest 源必须是直下渠道的纯文本版本号，而不是 npm");
         };
@@ -314,10 +315,7 @@ mod tests {
 
     #[test]
     fn plain_version_rejects_html_poison() {
-        assert_eq!(
-            parse_plain_version("<html>Just a moment...</html>"),
-            None
-        );
+        assert_eq!(parse_plain_version("<html>Just a moment...</html>"), None);
         assert_eq!(parse_plain_version("v0.39.1"), None); // 纯文本源必须裸数字
         assert_eq!(parse_plain_version(""), None);
     }

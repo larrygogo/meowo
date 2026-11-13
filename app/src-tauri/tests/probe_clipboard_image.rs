@@ -156,13 +156,22 @@ fn wait_boot(pty: &mut Pty) -> Vec<u8> {
     while Instant::now() < deadline {
         match pty.rx.recv_timeout(Duration::from_millis(1500)) {
             Ok(c) => {
-                eprintln!("[boot] +{}B @{:?}: {:?}", c.len(), start.elapsed(), &c[..c.len().min(48)]);
+                eprintln!(
+                    "[boot] +{}B @{:?}: {:?}",
+                    c.len(),
+                    start.elapsed(),
+                    &c[..c.len().min(48)]
+                );
                 answer_queries(pty, &c, "boot");
                 boot.extend_from_slice(&c);
             }
             Err(_) if !boot.is_empty() => break,
             Err(_) => {
-                eprintln!("[boot] 静默 @{:?}, try_wait={:?}", start.elapsed(), pty.child.try_wait());
+                eprintln!(
+                    "[boot] 静默 @{:?}, try_wait={:?}",
+                    start.elapsed(),
+                    pty.child.try_wait()
+                );
             }
         }
     }
@@ -206,7 +215,10 @@ fn probe_clipboard_image_paste() {
     let (w, h) = set_clipboard_image(&png).expect("set_clipboard_image 失败");
     eprintln!("[剪贴板] set_image 成功：{w}x{h}");
     match arboard::Clipboard::new().and_then(|mut c| c.get_image()) {
-        Ok(img) => eprintln!("[剪贴板] 跨实例 get_image 成功：{}x{}", img.width, img.height),
+        Ok(img) => eprintln!(
+            "[剪贴板] 跨实例 get_image 成功：{}x{}",
+            img.width, img.height
+        ),
         Err(e) => eprintln!("[剪贴板] 跨实例 get_image 失败：{e}"),
     }
 
@@ -227,7 +239,10 @@ fn probe_clipboard_image_paste() {
         let _ = pty.writer.write_all(b"x").and_then(|_| pty.writer.flush());
         let echo = watch(&mut pty, 2);
         eprintln!("### {label} → 普通字符 x 回显: {:?}", strip_ansi(&echo));
-        let _ = pty.writer.write_all(b"\x7f").and_then(|_| pty.writer.flush());
+        let _ = pty
+            .writer
+            .write_all(b"\x7f")
+            .and_then(|_| pty.writer.flush());
         std::thread::sleep(Duration::from_millis(400));
         while pty.rx.try_recv().is_ok() {}
         let _ = pty.writer.write_all(key).and_then(|_| pty.writer.flush());
@@ -238,9 +253,7 @@ fn probe_clipboard_image_paste() {
         eprintln!("\n### {label} → 按键后画面（尾部）:\n{tail}\n");
         eprintln!(
             "### {label} → marker `\\[image` 出现：{}；铃：{}",
-            after
-                .windows(6)
-                .any(|w| w == b"[image"),
+            after.windows(6).any(|w| w == b"[image"),
             after.contains(&0x07)
         );
         // 原始字节里找 image 上下文，确认真实形态（颜色序列/换行）。
@@ -250,7 +263,10 @@ fn probe_clipboard_image_paste() {
             eprintln!("### {label} → 原始上下文: {:?}", &after[lo..hi]);
         }
         // 撤掉可能落进 composer 的残留，再关掉。
-        let _ = pty.writer.write_all(b"\x15").and_then(|_| pty.writer.flush());
+        let _ = pty
+            .writer
+            .write_all(b"\x15")
+            .and_then(|_| pty.writer.flush());
         std::thread::sleep(Duration::from_millis(300));
         let _ = pty.child.kill();
     }

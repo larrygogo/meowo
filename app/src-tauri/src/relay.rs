@@ -287,10 +287,13 @@ mod dpapi {
         };
         if ok == 0 {
             let e = std::io::Error::last_os_error();
-            return Err(format!("DPAPI {}失败：{e}", if protect { "加密" } else { "解密" }));
+            return Err(format!(
+                "DPAPI {}失败：{e}",
+                if protect { "加密" } else { "解密" }
+            ));
         }
-        let out =
-            unsafe { std::slice::from_raw_parts(out_blob.pbData, out_blob.cbData as usize) }.to_vec();
+        let out = unsafe { std::slice::from_raw_parts(out_blob.pbData, out_blob.cbData as usize) }
+            .to_vec();
         unsafe { LocalFree(out_blob.pbData.cast()) };
         Ok(out)
     }
@@ -337,7 +340,9 @@ fn decode_secrets(raw: &str) -> Option<DecodedSecrets> {
             .ok()?;
         let plain = dpapi::unprotect(&cipher).ok()?;
         let plain = String::from_utf8(plain).ok()?;
-        return serde_json::from_str(&plain).ok().map(DecodedSecrets::Current);
+        return serde_json::from_str(&plain)
+            .ok()
+            .map(DecodedSecrets::Current);
     }
     serde_json::from_str::<SecretMap>(raw)
         .ok()
@@ -803,17 +808,13 @@ mod tests {
     /// 单测，仅编译期（cfg）覆盖。
     #[test]
     fn legacy_plaintext_secrets_file_is_migrated() {
-        let dir =
-            std::env::temp_dir().join(format!("meowo-relay-migrate-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("meowo-relay-migrate-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("relay-secrets.json");
         std::fs::write(&path, r#"{"claude":"sk-legacy","kimi":"kk-1"}"#).unwrap();
         let secrets = read_secrets_from(&path);
-        assert_eq!(
-            secrets.get("claude").map(String::as_str),
-            Some("sk-legacy")
-        );
+        assert_eq!(secrets.get("claude").map(String::as_str), Some("sk-legacy"));
         assert_eq!(secrets.get("kimi").map(String::as_str), Some("kk-1"));
         #[cfg(target_os = "windows")]
         {
@@ -851,7 +852,10 @@ mod tests {
     fn dpapi_roundtrip_and_tamper_fails() {
         let cipher = dpapi::protect(b"sk-test-123").unwrap();
         assert_ne!(cipher.as_slice(), b"sk-test-123");
-        assert_eq!(dpapi::unprotect(&cipher).unwrap().as_slice(), b"sk-test-123");
+        assert_eq!(
+            dpapi::unprotect(&cipher).unwrap().as_slice(),
+            b"sk-test-123"
+        );
         let mut tampered = cipher.clone();
         let last = tampered.len() - 1;
         tampered[last] ^= 0xFF;

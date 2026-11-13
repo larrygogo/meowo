@@ -5839,6 +5839,9 @@ button.scm-check-name:hover { text-decoration: underline; }
 /* Lead 面板（用户选定 2026-11-09，对照 Kimi 的留白与对齐）：进度并进标题行右侧的小环；页签是
    分段控件；验收项无编号、细线图标，没通过的在前、正常亮度，已通过的变淡；长句两行截断、点开看全文。 */
 .lead-phase::before { content: "· "; }
+.lead-delivery { margin: var(--sp-8) var(--sp-16); font-size: var(--text-xs); overflow-wrap: anywhere; }
+.lead-delivery button { margin-top: var(--sp-4); }
+.lead-delivery [role="alert"] { color: var(--cc-warn); }
 .lead-head-end { display: inline-flex; align-items: center; gap: var(--sp-8); }
 .lead-progress { display: inline-flex; align-items: center; gap: var(--sp-4); color: var(--cc-text-dim); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
 .lead-ring circle:last-child { transition: stroke-dasharray 0.4s var(--ease-in-out); }

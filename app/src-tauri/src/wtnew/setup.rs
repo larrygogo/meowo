@@ -316,7 +316,13 @@ pub(crate) fn start(task: &Arc<Task>, on_change: Arc<dyn Fn(&str) + Send + Sync>
         s.started_at = Some(crate::now_ms());
         s.finished_at = None;
         s.pid = None;
-        (script, runner, s.timeout, s.generation, s.config_env.clone())
+        (
+            script,
+            runner,
+            s.timeout,
+            s.generation,
+            s.config_env.clone(),
+        )
     };
     append_log(
         &task.log_path,

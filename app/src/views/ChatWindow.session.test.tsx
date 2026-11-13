@@ -391,6 +391,7 @@ describe("ChatWindow", () => {
     // 确认走应用内原生小窗(invoke confirm_dialog):按队列依次给答案,不再 mock 系统 confirm。
     const confirmAnswers: boolean[] = [false, true];
     invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "agent_chat_ui") return Promise.resolve(chatUi("claude"));
       if (command === "confirm_dialog") return Promise.resolve(confirmAnswers.shift() ?? false);
       if (command === "get_chat_history") return Promise.resolve(history);
       if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
@@ -631,6 +632,7 @@ describe("ChatWindow", () => {
     let started = false;
     let wrote = false;
     invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "agent_chat_ui") return Promise.resolve(chatUi("claude"));
       if (command === "get_chat_history") return Promise.resolve(history);
       if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
       if (command === "start_managed_terminal") { started = true; return Promise.resolve(); }
@@ -671,6 +673,7 @@ describe("ChatWindow", () => {
     let ready = false;
     let wrote = false;
     invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "agent_chat_ui") return Promise.resolve(chatUi("claude"));
       if (command === "get_chat_history") return Promise.resolve(history);
       if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
       if (command === "start_managed_terminal") { started = true; return Promise.resolve(); }
@@ -1014,11 +1017,9 @@ describe("ChatWindow", () => {
   });
 
   /**
-   * 软拦:hook 说 agent 在等交互(pendingReview)但屏幕识别没认出卡片(未覆盖的提示
-   * 形态)——直接发送会把正文+回车打进看不见的选择器。此时要一次明确知情的确认,
-   * 拒绝则不写终端;确认后照常发送。
+   * hook已报告交互时，不能把识别不到题面当成可发送；正文+回车会误答原生选择器。
    */
-  it("pendingReview 未识别成卡片时,发送不拦截,亮非阻断提示", async () => {
+  it("pendingReview 未识别成卡片时保留原文，不发送到未知选择器", async () => {
     window.history.replaceState({}, "", "/?sessionId=48");
     invoke.mockImplementation((command: string) => {
       if (command === "get_chat_history") return Promise.resolve({
@@ -1038,11 +1039,11 @@ describe("ChatWindow", () => {
     const input = await screen.findByRole("combobox", { name: "发送消息给 Agent" });
     fireEvent.change(input, { target: { value: "继续" } });
 
-    // 软拦已改非阻断:照常发送正文,不弹确认小窗,同时亮一条可跳终端的提示横幅。
     fireEvent.keyDown(input, { key: "Enter" });
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 48, data: "继续" }), { timeout: 3_000 });
+    expect(await screen.findByText(/Agent 有提问待回答/)).toBeTruthy();
+    expect(invoke.mock.calls.some(([command, args]) => command === "write_managed_terminal" && args?.sessionId === 48)).toBe(false);
+    expect((input as HTMLTextAreaElement).value).toBe("继续");
     expect(invoke.mock.calls.some(([command]) => command === "confirm_dialog")).toBe(false);
-    expect(await screen.findByText(/消息已发出/)).toBeTruthy();
   });
 
   /**

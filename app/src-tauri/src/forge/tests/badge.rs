@@ -7,9 +7,22 @@ use std::time::{Duration, Instant};
 
 const DIRTY: Option<DiffCounts> = Some((12, 3, 2));
 
-fn run(fake: &FakeGh, caches: &Caches, diffs: &DiffCache, prefs: &Path, cwds: &[String], online: bool, counts: Option<DiffCounts>) -> Vec<SidebarGitBadgeDto> {
+fn run(
+    fake: &FakeGh,
+    caches: &Caches,
+    diffs: &DiffCache,
+    prefs: &Path,
+    cwds: &[String],
+    online: bool,
+    counts: Option<DiffCounts>,
+) -> Vec<SidebarGitBadgeDto> {
     let gh = |dir: &str, args: &[&str]| fake.run(dir, args);
-    let ctx = Ctx { gh: &gh, caches, prefs: prefs.to_path_buf(), env: &[] };
+    let ctx = Ctx {
+        gh: &gh,
+        caches,
+        prefs: prefs.to_path_buf(),
+        env: &[],
+    };
     badges_with(&ctx, diffs, cwds, online, &|_| counts)
 }
 
@@ -28,11 +41,19 @@ fn 侧栏_同一仓库六十秒内只查一次_pr() {
     assert_eq!(first.len(), 1);
     let pr = first[0].pr.as_ref().expect("有 PR");
     assert_eq!(pr.checks.as_deref(), Some("fail"));
-    assert_eq!((first[0].additions, first[0].deletions, first[0].files), (12, 3, 2));
+    assert_eq!(
+        (first[0].additions, first[0].deletions, first[0].files),
+        (12, 3, 2)
+    );
     for _ in 0..5 {
         run(&fake, &caches, &diffs, &prefs, &cwds, true, DIRTY);
     }
-    assert_eq!(fake.count("pr view"), 1, "60 秒内反复刷新只打一次 gh pr view：{:?}", fake.calls.lock().unwrap());
+    assert_eq!(
+        fake.count("pr view"),
+        1,
+        "60 秒内反复刷新只打一次 gh pr view：{:?}",
+        fake.calls.lock().unwrap()
+    );
     // 过了 60 秒才再查。
     for entry in lock(&caches.prs).values_mut() {
         entry.0 = Instant::now().checked_sub(Duration::from_secs(61)).unwrap();
@@ -55,7 +76,12 @@ fn 侧栏_gh_出错也按六十秒节流_不每轮重查() {
         let out = run(&fake, &caches, &diffs, &prefs, &cwds, true, DIRTY);
         assert!(out[0].pr.is_none(), "出错时不显示 PR");
     }
-    assert_eq!(fake.count("pr view"), 1, "出错后 60 秒内不再重查：{:?}", fake.calls.lock().unwrap());
+    assert_eq!(
+        fake.count("pr view"),
+        1,
+        "出错后 60 秒内不再重查：{:?}",
+        fake.calls.lock().unwrap()
+    );
     for entry in lock(&caches.prs).values_mut() {
         entry.0 = Instant::now().checked_sub(Duration::from_secs(61)).unwrap();
     }
@@ -75,12 +101,18 @@ fn 侧栏_窗口隐藏时一次_gh_都不调() {
     let hidden = run(&fake, &caches, &diffs, &prefs, &cwds, false, DIRTY);
     assert_eq!(hidden.len(), 1);
     assert!(hidden[0].pr.is_none());
-    assert!(fake.calls.lock().unwrap().is_empty(), "{:?}", fake.calls.lock().unwrap());
+    assert!(
+        fake.calls.lock().unwrap().is_empty(),
+        "{:?}",
+        fake.calls.lock().unwrap()
+    );
     // 看得见时查一次，之后隐藏：缓存过期了也只读缓存，照样零调用。
     run(&fake, &caches, &diffs, &prefs, &cwds, true, DIRTY);
     let before = fake.calls.lock().unwrap().len();
     for entry in lock(&caches.prs).values_mut() {
-        entry.0 = Instant::now().checked_sub(Duration::from_secs(600)).unwrap();
+        entry.0 = Instant::now()
+            .checked_sub(Duration::from_secs(600))
+            .unwrap();
     }
     let stale = run(&fake, &caches, &diffs, &prefs, &cwds, false, DIRTY);
     assert!(stale[0].pr.is_some(), "隐藏时沿用缓存里的 PR");
@@ -99,7 +131,15 @@ fn 侧栏_没装_gh_只给改动数_干净且无_pr_的不回() {
     assert_eq!(dirty.len(), 1);
     assert!(dirty[0].pr.is_none());
     assert_eq!(dirty[0].additions, 12);
-    let clean = run(&fake, &caches, &DiffCache::default(), &prefs, &[s(&repo)], true, Some((0, 0, 0)));
+    let clean = run(
+        &fake,
+        &caches,
+        &DiffCache::default(),
+        &prefs,
+        &[s(&repo)],
+        true,
+        Some((0, 0, 0)),
+    );
     assert!(clean.is_empty(), "没有改动也没有 PR 的会话行什么都不显示");
 }
 
@@ -112,7 +152,12 @@ fn 侧栏_改动数按目录缓存() {
     let prefs = sb.root.join("forge.json");
     let counted = std::sync::atomic::AtomicUsize::new(0);
     let gh = |dir: &str, args: &[&str]| fake.run(dir, args);
-    let ctx = Ctx { gh: &gh, caches: &caches, prefs, env: &[] };
+    let ctx = Ctx {
+        gh: &gh,
+        caches: &caches,
+        prefs,
+        env: &[],
+    };
     let compute = |_: &str| {
         counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         DIRTY
@@ -136,9 +181,17 @@ fn 侧栏_切分支后_pr_跟着换_不等缓存过期() {
     // PR 去向按目录缓存了，但 HEAD 变了就得重算：不然切到新分支后一分钟内还挂着旧分支的 PR。
     sb.git(&repo, &["switch", "-q", "-c", "meowo/other"]);
     run(&fake, &caches, &diffs, &prefs, &[s(&repo)], true, DIRTY);
-    assert_eq!(fake.count("pr view meowo/other "), 1, "{:?}", fake.calls.lock().unwrap());
+    assert_eq!(
+        fake.count("pr view meowo/other "),
+        1,
+        "{:?}",
+        fake.calls.lock().unwrap()
+    );
     // 换远端（改 .git/config）同理：不再是 GitHub 仓库就不查 PR。
-    sb.git(&repo, &["remote", "set-url", "origin", "https://gitlab.com/x/y.git"]);
+    sb.git(
+        &repo,
+        &["remote", "set-url", "origin", "https://gitlab.com/x/y.git"],
+    );
     sb.git(&repo, &["switch", "-q", "-c", "meowo/third"]);
     run(&fake, &caches, &diffs, &prefs, &[s(&repo)], true, DIRTY);
     assert_eq!(fake.count("pr view meowo/third"), 0);
@@ -162,7 +215,17 @@ fn 侧栏_读_head_文件与_symbolic_ref_得到同一个_pr_键() {
     assert_eq!(repo_info(&dir, &[], &prefs).unwrap().branch, None);
     // worktree：HEAD 在 worktree 自己的 .git 目录里，键里的公共目录仍是主仓库的。
     let wt = sb.root.join("gh-wt");
-    sb.git(&repo, &["worktree", "add", "-q", "-b", "meowo/wt", &wt.to_string_lossy()]);
+    sb.git(
+        &repo,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "meowo/wt",
+            &wt.to_string_lossy(),
+        ],
+    );
     let (fast, _, _) = repo_head(&s(&wt), &[], &prefs, true).unwrap();
     let full = repo_info(&s(&wt), &[], &prefs).unwrap();
     assert_eq!(fast.branch.as_deref(), Some("meowo/wt"));
@@ -178,17 +241,38 @@ fn 侧栏_head_文件读不懂就交给_git() {
         std::fs::write(dir.join("HEAD"), text).unwrap();
         branch_from_head_file(&dir)
     };
-    assert_eq!(head("ref: refs/heads/feat/a
-"), Some(Some("feat/a".into())));
-    assert_eq!(head(&format!("{}
-", "a".repeat(40))), Some(None));
-    assert_eq!(head("ref: refs/remotes/origin/main
-"), None);
+    assert_eq!(
+        head(
+            "ref: refs/heads/feat/a
+"
+        ),
+        Some(Some("feat/a".into()))
+    );
+    assert_eq!(
+        head(&format!(
+            "{}
+",
+            "a".repeat(40)
+        )),
+        Some(None)
+    );
+    assert_eq!(
+        head(
+            "ref: refs/remotes/origin/main
+"
+        ),
+        None
+    );
     assert_eq!(head("garbage"), None);
     // reftable：HEAD 只是占位，必须问 git。
     std::fs::create_dir_all(dir.join("reftable")).unwrap();
-    assert_eq!(head("ref: refs/heads/.invalid
-"), None);
+    assert_eq!(
+        head(
+            "ref: refs/heads/.invalid
+"
+        ),
+        None
+    );
 }
 
 /// 基准：20 个工作目录（1 个带 15000 个未跟踪文件的大仓库、13 个普通仓库、6 个非仓库）跑一遍侧栏摘要，
@@ -199,16 +283,29 @@ fn 侧栏_head_文件读不懂就交给_git() {
 #[ignore]
 fn bench_sidebar_badges_20_dirs() {
     use super::super::badge::real_diff_counts;
-    let base = std::env::var_os("MEOWO_BADGE_BENCH_DIR").map(PathBuf::from).unwrap_or_else(std::env::temp_dir);
+    let base = std::env::var_os("MEOWO_BADGE_BENCH_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
     let root = base.join(format!("badge-bench-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     let config = root.join("empty.gitconfig");
     std::fs::write(&config, "").unwrap();
     // Drop 时删掉整个目录（含大仓库）。
-    let sb = Sandbox { root: root.clone(), config };
+    let sb = Sandbox {
+        root: root.clone(),
+        config,
+    };
     let github = |dir: &Path| {
-        sb.git(dir, &["remote", "add", "origin", "https://github.com/larrygogo/meowo-pr-drill.git"]);
+        sb.git(
+            dir,
+            &[
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/larrygogo/meowo-pr-drill.git",
+            ],
+        );
         let init = sb.git(dir, &["rev-parse", "HEAD"]);
         sb.git(dir, &["update-ref", "refs/remotes/origin/main", &init]);
         sb.git(dir, &["switch", "-q", "-c", "meowo/drill"]);
@@ -258,7 +355,12 @@ fn bench_sidebar_badges_20_dirs() {
             .unwrap_or_default()
             .lines()
             .filter(|l| l.contains("\"event\":\"start\""))
-            .filter(|l| l.split("\"sid\":\"").nth(1).and_then(|r| r.split('"').next()).is_some_and(|sid| !sid.contains('/')))
+            .filter(|l| {
+                l.split("\"sid\":\"")
+                    .nth(1)
+                    .and_then(|r| r.split('"').next())
+                    .is_some_and(|sid| !sid.contains('/'))
+            })
             .count()
     };
     let ms = |d: Duration| d.as_secs_f64() * 1000.0;
@@ -270,16 +372,36 @@ fn bench_sidebar_badges_20_dirs() {
     let cold = |list: &[String]| {
         crate::git::invalidate_caches();
         let (caches, diffs) = (Caches::default(), DiffCache::default());
-        let ctx = Ctx { gh: &gh, caches: &caches, prefs: prefs.clone(), env: &[] };
+        let ctx = Ctx {
+            gh: &gh,
+            caches: &caches,
+            prefs: prefs.clone(),
+            env: &[],
+        };
         let start = Instant::now();
         let rows = badges_with(&ctx, &diffs, list, true, &real_diff_counts);
         (start.elapsed(), rows)
     };
     let (_, rows) = cold(&cwds);
-    let shown: Vec<String> = rows.iter().map(|r| format!("{}:+{}-{}/{}", r.cwd.rsplit('/').next().unwrap(), r.additions, r.deletions, r.files)).collect();
+    let shown: Vec<String> = rows
+        .iter()
+        .map(|r| {
+            format!(
+                "{}:+{}-{}/{}",
+                r.cwd.rsplit('/').next().unwrap(),
+                r.additions,
+                r.deletions,
+                r.files
+            )
+        })
+        .collect();
     eprintln!("回包 {} 条：{shown:?}", rows.len());
     let cold_all = median((0..5).map(|_| cold(&cwds).0).collect());
-    let cold_big = median((0..5).map(|_| cold(std::slice::from_ref(&cwds[0])).0).collect());
+    let cold_big = median(
+        (0..5)
+            .map(|_| cold(std::slice::from_ref(&cwds[0])).0)
+            .collect(),
+    );
     let cold_spawns = spawns(&|| {
         cold(&cwds);
     });
@@ -290,7 +412,12 @@ fn bench_sidebar_badges_20_dirs() {
     // 稳态：前端每 30 秒问一次，改动缓存（15s）与折叠计数（30s）都已过期，PR（60s）与登录状态（5min）还新。
     crate::git::invalidate_caches();
     let (caches, diffs) = (Caches::default(), DiffCache::default());
-    let ctx = Ctx { gh: &gh, caches: &caches, prefs: prefs.clone(), env: &[] };
+    let ctx = Ctx {
+        gh: &gh,
+        caches: &caches,
+        prefs: prefs.clone(),
+        env: &[],
+    };
     badges_with(&ctx, &diffs, &cwds, true, &real_diff_counts);
     let hot_all = median(
         (0..5)
@@ -315,9 +442,29 @@ fn bench_sidebar_badges_20_dirs() {
     let steady_spawns = spawns(&|| {
         steady();
     });
-    eprintln!("冷（20 目录）：{:.1} ms，git 进程 {cold_spawns}", ms(cold_all));
-    eprintln!("冷（仅大仓库）：{:.1} ms，git 进程 {big_spawns}", ms(cold_big));
-    eprintln!("热（15s 内复查）：{:.1} ms，git 进程 {hot_spawns}", ms(hot_all));
-    eprintln!("稳态（每 30s 一轮）：{:.1} ms，git 进程 {steady_spawns}", ms(steady_all));
-    eprintln!("gh 调用：{:?}", fake.calls.lock().unwrap().iter().take(3).collect::<Vec<_>>());
+    eprintln!(
+        "冷（20 目录）：{:.1} ms，git 进程 {cold_spawns}",
+        ms(cold_all)
+    );
+    eprintln!(
+        "冷（仅大仓库）：{:.1} ms，git 进程 {big_spawns}",
+        ms(cold_big)
+    );
+    eprintln!(
+        "热（15s 内复查）：{:.1} ms，git 进程 {hot_spawns}",
+        ms(hot_all)
+    );
+    eprintln!(
+        "稳态（每 30s 一轮）：{:.1} ms，git 进程 {steady_spawns}",
+        ms(steady_all)
+    );
+    eprintln!(
+        "gh 调用：{:?}",
+        fake.calls
+            .lock()
+            .unwrap()
+            .iter()
+            .take(3)
+            .collect::<Vec<_>>()
+    );
 }

@@ -17,10 +17,18 @@ mod common;
 /// 把打包的 conpty.dll + OpenConsole.exe 放到测试 exe 旁边，portable-pty 才会加载它们。
 fn use_bundled_conpty() {
     let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("binaries/conpty");
-    let target = std::env::current_exe().unwrap().parent().unwrap().to_path_buf();
+    let target = std::env::current_exe()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_path_buf();
     for name in ["conpty.dll", "OpenConsole.exe"] {
         let from = source.join(name);
-        assert!(from.exists(), "缺 {}，先跑 scripts/fetch-conpty.mjs", from.display());
+        assert!(
+            from.exists(),
+            "缺 {}，先跑 scripts/fetch-conpty.mjs",
+            from.display()
+        );
         if !target.join(name).exists() {
             std::fs::copy(&from, target.join(name)).unwrap();
         }
@@ -74,7 +82,9 @@ fn opencode_models_menu_accepts_pty_input() {
                 let _ = writer.write_all(b"\x1b[1;1R").and_then(|_| writer.flush());
             }
             if chunk.windows(3).any(|part| part == b"\x1b[c") {
-                let _ = writer.write_all(b"\x1b[?62;22c").and_then(|_| writer.flush());
+                let _ = writer
+                    .write_all(b"\x1b[?62;22c")
+                    .and_then(|_| writer.flush());
             }
             drop(writer);
             parser.lock().unwrap().process(chunk);
@@ -100,7 +110,10 @@ fn opencode_models_menu_accepts_pty_input() {
         if !wait_for(&|s| s.contains("ask anything"), Duration::from_secs(20)) {
             return Err("首屏未出现输入框".into());
         }
-        let delay = std::env::var("OC_DELAY_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+        let delay = std::env::var("OC_DELAY_MS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
         std::thread::sleep(Duration::from_millis(delay));
         send("/models");
         if !wait_for(&|s| s.contains("/models"), Duration::from_secs(3)) {
@@ -122,5 +135,9 @@ fn opencode_models_menu_accepts_pty_input() {
     let _ = child.wait();
     drop(pair.master);
     let _ = std::fs::remove_dir_all(root);
-    assert!(result.is_ok(), "{}；末屏=\n{last_screen}", result.unwrap_err());
+    assert!(
+        result.is_ok(),
+        "{}；末屏=\n{last_screen}",
+        result.unwrap_err()
+    );
 }

@@ -29,8 +29,8 @@ use windows::Win32::UI::Shell::Common::{
     PERCEIVED_TYPE_AUDIO, PERCEIVED_TYPE_IMAGE, PERCEIVED_TYPE_VIDEO,
 };
 use windows::Win32::UI::Shell::{
-    AssocGetPerceivedType, IAssocHandler, IShellItem, SHAssocEnumHandlers,
-    SHCreateItemFromParsingName, SHDefExtractIconW, ASSOC_FILTER_RECOMMENDED, BHID_DataObject,
+    AssocGetPerceivedType, BHID_DataObject, IAssocHandler, IShellItem, SHAssocEnumHandlers,
+    SHCreateItemFromParsingName, SHDefExtractIconW, ASSOC_FILTER_RECOMMENDED,
 };
 use windows::Win32::UI::WindowsAndMessaging::{DestroyIcon, GetIconInfo, HICON, ICONINFO};
 
@@ -96,7 +96,11 @@ pub(crate) fn list_for_path(path: &Path) -> Vec<FileOpenerDto> {
     let list = if text {
         let mut merged = if ext_perceived_as_media(&ext) {
             let txt = enumerate_openers(".txt");
-            if txt.is_empty() { enumerate_openers(&ext) } else { txt }
+            if txt.is_empty() {
+                enumerate_openers(&ext)
+            } else {
+                txt
+            }
         } else {
             let mut base = enumerate_openers(&ext);
             for opener in enumerate_openers(".txt") {
@@ -115,14 +119,19 @@ pub(crate) fn list_for_path(path: &Path) -> Vec<FileOpenerDto> {
     } else {
         enumerate_openers(&ext)
     };
-    cache.lock().unwrap_or_else(|e| e.into_inner()).insert(key, list.clone());
+    cache
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(key, list.clone());
     list
 }
 
 /// 前 8KB 无 NUL 即视为文本（与 fsutil/git 的二进制嗅探同一判据）；读不了按二进制算。
 fn is_text_file(path: &Path) -> bool {
     use std::io::Read;
-    let Ok(file) = std::fs::File::open(path) else { return false };
+    let Ok(file) = std::fs::File::open(path) else {
+        return false;
+    };
     let mut buf = Vec::with_capacity(8 * 1024);
     if file.take(8 * 1024).read_to_end(&mut buf).is_err() {
         return false;
@@ -135,17 +144,29 @@ fn ext_perceived_as_media(ext: &str) -> bool {
     let wide: Vec<u16> = ext.encode_utf16().chain([0]).collect();
     let mut perceived = Default::default();
     let mut flag = Default::default();
-    unsafe { AssocGetPerceivedType(PCWSTR(wide.as_ptr()), &mut perceived, &mut flag, None) }
-        .is_ok()
-        && [PERCEIVED_TYPE_AUDIO, PERCEIVED_TYPE_VIDEO, PERCEIVED_TYPE_IMAGE].contains(&perceived)
+    unsafe { AssocGetPerceivedType(PCWSTR(wide.as_ptr()), &mut perceived, &mut flag, None) }.is_ok()
+        && [
+            PERCEIVED_TYPE_AUDIO,
+            PERCEIVED_TYPE_VIDEO,
+            PERCEIVED_TYPE_IMAGE,
+        ]
+        .contains(&perceived)
 }
 
 /// handler 标识（exe 路径）是否指向已知代码编辑器：文本文件的清单里让它们排最前。
 fn is_code_editor(id: &str) -> bool {
     let lower = id.to_lowercase();
-    ["code.exe", "cursor.exe", "notepad++.exe", "sublime_text.exe", "idea64.exe", "webstorm64.exe", "zed.exe"]
-        .iter()
-        .any(|exe| lower.ends_with(exe))
+    [
+        "code.exe",
+        "cursor.exe",
+        "notepad++.exe",
+        "sublime_text.exe",
+        "idea64.exe",
+        "webstorm64.exe",
+        "zed.exe",
+    ]
+    .iter()
+    .any(|exe| lower.ends_with(exe))
 }
 
 fn enumerate_openers(ext: &str) -> Vec<FileOpenerDto> {
@@ -197,9 +218,11 @@ pub(crate) fn invoke(path: &Path, handler_id: &str) -> Result<(), String> {
     if ext.is_empty() {
         return Err("该文件类型没有关联应用".into());
     }
-    let Some(handler) = find_handler(&ext, handler_id)
-        .or_else(|| (ext != ".txt").then(|| find_handler(".txt", handler_id)).flatten())
-    else {
+    let Some(handler) = find_handler(&ext, handler_id).or_else(|| {
+        (ext != ".txt")
+            .then(|| find_handler(".txt", handler_id))
+            .flatten()
+    }) else {
         return Err("该打开方式已不可用".into());
     };
     // 标识是实 exe：直接带参启动（见模块头——关联层对未声明的扩展名会弹选择器）。
@@ -244,8 +267,9 @@ fn invoke_handler(handler: &IAssocHandler, path: &Path) -> Result<(), String> {
         let wide_path: Vec<u16> = display.encode_utf16().chain([0]).collect();
         let item: IShellItem = SHCreateItemFromParsingName(PCWSTR(wide_path.as_ptr()), None)
             .map_err(|e| e.to_string())?;
-        let data: IDataObject =
-            item.BindToHandler(None, &BHID_DataObject).map_err(|e| e.to_string())?;
+        let data: IDataObject = item
+            .BindToHandler(None, &BHID_DataObject)
+            .map_err(|e| e.to_string())?;
         handler.Invoke(&data).map_err(|e| e.to_string())
     }
 }
@@ -333,9 +357,9 @@ unsafe fn bitmaps_to_png(color: HBITMAP, mask: HBITMAP) -> Option<Vec<u8>> {
     let pixels = unsafe { grab_bgra(hdc, color, width, height) };
     // alpha 全 0 时才需要掩码（白 = 透明）；现代图标带真 alpha，掩码不抓。
     let mask_pixels = match &pixels {
-        Some(px) if px.chunks_exact(4).all(|p| p[3] == 0) => {
-            unsafe { grab_bgra(hdc, mask, width, height) }
-        }
+        Some(px) if px.chunks_exact(4).all(|p| p[3] == 0) => unsafe {
+            grab_bgra(hdc, mask, width, height)
+        },
         _ => None,
     };
     unsafe { ReleaseDC(None, hdc) };

@@ -236,7 +236,9 @@ fn build_live_sessions_sql(
         } else if order == ListOrder::Created {
             conditions.push("((s.started_at < ?) OR (s.started_at = ? AND s.id < ?))".into());
         } else if order == ListOrder::Manual {
-            conditions.push(format!("(({MANUAL_KEY} < ?) OR ({MANUAL_KEY} = ? AND s.id < ?))"));
+            conditions.push(format!(
+                "(({MANUAL_KEY} < ?) OR ({MANUAL_KEY} = ? AND s.id < ?))"
+            ));
         } else {
             conditions.push("((s.last_event_at < ?) OR (s.last_event_at = ? AND s.id < ?))".into());
         }
@@ -259,7 +261,10 @@ fn build_live_sessions_sql(
             ListOrder::Activity => "s.last_event_at DESC, s.id DESC".to_string(),
         }
     };
-    let sql = format!("{} {} ORDER BY {} LIMIT ?", LIVE_SELECT, where_clause, order_by);
+    let sql = format!(
+        "{} {} ORDER BY {} LIMIT ?",
+        LIVE_SELECT, where_clause, order_by
+    );
     params.push(Value::Integer(limit as i64));
 
     (sql, params)
@@ -328,7 +333,15 @@ impl Store {
         before_id: Option<i64>,
         limit: usize,
     ) -> Result<Vec<LiveSession>, StoreError> {
-        self.live_sessions_scan(filter, search, cwd, before_last_event_at, before_id, ListOrder::Activity, limit)
+        self.live_sessions_scan(
+            filter,
+            search,
+            cwd,
+            before_last_event_at,
+            before_id,
+            ListOrder::Activity,
+            limit,
+        )
     }
 
     /// [`Self::live_sessions_filtered`] 再多一个排序开关:`by_created` 时按创建时间倒序,
@@ -352,7 +365,10 @@ impl Store {
     /// 会话管理页（对照 Kimi Code 的会话管理）：按工作区（多选）、状态、最后更新时间筛选，
     /// 按页码分页，同时给总数。只看「未被接替的链尾」，与看板同口径；从没发过一句话的空壳会话
     /// （无标题、无最近输入）不算——它们没有可管理的内容。顺序固定为最后更新倒序。
-    pub fn session_admin_page(&self, query: &AdminQuery) -> Result<(Vec<LiveSession>, i64), StoreError> {
+    pub fn session_admin_page(
+        &self,
+        query: &AdminQuery,
+    ) -> Result<(Vec<LiveSession>, i64), StoreError> {
         use rusqlite::types::Value;
         let mut conditions: Vec<String> = vec![
             "s.superseded_by IS NULL".into(),
@@ -367,12 +383,18 @@ impl Store {
         let dirs: Vec<String> = query
             .cwds
             .iter()
-            .map(|dir| dir.trim().replace('\\', "/").trim_end_matches('/').to_string())
+            .map(|dir| {
+                dir.trim()
+                    .replace('\\', "/")
+                    .trim_end_matches('/')
+                    .to_string()
+            })
             .filter(|dir| !dir.is_empty())
             .collect();
         if !dirs.is_empty() {
             // 斜杠归一 + 去尾斜杠后精确比较，与侧栏目录筛选同一规则。
-            let any = vec!["RTRIM(REPLACE(s.cwd, '\\', '/'), '/') = ? COLLATE NOCASE"; dirs.len()].join(" OR ");
+            let any = vec!["RTRIM(REPLACE(s.cwd, '\\', '/'), '/') = ? COLLATE NOCASE"; dirs.len()]
+                .join(" OR ");
             conditions.push(format!("({any})"));
             params.extend(dirs.into_iter().map(Value::Text));
         }
@@ -402,7 +424,11 @@ impl Store {
     }
 
     /// 执行一条以 [`LIVE_SELECT`] 开头的查询，逐行组装成会话卡（批量补上 todos）。
-    fn run_live_query(&self, sql: &str, params: &[rusqlite::types::Value]) -> Result<Vec<LiveSession>, StoreError> {
+    fn run_live_query(
+        &self,
+        sql: &str,
+        params: &[rusqlite::types::Value],
+    ) -> Result<Vec<LiveSession>, StoreError> {
         let mut stmt = self.conn.prepare(sql)?;
         let rows = stmt
             .query_map(rusqlite::params_from_iter(params.iter()), |r| {
@@ -538,7 +564,12 @@ impl Store {
     /// 位置取新邻居两键的中值，邻居按**全库**的手动键找（不限当前 tab / 筛选）：只要全局顺序
     /// 对，任何子集里看到的相对顺序都对。中值挤不下（两键相邻）时，把那一侧的会话整体挪开
     /// 一段再插——一条 UPDATE，罕见。两个都没给（列表里只剩它自己）不动。
-    pub fn move_session_rank(&self, id: i64, above: Option<i64>, below: Option<i64>) -> Result<(), StoreError> {
+    pub fn move_session_rank(
+        &self,
+        id: i64,
+        above: Option<i64>,
+        below: Option<i64>,
+    ) -> Result<(), StoreError> {
         // 挪到最上 / 最下、或空隙用尽整体挪开时的步长：1024 = 1ms 的创建时间。不能大：拖到顶的
         // 会话只该比原来的第一条高一点，之后新建的会话照样出现在它上面。
         const GAP: i64 = 1024;
@@ -549,7 +580,11 @@ impl Store {
         let tx = crate::store::ImmediateTx::begin(&self.conn)?;
         let conn = &self.conn;
         let key_of = |sid: i64| -> Result<i64, StoreError> {
-            Ok(conn.query_row(&format!("SELECT {KEY} FROM sessions WHERE id = ?1"), [sid], |r| r.get(0))?)
+            Ok(conn.query_row(
+                &format!("SELECT {KEY} FROM sessions WHERE id = ?1"),
+                [sid],
+                |r| r.get(0),
+            )?)
         };
         let rank = if let Some(above) = above.filter(|&a| a != id) {
             let hi = key_of(above)?;
@@ -598,7 +633,10 @@ impl Store {
                 f();
             }
         });
-        conn.execute("UPDATE sessions SET manual_rank = ?1 WHERE id = ?2", rusqlite::params![rank, id])?;
+        conn.execute(
+            "UPDATE sessions SET manual_rank = ?1 WHERE id = ?2",
+            rusqlite::params![rank, id],
+        )?;
         tx.commit()?;
         Ok(())
     }
@@ -657,11 +695,11 @@ impl Store {
                          AND TRIM(COALESCE(t.title, '')) IN ('', '(未命名会话)')
                          AND NOT EXISTS (SELECT 1 FROM todos td WHERE td.task_id = t.id)))"
             );
-            let (n, a): (i64, i64) = self.conn.query_row(
-                &sql,
-                rusqlite::params_from_iter(chunk),
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )?;
+            let (n, a): (i64, i64) =
+                self.conn
+                    .query_row(&sql, rusqlite::params_from_iter(chunk), |r| {
+                        Ok((r.get(0)?, r.get(1)?))
+                    })?;
             total += n;
             archived += a;
         }
@@ -788,14 +826,26 @@ mod tests {
             }));
         });
         let result = store.move_session_rank(a, Some(b), None);
-        assert!(result.is_ok(), "并发提交后 move_session_rank 失败：{result:?}（另一连接已提交={}）", other_committed.get());
+        assert!(
+            result.is_ok(),
+            "并发提交后 move_session_rank 失败：{result:?}（另一连接已提交={}）",
+            other_committed.get()
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// 对**真正执行的那条 SQL**取查询计划。用 `build_live_sessions_sql` 而非抄写的
     /// 字面量:谓词一旦改写到用不上索引,这里立刻红,而不是等大库上用户报「越滚越卡」。
     fn plan(store: &Store, filter: &str, search: Option<&str>) -> String {
-        let (sql, params) = build_live_sessions_sql(Some(filter), search, None, None, None, super::ListOrder::Activity, 50);
+        let (sql, params) = build_live_sessions_sql(
+            Some(filter),
+            search,
+            None,
+            None,
+            None,
+            super::ListOrder::Activity,
+            50,
+        );
         let mut stmt = store
             .conn
             .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
@@ -833,8 +883,15 @@ mod tests {
     #[test]
     fn paging_cursor_keeps_the_index_order() {
         let store = Store::open_in_memory().unwrap();
-        let (sql, params) =
-            build_live_sessions_sql(Some("all"), None, None, Some(1_700_000_000), Some(42), super::ListOrder::Activity, 50);
+        let (sql, params) = build_live_sessions_sql(
+            Some("all"),
+            None,
+            None,
+            Some(1_700_000_000),
+            Some(42),
+            super::ListOrder::Activity,
+            50,
+        );
         let mut stmt = store
             .conn
             .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))

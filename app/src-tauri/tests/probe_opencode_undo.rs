@@ -26,10 +26,18 @@ mod common;
 /// 同 probe_opencode_input：生产加载打包的 OpenConsole，测试 exe 旁不放它会退回系统 conhost。
 fn use_bundled_conpty() {
     let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("binaries/conpty");
-    let target = std::env::current_exe().unwrap().parent().unwrap().to_path_buf();
+    let target = std::env::current_exe()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .to_path_buf();
     for name in ["conpty.dll", "OpenConsole.exe"] {
         let from = source.join(name);
-        assert!(from.exists(), "缺 {}，先跑 scripts/fetch-conpty.mjs", from.display());
+        assert!(
+            from.exists(),
+            "缺 {}，先跑 scripts/fetch-conpty.mjs",
+            from.display()
+        );
         if !target.join(name).exists() {
             std::fs::copy(&from, target.join(name)).unwrap();
         }
@@ -38,7 +46,9 @@ fn use_bundled_conpty() {
 
 /// 探针只读查库。meowo-app 不直接依赖 rusqlite，借本机 python 的 sqlite3（只读 URI）。
 fn query(sql: &str, arg: &str) -> Vec<Vec<serde_json::Value>> {
-    let home = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).unwrap();
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .unwrap();
     let db = PathBuf::from(home).join(".local/share/opencode/opencode.db");
     let script = concat!(
         "import sqlite3,sys,json\n",
@@ -50,7 +60,10 @@ fn query(sql: &str, arg: &str) -> Vec<Vec<serde_json::Value>> {
         .output()
         .expect("需要本机 python");
     if !out.status.success() {
-        eprintln!("[probe] python 查库失败: {}", String::from_utf8_lossy(&out.stderr));
+        eprintln!(
+            "[probe] python 查库失败: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
     }
     serde_json::from_slice(&out.stdout).unwrap_or_default()
 }
@@ -60,22 +73,33 @@ fn probe_session(cwd: &Path) -> Option<String> {
     // opencode 存正斜杠（实测 1.19.3）。
     let norm = |p: &str| p.replace('\\', "/").to_lowercase();
     let want = norm(&cwd.to_string_lossy());
-    query("SELECT id, directory FROM session ORDER BY time_created DESC LIMIT 20", "")
-        .into_iter()
-        .find(|row| row[1].as_str().is_some_and(|d| norm(d) == want))
-        .and_then(|row| row[0].as_str().map(str::to_string))
+    query(
+        "SELECT id, directory FROM session ORDER BY time_created DESC LIMIT 20",
+        "",
+    )
+    .into_iter()
+    .find(|row| row[1].as_str().is_some_and(|d| norm(d) == want))
+    .and_then(|row| row[0].as_str().map(str::to_string))
 }
 
 /// (role, id, completed) 按时间序。
 fn messages(session: &str) -> Vec<(String, String, bool)> {
-    query("SELECT id, data FROM message WHERE session_id = ? ORDER BY time_created, id", session)
-        .into_iter()
-        .map(|row| {
-            let v: serde_json::Value = serde_json::from_str(row[1].as_str().unwrap_or("{}")).unwrap_or_default();
-            let role = v["role"].as_str().unwrap_or("?").to_string();
-            (role, row[0].as_str().unwrap_or("").to_string(), v.pointer("/time/completed").is_some())
-        })
-        .collect()
+    query(
+        "SELECT id, data FROM message WHERE session_id = ? ORDER BY time_created, id",
+        session,
+    )
+    .into_iter()
+    .map(|row| {
+        let v: serde_json::Value =
+            serde_json::from_str(row[1].as_str().unwrap_or("{}")).unwrap_or_default();
+        let role = v["role"].as_str().unwrap_or("?").to_string();
+        (
+            role,
+            row[0].as_str().unwrap_or("").to_string(),
+            v.pointer("/time/completed").is_some(),
+        )
+    })
+    .collect()
 }
 
 fn revert(session: &str) -> Option<String> {
@@ -87,10 +111,22 @@ fn revert(session: &str) -> Option<String> {
 /// 与前端 undoneInputRows 同规则：底边行（`╹`）之上连续以 `┃` 开头的行里，含原文末行开头
 /// 一小段的行数；认不出输入框返回 None。
 fn input_rows(screen: &str, text: &str) -> Option<usize> {
-    let snippet: String = text.lines().map(str::trim).rfind(|l| !l.is_empty())?.chars().take(12).collect();
+    let snippet: String = text
+        .lines()
+        .map(str::trim)
+        .rfind(|l| !l.is_empty())?
+        .chars()
+        .take(12)
+        .collect();
     let lines: Vec<&str> = screen.lines().collect();
-    let bottom = lines.iter().rposition(|l| l.trim_start().starts_with('╹'))?;
-    let block: Vec<&&str> = lines[..bottom].iter().rev().take_while(|l| l.trim_start().starts_with('┃')).collect();
+    let bottom = lines
+        .iter()
+        .rposition(|l| l.trim_start().starts_with('╹'))?;
+    let block: Vec<&&str> = lines[..bottom]
+        .iter()
+        .rev()
+        .take_while(|l| l.trim_start().starts_with('┃'))
+        .collect();
     (!block.is_empty()).then(|| block.iter().filter(|l| l.contains(&snippet)).count())
 }
 
@@ -104,12 +140,34 @@ fn opencode_undo_records_revert_and_restores_files() {
     std::fs::create_dir_all(&cwd).unwrap();
     // 快照依赖项目识别，给个 git 仓库（有一次提交）贴近真实使用。
     std::fs::write(cwd.join("seed.txt"), "seed\n").unwrap();
-    for args in [&["init", "-q"][..], &["add", "."], &["-c", "user.name=p", "-c", "user.email=p@p", "commit", "-qm", "seed"]] {
-        assert!(std::process::Command::new("git").args(args).current_dir(&cwd).status().unwrap().success());
+    for args in [
+        &["init", "-q"][..],
+        &["add", "."],
+        &[
+            "-c",
+            "user.name=p",
+            "-c",
+            "user.email=p@p",
+            "commit",
+            "-qm",
+            "seed",
+        ],
+    ] {
+        assert!(std::process::Command::new("git")
+            .args(args)
+            .current_dir(&cwd)
+            .status()
+            .unwrap()
+            .success());
     }
 
     let pair = native_pty_system()
-        .openpty(PtySize { rows: 40, cols: 120, pixel_width: 0, pixel_height: 0 })
+        .openpty(PtySize {
+            rows: 40,
+            cols: 120,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
         .unwrap();
     let mut command = common::agent_command(&argv[0], &cwd);
     command.args(&argv[1..]);
@@ -132,7 +190,9 @@ fn opencode_undo_records_revert_and_restores_files() {
                 let _ = writer.write_all(b"\x1b[1;1R").and_then(|_| writer.flush());
             }
             if chunk.windows(3).any(|part| part == b"\x1b[c") {
-                let _ = writer.write_all(b"\x1b[?62;22c").and_then(|_| writer.flush());
+                let _ = writer
+                    .write_all(b"\x1b[?62;22c")
+                    .and_then(|_| writer.flush());
             }
             drop(writer);
             parser.lock().unwrap().process(chunk);
@@ -161,8 +221,15 @@ fn opencode_undo_records_revert_and_restores_files() {
     };
     let dump = |tag: &str| {
         let text = contents();
-        let lines: Vec<&str> = text.lines().map(str::trim_end).filter(|l| !l.trim().is_empty()).collect();
-        eprintln!("[probe] {tag} 末屏:\n{}", lines[lines.len().saturating_sub(8)..].join("\n"));
+        let lines: Vec<&str> = text
+            .lines()
+            .map(str::trim_end)
+            .filter(|l| !l.trim().is_empty())
+            .collect();
+        eprintln!(
+            "[probe] {tag} 末屏:\n{}",
+            lines[lines.len().saturating_sub(8)..].join("\n")
+        );
     };
     let file = cwd.join("probe.txt");
     // 多行原文（LF 是 opencode 的换行键）：单行 Ctrl-U 就能清，多行才见真章。
@@ -200,7 +267,10 @@ fn opencode_undo_records_revert_and_restores_files() {
         std::thread::sleep(Duration::from_secs(2));
         let before = messages(&session);
         let baseline = input_rows(&contents(), prompt);
-        eprintln!("[probe] 撤回前 {} 条消息；输入框原文行基线={baseline:?}", before.len());
+        eprintln!(
+            "[probe] 撤回前 {} 条消息；输入框原文行基线={baseline:?}",
+            before.len()
+        );
 
         submit("/undo");
         if !wait(15, &|| revert(&session).is_some()) {
@@ -242,7 +312,12 @@ fn opencode_undo_records_revert_and_restores_files() {
         wait(120, &|| settled(2) && revert(&session).is_none());
         std::thread::sleep(Duration::from_secs(2));
         let last = messages(&session);
-        eprintln!("[probe] 再发言后 revert={:?} 消息 {} 条；probe.txt 存在={}", revert(&session), last.len(), file.exists());
+        eprintln!(
+            "[probe] 再发言后 revert={:?} 消息 {} 条；probe.txt 存在={}",
+            revert(&session),
+            last.len(),
+            file.exists()
+        );
         if revert(&session).is_some() || last.iter().any(|m| m.1 == before[2].1) || file.exists() {
             return Err("再发言后回退点之后的消息没清理，或文件被建回来了".into());
         }
@@ -253,5 +328,9 @@ fn opencode_undo_records_revert_and_restores_files() {
     let _ = child.wait();
     drop(pair.master);
     let _ = std::fs::remove_dir_all(&cwd);
-    assert!(result.is_ok(), "{}；末屏=\n{last_screen}", result.unwrap_err());
+    assert!(
+        result.is_ok(),
+        "{}；末屏=\n{last_screen}",
+        result.unwrap_err()
+    );
 }

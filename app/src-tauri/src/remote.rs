@@ -118,6 +118,18 @@ const MAX_BODY_BYTES: usize = 48 * 1024 * 1024;
 /// 名单按对话页组件树的实际调用集合收敛（ChatWindow/ChatSidebar/NewSessionPanel
 /// /chat/*），不是「所有无害命令」——用不到就不开。
 pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
+    "managed_conversation_create",
+    "managed_conversation_recoveries",
+    "managed_conversation_delivery_action",
+    "managed_conversation_adopt",
+    "managed_conversation_state",
+    "managed_conversation_send",
+    "managed_conversation_deliveries",
+    "managed_conversation_events",
+    "managed_conversation_control",
+    "managed_conversation_resolve",
+    "managed_conversation_set_model",
+    "managed_conversation_set_mode",
     // 会话列表/侧栏
     "get_live_sessions_page",
     "get_live_sessions_counts",
@@ -157,6 +169,7 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     "managed_terminal_snapshot",
     "managed_terminal_grid",
     "managed_terminal_screen",
+    "managed_terminal_frame",
     "managed_terminal_binding",
     "managed_terminal_pending_launch",
     "write_managed_terminal",
@@ -219,6 +232,7 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     // Lead 工作流（模块头「例外（2026-11-09）」）
     "lead_task_snapshot",
     "answer_lead_gate",
+    "retry_lead_gate_delivery",
     // 只读杂项
     "get_settings",
     "host_os",
@@ -838,7 +852,11 @@ use meowo_protocol::bridge::*;
 
 /// git 命令的目录收口（单文件 diff 与写操作共用）：带 sessionCwd 时，它必须是会话目录、cwd 必须是
 /// 它的相关仓库；不带就是老规矩，cwd 本身得是会话目录。
-async fn ensure_git_repo_dir(app: &tauri::AppHandle, cwd: &str, session_cwd: Option<&str>) -> Result<(), String> {
+async fn ensure_git_repo_dir(
+    app: &tauri::AppHandle,
+    cwd: &str,
+    session_cwd: Option<&str>,
+) -> Result<(), String> {
     match session_cwd {
         Some(session_cwd) => {
             ensure_session_dir(app, session_cwd).await?;
@@ -890,6 +908,16 @@ async fn ensure_session_dir(app: &tauri::AppHandle, dir: &str) -> Result<(), Str
     }
 }
 
+async fn ensure_conversation_session(app: &tauri::AppHandle, id: i64) -> Result<(), String> {
+    let db = app.state::<crate::AppState>().db_path.clone();
+    let cwd = tauri::async_runtime::spawn_blocking(move || {
+        crate::conversation::commands::session_cwd(&db, id)
+    })
+    .await
+    .map_err(|_| "conversation/worker_join".to_owned())??;
+    ensure_session_dir(app, &cwd).await
+}
+
 /// 白名单命令 → 各 command 函数本体。参数结构体见上方模块级定义（camelCase +
 /// deny_unknown_fields），与 api.ts 的 invoke 传参逐名对齐。
 async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Response {
@@ -904,6 +932,187 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
 
     let state = app.state::<crate::AppState>();
     match command {
+        "managed_conversation_recoveries" => {
+            let a = args!(ManagedConversationRecoveriesArgs);
+            if let Err(error) = ensure_conversation_session(app, a.session_id).await {
+                return err_status(StatusCode::FORBIDDEN, &error);
+            }
+            reply(
+                crate::conversation::commands::managed_conversation_recoveries(
+                    state,
+                    a.session_id,
+                    a.cursor,
+                    a.limit,
+                )
+                .await,
+            )
+        }
+        "managed_conversation_delivery_action" => {
+            let a = args!(ManagedConversationDeliveryActionArgs);
+            if let Err(error) = ensure_conversation_session(app, a.session_id).await {
+                return err_status(StatusCode::FORBIDDEN, &error);
+            }
+            reply(
+                crate::conversation::commands::managed_conversation_delivery_action(
+                    state,
+                    a.session_id,
+                    a.delivery_id,
+                    a.action,
+                    a.replacement_delivery_id,
+                )
+                .await,
+            )
+        }
+        "managed_conversation_create" => {
+            let a = args!(ManagedConversationCreateArgs);
+            if let Some(requested) = &a.profile_id {
+                let provider = a.provider.clone();
+                let active = tauri::async_runtime::spawn_blocking(move || {
+                    crate::profile::active_id(&provider)
+                })
+                .await;
+                if !matches!(active, Ok(Some(ref id)) if id == requested) {
+                    return err_status(StatusCode::FORBIDDEN, "remote/profile_scope");
+                }
+            }
+            reply(
+                crate::conversation::commands::managed_conversation_create(
+                    app.clone(),
+                    state,
+                    a.provider,
+                    a.cwd,
+                    a.profile_id,
+                )
+                .await,
+            )
+        }
+        "managed_conversation_adopt" => {
+            let a = args!(ManagedConversationAdoptArgs);
+            if let Err(error) = ensure_conversation_session(app, a.session_id).await {
+                return err_status(StatusCode::FORBIDDEN, &error);
+            }
+            reply(
+                crate::conversation::commands::managed_conversation_adopt(
+                    app.clone(),
+                    state,
+                    a.session_id,
+                )
+                .await,
+            )
+        }
+        "managed_conversation_state" => {
+            let a = args!(SessionArg);
+            if let Err(error) = ensure_conversation_session(app, a.session_id).await {
+                return err_status(StatusCode::FORBIDDEN, &error);
+            }
+            reply(
+                crate::conversation::commands::managed_conversation_state(state, a.session_id)
+                    .await,
+            )
+        }
+        "managed_conversation_send" => {
+            let a = args!(ManagedConversationSendArgs);
+            if let Err(error) = ensure_conversation_session(app, a.session_id).await {
+                return err_status(StatusCode::FORBIDDEN, &error);
+            }
+            reply(
+                crate::conversation::commands::managed_conversation_send(
+                    app.clone(),
+                    state,
+                    a.session_id,
+                    a.delivery_id,
+                    a.text,
+                    a.attachments,
+                    a.gate_ref,
+                )
+                .await,
+            )
+        }
+        "managed_conversation_deliveries" => {
+            let a = args!(SessionArg);
+            if let Err(error) = ensure_conversation_session(app, a.session_id).await {
+                return err_status(StatusCode::FORBIDDEN, &error);
+            }
+            reply(
+                crate::conversation::commands::managed_conversation_deliveries(state, a.session_id)
+                    .await,
+            )
+        }
+        "managed_conversation_events" => {
+            let a = args!(ManagedConversationEventsArgs);
+            if let Err(error) = ensure_conversation_session(app, a.session_id).await {
+                return err_status(StatusCode::FORBIDDEN, &error);
+            }
+            reply(
+                crate::conversation::commands::managed_conversation_events(
+                    state,
+                    a.session_id,
+                    a.after,
+                    a.limit,
+                )
+                .await,
+            )
+        }
+        "managed_conversation_control" => {
+            let a = args!(ManagedConversationControlArgs);
+            if let Err(error) = ensure_conversation_session(app, a.session_id).await {
+                return err_status(StatusCode::FORBIDDEN, &error);
+            }
+            reply(
+                crate::conversation::commands::managed_conversation_control(
+                    app.clone(),
+                    state,
+                    a.session_id,
+                    a.action,
+                )
+                .await,
+            )
+        }
+        "managed_conversation_resolve" => {
+            let a = args!(ManagedConversationResolveArgs);
+            if let Err(error) = ensure_conversation_session(app, a.session_id).await {
+                return err_status(StatusCode::FORBIDDEN, &error);
+            }
+            reply(
+                crate::conversation::commands::managed_conversation_resolve(
+                    state,
+                    a.session_id,
+                    a.interaction_id,
+                    a.option_id,
+                    a.answers,
+                )
+                .await,
+            )
+        }
+        "managed_conversation_set_model" => {
+            let a = args!(ManagedConversationSetModelArgs);
+            if let Err(error) = ensure_conversation_session(app, a.session_id).await {
+                return err_status(StatusCode::FORBIDDEN, &error);
+            }
+            reply(
+                crate::conversation::commands::managed_conversation_set_model(
+                    state,
+                    a.session_id,
+                    a.model,
+                )
+                .await,
+            )
+        }
+        "managed_conversation_set_mode" => {
+            let a = args!(ManagedConversationSetModeArgs);
+            if let Err(error) = ensure_conversation_session(app, a.session_id).await {
+                return err_status(StatusCode::FORBIDDEN, &error);
+            }
+            reply(
+                crate::conversation::commands::managed_conversation_set_mode(
+                    state,
+                    a.session_id,
+                    a.dimension,
+                    a.mode,
+                )
+                .await,
+            )
+        }
         "get_live_sessions_page" => {
             let a = args!(GetLiveSessionsPageArgs);
             reply(
@@ -985,12 +1194,22 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
             }
             reply(crate::lead::lead_task_snapshot(a.cwd, a.session).await)
         }
+        "retry_lead_gate_delivery" => {
+            let a = args!(RetryLeadGateDeliveryArgs);
+            if let Err(e) = ensure_session_dir(app, &a.cwd).await {
+                return reply::<()>(Err(e));
+            }
+            reply(crate::lead::retry_lead_gate_delivery(app.clone(), a.cwd, a.gate_id).await)
+        }
         "answer_lead_gate" => {
             let a = args!(AnswerLeadGateArgs);
             if let Err(e) = ensure_session_dir(app, &a.cwd).await {
                 return reply::<()>(Err(e));
             }
-            reply(crate::lead::answer_lead_gate(app.clone(), a.cwd, a.gate_id, a.choice, a.note).await)
+            reply(
+                crate::lead::answer_lead_gate(app.clone(), a.cwd, a.gate_id, a.choice, a.note)
+                    .await,
+            )
         }
         "file_mention_candidates" => {
             let a = args!(FileMentionCandidatesArgs);
@@ -1001,7 +1220,10 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
         }
         "fork_session" => {
             let a = args!(ForkSessionArgs);
-            reply(crate::terminal::fork_session(app.clone(), state, a.session_id, a.cols, a.rows).await)
+            reply(
+                crate::terminal::fork_session(app.clone(), state, a.session_id, a.cols, a.rows)
+                    .await,
+            )
         }
         "git_changes_overview" => {
             let a = args!(GitChangesOverviewArgs);
@@ -1017,14 +1239,23 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
                 let touched: Vec<String> = a
                     .touched
                     .into_iter()
-                    .filter(|path| related.iter().any(|root| crate::git::path_under(path, root)))
+                    .filter(|path| {
+                        related
+                            .iter()
+                            .any(|root| crate::git::path_under(path, root))
+                    })
                     .collect();
-                crate::git::changes_overview_detail(&cwd, &touched, &commands, detail.as_deref()).map(|repos| {
-                    repos
-                        .into_iter()
-                        .filter(|repo| related.iter().any(|root| crate::git::same_root(root, &repo.root)))
-                        .collect::<Vec<_>>()
-                })
+                crate::git::changes_overview_detail(&cwd, &touched, &commands, detail.as_deref())
+                    .map(|repos| {
+                        repos
+                            .into_iter()
+                            .filter(|repo| {
+                                related
+                                    .iter()
+                                    .any(|root| crate::git::same_root(root, &repo.root))
+                            })
+                            .collect::<Vec<_>>()
+                    })
             })
             .await
             .map_err(|e| e.to_string());
@@ -1046,7 +1277,8 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
                     let (cwd, base, path) = (a.cwd.clone(), base.clone(), a.path.clone());
                     tauri::async_runtime::spawn_blocking(move || {
                         crate::git::repo_changes(&cwd, false).is_some_and(|repo| {
-                            repo.base.as_deref() == Some(base.as_str()) && repo.committed.iter().any(|f| f.path == path)
+                            repo.base.as_deref() == Some(base.as_str())
+                                && repo.committed.iter().any(|f| f.path == path)
                         })
                     })
                     .await
@@ -1054,11 +1286,15 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
                 }
                 None => match crate::git::git_diff_summary(a.cwd.clone()).await {
                     // 折叠目录里的文件不在摘要里（摘要只给一条 `dir/`），点开后看 diff 的要再问一次清单。
-                    Ok(summary) if !changed_file_listed(&summary, &a.path, a.untracked) && a.untracked => {
+                    Ok(summary)
+                        if !changed_file_listed(&summary, &a.path, a.untracked) && a.untracked =>
+                    {
                         let (cwd, path) = (a.cwd.clone(), a.path.clone());
-                        tauri::async_runtime::spawn_blocking(move || crate::git::untracked_file_listed(&cwd, &path))
-                            .await
-                            .unwrap_or(false)
+                        tauri::async_runtime::spawn_blocking(move || {
+                            crate::git::untracked_file_listed(&cwd, &path)
+                        })
+                        .await
+                        .unwrap_or(false)
                     }
                     Ok(summary) => changed_file_listed(&summary, &a.path, a.untracked),
                     Err(e) => return reply::<()>(Err(e)),
@@ -1205,7 +1441,9 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
         "list_cleanable_worktrees" => reply(crate::worktree::list_cleanable_worktrees(state).await),
         "worktree_preview" => {
             let a = args!(WorktreePreviewArgs);
-            reply(crate::wtnew::worktree_preview(a.repo_cwd, a.slug, a.branch, a.fallback_slug).await)
+            reply(
+                crate::wtnew::worktree_preview(a.repo_cwd, a.slug, a.branch, a.fallback_slug).await,
+            )
         }
         "worktree_create" => {
             let a = args!(WorktreeCreateArgs);
@@ -1266,6 +1504,10 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
         "managed_terminal_grid" => {
             let a = args!(SessionArg);
             reply(crate::managed_terminal::managed_terminal_grid(state, a.session_id).await)
+        }
+        "managed_terminal_frame" => {
+            let a = args!(SessionArg);
+            reply(crate::managed_terminal::managed_terminal_frame(state, a.session_id).await)
         }
         "managed_terminal_screen" => {
             let a = args!(SessionArg);
@@ -2089,24 +2331,57 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         let git = |dir: &std::path::Path, args: &[&str]| {
-            let out = std::process::Command::new("git").arg("-C").arg(dir).args(args).output().unwrap();
-            assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+            let out = std::process::Command::new("git")
+                .arg("-C")
+                .arg(dir)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
         };
         let init = |name: &str| {
             let dir = root.join(name);
             std::fs::create_dir_all(&dir).unwrap();
             git(&dir, &["init", "-q", "-b", "main"]);
-            git(&dir, &["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "init"]);
+            git(
+                &dir,
+                &[
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@t",
+                    "-c",
+                    "commit.gpgsign=false",
+                    "commit",
+                    "-q",
+                    "--allow-empty",
+                    "-m",
+                    "init",
+                ],
+            );
             dir
         };
         let main = init("main");
         let other = init("other");
         let wt = root.join("main-wt");
-        git(&main, &["worktree", "add", "-q", "-b", "feat", wt.to_str().unwrap()]);
+        git(
+            &main,
+            &["worktree", "add", "-q", "-b", "feat", wt.to_str().unwrap()],
+        );
         let s = |p: &std::path::Path| p.to_string_lossy().replace('\\', "/");
         assert!(related_repo_gate(&s(&main), &s(&wt)).is_ok());
-        assert_eq!(related_repo_gate(&s(&main), &s(&other)).unwrap_err(), "remote/not_session_dir");
-        assert_eq!(related_repo_gate(&s(&main), &s(&root)).unwrap_err(), "remote/not_session_dir");
+        assert_eq!(
+            related_repo_gate(&s(&main), &s(&other)).unwrap_err(),
+            "remote/not_session_dir"
+        );
+        assert_eq!(
+            related_repo_gate(&s(&main), &s(&root)).unwrap_err(),
+            "remote/not_session_dir"
+        );
         // 老手机页不带 commands 也照样能解析。
         assert!(parse::<GitChangesOverviewArgs>(br#"{"cwd":"C:/w","touched":[]}"#).is_ok());
         assert!(parse::<GitPathsArgs>(br#"{"cwd":"C:/w","paths":[],"force":true}"#).is_err());
@@ -2223,7 +2498,9 @@ mod tests {
         let arms = dispatch_arm_arg_types();
         let mut problems = Vec::new();
         for cmd in BRIDGED_COMMANDS {
-            let Some((_, ty)) = arms.iter().find(|(c, _)| c == cmd) else { continue };
+            let Some((_, ty)) = arms.iter().find(|(c, _)| c == cmd) else {
+                continue;
+            };
             let calls = api_ts_invoke_args(api, cmd);
             if calls.is_empty() {
                 // host_os / file_access_token 不经 api.ts（mobile/transport.ts 直发），不在此列。
@@ -2236,7 +2513,11 @@ mod tests {
                 }
             }
         }
-        assert!(problems.is_empty(), "api.ts 桥接 invoke 未做类型校验：\n{}", problems.join("\n"));
+        assert!(
+            problems.is_empty(),
+            "api.ts 桥接 invoke 未做类型校验：\n{}",
+            problems.join("\n")
+        );
     }
 
     #[test]
@@ -2274,6 +2555,18 @@ mod tests {
     #[cfg(test)]
     fn sample_payload_parse_check(cmd: &str) -> Result<(), String> {
         match cmd {
+            "managed_conversation_recoveries" => parse::<ManagedConversationRecoveriesArgs>(br#"{"sessionId":42,"cursor":{"sequence":12,"messageIndex":1,"textByteOffset":128},"limit":50}"#).map(|_|()),
+            "managed_conversation_delivery_action" => parse::<ManagedConversationDeliveryActionArgs>(br#"{"sessionId":42,"deliveryId":"old","action":"retry","replacementDeliveryId":"new"}"#).map(|_| ()),
+            "managed_conversation_create" => parse::<ManagedConversationCreateArgs>(br#"{"provider":"codex","cwd":"C:/repo","profileId":null}"#).map(|_| ()),
+            "managed_conversation_adopt" => parse::<ManagedConversationAdoptArgs>(br#"{"sessionId":42}"#).map(|_| ()),
+            "managed_conversation_state" => parse::<SessionArg>(br#"{"sessionId":42}"#).map(|_| ()),
+            "managed_conversation_send" => parse::<ManagedConversationSendArgs>(br#"{"sessionId":42,"deliveryId":"d-1","text":"continue","attachments":[],"gateRef":null}"#).map(|_| ()),
+            "managed_conversation_deliveries" => parse::<SessionArg>(br#"{"sessionId":42}"#).map(|_| ()),
+            "managed_conversation_events" => parse::<ManagedConversationEventsArgs>(br#"{"sessionId":42,"after":0,"limit":30}"#).map(|_| ()),
+            "managed_conversation_control" => parse::<ManagedConversationControlArgs>(br#"{"sessionId":42,"action":"stop"}"#).map(|_| ()),
+            "managed_conversation_resolve" => parse::<ManagedConversationResolveArgs>(br#"{"sessionId":42,"interactionId":"i-1","optionId":null,"answers":null}"#).map(|_| ()),
+            "managed_conversation_set_model" => parse::<ManagedConversationSetModelArgs>(br#"{"sessionId":42,"model":"known-model"}"#).map(|_| ()),
+            "managed_conversation_set_mode" => parse::<ManagedConversationSetModeArgs>(br#"{"sessionId":42,"dimension":"permission","mode":"default"}"#).map(|_| ()),
             // api.ts:566（getLiveSessionsPage：filter/limit 恒有，search/cwd/游标键恒发、
             // 空值发 null，includeForeign/includePending 恒发）
             "get_live_sessions_page" => parse::<GetLiveSessionsPageArgs>(
@@ -2473,6 +2766,7 @@ mod tests {
             "file_mention_candidates" => parse::<FileMentionCandidatesArgs>(br#"{"cwd":"C:/repo","query":"src/ma"}"#).map(|_| ()),
             "lead_task_snapshot" => parse::<LeadTaskSnapshotArgs>(br#"{"cwd":"C:/repo","session":"cc-abc"}"#).map(|_| ()),
             "answer_lead_gate" => parse::<AnswerLeadGateArgs>(br#"{"cwd":"C:/repo","gateId":"B-1","choice":"1","note":""}"#).map(|_| ()),
+            "retry_lead_gate_delivery" => parse::<RetryLeadGateDeliveryArgs>(br#"{"cwd":"C:/repo","gateId":"B-1"}"#).map(|_| ()),
             "new_session" => parse::<NewSessionArgs>(
                 br#"{"cwd":"C:/repo","provider":"claude","options":{"permissionMode":"default"},"extraDirs":["C:/other"]}"#,
             )
@@ -2500,6 +2794,7 @@ mod tests {
             | "refresh_session_todos"
             | "managed_terminal_grid"
             | "managed_terminal_screen"
+            | "managed_terminal_frame"
             | "managed_terminal_binding"
             | "managed_terminal_pending_launch"
             | "attach_background_session"

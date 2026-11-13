@@ -212,10 +212,10 @@ describe("T-15 角标的可信度区分", () => {
     expect(container.querySelector(".run-badge")).not.toBeNull();
   });
 
-  it("fallback idle（什么规则都没命中）降级为中性灰点，不再挂自信的「等你」环", () => {
+  it("fallback idle 不把仍在运行的记录改判成等你", () => {
     const { container } = render(<Sticker filter="all" data={[mk({ connected: true, screen_state: "idle", screen_assumed: true })]} />);
-    expect(container.querySelector(".sdot-off")).not.toBeNull();
-    expect(container.querySelector(".run-badge")).toBeNull();
+    expect(container.querySelector(".sdot-off")).toBeNull();
+    expect(container.querySelector(".run-badge")).not.toBeNull();
   });
 
   it("带可见证据的 idle 仍是「等你」环（screen_assumed 缺省）", () => {

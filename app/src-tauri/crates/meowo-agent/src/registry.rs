@@ -7,6 +7,14 @@ use crate::{
 };
 use std::path::Path;
 
+/// 进程是否只承载一个会话；未知命令行不能成为结束进程的依据。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcessScope {
+    Exclusive,
+    Shared,
+    Unknown,
+}
+
 /// 对话页快速切模型的一个预设项：前端点选后向 PTY 发送 `/model <id>`。
 /// `label` 是展示名；描述文案是翻译资产，留在前端 i18n（按 `id` 取）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -75,14 +83,27 @@ pub struct ModelCatalogEntry {
 
 /// 一个 agent 插件。**必填的只有身份、变体表与进程名**；其余都是能力槽，不声明即由框架降级。
 pub trait AgentPlugin: Sync {
+    fn conversation(&self) -> Option<&'static dyn crate::conversation::ConversationCap> {
+        None
+    }
     fn id(&self) -> AgentId;
     fn display_name(&self) -> &'static str;
 
     /// 变体表，**按优先级排列**（新版在前）。首个变体同时充当「全新安装该装到哪」的默认。
     fn variants(&self) -> &'static [Variant];
 
+    fn lead(&self) -> Option<&'static dyn crate::lead_install::LeadCap> {
+        None
+    }
+
     /// 会话本体的进程名白名单（basename，小写）。owner_pid 上溯 + meowo-app 判活共用。
     fn process_names(&self) -> &'static [&'static str];
+
+    /// 共享服务可同时运行多个主会话，不能沿用 Claude 的 PID 独占与整进程重启。
+    /// 插件必须按已核实的启动形态声明；命令行不可读时宿主保持 Unknown。
+    fn process_scope(&self, _argv: &[String]) -> ProcessScope {
+        ProcessScope::Unknown
+    }
 
     /// 某进程名是否是**本 agent** 的会话本体。与全局的 [`is_agent_process`] 刻意不同：那个问的是
     /// 「这是不是某个 agent」，这个问的是「这是不是**我**」。
@@ -236,6 +257,10 @@ pub trait AgentPlugin: Sync {
         None
     }
 
+    fn composer_guard(&self, _version: Option<&str>) -> Option<crate::chat_ui::ComposerGuard> {
+        None
+    }
+
     /// 子代理视图的识别与切回键(见 chat_ui::SubagentView)。默认 None:未经取证不声明。
     fn subagent_view(&self) -> Option<crate::chat_ui::SubagentView> {
         None
@@ -339,6 +364,7 @@ pub trait AgentPlugin: Sync {
                     .collect()
             },
             draft_stash: self.draft_stash(),
+            composer_guard: self.composer_guard(ctx.version),
             subagent_view: self.subagent_view(),
             version: ctx.version.map(str::to_string),
         }

@@ -71,9 +71,7 @@ pub fn dispatch(
                     store.touch_session_turn_open(sid, now_ms)?;
                 }
                 // 给已注册（含压缩漏掉 SessionStart）的会话补抓 PID；每用户回合一次，开销可忽略。
-                if let Some(p) = crate::proc::owner_pid(provider) {
-                    store.set_session_pid(sid, p as i64, now_ms)?;
-                }
+                crate::proc::record_owner_pid(store, sid, provider, now_ms)?;
                 apply_title(store, ev, sid, now_ms, provider)?;
                 write_tab_token(store, sid, ev, provider);
             }
@@ -413,9 +411,7 @@ fn create_session(
     } else {
         store.backfill_session_cwd(sid, cwd)?;
     }
-    if let Some(p) = crate::proc::owner_pid(provider) {
-        store.set_session_pid(sid, p as i64, now_ms)?;
-    }
+    crate::proc::record_owner_pid(store, sid, provider, now_ms)?;
     Ok(sid)
 }
 
@@ -504,7 +500,10 @@ fn git_config_path(root: &Path) -> Option<std::path::PathBuf> {
         return Some(dot_git.join("config"));
     }
     let text = std::fs::read_to_string(&dot_git).ok()?;
-    let gitdir = text.lines().find_map(|l| l.trim().strip_prefix("gitdir:"))?.trim();
+    let gitdir = text
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("gitdir:"))?
+        .trim();
     let gitdir = root.join(gitdir); // join 遇到绝对路径会整体替换
     match std::fs::read_to_string(gitdir.join("commondir")) {
         Ok(common) => Some(gitdir.join(common.trim()).join("config")),

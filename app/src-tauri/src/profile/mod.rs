@@ -311,7 +311,10 @@ pub(crate) async fn create_profile(provider: String, name: String) -> Result<Str
         // reporter 路径写进全局的 mcp.json，不然安装版的 kimi 会话也会去调开发版。
         if created.is_ok()
             && crate::setup::auto_wire_enabled()
-            && matches!(plugin.mcp_attach(), Some(meowo_agent::McpAttach::DataDirJson { .. }))
+            && matches!(
+                plugin.mcp_attach(),
+                Some(meowo_agent::McpAttach::DataDirJson { .. })
+            )
         {
             crate::browser_agent::sync_mcp_files();
         }

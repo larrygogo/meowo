@@ -2,7 +2,7 @@
 // 夹具与 mock 见 chatWindow.harness.tsx（必须先于 ./ChatWindow 导入）。
 import { describe, expect, it } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { invoke, terminalProps, adapter, chatUiReady } from "./chatWindow.harness";
+import { emptyComposerFrame, invoke, terminalProps, adapter, chatUiReady } from "./chatWindow.harness";
 import { ChatWindow } from "./ChatWindow";
 import { zh } from "../i18n/zh";
 import { chatUi } from "../test/agents";
@@ -38,6 +38,7 @@ describe("ChatWindow 适配回归", () => {
   it("kimi 模型直接列出,点选后在 CLI 菜单里自动选中", async () => {
     const base = setup(511, "kimi");
     invoke.mockImplementation((command, args) => {
+      if (command === "managed_terminal_frame") return Promise.resolve(emptyComposerFrame("kimi"));
       if (command === "agent_model_catalog") return Promise.resolve([
         { id: "kimi-code/k3-256k", label: "K3-256k", group: "managed:kimi-code", efforts: [] },
         { id: "kimi-code/k3.1-pro", label: "K3.1 Pro", group: "managed:kimi-code", efforts: ["low", "high", "max"] },
@@ -77,6 +78,7 @@ describe("ChatWindow 适配回归", () => {
   it.each(["found", "missing"])("kimi 点选的模型不在当前屏时先搜索再选：%s", async (mode) => {
     const base = setup(512, "kimi");
     invoke.mockImplementation((command, args) => {
+      if (command === "managed_terminal_frame") return Promise.resolve(emptyComposerFrame("kimi"));
       if (command === "agent_model_catalog") return Promise.resolve([
         { id: "反向推理/DeepSeek-V4.1-Flash-1017", label: "DeepSeek V4.1 Flash", group: "反向推理", efforts: [] },
       ]);

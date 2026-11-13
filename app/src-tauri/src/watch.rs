@@ -169,7 +169,10 @@ pub(crate) fn run_db_watch_loop(
     let mut last_version: Option<i64> = None;
     // e2e 构建：记下各表指纹，每次发事件时把变化的表写进 reason，查「空闲时谁在写库」。
     #[cfg(feature = "e2e")]
-    let mut last_fp: Vec<(String, String)> = vconn.as_ref().and_then(|s| s.debug_table_fingerprint().ok()).unwrap_or_default();
+    let mut last_fp: Vec<(String, String)> = vconn
+        .as_ref()
+        .and_then(|s| s.debug_table_fingerprint().ok())
+        .unwrap_or_default();
     let is_board = |res: &Result<notify::Event, notify::Error>| -> bool {
         let Ok(ev) = res else { return false };
         ev.paths.iter().any(|p| {
@@ -228,15 +231,21 @@ pub(crate) fn run_db_watch_loop(
             if changed {
                 #[cfg(feature = "e2e")]
                 {
-                    let fp = vconn.as_ref().and_then(|s| s.debug_table_fingerprint().ok()).unwrap_or_default();
+                    let fp = vconn
+                        .as_ref()
+                        .and_then(|s| s.debug_table_fingerprint().ok())
+                        .unwrap_or_default();
                     let diff: Vec<String> = fp
                         .iter()
-                        .filter(|(t, v)| last_fp.iter().find(|(lt, _)| lt == t).map(|(_, lv)| lv) != Some(v))
+                        .filter(|(t, v)| {
+                            last_fp.iter().find(|(lt, _)| lt == t).map(|(_, lv)| lv) != Some(v)
+                        })
                         .map(|(t, v)| format!("{t}={v}"))
                         .collect();
                     last_fp = fp;
                     // reason 是 &'static str：e2e 构建里泄漏这几十字节换取可读的诊断，生产构建不编译这段。
-                    let reason: &'static str = Box::leak(format!("db-watcher [{}]", diff.join(" ")).into_boxed_str());
+                    let reason: &'static str =
+                        Box::leak(format!("db-watcher [{}]", diff.join(" ")).into_boxed_str());
                     emit_board_changed(app, reason);
                 }
                 #[cfg(not(feature = "e2e"))]
@@ -277,8 +286,7 @@ fn desired_transcript_watches(
         if row.session.status == "ended" {
             continue;
         }
-        let Some(spec) =
-            crate::agent_transcript(&row.provider).filter(|spec| spec.supports_chat())
+        let Some(spec) = crate::agent_transcript(&row.provider).filter(|spec| spec.supports_chat())
         else {
             continue;
         };
@@ -350,8 +358,7 @@ pub(crate) fn spawn_transcript_watcher(app: tauri::AppHandle, db_path: PathBuf) 
             std::collections::HashMap<String, i64>,
         > = std::collections::HashMap::new();
         let mut watcher: Option<RecommendedWatcher> = None;
-        let mut rx: Option<std::sync::mpsc::Receiver<Result<notify::Event, notify::Error>>> =
-            None;
+        let mut rx: Option<std::sync::mpsc::Receiver<Result<notify::Event, notify::Error>>> = None;
         loop {
             if watcher.is_none() {
                 let (tx, new_rx) = channel();
@@ -522,7 +529,12 @@ pub(crate) fn should_notify(prev: Option<&str>, cur: Option<&str>) -> bool {
 /// (与前端 activityTone 的 busySubagents 同口径,原料同为 TranscriptInfo::busy_subagents)。
 /// 后台跑完后 CLI 自动续跑的那一回合结束时才发,一次任务只提醒一次(对照 Kimi:后台工作
 /// 只在原地留痕,不打断)。
-pub(crate) fn waiting_fingerprint(errored: bool, has_pending: bool, status: &str, background_busy: bool) -> Option<String> {
+pub(crate) fn waiting_fingerprint(
+    errored: bool,
+    has_pending: bool,
+    status: &str,
+    background_busy: bool,
+) -> Option<String> {
     if errored || has_pending || status != "waiting" || background_busy {
         None
     } else {
@@ -598,10 +610,19 @@ fn strip_line_marker(line: &str) -> &str {
             .strip_prefix('>')
             .or_else(|| {
                 let hashes = trimmed.len() - trimmed.trim_start_matches('#').len();
-                (hashes > 0 && hashes <= 6 && spaced(&trimmed[hashes..])).then(|| &trimmed[hashes..])
+                (hashes > 0 && hashes <= 6 && spaced(&trimmed[hashes..]))
+                    .then(|| &trimmed[hashes..])
             })
-            .or_else(|| ['-', '*', '+'].iter().find_map(|m| trimmed.strip_prefix(*m).filter(|r| spaced(r))))
-            .or_else(|| ["[ ]", "[x]", "[X]"].iter().find_map(|m| trimmed.strip_prefix(m).filter(|r| spaced(r))));
+            .or_else(|| {
+                ['-', '*', '+']
+                    .iter()
+                    .find_map(|m| trimmed.strip_prefix(*m).filter(|r| spaced(r)))
+            })
+            .or_else(|| {
+                ["[ ]", "[x]", "[X]"]
+                    .iter()
+                    .find_map(|m| trimmed.strip_prefix(m).filter(|r| spaced(r)))
+            });
         match after {
             Some(next) => rest = next,
             None => return trimmed,
@@ -702,7 +723,10 @@ static UNREAD: std::sync::Mutex<std::collections::BTreeSet<i64>> =
     std::sync::Mutex::new(std::collections::BTreeSet::new());
 
 pub(crate) fn is_unread(session_id: i64) -> bool {
-    UNREAD.lock().map(|set| set.contains(&session_id)).unwrap_or(false)
+    UNREAD
+        .lock()
+        .map(|set| set.contains(&session_id))
+        .unwrap_or(false)
 }
 
 fn set_unread(session_id: i64, unread: bool) {
@@ -1042,7 +1066,9 @@ pub(crate) fn spawn_liveness_watch(
                 // 收尾、外部终端里跑的会话等）：上一轮还活着、这一轮没了、库里已是 ended、
                 // 也没被本 GUI 托管着（就地重启中的不算）。
                 let ended_now = truly_ended(&last, &alive, &pty_live, |id| {
-                    store.get_session(id).is_ok_and(|session| session.status == "ended")
+                    store
+                        .get_session(id)
+                        .is_ok_and(|session| session.status == "ended")
                 });
                 for id in &ended_now {
                     crate::browser_agent::close_session_panels(&app, *id);
@@ -1113,7 +1139,10 @@ pub(crate) fn spawn_liveness_watch(
                     present.insert(sid.clone(), String::new()); // 标记本轮已扫描；retain 只清理本轮彻底消失的会话
 
                     let meowo_agent::TranscriptInfo {
-                        mut title, error, busy_subagents, ..
+                        mut title,
+                        error,
+                        busy_subagents,
+                        ..
                     } = agent_transcript(&s.provider)
                         .filter(|spec| spec.supports_analysis())
                         .and_then(|spec| {
@@ -1150,7 +1179,9 @@ pub(crate) fn spawn_liveness_watch(
                     if error.is_some()
                         || s.session.status == "waiting"
                         || s.pending_review.is_some()
-                        || screen_states.get(&s.session.id).is_some_and(|sight| sight.state == "blocked")
+                        || screen_states
+                            .get(&s.session.id)
+                            .is_some_and(|sight| sight.state == "blocked")
                     {
                         tray_waiting += 1;
                     } else if s.session.status == "running" {
@@ -1170,16 +1201,31 @@ pub(crate) fn spawn_liveness_watch(
                     if let Some(e) = &error {
                         let prev = notified.get(&sid).map(|s| s.as_str());
                         let suppressed = suppressed_by_viewing(NotifyKind::Error, viewing);
-                        let fired = seeded && should_notify(prev, Some(&e.fingerprint)) && !suppressed;
+                        let fired =
+                            seeded && should_notify(prev, Some(&e.fingerprint)) && !suppressed;
                         attention_fired |= fired;
                         if fired {
-                            emit_island_alert(&app, s.session.id, "error", &display_title, &s.project_name, Some(e.label.clone()));
-                            crate::push::push_session(&settings, crate::push::PushMessage {
-                                title: format!("{} · {}", s.project_name, tr(lang, "notify.error")),
-                                body: format!("{} · {}", display_title, e.label),
-                                session_id: s.session.id,
-                                urgent: false,
-                            });
+                            emit_island_alert(
+                                &app,
+                                s.session.id,
+                                "error",
+                                &display_title,
+                                &s.project_name,
+                                Some(e.label.clone()),
+                            );
+                            crate::push::push_session(
+                                &settings,
+                                crate::push::PushMessage {
+                                    title: format!(
+                                        "{} · {}",
+                                        s.project_name,
+                                        tr(lang, "notify.error")
+                                    ),
+                                    body: format!("{} · {}", display_title, e.label),
+                                    session_id: s.session.id,
+                                    urgent: false,
+                                },
+                            );
                         }
                         if fired && notify_kind_enabled(&settings, "error") {
                             // 标题带项目名：多会话并行时通知中心里堆着一排相同的状态标题，
@@ -1224,13 +1270,23 @@ pub(crate) fn spawn_liveness_watch(
                                 _ => "approval",
                             };
                             if fired {
-                                emit_island_alert(&app, s.session.id, kind, &display_title, &s.project_name, None);
-                                crate::push::push_session(&settings, crate::push::PushMessage {
-                                    title: format!("{} · {}", s.project_name, tr(lang, key)),
-                                    body: display_title.clone(),
-                                    session_id: s.session.id,
-                                    urgent: true,
-                                });
+                                emit_island_alert(
+                                    &app,
+                                    s.session.id,
+                                    kind,
+                                    &display_title,
+                                    &s.project_name,
+                                    None,
+                                );
+                                crate::push::push_session(
+                                    &settings,
+                                    crate::push::PushMessage {
+                                        title: format!("{} · {}", s.project_name, tr(lang, key)),
+                                        body: display_title.clone(),
+                                        session_id: s.session.id,
+                                        urgent: true,
+                                    },
+                                );
                             }
                             if fired && notify_kind_enabled(&settings, kind) {
                                 show_session_notification(
@@ -1267,7 +1323,9 @@ pub(crate) fn spawn_liveness_watch(
                     match screen_blocked_fingerprint(
                         error.is_some(),
                         s.pending_review.is_some(),
-                        screen_states.get(&s.session.id).map(|sight| sight.state),
+                        screen_states
+                            .get(&s.session.id)
+                            .and_then(|sight| sight.confirmed_state()),
                     ) {
                         Some(fp) => {
                             let prev = notified_blocked.get(&sid).map(|s| s.as_str());
@@ -1275,13 +1333,27 @@ pub(crate) fn spawn_liveness_watch(
                             let fired = seeded && should_notify(prev, Some(&fp)) && !suppressed;
                             attention_fired |= fired;
                             if fired {
-                                emit_island_alert(&app, s.session.id, "blocked", &display_title, &s.project_name, None);
-                                crate::push::push_session(&settings, crate::push::PushMessage {
-                                    title: format!("{} · {}", s.project_name, tr(lang, "notify.blocked")),
-                                    body: display_title.clone(),
-                                    session_id: s.session.id,
-                                    urgent: true,
-                                });
+                                emit_island_alert(
+                                    &app,
+                                    s.session.id,
+                                    "blocked",
+                                    &display_title,
+                                    &s.project_name,
+                                    None,
+                                );
+                                crate::push::push_session(
+                                    &settings,
+                                    crate::push::PushMessage {
+                                        title: format!(
+                                            "{} · {}",
+                                            s.project_name,
+                                            tr(lang, "notify.blocked")
+                                        ),
+                                        body: display_title.clone(),
+                                        session_id: s.session.id,
+                                        urgent: true,
+                                    },
+                                );
                             }
                             if fired && notify_kind_enabled(&settings, "blocked") {
                                 show_session_notification(
@@ -1327,13 +1399,30 @@ pub(crate) fn spawn_liveness_watch(
                             attention_fired |= fired;
                             if fired {
                                 set_unread(s.session.id, true);
-                                emit_island_alert(&app, s.session.id, "waiting", &display_title, &s.project_name, island_preview(s.last_ai_text.as_deref()));
-                                crate::push::push_session(&settings, crate::push::PushMessage {
-                                    title: format!("{} · {}", s.project_name, tr(lang, "notify.waiting")),
-                                    body: waiting_body(&display_title, s.last_ai_text.as_deref()),
-                                    session_id: s.session.id,
-                                    urgent: false,
-                                });
+                                emit_island_alert(
+                                    &app,
+                                    s.session.id,
+                                    "waiting",
+                                    &display_title,
+                                    &s.project_name,
+                                    island_preview(s.last_ai_text.as_deref()),
+                                );
+                                crate::push::push_session(
+                                    &settings,
+                                    crate::push::PushMessage {
+                                        title: format!(
+                                            "{} · {}",
+                                            s.project_name,
+                                            tr(lang, "notify.waiting")
+                                        ),
+                                        body: waiting_body(
+                                            &display_title,
+                                            s.last_ai_text.as_deref(),
+                                        ),
+                                        session_id: s.session.id,
+                                        urgent: false,
+                                    },
+                                );
                             }
                             if fired && notify_kind_enabled(&settings, "waiting") {
                                 show_session_notification(
@@ -1462,7 +1551,8 @@ mod first_import_notice_tests {
     use super::take_first_import_notice;
 
     fn temp_dir(tag: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("meowo-import-notice-{tag}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("meowo-import-notice-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
@@ -1520,7 +1610,10 @@ mod unread_tests {
         let pty_live = HashSet::from([2]);
         let ended_in_db = |id: i64| id != 3;
         // 1 真结束；2 就地重启（PTY 还在）；3 库里没 ended（抖动）；4 仍活着。
-        assert_eq!(truly_ended(&[1, 2, 3, 4], &[4], &pty_live, ended_in_db), vec![1]);
+        assert_eq!(
+            truly_ended(&[1, 2, 3, 4], &[4], &pty_live, ended_in_db),
+            vec![1]
+        );
     }
 
     /// 会话结束时清：关掉的会话不再用蓝点提醒「有新回复」。
@@ -1610,8 +1703,14 @@ mod waiting_body_tests {
 
     #[test]
     fn appends_the_closing_question_only() {
-        assert_eq!(waiting_body("修解析器", Some("…要我把测试也补上吗？")), "修解析器\n…要我把测试也补上吗？");
-        assert_eq!(waiting_body("修解析器", Some("Shall I continue? ")), "修解析器\nShall I continue?");
+        assert_eq!(
+            waiting_body("修解析器", Some("…要我把测试也补上吗？")),
+            "修解析器\n…要我把测试也补上吗？"
+        );
+        assert_eq!(
+            waiting_body("修解析器", Some("Shall I continue? ")),
+            "修解析器\nShall I continue?"
+        );
         assert_eq!(waiting_body("修解析器", Some("已经全部改完。")), "修解析器");
         assert_eq!(waiting_body("修解析器", None), "修解析器");
     }
@@ -1619,6 +1718,23 @@ mod waiting_body_tests {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn screen_notifications_require_confirmed_evidence() {
+        let unknown = crate::pty::ScreenSight {
+            state: "idle",
+            fallback: true,
+        };
+        let blocked = crate::pty::ScreenSight {
+            state: "blocked",
+            fallback: false,
+        };
+        assert!(
+            super::screen_blocked_fingerprint(false, false, unknown.confirmed_state()).is_none()
+        );
+        assert!(
+            super::screen_blocked_fingerprint(false, false, blocked.confirmed_state()).is_some()
+        );
+    }
     use super::{coalesce_loop, BOARD_COALESCE};
     use std::sync::mpsc::{Receiver, RecvTimeoutError};
     use std::time::{Duration, Instant};
@@ -1747,23 +1863,49 @@ mod tests {
     fn island_preview_takes_first_meaningful_line() {
         use super::island_preview;
         assert_eq!(island_preview(None), None);
-        assert_eq!(island_preview(Some("  
-
-")), None);
         assert_eq!(
-            island_preview(Some("
+            island_preview(Some(
+                "  
+
+"
+            )),
+            None
+        );
+        assert_eq!(
+            island_preview(Some(
+                "
 ## 改好了
-- 测试全过")).as_deref(),
+- 测试全过"
+            ))
+            .as_deref(),
             Some("改好了")
         );
         assert_eq!(island_preview(Some("- 第一条")).as_deref(), Some("第一条"));
-        assert_eq!(island_preview(Some("**改好了**，测试全过")).as_deref(), Some("改好了，测试全过"));
-        assert_eq!(island_preview(Some("-1 个失败")).as_deref(), Some("-1 个失败"));
+        assert_eq!(
+            island_preview(Some("**改好了**，测试全过")).as_deref(),
+            Some("改好了，测试全过")
+        );
+        assert_eq!(
+            island_preview(Some("-1 个失败")).as_deref(),
+            Some("-1 个失败")
+        );
         assert_eq!(island_preview(Some("> ## 结论")).as_deref(), Some("结论"));
-        assert_eq!(island_preview(Some("#3 号问题修好了")).as_deref(), Some("#3 号问题修好了"));
-        assert_eq!(island_preview(Some("改了 __init__.py 和 n**2")).as_deref(), Some("改了 __init__.py 和 n**2"));
-        assert_eq!(island_preview(Some("---\n**\n## \n真正的第一句")).as_deref(), Some("真正的第一句"));
-        assert_eq!(island_preview(Some("- [x] 测试全过")).as_deref(), Some("测试全过"));
+        assert_eq!(
+            island_preview(Some("#3 号问题修好了")).as_deref(),
+            Some("#3 号问题修好了")
+        );
+        assert_eq!(
+            island_preview(Some("改了 __init__.py 和 n**2")).as_deref(),
+            Some("改了 __init__.py 和 n**2")
+        );
+        assert_eq!(
+            island_preview(Some("---\n**\n## \n真正的第一句")).as_deref(),
+            Some("真正的第一句")
+        );
+        assert_eq!(
+            island_preview(Some("- [x] 测试全过")).as_deref(),
+            Some("测试全过")
+        );
         assert_eq!(island_preview(Some("-\t列表项")).as_deref(), Some("列表项"));
         let long = "字".repeat(100);
         let cut = island_preview(Some(&long)).unwrap();

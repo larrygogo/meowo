@@ -5,9 +5,13 @@ pub mod dispatch;
 pub mod hook;
 pub mod import;
 pub mod lead;
+pub mod lead_mcp;
+pub mod lead_provider;
 pub mod proc;
 pub mod statusline;
 pub mod tabtitle;
+#[cfg(unix)]
+pub mod unix_supervisor;
 
 use std::path::PathBuf;
 

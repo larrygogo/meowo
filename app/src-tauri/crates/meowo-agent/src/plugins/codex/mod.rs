@@ -14,6 +14,8 @@
 //! 接线还有一步**副作用**（往 `config.toml` 写 `[hooks.state]` 的 trusted_hash 预信任）——见 `setup.rs`。
 
 pub mod account;
+mod conversation;
+mod lead;
 mod lineage;
 mod screen;
 pub mod setup;
@@ -129,6 +131,7 @@ static VARIANTS: [Variant; 1] = [Variant {
     tag: "stable",
     data_dir: DataDirSpec {
         env: Some("CODEX_HOME"),
+        env_suffix: "",
         candidates: &[".codex"],
     },
     hooks: &HOOKS,
@@ -232,6 +235,13 @@ impl AgentPlugin for Codex {
     fn permission_hook_decides(&self) -> bool {
         true
     }
+    fn lead(&self) -> Option<&'static dyn crate::lead_install::LeadCap> {
+        Some(&lead::CAP)
+    }
+    fn conversation(&self) -> Option<&'static dyn crate::conversation::ConversationCap> {
+        Some(&conversation::CAP)
+    }
+
     fn variants(&self) -> &'static [Variant] {
         &VARIANTS
     }
@@ -248,6 +258,25 @@ impl AgentPlugin for Codex {
         // 会话本体是原生 codex 二进制；npm 包装时它由 node 启动但 hook 由 codex 自身触发，上溯命中
         // codex(.exe) 即可。不收 node.exe（过宽，会把任意 node 进程误判为 agent）。
         &["codex", "codex.exe"]
+    }
+    /// 0.167.2 的 app-server 持有 ThreadManager 多线程表；嵌入式服务也不等于独占。
+    /// 来源：0.167.2 隔离双 thread 的 SessionStart/UserPromptSubmit 父链全部是同一 daemon PID
+    /// （target/lead-provider-probes/codex-shared/result.json），原生 TUI 退出后也仍可续跑。
+    fn process_scope(&self, argv: &[String]) -> crate::registry::ProcessScope {
+        use crate::registry::ProcessScope;
+        if !argv
+            .first()
+            .is_some_and(|executable| self.owns_process(executable))
+        {
+            ProcessScope::Unknown
+        } else if argv.iter().skip(1).any(|arg| {
+            matches!(arg.as_str(), "app-server" | "exec-server" | "--remote")
+                || arg.starts_with("--remote=")
+        }) {
+            ProcessScope::Shared
+        } else {
+            ProcessScope::Exclusive
+        }
     }
     fn resume_args(&self) -> &'static [&'static str] {
         &["resume"]
@@ -285,6 +314,23 @@ impl AgentPlugin for Codex {
     /// Esc 中断当前回合:codex 状态行自述 "esc to interrupt"(真机 capture 在档,
     /// 见 docs/research/tui-menu-captures-2026-07.md)。排队键 Tab 在空闲时同样直接提交
     /// (probe_tui_script,0.162.1,2026-10-16),运行态误判也不会卡住消息。
+    /// 2026-11-12 隔离无模型实拍（target/lead-provider-probes/composer）：文字只给候选，发送仍须核验原生光标。
+    fn composer_guard(&self, version: Option<&str>) -> Option<crate::chat_ui::ComposerGuard> {
+        if version != Some("0.167.2") {
+            return None;
+        }
+        Some(crate::chat_ui::ComposerGuard {
+            prompt_footer: true,
+            input_start_pattern: r"^(› )",
+            top_pattern: r"^› ",
+            bottom_pattern: r"^  [A-Za-z0-9][^\r\n]* · .+$",
+            row_pattern: r"^(?:› |  )(.*)$",
+            prompt_prefix: "",
+            tail_rows: 0,
+            tail_pattern: None,
+            empty_pattern: r"^(?:Ask Codex to do anything)?$",
+        })
+    }
     fn queue_input(&self) -> Option<&'static str> {
         Some("\t")
     }
@@ -341,6 +387,18 @@ impl AgentPlugin for Codex {
     fn slash_commands(&self) -> &'static [&'static str] {
         &[
             "/clear", "/compact", "/diff", "/help", "/model", "/new", "/review", "/status",
+        ]
+    }
+    /// 目录信任屏。0.166.0 的标题改成 `Trust this folder? Codex can read, edit, and run files
+    /// here, ...`（codex.exe 内嵌字符串，research-cli-drift X1，2026-11-12 复核：二进制里
+    /// `do you trust` 0 处）。只认通用表的旧句，新目录首条消息会被信任屏吞掉、会话像卡住。
+    /// 带问号取前半句：整句会随终端宽度折行，问号让它不至于撞上普通对话里的「trust this folder」。
+    /// 通用表的两句保留，0.16x 之前的老版本用户还在。
+    fn startup_attention_markers(&self) -> &'static [&'static str] {
+        &[
+            "do you trust the files in this folder",
+            "do you trust the contents of this directory",
+            "trust this folder?",
         ]
     }
     fn mode_controls(&self) -> &'static [crate::ModeControl] {
@@ -518,10 +576,52 @@ mod tests {
 
     use super::*;
 
+    /// codex 0.166.0 信任屏原文（codex.exe 内嵌字符串，research-cli-drift X1）。
+    #[test]
+    fn startup_markers_cover_trust_folder_screen_old_and_new() {
+        let screen = "Trust this folder? Codex can read, edit, and run files here, subject to \
+                      your permission settings."
+            .to_lowercase();
+        let markers = Codex.startup_attention_markers();
+        assert!(markers.iter().any(|m| screen.contains(m)));
+        // 旧版（< 0.16x）标题仍认
+        let old = "Do you trust the contents of this directory?".to_lowercase();
+        assert!(markers.iter().any(|m| old.contains(m)));
+        // 普通对话里提到这几个词不算
+        let chat = "you can trust this folder layout".to_lowercase();
+        assert!(!markers.iter().any(|m| chat.contains(m)));
+    }
+
     #[test]
     fn writes_session_token_before_first_prompt() {
         assert!(Codex.writes_tab_token());
         assert!(!Codex.sets_terminal_tab_title());
+    }
+
+    #[test]
+    fn app_server_is_shared_even_when_embedded_but_tui_is_private() {
+        use crate::registry::ProcessScope;
+        let scope = |args: &[&str]| {
+            Codex.process_scope(&args.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>())
+        };
+        assert_eq!(scope(&[]), ProcessScope::Unknown);
+        assert_eq!(scope(&["unrelated.exe"]), ProcessScope::Unknown);
+        assert_eq!(
+            scope(&["codex.exe", "--remote", "unix://test"]),
+            ProcessScope::Shared
+        );
+        assert_eq!(
+            scope(&["codex.exe", "app-server", "--stdio"]),
+            ProcessScope::Shared
+        );
+        assert_eq!(
+            scope(&["codex.exe", "app-server", "--listen", "unix://test"]),
+            ProcessScope::Shared
+        );
+        assert_eq!(
+            scope(&["codex.exe", "--no-daemon", "resume", "thread"]),
+            ProcessScope::Exclusive
+        );
     }
 
     #[test]

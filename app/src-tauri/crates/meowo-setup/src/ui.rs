@@ -33,7 +33,9 @@ impl HasWindowHandle for ParentWindow {
     fn window_handle(&self) -> Result<WindowHandle<'_>, HandleError> {
         let hwnd = NonZeroIsize::new(self.0).ok_or(HandleError::Unavailable)?;
         // SAFETY: HWND 由主线程存活的窗口而来，对话框模态期间窗口不可能被销毁。
-        Ok(unsafe { WindowHandle::borrow_raw(RawWindowHandle::Win32(Win32WindowHandle::new(hwnd))) })
+        Ok(unsafe {
+            WindowHandle::borrow_raw(RawWindowHandle::Win32(Win32WindowHandle::new(hwnd)))
+        })
     }
 }
 
@@ -74,7 +76,10 @@ fn forbidden_prefixes() -> Vec<String> {
 }
 
 fn json_str(v: &serde_json::Value, key: &str) -> String {
-    v.get(key).and_then(|x| x.as_str()).unwrap_or_default().to_string()
+    v.get(key)
+        .and_then(|x| x.as_str())
+        .unwrap_or_default()
+        .to_string()
 }
 
 /// 事件循环不返回（内部 std::process::exit）；只有窗口/webview 构建失败才 Err，
@@ -166,12 +171,14 @@ pub fn run() -> Result<(), String> {
                 match msg.get("cmd").and_then(|c| c.as_str()).unwrap_or("") {
                     "ready" => {
                         let existing = detect::detect_existing().map(|e| {
-                            let relation =
-                                match logic::compare_versions(&e.version, env!("MEOWO_APP_VERSION")) {
-                                    std::cmp::Ordering::Less => "upgrade",
-                                    std::cmp::Ordering::Equal => "same",
-                                    std::cmp::Ordering::Greater => "downgrade",
-                                };
+                            let relation = match logic::compare_versions(
+                                &e.version,
+                                env!("MEOWO_APP_VERSION"),
+                            ) {
+                                std::cmp::Ordering::Less => "upgrade",
+                                std::cmp::Ordering::Equal => "same",
+                                std::cmp::Ordering::Greater => "downgrade",
+                            };
                             serde_json::json!({ "version": e.version, "relation": relation })
                         });
                         push(
@@ -214,30 +221,31 @@ pub fn run() -> Result<(), String> {
                             return;
                         }
                         let raw_dir = json_str(&msg, "dir");
-                        let dir =
-                            match logic::normalize_install_dir_with(&raw_dir, &forbidden_prefixes())
-                            {
-                                Ok(d) => d,
-                                Err(e) => {
-                                    push(
-                                        &webview,
-                                        serde_json::json!({
-                                            "type": "dirError",
-                                            "code": dir_error_code(&e),
-                                        }),
-                                    );
-                                    return;
-                                }
-                            };
+                        let dir = match logic::normalize_install_dir_with(
+                            &raw_dir,
+                            &forbidden_prefixes(),
+                        ) {
+                            Ok(d) => d,
+                            Err(e) => {
+                                push(
+                                    &webview,
+                                    serde_json::json!({
+                                        "type": "dirError",
+                                        "code": dir_error_code(&e),
+                                    }),
+                                );
+                                return;
+                            }
+                        };
                         installing = true;
                         installed_dir = Some(dir.clone());
-                        push(&webview, serde_json::json!({ "type": "phase", "value": "installing" }));
+                        push(
+                            &webview,
+                            serde_json::json!({ "type": "phase", "value": "installing" }),
+                        );
                         let req = InstallReq {
                             dir,
-                            chat_enabled: msg
-                                .get("chat")
-                                .and_then(|v| v.as_bool())
-                                .unwrap_or(true),
+                            chat_enabled: msg.get("chat").and_then(|v| v.as_bool()).unwrap_or(true),
                             desktop_shortcut: msg
                                 .get("desktop")
                                 .and_then(|v| v.as_bool())

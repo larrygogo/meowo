@@ -92,7 +92,7 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched, onOpenSession
     const launched = await form.launch();
     // 旧后端桌面命令不回临时 id（null）：会话照样起来、reveal 照样切过去，只是第一句话
     // 没法记到它身上——放回输入框不现实（页面随即关掉），宁可不清空让用户看见。
-    if (launched?.tempId != null) onLaunched(launched.tempId, provider, message.trim(), attachments);
+    if (launched?.tempId != null) onLaunched(launched.tempId, provider, launched.managed ? message : message.trim(), attachments);
   }
 
   const pasteFiles = async (files: File[]) => {
@@ -165,13 +165,14 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched, onOpenSession
             <div className="chat-attachments nsp-attachments" data-testid="nsp-attachments">
               {attachments.map((file) => (
                 <div className={"chat-attachment" + (file.image ? " is-image" : "")} key={file.path} data-tip={file.path}>
-                  {file.image ? <ImageRef path={file.path} /> : <span className="chat-file-name">{file.name}</span>}
+                  {file.image ? <ImageRef path={file.path} /> : <span className="chat-file-name">{file.name}{form.managedMode && <small> · {t.chat.engineLocalFileReference}</small>}</span>}
                   <button type="button" aria-label={`${t.chat.removeAttachment} ${file.name}`} disabled={busy}
                     onClick={() => setAttachments((items) => items.filter((item) => item.path !== file.path))}>×</button>
                 </div>
               ))}
             </div>
           )}
+          {form.managedMode && attachments.length > 0 && <p className="row-desc">{t.chat.engineAttachmentHint}</p>}
           <div className="nsp-bar">
             <div className="nsp-chips">
               {/* 底部这排与对话页 composer 的权限 / 模型胶囊同一套（PillSelect）：短名上胶囊、
@@ -189,6 +190,10 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched, onOpenSession
                   onChange={(value) => { setProvider(value); setError(null); }}
                 />
               )}
+          {form.managedAvailable && <div className="row">
+            <label><input type="checkbox" checked={!form.managedMode} disabled={busy} onChange={(event) => form.setNativeRequested(event.target.checked)} />{t.chat.engineNative}</label>
+            <div className="row-desc">{form.managedMode ? t.chat.engineManagedDesc : t.chat.engineNativeDesc}</div>
+          </div>}
               {launchOptions.map((option) => {
                 // relay 启用时 model 档由中转固定：置灰，悬停说明固定成了什么。
                 const pinned = option.id === "model" ? relayPins[provider] : undefined;

@@ -59,7 +59,9 @@ fn merge_profile_into_default_end_to_end() {
     // DB：work 名下两条会话（一条 running、一条 ended），另有默认账号的一条对照。
     let db = meowo_dir.join("board.db");
     let store = meowo_store::Store::open(&db).unwrap();
-    let project = store.upsert_project_by_root("C:/root", "root", 100).unwrap();
+    let project = store
+        .upsert_project_by_root("C:/root", "root", 100)
+        .unwrap();
     let (running, _) = store.start_session(project, "cc-running", 100).unwrap();
     let (ended, _) = store.start_session(project, "cc-ended", 200).unwrap();
     let (_default, _) = store.start_session(project, "cc-default", 300).unwrap();

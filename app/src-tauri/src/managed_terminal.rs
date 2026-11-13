@@ -106,7 +106,10 @@ pub(crate) async fn screen_detect_explain(
         let (snapshot, provider) = ptys
             .screen_probe_snapshot(session_id)
             .ok_or("该会话没有托管 PTY 屏幕状态")?;
-        let published = ptys.screen_states().get(&session_id).map(|sight| sight.state);
+        let published = ptys
+            .screen_states()
+            .get(&session_id)
+            .map(|sight| sight.state);
         Ok(explain_snapshot(provider, snapshot, published))
     })
     .await
@@ -165,7 +168,8 @@ mod screen_explain_tests {
 
         // 无规则集的 provider 如实说明，而不是假装判了个 idle。用未注册的身份串——
         // 已注册的五家插件现在都声明了规则（这条断言本身被 gemini 加规则时抓到过）。
-        let unsupported = screen_detect_explain_text("not-an-agent".into(), "whatever".into(), None);
+        let unsupported =
+            screen_detect_explain_text("not-an-agent".into(), "whatever".into(), None);
         assert_eq!(unsupported.raw_state, None);
         assert_eq!(unsupported.matched_rule, "provider_unsupported");
     }
@@ -340,6 +344,17 @@ pub(crate) async fn managed_terminal_screen(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn managed_terminal_frame(
+    state: State<'_, super::AppState>,
+    session_id: i64,
+) -> Result<Option<meowo_protocol::ipc::TerminalScreenFrameDto>, String> {
+    let ptys = state.ptys.clone();
+    tauri::async_runtime::spawn_blocking(move || Ok(ptys.screen_frame(session_id)))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -585,7 +600,9 @@ mod orphan_stop_tests {
     fn start_session_with_pid(db: &std::path::Path, pid: Option<i64>) -> i64 {
         let store = meowo_store::Store::open(db).unwrap();
         let now = super::super::now_ms();
-        let project = store.upsert_project_by_root("/tmp/orphan", "orphan", now).unwrap();
+        let project = store
+            .upsert_project_by_root("/tmp/orphan", "orphan", now)
+            .unwrap();
         let (sid, _) = store.start_session(project, "cc-orphan", now).unwrap();
         if let Some(pid) = pid {
             store.set_session_pid(sid, pid, now).unwrap();
@@ -602,12 +619,18 @@ mod orphan_stop_tests {
         let alive = std::collections::HashSet::from([FAKE_PID]);
 
         let result = stop_orphan_by_pid(&db, sid, &alive);
-        assert!(matches!(result, Some(Ok(()))), "活 pid 的孤儿会话兜底必须生效");
+        assert!(
+            matches!(result, Some(Ok(()))),
+            "活 pid 的孤儿会话兜底必须生效"
+        );
 
         let store = meowo_store::Store::open(&db).unwrap();
         let header = store.session_header(sid).unwrap();
         assert_eq!(header.status, "ended");
-        assert_eq!(header.pid, None, "落 ended 必须清 pid（同 end_session 契约）");
+        assert_eq!(
+            header.pid, None,
+            "落 ended 必须清 pid（同 end_session 契约）"
+        );
         let _ = std::fs::remove_file(&db);
     }
 

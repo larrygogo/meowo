@@ -2,6 +2,20 @@
 
 use serde::{Deserialize, Serialize};
 
+/// 发送前需要同一帧的文字和光标；分两次读取会把异步重绘误认为用户移动了光标。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+pub struct TerminalScreenFrameDto {
+    pub lines: Vec<String>,
+    /// 从 0 起的可见网格行。
+    pub cursor_row: u16,
+    /// 从 0 起的终端格列，不是 UTF-16 字符索引。
+    pub cursor_col: u16,
+    pub cursor_visible: bool,
+}
+
 /// 一条待办。`status` 用字面量而非枚举：来源是各家 agent 的自由文本状态，
 /// 归一化后仍可能出现本版本不认识的值，前端按未知处理即可，不该让整份反序列化失败。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -339,6 +353,30 @@ pub struct AgentModeDto {
 #[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
 #[serde(rename_all = "camelCase")]
 pub struct ChatHistoryDto {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    #[cfg_attr(test, ts(type = "boolean", optional))]
+    pub managed_conversation: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub managed_phase: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub managed_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub managed_interaction: Option<crate::conversation::ManagedInteractionDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub managed_models: Option<Vec<crate::conversation::ManagedChoiceDto>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub managed_modes: Option<Vec<crate::conversation::ManagedChoiceDto>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub managed_mode_dimension: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub managed_deliveries: Option<Vec<crate::conversation::ManagedDeliveryDto>>,
     #[cfg_attr(test, ts(type = "number"))]
     pub session_id: i64,
     /// CLI 侧会话 id：前端以它为键的动作（重命名 rename_session、置顶 STAR_KEY）
@@ -386,6 +424,9 @@ pub struct ChatHistoryDto {
     /// 空闲会话当成「运行中」，发消息按了排队键 Tab 而非回车——正文停在输入框里发不出去
     /// （0.6.11 实机，gemini 0.64）。
     pub screen_state: Option<String>,
+    /// 无规则命中的 idle 不代表确认空闲，必须与状态一起传给统一活动判定。
+    #[serde(default)]
+    pub screen_assumed: bool,
     /// 最近一轮以错误收场（transcript 分析口径，与侧栏/贴纸的 `LiveItem.errored` 同源）。
     /// 不做 transcript 分析的 agent（codex/kimi）恒为 false。
     pub errored: bool,
@@ -1065,6 +1106,54 @@ pub struct LeadTaskDto {
     pub progress: String,
     /// 正在挂起或已作答未消费的关卡；没有关卡或 gate.json 损坏为 None。
     pub gate: Option<LeadGateDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub delivery: Option<LeadDeliveryDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct LeadDeliveryDto {
+    #[cfg_attr(test, ts(type = "number"))]
+    pub session_id: i64,
+    pub cwd: String,
+    pub delivery_id: String,
+    pub state: String,
+    pub reason: Option<String>,
+    pub can_retry: bool,
+}
+
+/// 设置页按 CLI 与账号隔离展示；资产安装状态不代表已具备自动续跑能力。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct LeadProviderInstallationDto {
+    pub provider: String,
+    pub profile_id: Option<String>,
+    pub profile_name: Option<String>,
+    pub name: String,
+    pub version: Option<String>,
+    pub configured: bool,
+    pub supported: bool,
+    pub managed: bool,
+    pub installed: bool,
+    pub assets_installed: bool,
+    pub hooks_installed: bool,
+    pub automatic_continue: bool,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SetLeadProviderEnabledArgs {
+    pub provider: String,
+    pub profile_id: Option<String>,
+    pub enabled: bool,
 }
 
 /// 验收清单的一条。
@@ -1289,11 +1378,28 @@ mod tests {
     /// interjected 只在为真时下发；缺字段（旧后端/旧缓存）按 false 读回。
     #[test]
     fn user_text_interjected_is_omitted_when_false() {
-        let plain = ChatItem::UserText { id: "u".into(), timestamp: None, text: "hi".into(), interjected: false, to_agent: None };
-        assert!(serde_json::to_value(&plain).unwrap().get("interjected").is_none());
-        let steered = ChatItem::UserText { id: "u".into(), timestamp: None, text: "hi".into(), interjected: true, to_agent: None };
+        let plain = ChatItem::UserText {
+            id: "u".into(),
+            timestamp: None,
+            text: "hi".into(),
+            interjected: false,
+            to_agent: None,
+        };
+        assert!(serde_json::to_value(&plain)
+            .unwrap()
+            .get("interjected")
+            .is_none());
+        let steered = ChatItem::UserText {
+            id: "u".into(),
+            timestamp: None,
+            text: "hi".into(),
+            interjected: true,
+            to_agent: None,
+        };
         assert_eq!(serde_json::to_value(&steered).unwrap()["interjected"], true);
-        let old: ChatItem = serde_json::from_str(r#"{"type":"user_text","id":"u","timestamp":null,"text":"hi"}"#).unwrap();
+        let old: ChatItem =
+            serde_json::from_str(r#"{"type":"user_text","id":"u","timestamp":null,"text":"hi"}"#)
+                .unwrap();
         assert_eq!(old, plain);
     }
 

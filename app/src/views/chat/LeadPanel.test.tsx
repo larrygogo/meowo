@@ -7,10 +7,12 @@ import type { LeadGateDto, LeadTaskDto } from "../../api";
 
 const snapshot = vi.fn<(cwd: string, session?: string | null) => Promise<LeadTaskDto | null>>();
 const answer = vi.fn<(cwd: string, gateId: string, choice: string, note: string) => Promise<void>>();
+const retryDelivery = vi.fn<(cwd: string, gateId: string) => Promise<void>>();
 vi.mock("../../api", async (importActual) => ({
   ...(await importActual<typeof import("../../api")>()),
   leadTaskSnapshot: (cwd: string, session?: string | null) => snapshot(cwd, session),
   answerLeadGate: (cwd: string, gateId: string, choice: string, note: string) => answer(cwd, gateId, choice, note),
+  retryLeadGateDelivery: (cwd: string, gateId: string) => retryDelivery(cwd, gateId),
 }));
 
 const { DockWork } = await import("./DockWork");
@@ -50,10 +52,38 @@ function gate(kind: "A" | "B" | "C" | "D" | "Q", over: Partial<LeadGateDto> = {}
 beforeEach(() => {
   snapshot.mockReset();
   answer.mockReset();
+  retryDelivery.mockReset();
 });
 afterEach(cleanup);
 
 describe("Lead 入口", () => {
+  it("模型回执不冒充关卡接手，不确定投递没有盲重发按钮", () => {
+    render(<LeadPanel task={task({ gate: gate("Q", { status: "answered" }), delivery: {
+      sessionId: 1, cwd: "C:/repo", deliveryId: "stable", state: "uncertain", reason: null, canRetry: false,
+    } })} onClose={() => {}} />);
+    expect(screen.getByText("送达结果不确定，请在会话中核对后处理")).toBeTruthy();
+    expect(screen.queryByText("Agent 已接手关卡")).toBeNull();
+    expect(screen.queryByRole("button", { name: "继续送达" })).toBeNull();
+  });
+
+  it("暂停后显式继续使用关卡稳定标识，并展示恢复失败", async () => {
+    retryDelivery.mockRejectedValue("conversation/previous_process_unverified");
+    render(<LeadPanel task={task({ gate: gate("Q", { status: "answered" }), delivery: {
+      sessionId: 1, cwd: "C:/repo", deliveryId: "stable", state: "paused", reason: null, canRetry: true,
+    } })} onClose={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "继续送达" }));
+    expect((await screen.findByRole("alert")).textContent).toContain("尚未确认上次会话进程已退出");
+    expect(retryDelivery).toHaveBeenCalledWith("C:/repo", "Q-1");
+  });
+
+  it("只有任务文件consumed显示已接手，且不再显示恢复按钮", () => {
+    render(<LeadPanel task={task({ gate: gate("Q", { status: "consumed" }), delivery: {
+      sessionId: 1, cwd: "C:/repo", deliveryId: "stable", state: "consumed", reason: null, canRetry: true,
+    } })} onClose={() => {}} />);
+    expect(screen.getByText("Agent 已接手关卡")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "继续送达" })).toBeNull();
+  });
+
   it("项目里没有任务（快照为 null）时不出入口", async () => {
     snapshot.mockResolvedValue(null);
     render(<DockWork sessionId={1} cwd="C:/repo" ccSessionId="cc-1" items={[]} history={history} loading={false} />);
@@ -199,7 +229,7 @@ describe("关卡卡片", () => {
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "提交" })); });
     expect(answer).toHaveBeenCalledWith("C:/repo", "C-1", "reject", "截图对不上");
     expect((await screen.findByRole("alert")).textContent).toBe("这个关卡已经回答过了");
-    expect(onAnswered).not.toHaveBeenCalled();
+    expect(onAnswered).toHaveBeenCalledOnce();
   });
 });
 
