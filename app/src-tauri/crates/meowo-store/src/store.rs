@@ -1779,6 +1779,18 @@ impl Store {
         Ok(r)
     }
 
+    /// 同 [`Self::session_provider`]，但会话行不存在时返回 `None` 而非报错。
+    ///
+    /// 给「手里的 id 不一定已落库」的调用方用：PTY 托管表里有 start_pending 的临时负 id，
+    /// CLI 未 SessionStart 前库里没有它的行。
+    pub fn session_provider_opt(&self, session_id: i64) -> Result<Option<String>, StoreError> {
+        match self.session_provider(session_id) {
+            Ok(p) => Ok(Some(p)),
+            Err(StoreError::Sqlite(rusqlite::Error::QueryReturnedNoRows)) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
     /// 取会话所属 agent。未知 id 原样返回；老数据的 NULL/空值回退历史默认值。
     pub fn session_provider(&self, session_id: i64) -> Result<String, StoreError> {
         let provider: Option<String> = self.conn.query_row(
