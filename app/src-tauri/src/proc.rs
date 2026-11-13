@@ -290,12 +290,14 @@ pub(crate) fn kill_descendants(root: u32) {
 /// 每个都要判活。各扫各的话，Windows 上就是好几次全进程表枚举，而且两次扫描之间进程可能退出，
 /// 导致角标与列表对不上。
 pub(crate) fn agent_pids_snapshot() -> HashSet<i64> {
+    // TUI 已退出、正待收掉的 codex app-server 不算会话存活（lead_native::codex_app_server）。
+    // 两个平台都要剔除：hook 会把 app-server 记成会话 pid，只在 Windows 剔除时 macOS 看板会短暂显示「运行中」
+    // （CI macOS 矩阵报 lingering_server_pids 未使用才发现两边口径不一）。
+    let lingering = crate::lead_native::codex_app_server::lingering_server_pids();
     #[cfg(target_os = "windows")]
     {
         // Toolhelp 快照（1-3ms）而非 sysinfo 全进程刷新（30-120ms，理由见 snapshot_processes）。
         // 快照里的可执行名已是小写 basename，与 is_agent_process 的精确匹配口径一致。
-        // TUI 已退出、正待收掉的 codex app-server 不算会话存活（lead_native::codex_app_server）。
-        let lingering = crate::lead_native::codex_app_server::lingering_server_pids();
         snapshot_processes()
             .into_iter()
             .filter(|(pid, (_, name))| {
@@ -307,6 +309,9 @@ pub(crate) fn agent_pids_snapshot() -> HashSet<i64> {
     #[cfg(not(target_os = "windows"))]
     {
         claude_pids_snapshot()
+            .into_iter()
+            .filter(|pid| !u32::try_from(*pid).is_ok_and(|p| lingering.contains(&p)))
+            .collect()
     }
 }
 
