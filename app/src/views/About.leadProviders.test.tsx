@@ -13,7 +13,7 @@ import { zh } from "../i18n/zh";
 import { formatBackendError } from "../i18n/errors";
 
 function row(provider: string, values: Partial<LeadProviderInstallationDto> = {}): LeadProviderInstallationDto {
-  return { provider, name: provider, profileId: null, profileName: null, version: "test", configured: true, supported: true, managed: false, installed: false, assetsInstalled: false, hooksInstalled: false, automaticContinue: false, reason: null, ...values };
+  return { provider, name: provider, profileId: null, profileName: null, version: "test", configured: true, supported: true, managed: false, installed: false, assetsInstalled: false, hooksInstalled: false, automaticContinue: false, notes: [], reason: null, ...values };
 }
 beforeEach(() => { api.leadProviderInstallations.mockResolvedValue([row("codex"), row("kimi"), row("gemini"), row("opencode")]); });
 afterEach(() => { cleanup(); vi.clearAllMocks(); });
@@ -41,6 +41,22 @@ describe("Lead 按 Provider / 账号独立安装", () => {
     expect(screen.queryByText(zh.settings.leadInstalled)).toBeNull();
     expect(screen.getAllByText(zh.settings.leadNotInstalled)).toHaveLength(3);
     expect(screen.getByRole("button", { name: `${zh.settings.leadUninstall} gemini` })).toBeTruthy();
+  });
+
+  it("自动继续的副作用说明来自插件声明，只在可自动继续时显示", async () => {
+    const note = "lead/note_dialog_starts_turn";
+    api.leadProviderInstallations.mockResolvedValue([
+      row("gemini", { managed: true, installed: true, assetsInstalled: true, hooksInstalled: true, automaticContinue: true, notes: [note] }),
+      row("kimi", { managed: true, installed: true, assetsInstalled: true, hooksInstalled: true, automaticContinue: false, notes: [note] }),
+    ]);
+    render(<LeadProviderRows />);
+    expect(await screen.findAllByText(formatBackendError(note, "zh"))).toHaveLength(1);
+    // 文案约束：一行内、不用破折号和分号，中英文都有映射（没映射时 formatBackendError 会原样回键名）。
+    for (const locale of ["zh", "en"] as const) {
+      const text = formatBackendError(note, locale);
+      expect(text).not.toBe(note);
+      expect(text).not.toMatch(/[—–;；]/);
+    }
   });
 
   it("未知版本仍允许卸载托管文件，不允许重新安装", async () => {

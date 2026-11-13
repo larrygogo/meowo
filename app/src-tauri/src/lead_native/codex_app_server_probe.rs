@@ -640,6 +640,7 @@ fn codex_remote_probe() {
         assets_installed: true,
         hooks_installed: true,
         automatic_continue: true,
+        notes: Vec::new(),
         reason: None,
     });
     let exe = meowo_agent::by_id("codex").unwrap().launch_argv();

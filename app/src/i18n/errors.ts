@@ -329,6 +329,8 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "lead/version_unsupported", exact: true, zh: "尚未验证此 CLI 版本的 Lead 接入，未修改配置", en: "Lead support has not been verified for this CLI version. Its configuration was left unchanged" },
   { m: "lead/variant_unsupported", exact: true, zh: "该 CLI 变体暂不支持 Lead 接入", en: "Lead is not supported for this CLI variant yet" },
   { m: "lead/profile_missing", exact: true, zh: "该账号配置已不存在，请刷新账号列表后重试", en: "This account configuration no longer exists. Refresh the account list and retry" },
+  // 设置页 Lead 行的自动继续副作用说明（插件声明 LeadCap::continue_notes）；leader 在关卡 Q 接受了这条风险，要求写明。
+  { m: "lead/note_dialog_starts_turn", exact: true, zh: "停在 /settings、登录等对话框时，手机作答也会直接开始新一轮", en: "Answering from your phone starts a new turn even while /settings or a sign-in dialog is open" },
   { m: "lead/reviewer_disabled", exact: true, zh: "CLI 已禁用审查角色所需的能力，请先在其设置中启用", en: "The CLI has disabled the capability required by the reviewer role. Enable it in the CLI settings first" },
   { m: "lead/config_changed", exact: true, zh: "CLI 配置在安装期间发生变化，请重试", en: "The CLI configuration changed during installation. Please retry" },
   { m: "lead/read_failed", exact: true, zh: "无法读取 Lead 配置，请检查目录权限后重试", en: "Could not read the Lead configuration. Check folder permissions and retry" },

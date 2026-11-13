@@ -421,6 +421,7 @@ fn opencode_tui_lead_continuation_probe() {
         assets_installed: true,
         hooks_installed: true,
         automatic_continue: true,
+        notes: Vec::new(),
         reason: None,
     });
     let agent = meowo_agent::by_id("opencode").unwrap();

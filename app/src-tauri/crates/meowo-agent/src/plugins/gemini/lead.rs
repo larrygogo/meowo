@@ -137,6 +137,12 @@ impl LeadCap for GeminiLead {
     fn native_continue_floor(&self) -> Option<(u32, u32, u32)> {
         Some((0, 68, 0))
     }
+    /// 0.68 空闲自动提交注入（interactiveCli 空闲 effect）不看 /settings、登录等对话框是否开着
+    /// （research-kimi-gemini.md G1：「对 /settings、auth 弹窗无守卫」）。leader 在关卡 Q 接受了这条风险，
+    /// 要求设置页写明。
+    fn continue_notes(&self) -> &'static [&'static str] {
+        &["lead/note_dialog_starts_turn"]
+    }
     fn spec(&self, inst: &Installation) -> Option<&'static LeadInstallSpec> {
         (inst.variant_tag == "stable").then_some(&SPEC)
     }

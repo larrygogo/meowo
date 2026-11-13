@@ -1134,6 +1134,8 @@ pub struct LeadProviderInstallationDto {
     pub assets_installed: bool,
     pub hooks_installed: bool,
     pub automatic_continue: bool,
+    /// 自动继续的已知副作用（双语映射键），插件声明（LeadCap::continue_notes），只在 automatic_continue 时给。
+    pub notes: Vec<String>,
     pub reason: Option<String>,
 }
 

@@ -127,6 +127,11 @@ pub trait LeadCap: Sync {
     fn native_continue_floor(&self) -> Option<(u32, u32, u32)> {
         None
     }
+    /// 自动续跑已知的副作用说明（双语映射键，`i18n/errors.ts`），设置页在「可自动继续」那一行下照列。
+    /// 插件声明，前端不按 provider 名写死。只在续跑机制成立时展示。
+    fn continue_notes(&self) -> &'static [&'static str] {
+        &[]
+    }
     fn spec(&self, installation: &Installation) -> Option<&'static LeadInstallSpec>;
     fn reviewer(&self) -> String;
     fn activation_issue(&self, _installation: &Installation) -> Option<String> {

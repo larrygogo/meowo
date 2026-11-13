@@ -200,6 +200,7 @@ export function LeadProviderRows({ onInstalledChange }: { onInstalledChange?: (i
       const status = row.managed ? row.installed ? row.automaticContinue ? t.settings.leadInstalled : t.settings.leadInstalledNoContinue : t.settings.leadNeedsConfiguration : t.settings.leadNotInstalled;
       return <div className="row" key={key}>
         <div className="row-text"><div className="row-label">{title}</div><div className="row-desc">{status}</div>
+          {row.automaticContinue && (row.notes ?? []).map((note) => <div className="row-desc" key={note}>{formatBackendError(note, t.locale)}</div>)}
           {row.reason && <div className="row-desc">{formatBackendError(row.reason, t.locale)}</div>}
         </div>
         {row.managed && <button type="button" className="sbtn" disabled={busy !== null} onClick={() => void change(row, false)} aria-label={`${t.settings.leadUninstall} ${title}`}>{t.settings.leadUninstall}</button>}

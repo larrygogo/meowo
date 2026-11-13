@@ -534,6 +534,7 @@ fn provider_installation_state(
         assets_installed: false,
         hooks_installed: false,
         automatic_continue: false,
+        notes: Vec::new(),
         reason: Some("lead/provider_missing".into()),
     };
     let Some(cap) = plugin.lead() else {
@@ -552,6 +553,9 @@ fn provider_installation_state(
     // codex app-server / opencode HTTP / kimi·gemini 会话内等待器）。托管会话路线已删除。
     dto.automatic_continue =
         dto.installed && lead_install::native_continue_for(cap, version).is_some();
+    if dto.automatic_continue {
+        dto.notes = cap.continue_notes().iter().map(|key| (*key).into()).collect();
+    }
     // 身份策略仅是准入条件；模型等待、答复消费及离线恢复仍需各自闭环证据，不能从磁盘安装推导。
     dto.reason = if !dto.configured {
         Some("lead/provider_missing".into())
@@ -1272,6 +1276,37 @@ mod provider_install_tests {
                 )
                 .managed
             );
+        }
+    }
+
+    /// leader 在关卡 Q 接受的风险要写在设置页：Gemini 的自动继续会在 /settings、登录对话框开着时直接开新一轮。
+    /// 说明来自插件声明，只在本机版本上续跑成立时给；其余 CLI 与续跑不成立的版本没有说明。
+    #[test]
+    fn continue_notes_come_from_the_plugin_and_only_with_automatic_continue() {
+        let fixture = Fixture::new();
+        let providers: [(&dyn AgentPlugin, &str, &[&str]); 5] = [
+            (&meowo_agent::plugins::gemini::Gemini, "0.68.0", &["lead/note_dialog_starts_turn"]),
+            (&meowo_agent::plugins::gemini::Gemini, "0.65.0", &[]),
+            (&meowo_agent::plugins::kimi::Kimi, "2.6.0", &[]),
+            (&meowo_agent::plugins::codex::Codex, "0.167.2", &[]),
+            (&meowo_agent::plugins::opencode::Opencode, "1.19.3", &[]),
+        ];
+        for (plugin, version, expected) in providers {
+            let inst = fixture.installation(plugin, &format!("{}-{version}", plugin.id().as_str()));
+            let cap = plugin.lead().unwrap();
+            meowo_agent::lead_install::install(cap, &inst, Some(version), "meowo-reporter.exe")
+                .unwrap();
+            let state = provider_installation_state(
+                plugin,
+                Some(&inst),
+                None,
+                Some(version),
+                Some("meowo-reporter.exe"),
+            );
+            assert_eq!(state.notes, expected.to_vec(), "{} {version}", plugin.id().as_str());
+            if !expected.is_empty() {
+                assert!(state.automatic_continue);
+            }
         }
     }
 
