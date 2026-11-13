@@ -879,7 +879,7 @@ fn parse_model_catalog(content: &str) -> Vec<crate::ModelCatalogEntry> {
                     entry.label = label;
                 }
             }
-            "provider" => entry.group = toml_str(value),
+            "provider" => entry.group = toml_str(value).map(|provider| provider_label(&provider)),
             "default_effort" => entry.default_effort = toml_str(value),
             "capabilities" => always_on = value.contains("\"always_thinking\""),
             "support_efforts" => {
@@ -896,6 +896,17 @@ fn parse_model_catalog(content: &str) -> Vec<crate::ModelCatalogEntry> {
     }
     out.extend(current.map(|entry| with_off(entry, always_on)));
     out
+}
+
+/// 分组名用人话：`managed:kimi-code` 这类是 Kimi 自家托管的 provider（config.toml 里
+/// `[providers."managed:kimi-code"] type = "kimi"`，本机配置实拍），菜单写「Kimi」；用户自己加的
+/// provider 名本就是用户起的（「反向推理」「xbot」），原样用。
+fn provider_label(provider: &str) -> String {
+    if provider.starts_with("managed:") {
+        "Kimi".to_string()
+    } else {
+        provider.to_string()
+    }
 }
 
 /// kimi 的档位列表 = `support_efforts`，非 always_thinking 的模型前面多一个 `off`
@@ -1003,7 +1014,7 @@ display_name = "不是模型段"
         assert_eq!(catalog[1].efforts, vec!["low", "high"]);
         assert_eq!(catalog[0].id, "kimi-code/k3.1-pro");
         assert_eq!(catalog[0].label, "K3.1 Pro");
-        assert_eq!(catalog[0].group.as_deref(), Some("managed:kimi-code"));
+        assert_eq!(catalog[0].group.as_deref(), Some("Kimi"));
         assert_eq!(catalog[0].efforts, vec!["off", "low", "high", "max"]);
         // 没写 display_name 的回退别名，菜单上至少认得出是哪个。
         assert_eq!(catalog[2].label, "反向推理/DeepSeek-V4.1-Flash-1017");

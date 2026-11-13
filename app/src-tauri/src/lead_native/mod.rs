@@ -69,28 +69,26 @@ fn probe_version(_plugin: &'static dyn meowo_agent::AgentPlugin) -> Option<Optio
 }
 
 /// 开终端的启动路径用：这次启动要不要为 `protocol` 起服务端口。先看插件**声明**的机制（不探测
-/// 版本），不是这个协议的 provider（claude、kimi/gemini 的会话内等待器）直接放行、零代价；再看本会话
-/// 账号装没装 Lead（`enabled`）；两者都满足才走带版本门的 [`mechanism`]（目前 ServerQueue 机制都
-/// 没有版本门，不会真的探测）。
-pub(crate) fn launches_server(
-    provider: &str,
-    protocol: ServerProtocol,
-    enabled: impl FnOnce() -> bool,
-) -> bool {
-    launches_server_with(provider, protocol, enabled, probe_version)
+/// 版本），不是这个协议的 provider（claude、kimi/gemini 的会话内等待器）直接放行、零代价；再走带
+/// 版本门的 [`mechanism`]（目前 ServerQueue 机制都没有版本门，不会真的探测）。
+///
+/// 2026-11-14 起**不再看本账号装没装 Lead**（任务 20261114-tui-model-switch，leader 定）：服务通道是
+/// 两家官方 CLI 自带的模式（Codex app-server + `--remote`、OpenCode `--port` + 密码），切模型 / 模式
+/// 依赖它。没装 Lead 时只开服务，Lead 的 MCP 与配置由 lead_runtime::launch_args 另行按安装状态注入。
+pub(crate) fn launches_server(provider: &str, protocol: ServerProtocol) -> bool {
+    launches_server_with(provider, protocol, probe_version)
 }
 
 fn launches_server_with(
     provider: &str,
     protocol: ServerProtocol,
-    enabled: impl FnOnce() -> bool,
     probe: impl FnOnce(&'static dyn meowo_agent::AgentPlugin) -> Option<Option<String>>,
 ) -> bool {
     let wanted = Some(NativeContinue::ServerQueue(protocol));
     let declared = meowo_agent::by_id(provider)
         .and_then(|plugin| plugin.lead())
         .and_then(|cap| cap.native_continue());
-    declared == wanted && enabled() && mechanism_with(provider, probe) == wanted
+    declared == wanted && mechanism_with(provider, probe) == wanted
 }
 
 /// `probe` 返回 None = 不看版本（按插件声明）；Some(None) = 读不出版本。
@@ -235,32 +233,36 @@ mod tests {
         assert!(mechanism_with("claude", |_| panic!()).is_none());
     }
 
-    /// 做空 R2：开终端的启动判定对任何 provider 都不探测版本、对非本协议的 provider 也不读 Lead 安装状态；
-    /// 只有声明了该协议且装了 Lead 的 provider 才会起服务。
+    /// 做空 R2：开终端的启动判定对任何 provider 都不探测版本；只有声明了该协议的 provider 起服务。
+    /// 2026-11-14 起不再看 Lead 安装状态：没装 Lead 的 Codex / OpenCode 会话同样起服务（切模型 / 模式依赖它）。
     #[test]
     fn launch_gate_never_probes_cli_version() {
         use ServerProtocol::{CodexAppServer, OpencodeHttp};
         for provider in ["claude", "codex", "kimi", "gemini", "opencode", "nope"] {
             for protocol in [CodexAppServer, OpencodeHttp] {
-                let mut enabled_asked = false;
-                let launches = launches_server_with(
-                    provider,
-                    protocol,
-                    || {
-                        enabled_asked = true;
-                        true
-                    },
-                    |_| panic!("{provider} 启动路径不该探测版本"),
-                );
+                let launches = launches_server_with(provider, protocol, |_| {
+                    panic!("{provider} 启动路径不该探测版本")
+                });
                 let ours = matches!(
                     (provider, protocol),
                     ("codex", CodexAppServer) | ("opencode", OpencodeHttp)
                 );
                 assert_eq!(launches, ours, "{provider} {protocol:?}");
-                assert_eq!(enabled_asked, ours, "{provider} {protocol:?}：别的协议不必读 Lead 安装状态");
             }
         }
-        assert!(!launches_server_with("codex", CodexAppServer, || false, |_| panic!()));
+    }
+
+    /// 没装 Lead 的账号：服务照开（launch_plan 给出 `--port`），但 Lead 的 MCP 启动参数一个不加。
+    #[test]
+    fn server_channel_opens_without_lead_but_injects_no_lead_args() {
+        let env: Vec<(String, String)> = vec![("MEOWO_PROFILE".into(), "nolead-profile".into())];
+        assert!(!crate::lead_runtime::enabled("opencode", &env));
+        assert!(crate::lead_runtime::launch_args("opencode", &env, None).is_empty());
+        assert!(crate::lead_runtime::launch_args("codex", &env, None).is_empty());
+        let argv = vec!["opencode".to_owned()];
+        let plan = opencode_http::launch_plan("opencode", &argv, &env).expect("没装 Lead 也起服务");
+        assert!(plan.args.windows(2).any(|w| w[0] == "--port"));
+        assert!(plan.args.iter().all(|arg| !arg.contains("mcp")));
     }
 
     /// 启动入口本身（不只判定函数）在 kimi/gemini 上不触发版本探测：mechanism() 的单测探针计数为 0。

@@ -173,6 +173,93 @@ fn dialog_catalog(
     (!out.is_empty()).then_some(out)
 }
 
+/// 会话此刻的模型与模式（服务 / 会话文件里读到的；读不到的项不出现）。
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct LiveSettings {
+    pub model: Option<String>,
+    pub effort: Option<String>,
+    pub modes: Vec<LiveMode>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct LiveMode {
+    pub dimension: String,
+    pub value: String,
+}
+
+/// 读会话当前的模型 / 模式，回合结束与打开菜单时调（leader 2026-11-14：合适时机同步，不定时轮询）。
+/// 按切换机制分派：会话服务机制读 rollout 最新段的 turn_context（TUI 里自己 /model、Shift+Tab 切的，
+/// 下一回合起就进 rollout）；TUI 对话框机制读最后一条用户消息带的 model / agent（上游限制：TUI 里刚切、
+/// 还没发消息的要等下一条，research-codex-opencode §8）。带参重启机制的两家由 transcript 增量负责，这里不读。
+#[tauri::command]
+pub(crate) async fn session_live_settings(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, crate::AppState>,
+    session_id: i64,
+) -> Result<LiveSettings, String> {
+    let db = state.db_path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        Ok(live_blocking(&app, &db, session_id).unwrap_or_default())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+fn live_blocking(app: &tauri::AppHandle, db: &Path, session_id: i64) -> Option<LiveSettings> {
+    if session_id <= 0 {
+        return None;
+    }
+    let store = crate::open_store(db).ok()?;
+    let header = store.session_header(session_id).ok()?;
+    let plugin = meowo_agent::resolve(Some(&header.provider))?;
+    let mode = |dimension: &str, value: String| LiveMode {
+        dimension: dimension.to_string(),
+        value,
+    };
+    match plugin.model_switch()? {
+        meowo_agent::ModelSwitch::ServerSettings => {
+            let (model, effort, modes) =
+                crate::lead_native::codex_app_server::live_settings(&header.cc_session_id)?;
+            Some(LiveSettings {
+                model,
+                effort,
+                modes: modes.into_iter().map(|(d, v)| mode(&d, v)).collect(),
+            })
+        }
+        meowo_agent::ModelSwitch::TuiDialog => {
+            use crate::lead_native::opencode_http as oc;
+            let presence = oc::session_presence(db, session_id, Some(app)).ok()?;
+            let choice = oc::current_choice(
+                db,
+                presence,
+                &header.cc_session_id,
+                header.cwd.as_deref(),
+            )
+            .ok()??;
+            let model = match (choice.provider_id, choice.model_id) {
+                (Some(provider), Some(model)) => Some(format!("{provider}/{model}")),
+                (_, model) => model,
+            };
+            // agent 记在插件里「经对话框切」的那一栏。
+            let option = plugin
+                .launch_options()
+                .iter()
+                .find(|o| o.switch == meowo_agent::ModeSwitch::Dialog)
+                .map(|o| o.id);
+            Some(LiveSettings {
+                model,
+                effort: choice.variant,
+                modes: option
+                    .zip(choice.agent)
+                    .map(|(option, agent)| vec![mode(option, agent)])
+                    .unwrap_or_default(),
+            })
+        }
+        meowo_agent::ModelSwitch::RestartResume { .. } => None,
+    }
+}
+
 /// 前端在切换前如实告知的会话状态（OpenCode 对话框路线的调用约定，服务端另会复核）。
 pub(crate) type TuiStateArg = meowo_protocol::bridge::SessionTuiState;
 
@@ -284,11 +371,9 @@ pub(crate) fn plan(
                     out.restart.insert(option_id.clone(), choice_id.clone());
                 }
             }
-            // Control 型由前端用 mode_controls 的直达输入切（Kimi `/plan on|off`）；opencode agent 的对话框
-            // 切换走服务（有服务时）。没有服务的 Control 维度不该来这里。
-            meowo_agent::ModeSwitch::Control if plugin.model_switch() == Some(meowo_agent::ModelSwitch::TuiDialog) => {
-                out.dialog_agent = Some(choice_id.clone());
-            }
+            // OpenCode agent：经服务打开 TUI 的 agent 对话框选中（switch_agent）。Control 型（Kimi `/plan on|off`）
+            // 由前端用 mode_controls 的直达输入切，不来这里。
+            meowo_agent::ModeSwitch::Dialog => out.dialog_agent = Some(choice_id.clone()),
             _ => return Err("settings/mode_launch_only".into()),
         }
     }

@@ -204,8 +204,9 @@ fn completed_item_events(
 /// research-cli-drift X4，2026-11-12）。按 `as_str` 取会落空，按钮退回显示维度名。
 /// 五个开关全开等于「按需审批」，全关等于「从不询问」，其余如实报 `granular`（分类审批）。
 /// rollout 的审批策略 + 沙箱类型 → 权限档 id（codex 插件 launch_options 的 approval 栏）。
+/// 宿主读会话当前设置时也用它换成同一套 id。
 /// 沙箱类型在 rollout 里是 kebab（`workspace-write`），在 app-server 里是驼峰（`workspaceWrite`），都认。
-pub(super) fn permission_tier(
+pub fn permission_tier(
     approval: Option<&str>,
     sandbox: Option<&str>,
     reviewer: Option<&str>,
@@ -648,6 +649,13 @@ pub fn parse_model(content: &str) -> Option<String> {
             .filter(|model| !model.is_empty())
             .map(str::to_owned)
     })
+}
+
+/// 会话当前在写的 rollout 段（回溯后续写段另起文件，见 lineage.rs）。宿主读当前设置用
+/// （lead_native::codex_app_server::read_rollout_settings，任务 20261114-tui-model-switch）。
+pub fn current_rollout_path(session_id: &str) -> Option<PathBuf> {
+    let known = find_rollout(session_id)?;
+    Some(super::lineage::current_rollout(&known, session_id))
 }
 
 /// 取某 codex 会话的模型展示名：优先用 hook 给的 transcript_path，否则按 session_id 在 sessions 下找。

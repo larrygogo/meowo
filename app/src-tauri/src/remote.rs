@@ -188,6 +188,7 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     "agent_launch_defaults",
     "agent_dynamic_mode_choices",
     "apply_session_settings",
+    "session_live_settings",
     "new_session",
     // 分叉会话（2026-11-04 用户决定放行）：与 new_session 同级——在原会话目录起一个新的托管
     // 会话，参数只有会话 id 和终端尺寸，不给路径、不给 argv。
@@ -1464,6 +1465,10 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
             let a = args!(AgentModelCatalogArgs);
             reply_ok(crate::agent_model_catalog(app.clone(), a.provider, a.session_id).await)
         }
+        "session_live_settings" => {
+            let a = args!(SessionArg);
+            reply(crate::session_settings::session_live_settings(app.clone(), state, a.session_id).await)
+        }
         "agent_launch_defaults" => {
             let a = args!(AgentLaunchDefaultsArgs);
             reply_ok(crate::session_settings::agent_launch_defaults(a.provider, a.cwd).await)
@@ -2561,6 +2566,7 @@ mod tests {
             "agent_model_catalog" => {
                 parse::<AgentModelCatalogArgs>(br#"{"provider":"kimi","sessionId":41}"#).map(|_| ())
             }
+            "session_live_settings" => parse::<SessionArg>(br#"{"sessionId":42}"#).map(|_| ()),
             "agent_launch_defaults" => {
                 parse::<AgentLaunchDefaultsArgs>(br#"{"provider":"kimi","cwd":null}"#).map(|_| ())
             }

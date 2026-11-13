@@ -820,13 +820,6 @@ fn catalog_agents_and_current_choice_come_from_the_tui_server() {
     let names: Vec<&str> = fake.models.iter().map(|m| m.name.as_str()).collect();
     assert_eq!(names, ["Fake One", "Fake Three", "Fake Two"]);
     assert_eq!(fake.models[1].variants, ["high"]);
-    let agents: Vec<String> = list_agents(&db, here, None)
-        .unwrap()
-        .into_iter()
-        .map(|a| format!("{}:{}", a.name, a.mode))
-        .collect();
-    // subagent 与 hidden 的不进菜单；mode=all 的自定义 agent 可选。
-    assert_eq!(agents, ["build:primary", "plan:primary", "reviewer:all"]);
     assert!(seen
         .lock()
         .unwrap()
@@ -860,7 +853,7 @@ fn session_without_port_is_unsupported_and_closed_tui_is_not_ready() {
         Err(ControlError::Unsupported)
     );
     assert_eq!(
-        list_agents(&db, Presence::Gone, None),
+        list_models(&db, Presence::Gone, None),
         Err(ControlError::NotReady("lead/opencode_tui_not_ready".into()))
     );
     let _ = std::fs::remove_dir_all(root);

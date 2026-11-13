@@ -1650,6 +1650,7 @@ pub fn run() {
             session_settings::agent_launch_defaults,
             session_settings::agent_dynamic_mode_choices,
             session_settings::apply_session_settings,
+            session_settings::session_live_settings,
             agent_updates::check_agent_updates,
             agent_updates::installed_agent_versions,
             profile::list_profiles,

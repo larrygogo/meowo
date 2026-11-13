@@ -62,6 +62,9 @@ pub enum ModeSwitch {
     Restart,
     /// 经会话自带服务改设置（Codex app-server `thread/settings/update`），不碰终端。
     Server,
+    /// 经会话服务打开 TUI 自己的选择对话框再输入名字回车（OpenCode `/tui/publish agent.list`，oc5/oc6
+    /// 实测）；没有服务时退回同名维度 [`crate::ModeControl`] 的循环键。
+    Dialog,
 }
 
 /// 会话里切模型的机制（插件级声明，宿主按它分发）。

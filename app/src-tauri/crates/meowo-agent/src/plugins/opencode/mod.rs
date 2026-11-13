@@ -265,7 +265,8 @@ impl AgentPlugin for Opencode {
     fn parse_dynamic_mode_choices(&self, output: &str) -> Vec<crate::DynamicModeChoice> {
         models::parse_agent_list(output)
     }
-    /// 新建会话的 agent（`--agent`，`opencode --help` 1.19.5）。会话里沿用 Tab 轮换（mode_controls）。
+    /// 新建会话的 agent（`--agent`，`opencode --help` 1.19.5）。会话里经 TUI 端口打开「Select agent」对话框
+    /// 选中（oc5/oc6 实测底栏 `Build →  Plan`、草稿保留）；没有服务时退回 Tab 轮换（mode_controls）。
     /// 统一说法按 `GET /agent` 的权限规则（oc1 ev.json）与官方 agents 文档：build 规则 `* allow`，
     /// 只有越出工作区与读 .env 才问；plan 规则 `edit * deny`（只放行 .opencode/plans/*.md），
     /// 命令照样能跑。规则可被用户配置改写，这里说的是内置默认。
@@ -298,7 +299,7 @@ impl AgentPlugin for Opencode {
                     server: None,
                 },
             ],
-            switch: ModeSwitch::Control,
+            switch: ModeSwitch::Dialog,
             resume_upgrade_only: false,
             in_session_only: false,
         }];

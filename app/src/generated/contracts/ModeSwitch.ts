@@ -3,4 +3,4 @@
 /**
  * 会话里切某一栏启动选项（模式）的机制。
  */
-export type ModeSwitch = "launch_only" | "control" | "restart" | "server";
+export type ModeSwitch = "launch_only" | "control" | "restart" | "server" | "dialog";

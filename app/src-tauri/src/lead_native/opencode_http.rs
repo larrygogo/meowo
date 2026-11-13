@@ -295,17 +295,16 @@ pub(crate) struct LaunchPlan {
     db: PathBuf,
 }
 
-/// 只对声明了 OpencodeHttp 机制、且本会话启用了 Lead 的启动生效；其余原样返回 None，启动行为不变。
+/// 只对声明了 OpencodeHttp 机制的启动生效（2026-11-14 起不再要求本账号装了 Lead：切模型 / agent 经
+/// TUI 端口打开对话框）；其余原样返回 None，启动行为不变。
 pub(crate) fn launch_plan(
     provider: &str,
     argv: &[String],
-    env: &[(String, String)],
+    _env: &[(String, String)],
 ) -> Option<LaunchPlan> {
     // 不直接调 mechanism()：它对有版本门的 provider 会同步探测 CLI 版本，而每个会话启动都经过这里（做空 R2）。
     if argv.is_empty()
-        || !super::launches_server(provider, ServerProtocol::OpencodeHttp, || {
-            crate::lead_runtime::enabled(provider, env)
-        })
+        || !super::launches_server(provider, ServerProtocol::OpencodeHttp)
     {
         return None;
     }
@@ -841,16 +840,6 @@ pub(crate) struct OcModel {
     pub variants: Vec<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct OcAgent {
-    pub name: String,
-    pub description: Option<String>,
-    /// primary / all（subagent 与 hidden 的已滤掉：用户不能直接选）。
-    pub mode: String,
-    pub native: bool,
-}
-
 /// 会话最后一条用户消息带的 agent / 模型 / variant。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -960,41 +949,9 @@ fn parse_catalog(body: &Value) -> OcCatalog {
     }
 }
 
-/// 用户能选的 agent：`GET /agent` 里 mode ≠ subagent 且没 hidden 的（oc1：build、plan；
-/// compaction/summary/title 是 hidden，explore/general 是 subagent）。自定义 agent 也在内。
-#[cfg_attr(not(test), allow(dead_code))] // 宿主分派（tms/main 另一路）接入前只有单测调用
-pub(crate) fn list_agents(
-    db: &Path,
-    presence: Presence,
-    cwd: Option<&str>,
-) -> Result<Vec<OcAgent>, ControlError> {
-    let endpoint = control_endpoint(db, presence)?;
-    let body = Client::of(&endpoint)
-        .get(&scoped("/agent".into(), &cwd.map(query)), Duration::from_secs(10))
-        .map_err(ControlError::Failed)?;
-    Ok(parse_agents(&body))
-}
-
-fn parse_agents(body: &Value) -> Vec<OcAgent> {
-    body.as_array()
-        .into_iter()
-        .flatten()
-        .filter(|a| a["mode"] != "subagent" && a["hidden"].as_bool() != Some(true))
-        .filter_map(|a| {
-            Some(OcAgent {
-                name: a["name"].as_str().filter(|n| !n.is_empty())?.to_owned(),
-                description: a["description"].as_str().map(str::to_owned),
-                mode: a["mode"].as_str().unwrap_or("primary").to_owned(),
-                native: a["native"].as_bool() == Some(true),
-            })
-        })
-        .collect()
-}
-
 /// 会话当前的 agent / 模型：主会话最后一条用户消息的 info.agent / info.model / info.variant。
 /// 上游限制：TUI 里刚切、还没发消息的值服务端看不到（选模型不发事件，oc4 events_after_pick），
 /// 用户发出下一条后才同步。会话还没有用户消息返回 Ok(None)。
-#[cfg_attr(not(test), allow(dead_code))] // 宿主分派（tms/main 另一路）接入前只有单测调用
 pub(crate) fn current_choice(
     db: &Path,
     presence: Presence,
@@ -1044,7 +1001,7 @@ pub(crate) fn switch_model(
     switch_via_dialog(req, Dialog::Models, model_name, io, &std::thread::sleep)
 }
 
-/// 把 TUI 当前 agent 切成 `agent`（[`OcAgent::name`]）。调用约定与阻塞同 [`switch_model`]。
+/// 把 TUI 当前 agent 切成 `agent`（agent 名，同 `opencode agent list` 列的）。调用约定与阻塞同 [`switch_model`]。
 /// 会话还没起时用启动参数 `--agent`（恢复会话时 `--agent` 能挡住「最后一条消息的 agent」覆盖，
 /// research 第 3 节源码）。
 pub(crate) fn switch_agent(

@@ -430,15 +430,13 @@ pub(crate) struct Launch {
 pub(crate) fn prepare_launch(
     session_id: i64,
     provider: &str,
-    env: &[(String, String)],
+    _env: &[(String, String)],
     command: &mut CommandBuilder,
 ) -> Option<Launch> {
     use meowo_agent::lead_install::ServerProtocol;
-    // 只给装了 Lead 的账号改形态：没有关卡就用不到投递通道，不必多一个常驻进程。
+    // 所有会话都起（2026-11-14 起不限装了 Lead 的账号）：切模型 / 模式走 thread/settings/update。
     // 不直接调 mechanism()：它对有版本门的 provider 会同步探测 CLI 版本，而每个会话启动都经过这里（做空 R2）。
-    if !super::launches_server(provider, ServerProtocol::CodexAppServer, || {
-        crate::lead_runtime::enabled(provider, env)
-    }) {
+    if !super::launches_server(provider, ServerProtocol::CodexAppServer) {
         return None;
     }
     let plugin = meowo_agent::by_id(provider)?;
@@ -1390,26 +1388,6 @@ pub(crate) enum ControlError {
     Failed(String),
 }
 
-/// `model/list` 的一项（ModelListResponse.json）。思考档就是 `supportedReasoningEfforts`。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct CodexModel {
-    /// 传给 `thread/settings/update.model` 的 slug（协议里的 `model` 字段，缺时退 `id`）。
-    pub id: String,
-    pub display_name: String,
-    pub description: Option<String>,
-    pub is_default: bool,
-    pub default_effort: Option<String>,
-    pub efforts: Vec<CodexEffort>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct CodexEffort {
-    pub effort: String,
-    pub description: Option<String>,
-}
-
 /// 会话（或配置）当前的模型与模式。取值统一用 CLI 参数里的写法：
 /// approval `on-request | never | untrusted | granular`，sandbox `read-only | workspace-write |
 /// danger-full-access`，collaboration `default | plan`，approvals_reviewer `user | auto_review`。
@@ -1448,14 +1426,6 @@ fn control_lock(session_id: i64) -> std::sync::Arc<Mutex<()>> {
         .unwrap_or_default()
 }
 
-/// 列出会话所用 app-server 的模型目录（`model/list`，不含 hidden）。0.167.2 实测不联网、走内置/缓存
-/// 目录（exp1 0.003s）；自定义 provider 的模型不在里面（exp1 注意项），宿主要把当前模型并进清单。
-/// 会阻塞：握手证据不足时最多等约 6 秒（[`await_handshake`]），别在 UI 线程上调。
-#[cfg_attr(not(test), allow(dead_code))] // 宿主分派（tms/main 另一路）接入前只有单测调用
-pub(crate) fn list_models(db: &Path, session_id: i64) -> Result<Vec<CodexModel>, ControlError> {
-    with_control(db, session_id, |client| models_live(client, RPC_TIMEOUT))
-}
-
 /// 改本会话（主线程）的模型/思考档/协作模式/审批/沙箱，从下一回合起生效；正在跑的回合不变，
 /// 草稿与待批审批不受影响，不写 config.toml。`native_session` 是 codex thread id；子代理 thread
 /// 沿父链改到主线程。会阻塞（同 [`list_models`]）。
@@ -1470,17 +1440,6 @@ pub(crate) fn update_settings(
     with_control(db, session_id, |client| {
         settings_update_live(client, native_session, update, RPC_TIMEOUT)
     })
-}
-
-/// 有服务时读 CLI 的生效配置（`config/read`，含项目层：传 `cwd` 时按该目录解析）。新建页默认值用；
-/// 没服务时用 [`config_defaults`]。会阻塞（同 [`list_models`]）。
-#[cfg_attr(not(test), allow(dead_code))] // 宿主分派（tms/main 另一路）接入前只有单测调用
-pub(crate) fn read_live_config(
-    db: &Path,
-    session_id: i64,
-    cwd: Option<&str>,
-) -> Result<CodexSettings, ControlError> {
-    with_control(db, session_id, |client| config_read_live(client, cwd, RPC_TIMEOUT))
 }
 
 /// 找到会话的服务 → 握手证据 → 连接并核对 originator → 交给 `op`。用完连接即断（Drop 发 close）。
@@ -1531,61 +1490,6 @@ fn connect_checked(port: u16, token: &str, timeout: Duration) -> Result<ws::Clie
         return Err(ControlError::NotReady(TUI_NOT_CONNECTED.into()));
     }
     Ok(client)
-}
-
-/// 分页取完（`nextCursor`），上限 16 页防服务端游标出错时死循环。
-fn models_live(client: &mut ws::Client, timeout: Duration) -> Result<Vec<CodexModel>, ControlError> {
-    let mut models = Vec::new();
-    let mut cursor: Option<String> = None;
-    for _ in 0..16 {
-        let page = client
-            .call(
-                "model/list",
-                json!({ "cursor": cursor, "includeHidden": false }),
-                timeout,
-            )
-            .map_err(ControlError::Failed)?;
-        models.extend(
-            page["data"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter(|m| m["hidden"].as_bool() != Some(true))
-                .filter_map(parse_model_entry),
-        );
-        cursor = page["nextCursor"].as_str().map(str::to_owned);
-        if cursor.is_none() {
-            break;
-        }
-    }
-    Ok(models)
-}
-
-fn parse_model_entry(entry: &Value) -> Option<CodexModel> {
-    let id = entry["model"]
-        .as_str()
-        .or_else(|| entry["id"].as_str())
-        .filter(|id| !id.is_empty())?
-        .to_owned();
-    let text = |v: &Value| v.as_str().filter(|s| !s.is_empty()).map(str::to_owned);
-    Some(CodexModel {
-        display_name: text(&entry["displayName"]).unwrap_or_else(|| id.clone()),
-        description: text(&entry["description"]),
-        is_default: entry["isDefault"].as_bool() == Some(true),
-        default_effort: text(&entry["defaultReasoningEffort"]),
-        efforts: entry["supportedReasoningEfforts"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|e| {
-                Some(CodexEffort {
-                    effort: text(&e["reasoningEffort"])?,
-                    description: text(&e["description"]),
-                })
-            })
-            .collect(),
-        id,
-    })
 }
 
 /// 本地校验 + 组 `thread/settings/update` 参数（ThreadSettingsUpdateParams.json）。
@@ -1692,27 +1596,6 @@ fn settings_update_live(
         .map_err(ControlError::Failed)
 }
 
-fn config_read_live(
-    client: &mut ws::Client,
-    cwd: Option<&str>,
-    timeout: Duration,
-) -> Result<CodexSettings, ControlError> {
-    let read = client
-        .call("config/read", json!({ "cwd": cwd }), timeout)
-        .map_err(ControlError::Failed)?;
-    // exp4 config_read_sample：{config:{model, model_reasoning_effort, approval_policy, sandbox_mode…}}。
-    let config = &read["config"];
-    let text = |key: &str| config[key].as_str().filter(|s| !s.is_empty()).map(str::to_owned);
-    Ok(CodexSettings {
-        model: text("model"),
-        effort: text("model_reasoning_effort"),
-        collaboration: None,
-        approval: approval_name(&config["approval_policy"]),
-        sandbox: text("sandbox_mode").map(|s| sandbox_name(&s)),
-        approvals_reviewer: text("approvals_reviewer"),
-    })
-}
-
 /// 审批策略 → 统一写法。0.163 起 rollout 默认写 granular 对象：五个开关全开 = on-request、
 /// 全关 = never，其余如实报 granular（与 meowo-agent codex telemetry 的 approval_mode 同一口径）。
 fn approval_name(policy: &Value) -> Option<String> {
@@ -1748,11 +1631,32 @@ fn sandbox_name(kind: &str) -> String {
     }
 }
 
+/// [`live_settings`] 的结果：(模型, 思考档, [(栏, 档)])。
+pub(crate) type LiveSettings = (Option<String>, Option<String>, Vec<(String, String)>);
+
+/// 会话当前的模型与模式（回合结束、打开菜单时读，不轮询）：rollout 最新段的 turn_context，
+/// 审批 + 沙箱换成插件权限栏的档 id（与新建页、会话菜单同一套）。返回 (模型, 思考档, [(栏, 档)])。
+pub(crate) fn live_settings(native_session: &str) -> Option<LiveSettings> {
+    use meowo_agent::plugins::codex::telemetry::{current_rollout_path, permission_tier};
+    let settings = read_rollout_settings(&current_rollout_path(native_session)?)?;
+    let mut modes = Vec::new();
+    if let Some(tier) = permission_tier(
+        settings.approval.as_deref(),
+        settings.sandbox.as_deref(),
+        settings.approvals_reviewer.as_deref(),
+    ) {
+        modes.push(("approval".to_string(), tier.to_string()));
+    }
+    if let Some(mode) = settings.collaboration {
+        modes.push(("collaboration".to_string(), mode));
+    }
+    Some((settings.model, settings.effort, modes))
+}
+
 /// 离线读会话当前设置：rollout 里**最后一条** `turn_context`（每回合开始时写，exp3/exp4 实测含
 /// model、effort、approval_policy、sandbox_policy、collaboration_mode、approvals_reviewer）。
 /// TUI 里刚切、还没开新回合的值要到下一回合才进 rollout——在线时以 thread/settings/updated 为准。
 /// `path` 传会话当前的 rollout 段（有回溯续写段时传最新段）。先读尾部 256KB，没有再整份流式扫。
-#[cfg_attr(not(test), allow(dead_code))] // 宿主分派（tms/main 另一路）接入前只有单测调用
 pub(crate) fn read_rollout_settings(path: &Path) -> Option<CodexSettings> {
     use std::io::{BufRead, Read, Seek, SeekFrom};
     const TAIL: u64 = 256 * 1024;
@@ -1798,63 +1702,6 @@ fn turn_context_settings(line: &str) -> Option<CodexSettings> {
         sandbox: text(&p["sandbox_policy"]["type"]).map(|s| sandbox_name(&s)),
         approvals_reviewer: text(&p["approvals_reviewer"]),
     })
-}
-
-/// 没有服务时读 CLI 配置文件里的默认值（新建页用）：`$CODEX_HOME/config.toml` 顶层键，`profile`
-/// 给出时再叠 `$CODEX_HOME/<name>.config.toml`（0.167.2 `--help`：「Layer $CODEX_HOME/<name>.config.toml
-/// on top of the base user config」）。不解析项目层（`.codex/config.toml`）——要项目层用
-/// [`read_live_config`]。读不到的项为 None。
-#[cfg_attr(not(test), allow(dead_code))] // 宿主分派（tms/main 另一路）接入前只有单测调用
-pub(crate) fn config_defaults(codex_home: &Path, profile: Option<&str>) -> CodexSettings {
-    let mut settings = CodexSettings::default();
-    let mut layers = vec![codex_home.join("config.toml")];
-    if let Some(name) = profile.filter(|n| !n.is_empty() && !n.contains(['/', '\\', '.'])) {
-        layers.push(codex_home.join(format!("{name}.config.toml")));
-    }
-    for layer in layers {
-        let Some(doc) = std::fs::read_to_string(&layer)
-            .ok()
-            .and_then(|body| body.parse::<toml_edit::DocumentMut>().ok())
-        else {
-            continue;
-        };
-        let text = |key: &str| {
-            doc.get(key)
-                .and_then(|item| item.as_str())
-                .filter(|s| !s.is_empty())
-                .map(str::to_owned)
-        };
-        if let Some(model) = text("model") {
-            settings.model = Some(model);
-        }
-        if let Some(effort) = text("model_reasoning_effort") {
-            settings.effort = Some(effort);
-        }
-        if let Some(sandbox) = text("sandbox_mode") {
-            settings.sandbox = Some(sandbox);
-        }
-        if let Some(reviewer) = text("approvals_reviewer") {
-            settings.approvals_reviewer = Some(reviewer);
-        }
-        if let Some(approval) = doc.get("approval_policy").and_then(toml_policy) {
-            settings.approval = Some(approval);
-        }
-    }
-    settings
-}
-
-/// approval_policy 可能是字符串，也可能是 `{ granular = { … } }` 表：转成 JSON 交给同一套判定。
-fn toml_policy(item: &toml_edit::Item) -> Option<String> {
-    if let Some(name) = item.as_str() {
-        return Some(name.to_owned());
-    }
-    let table = item.as_table_like()?;
-    let granular = table.get("granular")?.as_table_like()?;
-    let flags: serde_json::Map<String, Value> = granular
-        .iter()
-        .filter_map(|(k, v)| Some((k.to_owned(), json!(v.as_bool()?))))
-        .collect();
-    approval_name(&json!({ "granular": flags }))
 }
 
 #[cfg(test)]
@@ -1999,9 +1846,7 @@ mod tests {
         assert_eq!(
             rpc_calls,
             [
-                "config/read",
                 "initialize",
-                "model/list",
                 "thread/loaded/list",
                 "thread/queue/add",
                 "thread/queue/list",
@@ -3227,46 +3072,6 @@ mod tests {
         );
     }
 
-    /// model/list：翻页取完、滤掉 hidden，思考档取 supportedReasoningEfforts。
-    #[test]
-    fn model_list_pages_and_parses_efforts() {
-        let fake = settings_like(TUI_UA, &["main"]);
-        let mut client = connect_checked(fake.port, &fake.token, FAST).unwrap();
-        let models = models_live(&mut client, FAST).unwrap();
-        let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
-        assert_eq!(ids, ["gpt-6.1-sol", "gpt-5.5"]);
-        let sol = &models[0];
-        assert_eq!(sol.display_name, "GPT-6.1-Sol");
-        assert!(sol.is_default);
-        assert_eq!(sol.default_effort.as_deref(), Some("low"));
-        assert_eq!(
-            sol.efforts.iter().map(|e| e.effort.as_str()).collect::<Vec<_>>(),
-            ["low", "ultra"]
-        );
-        assert_eq!(models[1].display_name, "GPT-5.5");
-        assert_eq!(fake.params_of("model/list")[1]["cursor"], "p2");
-        assert!(fake.methods().iter().all(|m| !m.starts_with("turn/")));
-    }
-
-    #[test]
-    fn live_config_read_maps_to_cli_names() {
-        let fake = settings_like(TUI_UA, &["main"]);
-        let mut client = connect_checked(fake.port, &fake.token, FAST).unwrap();
-        let settings = config_read_live(&mut client, Some("C:\\proj"), FAST).unwrap();
-        assert_eq!(
-            settings,
-            CodexSettings {
-                model: Some("fake-model".into()),
-                effort: Some("high".into()),
-                collaboration: None,
-                approval: Some("never".into()),
-                sandbox: Some("workspace-write".into()),
-                approvals_reviewer: None,
-            }
-        );
-        assert_eq!(fake.params_of("config/read")[0]["cwd"], "C:\\proj");
-    }
-
     /// 没有 Meowo 起的 app-server（内嵌模式 / 会话没开）：明确返回 Unsupported，不连任何东西。
     #[test]
     fn session_without_own_server_is_unsupported() {
@@ -3274,11 +3079,9 @@ mod tests {
         let db = root.join("board.db");
         let update = CodexSettingsUpdate { model: Some("gpt-5.5".into()), ..Default::default() };
         assert_eq!(update_settings(&db, 7, "main", &update), Err(ControlError::Unsupported));
-        assert_eq!(list_models(&db, 7), Err(ControlError::Unsupported));
-        assert_eq!(read_live_config(&db, 7, None), Err(ControlError::Unsupported));
         // 服务目录在、但进程早没了（pid 不存在）：同样不支持。
         plant_server(&db, "dead", 7, 1);
-        assert_eq!(list_models(&db, 7), Err(ControlError::Unsupported));
+        assert_eq!(update_settings(&db, 7, "main", &update), Err(ControlError::Unsupported));
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -3324,45 +3127,4 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
     }
 
-    /// config.toml 顶层默认值；`-p <name>` 叠 `<name>.config.toml`；approval 的 granular 表按同一口径判定。
-    #[test]
-    fn config_defaults_layer_profile_over_base() {
-        let root = temp_root("cfg");
-        std::fs::write(
-            root.join("config.toml"),
-            "model = \"gpt-5.5\"\nmodel_reasoning_effort = \"high\"\nsandbox_mode = \"read-only\"\n\
-             [approval_policy.granular]\nsandbox_approval = false\nrules = false\nmcp_elicitations = false\n\
-             [projects.'C:\\x']\ntrust_level = \"trusted\"\n",
-        )
-        .unwrap();
-        std::fs::write(
-            root.join("work.config.toml"),
-            "model = \"gpt-6.1-sol\"\napproval_policy = \"on-request\"\n",
-        )
-        .unwrap();
-        let base = config_defaults(&root, None);
-        assert_eq!(
-            base,
-            CodexSettings {
-                model: Some("gpt-5.5".into()),
-                effort: Some("high".into()),
-                collaboration: None,
-                approval: Some("never".into()),
-                sandbox: Some("read-only".into()),
-                approvals_reviewer: None,
-            }
-        );
-        let work = config_defaults(&root, Some("work"));
-        assert_eq!(work.model.as_deref(), Some("gpt-6.1-sol"));
-        assert_eq!(work.effort.as_deref(), Some("high"), "没覆盖的项沿用基础层");
-        assert_eq!(work.approval.as_deref(), Some("on-request"));
-        // 不存在的 profile、路径穿越的名字：只读基础层。
-        assert_eq!(config_defaults(&root, Some("nope")), base);
-        assert_eq!(config_defaults(&root, Some("../work")), base);
-        assert_eq!(
-            config_defaults(&root.join("missing"), None),
-            CodexSettings::default()
-        );
-        let _ = std::fs::remove_dir_all(&root);
-    }
 }
