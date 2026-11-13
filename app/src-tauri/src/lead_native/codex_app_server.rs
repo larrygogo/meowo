@@ -2342,7 +2342,9 @@ mod tests {
         // 只有没装 lsof 的 Linux 会读不到；Windows 必须查得到。
         // 写成 let-else：macOS 上空的 None 分支会让 clippy 报 single_match（CI macOS 矩阵实测）。
         let Some(pids) = tcp_client_pids(port) else {
-            assert!(!cfg!(windows), "Windows 连接表读取失败");
+            if cfg!(windows) {
+                panic!("Windows 连接表读取失败");
+            }
             return;
         };
         assert!(pids.contains(&me), "{pids:?}");
