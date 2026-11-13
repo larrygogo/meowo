@@ -8,7 +8,7 @@ pub(crate) fn deliver(
     app: Option<&tauri::AppHandle>,
 ) -> Result<NativeOutcome, String> {
     match protocol {
-        ServerProtocol::CodexAppServer => super::codex_app_server::deliver(target),
+        ServerProtocol::CodexAppServer => super::codex_app_server::deliver(target, app),
         ServerProtocol::OpencodeHttp => super::opencode_http::deliver(target, app),
     }
 }

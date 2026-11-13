@@ -771,7 +771,14 @@ enum SendError {
     NotSent(String),
     MaybeSent(String),
     Waiting(Option<String>),
+    /// 会话开着，但不是连在 Meowo 服务上的远程模式（Lead 装好之前开的 TUI、app-server 没监听上降级
+    /// 成内嵌、argv 带 -p/--search、会话在 Meowo 外的终端里跑）：宿主没有通道，答复只保存，
+    /// 面板如实说「在会话里发一句话即可继续」（做空 R3），与 OpenCode 没开端口时一致。
+    Manual,
 }
+
+/// 记录状态 native_manual：面板文案取 i18n leadDeliveryState 同名键。
+const NATIVE_MANUAL: &str = "native_manual";
 
 /// 可能已送达、但没拿到确认（超时、断开）。
 const UNCERTAIN: &str = "lead/codex_delivery_uncertain";
@@ -898,8 +905,39 @@ fn try_claim(db: &Path, key: &str, foreign_alive: impl Fn(u32) -> bool) -> Optio
 }
 
 /// 送出一次答复。投递失败不报错给作答方（答复已保存）：记成 waiting/failed/uncertain，面板显示原因。
-pub(crate) fn deliver(target: &NativeTarget<'_>) -> Result<NativeOutcome, String> {
-    deliver_with(target, send)
+pub(crate) fn deliver(
+    target: &NativeTarget<'_>,
+    app: Option<&tauri::AppHandle>,
+) -> Result<NativeOutcome, String> {
+    deliver_with(target, |target, key| {
+        send(target, key, || session_open(target, app))
+    })
+}
+
+/// 会话此刻有没有 CLI 在跑（托管终端里，或 Meowo 外的终端里）。只在找不到服务时才问：用来区分
+/// 「TUI 不在，等重开」与「TUI 在但没连 Meowo 的服务，只能手动」。
+fn session_open(target: &NativeTarget<'_>, app: Option<&tauri::AppHandle>) -> bool {
+    if let Some(app) = app {
+        use tauri::Manager;
+        if app
+            .try_state::<crate::AppState>()
+            .is_some_and(|state| state.ptys.is_managed(target.session_id))
+        {
+            return true;
+        }
+    }
+    crate::open_store(target.db)
+        .ok()
+        .and_then(|store| crate::terminal::session_agent_alive(&store, target.session_id).ok())
+        .unwrap_or(false)
+}
+
+fn outcome_of(state: &str) -> NativeOutcome {
+    if state == NATIVE_MANUAL {
+        NativeOutcome::Unsupported
+    } else {
+        NativeOutcome::Delivered
+    }
 }
 
 fn deliver_with(
@@ -923,7 +961,7 @@ fn deliver_with(
             // 等会话打开：每轮巡检都再看一眼，TUI 一握手就送（不受失败冷却限制）。
             "waiting" => {}
             _ if now_ms().saturating_sub(record.at_ms) < RETRY_COOLDOWN_MS => {
-                return Ok(NativeOutcome::Delivered)
+                return Ok(outcome_of(&record.state))
             }
             _ => {}
         }
@@ -945,6 +983,7 @@ fn deliver_with(
         Err(SendError::NotSent(reason)) => ("failed", Some(reason), None),
         Err(SendError::MaybeSent(reason)) => ("uncertain", Some(reason), None),
         Err(SendError::Waiting(reason)) => ("waiting", reason, None),
+        Err(SendError::Manual) => (NATIVE_MANUAL, None, None),
     };
     write_record(
         target.db,
@@ -957,22 +996,34 @@ fn deliver_with(
             pid: None,
         },
     );
-    Ok(NativeOutcome::Delivered)
+    Ok(outcome_of(state))
 }
 
-fn send(target: &NativeTarget<'_>, key: &str) -> Result<(&'static str, Option<String>), SendError> {
+fn send(
+    target: &NativeTarget<'_>,
+    key: &str,
+    session_open: impl FnOnce() -> bool,
+) -> Result<(&'static str, Option<String>), SendError> {
     let store = crate::open_store(target.db).map_err(SendError::NotSent)?;
     let pid = store.session_pid(target.session_id).ok().flatten();
     let live = states(target.db).into_iter().find(|(dir, state)| {
         (pid == Some(i64::from(state.server_pid)) || state.launch_session == target.session_id)
             && server_alive(dir, state)
     });
-    // 会话没开（或 TUI 刚退、服务正被收掉）：不投，等下次打开。
+    // 没有带着活 TUI 的服务：会话没开（或 TUI 刚退、服务正被收掉）就等下次打开；会话开着却不在
+    // 远程模式（内嵌）就只能手动——此时说「打开后会自动送达」是假话，会话一直开着就永远送不到。
+    let no_server = move || {
+        if session_open() {
+            Err(SendError::Manual)
+        } else {
+            Err(SendError::Waiting(None))
+        }
+    };
     let Some((dir, mut state)) = live else {
-        return Err(SendError::Waiting(None));
+        return no_server();
     };
     let Some(tui_pid) = state.tui_pid.filter(|tui| pid_alive(*tui)) else {
-        return Err(SendError::Waiting(None));
+        return no_server();
     };
     let token = read_token(&dir)
         .ok_or_else(|| SendError::NotSent("lead/codex_server_unreachable".into()))?;
@@ -1382,7 +1433,7 @@ mod tests {
             force: false,
         };
         // 已 accepted：deliver 直接返回，不连服务、不改记录。
-        assert_eq!(deliver(&target), Ok(NativeOutcome::Delivered));
+        assert_eq!(deliver(&target, None), Ok(NativeOutcome::Delivered));
         assert_eq!(read_record(&db, &key).unwrap().state, "accepted");
         let _ = std::fs::remove_dir_all(&root);
     }
@@ -1943,6 +1994,33 @@ mod tests {
             |_: &NativeTarget<'_>, _: &str| -> SendResult { panic!("queued 被重投") },
         )
         .unwrap();
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 做空 R3：找不到服务时区分「TUI 不在」（waiting，等重开后自动送达）与「TUI 开着但是内嵌模式」
+    /// （native_manual，面板说在会话里发一句话；不给重试按钮；作答方拿到 Unsupported）。
+    #[test]
+    fn open_session_without_server_is_manual_not_waiting() {
+        let root = temp_root("manual");
+        let db = root.join("board.db");
+        let task = root.join("task");
+        let t = target(&db, &task, "n", "Q-closed");
+        let outcome = deliver_with(&t, |t: &NativeTarget<'_>, k: &str| send(t, k, || false)).unwrap();
+        assert_eq!(outcome, NativeOutcome::Delivered);
+        let st = status(&db, 7, "c".into(), &task, "Q-closed", "n");
+        assert_eq!((st.state.as_str(), st.can_retry), ("waiting", false));
+
+        let t = target(&db, &task, "n", "Q-embedded");
+        let outcome = deliver_with(&t, |t: &NativeTarget<'_>, k: &str| send(t, k, || true)).unwrap();
+        assert_eq!(outcome, NativeOutcome::Unsupported);
+        let st = status(&db, 7, "c".into(), &task, "Q-embedded", "n");
+        assert_eq!((st.state.as_str(), st.can_retry), (NATIVE_MANUAL, false));
+        // 冷却内再巡检：结果不变，仍告诉作答方做不到自动继续。
+        let again = deliver_with(&t, |_: &NativeTarget<'_>, _: &str| -> SendResult {
+            panic!("冷却内不该再试")
+        })
+        .unwrap();
+        assert_eq!(again, NativeOutcome::Unsupported);
         let _ = std::fs::remove_dir_all(&root);
     }
 
