@@ -760,7 +760,7 @@ export const en: Dict = {
     leadGateAnswered: "Answered · waiting for the agent",
     leadDeliveryHandled: "The agent has taken over this gate",
     leadDeliveryRetry: "Continue delivery",
-    leadDeliveryState: (state: string) => ({ saved: "Answer saved, awaiting delivery", paused: "Answer saved, session paused", queued: "Answer queued", sending: "Delivering answer", accepted: "Native session accepted the answer; awaiting model confirmation", consumed: "Model received the answer; awaiting gate takeover", completed: "Turn ended; awaiting gate takeover", failed: "Answer delivery failed; check delivery details in the conversation", uncertain: "Delivery is uncertain; check the conversation before taking action", cancelled: "Delivery cancelled", native_manual: "Answer saved. Send any message in the session to continue" }[state] ?? state),
+    leadDeliveryState: (state: string) => ({ saved: "Answer saved, awaiting delivery", paused: "Answer saved, session paused", queued: "Answer queued", sending: "Delivering answer", accepted: "Native session accepted the answer; awaiting model confirmation", consumed: "Model received the answer; awaiting gate takeover", completed: "Turn ended; awaiting gate takeover", failed: "Answer delivery failed; check delivery details in the conversation", uncertain: "Delivery is uncertain; check the conversation before taking action", cancelled: "Delivery cancelled", native_manual: "Answer saved. Send any message in the session to continue", native_resuming: "Session exited; resuming it to deliver the answer" }[state] ?? state),
     leadGateKind: { A: "Confirm spec", B: "Decide", C: "Review", D: "Permission", Q: "Question" },
     leadGateConfirm: "Confirm, go ahead",
     leadGateRevise: "Needs changes",

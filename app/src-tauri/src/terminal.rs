@@ -916,6 +916,17 @@ pub(crate) fn launch_env_for_exact_profile(
     env
 }
 
+/// （argv 前缀，环境变量）。
+pub(crate) type NativeLaunch = (Vec<String>, Vec<(String, String)>);
+
+/// 在会话自己的账号下直接跑一次该 CLI（不经 PTY）所需的 argv 前缀与 env：Lead 原生会话 TUI 已退出时
+/// 的非交互续写用（lead_native::waiter）。与恢复同源：relay 改写 + 代理/中转/账号隔离变量。
+pub(crate) fn native_print_launch(provider: &str, profile: Option<&str>) -> Option<NativeLaunch> {
+    let agent = meowo_agent::resolve(Some(provider))?;
+    let argv = crate::relay::augment_argv(agent.id(), agent.launch_argv());
+    Some((argv, launch_env_for_resume_target(provider, profile)))
+}
+
 fn launch_env_for_resume_target(provider: &str, profile: Option<&str>) -> Vec<(String, String)> {
     meowo_agent::resolve(Some(provider))
         .map(|agent| launch_env_for_exact_profile(agent, profile))
@@ -2845,8 +2856,37 @@ pub(crate) fn start_managed_resume_sized(
     terminal_size: crate::pty::TerminalSize,
     option_overrides: Option<std::collections::HashMap<String, String>>,
 ) -> Result<bool, String> {
+    start_managed_resume_with_args(
+        app,
+        broker,
+        sid,
+        cwd,
+        session_id,
+        provider,
+        terminal_size,
+        option_overrides,
+        Vec::new(),
+    )
+}
+
+/// 同 [`start_managed_resume_sized`]，恢复 argv 末尾再追加 `extra_args`（Lead 原生会话离线续写：
+/// gemini `-i <答复>` 让重新打开的 TUI 把答复作为第一条消息自动提交）。判重语义不变：PTY 已在跑
+/// 就什么都不起，返回 false。
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn start_managed_resume_with_args(
+    app: tauri::AppHandle,
+    broker: crate::pty::PtyBroker,
+    sid: i64,
+    cwd: Option<String>,
+    session_id: String,
+    provider: String,
+    terminal_size: crate::pty::TerminalSize,
+    option_overrides: Option<std::collections::HashMap<String, String>>,
+    extra_args: Vec<String>,
+) -> Result<bool, String> {
     let ResumeLaunch {
-        argv: resume,
+        argv: mut resume,
         cwd: resolved,
         env,
         revived,
@@ -2859,6 +2899,7 @@ pub(crate) fn start_managed_resume_sized(
         &provider,
         option_overrides.as_ref(),
     )?;
+    resume.extend(extra_args);
     let started = match broker.start(
         app.clone(),
         sid,

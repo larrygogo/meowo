@@ -184,7 +184,7 @@ pub(crate) fn delivery_status(db: &Path, cwd: &str, gate_id: &str) -> Option<Lea
     let native = owner(&task).ok()?;
     let id = store.find_session_id_pub(&native).ok()??;
     let Some(state) = store.managed_state(id).ok()? else {
-        return native_session_status(&store, id, &task, gate_id, cwd);
+        return native_session_status(&store, id, &task, gate_id, cwd, &native);
     };
     let key = current_delivery_key(&store, id, delivery_id(&task, gate_id, &native)).ok()?;
     let delivery = store.managed_delivery(id, &key).ok()?;
@@ -227,18 +227,24 @@ fn native_session_status(
     task: &Path,
     gate_id: &str,
     project_cwd: &str,
+    native: &str,
 ) -> Option<LeadDeliveryDto> {
     let provider = store.session_provider(id).ok()?;
     // 按插件能力而非 provider 身份分（SPEC 约束）：声明了 LeadCap 且原生路径不能自动继续才提示
     // 手动下一步。没有 LeadCap 的 provider 由宿主自带的 Lead 流程负责原生唤醒（claude 的 wait hook）。
     let cap = meowo_agent::by_id(&provider)?.lead()?;
-    if cap.native_auto_continue() {
-        return None;
-    }
     let gate = meowo_reporter::lead::read_gate(task)?;
     if gate.id != gate_id || gate.status != "answered" {
         return None;
     }
+    let (state, reason) = match cap.native_continue() {
+        None => ("native_manual".to_owned(), None),
+        // 会话内等待器（kimi/gemini）：如实说答复走到了哪一步（lead_native::waiter）。
+        Some(meowo_agent::lead_install::NativeContinue::InSessionWaiter { .. }) => {
+            crate::lead_native::waiter::status(store, id, task, &gate, &provider, native)
+        }
+        Some(_) => return None,
+    };
     Some(LeadDeliveryDto {
         session_id: id,
         cwd: store
@@ -248,8 +254,8 @@ fn native_session_status(
             .unwrap_or_else(|| project_cwd.to_owned()),
         delivery_id: String::new(),
         can_retry: false,
-        state: "native_manual".into(),
-        reason: None,
+        state,
+        reason,
     })
 }
 
@@ -501,12 +507,30 @@ mod tests {
         // claude 原生会话有自己的 wait hook 唤醒，面板不另挂投递条。
         assert!(delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe").is_none());
         // 其余 provider 的原生会话不会自行开新回合：如实告诉用户下一步，而不是什么都不显示（做空指出）。
+        // kimi/gemini 有会话内等待器（任务 20261113-lead-tui）：进程不在、还没续写时是「已保存，等待送达」，
+        // 答复交到会话后是「模型已收到」，进行中的离线续写单独说。
         for provider in ["codex", "kimi", "gemini", "opencode"] {
             store.set_session_provider(legacy, provider).unwrap();
-            let status = delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe").unwrap();
-            assert_eq!(status.state, "native_manual", "{provider}");
+            let Some(status) = delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe") else {
+                // 服务端投递路线（codex/opencode）由各自实现决定状态。
+                assert!(matches!(provider, "codex" | "opencode"), "{provider}");
+                continue;
+            };
+            let expected = match provider {
+                "kimi" | "gemini" => "saved",
+                _ => "native_manual",
+            };
+            assert_eq!(status.state, expected, "{provider}");
             assert!(!status.can_retry, "{provider}");
             assert_eq!(status.session_id, legacy);
         }
+        store.set_session_provider(legacy, "kimi").unwrap();
+        std::fs::write(f.task.join(".delivered"), "Q-probe").unwrap();
+        assert_eq!(delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe").unwrap().state, "consumed");
+        std::fs::write(f.task.join(".native-offline.json"), r#"{"gate":"Q-probe","state":"running","reason":null,"at":1}"#).unwrap();
+        assert_eq!(delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe").unwrap().state, "native_resuming");
+        std::fs::write(f.task.join(".native-offline.json"), r#"{"gate":"Q-probe","state":"failed","reason":"lead/native_resume_failed","at":1}"#).unwrap();
+        let failed = delivery_status(&f.db, &f.root.to_string_lossy(), "Q-probe").unwrap();
+        assert_eq!((failed.state.as_str(), failed.reason.as_deref()), ("failed", Some("lead/native_resume_failed")));
     }
 }
