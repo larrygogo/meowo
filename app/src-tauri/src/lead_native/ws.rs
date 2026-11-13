@@ -83,6 +83,11 @@ impl Client {
     }
 
     /// 发请求并等同 id 的响应；途中的通知丢弃（宿主不订阅线程事件）。
+    ///
+    /// 服务端发来的**请求**（带 id + method，如 `item/commandExecution/requestApproval`）也一律丢弃、
+    /// 绝不回 `result`：codex 协议里审批是 server→client 请求，只能由客户端回同 id 的响应来作答
+    /// （0.167.2 `generate-ts` 导出的 ServerRequest.ts）。宿主不回 = 不可能替用户答审批，审批框
+    /// 仍由 TUI 处理（research-codex-opencode.md C2 实测「审批框不受影响」）。
     pub(crate) fn call(
         &mut self,
         method: &str,
@@ -183,7 +188,7 @@ fn encode_client_frame(opcode: u8, payload: &[u8], mask: [u8; 4]) -> Vec<u8> {
     frame
 }
 
-fn read_frame(reader: &mut impl Read) -> Result<(bool, u8, Vec<u8>), String> {
+pub(super) fn read_frame(reader: &mut impl Read) -> Result<(bool, u8, Vec<u8>), String> {
     let err = |_| "lead/codex_server_closed".to_string();
     let mut head = [0u8; 2];
     reader.read_exact(&mut head).map_err(err)?;
