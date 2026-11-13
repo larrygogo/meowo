@@ -1383,8 +1383,11 @@ mod tests {
     /// 启动选项（审批/沙箱，仅新建；恢复时丢弃）、resume/fork 子命令与会话 id → TUI。
     #[test]
     fn meowo_launch_injections_split_between_server_and_tui() {
+        // 可执行路径按本平台写：macOS 不把反斜杠当分隔符，写死 Windows 路径会取不到文件名
+        // （CI macOS 矩阵在这里 unwrap 到 None）。
+        let exe = if cfg!(windows) { r"C:\x\codex.exe" } else { "/x/codex" };
         let argv = s(&[
-            r"C:\x\codex.exe",
+            exe,
             "--ask-for-approval",
             "never",
             "--sandbox",
@@ -1402,7 +1405,7 @@ mod tests {
             "--config=foo=1",
         ]);
         let split = split_argv(&argv, owns).unwrap();
-        assert_eq!(split.prefix, s(&[r"C:\x\codex.exe"]));
+        assert_eq!(split.prefix, s(&[exe]));
         assert_eq!(
             split.server,
             s(&[
