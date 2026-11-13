@@ -4,7 +4,6 @@ import {
   type AgentDescriptor,
   type HooksStatus,
   newSession,
-  managedConversationCreate,
   recentCwds,
   checkProviderHooks,
   repairProviderHooks,
@@ -71,7 +70,6 @@ export function useNewSessionForm(startCwd: string, startProvider: AgentId | nul
   // 各 provider 当前活跃账号的展示名（null = 默认账号）。非默认账号活跃时在启动按钮旁提示，
   // 防「切过一次账号就忘了，新会话全写进隔离账号」。
   const [activeProfiles, setActiveProfiles] = useState<Record<string, string | null>>({});
-  const [activeProfileIds, setActiveProfileIds] = useState<Record<string, string | undefined>>({});
   // relay 启用的 provider → 中转固定的模型。中转的 --model 在 argv 里压轴（terminal.rs），
   // 面板选的模型静默不生效——model 档置灰并注明固定值，不留「选了却没生效」的坑。
   const [relayPins, setRelayPins] = useState<Record<string, string>>({});
@@ -119,7 +117,6 @@ export function useNewSessionForm(startCwd: string, startProvider: AgentId | nul
             }
             setLoggedIn(m);
             setActiveProfiles(ap);
-            setActiveProfileIds(settings.active_profile ?? {});
             // relay_enabled 与后端 augment_argv 同一条判定（含密钥已存）；固定值取设置的
             // 中转模型。enabled 但取不到 model 时宁可不置灰（误锁比漏提示更糟）。
             const pins: Record<string, string> = {};
@@ -183,11 +180,6 @@ export function useNewSessionForm(startCwd: string, startProvider: AgentId | nul
   // 但优先回填本 provider 上次的选择——见 LAUNCH_OPTS_KEY。
   useEffect(() => setOpts(loadStoredOpts()[provider] ?? {}), [provider]);
   const launchOptions = agents?.find((a) => a.id === provider)?.launch_options ?? [];
-  const managedAvailable = agents?.find((agent) => agent.id === provider)?.supports_managed_conversation === true;
-  // 新建会话一律原生 TUI（leader 2026-11-13：「我觉得还是得保留TUI」）。Lead 关卡手机作答后的自动继续
-  // 改由原生会话自己完成（lead_native：codex app-server / opencode 端口 / kimi·gemini 会话内等待器），
-  // 托管会话不再作为新建入口；其代码保留给已有的托管会话。Kimi/Gemini 的托管走 ACP，leader 已排除。
-  const managedMode = false;
   // 7T-6：Enter 与「启动」钮此前各判各的——按钮 disabled 含「一个 agent 都没装/还在
   // 检测」，Enter 路径只看目录和 busy，于是在没装 CLI 的机器上回车照样发 newSession，
   // 拿一条后端错误回来。守卫抽出来，两条路径共用。
@@ -195,7 +187,7 @@ export function useNewSessionForm(startCwd: string, startProvider: AgentId | nul
 
   /** 启动会话。成功返回 { tempId }（临时负 id；旧后端桌面回 null），失败把原因写进 error、返回 null。
    *  成功后保持 busy：调用方紧接着关面板 / 切去新会话，不给第二次点击留缝。 */
-  async function launch(): Promise<{ tempId: number | null; managed?: boolean } | null> {
+  async function launch(): Promise<{ tempId: number | null } | null> {
     if (!canLaunch || launchPendingRef.current) return null;
     launchPendingRef.current = true;
     setBusy(true);
@@ -211,11 +203,6 @@ export function useNewSessionForm(startCwd: string, startProvider: AgentId | nul
       if (worktree.enabled) {
         const wt = await worktree.create(dir, provider);
         dir = wt.sessionCwd || wt.path;
-      }
-      if (managedMode) {
-        // 托管协议不能把CLI启动选项偷换为原生权限策略；界面已隐藏旧选择器，沿用该账号配置。
-        const created = await managedConversationCreate(provider, dir, activeProfileIds[provider] ?? null);
-        return { tempId: created.sessionId, managed: true };
       }
       const tempId = await newSession(dir, provider, opts);
       saveStoredOpts(provider, opts); // 启动成功才记：失败的组合不该成为下次的默认
@@ -282,7 +269,7 @@ export function useNewSessionForm(startCwd: string, startProvider: AgentId | nul
   return {
     cwd, setCwd, provider, setProvider, recent, hooks, busy, repairing, error, setError,
     agents, avail, opts, setOpts, loggedIn, activeProfiles, relayPins, loginOperations,
-    swappedFrom, launchOptions: managedMode ? [] : launchOptions, managedAvailable, managedMode, canLaunch, launch, repairHooks, doLogin, cancelLoginWait, warn: !managedMode && warn, needLogin,
+    swappedFrom, launchOptions, canLaunch, launch, repairHooks, doLogin, cancelLoginWait, warn, needLogin,
     worktree,
   };
 }

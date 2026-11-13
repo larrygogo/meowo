@@ -75,13 +75,13 @@ describe("Lead 入口", () => {
     expect(screen.queryByRole("button", { name: "继续送达" })).toBeNull();
   });
 
-  it("暂停后显式继续使用关卡稳定标识，并展示恢复失败", async () => {
-    retryDelivery.mockRejectedValue("conversation/previous_process_unverified");
+  it("已保存待送达时显式继续使用关卡稳定标识，并展示送达失败原因", async () => {
+    retryDelivery.mockRejectedValue("lead/codex_server_unreachable");
     render(<LeadPanel task={task({ gate: gate("Q", { status: "answered" }), delivery: {
-      sessionId: 1, cwd: "C:/repo", deliveryId: "stable", state: "paused", reason: null, canRetry: true,
+      sessionId: 1, cwd: "C:/repo", deliveryId: "stable", state: "saved", reason: null, canRetry: true,
     } })} onClose={() => {}} />);
     fireEvent.click(screen.getByRole("button", { name: "继续送达" }));
-    expect((await screen.findByRole("alert")).textContent).toContain("尚未确认上次会话进程已退出");
+    expect((await screen.findByRole("alert")).textContent).toContain("连不上 Codex 会话服务");
     expect(retryDelivery).toHaveBeenCalledWith("C:/repo", "Q-1");
   });
 

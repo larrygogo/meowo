@@ -28,48 +28,7 @@ export function attachmentOf(path: string): Attachment {
  *  草稿静默丢），各写各的 key 才没有竞态。 */
 const DRAFTS_KEY = "meowo-chat-drafts"; // 旧版整表格式，首次读取时拆成按会话 key 后删除
 const DRAFT_KEY_PREFIX = "meowo-chat-draft:";
-export type ManagedDraftSubmission = { deliveryId: string; prompt: string; attachments: Attachment[] };
-export function newManagedDeliveryId(): string {
-  // 手机HTTP页面没有secure-context限定的randomUUID，getRandomValues仍可生成随机回执id。
-  const bytes = new Uint8Array(24);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-type StoredDraft = { prompt: string; attachments: Attachment[]; at?: number; managedSubmissions?: ManagedDraftSubmission[] };
-export function storedManagedSubmissions(sessionId: number): ManagedDraftSubmission[] {
-  const raw = localStorage.getItem(DRAFT_KEY_PREFIX + sessionId);
-  const value = raw ? JSON.parse(raw) as StoredDraft : null;
-  return (value?.managedSubmissions ?? []).filter((entry) => /^[A-Za-z0-9_-]{1,160}$/.test(entry.deliveryId) && typeof entry.prompt === "string" && Array.isArray(entry.attachments));
-}
-function sameSubmission(entry: { prompt: string; attachments: Attachment[] }, prompt: string, attachments: Attachment[]): boolean {
-  return entry.prompt === prompt && JSON.stringify(entry.attachments.map((file) => file.path)) === JSON.stringify(attachments.map((file) => file.path));
-}
-export function persistManagedSubmission(sessionId: number, prompt: string, attachments: Attachment[]): string {
-  try {
-    const entries = storedManagedSubmissions(sessionId);
-    const existing = entries.find((entry) => sameSubmission(entry, prompt, attachments));
-    if (existing) return existing.deliveryId;
-    const deliveryId = newManagedDeliveryId();
-    // 先把原文、附件与id放进同一条草稿，再发网络请求；重载不能把未知送达变成新消息。
-    const draft: StoredDraft = { prompt, attachments, at: Date.now(), managedSubmissions: [...entries, { deliveryId, prompt, attachments }] };
-    localStorage.setItem(DRAFT_KEY_PREFIX + sessionId, JSON.stringify(draft));
-    return deliveryId;
-  } catch { throw new Error("conversation/client_persistence_failed"); }
-}
-export function acknowledgeManagedSubmission(sessionId: number, deliveryId: string): ManagedDraftSubmission | null {
-  const key = DRAFT_KEY_PREFIX + sessionId;
-  const raw = localStorage.getItem(key);
-  if (!raw) return null;
-  const draft = JSON.parse(raw) as StoredDraft;
-  const entries = storedManagedSubmissions(sessionId);
-  const submitted = entries.find((entry) => entry.deliveryId === deliveryId);
-  if (!submitted) return null;
-  draft.managedSubmissions = entries.filter((entry) => entry.deliveryId !== deliveryId);
-  if (sameSubmission(draft, submitted.prompt, submitted.attachments)) { draft.prompt = ""; draft.attachments = []; }
-  if (!draft.prompt.trim() && !draft.attachments.length && !draft.managedSubmissions.length) localStorage.removeItem(key);
-  else localStorage.setItem(key, JSON.stringify(draft));
-  return submitted;
-}
+type StoredDraft = { prompt: string; attachments: Attachment[]; at?: number };
 /** 校验一条草稿的形状；坏数据返回 null（当无草稿）。 */
 function parseStoredDraft(value: unknown): { prompt: string; attachments: Attachment[] } | null {
   const draft = value as StoredDraft | null;
@@ -112,11 +71,10 @@ export function loadStoredDrafts(): Map<number, { prompt: string; attachments: A
  *  每会话一个 key，只写 / 删自己这条：多窗并存互不覆盖，无读-改-写竞态。存储失败静默。 */
 export function saveStoredDraft(sessionId: number, prompt: string, attachments: Attachment[]): void {
   try {
-    const managedSubmissions = storedManagedSubmissions(sessionId);
-    if (!prompt.trim() && attachments.length === 0 && managedSubmissions.length === 0) {
+    if (!prompt.trim() && attachments.length === 0) {
       localStorage.removeItem(DRAFT_KEY_PREFIX + sessionId);
     } else {
-      const draft: StoredDraft = { prompt, attachments, at: Date.now(), managedSubmissions };
+      const draft: StoredDraft = { prompt, attachments, at: Date.now() };
       localStorage.setItem(DRAFT_KEY_PREFIX + sessionId, JSON.stringify(draft));
     }
     // LRU 保 20 条：先收集再删——localStorage.key 按下标枚举，边删边数会跳项。
@@ -126,9 +84,7 @@ export function saveStoredDraft(sessionId: number, prompt: string, attachments: 
       if (!key?.startsWith(DRAFT_KEY_PREFIX)) continue;
       let at = 0;
       try { at = (JSON.parse(localStorage.getItem(key) || "{}") as StoredDraft).at ?? 0; } catch { /* 坏数据排最旧 */ }
-      // 未对账投递不是可丢弃的LRU草稿：删掉id会使刷新后的重试重复执行。
-      const pending = (JSON.parse(localStorage.getItem(key) || "{}") as StoredDraft).managedSubmissions;
-      if (!pending?.length) stored.push({ key, at });
+      stored.push({ key, at });
     }
     if (stored.length > 20) {
       stored.sort((a, b) => b.at - a.at);

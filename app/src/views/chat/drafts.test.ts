@@ -1,26 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { acknowledgeManagedSubmission, persistManagedSubmission, storedManagedSubmissions, attachmentOf, loadStoredDrafts, promptWithAttachments, saveStoredDraft } from "./drafts";
+import { attachmentOf, loadStoredDrafts, promptWithAttachments, saveStoredDraft } from "./drafts";
 
 afterEach(() => localStorage.clear());
-
-it("managed request persists its ID atomically with original draft across edits and reloads", () => {
-  const files = [attachmentOf("C:/image.png")];
-  const id = persistManagedSubmission(9, "Original", files);
-  expect(loadStoredDrafts().get(9)).toEqual({ prompt: "Original", attachments: files });
-  saveStoredDraft(9, "New edit", []);
-  expect(persistManagedSubmission(9, "Original", files)).toBe(id);
-  for (let index = 20; index < 50; index++) saveStoredDraft(index, "other draft", []);
-  expect(storedManagedSubmissions(9)[0].deliveryId).toBe(id);
-  acknowledgeManagedSubmission(9, id);
-  expect(loadStoredDrafts().get(9)?.prompt).toBe("New edit");
-  expect(storedManagedSubmissions(9)).toEqual([]);
-});
-
-it("acknowledged original draft clears only its own pending delivery", () => {
-  const id = persistManagedSubmission(9, "Original", []);
-  acknowledgeManagedSubmission(9, id);
-  expect(loadStoredDrafts().has(9)).toBe(false);
-});
 
 describe("草稿存取", () => {
   it("写入后能读回，空草稿删掉条目", () => {

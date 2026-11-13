@@ -8,7 +8,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { pathKey, unquotePath } from "../paths";
 import { COMPACTING_ACTIVITY } from "../activity";
 import { appConfirm } from "../confirm";
-import { managedConversationDeliveries, managedConversationDeliveryAction, managedConversationSend, managedConversationControl, managedConversationSetModel, managedConversationSetMode, type ManagedDeliveryDto, diagLog, forkSession, agentChatUi, attachBackgroundSession, sendBackgroundPrompt, clipboardRestore, clipboardSetImage, confirmStopSession, dismissInteractiveQuestion, getChatHistory, getGitChangesOverview, getGitDiffSummary, getLiveSessionsPage, getSessionLineage, isExternallyHeld, managedTerminalBinding, managedTerminalPendingLaunch, managedTerminalScreen, managedTerminalSnapshot, openNewSessionWindow,  refreshSessionModel, refreshSessionTodos, renameSession as renameSessionCmd, savePastedAttachment, sessionLaunchSelections, setArchived as setArchivedCmd, sessionTone, startManagedTerminal, copySessionToProvider, takeoverManagedTerminal, writeManagedTerminal, type AgentId, type ChatHistory, type ChatItem, type ChatUi, type GitDiffSummaryDto, type RepoChangesDto, type LiveSession, type ModelPreset, type PendingApproval } from "../api";
+import { diagLog, forkSession, agentChatUi, attachBackgroundSession, sendBackgroundPrompt, clipboardRestore, clipboardSetImage, confirmStopSession, dismissInteractiveQuestion, getChatHistory, getGitChangesOverview, getGitDiffSummary, getLiveSessionsPage, getSessionLineage, isExternallyHeld, managedTerminalBinding, managedTerminalPendingLaunch, managedTerminalScreen, managedTerminalSnapshot, openNewSessionWindow,  refreshSessionModel, refreshSessionTodos, renameSession as renameSessionCmd, savePastedAttachment, sessionLaunchSelections, setArchived as setArchivedCmd, sessionTone, startManagedTerminal, copySessionToProvider, takeoverManagedTerminal, writeManagedTerminal, type AgentId, type ChatHistory, type ChatItem, type ChatUi, type GitDiffSummaryDto, type RepoChangesDto, type LiveSession, type ModelPreset, type PendingApproval } from "../api";
 import { hasEscLayers } from "../escLayers";
 import { useTauriEvent } from "../hooks/useTauriEvent";
 import { useVisibleInterval } from "../hooks/useVisibleInterval";
@@ -42,10 +42,8 @@ import { leaveSubagentView } from "./chat/subagentView";
 import { SubagentViewNotice } from "./chat/SubagentViewNotice";
 import { clearPartialImageDraft, composerDraftText, createSendQueue, IMAGE_PASTE_LANDING_POLLS, LATE_IMAGE_GRACE_MS, RESUME_VERIFY_WINDOW_MS, stashComposerDraft, submitToTerminal, terminalInput, waitForTerminalReady, type SubmitInput, type TerminalReadyMessages, type TerminalStartupResult } from "./chat/terminalSubmit";
 import { manualSendVerdict } from "./chat/composerConfirmation";
-import { useQuietTurn } from "./chat/useQuietTurn";
 import { managedTerminalFrame } from "../api";
 import { BottomSheet, SheetOnPhone } from "./chat/BottomSheet";
-import { ManagedPicker } from "./chat/ManagedPicker";
 import { runningActivityView, RunningBar, SnakeSpinner, TurnAnnouncer, useCliStatusStore } from "./chat/RunningBar";
 import { arrowPanelApprovalDetails, framedBoxApprovalDetails, proceedBoxApprovalDetails } from "./chat/terminalApprovalDetails";
 import { ModelPicker, readStarred, type ModelPickerItem } from "./chat/ModelPicker";
@@ -97,7 +95,6 @@ import { RemoteSessionList } from "../mobile/RemoteSessionList";
 import { performUndo } from "./chat/undoTerminal";
 import { useOutgoingUpkeep } from "./chat/useOutgoingUpkeep";
 import { SessionAdmin } from "./chat/SessionAdmin";
-import { ManagedInteraction, ManagedDeliveryStatus } from "./chat/ManagedInteraction";
 import { NewSessionPage } from "./chat/NewSessionPage";
 import { ChatTitleBar } from "./chat/ChatTitleBar";
 import { openLink, type PullRequestDto } from "../api";
@@ -107,7 +104,7 @@ import { useMainPages } from "./chat/useMainPages";
 import { AddMenu } from "./chat/AddMenu";
 import { DIFF_PANEL_MIN_WIDTH, useDiffPanelWidth } from "./chat/useDiffPanelWidth";
 import { fitPanes, surfaceGutter, useElementWidth } from "./chat/paneLayout";
-import { newManagedDeliveryId, acknowledgeManagedSubmission, persistManagedSubmission, storedManagedSubmissions, attachmentOf, base64OfBuffer, formatBytes, loadStoredDrafts, promptWithAttachments, saveStoredDraft, type Attachment } from "./chat/drafts";
+import { attachmentOf, base64OfBuffer, formatBytes, loadStoredDrafts, promptWithAttachments, saveStoredDraft, type Attachment } from "./chat/drafts";
 import { appendTerminalText, terminalAttention as detectTerminalAttention, visibleTerminalText, type AttentionGrammar, type TerminalAttention, type TerminalAttentionOption } from "../terminalAttention";
 import { Dropdown, useMenuPopup } from "./menu";
 // 恢复时的权限改选需要 agent 的启动选项声明表（与新建会话面板同源）。
@@ -269,11 +266,9 @@ export function ChatWindow() {
   useShowWhenReady();
   const [sessionId, setSessionId] = useState(initialSessionId);
   const [history, setHistory] = useState<ChatHistory | null>(null);
-  const managedConversation = history?.managedConversation === true;
-  const historyLoaded = history !== null;
-  const managedConversationRef = useRef(managedConversation);
-  managedConversationRef.current = managedConversation;
-  const managedFirstPrompt = useRef<{ sessionId: number; prompt: string; attachments: Attachment[] } | null>(null);
+  // 已停用的「Meowo 托管」会话（托管路线已删，旧库里的只读保留）：门卡换成停用说明，
+  // 有原生会话 id 时给「用官方 CLI 打开」（走原生恢复路径）。
+  const retiredManaged = history?.retiredManaged ?? null;
   const [items, setItems] = useState<ChatItem[]>([]);
   // CLI 的送达回执（claude 入队记录）：不进时间线，只喂给发出消息的对账。按会话归零。
   const [queueAcks, setQueueAcks] = useState<readonly PromptAck[]>([]);
@@ -319,7 +314,7 @@ export function ChatWindow() {
   const setView = useCallback<Dispatch<SetStateAction<"chat" | "terminal">>>((next) => {
     setViewState((prev) => {
       const resolved = typeof next === "function" ? next(prev) : next;
-      return (remoteUi() || managedConversationRef.current) && resolved === "terminal" ? "chat" : resolved;
+      return remoteUi() && resolved === "terminal" ? "chat" : resolved;
     });
   }, []);
   // 认领迟迟不来（信任目录询问/登录把 CLI 启动卡住，SessionStart hook 不触发）时，
@@ -508,27 +503,6 @@ export function ChatWindow() {
     const timer = window.setTimeout(() => saveStoredDraft(sessionId, prompt, attachments), 400);
     return () => window.clearTimeout(timer);
   }, [sessionId, prompt, attachments]);
-  useEffect(() => {
-    if (!managedConversation || syncLost) return;
-    let stale = false;
-    void (async () => {
-      try {
-        const pending = storedManagedSubmissions(sessionId);
-        if (!pending.length) return;
-        const receipts = await managedConversationDeliveries(sessionId);
-        if (stale) return;
-        for (const entry of pending) {
-          if (!receipts.some((receipt) => receipt.deliveryId === entry.deliveryId)) continue;
-          acknowledgeManagedSubmission(sessionId, entry.deliveryId);
-          // 仅清理当前仍等于该提交的草稿，断线期间的新编辑不能被回执吞掉。
-          if (promptRef.current === entry.prompt && JSON.stringify(attachmentsRef.current.map((file) => file.path)) === JSON.stringify(entry.attachments.map((file) => file.path))) {
-            setPrompt(""); setAttachments([]);
-          }
-        }
-      } catch { /* 请求失败保留持久id，用户重试仍用同一回执编号。 */ }
-    })();
-    return () => { stale = true; };
-  }, [sessionId, managedConversation, syncLost]);
   // submitToTerminal 回车前复核用的实时镜像:闭包里读 state 会拿到过期值。
   const terminalAttentionRef = useRef<TerminalAttention | null>(null);
   promptRef.current = prompt;
@@ -536,7 +510,7 @@ export function ChatWindow() {
   viewRef.current = view;
   terminalAttentionRef.current = terminalAttention;
   if (view === "terminal") terminalEverShownRef.current = true;
-  const terminalMounted = !managedConversation && (terminalEverShownRef.current || terminalMonitorNeeded);
+  const terminalMounted = terminalEverShownRef.current || terminalMonitorNeeded;
   const activeSessionRef = useRef(sessionId);
   // 会话 A→B→A 也必须作废 A 的旧操作；只比 id 会让旧发送清掉返回 A 后的新草稿。
   const sessionEpochRef = useRef(0);
@@ -571,7 +545,7 @@ export function ChatWindow() {
     approvalAwaitingIds, setApprovalAwaitingIds,
     brokerOwnsReview, setBrokerOwnsReview,
     lastInteractiveQuestionRef, collapsedQuestionIdRef,
-  } = useApprovalChannel({ sessionId: managedConversation ? 0 : sessionId, activeSessionRef, viewRef, setView, setSendError });
+  } = useApprovalChannel({ sessionId, activeSessionRef, viewRef, setView, setSendError });
   interactionBlockedRef.current = !!(terminalAttention || dismissedAttention || approval || structuredQuestion || dismissedQuestion || terminalMenuOpenRef.current
     || (history?.pendingReview && history.pendingReview !== "gate"));
   // 拦住发送时的说明：只剩提问卡（展开或收起）在拦时说「在等你回答」，其余仍是交互卡通用说法。
@@ -596,7 +570,7 @@ export function ChatWindow() {
   // t 的实时镜像:mount-once 监听(拖放附件上限提示)里的闭包 state 是过期值。
   const tRef = useRef(t);
   tRef.current = t;
-  const externalRunning = !managedConversation && isExternallyHeld(history?.status);
+  const externalRunning = isExternallyHeld(history?.status);
   // 展示层状态口径:DB status 必须经存活校正才能显示「在跑」,存活事实只信后端 connected
   // ——它已把 pid 判活、事件宽限与托管 PTY 活性(pty registry,随每次轮询新鲜)合并成
   // 单一真相。不要再引入前端自计的 PTY 活性标志(曾有 managedPtyActive:探测循环移交
@@ -607,7 +581,7 @@ export function ChatWindow() {
   const tone = sessionTone(history?.connected ?? false, history?.status, history?.pendingReview, history?.errored, undefined, history?.screenState, history?.screenAssumed);
   // 要在终端里答的交互。Lead 关卡（gate）不算：它有自己的卡片（DockWork 的 LeadGateCard），
   // 不能再冒出一张「Agent 请求权限 / 去终端批准」的降级卡和发送软拦（做空审查 M2）。
-  const terminalReview = !managedConversation && history?.pendingReview && history.pendingReview !== "gate" ? history.pendingReview : null;
+  const terminalReview = history?.pendingReview && history.pendingReview !== "gate" ? history.pendingReview : null;
   const toneRef = useRef(tone);
   toneRef.current = tone;
   // 运行条：压缩中的哨兵顶替首行动词；真实命令才进次行（空值/哨兵不占次行）。
@@ -679,13 +653,6 @@ export function ChatWindow() {
   const [endingSession, setEndingSession] = useState(false);
   const endSession = async () => {
     try {
-      if (managedConversation) {
-        if (!await appConfirm(t.chat.endSessionConfirm, { title: t.chat.endSession, danger: true })) return;
-        setEndingSession(true);
-        await managedConversationControl(sessionId, "stop");
-        await refreshRef.current();
-        return;
-      }
       // 成功后不用做别的:kill → waiter 收尾 → 下一轮历史轮询里 connected/pty_managed
       // 双双翻 false,徽标退「未连接」、本按钮随之卸载。失败必须可见,否则用户以为已停。
       await confirmStopSession(
@@ -920,8 +887,7 @@ export function ChatWindow() {
   // 对话页能力由安装实况组装（基础命令 ∪ 用户/项目命令 ∪ 当前会话 runtime skill 清单），
   // 按 provider+cwd 查询——换会话、换项目都重取，装了新命令下次打开就见。
   // 未知 provider / 查询未回时为空：不补全、不给菜单，宁缺毋滥。
-  const [nativeChatUi, setChatUi] = useState<ChatUi | null>(null);
-  const chatUi = managedConversation ? null : nativeChatUi;
+  const [chatUi, setChatUi] = useState<ChatUi | null>(null);
   // 运行条状态行解析读它（handleScreen 在上方声明，ref 在此处 chatUi 就位后同步）。
   statusLinePatternRef.current = chatUi?.status_line_pattern ?? null;
   retryLinePatternRef.current = chatUi?.retry_line_pattern ?? null;
@@ -1294,7 +1260,7 @@ export function ChatWindow() {
   // snapshot 探测 PTY；发现活跃 PTY 后在屏幕外挂载 xterm，还原 ANSI 当前屏并持续识别选择器。
   useEffect(() => {
     // 临时负 id 也要探:信任页正是认领之前的阻塞,只等真 id 就永远等不到。
-    if (sessionId === 0 || managedConversation || (sessionId > 0 && history === null)) return;
+    if (sessionId === 0) return;
     let cancelled = false;
     let timer = 0;
     let since = 0;
@@ -1364,7 +1330,7 @@ export function ChatWindow() {
     };
     // 文法按值指纹入依赖(理由见 grammarKey);实时值走 ref,不吃陈旧闭包。
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 文法按值指纹 grammarKey 入依赖，实时值走 ref
-  }, [sessionId, managedConversation, history === null, startupAttentionMarkerKey, terminalInteractivePrompt, revealTerminalAttention, grammarKey]);
+  }, [sessionId, startupAttentionMarkerKey, terminalInteractivePrompt, revealTerminalAttention, grammarKey]);
   // ↑ 取回历史消息(CLI 惯例):空输入框按 ↑ 进入浏览,↑/↓ 前后翻,翻回最新即回到空框;
   // 一旦手动编辑退出浏览态(当前文本保留成草稿)。只浏览自己发过的 user_text。
   const historyNavRef = useRef<{ index: number } | null>(null);
@@ -2135,14 +2101,14 @@ export function ChatWindow() {
   // 中途启动、hook 漏接、早先解析有误（状态别名不认识）都会让 DB 与真实清单脱节，
   // 而 agent 自己的日志一直是对的。一次有界读，不进历史轮询。
   useEffect(() => {
-    if (sessionId <= 0 || managedConversation || !historyLoaded) return;
+    if (sessionId <= 0) return;
     void refreshSessionTodos(sessionId).catch(() => {});
     // 模型与思考档位同理：kimi 的这两项平时由 Stop hook 读会话日志落库（hook 跑的是安装目录
     // 的 reporter），会话打开时还没走到那一步就是空的——模型钮只剩别名末段、菜单里没有
     // 「思考」行（用户实拍）。打开时自己读一次，下一轮历史轮询即带上。claude 走 statusline，
     // 这里读不到任何东西，不写库。
     void refreshSessionModel(sessionId).catch(() => {});
-  }, [sessionId, managedConversation, historyLoaded]);
+  }, [sessionId]);
 
   useEffect(() => {
     let un: (() => void) | undefined;
@@ -2552,7 +2518,6 @@ export function ChatWindow() {
     for (const entry of partial) outgoingStore.settle(entry.id, { bodyWritten: false });
   };
   const sendText = (content: string, submitInput: SubmitInput = "\r", detached = false, onBodyWritten?: () => void): Promise<boolean> => withSendGuard(async () => {
-    if (managedConversationRef.current) throw new Error("conversation/native_menu_unsupported");
     const verify = Date.now() - resumedAtRef.current < RESUME_VERIFY_WINDOW_MS
       ? { message: t.chat.sendEchoTimeout }
       : undefined;
@@ -3016,29 +2981,6 @@ export function ChatWindow() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- t/attentionGrammar 随渲染变化，注入只由会话代际与就绪信号驱动
   }, [sessionId, provider, history?.predecessorId, chatUi, terminalAttention, handoffClaimTick]);
 
-  const [managedResolvedInteraction, setManagedResolvedInteraction] = useState<string | null>(null);
-  const managedRestore = (delivery: ManagedDeliveryDto) => {
-    setPrompt((current) => current.trim() && delivery.text ? `${delivery.text}\n\n${current}` : current || delivery.text);
-    setAttachments((current) => [...delivery.attachments.map((file) => attachmentOf(file.path)).filter((file) => !current.some((old) => old.path === file.path)), ...current]);
-    promptInputRef.current?.focus();
-  };
-  const managedDeliveryAction = async (delivery: ManagedDeliveryDto, action: "retry" | "dismiss") => {
-    const live = history?.endable === true;
-    const risky = ["uncertain", "consumed"].includes(delivery.state);
-    const message = live ? action === "retry" ? t.chat.engineStopRetryConfirm : t.chat.engineStopDismissConfirm : risky && action === "retry" ? t.chat.engineRetryConfirm : null;
-    if (message && !await appConfirm(message, { title: action === "retry" ? t.chat.engineRetryDelivery : t.chat.engineDismissDelivery, danger: true })) return;
-    if (!isCurrentOperation()) return;
-    try {
-      if (live) await managedConversationControl(sessionId, "stop");
-      await managedConversationDeliveryAction(sessionId, delivery.deliveryId, action, action === "retry" ? newManagedDeliveryId() : null);
-      if (action === "retry") await managedConversationControl(sessionId, "resume");
-      if (isCurrentOperation()) await refreshRef.current();
-    } catch (error) { if (isCurrentOperation()) setSendError(formatBackendError(error, t.locale)); }
-  };
-  const managedControl = async (action: "resume" | "cancel" | "stop") => {
-    try { await managedConversationControl(sessionId, action); if (isCurrentOperation()) await refreshRef.current(); }
-    catch (error) { if (isCurrentOperation()) setSendError(formatBackendError(error, t.locale)); }
-  };
   const composerDraft = { prompt, attachments };
   /// override：重发一条失败的消息（气泡上的「重发」），内容取自它当时的草稿而不是输入框。
   const sendPrompt = async (override?: { prompt: string; attachments: Attachment[] }) => {
@@ -3053,26 +2995,6 @@ export function ChatWindow() {
       setAttachments((current) => current.filter((file) => !attachments.some((sent) => sent.path === file.path)));
       setAttachmentNotice("");
     };
-    if (managedConversation) {
-      const sid = sessionId;
-      const token = Symbol(); sendLockRef.current = token;
-      setSending(true); setSendError("");
-      try {
-        const deliveryId = persistManagedSubmission(sid, prompt, attachments);
-        await managedConversationSend(sid, deliveryId, prompt, attachments.map((file) => ({ path: file.path, mimeType: null, dataBase64: null })));
-        acknowledgeManagedSubmission(sid, deliveryId);
-        // 这里只证明持久化入队；是否执行由后端 delivery 状态显示，不走 user_text 猜测回执。
-        clearSubmittedDraft();
-        if (isCurrentOperation()) await refreshRef.current();
-      } catch (error) {
-        // 同一草稿重试复用 deliveryId，网络超时不能让一次持久化变成两次执行业务。
-        if (isCurrentOperation()) setSendError(formatBackendError(error, t.locale));
-      } finally {
-        if (sendLockRef.current === token) sendLockRef.current = null;
-        if (isCurrentOperation()) setSending(false);
-      }
-      return;
-    }
     const submitInput = toneRef.current === "running" ? chatUi?.queue_input : "\r";
     // 交互式内置命令（/config、/resume、无参 /model…）裸发出去会在终端里弹选择器：
     // 对话页什么都看不见，后续输入还会打进那个看不见的菜单。命中插件声明的清单时
@@ -3208,14 +3130,6 @@ export function ChatWindow() {
     }
   };
   /// 失败气泡的「重发」：收掉这条失败回执，用它当时的草稿重新走一遍发送。
-  useEffect(() => {
-    const first = managedFirstPrompt.current;
-    if (!managedConversation || first?.sessionId !== sessionId) return;
-    managedFirstPrompt.current = null;
-    void sendPrompt({ prompt: first.prompt, attachments: first.attachments });
-    // 首句只在稳定session进入协议托管后投递一次，失败保留草稿，由用户显式重试。
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, managedConversation]);
   const retryOutgoing = (id: number) => {
     const entry = outgoingStore.get(sessionId).find((item) => item.id === id);
     if (!entry?.draft) return;
@@ -3257,11 +3171,6 @@ export function ChatWindow() {
     writeInterruptKeys((data) => writeManagedTerminal(sessionId, data), input, chatUi?.interrupt_presses ?? 1);
   // 中断必须等状态确认回到可输入态；固定延时会把正文打进仍在收尾的 CLI。
   const interruptAndSend = async () => {
-    if (managedConversation) {
-      try { await managedConversationControl(sessionId, "cancel"); await sendPrompt(); }
-      catch (error) { if (isCurrentOperation()) setSendError(formatBackendError(error, t.locale)); }
-      return;
-    }
     const interrupt = chatUi?.interrupt_input;
     if (!interrupt || sending || sendLockRef.current || interruptLockRef.current || attentionAbort()) return;
     const token = Symbol();
@@ -3290,7 +3199,7 @@ export function ChatWindow() {
   /// 只发中断键,停掉当前回合、不发送任何内容。composer 上的裸「中断」与排队栈的
   /// 「中断并处理」是同一个动作,只是语境不同:后者停下当前回合后,CLI 自己会接着处理队列。
   /// 忙态与兜底解锁见 chat/terminalInput.useInterrupt。
-  const { interrupting: terminalInterrupting, interrupt: sendTerminalInterrupt } = useInterrupt({
+  const { interrupting, interrupt: sendInterrupt } = useInterrupt({
     sessionId,
     running: tone === "running",
     write: (data) => writeManagedTerminal(sessionId, data),
@@ -3301,14 +3210,6 @@ export function ChatWindow() {
     prepare: () => leaveSubagentViewBeforeWrite(true),
     onError: (error) => setSendError(formatBackendError(error, t.locale)),
   });
-  const [managedInterrupting, setManagedInterrupting] = useState(false);
-  const interrupting = managedConversation ? managedInterrupting : terminalInterrupting;
-  const sendInterrupt = () => {
-    if (!managedConversation) { sendTerminalInterrupt(); return; }
-    if (managedInterrupting) return;
-    setManagedInterrupting(true);
-    void managedConversationControl(sessionId, "cancel").then(() => refreshRef.current()).catch((error) => setSendError(formatBackendError(error, t.locale))).finally(() => setManagedInterrupting(false));
-  };
   /// 手动移除一条排队回执。**只动 GUI 记账**:消息已经写进 PTY,CLI 队列里的它照常
   /// 在回合结束后执行——按钮文案与 tip 必须说清这点,否则用户会以为消息被撤回了。
   const dismissQueued = (id: number) => outgoingStore.dismiss(sessionId, id);
@@ -3585,10 +3486,7 @@ export function ChatWindow() {
   // 输入框有没有东西,决定了 composer 右下角那颗圆钮的身份:空 + 回合运行中 = 停止键,
   // 否则 = 发送键。两个判定要用同一份口径,别在 JSX 里各算各的。
   const hasDraft = prompt.trim().length > 0 || attachments.length > 0;
-  const canInterrupt = managedConversation ? ["running", "blocked"].includes(history?.managedPhase ?? "") : tone === "running" && !!chatUi?.interrupt_input;
-  // 托管回合久无内容（Gemini 503 静默重试等）时给一句说明，见 useQuietTurn。指纹读累积的 items。
-  const lastItem = items[items.length - 1] as { id?: string } | undefined;
-  const managedQuiet = useQuietTurn(managedConversation && history?.managedPhase === "running", `${sessionId}:${items.length}:${lastItem?.id ?? ""}`);
+  const canInterrupt = tone === "running" && !!chatUi?.interrupt_input;
   const stopMode = canInterrupt && !hasDraft;
 
   // 屏幕上有活的选择器/提示时锁住 composer——**禁用而非卸载**:卸载会让 textarea 变成
@@ -3601,8 +3499,10 @@ export function ChatWindow() {
   // ptyManaged 用**严格 === false**:它是 DTO 必填字段,真实后端总有值;宁可在信号缺失时
   // 退回旧路径(发送失败再给接管条),也不能把一个其实能对话的会话锁在门外。
   // background 例外:它没有终端可接管,composer 是唯一出口(发送时后端另有拒绝话术)。
-  const composerGated = !managedConversation && !!history && history.supported && !history.background
-    && history.ptyManaged === false && (externalRunning || history.status === "ended");
+  // 已停用的「Meowo 托管」会话不看 supported：没绑定原生 id 的读不到原生记录（supported=false），
+  // 也得锁住输入框、给出停用说明——托管通道已删，消息发不出去。
+  const composerGated = !!history && !history.background && history.ptyManaged === false
+    && (retiredManaged != null || (history.supported && (externalRunning || history.status === "ended")));
   // CLI 意外退出（二期 #7）：已结束的会话问一次托管终端的定格快照，后端判定为意外退出
   //（退出码非 0、不是用户结束、不在重启窗口内）就把「会话已结束」换成退出码 + 最后几行输出。
   // since 给最大值：只要退出信息，不要整段 1MiB 的输出回放。
@@ -4247,12 +4147,6 @@ export function ChatWindow() {
             onOpenSession={selectSession}
             onMoreSessions={openAdminFor}
             onLaunched={(tempId, launchedProvider, message, files) => {
-              if (tempId > 0) {
-                if (message || files.length > 0) managedFirstPrompt.current = { sessionId: tempId, prompt: message, attachments: files };
-                selectSession(tempId);
-                if (message || files.length > 0) { setPrompt(message); setAttachments(files); }
-                return;
-              }
               unclaimedTempsRef.current.add(tempId);
               abandonFirstPrompt();
               // 第一句话等新会话认领成真 id、终端就绪后发进去（与复制到其他引擎同一条注入路）。
@@ -4451,8 +4345,6 @@ export function ChatWindow() {
         {/* 排队中的插话是对话的「下一轮」，就排在它将要出现的地方（对照 Kimi 的 q-stack：
             运行行之下、右对齐、淡一档的用户气泡）。不像 Kimi 那样给拖拽排序和编辑——
             消息已经写进 CLI，队列归它管，界面只说真话：状态、升级为中断、撤掉回执。 */}
-        {/* 托管会话的投递回执与原生排队区同位同形（chat-queued-*），见 ManagedDeliveryStatus。 */}
-        {!loading && managedConversation && (history?.managedDeliveries?.length ?? 0) > 0 && <ManagedDeliveryStatus deliveries={history!.managedDeliveries!} onRestore={managedRestore} engineLive={history?.endable === true} onRetry={(delivery) => void managedDeliveryAction(delivery, "retry")} onDismiss={(delivery) => void managedDeliveryAction(delivery, "dismiss")} />}
         {!loading && queuedShown.length > 0 && (
           <section className="chat-queued-stack" aria-label={t.chat.queueLabel}>
             <div className="chat-queued-head">
@@ -4731,13 +4623,7 @@ export function ChatWindow() {
       </ApprovalCard>}
       {/* broker 审批卡（claude hook 劫走的请求），本体与卡内状态见 chat/BrokerApprovalCard。
           按 requestId 挂载：换请求即新卡，「说明并拒绝」的草稿不串卡。 */}
-      {view === "chat" && managedConversation && <>
-        {history?.managedError && <div className="chat-send-error" role="alert">{formatBackendError(history.managedError, t.locale)}</div>}
-        {managedQuiet && <div className="chat-engine-gate" role="status"><span>{t.chat.engineQuiet}</span></div>}
-        {(["stopped", "failed"].includes(history?.managedPhase ?? "")) && <div className="chat-engine-gate" role="status"><span>{t.chat.engineStopped}</span><button type="button" className="chat-queued-interrupt" onClick={() => void managedControl("resume")}>{t.chat.engineResume}</button></div>}
-        {history?.managedInteraction && managedResolvedInteraction !== `${sessionId}:${history.managedInteraction.interactionId}` && <ManagedInteraction key={`${sessionId}:${history.managedInteraction.interactionId}`} sessionId={sessionId} interaction={history.managedInteraction} onResolved={() => { setManagedResolvedInteraction(`${sessionId}:${history.managedInteraction!.interactionId}`); void refreshRef.current(); }} />}
-      </>}
-      {view === "chat" && !managedConversation && !terminalAttention && approval && (
+      {view === "chat" && !terminalAttention && approval && (
         <BrokerApprovalCard
           key={approval.requestId}
           approval={approval}
@@ -4913,21 +4799,22 @@ export function ChatWindow() {
           </div>
         </div>}
         {supersededTo == null && composerGated && <div className="chat-compose-gate">
-          <span>{externalRunning ? t.chat.sendNeedsTakeover : crashShown ? t.chat.agentCrashed(crashShown.code) : t.chat.composerGateEnded}</span>
-          {crashShown?.tail && <pre className="chat-compose-gate-tail">{crashShown.tail}</pre>}
+          <span>{retiredManaged ? t.chat.managedRetired : externalRunning ? t.chat.sendNeedsTakeover : crashShown ? t.chat.agentCrashed(crashShown.code) : t.chat.composerGateEnded}</span>
+          {!retiredManaged && crashShown?.tail && <pre className="chat-compose-gate-tail">{crashShown.tail}</pre>}
           {/* 恢复失败的原因就地可见（接管态的主文案已是同一句，不重复）。 */}
           {sendError && sendError !== t.chat.sendNeedsTakeover && (
             <span className="chat-compose-gate-error" role="alert">{sendError}</span>
           )}
-          <div className="chat-compose-gate-actions">
+          {/* 停用的托管会话没绑定过原生 id 时没有可恢复的 CLI 会话，只留说明。 */}
+          {(!retiredManaged || retiredManaged.resumable) && <div className="chat-compose-gate-actions">
             {resumePermissionPicker}
             <button
               type="button"
               className="chat-send-takeover"
               disabled={sending}
-              onClick={() => { if (externalRunning) void takeoverAndRetry(() => {}); else resumeForChat(); }}
-            >{externalRunning ? t.chat.terminalTakeover : t.chat.resumeSession}</button>
-          </div>
+              onClick={() => { if (externalRunning && !retiredManaged) void takeoverAndRetry(() => {}); else resumeForChat(); }}
+            >{retiredManaged ? t.chat.managedRetiredOpenCli : externalRunning ? t.chat.terminalTakeover : t.chat.resumeSession}</button>
+          </div>}
         </div>}
         <>
         {/* 手机上斜杠命令走底部面板（对照 Kimi 的 slashSheet）：面板盖住输入框，所以自带一个搜索框，
@@ -5033,7 +4920,7 @@ export function ChatWindow() {
                 <span className="chat-file-name">{file.name}</span>
                 <span className="chat-file-meta">
                   {[
-                    managedConversation ? t.chat.engineLocalFileReference : file.name.includes(".") ? file.name.split(".").pop()!.toUpperCase() : t.chat.attachmentFile,
+                    file.name.includes(".") ? file.name.split(".").pop()!.toUpperCase() : t.chat.attachmentFile,
                     file.size != null ? formatBytes(file.size) : null,
                   ].filter(Boolean).join(" · ")}
                 </span>
@@ -5042,7 +4929,6 @@ export function ChatWindow() {
             </div>
           ))}
         </div>}
-        {managedConversation && attachments.length > 0 && <div className="row-desc">{t.chat.engineAttachmentHint}</div>}
         {attachmentNotice && <div className="chat-send-error" role="status"><span>{attachmentNotice}</span></div>}
         <textarea
           ref={promptInputRef}
@@ -5226,19 +5112,7 @@ export function ChatWindow() {
             commandBlocked={prompt.trim().length > 0}
             onMention={chatUi?.attachment_mention ? () => insertIntoPrompt("@") : undefined}
           />
-          {managedConversation && <>
-            {/* 顺序同原生会话：模式紧跟 +；模型放在上下文环之后、挨着发送键（见下方原生模型按钮处）。 */}
-            {(history?.managedModes?.length ?? 0) > 0 && history?.managedModeDimension && <ManagedPicker
-              label={t.chat.engineMode}
-              phone={compactChrome}
-              value={history.agentModes.find((mode) => mode.dimension === history.managedModeDimension)?.value}
-              fallback={t.chat.engineMode}
-              options={history.managedModes!.map((mode) => ({ id: mode.id, label: mode.label }))}
-              disabled={history.managedPhase !== "ready"}
-              onPick={(id) => { void managedConversationSetMode(sessionId, history.managedModeDimension!, id).then(() => refreshRef.current()).catch((error) => setSendError(formatBackendError(error, t.locale))); }}
-            />}
-          </>}
-          {!managedConversation && (() => {
+          {(() => {
             const states = history?.agentModes ?? [];
             const controls = new Map(modeControls.map((control) => [control.dimension, control]));
             const dimensions = [...modeControls.map((control) => control.dimension)];
@@ -5391,17 +5265,7 @@ export function ChatWindow() {
           {history?.contextPct != null && (
             <ContextMeter pct={history.contextPct} window={history.contextWindow} t={t} />
           )}
-          {managedConversation && (history?.managedModels?.length ?? 0) > 0 && <ManagedPicker
-            label={t.chat.engineModel}
-            primary
-            phone={compactChrome}
-            value={history?.model}
-            fallback={history?.model || t.chat.model}
-            options={history!.managedModels!.map((model) => ({ id: model.id, label: model.label }))}
-            disabled={history?.managedPhase !== "ready"}
-            onPick={(id) => { void managedConversationSetModel(sessionId, id).then(() => refreshRef.current()).catch((error) => setSendError(formatBackendError(error, t.locale))); }}
-          />}
-          {!managedConversation && (modelPresets.length > 0 || modelMenuCommand || history?.model || switchTargets.length > 0) && <div className="chat-model chat-model-select" ref={modelPickerOpenUi.ref} onKeyDown={modelPickerOpenUi.onKeyDown}>
+          {(modelPresets.length > 0 || modelMenuCommand || history?.model || switchTargets.length > 0) && <div className="chat-model chat-model-select" ref={modelPickerOpenUi.ref} onKeyDown={modelPickerOpenUi.onKeyDown}>
             <button
               ref={(node) => { assignRef(modelPickerOpenUi.btnRef, node); modelButtonRef.current = node; }}
               type="button"

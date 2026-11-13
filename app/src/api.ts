@@ -1,12 +1,3 @@
-import type { ManagedConversationRecoveriesArgs } from "./generated/contracts/bridge/ManagedConversationRecoveriesArgs";
-import type { ManagedConversationDeliveryActionArgs } from "./generated/contracts/bridge/ManagedConversationDeliveryActionArgs";
-import type { ManagedConversationAdoptArgs } from "./generated/contracts/bridge/ManagedConversationAdoptArgs";
-import type { ManagedConversationControlArgs } from "./generated/contracts/bridge/ManagedConversationControlArgs";
-import type { ManagedConversationCreateArgs } from "./generated/contracts/bridge/ManagedConversationCreateArgs";
-import type { ManagedConversationResolveArgs } from "./generated/contracts/bridge/ManagedConversationResolveArgs";
-import type { ManagedConversationSendArgs } from "./generated/contracts/bridge/ManagedConversationSendArgs";
-import type { ManagedConversationSetModeArgs } from "./generated/contracts/bridge/ManagedConversationSetModeArgs";
-import type { ManagedConversationSetModelArgs } from "./generated/contracts/bridge/ManagedConversationSetModelArgs";
 import { Channel, invoke } from "@tauri-apps/api/core";
 import { activityTone } from "./activity";
 import { appConfirm } from "./confirm";
@@ -864,46 +855,6 @@ export type { LeadTaskDto } from "./generated/contracts/LeadTaskDto";
 export type { LeadGateDto } from "./generated/contracts/LeadGateDto";
 export type { LeadCheckDto } from "./generated/contracts/LeadCheckDto";
 export type { LeadProviderInstallationDto } from "./generated/contracts/LeadProviderInstallationDto";
-
-export type { ManagedConversationDto } from "./generated/contracts/ManagedConversationDto";
-export type { ManagedDeliveryDto } from "./generated/contracts/ManagedDeliveryDto";
-export type { ManagedAttachmentDto } from "./generated/contracts/ManagedAttachmentDto";
-export type { ManagedInteractionDto } from "./generated/contracts/ManagedInteractionDto";
-export type { ManagedChoiceDto } from "./generated/contracts/ManagedChoiceDto";
-
-export function managedConversationCreate(provider: string, cwd: string, profileId: string | null = null): Promise<import("./generated/contracts/ManagedConversationDto").ManagedConversationDto> {
-  return invoke("managed_conversation_create", { provider, cwd, profileId } satisfies ManagedConversationCreateArgs);
-}
-export function managedConversationAdopt(sessionId: number): Promise<import("./generated/contracts/ManagedConversationDto").ManagedConversationDto> {
-  return invoke("managed_conversation_adopt", { sessionId } satisfies ManagedConversationAdoptArgs);
-}
-export function managedConversationState(sessionId: number): Promise<import("./generated/contracts/ManagedConversationDto").ManagedConversationDto | null> {
-  return invoke("managed_conversation_state", { sessionId } satisfies SessionArg);
-}
-export function managedConversationSend(sessionId: number, deliveryId: string, text: string, attachments: import("./generated/contracts/ManagedAttachmentDto").ManagedAttachmentDto[] = [], gateRef: import("./generated/contracts/ManagedGateRefDto").ManagedGateRefDto | null = null): Promise<import("./generated/contracts/ManagedDeliveryDto").ManagedDeliveryDto> {
-  return invoke("managed_conversation_send", { sessionId, deliveryId, text, attachments, gateRef } satisfies ManagedConversationSendArgs);
-}
-export function managedConversationRecoveries(sessionId: number, cursor: import("./generated/contracts/ManagedNativeRecoveryCursorDto").ManagedNativeRecoveryCursorDto | null = null, limit = 50): Promise<import("./generated/contracts/ManagedNativeRecoveryPageDto").ManagedNativeRecoveryPageDto> {
-  return invoke("managed_conversation_recoveries", { sessionId, cursor, limit } satisfies ManagedConversationRecoveriesArgs);
-}
-export function managedConversationDeliveries(sessionId: number): Promise<import("./generated/contracts/ManagedDeliveryDto").ManagedDeliveryDto[]> {
-  return invoke("managed_conversation_deliveries", { sessionId } satisfies SessionArg);
-}
-export function managedConversationDeliveryAction(sessionId: number, deliveryId: string, action: "dismiss" | "retry", replacementDeliveryId: string | null = null): Promise<import("./generated/contracts/ManagedDeliveryDto").ManagedDeliveryDto> {
-  return invoke("managed_conversation_delivery_action", { sessionId, deliveryId, action, replacementDeliveryId } satisfies ManagedConversationDeliveryActionArgs);
-}
-export function managedConversationControl(sessionId: number, action: "resume" | "cancel" | "stop"): Promise<import("./generated/contracts/ManagedConversationDto").ManagedConversationDto> {
-  return invoke("managed_conversation_control", { sessionId, action } satisfies ManagedConversationControlArgs);
-}
-export function managedConversationResolve(sessionId: number, interactionId: string, optionId: string | null, answers: unknown = null): Promise<void> {
-  return invoke("managed_conversation_resolve", { sessionId, interactionId, optionId, answers } satisfies ManagedConversationResolveArgs);
-}
-export function managedConversationSetModel(sessionId: number, model: string): Promise<void> {
-  return invoke("managed_conversation_set_model", { sessionId, model } satisfies ManagedConversationSetModelArgs);
-}
-export function managedConversationSetMode(sessionId: number, dimension: string, mode: string): Promise<void> {
-  return invoke("managed_conversation_set_mode", { sessionId, dimension, mode } satisfies ManagedConversationSetModeArgs);
-}
 
 export function leadProviderInstallations(): Promise<import("./generated/contracts/LeadProviderInstallationDto").LeadProviderInstallationDto[]> {
   return invoke("lead_provider_installations");

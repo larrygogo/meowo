@@ -435,7 +435,6 @@ export function descriptors(installed: string[]): AgentDescriptor[] {
     supports_context: SUPPORTS_CONTEXT.has(id),
     supports_chat_export: SUPPORTS_CHAT_EXPORT.has(id),
     // 旧用例明确覆盖原生CLI路径；协议托管用例需单独开启能力并给真实结构化历史。
-    supports_managed_conversation: false,
     // 与后端事实对齐:claude/codex/kimi 声明了 CrossAccountSession(会话能搬去另一个账号);
     // opencode 的会话存储没取证过,gemini 压根不支持多账号。
     moves_sessions_across_accounts: MOVES_SESSIONS_ACROSS_ACCOUNTS.has(id),
