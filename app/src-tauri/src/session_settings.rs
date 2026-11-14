@@ -80,10 +80,9 @@ pub(crate) fn args_for_selections(
         Vec::new()
     };
     let mut args = meowo_agent::resolve_session_args(plugin, selections, &catalog, &dynamic, resuming);
-    // 声明表表达不了、要按 CLI 当前配置现算的（Codex 自动审查没配 Windows 沙箱时补沙箱实现，真机第四轮 N7）。
-    if !resuming {
-        args.extend(plugin.extra_launch_args(selections, env));
-    }
+    // 声明表表达不了、要按 CLI 当前配置现算的（Codex workspace-write 的档没配 Windows 沙箱时补沙箱实现，
+    // 真机第四轮 N7）。新建与接回都加：接回时 thread 存下的 workspace-write 也要靠它才不被降成只读。
+    args.extend(plugin.extra_launch_args(selections, env));
     args
 }
 
@@ -1964,6 +1963,28 @@ mod tests {
         assert!(claim_server_update(codex, &modes(&[("collaboration", "plan")])).is_none());
         let kimi = meowo_agent::by_id("kimi").unwrap();
         assert!(claim_server_update(kimi, &modes(&[("approval", "approveForMe")])).is_none());
+    }
+
+    /// 真机第四轮 N7（leader 定范围）：workspace-write 的档在没配 Windows 沙箱时，新建与接回的启动参数都补
+    /// `-c windows.sandbox=unelevated`；接回时权限参数由 split_argv 丢掉，这一项照给。
+    #[test]
+    fn workspace_write_tiers_carry_windows_sandbox_on_new_and_resume() {
+        let codex = meowo_agent::by_id("codex").unwrap();
+        let home = std::env::temp_dir().join(format!("meowo-codex-n7-resume-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let env = vec![("CODEX_HOME".to_string(), home.to_string_lossy().into_owned())];
+        let has = |args: &[String]| args.windows(2).any(|pair| pair[0] == "-c" && pair[1] == "windows.sandbox=unelevated");
+        for tier in ["ask", "approveForMe"] {
+            for resuming in [false, true] {
+                let args = args_for_selections(codex, &modes(&[("approval", tier)]), &env, None, resuming);
+                assert_eq!(has(&args), cfg!(windows), "{tier} resuming={resuming}: {args:?}");
+            }
+        }
+        for tier in ["default", "readOnly", "yolo"] {
+            assert!(!has(&args_for_selections(codex, &modes(&[("approval", tier)]), &env, None, true)), "{tier}");
+        }
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     /// 真机验证 02d：同一请求既切模型又切 agent 时先切 agent，模型才不会被 agent 记住的那个盖掉。
