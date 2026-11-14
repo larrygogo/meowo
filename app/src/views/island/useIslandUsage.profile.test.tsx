@@ -24,14 +24,16 @@ const account = (provider: string, usage: unknown) => ({
 describe("useIslandUsage 切换账号", () => {
   let current: Record<string, number>;
   let failing = false;
+  let staleSnapshot = false;
   beforeEach(() => {
     listeners.clear();
     failing = false;
+    staleSnapshot = false;
     current = { claude: 80, codex: 30 };
     invoke.mockReset();
     invoke.mockImplementation((command: string, args?: { provider?: string }) => {
       // 后端在切换时已清缓存：账号快照里不带旧额度。
-      if (command === "get_accounts") return Promise.resolve([account("claude", null), account("codex", null)]);
+      if (command === "get_accounts") return Promise.resolve([account("claude", staleSnapshot ? usageOf(80) : null), account("codex", null)]);
       if (command === "refresh_usage") {
         return failing ? Promise.reject("UNAVAILABLE") : Promise.resolve(usageOf(current[args!.provider!]));
       }
@@ -58,6 +60,19 @@ describe("useIslandUsage 切换账号", () => {
     await waitFor(() => expect(view.result.current.usage.claude?.lanes[0].used_pct).toBe(80));
     await waitFor(() => expect(listeners.has(ACTIVE_PROFILE_CHANGED)).toBe(true));
 
+    failing = true;
+    act(() => listeners.get(ACTIVE_PROFILE_CHANGED)!({ payload: "claude" }));
+
+    await waitFor(() => expect(view.result.current.meta.claude?.failed).toBe(true));
+    expect(view.result.current.usage.claude).toBeUndefined();
+  });
+
+  it("账号快照里还带着上一个账号的缓存（后端某条路径没清）：也不拿它预填", async () => {
+    const view = renderHook(() => useIslandUsage());
+    await waitFor(() => expect(view.result.current.usage.claude?.lanes[0].used_pct).toBe(80));
+    await waitFor(() => expect(listeners.has(ACTIVE_PROFILE_CHANGED)).toBe(true));
+
+    staleSnapshot = true;
     failing = true;
     act(() => listeners.get(ACTIVE_PROFILE_CHANGED)!({ payload: "claude" }));
 

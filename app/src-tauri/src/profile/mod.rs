@@ -490,6 +490,13 @@ pub(crate) async fn delete_profile(
                 });
             }
         }
+        // 删掉的正是当前在用的账号：那份用量缓存属于它，留着会被岛当成默认账号的额度预填回去
+        // （与 set_active_profile 清缓存同理由；独立审查 2026-11-15 指出删除路径漏了这一步）。
+        if was_active {
+            if let Some(agent) = meowo_agent::by_id(&provider) {
+                crate::account::clear_cached_usage(agent.id());
+            }
+        }
         Ok(())
     })
     .await
@@ -695,6 +702,23 @@ mod tests {
     use super::*;
 
     /// id 会被拼进文件系统路径——`../` 这类输入必须在这里就被折平，否则接线会写到用户目录之外。
+    /// 会让「这家当前用的是哪个账号」变掉的三条路径，都要清用量缓存再通知窗口：缓存按 agent 存，
+    /// 不清就是上一个账号的数字（删除路径漏过一次，独立审查 2026-11-15）。命令要 AppHandle，
+    /// 这里按源码核对三处都在。
+    #[test]
+    fn every_path_that_changes_the_active_profile_clears_cached_usage() {
+        let source = include_str!("mod.rs");
+        let production = source.split("#[cfg(test)]").next().unwrap();
+        for name in ["async fn set_active_profile(", "async fn delete_profile(", "pub fn merge_into_default("] {
+            let start = production.find(name).unwrap_or_else(|| panic!("找不到 {name}"));
+            let body = &production[start..];
+            let end = body[1..].find("
+}
+").map(|at| at + 1).unwrap_or(body.len());
+            assert!(body[..end].contains("clear_cached_usage"), "{name} 没清用量缓存");
+        }
+    }
+
     #[test]
     fn slug_never_escapes_the_profile_root() {
         assert_eq!(slug("work"), "work");
