@@ -4,7 +4,7 @@
 // 每个探针只用到其中一部分，没用到的不该报警。
 #![allow(dead_code)]
 
-use meowo_agent::composer::{read, ComposerRead, Cursor};
+use meowo_agent::composer::{read_with_cols, ComposerRead, Cursor};
 use portable_pty::{native_pty_system, PtySize};
 use std::io::{Read, Write};
 use std::path::Path;
@@ -147,7 +147,11 @@ impl Tui {
                 .cell(row, col)
                 .is_some_and(|cell| cell.dim() && !cell.contents().trim().is_empty()),
         };
-        read(&lines, Some(cursor), spec)
+        read_with_cols(&lines, Some(cursor), Some(cols as usize), spec)
+    }
+    /// 在同一把锁里读仿真屏幕的任意状态（折行标记、粘贴模式、备用屏），取证用。
+    pub fn with_screen<R>(&self, read: impl FnOnce(&vt100::Screen) -> R) -> R {
+        read(self.screen.lock().unwrap().screen())
     }
     pub fn send(&self, data: &str) {
         let mut writer = self.writer.lock().unwrap();
