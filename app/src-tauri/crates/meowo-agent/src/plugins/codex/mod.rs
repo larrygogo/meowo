@@ -788,7 +788,8 @@ fn windows_sandbox_configured_in_layers(home: Option<&std::path::Path>, cwd: Opt
         return false;
     };
     let fold = |path: &std::path::Path| trust_key(path);
-    let trusted: Vec<String> = user
+    // 已信任的目录：每个信任键记规范路径与原样两种拼写（见 trust_keys），比较时任一相同即可。
+    let trusted: std::collections::HashSet<String> = user
         .as_deref()
         .and_then(|content| content.parse::<toml_edit::DocumentMut>().ok())
         .and_then(|doc| {
@@ -798,11 +799,12 @@ fn windows_sandbox_configured_in_layers(home: Option<&std::path::Path>, cwd: Opt
                     .filter(|(_, entry)| {
                         entry.get("trust_level").and_then(|level| level.as_str()) == Some("trusted")
                     })
-                    .map(|(key, _)| fold(std::path::Path::new(key)))
+                    .flat_map(|(key, _)| trust_keys(std::path::Path::new(key)))
                     .collect()
             })
         })
         .unwrap_or_default();
+    let is_trusted = |path: &std::path::Path| trust_keys(path).iter().any(|key| trusted.contains(key));
     let root = cwd
         .ancestors()
         .find(|dir| dir.join(".git").exists())
@@ -810,12 +812,11 @@ fn windows_sandbox_configured_in_layers(home: Option<&std::path::Path>, cwd: Opt
     // git worktree（.git 是文件）按主仓库的信任算（上游 git-utils/src/trust.rs resolve_root_git_project_for_trust，
     // 第六轮复核 L1）：主仓库被信任，worktree 和它的子目录都加载项目层。项目层仍只在 cwd 到 worktree 根之间找。
     let main_root = main_checkout_for_trust(root);
-    let root_trusted = trusted.contains(&fold(root))
-        || main_root.as_deref().is_some_and(|main| trusted.contains(&fold(main)));
+    let root_trusted = is_trusted(root) || main_root.as_deref().is_some_and(is_trusted);
     let home_dot = home.map(fold);
     for dir in cwd.ancestors() {
         let dot = dir.join(".codex");
-        let trusted_here = root_trusted || trusted.contains(&fold(dir));
+        let trusted_here = root_trusted || is_trusted(dir);
         if trusted_here && home_dot.as_deref() != Some(fold(&dot).as_str()) {
             if let Ok(content) = std::fs::read_to_string(dot.join("config.toml")) {
                 if windows_sandbox_configured(&content) {
@@ -839,6 +840,39 @@ fn trust_key(path: &std::path::Path) -> String {
     } else {
         text.trim_end_matches('/').to_string()
     }
+}
+
+/// 一个目录用来查信任的各种拼写：规范路径（解开符号链接 / 目录联接、Windows 8.3 短名展开成长名、去掉
+/// `\\?\` 前缀）与原样，都按 [`trust_key`] 折叠。照上游 codex-rs/config/src/loader/mod.rs
+/// `normalized_project_trust_keys`（dunce::canonicalize 后的与原样的，规范的优先）；规范化失败（目录不存在等）
+/// 就只用原样。CI 的临时目录就是这种情况：macOS 的 /var 是 /private/var 的链接，Windows runner 的 TEMP 是
+/// RUNNER~1 短名，git 写进 gitdir 的却是解析后的长路径（PR #172 CI）。
+fn trust_keys(path: &std::path::Path) -> Vec<String> {
+    let original = trust_key(path);
+    match std::fs::canonicalize(path) {
+        Ok(canonical) => {
+            let canonical = trust_key(&strip_verbatim(canonical));
+            if canonical == original {
+                vec![original]
+            } else {
+                vec![canonical, original]
+            }
+        }
+        Err(_) => vec![original],
+    }
+}
+
+/// Windows 的 canonicalize 返回 `\\?\C:\...` 或 `\\?\UNC\server\share\...`：去掉前缀变回常见写法（与
+/// dunce::simplified 同取向）。其他平台原样返回。
+fn strip_verbatim(path: std::path::PathBuf) -> std::path::PathBuf {
+    let text = path.to_string_lossy();
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        return std::path::PathBuf::from(format!(r"\\{rest}"));
+    }
+    if let Some(rest) = text.strip_prefix(r"\\?\") {
+        return std::path::PathBuf::from(rest);
+    }
+    path
 }
 
 /// worktree 的主仓库根（与上游 `resolve_root_git_project_for_trust` 同口径，只按文件系统核对、不调 git）：
@@ -1056,7 +1090,8 @@ mod tests {
         std::fs::create_dir_all(sub.join(".codex")).unwrap();
         std::fs::create_dir_all(wt.join(".codex")).unwrap();
         std::fs::write(wt.join(".codex").join("config.toml"), "[windows]\nsandbox = \"elevated\"\n").unwrap();
-        assert!(super::main_checkout_for_trust(&wt).is_some_and(|m| super::trust_key(&m) == super::trust_key(&main)));
+        // 比较规范路径：CI 的临时目录可能经链接 / 短名到达，git 写的是解析后的长路径（PR #172 CI）。
+        assert!(super::main_checkout_for_trust(&wt).is_some_and(|m| super::trust_keys(&m)[0] == super::trust_keys(&main)[0]));
         // Codex 写信任键的样子：Windows 上反斜杠、小写（照本机 ~/.codex/config.toml）；TOML 单引号字面量。
         let key = if cfg!(windows) {
             main.to_string_lossy().replace('/', "\\").to_ascii_lowercase()
@@ -1074,6 +1109,79 @@ mod tests {
         assert!(codex.extra_launch_args(&pick, &env, Some(&wt)).is_empty());
         let _ = git(&main, &["worktree", "remove", "--force", wt.to_str().unwrap()]);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// PR #172 CI：临时目录经别名路径到达（macOS /var → /private/var 的符号链接、Windows runner 的 8.3 短名）。
+    /// 这里用目录联接（Windows）/ 符号链接（其他平台）造一个别名根，git 经别名建仓库与 worktree，gitdir 里写的
+    /// 是解析后的真实路径；信任键分别用别名拼写和真实拼写，worktree 用别名和真实路径来问，都要认到主仓库的信任。
+    #[test]
+    fn trust_matches_through_path_aliases() {
+        use super::windows_sandbox_configured_in_layers as configured;
+        let git = |dir: &std::path::Path, args: &[&str]| {
+            std::process::Command::new("git")
+                .args(["-c", "user.name=probe", "-c", "user.email=probe@example.invalid", "-c", "commit.gpgsign=false"])
+                .args(args)
+                .current_dir(dir)
+                .output()
+                .is_ok_and(|out| out.status.success())
+        };
+        let base = std::env::temp_dir().join(format!("meowo-codex-alias-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let real = base.join("real");
+        let alias = base.join("alias");
+        std::fs::create_dir_all(&real).unwrap();
+        #[cfg(windows)]
+        let linked = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J", alias.to_str().unwrap(), real.to_str().unwrap()])
+            .output()
+            .is_ok_and(|out| out.status.success());
+        #[cfg(not(windows))]
+        let linked = std::os::unix::fs::symlink(&real, &alias).is_ok();
+        if !linked {
+            eprintln!("建不了目录别名，跳过");
+            let _ = std::fs::remove_dir_all(&base);
+            return;
+        }
+        let main = alias.join("Main");
+        let wt = alias.join("WT");
+        let home = real.join("home");
+        std::fs::create_dir_all(&main).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        let cleanup = || {
+            #[cfg(windows)]
+            let _ = std::fs::remove_dir(&alias); // 只拆联接，不进去删
+            #[cfg(not(windows))]
+            let _ = std::fs::remove_file(&alias);
+            let _ = std::fs::remove_dir_all(&base);
+        };
+        if !git(&main, &["init", "-q"]) {
+            eprintln!("没有 git，跳过");
+            cleanup();
+            return;
+        }
+        std::fs::write(main.join("a.txt"), "a").unwrap();
+        assert!(git(&main, &["add", "a.txt"]));
+        assert!(git(&main, &["commit", "-q", "-m", "init"]));
+        assert!(git(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+        std::fs::create_dir_all(wt.join(".codex")).unwrap();
+        std::fs::write(wt.join(".codex").join("config.toml"), "[windows]\nsandbox = \"elevated\"\n").unwrap();
+        // Codex 写信任键的样子：Windows 上反斜杠、小写。
+        let codex_key = |path: &std::path::Path| {
+            if cfg!(windows) {
+                path.to_string_lossy().replace('/', "\\").to_ascii_lowercase()
+            } else {
+                path.to_string_lossy().into_owned()
+            }
+        };
+        for key in [codex_key(&main), codex_key(&real.join("Main"))] {
+            std::fs::write(home.join("config.toml"), format!("[projects.'{key}']\ntrust_level = \"trusted\"\n")).unwrap();
+            assert!(configured(Some(&home), Some(&wt)), "别名路径的 worktree，信任键 {key}");
+            assert!(configured(Some(&home), Some(&real.join("WT"))), "真实路径的 worktree，信任键 {key}");
+        }
+        std::fs::write(home.join("config.toml"), "").unwrap();
+        assert!(!configured(Some(&home), Some(&wt)), "没信任就不读项目层");
+        let _ = git(&main, &["worktree", "remove", "--force", wt.to_str().unwrap()]);
+        cleanup();
     }
 
     /// 第七轮复核 R2 真机：本机真实 worktree（默认 meowo-tui-codex，`MEOWO_R2_WORKTREE` 可改）。隔离的 CODEX_HOME 里
