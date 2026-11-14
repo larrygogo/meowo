@@ -1785,6 +1785,14 @@ mod tests {
         .unwrap();
         assert_eq!(n7.server, s(&["-c", "approvals_reviewer=auto_review", "-c", "windows.sandbox=unelevated"]));
         assert_eq!(n7.tui, s(&["--sandbox", "workspace-write", "-c", "windows.sandbox=unelevated"]));
+        // 接回：权限参数丢掉（远程 resume 不收），Windows 沙箱实现两边照给（leader 定：接回也要名副其实）。
+        let resumed = split_argv(
+            &s(&[exe, "--sandbox", "workspace-write", "--ask-for-approval", "on-request", "-c", "windows.sandbox=unelevated", "resume", "019a-thread"]),
+            owns,
+        )
+        .unwrap();
+        assert_eq!(resumed.server, s(&["-c", "windows.sandbox=unelevated"]));
+        assert_eq!(resumed.tui, s(&["-c", "windows.sandbox=unelevated", "resume", "019a-thread"]));
         let fresh = split_argv(
             &s(&[
                 "codex",

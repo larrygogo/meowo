@@ -336,17 +336,27 @@ impl AgentPlugin for Codex {
     /// 改成 workspace-write，但沙箱级别仍是 Disabled，上游 `effective_windows_sandbox_type` 此时给
     /// SandboxType::None——命令实际不进沙箱。
     ///
-    /// 所以选这一档、而 CLI 配置里没配 Windows 沙箱（`[windows] sandbox`，或旧的
-    /// `features.experimental_windows_sandbox` / `elevated_windows_sandbox` / `enable_experimental_windows_sandbox`）
-    /// 时，启动参数补 `-c windows.sandbox=unelevated`：Codex 自带、不要管理员权限的受限令牌沙箱，首轮起就是
-    /// workspace-write 且真进沙箱。用户自己配过的（包括 elevated、mxc）一律不覆盖。只影响这一档、只在
-    /// Windows、只在新建时。
+    /// 所以凡是映射到 workspace-write 的档（「必要时询问」ask、「自动审查」approveForMe，按声明表的启动参数认），
+    /// 只要 CLI 配置里没配 Windows 沙箱（`[windows] sandbox`，或旧的
+    /// `features.experimental_windows_sandbox` / `elevated_windows_sandbox` / `enable_experimental_windows_sandbox`），
+    /// 启动参数就补 `-c windows.sandbox=unelevated`：Codex 自带、不要管理员权限的受限令牌沙箱，首轮起就是
+    /// workspace-write 且真进沙箱（leader 2026-11-14 定范围）。用户自己配过的（包括 elevated、mxc）一律不覆盖。
+    /// 新建与接回都加：接回时权限参数被丢掉（远程 resume 不收，见 codex_app_server 模块头），但 `-c` 照常交给
+    /// TUI 与 app-server，thread 存下的 workspace-write 才不会在接回后又被降成只读。只在 Windows。
+    /// 这一步只让档位名副其实，不连 app-server（认领后补设的范围另见 session_settings::claim_server_update）。
     fn extra_launch_args(
         &self,
         selections: &std::collections::HashMap<String, String>,
         env: &[(String, String)],
     ) -> Vec<String> {
-        if !cfg!(windows) || selections.get("approval").map(String::as_str) != Some("approveForMe") {
+        let workspace_write = selections.get("approval").is_some_and(|picked| {
+            self.launch_options()
+                .iter()
+                .find(|option| option.id == "approval")
+                .and_then(|option| option.choices.iter().find(|choice| choice.id == picked.as_str()))
+                .is_some_and(|choice| choice.args.windows(2).any(|pair| pair == ["--sandbox", "workspace-write"]))
+        });
+        if !cfg!(windows) || !workspace_write {
             return Vec::new();
         }
         let configured = codex_home(env)
@@ -790,9 +800,10 @@ mod tests {
         assert!(configured("this is = = not toml"));
     }
 
-    /// 只有「自动审查」、只在没配 Windows 沙箱时补 `-c windows.sandbox=unelevated`；其他档、配过的都不动。
+    /// workspace-write 的档（必要时询问、自动审查）在没配 Windows 沙箱时补 `-c windows.sandbox=unelevated`；
+    /// 其他档、配过的都不动。
     #[test]
-    fn approve_for_me_adds_unelevated_sandbox_only_when_unconfigured() {
+    fn workspace_write_tiers_add_unelevated_sandbox_only_when_unconfigured() {
         let codex = crate::by_id("codex").unwrap();
         let home = std::env::temp_dir().join(format!("meowo-codex-n7-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
@@ -808,11 +819,14 @@ mod tests {
         assert_eq!(codex.extra_launch_args(&pick("approveForMe"), &env), expect);
         std::fs::write(home.join("config.toml"), "check_for_update_on_startup = false\n").unwrap();
         assert_eq!(codex.extra_launch_args(&pick("approveForMe"), &env), expect);
-        for other in ["default", "readOnly", "ask", "yolo"] {
+        assert_eq!(codex.extra_launch_args(&pick("ask"), &env), expect);
+        for other in ["default", "readOnly", "yolo", "nonsense"] {
             assert!(codex.extra_launch_args(&pick(other), &env).is_empty(), "{other}");
         }
+        assert!(codex.extra_launch_args(&std::collections::HashMap::new(), &env).is_empty());
         std::fs::write(home.join("config.toml"), "[windows]\nsandbox = \"elevated\"\n").unwrap();
         assert!(codex.extra_launch_args(&pick("approveForMe"), &env).is_empty());
+        assert!(codex.extra_launch_args(&pick("ask"), &env).is_empty());
         let _ = std::fs::remove_dir_all(&home);
     }
 
