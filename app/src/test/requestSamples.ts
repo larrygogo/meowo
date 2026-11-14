@@ -1,6 +1,12 @@
 /// 五家的审批请求样本，卡片相关的测试共用。每份都注明出处，不凭空编。
 ///
 /// 屏幕样本是终端画面的文本（识别层的输入），broker 样本是后端发给前端的 RuntimeRequest。
+///
+/// 这里有几份不是真机抓的（kimi 的屏幕取自源码，claude、codex 的 broker 请求只有字段形状）。
+/// 真机抓的那一套在 fixtures/approval-frames.json（tests/probe_approval.rs，2026-11-14：claude、codex 的
+/// broker 请求，claude、kimi、opencode 的屏幕），由 views/chat/approvalFrames.test.tsx 回放。
+/// 两套并存：这里的样本带着各条用例要的特定内容（长命令、危险命令、多条持久放行），真机那套管
+/// 「CLI 现在实际长什么样」。
 
 import type { RuntimeRequest } from "../api";
 
@@ -27,7 +33,8 @@ export const CLAUDE_APPROVAL_SCREEN = [
 ].join("\n");
 
 /// Kimi 的审批面板。官方源码取证（apps/kimi-code/src/tui/components/dialogs/approval-panel.ts
-/// @ 0.29），与 terminalAttention.test.ts 里的既有样本同一份。
+/// @ 0.29），与 terminalAttention.test.ts 里的既有样本同一份。2.6.1 真机的面板在标题与命令之间
+/// 多一行 `cwd: <工作目录>`，见 approval-frames.json 的 kimi 帧。
 export const KIMI_APPROVAL_SCREEN = [
   "────────────────────────",
   "  ▶ Run this command?",
@@ -112,14 +119,15 @@ export const CLAUDE_BROKER_APPROVAL: RuntimeRequest = {
 };
 
 /// Codex 的 broker 审批。Codex 的 PermissionRequest hook 不带持久放行建议（插件声明
-/// permission_hook_decides，载荷只有工具名与参数）；形状同上，不是真机抓包。
+/// permission_hook_decides，载荷只有工具名与参数）；形状同上，不是真机抓包。工具名按 0.167.2
+/// 真机抓到的写（`Bash`，见 approval-frames.json 的 codex 帧；此前凭印象写成 `shell`）。
 export const CODEX_BROKER_APPROVAL: RuntimeRequest = {
   sessionId: 7,
   requestId: "codex-req-1",
   provider: "codex",
   kind: "approval",
   status: "pending",
-  toolName: "shell",
+  toolName: "Bash",
   description: null,
   input: JSON.stringify({ command: "git push origin main" }),
   permissionSuggestions: [],
