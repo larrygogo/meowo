@@ -131,7 +131,8 @@ describe("ChatWindow", () => {
 
     // 子任务自成一行，不被并进「N 个操作」那一坨；摘要显示的是描述而不是整包参数。
     const summary = await screen.findByText("验证审批双轨");
-    expect(screen.getByText("子任务")).toBeTruthy();
+    // 停靠条的入口也叫「子任务」（词表统一后与时间线同词），这里只认时间线块的标签。
+    expect(screen.getByText("子任务", { selector: ".chat-subagent-label" })).toBeTruthy();
     expect(screen.getByText("general-purpose")).toBeTruthy();
     expect(document.querySelector(".chat-activity-group")).toBeNull();
     // 未展开前绝不请求：一个会话可能有几十个子任务。
@@ -212,7 +213,7 @@ describe("ChatWindow", () => {
     render(<ChatWindow />);
 
     // 没有回执 → 三个都在跑，且**不必展开**（不该为一个徽标去读侧车流）。
-    expect(await screen.findByText("3 进行中")).toBeTruthy();
+    expect(await screen.findByText("3 运行中")).toBeTruthy();
     expect(invoke).not.toHaveBeenCalledWith("get_subagent_transcript", expect.anything());
     // 在跑时图标脉冲——折叠状态下不必读徽标小字也能看出里面有活儿。
     expect(document.querySelector(".chat-subagent-icon.is-running")).toBeTruthy();
@@ -220,7 +221,7 @@ describe("ChatWindow", () => {
     // 回执到达后按真实结局显示（靠历史轮询自然刷新，不手动重渲染）。
     done = true;
     await waitFor(() => expect(screen.getAllByText("2 完成 · 1 失败").length).toBeGreaterThan(0), { timeout: 3_000 });
-    expect(screen.queryByText("3 进行中")).toBeNull();
+    expect(screen.queryByText("3 运行中")).toBeNull();
     // 结束后:图标停脉冲,显示「委派 → 最终回执」的执行时长(04:00:00 → 04:06:40)。
     expect(document.querySelector(".chat-subagent-icon.is-running")).toBeNull();
     expect(screen.getAllByText("6 分 40 秒").length).toBeGreaterThan(0);
@@ -665,7 +666,7 @@ describe("ChatWindow", () => {
     expect(invoke).not.toHaveBeenCalledWith("write_managed_terminal", { sessionId: 71, data: "\r" });
     expect(await screen.findByText(zh.chat.sendEchoTimeout)).toBeTruthy();
     // 已写正文不能谎称确定未发：保留原文回执，由用户核对后恢复草稿或重发。
-    expect(await screen.findByText(zh.chat.echoUncertain)).toBeTruthy();
+    expect(await screen.findByText(zh.vocab.delivery.uncertain)).toBeTruthy();
     expect(screen.getByText("go on")).toBeTruthy();
     expect(input.value).toBe("");
   });

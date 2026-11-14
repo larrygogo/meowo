@@ -1,15 +1,21 @@
 // 中文字典（基准）。en.ts 用 `typeof zh` 约束 key 与函数签名编译期对齐。
 // 注意：「(未命名会话)」是数据库 sentinel 不在此处——展示层用 sticker.waitingFirstInput 映射。
 import { attachmentInstructionZh } from "./attachmentInstruction";
+import statusVocab from "./statusVocab.json";
+
+// 状态词表（会话状态、待处理请求、送达状态）：词只在 statusVocab.json 里写一遍，这里挂成 t.vocab。
+// 下文凡是状态词都引用 vocab，不再写字面量（statusVocab.test.ts 扫描）。
+const vocab = statusVocab.zh;
 
 export const zh = {
   // BCP-47 locale：日期/时刻格式化走 Intl（12/24 小时制、月日顺序随语言），不再手拼。
   locale: "zh-CN",
+  vocab,
   // 应用内确认模态(confirm.tsx)的通用按钮。
   dialog: { ok: "确定", cancel: "取消", gotIt: "知道了" },
   // 渲染崩溃兜底（ErrorBoundary.tsx）：窗口级整页替换时显示。
-  crash: { title: "出错了", hint: "这个窗口遇到问题，重新加载即可恢复。", reload: "重新加载" },
-  tabs: { all: "全部", waiting: "待交互", running: "运行中" },
+  crash: { title: "窗口遇到问题", hint: "重新加载即可恢复。", reload: "重新加载" },
+  tabs: { all: "全部", waiting: "待交互", running: vocab.session.running },
   time: {
     now: "刚刚",
     // 相对时间（N 分钟前）不走字典：Intl.RelativeTimeFormat(locale) 生成（helpers.fmtAgo）。
@@ -20,13 +26,8 @@ export const zh = {
     waitedDay: (d: number) => `已等待 ${d} 天`,
   },
   badge: {
-    waiting: "等待输入",
-    pending: "待处理",
-    running: "运行中",
     full: (what: string, pct: number) => `${what} · 上下文已用 ${pct}%`,
   },
-  // blocked：屏幕检测到 agent 停在审批/提问 UI 上但 hook 无对应事件（说不出具体哪一种）。
-  pending: { approval: "待批准", question: "待回答", plan: "待批计划", gate: "待拍板", blocked: "待处理" },
   empty: {
     allTitle: "还没有会话",
     allHint: "在终端运行 AI 编程会话，进度会自动出现在这里",
@@ -38,9 +39,7 @@ export const zh = {
   },
   // 灵动岛（Windows 贴纸的新形态）。
   island: {
-    finished: "等待输入",
     idle: "没有运行中的会话",
-    toneLabel: { pending: "待处理", error: "出错", running: "运行中", waiting: "等待输入", on: "在线", offline: "已断开" } as Record<string, string>,
     open: "打开",
     panelSessions: "会话",
     panelUsage: "用量",
@@ -84,9 +83,9 @@ export const zh = {
     keepOpenOn: "取消保持打开",
     keepOpenOff: "保持打开（失焦不自动收起）",
     waitingFirstInput: "等待首次输入",
-    stopped: "已断开",
+    stopped: vocab.session.offline,
     sessionError: "会话出错",
-    online: "在线",
+    online: vocab.session.online,
     // 无屏幕检测的外部会话，状态点回落 DB status 时的弱化 tip（T-15：与实时判定区分）。
     assumedState: "按会话记录推断，可能不是最新",
     // 弱化徽标的 hover/读屏文案（P2-11）：包层压制内层 RunBadge 的「自信」文案，附「推断」后缀。
@@ -529,15 +528,6 @@ export const zh = {
   },
   chat: {
     title: "会话对话",
-    // 标题栏状态徽标(按 SessionTone 取)。放在标题栏,文案要短。
-    status: {
-      running: "运行中",
-      pending: "待处理",
-      waiting: "等待输入",
-      offline: "已断开",
-      ended: "已结束",
-      error: "出错了",
-    } as Record<string, string>,
     unsupported: "这个 Agent 暂未提供结构化对话记录",
     empty: "还没有可显示的对话记录",
     // 空会话欢迎面板（A+B 改版）：替代整屏一行灰字，给出路而不是只报「没有」。
@@ -616,9 +606,9 @@ export const zh = {
     shortcutSend: "发送消息",
     shortcutNewline: "换行",
     shortcutInterruptSend: "中断当前回合并发送",
-    shortcutDeny: "拒绝待审批请求（输入框为空时，按两次确认）",
+    shortcutDeny: "拒绝待批准的请求（输入框为空时，按两次确认）",
     shortcutInterrupt: "中断当前回合（输入框为空时，按两次确认）",
-    shortcutApproveDigit: "允许待审批（焦点在输入框外）。2 起持久放行",
+    shortcutApproveDigit: "允许待批准的请求（焦点在输入框外）。2 起持久放行",
     shortcutSlashComplete: "选中斜杠命令补全",
     shortcutHistory: "取回上一条消息（输入框为空时）",
     shortcutSheet: "打开本速查表",
@@ -712,7 +702,7 @@ export const zh = {
     turnToolFailed: (count: number) => `（${count} 失败）`,
     compact: "上下文已压缩",
     // 用户按 Esc 中断回合后 CLI 写下的标记，时间线里以分隔条出现（对照 Kimi 的 turnInterrupted）。
-    turnInterrupted: "已手动终止",
+    turnInterrupted: vocab.session.interrupted,
     // 压缩分隔条的细节（对照 Kimi 的 compactedAuto / viewSummary）：CLI 自己压的要说清是自动，
     // 压缩前规模与摘要回答「它还记得什么」。
     compactAuto: "已自动压缩上下文",
@@ -777,9 +767,10 @@ export const zh = {
     // 拼进发给 agent 的消息里，必须跟随界面语言——英文界面混入中文指令会把 agent 的回答语言带偏。
     attachmentInstruction: attachmentInstructionZh,
     approvalTitle: "Agent 请求权限",
-    approvalPending: "待批准",
+    // 卡片组件还在读这几个键：值引用词表。TODO(合并后)：卡片直接取 t.vocab.request，删掉这几个别名。
+    approvalPending: vocab.request.approval,
     questionTitle: "Agent 正在等待你的回答",
-    questionPending: "待回答",
+    questionPending: vocab.request.question,
     questionFormLoading: "点选答案，终端表单就绪后自动作答",
     queuedAnswerHint: (label: string) => `已选「${label}」，表单就绪后自动作答`,
     questionExternalHint: "会话在外部终端运行，Meowo 无法代答。答完本卡自动关闭",
@@ -930,7 +921,7 @@ export const zh = {
     groupAttention: (count: number) => `${count} 项待处理`,
     // 任务面板（Kimi TasksPane）：后台 Bash / 子代理 / 待办。
     plan: "计划",
-    planPending: "待审批",
+    planPending: vocab.request.approval,
     planApproved: "已通过",
     planEmpty: "计划模式已开启，写出的计划会显示在这里",
     // Lead 工作流（停靠栏 Lead 入口 + 关卡卡片）
@@ -949,7 +940,7 @@ export const zh = {
     leadPillBlocked: (n: number) => `· ${n} 待实测`,
     leadSection: { checks: "验收", spec: "规格", decisions: "决策", progress: "进度" },
     leadSectionEmpty: "暂无内容",
-    leadGateWaiting: "待拍板",
+    leadGateWaiting: vocab.request.gate,
     leadGateAnswered: "已答复·等 agent 接手",
     leadDeliveryHandled: "Agent 已接手关卡",
     leadDeliveryRetry: "继续送达",
@@ -981,13 +972,13 @@ export const zh = {
     leadStage: (stage: string) => ({ interview: "访谈", spec: "规格", design: "方案", implement: "实施", verify: "验证", done: "完成" } as Record<string, string>)[stage] ?? stage,
     leadLatest: "最近：",
     tasksBackground: "后台 Bash",
-    tasksSubagents: "子代理",
+    tasksSubagents: vocab.concept.subagent,
     toolDone: "已完成",
     tasksEmpty: "暂无任务",
-    tasksRunningCount: (count: number) => `${count} 运行中`,
-    taskFilters: { recent: "最近", running: "进行中", done: "已完成", all: "全部" },
+    tasksRunningCount: (count: number) => `${count} ${vocab.session.running}`,
+    taskFilters: { recent: "最近", running: vocab.session.running, done: "已完成", all: "全部" },
     taskEmpty: { recent: "暂无最近任务", running: "暂无运行中的任务", done: "暂无已完成的任务", all: "暂无任务" },
-    taskStates: { run: "运行中", done: "已完成", fail: "失败" },
+    taskStates: { run: vocab.session.running, done: "已完成", fail: "失败" },
     // 模型市场（Kimi ModelPicker）：搜索、收藏、空结果。
     modelSearchPlaceholder: "搜索模型或提供商…",
     modelStar: "收藏模型",
@@ -1160,16 +1151,16 @@ export const zh = {
     todoEmptyHint: "任务进度将显示在这里",
     todoCollapse: "收起",
     todoExpand: (n: number) => `展开 ${n} 个`,
-    todoSubagentSection: "子任务",
-    subagent: "子任务",
+    todoSubagentSection: vocab.concept.subagent,
+    subagent: vocab.concept.subagent,
     subagentBatch: (n: number) => `${n} 个子任务`,
     subagentSteps: (n: number) => `${n} 条记录`,
-    subagentRunning: "进行中",
+    subagentRunning: vocab.session.running,
     subagentCompleted: "已完成",
     subagentFailed: "失败",
     subagentTallyCompleted: (n: number) => `${n} 完成`,
     subagentTallyFailed: (n: number) => `${n} 失败`,
-    subagentTallyRunning: (n: number) => `${n} 进行中`,
+    subagentTallyRunning: (n: number) => `${n} ${vocab.session.running}`,
     // 子代理交了结论、它派出的后台活儿还在跑（徽标次行小字）。
     subagentBackgroundRunning: "后台仍在运行",
     subagentDurationSec: (s: number) => `${s} 秒`,
@@ -1209,11 +1200,7 @@ export const zh = {
         : delivery === "turn_end" ? `${n} 条消息排队中，本回合结束后处理`
         : `${n} 条消息已交给 Agent`,
     queueLabel: "排队中的消息",
-    // 回显超时仍不见落盘：照实标出来，而不是悄悄撤掉
-    echoUncertain: "未确认送达",
-    // 先上屏再发送：写终端期间的气泡标注，与失败后的两个出口。
-    echoSending: "发送中",
-    echoFailed: "发送失败",
+    // 送达状态词（发送中、已排队、未确认送达、发送失败…）在词表 t.vocab.delivery，这里只留动作与说明。
     echoRetry: "重发",
     echoRestore: "放回输入框",
     echoUncertainTip: "对话记录里还没出现这条，可以重发或放回输入框",
@@ -1222,16 +1209,12 @@ export const zh = {
     echoStuckTip: "这段话还在 CLI 的输入框里，没有提交",
     echoSubmit: "提交",
     // CLI 回了送达回执（入队记录）：消息已进它的队列，还没轮到处理。
-    echoQueued: "已排队",
     echoQueuedTip: "Agent 还在忙，这条已进它的队列",
-    queuedAccepted: "已收到",
-    queuedAcceptedTip: "Agent 已收下，轮到时就处理",
-    interjectedBadge: "回合中插入",
     interjectedBadgeTip: "Agent 在干活途中读到了这条",
-    toAgentBadge: (name: string) => `发给子代理「${name}」`,
-    toAgentBadgeTip: "这条发给了子代理，不是主会话",
+    toAgentBadge: (name: string) => `发给${vocab.concept.subagent}「${name}」`,
+    toAgentBadgeTip: "这条发给了子任务，不是主会话",
     // 终端停在子代理视图且自动切不回(chat/subagentView)：发送会交给它，给一键切回。
-    subagentViewNotice: (name: string) => `终端停在子代理「${name}」，发送会交给它`,
+    subagentViewNotice: (name: string) => `终端停在${vocab.concept.subagent}「${name}」，发送会交给它`,
     subagentViewUnnamed: "未命名",
     subagentViewBack: "切回主会话",
     queuedAttachmentOnly: "（附件）",
@@ -1286,8 +1269,8 @@ export const zh = {
     crossMessage: "会话消息",
     crossMessageUnknown: "另一个会话",
     // 本会话派出的子代理发回来的话（<agent-message>）：来源写「子代理」，标签写「子代理消息」。
-    agentMessageFrom: "子代理",
-    agentMessage: "子代理消息",
+    agentMessageFrom: vocab.concept.subagent,
+    agentMessage: "子任务消息",
     taskNotification: "后台任务通知",
     changesUncommitted: "未提交",
     wsHide: "从列表中移除",
@@ -1348,7 +1331,6 @@ export const zh = {
     scmDiscardDirNote: "目录整个移到回收站，含其中被忽略的文件。",
     systemRecord: "系统记录",
     hookFeedback: "Hook 反馈",
-    sidebarApproval: "待批准",
     sidebarExpand: "展开会话列表",
     sidebarEmpty: "暂无会话",
     sidebarEmptyDir: "该目录下暂无会话",
@@ -1585,7 +1567,7 @@ export const zh = {
       search: "搜索",
       web: "网页",
       todo: "待办",
-      agent: "子任务",
+      agent: vocab.concept.subagent,
     } as Record<string, string>,
     // 归不进上面几类的工具按原名精确对照。只收本机实测高频的 claude 工具（11-04 统计近两周
     // 43 个会话：TaskStop 71 次、Skill 54、SendMessage 38、AskUserQuestion 31…），此前原样
@@ -1771,7 +1753,7 @@ export const zh = {
     islandAutoStripDesc: "最大化窗口在前台时收成细条，不挡标题栏",
     islandAlerts: "自动弹出提醒",
     islandAlertsDesc: "这些事发生时，灵动岛展开几秒告诉你",
-    islandAlertKinds: { waiting: "会话跑完", approval: "等待审批", question: "有提问", error: "出错" } as Record<string, string>,
+    islandAlertKinds: { waiting: "会话跑完", approval: vocab.request.approval, question: "有提问", error: vocab.session.error } as Record<string, string>,
     islandAlertSeconds: "提醒停留",
     islandAlertSecondsDesc: "提醒展开多久后缩回",
     islandSeconds: (n: number) => `${n} 秒`,

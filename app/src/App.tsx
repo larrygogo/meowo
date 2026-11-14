@@ -27,6 +27,7 @@ import type { IslandAlertEvent } from "./generated/contracts/IslandAlertEvent";
 import { useUpdate } from "./useUpdate";
 import { useShowWhenReady } from "./useShowWhenReady";
 import { useT } from "./i18n";
+import { sessionToneLabels } from "./i18n/statusVocab";
 import { FLOATING_HOST, isMac, type IslandHost } from "./platform";
 import { reconcileRows, sameRefs, type RowCache as SharedRowCache } from "./rowCache";
 import { reconcilePendings, type PendingRegistry } from "./views/sticker/pending";
@@ -588,7 +589,7 @@ export function App() {
     const tone = islandTone(islandCounts(stripSessions));
     const quota = orderIslandUsage(usage, quotaProviders, activeProviders)[0];
     const segments = menubarSegments(stripSessions, tone, quota?.pct ?? null, {
-      toneLabel: t.island.toneLabel,
+      toneLabel: sessionToneLabels(t),
       untitled: t.sticker.waitingFirstInput,
     });
     const key = JSON.stringify([tone, segments, menubarMood]);

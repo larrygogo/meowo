@@ -74,9 +74,9 @@ describe("ChatWindow 适配回归", () => {
     fireEvent.change(box(), { target: { value: "顺手改个名" } });
     fireEvent.keyDown(box(), { key: "Enter" });
     await waitFor(() => expect(document.querySelector(".chat-queued-bubble")?.textContent).toBe("顺手改个名"));
-    expect(screen.queryByText(zh.chat.queuedAccepted)).toBeNull();
+    expect(screen.queryByText(zh.vocab.delivery.accepted)).toBeNull();
     acked = true;
-    await screen.findByText(zh.chat.queuedAccepted, {}, { timeout: 4000 });
+    await screen.findByText(zh.vocab.delivery.accepted, {}, { timeout: 4000 });
     expect(document.querySelector(".chat-message.is-user")).toBeNull();
     expect(screen.getAllByText("顺手改个名")).toHaveLength(1);
   });
@@ -144,12 +144,12 @@ describe("ChatWindow 适配回归", () => {
     fireEvent.change(box(), { target: { value: "先上屏" } });
     fireEvent.keyDown(box(), { key: "Enter" });
     expect((await screen.findAllByText("先上屏")).length).toBeGreaterThan(0);
-    expect(screen.getByText(zh.chat.echoSending)).toBeTruthy();
+    expect(screen.getByText(zh.vocab.delivery.sending)).toBeTruthy();
     expect(box().value).toBe("");
     await waitFor(() => expect(release).toBeTypeOf("function"));
     await act(async () => { release(); });
     await waitFor(() => expect(writes(511)).toContain("\r"));
-    await waitFor(() => expect(screen.queryByText(zh.chat.echoSending)).toBeNull());
+    await waitFor(() => expect(screen.queryByText(zh.vocab.delivery.sending)).toBeNull());
   });
 
   // 失败时输入框里已经在写新内容：不覆盖它，留一个「发送失败」气泡，放回输入框接在新内容前面。
@@ -165,12 +165,12 @@ describe("ChatWindow 适配回归", () => {
     await waitFor(() => expect(fail).toBeTypeOf("function"));
     fireEvent.change(box(), { target: { value: "新草稿" } });
     await act(async () => { fail("写入终端失败"); });
-    expect(await screen.findByText(zh.chat.echoFailed)).toBeTruthy();
+    expect(await screen.findByText(zh.vocab.delivery.failed)).toBeTruthy();
     expect(box().value).toBe("新草稿");
     expect(writes(512)).not.toContain("\r");
     fireEvent.click(screen.getByRole("button", { name: zh.chat.echoRestore }));
     expect(box().value).toBe("会失败的话\n\n新草稿");
-    expect(screen.queryByText(zh.chat.echoFailed)).toBeNull();
+    expect(screen.queryByText(zh.vocab.delivery.failed)).toBeNull();
   });
 
   // 终端没起来时发送、拉起终端期间切走：照样拉起、等就绪、写完回车（用户要求切走不取消）；

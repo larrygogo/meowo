@@ -16,6 +16,7 @@ import { useSettingsEffect } from "../hooks/useSettings";
 import { confirmMarkDone, markDoneEndsWork, useSessionActions } from "../hooks/useSessionActions";
 import { useHistoryLayer } from "../hooks/useHistoryLayer";
 import { useT } from "../i18n";
+import { deliveryStatusLabel } from "../i18n/statusVocab";
 import { formatBackendError } from "../i18n/errors";
 import { useShowWhenReady } from "../useShowWhenReady";
 import { reduceChatEvents } from "../chat/reducer";
@@ -4635,15 +4636,16 @@ export function ChatWindow() {
             </div>
             {queuedShown.map((item) => (
               <div key={item.id} className={"chat-queued-turn" + (item.phase === "failed" ? " is-failed" : "")}>
-                {item.phase === "sending" && <span className="chat-queued-tag" role="status"><span className="chat-model-spinner" aria-hidden="true" />{t.chat.echoSending}</span>}
+                {item.phase === "sending" && <span className="chat-queued-tag" role="status"><span className="chat-model-spinner" aria-hidden="true" />{deliveryStatusLabel(t, "sending")}</span>}
                 {/* CLI 回了送达回执：确实进了它的队列，只是还没轮到（对照 Kimi 的「等待前序步骤收尾」）。 */}
-                {item.phase === "accepted" && <span className="chat-queued-tag" data-tip={t.chat.queuedAcceptedTip}>{t.chat.queuedAccepted}</span>}
+                {item.phase === "accepted" && <span className="chat-queued-tag" data-tip={t.chat.echoQueuedTip}>{deliveryStatusLabel(t, "accepted")}</span>}
                 {item.phase === "uncertain" && <>
-                  <span className="chat-queued-tag is-warn" role="status" data-tip={t.chat.echoUncertainTip}>{t.chat.echoUncertain}</span>
+                  <span className="chat-queued-tag is-warn" role="status" data-tip={t.chat.echoUncertainTip}>{deliveryStatusLabel(t, "uncertain")}</span>
+                  <button type="button" className="chat-user-action" onClick={() => retryOutgoing(item.id)}>{t.chat.echoRetry}</button>
                   <button type="button" className="chat-user-action" onClick={() => restoreOutgoing(item.id)}>{t.chat.echoRestore}</button>
                 </>}
                 {item.phase === "failed" && <>
-                  <span className="chat-queued-tag is-warn" role="alert">{t.chat.echoFailed}</span>
+                  <span className="chat-queued-tag is-warn" role="alert">{deliveryStatusLabel(t, "failed")}</span>
                   <button type="button" className="chat-user-action" onClick={() => retryOutgoing(item.id)}>{t.chat.echoRetry}</button>
                   <button type="button" className="chat-user-action" onClick={() => restoreOutgoing(item.id)}>{t.chat.echoRestore}</button>
                 </>}

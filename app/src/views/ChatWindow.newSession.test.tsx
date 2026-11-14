@@ -592,7 +592,7 @@ describe("ChatWindow", () => {
     claimed = true;
     act(() => eventListeners.get("chat-session-changed")?.({ payload: 71 }));
     // 回到真 id 先查一次认领关系，回执才搬过来。
-    expect(await screen.findByText(zh.chat.echoUncertain, undefined, { timeout: 3_000 })).toBeTruthy();
+    expect(await screen.findByText(zh.vocab.delivery.uncertain, undefined, { timeout: 3_000 })).toBeTruthy();
     expect(screen.getByText("修一下登录页")).toBeTruthy();
   }, 20_000);
 
@@ -609,7 +609,7 @@ describe("ChatWindow", () => {
     await waitFor(() => expect(screen.queryByTestId("new-session-page")).toBeNull());
     act(() => eventListeners.get("chat-session-changed")?.({ payload: -9 }));
     await waitFor(() => expect(screen.getByText("A的第一句")).toBeTruthy());
-    expect(await screen.findByText(zh.chat.echoFailed)).toBeTruthy();
+    expect(await screen.findByText(zh.vocab.delivery.failed)).toBeTruthy();
   }, 20_000);
 
   it("新建会话页:切走后过期,不把第一句话塞进正在看的别的会话", async () => {

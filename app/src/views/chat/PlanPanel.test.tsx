@@ -24,9 +24,9 @@ describe("PlanPanel 计划文档", () => {
     expect(screen.queryByText("拆分待办")).toBeNull();
   });
 
-  it("待审批时显示待审批状态", () => {
+  it("待批准时显示待批准状态", () => {
     render(<PlanPanel plan={latestPlan(items)} pending={true} onClose={() => {}} />);
-    expect(screen.getByText("待审批")).toBeTruthy();
+    expect(screen.getByText("待批准")).toBeTruthy();
   });
 
   it("取最近一次计划，空白文档不能覆盖已有计划", () => {

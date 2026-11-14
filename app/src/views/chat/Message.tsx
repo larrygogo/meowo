@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { pushEscLayer } from "../../escLayers";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useT } from "../../i18n";
+import { deliveryStatusLabel } from "../../i18n/statusVocab";
 import { attachmentInstructionEn, attachmentInstructionZh } from "../../i18n/attachmentInstruction";
 import { type ChatItem } from "../../api";
 import { ChatMarkdown, PlainMarkdown } from "../ChatMarkdown";
@@ -525,7 +526,7 @@ function EchoFailedActions({ itemId, actions }: { itemId: string; actions: EchoA
   const id = outgoingIdOf(itemId);
   return (
     <>
-      <span className="chat-user-note is-warn" role="alert">{t.chat.echoFailed}</span>
+      <span className="chat-user-note is-warn" role="alert">{deliveryStatusLabel(t, "failed")}</span>
       {actions && id != null && <>
         <button type="button" className="chat-user-action" onClick={() => actions.retry(id)}>{t.chat.echoRetry}</button>
         <button type="button" className="chat-user-action" onClick={() => actions.restore(id)}>{t.chat.echoRestore}</button>
@@ -549,7 +550,7 @@ function EchoUncertainActions({ itemId, actions }: { itemId: string; actions: Ec
   }
   return (
     <>
-      <span className="chat-user-note is-warn" data-tip={t.chat.echoUncertainTip}>{t.chat.echoUncertain}</span>
+      <span className="chat-user-note is-warn" data-tip={t.chat.echoUncertainTip}>{deliveryStatusLabel(t, "uncertain")}</span>
       {actions && id != null && <>
         <button type="button" className="chat-user-action" onClick={() => actions.retry(id)}>{t.chat.echoRetry}</button>
         <button type="button" className="chat-user-action" onClick={() => actions.restore(id)}>{t.chat.echoRestore}</button>
@@ -657,15 +658,15 @@ function MessageBody({ item, nextStamp = null, latest = false, compactSummary = 
         {(body || timeText || echoPhase || item.interjected || item.to_agent) && <div className="chat-user-foot">
           {/* 来源与送达是这条消息的事实，标在页脚：中途插入解释它为何出现在回复中间；
               未确认是回显超时仍不见落盘，照实说，不悄悄撤掉。 */}
-          {item.interjected && <span className="chat-user-note" data-tip={t.chat.interjectedBadgeTip}>{t.chat.interjectedBadge}</span>}
+          {item.interjected && <span className="chat-user-note" data-tip={t.chat.interjectedBadgeTip}>{deliveryStatusLabel(t, "inserted")}</span>}
           {/* 发给子代理的话（Claude Code 里切到子代理视图发的）：正文只在子代理记录里，后端取回挂到主时间线。
               标出去向，不然看着像对主会话说的，后面的回复也对不上（用户实拍 11-11）。 */}
           {item.to_agent && <span className="chat-user-note" data-tip={t.chat.toAgentBadgeTip}>{t.chat.toAgentBadge(item.to_agent)}</span>}
           {echoPhase === "uncertain" && <EchoUncertainActions itemId={item.id} actions={echoActions} />}
           {/* 发出时以为空闲、其实 CLI 还在忙：它把这条收进了队列，照实说「已排队」。 */}
-          {echoPhase === "accepted" && <span className="chat-user-note" data-tip={t.chat.echoQueuedTip}>{t.chat.echoQueued}</span>}
+          {echoPhase === "accepted" && <span className="chat-user-note" data-tip={t.chat.echoQueuedTip}>{deliveryStatusLabel(t, "accepted")}</span>}
           {/* 先上屏再发送：写终端期间转一个小圈；没写进去就照实标失败，给重发与放回输入框。 */}
-          {echoPhase === "sending" && <span className="chat-user-note is-sending" role="status"><span className="chat-model-spinner" aria-hidden="true" />{t.chat.echoSending}</span>}
+          {echoPhase === "sending" && <span className="chat-user-note is-sending" role="status"><span className="chat-model-spinner" aria-hidden="true" />{deliveryStatusLabel(t, "sending")}</span>}
           {echoPhase === "failed" && <EchoFailedActions itemId={item.id} actions={echoActions} />}
           {body && <MessageCopyButton text={body} className="chat-turn-copy" />}
           {body && <UndoButton id={item.id} text={body} />}

@@ -11,12 +11,12 @@ afterEach(() => { cleanup(); resetFoldMemory(); });
 
 /// 用户消息页脚上的两条事实标注：中途插入（后端结构标记）与回显未确认（前端对账结果）。
 describe("Message 用户消息标注", () => {
-  it("回合中插进来的消息标「回合中插入」，普通消息不标", () => {
+  it("回合中插进来的消息标「已插入」，普通消息不标", () => {
     render(<Message item={{ type: "user_text", id: "u1", timestamp: null, text: "顺便加个测试", interjected: true }} />);
-    expect(screen.getByText("回合中插入")).toBeTruthy();
+    expect(screen.getByText("已插入")).toBeTruthy();
     cleanup();
     render(<Message item={{ type: "user_text", id: "u2", timestamp: null, text: "开始吧" }} />);
-    expect(screen.queryByText("回合中插入")).toBeNull();
+    expect(screen.queryByText("已插入")).toBeNull();
   });
 
   it("回显超时未确认时照实标出，正常回显不标", () => {
@@ -65,12 +65,12 @@ describe("Message 用户消息标注", () => {
   });
 });
 
-/// 中断标记（后端把 CLI 的 `[Request interrupted by user]` 转成 meta）：分隔条写「已手动终止」，
+/// 中断标记（后端把 CLI 的 `[Request interrupted by user]` 转成 meta）：分隔条写「已中断」，
 /// 不再冒充用户气泡，也不能落进兜底的「上下文已压缩」。
 describe("Message 分隔条", () => {
-  it("interrupted 显示已手动终止，compact 照旧", () => {
+  it("interrupted 显示已中断，compact 照旧", () => {
     render(<Message item={{ type: "meta", id: "m1", timestamp: null, kind: "interrupted" }} />);
-    expect(screen.getByText("已手动终止")).toBeTruthy();
+    expect(screen.getByText("已中断")).toBeTruthy();
     expect(screen.queryByText("上下文已压缩")).toBeNull();
     cleanup();
     render(<Message item={{ type: "meta", id: "m2", timestamp: null, kind: "compact" }} />);

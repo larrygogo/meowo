@@ -23,6 +23,7 @@ import { editorKeyDown, fmtAgo, fmtShortAgo, fmtWaited, readSidebarGroupMode, re
 import { UNNAMED_SESSION_SENTINEL } from "./sticker/types";
 import { CheckIcon, MoreIcon, TopIcon } from "./sticker/icons";
 import { useT } from "../i18n";
+import { sessionRowLabel, sessionStatusLabel } from "../i18n/statusVocab";
 import { formatBackendError } from "../i18n/errors";
 import { isMac } from "../platform";
 import { RemoteSettings } from "../mobile/RemoteSettings";
@@ -1209,9 +1210,9 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
             没有状态就空着，标题照样对齐。agent 徽标不再占位：一行只留标题和时间。 */}
         <span className="chat-sidebar-lead">
           {awaitingApproval
-            ? <i className="chat-sidebar-dot is-approval" role="img" aria-label={t.chat.sidebarApproval} data-tip={t.chat.sidebarApproval} />
+            ? <i className="chat-sidebar-dot is-approval" role="img" aria-label={t.vocab.request.approval} data-tip={t.vocab.request.approval} />
             : showDot
-              ? <i className={`chat-sidebar-dot is-${tone}`} role="img" aria-label={t.chat.status[tone]} data-tip={t.chat.status[tone]} />
+              ? <i className={`chat-sidebar-dot is-${tone}`} role="img" aria-label={sessionStatusLabel(t, tone)} data-tip={sessionStatusLabel(t, tone)} />
               // 未读点（对照 Kimi 的 unread-dot）：回合结束时你没在看；当前会话不显示（正在看就是已读）。
               : item.unread && item.session.id !== activeId && (
                 <i className="chat-sidebar-unread" role="img" aria-label={t.chat.unread} data-tip={t.chat.unread} />
@@ -1277,7 +1278,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
               读屏名，这里对读屏隐藏免得念两遍。桌面侧栏不渲染。 */}
           {remoteUi() && selectedIds.size === 0 && (awaitingApproval || showDot) && (
             <span className={"chat-sidebar-status is-" + (awaitingApproval ? "approval" : tone)} aria-hidden="true">
-              {awaitingApproval ? t.chat.sidebarApproval : t.chat.status[tone]}
+              {sessionRowLabel(t, tone, awaitingApproval)}
             </span>
           )}
           {selectedIds.size === 0 && Number.isFinite(item.session.last_event_at) && (
@@ -1541,10 +1542,10 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
               const unread = (!tone || TONE_RANK[tone] < TONE_RANK.error)
                 && group.items.some((item) => item.unread && item.session.id !== activeId);
               const groupDot = approval
-                ? <i className="chat-sidebar-dot is-approval" role="img" aria-label={t.chat.sidebarApproval} data-tip={t.chat.sidebarApproval} />
+                ? <i className="chat-sidebar-dot is-approval" role="img" aria-label={t.vocab.request.approval} data-tip={t.vocab.request.approval} />
                 : unread
                   ? <i className="chat-sidebar-dot is-unread" role="img" aria-label={t.chat.unread} data-tip={t.chat.unread} />
-                  : showDot && <i className={`chat-sidebar-dot is-${tone}`} role="img" aria-label={t.chat.status[tone]} data-tip={t.chat.status[tone]} />;
+                  : showDot && <i className={`chat-sidebar-dot is-${tone}`} role="img" aria-label={sessionStatusLabel(t, tone)} data-tip={sessionStatusLabel(t, tone)} />;
               // 目录分组的组头汇总「N 项待处理」（对照 Kimi 的 attentionTitle）：组折起来也知道里面有几件要你决定。
               const attention = group.items.filter((item) => approvalAwaitingIds.has(item.session.id)
                 || sessionTone(item.connected, item.session.status, item.pending_review, item.errored, item.busy_subagents, item.screen_state, item.screen_assumed) === "pending").length;
