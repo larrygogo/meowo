@@ -27,7 +27,7 @@ import { approvalChoiceForKey, BrokerApprovalCard, useBrokerResolver } from "./c
 import { answersRepresentable, composeAnswers, matchFocusedQuestion, matchOptionByLabel, observeTranscriptForDismiss, parseAskUserQuestions, planQueuedChoiceWrites, type QuestionAnswerDraft, type QuestionDismissTracker, type StructuredQuestion } from "./chat/askUserQuestion";
 import { detectAtToken, useAtFileCompletion, useSlashCompletion } from "./chat/composerCompletion";
 import { useApprovalChannel } from "./chat/useApprovalChannel";
-import { runtimeRequestBrokerLive } from "./chat/runtimeRequest";
+import { asTerminalRuntimeRequest, runtimeRequestBrokerLive, runtimeRequestTerminalLive } from "./chat/runtimeRequest";
 import { useModelPresets } from "./chat/useModelPresets";
 import { useModelControls } from "./chat/useModelControls";
 import { ContextMeter } from "./chat/ContextMeter";
@@ -3748,11 +3748,24 @@ export function ChatWindow() {
   useEffect(() => {
     if (!dismissedQuestion) collapsedQuestionIdRef.current = null;
   }, [dismissedQuestion, collapsedQuestionIdRef]);
+  // 屏幕识别结果在卡片边界统一成 RuntimeRequest；原始按键仍随 terminal 载荷保留，
+  // 回答只能写原生 TUI，不能因为与 broker 共用契约就转调 respond_runtime_request。
+  const terminalRuntimeRequest = useMemo(
+    () => terminalAttention ? asTerminalRuntimeRequest({
+      sessionId,
+      provider: provider ?? "unknown",
+      attention: terminalAttention,
+      writable: history?.ptyManaged !== false,
+    }) : null,
+    [terminalAttention, sessionId, provider, history?.ptyManaged],
+  );
+  const terminalResponseReady = runtimeRequestTerminalLive(terminalRuntimeRequest);
   // 审批卡门控：插件声明了详情文法风格（details）的提示才走命令审批卡——不再枚举 pattern id。
   // 框线式没认出 ● 焦点时不出选项按钮(相对移动起点未知);此时退回通用卡,至少还有 Esc/Enter。
-  const commandAttention = terminalAttention && terminalAttention.details && terminalAttention.details !== "none"
+  const commandAttention = terminalRuntimeRequest?.terminal && terminalAttention?.details && terminalAttention.details !== "none"
     && (terminalAttention.details !== "framed_box" || terminalAttention.options?.length) ? terminalAttention : null;
-  const interactiveAttention = terminalAttention?.id === "interactive:numbered-selector" ? terminalAttention : null;
+  const interactiveAttention = terminalRuntimeRequest?.kind === "question"
+    && terminalAttention?.id === "interactive:numbered-selector" ? terminalAttention : null;
   // 屏幕识别就绪 → 可作答的交互选择器接管，结构化题面的展示卡藏起来（同一份题面不双卡）。
   // 题面本身留到表单从屏上消失才清：多问题表单靠它反查当前是第几题，排队的答案也跟着它
   // 存亡。此前一认出表单就清掉题面，第 2 题起的排队答案全被连带清空（只有第 1 题落得下），
@@ -3908,8 +3921,8 @@ export function ChatWindow() {
   // 到卡片随 .then 收起之间有窗口,期间极快双击会把 option.input 落键两次——命令审批场景
   // 等于替用户答两次。只锁**会收卡的终止动作**,多选勾选(卡片留驻)的连点不受影响。
   const optionResolvingRef = useRef(false);
-  const chooseTerminalOption = (option: { input: string } | undefined) => {
-    if (!option || optionResolvingRef.current) return;
+  const chooseTerminalOption = (option: { input: string } | undefined, responseReady = terminalResponseReady) => {
+    if (!option || !responseReady || optionResolvingRef.current) return;
     // 选完这次菜单就结束了：关掉识别窗口，否则按钮会一直停在「收起」态。
     // 判据取 attention 本身的类型而不是识别窗口是否还开着——窗口会到点自灭，
     // 用户慢慢选的话就漏掉刷新了。
@@ -3988,7 +4001,9 @@ export function ChatWindow() {
       abandonModelPick(wanted, t.chat.modelPickNotFound(wanted.label));
       return true;
     }
-    chooseTerminalOption(option);
+    // 自动选择在 reveal 写卡之前执行，派生请求此刻还是上一帧；当前菜单事件本身就是实时证明，
+    // 但会话是否可写仍必须独立成立。
+    chooseTerminalOption(option, history?.ptyManaged !== false);
     // 模型平时由 Stop hook 落库，/model 切换不产生 Stop：稍等 CLI 写下新模型再刷一次。
     window.setTimeout(() => void refreshSessionModel(sessionId).catch(() => {}), 900);
     return true;
@@ -4028,7 +4043,7 @@ export function ChatWindow() {
   });
 
   const chooseInteractiveOption = (option: TerminalAttentionOption) => {
-    if (!option.input) return;
+    if (!option.input || !terminalResponseReady) return;
     // 终止动作在途时不再接受点选(见 optionResolvingRef):多选勾选不置位,故连勾不受影响。
     if (optionResolvingRef.current) return;
     if (option.kind === "choice") {
@@ -4122,7 +4137,7 @@ export function ChatWindow() {
 
   const submitCustomAnswer = (option: TerminalAttentionOption) => {
     const value = questionCustomText.trim();
-    if (!value || !option.input) return;
+    if (!value || !option.input || !terminalResponseReady) return;
     void writeManagedTerminal(sessionId, option.input + value + "\r")
       .then(() => setQuestionCustomText(""))
       .catch((error) => setSendError(formatBackendError(error, t.locale)));
@@ -4580,17 +4595,18 @@ export function ChatWindow() {
         sideActions={<button type="button" className="chat-attention-dismiss is-inline" data-tip={t.chat.attentionDismissTip} onClick={collapseAttention}>{t.chat.attentionDismiss}</button>}
         actions={<>
           {interactiveAttention.options?.filter((option) => option.kind === "chat").map((option) => (
-            <button type="button" disabled={!option.input} key={`${option.position}:${option.label}`} onClick={() => chooseInteractiveOption(option)}>{t.chat.chatAboutThis}</button>
+            <button type="button" disabled={!terminalResponseReady || !option.input} key={`${option.position}:${option.label}`} onClick={() => chooseInteractiveOption(option)}>{t.chat.chatAboutThis}</button>
           ))}
           {interactiveAttention.options?.filter((option) => option.kind === "submit").map((option) => (
-            <button type="button" disabled={!option.input} className="btn-primary" key={`${option.position}:${option.label}`} onClick={() => chooseInteractiveOption(option)}>{t.chat.submitAnswer}</button>
+            <button type="button" disabled={!terminalResponseReady || !option.input} className="btn-primary" key={`${option.position}:${option.label}`} onClick={() => chooseInteractiveOption(option)}>{t.chat.submitAnswer}</button>
           ))}
         </>}
       >
+        {!terminalResponseReady && <span>{t.chat.questionExternalHint}</span>}
         {interactiveAttention.text && <span className="chat-approval-prewrap">{interactiveAttention.text}</span>}
         <div className="chat-approval-options">
           {interactiveAttention.options?.filter((option) => option.kind === "choice").map((option) => (
-            <button type="button" disabled={!option.input} className={option.selected ? "is-selected" : ""} key={`${option.position}:${option.label}`} onClick={() => chooseInteractiveOption(option)}>
+            <button type="button" disabled={!terminalResponseReady || !option.input} className={option.selected ? "is-selected" : ""} key={`${option.position}:${option.label}`} onClick={() => chooseInteractiveOption(option)}>
               <i aria-hidden="true">{option.selected ? "✓" : ""}</i>
               <span><b>{option.label}</b>{option.description && <small>{option.description}</small>}</span>
             </button>
@@ -4600,7 +4616,7 @@ export function ChatWindow() {
           <div className="chat-approval-custom" key={option.input}>
             <input value={questionCustomText} onChange={(event) => setQuestionCustomText(event.target.value)} placeholder={t.chat.customAnswerPlaceholder}
               onKeyDown={(event) => { if (event.key === "Enter") submitCustomAnswer(option); }} />
-            <button type="button" disabled={!questionCustomText.trim() || !option.input} onClick={() => submitCustomAnswer(option)}>{t.chat.addCustomAnswer}</button>
+            <button type="button" disabled={!terminalResponseReady || !questionCustomText.trim() || !option.input} onClick={() => submitCustomAnswer(option)}>{t.chat.addCustomAnswer}</button>
           </div>
         ))}
       </ApprovalCard>}
@@ -4611,7 +4627,7 @@ export function ChatWindow() {
         badge={t.chat.approvalPending}
         sideActions={<>
           <button type="button" className="chat-attention-dismiss is-inline" data-tip={t.chat.attentionDismissTip} onClick={collapseAttention}>{t.chat.attentionDismiss}</button>
-          {commandRemember && <button type="button" className="is-persistent" onClick={() => chooseTerminalOption(commandRemember)}>
+          {commandRemember && <button type="button" disabled={!terminalResponseReady} className="is-persistent" onClick={() => chooseTerminalOption(commandRemember)}>
             {/* arrow_panel 的「Approve for this session」与 gemini 的「Allow for this session」只记本会话，
                 proceed_box 的记住是持久规则——文案不能混。 */}
             {commandAttention.details === "arrow_panel" || /\bthis session\b/i.test(commandRemember.label)
@@ -4620,14 +4636,15 @@ export function ChatWindow() {
           </button>}
         </>}
         actions={<>
-          {commandDeny && <button type="button" className={"is-deny" + (escArmed ? " is-esc-armed" : "")} onClick={() => chooseTerminalOption(commandDeny)}>
+          {commandDeny && <button type="button" disabled={!terminalResponseReady} className={"is-deny" + (escArmed ? " is-esc-armed" : "")} onClick={() => chooseTerminalOption(commandDeny)}>
             {escArmed ? t.chat.denyConfirmEsc : t.chat.deny}{!remoteUi() && <kbd aria-hidden="true">Esc</kbd>}
           </button>}
           {/* 危险命令的「允许一次」降级为红色警示主按钮(is-danger):rm -rf 与 ls 不该
               同一个视觉权重(判定见 isRiskyCommand,宁漏勿冤)。 */}
-          {commandAllowOnce && <button type="button" className={"btn-primary" + (commandApproval.command && isRiskyCommand(commandApproval.command) ? " is-danger" : "")} onClick={() => chooseTerminalOption(commandAllowOnce)}>{t.chat.allowOnce}</button>}
+          {commandAllowOnce && <button type="button" disabled={!terminalResponseReady} className={"btn-primary" + (commandApproval.command && isRiskyCommand(commandApproval.command) ? " is-danger" : "")} onClick={() => chooseTerminalOption(commandAllowOnce)}>{t.chat.allowOnce}</button>}
         </>}
       >
+        {!terminalResponseReady && <span>{t.chat.questionExternalHint}</span>}
         {/* 次要信息收在一组，矮窗里压成一行，见 BrokerApprovalCard 同名容器。 */}
         <div className="chat-approval-meta">
           {commandApproval.tool && <div className="chat-approval-tool"><span>{t.chat.approvalTool}</span><code>{commandApproval.tool}</code></div>}
@@ -4649,35 +4666,34 @@ export function ChatWindow() {
         className="chat-screen-approval"
         title={terminalAttention.id === "claude:long-session-resume"
           ? t.chat.longSessionPromptTitle
-          // 「<agent>:command-approval」是插件声明审批卡的统一 id 约定（opencode 的横排选项框
-          // 没有结构化文法，落到这张通用卡上：确认 = Enter = Allow once，取消 = Esc = Reject）。
-          : terminalAttention.id.endsWith(":command-approval")
-            ? t.chat.approvalTitle
           : terminalAttention.id === "claude:plan-approval"
             ? t.chat.planTitle
-          // 「<agent>:question」：屏幕上识别出的提问表单（kimi）。
-          : terminalAttention.id.endsWith(":question")
+          : terminalRuntimeRequest?.kind === "question"
             ? t.chat.questionTitle
           : terminalAttention.options?.length && terminalAttention.id.startsWith("provider:")
             ? t.chat.trustPromptTitle
+          // opencode 的横排选项框没有结构化文法，仍以统一 approval 类型落入通用卡。
+          : terminalRuntimeRequest?.kind === "approval"
+            ? t.chat.approvalTitle
             : t.chat.terminalPromptTitle}
         badge={t.chat.approvalPending}
         sideActions={<button type="button" className="chat-attention-dismiss is-inline" data-tip={t.chat.attentionDismissTip} onClick={collapseAttention}>{t.chat.attentionDismiss}</button>}
         actions={!terminalAttention.options?.length && <>
           {/* 取消发 Esc——在 Claude 里会打断正在跑的回合,与零副作用的「仅收起」是两回事。
               这个后果必须在 tip 里对用户说出来,不能只写在注释里给维护者看。 */}
-          <button type="button" data-tip={t.chat.terminalPromptCancelTip} onClick={() => {
+          <button type="button" disabled={!terminalResponseReady} data-tip={t.chat.terminalPromptCancelTip} onClick={() => {
             void writeManagedTerminal(sessionId, "\x1b")
               .then(() => setTerminalAttention(null))
               .catch((error) => setSendError(formatBackendError(error, t.locale)));
           }}>{t.chat.terminalPromptCancel}</button>
-          <button type="button" className="btn-primary" onClick={() => {
+          <button type="button" disabled={!terminalResponseReady} className="btn-primary" onClick={() => {
             void writeManagedTerminal(sessionId, "\r")
               .then(() => setTerminalAttention(null))
               .catch((error) => setSendError(formatBackendError(error, t.locale)));
           }}>{t.chat.terminalPromptConfirm}</button>
         </>}
       >
+        {!terminalResponseReady && <span>{t.chat.questionExternalHint}</span>}
         {terminalAttention.id === "claude:long-session-resume"
           ? <span>{t.chat.longSessionPromptHelp}</span>
           : terminalAttention.id === "claude:command-approval"
@@ -4690,7 +4706,7 @@ export function ChatWindow() {
           {terminalAttention.options!.map((option, index) => (
             // 走同一个 chooseTerminalOption：它还负责关掉菜单识别窗口、并在模型菜单
             // 选完后主动刷新模型（`/model` 切换不产生 Stop hook，不刷就一直显示旧值）。
-            <button type="button" className={index === 0 ? "is-recommended" : ""} key={`${index}:${option.label}`} onClick={() => chooseTerminalOption(option)}>
+            <button type="button" disabled={!terminalResponseReady} className={index === 0 ? "is-recommended" : ""} key={`${index}:${option.label}`} onClick={() => chooseTerminalOption(option)}>
               <span><b>{option.label}</b></span>
             </button>
           ))}

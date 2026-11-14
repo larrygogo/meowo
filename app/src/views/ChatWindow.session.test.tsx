@@ -752,7 +752,15 @@ describe("ChatWindow", () => {
         sessionId: 45, title: "托管命令审批", status: "waiting", provider: "claude", cwd: "C:/repo",
         supported: true, offset: 0, reset: false, pendingReview: "approval", items: [],
       });
-      if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
+      if (command === "pending_interaction") return Promise.resolve({
+        approval: null,
+        question: null,
+        runtimeRequests: [{
+          sessionId: 45, requestId: "hook-45", provider: "claude", kind: "approval", status: "pending",
+          toolName: "Bash", description: "hook 同步审批", input: "{}", permissionSuggestions: [],
+          responseCapability: { type: "broker_live" },
+        }],
+      });
       if (command === "agent_chat_ui") return Promise.resolve(chatUi("claude"));
       if (command === "managed_terminal_snapshot") return Promise.resolve({
         sessionId: 45, active: true, managed: true, data: btoa(prompt), startOffset: 0, endOffset: prompt.length,
@@ -763,6 +771,9 @@ describe("ChatWindow", () => {
     render(<ChatWindow />);
 
     expect(await screen.findByRole("button", { name: "允许一次" })).toBeTruthy();
+    // Claude 的 hook 与 TUI 会竞速出现；RuntimeRequest 统一后仍由屏幕卡接管，不能双卡。
+    expect(screen.getAllByRole("button", { name: "允许一次" })).toHaveLength(1);
+    expect(screen.queryByText("hook 同步审批")).toBeNull();
     expect(screen.getByRole("button", { name: "允许并记住 · cargo build *" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "拒绝" })).toBeTruthy();
     expect(screen.getByText(/cargo build -p meowo-agent/)).toBeTruthy();
@@ -931,6 +942,8 @@ describe("ChatWindow", () => {
     // 按钮 = 直接向 PTY 打数字键（kimi 面板数字直选，官方源码 selectAndSubmit）。
     fireEvent.click(screen.getByRole("button", { name: "本会话内允许" }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 47, data: "2" }));
+    // terminal_live 只写原生 TUI；与 broker 共用 RuntimeRequest 后也不能误入统一 broker 回答命令。
+    expect(invoke).not.toHaveBeenCalledWith("respond_runtime_request", expect.anything());
   });
 
   it("shows a managed multi-select question without requiring a Terminal tab visit", async () => {

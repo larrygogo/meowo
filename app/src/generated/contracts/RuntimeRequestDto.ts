@@ -2,5 +2,10 @@
 import type { RuntimeRequestKind } from "./RuntimeRequestKind";
 import type { RuntimeRequestStatus } from "./RuntimeRequestStatus";
 import type { RuntimeResponseCapability } from "./RuntimeResponseCapability";
+import type { TerminalInteractionDto } from "./TerminalInteractionDto";
 
-export type RuntimeRequestDto = { sessionId: number, requestId: string, provider: string, kind: RuntimeRequestKind, status: RuntimeRequestStatus, toolName: string, description: string | null, input: string, permissionSuggestions: unknown[], responseCapability: RuntimeResponseCapability, };
+export type RuntimeRequestDto = { sessionId: number, requestId: string, provider: string, kind: RuntimeRequestKind, status: RuntimeRequestStatus, toolName: string, description: string | null, input: string, permissionSuggestions: unknown[], responseCapability: RuntimeResponseCapability, 
+/**
+ * 仅终端屏幕请求携带；broker 请求省略，旧载荷缺少该字段时仍可反序列化。
+ */
+terminal?: TerminalInteractionDto, };
