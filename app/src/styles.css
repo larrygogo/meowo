@@ -6122,6 +6122,10 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 }
 .chat-compose .chat-send-takeover:hover:not(:disabled, [aria-disabled="true"]) { background: color-mix(in srgb, var(--cc-err-vivid) 12%, transparent); }
 .chat-compose .chat-send-takeover:is(:disabled, [aria-disabled="true"]) { opacity: 0.55; cursor: default; }
+/* 错误条上不丢东西的出路（重试、连同草稿发送、看终端、收起）用中性描边：一排四个红钮分不出哪个
+   才是会丢内容的（截图自查 2026-11-15）。红色只留给破坏性的那一个。 */
+.chat-compose .chat-send-takeover.is-plain { border-color: var(--cc-border); color: var(--cc-text); }
+.chat-compose .chat-send-takeover.is-plain:hover:not(:disabled, [aria-disabled="true"]) { background: color-mix(in srgb, var(--cc-text) 8%, transparent); }
 /* 窄宽度统一一条 12px 边距（对照 Kimi 手机端：消息区、输入框、停靠栏同一条，横屏刘海再让出
    safe-area）。此前消息区 22px、输入框 12px、停靠胶囊约 40px，三者各对各的线。
    用户气泡封顶 88%：窄屏上整宽的用户消息与回复长得一样，分不出谁说的。封顶要加在收缩包裹的

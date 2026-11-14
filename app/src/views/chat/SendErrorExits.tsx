@@ -50,7 +50,8 @@ export function SendErrorExits({ exit, sessionId, onGoTerminal, onDismiss, dismi
         <button
           key={action.label}
           type="button"
-          className="chat-send-takeover"
+          // 只有会丢内容的那一个（要二次确认的）保留红色，其余出路是中性钮。
+          className={action.confirmLabel ? "chat-send-takeover" : "chat-send-takeover is-plain"}
           onClick={() => {
             if (action.confirmLabel && armed !== index) { setArmed(index); return; }
             if (!remote) focusComposer();
@@ -59,14 +60,14 @@ export function SendErrorExits({ exit, sessionId, onGoTerminal, onDismiss, dismi
         >{armed === index && action.confirmLabel ? action.confirmLabel : action.label}</button>
       ))}
       {exit.retry && (
-        <button type="button" className="chat-send-takeover" onClick={() => { if (!remote) focusComposer(); exit.retry?.(); }}>
+        <button type="button" className="chat-send-takeover is-plain" onClick={() => { if (!remote) focusComposer(); exit.retry?.(); }}>
           {exit.retryLabel ?? t.chat.errorRetry}
         </button>
       )}
       {exit.terminal && (remote
-        ? <button type="button" className="chat-send-takeover" aria-expanded={keysOpen} onClick={() => setKeysOpen((open) => !open)}>{t.chat.remoteOpenKeys}</button>
-        : <button type="button" className="chat-send-takeover" onClick={onGoTerminal}>{t.chat.goTerminal}</button>)}
-      <button type="button" className="chat-send-takeover" onClick={() => { if (!remote) focusComposer(); onDismiss(); }}>{dismissLabel ?? t.chat.slashMenuDismiss}</button>
+        ? <button type="button" className="chat-send-takeover is-plain" aria-expanded={keysOpen} onClick={() => setKeysOpen((open) => !open)}>{t.chat.remoteOpenKeys}</button>
+        : <button type="button" className="chat-send-takeover is-plain" onClick={onGoTerminal}>{t.chat.goTerminal}</button>)}
+      <button type="button" className="chat-send-takeover is-plain" onClick={() => { if (!remote) focusComposer(); onDismiss(); }}>{dismissLabel ?? t.chat.slashMenuDismiss}</button>
       {remote && exit.terminal && keysOpen && <RemoteTerminalKeys sessionId={sessionId} />}
     </>
   );

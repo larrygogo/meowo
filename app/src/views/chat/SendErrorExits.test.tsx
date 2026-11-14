@@ -147,3 +147,19 @@ describe("focusAfterRemoval", () => {
     composer.remove();
   });
 });
+
+// 一排出路里红色只留给会丢内容的那一个（截图自查 2026-11-15：四个红钮分不出轻重）。
+describe("SendErrorExits 按钮的轻重", () => {
+  it("要二次确认的是红钮，其余出路是中性钮", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    const { SendErrorExits: Exits } = await import("./SendErrorExits");
+    render(<Exits
+      exit={{ terminal: true, actions: [{ label: "连同草稿发送", run: () => {} }, { label: "放弃草稿后发送", confirmLabel: "确认放弃草稿", run: () => {} }] }}
+      sessionId={1} onGoTerminal={() => {}} onDismiss={() => {}} focusComposer={() => {}}
+    />);
+    const plain = (name: string) => screen.getByRole("button", { name }).classList.contains("is-plain");
+    expect(plain("放弃草稿后发送")).toBe(false);
+    expect(plain("连同草稿发送")).toBe(true);
+    expect(screen.getAllByRole("button").filter((b) => !b.classList.contains("is-plain"))).toHaveLength(1);
+  });
+});
