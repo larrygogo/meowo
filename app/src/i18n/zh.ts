@@ -1388,7 +1388,9 @@ export const zh = {
     imageDraftCleared: "已在终端清理，可以重试",
     interruptTimeout: "尚未确认任务已中断，草稿已保留。请稍后重试。",
     busySendUnavailable: "当前 Agent 尚未验证运行中排队，请等待当前任务结束后发送。",
-    menuBusy: "请等待当前任务结束后切换模型或模式。",
+    // 打开终端里的选择菜单（只能在终端里挑）：运行中打开会把命令打进正在跑的回合。选定的模型 / 模式
+    // 运行中一律排到这一轮之后（SPEC 终态 2），只有「打开菜单」本身要等。
+    menuBusyOpen: "这一轮结束后再打开菜单",
     modelSwitchUnconfirmed: "尚未确认模型已切换，未修改恢复配置。请到终端检查。",
     modelListUnavailable: (command: string) => `读不到模型清单，点这里到终端页用 ${command} 切换`,
     modelListUnavailableRemote: (command: string) => `读不到模型清单，可直接发送 ${command} 再选`,

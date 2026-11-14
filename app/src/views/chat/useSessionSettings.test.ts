@@ -166,6 +166,23 @@ describe("会话里切模型 / 模式的分派", () => {
   });
 
   /// 做空 R5：对话页执行时服务没就绪（刚打开的 Codex），放回宿主队列等就绪，不丢、不报错，前端也不再抢。
+  /// SPEC 终态 2（第四轮补）：Kimi 工作模式这类要往终端打字的切换，运行中和模型一样排到这一轮之后、
+  /// 同一套提示；回合结束由对话页照原样执行（不走后端），不再报「请等待当前任务结束后切换」。
+  it("运行中切终端项排到这一轮之后，回合结束照原样执行", async () => {
+    const applyTerminal = vi.fn(async () => {});
+    const action = { kind: "mode" as const, dimension: "work", value: "plan", inputs: [{ data: "/plan on", submit: true }], cycleInput: null, markers: [] };
+    let current = deps({ tone: "running", applyTerminal });
+    const { result, rerender } = renderHook(() => useSessionSettings(current));
+    act(() => result.current.request({ modes: { work: "plan" }, label: "计划：开", terminal: [action] }));
+    await waitFor(() => expect(result.current.notice).toBe("这一轮结束后切换到「计划：开」（重启 Meowo 会取消）"));
+    expect(applyTerminal).not.toHaveBeenCalled();
+    current = deps({ tone: "waiting", applyTerminal });
+    rerender();
+    await waitFor(() => expect(applyTerminal).toHaveBeenCalledWith(action));
+    expect(apply).not.toHaveBeenCalled();
+    await waitFor(() => expect(result.current.notice).toBeNull());
+  });
+
   it("服务没就绪时交给宿主等就绪", async () => {
     apply.mockImplementation(async () => { throw "settings/server_not_ready"; });
     const setSendError = vi.fn();

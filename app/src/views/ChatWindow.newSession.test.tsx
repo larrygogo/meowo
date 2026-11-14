@@ -734,7 +734,7 @@ describe("ChatWindow", () => {
     // 显式入口在回合运行中同样受「先等任务结束」保护，不往忙着的终端里写命令。
     fireEvent.click(await screen.findByRole("button", { name: "切换模型" }));
     fireEvent.click(await screen.findByRole("menuitem", { name: "读取模型清单" }));
-    expect(await screen.findByText(zh.chat.menuBusy)).toBeTruthy();
+    expect(await screen.findByText(zh.chat.menuBusyOpen)).toBeTruthy();
     expect(invoke.mock.calls.some(([command, args]) =>
       command === "write_managed_terminal" && (args as { data: string }).data === "/model")).toBe(false);
   });

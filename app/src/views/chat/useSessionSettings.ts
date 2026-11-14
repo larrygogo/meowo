@@ -23,6 +23,8 @@ import {
   takeQueuedSessionSettings,
   type ChatHistory,
   type LiveSettings,
+  type ModelPreset,
+  type ModeScreenMarker,
   type SessionTuiState,
   type SettingsOutcome,
 } from "../../api";
@@ -40,7 +42,37 @@ export type SettingsRequest = {
    *  open = 会话打开、服务 / TUI 就绪后由宿主补设（做空 N6/R5）；ready = 对话页执行时会话服务或 TUI
    *  还没就绪，交给宿主等就绪再执行（做空 R5）。有它时只由宿主执行。 */
   waitFor?: "lead" | "open" | "ready";
+  /** 要往终端里打字才能切的项（Kimi `/plan on`、Claude `/model`、循环快捷键等）：运行中排进同一个队列、
+   *  显示同一套提示，回合结束由对话页照原样执行（宿主不往终端打字，见 session_settings run_queued）。 */
+  terminal?: TerminalAction[];
 };
+
+/** 一条要往终端里打字的切换（运行中排队用，参数原样存，执行时不再查表）。 */
+export type TerminalAction =
+  | { kind: "mode"; dimension: string; value: string; inputs: { data: string; submit: boolean }[]; cycleInput?: string | null; markers?: ModeScreenMarker[] }
+  | { kind: "model"; preset: ModelPreset }
+  | { kind: "effort"; level: string };
+
+/** 同一件事（同一栏的模式、模型、思考档）后选的覆盖先选的。 */
+function terminalKey(action: TerminalAction): string {
+  return action.kind === "mode" ? `mode:${action.dimension}` : action.kind;
+}
+
+export function mergeTerminal(prev: TerminalAction[] | undefined, next: TerminalAction[] | undefined): TerminalAction[] | undefined {
+  if (!prev?.length) return next;
+  if (!next?.length) return prev;
+  const keys = new Set(next.map(terminalKey));
+  return [...prev.filter((action) => !keys.has(terminalKey(action))), ...next];
+}
+
+/** 去掉终端项之后还要经后端切的部分；没有就 null。 */
+function withoutTerminal(request: SettingsRequest): SettingsRequest | null {
+  const terminalDims = new Set((request.terminal ?? []).flatMap((action) => action.kind === "mode" ? [action.dimension] : []));
+  const modes = Object.fromEntries(Object.entries(request.modes ?? {}).filter(([dimension]) => !terminalDims.has(dimension)));
+  if (!request.model && Object.keys(modes).length === 0) return null;
+  const { terminal: _terminal, ...rest } = request;
+  return { ...rest, modes };
+}
 
 /** 「此刻还不能动、等一会儿就行」的失败原因：放回宿主队列等就绪，不丢这次选择（做空 R5）。 */
 const RETRY_WHEN_READY = new Set([
@@ -80,6 +112,8 @@ export interface SessionSettingsDeps {
   /** 读 TUI 输入框；`move` 为真且有字时搬进对话页输入框（要重启时 Meowo 先把用户内容保住），
    *  不重启的路线只读不搬，免得对话页与 TUI 各一份。 */
   rescueDraft: (move: boolean) => Promise<DraftRescue>;
+  /** 执行一条排着的终端项（对话页照原样打字切换，见 SettingsRequest.terminal）。 */
+  applyTerminal?: (action: TerminalAction) => Promise<void>;
   /** 搬了草稿最后却没重启（排进队列、被拒、出错）：把搬进对话页的那份撤回，TUI 里原稿还在，免得发两遍。 */
   undoRescue?: () => void;
   /** 这次请求会不会重启 / 重开 TUI 进程（带参重启机制、未建会话重开）。 */
@@ -104,10 +138,12 @@ export function mustDefer(tone: string | null): boolean {
 /** 合并两次请求：后选的覆盖先选的（运行中连点两次只执行最后的选择）。 */
 export function mergeRequests(prev: SettingsRequest | null, next: SettingsRequest): SettingsRequest {
   if (!prev) return next;
+  const terminal = mergeTerminal(prev.terminal, next.terminal);
   return {
     model: next.model ?? prev.model,
     modes: { ...(prev.modes ?? {}), ...(next.modes ?? {}) },
     label: next.label,
+    ...(terminal?.length ? { terminal } : {}),
   };
 }
 
@@ -116,7 +152,8 @@ function asRequest(value: unknown): SettingsRequest | null {
   const raw = value as Partial<SettingsRequest>;
   if (typeof raw.label !== "string") return null;
   const waitFor = raw.waitFor === "lead" || raw.waitFor === "open" || raw.waitFor === "ready" ? raw.waitFor : undefined;
-  return { model: raw.model ?? undefined, modes: raw.modes ?? undefined, label: raw.label, ...(waitFor ? { waitFor } : {}) };
+  const terminal = Array.isArray(raw.terminal) && raw.terminal.length > 0 ? raw.terminal : undefined;
+  return { model: raw.model ?? undefined, modes: raw.modes ?? undefined, label: raw.label, ...(waitFor ? { waitFor } : {}), ...(terminal ? { terminal } : {}) };
 }
 
 export function useSessionSettings(deps: SessionSettingsDeps) {
@@ -156,6 +193,28 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
   refreshQueuedRef.current = refreshQueued;
 
   const apply = async (request: SettingsRequest) => {
+    const actions = request.terminal ?? [];
+    if (actions.length > 0) {
+      // 终端项（运行中排进来的 Kimi /plan、Claude /model 等）：回合结束照原样执行，再做其余经后端的部分。
+      const { sessionId } = depsRef.current;
+      if (runningRef.current) { await enqueue(sessionId, request); return; }
+      runningRef.current = true;
+      setApplying(true);
+      try {
+        for (const action of actions) await attempt(() => depsRef.current.applyTerminal?.(action), undefined);
+      } finally {
+        runningRef.current = false;
+        setApplying(false);
+      }
+      const rest = withoutTerminal(request);
+      if (!rest || depsRef.current.sessionId !== sessionId) return;
+      await applyBackend(rest);
+      return;
+    }
+    await applyBackend(request);
+  };
+
+  const applyBackend = async (request: SettingsRequest) => {
     const { sessionId } = depsRef.current;
     if (runningRef.current) { await enqueue(sessionId, request); return; }
     runningRef.current = true;

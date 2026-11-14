@@ -50,7 +50,7 @@ import { arrowPanelApprovalDetails, framedBoxApprovalDetails, proceedBoxApproval
 import { ModelPicker, readStarred, type ModelPickerItem } from "./chat/ModelPicker";
 import { currentPresetId } from "./chat/modelLabels";
 import { ModelMenu, effortLabel } from "./chat/ModelMenu";
-import { useSessionSettings } from "./chat/useSessionSettings";
+import { mustDefer, useSessionSettings, type TerminalAction } from "./chat/useSessionSettings";
 import { modeChoiceViews, screenShowsAny } from "./chat/modeChoices";
 import { QuestionPanels } from "./chat/QuestionPanels";
 import { RemoteTerminalKeys } from "./chat/RemoteTerminalKeys";
@@ -1679,6 +1679,10 @@ export function ChatWindow() {
   const showHandoffNote = history?.predecessorId != null && prefixSegments.every((segment) => segment.items.length === 0);
   // 切模型 / 模式前从 TUI 搬进对话页的草稿（没重启时撤回用）。
   const rescuedRef = useRef<string | null>(null);
+  // 终端项（Kimi /plan、Claude /model、循环快捷键）运行中排队与回合结束执行：动作函数在下面
+  // useModelControls 才有，经 ref 接上。
+  const terminalRunnerRef = useRef<(action: TerminalAction) => Promise<void>>(async () => {});
+  const deferTerminalRef = useRef<(action: TerminalAction, label: string) => void>(() => {});
   // 切模型 / 模式（清单预先列好、选中按机制生效、在跑时排到这一轮之后，见 useSessionSettings）。
   const sessionSettings = useSessionSettings({
     sessionId,
@@ -1701,6 +1705,7 @@ export function ChatWindow() {
       setPrompt((prev) => (prev.trim() ? `${prev}\n${text}` : text));
       return "moved";
     },
+    applyTerminal: (action) => terminalRunnerRef.current(action),
     // 搬了却没重启（排进队列、被拒）：TUI 里原稿还在，撤回对话页这份；只撤刚追加的那段，用户改过就不动。
     undoRescue: () => {
       const text = rescuedRef.current;
@@ -1739,6 +1744,11 @@ export function ChatWindow() {
       return true;
     },
     modelLabel: (id) => modelCatalog.find((entry) => entry.id === id)?.label ?? id,
+  });
+  deferTerminalRef.current = (action, label) => sessionSettings.request({
+    label,
+    terminal: [action],
+    ...(action.kind === "mode" ? { modes: { [action.dimension]: action.value } } : {}),
   });
   // 识别窗口是个时间点，不是布尔——过期后要真的停下来，故用一个到点自灭的计时器驱动重渲染。
   const [menuWatching, setMenuWatching] = useState(false);
@@ -3355,7 +3365,7 @@ export function ChatWindow() {
     // `Search: /model/model`、`No matches`，三个模型全被过滤掉，反而彻底选不了。
     // 故识别窗口开着期间一律不再重发。
     if (sending || menuWatching || !isCurrentOperation()) return false;
-    if (toneRef.current === "running") { setSendError(t.chat.menuBusy); return false; }
+    if (toneRef.current === "running") { setSendError(t.chat.menuBusyOpen); return false; }
     modelPickerOpenPendingRef.current = forModelMenu;
     retryRef.current = () => { void openTerminalMenu(command); };
     // 菜单要靠屏幕识别，而识别跑在 ManagedTerminal 里——它可能还没挂载（用户从没开过终端页）。
@@ -3376,7 +3386,7 @@ export function ChatWindow() {
   /// 整个过程不上屏——终端页不弹卡、compose 上方不出「正在识别」等待条。
   const probeModelMenu = async () => {
     if (!modelMenuCommand || modelProbing || sending || !isCurrentOperation()) return;
-    if (toneRef.current === "running") { setSendError(t.chat.menuBusy); return; }
+    if (toneRef.current === "running") { setSendError(t.chat.menuBusyOpen); return; }
     if (!chatUi?.model_select_command) {
       // 菜单型 CLI 必须保留真实选择器，学到标签也不能变成 /model id 内联操作。
       setModelPickerOpen(false);
@@ -3442,7 +3452,15 @@ export function ChatWindow() {
   const { selectModel, selectEffort, effortBusy, effortLevels, cycleToMode, changeMode } = useModelControls({
     sessionId, chatUi, model: history?.model, modelCatalog, sending, toneRef, retryRef,
     withSendGuard, attentionAbort, isCurrentOperation, setSendError, setHistory, setStoredSelections,
+    deferTerminal: (action, label) => deferTerminalRef.current(action, label),
   });
+  // 排着的终端项回合结束时由 useSessionSettings 调回来执行（见 applyTerminal）。
+  terminalRunnerRef.current = async (action) => {
+    if (action.kind === "model") await selectModel(action.preset);
+    else if (action.kind === "effort") await selectEffort(action.level);
+    else if (action.inputs.length > 0) await changeMode(action.dimension, action.inputs, action.value, action.markers ?? []);
+    else if (action.cycleInput) await cycleToMode(action.dimension, action.value, action.cycleInput, action.markers ?? []);
+  };
   const chooseAttachments = async () => {
     if (remoteUi()) {
       // 手机没有系统文件对话框(plugin-dialog 也拿不到源路径):用原生 <input type=file> 取 File,
@@ -5412,6 +5430,16 @@ export function ChatWindow() {
                         if (active) return; // 已经是这个模式，别白按一圈
                         if (viaSettings) {
                           sessionSettings.request({ modes: { [dimension]: String(option.value) }, label: viewOf(String(option.value))?.short ?? option.label });
+                          return;
+                        }
+                        // 运行中 / 有待批审批：和会话服务、重启路线一样排到这一轮之后，同一套提示（SPEC 终态 2）。
+                        // 只排要打字的直达输入（Kimi `/plan on` 等）；Claude 的循环快捷键回合中照常可按。
+                        if (mustDefer(tone) && option.inputs.length > 0) {
+                          sessionSettings.request({
+                            modes: { [dimension]: String(option.value) },
+                            label: modeName(String(option.value)),
+                            terminal: [{ kind: "mode", dimension, value: String(option.value), inputs: option.inputs, cycleInput: control?.cycle_input ?? null, markers: control?.screen_markers ?? [] }],
+                          });
                           return;
                         }
                         // 有直达输入的走它；只有 cycle 键的（派生项 inputs 为空）循环按到位。

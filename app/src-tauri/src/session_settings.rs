@@ -941,6 +941,23 @@ pub(crate) fn merge_queued(prev: Option<&serde_json::Value>, next: &serde_json::
                 if let (Some(modes), Some(more)) = (modes.as_object_mut(), value.as_object()) {
                     modes.extend(more.clone());
                 }
+            } else if key == "terminal" {
+                // 终端项（前端 TerminalAction）：同一件事（同一栏模式 / 模型 / 思考档）后选的替换先选的。
+                let item_key = |item: &serde_json::Value| match item["kind"].as_str() {
+                    Some("mode") => format!("mode:{}", item["dimension"].as_str().unwrap_or_default()),
+                    other => other.unwrap_or_default().to_string(),
+                };
+                let incoming: Vec<serde_json::Value> = value.as_array().cloned().unwrap_or_default();
+                let keys: Vec<String> = incoming.iter().map(item_key).collect();
+                let mut items: Vec<serde_json::Value> = target
+                    .get("terminal")
+                    .and_then(|old| old.as_array().cloned())
+                    .unwrap_or_default()
+                    .into_iter()
+                    .filter(|item| !keys.contains(&item_key(item)))
+                    .collect();
+                items.extend(incoming);
+                target.insert(key.clone(), serde_json::Value::Array(items));
             } else if !value.is_null() {
                 target.insert(key.clone(), value.clone());
             }
@@ -1219,6 +1236,11 @@ fn run_queued(app: &tauri::AppHandle, session_id: i64) {
         } else if gone.is_none() {
             with_queued(session_id, |entry| entry.gone = Some(std::time::Instant::now()));
         }
+        return;
+    }
+    // 带终端项的（Kimi `/plan on`、Claude `/model` 等要往终端里打字的切换）由对话页在回合结束时执行：
+    // 宿主不往终端打字（lead_native/waiter.rs 同一约束）。
+    if request["terminal"].as_array().is_some_and(|items| !items.is_empty()) {
         return;
     }
     let wait = wait_for(&request).map(str::to_owned);
@@ -2024,6 +2046,24 @@ mod tests {
         assert_eq!(back["modes"]["permission"], "manual");
         assert_eq!(back["waitFor"], "lead");
         queue().remove(&sid);
+    }
+
+    /// 第四轮补：运行中排进来的终端项同一件事后选的替换先选的，宿主合并时不丢别的项。
+    #[test]
+    fn terminal_actions_merge_by_subject() {
+        let first = serde_json::json!({ "label": "计划：开", "modes": { "work": "plan" }, "terminal": [
+            { "kind": "mode", "dimension": "work", "value": "plan", "inputs": [{ "data": "/plan on", "submit": true }] },
+            { "kind": "effort", "level": "high" }
+        ] });
+        let next = serde_json::json!({ "label": "计划：关", "modes": { "work": "default" }, "terminal": [
+            { "kind": "mode", "dimension": "work", "value": "default", "inputs": [{ "data": "/plan off", "submit": true }] }
+        ] });
+        let merged = merge_queued(Some(&first), &next);
+        let items = merged["terminal"].as_array().unwrap();
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["kind"], "effort");
+        assert_eq!(items[1]["value"], "default");
+        assert_eq!(merged["modes"]["work"], "default");
     }
 
     /// 做空 R4：超时只算「空闲却切不了」，新入队 / 重新选择时不在计时；取消提醒带上要切的名字。

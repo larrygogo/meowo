@@ -897,10 +897,10 @@ describe("ChatWindow", () => {
     // accessible-name 会按 DOM 实现把相邻 code/span 拼成有空格或无空格，两种都等价。
     fireEvent.click(screen.getByRole("option", { name: /^\/deploy\s*部署到测试环境/ }));
     expect(input.value).toBe("/deploy ");
-    // 模型菜单：选择预设即向 PTY 发送 /model <id>。
+    // 模型菜单：运行中选的排到这一轮之后（同一套提示，SPEC 终态 2），不往 PTY 写。
     fireEvent.click(screen.getByRole("button", { name: "切换模型" }));
     fireEvent.click(screen.getByRole("menuitem", { name: /^Sonnet/ }));
-    await screen.findByText(zh.chat.menuBusy);
+    await screen.findByText(/^这一轮结束后切换到「Sonnet/);
     expect(invoke).not.toHaveBeenCalledWith("write_managed_terminal", { sessionId: 31, data: "/model sonnet" });
   });
 

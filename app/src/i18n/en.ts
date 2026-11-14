@@ -1250,7 +1250,7 @@ export const en: Dict = {
     imageDraftCleared: "Terminal draft cleared; allow retry",
     interruptTimeout: "Interruption was not confirmed. Your draft is preserved; try again shortly.",
     busySendUnavailable: "Queueing while this agent is busy has not been verified. Send after the current task finishes.",
-    menuBusy: "Wait for the current task to finish before changing the model or mode.",
+    menuBusyOpen: "Open the menu after this turn",
     modelSwitchUnconfirmed: "Model change was not confirmed. Resume settings were preserved; check the terminal.",
     modelListUnavailable: (command: string) => `Can't read the model list — use ${command} on the Terminal tab`,
     modelListUnavailableRemote: (command: string) => `Can't read the model list. Send ${command} and pick there`,
