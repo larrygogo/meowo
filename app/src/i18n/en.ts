@@ -692,7 +692,6 @@ export const en: Dict = {
     choicePending: "Awaiting choice",
     confirmPending: "Awaiting confirmation",
     cardExpired: "Expired",
-    cardCancelled: "Cancelled",
     choiceTitle: "The terminal needs your choice",
     questionTitle: "Agent is waiting for your answer",
     questionPending: "Awaiting answer",
@@ -741,11 +740,12 @@ export const en: Dict = {
     allowSuggested: (index: number) => `Use Agent option ${index}`,
     deny: "Deny",
     denyConfirmEsc: "Press Esc again to deny",
-    approvalClearedNotice: "This approval was handled elsewhere or timed out",
-    approvalClearedNoticeRemote: "This approval was handled elsewhere or timed out.",
+    approvalClearedNotice: "This approval was handled elsewhere or expired",
+    approvalExpiredNotice: "This approval expired and went back to the terminal",
+    approvalCancelledNotice: "This approval was cancelled",
     // Between countdown zero and the backend's settlement event: show this instead of a frozen 0:00.
     // Shared by the approval card and the question card (same fall-back-to-terminal semantics).
-    approvalTimedOut: "Timed out — falling back to the terminal",
+    approvalTimedOut: "Expired. Handed back to the terminal",
     goTerminal: "Go to terminal",
     // Terminal-view variant of the answer card's release button (question not representable in
     // the card): the user is already on the terminal page — pressing it hands the hang back to
@@ -1127,7 +1127,7 @@ export const en: Dict = {
     unrecognizedPromptNotice: "The terminal seems to be waiting for a choice. Your message was sent",
     unrecognizedPromptNoticeRemote: "The terminal seems to be waiting for a choice; your message was sent",
     terminalPromptTitle: "The Agent needs a startup choice",
-    terminalPromptHelp: "This is the terminal's prompt. Pick and confirm with the buttons on the right.",
+    terminalPromptHelp: "This is the terminal's prompt. Confirm or cancel with the buttons",
     trustPromptTitle: "Trust this folder?",
     terminalPromptConfirm: "Confirm",
     terminalPromptCancel: "Cancel / Back",

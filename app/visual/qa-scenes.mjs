@@ -67,6 +67,20 @@ export const QA_SHOTS = [
   { name: "qa-screen-plan", scene: "flow-screen-plan", sel: ".chat-screen-approval" },
   { name: "qa-screen-question", scene: "flow-screen-question", sel: ".chat-screen-approval" },
   { name: "qa-screen-prompt", scene: "flow-screen-prompt", sel: ".chat-screen-approval" },
+  // ── 五家的审批卡、提问卡、提示卡（数据在 cardScenes.ts，样本出处见 src/test/requestSamples.ts）──
+  // 五家的审批卡是同一张：换一家只有能力不同的按钮不同（broker 有「说明并拒绝」，屏幕通道有「仅收起」）。
+  ...["claude-approval", "codex-approval", "kimi-approval", "gemini-approval", "opencode-approval", "claude-screen"].flatMap((card) => [
+    { name: `qa-card-${card}`, scene: `flow-card-${card}`, size: W620, sel: ".chat-approval-actions" },
+    { name: `qa-m-card-${card}`, page: "mobile", scene: `mobile-card-${card}`, size: PHONE, sel: ".chat-approval-actions" },
+  ]),
+  // 屏幕上认出的提问表单（kimi 方括号、gemini 框线）与提示卡（gemini 额度耗尽、opencode 的二次确认页）。
+  ...["kimi-form", "gemini-form", "gemini-limit", "opencode-confirm"].flatMap((card) => [
+    { name: `qa-card-${card}`, scene: `flow-card-${card}`, size: W620, sel: ".chat-screen-approval" },
+    { name: `qa-m-card-${card}`, page: "mobile", scene: `mobile-card-${card}`, size: PHONE, sel: ".chat-screen-approval" },
+  ]),
+  // 长命令：卡内滚动，输入框不被挤（矮窗与键盘弹出各一张）。
+  { name: "qa-card-long-command-short", scene: "flow-card-long-command", size: [620, 480], sel: ".chat-approval-actions" },
+  { name: "qa-m-card-long-command-kbd", page: "mobile", scene: "mobile-card-long-command", size: [375, 476], sel: ".chat-approval-actions" },
   { name: "qa-image", scene: "flow-image", sel: ".chat-image-thumb-btn" },
   { name: "qa-lightbox", scene: "flow-image", sel: ".chat-lightbox", steps: [["click", ".chat-image-thumb-btn"]] },
   { name: "qa-drop", scene: "flow-drop", sel: ".chat-drop-overlay" },

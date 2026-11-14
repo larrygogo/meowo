@@ -508,13 +508,13 @@ export function ChatWindow() {
     if (modelPickerOpenPendingRef.current && attention.options && attention.options.length > 0) {
       modelPickerOpenPendingRef.current = false;
       learnModelLabelsRef.current(attention.options);
-      if (silentProbeRef.current && attention.id === "interactive:cursor-menu") {
+      if (silentProbeRef.current && attention.kind === "menu") {
         modelProbeConfirmedRef.current = true;
         finishSilentProbeRef.current();
         return;
       }
     }
-    if (attention.id === "interactive:cursor-menu" && autoPickModelRef.current(attention.options ?? [])) return;
+    if (attention.kind === "menu" && autoPickModelRef.current(attention.options ?? [])) return;
     // 刚在卡片上点了持久放行、CLI 弹出二次确认页：替用户按下确认，不再出第二张卡（见 terminalFollowUp）。
     // 写不进去就照常出卡，让用户自己选。
     const followUp = followUpInput(followUpRef.current, attention, activeSessionRef.current, Date.now());
@@ -4017,7 +4017,7 @@ export function ChatWindow() {
     // 选完这次菜单就结束了：关掉识别窗口，否则按钮会一直停在「收起」态。
     // 判据取 attention 本身的类型而不是识别窗口是否还开着——窗口会到点自灭，
     // 用户慢慢选的话就漏掉刷新了。
-    const wasModelMenu = terminalAttention?.id === "interactive:cursor-menu";
+    const wasModelMenu = terminalAttention?.kind === "menu";
     setMenuWatchUntil(0);
     optionResolvingRef.current = true;
     void writeManagedTerminal(sessionId, option.input)

@@ -131,8 +131,14 @@ describe("提示卡（屏幕通道）：标题与徽章由种类决定", () => {
     expect(dialog.getAttribute("aria-label")).not.toBe(zh.chat.terminalPromptTitle);
     expect(dialog.querySelector(".chat-approval-badge")?.textContent).toBe("待选择");
     // 选项没拆成按钮（框线选项，未声明文法）：终端原文摆出来，用户看得到回车选的是 Keep trying。
-    expect(dialog.querySelector("pre")?.textContent).toContain("Usage limit reached");
-    expect(dialog.querySelector("pre")?.textContent).toContain("Keep trying");
+    // 框线是排版不是内容：去掉之后五行就能看全，回车选的是带 ● 的那一项。
+    expect(dialog.querySelector("pre")?.textContent).toBe([
+      "Usage limit reached for gemini-3.8-flash.",
+      "/stats model for usage details",
+      "/model to switch models.",
+      "● 1. Keep trying",
+      "  2. Stop",
+    ].join("\n"));
   });
 
   it.each([

@@ -785,7 +785,6 @@ export const zh = {
     choicePending: "待选择",
     confirmPending: "待确认",
     cardExpired: "已过期",
-    cardCancelled: "已取消",
     choiceTitle: "终端正在等待你的选择",
     questionTitle: "Agent 正在等待你的回答",
     questionPending: "待回答",
@@ -839,11 +838,13 @@ export const zh = {
     // Esc 两段式确认的第二段按钮文案（第一下 Esc 点亮后显示）。
     denyConfirmEsc: "再按 Esc 确认拒绝",
     // 审批卡被别处结算/超时收卡时的去向说明——凭空消失像 bug。
-    approvalClearedNotice: "该审批已在别处处理或已超时",
-    approvalClearedNoticeRemote: "该审批已在别处处理或已超时",
+    // 审批在卡片之外了结时的说明：过期、已取消各一句，分不清原因时用第一句。状态词与卡片徽章同一个。
+    approvalClearedNotice: "该审批已在别处处理或已过期",
+    approvalExpiredNotice: "该审批已过期，已交回终端处理",
+    approvalCancelledNotice: "该审批已取消",
     // 倒计时归零到后端结算事件到达之间的一拍空窗：徽章切这句，不留定格的 0:00。
     // 审批卡与题面卡共用（回落语义相同）。
-    approvalTimedOut: "已超时，回落终端处理中",
+    approvalTimedOut: "已过期，已交回终端处理",
     // 切到终端页的按钮一律用这个标签（7G-9：此前四处四种说法）。
     goTerminal: "去终端页",
     // 终端视图下作答卡的「放行给终端」按钮（题面无法卡内表达时）：人已在终端页，
@@ -1261,7 +1262,7 @@ export const zh = {
     unrecognizedPromptNotice: "终端似乎在等待选择，消息已发出",
     unrecognizedPromptNoticeRemote: "终端似乎在等待选择，消息已发出",
     terminalPromptTitle: "Agent 需要你完成一个启动步骤",
-    terminalPromptHelp: "下面是终端的提示原文，用右侧按钮选择确认即可。",
+    terminalPromptHelp: "终端提示原文如下，用按钮确认或取消",
     trustPromptTitle: "是否信任此文件夹？",
     terminalPromptConfirm: "确认",
     terminalPromptCancel: "取消 / 返回",

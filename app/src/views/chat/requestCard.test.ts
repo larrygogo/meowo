@@ -14,6 +14,7 @@ import {
 } from "../../test/requestSamples";
 import {
   approvalCardModel,
+  approvalEndedNotice,
   cardBadge,
   cardKindOfAttention,
   cardStateOf,
@@ -157,6 +158,25 @@ describe("审批卡模型：五家各一份样本，能力集合对得上", () =
     expect(terminalInputForChoice(attention, "deny")).toBe("\x1b");
   });
 
+  /// 兄弟场景：这两键只对验证过的文法兜底。claude 的框式、kimi 的面板式认不出选项时
+  /// （面板滚出了屏幕）不猜按键，卡上不出允许与拒绝，数字键与 Esc 也不生效。
+  it.each([
+    ["claude 框式", "claude", "proceed_box"],
+    ["kimi 面板式", "kimi", "arrow_panel"],
+  ] as const)("%s 选项没认出来：不猜按键，不出允许与拒绝", (_name, provider, details) => {
+    const attention: TerminalAttention = { id: `${provider}:command-approval`, kind: "approval", text: "ls -la", details };
+    const model = approvalCardModel(asTerminalRuntimeRequest({ sessionId: 7, provider, attention, writable: true }), zh);
+    expect(model.actions).toMatchObject({ allowOnce: false, deny: false, persistent: [], collapse: true });
+    expect(terminalInputForChoice(attention, "allow_once")).toBeNull();
+    expect(terminalInputForChoice(attention, "deny")).toBeNull();
+  });
+
+  it("gemini 框线对话框没认出焦点（不出选项）：按回车与 Esc 兜底，与此前的通用卡同键", () => {
+    const attention: TerminalAttention = { id: "gemini:command-approval", kind: "approval", text: "│ Allow execution of [Shell]? │", details: "framed_box" };
+    expect(terminalInputForChoice(attention, "allow_once")).toBe("\r");
+    expect(terminalInputForChoice(attention, "deny")).toBe("\x1b");
+  });
+
   it("外部终端里跑的会话：屏幕请求不可作答（live=false），内容照常给", () => {
     const model = approvalCardModel(screenRequest("kimi", KIMI_APPROVAL_SCREEN, false).request, zh);
     expect(model.live).toBe(false);
@@ -172,23 +192,32 @@ describe("审批卡模型：五家各一份样本，能力集合对得上", () =
   });
 });
 
-describe("卡片状态：过期与已取消", () => {
-  it("broker 请求倒计时归零算过期；后端标了过期或已取消的照后端的", () => {
+describe("卡片状态：过期；在别处了结的说明", () => {
+  it("broker 请求倒计时归零算过期；后端标了过期的照后端的", () => {
     expect(cardStateOf({ status: "pending" })).toBe("pending");
     expect(cardStateOf({ status: "pending" }, true)).toBe("expired");
     expect(cardStateOf({ status: "expired" })).toBe("expired");
-    expect(cardStateOf({ status: "cancelled" })).toBe("cancelled");
-    // 已在别处了结的请求不再可答，同样按已取消显示。
-    expect(cardStateOf({ status: "resolved" })).toBe("cancelled");
     expect(approvalCardModel(CLAUDE_BROKER_APPROVAL, zh, true).state).toBe("expired");
-    expect(approvalCardModel({ ...CODEX_BROKER_APPROVAL, status: "cancelled" }, zh).state).toBe("cancelled");
+    expect(approvalCardModel(CODEX_BROKER_APPROVAL, zh).state).toBe("pending");
+  });
+
+  /// 审批在卡片之外了结（终端里答了、回合被中断、超时）：卡片收走，提示条照实说原因。
+  /// 此前三种情况是同一句「已在别处处理或已超时」。
+  it("了结的原因后端给了就照实说：过期、已取消各一句；没给用分不清原因的那一句", () => {
+    expect(approvalEndedNotice("expired", zh)).toBe("该审批已过期，已交回终端处理");
+    expect(approvalEndedNotice("cancelled", zh)).toBe("该审批已取消");
+    expect(approvalEndedNotice("resolved", zh)).toBe("该审批已在别处处理或已过期");
+    expect(approvalEndedNotice(undefined, zh)).toBe("该审批已在别处处理或已过期");
+    for (const status of ["expired", "cancelled", "resolved", undefined] as const) expect(approvalEndedNotice(status, en)).toBeTruthy();
+    // 状态词与卡片徽章是同一个词。
+    expect(approvalEndedNotice("expired", zh)).toContain(cardBadge("approval", "expired", zh));
   });
 });
 
 describe("标题与徽章只由种类决定", () => {
   const KINDS: CardKind[] = ["approval", "plan", "question", "choice", "trust", "startup"];
 
-  it("每个种类一个标题、一个待处理徽章；过期与已取消各一个词，所有种类共用", () => {
+  it("每个种类一个标题、一个待处理徽章；过期是一个词，所有种类共用", () => {
     expect(KINDS.map((kind) => [cardTitle(kind, zh), cardBadge(kind, "pending", zh)])).toEqual([
       ["Agent 请求权限", "待批准"],
       ["Agent 正在等待计划审批", "待批准"],
@@ -199,7 +228,6 @@ describe("标题与徽章只由种类决定", () => {
     ]);
     for (const kind of KINDS) {
       expect(cardBadge(kind, "expired", zh)).toBe("已过期");
-      expect(cardBadge(kind, "cancelled", zh)).toBe("已取消");
       // 过期后不再带倒计时。
       expect(cardBadge(kind, "expired", zh, "0:05")).toBe("已过期");
     }
@@ -211,7 +239,6 @@ describe("标题与徽章只由种类决定", () => {
     expect(new Set(titles).size).toBe(KINDS.length);
     for (const kind of KINDS) expect(cardBadge(kind, "pending", en)).toBeTruthy();
     expect(cardBadge("question", "expired", en)).toBe("Expired");
-    expect(cardBadge("question", "cancelled", en)).toBe("Cancelled");
   });
 
   /// 走查 输入 A3：kimi 提问卡徽章曾是「待批准」，gemini 额度耗尽曾被说成「启动步骤」。

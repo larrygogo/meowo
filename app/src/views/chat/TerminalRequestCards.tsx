@@ -71,13 +71,19 @@ export function TerminalQuestionCard({ attention, kind, live, customText, return
 /// - 「等你选择」且认出了选项：选项之前的那几行题干。标题只说了「终端正在等待你的选择」，
 ///   选什么得看原文（额度用完了、长会话怎么恢复、始终允许的范围）。
 /// - 其余（信任页、启动步骤、计划批准、菜单）：标题已经说清是什么事，只出选项按钮。
+///
+/// 原文里的对话框框线（左右的竖线、整行的横线、框里的空行）是排版不是内容，一律去掉：
+/// gemini 的额度耗尽框带着框线进卡片，在手机上折行后把「1. Keep trying / 2. Stop」挤出了可视区，
+/// 用户看得到「确认」却看不到确认的是哪一项（2026-11-14 截图）。
 export function promptContext(attention: Pick<TerminalAttention, "text" | "options">, kind: CardKind): string {
   const options = attention.options ?? [];
-  if (options.length === 0) return attention.text;
-  if (kind !== "choice") return "";
+  if (options.length > 0 && kind !== "choice") return "";
   const lines = attention.text.split("\n");
-  const firstOption = lines.findIndex((line) => options.some((option) => option.label && line.includes(option.label)));
+  const firstOption = options.length === 0 ? -1
+    : lines.findIndex((line) => options.some((option) => option.label && line.includes(option.label)));
   return (firstOption >= 0 ? lines.slice(0, firstOption) : lines)
+    // 行首行尾的竖线连同它旁边的一格空白去掉；行内的缩进留着（选项的对齐、光标标记靠它）。
+    .map((line) => line.replace(/^\s*[│┃]\s?/, "").replace(/\s*[│┃]\s*$/, "").trimEnd())
     // 整行都是框线的不是内容。U+2500–U+257F 是制表符块。
     .filter((line) => line.trim() && !/^[\s─-╿|+-]+$/u.test(line))
     .join("\n");

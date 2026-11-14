@@ -34,7 +34,7 @@ export function ApprovalRequestCard({ model, countdown, resolving, error, escArm
   const reasonButtonRef = useRef<HTMLButtonElement>(null);
   const [reason, setReason] = useState("");
   const { actions } = model;
-  // 过期、已取消、外部终端里跑的会话：卡片照常显示内容，按钮不再可用。
+  // 过期、外部终端里跑的会话：卡片照常显示内容，按钮不再可用。
   const answerable = model.live && model.state === "pending";
   // 远程没有键盘快捷键可言，kbd 徽章只在桌面挂。
   const kbd = !remoteUi() && answerable;
@@ -68,7 +68,11 @@ export function ApprovalRequestCard({ model, countdown, resolving, error, escArm
             data-tip={entry.tip}
             aria-disabled={busy}
             onClick={() => decide(`suggestion:${index}`)}
-          >{entry.label}{digits && index < 8 && <kbd aria-hidden="true">{index + 2}</kbd>}</button>
+          >
+            {/* 放行范围可能很长（规则原文、英文说明）：标签自己省略，全文在悬停提示里，不把按钮撑出卡片。 */}
+            <span className="chat-approval-persist-label">{entry.label}</span>
+            {digits && index < 8 && <kbd aria-hidden="true">{index + 2}</kbd>}
+          </button>
         ))}
       </> : undefined}
       actions={<>
@@ -87,7 +91,6 @@ export function ApprovalRequestCard({ model, countdown, resolving, error, escArm
     >
       {!model.live && model.state === "pending" && <span>{t.chat.questionExternalHint}</span>}
       {model.state === "expired" && <span>{t.chat.approvalTimedOut}</span>}
-      {model.state === "cancelled" && <span>{t.chat.approvalClearedNotice}</span>}
       {/* 次要信息（请求工具、影响范围、说明）收在一组：平时工具与标签同一行，矮窗里整组压成一行，
           把高度让给命令（做空审查：620×480 下命令被挤到折叠线下）。 */}
       <div className="chat-approval-meta">

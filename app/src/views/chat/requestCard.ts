@@ -32,13 +32,20 @@ export function cardKindOfAttention(kind: AttentionKind): CardKind {
   return kind === "menu" ? "choice" : kind;
 }
 
-/// 请求的状态。pending 等用户处理；expired 超过时限，已交回终端；cancelled 已在别处了结。
-export type CardState = "pending" | "expired" | "cancelled";
+/// 卡片上的请求状态。pending 等用户处理；expired 超过时限（broker 请求 300 秒），已交回终端。
+/// 没有「已取消」这一态：请求在别处了结（终端里答了、回合被中断）时卡片直接收走，原因写在
+/// 提示条上（见 approvalEndedNotice），不留一张点不了的卡。
+export type CardState = "pending" | "expired";
 
 export function cardStateOf(request: Pick<RuntimeRequest, "status">, timedOut = false): CardState {
-  if (request.status === "cancelled" || request.status === "resolved") return "cancelled";
-  if (request.status === "expired" || timedOut) return "expired";
-  return "pending";
+  return request.status === "expired" || timedOut ? "expired" : "pending";
+}
+
+/// 审批在卡片之外了结后的说明。后端给了终态就照实说（过期、已取消），没给就用分不清原因的那一句。
+export function approvalEndedNotice(status: RuntimeRequest["status"] | undefined, t: Dict): string {
+  if (status === "expired") return t.chat.approvalExpiredNotice;
+  if (status === "cancelled") return t.chat.approvalCancelledNotice;
+  return t.chat.approvalClearedNotice;
 }
 
 /// 标题：种类 → 唯一的一句话。
@@ -53,11 +60,10 @@ export function cardTitle(kind: CardKind, t: Dict): string {
   }
 }
 
-/// 徽章：过期、已取消各一个词，五种卡通用；待处理时按种类说在等什么。
+/// 徽章：过期是一个词，各种卡通用；待处理时按种类说在等什么。
 /// `countdown` 只有 broker 请求有（300 秒时限），接在待处理的词后面。
 export function cardBadge(kind: CardKind, state: CardState, t: Dict, countdown: string | null = null): string {
   if (state === "expired") return t.chat.cardExpired;
-  if (state === "cancelled") return t.chat.cardCancelled;
   const pending = (() => {
     switch (kind) {
       case "approval":
@@ -189,6 +195,17 @@ function terminalPersistentLabel(option: TerminalAttentionOption, attention: Ter
   return { label: raw.length > 28 ? raw.slice(0, 27) + "…" : raw, tip: raw };
 }
 
+/// 选项一个都没认出来时，能不能按「回车 = 默认的允许一次、Esc = 拒绝」兜底。
+/// 只对验证过这两键的文法兜底：横排选项（opencode 真机：回车选第一项、Esc 是 Reject）、
+/// 框线对话框（gemini：拒绝项原文带 `(esc)`，焦点默认在第一项）、没有声明文法的规则（此前的
+/// 通用卡就是这两键）。框式（claude）与面板式（kimi）认不出选项多半是面板滚出了屏幕，
+/// 这时不猜按键，卡上只留「仅收起」，去终端处理。
+function fallbackKeys(attention: Pick<TerminalAttention, "options" | "details">): boolean {
+  if ((attention.options?.length ?? 0) > 0) return false;
+  return attention.details === "option_row" || attention.details === "framed_box"
+    || attention.details === undefined || attention.details === "none";
+}
+
 function terminalApprovalDetails(attention: TerminalAttention) {
   switch (attention.details) {
     case "proceed_box": return { ...proceedBoxApprovalDetails(attention.text), isCommand: true };
@@ -208,9 +225,7 @@ function terminalApprovalDetails(attention: TerminalAttention) {
 function terminalApprovalModel(request: RuntimeRequest, attention: TerminalAttention, t: Dict): ApprovalCardModel {
   const details = terminalApprovalDetails(attention);
   const options = terminalApprovalOptions(attention);
-  // 选项一个都没认出来（框线式没认出焦点、选项行还没画完）：五家的审批框都是回车选默认的
-  // 「允许一次」、Esc 拒绝（各插件有实测），按这两键兜底，按钮名称不变。
-  const unparsed = (attention.options?.length ?? 0) === 0;
+  const keysFallback = fallbackKeys(attention);
   return {
     requestId: request.requestId,
     channel: "terminal",
@@ -223,8 +238,8 @@ function terminalApprovalModel(request: RuntimeRequest, attention: TerminalAtten
     detail: details.command ? { label: details.isCommand ? "command" : "input", text: details.command } : null,
     risky: !!details.command && isRiskyCommand(details.command),
     actions: {
-      allowOnce: unparsed || options.allowOnce !== null,
-      deny: unparsed || options.deny !== null,
+      allowOnce: keysFallback || options.allowOnce !== null,
+      deny: keysFallback || options.deny !== null,
       denyWithReason: false,
       persistent: options.persistent.map((option) => terminalPersistentLabel(option, attention, t)),
       collapse: true,
@@ -239,8 +254,8 @@ export function approvalCardModel(request: RuntimeRequest, t: Dict, timedOut = f
 }
 
 /// 屏幕通道把决定换成要写进终端的按键；这个决定在屏幕上没有对应项时返回 null。
-export function terminalInputForChoice(attention: Pick<TerminalAttention, "options">, choice: ApprovalChoice): string | null {
-  const unparsed = (attention.options?.length ?? 0) === 0;
+export function terminalInputForChoice(attention: Pick<TerminalAttention, "options" | "details">, choice: ApprovalChoice): string | null {
+  const unparsed = fallbackKeys(attention);
   const options = terminalApprovalOptions(attention);
   if (choice === "allow_once") return unparsed ? "\r" : options.allowOnce?.input ?? null;
   if (choice === "deny") return unparsed ? "\x1b" : options.deny?.input ?? null;

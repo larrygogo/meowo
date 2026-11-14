@@ -157,12 +157,10 @@ describe("审批卡：五家同一张卡", () => {
   });
 });
 
-describe("审批卡状态：过期、已取消、外部终端", () => {
+describe("审批卡状态：过期、外部终端", () => {
   it.each([
     ["过期（broker 倒计时归零）", { request: CLAUDE_BROKER_APPROVAL, timedOut: true }, "已过期"],
     ["过期（后端标记）", { request: { ...CODEX_BROKER_APPROVAL, status: "expired" as const } }, "已过期"],
-    ["已取消（broker）", { request: { ...CLAUDE_BROKER_APPROVAL, status: "cancelled" as const } }, "已取消"],
-    ["已取消（屏幕）", { request: { ...screenRequest("kimi", KIMI_APPROVAL_SCREEN), status: "cancelled" as const } }, "已取消"],
   ])("%s：徽章换成一个词，按钮点了不发", (_name, props, badge) => {
     const onDecide = vi.fn();
     render(<Card {...props} onDecide={onDecide} countdown="0:00" />);
@@ -176,6 +174,16 @@ describe("审批卡状态：过期、已取消、外部终端", () => {
     expect(onDecide).not.toHaveBeenCalled();
     // 不可作答时不挂键盘徽标：按了不生效的键不该写在按钮上。
     expect(document.querySelector(".chat-approval kbd")).toBeNull();
+    // 卡内说明过期之后怎么办：已交回终端。
+    expect(screen.getByText(zh.chat.approvalTimedOut)).toBeTruthy();
+  });
+
+  it("持久放行的标签包在可省略的容器里，全文在悬停提示上（长规则不把按钮撑出卡片）", () => {
+    const long = "pnpm --filter @scope/very-long-package-name run a-very-long-script-name --with --many --flags";
+    render(<Card request={{ ...CLAUDE_BROKER_APPROVAL, permissionSuggestions: [{ type: "addRules", destination: "localSettings", rules: [{ toolName: "Bash", ruleContent: long }] }] }} />);
+    const button = document.querySelector<HTMLButtonElement>(".chat-approval-actions button.is-persistent")!;
+    expect(button.querySelector(".chat-approval-persist-label")?.textContent).toContain("允许并记住");
+    expect(button.getAttribute("data-tip")).toContain(long);
   });
 
   it("待处理时徽章带剩余时间（broker 才有时限）", () => {

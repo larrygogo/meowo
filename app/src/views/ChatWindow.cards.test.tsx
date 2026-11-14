@@ -2,12 +2,12 @@
 // 卡片本体与视图模型的单测在 chat/ApprovalRequestCard.test.tsx、chat/requestCard.test.ts。
 import { describe, expect, it } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { adapter, invoke, terminalProps } from "./chatWindow.harness";
+import { adapter, eventListeners, invoke, terminalProps } from "./chatWindow.harness";
 import { ChatWindow } from "./ChatWindow";
 import { zh } from "../i18n/zh";
 import { markRemoteUi } from "../remoteMode";
 import { terminalAttention } from "../terminalAttention";
-import { grammar } from "../test/agents";
+import { chatUi, grammar } from "../test/agents";
 import {
   CLAUDE_APPROVAL_SCREEN,
   CLAUDE_BROKER_APPROVAL,
@@ -280,5 +280,64 @@ describe("Kimi 提问表单（屏幕通道）", () => {
     fireEvent.click(await screen.findByRole("button", { name: "绿色" }));
     await waitFor(() => expect(adapter.writes(931)).toEqual(["2"]));
     await waitFor(() => expect(screen.queryByRole("button", { name: "绿色" })).toBeNull());
+  });
+});
+
+describe("broker 审批的倒计时", () => {
+  /// 推送通道没接通时轮询 400ms 一次，每次交回一个内容相同的新对象。倒计时的计时器此前按对象依赖，
+  /// 还没响就被拆掉重建，徽章停在 5:00 不动，也到不了「已过期」。
+  it("轮询每次交回新对象时倒计时照样往下走", async () => {
+    setup(940, "claude", CLAUDE_BROKER_APPROVAL);
+    render(<ChatWindow />);
+    const allow = await screen.findByRole("button", { name: "允许一次" });
+    const badge = allow.closest(".chat-approval")!.querySelector(".chat-approval-badge")!;
+    await waitFor(() => expect(badge.textContent).toMatch(/^待批准 · 4:5\d$/), { timeout: 4_000 });
+    // 期间确实轮询过不止一次（每次都是新对象）。
+    expect(invoke.mock.calls.filter(([command]) => command === "pending_interaction").length).toBeGreaterThan(2);
+  });
+});
+
+describe("Kimi 的 broker 提问交回终端后：表单由后端屏幕认出（手机上没有 xterm，只有这一条识别源）", () => {
+  const RULE = " " + "─".repeat(60);
+  const FORM = [
+    RULE, "  question", "   Q1    Submit", "  ? 喜欢哪种颜色？", "   → [1] 红色", "     [2] 绿色", "     [3] Other",
+    "   ↑↓ select  1-3 / ↵ choose  ←/→/tab switch  esc cancel", RULE, " Ask When Needed  K3 thinking: high",
+  ];
+  const QUESTION = { questions: [{ header: "颜色", question: "喜欢哪种颜色？", multiSelect: false, options: [{ label: "红色", description: null }, { label: "绿色", description: null }] }] };
+
+  /// 探针此前只认 id 为编号选择器的识别结果，kimi 的方括号表单（规则 id 是 kimi:question）被它丢掉：
+  /// 手机上题面卡一直停在「等表单」，8 秒后说认不出。现在按种类认（提问）。
+  it.each([["桌面", false], ["手机页", true]] as const)("%s：方括号表单接管成可作答的提问卡，点选发数字键", async (_name, remote) => {
+    if (remote) markRemoteUi();
+    try {
+      window.history.replaceState({}, "", "/?sessionId=950");
+      invoke.mockImplementation((command: string) => {
+        if (command === "get_chat_history") return Promise.resolve({ ...adapter.history(950, "kimi", "running"), ptyManaged: true });
+        if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
+        if (command === "agent_chat_ui") return Promise.resolve(chatUi("kimi"));
+        // xterm 那条识别源什么都看不见（手机上没有 xterm；桌面对应网格错位）。
+        if (command === "managed_terminal_snapshot") return Promise.resolve({ sessionId: 950, active: false, managed: true, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
+        if (command === "managed_terminal_screen") return Promise.resolve(FORM);
+        return Promise.resolve();
+      });
+      render(<ChatWindow />);
+      await screen.findByText("适配-950");
+      act(() => {
+        eventListeners.get("interactive-question")?.({ payload: {
+          sessionId: 950, requestId: "kimi-q", provider: "kimi", toolName: "AskUserQuestion",
+          description: null, answerable: false, input: JSON.stringify(QUESTION), permissionSuggestions: [],
+        } });
+      });
+      // 屏幕上认出的提问卡有「仅收起」，题面展示卡在它接管后退场；选项按钮发的是数字键。
+      const green = await screen.findByRole("button", { name: "绿色" }, { timeout: 4_000 });
+      await waitFor(() => expect(document.querySelectorAll(".chat-approval-overlay .chat-approval")).toHaveLength(1));
+      const card = screen.getByRole("button", { name: "绿色" }).closest(".chat-approval")!;
+      expect(card.querySelector(".chat-approval-badge")?.textContent).toBe("待回答");
+      fireEvent.click(green.isConnected ? green : screen.getByRole("button", { name: "绿色" }));
+      await waitFor(() => expect(adapter.writes(950)).toContain("2"));
+    } finally {
+      (globalThis as Record<string, unknown>).__MEOWO_REMOTE__ = undefined;
+      document.body.classList.remove("remote-ui");
+    }
   });
 });
