@@ -12,12 +12,20 @@
  */
 import { useEffect, useRef } from "react";
 import { diagLog } from "../../api";
+import { backendErrorCode } from "../../i18n/errors";
+import type { Dict } from "../../i18n/zh";
 import { remoteUi } from "../../remoteMode";
 import type { OutgoingPhase, OutgoingPrompt } from "./outgoingPrompts";
 
 export type ChatDiagKind =
   /** 消息没能写进终端。 */
   | "send_failed"
+  /** 发送被拦下、一个字也没写进终端（终端输入框没收拾好、有卡片在等、会话在外部终端里…）。 */
+  | "send_blocked"
+  /** 撤回没成或没确认。 */
+  | "undo_failed"
+  /** 错误条上显示了一句失败说明，而它不属于上面任何一类（兜底，保证显示过的失败日志里都有）。 */
+  | "error_shown"
   /** 写进去了，但没等到它出现在对话记录里。 */
   | "send_unconfirmed"
   /** 切模型、思考档或模式：命令发了，没等到 CLI 的确认。 */
@@ -82,6 +90,38 @@ export function logChatEvent(sessionId: number, event: ChatDiagEvent): void {
   if (remoteUi()) return;
   // 日志写不了不能影响功能（宿主命令不在、单测里 api 被整体替换时都会抛）。
   try { diagLog(SCOPE, chatDiagLine(sessionId, providers.get(sessionId), event)); } catch { /* 尽力而为 */ }
+}
+
+// 文案 → 它在词典里的键（`chat.undoBusy`）。每个词典只建一次。
+const copyKeys = new WeakMap<Dict, Map<string, string>>();
+
+/**
+ * 错误条上显示的一句话 → 写日志用的固定代码：词典里的键、后端错误码，都对不上的记 `unkeyed`
+ * （带参数拼出来的句子、后端没有结构化代码的原文）。日志里不落这句话本身：里面可能有路径、
+ * 终端画面上的字。
+ */
+export function shownErrorReason(message: string, t: Dict): string {
+  let keys = copyKeys.get(t);
+  if (!keys) {
+    keys = new Map();
+    for (const group of ["chat", "newSession"] as const) {
+      for (const [key, value] of Object.entries(t[group])) {
+        if (typeof value === "string" && !keys.has(value)) keys.set(value, `${group}.${key}`);
+      }
+    }
+    copyKeys.set(t, keys);
+  }
+  return keys.get(message) ?? backendErrorCode(message, t.locale) ?? "unkeyed";
+}
+
+/**
+ * 错误条上显示了一句话：写一行兜底日志（做空⑧）。对话窗里「失败、未确认、被拦下」几十处都经
+ * 同一个 setSendError 上屏，日志挂在这个口子上，新加一处错误不用记得再补一行。发送失败、切换未确认
+ * 这些另有专门的一行（原因更细），这里会多出一行同一件事的 `error_shown`，宁可重复不可漏。
+ */
+export function logShownError(sessionId: number, message: string, t: Dict): void {
+  if (!message) return;
+  logChatEvent(sessionId, { kind: "error_shown", reason: shownErrorReason(message, t) });
 }
 
 /**

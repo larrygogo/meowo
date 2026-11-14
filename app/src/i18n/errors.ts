@@ -420,6 +420,20 @@ export const ENTRIES: ErrorEntry[] = [
 const hasHan = (text: string): boolean => /[一-鿿]/.test(text);
 
 /**
+ * 反查:一句已经格式化好的用户文案对应哪个后端错误码(`模块/代码`)。给运行日志用——日志只记代码,
+ * 不记可能带路径或正文的原文。只认结构化的错误码,老的中文原文前缀不算。认不出返回 null。
+ */
+export function backendErrorCode(message: string, locale: string): string | null {
+  const isZh = locale.startsWith("zh");
+  for (const entry of ENTRIES) {
+    if (!/^[a-z_]+\/[a-z0-9_]+$/.test(entry.m)) continue;
+    const base = isZh ? entry.zh : entry.en;
+    if (base === undefined ? message.startsWith(entry.m) : message === base || (entry.tail && message.startsWith(base))) return entry.m;
+  }
+  return null;
+}
+
+/**
  * 把后端错误(通常是 `invoke` reject 出来的 String)格式化成当前语言的用户文案。
  * @param raw    任意错误值(Error / string / unknown),内部先转字符串。
  * @param locale 当前界面 locale(取 `t.locale`),zh 开头视为中文界面。

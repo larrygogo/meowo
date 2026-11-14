@@ -567,6 +567,13 @@ export const zh = {
     composerDraftRunning: "回合结束后才能收起终端里的草稿",
     composerDraftNoClear: "这个终端里的草稿 Meowo 清不了",
     composerDraftStuck: "终端里的草稿没能收起，消息没有发出",
+    composerDraftPaste: "终端草稿含粘贴内容，没有清掉",
+    composerDraftOverflow: "终端草稿没显示全，没有清掉",
+    composerDraftWrapped: "终端草稿有折行读不准，没有清掉",
+    composerDraftUnsure: "终端草稿读不准，没有清掉",
+    composerSendWithDraft: "连同草稿发送",
+    composerDiscardDraft: "放弃草稿后发送",
+    composerDiscardConfirm: "确认放弃草稿",
     settingsFirstTurn: "第一条消息正在处理，会话建好后再切",
     // 会话没在跑：选择记成下次打开的启动参数（做空 M4）。
     settingsNextOpen: "会话没在运行，下次打开时生效",

@@ -1,5 +1,5 @@
 use super::*;
-use crate::chat_ui::{ComposerAltMode, ComposerStash};
+use crate::chat_ui::{ComposerAltMode, ComposerFidelity, ComposerStash};
 
 fn leak(value: &serde_json::Value) -> &'static str {
     Box::leak(value.as_str().unwrap().to_string().into_boxed_str())
@@ -50,6 +50,20 @@ fn spec_from(declared: &serde_json::Value) -> ComposerSpec {
         clear_rounds: declared["clear_rounds"].as_u64().unwrap() as u8,
         clear_while_running: declared["clear_while_running"].as_bool().unwrap(),
         alt_modes: Box::leak(modes.into_boxed_slice()),
+        fidelity: declared["fidelity"].as_object().map(|_| {
+            let rule = &declared["fidelity"];
+            ComposerFidelity {
+                paste_pattern: leak(&rule["paste_pattern"]),
+                overflow_pattern: optional(&rule["overflow_pattern"]),
+                overflow_rows: rule["overflow_rows"].as_u64().map(|rows| rows as usize),
+                wrap_edge: match rule["wrap_edge"].as_str().unwrap() {
+                    "border" => ComposerWrapEdge::Border,
+                    "terminal" => ComposerWrapEdge::Terminal,
+                    other => panic!("没见过的 wrap_edge：{other}"),
+                },
+                wrap_inset: rule["wrap_inset"].as_u64().unwrap() as usize,
+            }
+        }),
     }
 }
 
@@ -63,6 +77,7 @@ fn reads_agree_with_shared_frames() {
     ))
     .unwrap();
     let mut checked = 0;
+    let mut drafts = 0;
     let mut providers = std::collections::BTreeSet::new();
     for frame in fixture["frames"].as_array().unwrap() {
         let provider = frame["provider"].as_str().unwrap();
@@ -93,8 +108,12 @@ fn reads_agree_with_shared_frames() {
             dim: cursor["dim"].as_bool().unwrap(),
         });
         let expect = frame["expect"].as_str().unwrap();
-        for screen in [&lines, &trimmed] {
-            let got = read(screen, cursor, &spec);
+        let cols = frame["cols"].as_u64().map(|cols| cols as usize);
+        // rawOnly：这一帧去掉行尾空格后本来就认不出（Gemini 草稿里的空行是一串空格），只按原样判。
+        let raw_only = frame["rawOnly"].as_bool().unwrap_or(false);
+        let screens: &[&Vec<String>] = if raw_only { &[&lines] } else { &[&lines, &trimmed] };
+        for screen in screens {
+            let got = read_with_cols(screen, cursor, cols, &spec);
             let verdict = match &got {
                 None => "unknown".to_string(),
                 Some(read) => match read.alt_mode {
@@ -107,11 +126,34 @@ fn reads_agree_with_shared_frames() {
             if let (Some(text), Some(read)) = (frame.get("text").and_then(|t| t.as_str()), &got) {
                 assert_eq!(read.text, text, "{}", frame["name"]);
             }
+            // 草稿保真：读全的原文逐字相等，读不全的原因一致（与前端 composer.test.ts 同一批帧）。
+            if let Some(want) = frame.get("draft") {
+                let want = if want["complete"].as_bool().unwrap() {
+                    Draft::Complete(want["text"].as_str().unwrap().to_string())
+                } else {
+                    Draft::Incomplete(match want["why"].as_str().unwrap() {
+                        "paste" => Incomplete::Paste,
+                        "overflow" => Incomplete::Overflow,
+                        "wrap" => Incomplete::Wrap,
+                        "unverified" => Incomplete::Unverified,
+                        other => panic!("没见过的原因：{other}"),
+                    })
+                };
+                assert_eq!(
+                    got.as_ref().and_then(|read| read.draft.clone()),
+                    Some(want),
+                    "{}",
+                    frame["name"]
+                );
+                drafts += 1;
+            }
         }
         providers.insert(provider.to_string());
         checked += 1;
     }
     assert!(checked >= 25);
+    // 五家 × 十来种草稿形态的保真帧都在（每帧按原样与去行尾空格各判一次）。
+    assert!(drafts >= 100, "草稿保真的帧只核对了 {drafts} 次");
     // 五家都要有实拍帧：规格只有一份，哪一家没有样例就等于没测。
     assert_eq!(
         providers.into_iter().collect::<Vec<_>>(),

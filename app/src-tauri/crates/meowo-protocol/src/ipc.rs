@@ -19,6 +19,11 @@ pub struct TerminalScreenFrameDto {
     #[serde(default)]
     #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub cursor_dim: bool,
+    /// 终端列数。行尾空白不在 `lines` 里，没有框的输入框要靠它才知道一行最多能放多少字
+    /// （草稿里相邻两行是折行还是换行，见 meowo-agent 的 ComposerFidelity）。旧宿主不带。
+    #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<u16>", optional))]
+    pub cols: u16,
 }
 
 /// 一条待办。`status` 用字面量而非枚举：来源是各家 agent 的自由文本状态，

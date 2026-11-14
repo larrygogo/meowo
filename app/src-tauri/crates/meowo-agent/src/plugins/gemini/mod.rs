@@ -347,6 +347,20 @@ impl AgentPlugin for Gemini {
                     exit_input: "i",
                 },
             ],
+            // 草稿保真（0.68.0 真机，tests/probe_draft_fidelity.rs，2026-11-14）：
+            // - 粘贴占位 `[Pasted Text: 5120 chars]`、`[Pasted Text: 60 lines]`；正则照抄它自己的
+            //   PASTED_TEXT_PLACEHOLDER_REGEX（bundle/chunk-ASDLQWJU.js 47977 行，同名占位第二个起带 ` #2`）。
+            //   超过 5 行或 500 字的粘贴才折。图片占位没有实拍，按宽的认。
+            // - 超出可视高度不画任何标记：45 行草稿只画最后 10 行。输入框视口固定 10 行
+            //   （bundle/interactiveCli-ZJ2ZELJM.js 33636 行 `viewport: { height: 10, … }`）。
+            // - 120 列时一行正文最多 114 格（正文从第 3 列起，右边留 3 格），按词折行；续行缩进 3 格。
+            fidelity: Some(crate::chat_ui::ComposerFidelity {
+                paste_pattern: r"\[Pasted Text: \d+ (?:lines|chars)(?: #\d+)?\]|\[[Ii]mage[^\]\r\n]*\]",
+                overflow_pattern: None,
+                overflow_rows: Some(10),
+                wrap_edge: crate::chat_ui::ComposerWrapEdge::Terminal,
+                wrap_inset: 3,
+            }),
         })
     }
     fn queue_input(&self) -> Option<&'static str> {

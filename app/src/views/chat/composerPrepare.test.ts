@@ -11,7 +11,7 @@ import { prepareComposer, readComposerFrame, type ComposerSpec } from "./compose
 import { ComposerBlocked, composerBlockNotice, tidyComposer } from "./nativeDraft";
 import { zh } from "../../i18n/zh";
 
-type Sample = { name: string; lines: string[]; cursor?: { row: number; col: number; visible: boolean; dim: boolean } };
+type Sample = { name: string; lines: string[]; cols?: number; cursor?: { row: number; col: number; visible: boolean; dim: boolean } };
 const sample = (name: string): TerminalScreenFrameDto => {
   const frame = (composerFrames.frames as Sample[]).find((entry) => entry.name === name);
   if (!frame) throw new Error(`没有这一帧：${name}`);
@@ -21,6 +21,7 @@ const sample = (name: string): TerminalScreenFrameDto => {
     cursorCol: frame.cursor?.col ?? 0,
     cursorVisible: frame.cursor?.visible ?? false,
     cursorDim: frame.cursor?.dim ?? false,
+    cols: frame.cols,
   };
 };
 const spec = (provider: string): ComposerSpec => chatUi(provider)!.composer!;

@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { readComposer, type ComposerSpec } from "./composer";
+import { readComposer, type ComposerDraft, type ComposerSpec } from "./composer";
 import sharedFrames from "../../test/fixtures/composer-frames.json";
 
 // 这里的规格只测认框，操作类字段（暂存、清空、特殊模式）取空值。
-const OPS = { send_requires_recognition: true, stash: null, clear_inputs: [], clear_rounds: 1, clear_while_running: false, alt_modes: [] } satisfies Partial<ComposerSpec>;
+const OPS = { send_requires_recognition: true, stash: null, clear_inputs: [], clear_rounds: 1, clear_while_running: false, alt_modes: [], fidelity: null } satisfies Partial<ComposerSpec>;
 const state = (screen: readonly string[] | null, spec: ComposerSpec | null | undefined) => readComposer(screen, spec).state;
 // 2026-11-12 无模型 PTY 物理行实拍：target/lead-provider-probes/composer/runs/{kimi-24600,opencode-83332}。
 // 仅裁输入框，保留实拍字符与空格，覆盖多行、中间光标与折叠粘贴。
@@ -158,19 +158,22 @@ it("Codex 最下方的快捷键提示不是模型 footer", () => expect(readComp
 
 // 做空 N2：与宿主 meowo_agent::composer::read 读同一份实拍帧与规格（Rust 测试另核对规格与插件声明一致），
 // 两边对每一帧必须给出同样的结论。Gemini 0.68 的输入框边框是 ▄/▀ 半块字符。
-type SharedFrame = { name: string; provider: string; lines: string[]; expect: string; text?: string; cursor?: { row: number; col: number; visible: boolean; dim: boolean } };
+// 带 draft 的帧还要对草稿保真的结论（读全的原文逐字相等，读不全的原因一致）；rawOnly 的帧去掉行尾空格后
+// 本来就认不出（Gemini 草稿里的空行是一串空格），只按原样判。
+type SharedFrame = { name: string; provider: string; lines: string[]; expect: string; text?: string; cols?: number; rawOnly?: boolean; draft?: ComposerDraft; cursor?: { row: number; col: number; visible: boolean; dim: boolean } };
 describe("前后端输入框判定一致", () => {
   const specs = sharedFrames.specs as unknown as Record<string, ComposerSpec>;
   const verdict = (frame: SharedFrame, lines: string[]) => {
-    const read = readComposer(lines, specs[frame.provider], frame.cursor ?? null);
-    return { verdict: read.altMode ? `alt:${read.altMode.id}` : read.state, text: read.text };
+    const read = readComposer(lines, specs[frame.provider], frame.cursor ?? null, frame.cols);
+    return { verdict: read.altMode ? `alt:${read.altMode.id}` : read.state, text: read.text, draft: read.draft };
   };
   for (const frame of sharedFrames.frames as SharedFrame[]) {
     it(frame.name, () => {
-      for (const lines of [frame.lines, frame.lines.map((line) => line.trimEnd())]) {
+      for (const lines of frame.rawOnly ? [frame.lines] : [frame.lines, frame.lines.map((line) => line.trimEnd())]) {
         const got = verdict(frame, lines);
         expect(got.verdict).toBe(frame.expect);
         if (frame.text !== undefined) expect(got.text).toBe(frame.text);
+        if (frame.draft !== undefined) expect(got.draft).toEqual(frame.draft);
       }
     });
   }

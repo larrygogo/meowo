@@ -437,6 +437,10 @@ describe("ChatWindow", () => {
     await waitFor(() => expect(composer.value).toBe("修一下登录页"), { timeout: 8_000 });
     expect(screen.queryByText("修一下登录页", { selector: ".chat-user-text, .chat-user-text *" })).toBeNull();
     expect(document.querySelector(".chat-send-error")?.textContent ?? "").toContain("boom");
+    // 做空⑧：这次失败要进运行日志（此前只有错误条），而且日志里没有那句话。
+    const logged = invoke.mock.calls.filter(([command]) => command === "diag_log").map(([, args]) => (args as { message: string }).message);
+    expect(logged.some((line) => line.includes("kind=send_failed") && line.includes("reason=first_prompt_failed"))).toBe(true);
+    for (const line of logged) expect(line).not.toContain("修一下登录页");
   }, 15_000);
 
   /// 做空复现过的几种时序:认领发生在写入途中、等就绪时又发一句、启动中切走再回来、

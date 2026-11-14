@@ -432,6 +432,48 @@ pub struct SideQuestion {
     pub close_input: &'static str,
 }
 
+/// 输入框的内容区右边界从哪条边往里数（见 [`ComposerFidelity::wrap_inset`]）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+pub enum ComposerWrapEdge {
+    /// 输入框底边那一行的右端（有框的 TUI：框不一定贴着终端右沿）。
+    Border,
+    /// 终端右沿（没有框，或框与终端同宽）。读屏的帧里不带终端列数时无法判定，按读不全处理。
+    Terminal,
+}
+
+/// 草稿能不能从屏幕上**原样**读回来的判定依据，每家一份，全部来自真机取证
+/// （tests/probe_draft_fidelity.rs，2026-11-14，120×40）。
+///
+/// 为什么要有：对话页发送前把终端里的草稿清掉、搬进对话页输入框。屏幕只是 CLI 画出来的样子，
+/// 有三种情况屏幕上的字不等于草稿原文，清掉就是丢内容（做空①）：
+/// - 大段粘贴被 CLI 折成一个占位（`[Pasted Content 5120 chars]`），原文不在屏幕上；
+/// - 草稿比输入框的可视高度长，只画出最后几行；
+/// - 一行太长被框宽折成几行，屏幕上分不出这是折行还是用户敲的换行。
+///
+/// 口径是「保不住就不清」：命中任何一条都判读不全，Meowo 一个键也不按，草稿留在终端里，对话页
+/// 给出由人选择的出路。五家实拍里终端仿真层的折行标记（vt100 `row_wrapped`）在输入框的行上都是
+/// false：TUI 逐行定位重画，不靠终端自动折行。所以折行只能按宽度推断，推断不出就算读不全。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+pub struct ComposerFidelity {
+    /// 粘贴或图片占位：草稿任一行里出现就判读不全。宁可认宽（用户手打了一段同样的字也算）。
+    pub paste_pattern: &'static str,
+    /// 「上面 / 下面还有没显示的行」的标记：在输入框上边框到底边之间任一整行上匹配。
+    /// None = 这一家超出可视高度时不画标记，靠 `overflow_rows`。
+    pub overflow_pattern: Option<&'static str>,
+    /// 不画标记的家：屏幕上的草稿行数达到这个数，就可能还有没显示的行，判读不全。取这一家
+    /// 输入框可视高度的下限（恰好这么多行的草稿会被多判，方向是保守）。
+    pub overflow_rows: Option<usize>,
+    pub wrap_edge: ComposerWrapEdge,
+    /// 内容区右边界 = `wrap_edge` 那条边的列数 − 这个数。只能取大不能取小：取小了会把折行
+    /// 误认成换行。
+    pub wrap_inset: usize,
+}
+
 /// 终端输入框的规格：**每家只有这一份**，认框、判空、收草稿、清原文、退出特殊输入模式全用它。
 ///
 /// 此前有三份各认各的（草稿暂存用的只有 claude、撤回清原文用的只有 claude 与 opencode、
@@ -478,6 +520,9 @@ pub struct ComposerSpec {
     pub clear_while_running: bool,
     /// 特殊输入模式（见 [`ComposerAltMode`]）。
     pub alt_modes: &'static [ComposerAltMode],
+    /// 草稿能不能原样读回的判定依据（见 [`ComposerFidelity`]）。None = 没有取证，任何草稿都按
+    /// 读不全处理（不清）。
+    pub fidelity: Option<ComposerFidelity>,
 }
 
 /// 子代理视图（claude 在提示框下方的子代理面板里「打开」某个子代理）：此时 composer 改发给

@@ -11,6 +11,19 @@ const TRUST_TABLE: &str =
     "通用信任表（chat_ui.rs）里的句子，给有信任页的 CLI 用；kimi 2.5.1 程序文件里 0 处，不搜";
 
 pub(super) static DEPS: &[D] = &[
+    // ── 输入框规格（composer）──
+    D::new(
+        "composer.paste",
+        "[paste #",
+        " \u{2502} > [paste #1 +60 lines]                                                    \u{2502}",
+        "2.6.1 真机 2026-11-14（tests/probe_draft_fidelity.rs）：粘贴 60 行后输入框里只剩这个占位，5120 字单行是 `[paste #1 5120 chars]`；kimi.exe 含模板 `[paste #${pasteId} +${n} lines]`",
+    ),
+    D::new(
+        "composer.overflow",
+        "",
+        " \u{256d}\u{2500}\u{2500}\u{2500}\u{2500} \u{2191} 33 more \u{2500}\u{2500}\u{2500}\u{2500}\u{256e}",
+        "2.6.1 真机 2026-11-14（tests/probe_draft_fidelity.rs）：45 行草稿只画最后 12 行，上边框中间嵌 `↑ 33 more`。kimi.exe 里没搜到这段的原样模板（箭头、数字与 more 是运行时拼的），只做样例测试",
+    ),
     // ── 正则规则的样例 ──
     D::new(
         "effort.confirm",
