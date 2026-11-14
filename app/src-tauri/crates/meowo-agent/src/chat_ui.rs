@@ -254,8 +254,23 @@ pub enum OptionRole {
     DenyWithFeedback,
     /// 提问表单里的自定义答案项（同样要现场打字）。
     CustomAnswer,
+    /// 选了它 CLI 会退出、会话结束（启动确认页上的 `No, exit`）。卡片在按钮上写明后果。
+    Exit,
     /// 认不出作用的选项：卡片照终端原文列成普通按钮，不带数字快捷键，不冒充允许或拒绝。
     Other,
+}
+
+/// 这张选择卡在问什么。CLI 自己的确认页标题是英文原文，卡片的通用标题只说「终端正在等待你的选择」；
+/// 插件为认得的页面给一个主题，卡片据此用一句人话说清这是什么事（文案在前端 i18n）。原文照常摆在卡内。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+pub enum AttentionNotice {
+    /// 以跳过全部审批的权限档启动时，CLI 要用户确认承担后果。
+    BypassPermissions,
+    /// 环境里有一个自定义 API 密钥，CLI 问要不要用它。
+    CustomApiKey,
 }
 
 /// 持久放行记到哪里为止。按钮上的说法由它决定（本会话内允许 / 允许并记住 / 允许并切到自动模式）。
@@ -358,6 +373,8 @@ pub struct AttentionPattern {
     /// 选项行还没画出来、或滚出了屏幕时仍然成立的按键（见 [`RoleKey`]）。空 = 认不出选项就不猜按键，
     /// 卡上只有「仅收起」。
     pub unparsed_keys: &'static [RoleKey],
+    /// 这张卡在问什么（见 [`AttentionNotice`]）。None = 卡片只用种类的通用标题。
+    pub notice: Option<AttentionNotice>,
 }
 
 /// 屏幕回显标记：TUI 状态栏上代表某个模式值的稳定文案片段（如 claude 的 "plan mode on"）。

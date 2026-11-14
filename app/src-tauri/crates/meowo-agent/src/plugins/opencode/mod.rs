@@ -380,6 +380,7 @@ impl AgentPlugin for Opencode {
                         input: "\x1b",
                     },
                 ],
+                notice: None,
             },
             crate::chat_ui::AttentionPattern {
                 id: "opencode:always-allow-confirm",
@@ -390,6 +391,7 @@ impl AgentPlugin for Opencode {
                 confirms: Some("opencode:command-approval"),
                 options: &[],
                 unparsed_keys: &[],
+                notice: None,
             },
         ]
     }

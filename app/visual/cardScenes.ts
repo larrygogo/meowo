@@ -12,7 +12,11 @@ import {
   OPENCODE_ALWAYS_CONFIRM_SCREEN,
   OPENCODE_PERMISSION_SCREEN,
 } from "../src/test/requestSamples";
+import startupFrames from "../src/test/fixtures/startup-frames.json";
 import { CHAT_SESSION_ID, questionInput } from "./fixtures";
+
+/// Claude 启动确认页的真机屏幕（隔离配置目录抓的，见样本文件的 note）。
+const startupScreen = (name: "bypass-permissions" | "custom-api-key") => startupFrames.frames[name].screen.join("\n");
 
 type Lang = "zh" | "en";
 type Scene = {
@@ -116,6 +120,48 @@ export const CARD_SCENES: Record<string, Scene> = {
   "claude-plan": { provider: "claude", running: true, screen: [
     "Claude has written up a plan and is ready to execute. Would you like to proceed?", "",
     "❯ 1. Yes, and bypass permissions", "  2. Yes, manually approve edits", "  3. Tell Claude what to change",
+  ].join("\n") },
+  // ── 做空修复与验收 27 补的场景 ──
+  // 多选项审批卡：gemini 改文件的确认框，多一项认不出角色的「其他选项」和一项写进设置的放行。
+  "gemini-editor": { provider: "gemini", running: true, screen: [
+    "╭──────────────────────────────────────────────────╮",
+    "│ ? Edit  src/components/LoginForm.tsx             │",
+    "│ Apply this change?                               │",
+    "│                                                  │",
+    "│ ● 1. Allow once                                  │",
+    "│   2. Allow for this session                      │",
+    "│   3. Allow for this file in all future sessions  │",
+    "│   4. Modify with external editor                 │",
+    "│   5. No, suggest changes (esc)                   │",
+    "╰──────────────────────────────────────────────────╯",
+  ].join("\n") },
+  // gemini 高负载框（三项）。
+  "gemini-demand": { provider: "gemini", running: true, screen: [
+    "╭──────────────────────────────────────────────────────────╮",
+    "│ We are currently experiencing high demand for gemini-3.8-pro. │",
+    "│ We apologize and appreciate your patience.               │",
+    "│ /model to switch models.                                 │",
+    "│                                                          │",
+    "│ ● 1. Keep trying                                         │",
+    "│   2. Switch to gemini-3.8-flash                          │",
+    "│   3. Stop                                                │",
+    "╰──────────────────────────────────────────────────────────╯",
+  ].join("\n") },
+  // kimi 单选提问：末尾的 Other 是自定义答案输入框。
+  "kimi-form-single": { provider: "kimi", running: true, screen: kimiForm(
+    "   Q1    Submit",
+    "  ? 登录页的表单校验用哪个库？",
+    "   → [1] Zod",
+    "     [2] Yup",
+    "     [3] Other",
+    "   ↑↓ select  1-3 / ↵ choose  ←/→/tab switch  esc cancel",
+  ) },
+  // claude 启动确认页：以「都不问」档启动的确认、自定义 API 密钥确认。
+  "claude-bypass": { provider: "claude", screen: startupScreen("bypass-permissions") },
+  "claude-apikey": { provider: "claude", screen: startupScreen("custom-api-key") },
+  // claude 切模型时 hook 要求确认的框（不代按，交给用户）。
+  "claude-switch-hook": { provider: "claude", screen: [
+    "   Switch model?", "   A PreModelSwitch hook asked you to confirm", "   ❯ 1. Yes, switch to Haiku 5.5", "     2. No, go back",
   ].join("\n") },
   "codex-trust": { provider: "codex", screen: "Do you trust the contents of this directory?\n\n  C:\\dev\\web-app\n\n> 1. Yes, continue\n  2. No, quit" },
 };

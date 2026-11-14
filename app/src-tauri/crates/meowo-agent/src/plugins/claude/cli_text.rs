@@ -96,6 +96,24 @@ pub(super) static DEPS: &[D] = &[
         "2.1.325 程序文件：与 `Switch model?` 相邻的字面量；没有真机画面（要触发得给用户配 hook）",
     ),
     D::new(
+        "attention:claude:bypass-permissions-confirm",
+        "WARNING: Claude Code running in Bypass Permissions mode",
+        "  WARNING: Claude Code running in Bypass Permissions mode",
+        "2.1.325 真机屏幕 2026-11-15（隔离配置目录，probe_tui_script）；用户切账号后的实拍同文",
+    ),
+    D::new(
+        "option:claude:bypass-permissions-confirm#0",
+        "No, exit",
+        "No, exit",
+        "2.1.325 真机屏幕 2026-11-15：确认页的第一项，回车后 CLI 退出",
+    ),
+    D::new(
+        "attention:claude:custom-api-key-confirm",
+        "Detected a custom API key in your environment",
+        "  Detected a custom API key in your environment",
+        "2.1.325 真机屏幕 2026-11-15（隔离配置目录加假密钥，probe_tui_script）",
+    ),
+    D::new(
         "attention:claude:switch-confirm",
         "Switch model?",
         "   Switch model?",

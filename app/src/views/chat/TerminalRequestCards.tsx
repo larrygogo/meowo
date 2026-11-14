@@ -108,6 +108,10 @@ export function TerminalPromptCard({ attention, live, returnFocusTo, onChoose, o
   const kind = cardKindOfAttention(attention.kind);
   const options = attention.options ?? [];
   const context = promptContext(attention, kind);
+  // 插件认得这张确认页时给了主题：用一句人话说清在问什么（通用标题只说了「终端正在等待你的选择」）。
+  const notice = attention.notice ? t.chat.promptNotice[attention.notice] : "";
+  // 第一项通常是 CLI 的默认项，标成推荐；但会让 CLI 退出的那一项不标（启动确认页的默认项就是它）。
+  const recommended = options.findIndex((option) => option.role !== "exit");
   return (
     <ApprovalCard
       returnFocusTo={returnFocusTo}
@@ -123,11 +127,13 @@ export function TerminalPromptCard({ attention, live, returnFocusTo, onChoose, o
     >
       {!live && <span>{t.chat.questionExternalHint}</span>}
       {options.length === 0 && <span>{t.chat.terminalPromptHelp}</span>}
+      {notice && <span>{notice}</span>}
       {context && <pre>{context}</pre>}
       {options.length > 0 && <div className="chat-approval-options">
         {options.map((option, index) => (
-          <button type="button" disabled={!live} className={index === 0 ? "is-recommended" : ""} key={`${index}:${option.label}`} onClick={() => onChoose(option)}>
-            <span><b>{option.label}</b></span>
+          <button type="button" disabled={!live} className={index === recommended && recommended === 0 ? "is-recommended" : ""} key={`${index}:${option.label}`} onClick={() => onChoose(option)}>
+            {/* 选了会让 CLI 退出的那一项：后果写在按钮上（与选项说明同一个位置、同一种小字）。 */}
+            <span><b>{option.label}</b>{option.role === "exit" && <small>{t.chat.optionExitsSession}</small>}</span>
           </button>
         ))}
       </div>}

@@ -29,7 +29,7 @@ import { reduceChatEvents } from "../chat/reducer";
 import { ApprovalCard } from "./chat/ApprovalCard";
 import { ApprovalRequestCard } from "./chat/ApprovalRequestCard";
 import { TerminalPromptCard, TerminalQuestionCard } from "./chat/TerminalRequestCards";
-import { approvalCardModel, cardBadge, cardTitle, denyReasonOf, isPersistentChoice, terminalFeedbackFor, terminalInputForChoice, type ApprovalChoice } from "./chat/requestCard";
+import { approvalCardModel, cardBadge, cardTitle, denyReasonOf, isApprovalEndedNotice, isPersistentChoice, terminalFeedbackFor, terminalInputForChoice, type ApprovalChoice } from "./chat/requestCard";
 import { typeAnswerIntoTerminal } from "./chat/terminalTypedAnswer";
 import { holdSwitchDialog } from "./chat/switchConfirm";
 import { cardLockHint, composerCardLock, lockForPendingReview, lockForScreenCard, screenCardLockKind } from "./chat/composerCardLock";
@@ -471,6 +471,8 @@ export function ChatWindow() {
   const finishSilentProbeRef = useRef<() => void>(() => {});
   /// 刚在屏幕审批卡上点了持久放行：CLI 若再弹二次确认页，由 revealTerminalAttention 替用户确认。
   const followUpRef = useRef<PendingFollowUp | null>(null);
+  /// 清掉「审批已在别处了结」的说明（只清这几句，别的错误不动）。每次渲染刷新，见下方定义处。
+  const clearEndedNoticeRef = useRef<() => void>(() => {});
   const revealTerminalAttention = useCallback((attention: TerminalAttention | null) => {
     // 屏幕不再匹配（提示已在终端里被处理掉）或换了一张新卡时，收起条一并作废。
     setDismissedAttention(null);
@@ -504,6 +506,8 @@ export function ChatWindow() {
       void writeManagedTerminal(activeSessionRef.current, followUp).catch(() => setTerminalAttention(attention));
       return;
     }
+    // 新的卡片来了：上一张审批卡「已在别处处理或已过期」的说明不再成立，清掉（它解释的是上一张卡去哪了）。
+    clearEndedNoticeRef.current();
     // 切模型、切思考档的命令刚发出：CLI 的二次确认框先不上屏，等切换流程决定代按还是交给用户（见 chat/switchConfirm）。
     if (holdSwitchDialog(activeSessionRef.current, attention, (held) => setTerminalAttention(held))) return;
     setTerminalAttention((current) => current?.id === attention.id
@@ -2308,6 +2312,25 @@ export function ChatWindow() {
     return () => { cancelled = true; un?.(); };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- 来自 useMainPages 的 useCallback([])，引用稳定
   }, [resetTo]);
+
+  // 会话的进程被就地换了一个（切账号把会话重启到新账号、Kimi 与 Gemini 重启续接切模型，都发 pty-restarted）：
+  // 上一个进程留下的东西作废。此前只有终端视图听这条事件，对话页不知道进程换了代：旧进程被杀时挂着的审批
+  // 留下一条「该审批已在别处处理或已过期」，一直挂在新进程的画面上（用户实拍 2026-11-15）；旧进程屏幕上认出的
+  // 卡与它的收起条同理。手机页收不到宿主事件，靠上面「新卡到来时清掉」那一条兜底。
+  clearEndedNoticeRef.current = () => setSendErrorText((current) => (isApprovalEndedNotice(current, tRef.current) ? "" : current));
+  useEffect(() => {
+    let un: (() => void) | undefined;
+    let cancelled = false;
+    listen<{ sessionId: number }>("pty-restarted", (event) => {
+      if (event.payload.sessionId !== activeSessionRef.current) return;
+      clearEndedNoticeRef.current();
+      setDismissedAttention(null);
+      setTerminalAttention(null);
+    }).then((fn) => {
+      if (cancelled) fn(); else un = fn;
+    }).catch(() => {});
+    return () => { cancelled = true; un?.(); };
+  }, []);
 
   // 题面的轮询兜底在 useApprovalChannel 的 pendingInteraction 合并轮询里（同一次 IPC
   // 取审批 + 题面）。兜底过期：识别一直没就绪、用户已在终端答完的情况下，别让展示卡挂一辈子。

@@ -1,0 +1,113 @@
+{
+  "note": "Claude 启动阶段全屏确认页的真机屏幕（2.1.325，2026-11-15）。用 tests/probe_tui_script.rs 在一次性的隔离配置目录里抓的：CLAUDE_CONFIG_DIR 指向临时目录、预置跳过首次引导与目录信任、ANTHROPIC_API_KEY 是一串假密钥、启动参数 --dangerously-skip-permissions；没有登录、没有调用模型、没有碰用户的账号目录。bypass 页与用户切账号后的实拍截图逐字一致。moved 是在 bypass 页按了一次下键之后的画面。",
+  "frames": {
+    "bypass-permissions": {
+      "provider": "claude",
+      "version": "2.1.325",
+      "rule": "claude:bypass-permissions-confirm",
+      "screen": [
+        "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+        "  WARNING: Claude Code running in Bypass Permissions mode",
+        "",
+        "  In Bypass Permissions mode, Claude Code will not ask for your approval before running potentially dangerous",
+        "  commands.",
+        "  This mode should only be used in a sandboxed container/VM that has restricted internet access and can easily be",
+        "  restored if damaged.",
+        "",
+        "  By proceeding, you accept all responsibility for actions taken while running in Bypass Permissions mode.",
+        "",
+        "  https://code.claude.com/docs/en/security",
+        "",
+        "  ❯ No, exit",
+        "    Yes, I accept",
+        "",
+        "  Enter to confirm · Esc to cancel"
+      ]
+    },
+    "bypass-permissions-moved": {
+      "provider": "claude",
+      "version": "2.1.325",
+      "rule": "claude:bypass-permissions-confirm",
+      "screen": [
+        "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+        "  WARNING: Claude Code running in Bypass Permissions mode",
+        "",
+        "  In Bypass Permissions mode, Claude Code will not ask for your approval before running potentially dangerous",
+        "  commands.",
+        "  This mode should only be used in a sandboxed container/VM that has restricted internet access and can easily be",
+        "  restored if damaged.",
+        "",
+        "  By proceeding, you accept all responsibility for actions taken while running in Bypass Permissions mode.",
+        "",
+        "  https://code.claude.com/docs/en/security",
+        "",
+        "    No, exit",
+        "  ❯ Yes, I accept",
+        "",
+        "  Enter to confirm · Esc to cancel"
+      ]
+    },
+    "custom-api-key": {
+      "provider": "claude",
+      "version": "2.1.325",
+      "rule": "claude:custom-api-key-confirm",
+      "screen": [
+        "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+        "  Detected a custom API key in your environment",
+        "",
+        "  ANTHROPIC_API_KEY: sk-ant-...00000000000-AAAAAAAA",
+        "",
+        "  Do you want to use this API key?",
+        "",
+        "    Yes",
+        "  ❯ No (recommended)",
+        "",
+        "  Enter to confirm · Esc to cancel"
+      ]
+    },
+    "first-run-theme": {
+      "provider": "claude",
+      "version": "2.1.325",
+      "rule": null,
+      "screen": [
+        "Welcome to Claude Code v2.1.325",
+        "..........................................................",
+        "",
+        "     *                                       █████▓▓░",
+        "                                 *         ███▓░     ░░",
+        "            ░░░░░░                        ███▓░",
+        "    ░░░   ░░░░░░░░░░                      ███▓░",
+        "   ░░░░░░░░░░░░░░░░░░░    *                ██▓░░      ▓",
+        "                                             ░▓▓███▓▓░",
+        " *                                 ░░░░",
+        "                                 ░░░░░░░░",
+        "                               ░░░░░░░░░░░░░░░░",
+        "       █████████                                        *",
+        "      ██▄█████▄██                        *",
+        "       █████████      *",
+        ".......█ █   █ █..........................................",
+        "",
+        " Let's get started.",
+        "",
+        " Choose the text style that looks best with your terminal",
+        " To change this later, run /theme",
+        "",
+        "     Auto (match terminal)",
+        " ❯ ✔ Dark mode",
+        "     Light mode",
+        "     Dark mode (colorblind-friendly)",
+        "     Light mode (colorblind-friendly)",
+        "     Dark mode (ANSI colors only)",
+        "     Light mode (ANSI colors only)",
+        "",
+        " ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌",
+        "  1  function greet() {",
+        "  2 -  console.log(\"Hello, World!\");",
+        "  2 +  console.log(\"Hello, Claude!\");",
+        "  3  }",
+        " ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌",
+        "  Syntax theme: Monokai Extended (ctrl+t to disable)"
+      ]
+    }
+  }
+}

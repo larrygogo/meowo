@@ -1,9 +1,10 @@
+import type { AttentionNotice } from "./generated/contracts/AttentionNotice";
 import type { AttentionOptionRule } from "./generated/contracts/AttentionOptionRule";
 import type { OptionRole } from "./generated/contracts/OptionRole";
 import type { PersistScope } from "./generated/contracts/PersistScope";
 import type { RoleKey } from "./generated/contracts/RoleKey";
 
-export type { OptionRole, PersistScope, RoleKey };
+export type { AttentionNotice, OptionRole, PersistScope, RoleKey };
 
 /** 把 PTY snapshot 的 base64 增量追加为 UTF-8 文本；损坏的一帧不打断启动流程。 */
 export function appendTerminalText(tail: string, data: string, decoder: TextDecoder): string {
@@ -67,6 +68,8 @@ export type TerminalAttention = {
   confirms?: string;
   /// 选项没认出来时仍然成立的按键（插件声明的 `unparsed_keys`，只有真机验证过的才有）。
   unparsedKeys?: RoleKey[];
+  /// 这张卡在问什么（插件声明的主题，后端 `AttentionNotice`）。卡片据此用一句人话说明。
+  notice?: AttentionNotice;
 };
 
 export function visibleTerminalText(text: string): string {
@@ -179,6 +182,7 @@ export type AttentionPattern = {
   /// 选项文案 → 角色（后端 `AttentionOptionRule`）。识别层只负责照着套，不认识任何一家的文案。
   options?: AttentionOptionRule[];
   unparsed_keys?: RoleKey[];
+  notice?: AttentionNotice | null;
 };
 
 /// 解析阶段的选项：多带一个 `move`，是「把焦点移到这一项、但不回车」的按键。
@@ -797,11 +801,11 @@ export function terminalAttention(
   // 插件规则命中的提示：选项按规则定角色；选项没认出来时带上规则声明的兜底按键。
   // 信任页、启动步骤这些不是插件规则命中的，选项不分角色，原样返回。
   const rule = best.rule;
-  const roled = (options: ParsedOption[] | undefined): Pick<TerminalAttention, "options" | "unparsedKeys"> => {
+  const roled = (options: ParsedOption[] | undefined): Pick<TerminalAttention, "options" | "unparsedKeys" | "notice"> => {
     if (!rule) return { options: options?.map(({ move: _move, ...option }) => option) };
     const assigned = options ? assignRoles(options, rule) : undefined;
     const unparsed = !assigned?.length && rule.unparsed_keys?.length ? { unparsedKeys: rule.unparsed_keys } : {};
-    return { options: assigned, ...unparsed };
+    return { options: assigned, ...unparsed, ...(rule.notice ? { notice: rule.notice } : {}) };
   };
   // 详情区文法风格由插件随 AttentionPattern 声明（此前按 pattern id 猜，是变相身份分支）。
   const detailsStyle: AttentionDetailsStyle = best.details ?? "none";

@@ -811,6 +811,13 @@ export const zh = {
     confirmPending: "待确认",
     cardExpired: vocab.request.expired,
     choiceTitle: "终端正在等待你的选择",
+    // 插件认得的确认页：一句话说清在问什么（键 = 后端 AttentionNotice）。原文照常摆在卡内。
+    promptNotice: {
+      bypass_permissions: "确认以「都不问」模式运行",
+      custom_api_key: "发现环境里的 API 密钥，要用它吗",
+    },
+    // 选了会让 CLI 退出的选项（启动确认页的 No, exit）：后果写在按钮上。
+    optionExitsSession: "选它会结束这个会话",
     questionTitle: "Agent 正在等待你的回答",
     questionPending: vocab.request.question,
     questionFormLoading: "点选答案，终端表单就绪后自动作答",

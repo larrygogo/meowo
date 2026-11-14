@@ -917,6 +917,7 @@ impl AgentPlugin for Claude {
                 confirms: None,
                 options: &[],
                 unparsed_keys: &[],
+                notice: None,
             },
             crate::chat_ui::AttentionPattern {
                 id: "claude:command-approval",
@@ -998,6 +999,54 @@ impl AgentPlugin for Claude {
                     },
                 ],
                 unparsed_keys: &[],
+                notice: None,
+            },
+            // 以「都不问」档（`--dangerously-skip-permissions`）启动、而这个账号目录还没接受过时的确认页。
+            // 2.1.325 真机（隔离配置目录加假密钥抓的，probe_tui_script，2026-11-15；与用户切账号后的实拍逐字一致）：
+            //   WARNING: Claude Code running in Bypass Permissions mode
+            //   In Bypass Permissions mode, Claude Code will not ask for your approval before running potentially dangerous commands.
+            //   …
+            //   ❯ No, exit
+            //     Yes, I accept
+            //   Enter to confirm · Esc to cancel
+            // 接受记在账号目录的 settings.json（`skipDangerousModePermissionPrompt`），所以切到一个新账号、
+            // 会话在新账号下以这一档重启时会再问一次。此前对话页不认识它，会话卡住而页面上没有任何提示
+            // （用户实拍 2026-11-15）。**不代按**：这是上游的安全确认，由用户自己点。
+            // 选项没有编号，焦点默认在 `No, exit`：下移一格再回车是接受（进了主界面），在 `No, exit` 上回车
+            // CLI 直接退出（同一次真机都走过）。
+            crate::chat_ui::AttentionPattern {
+                id: "claude:bypass-permissions-confirm",
+                patterns: &[r"^\s*WARNING: Claude Code running in Bypass Permissions mode\s*$"],
+                last: true,
+                details: crate::chat_ui::AttentionDetails::None,
+                kind: crate::chat_ui::AttentionKind::Choice,
+                confirms: None,
+                options: &[crate::chat_ui::AttentionOptionRule {
+                    pattern: r"^no, exit$",
+                    role: crate::chat_ui::OptionRole::Exit,
+                    scope: None,
+                    typed: None,
+                }],
+                unparsed_keys: &[],
+                notice: Some(crate::chat_ui::AttentionNotice::BypassPermissions),
+            },
+            // 环境里带着 ANTHROPIC_API_KEY、而这个账号目录没有对它表过态时的确认页（2.1.325 真机，同上）：
+            //   Detected a custom API key in your environment
+            //   ANTHROPIC_API_KEY: sk-ant-...
+            //   Do you want to use this API key?
+            //     Yes
+            //   ❯ No (recommended)
+            // 两项都不退出、也不是放行或拒绝，照原文列出。
+            crate::chat_ui::AttentionPattern {
+                id: "claude:custom-api-key-confirm",
+                patterns: &[r"^\s*Detected a custom API key in your environment\s*$"],
+                last: true,
+                details: crate::chat_ui::AttentionDetails::None,
+                kind: crate::chat_ui::AttentionKind::Choice,
+                confirms: None,
+                options: &[],
+                unparsed_keys: &[],
+                notice: Some(crate::chat_ui::AttentionNotice::CustomApiKey),
             },
             // `/model`、`/effort` 的二次确认框（形态见 chat_ui::SwitchConfirm）。Meowo 自己发起的切换、且是
             // 「切到刚选的那一个」时由对话页代按，不出卡；其余情况（hook 要求确认、焦点在取消项上、
@@ -1012,6 +1061,7 @@ impl AgentPlugin for Claude {
                 confirms: None,
                 options: &[],
                 unparsed_keys: &[],
+                notice: None,
             },
             crate::chat_ui::AttentionPattern {
                 id: "claude:plan-approval",
@@ -1033,6 +1083,7 @@ impl AgentPlugin for Claude {
                 confirms: None,
                 options: &[],
                 unparsed_keys: &[],
+                notice: None,
             },
         ]
     }

@@ -8,4 +8,4 @@
  * `Allow always / Reject` 两项时，「允许一次」发出去的是 Allow always（做空审查 2026-11-14）。
  * 现在由插件随规则声明（[`AttentionOptionRule`]），认不出的一律是 `Other`。
  */
-export type OptionRole = "allow_once" | "allow_persistent" | "deny" | "deny_with_feedback" | "custom_answer" | "other";
+export type OptionRole = "allow_once" | "allow_persistent" | "deny" | "deny_with_feedback" | "custom_answer" | "exit" | "other";

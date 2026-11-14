@@ -50,6 +50,12 @@ export function approvalEndedNotice(status: RuntimeRequest["status"] | undefined
   return t.chat.approvalClearedNotice;
 }
 
+/// 这条提示是不是「审批在卡片之外了结」的那几句说明之一。它解释的是上一张卡去哪了：
+/// 新的卡片到来、或会话的进程换了代之后就不再成立，调用方据此把它清掉。
+export function isApprovalEndedNotice(text: string, t: Dict): boolean {
+  return text !== "" && [t.chat.approvalExpiredNotice, t.chat.approvalCancelledNotice, t.chat.approvalClearedNotice].includes(text);
+}
+
 /// 标题：种类 → 唯一的一句话。
 export function cardTitle(kind: CardKind, t: Dict): string {
   switch (kind) {

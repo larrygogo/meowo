@@ -8,6 +8,7 @@
         "id": "claude:long-session-resume",
         "kind": "choice",
         "last": false,
+        "notice": null,
         "options": [],
         "patterns": [
           "this session is[^\\n]{0,120}\\bold and[^\\n]{0,80}\\btokens\\b",
@@ -21,6 +22,7 @@
         "id": "claude:command-approval",
         "kind": "approval",
         "last": true,
+        "notice": null,
         "options": [
           {
             "pattern": "^yes$",
@@ -84,9 +86,43 @@
       {
         "confirms": null,
         "details": "none",
+        "id": "claude:bypass-permissions-confirm",
+        "kind": "choice",
+        "last": true,
+        "notice": "bypass_permissions",
+        "options": [
+          {
+            "pattern": "^no, exit$",
+            "role": "exit",
+            "scope": null,
+            "typed": null
+          }
+        ],
+        "patterns": [
+          "^\\s*WARNING: Claude Code running in Bypass Permissions mode\\s*$"
+        ],
+        "unparsed_keys": []
+      },
+      {
+        "confirms": null,
+        "details": "none",
+        "id": "claude:custom-api-key-confirm",
+        "kind": "choice",
+        "last": true,
+        "notice": "custom_api_key",
+        "options": [],
+        "patterns": [
+          "^\\s*Detected a custom API key in your environment\\s*$"
+        ],
+        "unparsed_keys": []
+      },
+      {
+        "confirms": null,
+        "details": "none",
         "id": "claude:switch-confirm",
         "kind": "choice",
         "last": true,
+        "notice": null,
         "options": [],
         "patterns": [
           "^\\s*(?:switch model|change effort level)\\?\\s*$"
@@ -99,6 +135,7 @@
         "id": "claude:plan-approval",
         "kind": "plan",
         "last": true,
+        "notice": null,
         "options": [],
         "patterns": [
           "written\\s+up\\s+a\\s+plan\\s+and\\s+is\\s+ready\\s+to\\s+execute"
@@ -114,6 +151,7 @@
         "id": "gemini:command-approval",
         "kind": "approval",
         "last": true,
+        "notice": null,
         "options": [
           {
             "pattern": "^allow once$",
@@ -159,6 +197,7 @@
         "id": "gemini:usage-limit",
         "kind": "choice",
         "last": true,
+        "notice": null,
         "options": [],
         "patterns": [
           "^\\s*│\\s*usage limit reached\\b",
@@ -172,6 +211,7 @@
         "id": "gemini:question",
         "kind": "question",
         "last": true,
+        "notice": null,
         "options": [],
         "patterns": [
           "^\\s*│\\s*answer questions\\b"
@@ -186,6 +226,7 @@
         "id": "kimi:question",
         "kind": "question",
         "last": true,
+        "notice": null,
         "options": [
           {
             "pattern": "^other$",
@@ -209,6 +250,7 @@
         "id": "kimi:command-approval",
         "kind": "approval",
         "last": true,
+        "notice": null,
         "options": [
           {
             "pattern": "^approve(?: once)?$",
@@ -253,6 +295,7 @@
         "id": "opencode:command-approval",
         "kind": "approval",
         "last": true,
+        "notice": null,
         "options": [
           {
             "pattern": "^allow once$",
@@ -293,6 +336,7 @@
         "id": "opencode:always-allow-confirm",
         "kind": "choice",
         "last": true,
+        "notice": null,
         "options": [],
         "patterns": [
           "△ always allow"

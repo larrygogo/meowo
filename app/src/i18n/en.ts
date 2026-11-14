@@ -712,6 +712,11 @@ export const en: Dict = {
     confirmPending: "Awaiting confirmation",
     cardExpired: vocab.request.expired,
     choiceTitle: "The terminal needs your choice",
+    promptNotice: {
+      bypass_permissions: "Confirm running without approvals",
+      custom_api_key: "Use the API key found in your environment?",
+    },
+    optionExitsSession: "This ends the session",
     questionTitle: "Agent is waiting for your answer",
     questionPending: vocab.request.question,
     questionFormLoading: "Pick an answer; it will be applied once the terminal form is ready",

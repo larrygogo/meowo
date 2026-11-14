@@ -506,6 +506,7 @@ impl AgentPlugin for Gemini {
                         input: "\x1b",
                     },
                 ],
+                notice: None,
             },
             crate::chat_ui::AttentionPattern {
                 id: "gemini:usage-limit",
@@ -520,6 +521,7 @@ impl AgentPlugin for Gemini {
                 confirms: None,
                 options: &[],
                 unparsed_keys: &[],
+                notice: None,
             },
             crate::chat_ui::AttentionPattern {
                 id: "gemini:question",
@@ -531,6 +533,7 @@ impl AgentPlugin for Gemini {
                 confirms: None,
                 options: &[],
                 unparsed_keys: &[],
+                notice: None,
             },
         ]
     }
