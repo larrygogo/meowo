@@ -156,6 +156,7 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     "managed_terminal_snapshot",
     "managed_terminal_grid",
     "managed_terminal_screen",
+    "managed_terminal_frame",
     "managed_terminal_binding",
     "managed_terminal_pending_launch",
     "write_managed_terminal",
@@ -182,6 +183,16 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     "agent_chat_ui",
     "agent_models",
     "agent_model_catalog",
+    // 会话设置（任务 20261114-tui-model-switch）：读 CLI 配置的默认值、列自定义 agent、切模型/模式。
+    // 切换的值只认插件清单里的 id，宿主不把用户输入拼进 argv；运行中/有审批时前端不调。
+    "agent_launch_defaults",
+    "agent_dynamic_mode_choices",
+    "apply_session_settings",
+    "session_live_settings",
+    "record_session_settings",
+    "queue_session_settings",
+    "queued_session_settings",
+    "take_queued_session_settings",
     "new_session",
     // 分叉会话（2026-11-04 用户决定放行）：与 new_session 同级——在原会话目录起一个新的托管
     // 会话，参数只有会话 id 和终端尺寸，不给路径、不给 argv。
@@ -218,6 +229,7 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     // Lead 工作流（模块头「例外（2026-11-09）」）
     "lead_task_snapshot",
     "answer_lead_gate",
+    "retry_lead_gate_delivery",
     // 只读杂项
     "get_settings",
     "host_os",
@@ -837,7 +849,11 @@ use meowo_protocol::bridge::*;
 
 /// git 命令的目录收口（单文件 diff 与写操作共用）：带 sessionCwd 时，它必须是会话目录、cwd 必须是
 /// 它的相关仓库；不带就是老规矩，cwd 本身得是会话目录。
-async fn ensure_git_repo_dir(app: &tauri::AppHandle, cwd: &str, session_cwd: Option<&str>) -> Result<(), String> {
+async fn ensure_git_repo_dir(
+    app: &tauri::AppHandle,
+    cwd: &str,
+    session_cwd: Option<&str>,
+) -> Result<(), String> {
     match session_cwd {
         Some(session_cwd) => {
             ensure_session_dir(app, session_cwd).await?;
@@ -984,12 +1000,22 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
             }
             reply(crate::lead::lead_task_snapshot(a.cwd, a.session).await)
         }
+        "retry_lead_gate_delivery" => {
+            let a = args!(RetryLeadGateDeliveryArgs);
+            if let Err(e) = ensure_session_dir(app, &a.cwd).await {
+                return reply::<()>(Err(e));
+            }
+            reply(crate::lead::retry_lead_gate_delivery(app.clone(), a.cwd, a.gate_id).await)
+        }
         "answer_lead_gate" => {
             let a = args!(AnswerLeadGateArgs);
             if let Err(e) = ensure_session_dir(app, &a.cwd).await {
                 return reply::<()>(Err(e));
             }
-            reply(crate::lead::answer_lead_gate(app.clone(), a.cwd, a.gate_id, a.choice, a.note).await)
+            reply(
+                crate::lead::answer_lead_gate(app.clone(), a.cwd, a.gate_id, a.choice, a.note)
+                    .await,
+            )
         }
         "file_mention_candidates" => {
             let a = args!(FileMentionCandidatesArgs);
@@ -1000,7 +1026,10 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
         }
         "fork_session" => {
             let a = args!(ForkSessionArgs);
-            reply(crate::terminal::fork_session(app.clone(), state, a.session_id, a.cols, a.rows).await)
+            reply(
+                crate::terminal::fork_session(app.clone(), state, a.session_id, a.cols, a.rows)
+                    .await,
+            )
         }
         "git_changes_overview" => {
             let a = args!(GitChangesOverviewArgs);
@@ -1016,14 +1045,23 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
                 let touched: Vec<String> = a
                     .touched
                     .into_iter()
-                    .filter(|path| related.iter().any(|root| crate::git::path_under(path, root)))
+                    .filter(|path| {
+                        related
+                            .iter()
+                            .any(|root| crate::git::path_under(path, root))
+                    })
                     .collect();
-                crate::git::changes_overview_detail(&cwd, &touched, &commands, detail.as_deref()).map(|repos| {
-                    repos
-                        .into_iter()
-                        .filter(|repo| related.iter().any(|root| crate::git::same_root(root, &repo.root)))
-                        .collect::<Vec<_>>()
-                })
+                crate::git::changes_overview_detail(&cwd, &touched, &commands, detail.as_deref())
+                    .map(|repos| {
+                        repos
+                            .into_iter()
+                            .filter(|repo| {
+                                related
+                                    .iter()
+                                    .any(|root| crate::git::same_root(root, &repo.root))
+                            })
+                            .collect::<Vec<_>>()
+                    })
             })
             .await
             .map_err(|e| e.to_string());
@@ -1045,7 +1083,8 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
                     let (cwd, base, path) = (a.cwd.clone(), base.clone(), a.path.clone());
                     tauri::async_runtime::spawn_blocking(move || {
                         crate::git::repo_changes(&cwd, false).is_some_and(|repo| {
-                            repo.base.as_deref() == Some(base.as_str()) && repo.committed.iter().any(|f| f.path == path)
+                            repo.base.as_deref() == Some(base.as_str())
+                                && repo.committed.iter().any(|f| f.path == path)
                         })
                     })
                     .await
@@ -1053,11 +1092,15 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
                 }
                 None => match crate::git::git_diff_summary(a.cwd.clone()).await {
                     // 折叠目录里的文件不在摘要里（摘要只给一条 `dir/`），点开后看 diff 的要再问一次清单。
-                    Ok(summary) if !changed_file_listed(&summary, &a.path, a.untracked) && a.untracked => {
+                    Ok(summary)
+                        if !changed_file_listed(&summary, &a.path, a.untracked) && a.untracked =>
+                    {
                         let (cwd, path) = (a.cwd.clone(), a.path.clone());
-                        tauri::async_runtime::spawn_blocking(move || crate::git::untracked_file_listed(&cwd, &path))
-                            .await
-                            .unwrap_or(false)
+                        tauri::async_runtime::spawn_blocking(move || {
+                            crate::git::untracked_file_listed(&cwd, &path)
+                        })
+                        .await
+                        .unwrap_or(false)
                     }
                     Ok(summary) => changed_file_listed(&summary, &a.path, a.untracked),
                     Err(e) => return reply::<()>(Err(e)),
@@ -1204,7 +1247,9 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
         "list_cleanable_worktrees" => reply(crate::worktree::list_cleanable_worktrees(state).await),
         "worktree_preview" => {
             let a = args!(WorktreePreviewArgs);
-            reply(crate::wtnew::worktree_preview(a.repo_cwd, a.slug, a.branch, a.fallback_slug).await)
+            reply(
+                crate::wtnew::worktree_preview(a.repo_cwd, a.slug, a.branch, a.fallback_slug).await,
+            )
         }
         "worktree_create" => {
             let a = args!(WorktreeCreateArgs);
@@ -1258,6 +1303,10 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
         "managed_terminal_grid" => {
             let a = args!(SessionArg);
             reply(crate::managed_terminal::managed_terminal_grid(state, a.session_id).await)
+        }
+        "managed_terminal_frame" => {
+            let a = args!(SessionArg);
+            reply(crate::managed_terminal::managed_terminal_frame(state, a.session_id).await)
         }
         "managed_terminal_screen" => {
             let a = args!(SessionArg);
@@ -1418,7 +1467,51 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
         }
         "agent_model_catalog" => {
             let a = args!(AgentModelCatalogArgs);
-            reply_ok(crate::agent_model_catalog(a.provider, a.session_id).await)
+            reply_ok(crate::agent_model_catalog(app.clone(), a.provider, a.session_id).await)
+        }
+        "record_session_settings" => {
+            let a = args!(RecordSessionSettingsArgs);
+            reply(crate::session_settings::record_session_settings(app.clone(), state, a.session_id, a.model, a.modes).await)
+        }
+        "queue_session_settings" => {
+            let a = args!(QueueSessionSettingsArgs);
+            reply_ok(crate::session_settings::queue_session_settings(app.clone(), a.session_id, a.request))
+        }
+        "queued_session_settings" => {
+            let a = args!(SessionArg);
+            reply_ok(crate::session_settings::queued_session_settings(a.session_id))
+        }
+        "take_queued_session_settings" => {
+            let a = args!(SessionArg);
+            reply_ok(crate::session_settings::take_queued_session_settings(a.session_id))
+        }
+        "session_live_settings" => {
+            let a = args!(SessionArg);
+            reply(crate::session_settings::session_live_settings(app.clone(), state, a.session_id).await)
+        }
+        "agent_launch_defaults" => {
+            let a = args!(AgentLaunchDefaultsArgs);
+            reply_ok(crate::session_settings::agent_launch_defaults(a.provider, a.cwd).await)
+        }
+        "agent_dynamic_mode_choices" => {
+            let a = args!(AgentDynamicModeChoicesArgs);
+            reply_ok(crate::session_settings::agent_dynamic_mode_choices(a.provider, a.cwd).await)
+        }
+        "apply_session_settings" => {
+            let a = args!(ApplySessionSettingsArgs);
+            reply(
+                crate::session_settings::apply_session_settings(
+                    app.clone(),
+                    state,
+                    a.session_id,
+                    a.model,
+                    a.effort,
+                    a.modes,
+                    a.current,
+                    a.tui,
+                )
+                .await,
+            )
         }
         "new_session" => {
             let a = args!(NewSessionArgs);
@@ -2081,24 +2174,57 @@ mod tests {
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         let git = |dir: &std::path::Path, args: &[&str]| {
-            let out = std::process::Command::new("git").arg("-C").arg(dir).args(args).output().unwrap();
-            assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+            let out = std::process::Command::new("git")
+                .arg("-C")
+                .arg(dir)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
         };
         let init = |name: &str| {
             let dir = root.join(name);
             std::fs::create_dir_all(&dir).unwrap();
             git(&dir, &["init", "-q", "-b", "main"]);
-            git(&dir, &["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "init"]);
+            git(
+                &dir,
+                &[
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@t",
+                    "-c",
+                    "commit.gpgsign=false",
+                    "commit",
+                    "-q",
+                    "--allow-empty",
+                    "-m",
+                    "init",
+                ],
+            );
             dir
         };
         let main = init("main");
         let other = init("other");
         let wt = root.join("main-wt");
-        git(&main, &["worktree", "add", "-q", "-b", "feat", wt.to_str().unwrap()]);
+        git(
+            &main,
+            &["worktree", "add", "-q", "-b", "feat", wt.to_str().unwrap()],
+        );
         let s = |p: &std::path::Path| p.to_string_lossy().replace('\\', "/");
         assert!(related_repo_gate(&s(&main), &s(&wt)).is_ok());
-        assert_eq!(related_repo_gate(&s(&main), &s(&other)).unwrap_err(), "remote/not_session_dir");
-        assert_eq!(related_repo_gate(&s(&main), &s(&root)).unwrap_err(), "remote/not_session_dir");
+        assert_eq!(
+            related_repo_gate(&s(&main), &s(&other)).unwrap_err(),
+            "remote/not_session_dir"
+        );
+        assert_eq!(
+            related_repo_gate(&s(&main), &s(&root)).unwrap_err(),
+            "remote/not_session_dir"
+        );
         // 老手机页不带 commands 也照样能解析。
         assert!(parse::<GitChangesOverviewArgs>(br#"{"cwd":"C:/w","touched":[]}"#).is_ok());
         assert!(parse::<GitPathsArgs>(br#"{"cwd":"C:/w","paths":[],"force":true}"#).is_err());
@@ -2215,7 +2341,9 @@ mod tests {
         let arms = dispatch_arm_arg_types();
         let mut problems = Vec::new();
         for cmd in BRIDGED_COMMANDS {
-            let Some((_, ty)) = arms.iter().find(|(c, _)| c == cmd) else { continue };
+            let Some((_, ty)) = arms.iter().find(|(c, _)| c == cmd) else {
+                continue;
+            };
             let calls = api_ts_invoke_args(api, cmd);
             if calls.is_empty() {
                 // host_os / file_access_token 不经 api.ts（mobile/transport.ts 直发），不在此列。
@@ -2228,7 +2356,11 @@ mod tests {
                 }
             }
         }
-        assert!(problems.is_empty(), "api.ts 桥接 invoke 未做类型校验：\n{}", problems.join("\n"));
+        assert!(
+            problems.is_empty(),
+            "api.ts 桥接 invoke 未做类型校验：\n{}",
+            problems.join("\n")
+        );
     }
 
     #[test]
@@ -2454,6 +2586,20 @@ mod tests {
             "agent_model_catalog" => {
                 parse::<AgentModelCatalogArgs>(br#"{"provider":"kimi","sessionId":41}"#).map(|_| ())
             }
+            "session_live_settings" => parse::<SessionArg>(br#"{"sessionId":42}"#).map(|_| ()),
+            "record_session_settings" => parse::<RecordSessionSettingsArgs>(br#"{"sessionId":42,"model":"kimi-code/k3","modes":{"permission":"manual"}}"#).map(|_| ()),
+            "queue_session_settings" => parse::<QueueSessionSettingsArgs>(br#"{"sessionId":42,"request":{"modes":{"work":"plan"},"label":"x"}}"#).map(|_| ()),
+            "queued_session_settings" | "take_queued_session_settings" => parse::<SessionArg>(br#"{"sessionId":42}"#).map(|_| ()),
+            "agent_launch_defaults" => {
+                parse::<AgentLaunchDefaultsArgs>(br#"{"provider":"kimi","cwd":null}"#).map(|_| ())
+            }
+            "agent_dynamic_mode_choices" => {
+                parse::<AgentDynamicModeChoicesArgs>(br#"{"provider":"opencode","cwd":"C:/repo"}"#).map(|_| ())
+            }
+            "apply_session_settings" => parse::<ApplySessionSettingsArgs>(
+                br#"{"sessionId":-3,"model":"kimi-code/k3","effort":null,"modes":{"permission":"yolo"},"current":{},"tui":{"idle":true,"composerEmpty":true,"approvalPending":false}}"#,
+            )
+            .map(|_| ()),
             // api.ts:941（options 可选、extraDirs 恒发——空也发 []，2026-08-31 事故的字段）
             // api.ts forkSession
             "fork_session" => parse::<ForkSessionArgs>(br#"{"sessionId":42,"cols":100,"rows":30}"#).map(|_| ()),
@@ -2461,6 +2607,7 @@ mod tests {
             "file_mention_candidates" => parse::<FileMentionCandidatesArgs>(br#"{"cwd":"C:/repo","query":"src/ma"}"#).map(|_| ()),
             "lead_task_snapshot" => parse::<LeadTaskSnapshotArgs>(br#"{"cwd":"C:/repo","session":"cc-abc"}"#).map(|_| ()),
             "answer_lead_gate" => parse::<AnswerLeadGateArgs>(br#"{"cwd":"C:/repo","gateId":"B-1","choice":"1","note":""}"#).map(|_| ()),
+            "retry_lead_gate_delivery" => parse::<RetryLeadGateDeliveryArgs>(br#"{"cwd":"C:/repo","gateId":"B-1"}"#).map(|_| ()),
             "new_session" => parse::<NewSessionArgs>(
                 br#"{"cwd":"C:/repo","provider":"claude","options":{"permissionMode":"default"},"extraDirs":["C:/other"]}"#,
             )
@@ -2488,6 +2635,7 @@ mod tests {
             | "refresh_session_todos"
             | "managed_terminal_grid"
             | "managed_terminal_screen"
+            | "managed_terminal_frame"
             | "managed_terminal_binding"
             | "managed_terminal_pending_launch"
             | "attach_background_session"

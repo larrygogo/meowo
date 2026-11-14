@@ -905,7 +905,7 @@ pub(crate) fn pretrust_workspace(provider: &str, profile: Option<&str>, cwd: &st
     }
 }
 
-fn launch_env_for_exact_profile(
+pub(crate) fn launch_env_for_exact_profile(
     agent: &'static dyn meowo_agent::AgentPlugin,
     profile: Option<&str>,
 ) -> Vec<(String, String)> {
@@ -1038,9 +1038,10 @@ pub(crate) async fn focus_session(
 pub(crate) fn open_automation_settings() -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        crate::fsutil::spawn_detached(std::process::Command::new("open").arg(
-            "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation",
-        ))
+        crate::fsutil::spawn_detached(
+            std::process::Command::new("open")
+                .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Automation"),
+        )
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -1457,7 +1458,8 @@ fn resume_session_ghostty(cwd: Option<&str>, argv: &[String], env_prefix: &str) 
     };
     // spawn_detached：拉起后后台 wait 回收，常驻进程下不留 <defunct> 僵尸。
     crate::fsutil::spawn_detached(
-        std::process::Command::new("open").args(["-na", "Ghostty", "--args", "-e", "/bin/sh", "-lc", &cmd]),
+        std::process::Command::new("open")
+            .args(["-na", "Ghostty", "--args", "-e", "/bin/sh", "-lc", &cmd]),
     )
     .is_ok()
 }
@@ -1611,8 +1613,12 @@ fn splice_stored_launch_args(
     sid: i64,
     overrides: Option<&std::collections::HashMap<String, String>>,
 ) {
-    let Some(agent) = meowo_agent::resolve(Some(provider)) else { return };
-    let Ok(store) = open_store(&db_path()) else { return };
+    let Some(agent) = meowo_agent::resolve(Some(provider)) else {
+        return;
+    };
+    let Ok(store) = open_store(&db_path()) else {
+        return;
+    };
     let mut selections: std::collections::HashMap<String, String> = store
         .session_launch_args(sid)
         .ok()
@@ -1655,8 +1661,21 @@ fn splice_stored_launch_args(
     if selections.is_empty() {
         return;
     }
-    // 未知 option/choice 由 resolve_launch_args 兜底（忽略/落默认），用户输入进不了 argv。
-    let args = meowo_agent::resolve_launch_args(agent.launch_options(), &selections);
+    // 未知 option/choice 由声明表兜底（忽略/落默认），模型只认清单里的 id，用户输入进不了 argv。
+    // 模型参数只在「带参重启」机制的 agent 上回放（resolve_session_args 的 resuming）。
+    let env = crate::profile::env_of(
+        agent.id(),
+        store.session_profile(sid).ok().flatten().as_deref(),
+    );
+    // 接回也带会话的项目目录：Codex 的项目层 `.codex/config.toml` 要据此看（做空第五轮 P4）。
+    let cwd = store.session_cwd(sid).ok().flatten();
+    let args = crate::session_settings::args_for_selections(
+        agent,
+        &selections,
+        &env,
+        cwd.as_deref().map(std::path::Path::new),
+        true,
+    );
     if args.is_empty() {
         return;
     }
@@ -1890,7 +1909,10 @@ pub(crate) fn spawn_in_terminal(
 /// 只剥成对的:单边引号在 Unix 上是合法文件名字符,剥掉会造出一个不存在的路径。
 fn strip_paired_quotes(dir: &str) -> &str {
     for quote in ['"', '\''] {
-        if let Some(inner) = dir.strip_prefix(quote).and_then(|rest| rest.strip_suffix(quote)) {
+        if let Some(inner) = dir
+            .strip_prefix(quote)
+            .and_then(|rest| rest.strip_suffix(quote))
+        {
             return inner.trim();
         }
     }
@@ -1961,12 +1983,6 @@ pub(crate) async fn new_session_inner(
     // resume/接管重启进程时经声明表翻译回放（权限模式等是启动参数，不回放每次重启都
     // 重置成 CLI 默认）。存选择而非 flag：接管时改权限只需按选项维度合并。
     let selections = options.unwrap_or_default();
-    let mut argv = agent.launch_argv();
-    argv.extend(meowo_agent::resolve_launch_args(
-        agent.launch_options(),
-        &selections,
-    ));
-    let argv = crate::relay::augment_argv(agent.id(), argv);
     // 代理 + 中转 **+ 当前活跃账号的隔离变量**（`CLAUDE_CONFIG_DIR` 等），三者都在
     // `launch_env_for_profile` 里。
     //
@@ -1978,6 +1994,24 @@ pub(crate) async fn new_session_inner(
     // PTY 冷启动与杀软扫描可能阻塞数秒，放 blocking 池；首次 SessionStart hook 会把临时 PTY
     // 认领为真实数据库 session。
     tauri::async_runtime::spawn_blocking(move || {
+        // 动态的两类（清单里的模型 `-m`、opencode 自定义 agent）要现读清单校验，放 blocking 池里。
+        let profile_env = crate::profile::env_of(agent.id(), active_profile.as_deref());
+        // 选了模型却进不了参数（清单里没有）要报错，不能静默按默认模型启动（做空 H3）。
+        crate::session_settings::check_model_selection(
+            agent,
+            &selections,
+            &profile_env,
+            Some(std::path::Path::new(&dir)),
+        )?;
+        let mut argv = agent.launch_argv();
+        argv.extend(crate::session_settings::args_for_selections(
+            agent,
+            &selections,
+            &profile_env,
+            Some(std::path::Path::new(&dir)),
+            false,
+        ));
+        let argv = crate::relay::augment_argv(agent.id(), argv);
         // 预信任工作目录（与上面的 env 同一个账号），否则 kimi 会停在信任屏、hook 不来、会话不落库。
         pretrust_workspace(&provider, active_profile.as_deref(), &dir);
         broker.start_pending(
@@ -2153,9 +2187,8 @@ pub(crate) async fn fork_session(
             if argv.is_empty() {
                 return Err("该 Agent 不支持恢复会话，无法分叉".into());
             }
-            let dir = validate_new_session_cwd(
-                &resolved.ok_or("会话缺少工作目录，无法在原目录分叉")?,
-            )?;
+            let dir =
+                validate_new_session_cwd(&resolved.ok_or("会话缺少工作目录，无法在原目录分叉")?)?;
             splice_stored_launch_args(&mut argv, &provider, session_id, None);
             argv.truncate(argv.len().saturating_sub(plugin.resume_args().len() + 1));
             let mut argv = crate::relay::augment_argv(plugin.id(), argv);
@@ -2250,7 +2283,9 @@ fn run_fork_command(
         use std::os::windows::process::CommandExt as _;
         command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
     }
-    let mut child = command.spawn().map_err(|e| format!("分叉命令启动失败: {e}"))?;
+    let mut child = command
+        .spawn()
+        .map_err(|e| format!("分叉命令启动失败: {e}"))?;
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
     loop {
         if child.try_wait().map_err(|e| e.to_string())?.is_some() {
@@ -2276,7 +2311,11 @@ fn run_fork_command(
         .and_then(|caps| caps.get(1))
         .map(|m| m.as_str().to_string())
         .ok_or_else(|| {
-            let line = output.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("无输出");
+            let line = output
+                .lines()
+                .map(str::trim)
+                .find(|l| !l.is_empty())
+                .unwrap_or("无输出");
             format!("分叉失败：{line}")
         })
 }
@@ -2308,7 +2347,7 @@ pub(crate) async fn apply_active_profile_to_sessions(
             let mut restarted = 0u32;
             let mut first_error: Option<String> = None;
             for sid in sessions_off_active_profile(&broker, &store, &provider)? {
-                match restart_session_onto_active_profile(&app, &broker, &store, sid, &provider) {
+                match restart_session_with(&app, &broker, &store, sid, &provider, None) {
                     Ok(true) => restarted += 1,
                     Ok(false) => {}
                     Err(error) => {
@@ -2423,15 +2462,34 @@ fn filter_sessions_off_profile(
     Ok(pending)
 }
 
-/// 把单个托管会话重启到当前活跃账号。`Ok(true)` = 真的重启了它；`Ok(false)` = 没动它
-/// （恰在此刻自己退出了 / start 判重收敛）。该不该动它由 [`sessions_off_active_profile`] 判。
+/// 把单个托管会话就地重启（停 → 等收掉 → 按恢复计划接回同一会话）。`Ok(true)` = 真的重启了它；
+/// `Ok(false)` = 没动它（恰在此刻自己退出了 / start 判重收敛）。
+/// - 切账号：`overrides = None`，账号随恢复计划迁到活跃账号（该不该动由 [`sessions_off_active_profile`] 判）。
+/// - 切模型 / 模式（session_settings 的 Restart 机制）：`overrides` 是要合并进启动选项的选择，
+///   Kimi `-r <id> -m <alias>`、Gemini `--resume <uuid> -m <id>`（research-kimi-gemini §2.3/§3.3）。
 #[cfg(any(target_os = "windows", target_os = "macos"))]
-fn restart_session_onto_active_profile(
+pub(crate) fn restart_session_with(
     app: &tauri::AppHandle,
     broker: &crate::pty::PtyBroker,
     store: &meowo_store::Store,
     sid: i64,
     provider: &str,
+    overrides: Option<std::collections::HashMap<String, String>>,
+) -> Result<bool, String> {
+    restart_session_checked(app, broker, store, sid, provider, overrides, None)
+}
+
+/// 同 [`restart_session_with`]，`before_stop` 在杀进程前一刻复核（宿主自己执行排队的切模型时用：
+/// 从看屏到这里之间用户可能打了字、CLI 可能自己开了新回合，做空 N4）。复核不过就不杀、原样返回它的错误。
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+pub(crate) fn restart_session_checked(
+    app: &tauri::AppHandle,
+    broker: &crate::pty::PtyBroker,
+    store: &meowo_store::Store,
+    sid: i64,
+    provider: &str,
+    overrides: Option<std::collections::HashMap<String, String>>,
+    before_stop: Option<&dyn Fn() -> Result<(), String>>,
 ) -> Result<bool, String> {
     let session = store.get_session(sid).map_err(|e| e.to_string())?;
     let cwd = store.session_cwd(sid).map_err(|e| e.to_string())?;
@@ -2443,6 +2501,9 @@ fn restart_session_onto_active_profile(
     } else {
         crate::pty::TerminalSize::new(cols, rows)
     };
+    if let Some(check) = before_stop {
+        check()?;
+    }
     // 与「结束会话」同一条路（stop 会武装 waiter 的升级链——Windows 上 kill 恒报成功
     // 却未必真死，只发一刀会永远等不到收尾）。
     if let Err(error) = broker.stop(sid) {
@@ -2456,7 +2517,8 @@ fn restart_session_onto_active_profile(
     // 等 broker 收掉 PTY 记录再起：`start` 的判重只看 sessions 表，没等到就会按
     // 「重复启动」收敛成 Ok(false)——账号一个都没换，还什么都不报。
     if !wait_pty_released(broker, sid) {
-        return Err("原会话仍在运行，未能切换到新账号".into());
+        // 账号切换与切模型 / 模式都走这里，原文说「账号」不对、也没进 i18n（做空 M8）。
+        return Err("terminal/restart_stuck".into());
     }
     let started = start_managed_resume_sized(
         app.clone(),
@@ -2466,8 +2528,8 @@ fn restart_session_onto_active_profile(
         session.cc_session_id,
         provider.to_string(),
         terminal_size,
-        // 启动选项不在这里回放：`prepare_resume_launch` 会从 DB 取回这个会话自己存的那份。
-        None,
+        // 存的启动选项由 `prepare_resume_launch` 从 DB 取回；这里只带本次要改的。
+        overrides,
     )?;
     if started {
         // 画面在对话窗/终端页，而这条重启是设置窗发起的——它们无从知道进程换了代。
@@ -2485,7 +2547,7 @@ fn restart_session_onto_active_profile(
 /// 等 broker 把该会话的 PTY 记录收掉（waiter 的 finalize_exit）。`stop` 只负责发刀，
 /// 收尾是异步的；升级链最迟在 3s 那档强制 finalize，10s 的上限留足了余量。
 #[cfg(any(target_os = "windows", target_os = "macos"))]
-fn wait_pty_released(broker: &crate::pty::PtyBroker, sid: i64) -> bool {
+pub(crate) fn wait_pty_released(broker: &crate::pty::PtyBroker, sid: i64) -> bool {
     for _ in 0..200 {
         if !broker.is_active(sid) {
             return true;
@@ -2790,6 +2852,11 @@ fn prepare_resume_launch(
     provider: &str,
     option_overrides: Option<&std::collections::HashMap<String, String>>,
 ) -> Result<ResumeLaunch, String> {
+    {
+        use tauri::Manager;
+        let store = open_store(&app.state::<crate::AppState>().db_path)?;
+        crate::managed_terminal::reject_retired_unbound(&store, sid)?;
+    }
     ensure_session_profile_available(provider, session_id)?;
     let (resolved, mut resume) = resolve_resume_plan(session_id, cwd, provider);
     if resume.is_empty() {
@@ -2816,6 +2883,15 @@ fn prepare_resume_launch(
     }
     // 回放会话的启动选项（权限模式等；接管时的改选合并写回），恢复后的进程与选择同参。
     splice_stored_launch_args(&mut resume, provider, sid, option_overrides);
+    // Meowo 记没记过用户发的话：会话文件找不到时据此区分「CLI 正常退出删掉了空文件」与「找不到但有内容」。
+    let user_spoke = {
+        use tauri::Manager;
+        open_store(&app.state::<crate::AppState>().db_path)
+            .ok()
+            .and_then(|store| store.session_header(sid).ok())
+            .is_none_or(|header| header.last_user_text.as_deref().is_some_and(|text| !text.trim().is_empty()))
+    };
+    swap_unsent_resume(&mut resume, provider, session_id, user_spoke);
     // takeover 在调用前已经结束旧进程；普通 resume 的旧进程本就不在。此刻复制能拿到
     // 完整的最后一帧 transcript，也不会与 Claude 正在追加同一个文件发生竞争。
     let target_profile = prepare_session_for_active_profile(provider, session_id)?;
@@ -2951,12 +3027,19 @@ pub(crate) fn session_agent_alive(store: &meowo_store::Store, sid: i64) -> Resul
     if !pid_alive_agent_quick(pid) {
         return Ok(false);
     }
+    // Meowo 为 Codex 原生 TUI 起的 app-server（hook 把它记成会话 pid）：以它的 TUI 死活为准。
+    // TUI 一退服务就被收掉（不做离线续跑），收掉前的几秒不算「外部终端里的会话」（lead_native::codex_app_server）。
+    if let Some(tui_alive) = crate::lead_native::codex_app_server::owned_server_tui_alive(pid) {
+        return Ok(tui_alive);
+    }
     // 进程活着还不够，pid 得仍归本会话：/clear 换代后旧行可能残留一个「活着但已被
     // 新会话认领」的 pid（end_session 清 pid 之前的存量数据）。拿它当「外部仍在运行」
     // 会误拒接管——而那个「外部终端」根本不存在；更糟的是 takeover 会照着它杀错新会话的进程。
-    if store
-        .pid_held_by_other_live(sid, pid)
-        .map_err(|e| e.to_string())?
+    if meowo_reporter::proc::process_scope(pid as u32)
+        != meowo_agent::registry::ProcessScope::Shared
+        && store
+            .pid_held_by_other_live(sid, pid)
+            .map_err(|e| e.to_string())?
     {
         return Ok(false);
     }
@@ -3047,6 +3130,13 @@ pub(crate) fn terminate_agent_for_restart(pid: i64) -> Result<(), String> {
     if !pid_alive_agent_quick(pid) {
         return Ok(());
     }
+    // Codex 0.167.2 默认 daemon 与 OpenCode server 可承载多个主会话；
+    // 旧 DB 也必须现场核对命令行，不能按名字白名单把共享引擎整进程结束。
+    if meowo_reporter::proc::process_scope(pid as u32)
+        != meowo_agent::registry::ProcessScope::Exclusive
+    {
+        return Err("terminal/process_not_exclusive".into());
+    }
     // Windows：校验后立刻持句柄钉住进程身份（见 AgentProcessHandle），之后的 terminate 与
     // 退出等待全走句柄、不按 pid 重开。进程名白名单复核不收反升：改在句柄钉住的进程对象上
     // 取镜像路径复核（open_verified）。
@@ -3060,6 +3150,13 @@ pub(crate) fn terminate_agent_for_restart(pid: i64) -> Result<(), String> {
         // pid 被非 agent 进程复用：白名单拦截，什么都不杀。
         AgentProcessOpen::NotAgent => return Err("无法结束原会话进程".into()),
     };
+    // 句柄钉住之后再查一次：检查命令行与 OpenProcess 之间 PID 可能已被新的共享服务复用。
+    #[cfg(target_os = "windows")]
+    if meowo_reporter::proc::process_scope(pid as u32)
+        != meowo_agent::registry::ProcessScope::Exclusive
+    {
+        return Err("terminal/process_not_exclusive".into());
+    }
     #[cfg(target_os = "windows")]
     let kill = |force: bool| {
         // Windows 只有 TerminateProcess 一档（与旧 sysinfo kill 相同），无 TERM/KILL 之分。
@@ -3204,9 +3301,18 @@ mod corrected_model_choice_tests {
 
     #[test]
     fn opusplan_and_unknown_choices_are_left_alone() {
-        assert_eq!(corrected_model_choice("opusplan", Some("Opus 5"), Some(1_000_000)), None);
-        assert_eq!(corrected_model_choice("default", Some("Opus 5"), Some(1_000_000)), None);
-        assert_eq!(corrected_model_choice("custom-x", Some("Opus 5"), Some(1_000_000)), None);
+        assert_eq!(
+            corrected_model_choice("opusplan", Some("Opus 5"), Some(1_000_000)),
+            None
+        );
+        assert_eq!(
+            corrected_model_choice("default", Some("Opus 5"), Some(1_000_000)),
+            None
+        );
+        assert_eq!(
+            corrected_model_choice("custom-x", Some("Opus 5"), Some(1_000_000)),
+            None
+        );
     }
 }
 
@@ -3371,7 +3477,10 @@ mod proxy_env_tests {
         ];
         let prefix = env_source_prefix_windows(&secrets).unwrap();
         // 前缀里只有清理语句、文件路径与读取命令,没有任何密钥。
-        assert!(!prefix.contains("sk-secret-123"), "密钥泄漏进命令串:{prefix}");
+        assert!(
+            !prefix.contains("sk-secret-123"),
+            "密钥泄漏进命令串:{prefix}"
+        );
         assert!(!prefix.contains("u:p@"), "代理凭据泄漏进命令串:{prefix}");
         assert!(prefix.starts_with("$env:HTTPS_PROXY=$null; "));
         assert!(prefix.contains("Get-Content -LiteralPath '"));
@@ -3415,7 +3524,10 @@ mod proxy_env_tests {
             assert!(wrapped.contains(mode), "收回清单缺 {mode}：{wrapped}");
         }
         // ESC 走 [char]27：双引号插值里 `$e[` 会被 PowerShell 当成索引解析。
-        assert!(wrapped.contains("[char]27"), "ESC 必须用 [char]27：{wrapped}");
+        assert!(
+            wrapped.contains("[char]27"),
+            "ESC 必须用 [char]27：{wrapped}"
+        );
         assert!(!wrapped.contains("\"$e["), "不得用双引号插值：{wrapped}");
     }
 
@@ -3438,7 +3550,10 @@ mod proxy_env_tests {
         assert!(decoded.starts_with("$env:HTTPS_PROXY=$null; "));
         // 值走临时文件,命令串里只有读取语句(见 wt_env_values_live_in_a_file_not_on_the_command_line)。
         assert!(decoded.contains("Get-Content -LiteralPath '"));
-        assert!(!decoded.contains("127.0.0.1:7890"), "代理值不该出现在命令串里");
+        assert!(
+            !decoded.contains("127.0.0.1:7890"),
+            "代理值不该出现在命令串里"
+        );
         assert!(decoded.contains("codex.exe"), "原命令必须还在：{decoded}");
         // 环境变量赋值在 try 外（要对退出后手敲的命令继续生效），agent 命令在 try 内，
         // 终端模式收回在 finally（见 wrap_with_terminal_restore）。
@@ -3552,3 +3667,121 @@ mod sessions_off_profile_tests {
         assert_eq!(got, vec![old]);
     }
 }
+
+/// 还没发过消息的会话：有的 CLI 退出时把会话文件删掉，按 id 恢复会报错（Gemini 0.68 `Invalid session
+/// identifier`，research-kimi-gemini §3.3 e3-05）。插件声明了替代参数时（Gemini `--session-id <同一 uuid>`，
+/// E3-D 实测 id 不变），找不到会话文件就换上它。找得到文件的照旧按 id 恢复。
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn swap_unsent_resume(resume: &mut [String], provider: &str, session_id: &str, user_spoke: bool) {
+    let Some(plugin) = meowo_agent::resolve(Some(provider)) else {
+        return;
+    };
+    let Some(meowo_agent::ModelSwitch::RestartResume {
+        unsent_resume_args: Some(unsent_args),
+        ..
+    }) = plugin.model_switch()
+    else {
+        return;
+    };
+    // 按「会话里有没有消息」判断，不按「文件在不在」：Meowo 硬杀进程时 CLI 来不及删只有元数据的会话文件，
+    // 见文件在就 resume 会报「No previous sessions found」（真机验证 G1，2026-11-14）。插件负责清掉那个
+    // 空文件后再走 `unsent_resume_args`。
+    // 找不到会话文件（None）：只有 Meowo 也没记过用户发的话时才当「没发过」（CLI 正常退出会删掉空文件，
+    // e3-05）；记过的、或读不到记录的，照常 resume 交给 CLI 报错，不静默起一个同 id 的空会话（真机低 3）。
+    let unsent = match plugin.prepare_unsent_resume(session_id) {
+        Some(unsent) => unsent,
+        None => !user_spoke,
+    };
+    if unsent {
+        replace_resume_args(resume, plugin.resume_args(), unsent_args);
+    }
+}
+
+/// resume argv 末尾是「resume 子命令 + id」：把子命令换成另一组等长或不等长的参数（纯函数，便于单测）。
+fn replace_resume_args(resume: &mut [String], from: &[&str], to: &[&str]) -> bool {
+    let n = resume.len();
+    if n < from.len() + 1 || from.len() != to.len() {
+        return false;
+    }
+    let at = n - 1 - from.len();
+    if resume[at..n - 1].iter().map(String::as_str).ne(from.iter().copied()) {
+        return false;
+    }
+    for (offset, arg) in to.iter().enumerate() {
+        resume[at + offset] = (*arg).to_string();
+    }
+    true
+}
+
+/// 还没建会话的新会话（临时负 id）带新的启动选项重开：停掉临时 PTY、等它收掉，按合并后的选择
+/// 重新裸启动，返回新的临时 id（前端切过去，第一句话与草稿跟着走）。Kimi 2.6 首条消息前不建会话，
+/// 这时重开不丢任何东西（research-kimi-gemini §2.3 p7）。
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+pub(crate) fn reopen_pending_with(
+    app: &tauri::AppHandle,
+    broker: &crate::pty::PtyBroker,
+    temp_id: i64,
+    overrides: &std::collections::HashMap<String, String>,
+) -> Result<i64, String> {
+    let launch = broker
+        .pending_launch(temp_id)
+        .ok_or("settings/session_gone")?;
+    let agent = meowo_agent::resolve(Some(&launch.provider)).ok_or("未知 agent")?;
+    let mut selections = broker.pending_selections(temp_id);
+    selections.extend(overrides.clone());
+    let active_profile = crate::profile::active_id(agent.id().as_str());
+    let env = launch_env_for_profile(Some(&launch.provider), active_profile.as_deref());
+    let profile_env = crate::profile::env_of(agent.id(), active_profile.as_deref());
+    let mut argv = agent.launch_argv();
+    argv.extend(crate::session_settings::args_for_selections(
+        agent,
+        &selections,
+        &profile_env,
+        launch.cwd.as_deref().map(std::path::Path::new),
+        false,
+    ));
+    let argv = crate::relay::augment_argv(agent.id(), argv);
+    let (cols, rows) = broker.grid(temp_id);
+    let (cols, rows) = if cols == 0 || rows == 0 { (100, 30) } else { (cols, rows) };
+    broker.stop(temp_id)?;
+    if !wait_pty_released(broker, temp_id) {
+        return Err("terminal/restart_stuck".into());
+    }
+    if let Some(dir) = launch.cwd.as_deref() {
+        pretrust_workspace(&launch.provider, active_profile.as_deref(), dir);
+    }
+    let new_id = broker.start_pending(
+        app.clone(),
+        &argv,
+        launch.cwd.as_deref(),
+        &env,
+        cols,
+        rows,
+        &launch.provider,
+        &selections,
+        None,
+    )?;
+    emit_board_changed(app, "reopen");
+    Ok(new_id)
+}
+
+#[cfg(test)]
+mod settings_restart_tests {
+    /// Gemini 没发过消息的会话：`--resume <id>` 换成 `--session-id <id>`，其余参数不动。
+    #[test]
+    fn unsent_resume_swaps_only_the_resume_subcommand() {
+        let mut argv: Vec<String> = ["gemini", "-m", "gemini-2.5-pro", "--resume", "u-1"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert!(super::replace_resume_args(&mut argv, &["--resume"], &["--session-id"]));
+        assert_eq!(argv, ["gemini", "-m", "gemini-2.5-pro", "--session-id", "u-1"]);
+        let mut other: Vec<String> = ["kimi", "-r", "s"].iter().map(|s| s.to_string()).collect();
+        assert!(!super::replace_resume_args(&mut other, &["--resume"], &["--session-id"]));
+    }
+}
+
+/// 真机探针：Kimi / Gemini 切模型、切模式（.lead/20261114-tui-model-switch）。挂在这里才能调到拼恢复 argv 的私有函数。
+#[cfg(test)]
+#[path = "tms_probe_restart.rs"]
+mod tms_probe_restart;

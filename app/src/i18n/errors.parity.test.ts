@@ -29,7 +29,9 @@ describe("errors.ts sentinel 对账", () => {
       files.map((file) => readFileSync(file, "utf8")).join("\n") +
       readFileSync(join(here, "zh.ts"), "utf8") +
       // 远程桥的 `remote/<code>` sentinel 由前端传输层自产（7M-7），出处在这里。
-      readFileSync(join(here, "../mobile/transport.ts"), "utf8");
+      readFileSync(join(here, "../mobile/transport.ts"), "utf8") +
+      // 原生composer保护在写入前由前端判定，仍复用结构化reason与双语映射。
+      readFileSync(join(here, "../views/ChatWindow.tsx"), "utf8");
     const missing = ENTRIES.filter((entry) => !corpus.includes(entry.m)).map((entry) => entry.m);
     expect(missing).toEqual([]);
   });

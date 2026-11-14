@@ -13,6 +13,7 @@ import { useT } from "../../i18n";
 import { appendTerminalText, modeFromScreen, visibleTerminalText } from "../../terminalAttention";
 import { currentPresetId } from "./modelLabels";
 import { stashComposerDraft, submitToTerminal } from "./terminalSubmit";
+import type { TerminalAction } from "./useSessionSettings";
 
 export interface ModelControlsDeps {
   sessionId: number;
@@ -31,16 +32,20 @@ export interface ModelControlsDeps {
   setSendError: (message: string) => void;
   setHistory: Dispatch<SetStateAction<ChatHistory | null>>;
   setStoredSelections: Dispatch<SetStateAction<Record<string, string>>>;
+  /** 运行中（或有待批审批）选的：排到这一轮之后，和会话服务 / 重启路线同一个队列、同一套提示
+   *  （SPEC 终态 2；第四轮补：不再报「请等待当前任务结束后切换」）。 */
+  deferTerminal: (action: TerminalAction, label: string) => void;
 }
 
 export function useModelControls({
   sessionId, chatUi, model, modelCatalog, sending, toneRef, retryRef,
-  withSendGuard, attentionAbort, isCurrentOperation, setSendError, setHistory, setStoredSelections,
+  withSendGuard, attentionAbort, isCurrentOperation, setSendError, setHistory, setStoredSelections, deferTerminal,
 }: ModelControlsDeps) {
   const t = useT();
   const selectModel = async (preset: ModelPreset) => {
     const command = chatUi?.model_select_command;
-    if (!command || toneRef.current === "running") { setSendError(t.chat.menuBusy); return; }
+    if (!command) return;
+    if (toneRef.current === "running") { deferTerminal({ kind: "model", preset }, preset.label || preset.id); return; }
     await withSendGuard(async () => {
       const before = await managedTerminalSnapshot(sessionId);
       if (chatUi?.draft_stash) await stashComposerDraft(sessionId, chatUi.draft_stash);
@@ -80,7 +85,8 @@ export function useModelControls({
   const [effortBusy, setEffortBusy] = useState(false);
   const selectEffort = async (level: string) => {
     const command = chatUi?.effort?.command;
-    if (!command || toneRef.current === "running") { setSendError(t.chat.menuBusy); return; }
+    if (!command) return;
+    if (toneRef.current === "running") { deferTerminal({ kind: "effort", level }, level); return; }
     setEffortBusy(true);
     try {
       await withSendGuard(async () => {
@@ -170,6 +176,7 @@ export function useModelControls({
   /// 不可用（插件注释已声明模式集合会变），此时停手并说明，不再空转。
   const cycleToMode = async (dimension: string, target: string, cycleInput: string, markers: ModeScreenMarker[]) => {
     if (sending) return;
+    // 循环快捷键（Claude Shift+Tab）在回合进行中照常可按（CLI 本来就支持），不排队。
     await withSendGuard(async () => {
       const seq = ++modeEchoSeqRef.current;
       for (let step = 0; step < Math.max(1, markers.length); step += 1) {
@@ -218,7 +225,11 @@ export function useModelControls({
   /// 模式动作完全由插件描述：快捷键原样发送，命令则用和人工输入一致的 paste + Enter 序列。
   const changeMode = async (dimension: string, inputs: { data: string; submit: boolean }[], optimisticValue?: string, screenMarkers: ModeScreenMarker[] = []) => {
     if (inputs.length === 0 || sending) return;
-    if (toneRef.current === "running") { setSendError(t.chat.menuBusy); return; }
+    if (toneRef.current === "running") {
+      if (optimisticValue) deferTerminal({ kind: "mode", dimension, value: optimisticValue, inputs, markers: screenMarkers }, optimisticValue);
+      else setSendError(t.chat.menuBusyOpen); // 按一次跳下一个的盲切：不知道目标档，排不了
+      return;
+    }
     // 若因外部占用被拒，接管后重放的是这同一个动作。
     retryRef.current = () => changeMode(dimension, inputs, optimisticValue, screenMarkers);
     // 守卫与发送同一套(withSendGuard):交后端权威判定,被拒才给接管入口。

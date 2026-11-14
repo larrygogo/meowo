@@ -31,7 +31,18 @@ import type { SubagentRun as GeneratedSubagentRun } from "./generated/contracts/
 import type { AgentChatUiArgs } from "./generated/contracts/bridge/AgentChatUiArgs";
 import type { AgentModelCatalogArgs } from "./generated/contracts/bridge/AgentModelCatalogArgs";
 import type { AgentModelsArgs } from "./generated/contracts/bridge/AgentModelsArgs";
+import type { AgentLaunchDefaultsArgs } from "./generated/contracts/bridge/AgentLaunchDefaultsArgs";
+import type { AgentDynamicModeChoicesArgs } from "./generated/contracts/bridge/AgentDynamicModeChoicesArgs";
+import type { ApplySessionSettingsArgs } from "./generated/contracts/bridge/ApplySessionSettingsArgs";
+import type { SessionTuiState } from "./generated/contracts/bridge/SessionTuiState";
+import type { RecordSessionSettingsArgs } from "./generated/contracts/bridge/RecordSessionSettingsArgs";
+import type { QueueSessionSettingsArgs } from "./generated/contracts/bridge/QueueSessionSettingsArgs";
+import type { LaunchDefaults } from "./generated/contracts/LaunchDefaults";
+import type { DynamicModeChoice } from "./generated/contracts/DynamicModeChoice";
+import type { ModeTraits } from "./generated/contracts/ModeTraits";
+import type { Ask } from "./generated/contracts/Ask";
 import type { AnswerLeadGateArgs } from "./generated/contracts/bridge/AnswerLeadGateArgs";
+import type { RetryLeadGateDeliveryArgs } from "./generated/contracts/bridge/RetryLeadGateDeliveryArgs";
 import type { CheckProviderHooksArgs } from "./generated/contracts/bridge/CheckProviderHooksArgs";
 import type { RepairProviderHooksArgs } from "./generated/contracts/bridge/RepairProviderHooksArgs";
 import type { FileMentionCandidatesArgs } from "./generated/contracts/bridge/FileMentionCandidatesArgs";
@@ -86,6 +97,8 @@ import type { WorktreeSetupTrustArgs } from "./generated/contracts/bridge/Worktr
 import type { WorktreeStatusArgs } from "./generated/contracts/bridge/WorktreeStatusArgs";
 import type { WriteManagedTerminalArgs } from "./generated/contracts/bridge/WriteManagedTerminalArgs";
 import type { SubagentProbeDto } from "./generated/contracts/SubagentProbeDto";
+import type { TerminalScreenFrameDto } from "./generated/contracts/TerminalScreenFrameDto";
+export type { TerminalScreenFrameDto };
 import type { ManagedTerminalSnapshotDto } from "./generated/contracts/ManagedTerminalSnapshotDto";
 import type { LineageEntryDto } from "./generated/contracts/LineageEntryDto";
 import type { PendingApprovalDto } from "./generated/contracts/PendingApprovalDto";
@@ -141,7 +154,7 @@ export type AgentId = string;
 export type AgentDescriptor = Omit<AgentDescriptorDto, "id"> & { id: AgentId };
 
 // 启动选项 / 模型预设 / 斜杠命令 / 模式控制：全部由 ts-rs 生成，原名重导出。
-export type { LaunchChoice, LaunchOption, ModelPreset, ModelCatalogEntry, SlashCommand, ModeInput, ModeOption, ModeScreenMarker, ModeControl };
+export type { LaunchChoice, LaunchOption, ModelPreset, ModelCatalogEntry, SlashCommand, ModeInput, ModeOption, ModeScreenMarker, ModeControl, LaunchDefaults, DynamicModeChoice, ModeTraits, Ask, SessionTuiState };
 
 /**
  * 对话页能力，由**安装实况**组装：插件内置表 ∪ 用户/项目目录里发现的自定义命令 + CLI 版本。
@@ -377,9 +390,10 @@ export function sessionTone(
   errored?: boolean,
   busySubagents?: number,
   screenState?: string | null,
+  screenAssumed?: boolean,
 ): SessionTone {
   if (!connected) return status === "ended" ? "ended" : "offline";
-  const activity = activityTone({ status, pendingReview, screenState, busySubagents });
+  const activity = activityTone({ status, pendingReview, screenState, screenAssumed, busySubagents });
   // 需要人做决定的（审批/提问/屏幕阻塞）压过出错（对照 Kimi 的优先级：待审批 > 待回答 > 失败）：
   // 出错只是「上一轮断了」，而审批挂着时 Agent 正卡在那里等你，先处理它才能继续。
   if (activity === "pending") return activity;
@@ -444,6 +458,10 @@ export function managedTerminalPendingLaunch(sessionId: number): Promise<Pending
   return invoke("managed_terminal_pending_launch", { sessionId } satisfies SessionArg);
 }
 /** 托管 PTY 仿真后的整屏文本（自上而下）；null = 该会话无屏幕仿真。 */
+export function managedTerminalFrame(sessionId: number): Promise<TerminalScreenFrameDto | null> {
+  return invoke("managed_terminal_frame", { sessionId } satisfies SessionArg);
+}
+
 export function managedTerminalScreen(sessionId: number): Promise<string[] | null> {
   return invoke("managed_terminal_screen", { sessionId } satisfies SessionArg);
 }
@@ -846,6 +864,15 @@ export function fileMentionCandidates(cwd: string, query: string): Promise<strin
 export type { LeadTaskDto } from "./generated/contracts/LeadTaskDto";
 export type { LeadGateDto } from "./generated/contracts/LeadGateDto";
 export type { LeadCheckDto } from "./generated/contracts/LeadCheckDto";
+export type { LeadProviderInstallationDto } from "./generated/contracts/LeadProviderInstallationDto";
+
+export function leadProviderInstallations(): Promise<import("./generated/contracts/LeadProviderInstallationDto").LeadProviderInstallationDto[]> {
+  return invoke("lead_provider_installations");
+}
+
+export function setLeadProviderEnabled(provider: string, profileId: string | null, enabled: boolean): Promise<import("./generated/contracts/LeadProviderInstallationDto").LeadProviderInstallationDto> {
+  return invoke("set_lead_provider_enabled", { args: { provider, profileId, enabled } satisfies import("./generated/contracts/SetLeadProviderEnabledArgs").SetLeadProviderEnabledArgs });
+}
 
 /// Lead 工作流：会话 cwd 所在项目的任务快照；没有任务为 null（入口据此隐藏）。
 /// 手机端经远程桥放行（remote.rs 模块头「例外（2026-11-09）」），参数改动须同步 AnswerLeadGateArgs 等桥臂结构体。
@@ -866,6 +893,10 @@ export function setLeadWorkflow(enabled: boolean): Promise<void> {
 /// 回答关卡：A 用 confirm/revise，C 用 accept/reject，B 用方案 id；note 为附加意见。
 export function answerLeadGate(cwd: string, gateId: string, choice: string, note: string): Promise<void> {
   return invoke("answer_lead_gate", { cwd, gateId, choice, note } satisfies AnswerLeadGateArgs);
+}
+
+export function retryLeadGateDelivery(cwd: string, gateId: string): Promise<void> {
+  return invoke("retry_lead_gate_delivery", { cwd, gateId } satisfies RetryLeadGateDeliveryArgs);
 }
 
 /** 文件面板「打开」菜单：能打开该文件的应用清单（Windows 为系统「打开方式」推荐列表，
@@ -1007,6 +1038,8 @@ export type TerminalLineHeight = "compact" | "normal" | "relaxed";
 export type ChatContentWidth = "fixed" | "full";
 
 export type Settings = {
+  /** 原生账号ID用于协议会话启动；展示名不能作为目录身份。 */
+  active_profile?: Partial<Record<AgentId, string>>;
   /** 桌面通知总开关（待交互 + 错误）。 */
   notifications_enabled: boolean;
   /** 需要关注且 Meowo 都不在前台时,请求任务栏注意力(Windows 任务栏闪烁)。 */
@@ -1267,6 +1300,76 @@ export function agentChatUi(provider: AgentId, cwd: string | null, sessionId?: n
  */
 export function agentModelCatalog(provider: string, sessionId?: number): Promise<ModelCatalogEntry[]> {
   return invoke<ModelCatalogEntry[] | null>("agent_model_catalog", { provider, sessionId: sessionId ?? null } satisfies AgentModelCatalogArgs).then((models) => models ?? []);
+}
+
+/** 新建页默认值：CLI 自己配置里此刻的默认模型与各栏默认档（后端现读，不缓存）。 */
+export function agentLaunchDefaults(provider: string, cwd?: string | null): Promise<LaunchDefaults> {
+  return invoke<LaunchDefaults | null>("agent_launch_defaults", { provider, cwd: cwd ?? null } satisfies AgentLaunchDefaultsArgs)
+    .then((defaults) => defaults ?? { model: null, choices: {} });
+}
+
+/** 运行时才知道的模式选项（OpenCode 的自定义 agent，后端起 `opencode agent list`）。 */
+export function agentDynamicModeChoices(provider: string, cwd?: string | null): Promise<DynamicModeChoice[]> {
+  return invoke<DynamicModeChoice[] | null>("agent_dynamic_mode_choices", { provider, cwd: cwd ?? null } satisfies AgentDynamicModeChoicesArgs)
+    .then((choices) => choices ?? []);
+}
+
+/** 回合结束时读到的会话当前模型 / 模式写回存档（做空 M5），之后的恢复与重启按它回放。 */
+export function recordSessionSettings(sessionId: number, model: string | null, modes: Record<string, string>): Promise<void> {
+  return invoke<void>("record_session_settings", { sessionId, model, modes } satisfies RecordSessionSettingsArgs);
+}
+
+/** 「这一轮结束后切换」的队列存在宿主里、按会话记（做空 M3）：返回合并后的整份。 */
+export function queueSessionSettings(sessionId: number, request: unknown): Promise<unknown> {
+  return invoke<unknown>("queue_session_settings", { sessionId, request } satisfies QueueSessionSettingsArgs);
+}
+
+export function queuedSessionSettings(sessionId: number): Promise<unknown> {
+  return invoke<unknown>("queued_session_settings", { sessionId } satisfies SessionArg);
+}
+
+export function takeQueuedSessionSettings(sessionId: number): Promise<unknown> {
+  return invoke<unknown>("take_queued_session_settings", { sessionId } satisfies SessionArg);
+}
+
+/** 会话此刻的模型与模式（后端 session_settings::LiveSettings）：会话服务机制读 rollout 最新段，
+ *  TUI 对话框机制读最后一条用户消息；带参重启的两家返回空（transcript 增量负责）。 */
+export type LiveSettings = { model: string | null; effort: string | null; modes: { dimension: string; value: string }[] };
+
+export function sessionLiveSettings(sessionId: number): Promise<LiveSettings> {
+  return invoke<LiveSettings | null>("session_live_settings", { sessionId } satisfies SessionArg)
+    .then((live) => live ?? { model: null, effort: null, modes: [] });
+}
+
+/** 会话里切模型 / 模式的结果（后端 session_settings::SettingsOutcome）。 */
+export type SettingsOutcome = {
+  // queued = 宿主收进了队列，等条件满足自己执行（Lead 关卡答复并续跑后 / 会话打开握手后），队列里的 waitFor 说等什么。
+  kind: "applied" | "restarted" | "reopened" | "next_open" | "needs_new_session" | "unsupported" | "not_now" | "queued";
+  sessionId: number;
+  confirmed: boolean;
+  reason: string | null;
+  /** 切完当场读回的实际模型显示名（OpenCode 只切 agent 时会换模型）。 */
+  model?: string | null;
+};
+
+/** 切模型 / 模式：后端按插件声明的机制分派（会话服务 / 带参重启接回 / TUI 对话框 / 未建会话重开）。
+ *  运行中或有待批审批时不要调：调用方排到这一轮之后。 */
+export function applySessionSettings(args: {
+  sessionId: number;
+  model?: string | null;
+  effort?: string | null;
+  modes?: Record<string, string>;
+  current?: Record<string, string>;
+  tui?: SessionTuiState;
+}): Promise<SettingsOutcome> {
+  return invoke<SettingsOutcome>("apply_session_settings", {
+    sessionId: args.sessionId,
+    model: args.model ?? null,
+    effort: args.effort ?? null,
+    modes: args.modes ?? null,
+    current: args.current ?? null,
+    tui: args.tui ?? null,
+  } satisfies ApplySessionSettingsArgs);
 }
 
 export function agentModels(provider: string, sessionId?: number): Promise<string[]> {

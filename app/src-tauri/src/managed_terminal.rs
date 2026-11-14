@@ -2,6 +2,21 @@
 
 use tauri::State;
 
+/// 已停用的「Meowo 托管」会话没绑定过 CLI 自己的会话 id 时，cc_session_id 是 Meowo 起的占位 id
+/// （meowo-managed-…），拿它 resume 只会让 CLI 报「找不到会话」或悄悄开个空会话。
+/// 所有恢复入口（对话页打开、看板/侧栏恢复、外部终端恢复、切账号重启、关卡自动恢复）都经
+/// terminal::prepare_resume_launch，守卫放在那里才挡得全（做空 R5：此前只挡了对话页一个入口）。
+pub(crate) fn reject_retired_unbound(store: &meowo_store::Store, session_id: i64) -> Result<(), String> {
+    if store
+        .retired_managed(session_id)
+        .map_err(|e| e.to_string())?
+        .is_some_and(|retired| retired.native_session_id.is_none())
+    {
+        return Err("session/managed_retired_unbound".into());
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub(crate) async fn start_managed_terminal(
     app: tauri::AppHandle,
@@ -20,6 +35,8 @@ pub(crate) async fn start_managed_terminal(
         if !super::session_command::is_safe_id(&session.cc_session_id) {
             return Err("无效 session_id".into());
         }
+        // 恢复的公共下游（prepare_resume_launch）也会再拦一次；这里先拦是为了不必走到外部终端判活等步骤。
+        reject_retired_unbound(&store, session_id)?;
         #[cfg(any(target_os = "windows", target_os = "macos"))]
         {
             if super::terminal::session_agent_alive(&store, session_id)? {
@@ -106,7 +123,10 @@ pub(crate) async fn screen_detect_explain(
         let (snapshot, provider) = ptys
             .screen_probe_snapshot(session_id)
             .ok_or("该会话没有托管 PTY 屏幕状态")?;
-        let published = ptys.screen_states().get(&session_id).map(|sight| sight.state);
+        let published = ptys
+            .screen_states()
+            .get(&session_id)
+            .map(|sight| sight.state);
         Ok(explain_snapshot(provider, snapshot, published))
     })
     .await
@@ -165,7 +185,8 @@ mod screen_explain_tests {
 
         // 无规则集的 provider 如实说明，而不是假装判了个 idle。用未注册的身份串——
         // 已注册的五家插件现在都声明了规则（这条断言本身被 gemini 加规则时抓到过）。
-        let unsupported = screen_detect_explain_text("not-an-agent".into(), "whatever".into(), None);
+        let unsupported =
+            screen_detect_explain_text("not-an-agent".into(), "whatever".into(), None);
         assert_eq!(unsupported.raw_state, None);
         assert_eq!(unsupported.matched_rule, "provider_unsupported");
     }
@@ -340,6 +361,17 @@ pub(crate) async fn managed_terminal_screen(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn managed_terminal_frame(
+    state: State<'_, super::AppState>,
+    session_id: i64,
+) -> Result<Option<meowo_protocol::ipc::TerminalScreenFrameDto>, String> {
+    let ptys = state.ptys.clone();
+    tauri::async_runtime::spawn_blocking(move || Ok(ptys.screen_frame(session_id)))
+        .await
+        .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -566,6 +598,57 @@ pub(crate) async fn open_attached_terminal(
 }
 
 #[cfg(test)]
+mod retired_resume_tests {
+    /// 做空 R5：没绑定原生 id 的停用会话在恢复的公共下游被拒，绑定过的与普通会话放行。
+    #[test]
+    fn retired_unbound_is_rejected_at_the_shared_resume_step() {
+        let dir = std::env::temp_dir().join(format!(
+            "meowo-retired-resume-{}",
+            crate::remote::generate_token().unwrap()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("board.db");
+        let store = crate::open_store(&db).unwrap();
+        let project = store
+            .upsert_project_by_root(&dir.to_string_lossy(), "retired", 1)
+            .unwrap();
+        let (bound, _) = store.start_session(project, "thread-bound", 1).unwrap();
+        let (unbound, _) = store.start_session(project, "meowo-managed-1", 1).unwrap();
+        let (plain, _) = store.start_session(project, "plain", 1).unwrap();
+        // 本版本已没有写入口，按旧表结构插行模拟存量数据。
+        let raw = rusqlite::Connection::open(&db).unwrap();
+        for (id, native) in [(bound, Some("thread-bound")), (unbound, None)] {
+            raw.execute(
+                "INSERT INTO managed_conversations(session_id,provider,cwd,native_session_id,phase,created_at,updated_at) VALUES(?1,'codex',?2,?3,'failed',1,1)",
+                rusqlite::params![id, dir.to_string_lossy(), native],
+            )
+            .unwrap();
+        }
+        drop(raw);
+        assert_eq!(
+            super::reject_retired_unbound(&store, unbound),
+            Err("session/managed_retired_unbound".into())
+        );
+        assert_eq!(super::reject_retired_unbound(&store, bound), Ok(()));
+        assert_eq!(super::reject_retired_unbound(&store, plain), Ok(()));
+        drop(store);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 守卫必须在公共下游里、且在任何副作用（乐观复活、账号迁移）之前：看板/侧栏/外部终端恢复、
+    /// 切账号重启、关卡自动恢复都只经过 prepare_resume_launch。
+    #[test]
+    fn every_resume_entry_passes_the_retired_guard() {
+        let source = include_str!("terminal.rs");
+        let start = source.find("fn prepare_resume_launch(").unwrap();
+        let body = &source[start..];
+        let guard = body.find("reject_retired_unbound").expect("prepare_resume_launch 要调用守卫");
+        let plan = body.find("resolve_resume_plan").unwrap();
+        assert!(guard < plan, "守卫要在恢复计划与副作用之前");
+    }
+}
+
+#[cfg(test)]
 mod orphan_stop_tests {
     use super::*;
 
@@ -585,7 +668,9 @@ mod orphan_stop_tests {
     fn start_session_with_pid(db: &std::path::Path, pid: Option<i64>) -> i64 {
         let store = meowo_store::Store::open(db).unwrap();
         let now = super::super::now_ms();
-        let project = store.upsert_project_by_root("/tmp/orphan", "orphan", now).unwrap();
+        let project = store
+            .upsert_project_by_root("/tmp/orphan", "orphan", now)
+            .unwrap();
         let (sid, _) = store.start_session(project, "cc-orphan", now).unwrap();
         if let Some(pid) = pid {
             store.set_session_pid(sid, pid, now).unwrap();
@@ -602,12 +687,18 @@ mod orphan_stop_tests {
         let alive = std::collections::HashSet::from([FAKE_PID]);
 
         let result = stop_orphan_by_pid(&db, sid, &alive);
-        assert!(matches!(result, Some(Ok(()))), "活 pid 的孤儿会话兜底必须生效");
+        assert!(
+            matches!(result, Some(Ok(()))),
+            "活 pid 的孤儿会话兜底必须生效"
+        );
 
         let store = meowo_store::Store::open(&db).unwrap();
         let header = store.session_header(sid).unwrap();
         assert_eq!(header.status, "ended");
-        assert_eq!(header.pid, None, "落 ended 必须清 pid（同 end_session 契约）");
+        assert_eq!(
+            header.pid, None,
+            "落 ended 必须清 pid（同 end_session 契约）"
+        );
         let _ = std::fs::remove_file(&db);
     }
 

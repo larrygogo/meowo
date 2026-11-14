@@ -148,6 +148,7 @@ function activity(l: Item): "pending" | "running" | "waiting" | null {
     status: l.session.status,
     pendingReview: l.pending_review,
     screenState: l.screen_state,
+    screenAssumed: l.screen_assumed,
     busySubagents: l.busy_subagents,
   });
 }
@@ -157,7 +158,7 @@ function activity(l: Item): "pending" | "running" | "waiting" | null {
  *  「有人在等你」的信号被抹掉（评审发现）——判定必须住在这一处。
  *  注：tone 只回答「画成哪一档」，不回答「这个判定有多可信」——角标的两层不自信
  *  区分（无 screen_state 回落 DB status 的 assumed、fallback idle 降中性点，T-15）
- *  由下方的 toneConfidence 回答（tab 归属等判定不消费它，呈现层才消费）。
+ *  活动态和 tab 同样忽略未识别屏幕，呈现置信度仍由下方 toneConfidence 回答。
  *  assumed 的区分只走文案层，不降透明度（实拍反馈，见 toneConfidence 注释）。 */
 export type CardTone = "offline" | "error" | "pending" | "running" | "waiting" | "on";
 export function cardTone(l: Item): CardTone {
@@ -182,7 +183,7 @@ export function cardTone(l: Item): CardTone {
  *  tone 由 cardTone 算出后传入，避免重复计算。 */
 export function toneConfidence(l: Item, tone: CardTone): "assumed" | "fallback" | null {
   if (tone === "waiting" && l.screen_state === "idle" && l.screen_assumed === true) return "fallback";
-  if (l.connected && l.screen_state == null && (tone === "running" || tone === "waiting")) return "assumed";
+  if (l.connected && (l.screen_state == null || l.screen_assumed) && (tone === "running" || tone === "waiting")) return "assumed";
   return null;
 }
 

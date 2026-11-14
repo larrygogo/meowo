@@ -38,6 +38,7 @@ pub mod id;
 pub mod install;
 pub mod launch;
 pub mod launch_options;
+pub mod lead_install;
 pub mod plugins;
 pub mod ports;
 pub mod profile;
@@ -45,6 +46,7 @@ pub mod proxy;
 pub mod registry;
 pub mod relay;
 pub mod screen;
+pub mod settings;
 pub mod transcript;
 pub mod trust;
 pub mod variant;
@@ -55,8 +57,8 @@ pub use account::{
 };
 pub use auth::{AuthScheme, CredentialSource, OAuthRefresh};
 pub use caps::{
-    BackgroundControl, BackgroundEndpoint, ContextUsage, HookContext, RuntimeCap, SessionRuntime, StopOutputs,
-    TelemetryCap,
+    BackgroundControl, BackgroundEndpoint, ContextUsage, HookContext, RuntimeCap, SessionRuntime,
+    StopOutputs, TelemetryCap,
 };
 pub use chat_ui::{
     ChatUi, ChatUiContext, CustomCommandSpec, ModeControl, ModeInput, ModeOption, ModeScreenMarker,
@@ -73,13 +75,17 @@ pub use install::{
 };
 pub use launch::{exe_on_path, LaunchCandidate, LaunchSpec, Root};
 pub use launch_options::{resolve_launch_args, LaunchChoice, LaunchOption};
+pub use settings::{
+    model_id_allowed, Ask, DynamicModeChoice, LaunchDefaults, ModeSwitch, ModeTraits, ModelSwitch,
+    ModelSwitchKind,
+};
 pub use plugins::claude::setup::remove_generated_wrapper;
 pub use ports::{Body, HttpError, HttpPort, HttpRequest, KeychainPort, NoKeychain, Ports};
 pub use profile::ProfileSpec;
 pub use proxy::{is_socks, ProxySpec};
 pub use registry::{
-    all, by_id, installation, is_agent_process, resolve, AgentPlugin, ForkMode, McpAttach, ModelCatalogEntry, ModelPreset,
-    DEFAULT_ID,
+    all, by_id, installation, is_agent_process, resolve, AgentPlugin, ForkMode, McpAttach,
+    ModelCatalogEntry, ModelPreset, resolve_session_args, DEFAULT_ID,
 };
 pub use relay::{
     RelayCap, RelayConfig, RelayEnvOption, RelayModelAuth, RelayModelRequest, RelayOption,
@@ -87,8 +93,8 @@ pub use relay::{
 };
 pub use transcript::{
     default_resolve_cwd, read_chat_delta, read_chat_delta_paged, read_chat_window, AgentMode,
-    ChatDelta, ChatItem, ChatWindow, TranscriptCache, TranscriptEvent, TranscriptInfo,
-    ChatLineMark, TranscriptParser, TranscriptSpec, TurnError,
+    ChatDelta, ChatItem, ChatLineMark, ChatWindow, TranscriptCache, TranscriptEvent,
+    TranscriptInfo, TranscriptParser, TranscriptSpec, TurnError,
 };
 pub use trust::{trust_key, WorkspaceTrustSpec};
 pub use variant::{DataDirSpec, Installation, Variant};

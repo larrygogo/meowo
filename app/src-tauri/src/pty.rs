@@ -142,6 +142,20 @@ impl ScreenProbe {
         )
     }
 
+    /// 只在发送守卫按需调用，不给 300ms 状态检测热路增加整屏导出。
+    fn frame(&self) -> Option<meowo_protocol::ipc::TerminalScreenFrameDto> {
+        let parser = self.parser.as_ref()?.lock().ok()?;
+        let screen = parser.screen();
+        let (_, cols) = screen.size();
+        let (cursor_row, cursor_col) = screen.cursor_position();
+        Some(meowo_protocol::ipc::TerminalScreenFrameDto {
+            lines: screen.rows(0, cols).collect(),
+            cursor_row,
+            cursor_col,
+            cursor_visible: !screen.hide_cursor(),
+        })
+    }
+
     /// 跑一轮检测。`current_end` 是会话此刻的累计输出偏移（[`ManagedPty::output_end`]）。
     /// 返回 Some = 发布状态发生变化。
     fn tick(
@@ -246,20 +260,24 @@ pub(crate) enum ExternalViewer {
 
 /// [`PtyBroker::screen_states`] 的单条取值：已发布的屏幕状态 + 它是否来自无规则命中的
 /// 回退（detect.rs `FALLBACK_RULE_ID`）。回退 idle 是「什么都没认出来」而不是「确认空闲」，
-/// 前端据此把角标从自信的「等你」降级为中性点（T-15），tab 归属等判定仍只看 state。
+/// 活动态与 tab 判定都必须忽略这类回退，否则 CLI 改版就会把运行中的会话误认成等输入。
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ScreenSight {
     pub(crate) state: &'static str,
     pub(crate) fallback: bool,
 }
 
+impl ScreenSight {
+    /// 回退来源保留给诊断，业务判定只消费确凿屏幕，避免把未知当成等待输入。
+    pub(crate) fn confirmed_state(self) -> Option<&'static str> {
+        (!self.fallback).then_some(self.state)
+    }
+}
+
 /// 「运行中 → 空闲/阻塞」的降级转变判定（T-15 高优通道，见 start_screen_detect）。
 /// blocked 与 idle 同属「agent 停下来等人」，都要即时上看板；升级（→ working）多由
 /// 用户自己敲键盘触发，人就在现场，不值得绕过合流/节流。纯函数，便于单测。
-fn is_downgrade(
-    prev: Option<crate::detect::ScreenState>,
-    new: crate::detect::ScreenState,
-) -> bool {
+fn is_downgrade(prev: Option<crate::detect::ScreenState>, new: crate::detect::ScreenState) -> bool {
     prev == Some(crate::detect::ScreenState::Working)
         && matches!(
             new,
@@ -458,7 +476,8 @@ impl Default for PtyBroker {
         // 测试便利构造；生产路径走 new() —— token 生成失败必须能向上报错拒绝启动，
         // 而 Default 无法返回 Result。这里同样不做弱随机回退：直接 panic。
         Self::with_token(
-            random_token().unwrap_or_else(|e| panic!("PTY broker token 生成失败（OS RNG 不可用）: {e}")),
+            random_token()
+                .unwrap_or_else(|e| panic!("PTY broker token 生成失败（OS RNG 不可用）: {e}")),
         )
     }
 }
@@ -474,7 +493,11 @@ struct StartPlaceholderGuard<'a> {
 impl Drop for StartPlaceholderGuard<'_> {
     fn drop(&mut self) {
         if self.armed {
-            let mut starting = self.broker.starting.lock().unwrap_or_else(|e| e.into_inner());
+            let mut starting = self
+                .broker
+                .starting
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             starting.remove(&self.session_id);
         }
     }
@@ -708,7 +731,12 @@ fn escalate_stop(managed: &Arc<ManagedPty>) {
 /// 必须无条件执行——锁有界、可能卡死的 ConPTY 释放丢牺牲线程（见 lock_within 的实拍）。
 /// `forced`：升级链末档的强制收尾（kill 静默无效、等不到真实退出）——事件里带给前端，
 /// 让它把「已强制结束，进程可能仍在」与正常退出区分开。
-fn finalize_exit(broker: &PtyBroker, app: &tauri::AppHandle, managed: &Arc<ManagedPty>, forced: bool) {
+fn finalize_exit(
+    broker: &PtyBroker,
+    app: &tauri::AppHandle,
+    managed: &Arc<ManagedPty>,
+    forced: bool,
+) {
     if managed.finalized.swap(true, Ordering::AcqRel) {
         return;
     }
@@ -817,7 +845,14 @@ fn finalize_exit(broker: &PtyBroker, app: &tauri::AppHandle, managed: &Arc<Manag
         }
         // 负 id（未认领的临时会话）没有库写入，直接发退出事件。app 级 emit：
         // 事件不绑窗口 label（PTY 事件解耦），监听方按 session_id 自行过滤。
-        let _ = app.emit("pty-exit", PtyExit { session_id, code, forced });
+        let _ = app.emit(
+            "pty-exit",
+            PtyExit {
+                session_id,
+                code,
+                forced,
+            },
+        );
     } else {
         // 托管 PTY 是这个 agent 进程的唯一持有者——它退出，会话就真的结束了。必须主动
         // 收尾：resume 路径已经乐观复活过 DB（prepare_resume），没人回滚的话卡片会一直
@@ -829,7 +864,14 @@ fn finalize_exit(broker: &PtyBroker, app: &tauri::AppHandle, managed: &Arc<Manag
         // end_session 在库忙（busy_timeout 3s，双实例并发写时是常态）时会把 emit 拖到
         // 秒级——「结束会话」的 UI 反馈没有理由等一笔迟早会自愈的库写入。
         // app 级 emit：不绑窗口 label，监听方按 session_id 过滤。
-        let _ = app.emit("pty-exit", PtyExit { session_id, code, forced });
+        let _ = app.emit(
+            "pty-exit",
+            PtyExit {
+                session_id,
+                code,
+                forced,
+            },
+        );
         match crate::open_store(&crate::db_path()) {
             Ok(store) => {
                 if let Err(error) = store.end_session(session_id, crate::now_ms()) {
@@ -885,7 +927,9 @@ static MISSING_FOR_TEST: std::sync::Mutex<Vec<i64>> = std::sync::Mutex::new(Vec:
 
 #[cfg(test)]
 fn session_missing(session_id: i64) -> bool {
-    MISSING_FOR_TEST.lock().is_ok_and(|ids| ids.contains(&session_id))
+    MISSING_FOR_TEST
+        .lock()
+        .is_ok_and(|ids| ids.contains(&session_id))
 }
 
 fn nested_claim_hijacks_reclaim(
@@ -905,8 +949,7 @@ fn agent_declared_continuation(old_sid: i64, new_sid: i64) -> bool {
     let Ok(store) = crate::open_store(&crate::db_path()) else {
         return false;
     };
-    let (Ok(old), Ok(new)) = (store.session_header(old_sid), store.session_header(new_sid))
-    else {
+    let (Ok(old), Ok(new)) = (store.session_header(old_sid), store.session_header(new_sid)) else {
         return false;
     };
     if old.provider != new.provider {
@@ -933,11 +976,7 @@ fn agent_declared_continuation(old_sid: i64, new_sid: i64) -> bool {
 /// agent 在 transcript 里声明了接续的那一个新会话不走这道判定（见 [`agent_declared_continuation`]）。
 /// 向上走父链而不是展开子孙：链短、不扫全表。父链断掉（中间进程已退出）按树外处理，
 /// 因为合法认领方在 SessionStart 时其祖先必然都还活着。
-fn claim_outside_pty_tree(
-    claim_pid: u32,
-    child_pid: u32,
-    parent_of: &HashMap<u32, u32>,
-) -> bool {
+fn claim_outside_pty_tree(claim_pid: u32, child_pid: u32, parent_of: &HashMap<u32, u32>) -> bool {
     let mut cur = claim_pid;
     // 层数上限兼防 pid 复用造成的伪环。
     for _ in 0..32 {
@@ -1200,11 +1239,17 @@ impl PtyBroker {
                 .copied();
             (pair, conhost)
         };
+        // Lead 原生续跑（OpenCode）：TUI 开放带密码的本机服务端口，关卡答复经它送进同一会话
+        // （lead_native::opencode_http）。
+        let lead_plan = crate::lead_native::opencode_http::launch_plan(provider, argv, env);
         let mut command = CommandBuilder::new(&argv[0]);
         command.args(&argv[1..]);
-        // 面板浏览器的 MCP 服务器（browser_agent.rs）。只加在托管 PTY 上：只有这里的 agent
-        // 环境带 Meowo 的会话令牌，服务器才有工具可给。
-        command.args(crate::browser_agent::launch_args(provider));
+        if let Some(plan) = &lead_plan {
+            command.args(&plan.args);
+            for (key, value) in &plan.env {
+                command.env(key, value);
+            }
+        }
         if let Some(cwd) = cwd.filter(|c| !c.trim().is_empty()) {
             command.cwd(cwd);
         }
@@ -1215,7 +1260,9 @@ impl PtyBroker {
         // start_pending 注入，导致历史会话恢复后 PermissionRequest 无法抵达 GUI。
         // 已签发但未随成功 spawn 交付的 scoped token，失败路径必须吊销（见下方）。
         let mut issued_scoped: Option<String> = None;
-        if let Ok(endpoint) = self.attach.endpoint.lock() {
+        let mut issued_endpoint: Option<String> = None;
+        {
+            let endpoint = self.attach.endpoint.lock().map_err(|_| LOCK_POISONED)?;
             if let Some(endpoint) = *endpoint {
                 // 凭据分级：agent 环境只拿按会话签发的 scoped reporter token（只许认领
                 // 自己/为自己会话递审批），full token 不出主进程——agent 的后代进程
@@ -1235,9 +1282,22 @@ impl PtyBroker {
                 command.env("MEOWO_PTY_ENDPOINT", endpoint.to_string());
                 command.env("MEOWO_PTY_TOKEN", &scoped);
                 command.env("MEOWO_PTY_PROTOCOL", CURRENT_PROTOCOL_VERSION.to_string());
+                issued_endpoint = Some(endpoint.to_string());
                 issued_scoped = Some(scoped);
             }
         }
+        // 必须在换发 scoped token 后生成 MCP 参数：共享引擎不会继承后来 TUI 的新环境。
+        // ConfigFileArg 沿用独占 CLI 的环境通道；TomlOverride 把绑定显式放进本 thread 的配置。
+        let mcp_session = issued_endpoint
+            .as_deref()
+            .zip(issued_scoped.as_deref())
+            .map(|(endpoint, token)| crate::browser_agent::McpSessionEnv {
+                endpoint,
+                token,
+                protocol: CURRENT_PROTOCOL_VERSION,
+            });
+        command.args(crate::browser_agent::launch_args(provider, mcp_session));
+        command.args(crate::lead_runtime::launch_args(provider, env, mcp_session));
         // 终端归一化:GUI 的托管 PTY 是给人看的全彩 xterm.js 渲染面,颜色必须可用。TERM
         // 之外还得管颜色开关——meowo 常从设了 NO_COLOR 的上游派生(典型:被某个 agent 的
         // "捕获输出用"子环境启动,那里为拿干净输出会置 NO_COLOR=1),CommandBuilder 默认
@@ -1249,6 +1309,14 @@ impl PtyBroker {
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
         command.env("FORCE_COLOR", "1");
+        // Lead 原生续跑（Codex）：在环境与 MCP 参数都定稿后，把配置覆盖交给每会话 app-server、
+        // TUI 改以 --remote 连它；条件不满足时原样内嵌启动（见 lead_native::codex_app_server）。
+        let codex_remote = crate::lead_native::codex_app_server::prepare_launch(
+            session_id,
+            provider,
+            env,
+            &mut command,
+        );
 
         // token 必须先于 spawn 登记（子进程一起来就可能 claim，reporter 不重试）；
         // 因此失败路径要反向吊销，不留「已登记但从未交付」的凭据。
@@ -1258,10 +1326,19 @@ impl PtyBroker {
                 if let Some(scoped) = &issued_scoped {
                     self.revoke_scoped_token(scoped);
                 }
+                if let Some(launch) = codex_remote {
+                    crate::lead_native::codex_app_server::abort(launch);
+                }
                 return Err(error.to_string());
             }
         };
         let child_pid = child.process_id();
+        if let Some(launch) = codex_remote {
+            crate::lead_native::codex_app_server::bind_tui(launch, child_pid);
+        }
+        if let Some(plan) = lead_plan {
+            plan.launched(child_pid);
+        }
         let pair_result = pair
             .master
             .try_clone_reader()
@@ -1353,11 +1430,7 @@ impl PtyBroker {
                 // 「结束会话」的升级链。stop() 只发 TerminateProcess，对卡死在 ConPTY 内核
                 // I/O 的进程它会静默无效（kill 恒返回 Ok 是谎报）——只等 try_wait 的话这里
                 // 永远转下去，UI 永远「运行中」。到点就加码，保证结束必定发生。
-                let stop_requested_at = waiter
-                    .stop_requested_at
-                    .lock()
-                    .ok()
-                    .and_then(|at| *at);
+                let stop_requested_at = waiter.stop_requested_at.lock().ok().and_then(|at| *at);
                 match stop_stage(stop_requested_at, std::time::Instant::now()) {
                     StopStage::Wait => {}
                     StopStage::KillTree => {
@@ -1828,7 +1901,9 @@ impl PtyBroker {
             exit_code: completed.as_ref().and_then(|item| item.code),
             // CLI 拒绝启动的原因只打在 PTY 输出里：尾部可读文本随快照带给对话页
             // （秒退探测只盖启动后第 1 秒，之后退出的失败否则只剩一句「退出码 X」）。
-            exit_tail: completed.as_ref().map(|item| readable_tail(&item.data, 240)),
+            exit_tail: completed
+                .as_ref()
+                .map(|item| readable_tail(&item.data, 240)),
             // 定格快照只在会话不再被托管时返回，重启窗口天然排除在外。
             exit_unexpected: completed.as_ref().is_some_and(|item| {
                 crate::exit_report::is_unexpected_exit(item.code, item.user_stopped, false)
@@ -1864,6 +1939,26 @@ impl PtyBroker {
             .pending_launches
             .lock()
             .map(|map| map.iter().map(|(id, info)| (*id, info.clone())).collect())
+            .unwrap_or_default()
+    }
+
+    /// 临时会话启动时的选择 map（按临时 id 反查 launch token）。带新参数重开时在它上面合并改选，
+    /// 免得把新建时选的权限档等丢掉。
+    pub(crate) fn pending_selections(&self, temp_id: i64) -> HashMap<String, String> {
+        let token = self.attach.pending.lock().ok().and_then(|pending| {
+            pending
+                .iter()
+                .find(|(_, id)| **id == temp_id)
+                .map(|(token, _)| token.clone())
+        });
+        token
+            .and_then(|token| {
+                self.attach
+                    .pending_launch_args
+                    .lock()
+                    .ok()
+                    .and_then(|map| map.get(&token).cloned())
+            })
             .unwrap_or_default()
     }
 
@@ -1915,11 +2010,7 @@ impl PtyBroker {
             }
         };
         let endpoint = listener.local_addr().map_err(|e| e.to_string())?;
-        *self
-            .attach
-            .endpoint
-            .lock()
-            .map_err(|_| LOCK_POISONED)? = Some(endpoint);
+        *self.attach.endpoint.lock().map_err(|_| LOCK_POISONED)? = Some(endpoint);
         // 外部终端没有托管 PTY 注入的环境变量。把仅监听 loopback 的端点和随机 token
         // 登记到当前用户的数据目录，让同一用户启动的 reporter 也能把审批转交 GUI。
         // 这里登记的是 full token：attach 客户端（用户显式 `meowo attach` 打开的同步
@@ -2063,6 +2154,15 @@ impl PtyBroker {
             .is_ok_and(|sessions| sessions.contains_key(&session_id))
     }
 
+    /// 托管会话的 PTY 子进程 pid（Lead 原生续跑按它找该 TUI 开放的本机服务端口）。
+    pub(crate) fn child_pid(&self, session_id: i64) -> Option<u32> {
+        self.sessions
+            .lock()
+            .ok()?
+            .get(&session_id)
+            .and_then(|managed| managed.child_pid)
+    }
+
     /// 会话已退出时，取退出码与输出尾部的可读文本（诊断用）。仍在运行/从未运行 → None。
     /// CLI 拒绝启动（如 resume 一个正被占用的会话）时，原因只存在于这段输出里。
     pub(crate) fn exit_info(&self, session_id: i64) -> Option<(Option<u32>, String)> {
@@ -2141,7 +2241,11 @@ impl PtyBroker {
         if subscribers.is_empty() {
             return ExternalViewer::None;
         }
-        match subscribers.iter().rev().find_map(|subscriber| subscriber.pid) {
+        match subscribers
+            .iter()
+            .rev()
+            .find_map(|subscriber| subscriber.pid)
+        {
             Some(pid) => ExternalViewer::Pid(pid),
             None => ExternalViewer::Legacy,
         }
@@ -2181,6 +2285,14 @@ impl PtyBroker {
         let managed = self.lookup(session_id).ok().flatten()?;
         let snapshot = managed.probe.snapshot()?;
         Some((snapshot, managed.probe.provider.clone()))
+    }
+
+    pub(crate) fn screen_frame(
+        &self,
+        session_id: i64,
+    ) -> Option<meowo_protocol::ipc::TerminalScreenFrameDto> {
+        // 与写入共用临时 sid 的绑定解析，认领前后不能读到不同会话的光标。
+        self.lookup(session_id).ok().flatten()?.probe.frame()
     }
 
     /// 启动屏幕检测节拍线程（幂等）。每 [`DETECT_TICK`] 过一遍所有托管会话：
@@ -2320,11 +2432,7 @@ impl PtyBroker {
         request_id: &str,
         decision: ApprovalDecision,
     ) -> Result<(), String> {
-        let mut approvals = self
-            .attach
-            .approvals
-            .lock()
-            .map_err(|_| LOCK_POISONED)?;
+        let mut approvals = self.attach.approvals.lock().map_err(|_| LOCK_POISONED)?;
         if approvals
             .get(request_id)
             .ok_or("审批请求已结束")?
@@ -2348,11 +2456,7 @@ impl PtyBroker {
         request_id: &str,
         choice: &str,
     ) -> Result<(), String> {
-        let mut approvals = self
-            .attach
-            .approvals
-            .lock()
-            .map_err(|_| LOCK_POISONED)?;
+        let mut approvals = self.attach.approvals.lock().map_err(|_| LOCK_POISONED)?;
         let pending = approvals.get(request_id).ok_or("审批请求已结束")?;
         if pending.request.session_id != session_id {
             return Err("审批请求不属于该会话".into());
@@ -2482,11 +2586,14 @@ impl PtyBroker {
 
     fn has_approval_consumer(&self, session_id: i64) -> bool {
         let now = crate::now_ms();
-        self.attach.approval_consumers.lock().is_ok_and(|consumers| {
-            consumers.iter().any(|(id, lease)| {
-                lease.session_id == session_id && consumer_lease_fresh(id, lease.seen_ms, now)
+        self.attach
+            .approval_consumers
+            .lock()
+            .is_ok_and(|consumers| {
+                consumers.iter().any(|(id, lease)| {
+                    lease.session_id == session_id && consumer_lease_fresh(id, lease.seen_ms, now)
+                })
             })
-        })
     }
 
     /// 手机端是否正看着这条会话（新鲜的 `remote:` 租约）。审批/提问闸门据此
@@ -2494,13 +2601,16 @@ impl PtyBroker {
     /// 是夺屏（与「用户正盯着别的会话不切窗」同一条产品判断）。
     fn has_fresh_remote_consumer(&self, session_id: i64) -> bool {
         let now = crate::now_ms();
-        self.attach.approval_consumers.lock().is_ok_and(|consumers| {
-            consumers.iter().any(|(id, lease)| {
-                lease.session_id == session_id
-                    && is_remote_consumer(id)
-                    && consumer_lease_fresh(id, lease.seen_ms, now)
+        self.attach
+            .approval_consumers
+            .lock()
+            .is_ok_and(|consumers| {
+                consumers.iter().any(|(id, lease)| {
+                    lease.session_id == session_id
+                        && is_remote_consumer(id)
+                        && consumer_lease_fresh(id, lease.seen_ms, now)
+                })
             })
-        })
     }
 
     /// 有任何**桌面**会话的消费者租约 = 对话窗的 WebView 活着且正显示着某条会话。
@@ -2511,11 +2621,14 @@ impl PtyBroker {
     /// （桌面用户其实没在看任何会话，却不切窗过去，审批空等 300s）。
     fn has_any_approval_consumer(&self) -> bool {
         let now = crate::now_ms();
-        self.attach.approval_consumers.lock().is_ok_and(|consumers| {
-            consumers.iter().any(|(id, lease)| {
-                !is_remote_consumer(id) && consumer_lease_fresh(id, lease.seen_ms, now)
+        self.attach
+            .approval_consumers
+            .lock()
+            .is_ok_and(|consumers| {
+                consumers.iter().any(|(id, lease)| {
+                    !is_remote_consumer(id) && consumer_lease_fresh(id, lease.seen_ms, now)
+                })
             })
-        })
     }
 
     /// 注册即续约：同 id 重复注册刷新 seen_ms（远端 20s 心跳走的就是这条）。
@@ -2657,6 +2770,18 @@ impl PtyBroker {
                 BrokerRequest::Browser { token, tool, args } => {
                     self.handle_browser(&token, &tool, &args, stream)
                 }
+                BrokerRequest::LeadContext {
+                    token,
+                    process_id,
+                    native_thread_id,
+                    catalog,
+                } => self.handle_lead_context(
+                    &token,
+                    process_id,
+                    native_thread_id.as_deref(),
+                    catalog,
+                    stream,
+                ),
                 BrokerRequest::Attach { .. } => unreachable!(),
             };
         };
@@ -2889,7 +3014,9 @@ impl PtyBroker {
         // 一个不存在的会话——此前是先换绑、后落库失败，1537 就这样成了「外部会话」（实拍）。
         // 打不开库时不拦：守卫只在证据齐全时收紧。
         if session_missing(real_id) {
-            return Err(format!("PTY claim 拒绝：会话 {real_id} 不在本库中（别的库里的会话 id）"));
+            return Err(format!(
+                "PTY claim 拒绝：会话 {real_id} 不在本库中（别的库里的会话 id）"
+            ));
         }
         let temp_id = *self
             .attach
@@ -2955,6 +3082,8 @@ impl PtyBroker {
         // 新会话在认领前（还是临时编号）就可能开了面板终端 / 浏览器：归属跟着换到真实编号，
         // 否则换号后页签消失、进程还在跑却没处关。
         crate::browser_agent::reassign_panels(temp_id, real_id);
+        // 认领前排进临时 id 的切模型 / 模式跟到真实 id（做空 N5：否则没人再取它）。
+        crate::session_settings::migrate_queued(temp_id, real_id);
         // 占位卡使命达成：真实会话行已由 hook 落库（先于 claim），看板下一次刷新用真实卡
         // 顶替——元数据此刻摘除，占位与真卡不会同屏并存（前端另有 provider/cwd 对账兜底）。
         if let Ok(mut map) = self.attach.pending_launches.lock() {
@@ -2975,6 +3104,17 @@ impl PtyBroker {
                 serde_json::to_string(&args),
             ) {
                 let _ = store.set_session_launch_args(real_id, &json);
+                // 会话服务机制的档（Codex 权限）在认领后经服务补设一次：启动参数在某些平台不生效
+                // （真机验证 codex 问题 1），会话里显示的是实际值，不补设就和新建页选的不一致。
+                if let Ok(header) = store.session_header(real_id) {
+                    crate::session_settings::apply_launch_server_settings(
+                        crate::db_path(),
+                        real_id,
+                        header.cc_session_id,
+                        header.provider,
+                        args,
+                    );
+                }
             }
         }
         // 跨 provider 切换的接续链此刻才有会话行可指：双向成对写入（set_session_lineage
@@ -3033,7 +3173,10 @@ impl PtyBroker {
                 .ok()
                 .and_then(|sessions| sessions.get(&old_sid).and_then(|m| m.child_pid));
             if let Some(child) = child_pid {
-                if claim_outside_pty_tree(claim, child, &crate::proc::parent_map()) {
+                // Codex 远程模式下 hook 由 Meowo 为这个 TUI 起的 app-server 派生，不在 PTY 树里，但同属本会话。
+                if claim_outside_pty_tree(claim, child, &crate::proc::parent_map())
+                    && !crate::lead_native::codex_app_server::serves_tui(claim, child)
+                {
                     return Err(format!(
                         "拒绝换代：认领方 pid {claim} 不在旧会话 {old_sid} 的 PTY 进程树内（agent 守护进程派生的后台会话误认领）"
                     ));
@@ -3083,6 +3226,82 @@ impl PtyBroker {
     /// agent 操作面板浏览器（见 browser_agent.rs）。只认 scoped token：会话归属从签发时
     /// 绑定的会话来（临时负 id 按 claim 后的绑定换成真实 id），agent 碰不到别的会话的浏览器。
     /// full token 没有会话归属，拒绝。
+    fn handle_lead_context(
+        &self,
+        token: &str,
+        process_id: u32,
+        native_thread_id: Option<&str>,
+        catalog: bool,
+        mut stream: TcpStream,
+    ) -> Result<(), String> {
+        let resolve = || -> Result<serde_json::Value, String> {
+            use meowo_agent::lead_install::LeadBindingPolicy;
+            let Some(TokenLevel::Scoped(owner)) = self.token_level(token) else {
+                return Err("lead/context_auth".into());
+            };
+            let session_id = self.binding(owner).unwrap_or(owner);
+            let managed = self.lookup(session_id)?.ok_or("lead/context_not_managed")?;
+            let store = crate::open_store(&crate::db_path())?;
+            let header = store
+                .session_header(session_id)
+                .map_err(|_| "lead/context_missing")?;
+            let cap = meowo_agent::by_id(&header.provider)
+                .and_then(|plugin| plugin.lead())
+                .ok_or("lead/context_unverified")?;
+            let parents = crate::proc::parent_map();
+            if process_id == 0 || !parents.contains_key(&process_id) {
+                return Err("lead/context_process".into());
+            }
+            match cap.binding_policy() {
+                LeadBindingPolicy::NativeThreadMeta => {
+                    // Codex 0.167.2实测：原生顶层threadId覆盖客户端伪值，其余meta字段不能作身份依据。
+                    // 工具目录没有执行thread，真正call必须携带与本token归属完全一致的原生字段。
+                    if !catalog && native_thread_id != Some(header.cc_session_id.as_str()) {
+                        return Err("lead/context_thread".into());
+                    }
+                }
+                LeadBindingPolicy::ExclusiveProcess => {
+                    let child = managed.child_pid.ok_or("lead/context_process")?;
+                    if claim_outside_pty_tree(process_id, child, &parents) {
+                        return Err("lead/context_process".into());
+                    }
+                    // 后代CLI会继承token，必须拒绝父链中的第二个CLI，不能把它当作主会话。
+                    let mut current = process_id;
+                    let mut agents = 0;
+                    for _ in 0..32 {
+                        if meowo_reporter::proc::process_scope(current)
+                            != meowo_agent::registry::ProcessScope::Unknown
+                        {
+                            agents += 1;
+                        }
+                        if current == child {
+                            break;
+                        }
+                        current = *parents.get(&current).ok_or("lead/context_process")?;
+                    }
+                    if agents != 1 {
+                        return Err("lead/context_process".into());
+                    }
+                }
+                LeadBindingPolicy::Unavailable => return Err("lead/context_unverified".into()),
+            }
+            let cwd = header
+                .cwd
+                .filter(|cwd| std::path::Path::new(cwd).is_absolute())
+                .ok_or("lead/context_cwd")?;
+            Ok(
+                serde_json::json!({"ok":true,"sessionId":header.cc_session_id,"cwd":cwd,"provider":header.provider}),
+            )
+        };
+        let reply = match resolve() {
+            Ok(reply) => reply,
+            Err(error) => serde_json::json!({"ok":false,"error":error}),
+        };
+        stream
+            .write_all(reply.to_string().as_bytes())
+            .map_err(|e| e.to_string())
+    }
+
     fn handle_browser(
         &self,
         token: &str,
@@ -3105,7 +3324,9 @@ impl PtyBroker {
             }
             Err(error) => serde_json::json!({ "ok": false, "error": error }),
         };
-        stream.write_all(reply.to_string().as_bytes()).map_err(|e| e.to_string())
+        stream
+            .write_all(reply.to_string().as_bytes())
+            .map_err(|e| e.to_string())
     }
 
     fn handle_approval(
@@ -3213,9 +3434,9 @@ impl PtyBroker {
                 ApprovalWait::Decision(decision) => decision,
                 // Abandoned = 远端领卡方消失(手机租约过期):与超时/别处结算同语义,
                 // Pass 交还终端表单作答。
-                ApprovalWait::TimedOut | ApprovalWait::ResolvedElsewhere | ApprovalWait::Abandoned => {
-                    ApprovalDecision::Pass
-                }
+                ApprovalWait::TimedOut
+                | ApprovalWait::ResolvedElsewhere
+                | ApprovalWait::Abandoned => ApprovalDecision::Pass,
             };
             if matches!(decision, ApprovalDecision::Answer(_)) {
                 // 已代答：收题面，已答的卡不许靠轮询弹回来。
@@ -3498,7 +3719,10 @@ fn answers_match_questions(
     };
     let mut keys = HashSet::new();
     for question in questions {
-        let text = question.get("question").and_then(|q| q.as_str()).unwrap_or("");
+        let text = question
+            .get("question")
+            .and_then(|q| q.as_str())
+            .unwrap_or("");
         if text.trim().is_empty() || !keys.insert(text) {
             return false;
         }

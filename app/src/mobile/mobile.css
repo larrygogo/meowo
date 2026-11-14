@@ -120,6 +120,21 @@ body.remote-ui .chat-window.is-remote-compact .chat-compose-actions > .chat-mode
 @media (max-width: 419px) {
   body.remote-ui .chat-window.is-remote-compact .chat-compose .chat-model-pill-effort { display: none; }
 }
+/* 第三轮 C2（375 宽实拍：「+」被挤到 9px 与计划胶囊叠在一起，模型名只剩 2px 一个括号）：
+   手机上模式胶囊只留图标（短名与说明在点开的底部面板里，当前值在 aria-label / 长按提示里），
+   让出的宽度给模型钮——模型名单行省略号截断，至少露 8 个字符；「+」不收缩，间距与桌面同档（--sp-8）。 */
+body.remote-ui .chat-window.is-remote-compact .chat-compose-actions { gap: var(--sp-8); }
+body.remote-ui .chat-window.is-remote-compact .chat-compose-actions > .chat-add { flex-shrink: 0; }
+body.remote-ui .chat-window.is-remote-compact .chat-compose .chat-mode-button :is(.chat-model-label, .chat-model-chevron) { display: none; }
+body.remote-ui .chat-window.is-remote-compact .chat-compose .chat-mode-button { padding: 0 var(--sp-7); }
+body.remote-ui .chat-window.is-remote-compact .chat-compose-actions > .chat-model-select { flex: 0 1 auto; min-width: 0; }
+body.remote-ui .chat-window.is-remote-compact .chat-compose .chat-model-select .chat-model-button { max-width: 100%; }
+/* 收缩下限：名字不超过 8 个字符（组件标 data-short，如 Auto、K3.1 Pro）就不收缩、按钮贴合内容，文字紧跟箭头，
+   间距同桌面（按钮 gap）；更长的名字才在剩余宽度内省略号截断，至少露 8 个字符（8ch）。
+   原先一律 min-width: 8ch，会把「Auto」撑到 8ch、靠左排，文字与箭头之间空出约 45px（screens-r4 实拍）；
+   按字符数估 ch 也不行——比例字体里 1 个字符不等于 1ch，「K3.1 Pro」仍空出 13px。 */
+body.remote-ui .chat-window.is-remote-compact .chat-compose .chat-model-select .chat-model-label { min-width: 8ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+body.remote-ui .chat-window.is-remote-compact .chat-compose .chat-model-select .chat-model-label[data-short] { min-width: max-content; }
 
 /* 触屏专属调优。远程页也会被桌面浏览器打开(同一局域网的另一台电脑),鼠标环境必须
    按 1:1 桌面密度渲染——这些规则无条件套用时,16px 输入框会撑肥侧栏搜索框、禁选中
@@ -834,6 +849,8 @@ body.remote-ui .remote-session-list .chat-sidebar-empty { display: flex; flex-di
   body.remote-ui .chat-title-agent { width: 18px; height: 18px; }
   body.remote-ui .chat-compose { width: calc(100% - 24px); padding: 11px 10px 8px; }
   body.remote-ui .chat-compose textarea { min-height: 44px; padding-left: 6px; padding-right: 6px; }
+  /* 提示条文字与占位文字同 x（第三轮 C9）。 */
+  body.remote-ui .chat-compose > .chat-send-error { padding-left: 6px; padding-right: 6px; }
   body.remote-ui .chat-compose-actions { gap: 6px; }
   body.remote-ui .chat-compose .chat-model-button { padding-left: 7px; padding-right: 7px; }
   body.remote-ui .chat-approval {

@@ -15,6 +15,14 @@ export type PillOption<T extends string> = {
   short?: string;
   /** 菜单项下的一行后果说明。 */
   desc?: string;
+  /** 行尾小字（模式的 CLI 原名、模型清单「以账号为准」一类）。 */
+  detail?: string;
+  /** 名字旁的小字标签（新建页 CLI 配置的默认档标「默认」）。 */
+  tag?: string;
+  /** 分组头（模型按 provider 分段）：与上一项不同时在它前面插一行组名。 */
+  group?: string;
+  /** 选不到（说明行写原因）。 */
+  disabled?: boolean;
   /** 高风险档：胶囊与菜单项用危险色（同对话页的 is-risk）。 */
   risk?: boolean;
   icon?: ReactElement;
@@ -58,35 +66,50 @@ export function PillSelect<T extends string>({ value, options, onChange, label, 
         <span className="chat-model-label">{current?.short ?? current?.label ?? ""}</span>
         <Chevron />
       </button>
-      {open && (
-        <div className="dd-menu chat-model-menu" role="menu">
-          {options.map((option) => {
-            const active = option.value === value;
-            return (
-              <button
-                type="button"
-                role="menuitem"
-                key={option.value}
-                // 说明行不进名字（同对话页），读屏名字只报档名。
-                aria-label={option.desc ? option.label : undefined}
-                className={"chat-model-item" + (active ? " is-active" : "") + (option.risk ? " is-risk" : "")}
-                onClick={() => {
-                  setOpen(false);
-                  ui.btnRef.current?.focus();
-                  if (!active) onChange(option.value);
-                }}
-              >
-                {option.icon && <span className="chat-model-icon" aria-hidden="true">{option.icon}</span>}
-                <span className="chat-model-item-text">
-                  <span className="chat-model-item-name">{option.label}</span>
-                  {option.desc && <span className="chat-model-item-desc">{option.desc}</span>}
+      {/* 分组的长清单（模型按 provider 分段）用模型菜单的限高外框、整块滚动，与对话页的模型菜单一致。 */}
+      {open && (() => {
+        // 两组以上才分段写组名：只有一组时组名就是当前引擎，不必再写。
+        const grouped = new Set(options.map((option) => option.group).filter(Boolean)).size > 1;
+        const rows = options.map((option, index) => {
+          const active = option.value === value;
+          const head = grouped && option.group && option.group !== options[index - 1]?.group
+            ? <div className="chat-model-quick-head" key={"head:" + option.group}>{option.group}</div>
+            : null;
+          return [head, (
+            <button
+              type="button"
+              role="menuitem"
+              key={option.value}
+              disabled={option.disabled}
+              // 说明行不进名字（同对话页），读屏名字只报档名。
+              aria-label={option.desc ? option.label : undefined}
+              className={"chat-model-item" + (active ? " is-active" : "") + (option.risk ? " is-risk" : "")}
+              onClick={() => {
+                setOpen(false);
+                ui.btnRef.current?.focus();
+                if (!active) onChange(option.value);
+              }}
+            >
+              {option.icon && <span className="chat-model-icon" aria-hidden="true">{option.icon}</span>}
+              <span className="chat-model-item-text">
+                <span className="chat-model-item-name">
+                  {option.label}
+                  {option.tag && <span className="chat-model-item-tag">{option.tag}</span>}
                 </span>
-                {active && <Icon glyph={icCheck} size={16} className="chat-model-check" />}
-              </button>
-            );
-          })}
-        </div>
-      )}
+                {option.desc && <span className="chat-model-item-desc">{option.desc}</span>}
+              </span>
+              {option.detail && <span className="chat-model-item-detail">{option.detail}</span>}
+              {/* 对勾占固定槽位（未选中行也占），右侧 CLI 原名列各行右缘对齐（第三轮 C5）。 */}
+              <span className="chat-model-check-slot" aria-hidden="true">{active && <Icon glyph={icCheck} size={16} className="chat-model-check" />}</span>
+            </button>
+          )];
+        });
+        return (
+          <div className={"dd-menu chat-model-menu" + (grouped ? " chat-model-quick" : "")} role="menu">
+            {grouped ? <div className="chat-model-quick-section is-list">{rows}</div> : rows}
+          </div>
+        );
+      })()}
     </div>
   );
 }

@@ -48,11 +48,16 @@ export function submitGapMs(content: string): number {
 /// 「可见 + 安静 700ms」对这两种形态都会误判成就绪。此时正文被吞,而无条件回车会替用户
 /// 按下选择器的默认焦点项:消息蒸发、恢复继续、没有任何报错(实拍:接管后对话页发送,
 /// transcript 里根本没有这条 user 消息)。写完正文先确认它真的出现在屏幕上,再发回车。
-export async function submitToTerminal(sessionId: number, content: string, abortIf?: () => string | null, verify?: { message: string }, submitInput = "\r"): Promise<void> {
+export type SubmitInput = string | (() => string | Promise<string>);
+
+export async function submitToTerminal(sessionId: number, content: string, abortIf?: () => string | null, verify?: { message: string }, submitInput: SubmitInput = "\r", onBodyWritten?: () => void): Promise<void> {
   const initialAbort = abortIf?.();
   if (initialAbort) throw new Error(initialAbort);
+  // 排队等待期间状态会变化；写正文前与落提交键前都重取，不能复用点击发送时的idle判断。
+  if (typeof submitInput === "function") await submitInput();
   const before = verify ? await managedTerminalSnapshot(sessionId) : null;
   await writeManagedTerminal(sessionId, terminalInput(content));
+  onBodyWritten?.();
   if (before && verify) {
     // 匹配规则:正文与可见文本都压掉空白与框线字符后做前缀包含——回显会被 composer
     // 边框/自动折行打散;长粘贴认 claude 的占位形态(Pasted text)。只扫**写入之后的
@@ -90,9 +95,10 @@ export async function submitToTerminal(sessionId: number, content: string, abort
     }
   }
   await new Promise((resolve) => window.setTimeout(resolve, submitGapMs(content)));
+  const input = typeof submitInput === "function" ? await submitInput() : submitInput;
   const abortReason = abortIf?.() ?? null;
   if (abortReason) throw new Error(abortReason);
-  await writeManagedTerminal(sessionId, submitInput);
+  await writeManagedTerminal(sessionId, input);
 }
 
 /// 定位 composer 首行,返回提示符之后的文本(已 trim);认不出返回 null。提示行的上一行须

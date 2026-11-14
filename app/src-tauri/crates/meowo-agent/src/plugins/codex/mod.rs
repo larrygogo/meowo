@@ -14,6 +14,7 @@
 //! 接线还有一步**副作用**（往 `config.toml` 写 `[hooks.state]` 的 trusted_hash 预信任）——见 `setup.rs`。
 
 pub mod account;
+mod lead;
 mod lineage;
 mod screen;
 pub mod setup;
@@ -129,6 +130,7 @@ static VARIANTS: [Variant; 1] = [Variant {
     tag: "stable",
     data_dir: DataDirSpec {
         env: Some("CODEX_HOME"),
+        env_suffix: "",
         candidates: &[".codex"],
     },
     hooks: &HOOKS,
@@ -232,6 +234,9 @@ impl AgentPlugin for Codex {
     fn permission_hook_decides(&self) -> bool {
         true
     }
+    fn lead(&self) -> Option<&'static dyn crate::lead_install::LeadCap> {
+        Some(&lead::CAP)
+    }
     fn variants(&self) -> &'static [Variant] {
         &VARIANTS
     }
@@ -248,6 +253,25 @@ impl AgentPlugin for Codex {
         // 会话本体是原生 codex 二进制；npm 包装时它由 node 启动但 hook 由 codex 自身触发，上溯命中
         // codex(.exe) 即可。不收 node.exe（过宽，会把任意 node 进程误判为 agent）。
         &["codex", "codex.exe"]
+    }
+    /// 0.167.2 的 app-server 持有 ThreadManager 多线程表；嵌入式服务也不等于独占。
+    /// 来源：0.167.2 隔离双 thread 的 SessionStart/UserPromptSubmit 父链全部是同一 daemon PID
+    /// （target/lead-provider-probes/codex-shared/result.json），原生 TUI 退出后也仍可续跑。
+    fn process_scope(&self, argv: &[String]) -> crate::registry::ProcessScope {
+        use crate::registry::ProcessScope;
+        if !argv
+            .first()
+            .is_some_and(|executable| self.owns_process(executable))
+        {
+            ProcessScope::Unknown
+        } else if argv.iter().skip(1).any(|arg| {
+            matches!(arg.as_str(), "app-server" | "exec-server" | "--remote")
+                || arg.starts_with("--remote=")
+        }) {
+            ProcessScope::Shared
+        } else {
+            ProcessScope::Exclusive
+        }
     }
     fn resume_args(&self) -> &'static [&'static str] {
         &["resume"]
@@ -268,23 +292,100 @@ impl AgentPlugin for Codex {
     /// 用的那份缓存（0.163 实测：`models[].slug/display_name/visibility/supported_reasoning_levels`）。
     /// 只列 `visibility = "list"` 的——`hide` 的（内部审查模型等）codex 菜单里也不出现。
     fn model_catalog(&self, env: &[(String, String)]) -> Vec<crate::ModelCatalogEntry> {
-        let home = env
-            .iter()
-            .find(|(key, value)| key == "CODEX_HOME" && !value.is_empty())
-            .map(|(_, value)| std::path::PathBuf::from(value))
-            .or_else(|| crate::installation(crate::id::CODEX).map(|inst| inst.data_dir));
-        home.and_then(|home| std::fs::read_to_string(home.join("models_cache.json")).ok())
+        codex_home(env)
+            .and_then(|home| std::fs::read_to_string(home.join("models_cache.json")).ok())
             .map(|content| parse_models_cache(&content))
             .unwrap_or_default()
     }
-    /// `/model` 是交互式菜单（不接受内联参数，故无 model_presets）。声明它，GUI 就能
-    /// 发出这条命令再把弹出的菜单渲染成按钮——模型清单由 CLI 现给。
+    /// 没登录过（没有 models_cache.json）时用 CLI 内置目录：`--bundled` 跳过联网刷新（`--help`），
+    /// 实测 0.06s（research-codex-opencode §1）。
+    fn model_catalog_command(&self) -> Option<&'static [&'static str]> {
+        Some(&["debug", "models", "--bundled"])
+    }
+    fn parse_model_catalog_output(&self, output: &str) -> Vec<crate::ModelCatalogEntry> {
+        parse_debug_models(output)
+    }
+    /// 裸 `/model` 弹菜单，只作兜底（会话没有 app-server 时）。主路线是会话自带服务的
+    /// `thread/settings/update {model, effort}`：TUI 底栏立刻变、下一回合生效、草稿和待批审批都不动、
+    /// 不写 config.toml（research-codex-opencode §2 exp2/exp3）。恢复时不带 `-m`（会弹新模型推荐框，
+    /// 选 1 改写默认模型，§3）。
     fn model_menu_command(&self) -> Option<&'static str> {
         Some("/model")
+    }
+    fn model_switch(&self) -> Option<crate::ModelSwitch> {
+        Some(crate::ModelSwitch::ServerSettings)
+    }
+    fn model_launch_flag(&self) -> Option<&'static str> {
+        Some("-m")
+    }
+    fn launch_defaults(
+        &self,
+        env: &[(String, String)],
+        _cwd: Option<&std::path::Path>,
+    ) -> crate::LaunchDefaults {
+        codex_home(env)
+            .and_then(|home| std::fs::read_to_string(home.join("config.toml")).ok())
+            .map(|content| parse_config_defaults(&content))
+            .unwrap_or_default()
+    }
+    /// 「自动审查」首轮只读的根因（真机第四轮 N7，evidence/round4-n7）：Windows 上没配 Windows 沙箱时，
+    /// Codex 读配置会把 workspace-write 降成 read-only（上游 codex-rs/config/src/config_toml.rs
+    /// `effective_sandbox_mode`：Windows + WindowsSandboxLevel::Disabled + WorkspaceWrite → ReadOnly；
+    /// 本机 0.167.2 `codex debug prompt-input` 实测：不配时首轮提示词写 `sandbox_mode` is `read-only`，
+    /// `-c windows.sandbox=unelevated` 或 `elevated` 时是 `workspace-write`）。认领后经 app-server 补设虽能
+    /// 改成 workspace-write，但沙箱级别仍是 Disabled，上游 `effective_windows_sandbox_type` 此时给
+    /// SandboxType::None——命令实际不进沙箱。
+    ///
+    /// 所以凡是映射到 workspace-write 的档（「必要时询问」ask、「自动审查」approveForMe，按声明表的启动参数认），
+    /// 只要 CLI 配置里没配 Windows 沙箱（`[windows] sandbox`，或旧的
+    /// `features.experimental_windows_sandbox` / `elevated_windows_sandbox` / `enable_experimental_windows_sandbox`），
+    /// 启动参数就补 `-c windows.sandbox=unelevated`：Codex 自带、不要管理员权限的受限令牌沙箱，首轮起就是
+    /// workspace-write 且真进沙箱（leader 2026-11-14 定范围）。用户自己配过的（包括 elevated、mxc）一律不覆盖。
+    /// 新建与接回都加：接回时权限参数被丢掉（远程 resume 不收，见 codex_app_server 模块头），但 `-c` 照常交给
+    /// TUI 与 app-server，thread 存下的 workspace-write 才不会在接回后又被降成只读。只在 Windows。
+    /// 这一步只让档位名副其实，不连 app-server（认领后补设的范围另见 session_settings::claim_server_update）。
+    fn extra_launch_args(
+        &self,
+        selections: &std::collections::HashMap<String, String>,
+        env: &[(String, String)],
+        cwd: Option<&std::path::Path>,
+    ) -> Vec<String> {
+        let workspace_write = selections.get("approval").is_some_and(|picked| {
+            self.launch_options()
+                .iter()
+                .find(|option| option.id == "approval")
+                .and_then(|option| option.choices.iter().find(|choice| choice.id == picked.as_str()))
+                .is_some_and(|choice| choice.args.windows(2).any(|pair| pair == ["--sandbox", "workspace-write"]))
+        });
+        if !cfg!(windows) || !workspace_write {
+            return Vec::new();
+        }
+        if windows_sandbox_configured_in_layers(codex_home(env).as_deref(), cwd) {
+            Vec::new()
+        } else {
+            vec!["-c".into(), "windows.sandbox=unelevated".into()]
+        }
     }
     /// Esc 中断当前回合:codex 状态行自述 "esc to interrupt"(真机 capture 在档,
     /// 见 docs/research/tui-menu-captures-2026-07.md)。排队键 Tab 在空闲时同样直接提交
     /// (probe_tui_script,0.162.1,2026-10-16),运行态误判也不会卡住消息。
+    /// 2026-11-12 隔离无模型实拍（target/lead-provider-probes/composer）：文字只给候选，发送仍须核验原生光标。
+    fn composer_guard(&self, version: Option<&str>) -> Option<crate::chat_ui::ComposerGuard> {
+        if !crate::lead_install::version_at_least(version, (0, 167, 2)) {
+            return None;
+        }
+        Some(crate::chat_ui::ComposerGuard {
+            prompt_footer: true,
+            input_start_pattern: r"^(› )",
+            top_pattern: r"^› ",
+            bottom_pattern: r"^  [A-Za-z0-9][^\r\n]* · .+$",
+            row_pattern: r"^(?:› |  )(.*)$",
+            prompt_prefix: "",
+            tail_rows: 0,
+            tail_pattern: None,
+            empty_pattern: r"^(?:Ask Codex to do anything)?$",
+        })
+    }
     fn queue_input(&self) -> Option<&'static str> {
         Some("\t")
     }
@@ -343,6 +444,20 @@ impl AgentPlugin for Codex {
             "/clear", "/compact", "/diff", "/help", "/model", "/new", "/review", "/status",
         ]
     }
+    /// 目录信任屏。0.166.0 的标题改成 `Trust this folder? Codex can read, edit, and run files
+    /// here, ...`（codex.exe 内嵌字符串，research-cli-drift X1，2026-11-12 复核：二进制里
+    /// `do you trust` 0 处）。只认通用表的旧句，新目录首条消息会被信任屏吞掉、会话像卡住。
+    /// 带问号取前半句：整句会随终端宽度折行，问号让它不至于撞上普通对话里的「trust this folder」。
+    /// 通用表的两句保留，0.16x 之前的老版本用户还在。
+    fn startup_attention_markers(&self) -> &'static [&'static str] {
+        &[
+            "do you trust the files in this folder",
+            "do you trust the contents of this directory",
+            "trust this folder?",
+        ]
+    }
+    /// 协作模式：会话里经 app-server `thread/settings/update {collaborationMode}` 直接设（exp4 实测底栏
+    /// 出现 `Plan mode`），没有服务时退回 Shift+Tab 循环。回显随 rollout 的 turn_context。
     fn mode_controls(&self) -> &'static [crate::ModeControl] {
         static MODES: [crate::ModeControl; 1] = [crate::ModeControl {
             menu_command: None,
@@ -354,48 +469,139 @@ impl AgentPlugin for Codex {
         }];
         &MODES
     }
-    /// 启动选项（实测 `codex --help`）：审批/沙箱形态。模型**不声明**——codex 的模型名随
-    /// 版本频繁更迭，声明一份很快就过期的清单等于给出会启动失败的选项。
+    /// 启动选项按 0.167.2 TUI `/permissions` 的四档（Read Only / Ask for approval / Approve for me /
+    /// Full Access，exp6 `screen-permissions.txt` 原文，research-codex-opencode §9）。旧版的
+    /// 「Full Auto」（`-a never -s workspace-write`）不再是任何一档，存了它的老会话按默认档恢复。
+    /// 栏 id 仍叫 approval、Full Access 仍用 id `yolo`：老会话存的选择照旧对得上。
+    /// 0.167.2 Windows 实测：经 `--remote` 起的新会话，TUI 侧的 `--sandbox workspace-write` 首轮仍是
+    /// read-only，app-server 侧 `-c sandbox_mode=…` 也一样（真机验证 2026-11-14）；只有会话内
+    /// `thread/settings/update` 设得上。所以会话认领后宿主按存的这一档再用服务补设一次
+    /// （session_settings::apply_launch_server_settings），对话页按 rollout 的实际值显示。
+    /// 会话里经 app-server 改：`server` 片段是宿主 CodexSettingsUpdate 的 JSON（取值用 CLI 参数写法，
+    /// 由 lead_native::codex_app_server 换成 `thread/settings/update` 参数，字段见 ThreadSettingsUpdateParams）。
+    /// 协作模式（Default / Plan）没有启动参数，只在会话里切。
     fn launch_options(&self) -> &'static [crate::LaunchOption] {
-        use crate::{LaunchChoice, LaunchOption};
-        static OPTIONS: [LaunchOption; 1] = [LaunchOption {
-            id: "approval",
-            default: "default",
-            choices: &[
-                LaunchChoice {
-                    id: "default",
-                    label: "Default",
-                    args: &[],
-                    risk: false,
-                },
-                LaunchChoice {
-                    id: "readOnly",
-                    label: "Read Only",
-                    args: &["--sandbox", "read-only"],
-                    risk: false,
-                },
-                LaunchChoice {
-                    id: "fullAuto",
-                    label: "Full Auto",
-                    // `--full-auto` 在 codex 0.16x 已移除（实测 0.162.1 `--help` 无此项，
-                    // 旧会话按残留选项启动即报 unexpected argument 直接退出）——它就是
-                    // `-a never -s workspace-write` 的速记，拆开写等价且新旧通吃。
-                    args: &[
-                        "--ask-for-approval",
-                        "never",
-                        "--sandbox",
-                        "workspace-write",
-                    ],
-                    risk: false,
-                },
-                LaunchChoice {
-                    id: "yolo",
-                    label: "YOLO",
-                    args: &["--dangerously-bypass-approvals-and-sandbox"],
-                    risk: true,
-                },
-            ],
-        }];
+        use crate::{Ask, LaunchChoice, LaunchOption, ModeSwitch, ModeTraits};
+        static OPTIONS: [LaunchOption; 2] = [
+            LaunchOption {
+                id: "approval",
+                default: "default",
+                choices: &[
+                    LaunchChoice {
+                        id: "default",
+                        label: "Default",
+                        args: &[],
+                        risk: false,
+                        traits: None,
+                        desc: Some("codex.approval.default"),
+                        server: None,
+                    },
+                    LaunchChoice {
+                        id: "readOnly",
+                        label: "Read Only",
+                        args: &["--sandbox", "read-only"],
+                        risk: false,
+                        // 「Read workspace files, with approval required for edits or internet access」
+                        traits: Some(ModeTraits::new(Ask::Always, Ask::Risky, false)),
+                        desc: Some("codex.approval.readOnly"),
+                        server: Some(
+                            r#"{"approval":"on-request","approvalsReviewer":"user","sandbox":"read-only"}"#,
+                        ),
+                    },
+                    LaunchChoice {
+                        id: "ask",
+                        label: "Ask for approval",
+                        args: &[
+                            "--sandbox",
+                            "workspace-write",
+                            "--ask-for-approval",
+                            "on-request",
+                        ],
+                        risk: false,
+                        // 「Read and edit workspace files and run commands, with approval required for
+                        // internet access or edits outside the workspace」
+                        traits: Some(ModeTraits::new(Ask::Risky, Ask::Risky, false)),
+                        desc: Some("codex.approval.ask"),
+                        server: Some(
+                            r#"{"approval":"on-request","approvalsReviewer":"user","sandbox":"workspace-write"}"#,
+                        ),
+                    },
+                    LaunchChoice {
+                        id: "approveForMe",
+                        label: "Approve for me",
+                        // 不用 `--approve-for-me`：0.167.2 Windows 实测单独用它启动沙箱落成 read-only（与 --help
+                        // 写的 workspace-write 不符），会话里显示成「只读」；它又与 --sandbox 互斥（真机验证
+                        // codex/README 问题 1）。改为与会话内切到这一档同一组值：workspace-write + on-request +
+                        // 自动审查（config 键 approvals_reviewer 与 app-server 的 approvalsReviewer 同义）。
+                        args: &[
+                            "--sandbox",
+                            "workspace-write",
+                            "--ask-for-approval",
+                            "on-request",
+                            "-c",
+                            "approvals_reviewer=auto_review",
+                        ],
+                        risk: false,
+                        // 「Only ask for actions detected as potentially unsafe」；越界先交自动审查。
+                        traits: Some(ModeTraits::new(Ask::Risky, Ask::Risky, false)),
+                        desc: Some("codex.approval.approveForMe"),
+                        server: Some(
+                            r#"{"approval":"on-request","approvalsReviewer":"auto_review","sandbox":"workspace-write"}"#,
+                        ),
+                    },
+                    LaunchChoice {
+                        id: "yolo",
+                        label: "Full Access",
+                        args: &[
+                            "--sandbox",
+                            "danger-full-access",
+                            "--ask-for-approval",
+                            "never",
+                        ],
+                        risk: true,
+                        // 「Use with caution: Codex can edit files outside this workspace and access the
+                        // internet without approval」
+                        traits: Some(ModeTraits::new(Ask::Never, Ask::Never, false)),
+                        desc: Some("codex.approval.yolo"),
+                        server: Some(
+                            r#"{"approval":"never","approvalsReviewer":"user","sandbox":"danger-full-access"}"#,
+                        ),
+                    },
+                ],
+                switch: ModeSwitch::Server,
+                resume_upgrade_only: false,
+                in_session_only: false,
+            },
+            LaunchOption {
+                id: "collaboration",
+                default: "default",
+                choices: &[
+                    LaunchChoice {
+                        id: "default",
+                        label: "Default",
+                        args: &[],
+                        risk: false,
+                        // 问不问由权限档决定。
+                        traits: Some(ModeTraits::new(Ask::Inherit, Ask::Inherit, false)),
+                        desc: Some("codex.collaboration.default"),
+                        server: Some(r#"{"collaboration":"default"}"#),
+                    },
+                    LaunchChoice {
+                        id: "plan",
+                        label: "Plan",
+                        args: &[],
+                        risk: false,
+                        // 「You must not perform mutating actions」：提示词约束，不是沙箱约束。
+                        traits: Some(ModeTraits::new(Ask::Blocked, Ask::Inherit, true)),
+                        desc: Some("codex.collaboration.plan"),
+                        server: Some(r#"{"collaboration":"plan"}"#),
+                    },
+                ],
+                switch: ModeSwitch::Server,
+                resume_upgrade_only: false,
+                in_session_only: true,
+            },
+        ];
         &OPTIONS
     }
     /// 自定义 prompt：`~/.codex/prompts/*.md` → `/<文件名>`。只有用户级（codex 无项目级目录），
@@ -487,18 +693,576 @@ fn parse_models_cache(content: &str) -> Vec<crate::ModelCatalogEntry> {
                         .collect()
                 })
                 .unwrap_or_default();
-            Some(crate::ModelCatalogEntry {
-                id,
-                label,
-                group: None,
-                efforts,
-            })
+            let mut entry = crate::ModelCatalogEntry::new(id, label);
+            entry.efforts = efforts;
+            entry.default_effort = model
+                .get("default_reasoning_level")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+            entry.is_default = model.get("is_default").and_then(|v| v.as_bool()) == Some(true);
+            Some(entry)
         })
         .collect()
 }
 
+/// `codex debug models --bundled` 的输出：与 models_cache.json 同形，前面可能夹一行 WARNING。
+fn parse_debug_models(output: &str) -> Vec<crate::ModelCatalogEntry> {
+    output
+        .find('{')
+        .map(|start| parse_models_cache(&output[start..]))
+        .unwrap_or_default()
+}
+
+/// 新建页默认值：`$CODEX_HOME/config.toml` 顶层的 `model`、`approval_policy`、`sandbox_mode`、
+/// `approvals_reviewer`（research-codex-opencode §7；`-p` 叠加的 profile 不读）。
+fn parse_config_defaults(content: &str) -> crate::LaunchDefaults {
+    let mut top = std::collections::HashMap::new();
+    for line in content.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            break;
+        }
+        if let Some((key, value)) = line.split_once('=') {
+            let value = value.trim();
+            let value = value.split(" #").next().unwrap_or(value).trim();
+            top.insert(key.trim().to_string(), value.trim_matches('"').to_string());
+        }
+    }
+    let mut out = crate::LaunchDefaults {
+        model: top.get("model").filter(|m| !m.is_empty()).cloned(),
+        ..Default::default()
+    };
+    let tier = telemetry::permission_tier(
+        top.get("approval_policy")
+            .map(String::as_str)
+            .or(Some("on-request")),
+        top.get("sandbox_mode").map(String::as_str),
+        top.get("approvals_reviewer").map(String::as_str),
+    );
+    if let Some(tier) = tier {
+        out.choices.insert("approval".into(), tier.into());
+    }
+    out
+}
+
+/// CLI 配置里有没有选 Windows 沙箱实现（与上游 `resolve_windows_sandbox_mode` 同口径：`[windows] sandbox`，
+/// 或旧的 features 开关）。解析不了的配置当作「配过」，不去改它（Codex 自己也会报错）。
+fn windows_sandbox_configured(content: &str) -> bool {
+    let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
+        return true;
+    };
+    if doc
+        .get("windows")
+        .and_then(|windows| windows.get("sandbox"))
+        .is_some_and(|sandbox| sandbox.as_str().is_some())
+    {
+        return true;
+    }
+    let features = doc.get("features");
+    [
+        "experimental_windows_sandbox",
+        "elevated_windows_sandbox",
+        "enable_experimental_windows_sandbox",
+    ]
+    .iter()
+    .any(|key| {
+        features
+            .and_then(|features| features.get(key))
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false)
+    })
+}
+
+/// 按 Codex 的配置分层看有没有配 Windows 沙箱（做空第五轮 P4）：用户层 `$CODEX_HOME/config.toml`，再加
+/// 项目层——从 cwd 往上到项目根（最近的含 `.git` 的目录，没有就是 cwd 本身）每一级的 `.codex/config.toml`，
+/// 只认已信任的（用户层 `[projects."<目录>"] trust_level = "trusted"`，目录本身或项目根信任即可；Windows 上
+/// 路径不分大小写）。与上游 codex-rs/config/src/loader/mod.rs `discover_project_layers` /
+/// `decision_for_dir` 同口径；未信任的项目层上游加载但禁用，这里不算。`$CODEX_HOME/.codex` 跳过（上游同）。
+/// 任何一层配了就算「用户配过」，不补参数。
+fn windows_sandbox_configured_in_layers(home: Option<&std::path::Path>, cwd: Option<&std::path::Path>) -> bool {
+    let user = home.and_then(|home| std::fs::read_to_string(home.join("config.toml")).ok());
+    if user.as_deref().is_some_and(windows_sandbox_configured) {
+        return true;
+    }
+    let Some(cwd) = cwd else {
+        return false;
+    };
+    let fold = |path: &std::path::Path| trust_key(path);
+    // 已信任的目录：每个信任键记规范路径与原样两种拼写（见 trust_keys），比较时任一相同即可。
+    let trusted: std::collections::HashSet<String> = user
+        .as_deref()
+        .and_then(|content| content.parse::<toml_edit::DocumentMut>().ok())
+        .and_then(|doc| {
+            doc.get("projects").and_then(|projects| projects.as_table_like()).map(|projects| {
+                projects
+                    .iter()
+                    .filter(|(_, entry)| {
+                        entry.get("trust_level").and_then(|level| level.as_str()) == Some("trusted")
+                    })
+                    .flat_map(|(key, _)| trust_keys(std::path::Path::new(key)))
+                    .collect()
+            })
+        })
+        .unwrap_or_default();
+    let is_trusted = |path: &std::path::Path| trust_keys(path).iter().any(|key| trusted.contains(key));
+    let root = cwd
+        .ancestors()
+        .find(|dir| dir.join(".git").exists())
+        .unwrap_or(cwd);
+    // git worktree（.git 是文件）按主仓库的信任算（上游 git-utils/src/trust.rs resolve_root_git_project_for_trust，
+    // 第六轮复核 L1）：主仓库被信任，worktree 和它的子目录都加载项目层。项目层仍只在 cwd 到 worktree 根之间找。
+    let main_root = main_checkout_for_trust(root);
+    let root_trusted = is_trusted(root) || main_root.as_deref().is_some_and(is_trusted);
+    let home_dot = home.map(fold);
+    for dir in cwd.ancestors() {
+        let dot = dir.join(".codex");
+        let trusted_here = root_trusted || is_trusted(dir);
+        if trusted_here && home_dot.as_deref() != Some(fold(&dot).as_str()) {
+            if let Ok(content) = std::fs::read_to_string(dot.join("config.toml")) {
+                if windows_sandbox_configured(&content) {
+                    return true;
+                }
+            }
+        }
+        if dir == root {
+            break;
+        }
+    }
+    false
+}
+
+/// 信任键的比较口径：去掉末尾分隔符；Windows 上分隔符统一成 `\`、再小写（第七轮复核 R2：git 写进 worktree
+/// `.git` 文件的 gitdir 是正斜杠 `C:/Users/...`，Codex 记信任键是反斜杠 `c:\users\...`，不统一就永远对不上）。
+fn trust_key(path: &std::path::Path) -> String {
+    let text = path.to_string_lossy();
+    if cfg!(windows) {
+        text.replace('/', "\\").trim_end_matches('\\').to_ascii_lowercase()
+    } else {
+        text.trim_end_matches('/').to_string()
+    }
+}
+
+/// 一个目录用来查信任的各种拼写：规范路径（解开符号链接 / 目录联接、Windows 8.3 短名展开成长名、去掉
+/// `\\?\` 前缀）与原样，都按 [`trust_key`] 折叠。照上游 codex-rs/config/src/loader/mod.rs
+/// `normalized_project_trust_keys`（dunce::canonicalize 后的与原样的，规范的优先）；规范化失败（目录不存在等）
+/// 就只用原样。CI 的临时目录就是这种情况：macOS 的 /var 是 /private/var 的链接，Windows runner 的 TEMP 是
+/// RUNNER~1 短名，git 写进 gitdir 的却是解析后的长路径（PR #172 CI）。
+fn trust_keys(path: &std::path::Path) -> Vec<String> {
+    let original = trust_key(path);
+    match std::fs::canonicalize(path) {
+        Ok(canonical) => {
+            let canonical = trust_key(&strip_verbatim(canonical));
+            if canonical == original {
+                vec![original]
+            } else {
+                vec![canonical, original]
+            }
+        }
+        Err(_) => vec![original],
+    }
+}
+
+/// Windows 的 canonicalize 返回 `\\?\C:\...` 或 `\\?\UNC\server\share\...`：去掉前缀变回常见写法（与
+/// dunce::simplified 同取向）。其他平台原样返回。
+fn strip_verbatim(path: std::path::PathBuf) -> std::path::PathBuf {
+    let text = path.to_string_lossy();
+    if let Some(rest) = text.strip_prefix(r"\\?\UNC\") {
+        return std::path::PathBuf::from(format!(r"\\{rest}"));
+    }
+    if let Some(rest) = text.strip_prefix(r"\\?\") {
+        return std::path::PathBuf::from(rest);
+    }
+    path
+}
+
+/// worktree 的主仓库根（与上游 `resolve_root_git_project_for_trust` 同口径，只按文件系统核对、不调 git）：
+/// `<root>/.git` 是文件、写着 `gitdir: <主仓库>/.git/worktrees/<名字>`；那个目录要在 `worktrees/` 下，它的
+/// `gitdir` 文件要指回 `<root>/.git`，`commondir` 要指回主仓库的 `.git`，主仓库根的 `.git` 也要就是这个公共目录。
+/// 任何一步对不上都返回 None（不借主仓库的信任）。`.git` 是目录时就是普通仓库，返回它自己。
+fn main_checkout_for_trust(root: &std::path::Path) -> Option<std::path::PathBuf> {
+    use std::path::{Path, PathBuf};
+    const MAX: u64 = 64 * 1024;
+    let read_small = |path: &Path| -> Option<String> {
+        let meta = std::fs::symlink_metadata(path).ok()?;
+        (meta.is_file() && meta.len() <= MAX).then(|| std::fs::read_to_string(path).ok()).flatten()
+    };
+    let dot_git = root.join(".git");
+    let meta = std::fs::symlink_metadata(&dot_git).ok()?;
+    if meta.is_dir() {
+        return Some(root.to_path_buf());
+    }
+    let gitdir_of = |file: &Path| -> Option<PathBuf> {
+        let text = read_small(file)?;
+        let target = text.trim().strip_prefix("gitdir:")?.trim().to_string();
+        (!target.is_empty()).then(|| file.parent().map(|dir| dir.join(&target)))?
+    };
+    let git_dir = gitdir_of(&dot_git)?;
+    let git_dir_meta = std::fs::symlink_metadata(&git_dir).ok()?;
+    if !git_dir_meta.is_dir() {
+        return None;
+    }
+    let canonical = |path: &Path| std::fs::canonicalize(path).ok();
+    let canonical_git_dir = canonical(&git_dir)?;
+    let worktrees = canonical_git_dir.parent()?;
+    if worktrees.file_name()? != "worktrees" {
+        return None;
+    }
+    let common = worktrees.parent()?.to_path_buf();
+    let registered = read_small(&canonical_git_dir.join("gitdir"))?;
+    let registered = canonical_git_dir.join(registered.trim());
+    if registered.file_name()? != ".git" || canonical(registered.parent()?)? != canonical(root)? {
+        return None;
+    }
+    let commondir = read_small(&canonical_git_dir.join("commondir"))?;
+    if canonical(&canonical_git_dir.join(commondir.trim()))? != common {
+        return None;
+    }
+    // 信任键沿用 gitdir 里写的主仓库路径（不规范化，与上游「保留原信任键」同取向），再核对它确实拥有公共目录。
+    let main_root = git_dir.parent()?.parent()?.parent()?.to_path_buf();
+    let main_dot_git = main_root.join(".git");
+    let main_git_dir = if std::fs::symlink_metadata(&main_dot_git).ok()?.is_dir() {
+        main_dot_git
+    } else {
+        gitdir_of(&main_dot_git)?
+    };
+    (canonical(&main_git_dir)? == common).then_some(main_root)
+}
+
+fn codex_home(env: &[(String, String)]) -> Option<std::path::PathBuf> {
+    env.iter()
+        .find(|(key, value)| key == "CODEX_HOME" && !value.is_empty())
+        .map(|(_, value)| std::path::PathBuf::from(value))
+        .or_else(|| crate::installation(crate::id::CODEX).map(|inst| inst.data_dir))
+}
+
 #[cfg(test)]
 mod tests {
+    /// 真机第四轮 N7：Windows 沙箱配没配，按上游同口径认；没配才补，配过的（任何实现）不覆盖。
+    #[test]
+    fn windows_sandbox_configured_follows_upstream_keys() {
+        use super::windows_sandbox_configured as configured;
+        assert!(!configured(""));
+        assert!(!configured("model = \"gpt\"\n[projects.'C:/x']\ntrust_level = \"trusted\"\n"));
+        assert!(configured("[windows]\nsandbox = \"elevated\"\n"));
+        assert!(configured("[windows]\nsandbox = \"unelevated\"\n"));
+        assert!(configured("[windows]\nsandbox = \"mxc\"\n"));
+        assert!(configured("[features]\nexperimental_windows_sandbox = true\n"));
+        assert!(configured("[features]\nelevated_windows_sandbox = true\n"));
+        assert!(configured("[features]\nenable_experimental_windows_sandbox = true\n"));
+        assert!(!configured("[features]\nexperimental_windows_sandbox = false\n"));
+        assert!(configured("this is = = not toml"));
+    }
+
+    /// 做空第五轮 P4：项目层 `.codex/config.toml` 配了 Windows 沙箱、且项目已信任时不补；未信任的项目层不算；
+    /// 从 cwd 往上到项目根（含 .git 的目录）每一级都看。
+    #[test]
+    fn project_layer_windows_sandbox_counts_only_when_trusted() {
+        use super::windows_sandbox_configured_in_layers as configured;
+        let root = std::env::temp_dir().join(format!("meowo-codex-p4-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let home = root.join("home");
+        let repo = root.join("repo");
+        let sub = repo.join("pkg").join("app");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::create_dir_all(repo.join(".codex")).unwrap();
+        std::fs::write(repo.join(".codex").join("config.toml"), "[windows]\nsandbox = \"elevated\"\n").unwrap();
+        let trust = |dir: &std::path::Path| {
+            let key = dir.to_string_lossy().replace('\\', "\\\\");
+            std::fs::write(home.join("config.toml"), format!("[projects.\"{key}\"]\ntrust_level = \"trusted\"\n")).unwrap();
+        };
+        // 没信任：项目层不算。
+        std::fs::write(home.join("config.toml"), "").unwrap();
+        assert!(!configured(Some(&home), Some(&sub)));
+        // 信任项目根：从子目录启动也算（上游 decision_for_dir 退回项目根的信任）。
+        trust(&repo);
+        assert!(configured(Some(&home), Some(&sub)));
+        assert!(configured(Some(&home), Some(&repo)));
+        // 只信任子目录、项目层在根上：子目录本身被信任时根的 .codex 也在扫描路径上，但根不受信任，不算。
+        trust(&sub);
+        assert!(!configured(Some(&home), Some(&sub)));
+        // 子目录自己的 .codex 配了、子目录受信任：算。
+        std::fs::create_dir_all(sub.join(".codex")).unwrap();
+        std::fs::write(sub.join(".codex").join("config.toml"), "[windows]\nsandbox = \"unelevated\"\n").unwrap();
+        assert!(configured(Some(&home), Some(&sub)));
+        // 用户层配了：不看项目层也算；没给 cwd 只看用户层。
+        std::fs::write(home.join("config.toml"), "[windows]\nsandbox = \"elevated\"\n").unwrap();
+        assert!(configured(Some(&home), None));
+        std::fs::write(home.join("config.toml"), "").unwrap();
+        assert!(!configured(Some(&home), None));
+        // extra_launch_args 走同一判定。
+        let codex = crate::by_id("codex").unwrap();
+        trust(&repo);
+        let env = vec![("CODEX_HOME".to_string(), home.to_string_lossy().into_owned())];
+        let pick = std::collections::HashMap::from([("approval".to_string(), "ask".to_string())]);
+        assert!(codex.extra_launch_args(&pick, &env, Some(&repo)).is_empty());
+        let other = root.join("elsewhere");
+        std::fs::create_dir_all(&other).unwrap();
+        assert_eq!(codex.extra_launch_args(&pick, &env, Some(&other)).is_empty(), !cfg!(windows));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 第六轮复核 L1：git worktree 按主仓库的信任算。主仓库被信任时，worktree 和它的子目录都认 worktree 里的
+    /// `.codex/config.toml`；主仓库不被信任、或 .git 指向的不是登记过的 worktree 时不借主仓库的信任。
+    #[test]
+    fn worktree_trust_follows_main_checkout() {
+        use super::windows_sandbox_configured_in_layers as configured;
+        let root = std::env::temp_dir().join(format!("meowo-codex-l1-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let home = root.join("home");
+        let main = root.join("main");
+        let wt = root.join("wt");
+        let sub = wt.join("pkg");
+        let admin = main.join(".git").join("worktrees").join("wt");
+        for dir in [&home, &admin, &sub] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        std::fs::write(main.join(".git").join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        std::fs::write(wt.join(".git"), format!("gitdir: {}\n", admin.display())).unwrap();
+        std::fs::write(admin.join("gitdir"), format!("{}\n", wt.join(".git").display())).unwrap();
+        std::fs::write(admin.join("commondir"), "../..\n").unwrap();
+        std::fs::create_dir_all(wt.join(".codex")).unwrap();
+        std::fs::write(wt.join(".codex").join("config.toml"), "[windows]\nsandbox = \"elevated\"\n").unwrap();
+        let trust = |dir: &std::path::Path| {
+            let key = dir.to_string_lossy().replace('\\', "\\\\");
+            std::fs::write(home.join("config.toml"), format!("[projects.\"{key}\"]\ntrust_level = \"trusted\"\n")).unwrap();
+        };
+        assert_eq!(super::main_checkout_for_trust(&wt), Some(main.clone()));
+        assert_eq!(super::main_checkout_for_trust(&main), Some(main.clone()));
+        // 主仓库没被信任：不加载。
+        std::fs::write(home.join("config.toml"), "").unwrap();
+        assert!(!configured(Some(&home), Some(&wt)));
+        // 主仓库被信任：worktree 根和子目录都认 worktree 里配的 elevated。
+        trust(&main);
+        assert!(configured(Some(&home), Some(&wt)));
+        assert!(configured(Some(&home), Some(&sub)));
+        let codex = crate::by_id("codex").unwrap();
+        let env = vec![("CODEX_HOME".to_string(), home.to_string_lossy().into_owned())];
+        let pick = std::collections::HashMap::from([("approval".to_string(), "approveForMe".to_string())]);
+        assert!(codex.extra_launch_args(&pick, &env, Some(&sub)).is_empty());
+        // 登记对不上（worktrees/<名字>/gitdir 不指回这个 worktree）：不借主仓库的信任。
+        std::fs::write(admin.join("gitdir"), format!("{}\n", root.join("other").join(".git").display())).unwrap();
+        assert_eq!(super::main_checkout_for_trust(&wt), None);
+        assert!(!configured(Some(&home), Some(&wt)));
+        // .git 文件指向的不在 worktrees/ 下：同样不借。
+        std::fs::write(admin.join("gitdir"), format!("{}\n", wt.join(".git").display())).unwrap();
+        let stray = root.join("stray");
+        std::fs::create_dir_all(&stray).unwrap();
+        std::fs::write(wt.join(".git"), format!("gitdir: {}\n", stray.display())).unwrap();
+        assert_eq!(super::main_checkout_for_trust(&wt), None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 第七轮复核 R2：用 `git worktree add` 建出真实目录（.git 文件里的 gitdir 是 git 写的正斜杠），信任键按
+    /// Codex 的写法（Windows 上反斜杠、小写）只给主仓库；worktree 与子目录都要认到项目层的 elevated。
+    #[test]
+    fn real_git_worktree_with_codex_style_trust_key() {
+        use super::windows_sandbox_configured_in_layers as configured;
+        let git = |dir: &std::path::Path, args: &[&str]| {
+            std::process::Command::new("git")
+                .args(["-c", "user.name=probe", "-c", "user.email=probe@example.invalid", "-c", "commit.gpgsign=false"])
+                .args(args)
+                .current_dir(dir)
+                .output()
+                .is_ok_and(|out| out.status.success())
+        };
+        let root = std::env::temp_dir().join(format!("meowo-codex-r2-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let main = root.join("Main");
+        let wt = root.join("WT");
+        let home = root.join("home");
+        std::fs::create_dir_all(&main).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        if !git(&main, &["init", "-q"]) {
+            eprintln!("没有 git，跳过");
+            return;
+        }
+        std::fs::write(main.join("a.txt"), "a").unwrap();
+        assert!(git(&main, &["add", "a.txt"]));
+        assert!(git(&main, &["commit", "-q", "-m", "init"]));
+        assert!(git(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+        let dot_git = std::fs::read_to_string(wt.join(".git")).unwrap();
+        if cfg!(windows) {
+            assert!(dot_git.contains('/') && !dot_git.contains('\\'), "git 写的应是正斜杠：{dot_git}");
+        }
+        let sub = wt.join("pkg");
+        std::fs::create_dir_all(sub.join(".codex")).unwrap();
+        std::fs::create_dir_all(wt.join(".codex")).unwrap();
+        std::fs::write(wt.join(".codex").join("config.toml"), "[windows]\nsandbox = \"elevated\"\n").unwrap();
+        // 比较规范路径：CI 的临时目录可能经链接 / 短名到达，git 写的是解析后的长路径（PR #172 CI）。
+        assert!(super::main_checkout_for_trust(&wt).is_some_and(|m| super::trust_keys(&m)[0] == super::trust_keys(&main)[0]));
+        // Codex 写信任键的样子：Windows 上反斜杠、小写（照本机 ~/.codex/config.toml）；TOML 单引号字面量。
+        let key = if cfg!(windows) {
+            main.to_string_lossy().replace('/', "\\").to_ascii_lowercase()
+        } else {
+            main.to_string_lossy().into_owned()
+        };
+        std::fs::write(home.join("config.toml"), "").unwrap();
+        assert!(!configured(Some(&home), Some(&wt)));
+        std::fs::write(home.join("config.toml"), format!("[projects.'{key}']\ntrust_level = \"trusted\"\n")).unwrap();
+        assert!(configured(Some(&home), Some(&wt)));
+        assert!(configured(Some(&home), Some(&sub)));
+        let codex = crate::by_id("codex").unwrap();
+        let env = vec![("CODEX_HOME".to_string(), home.to_string_lossy().into_owned())];
+        let pick = std::collections::HashMap::from([("approval".to_string(), "ask".to_string())]);
+        assert!(codex.extra_launch_args(&pick, &env, Some(&wt)).is_empty());
+        let _ = git(&main, &["worktree", "remove", "--force", wt.to_str().unwrap()]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// PR #172 CI：临时目录经别名路径到达（macOS /var → /private/var 的符号链接、Windows runner 的 8.3 短名）。
+    /// 这里用目录联接（Windows）/ 符号链接（其他平台）造一个别名根，git 经别名建仓库与 worktree，gitdir 里写的
+    /// 是解析后的真实路径；信任键分别用别名拼写和真实拼写，worktree 用别名和真实路径来问，都要认到主仓库的信任。
+    #[test]
+    fn trust_matches_through_path_aliases() {
+        use super::windows_sandbox_configured_in_layers as configured;
+        let git = |dir: &std::path::Path, args: &[&str]| {
+            std::process::Command::new("git")
+                .args(["-c", "user.name=probe", "-c", "user.email=probe@example.invalid", "-c", "commit.gpgsign=false"])
+                .args(args)
+                .current_dir(dir)
+                .output()
+                .is_ok_and(|out| out.status.success())
+        };
+        let base = std::env::temp_dir().join(format!("meowo-codex-alias-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let real = base.join("real");
+        let alias = base.join("alias");
+        std::fs::create_dir_all(&real).unwrap();
+        #[cfg(windows)]
+        let linked = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J", alias.to_str().unwrap(), real.to_str().unwrap()])
+            .output()
+            .is_ok_and(|out| out.status.success());
+        #[cfg(not(windows))]
+        let linked = std::os::unix::fs::symlink(&real, &alias).is_ok();
+        if !linked {
+            eprintln!("建不了目录别名，跳过");
+            let _ = std::fs::remove_dir_all(&base);
+            return;
+        }
+        let main = alias.join("Main");
+        let wt = alias.join("WT");
+        let home = real.join("home");
+        std::fs::create_dir_all(&main).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        let cleanup = || {
+            #[cfg(windows)]
+            let _ = std::fs::remove_dir(&alias); // 只拆联接，不进去删
+            #[cfg(not(windows))]
+            let _ = std::fs::remove_file(&alias);
+            let _ = std::fs::remove_dir_all(&base);
+        };
+        if !git(&main, &["init", "-q"]) {
+            eprintln!("没有 git，跳过");
+            cleanup();
+            return;
+        }
+        std::fs::write(main.join("a.txt"), "a").unwrap();
+        assert!(git(&main, &["add", "a.txt"]));
+        assert!(git(&main, &["commit", "-q", "-m", "init"]));
+        assert!(git(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+        std::fs::create_dir_all(wt.join(".codex")).unwrap();
+        std::fs::write(wt.join(".codex").join("config.toml"), "[windows]\nsandbox = \"elevated\"\n").unwrap();
+        // Codex 写信任键的样子：Windows 上反斜杠、小写。
+        let codex_key = |path: &std::path::Path| {
+            if cfg!(windows) {
+                path.to_string_lossy().replace('/', "\\").to_ascii_lowercase()
+            } else {
+                path.to_string_lossy().into_owned()
+            }
+        };
+        for key in [codex_key(&main), codex_key(&real.join("Main"))] {
+            std::fs::write(home.join("config.toml"), format!("[projects.'{key}']\ntrust_level = \"trusted\"\n")).unwrap();
+            assert!(configured(Some(&home), Some(&wt)), "别名路径的 worktree，信任键 {key}");
+            assert!(configured(Some(&home), Some(&real.join("WT"))), "真实路径的 worktree，信任键 {key}");
+        }
+        std::fs::write(home.join("config.toml"), "").unwrap();
+        assert!(!configured(Some(&home), Some(&wt)), "没信任就不读项目层");
+        let _ = git(&main, &["worktree", "remove", "--force", wt.to_str().unwrap()]);
+        cleanup();
+    }
+
+    /// 第七轮复核 R2 真机：本机真实 worktree（默认 meowo-tui-codex，`MEOWO_R2_WORKTREE` 可改）。隔离的 CODEX_HOME 里
+    /// 只放主仓库的信任键（照本机写法：反斜杠、小写），worktree 项目层临时放一份配了 [windows] sandbox 的
+    /// .codex/config.toml，跑完删掉。`MEOWO_R2_OUT` 给出时把结果写成 JSON。不碰用户的 ~/.codex。
+    #[test]
+    #[ignore = "第七轮复核 R2：本机真实 worktree；手动跑"]
+    fn r2_real_worktree_on_this_machine() {
+        let wt = std::path::PathBuf::from(
+            std::env::var("MEOWO_R2_WORKTREE").unwrap_or_else(|_| r"C:\Users\35122\Desktop\workspace\meowo-tui-codex".into()),
+        );
+        let dot_git = std::fs::read_to_string(wt.join(".git")).expect("应是 worktree（.git 是文件）");
+        let main = super::main_checkout_for_trust(&wt).expect("认得出主仓库");
+        let key = super::trust_key(&main);
+        let home = std::env::temp_dir().join(format!("meowo-codex-r2-home-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(home.join("config.toml"), format!("[projects.'{key}']\ntrust_level = \"trusted\"\n")).unwrap();
+        let dot_codex = wt.join(".codex");
+        let created_dir = !dot_codex.exists();
+        let config = dot_codex.join("config.toml");
+        assert!(!config.exists(), "worktree 里已有 .codex/config.toml，不覆盖：{}", config.display());
+        std::fs::create_dir_all(&dot_codex).unwrap();
+        std::fs::write(&config, "[windows]\nsandbox = \"elevated\"\n").unwrap();
+        let codex = crate::by_id("codex").unwrap();
+        let env = vec![("CODEX_HOME".to_string(), home.to_string_lossy().into_owned())];
+        let pick = std::collections::HashMap::from([("approval".to_string(), "ask".to_string())]);
+        let with_layer = codex.extra_launch_args(&pick, &env, Some(&wt));
+        let sub = wt.join("app");
+        let with_layer_sub = codex.extra_launch_args(&pick, &env, Some(&sub));
+        // 对照：项目层拿掉后应补参数（说明是项目层让它不补，而不是别的原因）。
+        let _ = std::fs::remove_file(&config);
+        if created_dir {
+            let _ = std::fs::remove_dir(&dot_codex);
+        }
+        let without_layer = codex.extra_launch_args(&pick, &env, Some(&wt));
+        let _ = std::fs::remove_dir_all(&home);
+        let out = serde_json::json!({
+            "worktree": wt, "dot_git": dot_git.trim(), "main_checkout": main, "trust_key_in_isolated_home": key,
+            "extra_args_with_project_layer": with_layer, "extra_args_with_project_layer_from_subdir": with_layer_sub,
+            "extra_args_after_removing_layer": without_layer,
+            "cleanup": {"config_removed": !config.exists(), "dot_codex_removed_if_created": !created_dir || !dot_codex.exists(), "home_removed": !home.exists()},
+        });
+        if let Ok(path) = std::env::var("MEOWO_R2_OUT") {
+            std::fs::write(path, serde_json::to_string_pretty(&out).unwrap()).unwrap();
+        }
+        assert!(with_layer.is_empty() && with_layer_sub.is_empty(), "{out}");
+        assert_eq!(without_layer.is_empty(), !cfg!(windows), "{out}");
+        assert!(!config.exists());
+    }
+
+    /// workspace-write 的档（必要时询问、自动审查）在没配 Windows 沙箱时补 `-c windows.sandbox=unelevated`；
+    /// 其他档、配过的都不动。
+    #[test]
+    fn workspace_write_tiers_add_unelevated_sandbox_only_when_unconfigured() {
+        let codex = crate::by_id("codex").unwrap();
+        let home = std::env::temp_dir().join(format!("meowo-codex-n7-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let env = vec![("CODEX_HOME".to_string(), home.to_string_lossy().into_owned())];
+        let pick = |tier: &str| std::collections::HashMap::from([("approval".to_string(), tier.to_string())]);
+        let expect: Vec<String> = if cfg!(windows) {
+            vec!["-c".into(), "windows.sandbox=unelevated".into()]
+        } else {
+            Vec::new()
+        };
+        // 没有 config.toml：没配。
+        assert_eq!(codex.extra_launch_args(&pick("approveForMe"), &env, None), expect);
+        std::fs::write(home.join("config.toml"), "check_for_update_on_startup = false\n").unwrap();
+        assert_eq!(codex.extra_launch_args(&pick("approveForMe"), &env, None), expect);
+        assert_eq!(codex.extra_launch_args(&pick("ask"), &env, None), expect);
+        for other in ["default", "readOnly", "yolo", "nonsense"] {
+            assert!(codex.extra_launch_args(&pick(other), &env, None).is_empty(), "{other}");
+        }
+        assert!(codex.extra_launch_args(&std::collections::HashMap::new(), &env, None).is_empty());
+        std::fs::write(home.join("config.toml"), "[windows]\nsandbox = \"elevated\"\n").unwrap();
+        assert!(codex.extra_launch_args(&pick("approveForMe"), &env, None).is_empty());
+        assert!(codex.extra_launch_args(&pick("ask"), &env, None).is_empty());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
     /// 样本形制取自本机 codex 0.163 的 models_cache.json（描述截短）。
     #[test]
     fn models_cache_lists_visible_models_with_reasoning_levels() {
@@ -516,12 +1280,75 @@ mod tests {
         assert!(parse_models_cache("not json").is_empty());
     }
 
+    /// `codex debug models --bundled` 前面会夹一行 WARNING（隔离 CODEX_HOME 实测 0.167.2）。
+    #[test]
+    fn debug_models_output_skips_leading_warning_and_reads_default_effort() {
+        let output = "WARNING: proceeding, even though we could not create PATH aliases\n{\"models\":[{\"slug\":\"gpt-6-astra\",\"display_name\":\"GPT-6-Astra\",\"default_reasoning_level\":\"low\",\"supported_reasoning_levels\":[{\"effort\":\"low\"}],\"visibility\":\"list\"}]}";
+        let catalog = super::parse_debug_models(output);
+        assert_eq!(catalog.len(), 1);
+        assert_eq!(catalog[0].default_effort.as_deref(), Some("low"));
+    }
+
+    #[test]
+    fn config_defaults_map_to_permission_tiers() {
+        let defaults = super::parse_config_defaults(
+            "model = \"gpt-5.5\"\napproval_policy = \"never\"\nsandbox_mode = \"danger-full-access\"\n[profiles.x]\nmodel = \"other\"\n",
+        );
+        assert_eq!(defaults.model.as_deref(), Some("gpt-5.5"));
+        assert_eq!(defaults.choices.get("approval").map(String::as_str), Some("yolo"));
+        let ro = super::parse_config_defaults("sandbox_mode = \"read-only\"\n");
+        assert_eq!(ro.choices.get("approval").map(String::as_str), Some("readOnly"));
+        assert!(super::parse_config_defaults("").choices.is_empty());
+    }
+
     use super::*;
+
+    /// codex 0.166.0 信任屏原文（codex.exe 内嵌字符串，research-cli-drift X1）。
+    #[test]
+    fn startup_markers_cover_trust_folder_screen_old_and_new() {
+        let screen = "Trust this folder? Codex can read, edit, and run files here, subject to \
+                      your permission settings."
+            .to_lowercase();
+        let markers = Codex.startup_attention_markers();
+        assert!(markers.iter().any(|m| screen.contains(m)));
+        // 旧版（< 0.16x）标题仍认
+        let old = "Do you trust the contents of this directory?".to_lowercase();
+        assert!(markers.iter().any(|m| old.contains(m)));
+        // 普通对话里提到这几个词不算
+        let chat = "you can trust this folder layout".to_lowercase();
+        assert!(!markers.iter().any(|m| chat.contains(m)));
+    }
 
     #[test]
     fn writes_session_token_before_first_prompt() {
         assert!(Codex.writes_tab_token());
         assert!(!Codex.sets_terminal_tab_title());
+    }
+
+    #[test]
+    fn app_server_is_shared_even_when_embedded_but_tui_is_private() {
+        use crate::registry::ProcessScope;
+        let scope = |args: &[&str]| {
+            Codex.process_scope(&args.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>())
+        };
+        assert_eq!(scope(&[]), ProcessScope::Unknown);
+        assert_eq!(scope(&["unrelated.exe"]), ProcessScope::Unknown);
+        assert_eq!(
+            scope(&["codex.exe", "--remote", "unix://test"]),
+            ProcessScope::Shared
+        );
+        assert_eq!(
+            scope(&["codex.exe", "app-server", "--stdio"]),
+            ProcessScope::Shared
+        );
+        assert_eq!(
+            scope(&["codex.exe", "app-server", "--listen", "unix://test"]),
+            ProcessScope::Shared
+        );
+        assert_eq!(
+            scope(&["codex.exe", "--no-daemon", "resume", "thread"]),
+            ProcessScope::Exclusive
+        );
     }
 
     #[test]

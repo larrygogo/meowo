@@ -2,9 +2,15 @@
 import type { AgentModeDto } from "./AgentModeDto";
 import type { ChatItem } from "./ChatItem";
 import type { PendingReviewKind } from "./PendingReviewKind";
+import type { RetiredManagedDto } from "./RetiredManagedDto";
 import type { TodoDto } from "./TodoDto";
 
-export type ChatHistoryDto = { sessionId: number, 
+export type ChatHistoryDto = { 
+/**
+ * 已停用的「Meowo 托管」会话（PR #172 删除了托管路线，旧库里的这类会话只读保留）。
+ * 前端据此把「会话已结束」换成「这种会话已停用」，有原生会话 id 时给「用官方 CLI 打开」。
+ */
+retiredManaged?: RetiredManagedDto, sessionId: number, 
 /**
  * CLI 侧会话 id：前端以它为键的动作（重命名 rename_session、置顶 STAR_KEY）
  * 从对话窗标题菜单发起时需要，数字主键替代不了。
@@ -39,6 +45,10 @@ connected: boolean,
  * （0.6.11 实机，gemini 0.64）。
  */
 screenState: string | null, 
+/**
+ * 无规则命中的 idle 不代表确认空闲，必须与状态一起传给统一活动判定。
+ */
+screenAssumed: boolean, 
 /**
  * 最近一轮以错误收场（transcript 分析口径，与侧栏/贴纸的 `LiveItem.errored` 同源）。
  * 不做 transcript 分析的 agent（codex/kimi）恒为 false。

@@ -22,9 +22,12 @@ export function activityTone(input: {
   status?: string;
   pendingReview?: unknown;
   screenState?: string | null;
+  screenAssumed?: boolean;
   busySubagents?: number;
 }): "pending" | "running" | "waiting" | null {
-  const { status, pendingReview, screenState, busySubagents } = input;
+  const { status, pendingReview, busySubagents } = input;
+  // 未命中规则的 idle 只表示认不出来，不能拿它覆盖 hook 的运行记录并改变发送按键。
+  const screenState = input.screenAssumed ? null : input.screenState;
   if (pendingReview || screenState === "blocked") return "pending";
   // 已 ended 的会话,屏幕上留着的最后一屏不能替它抢答「等你」:idle 是「一条规则都没
   // 命中」的回退值,不是证据。托管 PTY 没回收就一直算在线,于是一个 19 秒的空会话顶着

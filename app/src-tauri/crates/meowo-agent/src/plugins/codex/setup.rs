@@ -26,14 +26,7 @@ impl WiringCap for CodexWiring {
         // 0.162.1 已核实支持 SessionEnd/Interrupt；旧版本未必认识，不能因新增事件使整份 hooks 失效。
         let current = ctx
             .cli_version
-            .and_then(|version| {
-                let mut parts = version.split('.');
-                Some((
-                    parts.next()?.parse::<u32>().ok()?,
-                    parts.next()?.parse::<u32>().ok()?,
-                    parts.next()?.split('-').next()?.parse::<u32>().ok()?,
-                ))
-            })
+            .and_then(parse_cli_semver)
             .is_some_and(|version| version >= (0, 162, 1));
         if current {
             return Ok(text.into());
@@ -86,6 +79,30 @@ impl WiringCap for CodexWiring {
     fn after_write(&self, inst: &Installation, written: &str) -> Option<RepairReason> {
         write_trusted_hashes(inst, written)
     }
+}
+
+/// 从 `codex --version` 首行里取出 `(major, minor, patch)`。
+///
+/// 为什么不能直接 `split('.')`：`probe_cli_version` 喂进来的是原样首行，codex 0.166.0 实为
+/// `codex-cli 0.166.0`（research-cli-drift X2，2026-11-12；~/.codex/sessions 的 rollout
+/// `cli_version` 同为 0.166.0）。首段 `"codex-cli 0"` 解析失败，SessionEnd/Interrupt 就被当成
+/// 老版本一直剔掉。这里按空白切词，取第一个形如 `X.Y.Z` 的词（容忍前缀 `v` 和 `-alpha.1` 这类
+/// 预发布后缀），裸版本号 `0.162.1` 照旧能认。
+fn parse_cli_semver(line: &str) -> Option<(u32, u32, u32)> {
+    line.split_whitespace().find_map(|word| {
+        let word = word.strip_prefix('v').unwrap_or(word);
+        let mut parts = word.split('.');
+        Some((
+            parts.next()?.parse::<u32>().ok()?,
+            parts.next()?.parse::<u32>().ok()?,
+            parts
+                .next()?
+                .split(['-', '+'])
+                .next()?
+                .parse::<u32>()
+                .ok()?,
+        ))
+    })
 }
 
 /// 我方在 hooks.json 里认领到的一条 hook，附真实位置（group_idx = 组在该事件数组里的下标，
@@ -331,7 +348,16 @@ mod tests {
     fn lifecycle_hooks_are_version_gated_without_removing_user_handlers() {
         let inst = crate::by_id("codex").unwrap().resolve().unwrap();
         let text = serde_json::to_string(&wired("C:/x/meowo-reporter.exe")).unwrap();
-        for version in [None, Some("0.152.0"), Some("0.162.1"), Some("0.163.0")] {
+        // `codex-cli 0.166.0` 是 0.166.0 `--version` 首行原样（probe_cli_version 不裁前缀，
+        // research-cli-drift X2）；`codex-cli 0.152.0` 验证带前缀的老版本仍会被剔。
+        for version in [
+            None,
+            Some("0.152.0"),
+            Some("codex-cli 0.152.0"),
+            Some("0.162.1"),
+            Some("0.163.0"),
+            Some("codex-cli 0.166.0"),
+        ] {
             let ctx = crate::wiring::WiringContext {
                 cli_version: version,
                 fallback_reporter: None,
@@ -343,7 +369,8 @@ mod tests {
             let root: Value = serde_json::from_str(&amended).unwrap();
             assert_eq!(
                 root["hooks"].get("SessionEnd").is_some(),
-                matches!(version, Some("0.162.1" | "0.163.0"))
+                matches!(version, Some("0.162.1" | "0.163.0" | "codex-cli 0.166.0")),
+                "版本 {version:?}"
             );
             if version.is_none() {
                 let mut with_user: Value = serde_json::from_str(&text).unwrap();
@@ -366,6 +393,19 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn parse_cli_semver_accepts_prefixed_and_bare_lines() {
+        // codex 0.166.0 `--version` 首行原样（research-cli-drift X2）
+        assert_eq!(parse_cli_semver("codex-cli 0.166.0"), Some((0, 166, 0)));
+        assert_eq!(parse_cli_semver("0.162.1"), Some((0, 162, 1)));
+        assert_eq!(
+            parse_cli_semver("codex-cli 0.170.0-alpha.2"),
+            Some((0, 170, 0))
+        );
+        assert_eq!(parse_cli_semver("v0.163.0"), Some((0, 163, 0)));
+        assert_eq!(parse_cli_semver("codex-cli"), None);
     }
 
     #[test]
