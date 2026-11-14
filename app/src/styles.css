@@ -1791,7 +1791,11 @@ button.stab {
   cursor: pointer;
   transition: background var(--dur-fast) var(--ease-in-out);
 }
-.dd-btn:hover, .dd-btn.open { background: var(--fill-selected-hover); }
+/* 触屏点过会一直留着 :hover：菜单与下拉的悬停底色只在有悬停能力的指针下给（第四轮 L5，同 C4）。 */
+.dd-btn.open { background: var(--fill-selected-hover); }
+@media (hover: hover) {
+  .dd-btn:hover { background: var(--fill-selected-hover); }
+}
 .dd-chev { flex: none; opacity: 0.65; transition: transform var(--dur-base) var(--ease-out); }
 /* 值区（可选徽标 + 文字）：文字过长时省略，徽标不被挤掉。 */
 .dd-val { display: flex; align-items: center; gap: var(--sp-8); min-width: 0; }
@@ -1851,7 +1855,10 @@ button.stab {
 .dd-item.muted:hover .dd-ico, .dd-item.muted:hover svg { opacity: 0.85; }
 /* 高风险档（契约 LaunchChoice.risk，如跳过权限确认）：警示色，与普通档拉开视觉。 */
 .dd-item.risk { color: var(--cc-err); }
-.dd-item.risk:hover { background: color-mix(in srgb, var(--cc-err) 12%, transparent); color: var(--cc-err); }
+/* 触屏点过会一直留着 :hover：菜单与下拉的悬停底色只在有悬停能力的指针下给（第四轮 L5，同 C4）。 */
+@media (hover: hover) {
+  .dd-item.risk:hover { background: color-mix(in srgb, var(--cc-err) 12%, transparent); color: var(--cc-err); }
+}
 /* 选项下的风险副标题：独立成行、可换行（父级 .dd-item 整行 nowrap）。 */
 /* 说明行默认灰；只有高风险档（.risk）才转红。此前一律红字，普通档的说明也像警告
    （新建页权限菜单用户实拍「说明全是红的」）。 */
@@ -3252,7 +3259,10 @@ body:not(.remote-ui) .ns-actions .ns-btn { height: var(--btn-h-lg); min-width: 7
 
 /* 动作菜单里的危险项（删除账号）：连目录一起抹掉且不可逆，值得一眼看出来。 */
 .dd-item-danger { color: var(--cc-err); }
-.dd-item-danger:hover { background: color-mix(in srgb, var(--cc-err) 12%, transparent); }
+/* 触屏点过会一直留着 :hover：菜单与下拉的悬停底色只在有悬停能力的指针下给（第四轮 L5，同 C4）。 */
+@media (hover: hover) {
+  .dd-item-danger:hover { background: color-mix(in srgb, var(--cc-err) 12%, transparent); }
+}
 
 /* 独立会话对话窗：结构化 transcript 视图，不从 ANSI 终端输出反推消息。
    本段为各选择器的唯一定义（旧版与「重设计段」双份同名规则已逐条合并：布局/骨架取自旧段，
@@ -3378,11 +3388,17 @@ body:not(.remote-ui) .ns-actions .ns-btn { height: var(--btn-h-lg); min-width: 7
    accent 皮染成绿底，与提示条的中性灰和接管钮的红描边撞色（用户实拍反馈）。 */
 .chat-resume-permission { display: inline-flex; }
 .chat-resume-permission .dd-btn { min-width: 168px; height: calc(var(--btn-h-md) * var(--cc-ui)); padding: 0 var(--sp-9); font-size: var(--text-base); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-dim); }
-.chat-resume-permission .dd-btn:hover { background: var(--fill-hover); color: var(--cc-text); }
+/* 触屏点过会一直留着 :hover：菜单与下拉的悬停底色只在有悬停能力的指针下给（第四轮 L5，同 C4）。 */
+@media (hover: hover) {
+  .chat-resume-permission .dd-btn:hover { background: var(--fill-hover); color: var(--cc-text); }
+}
 /* 菜单项同样要防 `.chat-compose button` 的 accent 皮（38px 高、绿底绿描边——菜单里
    一排绿卡片，用户实拍反馈）：归位到 .dd-item 的中性默认。 */
 .chat-resume-permission .dd-item { height: auto; min-height: 0; padding: var(--sp-7) var(--sp-10); border: 0; border-radius: var(--radius-xs); background: transparent; color: var(--cc-text-dim); font-size: var(--text-base); }
-.chat-resume-permission .dd-item:hover { background: var(--fill-hover); color: var(--cc-text); }
+/* 触屏点过会一直留着 :hover：菜单与下拉的悬停底色只在有悬停能力的指针下给（第四轮 L5，同 C4）。 */
+@media (hover: hover) {
+  .chat-resume-permission .dd-item:hover { background: var(--fill-hover); color: var(--cc-text); }
+}
 .chat-resume-permission .dd-item.sel { color: var(--cc-text); }
 /* 标题是窗口拖拽区，不是可编辑文本：默认光标 + 禁选，否则悬停显示 I 形文本光标，
    拖窗时还会误选中标题文字。 */
@@ -6209,7 +6225,10 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .chat-context.is-full .chat-context-ring-fg { stroke: var(--cc-err-vivid); }
 /* 输入区 :is(button) 通用样式会改按钮高度与底色，斜杠菜单条目压回菜单条目（尺寸、悬停底见文末「弹出菜单」）。 */
 .chat-compose .chat-slash-menu .dd-item { height: auto; border: 0; color: var(--cc-text-dim); background: transparent; }
-.chat-compose .chat-slash-menu .dd-item:hover { color: var(--cc-text); background: var(--fill-selected); }
+/* 触屏点过会一直留着 :hover：菜单与下拉的悬停底色只在有悬停能力的指针下给（第四轮 L5，同 C4）。 */
+@media (hover: hover) {
+  .chat-compose .chat-slash-menu .dd-item:hover { color: var(--cc-text); background: var(--fill-selected); }
+}
 :is(.chat-compose, .nsp-composer) .chat-model-item { height: auto; min-height: 0; padding: var(--sp-9) var(--sp-11); border: 0; border-radius: var(--radius-md); color: inherit; background: transparent; }
 /* 模型菜单：双行卡片项（名称 + 描述），当前模型右侧打勾。表面/阴影仍继承 .dd-menu。 */
 /* 按内容定宽：浮层绝对定位在很窄的按钮容器里，只设 min-width 时长模型名会折成两行（托管会话截图，2026-11-13）。

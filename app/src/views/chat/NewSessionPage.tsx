@@ -9,18 +9,16 @@ import { fmtShortAgo } from "../sticker/helpers";
 import { agentAssets, tintStyle } from "../../providers";
 import { normalizePath, pathKey } from "../../paths";
 import { PillSelect } from "./PillSelect";
+import { modeIconGlyph, modeIconName } from "./modeIcon";
 import { initialChoice, modeChoiceViews, modelChoiceRows, planToggle } from "./modeChoices";
 import { AgentAppIcon } from "./AgentAppIcon";
 
-function ShieldIcon() {
-  return <Icon glyph={icShield} size={14} />;
-}
 import { useT } from "../../i18n";
 import { useNewSessionForm } from "../useNewSessionForm";
 import { WorkspacePicker } from "./WorkspacePicker";
 import { WorktreeOption } from "../WorktreeOption";
 import { Icon } from "../../icons/Icon";
-import { icAgents, icArrowUp, icLightbulb, icShield } from "../../icons/glyphs.chat";
+import { icArrowUp } from "../../icons/glyphs.chat";
 
 /// 对话窗里的新建会话页（对照 Kimi Code：新建会话不弹窗，主区就地换成一个输入框，
 /// 上方是工作区选择，下面一排 Agent / 启动选项的小下拉，写下第一句话发出去就开聊）。
@@ -224,7 +222,9 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched, onOpenSession
                 // 图标与对话框的模式胶囊一致：计划开关是灯泡、OpenCode agent 是 agent 图标（第三轮 C8）。
                 const plan = !!planToggle(option);
                 const agentPill = option.id === "agent";
-                const modeIcon = guard ? <ShieldIcon /> : plan ? <Icon glyph={icLightbulb} size={14} /> : agentPill ? <Icon glyph={icAgents} size={14} /> : undefined;
+                // 图标随选中的档变（第四轮 L4，与对话框的模式胶囊同一套，见 modeIcon.ts）。
+                const picked = initialChoice(option, opts[option.id], cliDefaults);
+                const modeIcon = guard || plan || agentPill ? <Icon glyph={modeIconGlyph(modeIconName(option, option.id, picked))} size={14} /> : undefined;
                 return (
                   <PillSelect
                     key={option.id}
@@ -234,7 +234,7 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched, onOpenSession
                     label={optionLabel}
                     tip={pinned !== undefined ? t.newSession.relayPinnedModel(pinned) : optionLabel}
                     disabled={pinned !== undefined}
-                    value={initialChoice(option, opts[option.id], cliDefaults)}
+                    value={picked}
                     options={option.choices.some((choice) => choice.traits)
                       // 带统一说法的栏（四家模式）：名字是统一说法，下一行一句话说明，行尾小字 CLI 原名。
                       ? modeChoiceViews(t, option, cliDefaults, dynamicChoices)
