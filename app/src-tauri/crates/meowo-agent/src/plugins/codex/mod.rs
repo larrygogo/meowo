@@ -814,7 +814,11 @@ fn windows_sandbox_configured_in_layers(home: Option<&std::path::Path>, cwd: Opt
         .ancestors()
         .find(|dir| dir.join(".git").exists())
         .unwrap_or(cwd);
-    let root_trusted = trusted.contains(&fold(root));
+    // git worktree（.git 是文件）按主仓库的信任算（上游 git-utils/src/trust.rs resolve_root_git_project_for_trust，
+    // 第六轮复核 L1）：主仓库被信任，worktree 和它的子目录都加载项目层。项目层仍只在 cwd 到 worktree 根之间找。
+    let main_root = main_checkout_for_trust(root);
+    let root_trusted = trusted.contains(&fold(root))
+        || main_root.as_deref().is_some_and(|main| trusted.contains(&fold(main)));
     let home_dot = home.map(fold);
     for dir in cwd.ancestors() {
         let dot = dir.join(".codex");
@@ -831,6 +835,59 @@ fn windows_sandbox_configured_in_layers(home: Option<&std::path::Path>, cwd: Opt
         }
     }
     false
+}
+
+/// worktree 的主仓库根（与上游 `resolve_root_git_project_for_trust` 同口径，只按文件系统核对、不调 git）：
+/// `<root>/.git` 是文件、写着 `gitdir: <主仓库>/.git/worktrees/<名字>`；那个目录要在 `worktrees/` 下，它的
+/// `gitdir` 文件要指回 `<root>/.git`，`commondir` 要指回主仓库的 `.git`，主仓库根的 `.git` 也要就是这个公共目录。
+/// 任何一步对不上都返回 None（不借主仓库的信任）。`.git` 是目录时就是普通仓库，返回它自己。
+fn main_checkout_for_trust(root: &std::path::Path) -> Option<std::path::PathBuf> {
+    use std::path::{Path, PathBuf};
+    const MAX: u64 = 64 * 1024;
+    let read_small = |path: &Path| -> Option<String> {
+        let meta = std::fs::symlink_metadata(path).ok()?;
+        (meta.is_file() && meta.len() <= MAX).then(|| std::fs::read_to_string(path).ok()).flatten()
+    };
+    let dot_git = root.join(".git");
+    let meta = std::fs::symlink_metadata(&dot_git).ok()?;
+    if meta.is_dir() {
+        return Some(root.to_path_buf());
+    }
+    let gitdir_of = |file: &Path| -> Option<PathBuf> {
+        let text = read_small(file)?;
+        let target = text.trim().strip_prefix("gitdir:")?.trim().to_string();
+        (!target.is_empty()).then(|| file.parent().map(|dir| dir.join(&target)))?
+    };
+    let git_dir = gitdir_of(&dot_git)?;
+    let git_dir_meta = std::fs::symlink_metadata(&git_dir).ok()?;
+    if !git_dir_meta.is_dir() {
+        return None;
+    }
+    let canonical = |path: &Path| std::fs::canonicalize(path).ok();
+    let canonical_git_dir = canonical(&git_dir)?;
+    let worktrees = canonical_git_dir.parent()?;
+    if worktrees.file_name()? != "worktrees" {
+        return None;
+    }
+    let common = worktrees.parent()?.to_path_buf();
+    let registered = read_small(&canonical_git_dir.join("gitdir"))?;
+    let registered = canonical_git_dir.join(registered.trim());
+    if registered.file_name()? != ".git" || canonical(registered.parent()?)? != canonical(root)? {
+        return None;
+    }
+    let commondir = read_small(&canonical_git_dir.join("commondir"))?;
+    if canonical(&canonical_git_dir.join(commondir.trim()))? != common {
+        return None;
+    }
+    // 信任键沿用 gitdir 里写的主仓库路径（不规范化，与上游「保留原信任键」同取向），再核对它确实拥有公共目录。
+    let main_root = git_dir.parent()?.parent()?.parent()?.to_path_buf();
+    let main_dot_git = main_root.join(".git");
+    let main_git_dir = if std::fs::symlink_metadata(&main_dot_git).ok()?.is_dir() {
+        main_dot_git
+    } else {
+        gitdir_of(&main_dot_git)?
+    };
+    (canonical(&main_git_dir)? == common).then_some(main_root)
 }
 
 fn codex_home(env: &[(String, String)]) -> Option<std::path::PathBuf> {
@@ -905,6 +962,57 @@ mod tests {
         let other = root.join("elsewhere");
         std::fs::create_dir_all(&other).unwrap();
         assert_eq!(codex.extra_launch_args(&pick, &env, Some(&other)).is_empty(), !cfg!(windows));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 第六轮复核 L1：git worktree 按主仓库的信任算。主仓库被信任时，worktree 和它的子目录都认 worktree 里的
+    /// `.codex/config.toml`；主仓库不被信任、或 .git 指向的不是登记过的 worktree 时不借主仓库的信任。
+    #[test]
+    fn worktree_trust_follows_main_checkout() {
+        use super::windows_sandbox_configured_in_layers as configured;
+        let root = std::env::temp_dir().join(format!("meowo-codex-l1-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let home = root.join("home");
+        let main = root.join("main");
+        let wt = root.join("wt");
+        let sub = wt.join("pkg");
+        let admin = main.join(".git").join("worktrees").join("wt");
+        for dir in [&home, &admin, &sub] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        std::fs::write(main.join(".git").join("HEAD"), "ref: refs/heads/main\n").unwrap();
+        std::fs::write(wt.join(".git"), format!("gitdir: {}\n", admin.display())).unwrap();
+        std::fs::write(admin.join("gitdir"), format!("{}\n", wt.join(".git").display())).unwrap();
+        std::fs::write(admin.join("commondir"), "../..\n").unwrap();
+        std::fs::create_dir_all(wt.join(".codex")).unwrap();
+        std::fs::write(wt.join(".codex").join("config.toml"), "[windows]\nsandbox = \"elevated\"\n").unwrap();
+        let trust = |dir: &std::path::Path| {
+            let key = dir.to_string_lossy().replace('\\', "\\\\");
+            std::fs::write(home.join("config.toml"), format!("[projects.\"{key}\"]\ntrust_level = \"trusted\"\n")).unwrap();
+        };
+        assert_eq!(super::main_checkout_for_trust(&wt), Some(main.clone()));
+        assert_eq!(super::main_checkout_for_trust(&main), Some(main.clone()));
+        // 主仓库没被信任：不加载。
+        std::fs::write(home.join("config.toml"), "").unwrap();
+        assert!(!configured(Some(&home), Some(&wt)));
+        // 主仓库被信任：worktree 根和子目录都认 worktree 里配的 elevated。
+        trust(&main);
+        assert!(configured(Some(&home), Some(&wt)));
+        assert!(configured(Some(&home), Some(&sub)));
+        let codex = crate::by_id("codex").unwrap();
+        let env = vec![("CODEX_HOME".to_string(), home.to_string_lossy().into_owned())];
+        let pick = std::collections::HashMap::from([("approval".to_string(), "approveForMe".to_string())]);
+        assert!(codex.extra_launch_args(&pick, &env, Some(&sub)).is_empty());
+        // 登记对不上（worktrees/<名字>/gitdir 不指回这个 worktree）：不借主仓库的信任。
+        std::fs::write(admin.join("gitdir"), format!("{}\n", root.join("other").join(".git").display())).unwrap();
+        assert_eq!(super::main_checkout_for_trust(&wt), None);
+        assert!(!configured(Some(&home), Some(&wt)));
+        // .git 文件指向的不在 worktrees/ 下：同样不借。
+        std::fs::write(admin.join("gitdir"), format!("{}\n", wt.join(".git").display())).unwrap();
+        let stray = root.join("stray");
+        std::fs::create_dir_all(&stray).unwrap();
+        std::fs::write(wt.join(".git"), format!("gitdir: {}\n", stray.display())).unwrap();
+        assert_eq!(super::main_checkout_for_trust(&wt), None);
         let _ = std::fs::remove_dir_all(&root);
     }
 
