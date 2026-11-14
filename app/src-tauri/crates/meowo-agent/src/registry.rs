@@ -383,6 +383,7 @@ pub trait AgentPlugin: Sync {
             status_line_pattern: self.status_line_pattern(),
             retry_line_pattern: self.retry_line_pattern(),
             effort: self.effort_control(),
+            effort_switch: self.effort_switch(),
             undo: self.undo_control(),
             side_question: self.side_question(),
             fork: self.fork_mode().is_some(),
@@ -430,6 +431,18 @@ pub trait AgentPlugin: Sync {
     /// 自动重试行的匹配正则（见 [`ChatUi::retry_line_pattern`]）。默认不声明。
     fn retry_line_pattern(&self) -> Option<&'static str> {
         None
+    }
+
+    /// 思考档在会话里怎么切：声明了 `/effort` 命令的走命令；否则切模型的通路能带 effort 的
+    /// （会话服务）随模型下发；两者都没有 = 会话里切不了。由已有的两项声明推出，插件不必再写一遍。
+    fn effort_switch(&self) -> Option<crate::EffortSwitchKind> {
+        if self.effort_control().is_some() {
+            Some(crate::EffortSwitchKind::Command)
+        } else if self.model_switch().is_some_and(crate::ModelSwitch::carries_effort) {
+            Some(crate::EffortSwitchKind::ServerSettings)
+        } else {
+            None
+        }
     }
 
     /// 思考程度切换（见 [`ChatUi::effort`]）。默认不声明。
@@ -1235,6 +1248,20 @@ mod tests {
                     p.id()
                 );
             }
+        }
+
+        // 思考档在会话里怎么切：Claude / Kimi 打 `/effort`，Codex 随模型经会话服务下发
+        // （tms_probe_codex 实测 reasoning.effort 生效）；Gemini 没有思考档，OpenCode 的模型变体
+        // 只能在它自己的对话框里选、上游没有可调的接口，两家不出入口。
+        use crate::EffortSwitchKind;
+        for (id, want) in [
+            ("claude", Some(EffortSwitchKind::Command)),
+            ("kimi", Some(EffortSwitchKind::Command)),
+            ("codex", Some(EffortSwitchKind::ServerSettings)),
+            ("gemini", None),
+            ("opencode", None),
+        ] {
+            assert_eq!(by_id(id).unwrap().effort_switch(), want, "{id}");
         }
 
         // 只有 claude 的 `/model` 接受内联参数——其余四家是交互式菜单，声明预设＝给出一个

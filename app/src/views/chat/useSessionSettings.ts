@@ -183,7 +183,7 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
         if (index >= 0) agentModes[index] = { dimension, value };
         else agentModes.push({ dimension, value });
       }
-      return { ...current, agentModes, model: request.model?.label ?? current.model };
+      return { ...current, agentModes, model: request.model?.label ?? current.model, effort: request.model?.effort ?? current.effort };
     });
   };
 

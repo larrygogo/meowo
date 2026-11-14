@@ -18,6 +18,7 @@ import { useHistoryLayer } from "../hooks/useHistoryLayer";
 import { useT } from "../i18n";
 import { deliveryStatusLabel } from "../i18n/statusVocab";
 import { runningPlaceholder, runningReceipt, runningSendMode, sendBlockedMessage, unrecognizedPromptNotice } from "./chat/sendCopy";
+import { controlAvailability, effortEntry, effortMechanism, modeButtonMechanism, modeMenuAvailability, modelListMechanism, modelMechanism } from "./chat/availability";
 import { formatBackendError } from "../i18n/errors";
 import { useShowWhenReady } from "../useShowWhenReady";
 import { reduceChatEvents } from "../chat/reducer";
@@ -3526,11 +3527,32 @@ export function ChatWindow() {
     void writeManagedTerminal(sessionId, "\x1b").catch(() => {});
   };
   // 模型/思考档位/模式的切换动作在 chat/useModelControls.ts；守卫、会话判定与 setter 由这里注入。
-  const { selectModel, selectEffort, effortBusy, effortLevels, cycleToMode, changeMode } = useModelControls({
+  const { selectModel, selectEffort, effortBusy, cycleToMode, changeMode } = useModelControls({
     sessionId, chatUi, model: history?.model, modelCatalog, sending, toneRef, retryRef,
     withSendGuard, attentionAbort, isCurrentOperation, setSendError, setHistory, setStoredSelections,
     deferTerminal: (action, label) => deferTerminalRef.current(action, label),
   });
+  // 思考档入口只看能力声明（chat/availability 的 effortEntry）：打命令的两家照旧，经会话服务的
+  // （Codex）随当前模型一起下发，回合中同样排到这一轮之后（走查输入 B7）。
+  const effortMenu = effortEntry(chatUi, modelCatalog.find((entry) => entry.id === currentPresetId(modelCatalog, history?.model)) ?? null);
+  const pickEffort = (level: string) => {
+    if (effortMenu?.via === "service" && effortMenu.model) {
+      sessionSettings.request({ model: { ...effortMenu.model, effort: level }, label: effortLabel(level) });
+      return;
+    }
+    void selectEffort(level);
+  };
+  // 模型菜单此刻的状态：选模型会排队的先说明；只能靠 CLI 菜单选、此刻开不了的置灰；清单读取入口同理。
+  const modelMenuAvailability = (() => {
+    const pick = controlAvailability(t, { mechanism: modelMechanism(chatUi), tone });
+    const list = controlAvailability(t, { mechanism: modelListMechanism(chatUi), tone });
+    const effort = effortMenu ? controlAvailability(t, { mechanism: effortMechanism(chatUi), tone }) : null;
+    return {
+      queuedNote: pick.state === "queued" ? pick.note : effort?.state === "queued" ? effort.note : null,
+      blocked: pick.state === "disabled" ? pick.reason : null,
+      loadBlocked: list.state === "disabled" ? list.reason : null,
+    };
+  })();
   /// 移除一个附件。焦点交给下一个附件的「×」，没有了回输入框（走查 C-10）。
   const removeAttachment = (button: HTMLElement, path: string) => {
     focusAfterRemoval(button, { list: ".chat-attachments", item: "[data-attachment-remove]", fallback: () => promptInputRef.current });
@@ -5510,6 +5532,14 @@ export function ChatWindow() {
                   : control?.cycle_input ? derived : []);
               const canCycle = Boolean(control?.cycle_input);
               const interactive = options.length > 0 || canCycle || !!control?.menu_command;
+              // 每一档此刻是 可用 / 排队 / 置灰（chat/availability）。休眠态的恢复改选只落状态、不碰终端，不参与。
+              const menuAvailability = modeMenuAvailability(t, {
+                launchOption: resumePick ? null : launchOption, control, options, tone,
+                currentValue: state?.value ?? null, skip: resumePick,
+              });
+              const buttonAvailability = options.length === 0 && interactive
+                ? controlAvailability(t, { mechanism: modeButtonMechanism(control), tone }) : null;
+              const buttonBlocked = buttonAvailability?.state === "disabled" ? buttonAvailability.reason : null;
               const label = t.chat.modeDimensions[dimension] ?? dimension;
               // 按钮只显示当前值（「跳过权限检查」），维度名（「权限模式」）不再做前缀
               // ——它在 aria-label 与 tooltip 里，占位不解释（实拍反馈「多此一举」）。
@@ -5542,7 +5572,7 @@ export function ChatWindow() {
                   disabled={!interactive || (composerDisabled && !resumePick)}
                   // 发送在途用 aria-disabled 不用 disabled：刚从菜单选完、焦点正落回这颗钮时置 disabled，
                   // 焦点会被踢到 body（走查 C-1，p3-mode-kbd-pick 选完 activeElement=BODY）。
-                  aria-disabled={sending || undefined}
+                  aria-disabled={sending || buttonBlocked !== null || undefined}
                   // aria-label 保持简短的动作名（屏幕阅读器要的是「做什么」，不是解释）；
                   // 轮换与下拉的差异放在下面的 tooltip 里说。
                   // 带上当前档的短名（第四轮 L4）：手机上按钮只剩图标，读屏要能报出现在是哪一档。
@@ -5552,9 +5582,9 @@ export function ChatWindow() {
                   // （codex 的协作模式）是「按一次跳下一个」，没有直达某个值的办法。
                   // 休眠态的恢复改选另有一套说明（选了会记住，之后的恢复自动沿用）。
                   // 提示里带上当前值：窄主列下按钮只留图标（data-narrow），当前是哪个模式只能从这里看。
-                  data-tip={resumePick ? t.chat.resumePermissionTip : interactive ? `${options.length > 0 ? t.chat.switchMode : t.chat.cycleMode}: ${value}` : undefined}
+                  data-tip={buttonBlocked ?? (resumePick ? t.chat.resumePermissionTip : interactive ? `${options.length > 0 ? t.chat.switchMode : t.chat.cycleMode}: ${value}` : undefined)}
                   onClick={() => {
-                    if (sending) return;
+                    if (sending || buttonBlocked !== null) return;
                     // 与模型菜单互斥：同时只开一个。
                     if (options.length > 0) {
                       setModelPickerOpen(false);
@@ -5590,18 +5620,21 @@ export function ChatWindow() {
                 {/* 手机上换成底部面板（对照 Kimi 手机端的模式切换）：内容同一份，仍挂在 modeMenuUi.ref
                     容器里，点面板内不算「点外面」，Esc/点外关闭照旧由菜单负责。 */}
                 {modeMenu === dimension && options.length > 0 && <SheetOnPhone phone={compactChrome} title={label} onClose={() => setModeMenu(null)} ownsEscape={false}><div className={compactChrome ? "chat-sheet-list" : "dd-menu chat-model-menu"} role="menu">
-                  {/* 回合在跑时，走命令的档位（changeMode）会被拒（menuBusy）：先在菜单里说清楚、
-                      把这些项标成不可选，不让用户选完才知道白选了（走查 C-8）。只按键轮换的
-                      （claude 的 Shift+Tab）运行中照样能切，不受影响。 */}
-                  {!resumePick && tone === "running" && options.some((option) => option.inputs.length > 0) && (
-                    <div className="chat-model-quick-status" role="status">{t.chat.menuBusyShort}</div>
+                  {/* 此刻点了会怎样由 chat/availability 统一定：会排到稍后自动执行的先在菜单顶上说明，
+                      做不成的档置灰并把原因写在档名下面。只按键轮换的（claude 的 Shift+Tab）回合中照常可切。 */}
+                  {menuAvailability.queuedNote && (
+                    <div className="chat-model-quick-status" role="status">{menuAvailability.queuedNote}</div>
                   )}
-                  {options.map((option) => {
+                  {options.map((option, optionIndex) => {
                     // 休眠态未改选时高亮存的那档（「沿用」的具象化）；没存值高亮空占位项。
                     const active = resumePick
                       ? (resumePermission || storedPermission?.id || "") === option.value
                       : state?.value === option.value;
-                    const busyBlocked = !resumePick && tone === "running" && option.inputs.length > 0 && !active;
+                    const availability = menuAvailability.items[optionIndex];
+                    const blockedReason = !active && availability.state === "disabled" ? availability.reason : null;
+                    const busyBlocked = blockedReason !== null;
+                    // 置灰的档：说明行换成原因（什么时候能用、该去哪里做）。
+                    const optionDesc = blockedReason ?? modeDesc(String(option.value));
                     return <button
                       type="button"
                       key={option.value}
@@ -5609,8 +5642,8 @@ export function ChatWindow() {
                       // aria-disabled 而不是 disabled：项仍可用方向键走到、读屏念得到，只是点了不动。
                       aria-disabled={busyBlocked || undefined}
                       // 说明行不进名字（同 Dropdown 的 dd-sub），读屏名字只报档名。
-                      aria-label={modeDesc(String(option.value)) ? option.label : undefined}
-                      aria-describedby={modeDesc(String(option.value)) ? `chat-mode-desc-${dimension}-${option.value}` : undefined}
+                      aria-label={optionDesc ? option.label : undefined}
+                      aria-describedby={optionDesc ? `chat-mode-desc-${dimension}-${option.value}` : undefined}
                       className={"chat-model-item" + (active ? " is-active" : "") + (riskOf(String(option.value)) ? " is-risk" : "")}
                       onClick={() => {
                         if (busyBlocked) return;
@@ -5653,7 +5686,7 @@ export function ChatWindow() {
                     >
                       <span className="chat-model-item-text">
                         <span className="chat-model-item-name">{option.label}</span>
-                        {modeDesc(String(option.value)) && <span className="chat-model-item-desc" id={`chat-mode-desc-${dimension}-${option.value}`}>{modeDesc(String(option.value))}</span>}
+                        {optionDesc && <span className="chat-model-item-desc" id={`chat-mode-desc-${dimension}-${option.value}`}>{optionDesc}</span>}
                       </span>
                       {!resumePick && viewOf(String(option.value))?.detail && <span className="chat-model-item-detail">{viewOf(String(option.value))?.detail}</span>}
                       {/* 对勾占固定槽位（未选中行也占），右侧 CLI 原名列各行右缘对齐（第三轮 C5）。 */}
@@ -5698,7 +5731,8 @@ export function ChatWindow() {
                 // 切换不该被探测门槛拖住),菜单里保留显式的探测入口。
                 // 配置目录已列出模型（kimi）就不探测：清单现成，弹 CLI 菜单只会把就地菜单换掉。
                 if (opening && !modelDropdownReady && !modelProbing && !modelProbeFailed
-                  && modelMenuCommand && switchTargets.length === 0 && modelCatalog.length === 0) {
+                  && modelMenuCommand && switchTargets.length === 0 && modelCatalog.length === 0
+                  && controlAvailability(t, { mechanism: modelListMechanism(chatUi), tone }).state === "available") {
                   void probeModelMenu();
                 }
               }}
@@ -5713,7 +5747,7 @@ export function ChatWindow() {
               <span className="chat-model-label" data-short={[...(history?.model || t.chat.model)].length <= 8 ? "" : undefined}>
                 {history?.model || t.chat.model}
                 {/* 「模型 · 档位」（对照 Kimi 的 K3.1 Pro · Max）：档位影响回答深度与耗时，常看常换。 */}
-                {chatUi?.effort && history?.effort && <span className="chat-model-pill-effort"> · {effortLabel(history.effort)}</span>}
+                {effortMenu && history?.effort && <span className="chat-model-pill-effort"> · {effortLabel(history.effort)}</span>}
               </span>
               {/* 静默探测时把箭头换成转圈：这一下点击确实在做事，但做的事不在屏幕上。 */}
               {modelProbing || modelPicking || sessionSettings.applying
@@ -5727,12 +5761,13 @@ export function ChatWindow() {
                   ? modelPresets.map((preset) => ({ id: preset.id, label: preset.label, desc: t.chat.modelDesc[preset.id] ?? undefined }))
                   : modelCatalog.map((entry) => ({ id: entry.id, label: entry.label, group: entry.group, desc: entry.uncertain ? t.modes.uncertain : undefined }))}
                 currentId={currentPresetId(modelPresets.length > 0 ? modelPresets : modelCatalog, history?.model, history?.contextWindow)}
-                effort={chatUi?.effort && history?.effort && effortLevels.length > 1 ? {
-                  levels: effortLevels,
-                  current: history.effort,
-                  busy: effortBusy,
-                  onPick: (level) => void selectEffort(level),
+                effort={effortMenu ? {
+                  levels: effortMenu.levels,
+                  current: history?.effort ?? "",
+                  busy: effortBusy || (effortMenu.via === "service" && sessionSettings.applying),
+                  onPick: pickEffort,
                 } : undefined}
+                {...modelMenuAvailability}
                 // 模型市场里收藏过的其他引擎（对照 Kimi 菜单顶部的「已收藏」）：常用的跨引擎切换不必每次进市场找。
                 starred={(() => {
                   const marks = readStarred();

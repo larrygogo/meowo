@@ -724,18 +724,21 @@ describe("ChatWindow", () => {
     render(<ChatWindow />);
     fireEvent.click(await screen.findByRole("button", { name: "切换模型" }));
     // 就地菜单照开:清单没学到时给「读取模型清单」显式入口,「更多模型…」进市场切引擎。
-    expect(await screen.findByRole("menuitem", { name: "读取模型清单" })).toBeTruthy();
+    // 回合在跑：入口置灰，原因（什么时候能用）就写在入口上（验收 7，走查输入 B1）。
+    const load = await screen.findByRole("menuitem", { name: /读取模型清单/ });
+    expect(load.getAttribute("aria-disabled")).toBe("true");
+    expect(load.textContent).toContain(zh.chat.availability.afterTurn);
     fireEvent.click(screen.getByRole("menuitem", { name: "更多模型…" }));
     expect(await screen.findByText("复制到新会话 · Claude Code")).toBeTruthy();
     expect(screen.getByRole("menuitem", { name: "默认模型" })).toBeTruthy();
     // 没学到清单不该触发 /model 探测(那会往终端里写命令、弹 TUI 菜单)。
     expect(invoke.mock.calls.some(([command, args]) =>
       command === "write_managed_terminal" && (args as { data: string }).data === "/model")).toBe(false);
-    // 显式入口在回合运行中同样受「先等任务结束」保护，不往忙着的终端里写命令。
-    // 走查 C-8：原因在菜单里先说（menuBusyShort），入口标成不可选，点了不动，不再选完才报 menuBusy。
+    // 置灰的入口点了不动：不往忙着的终端里写命令，也不再点完才弹一条报错。
     fireEvent.click(await screen.findByRole("button", { name: "切换模型" }));
-    fireEvent.click(await screen.findByRole("menuitem", { name: "读取模型清单" }));
-    expect(await screen.findByText(zh.chat.menuBusyOpen)).toBeTruthy();
+    fireEvent.click(await screen.findByRole("menuitem", { name: /读取模型清单/ }));
+    await act(async () => {});
+    expect(screen.queryByText(zh.chat.menuBusyOpen)).toBeNull();
     expect(invoke.mock.calls.some(([command, args]) =>
       command === "write_managed_terminal" && (args as { data: string }).data === "/model")).toBe(false);
   });

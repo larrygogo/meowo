@@ -454,6 +454,10 @@ pub struct ChatUi {
     pub model_menu_command: Option<&'static str>,
     /// 思考程度切换（见 [`EffortControl`]）；None = 不支持或未取证。
     pub effort: Option<EffortControl>,
+    /// 思考档在会话里怎么切（见 [`crate::EffortSwitchKind`]）。None = 这家在会话里切不了，
+    /// 前端不出思考档入口。与 `effort` 的区别：`effort` 只描述「打命令」这一种通路的细节，
+    /// 这里是「有没有、走哪条路」的总开关，经会话服务切的（Codex）也在内。
+    pub effort_switch: Option<crate::EffortSwitchKind>,
     /// 撤回最近几轮（见 [`UndoControl`]）；None = 不支持或未取证。
     pub undo: Option<UndoControl>,
     /// 侧问（见 [`SideQuestion`]）；None = 不支持或未取证。

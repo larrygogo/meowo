@@ -365,6 +365,8 @@ export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | 
       : provider === "kimi"
         ? { command: "/effort", levels: [], confirm_pattern: String.raw`(?:thinking set to|with thinking) (\w+)`, reject_pattern: String.raw`unsupported thinking effort|cannot switch models while streaming|failed to switch model` }
         : null,
+    // 与后端同源:思考档在会话里怎么切。claude/kimi 打 /effort,codex 随模型经会话服务下发,其余两家切不了。
+    effort_switch: provider === "claude" || provider === "kimi" ? "command" : provider === "codex" ? "server_settings" : null,
     // 与后端同源:原生分叉 claude/codex/opencode(启动参数)、kimi(fork 子命令后 -r 打开)。
     fork: ["claude", "codex", "opencode", "kimi"].includes(provider),
     // 与后端同源:claude `/btw` 侧问(2.1.314 探针实测)。

@@ -6289,7 +6289,7 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
    触屏点过不残留（第三轮 C4）。此前悬停与选中同色，选中行只靠一个勾认。 */
 :is(.chat-compose, .nsp-composer) .chat-model-item.is-active { background: var(--fill-selected); }
 @media (hover: hover) {
-  :is(.chat-compose, .nsp-composer) .chat-model-item:not(.is-active):not(:disabled):hover { background: var(--fill-hover); }
+  :is(.chat-compose, .nsp-composer) .chat-model-item:not(.is-active):not(:disabled, [aria-disabled="true"]):hover { background: var(--fill-hover); }
 }
 .chat-model-item { display: flex; align-items: center; gap: var(--sp-14); width: 100%; padding: var(--sp-9) var(--sp-11); border: 0; background: transparent; text-align: left; cursor: pointer; }
 .chat-model-item-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
@@ -6352,8 +6352,9 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .chat-model-item:is(:disabled, [aria-disabled="true"]):hover { background: transparent; }
 /* 选不到的档：不压透明度，名字与小字改用现有的禁用文字色（与 .nsp-send:disabled 同一个 --cc-text-faint，第三轮 C8）。 */
 .chat-model-item:disabled { cursor: default; }
-.chat-model-item:disabled :is(.chat-model-item-name, .chat-model-item-detail) { color: var(--cc-text-faint); }
-.chat-model-item:disabled:hover { background: transparent; }
+.chat-model-item:is(:disabled, [aria-disabled="true"]) { cursor: default; }
+.chat-model-item:is(:disabled, [aria-disabled="true"]) :is(.chat-model-item-name, .chat-model-item-detail) { color: var(--cc-text-faint); }
+.chat-model-item:is(:disabled, [aria-disabled="true"]):hover { background: transparent; }
 /* 对勾固定槽位：未选中行也占 16px，右侧 CLI 原名列各行右缘对齐到同一 x（第三轮 C5）。 */
 .chat-model-check-slot, .dd-check-slot { flex: 0 0 16px; width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; }
 /* 名字旁的「默认」小字标签（新建页 CLI 配置的默认档，第三轮 C7）。 */

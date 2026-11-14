@@ -1443,9 +1443,16 @@ export const zh = {
     imageDraftCleared: "已清理残图",
     interruptTimeout: "尚未确认任务已中断，草稿已保留。请稍后重试。",
     busySendUnavailable: "当前 Agent 尚未验证运行中排队，请等待当前任务结束后发送。",
-    menuBusy: "请等待当前任务结束后切换模型或模式。",
     errorRetry: "重试",
-    menuBusyShort: "回合结束后才能切换",
+    // 入口此刻做不到时的说法（chat/availability.ts）：排队的写明什么时候自动执行，置灰的写明什么时候能用。
+    availability: {
+      queuedAfterTurn: "这一轮结束后自动切换",
+      queuedAfterCard: "处理完卡片后自动切换",
+      afterTurn: "这一轮结束后才能用",
+      afterCard: "处理完卡片后才能用",
+      needsNewSession: "收紧权限要新建会话",
+      unsupported: "这个 CLI 不支持在会话里切换",
+    },
     // 打开终端里的选择菜单（只能在终端里挑）：运行中打开会把命令打进正在跑的回合。选定的模型 / 模式
     // 运行中一律排到这一轮之后（SPEC 终态 2），只有「打开菜单」本身要等。
     menuBusyOpen: "这一轮结束后再打开菜单",
