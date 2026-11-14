@@ -1269,15 +1269,11 @@
         },
         {
           "legacy": false,
-          "max_gap": 20000,
           "needle": "",
-          "note": "0.166.0 `codex --version` 首行原样（research-cli-drift X2）；codex.exe 里命令名 `codex-cli` 在 usage 模板后 10022 字节，其余 18 处离 usage 模板最近也有 29 万字节",
-          "parts": [
-            "codex-cli",
-            "codex [options] [prompt]"
-          ],
+          "note": "0.167.2 `codex --version` 首行原样（2026-11-14 本机）；0.166.0 是 `codex-cli 0.166.0`（research-cli-drift X2）。parse_cli_semver 取首行里第一个 X.Y.Z 词，前缀变了也要回来确认版本号还取得到",
           "rule": "record:codex-cli",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/setup.rs:356"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/setup.rs:356",
+          "version_prefix": "codex-cli "
         },
         {
           "legacy": false,
@@ -1349,14 +1345,14 @@
           "needle": "Script running",
           "note": "0.167.2 rollout 实样（exec 脚本让到后台时的回执头，结果之后由 wait 取）；codex.exe `Script running with cell ID` 2 处",
           "rule": "record:Script running",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/exec_script.rs:423"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/exec_script.rs:425"
         },
         {
           "legacy": false,
           "needle": "aborted by user",
           "note": "0.167.2 rollout 实样（脚本被用户打断时的回执，工具行据此显示已中断）；codex.exe 4 处",
           "rule": "record:aborted by user",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/exec_script.rs:404"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/exec_script.rs:406"
         }
       ],
       "id": "codex",
@@ -1381,32 +1377,104 @@
           "source": "app/src-tauri/crates/meowo-agent/src/chat_ui.rs:27"
         },
         {
-          "legacy": false,
+          "legacy": true,
           "needle": "shift+tab to accept edits",
-          "note": "",
+          "note": "0.65.0 bundle 里是整句；0.68.0 里 0 处（按键提示改成运行时格式化）",
           "rule": "literal:shift+tab to accept edits",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:395"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:410"
+        },
+        {
+          "legacy": false,
+          "max_gap": 1600,
+          "needle": "",
+          "note": "0.68.0 真机 2026-11-14（composer-frames gemini-0.68-g2-0）：default 档底栏。bundle ApprovalModeIndicator.tsx 的模板 `${cycleHint} to accept edits` 每个 interactiveCli chunk 1 处，离 formatCommand(\"app.cycleApprovalMode\") 782 字节",
+          "parts": [
+            " to accept edits",
+            "app.cycleApprovalMode"
+          ],
+          "rule": "literal:shift+tab to accept edits",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:410"
+        },
+        {
+          "legacy": false,
+          "max_gap": 140,
+          "needle": "",
+          "note": "0.68.0 bundle keyBindings：`[\"app.cycleApprovalMode\", [new KeyBinding(\"shift+tab\")]]`，键与命令相距 66 字节（三个 chunk 各一份）；formatKeyBinding 把它格式化成 `Shift+Tab`。0.65.0 未核对（本机已无该版本）",
+          "parts": [
+            "\"shift+tab\"",
+            "app.cycleApprovalMode"
+          ],
+          "rule": "literal:shift+tab to accept edits",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:410"
         },
         {
           "legacy": false,
           "needle": "auto-accept edits",
           "note": "",
           "rule": "literal:auto-accept edits",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:399"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:414"
         },
         {
-          "legacy": false,
+          "legacy": true,
           "needle": "yolo ctrl+y",
-          "note": "",
+          "note": "0.65.0 bundle 里是整句；0.68.0 里 0 处（按键提示改成运行时格式化）",
           "rule": "literal:yolo ctrl+y",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:403"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:418"
         },
         {
           "legacy": false,
+          "max_gap": 1000,
+          "needle": "",
+          "note": "0.68.0 真机 2026-11-14（composer-frames gemini-0.68-g7-2-yolo）：yolo 档底栏。bundle ApprovalModeIndicator.tsx 里 `textContent = \"YOLO\"` 离 formatCommand(\"app.toggleYolo\") 最远的一个 chunk 是 509 字节",
+          "parts": [
+            "\"yolo\"",
+            "app.toggleYolo"
+          ],
+          "rule": "literal:yolo ctrl+y",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:418"
+        },
+        {
+          "legacy": false,
+          "max_gap": 100,
+          "needle": "",
+          "note": "0.68.0 bundle keyBindings：`[\"app.toggleYolo\", [new KeyBinding(\"ctrl+y\")]]`，键与命令相距 51 字节；formatKeyBinding 把它格式化成 `Ctrl+Y`。0.65.0 未核对（本机已无该版本）",
+          "parts": [
+            "\"ctrl+y\"",
+            "app.toggleYolo"
+          ],
+          "rule": "literal:yolo ctrl+y",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:418"
+        },
+        {
+          "legacy": true,
           "needle": "shift+tab to manual",
-          "note": "",
-          "rule": "literal:shift+tab to manual",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:407"
+          "note": "0.65.0 bundle 里 `shift+tab to manual` 是整句；0.68.0 里 0 处（按键提示改成运行时格式化）",
+          "rule": "literal:plan shift+tab to manual",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:422"
+        },
+        {
+          "legacy": false,
+          "max_gap": 80,
+          "needle": "",
+          "note": "0.68.0 真机 2026-11-14（composer-frames gemini-0.68-g8-0）：plan 档底栏。bundle ApprovalModeIndicator.tsx 里 `textContent = \"plan\"` 与下一行模板 `${cycleHint} to manual` 相距 35 到 37 字节",
+          "parts": [
+            "\"plan\"",
+            " to manual"
+          ],
+          "rule": "literal:plan shift+tab to manual",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:422"
+        },
+        {
+          "legacy": false,
+          "max_gap": 140,
+          "needle": "",
+          "note": "0.68.0 bundle keyBindings：`[\"app.cycleApprovalMode\", [new KeyBinding(\"shift+tab\")]]`，键与命令相距 66 字节（三个 chunk 各一份）；formatKeyBinding 把它格式化成 `Shift+Tab`。0.65.0 未核对（本机已无该版本）",
+          "parts": [
+            "\"shift+tab\"",
+            "app.cycleApprovalMode"
+          ],
+          "rule": "literal:plan shift+tab to manual",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:422"
         },
         {
           "legacy": false,
@@ -1504,21 +1572,21 @@
           "needle": "allow execution of",
           "note": "0.65.0 bundle：`Allow execution of` 在工具确认框里；同规则还认 Apply this change? / Do you want to proceed? / 沙箱扩权 To run [Shell] …",
           "rule": "attention:gemini:command-approval",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:467"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:482"
         },
         {
           "legacy": false,
           "needle": "usage limit reached",
           "note": "0.65.0 bundle：`Usage limit reached`；高负载框 `We are currently experiencing high demand for ${model}.` 同规则",
           "rule": "attention:gemini:usage-limit",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:481"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:496"
         },
         {
           "legacy": false,
           "needle": "answer questions",
           "note": "0.65.0 bundle：ask_user 提问表单表头 `Answer Questions`",
           "rule": "attention:gemini:question",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:493"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:508"
         },
         {
           "legacy": false,

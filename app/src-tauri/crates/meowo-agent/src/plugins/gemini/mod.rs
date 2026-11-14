@@ -387,9 +387,24 @@ impl AgentPlugin for Gemini {
     // 审批时会**自动放行**挂起的调用（G:interactiveCli 29445-29478，research-kimi-gemini §3.4 e5-06
     // 实测 gate-p2 被写入），不再作切换手段。保留维度只为屏幕回显：transcript 与 hook 都不带审批
     // 模式，底栏原文是唯一来源（§3.5：「auto-accept edits」「YOLO Ctrl+Y」「plan Shift+Tab to manual」）。
+    //
+    // 底栏 = 模式名 + 空格 + 按键提示（0.68.0 bundle 的 ApprovalModeIndicator.tsx，2026-11-14 取证）：
+    //   default   `Shift+Tab to accept edits`（没有模式名）
+    //   autoEdit  `auto-accept edits Shift+Tab to plan`；plan 模式此刻切不过去时是
+    //             `auto-accept edits Shift+Tab to manual`
+    //   plan      `plan Shift+Tab to manual`
+    //   yolo      `YOLO Ctrl+Y`
+    // 0.65 这几句是整句写死的字面量；0.68.0 起按键提示改成运行时按键位表格式化
+    // （formatCommand("app.cycleApprovalMode") → `Shift+Tab`，"app.toggleYolo" → `Ctrl+Y`），
+    // 默认键位下屏幕上还是同样的字，所以标记新老版本都认。用户改了这两个键位就读不到模式了
+    // （读不到时不显示当前值、也不重启，不会读错）。
     fn mode_controls(&self) -> &'static [crate::ModeControl] {
         // default 档底栏只有「Shift+Tab to accept edits」（research §4.2），也认，才读得到「当前是每步都问」
         // ——带参重启要按当前值拼参数，读不到就不重启（做空 H1）。
+        //
+        // plan 的标记带上模式名：autoEdit 在 plan 切不过去时的提示也以 `Shift+Tab to manual` 结尾
+        // （allowPlanMode 要求会话空闲且没有待处理的审批，回合进行中恒为 false），宿主取画面里最靠后
+        // 的标记，只认 `shift+tab to manual` 会把「自动接受编辑、正在跑」读成 plan。
         static MARKERS: [crate::ModeScreenMarker; 4] = [
             crate::ModeScreenMarker {
                 marker: "shift+tab to accept edits",
@@ -404,7 +419,7 @@ impl AgentPlugin for Gemini {
                 value: "yolo",
             },
             crate::ModeScreenMarker {
-                marker: "shift+tab to manual",
+                marker: "plan shift+tab to manual",
                 value: "plan",
             },
         ];

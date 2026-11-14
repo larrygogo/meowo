@@ -118,6 +118,12 @@ describe("五家回放：真实会话样本 → 解析 → 归并 → 渲染", (
     // 命令结果里 exit_code 非零 → 失败态、红色、带退出码。
     const failed = tools.filter((tool) => tool.getAttribute("data-state") === "error");
     expect(failed.some((tool) => /^退出码 1/.test(tool.querySelector(".chat-tool-out.is-error")?.textContent ?? ""))).toBe(true);
+    // 脚本只打印 r.output 时回执里没有退出码：后端按旁路的 CommandExecution 记录补上（真实样本，
+    // 退出码 101），同样是失败态、红色、带退出码；正文首行接在退出码后面。
+    const joined = failed.filter((tool) => /^退出码 101/.test(tool.querySelector(".chat-tool-out.is-error")?.textContent ?? ""));
+    expect(joined).toHaveLength(1);
+    expect(joined[0].querySelector(".chat-tool-summary")?.textContent).toContain("cargo test -p meowo-agent conversation --quiet");
+    expect(joined[0].querySelector(".chat-tool-out.is-error")?.textContent).toContain("could not canonicalize path");
     // 补丁校验失败（Script failed）同样标红。
     expect(failed.some((tool) => tool.querySelector(".chat-tool-verb")?.textContent === "编辑")).toBe(true);
     // 样本里 FileChange 记录与脚本里的 apply_patch 说的是同一次修改：只出一行。

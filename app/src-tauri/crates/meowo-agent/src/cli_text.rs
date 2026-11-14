@@ -15,9 +15,13 @@
 //!   间距，脚本要求它们在程序文件里相距不超过这个字节数。只搜一段泛词（`interrupt`、` to page`）
 //!   哪个程序文件都能命中，永远报「找到」；整句又搜不到，只好标「不搜」（做空第一轮 #7，
 //!   2026-11-12：26 条不搜里有 opencode `esc interrupt` 这类本轮正好漂移过的）。
-//! - **记录格式**（[`CliTextDep::record`]）：transcript / wire / rollout 的事件名与字段、
-//!   `--version` 首行格式。它们不是屏幕规则，却同样随 CLI 升级漂移（kimi `plan_mode.cancel`、
-//!   codex 版本行 `codex-cli` 前缀都是用户先撞上的，research-cli-drift K1/X2）。
+//! - **记录格式**（[`CliTextDep::record`]）：transcript / wire / rollout 的事件名与字段。
+//!   它们不是屏幕规则，却同样随 CLI 升级漂移（kimi `plan_mode.cancel` 是用户先撞上的，
+//!   research-cli-drift K1）。
+//! - **版本行**（[`CliTextDep::version_line`]）：`--version` 首行的格式（codex 的 `codex-cli`
+//!   前缀是用户先撞上的，research-cli-drift X2）。不搜程序文件，脚本拿它比对 `<cli> --version`
+//!   的真实首行——版本行是命令名与版本号运行时拼的，命令名在程序文件里的位置随链接布局变
+//!   （codex 0.167.2 实测），按位置搜靠不住。
 //!
 //! `cargo test -p meowo-agent --lib` 把清单写到 `app/src/generated/cli-text-deps.json`，
 //! CI 校验无 diff（与 ts-rs 契约同一套机制）。
@@ -49,6 +53,8 @@ pub struct CliTextDep {
     /// 每段都要出现在样例里。
     pub parts: &'static [&'static str],
     pub max_gap: usize,
+    /// 版本行依赖：`needle` 是 `<cli> --version` 首行该有的前缀，脚本拿它比对真实输出，不搜程序文件。
+    pub version_line: bool,
 }
 
 impl CliTextDep {
@@ -66,6 +72,7 @@ impl CliTextDep {
             legacy: false,
             parts: &[],
             max_gap: 0,
+            version_line: false,
         }
     }
 
@@ -86,6 +93,7 @@ impl CliTextDep {
             legacy: false,
             parts,
             max_gap,
+            version_line: false,
         }
     }
 
@@ -100,17 +108,23 @@ impl CliTextDep {
         Self::new(rule, needle, sample, evidence)
     }
 
-    /// 记录格式依赖、但解析器认的片段在程序文件里是泛词（`codex-cli` 是 `codex-client\src\…` 包名路径的
-    /// 前缀，单搜永远「找到」，做空第二轮 N2，2026-11-12）：第一段是解析器认的片段（测试要求它在插件源码
-    /// 里），其余段是程序文件里紧挨着它、能证明命中的是那处输出模板的锚点。
-    pub const fn record_near(
+    /// `--version` 首行的格式：`rule` 写成 `record:<名字>`，`prefix` 是首行该有的前缀（测试要求它在
+    /// 插件源码里、且样例以它开头），`sample` 是一行真实的首行原文。
+    ///
+    /// 脚本拿 `prefix` 比对 `<cli> --version` 的真实首行，不搜程序文件。此前按「命令名与 usage 模板
+    /// 相距 ≤N 字节」在程序文件里搜：命令名 `codex-cli` 是个泛词（它是 `codex-client\src\…` 包名路径
+    /// 的前缀，单搜永远「找到」，做空第二轮 N2），只能靠位置锚；而 codex 0.167.2 的链接布局一变
+    /// （命令名从 usage 模板后 10022 字节挪到了前 160400 字节，2026-11-14 实测），版本行明明没变
+    /// 却报缺失。版本行是运行时拼的，真实输出才是它唯一可靠的出处——脚本本来就要跑 `--version`。
+    pub const fn version_line(
         rule: &'static str,
-        parts: &'static [&'static str],
-        max_gap: usize,
+        prefix: &'static str,
         sample: &'static str,
         evidence: &'static str,
     ) -> Self {
-        Self::near(rule, parts, max_gap, sample, evidence)
+        let mut dep = Self::new(rule, prefix, sample, evidence);
+        dep.version_line = true;
+        dep
     }
 
     /// 标成旧版兼容。
@@ -132,17 +146,20 @@ pub struct ManifestEntry {
     /// 分段近邻的片段与最大间距（字节）；空 = 按 `needle` 整串搜。
     pub parts: Vec<String>,
     pub max_gap: usize,
+    /// 非空 = 版本行依赖：不搜程序文件，`<cli> --version` 的首行要以它开头（此时 `needle` 为空）。
+    pub version_prefix: String,
 }
 
 impl ManifestEntry {
     fn from_dep(d: &CliTextDep) -> Self {
         Self {
             rule: d.rule.to_string(),
-            needle: d.needle.to_string(),
+            needle: if d.version_line { String::new() } else { d.needle.to_string() },
             legacy: d.legacy,
             note: d.evidence.to_string(),
             parts: d.parts.iter().map(|p| p.to_string()).collect(),
             max_gap: d.max_gap,
+            version_prefix: if d.version_line { d.needle.to_string() } else { String::new() },
         }
     }
 }
@@ -367,6 +384,7 @@ pub fn manifest(p: &dyn crate::AgentPlugin) -> Vec<ManifestEntry> {
                 note: String::new(),
                 parts: Vec::new(),
                 max_gap: 0,
+                version_prefix: String::new(),
             });
         }
         out.extend(overrides.into_iter().map(ManifestEntry::from_dep));
@@ -459,6 +477,14 @@ mod tests {
                         p.id(),
                         d.rule
                     );
+                    if d.version_line {
+                        assert!(
+                            d.parts.is_empty() && d.sample.to_lowercase().starts_with(&needle),
+                            "{} 的 `{}`：版本行样例要以声明的前缀开头，且不再给分段近邻",
+                            p.id(),
+                            d.rule
+                        );
+                    }
                     assert!(
                         plugin_source_lower(p.id().as_str()).contains(&needle),
                         "{} 的 `{}`：插件源码里已不用 {:?}，解析器改了清单也要改",
@@ -596,6 +622,9 @@ mod tests {
                     if !e.parts.is_empty() {
                         row["parts"] = serde_json::json!(e.parts);
                         row["max_gap"] = serde_json::json!(e.max_gap);
+                    }
+                    if !e.version_prefix.is_empty() {
+                        row["version_prefix"] = serde_json::json!(e.version_prefix);
                     }
                     row
                 })

@@ -232,6 +232,16 @@ pub(crate) struct ProfileView {
 
 /// 某 agent 的账号列表：默认账号 + 自定义 profile，每个都带自己的登录态。
 ///
+/// 「这家当前用的是哪个账号」变了（切换、删除、并回默认）时发给各窗口的事件名，payload 是 provider id。
+/// 用量缓存此刻已清：灵动岛常驻，不通知它就一直显示上一个账号的额度，要等五分钟的定时刷新
+/// 才换过来（用户实拍 2026-11-15：「切换账号之后灵动岛上的用量没有刷新成新的账号的」）。
+pub(crate) const ACTIVE_PROFILE_CHANGED: &str = "active-profile-changed";
+
+fn notify_active_profile_changed(app: &tauri::AppHandle, provider: &str) {
+    use tauri::Emitter;
+    let _ = app.emit(ACTIVE_PROFILE_CHANGED, provider);
+}
+
 /// 该 agent 不支持多账号（gemini）→ **只返回默认账号一条**，前端据此不给「添加账号」入口。
 #[tauri::command]
 pub(crate) async fn list_profiles(provider: String) -> Vec<ProfileView> {
@@ -398,8 +408,13 @@ pub(crate) async fn rename_profile(
 /// 恢复（＝用户此前只能手动做的「结束会话 → 恢复」）。两步分开是因为**杀进程要用户点头**，
 /// 而设置该不该写与他点不点头无关。
 #[tauri::command]
-pub(crate) async fn set_active_profile(provider: String, id: Option<String>) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
+pub(crate) async fn set_active_profile(
+    app: tauri::AppHandle,
+    provider: String,
+    id: Option<String>,
+) -> Result<(), String> {
+    let changed = provider.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
         crate::settings::update_settings(|s| {
             match id {
                 None => {
@@ -425,7 +440,11 @@ pub(crate) async fn set_active_profile(provider: String, id: Option<String>) -> 
         Ok(())
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    if result.is_ok() {
+        notify_active_profile_changed(&app, &changed);
+    }
+    result
 }
 
 /// 删除一个账号：**连同它的整个目录一起删**（凭据、配置、该账号的会话历史）。
@@ -433,8 +452,13 @@ pub(crate) async fn set_active_profile(provider: String, id: Option<String>) -> 
 /// 这是不可逆的，前端必须先确认。删的是 `~/.meowo/profiles/<agent>/<id>`——**只可能**是我们
 /// 自己建的目录，绝不会碰到 agent 本体的 `~/.claude`：默认账号没有 id，压根走不到这里。
 #[tauri::command]
-pub(crate) async fn delete_profile(provider: String, id: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || {
+pub(crate) async fn delete_profile(
+    app: tauri::AppHandle,
+    provider: String,
+    id: String,
+) -> Result<(), String> {
+    let changed = provider.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
         let (removed, was_active) = crate::settings::update_settings(|s| {
             let list = s.profiles.get_mut(&provider).ok_or("没有这个账号")?;
             let pos = list.iter().position(|p| p.id == id).ok_or("没有这个账号")?;
@@ -469,7 +493,11 @@ pub(crate) async fn delete_profile(provider: String, id: String) -> Result<(), S
         Ok(())
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+    if result.is_ok() {
+        notify_active_profile_changed(&app, &changed);
+    }
+    result
 }
 
 /// 把一个账号**合并进默认账号**：数据目录递归并入、会话改挂默认账号、账号从设置移除。
@@ -480,10 +508,19 @@ pub(crate) async fn delete_profile(provider: String, id: String) -> Result<(), S
 /// 2. 文件并入完成后才把会话改挂默认账号、从 settings 移除 profile。
 /// 3. 最后 best-effort 删 profile 目录——数据在默认目录已有副本，删不掉只是残留，无害。
 #[tauri::command]
-pub(crate) async fn merge_profile_into_default(provider: String, id: String) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || merge_into_default(&provider, &id))
+pub(crate) async fn merge_profile_into_default(
+    app: tauri::AppHandle,
+    provider: String,
+    id: String,
+) -> Result<(), String> {
+    let changed = provider.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || merge_into_default(&provider, &id))
         .await
-        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    if result.is_ok() {
+        notify_active_profile_changed(&app, &changed);
+    }
+    result
 }
 
 /// 合并的同步实现（命令只是它的 spawn_blocking 包装；集成测试直接调它）。
