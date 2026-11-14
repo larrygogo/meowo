@@ -2,7 +2,7 @@
 // 能力表与启动选项直接用 src/test/agents.ts（与后端插件声明同源的那份），模型清单与 CLI 默认值
 // 照本机 CLI 配置与后端解析器的真实形状造（codex models_cache.json、kimi config.toml、
 // gemini models.rs FULL 表、opencode `models --verbose` 的 provider/model）。
-// ?state=idle|running|lead|open|notnow|ready 决定会话状态与切换结果；?modes=approval:yolo,collaboration:plan
+// ?state=idle|running|lead|open|notnow|ready|readback 决定会话状态与切换结果；?modes=approval:yolo,collaboration:plan
 // 覆盖会话当前档（第四轮 L6 拍手机各档图标）；?cfg=proxy 让 CLI 配置的模型不在清单里（第四轮 M1）。
 import { chatUi, descriptors } from "../src/test/agents";
 import { makeSession } from "../src/demo/data";
@@ -160,6 +160,8 @@ export function tmsChatMock(provider: TmsProvider, state: string, chat: (cmd: st
         if (state === "lead" || state === "open") return { kind: "queued", sessionId: CHAT_SESSION_ID, confirmed: false, reason: null };
         // 会话服务还没握手（刚打开的 Codex）：前端放回宿主队列，提示「会话就绪后切换到「X」」（做空 R5）。
         if (state === "ready") throw "settings/server_not_ready";
+        // OpenCode 只切 agent：CLI 换上该 agent 记住的模型，后端从底栏当场读回（outcome.model，真机第四轮问题 3）。
+        if (state === "readback" && !(args as { model?: string | null }).model) return { kind: "applied", sessionId: CHAT_SESSION_ID, confirmed: true, reason: null, model: "Big Pickle" };
         if (state === "notnow") return { kind: "not_now", sessionId: CHAT_SESSION_ID, confirmed: false, reason: "settings/background_busy" };
         return { kind: "applied", sessionId: CHAT_SESSION_ID, confirmed: true, reason: null };
       case "managed_terminal_frame": {
