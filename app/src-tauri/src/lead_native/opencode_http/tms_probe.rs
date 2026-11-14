@@ -639,12 +639,12 @@ fn tms_probe_opencode() {
     };
     // apply_blocking 的 Dialog 分支：plan 拆出 dialog_model，按清单 label 搜索。
     let switch_model_via_plan = |tui: &Tui, id: &str, state: TuiState| {
-        let plan = crate::session_settings::plan(plugin, Some(id), None, &HashMap::new(), &catalog, &[], &HashMap::new())
+        let plan = crate::session_settings::plan(plugin, Some(id), None, &HashMap::new(), &catalog, &[], &HashMap::new(), &HashMap::new())
             .expect("plan");
         let model = plan.dialog_model.expect("TuiDialog 机制应走对话框");
-        let label = catalog.iter().find(|e| e.id == model).unwrap().label.clone();
+        let entry = catalog.iter().find(|e| e.id == model).unwrap();
         let t = Instant::now();
-        let r = switch_model(&request(state), &label, &mut tui.io());
+        let r = switch_model(&request(state), &entry.label, entry.group.as_deref(), &mut tui.io());
         (r, t.elapsed().as_millis())
     };
 
@@ -757,11 +757,21 @@ fn tms_probe_opencode() {
         &catalog,
         &[],
         &HashMap::new(),
+        &HashMap::new(),
     )
     .unwrap();
-    let label = catalog.iter().find(|e| Some(&e.id) == combined.dialog_model.as_ref()).unwrap().label.clone();
-    let rm = switch_model(&request(IDLE), &label, &mut tui.io());
-    let ra = switch_agent(&request(IDLE), combined.dialog_agent.as_deref().unwrap(), &mut tui.io());
+    // 与 apply_blocking 同一个执行顺序（session_settings::dialog_steps：先 agent 后模型，真机验证 02d）。
+    let mut rm = Ok(SwitchOutcome { confirmed: true });
+    let mut ra = Ok(SwitchOutcome { confirmed: true });
+    for step in crate::session_settings::dialog_steps(&combined) {
+        match step {
+            crate::session_settings::DialogStep::Agent(agent) => ra = switch_agent(&request(IDLE), &agent, &mut tui.io()),
+            crate::session_settings::DialogStep::Model(model) => {
+                let entry = catalog.iter().find(|e| e.id == model).unwrap();
+                rm = switch_model(&request(IDLE), &entry.label, entry.group.as_deref(), &mut tui.io());
+            }
+        }
+    }
     std::thread::sleep(Duration::from_millis(800));
     let screen = tui.text();
     run.save("02d-combined-model-then-agent.txt", &screen);
@@ -781,7 +791,7 @@ fn tms_probe_opencode() {
         dynamic.iter().any(|d| d.id == "reviewer"),
         json!(dynamic.iter().map(|d| json!({"option": d.option, "id": d.id, "label": d.label})).collect::<Vec<_>>()),
     );
-    let p = crate::session_settings::plan(plugin, None, None, &sel(&[("agent", "reviewer")]), &[], &dynamic, &HashMap::new());
+    let p = crate::session_settings::plan(plugin, None, None, &sel(&[("agent", "reviewer")]), &[], &dynamic, &HashMap::new(), &HashMap::new());
     let r = match p.as_ref().ok().and_then(|p| p.dialog_agent.clone()) {
         Some(agent) => switch_agent(&request(IDLE), &agent, &mut tui.io()),
         None => Err(ControlError::Failed(format!("plan: {p:?}"))),
@@ -794,7 +804,7 @@ fn tms_probe_opencode() {
         r.is_ok() && footer(&screen).is_some_and(|f| f.starts_with("Reviewer")),
         json!({"outcome": outcome(&r), "footer": footer(&screen)}),
     );
-    let p = crate::session_settings::plan(plugin, None, None, &sel(&[("agent", "build")]), &[], &[], &HashMap::new()).unwrap();
+    let p = crate::session_settings::plan(plugin, None, None, &sel(&[("agent", "build")]), &[], &[], &HashMap::new(), &HashMap::new()).unwrap();
     let r = switch_agent(&request(IDLE), p.dialog_agent.as_deref().unwrap(), &mut tui.io());
     std::thread::sleep(Duration::from_millis(800));
     run.check(
@@ -822,7 +832,8 @@ fn tms_probe_opencode() {
         is_not_now(&r1, "lead/opencode_busy")
             && is_not_now(&r2, "lead/opencode_busy")
             && !during.contains("Select model")
-            && footer(&during).is_some_and(|f| f.contains("Fake Three")),
+            // 运行中什么都不动：底栏与运行前一致（之前写死 Fake Three，是旧执行顺序留下的状态）。
+            && footer(&during) == footer(&before),
         json!({"hostSaysBusy": outcome(&r1), "hostMisjudgedIdle": outcome(&r2), "footerBefore": footer(&before), "footerDuring": footer(&during)}),
     );
     let ended = wait_idle(&client, &native, 60);
@@ -832,7 +843,8 @@ fn tms_probe_opencode() {
     run.check(
         "4_deferred_switch_after_turn_affects_next_only",
         ended && r.is_ok()
-            && run.model_for("SLOW_TURN").as_deref() == Some("fake-model-3")
+            // 慢回合仍是切换前的模型（上一步组合切换后是 fake-model-2）。
+            && run.model_for("SLOW_TURN").as_deref() == Some("fake-model-2")
             && run.model_for("AFTER_TURN_END").as_deref() == Some("fake-model"),
         json!({"outcome": outcome(&r), "slowModel": run.model_for("SLOW_TURN"), "afterModel": run.model_for("AFTER_TURN_END")}),
     );
@@ -896,8 +908,10 @@ fn tms_probe_opencode() {
     run.check(
         "8_user_self_switch_synced_after_next_message",
         opened
-            && matches!(&after_msg, Ok(Some(c)) if c.model_id.as_deref() == Some("fake-model-2") && c.agent.as_deref() == Some("plan"))
-            && run.model_for("USER_SELF").as_deref() == Some("fake-model-2"),
+            // OpenCode 每个 agent 记着自己的模型，Tab 切到 plan 后用的是 plan 记住的那个；同步只要求
+            // 读到的与 TUI 实际发出的一致。
+            && matches!(&after_msg, Ok(Some(c)) if c.agent.as_deref() == Some("plan")
+                && c.model_id.is_some() && c.model_id.as_deref() == run.model_for("USER_SELF").as_deref()),
         json!({"footer": footer(&self_switched), "beforeNextMessage": format!("{before_msg:?}"), "afterNextMessage": format!("{after_msg:?}")}),
     );
     run.save("06b-after-user-self.txt", &tui.text());

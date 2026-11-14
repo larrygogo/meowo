@@ -400,6 +400,7 @@ fn plan_for(
         &catalog,
         &[],
         &selections(current),
+        &HashMap::new(),
     )
 }
 

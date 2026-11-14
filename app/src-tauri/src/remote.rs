@@ -1475,7 +1475,7 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
         }
         "queue_session_settings" => {
             let a = args!(QueueSessionSettingsArgs);
-            reply_ok(crate::session_settings::queue_session_settings(a.session_id, a.request))
+            reply_ok(crate::session_settings::queue_session_settings(app.clone(), a.session_id, a.request))
         }
         "queued_session_settings" => {
             let a = args!(SessionArg);

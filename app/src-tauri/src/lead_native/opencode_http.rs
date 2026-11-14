@@ -1009,6 +1009,63 @@ pub(crate) fn switch_model(
     switch_via_dialog(req, Dialog::Models, model_name, &footer, io, &std::thread::sleep)
 }
 
+/// 宿主用的切模型：选错了不让用户去终端收拾（standards「不许让用户去终端手动收拾」）——
+/// 1. 按显示名搜索选中，底栏按「模型名 provider 名」核对；
+/// 2. 选错（同名 / 前缀相同的别家模型排在前面）就用「模型名 provider 名」再搜一次；
+/// 3. 还不对就再开对话框选回切换前底栏上的那个模型（按清单 `known` 把底栏文字对回模型名与 provider），
+///    报 `lead/opencode_choice_reverted`；连回退也没成才报 `lead/opencode_choice_mismatch`。
+pub(crate) fn switch_model_checked(
+    req: &DialogSwitch<'_>,
+    model_name: &str,
+    provider_name: Option<&str>,
+    known: &[(String, Option<String>)],
+    io: &mut dyn TuiIo,
+) -> Result<SwitchOutcome, ControlError> {
+    let footer_of = |name: &str, provider: Option<&str>| match provider.map(str::trim).filter(|p| !p.is_empty()) {
+        Some(provider) => format!("{} {provider}", name.trim()),
+        None => name.trim().to_string(),
+    };
+    let previous = io
+        .screen()
+        .and_then(|screen| footer_line(&screen).map(footer_model_text));
+    let expected = footer_of(model_name, provider_name);
+    let wrong = |error: &ControlError| {
+        matches!(error, ControlError::Failed(reason) if reason == "lead/opencode_choice_mismatch" || reason == "lead/opencode_choice_not_found")
+    };
+    let first = switch_model(req, model_name, provider_name, io);
+    match &first {
+        Err(error) if error == &ControlError::Failed("lead/opencode_choice_mismatch".into()) => {}
+        _ => return first,
+    }
+    let retry = switch_via_dialog(req, Dialog::Models, &expected, &expected, io, &std::thread::sleep);
+    match &retry {
+        Err(error) if wrong(error) => {}
+        _ => return retry,
+    }
+    let back = previous.and_then(|prev| {
+        known
+            .iter()
+            .find(|(name, provider)| footer_of(name, provider.as_deref()).eq_ignore_ascii_case(&prev))
+            .cloned()
+    });
+    if let Some((name, provider)) = back {
+        let expected = footer_of(&name, provider.as_deref());
+        if switch_via_dialog(req, Dialog::Models, &name, &expected, io, &std::thread::sleep)
+            .is_ok_and(|outcome| outcome.confirmed)
+        {
+            return Err(ControlError::Failed("lead/opencode_choice_reverted".into()));
+        }
+    }
+    Err(ControlError::Failed("lead/opencode_choice_mismatch".into()))
+}
+
+/// 底栏状态行里「· 」之后的模型文字（`Build · Fake One Fake` → `Fake One Fake`）。
+fn footer_model_text(line: &str) -> String {
+    line.split_once(" · ")
+        .map(|(_, rest)| rest.trim().to_string())
+        .unwrap_or_default()
+}
+
 /// 把 TUI 当前 agent 切成 `agent`（agent 名，同 `opencode agent list` 列的）。调用约定与阻塞同 [`switch_model`]。
 /// 会话还没起时用启动参数 `--agent`（恢复会话时 `--agent` 能挡住「最后一条消息的 agent」覆盖，
 /// research 第 3 节源码）。
@@ -1149,8 +1206,10 @@ fn dialog_visible(screen: Option<&str>, dialog: Dialog) -> bool {
 fn footer_shows(screen: &str, dialog: Dialog, name: &str) -> bool {
     match dialog {
         // 按词边界比：`· GPT-5` 不能算 `· GPT-5 Mini OpenAI` 命中，后面只能是行尾或分隔符。
+        // provider 显示名的大小写各处不一（`opencode` / `OpenCode`），按不区分大小写比。
         Dialog::Models => footer_line(screen).is_some_and(|line| {
-            let needle = format!("· {name}");
+            let line = line.to_lowercase();
+            let needle = format!("· {}", name.to_lowercase());
             line.match_indices(&needle).any(|(at, _)| {
                 let rest = &line[at + needle.len()..];
                 rest.trim().is_empty() || rest.starts_with("  ") || rest.trim_start().starts_with('·')

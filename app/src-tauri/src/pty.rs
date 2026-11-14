@@ -3102,6 +3102,17 @@ impl PtyBroker {
                 serde_json::to_string(&args),
             ) {
                 let _ = store.set_session_launch_args(real_id, &json);
+                // 会话服务机制的档（Codex 权限）在认领后经服务补设一次：启动参数在某些平台不生效
+                // （真机验证 codex 问题 1），会话里显示的是实际值，不补设就和新建页选的不一致。
+                if let Ok(header) = store.session_header(real_id) {
+                    crate::session_settings::apply_launch_server_settings(
+                        crate::db_path(),
+                        real_id,
+                        header.cc_session_id,
+                        header.provider,
+                        args,
+                    );
+                }
             }
         }
         // 跨 provider 切换的接续链此刻才有会话行可指：双向成对写入（set_session_lineage

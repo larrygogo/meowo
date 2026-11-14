@@ -572,6 +572,13 @@ pub trait AgentPlugin: Sync {
         Vec::new()
     }
 
+    /// 带参重启接回前判断这个会话是不是「还没发过消息」（见 [`crate::ModelSwitch::RestartResume`] 的
+    /// `unsent_resume_args`）：Some(true) = 是（必要时替 CLI 清掉只有元数据的会话文件），Some(false) =
+    /// 已有消息、照常 resume，None = 判断不了（照常 resume）。看的是 CLI 自己的会话文件，不是 Meowo 的缓存副本。
+    fn prepare_unsent_resume(&self, _session_id: &str) -> Option<bool> {
+        None
+    }
+
     /// 屏幕上出现这些原文 = CLI 已起好、只是在等第一条消息才建会话（Kimi 2.6：首条消息前不建
     /// 会话、不触发 SessionStart，research-kimi-gemini §2.6）。对话页据此不再显示「启动被卡住」。
     fn awaiting_first_message_markers(&self) -> &'static [&'static str] {
@@ -1501,7 +1508,10 @@ mod tests {
             arg_of("codex", "approval", "yolo"),
             vec!["--sandbox", "danger-full-access", "--ask-for-approval", "never"]
         );
-        assert_eq!(arg_of("codex", "approval", "approveForMe"), vec!["--approve-for-me"]);
+        assert_eq!(
+            arg_of("codex", "approval", "approveForMe"),
+            vec!["--sandbox", "workspace-write", "--ask-for-approval", "on-request", "-c", "approvals_reviewer=auto_review"]
+        );
         assert_eq!(arg_of("gemini", "approval", "yolo"), vec!["--yolo"]);
         assert_eq!(
             arg_of("gemini", "approval", "plan"),

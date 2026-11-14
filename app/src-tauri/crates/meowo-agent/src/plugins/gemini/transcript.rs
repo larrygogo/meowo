@@ -454,6 +454,35 @@ pub(super) fn read_model(ctx: &crate::caps::HookContext<'_>) -> Option<String> {
     model_from_tail(tail)
 }
 
+/// 见插件的 `prepare_unsent_resume`：找 CLI 自己的会话文件（不是 materialize 出的缓存副本）。
+pub(super) fn prepare_unsent_resume(session_id: &str) -> Option<bool> {
+    let Some(path) = source_path(None, session_id) else {
+        return Some(true);
+    };
+    let text = fs::read_to_string(&path).ok()?;
+    if !has_no_messages(&text) {
+        return Some(false);
+    }
+    fs::remove_file(&path).ok().map(|_| true)
+}
+
+/// 会话文件里一条消息都没有。启动时 CLI 就写了元数据行和一条合成的 `<session_context>` user 行
+/// （0.68 实拍会话文件第 1、2 行），它们不算用户发过的消息。读不出的行不算消息。
+pub(super) fn has_no_messages(text: &str) -> bool {
+    !text.lines().any(|line| {
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
+            return false;
+        };
+        match value["type"].as_str() {
+            Some("gemini") => true,
+            Some("user") => !content_text(value.get("content"))
+                .trim_start()
+                .starts_with("<session_context>"),
+            _ => false,
+        }
+    })
+}
+
 /// 会话文件尾部最近的模型：回复行的 `model`，或 `/model set` 当场写的 info 行「Model set to X」
 /// （0.68 切换时立即写，回复要等下一轮，research-kimi-gemini §3.5）。取最后出现的那条。
 pub(super) fn model_from_tail(tail: &str) -> Option<String> {

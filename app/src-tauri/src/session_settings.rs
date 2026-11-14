@@ -502,6 +502,7 @@ pub(crate) fn settings_reason(reason: &str) -> String {
         "lead/opencode_dialog_lost",
         "lead/opencode_choice_not_found",
         "lead/opencode_choice_mismatch",
+        "lead/opencode_choice_reverted",
         "lead/opencode_switch_invalid",
     ];
     if reason.starts_with("lead/") && !KEEP.contains(&reason) {
@@ -758,6 +759,67 @@ pub(crate) async fn record_session_settings(
     .map_err(|e| e.to_string())?
 }
 
+/// 新建时选的、会话服务机制各栏的服务端片段合并成一份（只取带 server 片段的档）。没有就 None。
+pub(crate) fn launch_server_update(
+    plugin: &dyn AgentPlugin,
+    selections: &HashMap<String, String>,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let mut merged = serde_json::Map::new();
+    for option in plugin.launch_options() {
+        if option.switch != meowo_agent::ModeSwitch::Server {
+            continue;
+        }
+        let patch = selections
+            .get(option.id)
+            .and_then(|id| option.choices.iter().find(|c| c.id == id.as_str()))
+            .and_then(|c| c.server)
+            .and_then(|patch| serde_json::from_str::<serde_json::Value>(patch).ok());
+        if let Some(serde_json::Value::Object(map)) = patch {
+            merged.extend(map);
+        }
+    }
+    (!merged.is_empty()).then_some(merged)
+}
+
+/// 会话认领后按新建时选的档经会话服务补设一次（真机验证 codex 问题 1：0.167.2 Windows 上新建带
+/// `--sandbox workspace-write` 首轮仍是 read-only，只有 thread/settings/update 设得上）。会话服务机制
+/// 才做；TUI 还没握手时隔 2 秒再试，最多 5 次；够不着服务（内嵌模式）就算了，启动参数已经给过。
+pub(crate) fn apply_launch_server_settings(
+    db: std::path::PathBuf,
+    session_id: i64,
+    native: String,
+    provider: String,
+    selections: HashMap<String, String>,
+) {
+    let Some(plugin) = meowo_agent::resolve(Some(&provider)) else {
+        return;
+    };
+    if plugin.model_switch() != Some(meowo_agent::ModelSwitch::ServerSettings) {
+        return;
+    }
+    let Some(patch) = launch_server_update(plugin, &selections) else {
+        return;
+    };
+    let Ok(update) = serde_json::from_value::<crate::lead_native::codex_app_server::CodexSettingsUpdate>(
+        serde_json::Value::Object(patch),
+    ) else {
+        return;
+    };
+    std::thread::spawn(move || {
+        use crate::lead_native::codex_app_server::{update_settings, ControlError};
+        for _ in 0..5 {
+            match update_settings(&db, session_id, &native, &update) {
+                Err(ControlError::NotReady(_)) => std::thread::sleep(std::time::Duration::from_secs(2)),
+                Err(ControlError::Failed(reason)) => {
+                    eprintln!("新建会话补设权限失败（{session_id}）：{reason}");
+                    return;
+                }
+                _ => return,
+            }
+        }
+    });
+}
+
 /// 「这一轮结束后切换」的排队（做空 M3）：存在宿主进程里、按会话 id 记，换会话、刷新手机页都还在；
 /// 后来的选择合并进同一份。内容是前端的请求原样（模型、各栏、提示名），执行仍走 apply_session_settings
 /// 的全部校验，这里不解释它。
@@ -784,11 +846,277 @@ pub(crate) fn merge_queued(prev: Option<&serde_json::Value>, next: &serde_json::
 }
 
 #[tauri::command]
-pub(crate) fn queue_session_settings(session_id: i64, request: serde_json::Value) -> serde_json::Value {
+pub(crate) fn queue_session_settings(
+    app: tauri::AppHandle,
+    session_id: i64,
+    request: serde_json::Value,
+) -> serde_json::Value {
+    let merged = enqueue(session_id, &request);
+    ensure_executor(app);
+    merged
+}
+
+/// 合并进会话的队列，返回合并后的整份。
+pub(crate) fn enqueue(session_id: i64, request: &serde_json::Value) -> serde_json::Value {
     let mut map = QUEUED.lock().unwrap_or_else(|e| e.into_inner());
-    let merged = merge_queued(map.get(&session_id), &request);
+    let merged = merge_queued(map.get(&session_id), request);
     map.insert(session_id, merged.clone());
     merged
+}
+
+static EXECUTOR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// 排队的切换由宿主在回合结束时自己执行（复核 M3：不依赖对话页正停在这个会话上）。只在队列非空时
+/// 跑，每 1.5 秒看一眼排着的几个会话，队列空了线程就退出。会话空闲的判定与看板 tab_class 同一阶梯
+/// （activityTone 的宿主版）；带参重启还要求 TUI 输入框是空的、读得到当前值——宿主没法把草稿搬进对话页，
+/// 输入框有字或认不出时留在队列里，等对话页打开这个会话时由前端（会先搬草稿）执行。
+fn ensure_executor(app: tauri::AppHandle) {
+    use std::sync::atomic::Ordering;
+    if EXECUTOR.swap(true, Ordering::AcqRel) {
+        return;
+    }
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(std::time::Duration::from_millis(1500));
+            let ids: Vec<i64> = QUEUED
+                .lock()
+                .map(|map| map.keys().copied().collect())
+                .unwrap_or_default();
+            if ids.is_empty() {
+                EXECUTOR.store(false, Ordering::Release);
+                // 释放标记后若又有人排进来，接着跑。
+                if QUEUED.lock().map(|map| map.is_empty()).unwrap_or(true)
+                    || EXECUTOR.swap(true, Ordering::AcqRel)
+                {
+                    return;
+                }
+                continue;
+            }
+            for sid in ids {
+                run_queued_if_idle(&app, sid);
+            }
+        }
+    });
+}
+
+fn run_queued_if_idle(app: &tauri::AppHandle, session_id: i64) {
+    use tauri::{Emitter as _, Manager as _};
+    if session_id <= 0 {
+        return; // 未认领会话由前端处理（重开要切到新的临时 id）
+    }
+    let Some(state) = app.try_state::<crate::AppState>() else {
+        return;
+    };
+    let Some(history) = crate::chat::session_snapshot(&state, session_id) else {
+        return;
+    };
+    let screen = if history.screen_assumed {
+        None
+    } else {
+        history.screen_state.as_deref()
+    };
+    let pending = history.pending_review.map(|_| "review");
+    let class = crate::session_query::tab_class(
+        history.connected,
+        &history.status,
+        pending,
+        screen,
+        || {
+            crate::session_query::subagents_busy(
+                &state.tx_cache,
+                &history.provider,
+                history.cwd.as_deref(),
+                &history.cc_session_id,
+            )
+        },
+    );
+    // 连着且在跑 / 等审批：继续等。没连着：执行（会记成下次打开的启动参数，见 apply_blocking）。
+    if history.connected && (pending.is_some() || class != Some("waiting")) {
+        return;
+    }
+    let Some(plugin) = meowo_agent::resolve(Some(&history.provider)) else {
+        return;
+    };
+    let Some(request) = QUEUED
+        .lock()
+        .ok()
+        .and_then(|map| map.get(&session_id).cloned())
+    else {
+        return;
+    };
+    let model = request["model"]["id"].as_str().map(str::to_owned);
+    let effort = request["model"]["effort"].as_str().map(str::to_owned);
+    let modes: HashMap<String, String> = request["modes"]
+        .as_object()
+        .map(|modes| {
+            modes
+                .iter()
+                .filter_map(|(k, v)| Some((k.clone(), v.as_str()?.to_owned())))
+                .collect()
+        })
+        .unwrap_or_default();
+    // 当前实际值：transcript 的模式 + 底栏标记 + 当前模型在清单里的 id（与前端 readCurrent 同口径）。
+    let lines = state
+        .ptys
+        .screen_probe_snapshot(session_id)
+        .map(|(snapshot, _)| snapshot.lines)
+        .unwrap_or_default();
+    let mut current: HashMap<String, String> = history
+        .agent_modes
+        .iter()
+        .map(|mode| (mode.dimension.clone(), mode.value.clone()))
+        .collect();
+    for control in plugin.mode_controls() {
+        if let Some(value) = mode_from_screen(&lines.join("\n"), control.screen_markers) {
+            current.insert(control.dimension.to_string(), value.to_string());
+        }
+    }
+    if let Some(label) = history.model.as_deref() {
+        let env = session_env(&history.provider, session_id);
+        let catalog = session_catalog(&state.db_path, plugin, Some(session_id), &env, history.cwd.as_deref(), Some(app));
+        if let Some(id) = catalog_id_for(&catalog, label) {
+            current.insert("model".into(), id);
+        }
+    }
+    let version = crate::probe_cli_version(plugin);
+    let composer_empty = history.connected
+        && plugin
+            .composer_guard(version.as_deref())
+            .and_then(|guard| composer_state(&lines, &guard))
+            == Some(true);
+    if history.connected && !composer_empty {
+        return; // 输入框有字或认不出：等前端（会先把草稿搬进对话页）
+    }
+    // 取走再执行：前端与宿主谁先拿到谁执行，不会执行两次。
+    if QUEUED.lock().ok().and_then(|mut map| map.remove(&session_id)).is_none() {
+        return;
+    }
+    let tui = TuiStateArg {
+        idle: true,
+        composer_empty,
+        approval_pending: false,
+    };
+    let result = apply_blocking(
+        app,
+        &state.ptys,
+        &state.db_path,
+        session_id,
+        model,
+        effort,
+        modes,
+        current,
+        tui,
+    );
+    let (kind, reason) = match result {
+        Ok(outcome) => (outcome.kind.to_string(), outcome.reason),
+        Err(reason) => ("failed".to_string(), Some(settings_reason(&reason))),
+    };
+    let _ = app.emit(
+        "session-settings-applied",
+        serde_json::json!({ "sessionId": session_id, "kind": kind, "reason": reason }),
+    );
+}
+
+/// 底栏模式标记（前端 modeFromScreen 的宿主版）：小写子串，取画面里最靠后出现的那个。
+fn mode_from_screen(text: &str, markers: &[meowo_agent::ModeScreenMarker]) -> Option<&'static str> {
+    let haystack = text.to_lowercase().replace('’', "'");
+    markers
+        .iter()
+        .filter_map(|marker| haystack.rfind(&marker.marker.to_lowercase()).map(|at| (at, marker.value)))
+        .max_by_key(|(at, _)| *at)
+        .map(|(_, value)| value)
+}
+
+/// 会话报出的当前模型（显示名或 id）→ 清单 id（前端 currentPresetId 的保守版：只认精确的 id、显示名、
+/// 或「斜杠后那段」，认不出就当读不到）。
+fn catalog_id_for(catalog: &[ModelCatalogEntry], current: &str) -> Option<String> {
+    let norm = |text: &str| {
+        text.chars()
+            .filter(|c| c.is_alphanumeric())
+            .flat_map(char::to_lowercase)
+            .collect::<String>()
+    };
+    let wanted = norm(current);
+    catalog
+        .iter()
+        .find(|entry| norm(&entry.id) == wanted || norm(&entry.label) == wanted)
+        .or_else(|| {
+            catalog.iter().find(|entry| {
+                entry
+                    .id
+                    .rsplit_once('/')
+                    .is_some_and(|(_, tail)| norm(tail) == wanted)
+            })
+        })
+        .map(|entry| entry.id.clone())
+}
+
+/// 托管终端输入框是不是空的（前端 composerSafety.composerCandidate 的宿主版）：Some(true) 空、
+/// Some(false) 有字、None 认不出。规则全来自插件声明的 ComposerGuard。
+pub(crate) fn composer_state(screen: &[String], guard: &meowo_agent::chat_ui::ComposerGuard) -> Option<bool> {
+    let re = |pattern: &str| regex::Regex::new(pattern).ok();
+    let top = re(guard.top_pattern)?;
+    let bottom = re(guard.bottom_pattern)?;
+    let row = re(guard.row_pattern)?;
+    let mut end = screen.iter().rposition(|line| bottom.is_match(line))?;
+    let mut start;
+    let mut body: Vec<&String>;
+    if guard.prompt_footer {
+        while end > 0 && screen[end - 1].trim().is_empty() {
+            end -= 1;
+        }
+        let mut cursor = end.checked_sub(1)?;
+        loop {
+            if top.is_match(&screen[cursor]) {
+                break;
+            }
+            if !screen[cursor].trim().is_empty() && !row.is_match(&screen[cursor]) {
+                return None;
+            }
+            cursor = cursor.checked_sub(1)?;
+        }
+        start = cursor;
+        body = screen[start..end].iter().collect();
+    } else {
+        start = end;
+        while start > 0 && row.is_match(&screen[start - 1]) {
+            start -= 1;
+        }
+        body = screen[start..end].iter().collect();
+        if body.first().is_some_and(|line| top.is_match(line)) {
+            body.remove(0);
+            start += 1;
+        } else if start == 0 || !top.is_match(&screen[start - 1]) {
+            return None;
+        }
+        if guard.tail_rows > 0 {
+            let tail = re(guard.tail_pattern?)?;
+            if body.len() <= guard.tail_rows || !tail.is_match(body.last()?) {
+                return None;
+            }
+            body.truncate(body.len() - guard.tail_rows);
+        }
+    }
+    let _ = start;
+    if body.is_empty() {
+        return None;
+    }
+    let mut text = Vec::new();
+    for line in &body {
+        if guard.prompt_footer && line.trim().is_empty() {
+            text.push(String::new());
+            continue;
+        }
+        let captures = row.captures(line)?;
+        text.push(captures.get(1)?.as_str().trim().to_string());
+    }
+    if !text[0].starts_with(guard.prompt_prefix) {
+        return None;
+    }
+    re(guard.input_start_pattern)?.captures(body[0])?.get(1)?;
+    text[0] = text[0][guard.prompt_prefix.len()..].trim_start().to_string();
+    let content = text.join("\n");
+    Some(re(guard.empty_pattern)?.is_match(content.trim()))
 }
 
 #[tauri::command]
@@ -829,6 +1157,23 @@ fn persist(
     if let Ok(json) = serde_json::to_string(&selections) {
         let _ = store.set_session_launch_args(session_id, &json);
     }
+}
+
+/// TUI 对话框路线的一步。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum DialogStep {
+    Agent(String),
+    Model(String),
+}
+
+/// 一次请求里两步的顺序：**先切 agent 再切模型**。OpenCode 每个 agent 记着自己上次用的模型，先切模型
+/// 再切 agent，模型会被 agent 记住的那个盖掉（真机验证 opencode 02d，2026-11-14）。
+pub(crate) fn dialog_steps(plan: &Plan) -> Vec<DialogStep> {
+    plan.dialog_agent
+        .iter()
+        .map(|agent| DialogStep::Agent(agent.clone()))
+        .chain(plan.dialog_model.iter().map(|model| DialogStep::Model(model.clone())))
+        .collect()
 }
 
 enum DialogError {
@@ -879,20 +1224,28 @@ fn dialog_switch(
                 .map(|(snapshot, _)| snapshot.lines.join("\n"))
         },
     );
+    let known: Vec<(String, Option<String>)> = catalog
+        .iter()
+        .map(|entry| (entry.label.clone(), entry.group.clone()))
+        .collect();
     let mut confirmed = true;
-    if let Some(model) = &plan.dialog_model {
-        // 对话框按显示名搜索（oc4），清单的 label 就是 TUI 列的名字。
-        // 分组就是 provider 显示名（dialog_catalog），底栏按「模型名 provider 名」精确核对（做空 M2）。
-        let entry = catalog
-            .iter()
-            .find(|entry| &entry.id == model)
-            .ok_or(DialogError::Failed("settings/model_unknown".into()))?;
-        confirmed &= oc::switch_model(&request, &entry.label, entry.group.as_deref(), &mut io)
-            .map_err(map)?
-            .confirmed;
-    }
-    if let Some(agent) = &plan.dialog_agent {
-        confirmed &= oc::switch_agent(&request, agent, &mut io).map_err(map)?.confirmed;
+    for step in dialog_steps(plan) {
+        match step {
+            DialogStep::Agent(agent) => {
+                confirmed &= oc::switch_agent(&request, &agent, &mut io).map_err(map)?.confirmed;
+            }
+            DialogStep::Model(model) => {
+                // 对话框按显示名搜索（oc4），清单的 label 就是 TUI 列的名字；分组就是 provider 显示名
+                // （dialog_catalog），底栏按「模型名 provider 名」核对，选错自动重选 / 选回（复核 M2）。
+                let entry = catalog
+                    .iter()
+                    .find(|entry| entry.id == model)
+                    .ok_or(DialogError::Failed("settings/model_unknown".into()))?;
+                confirmed &= oc::switch_model_checked(&request, &entry.label, entry.group.as_deref(), &known, &mut io)
+                    .map_err(map)?
+                    .confirmed;
+            }
+        }
     }
     Ok(confirmed)
 }
@@ -1067,6 +1420,69 @@ mod tests {
         assert_eq!(restart_guard(&draft), Err("settings/composer_not_empty"));
     }
 
+    /// 真机验证 codex 问题 1：新建选的会话服务档在认领后补设，片段与会话内切到同一档一致。
+    #[test]
+    fn launch_server_update_merges_declared_patches() {
+        let codex = meowo_agent::by_id("codex").unwrap();
+        let patch = launch_server_update(codex, &modes(&[("approval", "approveForMe")])).unwrap();
+        assert_eq!(patch["sandbox"], "workspace-write");
+        assert_eq!(patch["approvalsReviewer"], "auto_review");
+        assert!(launch_server_update(codex, &modes(&[("approval", "default")])).is_none());
+        let kimi = meowo_agent::by_id("kimi").unwrap();
+        assert!(launch_server_update(kimi, &modes(&[("permission", "yolo")])).is_none());
+    }
+
+    /// 真机验证 02d：同一请求既切模型又切 agent 时先切 agent，模型才不会被 agent 记住的那个盖掉。
+    #[test]
+    fn dialog_switches_agent_before_model() {
+        let opencode = meowo_agent::by_id("opencode").unwrap();
+        let catalog = vec![ModelCatalogEntry::new("fake/fake-model-2", "Fake Two")];
+        let plan = plan(opencode, Some("fake/fake-model-2"), None, &modes(&[("agent", "build")]), &catalog, &[], &none(), &none()).unwrap();
+        assert_eq!(
+            dialog_steps(&plan),
+            vec![DialogStep::Agent("build".into()), DialogStep::Model("fake/fake-model-2".into())]
+        );
+    }
+
+    /// 复核 M3：宿主执行排队前自己认输入框（前端 composerCandidate 的宿主版），规则同插件声明。
+    #[test]
+    fn host_composer_check_matches_the_kimi_frame() {
+        let guard = meowo_agent::chat_ui::ComposerGuard {
+            prompt_footer: false,
+            input_start_pattern: r"^(\s*│ > )",
+            top_pattern: r"^\s*╭─+╮\s*$",
+            bottom_pattern: r"^\s*╰─+╯\s*$",
+            row_pattern: r"^\s*│(.*)│\s*$",
+            prompt_prefix: ">",
+            tail_rows: 0,
+            tail_pattern: None,
+            empty_pattern: r"^$",
+        };
+        let frame = |row: &str| vec![" ╭──────╮".to_string(), format!(" │{row}│"), " ╰──────╯".to_string()];
+        assert_eq!(composer_state(&frame(" >    "), &guard), Some(true));
+        assert_eq!(composer_state(&frame(" > hi "), &guard), Some(false));
+        assert_eq!(composer_state(&["随便一行".to_string()], &guard), None);
+    }
+
+    #[test]
+    fn host_reads_modes_from_footer_and_maps_model_labels() {
+        let markers = [
+            meowo_agent::ModeScreenMarker { marker: "shift+tab to accept edits", value: "default" },
+            meowo_agent::ModeScreenMarker { marker: "yolo ctrl+y", value: "yolo" },
+        ];
+        assert_eq!(mode_from_screen("x
+ YOLO Ctrl+Y ", &markers), Some("yolo"));
+        assert_eq!(mode_from_screen("Shift+Tab to accept edits", &markers), Some("default"));
+        assert_eq!(mode_from_screen("nothing", &markers), None);
+        let catalog = vec![
+            ModelCatalogEntry::new("kimi-code/k3", "K3"),
+            ModelCatalogEntry::new("反向推理/DeepSeek-V4.1-Flash-1017", "DeepSeek V4.1 Flash"),
+        ];
+        assert_eq!(catalog_id_for(&catalog, "K3").as_deref(), Some("kimi-code/k3"));
+        assert_eq!(catalog_id_for(&catalog, "DeepSeek-V4.1-Flash-1017").as_deref(), Some("反向推理/DeepSeek-V4.1-Flash-1017"));
+        assert_eq!(catalog_id_for(&catalog, "gpt-x"), None);
+    }
+
     /// 做空 M8：服务通道的连接类错误在切换语境下不能落到 Lead「回答已保存…」。
     #[test]
     fn transport_errors_are_reworded_for_switching() {
@@ -1080,8 +1496,8 @@ mod tests {
     #[test]
     fn queued_settings_merge_and_survive_until_taken() {
         let sid = 987_654;
-        queue_session_settings(sid, serde_json::json!({ "model": { "id": "a", "label": "A" }, "modes": { "permission": "yolo" }, "label": "A" }));
-        let merged = queue_session_settings(sid, serde_json::json!({ "modes": { "work": "plan" }, "label": "计划：开" }));
+        enqueue(sid, &serde_json::json!({ "model": { "id": "a", "label": "A" }, "modes": { "permission": "yolo" }, "label": "A" }));
+        let merged = enqueue(sid, &serde_json::json!({ "modes": { "work": "plan" }, "label": "计划：开" }));
         assert_eq!(merged["model"]["id"], "a");
         assert_eq!(merged["modes"]["permission"], "yolo");
         assert_eq!(merged["modes"]["work"], "plan");

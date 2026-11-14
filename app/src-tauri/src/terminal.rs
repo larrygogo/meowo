@@ -3649,12 +3649,11 @@ fn swap_unsent_resume(resume: &mut [String], provider: &str, session_id: &str, c
     else {
         return;
     };
-    let exists = plugin
-        .telemetry()
-        .and_then(|t| t.transcript())
-        .and_then(|t| t.resolve_transcript_path(None, cwd, session_id))
-        .is_some_and(|path| path.is_file());
-    if !exists {
+    // 按「会话里有没有消息」判断，不按「文件在不在」：Meowo 硬杀进程时 CLI 来不及删只有元数据的会话文件，
+    // 见文件在就 resume 会报「No previous sessions found」（真机验证 G1，2026-11-14）。插件负责清掉那个
+    // 空文件后再走 `unsent_resume_args`。
+    let _ = cwd;
+    if plugin.prepare_unsent_resume(session_id) == Some(true) {
         replace_resume_args(resume, plugin.resume_args(), unsent);
     }
 }

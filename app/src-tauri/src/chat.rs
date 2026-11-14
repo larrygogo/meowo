@@ -658,6 +658,32 @@ pub(crate) async fn get_chat_history(
     .map_err(|e| e.to_string())?
 }
 
+/// 宿主自己读一次会话此刻的状态与模式（排队的切换在回合结束时由宿主执行，不依赖前端开着这个会话，
+/// 做空复核 M3）。与 get_chat_history 同一组原料，只读不翻页。
+pub(crate) fn session_snapshot(state: &super::AppState, session_id: i64) -> Option<ChatHistory> {
+    let screen_sight = state.ptys.screen_states().get(&session_id).copied();
+    load_chat_history(
+        &state.db_path,
+        &state.chat_mtimes,
+        &state.tx_cache,
+        LiveSignals {
+            alive: state.process_snapshots.snapshot(),
+            pty_live: state.ptys.is_active(session_id),
+            runtimes: state.session_runtimes.snapshot(),
+            broker_approval: state.ptys.pending_approval(session_id).is_some(),
+            screen_state: screen_sight.map(|sight| sight.state),
+            screen_assumed: screen_sight.is_some_and(|sight| sight.fallback),
+        },
+        session_id,
+        ChatRead {
+            offset: 0,
+            full: false,
+            before: None,
+        },
+    )
+    .ok()
+}
+
 // 粘贴附件的单文件上限与目录约定统一取自 fsutil（与排队插话图片同源，勿再各写一份）。
 use meowo_agent::fsutil::{paste_root, PASTE_MAX_BYTES};
 

@@ -617,6 +617,11 @@ impl AgentPlugin for Kimi {
     fn model_menu_command(&self) -> Option<&'static str> {
         Some("/model")
     }
+    /// 思考档不跟着新模型调整（research §2.3 p2：从不支持思考的 A 换到 B 后仍是 thinking disabled），
+    /// 这里不补：Kimi 2.6 没有指定思考档的启动参数（`kimi --help` 只有 -m），会话内的 `/effort <档>`
+    /// 走 confirmThenPerformEffortSwitch(…, "model") → persistModelSelection，会改写 config.toml 的
+    /// default_model 与 [thinking]（kimi.exe K:530950、K:529381），违反「不改用户 CLI 默认配置」。
+    /// 用户在模型菜单的思考档分段里自己选（同样经 /effort），是用户主动的改动。
     fn model_switch(&self) -> Option<crate::ModelSwitch> {
         Some(crate::ModelSwitch::RestartResume {
             flag: "-m",

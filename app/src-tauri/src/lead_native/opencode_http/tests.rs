@@ -1071,3 +1071,25 @@ fn switch_model_reports_mismatch_when_footer_shows_another_provider() {
     assert_eq!(outcome, Err(ControlError::Failed("lead/opencode_choice_mismatch".into())));
     let _ = std::fs::remove_dir_all(root);
 }
+
+/// 复核 M2：选错了不让用户去终端收拾——先按「模型名 provider 名」再搜，还不对就选回原模型并如实报。
+#[test]
+fn checked_switch_retries_then_reverts_to_the_previous_model() {
+    let root = temp_root("sw-revert");
+    let db = root.join("board.db");
+    let tui = fake_tui("Build · Fake One Fake", vec!["Fake One", "Fake Two"]);
+    let (port, _seen) = control_server("pw-rv", tui.clone(), "[]", "{}");
+    register_tui(&db, 5757, port, "pw-rv");
+    let writes = Arc::new(StdMutex::new(Vec::new()));
+    let mut io = io_for(&tui, &writes);
+    let known = vec![
+        ("Fake One".to_string(), Some("Fake".to_string())),
+        ("Fake Two".to_string(), Some("Anthropic".to_string())),
+    ];
+    let outcome = switch_model_checked(&switch_req(&db, 5757, READY), "Fake Two", Some("Anthropic"), &known, &mut io);
+    assert_eq!(outcome, Err(ControlError::Failed("lead/opencode_choice_reverted".into())));
+    assert_eq!(tui.lock().unwrap().footer, "Build · Fake One Fake", "选回了切换前的模型");
+    let typed = writes.lock().unwrap().clone();
+    assert!(typed.contains(&"Fake Two Anthropic".to_string()), "第二次带 provider 搜：{typed:?}");
+    let _ = std::fs::remove_dir_all(root);
+}

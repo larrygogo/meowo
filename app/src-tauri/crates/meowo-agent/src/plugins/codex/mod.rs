@@ -435,6 +435,10 @@ impl AgentPlugin for Codex {
     /// Full Access，exp6 `screen-permissions.txt` 原文，research-codex-opencode §9）。旧版的
     /// 「Full Auto」（`-a never -s workspace-write`）不再是任何一档，存了它的老会话按默认档恢复。
     /// 栏 id 仍叫 approval、Full Access 仍用 id `yolo`：老会话存的选择照旧对得上。
+    /// 0.167.2 Windows 实测：经 `--remote` 起的新会话，TUI 侧的 `--sandbox workspace-write` 首轮仍是
+    /// read-only，app-server 侧 `-c sandbox_mode=…` 也一样（真机验证 2026-11-14）；只有会话内
+    /// `thread/settings/update` 设得上。所以会话认领后宿主按存的这一档再用服务补设一次
+    /// （session_settings::apply_launch_server_settings），对话页按 rollout 的实际值显示。
     /// 会话里经 app-server 改：`server` 片段是宿主 CodexSettingsUpdate 的 JSON（取值用 CLI 参数写法，
     /// 由 lead_native::codex_app_server 换成 `thread/settings/update` 参数，字段见 ThreadSettingsUpdateParams）。
     /// 协作模式（Default / Plan）没有启动参数，只在会话里切。
@@ -487,7 +491,18 @@ impl AgentPlugin for Codex {
                     LaunchChoice {
                         id: "approveForMe",
                         label: "Approve for me",
-                        args: &["--approve-for-me"],
+                        // 不用 `--approve-for-me`：0.167.2 Windows 实测单独用它启动沙箱落成 read-only（与 --help
+                        // 写的 workspace-write 不符），会话里显示成「只读」；它又与 --sandbox 互斥（真机验证
+                        // codex/README 问题 1）。改为与会话内切到这一档同一组值：workspace-write + on-request +
+                        // 自动审查（config 键 approvals_reviewer 与 app-server 的 approvalsReviewer 同义）。
+                        args: &[
+                            "--sandbox",
+                            "workspace-write",
+                            "--ask-for-approval",
+                            "on-request",
+                            "-c",
+                            "approvals_reviewer=auto_review",
+                        ],
                         risk: false,
                         // 「Only ask for actions detected as potentially unsafe」；越界先交自动审查。
                         traits: Some(ModeTraits::new(Ask::Risky, Ask::Risky, false)),

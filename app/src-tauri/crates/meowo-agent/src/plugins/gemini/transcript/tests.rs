@@ -326,3 +326,25 @@ fn model_follows_the_latest_reply_or_model_set_info_line() {
     assert_eq!(super::model_from_tail(&later).as_deref(), Some("gemini-3.5-flash-lite"));
     assert_eq!(super::model_from_tail(r#"{"type":"info","content":"other"}"#), None);
 }
+
+/// 真机验证 G1：硬杀后留下只有元数据的会话文件，按「没发过消息」处理；有消息的不算。
+#[test]
+fn metadata_only_session_file_counts_as_unsent() {
+    // 0.68 实拍：没发消息的会话文件 = 元数据行 + 合成的 <session_context> user 行 + $set 行。
+    let meta = concat!(
+        r#"{"sessionId":"8b42a13c-8714-4a14-9d61-08036659e03e","projectHash":"edc4","startTime":"2026-11-13T16:46:15Z"}"#,
+        "
+",
+        r#"{"id":"d049","timestamp":"2026-11-13T16:46:15.353Z","type":"user","content":[{"text":"<session_context>
+This is the Gemini CLI."}]}"#,
+        "
+",
+        r#"{"$set":{"lastUpdated":"2026-11-13T16:46:15.354Z"}}"#
+    );
+    assert!(super::has_no_messages(meta));
+    assert!(super::has_no_messages(""));
+    let with_user = format!("{meta}\n{}", r#"{"type":"user","content":"hi"}"#);
+    assert!(!super::has_no_messages(&with_user));
+    let with_reply = format!("{meta}\n{}", r#"{"type":"gemini","model":"gemini-2.5-pro","content":"ok"}"#);
+    assert!(!super::has_no_messages(&with_reply));
+}

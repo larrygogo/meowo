@@ -367,6 +367,7 @@ impl Probe {
             &catalog,
             &[],
             &HashMap::new(),
+            &HashMap::new(),
         )?;
         assert!(plan.restart.is_empty() && plan.dialog_model.is_none() && !plan.needs_new_session);
         let update: CodexSettingsUpdate =
@@ -811,9 +812,11 @@ fn tms_probe_codex() {
     let live8 = thread2.as_deref().map(|t| probe.live(t)).unwrap_or(Value::Null);
     ev["s7_new_session_approveForMe"] = json!({"tuiArgv": argv2, "turnOk": ok8, "thread": thread2, "live": live8,
         "requests": probe.requests_for(&t8), "screen": tui2.text()});
+    // 2026-11-14 起不再用 `--approve-for-me`（Windows 上沙箱落成 read-only），改为与会话内同一组值：
+    // workspace-write + on-request + approvals_reviewer=auto_review。
     check(
-        argv2.iter().any(|a| a == "--approve-for-me"),
-        "#7 新建会话 argv 应带 --approve-for-me",
+        argv2.windows(2).any(|w| w[0] == "--sandbox" && w[1] == "workspace-write"),
+        "#7 新建会话启动参数应带 workspace-write 与自动审查（-c 交给 app-server）",
     );
     // 0.167.2 Windows 实测：`--approve-for-me` 单独启动时沙箱落成 read-only（内嵌与 --remote 一样，
     // 与 `--sandbox` 互斥），自动审查是开的。所以按请求元数据的 auto_review 判「启动参数生效」，
@@ -824,7 +827,23 @@ fn tms_probe_codex() {
         .any(|r| r["turnMetadata"]["auto_review_enabled"] == true);
     ev["s7_new_session_approveForMe"]["autoReviewEnabled"] = json!(review_on);
     ev["s7_new_session_approveForMe"]["tierShownInSession"] = json!(mode_of(&live8, "approval"));
+    // 认领后宿主按存的这一档经服务补设（pty 认领 → session_settings::apply_launch_server_settings 同一份片段），
+    // 下一轮看会话里显示的档。
+    let patch = crate::session_settings::launch_server_update(plugin, &selections).expect("服务端片段");
+    let update: CodexSettingsUpdate = serde_json::from_value(Value::Object(patch)).unwrap();
+    let applied8 = thread2
+        .as_deref()
+        .map(|thread| crate::lead_native::codex_app_server::update_settings(&probe.db, -2, thread, &update));
+    let t9 = nonce("T9");
+    let (ok9, _) = probe.turn(&tui2, &t9, &format!("只回复 {t9}"));
+    let live8 = thread2.as_deref().map(|t| probe.live(t)).unwrap_or(Value::Null);
+    ev["s7_new_session_approveForMe"]["afterLaunchPatch"] = json!({"applied": format!("{applied8:?}"), "turnOk": ok9, "live": live8,
+        "sandbox": probe.requests_for(&t9).iter().map(|r| r["turnMetadata"]["sandbox_mode"].clone()).collect::<Vec<_>>()});
     check(review_on, "#7 新建会话 Approve for me 应开自动审查");
+    check(
+        mode_of(&live8, "approval").as_deref() == Some("approveForMe"),
+        "#7 新建会话 Approve for me 在会话里应显示成同一档（沙箱 workspace-write）",
+    );
     probe.save("10-new-approveForMe.txt", &tui2.text());
     tui2.quit();
     save(&ev);

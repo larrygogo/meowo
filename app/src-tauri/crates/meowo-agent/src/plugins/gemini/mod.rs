@@ -253,6 +253,13 @@ impl AgentPlugin for Gemini {
     fn model_menu_command(&self) -> Option<&'static str> {
         Some("/model")
     }
+    /// 没发过消息的会话：Gemini 正常退出时会删掉只有元数据的会话文件（research-kimi-gemini §3.3 e3-05），
+    /// Meowo 硬杀进程（broker.stop）时来不及删，留着它 `--resume` 报「No previous sessions found」、
+    /// `--session-id` 报「already exists」（0.68 bundle `sessionExists` 按 chats/ 下同 id 文件判，
+    /// 真机验证 G1，2026-11-14）。这里替 CLI 做完它本来会做的清理。
+    fn prepare_unsent_resume(&self, session_id: &str) -> Option<bool> {
+        transcript::prepare_unsent_resume(session_id)
+    }
     fn model_switch(&self) -> Option<crate::ModelSwitch> {
         Some(crate::ModelSwitch::RestartResume {
             flag: "-m",
