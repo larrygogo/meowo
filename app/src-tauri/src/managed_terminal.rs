@@ -465,7 +465,7 @@ fn stop_orphan_by_pid(
 /// push 事件是主路径；这条轮询兜底「事件在对话窗冷启动时打进虚空」（emit 不排队）。
 /// 出口走 DTO 而非原始 ApprovalRequest：后者空 suggestions 会被 skip 掉字段，
 /// 与 ts-rs 生成的前端类型（字段恒在）不符。缘由见 pty.rs 的 emit_approval。
-/// 纯内存读（两次 map 查询），同步命令合规。
+/// 纯内存读（不访问磁盘或 CLI），同步命令合规。
 #[tauri::command]
 pub(crate) fn pending_interaction(
     state: State<'_, super::AppState>,
@@ -475,6 +475,8 @@ pub(crate) fn pending_interaction(
         approval: state.ptys.pending_approval(session_id).map(Into::into),
         // 题面走带 answerable 的出口：broker 是否仍持有请求（可代答）由它动态计算。
         question: state.ptys.interactive_question_dto(session_id),
+        runtime_request: state.ptys.runtime_question(session_id),
+        runtime_requests: state.ptys.runtime_requests(session_id),
     }
 }
 
@@ -536,15 +538,31 @@ pub(crate) async fn resolve_pending_approval(
     let db_path = state.db_path.clone();
     tauri::async_runtime::spawn_blocking(move || {
         ptys.resolve_approval_choice(session_id, &request_id, &choice)?;
-        // reporter 收到决策后也会清 pending_review，但 codex 的 hook 可能继承只读沙箱、
-        // 清不掉——标记会一直挂到下一个 hook 事件才被顺带清理。app 进程写库没有这种
-        // 限制，这里当场兜底清掉（best-effort：清不掉也不影响已送达的决策）。
+        // app 侧兜底清理由 broker 所有权守卫：并存或稍后的请求不得被本次回答误清。
         // 「去终端作答」（pass）例外：用户还没答，提问仍悬着（表单即将转到终端），
         // 标记必须留着。
         if choice != "pass" {
-            if let Ok(store) = super::open_store(&db_path) {
-                let _ = store.clear_pending_review(session_id, super::now_ms());
-            }
+            ptys.clear_pending_review_if_no_requests(&db_path, session_id);
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn respond_runtime_request(
+    state: State<'_, super::AppState>,
+    session_id: i64,
+    request_id: String,
+    choice: String,
+) -> Result<(), String> {
+    let ptys = state.ptys.clone();
+    let db_path = state.db_path.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let outcome = ptys.respond_runtime_request(session_id, &request_id, &choice)?;
+        if choice != "pass" && outcome == super::pty::RuntimeResponseOutcome::Delivered {
+            ptys.clear_pending_review_if_no_requests(&db_path, session_id);
         }
         Ok(())
     })

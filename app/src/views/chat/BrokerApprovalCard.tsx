@@ -6,10 +6,11 @@
 /// 挂载（key），卡内状态随请求自然重置，不再需要「记得清」。
 
 import { useRef, useState, type RefObject } from "react";
-import { resolvePendingApproval, type PendingApproval } from "../../api";
+import { respondRuntimeRequest, resolvePendingApproval, type RuntimeRequest } from "../../api";
 import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
 import { remoteUi } from "../../remoteMode";
+import { runtimeRequestCommandUnavailable } from "./runtimeRequest";
 import { ApprovalCard, ApprovalCommandDetail, isRiskyCommand } from "./ApprovalCard";
 import { ApprovalScopeTags } from "./ApprovalScopeTags";
 import { commandOfInput } from "./approvalScope";
@@ -18,18 +19,22 @@ type Dict = ReturnType<typeof useT>;
 
 export type ResolveResult = { ok: true } | { ok: false; message: string };
 
-/// broker 挂起请求（审批与结构化提问同一条 resolvePendingApproval 通道）的结算。
+/// broker 挂起请求的结算：普通审批与提问都走统一 respond，仅旧后端命令缺席时回退。
 /// 一个会话同一时刻只结算一件：连点、键盘与按钮同时触发都只发一次。
 /// 失败原因按 requestId 记：轮询换上新请求后，旧请求的错误不污染新卡。
 export function useBrokerResolver(sessionId: number) {
   const t = useT();
   const [resolving, setResolving] = useState(false);
   const [error, setError] = useState<{ requestId: string; message: string } | null>(null);
-  const resolve = async (requestId: string, choice: string): Promise<ResolveResult | null> => {
+  const settle = async (
+    requestId: string,
+    choice: string,
+    command: (sessionId: number, requestId: string, choice: string) => Promise<void>,
+  ): Promise<ResolveResult | null> => {
     if (resolving) return null;
     setResolving(true);
     try {
-      await resolvePendingApproval(sessionId, requestId, choice);
+      await command(sessionId, requestId, choice);
       setError((current) => (current?.requestId === requestId ? null : current));
       return { ok: true };
     } catch (raw) {
@@ -40,8 +45,18 @@ export function useBrokerResolver(sessionId: number) {
       setResolving(false);
     }
   };
+  const respond = (requestId: string, choice: string) =>
+    settle(requestId, choice, async (session, id, answer) => {
+      try {
+        await respondRuntimeRequest(session, id, answer);
+      } catch (raw) {
+        // 旧后端只能显示旧题面、没有新命令；只有命令缺席才回退，业务错误绝不二次作答。
+        if (!runtimeRequestCommandUnavailable(raw)) throw raw;
+        await resolvePendingApproval(session, id, answer);
+      }
+    });
   const errorFor = (requestId: string) => (error?.requestId === requestId ? error.message : null);
-  return { resolving, resolve, errorFor };
+  return { resolving, respond, errorFor };
 }
 
 /// 数字键 → 审批选择（对照 Kimi 审批卡的 1/2/3）：1 = 允许一次，2.. = 依次的持久放行。
@@ -88,11 +103,11 @@ export function approvalSuggestionTip(suggestion: unknown, index: number, t: Dic
   return detail ? `${base} · ${detail}` : base;
 }
 
-/// claude hook 劫走的审批请求的卡片。调用方以 `key={approval.requestId}` 挂载：换请求即
+/// Claude / Codex hook 劫走的审批请求卡片。调用方以 `key={approval.requestId}` 挂载：换请求即
 /// 新卡，「说明并拒绝」的展开与草稿随之归零，理由不会串到下一张卡。
 /// 注意它**没有**「仅收起」：收起等于让 hook 干等到 300s 超时，只能 allow/deny/持久放行。
 export function BrokerApprovalCard({ approval, countdown, timedOut, resolving, error, escArmed, dirs, returnFocusTo, onDecide }: {
-  approval: PendingApproval;
+  approval: RuntimeRequest;
   countdown: string | null;
   timedOut: boolean;
   resolving: boolean;

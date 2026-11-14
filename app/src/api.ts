@@ -66,6 +66,7 @@ import type { RemoveSessionWorktreeArgs } from "./generated/contracts/bridge/Rem
 import type { RenameSessionArgs } from "./generated/contracts/bridge/RenameSessionArgs";
 import type { ResizeManagedTerminalArgs } from "./generated/contracts/bridge/ResizeManagedTerminalArgs";
 import type { ResolvePendingApprovalArgs } from "./generated/contracts/bridge/ResolvePendingApprovalArgs";
+import type { RespondRuntimeRequestArgs } from "./generated/contracts/bridge/RespondRuntimeRequestArgs";
 import type { SavePastedAttachmentArgs } from "./generated/contracts/bridge/SavePastedAttachmentArgs";
 import type { SearchChatTranscriptsArgs } from "./generated/contracts/bridge/SearchChatTranscriptsArgs";
 import type { SendBackgroundPromptArgs } from "./generated/contracts/bridge/SendBackgroundPromptArgs";
@@ -92,6 +93,7 @@ import type { PendingApprovalDto } from "./generated/contracts/PendingApprovalDt
 import type { SwitchStartedDto } from "./generated/contracts/SwitchStartedDto";
 import type { PendingLaunchDto } from "./generated/contracts/PendingLaunchDto";
 import type { PendingInteractionDto } from "./generated/contracts/PendingInteractionDto";
+import type { RuntimeRequestDto } from "./generated/contracts/RuntimeRequestDto";
 import type { LoginDoneEvent } from "./generated/contracts/LoginDoneEvent";
 import type { GitDiffSummaryDto } from "./generated/contracts/GitDiffSummaryDto";
 import type { GitChangedFileDto } from "./generated/contracts/GitChangedFileDto";
@@ -238,6 +240,7 @@ export type SubagentRun = GeneratedSubagentRun;
 export type SubagentProbe = SubagentProbeDto;
 
 export type PendingApproval = PendingApprovalDto;
+export type RuntimeRequest = RuntimeRequestDto;
 
 /**
  * 取对话历史。offset>0 只回增量；offset=0 的首读默认只回尾部一屏（长会话可达上千条，
@@ -615,6 +618,9 @@ export function unregisterApprovalConsumer(consumerId: string): Promise<void> {
 }
 export function resolvePendingApproval(sessionId: number, requestId: string, choice: string): Promise<void> {
   return invoke("resolve_pending_approval", { sessionId, requestId, choice } satisfies ResolvePendingApprovalArgs);
+}
+export function respondRuntimeRequest(sessionId: number, requestId: string, choice: string): Promise<void> {
+  return invoke("respond_runtime_request", { sessionId, requestId, choice } satisfies RespondRuntimeRequestArgs);
 }
 export function openAttachedTerminal(sessionId: number): Promise<void> {
   return invoke("open_attached_terminal", { sessionId });

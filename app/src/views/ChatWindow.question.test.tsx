@@ -248,7 +248,7 @@ describe("ChatWindow", () => {
     const before = writes();
     fireEvent.click(screen.getByRole("button", { name: "提交选择" }));
     await waitFor(() => {
-      const resolved = invoke.mock.calls.find((call) => call[0] === "resolve_pending_approval");
+      const resolved = invoke.mock.calls.find((call) => call[0] === "respond_runtime_request");
       expect(resolved).toBeTruthy();
       const args = resolved![1] as { sessionId: number; requestId: string; choice: string };
       expect(args.sessionId).toBe(32);
@@ -263,6 +263,50 @@ describe("ChatWindow", () => {
     await waitFor(() => expect(screen.queryByText(/晚饭吃什么/)).toBeNull());
     expect(writes()).toBe(before);
   });
+
+  for (const outcome of ["empty", "resolved", "passed"] as const) {
+    it(`RuntimeRequest 一端作答后另一端收卡：${outcome}`, async () => {
+      window.history.replaceState({}, "", "/?sessionId=42");
+      const request = {
+        sessionId: 42, requestId: `request-cross-client-${outcome}`, provider: "claude",
+        kind: "question", status: "pending", toolName: "AskUserQuestion", description: null,
+        input: JSON.stringify({ questions: [{ question: "双端同步吗？", multiSelect: false, options: [{ label: "是" }] }] }),
+        permissionSuggestions: [], responseCapability: { type: "broker_live" },
+      };
+      let live = true;
+      invoke.mockImplementation((command: string) => {
+        if (command === "get_chat_history") return Promise.resolve({
+          sessionId: 42, title: "双端会话", status: "running", provider: "claude", cwd: "C:/repo",
+          supported: true, offset: 0, reset: false, pendingReview: null, items: [], connected: true,
+          ptyManaged: true,
+        });
+        if (command === "pending_interaction") return Promise.resolve({
+          approval: null,
+          question: null,
+          runtimeRequest: live ? request : outcome === "empty" ? null : {
+            ...request,
+            status: outcome === "resolved" ? "resolved" : "cancelled",
+            responseCapability: {
+              type: "not_resumable",
+              reason: outcome === "resolved" ? "answered" : "passed_to_terminal",
+            },
+          },
+        });
+        if (command === "managed_terminal_binding") return Promise.resolve(null);
+        return Promise.resolve();
+      });
+      render(<ChatWindow />);
+      expect(await screen.findByText(/双端同步吗/)).toBeTruthy();
+      expect(screen.getByRole("button", { name: "提交选择" })).toBeTruthy();
+
+      live = false;
+      await waitFor(() => expect(screen.queryByText(/双端同步吗/)).toBeNull());
+      expect(screen.queryByRole("button", { name: "提交选择" })).toBeNull();
+      expect(screen.getByText(outcome === "passed"
+        ? "已转到终端页，请继续作答"
+        : "该提问已在别处处理或已结束")).toBeTruthy();
+    });
+  }
 
   /** 作答卡的「去终端作答」不再只是切视图：先 resolve `pass` 把挂起交还终端
    *  （表单随权限流程出现在那里），再切终端页。 */
@@ -292,7 +336,7 @@ describe("ChatWindow", () => {
     expect(await screen.findByText(/继续吗/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "去终端页" }));
     await waitFor(() => {
-      const resolved = invoke.mock.calls.find((call) => call[0] === "resolve_pending_approval");
+      const resolved = invoke.mock.calls.find((call) => call[0] === "respond_runtime_request");
       expect(resolved).toBeTruthy();
       expect((resolved![1] as { choice: string }).choice).toBe("pass");
     });
@@ -375,7 +419,7 @@ describe("ChatWindow", () => {
     fireEvent.click(screen.getByRole("button", { name: /能/ }));
     fireEvent.click(screen.getByRole("button", { name: "提交选择" }));
     await waitFor(() => {
-      const resolved = invoke.mock.calls.find((call) => call[0] === "resolve_pending_approval");
+      const resolved = invoke.mock.calls.find((call) => call[0] === "respond_runtime_request");
       expect(resolved).toBeTruthy();
       const args = resolved![1] as { requestId: string; choice: string };
       expect(args.requestId).toBe("request-term-view");
@@ -417,7 +461,7 @@ describe("ChatWindow", () => {
     const release = screen.getByRole("button", { name: "在终端作答" });
     fireEvent.click(release);
     await waitFor(() => {
-      const resolved = invoke.mock.calls.find((call) => call[0] === "resolve_pending_approval");
+      const resolved = invoke.mock.calls.find((call) => call[0] === "respond_runtime_request");
       expect(resolved).toBeTruthy();
       expect((resolved![1] as { choice: string }).choice).toBe("pass");
     });
@@ -900,6 +944,29 @@ describe("ChatWindow", () => {
     expect(screen.getByText("必须能")).toBeTruthy();
   });
 
+  it("新后端的集合没有未迁移 Provider 题面时，仍从旧 question 字段补卡", async () => {
+    window.history.replaceState({}, "", "/?sessionId=100");
+    invoke.mockImplementation((command: string) => {
+      if (command === "get_chat_history") return Promise.resolve({
+        sessionId: 100, title: "未迁移提问", status: "running", provider: "codex", cwd: "C:/repo",
+        supported: true, offset: 0, reset: false, pendingReview: null, items: [], connected: true, ptyManaged: true,
+      });
+      if (command === "pending_interaction") return Promise.resolve({
+        approval: null, runtimeRequest: null, runtimeRequests: [],
+        question: {
+          sessionId: 100, requestId: "request-legacy-on-new", provider: "codex", toolName: "AskUserQuestion",
+          description: null, answerable: false, permissionSuggestions: [],
+          input: JSON.stringify({ questions: [{ question: "旧题面不能消失", options: [{ label: "保留" }] }] }),
+        },
+      });
+      if (command === "managed_terminal_binding") return Promise.resolve(null);
+      return Promise.resolve();
+    });
+    render(<ChatWindow />);
+    expect(await screen.findByText(/旧题面不能消失/)).toBeTruthy();
+    expect(screen.getByText("保留")).toBeTruthy();
+  });
+
   /**
    * 外部终端会话（GUI 不持有 PTY）：题面纯展示——选项不是按钮（点了也写不进按键，
    * 不承诺做不到的事），提示改为「回终端作答」，「去终端作答」按钮也不给（终端页
@@ -1311,5 +1378,76 @@ describe("ChatWindow", () => {
     fireEvent.click(await screen.findByRole("button", { name: /另一个会话/ }));
     expect(await screen.findByText("回答 42")).toBeTruthy();
     await waitFor(() => expect(scroller.scrollTop).toBe(2000));
+  });
+
+  it("RuntimeRequest 审批与提问并存时不互相覆盖，审批走统一回答后提问仍保留", async () => {
+    window.history.replaceState({}, "", "/?sessionId=98");
+    const approval = {
+      sessionId: 98, requestId: "request-runtime-approval", provider: "claude", kind: "approval", status: "pending",
+      toolName: "Bash", description: "部署到生产环境", input: JSON.stringify({ command: "cargo deploy" }),
+      permissionSuggestions: [], responseCapability: { type: "broker_live" },
+    };
+    const question = {
+      sessionId: 98, requestId: "request-runtime-question", provider: "claude", kind: "question", status: "pending",
+      toolName: "AskUserQuestion", description: null, permissionSuggestions: [], responseCapability: { type: "broker_live" },
+      input: JSON.stringify({ questions: [{ question: "选择部署范围", multiSelect: false, options: [{ label: "仅当前仓库" }] }] }),
+    };
+    let approvalLive = true;
+    invoke.mockImplementation((command: string) => {
+      if (command === "get_chat_history") return Promise.resolve({
+        sessionId: 98, title: "并行交互", status: "waiting", provider: "claude", cwd: "C:/repo",
+        supported: true, offset: 0, reset: false, pendingReview: null, items: [], connected: true, ptyManaged: true,
+      });
+      if (command === "pending_interaction") return Promise.resolve({
+        approval: null, question: null, runtimeRequest: question,
+        runtimeRequests: [approvalLive ? approval : {
+          ...approval, status: "resolved", responseCapability: { type: "not_resumable", reason: "answered" },
+        }, question],
+      });
+      if (command === "respond_runtime_request") { approvalLive = false; return Promise.resolve(); }
+      if (command === "managed_terminal_binding") return Promise.resolve(null);
+      return Promise.resolve();
+    });
+    render(<ChatWindow />);
+    expect(await screen.findByText("部署到生产环境")).toBeTruthy();
+    // 既有界面一次只在停靠区展开一张卡：审批优先，提问留在统一查询里，审批结算后再显示。
+    expect(screen.queryByText(/选择部署范围/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "允许一次" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("respond_runtime_request", {
+      sessionId: 98, requestId: "request-runtime-approval", choice: "allow_once",
+    }));
+    expect(invoke).not.toHaveBeenCalledWith("resolve_pending_approval", expect.anything());
+    await waitFor(() => expect(screen.queryByText("部署到生产环境")).toBeNull());
+    expect(screen.getByText(/选择部署范围/)).toBeTruthy();
+  });
+
+  it("另一端已结算的审批经轮询收卡，不再提供可答按钮", async () => {
+    window.history.replaceState({}, "", "/?sessionId=99");
+    const approval = {
+      sessionId: 99, requestId: "request-resolved-remotely", provider: "codex", kind: "approval", status: "pending",
+      toolName: "Bash", description: "等待手机审批", input: "{}", permissionSuggestions: [],
+      responseCapability: { type: "broker_live" },
+    };
+    let live = true;
+    invoke.mockImplementation((command: string) => {
+      if (command === "get_chat_history") return Promise.resolve({
+        sessionId: 99, title: "跨端审批", status: "waiting", provider: "codex", cwd: "C:/repo",
+        supported: true, offset: 0, reset: false, pendingReview: null, items: [], connected: true, ptyManaged: true,
+      });
+      if (command === "pending_interaction") return Promise.resolve({
+        approval: null, question: null, runtimeRequest: null,
+        runtimeRequests: [live ? approval : {
+          ...approval, status: "resolved", responseCapability: { type: "not_resumable", reason: "resolved_elsewhere" },
+        }],
+      });
+      if (command === "managed_terminal_binding") return Promise.resolve(null);
+      return Promise.resolve();
+    });
+    render(<ChatWindow />);
+    expect(await screen.findByText("等待手机审批")).toBeTruthy();
+    live = false;
+    await waitFor(() => expect(screen.queryByText("等待手机审批")).toBeNull(), { timeout: 5_000 });
+    expect(screen.queryByRole("button", { name: "允许一次" })).toBeNull();
+    expect(invoke).not.toHaveBeenCalledWith("respond_runtime_request", expect.anything());
   });
 });

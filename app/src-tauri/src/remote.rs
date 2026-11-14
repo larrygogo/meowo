@@ -174,6 +174,7 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     "register_approval_consumer",
     "unregister_approval_consumer",
     "resolve_pending_approval",
+    "respond_runtime_request",
     "dismiss_interactive_question",
     // 附件（落盘到 %TEMP%/meowo-paste，路径由后端生成）
     "save_pasted_attachment",
@@ -1398,6 +1399,18 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
                 .await,
             )
         }
+        "respond_runtime_request" => {
+            let a = args!(RespondRuntimeRequestArgs);
+            reply(
+                crate::managed_terminal::respond_runtime_request(
+                    state,
+                    a.session_id,
+                    a.request_id,
+                    a.choice,
+                )
+                .await,
+            )
+        }
         "dismiss_interactive_question" => {
             let a = args!(SessionArg);
             crate::managed_terminal::dismiss_interactive_question(state, a.session_id);
@@ -1867,6 +1880,7 @@ mod tests {
             "write_managed_terminal",
             "stop_managed_terminal",
             "pending_interaction",
+            "respond_runtime_request",
             "awaiting_interaction_sessions",
             "list_subdirectories",
             "get_accounts",
@@ -2434,6 +2448,10 @@ mod tests {
             // api.ts:434
             "resolve_pending_approval" => parse::<ResolvePendingApprovalArgs>(
                 br#"{"sessionId":7,"requestId":"r1","choice":"allow"}"#,
+            )
+            .map(|_| ()),
+            "respond_runtime_request" => parse::<RespondRuntimeRequestArgs>(
+                br#"{"sessionId":7,"requestId":"q1","choice":"pass"}"#,
             )
             .map(|_| ()),
             // api.ts:247

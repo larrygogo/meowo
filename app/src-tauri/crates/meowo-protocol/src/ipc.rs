@@ -493,6 +493,7 @@ pub struct PendingApprovalDto {
 /// 一次轮询同时取回审批与 AskUserQuestion 题面。此前是两条独立的 400ms 轮询——
 /// 目标高度相关（都是「会话在等用户吗」），拆开只是白付一倍 IPC。push 事件仍是
 /// 主路径，这条轮询是冷启动兜底（emit 不排队，对话窗晚开时只有轮询能补回题面）。
+/// `runtime_requests` 是新前端的统一视图：审批与提问可同时存在；旧字段保留给旧前后端兼容。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
@@ -500,6 +501,10 @@ pub struct PendingApprovalDto {
 pub struct PendingInteractionDto {
     pub approval: Option<PendingApprovalDto>,
     pub question: Option<PendingApprovalDto>,
+    #[serde(default)]
+    pub runtime_request: Option<crate::runtime_request::RuntimeRequestDto>,
+    #[serde(default)]
+    pub runtime_requests: Vec<crate::runtime_request::RuntimeRequestDto>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1288,6 +1293,16 @@ mod tests {
         assert_eq!(dto_value["permissionSuggestions"], serde_json::json!([]));
         assert_eq!(dto_value["sessionId"], 7);
         assert_eq!(dto_value["requestId"], "req-1");
+    }
+
+    #[test]
+    fn pending_interaction_defaults_runtime_collections_for_legacy_payloads() {
+        let old: PendingInteractionDto = serde_json::from_value(serde_json::json!({
+            "approval": null,
+            "question": null,
+        })).unwrap();
+        assert!(old.runtime_request.is_none());
+        assert!(old.runtime_requests.is_empty());
     }
 
     /// interjected 只在为真时下发；缺字段（旧后端/旧缓存）按 false 读回。

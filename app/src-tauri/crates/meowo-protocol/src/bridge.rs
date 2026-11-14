@@ -388,6 +388,13 @@ bridged_args!(ResolvePendingApprovalArgs {
     choice: String
 });
 
+bridged_args!(RespondRuntimeRequestArgs {
+    #[cfg_attr(test, ts(type = "number"))]
+    session_id: i64,
+    request_id: String,
+    choice: String
+});
+
 bridged_args!(SavePastedAttachmentArgs {
     file_name: String,
     data_base64: String

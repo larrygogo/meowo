@@ -6,4 +6,5 @@
 pub mod bridge;
 pub mod broker;
 pub mod ipc;
+pub mod runtime_request;
 pub mod wtnew;

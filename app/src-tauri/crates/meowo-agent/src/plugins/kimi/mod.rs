@@ -369,7 +369,13 @@ fn modern_launch_options() -> &'static [crate::LaunchOption] {
     &OPTIONS
 }
 
+static BROKER_QUESTION: crate::caps::BrokerQuestionCap = crate::caps::BrokerQuestionCap;
+
 impl AgentPlugin for Kimi {
+    fn broker_question(&self) -> Option<&'static crate::caps::BrokerQuestionCap> {
+        Some(&BROKER_QUESTION)
+    }
+
     fn screen_rules(&self) -> &'static [crate::screen::ScreenRule] {
         screen::RULES
     }
