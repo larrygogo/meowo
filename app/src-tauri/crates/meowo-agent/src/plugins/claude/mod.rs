@@ -637,6 +637,11 @@ impl AgentPlugin for Claude {
             .map(|exe| catalog::family_catalog(std::path::Path::new(&exe)))
             .unwrap_or_default()
     }
+    /// `/model <别名>` 的确认行原文是「Set model to … and saved as your default for new sessions」
+    /// （见 model_select_reply 的取证）：对话页选模型会连新会话的默认模型一起改。
+    fn model_select_saves_default(&self) -> bool {
+        true
+    }
     /// claude 的 `/model` 接受内联参数（`/model sonnet`），可以在对话页静默切换；
     /// 别名与官方 CLI 一致（`opusplan`：规划用 Opus、执行用 Sonnet）。
     fn model_select_command(&self) -> Option<&'static str> {

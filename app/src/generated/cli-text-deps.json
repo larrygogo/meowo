@@ -10,133 +10,133 @@
           "needle": "do you trust the files in this folder",
           "note": "旧版信任页标题；2.1.322 改为 `Quick safety check: Is this a project you trust?`，靠 trust this folder 命中",
           "rule": "literal:do you trust the files in this folder",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:753"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:758"
         },
         {
           "legacy": true,
           "needle": "do you trust the contents of this directory",
           "note": "更早版本的信任页措辞，2.1.322 全包 0 处",
           "rule": "literal:do you trust the contents of this directory",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:754"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:759"
         },
         {
           "legacy": false,
           "needle": "trust this folder",
           "note": "",
           "rule": "literal:trust this folder",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:755"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:760"
         },
         {
           "legacy": false,
           "needle": "workspace not trusted",
           "note": "",
           "rule": "literal:workspace not trusted",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:756"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:761"
         },
         {
           "legacy": false,
           "needle": "workspace trust dialog",
           "note": "",
           "rule": "literal:workspace trust dialog",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:757"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:762"
         },
         {
           "legacy": false,
           "needle": "bypass permissions",
           "note": "2.1.322 模式表 `bypassPermissions:{indicator:\"bypass permissions\"}`，组件 CM 运行时拼 `indicator + \" on\"`",
           "rule": "literal:bypass permissions on",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:716"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:721"
         },
         {
           "legacy": false,
           "needle": "accept edits on",
           "note": "",
           "rule": "literal:accept edits on",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:720"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:725"
         },
         {
           "legacy": false,
           "needle": "plan mode on",
           "note": "",
           "rule": "literal:plan mode on",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:724"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:729"
         },
         {
           "legacy": false,
           "needle": "auto mode on",
           "note": "",
           "rule": "literal:auto mode on",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:728"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:733"
         },
         {
           "legacy": false,
           "needle": "don't ask",
           "note": "2.1.322 模式表 `dontAsk:{indicator:\"don't ask\"}`，运行时拼 \" on\"",
           "rule": "literal:don't ask on",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:732"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:737"
         },
         {
           "legacy": false,
           "needle": "manual mode",
           "note": "2.1.322 模式表 `default:{indicator:\"manual mode\"}`，运行时拼 \" on\"",
           "rule": "literal:manual mode on",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:736"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:741"
         },
         {
           "legacy": false,
           "needle": "type something",
           "note": "",
           "rule": "literal:type something",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:907"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:912"
         },
         {
           "legacy": false,
           "needle": "chat about this",
           "note": "",
           "rule": "literal:chat about this",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:911"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:916"
         },
         {
           "legacy": false,
           "needle": "esc to close",
           "note": "",
           "rule": "literal:esc to close",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:842"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:847"
         },
         {
           "legacy": false,
           "needle": "c to copy",
           "note": "",
           "rule": "literal:c to copy",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:843"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:848"
         },
         {
           "legacy": false,
           "needle": "(current)",
           "note": "2.1.322 `/rewind` 菜单 `yje=\"(current)\"`，指针 ❯ 另行渲染",
           "rule": "literal:❯ (current)",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:826"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:831"
         },
         {
           "legacy": false,
           "needle": "Restore conversation",
           "note": "",
           "rule": "literal:Restore conversation",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:831"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:836"
         },
         {
           "legacy": false,
           "needle": " stashed",
           "note": "2.1.322 `[oe.pointerSmall,\" stashed\"]`，› 是 pointerSmall 符号",
           "rule": "literal:› stashed",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:784"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:789"
         },
         {
           "legacy": false,
           "needle": "Message @",
           "note": "",
           "rule": "literal:Message @",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:794"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:799"
         },
         {
           "legacy": false,
@@ -449,112 +449,112 @@
           "needle": "Set model to ",
           "note": "2.1.322 transcript <local-command-stdout> 实样 2026-11-12；模板 `var BTe=\"Set model to \"`",
           "rule": "model.confirm",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:665"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:670"
         },
         {
           "legacy": false,
           "needle": "Kept model as ",
           "note": "2.1.322 模板 `var ift=\"Kept model as \"` + `${ift}${Ew(uT(i))}`：额度/计费确认框被取消，模型没变",
           "rule": "model.reject",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:666"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:671"
         },
         {
           "legacy": false,
           "needle": "Model switch cancelled",
           "note": "2.1.322 `o(U(\"Model switch cancelled\"))`：PreModelSwitch hook 运行中按了 Esc",
           "rule": "model.reject",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:666"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:671"
         },
         {
           "legacy": false,
           "needle": " was blocked by a PreModelSwitch hook",
           "note": "2.1.322 模板 `Model switch to ${uT(e)} was blocked by a PreModelSwitch hook${o?`: ${jp(o)}`:\"\"}`",
           "rule": "model.reject",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:666"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:671"
         },
         {
           "legacy": false,
           "needle": "Model switch blocked by a PreModelSwitch hook",
           "note": "2.1.322 模板 `Model switch blocked by a PreModelSwitch hook${…}`",
           "rule": "model.reject",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:666"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:671"
         },
         {
           "legacy": false,
           "needle": "Model switch failed: ",
           "note": "2.1.322 模板 `Model switch failed: ${jp(d(bo))}`",
           "rule": "model.reject",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:666"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:671"
         },
         {
           "legacy": false,
           "needle": "' is restricted by your organization's settings.",
           "note": "2.1.322 别名校验 kje 模板 `Model '${Mf(n)}' is restricted by your organization's settings. …`",
           "rule": "model.reject",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:666"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:671"
         },
         {
           "legacy": false,
           "needle": "' is not available. ",
           "note": "2.1.322 kje 模板 `Model '${Mf(n)}' is not available. Your organization restricts model selection.`",
           "rule": "model.reject",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:666"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:671"
         },
         {
           "legacy": false,
           "needle": "' is not currently available for your account. ",
           "note": "2.1.322 kje 模板 `Model '${Mf(n)}' is not currently available for your account. ${vvt(r.description)}`",
           "rule": "model.reject",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:666"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:671"
         },
         {
           "legacy": false,
           "needle": "Failed to validate model: ",
           "note": "2.1.322 kje 模板 `Failed to validate model: ${vvt(d(r))}`",
           "rule": "model.reject",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:666"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:671"
         },
         {
           "legacy": false,
           "needle": "Couldn't confirm model '",
           "note": "2.1.322 模板 `Couldn't confirm model '${Mf(a)}' is available (the check timed out) \\xB7 try again`",
           "rule": "model.reject",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:666"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:671"
         },
         {
           "legacy": false,
           "needle": "1M context is turned off",
           "note": "2.1.322 kje 模板 `1M context is turned off (CLAUDE_CODE_DISABLE_1M_CONTEXT is set), so '${f}' isn\\u2019t available. …`",
           "rule": "model.reject",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:666"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:671"
         },
         {
           "legacy": false,
           "needle": " have a 1M context window, so '",
           "note": "2.1.322 kje 模板 `${jk(bs(r.carrier))} doesn\\u2019t have a 1M context window, so '${f}' isn\\u2019t available. …`",
           "rule": "model.reject",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:666"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:671"
         },
         {
           "legacy": false,
           "needle": "' isn't available: the ",
           "note": "2.1.322 kje 模板 `'${f}' isn't available: the ${u} setting switches models in plan mode and has no 1M form. …`",
           "rule": "model.reject",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:666"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:671"
         },
         {
           "legacy": false,
           "needle": " with 1M context is not available for your account",
           "note": "2.1.322 kje 字面量",
           "rule": "model.reject",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:666"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:671"
         },
         {
           "legacy": false,
           "needle": " isn't available for your account yet",
           "note": "2.1.322 kje 模板 `${r.displayName} isn't available for your account yet. …`",
           "rule": "model.reject",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:666"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:671"
         },
         {
           "legacy": false,
@@ -596,35 +596,35 @@
           "needle": "This session is ",
           "note": "2.1.322 模板 `This session is ${Ue} old and ${We} tokens.`",
           "rule": "attention:claude:long-session-resume",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:862"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:867"
         },
         {
           "legacy": false,
           "needle": "Resuming the full session will consume a substantial portion of your usage limits",
           "note": "2.1.322 包内字面量",
           "rule": "attention:claude:long-session-resume",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:862"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:867"
         },
         {
           "legacy": false,
           "needle": "This command requires approval",
           "note": "2.1.322 包内字面量",
           "rule": "attention:claude:command-approval",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:872"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:877"
         },
         {
           "legacy": false,
           "needle": "Do you want to proceed?",
           "note": "2.1.322 包内字面量",
           "rule": "attention:claude:command-approval",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:872"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:877"
         },
         {
           "legacy": false,
           "needle": "written up a plan and is ready to execute",
           "note": "2.1.227 实拍（插件注释）；2.1.322 包内原句仍在",
           "rule": "attention:claude:plan-approval",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:880"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:885"
         },
         {
           "legacy": false,
@@ -900,14 +900,14 @@
           "needle": "cannot undo ",
           "note": "2.5.1 kimi.EXE formatUndoLimitMessage：`Cannot undo ` 4 处，后面的数字与原因是运行时拼的",
           "rule": "undo.reject",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:942"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:947"
         },
         {
           "legacy": false,
           "needle": "[image #",
           "note": "2.5.1 kimi.EXE：`[image #` 2 处（输入框里的贴图占位）；`[image:` 1 处是旧形态",
           "rule": "clipboard_image",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:717"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:722"
         },
         {
           "legacy": false,

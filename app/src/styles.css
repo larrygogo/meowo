@@ -6265,6 +6265,9 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
    浅色主题下画环发暗发脏——实拍反馈）；与状态圆点同一套取色。 */
 .chat-context.is-warn .chat-context-ring-fg { stroke: var(--cc-warn-vivid); }
 .chat-context.is-full .chat-context-ring-fg { stroke: var(--cc-err-vivid); }
+/* 这家 CLI 不上报用量：只留底圈并压淡，位置不变。 */
+.chat-context.is-unsupported { opacity: .6; }
+.chat-context.is-unsupported .chat-context-ring-fg { stroke: transparent; }
 /* 输入区 :is(button) 通用样式会改按钮高度与底色，斜杠菜单条目压回菜单条目（尺寸、悬停底见文末「弹出菜单」）。 */
 .chat-compose .chat-slash-menu .dd-item { height: auto; border: 0; color: var(--cc-text-dim); background: transparent; }
 /* 触屏点过会一直留着 :hover：菜单与下拉的悬停底色只在有悬停能力的指针下给（第四轮 L5，同 C4）。 */

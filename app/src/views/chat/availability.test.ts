@@ -4,7 +4,7 @@ import { zh } from "../../i18n/zh";
 import { en } from "../../i18n/en";
 import {
   controlAvailability, effortEntry, effortMechanism, modeButtonMechanism, modeMechanism, modeMenuAvailability,
-  modelListMechanism, modelMechanism, needsNewSession, sessionBusy, type ControlMechanism,
+  modelListMechanism, modelMechanism, needsNewSession, savesDefaultHint, sessionBusy, type ControlMechanism,
 } from "./availability";
 
 const PROVIDERS = ["claude", "codex", "kimi", "gemini", "opencode"] as const;
@@ -210,5 +210,47 @@ describe("思考档入口（走查输入 B7）", () => {
     expect(effortEntry(chatUi("gemini"), model)).toBeNull();
     expect(effortEntry(chatUi("opencode"), model)).toBeNull();
     expect(effortEntry(null, model)).toBeNull();
+  });
+});
+
+describe("切换会不会改 CLI 默认配置（走查输入 C1）", () => {
+  it("按后端声明提醒：Claude 选模型、Kimi 切思考档，其余三家不提", () => {
+    const both = { model: true, effort: true };
+    expect(Object.fromEntries(PROVIDERS.map((provider) => [provider, savesDefaultHint(zh, chatUi(provider), both)]))).toEqual({
+      claude: zh.chat.savesDefault.model,
+      codex: null,
+      kimi: zh.chat.savesDefault.effort,
+      gemini: null,
+      opencode: null,
+    });
+  });
+
+  it("菜单里没有的入口不提；两样都会改时合成一句", () => {
+    expect(savesDefaultHint(zh, chatUi("claude"), { model: false, effort: true })).toBeNull();
+    expect(savesDefaultHint(zh, chatUi("kimi"), { model: true, effort: false })).toBeNull();
+    expect(savesDefaultHint(en, { model_select_saves_default: true, effort_saves_default: true }, { model: true, effort: true })).toBe(en.chat.savesDefault.both);
+    expect(savesDefaultHint(zh, null, { model: true, effort: true })).toBeNull();
+    for (const text of Object.values(zh.chat.savesDefault)) expect(text.length, text).toBeLessThanOrEqual(20);
+  });
+});
+
+describe("斜杠命令说明（走查输入 B11、C4）", () => {
+  it("中英文说明表的命令一致", () => {
+    expect(Object.keys(en.chat.slashDesc).sort()).toEqual(Object.keys(zh.chat.slashDesc).sort());
+  });
+
+  it("五家内置命令都有说明；侧问只在声明了能力的 Claude 的补全里", () => {
+    for (const provider of PROVIDERS) {
+      const ui = chatUi(provider)!;
+      for (const command of ui.slash_commands.filter((entry) => entry.source === "builtin")) {
+        expect(zh.chat.slashDesc[command.name], `${provider} ${command.name}`).toBeTruthy();
+      }
+      expect(ui.slash_commands.some((entry) => entry.name === "/btw"), provider).toBe(!!ui.side_question);
+    }
+  });
+
+  it("撤回只有一个说法，不再叫撤销", () => {
+    expect(zh.chat.slashDesc["/undo"]).toContain("撤回");
+    expect(zh.chat.slashDesc["/undo"]).not.toContain("撤销");
   });
 });

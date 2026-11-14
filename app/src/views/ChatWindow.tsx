@@ -18,7 +18,7 @@ import { useHistoryLayer } from "../hooks/useHistoryLayer";
 import { useT } from "../i18n";
 import { deliveryStatusLabel } from "../i18n/statusVocab";
 import { runningPlaceholder, runningReceipt, runningSendMode, sendBlockedMessage, unrecognizedPromptNotice } from "./chat/sendCopy";
-import { controlAvailability, effortEntry, effortMechanism, modeButtonMechanism, modeMenuAvailability, modelListMechanism, modelMechanism } from "./chat/availability";
+import { controlAvailability, effortEntry, effortMechanism, modeButtonMechanism, savesDefaultHint, modeMenuAvailability, modelListMechanism, modelMechanism } from "./chat/availability";
 import { formatBackendError } from "../i18n/errors";
 import { useShowWhenReady } from "../useShowWhenReady";
 import { reduceChatEvents } from "../chat/reducer";
@@ -1564,8 +1564,9 @@ export function ChatWindow() {
       input.setSelectionRange(text.length, text.length);
     });
   };
-  // copy_session_to_provider 会 spawn 宿主进程,是 /rpc 拒绝项——远程直接不给这一组,
-  // 免得用户点了收一句 404。
+  // 远程桥的白名单没有放行 copy_session_to_provider——远程直接不给这一组，免得用户点了收一句 404。
+  // 同样在宿主起进程的分叉（fork_session）是放行的；要不要一并放行属于远程安全面的取舍，
+  // 不在对话窗这一层决定（走查输入 B10，另立任务）。
   const switchTargets = !remoteUi() && currentAgentDescriptor?.supports_chat_export
     ? (agentsForOptions ?? []).filter((agent) => agent.installed && agent.id !== provider)
     : [];
@@ -5697,9 +5698,10 @@ export function ChatWindow() {
               </div>;
             });
           })()}
-          {history?.contextPct != null && (
-            <ContextMeter pct={history.contextPct} window={history.contextWindow} t={t} />
-          )}
+          {history?.contextPct != null
+            ? <ContextMeter pct={history.contextPct} window={history.contextWindow} t={t} />
+            // 这家 CLI 不上报用量（后端声明）：圆环留在原位置灰并说明，不整个消失。
+            : currentAgentDescriptor?.supports_context === false && <ContextMeter pct={null} window={null} t={t} />}
           {(modelPresets.length > 0 || modelMenuCommand || history?.model || switchTargets.length > 0) && <div className="chat-model chat-model-select" ref={modelPickerOpenUi.ref} onKeyDown={modelPickerOpenUi.onKeyDown}>
             <button
               ref={(node) => { assignRef(modelPickerOpenUi.btnRef, node); modelButtonRef.current = node; }}
@@ -5768,6 +5770,7 @@ export function ChatWindow() {
                   onPick: pickEffort,
                 } : undefined}
                 {...modelMenuAvailability}
+                savesDefault={savesDefaultHint(t, chatUi, { model: modelPresets.length > 0, effort: effortMenu?.via === "command" })}
                 // 模型市场里收藏过的其他引擎（对照 Kimi 菜单顶部的「已收藏」）：常用的跨引擎切换不必每次进市场找。
                 starred={(() => {
                   const marks = readStarred();

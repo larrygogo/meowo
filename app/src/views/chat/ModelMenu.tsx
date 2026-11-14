@@ -22,7 +22,7 @@ export function effortLabel(level: string): string {
   return level === "xhigh" ? "XHigh" : level.charAt(0).toUpperCase() + level.slice(1);
 }
 
-export function ModelMenu({ title, items, currentId, starred = [], effort, probing, unavailable, cacheHint, queuedNote, blocked, loadBlocked, onSelect, onLoad, onMore, onGoTerminal, phone, onClose }: {
+export function ModelMenu({ title, items, currentId, starred = [], effort, probing, unavailable, cacheHint, savesDefault, queuedNote, blocked, loadBlocked, onSelect, onLoad, onMore, onGoTerminal, phone, onClose }: {
   /** 当前引擎名（分组头）。 */
   title: string;
   items: ModelMenuItem[];
@@ -38,6 +38,8 @@ export function ModelMenu({ title, items, currentId, starred = [], effort, probi
   unavailable: string | null;
   /** 会话已有内容：换模型会让已缓存的提示词作废，提醒一句。 */
   cacheHint: boolean;
+  /** 在这里切换会顺带改写用户 CLI 默认配置时的提醒（chat/availability 的 savesDefaultHint）；不改的不传。 */
+  savesDefault?: string | null;
   /** 此刻选了不会立刻切、会排到稍后自动执行时的说明（chat/availability 的 queued）；先说清楚再让人选。 */
   queuedNote?: string | null;
   /** 此刻选模型做不成的原因（availability 的 disabled）：模型项置灰，原因写在清单下面。 */
@@ -159,6 +161,9 @@ export function ModelMenu({ title, items, currentId, starred = [], effort, probi
   const stateNote = blocked ?? queuedNote;
   if (stateNote && items.length > 0) {
     sections.push(<div className="chat-model-quick-section chat-model-quick-hint" key="state" role="status">{stateNote}</div>);
+  }
+  if (savesDefault && (items.length > 0 || effort)) {
+    sections.push(<div className="chat-model-quick-section chat-model-quick-hint" key="saves">{savesDefault}</div>);
   }
   if (cacheHint && items.length > 0) {
     sections.push(<div className="chat-model-quick-section chat-model-quick-hint" key="hint">{t.chat.modelCacheHint}</div>);

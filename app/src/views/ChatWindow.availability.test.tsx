@@ -165,3 +165,47 @@ describe("Codex 思考档（走查输入 B7）", () => {
     expect(document.querySelector(".chat-model-pill-effort")).toBeNull();
   });
 });
+
+describe("能力确实不同的地方：位置不变，说得清为什么（走查输入 C1、C6）", () => {
+  it.each(["gemini", "opencode"])("%s 不上报上下文占用：圆环留在原位置灰并说明", async (provider) => {
+    setup(789, provider, "waiting");
+    render(<ChatWindow />);
+    await screen.findByText("适配-789");
+    const ring = await waitFor(() => {
+      const node = document.querySelector(".chat-context.is-unsupported");
+      expect(node).toBeTruthy();
+      return node!;
+    });
+    expect(ring.getAttribute("aria-label")).toBe(zh.chat.contextUnsupported);
+    expect(ring.getAttribute("data-tip")).toBe(zh.chat.contextUnsupported);
+  });
+
+  it.each(["claude", "codex", "kimi"])("%s 能上报：还没有数值时不画圆环，也不说不支持", async (provider) => {
+    setup(790, provider, "waiting");
+    render(<ChatWindow />);
+    await screen.findByText("适配-790");
+    await waitFor(() => expect(invoke.mock.calls.some(([command]) => command === "list_agents")).toBe(true));
+    await act(async () => {});
+    expect(document.querySelector(".chat-context")).toBeNull();
+  });
+
+  it("Claude 选模型会改 CLI 默认模型：菜单里提醒；Codex 走会话服务不改，不提", async () => {
+    setup(791, "claude", "waiting", { model: "Opus" });
+    const first = render(<ChatWindow />);
+    await screen.findByText("适配-791");
+    fireEvent.click(await screen.findByRole("button", { name: "切换模型" }));
+    await screen.findByRole("menu");
+    expect(screen.getByText(zh.chat.savesDefault.model)).toBeTruthy();
+    first.unmount();
+
+    setup(792, "codex", "waiting", { model: "GPT-6.1-Sol" }, (command) => command === "agent_model_catalog"
+      ? Promise.resolve([{ id: "gpt-6.1-sol", label: "GPT-6.1-Sol", group: null, efforts: ["low", "high"], default_effort: null, is_default: true, uncertain: false }]) : undefined);
+    render(<ChatWindow />);
+    await screen.findByText("适配-792");
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("agent_model_catalog", expect.anything()));
+    await act(async () => { await Promise.resolve(); });
+    fireEvent.click(await screen.findByRole("button", { name: "切换模型" }));
+    await screen.findByRole("menu");
+    for (const text of Object.values(zh.chat.savesDefault)) expect(screen.queryByText(text)).toBeNull();
+  });
+});

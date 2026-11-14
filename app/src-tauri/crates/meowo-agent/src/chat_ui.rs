@@ -458,6 +458,11 @@ pub struct ChatUi {
     /// 前端不出思考档入口。与 `effort` 的区别：`effort` 只描述「打命令」这一种通路的细节，
     /// 这里是「有没有、走哪条路」的总开关，经会话服务切的（Codex）也在内。
     pub effort_switch: Option<crate::EffortSwitchKind>,
+    /// 在对话页选模型会不会顺带改写用户 CLI 的默认模型（新会话也跟着变）。各家不同、界面要说
+    /// （走查输入 C1）：true 时模型菜单里提醒一句。只对对话页自己走的那条通路声明。
+    pub model_select_saves_default: bool,
+    /// 在对话页切思考档会不会顺带改写用户 CLI 的默认配置。同上。
+    pub effort_saves_default: bool,
     /// 撤回最近几轮（见 [`UndoControl`]）；None = 不支持或未取证。
     pub undo: Option<UndoControl>,
     /// 侧问（见 [`SideQuestion`]）；None = 不支持或未取证。

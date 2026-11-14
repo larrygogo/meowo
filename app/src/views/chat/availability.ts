@@ -205,3 +205,23 @@ export function modeMenuAvailability(
   const queued = items.find((item) => item.state === "queued");
   return { items, queuedNote: queued?.state === "queued" ? queued.note : null };
 }
+
+// ── 切换的副作用 ──────────────────────────────────────────────────────────────
+
+/**
+ * 在对话页切模型 / 思考档会不会顺带改写用户 CLI 的默认配置，各家不同（Claude 的 `/model` 会存成
+ * 新会话默认，Kimi 的 `/effort` 会改写 config.toml，其余通路不改）。按后端声明提醒一句；
+ * 不改的返回 null。`shown` 说明菜单里此刻实际有哪种入口：没有的入口不提。
+ */
+export function savesDefaultHint(
+  t: Dict,
+  chatUi: Pick<ChatUi, "model_select_saves_default" | "effort_saves_default"> | null | undefined,
+  shown: { model: boolean; effort: boolean },
+): string | null {
+  const model = !!chatUi?.model_select_saves_default && shown.model;
+  const effort = !!chatUi?.effort_saves_default && shown.effort;
+  if (model && effort) return t.chat.savesDefault.both;
+  if (model) return t.chat.savesDefault.model;
+  if (effort) return t.chat.savesDefault.effort;
+  return null;
+}

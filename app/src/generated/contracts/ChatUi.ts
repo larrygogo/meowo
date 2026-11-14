@@ -43,6 +43,15 @@ effort: EffortControl | null,
  */
 effort_switch: EffortSwitchKind | null, 
 /**
+ * 在对话页选模型会不会顺带改写用户 CLI 的默认模型（新会话也跟着变）。各家不同、界面要说
+ * （走查输入 C1）：true 时模型菜单里提醒一句。只对对话页自己走的那条通路声明。
+ */
+model_select_saves_default: boolean, 
+/**
+ * 在对话页切思考档会不会顺带改写用户 CLI 的默认配置。同上。
+ */
+effort_saves_default: boolean, 
+/**
  * 撤回最近几轮（见 [`UndoControl`]）；None = 不支持或未取证。
  */
 undo: UndoControl | null, 

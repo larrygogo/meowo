@@ -626,6 +626,11 @@ impl AgentPlugin for Kimi {
             .map(|content| parse_model_catalog(&content))
             .unwrap_or_default()
     }
+    /// 会话内的 `/effort <档>` 走 persistModelSelection，会改写 config.toml 的 default_model 与
+    /// [thinking]（取证见下方 model_switch 的注释）。
+    fn effort_saves_default(&self) -> bool {
+        true
+    }
     /// `/model <alias>` 仍弹菜单、Enter 会改写 config.toml 的 default_model（research-kimi-gemini
     /// §2.2），所以菜单只作兜底；主路线是空闲时 `-r <id> -m <alias>` 重启接回（§2.3 e3 实测会话 id
     /// 不变、历史回放、下一轮用新模型、不改配置）。还没建会话时直接带 `-m` 重开（p7）。

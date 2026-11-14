@@ -90,7 +90,8 @@ const MOVES_SESSIONS_ACROSS_ACCOUNTS = new Set(["claude", "codex", "kimi"]);
  * 声明的事实（gemini 是 `/stats` 不是 `/status`，opencode 是 `/models` 不是 `/model`）。
  */
 const SLASH_COMMANDS: Record<string, string[]> = {
-  claude: ["/clear", "/compact", "/config", "/cost", "/help", "/init", "/mcp", "/memory", "/model", "/resume", "/review", "/status"],
+  // /btw：声明了侧问能力的命令由后端并进补全表（registry chat_ui）。
+  claude: ["/btw", "/clear", "/compact", "/config", "/cost", "/help", "/init", "/mcp", "/memory", "/model", "/resume", "/review", "/status"],
   codex: ["/clear", "/compact", "/diff", "/help", "/model", "/new", "/review", "/status"],
   kimi: ["/clear", "/compact", "/help", "/model", "/status"],
   gemini: ["/chat", "/clear", "/compress", "/help", "/mcp", "/memory", "/stats", "/tools"],
@@ -367,6 +368,9 @@ export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | 
         : null,
     // 与后端同源:思考档在会话里怎么切。claude/kimi 打 /effort,codex 随模型经会话服务下发,其余两家切不了。
     effort_switch: provider === "claude" || provider === "kimi" ? "command" : provider === "codex" ? "server_settings" : null,
+    // 与后端同源:对话页的切换会不会顺带改用户 CLI 的默认配置。claude 的 /model 会存成新会话默认,kimi 的 /effort 改写 config.toml。
+    model_select_saves_default: provider === "claude",
+    effort_saves_default: provider === "kimi",
     // 与后端同源:原生分叉 claude/codex/opencode(启动参数)、kimi(fork 子命令后 -r 打开)。
     fork: ["claude", "codex", "opencode", "kimi"].includes(provider),
     // 与后端同源:claude `/btw` 侧问(2.1.314 探针实测)。

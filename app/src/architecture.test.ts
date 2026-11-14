@@ -80,7 +80,103 @@ const ALIAS_COMPARISONS = (name: string) => [
   new RegExp(`\\bcase\\s+${name}\\b`),
 ];
 
+/**
+ * 带 Provider 前缀的标识（屏幕识别规则 id `claude:plan-approval`、说明键 `gemini.approval.default`）
+ * 是按身份分支的另一种写法：比的不是 `"claude"` 本身，效果一样。`[.:]` 之后至少一个字符。
+ */
+const PREFIXED = (id: string) => `["']${id}[.:][^"']+["']`;
+const PREFIXED_COMPARISONS = (id: string) => [
+  new RegExp(`[!=]=+\\s*${PREFIXED(id)}`),
+  new RegExp(`${PREFIXED(id)}\\s*[!=]=+`),
+  new RegExp(`\\.(includes|has|startsWith|endsWith|indexOf|match|test)\\(\\s*["']${id}[.:]`),
+  new RegExp(`\\bcase\\s+${PREFIXED(id)}`),
+];
+
+/**
+ * 白名单：按带前缀标识分支、此刻确需保留的写法（文件 → 标识 → 理由）。每条都要写理由；
+ * 标了 TODO(合并后) 的是落在别的并行分支负责的区域里、本轮不动的，合并后要清掉。
+ */
+const PREFIXED_ALLOWED: Record<string, Record<string, string>> = {
+  "views/ChatWindow.tsx": {
+    // TODO(合并后)：通用终端提示卡的标题与正文按 claude:* 规则 id 拼（走查输入 A3、B13）。
+    // 卡片组件归「卡片」一路，它把标题、徽章改成由请求种类决定后，这三条要删掉。
+    "claude:long-session-resume": "TODO(合并后) 通用提示卡标题按规则 id 拼，卡片一路改成按请求种类",
+    "claude:plan-approval": "TODO(合并后) 同上",
+    "claude:command-approval": "TODO(合并后) 同上",
+  },
+};
+
+/**
+ * 以 Provider 为键的查表（`{ claude: …, kimi: … }`、`{ "gemini.approval.default": … }`）同样是按身份
+ * 分支，只是写成了数据。只允许纯展示用途（图标、品牌色、显示名），逐个文件列出并写理由。
+ */
+const KEYED_TABLE = new RegExp(`^\\s*["']?(${AGENT_IDS.join("|")})(?:[.:][\\w.:-]+)?["']?\\s*:\\s`);
+const KEYED_ALLOWED: Record<string, string> = {
+  "providers.tsx": "各家的品牌图标与底色：纯展示，不决定任何功能有无",
+  "views/island/islandParts.tsx": "灵动岛用量环的品牌色：纯展示",
+  "views/chat/modeChoices.ts": "模式短名的文案映射（键是后端声明的说明键）：只决定叫什么，不决定能不能做",
+  "views/chatWindow.harness.tsx": "测试夹具（不叫 .test 所以被扫到）：按 id 造各家的终端画面样本",
+};
+
 describe("架构守卫", () => {
+  it("前端不按带 Provider 前缀的标识分支（确需保留的逐条列白名单）", () => {
+    const offences: string[] = [];
+    const used = new Set<string>();
+    for (const file of guardedFiles()) {
+      const source = readFileSync(join(SRC, file), "utf8");
+      source.split("\n").forEach((line, index) => {
+        const code = line.trim();
+        if (code.startsWith("//") || code.startsWith("*") || code.startsWith("/*")) return;
+        for (const id of AGENT_IDS) {
+          if (!PREFIXED_COMPARISONS(id).some((re) => re.test(code))) continue;
+          const literal = new RegExp(`["'](${id}[.:][^"']+)["']`).exec(code)?.[1] ?? `${id}:`;
+          if (PREFIXED_ALLOWED[file]?.[literal]) { used.add(`${file}|${literal}`); continue; }
+          offences.push(`${file}:${index + 1} 按 ${literal} 分支 → ${code.slice(0, 140)}`);
+        }
+      });
+    }
+    expect(offences).toEqual([]);
+    // 白名单里的写法已经不在代码里了：删掉对应条目，别让它替以后的回潮放行。
+    const stale = Object.entries(PREFIXED_ALLOWED)
+      .flatMap(([file, entries]) => Object.keys(entries).map((literal) => `${file}|${literal}`))
+      .filter((key) => !used.has(key));
+    expect(stale).toEqual([]);
+  });
+
+  it("以 Provider 为键的查表只用于纯展示（逐个文件列白名单并写理由）", () => {
+    const hits = new Map<string, number>();
+    for (const file of guardedFiles()) {
+      // 字典按后端下发的键取文案（t.modes.desc[键]），是翻译资产，不是分支。
+      if (file.startsWith("i18n/")) continue;
+      const source = readFileSync(join(SRC, file), "utf8");
+      for (const line of source.split("\n")) {
+        const code = line.trim();
+        if (code.startsWith("//") || code.startsWith("*") || code.startsWith("/*")) continue;
+        if (KEYED_TABLE.test(line)) hits.set(file, (hits.get(file) ?? 0) + 1);
+      }
+    }
+    expect([...hits.keys()].filter((file) => !KEYED_ALLOWED[file])).toEqual([]);
+    expect(Object.keys(KEYED_ALLOWED).filter((file) => !hits.has(file))).toEqual([]);
+    for (const reason of Object.values(KEYED_ALLOWED)) expect(reason.length).toBeGreaterThan(5);
+  });
+
+  it("守卫认得出这几种写法（自检：规则失灵会让守卫空转）", () => {
+    const branch = (code: string) => AGENT_IDS.some((id) => COMPARISONS(id).some((re) => re.test(code)));
+    const prefixed = (code: string) => AGENT_IDS.some((id) => PREFIXED_COMPARISONS(id).some((re) => re.test(code)));
+    expect(branch(`if (agent === 'claude') {`)).toBe(true);
+    expect(branch(`provider === "kimi" ? a : b`)).toBe(true);
+    expect(branch(`case "codex":`)).toBe(true);
+    expect(branch(`["gemini"].includes(provider)`)).toBe(false); // 数组字面量是数据声明，见上
+    expect(branch(`ids.includes("opencode")`)).toBe(true);
+    expect(prefixed(`attention.id === "claude:plan-approval"`)).toBe(true);
+    expect(prefixed(`id.startsWith("kimi:")`)).toBe(true);
+    expect(prefixed(`case "gemini:usage-limit":`)).toBe(true);
+    expect(prefixed(`id: "claude:plan-approval",`)).toBe(false);
+    expect(KEYED_TABLE.test(`  claude: { Icon: ClaudeMark },`)).toBe(true);
+    expect(KEYED_TABLE.test(`  "gemini.approval.default": "askChanges",`)).toBe(true);
+    expect(KEYED_TABLE.test(`  provider: "claude",`)).toBe(false);
+  });
+
   it("前端不按 agent 身份分支（能力一律由后端下发）", () => {
     const files = guardedFiles();
     // 枚举失灵（目录结构变了/路径算错）会静默把守卫变成空转——先钉住下限。

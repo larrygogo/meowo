@@ -1408,6 +1408,9 @@ export const zh = {
     running: "正在运行…",
     contextTip: (pct: number, kw: number) => `上下文已用 ${pct}%（窗口 ${kw}K）`,
     contextShort: (pct: number) => `上下文已用 ${pct}%`,
+    // 这家 CLI 不上报 token 用量（Gemini、OpenCode）：圆环留在原位置灰，悬停说明原因，
+    // 不留空白让人以为是 bug（走查输入 C6）。
+    contextUnsupported: "这个 CLI 不提供上下文占用",
     toolRunning: "正在执行，结果尚未返回…",
     toolNoOutput: "（无输出）",
     // 工具详情（对话页像终端那样看写了什么/改了什么/跑了什么）。
@@ -1467,6 +1470,12 @@ export const zh = {
     modelListUnavailableShort: "读不到模型清单",
     // 就地模型菜单（对照 Kimi）：换模型的代价写在做决定的地方。
     modelCacheHint: "换模型或思考程度会使提示词缓存失效，多耗 token",
+    // 在对话页切换会顺带改写用户 CLI 的默认配置时提醒一句（各家不同，按后端声明，走查输入 C1）。
+    savesDefault: {
+      model: "选模型会同时改 CLI 的默认模型",
+      effort: "切思考档会同时改 CLI 默认配置",
+      both: "模型和思考档会同时改 CLI 默认配置",
+    },
     modelMore: "更多模型…",
     modelLoad: "读取模型清单",
     modelPickNotFound: (name: string) => `模型菜单里没有 ${name}`,
@@ -1625,6 +1634,8 @@ export const zh = {
       "sonnet[1m]": "Sonnet 5 的 1M 上下文档",
     } as Record<string, string>,
     slashDesc: {
+      "/add-dir": "把另一个目录加入会话",
+      "/btw": "侧问一句，不打断当前任务",
       "/chat": "保存/恢复对话检查点",
       "/clear": "清空当前对话上下文",
       "/compact": "压缩上下文，只保留要点",
@@ -1642,11 +1653,10 @@ export const zh = {
       "/new": "开启新对话",
       "/resume": "恢复历史会话",
       "/review": "审查当前改动",
-      "/share": "分享当前会话",
       "/stats": "查看会话统计",
       "/status": "查看会话状态",
       "/tools": "查看可用工具",
-      "/undo": "撤销上一步改动",
+      "/undo": "撤回最近一轮对话",
     } as Record<string, string>,
   },
   errorLabels: {

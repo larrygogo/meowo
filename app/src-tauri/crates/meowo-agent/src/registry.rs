@@ -359,8 +359,15 @@ pub trait AgentPlugin: Sync {
                 }
             }
         }
+        // 侧问命令声明了能力就进补全：此前只能手敲，补全里没有、界面上也没有入口（走查输入 C4）。
+        let mut builtin_commands = self.slash_commands().to_vec();
+        if let Some(side) = self.side_question() {
+            if !builtin_commands.contains(&side.command) {
+                builtin_commands.push(side.command);
+            }
+        }
         crate::chat_ui::ChatUi {
-            slash_commands: crate::chat_ui::merge_commands(self.slash_commands(), custom),
+            slash_commands: crate::chat_ui::merge_commands(&builtin_commands, custom),
             model_presets: self.model_presets().to_vec(),
             model_select_command: self.model_select_command(),
             model_select_reply: self.model_select_reply(),
@@ -384,6 +391,8 @@ pub trait AgentPlugin: Sync {
             retry_line_pattern: self.retry_line_pattern(),
             effort: self.effort_control(),
             effort_switch: self.effort_switch(),
+            model_select_saves_default: self.model_select_saves_default(),
+            effort_saves_default: self.effort_saves_default(),
             undo: self.undo_control(),
             side_question: self.side_question(),
             fork: self.fork_mode().is_some(),
@@ -431,6 +440,17 @@ pub trait AgentPlugin: Sync {
     /// 自动重试行的匹配正则（见 [`ChatUi::retry_line_pattern`]）。默认不声明。
     fn retry_line_pattern(&self) -> Option<&'static str> {
         None
+    }
+
+    /// 对话页选模型会不会改写用户 CLI 的默认模型（见 [`ChatUi::model_select_saves_default`]）。
+    /// 默认 false：没取证到会改的不声明。
+    fn model_select_saves_default(&self) -> bool {
+        false
+    }
+
+    /// 对话页切思考档会不会改写用户 CLI 的默认配置（见 [`ChatUi::effort_saves_default`]）。
+    fn effort_saves_default(&self) -> bool {
+        false
     }
 
     /// 思考档在会话里怎么切：声明了 `/effort` 命令的走命令；否则切模型的通路能带 effort 的
@@ -1262,6 +1282,24 @@ mod tests {
             ("opencode", None),
         ] {
             assert_eq!(by_id(id).unwrap().effort_switch(), want, "{id}");
+        }
+
+        // 对话页的切换会不会顺带改用户 CLI 的默认配置（走查输入 C1）：Claude `/model X` 的确认行
+        // 原文「saved as your default for new sessions」；Kimi `/effort` 走 persistModelSelection
+        // 改写 config.toml。其余通路（会话服务、带参重启、TUI 对话框）特意选了不改配置的路线。
+        for id in ["claude", "codex", "kimi", "gemini", "opencode"] {
+            let p = by_id(id).unwrap();
+            assert_eq!(p.model_select_saves_default(), id == "claude", "{id}");
+            assert_eq!(p.effort_saves_default(), id == "kimi", "{id}");
+        }
+        // 侧问命令进补全：只有声明了侧问能力的 Claude 有 /btw。
+        for id in ["claude", "codex", "kimi", "gemini", "opencode"] {
+            let ui = by_id(id).unwrap().chat_ui(&crate::chat_ui::ChatUiContext::default());
+            assert_eq!(
+                ui.slash_commands.iter().any(|c| c.name == "/btw"),
+                id == "claude",
+                "{id}"
+            );
         }
 
         // 只有 claude 的 `/model` 接受内联参数——其余四家是交互式菜单，声明预设＝给出一个
