@@ -98,6 +98,40 @@ describe("回合进行中又发了一条", () => {
     expect(waiting.container.textContent).not.toContain("已中断");
   });
 
+  it("过程块也不收起：前面跑完了几条、最后一条还在跑时又发了一句，标题仍是正在运行，不写已中断", () => {
+    // codex 会话 01a1cea4 的「继续」那一轮，截到第三条调用刚发出；再接上回合中途的那句话（同一个 turn_id）。
+    const all = reduceChatEvents([], replaySample("codex.01a1cea4"), true);
+    const from = all.findIndex((item) => item.type === "user_text" && item.text === "继续");
+    const at = all.findIndex((item) => item.type === "tool_use" && item.summary.startsWith("Get-Content app/src-tauri/CLAUDE.md"));
+    const opener = all[from] as Extract<ChatItem, { type: "user_text" }>;
+    const timeline = [...all.slice(from, at + 1), user("mid", { turn_id: opener.turn_id })];
+    const fold = (root: HTMLElement) => root.querySelector<HTMLElement>(".turn-fold")!;
+    const view = render(
+      <ChatCwdContext.Provider value={null}><Transcript sessionId={33} items={timeline} activity="running" alive /></ChatCwdContext.Provider>,
+    );
+    expect(fold(view.container).classList.contains("is-open")).toBe(true);
+    expect(fold(view.container).classList.contains("is-running")).toBe(true);
+    expect(fold(view.container).querySelector(".turn-fold-lead")?.textContent).toBe("正在运行命令");
+    expect(fold(view.container).querySelector(".turn-fold-summary")?.textContent).not.toContain("已中断");
+    expect(lastRow(view.container).getAttribute("data-state")).toBe("running");
+    // agent 接着说话了：这段过程到此结束，过程块收起；那条命令的回执也到了。
+    const receipt = all.find((item) => item.type === "tool_result" && item.tool_use_id === (all[at] as ToolUse).id)!;
+    const reply: ChatItem = { type: "assistant_text", id: "reply", timestamp: null, text: "日志也看过了。" };
+    view.rerender(
+      <ChatCwdContext.Provider value={null}><Transcript sessionId={33} items={[...timeline, receipt, reply]} activity="running" alive /></ChatCwdContext.Provider>,
+    );
+    expect(fold(view.container).classList.contains("is-open")).toBe(false);
+    expect(fold(view.container).querySelector(".turn-fold-summary")?.textContent).not.toContain("已中断");
+    cleanup();
+    resetFoldMemory();
+    // 回合停了：收起，并照实说 1 次已中断。
+    const stopped = render(
+      <ChatCwdContext.Provider value={null}><Transcript sessionId={34} items={timeline} activity="idle" alive={false} /></ChatCwdContext.Provider>,
+    );
+    expect(fold(stopped.container).classList.contains("is-open")).toBe(false);
+    expect(fold(stopped.container).querySelector(".turn-fold-summary")?.textContent).toContain("1 次已中断");
+  });
+
   it.each(["claude", "kimi", "codex"] as const)("%s：回合已结束或已中止时，同一条调用是已中断", (agent) => {
     const { items } = pendingCall(agent);
     const mid = MID_TURN[agent](items);

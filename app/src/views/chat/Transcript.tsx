@@ -45,6 +45,9 @@ type BlockRec = {
   /// null = 这块与活动态无关（用户消息、分隔条）。复用前核对：按现在的活动态与回合起点再算一遍，
   /// 不一样就从这块起重算。
   activity: TurnActivity | null;
+  /// 这块不在末尾，却按「还在进行」画的（它后面只跟着回合中途送进去的话）。后面一旦来了新内容它就该
+  /// 收起，所以这种块不复用，每次重算（它紧挨着末尾，代价是一两块）。
+  trailing: boolean;
   nodes: JSX.Element[];
   daySep: boolean;
   reply: number | null;
@@ -155,6 +158,7 @@ export const Transcript = memo(function Transcript({ sessionId, items, activity 
       // 这块是按另一个活动态生成的（活动态翻了，或回合起点挪了）：从它起重算。能走到这里复用的都不是
       // 末尾那块，所以只看它在不在当前回合里。
       if (block.activity !== null && block.activity !== activityAt(block.start)) break;
+      if (block.trailing) break;
       keep += 1;
     }
     reuse = cache.blocks.slice(0, keep);
@@ -182,7 +186,7 @@ export const Transcript = memo(function Transcript({ sessionId, items, activity 
   for (let index = resume ? resume.start : 0; index < items.length;) {
     const item = items[index];
     const previous = blocks[blocks.length - 1];
-    const record: BlockRec = { start: index, lastDayBefore: lastDay, subagentId: null, unresolved: [], activity: null, nodes: [], daySep: false, reply: null, fold: null };
+    const record: BlockRec = { start: index, lastDayBefore: lastDay, subagentId: null, unresolved: [], activity: null, trailing: false, nodes: [], daySep: false, reply: null, fold: null };
     blocks.push(record);
     pushDaySep(record, item);
     // 连续的纯图片用户消息合成一行：Claude Code 把一次多图粘贴记成连续多条独立消息，
@@ -321,7 +325,13 @@ export const Transcript = memo(function Transcript({ sessionId, items, activity 
     // （2026-11-14 截图自验，kimi 与 opencode 的样本都是这个顺序）。
     const tail = turnItems[turnItems.length - 1];
     const processOpen = bodyItems.length === 0 || (tail.type !== "assistant_text" && tail.type !== "assistant_delta" && tail.type !== "turn_error");
-    const foldActivity: TurnActivity = isLive && processOpen ? blockActivity : "idle";
+    // 「在末尾」也算上后面只跟着用户消息的情形：回合中途又发了一条，那句话排在这段之后，可这段过程并没有
+    // 结束。只看是不是时间线最后一段时，命令还在跑，过程块却收起并写着「1 次已中断」（2026-11-14 截图自验，
+    // 运行中再发的场景；工具行自己是运行中，被收在里面看不见）。blockActivity 不是 idle 已经保证了这段之后
+    // 没有回合边界。
+    const stillLast = isLive || (blockActivity !== "idle" && items.slice(next).every((later) => later.type === "user_text"));
+    record.trailing = stillLast && !isLive;
+    const foldActivity: TurnActivity = stillLast && processOpen ? blockActivity : "idle";
     // 一条调用都没有、只剩回执的段（调用落在已加载窗口之外）什么都不画：不单列这一档的话，
     // 它会被套成一个空的过程块，摘要写着「思考过程」。为它插的日期分隔条也撤掉，游标还原，
     // 留给下一段去插。
