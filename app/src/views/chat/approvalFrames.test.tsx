@@ -51,6 +51,18 @@ type FeedbackFrame = {
 };
 const FRAMES = fixture.frames as unknown as Record<string, Frame>;
 const FEEDBACK = fixture.feedbackFrames as unknown as Record<string, FeedbackFrame>;
+/// tests/probe_kimi_other.rs 走提问表单自定义答案时的真机屏幕。
+type CustomAnswerFrame = {
+  answer: string;
+  typed: FeedbackFlow;
+  reviewPage: boolean;
+  screen: string[];
+  readyScreen: string[];
+  typedScreen: string[];
+  afterSaveScreen: string[];
+  finalScreen: string[];
+};
+const CUSTOM = fixture.customAnswerFrames as unknown as Record<string, CustomAnswerFrame>;
 
 afterEach(cleanup);
 
@@ -268,5 +280,49 @@ describe("真机样本：屏幕通道的说明并拒绝", () => {
   it("opencode 的真机屏幕上没有能带说明的拒绝项", () => {
     expect(terminalFeedbackFor(screenRequest("opencode").attention)).toBeNull();
     expect(FRAMES.opencode.denyFeedback).toBeUndefined();
+  });
+});
+
+/// kimi 提问表单的自定义答案（Other）：同一套分步打字。探针照插件声明走通（模型收到的正是打进去的答案）。
+describe("真机样本：kimi 提问表单的自定义答案", () => {
+  const frame = CUSTOM.kimi;
+  const attentionOf = (lines: string[]) => terminalAttention(lines.join("\n"), [], false, false, grammar("kimi"));
+
+  it("真机表单被认成提问，Other 是带输入框的那一项，打字流程就是探针走通的那一套", () => {
+    const attention = attentionOf(frame.screen);
+    expect(attention?.kind).toBe("question");
+    expect(attention?.options?.map((option) => [option.label, option.kind])).toEqual([["Red", "choice"], ["Blue", "choice"], ["Other", "input"]]);
+    expect(attention?.options?.[2].typed).toEqual(frame.typed);
+  });
+
+  it("就绪标志只在进入编辑之后的屏幕上命中；表单刚出现时不算（那时数字键还是选项）", () => {
+    expect(typedAnswerReady(frame.screen, frame.typed)).toBe(false);
+    expect(typedAnswerReady(frame.readyScreen, frame.typed)).toBe(true);
+    expect(typedAnswerReady(frame.typedScreen, frame.typed)).toBe(true);
+    expect(typedAnswerReady(frame.afterSaveScreen, frame.typed)).toBe(false);
+    expect(typedAnswerReady(frame.finalScreen, frame.typed)).toBe(false);
+  });
+
+  it("按真机屏幕回放三步：写进终端的依次是数字键、答案、回车", async () => {
+    const writes: string[] = [];
+    let clock = 0;
+    const outcome = await typeAnswerIntoTerminal(7, frame.typed, frame.answer, {
+      write: async (_session, data) => { writes.push(data); },
+      screen: async () => (clock < 300 ? frame.screen : frame.readyScreen),
+      sleep: async (ms) => { clock += ms; },
+      now: () => clock,
+    });
+    expect(outcome).toBe("sent");
+    expect(writes).toEqual([frame.typed.openInput, frame.answer, frame.typed.submitInput]);
+  });
+
+  it("存下之后是确认页：照常被认成提问卡，列出刚填的答案，提交是数字键 1", () => {
+    expect(frame.reviewPage).toBe(true);
+    const review = attentionOf(frame.afterSaveScreen);
+    expect(review?.kind).toBe("question");
+    expect(review?.text).toContain(frame.answer);
+    expect(review?.options?.map((option) => [option.label, option.input])).toEqual([["Submit", "1"], ["Cancel", "2"]]);
+    // 模型收到的就是打进去的答案（它按要求回了大写）。
+    expect(frame.finalScreen.join("\n")).toContain(frame.answer.toUpperCase());
   });
 });

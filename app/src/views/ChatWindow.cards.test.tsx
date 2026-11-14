@@ -470,3 +470,58 @@ describe("选项角色在对话窗里：没有的角色不出按钮，认不出�
     }
   });
 });
+
+/// kimi 提问表单的自定义答案在对话窗里：提问卡上有输入框，填了提交走分步打字（tests/probe_kimi_other.rs 真机走通）。
+describe("kimi 提问表单的自定义答案：在卡片上填，不用去终端", () => {
+  const RULE = " ────────────────────────────────────────";
+  const FORM = [
+    RULE, "  question", "   Q1    Submit", "  ? Pick a color", "   → [1] Red", "     [2] Blue", "     [3] Other",
+    "   ↑↓ select  1-3 / ↵ choose  ←/→/tab switch  esc cancel", RULE,
+  ].join("\n");
+  const EDITING = [
+    RULE, "  question", "   Q1    Submit", "  ? Pick a color", "    Type your answer, then press Enter to save.", "     [1] Red", "     [2] Blue", "   → [3] Other:",
+    "   type answer  ↵ save  tab switch  esc cancel", RULE,
+  ];
+  function setupForm(sessionId: number, screenLines: () => string[] | null) {
+    const base = adapter.setup(sessionId, "kimi", "running");
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "get_chat_history") return Promise.resolve({ ...adapter.history(sessionId, "kimi", "running"), ptyManaged: true, pendingReview: null });
+      if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
+      if (command === "managed_terminal_screen") return Promise.resolve(screenLines());
+      return base(command, args);
+    });
+  }
+  async function fillCustom(answer: string) {
+    const input = await screen.findByPlaceholderText(zh.chat.customAnswerPlaceholder);
+    fireEvent.change(input, { target: { value: answer } });
+    fireEvent.keyDown(screen.getByPlaceholderText(zh.chat.customAnswerPlaceholder), { key: "Enter", keyCode: 13 });
+  }
+
+  it.each([["桌面", 981, false], ["手机页", 982, true]] as const)("%s：依次写数字键、答案、回车", async (_name, id, remote) => {
+    if (remote) markRemoteUi();
+    try {
+      setupForm(id, () => [...EDITING]);
+      render(<ChatWindow />);
+      await showScreen("kimi", FORM);
+      // 答案里带数字：没进入编辑就打出去的话，1 会选中第一项。
+      await fillCustom("teal 1 号");
+      await waitFor(() => expect(delivered(id)).toEqual([
+        ["write_managed_terminal", "3"],
+        ["write_managed_terminal", "teal 1 号"],
+        ["write_managed_terminal", "\r"],
+      ]), { timeout: 3_000 });
+    } finally {
+      (globalThis as Record<string, unknown>).__MEOWO_REMOTE__ = undefined;
+      document.body.classList.remove("remote-ui");
+    }
+  });
+
+  it("终端没进入编辑：答案一个字都不写，提示条说明没有送达", async () => {
+    setupForm(983, () => FORM.split("\n"));
+    render(<ChatWindow />);
+    await showScreen("kimi", FORM);
+    await fillCustom("teal 1 号");
+    await screen.findByText(zh.chat.customAnswerNotSent, undefined, { timeout: 6_000 });
+    expect(delivered(983)).toEqual([["write_managed_terminal", "3"]]);
+  }, 10_000);
+});

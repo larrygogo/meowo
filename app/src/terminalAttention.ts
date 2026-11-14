@@ -455,7 +455,7 @@ const MARKED_NUMBERED_OPTION = /^\s*[❯›>▶]\s*\d+[.)]\s+/;
 ///   确认页  `Review your answer…` + `[1] Submit` / `[2] Cancel`，数字键 1 直接提交
 /// 选项按钮一律发数字键（相对移动用不上，也不会因光标位置算错）。末尾的自定义答案项要现场打字，
 /// 它算不算、怎么打由插件的选项规则定（角色 custom_answer），解析器只管照原样收进来。
-function parseBracketForm(visible: string, matchIndex: number): { text: string; options: TerminalAttentionOption[] } | null {
+function parseBracketForm(visible: string, matchIndex: number): { text: string; options: TerminalAttentionOption[]; multi: boolean } | null {
   const lines = visible.split("\n");
   const matchedLine = visible.slice(0, matchIndex).split("\n").length - 1;
   let top = matchedLine;
@@ -496,7 +496,7 @@ function parseBracketForm(visible: string, matchIndex: number): { text: string; 
   if (multi) options.push({ label: "⇥", input: "\t", kind: "submit", advance: true });
   const text = [review.join("\n"), question].filter(Boolean).join("\n");
   // 每项带上序号：提问卡勾选后要就地翻转那一项的勾（按 position 认是哪一项）。
-  return { text, options: options.map((option, position) => ({ ...option, position })) };
+  return { text, options: options.map((option, position) => ({ ...option, position })), multi };
 }
 
 /// 圆角外框提问表单（gemini 0.65 的 ask_user，npm bundle 源码取证 2026-11-12，未实拍）。
@@ -829,7 +829,8 @@ export function terminalAttention(
     // 解析不出选项（表单还没画完）就不出卡：空卡给不了任何动作。
     // 数字键直选，按钮发的键与焦点无关（absoluteKeys）。
     if (!form) return null;
-    const options = roled(form.options).options ?? [];
+    // 自定义答案只在单选页给入口：多选页里选中它之后的流程没有真机走过（单选页见 probe_kimi_other）。
+    const options = (roled(form.options).options ?? []).filter((option) => !(form.multi && option.role === "custom_answer"));
     // 只剩自定义答案也算可答；一项都不剩（规则把能点的都排除了）就不出卡。
     return options.length > 0 ? { id: best.id, kind: best.kind, text: form.text, options, absoluteKeys: true } : null;
   }

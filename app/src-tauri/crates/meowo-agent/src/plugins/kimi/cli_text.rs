@@ -44,6 +44,12 @@ pub(super) static DEPS: &[D] = &[
         "2.6.1 kimi.exe：提问表单末尾恒有的自定义答案项（`DEFAULT_OTHER_LABEL = \"Other\"`）。选项只有一个通用词，搜程序文件证明不了什么",
     ),
     D::new(
+        "option-ready:kimi:question#0",
+        "Type your answer, then press Enter to save.",
+        "   Type your answer, then press Enter to save.",
+        "2.6.1 真机屏幕 2026-11-15（probe_kimi_other：按 Other 的数字键之后题干下方的提示）；程序文件里是原句",
+    ),
+    D::new(
         "option:kimi:command-approval#0",
         "Approve once",
         "Approve once",

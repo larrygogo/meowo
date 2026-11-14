@@ -4285,6 +4285,21 @@ export function ChatWindow() {
   const submitCustomAnswer = (option: TerminalAttentionOption) => {
     const value = questionCustomText.trim();
     if (!value || !option.input || !terminalResponseReady) return;
+    // 插件给这一项声明了分步的打字流程（kimi 表单的 Other）：先进入编辑、认出来才打字（见 chat/terminalTypedAnswer）。
+    if (option.typed) {
+      if (optionResolvingRef.current) return;
+      optionResolvingRef.current = true;
+      void typeAnswerIntoTerminal(sessionId, option.typed, value)
+        .then((outcome) => {
+          if (!isCurrentOperation()) return;
+          if (outcome === "sent") { setQuestionCustomText(""); return; }
+          logChatEvent(sessionId, { kind: "card_unrecognized", reason: "typed_answer_not_ready", detail: { what: "custom_answer" } });
+          setSendError(t.chat.customAnswerNotSent, { terminal: true });
+        })
+        .catch((error) => setSendError(formatBackendError(error, t.locale)))
+        .finally(() => { optionResolvingRef.current = false; });
+      return;
+    }
     void writeManagedTerminal(sessionId, option.input + value + "\r")
       .then(() => setQuestionCustomText(""))
       .catch((error) => setSendError(formatBackendError(error, t.locale)));

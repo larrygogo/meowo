@@ -956,7 +956,7 @@ describe("kimi 提问表单", () => {
   const RULE = " " + "─".repeat(60);
   const screen = (...body: string[]) => [RULE, "  question", ...body, RULE, " Ask When Needed  K3 thinking: high"].join("\n");
 
-  it("单选题：每个选项一个按钮，发数字键；Other 要打字，不出按钮", () => {
+  it("单选题：每个选项一个按钮，发数字键；Other 是自定义答案项，带真机走通的打字流程", () => {
     const attention = terminalAttention(screen(
       "   Q1    Submit",
       "  ? 喜欢哪种颜色？",
@@ -969,7 +969,15 @@ describe("kimi 提问表单", () => {
     expect(attention?.id).toBe("kimi:question");
     expect(attention?.text).toBe("喜欢哪种颜色？");
     expect(attention?.details).toBeUndefined();
-    expect(attention?.options?.map((o) => [o.label, o.input])).toEqual([["红色", "1"], ["绿色", "2"], ["蓝色", "3"]]);
+    expect(attention?.options?.map((o) => [o.label, o.input, o.kind])).toEqual([
+      ["红色", "1", "choice"], ["绿色", "2", "choice"], ["蓝色", "3", "choice"], ["Other", "4", "input"],
+    ]);
+    // 自定义答案：按它的数字键进入编辑，认出题干下方的提示才打字，回车存下
+    // （tests/probe_kimi_other.rs，2.6.1 真机）。提问卡据此出一个输入框。
+    expect(attention?.options?.[3]).toMatchObject({
+      role: "custom_answer",
+      typed: { openInput: "4", readyPattern: String.raw`^\s*type your answer, then press enter to save\.?\s*$`, submitInput: "\r" },
+    });
   });
 
   it("多选题：数字键按位置勾选，已勾的记在 selected 上；末尾一个 Tab 去下一页", () => {
@@ -988,8 +996,8 @@ describe("kimi 提问表单", () => {
     ]);
     // 末尾那一项是去下一页，不是提交：标在 advance 上，卡片据此写「下一步」，不看它的文字。
     expect(attention?.options?.at(-1)).toMatchObject({ kind: "submit", advance: true });
-    // 自定义答案项（Other）由插件规则定为 custom_answer；还没有真机走通的打字流程时不列出来。
-    expect(attention?.options?.some((o) => o.role === "custom_answer")).toBe(false);
+    // 自定义答案项（Other）只在单选页给入口：多选页里选中它之后的流程没有真机走过。
+    expect(attention?.options?.some((o) => o.role === "custom_answer" || o.kind === "input")).toBe(false);
     // 勾选状态只在 selected 上：提问卡自己画勾，标签里再带一个「✓」就成了两个。
     expect(attention?.options?.map((o) => o.selected ?? false)).toEqual([false, true, false, false]);
     // 数字键直选：按钮发的键与焦点无关，卡片据此只翻转勾、不重算方向键。

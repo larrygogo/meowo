@@ -750,6 +750,7 @@ export const en: Dict = {
     denyReasonPlaceholder: "Why deny this…",
     denyReasonSubmit: "Deny",
     denyReasonNotSent: "Reason not delivered. Retry or deny",
+    customAnswerNotSent: "Answer not delivered. Try again",
     allowOnce: "Allow once",
     allowRemember: "Allow and remember",
     allowSession: "Allow for this session",

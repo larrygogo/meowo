@@ -506,14 +506,21 @@ impl AgentPlugin for Kimi {
                 kind: crate::chat_ui::AttentionKind::Question,
                 confirms: None,
                 // 自定义答案项 `Other`（表单恒在末尾追加，2.6.1 程序文件 `DEFAULT_OTHER_LABEL`）：按它的数字键
-                // 进入编辑，这一行变成 `Other: █`，表单下方出现 `Type your answer, then press Enter to save.`，
-                // 打字后回车存下答案。没有真机走通之前不给 typed，卡片上不出自定义答案的入口。
+                // 进入编辑，这一行变成 `→ [3] Other:`，题干下方出现 `Type your answer, then press Enter to save.`，
+                // 页脚换成 `type answer  ↵ save  tab switch  esc cancel`；打字后回车存下答案，表单跳到确认页
+                // （`[1] Submit` / `[2] Cancel`，由提问卡照常接手）。单选题真机走通：模型收到的正是打进去的
+                // 答案（tests/probe_kimi_other.rs，2.6.1，2026-11-15）。多选题里的 Other 没有走过，
+                // 前端只在单选页给入口。
                 options: &[
                     crate::chat_ui::AttentionOptionRule {
                         pattern: r"^other$",
                         role: crate::chat_ui::OptionRole::CustomAnswer,
                         scope: None,
-                        typed: None,
+                        typed: Some(crate::chat_ui::TypedInput {
+                            amend_input: None,
+                            ready_pattern: r"^\s*type your answer, then press enter to save\.?\s*$",
+                            submit_input: "\r",
+                        }),
                     },
                 ],
                 unparsed_keys: &[],

@@ -853,6 +853,8 @@ export const zh = {
     denyReasonSubmit: "提交并拒绝",
     // 屏幕通道的说明并拒绝：终端没进入等输入的状态，说明没有写进去（见 chat/terminalTypedAnswer）。
     denyReasonNotSent: "说明没有送达，可重试或直接拒绝",
+    // 提问表单的自定义答案同理：终端没进入编辑状态，答案没有写进去。
+    customAnswerNotSent: "答案没有送达，请重试",
     allowOnce: "允许一次",
     allowRemember: "允许并记住",
     allowSession: "本会话内允许",

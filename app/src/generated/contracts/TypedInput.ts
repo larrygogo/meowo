@@ -7,7 +7,7 @@
  * 打完再按 `submit_input`。认不出就停在第一步，不往终端里打字：审批框里数字键就是选项
  * （kimi 面板里 `1` 是 Approve once），没进输入状态时打进去的字可能变成放行。
  *
- * **每家都要真机走通才能声明**（tests/probe_deny_feedback.rs、probe_kimi_other.rs）。
+ * **每家都要真机走通才能声明**（tests/probe_deny_feedback.rs、tests/probe_kimi_other.rs）。
  */
 export type TypedInput = { 
 /**

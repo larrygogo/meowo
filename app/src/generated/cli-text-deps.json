@@ -977,70 +977,77 @@
           "needle": "thinking set to",
           "note": "2.5.1 kimi.EXE：`Thinking set to ` 2 处（/effort 成功后的回话）",
           "rule": "effort.confirm",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:655"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:662"
         },
         {
           "legacy": false,
           "needle": "unsupported thinking effort",
           "note": "2.5.1 kimi.EXE：`unsupported thinking effort` 1 处；同一规则里的 `cannot switch models while streaming` 0 处，留作旧版兼容",
           "rule": "effort.reject",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:656"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:663"
         },
         {
           "legacy": false,
           "needle": "cannot undo ",
           "note": "2.5.1 kimi.EXE formatUndoLimitMessage：`Cannot undo ` 4 处，后面的数字与原因是运行时拼的",
           "rule": "undo.reject",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:1015"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:1022"
         },
         {
           "legacy": false,
           "needle": "[image #",
           "note": "2.5.1 kimi.EXE：`[image #` 2 处（输入框里的贴图占位）；`[image:` 1 处是旧形态",
           "rule": "clipboard_image",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:790"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:797"
         },
         {
           "legacy": false,
           "needle": "",
           "note": "2.6.1 kimi.exe：提问表单末尾恒有的自定义答案项（`DEFAULT_OTHER_LABEL = \"Other\"`）。选项只有一个通用词，搜程序文件证明不了什么",
           "rule": "option:kimi:question#0",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:513"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:516"
+        },
+        {
+          "legacy": false,
+          "needle": "Type your answer, then press Enter to save.",
+          "note": "2.6.1 真机屏幕 2026-11-15（probe_kimi_other：按 Other 的数字键之后题干下方的提示）；程序文件里是原句",
+          "rule": "option-ready:kimi:question#0",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:521"
         },
         {
           "legacy": false,
           "needle": "Approve once",
           "note": "2.6.1 kimi.exe `DEFAULT_APPROVAL_CHOICES` 与真机屏幕 2026-11-14；计划审阅的 `Approve` 同规则",
           "rule": "option:kimi:command-approval#0",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:546"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:553"
         },
         {
           "legacy": false,
           "needle": "Approve for this session",
           "note": "2.6.1 kimi.exe `DEFAULT_APPROVAL_CHOICES` 与真机屏幕 2026-11-14",
           "rule": "option:kimi:command-approval#1",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:552"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:559"
         },
         {
           "legacy": false,
           "needle": "",
           "note": "2.6.1 真机屏幕 2026-11-14。选项只有一个通用词，搜程序文件证明不了什么；这一项在不在由同屏的问句规则盯着",
           "rule": "option:kimi:command-approval#2",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:558"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:565"
         },
         {
           "legacy": false,
           "needle": "Reject with feedback",
           "note": "2.6.1 kimi.exe `DEFAULT_APPROVAL_CHOICES`（requires_feedback）与真机屏幕 2026-11-14；计划审阅的 `Revise` 同规则",
           "rule": "option:kimi:command-approval#3",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:564"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:571"
         },
         {
           "legacy": false,
           "needle": "Type feedback · ↵ submit.",
           "note": "2.6.1 真机屏幕 2026-11-14（probe_deny_feedback：按 4 之后的页脚）；程序文件里是原句",
           "rule": "option-ready:kimi:command-approval#3",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:569"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:576"
         },
         {
           "legacy": false,
@@ -1054,7 +1061,7 @@
           "needle": "run this command?",
           "note": "2.5.1 kimi.EXE：`Run this command?` 在审批问句表里（与 Write this file? 等并列）",
           "rule": "attention:kimi:command-approval",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:522"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:529"
         },
         {
           "legacy": true,
