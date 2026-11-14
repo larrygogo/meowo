@@ -21,6 +21,8 @@ import { runningPlaceholder, runningReceipt, runningSendMode, unrecognizedPrompt
 import { logChatEvent, logShownError, maskScreenLine, useOutgoingDiag } from "./chat/chatDiag";
 import { controlAvailability, effortEntry, modeButtonMechanism, savesDefaultHint, modeMenuAvailability, modelListMechanism, modelMenuState, slashEntryAvailability, slashSendAvailability } from "./chat/availability";
 import { imeComposing } from "../ime";
+import { isHandoffInjectedPrompt, sameHistoryMeta } from "./chat/historyMeta";
+import { rememberViewPref, storedViewPref } from "./chat/viewPref";
 import { pickFilesViaInput } from "./chat/pickFiles";
 import { useMediaQuery } from "./chat/useMediaQuery";
 import { formatBackendError } from "../i18n/errors";
@@ -165,57 +167,11 @@ function initialSessionId(): number {
   return 0;
 }
 
-// 视图偏好：用户在终端就显示终端、在对话就显示对话（实拍反馈）。只记**明确的**视图
-// 选择（顶栏「对话/终端」切换、Ctrl+1/2）；程序性跳转（审批引导、后台会话兜底、
-// 探测失败落终端）不算——偏好表达「用户平时住在哪」，不是「上次被带去过哪」。
-const VIEW_PREF_KEY = "meowo-chat-view-pref";
-function storedViewPref(): "chat" | "terminal" {
-  return localStorage.getItem(VIEW_PREF_KEY) === "terminal" ? "terminal" : "chat";
-}
-function rememberViewPref(view: "chat" | "terminal") {
-  localStorage.setItem(VIEW_PREF_KEY, view);
-}
 const NO_REVIEW_COMMENTS: readonly ReviewComment[] = [];
 const NO_TOUCHED_PATHS: readonly string[] = [];
 const NO_URLS: readonly string[] = [];
 const SESSION_INFO_KEY = "meowo-session-info";
 const SESSION_INFO_WIDE_QUERY = "(min-width: 1100px)";
-
-/// 两次 history 的**渲染相关**字段是否完全一致。稳态轮询里这些值一轮都不变，
-/// 据此保留旧引用即可跳过整窗重渲染。
-///
-/// **排除法**而非白名单:除 items/offset/reset(由 setItems 单独短路)外,next 的
-/// 所有字段默认参与比较——后端新增 DTO 字段自动被覆盖,无需记得回来改这里。
-/// 此前的逐字段清单同一类漏加事故出了三回(todos、connected、ptyManaged/errored),
-/// 每次都表现为「数据变了但界面不动」,不再给第四次机会。
-const HISTORY_META_EXCLUDED: ReadonlySet<string> = new Set(["items", "offset", "reset"]);
-function sameHistoryMeta(prev: ChatHistory | null, next: ChatHistory): boolean {
-  if (prev === null) return false;
-  for (const key of Object.keys(next) as (keyof ChatHistory)[]) {
-    if (HISTORY_META_EXCLUDED.has(key)) continue;
-    if (key === "agentModes") {
-      if (prev.agentModes.length !== next.agentModes.length) return false;
-      if (!prev.agentModes.every((mode, index) => mode.dimension === next.agentModes[index]?.dimension && mode.value === next.agentModes[index]?.value)) return false;
-    } else if (key === "todos") {
-      // 容错取值：旧后端没有这个字段，不能因为版本错配就整窗崩掉。
-      if ((prev.todos?.length ?? 0) !== (next.todos?.length ?? 0)) return false;
-      if (!(prev.todos ?? []).every((todo, index) =>
-        todo.content === next.todos?.[index]?.content && todo.status === next.todos?.[index]?.status)) return false;
-    } else if (prev[key] !== next[key]) {
-      return false;
-    }
-  }
-  return true;
-}
-
-// 交接注入语（两种界面语言的模板前缀，见 i18n handoffPrompt）+ 交接目录标记：识别
-// transcript 里那条「请读交接文件」的机器消息。前序段历史内联进时间线后，它再以用户
-// 气泡出现只是重复分隔条已说的内容——显示层滤掉；items 记账层保留原文，水位线等
-// 逻辑不受影响。
-const HANDOFF_PROMPT_PREFIXES = ["请先完整阅读文件 ", "Please read the file "];
-function isHandoffInjectedPrompt(text: string): boolean {
-  return text.includes("meowo-handoff") && HANDOFF_PROMPT_PREFIXES.some((prefix) => text.startsWith(prefix));
-}
 
 // 稳定的空数组：`?? []` 每次渲染都是新引用，作为 props/依赖会让下游 memo/effect 空转
 // （chatUi 未就绪时每轮历史轮询都渲染一次，ManagedTerminal 的标记 key 就白算一次）。
