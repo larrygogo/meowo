@@ -1158,6 +1158,82 @@ mod tests {
     }
 
     /// 启动 argv 非空，且首元素（绝对路径或回退裸名）指向该 agent 自己。
+    /// 真机抓的审批样本（`tests/probe_approval.rs`，前端 `views/chat/approvalFrames.test.ts` 也读）：
+    /// - 样例里的 `patterns` 与各插件声明逐字一致，前端回放用的才是生产规则而不是手抄的一份；
+    /// - 屏幕通道的每一帧，声明的那条规则在真机屏幕上确实命中（规则是 JS 正则，`im` 标志；
+    ///   这里按同样的标志用 Rust 编译，用到的语法两边通用）。
+    ///
+    /// 规则改了之后更新样例：`MEOWO_DUMP_ATTENTION_PATTERNS=<文件> cargo test -p meowo-agent --lib
+    /// approval_frames`，把写出来的 JSON 填进样例的 `patterns`。
+    #[test]
+    fn approval_frames_carry_declared_patterns_and_match_real_screens() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../src/test/fixtures/approval-frames.json"
+        ))
+        .unwrap();
+        let declared: serde_json::Map<String, serde_json::Value> = all()
+            .iter()
+            .map(|plugin| {
+                (
+                    plugin.id().as_str().to_string(),
+                    serde_json::to_value(plugin.attention_patterns()).unwrap(),
+                )
+            })
+            .collect();
+        let declared = serde_json::Value::Object(declared);
+        if let Ok(path) = std::env::var("MEOWO_DUMP_ATTENTION_PATTERNS") {
+            std::fs::write(path, serde_json::to_string_pretty(&declared).unwrap()).unwrap();
+        }
+        assert_eq!(
+            fixture["patterns"], declared,
+            "approval-frames.json 的 patterns 与插件声明不一致，按本测试的注释更新"
+        );
+        let mut screen_frames = 0;
+        for (agent, frame) in fixture["frames"].as_object().unwrap() {
+            let plugin = by_id(agent).unwrap_or_else(|| panic!("样例里的 {agent} 不是已注册的 agent"));
+            let channel = frame["channel"].as_str().unwrap();
+            // 通道与插件声明对得上：hook 说了算的家走 broker，其余走屏幕。
+            assert_eq!(
+                channel == "broker",
+                plugin.permission_hook_decides(),
+                "{agent} 的样本通道与 permission_hook_decides 不符"
+            );
+            let Some(rule) = frame["rule"].as_str() else {
+                // 没有屏幕规则命中：只能是终端不画权限框的 broker 家。
+                assert!(
+                    channel == "broker" && !plugin.permission_prompt_races_hook(),
+                    "{agent} 的屏幕样本没有命中任何规则"
+                );
+                continue;
+            };
+            let screen: Vec<&str> = frame["screen"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|line| line.as_str().unwrap())
+                .collect();
+            let screen = screen.join("
+");
+            let pattern = plugin
+                .attention_patterns()
+                .iter()
+                .find(|pattern| pattern.id == rule)
+                .unwrap_or_else(|| panic!("{agent} 没有规则 {rule}"));
+            assert_eq!(pattern.kind, crate::chat_ui::AttentionKind::Approval);
+            assert!(
+                pattern.patterns.iter().any(|source| {
+                    regex::Regex::new(&format!("(?im){source}"))
+                        .unwrap()
+                        .is_match(&screen)
+                }),
+                "{agent} {} 的真机屏幕没有被 {rule} 认出来",
+                frame["version"]
+            );
+            screen_frames += 1;
+        }
+        assert!(screen_frames >= 3, "至少要有 claude、kimi、opencode 三家的屏幕样本");
+    }
+
     #[test]
     fn launch_argv_is_nonempty_and_points_at_the_agent() {
         let _env = crate::env_guard();

@@ -1,0 +1,347 @@
+{
+  "note": "五家审批的真机样本：tests/probe_approval.rs 用本机真实 CLI 抓的屏幕与 broker 请求（用户目录名已换成 me）。前端 views/chat/approvalFrames.test.ts 拿它回放识别与卡片模型；探针作答时读这里的 allowOnceInput。patterns 是各插件声明的 attention_patterns，Rust 测试逐字核对。",
+  "patterns": {
+    "claude": [
+      {
+        "confirms": null,
+        "details": "none",
+        "id": "claude:long-session-resume",
+        "kind": "choice",
+        "last": false,
+        "patterns": [
+          "this session is[^\\n]{0,120}\\bold and[^\\n]{0,80}\\btokens\\b",
+          "resuming the full session will consume a substantial portion of your usage limits"
+        ]
+      },
+      {
+        "confirms": null,
+        "details": "proceed_box",
+        "id": "claude:command-approval",
+        "kind": "approval",
+        "last": true,
+        "patterns": [
+          "this command requires approval",
+          "do you want to proceed\\?"
+        ]
+      },
+      {
+        "confirms": null,
+        "details": "none",
+        "id": "claude:plan-approval",
+        "kind": "plan",
+        "last": true,
+        "patterns": [
+          "written\\s+up\\s+a\\s+plan\\s+and\\s+is\\s+ready\\s+to\\s+execute"
+        ]
+      }
+    ],
+    "codex": [],
+    "gemini": [
+      {
+        "confirms": null,
+        "details": "framed_box",
+        "id": "gemini:command-approval",
+        "kind": "approval",
+        "last": true,
+        "patterns": [
+          "^\\s*│\\s*allow execution of [^\\n]*\\?",
+          "^\\s*│\\s*apply this change\\?",
+          "^\\s*│\\s*do you want to proceed\\?",
+          "^\\s*│\\s*to run \\[[^\\]\\n]+\\], allow access to the following\\?"
+        ]
+      },
+      {
+        "confirms": null,
+        "details": "none",
+        "id": "gemini:usage-limit",
+        "kind": "choice",
+        "last": true,
+        "patterns": [
+          "^\\s*│\\s*usage limit reached\\b",
+          "^\\s*│\\s*we are currently experiencing high demand\\b"
+        ]
+      },
+      {
+        "confirms": null,
+        "details": "framed_form",
+        "id": "gemini:question",
+        "kind": "question",
+        "last": true,
+        "patterns": [
+          "^\\s*│\\s*answer questions\\b"
+        ]
+      }
+    ],
+    "kimi": [
+      {
+        "confirms": null,
+        "details": "bracket_form",
+        "id": "kimi:question",
+        "kind": "question",
+        "last": true,
+        "patterns": [
+          "↑↓ select\\s+(?:1-\\d+ / ↵ (?:choose|toggle)|1/2 choose\\s+↵ confirm)\\s+←/→/tab switch"
+        ]
+      },
+      {
+        "confirms": null,
+        "details": "arrow_panel",
+        "id": "kimi:command-approval",
+        "kind": "approval",
+        "last": true,
+        "patterns": [
+          "↑/↓ select · [\\d/]+ choose · ↵ confirm",
+          "^\\s*▶\\s*(?:run this command|write this file|apply these edits|stop this task|ready to build with this plan|approve [^\\n?]+)\\?"
+        ]
+      }
+    ],
+    "opencode": [
+      {
+        "confirms": null,
+        "details": "option_row",
+        "id": "opencode:command-approval",
+        "kind": "approval",
+        "last": true,
+        "patterns": [
+          "△ permission required"
+        ]
+      },
+      {
+        "confirms": "opencode:command-approval",
+        "details": "option_row",
+        "id": "opencode:always-allow-confirm",
+        "kind": "choice",
+        "last": true,
+        "patterns": [
+          "△ always allow"
+        ]
+      }
+    ]
+  },
+  "frames": {
+    "claude": {
+      "version": "2.1.325",
+      "capturedAt": "2026-11-14",
+      "args": [
+        "--permission-mode",
+        "default",
+        "--model",
+        "haiku"
+      ],
+      "prompt": "Run this exact shell command and nothing else: echo meowo-probe > probe-out.txt",
+      "channel": "broker",
+      "rule": "claude:command-approval",
+      "allowOnceInput": null,
+      "screen": [
+        " ▐▛███▛█   Claude Code v2.1.325",
+        "▝▜██████▀  Haiku 5.5 · Claude Ultra",
+        " ▝▝   ▝▝   ~\\AppData\\Local\\Temp\\meowo-approval-probe-29232",
+        "",
+        "",
+        "❯ Run this exact shell command and nothing else: echo meowo-probe > probe-out.txt",
+        "",
+        "● Running the exact echo command to write probe-out.txt",
+        "  ⎿  $ echo meowo-probe > probe-out.txt",
+        "",
+        "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+        " Bash command",
+        " Tip: auto mode handles these prompts for you — choose \"switch to auto mode\" below",
+        " Run the exact echo command to write probe-out.txt",
+        "╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌",
+        " echo meowo-probe > probe-out.txt",
+        "╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌",
+        " Do you want to proceed?",
+        " ❯ 1. Yes",
+        "   2. Yes, and always allow access to C:\\Users\\me\\AppData\\Local\\Temp\\meowo-approval-probe-29232 from this project",
+        "   3. Yes, and switch to auto mode · auto mode handles these prompts for you",
+        "   4. No",
+        "",
+        " Esc to cancel · Tab to amend"
+      ],
+      "brokerRequest": {
+        "description": "Run the exact echo command to write probe-out.txt",
+        "input": "{\n  \"command\": \"echo meowo-probe > probe-out.txt\",\n  \"description\": \"Run the exact echo command to write probe-out.txt\"\n}",
+        "permissionSuggestions": [
+          {
+            "destination": "session",
+            "directories": [
+              "C:\\Users\\me\\AppData\\Local\\Temp\\meowo-approval-probe-29232"
+            ],
+            "type": "addDirectories"
+          }
+        ],
+        "provider": "claude",
+        "requestId": "3048-18e7efef34fa17ac",
+        "sessionId": 1,
+        "toolName": "Bash"
+      }
+    },
+    "codex": {
+      "version": "0.167.2",
+      "capturedAt": "2026-11-14",
+      "args": [
+        "--sandbox",
+        "read-only"
+      ],
+      "prompt": "Run this exact shell command and nothing else: echo meowo-probe > probe-out.txt",
+      "channel": "broker",
+      "rule": null,
+      "allowOnceInput": null,
+      "screen": [
+        "╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮",
+        "│ ✨ Update available! 0.167.2 -> 0.169.0                                                                              │",
+        "│ Run powershell -ExecutionPolicy Bypass -c '$env:CODEX_NON_INTERACTIVE=1; irm https://chatgpt.com/codex/install.ps1 | │",
+        "│ iex' to update.                                                                                                      │",
+        "│                                                                                                                      │",
+        "│ See full release notes:                                                                                              │",
+        "│ https://github.com/openai/codex/releases/latest                                                                      │",
+        "╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯",
+        "",
+        "",
+        "  >_ OpenAI Codex (v0.167.2)",
+        "     ~\\AppData\\Local\\Temp\\meowo-approval-probe-14876",
+        "",
+        "  To get started, describe a task or try one of these commands:",
+        "",
+        "  /init - create an AGENTS.md file with instructions for Codex",
+        "  /status - show current session configuration",
+        "  /permissions - choose what Codex is allowed to do",
+        "  /model - choose what model and reasoning effort to use",
+        "  /review - review any changes and find issues",
+        "",
+        "",
+        "› Run this exact shell command and nothing else: echo meowo-probe > probe-out.txt",
+        "",
+        "",
+        "• Exited (status 1) echo meowo-probe > probe-out.txt",
+        "  └    2 |  echo meowo-probe > probe-out.txt",
+        "         |  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~",
+        "         | Access to the path 'C:\\Users\\me\\AppData\\Local\\Temp\\meowo-approval-probe-14876\\probe-out.txt' is denied.",
+        "    + 2 lines (ctrl+t to expand)",
+        "",
+        "",
+        "",
+        "• Working (14s • esc to interrupt) · Running hook",
+        "",
+        "",
+        "› Ask Codex to do anything",
+        "",
+        "  GPT-5.6-Terra high · ~\\AppData\\Local\\Temp\\meowo-approval-probe-14876 · Create probe output file",
+        "  ← for agents · ? for shortcuts                                                               ⚠ 1 warning · f2 to view"
+      ],
+      "brokerRequest": {
+        "description": "Do you want to allow creation of probe-out.txt using the exact command you requested?",
+        "input": "{\n  \"command\": \"echo meowo-probe > probe-out.txt\",\n  \"description\": \"Do you want to allow creation of probe-out.txt using the exact command you requested?\"\n}",
+        "provider": "codex",
+        "requestId": "28344-18e7eff5c637e6bc",
+        "sessionId": 1,
+        "toolName": "Bash"
+      }
+    },
+    "kimi": {
+      "version": "2.6.1",
+      "capturedAt": "2026-11-14",
+      "args": [],
+      "prompt": "Run this exact shell command and nothing else: echo meowo-probe > probe-out.txt",
+      "channel": "terminal",
+      "rule": "kimi:command-approval",
+      "allowOnceInput": "1",
+      "screen": [
+        " │                                                                                                                    │",
+        " │  ▐█▛█▛█▌  Welcome to Kimi Code!                                                                                    │",
+        " │  ▐█████▌  Send /help for help information.                                                                         │",
+        " │                                                                                                                    │",
+        " │  Directory: C:\\Users\\me\\AppData\\Local\\Temp\\meowo-approval-probe-15712                                           │",
+        " │  Session:   session_a9561c02-5623-46d5-8a38-6b1d124efb9d                                                           │",
+        " │  Model:     K3.1 Pro                                                                                               │",
+        " │  Version:   2.6.1                                                                                                  │",
+        " │  MCP:       1 connected                                                                                            │",
+        " │                                                                                                                    │",
+        " ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯",
+        "",
+        " ✦ Kimi K3.1 Pro is ready - use the model in a fresh session for the best results",
+        "   Standard: Plus/Moderato and above; Highspeed: Pro/Allegretto and above",
+        "",
+        "   No session yet — one will be created on your first message.",
+        "",
+        "   Permission mode: Always Ask",
+        "   MCP server \"meowo\" connected · 14 tools (stdio)",
+        "",
+        " ❯ Run this exact shell command and nothing else: echo meowo-probe > probe-out.txt",
+        "",
+        " ● I need run exact shell command and nothing else. Should have tool call Bash command exactly. No prose.",
+        "",
+        " ● Running a command · $ echo meowo-probe > probe-out.txt",
+        " ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+        "   ▶ Run this command?",
+        "",
+        "   cwd: C:\\Users\\me\\AppData\\Local\\Temp\\meowo-approval-probe-15712",
+        "   $ echo meowo-probe > probe-out.txt",
+        "",
+        "   ▶ 1. Approve once",
+        "     2. Approve for this session",
+        "     3. Reject",
+        "     4. Reject with feedback",
+        "",
+        "   ↑/↓ select · 1/2/3/4 choose · ↵ confirm",
+        " ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+        " K3.1 Pro thinking: high  C:\\Users\\me\\AppData\\Local\\Temp\\meowo-approval-probe-15712                    ctrl+o expand",
+        "                                                                                                 context: 2% (16.8k/1M)"
+      ],
+      "brokerRequest": null
+    },
+    "opencode": {
+      "version": "1.19.5",
+      "capturedAt": "2026-11-14",
+      "args": [
+        "--model",
+        "opencode/big-pickle"
+      ],
+      "prompt": "Read the file C:/Windows/win.ini and reply with its first line only.",
+      "channel": "terminal",
+      "rule": "opencode:command-approval",
+      "allowOnceInput": "\r",
+      "screen": [
+        "  ┃",
+        "  ┃  Read the file C:/Windows/win.ini and reply with its first line only.",
+        "  ┃",
+        "",
+        "     + Thought: 371ms",
+        "",
+        "     ⠏ Read C:/Windows/win.ini",
+        "",
+        "     ▣  Build · Big Pickle",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "  ┃",
+        "  ┃  △ Permission required",
+        "  ┃    ← Access external directory C:\\Windows",
+        "  ┃",
+        "  ┃  Patterns",
+        "  ┃",
+        "  ┃  - C:\\Windows\\*",
+        "  ┃",
+        "  ┃",
+        "  ┃   Allow once   Allow always   Reject                                 ctrl+f fullscreen  ⇆ select  enter confirm",
+        "  ┃"
+      ],
+      "brokerRequest": null
+    }
+  }
+}

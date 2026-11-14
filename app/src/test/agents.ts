@@ -1,3 +1,4 @@
+import approvalFrames from "./fixtures/approval-frames.json";
 import composerFrames from "./fixtures/composer-frames.json";
 import type { AgentDescriptor, ChatUi, LaunchChoice, LaunchOption, SlashCommand } from "../api";
 
@@ -118,90 +119,11 @@ const MODEL_PRESETS: Record<string, ChatUi["model_presets"]> = {
  * 要测自定义命令，在用例里 `custom` 传发现出来的条目。未知 provider 回 null——与后端同语义。
  */
 /**
- * 整句可操作提示的识别规格。与后端各插件的 `attention_patterns()` 声明同源——
- * 那边改了正则，这里也要跟上，否则前端测试测的是一套过期规则。
- * 未取证的 provider 为空（不做整句识别）。
+ * 整句可操作提示的识别规格：直接取共享样例 approval-frames.json 里的 `patterns`。那一份由 Rust 测试
+ * （registry::tests::approval_frames_carry_declared_patterns_and_match_real_screens）逐字核对与各插件的
+ * `attention_patterns()` 一致，不再手抄一遍：手抄的那份改了后端正则不会报错，前端测的就成了过期规则。
  */
-const ATTENTION_PATTERNS: Record<string, NonNullable<ChatUi["attention_patterns"]>> = {
-  claude: [
-    {
-      id: "claude:long-session-resume",
-      patterns: [
-        "this session is[^\\n]{0,120}\\bold and[^\\n]{0,80}\\btokens\\b",
-        "resuming the full session will consume a substantial portion of your usage limits",
-      ],
-      last: false,
-      details: "none",
-      kind: "choice",
-      confirms: null,
-    },
-    {
-      id: "claude:command-approval",
-      patterns: ["this command requires approval", "do you want to proceed\\?"],
-      last: true,
-      details: "proceed_box",
-      kind: "approval",
-      confirms: null,
-    },
-    {
-      id: "claude:plan-approval",
-      patterns: ["written\\s+up\\s+a\\s+plan\\s+and\\s+is\\s+ready\\s+to\\s+execute"],
-      last: true,
-      details: "none",
-      kind: "plan",
-      confirms: null,
-    },
-  ],
-  kimi: [
-    {
-      id: "kimi:question",
-      patterns: ["↑↓ select\\s+(?:1-\\d+ / ↵ (?:choose|toggle)|1/2 choose\\s+↵ confirm)\\s+←/→/tab switch"],
-      last: true,
-      details: "bracket_form",
-      kind: "question",
-      confirms: null,
-    },
-    {
-      id: "kimi:command-approval",
-      patterns: [
-        "↑/↓ select · [\\d/]+ choose · ↵ confirm",
-        "^\\s*▶\\s*(?:run this command|write this file|apply these edits|stop this task|ready to build with this plan|approve [^\\n?]+)\\?",
-      ],
-      last: true,
-      details: "arrow_panel",
-      kind: "approval",
-      confirms: null,
-    },
-  ],
-  gemini: [
-    {
-      id: "gemini:command-approval",
-      patterns: [
-        "^\\s*│\\s*allow execution of [^\\n]*\\?",
-        "^\\s*│\\s*apply this change\\?",
-        "^\\s*│\\s*do you want to proceed\\?",
-        "^\\s*│\\s*to run \\[[^\\]\\n]+\\], allow access to the following\\?",
-      ],
-      last: true,
-      details: "framed_box",
-      kind: "approval",
-      confirms: null,
-    },
-    {
-      id: "gemini:usage-limit",
-      patterns: ["^\\s*│\\s*usage limit reached\\b", "^\\s*│\\s*we are currently experiencing high demand\\b"],
-      last: true,
-      details: "none",
-      kind: "choice",
-      confirms: null,
-    },
-    { id: "gemini:question", patterns: ["^\\s*│\\s*answer questions\\b"], last: true, details: "framed_form", kind: "question", confirms: null },
-  ],
-  opencode: [
-    { id: "opencode:command-approval", patterns: ["△ permission required"], last: true, details: "option_row", kind: "approval", confirms: null },
-    { id: "opencode:always-allow-confirm", patterns: ["△ always allow"], last: true, details: "option_row", kind: "choice", confirms: "opencode:command-approval" },
-  ],
-};
+const ATTENTION_PATTERNS = approvalFrames.patterns as unknown as Record<string, NonNullable<ChatUi["attention_patterns"]>>;
 
 /**
  * 识别文法固件：带上该 provider 由插件声明的整句规则。

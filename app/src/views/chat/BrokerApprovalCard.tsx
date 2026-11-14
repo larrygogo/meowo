@@ -108,7 +108,14 @@ function suggestionParts(suggestion: unknown, index: number, t: Dict): { base: s
     default: return t.chat.allowSuggested(index + 1);
   } })();
   const firstRule = Array.isArray(entry.rules) ? entry.rules[0] : null;
-  if (!firstRule || typeof firstRule !== "object" || Array.isArray(firstRule)) return { base, detail: "" };
+  if (!firstRule || typeof firstRule !== "object" || Array.isArray(firstRule)) {
+    // 放行的不是一条命令规则，而是一个目录（claude 2.1.325 真机抓到的建议：
+    // `{type:"addDirectories", destination:"session", directories:[…]}`，终端里对应
+    // `Yes, and always allow access to <目录> from this project`）。不写出目录，按钮就只剩
+    // 「本会话内允许」，看不出放行的范围比这条命令大。
+    const directory = Array.isArray(entry.directories) && typeof entry.directories[0] === "string" ? entry.directories[0] : "";
+    return { base, detail: directory };
+  }
   const rule = firstRule as Record<string, unknown>;
   const tool = typeof rule.toolName === "string" ? rule.toolName : "";
   const content = typeof rule.ruleContent === "string" ? rule.ruleContent : "";
