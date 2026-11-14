@@ -21,6 +21,8 @@ import { runningPlaceholder, runningReceipt, runningSendMode, unrecognizedPrompt
 import { logChatEvent, maskScreenLine, useOutgoingDiag } from "./chat/chatDiag";
 import { controlAvailability, effortEntry, modeButtonMechanism, savesDefaultHint, modeMenuAvailability, modelListMechanism, modelMenuState, slashEntryAvailability, slashSendAvailability } from "./chat/availability";
 import { imeComposing } from "../ime";
+import { pickFilesViaInput } from "./chat/pickFiles";
+import { useMediaQuery } from "./chat/useMediaQuery";
 import { formatBackendError } from "../i18n/errors";
 import { useShowWhenReady } from "../useShowWhenReady";
 import { reduceChatEvents } from "../chat/reducer";
@@ -171,50 +173,11 @@ function storedViewPref(): "chat" | "terminal" {
 function rememberViewPref(view: "chat" | "terminal") {
   localStorage.setItem(VIEW_PREF_KEY, view);
 }
-/** 远程模式选文件:临时挂一个隐藏 <input type=file multiple>,点开系统选择器,resolve 选中的 File。
- *  取消(未选)时 change 不触发,靠 window focus 兜底 resolve 空数组,避免 Promise 永挂。 */
-function pickFilesViaInput(): Promise<File[]> {
-  return new Promise((resolve) => {
-    const input = document.createElement("input");
-    input.type = "file";
-    input.multiple = true;
-    input.style.display = "none";
-    let settled = false;
-    const done = (files: File[]) => {
-      if (settled) return;
-      settled = true;
-      window.removeEventListener("focus", onFocus);
-      input.remove();
-      resolve(files);
-    };
-    input.addEventListener("change", () => done(input.files ? Array.from(input.files) : []));
-    // 用户点「取消」:多数浏览器不发 change,只在窗口重新获焦后能判定放弃。延迟要给足:
-    // iOS/低端安卓的 change 可比 refocus 晚数百毫秒,300ms 会把真选中的照片静默吞掉。
-    const onFocus = () => setTimeout(() => done([]), 1000);
-    window.addEventListener("focus", onFocus, { once: true });
-    document.body.appendChild(input);
-    input.click();
-  });
-}
 const NO_REVIEW_COMMENTS: readonly ReviewComment[] = [];
 const NO_TOUCHED_PATHS: readonly string[] = [];
 const NO_URLS: readonly string[] = [];
 const SESSION_INFO_KEY = "meowo-session-info";
 const SESSION_INFO_WIDE_QUERY = "(min-width: 1100px)";
-
-/** 媒体查询是否命中（随窗口缩放更新）。测试环境没有 matchMedia 时按不命中。 */
-function useMediaQuery(query: string): boolean {
-  const [matches, setMatches] = useState(() => typeof window.matchMedia === "function" && window.matchMedia(query).matches);
-  useEffect(() => {
-    if (typeof window.matchMedia !== "function") return;
-    const list = window.matchMedia(query);
-    const update = () => setMatches(list.matches);
-    update();
-    list.addEventListener?.("change", update);
-    return () => list.removeEventListener?.("change", update);
-  }, [query]);
-  return matches;
-}
 
 /// 两次 history 的**渲染相关**字段是否完全一致。稳态轮询里这些值一轮都不变，
 /// 据此保留旧引用即可跳过整窗重渲染。
