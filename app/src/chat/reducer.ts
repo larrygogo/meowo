@@ -43,7 +43,9 @@ export function reduceChatEvents(
       continue;
     }
 
-    const target = item.type === "assistant_delta" ? "assistant_text" : "reasoning";
+    // 正文增量并成定稿类型；思考增量并完仍是 reasoning_delta——「这条是逐块流进来的」是时间线
+    // 判断「此刻还在想」的依据（见 Transcript），并成 reasoning 就把它抹掉了。
+    const target = item.type === "assistant_delta" ? "assistant_text" : "reasoning_delta";
     if (last?.type === target) {
       const items = writable();
       items[items.length - 1] = { ...last, text: last.text + item.text };

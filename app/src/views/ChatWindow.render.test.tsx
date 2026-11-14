@@ -50,7 +50,7 @@ describe("ChatWindow", () => {
         { type: "user_text", id: "u1", timestamp: null, text: "开始" },
         { type: "assistant_text", id: "a1", timestamp: null, text: "我来实现" },
         { type: "reasoning", id: "r1", timestamp: null, text: "先检查现有协议" },
-        { type: "tool_use", id: "t1", timestamp: null, name: "Bash", summary: "cargo test" },
+        { type: "tool_use", id: "t1", timestamp: null, name: "Bash", kind: "run", summary: "cargo test" },
         { type: "tool_result", id: "tr1", timestamp: null, tool_use_id: "t1", text: "ok", is_error: false },
       ],
     });
@@ -91,7 +91,7 @@ describe("ChatWindow", () => {
       label: "agent-0", status: "completed",
       items: [
         { type: "assistant_text", id: "s1", timestamp: null, text: "子任务的结论" },
-        { type: "tool_use", id: "st1", timestamp: null, name: "Bash", summary: "rg foo" },
+        { type: "tool_use", id: "st1", timestamp: null, name: "Bash", kind: "run", summary: "rg foo" },
       ],
     }];
     respondWithHistory({
@@ -100,7 +100,7 @@ describe("ChatWindow", () => {
       items: [
         { type: "user_text", id: "u1", timestamp: null, text: "查一下" },
         {
-          type: "tool_use", id: "toolu_1", timestamp: null, name: "Agent", summary: "验证审批双轨",
+          type: "tool_use", id: "toolu_1", timestamp: null, name: "Agent", kind: "agent", summary: "验证审批双轨",
           subagent: { description: "验证审批双轨", agent_type: "general-purpose", count: 1 },
         },
       ],
@@ -113,7 +113,7 @@ describe("ChatWindow", () => {
         items: (args.offset as number) >= 10 ? [] : [
           { type: "user_text", id: "u1", timestamp: null, text: "查一下" },
           {
-            type: "tool_use", id: "toolu_1", timestamp: null, name: "Agent", summary: "验证审批双轨",
+            type: "tool_use", id: "toolu_1", timestamp: null, name: "Agent", kind: "agent", summary: "验证审批双轨",
             subagent: { description: "验证审批双轨", agent_type: "general-purpose", count: 1 },
           },
         ],
@@ -157,7 +157,7 @@ describe("ChatWindow", () => {
   it("子任务时间线里出现派出它自己的调用（fork 回声）时不再嵌套", async () => {
     window.history.replaceState({}, "", "/?sessionId=9");
     const launch = {
-      type: "tool_use", id: "toolu_1", timestamp: null, name: "Agent", summary: "web 端重测",
+      type: "tool_use", id: "toolu_1", timestamp: null, name: "Agent", kind: "agent", summary: "web 端重测",
       subagent: { description: "web 端重测", agent_type: "fork", count: 1 },
     };
     invoke.mockImplementation((command: string, args: Record<string, unknown>) => {
@@ -187,7 +187,7 @@ describe("ChatWindow", () => {
   it("不展开也显示子任务状态：无回执=在跑，有回执=按结局统计", async () => {
     window.history.replaceState({}, "", "/?sessionId=17");
     const swarm = {
-      type: "tool_use", id: "tool_s", timestamp: "2026-08-18T04:00:00.000Z", name: "AgentSwarm", summary: "分组审查",
+      type: "tool_use", id: "tool_s", timestamp: "2026-08-18T04:00:00.000Z", name: "AgentSwarm", kind: "agent", summary: "分组审查",
       subagent: { description: "分组审查", agent_type: "explore", count: 3 },
     };
     let done = false;

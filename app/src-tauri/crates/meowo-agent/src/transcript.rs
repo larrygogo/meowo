@@ -12,9 +12,108 @@ use std::path::{Path, PathBuf};
 /// GUI 对话窗口消费的 provider 无关消息单元。终端 ANSI 只负责还原终端，结构化对话始终来自
 /// agent 自己的 transcript，避免把光标移动、spinner 和重绘误当正文。
 pub use meowo_protocol::ipc::{
-    ChatItem, DiffHunk, CompactionDetail, SubagentBranchProbeDto, SubagentOutcome, SubagentProbeDto, SubagentRef, SubagentRun,
-    ToolDetail,
+    ChatItem, CompactionDetail, DiffHunk, PatchFile, SubagentBranchProbeDto, SubagentOutcome,
+    SubagentProbeDto, SubagentRef, SubagentRun, ToolDetail, ToolKind,
 };
+
+/// 工具回执上除正文之外的显式事实（见 `ChatItem::ToolResult` 的同名字段）。
+/// 单列一个结构：插件大多数回执三项皆无，构造处写 `ToolFacts::default()` 即可。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ToolFacts {
+    pub exit_code: Option<i32>,
+    pub count: Option<u32>,
+    pub interrupted: bool,
+}
+
+/// 回执 diff 的行数上限：整文件重写的 diff 能有上千行，前端只做预览。
+pub(crate) const PATCH_MAX_LINES: usize = 400;
+/// 单行截断：压缩过的 JS/CSS 一行能有几十 KB。
+pub(crate) const PATCH_MAX_LINE_CHARS: usize = 400;
+
+/// 一段 diff 文本解析后的结果。`added` / `removed` 按**完整** diff 数，不受 `hunks` 截断影响。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct ParsedDiff {
+    pub hunks: Vec<DiffHunk>,
+    pub added: u32,
+    pub removed: u32,
+    /// `hunks` 超过 [`PATCH_MAX_LINES`]，后面的行没收进来。
+    pub truncated: bool,
+}
+
+/// 解析 `@@ -a,b +c,d @@` 形式的统一 diff 文本（gemini 的 `resultDisplay.fileDiff`）。
+/// 首个 `@@` 之前的文件头（`Index:` / `---` / `+++`）跳过。段头不带行号的（codex 补丁的
+/// 裸 `@@`）起始行号记 0，前端据此不标行号。段内只收 ` ` / `-` / `+` 开头的行。
+pub(crate) fn parse_unified_diff(text: &str) -> ParsedDiff {
+    let mut out = ParsedDiff::default();
+    let mut kept = 0usize;
+    let mut current: Option<DiffHunk> = None;
+    for line in text.lines() {
+        if let Some(rest) = line.strip_prefix("@@") {
+            if let Some(hunk) = current.take() {
+                if !hunk.lines.is_empty() {
+                    out.hunks.push(hunk);
+                }
+            }
+            let start = |sign: char| {
+                rest.split_whitespace()
+                    .find_map(|token| token.strip_prefix(sign))
+                    .and_then(|token| token.split(',').next())
+                    .and_then(|n| n.parse::<u32>().ok())
+                    .unwrap_or(0)
+            };
+            current = Some(DiffHunk {
+                old_start: start('-'),
+                new_start: start('+'),
+                lines: Vec::new(),
+            });
+            continue;
+        }
+        let Some(hunk) = current.as_mut() else {
+            continue;
+        };
+        match line.chars().next() {
+            Some('+') => out.added += 1,
+            Some('-') => out.removed += 1,
+            Some(' ') => {}
+            // 空行在有些 diff 里是「空的上下文行」（行首空格被剥掉了）。
+            None => {
+                if kept < PATCH_MAX_LINES {
+                    hunk.lines.push(" ".to_string());
+                    kept += 1;
+                } else {
+                    out.truncated = true;
+                }
+                continue;
+            }
+            // `\ No newline at end of file` 之类的说明行。
+            _ => continue,
+        }
+        if kept < PATCH_MAX_LINES {
+            hunk.lines
+                .push(line.chars().take(PATCH_MAX_LINE_CHARS).collect());
+            kept += 1;
+        } else {
+            out.truncated = true;
+        }
+    }
+    if let Some(hunk) = current {
+        if !hunk.lines.is_empty() {
+            out.hunks.push(hunk);
+        }
+    }
+    out
+}
+
+/// 摘要与回执正文的统一截断：按字符截到 `max`，截了就补一个省略号（各家此前上限不一、
+/// 有的硬切不留标记，截断后的半截 JSON 还会让前端解析失败）。
+pub(crate) fn clip_text(text: &str, max: usize) -> String {
+    let mut chars = text.chars();
+    let mut out: String = chars.by_ref().take(max).collect();
+    if chars.next().is_some() {
+        out.push('…');
+    }
+    out
+}
 
 /// 一条待读取的子任务侧车流。
 pub struct SubagentStream {
@@ -72,6 +171,8 @@ pub enum TranscriptEvent {
         id: String,
         timestamp: Option<String>,
         name: String,
+        /// 语义类别：插件按自己的工具名表给出，前端只认它（见 [`ToolKind`]）。
+        kind: ToolKind,
         summary: String,
         /// 该调用是一次子任务委派时的展示信息（见 [`SubagentSpec::detect_call`]）。
         subagent: Option<SubagentRef>,
@@ -90,6 +191,8 @@ pub enum TranscriptEvent {
         subagent: Option<SubagentOutcome>,
         /// 编辑类工具的统一 diff（见 [`DiffHunk`]）；拿不到为 None。
         patch: Option<Vec<DiffHunk>>,
+        /// 退出码、真实数量、是否被打断。
+        facts: ToolFacts,
     },
     Metadata {
         id: String,
@@ -194,6 +297,7 @@ impl From<TranscriptEvent> for ChatItem {
                 id,
                 timestamp,
                 name,
+                kind,
                 summary,
                 subagent,
                 detail,
@@ -202,6 +306,7 @@ impl From<TranscriptEvent> for ChatItem {
                 id,
                 timestamp,
                 name,
+                kind,
                 summary,
                 subagent,
                 detail,
@@ -215,6 +320,7 @@ impl From<TranscriptEvent> for ChatItem {
                 is_error,
                 subagent,
                 patch,
+                facts,
             } => Self::ToolResult {
                 id,
                 timestamp,
@@ -223,6 +329,9 @@ impl From<TranscriptEvent> for ChatItem {
                 is_error,
                 subagent,
                 patch,
+                exit_code: facts.exit_code,
+                count: facts.count,
+                interrupted: facts.interrupted,
             },
             TranscriptEvent::Metadata {
                 id,
@@ -378,9 +487,12 @@ pub(crate) fn preview_text(s: &str) -> Option<String> {
     }
 }
 
-/// 只提供 GUI 对话、不参与标题/错误/上下文分析的 transcript 共用空解析器。
+/// 不参与标题/错误/上下文分析的空解析器。五家插件现在都有自己的分析解析器
+/// （至少报会话级出错），它只剩通用层的测试桩在用。
+#[cfg(test)]
 pub(crate) struct ChatOnlyParser;
 
+#[cfg(test)]
 impl TranscriptParser for ChatOnlyParser {
     fn fold_line(&mut self, _line: &str) {}
 
@@ -1791,6 +1903,7 @@ mod tests {
                     subagent: None,
                     detail: None,
                     plan: Some(plan.into()),
+                    kind: ToolKind::Other,
                 }];
             }
             let Some((n, tag)) = line
@@ -2023,6 +2136,7 @@ mod tests {
                 is_error: false,
                 subagent: None,
                 patch: None,
+                facts: ToolFacts::default(),
             }),
             ChatItem::ToolResult {
                 id: "result".into(),
@@ -2032,6 +2146,9 @@ mod tests {
                 is_error: false,
                 subagent: None,
                 patch: None,
+                exit_code: None,
+                count: None,
+                interrupted: false,
             }
         );
         assert_eq!(
@@ -2632,6 +2749,7 @@ mod tests {
                     subagent: None,
                     detail: None,
                     plan: Some(plan.to_string()),
+                    kind: ToolKind::Other,
                 }];
             }
             Vec::new()

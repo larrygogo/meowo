@@ -11,8 +11,8 @@ use crate::transcript::ChatItem;
 use crate::{
     caps::{HookContext, StopOutputs, TelemetryCap, TodoSnapshot},
     transcript::{
-        ChatOnlyParser, CompactionDetail, ToolDetail, TranscriptEvent, TranscriptParser,
-        TranscriptSpec,
+        CompactionDetail, ToolDetail, ToolFacts, ToolKind, TranscriptEvent, TranscriptInfo,
+        TranscriptParser, TranscriptSpec, TurnError,
     },
 };
 
@@ -58,9 +58,75 @@ impl TelemetryCap for OpencodeTelemetry {
 
 pub struct OpencodeTranscript;
 
+/// opencode 的看板分析解析器：只产**会话级出错**。
+///
+/// 回合出错在时间线里是一张红色错误卡，可侧栏状态、灵动岛与通知读的是分析口径——此前
+/// 这里是空解析器，对话里报错、侧栏却写着「等待输入」，也不弹出错通知（走查 A8）。
+/// 判据与时间线共用 [`turn_error`]：导出行里的 `error` 记录（用户中断不算）。之后只要
+/// 又有新的用户消息或助手内容，就说明已经越过那次出错，清掉。
+#[derive(Default)]
+struct OpencodeParser {
+    error: Option<TurnError>,
+}
+
+impl TranscriptParser for OpencodeParser {
+    fn fold_line(&mut self, line: &str) {
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
+            return;
+        };
+        match value.get("kind").and_then(Value::as_str) {
+            Some("error") => {
+                // 用户中断（MessageAbortedError）不是出错，也不清掉此前的出错。
+                if let Some(error) = value.get("error").and_then(turn_error) {
+                    self.error = Some(error);
+                }
+            }
+            Some("user" | "part") => self.error = None,
+            _ => {}
+        }
+    }
+
+    fn to_info(&self) -> TranscriptInfo {
+        TranscriptInfo {
+            error: self.error.clone(),
+            ..TranscriptInfo::default()
+        }
+    }
+}
+
+/// 看板轮询的导出节流：session_id →（上次导出时刻，路径）。分析每 ~2s 对每张 opencode
+/// 卡片定位一次，而「定位」对 opencode 意味着开库、比指纹、必要时增量导出。出错徽标
+/// 容忍几秒延迟，5 秒内直接用上次的路径。
+static POLLED_EXPORTS: std::sync::LazyLock<
+    std::sync::Mutex<
+        std::collections::HashMap<String, (std::time::Instant, Option<std::path::PathBuf>)>,
+    >,
+> = std::sync::LazyLock::new(Default::default);
+const POLLED_EXPORT_TTL: std::time::Duration = std::time::Duration::from_secs(5);
+
 impl TranscriptSpec for OpencodeTranscript {
     fn new_parser(&self) -> Box<dyn TranscriptParser> {
-        Box::new(ChatOnlyParser)
+        Box::new(OpencodeParser::default())
+    }
+
+    fn resolve_transcript_path_polled(
+        &self,
+        _cwd: Option<&str>,
+        session_id: &str,
+    ) -> Option<std::path::PathBuf> {
+        let now = std::time::Instant::now();
+        if let Ok(cache) = POLLED_EXPORTS.lock() {
+            if let Some((at, path)) = cache.get(session_id) {
+                if now.duration_since(*at) < POLLED_EXPORT_TTL {
+                    return path.clone();
+                }
+            }
+        }
+        let path = store::materialize(session_id);
+        if let Ok(mut cache) = POLLED_EXPORTS.lock() {
+            cache.insert(session_id.to_string(), (now, path.clone()));
+        }
+        path
     }
 
     /// 定位＝导出：每次调用把库里新定稿的内容追加进缓存（库没动时只比一次 mtime）。
@@ -96,10 +162,10 @@ impl TranscriptSpec for OpencodeTranscript {
         })
     }
 
-    /// 看板后台分析会对每张卡反复定位 transcript——对 opencode 那意味着反复导出，而它能产出的
-    /// 只有空的 TranscriptInfo（ChatOnlyParser），故关掉。
+    /// 只为会话级出错（见 [`OpencodeParser`]）。看板后台分析会对每张卡反复定位 transcript，
+    /// 对 opencode 那意味着反复导出，所以轮询路径做了节流（resolve_transcript_path_polled）。
     fn supports_analysis(&self) -> bool {
-        false
+        true
     }
 }
 
@@ -277,19 +343,21 @@ fn tool_events(key: &str, part: &Value, timestamp: Option<String>) -> Vec<Transc
     let call = TranscriptEvent::ToolCall {
         id: call_id.clone(),
         timestamp: timestamp.clone(),
+        kind: tool_kind(&name),
         summary: tool_summary(&name, input, title),
         detail: tool_detail(&name, input),
         name,
         subagent: None,
         plan: None,
     };
-    let (text, is_error) = match status {
+    let (text, is_error, interrupted) = match status {
         "completed" => (
             state
                 .and_then(|s| s.get("output"))
                 .and_then(Value::as_str)
                 .unwrap_or_default()
                 .to_string(),
+            false,
             false,
         ),
         "error" => (
@@ -299,23 +367,51 @@ fn tool_events(key: &str, part: &Value, timestamp: Option<String>) -> Vec<Transc
                 .unwrap_or_default()
                 .to_string(),
             true,
+            false,
         ),
         // 只有「所在消息被后续消息越过」时才会导出未终态的工具（见 store::collect_lines）：
-        // 它再也不会有结果了。补一条失败回执，否则对话页会永远挂着「运行中」。
-        _ => ("已中断".to_string(), true),
+        // 它再也不会有结果了。补一条回执并标成被打断，否则对话页会永远挂着「运行中」。
+        // 「已中断」这个词由前端按界面语言给：此前这里把中文当回执正文下发，英文界面露中文。
+        _ => (String::new(), false, true),
     };
+    // 回执的时间取工具结束时刻（`state.time.end`）：此前调用与回执共用开始时刻，
+    // 工具耗时永远算不出来。
+    let ended = state
+        .and_then(|s| s.pointer("/time/end"))
+        .and_then(Value::as_i64)
+        .map(iso_from_ms)
+        .or(timestamp);
     vec![
         call,
         TranscriptEvent::ToolResult {
             id: format!("{call_id}:result"),
-            timestamp,
+            timestamp: ended,
             tool_call_id: Some(call_id),
             text,
             is_error,
             subagent: None,
             patch: None,
+            facts: ToolFacts {
+                interrupted,
+                ..ToolFacts::default()
+            },
         },
     ]
+}
+
+/// opencode 内置工具 → 语义类别（工具名取自 1.19.x 实测落库的 `part.tool`）。
+fn tool_kind(name: &str) -> ToolKind {
+    match name {
+        "bash" => ToolKind::Run,
+        "read" => ToolKind::Read,
+        "write" => ToolKind::Write,
+        "edit" | "multiedit" | "patch" => ToolKind::Edit,
+        "grep" | "glob" | "codesearch" => ToolKind::Search,
+        "webfetch" | "websearch" => ToolKind::Web,
+        "task" => ToolKind::Agent,
+        "todowrite" | "todoread" => ToolKind::Todo,
+        _ => ToolKind::Other,
+    }
 }
 
 /// 摘要取各工具最能说明「在干什么」的那个入参（opencode 的入参是 camelCase），
@@ -411,7 +507,8 @@ fn tool_detail(name: &str, input: Option<&Value>) -> Option<ToolDetail> {
     }
 }
 
-/// 回合错误。用户按 Esc 中断（`MessageAbortedError`）不是故障，不出错误气泡。
+/// 回合错误。用户按 Esc 中断（`MessageAbortedError`）不是故障，不出错误气泡，
+/// 画成与 claude 同款的中断分隔条。
 fn error_events(
     msg: &str,
     timestamp: Option<String>,
@@ -420,12 +517,34 @@ fn error_events(
     let Some(error) = error else {
         return Vec::new();
     };
+    if error.get("name").and_then(Value::as_str) == Some("MessageAbortedError") {
+        return vec![TranscriptEvent::Metadata {
+            id: format!("{msg}:interrupted"),
+            timestamp,
+            kind: "interrupted".into(),
+            compaction: None,
+        }];
+    }
+    turn_error(error)
+        .map(|error| TranscriptEvent::TurnError {
+            id: format!("{msg}:error"),
+            timestamp,
+            label: error.label,
+            text: error.raw,
+        })
+        .into_iter()
+        .collect()
+}
+
+/// 导出行里的回合错误 → 标签与原文。时间线的错误卡与会话级「出错」状态共用。
+/// 用户中断（`MessageAbortedError`）不是错误，返回 None。
+fn turn_error(error: &Value) -> Option<TurnError> {
     let name = error
         .get("name")
         .and_then(Value::as_str)
         .unwrap_or_default();
     if name == "MessageAbortedError" {
-        return Vec::new();
+        return None;
     }
     let text = error
         .pointer("/data/message")
@@ -434,19 +553,18 @@ fn error_events(
         .unwrap_or(name)
         .to_string();
     if text.trim().is_empty() {
-        return Vec::new();
+        return None;
     }
     let label = if name == "ProviderAuthError" {
         "需要重新登录"
     } else {
         "回合出错"
     };
-    vec![TranscriptEvent::TurnError {
-        id: format!("{msg}:error"),
-        timestamp,
+    Some(TurnError {
         label: label.into(),
-        text,
-    }]
+        raw: text,
+        fingerprint: format!("opencode:{label}"),
+    })
 }
 
 #[cfg(test)]
@@ -542,14 +660,15 @@ mod tests {
         let line = json!({"kind": "part", "msg": "m", "key": "p", "part": {
             "type": "tool", "tool": "bash", "callID": "c", "state": {"status": "running", "input": {}}}})
         .to_string();
+        // 被打断是终态，不是失败；正文为空，「已中断」由前端按界面语言给。
         assert!(matches!(
             parse_chat_items(&line).as_slice(),
-            [_, ChatItem::ToolResult { is_error: true, .. }]
+            [_, ChatItem::ToolResult { is_error: false, interrupted: true, text, .. }] if text.is_empty()
         ));
     }
 
     #[test]
-    fn errors_map_to_turn_error_but_abort_is_silent() {
+    fn errors_map_to_turn_error_and_abort_to_interrupted_divider() {
         let api = json!({"kind": "error", "msg": "m", "key": "~error",
             "error": {"name": "APIError", "data": {"message": "overloaded"}}});
         assert!(matches!(
@@ -558,7 +677,36 @@ mod tests {
         ));
         let aborted = json!({"kind": "error", "msg": "m", "key": "~error",
             "error": {"name": "MessageAbortedError", "data": {"message": "Aborted"}}});
-        assert!(parse_chat_items(&aborted.to_string()).is_empty());
+        assert!(matches!(
+            parse_chat_items(&aborted.to_string()).as_slice(),
+            [ChatItem::Meta { kind, .. }] if kind == "interrupted"
+        ));
+    }
+
+    /// 会话级「出错」与时间线的错误卡同源；用户中断不算出错；越过那次出错后清掉。
+    #[test]
+    fn analysis_parser_reports_turn_error_until_conversation_moves_on() {
+        let api = json!({"kind": "error", "msg": "m", "key": "~error",
+            "error": {"name": "APIError", "data": {"message": "overloaded"}}})
+        .to_string();
+        let mut parser = OpencodeParser::default();
+        parser.fold_line(&api);
+        let error = parser.to_info().error.expect("回合出错应置位");
+        assert!(matches!(
+            parse_chat_items(&api).as_slice(),
+            [ChatItem::TurnError { label, text, .. }] if *label == error.label && *text == error.raw
+        ));
+        let aborted = json!({"kind": "error", "msg": "m2", "key": "~error",
+            "error": {"name": "MessageAbortedError", "data": {"message": "Aborted"}}})
+        .to_string();
+        parser.fold_line(&aborted);
+        assert!(parser.to_info().error.is_some(), "中断不清掉此前的出错");
+        parser.fold_line(&json!({"kind": "user", "msg": "m3", "key": "", "parts": []}).to_string());
+        assert!(parser.to_info().error.is_none(), "用户发了新消息即越过");
+
+        let mut parser = OpencodeParser::default();
+        parser.fold_line(&aborted);
+        assert!(parser.to_info().error.is_none(), "用户中断不是出错");
     }
 
     /// 导出 → 解析的整条链路：缓存行喂回解析器得到完整的一轮对话。

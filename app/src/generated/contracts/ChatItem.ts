@@ -4,6 +4,7 @@ import type { DiffHunk } from "./DiffHunk";
 import type { SubagentOutcome } from "./SubagentOutcome";
 import type { SubagentRef } from "./SubagentRef";
 import type { ToolDetail } from "./ToolDetail";
+import type { ToolKind } from "./ToolKind";
 
 /**
  * Provider 日志经插件解析后交给聊天归一化层的稳定消息单元。
@@ -23,7 +24,11 @@ to_agent?: string, } | { "type": "assistant_text", id: string, timestamp: string
 /**
  * 短中文标签（与看板卡片的 error_label 同源，见 claude 插件 classify_error）。
  */
-label: string, text: string, } | { "type": "reasoning", id: string, timestamp: string | null, text: string, } | { "type": "reasoning_delta", id: string, timestamp: string | null, text: string, } | { "type": "tool_use", id: string, timestamp: string | null, name: string, summary: string, 
+label: string, text: string, } | { "type": "reasoning", id: string, timestamp: string | null, text: string, } | { "type": "reasoning_delta", id: string, timestamp: string | null, text: string, } | { "type": "tool_use", id: string, timestamp: string | null, name: string, 
+/**
+ * 语义类别（见 [`ToolKind`]）。旧缓存缺字段按 `Other` 读回。
+ */
+kind: ToolKind, summary: string, 
 /**
  * Some = 这条是子任务委派（claude/kimi 的 `Agent` 工具）。委派出去的工作记在主
  * transcript 之外的侧车流里，前端据此渲染成可展开条目，展开时才按需拉取。
@@ -46,7 +51,21 @@ subagent?: SubagentOutcome | null,
  * 编辑类工具的统一 diff（带真实行号与上下文）；插件拿不到时为 None，
  * 前端退回按 ToolDetail 的旧段/新段两块展示。
  */
-patch?: Array<DiffHunk> | null, } | { "type": "meta", id: string, timestamp: string | null, kind: string, 
+patch?: Array<DiffHunk> | null, 
+/**
+ * 命令的退出码。provider 的回执里有才填；非零时 `is_error` 同时为 true。
+ */
+exit_code?: number, 
+/**
+ * 真实数量：读文件是读到的行数，搜索是命中条数。回执正文会被截断或包成 JSON，
+ * 按正文行数去数会少报或恒为 1；provider 给了结构化数字才填，没有则前端退回数正文。
+ */
+count?: number, 
+/**
+ * 这次调用没有跑完就被打断了（用户中断、所在回合被越过）。它是终态，不是失败：
+ * 前端显示「已中断」而不是红色报错。false 不下发。
+ */
+interrupted?: boolean, } | { "type": "meta", id: string, timestamp: string | null, kind: string, 
 /**
  * 分隔条的附加事实（目前只有压缩：触发方式、压缩前 token、摘要正文）。
  * provider 拿不到时为 None，前端照旧只显示一句「上下文已压缩」。

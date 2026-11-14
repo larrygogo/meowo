@@ -5,7 +5,7 @@ import { collectBackgroundTasks, filterTasks, hasTaskItems, TasksDockPanel, type
 
 function shell(id: string, command: string, outcome: { running: number; failed?: number } | null, times?: [string, string]): ChatItem[] {
   const use: ChatItem = {
-    type: "tool_use", id, timestamp: times?.[0] ?? null, name: "Bash", summary: command,
+    type: "tool_use", id, timestamp: times?.[0] ?? null, name: "Bash", kind: "run", summary: command,
     detail: { kind: "command", command, description: `说明 ${id}` },
   };
   if (!outcome) return [use];
@@ -16,7 +16,7 @@ function shell(id: string, command: string, outcome: { running: number; failed?:
 }
 
 const ordinaryItems: ChatItem[] = [
-  { type: "tool_use", id: "read1", timestamp: null, name: "Read", summary: "src/a.ts" },
+  { type: "tool_use", id: "read1", timestamp: null, name: "Read", kind: "read", summary: "src/a.ts" },
   { type: "tool_result", id: "rr1", timestamp: null, tool_use_id: "read1", text: "ok", is_error: false },
 ];
 
@@ -38,12 +38,12 @@ describe("后台任务", () => {
     // 回执形态照 CC 2.1.317 实拍：续上回执挂在 SendMessage 自己的调用上，靠 task_id
     // 归回最初那次委派；之后的完成通知仍挂在最初的委派上。
     const use: ChatItem = {
-      type: "tool_use", id: "toolu_a", timestamp: "2026-11-03T06:20:00Z", name: "Agent", summary: "rs 导出 schema",
+      type: "tool_use", id: "toolu_a", timestamp: "2026-11-03T06:20:00Z", name: "Agent", kind: "agent", summary: "rs 导出 schema",
       subagent: { description: "rs 导出 schema", agent_type: "general-purpose", count: 1 },
     };
     const launched: ChatItem = { type: "tool_result", id: "r1", timestamp: "2026-11-03T06:20:01Z", tool_use_id: "toolu_a", text: "Async agent launched", is_error: false, subagent: { running: 1, completed: 0, failed: 0, task_id: "a87" } };
     const done = (id: string, ts: string): ChatItem => ({ type: "tool_result", id, timestamp: ts, tool_use_id: "toolu_a", text: "done", is_error: false, subagent: { running: 0, completed: 1, failed: 0 } });
-    const send: ChatItem = { type: "tool_use", id: "toolu_s", timestamp: "2026-11-03T06:38:52Z", name: "SendMessage", summary: "纠正字段" };
+    const send: ChatItem = { type: "tool_use", id: "toolu_s", timestamp: "2026-11-03T06:38:52Z", name: "SendMessage", kind: "other", summary: "纠正字段" };
     const resumed: ChatItem = { type: "tool_result", id: "r3", timestamp: "2026-11-03T06:38:52Z", tool_use_id: "toolu_s", text: "Resuming agent a87", is_error: false, subagent: { running: 1, completed: 0, failed: 0, task_id: "a87" } };
     const states = (items: ChatItem[]) => collectBackgroundTasks(items).subagents.map((task) => [task.id, task.state]);
 

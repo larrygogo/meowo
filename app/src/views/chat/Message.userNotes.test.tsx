@@ -65,12 +65,12 @@ describe("Message 用户消息标注", () => {
   });
 });
 
-/// 中断标记（后端把 CLI 的 `[Request interrupted by user]` 转成 meta）：分隔条写「已手动终止」，
+/// 中断标记（后端把各家 CLI 记下的用户中断转成 meta）：分隔条写「已中断」，
 /// 不再冒充用户气泡，也不能落进兜底的「上下文已压缩」。
 describe("Message 分隔条", () => {
-  it("interrupted 显示已手动终止，compact 照旧", () => {
+  it("interrupted 显示已中断，compact 照旧", () => {
     render(<Message item={{ type: "meta", id: "m1", timestamp: null, kind: "interrupted" }} />);
-    expect(screen.getByText("已手动终止")).toBeTruthy();
+    expect(screen.getByText("已中断")).toBeTruthy();
     expect(screen.queryByText("上下文已压缩")).toBeNull();
     cleanup();
     render(<Message item={{ type: "meta", id: "m2", timestamp: null, kind: "compact" }} />);

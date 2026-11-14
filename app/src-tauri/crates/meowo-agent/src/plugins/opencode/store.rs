@@ -502,6 +502,8 @@ fn slim_part(part: Value) -> Value {
             "input": field("input"),
             "output": output,
             "error": field("error"),
+            // 起止时刻：回执用结束时刻，工具耗时才算得出来。
+            "time": field("time"),
         },
     })
 }

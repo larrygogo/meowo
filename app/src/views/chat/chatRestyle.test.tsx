@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { ChatItem } from "../../api";
-import { ChatCwdContext, relativize, ToolActivity, toolKind } from "./ToolActivity";
+import { ChatCwdContext, relativize, ToolActivity } from "./ToolActivity";
+import { TurnLiveContext } from "./toolState";
 import { Transcript } from "./Transcript";
 import { WelcomePanel, type WelcomeInfo } from "./WelcomePanel";
 import { stripAnsi } from "./shared";
@@ -18,9 +19,10 @@ const ESC = "\u001b";
 
 /** 工具行照搬 claude 终端：首行「动词(参数)」，次行「⎿ 结果摘要」，状态点读 data-state。 */
 describe("终端式工具行", () => {
-  it("Bash(命令)；没回执是 running 且次行在计时，失败回执是 error；中文名留给读屏", () => {
-    const item = { type: "tool_use" as const, id: "t1", timestamp: null, name: "Bash", summary: "ls" };
-    const { rerender } = render(<ToolActivity item={item} />);
+  it("Bash(命令)；回合在跑时没回执是 running 且次行在计时，失败回执是 error；中文名留给读屏", () => {
+    const item = { type: "tool_use" as const, id: "t1", timestamp: null, name: "Bash", kind: "run" as const, summary: "ls" };
+    const live = (node: JSX.Element) => <TurnLiveContext.Provider value="running">{node}</TurnLiveContext.Provider>;
+    const { rerender } = render(live(<ToolActivity item={item} />));
     const verb = document.querySelector(".chat-tool-verb")!;
     expect(verb.textContent).toBe("运行");
     expect(verb.getAttribute("data-kind")).toBe("run");
@@ -28,7 +30,7 @@ describe("终端式工具行", () => {
     expect(document.querySelector(".chat-tool")?.getAttribute("data-state")).toBe("running");
     expect(document.querySelector(".chat-tool-out.is-running")?.textContent).toMatch(/^运行中… \(\d+s\)$/);
     expect(screen.getByText("运行终端").className).toContain("chat-sronly");
-    rerender(<ToolActivity item={item} result={result("t1", ["boom", "more"].join("\n"), { is_error: true })} />);
+    rerender(live(<ToolActivity item={item} result={result("t1", ["boom", "more"].join("\n"), { is_error: true })} />));
     expect(document.querySelector(".chat-tool")?.getAttribute("data-state")).toBe("error");
     expect(document.querySelector(".chat-tool-out.is-error")?.textContent).toBe("boom");
   });
@@ -38,7 +40,7 @@ describe("终端式工具行", () => {
     expect(stripAnsi(`${ESC}]8;;https://x\u0007link${ESC}]8;;\u0007`)).toBe("link");
     expect(stripAnsi("纯文本")).toBe("纯文本");
     const item = {
-      type: "tool_use" as const, id: "t3", timestamp: null, name: "Bash", summary: "vitest",
+      type: "tool_use" as const, id: "t3", timestamp: null, name: "Bash", kind: "run" as const, summary: "vitest",
       detail: { kind: "command" as const, command: "vitest", description: "Run tests" },
     };
     render(<ToolActivity item={item} result={result("t3", [`${ESC}[32ma${ESC}[39m`, "b", "c", "d", "e"].join("\n"))} />);
@@ -50,7 +52,7 @@ describe("终端式工具行", () => {
 
   it("Edit 默认一行收起，展开后按真实行号渲染统一 diff", () => {
     const item = {
-      type: "tool_use" as const, id: "t4", timestamp: null, name: "Edit", summary: "C:/repo/src/a.ts",
+      type: "tool_use" as const, id: "t4", timestamp: null, name: "Edit", kind: "edit" as const, summary: "C:/repo/src/a.ts",
       detail: { kind: "edit" as const, path: "C:/repo/src/a.ts", old: "old", new: "new", replace_all: false, truncated: false },
     };
     render(
@@ -76,8 +78,8 @@ describe("终端式工具行", () => {
 
   it("Read 报读了几行，Search 报找到几条", () => {
     render(<>
-      <ToolActivity item={{ type: "tool_use", id: "t5", timestamp: null, name: "Read", summary: "a.ts" }} result={result("t5", ["1\ta", "2\tb"].join("\n"))} />
-      <ToolActivity item={{ type: "tool_use", id: "t6", timestamp: null, name: "Grep", summary: "foo" }} result={result("t6", ["x.ts", "y.ts", "z.ts"].join("\n"))} />
+      <ToolActivity item={{ type: "tool_use", id: "t5", timestamp: null, name: "Read", kind: "read", summary: "a.ts" }} result={result("t5", ["1\ta", "2\tb"].join("\n"))} />
+      <ToolActivity item={{ type: "tool_use", id: "t6", timestamp: null, name: "Grep", kind: "search", summary: "foo" }} result={result("t6", ["x.ts", "y.ts", "z.ts"].join("\n"))} />
     </>);
     const outs = [...document.querySelectorAll(".chat-tool-out")].map((node) => node.textContent);
     expect(outs).toEqual(["读取了 2 行", "找到 3 条结果"]);
@@ -92,14 +94,12 @@ describe("终端式工具行", () => {
   });
 
   it("未识别的工具原样用工具 id 作动词", () => {
-    expect(toolKind("SomeNewTool")).toBe("other");
-    render(<ToolActivity item={{ type: "tool_use", id: "t2", timestamp: null, name: "SomeNewTool", summary: "" }} />);
+    render(<ToolActivity item={{ type: "tool_use", id: "t2", timestamp: null, name: "SomeNewTool", kind: "other", summary: "" }} />);
     expect(document.querySelector(".chat-tool-verb")?.textContent).toBe("SomeNewTool");
   });
 
   it("MCP 工具的动词去掉 mcp__ 前缀，显示成「服务 · 工具」", () => {
-    expect(toolKind("mcp__x__do")).toBe("other");
-    render(<ToolActivity item={{ type: "tool_use", id: "t3", timestamp: null, name: "mcp__x__do", summary: "" }} />);
+    render(<ToolActivity item={{ type: "tool_use", id: "t3", timestamp: null, name: "mcp__x__do", kind: "other", summary: "" }} />);
     expect(document.querySelector(".chat-tool-verb")?.textContent).toBe("x · do");
   });
 });
@@ -140,7 +140,7 @@ describe("回合结构", () => {
     const items: ChatItem[] = [
       user("u1"), reply("a1"),
       user("u2"),
-      { type: "tool_use", id: "t1", timestamp: null, name: "Read", summary: "a.ts" },
+      { type: "tool_use", id: "t1", timestamp: null, name: "Read", kind: "read", summary: "a.ts" },
       { type: "tool_result", id: "r1", timestamp: null, tool_use_id: "t1", text: "ok", is_error: false },
       reply("a2"),
     ];
@@ -155,7 +155,7 @@ describe("回合结构", () => {
     const items: ChatItem[] = [
       user("u1"),
       { type: "assistant_text", id: "a1", timestamp: null, text: "第一节" },
-      { type: "tool_use", id: "t1", timestamp: null, name: "Read", summary: "a.ts" },
+      { type: "tool_use", id: "t1", timestamp: null, name: "Read", kind: "read", summary: "a.ts" },
       { type: "tool_result", id: "r1", timestamp: null, tool_use_id: "t1", text: "ok", is_error: false },
       { type: "assistant_text", id: "a2", timestamp: null, text: "第二节" },
       user("u2"),
@@ -200,13 +200,13 @@ describe("回合结构", () => {
   it("单条工具原样平铺，≥2 条才收成汇总块；跑完的汇总块收起并写完成态摘要", () => {
     const items: ChatItem[] = [
       user("u0"),
-      { type: "tool_use", id: "t0", timestamp: null, name: "Bash", summary: "ls" },
+      { type: "tool_use", id: "t0", timestamp: null, name: "Bash", kind: "run", summary: "ls" },
       { type: "tool_result", id: "r0", timestamp: null, tool_use_id: "t0", text: "ok", is_error: false },
       reply("a0"),
       user("u1"),
-      { type: "tool_use", id: "t1", timestamp: null, name: "Bash", summary: "pwd" },
+      { type: "tool_use", id: "t1", timestamp: null, name: "Bash", kind: "run", summary: "pwd" },
       { type: "tool_result", id: "r1", timestamp: null, tool_use_id: "t1", text: "ok", is_error: false },
-      { type: "tool_use", id: "t2", timestamp: null, name: "Read", summary: "a.ts" },
+      { type: "tool_use", id: "t2", timestamp: null, name: "Read", kind: "read", summary: "a.ts" },
       { type: "tool_result", id: "r2", timestamp: null, tool_use_id: "t2", text: "boom", is_error: true },
       reply("a1"),
     ];
@@ -221,11 +221,11 @@ describe("回合结构", () => {
     // 折叠记忆按块 id 存在模块里，id 不能和上一条用例撞。
     const running: ChatItem[] = [
       user("u1"),
-      { type: "tool_use", id: "run-t1", timestamp: null, name: "Bash", summary: "pwd" },
+      { type: "tool_use", id: "run-t1", timestamp: null, name: "Bash", kind: "run", summary: "pwd" },
       { type: "tool_result", id: "r1", timestamp: null, tool_use_id: "run-t1", text: "ok", is_error: false },
-      { type: "tool_use", id: "run-t2", timestamp: null, name: "Read", summary: "a.ts", detail: { kind: "read", path: "src/a.ts", offset: null, limit: null } },
+      { type: "tool_use", id: "run-t2", timestamp: null, name: "Read", kind: "read", summary: "a.ts", detail: { kind: "read", path: "src/a.ts", offset: null, limit: null } },
     ];
-    const { rerender } = render(<Transcript sessionId={2} items={running} agent={agent} working />);
+    const { rerender } = render(<Transcript sessionId={2} items={running} agent={agent} activity="running" />);
     const fold = () => document.querySelector(".turn-fold")!;
     expect(fold().classList.contains("is-open")).toBe(true);
     expect(fold().querySelector(".turn-fold-lead")?.textContent).toBe("正在读取 src/a.ts");
@@ -234,7 +234,7 @@ describe("回合结构", () => {
       ...running,
       { type: "tool_result", id: "r2", timestamp: null, tool_use_id: "run-t2", text: "ok", is_error: false },
       reply("a1"),
-    ]} agent={agent} working />);
+    ]} agent={agent} activity="running" />);
     expect(fold().classList.contains("is-open")).toBe(false);
     expect(fold().querySelector(".turn-fold-lead")).toBeNull();
   });
@@ -242,7 +242,7 @@ describe("回合结构", () => {
   it("连续工具渲染成扁平行，不包分组卡片也不逐行放复制钮", () => {
     const items: ChatItem[] = [
       user("u1"),
-      { type: "tool_use", id: "t1", timestamp: "2026-10-19T10:00:00Z", name: "Bash", summary: "ls" },
+      { type: "tool_use", id: "t1", timestamp: "2026-10-19T10:00:00Z", name: "Bash", kind: "run", summary: "ls" },
       { type: "tool_result", id: "r1", timestamp: "2026-10-19T10:00:38Z", tool_use_id: "t1", text: "ok", is_error: false },
     ];
     render(<Transcript sessionId={1} items={items} agent={agent} />);
@@ -258,10 +258,10 @@ describe("回合级折叠", () => {
   // 一段回复被中途的话切成两段：工具 → 「先看看」→ 工具 → 最终回答。
   const turn = (prefix: string): ChatItem[] => [
     { type: "user_text", id: `${prefix}-u`, timestamp: "2026-11-02T10:00:00Z", text: "改一下" },
-    { type: "tool_use", id: `${prefix}-t1`, timestamp: "2026-11-02T10:00:05Z", name: "Bash", summary: "ls" },
+    { type: "tool_use", id: `${prefix}-t1`, timestamp: "2026-11-02T10:00:05Z", name: "Bash", kind: "run", summary: "ls" },
     { type: "tool_result", id: `${prefix}-r1`, timestamp: "2026-11-02T10:00:06Z", tool_use_id: `${prefix}-t1`, text: "ok", is_error: false },
     { type: "assistant_text", id: `${prefix}-a1`, timestamp: "2026-11-02T10:00:10Z", text: "先看看" },
-    { type: "tool_use", id: `${prefix}-t2`, timestamp: "2026-11-02T10:01:00Z", name: "Read", summary: "a.ts" },
+    { type: "tool_use", id: `${prefix}-t2`, timestamp: "2026-11-02T10:01:00Z", name: "Read", kind: "read", summary: "a.ts" },
     { type: "tool_result", id: `${prefix}-r2`, timestamp: "2026-11-02T10:01:01Z", tool_use_id: `${prefix}-t2`, text: "ok", is_error: false },
     { type: "assistant_text", id: `${prefix}-a2`, timestamp: "2026-11-02T10:02:13Z", text: "改好了" },
   ];
@@ -289,10 +289,10 @@ describe("回合级折叠", () => {
 
   it("运行中不折，回合结束（working 落下）才收起", () => {
     const items = turn("live");
-    const { rerender } = render(<Transcript sessionId={33} items={items} agent={agent} working foldTurns />);
+    const { rerender } = render(<Transcript sessionId={33} items={items} agent={agent} activity="running" foldTurns />);
     expect(replyFold()).toBeNull();
     expect(screen.getByText("先看看")).toBeTruthy();
-    rerender(<Transcript sessionId={33} items={items} agent={agent} working={false} foldTurns />);
+    rerender(<Transcript sessionId={33} items={items} agent={agent} activity="idle" foldTurns />);
     expect(replyFold()).not.toBeNull();
     expect(screen.queryByText("先看看")).toBeNull();
   });
@@ -302,14 +302,14 @@ describe("回合级折叠", () => {
     const items: ChatItem[] = [
       ...turn("mid"),
       { type: "user_text", id: "mid-i", timestamp: "2026-11-02T10:03:00Z", text: "怎么样", interjected: true },
-      { type: "tool_use", id: "mid-t3", timestamp: "2026-11-02T10:03:05Z", name: "Bash", summary: "ls" },
+      { type: "tool_use", id: "mid-t3", timestamp: "2026-11-02T10:03:05Z", name: "Bash", kind: "run", summary: "ls" },
     ];
-    const { rerender } = render(<Transcript sessionId={35} items={items} agent={agent} working foldTurns />);
+    const { rerender } = render(<Transcript sessionId={35} items={items} agent={agent} activity="running" foldTurns />);
     expect(replyFold()).toBeNull();
     expect(screen.getByText("先看看")).toBeTruthy();
     expect(screen.getByText("怎么样")).toBeTruthy();
     const done = [...items, { type: "assistant_text" as const, id: "mid-a3", timestamp: "2026-11-02T10:04:00Z", text: "好了" }];
-    rerender(<Transcript sessionId={35} items={done} agent={agent} working={false} foldTurns />);
+    rerender(<Transcript sessionId={35} items={done} agent={agent} activity="idle" foldTurns />);
     expect(replyFold()).not.toBeNull();
     expect(screen.queryByText("先看看")).toBeNull();
     expect(screen.getByText("怎么样")).toBeTruthy();
@@ -319,9 +319,9 @@ describe("回合级折叠", () => {
     const items: ChatItem[] = [
       ...turn("prev"),
       { type: "user_text", id: "next-u", timestamp: "2026-11-02T10:05:00Z", text: "下一个" },
-      { type: "tool_use", id: "next-t", timestamp: "2026-11-02T10:05:05Z", name: "Bash", summary: "ls" },
+      { type: "tool_use", id: "next-t", timestamp: "2026-11-02T10:05:05Z", name: "Bash", kind: "run", summary: "ls" },
     ];
-    render(<Transcript sessionId={36} items={items} agent={agent} working foldTurns />);
+    render(<Transcript sessionId={36} items={items} agent={agent} activity="running" foldTurns />);
     expect(replyFold()).not.toBeNull();
     expect(screen.queryByText("先看看")).toBeNull();
   });

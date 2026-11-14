@@ -11,7 +11,11 @@ use std::path::{Path, PathBuf};
 
 #[cfg(test)]
 use crate::transcript::ChatItem;
-use crate::transcript::{ChatOnlyParser, TranscriptEvent, TranscriptParser, TranscriptSpec};
+use super::exec_script::{output_parts, parse_patch, script_calls, OutputPart};
+use crate::transcript::{
+    clip_text, ToolDetail, ToolFacts, ToolKind, TranscriptEvent, TranscriptInfo, TranscriptParser,
+    TranscriptSpec, TurnError,
+};
 
 fn chat_id(prefix: &str, line: &str) -> String {
     let mut hash = crate::codec::FNV1A_OFFSET;
@@ -45,9 +49,11 @@ fn content_text(value: &serde_json::Value) -> String {
 /// 用户与 AI 正文只剩这里（`response_item/message` 虽也存一份 assistant 正文，但
 /// 与本事件同 id 重复，且其 user 形态裹着 environment_context，维持整体跳过）。
 ///
-/// CommandExecution 刻意不产出：它是某次 `custom_tool_call`（exec）的子事件，命令
-/// 与输出已由 `custom_tool_call` / `custom_tool_call_output` 主链承载，再发一遍
-/// 就是同一条命令上屏两次。FileChange 没有主链对应物，是文件改动唯一的结构化记录。
+/// CommandExecution 与 FileChange 刻意不产出：它们是某次 `custom_tool_call`（exec 脚本）里
+/// `exec_command` / `apply_patch` 的子事件，命令、补丁与输出已由主链承载（脚本在
+/// [`tool_call_events`] 里解开），再发一遍就是同一件事上屏两次。本机 68 份 rollout 里
+/// 每条 FileChange 都有一次脚本内的 apply_patch 对应（1573 次调用、656 条 FileChange）；
+/// 反过来不成立——续写段带入的历史只有主链、没有这些子事件，所以主链才是完整的那份。
 fn completed_item_events(
     payload: &serde_json::Value,
     timestamp: Option<String>,
@@ -105,79 +111,6 @@ fn completed_item_events(
                 })
                 .into_iter()
                 .collect()
-        }
-        "FileChange" => {
-            let Some(changes) = item.get("changes").and_then(|c| c.as_object()) else {
-                return Vec::new();
-            };
-            // 摘要列文件名（带操作），展开给每个文件的正文/补丁；正文可能是整个文件。
-            // 两处上限都按**字符**计——与 claude 的 compact_json 同单位（800/4000 同量级）。
-            const DETAIL_LIMIT: usize = 4000;
-            const SUMMARY_LIMIT: usize = 800;
-            let mut names = Vec::new();
-            let mut detail = String::new();
-            let mut detail_chars = 0usize;
-            for (path, change) in changes {
-                let op = change
-                    .get("type")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("update");
-                let name = Path::new(path)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or(path);
-                names.push(name.to_string());
-                if detail_chars >= DETAIL_LIMIT {
-                    continue;
-                }
-                let body = change
-                    .get("content")
-                    .or_else(|| change.get("unified_diff"))
-                    .or_else(|| change.get("diff"))
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
-                let header = format!("[{op}] {path}\n");
-                detail_chars += header.chars().count();
-                detail.push_str(&header);
-                let room = DETAIL_LIMIT.saturating_sub(detail_chars);
-                if room > 0 && !body.is_empty() {
-                    let mut rest = body.chars();
-                    let clipped: String = rest.by_ref().take(room).collect();
-                    detail_chars += clipped.chars().count();
-                    detail.push_str(&clipped);
-                    // 迭代器还有剩 = 被截断；避免对整个 body 再做一次 O(n) 计数。
-                    if rest.next().is_some() {
-                        detail.push_str("\n…");
-                    }
-                    detail.push('\n');
-                }
-            }
-            let mut summary = names.join(", ");
-            if summary.chars().count() > SUMMARY_LIMIT {
-                summary = summary.chars().take(SUMMARY_LIMIT).collect();
-                summary.push('…');
-            }
-            let call_id = id("patch");
-            vec![
-                TranscriptEvent::ToolCall {
-                    id: call_id.clone(),
-                    timestamp: timestamp.clone(),
-                    name: "patch".into(),
-                    summary,
-                    subagent: None,
-                    detail: None,
-                    plan: None,
-                },
-                TranscriptEvent::ToolResult {
-                    id: format!("{call_id}-out"),
-                    timestamp,
-                    tool_call_id: Some(call_id),
-                    text: detail,
-                    is_error: item.get("status").and_then(|v| v.as_str()) == Some("failed"),
-                    subagent: None,
-                    patch: None,
-                },
-            ]
         }
         // 0.148 起压缩不再写 `event_msg/context_compacted`，改写 `compacted` +
         // `item_completed/ContextCompaction` + `response_item/compaction` 三行（本机 0.162.1
@@ -248,6 +181,349 @@ fn approval_mode(policy: &serde_json::Value) -> Option<&str> {
     })
 }
 
+/// 回合收尾带的错误（`task_complete.error`）。时间线的错误卡与会话级「出错」状态
+/// （侧栏、灵动岛、通知，见 [`CodexParser`]）都从这里取，两处不会各说各话。
+fn turn_error(payload: &serde_json::Value) -> Option<TurnError> {
+    let error = payload.get("error").filter(|e| !e.is_null())?;
+    let info = error
+        .get("codex_error_info")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let text = error
+        .get("message")
+        .and_then(|v| v.as_str())
+        .unwrap_or(info)
+        .to_string();
+    if text.trim().is_empty() {
+        return None;
+    }
+    let label = if info == "unauthorized" {
+        "需要重新登录"
+    } else {
+        "回合出错"
+    };
+    Some(TurnError {
+        label: label.into(),
+        raw: text,
+        fingerprint: format!("codex:{label}"),
+    })
+}
+
+/// 摘要上限（字符），与 claude / opencode 同值。
+const SUMMARY_MAX_CHARS: usize = 800;
+
+/// 命令行实参：字符串原样；数组形态（老版本 `["bash","-lc","…"]`、`["pwsh","-Command","…"]`）
+/// 取真正的命令那一段，其余形态用空格拼起来。
+fn command_text(value: &serde_json::Value) -> Option<String> {
+    if let Some(text) = value.as_str() {
+        return Some(text.to_string());
+    }
+    let parts: Vec<&str> = value.as_array()?.iter().filter_map(|v| v.as_str()).collect();
+    match parts.as_slice() {
+        [] => None,
+        [_, flag, script] if matches!(*flag, "-lc" | "-c" | "-Command" | "/c") => {
+            Some((*script).to_string())
+        }
+        parts => Some(parts.join(" ")),
+    }
+}
+
+/// 一次工具调用 → 语义类别、摘要与结构化详情。`name` 是脚本里 `tools.<name>` 的名字，
+/// 或直接调用（老版本、协作类工具）的函数名；`arg` 是它的实参。
+/// 表里没有的工具为 Other：协作类的 wait_agent / list_agents / interrupt_agent / send_message
+/// 不是「派出子任务」，此前因为名字里有 agent 被前端算进「已派出 N 个子任务」。
+fn describe_tool(name: &str, arg: &serde_json::Value) -> (ToolKind, String, Option<ToolDetail>) {
+    let text = |key: &str| arg.get(key).and_then(|v| v.as_str()).map(str::to_string);
+    match name {
+        "exec_command" | "shell_command" | "shell" | "local_shell" | "container.exec" => {
+            let command = arg
+                .get("cmd")
+                .or_else(|| arg.get("command"))
+                .and_then(command_text);
+            match command {
+                Some(command) => (
+                    ToolKind::Run,
+                    clip_text(&command, SUMMARY_MAX_CHARS),
+                    Some(ToolDetail::Command {
+                        command,
+                        description: None,
+                    }),
+                ),
+                None => (ToolKind::Run, String::new(), None),
+            }
+        }
+        "apply_patch" => {
+            let patch = arg
+                .as_str()
+                .map(str::to_string)
+                .or_else(|| text("patch"))
+                .or_else(|| text("input"))
+                .unwrap_or_default();
+            let files = parse_patch(&patch);
+            let summary = clip_text(
+                &files
+                    .iter()
+                    .map(|file| file.path.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                SUMMARY_MAX_CHARS,
+            );
+            // 只新建文件的补丁是「写入」，其余是「编辑」。
+            let kind = if !files.is_empty() && files.iter().all(|file| file.op == "add") {
+                ToolKind::Write
+            } else {
+                ToolKind::Edit
+            };
+            (
+                kind,
+                summary,
+                (!files.is_empty()).then_some(ToolDetail::Patch { files }),
+            )
+        }
+        "web__run" | "web_search" | "web.run" => {
+            let list = |key: &str, field: &str| -> Vec<String> {
+                arg.get(key)
+                    .and_then(|v| v.as_array())
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|item| item.get(field).and_then(|v| v.as_str()))
+                    .map(str::to_string)
+                    .collect()
+            };
+            // open 的 ref_id 可以是地址，也可以是上一次结果的引用号（turn6view0），后者不是地址。
+            let urls: Vec<String> = list("open", "ref_id")
+                .into_iter()
+                .filter(|url| url.contains("://"))
+                .collect();
+            let mut queries = list("search_query", "q");
+            queries.extend(text("query"));
+            let total = urls.len() + queries.len();
+            let url = urls.into_iter().next();
+            let query = queries.into_iter().next();
+            let summary = url.clone().or_else(|| query.clone()).unwrap_or_default();
+            (
+                ToolKind::Web,
+                clip_text(&summary, SUMMARY_MAX_CHARS),
+                (total > 0).then_some(ToolDetail::Web {
+                    url,
+                    query,
+                    more: total.saturating_sub(1) as u32,
+                }),
+            )
+        }
+        "view_image" => match text("path") {
+            Some(path) => (
+                ToolKind::Read,
+                path.clone(),
+                Some(ToolDetail::Read {
+                    path,
+                    offset: None,
+                    limit: None,
+                }),
+            ),
+            None => (ToolKind::Read, String::new(), None),
+        },
+        "update_plan" => (
+            ToolKind::Todo,
+            clip_text(&text("explanation").unwrap_or_default(), SUMMARY_MAX_CHARS),
+            None,
+        ),
+        // 派出子代理：任务正文（message）在 rollout 里是加密串，只有任务名可读。
+        "spawn_agent" => (
+            ToolKind::Agent,
+            text("task_name")
+                .or_else(|| text("agent_type"))
+                .unwrap_or_default(),
+            None,
+        ),
+        _ => (ToolKind::Other, other_summary(arg), None),
+    }
+}
+
+/// 未归类工具的摘要：先取能认出对象的那个入参，再退回整包入参。协作类工具的 `message`
+/// 是加密串（`gAAAA…`），显示出来只是一屏乱码，去掉。
+fn other_summary(arg: &serde_json::Value) -> String {
+    const KEYS: [&str; 7] = ["target", "task_name", "cell_id", "path", "name", "query", "url"];
+    if let Some(text) = KEYS
+        .iter()
+        .find_map(|key| arg.get(key).and_then(|v| v.as_str()))
+    {
+        return clip_text(text, SUMMARY_MAX_CHARS);
+    }
+    match arg {
+        serde_json::Value::Null => String::new(),
+        serde_json::Value::String(text) => clip_text(text.trim(), SUMMARY_MAX_CHARS),
+        serde_json::Value::Object(map) => {
+            let readable: serde_json::Map<String, serde_json::Value> = map
+                .iter()
+                .filter(|(_, value)| !value.as_str().is_some_and(|s| s.starts_with("gAAAA")))
+                // 输出预算、轮询间隔这类参数不说明「在干什么」。
+                .filter(|(key, _)| {
+                    !matches!(
+                        key.as_str(),
+                        "yield_time_ms" | "max_output_tokens" | "max_tokens" | "timeout_ms"
+                    )
+                })
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect();
+            if readable.is_empty() {
+                String::new()
+            } else {
+                clip_text(
+                    &serde_json::Value::Object(readable).to_string(),
+                    SUMMARY_MAX_CHARS,
+                )
+            }
+        }
+        other => clip_text(&other.to_string(), SUMMARY_MAX_CHARS),
+    }
+}
+
+/// `response_item/function_call`（直接调用）与 `custom_tool_call`（exec 脚本）→ 工具调用。
+///
+/// 脚本里有几个 `tools.<name>(…)` 就产出几条，id 是 `<call_id>#<序号>`，与回执一侧
+/// [`tool_result_events`] 的分段约定一致（见 exec_script 模块头）。脚本里一个工具调用都
+/// 认不出时（纯计算的脚本、认不得的写法）退回一条，摘要是脚本原文。
+fn tool_call_events(
+    payload: &serde_json::Value,
+    scripted: bool,
+    timestamp: Option<String>,
+    line: &str,
+) -> Vec<TranscriptEvent> {
+    let name = payload
+        .get("name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("tool");
+    let call_id = payload
+        .get("call_id")
+        .and_then(|v| v.as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| chat_id("tool", line));
+    let raw = payload
+        .get("arguments")
+        .or_else(|| payload.get("input"))
+        .map(content_text)
+        .unwrap_or_default();
+    let call = |id: String, name: &str, arg: &serde_json::Value| {
+        let (kind, summary, detail) = describe_tool(name, arg);
+        TranscriptEvent::ToolCall {
+            id,
+            timestamp: timestamp.clone(),
+            name: name.to_string(),
+            kind,
+            summary,
+            subagent: None,
+            detail,
+            plan: None,
+        }
+    };
+    if !scripted {
+        // 直接调用的实参是一段 JSON 文本。
+        let arg = serde_json::from_str::<serde_json::Value>(&raw)
+            .unwrap_or(serde_json::Value::String(raw));
+        return vec![call(call_id, name, &arg)];
+    }
+    if name != "exec" {
+        // 老版本不走脚本的自定义工具（apply_patch 直接带补丁文本）。
+        return vec![call(
+            format!("{call_id}#0"),
+            name,
+            &serde_json::Value::String(raw),
+        )];
+    }
+    let calls = script_calls(&raw);
+    if calls.is_empty() {
+        return vec![TranscriptEvent::ToolCall {
+            id: format!("{call_id}#0"),
+            timestamp,
+            name: name.to_string(),
+            kind: ToolKind::Other,
+            summary: clip_text(raw.trim(), SUMMARY_MAX_CHARS),
+            subagent: None,
+            detail: None,
+            plan: None,
+        }];
+    }
+    calls
+        .iter()
+        .enumerate()
+        .map(|(index, script_call)| {
+            call(
+                format!("{call_id}#{index}"),
+                &script_call.name,
+                &script_call.arg,
+            )
+        })
+        .collect()
+}
+
+/// 工具回执。脚本回执按 `text()` 分段，第 i 段挂到 `<call_id>#<i>`；直接调用的回执并成一条。
+/// 失败的来源有三个：行上的 `is_error`（新版恒无）、脚本状态头 `Script failed`、命令结果里
+/// 的非零退出码——此前只看第一个，失败的命令从不标红（走查 A2）。
+fn tool_result_events(
+    payload: &serde_json::Value,
+    scripted: bool,
+    timestamp: Option<String>,
+    line: &str,
+) -> Vec<TranscriptEvent> {
+    let call_id = payload
+        .get("call_id")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let flagged = payload
+        .get("is_error")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let parts = output_parts(payload.get("output").unwrap_or(&serde_json::Value::Null));
+    let result = |id: String, tool_call_id: Option<String>, part: OutputPart| {
+        TranscriptEvent::ToolResult {
+            id,
+            timestamp: timestamp.clone(),
+            tool_call_id,
+            text: part.text,
+            is_error: part.is_error || flagged,
+            // codex 没有带侧车流的子任务（见 mod.rs 的 subagents 说明）。
+            subagent: None,
+            patch: None,
+            facts: ToolFacts {
+                exit_code: part.exit_code,
+                count: None,
+                interrupted: part.interrupted,
+            },
+        }
+    };
+    let base = chat_id("result", line);
+    if scripted {
+        return parts
+            .into_iter()
+            .enumerate()
+            .map(|(index, part)| {
+                result(
+                    if index == 0 {
+                        base.clone()
+                    } else {
+                        format!("{base}-{index}")
+                    },
+                    call_id.as_ref().map(|id| format!("{id}#{index}")),
+                    part,
+                )
+            })
+            .collect();
+    }
+    let merged = OutputPart {
+        text: parts
+            .iter()
+            .map(|part| part.text.as_str())
+            .filter(|text| !text.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n"),
+        exit_code: parts.iter().rev().find_map(|part| part.exit_code),
+        is_error: parts.iter().any(|part| part.is_error),
+        interrupted: parts.iter().any(|part| part.interrupted),
+    };
+    vec![result(base, call_id, merged)]
+}
+
 fn parse_transcript_events(line: &str) -> Vec<TranscriptEvent> {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
         return Vec::new();
@@ -315,82 +591,31 @@ fn parse_transcript_events(line: &str) -> Vec<TranscriptEvent> {
                 .collect()
         }
         ("response_item", "function_call") | ("response_item", "custom_tool_call") => {
-            let name = payload
-                .get("name")
-                .and_then(|v| v.as_str())
-                .unwrap_or("tool")
-                .to_string();
-            let summary = payload
-                .get("arguments")
-                .or_else(|| payload.get("input"))
-                .map(content_text)
-                .unwrap_or_default();
-            vec![TranscriptEvent::ToolCall {
-                id: payload
-                    .get("call_id")
-                    .and_then(|v| v.as_str())
-                    .map(str::to_string)
-                    .unwrap_or_else(|| chat_id("tool", line)),
-                timestamp,
-                name,
-                summary,
-                // codex 当前没有子任务：工具集只有 exec/wait，`task_started` 是回合级事件
-                // （payload 带 turn_id / model_context_window）而非委派。
-                subagent: None,
-                detail: None,
-                plan: None,
-            }]
+            tool_call_events(payload, kind == "custom_tool_call", timestamp, line)
         }
         ("response_item", "function_call_output")
         | ("response_item", "custom_tool_call_output") => {
-            vec![TranscriptEvent::ToolResult {
-                // codex 没有子任务概念（见 mod.rs 的 subagents 说明）。
-                subagent: None,
-                patch: None,
-                id: chat_id("result", line),
-                timestamp,
-                tool_call_id: payload
-                    .get("call_id")
-                    .and_then(|v| v.as_str())
-                    .map(str::to_string),
-                text: payload.get("output").map(content_text).unwrap_or_default(),
-                is_error: payload
-                    .get("is_error")
-                    .and_then(|v| v.as_bool())
-                    .unwrap_or(false),
-            }]
+            tool_result_events(payload, kind == "custom_tool_call_output", timestamp, line)
         }
+        // 用户按 Esc 打断回合（本机 68 份 rollout 里 64 次）。画成与 claude 同款的中断分隔条。
+        ("event_msg", "turn_aborted") => vec![TranscriptEvent::Metadata {
+            id: chat_id("interrupted", line),
+            timestamp,
+            kind: "interrupted".into(),
+            compaction: None,
+        }],
         ("event_msg", "item_completed") => completed_item_events(payload, timestamp, line),
         // 回合收尾带错误（如 unauthorized：refresh token 被吊销）：终端里满屏红字，
         // 对话窗此前却一片空白——这是 rollout 里唯一的回合级错误信号。
-        ("event_msg", "task_complete") => {
-            let Some(error) = payload.get("error").filter(|e| !e.is_null()) else {
-                return Vec::new();
-            };
-            let info = error
-                .get("codex_error_info")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            let text = error
-                .get("message")
-                .and_then(|v| v.as_str())
-                .unwrap_or(info)
-                .to_string();
-            if text.trim().is_empty() {
-                return Vec::new();
-            }
-            let label = if info == "unauthorized" {
-                "需要重新登录"
-            } else {
-                "回合出错"
-            };
-            vec![TranscriptEvent::TurnError {
+        ("event_msg", "task_complete") => turn_error(payload)
+            .map(|error| TranscriptEvent::TurnError {
                 id: chat_id("error", line),
                 timestamp,
-                label: label.into(),
-                text,
-            }]
-        }
+                label: error.label,
+                text: error.raw,
+            })
+            .into_iter()
+            .collect(),
         ("event_msg", "context_compacted") => vec![TranscriptEvent::Metadata {
             id: chat_id("compact", line),
             timestamp,
@@ -409,12 +634,81 @@ fn parse_chat_items(line: &str) -> Vec<ChatItem> {
         .collect()
 }
 
+/// codex 的看板分析解析器：只产**会话级出错**。
+///
+/// 为什么要有它：回合出错（`task_complete.error`，如 refresh token 被吊销）在时间线里是
+/// 一张红色错误卡，可侧栏状态、灵动岛与通知读的是分析口径——此前这里是空解析器，
+/// 同一个会话对话里报错、侧栏却写着「等待输入」，也不弹出错通知（走查 A8）。
+/// 错误的判据与时间线共用 [`turn_error`]。新回合开始（`task_started`）即清掉。
+/// 标题、预览、上下文用量仍不从 rollout 取（标题走 session_index，见 resolve_title）。
+#[derive(Default)]
+struct CodexParser {
+    error: Option<TurnError>,
+}
+
+impl TranscriptParser for CodexParser {
+    fn fold_line(&mut self, line: &str) {
+        // 绝大多数行两样都不是：先按字面量筛，免得每行整解析一次 JSON（rollout 动辄十几 MB）。
+        if !line.contains("\"task_complete\"") && !line.contains("\"task_started\"") {
+            return;
+        }
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
+            return;
+        };
+        if value.get("type").and_then(|v| v.as_str()) != Some("event_msg") {
+            return;
+        }
+        let Some(payload) = value.get("payload") else {
+            return;
+        };
+        match payload.get("type").and_then(|v| v.as_str()) {
+            Some("task_started") => self.error = None,
+            Some("task_complete") => self.error = turn_error(payload),
+            _ => {}
+        }
+    }
+
+    fn to_info(&self) -> TranscriptInfo {
+        TranscriptInfo {
+            error: self.error.clone(),
+            ..TranscriptInfo::default()
+        }
+    }
+}
+
+/// 看板轮询用的 rollout 定位缓存：session_id →（定位时刻，结果）。
+/// 分析每 ~2s 对每张 codex 卡片定位一次，而 [`find_rollout`] 要走一遍 sessions 目录树。
+/// 命中的路径记 30 秒（回溯后续写段会换文件，过期后重新找当前段），查不到的也记，
+/// 免得没有 rollout 的会话每轮都把目录树扫一遍。
+static POLLED_ROLLOUTS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<String, (std::time::Instant, Option<PathBuf>)>>,
+> = std::sync::LazyLock::new(Default::default);
+const POLLED_ROLLOUT_TTL: std::time::Duration = std::time::Duration::from_secs(30);
+
 pub struct CodexTranscript;
 pub static CODEX_TRANSCRIPT: CodexTranscript = CodexTranscript;
 
 impl TranscriptSpec for CodexTranscript {
     fn new_parser(&self) -> Box<dyn TranscriptParser> {
-        Box::new(ChatOnlyParser)
+        Box::new(CodexParser::default())
+    }
+
+    /// 分析只要当前在写的那一段（出错信号在最新的回合里），不必拼接回溯前的历史。
+    fn resolve_transcript_path_polled(&self, _cwd: Option<&str>, session_id: &str) -> Option<PathBuf> {
+        let now = std::time::Instant::now();
+        if let Ok(cache) = POLLED_ROLLOUTS.lock() {
+            if let Some((at, path)) = cache.get(session_id) {
+                if now.duration_since(*at) < POLLED_ROLLOUT_TTL {
+                    return path.clone();
+                }
+            }
+        }
+        let path = find_rollout(session_id)
+            .map(|known| super::lineage::current_rollout(&known, session_id));
+        if let Ok(mut cache) = POLLED_ROLLOUTS.lock() {
+            cache.insert(session_id.to_string(), (now, path.clone()));
+        }
+        path
     }
 
     fn resolve_transcript_path(
@@ -532,8 +826,9 @@ impl TranscriptSpec for CodexTranscript {
         })
     }
 
+    /// 只为会话级出错（见 [`CodexParser`]）。
     fn supports_analysis(&self) -> bool {
-        false
+        true
     }
 }
 
@@ -1108,51 +1403,124 @@ mod tests {
         assert!(parse_chat_items(exec).is_empty());
     }
 
+    /// FileChange 是脚本里 apply_patch 的子事件：补丁已由主链的调用带出，再产出就是
+    /// 同一次修改显示两遍（走查 A2）。
     #[test]
-    fn file_change_item_becomes_patch_call_with_result() {
-        // 路径用正斜杠：Unix 的 Path::file_name 不认反斜杠分隔符，Windows 路径样本会让
-        // 此测试仅在 Windows 通过（rollout 由产生它的机器解析，生产中路径总是本平台形态）。
+    fn file_change_item_is_not_emitted() {
         let line = r##"{"timestamp":"t3","type":"event_msg","payload":{"type":"item_completed","item":{"type":"FileChange","id":"fc1","changes":{"/p/README.md":{"type":"add","content":"# 标题\n正文"}}}}}"##;
-        let items = parse_chat_items(line);
+        assert!(parse_chat_items(line).is_empty());
+    }
+
+    /// 本机 0.167.2 实拍的形态：exec 脚本里包着一条命令，回执是命令结果的 JSON。
+    /// 工具行要显示真实命令，非零退出要标红并带退出码。
+    #[test]
+    fn exec_script_is_unwrapped_into_the_real_command() {
+        let call = r##"{"timestamp":"2026-11-12T09:06:13.439Z","type":"response_item","payload":{"type":"custom_tool_call","status":"completed","call_id":"call_29b2","name":"exec","input":"text(await tools.exec_command({cmd:\"cargo test -p meowo-agent\",workdir:\"C:/repo\",max_output_tokens:3000}));"}}"##;
+        let items = parse_chat_items(call);
+        match items.as_slice() {
+            [ChatItem::ToolUse { id, name, kind, summary, detail, .. }] => {
+                assert_eq!(id, "call_29b2#0");
+                assert_eq!(name, "exec_command");
+                assert_eq!(*kind, ToolKind::Run);
+                assert_eq!(summary, "cargo test -p meowo-agent");
+                assert!(matches!(detail, Some(ToolDetail::Command { command, .. }) if command == "cargo test -p meowo-agent"));
+            }
+            other => panic!("{other:?}"),
+        }
+        let output = r##"{"timestamp":"2026-11-12T09:06:18.684Z","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"call_29b2","output":[{"type":"input_text","text":"Script completed\nWall time 5.2 seconds\nOutput:\n"},{"type":"input_text","text":"{\"chunk_id\":\"aad648\",\"wall_time_seconds\":1.8,\"exit_code\":101,\"original_token_count\":19,\"output\":\"error: test failed\\n\"}"}]}}"##;
+        match parse_chat_items(output).as_slice() {
+            [ChatItem::ToolResult { tool_use_id, text, is_error, exit_code, .. }] => {
+                assert_eq!(tool_use_id.as_deref(), Some("call_29b2#0"));
+                assert_eq!(text, "error: test failed\n");
+                assert!(*is_error, "非零退出必须标成失败");
+                assert_eq!(*exit_code, Some(101));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// 一段脚本连调补丁和命令：各出一行，补丁带逐文件的 diff 与增删行数；回执按 text() 分段对上号。
+    #[test]
+    fn exec_script_with_patch_and_command_yields_one_row_each() {
+        let call = r##"{"timestamp":"t","type":"response_item","payload":{"type":"custom_tool_call","call_id":"c1","name":"exec","input":"text(await tools.apply_patch(\"*** Begin Patch\\n*** Update File: src/a.rs\\n@@\\n-old\\n+new\\n+more\\n*** End Patch\"));\ntext(await tools.exec_command({cmd:\"git diff --stat\"}));"}}"##;
+        let items = parse_chat_items(call);
         assert_eq!(items.len(), 2);
+        match &items[0] {
+            ChatItem::ToolUse { id, name, kind, summary, detail: Some(ToolDetail::Patch { files }), .. } => {
+                assert_eq!((id.as_str(), name.as_str(), *kind), ("c1#0", "apply_patch", ToolKind::Edit));
+                assert_eq!(summary, "src/a.rs");
+                assert_eq!((files[0].added, files[0].removed), (2, 1));
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(matches!(&items[1], ChatItem::ToolUse { id, kind: ToolKind::Run, .. } if id == "c1#1"));
+        let output = r##"{"timestamp":"t","type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"c1","output":[{"type":"input_text","text":"Script completed\nWall time 0.4 seconds\nOutput:\n"},{"type":"input_text","text":"{}"},{"type":"input_text","text":"{\"chunk_id\":\"ea5d29\",\"exit_code\":0,\"output\":\" src/a.rs | 3 ++-\\n\"}"}]}}"##;
+        let results = parse_chat_items(output);
         assert!(matches!(
-            &items[0],
-            ChatItem::ToolUse { id, name, summary, .. }
-                if name == "patch" && summary == "README.md" && id == "codex-patch-fc1"
-        ));
-        assert!(matches!(
-            &items[1],
-            ChatItem::ToolResult { tool_use_id: Some(call), text, is_error: false, .. }
-                if call == "codex-patch-fc1" && text.contains("[add]") && text.contains("# 标题")
+            results.as_slice(),
+            [
+                ChatItem::ToolResult { tool_use_id: Some(first), is_error: false, .. },
+                ChatItem::ToolResult { tool_use_id: Some(second), is_error: false, exit_code: Some(0), text, .. },
+            ] if first == "c1#0" && second == "c1#1" && text.contains("src/a.rs")
         ));
     }
 
-    /// 上限一律按字符计：中文正文（每字符 3 字节）不得把详情撑到字节口径的数倍，
-    /// 超限文件仍要进摘要（只省正文），摘要本身也有封顶。
+    /// 协作类工具不是「派出子任务」；派出子代理的摘要是任务名，不是加密的 message。
     #[test]
-    fn file_change_caps_detail_and_summary_by_chars() {
-        let body: String = "中".repeat(5000);
-        let files: Vec<String> = (0..300)
-            .map(|i| format!(r#""/p/文件{i:03}.rs":{{"type":"update","content":"{body}"}}"#))
-            .collect();
-        let line = format!(
-            r#"{{"type":"event_msg","payload":{{"type":"item_completed","item":{{"type":"FileChange","id":"fc2","changes":{{{}}}}}}}}}"#,
-            files.join(",")
-        );
-        let items = parse_chat_items(&line);
-        assert_eq!(items.len(), 2);
-        let (summary, text) = match (&items[0], &items[1]) {
-            (ChatItem::ToolUse { summary, .. }, ChatItem::ToolResult { text, .. }) => {
-                (summary, text)
+    fn collaboration_tools_are_classified_by_table() {
+        let kind_of = |name: &str, args: &str| {
+            let line = serde_json::json!({"type": "response_item", "payload": {
+                "type": "function_call", "name": name, "arguments": args, "call_id": "c"}})
+            .to_string();
+            match parse_chat_items(&line).as_slice() {
+                [ChatItem::ToolUse { kind, summary, .. }] => (*kind, summary.clone()),
+                other => panic!("{other:?}"),
             }
-            other => panic!("形状不对: {other:?}"),
         };
-        // 详情：字符封顶（截断记号与文件头允许少量溢出），且带截断记号。
-        assert!(text.chars().count() < 4100, "实际 {}", text.chars().count());
-        assert!(text.contains('…'));
-        // 摘要：300 个文件名全进 names 但被封顶在 800 字符 + 记号。
-        assert_eq!(summary.chars().count(), 801);
-        assert!(summary.ends_with('…'));
+        assert_eq!(
+            kind_of("spawn_agent", r#"{"task_name":"gemini_e2e","fork_turns":"all","message":"gAAAAABq9ddVY9O3"}"#),
+            (ToolKind::Agent, "gemini_e2e".to_string())
+        );
+        assert_eq!(kind_of("wait_agent", r#"{"timeout_ms":10000}"#), (ToolKind::Other, String::new()));
+        assert_eq!(kind_of("list_agents", "{}"), (ToolKind::Other, String::new()));
+        assert_eq!(
+            kind_of("send_message", r#"{"target":"/root","message":"gAAAAABq9YGatHbP"}"#),
+            (ToolKind::Other, "/root".to_string())
+        );
+        assert_eq!(
+            kind_of("wait", r#"{"cell_id":"g9:1","yield_time_ms":10000,"max_tokens":12000}"#),
+            (ToolKind::Other, "g9:1".to_string())
+        );
+    }
+
+    #[test]
+    fn turn_aborted_becomes_an_interrupted_divider() {
+        let line = r#"{"timestamp":"2026-11-12T15:16:16.944Z","type":"event_msg","payload":{"type":"turn_aborted","turn_id":"01a1d032","reason":"interrupted","duration_ms":1521570}}"#;
+        assert!(matches!(
+            parse_chat_items(line).as_slice(),
+            [ChatItem::Meta { kind, .. }] if kind == "interrupted"
+        ));
+    }
+
+    /// 会话级「出错」与时间线的错误卡同源：回合带错收尾即置位，新回合开始即清掉。
+    #[test]
+    fn analysis_parser_reports_turn_error_until_next_turn() {
+        let mut parser = CodexParser::default();
+        parser.fold_line(r#"{"type":"event_msg","payload":{"type":"task_started","turn_id":"t1"}}"#);
+        assert!(parser.to_info().error.is_none());
+        let failed = r#"{"timestamp":"t4","type":"event_msg","payload":{"type":"task_complete","last_agent_message":null,"error":{"message":"Your access token could not be refreshed.","codex_error_info":"unauthorized"}}}"#;
+        parser.fold_line(failed);
+        let error = parser.to_info().error.expect("回合带错收尾应置位");
+        assert_eq!(error.label, "需要重新登录");
+        // 时间线上同一行就是那张错误卡，标签一致。
+        assert!(matches!(
+            parse_chat_items(failed).as_slice(),
+            [ChatItem::TurnError { label, .. }] if *label == error.label
+        ));
+        parser.fold_line(r#"{"type":"event_msg","payload":{"type":"task_started","turn_id":"t2"}}"#);
+        assert!(parser.to_info().error.is_none(), "新回合开始后不再报错");
+        parser.fold_line(r#"{"type":"event_msg","payload":{"type":"task_complete","last_agent_message":"done"}}"#);
+        assert!(parser.to_info().error.is_none());
     }
 
     #[test]
