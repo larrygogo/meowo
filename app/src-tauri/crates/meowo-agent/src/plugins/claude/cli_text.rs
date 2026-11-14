@@ -170,9 +170,9 @@ pub(super) static DEPS: &[D] = &[
     ),
     D::new(
         "anchor:claude:custom-api-key-confirm#2",
-        "No (recommended)",
+        "",
         "  ❯ No (recommended)",
-        "2.1.325 真机屏幕 2026-11-15（隔离配置目录，probe_tui_script，120、80、50 列各一帧）",
+        "2.1.325 真机屏幕 2026-11-15（隔离配置目录，probe_tui_script，120、80、50 列各一帧）。选项文字是运行时拼的（No 加 (recommended)），程序文件里没有原样，不搜",
     ),
     D::new(
         "anchor:claude:custom-api-key-confirm#3",
