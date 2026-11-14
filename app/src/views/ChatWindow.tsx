@@ -5511,7 +5511,8 @@ export function ChatWindow() {
                   inline-flex 里挤压时会按 min-content（CJK=单字）竖排溢出（实拍）。 */}
               {/* 只在窄主列（data-narrow）显示，顶替被收掉的模型名。 */}
               <span className="chat-model-narrow-icon" aria-hidden="true"><Icon glyph={icSparkles} size={14} /></span>
-              <span className="chat-model-label">
+              {/* data-short：名字不超过 8 个字符，手机上不收缩、按钮贴合内容（mobile.css）；更长的才省略号截断。 */}
+              <span className="chat-model-label" data-short={[...(history?.model || t.chat.model)].length <= 8 ? "" : undefined}>
                 {history?.model || t.chat.model}
                 {/* 「模型 · 档位」（对照 Kimi 的 K3.1 Pro · Max）：档位影响回答深度与耗时，常看常换。 */}
                 {chatUi?.effort && history?.effort && <span className="chat-model-pill-effort"> · {effortLabel(history.effort)}</span>}
