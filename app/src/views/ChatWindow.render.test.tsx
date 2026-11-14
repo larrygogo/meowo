@@ -1110,7 +1110,7 @@ describe("ChatWindow", () => {
     fireEvent.click(await screen.findByRole("button", { name: "切换模式: 权限模式" }));
     // 每档名字是统一说法（任务 20261114-tui-model-switch），下一行一句话说明，行尾小字 CLI 原名；
     // 运行中才有的 auto 不在启动项里，按值补说明。说明不进名字，读屏名字只报统一说法。
-    expect(await screen.findByText("改文件不问 · 命令要问")).toBeTruthy();
+    expect(await screen.findByText("自动改文件，跑命令仍先问")).toBeTruthy();
     expect(screen.getByRole("menuitem", { name: "自动改文件" })).toBeTruthy();
     expect(screen.getByText("Accept Edits")).toBeTruthy();
     const autoItem = screen.getByRole("menuitem", { name: "自动" });

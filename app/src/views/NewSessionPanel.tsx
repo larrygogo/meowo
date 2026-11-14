@@ -8,7 +8,7 @@ import { type AgentId, agentName, listSubdirectories, type DirListing } from "..
 import { agentAssets, tintStyle } from "../providers";
 import { normalizePath, unquotePath } from "../paths";
 import { Dropdown } from "./menu";
-import { initialChoice, modeChoiceViews } from "./chat/modeChoices";
+import { initialChoice, modeChoiceViews, modelChoiceRows } from "./chat/modeChoices";
 import { useTauriEvent } from "../hooks/useTauriEvent";
 import { useT } from "../i18n";
 import { formatBackendError } from "../i18n/errors";
@@ -339,7 +339,9 @@ export function NewSessionPanel({ onClose, prefill, onLaunched }: {
               {t.newSession.agentSwapped(agentName(agents ?? [], swappedFrom), agentName(agents ?? [], provider))}
             </div>
           )}
-          {(launchOptions.length > 0 || modelCatalog.length > 0) && (
+          {(launchOptions.length > 0 || modelCatalog.length > 0) && (() => {
+            const modelRows = modelChoiceRows(t, modelCatalog, cliDefaults);
+            return (
             <div className="ns-options" data-testid="ns-options">
               {/* 模型清单来自 CLI 自己；默认档写成 CLI 配置里的那个模型，不选就不传 -m。 */}
               {modelCatalog.length > 0 && (
@@ -348,15 +350,14 @@ export function NewSessionPanel({ onClose, prefill, onLaunched }: {
                   <Dropdown
                     align="left"
                     disabled={relayPins[provider] !== undefined}
-                    value={opts.model ?? ""}
-                    options={[
-                      { value: "", label: t.modes.followConfig(modelCatalog.find((entry) => entry.id === cliDefaults?.model)?.label ?? cliDefaults?.model ?? t.modes.followConfigUnknown) },
-                      ...modelCatalog.map((entry) => ({
-                        value: entry.id,
-                        label: entry.label,
-                        sub: [entry.group, entry.uncertain ? t.modes.uncertain : null].filter(Boolean).join(" · ") || undefined,
-                      })),
-                    ]}
+                    // 默认模型与桌面新建页同一口径：配置写明的，或清单标 is_default 的（第三轮 C3），只留一行标「默认」。
+                    value={modelRows.some((row) => row.value === (opts.model ?? "")) ? (opts.model ?? "") : ""}
+                    options={modelRows.map((row) => ({
+                      value: row.value,
+                      label: row.label,
+                      tag: row.tag,
+                      sub: [row.group, row.detail].filter(Boolean).join(t.modes.sep) || undefined,
+                    }))}
                     onChange={(v) => setOpts((m) => {
                       const next = { ...m };
                       if (v) next.model = String(v);
@@ -385,9 +386,12 @@ export function NewSessionPanel({ onClose, prefill, onLaunched }: {
                         value: view.value,
                         label: view.label,
                         risky: view.risk,
-                        // 选不到的档置灰、说明原因；选了也不生效（onChange 里拦）。
-                        muted: view.disabled,
-                        sub: [view.desc, view.detail].filter(Boolean).join(" · ") || undefined,
+                        // 选不到的档禁用、禁用色，说明写原因（第三轮 C8）。
+                        disabled: view.disabled,
+                        tag: view.tag,
+                        sub: view.desc,
+                        // CLI 原名放右侧小字列，与桌面一致（第三轮 C8）。
+                        detail: view.detail,
                       }))
                       : option.choices.map((choice) => ({
                       value: choice.id,
@@ -410,7 +414,8 @@ export function NewSessionPanel({ onClose, prefill, onLaunched }: {
                 );
               })}
             </div>
-          )}
+            );
+          })()}
           {/* 修复接入项只是 Meowo 写自己的接入配置，2026-11-11 起进了远程白名单（remote.rs 模块头
               「例外」），手机上同样给按钮，不再写「请在桌面端处理」（UI 调研 m10）。警告文字必须留：
               整块藏掉的话，用户点「启动」会起一个 hook 没接、永远不显示状态的哑会话(审查 #10)。 */}

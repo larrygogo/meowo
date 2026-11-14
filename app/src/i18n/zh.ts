@@ -313,30 +313,51 @@ export const zh = {
     } as Record<string, string>,
     // 计划开关（Kimi 工作模式、Codex 协作模式）：两档里一档只出方案，胶囊直接说开没开。
     plan: (on: boolean): string => (on ? "计划：开" : "计划：关"),
+    // 说明里的分隔符（中文逗号，第三轮 C8）。
+    sep: "，",
+    // 新建页 CLI 配置的默认档：只留一行、名字旁标这个小字（不再列「默认（X）」与「X」两行，第三轮 C7）。
+    defaultTag: "默认",
     followConfig: (name: string) => `默认（${name}）`,
     followConfigUnknown: "按 CLI 配置",
     // Kimi 没有改回「每步都问」的启动参数：CLI 配置默认是别的档时这一档选不到（做空 M1）。
     configLocked: (name: string) => `CLI 配置默认是「${name}」，改配置才能选`,
     uncertain: "能否使用以账号为准",
     desc: {
+      // 菜单第二行：一律是各家官方原文那句的提炼（三维 traits 只用于短名与分组，2026-11-14 第三轮 C1）。
+      // 每句 ≤20 字、中文逗号分隔。出处：research-kimi-gemini.md「模式对照」、research-codex-opencode.md §9。
+      // Kimi 2.6 /permission 原文「Auto-read only; everything else needs your approval first.」
       "kimi.permission.manual": "只自动读文件，其余都先问你",
-      "kimi.permission.yolo": "提问、计划和危险操作仍会问你",
-      "kimi.permission.auto": "全部自动决定，只有计划要你审",
+      // 「Routine edits and commands run automatically; risky actions, questions, and plans still ask.」
+      "kimi.permission.yolo": "常规自动做，危险操作和计划仍问",
+      // 「Everything runs and is decided automatically; only plans in Plan mode wait for your review.」
+      "kimi.permission.auto": "改文件和跑命令都不问，计划仍要你审",
       "kimi.work.default": "按权限档执行",
+      // 提示词「MUST NOT make any edits (with the exception of the current plan file)」
       "kimi.work.plan": "先出计划，除计划文件外不改文件",
-      "gemini.approval.default": "工作区内已知安全的命令不问",
+      // Gemini 0.68 cli-reference「default (prompt for approval)」+ policy-engine：工作区内已知安全的命令放行。
+      "gemini.approval.default": "工作区内已知安全的命令不问，其余先问",
+      // 「auto_edit (auto-approve edit tools)」
       "gemini.approval.autoEdit": "自动改文件，跑命令仍先问",
+      // 「plan (read-only mode)」
       "gemini.approval.plan": "只读，只出方案，不能跑命令",
+      // 「yolo (auto-approve all tools)」
       "gemini.approval.yolo": "所有工具自动放行，含危险命令",
       "codex.approval.default": "按 Codex 配置文件的设置",
+      // Codex 0.167 /permissions「Read workspace files, with approval required for edits or internet access」
       "codex.approval.readOnly": "只读工作区，改文件或联网要问",
+      // 「Read and edit workspace files and run commands, with approval required for internet access or edits outside the workspace」
       "codex.approval.ask": "工作区内自由改和跑，越界或联网要问",
-      "codex.approval.approveForMe": "越界操作先自动审查，判为危险才问",
+      // 「Only ask for actions detected as potentially unsafe」
+      "codex.approval.approveForMe": "越界先交自动审查，判为危险才问你",
+      // 「Codex can edit files outside this workspace and access the internet without approval」
       "codex.approval.yolo": "可改工作区外文件和联网，不再问",
       "codex.collaboration.default": "按权限档执行",
+      // rollout developer_instructions「may explore and execute non-mutating actions… must not perform mutating actions」
       "codex.collaboration.plan": "只探索和出方案，不做改动",
-      "opencode.agent.build": "默认 agent，越出工作区才问",
-      "opencode.agent.plan": "不能用编辑工具，命令照常能跑",
+      // OpenCode API「The default agent. Executes tools based on configured permissions.」
+      "opencode.agent.build": "默认 agent，按配置的权限执行",
+      // API「Plan mode. Disallows all edit tools.」；文档「shell commands remain permission-controlled」
+      "opencode.agent.plan": "不能用编辑工具，命令按权限问",
       "claude.permission.plan": "只读分析，最后给出方案",
       "claude.permission.acceptEdits": "自动改文件，跑命令仍先问",
       "claude.permission.bypassPermissions": "跳过所有权限确认",
@@ -521,11 +542,11 @@ export const zh = {
     emptyStarting: "会话正在启动…",
     // 切模型 / 模式（任务 20261114-tui-model-switch）：运行中或有待批审批时不写终端、不重启，排到这一轮之后。
     // 队列存在 Meowo 进程里：Meowo 重启会清空，界面写明（复核 M3）。
-    settingsDeferred: (name: string) => `这一轮结束后切换到 ${name}（重启 Meowo 会取消）`,
+    settingsDeferred: (name: string) => `这一轮结束后切换到「${name}」（重启 Meowo 会取消）`,
     // Lead 关卡等待中：带参重启会杀掉会话内的关卡等待器，答复后就不会自动继续（做空 N3），排到续跑之后。
-    settingsDeferredLead: (name: string) => `关卡答复并续跑后切换到 ${name}（重启 Meowo 会取消）`,
+    settingsDeferredLead: (name: string) => `关卡答复并续跑后切换到「${name}」（重启 Meowo 会取消）`,
     // 会话没在运行：Codex/OpenCode 恢复时不回放模型，打开后由宿主经会话服务补设（做空 N6）。
-    settingsDeferredOpen: (name: string) => `打开会话后切换到 ${name}（重启 Meowo 会取消）`,
+    settingsDeferredOpen: (name: string) => `打开会话后切换到「${name}」（重启 Meowo 会取消）`,
     // 排了 30 分钟这一轮还没结束（或宿主一直没等到空闲）：出队，告诉用户（做空 N5）。
     settingsQueueExpired: "等太久没切成，已取消，请重新选择",
     settingsApplying: "正在切换",
