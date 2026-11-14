@@ -1255,14 +1255,12 @@ fn emit_settings(app: &tauri::AppHandle, session_id: i64, kind: &str, reason: Op
 /// 出队并告诉前端为什么（`expired` / `session_gone`），不让选择悄悄消失（做空 N5）。超时取消另发一条
 /// 灵动岛提醒：对话页不在这个会话上时也看得到（做空 R4）。
 fn drop_queued(app: &tauri::AppHandle, session_id: i64, kind: &str) {
-    let Some(entry) = queue().remove(&session_id) else {
+    let lang = crate::settings::ui_lang(&crate::settings::load_settings());
+    let Some(alert) = take_dropped(session_id, kind, lang) else {
         return;
     };
     emit_settings(app, session_id, kind, None);
-    // 超时、会话归档 / 删除都提醒（未认领的临时会话是用户自己关掉的，不提醒）。
-    if kind == "expired" || (kind == "session_gone" && session_id > 0) {
-        let lang = crate::settings::ui_lang(&crate::settings::load_settings());
-        let name = entry.request["label"].as_str().unwrap_or_default();
+    if let Some(label) = alert {
         let store = crate::open_store(&crate::db_path()).ok();
         let title = store
             .as_ref()
@@ -1273,9 +1271,26 @@ fn drop_queued(app: &tauri::AppHandle, session_id: i64, kind: &str) {
             .and_then(|store| store.session_cwd(session_id).ok().flatten())
             .and_then(|cwd| std::path::Path::new(&cwd).file_name().map(|n| n.to_string_lossy().into_owned()))
             .unwrap_or_default();
-        let label = if kind == "expired" { expired_label(lang, name) } else { gone_label(lang, name) };
         crate::watch::emit_island_alert(app, session_id, "error", &title, &project, Some(label));
     }
+}
+
+/// 出队，并给出要不要发灵动岛提醒、提醒什么：None = 本来就不在队列里；Some(None) = 出队但不提醒（未认领
+/// 的临时会话是用户自己关掉的）；Some(Some(文案)) = 超时、会话归档 / 删除，提醒。
+fn take_dropped(session_id: i64, kind: &str, lang: &str) -> Option<Option<String>> {
+    let entry = queue().remove(&session_id)?;
+    let name = entry.request["label"].as_str().unwrap_or_default();
+    Some(match kind {
+        "expired" => Some(expired_label(lang, name)),
+        "session_gone" if session_id > 0 => Some(gone_label(lang, name)),
+        _ => None,
+    })
+}
+
+/// 会话行没了，或已归档：排着的切换不会再有机会执行（最终做空 R7 / P5）。
+pub(crate) fn queued_session_gone(store: &meowo_store::Store, session_id: i64) -> bool {
+    matches!(store.session_provider_opt(session_id), Ok(None))
+        || store.session_header(session_id).is_ok_and(|header| header.archived)
 }
 
 /// 超时取消的提醒文案（与前端 chat.settingsQueueExpired 同义，带上要切的名字）。
@@ -1331,20 +1346,29 @@ fn ensure_executor(app: tauri::AppHandle) {
     std::thread::spawn(move || {
         loop {
             std::thread::sleep(std::time::Duration::from_millis(1500));
-            let ids: Vec<i64> = queue().keys().copied().collect();
-            if ids.is_empty() {
-                EXECUTOR.store(false, Ordering::Release);
-                // 释放标记后若又有人排进来，接着跑。
-                if queue().is_empty() || EXECUTOR.swap(true, Ordering::AcqRel) {
-                    return;
-                }
-                continue;
-            }
+            let Some(ids) = executor_round() else {
+                return;
+            };
             for sid in ids {
                 run_queued(&app, sid);
             }
         }
     });
+}
+
+/// 执行线程的一轮：返回这一轮要看的会话；队列空了返回 None，线程就此退出（释放标记后若恰好又有人排进来、
+/// 且标记没被新线程抢走，接着跑）。
+fn executor_round() -> Option<Vec<i64>> {
+    use std::sync::atomic::Ordering;
+    let ids: Vec<i64> = queue().keys().copied().collect();
+    if !ids.is_empty() {
+        return Some(ids);
+    }
+    EXECUTOR.store(false, Ordering::Release);
+    if queue().is_empty() || EXECUTOR.swap(true, Ordering::AcqRel) {
+        return None;
+    }
+    Some(queue().keys().copied().collect())
 }
 
 /// 这次请求要不要求 TUI 输入框是空的：带参重启会杀进程（草稿跟着没），对话框路线要往输入框里打字。
@@ -1461,12 +1485,8 @@ fn run_queued(app: &tauri::AppHandle, session_id: i64) {
     let (request, leftover) = split_terminal(&request);
     let Some(request) = request else {
         // 只含终端项的条目宿主不执行，但会话归档 / 删除时照样出队并提醒（最终做空 P5），队列空了线程退出。
-        if let Ok(store) = crate::open_store(&state.db_path) {
-            let gone = matches!(store.session_provider_opt(session_id), Ok(None))
-                || store.session_header(session_id).is_ok_and(|header| header.archived);
-            if gone {
-                drop_queued(app, session_id, "session_gone");
-            }
+        if crate::open_store(&state.db_path).is_ok_and(|store| queued_session_gone(&store, session_id)) {
+            drop_queued(app, session_id, "session_gone");
         }
         return;
     };
@@ -2439,6 +2459,49 @@ mod tests {
         pin_switched_model(&mut live, &stored_selections(&store, sid));
         assert_eq!(live["model"], "fake/fake-model");
         assert_eq!(pinned_history_model(&store, sid, Some("fake-model-2".into())).as_deref(), Some("fake/fake-model"));
+        drop(store);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// 最终做空 P5：只含终端项的条目，会话归档 / 删除时出队并带提醒文案；队列空了执行线程退出。
+    #[test]
+    fn terminal_only_entries_leave_on_archive_and_executor_exits() {
+        let dir = std::env::temp_dir().join(format!("meowo-p5-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("board.db");
+        let _ = std::fs::remove_file(&db);
+        let store = meowo_store::Store::open(&db).unwrap();
+        let now = crate::now_ms();
+        let project = store.upsert_project_by_root("/tmp/p5", "p5", now).unwrap();
+        let (sid, _) = store.start_session(project, "cc-p5", now).unwrap();
+        let terminal_only = serde_json::json!({ "label": "计划：开", "modes": { "work": "plan" }, "terminal": [
+            { "kind": "mode", "dimension": "work", "value": "plan", "inputs": [{ "data": "/plan on", "submit": true }] }
+        ] });
+        // 宿主不执行只含终端项的条目。
+        assert_eq!(split_terminal(&terminal_only).0, None);
+        assert!(!queued_session_gone(&store, sid));
+        store.set_session_archived(sid, true, now).unwrap();
+        assert!(queued_session_gone(&store, sid), "归档了");
+        assert!(queued_session_gone(&store, sid + 10_000), "会话行不存在（删除）");
+
+        // 出队带提醒文案（与 R4 同一个灵动岛通道）；临时会话不提醒；不在队列里的不动。
+        let (real, temp) = (sid + 900_000, -900_001);
+        enqueue(real, &terminal_only);
+        enqueue(temp, &terminal_only);
+        assert_eq!(take_dropped(real, "session_gone", "zh"), Some(Some("会话已归档或删除，切换到「计划：开」已取消".to_string())));
+        assert_eq!(take_dropped(temp, "session_gone", "zh"), Some(None));
+        assert_eq!(take_dropped(real, "session_gone", "zh"), None);
+
+        // 执行线程：队列空了这一轮返回 None（线程退出）并释放标记；有条目时接着跑。
+        let others: Vec<i64> = queue().keys().copied().collect();
+        if others.is_empty() {
+            EXECUTOR.store(true, std::sync::atomic::Ordering::Release);
+            assert_eq!(executor_round(), None);
+            assert!(!EXECUTOR.load(std::sync::atomic::Ordering::Acquire));
+        }
+        enqueue(real, &terminal_only);
+        assert!(executor_round().is_some_and(|ids| ids.contains(&real)));
+        queue().remove(&real);
         drop(store);
         let _ = std::fs::remove_dir_all(dir);
     }
