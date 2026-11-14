@@ -14,6 +14,21 @@ use std::time::{Duration, Instant};
 pub const ROWS: u16 = 40;
 pub const COLS: u16 = 120;
 
+/// 探针终端的尺寸（行，列）。默认 120×40；`PROBE_ROWS` / `PROBE_COLS` 可改。
+///
+/// 为什么要能改：生产里终端列数跟着窗口变，而草稿保真的折行判定依赖一行能放多少格。只在 120 列
+/// 取证的话，别的宽度下判定对不对没有证据（独立审查 2026-11-15 指出，见 probe_draft_fidelity 的
+/// wrap 形态）。
+pub fn size() -> (u16, u16) {
+    let read = |key: &str, default: u16| {
+        std::env::var(key)
+            .ok()
+            .and_then(|raw| raw.trim().parse().ok())
+            .unwrap_or(default)
+    };
+    (read("PROBE_ROWS", ROWS), read("PROBE_COLS", COLS))
+}
+
 pub fn use_bundled_conpty() {
     let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("binaries/conpty");
     let target = std::env::current_exe()
@@ -49,10 +64,11 @@ impl Tui {
     /// （2.1.325 状态栏原文 `Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker`），
     /// 与 Meowo 拉起的会话不是一回事。
     pub fn spawn(argv: &[String], cwd: &Path, env: &[(&str, String)]) -> Tui {
+        let (rows, cols) = size();
         let pair = native_pty_system()
             .openpty(PtySize {
-                rows: ROWS,
-                cols: COLS,
+                rows,
+                cols,
                 pixel_width: 0,
                 pixel_height: 0,
             })
@@ -82,7 +98,7 @@ impl Tui {
         let mut reader = pair.master.try_clone_reader().unwrap();
         let writer: Arc<Mutex<Box<dyn Write + Send>>> =
             Arc::new(Mutex::new(pair.master.take_writer().unwrap()));
-        let screen = Arc::new(Mutex::new(vt100::Parser::new(ROWS, COLS, 0)));
+        let screen = Arc::new(Mutex::new(vt100::Parser::new(rows, cols, 0)));
         let (answer, parser) = (writer.clone(), screen.clone());
         std::thread::spawn(move || {
             let mut bytes = [0; 16_384];

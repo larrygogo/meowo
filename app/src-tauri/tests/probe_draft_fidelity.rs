@@ -12,6 +12,10 @@
 //! ```text
 //! PROBE_AGENT=kimi PROBE_OUT=<目录> cargo test -p meowo-app --test probe_draft_fidelity -- --ignored --nocapture
 //! ```
+//! `PROBE_SUITE=wrap PROBE_COLS=80 PROBE_ROWS=24`：换终端尺寸跑折行相关的形态（见 [`wrap_forms`]）。
+//! 形态的长度按这一尺寸下**实测**的一行格数生成（先打一串 `x` 量出来），所以「刚好填满」「差一格」
+//! 在每个宽度下都卡在真实边界上。样本写到 `draft-<家>-<列>x<行>.json`。
+//!
 //! `PROBE_FORMS=short,wrap_words` 只跑其中几种；`PROBE_ARGS` 追加启动参数；`PROBE_EDITOR=<按键>`
 //! 另外取证「外部编辑器」这条路能不能拿到输入框全文（把 EDITOR 指到一个只做复制的脚本，按这个键，
 //! 看脚本收到的文件是不是原文；按键支持 `\x07` 这样的转义）。
@@ -30,6 +34,98 @@ struct Form {
     id: &'static str,
     paste: bool,
     text: String,
+}
+
+/// 恰好 `len` 个字符的一行英文：按词排、词间单个空格，末尾用 `z` 补齐（首尾都不是空格）。
+fn words(len: usize) -> String {
+    const WORDS: [&str; 12] = [
+        "keep", "the", "draft", "when", "sending", "from", "chat", "page", "and", "verify",
+        "every", "provider",
+    ];
+    let mut out = String::new();
+    for word in WORDS.iter().cycle() {
+        if out.len() + 1 + word.len() > len {
+            break;
+        }
+        if !out.is_empty() {
+            out.push(' ');
+        }
+        out.push_str(word);
+    }
+    while out.len() < len {
+        out.push('z');
+    }
+    out.truncate(len);
+    out
+}
+
+fn solid(len: usize) -> String {
+    "abcdefghij0123456789".chars().cycle().take(len).collect()
+}
+
+/// 折行相关的形态。`width` 是这一尺寸下实测的一行最多能放的格数（见 [`measure_width`]）。
+///
+/// 为什么按实测宽度生成：判定最容易错的地方就在边界上（刚好填满、差一格、折行处是空格），固定长度
+/// 的文本换一个终端宽度就落不到边界上了。`near_*` 三种是同一幅屏幕的两种来历：行尾留 3 格后真换行，
+/// 与行尾 3 个空格后被折行，屏幕上若长得一样，判定就必须都判读不全。
+fn wrap_forms(width: usize, rows: u16) -> Vec<Form> {
+    let typed = |id, text: String| Form { id, paste: false, text };
+    let cjk = |len: usize| -> String { "终端里的草稿要原样搬进对话页".chars().cycle().take(len).collect() };
+    let mixed: String = "修复 bug：终端 draft 要原样 keep，不丢 a single 字符 "
+        .chars()
+        .cycle()
+        .take(width + width / 4)
+        .collect();
+    let tall: Vec<String> = (1..=rows as usize + 5).map(|n| format!("row {n:02} of the tall draft")).collect();
+    vec![
+        typed("short", "meowo short draft".to_string()),
+        typed("multi_short", "line one
+    indented four
+
+  two spaces after blank
+last line".to_string()),
+        typed("wrap_words", words(2 * width + width / 3)),
+        typed("wrap_solid", solid(2 * width + width / 3)),
+        typed("wrap_wide", cjk(width)),
+        typed("wrap_mixed", mixed.trim_end().to_string()),
+        typed("wrap_url", format!("curl -fsSL https://example.com/{} | sh -s -- --yes", solid(width))),
+        typed("fill_exact", solid(width)),
+        typed("fill_minus1", solid(width - 1)),
+        typed("fill_plus1", solid(width + 1)),
+        typed("fill_words", words(width)),
+        typed("multi_long", format!("first line
+{}
+last line", words(width + width / 2))),
+        typed("multi_full", format!("{}
+next line", solid(width))),
+        typed("near_newline", format!("{}
+ab cd", words(width - 3))),
+        typed("near_spaces3", format!("{}   ab cd", words(width - 3))),
+        typed("near_spaces5", format!("{}     ab cd", words(width - 6))),
+        typed("over_spaces6", format!("{}      ab cd", words(width - 3))),
+        typed("tall", tall.join("
+")),
+    ]
+}
+
+/// 这一尺寸下一行最多能放多少格：打一串比终端还宽的 `x`，数首行画出了几个。量完清掉。
+fn measure_width(tui: &Tui, spec: &meowo_agent::chat_ui::ComposerSpec, cols: u16) -> usize {
+    for _ in 0..cols as usize + 20 {
+        tui.send("x");
+        pause(12);
+    }
+    tui.wait("量宽度的 x 进了输入框", 20, |tui| tui.text().contains("xxxxxxxxxx"));
+    settle(tui);
+    let lines = tui.lines();
+    let first = lines
+        .iter()
+        .find(|line| line.contains("xxxxxxxxxx"))
+        .expect("屏幕上没有量宽度的那一行");
+    let width = first.chars().filter(|c| *c == 'x').count();
+    println!("  实测一行最多 {width} 格（终端 {cols} 列）：|{}|", first.trim_end());
+    assert!(clear(tui, spec), "量宽度的草稿清不掉，停");
+    pause(2500);
+    width
 }
 
 fn forms() -> Vec<Form> {
@@ -171,6 +267,22 @@ fn draft_forms_on_screen() {
     }
 }
 
+type Snapshot = (Vec<String>, (u16, u16, bool, bool), Vec<u16>, (u16, u16));
+
+/// 同一把锁里取整屏、光标（行、列、可见、暗色）、折行标记行、终端尺寸。
+fn snapshot(tui: &Tui) -> Snapshot {
+    tui.with_screen(|s| {
+        let (rows, cols) = s.size();
+        let lines: Vec<String> = s.rows(0, cols).collect();
+        let (row, col) = s.cursor_position();
+        let wrapped: Vec<u16> = (0..rows).filter(|r| s.row_wrapped(*r)).collect();
+        let dim = s
+            .cell(row, col)
+            .is_some_and(|cell| cell.dim() && !cell.contents().trim().is_empty());
+        (lines, (row, col, !s.hide_cursor(), dim), wrapped, (rows, cols))
+    })
+}
+
 fn walk(
     agent: &str,
     version: &str,
@@ -190,7 +302,30 @@ fn walk(
         .map(|list| list.split(',').map(str::to_string).collect());
     let newline = plugin.newline_input();
     let mut samples = Vec::new();
-    for form in forms() {
+    let (rows, cols) = tui::size();
+    let suite = std::env::var("PROBE_SUITE").unwrap_or_default();
+    let (all, file, tag, width) = if suite == "wrap" {
+        // 空输入框在这一尺寸下的样子也存一帧：窄窗里占位文字自己会折行（OpenCode 60 列实拍折成两行，
+        // 当时的规则认不出，整条发送链路按「认不出输入框」拦下）。
+        let (lines, cursor, _, size) = snapshot(tui);
+        samples.push(serde_json::json!({
+            "name": format!("{agent}-{version}-{cols}x{rows}-form-empty"),
+            "provider": agent, "version": version, "form": "empty", "how": "none", "original": "",
+            "lines": lines,
+            "cursor": { "row": cursor.0, "col": cursor.1, "visible": cursor.2, "dim": cursor.3 },
+            "rows": size.0, "cols": size.1, "verdict": "空",
+        }));
+        let width = measure_width(tui, spec, cols);
+        (
+            wrap_forms(width, rows),
+            format!("draft-{agent}-{cols}x{rows}.json"),
+            format!("{cols}x{rows}-form"),
+            Some(width),
+        )
+    } else {
+        (forms(), format!("draft-{agent}.json"), "form".to_string(), None)
+    };
+    for form in all {
         if only.as_ref().is_some_and(|list| !list.iter().any(|id| id == form.id)) {
             continue;
         }
@@ -225,16 +360,7 @@ fn walk(
         // 大段粘贴要过一会儿才进输入框（Codex 5KB 约 2 秒）：先等到输入框不再是空的，再等画面停下来。
         tui.wait("草稿进了输入框", 20, |tui| !tui.composer(spec).is_some_and(|read| read.empty));
         settle(tui);
-        let (lines, cursor, wrapped, size) = tui.with_screen(|s| {
-            let (rows, cols) = s.size();
-            let lines: Vec<String> = s.rows(0, cols).collect();
-            let (row, col) = s.cursor_position();
-            let wrapped: Vec<u16> = (0..rows).filter(|r| s.row_wrapped(*r)).collect();
-            let dim = s
-                .cell(row, col)
-                .is_some_and(|cell| cell.dim() && !cell.contents().trim().is_empty());
-            (lines, (row, col, !s.hide_cursor(), dim), wrapped, (rows, cols))
-        });
+        let (lines, cursor, wrapped, size) = snapshot(tui);
         let read = tui.composer(spec);
         // 生产判定：读全了才给原文（Draft::Complete），读不全给原因。
         let draft = read.as_ref().and_then(|r| r.draft.clone());
@@ -271,7 +397,7 @@ fn walk(
             tui.dump();
         }
         let mut sample = serde_json::json!({
-            "name": format!("{agent}-{version}-form-{}", form.id),
+            "name": format!("{agent}-{version}-{tag}-{}", form.id),
             "provider": agent,
             "version": version,
             "form": form.id,
@@ -283,6 +409,8 @@ fn walk(
             "rows": size.0,
             "cols": size.1,
             "wrappedRows": wrapped,
+            // 这一尺寸下实测的一行最多能放的格数（只有 wrap 形态量）。
+            "width": width,
             "verdict": verdict,
             "readText": read_text,
         });
@@ -308,7 +436,7 @@ fn walk(
         samples.push(sample);
         // 每种形态取完就落盘：后面某一种清不掉而中止时，前面的样本还在。
         std::fs::write(
-            out.join(format!("draft-{agent}.json")),
+            out.join(&file),
             serde_json::to_string_pretty(&samples).unwrap(),
         )
         .unwrap();
@@ -316,5 +444,5 @@ fn walk(
         // kimi / gemini 清空后挂「再按一次退出」的提示，等它过去再继续。
         pause(2500);
     }
-    println!("===== {agent}：样本写到 {} =====", out.join(format!("draft-{agent}.json")).display());
+    println!("===== {agent}：样本写到 {} =====", out.join(&file).display());
 }
