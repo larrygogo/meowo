@@ -57,8 +57,9 @@ export function ApprovalRequestCard({ model, countdown, resolving, error, escArm
       className={model.channel === "terminal" ? "chat-screen-approval" : undefined}
       title={cardTitle("approval", t)}
       badge={cardBadge("approval", model.state, t, countdown)}
-      // 左侧组放「不作本次决定」的动作：零副作用的仅收起、范围比这一次大的持久放行。
-      sideActions={(actions.collapse || actions.persistent.length > 0) ? <>
+      // 左侧组放「不作本次决定」的动作：零副作用的仅收起、范围比这一次大的持久放行、
+      // 认不出作用的其他选项（照终端原文列出，不带数字键，不放进右侧的允许与拒绝里）。
+      sideActions={(actions.collapse || actions.persistent.length > 0 || actions.others.length > 0) ? <>
         {actions.collapse && onCollapse && <button type="button" className="chat-attention-dismiss is-inline" data-tip={t.chat.attentionDismissTip} onClick={onCollapse}>{t.chat.attentionDismiss}</button>}
         {actions.persistent.map((entry, index) => (
           <button
@@ -72,6 +73,19 @@ export function ApprovalRequestCard({ model, countdown, resolving, error, escArm
             {/* 放行范围可能很长（规则原文、英文说明）：标签自己省略，全文在悬停提示里，不把按钮撑出卡片。 */}
             <span className="chat-approval-persist-label">{entry.label}</span>
             {digits && index < 8 && <kbd aria-hidden="true">{index + 2}</kbd>}
+          </button>
+        ))}
+        {actions.others.map((entry, index) => (
+          <button
+            type="button"
+            // 与持久放行同一副长相（同样会很长，同样自己省略），类名分开：数字徽标只数持久放行。
+            className="is-other"
+            key={`other:${index}`}
+            data-tip={entry.tip}
+            aria-disabled={busy}
+            onClick={() => decide(`option:${index}`)}
+          >
+            <span className="chat-approval-persist-label">{entry.label}</span>
           </button>
         ))}
       </> : undefined}

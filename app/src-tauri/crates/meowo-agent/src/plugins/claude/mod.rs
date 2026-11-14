@@ -910,6 +910,8 @@ impl AgentPlugin for Claude {
                 details: crate::chat_ui::AttentionDetails::None,
                 kind: crate::chat_ui::AttentionKind::Choice,
                 confirms: None,
+                options: &[],
+                unparsed_keys: &[],
             },
             crate::chat_ui::AttentionPattern {
                 id: "claude:command-approval",
@@ -920,6 +922,77 @@ impl AgentPlugin for Claude {
                 details: crate::chat_ui::AttentionDetails::ProceedBox,
                 kind: crate::chat_ui::AttentionKind::Approval,
                 confirms: None,
+                // 选项角色（2.1.325 真机屏幕，tests/probe_approval.rs 与 probe_deny_feedback.rs，2026-11-14）：
+                //   ❯ 1. Yes
+                //     2. Yes, and always allow access to <目录> from this project
+                //     3. Yes, and switch to auto mode · auto mode handles these prompts for you
+                //     4. No
+                //   Esc to cancel · Tab to amend
+                // 第二项随请求变：命令类是 `Yes, and don’t ask again for: curl *`（同版本真机），放行目录时是
+                // 上面这句；长了会折到下一行，屏幕上这一行只剩 `… from this`，所以句尾不强求。
+                // 旧版另有只管本会话的写法（`Yes, allow all edits during this session`）。
+                //
+                // 「说明并拒绝」不是单独的一项：焦点移到 `No` 上按 Tab，这一行变成
+                // `❯ 4. No, and tell Claude what to do differently`，页脚的 `Tab to amend` 消失，
+                // 再打的字替换掉那半句，回车提交。真机走通：命令没有执行（`Not run · rejected`），
+                // 模型按说明作答（probe_deny_feedback，2.1.325）。
+                // 最后一条规则：旧版把那句直接列成拒绝项（带 `(esc)`）；2.1.325 上它是 `No` 按过 Tab 之后的
+                // 样子。两种情况下回车都是拒绝（没打字就是不带说明的拒绝）。旧版上怎么打说明没有取证，不给 typed。
+                options: &[
+                    crate::chat_ui::AttentionOptionRule {
+                        pattern: r"^yes$",
+                        role: crate::chat_ui::OptionRole::AllowOnce,
+                        scope: None,
+                        typed: None,
+                    },
+                    crate::chat_ui::AttentionOptionRule {
+                        pattern: r"^yes, and (?:switch to|use) auto mode\b",
+                        role: crate::chat_ui::OptionRole::AllowPersistent,
+                        scope: Some(crate::chat_ui::PersistScope::AutoMode),
+                        typed: None,
+                    },
+                    crate::chat_ui::AttentionOptionRule {
+                        pattern: r"^yes,.*\bthis session\b",
+                        role: crate::chat_ui::OptionRole::AllowPersistent,
+                        scope: Some(crate::chat_ui::PersistScope::Session),
+                        typed: None,
+                    },
+                    crate::chat_ui::AttentionOptionRule {
+                        pattern: r"^yes, and don['’]t ask again for:?\s*(.+)$",
+                        role: crate::chat_ui::OptionRole::AllowPersistent,
+                        scope: Some(crate::chat_ui::PersistScope::Remember),
+                        typed: None,
+                    },
+                    crate::chat_ui::AttentionOptionRule {
+                        pattern: r"^yes, and always allow access to (.+?)(?:\s+from this(?: project)?)?$",
+                        role: crate::chat_ui::OptionRole::AllowPersistent,
+                        scope: Some(crate::chat_ui::PersistScope::Remember),
+                        typed: None,
+                    },
+                    crate::chat_ui::AttentionOptionRule {
+                        pattern: r"^yes, and (?:don['’]t ask again|always allow)\b",
+                        role: crate::chat_ui::OptionRole::AllowPersistent,
+                        scope: Some(crate::chat_ui::PersistScope::Remember),
+                        typed: None,
+                    },
+                    crate::chat_ui::AttentionOptionRule {
+                        pattern: r"^no$",
+                        role: crate::chat_ui::OptionRole::Deny,
+                        scope: None,
+                        typed: Some(crate::chat_ui::TypedInput {
+                            amend_input: Some("\t"),
+                            ready_pattern: r"^\s*❯\s*(?:\d+\.\s*)?no, and tell claude what to do differently\s*$",
+                            submit_input: "\r",
+                        }),
+                    },
+                    crate::chat_ui::AttentionOptionRule {
+                        pattern: r"^no, and tell claude what to do differently",
+                        role: crate::chat_ui::OptionRole::Deny,
+                        scope: None,
+                        typed: None,
+                    },
+                ],
+                unparsed_keys: &[],
             },
             crate::chat_ui::AttentionPattern {
                 id: "claude:plan-approval",
@@ -939,6 +1012,8 @@ impl AgentPlugin for Claude {
                 details: crate::chat_ui::AttentionDetails::None,
                 kind: crate::chat_ui::AttentionKind::Plan,
                 confirms: None,
+                options: &[],
+                unparsed_keys: &[],
             },
         ]
     }

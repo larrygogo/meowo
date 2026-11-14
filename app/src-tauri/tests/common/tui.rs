@@ -274,3 +274,30 @@ pub fn temp_cwd(tag: &str) -> std::path::PathBuf {
     .unwrap();
     temp
 }
+
+/// kimi 把本会话的权限档切到 Always Ask。每一步都先在屏幕上认出来才按键。
+pub fn kimi_always_ask(tui: &Tui, spec: &meowo_agent::chat_ui::ComposerSpec) {
+    tui.submit("/permission");
+    assert!(tui.wait("权限菜单打开", 15, |tui| tui.text().contains("Select permission mode")));
+    pause(500);
+    const LABELS: [&str; 3] = ["Always Ask", "Ask When Needed", "Never Ask"];
+    // 菜单里每一档占两行（名称、说明），`❯` 标在名称行上。
+    let focused = |tui: &Tui| -> Option<usize> {
+        let lines = tui.lines();
+        let line = lines.iter().find(|line| line.trim_start().starts_with('❯'))?;
+        let label = line.trim_start().trim_start_matches('❯').trim_start();
+        LABELS.iter().position(|name| label.starts_with(name))
+    };
+    let at = focused(tui).expect("认不出权限菜单的焦点");
+    for _ in 0..at {
+        tui.send("\x1b[A");
+        pause(300);
+    }
+    assert_eq!(focused(tui), Some(0), "焦点应该落在 Always Ask 上");
+    tui.send("\r");
+    assert!(tui.wait("本会话切到 Always Ask", 15, |tui| {
+        tui.text().contains("Permission mode: Always Ask")
+            && tui.composer(spec).is_some_and(|read| read.empty)
+    }));
+    pause(800);
+}

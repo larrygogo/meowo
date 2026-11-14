@@ -4,12 +4,14 @@
 /// ChatWindow 里）、认不出文法的再落一张通用卡，三处各定各的标题、徽章、按钮和键盘。同一件事
 /// 换一家 Provider 就换一副样子（走查 输入 A3、B3、B13）。现在差异全压在这里：
 /// - 这是什么事（种类）由后端声明：broker 请求的 `kind`，屏幕规则的 `AttentionKind`；
-/// - 能做什么（允许一次、拒绝、持久放行、说明并拒绝、仅收起）由通道与屏幕选项算出能力；
+/// - 能做什么（允许一次、拒绝、持久放行、说明并拒绝、其他选项、仅收起）：broker 请求看通道，
+///   屏幕请求看每个选项的角色。角色由插件随识别规则声明（后端 `OptionRole`），这里不认任何一家
+///   的选项文案（此前用正则认 `Approve for this session`、`switch to auto mode`，适配知识落在了界面层）。
 /// 卡片组件只拿模型渲染，不看 Provider 名字，也不看规则 id。
 
 import type { RuntimeRequest } from "../../api";
 import type { useT } from "../../i18n";
-import type { AttentionKind, TerminalAttention, TerminalAttentionOption } from "../../terminalAttention";
+import type { AttentionKind, OptionRole, TerminalAttention, TerminalAttentionOption, TypedAnswer } from "../../terminalAttention";
 import { isRiskyCommand } from "./ApprovalCard";
 import { commandOfInput } from "./approvalScope";
 import { approvalSuggestionLabel, approvalSuggestionTip } from "./BrokerApprovalCard";
@@ -82,7 +84,8 @@ export function cardBadge(kind: CardKind, state: CardState, t: Dict, countdown: 
 }
 
 /// 审批卡上的一个决定。取值与 broker 的应答词一致，屏幕通道在适配层换成按键：
-/// `allow_once` 允许一次、`deny` 拒绝、`deny:<理由>` 说明并拒绝、`suggestion:<n>` 第 n 个持久放行。
+/// `allow_once` 允许一次、`deny` 拒绝、`deny:<理由>` 说明并拒绝、`suggestion:<n>` 第 n 个持久放行、
+/// `option:<n>` 第 n 个其他选项（只有屏幕通道有）。
 export type ApprovalChoice = string;
 
 export type ApprovalCardModel = {
@@ -106,10 +109,14 @@ export type ApprovalCardModel = {
   actions: {
     allowOnce: boolean;
     deny: boolean;
-    /// 说明并拒绝：理由能送回 Agent 才有（broker 通道）。
+    /// 说明并拒绝：理由能送回 Agent 才有。broker 通道经 hook 送回；屏幕通道要这一屏上有一个
+    /// 声明了打字流程的拒绝项（真机走通过的家才声明，见后端 `TypedInput`）。
     denyWithReason: boolean;
     /// 持久放行，下标 n 对应决定 `suggestion:<n>`。
     persistent: { label: string; tip: string }[];
+    /// 认不出角色的选项，下标 n 对应决定 `option:<n>`。按钮上是终端原文，不带数字快捷键，
+    /// 不冒充允许或拒绝（gemini 的 `Modify with external editor`、kimi 计划审阅里计划自带的选项）。
+    others: { label: string; tip: string }[];
     /// 仅收起：屏幕识别是启发式的，认错或过期的卡要有不发按键的出口；
     /// broker 请求收起等于让 Agent 干等到超时，不给。
     collapse: boolean;
@@ -139,71 +146,69 @@ function brokerApprovalModel(request: RuntimeRequest, t: Dict, timedOut: boolean
         label: approvalSuggestionLabel(suggestion, index, t),
         tip: approvalSuggestionTip(suggestion, index, t),
       })),
+      others: [],
       collapse: false,
     },
   };
 }
 
-/// 屏幕审批框里的选项按语义归位。各家的文案（真机或源码取证，见各插件）：
-/// claude `Yes` / `Yes, and don't ask again for: …` / `No, and tell Claude what to do differently (esc)`；
-/// kimi `Approve once` / `Approve for this session` / `Reject`；
-/// gemini `Allow once` / `Allow for this session` / `No, suggest changes (esc)`；
-/// opencode `Allow once` / `Allow always` / `Reject`。
+/// 屏幕审批框里的选项按角色归位。角色是识别层照插件声明的选项规则定好的（见 terminalAttention
+/// 的 assignRoles），这里只是分组，不看文案。
+///
+/// 没有顶替：这一屏上没有 allow_once 角色的选项，`allowOnce` 就是 null，卡上不出「允许一次」。
+/// 此前认不出时拿「第一个不是拒绝的选项」顶上，只认出 `Allow always / Reject` 两项时，
+/// 「允许一次」发出去的是 Allow always（做空审查 2026-11-14）。
 export type TerminalApprovalOptions = {
   allowOnce: TerminalAttentionOption | null;
   deny: TerminalAttentionOption | null;
+  /// 能带说明的拒绝项与它的打字流程：专门的「拒绝并说明」项，或可以追加说明的拒绝项。
+  denyWithReason: (TerminalAttentionOption & { typed: TypedAnswer }) | null;
   persistent: TerminalAttentionOption[];
+  others: TerminalAttentionOption[];
 };
 
-const DENY_EXACT = /^(?:no|reject|deny|cancel)$/i;
-const DENY_PREFIX = /^(?:no|reject|deny)\b/i;
-const ALLOW_ONCE = /^(?:yes|approve once|approve|allow once|allow)$/i;
-/// 要现场打字的拒绝项（另有一个干脆的拒绝项时，它不算持久放行，也不出按钮）。
-const DENY_FEEDBACK = /\bfeedback\b|\bwhat to do\b|\bsuggest changes\b|^revise$/i;
+type AttentionOptions = Pick<TerminalAttention, "options" | "unparsedKeys">;
 
-export function terminalApprovalOptions(attention: Pick<TerminalAttention, "options">): TerminalApprovalOptions {
+export function terminalApprovalOptions(attention: AttentionOptions): TerminalApprovalOptions {
   const options = attention.options ?? [];
-  // 拒绝项两轮匹配：先找干脆的（kimi 的 Reject 不能被 Reject with feedback 抢注），
-  // 找不到再按词首认（claude 的长文案拒绝项只有前缀能认）。
-  const deny = options.find((option) => DENY_EXACT.test(option.label.trim()))
-    ?? options.find((option) => DENY_PREFIX.test(option.label.trim()))
-    ?? null;
-  const allowOnce = options.find((option) => option !== deny && ALLOW_ONCE.test(option.label.trim()))
-    ?? options.find((option) => option !== deny)
-    ?? null;
-  const persistent = options.filter((option) => option !== deny && option !== allowOnce
-    && !DENY_PREFIX.test(option.label.trim()) && !DENY_FEEDBACK.test(option.label.trim()));
-  return { allowOnce, deny, persistent };
+  const first = (role: OptionRole) => options.find((option) => option.role === role) ?? null;
+  const typedDeny = options.find((option): option is TerminalAttentionOption & { typed: TypedAnswer } => (
+    (option.role === "deny_with_feedback" || option.role === "deny") && option.typed !== undefined
+  )) ?? null;
+  return {
+    allowOnce: first("allow_once"),
+    deny: first("deny"),
+    denyWithReason: typedDeny,
+    persistent: options.filter((option) => option.role === "allow_persistent"),
+    // 没带角色的（旧后端没有下发选项规则）也归这里：宁可列成普通选项，也不猜它是允许还是拒绝。
+    others: options.filter((option) => option.role === "other" || option.role === undefined),
+  };
 }
 
-/// 持久放行按钮的名称。只记本会话的说「本会话内允许」，写进规则的说「允许并记住」，
-/// 认不出范围的照搬终端原文，不替它编一个范围。悬停提示一律是终端里的原文。
-function terminalPersistentLabel(option: TerminalAttentionOption, attention: TerminalAttention, t: Dict): { label: string; tip: string } {
+/// 持久放行按钮的名称，由插件声明的范围定：只记本会话的说「本会话内允许」，写进规则的说
+/// 「允许并记住」（带上放行的对象），切自动模式的说「允许并切到自动模式」；没声明范围的照搬终端原文，
+/// 不替它编一个范围。悬停提示一律是终端里的原文。
+function terminalPersistentLabel(option: TerminalAttentionOption, t: Dict): { label: string; tip: string } {
   const raw = option.label.trim();
-  // kimi、gemini 的记住项原文就写着 this session；横排选项（opencode）的 Allow always 到进程
-  // 重启前有效（确认页原文 `until OpenCode is restarted`），一个会话就是一个进程，同样按本会话说。
-  if (/\bthis session\b/i.test(raw) || (attention.details === "option_row" && /\balways\b/i.test(raw))) {
-    return { label: t.chat.allowSession, tip: raw };
+  switch (option.scope) {
+    case "session": return { label: t.chat.allowSession, tip: raw };
+    case "remember": return { label: option.target ? `${t.chat.allowRemember} · ${option.target}` : t.chat.allowRemember, tip: raw };
+    case "auto_mode": return { label: t.chat.allowAutoMode, tip: raw };
+    default: return plainOptionLabel(option);
   }
-  if (/don['’]t ask again|\balways\b|\bfuture\b|\bremember\b/i.test(raw)) {
-    const target = raw.match(/for:\s*(.+)$/i)?.[1];
-    return { label: target ? `${t.chat.allowRemember} · ${target}` : t.chat.allowRemember, tip: raw };
-  }
-  // claude 2.1.325 的第三项 `Yes, and switch to auto mode · …`（真机取证 2026-11-14）。
-  if (/\bswitch to auto mode\b/i.test(raw)) return { label: t.chat.allowAutoMode, tip: raw };
-  // 认不出范围：照搬终端原文，太长就截断（全文在悬停提示里）。
+}
+
+/// 普通选项按钮：终端原文，太长就截断（全文在悬停提示里）。
+function plainOptionLabel(option: TerminalAttentionOption): { label: string; tip: string } {
+  const raw = option.label.trim();
   return { label: raw.length > 28 ? raw.slice(0, 27) + "…" : raw, tip: raw };
 }
 
-/// 选项一个都没认出来时，能不能按「回车 = 默认的允许一次、Esc = 拒绝」兜底。
-/// 只对验证过这两键的文法兜底：横排选项（opencode 真机：回车选第一项、Esc 是 Reject）、
-/// 框线对话框（gemini：拒绝项原文带 `(esc)`，焦点默认在第一项）、没有声明文法的规则（此前的
-/// 通用卡就是这两键）。框式（claude）与面板式（kimi）认不出选项多半是面板滚出了屏幕，
-/// 这时不猜按键，卡上只留「仅收起」，去终端处理。
-function fallbackKeys(attention: Pick<TerminalAttention, "options" | "details">): boolean {
-  if ((attention.options?.length ?? 0) > 0) return false;
-  return attention.details === "option_row" || attention.details === "framed_box"
-    || attention.details === undefined || attention.details === "none";
+/// 选项一个都没认出来时仍然成立的按键：只有插件声明过的才有（`unparsed_keys`，都是真机验证过、
+/// 与焦点位置无关或焦点位置确定的键）。没声明的不猜，卡上只留「仅收起」，去终端处理。
+function unparsedKey(attention: AttentionOptions, role: OptionRole): string | null {
+  if ((attention.options?.length ?? 0) > 0) return null;
+  return attention.unparsedKeys?.find((entry) => entry.role === role)?.input ?? null;
 }
 
 function terminalApprovalDetails(attention: TerminalAttention) {
@@ -225,7 +230,6 @@ function terminalApprovalDetails(attention: TerminalAttention) {
 function terminalApprovalModel(request: RuntimeRequest, attention: TerminalAttention, t: Dict): ApprovalCardModel {
   const details = terminalApprovalDetails(attention);
   const options = terminalApprovalOptions(attention);
-  const keysFallback = fallbackKeys(attention);
   return {
     requestId: request.requestId,
     channel: "terminal",
@@ -238,10 +242,11 @@ function terminalApprovalModel(request: RuntimeRequest, attention: TerminalAtten
     detail: details.command ? { label: details.isCommand ? "command" : "input", text: details.command } : null,
     risky: !!details.command && isRiskyCommand(details.command),
     actions: {
-      allowOnce: keysFallback || options.allowOnce !== null,
-      deny: keysFallback || options.deny !== null,
-      denyWithReason: false,
-      persistent: options.persistent.map((option) => terminalPersistentLabel(option, attention, t)),
+      allowOnce: options.allowOnce !== null || unparsedKey(attention, "allow_once") !== null,
+      deny: options.deny !== null || unparsedKey(attention, "deny") !== null,
+      denyWithReason: options.denyWithReason !== null,
+      persistent: options.persistent.map((option) => terminalPersistentLabel(option, t)),
+      others: options.others.map(plainOptionLabel),
       collapse: true,
     },
   };
@@ -254,14 +259,25 @@ export function approvalCardModel(request: RuntimeRequest, t: Dict, timedOut = f
 }
 
 /// 屏幕通道把决定换成要写进终端的按键；这个决定在屏幕上没有对应项时返回 null。
-export function terminalInputForChoice(attention: Pick<TerminalAttention, "options" | "details">, choice: ApprovalChoice): string | null {
-  const unparsed = fallbackKeys(attention);
+/// 「说明并拒绝」不在这里：它不是一串按键，而是分步的打字流程（见 terminalFeedbackFor）。
+export function terminalInputForChoice(attention: AttentionOptions, choice: ApprovalChoice): string | null {
   const options = terminalApprovalOptions(attention);
-  if (choice === "allow_once") return unparsed ? "\r" : options.allowOnce?.input ?? null;
-  if (choice === "deny") return unparsed ? "\x1b" : options.deny?.input ?? null;
-  const persistent = /^suggestion:(\d+)$/.exec(choice);
-  if (persistent) return options.persistent[Number(persistent[1])]?.input ?? null;
-  return null;
+  if (choice === "allow_once") return options.allowOnce?.input ?? unparsedKey(attention, "allow_once");
+  if (choice === "deny") return options.deny?.input ?? unparsedKey(attention, "deny");
+  const indexed = /^(suggestion|option):(\d+)$/.exec(choice);
+  if (!indexed) return null;
+  const group = indexed[1] === "suggestion" ? options.persistent : options.others;
+  return group[Number(indexed[2])]?.input || null;
+}
+
+/// 「说明并拒绝」在屏幕通道上的打字流程；这一屏上没有能带说明的拒绝项时返回 null。
+export function terminalFeedbackFor(attention: AttentionOptions): TypedAnswer | null {
+  return terminalApprovalOptions(attention).denyWithReason?.typed ?? null;
+}
+
+/// 决定里的拒绝理由（`deny:<理由>`）；不是带理由的拒绝时返回 null。
+export function denyReasonOf(choice: ApprovalChoice): string | null {
+  return choice.startsWith("deny:") ? choice.slice("deny:".length) : null;
 }
 
 /// 这个决定是不是持久放行（屏幕通道据此记一笔「等二次确认页」，见 terminalFollowUp）。

@@ -84,10 +84,12 @@ describe("审批卡：五家同一张卡", () => {
       ["claude（broker）", ["允许并记住（此项目、本机） · cargo test", "说明并拒绝", "拒绝", "允许一次"]],
       ["codex（broker）", ["说明并拒绝", "拒绝", "允许一次"]],
       // 屏幕：识别可能认错，所以有「仅收起」；持久放行按终端里实际有的选项出。
-      ["kimi（屏幕）", ["仅收起", "本会话内允许", "拒绝", "允许一次"]],
+      // 「说明并拒绝」跟着能力走，不跟着通道走：拒绝项声明了打字流程的家有（kimi、claude 真机走通），
+      // gemini 那一项只是取消、opencode 主会话没有说明页，所以没有。
+      ["kimi（屏幕）", ["仅收起", "本会话内允许", "说明并拒绝", "拒绝", "允许一次"]],
       ["gemini（屏幕）", ["仅收起", "本会话内允许", "拒绝", "允许一次"]],
       ["opencode（屏幕）", ["仅收起", "本会话内允许", "拒绝", "允许一次"]],
-      ["claude（屏幕兜底）", ["仅收起", "允许并记住 · curl *", "允许并切到自动模式", "拒绝", "允许一次"]],
+      ["claude（屏幕兜底）", ["仅收起", "允许并记住 · curl *", "允许并切到自动模式", "说明并拒绝", "拒绝", "允许一次"]],
     ]);
   });
 
@@ -285,9 +287,56 @@ describe("审批卡：说明并拒绝、在途、焦点（broker 通道的能力
     expect(onDecide).toHaveBeenCalledWith("deny:先别跑");
   });
 
-  it("屏幕通道没有「说明并拒绝」：理由送不回 Agent 就不出这颗钮", () => {
-    render(<Card request={screenRequest("kimi", KIMI_APPROVAL_SCREEN)} />);
+  /// SPEC 终态 2：某家多出的选项按能力出现，不因走的通道不同而缺失。此前屏幕通道写死没有这颗钮。
+  it.each([
+    ["kimi", KIMI_APPROVAL_SCREEN],
+    ["claude", CLAUDE_APPROVAL_SCREEN],
+  ])("%s 屏幕通道：有「说明并拒绝」，填了理由提交发出 deny:<理由>，空着不发", (provider, sample) => {
+    const onDecide = vi.fn();
+    render(<Card request={screenRequest(provider, sample)} onDecide={onDecide} />);
+    fireEvent.click(screen.getByRole("button", { name: "说明并拒绝" }));
+    const input = screen.getByPlaceholderText("说明拒绝原因…");
+    const form = input.closest("form") as HTMLFormElement;
+    fireEvent.submit(form);
+    expect(onDecide).not.toHaveBeenCalled();
+    fireEvent.change(input, { target: { value: "改用 pnpm 1 次" } });
+    fireEvent.submit(form);
+    expect(onDecide).toHaveBeenCalledWith("deny:改用 pnpm 1 次");
+  });
+
+  it.each([
+    ["gemini", GEMINI_APPROVAL_SCREEN],
+    ["opencode", OPENCODE_PERMISSION_SCREEN],
+  ])("%s 屏幕通道：拒绝项没有声明打字流程，不出「说明并拒绝」", (provider, sample) => {
+    render(<Card request={screenRequest(provider, sample)} />);
     expect(screen.queryByRole("button", { name: "说明并拒绝" })).toBeNull();
+  });
+
+  /// 认不出角色的选项：照终端原文列成普通按钮，在左侧组里，不带数字徽标，发的是它自己的决定词。
+  it("其他选项：按终端原文出按钮，不带数字徽标，不进允许与拒绝", async () => {
+    const sample = GEMINI_APPROVAL_SCREEN.replace(
+      "│   3. No, suggest changes (esc)            │",
+      "│   3. Modify with external editor          │\n│   4. No, suggest changes (esc)            │",
+    );
+    const onDecide = vi.fn();
+    render(<Card request={screenRequest("gemini", sample)} onDecide={onDecide} />);
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(actionNames()).toEqual(["仅收起", "本会话内允许", "Modify with external editor", "拒绝", "允许一次"]);
+    const other = screen.getByRole("button", { name: "Modify with external editor" });
+    expect(other.closest(".chat-approval-actions-side")).not.toBeNull();
+    expect(other.querySelector("kbd")).toBeNull();
+    expect(other.className).toBe("is-other");
+    // 持久放行的数字徽标不因为多了一颗其他选项而错位。
+    expect(screen.getByRole("button", { name: /本会话内允许/ }).querySelector("kbd")?.textContent).toBe("2");
+    fireEvent.click(other);
+    expect(onDecide).toHaveBeenCalledWith("option:0");
+  });
+
+  it("这一屏没有允许一次那一项：卡上没有「允许一次」按钮", () => {
+    const sample = OPENCODE_PERMISSION_SCREEN.replace("Allow once   Allow always   Reject", "Allow always   Reject");
+    render(<Card request={screenRequest("opencode", sample)} />);
+    expect(screen.queryByRole("button", { name: /允许一次/ })).toBeNull();
+    expect(actionNames()).toEqual(["仅收起", "本会话内允许", "拒绝"]);
   });
 
   /// 走查 C-5（p2-digit-in-ta：默认焦点在输入框，按「1」只把数字打进输入框）：数字徽标只在按下去真生效时

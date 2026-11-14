@@ -42,6 +42,31 @@ pub(super) static DEPS: &[D] = &[
         "0.68.0 真机 2026-11-14：vim NORMAL 模式下状态行最左侧的标记（INSERT 时是 [INSERT]）。方括号是运行时拼的，bundle 里没有原样的 `[NORMAL]`；vim 模式是否还在由 composer.empty 的两句占位（for NORMAL mode. 与 for INSERT mode.）盯着",
     ),
     // ── 正则规则的样例 ──
+    // ── 工具确认框选项的角色规则 ──
+    D::new(
+        "option:gemini:command-approval#0",
+        "Allow once",
+        "Allow once",
+        "0.68.0 bundle ToolConfirmationMessage 2026-11-14；0.61 真机屏幕",
+    ),
+    D::new(
+        "option:gemini:command-approval#1",
+        "Allow for this session",
+        "Allow for this session",
+        "0.68.0 bundle 2026-11-14（另有 Allow tool for this session、Allow all server tools for this session）；0.61 真机屏幕",
+    ),
+    D::new(
+        "option:gemini:command-approval#2",
+        "Allow for all future sessions",
+        "Allow for all future sessions",
+        "0.68.0 bundle 2026-11-14（另有 Allow this command for all future sessions、Allow for this file in all future sessions）；没有真机屏幕",
+    ),
+    D::new(
+        "option:gemini:command-approval#3",
+        "No, suggest changes (esc)",
+        "No, suggest changes (esc)",
+        "0.68.0 bundle 2026-11-14：值是 cancel，与 Esc 相同；0.61 真机屏幕",
+    ),
     D::new(
         "attention:gemini:command-approval",
         "allow execution of",

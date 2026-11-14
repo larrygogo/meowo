@@ -5286,6 +5286,8 @@ button.scm-check-name:hover { text-decoration: underline; }
    （2026-11-14 量测：手机英文「Allow and remember (this project, local) · cargo test」超出卡片左右各 3px）。 */
 .chat-approval-actions-side { min-width: 0; max-width: 100%; }
 .chat-approval-actions-side > button.is-persistent { min-width: 0; max-width: 100%; }
+/* 认不出作用的其他选项（终端原文，同样可能很长）：与持久放行同一条宽度规则。 */
+.chat-approval-actions-side > button.is-other { min-width: 0; max-width: 100%; }
 .chat-approval-persist-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 /* 「收起」进了左侧组，就得交出自己那份 margin-right:auto（原本靠它把自己顶到最左），
    否则组内两颗按钮被顶到行的两端。顺带对齐高度：is-inline 的 height:auto 特异性更高，

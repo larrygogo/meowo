@@ -1,5 +1,5 @@
 {
-  "note": "五家审批的真机样本：tests/probe_approval.rs 用本机真实 CLI 抓的屏幕与 broker 请求（用户目录名已换成 me）。前端 views/chat/approvalFrames.test.ts 拿它回放识别与卡片模型；探针作答时读这里的 allowOnceInput。patterns 是各插件声明的 attention_patterns，Rust 测试逐字核对。",
+  "note": "五家审批的真机样本：tests/probe_approval.rs 用本机真实 CLI 抓的屏幕与 broker 请求（用户目录名已换成 me）。前端 views/chat/approvalFrames.test.tsx 拿它回放识别与卡片模型；探针作答时读这里的 allowOnceInput 与 denyFeedback。patterns 是各插件声明的 attention_patterns（含选项角色规则），Rust 测试逐字核对。feedbackFrames 是 tests/probe_deny_feedback.rs 走「说明并拒绝」时四个时刻的屏幕：审批框、进入等输入、打完字、了结之后。",
   "patterns": {
     "claude": [
       {
@@ -8,10 +8,12 @@
         "id": "claude:long-session-resume",
         "kind": "choice",
         "last": false,
+        "options": [],
         "patterns": [
           "this session is[^\\n]{0,120}\\bold and[^\\n]{0,80}\\btokens\\b",
           "resuming the full session will consume a substantial portion of your usage limits"
-        ]
+        ],
+        "unparsed_keys": []
       },
       {
         "confirms": null,
@@ -19,10 +21,65 @@
         "id": "claude:command-approval",
         "kind": "approval",
         "last": true,
+        "options": [
+          {
+            "pattern": "^yes$",
+            "role": "allow_once",
+            "scope": null,
+            "typed": null
+          },
+          {
+            "pattern": "^yes, and (?:switch to|use) auto mode\\b",
+            "role": "allow_persistent",
+            "scope": "auto_mode",
+            "typed": null
+          },
+          {
+            "pattern": "^yes,.*\\bthis session\\b",
+            "role": "allow_persistent",
+            "scope": "session",
+            "typed": null
+          },
+          {
+            "pattern": "^yes, and don['’]t ask again for:?\\s*(.+)$",
+            "role": "allow_persistent",
+            "scope": "remember",
+            "typed": null
+          },
+          {
+            "pattern": "^yes, and always allow access to (.+?)(?:\\s+from this(?: project)?)?$",
+            "role": "allow_persistent",
+            "scope": "remember",
+            "typed": null
+          },
+          {
+            "pattern": "^yes, and (?:don['’]t ask again|always allow)\\b",
+            "role": "allow_persistent",
+            "scope": "remember",
+            "typed": null
+          },
+          {
+            "pattern": "^no$",
+            "role": "deny",
+            "scope": null,
+            "typed": {
+              "amend_input": "\t",
+              "ready_pattern": "^\\s*❯\\s*(?:\\d+\\.\\s*)?no, and tell claude what to do differently\\s*$",
+              "submit_input": "\r"
+            }
+          },
+          {
+            "pattern": "^no, and tell claude what to do differently",
+            "role": "deny",
+            "scope": null,
+            "typed": null
+          }
+        ],
         "patterns": [
           "this command requires approval",
           "do you want to proceed\\?"
-        ]
+        ],
+        "unparsed_keys": []
       },
       {
         "confirms": null,
@@ -30,9 +87,11 @@
         "id": "claude:plan-approval",
         "kind": "plan",
         "last": true,
+        "options": [],
         "patterns": [
           "written\\s+up\\s+a\\s+plan\\s+and\\s+is\\s+ready\\s+to\\s+execute"
-        ]
+        ],
+        "unparsed_keys": []
       }
     ],
     "codex": [],
@@ -43,11 +102,43 @@
         "id": "gemini:command-approval",
         "kind": "approval",
         "last": true,
+        "options": [
+          {
+            "pattern": "^allow once$",
+            "role": "allow_once",
+            "scope": null,
+            "typed": null
+          },
+          {
+            "pattern": "^allow (?:tool |all server tools )?for this session$",
+            "role": "allow_persistent",
+            "scope": "session",
+            "typed": null
+          },
+          {
+            "pattern": "^allow (?:tool |this command )?for (?:this file in )?all future sessions$",
+            "role": "allow_persistent",
+            "scope": "remember",
+            "typed": null
+          },
+          {
+            "pattern": "^no, suggest changes(?: \\(esc\\))?$",
+            "role": "deny",
+            "scope": null,
+            "typed": null
+          }
+        ],
         "patterns": [
           "^\\s*│\\s*allow execution of [^\\n]*\\?",
           "^\\s*│\\s*apply this change\\?",
           "^\\s*│\\s*do you want to proceed\\?",
           "^\\s*│\\s*to run \\[[^\\]\\n]+\\], allow access to the following\\?"
+        ],
+        "unparsed_keys": [
+          {
+            "input": "\u001b",
+            "role": "deny"
+          }
         ]
       },
       {
@@ -56,10 +147,12 @@
         "id": "gemini:usage-limit",
         "kind": "choice",
         "last": true,
+        "options": [],
         "patterns": [
           "^\\s*│\\s*usage limit reached\\b",
           "^\\s*│\\s*we are currently experiencing high demand\\b"
-        ]
+        ],
+        "unparsed_keys": []
       },
       {
         "confirms": null,
@@ -67,9 +160,11 @@
         "id": "gemini:question",
         "kind": "question",
         "last": true,
+        "options": [],
         "patterns": [
           "^\\s*│\\s*answer questions\\b"
-        ]
+        ],
+        "unparsed_keys": []
       }
     ],
     "kimi": [
@@ -79,9 +174,18 @@
         "id": "kimi:question",
         "kind": "question",
         "last": true,
+        "options": [
+          {
+            "pattern": "^other$",
+            "role": "custom_answer",
+            "scope": null,
+            "typed": null
+          }
+        ],
         "patterns": [
           "↑↓ select\\s+(?:1-\\d+ / ↵ (?:choose|toggle)|1/2 choose\\s+↵ confirm)\\s+←/→/tab switch"
-        ]
+        ],
+        "unparsed_keys": []
       },
       {
         "confirms": null,
@@ -89,10 +193,41 @@
         "id": "kimi:command-approval",
         "kind": "approval",
         "last": true,
+        "options": [
+          {
+            "pattern": "^approve(?: once)?$",
+            "role": "allow_once",
+            "scope": null,
+            "typed": null
+          },
+          {
+            "pattern": "^approve for this session$",
+            "role": "allow_persistent",
+            "scope": "session",
+            "typed": null
+          },
+          {
+            "pattern": "^reject$",
+            "role": "deny",
+            "scope": null,
+            "typed": null
+          },
+          {
+            "pattern": "^(?:reject with feedback|revise)$",
+            "role": "deny_with_feedback",
+            "scope": null,
+            "typed": {
+              "amend_input": null,
+              "ready_pattern": "^\\s*type feedback · ↵ submit\\.?\\s*$",
+              "submit_input": "\r"
+            }
+          }
+        ],
         "patterns": [
           "↑/↓ select · [\\d/]+ choose · ↵ confirm",
           "^\\s*▶\\s*(?:run this command|write this file|apply these edits|stop this task|ready to build with this plan|approve [^\\n?]+)\\?"
-        ]
+        ],
+        "unparsed_keys": []
       }
     ],
     "opencode": [
@@ -102,8 +237,38 @@
         "id": "opencode:command-approval",
         "kind": "approval",
         "last": true,
+        "options": [
+          {
+            "pattern": "^allow once$",
+            "role": "allow_once",
+            "scope": null,
+            "typed": null
+          },
+          {
+            "pattern": "^allow always$",
+            "role": "allow_persistent",
+            "scope": "session",
+            "typed": null
+          },
+          {
+            "pattern": "^reject$",
+            "role": "deny",
+            "scope": null,
+            "typed": null
+          }
+        ],
         "patterns": [
           "△ permission required"
+        ],
+        "unparsed_keys": [
+          {
+            "input": "\r",
+            "role": "allow_once"
+          },
+          {
+            "input": "\u001b",
+            "role": "deny"
+          }
         ]
       },
       {
@@ -112,9 +277,11 @@
         "id": "opencode:always-allow-confirm",
         "kind": "choice",
         "last": true,
+        "options": [],
         "patterns": [
           "△ always allow"
-        ]
+        ],
+        "unparsed_keys": []
       }
     ]
   },
@@ -174,6 +341,11 @@
         "requestId": "3048-18e7efef34fa17ac",
         "sessionId": 1,
         "toolName": "Bash"
+      },
+      "denyFeedback": {
+        "openInput": "\u001b[B\u001b[B\u001b[B\t",
+        "readyPattern": "^\\s*❯\\s*(?:\\d+\\.\\s*)?no, and tell claude what to do differently\\s*$",
+        "submitInput": "\r"
       }
     },
     "codex": {
@@ -288,7 +460,12 @@
         " K3.1 Pro thinking: high  C:\\Users\\me\\AppData\\Local\\Temp\\meowo-approval-probe-15712                    ctrl+o expand",
         "                                                                                                 context: 2% (16.8k/1M)"
       ],
-      "brokerRequest": null
+      "brokerRequest": null,
+      "denyFeedback": {
+        "openInput": "4",
+        "readyPattern": "^\\s*type feedback · ↵ submit\\.?\\s*$",
+        "submitInput": "\r"
+      }
     },
     "opencode": {
       "version": "1.19.5",
@@ -342,6 +519,329 @@
         "  ┃"
       ],
       "brokerRequest": null
+    }
+  },
+  "feedbackFrames": {
+    "claude": {
+      "version": "2.1.325",
+      "capturedAt": "2026-11-14",
+      "args": [
+        "--permission-mode",
+        "default",
+        "--model",
+        "haiku"
+      ],
+      "prompt": "Run this exact shell command and nothing else: echo meowo-probe > probe-out.txt",
+      "rule": "claude:command-approval",
+      "feedback": "Do not run it. Reply with only the product of 1234 and 3.",
+      "denyFeedback": {
+        "openInput": "\u001b[B\u001b[B\u001b[B\t",
+        "readyPattern": "^\\s*❯\\s*(?:\\d+\\.\\s*)?no, and tell claude what to do differently\\s*$",
+        "submitInput": "\r"
+      },
+      "screen": [
+        " ▐▛███▛█   Claude Code v2.1.325",
+        "▝▜██████▀  Haiku 5.5 · Claude Ultra",
+        " ▝▝   ▝▝   ~\\AppData\\Local\\Temp\\meowo-deny-feedback-probe-9916",
+        "",
+        "",
+        "❯ Run this exact shell command and nothing else: echo meowo-probe > probe-out.txt",
+        "",
+        "● Running the requested echo command to write probe-out.txt",
+        "  ⎿  $ echo meowo-probe > probe-out.txt",
+        "",
+        "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+        " Bash command",
+        " Tip: auto mode handles these prompts for you — choose \"switch to auto mode\" below",
+        " Run the requested echo command to write probe-out.txt",
+        "╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌",
+        " echo meowo-probe > probe-out.txt",
+        "╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌",
+        " Do you want to proceed?",
+        " ❯ 1. Yes",
+        "   2. Yes, and always allow access to C:\\Users\\me\\AppData\\Local\\Temp\\meowo-deny-feedback-probe-9916 from this",
+        "      project",
+        "   3. Yes, and switch to auto mode · auto mode handles these prompts for you",
+        "   4. No",
+        "",
+        " Esc to cancel · Tab to amend"
+      ],
+      "readyScreen": [
+        " ▐▛███▛█   Claude Code v2.1.325",
+        "▝▜██████▀  Haiku 5.5 · Claude Ultra",
+        " ▝▝   ▝▝   ~\\AppData\\Local\\Temp\\meowo-deny-feedback-probe-9916",
+        "",
+        "",
+        "❯ Run this exact shell command and nothing else: echo meowo-probe > probe-out.txt",
+        "",
+        "● Running the requested echo command to write probe-out.txt",
+        "  ⎿  $ echo meowo-probe > probe-out.txt",
+        "",
+        "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+        " Bash command",
+        " Tip: auto mode handles these prompts for you — choose \"switch to auto mode\" below",
+        " Run the requested echo command to write probe-out.txt",
+        "╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌",
+        " echo meowo-probe > probe-out.txt",
+        "╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌",
+        " Do you want to proceed?",
+        "   1. Yes",
+        "   2. Yes, and always allow access to C:\\Users\\me\\AppData\\Local\\Temp\\meowo-deny-feedback-probe-9916 from this",
+        "      project",
+        "   3. Yes, and switch to auto mode · auto mode handles these prompts for you",
+        " ❯ 4. No, and tell Claude what to do differently",
+        "",
+        " Esc to cancel"
+      ],
+      "typedScreen": [
+        " ▐▛███▛█   Claude Code v2.1.325",
+        "▝▜██████▀  Haiku 5.5 · Claude Ultra",
+        " ▝▝   ▝▝   ~\\AppData\\Local\\Temp\\meowo-deny-feedback-probe-9916",
+        "",
+        "",
+        "❯ Run this exact shell command and nothing else: echo meowo-probe > probe-out.txt",
+        "",
+        "● Running the requested echo command to write probe-out.txt",
+        "  ⎿  $ echo meowo-probe > probe-out.txt",
+        "",
+        "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+        " Bash command",
+        " Tip: auto mode handles these prompts for you — choose \"switch to auto mode\" below",
+        " Run the requested echo command to write probe-out.txt",
+        "╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌",
+        " echo meowo-probe > probe-out.txt",
+        "╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌",
+        " Do you want to proceed?",
+        "   1. Yes",
+        "   2. Yes, and always allow access to C:\\Users\\me\\AppData\\Local\\Temp\\meowo-deny-feedback-probe-9916 from this",
+        "      project",
+        "   3. Yes, and switch to auto mode · auto mode handles these prompts for you",
+        " ❯ 4. No, Do not run it. Reply with only the product of 1234 and 3.",
+        "",
+        " Esc to cancel"
+      ],
+      "finalScreen": [
+        " ▐▛███▛█   Claude Code v2.1.325",
+        "▝▜██████▀  Haiku 5.5 · Claude Ultra",
+        " ▝▝   ▝▝   ~\\AppData\\Local\\Temp\\meowo-deny-feedback-probe-9916",
+        "",
+        "",
+        "❯ Run this exact shell command and nothing else: echo meowo-probe > probe-out.txt",
+        "",
+        "  Ran 1 shell command",
+        "  ⎿  Not run · rejected",
+        "",
+        "● 1234 × 3 = 3702",
+        "",
+        "✻ Cogitated for 3s · done 23:47",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "  You've used 88% of your weekly limit · resets Nov 18, 11pm (Asia/Singapore) · /usage-credits to keep using Claude C…",
+        "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+        "❯",
+        "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+        "  Haiku 5.5 · 5% ctx",
+        "  ⏸ manual mode on · ← for agents"
+      ]
+    },
+    "kimi": {
+      "version": "2.6.1",
+      "capturedAt": "2026-11-14",
+      "args": [],
+      "prompt": "Run this exact shell command and nothing else: echo meowo-probe > probe-out.txt",
+      "rule": "kimi:command-approval",
+      "feedback": "Do not run it. Reply with only the product of 1234 and 3.",
+      "denyFeedback": {
+        "openInput": "4",
+        "readyPattern": "^\\s*type feedback · ↵ submit\\.?\\s*$",
+        "submitInput": "\r"
+      },
+      "screen": [
+        " │  ▐█████▌  Send /help for help information.                                                                         │",
+        " │                                                                                                                    │",
+        " │  Directory: C:\\Users\\me\\AppData\\Local\\Temp\\meowo-deny-feedback-probe-12668                                      │",
+        " │  Session:   session_b667d0b9-151a-49b0-b236-d24ea636cea3                                                           │",
+        " │  Model:     K3.1 Pro                                                                                               │",
+        " │  Version:   2.6.1                                                                                                  │",
+        " │  MCP:       1 connected                                                                                            │",
+        " │                                                                                                                    │",
+        " ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯",
+        "",
+        " ✦ Kimi K3.1 Pro is ready - use the model in a fresh session for the best results",
+        "   Standard: Plus/Moderato and above; Highspeed: Pro/Allegretto and above",
+        "",
+        "   No session yet — one will be created on your first message.",
+        "",
+        "   Permission mode: Always Ask",
+        "   MCP server \"meowo\" connected · 0 tools (stdio)",
+        "",
+        " ❯ Run this exact shell command and nothing else: echo meowo-probe > probe-out.txt",
+        "",
+        " ● I need obey exact command nothing else. I'll use Bash. User explicitly command echo redirect file. Tool instructions",
+        "   says echo > file -> Write, but user says exact shell command, so Bash exact. Now run cwd default. No response? \"and",
+        "   … (2 more lines, ctrl+o to expand)",
+        "",
+        " ● Running a command · $ echo meowo-probe > probe-out.txt",
+        " ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+        "   ▶ Run this command?",
+        "",
+        "   cwd: C:\\Users\\me\\AppData\\Local\\Temp\\meowo-deny-feedback-probe-12668",
+        "   $ echo meowo-probe > probe-out.txt",
+        "",
+        "   ▶ 1. Approve once",
+        "     2. Approve for this session",
+        "     3. Reject",
+        "     4. Reject with feedback",
+        "",
+        "   ↑/↓ select · 1/2/3/4 choose · ↵ confirm",
+        " ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+        " K3.1 Pro thinking: high  C:\\Users\\me\\AppData\\Local\\Temp\\meowo-deny-feedback-probe-12668               ctrl+o expand",
+        "                                                                                                   context: 2% (16k/1M)"
+      ],
+      "readyScreen": [
+        " │  ▐█████▌  Send /help for help information.                                                                         │",
+        " │                                                                                                                    │",
+        " │  Directory: C:\\Users\\me\\AppData\\Local\\Temp\\meowo-deny-feedback-probe-12668                                      │",
+        " │  Session:   session_b667d0b9-151a-49b0-b236-d24ea636cea3                                                           │",
+        " │  Model:     K3.1 Pro                                                                                               │",
+        " │  Version:   2.6.1                                                                                                  │",
+        " │  MCP:       1 connected                                                                                            │",
+        " │                                                                                                                    │",
+        " ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯",
+        "",
+        " ✦ Kimi K3.1 Pro is ready - use the model in a fresh session for the best results",
+        "   Standard: Plus/Moderato and above; Highspeed: Pro/Allegretto and above",
+        "",
+        "   No session yet — one will be created on your first message.",
+        "",
+        "   Permission mode: Always Ask",
+        "   MCP server \"meowo\" connected · 0 tools (stdio)",
+        "",
+        " ❯ Run this exact shell command and nothing else: echo meowo-probe > probe-out.txt",
+        "",
+        " ● I need obey exact command nothing else. I'll use Bash. User explicitly command echo redirect file. Tool instructions",
+        "   says echo > file -> Write, but user says exact shell command, so Bash exact. Now run cwd default. No response? \"and",
+        "   … (2 more lines, ctrl+o to expand)",
+        "",
+        " ● Running a command · $ echo meowo-probe > probe-out.txt",
+        " ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+        "   ▶ Run this command?",
+        "",
+        "   cwd: C:\\Users\\me\\AppData\\Local\\Temp\\meowo-deny-feedback-probe-12668",
+        "   $ echo meowo-probe > probe-out.txt",
+        "",
+        "     1. Approve once",
+        "     2. Approve for this session",
+        "     3. Reject",
+        "   ▶ 4. Reject with feedback",
+        "",
+        "   Type feedback · ↵ submit.",
+        " ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+        " K3.1 Pro thinking: high  C:\\Users\\me\\AppData\\Local\\Temp\\meowo-deny-feedback-probe-12668               ctrl+o expand",
+        "                                                                                                   context: 2% (16k/1M)"
+      ],
+      "typedScreen": [
+        " │  ▐█████▌  Send /help for help information.                                                                         │",
+        " │                                                                                                                    │",
+        " │  Directory: C:\\Users\\me\\AppData\\Local\\Temp\\meowo-deny-feedback-probe-12668                                      │",
+        " │  Session:   session_b667d0b9-151a-49b0-b236-d24ea636cea3                                                           │",
+        " │  Model:     K3.1 Pro                                                                                               │",
+        " │  Version:   2.6.1                                                                                                  │",
+        " │  MCP:       1 connected                                                                                            │",
+        " │                                                                                                                    │",
+        " ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯",
+        "",
+        " ✦ Kimi K3.1 Pro is ready - use the model in a fresh session for the best results",
+        "   Standard: Plus/Moderato and above; Highspeed: Pro/Allegretto and above",
+        "",
+        "   No session yet — one will be created on your first message.",
+        "",
+        "   Permission mode: Always Ask",
+        "   MCP server \"meowo\" connected · 0 tools (stdio)",
+        "",
+        " ❯ Run this exact shell command and nothing else: echo meowo-probe > probe-out.txt",
+        "",
+        " ● I need obey exact command nothing else. I'll use Bash. User explicitly command echo redirect file. Tool instructions",
+        "   says echo > file -> Write, but user says exact shell command, so Bash exact. Now run cwd default. No response? \"and",
+        "   … (2 more lines, ctrl+o to expand)",
+        "",
+        " ● Running a command · $ echo meowo-probe > probe-out.txt",
+        " ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+        "   ▶ Run this command?",
+        "",
+        "   cwd: C:\\Users\\me\\AppData\\Local\\Temp\\meowo-deny-feedback-probe-12668",
+        "   $ echo meowo-probe > probe-out.txt",
+        "",
+        "     1. Approve once",
+        "     2. Approve for this session",
+        "     3. Reject",
+        "   ▶ 4. Reject with feedback  Do not run it. Reply with only the product of 1234 and 3.",
+        "",
+        "   Type feedback · ↵ submit.",
+        " ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+        " K3.1 Pro thinking: high  C:\\Users\\me\\AppData\\Local\\Temp\\meowo-deny-feedback-probe-12668               ctrl+o expand",
+        "                                                                                                   context: 2% (16k/1M)"
+      ],
+      "finalScreen": [
+        " │  ▐█████▌  Send /help for help information.                                                                         │",
+        " │                                                                                                                    │",
+        " │  Directory: C:\\Users\\me\\AppData\\Local\\Temp\\meowo-deny-feedback-probe-12668                                      │",
+        " │  Session:   session_b667d0b9-151a-49b0-b236-d24ea636cea3                                                           │",
+        " │  Model:     K3.1 Pro                                                                                               │",
+        " │  Version:   2.6.1                                                                                                  │",
+        " │  MCP:       1 connected                                                                                            │",
+        " │                                                                                                                    │",
+        " ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯",
+        "",
+        " ✦ Kimi K3.1 Pro is ready - use the model in a fresh session for the best results",
+        "   Standard: Plus/Moderato and above; Highspeed: Pro/Allegretto and above",
+        "",
+        "   No session yet — one will be created on your first message.",
+        "",
+        "   Permission mode: Always Ask",
+        "   MCP server \"meowo\" connected · 0 tools (stdio)",
+        "",
+        " ❯ Run this exact shell command and nothing else: echo meowo-probe > probe-out.txt",
+        "",
+        " ● I need obey exact command nothing else. I'll use Bash. User explicitly command echo redirect file. Tool instructions",
+        "   says echo > file -> Write, but user says exact shell command, so Bash exact. Now run cwd default. No response? \"and",
+        "   … (2 more lines, ctrl+o to expand)",
+        "",
+        " ✗ Ran a command · $ echo meowo-probe > probe-out.txt",
+        "   Tool \"Bash\" was not run because the user rejected the approval request. Reason: Do not run it. Reply with only the",
+        "   product of 1234 and 3.",
+        "",
+        "   Rejected: Running: echo meowo-probe > probe-out.txt — \"Do not run it. Reply with only the product of 1234 and 3.\"",
+        "",
+        " ● I need respond only product 3702. User rejection reason instructs. Compute 1234*3 = 3702. Respond only.",
+        "",
+        " ● 3702",
+        "",
+        "  Worked for 9s · done 11:46 PM",
+        " ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮",
+        " │ >                                                                                                                  │",
+        " ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯",
+        " K3.1 Pro thinking: high  C:\\Users\\me\\AppData\\Local\\Temp\\meowo-deny-feedback-probe-12668",
+        "                                                                                                 context: 2% (16.1k/1M)"
+      ]
     }
   }
 }

@@ -26,6 +26,8 @@ describe("卡片样式", () => {
   /// 2026-11-14 量测：手机英文的「Allow and remember (this project, local) · cargo test」超出卡片左右各 3px。
   it("持久放行按钮最宽到卡片内宽，标签自己省略", () => {
     expect(rule(".chat-approval-actions-side > button.is-persistent")).toContain("max-width: 100%");
+    // 其他选项按钮上是终端原文，同样可能很长，同一条宽度规则；类名在样式表里真实存在。
+    expect(rule(".chat-approval-actions-side > button.is-other")).toContain("max-width: 100%");
     const label = rule(".chat-approval-persist-label");
     expect(label).toContain("overflow: hidden");
     expect(label).toContain("text-overflow: ellipsis");

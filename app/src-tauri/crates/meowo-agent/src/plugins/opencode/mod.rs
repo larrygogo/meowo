@@ -341,6 +341,45 @@ impl AgentPlugin for Opencode {
                 details: crate::chat_ui::AttentionDetails::OptionRow,
                 kind: crate::chat_ui::AttentionKind::Approval,
                 confirms: None,
+                // 选项角色（1.19.5 程序文件 `options:{once:"Allow once",always:"Allow always",reject:"Reject"}`）。
+                // `Allow always` 只到 OpenCode 重启前有效（确认页原文 `until OpenCode is restarted`），
+                // 一个会话就是一个进程，范围按本会话说。
+                // 没有「说明并拒绝」：主会话里选 Reject 直接拒绝；带说明的 `Reject permission` 页只有
+                // 子代理会话才进（同一段代码 `if(parentID) stage = "reject"`），没有真机走过，不声明。
+                //
+                // unparsed_keys：选项行还没画出来时，框一出现焦点恒在第一项（程序文件 `selected: 第一项`），
+                // 回车就是 Allow once；Esc 是 `escapeKey: "reject"`，与焦点无关。两键都真机走过
+                // （probe_tui_script、probe_approval，1.19.5）。
+                options: &[
+                    crate::chat_ui::AttentionOptionRule {
+                        pattern: r"^allow once$",
+                        role: crate::chat_ui::OptionRole::AllowOnce,
+                        scope: None,
+                        typed: None,
+                    },
+                    crate::chat_ui::AttentionOptionRule {
+                        pattern: r"^allow always$",
+                        role: crate::chat_ui::OptionRole::AllowPersistent,
+                        scope: Some(crate::chat_ui::PersistScope::Session),
+                        typed: None,
+                    },
+                    crate::chat_ui::AttentionOptionRule {
+                        pattern: r"^reject$",
+                        role: crate::chat_ui::OptionRole::Deny,
+                        scope: None,
+                        typed: None,
+                    },
+                ],
+                unparsed_keys: &[
+                    crate::chat_ui::RoleKey {
+                        role: crate::chat_ui::OptionRole::AllowOnce,
+                        input: "\r",
+                    },
+                    crate::chat_ui::RoleKey {
+                        role: crate::chat_ui::OptionRole::Deny,
+                        input: "\x1b",
+                    },
+                ],
             },
             crate::chat_ui::AttentionPattern {
                 id: "opencode:always-allow-confirm",
@@ -349,6 +388,8 @@ impl AgentPlugin for Opencode {
                 details: crate::chat_ui::AttentionDetails::OptionRow,
                 kind: crate::chat_ui::AttentionKind::Choice,
                 confirms: Some("opencode:command-approval"),
+                options: &[],
+                unparsed_keys: &[],
             },
         ]
     }

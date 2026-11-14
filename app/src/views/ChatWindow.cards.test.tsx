@@ -341,3 +341,132 @@ describe("Kimi 的 broker 提问交回终端后：表单由后端屏幕认出（
     }
   });
 });
+
+/// 屏幕通道的「说明并拒绝」在对话窗里走完整条链：点按钮、填理由、Meowo 先让终端里那一项进入等输入、
+/// 认出来才打字、再提交。按键与就绪标志来自插件声明，真机走通见 tests/probe_deny_feedback.rs。
+describe("屏幕通道的说明并拒绝：对话窗里走完三步", () => {
+  /// 起会话；`screenLines` 是后端仿真屏幕（managed_terminal_screen）此刻的内容。
+  function setupScreen(sessionId: number, provider: string, screenLines: () => string[] | null) {
+    const base = adapter.setup(sessionId, provider, "running");
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "get_chat_history") return Promise.resolve({ ...adapter.history(sessionId, provider, "running"), ptyManaged: true, pendingReview: null });
+      if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
+      if (command === "managed_terminal_screen") return Promise.resolve(screenLines());
+      return base(command, args);
+    });
+  }
+  async function submitReason(reason: string) {
+    fireEvent.click(await screen.findByRole("button", { name: "说明并拒绝" }));
+    const input = screen.getByPlaceholderText("说明拒绝原因…");
+    fireEvent.change(input, { target: { value: reason } });
+    fireEvent.submit(input.closest("form") as HTMLFormElement);
+  }
+  const KIMI_READY = KIMI_APPROVAL_SCREEN.replace("  ↑/↓ select · 1/2/3/4 choose · ↵ confirm", "  Type feedback · ↵ submit.").split("\n");
+  const CLAUDE_READY = CLAUDE_APPROVAL_SCREEN.replace(" ❯ 1. Yes", "   1. Yes").replace("   4. No", " ❯ 4. No, and tell Claude what to do differently").split("\n");
+  // 理由里故意带数字：没进入等输入就打出去的话，kimi 面板里 1 是 Approve once。
+  const REASON = "先别跑，改用 pnpm 第 1 步";
+
+  it.each([
+    ["kimi（桌面）", 961, "kimi", KIMI_APPROVAL_SCREEN, KIMI_READY, "4", false],
+    ["kimi（手机页）", 962, "kimi", KIMI_APPROVAL_SCREEN, KIMI_READY, "4", true],
+    ["claude 屏幕兜底（桌面）", 963, "claude", CLAUDE_APPROVAL_SCREEN, CLAUDE_READY, "\x1b[B\x1b[B\x1b[B\t", false],
+    ["claude 屏幕兜底（手机页）", 964, "claude", CLAUDE_APPROVAL_SCREEN, CLAUDE_READY, "\x1b[B\x1b[B\x1b[B\t", true],
+  ] as const)("%s：依次写进入键、理由、提交键，卡片收走", async (_name, id, provider, sample, ready, open, remote) => {
+    if (remote) markRemoteUi();
+    try {
+      setupScreen(id, provider, () => [...ready]);
+      render(<ChatWindow />);
+      await showScreen(provider, sample);
+      await submitReason(REASON);
+      await waitFor(() => expect(delivered(id)).toEqual([
+        ["write_managed_terminal", open],
+        ["write_managed_terminal", REASON],
+        ["write_managed_terminal", "\r"],
+      ]), { timeout: 3_000 });
+      await waitFor(() => expect(document.querySelectorAll(".chat-approval-overlay .chat-approval")).toHaveLength(0));
+    } finally {
+      (globalThis as Record<string, unknown>).__MEOWO_REMOTE__ = undefined;
+      document.body.classList.remove("remote-ui");
+    }
+  });
+
+  it("终端没进入等输入（按键没生效）：理由一个字都不写，卡片留着，提示条说明没有送达", async () => {
+    // 仿真屏幕一直是按键前的样子。
+    setupScreen(965, "kimi", () => KIMI_APPROVAL_SCREEN.split("\n"));
+    render(<ChatWindow />);
+    await showScreen("kimi", KIMI_APPROVAL_SCREEN);
+    await submitReason(REASON);
+    await screen.findByText(zh.chat.denyReasonNotSent, undefined, { timeout: 6_000 });
+    expect(delivered(965)).toEqual([["write_managed_terminal", "4"]]);
+    expect(screen.getByRole("button", { name: "允许一次" })).toBeTruthy();
+    // 之后照常可以直接拒绝。
+    fireEvent.click(screen.getByRole("button", { name: /^拒绝/ }));
+    await waitFor(() => expect(delivered(965)).toEqual([["write_managed_terminal", "4"], ["write_managed_terminal", "3"]]));
+  }, 10_000);
+
+  it("打字流程在途时再点「允许一次」不生效：不会在说明写到一半时放行", async () => {
+    let ready = false;
+    setupScreen(966, "kimi", () => (ready ? [...KIMI_READY] : KIMI_APPROVAL_SCREEN.split("\n")));
+    render(<ChatWindow />);
+    await showScreen("kimi", KIMI_APPROVAL_SCREEN);
+    await submitReason(REASON);
+    await waitFor(() => expect(delivered(966)).toEqual([["write_managed_terminal", "4"]]));
+    fireEvent.click(screen.getByRole("button", { name: "允许一次" }));
+    ready = true;
+    await waitFor(() => expect(delivered(966)).toHaveLength(3), { timeout: 3_000 });
+    expect(delivered(966)).toEqual([["write_managed_terminal", "4"], ["write_managed_terminal", REASON], ["write_managed_terminal", "\r"]]);
+  });
+
+  it.each([
+    ["gemini", 967, GEMINI_APPROVAL_SCREEN],
+    ["opencode", 968, OPENCODE_PERMISSION_SCREEN],
+  ] as const)("%s：拒绝项不能带说明，卡上没有「说明并拒绝」", async (provider, id, sample) => {
+    setupScreen(id, provider, () => null);
+    render(<ChatWindow />);
+    await showScreen(provider, sample);
+    await screen.findByRole("button", { name: "允许一次" });
+    expect(screen.queryByRole("button", { name: "说明并拒绝" })).toBeNull();
+  });
+});
+
+describe("选项角色在对话窗里：没有的角色不出按钮，认不出的照原文列出", () => {
+  it("这一屏没有允许一次那一项：没有「允许一次」按钮，数字键 1 不发任何按键，2 是持久放行", async () => {
+    setup(971, "opencode");
+    render(<ChatWindow />);
+    await showScreen("opencode", OPENCODE_PERMISSION_SCREEN.replace("Allow once   Allow always   Reject", "Allow always   Reject"));
+    await screen.findByRole("button", { name: /^拒绝/ });
+    expect(screen.queryByRole("button", { name: /允许一次/ })).toBeNull();
+    adapter.box().blur();
+    fireEvent.keyDown(window, { key: "1" });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+    expect(delivered(971)).toEqual([]);
+    // 等待期间焦点可能回到输入框（数字键在那里属于输入），再让一次。
+    adapter.box().blur();
+    fireEvent.keyDown(window, { key: "2" });
+    await waitFor(() => expect(delivered(971)).toEqual([["write_managed_terminal", "\r"]]));
+  });
+
+  it.each([["桌面", 972, false], ["手机页", 973, true]] as const)("其他选项（%s）：按终端原文出按钮，点了按的是它那一项的键，数字键够不着它", async (_name, id, remote) => {
+    if (remote) markRemoteUi();
+    try {
+      setup(id, "gemini");
+      render(<ChatWindow />);
+      await showScreen("gemini", GEMINI_APPROVAL_SCREEN.replace(
+        "│   3. No, suggest changes (esc)            │",
+        "│   3. Modify with external editor          │\n│   4. No, suggest changes (esc)            │",
+      ));
+      const other = await screen.findByRole("button", { name: "Modify with external editor" });
+      expect(other.querySelector("kbd")).toBeNull();
+      adapter.box().blur();
+      // 数字键 3：持久放行只有一个（键 2），3 没有对应项。
+      fireEvent.keyDown(window, { key: "3" });
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+      expect(delivered(id)).toEqual([]);
+      fireEvent.click(other);
+      await waitFor(() => expect(delivered(id)).toEqual([["write_managed_terminal", "\x1b[B\x1b[B\r"]]));
+    } finally {
+      (globalThis as Record<string, unknown>).__MEOWO_REMOTE__ = undefined;
+      document.body.classList.remove("remote-ui");
+    }
+  });
+});

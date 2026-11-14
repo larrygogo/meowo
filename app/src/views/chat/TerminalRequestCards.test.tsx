@@ -144,15 +144,55 @@ describe("提示卡（屏幕通道）：标题与徽章由种类决定", () => {
     expect(dialog.getAttribute("aria-label")).toBe("终端正在等待你的选择");
     expect(dialog.getAttribute("aria-label")).not.toBe(zh.chat.terminalPromptTitle);
     expect(dialog.querySelector(".chat-approval-badge")?.textContent).toBe("待选择");
-    // 选项没拆成按钮（框线选项，未声明文法）：终端原文摆出来，用户看得到回车选的是 Keep trying。
-    // 框线是排版不是内容：去掉之后五行就能看全，回车选的是带 ● 的那一项。
+    // 题干摆出来（框线是排版不是内容，去掉）；选项一项一个按钮，不再混在原文里。
     expect(dialog.querySelector("pre")?.textContent).toBe([
       "Usage limit reached for gemini-3.8-flash.",
       "/stats model for usage details",
       "/model to switch models.",
-      "● 1. Keep trying",
-      "  2. Stop",
     ].join("\n"));
+    expect(Array.from(dialog.querySelectorAll(".chat-approval-options button")).map((button) => button.textContent)).toEqual(["Keep trying", "Stop"]);
+  });
+
+  /// 做空审查 2026-11-14：这张卡此前只有「确认 / 取消」，回车选的是 Keep trying，Stop 选不到；
+  /// 手机上没有终端页，等于只能一直重试。现在终端里的每一项都是一个按钮。
+  it.each([
+    ["桌面", false],
+    ["手机页", true],
+  ])("gemini 额度耗尽（%s）：Keep trying 与 Stop 都点得到，按的是各自那一项的键", (_name, remote) => {
+    if (remote) markRemoteUi();
+    const onChoose = vi.fn();
+    const onKey = vi.fn();
+    card(recognized("gemini", GEMINI_USAGE_LIMIT), true, { onChoose, onKey });
+    // 不再有分不清选的是哪一项的「确认 / 取消」。
+    expect(screen.queryByRole("button", { name: "确认" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "取消 / 返回" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    fireEvent.click(screen.getByRole("button", { name: "Keep trying" }));
+    expect(onChoose.mock.calls.map(([option]) => [option.label, option.input])).toEqual([["Stop", "\x1b[B\r"], ["Keep trying", "\r"]]);
+    expect(onKey).not.toHaveBeenCalled();
+  });
+
+  it("gemini 高负载框（三项）：Switch to <模型> 也是一个按钮", () => {
+    const onChoose = vi.fn();
+    card(recognized("gemini", [
+      "╭──────────────────────────────────────────────────────────╮",
+      "│ We are currently experiencing high demand for gemini-3.8-pro. │",
+      "│ ● 1. Keep trying                                         │",
+      "│   2. Switch to gemini-3.8-flash                          │",
+      "│   3. Stop                                                │",
+      "╰──────────────────────────────────────────────────────────╯",
+    ].join("\n")), true, { onChoose });
+    expect(Array.from(document.querySelectorAll(".chat-approval-options button")).map((button) => button.textContent)).toEqual(["Keep trying", "Switch to gemini-3.8-flash", "Stop"]);
+    fireEvent.click(screen.getByRole("button", { name: "Stop" }));
+    expect(onChoose).toHaveBeenCalledWith(expect.objectContaining({ input: "\x1b[B\x1b[B\r" }));
+  });
+
+  it("gemini 额度耗尽框没抓到焦点标记：不猜按键，退回确认与取消，原文连选项一起摆出来", () => {
+    const attention = recognized("gemini", GEMINI_USAGE_LIMIT.replace("│ ● 1. Keep trying", "│   1. Keep trying"));
+    card(attention);
+    expect(document.querySelectorAll(".chat-approval-options button")).toHaveLength(0);
+    expect(screen.getByRole("button", { name: "确认" })).toBeTruthy();
+    expect(screen.getByRole("alertdialog").querySelector("pre")?.textContent).toContain("2. Stop");
   });
 
   it.each([
@@ -177,7 +217,7 @@ describe("提示卡（屏幕通道）：标题与徽章由种类决定", () => {
     expect(onChoose).toHaveBeenCalledWith(expect.objectContaining({ input: "\r" }));
     cleanup();
     const onKey = vi.fn();
-    card(recognized("gemini", GEMINI_USAGE_LIMIT), true, { onKey });
+    card(recognized("claude", "OAuth token has been revoked\nPress Enter to continue"), true, { onKey });
     fireEvent.click(screen.getByRole("button", { name: "确认" }));
     fireEvent.click(screen.getByRole("button", { name: "取消 / 返回" }));
     expect(onKey.mock.calls.map(([input]) => input)).toEqual(["\r", "\x1b"]);

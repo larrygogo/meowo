@@ -587,7 +587,8 @@ describe("terminalAttention", () => {
   });
 
   /// gemini 额度耗尽框(0.64 真机):它取代输入框,不识别时对话页发的正文全被吞掉。
-  /// 选项行带外框 │,通用路径不拆按钮,由通用卡的 Enter(Keep trying)/Esc(取消请求)作答。
+  /// 选项行带外框 │：按框线数字菜单拆成按钮（● 焦点做相对移动），每一项都点得到。此前不拆，
+  /// 卡上只有「确认 / 取消」，手机上选不到 Stop（做空审查 2026-11-14）。
   it("recognizes Gemini's usage-limit dialog that replaces the composer", () => {
     const screen = [
       " > say hi",
@@ -604,7 +605,28 @@ describe("terminalAttention", () => {
     const attention = terminalAttention(screen, [], false, false, grammar("gemini"));
     expect(attention?.id).toBe("gemini:usage-limit");
     expect(attention?.text).toContain("Usage limit reached");
-    expect(attention?.options).toBeUndefined();
+    // 这条规则没有声明选项角色：两项都是 other，卡片照原文列出。
+    expect(attention?.options?.map((option) => [option.label, option.input, option.role])).toEqual([
+      ["Keep trying", "\r", "other"],
+      ["Stop", "\x1b[B\r", "other"],
+    ]);
+  });
+
+  it("Gemini's quota dialog: every option is reachable from wherever the focus is", () => {
+    const dialog = (focus: number) => [
+      "╭──────────────────────────────────────────────────────────╮",
+      "│ We are currently experiencing high demand for gemini-3.8-pro. │",
+      "│                                                          │",
+      `│ ${focus === 1 ? "●" : " "} 1. Keep trying                                         │`,
+      `│ ${focus === 2 ? "●" : " "} 2. Switch to gemini-3.8-flash                          │`,
+      `│ ${focus === 3 ? "●" : " "} 3. Stop                                                │`,
+      "╰──────────────────────────────────────────────────────────╯",
+    ].join("\n");
+    const inputs = (focus: number) => terminalAttention(dialog(focus), [], false, false, grammar("gemini"))?.options?.map((option) => option.input);
+    expect(inputs(1)).toEqual(["\r", "\x1b[B\r", "\x1b[B\x1b[B\r"]);
+    expect(inputs(3)).toEqual(["\x1b[A\x1b[A\r", "\x1b[A\r", "\r"]);
+    // 焦点标记没抓到：相对移动的起点未知，不出按钮（卡片退回确认与取消，原文照常摆出来）。
+    expect(inputs(0)).toBeUndefined();
   });
 
   /// gemini 0.65 额度框的高负载形态(npm bundle useQuotaAndFallback 源码取证,2026-11-12):
@@ -772,7 +794,7 @@ describe("terminalAttention", () => {
   /// kimi 审批面板(ApprovalPanel):面板形态与按键语义为官方源码取证
   /// (apps/kimi-code/src/tui/components/dialogs/approval-panel.ts @ 0.29)。
   /// PermissionRequest hook 是 observation-only,屏幕识别是 GUI 审批的唯一通道。
-  it("turns Kimi's approval panel into digit-keyed choices, dropping feedback options", () => {
+  it("turns Kimi's approval panel into digit-keyed choices with declared roles", () => {
     const prompt = [
       "\x1b[2J────────────────────────",
       "  ▶ Run this command?",
@@ -795,13 +817,56 @@ describe("terminalAttention", () => {
     expect(attention?.text).toContain("echo meowo-approval-probe-1234");
     expect(attention?.text).not.toContain("Approve once");
     expect(attention?.text).not.toContain("choose");
-    // 数字键直接选中提交(源码 selectAndSubmit),按钮 input 就是数字本身;
-    // 「Reject with feedback」要现场输入反馈,卡片完成不了,不收。
-    expect(attention?.options?.map((option) => [option.label, option.input])).toEqual([
-      ["Approve once", "1"],
-      ["Approve for this session", "2"],
-      ["Reject", "3"],
+    // 数字键直接选中提交(源码 selectAndSubmit),按钮 input 就是数字本身。每一项的角色来自插件
+    // 声明的选项规则；「Reject with feedback」要现场输入说明，带着真机走通的打字流程
+    // （tests/probe_deny_feedback.rs，2.6.1）：按 4 进入输入，认出页脚才打字，回车提交。
+    expect(attention?.options?.map((option) => [option.label, option.input, option.role, option.scope])).toEqual([
+      ["Approve once", "1", "allow_once", undefined],
+      ["Approve for this session", "2", "allow_persistent", "session"],
+      ["Reject", "3", "deny", undefined],
+      ["Reject with feedback", "4", "deny_with_feedback", undefined],
     ]);
+    expect(attention?.options?.[3].typed).toEqual({
+      openInput: "4",
+      readyPattern: String.raw`^\s*type feedback · ↵ submit\.?\s*$`,
+      submitInput: "\r",
+    });
+  });
+
+  /// 角色只来自插件声明：同一屏选项换一家的规则（或没有规则），角色就不同。识别层自己不认文案。
+  it("option roles come from the declared rules, not from the recognizer", () => {
+    const panel = [
+      "  ▶ Run this command?",
+      "  $ ls",
+      "  ▶ 1. Approve once",
+      "    2. Reject",
+      "  ↑/↓ select · 1/2 choose · ↵ confirm",
+    ].join("\n");
+    const base = grammar("kimi");
+    const rule = base.attentionPatterns.find((entry) => entry.id === "kimi:command-approval")!;
+    const withRules = (options: typeof rule.options) => ({ ...base, attentionPatterns: [{ ...rule, options }] });
+    // 规则清空：都认不出，全是 other。
+    expect(terminalAttention(panel, [], false, false, withRules([]))?.options?.map((option) => option.role)).toEqual(["other", "other"]);
+    // 规则对调：角色跟着规则走。
+    const swapped = terminalAttention(panel, [], false, false, withRules([
+      { pattern: "^reject$", role: "allow_once", scope: null, typed: null },
+      { pattern: "^approve once$", role: "deny", scope: null, typed: null },
+    ]));
+    expect(swapped?.options?.map((option) => option.role)).toEqual(["deny", "allow_once"]);
+    // 坏正则只跳过那一条，不让整屏识别崩掉。
+    const broken = terminalAttention(panel, [], false, false, withRules([
+      { pattern: "(", role: "deny", scope: null, typed: null },
+      { pattern: "^approve once$", role: "allow_once", scope: null, typed: null },
+    ]));
+    expect(broken?.options?.map((option) => option.role)).toEqual(["allow_once", "other"]);
+    // 要现场打字的选项没有打字流程：不列出来（点了也完成不了）。
+    const untyped = terminalAttention(panel, [], false, false, withRules([
+      { pattern: "^reject$", role: "deny_with_feedback", scope: null, typed: null },
+    ]));
+    expect(untyped?.options?.map((option) => option.label)).toEqual(["Approve once"]);
+    // 不是插件规则命中的提示（信任页）：选项不带角色。
+    const trust = terminalAttention("Do you trust the files in this folder?\n❯ 1. Yes, proceed\n  2. No, exit", ["do you trust the files in this folder"], false, false, grammar("codex"));
+    expect(trust?.options?.every((option) => option.role === undefined)).toBe(true);
   });
 
   /// kimi 重绘不清屏:上一条命令的面板残留在缓冲上方。标题/提示行若锚定**首个**匹配,
@@ -919,8 +984,12 @@ describe("kimi 提问表单", () => {
     ), [], false, false, grammar("kimi"));
     expect(attention?.id).toBe("kimi:question");
     expect(attention?.options?.map((o) => [o.label, o.input])).toEqual([
-      ["苹果", "1"], ["香蕉", "2"], ["橙子", "3"], ["Next ⇥", "\t"],
+      ["苹果", "1"], ["香蕉", "2"], ["橙子", "3"], ["⇥", "\t"],
     ]);
+    // 末尾那一项是去下一页，不是提交：标在 advance 上，卡片据此写「下一步」，不看它的文字。
+    expect(attention?.options?.at(-1)).toMatchObject({ kind: "submit", advance: true });
+    // 自定义答案项（Other）由插件规则定为 custom_answer；还没有真机走通的打字流程时不列出来。
+    expect(attention?.options?.some((o) => o.role === "custom_answer")).toBe(false);
     // 勾选状态只在 selected 上：提问卡自己画勾，标签里再带一个「✓」就成了两个。
     expect(attention?.options?.map((o) => o.selected ?? false)).toEqual([false, true, false, false]);
     // 数字键直选：按钮发的键与焦点无关，卡片据此只翻转勾、不重算方向键。

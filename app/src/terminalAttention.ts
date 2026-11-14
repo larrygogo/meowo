@@ -1,3 +1,10 @@
+import type { AttentionOptionRule } from "./generated/contracts/AttentionOptionRule";
+import type { OptionRole } from "./generated/contracts/OptionRole";
+import type { PersistScope } from "./generated/contracts/PersistScope";
+import type { RoleKey } from "./generated/contracts/RoleKey";
+
+export type { OptionRole, PersistScope, RoleKey };
+
 /** 把 PTY snapshot 的 base64 增量追加为 UTF-8 文本；损坏的一帧不打断启动流程。 */
 export function appendTerminalText(tail: string, data: string, decoder: TextDecoder): string {
   if (!data) return tail;
@@ -11,6 +18,10 @@ export function appendTerminalText(tail: string, data: string, decoder: TextDeco
   }
 }
 
+/// 要现场打字的选项怎么作答（后端 `TypedInput` 按这一屏算出来的结果）：先写 `openInput` 让这一项
+/// 进入等输入的状态，屏幕上认出 `readyPattern`（JS 正则，`im`）才打字，打完写 `submitInput`。
+export type TypedAnswer = { openInput: string; readyPattern: string; submitInput: string };
+
 export type TerminalAttentionOption = {
   label: string;
   input: string;
@@ -19,6 +30,17 @@ export type TerminalAttentionOption = {
   focused?: boolean;
   position?: number;
   kind?: "choice" | "input" | "submit" | "chat";
+  /// 提交项只是去下一页，还不是提交（kimi 多选页的 Tab）。
+  advance?: boolean;
+  /// 这个选项起什么作用。由插件随规则声明的选项规则定（后端 `OptionRole`），卡片只按它摆按钮。
+  /// 没有规则的提示（信任页、启动步骤、菜单）不带角色。
+  role?: OptionRole;
+  /// 持久放行记到哪里为止（后端 `PersistScope`）。
+  scope?: PersistScope;
+  /// 放行的对象（规则的捕获组 1，如 `curl *`），按钮上带出来。
+  target?: string;
+  /// 这一项可以带一句现场打的字（说明并拒绝的说明、自定义答案）。
+  typed?: TypedAnswer;
 };
 /// 审批详情区的屏幕文法风格（后端 `AttentionDetails` 的镜像，插件随 AttentionPattern 声明）：
 /// proceed_box = 「Do you want to proceed?」框式（光标移动选择、记住=持久规则）；
@@ -43,6 +65,8 @@ export type TerminalAttention = {
   /// 这一屏是另一条规则里某个选项的二次确认页（值 = 那条规则的 id）。用户刚在 Meowo 里点了
   /// 那个选项时，Meowo 替他按下确认（见 chat/terminalFollowUp）；不是 Meowo 发起的照常出卡。
   confirms?: string;
+  /// 选项没认出来时仍然成立的按键（插件声明的 `unparsed_keys`，只有真机验证过的才有）。
+  unparsedKeys?: RoleKey[];
 };
 
 export function visibleTerminalText(text: string): string {
@@ -152,7 +176,47 @@ export type AttentionPattern = {
   details?: AttentionDetailsStyle;
   kind?: AttentionKind;
   confirms?: string | null;
+  /// 选项文案 → 角色（后端 `AttentionOptionRule`）。识别层只负责照着套，不认识任何一家的文案。
+  options?: AttentionOptionRule[];
+  unparsed_keys?: RoleKey[];
 };
+
+/// 解析阶段的选项：多带一个 `move`，是「把焦点移到这一项、但不回车」的按键。
+/// 靠焦点做相对移动的文法才有；数字键直选的没有。定完角色后不再往外带。
+type ParsedOption = TerminalAttentionOption & { move?: string };
+
+/// 按插件声明的选项规则给每个选项定角色。规则按声明顺序逐条试，第一条命中的算数，都不命中是 other。
+/// 要现场打字的选项（说明并拒绝、自定义答案）没有可用的打字流程时不列出来：点了也完成不了，
+/// 只会把终端留在等输入的状态。
+function assignRoles(options: ParsedOption[], rule: Pick<AttentionPattern, "options">): TerminalAttentionOption[] {
+  const rules = (rule.options ?? []).flatMap((entry) => {
+    // 声明来自后端，坏一条只跳过它。
+    try { return [{ entry, pattern: new RegExp(entry.pattern, "i") }]; } catch { return []; }
+  });
+  return options.flatMap((option): TerminalAttentionOption[] => {
+    const { move, ...rest } = option;
+    const label = option.label.trim();
+    const hit = rules.find(({ pattern }) => pattern.test(label));
+    const role: OptionRole = hit?.entry.role ?? "other";
+    const spec = hit?.entry.typed ?? null;
+    // amend_input 为空 = 这一项自己的选中键就进入输入状态；否则先把焦点移过去再按它，
+    // 焦点位置认不出（没有 move）就不给。
+    const openInput = !spec ? null
+      : spec.amend_input == null ? option.input
+      : move !== undefined ? move + spec.amend_input : null;
+    const typed = spec && openInput ? { openInput, readyPattern: spec.ready_pattern, submitInput: spec.submit_input } : undefined;
+    if ((role === "deny_with_feedback" || role === "custom_answer") && !typed) return [];
+    const target = hit ? hit.pattern.exec(label)?.[1]?.trim() : undefined;
+    return [{
+      ...rest,
+      ...(role === "custom_answer" ? { kind: "input" as const } : {}),
+      role,
+      ...(hit?.entry.scope ? { scope: hit.entry.scope } : {}),
+      ...(target ? { target } : {}),
+      ...(typed ? { typed } : {}),
+    }];
+  });
+}
 
 /// 规则没带种类时（旧后端）按屏幕文法兜底：审批框文法是审批，表单文法是提问，其余是「等你选择」。
 /// 不看 id。
@@ -304,7 +368,7 @@ function detectCursorMenu(
 /// 仅在 expectMenu 窗口(刚发出菜单命令)内启用,进一步压误报面。
 function detectFramedNumberedMenu(
   visible: string,
-): { title: string; options: TerminalAttentionOption[] } | null {
+): { title: string; options: ParsedOption[] } | null {
   const lines = visible
     .split("\n")
     .filter((line) => /^\s*│/.test(line))
@@ -356,12 +420,12 @@ function detectFramedNumberedMenu(
     title: title.trim(),
     options: run.items.map((item, position) => {
       const delta = position - focusedIndex;
+      const move = delta < 0 ? "\x1b[A".repeat(-delta) : "\x1b[B".repeat(delta);
       return {
         label: item.label.replace(/\s{2,}/g, "  ").slice(0, 80),
         description: item.description,
-        input: delta === 0 ? "\r" : delta < 0
-          ? "\x1b[A".repeat(-delta) + "\r"
-          : "\x1b[B".repeat(delta) + "\r",
+        input: move + "\r",
+        move,
         focused: delta === 0,
         position,
         kind: "choice" as const,
@@ -389,8 +453,8 @@ const MARKED_NUMBERED_OPTION = /^\s*[❯›>▶]\s*\d+[.)]\s+/;
 ///   单选题  `? 问题` + `→ [1] 红色` …          数字键选中，自动跳到下一题 / 确认页
 ///   多选题  `? 问题` + `[ ] 苹果` / `[✓] 香蕉` 数字键（按位置）勾选/取消，Tab 去下一页
 ///   确认页  `Review your answer…` + `[1] Submit` / `[2] Cancel`，数字键 1 直接提交
-/// 选项按钮一律发数字键（相对移动用不上，也不会因光标位置算错）。`Other` 要现场打字，
-/// 卡片上完成不了，不出按钮——要写自定义答案就去终端。
+/// 选项按钮一律发数字键（相对移动用不上，也不会因光标位置算错）。末尾的自定义答案项要现场打字，
+/// 它算不算、怎么打由插件的选项规则定（角色 custom_answer），解析器只管照原样收进来。
 function parseBracketForm(visible: string, matchIndex: number): { text: string; options: TerminalAttentionOption[] } | null {
   const lines = visible.split("\n");
   const matchedLine = visible.slice(0, matchIndex).split("\n").length - 1;
@@ -410,18 +474,16 @@ function parseBracketForm(visible: string, matchIndex: number): { text: string; 
     }
     const numbered = line.match(/^\s*(?:→\s*)?\[(\d+)\]\s+(.+?)\s*$/);
     if (numbered) {
-      if (!/^other$/i.test(numbered[2])) options.push({ label: numbered[2], input: numbered[1], kind: "choice" });
+      options.push({ label: numbered[2], input: numbered[1], kind: "choice" });
       continue;
     }
     const checkbox = line.match(/^\s*(?:→\s*)?\[([ ✓✔x])\]\s+(.+?)\s*$/i);
     if (checkbox) {
       multi = true;
       checkboxPosition += 1;
-      if (!/^other$/i.test(checkbox[2])) {
-        const checked = checkbox[1] !== " ";
-        // 勾选状态只放在 selected 上：提问卡自己画勾，标签里再带一个「✓」就成了两个。
-        options.push({ label: checkbox[2], input: String(checkboxPosition), kind: "choice", selected: checked });
-      }
+      const checked = checkbox[1] !== " ";
+      // 勾选状态只放在 selected 上：提问卡自己画勾，标签里再带一个「✓」就成了两个。
+      options.push({ label: checkbox[2], input: String(checkboxPosition), kind: "choice", selected: checked });
       continue;
     }
     // 确认页列出已选的答案：`Q  问题` / `→  答案`。
@@ -431,7 +493,7 @@ function parseBracketForm(visible: string, matchIndex: number): { text: string; 
   }
   if (options.length === 0) return null;
   // 多选题按数字只是勾选，去下一页要按 Tab（表单的 ←/→/tab switch）。
-  if (multi) options.push({ label: "Next ⇥", input: "\t", kind: "submit" });
+  if (multi) options.push({ label: "⇥", input: "\t", kind: "submit", advance: true });
   const text = [review.join("\n"), question].filter(Boolean).join("\n");
   // 每项带上序号：提问卡勾选后要就地翻转那一项的勾（按 position 认是哪一项）。
   return { text, options: options.map((option, position) => ({ ...option, position })) };
@@ -670,7 +732,7 @@ export function terminalAttention(
   if (!text) return null;
   const visible = visibleTerminalText(text);
   const lower = visible.toLowerCase();
-  let best: { index: number; id: string; kind: AttentionKind; details?: AttentionDetailsStyle; confirms?: string } | null = null;
+  let best: { index: number; id: string; kind: AttentionKind; details?: AttentionDetailsStyle; confirms?: string; rule?: AttentionPattern } | null = null;
   // 整句可操作提示（审批框、长会话确认）由插件声明、经 chatUi 下发——识别层不再
   // 认识任何具体 agent。规则**天然是 per-agent 的**：这些是各家 TUI 的界面原文，
   // 别家 agent 的输出里引用同一句（讨论审批流程、cat 一个含该句的脚本）不该误弹卡片、
@@ -679,7 +741,7 @@ export function terminalAttention(
   for (const rule of grammar.attentionPatterns ?? []) {
     const index = matchAttentionPattern(rule, visible);
     if (index >= 0 && (!best || index > best.index)) {
-      best = { index, id: rule.id, kind: kindOfRule(rule), details: rule.details, confirms: rule.confirms ?? undefined };
+      best = { index, id: rule.id, kind: kindOfRule(rule), details: rule.details, confirms: rule.confirms ?? undefined, rule };
     }
   }
   for (const marker of markers) {
@@ -732,6 +794,15 @@ export function terminalAttention(
     };
   }
   if (!best) return null;
+  // 插件规则命中的提示：选项按规则定角色；选项没认出来时带上规则声明的兜底按键。
+  // 信任页、启动步骤这些不是插件规则命中的，选项不分角色，原样返回。
+  const rule = best.rule;
+  const roled = (options: ParsedOption[] | undefined): Pick<TerminalAttention, "options" | "unparsedKeys"> => {
+    if (!rule) return { options: options?.map(({ move: _move, ...option }) => option) };
+    const assigned = options ? assignRoles(options, rule) : undefined;
+    const unparsed = !assigned?.length && rule.unparsed_keys?.length ? { unparsedKeys: rule.unparsed_keys } : {};
+    return { options: assigned, ...unparsed };
+  };
   // 详情区文法风格由插件随 AttentionPattern 声明（此前按 pattern id 猜，是变相身份分支）。
   const detailsStyle: AttentionDetailsStyle = best.details ?? "none";
   // 框线对话框式(gemini 审批框):选项行形如 `│ ● 1. Allow once │`,行首的框线让下面按行首
@@ -746,18 +817,21 @@ export function terminalAttention(
     let bottom = matchedLine;
     while (bottom < lines.length - 1 && !/^\s*╰/.test(lines[bottom])) bottom += 1;
     const box = lines.slice(top, bottom + 1).join("\n");
-    return { id: best.id, kind: best.kind, text: box, details: detailsStyle, options: detectFramedNumberedMenu(box)?.options };
+    return { id: best.id, kind: best.kind, text: box, details: detailsStyle, ...roled(detectFramedNumberedMenu(box)?.options) };
   }
   if (detailsStyle === "option_row") {
     const row = parseOptionRow(visible, best.index);
     // 选项行还没画出来：照样出卡（正文先给用户看），按钮由卡片按「回车 = 第一项、Esc = 末项」兜底。
-    return { id: best.id, kind: best.kind, text: row.text, details: detailsStyle, options: row.options, confirms: best.confirms };
+    return { id: best.id, kind: best.kind, text: row.text, details: detailsStyle, ...roled(row.options), confirms: best.confirms };
   }
   if (detailsStyle === "bracket_form") {
     const form = parseBracketForm(visible, best.index);
     // 解析不出选项（表单还没画完）就不出卡：空卡给不了任何动作。
     // 数字键直选，按钮发的键与焦点无关（absoluteKeys）。
-    return form ? { id: best.id, kind: best.kind, text: form.text, options: form.options, absoluteKeys: true } : null;
+    if (!form) return null;
+    const options = roled(form.options).options ?? [];
+    // 只剩自定义答案也算可答；一项都不剩（规则把能点的都排除了）就不出卡。
+    return options.length > 0 ? { id: best.id, kind: best.kind, text: form.text, options, absoluteKeys: true } : null;
   }
   if (detailsStyle === "framed_form") {
     const form = parseFramedForm(visible, best.index);
@@ -918,16 +992,15 @@ export function terminalAttention(
     };
   }
   // 面板式(arrow_panel)审批:数字键直接选中并提交(kimi 源码 selectAndSubmit),GUI 按钮
-  // 只需打数字,无需光标相对移动;需要现场输入反馈的选项(Reject with feedback / Revise)
-  // 在卡片上完成不了,不收成按钮——想写反馈仍可从终端处理。
+  // 只需打数字,无需光标相对移动。要现场输入说明的选项算不算、怎么打，由插件的选项规则定
+  // （角色 deny_with_feedback 带打字流程），解析器不再按文案把它们丢掉。
   if (detailsStyle === "arrow_panel") {
     const byIndex = new Map<number, (typeof labels)[number]>();
     for (const entry of labels) byIndex.set(entry.index, entry);
     const options = [...byIndex.values()]
       .sort((a, b) => a.index - b.index)
-      .filter(({ label }) => !/reject with feedback|^revise$/i.test(label.trim()))
       .map(({ index, label }) => ({ label, input: String(index + 1) }));
-    return { id: best.id, kind: best.kind, text: displayText, details: detailsStyle, options: options.length >= 2 ? options : undefined, absoluteKeys: true };
+    return { id: best.id, kind: best.kind, text: displayText, details: detailsStyle, ...roled(options.length >= 2 ? options : undefined), absoluteKeys: true };
   }
   // trust、长会话恢复以及其他编号选择器共用同一套结构化按钮，不再退化成上一项/下一项。
   if (labels.length >= 2) {
@@ -941,26 +1014,41 @@ export function terminalAttention(
       kind: best.kind,
       text: displayText,
       details: detailsStyle,
-      options: merged.map(({ index, label }) => ({
-        label,
+      ...roled(merged.map(({ index, label }): ParsedOption => {
         // 这些菜单和 numbered-selector 一样首尾循环，「先按 8 次上键归零」在 3 项菜单上
         // 会绕圈选错（点拒绝实际选中批准）。抓到 ❯ 光标就从它做相对移动；确实没有光标
         // 标记时才退回归零法——那类菜单没有更可靠的定位依据。
-        input: focused
-          ? (index < focused.index
-            ? "\x1b[A".repeat(focused.index - index) + "\r"
-            : "\x1b[B".repeat(index - focused.index) + "\r")
-          : "\x1b[A".repeat(8) + "\x1b[B".repeat(Math.max(0, index)) + "\r",
+        if (!focused) return { label, input: "\x1b[A".repeat(8) + "\x1b[B".repeat(Math.max(0, index)) + "\r" };
+        const move = index < focused.index ? "\x1b[A".repeat(focused.index - index) : "\x1b[B".repeat(index - focused.index);
+        return { label, input: move + "\r", move };
       })),
     };
+  }
+  // 整框带框线的编号选项（gemini 的额度耗尽框：`│ ● 1. Keep trying │`）：行首是框线，上面按行首
+  // 编号提取的路径认不出，此前这张卡只有「确认 / 取消」两键，回车选的是哪一项要去看原文，
+  // 手机上（没有终端页）选不到 Stop（做空审查 2026-11-14）。取命中行所在的外框，复用框线数字菜单的
+  // 解析：同一个 RadioButtonSelect 组件（0.68.0 bundle 的 ProQuotaDialog 与工具确认框、/model 对话框
+  // 都用它），● 是焦点，↑/↓ 移动、回车选中，这套按键在后两个框上真机走过。找不到焦点不出按钮。
+  if (labels.length < 2) {
+    const lines = visible.split("\n");
+    const matchedLine = visible.slice(0, best.index).split("\n").length - 1;
+    if (/^\s*│/.test(lines[matchedLine] ?? "")) {
+      let top = matchedLine;
+      while (top > 0 && !/^\s*╭/.test(lines[top])) top -= 1;
+      let bottom = matchedLine;
+      while (bottom < lines.length - 1 && !/^\s*╰/.test(lines[bottom])) bottom += 1;
+      const box = lines.slice(top, bottom + 1).join("\n");
+      const framed = detectFramedNumberedMenu(box);
+      if (framed) return { id: best.id, kind: best.kind, text: box, details: detailsStyle, ...roled(framed.options) };
+    }
   }
   // 无编号的光标菜单（中文本地化 CLI 的长会话恢复等）：编号提取落空时从 ❯ 光标块提取选项，
   // 让 GUI 直接给出选项按钮，而不是把「上一项/下一项」甩给用户。
   const anchored = detectAnchoredCursorMenu(visible, best.index) ?? detectCursorMenu(visible);
   if (anchored) {
-    return { id: best.id, kind: best.kind, text: displayText, details: detailsStyle, options: cursorMenuOptions(anchored.lines, anchored.focused) };
+    return { id: best.id, kind: best.kind, text: displayText, details: detailsStyle, ...roled(cursorMenuOptions(anchored.lines, anchored.focused)) };
   }
-  return { id: best.id, kind: best.kind, text: displayText, details: detailsStyle };
+  return { id: best.id, kind: best.kind, text: displayText, details: detailsStyle, ...roled(undefined) };
 }
 
 /** 兼容启动发送路径只关心是否阻塞的调用。 */

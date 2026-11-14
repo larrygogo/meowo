@@ -211,6 +211,62 @@ pub(super) static DEPS: &[D] = &[
         "[Image #1]",
         "2.1.303 pywinpty 实测占位符（插件注释）；2.1.322 包内 `[Image #` 仍在",
     ),
+    // ── 审批框选项的角色规则（见 mod.rs attention_patterns 的 options）──
+    D::new(
+        "option:claude:command-approval#0",
+        "",
+        "Yes",
+        "2.1.325 真机屏幕 2026-11-14（probe_approval）。选项只有一个通用词，搜程序文件证明不了什么；这一项在不在由同屏的问句规则盯着",
+    ),
+    D::new(
+        "option:claude:command-approval#1",
+        "Yes, and switch to auto mode",
+        "Yes, and switch to auto mode · auto mode handles these prompts for you",
+        "2.1.325 真机屏幕 2026-11-14；程序文件里另有同义的 `Yes, and use auto mode`",
+    ),
+    D::new(
+        "option:claude:command-approval#2",
+        "",
+        "Yes, allow all edits during this session (shift+tab)",
+        "旧版的只管本会话的放行项（2.1.2xx 实拍）；2.1.325 的句子是运行时拼的，不搜",
+    )
+    .legacy(),
+    D::new(
+        "option:claude:command-approval#3",
+        "Yes, and don't ask again for",
+        "Yes, and don't ask again for: curl *",
+        "2.1.325 真机屏幕 2026-11-14（probe_tui_script，屏幕上是弯引号）；程序文件里是直引号，样例按程序文件写，规则两种都认",
+    ),
+    D::new(
+        "option:claude:command-approval#4",
+        "",
+        "Yes, and always allow access to C:\\Users\\me\\AppData\\Local\\Temp\\meowo-approval-probe-29232 from this",
+        "2.1.325 真机屏幕 2026-11-14（probe_approval；放行目录的建议，长了折行所以句尾只到 from this）。句子是运行时拼的，程序文件里没有原样，不搜",
+    ),
+    D::new(
+        "option:claude:command-approval#5",
+        "",
+        "Yes, and always allow",
+        "兜底：记住类放行项的句首（上两条认不出对象时落到这里）；运行时拼接，不搜",
+    ),
+    D::new(
+        "option:claude:command-approval#6",
+        "",
+        "No",
+        "2.1.325 真机屏幕 2026-11-14。选项只有一个通用词，搜程序文件证明不了什么；这一项在不在由同屏的问句规则盯着",
+    ),
+    D::new(
+        "option-ready:claude:command-approval#6",
+        "tell Claude what to do differently",
+        " ❯ 4. No, and tell Claude what to do differently",
+        "2.1.325 真机屏幕 2026-11-14（probe_deny_feedback：焦点在 No 上按 Tab 之后这一行的样子）",
+    ),
+    D::new(
+        "option:claude:command-approval#7",
+        "No, and tell Claude what to do differently",
+        "No, and tell Claude what to do differently (esc)",
+        "旧版直接列出的拒绝项；2.1.325 程序文件里原句仍在（No 按 Tab 之后显示）",
+    ),
     D::new(
         "attention:claude:long-session-resume",
         "This session is ",

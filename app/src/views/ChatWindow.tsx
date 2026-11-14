@@ -29,7 +29,8 @@ import { reduceChatEvents } from "../chat/reducer";
 import { ApprovalCard } from "./chat/ApprovalCard";
 import { ApprovalRequestCard } from "./chat/ApprovalRequestCard";
 import { TerminalPromptCard, TerminalQuestionCard } from "./chat/TerminalRequestCards";
-import { approvalCardModel, cardBadge, cardTitle, isPersistentChoice, terminalInputForChoice, type ApprovalChoice } from "./chat/requestCard";
+import { approvalCardModel, cardBadge, cardTitle, denyReasonOf, isPersistentChoice, terminalFeedbackFor, terminalInputForChoice, type ApprovalChoice } from "./chat/requestCard";
+import { typeAnswerIntoTerminal } from "./chat/terminalTypedAnswer";
 import { cardLockHint, composerCardLock, lockForPendingReview, lockForScreenCard, screenCardLockKind } from "./chat/composerCardLock";
 import { followUpInput, type PendingFollowUp } from "./chat/terminalFollowUp";
 import { CardAnnouncer } from "./chat/cardAnnouncer";
@@ -4054,6 +4055,24 @@ export function ChatWindow() {
     if (!approvalModel || !approvalModel.live || approvalModel.state !== "pending") return;
     if (approvalModel.channel === "broker") { void decideApproval(choice); return; }
     if (!commandAttention) return;
+    // 说明并拒绝：不是一串按键，要先让那一项进入等输入的状态、认出来才打字（见 chat/terminalTypedAnswer）。
+    const reason = denyReasonOf(choice);
+    if (reason !== null) {
+      const flow = terminalFeedbackFor(commandAttention);
+      if (!flow || !terminalResponseReady || optionResolvingRef.current) return;
+      optionResolvingRef.current = true;
+      void typeAnswerIntoTerminal(sessionId, flow, reason)
+        .then((outcome) => {
+          if (!isCurrentOperation()) return;
+          if (outcome === "sent") { setTerminalAttention(null); return; }
+          // 没进入等输入的状态：说明没有写进终端，审批框还在，卡片留着让用户重试或直接拒绝。
+          logChatEvent(sessionId, { kind: "card_unrecognized", reason: "typed_answer_not_ready", detail: { what: "deny_reason" } });
+          setSendError(t.chat.denyReasonNotSent, { terminal: true });
+        })
+        .catch((error) => setSendError(formatBackendError(error, t.locale)))
+        .finally(() => { optionResolvingRef.current = false; });
+      return;
+    }
     const input = terminalInputForChoice(commandAttention, choice);
     if (input === null) return;
     // 持久放行在有的 CLI 上还要过一道确认页：记一笔，认出确认页时替用户确认。

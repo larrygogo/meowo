@@ -31,6 +31,8 @@ pub struct CliTextDep {
     /// - `effort.confirm` / `effort.reject` / `model.confirm` / `model.reject` / `undo.reject` /
     ///   `status_line` / `retry_line` / `clipboard_image`：对应能力槽的正则；
     /// - `attention:<id>`：该提示规则的任一正则；
+    /// - `option:<提示 id>#<序号>`：该提示规则里第几条选项角色规则；`option-ready:…`：那一项
+    ///   现场打字流程的就绪标志（`TypedInput::ready_pattern`）；
     /// - `screen:<id>`：该屏幕规则里的任一 `LineRegex`；
     /// - `literal:<文案>`：自动抽取的某个字面量（给替代搜索片段，或标成旧版兼容）。
     pub rule: &'static str,
@@ -283,6 +285,14 @@ pub fn regex_rule_keys(p: &dyn crate::AgentPlugin) -> Vec<String> {
     }
     for a in p.attention_patterns() {
         keys.push(format!("attention:{}", a.id));
+        // 选项角色规则同样是在认 CLI 的文案：选项改了说法，按钮就从「允许一次」掉成普通选项。
+        // 一条规则一个键（`option:<提示 id>#<声明序号>`）；带现场打字流程的另有就绪标志一条。
+        for (index, option) in a.options.iter().enumerate() {
+            keys.push(format!("option:{}#{index}", a.id));
+            if option.typed.is_some() {
+                keys.push(format!("option-ready:{}#{index}", a.id));
+            }
+        }
     }
     for rule in p.screen_rules() {
         let mut regex = Vec::new();
@@ -308,6 +318,23 @@ pub fn resolve(p: &dyn crate::AgentPlugin, rule: &str) -> Option<RuleText> {
             .iter()
             .find(|a| a.id == id)
             .map(|a| RuleText::Regex(a.patterns.to_vec()));
+    }
+    // `option:<提示 id>#<序号>` 与 `option-ready:<提示 id>#<序号>`：提示 id 里自带冒号，按最后一个 `#` 切。
+    for (prefix, ready) in [("option-ready:", true), ("option:", false)] {
+        if let Some(rest) = rule.strip_prefix(prefix) {
+            let (id, index) = rest.rsplit_once('#')?;
+            let option = p
+                .attention_patterns()
+                .iter()
+                .find(|a| a.id == id)?
+                .options
+                .get(index.parse::<usize>().ok()?)?;
+            return if ready {
+                option.typed.map(|typed| RuleText::Regex(vec![typed.ready_pattern]))
+            } else {
+                Some(RuleText::Regex(vec![option.pattern]))
+            };
+        }
     }
     if let Some(id) = rule.strip_prefix("screen:") {
         let found = p.screen_rules().iter().find(|r| r.id == id)?;

@@ -16,8 +16,9 @@ import { terminalAttention } from "../../terminalAttention";
 import { grammar } from "../../test/agents";
 import fixture from "../../test/fixtures/approval-frames.json";
 import { ApprovalRequestCard } from "./ApprovalRequestCard";
-import { approvalCardModel, cardBadge, cardKindOfAttention, cardTitle, terminalInputForChoice } from "./requestCard";
+import { approvalCardModel, cardBadge, cardKindOfAttention, cardTitle, terminalFeedbackFor, terminalInputForChoice } from "./requestCard";
 import { asTerminalRuntimeRequest } from "./runtimeRequest";
+import { typeAnswerIntoTerminal, typedAnswerReady } from "./terminalTypedAnswer";
 
 type BrokerSample = {
   sessionId: number;
@@ -33,10 +34,23 @@ type Frame = {
   channel: "broker" | "terminal";
   rule: string | null;
   allowOnceInput: string | null;
+  denyFeedback?: FeedbackFlow;
   screen: string[];
   brokerRequest: BrokerSample | null;
 };
+type FeedbackFlow = { openInput: string; readyPattern: string; submitInput: string };
+/// tests/probe_deny_feedback.rs 走「说明并拒绝」时四个时刻的真机屏幕。
+type FeedbackFrame = {
+  version: string;
+  feedback: string;
+  denyFeedback: FeedbackFlow;
+  screen: string[];
+  readyScreen: string[];
+  typedScreen: string[];
+  finalScreen: string[];
+};
 const FRAMES = fixture.frames as unknown as Record<string, Frame>;
+const FEEDBACK = fixture.feedbackFrames as unknown as Record<string, FeedbackFrame>;
 
 afterEach(cleanup);
 
@@ -118,10 +132,11 @@ describe("真机审批样本：按钮集合与顺序五家同一套规则", () =
       "claude（broker）": ["本会话内允许 · C:\\Users\\me\\AppData\\Local\\Temp\\meowo-appr…", "说明并拒绝", "拒绝", "允许一次"],
       // codex 的请求不带持久放行建议。
       "codex（broker）": ["说明并拒绝", "拒绝", "允许一次"],
-      // 屏幕：有「仅收起」，持久放行按终端里实际有的选项出；kimi 要现场打字的 Reject with feedback 不出按钮。
-      "kimi（屏幕）": ["仅收起", "本会话内允许", "拒绝", "允许一次"],
+      // 屏幕：有「仅收起」，持久放行按终端里实际有的选项出。kimi 的 Reject with feedback、claude 的
+      // No 加 Tab 真机走通了，所以屏幕通道也有「说明并拒绝」；opencode 主会话没有说明页。
+      "kimi（屏幕）": ["仅收起", "本会话内允许", "说明并拒绝", "拒绝", "允许一次"],
       "opencode（屏幕）": ["仅收起", "本会话内允许", "拒绝", "允许一次"],
-      "claude（屏幕兜底）": ["仅收起", "允许并记住", "允许并切到自动模式", "拒绝", "允许一次"],
+      "claude（屏幕兜底）": ["仅收起", "允许并记住 · C:\\Users\\me\\AppData\\Local\\Temp\\meowo-approval-probe-29232", "允许并切到自动模式", "说明并拒绝", "拒绝", "允许一次"],
     });
   });
 
@@ -183,5 +198,75 @@ describe("真机审批样本：「允许一次」写进终端的按键", () => {
     expect(keys("opencode")).toEqual(["\r", "\x1b[C\r", "\x1b"]);
     // claude 屏幕兜底：焦点在第一项，从它往下移；拒绝是第 4 项 No。
     expect(keys("claude")).toEqual(["\r", "\x1b[B\r", "\x1b[B\x1b[B\r", "\x1b[B\x1b[B\x1b[B\r"]);
+  });
+});
+
+/// 屏幕通道的「说明并拒绝」：按键与就绪标志取自插件声明，探针照着走通（命令没有执行、模型收到了说明）。
+/// 这里用探针抓下的四个时刻的屏幕回放生产逻辑。
+describe("真机样本：屏幕通道的说明并拒绝", () => {
+  const AGENTS = ["claude", "kimi"] as const;
+  const attentionOf = (lines: string[], agent: string) => terminalAttention(lines.join("\n"), [], false, false, grammar(agent));
+
+  it.each(AGENTS)("%s：卡片算出来的打字流程就是探针真机走通的那一套", (agent) => {
+    // 探针读的是 frames 里的 denyFeedback；两处屏幕（允许一次那次、说明并拒绝那次）算出来的都得是它。
+    expect(terminalFeedbackFor(screenRequest(agent).attention)).toEqual(FRAMES[agent].denyFeedback);
+    const attention = attentionOf(FEEDBACK[agent].screen, agent);
+    expect(terminalFeedbackFor(attention!)).toEqual(FEEDBACK[agent].denyFeedback);
+    expect(FEEDBACK[agent].denyFeedback).toEqual(FRAMES[agent].denyFeedback);
+  });
+
+  it.each(AGENTS)("%s：就绪标志只在进入等输入之后的屏幕上命中", (agent) => {
+    const frame = FEEDBACK[agent];
+    const flow = frame.denyFeedback;
+    // 审批框刚出现、还没按键：不能算就绪（否则正文会被当成按键，数字 1 就是允许）。
+    expect(typedAnswerReady(frame.screen, flow)).toBe(false);
+    expect(typedAnswerReady(frame.readyScreen, flow)).toBe(true);
+    // 了结之后的屏幕上没有它。
+    expect(typedAnswerReady(frame.finalScreen, flow)).toBe(false);
+    // 被拒的命令没有执行的字样、模型按说明给出的答案都在最后一屏上。
+    expect(frame.finalScreen.join("\n")).toContain("3702");
+  });
+
+  it.each(AGENTS)("%s：进入等输入之后屏幕仍被认成同一条审批，卡片不会中途换成别的卡", (agent) => {
+    const before = attentionOf(FEEDBACK[agent].screen, agent);
+    for (const lines of [FEEDBACK[agent].readyScreen, FEEDBACK[agent].typedScreen]) {
+      const during = attentionOf(lines, agent);
+      expect(during?.id).toBe(before?.id);
+      expect(during?.kind).toBe("approval");
+    }
+  });
+
+  it.each(AGENTS)("%s：按真机屏幕回放三步，写进终端的依次是进入键、说明、提交键", async (agent) => {
+    const frame = FEEDBACK[agent];
+    const writes: string[] = [];
+    let clock = 0;
+    const outcome = await typeAnswerIntoTerminal(7, frame.denyFeedback, frame.feedback, {
+      write: async (_session, data) => { writes.push(data); },
+      // 第一次读屏还是按键前的画面（重绘没跟上），第二次才是进入等输入的画面。
+      screen: async () => (clock < 300 ? frame.screen : frame.readyScreen),
+      sleep: async (ms) => { clock += ms; },
+      now: () => clock,
+    });
+    expect(outcome).toBe("sent");
+    expect(writes).toEqual([frame.denyFeedback.openInput, frame.feedback, frame.denyFeedback.submitInput]);
+  });
+
+  it.each(AGENTS)("%s：屏幕一直没进入等输入（按键没生效）：只写了进入键，说明一个字都不写", async (agent) => {
+    const frame = FEEDBACK[agent];
+    const writes: string[] = [];
+    let clock = 0;
+    const outcome = await typeAnswerIntoTerminal(7, frame.denyFeedback, frame.feedback, {
+      write: async (_session, data) => { writes.push(data); },
+      screen: async () => frame.screen,
+      sleep: async (ms) => { clock += ms; },
+      now: () => clock,
+    });
+    expect(outcome).toBe("not_ready");
+    expect(writes).toEqual([frame.denyFeedback.openInput]);
+  });
+
+  it("opencode 的真机屏幕上没有能带说明的拒绝项", () => {
+    expect(terminalFeedbackFor(screenRequest("opencode").attention)).toBeNull();
+    expect(FRAMES.opencode.denyFeedback).toBeUndefined();
   });
 });

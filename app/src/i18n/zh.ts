@@ -851,6 +851,8 @@ export const zh = {
     denyWithReason: "说明并拒绝",
     denyReasonPlaceholder: "说明拒绝原因…",
     denyReasonSubmit: "提交并拒绝",
+    // 屏幕通道的说明并拒绝：终端没进入等输入的状态，说明没有写进去（见 chat/terminalTypedAnswer）。
+    denyReasonNotSent: "说明没有送达，可重试或直接拒绝",
     allowOnce: "允许一次",
     allowRemember: "允许并记住",
     allowSession: "本会话内允许",

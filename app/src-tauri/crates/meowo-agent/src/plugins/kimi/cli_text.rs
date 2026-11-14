@@ -36,6 +36,43 @@ pub(super) static DEPS: &[D] = &[
         "[Image #1]",
         "2.5.1 kimi.EXE：`[image #` 2 处（输入框里的贴图占位）；`[image:` 1 处是旧形态",
     ),
+    // ── 审批面板与提问表单选项的角色规则 ──
+    D::new(
+        "option:kimi:question#0",
+        "",
+        "Other",
+        "2.6.1 kimi.exe：提问表单末尾恒有的自定义答案项（`DEFAULT_OTHER_LABEL = \"Other\"`）。选项只有一个通用词，搜程序文件证明不了什么",
+    ),
+    D::new(
+        "option:kimi:command-approval#0",
+        "Approve once",
+        "Approve once",
+        "2.6.1 kimi.exe `DEFAULT_APPROVAL_CHOICES` 与真机屏幕 2026-11-14；计划审阅的 `Approve` 同规则",
+    ),
+    D::new(
+        "option:kimi:command-approval#1",
+        "Approve for this session",
+        "Approve for this session",
+        "2.6.1 kimi.exe `DEFAULT_APPROVAL_CHOICES` 与真机屏幕 2026-11-14",
+    ),
+    D::new(
+        "option:kimi:command-approval#2",
+        "",
+        "Reject",
+        "2.6.1 真机屏幕 2026-11-14。选项只有一个通用词，搜程序文件证明不了什么；这一项在不在由同屏的问句规则盯着",
+    ),
+    D::new(
+        "option:kimi:command-approval#3",
+        "Reject with feedback",
+        "Reject with feedback",
+        "2.6.1 kimi.exe `DEFAULT_APPROVAL_CHOICES`（requires_feedback）与真机屏幕 2026-11-14；计划审阅的 `Revise` 同规则",
+    ),
+    D::new(
+        "option-ready:kimi:command-approval#3",
+        "Type feedback · ↵ submit.",
+        "  Type feedback · ↵ submit.",
+        "2.6.1 真机屏幕 2026-11-14（probe_deny_feedback：按 4 之后的页脚）；程序文件里是原句",
+    ),
     D::new(
         "attention:kimi:question",
         "←/→/tab switch",

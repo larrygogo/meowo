@@ -462,6 +462,50 @@ impl AgentPlugin for Gemini {
                 details: crate::chat_ui::AttentionDetails::FramedBox,
                 kind: crate::chat_ui::AttentionKind::Approval,
                 confirms: None,
+                // 选项角色（0.68.0 npm bundle 的 ToolConfirmationMessage，2026-11-14 逐条核对；屏幕样本仍是
+                // 0.61 真机的）：`Allow once`、几种只管本会话的（`Allow for this session`、
+                // `Allow tool for this session`、`Allow all server tools for this session`）、几种写进设置的
+                // （`Allow for all future sessions`、`Allow this command for all future sessions`、
+                // `Allow for this file in all future sessions`、`Allow tool for all future sessions`）、
+                // `No, suggest changes (esc)`。
+                // 最后一项的值是 `cancel`，与按 Esc 相同：它只是取消这次调用，「suggest changes」指的是
+                // 取消之后用户自己再发一条消息，没有单独的说明输入框。所以它是 deny，不是 deny_with_feedback。
+                // `Modify with external editor` 会在本机打开外部编辑器，不是放行也不是拒绝，不声明，归 other。
+                //
+                // unparsed_keys：选项认不出（焦点标记 ● 没抓到）时只留拒绝，Esc 与焦点无关（拒绝项原文就写着
+                // `(esc)`）。不给「允许一次」：回车选的是当前焦点项，焦点在哪认不出来就不能替用户按。
+                options: &[
+                    crate::chat_ui::AttentionOptionRule {
+                        pattern: r"^allow once$",
+                        role: crate::chat_ui::OptionRole::AllowOnce,
+                        scope: None,
+                        typed: None,
+                    },
+                    crate::chat_ui::AttentionOptionRule {
+                        pattern: r"^allow (?:tool |all server tools )?for this session$",
+                        role: crate::chat_ui::OptionRole::AllowPersistent,
+                        scope: Some(crate::chat_ui::PersistScope::Session),
+                        typed: None,
+                    },
+                    crate::chat_ui::AttentionOptionRule {
+                        pattern: r"^allow (?:tool |this command )?for (?:this file in )?all future sessions$",
+                        role: crate::chat_ui::OptionRole::AllowPersistent,
+                        scope: Some(crate::chat_ui::PersistScope::Remember),
+                        typed: None,
+                    },
+                    crate::chat_ui::AttentionOptionRule {
+                        pattern: r"^no, suggest changes(?: \(esc\))?$",
+                        role: crate::chat_ui::OptionRole::Deny,
+                        scope: None,
+                        typed: None,
+                    },
+                ],
+                unparsed_keys: &[
+                    crate::chat_ui::RoleKey {
+                        role: crate::chat_ui::OptionRole::Deny,
+                        input: "\x1b",
+                    },
+                ],
             },
             crate::chat_ui::AttentionPattern {
                 id: "gemini:usage-limit",
@@ -474,6 +518,8 @@ impl AgentPlugin for Gemini {
                 // 回合中途的额度或高负载提示：CLI 要用户选「继续重试 / 停下」，不是审批也不是启动步骤。
                 kind: crate::chat_ui::AttentionKind::Choice,
                 confirms: None,
+                options: &[],
+                unparsed_keys: &[],
             },
             crate::chat_ui::AttentionPattern {
                 id: "gemini:question",
@@ -483,6 +529,8 @@ impl AgentPlugin for Gemini {
                 details: crate::chat_ui::AttentionDetails::FramedForm,
                 kind: crate::chat_ui::AttentionKind::Question,
                 confirms: None,
+                options: &[],
+                unparsed_keys: &[],
             },
         ]
     }

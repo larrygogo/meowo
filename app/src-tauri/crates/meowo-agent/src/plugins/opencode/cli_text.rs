@@ -23,6 +23,25 @@ pub(super) static DEPS: &[D] = &[
         "[Image 1]",
         "1.19.3 opencode.exe 内嵌 JS：`[image ${n+1}]`（与 `[pdf ${n+1}]` 并列的附件占位）",
     ),
+    // ── 权限框选项的角色规则 ──
+    D::new(
+        "option:opencode:command-approval#0",
+        "Allow once",
+        "Allow once",
+        "1.19.5 opencode.exe `options:{once:\"Allow once\",always:\"Allow always\",reject:\"Reject\"}` 与真机屏幕 2026-11-14",
+    ),
+    D::new(
+        "option:opencode:command-approval#1",
+        "Allow always",
+        "Allow always",
+        "1.19.5 opencode.exe 同上",
+    ),
+    D::new(
+        "option:opencode:command-approval#2",
+        "",
+        "Reject",
+        "1.19.5 真机屏幕 2026-11-14。选项只有一个通用词，搜程序文件证明不了什么；这一项在不在由同屏的问句规则盯着",
+    ),
     D::new(
         "attention:opencode:command-approval",
         "permission required",

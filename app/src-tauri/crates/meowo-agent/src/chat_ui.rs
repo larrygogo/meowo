@@ -233,6 +233,92 @@ pub enum AttentionKind {
     Choice,
 }
 
+/// 屏幕上一个选项**起什么作用**。卡片只按它摆按钮，不看选项的文案。
+///
+/// 此前前端用正则认各家的英文选项文案（`Approve for this session`、`switch to auto mode`）来决定
+/// 哪个是「允许一次」、哪个是「拒绝」，适配知识落在界面层；兜底还会出错：只认出
+/// `Allow always / Reject` 两项时，「允许一次」发出去的是 Allow always（做空审查 2026-11-14）。
+/// 现在由插件随规则声明（[`AttentionOptionRule`]），认不出的一律是 `Other`。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+pub enum OptionRole {
+    /// 只放行这一次。卡片上的「允许一次」只认它：请求里没有这个角色，就没有这颗按钮。
+    AllowOnce,
+    /// 放行并记住（范围见 [`PersistScope`]）。
+    AllowPersistent,
+    /// 拒绝这一次。
+    Deny,
+    /// 拒绝并附一句说明（说明要在终端里现场打字，流程见 [`TypedInput`]）。
+    DenyWithFeedback,
+    /// 提问表单里的自定义答案项（同样要现场打字）。
+    CustomAnswer,
+    /// 认不出作用的选项：卡片照终端原文列成普通按钮，不带数字快捷键，不冒充允许或拒绝。
+    Other,
+}
+
+/// 持久放行记到哪里为止。按钮上的说法由它决定（本会话内允许 / 允许并记住 / 允许并切到自动模式）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+pub enum PersistScope {
+    /// 只到这个会话（或这个 CLI 进程）结束。
+    Session,
+    /// 写进规则，以后的会话也生效。
+    Remember,
+    /// 放行并把会话切到自动模式（claude 2.1.325 的 `Yes, and switch to auto mode`）。
+    AutoMode,
+}
+
+/// 要在终端里**现场打字**的选项怎么作答（「说明并拒绝」的说明、提问表单的自定义答案）。
+///
+/// 流程三步，每一步都不盲按：先让这一项进入等输入的状态，屏幕上认出 `ready_pattern` 才打字，
+/// 打完再按 `submit_input`。认不出就停在第一步，不往终端里打字：审批框里数字键就是选项
+/// （kimi 面板里 `1` 是 Approve once），没进输入状态时打进去的字可能变成放行。
+///
+/// **每家都要真机走通才能声明**（tests/probe_deny_feedback.rs、probe_kimi_other.rs）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+pub struct TypedInput {
+    /// 怎么让这一项进入等输入的状态。None = 按这一项自己的选中键就进（kimi 的数字键）；
+    /// Some(key) = 先把焦点移到这一项（不回车），再按 key（claude 在「No」上按 Tab）。
+    pub amend_input: Option<&'static str>,
+    /// 进入等输入状态后屏幕上出现的那一行（JS 正则，前端以 `im` 编译）。认出才打字。
+    pub ready_pattern: &'static str,
+    /// 打完字后的提交键。
+    pub submit_input: &'static str,
+}
+
+/// 一条「选项文案 → 角色」的规则。前端拿屏幕上解析出的每个选项的文字，按声明顺序逐条试，
+/// 第一条命中的定角色；都不命中是 [`OptionRole::Other`]。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+pub struct AttentionOptionRule {
+    /// JS 正则源码，对选项文字（去掉首尾空白）匹配，前端以 `i` 编译。
+    /// 捕获组 1（如有）= 放行的对象（`don't ask again for: curl *` 里的 `curl *`），按钮上带出来。
+    pub pattern: &'static str,
+    pub role: OptionRole,
+    /// 只对 `AllowPersistent` 有意义。None = 范围认不出，按钮照搬终端原文。
+    pub scope: Option<PersistScope>,
+    /// 这一项可以（或必须）带一句现场打的字。None = 不能，或还没真机验证过。
+    /// `DenyWithFeedback`、`CustomAnswer` 没有它时卡片上不出入口（点了也完成不了）；
+    /// `Deny` 带着它 = 拒绝项可以追加说明（claude 的 Tab to amend）。
+    pub typed: Option<TypedInput>,
+}
+
+/// 选项行没解析出来时也成立的按键（只填真机验证过、与焦点位置无关或焦点位置确定的）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+pub struct RoleKey {
+    pub role: OptionRole,
+    pub input: &'static str,
+}
+
 /// 屏幕上**可操作**提示的识别规格：审批框、长会话确认这类需要用户当场决定的整句提示。
 ///
 /// 与 [`crate::screen::ScreenRule`] 的分工：那套只判**状态**（working/idle/blocked，只读）；
@@ -266,6 +352,12 @@ pub struct AttentionPattern {
     /// 后的「Always allow」确认页）。用户刚在 Meowo 的卡片上点了那个选项，Meowo 认出这一屏后
     /// 替他按下确认，对话页上一次点击就完成；用户自己在终端里走到这一屏的，照常出卡。
     pub confirms: Option<&'static str>,
+    /// 选项文案 → 角色（见 [`AttentionOptionRule`]）。空 = 这条提示的选项不分角色，
+    /// 卡片把它们原样列成普通按钮（额度耗尽后重试还是停下、长会话怎么恢复）。
+    pub options: &'static [AttentionOptionRule],
+    /// 选项行还没画出来、或滚出了屏幕时仍然成立的按键（见 [`RoleKey`]）。空 = 认不出选项就不猜按键，
+    /// 卡上只有「仅收起」。
+    pub unparsed_keys: &'static [RoleKey],
 }
 
 /// 屏幕回显标记：TUI 状态栏上代表某个模式值的稳定文案片段（如 claude 的 "plan mode on"）。

@@ -40,8 +40,9 @@ export function TerminalQuestionCard({ attention, kind, live, customText, return
           <button type="button" disabled={!live || !option.input} key={`${option.position}:${option.label}`} onClick={() => onChoose(option)}>{t.chat.chatAboutThis}</button>
         ))}
         {options.filter((option) => option.kind === "submit").map((option) => (
-          // kimi 多选页的这一项是 Tab 去下一页（标签 `Next ⇥`），还不是提交，按钮照实说「下一步」。
-          <button type="button" disabled={!live || !option.input} className="btn-primary" key={`${option.position}:${option.label}`} onClick={() => onChoose(option)}>{/^next\b/i.test(option.label) ? t.chat.questionNext : t.chat.submitAnswer}</button>
+          // 多选页去下一页的那一项（kimi 的 Tab）还不是提交，按钮照实说「下一步」。是不是由识别层标在
+          // advance 上，这里不看选项的文字。
+          <button type="button" disabled={!live || !option.input} className="btn-primary" key={`${option.position}:${option.label}`} onClick={() => onChoose(option)}>{option.advance ? t.chat.questionNext : t.chat.submitAnswer}</button>
         ))}
       </>}
     >

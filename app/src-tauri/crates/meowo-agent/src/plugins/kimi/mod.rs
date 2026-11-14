@@ -505,6 +505,18 @@ impl AgentPlugin for Kimi {
                 details: crate::chat_ui::AttentionDetails::BracketForm,
                 kind: crate::chat_ui::AttentionKind::Question,
                 confirms: None,
+                // 自定义答案项 `Other`（表单恒在末尾追加，2.6.1 程序文件 `DEFAULT_OTHER_LABEL`）：按它的数字键
+                // 进入编辑，这一行变成 `Other: █`，表单下方出现 `Type your answer, then press Enter to save.`，
+                // 打字后回车存下答案。没有真机走通之前不给 typed，卡片上不出自定义答案的入口。
+                options: &[
+                    crate::chat_ui::AttentionOptionRule {
+                        pattern: r"^other$",
+                        role: crate::chat_ui::OptionRole::CustomAnswer,
+                        scope: None,
+                        typed: None,
+                    },
+                ],
+                unparsed_keys: &[],
             },
             crate::chat_ui::AttentionPattern {
                 id: "kimi:command-approval",
@@ -519,6 +531,47 @@ impl AgentPlugin for Kimi {
                 details: crate::chat_ui::AttentionDetails::ArrowPanel,
                 kind: crate::chat_ui::AttentionKind::Approval,
                 confirms: None,
+                // 选项角色（2.6.1 程序文件 `DEFAULT_APPROVAL_CHOICES` / `PLAN_REJECT_CHOICES` 与真机屏幕）：
+                //   ▶ 1. Approve once / 2. Approve for this session / 3. Reject / 4. Reject with feedback
+                // 计划审阅是 `Approve`（或计划自带的几个选项）加 `Reject`、`Revise`；计划自带的选项文案
+                // 不固定，认不出的归 other，卡片照原文列出来。
+                //
+                // `Reject with feedback`：按它的数字键进入输入状态（`selectAndSubmit` 里
+                // `requires_feedback` 分支），页脚从 `↑/↓ select · …` 变成 `Type feedback · ↵ submit.`，
+                // 打字后回车以 rejected 加 feedback 作答。真机走通：命令没有执行，模型收到
+                // `… rejected the approval request. Reason: <说明>`（probe_deny_feedback，2.6.1，2026-11-14）。
+                // `Revise` 是同一个组件、同一个 `requires_feedback` 分支，没有单独走真机。
+                options: &[
+                    crate::chat_ui::AttentionOptionRule {
+                        pattern: r"^approve(?: once)?$",
+                        role: crate::chat_ui::OptionRole::AllowOnce,
+                        scope: None,
+                        typed: None,
+                    },
+                    crate::chat_ui::AttentionOptionRule {
+                        pattern: r"^approve for this session$",
+                        role: crate::chat_ui::OptionRole::AllowPersistent,
+                        scope: Some(crate::chat_ui::PersistScope::Session),
+                        typed: None,
+                    },
+                    crate::chat_ui::AttentionOptionRule {
+                        pattern: r"^reject$",
+                        role: crate::chat_ui::OptionRole::Deny,
+                        scope: None,
+                        typed: None,
+                    },
+                    crate::chat_ui::AttentionOptionRule {
+                        pattern: r"^(?:reject with feedback|revise)$",
+                        role: crate::chat_ui::OptionRole::DenyWithFeedback,
+                        scope: None,
+                        typed: Some(crate::chat_ui::TypedInput {
+                            amend_input: None,
+                            ready_pattern: r"^\s*type feedback · ↵ submit\.?\s*$",
+                            submit_input: "\r",
+                        }),
+                    },
+                ],
+                unparsed_keys: &[],
             },
         ]
     }

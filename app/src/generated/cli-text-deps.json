@@ -87,14 +87,14 @@
           "needle": "type something",
           "note": "",
           "rule": "literal:type something",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:954"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:1029"
         },
         {
           "legacy": false,
           "needle": "chat about this",
           "note": "",
           "rule": "literal:chat about this",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:958"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:1033"
         },
         {
           "legacy": false,
@@ -621,6 +621,69 @@
         },
         {
           "legacy": false,
+          "needle": "",
+          "note": "2.1.325 真机屏幕 2026-11-14（probe_approval）。选项只有一个通用词，搜程序文件证明不了什么；这一项在不在由同屏的问句规则盯着",
+          "rule": "option:claude:command-approval#0",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:943"
+        },
+        {
+          "legacy": false,
+          "needle": "Yes, and switch to auto mode",
+          "note": "2.1.325 真机屏幕 2026-11-14；程序文件里另有同义的 `Yes, and use auto mode`",
+          "rule": "option:claude:command-approval#1",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:949"
+        },
+        {
+          "legacy": true,
+          "needle": "",
+          "note": "旧版的只管本会话的放行项（2.1.2xx 实拍）；2.1.325 的句子是运行时拼的，不搜",
+          "rule": "option:claude:command-approval#2",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:955"
+        },
+        {
+          "legacy": false,
+          "needle": "Yes, and don't ask again for",
+          "note": "2.1.325 真机屏幕 2026-11-14（probe_tui_script，屏幕上是弯引号）；程序文件里是直引号，样例按程序文件写，规则两种都认",
+          "rule": "option:claude:command-approval#3",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:961"
+        },
+        {
+          "legacy": false,
+          "needle": "",
+          "note": "2.1.325 真机屏幕 2026-11-14（probe_approval；放行目录的建议，长了折行所以句尾只到 from this）。句子是运行时拼的，程序文件里没有原样，不搜",
+          "rule": "option:claude:command-approval#4",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:967"
+        },
+        {
+          "legacy": false,
+          "needle": "",
+          "note": "兜底：记住类放行项的句首（上两条认不出对象时落到这里）；运行时拼接，不搜",
+          "rule": "option:claude:command-approval#5",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:973"
+        },
+        {
+          "legacy": false,
+          "needle": "",
+          "note": "2.1.325 真机屏幕 2026-11-14。选项只有一个通用词，搜程序文件证明不了什么；这一项在不在由同屏的问句规则盯着",
+          "rule": "option:claude:command-approval#6",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:979"
+        },
+        {
+          "legacy": false,
+          "needle": "tell Claude what to do differently",
+          "note": "2.1.325 真机屏幕 2026-11-14（probe_deny_feedback：焦点在 No 上按 Tab 之后这一行的样子）",
+          "rule": "option-ready:claude:command-approval#6",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:984"
+        },
+        {
+          "legacy": false,
+          "needle": "No, and tell Claude what to do differently",
+          "note": "旧版直接列出的拒绝项；2.1.325 程序文件里原句仍在（No 按 Tab 之后显示）",
+          "rule": "option:claude:command-approval#7",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:989"
+        },
+        {
+          "legacy": false,
           "needle": "This session is ",
           "note": "2.1.322 模板 `This session is ${Ue} old and ${We} tokens.`",
           "rule": "attention:claude:long-session-resume",
@@ -638,21 +701,21 @@
           "needle": "This command requires approval",
           "note": "2.1.322 包内字面量",
           "rule": "attention:claude:command-approval",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:915"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:917"
         },
         {
           "legacy": false,
           "needle": "Do you want to proceed?",
           "note": "2.1.322 包内字面量",
           "rule": "attention:claude:command-approval",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:915"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:917"
         },
         {
           "legacy": false,
           "needle": "written up a plan and is ready to execute",
           "note": "2.1.227 实拍（插件注释）；2.1.322 包内原句仍在",
           "rule": "attention:claude:plan-approval",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:925"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:998"
         },
         {
           "legacy": false,
@@ -914,28 +977,70 @@
           "needle": "thinking set to",
           "note": "2.5.1 kimi.EXE：`Thinking set to ` 2 处（/effort 成功后的回话）",
           "rule": "effort.confirm",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:602"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:655"
         },
         {
           "legacy": false,
           "needle": "unsupported thinking effort",
           "note": "2.5.1 kimi.EXE：`unsupported thinking effort` 1 处；同一规则里的 `cannot switch models while streaming` 0 处，留作旧版兼容",
           "rule": "effort.reject",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:603"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:656"
         },
         {
           "legacy": false,
           "needle": "cannot undo ",
           "note": "2.5.1 kimi.EXE formatUndoLimitMessage：`Cannot undo ` 4 处，后面的数字与原因是运行时拼的",
           "rule": "undo.reject",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:962"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:1015"
         },
         {
           "legacy": false,
           "needle": "[image #",
           "note": "2.5.1 kimi.EXE：`[image #` 2 处（输入框里的贴图占位）；`[image:` 1 处是旧形态",
           "rule": "clipboard_image",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:737"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:790"
+        },
+        {
+          "legacy": false,
+          "needle": "",
+          "note": "2.6.1 kimi.exe：提问表单末尾恒有的自定义答案项（`DEFAULT_OTHER_LABEL = \"Other\"`）。选项只有一个通用词，搜程序文件证明不了什么",
+          "rule": "option:kimi:question#0",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:513"
+        },
+        {
+          "legacy": false,
+          "needle": "Approve once",
+          "note": "2.6.1 kimi.exe `DEFAULT_APPROVAL_CHOICES` 与真机屏幕 2026-11-14；计划审阅的 `Approve` 同规则",
+          "rule": "option:kimi:command-approval#0",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:546"
+        },
+        {
+          "legacy": false,
+          "needle": "Approve for this session",
+          "note": "2.6.1 kimi.exe `DEFAULT_APPROVAL_CHOICES` 与真机屏幕 2026-11-14",
+          "rule": "option:kimi:command-approval#1",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:552"
+        },
+        {
+          "legacy": false,
+          "needle": "",
+          "note": "2.6.1 真机屏幕 2026-11-14。选项只有一个通用词，搜程序文件证明不了什么；这一项在不在由同屏的问句规则盯着",
+          "rule": "option:kimi:command-approval#2",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:558"
+        },
+        {
+          "legacy": false,
+          "needle": "Reject with feedback",
+          "note": "2.6.1 kimi.exe `DEFAULT_APPROVAL_CHOICES`（requires_feedback）与真机屏幕 2026-11-14；计划审阅的 `Revise` 同规则",
+          "rule": "option:kimi:command-approval#3",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:564"
+        },
+        {
+          "legacy": false,
+          "needle": "Type feedback · ↵ submit.",
+          "note": "2.6.1 真机屏幕 2026-11-14（probe_deny_feedback：按 4 之后的页脚）；程序文件里是原句",
+          "rule": "option-ready:kimi:command-approval#3",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:569"
         },
         {
           "legacy": false,
@@ -949,7 +1054,7 @@
           "needle": "run this command?",
           "note": "2.5.1 kimi.EXE：`Run this command?` 在审批问句表里（与 Write this file? 等并列）",
           "rule": "attention:kimi:command-approval",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:510"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:522"
         },
         {
           "legacy": true,
@@ -1459,6 +1564,34 @@
         },
         {
           "legacy": false,
+          "needle": "Allow once",
+          "note": "0.68.0 bundle ToolConfirmationMessage 2026-11-14；0.61 真机屏幕",
+          "rule": "option:gemini:command-approval#0",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:479"
+        },
+        {
+          "legacy": false,
+          "needle": "Allow for this session",
+          "note": "0.68.0 bundle 2026-11-14（另有 Allow tool for this session、Allow all server tools for this session）；0.61 真机屏幕",
+          "rule": "option:gemini:command-approval#1",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:485"
+        },
+        {
+          "legacy": false,
+          "needle": "Allow for all future sessions",
+          "note": "0.68.0 bundle 2026-11-14（另有 Allow this command for all future sessions、Allow for this file in all future sessions）；没有真机屏幕",
+          "rule": "option:gemini:command-approval#2",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:491"
+        },
+        {
+          "legacy": false,
+          "needle": "No, suggest changes (esc)",
+          "note": "0.68.0 bundle 2026-11-14：值是 cancel，与 Esc 相同；0.61 真机屏幕",
+          "rule": "option:gemini:command-approval#3",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:497"
+        },
+        {
+          "legacy": false,
           "needle": "allow execution of",
           "note": "0.65.0 bundle：`Allow execution of` 在工具确认框里；同规则还认 Apply this change? / Do you want to proceed? / 沙箱扩权 To run [Shell] …",
           "rule": "attention:gemini:command-approval",
@@ -1469,14 +1602,14 @@
           "needle": "usage limit reached",
           "note": "0.65.0 bundle：`Usage limit reached`；高负载框 `We are currently experiencing high demand for ${model}.` 同规则",
           "rule": "attention:gemini:usage-limit",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:467"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:511"
         },
         {
           "legacy": false,
           "needle": "answer questions",
           "note": "0.65.0 bundle：ask_user 提问表单表头 `Answer Questions`",
           "rule": "attention:gemini:question",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:479"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:525"
         },
         {
           "legacy": false,
@@ -1533,14 +1666,14 @@
           "needle": "",
           "note": "运行时拼接：模式名与模型名在底栏分别渲染，中间点由模板插入；`build`、`plan` 在程序文件里是通用词，搜它们证明不了什么",
           "rule": "literal:build · ",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:423"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:464"
         },
         {
           "legacy": false,
           "needle": "",
           "note": "运行时拼接：同 build · ",
           "rule": "literal:plan · ",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:427"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:468"
         },
         {
           "legacy": false,
@@ -1666,14 +1799,35 @@
           "needle": "Ask anything",
           "note": "1.19.5 真机 2026-11-14（probe_tui_script cells）：空输入框的灰色占位，引号里的示例会轮换",
           "rule": "composer.empty",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:380"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:421"
         },
         {
           "legacy": false,
           "needle": "[image ",
           "note": "1.19.3 opencode.exe 内嵌 JS：`[image ${n+1}]`（与 `[pdf ${n+1}]` 并列的附件占位）",
           "rule": "clipboard_image",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:448"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:489"
+        },
+        {
+          "legacy": false,
+          "needle": "Allow once",
+          "note": "1.19.5 opencode.exe `options:{once:\"Allow once\",always:\"Allow always\",reject:\"Reject\"}` 与真机屏幕 2026-11-14",
+          "rule": "option:opencode:command-approval#0",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:355"
+        },
+        {
+          "legacy": false,
+          "needle": "Allow always",
+          "note": "1.19.5 opencode.exe 同上",
+          "rule": "option:opencode:command-approval#1",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:361"
+        },
+        {
+          "legacy": false,
+          "needle": "",
+          "note": "1.19.5 真机屏幕 2026-11-14。选项只有一个通用词，搜程序文件证明不了什么；这一项在不在由同屏的问句规则盯着",
+          "rule": "option:opencode:command-approval#2",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:367"
         },
         {
           "legacy": false,
@@ -1687,7 +1841,7 @@
           "needle": "always allow",
           "note": "1.19.5 opencode.exe：权限框第二段 `title:\"Always allow\"`，三角符号与文字分开渲染；真机屏幕见 probe_tui_script 2026-11-14",
           "rule": "attention:opencode:always-allow-confirm",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:346"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:385"
         },
         {
           "legacy": false,
