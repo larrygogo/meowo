@@ -30,6 +30,7 @@ import {
 } from "../../api";
 import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
+import { logChatEvent } from "./chatDiag";
 
 export type SettingsRequest = {
   /** 模型 id（清单里的），带显示名供乐观更新与提示。 */
@@ -303,7 +304,10 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
             depsRef.current.setHistory((current) => current && current.sessionId === sessionId ? { ...current, model: readBack } : current);
           }
           // TUI 对话框路线：回车后底栏没认出新值（终端太窄被截断等）不算失败，下一条消息再核对。
-          if (outcome.kind === "applied" && !outcome.confirmed) depsRef.current.setSendError(t.chat.settingsUnconfirmed);
+          if (outcome.kind === "applied" && !outcome.confirmed) {
+            logChatEvent(sessionId, { kind: "switch_unconfirmed", reason: "tui_value_not_seen", detail: { what: request.model ? "model" : "mode" } });
+            depsRef.current.setSendError(t.chat.settingsUnconfirmed);
+          }
           break;
         case "reopened":
           depsRef.current.moveTo(outcome.sessionId);
@@ -313,6 +317,7 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
           setNextOpen(sessionId);
           break;
         case "needs_new_session":
+          logChatEvent(sessionId, { kind: "switch_failed", reason: "needs_new_session", detail: { what: "mode" } });
           fail(t.chat.settingsNeedsNewSession);
           break;
         case "unsupported": {
@@ -332,7 +337,10 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
           // 其余（输入框有字等）说原因。
           if (mustDefer(depsRef.current.tone)) { result = "deferred"; await enqueue(sessionId, request); }
           else if (RETRY_WHEN_READY.has(outcome.reason ?? "")) { result = "deferred"; await enqueue(sessionId, { ...request, waitFor: "ready" }); }
-          else fail(formatBackendError(outcome.reason ?? "", t.locale));
+          else {
+            logChatEvent(sessionId, { kind: "switch_failed", reason: outcome.reason ?? "not_now", detail: { what: request.model ? "model" : "mode" } });
+            fail(formatBackendError(outcome.reason ?? "", t.locale));
+          }
           break;
       }
     } catch (error) {
@@ -340,6 +348,8 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
       if (typeof error === "string" && RETRY_WHEN_READY.has(error)) { result = "deferred"; await enqueue(sessionId, { ...request, waitFor: "ready" }); }
       else {
         result = "failed";
+        // 后端错误码进日志（不是本地化后的句子）；非字符串的异常只记类型。
+        logChatEvent(sessionId, { kind: "switch_failed", reason: typeof error === "string" ? error : "exception", detail: { what: request.model ? "model" : "mode" } });
         if (depsRef.current.sessionId === sessionId) depsRef.current.setSendError(formatBackendError(error, t.locale));
       }
     } finally {
@@ -380,7 +390,10 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
       if (payload.kind === "queued") { void refreshQueuedRef.current(payload.sessionId); return; }
       setQueued(null);
       // 排太久（30 分钟）出队：说一声，不让选择悄悄消失（做空 N5）。会话没了的不用说。
-      if (payload.kind === "expired") depsRef.current.setSendError(t.chat.settingsQueueExpired);
+      if (payload.kind === "expired") {
+        logChatEvent(payload.sessionId, { kind: "switch_failed", reason: "queue_expired" });
+        depsRef.current.setSendError(t.chat.settingsQueueExpired);
+      }
       else if (payload.kind === "next_open") setNextOpen(payload.sessionId);
       else if (payload.kind === "needs_new_session") depsRef.current.setSendError(t.chat.settingsNeedsNewSession);
       else if ((payload.kind === "failed" || payload.kind === "not_now") && payload.reason) depsRef.current.setSendError(formatBackendError(payload.reason, t.locale));

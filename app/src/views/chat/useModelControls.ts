@@ -12,6 +12,7 @@ import { managedTerminalSnapshot, setSessionLaunchSelection, writeManagedTermina
 import { useT } from "../../i18n";
 import { appendTerminalText, modeFromScreen, visibleTerminalText } from "../../terminalAttention";
 import { currentPresetId } from "./modelLabels";
+import { logChatEvent } from "./chatDiag";
 import { stashComposerDraft, submitToTerminal } from "./terminalSubmit";
 import type { SendErrorExit } from "./SendErrorExits";
 import type { TerminalAction } from "./useSessionSettings";
@@ -94,6 +95,10 @@ export function useModelControls({
       if (outcome?.kind !== "ok") {
         // CLI 说了什么就转什么（2026-11-12 研究 C4：确认框被取消、hook 拦截、别名校验失败时
         // 以前一律只报「未确认」，用户看不到原因）。
+        // 运行日志（验收 19）：没切成的三种情况各记一行，原因用固定代码。
+        logChatEvent(sessionId, outcome?.kind === "rejected"
+          ? { kind: "switch_failed", reason: "cli_rejected", detail: { what: "model" } }
+          : { kind: "switch_unconfirmed", reason: otherModel ? "confirmed_other_model" : "no_confirm_line", detail: { what: "model" } });
         if (outcome?.kind === "rejected") setSendError(t.chat.modelSwitchRejected(outcome.line));
         else if (otherModel) setSendError(t.chat.modelSwitchOther(otherModel));
         // 没等到任何回话：切没切过去只有终端画面说得清，给「重试」与看终端画面两条出路，
@@ -142,8 +147,13 @@ export function useModelControls({
             if (hit) { outcome = { kind: "rejected", line: cliLine(line), actual: hit[1]?.toLowerCase() ?? null }; break; }
           }
         }
-        if (outcome === null) { setSendError(t.chat.effortUnconfirmed, { retry: () => void selectEffort(level), terminal: true }); return false; }
+        if (outcome === null) {
+          logChatEvent(sessionId, { kind: "switch_unconfirmed", reason: "no_confirm_line", detail: { what: "effort", level } });
+          setSendError(t.chat.effortUnconfirmed, { retry: () => void selectEffort(level), terminal: true });
+          return false;
+        }
         if (outcome.kind === "rejected") {
+          logChatEvent(sessionId, { kind: "switch_failed", reason: outcome.actual ? "cli_capped" : "cli_rejected", detail: { what: "effort", level } });
           const actual = outcome.actual;
           if (actual) {
             if (isCurrentOperation()) setHistory((current) => current ? { ...current, effort: actual } : current);

@@ -542,8 +542,14 @@ describe("ChatWindow", () => {
       await act(async () => { vi.advanceTimersByTime(2_000); });
       await waitFor(() => expect(diagCalls()).toHaveLength(1));
       const args = diagCalls()[0][1] as { scope: string; message: string };
-      expect(args.scope).toBe("question");
-      expect(args.message).toContain("未认出终端表单");
+      // 统一的对话窗运行日志格式（chat/chatDiag，验收 19）：种类、Provider、会话 id、原因。
+      expect(args.scope).toBe("chat");
+      expect(args.message).toContain("kind=card_unrecognized");
+      expect(args.message).toContain("provider=claude");
+      expect(args.message).toContain("session=41");
+      expect(args.message).toContain("reason=question_form_not_seen_8s");
+      // 不带题面与终端画面上的文字。
+      expect(args.message).not.toContain("火锅");
       // 同一道题不重复记。
       await act(async () => { vi.advanceTimersByTime(20_000); });
       expect(diagCalls()).toHaveLength(1);

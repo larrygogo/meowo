@@ -8,7 +8,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { pathKey, unquotePath } from "../paths";
 import { COMPACTING_ACTIVITY } from "../activity";
 import { appConfirm } from "../confirm";
-import { diagLog, forkSession, agentChatUi, attachBackgroundSession, sendBackgroundPrompt, clipboardRestore, clipboardSetImage, confirmStopSession, dismissInteractiveQuestion, getChatHistory, getGitChangesOverview, getGitDiffSummary, getLiveSessionsPage, getSessionLineage, isExternallyHeld, managedTerminalBinding, managedTerminalPendingLaunch, managedTerminalScreen, managedTerminalSnapshot, openNewSessionWindow,  refreshSessionModel, refreshSessionTodos, renameSession as renameSessionCmd, savePastedAttachment, sessionLaunchSelections, setArchived as setArchivedCmd, sessionTone, startManagedTerminal, copySessionToProvider, takeoverManagedTerminal, writeManagedTerminal, type AgentId, type ChatHistory, type ChatItem, type ChatUi, type GitDiffSummaryDto, type RepoChangesDto, type LiveSession, type ModelPreset, type PendingApproval, type RuntimeRequest } from "../api";
+import { forkSession, agentChatUi, attachBackgroundSession, sendBackgroundPrompt, clipboardRestore, clipboardSetImage, confirmStopSession, dismissInteractiveQuestion, getChatHistory, getGitChangesOverview, getGitDiffSummary, getLiveSessionsPage, getSessionLineage, isExternallyHeld, managedTerminalBinding, managedTerminalPendingLaunch, managedTerminalScreen, managedTerminalSnapshot, openNewSessionWindow,  refreshSessionModel, refreshSessionTodos, renameSession as renameSessionCmd, savePastedAttachment, sessionLaunchSelections, setArchived as setArchivedCmd, sessionTone, startManagedTerminal, copySessionToProvider, takeoverManagedTerminal, writeManagedTerminal, type AgentId, type ChatHistory, type ChatItem, type ChatUi, type GitDiffSummaryDto, type RepoChangesDto, type LiveSession, type ModelPreset, type PendingApproval, type RuntimeRequest } from "../api";
 import { hasEscLayers } from "../escLayers";
 import { useTauriEvent } from "../hooks/useTauriEvent";
 import { useVisibleInterval } from "../hooks/useVisibleInterval";
@@ -18,6 +18,7 @@ import { useHistoryLayer } from "../hooks/useHistoryLayer";
 import { useT } from "../i18n";
 import { deliveryStatusLabel } from "../i18n/statusVocab";
 import { runningPlaceholder, runningReceipt, runningSendMode, sendBlockedMessage, unrecognizedPromptNotice } from "./chat/sendCopy";
+import { logChatEvent, maskScreenLine, useOutgoingDiag } from "./chat/chatDiag";
 import { controlAvailability, effortEntry, effortMechanism, modeButtonMechanism, savesDefaultHint, modeMenuAvailability, modelListMechanism, modelMechanism } from "./chat/availability";
 import { formatBackendError } from "../i18n/errors";
 import { useShowWhenReady } from "../useShowWhenReady";
@@ -961,6 +962,8 @@ export function ChatWindow() {
   }, [sessionId]);
   const launchInfo = pendingLaunch?.sessionId === sessionId ? pendingLaunch : null;
   const provider = history?.provider ?? launchInfo?.provider;
+  // 运行日志：发出的消息落进「发送失败」「未确认送达」各记一行（chat/chatDiag，验收 19）。
+  useOutgoingDiag(sessionId, provider, outgoing);
   const cwd = history?.cwd ?? launchInfo?.cwd ?? null;
   const folderOpeners = useFolderOpeners(cwd ?? "", setSendError).options;
   // 「文件」入口有 cwd 即可用；「改动」入口仅当后端确认 cwd 是 git 仓库时出现。
@@ -3941,10 +3944,14 @@ export function ChatWindow() {
     if (!waitingForQuestionForm || !requestId || loggedQuestionRef.current === requestId) return;
     const timer = window.setTimeout(() => {
       loggedQuestionRef.current = requestId;
+      // 画面只记轮廓（文字换成 x）：认表单看的是结构，日志里不留消息正文与终端上的文字。
       const tail = lastScreenRef.current.split("\n").map((line) => line.trimEnd()).filter(Boolean)
-        .slice(-12).map((line) => line.slice(0, 200));
-      diagLog("question", `提问卡出现 8s 仍未认出终端表单 · provider=${provider ?? "?"} · view=${view}`
-        + ` · attention=${terminalAttention?.id ?? "none"} · 屏幕末尾: ${tail.length ? tail.join(" ⏎ ") : "（无画面）"}`);
+        .slice(-12).map((line) => maskScreenLine(line.slice(0, 80)));
+      logChatEvent(sessionId, {
+        kind: "card_unrecognized",
+        reason: "question_form_not_seen_8s",
+        detail: { view, attention: terminalAttention?.id ?? "none", lines: tail.length, shape: tail.slice(-4).join(" ⏎ ") },
+      });
     }, 8_000);
     return () => window.clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- 只按「是否在等」与题目切换重新计时
@@ -4069,6 +4076,7 @@ export function ChatWindow() {
     terminalMenuSeenRef.current = false;
     setTerminalMenuOpen(false);
     void writeInterruptKeys((data) => writeManagedTerminal(sessionId, data), "\x1b", wanted.searched ? 2 : 1).catch(() => {});
+    logChatEvent(sessionId, { kind: "switch_unconfirmed", reason: "terminal_menu_pick_abandoned", detail: { what: "model", searched: !!wanted.searched } });
     setSendError(message, exit);
   };
   /// 菜单迟迟认不出（或搜索后没再画出来）：到点收尾并说清楚，不留一个永远转圈的按钮。
