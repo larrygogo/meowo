@@ -552,6 +552,16 @@ pub trait AgentPlugin: Sync {
         None
     }
 
+    /// 新建会话时、声明表表达不了的额外启动参数：要按 CLI 当前配置现算的（Codex「自动审查」在没配 Windows
+    /// 沙箱时补 `windows.sandbox`，见 codex 插件）。只在新建时调，接回不调。
+    fn extra_launch_args(
+        &self,
+        _selections: &std::collections::HashMap<String, String>,
+        _env: &[(String, String)],
+    ) -> Vec<String> {
+        Vec::new()
+    }
+
     /// 新建页默认值：读 CLI 自己的配置（打开新建页时现读，不缓存）。`cwd` 用于项目级配置。
     fn launch_defaults(
         &self,

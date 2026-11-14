@@ -79,7 +79,12 @@ pub(crate) fn args_for_selections(
     } else {
         Vec::new()
     };
-    meowo_agent::resolve_session_args(plugin, selections, &catalog, &dynamic, resuming)
+    let mut args = meowo_agent::resolve_session_args(plugin, selections, &catalog, &dynamic, resuming);
+    // 声明表表达不了、要按 CLI 当前配置现算的（Codex 自动审查没配 Windows 沙箱时补沙箱实现，真机第四轮 N7）。
+    if !resuming {
+        args.extend(plugin.extra_launch_args(selections, env));
+    }
+    args
 }
 
 /// 选择里有模型、而这家用 `-m` 一类参数指定模型时，模型必须在清单里——否则 resolve_session_args 会

@@ -328,6 +328,36 @@ impl AgentPlugin for Codex {
             .map(|content| parse_config_defaults(&content))
             .unwrap_or_default()
     }
+    /// 「自动审查」首轮只读的根因（真机第四轮 N7，evidence/round4-n7）：Windows 上没配 Windows 沙箱时，
+    /// Codex 读配置会把 workspace-write 降成 read-only（上游 codex-rs/config/src/config_toml.rs
+    /// `effective_sandbox_mode`：Windows + WindowsSandboxLevel::Disabled + WorkspaceWrite → ReadOnly；
+    /// 本机 0.167.2 `codex debug prompt-input` 实测：不配时首轮提示词写 `sandbox_mode` is `read-only`，
+    /// `-c windows.sandbox=unelevated` 或 `elevated` 时是 `workspace-write`）。认领后经 app-server 补设虽能
+    /// 改成 workspace-write，但沙箱级别仍是 Disabled，上游 `effective_windows_sandbox_type` 此时给
+    /// SandboxType::None——命令实际不进沙箱。
+    ///
+    /// 所以选这一档、而 CLI 配置里没配 Windows 沙箱（`[windows] sandbox`，或旧的
+    /// `features.experimental_windows_sandbox` / `elevated_windows_sandbox` / `enable_experimental_windows_sandbox`）
+    /// 时，启动参数补 `-c windows.sandbox=unelevated`：Codex 自带、不要管理员权限的受限令牌沙箱，首轮起就是
+    /// workspace-write 且真进沙箱。用户自己配过的（包括 elevated、mxc）一律不覆盖。只影响这一档、只在
+    /// Windows、只在新建时。
+    fn extra_launch_args(
+        &self,
+        selections: &std::collections::HashMap<String, String>,
+        env: &[(String, String)],
+    ) -> Vec<String> {
+        if !cfg!(windows) || selections.get("approval").map(String::as_str) != Some("approveForMe") {
+            return Vec::new();
+        }
+        let configured = codex_home(env)
+            .and_then(|home| std::fs::read_to_string(home.join("config.toml")).ok())
+            .is_some_and(|content| windows_sandbox_configured(&content));
+        if configured {
+            Vec::new()
+        } else {
+            vec!["-c".into(), "windows.sandbox=unelevated".into()]
+        }
+    }
     /// Esc 中断当前回合:codex 状态行自述 "esc to interrupt"(真机 capture 在档,
     /// 见 docs/research/tui-menu-captures-2026-07.md)。排队键 Tab 在空闲时同样直接提交
     /// (probe_tui_script,0.162.1,2026-10-16),运行态误判也不会卡住消息。
@@ -707,6 +737,34 @@ fn parse_config_defaults(content: &str) -> crate::LaunchDefaults {
     out
 }
 
+/// CLI 配置里有没有选 Windows 沙箱实现（与上游 `resolve_windows_sandbox_mode` 同口径：`[windows] sandbox`，
+/// 或旧的 features 开关）。解析不了的配置当作「配过」，不去改它（Codex 自己也会报错）。
+fn windows_sandbox_configured(content: &str) -> bool {
+    let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
+        return true;
+    };
+    if doc
+        .get("windows")
+        .and_then(|windows| windows.get("sandbox"))
+        .is_some_and(|sandbox| sandbox.as_str().is_some())
+    {
+        return true;
+    }
+    let features = doc.get("features");
+    [
+        "experimental_windows_sandbox",
+        "elevated_windows_sandbox",
+        "enable_experimental_windows_sandbox",
+    ]
+    .iter()
+    .any(|key| {
+        features
+            .and_then(|features| features.get(key))
+            .and_then(|value| value.as_bool())
+            .unwrap_or(false)
+    })
+}
+
 fn codex_home(env: &[(String, String)]) -> Option<std::path::PathBuf> {
     env.iter()
         .find(|(key, value)| key == "CODEX_HOME" && !value.is_empty())
@@ -716,6 +774,48 @@ fn codex_home(env: &[(String, String)]) -> Option<std::path::PathBuf> {
 
 #[cfg(test)]
 mod tests {
+    /// 真机第四轮 N7：Windows 沙箱配没配，按上游同口径认；没配才补，配过的（任何实现）不覆盖。
+    #[test]
+    fn windows_sandbox_configured_follows_upstream_keys() {
+        use super::windows_sandbox_configured as configured;
+        assert!(!configured(""));
+        assert!(!configured("model = \"gpt\"\n[projects.'C:/x']\ntrust_level = \"trusted\"\n"));
+        assert!(configured("[windows]\nsandbox = \"elevated\"\n"));
+        assert!(configured("[windows]\nsandbox = \"unelevated\"\n"));
+        assert!(configured("[windows]\nsandbox = \"mxc\"\n"));
+        assert!(configured("[features]\nexperimental_windows_sandbox = true\n"));
+        assert!(configured("[features]\nelevated_windows_sandbox = true\n"));
+        assert!(configured("[features]\nenable_experimental_windows_sandbox = true\n"));
+        assert!(!configured("[features]\nexperimental_windows_sandbox = false\n"));
+        assert!(configured("this is = = not toml"));
+    }
+
+    /// 只有「自动审查」、只在没配 Windows 沙箱时补 `-c windows.sandbox=unelevated`；其他档、配过的都不动。
+    #[test]
+    fn approve_for_me_adds_unelevated_sandbox_only_when_unconfigured() {
+        let codex = crate::by_id("codex").unwrap();
+        let home = std::env::temp_dir().join(format!("meowo-codex-n7-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let env = vec![("CODEX_HOME".to_string(), home.to_string_lossy().into_owned())];
+        let pick = |tier: &str| std::collections::HashMap::from([("approval".to_string(), tier.to_string())]);
+        let expect: Vec<String> = if cfg!(windows) {
+            vec!["-c".into(), "windows.sandbox=unelevated".into()]
+        } else {
+            Vec::new()
+        };
+        // 没有 config.toml：没配。
+        assert_eq!(codex.extra_launch_args(&pick("approveForMe"), &env), expect);
+        std::fs::write(home.join("config.toml"), "check_for_update_on_startup = false\n").unwrap();
+        assert_eq!(codex.extra_launch_args(&pick("approveForMe"), &env), expect);
+        for other in ["default", "readOnly", "ask", "yolo"] {
+            assert!(codex.extra_launch_args(&pick(other), &env).is_empty(), "{other}");
+        }
+        std::fs::write(home.join("config.toml"), "[windows]\nsandbox = \"elevated\"\n").unwrap();
+        assert!(codex.extra_launch_args(&pick("approveForMe"), &env).is_empty());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
     /// 样本形制取自本机 codex 0.163 的 models_cache.json（描述截短）。
     #[test]
     fn models_cache_lists_visible_models_with_reasoning_levels() {
