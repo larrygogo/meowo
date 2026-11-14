@@ -268,6 +268,7 @@ export const en: Dict = {
       readOnly: "Read only",
       autoEdits: "Auto edits",
       risky: "Ask when needed",
+      askChanges: "Ask before changes",
       never: "Never ask",
       plan: "Plan",
     } as Record<string, string>,

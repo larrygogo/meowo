@@ -302,6 +302,8 @@ export const zh = {
       readOnly: "只读",
       autoEdits: "自动改文件",
       risky: "必要时询问",
+      // Gemini default：改文件要问，工作区内已知安全的命令不问（官方说明），和「每步都问」语义不同（第四轮 M2）。
+      askChanges: "改动先问",
       never: "都不问",
       plan: "计划",
     } as Record<string, string>,

@@ -34,12 +34,20 @@ export function traitsSummary(t: Dict, traits: ModeTraits): string {
   return parts.filter(Boolean).join(t.modes.sep);
 }
 
+/** 三维（粗分「问 / 不问」）表达不出的差别：官方说明与同三维的档语义不同，走共用表里单独的一项
+ *  （第四轮 M2：Gemini default 已知安全的命令不问，不能和 Kimi「每步都问」同名）。 */
+const SHARED_BY_DESC: Record<string, string> = {
+  "gemini.approval.default": "askChanges",
+};
+
 /** 共用短名：按三维查表，同一语义跨家同一个名字（「统一解释」，2026-11-14 截图复核）。
  *  三维相同、同一栏里又必须分开的档由 `t.modes.short[说明键]` 单独命名（Codex 自动审查）。
  *  查不到的组合返回 undefined，调用方退回 CLI 原名。 */
 export function sharedShort(t: Dict, traits: ModeTraits, descKey?: string | null): string | undefined {
   const own = descKey ? t.modes.short[descKey] : undefined;
   if (own) return own;
+  const alias = descKey ? SHARED_BY_DESC[descKey] : undefined;
+  if (alias) return t.modes.shared[alias];
   if (traits.plan_only) return t.modes.shared.plan;
   const key = `${traits.edits}/${traits.commands}`;
   const table: Record<string, string> = {
@@ -122,15 +130,21 @@ export function modeChoiceViews(
   return views;
 }
 
-/** 新建页的模型清单行（桌面 NewSessionPage 与手机 NewSessionPanel 共用，第三轮 C3/C7）。
- *  CLI 配置里的默认模型（配置写明的，或清单标 is_default 的）不另列「默认（X）」：X 那一行的值就是
- *  「不传 -m」（空串），名字旁标「默认」。读不到默认模型时才留一行「默认（按 CLI 配置）」。 */
+/** 新建页的模型清单行（桌面 NewSessionPage 与手机 NewSessionPanel 共用，第三轮 C3/C7、第四轮 M1）。
+ *  默认那一行的值是「不传 -m」（空串），名字旁标「默认」，只标一行：
+ *  - CLI 配置写了模型、且在清单里：标那一行。
+ *  - CLI 配置写了模型、却不在清单里（第三方 / 旧模型）：单独列一行「<配置里的模型名>」标默认；清单里的
+ *    模型（包括清单自带的 is_default）都是普通行，各自带 -m，可以单独选。
+ *  - 配置没写模型：CLI 用清单自带的默认，标 is_default 那一行；清单也没标时留「默认（按 CLI 配置）」。 */
 export function modelChoiceRows(
   t: Dict,
   catalog: readonly ModelCatalogEntry[],
   defaults?: LaunchDefaults | null,
 ): { value: string; label: string; group?: string | null; detail?: string; tag?: string }[] {
-  const configured = catalog.find((entry) => entry.id === defaults?.model) ?? catalog.find((entry) => entry.is_default);
+  const configuredModel = defaults?.model || null;
+  const configured = configuredModel
+    ? catalog.find((entry) => entry.id === configuredModel)
+    : catalog.find((entry) => entry.is_default);
   const rows = catalog.map((entry) => ({
     value: entry === configured ? "" : entry.id,
     label: entry.label,
@@ -139,7 +153,8 @@ export function modelChoiceRows(
     ...(entry === configured ? { tag: t.modes.defaultTag } : {}),
   }));
   if (configured) return rows;
-  return [{ value: "", label: t.modes.followConfig(defaults?.model ?? t.modes.followConfigUnknown), group: null, detail: undefined }, ...rows];
+  if (configuredModel) return [{ value: "", label: configuredModel, group: null, detail: undefined, tag: t.modes.defaultTag }, ...rows];
+  return [{ value: "", label: t.modes.followConfig(t.modes.followConfigUnknown), group: null, detail: undefined }, ...rows];
 }
 
 /** 新建页显示哪一档：用户明确选过非默认档的用它；否则按 CLI 配置的默认档显示（不传参数时 CLI 本来

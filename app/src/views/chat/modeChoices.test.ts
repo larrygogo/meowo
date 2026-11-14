@@ -58,7 +58,8 @@ describe("模式统一说法", () => {
       for (const option of agent.launch_options) {
         if (planToggle(option)) continue; // 计划开关说开没开，另有测试
         for (const choice of option.choices) {
-          if (!choice.traits || (choice.desc && zh.modes.short[choice.desc])) continue;
+          // 单独命名的（Codex 自动审查）与三维表达不出差别、走共用表单独一项的（Gemini default）另测。
+          if (!choice.traits || (choice.desc && (zh.modes.short[choice.desc] || choice.desc === "gemini.approval.default"))) continue;
           const key = JSON.stringify(choice.traits);
           const short = modeChoiceViews(zh, option).find((view) => view.value === choice.id)!.short;
           byTraits.set(key, new Set([...(byTraits.get(key) ?? []), short]));
@@ -69,7 +70,14 @@ describe("模式统一说法", () => {
     const short = (provider: string, option: string, value: string) =>
       modeChoiceViews(zh, optionOf(provider, option)).find((view) => view.value === value)?.short;
     expect([short("kimi", "permission", "auto"), short("codex", "approval", "yolo"), short("gemini", "approval", "yolo")]).toEqual(["都不问", "都不问", "都不问"]);
-    expect([short("kimi", "permission", "manual"), short("gemini", "approval", "default")]).toEqual(["每步都问", "每步都问"]);
+    // 第四轮 M2：语义不同必须不同名。Kimi 每步都问（只自动读文件）≠ Gemini default（已知安全的命令不问）。
+    expect([short("kimi", "permission", "manual"), short("gemini", "approval", "default")]).toEqual(["每步都问", "改动先问"]);
+    expect(modeChoiceViews(en, optionOf("gemini", "approval")).find((view) => view.value === "default")?.short).toBe("Ask before changes");
+    // 共用表里每个名字只代表一种语义：不同键不能同名（中英都查）。
+    for (const dict of [zh, en]) {
+      const names = Object.values(dict.modes.shared);
+      expect(new Set(names).size, names.join("/")).toBe(names.length);
+    }
     // Gemini plan 与 Kimi / Codex 的计划档同叫「计划」，第二行如实区分：Gemini 不能跑命令，Kimi 命令按权限档。
     expect(short("gemini", "approval", "plan")).toBe("计划");
     const geminiPlan = modeChoiceViews(zh, optionOf("gemini", "approval")).find((view) => view.value === "plan");
@@ -84,7 +92,7 @@ describe("模式统一说法", () => {
     expect(kimi.find((view) => view.value === "manual")).toMatchObject({ disabled: true, desc: zh.modes.configLocked("必要时询问") });
     expect(kimi.find((view) => view.value === "yolo")?.disabled).toBeUndefined();
     expect(modeChoiceViews(zh, optionOf("kimi", "permission"), { model: null, choices: { permission: "manual" } }).some((view) => view.disabled)).toBe(false);
-    // Gemini「每步都问」显式带 --approval-mode default，配置默认是什么都选得到。
+    // Gemini「改动先问」显式带 --approval-mode default，配置默认是什么都选得到。
     expect(modeChoiceViews(zh, optionOf("gemini", "approval"), { model: null, choices: { approval: "autoEdit" } }).some((view) => view.disabled)).toBe(false);
   });
 
@@ -132,6 +140,21 @@ describe("模式统一说法", () => {
     expect(byConfig.map((row) => [row.value, row.tag ?? null])).toEqual([["", "默认"], ["k31", null]]);
     const unknown = modelChoiceRows(zh, catalog.map((entry: { is_default: boolean }) => ({ ...entry, is_default: false })) as never[], null);
     expect(unknown[0]).toMatchObject({ value: "", label: zh.modes.followConfig(zh.modes.followConfigUnknown) });
+  });
+
+  /// 第四轮 M1：配置里的模型不在清单里时单独一行标默认（不传 -m）；清单自带的默认模型不标、可以带 -m 单独选。
+  it("新建页模型清单：配置模型不在清单里时单列一行", () => {
+    const catalog = [
+      { id: "gpt-5.6", label: "GPT-5.6", group: null, uncertain: false, is_default: true },
+      { id: "gpt-5.6-mini", label: "GPT-5.6 Mini", group: null, uncertain: false, is_default: false },
+    ] as never[];
+    const rows = modelChoiceRows(zh, catalog, { model: "my-proxy-model", choices: {} });
+    expect(rows.map((row) => [row.value, row.label, row.tag ?? null])).toEqual([
+      ["", "my-proxy-model", "默认"],
+      ["gpt-5.6", "GPT-5.6", null],
+      ["gpt-5.6-mini", "GPT-5.6 Mini", null],
+    ]);
+    expect(rows.filter((row) => row.tag).length).toBe(1);
   });
 
   it("OpenCode 自定义 agent 附在末尾，没有统一说法", () => {
