@@ -14,6 +14,7 @@ import { TooltipLayer } from "../src/Tooltip";
 import { installInputModality } from "../src/input-modality";
 import { demoChatUi, installMocks, setExtraMock, store } from "../src/demo/mock";
 import { patchChatUi } from "./qaFlow";
+import { tmsChatMock, tmsCommonMock, tmsProviderOf } from "./tmsFixtures";
 import { chatMock } from "../src/demo/chatData";
 import { panelMock } from "../src/demo/panelData";
 import { savePanel } from "../src/views/chat/panelTabs";
@@ -39,7 +40,9 @@ if (scene === "mobile-changes") {
 // mobile-idle：对话页但没有待批准的请求（拍补全、菜单用）；mobile-lead：再加一张 Lead 关卡卡。
 // mobile-question：审批卡换成 AskUserQuestion 问答卡（矮屏下选项可见性，与桌面 flow-question 同一份题面）。
 // mobile-tasks：派过后台 Bash（一条在跑、三条跑完）和一个在跑的子代理，拍底栏胶囊与后台任务面板。
-const inChat = scene === "mobile-chat" || scene === "mobile-changes" || scene === "mobile-idle" || scene === "mobile-lead" || scene === "mobile-lead-c" || scene === "mobile-question" || scene === "mobile-tasks";
+const tmsChat = scene.startsWith("mobile-tms-") && !scene.startsWith("mobile-tms-new-");
+const tmsNew = scene.startsWith("mobile-tms-new-");
+const inChat = tmsChat || scene === "mobile-chat" || scene === "mobile-changes" || scene === "mobile-idle" || scene === "mobile-lead" || scene === "mobile-lead-c" || scene === "mobile-question" || scene === "mobile-tasks";
 /// 后台任务的假数据：判据是「回执带子任务结局」（与 TasksPanel 同口径），一条调用配一条回执。
 function taskItems(zh: boolean): unknown[] {
   const at = (minutes: number) => new Date(FIXED_NOW - minutes * 60_000).toISOString();
@@ -69,7 +72,12 @@ const SCREEN = [
   "  2. Yes, and always allow git push commands",
   "  3. No, and tell Claude what to do differently (esc)",
 ];
+const tmsMock = tmsChat ? tmsChatMock(tmsProviderOf(scene), q.get("state") ?? "idle", chat) : tmsNew ? tmsCommonMock(tmsProviderOf(scene)) : null;
 setExtraMock((cmd, args) => {
+  if (tmsMock && cmd !== "open_new_session_window") {
+    const hit = tmsMock(cmd, args);
+    if (hit !== undefined) return hit;
+  }
   // 远程桥把 open_new_session_window 转成页内事件（transport.ts）；这里没有桥，照样转一次。
   if (cmd === "open_new_session_window") {
     window.dispatchEvent(new CustomEvent(NEW_SESSION_EVENT, { detail: args ?? {} }));
@@ -211,6 +219,11 @@ void (async () => {
     </I18nProvider>,
   );
   if (scene === "mobile-settings") clickWhenReady(() => document.querySelectorAll<HTMLElement>(".remote-tabbar-item")[2]);
+  if (tmsNew) when(() => {
+    if (!document.querySelector(".remote-tabbar-item")) return false;
+    window.dispatchEvent(new CustomEvent(NEW_SESSION_EVENT, { detail: { cwd: "C:/Users/demo/workspace/web-app".replace(/\//g, "\\"), provider: tmsProviderOf(scene) } }));
+    return true;
+  });
   if (scene === "mobile-new") clickWhenReady(() => document.querySelectorAll<HTMLElement>(".remote-tabbar-item")[1]);
   markReady();
 })();
