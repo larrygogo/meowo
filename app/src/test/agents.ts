@@ -246,8 +246,11 @@ export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | 
     interrupt_input: "\x1b",
     // 与后端同源:opencode 首按 Esc 只提示 "esc again to interrupt",须分两次写。
     interrupt_presses: provider === "opencode" ? 2 : 1,
-    // 与后端同源:换行注入序列 claude 是 ESC+CR,其余四家是 ctrl+j(裸 LF),见各插件的取证注释。
-    newline_input: provider === "claude" ? "\u001b\r" : "\n",
+    // 与后端同源:换行注入序列 claude 与 codex 是 ESC+CR(codex 0.167.2 真机上裸 LF 已不换行),
+    // 其余三家是 ctrl+j(裸 LF),见各插件的取证注释。
+    newline_input: provider === "claude" || provider === "codex" ? "\u001b\r" : "\n",
+    // 与后端同源:gemini 0.68.0 吞掉一次写入里的半角问号,带问号的单行正文改走粘贴。
+    single_line_paste_pattern: provider === "gemini" ? String.raw`\?` : null,
     runtime_commands_pending: false,
     // 与后端同源:claude/gemini(提交时原生附加)与 kimi/codex/opencode(@ 是文本级惯例,
     // 模型自行读取)声明 true。测试桩模拟「已探测到版本」的常态,故不做 version 门控。

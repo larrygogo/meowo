@@ -306,6 +306,12 @@ pub trait AgentPlugin: Sync {
         None
     }
 
+    /// 单行正文命中时也包成 bracketed paste 的正则（见 [`crate::chat_ui::ChatUi::single_line_paste_pattern`]）。
+    /// None = 单行直接写。只在真机取证到「直接写会丢字」的家声明。
+    fn single_line_paste_pattern(&self) -> Option<&'static str> {
+        None
+    }
+
     /// 自定义斜杠命令的发现规格（用户/项目目录里放了什么命令文件，补全就出什么）。
     /// None = 该 agent 无自定义命令机制，或其机制未经调研——**没验证过的不声明**。
     fn custom_commands(&self) -> Option<&'static crate::chat_ui::CustomCommandSpec> {
@@ -386,6 +392,7 @@ pub trait AgentPlugin: Sync {
             queue_input: self.queue_input(),
             queue_delivery: self.queue_delivery(),
             newline_input: self.newline_input(),
+            single_line_paste_pattern: self.single_line_paste_pattern(),
             runtime_commands_pending,
             attachment_mention: self.attachment_mention(ctx.version),
             clipboard_image_paste: self.clipboard_image_paste(ctx.version),
@@ -1491,8 +1498,13 @@ mod tests {
             .unwrap()
             .clipboard_image_paste(Some("1.0.0"))
             .is_none());
-        // 换行注入:claude 是 ESC+CR,其余四家是 ctrl+j(裸 LF,不带会被拆成 Esc 的前缀)。
-        for id in ["codex", "gemini", "kimi", "opencode"] {
+        // 换行注入:claude 与 codex 是 ESC+CR(Alt+Enter)。codex 原来也是裸 LF,0.167.2 真机上
+        // 裸 LF 已不换行(两段字连成一行),Alt+Enter 在 0.162.1 与 0.167.2 都成立,见插件注释。
+        // 其余三家是 ctrl+j(裸 LF,不带会被拆成 Esc 的前缀)。
+        for id in ["claude", "codex"] {
+            assert_eq!(by_id(id).unwrap().newline_input(), Some("\x1b\r"), "{id}");
+        }
+        for id in ["gemini", "kimi", "opencode"] {
             assert_eq!(by_id(id).unwrap().newline_input(), Some("\n"), "{id}");
         }
 

@@ -428,11 +428,20 @@ impl AgentPlugin for Codex {
     fn interrupt_input(&self) -> Option<&'static str> {
         Some("\x1b")
     }
-    /// Ctrl+J（裸 LF）在 composer 里换行、不提交（tests/probe_tui_script.rs，0.162.1，
-    /// 2026-10-16）。Alt+Enter 同样可用，但取不带 ESC 前缀的那个——crossterm 拆包时 ESC 可能
-    /// 被单独认成 Esc，运行中就是一次中断。
+    /// Alt+Enter（ESC+CR）在 composer 里换行、不提交。
+    ///
+    /// 此前声明的是 Ctrl+J（裸 LF，0.162.1 取证 2026-10-16），理由是它不带 ESC 前缀。0.167.2 上它
+    /// 已经不换行：真机 `line one` + LF + `line two` 在输入框里连成一行 `line oneline two`
+    /// （tests/probe_tui_script.rs，2026-11-14），对话页终端里的 Ctrl/Shift+Enter 因此失效。
+    /// 同一轮取证：Alt+Enter 与 Shift+Enter 的 CSI-u 序列（`ESC[13;2u`）都换行；Ctrl+J 的 CSI-u
+    /// 序列（`ESC[106;5u`）被当成字面文字。取 Alt+Enter：0.162.1 上它同样可用（当时的注释），
+    /// 两个版本都成立。
+    ///
+    /// 当初担心的「ESC 被单独认成 Esc，运行中就是一次中断」：0.167.2 回合进行中各发一次 Alt+Enter 与
+    /// CSI-u，输入框里都是两行，回合照常数完，屏幕上没有 interrupted（同日实拍）。序列是一次写入，
+    /// 不拆开发。
     fn newline_input(&self) -> Option<&'static str> {
-        Some("\n")
+        Some("\x1b\r")
     }
     /// `@绝对路径 正文` 提交后模型自行读取该文件（实测 0.162.1：Read secret.txt → 答对）。
     /// 与 kimi 同为文本级惯例。版本探测不到时兜底 false。

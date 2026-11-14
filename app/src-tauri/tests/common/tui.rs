@@ -59,6 +59,12 @@ impl Tui {
             .unwrap();
         let mut command = crate::common::agent_command(&argv[0], cwd);
         command.args(&argv[1..]);
+        // codex 有新版时启动先弹更新询问，回车就是「立即更新」（会改用户装机）。`wait_ready` 认得它、
+        // 按 Esc 跳过，但不把装机安全押在「每次都认得出」上：直接关掉启动时的更新检查
+        // （与 probe_codex_backtrack、tms_probe_codex 同一个配置键）。
+        if argv.iter().any(|arg| arg.to_ascii_lowercase().contains("codex")) {
+            command.args(["-c", "check_for_update_on_startup=false"]);
+        }
         for (key, _) in std::env::vars() {
             if key.starts_with("MEOWO_PTY_")
                 || (key.starts_with("CLAUDE") && key != "CLAUDE_CONFIG_DIR")

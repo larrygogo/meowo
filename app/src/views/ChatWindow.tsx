@@ -53,7 +53,7 @@ import { useSidebarLayout } from "./chat/useSidebarLayout";
 import { pasteImagesNatively, useInterrupt, writeInterruptKeys } from "./chat/terminalInput";
 import { leaveSubagentView } from "./chat/subagentView";
 import { SubagentViewNotice } from "./chat/SubagentViewNotice";
-import { clearPartialImageDraft, createSendQueue, IMAGE_PASTE_LANDING_POLLS, LATE_IMAGE_GRACE_MS, RESUME_VERIFY_WINDOW_MS, submitToTerminal, terminalInput, waitForTerminalReady, type SubmitInput, type TerminalReadyMessages, type TerminalStartupResult } from "./chat/terminalSubmit";
+import { clearPartialImageDraft, createSendQueue, IMAGE_PASTE_LANDING_POLLS, LATE_IMAGE_GRACE_MS, RESUME_VERIFY_WINDOW_MS, setSingleLinePaste, submitToTerminal, terminalInput, waitForTerminalReady, type SubmitInput, type TerminalReadyMessages, type TerminalStartupResult } from "./chat/terminalSubmit";
 import { ComposerBlocked, composerBlockNotice, useNativeDraft } from "./chat/nativeDraft";
 import { useSessionRef, useSessionScope, useSessionState, useSessionTimer } from "./chat/sessionScope";
 import { launchGrid } from "./chat/terminalGrid";
@@ -3583,6 +3583,8 @@ export function ChatWindow() {
     tidyComposer: () => nativeDraft.tidy(),
     deferTerminal: (action, label) => deferTerminalRef.current(action, label),
   });
+  // 这家 CLI 的单行正文要不要也走粘贴（gemini 吞半角问号）：随能力声明登记，见 chat/terminalSubmit。
+  useEffect(() => { setSingleLinePaste(sessionId, chatUi?.single_line_paste_pattern); }, [sessionId, chatUi?.single_line_paste_pattern]);
   // 思考档入口只看能力声明（chat/availability 的 effortEntry）：打命令的两家照旧，经会话服务的
   // （Codex）随当前模型一起下发，回合中同样排到这一轮之后（走查输入 B7）。
   const effortMenu = effortEntry(chatUi, modelCatalog.find((entry) => entry.id === currentPresetId(modelCatalog, history?.model)) ?? null);

@@ -129,6 +129,14 @@ queue_delivery: QueueDelivery | null,
  */
 newline_input: string | null, 
 /**
+ * 单行正文命中这条正则（JS 语法）时，也包成 bracketed paste 再写进终端；None = 单行照旧直接写。
+ *
+ * 多行正文本来就一律走 bracketed paste。单行直接写是为了兼容不开 bracketed paste 的旧 CLI，
+ * 但有的 TUI 会把「一次写进来的一串字」里的某些字符当成快捷键吃掉（gemini 0.68.0 吞半角问号，
+ * 见其插件注释）。命中的正文改走粘贴，TUI 按粘贴内容原样收下。
+ */
+single_line_paste_pattern: string | null, 
+/**
  * 当前会话支持 runtime 命令自发现、但权威清单尚未写入 transcript。前端据此继续随
  * transcript 增量重试；一旦为 false 就停止探测，避免稳态轮询反复扫描文件。
  */

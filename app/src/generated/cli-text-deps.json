@@ -1069,21 +1069,21 @@
           "needle": "do you trust the files in this folder",
           "note": "0.16x 之前的信任页标题；0.166.0 改为 `Trust this folder?`（codex.exe 里 `do you trust` 0 处）",
           "rule": "literal:do you trust the files in this folder",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:488"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:497"
         },
         {
           "legacy": true,
           "needle": "do you trust the contents of this directory",
           "note": "更早版本的信任页标题；0.166.0 已无",
           "rule": "literal:do you trust the contents of this directory",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:489"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:498"
         },
         {
           "legacy": false,
           "needle": "trust this folder?",
           "note": "",
           "rule": "literal:trust this folder?",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:490"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:499"
         },
         {
           "legacy": false,
@@ -1216,7 +1216,7 @@
           "needle": "[image #",
           "note": "0.166.0 codex.exe 含 `- [Image #…]` 模板（附件占位，与输入框里的贴图占位同一写法）",
           "rule": "clipboard_image",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:447"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:456"
         },
         {
           "legacy": false,
@@ -1256,7 +1256,7 @@
           "needle": "approval_policy",
           "note": "0.163 rollout 实样（运行中权限档，research-cli-drift X4）；0.166.0 codex.exe 55 处",
           "rule": "record:approval_policy",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:770"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:779"
         },
         {
           "legacy": false,
@@ -1462,21 +1462,21 @@
           "needle": "allow execution of",
           "note": "0.65.0 bundle：`Allow execution of` 在工具确认框里；同规则还认 Apply this change? / Do you want to proceed? / 沙箱扩权 To run [Shell] …",
           "rule": "attention:gemini:command-approval",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:441"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:453"
         },
         {
           "legacy": false,
           "needle": "usage limit reached",
           "note": "0.65.0 bundle：`Usage limit reached`；高负载框 `We are currently experiencing high demand for ${model}.` 同规则",
           "rule": "attention:gemini:usage-limit",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:455"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:467"
         },
         {
           "legacy": false,
           "needle": "answer questions",
           "note": "0.65.0 bundle：ask_user 提问表单表头 `Answer Questions`",
           "rule": "attention:gemini:question",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:467"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:479"
         },
         {
           "legacy": false,

@@ -75,6 +75,13 @@ fn tui_script() {
     let agent = std::env::var("PROBE_AGENT").expect("PROBE_AGENT");
     let steps = std::env::var("PROBE_STEPS").unwrap_or_default();
     let mut argv = meowo_agent::by_id(&agent).unwrap().launch_argv();
+    // codex 有新版时启动先弹更新询问，回车（含换行）就是「立即更新」。脚本里的按键不看屏幕，打上去
+    // 就把用户装机的 codex 送去更新了（2026-11-14 实撞：0.167.2 提示 0.169.0，脚本第一段字后面的
+    // 换行触发了安装脚本，随后被探针收尾杀掉，装机没变，但留下了下载到一半的临时目录和两个后台
+    // 进程要手工清）。取证不得改用户装机：这里直接关掉启动时的更新检查。
+    if agent == "codex" {
+        argv.extend(["-c", "check_for_update_on_startup=false"].map(String::from));
+    }
     if let Ok(extra) = std::env::var("PROBE_ARGS") {
         argv.extend(extra.split_whitespace().map(String::from));
     }

@@ -414,6 +414,18 @@ impl AgentPlugin for Gemini {
     fn newline_input(&self) -> Option<&'static str> {
         Some("\n")
     }
+    /// 一次写进输入框的一串字里的半角问号会被吞掉（0.68.0 真机，tests/probe_tui_script.rs，
+    /// 2026-11-14，只打字不提交）：
+    /// - `What is 17+25? Reply now` 一次写入，输入框里是 `What is 17+25 Reply now`；
+    ///   `a?b` 成了 `ab`；`ab??cd? ef` 成了 `abcd ef`；
+    /// - 问号单独一次写入（`x`、`?`、`y` 分三次写）是 `x?y`，不丢；
+    /// - 同一句包成 bracketed paste，原样不丢。
+    ///
+    /// 对话页的单行消息是一次写入，带半角问号的问句发到 Gemini 就少了问号（全角问号不受影响）。
+    /// 带半角问号的单行正文改走粘贴。只对问号声明：别的字符没有取证到丢失，不扩大。
+    fn single_line_paste_pattern(&self) -> Option<&'static str> {
+        Some(r"\?")
+    }
     /// 工具确认框（源码 ToolConfirmationMessage，0.64 未变）。gemini 没有能代为决定的权限 hook，
     /// 屏幕识别是 GUI 给出可操作审批的唯一通道。问句只认**行首是外框 │** 的那一行——模型
     /// 正文里引用同一句不带框线，不该凭空弹卡锁输入框。真机屏（0.61，`--approval-mode default`）：

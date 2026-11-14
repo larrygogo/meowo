@@ -10,10 +10,26 @@ import { managedTerminalSnapshot, writeManagedTerminal } from "../../api";
 import { composerDraft, readComposerFrame, terminalComposerIo, type ComposerSpec } from "./composer";
 import { appendTerminalText, terminalAttention as detectTerminalAttention, visibleTerminalText, type AttentionGrammar, type TerminalAttention } from "../../terminalAttention";
 
-export function terminalInput(content: string): string {
+export function terminalInput(content: string, singleLinePaste?: RegExp | null): string {
   // 多行内容必须作为一次 bracketed paste 交给 TUI composer，否则附件列表中的换行可能被当成
   // 多次 Enter，导致第一行提前提交。单行保持原协议，兼容不启用 bracketed paste 的旧 CLI。
-  return content.includes("\n") ? `\x1b[200~${content}\x1b[201~` : content;
+  // 例外由插件声明（ChatUi.single_line_paste_pattern）：有的 TUI 把一次写进来的一串字里的某些
+  // 字符当成快捷键吃掉（gemini 0.68.0 吞半角问号，真机取证见其插件），命中的单行也走粘贴。
+  return content.includes("\n") || singleLinePaste?.test(content) ? `\x1b[200~${content}\x1b[201~` : content;
+}
+
+/// 各会话「单行也走粘贴」的规则，随对话页能力（agent_chat_ui）登记。按会话记在这里而不是给
+/// submitToTerminal 再加一个参数：往终端提交正文的调用有八九处（发送、排队、撤回、切模型、侧问…），
+/// 哪一处漏传，那条路上的问号就还是丢。
+const singleLinePasteBySession = new Map<number, RegExp>();
+export function setSingleLinePaste(sessionId: number, pattern: string | null | undefined): void {
+  if (!pattern) { singleLinePasteBySession.delete(sessionId); return; }
+  try {
+    singleLinePasteBySession.set(sessionId, new RegExp(pattern));
+  } catch {
+    // 规则是数据，坏了就按没声明处理，不让发送整个停摆。
+    singleLinePasteBySession.delete(sessionId);
+  }
 }
 
 /// 正文与 Enter 之间的基础间隔。实测（probe_enter.rs 对真实 kimi）：
@@ -57,7 +73,7 @@ export async function submitToTerminal(sessionId: number, content: string, abort
   // 排队等待期间状态会变化；写正文前与落提交键前都重取，不能复用点击发送时的idle判断。
   if (typeof submitInput === "function") await submitInput();
   const before = verify ? await managedTerminalSnapshot(sessionId) : null;
-  await writeManagedTerminal(sessionId, terminalInput(content));
+  await writeManagedTerminal(sessionId, terminalInput(content, singleLinePasteBySession.get(sessionId)));
   onBodyWritten?.();
   if (before && verify) {
     // 匹配规则:正文与可见文本都压掉空白与框线字符后做前缀包含——回显会被 composer
