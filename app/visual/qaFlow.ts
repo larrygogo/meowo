@@ -3,6 +3,7 @@
 // 出现条件逐条对过源码（ChatWindow.tsx / LeadPanel.tsx / WorktreeSetupBar.tsx / terminalAttention.ts）。
 import { CHAT_SESSION_ID, FIXED_NOW, leadTask, MENTION_CANDIDATES, MODE_MARKERS } from "./fixtures";
 import { cardSceneMock } from "./cardScenes";
+import { toolSceneMock } from "./toolScenes";
 import { outgoingStore } from "../src/views/chat/outgoingPrompts";
 import { demoChatUi } from "../src/demo/mock";
 import { panelMock } from "../src/demo/panelData";
@@ -122,7 +123,9 @@ export function qaFlowMock(scene: string, lang: Lang, chat: (cmd: string) => unk
       exitTail: null, cols: 120, rows: 40, modes: [], externalViewers: false, exitUnexpected: false };
   };
   // 卡片场景（flow-card-<名字>）：五家的审批卡、提问卡、提示卡，数据在 cardScenes.ts，手机 harness 共用。
-  const card = kind.startsWith("card-") ? cardSceneMock(kind.slice("card-".length), lang, chat) : null;
+  // 工具行场景（flow-tools-<家>-<状态>）：五家回放样本的时间线，数据在 toolScenes.ts，手机 harness 共用。
+  const card = kind.startsWith("card-") ? cardSceneMock(kind.slice("card-".length), lang, chat)
+    : kind.startsWith("tools-") ? toolSceneMock(kind.slice("tools-".length), lang, chat) : null;
   return (cmd, args) => {
     const cardHit = card?.(cmd, args);
     if (cardHit !== undefined) return cardHit;

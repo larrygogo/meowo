@@ -15,6 +15,7 @@ import { installInputModality } from "../src/input-modality";
 import { demoChatUi, installMocks, setExtraMock, store } from "../src/demo/mock";
 import { patchChatUi } from "./qaFlow";
 import { cardSceneMock } from "./cardScenes";
+import { toolSceneMock } from "./toolScenes";
 import { tmsChatMock, tmsCommonMock, tmsProviderOf } from "./tmsFixtures";
 import { chatMock } from "../src/demo/chatData";
 import { panelMock } from "../src/demo/panelData";
@@ -47,7 +48,9 @@ const tmsChat = scene.startsWith("mobile-tms-") && !scene.startsWith("mobile-tms
 const tmsNew = scene.startsWith("mobile-tms-new-");
 // mobile-card-<名字>：五家的审批卡、提问卡、提示卡（数据在 cardScenes.ts，与桌面 flow-card-* 同一份）。
 const cardScene = scene.startsWith("mobile-card-") ? scene.slice("mobile-card-".length) : null;
-const inChat = tmsChat || cardScene !== null || scene === "mobile-chat" || scene === "mobile-changes" || scene === "mobile-idle" || scene === "mobile-lead" || scene === "mobile-lead-c" || scene === "mobile-question" || scene === "mobile-tasks";
+// mobile-tools-<家>-<状态>：五家的工具行与运行状态（数据在 toolScenes.ts，与桌面 flow-tools-* 同一份）。
+const toolScene = scene.startsWith("mobile-tools-") ? scene.slice("mobile-tools-".length) : null;
+const inChat = tmsChat || cardScene !== null || toolScene !== null || scene === "mobile-chat" || scene === "mobile-changes" || scene === "mobile-idle" || scene === "mobile-lead" || scene === "mobile-lead-c" || scene === "mobile-question" || scene === "mobile-tasks";
 /// 后台任务的假数据：判据是「回执带子任务结局」（与 TasksPanel 同口径），一条调用配一条回执。
 function taskItems(zh: boolean): unknown[] {
   const at = (minutes: number) => new Date(FIXED_NOW - minutes * 60_000).toISOString();
@@ -78,7 +81,7 @@ const SCREEN = [
   "  3. No, and tell Claude what to do differently (esc)",
 ];
 const tmsMock = tmsChat ? tmsChatMock(tmsProviderOf(scene), q.get("state") ?? "idle", chat, q.get("modes")) : tmsNew ? tmsCommonMock(tmsProviderOf(scene), q.get("cfg")) : null;
-const cardMock = cardScene !== null ? cardSceneMock(cardScene, lang, chat) : null;
+const cardMock = cardScene !== null ? cardSceneMock(cardScene, lang, chat) : toolScene !== null ? toolSceneMock(toolScene, lang, chat) : null;
 setExtraMock((cmd, args) => {
   const cardHit = cardMock?.(cmd, args);
   if (cardHit !== undefined) return cardHit;
