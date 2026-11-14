@@ -284,7 +284,7 @@ fn load_chat_history(
     };
     // 刚切成功、还没有新回复的模型以宿主存档为准（最终做空 P1/P2）：对话页、手机、换会话回来、重启
     // Meowo 后读到的都是它，不再靠前端内存里的钉子。
-    history.model = super::session_settings::pinned_history_model(&store, session_id, &header, history.model.take());
+    history.model = super::session_settings::pinned_history_model(&store, session_id, history.model.take());
     // 已停用的「Meowo 托管」会话（PR #172 删除托管路线）：照常走原生记录读取——绑定过原生 id 的，
     // cc_session_id 就是 CLI 自己的会话 id，对话页能看到 CLI 落盘的记录；前端据此换门卡文案。
     let running = super::session_query::process_alive(header.pid, &live.alive, live.pty_live);

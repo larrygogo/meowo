@@ -25,6 +25,9 @@ CREATE TABLE IF NOT EXISTS sessions (
     pending_review TEXT,
     last_ai_text   TEXT,
     last_user_text TEXT,
+    -- 已结束的回合数（v26）：每次回合结束（Stop）在 finish_turn 里与正文、状态同一事务加一。
+    -- 切模型的钉子据此判断「切换之后有没有新回复」（任务 20261114-tui-model-switch 第七轮 R1）。
+    turns          INTEGER NOT NULL DEFAULT 0,
     -- agent provider：claude（默认）/ kimi…，驱动卡片图标/标签与 resume 命令。旧库由 migrate 的 ALTER 补齐。
     -- 此 'claude' 默认值须与 DEFAULT_PROVIDER 常量、store.rs ALTER 语句中的 'claude' 一致；
     -- 改默认 provider 时三处都要改，models.rs 的绊线测试会在改常量时提醒。

@@ -274,7 +274,7 @@ fn live_blocking(app: &tauri::AppHandle, db: &Path, session_id: i64) -> Option<L
                 .map(|o| o.id);
             // 最终做空 P2 / 第六轮 Q2：最后一条用户消息里的模型是切换前的，钉子成立时以存档为准。
             Some(LiveSettings {
-                model: pinned_model(&store, session_id, &header, model),
+                model: pinned_model(&store, session_id, &turn_of(&store, session_id), model),
                 effort: choice.variant,
                 modes: option
                     .zip(choice.agent)
@@ -286,7 +286,7 @@ fn live_blocking(app: &tauri::AppHandle, db: &Path, session_id: i64) -> Option<L
         // （最终做空 P1），让打开菜单的同步不会拿旧回复的模型覆盖。
         meowo_agent::ModelSwitch::RestartResume { .. } => {
             let stored = stored_selections(&store, session_id);
-            let pinned = stored.get("model").filter(|_| pin_holds(&stored, &header)).cloned();
+            let pinned = stored.get("model").filter(|_| pin_holds(&stored, &turn_of(&store, session_id))).cloned();
             pinned.map(|model| LiveSettings { model: Some(model), effort: None, modes: Vec::new() })
         }
     }
@@ -444,22 +444,23 @@ pub(crate) fn plan(
 
 /// 钉子：刚切成功的模型在会话出现新回复之前以宿主存档为准（最终做空 P1/P2、第六轮 Q1/Q2）。
 /// 判断「有没有新回复」看回合标识，不比模型名——用户在 TUI 里 /model 切回原模型再回复，模型名和切换那一刻
-/// 一样，但回合变了，钉子必须作废（Q1）。回合标识取会话最近一条 AI 回复（sessions.last_ai_text，每个回合
-/// 结束由 Stop 钩子写入，重启 / SessionStart 不动它）。两条回复正文恰好完全相同时认不出，这种情况钉子会多留
-/// 一轮，下一条不同的回复就清掉。
+/// 一样，但回合变了，钉子必须作废（Q1）。回合标识是会话已结束的回合数（sessions.turns，每个回合结束由 Stop
+/// 钩子在 finish_turn 里与正文、状态同一事务加一；重启 / SessionStart 不动它）。不用最近一条 AI 正文：同一句
+/// 问话收尾、前 200 字相同、只有工具调用时正文不变，会把新回合认成旧的（第七轮 R1）。
 /// 以下键都不是启动选项，resolve_launch_args 只认声明过的栏，不会拼进命令行。
 pub(crate) const PIN_TURN: &str = "_pinTurn";
 /// 切换那一刻会话报的模型（session_context.model 原样），只作记录与排查，不参与判断。
 pub(crate) const PIN_REPORTED: &str = "_pinReported";
 
-/// 会话此刻的回合标识（见 [`PIN_TURN`]）。
-fn turn_marker(header: &meowo_store::store::SessionHeader) -> String {
-    header.last_ai_text.clone().unwrap_or_default()
+/// 会话此刻的回合标识（见 [`PIN_TURN`]）：库里的回合计数。前端靠屏幕识别先判出回合结束、Stop 还没落库时，
+/// 读到的仍是上一轮的计数——以库为准（第七轮 R4），等 Stop 落库后下一次读自然跟上。
+pub(crate) fn turn_of(store: &meowo_store::Store, session_id: i64) -> String {
+    store.session_turns(session_id).unwrap_or_default().to_string()
 }
 
-/// 钉子还成立：存档有钉子，且会话没有出现新回复。
-pub(crate) fn pin_holds(stored: &HashMap<String, String>, header: &meowo_store::store::SessionHeader) -> bool {
-    stored.get(PIN_TURN).is_some_and(|turn| *turn == turn_marker(header))
+/// 钉子还成立：存档有钉子，且会话没有出现新回复（回合计数没变）。
+pub(crate) fn pin_holds(stored: &HashMap<String, String>, turn: &str) -> bool {
+    stored.get(PIN_TURN).is_some_and(|at_switch| at_switch == turn)
 }
 
 /// 切模型成功后记下钉子：存档的模型改成新值。回合标识与「切换那一刻会话报的模型」由宿主自己读（Q2：不用
@@ -469,9 +470,10 @@ fn pin_model(store: &meowo_store::Store, session_id: i64, model: &str) {
         return;
     };
     let stored = stored_selections(store, session_id);
+    let turn = turn_of(store, session_id);
     let mut pin = HashMap::from([("model".to_string(), model.to_string())]);
-    if !pin_holds(&stored, &header) {
-        pin.insert(PIN_TURN.to_string(), turn_marker(&header));
+    if !pin_holds(&stored, &turn) {
+        pin.insert(PIN_TURN.to_string(), turn);
         let reported = store.session_context(&header.cc_session_id).ok().and_then(|context| context.model);
         pin.insert(PIN_REPORTED.to_string(), reported.unwrap_or_default());
     }
@@ -479,8 +481,8 @@ fn pin_model(store: &meowo_store::Store, session_id: i64, model: &str) {
 }
 
 /// 对话页同步写回存档的模型要不要收：钉子还成立时不收（会话报的仍是切换前那一轮的模型）。
-pub(crate) fn record_model_allowed(stored: &HashMap<String, String>, header: &meowo_store::store::SessionHeader) -> bool {
-    !pin_holds(stored, header)
+pub(crate) fn record_model_allowed(stored: &HashMap<String, String>, turn: &str) -> bool {
+    !pin_holds(stored, turn)
 }
 
 /// 有了新回复：钉子作废，删掉标记（存档的模型留着，之后的同步会按回复写回）。
@@ -499,37 +501,60 @@ fn clear_pin(store: &meowo_store::Store, session_id: i64) {
 pub(crate) fn pinned_model(
     store: &meowo_store::Store,
     session_id: i64,
-    header: &meowo_store::store::SessionHeader,
+    turn: &str,
     reported: Option<String>,
 ) -> Option<String> {
     let stored = stored_selections(store, session_id);
     if !stored.contains_key(PIN_TURN) {
         return reported;
     }
-    if pin_holds(&stored, header) {
+    if pin_holds(&stored, turn) {
         return stored.get("model").cloned().or(reported);
     }
     clear_pin(store, session_id);
+    resync_stored_model(store, session_id, reported.as_deref());
     reported
+}
+
+/// 钉子作废那一刻，把存档的模型改成新回复报的模型（第七轮 R4 的 S8）：回合结束同步可能赶在 Stop 落库之前、
+/// 被钉子拒掉（用户其实已在 TUI 里切回），不改的话，接回会按存档里的旧值回放，直到下一次同步才改正。
+/// 只对带参重启的两家（Gemini/Kimi，接回时回放存档里的模型）做，而且回复报的要能在清单里对上。
+fn resync_stored_model(store: &meowo_store::Store, session_id: i64, reported: Option<&str>) {
+    let Some(reported) = reported.filter(|reported| !reported.is_empty()) else {
+        return;
+    };
+    let Ok(header) = store.session_header(session_id) else {
+        return;
+    };
+    let Some(plugin) = meowo_agent::resolve(Some(&header.provider)) else {
+        return;
+    };
+    if !matches!(plugin.model_switch(), Some(meowo_agent::ModelSwitch::RestartResume { .. })) {
+        return;
+    }
+    let env = session_env(&header.provider, session_id);
+    let catalog = catalog_for(plugin, &env, header.cwd.as_deref().map(Path::new));
+    if let Some(id) = catalog_id_for(&catalog, reported) {
+        persist(store, session_id, &HashMap::new(), Some(&id));
+    }
 }
 
 /// 对话页历史快照里的「当前模型」（chat.rs 调）。
 pub(crate) fn pinned_history_model(
     store: &meowo_store::Store,
     session_id: i64,
-    header: &meowo_store::store::SessionHeader,
     reported: Option<String>,
 ) -> Option<String> {
-    pinned_model(store, session_id, header, reported)
+    pinned_model(store, session_id, &turn_of(store, session_id), reported)
 }
 
 /// 带参重启拼参数时：钉子成立就以存档的模型为当前模型，不用前端 / 会话文件报的切换前的模型。
 pub(crate) fn pin_switched_model(
     current: &mut HashMap<String, String>,
     stored: &HashMap<String, String>,
-    header: &meowo_store::store::SessionHeader,
+    turn: &str,
 ) {
-    if let (true, Some(model)) = (pin_holds(stored, header), stored.get("model")) {
+    if let (true, Some(model)) = (pin_holds(stored, turn), stored.get("model")) {
         current.insert("model".into(), model.clone());
     }
 }
@@ -773,7 +798,7 @@ fn apply_blocking(
     }
     let stored = stored_selections(&store, session_id);
     // 会话文件读到的「当前模型」是最近一条回复的；切完模型还没有新回复时它仍是旧的（真机第四轮问题 2）。
-    pin_switched_model(&mut current, &stored, &header);
+    pin_switched_model(&mut current, &stored, &turn_of(&store, session_id));
     let current_model = current.get("model").cloned();
     let plan = plan(
         plugin,
@@ -1030,7 +1055,7 @@ pub(crate) async fn record_session_settings(
             .collect();
         // 最终做空 P1：对话页回合结束同步时，会话报的若仍是切换那一刻的旧模型（钉子在），不写回存档。
         let stored = stored_selections(&store, session_id);
-        let model = model.filter(|_| record_model_allowed(&stored, &header));
+        let model = model.filter(|_| record_model_allowed(&stored, &turn_of(&store, session_id)));
         let model = model.filter(|model| {
             let env = session_env(&header.provider, session_id);
             let catalog =
@@ -2497,26 +2522,26 @@ mod tests {
     /// - Q2：OpenCode 连切两次 agent（读回两个不同模型），中间没有新回复：基准保留第一次的，live 给第二次的。
     #[test]
     fn pin_follows_turns_not_model_names() {
-        let dir = std::env::temp_dir().join(format!("meowo-pin6-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("meowo-pin7-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let db = dir.join("board.db");
         let _ = std::fs::remove_file(&db);
         let store = meowo_store::Store::open(&db).unwrap();
         let now = crate::now_ms();
-        let project = store.upsert_project_by_root("/tmp/pin6", "pin6", now).unwrap();
-        let (sid, _) = store.start_session(project, "cc-pin6", now).unwrap();
-        store.set_last_ai_text(sid, "第一轮回复（用 A）", now + 10).unwrap();
+        let project = store.upsert_project_by_root("/tmp/pin7", "pin7", now).unwrap();
+        let (sid, _) = store.start_session(project, "cc-pin7", now).unwrap();
+        store.finish_turn(sid, Some("Shall I go on with the tests?"), now + 10).unwrap();
         store.set_session_launch_args(sid, r#"{"model":"gemini-3.8-flash","approval":"autoEdit"}"#).unwrap();
-        let header = |store: &meowo_store::Store| store.session_header(sid).unwrap();
+        let turn = |store: &meowo_store::Store| turn_of(store, sid);
 
-        // 1. 对话页切到 B（gemini-2.5-pro），restarted：宿主记钉子，回合标识是第一轮回复。
+        // 1. 对话页切到 B（gemini-2.5-pro），restarted：宿主记钉子，回合标识是已结束的回合数。
         pin_model(&store, sid, "gemini-2.5-pro");
         let stored = stored_selections(&store, sid);
-        assert_eq!(stored[PIN_TURN], "第一轮回复（用 A）");
+        assert_eq!(stored[PIN_TURN], "1");
         // 2. 换会话再回来 / 手机 / 重启 Meowo：会话报的仍是 A，显示 B。
-        assert_eq!(pinned_history_model(&store, sid, &header(&store), Some("gemini-3.8-flash".into())).as_deref(), Some("gemini-2.5-pro"));
+        assert_eq!(pinned_history_model(&store, sid, Some("gemini-3.8-flash".into())).as_deref(), Some("gemini-2.5-pro"));
         // 3. 打开菜单：同步不收会话报的旧模型。
-        assert!(!record_model_allowed(&stored_selections(&store, sid), &header(&store)));
+        assert!(!record_model_allowed(&stored_selections(&store, sid), &turn(&store)));
         // 4. 再切审批档：前端报的 current 还是 A，拼出来的命令行带 B。
         let gemini = meowo_agent::by_id("gemini").unwrap();
         let catalog = vec![
@@ -2528,19 +2553,30 @@ mod tests {
             ("approval".to_string(), "autoEdit".to_string()),
         ]);
         let stored = stored_selections(&store, sid);
-        pin_switched_model(&mut current, &stored, &header(&store));
+        pin_switched_model(&mut current, &stored, &turn(&store));
         let planned = plan(gemini, None, None, &modes(&[("approval", "default")]), &catalog, &[], &current, &stored).unwrap();
         assert_eq!(planned.restart.get("model").map(String::as_str), Some("gemini-2.5-pro"));
 
-        // 5. Q1：用户在 TUI 里 /model 切回 A 并回复。会话报的模型名和切换那一刻一样，但有了新回复：钉子作废。
-        store.set_last_ai_text(sid, "第二轮回复（用户切回 A 后）", now + 20).unwrap();
-        assert_eq!(pinned_history_model(&store, sid, &header(&store), Some("gemini-3.8-flash".into())).as_deref(), Some("gemini-3.8-flash"));
-        let stored = stored_selections(&store, sid);
-        assert!(!stored.contains_key(PIN_TURN), "钉子已清");
-        assert!(record_model_allowed(&stored, &header(&store)), "之后的同步照回复写回 A");
-        let mut current = HashMap::from([("model".to_string(), "gemini-3.8-flash".to_string())]);
-        pin_switched_model(&mut current, &stored, &header(&store));
-        assert_eq!(current["model"], "gemini-3.8-flash", "下一次重启带用户自己选的 A");
+        // 5. 第七轮 R1：用户在 TUI 里 /model 切回 A 并回复。下面三种回复的正文都和上一轮「一样」（同一句问话
+        //    收尾 / 前 200 字相同 / 只有工具调用没有正文），但回合计数变了，钉子都作废、照回复。
+        let long_same_head = format!("{}后面不同的结尾", "相".repeat(210));
+        for (case, reply) in [
+            ("同一句问话收尾", Some("Done.\nShall I go on with the tests?")),
+            ("前 200 字相同", Some(long_same_head.as_str())),
+            ("只有工具调用", None),
+        ] {
+            store.set_session_status(sid, meowo_store::SessionStatus::Running, now + 15).unwrap();
+            pin_model(&store, sid, "gemini-2.5-pro");
+            assert!(pin_holds(&stored_selections(&store, sid), &turn(&store)), "{case}：切换后钉子成立");
+            store.finish_turn(sid, reply, now + 20).unwrap();
+            assert_eq!(pinned_history_model(&store, sid, Some("gemini-3.8-flash".into())).as_deref(), Some("gemini-3.8-flash"), "{case}");
+            let stored = stored_selections(&store, sid);
+            assert!(!stored.contains_key(PIN_TURN), "{case}：钉子已清");
+            assert!(record_model_allowed(&stored, &turn(&store)), "{case}：之后的同步照回复写回 A");
+            let mut current = HashMap::from([("model".to_string(), "gemini-3.8-flash".to_string())]);
+            pin_switched_model(&mut current, &stored, &turn(&store));
+            assert_eq!(current["model"], "gemini-3.8-flash", "{case}：下一次重启带用户自己选的 A");
+        }
 
         // 6. Q2：OpenCode 连切两次 agent，读回 big-pickle、再读回 gpt-x，中间没有新回复。
         pin_model(&store, sid, "opencode/big-pickle");
@@ -2549,13 +2585,46 @@ mod tests {
         let stored = stored_selections(&store, sid);
         assert_eq!(stored[PIN_TURN], base, "保留第一次记下的基准");
         assert_eq!(stored["model"], "openai/gpt-x");
-        // 打开菜单：live 拿最后一条用户消息里的旧模型来问，仍给 gpt-x；快照同样。
-        assert_eq!(pinned_model(&store, sid, &header(&store), Some("fake/fake-model-2".into())).as_deref(), Some("openai/gpt-x"));
-        assert!(!record_model_allowed(&stored, &header(&store)));
+        assert_eq!(pinned_model(&store, sid, &turn(&store), Some("fake/fake-model-2".into())).as_deref(), Some("openai/gpt-x"));
+        assert!(!record_model_allowed(&stored, &turn(&store)));
         drop(store);
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    /// 第七轮 R4（S7）：OpenCode 排队切换恰在回合结束时执行。Stop 的正文、回合计数、状态在同一事务里写，
+    /// 宿主一看到 waiting（排队切换据此执行），用旧模型跑完的那一轮已经计入；之后记的钉子基准就是它，
+    /// 不会被这一轮的落库立刻作废、把刚切的模型改回去。
+    #[test]
+    fn queued_switch_at_turn_end_sees_the_finished_turn() {
+        let dir = std::env::temp_dir().join(format!("meowo-s7-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = dir.join("board.db");
+        let _ = std::fs::remove_file(&db);
+        let store = meowo_store::Store::open(&db).unwrap();
+        let now = crate::now_ms();
+        let project = store.upsert_project_by_root("/tmp/s7", "s7", now).unwrap();
+        let (sid, _) = store.start_session(project, "cc-s7", now).unwrap();
+        store.set_session_status(sid, meowo_store::SessionStatus::Running, now + 1).unwrap();
+        // Stop：一次写完。写完前别处读不到 waiting；写完后状态、计数、正文同时可见。
+        assert_eq!(store.session_turns(sid).unwrap(), 0);
+        store.finish_turn(sid, Some("用旧模型跑完的这一轮"), now + 5).unwrap();
+        let header = store.session_header(sid).unwrap();
+        assert_eq!(header.status, "waiting");
+        assert_eq!(store.session_turns(sid).unwrap(), 1);
+        assert_eq!(header.last_ai_text.as_deref(), Some("用旧模型跑完的这一轮"));
+        // 宿主看到 waiting 执行排队的切换（只切 agent，读回 big-pickle）：基准是已计入的这一轮。
+        pin_model(&store, sid, "opencode/big-pickle");
+        assert_eq!(stored_selections(&store, sid)[PIN_TURN], "1");
+        // 这一轮的模型、上下文随后才落（不在事务里）：钉子只看回合计数，不受影响。
+        assert_eq!(pinned_model(&store, sid, &turn_of(&store, sid), Some("fake/fake-model-2".into())).as_deref(), Some("opencode/big-pickle"));
+        // 已结束的会话不计数、不翻状态（迟到的 Stop 尾巴）。
+        store.set_session_status(sid, meowo_store::SessionStatus::Ended, now + 9).unwrap();
+        store.finish_turn(sid, Some("迟到"), now + 10).unwrap();
+        assert_eq!(store.session_turns(sid).unwrap(), 1);
+        assert_eq!(store.session_header(sid).unwrap().status, "ended");
+        drop(store);
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     /// 最终做空 P5：只含终端项的条目，会话归档 / 删除时出队并带提醒文案；队列空了执行线程退出。
     #[test]

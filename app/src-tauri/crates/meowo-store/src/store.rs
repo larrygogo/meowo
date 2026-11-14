@@ -216,7 +216,7 @@ impl Store {
     // v24：区分人类消息与 Lead 内部续跑，内部消息不能解除人类暂停。
     // v25：原生弱ID恢复记录单独索引，保留原始事实而不伪造与现场投影的去重关系。
     // v21–v25 的 managed_* 表属于已删除的「Meowo 托管」会话：结构与数据刻意保留、只读（见 managed.rs），勿删勿复活。
-    const USER_VERSION: i64 = 25;
+    const USER_VERSION: i64 = 26;
 
     /// 一次性建表 + 迁移 + 建索引，用 `PRAGMA user_version` 门控：已是最新版直接返回，
     /// 避免 statusline/hook 每次 open 都重跑 DDL 与注定失败的 ALTER（hot-path 浪费）。
@@ -232,7 +232,7 @@ impl Store {
         conn.execute_batch(SCHEMA)?;
         conn.execute_batch(crate::managed::SCHEMA)?;
         // 给旧库补列（新库 SCHEMA 已含这些列 → ALTER 必报 duplicate，忽略即可）。
-        const ALTERS: [&str; 22] = [
+        const ALTERS: [&str; 23] = [
             "ALTER TABLE managed_deliveries ADD COLUMN origin TEXT NOT NULL DEFAULT 'user'",
             "ALTER TABLE sessions ADD COLUMN pid INTEGER",
             "ALTER TABLE sessions ADD COLUMN pid_shared INTEGER NOT NULL DEFAULT 0",
@@ -268,6 +268,8 @@ impl Store {
             // 标题锁（v19）：老库补齐后全是 0 = 没改过名，agent 起的标题可以接管。老会话
             // 里用户改过的名字没留记录，会被 agent 标题覆盖一次——可接受（改名少，再改一次即锁）。
             "ALTER TABLE tasks ADD COLUMN title_locked INTEGER NOT NULL DEFAULT 0",
+            // 回合计数（v26）：老库补齐后全是 0，下一次 Stop 起累加；钉子只比较前后两次读数，起点无关。
+            "ALTER TABLE sessions ADD COLUMN turns INTEGER NOT NULL DEFAULT 0",
         ];
         for sql in ALTERS {
             if let Err(e) = conn.execute(sql, []) {
@@ -1203,19 +1205,54 @@ impl Store {
     /// 回合以一句问话收尾时(「要我接着改测试吗?」)存的是那句问话:长回复截前 200 字,
     /// 结尾的问题正好被截掉,看板卡片上只剩开头的总结,看不出 agent 停下来在等什么
     /// (对照 WorkBuddy 被吐槽最多的「做一半停下等回复」)。前面还有话时加「…」。
+    /// 回合结束（Stop）：最近 AI 正文、回合计数、状态在**同一事务**里写，先正文与计数、最后状态
+    /// （任务 20261114-tui-model-switch 第七轮 R1/R4）。别处看到 waiting 时，这一轮的正文和计数一定已经落库，
+    /// 不会出现「状态已是等你、正文还是上一轮」的窗口。正文规则同 [`Self::set_last_ai_text`]（空不覆盖）。
+    /// 已结束（ended）的会话不翻状态、不计数（迟到的 Stop 尾巴，见 set_session_status 的说明）。
+    pub fn finish_turn(
+        &self,
+        session_id: i64,
+        last_ai: Option<&str>,
+        now_ms: i64,
+    ) -> Result<(), StoreError> {
+        let tx = ImmediateTx::begin(&self.conn)?;
+        if let Some(text) = last_ai {
+            let cleaned = clean_ai_text(text);
+            if !cleaned.is_empty() {
+                self.conn.execute(
+                    "UPDATE sessions SET last_ai_text = ?1 WHERE id = ?2 AND last_event_at <= ?3 AND status <> 'ended'",
+                    rusqlite::params![cleaned, session_id, now_ms],
+                )?;
+            }
+        }
+        self.conn.execute(
+            "UPDATE sessions SET turns = turns + 1 WHERE id = ?1 AND status <> 'ended'",
+            [session_id],
+        )?;
+        self.conn.execute(
+            "UPDATE sessions SET status = 'waiting', last_event_at = ?1 \
+             WHERE id = ?2 AND last_event_at <= ?1 AND status <> 'ended'",
+            rusqlite::params![now_ms, session_id],
+        )?;
+        tx.commit()
+    }
+
+    /// 已结束的回合数（见 [`Self::finish_turn`]）；会话不存在时 0。
+    pub fn session_turns(&self, session_id: i64) -> Result<i64, StoreError> {
+        match self.conn.query_row("SELECT turns FROM sessions WHERE id = ?1", [session_id], |row| row.get(0)) {
+            Ok(turns) => Ok(turns),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(0),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     pub fn set_last_ai_text(
         &self,
         session_id: i64,
         text: &str,
         now_ms: i64,
     ) -> Result<(), StoreError> {
-        let full = sanitize_prompt(text);
-        let cleaned = match trailing_question(text) {
-            Some(question) if question.chars().count() < full.chars().count() => {
-                truncate_chars(&format!("…{question}"), 200)
-            }
-            _ => truncate_chars(&full, 200),
-        };
+        let cleaned = clean_ai_text(text);
         if cleaned.is_empty() {
             return Ok(());
         }
@@ -2003,6 +2040,17 @@ impl Store {
 }
 
 /// 按字符（非字节）截断，避免切坏多字节中文。
+/// 看板上显示的最近 AI 正文：折叠空白、截 200 字；以问句收尾时只留「…问句」。
+fn clean_ai_text(text: &str) -> String {
+    let full = sanitize_prompt(text);
+    match trailing_question(text) {
+        Some(question) if question.chars().count() < full.chars().count() => {
+            truncate_chars(&format!("…{question}"), 200)
+        }
+        _ => truncate_chars(&full, 200),
+    }
+}
+
 fn truncate_chars(s: &str, max: usize) -> String {
     s.chars().take(max).collect()
 }

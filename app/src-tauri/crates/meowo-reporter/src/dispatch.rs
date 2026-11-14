@@ -161,15 +161,15 @@ pub fn dispatch(
         "Stop" => {
             if let Some(sid) = lookup_or_create(store, ev, provider, now_ms)? {
                 store.clear_pending_review(sid, now_ms)?;
-                store.set_session_status(sid, SessionStatus::Waiting, now_ms)?;
                 // 最近 AI 正文 + 模型由 agent 决定来源：claude 用 Stop hook 携带的正文（模型走 statusline）；
                 // kimi 的 Stop hook 不带，读会话 wire.jsonl 一次出正文 + 模型。
                 let out = telemetry(provider)
                     .map(|t| t.stop_outputs(&ev.agent_ctx()))
                     .unwrap_or_default();
-                if let Some(msg) = out.last_ai {
-                    store.set_last_ai_text(sid, &msg, now_ms)?;
-                }
+                // 正文、回合计数、状态同一事务写，先正文与计数、最后状态（任务 20261114-tui-model-switch
+                // 第七轮 R4）：别处一看到 waiting，这一轮的正文和计数就已落库。模型紧随其后写（下面），
+                // 切模型的钉子只看回合计数，不看模型，不受这一点先后影响。
+                store.finish_turn(sid, out.last_ai.as_deref(), now_ms)?;
                 // stop_outputs 的模型(config.update 通道,/model 切换即时反映)比 usage 通道
                 // (最后一条 usage.record,切换后仍是旧回合的模型)更新。写过它之后,下面的
                 // read_context 就不许再带 model——否则后写的旧值把刚切换的模型顶回去。
