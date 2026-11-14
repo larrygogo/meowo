@@ -2875,7 +2875,15 @@ fn prepare_resume_launch(
     }
     // 回放会话的启动选项（权限模式等；接管时的改选合并写回），恢复后的进程与选择同参。
     splice_stored_launch_args(&mut resume, provider, sid, option_overrides);
-    swap_unsent_resume(&mut resume, provider, session_id, resolved.as_deref());
+    // Meowo 记没记过用户发的话：会话文件找不到时据此区分「CLI 正常退出删掉了空文件」与「找不到但有内容」。
+    let user_spoke = {
+        use tauri::Manager;
+        open_store(&app.state::<crate::AppState>().db_path)
+            .ok()
+            .and_then(|store| store.session_header(sid).ok())
+            .is_none_or(|header| header.last_user_text.as_deref().is_some_and(|text| !text.trim().is_empty()))
+    };
+    swap_unsent_resume(&mut resume, provider, session_id, user_spoke);
     // takeover 在调用前已经结束旧进程；普通 resume 的旧进程本就不在。此刻复制能拿到
     // 完整的最后一帧 transcript，也不会与 Claude 正在追加同一个文件发生竞争。
     let target_profile = prepare_session_for_active_profile(provider, session_id)?;
@@ -3656,12 +3664,12 @@ mod sessions_off_profile_tests {
 /// identifier`，research-kimi-gemini §3.3 e3-05）。插件声明了替代参数时（Gemini `--session-id <同一 uuid>`，
 /// E3-D 实测 id 不变），找不到会话文件就换上它。找得到文件的照旧按 id 恢复。
 #[cfg(any(target_os = "windows", target_os = "macos"))]
-fn swap_unsent_resume(resume: &mut [String], provider: &str, session_id: &str, cwd: Option<&str>) {
+fn swap_unsent_resume(resume: &mut [String], provider: &str, session_id: &str, user_spoke: bool) {
     let Some(plugin) = meowo_agent::resolve(Some(provider)) else {
         return;
     };
     let Some(meowo_agent::ModelSwitch::RestartResume {
-        unsent_resume_args: Some(unsent),
+        unsent_resume_args: Some(unsent_args),
         ..
     }) = plugin.model_switch()
     else {
@@ -3670,9 +3678,14 @@ fn swap_unsent_resume(resume: &mut [String], provider: &str, session_id: &str, c
     // 按「会话里有没有消息」判断，不按「文件在不在」：Meowo 硬杀进程时 CLI 来不及删只有元数据的会话文件，
     // 见文件在就 resume 会报「No previous sessions found」（真机验证 G1，2026-11-14）。插件负责清掉那个
     // 空文件后再走 `unsent_resume_args`。
-    let _ = cwd;
-    if plugin.prepare_unsent_resume(session_id) == Some(true) {
-        replace_resume_args(resume, plugin.resume_args(), unsent);
+    // 找不到会话文件（None）：只有 Meowo 也没记过用户发的话时才当「没发过」（CLI 正常退出会删掉空文件，
+    // e3-05）；记过的、或读不到记录的，照常 resume 交给 CLI 报错，不静默起一个同 id 的空会话（真机低 3）。
+    let unsent = match plugin.prepare_unsent_resume(session_id) {
+        Some(unsent) => unsent,
+        None => !user_spoke,
+    };
+    if unsent {
+        replace_resume_args(resume, plugin.resume_args(), unsent_args);
     }
 }
 

@@ -296,14 +296,17 @@ impl AgentPlugin for Gemini {
         }
         Some(crate::chat_ui::ComposerGuard {
             prompt_footer: false,
-            input_start_pattern: r"^(\s*> )",
+            // 提示符按状态取值（0.68 interactiveCli-ZJ2ZELJM.js 约 22698 行）：平常 `>`，YOLO 档 `*`（做空 R2，
+            // 实拍 g7-2）；shell 模式 `!`、反向搜索 `(r:)` 有意不认——那时输入框里不是普通草稿，保守按认不出。
+            input_start_pattern: r"^(\s*[>*] )",
             // 0.65 是整条细线 `─`；0.68 改画半块字符，上沿 `▄`、下沿 `▀`（真机验证 g2/g7/g8 四帧，
             // UTF-8 E2 96 84 / E2 96 80，做空 N2）。历史里每条用户消息也画同样的框，从屏幕底往上找到的
             // 第一个下沿才是输入框；等审批时输入框被审批面板取代，认到的是历史框（有字），只会更保守。
             top_pattern: r"^(?:─+|▄+)\s*$",
             bottom_pattern: r"^(?:─+|▀+)\s*$",
             row_pattern: r"^ (.*)$",
-            prompt_prefix: ">",
+            // 多个提示符用 `|` 分隔（composer_read / composerCandidate 逐个试）。
+            prompt_prefix: ">|*",
             tail_rows: 0,
             tail_pattern: None,
             empty_pattern: r"^(?:Type your message or @path/to/file)?$",

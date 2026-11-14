@@ -821,6 +821,19 @@ pub(crate) fn launch_server_update(
     (!merged.is_empty()).then_some(merged)
 }
 
+/// 认领后要不要连会话服务补设：只有选了「自动审查」（Codex approveForMe）才补（leader 2026-11-14 定，
+/// 做空 N7）。补设要连 app-server，UA 末尾客户端名会变成 meowo；其他档的启动参数本身就生效，不为它们连入。
+/// 自动审查是唯一「启动参数在 0.167.2 Windows 上首轮不生效」的档（真机验证 codex 问题 1）。
+pub(crate) fn claim_server_update(
+    plugin: &dyn AgentPlugin,
+    selections: &HashMap<String, String>,
+) -> Option<serde_json::Map<String, serde_json::Value>> {
+    if selections.get("approval").map(String::as_str) != Some("approveForMe") {
+        return None;
+    }
+    launch_server_update(plugin, selections)
+}
+
 /// 会话认领后按新建时选的档经会话服务补设一次（真机验证 codex 问题 1：0.167.2 Windows 上新建带
 /// `--sandbox workspace-write` 首轮仍是 read-only，只有 thread/settings/update 设得上）。会话服务机制
 /// 才做；TUI 还没握手时隔 2 秒再试，最多 5 次；够不着服务（内嵌模式）就算了，启动参数已经给过。
@@ -837,7 +850,7 @@ pub(crate) fn apply_launch_server_settings(
     if plugin.model_switch() != Some(meowo_agent::ModelSwitch::ServerSettings) {
         return;
     }
-    let Some(patch) = launch_server_update(plugin, &selections) else {
+    let Some(patch) = claim_server_update(plugin, &selections) else {
         return;
     };
     let Ok(update) = serde_json::from_value::<crate::lead_native::codex_app_server::CodexSettingsUpdate>(
@@ -1382,11 +1395,13 @@ pub(crate) fn composer_read(
         let captures = row.captures(line)?;
         text.push(captures.get(1)?.as_str().trim().to_string());
     }
-    if !text[0].starts_with(guard.prompt_prefix) {
-        return None;
-    }
+    // prompt_prefix 可列几个提示符，用 `|` 分隔（Gemini 平常 `>`、YOLO `*`，做空 R2）；空串 = 没有提示符。
+    let prefix = guard
+        .prompt_prefix
+        .split('|')
+        .find(|prefix| text[0].starts_with(prefix))?;
     re(guard.input_start_pattern)?.captures(body[0])?.get(1)?;
-    text[0] = text[0][guard.prompt_prefix.len()..].trim_start().to_string();
+    text[0] = text[0][prefix.len()..].trim_start().to_string();
     let content = text.join("\n");
     let content = content.trim();
     Some((re(guard.empty_pattern)?.is_match(content), content.to_string()))
@@ -1711,6 +1726,20 @@ mod tests {
         assert!(launch_server_update(codex, &modes(&[("approval", "default")])).is_none());
         let kimi = meowo_agent::by_id("kimi").unwrap();
         assert!(launch_server_update(kimi, &modes(&[("permission", "yolo")])).is_none());
+    }
+
+    /// 做空 N7（leader 定）：认领后只有选了「自动审查」才连会话服务补设，其他带服务端片段的档不连。
+    #[test]
+    fn only_approve_for_me_connects_after_claim() {
+        let codex = meowo_agent::by_id("codex").unwrap();
+        let patch = claim_server_update(codex, &modes(&[("approval", "approveForMe"), ("collaboration", "plan")])).unwrap();
+        assert_eq!(patch["approvalsReviewer"], "auto_review");
+        for other in ["default", "readOnly", "ask", "yolo"] {
+            assert!(claim_server_update(codex, &modes(&[("approval", other)])).is_none(), "{other}");
+        }
+        assert!(claim_server_update(codex, &modes(&[("collaboration", "plan")])).is_none());
+        let kimi = meowo_agent::by_id("kimi").unwrap();
+        assert!(claim_server_update(kimi, &modes(&[("approval", "approveForMe")])).is_none());
     }
 
     /// 真机验证 02d：同一请求既切模型又切 agent 时先切 agent，模型才不会被 agent 记住的那个盖掉。

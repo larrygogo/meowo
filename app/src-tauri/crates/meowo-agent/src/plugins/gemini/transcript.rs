@@ -455,26 +455,36 @@ pub(super) fn read_model(ctx: &crate::caps::HookContext<'_>) -> Option<String> {
 }
 
 /// 见插件的 `prepare_unsent_resume`：找 CLI 自己的会话文件（不是 materialize 出的缓存副本）。
-/// 只有判定为「确定没发过消息」时才挪走它，挪到 Meowo 数据目录下备份（不直接删，做空 N1：判据一旦
-/// 出错删掉的就是用户的对话原文）；备份失败就不动它、按「有内容」走 `--resume`。
+/// - 找不到文件：`None`，交给调用方按 Meowo 自己的记录判断（真机低 3：找不到 ≠ 确定没发过，不能一律
+///   静默 `--session-id` 起空会话）。
+/// - 找到且 CLI 认为没有可恢复内容：挪进 Meowo 数据目录下备份（不直接删，做空 N1），`Some(true)`。
+/// - 其余（有内容、认不准、备份失败）：`Some(false)`，照常 `--resume`。
 pub(super) fn prepare_unsent_resume(session_id: &str) -> Option<bool> {
-    let Some(path) = source_path(None, session_id) else {
-        return Some(true);
+    let path = source_path(None, session_id)?;
+    let Some(root) = crate::meowo_data_root() else {
+        return Some(false);
     };
-    let backup = crate::meowo_data_root()?.join("backup").join("gemini-unsent");
-    prepare_unsent_at(&path, &backup)
+    prepare_unsent_at(&path, &root.join("backup").join("gemini-unsent"))
 }
 
 /// [`prepare_unsent_resume`] 找到会话文件之后的部分（单测用真实文件跑）。
 pub(super) fn prepare_unsent_at(path: &Path, backup: &Path) -> Option<bool> {
-    let text = fs::read_to_string(path).ok()?;
+    let Ok(text) = fs::read_to_string(path) else {
+        return Some(false); // 文件在却读不了：按有内容走 --resume，不碰它
+    };
     if session_content(path, &text) != SessionContent::Empty {
         return Some(false);
     }
     Some(move_to_backup(path, backup).is_ok())
 }
 
-/// 把文件挪进备份目录、改名 `<原名>.bak`（同名已在就加序号）。跨盘时 rename 会失败，退回「复制成功再删原件」。
+/// 每个会话最多留几份备份、备份目录总共最多留几份（做空 R10：每次在未发消息的会话上切换都会留一份）。
+const BACKUPS_PER_SESSION: usize = 1;
+const BACKUPS_TOTAL: usize = 50;
+
+/// 把文件挪进备份目录、改名 `<原名>.bak`。同一会话的旧备份被新的替换（只留最近一份），目录总量超过上限
+/// 时删最旧的。跨盘时 rename 会失败，退回「复制后删原件」；删原件失败就把刚复制的副本删掉、报错
+/// （调用方按有内容走 `--resume`，不留孤儿副本）。
 pub(super) fn move_to_backup(path: &Path, backup: &Path) -> std::io::Result<PathBuf> {
     fs::create_dir_all(backup)?;
     let name = path
@@ -483,21 +493,45 @@ pub(super) fn move_to_backup(path: &Path, backup: &Path) -> std::io::Result<Path
         .to_string_lossy()
         .into_owned();
     // 改名成 .bak：CLI 只按 .json / .jsonl 列会话，备份不会被当成会话接回。
-    let mut target = backup.join(format!("{name}.bak"));
-    let mut n = 1;
-    while target.exists() {
-        target = backup.join(format!("{name}.{n}.bak"));
-        n += 1;
+    let target = backup.join(format!("{name}.bak"));
+    let staged = backup.join(format!("{name}.bak.tmp"));
+    let _ = fs::remove_file(&staged);
+    if fs::rename(path, &staged).is_err() {
+        fs::copy(path, &staged)?;
+        if let Err(error) = fs::remove_file(path) {
+            let _ = fs::remove_file(&staged);
+            return Err(error);
+        }
     }
-    if fs::rename(path, &target).is_err() {
-        fs::copy(path, &target)?;
-        fs::remove_file(path)?;
-    }
+    // 同名旧备份（同一会话上一次切换留下的）被这一份替换。
+    let _ = fs::remove_file(&target);
+    fs::rename(&staged, &target)?;
+    prune_backups(backup, BACKUPS_PER_SESSION.max(1), BACKUPS_TOTAL);
     Ok(target)
 }
 
-/// 会话文件里有没有用户发过的消息。三态：只有确定形态才判 `Empty`，认不准一律 `Unknown`（调用方当作
-/// 有内容，绝不删）。
+/// 备份目录只留最近 `total` 份（按修改时间）。每会话一份由同名覆盖保证。
+fn prune_backups(backup: &Path, _per_session: usize, total: usize) {
+    let Ok(entries) = fs::read_dir(backup) else {
+        return;
+    };
+    let mut files: Vec<(std::time::SystemTime, PathBuf)> = entries
+        .flatten()
+        .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "bak"))
+        .filter_map(|entry| Some((entry.metadata().ok()?.modified().ok()?, entry.path())))
+        .collect();
+    if files.len() <= total {
+        return;
+    }
+    files.sort_by_key(|(at, _)| *at);
+    for (_, path) in files.iter().take(files.len() - total) {
+        let _ = fs::remove_file(path);
+    }
+}
+
+/// 会话文件里有没有 CLI 认的可恢复内容。三态：`Empty` = CLI 认得这个文件、但里面没有可恢复内容（CLI
+/// 自己 `--resume` 会报 No previous sessions，只能 `--session-id` 接回）；`HasMessages` = 有；`Unknown` =
+/// 认不准（调用方当作有内容，绝不挪走）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum SessionContent {
     Empty,
@@ -505,69 +539,179 @@ pub(super) enum SessionContent {
     Unknown,
 }
 
-/// 两种格式：
-/// - 0.68 的 `.jsonl`：首行元数据（带 `sessionId`），之后是消息行与 `$set` / `$rewindTo` 等更新行。启动时
-///   CLI 就写了元数据行和一条合成的 `<session_context>` user 行（0.68 实拍会话文件第 1、2 行），它们不算
-///   用户发过的消息。
-/// - 旧版 `.json`：单个对象，消息在 `messages` 数组里（一行或缩进都有；0.68 仍按 `.json || .jsonl` 列出
-///   并接回，做空 N1 读 chunk-RCB6BI5H.js）。
-pub(super) fn session_content(path: &Path, text: &str) -> SessionContent {
-    let is_message = |value: &Value| match value["type"].as_str() {
-        Some("user") => !content_text(value.get("content"))
-            .trim_start()
-            .starts_with("<session_context>"),
-        // gemini 回复、info（/model set）、error 等任何带类型的行都算会话里发生过事。
-        Some(_) => true,
-        None => false,
+/// 一条消息记录能不能让会话「可恢复」，照搬 CLI 0.68 的口径（做空 R1）：本机 bundle
+/// `@google/gemini-cli/bundle/chunk-RCB6BI5H.js` 的 `isResumableMessageRecord`（约 286866 行）与
+/// `isIgnoredUserContent`（约 286595 行）。CLI 升级时对照这两个函数复核。
+/// - user：内容转成字符串（`partListUnionToString`，verbose：非文字片段记成 `[Function Call: x]` 之类）
+///   去首尾空白后为空、或以 `/`（斜杠命令）`?` `<session_context>` `<hook_context>`（Lead 等钩子注入）
+///   开头的都不算。
+/// - gemini：有文字、或有 toolCalls、或有 thoughts 才算。
+/// - info / error / warning 等其他类型一律不算（`/model` 留下的「Model set to」就是 info）。
+pub(super) fn is_resumable_record(message: &Value) -> bool {
+    let text = cli_part_string(message.get("content"));
+    match message["type"].as_str() {
+        Some("user") => {
+            let text = text.trim();
+            !(text.is_empty()
+                || text.starts_with('/')
+                || text.starts_with('?')
+                || text.starts_with("<session_context>")
+                || text.starts_with("<hook_context>"))
+        }
+        Some("gemini") => {
+            let non_empty = |key: &str| message[key].as_array().is_some_and(|items| !items.is_empty());
+            !text.trim().is_empty() || non_empty("toolCalls") || non_empty("thoughts")
+        }
+        _ => false,
+    }
+}
+
+/// CLI 的 `partToString(value, { verbose: true })`：字符串原样；数组逐个拼接；片段按种类取文字或占位。
+fn cli_part_string(value: Option<&Value>) -> String {
+    let Some(value) = value else {
+        return String::new();
     };
+    match value {
+        Value::Null => String::new(),
+        Value::String(text) => text.clone(),
+        Value::Array(parts) => parts.iter().map(|part| cli_part_string(Some(part))).collect(),
+        Value::Object(part) => {
+            const PLACEHOLDERS: [(&str, &str); 4] = [
+                ("videoMetadata", "[Video Metadata]"),
+                ("codeExecutionResult", "[Code Execution Result]"),
+                ("executableCode", "[Executable Code]"),
+                ("fileData", "[File Data]"),
+            ];
+            if let Some(thought) = part.get("thought") {
+                return format!("[Thought: {}]", thought.as_str().map_or_else(|| thought.to_string(), str::to_owned));
+            }
+            for (key, text) in PLACEHOLDERS {
+                if part.contains_key(key) {
+                    return text.to_string();
+                }
+            }
+            if let Some(call) = part.get("functionCall") {
+                return format!("[Function Call: {}]", call["name"].as_str().unwrap_or("undefined"));
+            }
+            if let Some(response) = part.get("functionResponse") {
+                return format!("[Function Response: {}]", response["name"].as_str().unwrap_or("undefined"));
+            }
+            if part.contains_key("inlineData") {
+                return "[Media]".to_string(); // 只用来判空，具体文字无关
+            }
+            part.get("text").and_then(Value::as_str).unwrap_or_default().to_string()
+        }
+        // JS 里数字、布尔走 `part.text ?? ""`，结果是空串。
+        _ => String::new(),
+    }
+}
+
+/// 两种格式，都按 CLI 自己读文件的方式重放后再判：
+/// - 0.68 的 `.jsonl`：照 `createJsonlRecordAccumulator`（chunk-RCB6BI5H.js 约 286879 行）逐行重放：
+///   `$rewindTo` 删掉该条及之后（找不到就全清）、`$patch` 改内容 / 删 / 排序、带字符串 `id` 的是消息
+///   （同 id 后写覆盖）、`$set.messages` 整体替换、带 `sessionId`+`projectHash` 的是元数据（可带 messages）。
+///   解析不了的行 CLI 跳过，这里也跳过。没有 `sessionId`+`projectHash` 的文件 CLI 不认，这里判 Unknown。
+/// - 旧版 `.json`：只判「有内容」、从不判空（0.68 不再写这种格式，没有硬杀留下的空壳要清；判错的代价是
+///   挪走对话原文，做空 N1）。
+pub(super) fn session_content(path: &Path, text: &str) -> SessionContent {
     match path.extension().and_then(|ext| ext.to_str()) {
         Some("jsonl") => {
-            let mut lines = text.lines().filter(|line| !line.trim().is_empty());
-            let Some(first) = lines.next() else {
-                return SessionContent::Unknown; // 空文件：不是 CLI 写的形态
-            };
-            let Ok(meta) = serde_json::from_str::<Value>(first) else {
+            let Some(messages) = replay_jsonl(text) else {
                 return SessionContent::Unknown;
             };
-            if !meta["sessionId"].is_string() || meta.get("type").is_some() {
-                return SessionContent::Unknown;
+            if messages.iter().any(|(_, message)| is_resumable_record(message)) {
+                SessionContent::HasMessages
+            } else {
+                SessionContent::Empty
             }
-            for line in lines {
-                let Ok(value) = serde_json::from_str::<Value>(line) else {
-                    return SessionContent::Unknown;
-                };
-                if is_message(&value) {
-                    return SessionContent::HasMessages;
-                }
-                let update = value.get("$set").is_some() || value.get("$rewindTo").is_some();
-                let synthetic = value["type"] == "user";
-                if !update && !synthetic {
-                    return SessionContent::Unknown;
-                }
-                // `$set` 里也可能整体换掉 messages（rewind 后重写）：里面有消息就算有内容。
-                if value
-                    .pointer("/$set/messages")
-                    .and_then(Value::as_array)
-                    .is_some_and(|messages| messages.iter().any(is_message))
-                {
-                    return SessionContent::HasMessages;
-                }
-            }
-            SessionContent::Empty
         }
         Some("json") => {
             let Ok(value) = serde_json::from_str::<Value>(text) else {
                 return SessionContent::Unknown;
             };
-            // 旧版只判「有内容」，从不判空：0.68 不再写这种格式，没有「硬杀留下的空壳」要清，
-            // 判错的代价是删掉对话原文（做空 N1）。
             match value.get("messages").and_then(Value::as_array) {
-                Some(messages) if messages.iter().any(is_message) => SessionContent::HasMessages,
+                Some(messages) if messages.iter().any(is_resumable_record) => SessionContent::HasMessages,
                 _ => SessionContent::Unknown,
             }
         }
         _ => SessionContent::Unknown,
     }
+}
+
+/// 按 CLI 的累加器重放 `.jsonl`，返回最终的消息（按顺序）；元数据缺 `sessionId` / `projectHash` 时 None。
+fn replay_jsonl(text: &str) -> Option<Vec<(String, Value)>> {
+    let mut messages: Vec<(String, Value)> = Vec::new();
+    let mut session = false;
+    let mut project = false;
+    let is_message = |value: &Value| value["id"].is_string() && value.get("$patch").is_none();
+    fn upsert(messages: &mut Vec<(String, Value)>, value: &Value) {
+        let id = value["id"].as_str().unwrap_or_default().to_string();
+        match messages.iter_mut().find(|(existing, _)| *existing == id) {
+            Some(slot) => slot.1 = value.clone(),
+            None => messages.push((id, value.clone())),
+        }
+    }
+    for line in text.lines().filter(|line| !line.trim().is_empty()) {
+        let Ok(record) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if let Some(rewind) = record["$rewindTo"].as_str() {
+            match messages.iter().position(|(id, _)| id == rewind) {
+                Some(at) => messages.truncate(at),
+                None => messages.clear(),
+            }
+        } else if let Some(patch) = record.get("$patch").filter(|patch| patch.is_object()) {
+            let apply = |messages: &mut Vec<(String, Value)>, update: &Value| {
+                let Some(id) = update["id"].as_str() else {
+                    return;
+                };
+                if let (Some(slot), Some(content)) = (
+                    messages.iter_mut().find(|(existing, _)| existing == id),
+                    update.get("content").filter(|content| !content.is_null()),
+                ) {
+                    slot.1["content"] = content.clone();
+                }
+            };
+            apply(&mut messages, patch);
+            for update in patch["updates"].as_array().into_iter().flatten() {
+                apply(&mut messages, update);
+            }
+            for remove in patch["removeIds"].as_array().into_iter().flatten() {
+                if let Some(remove) = remove.as_str() {
+                    messages.retain(|(id, _)| id != remove);
+                }
+            }
+            if let Some(order) = patch["orderIds"].as_array() {
+                let ordered: Vec<(String, Value)> = order
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .filter_map(|id| messages.iter().find(|(existing, _)| existing == id).cloned())
+                    .collect();
+                messages.retain(|(id, _)| !ordered.iter().any(|(other, _)| other == id));
+                messages.extend(ordered);
+            }
+        } else if is_message(&record) {
+            upsert(&mut messages, &record);
+        } else if let Some(set) = record.get("$set").filter(|set| set.is_object()) {
+            if let Some(list) = set["messages"].as_array() {
+                messages.clear();
+                for message in list.iter().filter(|message| is_message(message)) {
+                    upsert(&mut messages, message);
+                }
+            }
+            session |= set["sessionId"].is_string();
+            project |= set["projectHash"].is_string();
+        } else if record["sessionId"].is_string() && record["projectHash"].is_string() {
+            session = true;
+            project = true;
+            for message in record["messages"].as_array().into_iter().flatten() {
+                if is_message(message) {
+                    upsert(&mut messages, message);
+                }
+            }
+        }
+    }
+    (session && project).then_some(messages)
 }
 
 /// 会话文件尾部最近的模型：回复行的 `model`，或 `/model set` 当场写的 info 行「Model set to X」

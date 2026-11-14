@@ -231,25 +231,25 @@ const COMPOSER_GUARDS: Record<string, NonNullable<ChatUi["composer_guard"]>> = {
   },
   "gemini": {
     "prompt_footer": false,
-    "input_start_pattern": "^(\\s*> )",
+    "input_start_pattern": "^(\\s*[>*] )",
     "top_pattern": "^(?:─+|▄+)\\s*$",
     "bottom_pattern": "^(?:─+|▀+)\\s*$",
     "row_pattern": "^ (.*)$",
-    "prompt_prefix": ">",
+    "prompt_prefix": ">|*",
     "tail_rows": 0,
     "tail_pattern": null,
     "empty_pattern": "^(?:Type your message or @path/to/file)?$"
   },
   "opencode": {
     "prompt_footer": false,
-    "input_start_pattern": "^(\\s*┃  )",
+    "input_start_pattern": "^(\\s*┃  |\\s*┃$)",
     "top_pattern": "^\\s*┃\\s*$",
     "bottom_pattern": "^\\s*╹▀+\\s*$",
     "row_pattern": "^\\s*┃(.*)$",
     "prompt_prefix": "",
     "tail_rows": 2,
     "tail_pattern": "^\\s*┃\\s+\\S.* · .+$",
-    "empty_pattern": "^Ask anything…(?: \"[^\"\\r\\n]*\")?$"
+    "empty_pattern": "^(?:Ask anything…(?: \"[^\"\\r\\n]*\")?)?$"
   }
 };
 

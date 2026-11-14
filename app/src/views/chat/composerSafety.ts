@@ -53,10 +53,12 @@ export function composerCandidate(screen: readonly string[] | null, guard: Compo
       if (!match || match[1] === undefined) return { state: "unknown" };
       text.push(match[1].trim());
     }
-    if (!text[0].startsWith(guard.prompt_prefix)) return { state: "unknown" };
+    // prompt_prefix 可列几个提示符，用 `|` 分隔（Gemini 平常 `>`、YOLO `*`，做空 R2）；空串 = 没有提示符。
+    const promptPrefix = guard.prompt_prefix.split("|").find((prefix) => text[0].startsWith(prefix));
+    if (promptPrefix === undefined) return { state: "unknown" };
     const prefix = new RegExp(guard.input_start_pattern).exec(body[0]);
     if (!prefix || prefix[1] === undefined) return { state: "unknown" };
-    text[0] = text[0].slice(guard.prompt_prefix.length).trimStart();
+    text[0] = text[0].slice(promptPrefix.length).trimStart();
     const content = text.join("\n").trim();
     const candidate = new RegExp(guard.empty_pattern).test(content);
     return {

@@ -327,7 +327,7 @@ fn model_follows_the_latest_reply_or_model_set_info_line() {
     assert_eq!(super::model_from_tail(r#"{"type":"info","content":"other"}"#), None);
 }
 
-/// 真机验证 G1 + 做空 N1：只有确定「没发过消息」的形态才判空；旧版 `.json`（一行、缩进）有消息必须
+/// 真机验证 G1 + 做空 N1/R1：.jsonl 按 CLI 口径判（info、半截行、陌生行不算内容）；旧版 `.json` 有消息必须
 /// 判有内容；认不准的一律不判空。
 #[test]
 fn unsent_session_detection_is_exact_for_both_formats() {
@@ -345,17 +345,19 @@ fn unsent_session_detection_is_exact_for_both_formats() {
     assert_eq!(session_content(jsonl, &meta), Empty);
     let with_user = format!("{meta}\n{}", r#"{"id":"u1","type":"user","content":[{"text":"hi"}]}"#);
     assert_eq!(session_content(jsonl, &with_user), HasMessages);
-    let with_reply = format!("{meta}\n{}", r#"{"type":"gemini","model":"gemini-2.5-pro","content":"ok"}"#);
+    let with_reply = format!("{meta}\n{}", r#"{"id":"g1","type":"gemini","model":"gemini-2.5-pro","content":"ok"}"#);
     assert_eq!(session_content(jsonl, &with_reply), HasMessages);
-    let with_info = format!("{meta}\n{}", r#"{"type":"info","content":"Model set to gemini-2.5-pro."}"#);
-    assert_eq!(session_content(jsonl, &with_info), HasMessages);
+    // `/model` 留下的 info 行 CLI 不算可恢复内容（做空 R1）。
+    let with_info = format!("{meta}\n{}", r#"{"id":"i1","type":"info","content":"Model set to gemini-2.5-pro."}"#);
+    assert_eq!(session_content(jsonl, &with_info), Empty);
     let rewritten = format!("{meta}\n{}", r#"{"$set":{"messages":[{"id":"u1","type":"user","content":"hi"}]}}"#);
     assert_eq!(session_content(jsonl, &rewritten), HasMessages);
-    // 认不准：空文件、首行不是元数据、半截行、陌生行。
+    // CLI 不认（没有 sessionId + projectHash）：空文件、只有消息行。
     assert_eq!(session_content(jsonl, ""), Unknown);
     assert_eq!(session_content(jsonl, r#"{"type":"user","content":"hi"}"#), Unknown);
-    assert_eq!(session_content(jsonl, &format!("{meta}\n{{\"type\":\"gem")), Unknown);
-    assert_eq!(session_content(jsonl, &format!("{meta}\n{{\"other\":1}}")), Unknown);
+    // 半截行、陌生行 CLI 跳过。
+    assert_eq!(session_content(jsonl, &format!("{meta}\n{{\"type\":\"gem")), Empty);
+    assert_eq!(session_content(jsonl, &format!("{meta}\n{{\"other\":1}}")), Empty);
 
     // 旧版单文件（ConversationRecord：元数据字段 + messages 数组），一行与缩进两种写法。
     let old = serde_json::json!({
@@ -379,7 +381,30 @@ fn unsent_session_detection_is_exact_for_both_formats() {
     assert_eq!(session_content(Path::new("session-x.txt"), &meta), Unknown);
 }
 
-/// 判空的文件挪进备份目录（可恢复），不是删掉；同名已在时不覆盖旧备份。
+/// 做空 R1：逐文件与 CLI 0.68 自己的判定（loadConversationRecord 的 hasResumableContent）对照。样例与期望值在
+/// fixtures/unsent/（期望值由本机 CLI 实跑生成，见 expected.json 的 comment）。含 Lead 注入的 <hook_context>、
+/// /model 的 info 行、斜杠命令、`?`、空白、rewind、$patch、$set.messages、同 id 覆盖、半截行等。
+#[test]
+fn unsent_detection_matches_gemini_cli_file_by_file() {
+    use super::{session_content, SessionContent::*};
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/plugins/gemini/transcript/fixtures/unsent");
+    let expected: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.join("expected.json")).unwrap()).unwrap();
+    let cases = expected["expect"].as_object().unwrap();
+    assert!(cases.len() >= 20);
+    for (name, cli) in cases {
+        let path = dir.join(name);
+        let text = std::fs::read_to_string(&path).unwrap();
+        let want = match cli.as_bool() {
+            Some(true) => HasMessages,
+            Some(false) => Empty,
+            None => Unknown,
+        };
+        assert_eq!(session_content(&path, &text), want, "{name}");
+    }
+}
+
+/// 判空的文件挪进备份目录（可恢复），不是删掉；同一会话只留最近一份（做空 R10）。
 #[test]
 fn unsent_session_file_is_moved_to_backup_not_deleted() {
     let root = std::env::temp_dir().join(format!("meowo-gemini-backup-{}", std::process::id()));
@@ -394,7 +419,7 @@ fn unsent_session_file_is_moved_to_backup_not_deleted() {
         assert_eq!(std::fs::read_to_string(&moved).unwrap(), format!("round {round}"));
         assert!(moved.extension().is_some_and(|ext| ext == "bak"));
     }
-    assert_eq!(std::fs::read_dir(&backup).unwrap().count(), 2);
+    assert_eq!(std::fs::read_dir(&backup).unwrap().count(), 1);
     let _ = std::fs::remove_dir_all(root);
 }
 

@@ -368,7 +368,8 @@ fn restart_argv(
     let (resolved, mut resume) = resolve_resume_plan(native, Some(&cwd_text), provider);
     assert!(!resume.is_empty(), "{provider} 应声明 resume");
     splice_stored_launch_args(&mut resume, provider, sid, Some(overrides));
-    swap_unsent_resume(&mut resume, provider, native, resolved.as_deref());
+    // 探针里的会话都没在 Meowo 记过用户发言（与生产的 last_user_text 为空同口径）。
+    swap_unsent_resume(&mut resume, provider, native, false);
     (resume, resolved.map(PathBuf::from).unwrap_or_else(|| cwd.to_path_buf()))
 }
 

@@ -339,14 +339,17 @@ impl AgentPlugin for Opencode {
         }
         Some(crate::chat_ui::ComposerGuard {
             prompt_footer: false,
-            input_start_pattern: r"^(\s*┃  )",
+            // 一轮之后、`--session` 打开后的空输入框只剩 `  ┃`（不带占位，去尾空格后是 `┃`；真机高 1，
+            // evidence/round3/opencode o1-idle-after-turn、N6opencode-1-opened）。这种行的捕获不是真实输入列，
+            // 严格确认（confirmComposerEmpty 比光标列）会按认不出处理，只用于判空。
+            input_start_pattern: r"^(\s*┃  |\s*┃$)",
             top_pattern: r"^\s*┃\s*$",
             bottom_pattern: r"^\s*╹▀+\s*$",
             row_pattern: r"^\s*┃(.*)$",
             prompt_prefix: "",
             tail_rows: 2,
             tail_pattern: Some(r"^\s*┃\s+\S.* · .+$"),
-            empty_pattern: r#"^Ask anything…(?: "[^"\r\n]*")?$"#,
+            empty_pattern: r#"^(?:Ask anything…(?: "[^"\r\n]*")?)?$"#,
         })
     }
     fn queue_input(&self) -> Option<&'static str> {
