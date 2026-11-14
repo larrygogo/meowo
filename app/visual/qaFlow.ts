@@ -2,6 +2,8 @@
 // 都挂真实 ChatWindow，这里只决定各条 IPC 返回什么、挂载前往本地状态里放什么。
 // 出现条件逐条对过源码（ChatWindow.tsx / LeadPanel.tsx / WorktreeSetupBar.tsx / terminalAttention.ts）。
 import { CHAT_SESSION_ID, FIXED_NOW, leadTask, MENTION_CANDIDATES, MODE_MARKERS } from "./fixtures";
+import { cardSceneMock } from "./cardScenes";
+import { toolSceneMock } from "./toolScenes";
 import { outgoingStore } from "../src/views/chat/outgoingPrompts";
 import { demoChatUi } from "../src/demo/mock";
 import { panelMock } from "../src/demo/panelData";
@@ -54,8 +56,8 @@ const SCREENS: Record<string, string[]> = {
 };
 
 const ATTENTION_PATTERNS = [
-  { id: "claude:command-approval", patterns: ["this command requires approval", "do you want to proceed\\?"], last: true, details: "proceed_box" },
-  { id: "claude:plan-approval", patterns: ["written\\s+up\\s+a\\s+plan\\s+and\\s+is\\s+ready\\s+to\\s+execute"], last: true, details: "none" },
+  { id: "claude:command-approval", patterns: ["this command requires approval", "do you want to proceed\\?"], last: true, details: "proceed_box", kind: "approval", confirms: null },
+  { id: "claude:plan-approval", patterns: ["written\\s+up\\s+a\\s+plan\\s+and\\s+is\\s+ready\\s+to\\s+execute"], last: true, details: "none", kind: "plan", confirms: null },
 ];
 
 function worktreeSetup(state: string): unknown {
@@ -120,7 +122,13 @@ export function qaFlowMock(scene: string, lang: Lang, chat: (cmd: string) => unk
     return { sessionId: CHAT_SESSION_ID, managed: true, data: b64(text), startOffset: 0, endOffset: new TextEncoder().encode(text).length,
       exitTail: null, cols: 120, rows: 40, modes: [], externalViewers: false, exitUnexpected: false };
   };
+  // 卡片场景（flow-card-<名字>）：五家的审批卡、提问卡、提示卡，数据在 cardScenes.ts，手机 harness 共用。
+  // 工具行场景（flow-tools-<家>-<状态>）：五家回放样本的时间线，数据在 toolScenes.ts，手机 harness 共用。
+  const card = kind.startsWith("card-") ? cardSceneMock(kind.slice("card-".length), lang, chat)
+    : kind.startsWith("tools-") ? toolSceneMock(kind.slice("tools-".length), lang, chat) : null;
   return (cmd, args) => {
+    const cardHit = card?.(cmd, args);
+    if (cardHit !== undefined) return cardHit;
     if (cmd === "file_mention_candidates") return MENTION_CANDIDATES;
     // @ 补全：桌面走目录列举与项目搜索。
     if (cmd === "list_dir_entries") return panel(cmd, args);

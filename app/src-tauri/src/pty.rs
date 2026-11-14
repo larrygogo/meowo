@@ -146,13 +146,18 @@ impl ScreenProbe {
     fn frame(&self) -> Option<meowo_protocol::ipc::TerminalScreenFrameDto> {
         let parser = self.parser.as_ref()?.lock().ok()?;
         let screen = parser.screen();
-        let (_, cols) = screen.size();
+        let (rows, cols) = screen.size();
         let (cursor_row, cursor_col) = screen.cursor_position();
         Some(meowo_protocol::ipc::TerminalScreenFrameDto {
             lines: screen.rows(0, cols).collect(),
             cursor_row,
             cursor_col,
             cursor_visible: !screen.hide_cursor(),
+            cursor_dim: screen
+                .cell(cursor_row, cursor_col)
+                .is_some_and(|cell| cell.dim() && !cell.contents().trim().is_empty()),
+            cols,
+            rows,
         })
     }
 
@@ -2561,7 +2566,7 @@ impl PtyBroker {
         pending
             .response
             .send(decision)
-            .map_err(|_| "Agent 已不再等待审批".into())
+            .map_err(|_| "审批请求已结束".into())
     }
 
     pub(crate) fn resolve_approval_choice(
@@ -2581,7 +2586,7 @@ impl PtyBroker {
         pending
             .response
             .send(decision)
-            .map_err(|_| "Agent 已不再等待审批".into())
+            .map_err(|_| "审批请求已结束".into())
     }
 
     /// 该会话待处理的 AskUserQuestion 题面（前端轮询用，补 emit 丢失的事件）。

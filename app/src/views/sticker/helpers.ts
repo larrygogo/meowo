@@ -3,11 +3,12 @@ import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKe
 import type { Dict } from "../../i18n/zh";
 import { activityTone } from "../../activity";
 import { STAR_KEY, type Item, type Tab } from "./types";
+import { imeComposing } from "../../ime";
 
 export const editorKeyDown =
   (submit: () => void, cancel: () => void) =>
   (e: ReactKeyboardEvent<HTMLInputElement>) => {
-    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
+    if (imeComposing(e)) return;
     if (e.key === "Enter") submit();
     else if (e.key === "Escape") cancel();
   };

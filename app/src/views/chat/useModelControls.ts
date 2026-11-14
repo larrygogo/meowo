@@ -12,7 +12,9 @@ import { managedTerminalSnapshot, setSessionLaunchSelection, writeManagedTermina
 import { useT } from "../../i18n";
 import { appendTerminalText, modeFromScreen, visibleTerminalText } from "../../terminalAttention";
 import { currentPresetId } from "./modelLabels";
-import { stashComposerDraft, submitToTerminal } from "./terminalSubmit";
+import { logChatEvent } from "./chatDiag";
+import { beginSwitchHold, endSwitchHold, releaseSwitchHold, switchConfirmVerdict } from "./switchConfirm";
+import { submitToTerminal } from "./terminalSubmit";
 import type { SendErrorExit } from "./SendErrorExits";
 import type { TerminalAction } from "./useSessionSettings";
 
@@ -33,6 +35,9 @@ export interface ModelControlsDeps {
   /** 外部占用被拒后，接管成功要重放的动作。 */
   retryRef: { current: (() => void | Promise<void>) | null };
   withSendGuard: (body: () => Promise<boolean>) => Promise<boolean>;
+  /** 往终端打命令之前收拾它的输入框（有草稿就收起或搬进对话页，见 chat/nativeDraft）；收不掉会抛错，
+   *  由 withSendGuard 落到错误条。 */
+  tidyComposer: () => Promise<unknown>;
   attentionAbort: () => string | null;
   isCurrentOperation: () => boolean;
   /** exit：错误条上的出路（重试 / 看终端画面），见 SendErrorExits。 */
@@ -44,9 +49,12 @@ export interface ModelControlsDeps {
   deferTerminal: (action: TerminalAction, label: string) => void;
 }
 
+/// 确认框交给用户之后等他选完的轮询次数（每次 200ms，共 60 秒）。
+const HANDED_OVER_ATTEMPTS = 300;
+
 export function useModelControls({
   sessionId, chatUi, model, modelCatalog, sending, toneRef, retryRef,
-  withSendGuard, attentionAbort, isCurrentOperation, setSendError, setHistory, setStoredSelections, deferTerminal,
+  withSendGuard, tidyComposer, attentionAbort, isCurrentOperation, setSendError, setHistory, setStoredSelections, deferTerminal,
 }: ModelControlsDeps) {
   const t = useT();
   const selectModel = async (preset: ModelPreset) => {
@@ -55,7 +63,12 @@ export function useModelControls({
     if (toneRef.current === "running" || toneRef.current === "pending") { deferTerminal({ kind: "model", preset }, preset.label || preset.id); return; }
     await withSendGuard(async () => {
       const before = await managedTerminalSnapshot(sessionId);
-      if (chatUi?.draft_stash) await stashComposerDraft(sessionId, chatUi.draft_stash);
+      // 输入框收不干净时错误条的「重试」重做这次切换。
+      retryRef.current = () => selectModel(preset);
+      await tidyComposer();
+      // 确认框的卡片先压着，等下面决定代按还是交给用户（见 chat/switchConfirm）。
+      beginSwitchHold(sessionId);
+      try {
       await submitToTerminal(sessionId, `${command} ${preset.id}`, attentionAbort);
       let since = before.endOffset;
       let tail = "";
@@ -74,7 +87,12 @@ export function useModelControls({
       const family = preset.id.replace(/\[[^\]]*\]$/, "").toLowerCase().replace(/[^a-z0-9]/g, "");
       let outcome: { kind: "ok" } | { kind: "rejected"; line: string } | null = null;
       let otherModel: string | null = null;
-      for (let attempt = 0; attempt < 12 && outcome === null; attempt += 1) {
+      // 对话中途切换时 CLI 先弹的二次确认框（见 chat/switchConfirm）：认出是这次要切的模型就替用户
+      // 确认一次，然后重新给足等确认行的时间。不该代按的（hook 要求确认、焦点在取消项上）交给用户：
+      // 确认框作为选择卡上屏，这里改成慢慢等他选完（确认行或 CLI 的放弃行），不再报「未确认」。
+      let dialogConfirmed = false;
+      let handedOver = false;
+      for (let attempt = 0; attempt < (handedOver ? HANDED_OVER_ATTEMPTS : 12) && outcome === null; attempt += 1) {
         await new Promise((resolve) => window.setTimeout(resolve, 200));
         if (!isCurrentOperation()) return false;
         const snapshot = await managedTerminalSnapshot(sessionId, since);
@@ -89,11 +107,28 @@ export function useModelControls({
         // 确认成了别的模型：先记下，继续等本家族的那一行（可能是重绘带进来的旧确认）。
         if (confirmed.length > 0) otherModel = cliLine(confirmed[confirmed.length - 1]);
         const rejected = rejectLine ? lines.find((line) => rejectLine.test(line)) : undefined;
-        if (rejected) outcome = { kind: "rejected", line: cliLine(rejected) };
+        if (rejected) { outcome = { kind: "rejected", line: cliLine(rejected) }; break; }
+        // 交出去要等屏幕识别认出这个框（卡片存在 hold 里）：没认出之前每轮再问，到点仍没有就照旧报未确认。
+        const verdict = dialogConfirmed || handedOver ? null : switchConfirmVerdict(lines, chatUi?.switch_confirm, family);
+        if (verdict?.kind === "confirm") {
+          dialogConfirmed = true;
+          await writeManagedTerminal(sessionId, verdict.input);
+          attempt = -1;
+        } else if (verdict?.kind === "manual" && releaseSwitchHold(sessionId)) {
+          handedOver = true;
+          logChatEvent(sessionId, { kind: "switch_unconfirmed", reason: "confirm_dialog_handed_to_user", detail: { what: "model" } });
+          attempt = -1;
+        }
       }
+      // 交给用户之后一直没选：卡片还在上面等着，这里安静收尾，不报错。
+      if (handedOver && outcome === null) return false;
       if (outcome?.kind !== "ok") {
         // CLI 说了什么就转什么（2026-11-12 研究 C4：确认框被取消、hook 拦截、别名校验失败时
         // 以前一律只报「未确认」，用户看不到原因）。
+        // 运行日志（验收 19）：没切成的三种情况各记一行，原因用固定代码。
+        logChatEvent(sessionId, outcome?.kind === "rejected"
+          ? { kind: "switch_failed", reason: "cli_rejected", detail: { what: "model" } }
+          : { kind: "switch_unconfirmed", reason: otherModel ? "confirmed_other_model" : "no_confirm_line", detail: { what: "model" } });
         if (outcome?.kind === "rejected") setSendError(t.chat.modelSwitchRejected(outcome.line));
         else if (otherModel) setSendError(t.chat.modelSwitchOther(otherModel));
         // 没等到任何回话：切没切过去只有终端画面说得清，给「重试」与看终端画面两条出路，
@@ -104,6 +139,9 @@ export function useModelControls({
       await setSessionLaunchSelection(sessionId, "model", preset.id);
       if (isCurrentOperation()) setStoredSelections((prev) => ({ ...prev, model: preset.id }));
       return true;
+      } finally {
+        endSwitchHold(sessionId);
+      }
     });
   };
   /// 切换思考程度（对照 Kimi 模型菜单的「思考」分段）：写 `/effort <档位>`，只认本次之后
@@ -118,7 +156,10 @@ export function useModelControls({
     try {
       await withSendGuard(async () => {
         const before = await managedTerminalSnapshot(sessionId);
-        if (chatUi?.draft_stash) await stashComposerDraft(sessionId, chatUi.draft_stash);
+        retryRef.current = () => selectEffort(level);
+        await tidyComposer();
+        beginSwitchHold(sessionId);
+        try {
         await submitToTerminal(sessionId, `${command} ${level}`, attentionAbort);
         let since = before.endOffset;
         let tail = "";
@@ -127,7 +168,10 @@ export function useModelControls({
         const confirm = new RegExp(chatUi.effort!.confirm_pattern, "i");
         const reject = new RegExp(chatUi.effort!.reject_pattern, "i");
         let outcome: { kind: "ok" } | { kind: "rejected"; line: string; actual: string | null } | null = null;
-        for (let attempt = 0; attempt < 12 && outcome === null; attempt += 1) {
+        // 与切模型同一个二次确认框（claude `Change effort level?`，见 chat/switchConfirm）。
+        let dialogConfirmed = false;
+        let handedOver = false;
+        for (let attempt = 0; attempt < (handedOver ? HANDED_OVER_ATTEMPTS : 12) && outcome === null; attempt += 1) {
           await new Promise((resolve) => window.setTimeout(resolve, 200));
           if (!isCurrentOperation()) return false;
           const snapshot = await managedTerminalSnapshot(sessionId, since);
@@ -141,9 +185,26 @@ export function useModelControls({
             // 捕获组 1 = CLI 实际改成的档位（claude 2.1.322 封顶：`… set to 'high' instead`）。
             if (hit) { outcome = { kind: "rejected", line: cliLine(line), actual: hit[1]?.toLowerCase() ?? null }; break; }
           }
+          if (outcome !== null) break;
+          const verdict = dialogConfirmed || handedOver ? null : switchConfirmVerdict(lines, chatUi.switch_confirm, level);
+          if (verdict?.kind === "confirm") {
+            dialogConfirmed = true;
+            await writeManagedTerminal(sessionId, verdict.input);
+            attempt = -1;
+          } else if (verdict?.kind === "manual" && releaseSwitchHold(sessionId)) {
+            handedOver = true;
+            logChatEvent(sessionId, { kind: "switch_unconfirmed", reason: "confirm_dialog_handed_to_user", detail: { what: "effort", level } });
+            attempt = -1;
+          }
         }
-        if (outcome === null) { setSendError(t.chat.effortUnconfirmed, { retry: () => void selectEffort(level), terminal: true }); return false; }
+        if (handedOver && outcome === null) return false;
+        if (outcome === null) {
+          logChatEvent(sessionId, { kind: "switch_unconfirmed", reason: "no_confirm_line", detail: { what: "effort", level } });
+          setSendError(t.chat.effortUnconfirmed, { retry: () => void selectEffort(level), terminal: true });
+          return false;
+        }
         if (outcome.kind === "rejected") {
+          logChatEvent(sessionId, { kind: "switch_failed", reason: outcome.actual ? "cli_capped" : "cli_rejected", detail: { what: "effort", level } });
           const actual = outcome.actual;
           if (actual) {
             if (isCurrentOperation()) setHistory((current) => current ? { ...current, effort: actual } : current);
@@ -155,6 +216,9 @@ export function useModelControls({
         }
         if (isCurrentOperation()) setHistory((current) => current ? { ...current, effort: level } : current);
         return true;
+        } finally {
+          endSwitchHold(sessionId);
+        }
       });
     } finally {
       setEffortBusy(false);

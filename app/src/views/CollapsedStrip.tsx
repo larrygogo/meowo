@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import { LiveSession } from "../api";
 import { useT } from "../i18n";
+import { requestStatusLabel, sessionStatusLabel } from "../i18n/statusVocab";
 import { cardTone, toneConfidence } from "./sticker/helpers";
 
 type Item = LiveSession & { connected: boolean };
@@ -147,11 +148,9 @@ export function CollapsedStrip({
             const status = tone === "error"
               ? t.sticker.sessionError
               : tone === "pending"
-              ? (l.pending_review ? t.pending[l.pending_review] : t.chat.status.pending)
-              : tone === "running"
-              ? t.badge.running
-              : tone === "waiting"
-              ? t.badge.waiting
+              ? requestStatusLabel(t, l.pending_review)
+              : tone === "running" || tone === "waiting"
+              ? sessionStatusLabel(t, tone)
               : t.sticker.online;
             // 弱化判定不配「自信」文案（与卡片徽标同口径，P2-11）：assumed 标「推断」，
             // fallback 直接说「按记录推断，可能不是最新」。

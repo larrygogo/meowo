@@ -14,6 +14,8 @@ import { TooltipLayer } from "../src/Tooltip";
 import { installInputModality } from "../src/input-modality";
 import { demoChatUi, installMocks, setExtraMock, store } from "../src/demo/mock";
 import { patchChatUi } from "./qaFlow";
+import { cardSceneMock } from "./cardScenes";
+import { toolSceneMock } from "./toolScenes";
 import { tmsChatMock, tmsCommonMock, tmsProviderOf } from "./tmsFixtures";
 import { chatMock } from "../src/demo/chatData";
 import { panelMock } from "../src/demo/panelData";
@@ -29,7 +31,9 @@ const lang: "zh" | "en" = q.get("lang") === "en" ? "en" : "zh";
 const theme = q.get("theme") === "light" ? "light" : "dark";
 const scene = q.get("scene") ?? "mobile-chat";
 
-Date.now = () => FIXED_NOW;
+// 默认把 Date.now 冻结在 FIXED_NOW。?clock=live：不冻结，时间跟着截图脚本的假时钟走（它同样从 FIXED_NOW 起步，
+// 只在脚本推进时前进），用来拍要等时间过去才出现的状态（审批卡倒计时归零后的「已过期」）。
+if (q.get("clock") !== "live") Date.now = () => FIXED_NOW;
 
 markRemoteUi();
 setHostOsUnknown();
@@ -42,7 +46,11 @@ if (scene === "mobile-changes") {
 // mobile-tasks：派过后台 Bash（一条在跑、三条跑完）和一个在跑的子代理，拍底栏胶囊与后台任务面板。
 const tmsChat = scene.startsWith("mobile-tms-") && !scene.startsWith("mobile-tms-new-");
 const tmsNew = scene.startsWith("mobile-tms-new-");
-const inChat = tmsChat || scene === "mobile-chat" || scene === "mobile-changes" || scene === "mobile-idle" || scene === "mobile-lead" || scene === "mobile-lead-c" || scene === "mobile-question" || scene === "mobile-tasks";
+// mobile-card-<名字>：五家的审批卡、提问卡、提示卡（数据在 cardScenes.ts，与桌面 flow-card-* 同一份）。
+const cardScene = scene.startsWith("mobile-card-") ? scene.slice("mobile-card-".length) : null;
+// mobile-tools-<家>-<状态>：五家的工具行与运行状态（数据在 toolScenes.ts，与桌面 flow-tools-* 同一份）。
+const toolScene = scene.startsWith("mobile-tools-") ? scene.slice("mobile-tools-".length) : null;
+const inChat = tmsChat || cardScene !== null || toolScene !== null || scene === "mobile-chat" || scene === "mobile-changes" || scene === "mobile-idle" || scene === "mobile-lead" || scene === "mobile-lead-c" || scene === "mobile-question" || scene === "mobile-tasks";
 /// 后台任务的假数据：判据是「回执带子任务结局」（与 TasksPanel 同口径），一条调用配一条回执。
 function taskItems(zh: boolean): unknown[] {
   const at = (minutes: number) => new Date(FIXED_NOW - minutes * 60_000).toISOString();
@@ -73,7 +81,10 @@ const SCREEN = [
   "  3. No, and tell Claude what to do differently (esc)",
 ];
 const tmsMock = tmsChat ? tmsChatMock(tmsProviderOf(scene), q.get("state") ?? "idle", chat, q.get("modes")) : tmsNew ? tmsCommonMock(tmsProviderOf(scene), q.get("cfg")) : null;
+const cardMock = cardScene !== null ? cardSceneMock(cardScene, lang, chat) : toolScene !== null ? toolSceneMock(toolScene, lang, chat) : null;
 setExtraMock((cmd, args) => {
+  const cardHit = cardMock?.(cmd, args);
+  if (cardHit !== undefined) return cardHit;
   if (tmsMock && cmd !== "open_new_session_window") {
     const hit = tmsMock(cmd, args);
     if (hit !== undefined) return hit;

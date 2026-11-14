@@ -8,4 +8,10 @@ import type { RuntimeRequestDto } from "./RuntimeRequestDto";
  * 主路径，这条轮询是冷启动兜底（emit 不排队，对话窗晚开时只有轮询能补回题面）。
  * `runtime_requests` 是新前端的统一视图：审批与提问可同时存在；旧字段保留给旧前后端兼容。
  */
-export type PendingInteractionDto = { approval: PendingApprovalDto | null, question: PendingApprovalDto | null, runtimeRequest: RuntimeRequestDto | null, runtimeRequests: Array<RuntimeRequestDto>, };
+export type PendingInteractionDto = { approval: PendingApprovalDto | null, question: PendingApprovalDto | null, runtimeRequest: RuntimeRequestDto | null, runtimeRequests: Array<RuntimeRequestDto>, 
+/**
+ * 这个会话的托管进程被就地换过几次（切账号把会话重启到新账号、重启续接切模型）。前端看到它变了，
+ * 就把上一个进程留下的提示条与卡片清掉。桌面另有 `pty-restarted` 事件；手机页收不到宿主事件，
+ * 只能靠这条已有的轮询带回来（不为它新增远程桥命令）。旧宿主不带，前端按 0 处理。
+ */
+ptyGeneration: number, };

@@ -957,6 +957,8 @@ fn receipt_replay_does_not_clear_a_later_request() {
     first.request_id = "runtime-replay-first".into();
     let (tx, rx) = mpsc::channel();
     broker.insert_pending_approval(&first, tx, &dir).unwrap();
+    // 真实作答晚于置位；同毫秒清理会被 store 的严格时间守卫当作迟到尾巴拒绝（#177 macOS CI）。
+    std::thread::sleep(std::time::Duration::from_millis(2));
     assert_eq!(
         broker.respond_runtime_request(sid, &first.request_id, "deny").unwrap(),
         RuntimeResponseOutcome::Delivered

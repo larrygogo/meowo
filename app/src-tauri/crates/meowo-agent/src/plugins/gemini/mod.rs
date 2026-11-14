@@ -37,6 +37,8 @@ pub(crate) fn lead_model_steering(data_dir: &std::path::Path) -> bool {
 mod screen;
 pub mod telemetry;
 mod transcript;
+#[cfg(test)]
+pub(crate) use transcript::materialize_for_test;
 
 use crate::{
     auth::{AuthScheme, CredentialSource},
@@ -294,15 +296,26 @@ impl AgentPlugin for Gemini {
     /// `Queued (press ↑ to edit)`，但空闲时 Tab 不提交、正文停在输入框里。对话页的运行态
     /// 是推断（DB 启动即 running、hook 执行期屏幕无 esc to cancel），推断错了按 Tab 就丢
     /// 消息，按回车两种状态都对。
-    /// 2026-11-12 隔离无模型实拍（target/lead-provider-probes/composer）：文字只给候选，发送仍须核验原生光标。
-    fn composer_guard(&self, version: Option<&str>) -> Option<crate::chat_ui::ComposerGuard> {
+    /// 输入框规格（这一家唯一的一份，见 chat_ui::ComposerSpec）。
+    /// - 框体：2026-11-12 隔离无模型实拍（target/lead-provider-probes/composer）。
+    /// - 占位是灰色、比真实草稿多缩进两格，光标停在列 3；真打出同一句光标在文末（0.68.0，
+    ///   2026-11-14 probe_tui_script `cells`）。开了 vim 模式（`general.vimMode`）占位换成
+    ///   `Press 'Esc' for NORMAL mode.` / `Press 'i' for INSERT mode.`，旧规则不认，开 vim 的人
+    ///   每次发送都被当成「已有草稿」。
+    /// - 清空：Ctrl-C 能清，但回合进行中它会取消当前请求（实拍 `Request cancelled.`），空闲时还会
+    ///   挂上「Press Ctrl+C again to exit.」。改用行编辑键 Ctrl-K、Ctrl-U、退格逐行清，每轮后复核：
+    ///   回合进行中两行草稿两轮清完，回合不受影响（同日实拍）。
+    /// - shell 模式：提示符 `!`（占位 `Type your shell command`，状态行 `shell mode enabled (esc to
+    ///   disable)`），按一次 Esc 回到普通输入框。vim NORMAL：状态行左侧 `[NORMAL]`，按 `i` 回到
+    ///   `[INSERT]`。这两种模式下写进去的字会被当成 shell 命令 / vim 命令，先退出再写（同日实拍）。
+    fn composer(&self, version: Option<&str>) -> Option<crate::chat_ui::ComposerSpec> {
         if !crate::lead_install::version_at_least(version, (0, 65, 0)) {
             return None;
         }
-        Some(crate::chat_ui::ComposerGuard {
+        Some(crate::chat_ui::ComposerSpec {
             prompt_footer: false,
             // 提示符按状态取值（0.68 interactiveCli-ZJ2ZELJM.js 约 22698 行）：平常 `>`，YOLO 档 `*`（做空 R2，
-            // 实拍 g7-2）；shell 模式 `!`、反向搜索 `(r:)` 有意不认——那时输入框里不是普通草稿，保守按认不出。
+            // 实拍 g7-2）；shell 模式 `!` 走 alt_modes；反向搜索 `(r:)` 有意不认，保守按认不出。
             input_start_pattern: r"^(\s*[>*] )",
             // 0.65 是整条细线 `─`；0.68 改画半块字符，上沿 `▄`、下沿 `▀`（真机验证 g2/g7/g8 四帧，
             // UTF-8 E2 96 84 / E2 96 80，做空 N2）。历史里每条用户消息也画同样的框，从屏幕底往上找到的
@@ -314,7 +327,41 @@ impl AgentPlugin for Gemini {
             prompt_prefix: ">|*",
             tail_rows: 0,
             tail_pattern: None,
-            empty_pattern: r"^(?:Type your message or @path/to/file)?$",
+            empty_pattern: r"^(?:Type your message or @path/to/file|Press 'Esc' for NORMAL mode\.|Press 'i' for INSERT mode\.)?$",
+            send_requires_recognition: true,
+            stash: None,
+            clear_inputs: &["\x0b", "\x15", "\x7f"],
+            clear_rounds: 12,
+            clear_while_running: true,
+            alt_modes: &[
+                crate::chat_ui::ComposerAltMode {
+                    id: "shell",
+                    prompt_pattern: Some(r"^!(?:\s|$)"),
+                    below_pattern: None,
+                    exit_input: "\x1b",
+                },
+                crate::chat_ui::ComposerAltMode {
+                    id: "vim_normal",
+                    prompt_pattern: None,
+                    below_pattern: Some(r"^\s*\[NORMAL\]"),
+                    exit_input: "i",
+                },
+            ],
+            // 草稿保真（0.68.0 真机，tests/probe_draft_fidelity.rs，2026-11-14）：
+            // - 粘贴占位 `[Pasted Text: 5120 chars]`、`[Pasted Text: 60 lines]`；正则照抄它自己的
+            //   PASTED_TEXT_PLACEHOLDER_REGEX（bundle/chunk-ASDLQWJU.js 47977 行，同名占位第二个起带 ` #2`）。
+            //   超过 5 行或 500 字的粘贴才折。图片占位没有实拍，按宽的认。
+            // - 超出可视高度不画任何标记：45 行草稿只画最后 10 行。输入框视口固定 10 行
+            //   （bundle/interactiveCli-ZJ2ZELJM.js 33636 行 `viewport: { height: 10, … }`）。
+            // - 120 列时一行正文最多 114 格（正文从第 3 列起，右边留 3 格），按词折行；续行缩进 3 格。
+            fidelity: Some(crate::chat_ui::ComposerFidelity {
+                paste_pattern: r"\[Pasted Text: \d+ (?:lines|chars)(?: #\d+)?\]|\[[Ii]mage[^\]\r\n]*\]",
+                overflow_pattern: None,
+                overflow_rows: Some(10),
+                overflow_height: None,
+                wrap_edge: crate::chat_ui::ComposerWrapEdge::Terminal,
+                wrap_inset: 3,
+            }),
         })
     }
     fn queue_input(&self) -> Option<&'static str> {
@@ -341,9 +388,24 @@ impl AgentPlugin for Gemini {
     // 审批时会**自动放行**挂起的调用（G:interactiveCli 29445-29478，research-kimi-gemini §3.4 e5-06
     // 实测 gate-p2 被写入），不再作切换手段。保留维度只为屏幕回显：transcript 与 hook 都不带审批
     // 模式，底栏原文是唯一来源（§3.5：「auto-accept edits」「YOLO Ctrl+Y」「plan Shift+Tab to manual」）。
+    //
+    // 底栏 = 模式名 + 空格 + 按键提示（0.68.0 bundle 的 ApprovalModeIndicator.tsx，2026-11-14 取证）：
+    //   default   `Shift+Tab to accept edits`（没有模式名）
+    //   autoEdit  `auto-accept edits Shift+Tab to plan`；plan 模式此刻切不过去时是
+    //             `auto-accept edits Shift+Tab to manual`
+    //   plan      `plan Shift+Tab to manual`
+    //   yolo      `YOLO Ctrl+Y`
+    // 0.65 这几句是整句写死的字面量；0.68.0 起按键提示改成运行时按键位表格式化
+    // （formatCommand("app.cycleApprovalMode") → `Shift+Tab`，"app.toggleYolo" → `Ctrl+Y`），
+    // 默认键位下屏幕上还是同样的字，所以标记新老版本都认。用户改了这两个键位就读不到模式了
+    // （读不到时不显示当前值、也不重启，不会读错）。
     fn mode_controls(&self) -> &'static [crate::ModeControl] {
         // default 档底栏只有「Shift+Tab to accept edits」（research §4.2），也认，才读得到「当前是每步都问」
         // ——带参重启要按当前值拼参数，读不到就不重启（做空 H1）。
+        //
+        // plan 的标记带上模式名：autoEdit 在 plan 切不过去时的提示也以 `Shift+Tab to manual` 结尾
+        // （allowPlanMode 要求会话空闲且没有待处理的审批，回合进行中恒为 false），宿主取画面里最靠后
+        // 的标记，只认 `shift+tab to manual` 会把「自动接受编辑、正在跑」读成 plan。
         static MARKERS: [crate::ModeScreenMarker; 4] = [
             crate::ModeScreenMarker {
                 marker: "shift+tab to accept edits",
@@ -358,7 +420,7 @@ impl AgentPlugin for Gemini {
                 value: "yolo",
             },
             crate::ModeScreenMarker {
-                marker: "shift+tab to manual",
+                marker: "plan shift+tab to manual",
                 value: "plan",
             },
         ];
@@ -381,6 +443,18 @@ impl AgentPlugin for Gemini {
     /// 再以 @路径 引用——等于往用户仓库里写文件，故不声明，图片照旧走指令文本。
     fn newline_input(&self) -> Option<&'static str> {
         Some("\n")
+    }
+    /// 一次写进输入框的一串字里的半角问号会被吞掉（0.68.0 真机，tests/probe_tui_script.rs，
+    /// 2026-11-14，只打字不提交）：
+    /// - `What is 17+25? Reply now` 一次写入，输入框里是 `What is 17+25 Reply now`；
+    ///   `a?b` 成了 `ab`；`ab??cd? ef` 成了 `abcd ef`；
+    /// - 问号单独一次写入（`x`、`?`、`y` 分三次写）是 `x?y`，不丢；
+    /// - 同一句包成 bracketed paste，原样不丢。
+    ///
+    /// 对话页的单行消息是一次写入，带半角问号的问句发到 Gemini 就少了问号（全角问号不受影响）。
+    /// 带半角问号的单行正文改走粘贴。只对问号声明：别的字符没有取证到丢失，不扩大。
+    fn single_line_paste_pattern(&self) -> Option<&'static str> {
+        Some(r"\?")
     }
     /// 工具确认框（源码 ToolConfirmationMessage，0.64 未变）。gemini 没有能代为决定的权限 hook，
     /// 屏幕识别是 GUI 给出可操作审批的唯一通道。问句只认**行首是外框 │** 的那一行——模型
@@ -416,6 +490,55 @@ impl AgentPlugin for Gemini {
                 // 重绘不清屏，上一个确认框会残留在缓冲上方：取最后一次。
                 last: true,
                 details: crate::chat_ui::AttentionDetails::FramedBox,
+                kind: crate::chat_ui::AttentionKind::Approval,
+                confirms: None,
+                // 选项角色（0.68.0 npm bundle 的 ToolConfirmationMessage，2026-11-14 逐条核对；屏幕样本仍是
+                // 0.61 真机的）：`Allow once`、几种只管本会话的（`Allow for this session`、
+                // `Allow tool for this session`、`Allow all server tools for this session`）、几种写进设置的
+                // （`Allow for all future sessions`、`Allow this command for all future sessions`、
+                // `Allow for this file in all future sessions`、`Allow tool for all future sessions`）、
+                // `No, suggest changes (esc)`。
+                // 最后一项的值是 `cancel`，与按 Esc 相同：它只是取消这次调用，「suggest changes」指的是
+                // 取消之后用户自己再发一条消息，没有单独的说明输入框。所以它是 deny，不是 deny_with_feedback。
+                // `Modify with external editor` 会在本机打开外部编辑器，不是放行也不是拒绝，不声明，归 other。
+                //
+                // unparsed_keys：选项认不出（焦点标记 ● 没抓到）时只留拒绝，Esc 与焦点无关（拒绝项原文就写着
+                // `(esc)`）。不给「允许一次」：回车选的是当前焦点项，焦点在哪认不出来就不能替用户按。
+                options: &[
+                    crate::chat_ui::AttentionOptionRule {
+                        pattern: r"^allow once$",
+                        role: crate::chat_ui::OptionRole::AllowOnce,
+                        scope: None,
+                        typed: None,
+                    },
+                    crate::chat_ui::AttentionOptionRule {
+                        pattern: r"^allow (?:tool |all server tools )?for this session$",
+                        role: crate::chat_ui::OptionRole::AllowPersistent,
+                        scope: Some(crate::chat_ui::PersistScope::Session),
+                        typed: None,
+                    },
+                    crate::chat_ui::AttentionOptionRule {
+                        pattern: r"^allow (?:tool |this command )?for (?:this file in )?all future sessions$",
+                        role: crate::chat_ui::OptionRole::AllowPersistent,
+                        scope: Some(crate::chat_ui::PersistScope::Remember),
+                        typed: None,
+                    },
+                    crate::chat_ui::AttentionOptionRule {
+                        pattern: r"^no, suggest changes(?: \(esc\))?$",
+                        role: crate::chat_ui::OptionRole::Deny,
+                        scope: None,
+                        typed: None,
+                    },
+                ],
+                unparsed_keys: &[
+                    crate::chat_ui::RoleKey {
+                        role: crate::chat_ui::OptionRole::Deny,
+                        input: "\x1b",
+                    },
+                ],
+                notice: None,
+                anchors: &[],
+                tail_lines: None,
             },
             crate::chat_ui::AttentionPattern {
                 id: "gemini:usage-limit",
@@ -425,6 +548,14 @@ impl AgentPlugin for Gemini {
                 ],
                 last: true,
                 details: crate::chat_ui::AttentionDetails::None,
+                // 回合中途的额度或高负载提示：CLI 要用户选「继续重试 / 停下」，不是审批也不是启动步骤。
+                kind: crate::chat_ui::AttentionKind::Choice,
+                confirms: None,
+                options: &[],
+                unparsed_keys: &[],
+                notice: None,
+                anchors: &[],
+                tail_lines: None,
             },
             crate::chat_ui::AttentionPattern {
                 id: "gemini:question",
@@ -432,6 +563,13 @@ impl AgentPlugin for Gemini {
                 // 多问题表单切页重绘，上一页残留在上方：取最后一次。
                 last: true,
                 details: crate::chat_ui::AttentionDetails::FramedForm,
+                kind: crate::chat_ui::AttentionKind::Question,
+                confirms: None,
+                options: &[],
+                unparsed_keys: &[],
+                notice: None,
+                anchors: &[],
+                tail_lines: None,
             },
         ]
     }

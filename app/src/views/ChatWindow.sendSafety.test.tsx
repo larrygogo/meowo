@@ -14,7 +14,7 @@ describe("跨Provider发送保护", () => {
     await screen.findByText("适配-751");
     fireEvent.change(adapter.box(), { target: { value: "不能误答审批" } });
     fireEvent.keyDown(adapter.box(), { key: "Enter" });
-    await screen.findByText(zh.chat.terminalNeedsAttention);
+    await screen.findByText(zh.chat.cardLockApproval);
     expect(adapter.writes(751)).toEqual([]);
     expect(adapter.box().value).toBe("不能误答审批");
   });
@@ -33,7 +33,7 @@ describe("跨Provider发送保护", () => {
     await screen.findByText("适配-762");
     fireEvent.change(adapter.box(), { target: { value: "不能误答审批" } });
     fireEvent.keyDown(adapter.box(), { key: "Enter" });
-    await screen.findByText(zh.chat.terminalNeedsAttention);
+    await screen.findByText(zh.chat.cardLockApproval);
     expect(adapter.writes(762)).toEqual([]);
   });
 
@@ -68,7 +68,7 @@ describe("跨Provider发送保护", () => {
     await screen.findByText("适配-753");
     fireEvent.change(adapter.box(), { target: { value: "这条不能确认权限" } });
     fireEvent.keyDown(adapter.box(), { key: "Enter" });
-    await screen.findByText(zh.chat.terminalNeedsAttention);
+    await screen.findByText(zh.chat.cardLockApproval);
     expect(adapter.writes(753)).toContain("这条不能确认权限");
     expect(adapter.writes(753)).not.toContain("\r");
   });

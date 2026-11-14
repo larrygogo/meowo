@@ -221,6 +221,7 @@ mod tests {
             timestamp: None,
             text: text.into(),
             interjected: false,
+            turn_id: None,
             to_agent: None,
         }
     }
@@ -325,6 +326,7 @@ mod tests {
                 subagent: None,
                 detail: None,
                 plan: None,
+                kind: meowo_protocol::ipc::ToolKind::Run,
             },
             ChatItem::ToolResult {
                 id: "t1r".into(),
@@ -334,6 +336,9 @@ mod tests {
                 is_error: true,
                 subagent: None,
                 patch: None,
+                exit_code: None,
+                count: None,
+                interrupted: false,
             },
         ];
         let out = render_history(&items, &meta());

@@ -50,7 +50,7 @@ describe("ChatWindow", () => {
         { type: "user_text", id: "u1", timestamp: null, text: "开始" },
         { type: "assistant_text", id: "a1", timestamp: null, text: "我来实现" },
         { type: "reasoning", id: "r1", timestamp: null, text: "先检查现有协议" },
-        { type: "tool_use", id: "t1", timestamp: null, name: "Bash", summary: "cargo test" },
+        { type: "tool_use", id: "t1", timestamp: null, name: "Bash", kind: "run", summary: "cargo test" },
         { type: "tool_result", id: "tr1", timestamp: null, tool_use_id: "t1", text: "ok", is_error: false },
       ],
     });
@@ -91,7 +91,7 @@ describe("ChatWindow", () => {
       label: "agent-0", status: "completed",
       items: [
         { type: "assistant_text", id: "s1", timestamp: null, text: "子任务的结论" },
-        { type: "tool_use", id: "st1", timestamp: null, name: "Bash", summary: "rg foo" },
+        { type: "tool_use", id: "st1", timestamp: null, name: "Bash", kind: "run", summary: "rg foo" },
       ],
     }];
     respondWithHistory({
@@ -100,7 +100,7 @@ describe("ChatWindow", () => {
       items: [
         { type: "user_text", id: "u1", timestamp: null, text: "查一下" },
         {
-          type: "tool_use", id: "toolu_1", timestamp: null, name: "Agent", summary: "验证审批双轨",
+          type: "tool_use", id: "toolu_1", timestamp: null, name: "Agent", kind: "agent", summary: "验证审批双轨",
           subagent: { description: "验证审批双轨", agent_type: "general-purpose", count: 1 },
         },
       ],
@@ -113,7 +113,7 @@ describe("ChatWindow", () => {
         items: (args.offset as number) >= 10 ? [] : [
           { type: "user_text", id: "u1", timestamp: null, text: "查一下" },
           {
-            type: "tool_use", id: "toolu_1", timestamp: null, name: "Agent", summary: "验证审批双轨",
+            type: "tool_use", id: "toolu_1", timestamp: null, name: "Agent", kind: "agent", summary: "验证审批双轨",
             subagent: { description: "验证审批双轨", agent_type: "general-purpose", count: 1 },
           },
         ],
@@ -131,7 +131,8 @@ describe("ChatWindow", () => {
 
     // 子任务自成一行，不被并进「N 个操作」那一坨；摘要显示的是描述而不是整包参数。
     const summary = await screen.findByText("验证审批双轨");
-    expect(screen.getByText("子任务")).toBeTruthy();
+    // 停靠条的入口也叫「子任务」（词表统一后与时间线同词），这里只认时间线块的标签。
+    expect(screen.getByText("子任务", { selector: ".chat-subagent-label" })).toBeTruthy();
     expect(screen.getByText("general-purpose")).toBeTruthy();
     expect(document.querySelector(".chat-activity-group")).toBeNull();
     // 未展开前绝不请求：一个会话可能有几十个子任务。
@@ -157,7 +158,7 @@ describe("ChatWindow", () => {
   it("子任务时间线里出现派出它自己的调用（fork 回声）时不再嵌套", async () => {
     window.history.replaceState({}, "", "/?sessionId=9");
     const launch = {
-      type: "tool_use", id: "toolu_1", timestamp: null, name: "Agent", summary: "web 端重测",
+      type: "tool_use", id: "toolu_1", timestamp: null, name: "Agent", kind: "agent", summary: "web 端重测",
       subagent: { description: "web 端重测", agent_type: "fork", count: 1 },
     };
     invoke.mockImplementation((command: string, args: Record<string, unknown>) => {
@@ -187,7 +188,7 @@ describe("ChatWindow", () => {
   it("不展开也显示子任务状态：无回执=在跑，有回执=按结局统计", async () => {
     window.history.replaceState({}, "", "/?sessionId=17");
     const swarm = {
-      type: "tool_use", id: "tool_s", timestamp: "2026-08-18T04:00:00.000Z", name: "AgentSwarm", summary: "分组审查",
+      type: "tool_use", id: "tool_s", timestamp: "2026-08-18T04:00:00.000Z", name: "AgentSwarm", kind: "agent", summary: "分组审查",
       subagent: { description: "分组审查", agent_type: "explore", count: 3 },
     };
     let done = false;
@@ -212,7 +213,7 @@ describe("ChatWindow", () => {
     render(<ChatWindow />);
 
     // 没有回执 → 三个都在跑，且**不必展开**（不该为一个徽标去读侧车流）。
-    expect(await screen.findByText("3 进行中")).toBeTruthy();
+    expect(await screen.findByText("3 运行中")).toBeTruthy();
     expect(invoke).not.toHaveBeenCalledWith("get_subagent_transcript", expect.anything());
     // 在跑时图标脉冲——折叠状态下不必读徽标小字也能看出里面有活儿。
     expect(document.querySelector(".chat-subagent-icon.is-running")).toBeTruthy();
@@ -220,7 +221,7 @@ describe("ChatWindow", () => {
     // 回执到达后按真实结局显示（靠历史轮询自然刷新，不手动重渲染）。
     done = true;
     await waitFor(() => expect(screen.getAllByText("2 完成 · 1 失败").length).toBeGreaterThan(0), { timeout: 3_000 });
-    expect(screen.queryByText("3 进行中")).toBeNull();
+    expect(screen.queryByText("3 运行中")).toBeNull();
     // 结束后:图标停脉冲,显示「委派 → 最终回执」的执行时长(04:00:00 → 04:06:40)。
     expect(document.querySelector(".chat-subagent-icon.is-running")).toBeNull();
     expect(screen.getAllByText("6 分 40 秒").length).toBeGreaterThan(0);
@@ -665,7 +666,7 @@ describe("ChatWindow", () => {
     expect(invoke).not.toHaveBeenCalledWith("write_managed_terminal", { sessionId: 71, data: "\r" });
     expect(await screen.findByText(zh.chat.sendEchoTimeout)).toBeTruthy();
     // 已写正文不能谎称确定未发：保留原文回执，由用户核对后恢复草稿或重发。
-    expect(await screen.findByText(zh.chat.echoUncertain)).toBeTruthy();
+    expect(await screen.findByText(zh.vocab.delivery.uncertain)).toBeTruthy();
     expect(screen.getByText("go on")).toBeTruthy();
     expect(input.value).toBe("");
   });
@@ -706,8 +707,15 @@ describe("ChatWindow", () => {
     // C-9：卡片渲染在 overlay 层(零高度容器,不占文档流、不下推 composer),
     // 有卡在场时容器挂 is-active 启用消息列表底部的淡出过渡。
     expect(trustCard?.closest(".chat-approval-overlay")?.className).toContain("is-active");
-    // 卡片在场时 composer 锁定但**不卸载**:textarea 还是同一个节点(草稿不丢),只是禁用。
-    expect((screen.getByRole("combobox", { name: "发送消息给 Agent" }) as HTMLTextAreaElement).disabled).toBe(true);
+    // 卡片在场时输入框不禁用也不卸载：textarea 还是同一个节点，草稿照常可写；
+    // 发送被拦住（下面断言正文没写进终端），发送键置灰并带上同一句说明（见 chat/composerCardLock）。
+    const box = screen.getByRole("combobox", { name: "发送消息给 Agent" }) as HTMLTextAreaElement;
+    expect(box).toBe(input);
+    expect(box.disabled).toBe(false);
+    expect(box.closest(".chat-compose")?.hasAttribute("inert")).toBe(false);
+    const send = screen.getByRole("button", { name: "发送" });
+    expect(send.getAttribute("aria-disabled")).toBe("true");
+    expect(send.getAttribute("data-tip")).toBe(zh.chat.cardLockPrompt);
     expect(screen.getByText("PTY 14")).toBeTruthy();
     expect(screen.getByRole("button", { name: "终端" }).getAttribute("aria-pressed")).toBe("false");
     expect(screen.getByText("PTY 14").closest(".chat-terminal-pane")?.className).toContain("is-background");

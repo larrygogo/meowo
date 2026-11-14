@@ -12,7 +12,7 @@ import { collectBackgroundTasks, filterTasks, TasksPanel } from "./TasksPanel";
 afterEach(cleanup);
 
 const use: ChatItem = {
-  type: "tool_use", id: "toolu_a", timestamp: "2026-11-11T05:00:00Z", name: "Agent", summary: "查误报",
+  type: "tool_use", id: "toolu_a", timestamp: "2026-11-11T05:00:00Z", name: "Agent", kind: "agent", summary: "查误报",
   subagent: { description: "查误报", agent_type: "general-purpose", count: 1 },
 };
 const launched: ChatItem = { type: "tool_result", id: "r1", timestamp: "2026-11-11T05:00:01Z", tool_use_id: "toolu_a", text: "Async agent launched", is_error: false, subagent: { running: 1, completed: 0, failed: 0, task_id: "a87" } };

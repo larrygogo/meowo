@@ -23,6 +23,11 @@ export type SendErrorExit = {
   retryLabel?: string;
   /** 结论在终端画面上：桌面去终端页，手机就地看画面、按键。 */
   terminal?: boolean;
+  /**
+   * 由人决定的选择（终端草稿读不全时：连同草稿一起发、放弃草稿后发）。带 `confirmLabel` 的是会丢
+   * 内容的那一种：第一下只把按钮换成确认文案，再点一次才执行。
+   */
+  actions?: { label: string; run: () => void; confirmLabel?: string }[];
 };
 
 export function SendErrorExits({ exit, sessionId, onGoTerminal, onDismiss, dismissLabel, focusComposer }: {
@@ -37,17 +42,32 @@ export function SendErrorExits({ exit, sessionId, onGoTerminal, onDismiss, dismi
   const t = useT();
   const remote = remoteUi();
   const [keysOpen, setKeysOpen] = useState(false);
+  // 等着第二下确认的是哪一个按钮。错误条换一条就整个重挂（ChatWindow 按文案给 key），不会串到下一条。
+  const [armed, setArmed] = useState<number | null>(null);
   return (
     <>
+      {exit.actions?.map((action, index) => (
+        <button
+          key={action.label}
+          type="button"
+          // 只有会丢内容的那一个（要二次确认的）保留红色，其余出路是中性钮。
+          className={action.confirmLabel ? "chat-send-takeover" : "chat-send-takeover is-plain"}
+          onClick={() => {
+            if (action.confirmLabel && armed !== index) { setArmed(index); return; }
+            if (!remote) focusComposer();
+            action.run();
+          }}
+        >{armed === index && action.confirmLabel ? action.confirmLabel : action.label}</button>
+      ))}
       {exit.retry && (
-        <button type="button" className="chat-send-takeover" onClick={() => { if (!remote) focusComposer(); exit.retry?.(); }}>
+        <button type="button" className="chat-send-takeover is-plain" onClick={() => { if (!remote) focusComposer(); exit.retry?.(); }}>
           {exit.retryLabel ?? t.chat.errorRetry}
         </button>
       )}
       {exit.terminal && (remote
-        ? <button type="button" className="chat-send-takeover" aria-expanded={keysOpen} onClick={() => setKeysOpen((open) => !open)}>{t.chat.remoteOpenKeys}</button>
-        : <button type="button" className="chat-send-takeover" onClick={onGoTerminal}>{t.chat.goTerminal}</button>)}
-      <button type="button" className="chat-send-takeover" onClick={() => { if (!remote) focusComposer(); onDismiss(); }}>{dismissLabel ?? t.chat.slashMenuDismiss}</button>
+        ? <button type="button" className="chat-send-takeover is-plain" aria-expanded={keysOpen} onClick={() => setKeysOpen((open) => !open)}>{t.chat.remoteOpenKeys}</button>
+        : <button type="button" className="chat-send-takeover is-plain" onClick={onGoTerminal}>{t.chat.goTerminal}</button>)}
+      <button type="button" className="chat-send-takeover is-plain" onClick={() => { if (!remote) focusComposer(); onDismiss(); }}>{dismissLabel ?? t.chat.slashMenuDismiss}</button>
       {remote && exit.terminal && keysOpen && <RemoteTerminalKeys sessionId={sessionId} />}
     </>
   );

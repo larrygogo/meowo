@@ -1,0 +1,1 @@
+{"type":"turn.ended","agentId":"main","turnId":0,"reason":"failed","error":{"code":"config.invalid","message":"Model \"local-provider/Qwen3.8-Flash-Next\" is not configured in config.toml.","name":"Error2","details":{"model":"local-provider/Qwen3.8-Flash-Next"},"retryable":false},"durationMs":403962,"time":1793153808088}

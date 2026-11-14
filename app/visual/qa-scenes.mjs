@@ -6,6 +6,8 @@ const TA = ".chat-compose textarea";
 const W620 = [620, 760];
 const PHONE = [375, 812];
 const SETTINGS = [620, 460];
+// 已结束回合的过程块默认收起：点开才看得到里面的工具行。
+const OPEN_FOLDS = ["eval", "document.querySelectorAll('.turn-fold:not(.is-open) > .turn-fold-head').forEach((b) => b.click())"];
 const MODEL_BTN = ".chat-compose .chat-model-select .chat-model-button";
 
 export const QA_SHOTS = [
@@ -67,6 +69,52 @@ export const QA_SHOTS = [
   { name: "qa-screen-plan", scene: "flow-screen-plan", sel: ".chat-screen-approval" },
   { name: "qa-screen-question", scene: "flow-screen-question", sel: ".chat-screen-approval" },
   { name: "qa-screen-prompt", scene: "flow-screen-prompt", sel: ".chat-screen-approval" },
+  // ── 五家的审批卡、提问卡、提示卡（数据在 cardScenes.ts，样本出处见 src/test/requestSamples.ts）──
+  // 五家的审批卡是同一张：换一家只有能力不同的按钮不同（broker 有「说明并拒绝」，屏幕通道有「仅收起」）。
+  ...["claude-approval", "codex-approval", "kimi-approval", "gemini-approval", "opencode-approval", "claude-screen"].flatMap((card) => [
+    { name: `qa-card-${card}`, scene: `flow-card-${card}`, size: W620, sel: ".chat-approval-actions" },
+    { name: `qa-m-card-${card}`, page: "mobile", scene: `mobile-card-${card}`, size: PHONE, sel: ".chat-approval-actions" },
+  ]),
+  // 屏幕上认出的提问表单（kimi 方括号、gemini 框线）与提示卡（gemini 额度耗尽、opencode 的二次确认页）。
+  ...["kimi-form", "gemini-form", "gemini-limit", "opencode-confirm"].flatMap((card) => [
+    { name: `qa-card-${card}`, scene: `flow-card-${card}`, size: W620, sel: ".chat-screen-approval" },
+    { name: `qa-m-card-${card}`, page: "mobile", scene: `mobile-card-${card}`, size: PHONE, sel: ".chat-screen-approval" },
+  ]),
+  // 长命令：卡内滚动，输入框不被挤（矮窗与键盘弹出各一张）。
+  { name: "qa-card-long-command-short", scene: "flow-card-long-command", size: [620, 480], sel: ".chat-approval-actions" },
+  { name: "qa-m-card-long-command-kbd", page: "mobile", scene: "mobile-card-long-command", size: [375, 476], sel: ".chat-approval-actions" },
+  // 手机页审批卡「已过期」：假时钟一次拨快 302 秒（jump），倒计时归零。?clock=live 让 Date.now 跟着假时钟走。
+  { name: "qa-m-card-expired", page: "mobile", scene: "mobile-card-claude-approval", params: "clock=live", size: PHONE, sel: ".chat-approval-actions", steps: [["jump", 302000]] },
+  // ── 五家的工具行与运行状态（harness 见 toolScenes.ts，条目取自五家回放样本）──
+  // 整份时间线（过程块点开）、运行中、等待审批（工具行写待批准、过程块不收起）、回合出错。手机拍等待审批与整份时间线的底部。
+  ...["claude", "codex", "kimi", "gemini", "opencode"].flatMap((agent) => [
+    { name: `qa-tools-${agent}`, scene: `flow-tools-${agent}-all`, size: W620, sel: ".chat-flat-steps .chat-tool", steps: [OPEN_FOLDS, ["eval", "document.querySelector('.chat-scroll').scrollTop = 0"]] },
+    { name: `qa-tools-${agent}-running`, scene: `flow-tools-${agent}-running`, size: W620, sel: '.chat-tool[data-state="running"]' },
+    { name: `qa-tools-${agent}-waiting`, scene: `flow-tools-${agent}-waiting`, size: W620, sel: ".chat-tool-status.is-waiting" },
+    { name: `qa-tools-${agent}-error`, scene: `flow-tools-${agent}-error`, size: W620, sel: ".chat-message.is-turn-error" },
+    { name: `qa-m-tools-${agent}-waiting`, page: "mobile", scene: `mobile-tools-${agent}-waiting`, size: PHONE, sel: ".chat-tool-status.is-waiting" },
+    { name: `qa-m-tools-${agent}`, page: "mobile", scene: `mobile-tools-${agent}-all`, size: PHONE, sel: ".chat-flat-steps .chat-tool", steps: [OPEN_FOLDS] },
+  ]),
+  // 展开一行 diff（codex 的补丁不带行号）、一行失败的命令；待办行（样本里没有，场景里按各家规则补的一条）。
+  { name: "qa-tools-codex-diff", scene: "flow-tools-codex-all", size: W620, sel: ".chat-tool[open] .chat-tool-udiff", steps: [OPEN_FOLDS, ["click", '.chat-tool[data-state="done"]:has(.chat-tool-verb[data-kind="edit"]) > summary']] },
+  { name: "qa-m-tools-gemini-diff", page: "mobile", scene: "mobile-tools-gemini-all", size: PHONE, sel: ".chat-tool[open] .chat-tool-udiff", steps: [OPEN_FOLDS, ["click", '.chat-tool[data-state="done"]:has(.chat-tool-verb[data-kind="edit"]) > summary']] },
+  { name: "qa-tools-claude-fail", scene: "flow-tools-claude-all", size: W620, sel: ".chat-tool.is-error[open]", steps: [OPEN_FOLDS, ["click", ".chat-tool.is-error > summary"]] },
+  { name: "qa-tools-claude-todo", scene: "flow-tools-claude-todo", size: W620, sel: '.chat-tool-icon[data-kind="todo"]', steps: [OPEN_FOLDS, ["eval", "document.querySelector('.chat-scroll').scrollTop = 0"]] },
+  // 运行中又发了一条：命令还在跑，后面跟着回合中途送进去的那句话，那条命令仍是运行中（做空 ③）。
+  // opencode 是真实的一场：那句话排在跑完的 ping 之后。gemini 没有这种时间线（调用连同结果一起落盘）。
+  ...["claude", "codex", "kimi"].flatMap((agent) => [
+    { name: `qa-tools-${agent}-midturn`, scene: `flow-tools-${agent}-midturn`, size: W620, sel: '.chat-tool[data-state="running"]' },
+    { name: `qa-m-tools-${agent}-midturn`, page: "mobile", scene: `mobile-tools-${agent}-midturn`, size: PHONE, sel: '.chat-tool[data-state="running"]' },
+  ]),
+  { name: "qa-tools-opencode-midturn", scene: "flow-tools-opencode-midturn", size: W620, sel: '.chat-tool[data-state="done"]' },
+  { name: "qa-m-tools-opencode-midturn", page: "mobile", scene: "mobile-tools-opencode-midturn", size: PHONE, sel: '.chat-tool[data-state="done"]' },
+  // 子任务块：claude、kimi、codex 同一个组件。codex 的状态取自记录里的开始与结局（在跑、跑完、被叫停）。
+  ...["claude", "codex", "kimi"].flatMap((agent) => [
+    { name: `qa-tools-${agent}-agents`, scene: `flow-tools-${agent}-agents`, size: W620, sel: "details.chat-subagent", steps: [OPEN_FOLDS] },
+    { name: `qa-m-tools-${agent}-agents`, page: "mobile", scene: `mobile-tools-${agent}-agents`, size: PHONE, sel: "details.chat-subagent", steps: [OPEN_FOLDS] },
+  ]),
+  { name: "qa-tools-codex-agents-running", scene: "flow-tools-codex-agents-running", size: W620, sel: ".chat-subagent-status.is-running" },
+  { name: "qa-m-tools-codex-agents-running", page: "mobile", scene: "mobile-tools-codex-agents-running", size: PHONE, sel: ".chat-subagent-status.is-running" },
   { name: "qa-image", scene: "flow-image", sel: ".chat-image-thumb-btn" },
   { name: "qa-lightbox", scene: "flow-image", sel: ".chat-lightbox", steps: [["click", ".chat-image-thumb-btn"]] },
   { name: "qa-drop", scene: "flow-drop", sel: ".chat-drop-overlay" },

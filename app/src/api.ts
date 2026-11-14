@@ -423,6 +423,18 @@ export function sessionTone(
   return status === "ended" ? "ended" : "waiting";
 }
 
+/// 一条会话记录 → 会话状态。界面上的调用点都走这两个入口（对话窗手里的 ChatHistory、侧栏与名单手里的
+/// LiveSession），不再逐个字段手传：手传的地方漏过字段——对话窗发送路径没传后台子任务数（主回合停了、
+/// 后台子任务还在跑时，标题栏说运行中、发送却按空闲处理），两处「标记完成」的确认没传 screen_assumed
+/// （做空 ⑩）。`sessionToneCallSites.test.ts` 扫描源码，保证没有别处再直接调 sessionTone。
+export function historyTone(history: Pick<ChatHistory, "connected" | "status" | "pendingReview" | "errored" | "busySubagents" | "screenState" | "screenAssumed"> | null | undefined): SessionTone {
+  return sessionTone(history?.connected ?? false, history?.status, history?.pendingReview, history?.errored, history?.busySubagents, history?.screenState, history?.screenAssumed);
+}
+
+export function liveSessionTone(row: Pick<LiveSession, "connected" | "session" | "pending_review" | "errored" | "busy_subagents" | "screen_state" | "screen_assumed">): SessionTone {
+  return sessionTone(row.connected, row.session.status, row.pending_review, row.errored, row.busy_subagents, row.screen_state, row.screen_assumed);
+}
+
 export type ManagedTerminalSnapshot = ManagedTerminalSnapshotDto;
 /** `options`：恢复时对启动选项的改选（option id → choice id，如 {permission:"bypassPermissions"}），
  *  省略 = 沿用会话存的选择。改选会被后端合并写回，成为会话新的持久形态。 */

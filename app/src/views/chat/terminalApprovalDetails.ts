@@ -7,6 +7,8 @@ const PROCEED_QUESTION = /^do you want to proceed\?$/i;
 /// 「proceed_box」框式审批详情（claude 真机取证的屏幕文法）。用哪种解析器由插件随
 /// AttentionPattern.details 声明，前端不再按 pattern id 猜。
 export function proceedBoxApprovalDetails(text: string) {
+  const dashed = dashedBoxApprovalDetails(text);
+  if (dashed) return dashed;
   // TUI 把标题行用横线铺满整屏宽（"Do you want to proceed? ──────"）。这些框线是
   // 排版，不是内容：行尾的要剥掉，整行都是框线的整行丢弃。
   const lines = text.split("\n")
@@ -44,6 +46,37 @@ export function proceedBoxApprovalDetails(text: string) {
   };
 }
 
+/// claude 2.1.325 的框式审批（真机取证 2026-11-14，tests/probe_tui_script.rs）：命令夹在两条
+/// 虚线之间，用途说明挪到了命令上面，中间还可能插一行 `Tip: …`：
+///   Bash command
+///   Tip: auto mode handles these prompts for you — choose "switch to auto mode" below
+///   Download example.com homepage to out.html
+///   ╌╌╌╌╌╌╌╌
+///   curl -s https://example.com -o out.html
+///   ╌╌╌╌╌╌╌╌
+///   This command requires approval
+///   Do you want to proceed?
+/// 旧版没有虚线、说明在命令下面。两种版式不能用同一条「末行是说明」的规则：按旧规则读新版，
+/// 会把 Tip 和说明当成命令、把真正的命令当成说明。有成对的虚线就按新版读，没有就返回 null 走旧规则。
+function dashedBoxApprovalDetails(text: string) {
+  const lines = text.split("\n").map((line) => line.trim());
+  const HEADER = /^(bash|powershell) command(?: \(.*\))?$/i;
+  const DASHED = /^[╌╍┄┅┈┉]{3,}$/;
+  const header = lines.reduce((found, line, index) => (HEADER.test(line) ? index : found), -1);
+  if (header < 0) return null;
+  const rules = lines.flatMap((line, index) => (index > header && DASHED.test(line) ? [index] : []));
+  if (rules.length < 2) return null;
+  const [open, close] = rules.slice(-2);
+  const intro = lines.slice(header + 1, open).filter((line) => line && !/^tip:/i.test(line));
+  const question = lines.slice(close + 1).reduce((found, line) => (PROCEED_QUESTION.test(line) ? line : found), "");
+  return {
+    tool: /^powershell/i.test(lines[header]) ? "PowerShell" : "Bash",
+    command: lines.slice(open + 1, close).filter(Boolean).join("\n"),
+    description: intro.at(-1) ?? "",
+    question,
+  };
+}
+
 /// 「arrow_panel」面板式审批详情（kimi 官方源码取证 apps/kimi-code/.../approval-panel.ts @ 0.29）：
 /// 标题行 ▶ <按工具定制的问题>（Run this command? / Write this file? / Approve X?），
 /// 之下是命令/diff 等 display 块。详情区剥掉框线与标题，正文整段进 pre；
@@ -53,13 +86,18 @@ export function arrowPanelApprovalDetails(text: string) {
     .filter((line) => !/^[─━═|-]+$/.test(line));
   const headerIndex = lines.findIndex((line) => /^▶\s*[^\n]+\?$/.test(line));
   const question = headerIndex >= 0 ? lines[headerIndex].replace(/^▶\s*/, "") : "";
-  const command = (headerIndex >= 0 ? lines.slice(headerIndex + 1) : lines).join("\n");
+  const body = headerIndex >= 0 ? lines.slice(headerIndex + 1) : lines;
+  // kimi 2.6.1 在标题与命令之间多了一行 `cwd: <工作目录>`（真机取证 2026-11-14，
+  // tests/probe_approval.rs，样本在 approval-frames.json）。它不是命令的一部分：留在命令里，
+  // 「命令」区第一行就成了路径，复制出来的也不是能执行的命令。挪到说明行。
+  const cwd = /^cwd:\s*\S/.test(body[0] ?? "") ? body.shift() ?? "" : "";
+  const command = body.join("\n");
   const tool = /run this command/i.test(question) ? "Bash"
     : /write this file/i.test(question) ? "Write"
     : /apply these edits/i.test(question) ? "Edit"
     : /stop this task/i.test(question) ? "TaskStop"
     : /^approve ([^\n?]+)\?$/i.exec(question)?.[1] ?? "";
-  return { tool, command, description: "", question };
+  return { tool, command, description: cwd, question };
 }
 
 /// 「framed_box」框线对话框式审批详情（gemini 0.6x 真机取证 + 源码 ToolConfirmationMessage）：
@@ -81,4 +119,19 @@ export function framedBoxApprovalDetails(text: string) {
     .join("\n")
     .trim();
   return { tool, command, description: "", question };
+}
+
+/// 「option_row」横排选项式审批详情（opencode 1.19.5 真机取证，2026-11-14）：
+///   △ Permission required
+///     ← Access external directory C:\Windows
+///   Patterns
+///   - C:\Windows\*
+/// 首行是固定标题，第二行是「图标 + 这次要做什么」，其余是正文。opencode 不在屏上单列工具名，
+/// 工具行留空（不显示），第二行当说明，正文整段进详情区。
+export function optionRowApprovalDetails(text: string) {
+  const lines = text.split("\n").map((line) => line.trimEnd()).filter((line) => line.trim());
+  const [, summary = "", ...body] = lines;
+  // 图标是一个非字母数字的符号（← $ % ◈ ⚙ …），后面跟空格；没有图标就整行当说明。
+  const description = summary.trim().replace(/^[^\p{L}\p{N}\s]\s+/u, "");
+  return { tool: "", command: body.map((line) => line.trim()).join("\n"), description, question: "" };
 }

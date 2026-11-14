@@ -1734,8 +1734,10 @@ fn run_queued(app: &tauri::AppHandle, session_id: i64) {
             current.insert("model".into(), id);
         }
     }
-    let guard = plugin.composer_guard(version.as_deref());
-    let composer = guard.as_ref().and_then(|guard| composer_state(&lines, guard));
+    let guard = plugin.composer(version.as_deref());
+    let composer = guard
+        .as_ref()
+        .and_then(|guard| composer_state(&state.ptys, session_id, guard));
     if history.connected && needs_empty_composer(plugin, model.is_some(), &modes) {
         match composer {
             Some(true) => with_queued(session_id, |entry| entry.misses = 0),
@@ -1772,12 +1774,10 @@ fn run_queued(app: &tauri::AppHandle, session_id: i64) {
         if !history.connected || !host_idle(&state, &history) {
             return Err("settings/busy_now".into());
         }
-        let lines = state
-            .ptys
-            .screen_probe_snapshot(session_id)
-            .map(|(snapshot, _)| snapshot.lines)
-            .unwrap_or_default();
-        match guard.as_ref().and_then(|guard| composer_state(&lines, guard)) {
+        match guard
+            .as_ref()
+            .and_then(|guard| composer_state(&state.ptys, session_id, guard))
+        {
             Some(true) => Ok(()),
             _ => Err("settings/composer_not_empty".into()),
         }
@@ -1904,83 +1904,22 @@ fn catalog_id_for(catalog: &[ModelCatalogEntry], current: &str) -> Option<String
         .map(|entry| entry.id.clone())
 }
 
-/// 托管终端输入框是不是空的（前端 composerSafety.composerCandidate 的宿主版）：Some(true) 空、
-/// Some(false) 有字、None 认不出。规则全来自插件声明的 ComposerGuard。
-pub(crate) fn composer_state(screen: &[String], guard: &meowo_agent::chat_ui::ComposerGuard) -> Option<bool> {
-    composer_read(screen, guard).map(|(empty, _)| empty)
-}
-
-/// 同 [`composer_state`]，另带输入框里的文字（去掉提示符与首尾空白；占位文字原样）。
-pub(crate) fn composer_read(
-    screen: &[String],
-    guard: &meowo_agent::chat_ui::ComposerGuard,
-) -> Option<(bool, String)> {
-    let re = |pattern: &str| regex::Regex::new(pattern).ok();
-    let top = re(guard.top_pattern)?;
-    let bottom = re(guard.bottom_pattern)?;
-    let row = re(guard.row_pattern)?;
-    let mut end = screen.iter().rposition(|line| bottom.is_match(line))?;
-    let mut start;
-    let mut body: Vec<&String>;
-    if guard.prompt_footer {
-        while end > 0 && screen[end - 1].trim().is_empty() {
-            end -= 1;
-        }
-        let mut cursor = end.checked_sub(1)?;
-        loop {
-            if top.is_match(&screen[cursor]) {
-                break;
-            }
-            if !screen[cursor].trim().is_empty() && !row.is_match(&screen[cursor]) {
-                return None;
-            }
-            cursor = cursor.checked_sub(1)?;
-        }
-        start = cursor;
-        body = screen[start..end].iter().collect();
-    } else {
-        start = end;
-        while start > 0 && row.is_match(&screen[start - 1]) {
-            start -= 1;
-        }
-        body = screen[start..end].iter().collect();
-        if body.first().is_some_and(|line| top.is_match(line)) {
-            body.remove(0);
-            start += 1;
-        } else if start == 0 || !top.is_match(&screen[start - 1]) {
-            return None;
-        }
-        if guard.tail_rows > 0 {
-            let tail = re(guard.tail_pattern?)?;
-            if body.len() <= guard.tail_rows || !tail.is_match(body.last()?) {
-                return None;
-            }
-            body.truncate(body.len() - guard.tail_rows);
-        }
-    }
-    let _ = start;
-    if body.is_empty() {
-        return None;
-    }
-    let mut text = Vec::new();
-    for line in &body {
-        if guard.prompt_footer && line.trim().is_empty() {
-            text.push(String::new());
-            continue;
-        }
-        let captures = row.captures(line)?;
-        text.push(captures.get(1)?.as_str().trim().to_string());
-    }
-    // prompt_prefix 可列几个提示符，用 `|` 分隔（Gemini 平常 `>`、YOLO `*`，做空 R2）；空串 = 没有提示符。
-    let prefix = guard
-        .prompt_prefix
-        .split('|')
-        .find(|prefix| text[0].starts_with(prefix))?;
-    re(guard.input_start_pattern)?.captures(body[0])?.get(1)?;
-    text[0] = text[0][prefix.len()..].trim_start().to_string();
-    let content = text.join("\n");
-    let content = content.trim();
-    Some((re(guard.empty_pattern)?.is_match(content), content.to_string()))
+/// 托管终端输入框是不是空的：Some(true) 空、Some(false) 有字（或处在 shell / vim NORMAL 这类
+/// 特殊输入模式）、None 认不出。文字与光标取自同一帧，认框只有 meowo_agent::composer::read 一份实现
+///（前端同款在 views/chat/composer.ts），规则全来自插件声明的 ComposerSpec。
+pub(crate) fn composer_state(
+    ptys: &crate::pty::PtyBroker,
+    session_id: i64,
+    spec: &meowo_agent::chat_ui::ComposerSpec,
+) -> Option<bool> {
+    let frame = ptys.screen_frame(session_id)?;
+    let cursor = meowo_agent::composer::Cursor {
+        row: frame.cursor_row as usize,
+        col: frame.cursor_col as usize,
+        visible: frame.cursor_visible,
+        dim: frame.cursor_dim,
+    };
+    meowo_agent::composer::read(&frame.lines, Some(cursor), spec).map(|read| read.empty)
 }
 
 #[tauri::command]
@@ -2402,75 +2341,6 @@ mod tests {
         );
     }
 
-    /// 复核 M3：宿主执行排队前自己认输入框（前端 composerCandidate 的宿主版），规则同插件声明。
-    #[test]
-    fn host_composer_check_matches_the_kimi_frame() {
-        let guard = meowo_agent::chat_ui::ComposerGuard {
-            prompt_footer: false,
-            input_start_pattern: r"^(\s*│ > )",
-            top_pattern: r"^\s*╭─+╮\s*$",
-            bottom_pattern: r"^\s*╰─+╯\s*$",
-            row_pattern: r"^\s*│(.*)│\s*$",
-            prompt_prefix: ">",
-            tail_rows: 0,
-            tail_pattern: None,
-            empty_pattern: r"^$",
-        };
-        let frame = |row: &str| vec![" ╭──────╮".to_string(), format!(" │{row}│"), " ╰──────╯".to_string()];
-        assert_eq!(composer_state(&frame(" >    "), &guard), Some(true));
-        assert_eq!(composer_state(&frame(" > hi "), &guard), Some(false));
-        assert_eq!(composer_state(&["随便一行".to_string()], &guard), None);
-    }
-
-    /// 做空 N2：宿主与前端的输入框判定对同一批实拍帧必须给出同样的结论。帧与规则放在前端测试也读的
-    /// app/src/test/fixtures/composer-frames.json；规则先与插件声明逐字核对，免得样例里的规则过期。
-    #[test]
-    fn host_composer_check_agrees_with_shared_frames() {
-        let fixture: serde_json::Value =
-            serde_json::from_str(include_str!("../../src/test/fixtures/composer-frames.json")).unwrap();
-        let leak = |value: &serde_json::Value| -> &'static str {
-            Box::leak(value.as_str().unwrap().to_string().into_boxed_str())
-        };
-        let mut checked = 0;
-        for frame in fixture["frames"].as_array().unwrap() {
-            let provider = frame["provider"].as_str().unwrap();
-            let declared = &fixture["guards"][provider];
-            let plugin = meowo_agent::by_id(provider).unwrap();
-            // Kimi 的规则还要求装着 modern 版，本机没装时插件返回 None，只用样例里的规则测判定。
-            if let Some(guard) = plugin.composer_guard(frame["version"].as_str()) {
-                assert_eq!(&serde_json::to_value(guard).unwrap(), declared, "{provider} 规则与插件声明不一致");
-            }
-            let guard = meowo_agent::chat_ui::ComposerGuard {
-                prompt_footer: declared["prompt_footer"].as_bool().unwrap(),
-                input_start_pattern: leak(&declared["input_start_pattern"]),
-                top_pattern: leak(&declared["top_pattern"]),
-                bottom_pattern: leak(&declared["bottom_pattern"]),
-                row_pattern: leak(&declared["row_pattern"]),
-                prompt_prefix: leak(&declared["prompt_prefix"]),
-                tail_rows: declared["tail_rows"].as_u64().unwrap() as usize,
-                tail_pattern: declared["tail_pattern"].as_str().map(|_| leak(&declared["tail_pattern"])),
-                empty_pattern: leak(&declared["empty_pattern"]),
-            };
-            let lines: Vec<String> = frame["lines"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|line| line.as_str().unwrap().to_string())
-                .collect();
-            let trimmed: Vec<String> = lines.iter().map(|line| line.trim_end().to_string()).collect();
-            let expect = match frame["expect"].as_str().unwrap() {
-                "empty" => Some(true),
-                "occupied" => Some(false),
-                _ => None,
-            };
-            for screen in [&lines, &trimmed] {
-                assert_eq!(composer_state(screen, &guard), expect, "{}", frame["name"]);
-            }
-            checked += 1;
-        }
-        assert!(checked >= 10);
-    }
-
     #[test]
     fn host_reads_modes_from_footer_and_maps_model_labels() {
         let markers = [
@@ -2488,6 +2358,32 @@ mod tests {
         assert_eq!(catalog_id_for(&catalog, "K3").as_deref(), Some("kimi-code/k3"));
         assert_eq!(catalog_id_for(&catalog, "DeepSeek-V4.1-Flash-1017").as_deref(), Some("反向推理/DeepSeek-V4.1-Flash-1017"));
         assert_eq!(catalog_id_for(&catalog, "gpt-x"), None);
+    }
+
+    /// gemini 审批模式底栏 → 当前档位，用插件现行的标记表。前四行是 0.68.0 真机原文
+    /// （app/src/test/fixtures/composer-frames.json 的 g2-0、g7-1、g8-0、g7-2-yolo 四帧，2026-11-14）；
+    /// 0.65 的整句字面量与它们逐字相同，所以新老版本一起认。
+    #[test]
+    fn gemini_footer_lines_map_to_approval_modes() {
+        let gemini = meowo_agent::by_id("gemini").unwrap();
+        let markers = gemini.mode_controls()[0].screen_markers;
+        let above = " > Type your message or @path/to/file\n";
+        for (footer, want) in [
+            (" Shift+Tab to accept edits                                   29 skills", "default"),
+            (" auto-accept edits Shift+Tab to plan", "autoEdit"),
+            (" plan Shift+Tab to manual", "plan"),
+            (" YOLO Ctrl+Y", "yolo"),
+            // 回合进行中 plan 切不过去，autoEdit 的提示以 `Shift+Tab to manual` 结尾（按 0.68.0 bundle
+            // ApprovalModeIndicator.tsx 的模板拼出，未实拍）。只认 `shift+tab to manual` 时它被读成 plan。
+            (" auto-accept edits Shift+Tab to manual", "autoEdit"),
+        ] {
+            assert_eq!(mode_from_screen(&format!("{above}{footer}"), markers), Some(want), "{footer}");
+        }
+        // 正文里提到过别的档位，底栏在更靠后的位置：以底栏为准。
+        let screen = "  I switched to YOLO Ctrl+Y earlier, then to plan Shift+Tab to manual.\n Shift+Tab to accept edits";
+        assert_eq!(mode_from_screen(screen, markers), Some("default"));
+        // 用户改了键位（0.68.0 起按键提示按键位表格式化）：读不到，不猜。
+        assert_eq!(mode_from_screen(" Alt+M to accept edits", markers), None);
     }
 
     /// 做空 M8：服务通道的连接类错误在切换语境下不能落到 Lead「回答已保存…」。

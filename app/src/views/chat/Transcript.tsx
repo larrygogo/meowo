@@ -1,8 +1,9 @@
-import { memo, useRef } from "react";
+import { memo, useContext, useRef } from "react";
 import { type ChatItem } from "../../api";
 import { collectSubagentReceipts } from "../../chat/reducer";
 import { useT } from "../../i18n";
 import type { Dict } from "../../i18n/zh";
+import type { ToolUseItem } from "./shared";
 
 /** 日期分隔条文案：今天/昨天沿用侧栏日期分组的同一对键，更早按界面语言格式化。 */
 function dayLabel(date: Date, t: Dict): string {
@@ -21,7 +22,8 @@ import { ToolActivity } from "./ToolActivity";
 import { TurnChanges } from "./TurnChanges";
 import { ReplyFold, TurnFold } from "./TurnFold";
 import { FoldScopeContext, foldScope } from "./foldMemory";
-import { isSubagentDelegation, type ToolResultItem, type ToolUseItem } from "./shared";
+import { isSubagentDelegation, type ToolResultItem } from "./shared";
+import { liveTurnStart, SessionAliveContext, TurnLiveContext, type TurnActivity } from "./toolState";
 
 type SubagentOutcomeInfo = NonNullable<ToolResultItem["subagent"]>;
 
@@ -36,6 +38,16 @@ type BlockRec = {
   start: number;
   lastDayBefore: string | null;
   subagentId: string | null;
+  /// 该块里还没等到回执的调用。回执可能隔着别的块才到（见 collectSubagentReceipts 的 results），到了就得
+  /// 从这块重算，不然它会一直显示成没回执的样子。
+  unresolved: string[];
+  /// 这块的节点是按哪个活动态生成的（工具行与子任务块的运行态、回合级折叠要不要收，都取决于它）。
+  /// null = 这块与活动态无关（用户消息、分隔条）。复用前核对：按现在的活动态与回合起点再算一遍，
+  /// 不一样就从这块起重算。
+  activity: TurnActivity | null;
+  /// 这块不在末尾，却按「还在进行」画的（它后面只跟着回合中途送进去的话）。后面一旦来了新内容它就该
+  /// 收起，所以这种块不复用，每次重算（它紧挨着末尾，代价是一两块）。
+  trailing: boolean;
   nodes: JSX.Element[];
   daySep: boolean;
   reply: number | null;
@@ -74,7 +86,6 @@ type BlockCache = {
   sessionId: number;
   t: Dict;
   foldTurns: boolean;
-  working: boolean;
   items: ChatItem[];
   blocks: BlockRec[];
   outcomes: Map<string, SubagentOutcomeInfo>;
@@ -88,27 +99,46 @@ type BlockCache = {
 /// 流式期间 items 每批(200ms 的 pty-output 合流)都换新引用,memo 帮不上——此前每批
 /// 都从头全量重建整棵块数组,长会话是 O(n²)。现在按块做增量缓存:reducer 的写时复制
 /// 保证未变条目同引用,据此找到首个变化下标,之前的块原样复用,只重算尾部。
-export const Transcript = memo(function Transcript({ sessionId, items, working = false, foldTurns = false }: {
+export const Transcript = memo(function Transcript({ sessionId, items, activity = "idle", alive, foldTurns = false }: {
   sessionId: number;
   items: ChatItem[];
   agent?: TranscriptAgent | null;
-  working?: boolean;
+  /** 当前回合此刻的活动态（对话窗按会话状态给，见 turnActivityOf）。缺省 = 已不在进行。 */
+  activity?: TurnActivity;
+  /** 会话进程是否还活着（后台子任务的「进行中」只在活着时成立）。缺省沿用外层。 */
+  alive?: boolean;
   /** 设置「消息自动折叠」：已结束的回复只露最终回答，过程收成一行。 */
   foldTurns?: boolean;
 }) {
   const t = useT();
+  const outerAlive = useContext(SessionAliveContext);
+  const sessionAlive = alive ?? outerAlive;
+  const working = activity !== "idle";
   // 委派的结局写在**主链的工具回执**上，而回执往往排在委派之后若干条（TaskOutput 拉取
   // 的结局甚至挂在别的调用上，靠 task_id 归回原委派）。关联规则收敛在
   // collectSubagentReceipts——与标题栏进度面板同一份。没有回执 = 派出去了还没回来 = 在跑。
   // 每轮全量重扫:O(n) 的纯 Map 构建很便宜,贵的是按块生成 JSX——那部分走下面的缓存。
-  const { outcomes, settledAt, finishedTs } = collectSubagentReceipts(items);
+  // results：调用与回执按整份时间线配对，与委派结局同一趟扫描建出来。
+  const { outcomes, settledAt, finishedTs, results } = collectSubagentReceipts(items);
   const cacheRef = useRef<BlockCache | null>(null);
   const cache = cacheRef.current;
   let reuse: BlockRec[] = [];
+  // 当前回合的起点：最后一条开启回合的用户消息，或最后一条中断分隔（见 liveTurnStart）。
+  // 回合中途送进去的话不算：agent 读到后接着干同一回合。以前把它当回合边界，运行中的回复一遇插话就被当成
+  // 「已结束」折起来，十几分钟的进度只剩「工作了 16m21s」一行（2026-11-12 用户实拍：这个会话的消息都没在
+  // 对话里反馈出来）。
+  const lastTurnStart = liveTurnStart(items);
+  // 一段回复此刻的活动态：会话在进行，且这一段在当前回合起点之后。更早回合里没回执的调用不会再有结果了，
+  // 一律按已不在进行算。
+  const activityAt = (start: number): TurnActivity => working && start > lastTurnStart ? activity : "idle";
   // 折叠开关一变,旧块里记的切点全部作废,整体重算(开关很少动,不值得做细)。
-  // 开着回合折叠时，是否折取决于 working（见下方 settled）：working 一变，早先块里记的折叠切点也要重算，
-  // 否则「运行中没折」的旧块在回合结束后被原样复用，永远不折。
-  if (cache && cache.sessionId === sessionId && cache.t === t && cache.foldTurns === foldTurns && (!foldTurns || cache.working === working) && cache.blocks.length > 0) {
+  //
+  // 活动态一变**不**整体重算，只重算受它影响的块：当前回合起点之后的那几段（见下面对 block.activity 的核对）。
+  // 之前回合的块按「已不在进行」生成，活动态怎么翻它们都不变。此前这里把活动态放进了整体失效的条件，
+  // 一份 2432 条的真实会话每翻一次重渲染 296 行（main 是 1 行），而等审批、放行、回合起止都会翻
+  // （做空指出，数字见任务目录 progress-fix-display.md）。会话进程是否活着（alive）走 context，不进节点，
+  // 不需要为它重算。
+  if (cache && cache.sessionId === sessionId && cache.t === t && cache.foldTurns === foldTurns && cache.blocks.length > 0) {
     const common = Math.min(cache.items.length, items.length);
     let firstChanged = 0;
     while (firstChanged < common && cache.items[firstChanged] === items[firstChanged]) firstChanged += 1;
@@ -123,6 +153,12 @@ export const Transcript = memo(function Transcript({ sessionId, items, working =
       // 尾部新到的回执会改写早先子任务块的结局徽标;outcomes 的值来自未变条目时是
       // 同一个对象引用,直接比引用即可。
       if (id !== null && (outcomes.get(id) !== cache.outcomes.get(id) || settledAt.has(id) !== cache.settledAt.has(id))) break;
+      // 早先块里没回执的调用，这一批等到了回执：从它起重算。
+      if (block.unresolved.some((callId) => results.has(callId))) break;
+      // 这块是按另一个活动态生成的（活动态翻了，或回合起点挪了）：从它起重算。能走到这里复用的都不是
+      // 末尾那块，所以只看它在不在当前回合里。
+      if (block.activity !== null && block.activity !== activityAt(block.start)) break;
+      if (block.trailing) break;
       keep += 1;
     }
     reuse = cache.blocks.slice(0, keep);
@@ -147,18 +183,10 @@ export const Transcript = memo(function Transcript({ sessionId, items, working =
       </div>,
     );
   };
-  // 最后一条「真正结束上一回合」的用户消息。回合中插话（interjected）和发给子代理的话（to_agent）不算：
-  // agent 读到插话后接着干同一回合。以前把插话当回合边界，运行中的回复一遇插话就被当成「已结束」折起来，
-  // 十几分钟的进度只剩「工作了 16m21s」一行（2026-11-12 用户实拍：这个会话的消息都没在对话里反馈出来）。
-  let lastTurnStart = -1;
-  for (let i = items.length - 1; i >= 0; i -= 1) {
-    const it = items[i];
-    if (it.type === "user_text" && !it.interjected && !it.to_agent) { lastTurnStart = i; break; }
-  }
   for (let index = resume ? resume.start : 0; index < items.length;) {
     const item = items[index];
     const previous = blocks[blocks.length - 1];
-    const record: BlockRec = { start: index, lastDayBefore: lastDay, subagentId: null, nodes: [], daySep: false, reply: null, fold: null };
+    const record: BlockRec = { start: index, lastDayBefore: lastDay, subagentId: null, unresolved: [], activity: null, trailing: false, nodes: [], daySep: false, reply: null, fold: null };
     blocks.push(record);
     pushDaySep(record, item);
     // 连续的纯图片用户消息合成一行：Claude Code 把一次多图粘贴记成连续多条独立消息，
@@ -221,6 +249,9 @@ export const Transcript = memo(function Transcript({ sessionId, items, working =
       entry.type === "assistant_text" || entry.type === "assistant_delta" || entry.type === "turn_error",
     );
     const isLive = next >= items.length;
+    // 这一段此刻的活动态：会话在进行，且这一段属于当前回合（在末尾，或在当前回合起点之后）。
+    const blockActivity: TurnActivity = working && isLive ? activity : activityAt(index);
+    record.activity = blockActivity;
     // 所属回复:紧挨着的前一条不是用户消息/meta,说明还在同一段回复里,沿用上一段的起点。
     const before = items[index - 1];
     record.reply = before && before.type !== "user_text" && before.type !== "meta" && previous?.reply != null
@@ -237,7 +268,10 @@ export const Transcript = memo(function Transcript({ sessionId, items, working =
         const entry = processItems[cursor];
         if (entry.type === "reasoning" || entry.type === "reasoning_delta") {
           const globalIndex = items.indexOf(entry);
-          nodes.push(<Message key={entry.id} item={entry} nextStamp={nextStamp(items, globalIndex)} />);
+          // 「思考中」只在真的还在想时出现：逐块流进来的思考（reasoning_delta），排在整份时间线
+          // 的最后，且会话在跑。后面一旦有了新内容，或回合停了，它就是想完的那条。
+          const live = entry.type === "reasoning_delta" && activity === "running" && globalIndex === items.length - 1;
+          nodes.push(<Message key={entry.id} item={entry} nextStamp={nextStamp(items, globalIndex)} live={live} />);
           cursor += 1;
           continue;
         }
@@ -253,55 +287,72 @@ export const Transcript = memo(function Transcript({ sessionId, items, working =
           cursor += 1;
           continue;
         }
-        // 连续工具调用/回执：保持原有配对，逐行渲染。
-        const tools: Array<ToolUseItem | ToolResultItem> = [];
+        // 连续工具调用：逐行渲染，回执挂在各自的调用行上（配对见 collectSubagentReceipts 的 results）。
+        // 回执本身不单独成行：它要么已经挂在调用上，要么是找不到调用的孤儿（委派的晚到结局
+        // 归子任务块管；调用落在已加载窗口之外的，等「加载更早」把调用读进来再配上）。
+        // 此前孤儿回执按旧样式画成一行「工具结果」，正文为空时是一个空行（走查 A10、C6）。
+        const tools: ToolUseItem[] = [];
+        const groupStart = cursor;
         while (cursor < processItems.length) {
           const candidate = processItems[cursor];
           if (candidate.type === "tool_use" && isSubagentDelegation(candidate, outcomes)) break;
           if (candidate.type !== "tool_use" && candidate.type !== "tool_result") break;
-          tools.push(candidate);
+          if (candidate.type === "tool_use") tools.push(candidate);
           cursor += 1;
         }
         if (tools.length === 0) continue;
-        const results = new Map<string, ToolResultItem>();
-        for (const tool of tools) {
-          if (tool.type === "tool_result" && tool.tool_use_id) results.set(tool.tool_use_id, tool);
-        }
-        const consumed = new Set<string>();
-        for (const tool of tools) {
-          if (tool.type !== "tool_use") continue;
-          const result = results.get(tool.id);
-          if (result) consumed.add(result.id);
-        }
         nodes.push(
-          <div className="chat-flat-steps" key={`tools-${tools[0].id}`}>
-            {tools.map((tool) => {
-              if (tool.type === "tool_use") {
-                return <ToolActivity key={tool.id} item={tool} result={results.get(tool.id)} />;
-              }
-              return consumed.has(tool.id) ? null : <Message key={tool.id} item={tool} />;
-            })}
+          <div className="chat-flat-steps" key={`tools-${processItems[groupStart].id}`}>
+            {tools.map((tool) => <ToolActivity key={tool.id} item={tool} result={results.get(tool.id)} />)}
           </div>,
         );
       }
-      return nodes;
+      // 这一段的活动态经 context 给到每条工具行与子任务块。
+      return nodes.map((node) => (
+        <TurnLiveContext.Provider key={node.key} value={blockActivity}>{node}</TurnLiveContext.Provider>
+      ));
     };
+    for (const entry of processItems) {
+      if (entry.type === "tool_use" && !results.has(entry.id)) record.unresolved.push(entry.id);
+    }
 
     // 只有一条思考/工具时原样平铺，≥2 条才收成汇总块（Kimi 的 ActivityRun 分组规则）：
     // 单条工具外面再套一层「已运行 1 条命令」是重复信息。工具与它的回执算一条。
     const units = processItems.filter((entry) => entry.type !== "tool_result").length;
-    // 运行中 = 会话在工作、这一段在末尾、后面还没有正文（正文一到，这段过程就算结束）。
-    const running = working && isLive && bodyItems.length === 0;
+    // 这一段过程还在进行 = 会话在进行、这一段在末尾、过程之后还没有正文（正文一到，这段过程就算结束）。
+    // 看的是「末条是不是正文」，不是「这一段有没有正文」：先说要做什么再调用工具是最常见的顺序，那段正文
+    // 排在工具之前。只看有没有正文时，命令还在跑、还在等批准，过程块却收起并写着「1 次已中断」
+    // （2026-11-14 截图自验，kimi 与 opencode 的样本都是这个顺序）。
+    const tail = turnItems[turnItems.length - 1];
+    const processOpen = bodyItems.length === 0 || (tail.type !== "assistant_text" && tail.type !== "assistant_delta" && tail.type !== "turn_error");
+    // 「在末尾」也算上后面只跟着用户消息的情形：回合中途又发了一条，那句话排在这段之后，可这段过程并没有
+    // 结束。只看是不是时间线最后一段时，命令还在跑，过程块却收起并写着「1 次已中断」（2026-11-14 截图自验，
+    // 运行中再发的场景；工具行自己是运行中，被收在里面看不见）。blockActivity 不是 idle 已经保证了这段之后
+    // 没有回合边界。
+    const stillLast = isLive || (blockActivity !== "idle" && items.slice(next).every((later) => later.type === "user_text"));
+    record.trailing = stillLast && !isLive;
+    const foldActivity: TurnActivity = stillLast && processOpen ? blockActivity : "idle";
+    // 一条调用都没有、只剩回执的段（调用落在已加载窗口之外）什么都不画：不单列这一档的话，
+    // 它会被套成一个空的过程块，摘要写着「思考过程」。为它插的日期分隔条也撤掉，游标还原，
+    // 留给下一段去插。
+    if (units === 0 && bodyItems.length === 0) {
+      if (record.daySep) lastDay = record.lastDayBefore;
+      record.nodes = [];
+      record.daySep = false;
+      index = next;
+      continue;
+    }
     if (units === 1) {
       record.nodes.push(...renderProcess());
-    } else if (processItems.length > 0) {
+    } else if (units > 1) {
       record.nodes.push(
         <TurnFold
           key={`fold-${turnItems[0].id}`}
           id={turnItems[0].id}
           items={processItems}
+          results={results}
           durationMs={durationMs}
-          running={running}
+          activity={foldActivity}
         >
           {renderProcess()}
         </TurnFold>,
@@ -335,7 +386,7 @@ export const Transcript = memo(function Transcript({ sessionId, items, working =
       // 回合级折叠(对照 Kimi):回复已结束(运行中不折,过程要看得见)、最后一段有正文、
       // 正文之前确实有东西可收(前面还有别的段,或本段有思考/工具)。
       // 运行中不折：这段回复在末尾，或者它后面只隔着插话、仍属于正在进行的回合。
-      const settled = !(working && (isLive || index > lastTurnStart));
+      const settled = blockActivity === "idle";
       const finalText = bodyItems.some((entry) => (entry.type === "assistant_text" || entry.type === "assistant_delta") && entry.text.trim());
       const replyStart = record.reply ?? index;
       const hasEarlier = replyStart < index;
@@ -350,7 +401,7 @@ export const Transcript = memo(function Transcript({ sessionId, items, working =
     }
     index = next;
   }
-  cacheRef.current = { sessionId, t, foldTurns, working, items, blocks, outcomes, settledAt };
+  cacheRef.current = { sessionId, t, foldTurns, items, blocks, outcomes, settledAt };
   // 拼装:同一段回复的各块连在一起;最后一块带 fold 的,把它切点之前和前面各块的节点收进
   // ReplyFold。日期分隔条提到折叠外面:它标的是日期,收进去就看不出跨了天。
   const nodes: JSX.Element[] = [];
@@ -385,5 +436,9 @@ export const Transcript = memo(function Transcript({ sessionId, items, working =
     at = end;
   }
   // 折叠块的开合按会话各记一份（最近 4 个会话），切走再回来原样还原，见 foldMemory。
-  return <FoldScopeContext.Provider value={foldScope(sessionId)}>{nodes}</FoldScopeContext.Provider>;
+  return (
+    <SessionAliveContext.Provider value={sessionAlive}>
+      <FoldScopeContext.Provider value={foldScope(sessionId)}>{nodes}</FoldScopeContext.Provider>
+    </SessionAliveContext.Provider>
+  );
 });

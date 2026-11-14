@@ -75,8 +75,8 @@ describe("#16 读屏与键盘", () => {
     const notch = document.querySelector(".isl-notch")!;
     const label = notch.getAttribute("aria-label")!;
     expect(label).not.toContain("点击展开会话列表");
-    expect(label).toContain(zh.island.ariaCount(2, zh.island.toneLabel.running));
-    expect(label).toContain(zh.island.ariaCount(1, zh.island.toneLabel.pending));
+    expect(label).toContain(zh.island.ariaCount(2, zh.vocab.session.running));
+    expect(label).toContain(zh.island.ariaCount(1, zh.vocab.session.pending));
   });
 
   it("提醒态的名字说清是哪个会话、什么事、按 Enter 做什么，并经 live region 播报", () => {
@@ -88,7 +88,7 @@ describe("#16 读屏与键盘", () => {
     });
     // 提醒里还有「打开」「关闭」按钮，整块不能再是 role=button（按钮里套按钮，读屏念不出里面的）：
     // 名字挂在正文那块按钮上。
-    const main = screen.getByRole("button", { name: zh.island.alertAria("修登录页", zh.pending.approval) });
+    const main = screen.getByRole("button", { name: zh.island.alertAria("修登录页", zh.vocab.request.approval) });
     expect(main.querySelector("button")).toBeNull();
     expect(screen.getByRole("status").textContent).toContain("修登录页");
     fireEvent.keyDown(main, { key: "Enter" });
@@ -150,7 +150,7 @@ describe("#34 长文本与圆点", () => {
   it("出错提醒的状态词固定，详情进可省略的 detail 并带 title", () => {
     const detail = "API Error: 529 overloaded_error · the model is overloaded, please retry later";
     renderIsland({ sessions: [mk()], alert: { sessionId: 1, kind: "error", title: "修测试", project: "api", detail } });
-    expect(document.querySelector(".isl-alert-sub .isl-state")!.textContent).toBe(zh.island.toneLabel.error);
+    expect(document.querySelector(".isl-alert-sub .isl-state")!.textContent).toBe(zh.vocab.session.error);
     const el = document.querySelector(".isl-alert-detail")!;
     expect(el.textContent).toBe(detail);
     expect(el.getAttribute("title")).toBe(detail);

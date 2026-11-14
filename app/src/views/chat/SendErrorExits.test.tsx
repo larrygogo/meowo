@@ -65,6 +65,35 @@ describe("SendErrorExits", () => {
     expect(focusComposer).not.toHaveBeenCalled();
     expect(onGoTerminal).not.toHaveBeenCalled();
   });
+
+  // 终端草稿读不全时由人选择（做空①）：两个选择排在最前；会丢内容的那个要点两次。
+  it("由人决定的选择：直接执行的点一次，带确认的第一下只换文案、第二下才执行", () => {
+    const keep = vi.fn();
+    const discard = vi.fn();
+    const actions = [
+      { label: zh.chat.composerSendWithDraft, run: keep },
+      { label: zh.chat.composerDiscardDraft, confirmLabel: zh.chat.composerDiscardConfirm, run: discard },
+    ];
+    render(<SendErrorExits exit={{ terminal: true, actions }} sessionId={1} onGoTerminal={() => {}} onDismiss={() => {}} focusComposer={() => {}} />);
+    expect(labels()).toEqual([zh.chat.composerSendWithDraft, zh.chat.composerDiscardDraft, zh.chat.goTerminal, zh.chat.slashMenuDismiss]);
+    fireEvent.click(screen.getByRole("button", { name: zh.chat.composerDiscardDraft }));
+    expect(discard).not.toHaveBeenCalled();
+    expect(labels()).toEqual([zh.chat.composerSendWithDraft, zh.chat.composerDiscardConfirm, zh.chat.goTerminal, zh.chat.slashMenuDismiss]);
+    fireEvent.click(screen.getByRole("button", { name: zh.chat.composerDiscardConfirm }));
+    expect(discard).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("button", { name: zh.chat.composerSendWithDraft }));
+    expect(keep).toHaveBeenCalledTimes(1);
+  });
+
+  it("手机远程：两个选择同样在，看终端画面是就地展开", () => {
+    markRemoteUi();
+    const actions = [
+      { label: zh.chat.composerSendWithDraft, run: () => {} },
+      { label: zh.chat.composerDiscardDraft, confirmLabel: zh.chat.composerDiscardConfirm, run: () => {} },
+    ];
+    render(<SendErrorExits exit={{ terminal: true, actions }} sessionId={7} onGoTerminal={() => {}} onDismiss={() => {}} focusComposer={() => {}} />);
+    expect(labels()).toEqual([zh.chat.composerSendWithDraft, zh.chat.composerDiscardDraft, zh.chat.remoteOpenKeys, zh.chat.slashMenuDismiss]);
+  });
 });
 
 describe("focusAfterRemoval", () => {
@@ -116,5 +145,21 @@ describe("focusAfterRemoval", () => {
     expect(document.activeElement).toBe(document.body);
     ul.remove();
     composer.remove();
+  });
+});
+
+// 一排出路里红色只留给会丢内容的那一个（截图自查 2026-11-15：四个红钮分不出轻重）。
+describe("SendErrorExits 按钮的轻重", () => {
+  it("要二次确认的是红钮，其余出路是中性钮", async () => {
+    const { render, screen } = await import("@testing-library/react");
+    const { SendErrorExits: Exits } = await import("./SendErrorExits");
+    render(<Exits
+      exit={{ terminal: true, actions: [{ label: "连同草稿发送", run: () => {} }, { label: "放弃草稿后发送", confirmLabel: "确认放弃草稿", run: () => {} }] }}
+      sessionId={1} onGoTerminal={() => {}} onDismiss={() => {}} focusComposer={() => {}}
+    />);
+    const plain = (name: string) => screen.getByRole("button", { name }).classList.contains("is-plain");
+    expect(plain("放弃草稿后发送")).toBe(false);
+    expect(plain("连同草稿发送")).toBe(true);
+    expect(screen.getAllByRole("button").filter((b) => !b.classList.contains("is-plain"))).toHaveLength(1);
   });
 });

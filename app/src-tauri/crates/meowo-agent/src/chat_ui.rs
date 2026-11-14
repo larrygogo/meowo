@@ -132,11 +132,10 @@ pub enum SelectorAnchorKind {
 
 /// composer 草稿的「收起 → 提交后自动还原」能力(issue #72)。对话页往 PTY 写正文前按
 /// `input` 收走用户在终端输入行里未提交的草稿,免得它拼进消息;CLI 在下一次提交后自己
-/// 还原草稿。判断全看**仿真后的整屏**(增量字节不可靠:渲染器按字符差分重绘):
-/// - 最下方「上一行整行都是 `composer_border` 字符、本行以 `composer_prompt` 开头」的行
-///   就是 composer 首行(边框约束防止把历史里回显的用户消息认成 composer);只剩提示符
-///   = 空,**不按键**。
-///   这一步不能省——键是切换语义,composer 空且已有暂存时按下 = 把暂存放回 composer。
+/// 还原草稿。认输入框用同一份 [`ComposerSpec`] 的框体规则；判断全看**仿真后的整屏**
+/// (增量字节不可靠:渲染器按字符差分重绘):
+/// - 输入框空 = **不按键**。这一步不能省——键是切换语义,composer 空且已有暂存时按下 =
+///   把暂存放回 composer。
 /// - 非空才按;`stashed_marker` 是「当前有暂存」的常驻标记,按前有、按后消失即误放出了
 ///   用户手动暂存的内容,再按一次收回。
 ///
@@ -144,11 +143,25 @@ pub enum SelectorAnchorKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
-pub struct DraftStash {
+pub struct ComposerStash {
     pub input: &'static str,
-    pub composer_prompt: &'static str,
-    pub composer_border: char,
     pub stashed_marker: &'static str,
+}
+
+/// 输入框处在另一种输入模式（Gemini 的 shell 模式、vim NORMAL）：这时写进去的字不是普通消息
+/// （会被当成 shell 命令 / vim 命令执行）。认出来之后先按 `exit_input` 退回普通模式，复核
+/// 退出了才写正文；退不出就不写，并按 `id` 给出说明。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+pub struct ComposerAltMode {
+    /// 模式标识（`shell` / `vim_normal`），前端按它选说明文案。
+    pub id: &'static str,
+    /// `prompt_pattern`：匹配输入框首行（去掉框线之后）；`below_pattern`：匹配输入框底边之下的
+    /// 任意一行（状态行）。二者任一命中即处在这个模式。
+    pub prompt_pattern: Option<&'static str>,
+    pub below_pattern: Option<&'static str>,
+    pub exit_input: &'static str,
 }
 
 /// 数字选择器的锚点项:该 provider 的选择器里**固有出现**的选项文案(小写子串匹配)。
@@ -194,6 +207,135 @@ pub enum AttentionDetails {
     /// 以 ● 焦点做相对移动，回车选中（gemini 0.65 AskUserDialog 源码取证，2026-11-12，未实拍）。
     /// 与 `FramedBox` 的区别在语义：这是提问，不是命令审批，前端出提问卡。
     FramedForm,
+    /// 横排选项行：标题行之下是正文，末行是 `Allow once   Allow always   Reject` 这样用多个空格
+    /// 隔开的选项，同行尾部带 `⇆ select  enter confirm` 按键说明。焦点只用底色表示，文本里
+    /// 认不出，所以**不靠键盘焦点作答**：选项可以用鼠标点（程序文件里每个选项都挂着 `onMouseUp`），
+    /// 对话页按屏幕上那个选项的位置发一次点击，与焦点在哪无关。1.19.5 真机：把焦点挪到 Reject 之后点
+    /// `Allow once`，CLI 只放行这一次（tests/probe_tui_script.rs 的 click 步骤，2026-11-15）。
+    /// Esc 等于末项，同样与焦点无关。键盘的相对移动（→ 下一项、回车选中）只在确认页刚弹出、焦点
+    /// 确定在第一项时用。
+    /// opencode 1.19.2 真机屏幕 + 1.19.5 程序文件内嵌 JS 取证（权限框的 `left/right/return/escape`
+    /// 绑定，2026-11-14）。
+    OptionRow,
+}
+
+/// 屏幕上这条可操作提示**是什么事**。前端按它定卡片的标题、徽章和按钮形态，
+/// 不再从 `id` 的后缀猜（`gemini:usage-limit` 曾因此被说成「启动步骤」、徽章写「待批准」）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+pub enum AttentionKind {
+    /// 工具或命令在等用户放行。
+    Approval,
+    /// 计划写好了，等用户批准后执行。
+    Plan,
+    /// Agent 向用户提问。
+    Question,
+    /// CLI 自己要用户选一项才能继续（额度耗尽后重试还是停下、长会话怎么恢复），
+    /// 不是审批，也不是 Agent 的提问。
+    Choice,
+}
+
+/// 屏幕上一个选项**起什么作用**。卡片只按它摆按钮，不看选项的文案。
+///
+/// 此前前端用正则认各家的英文选项文案（`Approve for this session`、`switch to auto mode`）来决定
+/// 哪个是「允许一次」、哪个是「拒绝」，适配知识落在界面层；兜底还会出错：只认出
+/// `Allow always / Reject` 两项时，「允许一次」发出去的是 Allow always（做空审查 2026-11-14）。
+/// 现在由插件随规则声明（[`AttentionOptionRule`]），认不出的一律是 `Other`。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+pub enum OptionRole {
+    /// 只放行这一次。卡片上的「允许一次」只认它：请求里没有这个角色，就没有这颗按钮。
+    AllowOnce,
+    /// 放行并记住（范围见 [`PersistScope`]）。
+    AllowPersistent,
+    /// 拒绝这一次。
+    Deny,
+    /// 拒绝并附一句说明（说明要在终端里现场打字，流程见 [`TypedInput`]）。
+    DenyWithFeedback,
+    /// 提问表单里的自定义答案项（同样要现场打字）。
+    CustomAnswer,
+    /// 选了它 CLI 会退出、会话结束（启动确认页上的 `No, exit`）。卡片在按钮上写明后果。
+    Exit,
+    /// 认不出作用的选项：卡片照终端原文列成普通按钮，不带数字快捷键，不冒充允许或拒绝。
+    Other,
+}
+
+/// 这张选择卡在问什么。CLI 自己的确认页标题是英文原文，卡片的通用标题只说「终端正在等待你的选择」；
+/// 插件为认得的页面给一个主题，卡片据此用一句人话说清这是什么事（文案在前端 i18n）。原文照常摆在卡内。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+pub enum AttentionNotice {
+    /// 以跳过全部审批的权限档启动时，CLI 要用户确认承担后果。
+    BypassPermissions,
+    /// 环境里有一个自定义 API 密钥，CLI 问要不要用它。
+    CustomApiKey,
+}
+
+/// 持久放行记到哪里为止。按钮上的说法由它决定（本会话内允许 / 允许并记住 / 允许并切到自动模式）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+pub enum PersistScope {
+    /// 只到这个会话（或这个 CLI 进程）结束。
+    Session,
+    /// 写进规则，以后的会话也生效。
+    Remember,
+    /// 放行并把会话切到自动模式（claude 2.1.325 的 `Yes, and switch to auto mode`）。
+    AutoMode,
+}
+
+/// 要在终端里**现场打字**的选项怎么作答（「说明并拒绝」的说明、提问表单的自定义答案）。
+///
+/// 流程三步，每一步都不盲按：先让这一项进入等输入的状态，屏幕上认出 `ready_pattern` 才打字，
+/// 打完再按 `submit_input`。认不出就停在第一步，不往终端里打字：审批框里数字键就是选项
+/// （kimi 面板里 `1` 是 Approve once），没进输入状态时打进去的字可能变成放行。
+///
+/// **每家都要真机走通才能声明**（tests/probe_deny_feedback.rs、tests/probe_kimi_other.rs）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+pub struct TypedInput {
+    /// 怎么让这一项进入等输入的状态。None = 按这一项自己的选中键就进（kimi 的数字键）；
+    /// Some(key) = 先把焦点移到这一项（不回车），再按 key（claude 在「No」上按 Tab）。
+    pub amend_input: Option<&'static str>,
+    /// 进入等输入状态后屏幕上出现的那一行（JS 正则，前端以 `im` 编译）。认出才打字。
+    pub ready_pattern: &'static str,
+    /// 打完字后的提交键。
+    pub submit_input: &'static str,
+}
+
+/// 一条「选项文案 → 角色」的规则。前端拿屏幕上解析出的每个选项的文字，按声明顺序逐条试，
+/// 第一条命中的定角色；都不命中是 [`OptionRole::Other`]。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+pub struct AttentionOptionRule {
+    /// JS 正则源码，对选项文字（去掉首尾空白）匹配，前端以 `i` 编译。
+    /// 捕获组 1（如有）= 放行的对象（`don't ask again for: curl *` 里的 `curl *`），按钮上带出来。
+    pub pattern: &'static str,
+    pub role: OptionRole,
+    /// 只对 `AllowPersistent` 有意义。None = 范围认不出，按钮照搬终端原文。
+    pub scope: Option<PersistScope>,
+    /// 这一项可以（或必须）带一句现场打的字。None = 不能，或还没真机验证过。
+    /// `DenyWithFeedback`、`CustomAnswer` 没有它时卡片上不出入口（点了也完成不了）；
+    /// `Deny` 带着它 = 拒绝项可以追加说明（claude 的 Tab to amend）。
+    pub typed: Option<TypedInput>,
+}
+
+/// 选项行没解析出来时也成立的按键（只填真机验证过、与焦点位置无关或焦点位置确定的）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+pub struct RoleKey {
+    pub role: OptionRole,
+    pub input: &'static str,
 }
 
 /// 屏幕上**可操作**提示的识别规格：审批框、长会话确认这类需要用户当场决定的整句提示。
@@ -210,8 +352,8 @@ pub enum AttentionDetails {
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
 pub struct AttentionPattern {
-    /// 卡片标识（如 `"claude:command-approval"`）。前端按它决定卡片形态与按键语义，
-    /// 取值必须与前端已实现的分支一致，不能随意造新的。
+    /// 规则标识（如 `"claude:command-approval"`），只用来去重、写日志和对上漂移检查的清单。
+    /// 前端**不按它**决定卡片的标题、徽章或按钮：那些由 `kind` 与 `details` 决定。
     pub id: &'static str,
     /// JS 正则源码（不含分隔符与标志），**任一命中**即算命中该卡片。
     /// 前端统一以 `im`（+ `last` 时加 `g`）标志编译，故 `^`/`$` 按行匹配。
@@ -223,6 +365,28 @@ pub struct AttentionPattern {
     pub last: bool,
     /// 详情区的屏幕文法风格（见 [`AttentionDetails`]）。None = 不做结构化拆解。
     pub details: AttentionDetails,
+    /// 这条提示是什么事（见 [`AttentionKind`]）。卡片的标题、徽章由它决定。
+    pub kind: AttentionKind,
+    /// 这一屏是另一条规则里某个选项的二次确认页时，填那条规则的 id（opencode 选 Allow always
+    /// 后的「Always allow」确认页）。用户刚在 Meowo 的卡片上点了那个选项，Meowo 认出这一屏后
+    /// 替他按下确认，对话页上一次点击就完成；用户自己在终端里走到这一屏的，照常出卡。
+    pub confirms: Option<&'static str>,
+    /// 选项文案 → 角色（见 [`AttentionOptionRule`]）。空 = 这条提示的选项不分角色，
+    /// 卡片把它们原样列成普通按钮（额度耗尽后重试还是停下、长会话怎么恢复）。
+    pub options: &'static [AttentionOptionRule],
+    /// 选项行还没画出来、或滚出了屏幕时仍然成立的按键（见 [`RoleKey`]）。空 = 认不出选项就不猜按键，
+    /// 卡上只有「仅收起」。
+    pub unparsed_keys: &'static [RoleKey],
+    /// 这张卡在问什么（见 [`AttentionNotice`]）。None = 卡片只用种类的通用标题。
+    pub notice: Option<AttentionNotice>,
+    /// 同屏还必须有的几行（JS 正则，`im`，逐条都要在命中处**之后**匹配到）。整句规则只凭一句话出卡，
+    /// 正文里引用那句话（讨论这个页面、cat 出源码注释或测试样本）就会误弹卡并锁住输入框，点卡上的
+    /// 选项还会往正常的输入框里发按键（第二轮审查 2026-11-15）。全屏确认页把它的选项行、按键提示行
+    /// 都列在这里，缺一样不出卡。空 = 不加这层保护。
+    pub anchors: &'static [&'static str],
+    /// 最后一条 anchor 之后最多还能有几行非空内容。全屏确认页填 0：页面在屏幕末段，后面不会有
+    /// 输入框或别的输出。None = 不限。
+    pub tail_lines: Option<u8>,
 }
 
 /// 屏幕回显标记：TUI 状态栏上代表某个模式值的稳定文案片段（如 claude 的 "plan mode on"）。
@@ -288,6 +452,47 @@ pub struct CommandReply {
     pub reject_pattern: &'static str,
 }
 
+/// 带参切换命令（`/model sonnet`、`/effort high`）在对话进行到一半时弹出的二次确认框。
+///
+/// claude 2.1.325 真机取证（tests/probe_claude_model.rs，2026-11-14）：会话里已经有过回合、提示缓存
+/// 还热着时，`/model haiku` 不直接切，先弹：
+/// ```text
+///    Switch model?
+///    Your next response will be slower and use more tokens
+///    This conversation is cached for the current model. Switching to Haiku 5.5 means the full history gets re-read.
+///    ❯ 1. Yes, switch to Haiku 5.5
+///      2. No, go back
+/// ```
+/// 此前对话页不认识它：命令发出去后等不到确认行，报「未确认」，确认框留在终端里挡着输入框，
+/// 之后发的消息被它吞掉（回合结束后自动执行的切换同样撞上，验收 6）。
+///
+/// 用户已经在对话页选定了要切到哪一个，所以认出这个框、且框里要切到的正是所选的那一个、
+/// 焦点就在「Yes」那一行时，替他按下确认。
+///
+/// **只替用户确认这一种**。同一个确认组件还用于别的事：2.1.325 程序文件里与上面几句相邻的还有
+/// `A PreModelSwitch hook asked you to confirm`，那是用户自己配的 hook 要求人来确认，Meowo 不能代按
+/// （做空审查 2026-11-14）。所以自动确认要同时满足：框里有 `auto_pattern` 那一行（「因为缓存，下一条
+/// 回复更慢」这个已知的、用户选模型时就隐含同意的理由）、没有 `manual_pattern` 那一行、焦点在确认项上、
+/// 目标对得上。任何一条不满足都不按键，这个框作为一张普通的选择卡交给用户（规则
+/// `claude:switch-confirm`），不留在终端里。
+/// 几条正则都按**不区分大小写**、逐行匹配（前端带 i 标志编译）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+pub struct SwitchConfirm {
+    /// 确认框的标题行（整行）。
+    pub title_pattern: &'static str,
+    /// 带着焦点的确认项那一行，捕获组 1 = 要切到的目标（模型显示名或思考档）。
+    /// 前端核对它含所选的那一个才按键。
+    pub accept_pattern: &'static str,
+    /// 确认键（焦点已在确认项上时按）。
+    pub accept_input: &'static str,
+    /// 标题与确认项之间必须有的那一行：有它才是「切到刚选的那一个」这种可以代按的确认。
+    pub auto_pattern: &'static str,
+    /// 标题与确认项之间出现它就不代按（hook 要求人来确认）。None = 没有这种情况。
+    pub manual_pattern: Option<&'static str>,
+}
+
 /// 撤回最近几轮对话的能力（对照 Kimi 桌面版用户消息上的「撤回」：这条及之后移出上下文，
 /// 原文放回输入框）。轮数由前端按「非插话的用户消息」数——插件须保证 transcript 里插话标了
 /// interjected，否则计数与 CLI 对不上。撤回是否生效以 transcript 为准（被撤的消息从对话里
@@ -305,40 +510,15 @@ pub struct UndoControl {
     pub restores_files: bool,
     /// CLI 拒绝撤回的屏幕行（整行原样带给用户；前端带 i 标志编译）。None = 未取证。
     pub reject_pattern: Option<&'static str>,
-    /// CLI 撤回后把原文放回**它自己的**输入框时（opencode / claude），清掉它的方式。原文已放进
-    /// 对话页输入框，终端里那份不清，下一次发送会拼在新消息前面（真机复现过）。None = 不放回。
-    pub input_clear: Option<UndoInputClear>,
+    /// CLI 撤回后把原文放回**它自己的**输入框（opencode / claude）。原文已放进对话页输入框，
+    /// 终端里那份不清，下一次发送会拼在新消息前面（真机复现过）。清它用 [`ComposerSpec`] 的
+    /// `clear_inputs`：先在屏幕上认出输入框、确认里面是原文才按——清空键在空输入框上另有含义
+    /// （opencode 的 Ctrl-C 空框是退出，claude 的双 Esc 空框是打开回退菜单）。按后复核。
+    pub returns_input: bool,
     /// 撤回命令打开的是选择菜单（claude `/rewind`）时的操作规格；None = 命令直接生效。
     /// 菜单式撤回**不写 transcript**（claude 回退零写入，下一条消息才长出新分支），成败只能
     /// 看屏幕：原文回到 CLI 输入框即成，前端随之在本地收掉被撤的消息。
     pub menu: Option<UndoMenu>,
-}
-
-/// 撤回后清终端输入框：先在屏幕上认出输入框、确认里面是原文才按键——清空键在空输入框上
-/// 另有含义（opencode 的 Ctrl-C 空框是退出，claude 的双 Esc 空框是打开回退菜单）。按后复核。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
-#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
-pub struct UndoInputClear {
-    /// 依次发送的清空键（分开写：两个 Esc 合成一次写入会被当成 Alt+Esc）。
-    pub inputs: &'static [&'static str],
-    pub composer: UndoComposer,
-}
-
-/// 屏幕上认输入框的方式。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
-#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum UndoComposer {
-    /// 底边行（`bottom_prefix` 开头）之上、连续以 `row_prefix` 开头的行（opencode 的 `┃`/`╹`）。
-    Block {
-        row_prefix: &'static str,
-        bottom_prefix: &'static str,
-    },
-    /// 以 `prompt` 开头、上一行整行是 `border` 的那行起（claude 的 `❯` 夹在 `─` 横线间，同
-    /// DraftStash）。
-    Prompt { prompt: &'static str, border: char },
 }
 
 /// 菜单式撤回的操作规格（claude `/rewind`，2.1.314 真机取证，tests/probe_claude_rewind.rs）：
@@ -384,11 +564,79 @@ pub struct SideQuestion {
     pub close_input: &'static str,
 }
 
-/// 只认真实取证过的空输入框，非空或框体不完整时必须保留原稿并停止 GUI 提交。
+/// 输入框的内容区右边界从哪条边往里数（见 [`ComposerFidelity::wrap_inset`]）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+pub enum ComposerWrapEdge {
+    /// 输入框底边那一行的右端（有框的 TUI：框不一定贴着终端右沿）。
+    Border,
+    /// 终端右沿（没有框，或框与终端同宽）。读屏的帧里不带终端列数时无法判定，按读不全处理。
+    Terminal,
+}
+
+/// 输入框的可视高度跟着终端行数走：最多画 `max(floor, (终端行数 − reserve) / divisor)` 行，
+/// 超出时只画草稿的最后几行、**不画任何标记**（见 [`ComposerFidelity::overflow_height`]）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
-pub struct ComposerGuard {
+pub struct ComposerHeightCap {
+    pub reserve: usize,
+    pub divisor: usize,
+    /// 再矮的终端也至少画这么多行；读屏的帧里不带终端行数时就按它判（最保守）。
+    pub floor: usize,
+}
+
+/// 草稿能不能从屏幕上**原样**读回来的判定依据，每家一份，全部来自真机取证
+/// （tests/probe_draft_fidelity.rs：2026-11-14 在 120×40；2026-11-15 换终端宽度与高度复核，
+/// 一行能放的格数先在真机上量出来，再与这里的算法对）。
+///
+/// 为什么要有：对话页发送前把终端里的草稿清掉、搬进对话页输入框。屏幕只是 CLI 画出来的样子，
+/// 有三种情况屏幕上的字不等于草稿原文，清掉就是丢内容（做空①）：
+/// - 大段粘贴被 CLI 折成一个占位（`[Pasted Content 5120 chars]`），原文不在屏幕上；
+/// - 草稿比输入框的可视高度长，只画出最后几行；
+/// - 一行太长被框宽折成几行，屏幕上分不出这是折行还是用户敲的换行。
+///
+/// 口径是「保不住就不清」：命中任何一条都判读不全，Meowo 一个键也不按，草稿留在终端里，对话页
+/// 给出由人选择的出路。五家实拍里终端仿真层的折行标记（vt100 `row_wrapped`）在输入框的行上都是
+/// false：TUI 逐行定位重画，不靠终端自动折行。所以折行只能按宽度推断，推断不出就算读不全。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+pub struct ComposerFidelity {
+    /// 粘贴或图片占位：草稿任一行里出现就判读不全。宁可认宽（用户手打了一段同样的字也算）。
+    pub paste_pattern: &'static str,
+    /// 「上面 / 下面还有没显示的行」的标记：在输入框上边框到底边之间任一整行上匹配。
+    /// None = 这一家超出可视高度时不画标记，靠 `overflow_rows`。
+    pub overflow_pattern: Option<&'static str>,
+    /// 不画标记的家：屏幕上的草稿行数达到这个数，就可能还有没显示的行，判读不全。取这一家
+    /// 输入框可视高度的下限（恰好这么多行的草稿会被多判，方向是保守）。
+    pub overflow_rows: Option<usize>,
+    /// 不画标记、且可视高度跟着终端行数走的家：屏幕上的草稿行数达到按终端行数算出的上限就判读不全。
+    pub overflow_height: Option<ComposerHeightCap>,
+    pub wrap_edge: ComposerWrapEdge,
+    /// 内容区右边界 = `wrap_edge` 那条边的列数 − 这个数。只能取大不能取小：取小了会把折行
+    /// 误认成换行。
+    pub wrap_inset: usize,
+}
+
+/// 终端输入框的规格：**每家只有这一份**，认框、判空、收草稿、清原文、退出特殊输入模式全用它。
+///
+/// 此前有三份各认各的（草稿暂存用的只有 claude、撤回清原文用的只有 claude 与 opencode、
+/// 发送前判空用的只有另外四家），每个功能只接其中一份：某家缺哪一份，对应功能就静默失效或
+/// 退成「请到终端处理」（走查输入 A1、A4、B6）。现在发送前收草稿、撤回后清原文、切模型前搬
+/// 草稿、未确认回显核对、子代理视图定位都读这一份；架构测试拦着不让第二份再长出来。
+///
+/// 认框只认真实取证过的框体；框体不完整一律按「认不出」，不猜。
+///
+/// 占位文字与内容相同的真实草稿怎么分（2026-11-14 五家真机取证，见各插件注释）：占位时硬件
+/// 光标停在输入起点，真打出来的字光标在文末。读屏时带上光标位置即可分开；没有光标信息时
+/// 退回只看文字（`empty_pattern`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+pub struct ComposerSpec {
     /// Codex 用 prompt 与状态 footer 定界；有边框的 TUI 不启用这个布局。
     pub prompt_footer: bool,
     /// 捕获组 1 必须是输入起点之前的物理前缀；占位文字可能另有灰字缩进，不能反推光标。
@@ -402,6 +650,26 @@ pub struct ComposerGuard {
     pub tail_rows: usize,
     pub tail_pattern: Option<&'static str>,
     pub empty_pattern: &'static str,
+    /// 认不出输入框时对话页还发不发：false = 照发（claude 多年如此，另有提示识别、子代理视图等
+    /// 守卫兜着）；true = 不发，错误条给看终端画面与「仍然发送」的出口。
+    pub send_requires_recognition: bool,
+    /// 收起草稿、提交后 CLI 自己还原（见 [`ComposerStash`]）。有它时发送前优先用它：草稿留在
+    /// 终端里原样回来。None = 没有这种键，改用 `clear_inputs` 清空并把草稿搬进对话页输入框。
+    pub stash: Option<ComposerStash>,
+    /// 清空输入框的按键，逐个分开写（两个 Esc 合成一次写入会被当成 Alt+Esc）。**只在认出输入框
+    /// 里有字时才按**：这些键在空输入框上另有含义（退出、打开回退菜单）。空表 = 未取证，不清。
+    pub clear_inputs: &'static [&'static str],
+    /// 一轮 `clear_inputs` 清不完时最多重复几轮，每轮后复核（gemini 用行删除键逐行清）。
+    /// 1 = 一轮清空整段。
+    pub clear_rounds: u8,
+    /// 回合进行中按 `clear_inputs` 是否只清草稿、不打断回合（逐家真机取证）。false = 运行中不清，
+    /// 错误条说明原因。
+    pub clear_while_running: bool,
+    /// 特殊输入模式（见 [`ComposerAltMode`]）。
+    pub alt_modes: &'static [ComposerAltMode],
+    /// 草稿能不能原样读回的判定依据（见 [`ComposerFidelity`]）。None = 没有取证，任何草稿都按
+    /// 读不全处理（不清）。
+    pub fidelity: Option<ComposerFidelity>,
 }
 
 /// 子代理视图（claude 在提示框下方的子代理面板里「打开」某个子代理）：此时 composer 改发给
@@ -426,6 +694,9 @@ pub struct ComposerGuard {
 #[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
 pub struct SubagentView {
     pub placeholder_prefix: &'static str,
+    /// 输入框上边框挂着子代理描述时的形态，捕获组 1 = 描述（`──── probe-sleeper ─`）。输入框本身
+    /// 用 [`ComposerSpec`] 认，这里只负责从上边框那一行取出描述。
+    pub label_pattern: &'static str,
     pub panel_main_label: &'static str,
     pub panel_pointer: &'static str,
     pub panel_viewed_marker: &'static str,
@@ -449,11 +720,22 @@ pub struct ChatUi {
     pub model_select_command: Option<&'static str>,
     /// `model_select_command` 之后 CLI 的回话（见 [`CommandReply`]）；None = 前端用通用确认文案兜底。
     pub model_select_reply: Option<CommandReply>,
+    /// 带参切换命令在对话中途弹的二次确认框（见 [`SwitchConfirm`]）；None = 这家没有这种框。
+    pub switch_confirm: Option<SwitchConfirm>,
     /// 打开「选模型」菜单的命令。预设为空但有它时，前端发这条命令并把 CLI 弹出的
     /// 交互菜单渲染成按钮——模型清单由 CLI 现给，不必宿主维护一份会过时的。
     pub model_menu_command: Option<&'static str>,
     /// 思考程度切换（见 [`EffortControl`]）；None = 不支持或未取证。
     pub effort: Option<EffortControl>,
+    /// 思考档在会话里怎么切（见 [`crate::EffortSwitchKind`]）。None = 这家在会话里切不了，
+    /// 前端不出思考档入口。与 `effort` 的区别：`effort` 只描述「打命令」这一种通路的细节，
+    /// 这里是「有没有、走哪条路」的总开关，经会话服务切的（Codex）也在内。
+    pub effort_switch: Option<crate::EffortSwitchKind>,
+    /// 在对话页选模型会不会顺带改写用户 CLI 的默认模型（新会话也跟着变）。各家不同、界面要说
+    /// （走查输入 C1）：true 时模型菜单里提醒一句。只对对话页自己走的那条通路声明。
+    pub model_select_saves_default: bool,
+    /// 在对话页切思考档会不会顺带改写用户 CLI 的默认配置。同上。
+    pub effort_saves_default: bool,
     /// 撤回最近几轮（见 [`UndoControl`]）；None = 不支持或未取证。
     pub undo: Option<UndoControl>,
     /// 侧问（见 [`SideQuestion`]）；None = 不支持或未取证。
@@ -497,6 +779,12 @@ pub struct ChatUi {
     /// Ctrl/Shift+Enter 在 composer 插入换行的注入序列(如 claude 的 ESC+CR)。
     /// None = 未声明,前端保持终端原生语义(带修饰的 Enter 与裸 Enter 同码 `\r`)。
     pub newline_input: Option<&'static str>,
+    /// 单行正文命中这条正则（JS 语法）时，也包成 bracketed paste 再写进终端；None = 单行照旧直接写。
+    ///
+    /// 多行正文本来就一律走 bracketed paste。单行直接写是为了兼容不开 bracketed paste 的旧 CLI，
+    /// 但有的 TUI 会把「一次写进来的一串字」里的某些字符当成快捷键吃掉（gemini 0.68.0 吞半角问号，
+    /// 见其插件注释）。命中的正文改走粘贴，TUI 按粘贴内容原样收下。
+    pub single_line_paste_pattern: Option<&'static str>,
     /// 当前会话支持 runtime 命令自发现、但权威清单尚未写入 transcript。前端据此继续随
     /// transcript 增量重试；一旦为 false 就停止探测，避免稳态轮询反复扫描文件。
     pub runtime_commands_pending: bool,
@@ -520,12 +808,9 @@ pub struct ChatUi {
     /// 这类重试不落 transcript，屏幕是唯一证据；不认的话重试期间对话页像卡死。
     /// 同 status_line_pattern：对方界面文案，宁可漏认不可误认。None = 不解析。
     pub retry_line_pattern: Option<&'static str>,
-    /// 发送前收起 composer 残留草稿的能力(见 [`DraftStash`])。None = 未取证,照旧直接写入
-    /// ——残留会拼进消息,但盲按一个未验证的键可能触发对方的别的功能,宁缺勿滥。
-    pub draft_stash: Option<DraftStash>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(test, ts(optional))]
-    pub composer_guard: Option<ComposerGuard>,
+    /// 终端输入框的规格（见 [`ComposerSpec`]）：认框、收草稿、清原文共用这一份。None = 这个
+    /// 版本的输入框未取证，对话页不读也不动它。
+    pub composer: Option<ComposerSpec>,
     /// 发送前切回主会话的能力(见 [`SubagentView`])。None = 该 agent 没有子代理视图或未取证。
     pub subagent_view: Option<SubagentView>,
     /// 会话里切模型的机制（见 [`crate::ModelSwitch`]）。None = 没有确定方式，前端退回终端菜单兜底。

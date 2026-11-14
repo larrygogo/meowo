@@ -1,15 +1,21 @@
 // 中文字典（基准）。en.ts 用 `typeof zh` 约束 key 与函数签名编译期对齐。
 // 注意：「(未命名会话)」是数据库 sentinel 不在此处——展示层用 sticker.waitingFirstInput 映射。
 import { attachmentInstructionZh } from "./attachmentInstruction";
+import statusVocab from "./statusVocab.json";
+
+// 状态词表（会话状态、待处理请求、送达状态）：词只在 statusVocab.json 里写一遍，这里挂成 t.vocab。
+// 下文凡是状态词都引用 vocab，不再写字面量（statusVocab.test.ts 扫描）。
+const vocab = statusVocab.zh;
 
 export const zh = {
   // BCP-47 locale：日期/时刻格式化走 Intl（12/24 小时制、月日顺序随语言），不再手拼。
   locale: "zh-CN",
+  vocab,
   // 应用内确认模态(confirm.tsx)的通用按钮。
   dialog: { ok: "确定", cancel: "取消", gotIt: "知道了" },
   // 渲染崩溃兜底（ErrorBoundary.tsx）：窗口级整页替换时显示。
-  crash: { title: "出错了", hint: "这个窗口遇到问题，重新加载即可恢复。", reload: "重新加载" },
-  tabs: { all: "全部", waiting: "待交互", running: "运行中" },
+  crash: { title: "窗口遇到问题", hint: "重新加载即可恢复。", reload: "重新加载" },
+  tabs: { all: "全部", waiting: "待交互", running: vocab.session.running },
   time: {
     now: "刚刚",
     // 相对时间（N 分钟前）不走字典：Intl.RelativeTimeFormat(locale) 生成（helpers.fmtAgo）。
@@ -20,13 +26,8 @@ export const zh = {
     waitedDay: (d: number) => `已等待 ${d} 天`,
   },
   badge: {
-    waiting: "等待输入",
-    pending: "待处理",
-    running: "运行中",
     full: (what: string, pct: number) => `${what} · 上下文已用 ${pct}%`,
   },
-  // blocked：屏幕检测到 agent 停在审批/提问 UI 上但 hook 无对应事件（说不出具体哪一种）。
-  pending: { approval: "待批准", question: "待回答", plan: "待批计划", gate: "待拍板", blocked: "待处理" },
   empty: {
     allTitle: "还没有会话",
     allHint: "在终端运行 AI 编程会话，进度会自动出现在这里",
@@ -38,9 +39,7 @@ export const zh = {
   },
   // 灵动岛（Windows 贴纸的新形态）。
   island: {
-    finished: "等待输入",
     idle: "没有运行中的会话",
-    toneLabel: { pending: "待处理", error: "出错", running: "运行中", waiting: "等待输入", on: "在线", offline: "已断开" } as Record<string, string>,
     open: "打开",
     panelSessions: "会话",
     panelUsage: "用量",
@@ -84,9 +83,9 @@ export const zh = {
     keepOpenOn: "取消保持打开",
     keepOpenOff: "保持打开（失焦不自动收起）",
     waitingFirstInput: "等待首次输入",
-    stopped: "已断开",
+    stopped: vocab.session.offline,
     sessionError: "会话出错",
-    online: "在线",
+    online: vocab.session.online,
     // 无屏幕检测的外部会话，状态点回落 DB status 时的弱化 tip（T-15：与实时判定区分）。
     assumedState: "按会话记录推断，可能不是最新",
     // 弱化徽标的 hover/读屏文案（P2-11）：包层压制内层 RunBadge 的「自信」文案，附「推断」后缀。
@@ -529,15 +528,6 @@ export const zh = {
   },
   chat: {
     title: "会话对话",
-    // 标题栏状态徽标(按 SessionTone 取)。放在标题栏,文案要短。
-    status: {
-      running: "运行中",
-      pending: "待处理",
-      waiting: "等待输入",
-      offline: "已断开",
-      ended: "已结束",
-      error: "出错了",
-    } as Record<string, string>,
     unsupported: "这个 Agent 暂未提供结构化对话记录",
     empty: "还没有可显示的对话记录",
     // 空会话欢迎面板（A+B 改版）：替代整屏一行灰字，给出路而不是只报「没有」。
@@ -565,6 +555,25 @@ export const zh = {
     settingsQueueExpired: "等太久没切成，已取消，请重新选择",
     settingsApplying: "正在切换",
     settingsComposerUnknown: "认不出终端输入框，为免丢字没有重启",
+    settingsTerminalNotReady: "终端还没准备好，这次没有切换",
+    // 终端输入框里的草稿（见 views/chat/nativeDraft）：Meowo 自己收，收不掉才说原因并给出路。
+    nativeDraftMoved: "终端里的草稿已移到输入框",
+    composerUnrecognized: "认不出终端输入框，消息没有发出",
+    composerSendAnyway: "仍然发送",
+    composerModeShell: "终端在 shell 模式且没能退出",
+    composerModeVim: "终端在 vim 命令模式且没能退出",
+    composerModeOther: "终端在特殊输入模式，消息没有发出",
+    composerModeRunning: "回合结束后才能退出终端的输入模式",
+    composerDraftRunning: "回合结束后才能收起终端里的草稿",
+    composerDraftNoClear: "这个终端里的草稿 Meowo 清不了",
+    composerDraftStuck: "终端里的草稿没能收起，消息没有发出",
+    composerDraftPaste: "终端草稿含粘贴内容，没有清掉",
+    composerDraftOverflow: "终端草稿没显示全，没有清掉",
+    composerDraftWrapped: "终端草稿有折行读不准，没有清掉",
+    composerDraftUnsure: "终端草稿读不准，没有清掉",
+    composerSendWithDraft: "连同草稿发送",
+    composerDiscardDraft: "放弃草稿后发送",
+    composerDiscardConfirm: "确认放弃草稿",
     settingsFirstTurn: "第一条消息正在处理，会话建好后再切",
     // 会话没在跑：选择记成下次打开的启动参数（做空 M4）。
     settingsNextOpen: "会话没在运行，下次打开时生效",
@@ -616,9 +625,9 @@ export const zh = {
     shortcutSend: "发送消息",
     shortcutNewline: "换行",
     shortcutInterruptSend: "中断当前回合并发送",
-    shortcutDeny: "拒绝待审批请求（输入框为空时，按两次确认）",
+    shortcutDeny: "拒绝待批准的请求（输入框为空时，按两次确认）",
     shortcutInterrupt: "中断当前回合（输入框为空时，按两次确认）",
-    shortcutApproveDigit: "允许待审批（焦点在输入框外）。2 起持久放行",
+    shortcutApproveDigit: "允许待批准的请求（焦点在输入框外）。2 起持久放行",
     shortcutSlashComplete: "选中斜杠命令补全",
     shortcutHistory: "取回上一条消息（输入框为空时）",
     shortcutSheet: "打开本速查表",
@@ -683,7 +692,7 @@ export const zh = {
       write: (count: number) => `已写入 ${count} 个文件`,
       edit: (count: number) => `已编辑 ${count} 处`,
       search: (count: number) => `搜索了 ${count} 个模式`,
-      web: (count: number) => `已执行 ${count} 次浏览器操作`,
+      web: (count: number) => `访问了 ${count} 次网页`,
       todo: (count: number) => `已更新 ${count} 次清单`,
       agent: (count: number) => `已派出 ${count} 个子任务`,
       other: (count: number) => `执行了 ${count} 次工具调用`,
@@ -706,13 +715,15 @@ export const zh = {
       edit: (subject: string) => `正在编辑 ${subject}`,
       write: (subject: string) => `正在写入 ${subject}`,
       search: (subject: string) => `正在搜索 ${subject}`,
-      web: (subject: string) => `正在抓取 ${subject}`,
+      web: (subject: string) => `正在访问 ${subject}`,
       other: "正在执行…",
     },
     turnToolFailed: (count: number) => `（${count} 失败）`,
+    // 过程块摘要里没跑完的调用：单列一句，不计入「已运行」。
+    turnToolInterrupted: (count: number) => `${count} 次已中断`,
     compact: "上下文已压缩",
-    // 用户按 Esc 中断回合后 CLI 写下的标记，时间线里以分隔条出现（对照 Kimi 的 turnInterrupted）。
-    turnInterrupted: "已手动终止",
+    // 没跑完就停了：用户中断处的分隔条、没等到结果的工具调用与子任务，都是这一个词。
+    interrupted: vocab.session.interrupted,
     // 压缩分隔条的细节（对照 Kimi 的 compactedAuto / viewSummary）：CLI 自己压的要说清是自动，
     // 压缩前规模与摘要回答「它还记得什么」。
     compactAuto: "已自动压缩上下文",
@@ -736,24 +747,48 @@ export const zh = {
     // 自动重试优先于一切说法：此刻「没动静」的真正原因（重试不落对话记录，只在终端画面上）
     workingRetry: (attempt: number, max: number) => `请求失败，正在重试（第 ${attempt}/${max} 次）`,
     inputLabel: "发送消息给 Agent",
-    inputPlaceholderRunning: "Enter 排队 · Ctrl+Enter 中断并发送",
-    inputPlaceholderQueue: "Enter 排队，当前任务结束后发送",
-    // Agent 边干边读（claude）：运行中提交不是排队，而是插进当前回合
-    inputPlaceholderSteer: "Enter 插入当前回合 · Ctrl+Enter 中断并发送",
-    inputPlaceholderSteerOnly: "Enter 插入当前回合，不打断它",
+    // 回合在跑时发消息会怎样，按后端声明的能力分三种去向（chat/sendCopy.ts）。同一种去向的占位
+    //（发之前的许诺）与回执（发之后的说法）写在一起、共用一个动词：此前 Kimi 没声明送达时机，
+    // 占位许诺「排队」，回执却只说「已交给 Agent」（走查输入 B5）。
+    runningSend: {
+      // Agent 边干边读：下一步就读到，插进当前回合。
+      insert: {
+        verb: "插入",
+        placeholder: "Enter 插入当前回合 · Ctrl+Enter 中断并发送",
+        placeholderNoInterrupt: "Enter 插入当前回合，不打断它",
+        placeholderRemote: "发送会插入当前回合，不打断它",
+        receipt: (n: number) => `${n} 条插话等待插入当前回合`,
+      },
+      // 排到当前回合结束后处理。
+      queue: {
+        verb: "排队",
+        placeholder: "Enter 排队 · Ctrl+Enter 中断并发送",
+        placeholderNoInterrupt: "Enter 排队，当前任务结束后发送",
+        placeholderRemote: "发送后排队，当前任务结束再发",
+        receipt: (n: number) => `${n} 条消息${vocab.delivery.accepted}，本回合结束后处理`,
+      },
+      // 何时处理没有取证：只说交给了 Agent，不许诺时机。
+      handoff: {
+        verb: "交给 Agent",
+        placeholder: "Enter 交给 Agent · Ctrl+Enter 中断并发送",
+        placeholderNoInterrupt: "Enter 交给 Agent，由它安排处理",
+        placeholderRemote: "发送后交给 Agent，由它安排处理",
+        receipt: (n: number) => `${n} 条消息已交给 Agent`,
+      },
+    },
     inputPlaceholderBusy: "当前任务结束后才能发送",
     inputPlaceholder: "发消息给 Agent（Shift+Enter 换行）",
     inputPlaceholderRemote: "发消息给 Agent",
-    // 手机上回合在跑时的说法：没有 Enter/Ctrl+Enter 可讲，只说发出去会怎样。
-    inputPlaceholderRemoteSteer: "发送会插入当前回合，不打断它",
-    inputPlaceholderRemoteQueue: "发送后排队，当前任务结束再发",
     inputUnavailable: "接管后才能在这里发送",
     sendBackgroundSession: "后台会话由 Agent 托管。这里只能发消息和结束",
     sendBackgroundKeysMovedYou: "后台会话不接受终端按键，请在这里直接发消息。",
     sendBackgroundQueued: "已发给后台会话。若它未处理，内容还在输入框，可直接重发。",
     sendBackgroundNoAttachments: "后台会话暂不支持附件，请只发文字。",
-    inputLocked: "终端正在等待选择，请先用上方卡片处理",
-    inputLockedRemote: "终端正在等待选择，请先用上方卡片处理",
+    // 有卡片待处理时输入框的说明（占位、发送键提示、按回车后的提示同一句），见 chat/composerCardLock。
+    cardLockApproval: "先处理上方的审批再发送",
+    cardLockQuestion: "先回答上方的提问再发送",
+    cardLockPrompt: "先处理上方的卡片再发送",
+    cardLockMenu: "先完成终端里的选择再发送",
     send: "发送",
     sending: "发送中…",
     attach: "添加图片或文件",
@@ -777,9 +812,23 @@ export const zh = {
     // 拼进发给 agent 的消息里，必须跟随界面语言——英文界面混入中文指令会把 agent 的回答语言带偏。
     attachmentInstruction: attachmentInstructionZh,
     approvalTitle: "Agent 请求权限",
-    approvalPending: "待批准",
+    // 卡片徽章：每个状态一个词，五家、两条通道共用（见 chat/requestCard 的 cardBadge）。状态词取自词表。
+    approvalPending: vocab.request.approval,
+    choicePending: "待选择",
+    confirmPending: "待确认",
+    cardExpired: vocab.request.expired,
+    choiceTitle: "终端正在等待你的选择",
+    // 插件认得的确认页：一句话说清在问什么（键 = 后端 AttentionNotice）。原文照常摆在卡内。
+    promptNotice: {
+      bypass_permissions: "确认以「都不问」模式运行",
+      custom_api_key: "发现环境里的 API 密钥，要用它吗",
+    },
+    // 选了会让 CLI 退出的选项（启动确认页的 No, exit）：后果写在按钮上。
+    optionExitsSession: "选它会结束这个会话",
+    // 要用鼠标点的终端选项（opencode 权限框）：屏幕上没找到它，什么都没发。
+    optionNotFound: "终端里没找到这个选项，请重试",
     questionTitle: "Agent 正在等待你的回答",
-    questionPending: "待回答",
+    questionPending: vocab.request.question,
     questionFormLoading: "点选答案，终端表单就绪后自动作答",
     queuedAnswerHint: (label: string) => `已选「${label}」，表单就绪后自动作答`,
     questionExternalHint: "会话在外部终端运行，Meowo 无法代答。答完本卡自动关闭",
@@ -799,6 +848,7 @@ export const zh = {
     customAnswerPlaceholder: "输入其他回答",
     addCustomAnswer: "添加回答",
     submitAnswer: "提交选择",
+    questionNext: "下一步",
     questionAnswered: "已作答",
     questionAnswerReady: "提交后 Agent 立即继续",
     questionAnswerIncomplete: (count: number) => `还有 ${count} 题未作答`,
@@ -817,9 +867,14 @@ export const zh = {
     denyWithReason: "说明并拒绝",
     denyReasonPlaceholder: "说明拒绝原因…",
     denyReasonSubmit: "提交并拒绝",
+    // 屏幕通道的说明并拒绝：终端没进入等输入的状态，说明没有写进去（见 chat/terminalTypedAnswer）。
+    denyReasonNotSent: "说明没有送达，可重试或直接拒绝",
+    // 提问表单的自定义答案同理：终端没进入编辑状态，答案没有写进去。
+    customAnswerNotSent: "答案没有送达，请重试",
     allowOnce: "允许一次",
     allowRemember: "允许并记住",
     allowSession: "本会话内允许",
+    allowAutoMode: "允许并切到自动模式",
     allowLocalProject: "允许并记住（此项目、本机）",
     allowProject: "允许并记住（项目共享）",
     allowUser: "始终允许（全局）",
@@ -828,11 +883,13 @@ export const zh = {
     // Esc 两段式确认的第二段按钮文案（第一下 Esc 点亮后显示）。
     denyConfirmEsc: "再按 Esc 确认拒绝",
     // 审批卡被别处结算/超时收卡时的去向说明——凭空消失像 bug。
-    approvalClearedNotice: "该审批已在别处处理或已超时",
-    approvalClearedNoticeRemote: "该审批已在别处处理或已超时",
+    // 审批在卡片之外了结时的说明：过期、已取消各一句，分不清原因时用第一句。状态词与卡片徽章同一个。
+    approvalClearedNotice: "该审批已在别处处理或已过期",
+    approvalExpiredNotice: "该审批已过期，已交回终端处理",
+    approvalCancelledNotice: "该审批已取消",
     // 倒计时归零到后端结算事件到达之间的一拍空窗：徽章切这句，不留定格的 0:00。
     // 审批卡与题面卡共用（回落语义相同）。
-    approvalTimedOut: "已超时，回落终端处理中",
+    approvalTimedOut: "已过期，已交回终端处理",
     // 切到终端页的按钮一律用这个标签（7G-9：此前四处四种说法）。
     goTerminal: "去终端页",
     // 终端视图下作答卡的「放行给终端」按钮（题面无法卡内表达时）：人已在终端页，
@@ -930,7 +987,7 @@ export const zh = {
     groupAttention: (count: number) => `${count} 项待处理`,
     // 任务面板（Kimi TasksPane）：后台 Bash / 子代理 / 待办。
     plan: "计划",
-    planPending: "待审批",
+    planPending: vocab.request.approval,
     planApproved: "已通过",
     planEmpty: "计划模式已开启，写出的计划会显示在这里",
     // Lead 工作流（停靠栏 Lead 入口 + 关卡卡片）
@@ -949,7 +1006,7 @@ export const zh = {
     leadPillBlocked: (n: number) => `· ${n} 待实测`,
     leadSection: { checks: "验收", spec: "规格", decisions: "决策", progress: "进度" },
     leadSectionEmpty: "暂无内容",
-    leadGateWaiting: "待拍板",
+    leadGateWaiting: vocab.request.gate,
     leadGateAnswered: "已答复·等 agent 接手",
     leadDeliveryHandled: "Agent 已接手关卡",
     leadDeliveryRetry: "继续送达",
@@ -981,13 +1038,13 @@ export const zh = {
     leadStage: (stage: string) => ({ interview: "访谈", spec: "规格", design: "方案", implement: "实施", verify: "验证", done: "完成" } as Record<string, string>)[stage] ?? stage,
     leadLatest: "最近：",
     tasksBackground: "后台 Bash",
-    tasksSubagents: "子代理",
+    tasksSubagents: vocab.concept.subagent,
     toolDone: "已完成",
     tasksEmpty: "暂无任务",
-    tasksRunningCount: (count: number) => `${count} 运行中`,
-    taskFilters: { recent: "最近", running: "进行中", done: "已完成", all: "全部" },
+    tasksRunningCount: (count: number) => `${count} ${vocab.session.running}`,
+    taskFilters: { recent: "最近", running: vocab.session.running, done: "已完成", all: "全部" },
     taskEmpty: { recent: "暂无最近任务", running: "暂无运行中的任务", done: "暂无已完成的任务", all: "暂无任务" },
-    taskStates: { run: "运行中", done: "已完成", fail: "失败" },
+    taskStates: { run: vocab.session.running, done: "已完成", fail: "失败", stop: vocab.session.interrupted },
     // 模型市场（Kimi ModelPicker）：搜索、收藏、空结果。
     modelSearchPlaceholder: "搜索模型或提供商…",
     modelStar: "收藏模型",
@@ -1160,16 +1217,16 @@ export const zh = {
     todoEmptyHint: "任务进度将显示在这里",
     todoCollapse: "收起",
     todoExpand: (n: number) => `展开 ${n} 个`,
-    todoSubagentSection: "子任务",
-    subagent: "子任务",
+    todoSubagentSection: vocab.concept.subagent,
+    subagent: vocab.concept.subagent,
     subagentBatch: (n: number) => `${n} 个子任务`,
     subagentSteps: (n: number) => `${n} 条记录`,
-    subagentRunning: "进行中",
+    subagentRunning: vocab.session.running,
     subagentCompleted: "已完成",
     subagentFailed: "失败",
     subagentTallyCompleted: (n: number) => `${n} 完成`,
     subagentTallyFailed: (n: number) => `${n} 失败`,
-    subagentTallyRunning: (n: number) => `${n} 进行中`,
+    subagentTallyRunning: (n: number) => `${n} ${vocab.session.running}`,
     // 子代理交了结论、它派出的后台活儿还在跑（徽标次行小字）。
     subagentBackgroundRunning: "后台仍在运行",
     subagentDurationSec: (s: number) => `${s} 秒`,
@@ -1194,26 +1251,14 @@ export const zh = {
     // CLI 意外退出（二期 #7）：与后端 exit_report::crash_label 同文，灵动岛/通知里也是这句。
     agentCrashed: (code: number) => `Agent 意外退出（退出码 ${code}）`,
     resumeSession: "恢复会话",
-    terminalNeedsAttention: "Agent 有待处理的交互，请先完成卡片或终端里的确认，再重新发送。",
-    // 拦住发送的是提问卡时用这句：「启动确认」对一个回合中途的提问是错的说法（用户实拍）。
-    questionNeedsAnswer: "Agent 有提问待回答，答完再发送。",
     sendEchoTimeout: "消息没进入终端，未发出。终端可能停在启动询问上",
     terminalStreamStalled: "终端画面卡住了，不会自行恢复。点「结束并恢复」即可，对话记录不受影响。",
     // 初始化 25s 超时（撤遮罩后的黑屏说明，见 ManagedTerminal 的 initTimedOut）。
     terminalInitTimeout: "终端长时间无输出，可能启动失败。可结束会话后重试，对话记录不受影响。",
     queuedInterjections: (n: number) => `${n} 条插话已排队，本回合结束后处理`,
     // composer 上方的队列折叠条（Kimi 式）：收起时一行提示，点开逐条查看/移除。
-    // 运行中发出的消息何时被读到，按插件声明照实说（null = 未取证，不许诺时机）
-    queuePending: (n: number, delivery: "next_step" | "turn_end" | null) =>
-      delivery === "next_step" ? `${n} 条插话等待插入当前回合`
-        : delivery === "turn_end" ? `${n} 条消息排队中，本回合结束后处理`
-        : `${n} 条消息已交给 Agent`,
-    queueLabel: "排队中的消息",
-    // 回显超时仍不见落盘：照实标出来，而不是悄悄撤掉
-    echoUncertain: "未确认送达",
-    // 先上屏再发送：写终端期间的气泡标注，与失败后的两个出口。
-    echoSending: "发送中",
-    echoFailed: "发送失败",
+    queueLabel: `${vocab.delivery.accepted}的消息`,
+    // 送达状态词（发送中、已排队、未确认送达、发送失败…）在词表 t.vocab.delivery，这里只留动作与说明。
     echoRetry: "重发",
     echoRestore: "放回输入框",
     echoUncertainTip: "对话记录里还没出现这条，可以重发或放回输入框",
@@ -1222,16 +1267,12 @@ export const zh = {
     echoStuckTip: "这段话还在 CLI 的输入框里，没有提交",
     echoSubmit: "提交",
     // CLI 回了送达回执（入队记录）：消息已进它的队列，还没轮到处理。
-    echoQueued: "已排队",
     echoQueuedTip: "Agent 还在忙，这条已进它的队列",
-    queuedAccepted: "已收到",
-    queuedAcceptedTip: "Agent 已收下，轮到时就处理",
-    interjectedBadge: "回合中插入",
     interjectedBadgeTip: "Agent 在干活途中读到了这条",
-    toAgentBadge: (name: string) => `发给子代理「${name}」`,
-    toAgentBadgeTip: "这条发给了子代理，不是主会话",
+    toAgentBadge: (name: string) => `发给${vocab.concept.subagent}「${name}」`,
+    toAgentBadgeTip: "这条发给了子任务，不是主会话",
     // 终端停在子代理视图且自动切不回(chat/subagentView)：发送会交给它，给一键切回。
-    subagentViewNotice: (name: string) => `终端停在子代理「${name}」，发送会交给它`,
+    subagentViewNotice: (name: string) => `终端停在${vocab.concept.subagent}「${name}」，发送会交给它`,
     subagentViewUnnamed: "未命名",
     subagentViewBack: "切回主会话",
     queuedAttachmentOnly: "（附件）",
@@ -1239,7 +1280,7 @@ export const zh = {
     interjectNowTip: "停下当前回合，立刻处理这些消息",
     queuedDismiss: "隐藏，不会取消",
     queuedDismissTip: "只是隐藏，消息仍会执行",
-    interruptAndSendTip: "Ctrl+Enter 中断并发送，Enter 排队",
+    interruptAndSendTip: "Ctrl+Enter 中断当前回合并发送",
     interruptNow: "中断",
     interruptNowTip: "中断当前回合，不发送",
     escInterruptArmed: "再按一次 Esc 中断当前回合",
@@ -1250,13 +1291,11 @@ export const zh = {
     attentionCollapsedRestore: "已收起提示，点击展开",
     questionCollapsedRestore: "已收起提问，点击展开",
     questionFoldedInTerminal: "终端里有待答的提问，点此展开卡片",
-    unrecognizedPromptNotice: "终端似乎在等待选择，消息已发出",
-    unrecognizedPromptNoticeRemote: "终端似乎在等待选择，消息已发出",
+    // 消息被拦下、没有发出时才出现：正文后的 Enter 可能落到原生审批的默认项上（走查输入 A2）。
+    unrecognizedPromptNotice: "终端似乎在等待选择，消息没有发出",
     terminalPromptTitle: "Agent 需要你完成一个启动步骤",
-    terminalPromptHelp: "下面是终端的提示原文，用右侧按钮选择确认即可。",
+    terminalPromptHelp: "终端提示原文如下，用按钮确认或取消",
     trustPromptTitle: "是否信任此文件夹？",
-    longSessionPromptTitle: "如何恢复这个长会话？",
-    longSessionPromptHelp: "完整恢复会消耗较多额度，建议从摘要恢复。",
     terminalPromptConfirm: "确认",
     terminalPromptCancel: "取消 / 返回",
     // 「取消」实发 Esc 的后果说明：与零副作用的「仅收起」是两回事，必须对用户说出来。
@@ -1286,8 +1325,8 @@ export const zh = {
     crossMessage: "会话消息",
     crossMessageUnknown: "另一个会话",
     // 本会话派出的子代理发回来的话（<agent-message>）：来源写「子代理」，标签写「子代理消息」。
-    agentMessageFrom: "子代理",
-    agentMessage: "子代理消息",
+    agentMessageFrom: vocab.concept.subagent,
+    agentMessage: "子任务消息",
     taskNotification: "后台任务通知",
     changesUncommitted: "未提交",
     wsHide: "从列表中移除",
@@ -1348,7 +1387,6 @@ export const zh = {
     scmDiscardDirNote: "目录整个移到回收站，含其中被忽略的文件。",
     systemRecord: "系统记录",
     hookFeedback: "Hook 反馈",
-    sidebarApproval: "待批准",
     sidebarExpand: "展开会话列表",
     sidebarEmpty: "暂无会话",
     sidebarEmptyDir: "该目录下暂无会话",
@@ -1407,9 +1445,13 @@ export const zh = {
     // 非默认排序只作用于已加载条目（翻页新条目追加尾部），要向用户说明范围。
     dateToday: "今天",
     dateYesterday: "昨天",
-    running: "正在运行…",
+    // 运行行的兜底说法：就是会话状态「运行中」，不另起一个词。
+    running: `${vocab.session.running}…`,
     contextTip: (pct: number, kw: number) => `上下文已用 ${pct}%（窗口 ${kw}K）`,
     contextShort: (pct: number) => `上下文已用 ${pct}%`,
+    // 这家 CLI 不上报 token 用量（Gemini、OpenCode）：圆环留在原位置灰，悬停说明原因，
+    // 不留空白让人以为是 bug（走查输入 C6）。
+    contextUnsupported: "这个 CLI 不提供上下文占用",
     toolRunning: "正在执行，结果尚未返回…",
     toolNoOutput: "（无输出）",
     // 工具详情（对话页像终端那样看写了什么/改了什么/跑了什么）。
@@ -1430,6 +1472,10 @@ export const zh = {
     toolReadLines: (count: number) => `读取了 ${count} 行`,
     toolReadFailed: "读取失败",
     toolFoundLines: (count: number) => `找到 ${count} 条结果`,
+    // 命令非零退出：退出码放在最前，后面跟输出的第一行。
+    toolExitCode: (code: number, first: string) => (first ? `退出码 ${code}：${first}` : `退出码 ${code}`),
+    // 一次调用带了几个地址或查询时，摘要只列第一个。
+    toolMoreTargets: (count: number) => `另有 ${count} 个`,
     model: "模型",
     switchModel: "切换模型",
     mode: "模式",
@@ -1445,9 +1491,16 @@ export const zh = {
     imageDraftCleared: "已清理残图",
     interruptTimeout: "尚未确认任务已中断，草稿已保留。请稍后重试。",
     busySendUnavailable: "当前 Agent 尚未验证运行中排队，请等待当前任务结束后发送。",
-    menuBusy: "请等待当前任务结束后切换模型或模式。",
     errorRetry: "重试",
-    menuBusyShort: "回合结束后才能切换",
+    // 入口此刻做不到时的说法（chat/availability.ts）：排队的写明什么时候自动执行，置灰的写明什么时候能用。
+    availability: {
+      queuedAfterTurn: "这一轮结束后自动切换",
+      queuedAfterCard: "处理完卡片后自动切换",
+      afterTurn: "这一轮结束后才能用",
+      afterCard: "处理完卡片后才能用",
+      needsNewSession: "收紧权限要新建会话",
+      unsupported: "这个 CLI 不支持在会话里切换",
+    },
     // 打开终端里的选择菜单（只能在终端里挑）：运行中打开会把命令打进正在跑的回合。选定的模型 / 模式
     // 运行中一律排到这一轮之后（SPEC 终态 2），只有「打开菜单」本身要等。
     menuBusyOpen: "这一轮结束后再打开菜单",
@@ -1462,6 +1515,12 @@ export const zh = {
     modelListUnavailableShort: "读不到模型清单",
     // 就地模型菜单（对照 Kimi）：换模型的代价写在做决定的地方。
     modelCacheHint: "换模型或思考程度会使提示词缓存失效，多耗 token",
+    // 在对话页切换会顺带改写用户 CLI 的默认配置时提醒一句（各家不同，按后端声明，走查输入 C1）。
+    savesDefault: {
+      model: "选模型会同时改 CLI 的默认模型",
+      effort: "切思考档会同时改 CLI 默认配置",
+      both: "模型和思考档会同时改 CLI 默认配置",
+    },
     modelMore: "更多模型…",
     modelLoad: "读取模型清单",
     modelPickNotFound: (name: string) => `模型菜单里没有 ${name}`,
@@ -1475,6 +1534,8 @@ export const zh = {
     undoConfirm: "这条消息及之后的对话会移出上下文，原文放回输入框。已修改的文件不受影响。",
     // opencode 的撤回按快照回滚整个工作区（probe_opencode_undo 实测连没碰过的文件也回到当时）。
     undoConfirmFiles: "这条消息及之后的对话会撤回，原文放回输入框。工作区文件会一并还原到发这条消息之前。",
+    // 撤回命令一次只撤一轮的 CLI（OpenCode）在确认框里多这一句。
+    undoLatestOnly: "只能撤回最近一轮",
     undoConfirmLabel: "撤回",
     undoBusy: "任务运行中，结束后才能撤回",
     undoRejected: (line: string) => `撤回未完成：${line}`,
@@ -1585,7 +1646,7 @@ export const zh = {
       search: "搜索",
       web: "网页",
       todo: "待办",
-      agent: "子任务",
+      agent: vocab.concept.subagent,
     } as Record<string, string>,
     // 归不进上面几类的工具按原名精确对照。只收本机实测高频的 claude 工具（11-04 统计近两周
     // 43 个会话：TaskStop 71 次、Skill 54、SendMessage 38、AskUserQuestion 31…），此前原样
@@ -1608,6 +1669,29 @@ export const zh = {
       PushNotification: "推送通知",
       ExitPlanMode: "提交计划",
       EnterPlanMode: "进入计划",
+      // 其余四家归不进类别的常用工具（本机会话实测出现过的名字）。
+      // Codex
+      exec: "脚本",
+      write_stdin: "终端输入",
+      wait: "等待结果",
+      sleep: "等待",
+      wait_agent: "等待子任务",
+      list_agents: "子任务列表",
+      interrupt_agent: "中断子任务",
+      send_message: "发消息",
+      followup_task: "追加任务",
+      request_user_input_async: "提问",
+      // Gemini
+      list_directory: "列出目录",
+      update_topic: "更新主题",
+      enter_plan_mode: "进入计划",
+      exit_plan_mode: "提交计划",
+      save_memory: "保存记忆",
+      // Kimi
+      NotifyUser: "通知",
+      WaitFor: "等待",
+      // OpenCode
+      list: "列出目录",
     } as Record<string, string>,
     modelDesc: {
       fable: "能力高于 Opus 的旗舰档",
@@ -1620,6 +1704,8 @@ export const zh = {
       "sonnet[1m]": "Sonnet 5 的 1M 上下文档",
     } as Record<string, string>,
     slashDesc: {
+      "/add-dir": "把另一个目录加入会话",
+      "/btw": "侧问一句，不打断当前任务",
       "/chat": "保存/恢复对话检查点",
       "/clear": "清空当前对话上下文",
       "/compact": "压缩上下文，只保留要点",
@@ -1637,11 +1723,10 @@ export const zh = {
       "/new": "开启新对话",
       "/resume": "恢复历史会话",
       "/review": "审查当前改动",
-      "/share": "分享当前会话",
       "/stats": "查看会话统计",
       "/status": "查看会话状态",
       "/tools": "查看可用工具",
-      "/undo": "撤销上一步改动",
+      "/undo": "撤回最近一轮对话",
     } as Record<string, string>,
   },
   errorLabels: {
@@ -1771,7 +1856,7 @@ export const zh = {
     islandAutoStripDesc: "最大化窗口在前台时收成细条，不挡标题栏",
     islandAlerts: "自动弹出提醒",
     islandAlertsDesc: "这些事发生时，灵动岛展开几秒告诉你",
-    islandAlertKinds: { waiting: "会话跑完", approval: "等待审批", question: "有提问", error: "出错" } as Record<string, string>,
+    islandAlertKinds: { waiting: "会话跑完", approval: vocab.request.approval, question: "有提问", error: vocab.session.error } as Record<string, string>,
     islandAlertSeconds: "提醒停留",
     islandAlertSecondsDesc: "提醒展开多久后缩回",
     islandSeconds: (n: number) => `${n} 秒`,

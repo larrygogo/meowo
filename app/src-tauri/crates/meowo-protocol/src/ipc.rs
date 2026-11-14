@@ -14,6 +14,21 @@ pub struct TerminalScreenFrameDto {
     /// 从 0 起的终端格列，不是 UTF-16 字符索引。
     pub cursor_col: u16,
     pub cursor_visible: bool,
+    /// 光标所在格是暗色（SGR dim）。占位文字的画法：输入框里那句话是 CLI 画的提示，还是用户
+    /// 真打出来的字，文字相同时靠它和光标位置分开（见 meowo-agent 的 composer::read）。
+    #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
+    pub cursor_dim: bool,
+    /// 终端列数。行尾空白不在 `lines` 里，没有框的输入框要靠它才知道一行最多能放多少字
+    /// （草稿里相邻两行是折行还是换行，见 meowo-agent 的 ComposerFidelity）。旧宿主不带。
+    #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<u16>", optional))]
+    pub cols: u16,
+    /// 终端行数。有的输入框可视高度跟着终端行数走、超出时不画任何标记（Claude：24 行的终端里
+    /// 29 行草稿只画最后 7 行，2026-11-15 实拍），要靠它才知道草稿有没有显示全。旧宿主不带。
+    #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<u16>", optional))]
+    pub rows: u16,
 }
 
 /// 一条待办。`status` 用字面量而非枚举：来源是各家 agent 的自由文本状态，
@@ -77,6 +92,11 @@ pub struct SubagentOutcome {
     /// 调用上，只有这个 id 能把它归回原委派。前端按「同 id 首见者为委派本体」路由。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_id: Option<String>,
+    /// 这个子任务被叫停了（codex 的 `interrupt_agent`）：没跑完，也不是失败。此时三个计数都是 0，
+    /// 前端显示「已中断」。false 时不下发。
+    #[serde(default, skip_serializing_if = "is_false")]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
+    pub interrupted: bool,
 }
 
 /// 一个子任务的完整时间线。一次委派可能对应多条（kimi 的 `AgentSwarm`），
@@ -132,6 +152,55 @@ pub struct SubagentProbeDto {
     pub branches: Vec<SubagentBranchProbeDto>,
 }
 
+/// 工具调用的语义类别。由各家插件在适配层按**自己的工具名表**给出，前端只认这个字段，
+/// 不再按工具名的子串去猜（猜的规则是照 Claude 的命名调的，Gemini 的 read_file / replace
+/// 全落进「其他」，Codex 的 wait_agent 因为名字含 agent 被当成子任务）。
+/// 插件不认识的工具一律 `Other`，界面显示原始工具名。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "snake_case")]
+pub enum ToolKind {
+    /// 读文件（含看图）。
+    Read,
+    /// 整文件写入。
+    Write,
+    /// 局部修改（替换、补丁、笔记本单元格）。
+    Edit,
+    /// 终端命令。
+    Run,
+    /// 搜索（内容、文件名）。
+    Search,
+    /// 网页（抓取、联网搜索）。
+    Web,
+    /// 子任务委派。
+    Agent,
+    /// 待办清单。
+    Todo,
+    #[default]
+    Other,
+}
+
+/// 一次补丁里对单个文件的改动（codex 的 `apply_patch` 一次可以改多个文件）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+pub struct PatchFile {
+    pub path: String,
+    /// `add` / `update` / `delete`。
+    pub op: String,
+    /// 改名或移动时的新路径。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(type = "string", optional))]
+    pub move_to: Option<String>,
+    /// 各段改动。补丁格式不带行号时 `old_start` / `new_start` 为 0，前端据此不标行号。
+    pub hunks: Vec<DiffHunk>,
+    /// 完整的增删行数（hunks 可能已截断，行数不受影响）。
+    pub added: u32,
+    pub removed: u32,
+    pub truncated: bool,
+}
+
 /// 工具调用的结构化详情：对话页「像终端那样」展开看——写了什么、改了什么、跑了什么
 /// （用户实拍：终端里 Write 一行「Wrote 225 lines to …」+ 正文预览 + 「+262 lines」，
 /// 对话页只有一个路径摘要）。只有插件认得的工具才填，认不得的留 None，前端退回
@@ -174,6 +243,15 @@ pub enum ToolDetail {
         path: Option<String>,
         glob: Option<String>,
     },
+    /// 补丁式修改：一次调用改一到多个文件，diff 在调用时就有（codex 的 `apply_patch`）。
+    Patch { files: Vec<PatchFile> },
+    /// 网页：抓取的地址或联网搜索的查询词。一次调用可以带多个，这里列第一个，其余计数。
+    Web {
+        url: Option<String>,
+        query: Option<String>,
+        /// 除已列出的那个之外，这次调用还带了几个地址或查询。
+        more: u32,
+    },
 }
 
 /// Provider 日志经插件解析后交给聊天归一化层的稳定消息单元。
@@ -191,6 +269,13 @@ pub enum ChatItem {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         #[cfg_attr(test, ts(type = "boolean", optional))]
         interjected: bool,
+        /// 这条消息所属回合的 id，provider 的记录里有才填（codex 的 `turn_id`）。同一回合里的
+        /// 第二条起就是回合中途送进去的话：前端据此不把它当成「上一回合到此结束」。
+        /// 与 `interjected` 分开，是因为后者还管撤回的轮数——codex 的回溯把插话也算一轮，
+        /// 标成 interjected 会让撤回数错。None 不下发。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(type = "string", optional))]
+        turn_id: Option<String>,
         /// 这句话是发给某个子代理的（claude：用户切到子代理视图直接发），值是它的任务描述。
         /// 正文只记在子代理侧车里，主链没有这条（2.1.322 实拍），不标出来前端既找不到它
         /// 判「未确认送达」，也说不清后面的回复是谁给的。None 不下发。
@@ -232,6 +317,9 @@ pub enum ChatItem {
         id: String,
         timestamp: Option<String>,
         name: String,
+        /// 语义类别（见 [`ToolKind`]）。旧缓存缺字段按 `Other` 读回。
+        #[serde(default)]
+        kind: ToolKind,
         summary: String,
         /// Some = 这条是子任务委派（claude/kimi 的 `Agent` 工具）。委派出去的工作记在主
         /// transcript 之外的侧车流里，前端据此渲染成可展开条目，展开时才按需拉取。
@@ -258,6 +346,20 @@ pub enum ChatItem {
         /// 前端退回按 ToolDetail 的旧段/新段两块展示。
         #[serde(default, skip_serializing_if = "Option::is_none")]
         patch: Option<Vec<DiffHunk>>,
+        /// 命令的退出码。provider 的回执里有才填；非零时 `is_error` 同时为 true。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(type = "number", optional))]
+        exit_code: Option<i32>,
+        /// 真实数量：读文件是读到的行数，搜索是命中条数。回执正文会被截断或包成 JSON，
+        /// 按正文行数去数会少报或恒为 1；provider 给了结构化数字才填，没有则前端退回数正文。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(type = "number", optional))]
+        count: Option<u32>,
+        /// 这次调用没有跑完就被打断了（用户中断、所在回合被越过）。它是终态，不是失败：
+        /// 前端显示「已中断」而不是红色报错。false 不下发。
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        #[cfg_attr(test, ts(type = "boolean", optional))]
+        interrupted: bool,
     },
     Meta {
         id: String,
@@ -419,8 +521,14 @@ pub struct ChatHistoryDto {
     #[serde(default)]
     pub screen_assumed: bool,
     /// 最近一轮以错误收场（transcript 分析口径，与侧栏/贴纸的 `LiveItem.errored` 同源）。
-    /// 不做 transcript 分析的 agent（codex/kimi）恒为 false。
+    /// 五家都报：claude / gemini / kimi 的分析解析器本来就有，codex 与 opencode 的错误判据
+    /// 与各自时间线的错误卡共用一个函数。
     pub errored: bool,
+    /// 还在跑的后台子任务数（与侧栏/贴纸的 `LiveItem.busy_subagents` 同源）。主回合停了但
+    /// 后台子任务还在跑时，活动态是「运行中」：此前对话窗拿不到这个数，侧栏和灵动岛是
+    /// 「运行中」，对话窗里却没有运行条，撤回、分叉、发送键都按空闲处理（走查 A9）。
+    #[serde(default)]
+    pub busy_subagents: u32,
     /// 本 GUI 进程正托管着该会话的 PTY。决定「结束会话」入口的可见性：只有自己托管的
     /// 进程才能从 GUI 结束；外部终端里跑的会话（connected 但非托管）不该亮这个入口。
     pub pty_managed: bool,
@@ -537,6 +645,12 @@ pub struct PendingInteractionDto {
     pub runtime_request: Option<crate::runtime_request::RuntimeRequestDto>,
     #[serde(default)]
     pub runtime_requests: Vec<crate::runtime_request::RuntimeRequestDto>,
+    /// 这个会话的托管进程被就地换过几次（切账号把会话重启到新账号、重启续接切模型）。前端看到它变了，
+    /// 就把上一个进程留下的提示条与卡片清掉。桌面另有 `pty-restarted` 事件；手机页收不到宿主事件，
+    /// 只能靠这条已有的轮询带回来（不为它新增远程桥命令）。旧宿主不带，前端按 0 处理。
+    #[serde(default)]
+    #[cfg_attr(test, ts(type = "number"))]
+    pub pty_generation: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1412,6 +1526,7 @@ mod tests {
             timestamp: None,
             text: "hi".into(),
             interjected: false,
+            turn_id: None,
             to_agent: None,
         };
         assert!(serde_json::to_value(&plain)
@@ -1423,6 +1538,7 @@ mod tests {
             timestamp: None,
             text: "hi".into(),
             interjected: true,
+            turn_id: None,
             to_agent: None,
         };
         assert_eq!(serde_json::to_value(&steered).unwrap()["interjected"], true);
@@ -1442,6 +1558,9 @@ mod tests {
             is_error: false,
             subagent: None,
             patch: None,
+            exit_code: None,
+            count: None,
+            interrupted: false,
         };
         let value = serde_json::to_value(item).unwrap();
         assert_eq!(value["type"], "tool_result");

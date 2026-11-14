@@ -503,6 +503,30 @@ impl AgentPlugin for Kimi {
                 // kimi 重绘不清屏，上一页的表单残留在上方：取最后一次。
                 last: true,
                 details: crate::chat_ui::AttentionDetails::BracketForm,
+                kind: crate::chat_ui::AttentionKind::Question,
+                confirms: None,
+                // 自定义答案项 `Other`（表单恒在末尾追加，2.6.1 程序文件 `DEFAULT_OTHER_LABEL`）：按它的数字键
+                // 进入编辑，这一行变成 `→ [3] Other:`，题干下方出现 `Type your answer, then press Enter to save.`，
+                // 页脚换成 `type answer  ↵ save  tab switch  esc cancel`；打字后回车存下答案，表单跳到确认页
+                // （`[1] Submit` / `[2] Cancel`，由提问卡照常接手）。单选题真机走通：模型收到的正是打进去的
+                // 答案（tests/probe_kimi_other.rs，2.6.1，2026-11-15）。多选题里的 Other 没有走过，
+                // 前端只在单选页给入口。
+                options: &[
+                    crate::chat_ui::AttentionOptionRule {
+                        pattern: r"^other$",
+                        role: crate::chat_ui::OptionRole::CustomAnswer,
+                        scope: None,
+                        typed: Some(crate::chat_ui::TypedInput {
+                            amend_input: None,
+                            ready_pattern: r"^\s*type your answer, then press enter to save\.?\s*$",
+                            submit_input: "\r",
+                        }),
+                    },
+                ],
+                unparsed_keys: &[],
+                notice: None,
+                anchors: &[],
+                tail_lines: None,
             },
             crate::chat_ui::AttentionPattern {
                 id: "kimi:command-approval",
@@ -515,6 +539,52 @@ impl AgentPlugin for Kimi {
                 // 面板——用户看着 A 批准了 B。
                 last: true,
                 details: crate::chat_ui::AttentionDetails::ArrowPanel,
+                kind: crate::chat_ui::AttentionKind::Approval,
+                confirms: None,
+                // 选项角色（2.6.1 程序文件 `DEFAULT_APPROVAL_CHOICES` / `PLAN_REJECT_CHOICES` 与真机屏幕）：
+                //   ▶ 1. Approve once / 2. Approve for this session / 3. Reject / 4. Reject with feedback
+                // 计划审阅是 `Approve`（或计划自带的几个选项）加 `Reject`、`Revise`；计划自带的选项文案
+                // 不固定，认不出的归 other，卡片照原文列出来。
+                //
+                // `Reject with feedback`：按它的数字键进入输入状态（`selectAndSubmit` 里
+                // `requires_feedback` 分支），页脚从 `↑/↓ select · …` 变成 `Type feedback · ↵ submit.`，
+                // 打字后回车以 rejected 加 feedback 作答。真机走通：命令没有执行，模型收到
+                // `… rejected the approval request. Reason: <说明>`（probe_deny_feedback，2.6.1，2026-11-14）。
+                // `Revise` 是同一个组件、同一个 `requires_feedback` 分支，没有单独走真机。
+                options: &[
+                    crate::chat_ui::AttentionOptionRule {
+                        pattern: r"^approve(?: once)?$",
+                        role: crate::chat_ui::OptionRole::AllowOnce,
+                        scope: None,
+                        typed: None,
+                    },
+                    crate::chat_ui::AttentionOptionRule {
+                        pattern: r"^approve for this session$",
+                        role: crate::chat_ui::OptionRole::AllowPersistent,
+                        scope: Some(crate::chat_ui::PersistScope::Session),
+                        typed: None,
+                    },
+                    crate::chat_ui::AttentionOptionRule {
+                        pattern: r"^reject$",
+                        role: crate::chat_ui::OptionRole::Deny,
+                        scope: None,
+                        typed: None,
+                    },
+                    crate::chat_ui::AttentionOptionRule {
+                        pattern: r"^(?:reject with feedback|revise)$",
+                        role: crate::chat_ui::OptionRole::DenyWithFeedback,
+                        scope: None,
+                        typed: Some(crate::chat_ui::TypedInput {
+                            amend_input: None,
+                            ready_pattern: r"^\s*type feedback · ↵ submit\.?\s*$",
+                            submit_input: "\r",
+                        }),
+                    },
+                ],
+                unparsed_keys: &[],
+                notice: None,
+                anchors: &[],
+                tail_lines: None,
             },
         ]
     }
@@ -613,7 +683,7 @@ impl AgentPlugin for Kimi {
             count_arg: true,
             restores_files: false,
             reject_pattern: Some(UNDO_REJECT_PATTERN),
-            input_clear: None,
+            returns_input: false,
             menu: None,
         })
     }
@@ -625,6 +695,11 @@ impl AgentPlugin for Kimi {
             .and_then(|path| std::fs::read_to_string(path).ok())
             .map(|content| parse_model_catalog(&content))
             .unwrap_or_default()
+    }
+    /// 会话内的 `/effort <档>` 走 persistModelSelection，会改写 config.toml 的 default_model 与
+    /// [thinking]（取证见下方 model_switch 的注释）。
+    fn effort_saves_default(&self) -> bool {
+        true
     }
     /// `/model <alias>` 仍弹菜单、Enter 会改写 config.toml 的 default_model（research-kimi-gemini
     /// §2.2），所以菜单只作兜底；主路线是空闲时 `-r <id> -m <alias>` 重启接回（§2.3 e3 实测会话 id
@@ -666,8 +741,13 @@ impl AgentPlugin for Kimi {
     /// 「打断并发送」→ Esc 确实停下当前回合)。自动探针抓不到证据(kimi.exe 的 launcher
     /// shim 在 ConPTY 下即退),故走真机人工确认——与 claude(官方文档)/codex(状态行)
     /// 同为确证级别。
-    /// 2026-11-12 隔离无模型 PTY 实拍（target/lead-provider-probes/composer）：只允许已验证空框，不清非空草稿。
-    fn composer_guard(&self, version: Option<&str>) -> Option<crate::chat_ui::ComposerGuard> {
+    /// 输入框规格（这一家唯一的一份，见 chat_ui::ComposerSpec）。
+    /// - 框体：2026-11-12 隔离无模型 PTY 实拍（target/lead-provider-probes/composer）。没有占位文字，
+    ///   硬件光标常年隐藏（自绘光标）。
+    /// - 清空：Ctrl-C 清掉整段草稿，随后状态行挂「Press Ctrl+C again to exit」；回合进行中按，草稿
+    ///   清掉、回合照常继续（2.6.1，2026-11-14 probe_tui_script：`Count from 1 to 300` 途中按下，
+    ///   数字接着往下出）。空输入框上的 Ctrl-C 是退出的第一下，所以只在认出有字时按。
+    fn composer(&self, version: Option<&str>) -> Option<crate::chat_ui::ComposerSpec> {
         if !crate::lead_install::version_at_least(version, (2, 5, 3))
             || !self
                 .resolve()
@@ -675,16 +755,39 @@ impl AgentPlugin for Kimi {
         {
             return None;
         }
-        Some(crate::chat_ui::ComposerGuard {
+        Some(crate::chat_ui::ComposerSpec {
             prompt_footer: false,
             input_start_pattern: r"^(\s*│ > )",
-            top_pattern: r"^\s*╭─+╮\s*$",
-            bottom_pattern: r"^\s*╰─+╯\s*$",
+            // 草稿超出可视高度时上边框中间嵌一段 `↑ 33 more`（2.6.1 真机，45 行草稿只画最后 12 行）。
+            // 不认它的话整框变成「认不出」，错误条说的是认不出输入框，而不是草稿没显示全。
+            // 底边的 `↓ N more` 是按同一画法推的，没有实拍。
+            top_pattern: r"^\s*╭─+(?: [↑↓] \d+ more ─+)?╮\s*$",
+            bottom_pattern: r"^\s*╰─+(?: [↑↓] \d+ more ─+)?╯\s*$",
             row_pattern: r"^\s*│(.*)│\s*$",
             prompt_prefix: ">",
             tail_rows: 0,
             tail_pattern: None,
             empty_pattern: r"^$",
+            send_requires_recognition: true,
+            stash: None,
+            clear_inputs: &["\x03"],
+            clear_rounds: 1,
+            clear_while_running: true,
+            alt_modes: &[],
+            // 草稿保真（2.6.1 真机，tests/probe_draft_fidelity.rs，2026-11-14）：
+            // - 粘贴占位 `[paste #1 5120 chars]`（5120 字单行）、`[paste #1 +60 lines]`（60 行）；3 行小粘贴原样显示。
+            //   正则照它自己认占位的那条写（kimi.exe 内嵌 `\[paste #(\d+)( (\+\d+ lines|\d+ chars))?\]`，尾部可缺）。
+            //   图片占位 `[image #N (W×H)]` 见 clipboard_image_paste，按宽的认。
+            // - 超出可视高度：见 top_pattern 的 `↑ N more`。
+            // - 框宽 119 列时一行正文最多 110 格（正文从第 5 列起，离底边右端 4 格），按词折行；续行缩进 3 格。
+            fidelity: Some(crate::chat_ui::ComposerFidelity {
+                paste_pattern: r"\[paste #\d+(?: (?:\+\d+ lines|\d+ chars))?\]|\[[Ii]mage[^\]\r\n]*\]",
+                overflow_pattern: Some(r"[↑↓] \d+ more"),
+                overflow_rows: None,
+                overflow_height: None,
+                wrap_edge: crate::chat_ui::ComposerWrapEdge::Border,
+                wrap_inset: 4,
+            }),
         })
     }
     fn queue_input(&self) -> Option<&'static str> {

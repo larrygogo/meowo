@@ -39,16 +39,17 @@ export function asTerminalRuntimeRequest({ sessionId, provider, attention, writa
   attention: TerminalAttention;
   writable: boolean;
 }): RuntimeRequest {
-  const question = attention.id === "interactive:numbered-selector" || attention.id.endsWith(":question");
-  const approval = attention.id.endsWith(":command-approval")
-    || attention.id.endsWith(":plan-approval")
-    || (attention.id.startsWith("provider:") && !!attention.options?.length);
+  // 种类由规则声明（插件的 AttentionKind）或识别来源给出，不从 id 的后缀猜：
+  // 提问是 question，命令审批与计划批准是 approval，其余（等你选择、信任页、启动步骤）是 prompt。
+  const kind = attention.kind === "question" ? "question"
+    : attention.kind === "approval" || attention.kind === "plan" ? "approval"
+    : "prompt";
   return {
     sessionId,
     // 同一规则在屏幕重绘时更新原文和选项，不应因文本变化变成另一张请求卡。
     requestId: `terminal:${sessionId}:${attention.id}`,
     provider,
-    kind: question ? "question" : approval ? "approval" : "prompt",
+    kind,
     status: "pending",
     toolName: attention.id,
     description: null,

@@ -176,8 +176,14 @@ export function tmsChatMock(provider: TmsProvider, state: string, chat: (cmd: st
         if (state === "notnow") return { kind: "not_now", sessionId: CHAT_SESSION_ID, confirmed: false, reason: "settings/background_busy" };
         return { kind: "applied", sessionId: CHAT_SESSION_ID, confirmed: true, reason: null };
       case "managed_terminal_frame": {
-        const frame = (frames as { frames: { name: string; lines: string[] }[] }).frames.find((f) => f.name === EMPTY_FRAME[provider]);
-        return frame ? { lines: frame.lines, cursorRow: 0, cursorCol: 0, cursorVisible: true } : null;
+        // ?frame=<样例帧名>：终端输入框里是这一帧真机画面（拍「终端草稿读不全」的错误条用）。
+        const named = new URLSearchParams(location.search).get("frame");
+        type Frame = { name: string; lines: string[]; cols?: number; cursor?: { row: number; col: number; visible: boolean; dim: boolean } };
+        const frame = (frames as { frames: Frame[] }).frames.find((f) => f.name === (named ?? EMPTY_FRAME[provider]));
+        if (!frame) return null;
+        return named
+          ? { lines: frame.lines, cursorRow: frame.cursor?.row ?? 0, cursorCol: frame.cursor?.col ?? 0, cursorVisible: frame.cursor?.visible ?? false, cursorDim: frame.cursor?.dim ?? false, cols: frame.cols }
+          : { lines: frame.lines, cursorRow: 0, cursorCol: 0, cursorVisible: true };
       }
       case "managed_terminal_screen":
         return [];

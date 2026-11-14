@@ -11,6 +11,19 @@ const TRUST_TABLE: &str =
     "通用信任表（chat_ui.rs）里的句子，给有信任页的 CLI 用；kimi 2.5.1 程序文件里 0 处，不搜";
 
 pub(super) static DEPS: &[D] = &[
+    // ── 输入框规格（composer）──
+    D::new(
+        "composer.paste",
+        "[paste #",
+        " \u{2502} > [paste #1 +60 lines]                                                    \u{2502}",
+        "2.6.1 真机 2026-11-14（tests/probe_draft_fidelity.rs）：粘贴 60 行后输入框里只剩这个占位，5120 字单行是 `[paste #1 5120 chars]`；kimi.exe 含模板 `[paste #${pasteId} +${n} lines]`",
+    ),
+    D::new(
+        "composer.overflow",
+        "",
+        " \u{256d}\u{2500}\u{2500}\u{2500}\u{2500} \u{2191} 33 more \u{2500}\u{2500}\u{2500}\u{2500}\u{256e}",
+        "2.6.1 真机 2026-11-14（tests/probe_draft_fidelity.rs）：45 行草稿只画最后 12 行，上边框中间嵌 `↑ 33 more`。kimi.exe 里没搜到这段的原样模板（箭头、数字与 more 是运行时拼的），只做样例测试",
+    ),
     // ── 正则规则的样例 ──
     D::new(
         "effort.confirm",
@@ -35,6 +48,49 @@ pub(super) static DEPS: &[D] = &[
         "[image #",
         "[Image #1]",
         "2.5.1 kimi.EXE：`[image #` 2 处（输入框里的贴图占位）；`[image:` 1 处是旧形态",
+    ),
+    // ── 审批面板与提问表单选项的角色规则 ──
+    D::new(
+        "option:kimi:question#0",
+        "",
+        "Other",
+        "2.6.1 kimi.exe：提问表单末尾恒有的自定义答案项（`DEFAULT_OTHER_LABEL = \"Other\"`）。选项只有一个通用词，搜程序文件证明不了什么",
+    ),
+    D::new(
+        "option-ready:kimi:question#0",
+        "Type your answer, then press Enter to save.",
+        "   Type your answer, then press Enter to save.",
+        "2.6.1 真机屏幕 2026-11-15（probe_kimi_other：按 Other 的数字键之后题干下方的提示）；程序文件里是原句",
+    ),
+    D::new(
+        "option:kimi:command-approval#0",
+        "Approve once",
+        "Approve once",
+        "2.6.1 kimi.exe `DEFAULT_APPROVAL_CHOICES` 与真机屏幕 2026-11-14；计划审阅的 `Approve` 同规则",
+    ),
+    D::new(
+        "option:kimi:command-approval#1",
+        "Approve for this session",
+        "Approve for this session",
+        "2.6.1 kimi.exe `DEFAULT_APPROVAL_CHOICES` 与真机屏幕 2026-11-14",
+    ),
+    D::new(
+        "option:kimi:command-approval#2",
+        "",
+        "Reject",
+        "2.6.1 真机屏幕 2026-11-14。选项只有一个通用词，搜程序文件证明不了什么；这一项在不在由同屏的问句规则盯着",
+    ),
+    D::new(
+        "option:kimi:command-approval#3",
+        "Reject with feedback",
+        "Reject with feedback",
+        "2.6.1 kimi.exe `DEFAULT_APPROVAL_CHOICES`（requires_feedback）与真机屏幕 2026-11-14；计划审阅的 `Revise` 同规则",
+    ),
+    D::new(
+        "option-ready:kimi:command-approval#3",
+        "Type feedback · ↵ submit.",
+        "  Type feedback · ↵ submit.",
+        "2.6.1 真机屏幕 2026-11-14（probe_deny_feedback：按 4 之后的页脚）；程序文件里是原句",
     ),
     D::new(
         "attention:kimi:question",
@@ -186,6 +242,12 @@ pub(super) static DEPS: &[D] = &[
         "2.5.1 之前的三个点写法；2.5.1 改用省略号字符 `Working…`",
     )
     .legacy(),
+    D::record(
+        "record:turn.ended",
+        "turn.ended",
+        r#"{"type":"turn.ended","agentId":"main","turnId":1,"reason":"cancelled","durationMs":1433879,"time":1793173662714}"#,
+        "2.6.1 wire.jsonl 实样（reason=cancelled 画中断分隔条、failed 出错误卡；本机 164 份主链里 cancelled 17 次）；kimi.exe 73 处",
+    ),
     D::new(
         "literal:compacting...",
         "compacting...",

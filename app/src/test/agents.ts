@@ -1,3 +1,6 @@
+import approvalFrames from "./fixtures/approval-frames.json";
+import composerFrames from "./fixtures/composer-frames.json";
+import switchConfirm from "./fixtures/switch-confirm.json";
 import type { AgentDescriptor, ChatUi, LaunchChoice, LaunchOption, SlashCommand } from "../api";
 
 /** 与 plugins/claude 的 status_line_pattern 同一串（改一边必须同步另一边）。 */
@@ -90,7 +93,8 @@ const MOVES_SESSIONS_ACROSS_ACCOUNTS = new Set(["claude", "codex", "kimi"]);
  * 声明的事实（gemini 是 `/stats` 不是 `/status`，opencode 是 `/models` 不是 `/model`）。
  */
 const SLASH_COMMANDS: Record<string, string[]> = {
-  claude: ["/clear", "/compact", "/config", "/cost", "/help", "/init", "/mcp", "/memory", "/model", "/resume", "/review", "/status"],
+  // /btw：声明了侧问能力的命令由后端并进补全表（registry chat_ui）。
+  claude: ["/btw", "/clear", "/compact", "/config", "/cost", "/help", "/init", "/mcp", "/memory", "/model", "/resume", "/review", "/status"],
   codex: ["/clear", "/compact", "/diff", "/help", "/model", "/new", "/review", "/status"],
   kimi: ["/clear", "/compact", "/help", "/model", "/status"],
   gemini: ["/chat", "/clear", "/compress", "/help", "/mcp", "/memory", "/stats", "/tools"],
@@ -116,69 +120,11 @@ const MODEL_PRESETS: Record<string, ChatUi["model_presets"]> = {
  * 要测自定义命令，在用例里 `custom` 传发现出来的条目。未知 provider 回 null——与后端同语义。
  */
 /**
- * 整句可操作提示的识别规格。与后端各插件的 `attention_patterns()` 声明同源——
- * 那边改了正则，这里也要跟上，否则前端测试测的是一套过期规则。
- * 未取证的 provider 为空（不做整句识别）。
+ * 整句可操作提示的识别规格：直接取共享样例 approval-frames.json 里的 `patterns`。那一份由 Rust 测试
+ * （registry::tests::approval_frames_carry_declared_patterns_and_match_real_screens）逐字核对与各插件的
+ * `attention_patterns()` 一致，不再手抄一遍：手抄的那份改了后端正则不会报错，前端测的就成了过期规则。
  */
-const ATTENTION_PATTERNS: Record<string, { id: string; patterns: string[]; last: boolean; details: "none" | "proceed_box" | "arrow_panel" | "framed_box" | "bracket_form" | "framed_form" }[]> = {
-  claude: [
-    {
-      id: "claude:long-session-resume",
-      patterns: [
-        "this session is[^\\n]{0,120}\\bold and[^\\n]{0,80}\\btokens\\b",
-        "resuming the full session will consume a substantial portion of your usage limits",
-      ],
-      last: false,
-      details: "none",
-    },
-    {
-      id: "claude:command-approval",
-      patterns: ["this command requires approval", "do you want to proceed\\?"],
-      last: true,
-      details: "proceed_box",
-    },
-  ],
-  kimi: [
-    {
-      id: "kimi:question",
-      patterns: ["↑↓ select\\s+(?:1-\\d+ / ↵ (?:choose|toggle)|1/2 choose\\s+↵ confirm)\\s+←/→/tab switch"],
-      last: true,
-      details: "bracket_form",
-    },
-    {
-      id: "kimi:command-approval",
-      patterns: [
-        "↑/↓ select · [\\d/]+ choose · ↵ confirm",
-        "^\\s*▶\\s*(?:run this command|write this file|apply these edits|stop this task|ready to build with this plan|approve [^\\n?]+)\\?",
-      ],
-      last: true,
-      details: "arrow_panel",
-    },
-  ],
-  gemini: [
-    {
-      id: "gemini:command-approval",
-      patterns: [
-        "^\\s*│\\s*allow execution of [^\\n]*\\?",
-        "^\\s*│\\s*apply this change\\?",
-        "^\\s*│\\s*do you want to proceed\\?",
-        "^\\s*│\\s*to run \\[[^\\]\\n]+\\], allow access to the following\\?",
-      ],
-      last: true,
-      details: "framed_box",
-    },
-    {
-      id: "gemini:usage-limit",
-      patterns: ["^\\s*│\\s*usage limit reached\\b", "^\\s*│\\s*we are currently experiencing high demand\\b"],
-      last: true,
-      details: "none",
-    },
-    { id: "gemini:question", patterns: ["^\\s*│\\s*answer questions\\b"], last: true, details: "framed_form" },
-  ],
-  opencode: [
-    { id: "opencode:command-approval", patterns: ["△ permission required"], last: true, details: "none" },
-  ],
-};
+const ATTENTION_PATTERNS = approvalFrames.patterns as unknown as Record<string, NonNullable<ChatUi["attention_patterns"]>>;
 
 /**
  * 识别文法固件：带上该 provider 由插件声明的整句规则。
@@ -190,6 +136,7 @@ const ATTENTION_PATTERNS: Record<string, { id: string; patterns: string[]; last:
 /** claude 插件 subagent_view() 的同值镜像(见 plugins/claude/mod.rs)。 */
 export const SUBAGENT_VIEW: NonNullable<ChatUi["subagent_view"]> = {
   placeholder_prefix: "Message @",
+  label_pattern: String.raw`^\s*─{3,}\s+(\S.*?)\s+─{1,3}\s*$`,
   panel_main_label: "main",
   panel_pointer: "❯",
   panel_viewed_marker: "●",
@@ -211,59 +158,15 @@ export function grammar(
   return { provider, selectorAnchors, attentionPatterns: ATTENTION_PATTERNS[provider] ?? [] };
 }
 
-// 与四家已实拍版本的 ComposerGuard 同值；未声明不表示终端可以直接写入。
+// 五家的输入框规格直接取共享样例里的那一份（Rust 测试逐字核对它与插件声明一致），不再手抄一遍。
+// 版本是各家规格取证过的版本；未声明不表示终端可以直接写入。
 const COMPOSER_VERSIONS: Record<string, string> = {
   "codex": "0.167.2",
   "kimi": "2.5.3",
   "gemini": "0.65.0",
   "opencode": "1.19.3"
 };
-const COMPOSER_GUARDS: Record<string, NonNullable<ChatUi["composer_guard"]>> = {
-  "codex": {
-    "prompt_footer": true,
-    "input_start_pattern": "^(› )",
-    "top_pattern": "^› ",
-    "bottom_pattern": "^  [A-Za-z0-9][^\\r\\n]* · .+$",
-    "row_pattern": "^(?:› |  )(.*)$",
-    "prompt_prefix": "",
-    "tail_rows": 0,
-    "tail_pattern": null,
-    "empty_pattern": "^(?:Ask Codex to do anything)?$"
-  },
-  "kimi": {
-    "prompt_footer": false,
-    "input_start_pattern": "^(\\s*│ > )",
-    "top_pattern": "^\\s*╭─+╮\\s*$",
-    "bottom_pattern": "^\\s*╰─+╯\\s*$",
-    "row_pattern": "^\\s*│(.*)│\\s*$",
-    "prompt_prefix": ">",
-    "tail_rows": 0,
-    "tail_pattern": null,
-    "empty_pattern": "^$"
-  },
-  "gemini": {
-    "prompt_footer": false,
-    "input_start_pattern": "^(\\s*[>*] )",
-    "top_pattern": "^(?:─+|▄+)\\s*$",
-    "bottom_pattern": "^(?:─+|▀+)\\s*$",
-    "row_pattern": "^ (.*)$",
-    "prompt_prefix": ">|*",
-    "tail_rows": 0,
-    "tail_pattern": null,
-    "empty_pattern": "^(?:Type your message or @path/to/file)?$"
-  },
-  "opencode": {
-    "prompt_footer": false,
-    "input_start_pattern": "^(\\s*┃  |\\s*┃$)",
-    "top_pattern": "^\\s*┃\\s*$",
-    "bottom_pattern": "^\\s*╹▀+\\s*$",
-    "row_pattern": "^\\s*┃(.*)$",
-    "prompt_prefix": "",
-    "tail_rows": 2,
-    "tail_pattern": "^\\s*┃\\s+\\S.* · .+$",
-    "empty_pattern": "^(?:Ask anything…(?: \"[^\"\\r\\n]*\")?)?$"
-  }
-};
+const COMPOSER_SPECS = composerFrames.specs as unknown as Record<string, NonNullable<ChatUi["composer"]>>;
 
 export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | null {
   const builtins = SLASH_COMMANDS[provider];
@@ -281,6 +184,8 @@ export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | 
     model_select_command: provider === "claude" ? "/model" : null,
     // 与后端同源:claude 插件 model_select_reply(2.1.322 包内模板取证)。
     model_select_reply: provider === "claude" ? { confirm_pattern: "set model to ", reject_pattern: CLAUDE_MODEL_REJECT_PATTERN } : null,
+    // 对话中途切换的二次确认框：取共享样例里的规格（Rust 测试逐字核对与插件声明一致）。
+    switch_confirm: (switchConfirm.spec as Record<string, NonNullable<ChatUi["switch_confirm"]>>)[provider] ?? null,
     queue_input: provider === "codex" ? "\t" : "\r",
     // 与后端插件声明同源：claude 边干边读，kimi 未取证，其余排到回合结束。
     queue_delivery: provider === "claude" ? "next_step" : provider === "kimi" ? null : "turn_end",
@@ -341,8 +246,11 @@ export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | 
     interrupt_input: "\x1b",
     // 与后端同源:opencode 首按 Esc 只提示 "esc again to interrupt",须分两次写。
     interrupt_presses: provider === "opencode" ? 2 : 1,
-    // 与后端同源:换行注入序列 claude 是 ESC+CR,其余四家是 ctrl+j(裸 LF),见各插件的取证注释。
-    newline_input: provider === "claude" ? "\u001b\r" : "\n",
+    // 与后端同源:换行注入序列 claude 与 codex 是 ESC+CR(codex 0.167.2 真机上裸 LF 已不换行),
+    // 其余三家是 ctrl+j(裸 LF),见各插件的取证注释。
+    newline_input: provider === "claude" || provider === "codex" ? "\u001b\r" : "\n",
+    // 与后端同源:gemini 0.68.0 吞掉一次写入里的半角问号,带问号的单行正文改走粘贴。
+    single_line_paste_pattern: provider === "gemini" ? String.raw`\?` : null,
     runtime_commands_pending: false,
     // 与后端同源:claude/gemini(提交时原生附加)与 kimi/codex/opencode(@ 是文本级惯例,
     // 模型自行读取)声明 true。测试桩模拟「已探测到版本」的常态,故不做 version 门控。
@@ -365,6 +273,11 @@ export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | 
       : provider === "kimi"
         ? { command: "/effort", levels: [], confirm_pattern: String.raw`(?:thinking set to|with thinking) (\w+)`, reject_pattern: String.raw`unsupported thinking effort|cannot switch models while streaming|failed to switch model` }
         : null,
+    // 与后端同源:思考档在会话里怎么切。claude/kimi 打 /effort,codex 随模型经会话服务下发,其余两家切不了。
+    effort_switch: provider === "claude" || provider === "kimi" ? "command" : provider === "codex" ? "server_settings" : null,
+    // 与后端同源:对话页的切换会不会顺带改用户 CLI 的默认配置。claude 的 /model 会存成新会话默认,kimi 的 /effort 改写 config.toml。
+    model_select_saves_default: provider === "claude",
+    effort_saves_default: provider === "kimi",
     // 与后端同源:原生分叉 claude/codex/opencode(启动参数)、kimi(fork 子命令后 -r 打开)。
     fork: ["claude", "codex", "opencode", "kimi"].includes(provider),
     // 与后端同源:claude `/btw` 侧问(2.1.314 探针实测)。
@@ -376,19 +289,18 @@ export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | 
     // 与后端同源:kimi `/undo N`(2.4.0 包内取证);opencode `/undo` 一次一轮、还原文件、
     // 原文放回它的输入框(1.19.3 probe_opencode_undo);claude `/rewind` 菜单(2.1.314 probe_claude_rewind)。
     undo: provider === "kimi"
-      ? { command: "/undo", count_arg: true, restores_files: false, reject_pattern: String.raw`cannot undo while streaming|cannot undo \d+ prompts?;|nothing to undo|failed to undo|run /undo again|usage: /undo|no active session`, input_clear: null, menu: null }
+      ? { command: "/undo", count_arg: true, restores_files: false, reject_pattern: String.raw`cannot undo while streaming|cannot undo \d+ prompts?;|nothing to undo|failed to undo|run /undo again|usage: /undo|no active session`, returns_input: false, menu: null }
       : provider === "opencode"
-        ? { command: "/undo", count_arg: false, restores_files: true, reject_pattern: null, input_clear: { inputs: ["\u0003"], composer: { kind: "block", row_prefix: "┃", bottom_prefix: "╹" } }, menu: null }
+        ? { command: "/undo", count_arg: false, restores_files: true, reject_pattern: null, returns_input: true, menu: null }
         : provider === "claude"
-          ? { command: "/rewind", count_arg: false, restores_files: false, reject_pattern: null, input_clear: { inputs: ["\u001b", "\u001b"], composer: { kind: "prompt", prompt: "❯", border: "─" } }, menu: { title: "Rewind", ready_marker: "❯ (current)", step_input: "\u001b[A", selected_prefix: "❯", enter_input: "\r", quote_prefix: "│", option_label: "Restore conversation", cancel_input: "\u001b" } }
+          ? { command: "/rewind", count_arg: false, restores_files: false, reject_pattern: null, returns_input: true, menu: { title: "Rewind", ready_marker: "❯ (current)", step_input: "\u001b[A", selected_prefix: "❯", enter_input: "\r", quote_prefix: "│", option_label: "Restore conversation", cancel_input: "\u001b" } }
           : null,
-    // 与后端同源:草稿暂存键只有 claude 经真机取证(issue #72)。
-    draft_stash: provider === "claude" ? { input: "\u0013", composer_prompt: "❯", composer_border: "─", stashed_marker: "› stashed" } : null,
     // 与后端同源:子代理视图只有 claude 有(2.1.322 真机取证)。
     subagent_view: provider === "claude" ? SUBAGENT_VIEW : null,
     // 与后端同源:仅 claude 取证过「TUI 权限框与 PermissionRequest hook 并行竞速」。
     permission_prompt_races_hook: provider === "claude",
-    composer_guard: COMPOSER_GUARDS[provider],
+    // 与后端同源:每家一份输入框规格（认框、暂存、清空、特殊输入模式）。
+    composer: COMPOSER_SPECS[provider] ?? null,
     version: COMPOSER_VERSIONS[provider] ?? null,
   };
 }

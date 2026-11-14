@@ -9,6 +9,19 @@
 use crate::cli_text::CliTextDep as D;
 
 pub(super) static DEPS: &[D] = &[
+    // ── 输入框规格（composer）──
+    D::new(
+        "composer.empty",
+        "Ask anything",
+        "Ask anything… \"Fix a TODO in the codebase\"",
+        "1.19.5 真机 2026-11-14（probe_tui_script cells）：空输入框的灰色占位，引号里的示例会轮换",
+    ),
+    D::new(
+        "composer.paste",
+        "[Pasted ~",
+        "                       \u{2503}  [Pasted ~3 lines]",
+        "1.19.5 真机 2026-11-14（tests/probe_draft_fidelity.rs）：3 行的小粘贴就折成这个占位；opencode.exe 含模板 `[Pasted ~${n} lines]`",
+    ),
     // ── 正则规则的样例 ──
     D::new(
         "clipboard_image",
@@ -16,11 +29,36 @@ pub(super) static DEPS: &[D] = &[
         "[Image 1]",
         "1.19.3 opencode.exe 内嵌 JS：`[image ${n+1}]`（与 `[pdf ${n+1}]` 并列的附件占位）",
     ),
+    // ── 权限框选项的角色规则 ──
+    D::new(
+        "option:opencode:command-approval#0",
+        "Allow once",
+        "Allow once",
+        "1.19.5 opencode.exe `options:{once:\"Allow once\",always:\"Allow always\",reject:\"Reject\"}` 与真机屏幕 2026-11-14",
+    ),
+    D::new(
+        "option:opencode:command-approval#1",
+        "Allow always",
+        "Allow always",
+        "1.19.5 opencode.exe 同上",
+    ),
+    D::new(
+        "option:opencode:command-approval#2",
+        "",
+        "Reject",
+        "1.19.5 真机屏幕 2026-11-14。选项只有一个通用词，搜程序文件证明不了什么；这一项在不在由同屏的问句规则盯着",
+    ),
     D::new(
         "attention:opencode:command-approval",
         "permission required",
         "\u{25B3} Permission required",
         "1.19.3 opencode.exe：`c(x,k(\"\\u25b3\")),c(j,k(\"permission required\"))`，三角符号与文字分开渲染",
+    ),
+    D::new(
+        "attention:opencode:always-allow-confirm",
+        "always allow",
+        "\u{25B3} Always allow",
+        "1.19.5 opencode.exe：权限框第二段 `title:\"Always allow\"`，三角符号与文字分开渲染；真机屏幕见 probe_tui_script 2026-11-14",
     ),
     // ── 自动抽取的字面量 ──
     D::new(
@@ -85,5 +123,18 @@ pub(super) static DEPS: &[D] = &[
         2500,
         "esc interrupt",
         "1.19.3：`K(\"esc \")` 与 `\"interrupt\"` 相距 1677 字节（research-cli-drift O1）",
+    ),
+    // ── 对话页中断分隔与工具行依赖的库内记录（2026-11-14，本机 1.19.5 的 opencode.db 与 opencode.exe）──
+    D::record(
+        "record:MessageAbortedError",
+        "MessageAbortedError",
+        r#"{"error":{"data":{"message":"Aborted"},"name":"MessageAbortedError"},"key":"~error","kind":"error","msg":"msg_142cd36290011e33OiUHQ20U5k","time":1792122113434}"#,
+        "1.19.x 库内实样经导出（用户中断，画中断分隔条而不是错误卡；本机 3 次）；opencode.exe 15 处",
+    ),
+    D::record(
+        "record:Tool execution aborted",
+        "Tool execution aborted",
+        r#"{"kind":"part","part":{"callID":"toolu_vrtx_01EovD7P","state":{"error":"Tool execution aborted","input":{"command":"ping -n 30 127.0.0.1"},"status":"error"},"tool":"bash","type":"tool"}}"#,
+        "1.19.x 库内实样经导出（用户中断时正在跑的工具以这句收场，工具行显示已中断而不是失败；本机 3 次）；opencode.exe 2 处",
     ),
 ];

@@ -13,6 +13,7 @@ import { latestPlan, PlanPanel } from "./PlanPanel";
 import { collectBackgroundTasks, TasksDockPanel } from "./TasksPanel";
 import { TodoListItems, type TodoRow } from "./TodoPanel";
 import { LeadGateCard, LeadPanel, LeadPill, useLeadTask } from "./LeadPanel";
+import { ASSUME_LIVE, type SessionLive } from "./toolState";
 import { Icon } from "../../icons/Icon";
 import { icList, icSparkles, icTerminalBox } from "../../icons/glyphs.chat";
 import { icPencil } from "../../icons/glyphs";
@@ -21,13 +22,15 @@ type Panel = "plan" | "todos" | "tasks" | "subagents" | "lead";
 
 /// 入口按需出现（对照 Kimi 的 ChatDock）：计划只在有计划、开着计划模式或正等计划审批时出；
 /// 后台 Bash/子代理只在确实派过时出——常驻的空入口点开只有「暂无」，是噪音。
-export function dockEntries({ items, plan, planMode, planPending }: {
+export function dockEntries({ items, plan, planMode, planPending, live = ASSUME_LIVE }: {
   items: ChatItem[];
   plan: string | null | undefined;
   planMode: boolean;
   planPending: boolean;
+  /** 会话此刻的活动态与存活：后台任务算不算「运行中」要看它（见 collectBackgroundTasks）。 */
+  live?: SessionLive;
 }) {
-  const backgroundTasks = collectBackgroundTasks(items);
+  const backgroundTasks = collectBackgroundTasks(items, live);
   const currentPlan = latestPlan(items, plan ?? undefined);
   return {
     backgroundTasks,
@@ -60,8 +63,10 @@ function TodosIcon({ className }: { className: string }) {
   return <Icon glyph={icList} size={16} className={className} />;
 }
 
-export function DockWork({ sessionId, cwd, ccSessionId, items, history, loading, returnFocusTo }: {
+export function DockWork({ sessionId, cwd, ccSessionId, items, history, loading, returnFocusTo, live }: {
   sessionId: number;
+  /// 会话此刻的活动态与存活（对话窗给）：后台任务算不算「运行中」要看它。
+  live?: SessionLive;
   /// 关卡卡片答完收起时焦点的去处（输入框）。
   returnFocusTo?: RefObject<HTMLElement | null>;
   /// 会话工作目录：Lead 入口据此读 `.lead/active`（为空时不显示 Lead）。
@@ -106,8 +111,9 @@ export function DockWork({ sessionId, cwd, ccSessionId, items, history, loading,
   const planMode = (history?.agentModes ?? []).some((mode) => mode.value === "plan");
   const planPending = history?.pendingReview === "plan";
   const { backgroundTasks, currentPlan, showPlan, bashRunning, subagentsRunning } = useMemo(
-    () => dockEntries({ items, plan: history?.plan, planMode, planPending }),
-    [items, history?.plan, planMode, planPending],
+    () => dockEntries({ items, plan: history?.plan, planMode, planPending, live }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- live 是每次渲染新建的对象，按它的两个字段比
+    [items, history?.plan, planMode, planPending, live?.activity, live?.alive],
   );
 
   // 开着的面板：Esc 关（走层栈，审批卡的 Esc 不抢）；点面板外关（对照 Kimi 的 ChatDock）。

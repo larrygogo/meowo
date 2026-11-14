@@ -24,6 +24,7 @@ import {
   type RuntimeRequest,
 } from "../../api";
 import { asRuntimeApproval, asRuntimeRequest, runtimeRequestBrokerLive } from "./runtimeRequest";
+import { approvalEndedNotice } from "./requestCard";
 import { useT } from "../../i18n";
 import { remoteUi } from "../../remoteMode";
 import { WINDOW_CLOSE_CANCELLED_EVENT } from "./windowClose";
@@ -31,14 +32,20 @@ import { WINDOW_CLOSE_CANCELLED_EVENT } from "./windowClose";
 /** 远程审批租约续约周期（ms）。须显著小于后端 REMOTE_CONSUMER_TTL_MS(60s),留足网络抖动余量。 */
 export const REMOTE_CONSUMER_HEARTBEAT_MS = 20_000;
 
-export function useApprovalChannel({ sessionId, activeSessionRef, viewRef, setView, setSendError }: {
+export function useApprovalChannel({ sessionId, activeSessionRef, viewRef, setView, setSendError, onProcessRestart }: {
   sessionId: number;
   /** 当前会话 id 的实时镜像（mount-once 监听里的闭包 state 是过期值）。 */
   activeSessionRef: MutableRefObject<number>;
   viewRef: MutableRefObject<"chat" | "terminal">;
   setView: Dispatch<SetStateAction<"chat" | "terminal">>;
   setSendError: Dispatch<SetStateAction<string>>;
+  /** 会话的托管进程换了代（轮询里的 ptyGeneration 变了）。手机页收不到 pty-restarted 事件，靠这条知道。 */
+  onProcessRestart?: () => void;
 }) {
+  const onProcessRestartRef = useRef(onProcessRestart);
+  onProcessRestartRef.current = onProcessRestart;
+  // 上一次轮询看到的进程代次。换会话后的第一次只记基线，不算换代。
+  const generationRef = useRef<{ session: number; value: number } | null>(null);
   const t = useT();
   const [approval, setApproval] = useState<RuntimeRequest | null>(null);
   // 实时镜像：pending-approval-cleared 的 mount-once 监听里要判「卡是否还挂着」，
@@ -66,7 +73,11 @@ export function useApprovalChannel({ sessionId, activeSessionRef, viewRef, setVi
     }
     const timer = window.setInterval(() => setApprovalNow(Date.now()), 1_000);
     return () => window.clearInterval(timer);
-  }, [approval]);
+    // 只按请求 id 重建计时：轮询每次都交回一个新对象（内容相同），按对象依赖的话，推送通道没接通时
+    // 400ms 一次的轮询会在这个 1 秒的计时器响之前把它拆掉重建，倒计时停在 5:00 不动，
+    // 也永远到不了「已过期」（2026-11-14 演示页推进时钟 302 秒实测）。
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 见上：有意只依赖请求 id
+  }, [approval?.requestId]);
   const approvalCountdown = (() => {
     if (!approval || !approvalSeenRef.current) return null;
     const left = Math.max(0, APPROVAL_TIMEOUT_MS - (approvalNow - approvalSeenRef.current.at));
@@ -150,6 +161,11 @@ export function useApprovalChannel({ sessionId, activeSessionRef, viewRef, setVi
     const poll = () => pendingInteraction(sessionId).then((snapshot) => {
       if (cancelled) return;
       const { approval: legacyApproval, question, runtimeRequest, runtimeRequests } = snapshot;
+      // 进程代次变了：上一个进程留下的提示条与卡片作废（旧宿主不带这个字段，按 0）。
+      const generation = snapshot.ptyGeneration ?? 0;
+      const seen = generationRef.current;
+      generationRef.current = { session: sessionId, value: generation };
+      if (seen && seen.session === sessionId && seen.value !== generation) onProcessRestartRef.current?.();
       // 首切片后端只有 runtimeRequest，旧后端连它也没有；集合出现后才以集合为权威，
       // 这样审批与提问的终态/空快照都不会被旧字段里的残留重新复活。
       const nextApproval = runtimeRequests === undefined
@@ -162,7 +178,8 @@ export function useApprovalChannel({ sessionId, activeSessionRef, viewRef, setVi
         if (current && (!nextApproval || nextApproval.status !== "pending")) {
           if (nextApproval && current.requestId !== nextApproval.requestId) return current;
           if (runtimeRequestBrokerLive(current)) {
-            setSendError(remoteUi() ? tRef.current.chat.approvalClearedNoticeRemote : tRef.current.chat.approvalClearedNotice);
+            // 后端给了终态就照实说是过期还是已取消；没给（空快照）用分不清原因的那一句。
+            setSendError(approvalEndedNotice(nextApproval?.status, tRef.current));
           }
           return null;
         }
@@ -287,7 +304,7 @@ export function useApprovalChannel({ sessionId, activeSessionRef, viewRef, setVi
         // （那条路先行 setApproval(null)，这里读到的已是 null）。凭空消失分不清是自己漏点
         // 还是超时（与题面卡 questionExpired 同一课），说清卡去哪了。
         if (approvalLiveRef.current?.requestId === event.payload.requestId) {
-          setSendError(remoteUi() ? tRef.current.chat.approvalClearedNoticeRemote : tRef.current.chat.approvalClearedNotice);
+          setSendError(approvalEndedNotice(undefined, tRef.current));
         }
         setApproval((current) => current?.requestId === event.payload.requestId ? null : current);
         setLiveQuestionId((current) => (current === event.payload.requestId ? null : current));

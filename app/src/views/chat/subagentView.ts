@@ -8,9 +8,9 @@
 /// 屏幕形态与键位见后端 chat_ui::SubagentView（2.1.322 真机取证）。
 
 import type { ChatUi } from "../../api";
+import { readComposer, type ComposerSpec } from "./composer";
 
 export type SubagentViewSpec = NonNullable<ChatUi["subagent_view"]>;
-export type ComposerSpec = NonNullable<ChatUi["draft_stash"]>;
 
 export type SubagentScreen = {
   /// 是否停在子代理视图。
@@ -29,31 +29,23 @@ function escapeRegex(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/// 读屏幕。composer 的认法与 DraftStash 相同（提示符行、上一行是边框），只是视图里的上边框
-/// 右侧挂着子代理描述（`──── probe-sleeper ─`），不再整行是横线。
+/// 读屏幕。输入框用插件那一份输入框规格认（composer.ts）；视图里的上边框右侧挂着子代理描述
+/// （`──── probe-sleeper ─`），规格的上边框规则认得这种形态，描述用 `label_pattern` 取出来。
 ///
 /// 判视图要两条证据之一：空 composer 的占位以 `Message @` 开头；或边框挂了描述且面板里
 /// main 行不是「正在看」的那个记号。composer 里有字时占位不画，只能靠后者。
 export function readSubagentScreen(screen: string[] | null, spec: SubagentViewSpec, composer: ComposerSpec): SubagentScreen {
   if (!screen) return NOT_VIEWING;
-  const border = escapeRegex(composer.composer_border);
-  const plainBorder = new RegExp(`^${border}{3,}$`);
-  const labeledBorder = new RegExp(`^${border}{3,}\\s+(.+?)\\s+${border}{1,3}$`);
-  const isBorder = (line: string) => plainBorder.test(line.trim()) || labeledBorder.test(line.trim());
-  let promptAt = -1;
-  for (let index = screen.length - 1; index > 0; index -= 1) {
-    if (isBorder(screen[index - 1]) && screen[index].trimStart().startsWith(composer.composer_prompt)) { promptAt = index; break; }
-  }
-  if (promptAt < 0) return NOT_VIEWING;
-  const label = labeledBorder.exec(screen[promptAt - 1].trim())?.[1]?.trim() || null;
-  const draft = screen[promptAt].trimStart().slice(composer.composer_prompt.length).trim();
+  // 不带光标读：这里要的是输入框的位置和首行原文（占位也要原样拿到）。
+  const read = readComposer(screen, composer);
+  if (read.topRow === undefined || read.bottomRow === undefined || read.altMode) return NOT_VIEWING;
+  const label = new RegExp(spec.label_pattern).exec(screen[read.topRow])?.[1]?.trim() || null;
+  const draft = (read.text ?? "").split("\n")[0];
   const placeholder = draft.startsWith(spec.placeholder_prefix)
     ? draft.slice(spec.placeholder_prefix.length).replace(/(…|\.\.\.)\s*$/, "").trim() || null
     : undefined;
 
-  let bottom = promptAt + 1;
-  while (bottom < screen.length && !plainBorder.test(screen[bottom].trim())) bottom += 1;
-  const rows = screen.slice(bottom + 1).map((row) => row.trimEnd());
+  const rows = screen.slice(read.bottomRow + 1).map((row) => row.trimEnd());
   const pointer = escapeRegex(spec.panel_pointer);
   // 记号在不同字体下可能是 ◯/●/⚪ 或 ASCII 回退 `( )`，只要求是一个短记号。
   const mainRow = new RegExp(`^\\s*(?:${pointer}\\s+)?(\\(\\s?\\)|\\S{1,2})\\s+${escapeRegex(spec.panel_main_label)}(?:\\s{2,}.*)?$`);

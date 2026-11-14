@@ -5264,7 +5264,8 @@ button.scm-check-name:hover { text-decoration: underline; }
 .chat-approval-copy details { margin-top: var(--sp-5); color: var(--cc-text-faint); font-size: var(--text-xs); }
 /* 命令正文是这张卡里真正要读的东西：下沉的代码底（--cc-code-bg）+ 正文色等宽字，不描边。
    留 max-height + 滚动——真实命令能有好几百字符，不能让它把卡撑到满屏。 */
-.chat-approval-copy pre { max-height: 160px; margin: 0; padding: var(--sp-8) var(--sp-12); overflow: auto; border-radius: var(--radius-md); background: var(--cc-code-bg); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--cc-text); font: var(--text-xs)/var(--leading-normal) var(--cc-mono); user-select: text; }
+/* 原文区限高按整行取：上内边距加 8 行。此前固定 160px，最后一行露半截（确认页原文 9 行以上时，第二轮审查截图）。 */
+.chat-approval-copy pre { max-height: calc(8lh + var(--sp-8)); margin: 0; padding: var(--sp-8) var(--sp-12); overflow: auto; border-radius: var(--radius-md); background: var(--cc-code-bg); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--cc-text); font: var(--text-xs)/var(--leading-normal) var(--cc-mono); user-select: text; }
 /* 一行放不下时，掉行的必须是左边的旁支，不能是主按钮：正着排（row + wrap）是从左往右装，
    装不下的是最后一颗，也就是主按钮自己掉到第二行（实拍英文带「Allow and remember…」的卡：
    Allow once 宽 116 加 16 的间距放不下，独自靠右占一行，和「拒绝」分开了）。
@@ -5282,6 +5283,13 @@ button.scm-check-name:hover { text-decoration: underline; }
    把本次决定推到右端，形成「旁支在左、决定在右」的固定落点。 */
 .chat-approval-actions-side { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-8); margin-right: auto; }
 .chat-approval-actions-side:empty { display: none; }
+/* 持久放行的标签可能很长（规则原文、英文说明）：按钮最宽到卡片内宽，标签自己省略，不撑出卡片
+   （2026-11-14 量测：手机英文「Allow and remember (this project, local) · cargo test」超出卡片左右各 3px）。 */
+.chat-approval-actions-side { min-width: 0; max-width: 100%; }
+.chat-approval-actions-side > button.is-persistent { min-width: 0; max-width: 100%; }
+/* 认不出作用的其他选项（终端原文，同样可能很长）：与持久放行同一条宽度规则。 */
+.chat-approval-actions-side > button.is-other { min-width: 0; max-width: 100%; }
+.chat-approval-persist-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 /* 「收起」进了左侧组，就得交出自己那份 margin-right:auto（原本靠它把自己顶到最左），
    否则组内两颗按钮被顶到行的两端。顺带对齐高度：is-inline 的 height:auto 特异性更高，
    不显式压回来它会比同行按钮矮一截。 */
@@ -5310,11 +5318,10 @@ button.scm-check-name:hover { text-decoration: underline; }
 /* Esc 两段式确认:第一下把拒绝按钮点亮为警示态并换文案「再按 Esc 确认拒绝」,
    第二下才真拒(见 ChatWindow 的 denyViaEsc)。 */
 .chat-approval button.is-deny.is-esc-armed { border-color: color-mix(in srgb, var(--cc-err) 55%, transparent); color: var(--cc-fail-text); background: color-mix(in srgb, var(--cc-err) 12%, transparent); }
-/* 屏幕识别卡在场时 composer 整体锁定:inert(由 ChatWindow 经 ref 设置)负责挡键盘
-   与焦点,这里管视觉降级 + 老 WebView 的指针兜底。不卸载的理由见 ChatWindow 注释。 */
-/* 降级只压工具行，不压文字区：整块 opacity .55 把那句告诉用户该做什么的提示一起压掉了
-   （实拍「终端正在等待选择，请先用上方卡片或终端页处理」深色 2.62:1、浅色 2.23:1；不锁时 5.88 / 5.66）。 */
-.chat-compose.is-locked { pointer-events: none; }
+/* 屏幕上的卡摆在眼前时（终端里正开着一个等按键的框）：工具行的控件逐个停用（见 chat/composerCardLock），
+   这里只管视觉降级。输入框不锁：草稿照常可写，所以不再对整块设 pointer-events:none，也不设 inert。 */
+/* 降级只压工具行，不压文字区：整块 opacity .55 会把占位里那句告诉用户该做什么的说明一起压掉
+   （实拍深色 2.62:1、浅色 2.23:1；不压时 5.88 / 5.66）。 */
 .chat-compose.is-locked > :not(textarea) { opacity: .55; }
 .chat-compose {
   /* 文档流内的 footer：margin 居中限宽、底部留 18px。position:relative 是给内部的
@@ -5460,6 +5467,9 @@ button.scm-check-name:hover { text-decoration: underline; }
 .chat-flat-steps > .chat-tool > summary > .chat-tool-state { order: 3; }
 .chat-tool-time { flex: 0 0 auto; color: var(--cc-text-faint); font: var(--text-xs) var(--cc-mono); font-variant-numeric: tabular-nums; }
 .chat-tool-count { flex: 0 0 auto; color: var(--cc-text-faint); font-size: var(--text-xs); }
+/* 行上的状态词（待批准、已中断）：与行数、条数同一档字号与位置；等人用运行条同款的琥珀字，已中断是静止的事实，不上色。 */
+.chat-tool-status { flex: 0 0 auto; color: var(--cc-text-faint); font-size: var(--text-xs); white-space: nowrap; }
+.chat-tool-status.is-waiting { color: var(--cc-warn-text); }
 .chat-tool-state { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; }
 .chat-tool[data-state="running"] .chat-tool-state { background: var(--cc-ok-vivid); }
 .chat-tool[data-state="error"] .chat-tool-state { background: var(--cc-err-vivid); }
@@ -6115,6 +6125,10 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 }
 .chat-compose .chat-send-takeover:hover:not(:disabled, [aria-disabled="true"]) { background: color-mix(in srgb, var(--cc-err-vivid) 12%, transparent); }
 .chat-compose .chat-send-takeover:is(:disabled, [aria-disabled="true"]) { opacity: 0.55; cursor: default; }
+/* 错误条上不丢东西的出路（重试、连同草稿发送、看终端、收起）用中性描边：一排四个红钮分不出哪个
+   才是会丢内容的（截图自查 2026-11-15）。红色只留给破坏性的那一个。 */
+.chat-compose .chat-send-takeover.is-plain { border-color: var(--cc-border); color: var(--cc-text); }
+.chat-compose .chat-send-takeover.is-plain:hover:not(:disabled, [aria-disabled="true"]) { background: color-mix(in srgb, var(--cc-text) 8%, transparent); }
 /* 窄宽度统一一条 12px 边距（对照 Kimi 手机端：消息区、输入框、停靠栏同一条，横屏刘海再让出
    safe-area）。此前消息区 22px、输入框 12px、停靠胶囊约 40px，三者各对各的线。
    用户气泡封顶 88%：窄屏上整宽的用户消息与回复长得一样，分不出谁说的。封顶要加在收缩包裹的
@@ -6227,6 +6241,10 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 /* .chat-compose 前缀同模型菜单：压过 `.chat-compose button` 的 accent 皮肤。 */
 .chat-compose .chat-slash-item { display: flex; align-items: baseline; gap: var(--sp-12); width: 100%; height: auto; min-height: 0; padding: var(--sp-8) var(--sp-11); border: 0; border-radius: var(--radius-md); background: transparent; text-align: left; cursor: pointer; }
 .chat-compose .chat-slash-item:hover { background: var(--fill-hover); }
+/* 回合在跑时要开 CLI 菜单的命令：置灰，右侧的说明换成原因。用 aria-disabled 而不是 disabled，键盘高亮仍能停上去读到原因。 */
+.chat-slash-item[aria-disabled="true"] { cursor: default; }
+.chat-slash-item[aria-disabled="true"] code { opacity: .5; }
+.chat-compose .chat-slash-item[aria-disabled="true"]:hover { background: transparent; }
 .chat-compose .chat-slash-item code { flex: 0 0 auto; color: var(--cc-text); font-family: var(--cc-mono); font-size: var(--text-xs); font-weight: 500; }
 .chat-compose .chat-slash-item span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cc-text-faint); font-size: var(--text-xs); margin-left: auto; }
 /* 参数提示行（命令已命中、正在填参数）：纯展示，不是可点候选——收回手型与 hover 反馈。 */
@@ -6265,6 +6283,9 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
    浅色主题下画环发暗发脏——实拍反馈）；与状态圆点同一套取色。 */
 .chat-context.is-warn .chat-context-ring-fg { stroke: var(--cc-warn-vivid); }
 .chat-context.is-full .chat-context-ring-fg { stroke: var(--cc-err-vivid); }
+/* 这家 CLI 不上报用量：只留底圈并压淡，位置不变。 */
+.chat-context.is-unsupported { opacity: .6; }
+.chat-context.is-unsupported .chat-context-ring-fg { stroke: transparent; }
 /* 输入区 :is(button) 通用样式会改按钮高度与底色，斜杠菜单条目压回菜单条目（尺寸、悬停底见文末「弹出菜单」）。 */
 .chat-compose .chat-slash-menu .dd-item { height: auto; border: 0; color: var(--cc-text-dim); background: transparent; }
 /* 触屏点过会一直留着 :hover：菜单与下拉的悬停底色只在有悬停能力的指针下给（第四轮 L5，同 C4）。 */
@@ -6289,7 +6310,7 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
    触屏点过不残留（第三轮 C4）。此前悬停与选中同色，选中行只靠一个勾认。 */
 :is(.chat-compose, .nsp-composer) .chat-model-item.is-active { background: var(--fill-selected); }
 @media (hover: hover) {
-  :is(.chat-compose, .nsp-composer) .chat-model-item:not(.is-active):not(:disabled):hover { background: var(--fill-hover); }
+  :is(.chat-compose, .nsp-composer) .chat-model-item:not(.is-active):not(:disabled, [aria-disabled="true"]):hover { background: var(--fill-hover); }
 }
 .chat-model-item { display: flex; align-items: center; gap: var(--sp-14); width: 100%; padding: var(--sp-9) var(--sp-11); border: 0; background: transparent; text-align: left; cursor: pointer; }
 .chat-model-item-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
@@ -6352,8 +6373,9 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .chat-model-item:is(:disabled, [aria-disabled="true"]):hover { background: transparent; }
 /* 选不到的档：不压透明度，名字与小字改用现有的禁用文字色（与 .nsp-send:disabled 同一个 --cc-text-faint，第三轮 C8）。 */
 .chat-model-item:disabled { cursor: default; }
-.chat-model-item:disabled :is(.chat-model-item-name, .chat-model-item-detail) { color: var(--cc-text-faint); }
-.chat-model-item:disabled:hover { background: transparent; }
+.chat-model-item:is(:disabled, [aria-disabled="true"]) { cursor: default; }
+.chat-model-item:is(:disabled, [aria-disabled="true"]) :is(.chat-model-item-name, .chat-model-item-detail) { color: var(--cc-text-faint); }
+.chat-model-item:is(:disabled, [aria-disabled="true"]):hover { background: transparent; }
 /* 对勾固定槽位：未选中行也占 16px，右侧 CLI 原名列各行右缘对齐到同一 x（第三轮 C5）。 */
 .chat-model-check-slot, .dd-check-slot { flex: 0 0 16px; width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; }
 /* 名字旁的「默认」小字标签（新建页 CLI 配置的默认档，第三轮 C7）。 */
@@ -6690,13 +6712,16 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 /* ── 统一审批卡(ApprovalCard)──
    外壳/头部/徽章/左右动作组直接复用上面的 .chat-approval 一族;这里只放屏幕识别卡
    特有的部件:选择器选项列表、自定义回答输入行、pre-wrap 正文。卡片在场时 compose
-   锁定但不卸载(.chat-compose.is-locked),底部间距无需特判。 */
+   不卸载、输入框不禁用(工具行降级见 .chat-compose.is-locked),底部间距无需特判。 */
 .chat-approval-prewrap { white-space: pre-wrap; }
 /* 交互卡的「仅收起」:零副作用出口(不写 PTY)。× 形态绝对定位在卡片右上;文字形态
    (is-inline)混在动作行里,保持幽灵按钮的低调——它不是主要动作,不能与选项抢视觉。 */
 .chat-attention-dismiss { position: absolute; top: var(--sp-8); right: var(--sp-8); width: var(--icon-button-sm); height: var(--icon-button-sm); display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: var(--radius-sm); color: var(--cc-text-faint); background: transparent; font-size: var(--text-base); line-height: 1; cursor: pointer; }
 .chat-attention-dismiss:hover { color: var(--cc-text); background: var(--fill-selected); }
-.chat-attention-dismiss.is-inline { position: static; width: auto; height: auto; padding: var(--sp-6) var(--sp-10); font-size: var(--text-xs); margin-right: auto; }
+/* 文字形态回到文档流，但必须仍是定位元素（relative，不是 static）：手机页给每个按钮加了一块绝对定位的
+   外扩热区（mobile.css 的 button::after）。按钮是 static 时这块热区改以整张卡为参照，盖住了卡片正文——
+   手机上点选项、点命令、点复制，落点全是「仅收起」（2026-11-14 用 elementFromPoint 实测）。 */
+.chat-attention-dismiss.is-inline { position: relative; top: auto; right: auto; width: auto; height: auto; padding: var(--sp-6) var(--sp-10); font-size: var(--text-xs); margin-right: auto; }
 /* 收起后的折叠条(7C-2):挂在 overlay 底部、卡片的位置上,窄一条不挡消息。
    宽度与卡片同轴居中,视觉上就是那张卡压扁后的残留,点一下原样展开。 */
 .chat-attention-collapsed { width: min(var(--chat-col), calc(100% - 48px)); margin: 0 auto var(--sp-14); flex: 0 0 auto; padding: var(--sp-7) var(--sp-14); display: flex; align-items: center; gap: var(--sp-8); border: 0; border-radius: var(--radius-md); background: var(--cc-panel-raised); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cc-warn-vivid) 70%, transparent), var(--shadow-sm); color: var(--cc-text-dim); font-size: var(--text-xs); text-align: left; cursor: pointer; }
@@ -6992,6 +7017,7 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .chat-tool-output .is-warn { color: var(--cc-warn-text); }
 /* 统一 diff（structuredPatch）：终端同款「行号 记号 代码」，增删交错带上下文。 */
 .chat-tool-udiff .chat-tool-ln { flex-basis: 4ch; }
+.chat-tool-udiff.is-unnumbered .chat-tool-line:not(.is-gap) .chat-tool-ln { display: none; }
 .chat-tool-mark { flex: 0 0 1ch; color: var(--cc-text-faint); user-select: none; }
 .chat-tool-udiff .chat-tool-line.is-del { background: color-mix(in srgb, var(--cc-err-vivid) 12%, transparent); }
 .chat-tool-udiff .chat-tool-line.is-del .chat-tool-mark, .chat-tool-udiff .chat-tool-line.is-del .chat-tool-ln { color: var(--cc-fail-text); }

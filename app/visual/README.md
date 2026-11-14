@@ -28,7 +28,7 @@ bun run visual:compare <基线目录> <新目录>
 
 - `--filter <正则>`：只拍名字匹配的图，例如 `--filter "^chat__"`、`--filter "dark__w1280"`。对比时加 `--subset`，基线里多出来的图不算缺图。
 - `--list`：只列出会拍哪些图，不起 vite。
-- 补看场景的 `steps`（`click` / `rclick` / `hover` / `type` / `key` / `tick` / `log` …）是截图前替用户做的真实指针与键盘动作，见 `shoot.mjs` 的 `runSteps`；`?ui=1.5` 拍界面缩放。
+- 补看场景的 `steps`（`click` / `rclick` / `hover` / `type` / `key` / `tick` / `jump` / `log` …）是截图前替用户做的真实指针与键盘动作，见 `shoot.mjs` 的 `runSteps`；`?ui=1.5` 拍界面缩放。
 - `VISUAL_EXTRA=<仓库外的 .mjs>`：临时追加一批补看场景（文件同样导出 `QA_SHOTS`）。量对齐用的 `log` 步骤、一次性的排查场景放那里，不用改仓库里的 `qa-scenes.mjs`。
 - `?max=1`：右侧面板最大化（`panel-*` 与 `flow-md` 等带面板的场景都认）。
 - `--jobs <n>`：并发页数，默认 4。
@@ -75,6 +75,8 @@ bun run visual:compare <基线目录> <新目录>
 | `mobile-question` / `mobile-tasks` | 手机对话页换成问答卡（矮屏下选项可见性，量测脚本用，不进矩阵）/ 派过后台 Bash（一条在跑、三条跑完）与一个在跑的子代理（`qa-m-tasks*`、`qa-m-subagents` 从它点开后台任务面板） | 375 / 430 |
 | `mobile-*-kbd` / `-land` / `-ipad` / `-ipadland` | 同一场景换视口：键盘弹出（375×476、375×376）、横屏 812×375、iPad 820×1180 与 1180×820。覆盖 `mobile-list` / `-chat` / `-changes` / `-settings`。**只拍 dpr 2**，文件名带高度（`w375h376`），按 `dpr1` 筛基础矩阵时看不到它们 | 见文件名 |
 | `qa-*` | 补看场景（`qa-scenes.mjs`）：要靠真实点击、悬停、键盘才出现的弹层与状态（斜杠菜单、@ 补全、模型菜单与模型市场、截图标注、重命名、Lead 关卡卡、Broker 审批、屏幕识别的五种交互卡、同步中断、worktree setup、排队消息、灯箱、区内搜索、侧栏各态、会话管理页、右侧面板的 Markdown / 浏览器 / 终端页签、托管终端页签、设置窗的更新状态 / 下拉 / 聚焦 / 保存失败、手机底部面板），以及缩放 150%、英文、2560 超宽。假数据在 `qaFlow.ts`（harness 场景名 `flow-<名字>`） | 见各条 `size` |
+| `qa-card-*` / `qa-m-card-*` | 五家的审批卡、提问卡、提示卡（harness 场景名 `flow-card-<名字>` 与 `mobile-card-<名字>`，数据在 `cardScenes.ts`，桌面与手机同一份）：五家各一张审批卡、Claude 屏幕兜底的多选项卡、Kimi 与 Gemini 的提问表单、Gemini 额度耗尽、OpenCode 的二次确认页、长命令在矮窗与键盘弹出下的卡内滚动。样本用测试里那份（`src/test/requestSamples.ts`，各自注明出处），能力表用测试夹具的 `chatUi(provider)`，所以与真实会话走同一条识别链 | 620×760、375×812（长命令 620×480、375×476） |
+| `qa-tools-*` / `qa-m-tools-*` | 五家的工具行与运行状态（harness 场景名 `flow-tools-<家>-<状态>` 与 `mobile-tools-<家>-<状态>`，数据在 `toolScenes.ts`，桌面与手机同一份）：整份时间线、运行中、等待审批、回合出错，外加展开的 diff、失败的命令、待办行。条目直接读五家的回放样本（`src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/`，与 `replay.test.tsx` 同一份），只按状态截取并重排时间戳；样本里没有的待办与 Codex 回合出错是按插件规则补的，文件头写了出处。`qa-m-card-expired` 是手机页审批卡的「已过期」（`jump` 拨快假时钟） | 620×760、375×812 |
 
 每个场景都拍深色、浅色两种主题，dpr 1 和 2。语言默认只拍中文，`chat` 与 `mobile-chat` 另加英文。
 

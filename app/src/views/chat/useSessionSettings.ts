@@ -30,6 +30,7 @@ import {
 } from "../../api";
 import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
+import { logChatEvent } from "./chatDiag";
 
 export type SettingsRequest = {
   /** 模型 id（清单里的），带显示名供乐观更新与提示。 */
@@ -83,6 +84,10 @@ const RETRY_WHEN_READY = new Set([
   "lead/opencode_busy",
 ]);
 
+/** 「输入框里有字」的失败原因：不重启的路线（会话服务 / TUI 对话框）要求输入框是空的。Meowo 自己把草稿
+ *  清掉并搬进对话页输入框，再切一次，不叫用户去终端清。 */
+const COMPOSER_BUSY = new Set(["settings/composer_not_empty", "lead/opencode_composer_not_empty"]);
+
 /** 后端明确没动进程的结果：只有这些才把搬进对话页的草稿撤回（做空 R3）。出错、next_open（进程恰好
  *  没了）、restart_stuck 之类都可能已经杀了进程，TUI 里的原稿跟着没了，对话页这份必须留着。 */
 const PROCESS_UNTOUCHED = new Set<SettingsOutcome["kind"]>(["applied", "queued", "not_now", "unsupported", "needs_new_session"]);
@@ -106,12 +111,18 @@ export interface SessionSettingsDeps {
   tone: string | null;
   history: ChatHistory | null;
   setHistory: Dispatch<SetStateAction<ChatHistory | null>>;
-  setSendError: (message: string) => void;
+  /** exit：错误条上的出路（重试 / 看终端画面）。 */
+  setSendError: (message: string, exit?: { retry?: () => void; terminal?: boolean }) => void;
   /** 未建会话重开后切到新的临时 id（草稿跟着走）。 */
   moveTo: (sessionId: number) => void;
   /** 读 TUI 输入框；`move` 为真且有字时搬进对话页输入框（要重启时 Meowo 先把用户内容保住），
    *  不重启的路线只读不搬，免得对话页与 TUI 各一份。 */
   rescueDraft: (move: boolean) => Promise<DraftRescue>;
+  /** 这一家的终端输入框认不认得出（插件声明了输入框规格）。认不出的（旧版本 CLI）排着的终端项不等
+   *  「输入框认得出」这个条件，直接执行；缺省按认得出。 */
+  readsComposer?: () => boolean;
+  /** 把 TUI 输入框里的草稿清掉并搬进对话页输入框（不重启的路线遇到「输入框里有字」时用）。 */
+  takeDraft?: () => Promise<DraftRescue>;
   /** 执行一条排着的终端项（对话页照原样打字切换，见 SettingsRequest.terminal）。 */
   applyTerminal?: (action: TerminalAction) => Promise<void>;
   /** 搬了草稿最后却没重启（排进队列、被拒、出错）：把搬进对话页的那份撤回，TUI 里原稿还在，免得发两遍。 */
@@ -128,6 +139,31 @@ export interface SessionSettingsDeps {
   fallbackMode: (dimension: string, value: string) => boolean;
   /** 清单 id → 显示名（同步当前模型时用）。 */
   modelLabel: (id: string) => string;
+}
+
+type RestartOption = { id: string; switch?: string | null; choices?: readonly { id: string; args: readonly string[] }[] };
+
+/** 这次请求会不会重启 / 重开 TUI 进程。按声明表判断，不按 agent 身份分支（架构守卫）：
+ *  - 还没建会话（临时 id）：重开；
+ *  - 模型的切换机制是带参重启接回；
+ *  - 某一栏声明了「重启生效」；
+ *  - 会话服务栏从别的档切进启动参数带 `--sandbox workspace-write` 的档：进程若没带 Windows 沙箱参数，后端改走
+ *    带参接回（做空第五轮 P3）。前端看不到进程参数，按「可能重启」先把 TUI 草稿搬走；已在这类档里互切不算。 */
+export function requestRestarts(request: SettingsRequest, context: {
+  sessionId: number;
+  modelSwitch: string | null | undefined;
+  options: readonly RestartOption[] | null | undefined;
+  currentModes: readonly { dimension: string; value: string }[] | null | undefined;
+}): boolean {
+  if (context.sessionId < 0) return true;
+  if (request.model && context.modelSwitch === "restart_resume") return true;
+  return Object.entries(request.modes ?? {}).some(([dimension, value]) => {
+    const option = context.options?.find((candidate) => candidate.id === dimension);
+    if (option?.switch === "restart") return true;
+    const choices = option?.switch === "server" ? option.choices : undefined;
+    const workspaceWrite = (id: string | undefined) => !!choices?.find((choice) => choice.id === id)?.args.join(" ").includes("--sandbox workspace-write");
+    return workspaceWrite(value) && !workspaceWrite(context.currentModes?.find((mode) => mode.dimension === dimension)?.value);
+  });
 }
 
 /** 在跑或有待批审批：不能动终端，也不能重启。 */
@@ -183,7 +219,7 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
         if (index >= 0) agentModes[index] = { dimension, value };
         else agentModes.push({ dimension, value });
       }
-      return { ...current, agentModes, model: request.model?.label ?? current.model };
+      return { ...current, agentModes, model: request.model?.label ?? current.model, effort: request.model?.effort ?? current.effort };
     });
   };
 
@@ -225,9 +261,11 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
     runningRef.current = true;
     setApplying(true);
     try {
-      // 刚带参重启过的话新 TUI 可能还没起来：等输入框认得出再打字（最多约 10 秒）。
+      // 刚带参重启过的话新 TUI 可能还没起来：等输入框认得出再打字（最多约 10 秒）。等不到不悄悄丢掉
+      // 这次选择：错误条说明没切成，「重试」再执行同一条。
       if (!(await composerReady())) {
-        depsRef.current.setSendError(t.chat.settingsComposerUnknown);
+        const retry = () => { if (depsRef.current.sessionId === sessionId) void apply(terminalPart); };
+        depsRef.current.setSendError(t.chat.settingsTerminalNotReady, { retry, terminal: true });
         return;
       }
       for (const action of actions) await attempt(() => depsRef.current.applyTerminal?.(action), undefined);
@@ -237,8 +275,10 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
     }
   };
 
-  /** 终端输入框认得出（空或有字都算）就算就绪。 */
+  /** 终端输入框认得出（空或有字都算）就算就绪。这一家没有输入框规格时没法认，不等：此前 Claude 没声明
+   *  规格，排着的模型 / 思考档在回合结束后空等 10 秒再报错丢弃（走查输入 A1）。 */
   const composerReady = async () => {
+    if (depsRef.current.readsComposer && !depsRef.current.readsComposer()) return true;
     for (let attempt_ = 0; attempt_ < 20; attempt_ += 1) {
       const state = await attempt<DraftRescue>(() => depsRef.current.rescueDraft(false), "unknown");
       if (state !== "unknown") return true;
@@ -250,13 +290,14 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
   /** 经后端切。返回 false 表示这次没做成、已排进队列等下一次（宿主 queued / not_now 排队 / 等就绪）。 */
   /** 经后端切：done = 做成了；deferred = 没做成、已排进队列等下一次（宿主 queued / not_now 排队 / 等就绪）；
    *  failed = 出错或被拒（已提示）。 */
-  const applyBackend = async (request: SettingsRequest): Promise<"done" | "deferred" | "failed"> => {
+  const applyBackend = async (request: SettingsRequest, draftTaken = false): Promise<"done" | "deferred" | "failed"> => {
     const { sessionId } = depsRef.current;
     if (runningRef.current) { await enqueue(sessionId, request); return "deferred"; }
     runningRef.current = true;
     setApplying(true);
     let moved = false;
     let untouched = false;
+    let retryAfterTake = false;
     let result: "done" | "deferred" | "failed" = "done";
     const fail = (message: string) => { result = "failed"; depsRef.current.setSendError(message); };
     try {
@@ -303,7 +344,10 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
             depsRef.current.setHistory((current) => current && current.sessionId === sessionId ? { ...current, model: readBack } : current);
           }
           // TUI 对话框路线：回车后底栏没认出新值（终端太窄被截断等）不算失败，下一条消息再核对。
-          if (outcome.kind === "applied" && !outcome.confirmed) depsRef.current.setSendError(t.chat.settingsUnconfirmed);
+          if (outcome.kind === "applied" && !outcome.confirmed) {
+            logChatEvent(sessionId, { kind: "switch_unconfirmed", reason: "tui_value_not_seen", detail: { what: request.model ? "model" : "mode" } });
+            depsRef.current.setSendError(t.chat.settingsUnconfirmed);
+          }
           break;
         case "reopened":
           depsRef.current.moveTo(outcome.sessionId);
@@ -313,6 +357,7 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
           setNextOpen(sessionId);
           break;
         case "needs_new_session":
+          logChatEvent(sessionId, { kind: "switch_failed", reason: "needs_new_session", detail: { what: "mode" } });
           fail(t.chat.settingsNeedsNewSession);
           break;
         case "unsupported": {
@@ -332,7 +377,13 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
           // 其余（输入框有字等）说原因。
           if (mustDefer(depsRef.current.tone)) { result = "deferred"; await enqueue(sessionId, request); }
           else if (RETRY_WHEN_READY.has(outcome.reason ?? "")) { result = "deferred"; await enqueue(sessionId, { ...request, waitFor: "ready" }); }
-          else fail(formatBackendError(outcome.reason ?? "", t.locale));
+          // 输入框里有字：清掉并搬进对话页输入框，再切一次（只试一次，清不掉才说原因）。
+          else if (COMPOSER_BUSY.has(outcome.reason ?? "") && !draftTaken && depsRef.current.takeDraft
+            && ["moved", "empty"].includes(await attempt<DraftRescue>(() => depsRef.current.takeDraft?.(), "unknown"))) retryAfterTake = true;
+          else {
+            logChatEvent(sessionId, { kind: "switch_failed", reason: outcome.reason ?? "not_now", detail: { what: request.model ? "model" : "mode" } });
+            fail(formatBackendError(outcome.reason ?? "", t.locale));
+          }
           break;
       }
     } catch (error) {
@@ -340,6 +391,8 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
       if (typeof error === "string" && RETRY_WHEN_READY.has(error)) { result = "deferred"; await enqueue(sessionId, { ...request, waitFor: "ready" }); }
       else {
         result = "failed";
+        // 后端错误码进日志（不是本地化后的句子）；非字符串的异常只记类型。
+        logChatEvent(sessionId, { kind: "switch_failed", reason: typeof error === "string" ? error : "exception", detail: { what: request.model ? "model" : "mode" } });
         if (depsRef.current.sessionId === sessionId) depsRef.current.setSendError(formatBackendError(error, t.locale));
       }
     } finally {
@@ -347,6 +400,7 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
       runningRef.current = false;
       setApplying(false);
     }
+    if (retryAfterTake && depsRef.current.sessionId === sessionId) return applyBackend(request, true);
     return result;
   };
 
@@ -380,7 +434,10 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
       if (payload.kind === "queued") { void refreshQueuedRef.current(payload.sessionId); return; }
       setQueued(null);
       // 排太久（30 分钟）出队：说一声，不让选择悄悄消失（做空 N5）。会话没了的不用说。
-      if (payload.kind === "expired") depsRef.current.setSendError(t.chat.settingsQueueExpired);
+      if (payload.kind === "expired") {
+        logChatEvent(payload.sessionId, { kind: "switch_failed", reason: "queue_expired" });
+        depsRef.current.setSendError(t.chat.settingsQueueExpired);
+      }
       else if (payload.kind === "next_open") setNextOpen(payload.sessionId);
       else if (payload.kind === "needs_new_session") depsRef.current.setSendError(t.chat.settingsNeedsNewSession);
       else if ((payload.kind === "failed" || payload.kind === "not_now") && payload.reason) depsRef.current.setSendError(formatBackendError(payload.reason, t.locale));

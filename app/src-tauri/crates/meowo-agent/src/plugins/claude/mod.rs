@@ -637,6 +637,11 @@ impl AgentPlugin for Claude {
             .map(|exe| catalog::family_catalog(std::path::Path::new(&exe)))
             .unwrap_or_default()
     }
+    /// `/model <别名>` 的确认行原文是「Set model to … and saved as your default for new sessions」
+    /// （见 model_select_reply 的取证）：对话页选模型会连新会话的默认模型一起改。
+    fn model_select_saves_default(&self) -> bool {
+        true
+    }
     /// claude 的 `/model` 接受内联参数（`/model sonnet`），可以在对话页静默切换；
     /// 别名与官方 CLI 一致（`opusplan`：规划用 Opus、执行用 Sonnet）。
     fn model_select_command(&self) -> Option<&'static str> {
@@ -664,6 +669,29 @@ impl AgentPlugin for Claude {
         Some(crate::chat_ui::CommandReply {
             confirm_pattern: r"set model to ",
             reject_pattern: r"^\s*(?:⎿\s*)?(?:kept model as |model switch cancelled|model switch (?:to .+ was )?blocked by a premodelswitch hook|model switch failed: |model '[^']+' is (?:restricted|not available|not currently available)|failed to validate model: |couldn't confirm model '|1m context is turned off|\S.* doesn['’]t have a 1m context window|'[^']+' isn['’]t available: the |(?:opus|sonnet) with 1m context is not available|\S.* isn['’]t available for your account yet)",
+        })
+    }
+
+    /// `/model <别名>`、`/effort <档>` 在对话中途的二次确认框（形态见 chat_ui::SwitchConfirm）。
+    ///
+    /// - `/model`：2.1.325 真机取证（tests/probe_claude_model.rs，2026-11-14）。空会话里切不弹，
+    ///   有过回合之后切就弹；确认后照常回 `Set model to …`，选「No, go back」回 `Kept model as …`。
+    /// - `/effort`：同一个组件，标题是 `Change effort level?`（2.1.325 程序文件里两句标题相邻，
+    ///   确认项同为模板 `Yes, switch to ${…}`）。**没有真机走过**：切思考档会不会改写用户默认配置
+    ///   没有取证，走查不碰它。所以这一半是按程序文件写的，核对条件与 `/model` 相同。
+    /// - 确认项的编号可能不显示、焦点也可能默认落在取消项上（同一段代码里 `hideIndexes`、
+    ///   `focus: Ve ? "cancel" : "confirm"`）。所以正则不要求编号，但要求焦点标记 `❯` 就在确认项上；
+    ///   焦点在取消项上时不按键。
+    fn switch_confirm(&self) -> Option<crate::chat_ui::SwitchConfirm> {
+        Some(crate::chat_ui::SwitchConfirm {
+            title_pattern: r"^\s*(?:switch model|change effort level)\?\s*$",
+            accept_pattern: r"^\s*❯\s*(?:\d+\.\s*)?yes, switch to (.+?)\s*$",
+            accept_input: "\r",
+            // 真机两帧（/model haiku、/model fable）都有这一行；/effort 的同款框按程序文件也是它。
+            auto_pattern: r"^\s*your next response will be slower and use more tokens\s*$",
+            // 2.1.325 程序文件：`A PreModelSwitch hook asked you to confirm`（没有真机画面：要触发它得给
+            // 用户配一个 hook）。只认关键词，hook 给的理由拼在哪里不影响判断。
+            manual_pattern: Some(r"premodelswitch hook"),
         })
     }
 
@@ -772,16 +800,61 @@ impl AgentPlugin for Claude {
         Some("\x1b")
     }
 
-    /// Ctrl-S 暂存 composer 草稿(多行整段),下一次提交后 CLI 自动还原;有暂存时 composer
-    /// 上方常驻 `› stashed`,composer 夹在两条 `─` 横线之间、空时渲染为独行 `❯`。2.1.280 真机取证
-    /// (tests/probe_draft_residual.rs);Ctrl-U/Ctrl-Y 不可替代:多行只剪一行,且空
-    /// composer 时会粘出更早删掉的文本。
-    fn draft_stash(&self) -> Option<crate::chat_ui::DraftStash> {
-        Some(crate::chat_ui::DraftStash {
-            input: "\x13",
-            composer_prompt: "❯",
-            composer_border: '─',
-            stashed_marker: "› stashed",
+    /// 输入框规格（这一家唯一的一份，见 chat_ui::ComposerSpec）。
+    /// - 框体：composer 夹在两条 `─` 横线之间，首行 `❯` + 不换行空格 + 正文，续行缩进两格；子代理
+    ///   视图里上边框右侧挂描述（`──── probe-sleeper ─`）。空时渲染为独行 `❯`，或暗色占位
+    ///   （`Try "fix typecheck errors"`、预测的下一句，内容不固定）。2.1.280 / 2.1.325 真机取证
+    ///   （tests/probe_draft_residual.rs；2026-11-14 probe_tui_script `cells`：占位是 SGR dim，
+    ///   光标停在列 2；真打出来的字不暗、光标在文末）。bash 模式（`!`）等别的提示符不认。
+    /// - 暂存：Ctrl-S 暂存草稿(多行整段),下一次提交后 CLI 自动还原;有暂存时 composer 上方常驻
+    ///   `› stashed`,暂存后输入框回到占位。Ctrl-U/Ctrl-Y 不可替代:多行只剪一行,且空 composer
+    ///   时会粘出更早删掉的文本。
+    /// - 清空：双 Esc（多行整段；Ctrl-U 只清一行）；空 composer 的双 Esc 会打开回退菜单
+    ///   （tests/probe_claude_rewind.rs）。运行中 Esc 是中断，所以运行中不清，只用暂存。
+    /// - 认不出输入框时照发：这一家另有提示识别、子代理视图、启动标记兜着，认不出多半是画面
+    ///   被别的东西盖住了一角，拦发送只会让对话页发不出去。
+    fn composer(&self, _version: Option<&str>) -> Option<crate::chat_ui::ComposerSpec> {
+        Some(crate::chat_ui::ComposerSpec {
+            prompt_footer: false,
+            input_start_pattern: r"^(❯[ \xa0]?)",
+            top_pattern: r"^\s*─{3,}(?:\s+\S.*?\s+─{1,3})?\s*$",
+            bottom_pattern: r"^\s*─{3,}\s*$",
+            row_pattern: r"^(?:❯[ \xa0]?|  |$)(.*)$",
+            prompt_prefix: "",
+            tail_rows: 0,
+            tail_pattern: None,
+            empty_pattern: r#"^(?:Try "[^"\r\n]*")?$"#,
+            send_requires_recognition: false,
+            stash: Some(crate::chat_ui::ComposerStash {
+                input: "\x13",
+                stashed_marker: "› stashed",
+            }),
+            clear_inputs: &["\x1b", "\x1b"],
+            clear_rounds: 1,
+            clear_while_running: false,
+            alt_modes: &[],
+            // 草稿保真（2.1.325 真机，tests/probe_draft_fidelity.rs，2026-11-14）：
+            // - 粘贴占位 `[Pasted text #1]`（5120 字单行）、`[Pasted text #2 +59 lines]`（60 行）；3 行小粘贴原样显示。
+            //   图片占位 `[Image #N]` 没有实拍，按宽的认。
+            // - 输入框没有高度上限：45 行草稿把上边框顶出屏幕，这时整框认不出（不清）。所以不用溢出规则。
+            // - 120 列时一行正文最多 116 格（提示符 2 格，右边留 2 格），按词折行；续行缩进 2 格。
+            // - 发送前走的是暂存（Ctrl-S，CLI 自己保管原文），用不到这份判定；撤回前、切模型前清草稿才用。
+            fidelity: Some(crate::chat_ui::ComposerFidelity {
+                paste_pattern: r"\[Pasted text #\d+(?: \+\d+ lines)?\]|\[[Ii]mage[^\]\r\n]*\]",
+                overflow_pattern: None,
+                overflow_rows: None,
+                // 可视高度有上限，而且不画标记（2.1.325，2026-11-15 实拍，29 到 55 行的草稿）：终端
+                // 12 / 16 / 20 / 24 / 30 / 34 / 40 / 50 行时各画最后 3 / 3 / 5 / 7 / 10 / 12 / 15 / 20 行，
+                // 即 max(3, (行数 − 10) / 2)。不认这个上限的话，只画出尾部的草稿会被当成全文，撤回前、
+                // 切模型前清掉就丢了前半截。上面说的「上边框被顶出屏幕」是 2026-11-14 那一次的画面。
+                overflow_height: Some(crate::chat_ui::ComposerHeightCap {
+                    reserve: 10,
+                    divisor: 2,
+                    floor: 3,
+                }),
+                wrap_edge: crate::chat_ui::ComposerWrapEdge::Terminal,
+                wrap_inset: 2,
+            }),
         })
     }
 
@@ -792,6 +865,7 @@ impl AgentPlugin for Claude {
     fn subagent_view(&self) -> Option<crate::chat_ui::SubagentView> {
         Some(crate::chat_ui::SubagentView {
             placeholder_prefix: "Message @",
+            label_pattern: r"^\s*─{3,}\s+(\S.*?)\s+─{1,3}\s*$",
             panel_main_label: "main",
             panel_pointer: "❯",
             panel_viewed_marker: "●",
@@ -814,13 +888,7 @@ impl AgentPlugin for Claude {
             count_arg: false,
             restores_files: false,
             reject_pattern: None,
-            input_clear: Some(crate::chat_ui::UndoInputClear {
-                inputs: &["\x1b", "\x1b"],
-                composer: crate::chat_ui::UndoComposer::Prompt {
-                    prompt: "❯",
-                    border: '─',
-                },
-            }),
+            returns_input: true,
             menu: Some(crate::chat_ui::UndoMenu {
                 title: "Rewind",
                 ready_marker: "❯ (current)",
@@ -867,6 +935,13 @@ impl AgentPlugin for Claude {
                 // 该提示每次恢复只出现一次，取首个匹配即可。
                 last: false,
                 details: crate::chat_ui::AttentionDetails::None,
+                kind: crate::chat_ui::AttentionKind::Choice,
+                confirms: None,
+                options: &[],
+                unparsed_keys: &[],
+                notice: None,
+                anchors: &[],
+                tail_lines: None,
             },
             crate::chat_ui::AttentionPattern {
                 id: "claude:command-approval",
@@ -875,6 +950,168 @@ impl AgentPlugin for Claude {
                 patterns: &["this command requires approval", r"do you want to proceed\?"],
                 last: true,
                 details: crate::chat_ui::AttentionDetails::ProceedBox,
+                kind: crate::chat_ui::AttentionKind::Approval,
+                confirms: None,
+                // 选项角色（2.1.325 真机屏幕，tests/probe_approval.rs 与 probe_deny_feedback.rs，2026-11-14）：
+                //   ❯ 1. Yes
+                //     2. Yes, and always allow access to <目录> from this project
+                //     3. Yes, and switch to auto mode · auto mode handles these prompts for you
+                //     4. No
+                //   Esc to cancel · Tab to amend
+                // 第二项随请求变：命令类是 `Yes, and don’t ask again for: curl *`（同版本真机），放行目录时是
+                // 上面这句；长了会折到下一行，屏幕上这一行只剩 `… from this`，所以句尾不强求。
+                // 旧版另有只管本会话的写法（`Yes, allow all edits during this session`）。
+                //
+                // 「说明并拒绝」不是单独的一项：焦点移到 `No` 上按 Tab，这一行变成
+                // `❯ 4. No, and tell Claude what to do differently`，页脚的 `Tab to amend` 消失，
+                // 再打的字替换掉那半句，回车提交。真机走通：命令没有执行（`Not run · rejected`），
+                // 模型按说明作答（probe_deny_feedback，2.1.325）。
+                // 最后一条规则：旧版把那句直接列成拒绝项（带 `(esc)`）；2.1.325 上它是 `No` 按过 Tab 之后的
+                // 样子。两种情况下回车都是拒绝（没打字就是不带说明的拒绝）。旧版上怎么打说明没有取证，不给 typed。
+                options: &[
+                    crate::chat_ui::AttentionOptionRule {
+                        pattern: r"^yes$",
+                        role: crate::chat_ui::OptionRole::AllowOnce,
+                        scope: None,
+                        typed: None,
+                    },
+                    crate::chat_ui::AttentionOptionRule {
+                        pattern: r"^yes, and (?:switch to|use) auto mode\b",
+                        role: crate::chat_ui::OptionRole::AllowPersistent,
+                        scope: Some(crate::chat_ui::PersistScope::AutoMode),
+                        typed: None,
+                    },
+                    crate::chat_ui::AttentionOptionRule {
+                        pattern: r"^yes,.*\bthis session\b",
+                        role: crate::chat_ui::OptionRole::AllowPersistent,
+                        scope: Some(crate::chat_ui::PersistScope::Session),
+                        typed: None,
+                    },
+                    crate::chat_ui::AttentionOptionRule {
+                        pattern: r"^yes, and don['’]t ask again for:?\s*(.+)$",
+                        role: crate::chat_ui::OptionRole::AllowPersistent,
+                        scope: Some(crate::chat_ui::PersistScope::Remember),
+                        typed: None,
+                    },
+                    crate::chat_ui::AttentionOptionRule {
+                        pattern: r"^yes, and always allow access to (.+?)(?:\s+from this(?: project)?)?$",
+                        role: crate::chat_ui::OptionRole::AllowPersistent,
+                        scope: Some(crate::chat_ui::PersistScope::Remember),
+                        typed: None,
+                    },
+                    crate::chat_ui::AttentionOptionRule {
+                        pattern: r"^yes, and (?:don['’]t ask again|always allow)\b",
+                        role: crate::chat_ui::OptionRole::AllowPersistent,
+                        scope: Some(crate::chat_ui::PersistScope::Remember),
+                        typed: None,
+                    },
+                    crate::chat_ui::AttentionOptionRule {
+                        pattern: r"^no$",
+                        role: crate::chat_ui::OptionRole::Deny,
+                        scope: None,
+                        typed: Some(crate::chat_ui::TypedInput {
+                            amend_input: Some("\t"),
+                            ready_pattern: r"^\s*❯\s*(?:\d+\.\s*)?no, and tell claude what to do differently\s*$",
+                            submit_input: "\r",
+                        }),
+                    },
+                    crate::chat_ui::AttentionOptionRule {
+                        pattern: r"^no, and tell claude what to do differently",
+                        role: crate::chat_ui::OptionRole::Deny,
+                        scope: None,
+                        typed: None,
+                    },
+                ],
+                unparsed_keys: &[],
+                notice: None,
+                anchors: &[],
+                tail_lines: None,
+            },
+            // 以「都不问」档（`--dangerously-skip-permissions`）启动、而这个账号目录还没接受过时的确认页。
+            // 2.1.325 真机（隔离配置目录加假密钥抓的，probe_tui_script，2026-11-15；与用户切账号后的实拍逐字一致）：
+            //   WARNING: Claude Code running in Bypass Permissions mode
+            //   In Bypass Permissions mode, Claude Code will not ask for your approval before running potentially dangerous commands.
+            //   …
+            //   ❯ No, exit
+            //     Yes, I accept
+            //   Enter to confirm · Esc to cancel
+            // 接受记在账号目录的 settings.json（`skipDangerousModePermissionPrompt`），所以切到一个新账号、
+            // 会话在新账号下以这一档重启时会再问一次。此前对话页不认识它，会话卡住而页面上没有任何提示
+            // （用户实拍 2026-11-15）。**不代按**：这是上游的安全确认，由用户自己点。
+            // 选项没有编号，焦点默认在 `No, exit`：下移一格再回车是接受（进了主界面），在 `No, exit` 上回车
+            // CLI 直接退出（同一次真机都走过）。
+            crate::chat_ui::AttentionPattern {
+                id: "claude:bypass-permissions-confirm",
+                // 词间用 \s+：终端窄于约 58 列时这句折成两行（50 列真机帧），折行处是换行加缩进。
+                patterns: &[r"^\s*WARNING:\s+Claude\s+Code\s+running\s+in\s+Bypass\s+Permissions\s+mode\s*$"],
+                last: true,
+                details: crate::chat_ui::AttentionDetails::None,
+                kind: crate::chat_ui::AttentionKind::Choice,
+                confirms: None,
+                options: &[crate::chat_ui::AttentionOptionRule {
+                    pattern: r"^no, exit$",
+                    role: crate::chat_ui::OptionRole::Exit,
+                    scope: None,
+                    typed: None,
+                }],
+                unparsed_keys: &[],
+                notice: Some(crate::chat_ui::AttentionNotice::BypassPermissions),
+                // 两个选项行（其一带焦点）与按键提示行都在、且提示行之后没有别的内容，才是这一页。
+                // 正文里引用警告句、cat 出本文件的注释或测试样本都凑不齐这几行，或者后面跟着输入框。
+                anchors: &[
+                    r"^\s*(?:❯\s*)?No,\s+exit\s*$",
+                    r"^\s*(?:❯\s*)?Yes,\s+I\s+accept\s*$",
+                    r"^\s*❯\s*(?:No,\s+exit|Yes,\s+I\s+accept)\s*$",
+                    r"^\s*Enter\s+to\s+confirm\s+·\s+Esc\s+to\s+cancel\s*$",
+                ],
+                tail_lines: Some(0),
+            },
+            // 环境里带着 ANTHROPIC_API_KEY、而这个账号目录没有对它表过态时的确认页（2.1.325 真机，同上）：
+            //   Detected a custom API key in your environment
+            //   ANTHROPIC_API_KEY: sk-ant-...
+            //   Do you want to use this API key?
+            //     Yes
+            //   ❯ No (recommended)
+            // 两项都不退出、也不是放行或拒绝，照原文列出。
+            crate::chat_ui::AttentionPattern {
+                id: "claude:custom-api-key-confirm",
+                patterns: &[r"^\s*Detected\s+a\s+custom\s+API\s+key\s+in\s+your\s+environment\s*$"],
+                last: true,
+                details: crate::chat_ui::AttentionDetails::None,
+                kind: crate::chat_ui::AttentionKind::Choice,
+                confirms: None,
+                options: &[],
+                unparsed_keys: &[],
+                notice: Some(crate::chat_ui::AttentionNotice::CustomApiKey),
+                anchors: &[
+                    r"^\s*Do\s+you\s+want\s+to\s+use\s+this\s+API\s+key\?\s*$",
+                    r"^\s*(?:❯\s*)?Yes\s*$",
+                    r"^\s*(?:❯\s*)?No\s+\(recommended\)\s*$",
+                    r"^\s*❯\s*(?:Yes|No\s+\(recommended\))\s*$",
+                    r"^\s*Enter\s+to\s+confirm\s+·\s+Esc\s+to\s+cancel\s*$",
+                ],
+                tail_lines: Some(0),
+            },
+            // `/model`、`/effort` 的二次确认框（形态见 chat_ui::SwitchConfirm）。Meowo 自己发起的切换、且是
+            // 「切到刚选的那一个」时由对话页代按，不出卡；其余情况（hook 要求确认、焦点在取消项上、
+            // 用户自己在终端里打的命令）这个框就是一张选择卡，选项照原文列出。标题是整行才认：
+            // 正文里引用这句不弹卡。
+            crate::chat_ui::AttentionPattern {
+                id: "claude:switch-confirm",
+                patterns: &[r"^\s*(?:switch model|change effort level)\?\s*$"],
+                last: true,
+                details: crate::chat_ui::AttentionDetails::None,
+                kind: crate::chat_ui::AttentionKind::Choice,
+                confirms: None,
+                options: &[],
+                unparsed_keys: &[],
+                notice: None,
+                anchors: &[
+                    r"^\s*(?:❯\s*)?(?:\d+\.\s*)?Yes, switch to \S.*$",
+                    r"^\s*(?:❯\s*)?(?:\d+\.\s*)?No, go back\s*$",
+                    r"^\s*❯\s*(?:\d+\.\s*)?(?:Yes, switch to|No, go back)\b",
+                ],
+                tail_lines: None,
             },
             crate::chat_ui::AttentionPattern {
                 id: "claude:plan-approval",
@@ -892,6 +1129,13 @@ impl AgentPlugin for Claude {
                 patterns: &[r"written\s+up\s+a\s+plan\s+and\s+is\s+ready\s+to\s+execute"],
                 last: true,
                 details: crate::chat_ui::AttentionDetails::None,
+                kind: crate::chat_ui::AttentionKind::Plan,
+                confirms: None,
+                options: &[],
+                unparsed_keys: &[],
+                notice: None,
+                anchors: &[],
+                tail_lines: None,
             },
         ]
     }

@@ -456,7 +456,7 @@ describe("Island 收起", () => {
     const item = mk({ task_title: "改登录页", pending_review: "approval" });
     const { container } = renderIsland({ sessions: [item] });
     const icon = container.querySelector(".isl-agent")!;
-    expect(icon.getAttribute("title")).toBe(`改登录页 · ${zh.island.toneLabel.pending}`);
+    expect(icon.getAttribute("title")).toBe(`改登录页 · ${zh.vocab.session.pending}`);
     expect(icon.getAttribute("data-session-id")).toBe(String(item.session.id));
   });
 
@@ -478,7 +478,7 @@ describe("Island 收起", () => {
     const pending = mk({ pending_review: "question", task_title: "改登录页" });
     renderIsland({ sessions: [mk(), pending], compactStyle: "focus" });
     expect(screen.getByText("改登录页")).toBeTruthy();
-    expect(screen.getByText(zh.island.toneLabel.pending)).toBeTruthy();
+    expect(screen.getByText(zh.vocab.session.pending)).toBeTruthy();
   });
 
   it("极简：只有色点，最多 6 个", () => {
@@ -695,12 +695,12 @@ describe("IslandPanel 展开面板", () => {
 });
 
 describe("macOS 菜单栏富文本", () => {
-  const labels = { toneLabel: zh.island.toneLabel, untitled: "未命名" };
+  const labels = { toneLabel: zh.vocab.session, untitled: "未命名" };
   it("显示决定眼睛神态的那个会话：标题 · 状态词，其余折成 +N，只用主文字色", () => {
     const sessions = [mk({ task_title: "跑着的" }), mk({ task_title: "跑完的", status: "waiting", unread: true })];
     // 眼睛按 islandTone 是「在跑」（绿）：文字就得是在跑的那个，不是排在前面的未读跑完。
     expect(menubarSegments(sessions, "running", 12, labels)).toEqual([
-      { kind: "text", text: `跑着的 · ${zh.island.toneLabel.running}  +1`, color: "label" },
+      { kind: "text", text: `跑着的 · ${zh.vocab.session.running}  +1`, color: "label" },
     ]);
   });
   it("标题太长省略；没会话显示额度；都没有就空", () => {
