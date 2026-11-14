@@ -648,6 +648,9 @@ export const zh = {
     questionExpired: "提问卡已超时收起，可到终端页继续作答",
     // 远程没有终端页：超时放行后终端表单经屏幕识别回到手机上作答，不必回桌面端。
     questionExpiredRemote: "提问卡已超时收起，表单就绪后可在此作答",
+    questionSettledNotice: "该提问已在别处处理或已结束",
+    questionTransferredNotice: "已转到终端页，请继续作答",
+    questionTransferredNoticeRemote: "已转为逐题作答，表单就绪后可继续",
     terminalApprovalBanner: "有 1 条待批准的请求",
     terminalApprovalGo: "去处理",
     toolResult: "工具结果",

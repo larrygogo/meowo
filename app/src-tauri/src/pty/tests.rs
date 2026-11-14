@@ -783,6 +783,299 @@ fn resolve_channel_answers_or_passes_a_held_question() {
         .is_err());
 }
 
+#[test]
+fn runtime_request_reads_and_answers_a_claude_or_kimi_question() {
+    for provider in ["claude", "kimi"] {
+        let broker = PtyBroker::default();
+        let mut request = approval_request(37, "AskUserQuestion");
+        request.provider = provider.into();
+        request.pre_tool_use = true;
+        request.input = r#"{"questions":[{"question":"选哪个？"}]}"#.into();
+        broker
+            .attach
+            .interactive_questions
+            .lock()
+            .unwrap()
+            .insert(37, (request.clone(), crate::now_ms()));
+        let initial = broker.runtime_question(37).unwrap();
+        assert!(matches!(
+            initial.response_capability,
+            meowo_protocol::runtime_request::RuntimeResponseCapability::NotResumable { .. }
+        ));
+
+        let (tx, rx) = mpsc::channel();
+        broker.attach.approvals.lock().unwrap().insert(
+            request.request_id.clone(),
+            PendingApproval {
+                request: request.clone(),
+                response: tx,
+            },
+        );
+        let live = broker.runtime_question(37).unwrap();
+        assert_eq!(live.provider, provider);
+        assert!(matches!(
+            live.response_capability,
+            meowo_protocol::runtime_request::RuntimeResponseCapability::BrokerLive
+        ));
+        broker
+            .respond_runtime_request(37, &request.request_id, r#"answers:{"选哪个？":"甲"}"#)
+            .unwrap();
+        assert!(matches!(rx.recv().unwrap(), ApprovalDecision::Answer(_)));
+        let resolved = broker.runtime_question(37).unwrap();
+        assert_eq!(
+            resolved.status,
+            meowo_protocol::runtime_request::RuntimeRequestStatus::Resolved
+        );
+        assert!(matches!(
+            resolved.response_capability,
+            meowo_protocol::runtime_request::RuntimeResponseCapability::NotResumable { .. }
+        ));
+        broker
+            .respond_runtime_request(37, &request.request_id, r#"answers:{"选哪个？":"甲"}"#)
+            .unwrap();
+        assert!(rx.try_recv().is_err(), "重复回答不得再次送入 broker");
+        assert_eq!(
+            broker
+                .respond_runtime_request(37, &request.request_id, "pass")
+                .unwrap_err(),
+            "runtime_request/already_resolved"
+        );
+    }
+}
+
+#[test]
+fn runtime_request_reads_and_answers_a_claude_or_codex_approval() {
+    for provider in ["claude", "codex"] {
+        let broker = PtyBroker::default();
+        let (tx, rx) = mpsc::channel();
+        let mut request = approval_request(37, "Bash");
+        request.provider = provider.into();
+        request.request_id = format!("runtime-approval-{provider}");
+        request.permission_suggestions = vec![serde_json::json!({"destination":"session"})];
+        broker.attach.approvals.lock().unwrap().insert(
+            request.request_id.clone(),
+            PendingApproval {
+                request: request.clone(),
+                response: tx,
+            },
+        );
+        let live = broker.runtime_approval(37).unwrap();
+        assert_eq!(live.kind, meowo_protocol::runtime_request::RuntimeRequestKind::Approval);
+        assert_eq!(live.provider, provider);
+        assert!(matches!(
+            live.response_capability,
+            meowo_protocol::runtime_request::RuntimeResponseCapability::BrokerLive
+        ));
+        broker
+            .respond_runtime_request(37, &request.request_id, "allow_once")
+            .unwrap();
+        assert!(matches!(rx.recv().unwrap(), ApprovalDecision::Allow));
+        let resolved = broker.runtime_approval(37).unwrap();
+        assert_eq!(resolved.status, meowo_protocol::runtime_request::RuntimeRequestStatus::Resolved);
+        broker
+            .respond_runtime_request(37, &request.request_id, "allow_once")
+            .unwrap();
+        assert!(rx.try_recv().is_err(), "重复审批不得再次送入 broker");
+        assert_eq!(
+            broker.respond_runtime_request(37, &request.request_id, "deny").unwrap_err(),
+            "runtime_request/already_resolved"
+        );
+        assert_eq!(
+            broker.respond_runtime_request(38, &request.request_id, "allow_once").unwrap_err(),
+            "runtime_request/session_mismatch"
+        );
+    }
+}
+
+#[test]
+fn concurrent_runtime_approval_responses_deliver_only_one_decision() {
+    for choices in [("allow_once", "allow_once"), ("allow_once", "deny")] {
+        let broker = PtyBroker::default();
+        let rx = seed_pending_approval(&broker, 42, "runtime-concurrent-approval");
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+        let handles: Vec<_> = [choices.0, choices.1]
+            .into_iter()
+            .map(|choice| {
+                let broker = broker.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    broker.respond_runtime_request(42, "runtime-concurrent-approval", choice)
+                })
+            })
+            .collect();
+        barrier.wait();
+        let results: Vec<_> = handles.into_iter().map(|handle| handle.join().unwrap()).collect();
+        if choices.0 == choices.1 {
+            assert!(results.iter().all(Result::is_ok), "相同回答应幂等成功：{results:?}");
+        } else {
+            assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+            assert!(results.iter().any(|result| matches!(result, Err(error) if error == "runtime_request/already_resolved")));
+        }
+        assert!(rx.recv().is_ok(), "原生审批只收到一个决策");
+        assert!(rx.try_recv().is_err(), "另一个客户端不得再次投递");
+    }
+}
+
+#[test]
+fn answering_one_runtime_request_does_not_clear_a_concurrent_request() {
+    let (dir, store, sid) = runtime_pending_store("concurrent");
+    let broker = PtyBroker::default();
+    let mut approval = approval_request(sid, "Bash");
+    approval.request_id = "runtime-clear-approval".into();
+    let (tx, rx) = mpsc::channel();
+    broker.insert_pending_approval(&approval, tx, &dir).unwrap();
+    let mut question = approval_request(sid, "AskUserQuestion");
+    question.request_id = "runtime-clear-question".into();
+    question.input = r#"{"questions":[{"question":"保留这个问题"}]}"#.into();
+    broker.attach.interactive_questions.lock().unwrap().insert(sid, (question.clone(), crate::now_ms()));
+    let (tx, _question_rx) = mpsc::channel();
+    broker.insert_pending_approval(&question, tx, &dir).unwrap();
+    assert_eq!(store.session_pending_review(sid).unwrap().as_deref(), Some("question"));
+
+    assert_eq!(
+        broker.respond_runtime_request(sid, &approval.request_id, "allow_once").unwrap(),
+        RuntimeResponseOutcome::Delivered
+    );
+    assert!(matches!(rx.recv().unwrap(), ApprovalDecision::Allow));
+    broker.clear_pending_review_if_no_requests(&dir, sid);
+    assert_eq!(store.session_pending_review(sid).unwrap().as_deref(), Some("question"), "B 仍在等，A 不得清掉 B");
+    assert!(broker.runtime_question(sid).is_some_and(|request| {
+        request.request_id == question.request_id
+            && matches!(request.response_capability, meowo_protocol::runtime_request::RuntimeResponseCapability::BrokerLive)
+    }));
+    drop(store);
+    let _ = std::fs::remove_file(&dir);
+    let _ = std::fs::remove_dir(dir.parent().unwrap());
+}
+
+#[test]
+fn receipt_replay_does_not_clear_a_later_request() {
+    let (dir, store, sid) = runtime_pending_store("replay");
+    let broker = PtyBroker::default();
+    let mut first = approval_request(sid, "Bash");
+    first.request_id = "runtime-replay-first".into();
+    let (tx, rx) = mpsc::channel();
+    broker.insert_pending_approval(&first, tx, &dir).unwrap();
+    assert_eq!(
+        broker.respond_runtime_request(sid, &first.request_id, "deny").unwrap(),
+        RuntimeResponseOutcome::Delivered
+    );
+    assert!(matches!(rx.recv().unwrap(), ApprovalDecision::Deny));
+    broker.clear_pending_review_if_no_requests(&dir, sid);
+    assert_eq!(store.session_pending_review(sid).unwrap(), None);
+
+    let mut later = approval_request(sid, "Bash");
+    later.request_id = "runtime-replay-later".into();
+    let (tx, _later_rx) = mpsc::channel();
+    broker.insert_pending_approval(&later, tx, &dir).unwrap();
+    assert_eq!(store.session_pending_review(sid).unwrap().as_deref(), Some("approval"));
+    let replay = broker.respond_runtime_request(sid, &first.request_id, "deny").unwrap();
+    assert_eq!(replay, RuntimeResponseOutcome::ReceiptReplay);
+    if replay == RuntimeResponseOutcome::Delivered {
+        broker.clear_pending_review_if_no_requests(&dir, sid);
+    }
+    assert_eq!(store.session_pending_review(sid).unwrap().as_deref(), Some("approval"), "A 的收据重试不得写 B 的状态");
+    assert!(broker.runtime_approval(sid).is_some_and(|request| request.request_id == later.request_id));
+    assert!(rx.try_recv().is_err(), "收据重试不得再次投递 A");
+    drop(store);
+    let _ = std::fs::remove_file(&dir);
+    let _ = std::fs::remove_dir(dir.parent().unwrap());
+}
+
+#[test]
+fn runtime_requests_keep_simultaneous_approval_and_question_independent() {
+    let broker = PtyBroker::default();
+    let mut question = approval_request(40, "AskUserQuestion");
+    question.request_id = "runtime-simultaneous-question".into();
+    question.input = r#"{"questions":[{"question":"继续吗？"}]}"#.into();
+    broker.attach.interactive_questions.lock().unwrap().insert(
+        40,
+        (question.clone(), crate::now_ms()),
+    );
+    let (question_tx, _question_rx) = mpsc::channel();
+    broker.attach.approvals.lock().unwrap().insert(
+        question.request_id.clone(),
+        PendingApproval { request: question, response: question_tx },
+    );
+    let mut approval = approval_request(40, "Bash");
+    approval.request_id = "runtime-simultaneous-approval".into();
+    let (approval_tx, approval_rx) = mpsc::channel();
+    broker.attach.approvals.lock().unwrap().insert(
+        approval.request_id.clone(),
+        PendingApproval { request: approval.clone(), response: approval_tx },
+    );
+
+    let both = broker.runtime_requests(40);
+    assert_eq!(both.len(), 2);
+    assert!(both.iter().any(|request| request.kind == meowo_protocol::runtime_request::RuntimeRequestKind::Approval));
+    assert!(both.iter().any(|request| request.kind == meowo_protocol::runtime_request::RuntimeRequestKind::Question));
+    broker.respond_runtime_request(40, &approval.request_id, "deny").unwrap();
+    assert!(matches!(approval_rx.recv().unwrap(), ApprovalDecision::Deny));
+    let remaining = broker.runtime_requests(40);
+    assert!(remaining.iter().any(|request| {
+        request.kind == meowo_protocol::runtime_request::RuntimeRequestKind::Question
+            && request.status == meowo_protocol::runtime_request::RuntimeRequestStatus::Pending
+    }));
+}
+
+#[test]
+fn runtime_approval_exposes_terminal_outcomes_without_live_capability() {
+    use meowo_protocol::runtime_request::RuntimeRequestStatus;
+    for (status, reason) in [
+        (RuntimeRequestStatus::Expired, "timed_out"),
+        (RuntimeRequestStatus::Resolved, "resolved_elsewhere"),
+        (RuntimeRequestStatus::Cancelled, "peer_gone"),
+        (RuntimeRequestStatus::Cancelled, "consumer_abandoned"),
+    ] {
+        let broker = PtyBroker::default();
+        let request = approval_request(41, "Bash");
+        broker.record_runtime_request_outcome(&request, status, reason, None);
+        let terminal = broker.runtime_approval(41).unwrap();
+        assert_eq!(terminal.status, status);
+        assert!(matches!(
+            terminal.response_capability,
+            meowo_protocol::runtime_request::RuntimeResponseCapability::NotResumable { reason: actual } if actual == reason
+        ));
+    }
+    assert!(PtyBroker::default().runtime_approval(41).is_none(), "新进程没有旧收据，应返回空快照");
+}
+
+#[test]
+fn runtime_request_refuses_observation_only_approvals_and_other_questions() {
+    let broker = PtyBroker::default();
+    let (tx, _rx) = mpsc::channel();
+    let mut request = approval_request(38, "Bash");
+    request.provider = "kimi".into();
+    request.request_id = "runtime-plain-approval".into();
+    broker.attach.approvals.lock().unwrap().insert(
+        request.request_id.clone(),
+        PendingApproval {
+            request: request.clone(),
+            response: tx,
+        },
+    );
+    assert!(broker
+        .respond_runtime_request(38, &request.request_id, "allow_once")
+        .is_err());
+
+    let mut other = approval_request(39, "AskUserQuestion");
+    other.provider = "codex".into();
+    broker
+        .attach
+        .interactive_questions
+        .lock()
+        .unwrap()
+        .insert(39, (other, crate::now_ms()));
+    assert!(broker.runtime_question(39).is_none());
+    assert_eq!(
+        broker
+            .respond_runtime_request(39, "already-gone", "pass")
+            .unwrap_err(),
+        "runtime_request/not_resumable"
+    );
+}
+
 /// 挂起中的题面豁免 TTL：代答等待期 300s 长于 TTL 150s，不豁免的话挂起中途
 /// 题面就被 retain 清掉、轮询丢卡；approvals 出表后恢复正常过期。
 #[test]
@@ -1818,7 +2111,7 @@ fn resolving_agent_suggestion_returns_its_original_permission_update() {
     );
 
     broker
-        .resolve_approval_choice(7, "request-options", "suggestion:0")
+        .respond_runtime_request(7, "request-options", "suggestion:0")
         .unwrap();
     assert_eq!(
         rx.recv().unwrap(),
@@ -1832,7 +2125,7 @@ fn deny_choice_carries_reason_to_model() {
     let broker = PtyBroker::default();
     let rx = seed_pending_approval(&broker, 9, "request-deny-reason");
     broker
-        .resolve_approval_choice(9, "request-deny-reason", "deny:  别动生产配置 ")
+        .respond_runtime_request(9, "request-deny-reason", "deny:  别动生产配置 ")
         .unwrap();
     assert_eq!(
         rx.recv().unwrap(),
@@ -1840,9 +2133,24 @@ fn deny_choice_carries_reason_to_model() {
     );
     let rx = seed_pending_approval(&broker, 9, "request-deny-empty");
     broker
-        .resolve_approval_choice(9, "request-deny-empty", "deny:   ")
+        .respond_runtime_request(9, "request-deny-empty", "deny:   ")
         .unwrap();
     assert_eq!(rx.recv().unwrap(), ApprovalDecision::Deny);
+}
+
+/// RuntimeRequest 跨请求清理用独立临时库，绝不接触开发实例共享的 ~/.meowo。
+fn runtime_pending_store(name: &str) -> (std::path::PathBuf, meowo_store::Store, i64) {
+    let dir = std::env::temp_dir().join(format!(
+        "meowo-runtime-request-{name}-{}-{}",
+        std::process::id(),
+        crate::now_ms()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let db = dir.join("board.db");
+    let store = meowo_store::Store::open(&db).unwrap();
+    let project = store.upsert_project_by_root("C:/repo", "repo", 100).unwrap();
+    let (session_id, _) = store.start_session(project, "runtime-request", 100).unwrap();
+    (db, store, session_id)
 }
 
 /// 测试固件：向审批表塞一条挂起请求，返回决策接收端。

@@ -351,9 +351,9 @@ describe("ChatWindow 远程底部面板", () => {
 
 describe("ChatWindow 远程答题", () => {
   // 远程无 push 事件(listen 是空订阅),题面只经 pending_interaction 轮询到达。
-  function questionSessionImpl(question: Record<string, unknown>) {
+  function questionSessionImpl(question: Record<string, unknown> | null, runtimeRequest: Record<string, unknown> | null = null) {
     return (command: string, args?: Record<string, unknown>): Promise<unknown> => {
-      if (command === "pending_interaction") return Promise.resolve({ approval: null, question });
+      if (command === "pending_interaction") return Promise.resolve({ approval: null, question, runtimeRequest });
       return runningSessionImpl(command, args);
     };
   }
@@ -361,9 +361,10 @@ describe("ChatWindow 远程答题", () => {
   it("可代答题面:手机上直接作答提交,不再指路桌面端", async () => {
     markRemoteUi();
     window.history.replaceState({}, "", "/?sessionId=7");
-    invoke.mockImplementation(questionSessionImpl({
+    invoke.mockImplementation(questionSessionImpl(null, {
       sessionId: 7, requestId: "request-remote-answer", provider: "claude", toolName: "AskUserQuestion",
-      description: null, answerable: true, permissionSuggestions: [],
+      kind: "question", status: "pending", description: null, permissionSuggestions: [],
+      responseCapability: { type: "broker_live" },
       input: JSON.stringify({ questions: [{ question: "晚饭吃什么？", multiSelect: false, options: [{ label: "火锅" }, { label: "烧烤" }] }] }),
     }));
     render(<ChatWindow />);
@@ -374,25 +375,53 @@ describe("ChatWindow 远程答题", () => {
     fireEvent.click(screen.getByRole("button", { name: /火锅/ }));
     fireEvent.click(screen.getByRole("button", { name: "提交选择" }));
     await waitFor(() => {
-      const resolved = invoke.mock.calls.find((call) => call[0] === "resolve_pending_approval");
+      const resolved = invoke.mock.calls.find((call) => call[0] === "respond_runtime_request");
       expect(resolved).toBeTruthy();
       const choice = (resolved![1] as { choice: string }).choice;
       expect(JSON.parse(choice.slice("answers:".length))).toEqual({ "晚饭吃什么？": "火锅" });
     });
   });
 
+  it("普通审批:手机从 RuntimeRequest 集合读取并用统一命令拒绝", async () => {
+    markRemoteUi();
+    window.history.replaceState({}, "", "/?sessionId=7");
+    const base = questionSessionImpl(null);
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "pending_interaction") return Promise.resolve({
+        approval: null, question: null, runtimeRequest: null,
+        runtimeRequests: [{
+          sessionId: 7, requestId: "request-remote-approval", provider: "codex", kind: "approval", status: "pending",
+          toolName: "Bash", description: "手机拒绝这条命令", input: "{}", permissionSuggestions: [],
+          responseCapability: { type: "broker_live" },
+        }],
+      });
+      return base(command, args);
+    });
+    render(<ChatWindow />);
+    expect(await screen.findByText("手机拒绝这条命令")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "拒绝" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("respond_runtime_request", {
+      sessionId: 7, requestId: "request-remote-approval", choice: "deny",
+    }));
+    expect(invoke).not.toHaveBeenCalledWith("resolve_pending_approval", expect.anything());
+  });
+
   it("卡内答不了的题面:转为逐题作答只放行挂起,不切终端页", async () => {
     markRemoteUi();
     window.history.replaceState({}, "", "/?sessionId=7");
     // 两题同文:答案按题面原文键控,卡内无法表达(answersRepresentable=false)。
-    invoke.mockImplementation(questionSessionImpl({
+    const legacy = questionSessionImpl({
       sessionId: 7, requestId: "request-remote-stepwise", provider: "claude", toolName: "AskUserQuestion",
       description: null, answerable: true, permissionSuggestions: [],
       input: JSON.stringify({ questions: [
         { header: "甲", question: "选哪个？", multiSelect: false, options: [{ label: "A" }] },
         { header: "乙", question: "选哪个？", multiSelect: false, options: [{ label: "B" }] },
       ] }),
-    }));
+    });
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "respond_runtime_request") return Promise.reject("remote/unknown_command");
+      return legacy(command, args);
+    });
     render(<ChatWindow />);
     expect(await screen.findByText("这组问题无法在卡片内作答，请转为逐题作答")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "转为逐题作答" }));
@@ -400,6 +429,7 @@ describe("ChatWindow 远程答题", () => {
       const resolved = invoke.mock.calls.find((call) => call[0] === "resolve_pending_approval");
       expect((resolved?.[1] as { choice?: string } | undefined)?.choice).toBe("pass");
     });
+    expect(invoke.mock.calls.some((call) => call[0] === "respond_runtime_request")).toBe(true);
     // 远程没有终端视图:仍停在对话页(输入框在场)。
     expect(screen.getByRole("combobox", { name: "发送消息给 Agent" })).toBeTruthy();
   });

@@ -98,9 +98,9 @@ use managed_terminal::{
     managed_terminal_pending_launch, managed_terminal_screen, managed_terminal_snapshot,
     open_attached_terminal, pending_interaction, register_approval_consumer,
     register_terminal_viewer, resize_managed_terminal, resolve_pending_approval,
-    screen_detect_explain, screen_detect_explain_text, send_background_prompt,
-    start_managed_terminal, stop_managed_terminal, unregister_approval_consumer,
-    unregister_terminal_viewer, write_managed_terminal,
+    respond_runtime_request, screen_detect_explain, screen_detect_explain_text,
+    send_background_prompt, start_managed_terminal, stop_managed_terminal,
+    unregister_approval_consumer, unregister_terminal_viewer, write_managed_terminal,
 };
 #[cfg(test)]
 use session_command::is_safe_id;
@@ -1521,6 +1521,7 @@ pub fn run() {
             register_approval_consumer,
             unregister_approval_consumer,
             resolve_pending_approval,
+            respond_runtime_request,
             open_attached_terminal,
             attach_background_session,
             focus_session,

@@ -657,6 +657,16 @@ pub trait AgentPlugin: Sync {
         None
     }
 
+    /// AskUserQuestion 是否纳入 RuntimeRequest；broker 是否仍持有请求另由实时状态决定。
+    fn broker_question(&self) -> Option<&'static crate::caps::BrokerQuestionCap> {
+        None
+    }
+
+    /// 普通审批是否纳入 RuntimeRequest；只读 hook 不属于这项能力。
+    fn broker_approval(&self) -> Option<&'static crate::caps::BrokerApprovalCap> {
+        None
+    }
+
     /// 该 agent 怎么才能被套上代理（支不支持 SOCKS、写哪些环境变量、能否写进自己的配置文件）。
     /// None = 无从配置代理。差异见 [`crate::proxy`]。
     fn proxy(&self) -> Option<&'static crate::proxy::ProxySpec> {
@@ -1652,6 +1662,26 @@ mod tests {
         assert!(by_id("claude").unwrap().runtime().is_some());
         for id in ["kimi", "codex", "gemini", "opencode"] {
             assert!(by_id(id).unwrap().runtime().is_none(), "{id} 没有后台会话");
+        }
+    }
+
+    #[test]
+    fn broker_question_slot_is_explicit() {
+        for id in ["claude", "kimi"] {
+            assert!(by_id(id).unwrap().broker_question().is_some(), "{id}");
+        }
+        for id in ["codex", "gemini", "opencode"] {
+            assert!(by_id(id).unwrap().broker_question().is_none(), "{id}");
+        }
+    }
+
+    #[test]
+    fn broker_approval_slot_excludes_observation_only_hooks() {
+        for id in ["claude", "codex"] {
+            assert!(by_id(id).unwrap().broker_approval().is_some(), "{id}");
+        }
+        for id in ["kimi", "gemini", "opencode"] {
+            assert!(by_id(id).unwrap().broker_approval().is_none(), "{id}");
         }
     }
 }

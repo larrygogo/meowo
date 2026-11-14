@@ -56,7 +56,9 @@ describe("ChatWindow 焦点规则", () => {
     expect(document.activeElement).toBe(composer);
     typeLikeBrowser("hello world\n");
     expect(screen.queryByPlaceholderText("说明拒绝原因…")).toBeNull();
-    const denies = invoke.mock.calls.filter(([command, args]) => command === "resolve_pending_approval" && String(args?.choice).startsWith("deny"));
+    const denies = invoke.mock.calls.filter(([command, args]) =>
+      (command === "respond_runtime_request" || command === "resolve_pending_approval")
+      && String(args?.choice).startsWith("deny"));
     expect(denies).toEqual([]);
   });
 

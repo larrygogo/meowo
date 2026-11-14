@@ -137,19 +137,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 &ev.permission_suggestions,
                 false,
             ) {
-                let (output, settled) = approval_outcome(decision);
+                let (output, _) = approval_outcome(decision);
                 if let Some(output) = output {
                     println!("{output}");
                 }
-                // 决策已尘埃落定（GUI 里点了允许/拒绝）→ **当场**清「待批准」。不清的话，
-                // 这个标记要等下一个 hook 事件（PostToolUse/Stop）才被顺带清掉——被批准的
-                // 工具跑多久，卡片就错挂「待批准」多久；拒绝更要等到回合结束的 Stop。
-                //
-                // best-effort（吞错）：codex 的 hook 可能继承只读沙箱（见上方 dispatch 的注释），
-                // 清不掉绝不能影响已经打给 agent 的决策输出。
-                if settled {
-                    let _ = store.clear_pending_review(session_id, now_ms());
-                }
+                // 会话级清理由 app 在 broker 锁内按其他请求是否仍存在决定。reporter 不知道
+                // 并存请求，若在这里清，会把另一请求误判成「已在别处结算」（做空 R1）。
+
             }
         }
     }
@@ -172,14 +166,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 &[],
                 true,
             ) {
-                let (output, settled) = pretooluse_outcome(decision, ev.tool_input.as_ref());
+                let (output, _) = pretooluse_outcome(decision, ev.tool_input.as_ref());
                 if let Some(output) = output {
                     println!("{output}");
                 }
-                // 已代答 → 提问不再悬着，当场清「待回答」（与审批桥同一时序理由）。
-                if settled {
-                    let _ = store.clear_pending_review(session_id, now_ms());
-                }
+                // 与普通审批同理：由 app 按 broker 实时所有权清理，不在此处抹掉并存请求。
+
             }
         }
     }
@@ -222,7 +214,7 @@ fn now_ms() -> i64 {
 
 /// GUI 审批决策 → （打给 agent 的 hook 输出，审批是否已尘埃落定）。
 ///
-/// 第二个分量决定要不要当场清 `pending_review`：Allow/Deny 都是「有人做了决定」，提示不再悬着；
+/// 第二个分量只表达决策是否尘埃落定：Allow/Deny 都是「有人做了决定」，提示不再悬着；
 /// **Pass 不算**——GUI 消费者消失时交还 agent 原终端（不输出 hook 决策即可恢复原生提示），
 /// 用户还没批，标记必须留着，否则卡片会在提示仍悬着时谎报「运行中」。
 fn approval_outcome(
@@ -338,8 +330,7 @@ mod tests {
     use super::{approval_outcome, pretooluse_outcome};
     use meowo_protocol::broker::ApprovalDecision;
 
-    /// Allow/Deny = 决策落地：既要输出 hook 决策，也要清「待批准」。此前没有第二个分量，
-    /// 批准后卡片会一直挂着「待批准」直到下一个 hook 事件——被批准的工具跑多久就错多久。
+    /// Allow/Deny = 决策落地：输出 hook 决策并报告 settled；实际清理由 app 按 broker 所有权执行。
     #[test]
     fn allow_and_deny_settle_the_review() {
         let (output, settled) = approval_outcome(ApprovalDecision::Allow);
@@ -369,7 +360,7 @@ mod tests {
         );
     }
 
-    /// Pass = 交还原终端：不输出决策（恢复原生提示），也**不**清「待批准」——用户还没批。
+    /// Pass = 交还原终端：不输出决策（恢复原生提示），settled=false——用户还没批。
     #[test]
     fn pass_returns_to_terminal_and_keeps_the_review_pending() {
         let (output, settled) = approval_outcome(ApprovalDecision::Pass);

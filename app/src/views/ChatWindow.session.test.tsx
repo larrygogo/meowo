@@ -1108,7 +1108,7 @@ describe("ChatWindow", () => {
     invoke.mockImplementation((command: string) => {
       if (command === "get_chat_history") return Promise.resolve(history);
       if (command === "pending_interaction") return Promise.resolve({ approval: pending, question: null });
-      if (command === "resolve_pending_approval") { pending = null; return Promise.resolve(); }
+      if (command === "respond_runtime_request") { pending = null; return Promise.resolve(); }
       return Promise.resolve();
     });
     render(<ChatWindow />);
@@ -1116,7 +1116,7 @@ describe("ChatWindow", () => {
     // Bash 参数只摆命令本身（commandOfInput），不摆 JSON 外壳。
     expect(screen.getByText("cargo test")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /^允许并记住（此项目、本机）/ }));
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("resolve_pending_approval", {
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("respond_runtime_request", {
       sessionId: 12, requestId: "request-1", choice: "suggestion:0",
     }));
     await waitFor(() => expect(screen.queryByRole("button", { name: "允许一次" })).toBeNull());
@@ -1142,7 +1142,7 @@ describe("ChatWindow", () => {
       });
       if (command === "pending_interaction") return Promise.resolve({ approval: pending, question: null });
       if (command === "agent_chat_ui") return Promise.resolve(chatUi("claude"));
-      if (command === "resolve_pending_approval") { pending = null; return Promise.resolve(); }
+      if (command === "respond_runtime_request") { pending = null; return Promise.resolve(); }
       return Promise.resolve();
     });
     render(<ChatWindow />);
@@ -1154,16 +1154,16 @@ describe("ChatWindow", () => {
     const input = await screen.findByRole("combobox", { name: "发送消息给 Agent" });
     input.focus();
     fireEvent.keyDown(window, { key: "Escape" });
-    expect(invoke.mock.calls.some(([command]) => command === "resolve_pending_approval")).toBe(false);
+    expect(invoke.mock.calls.some(([command]) => command === "respond_runtime_request")).toBe(false);
 
     input.blur();
     // 两段式确认:第一下只把拒绝按钮点亮为「再按 Esc 确认拒绝」,不发拒绝——
     // 空手一个 Esc 就替 agent 递出不可撤销的正式拒绝,误触面太大。
     fireEvent.keyDown(window, { key: "Escape" });
-    expect(invoke.mock.calls.some(([command]) => command === "resolve_pending_approval")).toBe(false);
+    expect(invoke.mock.calls.some(([command]) => command === "respond_runtime_request")).toBe(false);
     expect(await screen.findByRole("button", { name: "再按 Esc 确认拒绝" })).toBeTruthy();
     fireEvent.keyDown(window, { key: "Escape" });
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("resolve_pending_approval", {
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("respond_runtime_request", {
       sessionId: 13, requestId: "request-esc", choice: "deny",
     }));
   });
@@ -1190,10 +1190,10 @@ describe("ChatWindow", () => {
     const input = screen.getByRole("combobox", { name: "发送消息给 Agent" });
     input.focus();
     fireEvent.keyDown(input, { key: "1" });
-    expect(invoke.mock.calls.some(([command]) => command === "resolve_pending_approval")).toBe(false);
+    expect(invoke.mock.calls.some(([command]) => command === "respond_runtime_request")).toBe(false);
     input.blur();
     fireEvent.keyDown(window, { key: "1" });
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("resolve_pending_approval", {
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("respond_runtime_request", {
       sessionId: 23, requestId: "request-keys", choice: "allow_once",
     }));
     // 换一条新请求：附理由拒绝。
@@ -1201,7 +1201,7 @@ describe("ChatWindow", () => {
     fireEvent.click(await screen.findByRole("button", { name: "说明并拒绝" }, { timeout: 3000 }));
     fireEvent.change(screen.getByRole("textbox", { name: "说明拒绝原因…" }), { target: { value: "先别跑全量" } });
     fireEvent.click(screen.getByRole("button", { name: "提交并拒绝" }));
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("resolve_pending_approval", {
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("respond_runtime_request", {
       sessionId: 23, requestId: "request-reason", choice: "deny:先别跑全量",
     }));
   });
@@ -1222,7 +1222,7 @@ describe("ChatWindow", () => {
       });
       if (command === "pending_interaction") return Promise.resolve({ approval: pending, question: null });
       if (command === "agent_chat_ui") return Promise.resolve(chatUi("claude"));
-      if (command === "resolve_pending_approval") return Promise.reject("broker 已结算");
+      if (command === "respond_runtime_request") return Promise.reject("broker 已结算");
       return Promise.resolve();
     });
     render(<ChatWindow />);
@@ -1230,7 +1230,7 @@ describe("ChatWindow", () => {
     // rm -rf 与 ls 不同权重:危险命令的允许钮是红色警示主按钮。
     expect(allow.className).toContain("is-danger");
     fireEvent.click(allow);
-    await waitFor(() => expect(invoke).toHaveBeenCalledWith("resolve_pending_approval", {
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("respond_runtime_request", {
       sessionId: 22, requestId: "request-fail", choice: "allow_once",
     }));
     // 失败原因就地可见,卡片与按钮不消失(此前点了像没点一样)。

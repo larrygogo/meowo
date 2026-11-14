@@ -234,6 +234,10 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "Agent 已不再等待审批", exact: true, zh: "Agent 已不再等待审批", en: "The agent is no longer waiting for approval" },
   { m: "无效的审批选项", exact: true, zh: "该审批选项已失效", en: "That approval option is no longer valid" },
   { m: "审批选项已失效", exact: true, zh: "该审批选项已失效", en: "That approval option is no longer valid" },
+  { m: "runtime_request/not_resumable", exact: true, zh: "该提问已结束，不能再通过此卡片回答", en: "This question has ended and can no longer be answered from this card" },
+  { m: "runtime_request/already_resolved", exact: true, zh: "该提问已用另一份答案回答", en: "This question has already been answered differently" },
+  { m: "runtime_request/session_mismatch", exact: true, zh: "该提问属于另一条会话", en: "This question belongs to another session" },
+  { m: "runtime_request/unsupported", exact: true, zh: "该请求不支持通过统一提问入口回答", en: "This request cannot be answered through the runtime question channel" },
   // ── 后台会话(bgpty / managed_terminal)──
   { m: "该后台会话未接入", exact: true, zh: "后台会话未连接", en: "Background session not attached" },
   { m: "后台会话已结束或被 Agent 收回", exact: true, zh: "后台会话已结束或被 Agent 收回", en: "The background session has ended or was reclaimed by the agent" },

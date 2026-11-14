@@ -405,6 +405,8 @@ fn modern_launch_options() -> &'static [crate::LaunchOption] {
     &OPTIONS
 }
 
+static BROKER_QUESTION: crate::caps::BrokerQuestionCap = crate::caps::BrokerQuestionCap;
+
 /// Kimi `config.toml` 顶层（第一个表头之前）的一个字符串 / 布尔键。
 fn top_level_value(content: &str, key: &str) -> Option<String> {
     for line in content.lines() {
@@ -470,6 +472,11 @@ impl AgentPlugin for Kimi {
             ProcessScope::Exclusive
         }
     }
+
+    fn broker_question(&self) -> Option<&'static crate::caps::BrokerQuestionCap> {
+        Some(&BROKER_QUESTION)
+    }
+
     fn screen_rules(&self) -> &'static [crate::screen::ScreenRule] {
         screen::RULES
     }

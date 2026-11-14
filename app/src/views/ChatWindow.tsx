@@ -8,7 +8,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { pathKey, unquotePath } from "../paths";
 import { COMPACTING_ACTIVITY } from "../activity";
 import { appConfirm } from "../confirm";
-import { diagLog, forkSession, agentChatUi, attachBackgroundSession, sendBackgroundPrompt, clipboardRestore, clipboardSetImage, confirmStopSession, dismissInteractiveQuestion, getChatHistory, getGitChangesOverview, getGitDiffSummary, getLiveSessionsPage, getSessionLineage, isExternallyHeld, managedTerminalBinding, managedTerminalPendingLaunch, managedTerminalScreen, managedTerminalSnapshot, openNewSessionWindow,  refreshSessionModel, refreshSessionTodos, renameSession as renameSessionCmd, savePastedAttachment, sessionLaunchSelections, setArchived as setArchivedCmd, sessionTone, startManagedTerminal, copySessionToProvider, takeoverManagedTerminal, writeManagedTerminal, type AgentId, type ChatHistory, type ChatItem, type ChatUi, type GitDiffSummaryDto, type RepoChangesDto, type LiveSession, type ModelPreset, type PendingApproval } from "../api";
+import { diagLog, forkSession, agentChatUi, attachBackgroundSession, sendBackgroundPrompt, clipboardRestore, clipboardSetImage, confirmStopSession, dismissInteractiveQuestion, getChatHistory, getGitChangesOverview, getGitDiffSummary, getLiveSessionsPage, getSessionLineage, isExternallyHeld, managedTerminalBinding, managedTerminalPendingLaunch, managedTerminalScreen, managedTerminalSnapshot, openNewSessionWindow,  refreshSessionModel, refreshSessionTodos, renameSession as renameSessionCmd, savePastedAttachment, sessionLaunchSelections, setArchived as setArchivedCmd, sessionTone, startManagedTerminal, copySessionToProvider, takeoverManagedTerminal, writeManagedTerminal, type AgentId, type ChatHistory, type ChatItem, type ChatUi, type GitDiffSummaryDto, type RepoChangesDto, type LiveSession, type ModelPreset, type PendingApproval, type RuntimeRequest } from "../api";
 import { hasEscLayers } from "../escLayers";
 import { useTauriEvent } from "../hooks/useTauriEvent";
 import { useVisibleInterval } from "../hooks/useVisibleInterval";
@@ -27,6 +27,7 @@ import { approvalChoiceForKey, BrokerApprovalCard, useBrokerResolver } from "./c
 import { answersRepresentable, composeAnswers, matchFocusedQuestion, matchOptionByLabel, observeTranscriptForDismiss, parseAskUserQuestions, planQueuedChoiceWrites, type QuestionAnswerDraft, type QuestionDismissTracker, type StructuredQuestion } from "./chat/askUserQuestion";
 import { detectAtToken, useAtFileCompletion, useSlashCompletion } from "./chat/composerCompletion";
 import { useApprovalChannel } from "./chat/useApprovalChannel";
+import { runtimeRequestBrokerLive } from "./chat/runtimeRequest";
 import { useModelPresets } from "./chat/useModelPresets";
 import { useModelControls } from "./chat/useModelControls";
 import { ContextMeter } from "./chat/ContextMeter";
@@ -415,7 +416,7 @@ export function ChatWindow() {
   // 收起后可继续编辑草稿；提交仍检查尚未了结的交互，防 Enter 意外确认选项。
   const [dismissedAttention, setDismissedAttention] = useState<TerminalAttention | null>(null);
   // 收起的题面卡（同上，见 collapseQuestion）。类型与 structuredQuestion 同源。
-  const [dismissedQuestion, setDismissedQuestion] = useState<PendingApproval | null>(null);
+  const [dismissedQuestion, setDismissedQuestion] = useState<RuntimeRequest | null>(null);
   const [questionCustomText, setQuestionCustomText] = useState("");
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   // 附件超上限被截断时给用户的可见提示（此前 .slice(0, 12) 静默丢弃）。
@@ -2297,9 +2298,9 @@ export function ChatWindow() {
       return;
     }
     shownQuestionSessionRef.current = structuredQuestion.sessionId;
-    // 作答卡不吃 180s 过期：broker 一直挂着等作答；交还终端后 answerable 随轮询翻
+    // 作答卡不吃 180s 过期：broker 一直挂着等作答；交还终端后回答能力随轮询翻
     // false，本 effect 因对象更换重跑，展示卡的 180s 从那一刻起算。
-    if (structuredQuestion.answerable) return;
+    if (runtimeRequestBrokerLive(structuredQuestion)) return;
     const timer = window.setTimeout(() => {
       setStructuredQuestion(null);
       // 过期不能只是凭空消失（用户离开一会儿回来，分不清是自己漏点还是超时）——
@@ -3632,7 +3633,7 @@ export function ChatWindow() {
     setBrokerOwnsReview(true);
     // 失败时卡片还在（请求未结算），原因由 broker.errorFor 写进卡内；下一次轮询会恢复
     // 仍有效的请求，hook 已结束则保持消失。
-    const result = await broker.resolve(approval.requestId, choice);
+    const result = await broker.respond(approval.requestId, choice);
     if (result?.ok) setApproval(null);
   };
 
@@ -3802,7 +3803,7 @@ export function ChatWindow() {
   };
   // 作答卡（broker 挂起代答）：题面来自挂起路径且会话托管时，卡片就是作答面——
   // 多选/多问题/自定义输入全部可答，不再依赖屏幕识别与排队落键。
-  const questionAnswerable = !!structuredQuestion?.answerable && history?.ptyManaged !== false;
+  const questionAnswerable = runtimeRequestBrokerLive(structuredQuestion) && history?.ptyManaged !== false;
   // 题面卡在场、终端表单 8s 还没被屏幕识别接管：写一条诊断，带上识别看到的屏幕末尾。
   // 用户实拍过卡在这一步（卡上答不了、终端表单被盖住），当时没留下任何现场，只能等复现。
   // 每道题只记一次；手机端不写（远程桥不放行，写的也是宿主磁盘）。
@@ -3856,7 +3857,7 @@ export function ChatWindow() {
   // 复用 resolvingApproval 在途锁（与审批同类的终止动作）。
   const submitQuestionAnswers = async () => {
     if (!questionAnswerable || !structuredQuestion || resolvingApproval || !answerMap) return;
-    const result = await broker.resolve(structuredQuestion.requestId, `answers:${JSON.stringify(answerMap)}`);
+    const result = await broker.respond(structuredQuestion.requestId, `answers:${JSON.stringify(answerMap)}`);
     if (result?.ok) setStructuredQuestion(null);
     // 挂起可能已在别处结算（超时/回合终止）：说明原因，卡随下一拍轮询降级或消失。
     else if (result) setSendError(result.message);
@@ -3866,7 +3867,7 @@ export function ChatWindow() {
   const sendQuestionToTerminal = async () => {
     if (!questionAnswerable || !structuredQuestion || resolvingApproval) return;
     // 失败也照样切过去：已在别处结算时，表单要么已在终端，要么请求已了结。
-    await broker.resolve(structuredQuestion.requestId, "pass");
+    await broker.respond(structuredQuestion.requestId, "pass");
     // 远程没有终端视图：放行后终端表单出现，由屏幕识别的作答卡（interactiveAttention）
     // 接手，手机上逐题点选即可。
     if (!remoteUi()) setView("terminal");
@@ -4778,7 +4779,7 @@ export function ChatWindow() {
           ? t.chat.queuedAnswerHint(queuedLabels.join("、"))
           : t.chat.questionFormLoading}</span>
       </ApprovalCard>}
-      {/* broker 审批卡（claude hook 劫走的请求），本体与卡内状态见 chat/BrokerApprovalCard。
+      {/* broker 审批卡（Claude / Codex 的 RuntimeRequest），本体与卡内状态见 chat/BrokerApprovalCard。
           按 requestId 挂载：换请求即新卡，「说明并拒绝」的草稿不串卡。 */}
       {view === "chat" && !terminalAttention && approval && (
         <BrokerApprovalCard

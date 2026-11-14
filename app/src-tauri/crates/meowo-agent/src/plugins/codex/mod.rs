@@ -219,7 +219,13 @@ impl crate::RelayCap for CodexRelay {
     }
 }
 
+static BROKER_APPROVAL: crate::caps::BrokerApprovalCap = crate::caps::BrokerApprovalCap;
+
 impl AgentPlugin for Codex {
+    fn broker_approval(&self) -> Option<&'static crate::caps::BrokerApprovalCap> {
+        Some(&BROKER_APPROVAL)
+    }
+
     fn screen_rules(&self) -> &'static [crate::screen::ScreenRule] {
         screen::RULES
     }

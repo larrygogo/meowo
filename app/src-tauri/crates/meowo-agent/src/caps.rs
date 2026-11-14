@@ -10,6 +10,12 @@
 
 use crate::transcript::TranscriptSpec;
 
+/// broker 的 AskUserQuestion 可纳入 RuntimeRequest；不声明的 Provider 保持旧题面路径。
+pub struct BrokerQuestionCap;
+
+/// broker 的普通审批可纳入 RuntimeRequest；只读 hook 与终端屏幕审批不得声明。
+pub struct BrokerApprovalCap;
+
 /// hook 事件里被 agent 能力用到的那几个字段。由调用方（reporter 的 dispatch）从 hook 负载构造。
 #[derive(Debug, Default, Clone, Copy)]
 pub struct HookContext<'a> {

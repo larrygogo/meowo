@@ -270,7 +270,18 @@ impl crate::RelayCap for ClaudeRelay {
     }
 }
 
+static BROKER_QUESTION: crate::caps::BrokerQuestionCap = crate::caps::BrokerQuestionCap;
+static BROKER_APPROVAL: crate::caps::BrokerApprovalCap = crate::caps::BrokerApprovalCap;
+
 impl AgentPlugin for Claude {
+    fn broker_question(&self) -> Option<&'static crate::caps::BrokerQuestionCap> {
+        Some(&BROKER_QUESTION)
+    }
+
+    fn broker_approval(&self) -> Option<&'static crate::caps::BrokerApprovalCap> {
+        Some(&BROKER_APPROVAL)
+    }
+
     fn process_scope(&self, argv: &[String]) -> crate::registry::ProcessScope {
         use crate::registry::ProcessScope;
         let is_claude = |arg: &String| {

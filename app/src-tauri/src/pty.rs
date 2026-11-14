@@ -349,12 +349,101 @@ struct AttachState {
     /// 400ms 轮询」两道保险兜住同一问题；这条路径为了让 TUI 表单零延迟出现，刻意不等
     /// 消费者，那就更不能把入表也一起丢。
     interactive_questions: Mutex<HashMap<i64, (ApprovalRequest, i64)>>,
+    /// RuntimeRequest 的短期回答收据：另一客户端重试同一回答时按成功处理，不再送进 Agent。
+    runtime_request_receipts: Mutex<HashMap<String, RuntimeRequestReceipt>>,
     app: Mutex<Option<tauri::AppHandle>>,
 }
 
 struct PendingApproval {
     request: ApprovalRequest,
     response: mpsc::Sender<ApprovalDecision>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RuntimeResponseOutcome {
+    Delivered,
+    ReceiptReplay,
+}
+
+#[derive(Clone)]
+struct RuntimeRequestReceipt {
+    request: ApprovalRequest,
+    choice: Option<String>,
+    status: meowo_protocol::runtime_request::RuntimeRequestStatus,
+    reason: String,
+    at: i64,
+}
+
+const RUNTIME_REQUEST_RECEIPT_TTL_MS: i64 = 600_000;
+const RUNTIME_REQUEST_RECEIPT_LIMIT: usize = 64;
+
+fn approval_decision_for_choice(
+    request: &ApprovalRequest,
+    choice: &str,
+) -> Result<ApprovalDecision, String> {
+    match choice {
+        "allow_once" => Ok(ApprovalDecision::Allow),
+        "deny" => Ok(ApprovalDecision::Deny),
+        value if value.starts_with("deny:") => {
+            let reason = value["deny:".len()..].trim();
+            Ok(if reason.is_empty() {
+                ApprovalDecision::Deny
+            } else {
+                ApprovalDecision::DenyWith(reason.to_string())
+            })
+        }
+        value if value.starts_with("suggestion:") => {
+            let index = value["suggestion:".len()..]
+                .parse::<usize>()
+                .map_err(|_| "无效的审批选项")?;
+            let suggestion = request
+                .permission_suggestions
+                .get(index)
+                .cloned()
+                .ok_or("审批选项已失效")?;
+            Ok(ApprovalDecision::AllowWithPermissions(vec![suggestion]))
+        }
+        "pass" if request.tool_name == "AskUserQuestion" => Ok(ApprovalDecision::Pass),
+        value if value.starts_with("answers:") => {
+            if request.tool_name != "AskUserQuestion" {
+                return Err("无效的审批选项".into());
+            }
+            let answers = serde_json::from_str::<serde_json::Value>(&value["answers:".len()..])
+                .ok()
+                .and_then(|v| v.as_object().cloned())
+                .filter(|answers| answers_match_questions(&request.input, answers))
+                .ok_or("无效的审批选项")?;
+            Ok(ApprovalDecision::Answer(answers))
+        }
+        _ => Err("无效的审批选项".into()),
+    }
+}
+
+fn runtime_request_kind(
+    request: &ApprovalRequest,
+) -> Option<meowo_protocol::runtime_request::RuntimeRequestKind> {
+    use meowo_protocol::runtime_request::RuntimeRequestKind;
+    let plugin = meowo_agent::registry::by_id(&request.provider)?;
+    if request.tool_name == "AskUserQuestion" {
+        plugin.broker_question().map(|_| RuntimeRequestKind::Question)
+    } else {
+        plugin.broker_approval().map(|_| RuntimeRequestKind::Approval)
+    }
+}
+
+fn runtime_request_supported(request: &ApprovalRequest) -> bool {
+    runtime_request_kind(request).is_some()
+}
+
+fn runtime_request_dto(
+    request: ApprovalRequest,
+    broker_live: bool,
+) -> Option<meowo_protocol::runtime_request::RuntimeRequestDto> {
+    use meowo_protocol::runtime_request::{RuntimeRequestDto, RuntimeRequestKind};
+    match runtime_request_kind(&request)? {
+        RuntimeRequestKind::Question => Some(RuntimeRequestDto::broker_question(request, broker_live)),
+        RuntimeRequestKind::Approval => Some(RuntimeRequestDto::broker_approval(request, broker_live)),
+    }
 }
 
 /// 一次 pending 启动的占位元数据（见 [`AttachState::pending_launches`]）。看板占位卡
@@ -465,6 +554,7 @@ impl PtyBroker {
                 approvals: Mutex::new(HashMap::new()),
                 approval_consumers: Mutex::new(HashMap::new()),
                 interactive_questions: Mutex::new(HashMap::new()),
+                runtime_request_receipts: Mutex::new(HashMap::new()),
                 app: Mutex::new(None),
             }),
         }
@@ -1040,13 +1130,35 @@ impl PtyBroker {
         }
     }
 
+    /// 新前端从同一事件取得 RuntimeRequest；旧前端忽略新增字段，仍读原有审批题面。
+    fn emit_pending_approval(&self, request: &ApprovalRequest) {
+        if let Some(app) = self.attach.app.lock().ok().and_then(|app| app.clone()) {
+            if let Some(dto) = runtime_request_dto(request.clone(), true) {
+                let _ = app.emit("pending-approval", dto);
+            } else {
+                let _ = app.emit(
+                    "pending-approval",
+                    meowo_protocol::ipc::PendingApprovalDto::from(request.clone()),
+                );
+            }
+        }
+    }
+
     /// interactive-question 的 emit：与 [`Self::emit_approval`] 同一 DTO 纪律，另带
     /// answerable（PreToolUse 挂起代答=true；自动放行的展示题面=false）。
     fn emit_question(&self, request: &ApprovalRequest, answerable: bool) {
         if let Some(app) = self.attach.app.lock().ok().and_then(|app| app.clone()) {
-            let mut dto = meowo_protocol::ipc::PendingApprovalDto::from(request.clone());
-            dto.answerable = answerable;
-            let _ = app.emit("interactive-question", dto);
+            if runtime_request_supported(request) {
+                let dto = meowo_protocol::runtime_request::RuntimeRequestDto::broker_question(
+                    request.clone(),
+                    answerable,
+                );
+                let _ = app.emit("interactive-question", dto);
+            } else {
+                let mut dto = meowo_protocol::ipc::PendingApprovalDto::from(request.clone());
+                dto.answerable = answerable;
+                let _ = app.emit("interactive-question", dto);
+            }
         }
     }
 
@@ -2461,50 +2573,7 @@ impl PtyBroker {
         if pending.request.session_id != session_id {
             return Err("审批请求不属于该会话".into());
         }
-        let decision = match choice {
-            "allow_once" => ApprovalDecision::Allow,
-            "deny" => ApprovalDecision::Deny,
-            // 附理由拒绝（对照 Kimi「说明拒绝原因… / 提交并拒绝」）：理由经 reporter 作为
-            // 拒绝说明回给模型，它据此调整做法而不是只知道「被拒了」。空理由按普通拒绝。
-            value if value.starts_with("deny:") => {
-                let reason = value["deny:".len()..].trim();
-                if reason.is_empty() {
-                    ApprovalDecision::Deny
-                } else {
-                    ApprovalDecision::DenyWith(reason.to_string())
-                }
-            }
-            value if value.starts_with("suggestion:") => {
-                let index = value["suggestion:".len()..]
-                    .parse::<usize>()
-                    .map_err(|_| "无效的审批选项")?;
-                let suggestion = pending
-                    .request
-                    .permission_suggestions
-                    .get(index)
-                    .cloned()
-                    .ok_or("审批选项已失效")?;
-                ApprovalDecision::AllowWithPermissions(vec![suggestion])
-            }
-            // 「去终端作答」：把挂起的提问交还 TUI（reporter 零输出 → CC 继续 →
-            // PermissionRequest 自动放行 → 表单出现在终端）。仅提问可用，普通审批
-            // 不开这个口子——它的 pass 由消费者注销/窗口关闭等路径兜底。
-            "pass" if pending.request.tool_name == "AskUserQuestion" => ApprovalDecision::Pass,
-            // 卡内代答：前端给出 `问题原文 → 答案` 的 JSON 映射，reporter 以 allow +
-            // updatedInput.answers 回 CC（工具正常返回答案，不是 error 回执）。
-            value if value.starts_with("answers:") => {
-                if pending.request.tool_name != "AskUserQuestion" {
-                    return Err("无效的审批选项".into());
-                }
-                let answers = serde_json::from_str::<serde_json::Value>(&value["answers:".len()..])
-                    .ok()
-                    .and_then(|v| v.as_object().cloned())
-                    .filter(|answers| answers_match_questions(&pending.request.input, answers))
-                    .ok_or("无效的审批选项")?;
-                ApprovalDecision::Answer(answers)
-            }
-            _ => return Err("无效的审批选项".into()),
-        };
+        let decision = approval_decision_for_choice(&pending.request, choice)?;
         let pending = approvals.remove(request_id).expect("刚验证存在的审批请求");
         drop(approvals);
         pending
@@ -2555,6 +2624,261 @@ impl PtyBroker {
         let mut dto = meowo_protocol::ipc::PendingApprovalDto::from(request);
         dto.answerable = answerable;
         Some(dto)
+    }
+
+    pub(crate) fn runtime_question(
+        &self,
+        session_id: i64,
+    ) -> Option<meowo_protocol::runtime_request::RuntimeRequestDto> {
+        if let Some(request) = self.interactive_question(session_id) {
+            if !runtime_request_supported(&request) {
+                return None;
+            }
+            let broker_live = self
+                .attach
+                .approvals
+                .lock()
+                .is_ok_and(|approvals| approvals.contains_key(&request.request_id));
+            if !broker_live {
+                if let Some(terminal) = self.terminal_runtime_request(&request.request_id) {
+                    return Some(terminal);
+                }
+            }
+            return runtime_request_dto(request, broker_live);
+        }
+        self.latest_terminal_runtime_request(
+            session_id,
+            meowo_protocol::runtime_request::RuntimeRequestKind::Question,
+        )
+    }
+
+    pub(crate) fn runtime_approval(
+        &self,
+        session_id: i64,
+    ) -> Option<meowo_protocol::runtime_request::RuntimeRequestDto> {
+        if let Some(request) = self.pending_approval(session_id) {
+            return runtime_request_dto(request, true);
+        }
+        self.latest_terminal_runtime_request(
+            session_id,
+            meowo_protocol::runtime_request::RuntimeRequestKind::Approval,
+        )
+    }
+
+    /// 一次查询同时给出审批与提问；两者拥有独立终态，不能共用一个可选字段互相覆盖。
+    pub(crate) fn runtime_requests(
+        &self,
+        session_id: i64,
+    ) -> Vec<meowo_protocol::runtime_request::RuntimeRequestDto> {
+        [self.runtime_approval(session_id), self.runtime_question(session_id)]
+            .into_iter()
+            .flatten()
+            .collect()
+    }
+
+    fn terminal_runtime_request(
+        &self,
+        request_id: &str,
+    ) -> Option<meowo_protocol::runtime_request::RuntimeRequestDto> {
+        let receipt = self
+            .attach
+            .runtime_request_receipts
+            .lock()
+            .ok()?
+            .get(request_id)?
+            .clone();
+        runtime_request_dto(receipt.request, false)
+            .map(|dto| dto.with_terminal_state(receipt.status, receipt.reason))
+    }
+
+    fn latest_terminal_runtime_request(
+        &self,
+        session_id: i64,
+        kind: meowo_protocol::runtime_request::RuntimeRequestKind,
+    ) -> Option<meowo_protocol::runtime_request::RuntimeRequestDto> {
+        let request_id = self
+            .attach
+            .runtime_request_receipts
+            .lock()
+            .ok()?
+            .iter()
+            .filter(|(_, receipt)| {
+                receipt.request.session_id == session_id
+                    && runtime_request_kind(&receipt.request) == Some(kind)
+            })
+            .max_by_key(|(_, receipt)| receipt.at)
+            .map(|(id, _)| id.clone())?;
+        self.terminal_runtime_request(&request_id)
+    }
+
+    /// 入表后重新声明这条请求的等待状态。reporter 的首次落库发生在入表之前；与另一请求
+    /// 的结算清理交错时，这把锁保证「入表 + 重申」与「确认无其他请求 + 清理」不会交叉。
+    fn insert_pending_approval(
+        &self,
+        request: &ApprovalRequest,
+        response: mpsc::Sender<ApprovalDecision>,
+        db_path: &std::path::Path,
+    ) -> Result<(), String> {
+        let mut approvals = self.attach.approvals.lock().map_err(|_| LOCK_POISONED)?;
+        approvals.insert(
+            request.request_id.clone(),
+            PendingApproval {
+                request: request.clone(),
+                response,
+            },
+        );
+        if let Ok(store) = crate::open_store(db_path) {
+            let kind = match request.tool_name.as_str() {
+                "AskUserQuestion" => meowo_store::PendingReview::Question,
+                "ExitPlanMode" => meowo_store::PendingReview::Plan,
+                _ => meowo_store::PendingReview::Approval,
+            };
+            let _ = store.set_pending_review(request.session_id, kind, crate::now_ms());
+        }
+        Ok(())
+    }
+
+    /// 仅在没有其他 broker 请求时做会话级兜底清理。锁覆盖检查与写入；新请求一旦先入表，
+    /// 这次清理就跳过，后入表的请求则由 [`Self::insert_pending_approval`] 重申自己的标记。
+    pub(crate) fn clear_pending_review_if_no_requests(&self, db_path: &std::path::Path, session_id: i64) {
+        let Ok(approvals) = self.attach.approvals.lock() else {
+            return;
+        };
+        if approvals.values().any(|pending| pending.request.session_id == session_id) {
+            return;
+        }
+        if let Ok(store) = crate::open_store(db_path) {
+            let _ = store.clear_pending_review(session_id, crate::now_ms());
+        }
+    }
+
+    fn record_runtime_request_outcome(
+        &self,
+        request: &ApprovalRequest,
+        status: meowo_protocol::runtime_request::RuntimeRequestStatus,
+        reason: &str,
+        choice: Option<&str>,
+    ) {
+        if !runtime_request_supported(request) {
+            return;
+        }
+        let now = crate::now_ms();
+        let Ok(mut receipts) = self.attach.runtime_request_receipts.lock() else {
+            return;
+        };
+        receipts.retain(|_, receipt| now.saturating_sub(receipt.at) < RUNTIME_REQUEST_RECEIPT_TTL_MS);
+        if receipts.len() >= RUNTIME_REQUEST_RECEIPT_LIMIT
+            && !receipts.contains_key(&request.request_id)
+        {
+            if let Some(oldest) = receipts
+                .iter()
+                .min_by_key(|(_, receipt)| receipt.at)
+                .map(|(id, _)| id.clone())
+            {
+                receipts.remove(&oldest);
+            }
+        }
+        receipts
+            .entry(request.request_id.clone())
+            .and_modify(|receipt| {
+                receipt.status = status;
+                receipt.reason = reason.to_string();
+                receipt.at = now;
+                if choice.is_some() {
+                    receipt.choice = choice.map(str::to_string);
+                }
+            })
+            .or_insert_with(|| RuntimeRequestReceipt {
+                request: request.clone(),
+                choice: choice.map(str::to_string),
+                status,
+                reason: reason.to_string(),
+                at: now,
+            });
+    }
+
+    pub(crate) fn respond_runtime_request(
+        &self,
+        session_id: i64,
+        request_id: &str,
+        choice: &str,
+    ) -> Result<RuntimeResponseOutcome, String> {
+        let now = crate::now_ms();
+        {
+            let mut receipts = self
+                .attach
+                .runtime_request_receipts
+                .lock()
+                .map_err(|_| LOCK_POISONED)?;
+            receipts.retain(|_, receipt| now.saturating_sub(receipt.at) < RUNTIME_REQUEST_RECEIPT_TTL_MS);
+            if let Some(receipt) = receipts.get(request_id) {
+                if receipt.request.session_id != session_id {
+                    return Err("runtime_request/session_mismatch".into());
+                }
+                return if receipt.choice.as_deref() == Some(choice) {
+                    Ok(RuntimeResponseOutcome::ReceiptReplay)
+                } else {
+                    Err("runtime_request/already_resolved".into())
+                };
+            }
+        }
+
+        let mut approvals = self
+            .attach
+            .approvals
+            .lock()
+            .map_err(|_| LOCK_POISONED)?;
+        // 两个客户端可同时通过上面的收据检查；等待 approvals 锁后再复核一次。
+        if let Some(receipt) = self
+            .attach
+            .runtime_request_receipts
+            .lock()
+            .map_err(|_| LOCK_POISONED)?
+            .get(request_id)
+        {
+            return if receipt.request.session_id == session_id && receipt.choice.as_deref() == Some(choice) {
+                Ok(RuntimeResponseOutcome::ReceiptReplay)
+            } else if receipt.request.session_id != session_id {
+                Err("runtime_request/session_mismatch".into())
+            } else {
+                Err("runtime_request/already_resolved".into())
+            };
+        }
+        let pending = approvals
+            .get(request_id)
+            .ok_or("runtime_request/not_resumable")?;
+        if pending.request.session_id != session_id {
+            return Err("runtime_request/session_mismatch".into());
+        }
+        if !runtime_request_supported(&pending.request) {
+            return Err("runtime_request/unsupported".into());
+        }
+        let decision = approval_decision_for_choice(&pending.request, choice)?;
+        let pending = approvals.remove(request_id).expect("刚验证存在的运行时请求");
+        let request = pending.request.clone();
+        if pending.response.send(decision).is_err() {
+            self.record_runtime_request_outcome(
+                &request,
+                meowo_protocol::runtime_request::RuntimeRequestStatus::Cancelled,
+                "peer_gone",
+                None,
+            );
+            return Err("runtime_request/not_resumable".into());
+        }
+
+        let (status, reason) = if choice == "pass" {
+            (
+                meowo_protocol::runtime_request::RuntimeRequestStatus::Cancelled,
+                "passed_to_terminal",
+            )
+        } else {
+            (
+                meowo_protocol::runtime_request::RuntimeRequestStatus::Resolved,
+                "answered",
+            )
+        };
+        self.record_runtime_request_outcome(&request, status, reason, Some(choice));
+        Ok(RuntimeResponseOutcome::Delivered)
     }
 
     /// 用户已处理完该题面（前端收卡时调用）：撤下表，避免轮询把答过的题重新弹出来。
@@ -3380,17 +3704,7 @@ impl PtyBroker {
             }
             // 与普通审批同款「先入表再等窗口」：晚注册的窗口靠轮询也能找回请求。
             let (tx, rx) = mpsc::channel();
-            self.attach
-                .approvals
-                .lock()
-                .map_err(|_| LOCK_POISONED)?
-                .insert(
-                    request.request_id.clone(),
-                    PendingApproval {
-                        request: request.clone(),
-                        response: tx,
-                    },
-                );
+            self.insert_pending_approval(&request, tx, &crate::db_path())?;
             let hold = self.ensure_approval_window(request.session_id);
             if matches!(hold, ApprovalHold::Reject) {
                 if let Ok(mut approvals) = self.attach.approvals.lock() {
@@ -3425,19 +3739,48 @@ impl PtyBroker {
             if let Ok(mut approvals) = self.attach.approvals.lock() {
                 approvals.remove(&request.request_id);
             }
-            let decision = match outcome {
+            let decision = match &outcome {
                 ApprovalWait::PeerGone => {
+                    self.record_runtime_request_outcome(
+                        &request,
+                        meowo_protocol::runtime_request::RuntimeRequestStatus::Cancelled,
+                        "peer_gone",
+                        None,
+                    );
                     // CC 撤销了提问（Esc/回合终止）：题面已失效，收掉防轮询诈尸。
                     self.clear_interactive_question(request.session_id);
                     return Ok(());
                 }
-                ApprovalWait::Decision(decision) => decision,
+                ApprovalWait::Decision(decision) => decision.clone(),
                 // Abandoned = 远端领卡方消失(手机租约过期):与超时/别处结算同语义,
                 // Pass 交还终端表单作答。
                 ApprovalWait::TimedOut
                 | ApprovalWait::ResolvedElsewhere
                 | ApprovalWait::Abandoned => ApprovalDecision::Pass,
             };
+            let (status, reason) = match &outcome {
+                ApprovalWait::TimedOut => (
+                    meowo_protocol::runtime_request::RuntimeRequestStatus::Expired,
+                    "timed_out",
+                ),
+                ApprovalWait::ResolvedElsewhere => (
+                    meowo_protocol::runtime_request::RuntimeRequestStatus::Resolved,
+                    "resolved_elsewhere",
+                ),
+                ApprovalWait::Abandoned => (
+                    meowo_protocol::runtime_request::RuntimeRequestStatus::Cancelled,
+                    "consumer_abandoned",
+                ),
+                ApprovalWait::Decision(ApprovalDecision::Answer(_)) => (
+                    meowo_protocol::runtime_request::RuntimeRequestStatus::Resolved,
+                    "answered",
+                ),
+                _ => (
+                    meowo_protocol::runtime_request::RuntimeRequestStatus::Cancelled,
+                    "passed_to_terminal",
+                ),
+            };
+            self.record_runtime_request_outcome(&request, status, reason, None);
             if matches!(decision, ApprovalDecision::Answer(_)) {
                 // 已代答：收题面，已答的卡不许靠轮询弹回来。
                 self.clear_interactive_question(request.session_id);
@@ -3497,27 +3840,23 @@ impl PtyBroker {
         // 请求在表里，晚注册的窗口靠 getPendingApproval 轮询就能找回它；反过来（等到了
         // 才入表）则超时瞬间请求人间蒸发，用户面对一扇刚弹出的空窗口。
         let (tx, rx) = mpsc::channel();
-        self.attach
-            .approvals
-            .lock()
-            .map_err(|_| LOCK_POISONED)?
-            .insert(
-                request.request_id.clone(),
-                PendingApproval {
-                    request: request.clone(),
-                    response: tx,
-                },
-            );
+        self.insert_pending_approval(&request, tx, &crate::db_path())?;
         let hold = self.ensure_approval_window(request.session_id);
         if matches!(hold, ApprovalHold::Reject) {
             // 窗口没起来：撤回请求，把决定权交还 agent 自己的审批界面。
             if let Ok(mut approvals) = self.attach.approvals.lock() {
                 approvals.remove(&request.request_id);
             }
+            self.record_runtime_request_outcome(
+                &request,
+                meowo_protocol::runtime_request::RuntimeRequestStatus::Cancelled,
+                "consumer_unavailable",
+                None,
+            );
             self.emit_approval("pending-approval-cleared", &request);
             return stream.write_all(b"pass\n").map_err(|e| e.to_string());
         }
-        self.emit_approval("pending-approval", &request);
+        self.emit_pending_approval(&request);
         // 等 GUI 决策的同时监视「已在终端结算」的信号(见 await_approval_outcome)——TUI
         // 权限框与 hook 是并行竞速的(claude 官方 hooks 文档明载),用户完全可能直接在终端
         // 作答。此前这里盲等满 300s,对话页的审批卡片残留成幽灵卡(实拍:终端已批准,切回
@@ -3543,6 +3882,33 @@ impl PtyBroker {
         if let Ok(mut approvals) = self.attach.approvals.lock() {
             approvals.remove(&request.request_id);
         }
+        let (status, reason) = match &outcome {
+            ApprovalWait::Decision(ApprovalDecision::Pass) => (
+                meowo_protocol::runtime_request::RuntimeRequestStatus::Cancelled,
+                "passed_to_terminal",
+            ),
+            ApprovalWait::Decision(_) => (
+                meowo_protocol::runtime_request::RuntimeRequestStatus::Resolved,
+                "answered",
+            ),
+            ApprovalWait::TimedOut => (
+                meowo_protocol::runtime_request::RuntimeRequestStatus::Expired,
+                "timed_out",
+            ),
+            ApprovalWait::PeerGone => (
+                meowo_protocol::runtime_request::RuntimeRequestStatus::Cancelled,
+                "peer_gone",
+            ),
+            ApprovalWait::ResolvedElsewhere => (
+                meowo_protocol::runtime_request::RuntimeRequestStatus::Resolved,
+                "resolved_elsewhere",
+            ),
+            ApprovalWait::Abandoned => (
+                meowo_protocol::runtime_request::RuntimeRequestStatus::Cancelled,
+                "consumer_abandoned",
+            ),
+        };
+        self.record_runtime_request_outcome(&request, status, reason, None);
         self.emit_approval("pending-approval-cleared", &request);
         let decision = match outcome {
             // 对端已死,写响应只会得到 broken pipe——收尾即可,卡片已随上面的事件清掉。

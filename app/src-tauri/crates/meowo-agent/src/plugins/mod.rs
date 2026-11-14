@@ -15,6 +15,7 @@
 //!    - `screen_rules`：屏幕状态检测（见 [`crate::screen`]）
 //!    - `attention_patterns`：可操作提示的识别（见 [`crate::chat_ui::AttentionPattern`]）
 //!    - `permission_hook_decides`：hook 的审批决策会被该 agent 采纳
+//!    - `broker_question` / `broker_approval`：提问 / 普通审批纳入 RuntimeRequest 统一契约
 //!    - `cross_account_session`：会话可搬到另一账号继续（见 [`crate::profile`]）
 //!    - `profile` / `account` / `proxy` / `relay`：多账号、登录态、代理、中转
 //!
