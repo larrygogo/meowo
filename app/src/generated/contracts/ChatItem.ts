@@ -16,6 +16,13 @@ export type ChatItem = { "type": "user_text", id: string, timestamp: string | nu
  */
 interjected?: boolean, 
 /**
+ * 这条消息所属回合的 id，provider 的记录里有才填（codex 的 `turn_id`）。同一回合里的
+ * 第二条起就是回合中途送进去的话：前端据此不把它当成「上一回合到此结束」。
+ * 与 `interjected` 分开，是因为后者还管撤回的轮数——codex 的回溯把插话也算一轮，
+ * 标成 interjected 会让撤回数错。None 不下发。
+ */
+turn_id?: string, 
+/**
  * 这句话是发给某个子代理的（claude：用户切到子代理视图直接发），值是它的任务描述。
  * 正文只记在子代理侧车里，主链没有这条（2.1.322 实拍），不标出来前端既找不到它
  * 判「未确认送达」，也说不清后面的回复是谁给的。None 不下发。

@@ -16,6 +16,12 @@ pub(super) static DEPS: &[D] = &[
         "Ask anything… \"Fix a TODO in the codebase\"",
         "1.19.5 真机 2026-11-14（probe_tui_script cells）：空输入框的灰色占位，引号里的示例会轮换",
     ),
+    D::new(
+        "composer.paste",
+        "[Pasted ~",
+        "                       \u{2503}  [Pasted ~3 lines]",
+        "1.19.5 真机 2026-11-14（tests/probe_draft_fidelity.rs）：3 行的小粘贴就折成这个占位；opencode.exe 含模板 `[Pasted ~${n} lines]`",
+    ),
     // ── 正则规则的样例 ──
     D::new(
         "clipboard_image",

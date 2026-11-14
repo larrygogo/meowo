@@ -79,6 +79,15 @@ fn completed_item_events(
                     timestamp,
                     text,
                     interjected: false,
+                    // 回合进行中用户又发的话，codex 不另起回合：这条记录带的 turn_id 与该回合
+                    // 第一条用户消息相同（本机 98 份 rollout 里 15 条回合中途的用户消息都是，
+                    // 例：01a13d51 那份的 1962、1966 行与回合 01a13e4c 同号）。把它交给前端判
+                    // 回合边界。不标 interjected：codex 的回溯把插话也算一轮（见 chat_line_mark），
+                    // 标了撤回会数错轮数。老版本的 `event_msg/user_message` 没有这个字段。
+                    turn_id: payload
+                        .get("turn_id")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string),
                 })
                 .into_iter()
                 .collect()
@@ -118,6 +127,7 @@ fn completed_item_events(
         // 只认 ContextCompaction：`compacted` 在 0.144 与 context_compacted 成对出现（各 25 次），
         // 认它会让老会话每次压缩出两条分隔；`response_item/compaction` 还会出现在续写段开头
         // （ordinal 1，带入的旧压缩），不是这一刻发生的压缩。
+        "SubAgentActivity" => super::subagents::activity_events(item, timestamp),
         "ContextCompaction" => vec![TranscriptEvent::Metadata {
             id: id("compact"),
             timestamp,
@@ -412,7 +422,8 @@ fn tool_call_events(
             name: name.to_string(),
             kind,
             summary,
-            subagent: None,
+            // 派出子代理：与 claude、kimi 同一个子任务块（开始、结局、过程见 subagents.rs）。
+            subagent: (name == "spawn_agent").then(|| super::subagents::spawn_ref(arg)),
             detail,
             plan: None,
         }
@@ -524,7 +535,7 @@ fn tool_result_events(
     vec![result(base, call_id, merged)]
 }
 
-fn parse_transcript_events(line: &str) -> Vec<TranscriptEvent> {
+pub(super) fn parse_transcript_events(line: &str) -> Vec<TranscriptEvent> {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
         return Vec::new();
     };
@@ -544,6 +555,7 @@ fn parse_transcript_events(line: &str) -> Vec<TranscriptEvent> {
                     timestamp,
                     text,
                     interjected: false,
+                    turn_id: None,
                 })
                 .into_iter()
                 .collect()
@@ -624,6 +636,87 @@ fn parse_transcript_events(line: &str) -> Vec<TranscriptEvent> {
         }],
         _ => Vec::new(),
     }
+}
+
+/// `event_msg/item_completed` 的 `CommandExecution`：一条命令跑完了，带退出码。
+///
+/// 它不上屏（命令与输出已由主链的 exec 脚本承载，见 [`completed_item_events`]），但脚本只打印
+/// `r.output` 时主链回执里没有退出码，要靠它补（规则见 `transcript::ExitJoin`）。
+/// 本机 0.148 起的 30 份 rollout、2837 条记录（2026-11-14）：`command` 是
+/// `[shell, "-Command", 命令原文]`（2702 条）或 `[shell, "-NoProfile", "-Command", 命令原文]`
+/// （135 条，调用带 `login:false` 时），命令原文恒在最后一项；`exit_code` 与 `duration` 恒有；
+/// 较新的版本在 payload 上另有 `started_at_ms`。只按需要的字段反序列化——`aggregated_output`
+/// 可以有几百 KB。
+fn command_exit(line: &str) -> Option<crate::transcript::CommandExit> {
+    #[derive(serde::Deserialize)]
+    struct Line<'a> {
+        #[serde(default, borrow)]
+        timestamp: Option<std::borrow::Cow<'a, str>>,
+        #[serde(rename = "type", borrow)]
+        outer: std::borrow::Cow<'a, str>,
+        payload: Payload<'a>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Payload<'a> {
+        #[serde(rename = "type", borrow)]
+        kind: std::borrow::Cow<'a, str>,
+        #[serde(default)]
+        started_at_ms: Option<i64>,
+        item: Item<'a>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Item<'a> {
+        #[serde(rename = "type", borrow)]
+        kind: std::borrow::Cow<'a, str>,
+        #[serde(default)]
+        command: serde_json::Value,
+        #[serde(default)]
+        exit_code: Option<i64>,
+        #[serde(default)]
+        duration: Option<Duration>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Duration {
+        #[serde(default)]
+        secs: i64,
+        #[serde(default)]
+        nanos: i64,
+    }
+    if !line.contains("\"CommandExecution\"") {
+        return None;
+    }
+    let record: Line = serde_json::from_str(line).ok()?;
+    if record.outer != "event_msg"
+        || record.payload.kind != "item_completed"
+        || record.payload.item.kind != "CommandExecution"
+    {
+        return None;
+    }
+    let item = record.payload.item;
+    let exit_code = item.exit_code?.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+    // 开始时刻：payload 直接给了就用，否则用落盘时刻减去耗时。
+    let started_ms = record.payload.started_at_ms.or_else(|| {
+        let finished = crate::transcript::epoch_millis(record.timestamp.as_deref()?)?;
+        let duration = item.duration.as_ref()?;
+        Some(finished - duration.secs * 1000 - duration.nanos / 1_000_000)
+    });
+    Some(crate::transcript::CommandExit {
+        command: executed_command(&item.command)?,
+        exit_code,
+        started_ms,
+    })
+}
+
+/// CommandExecution 的 `command` 数组里真正执行的那段命令原文：紧跟在 shell 的「执行这段命令」
+/// 开关（`-Command` / `-lc` / `-c` / `/c`）后面的最后一项。认不出这个形态就不取——拿整个数组
+/// 拼起来的串去和调用实参比只会对不上，不如明说拿不到。
+fn executed_command(value: &serde_json::Value) -> Option<String> {
+    let parts = value.as_array()?;
+    let (script, head) = parts.split_last()?;
+    let flag = head.last()?.as_str()?;
+    (head.len() >= 2 && matches!(flag, "-lc" | "-c" | "-Command" | "/c"))
+        .then(|| script.as_str().map(str::to_string))
+        .flatten()
 }
 
 #[cfg(test)]
@@ -735,6 +828,10 @@ impl TranscriptSpec for CodexTranscript {
         parse_transcript_events(line)
     }
 
+    fn subagents(&self) -> Option<&'static dyn crate::transcript::SubagentSpec> {
+        Some(&super::subagents::CodexSubagents)
+    }
+
     /// 回溯（TUI 双击 Esc 编辑上一条）不改写 rollout，追加 `event_msg/thread_rolled_back
     /// {num_turns}`（本机实拍 0.144），与 kimi 的 context.undo 同形，交给读取层回放。轮的边界
     /// 按 codex 源码 `is_user_turn_boundary`：每条非上下文注入的用户消息，插话也算一轮——即
@@ -759,6 +856,23 @@ impl TranscriptSpec for CodexTranscript {
             .iter()
             .any(|event| matches!(event, TranscriptEvent::UserMessage { .. }))
             .then_some(crate::ChatLineMark::TurnStart)
+    }
+
+    fn chat_command_exit(&self, line: &str) -> Option<crate::transcript::CommandExit> {
+        command_exit(line)
+    }
+
+    /// 关联要看的行：工具调用与回执（exec 脚本的 `custom_tool_call(_output)`、直接调用的
+    /// `function_call(_output)`）、命令执行完毕的旁路记录、一轮的起点（新老两种用户消息行）与回溯。
+    fn command_exit_markers(&self) -> &'static [&'static str] {
+        &[
+            "\"custom_tool_call",
+            "\"function_call",
+            "\"CommandExecution\"",
+            "\"user_message\"",
+            "\"UserMessage\"",
+            "\"thread_rolled_back\"",
+        ]
     }
 
     fn agent_modes_from_line(&self, line: &str) -> Vec<crate::AgentMode> {
@@ -848,7 +962,7 @@ pub fn codex_launch_prefix() -> Option<Vec<String>> {
 /// 没有该变量，profile 会话靠 `managed_codex_homes()` 兜底——漏了它，多账号下的 codex 会话
 /// 上下文/切换引擎/跨账号搬迁会全部静默落空（kimi 侧 `managed_share_dirs` 与 claude 侧
 /// `managed_projects_dirs` 是同一条纪律）。
-fn find_rollout(session_id: &str) -> Option<PathBuf> {
+pub(super) fn find_rollout(session_id: &str) -> Option<PathBuf> {
     let suffix = format!("{session_id}.jsonl");
     std::iter::once(codex_home())
         .flatten()
@@ -1403,6 +1517,98 @@ mod tests {
 
     /// 本机 0.167.2 实拍的形态：exec 脚本里包着一条命令，回执是命令结果的 JSON。
     /// 工具行要显示真实命令，非零退出要标红并带退出码。
+    fn replay_fixture(name: &str) -> String {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/chat-replay")
+            .join(name);
+        std::fs::read_to_string(path).unwrap().replace("\r\n", "\n")
+    }
+
+    /// 本机真实 0.167.2 rollout 的三条 CommandExecution（已脱敏，与它们的调用行、回执行一起
+    /// 存在 codex-exit-join.jsonl）：取出命令原文、退出码与开始时刻。
+    #[test]
+    fn command_exit_reads_real_command_execution_records() {
+        let text = replay_fixture("codex-exit-join.jsonl");
+        let exits: Vec<_> = text.lines().filter_map(command_exit).collect();
+        assert_eq!(
+            exits.iter().map(|exit| exit.exit_code).collect::<Vec<_>>(),
+            vec![101, 0, 1]
+        );
+        assert!(exits[0].command.starts_with("$env:CARGO_TARGET_DIR="));
+        assert!(exits[0].command.ends_with("--maxWorkers=2"));
+        assert_eq!(exits[0].started_ms, Some(1_794_493_056_174));
+        // 调用行、回执行不是旁路记录。
+        assert_eq!(text.lines().count(), 9);
+
+        // 较早的版本 payload 上没有 started_at_ms：用落盘时刻减去耗时，得到同一个时刻。
+        let line = text.lines().find(|line| command_exit(line).is_some()).unwrap();
+        let mut value: serde_json::Value = serde_json::from_str(line).unwrap();
+        value["payload"].as_object_mut().unwrap().remove("started_at_ms");
+        assert_eq!(
+            command_exit(&value.to_string()).unwrap().started_ms,
+            Some(1_794_493_056_174)
+        );
+        // 调用带 login:false 时 shell 多一个 -NoProfile（本机实拍 135 条）：命令原文仍是最后一项。
+        let mut no_profile: serde_json::Value = serde_json::from_str(line).unwrap();
+        no_profile["payload"]["item"]["command"] = serde_json::json!([
+            "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+            "-NoProfile",
+            "-Command",
+            "Resolve-DnsName github.com -ErrorAction Continue | Select-Object Name,Type,IPAddress"
+        ]);
+        assert_eq!(
+            command_exit(&no_profile.to_string()).unwrap().command,
+            "Resolve-DnsName github.com -ErrorAction Continue | Select-Object Name,Type,IPAddress"
+        );
+        // 认不出的形态（没有「执行这段命令」的开关）不取。
+        no_profile["payload"]["item"]["command"] = serde_json::json!(["git", "status"]);
+        assert_eq!(command_exit(&no_profile.to_string()), None);
+        // 没有退出码（还没跑完就落的记录）不算。
+        value["payload"]["item"]["exit_code"] = serde_json::Value::Null;
+        assert_eq!(command_exit(&value.to_string()), None);
+        // 正文里提到这个词的普通行不算。
+        let message = r#"{"timestamp":"t","type":"event_msg","payload":{"type":"agent_message","message":"看 \"CommandExecution\" 记录"}}"#;
+        assert_eq!(command_exit(message), None);
+    }
+
+    /// 读取层回看窗口之前的内容时，只解析含 command_exit_markers 的行（见 transcript::ExitJoin）。
+    /// 所以凡是关联要看的行——开出工具调用、给出回执、一轮的边界、旁路记录——都必须含其一，
+    /// 否则增量读与整读的结果会不一致。拿两份真实样本逐行核对。
+    #[test]
+    fn command_exit_markers_cover_every_line_the_join_looks_at() {
+        let markers = CODEX_TRANSCRIPT.command_exit_markers();
+        assert!(!markers.is_empty());
+        let mut relevant = 0;
+        for name in ["codex.01a1cea4.jsonl", "codex.01a13ed0.jsonl", "codex-exit-join.jsonl"] {
+            for line in replay_fixture(name).lines() {
+                let matters = command_exit(line).is_some()
+                    || CODEX_TRANSCRIPT.chat_line_mark(line).is_some()
+                    || parse_transcript_events(line).iter().any(|event| {
+                        // 子代理的开始与结局（SubAgentActivity）产出的是子任务的结局回执，不是命令的回执：
+                        // 关联不看它（ExitJoin::needs_exit），不必进标记。
+                        matches!(
+                            event,
+                            TranscriptEvent::ToolCall { .. }
+                                | TranscriptEvent::ToolResult { subagent: None, .. }
+                        )
+                    });
+                if matters {
+                    relevant += 1;
+                    assert!(
+                        markers.iter().any(|marker| line.contains(marker)),
+                        "{name} 里这一行会影响关联，却不含任何标记：{}",
+                        line.chars().take(160).collect::<String>()
+                    );
+                }
+            }
+        }
+        assert!(relevant >= 30, "样本里只有 {relevant} 行相关记录，核对没有意义");
+        // 回溯行（本机实拍 0.144）同样算一轮的边界。
+        let rollback = r#"{"timestamp":"t","type":"event_msg","payload":{"type":"thread_rolled_back","num_turns":1}}"#;
+        assert!(CODEX_TRANSCRIPT.chat_line_mark(rollback).is_some());
+        assert!(markers.iter().any(|marker| rollback.contains(marker)));
+    }
+
     #[test]
     fn exec_script_is_unwrapped_into_the_real_command() {
         let call = r##"{"timestamp":"2026-11-12T09:06:13.439Z","type":"response_item","payload":{"type":"custom_tool_call","status":"completed","call_id":"call_29b2","name":"exec","input":"text(await tools.exec_command({cmd:\"cargo test -p meowo-agent\",workdir:\"C:/repo\",max_output_tokens:3000}));"}}"##;
@@ -1526,5 +1732,23 @@ mod tests {
             r#"{"type":"event_msg","payload":{"type":"task_complete","last_agent_message":"done","error":null}}"#
         )
         .is_empty());
+    }
+
+    /// 回合中途送进去的话与回合开头那条写法相同，只有 turn_id 说明它们同属一个回合
+    /// （本机 rollout 01a13d51 的 1962、1966 行，回合 01a13e4c；正文已换成占位）。
+    #[test]
+    fn user_message_carries_the_turn_id_from_the_record() {
+        let line = r#"{"timestamp":"2026-10-15T06:49:36.271Z","ordinal":1965,"type":"event_msg","payload":{"type":"item_completed","thread_id":"01a13d51-8612-7a62-adab-5bdfe4daf61f","turn_id":"01a13e4c-2c55-7831-a8de-d0f6ddfb65d6","item":{"type":"UserMessage","id":"01a13e52-cd0e-7ae0-a8bc-4f7f2f45c10d","client_id":"6b982180-ed27-49ff-b20b-159a3d283a00","content":[{"type":"text","text":"clippy 也报错","text_elements":[]}]},"started_at_ms":1792046976271,"completed_at_ms":1792046976271}}"#;
+        assert!(matches!(
+            parse_chat_items(line).as_slice(),
+            [ChatItem::UserText { turn_id: Some(turn), interjected: false, .. }]
+                if turn == "01a13e4c-2c55-7831-a8de-d0f6ddfb65d6"
+        ));
+        // 老版本的 user_message 事件没有 turn_id。
+        let old = r#"{"timestamp":"t1","type":"event_msg","payload":{"type":"user_message","message":"修复测试"}}"#;
+        assert!(matches!(
+            parse_chat_items(old).as_slice(),
+            [ChatItem::UserText { turn_id: None, .. }]
+        ));
     }
 }

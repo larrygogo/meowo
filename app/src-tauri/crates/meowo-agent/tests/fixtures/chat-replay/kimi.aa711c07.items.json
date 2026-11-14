@@ -1,0 +1,9 @@
+[
+  {
+    "type": "turn_error",
+    "id": "kimi-error-559b677fcb197985",
+    "timestamp": "2026-10-28T02:16:48.088Z",
+    "label": "API 请求出错",
+    "text": "Model \"local-provider/Qwen3.8-Flash-Next\" is not configured in config.toml."
+  }
+]

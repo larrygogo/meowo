@@ -384,6 +384,9 @@ describe("ChatWindow 适配回归", () => {
       if (command === "get_chat_history") return base(command, args).then((h: object) => ({ ...h, offset: 5, items: args?.offset ? [] : items }));
       if (command === "confirm_dialog") return Promise.resolve(true);
       if (command === "managed_terminal_screen") return Promise.resolve(screenNow());
+      // 生产宿主的帧带终端列数：claude 的输入框以终端右沿为界，多行草稿要靠它确认两行之间是换行
+      // 而不是折行，确认不了就不清（保不住就不清）。
+      if (command === "managed_terminal_frame") return Promise.resolve({ lines: screenNow(), cursorRow: 0, cursorCol: 0, cursorVisible: false, cursorDim: false, cols: 120 });
       if (command === "write_managed_terminal") {
         const data = String(args?.data);
         if (data === "\u001b" && stage === "idle" && draft.length > 0) {

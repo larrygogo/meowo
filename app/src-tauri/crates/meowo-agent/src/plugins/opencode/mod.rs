@@ -427,6 +427,21 @@ impl AgentPlugin for Opencode {
             clear_rounds: 1,
             clear_while_running: true,
             alt_modes: &[],
+            // 草稿保真（1.19.5 真机，tests/probe_draft_fidelity.rs，2026-11-14）：
+            // - 粘贴占位 `[Pasted ~3 lines]`：3 行的小粘贴就折，5120 字单行是 `[Pasted ~1 lines]`
+            //   （程序文件里的模板 `[Pasted ~${n} lines]`）。图片占位没有实拍，按宽的认。
+            // - 超出可视高度不画任何标记：45 行草稿在 40 行的终端里只画最后 13 行。上限是
+            //   `max(6, floor(终端行数 / 3))`（程序文件原文 `prompt?.max_height??Math.max(6,Math.floor(F().height/3))`），
+            //   取下限 6。用户在配置里把 `prompt.max_height` 调到 6 以下时这条规则不成立。
+            // - 首页布局实拍：底边右端在第 98 列，正文最多 70 格（从第 26 列起），离底边右端 2 格，按词折行。
+            //   会话内的布局（框靠左、变宽）没有实拍，多留 2 格。
+            fidelity: Some(crate::chat_ui::ComposerFidelity {
+                paste_pattern: r"\[Pasted ~\d+ lines\]|\[[Ii]mage[^\]\r\n]*\]",
+                overflow_pattern: None,
+                overflow_rows: Some(6),
+                wrap_edge: crate::chat_ui::ComposerWrapEdge::Border,
+                wrap_inset: 4,
+            }),
         })
     }
     fn queue_input(&self) -> Option<&'static str> {

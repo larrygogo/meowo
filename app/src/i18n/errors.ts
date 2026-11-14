@@ -261,7 +261,6 @@ export const ENTRIES: ErrorEntry[] = [
   // ── 审批 ──
   { m: "审批请求已结束", exact: true, zh: "审批请求已结束", en: "The approval request has ended" },
   { m: "审批请求不属于该会话", exact: true, zh: "该审批属于另一条会话", en: "This approval belongs to another session" },
-  { m: "Agent 已不再等待审批", exact: true, zh: "Agent 已不再等待审批", en: "The agent is no longer waiting for approval" },
   { m: "无效的审批选项", exact: true, zh: "该审批选项已失效", en: "That approval option is no longer valid" },
   { m: "审批选项已失效", exact: true, zh: "该审批选项已失效", en: "That approval option is no longer valid" },
   { m: "runtime_request/not_resumable", exact: true, zh: "该提问已结束，不能再通过此卡片回答", en: "This question has ended and can no longer be answered from this card" },
@@ -418,6 +417,20 @@ export const ENTRIES: ErrorEntry[] = [
 
 /** 是否含汉字(CJK 统一表意文字基本区,后端 sentinel 均落在此区间)。 */
 const hasHan = (text: string): boolean => /[一-鿿]/.test(text);
+
+/**
+ * 反查:一句已经格式化好的用户文案对应哪个后端错误码(`模块/代码`)。给运行日志用——日志只记代码,
+ * 不记可能带路径或正文的原文。只认结构化的错误码,老的中文原文前缀不算。认不出返回 null。
+ */
+export function backendErrorCode(message: string, locale: string): string | null {
+  const isZh = locale.startsWith("zh");
+  for (const entry of ENTRIES) {
+    if (!/^[a-z_]+\/[a-z0-9_]+$/.test(entry.m)) continue;
+    const base = isZh ? entry.zh : entry.en;
+    if (base === undefined ? message.startsWith(entry.m) : message === base || (entry.tail && message.startsWith(base))) return entry.m;
+  }
+  return null;
+}
 
 /**
  * 把后端错误(通常是 `invoke` reject 出来的 String)格式化成当前语言的用户文案。

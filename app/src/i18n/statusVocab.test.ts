@@ -48,7 +48,13 @@ const BANNED_ZH: [RegExp, string][] = [
   [/进行中/, "运行中"],
   [/子代理/, "子任务"],
   [/已手动终止|已终止/, "已中断"],
+  // 做空 ⑫：与「已排队」「运行中」「待批准」并存的近义说法。
+  [/排队中/, "已排队"],
+  [/正在运行(?:…|\.\.\.|$)/, "运行中"],
+  [/不再等待/, "待批准 / 审批请求已结束"],
 ];
+// 不算状态词、所以不在上表里的：「正在运行命令」「正在读取文件」这类过程块标题（chat.turnToolDoing）。它们说的是
+// 「此刻在做哪个动作」，带宾语，每类工具一句；会话与调用的状态仍只有「运行中」一个词。
 const BANNED_EN: [RegExp, string][] = [
   [/\berrored\b/i, "Error"],
   [/pending approval|awaiting approval|waiting for approval/i, "Needs approval"],
@@ -197,6 +203,40 @@ describe("状态词表", () => {
         if (code.startsWith("//")) return;
         for (const word of zhWords) {
           if (code.includes(`"${word}"`)) offences.push(`${name}:${index + 1} 硬编码「${word}」`);
+        }
+      });
+    }
+    expect(offences).toEqual([]);
+  });
+
+  it("应用后端（src-tauri/src）的文案里没有被收敛掉的旧说法", () => {
+    // 这里的中文多是给 formatBackendError 映射的错误原因，也有直接上屏的。做空 ⑫ 发现 pty.rs 写着
+    // 「Agent 已不再等待审批」，此前只扫 crates/meowo-agent，扫不到它。
+    const root = join(SRC, "../src-tauri/src");
+    const files: string[] = [];
+    const collect = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name);
+        if (entry.isDirectory()) collect(path);
+        // *test(s).rs 是测试模块；*probe.rs 是真机探针（ignored 测试，里面的中文是发给模型的提示词与断言说明，
+        // 不上屏）。
+        else if (entry.name.endsWith(".rs") && !/(tests?|probe)\.rs$/.test(entry.name)) files.push(path);
+      }
+    };
+    collect(root);
+    expect(files.length).toBeGreaterThan(20);
+    const offences: string[] = [];
+    for (const file of files) {
+      const name = relative(root, file).split("\\").join("/");
+      const production = read(file).split(/\n\s*#\[cfg\(test\)\]/)[0];
+      production.split("\n").forEach((line, index) => {
+        const code = line.trim();
+        if (code.startsWith("//")) return;
+        // 只看字符串字面量里的内容。
+        for (const literal of code.match(/"(?:[^"\\]|\\.)*"/g) ?? []) {
+          for (const [re, use] of BANNED_ZH) {
+            if (re.test(literal.slice(1, -1))) offences.push(`${name}:${index + 1} ${literal} 应说「${use}」`);
+          }
         }
       });
     }

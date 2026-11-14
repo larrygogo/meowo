@@ -58,10 +58,12 @@ const SubagentAncestors = createContext<ReadonlySet<string>>(new Set());
 /// 结局统计 → 徽标。多个分支时报出数量，单个只说状态。
 /// background_running：子代理交了结论、它派出的后台活儿还在跑（claude「is waiting on its own background
 /// work」）。按完成算，另给次行小字 note；不算进行中——本机实拍 9 次里 4 次之后再无 finished（做空第二轮）。
+/// interrupted：这个子任务被叫停了（codex 的 interrupt_agent），三个计数都是 0。没跑完，也不是失败。
 export function outcomeBadge(
-  outcome: { running: number; completed: number; failed: number; background_running?: boolean },
+  outcome: { running: number; completed: number; failed: number; background_running?: boolean; interrupted?: boolean },
   t: ReturnType<typeof useT>,
 ): { tone: string; text: string; note?: string } | null {
+  if (outcome.interrupted) return { tone: "interrupted", text: t.chat.interrupted };
   const badge = tallyBadge(outcome, t);
   return badge && outcome.background_running ? { ...badge, note: t.chat.subagentBackgroundRunning } : badge;
 }
@@ -91,7 +93,7 @@ type SubagentBlockProps = {
   sessionId: number;
   item: ToolUseItem;
   /// 主链回执带来的结局统计——**不必展开**就有，展开才拉的是时间线本身。
-  outcome?: { running: number; completed: number; failed: number } | null;
+  outcome?: { running: number; completed: number; failed: number; interrupted?: boolean } | null;
   /// 主链上是否已有这次委派的回执。没有 = 还没回来 = 在跑。
   settled?: boolean;
   /// 最终回执的时间戳(TaskOutput 拉取的结局已按 task_id 归回)。与委派时刻相减得

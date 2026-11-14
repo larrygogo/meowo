@@ -1,0 +1,64 @@
+[
+  {
+    "type": "user_text",
+    "id": "msg_142dbc154001tQB7Lu29R1Xm0p",
+    "timestamp": "2026-10-16T03:57:40.564Z",
+    "text": "Read the file C:\\Windows\\win.ini and tell me its first line"
+  },
+  {
+    "type": "tool_use",
+    "id": "toolu_bdrk_01Bbzgh7c3SUURMzoXkZck2P",
+    "timestamp": "2026-10-16T03:57:44.055Z",
+    "name": "read",
+    "kind": "read",
+    "summary": "C:\\Windows\\win.ini",
+    "detail": {
+      "kind": "read",
+      "path": "C:\\Windows\\win.ini",
+      "offset": null,
+      "limit": 1
+    }
+  },
+  {
+    "type": "tool_result",
+    "id": "toolu_bdrk_01Bbzgh7c3SUURMzoXkZck2P:result",
+    "timestamp": "2026-10-16T03:57:45.669Z",
+    "tool_use_id": "toolu_bdrk_01Bbzgh7c3SUURMzoXkZck2P",
+    "text": "The user rejected permission to use this specific tool call.",
+    "is_error": true
+  },
+  {
+    "type": "user_text",
+    "id": "msg_142dbe222001S31myykLdOj39Q",
+    "timestamp": "2026-10-16T03:57:48.962Z",
+    "text": "Read the file C:\\Windows\\system.ini and tell me its first line"
+  },
+  {
+    "type": "tool_use",
+    "id": "toolu_bdrk_01MLTFEGR5VjaAxo3nwA5bZr",
+    "timestamp": "2026-10-16T03:57:50.725Z",
+    "name": "read",
+    "kind": "read",
+    "summary": "C:\\Windows\\system.ini",
+    "detail": {
+      "kind": "read",
+      "path": "C:\\Windows\\system.ini",
+      "offset": null,
+      "limit": 1
+    }
+  },
+  {
+    "type": "tool_result",
+    "id": "toolu_bdrk_01MLTFEGR5VjaAxo3nwA5bZr:result",
+    "timestamp": "2026-10-16T03:57:52.363Z",
+    "tool_use_id": "toolu_bdrk_01MLTFEGR5VjaAxo3nwA5bZr",
+    "text": "<path>C:\\Windows\\system.ini</path>\n<type>file</type>\n<content>\n1: ; for 16-bit app support\n\n(Showing lines 1-1 of 13. Use offset=2 to continue.)\n</content>",
+    "is_error": false
+  },
+  {
+    "type": "assistant_text",
+    "id": "prt_142dbf6bc001PR6yXUDnL5agMI",
+    "timestamp": "2026-10-16T03:57:54.236Z",
+    "text": "The first line of `C:\\Windows\\system.ini` is:\n\n```\n; for 16-bit app support\n```\n\nIt's a comment line indicating the file exists to provide legacy support for 16-bit applications."
+  }
+]

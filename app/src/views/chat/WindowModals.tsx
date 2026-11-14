@@ -6,7 +6,7 @@
  * 三者共用 AppModal 壳（G-3）：Esc 关、Tab 焦点循环、初始焦点、关闭归还焦点、背景 inert。
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getLiveSessionsPage, sessionTone, type LiveSession } from "../../api";
+import { getLiveSessionsPage, type LiveSession, liveSessionTone } from "../../api";
 import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
 import { parentSegment } from "../../paths";
@@ -194,7 +194,7 @@ export function QuickSwitcher({ activeId, commands, onPick, onCommand, onClose }
           <>
             <div className="chat-switcher-group" role="presentation">{t.chat.switcherGroupSessions}</div>
             {rows.map((row, index) => {
-              const tone = sessionTone(row.connected, row.session.status, row.pending_review, row.errored, row.busy_subagents, row.screen_state, row.screen_assumed);
+              const tone = liveSessionTone(row);
               return (
                 <button
                   type="button"

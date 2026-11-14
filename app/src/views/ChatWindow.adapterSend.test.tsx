@@ -53,6 +53,25 @@ describe("ChatWindow 适配回归", () => {
     expect(screen.getAllByText("顺手改个名")).toHaveLength(1);
   });
 
+  // 主回合停了、后台子任务还在跑：标题栏说运行中，发送也按运行中处理（进排队区），两处用的是同一批
+  // 事实。此前发送路径算状态时没带后台子任务数：点发送先进了排队区，写终端前又被改判成空闲，
+  // 气泡从排队区跳到对话里（做空 ⑩）。
+  it("后台子任务还在跑时发送：按运行中排队，与标题栏的状态一致", async () => {
+    const base = setup(513, "claude", "waiting");
+    invoke.mockImplementation((command, args) => command === "get_chat_history"
+      ? Promise.resolve({ ...history(513, "claude", "waiting"), busySubagents: 2 })
+      : base(command, args));
+    render(<ChatWindow />);
+    await screen.findByText("适配-513");
+    await waitFor(() => expect(document.querySelector(".chat-model-label")).toBeTruthy());
+    fireEvent.change(box(), { target: { value: "等它们跑完再汇总" } });
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await waitFor(() => expect(writes(513).some((text) => String(text).includes("等它们跑完再汇总"))).toBe(true));
+    // 写进终端之后仍在排队区，没有变成对话里的回显气泡。
+    await waitFor(() => expect(document.querySelector(".chat-queued-bubble")?.textContent).toBe("等它们跑完再汇总"));
+    expect(document.querySelector(".chat-message.is-user")).toBeNull();
+  });
+
   // 回执 reducer 与 Provider 无关；用已支持原生草稿暂存的 Claude 验证入队回执标「已收到」，
   // 回执本身不出现在对话里（它不是一句话，正文之后会以用户消息再出现）。
   it("CLI 的送达回执把排队消息标成已收到，回执不进对话", async () => {

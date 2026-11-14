@@ -567,6 +567,13 @@ export const zh = {
     composerDraftRunning: "回合结束后才能收起终端里的草稿",
     composerDraftNoClear: "这个终端里的草稿 Meowo 清不了",
     composerDraftStuck: "终端里的草稿没能收起，消息没有发出",
+    composerDraftPaste: "终端草稿含粘贴内容，没有清掉",
+    composerDraftOverflow: "终端草稿没显示全，没有清掉",
+    composerDraftWrapped: "终端草稿有折行读不准，没有清掉",
+    composerDraftUnsure: "终端草稿读不准，没有清掉",
+    composerSendWithDraft: "连同草稿发送",
+    composerDiscardDraft: "放弃草稿后发送",
+    composerDiscardConfirm: "确认放弃草稿",
     settingsFirstTurn: "第一条消息正在处理，会话建好后再切",
     // 会话没在跑：选择记成下次打开的启动参数（做空 M4）。
     settingsNextOpen: "会话没在运行，下次打开时生效",
@@ -758,7 +765,7 @@ export const zh = {
         placeholder: "Enter 排队 · Ctrl+Enter 中断并发送",
         placeholderNoInterrupt: "Enter 排队，当前任务结束后发送",
         placeholderRemote: "发送后排队，当前任务结束再发",
-        receipt: (n: number) => `${n} 条消息排队中，本回合结束后处理`,
+        receipt: (n: number) => `${n} 条消息${vocab.delivery.accepted}，本回合结束后处理`,
       },
       // 何时处理没有取证：只说交给了 Agent，不许诺时机。
       handoff: {
@@ -1248,7 +1255,7 @@ export const zh = {
     terminalInitTimeout: "终端长时间无输出，可能启动失败。可结束会话后重试，对话记录不受影响。",
     queuedInterjections: (n: number) => `${n} 条插话已排队，本回合结束后处理`,
     // composer 上方的队列折叠条（Kimi 式）：收起时一行提示，点开逐条查看/移除。
-    queueLabel: "排队中的消息",
+    queueLabel: `${vocab.delivery.accepted}的消息`,
     // 送达状态词（发送中、已排队、未确认送达、发送失败…）在词表 t.vocab.delivery，这里只留动作与说明。
     echoRetry: "重发",
     echoRestore: "放回输入框",
@@ -1436,7 +1443,8 @@ export const zh = {
     // 非默认排序只作用于已加载条目（翻页新条目追加尾部），要向用户说明范围。
     dateToday: "今天",
     dateYesterday: "昨天",
-    running: "正在运行…",
+    // 运行行的兜底说法：就是会话状态「运行中」，不另起一个词。
+    running: `${vocab.session.running}…`,
     contextTip: (pct: number, kw: number) => `上下文已用 ${pct}%（窗口 ${kw}K）`,
     contextShort: (pct: number) => `上下文已用 ${pct}%`,
     // 这家 CLI 不上报 token 用量（Gemini、OpenCode）：圆环留在原位置灰，悬停说明原因，

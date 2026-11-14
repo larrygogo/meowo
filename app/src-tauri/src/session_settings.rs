@@ -2360,6 +2360,32 @@ mod tests {
         assert_eq!(catalog_id_for(&catalog, "gpt-x"), None);
     }
 
+    /// gemini 审批模式底栏 → 当前档位，用插件现行的标记表。前四行是 0.68.0 真机原文
+    /// （app/src/test/fixtures/composer-frames.json 的 g2-0、g7-1、g8-0、g7-2-yolo 四帧，2026-11-14）；
+    /// 0.65 的整句字面量与它们逐字相同，所以新老版本一起认。
+    #[test]
+    fn gemini_footer_lines_map_to_approval_modes() {
+        let gemini = meowo_agent::by_id("gemini").unwrap();
+        let markers = gemini.mode_controls()[0].screen_markers;
+        let above = " > Type your message or @path/to/file\n";
+        for (footer, want) in [
+            (" Shift+Tab to accept edits                                   29 skills", "default"),
+            (" auto-accept edits Shift+Tab to plan", "autoEdit"),
+            (" plan Shift+Tab to manual", "plan"),
+            (" YOLO Ctrl+Y", "yolo"),
+            // 回合进行中 plan 切不过去，autoEdit 的提示以 `Shift+Tab to manual` 结尾（按 0.68.0 bundle
+            // ApprovalModeIndicator.tsx 的模板拼出，未实拍）。只认 `shift+tab to manual` 时它被读成 plan。
+            (" auto-accept edits Shift+Tab to manual", "autoEdit"),
+        ] {
+            assert_eq!(mode_from_screen(&format!("{above}{footer}"), markers), Some(want), "{footer}");
+        }
+        // 正文里提到过别的档位，底栏在更靠后的位置：以底栏为准。
+        let screen = "  I switched to YOLO Ctrl+Y earlier, then to plan Shift+Tab to manual.\n Shift+Tab to accept edits";
+        assert_eq!(mode_from_screen(screen, markers), Some("default"));
+        // 用户改了键位（0.68.0 起按键提示按键位表格式化）：读不到，不猜。
+        assert_eq!(mode_from_screen(" Alt+M to accept edits", markers), None);
+    }
+
     /// 做空 M8：服务通道的连接类错误在切换语境下不能落到 Lead「回答已保存…」。
     #[test]
     fn transport_errors_are_reworded_for_switching() {

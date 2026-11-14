@@ -833,6 +833,19 @@ impl AgentPlugin for Claude {
             clear_rounds: 1,
             clear_while_running: false,
             alt_modes: &[],
+            // 草稿保真（2.1.325 真机，tests/probe_draft_fidelity.rs，2026-11-14）：
+            // - 粘贴占位 `[Pasted text #1]`（5120 字单行）、`[Pasted text #2 +59 lines]`（60 行）；3 行小粘贴原样显示。
+            //   图片占位 `[Image #N]` 没有实拍，按宽的认。
+            // - 输入框没有高度上限：45 行草稿把上边框顶出屏幕，这时整框认不出（不清）。所以不用溢出规则。
+            // - 120 列时一行正文最多 116 格（提示符 2 格，右边留 2 格），按词折行；续行缩进 2 格。
+            // - 发送前走的是暂存（Ctrl-S，CLI 自己保管原文），用不到这份判定；撤回前、切模型前清草稿才用。
+            fidelity: Some(crate::chat_ui::ComposerFidelity {
+                paste_pattern: r"\[Pasted text #\d+(?: \+\d+ lines)?\]|\[[Ii]mage[^\]\r\n]*\]",
+                overflow_pattern: None,
+                overflow_rows: None,
+                wrap_edge: crate::chat_ui::ComposerWrapEdge::Terminal,
+                wrap_inset: 2,
+            }),
         })
     }
 

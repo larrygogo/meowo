@@ -19,6 +19,7 @@ mod exec_script;
 mod lead;
 mod lineage;
 mod screen;
+mod subagents;
 pub mod setup;
 pub mod telemetry;
 
@@ -414,6 +415,19 @@ impl AgentPlugin for Codex {
             clear_rounds: 1,
             clear_while_running: true,
             alt_modes: &[],
+            // 草稿保真（0.167.2 真机，tests/probe_draft_fidelity.rs，2026-11-14）：
+            // - 粘贴占位 `[Pasted Content 5120 chars]`（5120 字单行）、`[Pasted Content 2219 chars]`（60 行）；
+            //   3 行小粘贴原样显示。图片占位没有实拍，按宽的认。
+            // - 超出可视高度（120×40 时最多画 22 行）：首行最右一列画 `↑`，上面的行不显示；`↓` 是按同一
+            //   画法推的，没有实拍。
+            // - 120 列时一行正文最多 117 格（提示符 2 格，最右一列留给滚动标记），按词折行；续行缩进 2 格。
+            fidelity: Some(crate::chat_ui::ComposerFidelity {
+                paste_pattern: r"\[Pasted Content \d+ chars\]|\[[Ii]mage[^\]\r\n]*\]",
+                overflow_pattern: Some(r"\s[↑↓]\s*$"),
+                overflow_rows: None,
+                wrap_edge: crate::chat_ui::ComposerWrapEdge::Terminal,
+                wrap_inset: 1,
+            }),
         })
     }
     fn queue_input(&self) -> Option<&'static str> {

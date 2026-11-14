@@ -1,5 +1,5 @@
 {
- "comment": "终端输入框识别的前后端一致性样例。specs 与各插件 composer() 的声明由 Rust 测试逐字核对；Rust meowo_agent::composer::read 与前端 readComposer 对每一帧（原样与去掉行尾空格两种）都必须给出 expect（empty / occupied / unknown / alt:<模式>），带 text 的还要读出同样的文字。cursor 是同一帧的硬件光标（行号按 lines 计）；没有 cursor 的帧只按文字判。Gemini YOLO 档提示符是 *（做空 R2，g7-2 实拍）；OpenCode 一轮之后 / --session 打开后空输入框只剩 ┃（真机高 1，round3 实拍）。2026-11-14 的帧取自 probe_tui_script（120×40），裁到输入框附近，光标行号按裁剪后重算。",
+ "comment": "终端输入框识别的前后端一致性样例。specs 与各插件 composer() 的声明由 Rust 测试逐字核对；Rust meowo_agent::composer::read 与前端 readComposer 对每一帧（原样与去掉行尾空格两种）都必须给出 expect（empty / occupied / unknown / alt:<模式>），带 text 的还要读出同样的文字。cursor 是同一帧的硬件光标（行号按 lines 计）；没有 cursor 的帧只按文字判。Gemini YOLO 档提示符是 *（做空 R2，g7-2 实拍）；OpenCode 一轮之后 / --session 打开后空输入框只剩 ┃（真机高 1，round3 实拍）。2026-11-14 的帧取自 probe_tui_script（120×40），裁到输入框附近，光标行号按裁剪后重算。 名字带 -form- 的帧是草稿保真的取证（tests/probe_draft_fidelity.rs，五家各十来种草稿形态）：draft 是两边都必须给出的结论，complete 时 text 是保留行首缩进与空行的草稿全文，否则 why 是读不全的原因（paste / overflow / wrap / unverified）；cols 是抓帧时的终端列数；rawOnly 的帧只按原样判，不再判去掉行尾空格的那一遍；note 记着屏幕上的全文与打进去的原文之间已知的出入。",
  "specs": {
   "gemini": {
    "prompt_footer": false,
@@ -33,13 +33,20 @@
      "below_pattern": "^\\s*\\[NORMAL\\]",
      "exit_input": "i"
     }
-   ]
+   ],
+   "fidelity": {
+    "paste_pattern": "\\[Pasted Text: \\d+ (?:lines|chars)(?: #\\d+)?\\]|\\[[Ii]mage[^\\]\\r\\n]*\\]",
+    "overflow_pattern": null,
+    "overflow_rows": 10,
+    "wrap_edge": "terminal",
+    "wrap_inset": 3
+   }
   },
   "kimi": {
    "prompt_footer": false,
    "input_start_pattern": "^(\\s*│ > )",
-   "top_pattern": "^\\s*╭─+╮\\s*$",
-   "bottom_pattern": "^\\s*╰─+╯\\s*$",
+   "top_pattern": "^\\s*╭─+(?: [↑↓] \\d+ more ─+)?╮\\s*$",
+   "bottom_pattern": "^\\s*╰─+(?: [↑↓] \\d+ more ─+)?╯\\s*$",
    "row_pattern": "^\\s*│(.*)│\\s*$",
    "prompt_prefix": ">",
    "tail_rows": 0,
@@ -52,7 +59,14 @@
    ],
    "clear_rounds": 1,
    "clear_while_running": true,
-   "alt_modes": []
+   "alt_modes": [],
+   "fidelity": {
+    "paste_pattern": "\\[paste #\\d+(?: (?:\\+\\d+ lines|\\d+ chars))?\\]|\\[[Ii]mage[^\\]\\r\\n]*\\]",
+    "overflow_pattern": "[↑↓] \\d+ more",
+    "overflow_rows": null,
+    "wrap_edge": "border",
+    "wrap_inset": 4
+   }
   },
   "codex": {
    "prompt_footer": true,
@@ -71,7 +85,14 @@
    ],
    "clear_rounds": 1,
    "clear_while_running": true,
-   "alt_modes": []
+   "alt_modes": [],
+   "fidelity": {
+    "paste_pattern": "\\[Pasted Content \\d+ chars\\]|\\[[Ii]mage[^\\]\\r\\n]*\\]",
+    "overflow_pattern": "\\s[↑↓]\\s*$",
+    "overflow_rows": null,
+    "wrap_edge": "terminal",
+    "wrap_inset": 1
+   }
   },
   "opencode": {
    "prompt_footer": false,
@@ -90,7 +111,14 @@
    ],
    "clear_rounds": 1,
    "clear_while_running": true,
-   "alt_modes": []
+   "alt_modes": [],
+   "fidelity": {
+    "paste_pattern": "\\[Pasted ~\\d+ lines\\]|\\[[Ii]mage[^\\]\\r\\n]*\\]",
+    "overflow_pattern": null,
+    "overflow_rows": 6,
+    "wrap_edge": "border",
+    "wrap_inset": 4
+   }
   },
   "claude": {
    "prompt_footer": false,
@@ -113,7 +141,14 @@
    ],
    "clear_rounds": 1,
    "clear_while_running": false,
-   "alt_modes": []
+   "alt_modes": [],
+   "fidelity": {
+    "paste_pattern": "\\[Pasted text #\\d+(?: \\+\\d+ lines)?\\]|\\[[Ii]mage[^\\]\\r\\n]*\\]",
+    "overflow_pattern": null,
+    "overflow_rows": null,
+    "wrap_edge": "terminal",
+    "wrap_inset": 2
+   }
   }
  },
  "frames": [
@@ -127,7 +162,8 @@
     " >   Type your message or @path/to/file",
     "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────"
    ],
-   "expect": "empty"
+   "expect": "empty",
+   "cols": 120
   },
   {
    "name": "gemini-0.65-draft",
@@ -141,7 +177,8 @@
     "   DRAFT-THIRD",
     "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────"
    ],
-   "expect": "occupied"
+   "expect": "occupied",
+   "cols": 120
   },
   {
    "name": "gemini-0.68-g2-0",
@@ -164,7 +201,8 @@
     " workspace (/directory)                                                                   sandbox                                    /model",
     " C:\\Users\\35122\\AppData\\Local\\Temp\\meowo-tms-gemini-5686398803\\cwd                        no sandbox                       gemini-3.8-flash"
    ],
-   "expect": "empty"
+   "expect": "empty",
+   "cols": 140
   },
   {
    "name": "gemini-0.68-g2-1",
@@ -193,7 +231,8 @@
     " workspace (/directory)                                                                   sandbox                                    /model",
     " C:\\Users\\35122\\AppData\\Local\\Temp\\meowo-tms-gemini-5686398803\\cwd                        no sandbox                       gemini-3.8-flash"
    ],
-   "expect": "empty"
+   "expect": "empty",
+   "cols": 140
   },
   {
    "name": "gemini-0.68-g7-1",
@@ -225,7 +264,8 @@
     " workspace (/directory)                                                                   sandbox                                    /model",
     " C:\\Users\\35122\\AppData\\Local\\Temp\\meowo-tms-gemini-5686398803\\cwd                        no sandbox                       gemini-3.8-flash"
    ],
-   "expect": "empty"
+   "expect": "empty",
+   "cols": 140
   },
   {
    "name": "gemini-0.68-g8-0",
@@ -269,7 +309,8 @@
     " workspace (/directory)                                                                    sandbox                                   /model",
     " C:\\Users\\35122\\AppData\\Local\\Temp\\meowo-tms-gemini-5686398803\\cwd                         no sandbox                        gemini-2.5-pro"
    ],
-   "expect": "empty"
+   "expect": "empty",
+   "cols": 140
   },
   {
    "name": "gemini-0.68-draft",
@@ -298,7 +339,8 @@
     " workspace (/directory)                                                                   sandbox                                    /model",
     " C:\\Users\\35122\\AppData\\Local\\Temp\\meowo-tms-gemini-5686398803\\cwd                        no sandbox                       gemini-3.8-flash"
    ],
-   "expect": "occupied"
+   "expect": "occupied",
+   "cols": 140
   },
   {
    "name": "gemini-0.68-draft-multiline",
@@ -328,7 +370,8 @@
     " workspace (/directory)                                                                   sandbox                                    /model",
     " C:\\Users\\35122\\AppData\\Local\\Temp\\meowo-tms-gemini-5686398803\\cwd                        no sandbox                       gemini-3.8-flash"
    ],
-   "expect": "occupied"
+   "expect": "occupied",
+   "cols": 140
   },
   {
    "name": "gemini-0.68-approval",
@@ -363,7 +406,8 @@
     "│   4. No, suggest changes (esc)                                                                                                           │",
     "╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯"
    ],
-   "expect": "occupied"
+   "expect": "occupied",
+   "cols": 140
   },
   {
    "name": "kimi-2.6-k2-0",
@@ -558,7 +602,8 @@
     "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀",
     " workspace (/directory)                                                                   sandbox                                    /model",
     " C:\\Users\\35122\\AppData\\Local\\Temp\\meowo-tms-gemini-5686398803\\cwd                        no sandbox                       gemini-3.8-flash"
-   ]
+   ],
+   "cols": 140
   },
   {
    "name": "opencode-1.19.5-o1-idle-after-turn",
@@ -741,7 +786,8 @@
     "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀",
     " workspace (/directory)                                                                   sandbox                                    /model",
     " C:\\Users\\35122\\AppData\\Local\\Temp\\meowo-tms-gemini-5686398803\\cwd                        no sandbox                       gemini-3.8-flash"
-   ]
+   ],
+   "cols": 140
   },
   {
    "name": "claude-2.1.325-placeholder-cursor",
@@ -762,7 +808,8 @@
     "col": 2,
     "visible": true,
     "dim": true
-   }
+   },
+   "cols": 120
   },
   {
    "name": "claude-2.1.325-placeholder-text-only",
@@ -777,7 +824,8 @@
     "  Fable 5.2",
     "  ⏵⏵ auto mode on (shift+tab to cycle)"
    ],
-   "expect": "empty"
+   "expect": "empty",
+   "cols": 120
   },
   {
    "name": "claude-2.1.325-draft-multiline",
@@ -800,7 +848,8 @@
     "visible": true,
     "dim": false
    },
-   "text": "DRAFT-ONE\nDRAFT-TWO"
+   "text": "DRAFT-ONE\nDRAFT-TWO",
+   "cols": 120
   },
   {
    "name": "claude-2.1.325-stashed",
@@ -821,7 +870,8 @@
     "col": 2,
     "visible": true,
     "dim": true
-   }
+   },
+   "cols": 120
   },
   {
    "name": "codex-0.167.2-placeholder-cursor",
@@ -840,7 +890,8 @@
     "col": 2,
     "visible": true,
     "dim": true
-   }
+   },
+   "cols": 120
   },
   {
    "name": "codex-0.167.2-same-text-draft",
@@ -860,7 +911,8 @@
     "visible": true,
     "dim": false
    },
-   "text": "Ask Codex to do anything"
+   "text": "Ask Codex to do anything",
+   "cols": 120
   },
   {
    "name": "gemini-0.68-placeholder-cursor",
@@ -882,7 +934,8 @@
     "col": 3,
     "visible": true,
     "dim": false
-   }
+   },
+   "cols": 120
   },
   {
    "name": "gemini-0.68-same-text-draft",
@@ -905,7 +958,8 @@
     "visible": true,
     "dim": false
    },
-   "text": "Type your message or @path/to/file"
+   "text": "Type your message or @path/to/file",
+   "cols": 120
   },
   {
    "name": "gemini-0.68-draft-multiline",
@@ -929,7 +983,8 @@
     "visible": true,
     "dim": false
    },
-   "text": "DRAFT-ONE\nDRAFT-TWO"
+   "text": "DRAFT-ONE\nDRAFT-TWO",
+   "cols": 120
   },
   {
    "name": "gemini-0.68-shell-mode",
@@ -951,7 +1006,8 @@
     "col": 3,
     "visible": true,
     "dim": false
-   }
+   },
+   "cols": 120
   },
   {
    "name": "gemini-0.68-vim-insert-placeholder",
@@ -973,7 +1029,8 @@
     "col": 3,
     "visible": true,
     "dim": false
-   }
+   },
+   "cols": 120
   },
   {
    "name": "gemini-0.68-vim-normal-empty",
@@ -995,7 +1052,8 @@
     "col": 3,
     "visible": true,
     "dim": false
-   }
+   },
+   "cols": 120
   },
   {
    "name": "gemini-0.68-vim-normal-draft",
@@ -1012,7 +1070,8 @@
     " [NORMAL]       ~\\...\\scratchpad\\chat-composer\\gvim        no sandbox         Auto"
    ],
    "expect": "alt:vim_normal",
-   "text": "hello"
+   "text": "hello",
+   "cols": 120
   },
   {
    "name": "opencode-1.19.5-placeholder-cursor",
@@ -1033,7 +1092,8 @@
     "col": 26,
     "visible": true,
     "dim": false
-   }
+   },
+   "cols": 120
   },
   {
    "name": "opencode-1.19.5-draft-multiline",
@@ -1056,7 +1116,8 @@
     "visible": true,
     "dim": false
    },
-   "text": "DRAFT-ONE\nDRAFT-TWO"
+   "text": "DRAFT-ONE\nDRAFT-TWO",
+   "cols": 120
   },
   {
    "name": "kimi-2.6.1-draft",
@@ -1076,7 +1137,8 @@
     "visible": false,
     "dim": false
    },
-   "text": "DRAFT-TWO"
+   "text": "DRAFT-TWO",
+   "cols": 120
   },
   {
    "name": "kimi-2.6.1-cleared",
@@ -1096,6 +1158,2046 @@
     "col": 5,
     "visible": false,
     "dim": false
+   },
+   "cols": 120
+  },
+  {
+   "name": "claude-2.1.325-form-short",
+   "provider": "claude",
+   "version": "2.1.325",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（逐字打入，17 字 1 行；裁到输入框附近）",
+   "lines": [
+    " ▝▝   ▝▝   ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-48840",
+    "",
+    "",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "❯ meowo short draft",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "  Fable 5.2                                                                                         ◐ medium · /effort",
+    "  ⏵⏵ auto mode on (shift+tab to cycle)"
+   ],
+   "cursor": {
+    "col": 19,
+    "dim": false,
+    "row": 4,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": true,
+    "text": "meowo short draft"
+   }
+  },
+  {
+   "name": "claude-2.1.325-form-wrap_words",
+   "provider": "claude",
+   "version": "2.1.325",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（逐字打入，234 字 1 行；裁到输入框附近）",
+   "lines": [
+    " ▝▝   ▝▝   ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-48840",
+    "",
+    "",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "❯ fix: keep the draft when sending from the chat page and do not ask the user to clear it in the terminal, then verify",
+    "  every provider keeps the same behaviour across desktop and mobile without losing a single character of what was",
+    "  typed",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "  Fable 5.2                                                                                         ◐ medium · /effort",
+    "  ⏵⏵ auto mode on (shift+tab to cycle)"
+   ],
+   "cursor": {
+    "col": 7,
+    "dim": false,
+    "row": 6,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": false,
+    "why": "wrap"
+   }
+  },
+  {
+   "name": "claude-2.1.325-form-wrap_solid",
+   "provider": "claude",
+   "version": "2.1.325",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（逐字打入，160 字 1 行；裁到输入框附近）",
+   "lines": [
+    " ▝▝   ▝▝   ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-48840",
+    "",
+    "",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "❯ abcdefghij0123456789abcdefghij0123456789abcdefghij0123456789abcdefghij0123456789abcdefghij0123456789abcdefghij012345",
+    "  6789abcdefghij0123456789abcdefghij0123456789",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "  Fable 5.2                                                                                         ◐ medium · /effort",
+    "  ⏵⏵ auto mode on (shift+tab to cycle)"
+   ],
+   "cursor": {
+    "col": 46,
+    "dim": false,
+    "row": 5,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": false,
+    "why": "wrap"
+   }
+  },
+  {
+   "name": "claude-2.1.325-form-multi",
+   "provider": "claude",
+   "version": "2.1.325",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（逐字打入，62 字 5 行；裁到输入框附近）",
+   "lines": [
+    " ▝▝   ▝▝   ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-48840",
+    "",
+    "",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "❯ line one",
+    "      indented four",
+    "",
+    "    two spaces after blank",
+    "  last line",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "  Fable 5.2                                                                                  ctrl+g to edit in Notepad",
+    "  ⏵⏵ auto mode on (shift+tab to cycle)"
+   ],
+   "cursor": {
+    "col": 11,
+    "dim": false,
+    "row": 8,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": true,
+    "text": "line one\n    indented four\n\n  two spaces after blank\nlast line"
+   }
+  },
+  {
+   "name": "claude-2.1.325-form-trailing",
+   "provider": "claude",
+   "version": "2.1.325",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（逐字打入，25 字 1 行；裁到输入框附近）",
+   "lines": [
+    " ▝▝   ▝▝   ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-48840",
+    "",
+    "",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "❯ ends with three spaces",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "  Fable 5.2                                                                                         ◐ medium · /effort",
+    "  ⏵⏵ auto mode on (shift+tab to cycle)"
+   ],
+   "cursor": {
+    "col": 27,
+    "dim": false,
+    "row": 4,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": true,
+    "text": "ends with three spaces"
+   },
+   "note": "行尾的三个空格屏幕上看不见，读不回来（已知限制）"
+  },
+  {
+   "name": "claude-2.1.325-form-wide",
+   "provider": "claude",
+   "version": "2.1.325",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（逐字打入，22 字 1 行；裁到输入框附近）",
+   "lines": [
+    " ▝▝   ▝▝   ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-48840",
+    "",
+    "",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "❯ 中文草稿测试，全角标点。emoji 😀 结束",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "  Fable 5.2                                                                                         ◐ medium · /effort",
+    "  ⏵⏵ auto mode on (shift+tab to cycle)"
+   ],
+   "cursor": {
+    "col": 39,
+    "dim": false,
+    "row": 4,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": true,
+    "text": "中文草稿测试，全角标点。emoji 😀 结束"
+   }
+  },
+  {
+   "name": "claude-2.1.325-form-wide_wrap",
+   "provider": "claude",
+   "version": "2.1.325",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（逐字打入，112 字 1 行；裁到输入框附近）",
+   "lines": [
+    " ▝▝   ▝▝   ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-48840",
+    "",
+    "",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "❯ 终端里的草稿要原样搬进对话页终端里的草稿要原样搬进对话页终端里的草稿要原样搬进对话页终端里的草稿要原样搬进对话页终端",
+    "  里的草稿要原样搬进对话页终端里的草稿要原样搬进对话页终端里的草稿要原样搬进对话页终端里的草稿要原样搬进对话页",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "  Fable 5.2                                                                                         ◐ medium · /effort",
+    "  ⏵⏵ auto mode on (shift+tab to cycle)"
+   ],
+   "cursor": {
+    "col": 110,
+    "dim": false,
+    "row": 5,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": false,
+    "why": "wrap"
+   }
+  },
+  {
+   "name": "claude-2.1.325-form-tall",
+   "provider": "claude",
+   "version": "2.1.325",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（逐字打入，1124 字 45 行；裁到输入框附近）",
+   "lines": [
+    "  row 10 of the tall draft",
+    "  row 11 of the tall draft",
+    "  row 12 of the tall draft",
+    "  row 13 of the tall draft",
+    "  row 14 of the tall draft",
+    "  row 15 of the tall draft",
+    "  row 16 of the tall draft",
+    "  row 17 of the tall draft",
+    "  row 18 of the tall draft",
+    "  row 19 of the tall draft",
+    "  row 20 of the tall draft",
+    "  row 21 of the tall draft",
+    "  row 22 of the tall draft",
+    "  row 23 of the tall draft",
+    "  row 24 of the tall draft",
+    "  row 25 of the tall draft",
+    "  row 26 of the tall draft",
+    "  row 27 of the tall draft",
+    "  row 28 of the tall draft",
+    "  row 29 of the tall draft",
+    "  row 30 of the tall draft",
+    "  row 31 of the tall draft",
+    "  row 32 of the tall draft",
+    "  row 33 of the tall draft",
+    "  row 34 of the tall draft",
+    "  row 35 of the tall draft",
+    "  row 36 of the tall draft",
+    "  row 37 of the tall draft",
+    "  row 38 of the tall draft",
+    "  row 39 of the tall draft",
+    "  row 40 of the tall draft",
+    "  row 41 of the tall draft",
+    "  row 42 of the tall draft",
+    "  row 43 of the tall draft",
+    "  row 44 of the tall draft",
+    "  row 45 of the tall draft",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "  Fable 5.2",
+    "  ⏵⏵ auto mode on (shift+tab to cycle)"
+   ],
+   "cursor": {
+    "col": 26,
+    "dim": false,
+    "row": 35,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "unknown"
+  },
+  {
+   "name": "claude-2.1.325-form-paste_small",
+   "provider": "claude",
+   "version": "2.1.325",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（一次粘贴，48 字 3 行；裁到输入框附近）",
+   "lines": [
+    " ▝▝   ▝▝   ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-48840",
+    "",
+    "",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "❯ pasted alpha",
+    "    pasted beta indented",
+    "  pasted gamma",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "  Fable 5.2                                                                                  ctrl+g to edit in Notepad",
+    "  ⏵⏵ auto mode on (shift+tab to cycle)"
+   ],
+   "cursor": {
+    "col": 14,
+    "dim": false,
+    "row": 6,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": true,
+    "text": "pasted alpha\n  pasted beta indented\npasted gamma"
+   }
+  },
+  {
+   "name": "claude-2.1.325-form-paste_wide",
+   "provider": "claude",
+   "version": "2.1.325",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（一次粘贴，22 字 1 行；裁到输入框附近）",
+   "lines": [
+    " ▝▝   ▝▝   ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-48840",
+    "",
+    "",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "❯ 中文草稿测试，全角标点。emoji 😀 结束",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "  Fable 5.2",
+    "  ⏵⏵ auto mode on (shift+tab to cycle)"
+   ],
+   "cursor": {
+    "col": 39,
+    "dim": false,
+    "row": 4,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": true,
+    "text": "中文草稿测试，全角标点。emoji 😀 结束"
+   }
+  },
+  {
+   "name": "claude-2.1.325-form-paste_tab",
+   "provider": "claude",
+   "version": "2.1.325",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（一次粘贴，28 字 3 行；裁到输入框附近）",
+   "lines": [
+    " ▝▝   ▝▝   ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-48840",
+    "",
+    "",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "❯ tab line",
+    "      one tab indent",
+    "  end",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "  Fable 5.2                                                                                  ctrl+g to edit in Notepad",
+    "  ⏵⏵ auto mode on (shift+tab to cycle)"
+   ],
+   "cursor": {
+    "col": 5,
+    "dim": false,
+    "row": 6,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": true,
+    "text": "tab line\n    one tab indent\nend"
+   },
+   "note": "制表符在输入框里画成空格，读回来是空格（已知限制）"
+  },
+  {
+   "name": "claude-2.1.325-form-paste_big_line",
+   "provider": "claude",
+   "version": "2.1.325",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（一次粘贴，5120 字 1 行；裁到输入框附近）",
+   "lines": [
+    " ▝▝   ▝▝   ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-48840",
+    "",
+    "",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "❯ [Pasted text #1]",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "  Fable 5.2",
+    "  paste again to expand"
+   ],
+   "cursor": {
+    "col": 18,
+    "dim": false,
+    "row": 4,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": false,
+    "why": "paste"
+   }
+  },
+  {
+   "name": "claude-2.1.325-form-paste_big_lines",
+   "provider": "claude",
+   "version": "2.1.325",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（一次粘贴，2219 字 60 行；裁到输入框附近）",
+   "lines": [
+    " ▝▝   ▝▝   ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-48840",
+    "",
+    "",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "❯ [Pasted text #2 +59 lines]",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "  Fable 5.2",
+    "  paste again to expand"
+   ],
+   "cursor": {
+    "col": 28,
+    "dim": false,
+    "row": 4,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": false,
+    "why": "paste"
+   }
+  },
+  {
+   "name": "codex-0.167.2-form-short",
+   "provider": "codex",
+   "version": "0.167.2",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（逐字打入，17 字 1 行；裁到输入框附近）",
+   "lines": [
+    " ",
+    "› meowo short draft",
+    " ",
+    "  GPT-5.6-Terra high · ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-48764",
+    "                                                                                               ⚠ 1 warning · f2 to view"
+   ],
+   "cursor": {
+    "col": 19,
+    "dim": false,
+    "row": 1,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": true,
+    "text": "meowo short draft"
+   }
+  },
+  {
+   "name": "codex-0.167.2-form-wrap_words",
+   "provider": "codex",
+   "version": "0.167.2",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（逐字打入，234 字 1 行；裁到输入框附近）",
+   "lines": [
+    " ",
+    "› fix: keep the draft when sending from the chat page and do not ask the user to clear it in the terminal, then verify",
+    "  every provider keeps the same behaviour across desktop and mobile without losing a single character of what was typed",
+    " ",
+    " ",
+    "  GPT-5.6-Terra high · ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-48764",
+    "                                                                                               ⚠ 1 warning · f2 to view"
+   ],
+   "cursor": {
+    "col": 2,
+    "dim": false,
+    "row": 3,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": false,
+    "why": "wrap"
+   }
+  },
+  {
+   "name": "codex-0.167.2-form-wrap_solid",
+   "provider": "codex",
+   "version": "0.167.2",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（逐字打入，160 字 1 行；裁到输入框附近）",
+   "lines": [
+    " ",
+    "› abcdefghij0123456789abcdefghij0123456789abcdefghij0123456789abcdefghij0123456789abcdefghij0123456789abcdefghij0123456",
+    "  789abcdefghij0123456789abcdefghij0123456789",
+    " ",
+    "  GPT-5.6-Terra high · ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-48764",
+    "                                                                                               ⚠ 1 warning · f2 to view"
+   ],
+   "cursor": {
+    "col": 45,
+    "dim": false,
+    "row": 2,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": false,
+    "why": "wrap"
+   }
+  },
+  {
+   "name": "codex-0.167.2-form-multi",
+   "provider": "codex",
+   "version": "0.167.2",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（逐字打入，62 字 5 行；裁到输入框附近）",
+   "lines": [
+    " ",
+    "› line one",
+    "      indented four",
+    " ",
+    "    two spaces after blank",
+    "  last line",
+    " ",
+    "  GPT-5.6-Terra high · ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-48764",
+    "                                                                                               ⚠ 1 warning · f2 to view"
+   ],
+   "cursor": {
+    "col": 11,
+    "dim": false,
+    "row": 5,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": true,
+    "text": "line one\n    indented four\n\n  two spaces after blank\nlast line"
+   }
+  },
+  {
+   "name": "codex-0.167.2-form-trailing",
+   "provider": "codex",
+   "version": "0.167.2",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（逐字打入，25 字 1 行；裁到输入框附近）",
+   "lines": [
+    " ",
+    "› ends with three spaces",
+    " ",
+    "  GPT-5.6-Terra high · ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-48764",
+    "                                                                                               ⚠ 1 warning · f2 to view"
+   ],
+   "cursor": {
+    "col": 27,
+    "dim": false,
+    "row": 1,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": true,
+    "text": "ends with three spaces"
+   },
+   "note": "行尾的三个空格屏幕上看不见，读不回来（已知限制）"
+  },
+  {
+   "name": "codex-0.167.2-form-wide_wrap",
+   "provider": "codex",
+   "version": "0.167.2",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（逐字打入，112 字 1 行；裁到输入框附近）",
+   "lines": [
+    " ",
+    "› 终端里的草稿要原样搬进对话页终端里的草稿要原样搬进对话页终端里的草稿要原样搬进对话页终端里的草稿要原样搬进对话页终端",
+    "  里的草稿要原样搬进对话页终端里的草稿要原样搬进对话页终端里的草稿要原样搬进对话页终端里的草稿要原样搬进对话页",
+    " ",
+    "  GPT-5.6-Terra high · ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-48764",
+    "                                                                                               ⚠ 1 warning · f2 to view"
+   ],
+   "cursor": {
+    "col": 110,
+    "dim": false,
+    "row": 2,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": false,
+    "why": "wrap"
+   }
+  },
+  {
+   "name": "codex-0.167.2-form-tall",
+   "provider": "codex",
+   "version": "0.167.2",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（逐字打入，1124 字 45 行；裁到输入框附近）",
+   "lines": [
+    " ",
+    "› row 24 of the tall draft                                                                                             ↑",
+    "  row 25 of the tall draft",
+    "  row 26 of the tall draft",
+    "  row 27 of the tall draft",
+    "  row 28 of the tall draft",
+    "  row 29 of the tall draft",
+    "  row 30 of the tall draft",
+    "  row 31 of the tall draft",
+    "  row 32 of the tall draft",
+    "  row 33 of the tall draft",
+    "  row 34 of the tall draft",
+    "  row 35 of the tall draft",
+    "  row 36 of the tall draft",
+    "  row 37 of the tall draft",
+    "  row 38 of the tall draft",
+    "  row 39 of the tall draft",
+    "  row 40 of the tall draft",
+    "  row 41 of the tall draft",
+    "  row 42 of the tall draft",
+    "  row 43 of the tall draft",
+    "  row 44 of the tall draft",
+    "  row 45 of the tall draft",
+    " ",
+    "  GPT-5.6-Terra high · ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-48764",
+    "                                                                                               ⚠ 1 warning · f2 to view"
+   ],
+   "cursor": {
+    "col": 26,
+    "dim": false,
+    "row": 22,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": false,
+    "why": "overflow"
+   }
+  },
+  {
+   "name": "codex-0.167.2-form-paste_small",
+   "provider": "codex",
+   "version": "0.167.2",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（一次粘贴，48 字 3 行；裁到输入框附近）",
+   "lines": [
+    " ",
+    "› pasted alpha",
+    "    pasted beta indented",
+    "  pasted gamma",
+    " ",
+    "  GPT-5.6-Terra high · ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-48764",
+    "                                                                                               ⚠ 1 warning · f2 to view"
+   ],
+   "cursor": {
+    "col": 14,
+    "dim": false,
+    "row": 3,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": true,
+    "text": "pasted alpha\n  pasted beta indented\npasted gamma"
+   }
+  },
+  {
+   "name": "codex-0.167.2-form-paste_wide",
+   "provider": "codex",
+   "version": "0.167.2",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（一次粘贴，22 字 1 行；裁到输入框附近）",
+   "lines": [
+    " ",
+    "› 中文草稿测试，全角标点。emoji  结束",
+    " ",
+    "  GPT-5.6-Terra high · ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-48764",
+    "                                                                                               ⚠ 1 warning · f2 to view"
+   ],
+   "cursor": {
+    "col": 37,
+    "dim": false,
+    "row": 1,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": true,
+    "text": "中文草稿测试，全角标点。emoji  结束"
+   },
+   "note": "emoji 经 ConPTY 到不了 Codex 的输入框（光标列数表明输入框里就没有它），屏幕上的就是输入框里的全部"
+  },
+  {
+   "name": "codex-0.167.2-form-paste_tab",
+   "provider": "codex",
+   "version": "0.167.2",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（一次粘贴，28 字 3 行；裁到输入框附近）",
+   "lines": [
+    " ",
+    "› tab line",
+    "   one tab indent",
+    "  end",
+    " ",
+    "  GPT-5.6-Terra high · ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-48764",
+    "                                                                                               ⚠ 1 warning · f2 to view"
+   ],
+   "cursor": {
+    "col": 5,
+    "dim": false,
+    "row": 3,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": true,
+    "text": "tab line\n one tab indent\nend"
+   },
+   "note": "制表符在输入框里画成空格，读回来是空格（已知限制）"
+  },
+  {
+   "name": "codex-0.167.2-form-paste_big_line",
+   "provider": "codex",
+   "version": "0.167.2",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（一次粘贴，5120 字 1 行；裁到输入框附近）",
+   "lines": [
+    " ",
+    "› [Pasted Content 5120 chars]",
+    " ",
+    "  GPT-5.6-Terra high · ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-48764",
+    "                                                                                               ⚠ 1 warning · f2 to view"
+   ],
+   "cursor": {
+    "col": 29,
+    "dim": false,
+    "row": 1,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": false,
+    "why": "paste"
+   }
+  },
+  {
+   "name": "codex-0.167.2-form-paste_big_lines",
+   "provider": "codex",
+   "version": "0.167.2",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（一次粘贴，2219 字 60 行；裁到输入框附近）",
+   "lines": [
+    " ",
+    "› [Pasted Content 2219 chars]",
+    " ",
+    "  GPT-5.6-Terra high · ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-48764",
+    "                                                                                               ⚠ 1 warning · f2 to view"
+   ],
+   "cursor": {
+    "col": 29,
+    "dim": false,
+    "row": 1,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": false,
+    "why": "paste"
+   }
+  },
+  {
+   "name": "kimi-2.6.1-form-short",
+   "provider": "kimi",
+   "version": "2.6.1",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（逐字打入，17 字 1 行；裁到输入框附近）",
+   "lines": [
+    " ",
+    " ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮",
+    " │ > meowo short draft                                                                                                │",
+    " ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯",
+    " Ask When Needed  K3.1 Pro thinking: high  C:\\Users\\x\\AppData\\Local\\Temp\\meowo-draft-fidelity-5844",
+    "                                                                                                     context: 0% (0/1M)"
+   ],
+   "cursor": {
+    "col": 22,
+    "dim": false,
+    "row": 2,
+    "visible": false
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": true,
+    "text": "meowo short draft"
+   }
+  },
+  {
+   "name": "kimi-2.6.1-form-wrap_words",
+   "provider": "kimi",
+   "version": "2.6.1",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（逐字打入，234 字 1 行；裁到输入框附近）",
+   "lines": [
+    " ",
+    " ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮",
+    " │ > fix: keep the draft when sending from the chat page and do not ask the user to clear it in the terminal, then    │",
+    " │   verify every provider keeps the same behaviour across desktop and mobile without losing a single character of    │",
+    " │   what was typed                                                                                                   │",
+    " ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯",
+    " Ask When Needed  K3.1 Pro thinking: high  C:\\Users\\x\\AppData\\Local\\Temp\\meowo-draft-fidelity-5844",
+    "                                                                                                     context: 0% (0/1M)"
+   ],
+   "cursor": {
+    "col": 19,
+    "dim": false,
+    "row": 4,
+    "visible": false
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": false,
+    "why": "wrap"
+   }
+  },
+  {
+   "name": "kimi-2.6.1-form-wrap_solid",
+   "provider": "kimi",
+   "version": "2.6.1",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（逐字打入，160 字 1 行；裁到输入框附近）",
+   "lines": [
+    " ",
+    " ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮",
+    " │ > abcdefghij0123456789abcdefghij0123456789abcdefghij0123456789abcdefghij0123456789abcdefghij0123456789abcdefghij   │",
+    " │   0123456789abcdefghij0123456789abcdefghij0123456789                                                               │",
+    " ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯",
+    " Ask When Needed  K3.1 Pro thinking: high  C:\\Users\\x\\AppData\\Local\\Temp\\meowo-draft-fidelity-5844",
+    "                                                                                                     context: 0% (0/1M)"
+   ],
+   "cursor": {
+    "col": 55,
+    "dim": false,
+    "row": 3,
+    "visible": false
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": false,
+    "why": "wrap"
+   }
+  },
+  {
+   "name": "kimi-2.6.1-form-multi",
+   "provider": "kimi",
+   "version": "2.6.1",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（逐字打入，62 字 5 行；裁到输入框附近）",
+   "lines": [
+    " ",
+    " ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮",
+    " │ > line one                                                                                                         │",
+    " │       indented four                                                                                                │",
+    " │                                                                                                                    │",
+    " │     two spaces after blank                                                                                         │",
+    " │   last line                                                                                                        │",
+    " ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯",
+    " Ask When Needed  K3.1 Pro thinking: high  C:\\Users\\x\\AppData\\Local\\Temp\\meowo-draft-fidelity-5844",
+    "                                                                                                     context: 0% (0/1M)"
+   ],
+   "cursor": {
+    "col": 14,
+    "dim": false,
+    "row": 6,
+    "visible": false
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": true,
+    "text": "line one\n    indented four\n\n  two spaces after blank\nlast line"
+   }
+  },
+  {
+   "name": "kimi-2.6.1-form-trailing",
+   "provider": "kimi",
+   "version": "2.6.1",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（逐字打入，25 字 1 行；裁到输入框附近）",
+   "lines": [
+    " ",
+    " ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮",
+    " │ > ends with three spaces                                                                                           │",
+    " ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯",
+    " Ask When Needed  K3.1 Pro thinking: high  C:\\Users\\x\\AppData\\Local\\Temp\\meowo-draft-fidelity-5844",
+    "                                                                                                     context: 0% (0/1M)"
+   ],
+   "cursor": {
+    "col": 30,
+    "dim": false,
+    "row": 2,
+    "visible": false
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": true,
+    "text": "ends with three spaces"
+   },
+   "note": "行尾的三个空格屏幕上看不见，读不回来（已知限制）"
+  },
+  {
+   "name": "kimi-2.6.1-form-wide",
+   "provider": "kimi",
+   "version": "2.6.1",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（逐字打入，22 字 1 行；裁到输入框附近）",
+   "lines": [
+    " ",
+    " ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮",
+    " │ > 中文草稿测试，全角标点。emoji 😀 结束                                                                            │",
+    " ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯",
+    " Ask When Needed  K3.1 Pro thinking: high  C:\\Users\\x\\AppData\\Local\\Temp\\meowo-draft-fidelity-5844",
+    "                                                                                                     context: 0% (0/1M)"
+   ],
+   "cursor": {
+    "col": 42,
+    "dim": false,
+    "row": 2,
+    "visible": false
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": true,
+    "text": "中文草稿测试，全角标点。emoji 😀 结束"
+   }
+  },
+  {
+   "name": "kimi-2.6.1-form-wide_wrap",
+   "provider": "kimi",
+   "version": "2.6.1",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（逐字打入，112 字 1 行；裁到输入框附近）",
+   "lines": [
+    " ",
+    " ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮",
+    " │ > 终端里的草稿要原样搬进对话页终端里的草稿要原样搬进对话页终端里的草稿要原样搬进对话页终端里的草稿要原样搬进对话   │",
+    " │   页终端里的草稿要原样搬进对话页终端里的草稿要原样搬进对话页终端里的草稿要原样搬进对话页终端里的草稿要原样搬进对   │",
+    " │   话页                                                                                                             │",
+    " ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯",
+    " Ask When Needed  K3.1 Pro thinking: high  C:\\Users\\x\\AppData\\Local\\Temp\\meowo-draft-fidelity-5844",
+    "                                                                                                     context: 0% (0/1M)"
+   ],
+   "cursor": {
+    "col": 9,
+    "dim": false,
+    "row": 4,
+    "visible": false
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": false,
+    "why": "wrap"
+   }
+  },
+  {
+   "name": "kimi-2.6.1-form-tall",
+   "provider": "kimi",
+   "version": "2.6.1",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（逐字打入，1124 字 45 行；裁到输入框附近）",
+   "lines": [
+    " ",
+    " ╭──────────────────────────────────────────────────── ↑ 33 more ─────────────────────────────────────────────────────╮",
+    " │ > row 34 of the tall draft                                                                                         │",
+    " │   row 35 of the tall draft                                                                                         │",
+    " │   row 36 of the tall draft                                                                                         │",
+    " │   row 37 of the tall draft                                                                                         │",
+    " │   row 38 of the tall draft                                                                                         │",
+    " │   row 39 of the tall draft                                                                                         │",
+    " │   row 40 of the tall draft                                                                                         │",
+    " │   row 41 of the tall draft                                                                                         │",
+    " │   row 42 of the tall draft                                                                                         │",
+    " │   row 43 of the tall draft                                                                                         │",
+    " │   row 44 of the tall draft                                                                                         │",
+    " │   row 45 of the tall draft                                                                                         │",
+    " ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯",
+    " Ask When Needed  K3.1 Pro thinking: high  C:\\Users\\x\\AppData\\Local\\Temp\\meowo-draft-fidelity-5844",
+    "                                                                                                     context: 0% (0/1M)"
+   ],
+   "cursor": {
+    "col": 29,
+    "dim": false,
+    "row": 13,
+    "visible": false
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": false,
+    "why": "overflow"
+   }
+  },
+  {
+   "name": "kimi-2.6.1-form-paste_small",
+   "provider": "kimi",
+   "version": "2.6.1",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（一次粘贴，48 字 3 行；裁到输入框附近）",
+   "lines": [
+    " ",
+    " ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮",
+    " │ > pasted alpha                                                                                                     │",
+    " │     pasted beta indented                                                                                           │",
+    " │   pasted gamma                                                                                                     │",
+    " ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯",
+    " Ask When Needed  K3.1 Pro thinking: high  C:\\Users\\x\\AppData\\Local\\Temp\\meowo-draft-fidelity-5844",
+    "                                                                                                     context: 0% (0/1M)"
+   ],
+   "cursor": {
+    "col": 17,
+    "dim": false,
+    "row": 4,
+    "visible": false
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": true,
+    "text": "pasted alpha\n  pasted beta indented\npasted gamma"
+   }
+  },
+  {
+   "name": "kimi-2.6.1-form-paste_wide",
+   "provider": "kimi",
+   "version": "2.6.1",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（一次粘贴，22 字 1 行；裁到输入框附近）",
+   "lines": [
+    " ",
+    " ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮",
+    " │ > 中文草稿测试，全角标点。emoji 😀 结束                                                                            │",
+    " ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯",
+    " Ask When Needed  K3.1 Pro thinking: high  C:\\Users\\x\\AppData\\Local\\Temp\\meowo-draft-fidelity-5844",
+    "                                                                                                     context: 0% (0/1M)"
+   ],
+   "cursor": {
+    "col": 42,
+    "dim": false,
+    "row": 2,
+    "visible": false
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": true,
+    "text": "中文草稿测试，全角标点。emoji 😀 结束"
+   }
+  },
+  {
+   "name": "kimi-2.6.1-form-paste_tab",
+   "provider": "kimi",
+   "version": "2.6.1",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（一次粘贴，28 字 3 行；裁到输入框附近）",
+   "lines": [
+    " ",
+    " ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮",
+    " │ > tab line                                                                                                         │",
+    " │       one tab indent                                                                                               │",
+    " │   end                                                                                                              │",
+    " ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯",
+    " Ask When Needed  K3.1 Pro thinking: high  C:\\Users\\x\\AppData\\Local\\Temp\\meowo-draft-fidelity-5844",
+    "                                                                                                     context: 0% (0/1M)"
+   ],
+   "cursor": {
+    "col": 8,
+    "dim": false,
+    "row": 4,
+    "visible": false
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": true,
+    "text": "tab line\n    one tab indent\nend"
+   },
+   "note": "制表符在输入框里画成空格，读回来是空格（已知限制）"
+  },
+  {
+   "name": "kimi-2.6.1-form-paste_big_line",
+   "provider": "kimi",
+   "version": "2.6.1",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（一次粘贴，5120 字 1 行；裁到输入框附近）",
+   "lines": [
+    " ",
+    " ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮",
+    " │ > [paste #1 5120 chars]                                                                                            │",
+    " ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯",
+    " Ask When Needed  K3.1 Pro thinking: high  C:\\Users\\x\\AppData\\Local\\Temp\\meowo-draft-fidelity-5844",
+    "                                                                                                     context: 0% (0/1M)"
+   ],
+   "cursor": {
+    "col": 26,
+    "dim": false,
+    "row": 2,
+    "visible": false
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": false,
+    "why": "paste"
+   }
+  },
+  {
+   "name": "kimi-2.6.1-form-paste_big_lines",
+   "provider": "kimi",
+   "version": "2.6.1",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（一次粘贴，2219 字 60 行；裁到输入框附近）",
+   "lines": [
+    " ",
+    " ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮",
+    " │ > [paste #1 +60 lines]                                                                                             │",
+    " ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯",
+    " Ask When Needed  K3.1 Pro thinking: high  C:\\Users\\x\\AppData\\Local\\Temp\\meowo-draft-fidelity-5844",
+    "                                                                                                     context: 0% (0/1M)"
+   ],
+   "cursor": {
+    "col": 25,
+    "dim": false,
+    "row": 2,
+    "visible": false
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": false,
+    "why": "paste"
+   }
+  },
+  {
+   "name": "gemini-0.68.0-form-short",
+   "provider": "gemini",
+   "version": "0.68.0",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（逐字打入，17 字 1 行；裁到输入框附近）",
+   "lines": [
+    "",
+    "  Executing Hooks: & \"C:\\Users\\x\\AppData\\Local\\Meowo\\meowo-reporter.exe\" --provider gemini (1/2), & \"C:\\Users\\x\\",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    " Shift+Tab to accept edits                                                                                    29 skills",
+    "▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄",
+    " > meowo short draft                                                                                                    ",
+    "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀",
+    " workspace (/directory)                                                     sandbox                              /model",
+    " ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-34860                            no sandbox                             Auto"
+   ],
+   "cursor": {
+    "col": 20,
+    "dim": false,
+    "row": 5,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": true,
+    "text": "meowo short draft"
+   }
+  },
+  {
+   "name": "gemini-0.68.0-form-wrap_words",
+   "provider": "gemini",
+   "version": "0.68.0",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（逐字打入，234 字 1 行；裁到输入框附近）",
+   "lines": [
+    "",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    " Shift+Tab to accept edits                                                                                    29 skills",
+    "▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄",
+    " > fix: keep the draft when sending from the chat page and do not ask the user to clear it in the terminal, then        ",
+    "   verify every provider keeps the same behaviour across desktop and mobile without losing a single character of        ",
+    "   what was typed                                                                                                       ",
+    "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀",
+    " workspace (/directory)                                                     sandbox                              /model",
+    " ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-34860                            no sandbox                             Auto"
+   ],
+   "cursor": {
+    "col": 17,
+    "dim": false,
+    "row": 6,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": false,
+    "why": "wrap"
+   }
+  },
+  {
+   "name": "gemini-0.68.0-form-wrap_solid",
+   "provider": "gemini",
+   "version": "0.68.0",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（逐字打入，160 字 1 行；裁到输入框附近）",
+   "lines": [
+    "",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    " Shift+Tab to accept edits                                                                                    29 skills",
+    "▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄",
+    " > abcdefghij0123456789abcdefghij0123456789abcdefghij0123456789abcdefghij0123456789abcdefghij0123456789abcdefghij0123   ",
+    "   456789abcdefghij0123456789abcdefghij0123456789                                                                       ",
+    "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀",
+    " workspace (/directory)                                                     sandbox                              /model",
+    " ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-34860                            no sandbox                             Auto"
+   ],
+   "cursor": {
+    "col": 49,
+    "dim": false,
+    "row": 5,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": false,
+    "why": "wrap"
+   }
+  },
+  {
+   "name": "gemini-0.68.0-form-multi",
+   "provider": "gemini",
+   "version": "0.68.0",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（逐字打入，62 字 5 行；裁到输入框附近）",
+   "lines": [
+    "",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    " Shift+Tab to accept edits                                                                                    29 skills",
+    "▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄",
+    " > line one                                                                                                             ",
+    "       indented four                                                                                                    ",
+    "                                                                                                                        ",
+    "     two spaces after blank                                                                                             ",
+    "   last line                                                                                                            ",
+    "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀",
+    " workspace (/directory)                                                     sandbox                              /model",
+    " ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-34860                            no sandbox                             Auto"
+   ],
+   "cursor": {
+    "col": 12,
+    "dim": false,
+    "row": 8,
+    "visible": true
+   },
+   "cols": 120,
+   "rawOnly": true,
+   "expect": "occupied",
+   "draft": {
+    "complete": true,
+    "text": "line one\n    indented four\n\n  two spaces after blank\nlast line"
+   }
+  },
+  {
+   "name": "gemini-0.68.0-form-trailing",
+   "provider": "gemini",
+   "version": "0.68.0",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（逐字打入，25 字 1 行；裁到输入框附近）",
+   "lines": [
+    "",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    " Shift+Tab to accept edits                                                                                    29 skills",
+    "▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄",
+    " > ends with three spaces                                                                                               ",
+    "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀",
+    " workspace (/directory)                                                     sandbox                              /model",
+    " ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-34860                            no sandbox                             Auto"
+   ],
+   "cursor": {
+    "col": 28,
+    "dim": false,
+    "row": 4,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": true,
+    "text": "ends with three spaces"
+   },
+   "note": "行尾的三个空格屏幕上看不见，读不回来（已知限制）"
+  },
+  {
+   "name": "gemini-0.68.0-form-wide",
+   "provider": "gemini",
+   "version": "0.68.0",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（逐字打入，22 字 1 行；裁到输入框附近）",
+   "lines": [
+    "",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    " Shift+Tab to accept edits                                                                                    29 skills",
+    "▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄",
+    " > 中文草稿测试，全角标点。emoji 😀 结束                                                                                ",
+    "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀",
+    " workspace (/directory)                                                     sandbox                              /model",
+    " ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-34860                            no sandbox                             Auto"
+   ],
+   "cursor": {
+    "col": 40,
+    "dim": false,
+    "row": 4,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": true,
+    "text": "中文草稿测试，全角标点。emoji 😀 结束"
+   }
+  },
+  {
+   "name": "gemini-0.68.0-form-wide_wrap",
+   "provider": "gemini",
+   "version": "0.68.0",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（逐字打入，112 字 1 行；裁到输入框附近）",
+   "lines": [
+    "",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    " Shift+Tab to accept edits                                                                                    29 skills",
+    "▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄",
+    " > 终端里的草稿要原样搬进对话页终端里的草稿要原样搬进对话页终端里的草稿要原样搬进对话页终端里的草稿要原样搬进对话页终   ",
+    "   端里的草稿要原样搬进对话页终端里的草稿要原样搬进对话页终端里的草稿要原样搬进对话页终端里的草稿要原样搬进对话页       ",
+    "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀",
+    " workspace (/directory)                                                     sandbox                              /model",
+    " ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-34860                            no sandbox                             Auto"
+   ],
+   "cursor": {
+    "col": 113,
+    "dim": false,
+    "row": 5,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": false,
+    "why": "wrap"
+   }
+  },
+  {
+   "name": "gemini-0.68.0-form-tall",
+   "provider": "gemini",
+   "version": "0.68.0",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（逐字打入，1124 字 45 行；裁到输入框附近）",
+   "lines": [
+    "",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    " Shift+Tab to accept edits                                                                                    29 skills",
+    "▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄",
+    " > row 36 of the tall draft                                                                                             ",
+    "   row 37 of the tall draft                                                                                             ",
+    "   row 38 of the tall draft                                                                                             ",
+    "   row 39 of the tall draft                                                                                             ",
+    "   row 40 of the tall draft                                                                                             ",
+    "   row 41 of the tall draft                                                                                             ",
+    "   row 42 of the tall draft                                                                                             ",
+    "   row 43 of the tall draft                                                                                             ",
+    "   row 44 of the tall draft                                                                                             ",
+    "   row 45 of the tall draft                                                                                             ",
+    "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀",
+    " workspace (/directory)                                                     sandbox                              /model",
+    " ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-34860                            no sandbox                             Auto"
+   ],
+   "cursor": {
+    "col": 27,
+    "dim": false,
+    "row": 13,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": false,
+    "why": "overflow"
+   }
+  },
+  {
+   "name": "gemini-0.68.0-form-paste_small",
+   "provider": "gemini",
+   "version": "0.68.0",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（一次粘贴，48 字 3 行；裁到输入框附近）",
+   "lines": [
+    "",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    " Shift+Tab to accept edits                                                                                    29 skills",
+    "▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄",
+    " > pasted alpha                                                                                                         ",
+    "     pasted beta indented                                                                                               ",
+    "   pasted gamma                                                                                                         ",
+    "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀",
+    " workspace (/directory)                                                     sandbox                              /model",
+    " ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-34860                            no sandbox                             Auto"
+   ],
+   "cursor": {
+    "col": 15,
+    "dim": false,
+    "row": 6,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": true,
+    "text": "pasted alpha\n  pasted beta indented\npasted gamma"
+   }
+  },
+  {
+   "name": "gemini-0.68.0-form-paste_wide",
+   "provider": "gemini",
+   "version": "0.68.0",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（一次粘贴，22 字 1 行；裁到输入框附近）",
+   "lines": [
+    "",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    " Shift+Tab to accept edits                                                                                    29 skills",
+    "▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄",
+    " > 中文草稿测试，全角标点。emoji 😀 结束                                                                                ",
+    "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀",
+    " workspace (/directory)                                                     sandbox                              /model",
+    " ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-34860                            no sandbox                             Auto"
+   ],
+   "cursor": {
+    "col": 40,
+    "dim": false,
+    "row": 4,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": true,
+    "text": "中文草稿测试，全角标点。emoji 😀 结束"
+   }
+  },
+  {
+   "name": "gemini-0.68.0-form-paste_tab",
+   "provider": "gemini",
+   "version": "0.68.0",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（一次粘贴，28 字 3 行；裁到输入框附近）",
+   "lines": [
+    "",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    " Shift+Tab to accept edits                                                                                    29 skills",
+    "▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄",
+    " > tab line                                                                                                             ",
+    "       one tab indent                                                                                                   ",
+    "   end                                                                                                                  ",
+    "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀",
+    " workspace (/directory)                                                     sandbox                              /model",
+    " ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-34860                            no sandbox                             Auto"
+   ],
+   "cursor": {
+    "col": 6,
+    "dim": false,
+    "row": 6,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": true,
+    "text": "tab line\n    one tab indent\nend"
+   },
+   "note": "制表符在输入框里画成空格，读回来是空格（已知限制）"
+  },
+  {
+   "name": "gemini-0.68.0-form-paste_big_line",
+   "provider": "gemini",
+   "version": "0.68.0",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（一次粘贴，5120 字 1 行；裁到输入框附近）",
+   "lines": [
+    "",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    " Shift+Tab to accept edits                                                                                    29 skills",
+    "▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄",
+    " > [Pasted Text: 5120 chars]                                                                                            ",
+    "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀",
+    " workspace (/directory)                                                     sandbox                              /model",
+    " ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-34860                            no sandbox                             Auto"
+   ],
+   "cursor": {
+    "col": 28,
+    "dim": false,
+    "row": 4,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": false,
+    "why": "paste"
+   }
+  },
+  {
+   "name": "gemini-0.68.0-form-paste_big_lines",
+   "provider": "gemini",
+   "version": "0.68.0",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（一次粘贴，2219 字 60 行；裁到输入框附近）",
+   "lines": [
+    "",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    " Shift+Tab to accept edits                                                                                    29 skills",
+    "▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄",
+    " > [Pasted Text: 60 lines]                                                                                              ",
+    "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀",
+    " workspace (/directory)                                                     sandbox                              /model",
+    " ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-34860                            no sandbox                             Auto"
+   ],
+   "cursor": {
+    "col": 26,
+    "dim": false,
+    "row": 4,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": false,
+    "why": "paste"
+   }
+  },
+  {
+   "name": "opencode-1.19.5-form-short",
+   "provider": "opencode",
+   "version": "1.19.5",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（逐字打入，17 字 1 行；裁到输入框附近）",
+   "lines": [
+    "                                                                                                                        ",
+    "                       ┃                                                                                                ",
+    "                       ┃  meowo short draft                                                                             ",
+    "                       ┃                                                                                                ",
+    "                       ┃  Build · Qwen3.8-Flash-Next TensorFold (局域网)                                                ",
+    "                       ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                      ",
+    "                                                                       tab agents  ctrl+p commands                      ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "  ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-49292                                                               1.19.5  "
+   ],
+   "cursor": {
+    "col": 43,
+    "dim": false,
+    "row": 2,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": true,
+    "text": "meowo short draft"
+   }
+  },
+  {
+   "name": "opencode-1.19.5-form-wrap_words",
+   "provider": "opencode",
+   "version": "1.19.5",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（逐字打入，234 字 1 行；裁到输入框附近）",
+   "lines": [
+    "                                                                                                                        ",
+    "                       ┃                                                                                                ",
+    "                       ┃  fix: keep the draft when sending from the chat page and do not ask                            ",
+    "                       ┃  the user to clear it in the terminal, then verify every provider                              ",
+    "                       ┃  keeps the same behaviour across desktop and mobile without losing a                           ",
+    "                       ┃  single character of what was typed                                                            ",
+    "                       ┃                                                                                                ",
+    "                       ┃  Build · Qwen3.8-Flash-Next TensorFold (局域网)                                                ",
+    "                       ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                      ",
+    "                                                                       tab agents  ctrl+p commands                      ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "  ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-49292                                                               1.19.5  "
+   ],
+   "cursor": {
+    "col": 60,
+    "dim": false,
+    "row": 5,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": false,
+    "why": "wrap"
+   }
+  },
+  {
+   "name": "opencode-1.19.5-form-wrap_solid",
+   "provider": "opencode",
+   "version": "1.19.5",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（逐字打入，160 字 1 行；裁到输入框附近）",
+   "lines": [
+    "                                                                                                                        ",
+    "                       ┃                                                                                                ",
+    "                       ┃  abcdefghij0123456789abcdefghij0123456789abcdefghij0123456789abcdefghij                        ",
+    "                       ┃  0123456789abcdefghij0123456789abcdefghij0123456789abcdefghij0123456789                        ",
+    "                       ┃  abcdefghij0123456789                                                                          ",
+    "                       ┃                                                                                                ",
+    "                       ┃  Build · Qwen3.8-Flash-Next TensorFold (局域网)                                                ",
+    "                       ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                      ",
+    "                                                                       tab agents  ctrl+p commands                      ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "  ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-49292                                                               1.19.5  "
+   ],
+   "cursor": {
+    "col": 46,
+    "dim": false,
+    "row": 4,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": false,
+    "why": "wrap"
+   }
+  },
+  {
+   "name": "opencode-1.19.5-form-multi",
+   "provider": "opencode",
+   "version": "1.19.5",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（逐字打入，62 字 5 行；裁到输入框附近）",
+   "lines": [
+    "                                                                                                                        ",
+    "                       ┃                                                                                                ",
+    "                       ┃  line one                                                                                      ",
+    "                       ┃      indented four                                                                             ",
+    "                       ┃                                                                                                ",
+    "                       ┃    two spaces after blank                                                                      ",
+    "                       ┃  last line                                                                                     ",
+    "                       ┃                                                                                                ",
+    "                       ┃  Build · Qwen3.8-Flash-Next TensorFold (局域网)                                                ",
+    "                       ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                      ",
+    "                                                                       tab agents  ctrl+p commands                      ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "  ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-49292                                                               1.19.5  "
+   ],
+   "cursor": {
+    "col": 35,
+    "dim": false,
+    "row": 6,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": true,
+    "text": "line one\n    indented four\n\n  two spaces after blank\nlast line"
+   }
+  },
+  {
+   "name": "opencode-1.19.5-form-trailing",
+   "provider": "opencode",
+   "version": "1.19.5",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（逐字打入，25 字 1 行；裁到输入框附近）",
+   "lines": [
+    "                                                                                                                        ",
+    "                       ┃                                                                                                ",
+    "                       ┃  ends with three spaces                                                                        ",
+    "                       ┃                                                                                                ",
+    "                       ┃  Build · Qwen3.8-Flash-Next TensorFold (局域网)                                                ",
+    "                       ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                      ",
+    "                                                                       tab agents  ctrl+p commands                      ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "  ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-49292                                                               1.19.5  "
+   ],
+   "cursor": {
+    "col": 51,
+    "dim": false,
+    "row": 2,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": true,
+    "text": "ends with three spaces"
+   },
+   "note": "行尾的三个空格屏幕上看不见，读不回来（已知限制）"
+  },
+  {
+   "name": "opencode-1.19.5-form-wide",
+   "provider": "opencode",
+   "version": "1.19.5",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（逐字打入，22 字 1 行；裁到输入框附近）",
+   "lines": [
+    "                                                                                                                        ",
+    "                       ┃                                                                                                ",
+    "                       ┃  中文草稿测试，全角标点。emoji 😀 结束                                                         ",
+    "                       ┃                                                                                                ",
+    "                       ┃  Build · Qwen3.8-Flash-Next TensorFold (局域网)                                                ",
+    "                       ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                      ",
+    "                                                                       tab agents  ctrl+p commands                      ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "  ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-49292                                                               1.19.5  "
+   ],
+   "cursor": {
+    "col": 63,
+    "dim": false,
+    "row": 2,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": true,
+    "text": "中文草稿测试，全角标点。emoji 😀 结束"
+   }
+  },
+  {
+   "name": "opencode-1.19.5-form-wide_wrap",
+   "provider": "opencode",
+   "version": "1.19.5",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（逐字打入，112 字 1 行；裁到输入框附近）",
+   "lines": [
+    "                                                                                                                        ",
+    "                       ┃                                                                                                ",
+    "                       ┃  终端里的草稿要原样搬进对话页终端里的草稿要原样搬进对话页终端里的草稿要                        ",
+    "                       ┃  原样搬进对话页终端里的草稿要原样搬进对话页终端里的草稿要原样搬进对话页                        ",
+    "                       ┃  终端里的草稿要原样搬进对话页终端里的草稿要原样搬进对话页终端里的草稿要                        ",
+    "                       ┃  原样搬进对话页                                                                                ",
+    "                       ┃                                                                                                ",
+    "                       ┃  Build · Qwen3.8-Flash-Next TensorFold (局域网)                                                ",
+    "                       ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                      ",
+    "                                                                       tab agents  ctrl+p commands                      ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "  ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-49292                                                               1.19.5  "
+   ],
+   "cursor": {
+    "col": 40,
+    "dim": false,
+    "row": 5,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": false,
+    "why": "wrap"
+   }
+  },
+  {
+   "name": "opencode-1.19.5-form-tall",
+   "provider": "opencode",
+   "version": "1.19.5",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（逐字打入，1124 字 45 行；裁到输入框附近）",
+   "lines": [
+    "                                                                                                                        ",
+    "                       ┃                                                                                                ",
+    "                       ┃  row 33 of the tall draft                                                                      ",
+    "                       ┃  row 34 of the tall draft                                                                      ",
+    "                       ┃  row 35 of the tall draft                                                                      ",
+    "                       ┃  row 36 of the tall draft                                                                      ",
+    "                       ┃  row 37 of the tall draft                                                                      ",
+    "                       ┃  row 38 of the tall draft                                                                      ",
+    "                       ┃  row 39 of the tall draft                                                                      ",
+    "                       ┃  row 40 of the tall draft                                                                      ",
+    "                       ┃  row 41 of the tall draft                                                                      ",
+    "                       ┃  row 42 of the tall draft                                                                      ",
+    "                       ┃  row 43 of the tall draft                                                                      ",
+    "                       ┃  row 44 of the tall draft                                                                      ",
+    "                       ┃  row 45 of the tall draft                                                                      ",
+    "                       ┃                                                                                                ",
+    "                       ┃  Build · Qwen3.8-Flash-Next TensorFold (局域网)                                                ",
+    "                       ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                      ",
+    "                                                                       tab agents  ctrl+p commands                      ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "  ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-49292                                                               1.19.5  "
+   ],
+   "cursor": {
+    "col": 50,
+    "dim": false,
+    "row": 14,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": false,
+    "why": "overflow"
+   }
+  },
+  {
+   "name": "opencode-1.19.5-form-paste_small",
+   "provider": "opencode",
+   "version": "1.19.5",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（一次粘贴，48 字 3 行；裁到输入框附近）",
+   "lines": [
+    "                                                                                                                        ",
+    "                       ┃                                                                                                ",
+    "                       ┃  [Pasted ~3 lines]                                                                             ",
+    "                       ┃                                                                                                ",
+    "                       ┃  Build · Qwen3.8-Flash-Next TensorFold (局域网)                                                ",
+    "                       ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                      ",
+    "                                                                       tab agents  ctrl+p commands                      ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "  ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-49292                                                               1.19.5  "
+   ],
+   "cursor": {
+    "col": 44,
+    "dim": false,
+    "row": 2,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": false,
+    "why": "paste"
+   }
+  },
+  {
+   "name": "opencode-1.19.5-form-paste_wide",
+   "provider": "opencode",
+   "version": "1.19.5",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（一次粘贴，22 字 1 行；裁到输入框附近）",
+   "lines": [
+    "                                                                                                                        ",
+    "                       ┃                                                                                                ",
+    "                       ┃  中文草稿测试，全角标点。emoji 😀 结束                                                         ",
+    "                       ┃                                                                                                ",
+    "                       ┃  Build · Qwen3.8-Flash-Next TensorFold (局域网)                                                ",
+    "                       ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                      ",
+    "                                                                       tab agents  ctrl+p commands                      ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "  ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-49292                                                               1.19.5  "
+   ],
+   "cursor": {
+    "col": 63,
+    "dim": false,
+    "row": 2,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": true,
+    "text": "中文草稿测试，全角标点。emoji 😀 结束"
+   }
+  },
+  {
+   "name": "opencode-1.19.5-form-paste_tab",
+   "provider": "opencode",
+   "version": "1.19.5",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（一次粘贴，28 字 3 行；裁到输入框附近）",
+   "lines": [
+    "                                                                                                                        ",
+    "                       ┃                                                                                                ",
+    "                       ┃  [Pasted ~3 lines]                                                                             ",
+    "                       ┃                                                                                                ",
+    "                       ┃  Build · Qwen3.8-Flash-Next TensorFold (局域网)                                                ",
+    "                       ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                      ",
+    "                                                                       tab agents  ctrl+p commands                      ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "  ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-49292                                                               1.19.5  "
+   ],
+   "cursor": {
+    "col": 44,
+    "dim": false,
+    "row": 2,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": false,
+    "why": "paste"
+   }
+  },
+  {
+   "name": "opencode-1.19.5-form-paste_big_line",
+   "provider": "opencode",
+   "version": "1.19.5",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（一次粘贴，5120 字 1 行；裁到输入框附近）",
+   "lines": [
+    "                                                                                                                        ",
+    "                       ┃                                                                                                ",
+    "                       ┃  [Pasted ~1 lines]                                                                             ",
+    "                       ┃                                                                                                ",
+    "                       ┃  Build · Qwen3.8-Flash-Next TensorFold (局域网)                                                ",
+    "                       ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                      ",
+    "                                                                       tab agents  ctrl+p commands                      ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "  ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-49292                                                               1.19.5  "
+   ],
+   "cursor": {
+    "col": 44,
+    "dim": false,
+    "row": 2,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": false,
+    "why": "paste"
+   }
+  },
+  {
+   "name": "opencode-1.19.5-form-paste_big_lines",
+   "provider": "opencode",
+   "version": "1.19.5",
+   "source": "2026-11-14 probe_draft_fidelity 实拍（一次粘贴，2219 字 60 行；裁到输入框附近）",
+   "lines": [
+    "                                                                                                                        ",
+    "                       ┃                                                                                                ",
+    "                       ┃  [Pasted ~60 lines]                                                                            ",
+    "                       ┃                                                                                                ",
+    "                       ┃  Build · Qwen3.8-Flash-Next TensorFold (局域网)                                                ",
+    "                       ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀                      ",
+    "                                                                       tab agents  ctrl+p commands                      ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "                                                                                                                        ",
+    "  ~\\AppData\\Local\\Temp\\meowo-draft-fidelity-49292                                                               1.19.5  "
+   ],
+   "cursor": {
+    "col": 45,
+    "dim": false,
+    "row": 2,
+    "visible": true
+   },
+   "cols": 120,
+   "expect": "occupied",
+   "draft": {
+    "complete": false,
+    "why": "paste"
    }
   }
  ]

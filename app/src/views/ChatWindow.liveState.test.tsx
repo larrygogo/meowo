@@ -1,15 +1,14 @@
 // 对话窗的会话状态与时间线运行态接线：后台子任务数、等待审批。
 // 夹具与 mock 见 chatWindow.harness.tsx（必须先于 ./ChatWindow 导入）。
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { respondWithHistory } from "./chatWindow.harness";
 import { ChatWindow } from "./ChatWindow";
-import { sessionTone, type ChatItem } from "../api";
+import { sessionTone } from "../api";
+import { replaySample } from "../test/replaySamples";
 
-const FIXTURES = join(__dirname, "../../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay");
-const claude = JSON.parse(readFileSync(join(FIXTURES, "claude.items.json"), "utf8")) as ChatItem[];
+// claude 的一场真实会话（原顺序片段）：读文件、跑命令、写文件、再跑命令。
+const claude = replaySample("claude.152e4c8e");
 
 describe("ChatWindow 会话状态与侧栏同源", () => {
   const base = {
@@ -43,7 +42,7 @@ describe("ChatWindow 会话状态与侧栏同源", () => {
 
 describe("ChatWindow 等待审批时的时间线", () => {
   it("过程块不收起，未批准的调用写待批准、不计入已运行", async () => {
-    // claude 真实样本截到写文件的调用为止：读、搜索已跑完，写文件正等审批。
+    // claude 真实样本截到写文件的调用为止：读文件、跑命令已完成，写文件正等审批。
     const cut = claude.findIndex((item) => item.type === "tool_use" && item.kind === "write");
     window.history.replaceState({}, "", "/?sessionId=63");
     respondWithHistory({

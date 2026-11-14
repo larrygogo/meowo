@@ -19,6 +19,11 @@ pub struct TerminalScreenFrameDto {
     #[serde(default)]
     #[cfg_attr(test, ts(as = "Option<bool>", optional))]
     pub cursor_dim: bool,
+    /// 终端列数。行尾空白不在 `lines` 里，没有框的输入框要靠它才知道一行最多能放多少字
+    /// （草稿里相邻两行是折行还是换行，见 meowo-agent 的 ComposerFidelity）。旧宿主不带。
+    #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<u16>", optional))]
+    pub cols: u16,
 }
 
 /// 一条待办。`status` 用字面量而非枚举：来源是各家 agent 的自由文本状态，
@@ -82,6 +87,11 @@ pub struct SubagentOutcome {
     /// 调用上，只有这个 id 能把它归回原委派。前端按「同 id 首见者为委派本体」路由。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_id: Option<String>,
+    /// 这个子任务被叫停了（codex 的 `interrupt_agent`）：没跑完，也不是失败。此时三个计数都是 0，
+    /// 前端显示「已中断」。false 时不下发。
+    #[serde(default, skip_serializing_if = "is_false")]
+    #[cfg_attr(test, ts(as = "Option<bool>", optional))]
+    pub interrupted: bool,
 }
 
 /// 一个子任务的完整时间线。一次委派可能对应多条（kimi 的 `AgentSwarm`），
@@ -254,6 +264,13 @@ pub enum ChatItem {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         #[cfg_attr(test, ts(type = "boolean", optional))]
         interjected: bool,
+        /// 这条消息所属回合的 id，provider 的记录里有才填（codex 的 `turn_id`）。同一回合里的
+        /// 第二条起就是回合中途送进去的话：前端据此不把它当成「上一回合到此结束」。
+        /// 与 `interjected` 分开，是因为后者还管撤回的轮数——codex 的回溯把插话也算一轮，
+        /// 标成 interjected 会让撤回数错。None 不下发。
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(test, ts(type = "string", optional))]
+        turn_id: Option<String>,
         /// 这句话是发给某个子代理的（claude：用户切到子代理视图直接发），值是它的任务描述。
         /// 正文只记在子代理侧车里，主链没有这条（2.1.322 实拍），不标出来前端既找不到它
         /// 判「未确认送达」，也说不清后面的回复是谁给的。None 不下发。
@@ -1498,6 +1515,7 @@ mod tests {
             timestamp: None,
             text: "hi".into(),
             interjected: false,
+            turn_id: None,
             to_agent: None,
         };
         assert!(serde_json::to_value(&plain)
@@ -1509,6 +1527,7 @@ mod tests {
             timestamp: None,
             text: "hi".into(),
             interjected: true,
+            turn_id: None,
             to_agent: None,
         };
         assert_eq!(serde_json::to_value(&steered).unwrap()["interjected"], true);

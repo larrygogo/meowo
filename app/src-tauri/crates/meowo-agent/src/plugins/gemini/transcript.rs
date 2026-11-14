@@ -1069,6 +1069,7 @@ fn parse_line(line: &str) -> Vec<TranscriptEvent> {
             timestamp,
             text,
             interjected: false,
+            turn_id: None,
         }),
         // 用户按 Esc 打断：CLI 记一条 info「Request cancelled.」。画成中断分隔条；
         // 其余 info（升级提示、切换回退模型）仍不上屏。

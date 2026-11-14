@@ -7,12 +7,31 @@
 use crate::cli_text::CliTextDep as D;
 
 pub(super) static DEPS: &[D] = &[
+    // ── 记录格式：CC 给没跑完的调用补写的回执（transcript.rs 的 unfinished_receipt）──
+    D::record(
+        "record:tool-interrupted-session-ended",
+        "[Tool call interrupted: the session ended before this call's result was recorded",
+        "[Tool call interrupted: the session ended before this call's result was recorded, so its outcome is unknown. Check whether it took effect before relying on it or running it again.]",
+        "2.1.316 transcript 实样（meowo 项目会话 a7bec18a 第 19706 行，2026-10-31）；本机 2.1.303 到 2.1.323 共 16 次，文案一致",
+    ),
+    D::record(
+        "record:tool-interrupted-response-stopped",
+        "Interrupted: the response that made this tool call was stopped",
+        "Interrupted: the response that made this tool call was stopped by a safety classifier while the call was running; it may have partially or fully completed.",
+        "2.1.322 transcript 实样（2026-11-11）；本机 2.1.302、2.1.322 共 11 次",
+    ),
     // ── 输入框规格（composer）──
     D::new(
         "composer.empty",
         "Try \"",
         "Try \"fix typecheck errors\"",
         "2.1.325 真机 2026-11-14（probe_tui_script cells）：空输入框的暗色占位。占位内容不固定（还有预测的下一句），带光标读屏时靠「光标在输入起点且该格暗色」认，这条正则只是没有光标信息时的退路",
+    ),
+    D::new(
+        "composer.paste",
+        "Pasted text #",
+        "\u{276f} [Pasted text #2 +59 lines]",
+        "2.1.325 真机 2026-11-14（tests/probe_draft_fidelity.rs）：粘贴 60 行后输入框里只剩这个占位，5120 字单行是 `[Pasted text #1]`；claude.exe 含 `Pasted text #` 4 处",
     ),
     // ── /effort ──
     D::new(
