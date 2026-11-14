@@ -1,0 +1,106 @@
+{
+  "note": "对话中途切换时 CLI 弹的二次确认框。spec 是插件声明的 switch_confirm（Rust 测试逐字核对）；frames 里 source 为 probe 的是 tests/probe_claude_model.rs 真机抓的屏幕原文，其余是在真机原文上改一处造的反例。前端 chat/switchConfirm.test.ts 与后端同一份判据都读它。",
+  "spec": {
+    "claude": {
+      "title_pattern": "^\\s*(?:switch model|change effort level)\\?\\s*$",
+      "accept_pattern": "^\\s*❯\\s*(?:\\d+\\.\\s*)?yes, switch to (.+?)\\s*$",
+      "accept_input": "\r"
+    }
+  },
+  "frames": [
+    {
+      "name": "claude-2.1.325-model-haiku",
+      "provider": "claude",
+      "source": "probe 2026-11-14：有过回合之后 /model haiku",
+      "target": "haiku",
+      "lines": [
+        "   Switch model?",
+        "   Your next response will be slower and use more tokens",
+        "   This conversation is cached for the current model. Switching to Haiku 5.5 means the full history gets re-read.",
+        "   ❯ 1. Yes, switch to Haiku 5.5",
+        "     2. No, go back"
+      ],
+      "expect": "\r"
+    },
+    {
+      "name": "claude-2.1.325-model-fable",
+      "provider": "claude",
+      "source": "probe 2026-11-14：有过回合之后 /model fable",
+      "target": "fable",
+      "lines": [
+        "   Switch model?",
+        "   Your next response will be slower and use more tokens",
+        "   This conversation is cached for the current model. Switching to Fable 5.2 means the full history gets re-read.",
+        "   ❯ 1. Yes, switch to Fable 5.2",
+        "     2. No, go back"
+      ],
+      "expect": "\r"
+    },
+    {
+      "name": "claude-other-model",
+      "provider": "claude",
+      "source": "反例：框里要切到的不是这次选的模型，不按",
+      "target": "sonnet",
+      "lines": [
+        "   Switch model?",
+        "   Your next response will be slower and use more tokens",
+        "   This conversation is cached for the current model. Switching to Haiku 5.5 means the full history gets re-read.",
+        "   ❯ 1. Yes, switch to Haiku 5.5",
+        "     2. No, go back"
+      ],
+      "expect": null
+    },
+    {
+      "name": "claude-focus-on-cancel",
+      "provider": "claude",
+      "source": "反例：焦点在取消项上（程序文件里 focus 可能默认落在 cancel），不按",
+      "target": "haiku",
+      "lines": [
+        "   Switch model?",
+        "   Your next response will be slower and use more tokens",
+        "   This conversation is cached for the current model. Switching to Haiku 5.5 means the full history gets re-read.",
+        "     1. Yes, switch to Haiku 5.5",
+        "   ❯ 2. No, go back"
+      ],
+      "expect": null
+    },
+    {
+      "name": "claude-no-index",
+      "provider": "claude",
+      "source": "按程序文件造：确认项不带编号（hideIndexes），焦点在确认项上",
+      "target": "haiku",
+      "lines": [
+        "   Switch model?",
+        "   Your next response will be slower and use more tokens",
+        "   This conversation is cached for the current model. Switching to Haiku 5.5 means the full history gets re-read.",
+        "   ❯ Yes, switch to Haiku 5.5",
+        "     No, go back"
+      ],
+      "expect": "\r"
+    },
+    {
+      "name": "claude-effort-high",
+      "provider": "claude",
+      "source": "按程序文件造：/effort 的同款确认框，标题 Change effort level?，没有真机走过",
+      "target": "high",
+      "lines": [
+        "   Change effort level?",
+        "   Your next response will be slower and use more tokens",
+        "   ❯ 1. Yes, switch to high",
+        "     2. No, go back"
+      ],
+      "expect": "\r"
+    },
+    {
+      "name": "claude-quoted-in-chat",
+      "provider": "claude",
+      "source": "反例：正文里引用了确认项，但没有标题行，不是确认框",
+      "target": "haiku",
+      "lines": [
+        "● The dialog offers:",
+        "   ❯ 1. Yes, switch to Haiku 5.5"
+      ],
+      "expect": null
+    }
+  ]
+}

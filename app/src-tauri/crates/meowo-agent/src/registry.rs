@@ -220,6 +220,11 @@ pub trait AgentPlugin: Sync {
         None
     }
 
+    /// 带参切换命令在对话中途弹的二次确认框（见 [`crate::chat_ui::SwitchConfirm`]）。
+    fn switch_confirm(&self) -> Option<crate::chat_ui::SwitchConfirm> {
+        None
+    }
+
     /// 本插件依赖的 CLI 输出文案中，需要手工声明的部分（见 [`crate::cli_text`]）：正则规则的
     /// 真实样例，以及运行时拼接、在程序文件里搜不到原样的字面量。插件里的字面量规则
     /// （信任页、模式回显、屏幕规则的子串）由 `cli_text` 自动抽取，不必在这里重复。
@@ -301,6 +306,12 @@ pub trait AgentPlugin: Sync {
         None
     }
 
+    /// 单行正文命中时也包成 bracketed paste 的正则（见 [`crate::chat_ui::ChatUi::single_line_paste_pattern`]）。
+    /// None = 单行直接写。只在真机取证到「直接写会丢字」的家声明。
+    fn single_line_paste_pattern(&self) -> Option<&'static str> {
+        None
+    }
+
     /// 自定义斜杠命令的发现规格（用户/项目目录里放了什么命令文件，补全就出什么）。
     /// None = 该 agent 无自定义命令机制，或其机制未经调研——**没验证过的不声明**。
     fn custom_commands(&self) -> Option<&'static crate::chat_ui::CustomCommandSpec> {
@@ -368,6 +379,7 @@ pub trait AgentPlugin: Sync {
             model_presets: self.model_presets().to_vec(),
             model_select_command: self.model_select_command(),
             model_select_reply: self.model_select_reply(),
+            switch_confirm: self.switch_confirm(),
             model_menu_command: self.model_menu_command(),
             mode_controls: self.mode_controls().to_vec(),
             menu_slash_commands,
@@ -380,6 +392,7 @@ pub trait AgentPlugin: Sync {
             queue_input: self.queue_input(),
             queue_delivery: self.queue_delivery(),
             newline_input: self.newline_input(),
+            single_line_paste_pattern: self.single_line_paste_pattern(),
             runtime_commands_pending,
             attachment_mention: self.attachment_mention(ctx.version),
             clipboard_image_paste: self.clipboard_image_paste(ctx.version),
@@ -1158,6 +1171,142 @@ mod tests {
     }
 
     /// 启动 argv 非空，且首元素（绝对路径或回退裸名）指向该 agent 自己。
+    /// 真机抓的审批样本（`tests/probe_approval.rs`，前端 `views/chat/approvalFrames.test.ts` 也读）：
+    /// - 样例里的 `patterns` 与各插件声明逐字一致，前端回放用的才是生产规则而不是手抄的一份；
+    /// - 屏幕通道的每一帧，声明的那条规则在真机屏幕上确实命中（规则是 JS 正则，`im` 标志；
+    ///   这里按同样的标志用 Rust 编译，用到的语法两边通用）。
+    ///
+    /// 规则改了之后更新样例：`MEOWO_DUMP_ATTENTION_PATTERNS=<文件> cargo test -p meowo-agent --lib
+    /// approval_frames`，把写出来的 JSON 填进样例的 `patterns`。
+    #[test]
+    fn approval_frames_carry_declared_patterns_and_match_real_screens() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../src/test/fixtures/approval-frames.json"
+        ))
+        .unwrap();
+        let declared: serde_json::Map<String, serde_json::Value> = all()
+            .iter()
+            .map(|plugin| {
+                (
+                    plugin.id().as_str().to_string(),
+                    serde_json::to_value(plugin.attention_patterns()).unwrap(),
+                )
+            })
+            .collect();
+        let declared = serde_json::Value::Object(declared);
+        if let Ok(path) = std::env::var("MEOWO_DUMP_ATTENTION_PATTERNS") {
+            std::fs::write(path, serde_json::to_string_pretty(&declared).unwrap()).unwrap();
+        }
+        assert_eq!(
+            fixture["patterns"], declared,
+            "approval-frames.json 的 patterns 与插件声明不一致，按本测试的注释更新"
+        );
+        let mut screen_frames = 0;
+        for (agent, frame) in fixture["frames"].as_object().unwrap() {
+            let plugin = by_id(agent).unwrap_or_else(|| panic!("样例里的 {agent} 不是已注册的 agent"));
+            let channel = frame["channel"].as_str().unwrap();
+            // 通道与插件声明对得上：hook 说了算的家走 broker，其余走屏幕。
+            assert_eq!(
+                channel == "broker",
+                plugin.permission_hook_decides(),
+                "{agent} 的样本通道与 permission_hook_decides 不符"
+            );
+            let Some(rule) = frame["rule"].as_str() else {
+                // 没有屏幕规则命中：只能是终端不画权限框的 broker 家。
+                assert!(
+                    channel == "broker" && !plugin.permission_prompt_races_hook(),
+                    "{agent} 的屏幕样本没有命中任何规则"
+                );
+                continue;
+            };
+            let screen: Vec<&str> = frame["screen"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|line| line.as_str().unwrap())
+                .collect();
+            let screen = screen.join("
+");
+            let pattern = plugin
+                .attention_patterns()
+                .iter()
+                .find(|pattern| pattern.id == rule)
+                .unwrap_or_else(|| panic!("{agent} 没有规则 {rule}"));
+            assert_eq!(pattern.kind, crate::chat_ui::AttentionKind::Approval);
+            assert!(
+                pattern.patterns.iter().any(|source| {
+                    regex::Regex::new(&format!("(?im){source}"))
+                        .unwrap()
+                        .is_match(&screen)
+                }),
+                "{agent} {} 的真机屏幕没有被 {rule} 认出来",
+                frame["version"]
+            );
+            screen_frames += 1;
+        }
+        assert!(screen_frames >= 3, "至少要有 claude、kimi、opencode 三家的屏幕样本");
+    }
+
+    /// 切换确认框的共享样例（前端 chat/switchConfirm.test.ts 也读）：样例里的规格与插件声明逐字
+    /// 一致；按同一套判据（最后一个标题行之后，带焦点的确认项里含所选目标）过每一帧，结论与样例
+    /// 写的一致。真机帧来自 tests/probe_claude_model.rs。
+    #[test]
+    fn switch_confirm_frames_agree_with_declared_spec() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../src/test/fixtures/switch-confirm.json"
+        ))
+        .unwrap();
+        for plugin in all() {
+            let declared = plugin
+                .switch_confirm()
+                .map(|spec| serde_json::to_value(spec).unwrap())
+                .unwrap_or(serde_json::Value::Null);
+            let listed = fixture["spec"]
+                .get(plugin.id().as_str())
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            assert_eq!(listed, declared, "{} 的 switch_confirm 与样例不一致", plugin.id());
+        }
+        let squash = |text: &str| -> String {
+            text.to_lowercase()
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric())
+                .collect()
+        };
+        let mut real = 0;
+        for frame in fixture["frames"].as_array().unwrap() {
+            let name = frame["name"].as_str().unwrap();
+            let spec = by_id(frame["provider"].as_str().unwrap())
+                .unwrap()
+                .switch_confirm()
+                .unwrap();
+            let title = regex::Regex::new(&format!("(?i){}", spec.title_pattern)).unwrap();
+            let accept = regex::Regex::new(&format!("(?i){}", spec.accept_pattern)).unwrap();
+            let lines: Vec<&str> = frame["lines"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|line| line.as_str().unwrap())
+                .collect();
+            let target = squash(frame["target"].as_str().unwrap());
+            let input = lines
+                .iter()
+                .rposition(|line| title.is_match(line))
+                .and_then(|at| {
+                    lines[at + 1..]
+                        .iter()
+                        .find_map(|line| accept.captures(line).map(|caps| squash(&caps[1])))
+                })
+                .filter(|shown| shown.contains(&target))
+                .map(|_| spec.accept_input);
+            assert_eq!(input, frame["expect"].as_str(), "{name}");
+            if frame["source"].as_str().unwrap().starts_with("probe") {
+                real += 1;
+            }
+        }
+        assert!(real >= 1, "至少要有一帧真机抓的确认框");
+    }
+
     #[test]
     fn launch_argv_is_nonempty_and_points_at_the_agent() {
         let _env = crate::env_guard();
@@ -1349,8 +1498,13 @@ mod tests {
             .unwrap()
             .clipboard_image_paste(Some("1.0.0"))
             .is_none());
-        // 换行注入:claude 是 ESC+CR,其余四家是 ctrl+j(裸 LF,不带会被拆成 Esc 的前缀)。
-        for id in ["codex", "gemini", "kimi", "opencode"] {
+        // 换行注入:claude 与 codex 是 ESC+CR(Alt+Enter)。codex 原来也是裸 LF,0.167.2 真机上
+        // 裸 LF 已不换行(两段字连成一行),Alt+Enter 在 0.162.1 与 0.167.2 都成立,见插件注释。
+        // 其余三家是 ctrl+j(裸 LF,不带会被拆成 Esc 的前缀)。
+        for id in ["claude", "codex"] {
+            assert_eq!(by_id(id).unwrap().newline_input(), Some("\x1b\r"), "{id}");
+        }
+        for id in ["gemini", "kimi", "opencode"] {
             assert_eq!(by_id(id).unwrap().newline_input(), Some("\n"), "{id}");
         }
 

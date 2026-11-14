@@ -86,13 +86,18 @@ export function arrowPanelApprovalDetails(text: string) {
     .filter((line) => !/^[─━═|-]+$/.test(line));
   const headerIndex = lines.findIndex((line) => /^▶\s*[^\n]+\?$/.test(line));
   const question = headerIndex >= 0 ? lines[headerIndex].replace(/^▶\s*/, "") : "";
-  const command = (headerIndex >= 0 ? lines.slice(headerIndex + 1) : lines).join("\n");
+  const body = headerIndex >= 0 ? lines.slice(headerIndex + 1) : lines;
+  // kimi 2.6.1 在标题与命令之间多了一行 `cwd: <工作目录>`（真机取证 2026-11-14，
+  // tests/probe_approval.rs，样本在 approval-frames.json）。它不是命令的一部分：留在命令里，
+  // 「命令」区第一行就成了路径，复制出来的也不是能执行的命令。挪到说明行。
+  const cwd = /^cwd:\s*\S/.test(body[0] ?? "") ? body.shift() ?? "" : "";
+  const command = body.join("\n");
   const tool = /run this command/i.test(question) ? "Bash"
     : /write this file/i.test(question) ? "Write"
     : /apply these edits/i.test(question) ? "Edit"
     : /stop this task/i.test(question) ? "TaskStop"
     : /^approve ([^\n?]+)\?$/i.exec(question)?.[1] ?? "";
-  return { tool, command, description: "", question };
+  return { tool, command, description: cwd, question };
 }
 
 /// 「framed_box」框线对话框式审批详情（gemini 0.6x 真机取证 + 源码 ToolConfirmationMessage）：

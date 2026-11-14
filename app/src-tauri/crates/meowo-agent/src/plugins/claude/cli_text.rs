@@ -64,6 +64,25 @@ pub(super) static DEPS: &[D] = &[
         "2.1.314 的旧拒绝句 `Effort '<x>' isn't …`（插件旧注释），2.1.322 全包已无；只存了前半句，不搜",
     )
     .legacy(),
+    // ── /model、/effort 在对话中途的二次确认框 ──
+    D::new(
+        "switch_confirm.title",
+        "Switch model?",
+        "   Switch model?",
+        "2.1.325 真机屏幕 2026-11-14（tests/probe_claude_model.rs：有过回合之后 `/model haiku`）",
+    ),
+    D::new(
+        "switch_confirm.title",
+        "Change effort level?",
+        "   Change effort level?",
+        "2.1.325 程序文件：与 `Switch model?` 相邻的另一句标题，同一个确认组件；没有真机走过",
+    ),
+    D::new(
+        "switch_confirm.accept",
+        "Yes, switch to ",
+        "   ❯ 1. Yes, switch to Haiku 5.5",
+        "2.1.325 真机屏幕 2026-11-14；模板 `Yes, switch to ${Bt}`",
+    ),
     // ── /model ──
     D::new(
         "model.confirm",

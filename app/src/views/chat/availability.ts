@@ -250,3 +250,34 @@ export function modelMenuState(
     loadBlocked: list.state === "disabled" && modelListMechanism(chatUi) !== null ? list.reason : null,
   };
 }
+
+// ── 斜杠命令 ───────────────────────────────────────────────────────────────────
+
+type SlashUi = Pick<ChatUi, "menu_slash_commands" | "model_select_command"> | null | undefined;
+
+/**
+ * 裸发一条斜杠命令靠什么完成：插件声明「裸发会弹出 CLI 自己的界面」的是 terminal_menu，
+ * 其余是普通命令（null = 不归这套策略管，照常发）。清单只有后端总装的 `menu_slash_commands` 一处。
+ */
+export function slashCommandMechanism(chatUi: SlashUi, name: string): ControlMechanism | null {
+  return (chatUi?.menu_slash_commands ?? []).includes(name) ? "terminal_menu" : null;
+}
+
+/**
+ * 手敲整条命令回车（裸发）此刻的状态。回合在跑时菜单型命令做不了：打进去会混进正在跑的回合，
+ * 菜单也读不到。原因与补全里置灰的那一句相同（走查输入 B1、B9：此前是另一句「再打开菜单」）。
+ */
+export function slashSendAvailability(t: Dict, chatUi: SlashUi, name: string, tone: string | null): Availability {
+  const mechanism = slashCommandMechanism(chatUi, name);
+  return mechanism ? controlAvailability(t, { mechanism, tone }) : { state: "available" };
+}
+
+/**
+ * 补全列表里的一项此刻的状态。选中只是把命令写进输入框，但菜单型命令写进去也发不出，
+ * 所以回合在跑时直接置灰并写明原因，不等用户点了、回车了才报错。
+ * 例外：同名命令带参数时是内联执行（Claude 的 `/model sonnet`），选中后还能接着填参数，不置灰。
+ */
+export function slashEntryAvailability(t: Dict, chatUi: SlashUi, name: string, tone: string | null): Availability {
+  if (chatUi?.model_select_command === name) return { state: "available" };
+  return slashSendAvailability(t, chatUi, name, tone);
+}

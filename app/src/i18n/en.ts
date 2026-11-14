@@ -1335,6 +1335,7 @@ export const en: Dict = {
     undoTip: "Undo this message and everything after it",
     undoTitle: "Undo message",
     undoConfirm: "This message and everything after it will be removed from the context, and its text goes back to the input box. Edited files are not affected.",
+    undoLatestOnly: "Only the latest turn can be undone",
     undoConfirmLabel: "Undo",
     undoConfirmFiles: "This message and everything after it will be undone, and its text goes back to the input box. Workspace files are restored to how they were before this message.",
     undoBusy: "A task is running. Undo once it finishes.",

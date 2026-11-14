@@ -13,6 +13,7 @@ import { useT } from "../../i18n";
 import { appendTerminalText, modeFromScreen, visibleTerminalText } from "../../terminalAttention";
 import { currentPresetId } from "./modelLabels";
 import { logChatEvent } from "./chatDiag";
+import { switchConfirmInput } from "./switchConfirm";
 import { submitToTerminal } from "./terminalSubmit";
 import type { SendErrorExit } from "./SendErrorExits";
 import type { TerminalAction } from "./useSessionSettings";
@@ -80,6 +81,9 @@ export function useModelControls({
       const family = preset.id.replace(/\[[^\]]*\]$/, "").toLowerCase().replace(/[^a-z0-9]/g, "");
       let outcome: { kind: "ok" } | { kind: "rejected"; line: string } | null = null;
       let otherModel: string | null = null;
+      // 对话中途切换时 CLI 先弹的二次确认框（见 chat/switchConfirm）：认出是这次要切的模型就替用户
+      // 确认一次，然后重新给足等确认行的时间。
+      let dialogConfirmed = false;
       for (let attempt = 0; attempt < 12 && outcome === null; attempt += 1) {
         await new Promise((resolve) => window.setTimeout(resolve, 200));
         if (!isCurrentOperation()) return false;
@@ -95,7 +99,13 @@ export function useModelControls({
         // 确认成了别的模型：先记下，继续等本家族的那一行（可能是重绘带进来的旧确认）。
         if (confirmed.length > 0) otherModel = cliLine(confirmed[confirmed.length - 1]);
         const rejected = rejectLine ? lines.find((line) => rejectLine.test(line)) : undefined;
-        if (rejected) outcome = { kind: "rejected", line: cliLine(rejected) };
+        if (rejected) { outcome = { kind: "rejected", line: cliLine(rejected) }; break; }
+        const dialogInput = dialogConfirmed ? null : switchConfirmInput(lines, chatUi?.switch_confirm, family);
+        if (dialogInput) {
+          dialogConfirmed = true;
+          await writeManagedTerminal(sessionId, dialogInput);
+          attempt = -1;
+        }
       }
       if (outcome?.kind !== "ok") {
         // CLI 说了什么就转什么（2026-11-12 研究 C4：确认框被取消、hook 拦截、别名校验失败时
@@ -138,6 +148,8 @@ export function useModelControls({
         const confirm = new RegExp(chatUi.effort!.confirm_pattern, "i");
         const reject = new RegExp(chatUi.effort!.reject_pattern, "i");
         let outcome: { kind: "ok" } | { kind: "rejected"; line: string; actual: string | null } | null = null;
+        // 与切模型同一个二次确认框（claude `Change effort level?`，见 chat/switchConfirm）。
+        let dialogConfirmed = false;
         for (let attempt = 0; attempt < 12 && outcome === null; attempt += 1) {
           await new Promise((resolve) => window.setTimeout(resolve, 200));
           if (!isCurrentOperation()) return false;
@@ -151,6 +163,13 @@ export function useModelControls({
             const hit = reject.exec(line);
             // 捕获组 1 = CLI 实际改成的档位（claude 2.1.322 封顶：`… set to 'high' instead`）。
             if (hit) { outcome = { kind: "rejected", line: cliLine(line), actual: hit[1]?.toLowerCase() ?? null }; break; }
+          }
+          if (outcome !== null) break;
+          const dialogInput = dialogConfirmed ? null : switchConfirmInput(lines, chatUi.switch_confirm, level);
+          if (dialogInput) {
+            dialogConfirmed = true;
+            await writeManagedTerminal(sessionId, dialogInput);
+            attempt = -1;
           }
         }
         if (outcome === null) {

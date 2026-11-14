@@ -6234,6 +6234,10 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 /* .chat-compose 前缀同模型菜单：压过 `.chat-compose button` 的 accent 皮肤。 */
 .chat-compose .chat-slash-item { display: flex; align-items: baseline; gap: var(--sp-12); width: 100%; height: auto; min-height: 0; padding: var(--sp-8) var(--sp-11); border: 0; border-radius: var(--radius-md); background: transparent; text-align: left; cursor: pointer; }
 .chat-compose .chat-slash-item:hover { background: var(--fill-hover); }
+/* 回合在跑时要开 CLI 菜单的命令：置灰，右侧的说明换成原因。用 aria-disabled 而不是 disabled，键盘高亮仍能停上去读到原因。 */
+.chat-slash-item[aria-disabled="true"] { cursor: default; }
+.chat-slash-item[aria-disabled="true"] code { opacity: .5; }
+.chat-compose .chat-slash-item[aria-disabled="true"]:hover { background: transparent; }
 .chat-compose .chat-slash-item code { flex: 0 0 auto; color: var(--cc-text); font-family: var(--cc-mono); font-size: var(--text-xs); font-weight: 500; }
 .chat-compose .chat-slash-item span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cc-text-faint); font-size: var(--text-xs); margin-left: auto; }
 /* 参数提示行（命令已命中、正在填参数）：纯展示，不是可点候选——收回手型与 hover 反馈。 */

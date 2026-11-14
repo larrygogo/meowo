@@ -672,6 +672,24 @@ impl AgentPlugin for Claude {
         })
     }
 
+    /// `/model <别名>`、`/effort <档>` 在对话中途的二次确认框（形态见 chat_ui::SwitchConfirm）。
+    ///
+    /// - `/model`：2.1.325 真机取证（tests/probe_claude_model.rs，2026-11-14）。空会话里切不弹，
+    ///   有过回合之后切就弹；确认后照常回 `Set model to …`，选「No, go back」回 `Kept model as …`。
+    /// - `/effort`：同一个组件，标题是 `Change effort level?`（2.1.325 程序文件里两句标题相邻，
+    ///   确认项同为模板 `Yes, switch to ${…}`）。**没有真机走过**：切思考档会不会改写用户默认配置
+    ///   没有取证，走查不碰它。所以这一半是按程序文件写的，核对条件与 `/model` 相同。
+    /// - 确认项的编号可能不显示、焦点也可能默认落在取消项上（同一段代码里 `hideIndexes`、
+    ///   `focus: Ve ? "cancel" : "confirm"`）。所以正则不要求编号，但要求焦点标记 `❯` 就在确认项上；
+    ///   焦点在取消项上时不按键。
+    fn switch_confirm(&self) -> Option<crate::chat_ui::SwitchConfirm> {
+        Some(crate::chat_ui::SwitchConfirm {
+            title_pattern: r"^\s*(?:switch model|change effort level)\?\s*$",
+            accept_pattern: r"^\s*❯\s*(?:\d+\.\s*)?yes, switch to (.+?)\s*$",
+            accept_input: "\r",
+        })
+    }
+
     fn model_presets(&self) -> &'static [crate::ModelPreset] {
         // label 是学到真实菜单前的兜底，维护约定见 launch_options 里的注释。
         &[

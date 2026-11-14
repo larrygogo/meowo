@@ -1,4 +1,6 @@
+import approvalFrames from "./fixtures/approval-frames.json";
 import composerFrames from "./fixtures/composer-frames.json";
+import switchConfirm from "./fixtures/switch-confirm.json";
 import type { AgentDescriptor, ChatUi, LaunchChoice, LaunchOption, SlashCommand } from "../api";
 
 /** 与 plugins/claude 的 status_line_pattern 同一串（改一边必须同步另一边）。 */
@@ -118,90 +120,11 @@ const MODEL_PRESETS: Record<string, ChatUi["model_presets"]> = {
  * 要测自定义命令，在用例里 `custom` 传发现出来的条目。未知 provider 回 null——与后端同语义。
  */
 /**
- * 整句可操作提示的识别规格。与后端各插件的 `attention_patterns()` 声明同源——
- * 那边改了正则，这里也要跟上，否则前端测试测的是一套过期规则。
- * 未取证的 provider 为空（不做整句识别）。
+ * 整句可操作提示的识别规格：直接取共享样例 approval-frames.json 里的 `patterns`。那一份由 Rust 测试
+ * （registry::tests::approval_frames_carry_declared_patterns_and_match_real_screens）逐字核对与各插件的
+ * `attention_patterns()` 一致，不再手抄一遍：手抄的那份改了后端正则不会报错，前端测的就成了过期规则。
  */
-const ATTENTION_PATTERNS: Record<string, NonNullable<ChatUi["attention_patterns"]>> = {
-  claude: [
-    {
-      id: "claude:long-session-resume",
-      patterns: [
-        "this session is[^\\n]{0,120}\\bold and[^\\n]{0,80}\\btokens\\b",
-        "resuming the full session will consume a substantial portion of your usage limits",
-      ],
-      last: false,
-      details: "none",
-      kind: "choice",
-      confirms: null,
-    },
-    {
-      id: "claude:command-approval",
-      patterns: ["this command requires approval", "do you want to proceed\\?"],
-      last: true,
-      details: "proceed_box",
-      kind: "approval",
-      confirms: null,
-    },
-    {
-      id: "claude:plan-approval",
-      patterns: ["written\\s+up\\s+a\\s+plan\\s+and\\s+is\\s+ready\\s+to\\s+execute"],
-      last: true,
-      details: "none",
-      kind: "plan",
-      confirms: null,
-    },
-  ],
-  kimi: [
-    {
-      id: "kimi:question",
-      patterns: ["↑↓ select\\s+(?:1-\\d+ / ↵ (?:choose|toggle)|1/2 choose\\s+↵ confirm)\\s+←/→/tab switch"],
-      last: true,
-      details: "bracket_form",
-      kind: "question",
-      confirms: null,
-    },
-    {
-      id: "kimi:command-approval",
-      patterns: [
-        "↑/↓ select · [\\d/]+ choose · ↵ confirm",
-        "^\\s*▶\\s*(?:run this command|write this file|apply these edits|stop this task|ready to build with this plan|approve [^\\n?]+)\\?",
-      ],
-      last: true,
-      details: "arrow_panel",
-      kind: "approval",
-      confirms: null,
-    },
-  ],
-  gemini: [
-    {
-      id: "gemini:command-approval",
-      patterns: [
-        "^\\s*│\\s*allow execution of [^\\n]*\\?",
-        "^\\s*│\\s*apply this change\\?",
-        "^\\s*│\\s*do you want to proceed\\?",
-        "^\\s*│\\s*to run \\[[^\\]\\n]+\\], allow access to the following\\?",
-      ],
-      last: true,
-      details: "framed_box",
-      kind: "approval",
-      confirms: null,
-    },
-    {
-      id: "gemini:usage-limit",
-      patterns: ["^\\s*│\\s*usage limit reached\\b", "^\\s*│\\s*we are currently experiencing high demand\\b"],
-      last: true,
-      details: "none",
-      kind: "choice",
-      confirms: null,
-    },
-    { id: "gemini:question", patterns: ["^\\s*│\\s*answer questions\\b"], last: true, details: "framed_form", kind: "question", confirms: null },
-  ],
-  opencode: [
-    { id: "opencode:command-approval", patterns: ["△ permission required"], last: true, details: "option_row", kind: "approval", confirms: null },
-    { id: "opencode:always-allow-confirm", patterns: ["△ always allow"], last: true, details: "option_row", kind: "choice", confirms: "opencode:command-approval" },
-  ],
-};
+const ATTENTION_PATTERNS = approvalFrames.patterns as unknown as Record<string, NonNullable<ChatUi["attention_patterns"]>>;
 
 /**
  * 识别文法固件：带上该 provider 由插件声明的整句规则。
@@ -261,6 +184,8 @@ export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | 
     model_select_command: provider === "claude" ? "/model" : null,
     // 与后端同源:claude 插件 model_select_reply(2.1.322 包内模板取证)。
     model_select_reply: provider === "claude" ? { confirm_pattern: "set model to ", reject_pattern: CLAUDE_MODEL_REJECT_PATTERN } : null,
+    // 对话中途切换的二次确认框：取共享样例里的规格（Rust 测试逐字核对与插件声明一致）。
+    switch_confirm: (switchConfirm.spec as Record<string, NonNullable<ChatUi["switch_confirm"]>>)[provider] ?? null,
     queue_input: provider === "codex" ? "\t" : "\r",
     // 与后端插件声明同源：claude 边干边读，kimi 未取证，其余排到回合结束。
     queue_delivery: provider === "claude" ? "next_step" : provider === "kimi" ? null : "turn_end",
@@ -321,8 +246,11 @@ export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | 
     interrupt_input: "\x1b",
     // 与后端同源:opencode 首按 Esc 只提示 "esc again to interrupt",须分两次写。
     interrupt_presses: provider === "opencode" ? 2 : 1,
-    // 与后端同源:换行注入序列 claude 是 ESC+CR,其余四家是 ctrl+j(裸 LF),见各插件的取证注释。
-    newline_input: provider === "claude" ? "\u001b\r" : "\n",
+    // 与后端同源:换行注入序列 claude 与 codex 是 ESC+CR(codex 0.167.2 真机上裸 LF 已不换行),
+    // 其余三家是 ctrl+j(裸 LF),见各插件的取证注释。
+    newline_input: provider === "claude" || provider === "codex" ? "\u001b\r" : "\n",
+    // 与后端同源:gemini 0.68.0 吞掉一次写入里的半角问号,带问号的单行正文改走粘贴。
+    single_line_paste_pattern: provider === "gemini" ? String.raw`\?` : null,
     runtime_commands_pending: false,
     // 与后端同源:claude/gemini(提交时原生附加)与 kimi/codex/opencode(@ 是文本级惯例,
     // 模型自行读取)声明 true。测试桩模拟「已探测到版本」的常态,故不做 version 门控。

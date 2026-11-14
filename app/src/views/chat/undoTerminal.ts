@@ -8,8 +8,17 @@ import { managedTerminalScreen, managedTerminalSnapshot, writeManagedTerminal, t
 import { appendTerminalText, visibleTerminalText } from "../../terminalAttention";
 import { clearComposerDraft, composerDraft, composerHolds, prepareComposer, readComposerFrame, terminalComposerIo, type ComposerIo, type ComposerSpec } from "./composer";
 import { submitToTerminal } from "./terminalSubmit";
+import type { Dict } from "../../i18n/zh";
 
 export type UndoControl = NonNullable<ChatUi["undo"]>;
+
+/// 撤回确认框的正文：后果按能力说（会不会连带还原文件）。撤回命令不带轮数、也不是菜单式的
+/// （OpenCode）一次只撤最近一轮，多写一句，不让用户以为和别家一样能从更早的消息撤（走查输入 C3）。
+export function undoConfirmMessage(t: Dict, control: Pick<UndoControl, "count_arg" | "menu" | "restores_files">): string {
+  const consequence = control.restores_files ? t.chat.undoConfirmFiles : t.chat.undoConfirm;
+  return !control.count_arg && !control.menu ? `${consequence}
+${t.chat.undoLatestOnly}` : consequence;
+}
 
 type UndoMenuSpec = NonNullable<NonNullable<ChatUi["undo"]>["menu"]>;
 
