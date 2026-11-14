@@ -787,6 +787,57 @@ fn apply_blocking(
         let update: codex::CodexSettingsUpdate =
             serde_json::from_value(serde_json::Value::Object(plan.server.clone()))
                 .map_err(|_| "settings/mode_unknown")?;
+        // 做空第五轮 P3：目标档要的启动参数（Codex workspace-write 档在没配 Windows 沙箱时的
+        // `-c windows.sandbox=unelevated`）进程启动时没带——会话内改成 workspace-write 也是 SandboxType::None，
+        // 命令不进沙箱。这时改走带参接回（接回路径会补上这个参数），接回后再经服务补设新档。守卫同 Kimi/Gemini 的
+        // 带参重启：输入框要空（对话页已把草稿搬走）、后台子任务不忙。
+        let mut target = stored.clone();
+        target.extend(modes.clone());
+        let required = plugin.extra_launch_args(&target, &env, header.cwd.as_deref().map(Path::new));
+        if !required.is_empty() && !process_has_args(broker.child_pid(session_id), &required) {
+            restart_guard(&tui)?;
+            use tauri::Manager as _;
+            if let Some(state) = app.try_state::<crate::AppState>() {
+                if crate::session_query::subagents_busy(
+                    &state.tx_cache,
+                    &header.provider,
+                    header.cwd.as_deref(),
+                    &header.cc_session_id,
+                ) {
+                    let mut not_now = SettingsOutcome::new("not_now", session_id);
+                    not_now.reason = Some("settings/background_busy".into());
+                    return Ok(not_now);
+                }
+            }
+            if !restart(app, broker, &store, session_id, &header.provider, modes.clone(), before_stop)? {
+                // 恰在此刻自己退出了：记成打开后补设（与离线一样，见上面 !is_active 分支）。
+                persist(&store, session_id, &modes, model.as_deref());
+                return Ok(SettingsOutcome::queued(session_id, "settings/applies_on_open", "open"));
+            }
+            // 接回后 thread 沿用自己存的权限（远程接回不收权限参数），新档经服务补设；等 TUI 握手。
+            let mut applied = false;
+            for _ in 0..20 {
+                match codex::update_settings(db, session_id, &header.cc_session_id, &update) {
+                    Ok(()) => {
+                        applied = true;
+                        break;
+                    }
+                    Err(codex::ControlError::NotReady(_)) => {
+                        std::thread::sleep(std::time::Duration::from_millis(1500))
+                    }
+                    Err(codex::ControlError::Unsupported) => break,
+                    Err(codex::ControlError::Failed(reason)) => return Err(reason),
+                }
+            }
+            persist(&store, session_id, &modes, model.as_deref());
+            if !applied {
+                // 进程已带沙箱参数接回，新档还没设上：交给宿主等就绪再补（与对话页遇到服务没就绪同一条路）。
+                return Ok(SettingsOutcome::queued(session_id, "settings/server_not_ready", "ready"));
+            }
+            outcome.kind = "restarted";
+            outcome.confirmed = true;
+            return Ok(outcome);
+        }
         match codex::update_settings(db, session_id, &header.cc_session_id, &update) {
             Ok(()) => outcome.confirmed = true,
             Err(codex::ControlError::Unsupported) => {
@@ -875,6 +926,54 @@ fn apply_blocking(
         }
     }
     Ok(outcome)
+}
+
+/// 会话进程启动时有没有带这些参数（按进程实际命令行逐项找；`-c` 的值要原样出现）。读不到命令行时当作没带——
+/// 宁可多一次接回，也不让 workspace-write 档在没有沙箱的进程里生效（做空第五轮 P3）。
+fn process_has_args(pid: Option<u32>, required: &[String]) -> bool {
+    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+    let Some(pid) = pid else {
+        return false;
+    };
+    let pid = sysinfo::Pid::from_u32(pid);
+    let mut sys = System::new();
+    sys.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[pid]),
+        true,
+        ProcessRefreshKind::new().with_cmd(UpdateKind::Always),
+    );
+    let Some(process) = sys.process(pid) else {
+        return false;
+    };
+    let argv: Vec<String> = process.cmd().iter().map(|arg| arg.to_string_lossy().into_owned()).collect();
+    argv_has_args(&argv, required)
+}
+
+/// [`process_has_args`] 的判定部分：`-c` / `--config` 的值逐个在命令行里找到（`-c` 后一项或 `--config=` 写法），
+/// 其余参数原样出现即可。
+fn argv_has_args(argv: &[String], required: &[String]) -> bool {
+    let configs: Vec<&str> = argv
+        .iter()
+        .enumerate()
+        .filter_map(|(index, arg)| match arg.as_str() {
+            "-c" | "--config" => argv.get(index + 1).map(String::as_str),
+            other => other.strip_prefix("--config="),
+        })
+        .collect();
+    let mut wanted = required.iter().peekable();
+    while let Some(arg) = wanted.next() {
+        if arg == "-c" || arg == "--config" {
+            let Some(value) = wanted.next() else {
+                return false;
+            };
+            if !configs.contains(&value.as_str()) {
+                return false;
+            }
+        } else if !argv.contains(arg) {
+            return false;
+        }
+    }
+    true
 }
 
 /// 回合结束时对话页读到的会话当前模型 / 模式，写进存档（做空 M5）：之后的恢复、切账号、带参重启按它回放，
@@ -2079,6 +2178,23 @@ mod tests {
         assert!(launch_server_update(codex, &modes(&[("approval", "default")])).is_none());
         let kimi = meowo_agent::by_id("kimi").unwrap();
         assert!(launch_server_update(kimi, &modes(&[("permission", "yolo")])).is_none());
+    }
+
+    /// 做空第五轮 P3：进程命令行里有没有目标档要的启动参数（`-c` 值逐个找）。
+    #[test]
+    fn argv_has_args_matches_config_values() {
+        let argv: Vec<String> = ["codex.exe", "--sandbox", "workspace-write", "-c", "windows.sandbox=unelevated", "--remote", "ws://x"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let need = vec!["-c".to_string(), "windows.sandbox=unelevated".to_string()];
+        assert!(argv_has_args(&argv, &need));
+        assert!(argv_has_args(&argv, &[]));
+        let bare: Vec<String> = ["codex.exe", "-c", "approvals_reviewer=auto_review", "resume", "t"].iter().map(|s| s.to_string()).collect();
+        assert!(!argv_has_args(&bare, &need));
+        let eq: Vec<String> = ["codex.exe", "--config=windows.sandbox=unelevated"].iter().map(|s| s.to_string()).collect();
+        assert!(argv_has_args(&eq, &need));
+        assert!(!process_has_args(None, &need));
     }
 
     /// 做空 N7（leader 定）：认领后只有选了「自动审查」才连会话服务补设，其他带服务端片段的档不连。

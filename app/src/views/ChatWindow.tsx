@@ -1716,7 +1716,14 @@ export function ChatWindow() {
     restarts: (request) => sessionId < 0
       || (!!request.model && chatUi?.model_switch === "restart_resume")
       || Object.keys(request.modes ?? {}).some((dimension) => agentsForOptions?.find((agent) => agent.id === provider)?.launch_options
-        ?.find((option) => option.id === dimension)?.switch === "restart"),
+        ?.find((option) => option.id === dimension)?.switch === "restart")
+      // Codex 从别的档切进 workspace-write 档（必要时询问 / 自动审查）时，进程若没带 Windows 沙箱参数，后端改走带参
+      // 接回（做空第五轮 P3）。前端看不到进程参数，按「可能重启」先把 TUI 草稿搬走；已在 workspace-write 档里互切不算。
+      || (provider === "codex" && Object.entries(request.modes ?? {}).some(([dimension, value]) => {
+        const choices = agentsForOptions?.find((agent) => agent.id === provider)?.launch_options?.find((option) => option.id === dimension)?.choices;
+        const workspaceWrite = (id: string | undefined) => !!choices?.find((choice) => choice.id === id)?.args.join(" ").includes("--sandbox workspace-write");
+        return workspaceWrite(value) && !workspaceWrite(history?.agentModes.find((mode) => mode.dimension === dimension)?.value);
+      })),
     // 会话此刻的实际值：transcript 的模式、底栏原文认的模式（Gemini 审批模式只有这里有），当前模型的清单 id。
     readCurrent: async () => {
       const current: Record<string, string> = {};
