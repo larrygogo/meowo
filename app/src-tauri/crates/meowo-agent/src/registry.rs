@@ -1389,17 +1389,46 @@ mod tests {
             let presses = if id == "opencode" { 2 } else { 1 };
             assert_eq!(by_id(id).unwrap().interrupt_presses(), presses, "{id}");
         }
-        // 审批卡统一 id 约定 `<agent>:command-approval`(前端按后缀定卡片标题)。gemini 的确认框
-        // 有框线编号文法;opencode 是横排选项,不做结构化拆解、落通用卡。
+        // 审批框的规则 id 沿用 `<agent>:command-approval`，但卡片形态只看 kind 与 details。
+        // gemini 的确认框有框线编号文法；opencode 是横排选项文法。
         for (id, details) in [
             ("gemini", crate::chat_ui::AttentionDetails::FramedBox),
-            ("opencode", crate::chat_ui::AttentionDetails::None),
+            ("opencode", crate::chat_ui::AttentionDetails::OptionRow),
         ] {
             let pattern = by_id(id).unwrap().attention_patterns()[0];
             assert_eq!(pattern.id, format!("{id}:command-approval"));
             assert!(pattern.last, "{id} 审批框会残留在缓冲上方,必须取最后一次");
             assert_eq!(pattern.details, details);
+            assert_eq!(pattern.kind, crate::chat_ui::AttentionKind::Approval);
         }
+        // 每条规则都声明了种类：四家的审批框是 approval，提问表单是 question，
+        // 计划批准是 plan，额度耗尽与长会话确认是 choice（不是审批，也不是启动步骤）。
+        let kind_of = |agent: &str, rule: &str| {
+            by_id(agent)
+                .unwrap()
+                .attention_patterns()
+                .iter()
+                .find(|pattern| pattern.id == rule)
+                .unwrap_or_else(|| panic!("{agent} 缺规则 {rule}"))
+                .kind
+        };
+        use crate::chat_ui::AttentionKind as Kind;
+        assert_eq!(kind_of("claude", "claude:command-approval"), Kind::Approval);
+        assert_eq!(kind_of("claude", "claude:plan-approval"), Kind::Plan);
+        assert_eq!(
+            kind_of("claude", "claude:long-session-resume"),
+            Kind::Choice
+        );
+        assert_eq!(kind_of("kimi", "kimi:command-approval"), Kind::Approval);
+        assert_eq!(kind_of("kimi", "kimi:question"), Kind::Question);
+        assert_eq!(kind_of("gemini", "gemini:usage-limit"), Kind::Choice);
+        assert_eq!(kind_of("gemini", "gemini:question"), Kind::Question);
+        // opencode 选 Allow always 后的确认页：单列一条规则，指明它确认的是权限框。
+        let confirm = by_id("opencode").unwrap().attention_patterns()[1];
+        assert_eq!(confirm.id, "opencode:always-allow-confirm");
+        assert_eq!(confirm.confirms, Some("opencode:command-approval"));
+        assert_eq!(confirm.kind, Kind::Choice);
+        assert_eq!(confirm.details, crate::chat_ui::AttentionDetails::OptionRow);
         // gemini 额度耗尽框取代输入框：不识别，对话页发出的正文会被它吞掉(插件注释有实测)。
         let limit = by_id("gemini").unwrap().attention_patterns()[1];
         assert_eq!(limit.id, "gemini:usage-limit");

@@ -19,13 +19,18 @@ import { useT } from "../i18n";
 import { formatBackendError } from "../i18n/errors";
 import { useShowWhenReady } from "../useShowWhenReady";
 import { reduceChatEvents } from "../chat/reducer";
-import { ApprovalCard, ApprovalCommandDetail, isRiskyCommand } from "./chat/ApprovalCard";
+import { ApprovalCard } from "./chat/ApprovalCard";
+import { ApprovalRequestCard } from "./chat/ApprovalRequestCard";
+import { TerminalPromptCard, TerminalQuestionCard } from "./chat/TerminalRequestCards";
+import { approvalCardModel, cardBadge, cardTitle, isPersistentChoice, terminalInputForChoice, type ApprovalChoice } from "./chat/requestCard";
+import { cardLockHint, composerCardLock, lockForPendingReview, lockForScreenCard, screenCardLockKind } from "./chat/composerCardLock";
+import { followUpInput, type PendingFollowUp } from "./chat/terminalFollowUp";
 import { CardAnnouncer } from "./chat/cardAnnouncer";
 import { isSidebarToggleKey } from "./terminalKeys";
 import { copyPlainText } from "./chat/clipboard";
 import { ReviewBar } from "./chat/ReviewBar";
 import { readSideAnswer, sideQuestionText } from "./chat/sideQuestion";
-import { approvalChoiceForKey, BrokerApprovalCard, digitKeysOwnedElsewhere, useBrokerResolver } from "./chat/BrokerApprovalCard";
+import { approvalChoiceForKey, digitKeysOwnedElsewhere, useBrokerResolver } from "./chat/BrokerApprovalCard";
 import { answersRepresentable, composeAnswers, matchFocusedQuestion, matchOptionByLabel, observeTranscriptForDismiss, parseAskUserQuestions, planQueuedChoiceWrites, type QuestionAnswerDraft, type QuestionDismissTracker, type StructuredQuestion } from "./chat/askUserQuestion";
 import { detectAtToken, useAtFileCompletion, useSlashCompletion } from "./chat/composerCompletion";
 import { useApprovalChannel } from "./chat/useApprovalChannel";
@@ -49,7 +54,6 @@ import { composerCandidate } from "./chat/composerSafety";
 import { managedTerminalFrame, agentDynamicModeChoices, type DynamicModeChoice } from "../api";
 import { BottomSheet, SheetOnPhone } from "./chat/BottomSheet";
 import { runningActivityView, RunningBar, SnakeSpinner, TurnAnnouncer, useCliStatusStore } from "./chat/RunningBar";
-import { arrowPanelApprovalDetails, framedBoxApprovalDetails, proceedBoxApprovalDetails } from "./chat/terminalApprovalDetails";
 import { ModelPicker, readStarred, type ModelPickerItem } from "./chat/ModelPicker";
 import { currentPresetId } from "./chat/modelLabels";
 import { ModelMenu, effortLabel } from "./chat/ModelMenu";
@@ -74,7 +78,6 @@ import { localUrlsIn } from "./chat/localUrls";
 import { useGuardedWindowClose } from "./chat/windowClose";
 import { usePanel } from "./chat/usePanel";
 import { SessionInfo } from "./chat/SessionInfo";
-import { ApprovalScopeTags } from "./chat/ApprovalScopeTags";
 import { ImageAnnotator } from "./chat/ImageAnnotator";
 import { ChatCwdContext } from "./chat/ToolActivity";
 import { WelcomePanel, type WelcomeInfo } from "./chat/WelcomePanel";
@@ -485,6 +488,8 @@ export function ChatWindow() {
   /// 菜单识别到时尝试自动选中；返回 true = 已替用户选了（不再上屏那张卡）。每次渲染刷新。
   const autoPickModelRef = useRef<(options: TerminalAttentionOption[]) => boolean>(() => false);
   const finishSilentProbeRef = useRef<() => void>(() => {});
+  /// 刚在屏幕审批卡上点了持久放行：CLI 若再弹二次确认页，由 revealTerminalAttention 替用户确认。
+  const followUpRef = useRef<PendingFollowUp | null>(null);
   const revealTerminalAttention = useCallback((attention: TerminalAttention | null) => {
     // 屏幕不再匹配（提示已在终端里被处理掉）或换了一张新卡时，收起条一并作废。
     setDismissedAttention(null);
@@ -510,6 +515,14 @@ export function ChatWindow() {
       }
     }
     if (attention.id === "interactive:cursor-menu" && autoPickModelRef.current(attention.options ?? [])) return;
+    // 刚在卡片上点了持久放行、CLI 弹出二次确认页：替用户按下确认，不再出第二张卡（见 terminalFollowUp）。
+    // 写不进去就照常出卡，让用户自己选。
+    const followUp = followUpInput(followUpRef.current, attention, activeSessionRef.current, Date.now());
+    if (followUp) {
+      followUpRef.current = null;
+      void writeManagedTerminal(activeSessionRef.current, followUp).catch(() => setTerminalAttention(attention));
+      return;
+    }
     setTerminalAttention((current) => current?.id === attention.id
       && current.text === attention.text
       && JSON.stringify(current.options) === JSON.stringify(attention.options)
@@ -577,14 +590,22 @@ export function ChatWindow() {
     brokerOwnsReview, setBrokerOwnsReview,
     lastInteractiveQuestionRef, collapsedQuestionIdRef,
   } = useApprovalChannel({ sessionId, activeSessionRef, viewRef, setView, setSendError });
-  interactionBlockedRef.current = !!(terminalAttention || dismissedAttention || approval || structuredQuestion || dismissedQuestion || terminalMenuOpenRef.current
-    || (history?.pendingReview && history.pendingReview !== "gate"));
-  // 拦住发送时的说明：只剩提问卡（展开或收起）在拦时说「在等你回答」，其余仍是交互卡通用说法。
-  // 此前一律说「在等启动确认」，回合中途的提问也这么说，用户看不懂该做什么（用户实拍）。
-  const blockedByQuestionRef = useRef(false);
-  blockedByQuestionRef.current = !!(structuredQuestion || dismissedQuestion || history?.pendingReview === "question")
-    && !(terminalAttention || dismissedAttention || approval || terminalMenuOpenRef.current);
-  const blockedMessage = () => (blockedByQuestionRef.current ? t.chat.questionNeedsAnswer : t.chat.terminalNeedsAttention);
+  // 有卡片待处理时输入框怎么办：五家、两条通道同一条规则，见 chat/composerCardLock。
+  // 发送是否被拦、控件是否停用、说明用哪一句，都从这一个结果取。
+  const screenCard = terminalAttention ?? dismissedAttention;
+  const cardLock = composerCardLock({
+    terminalCard: screenCard ? { kind: screenCardLockKind(screenCard.kind), collapsed: !terminalAttention } : null,
+    brokerApproval: !!approval,
+    brokerQuestion: !!(structuredQuestion || dismissedQuestion),
+    pendingReview: history?.pendingReview && history.pendingReview !== "gate" ? history.pendingReview : null,
+    terminalMenuOpen: terminalMenuOpenRef.current,
+  });
+  interactionBlockedRef.current = cardLock.send;
+  // 在途的发送流程要读最新的原因（闭包里的是发起那一刻的）。
+  const cardLockRef = useRef(cardLock);
+  cardLockRef.current = cardLock;
+  // 发起会话已切走时本会话可能没有卡在拦：退回通用的那一句。
+  const blockedMessage = () => cardLockHint(cardLockRef.current, t) || t.chat.cardLockPrompt;
   const isCurrentOperation = () => mountedRef.current && activeSessionRef.current === sessionId
     && sessionEpochRef.current === operationEpoch;
   /// 最近一次认领(临时 id → 真 id)。在途的粘贴落盘回来时,本会话若已被认领,结果仍归它。
@@ -2932,7 +2953,7 @@ export function ChatWindow() {
       if (isCurrentOperation()) {
         terminalEverShownRef.current = true;
         setTerminalAttention(startup);
-        setSendError(t.chat.terminalNeedsAttention);
+        setSendError(cardLockHint(lockForScreenCard(startup), t));
       }
       return false;
     }
@@ -2972,7 +2993,7 @@ export function ChatWindow() {
       if (startup !== "ready") {
         terminalEverShownRef.current = true;
         setTerminalAttention(startup);
-        setSendError(t.chat.terminalNeedsAttention);
+        setSendError(cardLockHint(lockForScreenCard(startup), t));
         return;
       }
     } catch (error) {
@@ -3310,8 +3331,9 @@ export function ChatWindow() {
         // 只要状态字段：同一会话用已知的尾部偏移做增量读，不整段重读（长会话 transcript 可达几十 MB，
         // 每次发送全量解析会卡住发送，做空指出）；排队期间切走了才退回整读。
         const latest = await getChatHistory(sid, sid === activeSessionRef.current ? offsetRef.current : 0);
-        if (latest.pendingReview && latest.pendingReview !== "gate") throw new Error(t.chat.terminalNeedsAttention);
-        if (latest.screenState === "blocked") throw new Error(t.chat.terminalNeedsAttention);
+        // 说明与卡片在场时的占位同一句（见 chat/composerCardLock）。
+        if (latest.pendingReview && latest.pendingReview !== "gate") throw new Error(cardLockHint(lockForPendingReview(latest.pendingReview), t));
+        if (latest.screenState === "blocked") throw new Error(t.chat.cardLockMenu);
         const currentTone = sessionTone(latest.connected, latest.status, latest.pendingReview, latest.errored, undefined, latest.screenState, latest.screenAssumed);
         const key = currentTone === "running" ? chatUi?.queue_input : "\r";
         if (!key) throw new Error(t.chat.busySendUnavailable);
@@ -3722,11 +3744,9 @@ export function ChatWindow() {
   // 开口打字（不再是停止态）、回合结束、换会话：武装的 Esc 中断作废。
   useEffect(() => { setEscInterruptArmed(false); }, [stopMode, sessionId]);
 
-  // 屏幕上有活的选择器/提示时锁住 composer——**禁用而非卸载**:卸载会让 textarea 变成
-  // 全新节点(草稿的光标/滚动、聚焦全丢)、整个底栏跳没,而锁的目的只是「别把正文打进
-  // 选择器」(文字会过滤选项、回车会提交焦点项,见 sendPrompt 的软拦)。inert 属性经
-  // ref 设置:React 18 的属性表还不认识 inert,JSX 直写过不了类型检查。
-  const composerLocked = !!terminalAttention;
+  // 屏幕上的卡摆在眼前时（终端里正开着一个等按键的框），会往终端写按键的控件停用。
+  // 输入框本身不因卡片禁用：草稿照常可写，发送由 cardLock.send 先拦并说明（见 chat/composerCardLock）。
+  const composerLocked = cardLock.controls;
   // 会话不可直接对话(外部终端占用/已结束)时,composer 让位给「先接管/先恢复」门卡:
   // 输入框摆着也发不出去,placeholder 引导远不如把唯一可行的动作直接放在手边(用户反馈)。
   // ptyManaged 用**严格 === false**:它是 DTO 必填字段,真实后端总有值;宁可在信号缺失时
@@ -3791,12 +3811,6 @@ export function ChatWindow() {
   // 不发任何内容;成功后轮询把 ptyManaged 翻真,门卡自动让位给 composer。
   const resumeForChat = () => void withSendGuard(async () => true);
   const composeRef = useRef<HTMLElement>(null);
-  useEffect(() => {
-    const el = composeRef.current;
-    if (!el) return;
-    if (composerLocked) el.setAttribute("inert", "");
-    else el.removeAttribute("inert");
-  }, [composerLocked, view]);
 
   // 「仅收起」：零副作用地把卡收走（不向 PTY 写任何字节），同时留一条可再展开的折叠条。
   const collapseAttention = () => {
@@ -3838,12 +3852,11 @@ export function ChatWindow() {
     [terminalAttention, sessionId, provider, history?.ptyManaged],
   );
   const terminalResponseReady = runtimeRequestTerminalLive(terminalRuntimeRequest);
-  // 审批卡门控：插件声明了详情文法风格（details）的提示才走命令审批卡——不再枚举 pattern id。
-  // 框线式没认出 ● 焦点时不出选项按钮(相对移动起点未知);此时退回通用卡,至少还有 Esc/Enter。
-  const commandAttention = terminalRuntimeRequest?.terminal && terminalAttention?.details && terminalAttention.details !== "none"
-    && (terminalAttention.details !== "framed_box" || terminalAttention.options?.length) ? terminalAttention : null;
-  const interactiveAttention = terminalRuntimeRequest?.kind === "question"
-    && terminalAttention?.id === "interactive:numbered-selector" ? terminalAttention : null;
+  // 屏幕上的请求按种类分三张卡：审批（与 broker 审批同一张 ApprovalRequestCard）、提问、其余提示。
+  // 种类由规则声明，不看规则 id，也不看详情文法：认不出选项的审批框照样是审批卡，
+  // 按钮名称不变，按键按「回车允许一次、Esc 拒绝」兜底（见 requestCard）。
+  const commandAttention = terminalAttention?.kind === "approval" ? terminalAttention : null;
+  const interactiveAttention = terminalAttention?.kind === "question" ? terminalAttention : null;
   // 屏幕识别就绪 → 可作答的交互选择器接管，结构化题面的展示卡藏起来（同一份题面不双卡）。
   // 题面本身留到表单从屏上消失才清：多问题表单靠它反查当前是第几题，排队的答案也跟着它
   // 存亡。此前一认出表单就清掉题面，第 2 题起的排队答案全被连带清空（只有第 1 题落得下），
@@ -3973,34 +3986,24 @@ export function ChatWindow() {
     // 接手，手机上逐题点选即可。
     if (!remoteUi()) setView("terminal");
   };
-  const commandApproval = commandAttention
-    ? commandAttention.details === "arrow_panel"
-      ? arrowPanelApprovalDetails(commandAttention.text)
-      : commandAttention.details === "framed_box"
-        ? framedBoxApprovalDetails(commandAttention.text)
-        : proceedBoxApprovalDetails(commandAttention.text)
-    : null;
-  const commandOptions = commandAttention?.options ?? [];
-  // claude 的选项文案是 Yes/No，kimi 是 Approve once/Reject，gemini 是 Allow once/No, suggest
-  // changes——按钮语义同一套。
-  // 拒绝项两轮匹配:先找裸文案(kimi 的 "Reject" 不能被 "Reject with feedback" 抢注),
-  // 找不到再按词首前缀兜底——claude 的长文案拒绝项("No, and tell Claude what to do
-  // differently (esc)")只有前缀能认;全等匹配会让它漏网,被下面的 commandRemember
-  // (「既非拒绝也非允许的第一项」)吸收,点「允许并记住」实际发出的是拒绝按键。
-  const commandDeny = commandOptions.find((option) => /^(?:no|reject)$/i.test(option.label.trim()))
-    ?? commandOptions.find((option) => /^(?:no|reject)\b/i.test(option.label.trim()));
-  const commandAllowOnce = commandOptions.find((option) => /^(?:yes|approve once|approve|allow once)$/i.test(option.label.trim())) ?? commandOptions[0];
-  const commandRemember = commandOptions.find((option) => option !== commandDeny && option !== commandAllowOnce);
+  // 审批卡的视图模型：屏幕上认出的审批框优先（它在场说明终端正等着按键），否则是 broker
+  // 挂起的审批。两条通道归一成同一份模型，交给同一张卡（见 chat/requestCard）。
+  const approvalRequest = commandAttention && terminalRuntimeRequest
+    ? terminalRuntimeRequest
+    : !terminalAttention && approval ? approval : null;
+  const approvalModel = useMemo(
+    () => (approvalRequest ? approvalCardModel(approvalRequest, t, approvalTimedOut) : null),
+    [approvalRequest, t, approvalTimedOut],
+  );
   // C-9：overlay 层是否有卡在场(供 wrapper 挂 is-active,消息列表底部淡出过渡随之启停)。
-  // 条件镜像下方渲染分支:屏幕识别三卡互斥(commandAttention 解析不出详情时一张都不出,
-  // 见卡片 2 的 commandApproval 判空),题面两形态互斥,三类之间可并存(overlay 内纵向堆叠)。
+  // 条件镜像下方渲染分支:屏幕识别三卡互斥,题面两形态互斥,三类之间可并存(overlay 内纵向堆叠)。
   // 提问卡（屏幕识别选择器 + 题面两形态）用户要求两视图都出：broker 挂起时终端画面上
   // 什么都没有，终端视图看不到卡就不知道 agent 在等——状态在同一组件里，两边渲染天然同步。
   const hasOverlayCard = Boolean(
     interactiveAttention
     || (structuredQuestions.length > 0 && !terminalAttention && !approval)
     || (view === "chat" && (
-      (commandAttention && commandApproval)
+      commandAttention
       || (terminalAttention && !commandAttention && !interactiveAttention)
       || (!terminalAttention && (approval || (!brokerOwnsReview && terminalReview && history?.ptyManaged !== false)))
     )),
@@ -4031,6 +4034,18 @@ export function ChatWindow() {
       })
       .catch((error) => setSendError(formatBackendError(error, t.locale)))
       .finally(() => { optionResolvingRef.current = false; });
+  };
+  // 审批卡上的决定。broker 请求回 broker；屏幕请求在适配层换成按键写进终端
+  // （不能因为共用一张卡就转调 respond_runtime_request，终端里的框只认按键）。
+  const decideCardApproval = (choice: ApprovalChoice) => {
+    if (!approvalModel || !approvalModel.live || approvalModel.state !== "pending") return;
+    if (approvalModel.channel === "broker") { void decideApproval(choice); return; }
+    if (!commandAttention) return;
+    const input = terminalInputForChoice(commandAttention, choice);
+    if (input === null) return;
+    // 持久放行在有的 CLI 上还要过一道确认页：记一笔，认出确认页时替用户确认。
+    if (isPersistentChoice(choice)) followUpRef.current = { session: sessionId, rule: commandAttention.id, at: Date.now() };
+    chooseTerminalOption({ input });
   };
   /// 放弃这次静默选模型：收掉 CLI 菜单、停转圈、只报一句。kimi 菜单的 Esc 有搜索词时先清词，
   /// 第二下才关菜单（model-selector 的 handleInput），搜过就按两下；分两次写——合成一次写入
@@ -4103,30 +4118,30 @@ export function ChatWindow() {
   // 数字键是明确意图（对照 Kimi 审批卡的 1/2/3）：1 = 允许一次，2.. = 依次的持久放行。
   // 焦点在输入框/终端/按钮上时让开,那里的键另有主人（收补全菜单、写进 PTY、按钮自身）。
   // 无依赖数组是有意的:每次渲染重绑一个 keydown,换闭包永远新鲜。
+  // 两条通道同一套键：数字键与 Esc 只认审批卡的模型，不分请求来自 broker 还是屏幕。
   useEffect(() => {
-    const terminalDeny = view === "chat" && commandAttention && commandApproval ? commandDeny : undefined;
-    const brokerDeny = view === "chat" && !terminalAttention && approval ? approval : undefined;
-    if (!terminalDeny && !brokerDeny) return;
+    const model = view === "chat" && approvalModel?.live && approvalModel.state === "pending" ? approvalModel : null;
+    if (!model) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
       const active = document.activeElement;
       const editing = active instanceof HTMLElement && (active.tagName === "TEXTAREA" || active.tagName === "INPUT" || active.isContentEditable);
-      if (brokerDeny && /^[1-9]$/.test(event.key) && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
+      if (/^[1-9]$/.test(event.key) && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
         // 判据与卡上徽标的显隐同一份（digitKeysOwnedElsewhere）：徽标亮着时按下去就一定生效。
         if (digitKeysOwnedElsewhere(active) || hasEscLayers() || resolvingApproval) return;
-        const choice = approvalChoiceForKey(event.key, (brokerDeny.permissionSuggestions ?? []).length);
-        if (choice) { event.preventDefault(); void decideApproval(choice); }
+        const choice = approvalChoiceForKey(event.key, model.actions.persistent.length);
+        if (choice === "allow_once" && !model.actions.allowOnce) return;
+        if (choice) { event.preventDefault(); decideCardApproval(choice); }
         return;
       }
-      if (event.key !== "Escape") return;
+      if (event.key !== "Escape" || !model.actions.deny) return;
       // 层栈让位（escLayers.ts）：任何浮层（菜单/弹层/灯箱/切换器/补全）开着时，
       // 这次 Esc 属于它们——统一判据，不再依赖各浮层「记得」用哪种截停约定。
       if (hasEscLayers()) return;
       if (editing) return;
       event.preventDefault();
       // 两段式:第一下点亮确认,第二下才真拒(见 denyViaEsc)。
-      if (terminalDeny) denyViaEsc(() => chooseTerminalOption(terminalDeny));
-      else denyViaEsc(() => void decideApproval("deny"));
+      denyViaEsc(() => decideCardApproval("deny"));
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
@@ -4137,7 +4152,13 @@ export function ChatWindow() {
     // 终止动作在途时不再接受点选(见 optionResolvingRef):多选勾选不置位,故连勾不受影响。
     if (optionResolvingRef.current) return;
     if (option.kind === "choice") {
-      setTerminalAttention((current) => current?.id !== "interactive:numbered-selector" ? current : {
+      setTerminalAttention((current) => current?.kind !== "question" ? current : current.absoluteKeys ? {
+        // 数字键直选的表单（kimi）：按键与焦点无关，只就地翻转这一项的勾。
+        ...current,
+        options: current.options?.map((entry) => (
+          entry.position === option.position ? { ...entry, selected: !entry.selected } : entry
+        )),
+      } : {
         ...current,
         options: current.options?.map((entry) => {
           const position = entry.position ?? 0;
@@ -4199,7 +4220,11 @@ export function ChatWindow() {
     }
     // 多选形态：勾选序列一次性排好再逐条等待落键（每次勾选都是相对焦点的移动，并发
     // 乱序会把勾选打到错的项上）；提交仍归用户（卡保留，submit 项在屏）。
-    const writes = planQueuedChoiceWrites(choices, labels);
+    // 数字键直选的表单（kimi）每项的按键是固定的，不用按焦点推算移动。
+    const writes = interactiveAttention.absoluteKeys
+      ? [...new Set(labels.map((label) => matchOptionByLabel(choices, label)))]
+        .flatMap((match) => (match?.input ? [{ option: match, input: match.input }] : []))
+      : planQueuedChoiceWrites(choices, labels);
     if (writes.length === 0) return; // 全部匹配不上：保留排队，等下一帧识别
     clearFocused();
     void (async () => {
@@ -4212,12 +4237,12 @@ export function ChatWindow() {
           return;
         }
         // 与 chooseInteractiveOption 同规则的乐观镜像：勾选项翻转 selected、焦点跟进。
-        setTerminalAttention((current) => current?.id !== "interactive:numbered-selector" ? current : {
+        setTerminalAttention((current) => current?.kind !== "question" ? current : {
           ...current,
           options: current.options?.map((entry) => ({
             ...entry,
             selected: entry.position === write.option.position ? !entry.selected : entry.selected,
-            focused: entry.position === write.option.position,
+            focused: current.absoluteKeys ? entry.focused : entry.position === write.option.position,
           })),
         });
       }
@@ -4695,131 +4720,48 @@ export function ChatWindow() {
           终端视图里 TUI 提示框就在眼前，重复一张只会遮挡画面。is-active 的底部淡出
           渐变只作用于对话页（消息列表），终端视图不挂，免得在终端画面上糊一条底色。 ── */}
       <div ref={overlayRef} className={"chat-approval-overlay" + (hasOverlayCard && view === "chat" ? " is-active" : "")}>
-      {interactiveAttention && <ApprovalCard
+      {interactiveAttention && <TerminalQuestionCard
+        attention={interactiveAttention}
+        kind={history?.pendingReview === "plan" ? "plan" : "question"}
+        live={terminalResponseReady}
+        customText={questionCustomText}
         returnFocusTo={promptInputRef}
-        className="chat-screen-approval"
-        title={history?.pendingReview === "plan" ? t.chat.planTitle : t.chat.questionTitle}
-        badge={history?.pendingReview === "plan" ? t.chat.approvalPending : t.chat.questionPending}
-        sideActions={<button type="button" className="chat-attention-dismiss is-inline" data-tip={t.chat.attentionDismissTip} onClick={collapseAttention}>{t.chat.attentionDismiss}</button>}
-        actions={<>
-          {interactiveAttention.options?.filter((option) => option.kind === "chat").map((option) => (
-            <button type="button" disabled={!terminalResponseReady || !option.input} key={`${option.position}:${option.label}`} onClick={() => chooseInteractiveOption(option)}>{t.chat.chatAboutThis}</button>
-          ))}
-          {interactiveAttention.options?.filter((option) => option.kind === "submit").map((option) => (
-            <button type="button" disabled={!terminalResponseReady || !option.input} className="btn-primary" key={`${option.position}:${option.label}`} onClick={() => chooseInteractiveOption(option)}>{t.chat.submitAnswer}</button>
-          ))}
-        </>}
-      >
-        {!terminalResponseReady && <span>{t.chat.questionExternalHint}</span>}
-        {interactiveAttention.text && <span className="chat-approval-prewrap">{interactiveAttention.text}</span>}
-        <div className="chat-approval-options">
-          {interactiveAttention.options?.filter((option) => option.kind === "choice").map((option) => (
-            <button type="button" disabled={!terminalResponseReady || !option.input} className={option.selected ? "is-selected" : ""} key={`${option.position}:${option.label}`} onClick={() => chooseInteractiveOption(option)}>
-              <i aria-hidden="true">{option.selected ? "✓" : ""}</i>
-              <span><b>{option.label}</b>{option.description && <small>{option.description}</small>}</span>
-            </button>
-          ))}
-        </div>
-        {interactiveAttention.options?.filter((option) => option.kind === "input").map((option) => (
-          <div className="chat-approval-custom" key={option.input}>
-            <input value={questionCustomText} onChange={(event) => setQuestionCustomText(event.target.value)} placeholder={t.chat.customAnswerPlaceholder}
-              onKeyDown={(event) => { if (event.key === "Enter") submitCustomAnswer(option); }} />
-            <button type="button" disabled={!terminalResponseReady || !questionCustomText.trim() || !option.input} onClick={() => submitCustomAnswer(option)}>{t.chat.addCustomAnswer}</button>
-          </div>
-        ))}
-      </ApprovalCard>}
-      {view === "chat" && commandAttention && commandApproval && <ApprovalCard
+        onChoose={chooseInteractiveOption}
+        onCustomText={setQuestionCustomText}
+        onCustomSubmit={submitCustomAnswer}
+        onCollapse={collapseAttention}
+      />}
+      {/* 审批卡只有一张：屏幕上认出的审批框与 broker 挂起的审批都渲染 ApprovalRequestCard，
+          差异在 approvalModel 里（见 chat/requestCard）。按 requestId 挂载：换请求即新卡，
+          「说明并拒绝」的草稿不串卡。 */}
+      {view === "chat" && approvalModel && (
+        <ApprovalRequestCard
+          key={approvalModel.requestId}
+          model={approvalModel}
+          countdown={approvalModel.channel === "broker" ? approvalCountdown : null}
+          resolving={approvalModel.channel === "broker" && resolvingApproval}
+          error={approvalModel.channel === "broker" ? broker.errorFor(approvalModel.requestId) : null}
+          escArmed={escArmed}
+          dirs={diffDirs}
+          returnFocusTo={promptInputRef}
+          onDecide={decideCardApproval}
+          onCollapse={collapseAttention}
+        />
+      )}
+      {view === "chat" && terminalAttention && !commandAttention && !interactiveAttention && <TerminalPromptCard
+        attention={terminalAttention}
+        live={terminalResponseReady}
         returnFocusTo={promptInputRef}
-        className="chat-screen-approval"
-        title={t.chat.approvalTitle}
-        badge={t.chat.approvalPending}
-        sideActions={<>
-          <button type="button" className="chat-attention-dismiss is-inline" data-tip={t.chat.attentionDismissTip} onClick={collapseAttention}>{t.chat.attentionDismiss}</button>
-          {commandRemember && <button type="button" disabled={!terminalResponseReady} className="is-persistent" onClick={() => chooseTerminalOption(commandRemember)}>
-            {/* arrow_panel 的「Approve for this session」与 gemini 的「Allow for this session」只记本会话，
-                proceed_box 的记住是持久规则——文案不能混。 */}
-            {commandAttention.details === "arrow_panel" || /\bthis session\b/i.test(commandRemember.label)
-              ? t.chat.allowSession
-              : `${t.chat.allowRemember}${commandRemember.label.match(/for:\s*(.+)$/i)?.[1] ? ` · ${commandRemember.label.match(/for:\s*(.+)$/i)?.[1]}` : ""}`}
-          </button>}
-        </>}
-        actions={<>
-          {commandDeny && <button type="button" disabled={!terminalResponseReady} className={"is-deny" + (escArmed ? " is-esc-armed" : "")} onClick={() => chooseTerminalOption(commandDeny)}>
-            {escArmed ? t.chat.denyConfirmEsc : t.chat.deny}{!remoteUi() && <kbd aria-hidden="true">Esc</kbd>}
-          </button>}
-          {/* 危险命令的「允许一次」降级为红色警示主按钮(is-danger):rm -rf 与 ls 不该
-              同一个视觉权重(判定见 isRiskyCommand,宁漏勿冤)。 */}
-          {commandAllowOnce && <button type="button" disabled={!terminalResponseReady} className={"btn-primary" + (commandApproval.command && isRiskyCommand(commandApproval.command) ? " is-danger" : "")} onClick={() => chooseTerminalOption(commandAllowOnce)}>{t.chat.allowOnce}</button>}
-        </>}
-      >
-        {!terminalResponseReady && <span>{t.chat.questionExternalHint}</span>}
-        {/* 次要信息收在一组，矮窗里压成一行，见 BrokerApprovalCard 同名容器。 */}
-        <div className="chat-approval-meta">
-          {commandApproval.tool && <div className="chat-approval-tool"><span>{t.chat.approvalTool}</span><code>{commandApproval.tool}</code></div>}
-          {commandApproval.command && <ApprovalScopeTags tool={commandApproval.tool} input={commandApproval.command} dirs={diffDirs} />}
-          {commandApproval.description && <span className="chat-approval-desc">{commandApproval.description}</span>}
-        </div>
-        {commandApproval.question && <span>{commandApproval.question}</span>}
-        {commandApproval.command && <ApprovalCommandDetail
-          label={t.chat.approvalInput}
-          command={commandApproval.command}
-          expandLabel={t.chat.approvalExpand}
-          collapseLabel={t.chat.approvalCollapse}
-          copyLabel={t.chat.copyCommand}
-          copiedLabel={t.chat.codeCopied}
-        />}
-      </ApprovalCard>}
-      {view === "chat" && terminalAttention && !commandAttention && !interactiveAttention && <ApprovalCard
-        returnFocusTo={promptInputRef}
-        className="chat-screen-approval"
-        title={terminalAttention.id === "claude:long-session-resume"
-          ? t.chat.longSessionPromptTitle
-          : terminalAttention.id === "claude:plan-approval"
-            ? t.chat.planTitle
-          : terminalRuntimeRequest?.kind === "question"
-            ? t.chat.questionTitle
-          : terminalAttention.options?.length && terminalAttention.id.startsWith("provider:")
-            ? t.chat.trustPromptTitle
-          // opencode 的横排选项框没有结构化文法，仍以统一 approval 类型落入通用卡。
-          : terminalRuntimeRequest?.kind === "approval"
-            ? t.chat.approvalTitle
-            : t.chat.terminalPromptTitle}
-        badge={t.chat.approvalPending}
-        sideActions={<button type="button" className="chat-attention-dismiss is-inline" data-tip={t.chat.attentionDismissTip} onClick={collapseAttention}>{t.chat.attentionDismiss}</button>}
-        actions={!terminalAttention.options?.length && <>
-          {/* 取消发 Esc——在 Claude 里会打断正在跑的回合,与零副作用的「仅收起」是两回事。
-              这个后果必须在 tip 里对用户说出来,不能只写在注释里给维护者看。 */}
-          <button type="button" disabled={!terminalResponseReady} data-tip={t.chat.terminalPromptCancelTip} onClick={() => {
-            void writeManagedTerminal(sessionId, "\x1b")
-              .then(() => setTerminalAttention(null))
-              .catch((error) => setSendError(formatBackendError(error, t.locale)));
-          }}>{t.chat.terminalPromptCancel}</button>
-          <button type="button" disabled={!terminalResponseReady} className="btn-primary" onClick={() => {
-            void writeManagedTerminal(sessionId, "\r")
-              .then(() => setTerminalAttention(null))
-              .catch((error) => setSendError(formatBackendError(error, t.locale)));
-          }}>{t.chat.terminalPromptConfirm}</button>
-        </>}
-      >
-        {!terminalResponseReady && <span>{t.chat.questionExternalHint}</span>}
-        {terminalAttention.id === "claude:long-session-resume"
-          ? <span>{t.chat.longSessionPromptHelp}</span>
-          : terminalAttention.id === "claude:command-approval"
-            ? <pre>{terminalAttention.text}</pre>
-          : !terminalAttention.options?.length && <>
-            <span>{t.chat.terminalPromptHelp}</span>
-            <pre>{terminalAttention.text}</pre>
-          </>}
-        {(terminalAttention.options?.length ?? 0) > 0 && <div className="chat-approval-options">
-          {terminalAttention.options!.map((option, index) => (
-            // 走同一个 chooseTerminalOption：它还负责关掉菜单识别窗口、并在模型菜单
-            // 选完后主动刷新模型（`/model` 切换不产生 Stop hook，不刷就一直显示旧值）。
-            <button type="button" disabled={!terminalResponseReady} className={index === 0 ? "is-recommended" : ""} key={`${index}:${option.label}`} onClick={() => chooseTerminalOption(option)}>
-              <span><b>{option.label}</b></span>
-            </button>
-          ))}
-        </div>}
-      </ApprovalCard>}
+        // 走同一个 chooseTerminalOption：它还负责关掉菜单识别窗口、并在模型菜单
+        // 选完后主动刷新模型（`/model` 切换不产生 Stop hook，不刷就一直显示旧值）。
+        onChoose={chooseTerminalOption}
+        onKey={(input) => {
+          void writeManagedTerminal(sessionId, input)
+            .then(() => setTerminalAttention(null))
+            .catch((error) => setSendError(formatBackendError(error, t.locale)));
+        }}
+        onCollapse={collapseAttention}
+      />}
       {/* AskUserQuestion 的作答卡（broker 挂起代答）：表单尚未渲染，卡片就是作答面——
           多选/多问题/自定义输入全部可答，提交后答案经 hook 直达模型。刻意没有「仅收起」：
           收起等于让 hook 一直干等（与 broker 审批卡同理），出口只有提交与
@@ -4828,8 +4770,8 @@ export function ChatWindow() {
       {structuredQuestions.length > 0 && !terminalAttention && !approval && questionAnswerable && <ApprovalCard
         returnFocusTo={promptInputRef}
         className="chat-screen-approval"
-        title={t.chat.questionTitle}
-        badge={t.chat.questionPending}
+        title={cardTitle("question", t)}
+        badge={cardBadge("question", "pending", t)}
         actions={<>
           {/* 远程：卡本身就是作答面，直接提交。卡内答不了时放行挂起，终端表单经屏幕识别
               变成作答卡回到手机上（此前一律「请在桌面端作答」，手机答不了题）。 */}
@@ -4880,8 +4822,8 @@ export function ChatWindow() {
       {structuredQuestions.length > 0 && !terminalAttention && !questionFormSeen && !approval && !questionAnswerable && !questionFoldedInTerminal && <ApprovalCard
         returnFocusTo={promptInputRef}
         className="chat-screen-approval"
-        title={t.chat.questionTitle}
-        badge={t.chat.questionPending}
+        title={cardTitle("question", t)}
+        badge={cardBadge("question", "pending", t)}
         sideActions={<button type="button" className="chat-attention-dismiss is-inline" data-tip={t.chat.attentionDismissTip} onClick={collapseQuestion}>{t.chat.attentionDismiss}</button>}
         actions={view === "chat" && !remoteUi() && history?.ptyManaged && <button type="button" className="btn-primary" onClick={() => setView("terminal")}>{t.chat.goTerminal}</button>}
       >
@@ -4910,30 +4852,14 @@ export function ChatWindow() {
         {/* 手机上没有终端页：认不出表单时把终端画面和按键摆进卡里，就地作答（同降级审批卡）。 */}
         {remoteUi() && history?.ptyManaged && questionFormProbe.missing && <RemoteTerminalKeys sessionId={sessionId} />}
       </ApprovalCard>}
-      {/* broker 审批卡（Claude / Codex 的 RuntimeRequest），本体与卡内状态见 chat/BrokerApprovalCard。
-          按 requestId 挂载：换请求即新卡，「说明并拒绝」的草稿不串卡。 */}
-      {view === "chat" && !terminalAttention && approval && (
-        <BrokerApprovalCard
-          key={approval.requestId}
-          approval={approval}
-          countdown={approvalCountdown}
-          timedOut={approvalTimedOut}
-          resolving={resolvingApproval}
-          error={broker.errorFor(approval.requestId)}
-          escArmed={escArmed}
-          dirs={diffDirs}
-          returnFocusTo={promptInputRef}
-          onDecide={(choice) => void decideApproval(choice)}
-        />
-      )}
       {/* 「有 pendingReview 但 GUI 接不了」的降级态：只对 GUI 托管的会话渲染——外部终端
           会话的提问/审批一律留在终端处理（broker 同口径整段短路，见 pty.rs handle_approval），
           对着它弹一张只能「打开终端」的卡，和不弹相比只多一次打扰。ptyManaged 用严格
           === false（与 composerGated 同哲学）：DTO 必填，信号缺失只可能是错配，退回旧路径。 */}
       {view === "chat" && !terminalAttention && !approval && !brokerOwnsReview && terminalReview && history?.ptyManaged !== false && <ApprovalCard
         returnFocusTo={promptInputRef}
-        title={terminalReview === "question" ? t.chat.questionTitle : terminalReview === "plan" ? t.chat.planTitle : t.chat.approvalTitle}
-        badge={terminalReview === "question" ? t.chat.questionPending : t.chat.approvalPending}
+        title={cardTitle(terminalReview, t)}
+        badge={cardBadge(terminalReview, "pending", t)}
         // 远程没有终端页可去：直接把终端画面和按键摆进卡里（RemoteTerminalKeys），
         // 此前这里写「请在桌面端作答」，人在手机上等于死路（用户实拍反馈）。
         actions={remoteUi() ? undefined : <button type="button" onClick={() => setView("terminal")}>{t.chat.goTerminal}</button>}
@@ -5268,7 +5194,8 @@ export function ChatWindow() {
           aria-activedescendant={slashMatches.length > 0 && slashActive >= 0
             ? `chat-slash-option-${slashActive}`
             : atQuery !== null && atFiles.length > 0 && atActive >= 0 ? `chat-at-option-${atActive}` : undefined}
-          disabled={composerDisabled}
+          // 卡片待处理不禁用输入框（草稿照常可写，见 chat/composerCardLock）；只有门卡才禁用。
+          disabled={composerGated || supersededTo != null}
           // 后台会话不吃 inputUnavailable 那句：它说的是「尚未接管，请先切换到终端」，
           // 而后台会话恰恰相反——终端页是没用的那一页，这个输入框才是唯一能发出去的地方。
           // 「尚未接管」占位只随 needsTakeover 翻：其它发送错误各有 sendError 条说明真实
@@ -5280,8 +5207,9 @@ export function ChatWindow() {
             // 停用的托管会话：输入框锁着，占位直接说清楚还能怎么继续，别让它看起来能输入。
             : retiredGate
               ? (retiredGate.resumable ? t.chat.managedRetiredInputResumable : t.chat.managedRetiredInputUnbound)
-              : composerLocked
-              ? (remoteUi() ? t.chat.inputLockedRemote : t.chat.inputLocked)
+              // 有卡片待处理：发送被拦，占位先把原因说了（五家、两条通道同一句）。
+              : cardLock.send
+              ? cardLockHint(cardLock, t)
               : needsTakeover && !history?.background
                 ? t.chat.inputUnavailable
                 // 手机上 Enter/Shift+Enter 是不存在的键盘语义,占位只留一句短的。回合在跑时
@@ -5403,15 +5331,10 @@ export function ChatWindow() {
             // 让开了输入框，而默认焦点几乎总在这里——徽章几乎永远不生效。空输入框时在此
             // 放行同一语义；有草稿不动（Esc 另有清心流/收 IME 的含义，不能顺手拒了审批）。
             if (event.key === "Escape" && !prompt.trim() && !event.nativeEvent.isComposing && view === "chat") {
-              const terminalDeny = commandAttention && commandApproval ? commandDeny : null;
-              if (terminalDeny) {
+              // 两条通道同一条规则：审批卡在场、能作答、有拒绝项，空输入框里的 Esc 就是两段式拒绝。
+              if (approvalModel?.live && approvalModel.state === "pending" && approvalModel.actions.deny && !resolvingApproval) {
                 event.preventDefault();
-                denyViaEsc(() => chooseTerminalOption(terminalDeny));
-                return;
-              }
-              if (!terminalAttention && approval && !resolvingApproval) {
-                event.preventDefault();
-                denyViaEsc(() => void decideApproval("deny"));
+                denyViaEsc(() => decideCardApproval("deny"));
                 return;
               }
               // 没有待审批时，空输入框里的 Esc = 中断当前回合（走查 C-9）。CLI 用户的肌肉记忆就是
@@ -5796,7 +5719,8 @@ export function ChatWindow() {
             // 这句提示就挂在这里(此前的挂点随「Enter ↵」文字一起删掉后成了孤儿文案)。
             // 7M-12：触屏上长按会弹这条 tip（G-15 给的长按提示），可它说的是 Ctrl+Enter——
             // 手机上根本没有这组键。远程不给 tip。
-            data-tip={remoteUi() ? undefined : stopMode ? t.chat.interruptNowTip : canInterrupt ? t.chat.interruptAndSendTip : undefined}
+            data-tip={!stopMode && cardLock.send ? cardLockHint(cardLock, t)
+              : remoteUi() ? undefined : stopMode ? t.chat.interruptNowTip : canInterrupt ? t.chat.interruptAndSendTip : undefined}
             onClick={() => {
               if (stopMode) {
                 if (interrupting) return;
@@ -5807,7 +5731,9 @@ export function ChatWindow() {
               } else if (!sending) void sendPrompt();
             }}
             // 在途（中断中 / 发送中）用 aria-disabled：disabled 会把正聚焦的这颗钮的焦点踢到 body。
-            aria-disabled={(stopMode ? interrupting : sending) || undefined}
+            // 有卡片待处理时发送键先置灰并带提示（同样用 aria-disabled：卡片可能在这颗钮聚焦时出现）；
+            // 点下去不发消息，只把同一句说明摆到提示条上。
+            aria-disabled={(stopMode ? interrupting : sending || cardLock.send) || undefined}
             disabled={composerDisabled || (!stopMode && !sending && !prompt.trim() && attachments.length === 0)}
           >
             {/* sending 不再借停止方块——一个「点不动的停止键」读不出是正在发送,转圈才是。

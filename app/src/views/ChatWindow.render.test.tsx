@@ -706,8 +706,15 @@ describe("ChatWindow", () => {
     // C-9：卡片渲染在 overlay 层(零高度容器,不占文档流、不下推 composer),
     // 有卡在场时容器挂 is-active 启用消息列表底部的淡出过渡。
     expect(trustCard?.closest(".chat-approval-overlay")?.className).toContain("is-active");
-    // 卡片在场时 composer 锁定但**不卸载**:textarea 还是同一个节点(草稿不丢),只是禁用。
-    expect((screen.getByRole("combobox", { name: "发送消息给 Agent" }) as HTMLTextAreaElement).disabled).toBe(true);
+    // 卡片在场时输入框不禁用也不卸载：textarea 还是同一个节点，草稿照常可写；
+    // 发送被拦住（下面断言正文没写进终端），发送键置灰并带上同一句说明（见 chat/composerCardLock）。
+    const box = screen.getByRole("combobox", { name: "发送消息给 Agent" }) as HTMLTextAreaElement;
+    expect(box).toBe(input);
+    expect(box.disabled).toBe(false);
+    expect(box.closest(".chat-compose")?.hasAttribute("inert")).toBe(false);
+    const send = screen.getByRole("button", { name: "发送" });
+    expect(send.getAttribute("aria-disabled")).toBe("true");
+    expect(send.getAttribute("data-tip")).toBe(zh.chat.cardLockPrompt);
     expect(screen.getByText("PTY 14")).toBeTruthy();
     expect(screen.getByRole("button", { name: "终端" }).getAttribute("aria-pressed")).toBe("false");
     expect(screen.getByText("PTY 14").closest(".chat-terminal-pane")?.className).toContain("is-background");

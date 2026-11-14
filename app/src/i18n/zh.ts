@@ -752,8 +752,11 @@ export const zh = {
     sendBackgroundKeysMovedYou: "后台会话不接受终端按键，请在这里直接发消息。",
     sendBackgroundQueued: "已发给后台会话。若它未处理，内容还在输入框，可直接重发。",
     sendBackgroundNoAttachments: "后台会话暂不支持附件，请只发文字。",
-    inputLocked: "终端正在等待选择，请先用上方卡片处理",
-    inputLockedRemote: "终端正在等待选择，请先用上方卡片处理",
+    // 有卡片待处理时输入框的说明（占位、发送键提示、按回车后的提示同一句），见 chat/composerCardLock。
+    cardLockApproval: "先处理上方的审批再发送",
+    cardLockQuestion: "先回答上方的提问再发送",
+    cardLockPrompt: "先处理上方的卡片再发送",
+    cardLockMenu: "先完成终端里的选择再发送",
     send: "发送",
     sending: "发送中…",
     attach: "添加图片或文件",
@@ -778,6 +781,12 @@ export const zh = {
     attachmentInstruction: attachmentInstructionZh,
     approvalTitle: "Agent 请求权限",
     approvalPending: "待批准",
+    // 卡片徽章：每个状态一个词，五家、两条通道共用（见 chat/requestCard 的 cardBadge）。
+    choicePending: "待选择",
+    confirmPending: "待确认",
+    cardExpired: "已过期",
+    cardCancelled: "已取消",
+    choiceTitle: "终端正在等待你的选择",
     questionTitle: "Agent 正在等待你的回答",
     questionPending: "待回答",
     questionFormLoading: "点选答案，终端表单就绪后自动作答",
@@ -799,6 +808,7 @@ export const zh = {
     customAnswerPlaceholder: "输入其他回答",
     addCustomAnswer: "添加回答",
     submitAnswer: "提交选择",
+    questionNext: "下一步",
     questionAnswered: "已作答",
     questionAnswerReady: "提交后 Agent 立即继续",
     questionAnswerIncomplete: (count: number) => `还有 ${count} 题未作答`,
@@ -820,6 +830,7 @@ export const zh = {
     allowOnce: "允许一次",
     allowRemember: "允许并记住",
     allowSession: "本会话内允许",
+    allowAutoMode: "允许并切到自动模式",
     allowLocalProject: "允许并记住（此项目、本机）",
     allowProject: "允许并记住（项目共享）",
     allowUser: "始终允许（全局）",
@@ -1194,9 +1205,6 @@ export const zh = {
     // CLI 意外退出（二期 #7）：与后端 exit_report::crash_label 同文，灵动岛/通知里也是这句。
     agentCrashed: (code: number) => `Agent 意外退出（退出码 ${code}）`,
     resumeSession: "恢复会话",
-    terminalNeedsAttention: "Agent 有待处理的交互，请先完成卡片或终端里的确认，再重新发送。",
-    // 拦住发送的是提问卡时用这句：「启动确认」对一个回合中途的提问是错的说法（用户实拍）。
-    questionNeedsAnswer: "Agent 有提问待回答，答完再发送。",
     sendEchoTimeout: "消息没进入终端，未发出。终端可能停在启动询问上",
     terminalStreamStalled: "终端画面卡住了，不会自行恢复。点「结束并恢复」即可，对话记录不受影响。",
     // 初始化 25s 超时（撤遮罩后的黑屏说明，见 ManagedTerminal 的 initTimedOut）。
@@ -1255,8 +1263,6 @@ export const zh = {
     terminalPromptTitle: "Agent 需要你完成一个启动步骤",
     terminalPromptHelp: "下面是终端的提示原文，用右侧按钮选择确认即可。",
     trustPromptTitle: "是否信任此文件夹？",
-    longSessionPromptTitle: "如何恢复这个长会话？",
-    longSessionPromptHelp: "完整恢复会消耗较多额度，建议从摘要恢复。",
     terminalPromptConfirm: "确认",
     terminalPromptCancel: "取消 / 返回",
     // 「取消」实发 Esc 的后果说明：与零副作用的「仅收起」是两回事，必须对用户说出来。

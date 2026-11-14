@@ -416,6 +416,8 @@ impl AgentPlugin for Gemini {
                 // 重绘不清屏，上一个确认框会残留在缓冲上方：取最后一次。
                 last: true,
                 details: crate::chat_ui::AttentionDetails::FramedBox,
+                kind: crate::chat_ui::AttentionKind::Approval,
+                confirms: None,
             },
             crate::chat_ui::AttentionPattern {
                 id: "gemini:usage-limit",
@@ -425,6 +427,9 @@ impl AgentPlugin for Gemini {
                 ],
                 last: true,
                 details: crate::chat_ui::AttentionDetails::None,
+                // 回合中途的额度或高负载提示：CLI 要用户选「继续重试 / 停下」，不是审批也不是启动步骤。
+                kind: crate::chat_ui::AttentionKind::Choice,
+                confirms: None,
             },
             crate::chat_ui::AttentionPattern {
                 id: "gemini:question",
@@ -432,6 +437,8 @@ impl AgentPlugin for Gemini {
                 // 多问题表单切页重绘，上一页残留在上方：取最后一次。
                 last: true,
                 details: crate::chat_ui::AttentionDetails::FramedForm,
+                kind: crate::chat_ui::AttentionKind::Question,
+                confirms: None,
             },
         ]
     }

@@ -25,9 +25,25 @@ export type TerminalAttentionOption = {
 /// arrow_panel = 「▶ 标题」面板式（数字键直选、记住=仅本会话）；
 /// framed_box = 圆角外框对话框式（● 焦点光标移动选择，选项行带框线）。
 /// bracket_form = 方括号编号表单（kimi 提问：`[1] 选项` / `[✓] 选项`，数字键直选）。
-/// framed_form = 圆角外框提问表单（gemini 0.65 ask_user：● 焦点光标移动 + 回车）。缺省/none = 不做结构化拆解。
-export type AttentionDetailsStyle = "none" | "proceed_box" | "arrow_panel" | "framed_box" | "bracket_form" | "framed_form";
-export type TerminalAttention = { id: string; text: string; options?: TerminalAttentionOption[]; details?: AttentionDetailsStyle };
+/// framed_form = 圆角外框提问表单（gemini 0.65 ask_user：● 焦点光标移动 + 回车）。
+/// option_row = 横排选项行（opencode 权限框：→ 切换、回车选中、Esc 等于末项）。缺省/none = 不做结构化拆解。
+export type AttentionDetailsStyle = "none" | "proceed_box" | "arrow_panel" | "framed_box" | "bracket_form" | "framed_form" | "option_row";
+/// 这条提示是什么事。卡片的标题、徽章、形态只看它，不看 id。
+/// 前四种由插件随规则声明（后端 `AttentionKind`）；后三种由识别层按来源给：
+/// trust = 插件声明的信任页标记，startup = 登录与凭据类通用启动提示，menu = 刚发出菜单命令后认出的菜单。
+export type AttentionKind = "approval" | "plan" | "question" | "choice" | "trust" | "startup" | "menu";
+export type TerminalAttention = {
+  id: string;
+  kind: AttentionKind;
+  text: string;
+  options?: TerminalAttentionOption[];
+  details?: AttentionDetailsStyle;
+  /// 选项按钮发的是绝对按键（数字键直选），与当前焦点无关。缺省 = 从焦点做相对移动。
+  absoluteKeys?: boolean;
+  /// 这一屏是另一条规则里某个选项的二次确认页（值 = 那条规则的 id）。用户刚在 Meowo 里点了
+  /// 那个选项时，Meowo 替他按下确认（见 chat/terminalFollowUp）；不是 Meowo 发起的照常出卡。
+  confirms?: string;
+};
 
 export function visibleTerminalText(text: string): string {
   // backlog 可能保留已经处理过的旧提示。只看最后一次整屏清除之后的内容，避免重新挂载
@@ -129,7 +145,32 @@ export type SelectorAnchor = { marker: string; kind: "input" | "chat" };
 /// 可操作提示的识别规格，由插件声明、经 chatUi 下发（后端 AttentionPattern）。
 /// patterns 是 JS 正则源码，任一命中即算命中该卡片；last=true 取最后一次匹配
 /// （审批框必须如此：TUI 重绘不清屏，上一屏的残影在缓冲上方）。
-export type AttentionPattern = { id: string; patterns: string[]; last: boolean; details?: AttentionDetailsStyle };
+export type AttentionPattern = {
+  id: string;
+  patterns: string[];
+  last: boolean;
+  details?: AttentionDetailsStyle;
+  kind?: AttentionKind;
+  confirms?: string | null;
+};
+
+/// 规则没带种类时（旧后端）按屏幕文法兜底：审批框文法是审批，表单文法是提问，其余是「等你选择」。
+/// 不看 id。
+function kindOfRule(rule: { kind?: AttentionKind; details?: AttentionDetailsStyle }): AttentionKind {
+  if (rule.kind) return rule.kind;
+  switch (rule.details) {
+    case "proceed_box":
+    case "arrow_panel":
+    case "framed_box":
+    case "option_row":
+      return "approval";
+    case "bracket_form":
+    case "framed_form":
+      return "question";
+    default:
+      return "choice";
+  }
+}
 
 export type AttentionGrammar = {
   /// 会话的 agent id。仅用于日志/调试与默认文法的自述——**识别规则不再按它分支**，
@@ -159,10 +200,12 @@ const CLAUDE_GRAMMAR: AttentionGrammar = {
         "resuming the full session will consume a substantial portion of your usage limits",
       ],
       last: false,
+      kind: "choice",
     },
     {
       id: "claude:command-approval",
       details: "proceed_box",
+      kind: "approval",
       patterns: ["this command requires approval", "do you want to proceed\\?"],
       last: true,
     },
@@ -172,6 +215,7 @@ const CLAUDE_GRAMMAR: AttentionGrammar = {
       id: "claude:plan-approval",
       patterns: ["written\\s+up\\s+a\\s+plan\\s+and\\s+is\\s+ready\\s+to\\s+execute"],
       last: true,
+      kind: "plan",
     },
   ],
 };
@@ -375,7 +419,8 @@ function parseBracketForm(visible: string, matchIndex: number): { text: string; 
       checkboxPosition += 1;
       if (!/^other$/i.test(checkbox[2])) {
         const checked = checkbox[1] !== " ";
-        options.push({ label: checked ? `✓ ${checkbox[2]}` : checkbox[2], input: String(checkboxPosition), kind: "choice", selected: checked });
+        // 勾选状态只放在 selected 上：提问卡自己画勾，标签里再带一个「✓」就成了两个。
+        options.push({ label: checkbox[2], input: String(checkboxPosition), kind: "choice", selected: checked });
       }
       continue;
     }
@@ -388,7 +433,8 @@ function parseBracketForm(visible: string, matchIndex: number): { text: string; 
   // 多选题按数字只是勾选，去下一页要按 Tab（表单的 ←/→/tab switch）。
   if (multi) options.push({ label: "Next ⇥", input: "\t", kind: "submit" });
   const text = [review.join("\n"), question].filter(Boolean).join("\n");
-  return { text, options };
+  // 每项带上序号：提问卡勾选后要就地翻转那一项的勾（按 position 认是哪一项）。
+  return { text, options: options.map((option, position) => ({ ...option, position })) };
 }
 
 /// 圆角外框提问表单（gemini 0.65 的 ask_user，npm bundle 源码取证 2026-11-12，未实拍）。
@@ -466,6 +512,41 @@ function parseFramedForm(visible: string, matchIndex: number): { text: string; o
     }];
   });
   return { text: question, options };
+}
+
+/// 横排选项行（opencode 权限框，1.19.5 真机取证 2026-11-14，tests/probe_tui_script.rs）：
+///   ┃  △ Permission required
+///   ┃    ← Access external directory C:\Windows
+///   ┃  Patterns
+///   ┃  - C:\Windows\*
+///   ┃   Allow once   Allow always   Reject          ctrl+f fullscreen  ⇆ select  enter confirm
+/// 命中行是标题行；选项行是它下面第一条带 `⇆ select` 按键说明的行，选项之间至少两个空格。
+/// 焦点只用底色表示，文本里认不出：框一出现焦点恒在第一项（程序文件里 `selected: 第一项`），
+/// 按钮按这个起点做相对移动（→ × n 再回车）；末项是 Esc 的落点（`escapeKey`），直接发 Esc，
+/// 不依赖焦点。同一次写入里的「→ 回车」实测有效。
+function parseOptionRow(visible: string, matchIndex: number): { text: string; options?: TerminalAttentionOption[] } {
+  const lines = visible.split("\n");
+  const matchedLine = visible.slice(0, matchIndex).split("\n").length - 1;
+  // 左边框之后正文缩进两格（真机屏幕），一并去掉；更深的缩进（第二行的图标行）保留。
+  const strip = (line: string) => line.replace(/^\s*[┃│|]\s{0,2}/, "").trimEnd();
+  let rowAt = -1;
+  for (let line = matchedLine + 1; line < lines.length; line += 1) {
+    if (/⇆\s*select/i.test(lines[line])) { rowAt = line; break; }
+  }
+  // 选项行还没画出来时只取标题下面几行，别把框外的内容收进正文。
+  const body = lines.slice(matchedLine, rowAt >= 0 ? rowAt : matchedLine + 8).map(strip).filter((line) => line.trim());
+  const text = body.join("\n");
+  if (rowAt < 0) return { text };
+  // 按键说明在同一行的右侧：从第一个按键说明起裁掉，剩下的才是选项。
+  const row = strip(lines[rowAt]).replace(/\s{2,}(?:ctrl\+\S+\s+\S+\s+)?⇆\s*select.*$/i, "");
+  const labels = row.trim().split(/\s{2,}/).map((label) => label.trim()).filter(Boolean);
+  if (labels.length < 2) return { text };
+  const options = labels.map((label, position): TerminalAttentionOption => ({
+    label,
+    input: position === labels.length - 1 ? "\x1b" : "\x1b[C".repeat(position) + "\r",
+    position,
+  }));
+  return { text, options };
 }
 
 function lastMatch(pattern: RegExp, text: string): (RegExpMatchArray & { index: number }) | null {
@@ -589,7 +670,7 @@ export function terminalAttention(
   if (!text) return null;
   const visible = visibleTerminalText(text);
   const lower = visible.toLowerCase();
-  let best: { index: number; id: string; details?: AttentionDetailsStyle } | null = null;
+  let best: { index: number; id: string; kind: AttentionKind; details?: AttentionDetailsStyle; confirms?: string } | null = null;
   // 整句可操作提示（审批框、长会话确认）由插件声明、经 chatUi 下发——识别层不再
   // 认识任何具体 agent。规则**天然是 per-agent 的**：这些是各家 TUI 的界面原文，
   // 别家 agent 的输出里引用同一句（讨论审批流程、cat 一个含该句的脚本）不该误弹卡片、
@@ -597,12 +678,14 @@ export function terminalAttention(
   // 「你只会拿到自己的规则」。
   for (const rule of grammar.attentionPatterns ?? []) {
     const index = matchAttentionPattern(rule, visible);
-    if (index >= 0 && (!best || index > best.index)) best = { index, id: rule.id, details: rule.details };
+    if (index >= 0 && (!best || index > best.index)) {
+      best = { index, id: rule.id, kind: kindOfRule(rule), details: rule.details, confirms: rule.confirms ?? undefined };
+    }
   }
   for (const marker of markers) {
     const normalized = marker.toLowerCase();
     const index = lower.lastIndexOf(normalized);
-    if (index >= 0 && (!best || index > best.index)) best = { index, id: `provider:${normalized}` };
+    if (index >= 0 && (!best || index > best.index)) best = { index, id: `provider:${normalized}`, kind: "trust" };
   }
   for (const pattern of startupPrompts ? GENERIC_STARTUP_PROMPTS : []) {
     for (const match of lower.matchAll(pattern)) {
@@ -611,7 +694,7 @@ export function terminalAttention(
         // id 按识别规则稳定，而不带整屏文字。TUI 重绘会改变原始流的重复片段，若把它们
         // 放进 id，同一提示就会被误报成几十个新提示，导致对话页闪烁。用户操作后的下一屏
         // 由一次性抓屏交付，因此连续两个同类选择器也不会丢。
-        best = { index, id: `generic:${pattern.source}` };
+        best = { index, id: `generic:${pattern.source}`, kind: "startup" };
       }
     }
   }
@@ -619,7 +702,7 @@ export function terminalAttention(
     const selectorHint = /enter to select[^\n]*/i.exec(visible);
     const numberedChoices = visible.match(/^\s*(?:[❯›>]\s*)?\d+[.)]\s+/gm) ?? [];
     if (selectorHint && numberedChoices.length >= 2) {
-      best = { index: selectorHint.index, id: "interactive:numbered-selector" };
+      best = { index: selectorHint.index, id: "interactive:numbered-selector", kind: "question" };
     }
   }
   // 无编号的光标菜单（kimi 的 `/model`、provider 切换等）。与上面的编号选择器是两种形态：
@@ -632,6 +715,7 @@ export function terminalAttention(
   if (cursorMenu) {
     return {
       id: "interactive:cursor-menu",
+      kind: "menu",
       text: cursorMenu.title,
       options: cursorMenuOptions(cursorMenu.lines, cursorMenu.focused),
     };
@@ -642,6 +726,7 @@ export function terminalAttention(
   if (framedMenu) {
     return {
       id: "interactive:cursor-menu",
+      kind: "menu",
       text: framedMenu.title,
       options: framedMenu.options,
     };
@@ -661,19 +746,24 @@ export function terminalAttention(
     let bottom = matchedLine;
     while (bottom < lines.length - 1 && !/^\s*╰/.test(lines[bottom])) bottom += 1;
     const box = lines.slice(top, bottom + 1).join("\n");
-    return { id: best.id, text: box, details: detailsStyle, options: detectFramedNumberedMenu(box)?.options };
+    return { id: best.id, kind: best.kind, text: box, details: detailsStyle, options: detectFramedNumberedMenu(box)?.options };
+  }
+  if (detailsStyle === "option_row") {
+    const row = parseOptionRow(visible, best.index);
+    // 选项行还没画出来：照样出卡（正文先给用户看），按钮由卡片按「回车 = 第一项、Esc = 末项」兜底。
+    return { id: best.id, kind: best.kind, text: row.text, details: detailsStyle, options: row.options, confirms: best.confirms };
   }
   if (detailsStyle === "bracket_form") {
     const form = parseBracketForm(visible, best.index);
-    // 解析不出选项（表单还没画完）就不出卡：空卡只会收走输入框又给不了动作。
-    // details 不往外带：这不是命令审批，走通用的终端提示卡（按钮 = 发对应按键）。
-    return form ? { id: best.id, text: form.text, options: form.options } : null;
+    // 解析不出选项（表单还没画完）就不出卡：空卡给不了任何动作。
+    // 数字键直选，按钮发的键与焦点无关（absoluteKeys）。
+    return form ? { id: best.id, kind: best.kind, text: form.text, options: form.options, absoluteKeys: true } : null;
   }
   if (detailsStyle === "framed_form") {
     const form = parseFramedForm(visible, best.index);
     // 出的是可作答的提问卡（与 claude 屏幕上认出的选择器同一张卡：单选即答、多选勾选后
     // 提交）。认不出可点的动作（文本题、表单没画完）就不出卡，空卡只会收走输入框。
-    return form ? { id: "interactive:numbered-selector", text: form.text, options: form.options } : null;
+    return form ? { id: "interactive:numbered-selector", kind: best.kind, text: form.text, options: form.options } : null;
   }
   const approvalCard = detailsStyle !== "none";
   // 面板式的详情从标题行(▶ Run this command?)起取:best 可能命中面板底部的
@@ -822,6 +912,7 @@ export function terminalAttention(
     const question = questionLine?.split(/→|->/).at(-1)?.trim() ?? "";
     return {
       id: best.id,
+      kind: best.kind,
       text: question,
       options: choices,
     };
@@ -836,7 +927,7 @@ export function terminalAttention(
       .sort((a, b) => a.index - b.index)
       .filter(({ label }) => !/reject with feedback|^revise$/i.test(label.trim()))
       .map(({ index, label }) => ({ label, input: String(index + 1) }));
-    return { id: best.id, text: displayText, details: detailsStyle, options: options.length >= 2 ? options : undefined };
+    return { id: best.id, kind: best.kind, text: displayText, details: detailsStyle, options: options.length >= 2 ? options : undefined, absoluteKeys: true };
   }
   // trust、长会话恢复以及其他编号选择器共用同一套结构化按钮，不再退化成上一项/下一项。
   if (labels.length >= 2) {
@@ -847,6 +938,7 @@ export function terminalAttention(
     const focused = merged.filter((entry) => entry.focused).at(-1);
     return {
       id: best.id,
+      kind: best.kind,
       text: displayText,
       details: detailsStyle,
       options: merged.map(({ index, label }) => ({
@@ -866,9 +958,9 @@ export function terminalAttention(
   // 让 GUI 直接给出选项按钮，而不是把「上一项/下一项」甩给用户。
   const anchored = detectAnchoredCursorMenu(visible, best.index) ?? detectCursorMenu(visible);
   if (anchored) {
-    return { id: best.id, text: displayText, details: detailsStyle, options: cursorMenuOptions(anchored.lines, anchored.focused) };
+    return { id: best.id, kind: best.kind, text: displayText, details: detailsStyle, options: cursorMenuOptions(anchored.lines, anchored.focused) };
   }
-  return { id: best.id, text: displayText, details: detailsStyle };
+  return { id: best.id, kind: best.kind, text: displayText, details: detailsStyle };
 }
 
 /** 兼容启动发送路径只关心是否阻塞的调用。 */

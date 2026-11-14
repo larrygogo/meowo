@@ -120,7 +120,7 @@ const MODEL_PRESETS: Record<string, ChatUi["model_presets"]> = {
  * 那边改了正则，这里也要跟上，否则前端测试测的是一套过期规则。
  * 未取证的 provider 为空（不做整句识别）。
  */
-const ATTENTION_PATTERNS: Record<string, { id: string; patterns: string[]; last: boolean; details: "none" | "proceed_box" | "arrow_panel" | "framed_box" | "bracket_form" | "framed_form" }[]> = {
+const ATTENTION_PATTERNS: Record<string, NonNullable<ChatUi["attention_patterns"]>> = {
   claude: [
     {
       id: "claude:long-session-resume",
@@ -130,12 +130,24 @@ const ATTENTION_PATTERNS: Record<string, { id: string; patterns: string[]; last:
       ],
       last: false,
       details: "none",
+      kind: "choice",
+      confirms: null,
     },
     {
       id: "claude:command-approval",
       patterns: ["this command requires approval", "do you want to proceed\\?"],
       last: true,
       details: "proceed_box",
+      kind: "approval",
+      confirms: null,
+    },
+    {
+      id: "claude:plan-approval",
+      patterns: ["written\\s+up\\s+a\\s+plan\\s+and\\s+is\\s+ready\\s+to\\s+execute"],
+      last: true,
+      details: "none",
+      kind: "plan",
+      confirms: null,
     },
   ],
   kimi: [
@@ -144,6 +156,8 @@ const ATTENTION_PATTERNS: Record<string, { id: string; patterns: string[]; last:
       patterns: ["↑↓ select\\s+(?:1-\\d+ / ↵ (?:choose|toggle)|1/2 choose\\s+↵ confirm)\\s+←/→/tab switch"],
       last: true,
       details: "bracket_form",
+      kind: "question",
+      confirms: null,
     },
     {
       id: "kimi:command-approval",
@@ -153,6 +167,8 @@ const ATTENTION_PATTERNS: Record<string, { id: string; patterns: string[]; last:
       ],
       last: true,
       details: "arrow_panel",
+      kind: "approval",
+      confirms: null,
     },
   ],
   gemini: [
@@ -166,17 +182,22 @@ const ATTENTION_PATTERNS: Record<string, { id: string; patterns: string[]; last:
       ],
       last: true,
       details: "framed_box",
+      kind: "approval",
+      confirms: null,
     },
     {
       id: "gemini:usage-limit",
       patterns: ["^\\s*│\\s*usage limit reached\\b", "^\\s*│\\s*we are currently experiencing high demand\\b"],
       last: true,
       details: "none",
+      kind: "choice",
+      confirms: null,
     },
-    { id: "gemini:question", patterns: ["^\\s*│\\s*answer questions\\b"], last: true, details: "framed_form" },
+    { id: "gemini:question", patterns: ["^\\s*│\\s*answer questions\\b"], last: true, details: "framed_form", kind: "question", confirms: null },
   ],
   opencode: [
-    { id: "opencode:command-approval", patterns: ["△ permission required"], last: true, details: "none" },
+    { id: "opencode:command-approval", patterns: ["△ permission required"], last: true, details: "option_row", kind: "approval", confirms: null },
+    { id: "opencode:always-allow-confirm", patterns: ["△ always allow"], last: true, details: "option_row", kind: "choice", confirms: "opencode:command-approval" },
   ],
 };
 

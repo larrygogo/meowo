@@ -5310,11 +5310,10 @@ button.scm-check-name:hover { text-decoration: underline; }
 /* Esc 两段式确认:第一下把拒绝按钮点亮为警示态并换文案「再按 Esc 确认拒绝」,
    第二下才真拒(见 ChatWindow 的 denyViaEsc)。 */
 .chat-approval button.is-deny.is-esc-armed { border-color: color-mix(in srgb, var(--cc-err) 55%, transparent); color: var(--cc-fail-text); background: color-mix(in srgb, var(--cc-err) 12%, transparent); }
-/* 屏幕识别卡在场时 composer 整体锁定:inert(由 ChatWindow 经 ref 设置)负责挡键盘
-   与焦点,这里管视觉降级 + 老 WebView 的指针兜底。不卸载的理由见 ChatWindow 注释。 */
-/* 降级只压工具行，不压文字区：整块 opacity .55 把那句告诉用户该做什么的提示一起压掉了
-   （实拍「终端正在等待选择，请先用上方卡片或终端页处理」深色 2.62:1、浅色 2.23:1；不锁时 5.88 / 5.66）。 */
-.chat-compose.is-locked { pointer-events: none; }
+/* 屏幕上的卡摆在眼前时（终端里正开着一个等按键的框）：工具行的控件逐个停用（见 chat/composerCardLock），
+   这里只管视觉降级。输入框不锁：草稿照常可写，所以不再对整块设 pointer-events:none，也不设 inert。 */
+/* 降级只压工具行，不压文字区：整块 opacity .55 会把占位里那句告诉用户该做什么的说明一起压掉
+   （实拍深色 2.62:1、浅色 2.23:1；不压时 5.88 / 5.66）。 */
 .chat-compose.is-locked > :not(textarea) { opacity: .55; }
 .chat-compose {
   /* 文档流内的 footer：margin 居中限宽、底部留 18px。position:relative 是给内部的
@@ -6690,7 +6689,7 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 /* ── 统一审批卡(ApprovalCard)──
    外壳/头部/徽章/左右动作组直接复用上面的 .chat-approval 一族;这里只放屏幕识别卡
    特有的部件:选择器选项列表、自定义回答输入行、pre-wrap 正文。卡片在场时 compose
-   锁定但不卸载(.chat-compose.is-locked),底部间距无需特判。 */
+   不卸载、输入框不禁用(工具行降级见 .chat-compose.is-locked),底部间距无需特判。 */
 .chat-approval-prewrap { white-space: pre-wrap; }
 /* 交互卡的「仅收起」:零副作用出口(不写 PTY)。× 形态绝对定位在卡片右上;文字形态
    (is-inline)混在动作行里,保持幽灵按钮的低调——它不是主要动作,不能与选项抢视觉。 */
