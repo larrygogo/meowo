@@ -7,6 +7,19 @@
 use crate::cli_text::CliTextDep as D;
 
 pub(super) static DEPS: &[D] = &[
+    // ── 记录格式：CC 给没跑完的调用补写的回执（transcript.rs 的 unfinished_receipt）──
+    D::record(
+        "record:tool-interrupted-session-ended",
+        "[Tool call interrupted: the session ended before this call's result was recorded",
+        "[Tool call interrupted: the session ended before this call's result was recorded, so its outcome is unknown. Check whether it took effect before relying on it or running it again.]",
+        "2.1.316 transcript 实样（meowo 项目会话 a7bec18a 第 19706 行，2026-10-31）；本机 2.1.303 到 2.1.323 共 16 次，文案一致",
+    ),
+    D::record(
+        "record:tool-interrupted-response-stopped",
+        "Interrupted: the response that made this tool call was stopped",
+        "Interrupted: the response that made this tool call was stopped by a safety classifier while the call was running; it may have partially or fully completed.",
+        "2.1.322 transcript 实样（2026-11-11）；本机 2.1.302、2.1.322 共 11 次",
+    ),
     // ── 输入框规格（composer）──
     D::new(
         "composer.empty",

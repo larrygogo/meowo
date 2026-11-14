@@ -8,7 +8,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { pathKey, unquotePath } from "../paths";
 import { COMPACTING_ACTIVITY } from "../activity";
 import { appConfirm } from "../confirm";
-import { forkSession, agentChatUi, attachBackgroundSession, sendBackgroundPrompt, clipboardRestore, clipboardSetImage, confirmStopSession, dismissInteractiveQuestion, getChatHistory, getGitChangesOverview, getGitDiffSummary, getLiveSessionsPage, getSessionLineage, isExternallyHeld, managedTerminalBinding, managedTerminalPendingLaunch, managedTerminalScreen, managedTerminalSnapshot, openNewSessionWindow,  refreshSessionModel, refreshSessionTodos, renameSession as renameSessionCmd, savePastedAttachment, sessionLaunchSelections, setArchived as setArchivedCmd, sessionTone, startManagedTerminal, copySessionToProvider, takeoverManagedTerminal, writeManagedTerminal, type AgentId, type ChatHistory, type ChatItem, type ChatUi, type GitDiffSummaryDto, type RepoChangesDto, type LiveSession, type ModelPreset, type PendingApproval, type RuntimeRequest } from "../api";
+import { forkSession, agentChatUi, attachBackgroundSession, sendBackgroundPrompt, clipboardRestore, clipboardSetImage, confirmStopSession, dismissInteractiveQuestion, getChatHistory, getGitChangesOverview, getGitDiffSummary, getLiveSessionsPage, getSessionLineage, isExternallyHeld, managedTerminalBinding, managedTerminalPendingLaunch, managedTerminalScreen, managedTerminalSnapshot, openNewSessionWindow,  refreshSessionModel, refreshSessionTodos, renameSession as renameSessionCmd, savePastedAttachment, sessionLaunchSelections, setArchived as setArchivedCmd, historyTone, liveSessionTone, startManagedTerminal, copySessionToProvider, takeoverManagedTerminal, writeManagedTerminal, type AgentId, type ChatHistory, type ChatItem, type ChatUi, type GitDiffSummaryDto, type RepoChangesDto, type LiveSession, type ModelPreset, type PendingApproval, type RuntimeRequest } from "../api";
 import { hasEscLayers } from "../escLayers";
 import { useTauriEvent } from "../hooks/useTauriEvent";
 import { useVisibleInterval } from "../hooks/useVisibleInterval";
@@ -614,7 +614,7 @@ export function ChatWindow() {
   // Tab——正文停在输入框里发不出去(0.6.11 实机)。
   // 后台子任务数与侧栏同源（后端同一份 transcript 分析）：主回合停了、后台子任务还在跑时，
   // 这里和侧栏一样是「运行中」。此前这一位传的是 undefined，对话窗按空闲处理。
-  const tone = sessionTone(history?.connected ?? false, history?.status, history?.pendingReview, history?.errored, history?.busySubagents, history?.screenState, history?.screenAssumed);
+  const tone = historyTone(history);
   // 要在终端里答的交互。Lead 关卡（gate）不算：它有自己的卡片（DockWork 的 LeadGateCard），
   // 不能再冒出一张「Agent 请求权限 / 去终端批准」的降级卡和发送软拦（做空审查 M2）。
   const terminalReview = history?.pendingReview && history.pendingReview !== "gate" ? history.pendingReview : null;
@@ -2082,7 +2082,7 @@ export function ChatWindow() {
       getLiveSessionsPage("all", null, null, 200)
         .then((page) => {
           const needs = new Set(page.items
-            .filter((row) => attentionTone(sessionTone(row.connected, row.session.status, row.pending_review, row.errored, row.busy_subagents, row.screen_state, row.screen_assumed)))
+            .filter((row) => attentionTone(liveSessionTone(row)))
             .map((row) => row.session.id));
           go(nextAttentionSession(page.items.map((row) => row.session.id), (id) => needs.has(id), activeSessionRef.current));
         })
@@ -3342,7 +3342,7 @@ export function ChatWindow() {
         // 说明与卡片在场时的占位同一句（见 chat/composerCardLock）。
         if (latest.pendingReview && latest.pendingReview !== "gate") throw new Error(cardLockHint(lockForPendingReview(latest.pendingReview), t));
         if (latest.screenState === "blocked") throw new Error(t.chat.cardLockMenu);
-        const currentTone = sessionTone(latest.connected, latest.status, latest.pendingReview, latest.errored, undefined, latest.screenState, latest.screenAssumed);
+        const currentTone = historyTone(latest);
         const key = currentTone === "running" ? chatUi?.queue_input : "\r";
         if (!key) throw new Error(t.chat.busySendUnavailable);
         outgoingStore.settle(outgoingId, { kind: currentTone === "running" ? "queued" : "echo" });

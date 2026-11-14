@@ -765,7 +765,7 @@ export const zh = {
         placeholder: "Enter 排队 · Ctrl+Enter 中断并发送",
         placeholderNoInterrupt: "Enter 排队，当前任务结束后发送",
         placeholderRemote: "发送后排队，当前任务结束再发",
-        receipt: (n: number) => `${n} 条消息排队中，本回合结束后处理`,
+        receipt: (n: number) => `${n} 条消息${vocab.delivery.accepted}，本回合结束后处理`,
       },
       // 何时处理没有取证：只说交给了 Agent，不许诺时机。
       handoff: {
@@ -1244,7 +1244,7 @@ export const zh = {
     terminalInitTimeout: "终端长时间无输出，可能启动失败。可结束会话后重试，对话记录不受影响。",
     queuedInterjections: (n: number) => `${n} 条插话已排队，本回合结束后处理`,
     // composer 上方的队列折叠条（Kimi 式）：收起时一行提示，点开逐条查看/移除。
-    queueLabel: "排队中的消息",
+    queueLabel: `${vocab.delivery.accepted}的消息`,
     // 送达状态词（发送中、已排队、未确认送达、发送失败…）在词表 t.vocab.delivery，这里只留动作与说明。
     echoRetry: "重发",
     echoRestore: "放回输入框",
@@ -1432,7 +1432,8 @@ export const zh = {
     // 非默认排序只作用于已加载条目（翻页新条目追加尾部），要向用户说明范围。
     dateToday: "今天",
     dateYesterday: "昨天",
-    running: "正在运行…",
+    // 运行行的兜底说法：就是会话状态「运行中」，不另起一个词。
+    running: `${vocab.session.running}…`,
     contextTip: (pct: number, kw: number) => `上下文已用 ${pct}%（窗口 ${kw}K）`,
     contextShort: (pct: number) => `上下文已用 ${pct}%`,
     // 这家 CLI 不上报 token 用量（Gemini、OpenCode）：圆环留在原位置灰，悬停说明原因，

@@ -390,6 +390,20 @@
         },
         {
           "legacy": false,
+          "needle": "[Tool call interrupted: the session ended before this call's result was recorded",
+          "note": "2.1.316 transcript 实样（meowo 项目会话 a7bec18a 第 19706 行，2026-10-31）；本机 2.1.303 到 2.1.323 共 16 次，文案一致",
+          "rule": "record:tool-interrupted-session-ended",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/transcript.rs:339"
+        },
+        {
+          "legacy": false,
+          "needle": "Interrupted: the response that made this tool call was stopped",
+          "note": "2.1.322 transcript 实样（2026-11-11）；本机 2.1.302、2.1.322 共 11 次",
+          "rule": "record:tool-interrupted-response-stopped",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/transcript.rs:340"
+        },
+        {
+          "legacy": false,
           "needle": "Try \"",
           "note": "2.1.325 真机 2026-11-14（probe_tui_script cells）：空输入框的暗色占位。占位内容不固定（还有预测的下一句），带光标读屏时靠「光标在输入起点且该格暗色」认，这条正则只是没有光标信息时的退路",
           "rule": "composer.empty",
@@ -1026,42 +1040,42 @@
           "needle": "plan_mode.cancel",
           "note": "2.5.1 wire.jsonl 实样（/plan off 与 Shift+Tab 关计划模式都写它，research-cli-drift K1）；kimi.EXE 6 处",
           "rule": "record:plan_mode.cancel",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/telemetry.rs:1257"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/telemetry.rs:1262"
         },
         {
           "legacy": false,
           "needle": "plan_mode.enter",
           "note": "2.5.1 kimi.EXE 6 处（包内回放器 case）",
           "rule": "record:plan_mode.enter",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/telemetry.rs:1252"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/telemetry.rs:1257"
         },
         {
           "legacy": false,
           "needle": "token_counting.rebased",
           "note": "2.5.1 wire.jsonl 实样（压缩后 Context% 读它，research-cli-drift K4）；kimi.EXE 3 处",
           "rule": "record:token_counting.rebased",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/telemetry.rs:1713"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/telemetry.rs:1718"
         },
         {
           "legacy": false,
           "needle": "usageScope",
           "note": "2.5.1 wire.jsonl 实样（压缩请求记 session 档，不能当上下文，research-cli-drift K4）；kimi.EXE 5 处",
           "rule": "record:usageScope",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/telemetry.rs:1724"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/telemetry.rs:1729"
         },
         {
           "legacy": false,
           "needle": "full_compaction.complete",
           "note": "2.5.1 wire.jsonl 实样（已压缩分隔条）；kimi.EXE 2 处",
           "rule": "record:full_compaction.complete",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/telemetry.rs:707"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/telemetry.rs:711"
         },
         {
           "legacy": false,
           "needle": "permission.set_mode",
           "note": "2.5.1 wire.jsonl 实样（权限档显示）；kimi.EXE 5 处",
           "rule": "record:permission.set_mode",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/telemetry.rs:1247"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/telemetry.rs:1252"
         },
         {
           "legacy": false,
@@ -1090,21 +1104,21 @@
           "needle": "do you trust the files in this folder",
           "note": "0.16x 之前的信任页标题；0.166.0 改为 `Trust this folder?`（codex.exe 里 `do you trust` 0 处）",
           "rule": "literal:do you trust the files in this folder",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:510"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:511"
         },
         {
           "legacy": true,
           "needle": "do you trust the contents of this directory",
           "note": "更早版本的信任页标题；0.166.0 已无",
           "rule": "literal:do you trust the contents of this directory",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:511"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:512"
         },
         {
           "legacy": false,
           "needle": "trust this folder?",
           "note": "",
           "rule": "literal:trust this folder?",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:512"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:513"
         },
         {
           "legacy": false,
@@ -1230,28 +1244,28 @@
           "needle": "Ask Codex to do anything",
           "note": "0.167.2 真机 2026-11-14（probe_tui_script cells）：空输入框的暗色占位",
           "rule": "composer.empty",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:410"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:411"
         },
         {
           "legacy": false,
           "needle": "Pasted Content ",
           "note": "0.167.2 真机 2026-11-14（tests/probe_draft_fidelity.rs）：粘贴 5120 字后输入框里只剩这个占位（60 行的粘贴是 `[Pasted Content 2219 chars]`）；codex.exe 含模板 `[Pasted Content ` + 字数 + ` chars]`",
           "rule": "composer.paste",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:424"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:425"
         },
         {
           "legacy": false,
           "needle": "",
           "note": "0.167.2 真机 2026-11-14（tests/probe_draft_fidelity.rs）：45 行草稿只画最后 22 行，首行最右一列画 `↑`。标记只有一个箭头字符，程序文件里没有可搜的原样片段，只做样例测试",
           "rule": "composer.overflow",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:425"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:426"
         },
         {
           "legacy": false,
           "needle": "[image #",
           "note": "0.166.0 codex.exe 含 `- [Image #…]` 模板（附件占位，与输入框里的贴图占位同一写法）",
           "rule": "clipboard_image",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:469"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:470"
         },
         {
           "legacy": false,
@@ -1280,14 +1294,14 @@
           "needle": "ContextCompaction",
           "note": "0.162.1 rollout 实样（已压缩分隔条，research-cli-drift X3）；0.166.0 codex.exe 33 处",
           "rule": "record:ContextCompaction",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/telemetry.rs:121"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/telemetry.rs:131"
         },
         {
           "legacy": false,
           "needle": "approval_policy",
           "note": "0.163 rollout 实样（运行中权限档，research-cli-drift X4）；0.166.0 codex.exe 55 处",
           "rule": "record:approval_policy",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:792"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/mod.rs:793"
         },
         {
           "legacy": false,
@@ -1338,7 +1352,7 @@
           "needle": "turn_aborted",
           "note": "0.167.2 rollout 实样（用户中断处的分隔条，68 份里 64 次）；codex.exe 17 处",
           "rule": "record:turn_aborted",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/telemetry.rs:601"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/telemetry.rs:613"
         },
         {
           "legacy": false,
@@ -1614,7 +1628,7 @@
           "needle": "Request cancelled.",
           "note": "0.6x 会话日志实样（用户按 Esc 后的 info 记录，对话页据此画中断分隔条）；0.68.0 bundle 里 18 处",
           "rule": "record:Request cancelled.",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/transcript.rs:1075"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/transcript.rs:1076"
         }
       ],
       "id": "gemini",
@@ -1811,14 +1825,14 @@
           "needle": "MessageAbortedError",
           "note": "1.19.x 库内实样经导出（用户中断，画中断分隔条而不是错误卡；本机 3 次）；opencode.exe 15 处",
           "rule": "record:MessageAbortedError",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/telemetry.rs:507"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/telemetry.rs:508"
         },
         {
           "legacy": false,
           "needle": "Tool execution aborted",
           "note": "1.19.x 库内实样经导出（用户中断时正在跑的工具以这句收场，工具行显示已中断而不是失败；本机 3 次）；opencode.exe 2 处",
           "rule": "record:Tool execution aborted",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/telemetry.rs:353"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/telemetry.rs:354"
         }
       ],
       "id": "opencode",

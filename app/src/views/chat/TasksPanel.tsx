@@ -45,6 +45,8 @@ export function collectBackgroundTasks(items: ChatItem[], live: SessionLive = AS
     const state: BackgroundTask["state"] = !outcome
       ? (live.activity !== "idle" && index > turnStart ? "run" : "stop")
       : outcome.running > 0 ? (live.alive ? "run" : "stop")
+      // 被叫停的子任务（codex interrupt_agent）：没跑完，也不是失败。
+      : outcome.interrupted ? "stop"
       : outcome.failed > 0 ? "fail" : "done";
     const started = Date.parse(item.timestamp ?? "");
     const ended = Date.parse(finishedTs.get(item.id) ?? "");

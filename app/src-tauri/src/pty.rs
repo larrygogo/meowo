@@ -2565,7 +2565,7 @@ impl PtyBroker {
         pending
             .response
             .send(decision)
-            .map_err(|_| "Agent 已不再等待审批".into())
+            .map_err(|_| "审批请求已结束".into())
     }
 
     pub(crate) fn resolve_approval_choice(
@@ -2585,7 +2585,7 @@ impl PtyBroker {
         pending
             .response
             .send(decision)
-            .map_err(|_| "Agent 已不再等待审批".into())
+            .map_err(|_| "审批请求已结束".into())
     }
 
     /// 该会话待处理的 AskUserQuestion 题面（前端轮询用，补 emit 丢失的事件）。

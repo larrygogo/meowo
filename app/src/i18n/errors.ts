@@ -261,7 +261,6 @@ export const ENTRIES: ErrorEntry[] = [
   // ── 审批 ──
   { m: "审批请求已结束", exact: true, zh: "审批请求已结束", en: "The approval request has ended" },
   { m: "审批请求不属于该会话", exact: true, zh: "该审批属于另一条会话", en: "This approval belongs to another session" },
-  { m: "Agent 已不再等待审批", exact: true, zh: "Agent 已不再等待审批", en: "The agent is no longer waiting for approval" },
   { m: "无效的审批选项", exact: true, zh: "该审批选项已失效", en: "That approval option is no longer valid" },
   { m: "审批选项已失效", exact: true, zh: "该审批选项已失效", en: "That approval option is no longer valid" },
   { m: "runtime_request/not_resumable", exact: true, zh: "该提问已结束，不能再通过此卡片回答", en: "This question has ended and can no longer be answered from this card" },

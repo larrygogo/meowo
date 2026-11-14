@@ -1,0 +1,15 @@
+[
+  {
+    "type": "user_text",
+    "id": "gemini-user-48de4284-1749-4e05-9e6a-56c1d5ebb8c9",
+    "timestamp": "2026-11-13T02:09:41.348Z",
+    "text": "hi"
+  },
+  {
+    "type": "turn_error",
+    "id": "gemini-error-48a6254f-bf65-4676-82b7-9d4b48273cd2",
+    "timestamp": "2026-11-13T02:12:22.945Z",
+    "label": "API 请求出错",
+    "text": "[API Error: You have exhausted your daily quota on this model.]\nPlease wait and try again later. To increase your limits, request a quota increase through AI Studio, or switch to another /auth method"
+  }
+]

@@ -86,6 +86,7 @@ pub(super) fn resumed_agent_prompt(main_transcript: &Path, line: &str) -> Option
             failed: 0,
             background_running: false,
             task_id: Some(task_id.to_string()),
+            interrupted: false,
         }),
         patch: None,
         facts: ToolFacts::default(),

@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import type { ChatItem } from "../../api";
@@ -9,24 +7,18 @@ import { Transcript } from "./Transcript";
 import { collectBackgroundTasks } from "./TasksPanel";
 import { resetFoldMemory } from "./foldMemory";
 import { liveTurnStart, toolRunState, turnActivityOf, type TurnActivity } from "./toolState";
+import { findInSamples, REPLAY_AGENTS, replaySample, type ReplayAgent } from "../../test/replaySamples";
 
 /// 运行态的显式终态（走查 A1、A3、A4、A10、C6）。
 ///
-/// 数据全部取自五家的真实会话样本（后端回放快照）。「调用发出了、回执还没到」这个瞬间，
-/// 用把真实时间线截到那条调用为止来得到——那正是轮询读到一半时界面手里的数据。
+/// 数据全部取自五家的真实会话样本（后端回放快照，每份是同一场会话的原顺序片段）。「调用发出了、
+/// 回执还没到」这个瞬间，用把真实时间线截到那条调用为止来得到——那正是轮询读到一半时界面手里的数据。
 
-const FIXTURES = join(__dirname, "../../../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay");
-const AGENTS = ["claude", "kimi", "codex", "gemini", "opencode"] as const;
+const AGENTS = REPLAY_AGENTS;
 
-function raw(agent: string): ChatItem[] {
-  return JSON.parse(readFileSync(join(FIXTURES, `${agent}.items.json`), "utf8")) as ChatItem[];
-}
-
-/** 真实时间线截到第一条满足条件的条目为止（含它）。 */
-function upTo(agent: string, pick: (item: ChatItem) => boolean): ChatItem[] {
-  const items = raw(agent);
-  const at = items.findIndex(pick);
-  expect(at, `${agent} 样本里没有要找的条目`).toBeGreaterThanOrEqual(0);
+/** 这一家里第一份含有满足条件的条目的样本，截到那条为止（含它）。 */
+function upTo(agent: ReplayAgent, pick: (item: ChatItem) => boolean): ChatItem[] {
+  const { items, at } = findInSamples(agent, pick);
   return reduceChatEvents([], items.slice(0, at + 1), true);
 }
 
@@ -85,8 +77,7 @@ describe("没有回执的工具调用", () => {
 
   it("上一回合里没回执的调用，即使会话此刻在跑也是已中断", () => {
     // codex 样本：命令被用户打断后（中断分隔），会话又开始了新的一轮。
-    const items = raw("codex");
-    const cut = items.findIndex((item) => item.type === "tool_use" && item.kind === "run");
+    const { items, at: cut } = findInSamples("codex", (item) => item.type === "tool_use" && item.kind === "run");
     const earlier = reduceChatEvents([], [
       ...items.slice(0, cut + 1),
       { type: "user_text", id: "next-turn", timestamp: null, text: "继续" } as ChatItem,
@@ -100,7 +91,7 @@ describe("没有回执的工具调用", () => {
 
 describe("等待审批时的过程块", () => {
   it("不收起，未批准的调用不计入「已运行」，那一行写待批准；回合停掉后才收起并单列已中断", () => {
-    // claude 样本：读、搜索都跑完了，写文件的调用刚发出（正卡在审批上）。
+    // claude 样本：读文件、跑命令都完成了，写文件的调用刚发出（正卡在审批上）。
     const items = upTo("claude", (item) => item.type === "tool_use" && item.kind === "write");
     const view = show(items, "waiting");
     const fold = () => view.container.querySelector<HTMLElement>(".turn-fold")!;
@@ -108,7 +99,7 @@ describe("等待审批时的过程块", () => {
     expect(fold().querySelector(".turn-fold-lead")?.textContent).toBe("待批准");
     const summary = () => fold().querySelector(".turn-fold-summary")?.textContent ?? "";
     expect(summary()).toContain("读取了 1 个文件");
-    expect(summary()).toContain("搜索了 1 个模式");
+    expect(summary()).toContain("已运行 1 条命令");
     expect(summary()).not.toContain("已写入");
     const row = lastTool(view.container);
     expect(row.getAttribute("data-state")).toBe("waiting");
@@ -209,10 +200,10 @@ describe("没有回执的子任务", () => {
 
 describe("调用与回执的配对", () => {
   it("回执隔着别的块才到也能配上：codex 一段脚本两个调用，两条回执排在两个调用之后", () => {
-    const items = reduceChatEvents([], raw("codex"), true);
+    const items = reduceChatEvents([], replaySample("codex.01a1cea4"), true);
     const { results } = collectSubagentReceipts(items);
     const calls = items.filter((item): item is Extract<ChatItem, { type: "tool_use" }> => item.type === "tool_use");
-    // 样本里只有被打断之外的调用都有回执。
+    // 这场会话里每次调用都有回执（被 Esc 打断的那条命令，回执写着被打断）。
     const unresolved = calls.filter((call) => !results.has(call.id));
     expect(unresolved).toEqual([]);
     const multi = calls.filter((call) => /#1$/.test(call.id));
@@ -222,8 +213,7 @@ describe("调用与回执的配对", () => {
 
   it.each(AGENTS)("%s：时间线从一条回执开始时，不画孤立的「工具结果」行", (agent) => {
     // 首屏只读尾部一屏，窗口可能正好从回执切开：调用在窗口之外。
-    const items = raw(agent);
-    const at = items.findIndex((item) => item.type === "tool_result");
+    const { items, at } = findInSamples(agent, (item) => item.type === "tool_result");
     const view = show(reduceChatEvents([], items.slice(at), true), "idle");
     expect(view.container.querySelector(".chat-result")).toBeNull();
     expect(view.container.textContent).not.toContain("工具结果");
@@ -238,15 +228,13 @@ describe("调用与回执的配对", () => {
 describe("思考中", () => {
   it("逐块流进来的思考排在末尾且会话在跑时写「思考中…」，想完或回合停了就是「思考过程」", () => {
     // kimi 是唯一逐块落盘思考的一家：截到思考那条为止。
-    const all = raw("kimi");
-    const at = all.findIndex((item) => item.type === "reasoning_delta");
-    expect(at).toBeGreaterThanOrEqual(0);
+    const { items: all, at } = findInSamples("kimi", (item) => item.type === "reasoning_delta");
     const thinking = reduceChatEvents([], all.slice(0, at + 1), true);
     const view = show(thinking, "running");
     const label = () => view.container.querySelector(".chat-reasoning > summary")?.textContent ?? "";
     expect(label()).toContain("思考中…");
 
-    // 后面有了正文：想完了。
+    // 后面有了新内容：想完了。
     view.rerender(
       <ChatCwdContext.Provider value={null}>
         <Transcript sessionId={7} items={reduceChatEvents(thinking, all.slice(at + 1, at + 2), false)} activity="running" alive />

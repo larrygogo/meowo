@@ -81,6 +81,7 @@ fn task_notification_result(
             // (xbot 会话实拍两次),结局记到 SendMessage 名下,原委派被续上回执翻回运行中后一直挂着
             // (实拍 02:44 挂到 04:39)。常规委派的 tool-use-id 本来就是委派本体,带上 task-id 路由结果不变。
             task_id,
+            interrupted: false,
         }),
         patch: None,
         facts: ToolFacts::default(),
@@ -130,6 +131,7 @@ fn peer_handback_result(
             failed: 0,
             background_running: false,
             task_id: Some(task_id),
+            interrupted: false,
         }),
         patch: None,
         facts: ToolFacts::default(),
@@ -317,11 +319,28 @@ fn tool_facts(v: &serde_json::Value, text: &str, is_error: bool) -> ToolFacts {
     ToolFacts {
         exit_code,
         count,
-        interrupted: result
-            .and_then(|r| r.get("interrupted"))
-            .and_then(|x| x.as_bool())
-            .unwrap_or(false),
+        interrupted: unfinished_receipt(text)
+            || result
+                .and_then(|r| r.get("interrupted"))
+                .and_then(|x| x.as_bool())
+                .unwrap_or(false),
     }
+}
+
+/// CC 自己补写的「这次调用没跑完」回执。会话在调用途中结束（进程被杀、窗口被关），下次接续时
+/// CC 给那条悬空的调用补一条回执；回复被中途停掉时同理。它们带 `is_error: true`，可这不是
+/// 工具失败，是没跑完：标成被打断，前端显示「已中断」而不是红色报错加一段英文。
+///
+/// 取证（2026-11-14，本机 172 份主链 transcript、41896 次调用）：没有回执的调用只有 3 次，
+/// 其余悬空调用都被 CC 用下面两句补上了——会话结束 16 次（2.1.303 到 2.1.323），回复被停 11 次
+/// （2.1.302、2.1.322）。所以 claude 的「无回执」在记录里几乎总是这条显式回执。
+fn unfinished_receipt(text: &str) -> bool {
+    const MARKERS: [&str; 2] = [
+        "[Tool call interrupted: the session ended before this call's result was recorded",
+        "Interrupted: the response that made this tool call was stopped",
+    ];
+    let text = text.trim_start();
+    MARKERS.iter().any(|marker| text.starts_with(marker))
 }
 
 /// Skill 调用的展示形态:`/<skill> <args>`(args 为空则只有 `/<skill>`)。
@@ -588,6 +607,7 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                     timestamp,
                     text,
                     interjected: true,
+                    turn_id: None,
                 }];
             }
             // 工具注入给模型的内容：Skill 调用后 CC 把整份技能说明以 user 行写回
@@ -631,6 +651,7 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                         timestamp,
                         text: format!("<hook-feedback>\n{}\n</hook-feedback>", text.trim()),
                         interjected: false,
+                        turn_id: None,
                     }];
                 }
             }
@@ -658,6 +679,7 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                     timestamp,
                     text: strip_pasted_content_tags(text).into_owned(),
                     interjected: false,
+                    turn_id: None,
                 }];
             }
             if is_image_companion(&v, content) {
@@ -693,6 +715,7 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                                     timestamp: timestamp.clone(),
                                     text: strip_pasted_content_tags(text).into_owned(),
                                     interjected: false,
+                                    turn_id: None,
                                 }
                             }),
                         Some("tool_result") => {
@@ -731,7 +754,8 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                                 .get("is_error")
                                 .and_then(|x| x.as_bool())
                                 .unwrap_or(false)
-                                && !answered_by_meowo;
+                                && !answered_by_meowo
+                                && !unfinished_receipt(&text);
                             let facts = tool_facts(&v, &text, is_error);
                             Some(TranscriptEvent::ToolResult {
                                 id: format!("{base_id}:{i}"),
@@ -774,6 +798,7 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                         timestamp,
                         text: refs,
                         interjected: false,
+                        turn_id: None,
                     }),
                 }
             }
@@ -955,6 +980,7 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                 // 走 queued_command 送入 = 回合进行中被 CLI 在工具边界插进去的话。
                 // 前端靠这个结构信号标「回合中插入」并结算插话回执，不必靠文本猜。
                 interjected: true,
+                turn_id: None,
             }]
         }
         // CLI 正忙时用户发来的话先入队，记一行 queue-operation enqueue（2.1.31x 实拍：入队
@@ -2031,6 +2057,7 @@ impl SubagentSpec for ClaudeSubagents {
                 background_running: false,
                 // 启动回执携带任务 id(`agentId: xxx …`),是 task_id → 委派 的映射来源。
                 task_id: launch_agent_id(output),
+                interrupted: false,
             });
         }
         // 续上已结束的子代理:按 task_id 归回原委派,重新记为在跑(见 resumed_agent_id)。
@@ -2041,6 +2068,7 @@ impl SubagentSpec for ClaudeSubagents {
                 failed: 0,
                 background_running: false,
                 task_id: Some(task_id),
+                interrupted: false,
             });
         }
         // 3. 主 agent 用 `TaskStop` 停掉的任务**同样不发通知**(2026-10-22 实拍:停掉的
@@ -2052,6 +2080,7 @@ impl SubagentSpec for ClaudeSubagents {
                 failed: 0,
                 background_running: false,
                 task_id: Some(task_id),
+                interrupted: false,
             });
         }
         // TaskOutput 回执(实拍形态):`<retrieval_status>…</retrieval_status>` 开头,
@@ -2074,6 +2103,7 @@ impl SubagentSpec for ClaudeSubagents {
             failed,
             background_running: false,
             task_id: Some(task_id),
+            interrupted: false,
         })
     }
 }
@@ -2180,6 +2210,7 @@ fn forked_skill_outcome(output: &str) -> Option<SubagentOutcome> {
         background_running: false,
         // forked skill 的回执不带任务 id;委派靠 tool_use_id 直连,不需要 task_id 路由。
         task_id: None,
+        interrupted: false,
     })
 }
 
@@ -2668,6 +2699,33 @@ mod tests {
             [TranscriptEvent::Metadata { kind, compaction: Some(CompactionDetail { trigger: Some(trigger), pre_tokens: Some(592064), summary: None }), .. }]
                 if kind == "compact" && trigger == "auto"
         ));
+    }
+
+    /// 会话在调用途中结束，CC 接续时给悬空的调用补一条回执（本机 16 次，文案一致）；回复被中途
+    /// 停掉时同理（11 次）。它们是「没跑完」，不是工具失败。
+    #[test]
+    fn receipts_cc_writes_for_unfinished_calls_are_interrupted_not_failed() {
+        let ended = r#"{"type":"user","uuid":"e1","timestamp":"2026-10-31T16:01:37.759Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","is_error":true,"content":"[Tool call interrupted: the session ended before this call's result was recorded, so its outcome is unknown. Check whether it took effect before relying on it or running it again.]"}]},"toolUseResult":"[Tool call interrupted: the session ended before this call's result was recorded, so its outcome is unknown. Check whether it took effect before relying on it or running it again.]"}"#;
+        let stopped = r#"{"type":"user","uuid":"e2","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_2","is_error":true,"content":"Interrupted: the response that made this tool call was stopped by a safety classifier while the call was running; it may have partially or fully completed."}]}}"#;
+        for line in [ended, stopped] {
+            assert!(
+                matches!(
+                    parse_transcript_events(line).as_slice(),
+                    [TranscriptEvent::ToolResult { is_error: false, facts, .. }] if facts.interrupted
+                ),
+                "{line}"
+            );
+        }
+        // 真正的失败回执不受影响，引用这句话的正文也不算。
+        let failed = r#"{"type":"user","uuid":"e3","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_3","is_error":true,"content":"Exit code 1\nnote: [Tool call interrupted: the session ended before this call's result was recorded"}]}}"#;
+        let events = parse_transcript_events(failed);
+        assert!(
+            matches!(
+                events.as_slice(),
+                [TranscriptEvent::ToolResult { is_error: true, facts, .. }] if !facts.interrupted
+            ),
+            "{events:?}"
+        );
     }
 
     /// 样本取自 2.1.312 真机：中断标记转成 interrupted 分隔，同一行里紧跟的新消息照常显示；

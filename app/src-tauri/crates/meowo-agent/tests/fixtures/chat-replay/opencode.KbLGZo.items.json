@@ -1,0 +1,41 @@
+[
+  {
+    "type": "user_text",
+    "id": "msg_142cc56da001Fese864hM1Gfqg",
+    "timestamp": "2026-10-16T03:40:50.266Z",
+    "text": "run the shell command: ping -n 20 127.0.0.1 and then say DONE1"
+  },
+  {
+    "type": "tool_use",
+    "id": "toolu_vrtx_015tGP8au8EAegsaQYXzFDVj",
+    "timestamp": "2026-10-16T03:40:53.672Z",
+    "name": "bash",
+    "kind": "run",
+    "summary": "ping -n 20 127.0.0.1",
+    "detail": {
+      "kind": "command",
+      "command": "ping -n 20 127.0.0.1",
+      "description": null
+    }
+  },
+  {
+    "type": "tool_result",
+    "id": "toolu_vrtx_015tGP8au8EAegsaQYXzFDVj:result",
+    "timestamp": "2026-10-16T03:41:12.927Z",
+    "tool_use_id": "toolu_vrtx_015tGP8au8EAegsaQYXzFDVj",
+    "text": "\r\nPinging 127.0.0.1 with 32 bytes of data:\r\nReply from 127.0.0.1: bytes=32 time<1ms TTL=128\r\nReply from 127.0.0.1: bytes=32 time<1ms TTL=128\r\nReply from 127.0.0.1: bytes=32 time<1ms TTL=128\r\nReply from 127.0.0.1: bytes=32 time<1ms TTL=128\r\nReply from 127.0.0.1: bytes=32 time<1ms TTL=128\r\nReply from 127.0.0.1: bytes=32 time<1ms TTL=128\r\nReply from 127.0.0.1: bytes=32 time<1ms TTL=128\r\nReply from 127.0.0.1: bytes=32 time<1ms TTL=128\r\nReply from 127.0.0.1: bytes=32 time<1ms TTL=128\r\nReply from 127.…[样本截短]",
+    "is_error": false
+  },
+  {
+    "type": "user_text",
+    "id": "msg_142cc6b7800123fXz48TM5F4k2",
+    "timestamp": "2026-10-16T03:40:55.544Z",
+    "text": "reply only QUEUED-OK"
+  },
+  {
+    "type": "assistant_text",
+    "id": "prt_142ccb439001kWVetCYlXfc0Mn",
+    "timestamp": "2026-10-16T03:41:14.169Z",
+    "text": "QUEUED-OK"
+  }
+]

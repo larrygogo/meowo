@@ -1269,7 +1269,7 @@ export const en: Dict = {
     sortManual: "Manual",
     dateToday: "Today",
     dateYesterday: "Yesterday",
-    running: "Running…",
+    running: `${vocab.session.running}…`,
     contextTip: (pct: number, kw: number) => `Context ${pct}% used (${kw}K window)`,
     contextShort: (pct: number) => `Context ${pct}% used`,
     contextUnsupported: "This CLI doesn't report context usage",

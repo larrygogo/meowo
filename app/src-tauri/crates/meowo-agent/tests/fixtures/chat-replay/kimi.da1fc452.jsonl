@@ -1,0 +1,2 @@
+{"type":"turn.prompt","agentId":"main","input":[{"type":"text","text":"Count from 1 to 300, one number per line, no other text."}],"origin":{"kind":"user"},"promptId":"msg_01M7D26ETTG36ZAPRQ413CP00Y","turnId":0,"trigger":"normal","time":1794661104905}
+{"type":"context.append_message","agentId":"main","message":{"role":"user","content":[{"type":"text","text":"Count from 1 to 300, one number per line, no other text."}],"toolCalls":[],"id":"msg_01M7D26ETTG36ZAPRQ413CP00Y","origin":{"kind":"user"}},"time":1794661104908}
