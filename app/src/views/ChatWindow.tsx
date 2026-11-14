@@ -51,7 +51,7 @@ import { ModelPicker, readStarred, type ModelPickerItem } from "./chat/ModelPick
 import { currentPresetId } from "./chat/modelLabels";
 import { ModelMenu, effortLabel } from "./chat/ModelMenu";
 import { useSessionSettings } from "./chat/useSessionSettings";
-import { modeChoiceViews, planToggle, screenShowsAny } from "./chat/modeChoices";
+import { modeChoiceViews, screenShowsAny } from "./chat/modeChoices";
 import { QuestionPanels } from "./chat/QuestionPanels";
 import { RemoteTerminalKeys } from "./chat/RemoteTerminalKeys";
 import { peekSessionMeta, prefetchPending, recallHistory, rememberHistory, takePrefetch, trackPrefetch } from "./chat/historyCache";
@@ -116,7 +116,8 @@ import { listAgents, type AgentDescriptor } from "../api";
 import { agentAssets, tintStyle } from "../providers";
 import appLogoUrl from "../../src-tauri/icons/64x64.png";
 import { Icon } from "../icons/Icon";
-import { icArrowLeftRight, icArrowUp, icChevronLeft, icCollapse, icExpand, icAgents, icFile, icLightbulb, icMessage, icShield, icSidebarLeft, icSparkles, icStop } from "../icons/glyphs.chat";
+import { modeIconGlyph, modeIconName } from "./chat/modeIcon";
+import { icArrowLeftRight, icArrowUp, icChevronLeft, icCollapse, icExpand, icFile, icMessage, icSidebarLeft, icSparkles, icStop } from "../icons/glyphs.chat";
 import { icAlert, icCheck, icChevronDown, icClose, icPencil } from "../icons/glyphs";
 
 
@@ -5328,6 +5329,8 @@ export function ChatWindow() {
               const riskOf = (id: string | undefined) => !!id && permissionOption?.id === dimension
                 && !!permissionOption.choices.find((choice) => choice.id === id)?.risk;
               const risky = riskOf(resumePick ? nextResume : state?.value);
+              // 图标按当前档变化（第四轮 L4）：手机上胶囊只剩图标，不点开也看得出现在是哪一档。
+              const iconName = modeIconName(launchOption ?? (permissionOption?.id === dimension ? permissionOption : undefined), dimension, resumePick ? nextResume : state?.value);
               return <div className="chat-model" key={dimension} ref={modeMenu === dimension ? modeMenuUi.ref : undefined} onKeyDown={modeMenu === dimension ? modeMenuUi.onKeyDown : undefined}>
                 <button
                   ref={(node) => {
@@ -5339,7 +5342,8 @@ export function ChatWindow() {
                   disabled={!interactive || sending}
                   // aria-label 保持简短的动作名（屏幕阅读器要的是「做什么」，不是解释）；
                   // 轮换与下拉的差异放在下面的 tooltip 里说。
-                  aria-label={interactive ? `${t.chat.switchMode}: ${label}` : label}
+                  // 带上当前档的短名（第四轮 L4）：手机上按钮只剩图标，读屏要能报出现在是哪一档。
+                  aria-label={interactive ? `${t.chat.switchMode}: ${label} · ${value}` : `${label} · ${value}`}
                   aria-expanded={options.length > 0 ? modeMenu === dimension : undefined}
                   // 两种交互要分开说：有 options 是「打开菜单挑一个」，只有 cycle_input 的
                   // （codex 的协作模式）是「按一次跳下一个」，没有直达某个值的办法。
@@ -5369,8 +5373,8 @@ export function ChatWindow() {
                 >
                   {/* 权限 pill 的图标与短文案（对齐 Kimi 的 perm-pill）。同模型按钮：标签套 span 防挤压竖排。 */}
                   {/* 图标按维度分：计划开关是灯泡、Agent 是 Agent 图标，只有权限一类用盾牌——两颗同样的盾牌看不出谁是谁（实拍）。 */}
-                  <span className="chat-mode-icon" aria-hidden="true">
-                    <Icon glyph={launchOption && planToggle(launchOption) ? icLightbulb : dimension === "agent" ? icAgents : icShield} size={14} />
+                  <span className="chat-mode-icon" aria-hidden="true" data-icon={iconName}>
+                    <Icon glyph={modeIconGlyph(iconName)} size={14} />
                   </span>
                   <span className="chat-model-label">{value}</span>
                   {options.length > 0

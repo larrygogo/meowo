@@ -382,7 +382,7 @@ describe("ChatWindow", () => {
     render(<ChatWindow />);
     const input = await screen.findByRole("combobox", { name: "发送消息给 Agent" });
     // 等 chatUi（menu_slash_commands 的来源）就位再回车，否则命中判断还没有数据。
-    await screen.findByRole("button", { name: "切换模式: 权限模式" });
+    await screen.findByRole("button", { name: /^切换模式: 权限模式 · / });
     fireEvent.change(input, { target: { value: "/config" } });
     fireEvent.keyDown(input, { key: "Enter" });
     // 命令原样送达 CLI，同时打开屏幕识别窗口（expectMenu 传给终端组件）。
@@ -770,7 +770,8 @@ describe("ChatWindow", () => {
     // 信任卡要经过 pending 启动登记 → 对话 UI → 终端快照 → 屏幕识别四次异步往返；单跑约 0.8s，
     // 全量并发下偶发超过 findBy 默认的 1s（UI 优化集成分支实测一次），按本文件惯例放宽。
     expect(await screen.findByRole("button", { name: "Yes, I trust this folder" }, { timeout: 5000 })).toBeTruthy();
-    expect(screen.getByText("是否信任此文件夹？")).toBeTruthy();
+    // 读屏播报区（card-announcer）稍后也会念同一句：只认卡片里的标题，免得全量并发下两处都在时报重复。
+    expect(screen.getByText("是否信任此文件夹？", { selector: "strong" })).toBeTruthy();
   });
 
   it("renders assistant markdown but keeps user text verbatim", async () => {
@@ -973,7 +974,7 @@ describe("ChatWindow", () => {
     const actions = meter.parentElement!;
     const ordered = [
       actions.querySelector(".chat-attach-button")!,
-      screen.getByRole("button", { name: "切换模式: 权限模式" }),
+      screen.getByRole("button", { name: /^切换模式: 权限模式 · / }),
       meter,
       actions.querySelector(".chat-model-select")!,
     ];
@@ -982,7 +983,7 @@ describe("ChatWindow", () => {
     }
 
     // 权限模式现在是下拉（选项由屏幕回显标记派生）：点按钮开菜单、点某项才发 cycle 键。
-    fireEvent.click(screen.getByRole("button", { name: "切换模式: 权限模式" }));
+    fireEvent.click(screen.getByRole("button", { name: /^切换模式: 权限模式 · / }));
     fireEvent.click(screen.getByRole("menuitem", { name: /计划/ }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 21, data: "\u001b[Z" }));
 
@@ -1063,10 +1064,10 @@ describe("ChatWindow", () => {
     });
     render(<ChatWindow />);
     // 模式按钮只显示当前值，维度名在 aria-label/tooltip 里。
-    await screen.findByRole("button", { name: "切换模式: 工作模式" });
+    await screen.findByRole("button", { name: /^切换模式: 工作模式 · / });
     expect(screen.getByText("默认")).toBeTruthy();
     expect(screen.getByText("手动确认")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "切换模式: 权限模式" }));
+    fireEvent.click(screen.getByRole("button", { name: /^切换模式: 权限模式 · / }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 41, data: "/permission" }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 41, data: "\r" }));
     expect(screen.getByText("手动确认")).toBeTruthy();
@@ -1107,7 +1108,7 @@ describe("ChatWindow", () => {
     // 空闲期：后续轮询不再带模式增量（真实后端普通增量的 agent_modes 就是空）。
     current = { ...base, agentModes: [] };
     // 只有 cycle 键的维度也给下拉：选项由屏幕回显标记派生，选中后循环按到位（cycleToMode）。
-    fireEvent.click(await screen.findByRole("button", { name: "切换模式: 权限模式" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^切换模式: 权限模式 · / }));
     // 每档名字是统一说法（任务 20261114-tui-model-switch），下一行一句话说明，行尾小字 CLI 原名；
     // 运行中才有的 auto 不在启动项里，按值补说明。说明不进名字，读屏名字只报统一说法。
     expect(await screen.findByText("自动改文件，跑命令仍先问")).toBeTruthy();
@@ -1118,7 +1119,7 @@ describe("ChatWindow", () => {
     fireEvent.click(screen.getByRole("menuitem", { name: "计划" }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 51, data: "\u001b[Z" }));
     // transcript 静默，但屏幕是 CLI 自己画的权威状态——标签应据它回显为「计划」。
-    await waitFor(() => expect(screen.getByRole("button", { name: "切换模式: 权限模式" }).textContent).toContain("计划"));
+    await waitFor(() => expect(screen.getByRole("button", { name: /^切换模式: 权限模式 · / }).textContent).toContain("计划"));
   });
 
   it("休眠会话的权限胶囊改卖「下一次恢复的权限」：选择只落启动参数，不碰终端", async () => {
@@ -1142,7 +1143,7 @@ describe("ChatWindow", () => {
       return Promise.resolve();
     });
     render(<ChatWindow />);
-    fireEvent.click(await screen.findByRole("button", { name: "切换模式: 权限模式" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^切换模式: 权限模式 · / }));
     // 菜单是启动档位（含「沿用原设置」与循环够不着的 bypassPermissions）；等 list_agents
     // 就位后条目才换装——findByRole 的重试恰好吸收这次异步。
     await screen.findByRole("menuitem", { name: "权限：沿用原设置" });
@@ -1185,13 +1186,13 @@ describe("ChatWindow", () => {
     render(<ChatWindow />);
     // 胶囊直接显示存的档（启动档位词），不再是 transcript 回读的旧模式词。
     expect(await screen.findByText("跳过权限确认")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "切换模式: 权限模式" }));
+    fireEvent.click(screen.getByRole("button", { name: /^切换模式: 权限模式 · / }));
     // 菜单里没有黑盒占位项；存的那档带高亮。
     const item = await screen.findByRole("menuitem", { name: "跳过权限确认" });
     expect(screen.queryByRole("menuitem", { name: "权限：沿用原设置" })).toBeNull();
     expect(item.className).toContain("is-active");
     // 高风险档（插件 risk 声明）：按钮与该菜单项都转危险色（对照 Kimi 的 perm-pill），普通档不带。
-    expect(screen.getByRole("button", { name: "切换模式: 权限模式" }).className).toContain("is-risk");
+    expect(screen.getByRole("button", { name: /^切换模式: 权限模式 · / }).className).toContain("is-risk");
     expect(item.className).toContain("is-risk");
     expect(screen.getByRole("menuitem", { name: /默认/ }).className).not.toContain("is-risk");
   });
