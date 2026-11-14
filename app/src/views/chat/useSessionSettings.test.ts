@@ -25,7 +25,7 @@ vi.mock("../../api", () => ({
   },
 }));
 
-import { mergeRequests, mustDefer, useSessionSettings, type SessionSettingsDeps } from "./useSessionSettings";
+import { mergeRequests, mustDefer, pinnedModel, useSessionSettings, type SessionSettingsDeps } from "./useSessionSettings";
 import type { ChatHistory } from "../../api";
 
 const history = { agentModes: [{ dimension: "permission", value: "manual" }], model: "K3" } as unknown as ChatHistory;
@@ -157,6 +157,19 @@ describe("会话里切模型 / 模式的分派", () => {
       await act(async () => result.current.request({ model: { id: "kimi-code/k2", label: "K2" }, label: "K2" }));
       expect(r.prompt).toBe("这段只在 TUI 输入框里");
     });
+    it("新进程起来马上退出（后端已报 restarted，之后进程没了）：草稿留着", async () => {
+      // 真机第四轮 R3 补测：后端只看得到「起来了」，紧接着的退出由 PTY 退出事件另报；对话页这份是唯一副本。
+      const r = run(async () => ({ kind: "restarted", sessionId: 7, confirmed: false, reason: null }));
+      const { result } = renderHook(() => useSessionSettings(r.d));
+      await act(async () => result.current.request({ model: { id: "kimi-code/k2", label: "K2" }, label: "K2" }));
+      expect(r.prompt).toBe("这段只在 TUI 输入框里");
+    });
+    it("起新进程前报错（项目目录不存在 / 未安装）：草稿留着", async () => {
+      const r = run(async () => { throw "项目目录已不存在：C:/gone。目录被移动或删除后无法在原位置恢复会话"; });
+      const { result } = renderHook(() => useSessionSettings(r.d));
+      await act(async () => result.current.request({ model: { id: "kimi-code/k2", label: "K2" }, label: "K2" }));
+      expect(r.prompt).toBe("这段只在 TUI 输入框里");
+    });
     it("后端明确没动进程（not_now）：撤回对话页那份", async () => {
       const r = run(async () => ({ kind: "not_now", sessionId: 7, confirmed: false, reason: "settings/composer_not_empty" }));
       const { result } = renderHook(() => useSessionSettings(r.d));
@@ -181,6 +194,33 @@ describe("会话里切模型 / 模式的分派", () => {
     await waitFor(() => expect(applyTerminal).toHaveBeenCalledWith(action));
     expect(apply).not.toHaveBeenCalled();
     await waitFor(() => expect(result.current.notice).toBeNull());
+  });
+
+  /// 真机第四轮问题 2：切完模型还没有新回复时，轮询报的旧模型不能盖回刚切的值；有了新回复且模型
+  /// 不同才以回复为准。
+  it("刚切的模型在新回复前不被轮询盖回", async () => {
+    const pinModel = vi.fn();
+    apply.mockResolvedValue({ kind: "restarted", sessionId: 7, confirmed: false, reason: null });
+    const { result } = renderHook(() => useSessionSettings(deps({ pinModel })));
+    await act(async () => result.current.request({ model: { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" }, label: "Gemini 2.5 Pro" }));
+    expect(pinModel).toHaveBeenCalledWith({ sessionId: 7, label: "Gemini 2.5 Pro", replyModel: "K3" });
+    const pin = pinModel.mock.calls[0][0];
+    expect(pinnedModel(pin, 7, "K3")).toEqual({ model: "Gemini 2.5 Pro", keep: true });
+    expect(pinnedModel(pin, 7, null)).toEqual({ model: "Gemini 2.5 Pro", keep: true });
+    expect(pinnedModel(pin, 7, "gemini-2.5-pro")).toEqual({ model: "gemini-2.5-pro", keep: false });
+    expect(pinnedModel(pin, 8, "K3")).toEqual({ model: "K3", keep: false });
+  });
+
+  /// 真机第四轮问题 3：OpenCode 只切 agent，后端当场读回模型，界面立刻显示并钉住。
+  it("只切 agent 后显示读回的模型", async () => {
+    const pinModel = vi.fn();
+    const setHistory = vi.fn();
+    apply.mockResolvedValue({ kind: "applied", sessionId: 7, confirmed: true, reason: null, model: "Fake One" });
+    const { result } = renderHook(() => useSessionSettings(deps({ pinModel, setHistory, restarts: () => false })));
+    await act(async () => result.current.request({ modes: { agent: "plan" }, label: "计划" }));
+    expect(pinModel).toHaveBeenCalledWith({ sessionId: 7, label: "Fake One", replyModel: "K3" });
+    const update = setHistory.mock.calls.at(-1)![0] as (h: unknown) => { model: string };
+    expect(update({ sessionId: 7, model: "Fake Two", agentModes: [] }).model).toBe("Fake One");
   });
 
   it("服务没就绪时交给宿主等就绪", async () => {

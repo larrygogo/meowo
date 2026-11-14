@@ -305,6 +305,10 @@ pub(crate) struct SettingsOutcome {
     /// `queued` 时等的条件，调用方据此入队（不发给前端，前端从队列条目的 `waitFor` 读）。
     #[serde(skip)]
     pub wait_for: Option<&'static str>,
+    /// 切完以后会话此刻的模型显示名（只在能当场读回时给）：OpenCode 只切 agent 时 CLI 会换成该 agent
+    /// 记住的模型（真机第四轮问题 3），切完从底栏读回，界面立刻跟上，不等下一条消息。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 impl SettingsOutcome {
@@ -315,6 +319,7 @@ impl SettingsOutcome {
             confirmed: false,
             reason: None,
             wait_for: None,
+            model: None,
         }
     }
 
@@ -424,6 +429,21 @@ pub(crate) fn plan(
         fill_restart_with_current(plugin, &mut out.restart, current, stored)?;
     }
     Ok(out)
+}
+
+/// 存档里记的「切模型那一刻会话文件报的模型」（不是启动选项，resolve_launch_args 只认声明过的栏，
+/// 不会把它拼进命令行）。
+pub(crate) const REPLY_MODEL_AT_SWITCH: &str = "_replyModelAtSwitch";
+
+/// 刚切成功的模型优先（真机第四轮问题 2）：存档有模型、且会话文件报的模型仍是切换那一刻的（或报不出），
+/// 说明还没有新回复，当前模型以存档为准；报出别的模型（有了新回复）才以回复为准。
+pub(crate) fn pin_switched_model(current: &mut HashMap<String, String>, stored: &HashMap<String, String>) {
+    let (Some(model), Some(at_switch)) = (stored.get("model"), stored.get(REPLY_MODEL_AT_SWITCH)) else {
+        return;
+    };
+    if current.get("model").is_none_or(|reply| reply == at_switch) {
+        current.insert("model".into(), model.clone());
+    }
 }
 
 /// 带参重启的其余各栏：按会话当前实际值拼（见 [`plan`]）。读不到当前值、而存档那一档会带参数的，拒绝。
@@ -664,6 +684,9 @@ fn apply_blocking(
         current.remove("model");
     }
     let stored = stored_selections(&store, session_id);
+    // 会话文件读到的「当前模型」是最近一条回复的；切完模型还没有新回复时它仍是旧的（真机第四轮问题 2）。
+    let reply_model = current.get("model").cloned();
+    pin_switched_model(&mut current, &stored);
     let plan = plan(
         plugin,
         model.as_deref(),
@@ -717,7 +740,23 @@ fn apply_blocking(
             check()?;
         }
         match dialog_switch(app, broker, db, session_id, &header, &catalog, &plan, tui) {
-            Ok(confirmed) => outcome.confirmed = confirmed,
+            Ok(confirmed) => {
+                outcome.confirmed = confirmed;
+                // 只切 agent：OpenCode 会换成该 agent 记住的模型（1.19.5 上游行为，TUI 里按 Tab 也一样）。
+                // 当场从底栏读回，界面立刻显示实际模型（真机第四轮问题 3）。
+                if plan.dialog_model.is_none() {
+                    let catalog = if catalog.is_empty() {
+                        session_catalog(db, plugin, Some(session_id), &env, header.cwd.as_deref(), Some(app))
+                    } else {
+                        catalog.clone()
+                    };
+                    let lines = broker
+                        .screen_probe_snapshot(session_id)
+                        .map(|(snapshot, _)| snapshot.lines)
+                        .unwrap_or_default();
+                    outcome.model = footer_model(&lines, &catalog).map(|entry| entry.label.clone());
+                }
+            }
             Err(DialogError::Unsupported) => {
                 return Ok(SettingsOutcome::new("unsupported", session_id))
             }
@@ -758,6 +797,12 @@ fn apply_blocking(
             return Ok(SettingsOutcome::new("next_open", session_id));
         }
         outcome.kind = "restarted";
+        // 记下这次带参重启时会话文件报的模型：之后报的仍是它，就说明还没有新回复，当前模型以存档为准。
+        if plan.restart.contains_key("model") {
+            if let Some(reply) = reply_model {
+                persist(&store, session_id, &HashMap::from([(REPLY_MODEL_AT_SWITCH.to_string(), reply)]), None);
+            }
+        }
     }
     Ok(outcome)
 }
@@ -1593,6 +1638,32 @@ fn persist(
     }
 }
 
+/// OpenCode 底栏（`┃  Build · <模型名> <provider 名>`，oc4 实拍，右侧可能还跟着路径等）里的模型：
+/// 按「模型名 provider 名」或「模型名」前缀匹配清单，取最长的那个，后面必须是行尾或空白（GPT-5 与
+/// GPT-5 Mini 分得开）。认不出返回 None。
+pub(crate) fn footer_model<'a>(lines: &[String], catalog: &'a [ModelCatalogEntry]) -> Option<&'a ModelCatalogEntry> {
+    let footer = regex::Regex::new(r"^\s*┃\s+\S[^·]* · (.+)$").ok()?;
+    let text = lines.iter().rev().find_map(|line| footer.captures(line.trim_end()))?.get(1)?.as_str().to_string();
+    let fits = |prefix: &str| {
+        text.strip_prefix(prefix)
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with(char::is_whitespace))
+    };
+    catalog
+        .iter()
+        .filter_map(|entry| {
+            let full = entry.group.as_deref().map(|group| format!("{} {group}", entry.label));
+            if full.as_deref().is_some_and(fits) {
+                Some((full.map_or(0, |f| f.len()) + 1000, entry))
+            } else if fits(&entry.label) {
+                Some((entry.label.len(), entry))
+            } else {
+                None
+            }
+        })
+        .max_by_key(|(score, _)| *score)
+        .map(|(_, entry)| entry)
+}
+
 /// TUI 对话框路线的一步。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum DialogStep {
@@ -2046,6 +2117,50 @@ mod tests {
         assert_eq!(back["modes"]["permission"], "manual");
         assert_eq!(back["waitFor"], "lead");
         queue().remove(&sid);
+    }
+
+    /// 真机第四轮问题 3：只切 agent 后从底栏读回 OpenCode 实际用的模型（前缀相同的模型分得开）。
+    #[test]
+    fn opencode_footer_model_is_read_back() {
+        let mut one = ModelCatalogEntry::new("fake/fake-model", "Fake One");
+        one.group = Some("Fake".into());
+        let mut two = ModelCatalogEntry::new("fake/fake-model-2", "Fake Two");
+        two.group = Some("Fake".into());
+        let mut gpt = ModelCatalogEntry::new("openai/gpt-5", "GPT-5");
+        gpt.group = Some("OpenAI".into());
+        let mut mini = ModelCatalogEntry::new("openai/gpt-5-mini", "GPT-5 Mini");
+        mini.group = Some("OpenAI".into());
+        let catalog = vec![one, two, gpt, mini];
+        let screen = |footer: &str| vec!["  ┃".to_string(), footer.to_string(), "  ╹▀▀▀▀".to_string()];
+        assert_eq!(footer_model(&screen("  ┃  Plan · Fake One Fake"), &catalog).unwrap().id, "fake/fake-model");
+        assert_eq!(footer_model(&screen("  ┃  Build · Fake Two Fake          C:\\proj:master"), &catalog).unwrap().id, "fake/fake-model-2");
+        assert_eq!(footer_model(&screen("  ┃  Build · GPT-5 Mini OpenAI"), &catalog).unwrap().id, "openai/gpt-5-mini");
+        assert_eq!(footer_model(&screen("  ┃  Build · GPT-5 OpenAI"), &catalog).unwrap().id, "openai/gpt-5");
+        assert!(footer_model(&screen("  ┃  Build · Unknown Model X"), &catalog).is_none());
+    }
+
+    /// 真机第四轮问题 2：切完模型、还没有新回复就再切模式，不能按会话文件里旧回复的模型拼参数。
+    #[test]
+    fn switched_model_wins_until_a_new_reply() {
+        let stored = HashMap::from([
+            ("model".to_string(), "gemini-2.5-pro".to_string()),
+            (REPLY_MODEL_AT_SWITCH.to_string(), "gemini-3.8-flash".to_string()),
+        ]);
+        let mut current = HashMap::from([("model".to_string(), "gemini-3.8-flash".to_string())]);
+        pin_switched_model(&mut current, &stored);
+        assert_eq!(current["model"], "gemini-2.5-pro", "还没有新回复：以刚切的为准");
+        let mut unknown = HashMap::new();
+        pin_switched_model(&mut unknown, &stored);
+        assert_eq!(unknown["model"], "gemini-2.5-pro", "读不到回复模型：以存档为准");
+        let mut replied = HashMap::from([("model".to_string(), "gemini-2.5-flash".to_string())]);
+        pin_switched_model(&mut replied, &stored);
+        assert_eq!(replied["model"], "gemini-2.5-flash", "有了新回复且模型不同：以回复为准");
+        let mut no_marker = HashMap::from([("model".to_string(), "gemini-3.8-flash".to_string())]);
+        pin_switched_model(&mut no_marker, &HashMap::from([("model".to_string(), "gemini-2.5-pro".to_string())]));
+        assert_eq!(no_marker["model"], "gemini-3.8-flash", "没切过（无标记）：照回复");
+        // 标记键不是启动选项，不会拼进命令行。
+        let gemini = meowo_agent::by_id("gemini").unwrap();
+        assert!(!meowo_agent::resolve_launch_args(gemini.launch_options(), &stored).iter().any(|arg| arg.contains("flash")));
     }
 
     /// 第四轮补：运行中排进来的终端项同一件事后选的替换先选的，宿主合并时不丢别的项。

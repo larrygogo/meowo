@@ -50,7 +50,7 @@ import { arrowPanelApprovalDetails, framedBoxApprovalDetails, proceedBoxApproval
 import { ModelPicker, readStarred, type ModelPickerItem } from "./chat/ModelPicker";
 import { currentPresetId } from "./chat/modelLabels";
 import { ModelMenu, effortLabel } from "./chat/ModelMenu";
-import { mustDefer, useSessionSettings, type TerminalAction } from "./chat/useSessionSettings";
+import { mustDefer, pinnedModel, useSessionSettings, type ModelPin, type TerminalAction } from "./chat/useSessionSettings";
 import { modeChoiceViews, screenShowsAny } from "./chat/modeChoices";
 import { QuestionPanels } from "./chat/QuestionPanels";
 import { RemoteTerminalKeys } from "./chat/RemoteTerminalKeys";
@@ -1679,6 +1679,8 @@ export function ChatWindow() {
   const showHandoffNote = history?.predecessorId != null && prefixSegments.every((segment) => segment.items.length === 0);
   // 切模型 / 模式前从 TUI 搬进对话页的草稿（没重启时撤回用）。
   const rescuedRef = useRef<string | null>(null);
+  // 刚切成功的模型：会话文件还没有新回复前，轮询报的旧模型不能把它盖回去（真机第四轮问题 2）。
+  const modelPinRef = useRef<ModelPin | null>(null);
   // 终端项（Kimi /plan、Claude /model、循环快捷键）运行中排队与回合结束执行：动作函数在下面
   // useModelControls 才有，经 ref 接上。
   const terminalRunnerRef = useRef<(action: TerminalAction) => Promise<void>>(async () => {});
@@ -1706,6 +1708,7 @@ export function ChatWindow() {
       return "moved";
     },
     applyTerminal: (action) => terminalRunnerRef.current(action),
+    pinModel: (pin) => { modelPinRef.current = pin; },
     // 搬了却没重启（排进队列、被拒）：TUI 里原稿还在，撤回对话页这份；只撤刚追加的那段，用户改过就不动。
     undoRescue: () => {
       const text = rescuedRef.current;
@@ -2124,7 +2127,9 @@ export function ChatWindow() {
             else agentModes.push(update);
           }
         }
-        const merged = { ...next, agentModes };
+        const pinned = pinnedModel(modelPinRef.current, next.sessionId, next.model);
+        if (!pinned.keep) modelPinRef.current = null;
+        const merged = { ...next, agentModes, model: pinned.model ?? next.model };
         return sameHistoryMeta(prev, merged) ? prev : merged;
       });
       setItems((prev) => next.items.length || reset ? reduceChatEvents(prev, next.items, reset) : prev);

@@ -1348,6 +1348,8 @@ export type SettingsOutcome = {
   sessionId: number;
   confirmed: boolean;
   reason: string | null;
+  /** 切完当场读回的实际模型显示名（OpenCode 只切 agent 时会换模型）。 */
+  model?: string | null;
 };
 
 /** 切模型 / 模式：后端按插件声明的机制分派（会话服务 / 带参重启接回 / TUI 对话框 / 未建会话重开）。

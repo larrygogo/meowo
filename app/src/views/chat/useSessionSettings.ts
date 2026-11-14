@@ -47,6 +47,18 @@ export type SettingsRequest = {
   terminal?: TerminalAction[];
 };
 
+/** 刚切成功的模型（真机第四轮问题 2）：会话文件里的「当前模型」取最近一条回复，切完还没有新回复时
+ *  它仍是旧模型；轮询合并、再切模式时都不能拿它把刚切的值盖回去。`replyModel` 是切换那一刻轮询报的
+ *  模型；之后报的仍是它（或报不出），就以刚切的为准；报出别的模型（有了新回复）才以回复为准。 */
+export type ModelPin = { sessionId: number; label: string; replyModel: string | null };
+
+/** 轮询报的模型与钉住的值合并：返回该显示的模型，以及钉子还要不要留着。 */
+export function pinnedModel(pin: ModelPin | null, sessionId: number, polled: string | null | undefined): { model: string | null | undefined; keep: boolean } {
+  if (!pin || pin.sessionId !== sessionId) return { model: polled, keep: false };
+  if (!polled || polled === pin.replyModel) return { model: pin.label, keep: true };
+  return { model: polled, keep: false };
+}
+
 /** 一条要往终端里打字的切换（运行中排队用，参数原样存，执行时不再查表）。 */
 export type TerminalAction =
   | { kind: "mode"; dimension: string; value: string; inputs: { data: string; submit: boolean }[]; cycleInput?: string | null; markers?: ModeScreenMarker[] }
@@ -112,6 +124,8 @@ export interface SessionSettingsDeps {
   /** 读 TUI 输入框；`move` 为真且有字时搬进对话页输入框（要重启时 Meowo 先把用户内容保住），
    *  不重启的路线只读不搬，免得对话页与 TUI 各一份。 */
   rescueDraft: (move: boolean) => Promise<DraftRescue>;
+  /** 切模型成功后钉住新值（见 ModelPin）。 */
+  pinModel?: (pin: ModelPin) => void;
   /** 执行一条排着的终端项（对话页照原样打字切换，见 SettingsRequest.terminal）。 */
   applyTerminal?: (action: TerminalAction) => Promise<void>;
   /** 搬了草稿最后却没重启（排进队列、被拒、出错）：把搬进对话页的那份撤回，TUI 里原稿还在，免得发两遍。 */
@@ -166,6 +180,10 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
   const runningRef = useRef(false);
 
   const optimistic = (request: SettingsRequest) => {
+    if (request.model) {
+      const { sessionId, history } = depsRef.current;
+      depsRef.current.pinModel?.({ sessionId, label: request.model.label, replyModel: history?.model ?? null });
+    }
     depsRef.current.setHistory((current) => {
       if (!current) return current;
       const agentModes = [...current.agentModes];
@@ -256,6 +274,12 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
         case "applied":
         case "restarted":
           optimistic(request);
+          // 只切 agent 时 OpenCode 换成了该 agent 记住的模型：后端当场读回，立刻显示并钉住（真机第四轮问题 3）。
+          if (outcome.model && !request.model) {
+            const readBack = outcome.model;
+            depsRef.current.pinModel?.({ sessionId, label: readBack, replyModel: depsRef.current.history?.model ?? null });
+            depsRef.current.setHistory((current) => current && current.sessionId === sessionId ? { ...current, model: readBack } : current);
+          }
           // TUI 对话框路线：回车后底栏没认出新值（终端太窄被截断等）不算失败，下一条消息再核对。
           if (outcome.kind === "applied" && !outcome.confirmed) depsRef.current.setSendError(t.chat.settingsUnconfirmed);
           break;
