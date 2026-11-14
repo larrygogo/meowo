@@ -643,6 +643,31 @@ async fn refresh_usage(provider: String) -> Result<meowo_agent::ProviderUsage, S
     .map_err(|e| e.to_string())?
 }
 
+/// 查看指定 profile 的用量，不改变 active 账号。非 active 结果不写 active 缓存。
+#[tauri::command]
+async fn refresh_profile_usage(
+    provider: String,
+    profile: Option<String>,
+) -> Result<meowo_agent::ProviderUsage, String> {
+    let key = agent_id(&provider).ok_or("未知 agent")?;
+    if let Some(id) = profile.as_deref() {
+        if !profile::exists(&provider, id) {
+            return Err("没有这个账号".into());
+        }
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        match account::usage_of_profile(key, profile.as_deref()) {
+            Some(u) => Ok(u),
+            None if account::usage_supported_for_profile(key, profile.as_deref()) => {
+                Err("UNAVAILABLE".into())
+            }
+            None => Err(account::USAGE_UNSUPPORTED.to_string()),
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 /// 返回宿主操作系统标识，供前端按平台调整 UI / 交互。
 #[tauri::command]
 fn host_os() -> String {
@@ -1648,6 +1673,7 @@ pub fn run() {
             mouse_pressed_outside_window,
             get_accounts,
             refresh_usage,
+            refresh_profile_usage,
             host_os,
             available_terminals,
             list_agents,

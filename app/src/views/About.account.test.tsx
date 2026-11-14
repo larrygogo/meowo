@@ -14,6 +14,7 @@ const api = vi.hoisted(() => ({
   apiKeyLogin: vi.fn(),
   checkProviderHooks: vi.fn(),
   refreshUsage: vi.fn(),
+  refreshProfileUsage: vi.fn(),
   getSettings: vi.fn(),
   setSettings: vi.fn(),
   getRelaySecretStatus: vi.fn(),
@@ -99,6 +100,11 @@ import { modelMenuPlacement } from "./settings/RelayAccess";
 import { descriptors } from "../test/agents";
 import { zh } from "../i18n/zh";
 
+const usageAt = (pct: number) => ({
+  lanes: [{ kind: "five_hour" as const, used_pct: pct, used: null, limit: null, unit: null, resets_at: null }],
+  note: null,
+});
+
 beforeEach(() => {
   // 顶部模型切换记进 localStorage：不清的话，上个用例选过的 agent 会成为下个用例的默认选中卡。
   localStorage.clear();
@@ -106,6 +112,7 @@ beforeEach(() => {
   api.getAccounts.mockResolvedValue([{ provider: "claude", account: { email: "a@b.c" }, usage: null, usage_supported: true }]);
   api.listAgents.mockResolvedValue(descriptors(["claude", "codex"]));
   api.refreshUsage.mockResolvedValue({ lanes: [], note: null });
+  api.refreshProfileUsage.mockResolvedValue({ lanes: [], note: null });
   api.getSettings.mockResolvedValue({ sticker_quota_providers: [] });
   api.availableTerminals.mockResolvedValue([]);
   api.setSettings.mockResolvedValue(undefined);
@@ -876,6 +883,100 @@ describe("AccountSection 多账号", () => {
     await waitFor(() =>
       expect(api.loginAgent).toHaveBeenCalledWith("claude", undefined, "work", expect.any(String))
     );
+  });
+
+  it("查看其他账号用量不切换 active；可切回 active 视图", async () => {
+    api.getAccounts.mockResolvedValue([{ provider: "claude", account: { email: "a@b.c" }, usage: usageAt(11), usage_supported: true }]);
+    api.refreshUsage.mockResolvedValue(usageAt(11));
+    api.listProfiles.mockResolvedValue([
+      { id: null, name: "", active: true, account: { email: "a@b.c" } },
+      { id: "work", name: "工作", active: false, account: { email: "w@b.c" } },
+    ]);
+    api.refreshProfileUsage.mockResolvedValue(usageAt(73));
+    render(<AccountSection />);
+
+    const activeView = await screen.findByTestId("profile-usage-claude-__default__");
+    expect(activeView.getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(await screen.findByTestId("profile-usage-claude-work"));
+    await waitFor(() => expect(screen.getByRole("progressbar", { name: zh.account.laneFiveHour }).getAttribute("aria-valuenow")).toBe("73"));
+    expect(api.refreshProfileUsage).toHaveBeenCalledWith("claude", "work");
+    expect(screen.getByText(zh.account.usageFor("工作"))).toBeTruthy();
+    expect(screen.queryByRole("switch", { name: zh.settings.showQuotaOnSticker })).toBeNull();
+    expect(api.setActiveProfile).not.toHaveBeenCalled();
+    expect(api.applyActiveProfileToSessions).not.toHaveBeenCalled();
+
+    fireEvent.click(activeView);
+    await waitFor(() => expect(screen.getByRole("progressbar", { name: zh.account.laneFiveHour }).getAttribute("aria-valuenow")).toBe("11"));
+    expect(screen.getByText(zh.account.quota)).toBeTruthy();
+    expect(screen.getByRole("switch", { name: zh.settings.showQuotaOnSticker })).toBeTruthy();
+    expect(api.refreshProfileUsage).toHaveBeenCalledTimes(1);
+  });
+
+  it("active 未登录时也能查看其他已登录账号", async () => {
+    api.getAccounts.mockResolvedValue([{ provider: "claude", account: null, usage: null, usage_supported: false }]);
+    api.listProfiles.mockResolvedValue([
+      { id: null, name: "", active: true, account: null },
+      { id: "work", name: "工作", active: false, account: { email: "w@b.c" } },
+    ]);
+    api.refreshProfileUsage.mockResolvedValue(usageAt(33));
+    render(<AccountSection />);
+
+    expect(await screen.findByTestId("profile-usage-claude-work")).toBeTruthy();
+    expect(screen.queryByRole("progressbar")).toBeNull();
+    fireEvent.click(screen.getByTestId("profile-usage-claude-work"));
+    await waitFor(() => expect(screen.getByRole("progressbar", { name: zh.account.laneFiveHour }).getAttribute("aria-valuenow")).toBe("33"));
+  });
+
+  it("刷新其他账号失败时保留已显示的用量", async () => {
+    api.listProfiles.mockResolvedValue([
+      { id: null, name: "", active: true, account: { email: "a@b.c" } },
+      { id: "work", name: "工作", active: false, account: { email: "w@b.c" } },
+    ]);
+    api.refreshProfileUsage.mockResolvedValueOnce(usageAt(45));
+    render(<AccountSection />);
+
+    fireEvent.click(await screen.findByTestId("profile-usage-claude-work"));
+    await waitFor(() => expect(screen.getByRole("progressbar", { name: zh.account.laneFiveHour }).getAttribute("aria-valuenow")).toBe("45"));
+    api.refreshProfileUsage.mockRejectedValueOnce("offline");
+    fireEvent.click(screen.getByRole("button", { name: zh.account.refresh }));
+    expect(await screen.findByText(zh.account.refreshFailed)).toBeTruthy();
+    expect(screen.getByRole("progressbar", { name: zh.account.laneFiveHour }).getAttribute("aria-valuenow")).toBe("45");
+  });
+
+  it("其他账号不支持查询时显示能力状态并停用刷新", async () => {
+    api.listProfiles.mockResolvedValue([
+      { id: null, name: "", active: true, account: { email: "a@b.c" } },
+      { id: "work", name: "工作", active: false, account: { email: "w@b.c" } },
+    ]);
+    api.refreshProfileUsage.mockRejectedValue("USAGE_UNSUPPORTED");
+    render(<AccountSection />);
+
+    fireEvent.click(await screen.findByTestId("profile-usage-claude-work"));
+    expect(await screen.findByText(zh.account.usageUnsupported)).toBeTruthy();
+    expect((screen.getByRole("button", { name: zh.account.refresh }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("快速切换查看账号时，旧请求响应不能覆盖新视图", async () => {
+    api.listProfiles.mockResolvedValue([
+      { id: null, name: "", active: true, account: { email: "a@b.c" } },
+      { id: "work", name: "工作", active: false, account: { email: "w@b.c" } },
+      { id: "personal", name: "个人", active: false, account: { email: "p@b.c" } },
+    ]);
+    let resolveWork!: (u: ReturnType<typeof usageAt>) => void;
+    let resolvePersonal!: (u: ReturnType<typeof usageAt>) => void;
+    api.refreshProfileUsage.mockImplementation((_provider, profile) => new Promise((resolve) => {
+      if (profile === "work") resolveWork = resolve;
+      else resolvePersonal = resolve;
+    }));
+    render(<AccountSection />);
+
+    fireEvent.click(await screen.findByTestId("profile-usage-claude-work"));
+    fireEvent.click(screen.getByTestId("profile-usage-claude-personal"));
+    await act(async () => { resolvePersonal(usageAt(21)); });
+    expect(screen.getByRole("progressbar", { name: zh.account.laneFiveHour }).getAttribute("aria-valuenow")).toBe("21");
+    await act(async () => { resolveWork(usageAt(88)); });
+    expect(screen.getByRole("progressbar", { name: zh.account.laneFiveHour }).getAttribute("aria-valuenow")).toBe("21");
+    expect(screen.getByText(zh.account.usageFor("个人"))).toBeTruthy();
   });
 
   it("点账号行即切换；已是活跃的那行不可点", async () => {

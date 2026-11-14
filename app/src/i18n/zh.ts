@@ -1878,6 +1878,10 @@ export const zh = {
     pushToggle: "手机推送",
     pushToggleDesc: "暂停后地址保留",
     settingFailed: "没改成，请稍后再试",
+    usageTitle: "Provider 用量",
+    usageEmpty: "暂无支持用量查询的 provider",
+    usageNoCache: "暂无缓存用量，点刷新获取",
+    usageRefreshProvider: (provider: string) => `刷新 ${provider} 用量`,
     backToSessions: "返回会话列表",
     // 配置端口与实际监听分叉（多实例共享 settings.json，另一实例改端口本实例不跟随）。
     boundMismatch: (configured: number, actual: number) =>
@@ -2002,6 +2006,9 @@ export const zh = {
     // 带上后端原因（做空第二轮 R10）：原先只说「请手动添加」，看不出为什么失败。「加入 PATH」按钮还在，可直接重试。
     pathAddFailed: (reason: string) => (reason ? `没能写入 PATH：${reason}` : "没能写入 PATH，可再点一次"),
     quota: "配额",
+    viewUsage: "用量",
+    viewProfileUsage: (name: string) => `查看${name}的用量`,
+    usageFor: (name: string) => `${name} · 用量`,
     relayBadge: "中转",
     relayActive: "正在使用 API 中转，官方配额不适用",
     refresh: "刷新",

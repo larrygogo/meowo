@@ -516,6 +516,8 @@ bridged_args!(NewSessionArgs {
     extra_dirs: Option<Vec<String>>
 });
 
+bridged_args!(RefreshUsageArgs { provider: String });
+
 bridged_args!(CheckProviderHooksArgs { provider: String });
 
 bridged_args!(RepairProviderHooksArgs { provider: String });

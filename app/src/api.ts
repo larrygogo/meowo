@@ -45,6 +45,7 @@ import type { AnswerLeadGateArgs } from "./generated/contracts/bridge/AnswerLead
 import type { RetryLeadGateDeliveryArgs } from "./generated/contracts/bridge/RetryLeadGateDeliveryArgs";
 import type { CheckProviderHooksArgs } from "./generated/contracts/bridge/CheckProviderHooksArgs";
 import type { RepairProviderHooksArgs } from "./generated/contracts/bridge/RepairProviderHooksArgs";
+import type { RefreshUsageArgs } from "./generated/contracts/bridge/RefreshUsageArgs";
 import type { FileMentionCandidatesArgs } from "./generated/contracts/bridge/FileMentionCandidatesArgs";
 import type { ForkSessionArgs } from "./generated/contracts/bridge/ForkSessionArgs";
 import type { GetChatHistoryArgs } from "./generated/contracts/bridge/GetChatHistoryArgs";
@@ -1539,7 +1540,12 @@ export function getAccounts(): Promise<ProviderAccountPayload[]> {
   return invoke("get_accounts");
 }
 export function refreshUsage(provider: string): Promise<ProviderUsage> {
-  return invoke("refresh_usage", { provider });
+  return invoke("refresh_usage", { provider } satisfies RefreshUsageArgs);
+}
+
+/** 查看指定账号的用量，不切换 active；非 active 结果不写 active 缓存。桌面账号页专用。 */
+export function refreshProfileUsage(provider: AgentId, profile: string | null): Promise<ProviderUsage> {
+  return invoke("refresh_profile_usage", { provider, profile });
 }
 
 /** 某 provider 的 meowo-reporter hooks 接入状态。unknown = 无法确认（读取失败/位置未知）。 */

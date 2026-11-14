@@ -244,6 +244,8 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     // 账号载荷只有展示字段(email/plan/登录方式标签),无任何密钥;新建会话页
     // 靠它提示「当前用的是非默认账号」,不加白会静默丢提示。
     "get_accounts",
+    // 手机设置里的 provider 用量：只按 provider 刷新官方配额，沿用桌面 60s 限频，不读写凭据。
+    "refresh_usage",
 ];
 
 /// server 运行态。独立 `app.manage`（不进 AppState：那是命令数据面的托管，这里是
@@ -1602,6 +1604,10 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
         // reply_ok 前提:get_accounts 返回 Vec 而非 Result(Result 会被 serde 包成
         // {"Ok":…} 且照样 200)——改它签名时这里必须复检。
         "get_accounts" => reply_ok(crate::get_accounts().await),
+        "refresh_usage" => {
+            let a = args!(RefreshUsageArgs);
+            reply(crate::refresh_usage(a.provider).await)
+        }
         // BRIDGED_COMMANDS 有而这里漏写的项落到此处：fail-closed，宁 404 不放行。
         _ => err_status(StatusCode::NOT_FOUND, "remote/unknown_command"),
     }
@@ -2003,6 +2009,7 @@ mod tests {
             "awaiting_interaction_sessions",
             "list_subdirectories",
             "get_accounts",
+            "refresh_usage",
         ] {
             assert!(BRIDGED_COMMANDS.contains(&cmd), "{cmd} 应在白名单");
         }
@@ -2665,6 +2672,8 @@ mod tests {
                 br#"{"cwd":"C:/repo","provider":"claude","options":{"permissionMode":"default"},"extraDirs":["C:/other"]}"#,
             )
             .map(|_| ()),
+            // api.ts refreshUsage
+            "refresh_usage" => parse::<RefreshUsageArgs>(br#"{"provider":"claude"}"#).map(|_| ()),
             // api.ts:972
             "check_provider_hooks" => {
                 parse::<CheckProviderHooksArgs>(br#"{"provider":"claude"}"#).map(|_| ())

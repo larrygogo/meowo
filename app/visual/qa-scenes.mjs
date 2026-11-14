@@ -119,6 +119,8 @@ export const QA_SHOTS = [
   // ── 设置窗：更新状态、下拉展开、输入框聚焦、保存失败 ──
   ...["checking", "error", "available", "downloading", "ready"].map((u) => ({ name: "qa-set-update-" + u, scene: "settingswin-about", params: "upd=" + u, size: SETTINGS, sel: ".settings", steps: [["tick", 11000]] })),
   { name: "qa-set-dropdown", scene: "settingswin-general", size: SETTINGS, sel: ".dd-menu", steps: [["click", ".dd > .dd-btn"]] },
+  // 查看非 active 账号只换用量视图：账号名、按下态和非 active 用量都要入镜。
+  { name: "qa-set-profile-usage", scene: "settingswin-account", size: SETTINGS, sel: ".usage-card-title", steps: [["click", '[data-testid="profile-usage-claude-work"]']], langs: ["zh", "en"] },
   { name: "qa-set-dropdown-sessions", scene: "settingswin-sessions", size: SETTINGS, sel: ".dd-menu", steps: [["click", ".dd > .dd-btn >> nth=1"]] },
   { name: "qa-set-focus", scene: "settingswin-network", size: SETTINGS, sel: ".settings", steps: [["click", ".main-body input[type=text], .main-body input:not([type])"]] },
   { name: "qa-set-search-focus", scene: "settingswin-general", size: SETTINGS, sel: ".settings", steps: [["click", ".side-search input"]] },
