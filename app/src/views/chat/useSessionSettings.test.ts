@@ -6,6 +6,11 @@ const live = vi.fn();
 const record = vi.fn();
 // 宿主侧的排队（session_settings 的 QUEUED）在这里用一张表模拟：按会话记、合并、取走即清。
 const queue = new Map<number, Record<string, unknown>>();
+// 宿主执行结果事件（session-settings-applied）：测试里直接调监听函数模拟宿主发事件。
+const hostEvents = vi.hoisted(() => ({ handler: null as null | ((event: { payload: { sessionId: number; kind: string; reason: string | null } }) => void) }));
+vi.mock("@tauri-apps/api/event", () => ({
+  listen: async (_name: string, handler: typeof hostEvents.handler) => { hostEvents.handler = handler; return () => {}; },
+}));
 vi.mock("../../api", () => ({
   applySessionSettings: (...args: unknown[]) => apply(...args),
   sessionLiveSettings: (...args: unknown[]) => live(...args),
@@ -221,6 +226,28 @@ describe("会话里切模型 / 模式的分派", () => {
     expect(pinModel).toHaveBeenCalledWith({ sessionId: 7, label: "Fake One", replyModel: "K3" });
     const update = setHistory.mock.calls.at(-1)![0] as (h: unknown) => { model: string };
     expect(update({ sessionId: 7, model: "Fake Two", agentModes: [] }).model).toBe("Fake One");
+  });
+
+  /// leader 2026-11-14：混合排队宿主先做经后端的部分（模型），终端项留给对话页；拆分后提示仍是同一句。
+  it("混合排队宿主做完模型后，剩下的终端项提示仍是同一句", async () => {
+    const action = { kind: "mode" as const, dimension: "work", value: "plan", inputs: [{ data: "/plan on", submit: true }], cycleInput: null, markers: [] };
+    const applyTerminal = vi.fn(async () => {});
+    let current = deps({ tone: "running", applyTerminal });
+    const { result, rerender } = renderHook(() => useSessionSettings(current));
+    await waitFor(() => expect(hostEvents.handler).not.toBeNull());
+    act(() => result.current.request({ model: { id: "kimi-code/k3", label: "K3" }, label: "K3" }));
+    act(() => result.current.request({ modes: { work: "plan" }, label: "计划：开", terminal: [action] }));
+    await waitFor(() => expect(result.current.notice).toBe("这一轮结束后切换到「计划：开」（重启 Meowo 会取消）"));
+    // 宿主在回合结束时做掉了模型（restarted），把终端项放回队列并发 queued。
+    queue.set(7, { label: "计划：开", modes: { work: "plan" }, terminal: [action] });
+    act(() => hostEvents.handler!({ payload: { sessionId: 7, kind: "restarted", reason: null } }));
+    act(() => hostEvents.handler!({ payload: { sessionId: 7, kind: "queued", reason: null } }));
+    await waitFor(() => expect(result.current.notice).toBe("这一轮结束后切换到「计划：开」（重启 Meowo 会取消）"));
+    // 回合结束：对话页照原样执行终端项，不再走后端。
+    current = deps({ tone: "waiting", applyTerminal });
+    rerender();
+    await waitFor(() => expect(applyTerminal).toHaveBeenCalledWith(action));
+    expect(apply).not.toHaveBeenCalled();
   });
 
   it("服务没就绪时交给宿主等就绪", async () => {

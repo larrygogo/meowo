@@ -1288,11 +1288,13 @@ fn run_queued(app: &tauri::AppHandle, session_id: i64) {
         }
         return;
     }
-    // 带终端项的（Kimi `/plan on`、Claude `/model` 等要往终端里打字的切换）由对话页在回合结束时执行：
-    // 宿主不往终端打字（lead_native/waiter.rs 同一约束）。
-    if request["terminal"].as_array().is_some_and(|items| !items.is_empty()) {
+    // 终端项（Kimi `/plan on`、Claude `/model` 等要往终端里打字的切换）由对话页在回合结束时执行，宿主不往
+    // 终端打字（lead_native/waiter.rs 同一约束）。混合的条目宿主先做能经后端做的部分（模型 / 会话服务 /
+    // 带参重启），终端项留在队列里，提示仍是同一句（leader 2026-11-14）。
+    let (request, leftover) = split_terminal(&request);
+    let Some(request) = request else {
         return;
-    }
+    };
     let wait = wait_for(&request).map(str::to_owned);
     // 等打开：只看 PTY 在不在（不开库），一直不打开的到上限出队并提醒（做空 R7、第四轮 L1）。
     if wait.as_deref() == Some("open") && !state.ptys.is_active(session_id) {
@@ -1487,9 +1489,60 @@ fn run_queued(app: &tauri::AppHandle, session_id: i64) {
         // 等打开的条目保留 waitFor，前端取不走（做空 R5）。
         Ok(outcome) if outcome.kind == "not_now" => retry(taken),
         Err(reason) if RETRY_LATER.contains(&reason.as_str()) => retry(taken),
-        Ok(outcome) => emit_settings(app, session_id, outcome.kind, outcome.reason),
-        Err(reason) => emit_settings(app, session_id, "failed", Some(settings_reason(&reason))),
+        Ok(outcome) => {
+            emit_settings(app, session_id, outcome.kind, outcome.reason);
+            requeue_terminal(app, session_id, leftover);
+        }
+        Err(reason) => {
+            emit_settings(app, session_id, "failed", Some(settings_reason(&reason)));
+            requeue_terminal(app, session_id, leftover);
+        }
     }
+}
+
+/// 拆开混合条目：(宿主能做的部分, 留给对话页的终端项)。没有终端项时原样返回、不留；只有终端项时宿主
+/// 那份是 None。留下的那份带原来的提示名，界面上仍是同一句「这一轮结束后切换到「X」」。
+pub(crate) fn split_terminal(request: &serde_json::Value) -> (Option<serde_json::Value>, Option<serde_json::Value>) {
+    let Some(items) = request["terminal"].as_array().filter(|items| !items.is_empty()) else {
+        return (Some(request.clone()), None);
+    };
+    let terminal_dims: Vec<&str> = items
+        .iter()
+        .filter(|item| item["kind"] == "mode")
+        .filter_map(|item| item["dimension"].as_str())
+        .collect();
+    let mut backend_modes = serde_json::Map::new();
+    let mut terminal_modes = serde_json::Map::new();
+    for (dimension, value) in request["modes"].as_object().into_iter().flatten() {
+        if terminal_dims.contains(&dimension.as_str()) {
+            terminal_modes.insert(dimension.clone(), value.clone());
+        } else {
+            backend_modes.insert(dimension.clone(), value.clone());
+        }
+    }
+    let mut leftover = serde_json::json!({ "label": request["label"].clone(), "terminal": items.clone() });
+    if !terminal_modes.is_empty() {
+        leftover["modes"] = serde_json::Value::Object(terminal_modes);
+    }
+    let has_model = request["model"]["id"].is_string();
+    if !has_model && backend_modes.is_empty() {
+        return (None, Some(leftover));
+    }
+    let mut backend = request.clone();
+    if let Some(map) = backend.as_object_mut() {
+        map.remove("terminal");
+        map.insert("modes".into(), serde_json::Value::Object(backend_modes));
+    }
+    (Some(backend), Some(leftover))
+}
+
+/// 宿主做完能做的部分后，把终端项放回队列（与期间前端新排的合并），并让对话页刷新同一句提示。
+fn requeue_terminal(app: &tauri::AppHandle, session_id: i64, leftover: Option<serde_json::Value>) {
+    let Some(leftover) = leftover else {
+        return;
+    };
+    put_back(session_id, Queued::new(leftover));
+    emit_settings(app, session_id, "queued", None);
 }
 
 /// 底栏模式标记（前端 modeFromScreen 的宿主版）：小写子串，取画面里最靠后出现的那个。
@@ -2166,6 +2219,35 @@ mod tests {
         // 标记键不是启动选项，不会拼进命令行。
         let gemini = meowo_agent::by_id("gemini").unwrap();
         assert!(!meowo_agent::resolve_launch_args(gemini.launch_options(), &stored).iter().any(|arg| arg.contains("flash")));
+    }
+
+    /// leader 2026-11-14：混合排队宿主先做能经后端做的部分，终端项留给对话页；提示名不变。
+    #[test]
+    fn mixed_queue_splits_backend_and_terminal_parts() {
+        let action = serde_json::json!({ "kind": "mode", "dimension": "work", "value": "plan", "inputs": [{ "data": "/plan on", "submit": true }] });
+        let mixed = serde_json::json!({
+            "label": "计划：开",
+            "model": { "id": "kimi-code/k3", "label": "K3" },
+            "modes": { "permission": "yolo", "work": "plan" },
+            "terminal": [action.clone()],
+        });
+        let (backend, leftover) = split_terminal(&mixed);
+        let backend = backend.unwrap();
+        assert_eq!(backend["model"]["id"], "kimi-code/k3");
+        assert_eq!(backend["modes"], serde_json::json!({ "permission": "yolo" }));
+        assert!(backend.get("terminal").is_none());
+        let leftover = leftover.unwrap();
+        assert_eq!(leftover["label"], "计划：开");
+        assert_eq!(leftover["modes"], serde_json::json!({ "work": "plan" }));
+        assert_eq!(leftover["terminal"], serde_json::json!([action]));
+        // 只有终端项：宿主不做，整条留给对话页。
+        let only = serde_json::json!({ "label": "计划：开", "modes": { "work": "plan" }, "terminal": [action] });
+        let (none, rest) = split_terminal(&only);
+        assert!(none.is_none());
+        assert_eq!(rest.unwrap()["modes"]["work"], "plan");
+        // 没有终端项：原样执行，不留。
+        let plain = serde_json::json!({ "label": "K3", "model": { "id": "kimi-code/k3" } });
+        assert_eq!(split_terminal(&plain), (Some(plain.clone()), None));
     }
 
     /// 第四轮补：运行中排进来的终端项同一件事后选的替换先选的，宿主合并时不丢别的项。
