@@ -3,6 +3,7 @@
   "patterns": {
     "claude": [
       {
+        "anchors": [],
         "confirms": null,
         "details": "none",
         "id": "claude:long-session-resume",
@@ -14,9 +15,11 @@
           "this session is[^\\n]{0,120}\\bold and[^\\n]{0,80}\\btokens\\b",
           "resuming the full session will consume a substantial portion of your usage limits"
         ],
+        "tail_lines": null,
         "unparsed_keys": []
       },
       {
+        "anchors": [],
         "confirms": null,
         "details": "proceed_box",
         "id": "claude:command-approval",
@@ -81,9 +84,16 @@
           "this command requires approval",
           "do you want to proceed\\?"
         ],
+        "tail_lines": null,
         "unparsed_keys": []
       },
       {
+        "anchors": [
+          "^\\s*(?:❯\\s*)?No,\\s+exit\\s*$",
+          "^\\s*(?:❯\\s*)?Yes,\\s+I\\s+accept\\s*$",
+          "^\\s*❯\\s*(?:No,\\s+exit|Yes,\\s+I\\s+accept)\\s*$",
+          "^\\s*Enter\\s+to\\s+confirm\\s+·\\s+Esc\\s+to\\s+cancel\\s*$"
+        ],
         "confirms": null,
         "details": "none",
         "id": "claude:bypass-permissions-confirm",
@@ -99,11 +109,19 @@
           }
         ],
         "patterns": [
-          "^\\s*WARNING: Claude Code running in Bypass Permissions mode\\s*$"
+          "^\\s*WARNING:\\s+Claude\\s+Code\\s+running\\s+in\\s+Bypass\\s+Permissions\\s+mode\\s*$"
         ],
+        "tail_lines": 0,
         "unparsed_keys": []
       },
       {
+        "anchors": [
+          "^\\s*Do\\s+you\\s+want\\s+to\\s+use\\s+this\\s+API\\s+key\\?\\s*$",
+          "^\\s*(?:❯\\s*)?Yes\\s*$",
+          "^\\s*(?:❯\\s*)?No\\s+\\(recommended\\)\\s*$",
+          "^\\s*❯\\s*(?:Yes|No\\s+\\(recommended\\))\\s*$",
+          "^\\s*Enter\\s+to\\s+confirm\\s+·\\s+Esc\\s+to\\s+cancel\\s*$"
+        ],
         "confirms": null,
         "details": "none",
         "id": "claude:custom-api-key-confirm",
@@ -112,11 +130,17 @@
         "notice": "custom_api_key",
         "options": [],
         "patterns": [
-          "^\\s*Detected a custom API key in your environment\\s*$"
+          "^\\s*Detected\\s+a\\s+custom\\s+API\\s+key\\s+in\\s+your\\s+environment\\s*$"
         ],
+        "tail_lines": 0,
         "unparsed_keys": []
       },
       {
+        "anchors": [
+          "^\\s*(?:❯\\s*)?(?:\\d+\\.\\s*)?Yes, switch to \\S.*$",
+          "^\\s*(?:❯\\s*)?(?:\\d+\\.\\s*)?No, go back\\s*$",
+          "^\\s*❯\\s*(?:\\d+\\.\\s*)?(?:Yes, switch to|No, go back)\\b"
+        ],
         "confirms": null,
         "details": "none",
         "id": "claude:switch-confirm",
@@ -127,9 +151,11 @@
         "patterns": [
           "^\\s*(?:switch model|change effort level)\\?\\s*$"
         ],
+        "tail_lines": null,
         "unparsed_keys": []
       },
       {
+        "anchors": [],
         "confirms": null,
         "details": "none",
         "id": "claude:plan-approval",
@@ -140,12 +166,14 @@
         "patterns": [
           "written\\s+up\\s+a\\s+plan\\s+and\\s+is\\s+ready\\s+to\\s+execute"
         ],
+        "tail_lines": null,
         "unparsed_keys": []
       }
     ],
     "codex": [],
     "gemini": [
       {
+        "anchors": [],
         "confirms": null,
         "details": "framed_box",
         "id": "gemini:command-approval",
@@ -184,6 +212,7 @@
           "^\\s*│\\s*do you want to proceed\\?",
           "^\\s*│\\s*to run \\[[^\\]\\n]+\\], allow access to the following\\?"
         ],
+        "tail_lines": null,
         "unparsed_keys": [
           {
             "input": "\u001b",
@@ -192,6 +221,7 @@
         ]
       },
       {
+        "anchors": [],
         "confirms": null,
         "details": "none",
         "id": "gemini:usage-limit",
@@ -203,9 +233,11 @@
           "^\\s*│\\s*usage limit reached\\b",
           "^\\s*│\\s*we are currently experiencing high demand\\b"
         ],
+        "tail_lines": null,
         "unparsed_keys": []
       },
       {
+        "anchors": [],
         "confirms": null,
         "details": "framed_form",
         "id": "gemini:question",
@@ -216,11 +248,13 @@
         "patterns": [
           "^\\s*│\\s*answer questions\\b"
         ],
+        "tail_lines": null,
         "unparsed_keys": []
       }
     ],
     "kimi": [
       {
+        "anchors": [],
         "confirms": null,
         "details": "bracket_form",
         "id": "kimi:question",
@@ -242,9 +276,11 @@
         "patterns": [
           "↑↓ select\\s+(?:1-\\d+ / ↵ (?:choose|toggle)|1/2 choose\\s+↵ confirm)\\s+←/→/tab switch"
         ],
+        "tail_lines": null,
         "unparsed_keys": []
       },
       {
+        "anchors": [],
         "confirms": null,
         "details": "arrow_panel",
         "id": "kimi:command-approval",
@@ -285,11 +321,13 @@
           "↑/↓ select · [\\d/]+ choose · ↵ confirm",
           "^\\s*▶\\s*(?:run this command|write this file|apply these edits|stop this task|ready to build with this plan|approve [^\\n?]+)\\?"
         ],
+        "tail_lines": null,
         "unparsed_keys": []
       }
     ],
     "opencode": [
       {
+        "anchors": [],
         "confirms": null,
         "details": "option_row",
         "id": "opencode:command-approval",
@@ -319,11 +357,8 @@
         "patterns": [
           "△ permission required"
         ],
+        "tail_lines": null,
         "unparsed_keys": [
-          {
-            "input": "\r",
-            "role": "allow_once"
-          },
           {
             "input": "\u001b",
             "role": "deny"
@@ -331,6 +366,7 @@
         ]
       },
       {
+        "anchors": [],
         "confirms": "opencode:command-approval",
         "details": "option_row",
         "id": "opencode:always-allow-confirm",
@@ -341,6 +377,7 @@
         "patterns": [
           "△ always allow"
         ],
+        "tail_lines": null,
         "unparsed_keys": []
       }
     ]

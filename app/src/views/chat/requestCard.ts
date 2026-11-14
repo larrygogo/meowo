@@ -276,6 +276,17 @@ export function terminalInputForChoice(attention: AttentionOptions, choice: Appr
   return group[Number(indexed[2])]?.input || null;
 }
 
+/// 这个决定对应屏幕上的哪一个选项；没有对应项（或只有兜底按键）时返回 null。
+/// 调用方据此知道这一项是不是要用鼠标点（`pointer`），按键本身仍从 terminalInputForChoice 取。
+export function terminalOptionForChoice(attention: AttentionOptions, choice: ApprovalChoice): TerminalAttentionOption | null {
+  const options = terminalApprovalOptions(attention);
+  if (choice === "allow_once") return options.allowOnce;
+  if (choice === "deny") return options.deny;
+  const indexed = /^(suggestion|option):(\d+)$/.exec(choice);
+  if (!indexed) return null;
+  return (indexed[1] === "suggestion" ? options.persistent : options.others)[Number(indexed[2])] ?? null;
+}
+
 /// 「说明并拒绝」在屏幕通道上的打字流程；这一屏上没有能带说明的拒绝项时返回 null。
 export function terminalFeedbackFor(attention: AttentionOptions): TypedAnswer | null {
   return terminalApprovalOptions(attention).denyWithReason?.typed ?? null;

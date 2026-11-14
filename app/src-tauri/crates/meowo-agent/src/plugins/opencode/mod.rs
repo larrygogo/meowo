@@ -370,17 +370,15 @@ impl AgentPlugin for Opencode {
                         typed: None,
                     },
                 ],
-                unparsed_keys: &[
-                    crate::chat_ui::RoleKey {
-                        role: crate::chat_ui::OptionRole::AllowOnce,
-                        input: "\r",
-                    },
-                    crate::chat_ui::RoleKey {
-                        role: crate::chat_ui::OptionRole::Deny,
-                        input: "\x1b",
-                    },
-                ],
+                // 只留拒绝：Esc 与焦点无关。回车选的是焦点项，而焦点只用底色表示、文本里看不出，用户在终端里
+                // 动过方向键之后回车可能落到 Allow always 或 Reject 上（第二轮审查 2026-11-15），所以不给。
+                unparsed_keys: &[crate::chat_ui::RoleKey {
+                    role: crate::chat_ui::OptionRole::Deny,
+                    input: "\x1b",
+                }],
                 notice: None,
+                anchors: &[],
+                tail_lines: None,
             },
             crate::chat_ui::AttentionPattern {
                 id: "opencode:always-allow-confirm",
@@ -392,6 +390,8 @@ impl AgentPlugin for Opencode {
                 options: &[],
                 unparsed_keys: &[],
                 notice: None,
+                anchors: &[],
+                tail_lines: None,
             },
         ]
     }

@@ -21,8 +21,16 @@ use std::time::{Duration, Instant};
 
 mod common;
 
-const ROWS: u16 = 40;
-const COLS: u16 = 120;
+/// 终端尺寸，缺省 120×40；`PROBE_COLS` / `PROBE_ROWS` 可改（取证窄终端下的折行）。
+fn grid_size() -> (u16, u16) {
+    let read = |key: &str, fallback: u16| {
+        std::env::var(key)
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(fallback)
+    };
+    (read("PROBE_ROWS", 40), read("PROBE_COLS", 120))
+}
 
 fn use_bundled_conpty() {
     let source = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("binaries/conpty");
@@ -101,6 +109,8 @@ fn tui_script() {
             temp.clone()
         }
     };
+    #[allow(non_snake_case)]
+    let (ROWS, COLS) = grid_size();
     let pair = native_pty_system()
         .openpty(PtySize {
             rows: ROWS,
@@ -207,11 +217,12 @@ fn tui_script() {
                     for col in 0..cols {
                         let Some(cell) = grid.cell(row, col) else { continue };
                         let style = format!(
-                            "dim={} inv={} bold={} fg={:?}",
+                            "dim={} inv={} bold={} fg={:?} bg={:?}",
                             cell.dim(),
                             cell.inverse(),
                             cell.bold(),
-                            cell.fgcolor()
+                            cell.fgcolor(),
+                            cell.bgcolor()
                         );
                         match runs.last_mut() {
                             Some((last, text)) if *last == style => text.push_str(cell.contents()),
@@ -226,6 +237,50 @@ fn tui_script() {
                     }
                 }
                 true
+            }
+            // click=文本：在屏幕上找到最后一处该文本，往它的第二个字符所在格发一次鼠标左键点击
+            // （SGR 鼠标序列，按下加抬起）。取证「不依赖键盘焦点的作答方式」：opencode 的选项可点。
+            "click" => {
+                let hit = {
+                    let parser = screen.lock().unwrap();
+                    let grid = parser.screen();
+                    let (rows, cols) = grid.size();
+                    (0..rows).rev().find_map(|row| {
+                        // 逐格拼出这一行并记下每个字符所在的列（宽字符占两格，不能按字符下标当列）。
+                        let mut text = String::new();
+                        let mut at = Vec::new();
+                        for col in 0..cols {
+                            let Some(cell) = grid.cell(row, col) else { continue };
+                            let piece = if cell.contents().is_empty() { " " } else { cell.contents() };
+                            if cell.is_wide_continuation() {
+                                continue;
+                            }
+                            for _ in piece.chars() {
+                                at.push(col);
+                            }
+                            text.push_str(piece);
+                        }
+                        let found = text.to_lowercase().rfind(&arg.to_lowercase())?;
+                        let index = text[..found].chars().count();
+                        Some((row, at[index + 1]))
+                    })
+                };
+                match hit {
+                    Some((row, col)) => {
+                        println!("===== click {arg} at row={row} col={col} =====");
+                        let mut w = writer.lock().unwrap();
+                        w.write_all(format!("\x1b[<0;{};{}M", col + 1, row + 1).as_bytes())
+                            .and_then(|_| w.flush())
+                            .ok();
+                        drop(w);
+                        std::thread::sleep(Duration::from_millis(80));
+                        let mut w = writer.lock().unwrap();
+                        w.write_all(format!("\x1b[<0;{};{}m", col + 1, row + 1).as_bytes())
+                            .and_then(|_| w.flush())
+                            .is_ok()
+                    }
+                    None => false,
+                }
             }
             // mark + raw：打印两步之间的原始输出（前端的回显/识别读的是增量流而非整屏）。
             "mark" => {

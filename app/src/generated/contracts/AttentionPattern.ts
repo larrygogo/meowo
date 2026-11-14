@@ -62,4 +62,16 @@ unparsed_keys: Array<RoleKey>,
 /**
  * 这张卡在问什么（见 [`AttentionNotice`]）。None = 卡片只用种类的通用标题。
  */
-notice: AttentionNotice | null, };
+notice: AttentionNotice | null, 
+/**
+ * 同屏还必须有的几行（JS 正则，`im`，逐条都要在命中处**之后**匹配到）。整句规则只凭一句话出卡，
+ * 正文里引用那句话（讨论这个页面、cat 出源码注释或测试样本）就会误弹卡并锁住输入框，点卡上的
+ * 选项还会往正常的输入框里发按键（第二轮审查 2026-11-15）。全屏确认页把它的选项行、按键提示行
+ * 都列在这里，缺一样不出卡。空 = 不加这层保护。
+ */
+anchors: Array<string>, 
+/**
+ * 最后一条 anchor 之后最多还能有几行非空内容。全屏确认页填 0：页面在屏幕末段，后面不会有
+ * 输入框或别的输出。None = 不限。
+ */
+tail_lines: number | null, };

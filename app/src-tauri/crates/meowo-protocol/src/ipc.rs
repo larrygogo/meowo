@@ -645,6 +645,12 @@ pub struct PendingInteractionDto {
     pub runtime_request: Option<crate::runtime_request::RuntimeRequestDto>,
     #[serde(default)]
     pub runtime_requests: Vec<crate::runtime_request::RuntimeRequestDto>,
+    /// 这个会话的托管进程被就地换过几次（切账号把会话重启到新账号、重启续接切模型）。前端看到它变了，
+    /// 就把上一个进程留下的提示条与卡片清掉。桌面另有 `pty-restarted` 事件；手机页收不到宿主事件，
+    /// 只能靠这条已有的轮询带回来（不为它新增远程桥命令）。旧宿主不带，前端按 0 处理。
+    #[serde(default)]
+    #[cfg_attr(test, ts(type = "number"))]
+    pub pty_generation: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

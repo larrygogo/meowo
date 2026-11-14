@@ -2532,6 +2532,7 @@ pub(crate) fn restart_session_checked(
         overrides,
     )?;
     if started {
+        bump_pty_generation(sid);
         // 画面在对话窗/终端页，而这条重启是设置窗发起的——它们无从知道进程换了代。
         // 不发这条事件，新 PTY 从 0 起的输出会被旧偏移全判成「已写过」丢弃：终端定格在
         // 旧进程的最后一帧、打字没有回显（用户实拍「切完账号终端页不刷新」的直接原因）。
@@ -2542,6 +2543,26 @@ pub(crate) fn restart_session_checked(
         );
     }
     Ok(started)
+}
+
+/// 每个会话的托管进程被就地换过几次（只增不减，进程内有效）。`pending_interaction` 的轮询把它带给前端：
+/// 手机页收不到 `pty-restarted` 事件，靠它知道进程换了代（见 PendingInteractionDto::pty_generation）。
+static PTY_GENERATIONS: std::sync::Mutex<Option<std::collections::HashMap<i64, u64>>> =
+    std::sync::Mutex::new(None);
+
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn bump_pty_generation(sid: i64) {
+    let mut table = PTY_GENERATIONS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    *table.get_or_insert_with(Default::default).entry(sid).or_insert(0) += 1;
+}
+
+pub(crate) fn pty_generation(sid: i64) -> u64 {
+    PTY_GENERATIONS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .as_ref()
+        .and_then(|table| table.get(&sid).copied())
+        .unwrap_or(0)
 }
 
 /// 等 broker 把该会话的 PTY 记录收掉（waiter 的 finalize_exit）。`stop` 只负责发刀，
