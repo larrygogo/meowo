@@ -555,8 +555,6 @@ export const zh = {
     settingsDeferredReady: (name: string) => `会话就绪后切换到「${name}」（重启 Meowo 会取消）`,
     // Codex 会话内首次切进要沙箱的档（必要时询问 / 自动审查）：带沙箱参数重开了会话（第五轮 P3），≤20 字。
     settingsSandboxReopen: (name: string) => `已带沙箱重开会话，切到「${name}」`,
-    // 只含终端项（Kimi /plan 等）的排队要对话页停在这个会话上才执行（第六轮 L4）。
-    settingsDeferredOpenSession: (name: string) => `打开这个会话后切换到「${name}」`,
     settingsQueueExpired: "等太久没切成，已取消，请重新选择",
     settingsApplying: "正在切换",
     settingsComposerUnknown: "认不出终端输入框，为免丢字没有重启",

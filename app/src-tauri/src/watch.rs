@@ -1403,13 +1403,18 @@ pub(crate) fn spawn_liveness_watch(
                             attention_fired |= fired;
                             if fired {
                                 set_unread(s.session.id, true);
+                                // 排着只含终端项的切换（Kimi「计划：开」等，要对话页停在这个会话上才执行）：
+                                // 这条提醒改说「打开这个会话后切换到「X」」，不另弹一条（任务
+                                // 20261114-tui-model-switch 第七轮 R3）。
+                                let detail = crate::session_settings::terminal_reminder(s.session.id, lang)
+                                    .or_else(|| island_preview(s.last_ai_text.as_deref()));
                                 emit_island_alert(
                                     &app,
                                     s.session.id,
                                     "waiting",
                                     &display_title,
                                     &s.project_name,
-                                    island_preview(s.last_ai_text.as_deref()),
+                                    detail,
                                 );
                                 crate::push::push_session(
                                     &settings,

@@ -1356,8 +1356,8 @@ pub(crate) fn expired_label(lang: &str, name: &str) -> String {
     }
 }
 
-/// 只含终端项的条目在回合结束后多久还没被对话页执行，就提醒一次（第六轮 L4）。
-const TERMINAL_ALERT_AFTER: std::time::Duration = std::time::Duration::from_secs(5);
+/// 只含终端项的条目在回合结束后多久还没被对话页执行、也没随「等你回复」提醒过，就兜底提醒一次（第六轮 L4）。
+const TERMINAL_ALERT_AFTER: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// 只含终端项的条目等对话页执行时的提醒文案（与前端 chat.settingsDeferredOpenSession 同义）。
 pub(crate) fn open_session_label(lang: &str, name: &str) -> String {
@@ -1425,15 +1425,44 @@ fn ensure_executor(app: tauri::AppHandle) {
 /// 且标记没被新线程抢走，接着跑）。
 fn executor_round() -> Option<Vec<i64>> {
     use std::sync::atomic::Ordering;
-    let ids: Vec<i64> = queue().keys().copied().collect();
+    let ids = workable_ids();
     if !ids.is_empty() {
         return Some(ids);
     }
     EXECUTOR.store(false, Ordering::Release);
-    if queue().is_empty() || EXECUTOR.swap(true, Ordering::AcqRel) {
+    let ids = workable_ids();
+    if ids.is_empty() || EXECUTOR.swap(true, Ordering::AcqRel) {
         return None;
     }
-    Some(queue().keys().copied().collect())
+    Some(ids)
+}
+
+/// 执行线程这一轮要看的条目。只含终端项、已经提醒过、还没到期的条目宿主没事可做（等对话页执行），不算在内——
+/// 只剩这种条目时线程退出，不每 1.5 秒空转（第七轮 R3）。它们在下一次有人排队、线程重新起来时再看一眼
+/// （到期出队），对话页回到会话时也会取走执行。
+fn workable_ids() -> Vec<i64> {
+    queue()
+        .iter()
+        .filter(|(_, entry)| {
+            let dormant = entry.alerted
+                && split_terminal(&entry.request).0.is_none()
+                && entry.created.elapsed() <= HOLD_CAP;
+            !dormant
+        })
+        .map(|(id, _)| *id)
+        .collect()
+}
+
+/// 会话回合结束、看板要弹「等你回复」时（watch.rs 调）：会话排着只含终端项的切换、还没提醒过，就把这条
+/// 提醒并进去——一次提醒说清「打开这个会话后切换到「X」」，不连弹两次（第七轮 R3）。
+pub(crate) fn terminal_reminder(session_id: i64, lang: &str) -> Option<String> {
+    let mut map = queue();
+    let entry = map.get_mut(&session_id)?;
+    if entry.alerted || split_terminal(&entry.request).0.is_some() {
+        return None;
+    }
+    entry.alerted = true;
+    Some(open_session_label(lang, entry.request["label"].as_str().unwrap_or_default()))
 }
 
 /// 这次请求要不要求 TUI 输入框是空的：带参重启会杀进程（草稿跟着没），对话框路线要往输入框里打字。
@@ -1557,8 +1586,14 @@ fn run_queued(app: &tauri::AppHandle, session_id: i64) {
             drop_queued(app, session_id, "session_gone");
             return;
         }
-        // 第六轮 L4：回合已经结束、对话页却没来执行（多半不在这个会话上）——发一次提醒：打开这个会话后切换。
-        // 等 5 秒再发，对话页正停在这个会话上时它会先取走执行，不打扰。
+        // 第七轮 R3：只含终端项的条目也有上限，到期出队并提醒（同等打开的条目，24 小时）。
+        if created.elapsed() > HOLD_CAP {
+            drop_queued(app, session_id, "expired");
+            return;
+        }
+        // 第六轮 L4：回合已经结束、对话页却没来执行（多半不在这个会话上）——提醒一次：打开这个会话后切换。
+        // 通常并在看板的「等你回复」那条提醒里一起发（terminal_reminder，不连弹两次）；那条没发（用户正看着
+        // 这个会话被抑制、提醒关了……）时，这里等一会儿兜底补一次。对话页正停在这个会话上时它会先取走执行。
         let idle = store.session_header(session_id).is_ok_and(|header| header.status == "waiting");
         if !idle {
             not_blocked(session_id);
@@ -2657,6 +2692,12 @@ mod tests {
         assert_eq!(take_dropped(real, "session_gone", "zh"), None);
         // 第六轮 L4：对话页不在时的提醒文案，中英成对。
         assert_eq!(open_session_label("zh", "计划：开"), "打开这个会话后切换到「计划：开」");
+        // 第七轮 R3：随「等你回复」提醒并发一次，不连弹两次；提醒过、只含终端项的条目不算执行线程要干的活。
+        enqueue(real, &terminal_only);
+        assert_eq!(terminal_reminder(real, "zh").as_deref(), Some("打开这个会话后切换到「计划：开」"));
+        assert_eq!(terminal_reminder(real, "zh"), None, "只提醒一次");
+        assert!(!workable_ids().contains(&real), "提醒过的终端项条目不让执行线程空转");
+        queue().remove(&real);
         assert_eq!(open_session_label("en", "Plan: on"), "Open this session to switch to \"Plan: on\"");
 
         // 执行线程：队列空了这一轮返回 None（线程退出）并释放标记；有条目时接着跑。持着测试锁，别的测试
@@ -2666,7 +2707,10 @@ mod tests {
         assert_eq!(executor_round(), None);
         assert!(!EXECUTOR.load(std::sync::atomic::Ordering::Acquire));
         enqueue(real, &terminal_only);
-        assert!(executor_round().is_some_and(|ids| ids.contains(&real)));
+        assert!(executor_round().is_some_and(|ids| ids.contains(&real)), "没提醒过的还要看（到点提醒、归档出队）");
+        queue().get_mut(&real).unwrap().alerted = true;
+        EXECUTOR.store(true, std::sync::atomic::Ordering::Release);
+        assert_eq!(executor_round(), None, "只剩提醒过的终端项条目：线程退出");
         queue().remove(&real);
         drop(store);
         let _ = std::fs::remove_dir_all(dir);

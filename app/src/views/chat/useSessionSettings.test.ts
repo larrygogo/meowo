@@ -31,7 +31,6 @@ vi.mock("../../api", () => ({
 }));
 
 import { mergeRequests, mustDefer, useSessionSettings, type SessionSettingsDeps } from "./useSessionSettings";
-import { zh } from "../../i18n/zh";
 import type { ChatHistory } from "../../api";
 
 const history = { agentModes: [{ dimension: "permission", value: "manual" }], model: "K3" } as unknown as ChatHistory;
@@ -295,13 +294,18 @@ describe("会话里切模型 / 模式的分派", () => {
     await waitFor(() => expect(result.current.notice).toBe("已带沙箱重开会话，切到「必要时询问」"));
   });
 
-  /// 第六轮 L4：只含终端项的条目在回合结束后还没执行（刚回到会话等），提示要停在这个会话上。
-  it("只含终端项、回合已结束的排队提示打开这个会话后切换", async () => {
-    queue.set(7, { label: "计划：开", modes: { work: "plan" }, terminal: [{ kind: "mode", dimension: "work", value: "plan", inputs: [] }] });
-    const applyTerminal = vi.fn(() => new Promise<void>(() => {}));
-    const { result } = renderHook(() => useSessionSettings(deps({ tone: "running", applyTerminal })));
+  /// 第七轮 R3：用户就在这个会话里，只含终端项的排队显示通常的「这一轮结束后切换」（离开会话时才由灵动岛
+  /// 提醒「打开这个会话后切换」），回合结束空闲时照原样执行。
+  it("会话里只含终端项的排队显示通常提示，空闲时执行", async () => {
+    const action = { kind: "mode", dimension: "work", value: "plan", inputs: [{ data: "/plan on", submit: true }] };
+    queue.set(7, { label: "计划：开", modes: { work: "plan" }, terminal: [action] });
+    const applyTerminal = vi.fn(async () => {});
+    let current = deps({ tone: "running", applyTerminal });
+    const { result, rerender } = renderHook(() => useSessionSettings(current));
     await waitFor(() => expect(result.current.notice).toBe("这一轮结束后切换到「计划：开」（重启 Meowo 会取消）"));
-    expect(zh.chat.settingsDeferredOpenSession("计划：开")).toBe("打开这个会话后切换到「计划：开」");
+    current = deps({ tone: "waiting", applyTerminal });
+    rerender();
+    await waitFor(() => expect(applyTerminal).toHaveBeenCalledWith(action));
   });
 
   it("服务没就绪时交给宿主等就绪", async () => {

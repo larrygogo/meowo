@@ -451,8 +451,6 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
   const deferredText = (request: SettingsRequest) => request.waitFor === "lead" ? t.chat.settingsDeferredLead(request.label)
     : request.waitFor === "open" ? t.chat.settingsDeferredOpen(request.label)
     : request.waitFor === "ready" ? t.chat.settingsDeferredReady(request.label)
-    // 只含终端项、回合已结束：要对话页停在这个会话上才执行（第六轮 L4）。
-    : request.terminal?.length && !request.model && !mustDefer(deps.tone) ? t.chat.settingsDeferredOpenSession(request.label)
     : t.chat.settingsDeferred(request.label);
   const notice = queued && queued.sessionId === deps.sessionId ? deferredText(queued.request)
     : nextOpen === deps.sessionId ? t.chat.settingsNextOpen
