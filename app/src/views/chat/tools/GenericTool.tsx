@@ -3,7 +3,7 @@ import { useT } from "../../../i18n";
 import { ToolDisclosure } from "../ToolDisclosure";
 import { toolShortName } from "../ToolIcon";
 import { ToolResultLine } from "../ToolResultLine";
-import { ChatCwdContext, toolSummary } from "../ToolActivity";
+import { ChatCwdContext, todoSummary, toolSummary } from "../ToolActivity";
 import { outputLines, type ToolResultItem, type ToolUseItem } from "../shared";
 import { ToolBodyText } from "./ToolBodyText";
 import { languageForPath } from "../highlight";
@@ -19,6 +19,8 @@ export const GenericTool = memo(function GenericTool({ item, result }: { item: T
     ? result.count ?? outputLines(result.text).length
     : null;
   const more = item.detail?.kind === "web" ? item.detail.more : 0;
+  // 待办：行尾写完成进度（已完成 / 总数），与标题栏进度胶囊同一种写法。
+  const todo = kind === "todo" ? todoSummary(item.summary) : null;
   const detailPath = item.detail && "path" in item.detail ? item.detail.path : null;
   const lang = languageForPath(detailPath ?? "") ?? (result && /^\s*(?:\{|\[)/.test(result.text) ? "json" : null);
   return (
@@ -31,6 +33,7 @@ export const GenericTool = memo(function GenericTool({ item, result }: { item: T
           <span className="chat-tool-summary">{summary}</span>
           {more > 0 && <span className="chat-tool-count">{t.chat.toolMoreTargets(more)}</span>}
           {count !== null && <span className="chat-tool-count">{t.chat.toolFoundLines(count)}</span>}
+          {todo && <span className="chat-tool-count">{todo.done}/{todo.total}</span>}
         </>
       }
       body={

@@ -5464,6 +5464,9 @@ button.scm-check-name:hover { text-decoration: underline; }
 .chat-flat-steps > .chat-tool > summary > .chat-tool-state { order: 3; }
 .chat-tool-time { flex: 0 0 auto; color: var(--cc-text-faint); font: var(--text-xs) var(--cc-mono); font-variant-numeric: tabular-nums; }
 .chat-tool-count { flex: 0 0 auto; color: var(--cc-text-faint); font-size: var(--text-xs); }
+/* 行上的状态词（待批准、已中断）：与行数、条数同一档字号与位置；等人用运行条同款的琥珀字，已中断是静止的事实，不上色。 */
+.chat-tool-status { flex: 0 0 auto; color: var(--cc-text-faint); font-size: var(--text-xs); white-space: nowrap; }
+.chat-tool-status.is-waiting { color: var(--cc-warn-text); }
 .chat-tool-state { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; }
 .chat-tool[data-state="running"] .chat-tool-state { background: var(--cc-ok-vivid); }
 .chat-tool[data-state="error"] .chat-tool-state { background: var(--cc-err-vivid); }

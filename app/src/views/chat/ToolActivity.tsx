@@ -189,6 +189,29 @@ export function relativize(text: string, cwd: string | null): string {
   return text;
 }
 
+/// 待办调用的摘要：正在做的那一项（没有就取第一项没做完的，再没有取最后一项）与完成进度。
+///
+/// 各家待办工具的入参都是整份清单（claude TodoWrite、kimi TodoList、gemini write_todos、opencode
+/// todowrite），后端给的摘要是整包入参的 JSON，原样显示就是一行 `{"todos":[{"content":…`
+/// （2026-11-14 截图自验）。条目的文字字段各家不同名（content / title / description / subject），
+/// 状态词也不完全一样（completed / done）。摘要不是这种 JSON（codex update_plan 给的是一句说明）
+/// 或被截断解析不了时返回 null，由调用方按原文处理。
+export function todoSummary(raw: string): { text: string; done: number; total: number } | null {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith("{")) return null;
+  let todos: unknown;
+  try { todos = (JSON.parse(trimmed) as { todos?: unknown }).todos; } catch { return null; }
+  if (!Array.isArray(todos) || todos.length === 0) return null;
+  const rows = todos.map((entry) => {
+    const todo = (entry ?? {}) as Record<string, unknown>;
+    const text = [todo.content, todo.title, todo.description, todo.subject].find((value): value is string => typeof value === "string" && value.trim() !== "") ?? "";
+    const status = typeof todo.status === "string" ? todo.status : "";
+    return { text, done: status === "completed" || status === "done", active: status === "in_progress" };
+  });
+  const current = rows.find((row) => row.active) ?? rows.find((row) => !row.done) ?? rows[rows.length - 1];
+  return { text: current.text, done: rows.filter((row) => row.done).length, total: rows.length };
+}
+
 /// 工具行的参数摘要（对齐 Kimi 的 BashTool/ReadTool/EditTool）：命令全文、文件路径、
 /// 搜索模式，而不是把 JSON 参数原样摊开。没有结构化 detail 时尝试从 JSON 摘要里提取。
 export function toolSummary(item: import("./shared").ToolUseItem, cwd: string | null): string {
@@ -204,6 +227,12 @@ export function toolSummary(item: import("./shared").ToolUseItem, cwd: string | 
   if (detail?.kind === "patch") return detail.files.map((file) => relativize(file.move_to ?? file.path, cwd).replace(/\\/g, "/")).join(", ");
   if (detail?.kind === "web") return detail.url ?? detail.query ?? "";
   const raw = item.summary.trim();
+  if (item.kind === "todo") {
+    const todo = todoSummary(raw);
+    if (todo) return todo.text;
+    // 清单被截断、解析不了：宁可只留动作词，也不把半截 JSON 摊在行上。
+    if (raw.startsWith("{")) return "";
+  }
   if (raw.startsWith("{")) {
     try {
       const parsed = JSON.parse(raw) as Record<string, unknown>;

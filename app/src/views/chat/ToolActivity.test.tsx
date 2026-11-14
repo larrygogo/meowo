@@ -2,7 +2,7 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { TurnLiveContext } from "./toolState";
 import { loadHighlighter } from "./highlight";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { ToolActivity, ActivityGroup, diffText, lineDelta } from "./ToolActivity";
+import { ToolActivity, ActivityGroup, diffText, lineDelta, todoSummary } from "./ToolActivity";
 import type { ToolResultItem, ToolUseItem } from "./shared";
 
 afterEach(cleanup);
@@ -150,5 +150,48 @@ describe("ToolActivity 详情", () => {
     expect(diff.added).toBe(2);
     expect(diff.removed).toBe(2);
     expect(diff.hunks).toHaveLength(2);
+  });
+});
+
+/// 待办与子任务这两类工具行（2026-11-14 截图自验：待办行是一行 JSON，两类都顶着终端图标）。
+describe("待办与子任务的工具行", () => {
+  const todo = (name: string, summary: string): ToolUseItem => ({ type: "tool_use", id: `todo-${name}`, timestamp: null, name, kind: "todo", summary, detail: null });
+  const row = () => document.querySelector("details.chat-tool > summary")!;
+
+  it.each([
+    // 入参形状取自各家工具：条目的文字字段与完成的状态词各不相同。
+    ["TodoWrite", '{"todos":[{"content":"读现状","status":"completed","activeForm":"读现状"},{"content":"写方案","status":"in_progress","activeForm":"写方案"},{"content":"补测试","status":"pending","activeForm":"补测试"}]}', "写方案", "1/3"],
+    ["TodoList", '{"todos":[{"title":"读现状","status":"done"},{"title":"写方案","status":"pending"}]}', "写方案", "1/2"],
+    ["write_todos", '{"todos":[{"description":"读现状","status":"completed"},{"description":"写方案","status":"completed"}]}', "写方案", "2/2"],
+    ["todowrite", '{"todos":[{"content":"读现状","status":"in_progress","priority":"high"}]}', "读现状", "0/1"],
+  ])("%s：行上是当前那一项和完成进度，不是整包 JSON", (name, summary, text, progress) => {
+    render(<ToolActivity item={todo(name, summary)} result={{ ...done, tool_use_id: `todo-${name}` }} />);
+    expect(row().querySelector(".chat-tool-verb")?.textContent).toBe("待办");
+    expect(row().querySelector(".chat-tool-summary")?.textContent).toBe(text);
+    expect(row().querySelector(".chat-tool-count")?.textContent).toBe(progress);
+    expect(row().textContent).not.toContain("{");
+  });
+
+  it("摘要本来就是一句话（codex update_plan）照原文；被截断的 JSON 不上屏", () => {
+    expect(todoSummary("先落盘关卡 B 的决定，再补探针")).toBeNull();
+    const view = render(<ToolActivity item={todo("update_plan", "先落盘关卡 B 的决定，再补探针")} result={{ ...done, tool_use_id: "todo-update_plan" }} />);
+    expect(row().querySelector(".chat-tool-summary")?.textContent).toBe("先落盘关卡 B 的决定，再补探针");
+    expect(row().querySelector(".chat-tool-count")).toBeNull();
+    view.unmount();
+    render(<ToolActivity item={todo("TodoWrite", '{"todos":[{"content":"很长的一项…')} result={{ ...done, tool_use_id: "todo-TodoWrite" }} />);
+    expect(row().querySelector(".chat-tool-summary")?.textContent).toBe("");
+  });
+
+  it("待办、子任务各有自己的图标，不与命令行共用终端图标", () => {
+    const paths = (item: ToolUseItem) => {
+      const view = render(<ToolActivity item={item} />);
+      const html = view.container.querySelector(".chat-tool-icon svg")!.innerHTML;
+      view.unmount();
+      return html;
+    };
+    const run = paths({ type: "tool_use", id: "i1", timestamp: null, name: "Bash", kind: "run", summary: "ls", detail: null });
+    const todoIcon = paths(todo("TodoWrite", "x"));
+    const agentIcon = paths({ type: "tool_use", id: "i2", timestamp: null, name: "spawn_agent", kind: "agent", summary: "gemini_e2e", detail: null });
+    expect(new Set([run, todoIcon, agentIcon]).size).toBe(3);
   });
 });

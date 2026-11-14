@@ -3,7 +3,7 @@ import type { Dict } from "../../i18n/zh";
 import type { ToolKind } from "../../generated/contracts/ToolKind";
 import { Icon } from "../../icons/Icon";
 import { icGlobe, icPencil, icSearch, icTerminal } from "../../icons/glyphs";
-import { icFile } from "../../icons/glyphs.chat";
+import { icAgents, icFile, icList } from "../../icons/glyphs.chat";
 
 /// 工具的语义类别。它由后端各家插件按自己的工具名表给出（ChatItem 的 `kind`），这里只消费：
 /// 前端不看工具名去猜类别。此前按名字子串猜，规则是照 Claude 的命名调的，Gemini 的
@@ -17,9 +17,13 @@ const KIND_GLYPH: Partial<Record<ToolKind, typeof icSearch>> = {
   write: icPencil,
   edit: icPencil,
   web: icGlobe,
+  // 子任务与待办用它们在别处已有的图标（子任务块、标题栏进度）：此前落到终端图标，
+  // 一行「待办」顶着 >_，和上下的命令行分不开（2026-11-14 截图自验）。
+  agent: icAgents,
+  todo: icList,
 };
 
-/// 按工具类别分图标：搜索 / 读文件 / 改文件 / 网络，其余用终端图标。
+/// 按工具类别分图标：搜索 / 读文件 / 改文件 / 网络 / 子任务 / 待办，其余用终端图标。
 /// 一组操作若全是同一个 `>_`，用户在展开列表里无法一眼区分做了什么。
 /// 形状走共用注册表、线宽由 Icon 统一：放大镜曾是填充轮廓（内外两圈），与笔/文件并排时明显发粗。
 export function ToolIcon({ kind }: { kind: ToolKind }) {

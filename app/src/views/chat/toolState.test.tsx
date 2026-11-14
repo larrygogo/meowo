@@ -130,6 +130,49 @@ describe("等待审批时的过程块", () => {
     expect(summary()).not.toContain("已写入");
   });
 
+  it("先说话再调用工具时同样算进行中：过程块不收起，不把在跑、待批准的调用写成已中断", () => {
+    // kimi 样本：先有一段正文，然后才是工具调用，截到第二条命令刚发出（最常见的顺序：先说要做什么再动手）。
+    // 此前只看「这一段有没有正文」，有正文就当过程已结束：命令还在跑，过程块却收起并写着「1 次已中断」。
+    const items = upTo("kimi", (item) => item.type === "tool_use" && item.kind === "run" && item.summary.includes("cargo test"));
+    expect(items.findIndex((item) => item.type === "assistant_text" || item.type === "assistant_delta")).toBeLessThan(items.findIndex((item) => item.type === "tool_use"));
+    for (const [activity, lead, state] of [["running", "正在运行命令", "running"], ["waiting", "待批准", "waiting"]] as const) {
+      const view = show(items, activity);
+      const fold = view.container.querySelector<HTMLElement>(".turn-fold")!;
+      expect(fold.classList.contains("is-open"), activity).toBe(true);
+      expect(fold.classList.contains("is-running"), activity).toBe(true);
+      expect(fold.querySelector(".turn-fold-lead")?.textContent).toBe(lead);
+      expect(fold.querySelector(".turn-fold-summary")?.textContent).not.toContain("已中断");
+      expect(lastTool(view.container).getAttribute("data-state")).toBe(state);
+      view.unmount();
+      resetFoldMemory();
+    }
+    // 回合停了才收起、才说已中断。
+    const stopped = show(items, "idle");
+    const fold = stopped.container.querySelector<HTMLElement>(".turn-fold")!;
+    expect(fold.classList.contains("is-open")).toBe(false);
+    expect(fold.querySelector(".turn-fold-summary")?.textContent).toContain("1 次已中断");
+  });
+
+  it("工具行收起着也看得到状态：待批准、已中断写在行上，不必展开", () => {
+    // 截图自验发现：这两个词原先只在展开区里，行默认是收起的，等于没说。
+    const items = upTo("claude", (item) => item.type === "tool_use" && item.kind === "write");
+    const waiting = show(items, "waiting");
+    const label = (root: HTMLElement) => lastTool(root).querySelector(":scope > summary > .chat-tool-status");
+    expect(lastTool(waiting.container).open).toBe(false);
+    expect(label(waiting.container)?.textContent).toBe("待批准");
+    expect(label(waiting.container)?.classList.contains("is-waiting")).toBe(true);
+    waiting.unmount();
+    resetFoldMemory();
+    const stopped = show(items, "idle");
+    openFolds(stopped.container);
+    expect(label(stopped.container)?.textContent).toBe("已中断");
+    expect(label(stopped.container)?.classList.contains("is-waiting")).toBe(false);
+    // 跑完的、在跑的行没有这个标签（在跑的是状态点）。
+    const done = [...stopped.container.querySelectorAll<HTMLElement>("details.chat-tool")][0];
+    expect(done.getAttribute("data-state")).toBe("done");
+    expect(done.querySelector(".chat-tool-status")).toBeNull();
+  });
+
   it("会话状态到时间线活动态的换算：待批准算回合仍在进行", () => {
     expect(turnActivityOf("running")).toBe("running");
     expect(turnActivityOf("pending")).toBe("waiting");

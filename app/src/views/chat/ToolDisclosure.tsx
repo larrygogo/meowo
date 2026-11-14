@@ -1,4 +1,5 @@
 import { memo, type ReactNode } from "react";
+import { useT } from "../../i18n";
 import { useRememberedDetails } from "./foldMemory";
 import { fmtSpan, type ToolResultItem, type ToolUseItem } from "./shared";
 import { ToolIcon } from "./ToolIcon";
@@ -13,6 +14,7 @@ export const ToolDisclosure = memo(function ToolDisclosure({ item, result, summa
   body: ReactNode;
   defaultOpen?: boolean;
 }) {
+  const t = useT();
   const details = useRememberedDetails(`tool:${item.id}`, defaultOpen);
   const state = useToolRunState(result);
   const startedAt = Date.parse(item.timestamp ?? "");
@@ -29,6 +31,10 @@ export const ToolDisclosure = memo(function ToolDisclosure({ item, result, summa
       <summary>
         <ToolIcon kind={item.kind} />
         {summary}
+        {/* 等人、已中断写在行上：这两个词原先只在展开区里，而行默认收起，等审批时只看到一行没有任何标记的
+            命令（2026-11-14 截图自验）。与会话状态、中断分隔用的是同一个词。 */}
+        {state === "waiting" && <span className="chat-tool-status is-waiting">{t.vocab.request.approval}</span>}
+        {state === "interrupted" && <span className="chat-tool-status">{t.chat.interrupted}</span>}
         {span && <span className="chat-tool-time">{span}</span>}
         {/* 状态点只给「在跑」和「失败」：等人、已中断是静止的事实，不需要一个亮点去抢眼。 */}
         {(state === "running" || state === "error") && <span className="chat-tool-state" aria-hidden="true" />}

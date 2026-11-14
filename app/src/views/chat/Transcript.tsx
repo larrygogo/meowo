@@ -303,8 +303,13 @@ export const Transcript = memo(function Transcript({ sessionId, items, activity 
     // 只有一条思考/工具时原样平铺，≥2 条才收成汇总块（Kimi 的 ActivityRun 分组规则）：
     // 单条工具外面再套一层「已运行 1 条命令」是重复信息。工具与它的回执算一条。
     const units = processItems.filter((entry) => entry.type !== "tool_result").length;
-    // 这一段过程还在进行 = 会话在进行、这一段在末尾、后面还没有正文（正文一到，这段过程就算结束）。
-    const foldActivity: TurnActivity = isLive && bodyItems.length === 0 ? blockActivity : "idle";
+    // 这一段过程还在进行 = 会话在进行、这一段在末尾、过程之后还没有正文（正文一到，这段过程就算结束）。
+    // 看的是「末条是不是正文」，不是「这一段有没有正文」：先说要做什么再调用工具是最常见的顺序，那段正文
+    // 排在工具之前。只看有没有正文时，命令还在跑、还在等批准，过程块却收起并写着「1 次已中断」
+    // （2026-11-14 截图自验，kimi 与 opencode 的样本都是这个顺序）。
+    const tail = turnItems[turnItems.length - 1];
+    const processOpen = bodyItems.length === 0 || (tail.type !== "assistant_text" && tail.type !== "assistant_delta" && tail.type !== "turn_error");
+    const foldActivity: TurnActivity = isLive && processOpen ? blockActivity : "idle";
     // 一条调用都没有、只剩回执的段（调用落在已加载窗口之外）什么都不画：不单列这一档的话，
     // 它会被套成一个空的过程块，摘要写着「思考过程」。为它插的日期分隔条也撤掉，游标还原，
     // 留给下一段去插。
