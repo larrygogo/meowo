@@ -140,7 +140,7 @@ export function installMocks(windowLabel = "main"): void {
         // 后端 list_agents:agent 名单(展示名 + 安装态),前端 useAgents 取展示名并交叉过滤底栏配额。
         // demo 演示多 Agent:装了 Claude Code / Codex / Kimi / Gemini CLI（不独尊 Claude）。
         return [
-          { id: "claude", display_name: "Claude Code", installed: true },
+          { id: "claude", display_name: "Claude Code", installed: true, supports_profiles: true },
           { id: "codex", display_name: "Codex", installed: true },
           { id: "kimi", display_name: "Kimi Code", installed: true },
           { id: "gemini", display_name: "Gemini CLI", installed: true },
@@ -160,6 +160,16 @@ export function installMocks(windowLabel = "main"): void {
         if (a.provider === "codex") return mkUsage(45, 22);
         return { lanes: [], note: null };
       }
+      case "list_profiles": {
+        const a = args as { provider: string };
+        if (a.provider !== "claude") return [];
+        return [
+          { id: null, name: "", active: true, account: mkAccount("claude", 62, 38).account },
+          { id: "work", name: "Work", active: false, account: { email: "work@example.com", display_name: null, organization: null, plan: "Max", login_label: null } },
+        ];
+      }
+      case "refresh_profile_usage":
+        return mkUsage(27, 64, { label: "Fable", pct: 46 });
       case "get_live_sessions":
         return store.sessions;
       case "rename_session": {

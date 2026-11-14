@@ -69,7 +69,7 @@ pub fn account_cap(id: AgentId) -> Option<&'static dyn AccountCap> {
 /// 该 agent **当前活跃 profile** 的安装实况；没建 profile / 该 agent 不支持多账号 → 默认账号
 /// （agent 自己的目录）。
 ///
-/// 账号与用量一律按活跃 profile 读——切了账号，卡片上显示的就该是那个账号的邮箱与额度。
+/// active 快照、贴纸与轮询按活跃 profile 读；设置页查看其他账号走 `usage_of_profile`，不写这里。
 pub fn active_installation(id: AgentId) -> Option<meowo_agent::Installation> {
     let profile = crate::profile::active_id(id.as_str());
     installation_for_profile(id, profile.as_deref())
@@ -123,11 +123,16 @@ pub fn account_of_display(id: AgentId) -> Option<Account> {
 
 /// 该 agent 当前是否支持用量查询。
 pub fn usage_supported(id: AgentId) -> bool {
+    usage_supported_for_profile(id, crate::profile::active_id(id.as_str()).as_deref())
+}
+
+/// 指定 profile 是否支持用量查询。查看非活跃账号时不能拿 active 账号的能力代替判断。
+pub fn usage_supported_for_profile(id: AgentId, profile: Option<&str>) -> bool {
     // 走中转时用量无从谈起（额度归中转的密钥所有者）。
     if crate::settings::load_settings().relay.enabled(id) {
         return false;
     }
-    let Some(inst) = active_installation(id) else {
+    let Some(inst) = installation_for_profile(id, profile) else {
         return false;
     };
     let p = crate::ports::HostPorts::for_agent(id);
@@ -168,6 +173,27 @@ pub fn usage_of(id: AgentId, force: bool) -> Option<ProviderUsage> {
         }
         Err(e) => {
             eprintln!("Meowo usage[{id}]: {e}");
+            None
+        }
+    }
+}
+
+/// 查看指定 profile 的用量。active 仍走现有缓存与限频；非 active 只查询并返回，不写缓存，
+/// 避免「只是看看另一个账号」把当前账号的额度覆盖掉。
+pub fn usage_of_profile(id: AgentId, profile: Option<&str>) -> Option<ProviderUsage> {
+    let requested = profile.map(str::to_owned);
+    if same_profile(&requested, &crate::profile::active_id(id.as_str())) {
+        return usage_of(id, true);
+    }
+    if crate::settings::load_settings().relay.enabled(id) {
+        return None;
+    }
+    let inst = installation_for_profile(id, profile)?;
+    let p = crate::ports::HostPorts::for_agent(id);
+    match account_cap(id)?.fetch_usage(&inst, &p.as_ports()) {
+        Ok(usage) => Some(usage),
+        Err(e) => {
+            eprintln!("Meowo usage[{id}/{profile:?}]: {e}");
             None
         }
     }

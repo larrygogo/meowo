@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const api = vi.hoisted(() => ({
   getSettings: vi.fn(),
+  getAccounts: vi.fn(),
   openNewSessionWindow: vi.fn(),
 }));
 vi.mock("../api", async (importOriginal) => ({ ...(await importOriginal<typeof import("../api")>()), ...api }));
@@ -15,6 +16,7 @@ import { RemoteSessionList } from "./RemoteSessionList";
 describe("RemoteSessionList 底栏", () => {
   beforeEach(() => {
     api.getSettings.mockResolvedValue({ keep_awake_while_running: true, bark_url: "", bark_paused: false, chat_turn_folding: false });
+    api.getAccounts.mockResolvedValue([]);
     api.openNewSessionWindow.mockResolvedValue(undefined);
   });
   afterEach(() => {

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const api = vi.hoisted(() => ({
   getSettings: vi.fn(),
+  getAccounts: vi.fn(),
   setKeepAwake: vi.fn(),
   setPushPaused: vi.fn(),
 }));
@@ -16,6 +17,7 @@ describe("RemoteSettings", () => {
   beforeEach(() => {
     localStorage.clear();
     api.getSettings.mockResolvedValue({ keep_awake_while_running: true, bark_url: "", bark_paused: false, chat_turn_folding: false });
+    api.getAccounts.mockResolvedValue([]);
     api.setKeepAwake.mockResolvedValue(undefined);
     api.setPushPaused.mockResolvedValue(undefined);
   });

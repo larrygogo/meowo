@@ -22,6 +22,7 @@ import {
 import {
   getAccounts,
   refreshUsage,
+  refreshProfileUsage,
   checkProviderHooks,
   repairProviderHooks,
   logoutAgent,
@@ -221,6 +222,63 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsApiK
 }) {
   const t = useT();
   const acc = payload?.account ?? null;
+  // null = 看 active 账号。非 active 的数据只住在这张卡片里，不进 active 缓存，也不影响贴纸。
+  const [viewingProfile, setViewingProfile] = useState<ProfileView | null>(null);
+  const [profileUsage, setProfileUsage] = useState<ProviderUsage | null>(null);
+  const [profileErr, setProfileErr] = useState<"unsupported" | "error" | null>(null);
+  const [profileRefreshing, setProfileRefreshing] = useState(false);
+  const [profileUpdatedAt, setProfileUpdatedAt] = useState<number | null>(null);
+  const profileRequest = useRef(0);
+  useEffect(() => () => { profileRequest.current += 1; }, []);
+
+  const loadProfileUsage = (profile: ProfileView) => {
+    const request = ++profileRequest.current;
+    setProfileRefreshing(true);
+    setProfileErr(null);
+    refreshProfileUsage(provider, profile.id)
+      .then((next) => {
+        if (profileRequest.current !== request) return;
+        setProfileUsage(next);
+        setProfileUpdatedAt(Date.now());
+      })
+      .catch((e) => {
+        if (profileRequest.current !== request) return;
+        setProfileErr(String(e).includes("USAGE_UNSUPPORTED") ? "unsupported" : "error");
+      })
+      .finally(() => {
+        if (profileRequest.current === request) setProfileRefreshing(false);
+      });
+  };
+  const viewProfile = (profile: ProfileView) => {
+    if (profile.active) {
+      profileRequest.current += 1;
+      setViewingProfile(null);
+      setProfileUsage(null);
+      setProfileErr(null);
+      setProfileRefreshing(false);
+      setProfileUpdatedAt(null);
+      return;
+    }
+    setViewingProfile(profile);
+    setProfileUsage(null);
+    setProfileErr(null);
+    setProfileUpdatedAt(null);
+    loadProfileUsage(profile);
+  };
+  const profilesChanged = () => {
+    // 删除、改名、切换 active 后，原来选中的视图都可能已失效，回到新的 active 快照。
+    profileRequest.current += 1;
+    setViewingProfile(null);
+    setProfileUsage(null);
+    setProfileErr(null);
+    setProfileRefreshing(false);
+    setProfileUpdatedAt(null);
+    onLoggedIn();
+  };
+  const shownUsage = viewingProfile ? profileUsage : usage;
+  const shownErr = viewingProfile ? profileErr : err;
+  const shownRefreshing = viewingProfile ? profileRefreshing : refreshing;
+  const shownUpdatedAt = viewingProfile ? profileUpdatedAt : usageRefreshedAt;
 
   // 后台安装态从页面级 useInstallOperations 派生（installOp prop）：状态曾住在本卡片里，
   // 安装中切换下拉 = 卡片卸载 + install-done 监听注销，回来显示「安装」按钮诱导二次安装，
@@ -770,41 +828,43 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsApiK
       )}
 
 
-      {isLoggedIn && !relayEnabled && (
+      {(isLoggedIn || viewingProfile) && !relayEnabled && (
         <div className="provider-usage">
           <div className="usage-bar-head">
-            <span className="usage-card-title">{t.account.quota}</span>
+            <span className="usage-card-title">{viewingProfile ? t.account.usageFor(viewingProfile.name || t.account.defaultProfile) : t.account.quota}</span>
             {/* 数据时刻：没有它，开着设置页越久显示的越陈旧且毫无提示——用户判断
                 「要不要现在跑大任务」依据的可能是十几分钟前的额度。 */}
-            {usageRefreshedAt != null && (
+            {shownUpdatedAt != null && (
               <span className="usage-updated">
-                {t.account.usageUpdatedAt(new Intl.DateTimeFormat(t.locale, { hour: "numeric", minute: "2-digit" }).format(usageRefreshedAt))}
+                {t.account.usageUpdatedAt(new Intl.DateTimeFormat(t.locale, { hour: "numeric", minute: "2-digit" }).format(shownUpdatedAt))}
               </span>
             )}
-            <button className="icon-btn" data-tip={t.account.refresh} aria-label={t.account.refresh} disabled={err === "unsupported" || (!(payload?.usage_supported ?? false) && !usage)} {...busyProps(refreshing, onRefresh)}>
-              <RefreshIcon spinning={refreshing} />
+            <button className="icon-btn" data-tip={t.account.refresh} aria-label={t.account.refresh} disabled={shownErr === "unsupported" || (!viewingProfile && !(payload?.usage_supported ?? false) && !shownUsage)} {...busyProps(shownRefreshing, () => viewingProfile ? loadProfileUsage(viewingProfile) : onRefresh())}>
+              <RefreshIcon spinning={shownRefreshing} />
             </button>
           </div>
-          {usage ? (
+          {shownUsage ? (
             <>
-              {usage.lanes.map((lane, i) => (
+              {shownUsage.lanes.map((lane, i) => (
                 <UsageBar key={`${lane.kind}-${i}`} lane={lane} label={laneLabel(lane, t)} />
               ))}
-              {usage.note && <div className="usage-extra">{renderNote(usage.note, t)}</div>}
-              {err === "error" && <div className="usage-stale">{t.account.refreshFailed}</div>}
+              {shownUsage.note && <div className="usage-extra">{renderNote(shownUsage.note, t)}</div>}
+              {shownErr === "error" && <div className="usage-stale">{t.account.refreshFailed}</div>}
             </>
-          ) : !(payload?.usage_supported ?? false) || err === "unsupported" ? (
+          ) : (!viewingProfile && !(payload?.usage_supported ?? false)) || shownErr === "unsupported" ? (
             <div className="usage-stale">{t.account.usageUnsupported}</div>
-          ) : err === "error" ? (
+          ) : shownErr === "error" ? (
             <div className="usage-stale">{t.account.usageUnavailable}</div>
           ) : (
             <div className="usage-stale">{t.account.loading}</div>
           )}
-          {/* 贴纸配额显示开关 */}
-          <div className="usage-sticker-row">
-            <span className="usage-sticker-label">{t.settings.showQuotaOnSticker}</span>
-            <Switch checked={inQuota} onChange={onToggleQuota} label={t.settings.showQuotaOnSticker} />
-          </div>
+          {/* 贴纸始终展示 active 账号；查看其他账号时不让开关误导成「贴这个账号」。 */}
+          {!viewingProfile && (
+            <div className="usage-sticker-row">
+              <span className="usage-sticker-label">{t.settings.showQuotaOnSticker}</span>
+              <Switch checked={inQuota} onChange={onToggleQuota} label={t.settings.showQuotaOnSticker} />
+            </div>
+          )}
         </div>
       )}
 
@@ -825,7 +885,9 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsApiK
         <ProfileList
           provider={provider}
           movesSessionsAcrossAccounts={movesSessionsAcrossAccounts}
-          onChanged={onLoggedIn}
+          onChanged={profilesChanged}
+          viewingProfile={viewingProfile}
+          onViewUsage={viewProfile}
           loginState={loginState}
           onStartLogin={onStartLogin}
           onCancelLogin={onCancelLogin}
@@ -836,7 +898,7 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsApiK
 }
 
 /**
- * 某个 agent 的账号列表：默认账号 + 自定义账号，可切换 / 登录 / 删除 / 添加。
+ * 某个 agent 的账号列表：默认账号 + 自定义账号，可切换 / 查看用量 / 登录 / 删除 / 添加。
  *
  * 「默认账号」是隐式的（`id === null`）——它就是 agent 自己的目录（`~/.claude`），不可删除。
  * 没建过任何自定义账号的用户，这里只会看到它一条 + 一个「添加账号」按钮。
@@ -844,11 +906,14 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsApiK
 /** 默认账号在前端的行 key —— 后端给的 id 是 `null`（它不在 settings.profiles 里）。 */
 const DEFAULT_KEY = "__default__";
 
-function ProfileList({ provider, movesSessionsAcrossAccounts, onChanged, loginState, onStartLogin, onCancelLogin }: {
+function ProfileList({ provider, movesSessionsAcrossAccounts, onChanged, viewingProfile, onViewUsage, loginState, onStartLogin, onCancelLogin }: {
   provider: AgentId;
   /** 见 ProviderCard 同名 prop：决定切换后要不要问「运行中的会话也重启过去吗」。 */
   movesSessionsAcrossAccounts: boolean;
   onChanged: () => void;
+  /** null = 正在看 active；仅决定用量按钮的按下态，不改变 active。 */
+  viewingProfile: ProfileView | null;
+  onViewUsage: (profile: ProfileView) => void;
   loginState: LoginOperationState | undefined;
   onStartLogin: (profile?: string | null) => Promise<boolean>;
   onCancelLogin: () => Promise<boolean>;
@@ -1071,6 +1136,19 @@ function ProfileList({ provider, movesSessionsAcrossAccounts, onChanged, loginSt
             </button>
 
             {p.active && <span className="profile-badge">{t.account.activeProfile}</span>}
+
+            {p.account && (
+              <button
+                type="button"
+                className="provider-card-action"
+                data-testid={"profile-usage-" + provider + "-" + key}
+                aria-label={t.account.viewProfileUsage(p.name || t.account.defaultProfile)}
+                aria-pressed={viewingProfile ? (viewingProfile.id ?? DEFAULT_KEY) === key : p.active}
+                {...busyProps(busy, () => onViewUsage(p))}
+              >
+                {t.account.viewUsage}
+              </button>
+            )}
 
             {/* 登录是未登录时的主操作，留作显眼的按钮；其余（退出/改名/删除）收进菜单。
                 **必须带上这一行自己的 id**：漏了它，登录会把凭据写进默认账号（用户以为加了个账号，
