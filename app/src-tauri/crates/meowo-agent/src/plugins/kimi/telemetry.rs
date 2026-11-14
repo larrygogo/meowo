@@ -17,8 +17,8 @@ use std::path::{Path, PathBuf};
 #[cfg(test)]
 use crate::transcript::ChatItem;
 use crate::transcript::{
-    preview_text, SubagentOutcome, SubagentRef, SubagentSpec, SubagentStream, ToolDetail,
-    TranscriptEvent, TranscriptInfo, TranscriptParser, TranscriptSpec,
+    SubagentOutcome, SubagentRef, SubagentSpec, SubagentStream, ToolDetail, TranscriptEvent,
+    TranscriptInfo, TranscriptParser, TranscriptSpec, preview_text,
 };
 
 fn chat_id(prefix: &str, line: &str) -> String {
@@ -339,6 +339,48 @@ fn parse_events(line: &str, wire_dir: Option<&Path>) -> Vec<TranscriptEvent> {
             })
             .into_iter()
             .collect(),
+        "task.terminated" => {
+            let info = value.get("info");
+            let tool_call_id = info
+                .and_then(|info| info.get("parentToolCallId"))
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
+            if info
+                .and_then(|info| info.get("kind"))
+                .and_then(|v| v.as_str())
+                != Some("agent")
+            {
+                return Vec::new();
+            }
+            let Some(tool_call_id) = tool_call_id else {
+                return Vec::new();
+            };
+            let failed = match info
+                .and_then(|info| info.get("status"))
+                .and_then(|v| v.as_str())
+            {
+                Some("completed") => false,
+                Some("failed" | "lost" | "killed" | "cancelled") => true,
+                _ => return Vec::new(),
+            };
+            // 后台 Agent 的启动 tool.result 永远写 running；task.terminated 才是结局。
+            // 归回 parentToolCallId，让折叠卡与任务面板不必展开侧车也能收到终态。
+            vec![TranscriptEvent::ToolResult {
+                id: chat_id("subagent-terminal", line),
+                timestamp,
+                tool_call_id: Some(tool_call_id),
+                subagent: Some(SubagentOutcome {
+                    running: 0,
+                    completed: usize::from(!failed) as u32,
+                    failed: u32::from(failed),
+                    background_running: false,
+                    task_id: None,
+                }),
+                patch: None,
+                text: String::new(),
+                is_error: failed,
+            }]
+        }
         "turn.prompt" => {
             let id = chat_id("user", line);
             // turn.prompt 也承载非用户输入（真机 main wire 统计：origin 为 task 的后台任务完成
@@ -2847,6 +2889,46 @@ mod tests {
             panic!("应解析成工具结果");
         };
         assert!(subagent.is_none());
+    }
+
+    /// 实档：后台 Agent 的启动结果是 running，结局另写 task.terminated，并由
+    /// info.parentToolCallId 指回启动调用。缺了这条映射，折叠卡会永远显示进行中。
+    #[test]
+    fn terminated_background_agent_overrides_the_running_launch_receipt() {
+        let launch = r#"{"type":"context.append_loop_event","event":{"type":"tool.result","toolCallId":"tool_agent","output":"task_id: agent-task\nstatus: running\nagent_id: agent-2"}}"#;
+        let done = r#"{"type":"task.terminated","info":{"taskId":"agent-task","status":"completed","kind":"agent","agentId":"agent-2","parentToolCallId":"tool_agent"},"time":1794650262185}"#;
+        let items = [launch, done].into_iter().flat_map(parse_chat_items).collect::<Vec<_>>();
+        assert_eq!(items.len(), 2);
+        let ChatItem::ToolResult {
+            tool_use_id,
+            subagent,
+            is_error,
+            ..
+        } = &items[1]
+        else {
+            panic!("终态应合成主链工具结果");
+        };
+        assert_eq!(tool_use_id.as_deref(), Some("tool_agent"));
+        assert!(!is_error);
+        let outcome = subagent.as_ref().unwrap();
+        assert_eq!(
+            (outcome.running, outcome.completed, outcome.failed),
+            (0, 1, 0)
+        );
+
+        let failed = done.replace("\"completed\"", "\"failed\"");
+        let ChatItem::ToolResult {
+            subagent, is_error, ..
+        } = &parse_chat_items(&failed)[0]
+        else {
+            panic!("失败终态应合成主链工具结果");
+        };
+        assert!(*is_error);
+        assert_eq!(subagent.as_ref().unwrap().failed, 1);
+
+        // 后台 Bash 的 task.terminated 不能冒充 Agent 结局。
+        let bash = done.replace("\"kind\":\"agent\"", "\"kind\":\"bash\"");
+        assert!(parse_chat_items(&bash).is_empty());
     }
 
     /// 主链识别 + 摘要取描述（args 里的 prompt 上千字，不能进摘要行）。

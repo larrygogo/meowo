@@ -11,6 +11,7 @@ use crate::broker::ApprovalRequest;
 pub enum RuntimeRequestKind {
     Question,
     Approval,
+    Prompt,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -30,7 +31,47 @@ pub enum RuntimeRequestStatus {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum RuntimeResponseCapability {
     BrokerLive,
+    TerminalLive,
     NotResumable { reason: String },
+}
+
+/// 终端卡片仍使用插件识别出的原始按键；统一契约只描述事实，不把按键改写成 broker 决策。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalInteractionOptionDto {
+    pub label: String,
+    pub input: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub selected: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub focused: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional, type = "number"))]
+    pub position: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub kind: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalInteractionDto {
+    pub text: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub options: Option<Vec<TerminalInteractionOptionDto>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub details: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -50,14 +91,14 @@ pub struct RuntimeRequestDto {
     #[cfg_attr(test, ts(type = "unknown[]"))]
     pub permission_suggestions: Vec<serde_json::Value>,
     pub response_capability: RuntimeResponseCapability,
+    /// 仅终端屏幕请求携带；broker 请求省略，旧载荷缺少该字段时仍可反序列化。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub terminal: Option<TerminalInteractionDto>,
 }
 
 impl RuntimeRequestDto {
-    fn broker(
-        request: ApprovalRequest,
-        kind: RuntimeRequestKind,
-        broker_live: bool,
-    ) -> Self {
+    fn broker(request: ApprovalRequest, kind: RuntimeRequestKind, broker_live: bool) -> Self {
         Self {
             session_id: request.session_id,
             request_id: request.request_id,
@@ -75,6 +116,7 @@ impl RuntimeRequestDto {
                     reason: "broker_released".into(),
                 }
             },
+            terminal: None,
         }
     }
 
@@ -146,9 +188,13 @@ mod tests {
         approval.tool_name = "Bash".into();
         approval.input = r#"{"command":"cargo test"}"#.into();
         approval.permission_suggestions = vec![serde_json::json!({"destination":"session"})];
-        let value = serde_json::to_value(RuntimeRequestDto::broker_approval(approval, true)).unwrap();
+        let value =
+            serde_json::to_value(RuntimeRequestDto::broker_approval(approval, true)).unwrap();
         assert_eq!(value["kind"], "approval");
-        assert_eq!(value["responseCapability"], serde_json::json!({ "type": "broker_live" }));
+        assert_eq!(
+            value["responseCapability"],
+            serde_json::json!({ "type": "broker_live" })
+        );
         assert_eq!(value["permissionSuggestions"][0]["destination"], "session");
     }
 
@@ -161,6 +207,48 @@ mod tests {
         assert_eq!(
             value["responseCapability"],
             serde_json::json!({ "type": "not_resumable", "reason": "answered" })
+        );
+    }
+
+    #[test]
+    fn terminal_prompt_keeps_native_options_and_response_capability() {
+        let dto = RuntimeRequestDto {
+            kind: RuntimeRequestKind::Prompt,
+            response_capability: RuntimeResponseCapability::TerminalLive,
+            terminal: Some(TerminalInteractionDto {
+                text: "Choose a directory".into(),
+                options: Some(vec![TerminalInteractionOptionDto {
+                    label: "Yes".into(),
+                    input: "\r".into(),
+                    description: None,
+                    selected: None,
+                    focused: Some(true),
+                    position: Some(1),
+                    kind: Some("choice".into()),
+                }]),
+                details: None,
+            }),
+            ..RuntimeRequestDto::broker_question(request(), true)
+        };
+        let value = serde_json::to_value(dto).unwrap();
+        assert_eq!(value["kind"], "prompt");
+        assert_eq!(
+            value["responseCapability"],
+            serde_json::json!({"type":"terminal_live"})
+        );
+        assert_eq!(value["terminal"]["options"][0]["input"], "\r");
+    }
+
+    #[test]
+    fn legacy_broker_payload_does_not_require_terminal_payload() {
+        let mut value =
+            serde_json::to_value(RuntimeRequestDto::broker_approval(request(), true)).unwrap();
+        value.as_object_mut().unwrap().remove("terminal");
+        let dto: RuntimeRequestDto = serde_json::from_value(value).unwrap();
+        assert_eq!(dto.terminal, None);
+        assert_eq!(
+            dto.response_capability,
+            RuntimeResponseCapability::BrokerLive
         );
     }
 }

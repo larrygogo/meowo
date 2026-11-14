@@ -443,6 +443,8 @@ fn runtime_request_dto(
     match runtime_request_kind(&request)? {
         RuntimeRequestKind::Question => Some(RuntimeRequestDto::broker_question(request, broker_live)),
         RuntimeRequestKind::Approval => Some(RuntimeRequestDto::broker_approval(request, broker_live)),
+        // Prompt 只由前端屏幕识别构造；broker 的 ApprovalRequest 没有这条来源。
+        RuntimeRequestKind::Prompt => None,
     }
 }
 
