@@ -1,8 +1,8 @@
-# 生成 R1 一致性样例（只重写 *.jsonl）。CLI 升级时：python mk_unsent.py . && node cli_expect.mjs . 对照 expected.json。
+# 生成 R1 一致性样例（只重写本脚本生成的 *.jsonl；session-za* 是做空第四轮对抗样例，手工保留）。CLI 升级时：python mk_unsent.py . && node cli_expect.mjs . 对照 expected.json。
 import json, os, sys
 out = sys.argv[1]
 os.makedirs(out, exist_ok=True)
-for f in [f for f in os.listdir(out) if f.endswith(".jsonl")]:
+for f in [f for f in os.listdir(out) if f.endswith(".jsonl") and not f.startswith("session-za")]:
     os.remove(os.path.join(out, f))
 META = {"sessionId": "8b42a13c-8714-4a14-9d61-08036659e03e", "projectHash": "edc4", "startTime": "2026-11-13T16:46:15Z", "lastUpdated": "2026-11-13T16:46:15Z", "kind": "main"}
 CTX = {"id": "d049", "timestamp": "2026-11-13T16:46:15.353Z", "type": "user", "content": [{"text": "<session_context>\nThis is the Gemini CLI."}]}

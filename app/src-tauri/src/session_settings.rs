@@ -913,7 +913,8 @@ impl Queued {
 
 /// 「空闲却切不了」最多耗多久（见 [`Queued::blocked`]）。
 const QUEUE_TTL: std::time::Duration = std::time::Duration::from_secs(30 * 60);
-/// 等 Lead 关卡答复、等会话打开的条目最多留多久：归档了或再也不打开的会话，条目不能永远留着（做空 R7）。
+/// 等会话打开的条目最多留多久：再也不打开的会话，条目不能永远留着（做空 R7）。等 Lead 关卡的不限时
+/// （关卡可能隔很久才答，第四轮 L1）。
 const HOLD_CAP: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
 /// 临时 id 的启动不见了多久才算真没了（重开要先停旧进程、等收尾、再起新的，见 reopen_pending_with）。
 const GONE_GRACE: std::time::Duration = std::time::Duration::from_secs(20);
@@ -1024,7 +1025,8 @@ fn drop_queued(app: &tauri::AppHandle, session_id: i64, kind: &str) {
         return;
     };
     emit_settings(app, session_id, kind, None);
-    if kind == "expired" {
+    // 超时、会话归档 / 删除都提醒（未认领的临时会话是用户自己关掉的，不提醒）。
+    if kind == "expired" || (kind == "session_gone" && session_id > 0) {
         let lang = crate::settings::ui_lang(&crate::settings::load_settings());
         let name = entry.request["label"].as_str().unwrap_or_default();
         let store = crate::open_store(&crate::db_path()).ok();
@@ -1037,7 +1039,8 @@ fn drop_queued(app: &tauri::AppHandle, session_id: i64, kind: &str) {
             .and_then(|store| store.session_cwd(session_id).ok().flatten())
             .and_then(|cwd| std::path::Path::new(&cwd).file_name().map(|n| n.to_string_lossy().into_owned()))
             .unwrap_or_default();
-        crate::watch::emit_island_alert(app, session_id, "error", &title, &project, Some(expired_label(lang, name)));
+        let label = if kind == "expired" { expired_label(lang, name) } else { gone_label(lang, name) };
+        crate::watch::emit_island_alert(app, session_id, "error", &title, &project, Some(label));
     }
 }
 
@@ -1048,6 +1051,16 @@ pub(crate) fn expired_label(lang: &str, name: &str) -> String {
         (true, false) => format!("Switching to \"{name}\" waited too long and was canceled"),
         (false, true) => "排着的切换等太久，已取消".into(),
         (false, false) => format!("切换到「{name}」等太久，已取消"),
+    }
+}
+
+/// 会话归档 / 删除时取消的提醒文案。
+pub(crate) fn gone_label(lang: &str, name: &str) -> String {
+    match (lang == "en", name.is_empty()) {
+        (true, true) => "The session was archived or removed, so the queued switch was canceled".into(),
+        (true, false) => format!("The session was archived or removed, so switching to \"{name}\" was canceled"),
+        (false, true) => "会话已归档或删除，排着的切换已取消".into(),
+        (false, false) => format!("会话已归档或删除，切换到「{name}」已取消"),
     }
 }
 
@@ -1209,10 +1222,10 @@ fn run_queued(app: &tauri::AppHandle, session_id: i64) {
         return;
     }
     let wait = wait_for(&request).map(str::to_owned);
-    // 等打开：只看 PTY 在不在（不开库），一直不打开的到上限出队（做空 R7）。
+    // 等打开：只看 PTY 在不在（不开库），一直不打开的到上限出队并提醒（做空 R7、第四轮 L1）。
     if wait.as_deref() == Some("open") && !state.ptys.is_active(session_id) {
         if created.elapsed() > HOLD_CAP {
-            drop_queued(app, session_id, "session_gone");
+            drop_queued(app, session_id, "expired");
         } else {
             not_blocked(session_id);
         }
@@ -1234,15 +1247,13 @@ fn run_queued(app: &tauri::AppHandle, session_id: i64) {
         return;
     }
     if wait.as_deref() == Some("lead") {
+        // 关卡可能隔很久才答（product.md），等 Lead 的条目不限时；只在会话归档 / 删除（上面）或 Meowo
+        // 重启（队列在内存里）时取消（第四轮 L1）。
         if lead_holds_restart(&header) {
-            if created.elapsed() > HOLD_CAP {
-                drop_queued(app, session_id, "expired");
-            } else {
-                with_queued(session_id, |entry| {
-                    entry.since = std::time::Instant::now();
-                    entry.blocked = None;
-                });
-            }
+            with_queued(session_id, |entry| {
+                entry.since = std::time::Instant::now();
+                entry.blocked = None;
+            });
             return;
         }
         // 等待器交出答复就退出，CLI 要过一会儿才在空闲时开新回合：解除后再观望一段，免得赶在
@@ -2032,6 +2043,8 @@ mod tests {
         assert!(queue().get(&sid).unwrap().blocked.is_none(), "重新选择从头算");
         queue().remove(&sid);
         assert_eq!(expired_label("zh", "只读"), "切换到「只读」等太久，已取消");
+        // 第四轮 L1：会话归档 / 删除时取消也提醒。
+        assert_eq!(gone_label("zh", "只读"), "会话已归档或删除，切换到「只读」已取消");
         assert_eq!(expired_label("en", "Read only"), "Switching to \"Read only\" waited too long and was canceled");
     }
 

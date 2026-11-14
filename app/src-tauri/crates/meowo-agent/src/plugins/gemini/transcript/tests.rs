@@ -391,7 +391,7 @@ fn unsent_detection_matches_gemini_cli_file_by_file() {
     let expected: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(dir.join("expected.json")).unwrap()).unwrap();
     let cases = expected["expect"].as_object().unwrap();
-    assert!(cases.len() >= 20);
+    assert!(cases.len() >= 30);
     for (name, cli) in cases {
         let path = dir.join(name);
         let text = std::fs::read_to_string(&path).unwrap();

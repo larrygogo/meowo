@@ -550,16 +550,14 @@ pub(super) enum SessionContent {
 pub(super) fn is_resumable_record(message: &Value) -> bool {
     let text = cli_part_string(message.get("content"));
     match message["type"].as_str() {
-        Some("user") => {
-            let text = text.trim();
-            !(text.is_empty()
-                || text.starts_with('/')
-                || text.starts_with('?')
-                || text.starts_with("<session_context>")
-                || text.starts_with("<hook_context>"))
-        }
+        Some("user") => !ignored_user_content(text.trim()),
         Some("gemini") => {
-            let non_empty = |key: &str| message[key].as_array().is_some_and(|items| !items.is_empty());
+            // JS `(x?.length ?? 0) > 0`：数组和字符串都看长度（第四轮 L2 a4：thoughts 写成字符串也算）。
+            let non_empty = |key: &str| match &message[key] {
+                Value::Array(items) => !items.is_empty(),
+                Value::String(text) => !text.is_empty(),
+                _ => false,
+            };
             !text.trim().is_empty() || non_empty("toolCalls") || non_empty("thoughts")
         }
         _ => false,
@@ -599,32 +597,45 @@ fn cli_part_string(value: Option<&Value>) -> String {
             if part.contains_key("inlineData") {
                 return "[Media]".to_string(); // 只用来判空，具体文字无关
             }
-            part.get("text").and_then(Value::as_str).unwrap_or_default().to_string()
+            // `part.text ?? ""`，数组里 join 时转成字符串（第四轮 L2 a7：text 是数字也算有字）。
+            match part.get("text") {
+                None | Some(Value::Null) => String::new(),
+                Some(Value::String(text)) => text.clone(),
+                Some(Value::Number(number)) => number.to_string(),
+                Some(Value::Bool(flag)) => flag.to_string(),
+                Some(Value::Array(items)) if items.is_empty() => String::new(),
+                Some(_) => "[object Object]".to_string(),
+            }
         }
-        // JS 里数字、布尔走 `part.text ?? ""`，结果是空串。
+        // 顶层是数字、布尔：`part.text` 是 undefined，结果是空串。
         _ => String::new(),
     }
 }
 
-/// 两种格式，都按 CLI 自己读文件的方式重放后再判：
-/// - 0.68 的 `.jsonl`：照 `createJsonlRecordAccumulator`（chunk-RCB6BI5H.js 约 286879 行）逐行重放：
-///   `$rewindTo` 删掉该条及之后（找不到就全清）、`$patch` 改内容 / 删 / 排序、带字符串 `id` 的是消息
-///   （同 id 后写覆盖）、`$set.messages` 整体替换、带 `sessionId`+`projectHash` 的是元数据（可带 messages）。
-///   解析不了的行 CLI 跳过，这里也跳过。没有 `sessionId`+`projectHash` 的文件 CLI 不认，这里判 Unknown。
+/// 两种格式：
+/// - 0.68 的 `.jsonl`：照 CLI `--resume` 列会话时的读法重放（`loadConversationRecord(..., { metadataOnly: true })`，
+///   会话列表 chunk-VFM6AETN.js getAllSessionFiles 用它判 hasResumableContent；累加器在 chunk-RCB6BI5H.js
+///   约 286879 行 createJsonlRecordAccumulator 的 metadataOnly 分支）。第四轮 L2：之前照的是全量读法，在
+///   `$patch` 上与列表口径不同，现改照列表口径：
+///   - 消息行（带字符串 `id`、不带 `$patch`）：记下 id 的「是不是 user、能不能恢复」，同 id 后写覆盖。
+///   - `$patch`：带 content 的更新——user 按新内容重算；其他类型新内容非空就记成可恢复（不会改回不可恢复）。
+///     `removeIds` 删掉；`orderIds` 只改顺序，不影响判定。
+///   - `$rewindTo`：从该 id 第一次出现处起全删（id 列表允许重复，`$set.messages` 里同 id 会重复记一次），
+///     找不到就全清。
+///   - `$set.messages` 整体替换；带 `sessionId`+`projectHash` 的元数据行可带 messages（追加）。
+///   - 解析不了的行跳过。没有 `sessionId`+`projectHash` 的文件 CLI 不认，判 Unknown。
+///   - 与 CLI 仍不同的一处：顶层 content 是 `{ text: 数字 }` 这类对象时 CLI 对数字调 `.trim()` 抛错、整行被跳过，
+///     这里按有字算（CLI 不会写出这种记录，不再对齐）。
+///   - 复杂度：按 id 建索引，整体线性（第四轮 L3）；只有 `$rewindTo` 要找位置。
 /// - 旧版 `.json`：只判「有内容」、从不判空（0.68 不再写这种格式，没有硬杀留下的空壳要清；判错的代价是
 ///   挪走对话原文，做空 N1）。
 pub(super) fn session_content(path: &Path, text: &str) -> SessionContent {
     match path.extension().and_then(|ext| ext.to_str()) {
-        Some("jsonl") => {
-            let Some(messages) = replay_jsonl(text) else {
-                return SessionContent::Unknown;
-            };
-            if messages.iter().any(|(_, message)| is_resumable_record(message)) {
-                SessionContent::HasMessages
-            } else {
-                SessionContent::Empty
-            }
-        }
+        Some("jsonl") => match replay_jsonl(text) {
+            Some(true) => SessionContent::HasMessages,
+            Some(false) => SessionContent::Empty,
+            None => SessionContent::Unknown,
+        },
         Some("json") => {
             let Ok(value) = serde_json::from_str::<Value>(text) else {
                 return SessionContent::Unknown;
@@ -638,80 +649,105 @@ pub(super) fn session_content(path: &Path, text: &str) -> SessionContent {
     }
 }
 
-/// 按 CLI 的累加器重放 `.jsonl`，返回最终的消息（按顺序）；元数据缺 `sessionId` / `projectHash` 时 None。
-fn replay_jsonl(text: &str) -> Option<Vec<(String, Value)>> {
-    let mut messages: Vec<(String, Value)> = Vec::new();
+/// 一条消息在 CLI 列表口径里的记录（metadataOnly 的 messageKinds）。
+#[derive(Clone, Copy)]
+struct Kind {
+    user: bool,
+    resumable: bool,
+}
+
+/// 按 CLI 列表口径重放 `.jsonl`：Some(有没有可恢复内容)；元数据缺 `sessionId` / `projectHash` 时 None。
+fn replay_jsonl(text: &str) -> Option<bool> {
+    let mut ids: Vec<String> = Vec::new();
+    let mut kinds: HashMap<String, Kind> = HashMap::new();
     let mut session = false;
     let mut project = false;
     let is_message = |value: &Value| value["id"].is_string() && value.get("$patch").is_none();
-    fn upsert(messages: &mut Vec<(String, Value)>, value: &Value) {
-        let id = value["id"].as_str().unwrap_or_default().to_string();
-        match messages.iter_mut().find(|(existing, _)| *existing == id) {
-            Some(slot) => slot.1 = value.clone(),
-            None => messages.push((id, value.clone())),
+    let kind_of = |value: &Value| Kind {
+        user: value["type"] == "user",
+        resumable: is_resumable_record(value),
+    };
+    // `$set.messages` / 元数据行带的 messages：CLI 直接 push，不查重。
+    let push_all = |ids: &mut Vec<String>, kinds: &mut HashMap<String, Kind>, list: &[Value]| {
+        for message in list.iter().filter(|message| is_message(message)) {
+            let id = message["id"].as_str().unwrap_or_default().to_string();
+            kinds.insert(id.clone(), kind_of(message));
+            ids.push(id);
         }
-    }
+    };
     for line in text.lines().filter(|line| !line.trim().is_empty()) {
         let Ok(record) = serde_json::from_str::<Value>(line) else {
             continue;
         };
         if let Some(rewind) = record["$rewindTo"].as_str() {
-            match messages.iter().position(|(id, _)| id == rewind) {
-                Some(at) => messages.truncate(at),
-                None => messages.clear(),
+            match ids.iter().position(|id| id == rewind) {
+                Some(at) => {
+                    for removed in ids.drain(at..) {
+                        kinds.remove(&removed);
+                    }
+                }
+                None => {
+                    ids.clear();
+                    kinds.clear();
+                }
             }
         } else if let Some(patch) = record.get("$patch").filter(|patch| patch.is_object()) {
-            let apply = |messages: &mut Vec<(String, Value)>, update: &Value| {
-                let Some(id) = update["id"].as_str() else {
+            let mut apply = |update: &Value| {
+                let (Some(id), Some(content)) = (update["id"].as_str(), update.get("content")) else {
                     return;
                 };
-                if let (Some(slot), Some(content)) = (
-                    messages.iter_mut().find(|(existing, _)| existing == id),
-                    update.get("content").filter(|content| !content.is_null()),
-                ) {
-                    slot.1["content"] = content.clone();
+                if let Some(kind) = kinds.get_mut(id) {
+                    let content = cli_part_string(Some(content));
+                    let content = content.trim();
+                    if kind.user {
+                        kind.resumable = !ignored_user_content(content);
+                    } else if !content.is_empty() {
+                        kind.resumable = true;
+                    }
                 }
             };
-            apply(&mut messages, patch);
+            apply(patch);
             for update in patch["updates"].as_array().into_iter().flatten() {
-                apply(&mut messages, update);
+                apply(update);
             }
-            for remove in patch["removeIds"].as_array().into_iter().flatten() {
-                if let Some(remove) = remove.as_str() {
-                    messages.retain(|(id, _)| id != remove);
+            for remove in patch["removeIds"].as_array().into_iter().flatten().filter_map(Value::as_str) {
+                if let Some(at) = ids.iter().position(|id| id == remove) {
+                    ids.remove(at);
                 }
-            }
-            if let Some(order) = patch["orderIds"].as_array() {
-                let ordered: Vec<(String, Value)> = order
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .filter_map(|id| messages.iter().find(|(existing, _)| existing == id).cloned())
-                    .collect();
-                messages.retain(|(id, _)| !ordered.iter().any(|(other, _)| other == id));
-                messages.extend(ordered);
+                kinds.remove(remove);
             }
         } else if is_message(&record) {
-            upsert(&mut messages, &record);
+            let id = record["id"].as_str().unwrap_or_default().to_string();
+            if !kinds.contains_key(&id) {
+                ids.push(id.clone());
+            }
+            kinds.insert(id, kind_of(&record));
         } else if let Some(set) = record.get("$set").filter(|set| set.is_object()) {
             if let Some(list) = set["messages"].as_array() {
-                messages.clear();
-                for message in list.iter().filter(|message| is_message(message)) {
-                    upsert(&mut messages, message);
-                }
+                ids.clear();
+                kinds.clear();
+                push_all(&mut ids, &mut kinds, list);
             }
             session |= set["sessionId"].is_string();
             project |= set["projectHash"].is_string();
         } else if record["sessionId"].is_string() && record["projectHash"].is_string() {
             session = true;
             project = true;
-            for message in record["messages"].as_array().into_iter().flatten() {
-                if is_message(message) {
-                    upsert(&mut messages, message);
-                }
+            if let Some(list) = record["messages"].as_array() {
+                push_all(&mut ids, &mut kinds, list);
             }
         }
     }
-    (session && project).then_some(messages)
+    (session && project).then(|| kinds.values().any(|kind| kind.resumable))
+}
+
+/// CLI `isIgnoredUserContent`（参数已去首尾空白）。
+fn ignored_user_content(text: &str) -> bool {
+    text.is_empty()
+        || text.starts_with('/')
+        || text.starts_with('?')
+        || text.starts_with("<session_context>")
+        || text.starts_with("<hook_context>")
 }
 
 /// 会话文件尾部最近的模型：回复行的 `model`，或 `/model set` 当场写的 info 行「Model set to X」

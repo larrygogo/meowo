@@ -1,5 +1,5 @@
 {
-  "comment": "期望值由本机 Gemini CLI 0.68.0 的 loadConversationRecord 实跑得出（node cli_expect.mjs，全量与 metadataOnly 两种读法一致）：true=有可恢复内容，false=没有，null=CLI 不认这个文件。做空 R1。",
+  "comment": "期望值由本机 Gemini CLI 0.68.0 的 loadConversationRecord（metadataOnly，即 --resume 列会话的读法）实跑得出（node cli_expect.mjs）：true=有可恢复内容，false=没有，null=CLI 不认这个文件。session-za* 是做空第四轮的对抗样例。做空 R1 / 第四轮 L2。",
   "cli": "0.68.0",
   "expect": {
     "session-a-plain-8b42a13c.jsonl": false,
@@ -25,6 +25,16 @@
     "session-u-no-projecthash-8b42a13c.jsonl": null,
     "session-v-partial-line-8b42a13c.jsonl": false,
     "session-w-error-warning-8b42a13c.jsonl": false,
-    "session-x-meta-messages-8b42a13c.jsonl": true
+    "session-x-meta-messages-8b42a13c.jsonl": true,
+    "session-za1-info-patched-8b42a13c.jsonl": true,
+    "session-za10-leading-space-slash-8b42a13c.jsonl": false,
+    "session-za2-gemini-patched-empty-8b42a13c.jsonl": true,
+    "session-za3-user-patched-null-8b42a13c.jsonl": false,
+    "session-za4-thoughts-string-8b42a13c.jsonl": true,
+    "session-za5-hook-then-real-8b42a13c.jsonl": true,
+    "session-za6-crlf-8b42a13c.jsonl": false,
+    "session-za7-text-number-8b42a13c.jsonl": true,
+    "session-za8-set-dup-rewind-8b42a13c.jsonl": false,
+    "session-za9-patch-order-rewind-8b42a13c.jsonl": false
   }
 }
