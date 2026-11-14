@@ -77,13 +77,26 @@ fn width_at_most(text: &str) -> usize {
         .sum()
 }
 
+/// 一行行尾最多假定藏着几个看不见的空格。
+///
+/// 为什么要假定：五家都按词折行，折行处的空格不画出来（2026-11-15 真机，多个终端宽度）。
+/// 「…keepz」后面跟 3 个空格再接 `ab cd` 被折成两行，和「…keepz」回车再打 `ab cd`，屏幕与光标
+/// 一模一样（Codex 80×24 的 near_spaces3 与 near_newline 两帧逐格相同）。所以一行后面到底藏了
+/// 几个空格，屏幕上没有任何证据。此前只按「藏 1 个」算，折行处有 2 个以上空格、下一行开头是短词
+/// 时就被判成换行，搬过来的草稿里几个空格变成了一个换行。
+///
+/// 藏的空格数理论上没有上限，全堵就是「多行草稿一律读不全」。取 8：正文里连续的空格（句末两格、
+/// 行内对齐）一般不超过它；代价是离右边界不到「下一行开头的词 + 8 格」的行，后面即使是真换行也判
+/// 读不全。连续 9 个以上空格又恰好落在折行处的草稿仍然分不出，这是已知的残留。
+pub const HIDDEN_SPACES: usize = 8;
+
 /// 逐行的原样内容 → 能不能确认这就是草稿全文。规则只来自插件声明的 `fidelity`。
 fn judge_draft(
     rows: &[String],
     screen: &[String],
     (top_row, bottom_row): (usize, usize),
     input_col: usize,
-    cols: Option<usize>,
+    (cols, term_rows): (Option<usize>, Option<usize>),
     spec: &ComposerSpec,
 ) -> Draft {
     let unverified = Draft::Incomplete(Incomplete::Unverified);
@@ -110,10 +123,23 @@ fn judge_draft(
     if rule.overflow_rows.is_some_and(|limit| rows.len() >= limit) {
         return Draft::Incomplete(Incomplete::Overflow);
     }
+    if let Some(cap) = rule.overflow_height {
+        // 不知道终端行数（旧宿主的帧）就按最矮的终端算。
+        let limit = term_rows.map_or(cap.floor, |height| {
+            (height.saturating_sub(cap.reserve) / cap.divisor.max(1)).max(cap.floor)
+        });
+        if rows.len() >= limit {
+            return Draft::Incomplete(Incomplete::Overflow);
+        }
+    }
     if rows.len() > 1 {
         // 相邻两行之间是用户敲的换行，还是框宽折出来的：屏幕上没有标记。只有一种情况能确认是换行：
-        // 下一行开头那个词（连同它前面的缩进）本来放得进上一行剩下的宽度，CLI 却没有放。
-        // 放不进的分不清，判读不全。
+        // 下一行开头那一块本来放得进上一行剩下的宽度，CLI 却没有放。放不进的分不清，判读不全。
+        // 「那一块」要算足（都是 2026-11-15 真机上被判错过的）：
+        // - 上一行行尾可能藏着空格（见 HIDDEN_SPACES）；
+        // - 词后面的空格跟着词走：Kimi 把「词 + 它后面的空格」当成一块，整块放不下就一起折下去
+        //   （80×24：`…verify` / `everyzzzzzzzz      ab cd`，词本身放得下，带上 6 个空格放不下）。
+        //   空格在行中间时数得出来；词在行尾时它后面的空格也看不见，同样按 HIDDEN_SPACES 算。
         let edge = match rule.wrap_edge {
             ComposerWrapEdge::Border => Some(screen[bottom_row].trim_end().chars().count()),
             ComposerWrapEdge::Terminal => cols,
@@ -128,8 +154,14 @@ fn judge_draft(
             let word_end = pair[1][lead..]
                 .find(char::is_whitespace)
                 .map_or(pair[1].len(), |at| lead + at);
-            let head = width_at_most(&pair[1][..word_end]) as isize;
-            if room < (1 + head).max(2) {
+            let head = width_at_most(&pair[1][..word_end]);
+            let rest = &pair[1][word_end..];
+            let after = if rest.is_empty() {
+                HIDDEN_SPACES
+            } else {
+                rest.len() - rest.trim_start().len()
+            };
+            if room < (head + after + HIDDEN_SPACES) as isize {
                 return Draft::Incomplete(Incomplete::Wrap);
             }
         }
@@ -141,17 +173,17 @@ fn judge_draft(
     Draft::Complete(rows[..end].join("\n"))
 }
 
-/// 认不出输入框返回 None。不带终端列数：以终端右沿为界的家（见
+/// 认不出输入框返回 None。不带终端尺寸：以终端右沿为界的家（见
 /// [`ComposerWrapEdge::Terminal`]）多行草稿一律判读不全。只判空、比对时用它就够。
 pub fn read(screen: &[String], cursor: Option<Cursor>, spec: &ComposerSpec) -> Option<ComposerRead> {
-    read_with_cols(screen, cursor, None, spec)
+    read_with_size(screen, cursor, (None, None), spec)
 }
 
-/// 同 [`read`]，带上终端列数（与文字、光标同一帧取），草稿保真判定才完整。
-pub fn read_with_cols(
+/// 同 [`read`]，带上终端的（列数，行数）（与文字、光标同一帧取），草稿保真判定才完整。
+pub fn read_with_size(
     screen: &[String],
     cursor: Option<Cursor>,
-    cols: Option<usize>,
+    size: (Option<usize>, Option<usize>),
     spec: &ComposerSpec,
 ) -> Option<ComposerRead> {
     let re = |pattern: &str| regex::Regex::new(pattern).ok();
@@ -302,7 +334,7 @@ pub fn read_with_cols(
             })
             .collect();
         if aligned {
-            judge_draft(&rows, screen, (top_row, bottom_row), input_col, cols, spec)
+            judge_draft(&rows, screen, (top_row, bottom_row), input_col, size, spec)
         } else {
             Draft::Incomplete(Incomplete::Unverified)
         }

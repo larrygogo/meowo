@@ -843,6 +843,15 @@ impl AgentPlugin for Claude {
                 paste_pattern: r"\[Pasted text #\d+(?: \+\d+ lines)?\]|\[[Ii]mage[^\]\r\n]*\]",
                 overflow_pattern: None,
                 overflow_rows: None,
+                // 可视高度有上限，而且不画标记（2.1.325，2026-11-15 实拍，29 到 55 行的草稿）：终端
+                // 12 / 16 / 20 / 24 / 30 / 34 / 40 / 50 行时各画最后 3 / 3 / 5 / 7 / 10 / 12 / 15 / 20 行，
+                // 即 max(3, (行数 − 10) / 2)。不认这个上限的话，只画出尾部的草稿会被当成全文，撤回前、
+                // 切模型前清掉就丢了前半截。上面说的「上边框被顶出屏幕」是 2026-11-14 那一次的画面。
+                overflow_height: Some(crate::chat_ui::ComposerHeightCap {
+                    reserve: 10,
+                    divisor: 2,
+                    floor: 3,
+                }),
                 wrap_edge: crate::chat_ui::ComposerWrapEdge::Terminal,
                 wrap_inset: 2,
             }),

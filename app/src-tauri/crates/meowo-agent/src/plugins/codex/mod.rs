@@ -425,6 +425,7 @@ impl AgentPlugin for Codex {
                 paste_pattern: r"\[Pasted Content \d+ chars\]|\[[Ii]mage[^\]\r\n]*\]",
                 overflow_pattern: Some(r"\s[↑↓]\s*$"),
                 overflow_rows: None,
+                overflow_height: None,
                 wrap_edge: crate::chat_ui::ComposerWrapEdge::Terminal,
                 wrap_inset: 1,
             }),

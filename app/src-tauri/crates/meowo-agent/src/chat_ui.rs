@@ -564,8 +564,21 @@ pub enum ComposerWrapEdge {
     Terminal,
 }
 
+/// 输入框的可视高度跟着终端行数走：最多画 `max(floor, (终端行数 − reserve) / divisor)` 行，
+/// 超出时只画草稿的最后几行、**不画任何标记**（见 [`ComposerFidelity::overflow_height`]）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+pub struct ComposerHeightCap {
+    pub reserve: usize,
+    pub divisor: usize,
+    /// 再矮的终端也至少画这么多行；读屏的帧里不带终端行数时就按它判（最保守）。
+    pub floor: usize,
+}
+
 /// 草稿能不能从屏幕上**原样**读回来的判定依据，每家一份，全部来自真机取证
-/// （tests/probe_draft_fidelity.rs，2026-11-14，120×40）。
+/// （tests/probe_draft_fidelity.rs：2026-11-14 在 120×40；2026-11-15 换终端宽度与高度复核，
+/// 一行能放的格数先在真机上量出来，再与这里的算法对）。
 ///
 /// 为什么要有：对话页发送前把终端里的草稿清掉、搬进对话页输入框。屏幕只是 CLI 画出来的样子，
 /// 有三种情况屏幕上的字不等于草稿原文，清掉就是丢内容（做空①）：
@@ -588,6 +601,8 @@ pub struct ComposerFidelity {
     /// 不画标记的家：屏幕上的草稿行数达到这个数，就可能还有没显示的行，判读不全。取这一家
     /// 输入框可视高度的下限（恰好这么多行的草稿会被多判，方向是保守）。
     pub overflow_rows: Option<usize>,
+    /// 不画标记、且可视高度跟着终端行数走的家：屏幕上的草稿行数达到按终端行数算出的上限就判读不全。
+    pub overflow_height: Option<ComposerHeightCap>,
     pub wrap_edge: ComposerWrapEdge,
     /// 内容区右边界 = `wrap_edge` 那条边的列数 − 这个数。只能取大不能取小：取小了会把折行
     /// 误认成换行。

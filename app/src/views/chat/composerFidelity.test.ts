@@ -18,7 +18,9 @@ import { zh } from "../../i18n/zh";
 import { en } from "../../i18n/en";
 
 type Sample = {
-  name: string; provider: string; lines: string[]; expect: string; cols?: number; note?: string;
+  name: string; provider: string; lines: string[]; expect: string; cols?: number; rows?: number; note?: string;
+  /// 打进输入框的原文与那个尺寸下真机量出的一行格数（2026-11-15 换终端尺寸的帧才有）。
+  original?: string; width?: number;
   cursor?: { row: number; col: number; visible: boolean; dim: boolean };
   draft?: ComposerDraft;
 };
@@ -30,6 +32,7 @@ const toFrame = (sample: Sample): TerminalScreenFrameDto => ({
   cursorVisible: sample.cursor?.visible ?? false,
   cursorDim: sample.cursor?.dim ?? false,
   cols: sample.cols,
+  rows: sample.rows,
 });
 const named = (name: string): TerminalScreenFrameDto => {
   const sample = samples.find((entry) => entry.name === name);
@@ -165,11 +168,12 @@ describe("分不清折行与换行的边界", () => {
     expect(readComposerFrame(toFrame(multi()), spec("kimi")).draft).toMatchObject({ complete: true });
   });
   it("上一行写到了框边、下一个词放不下：可能是折行也可能是换行，判读不全", () => {
-    // 内容区 110 格。下一行开头是 4 格缩进加 8 个字母的词，连同一个空格要 13 格：上一行写到 98 格就放不下了。
-    const full = rewrite(multi(), "line one", "x".repeat(98));
+    // 内容区 110 格。下一行开头是 4 格缩进加 8 个字母的词，词后面跟着 1 个空格（Kimi 把它和词一起折），
+    // 上一行行尾还可能藏着最多 8 个看不见的空格：一共要 21 格，上一行写到 90 格就不敢说放得下了。
+    const full = rewrite(multi(), "line one", "x".repeat(90));
     expect(readComposerFrame(full, spec("kimi")).draft).toEqual({ complete: false, why: "wrap" });
     // 少写一格就放得下，CLI 却另起了一行：只能是换行。
-    const roomy = rewrite(multi(), "line one", "x".repeat(97));
+    const roomy = rewrite(multi(), "line one", "x".repeat(89));
     expect(readComposerFrame(roomy, spec("kimi")).draft).toMatchObject({ complete: true });
   });
   it("以终端右沿为界的家，帧里没有终端列数时多行草稿判读不全", () => {
@@ -189,6 +193,84 @@ describe("分不清折行与换行的边界", () => {
     const io = { frame: async () => (reads++ === 0 ? first : second), write: async (data: string) => { keys.push(data); }, sleep: async () => {} };
     expect(await prepareComposer(io, spec("kimi"), { running: false })).toEqual({ kind: "incomplete", why: "unverified" });
     expect(keys).toEqual([]);
+  });
+});
+
+// 2026-11-15 换终端尺寸取证（PROBE_SUITE=wrap）：生产里终端列数跟着窗口变，此前的样本全是 120×40。
+// 形态的长度按每个尺寸下真机量出的一行格数生成，刚好填满、差一格、折行处是空格都卡在真实边界上。
+describe("换终端尺寸：折行从不被当成换行", () => {
+  const sized = samples.filter((sample) => /-\d+x\d+-form-/.test(sample.name));
+  const sizeOf = (sample: Sample) => /-(\d+x\d+)-form-/.exec(sample.name)![1];
+  const formOf = (sample: Sample) => sample.name.split("-form-")[1];
+  const draftOf = (sample: Sample) => readComposerFrame(toFrame(sample), spec(sample.provider)).draft;
+
+  it("五家各在至少四个宽度、两个高度上有帧", () => {
+    for (const provider of PROVIDERS) {
+      const sizes = new Set(sized.filter((sample) => sample.provider === provider).map(sizeOf));
+      expect(new Set([...sizes].map((size) => size.split("x")[0])).size, provider).toBeGreaterThanOrEqual(4);
+      expect(new Set([...sizes].map((size) => size.split("x")[1])).size, provider).toBeGreaterThanOrEqual(2);
+    }
+  });
+  it("判读全的每一帧都与打进去的原文逐字相等（否则就是错清）", () => {
+    let whole = 0;
+    for (const sample of sized.filter((entry) => entry.original !== undefined && entry.expect === "occupied")) {
+      const draft = draftOf(sample);
+      if (!draft?.complete) continue;
+      expect(draft.text, sample.name).toBe(sample.original);
+      whole += 1;
+    }
+    expect(whole).toBeGreaterThan(100);
+  });
+  it("被折行的长单行在每个尺寸下都判读不全", () => {
+    const wrapped = sized.filter((sample) => /^(wrap_|fill_plus1|near_spaces|over_spaces|multi_long|multi_full)/.test(formOf(sample)));
+    expect(wrapped.length).toBeGreaterThan(300);
+    for (const sample of wrapped) expect(draftOf(sample), sample.name).toEqual({ complete: false, why: "wrap" });
+  });
+  it("没有矫枉过正：短草稿、刚好填满一行、差一格填满的单行在每个尺寸下都读全", () => {
+    for (const sample of sized.filter((entry) => /^(short|fill_exact|fill_minus1|fill_words)$/.test(formOf(entry)))) {
+      expect(draftOf(sample), sample.name).toEqual({ complete: true, text: sample.original });
+    }
+    // 没碰到边界的多行草稿：60 列以上五家都读全（40 列时一行只有 30 来格，5 行的草稿确实贴着边）。
+    for (const sample of sized.filter((entry) => formOf(entry) === "multi_short" && sizeOf(entry) !== "40x20")) {
+      expect(draftOf(sample), sample.name).toEqual({ complete: true, text: sample.original });
+    }
+  });
+  it("规格里的宽度算法与真机量出的一行格数相符（四家按终端或框线算；OpenCode 的框定宽，只往窄里估）", () => {
+    for (const sample of sized.filter((entry) => formOf(entry) === "fill_exact")) {
+      const rule = spec(sample.provider).fidelity!;
+      const read = readComposerFrame(toFrame(sample), spec(sample.provider));
+      const edge = rule.wrap_edge === "border" ? [...sample.lines[read.bottomRow!].trimEnd()].length : sample.cols!;
+      const computed = edge - read.inputCol! - rule.wrap_inset;
+      if (sample.provider === "opencode") expect(computed, sample.name).toBeLessThanOrEqual(sample.width!);
+      else expect(computed, sample.name).toBe(sample.width);
+    }
+  });
+  it("折行处的几个空格不画出来：与回车逐格相同的两幅屏幕都判读不全", () => {
+    const pick = (form: string) => sized.find((sample) => sample.name === `codex-0.167.2-80x24-form-${form}`)!;
+    const [newline, spaces] = [pick("near_newline"), pick("near_spaces3")];
+    expect(newline.original).not.toBe(spaces.original);
+    expect(newline.lines).toEqual(spaces.lines);
+    expect(draftOf(newline)).toEqual({ complete: false, why: "wrap" });
+    expect(draftOf(spaces)).toEqual({ complete: false, why: "wrap" });
+  });
+  it("Kimi 把词连同后面的空格一起折下去：按词加空格算放不放得下", () => {
+    const sample = sized.find((entry) => entry.name === "kimi-2.6.1-80x24-form-over_spaces6")!;
+    expect(sample.lines.some((line) => line.includes("everyzzzzzzzz      ab cd"))).toBe(true);
+    expect(draftOf(sample)).toEqual({ complete: false, why: "wrap" });
+  });
+  it("Claude 的输入框可视高度跟着终端行数走、超出不画标记：按行数上限判没显示全", () => {
+    for (const sample of sized.filter((entry) => entry.provider === "claude" && formOf(entry) === "tall")) {
+      expect(draftOf(sample), sample.name).toEqual({ complete: false, why: "overflow" });
+    }
+    // 帧里不带终端行数（旧宿主）：按最矮的终端算，3 行以上都不敢说显示全了。
+    const multi = sized.find((entry) => entry.name === "claude-2.1.325-80x24-form-multi_short")!;
+    expect(draftOf(multi)).toMatchObject({ complete: true });
+    expect(readComposerFrame({ ...toFrame(multi), rows: undefined }, spec("claude")).draft).toEqual({ complete: false, why: "overflow" });
+  });
+  it("空输入框在每个尺寸下都认得出（OpenCode 60 列的占位文字自己折成两行）", () => {
+    const empties = sized.filter((sample) => formOf(sample) === "empty");
+    expect(empties.some((sample) => sample.name === "opencode-1.19.5-60x24-form-empty")).toBe(true);
+    for (const sample of empties) expect(readComposerFrame(toFrame(sample), spec(sample.provider)).state, sample.name).toBe("empty");
   });
 });
 

@@ -420,7 +420,10 @@ impl AgentPlugin for Opencode {
             prompt_prefix: "",
             tail_rows: 2,
             tail_pattern: Some(r"^\s*┃\s+\S.* · .+$"),
-            empty_pattern: r#"^(?:Ask anything…(?: "[^"\r\n]*")?)?$"#,
+            // 窄窗里占位文字自己会折行：60 列时 `Ask anything… "What is the tech stack of this` /
+            // `project?"` 占两行（1.19.5，tests/probe_draft_fidelity.rs，2026-11-15）。只认单行的话空输入框
+            // 被当成有草稿，发送被拦下。所以词与词之间按任意空白认，引号里允许换行。
+            empty_pattern: r#"^(?:Ask\s+anything…(?:\s+"[^"]*")?)?$"#,
             send_requires_recognition: true,
             stash: None,
             clear_inputs: &["\x03"],
@@ -439,6 +442,7 @@ impl AgentPlugin for Opencode {
                 paste_pattern: r"\[Pasted ~\d+ lines\]|\[[Ii]mage[^\]\r\n]*\]",
                 overflow_pattern: None,
                 overflow_rows: Some(6),
+                overflow_height: None,
                 wrap_edge: crate::chat_ui::ComposerWrapEdge::Border,
                 wrap_inset: 4,
             }),

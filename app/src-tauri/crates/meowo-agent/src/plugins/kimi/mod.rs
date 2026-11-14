@@ -780,6 +780,7 @@ impl AgentPlugin for Kimi {
                 paste_pattern: r"\[paste #\d+(?: (?:\+\d+ lines|\d+ chars))?\]|\[[Ii]mage[^\]\r\n]*\]",
                 overflow_pattern: Some(r"[↑↓] \d+ more"),
                 overflow_rows: None,
+                overflow_height: None,
                 wrap_edge: crate::chat_ui::ComposerWrapEdge::Border,
                 wrap_inset: 4,
             }),

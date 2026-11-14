@@ -64,9 +64,13 @@ function widthAtMost(text: string): number {
   return width;
 }
 
+/// 一行行尾最多假定藏着几个看不见的空格（与宿主 composer.rs 的 HIDDEN_SPACES 同值，出处见那里）：
+/// 五家都按词折行、折行处的空格不画出来，「几个空格后被折行」与「回车」在屏幕上逐格相同。
+const HIDDEN_SPACES = 8;
+
 /// 逐行的原样内容 → 能不能确认这就是草稿全文。规则每家一份声明（spec.fidelity），这里不写任何
 /// 一家的字符。行尾空白屏幕上看不见，不在「原样」之内。
-function judgeDraft(rows: readonly string[], frame: { screen: readonly string[]; topRow: number; bottomRow: number; inputCol: number; cols?: number }, spec: ComposerSpec): ComposerDraft {
+function judgeDraft(rows: readonly string[], frame: { screen: readonly string[]; topRow: number; bottomRow: number; inputCol: number; cols?: number; rows?: number }, spec: ComposerSpec): ComposerDraft {
   const rule = spec.fidelity;
   if (!rule) return { complete: false, why: "unverified" };
   const paste = new RegExp(rule.paste_pattern);
@@ -76,17 +80,28 @@ function judgeDraft(rows: readonly string[], frame: { screen: readonly string[];
     if (frame.screen.slice(frame.topRow, frame.bottomRow + 1).some((line) => overflow.test(line))) return { complete: false, why: "overflow" };
   }
   if (rule.overflow_rows != null && rows.length >= rule.overflow_rows) return { complete: false, why: "overflow" };
+  if (rule.overflow_height) {
+    // 可视高度跟着终端行数走、超出时不画标记（Claude）。不知道终端行数（旧宿主的帧）就按最矮的算。
+    const cap = rule.overflow_height;
+    const limit = frame.rows ? Math.max(cap.floor, Math.floor(Math.max(0, frame.rows - cap.reserve) / Math.max(1, cap.divisor))) : cap.floor;
+    if (rows.length >= limit) return { complete: false, why: "overflow" };
+  }
   if (rows.length > 1) {
     // 相邻两行之间是用户敲的换行，还是框宽折出来的：屏幕上没有标记（终端仿真层的折行标记只管终端
     // 自己的自动折行，TUI 是逐行定位画的，五家实拍都不带）。只有一种情况能确认是换行：下一行开头
-    // 那个词（连同它前面的缩进）本来放得进上一行剩下的宽度，CLI 却没有放。放不进的分不清，判读不全。
+    // 那一块本来放得进上一行剩下的宽度，CLI 却没有放。放不进的分不清，判读不全。那一块要算足：
+    // 上一行行尾可能藏着空格；词后面的空格跟着词走（Kimi 把「词 + 后面的空格」整块折下去），空格在
+    // 行中间数得出来，词在行尾时也按藏着算。
     const edge = rule.wrap_edge === "border" ? [...(frame.screen[frame.bottomRow] ?? "").trimEnd()].length : frame.cols;
     if (!edge) return { complete: false, why: "unverified" };
     const width = edge - frame.inputCol - rule.wrap_inset;
     for (let index = 0; index + 1 < rows.length; index += 1) {
       const room = width - widthAtMost(rows[index]);
-      const head = /^\s*\S*/.exec(rows[index + 1])?.[0] ?? "";
-      if (room < Math.max(2, 1 + widthAtMost(head))) return { complete: false, why: "wrap" };
+      const next = rows[index + 1];
+      const head = /^\s*\S*/.exec(next)?.[0] ?? "";
+      const rest = next.slice(head.length);
+      const after = rest === "" ? HIDDEN_SPACES : rest.length - rest.trimStart().length;
+      if (room < widthAtMost(head) + after + HIDDEN_SPACES) return { complete: false, why: "wrap" };
     }
   }
   let end = rows.length;
@@ -96,7 +111,7 @@ function judgeDraft(rows: readonly string[], frame: { screen: readonly string[];
 
 /// 在整屏上认出输入框。`cursor` 用来分开「占位文字」和「内容相同的真实草稿」：占位时光标停在
 /// 输入起点，真打出来的字光标在文末（五家真机取证，2026-11-14）；没有光标就只看文字。
-export function readComposer(screen: readonly string[] | null, spec: ComposerSpec | null | undefined, cursor?: ComposerCursor | null, cols?: number): ComposerRead {
+export function readComposer(screen: readonly string[] | null, spec: ComposerSpec | null | undefined, cursor?: ComposerCursor | null, cols?: number, termRows?: number): ComposerRead {
   if (!screen || !spec) return UNKNOWN;
   try {
     const top = new RegExp(spec.top_pattern);
@@ -179,7 +194,7 @@ export function readComposer(screen: readonly string[] | null, spec: ComposerSpe
       return [...value].slice(Math.max(0, skip)).join("").trimEnd();
     });
     const draft: ComposerDraft = aligned
-      ? judgeDraft(rows, { screen, topRow, bottomRow, inputCol, cols }, spec)
+      ? judgeDraft(rows, { screen, topRow, bottomRow, inputCol, cols, rows: termRows }, spec)
       : { complete: false, why: "unverified" };
     return { state: "occupied", ...position, isPlaceholder: false, draft };
   } catch {
@@ -190,7 +205,7 @@ export function readComposer(screen: readonly string[] | null, spec: ComposerSpe
 /// 同一帧的文字与光标一起读（分两次读会把异步重绘误认成用户移动了光标）。
 export function readComposerFrame(frame: TerminalScreenFrameDto | null | undefined, spec: ComposerSpec | null | undefined): ComposerRead {
   if (!frame) return UNKNOWN;
-  return readComposer(frame.lines, spec, { row: frame.cursorRow, col: frame.cursorCol, visible: frame.cursorVisible, dim: frame.cursorDim === true }, frame.cols ?? undefined);
+  return readComposer(frame.lines, spec, { row: frame.cursorRow, col: frame.cursorCol, visible: frame.cursorVisible, dim: frame.cursorDim === true }, frame.cols ?? undefined, frame.rows ?? undefined);
 }
 
 /// 输入框里有没有字、大致是什么：认不出返回 null，空（含占位）返回 ""，否则是屏幕上那几行

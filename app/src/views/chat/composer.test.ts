@@ -160,11 +160,11 @@ it("Codex 最下方的快捷键提示不是模型 footer", () => expect(readComp
 // 两边对每一帧必须给出同样的结论。Gemini 0.68 的输入框边框是 ▄/▀ 半块字符。
 // 带 draft 的帧还要对草稿保真的结论（读全的原文逐字相等，读不全的原因一致）；rawOnly 的帧去掉行尾空格后
 // 本来就认不出（Gemini 草稿里的空行是一串空格），只按原样判。
-type SharedFrame = { name: string; provider: string; lines: string[]; expect: string; text?: string; cols?: number; rawOnly?: boolean; draft?: ComposerDraft; cursor?: { row: number; col: number; visible: boolean; dim: boolean } };
+type SharedFrame = { name: string; provider: string; lines: string[]; expect: string; text?: string; cols?: number; rows?: number; rawOnly?: boolean; draft?: ComposerDraft; cursor?: { row: number; col: number; visible: boolean; dim: boolean } };
 describe("前后端输入框判定一致", () => {
   const specs = sharedFrames.specs as unknown as Record<string, ComposerSpec>;
   const verdict = (frame: SharedFrame, lines: string[]) => {
-    const read = readComposer(lines, specs[frame.provider], frame.cursor ?? null, frame.cols);
+    const read = readComposer(lines, specs[frame.provider], frame.cursor ?? null, frame.cols, frame.rows);
     return { verdict: read.altMode ? `alt:${read.altMode.id}` : read.state, text: read.text, draft: read.draft };
   };
   for (const frame of sharedFrames.frames as SharedFrame[]) {

@@ -24,6 +24,11 @@ pub struct TerminalScreenFrameDto {
     #[serde(default)]
     #[cfg_attr(test, ts(as = "Option<u16>", optional))]
     pub cols: u16,
+    /// 终端行数。有的输入框可视高度跟着终端行数走、超出时不画任何标记（Claude：24 行的终端里
+    /// 29 行草稿只画最后 7 行，2026-11-15 实拍），要靠它才知道草稿有没有显示全。旧宿主不带。
+    #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<u16>", optional))]
+    pub rows: u16,
 }
 
 /// 一条待办。`status` 用字面量而非枚举：来源是各家 agent 的自由文本状态，

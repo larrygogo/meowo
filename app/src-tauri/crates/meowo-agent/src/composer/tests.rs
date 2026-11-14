@@ -1,5 +1,5 @@
 use super::*;
-use crate::chat_ui::{ComposerAltMode, ComposerFidelity, ComposerStash};
+use crate::chat_ui::{ComposerAltMode, ComposerFidelity, ComposerHeightCap, ComposerStash};
 
 fn leak(value: &serde_json::Value) -> &'static str {
     Box::leak(value.as_str().unwrap().to_string().into_boxed_str())
@@ -56,6 +56,14 @@ fn spec_from(declared: &serde_json::Value) -> ComposerSpec {
                 paste_pattern: leak(&rule["paste_pattern"]),
                 overflow_pattern: optional(&rule["overflow_pattern"]),
                 overflow_rows: rule["overflow_rows"].as_u64().map(|rows| rows as usize),
+                overflow_height: rule["overflow_height"].as_object().map(|cap| {
+                    let field = |key: &str| cap[key].as_u64().unwrap() as usize;
+                    ComposerHeightCap {
+                        reserve: field("reserve"),
+                        divisor: field("divisor"),
+                        floor: field("floor"),
+                    }
+                }),
                 wrap_edge: match rule["wrap_edge"].as_str().unwrap() {
                     "border" => ComposerWrapEdge::Border,
                     "terminal" => ComposerWrapEdge::Terminal,
@@ -78,6 +86,7 @@ fn reads_agree_with_shared_frames() {
     .unwrap();
     let mut checked = 0;
     let mut drafts = 0;
+    let mut exact = 0;
     let mut providers = std::collections::BTreeSet::new();
     for frame in fixture["frames"].as_array().unwrap() {
         let provider = frame["provider"].as_str().unwrap();
@@ -108,12 +117,15 @@ fn reads_agree_with_shared_frames() {
             dim: cursor["dim"].as_bool().unwrap(),
         });
         let expect = frame["expect"].as_str().unwrap();
-        let cols = frame["cols"].as_u64().map(|cols| cols as usize);
+        let size = (
+            frame["cols"].as_u64().map(|cols| cols as usize),
+            frame["rows"].as_u64().map(|rows| rows as usize),
+        );
         // rawOnly：这一帧去掉行尾空格后本来就认不出（Gemini 草稿里的空行是一串空格），只按原样判。
         let raw_only = frame["rawOnly"].as_bool().unwrap_or(false);
         let screens: &[&Vec<String>] = if raw_only { &[&lines] } else { &[&lines, &trimmed] };
         for screen in screens {
-            let got = read_with_cols(screen, cursor, cols, &spec);
+            let got = read_with_size(screen, cursor, size, &spec);
             let verdict = match &got {
                 None => "unknown".to_string(),
                 Some(read) => match read.alt_mode {
@@ -146,6 +158,15 @@ fn reads_agree_with_shared_frames() {
                     frame["name"]
                 );
                 drafts += 1;
+                // 换终端尺寸的帧登记了打进去的原文：判读全的必须与它逐字相等，否则清掉就是丢内容
+                // （2026-11-15：折行处的空格、Kimi 的词带空格、Claude 的可视高度都在这里被判错过）。
+                if let (Some(original), Some(Draft::Complete(text))) = (
+                    frame.get("original").and_then(|o| o.as_str()),
+                    got.as_ref().and_then(|read| read.draft.as_ref()),
+                ) {
+                    assert_eq!(text, original, "{}", frame["name"]);
+                    exact += 1;
+                }
             }
         }
         providers.insert(provider.to_string());
@@ -154,6 +175,9 @@ fn reads_agree_with_shared_frames() {
     assert!(checked >= 25);
     // 五家 × 十来种草稿形态的保真帧都在（每帧按原样与去行尾空格各判一次）。
     assert!(drafts >= 100, "草稿保真的帧只核对了 {drafts} 次");
+    // 七个终端宽度 × 五家的折行形态都在（每个尺寸里读全的只有四五种）。
+    assert!(drafts >= 1200, "换终端尺寸的帧没进来，只核对了 {drafts} 次");
+    assert!(exact >= 200, "与原文逐字核对的只有 {exact} 次");
     // 五家都要有实拍帧：规格只有一份，哪一家没有样例就等于没测。
     assert_eq!(
         providers.into_iter().collect::<Vec<_>>(),

@@ -358,6 +358,7 @@ impl AgentPlugin for Gemini {
                 paste_pattern: r"\[Pasted Text: \d+ (?:lines|chars)(?: #\d+)?\]|\[[Ii]mage[^\]\r\n]*\]",
                 overflow_pattern: None,
                 overflow_rows: Some(10),
+                overflow_height: None,
                 wrap_edge: crate::chat_ui::ComposerWrapEdge::Terminal,
                 wrap_inset: 3,
             }),

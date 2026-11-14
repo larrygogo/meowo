@@ -12,7 +12,7 @@ import composerFrames from "../test/fixtures/composer-frames.json";
 
 const { setup, box, writes } = adapter;
 
-type Sample = { name: string; lines: string[]; cols?: number; cursor?: { row: number; col: number; visible: boolean; dim: boolean } };
+type Sample = { name: string; lines: string[]; cols?: number; rows?: number; cursor?: { row: number; col: number; visible: boolean; dim: boolean } };
 function liveFrame(name: string) {
   const frame = (composerFrames.frames as Sample[]).find((entry) => entry.name === name);
   if (!frame) throw new Error(`没有这一帧：${name}`);
@@ -23,6 +23,7 @@ function liveFrame(name: string) {
     cursorVisible: frame.cursor?.visible ?? false,
     cursorDim: frame.cursor?.dim ?? false,
     cols: frame.cols,
+    rows: frame.rows,
   };
 }
 const errorBar = () => document.querySelector(".chat-send-error")!;
