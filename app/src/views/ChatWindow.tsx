@@ -16,6 +16,7 @@ import { useSettingsEffect } from "../hooks/useSettings";
 import { confirmMarkDone, markDoneEndsWork, useSessionActions } from "../hooks/useSessionActions";
 import { useHistoryLayer } from "../hooks/useHistoryLayer";
 import { useT } from "../i18n";
+import { imeComposing } from "../ime";
 import { formatBackendError } from "../i18n/errors";
 import { useShowWhenReady } from "../useShowWhenReady";
 import { reduceChatEvents } from "../chat/reducer";
@@ -43,9 +44,11 @@ import { useSidebarLayout } from "./chat/useSidebarLayout";
 import { pasteImagesNatively, useInterrupt, writeInterruptKeys } from "./chat/terminalInput";
 import { leaveSubagentView } from "./chat/subagentView";
 import { SubagentViewNotice } from "./chat/SubagentViewNotice";
-import { clearPartialImageDraft, composerDraftText, createSendQueue, IMAGE_PASTE_LANDING_POLLS, LATE_IMAGE_GRACE_MS, RESUME_VERIFY_WINDOW_MS, stashComposerDraft, submitToTerminal, terminalInput, waitForTerminalReady, type SubmitInput, type TerminalReadyMessages, type TerminalStartupResult } from "./chat/terminalSubmit";
-import { manualSendVerdict } from "./chat/composerConfirmation";
-import { composerCandidate } from "./chat/composerSafety";
+import { clearPartialImageDraft, createSendQueue, IMAGE_PASTE_LANDING_POLLS, LATE_IMAGE_GRACE_MS, RESUME_VERIFY_WINDOW_MS, submitToTerminal, terminalInput, waitForTerminalReady, type SubmitInput, type TerminalReadyMessages, type TerminalStartupResult } from "./chat/terminalSubmit";
+import { clearComposerDraft, readComposerFrame, terminalComposerIo } from "./chat/composer";
+import { appendDraft, ComposerBlocked, composerBlockNotice, tidyComposer } from "./chat/nativeDraft";
+import { useSessionRef, useSessionScope, useSessionState, useSessionTimer } from "./chat/sessionScope";
+import { launchGrid } from "./chat/terminalGrid";
 import { managedTerminalFrame, agentDynamicModeChoices, type DynamicModeChoice } from "../api";
 import { BottomSheet, SheetOnPhone } from "./chat/BottomSheet";
 import { runningActivityView, RunningBar, SnakeSpinner, TurnAnnouncer, useCliStatusStore } from "./chat/RunningBar";
@@ -99,7 +102,7 @@ import { remoteUi, SELECT_SESSION_EVENT } from "../remoteMode";
 import { busyProps } from "../busyButton";
 import { REMOTE_PREFS_EVENT, remoteTurnFolding } from "../remotePrefs";
 import { RemoteSessionList } from "../mobile/RemoteSessionList";
-import { performUndo } from "./chat/undoTerminal";
+import { performUndo, typedUndoTarget } from "./chat/undoTerminal";
 import { useOutgoingUpkeep } from "./chat/useOutgoingUpkeep";
 import { useQuestionFormProbe } from "./chat/useQuestionFormProbe";
 import { SessionAdmin } from "./chat/SessionAdmin";
@@ -463,6 +466,17 @@ export function ChatWindow() {
   };
   /// 把异常写进错误条；终端启动类的报错带上看终端画面的出口。
   const failWithError = (error: unknown) => {
+    // 终端输入框没收拾好（草稿清不掉、处在 shell / vim 命令模式、认不出）：说清原因，给能在对话页
+    // 完成的出路——重试（认不出时是「仍然发送」）与看终端画面，不叫用户去终端收拾。
+    if (error instanceof ComposerBlocked) {
+      const notice = composerBlockNotice(error.block, t);
+      setSendError(notice.message, {
+        terminal: true,
+        retryLabel: notice.retryLabel,
+        retry: () => { composerForceRef.current = notice.force; void retryRef.current?.(); },
+      });
+      return;
+    }
     const message = formatBackendError(error, t.locale);
     const raw = error instanceof Error ? error.message : String(error ?? "");
     setSendError(message, startupFailureTextsRef.current.has(raw) ? { terminal: true } : null);
@@ -478,10 +492,16 @@ export function ChatWindow() {
   const modelProbeConfirmedRef = useRef(false);
   const learnModelLabelsRef = useRef<(options: TerminalAttentionOption[]) => void>(() => {});
   /// 从配置目录里点选的模型（菜单型 CLI）：发 /model 后在它弹出的菜单里替用户选中这一项。
-  const pendingModelPickRef = useRef<{ id: string; label: string; at: number; searched?: boolean } | null>(null);
+  // 会话级状态的归零登记处（见 chat/sessionScope）：下面用 useSession* 声明的，换会话时自动归零。
+  const sessionScope = useSessionScope();
+  const pendingModelPickRef = useSessionRef<{ id: string; label: string; at: number; searched?: boolean } | null>(sessionScope, null);
   // 静默选模型进行中：CLI 菜单只是执行通道，不出卡片、不出「正在识别」条，忙态只体现在模型钮转圈。
-  const [modelPicking, setModelPicking] = useState(false);
-  const modelPickTimerRef = useRef<number | undefined>(undefined);
+  const [modelPicking, setModelPicking] = useSessionState(sessionScope, false);
+  const modelPickTimer = useSessionTimer(sessionScope);
+  // 终端输入框里的草稿被搬进对话页输入框后的一句说明（见 chat/nativeDraft）。
+  const [draftMovedNotice, setDraftMovedNotice] = useSessionState(sessionScope, false);
+  // 错误条上点了「仍然发送」：这个会话的下一次发送认不出输入框也照发（只管一次）。
+  const composerForceRef = useSessionRef<boolean>(sessionScope, false);
   /// 菜单识别到时尝试自动选中；返回 true = 已替用户选了（不再上屏那张卡）。每次渲染刷新。
   const autoPickModelRef = useRef<(options: TerminalAttentionOption[]) => boolean>(() => false);
   const finishSilentProbeRef = useRef<() => void>(() => {});
@@ -1003,7 +1023,7 @@ export function ChatWindow() {
   useEffect(() => {
     if (remoteUi()) return;
     const onKey = (e: KeyboardEvent) => {
-      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.isComposing) return;
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || imeComposing(e)) return;
       const visible = panelStateRef.current.visible;
       const hasActive = panelStateRef.current.active !== null;
       let handled = true;
@@ -1591,6 +1611,8 @@ export function ChatWindow() {
       pendingModelPickRef.current = { id: configured.id, label: configured.label, at: Date.now() };
       setModelPicking(true);
       void openTerminalMenu(modelMenuCommand, true).then((sent) => {
+        // 菜单还没发出去人就切走了：这次选择已随会话归零，别在新会话上计时。
+        if (!isCurrentOperation()) return;
         if (!sent) { pendingModelPickRef.current = null; setModelPicking(false); return; }
         armModelPickTimeout();
       });
@@ -1610,6 +1632,8 @@ export function ChatWindow() {
       pendingModelPickRef.current = { id: configured.id, label: configured.label, at: Date.now() };
       setModelPicking(true);
       void openTerminalMenu(modelMenuCommand, true).then((sent) => {
+        // 菜单还没发出去人就切走了：这次选择已随会话归零，别在新会话上计时。
+        if (!isCurrentOperation()) return;
         if (!sent) { pendingModelPickRef.current = null; setModelPicking(false); return; }
         armModelPickTimeout();
       });
@@ -1723,9 +1747,8 @@ export function ChatWindow() {
     moveTo: (id) => resetToRef.current(id, true),
     // 重启前把 TUI 输入框里没发的字搬进对话页输入框（standards：Meowo 先把用户内容保住，做空 H2）。
     rescueDraft: async (move) => {
-      // 与发送前的输入框判定同一来源（manualSendVerdict 读的 frame）。
-      const frame = await managedTerminalFrame(sessionId).catch(() => null);
-      const candidate = composerCandidate(frame?.lines ?? null, chatUi?.composer_guard);
+      // 与发送前的输入框判定同一来源（chat/composer，文字与光标同一帧）。
+      const candidate = readComposerFrame(await terminalComposerIo(sessionId).frame(), chatUi?.composer);
       if (candidate.state === "empty") return "empty";
       const text = candidate.text?.trim();
       if (candidate.state !== "occupied" || !text) return "unknown";
@@ -1733,6 +1756,22 @@ export function ChatWindow() {
       if (!move) return "occupied";
       rescuedRef.current = text;
       setPrompt((prev) => (prev.trim() ? `${prev}\n${text}` : text));
+      return "moved";
+    },
+    // 这一家的输入框认不认得出（没声明规格的旧版本认不出，排着的终端项不等它）。
+    readsComposer: () => !!chatUi?.composer,
+    // 不重启的路线遇到「输入框里有字」：用 CLI 自己的清空键清掉，草稿搬进对话页输入框再切。
+    takeDraft: async () => {
+      const spec = chatUi?.composer;
+      if (!spec) return "unknown";
+      const io = terminalComposerIo(sessionId);
+      const candidate = readComposerFrame(await io.frame(), spec);
+      if (candidate.state === "empty") return "empty";
+      const text = candidate.text?.trim();
+      if (candidate.state !== "occupied" || !text) return "unknown";
+      if (!await clearComposerDraft(io, spec)) return "occupied";
+      setPrompt((prev) => appendDraft(prev, text));
+      setDraftMovedNotice(true);
       return "moved";
     },
     applyTerminal: (action) => terminalRunnerRef.current(action),
@@ -1966,6 +2005,9 @@ export function ChatWindow() {
     setNeedsTakeover(false);
     setSoftPromptNotice(false);
     setUndoNotice(false);
+    // 用 useSession* 声明的会话级状态在这里一并归零（选模型的转圈与计时、草稿搬运提示等）。
+    // 新增的会话级状态不要再往这串里加行，见 chat/sessionScope。
+    sessionScope.reset();
     setSubagentStuck(null);
     subagentStuckRef.current = null;
     setCopyNotice(null);
@@ -2031,7 +2073,7 @@ export function ChatWindow() {
   // 侧栏收起时镜像为空，不动。终端里让位给 shell 自己的 Alt 组合键；到头不循环。
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || e.isComposing) return;
+      if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey || imeComposing(e)) return;
       if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
       if (document.activeElement?.closest(".managed-terminal")) return;
       const order = sidebarOrderRef.current;
@@ -2054,7 +2096,7 @@ export function ChatWindow() {
   // 终端里让位给 shell 的 Alt 组合键，同 Alt+↑/↓。
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!e.altKey || !e.shiftKey || e.ctrlKey || e.metaKey || e.isComposing || e.key !== "ArrowDown") return;
+      if (!e.altKey || !e.shiftKey || e.ctrlKey || e.metaKey || imeComposing(e) || e.key !== "ArrowDown") return;
       if (document.activeElement?.closest(".managed-terminal")) return;
       e.preventDefault();
       const go = (next: number | null) => {
@@ -2581,6 +2623,7 @@ export function ChatWindow() {
       setSendError("");
       setSoftPromptNotice(false);
       setUndoNotice(false);
+      setDraftMovedNotice(false);
       setNeedsTakeover(false);
     }
     const alive = () => detached || isCurrentOperation();
@@ -2589,8 +2632,8 @@ export function ChatWindow() {
       // 上次发图失败的残图:能识别 composer 的 agent 在发送前自动清掉再继续(用户要求:
       // 别拦着让人去终端手动清);识别不了的才退回拦截。清理要写终端,放在占用检查之后。
       const partialDraft = partialImageDraftsRef.current.has(sessionId);
-      const autoClear = partialDraft && chatUi?.draft_stash && chatUi.clipboard_image_paste
-        ? { stash: chatUi.draft_stash, marker: chatUi.clipboard_image_paste } : null;
+      const autoClear = partialDraft && chatUi?.composer?.stash && chatUi.clipboard_image_paste
+        ? { stash: chatUi.composer, marker: chatUi.clipboard_image_paste } : null;
       if (partialDraft && !autoClear) {
         if (isCurrentOperation()) setSendError(t.chat.imagePasteUnconfirmed);
         return false;
@@ -2657,7 +2700,7 @@ export function ChatWindow() {
   /// `/rewind` 进的是子代理的 composer（做空第二轮 B），切不回就一律不写。
   const leaveSubagentViewBeforeWrite = async (strict = false): Promise<boolean> => {
     const spec = chatUi?.subagent_view;
-    const composer = chatUi?.draft_stash;
+    const composer = chatUi?.composer;
     if (!spec || !composer) return true;
     const result = await leaveSubagentView({
       screen: () => managedTerminalScreen(sessionId),
@@ -2680,17 +2723,37 @@ export function ChatWindow() {
     return leaveSubagentViewBeforeWrite();
   });
   /// 发送一段文本到会话（消息正文与斜杠命令共用）。返回是否真的送达。
+  /// 终端输入框里的草稿被清掉后接进对话页：还在这个会话就放进输入框并说一声，切走了就记进它的草稿。
+  const adoptNativeDraft = (draft: string) => {
+    if (isCurrentOperation()) {
+      setPrompt((current) => appendDraft(current, draft));
+      setDraftMovedNotice(true);
+      return;
+    }
+    const stored = draftsRef.current.get(sessionId);
+    draftsRef.current.set(sessionId, { prompt: appendDraft(stored?.prompt ?? "", draft), attachments: stored?.attachments ?? [] });
+  };
+  /// 往终端写正文或命令之前收拾它的输入框（五家同一条路，见 chat/composer 的 prepareComposer）：
+  /// 有草稿就收起——能暂存的暂存（提交后 CLI 自己还原），否则用 CLI 的清空键清掉、内容搬进对话页
+  /// 输入框；处在 shell / vim 命令模式先退出。收不掉抛 ComposerBlocked，错误条给出路。
+  const tidyTerminalComposer = async (adopt: (draft: string) => void = adoptNativeDraft) => {
+    const force = composerForceRef.current;
+    composerForceRef.current = false;
+    // 切走的会话读不到实时状态：按在跑处理（不按可能打断回合的键）。
+    const running = !isCurrentOperation() || toneRef.current === "running";
+    return tidyComposer(sessionId, chatUi?.composer, { running, force }, adopt);
+  };
   const preserveNativeDraftBeforeWrite = async () => {
     const partial = outgoingStore.get(sessionId).filter((entry) => entry.bodyWritten && entry.phase === "uncertain");
-    if (chatUi?.draft_stash) {
-      await stashComposerDraft(sessionId, chatUi.draft_stash);
-      if (partial.length && composerDraftText(await managedTerminalScreen(sessionId), chatUi.draft_stash) !== "") throw new Error("terminal/composer_partial");
-    } else {
-      // 用户亲手发送、人在场：认出有草稿或认不出输入框才拦，占位/空白照常发（判定口径见
-      // manualSendVerdict）。严格的 confirmComposerEmpty 会让 codex/gemini/opencode 永远发不出去。
-      const verdict = await manualSendVerdict({ read: () => managedTerminalFrame(sessionId) }, chatUi?.composer_guard);
-      if (verdict !== "send") throw new Error(verdict === "occupied" ? "terminal/composer_occupied" : "terminal/composer_unknown");
-    }
+    // 清出来的若是上一条没提交成的正文（Meowo 自己写进去的残稿），不当成用户的草稿搬进输入框：
+    // 那条消息的原文在它自己的回执里，再搬一份用户会看到两遍。
+    const ownResidue = (draft: string) => {
+      const head = draft.replace(/\s+/g, "").slice(0, 24);
+      return head !== "" && partial.some((entry) => entry.text.replace(/\s+/g, "").startsWith(head));
+    };
+    const prepared = await tidyTerminalComposer((draft) => { if (!ownResidue(draft)) adoptNativeDraft(draft); });
+    // 上一条的正文可能还停在终端输入框里：没能确认输入框是空的就不再写一遍。
+    if (partial.length && chatUi?.composer && prepared.kind === "clean" && !prepared.verified) throw new Error("terminal/composer_partial");
     // 只解除“原生残稿仍在”的阻挡，不把空框当作模型已消费；原文回执继续独立对账。
     for (const entry of partial) outgoingStore.settle(entry.id, { bodyWritten: false });
   };
@@ -2733,7 +2796,7 @@ export function ChatWindow() {
         control,
         turns,
         text,
-        draftStash: chatUi?.draft_stash,
+        composer: chatUi?.composer,
         attentionAbort,
         isCurrent: isCurrentOperation,
         stillHas: async () => {
@@ -2825,8 +2888,8 @@ export function ChatWindow() {
       // 原先直接报「图片附加未完成」让人去终端手动清理(2026-10-21 实拍)。残图清不掉
       // (认不出 composer)才退回报错——带着残图降级会重复附图。
       const abandonNativePaste = async (): Promise<boolean> => {
-        const stash = chatUi?.draft_stash;
-        if (!stash || !await clearPartialImageDraft(sessionId, stash, marker)) return false;
+        const stash = chatUi?.composer;
+        if (!stash?.stash || !await clearPartialImageDraft(sessionId, stash, marker)) return false;
         await new Promise((resolve) => window.setTimeout(resolve, LATE_IMAGE_GRACE_MS));
         if (!await clearPartialImageDraft(sessionId, stash, marker)) return false;
         partialImageDraftsRef.current.delete(sessionId);
@@ -2882,7 +2945,7 @@ export function ChatWindow() {
     const ui = chatUi ?? (provider ? await agentChatUi(provider, cwd, sessionId).catch(() => null) : null);
     // 初始网格取当前 xterm 的 cols/rows：硬编码 100×30 会让 CLI 先按占位宽度排版，
     // 终端页 fit 落地后再 resize 整屏重排一遍（首屏闪）。终端未挂载时才退回占位尺寸。
-    const grid = terminalGridRef.current?.() ?? { cols: 100, rows: 30 };
+    const grid = launchGrid(terminalGridRef.current);
     try {
       await startManagedTerminal(sessionId, grid.cols, grid.rows, resumeOptions);
     } catch (error) {
@@ -2960,7 +3023,7 @@ export function ChatWindow() {
     };
     try {
       // 初始网格取当前 xterm(同 ensureWritableTerminal):硬编码占位会让首屏重排一遍。
-      const grid = terminalGridRef.current?.() ?? { cols: 100, rows: 30 };
+      const grid = launchGrid(terminalGridRef.current);
       await takeoverManagedTerminal(sessionId, grid.cols, grid.rows, resumeOptions);
       if (!isCurrentOperation()) return;
       terminalRearmRef.current?.();
@@ -3036,7 +3099,9 @@ export function ChatWindow() {
     setSending(true);
     setSendError("");
     try {
-      resetTo(await forkSession(sessionId, 100, 30));
+      // 分叉出来的终端与当前终端同尺寸（写死的话首屏先按占位宽度排版，挂上后再整屏重排）。
+      const grid = launchGrid(terminalGridRef.current);
+      resetTo(await forkSession(sessionId, grid.cols, grid.rows));
     } catch (error) {
       setSendError(formatBackendError(error, t.locale));
     } finally {
@@ -3200,6 +3265,15 @@ export function ChatWindow() {
     // 改走菜单识别通道——与「切换模型」按钮同一条路。只认精确命中（带参数的
     // `/model sonnet` 是内联执行，不弹菜单，照常发送）。
     const bare = prompt.trim();
+    // 手敲撤回命令（OpenCode `/undo`、Kimi `/undo 2`）和消息上的「撤回」走同一条路：先确认（会连带
+    // 还原文件的说清楚），撤完把原文放回对话页输入框、清掉 CLI 输入框里那份。原样发出去的话没有
+    // 确认，CLI 放回它自己输入框的原文也没人清（走查输入 A4）。
+    const typedUndo = attachments.length === 0 ? typedUndoTarget(bare, chatUi?.undo, itemsRef.current) : null;
+    if (typedUndo) {
+      clearSubmittedDraft();
+      void undoFrom(typedUndo.id, typedUndo.text);
+      return;
+    }
     if (attachments.length === 0 && (chatUi?.menu_slash_commands ?? []).includes(bare)) {
       if (await openTerminalMenu(bare)) clearSubmittedDraft();
       return;
@@ -3212,7 +3286,7 @@ export function ChatWindow() {
     if (sideSpec && sideQuestion) {
       await withSendGuard(async () => {
         if (!await leaveSubagentViewBeforeWrite()) return false;
-        if (chatUi?.draft_stash) await stashComposerDraft(sessionId, chatUi.draft_stash);
+        await tidyTerminalComposer();
         await submitToTerminal(sessionId, `${sideSpec.command} ${sideQuestion}`, attentionAbort);
         clearSubmittedDraft();
         sideSeqRef.current += 1;
@@ -3527,6 +3601,7 @@ export function ChatWindow() {
   const { selectModel, selectEffort, effortBusy, effortLevels, cycleToMode, changeMode } = useModelControls({
     sessionId, chatUi, model: history?.model, modelCatalog, sending, toneRef, retryRef,
     withSendGuard, attentionAbort, isCurrentOperation, setSendError, setHistory, setStoredSelections,
+    tidyComposer: () => tidyTerminalComposer(),
     deferTerminal: (action, label) => deferTerminalRef.current(action, label),
   });
   /// 移除一个附件。焦点交给下一个附件的「×」，没有了回输入框（走查 C-10）。
@@ -4036,7 +4111,7 @@ export function ChatWindow() {
   /// 第二下才关菜单（model-selector 的 handleInput），搜过就按两下；分两次写——合成一次写入
   /// 会被当成 Alt+Esc。
   const abandonModelPick = (wanted: { searched?: boolean }, message: string, exit: SendErrorExit | null = null) => {
-    window.clearTimeout(modelPickTimerRef.current);
+    modelPickTimer.cancel();
     pendingModelPickRef.current = null;
     setModelPicking(false);
     setMenuWatchUntil(0);
@@ -4048,8 +4123,7 @@ export function ChatWindow() {
   };
   /// 菜单迟迟认不出（或搜索后没再画出来）：到点收尾并说清楚，不留一个永远转圈的按钮。
   const armModelPickTimeout = () => {
-    window.clearTimeout(modelPickTimerRef.current);
-    modelPickTimerRef.current = window.setTimeout(() => {
+    modelPickTimer.start(() => {
       const wanted = pendingModelPickRef.current;
       // 搜过之后再没认出菜单，多半是搜索结果为空（kimi 画 No matches，不成菜单）：照实说没找到。
       // 菜单没认出（超时）可以再试一次；搜过仍没有的是菜单里真没这个名字，重试也一样，只给看终端画面。
@@ -4065,7 +4139,7 @@ export function ChatWindow() {
     pendingModelPickRef.current = null;
     // 与菜单识别窗口同长（20s）：过期的待选不能落到之后用户自己打开的菜单上。
     if (!wanted || Date.now() - wanted.at > 20_000) return false;
-    window.clearTimeout(modelPickTimerRef.current);
+    modelPickTimer.cancel();
     setModelPicking(false);
     // 只比第一列：kimi 的菜单行是「名称  provider  ← current」多列对齐（识别时已压成双空格）。
     const norm = (text: string) => text.toLowerCase().replace(/[^\p{L}\p{N}]/gu, "");
@@ -5143,7 +5217,7 @@ export function ChatWindow() {
                   event.preventDefault();
                   const step = event.key === "ArrowDown" ? 1 : -1;
                   setSlashIndex((slashActive + step + slashMatches.length) % Math.max(1, slashMatches.length));
-                } else if (event.key === "Enter" && slashActive >= 0 && !event.nativeEvent.isComposing) {
+                } else if (event.key === "Enter" && slashActive >= 0 && !imeComposing(event)) {
                   event.preventDefault();
                   setPrompt(slashMatches[slashActive].name + " ");
                   setSlashIndex(0);
@@ -5333,7 +5407,7 @@ export function ChatWindow() {
                 setSlashDismissed(true);
                 return;
               }
-              if (event.key === "Tab" || (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing)) {
+              if (event.key === "Tab" || (event.key === "Enter" && !event.shiftKey && !imeComposing(event))) {
                 event.preventDefault();
                 const command = slashMatches[slashActive];
                 if (command) setPrompt(command.name + " ");
@@ -5354,7 +5428,7 @@ export function ChatWindow() {
                 setAtFiles([]);
                 return;
               }
-              if (event.key === "Tab" || (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing)) {
+              if (event.key === "Tab" || (event.key === "Enter" && !event.shiftKey && !imeComposing(event))) {
                 event.preventDefault();
                 const rel = atFiles[atActive];
                 if (rel) pickAtFile(rel);
@@ -5368,7 +5442,7 @@ export function ChatWindow() {
             const caret = event.currentTarget;
             const onFirstLine = !caret.value.slice(0, caret.selectionStart).includes("\n");
             const onLastLine = !caret.value.slice(caret.selectionEnd).includes("\n");
-            if (event.key === "ArrowUp" && !event.nativeEvent.isComposing && userHistory.length > 0
+            if (event.key === "ArrowUp" && !imeComposing(event) && userHistory.length > 0
               && (historyNavRef.current !== null || !prompt.trim()) && onFirstLine) {
               const at = historyNavRef.current?.index ?? userHistory.length;
               if (at > 0) {
@@ -5383,7 +5457,7 @@ export function ChatWindow() {
               }
               return;
             }
-            if (event.key === "ArrowDown" && historyNavRef.current !== null && !event.nativeEvent.isComposing && onLastLine) {
+            if (event.key === "ArrowDown" && historyNavRef.current !== null && !imeComposing(event) && onLastLine) {
               event.preventDefault();
               const next = historyNavRef.current.index + 1;
               if (next >= userHistory.length) {
@@ -5402,7 +5476,7 @@ export function ChatWindow() {
             // 审批卡的 Esc 徽章要说话算话：窗口级「Esc=拒绝」监听按 activeElement 白名单
             // 让开了输入框，而默认焦点几乎总在这里——徽章几乎永远不生效。空输入框时在此
             // 放行同一语义；有草稿不动（Esc 另有清心流/收 IME 的含义，不能顺手拒了审批）。
-            if (event.key === "Escape" && !prompt.trim() && !event.nativeEvent.isComposing && view === "chat") {
+            if (event.key === "Escape" && !prompt.trim() && !imeComposing(event) && view === "chat") {
               const terminalDeny = commandAttention && commandApproval ? commandDeny : null;
               if (terminalDeny) {
                 event.preventDefault();
@@ -5430,13 +5504,13 @@ export function ChatWindow() {
             // 但它和右边的圆钮是两个「把话递出去」的入口，摆在一起只会让人先停下来
             // 分辨该按哪个。降成加速键：默认路径（Enter 排队、圆钮停止）各司其职，
             // 一步到位的组合动作留给知道自己要什么的人。
-            if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && !event.nativeEvent.isComposing) {
+            if (event.key === "Enter" && (event.ctrlKey || event.metaKey) && !imeComposing(event)) {
               event.preventDefault();
               if (canInterrupt && hasDraft) void interruptAndSend();
               else void sendPrompt();
               return;
             }
-            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+            if (event.key === "Enter" && !event.shiftKey && !imeComposing(event)) {
               event.preventDefault();
               void sendPrompt();
             }
@@ -5909,6 +5983,10 @@ export function ChatWindow() {
           {remoteUi() && remoteKeysOpen && <RemoteTerminalKeys sessionId={sessionId} />}
         </div>}
         {subagentStuck?.sid === sessionId && <SubagentViewNotice name={subagentStuck.name} busy={sending} onBack={() => void retryLeaveSubagentView()} />}
+        {draftMovedNotice && <div className="chat-send-error" role="status">
+          <span>{t.chat.nativeDraftMoved}</span>
+          <button type="button" className="chat-send-takeover" onClick={() => setDraftMovedNotice(false)}>{t.chat.slashMenuDismiss}</button>
+        </div>}
         {undoNotice && <div className="chat-send-error" role="status">
           <span>{t.chat.undoDone}</span>
           <button type="button" className="chat-send-takeover" onClick={() => setUndoNotice(false)}>{t.chat.slashMenuDismiss}</button>

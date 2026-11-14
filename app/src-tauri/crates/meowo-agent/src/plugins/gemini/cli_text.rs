@@ -10,6 +10,37 @@ use crate::cli_text::CliTextDep as D;
 const FRAMED: &str = "0.65.0 bundle 里有这句；框线 `│` 是运行时画的边框，去掉框线再搜";
 
 pub(super) static DEPS: &[D] = &[
+    // ── 输入框规格（composer）──
+    D::new(
+        "composer.empty",
+        "Type your message or @path/to/file",
+        "Type your message or @path/to/file",
+        "0.68.0 真机 2026-11-14（probe_tui_script cells）：空输入框的灰色占位",
+    ),
+    D::new(
+        "composer.empty",
+        "for NORMAL mode.",
+        "Press 'Esc' for NORMAL mode.",
+        "0.68.0 真机 2026-11-14：general.vimMode 打开、INSERT 模式下空输入框的占位",
+    ),
+    D::new(
+        "composer.empty",
+        "for INSERT mode.",
+        "Press 'i' for INSERT mode.",
+        "0.68.0 真机 2026-11-14：general.vimMode 打开、NORMAL 模式下空输入框的占位",
+    ),
+    D::new(
+        "composer.alt:shell",
+        "Type your shell command",
+        "!   Type your shell command",
+        "0.68.0 真机 2026-11-14：按 ! 进 shell 模式后提示符变成 `!`，占位是这句；规则认的是提示符，占位用来在程序文件里定位这个模式还在",
+    ),
+    D::new(
+        "composer.alt:vim_normal",
+        "[NORMAL]",
+        " [NORMAL]       ~\\repo        no sandbox         Auto",
+        "0.68.0 真机 2026-11-14：vim NORMAL 模式下状态行最左侧的标记（INSERT 时是 [INSERT]）",
+    ),
     // ── 正则规则的样例 ──
     D::new(
         "attention:gemini:command-approval",

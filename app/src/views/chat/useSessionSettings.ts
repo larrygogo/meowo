@@ -83,6 +83,10 @@ const RETRY_WHEN_READY = new Set([
   "lead/opencode_busy",
 ]);
 
+/** 「输入框里有字」的失败原因：不重启的路线（会话服务 / TUI 对话框）要求输入框是空的。Meowo 自己把草稿
+ *  清掉并搬进对话页输入框，再切一次，不叫用户去终端清。 */
+const COMPOSER_BUSY = new Set(["settings/composer_not_empty", "lead/opencode_composer_not_empty"]);
+
 /** 后端明确没动进程的结果：只有这些才把搬进对话页的草稿撤回（做空 R3）。出错、next_open（进程恰好
  *  没了）、restart_stuck 之类都可能已经杀了进程，TUI 里的原稿跟着没了，对话页这份必须留着。 */
 const PROCESS_UNTOUCHED = new Set<SettingsOutcome["kind"]>(["applied", "queued", "not_now", "unsupported", "needs_new_session"]);
@@ -106,12 +110,18 @@ export interface SessionSettingsDeps {
   tone: string | null;
   history: ChatHistory | null;
   setHistory: Dispatch<SetStateAction<ChatHistory | null>>;
-  setSendError: (message: string) => void;
+  /** exit：错误条上的出路（重试 / 看终端画面）。 */
+  setSendError: (message: string, exit?: { retry?: () => void; terminal?: boolean }) => void;
   /** 未建会话重开后切到新的临时 id（草稿跟着走）。 */
   moveTo: (sessionId: number) => void;
   /** 读 TUI 输入框；`move` 为真且有字时搬进对话页输入框（要重启时 Meowo 先把用户内容保住），
    *  不重启的路线只读不搬，免得对话页与 TUI 各一份。 */
   rescueDraft: (move: boolean) => Promise<DraftRescue>;
+  /** 这一家的终端输入框认不认得出（插件声明了输入框规格）。认不出的（旧版本 CLI）排着的终端项不等
+   *  「输入框认得出」这个条件，直接执行；缺省按认得出。 */
+  readsComposer?: () => boolean;
+  /** 把 TUI 输入框里的草稿清掉并搬进对话页输入框（不重启的路线遇到「输入框里有字」时用）。 */
+  takeDraft?: () => Promise<DraftRescue>;
   /** 执行一条排着的终端项（对话页照原样打字切换，见 SettingsRequest.terminal）。 */
   applyTerminal?: (action: TerminalAction) => Promise<void>;
   /** 搬了草稿最后却没重启（排进队列、被拒、出错）：把搬进对话页的那份撤回，TUI 里原稿还在，免得发两遍。 */
@@ -225,9 +235,11 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
     runningRef.current = true;
     setApplying(true);
     try {
-      // 刚带参重启过的话新 TUI 可能还没起来：等输入框认得出再打字（最多约 10 秒）。
+      // 刚带参重启过的话新 TUI 可能还没起来：等输入框认得出再打字（最多约 10 秒）。等不到不悄悄丢掉
+      // 这次选择：错误条说明没切成，「重试」再执行同一条。
       if (!(await composerReady())) {
-        depsRef.current.setSendError(t.chat.settingsComposerUnknown);
+        const retry = () => { if (depsRef.current.sessionId === sessionId) void apply(terminalPart); };
+        depsRef.current.setSendError(t.chat.settingsTerminalNotReady, { retry, terminal: true });
         return;
       }
       for (const action of actions) await attempt(() => depsRef.current.applyTerminal?.(action), undefined);
@@ -237,8 +249,10 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
     }
   };
 
-  /** 终端输入框认得出（空或有字都算）就算就绪。 */
+  /** 终端输入框认得出（空或有字都算）就算就绪。这一家没有输入框规格时没法认，不等：此前 Claude 没声明
+   *  规格，排着的模型 / 思考档在回合结束后空等 10 秒再报错丢弃（走查输入 A1）。 */
   const composerReady = async () => {
+    if (depsRef.current.readsComposer && !depsRef.current.readsComposer()) return true;
     for (let attempt_ = 0; attempt_ < 20; attempt_ += 1) {
       const state = await attempt<DraftRescue>(() => depsRef.current.rescueDraft(false), "unknown");
       if (state !== "unknown") return true;
@@ -250,13 +264,14 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
   /** 经后端切。返回 false 表示这次没做成、已排进队列等下一次（宿主 queued / not_now 排队 / 等就绪）。 */
   /** 经后端切：done = 做成了；deferred = 没做成、已排进队列等下一次（宿主 queued / not_now 排队 / 等就绪）；
    *  failed = 出错或被拒（已提示）。 */
-  const applyBackend = async (request: SettingsRequest): Promise<"done" | "deferred" | "failed"> => {
+  const applyBackend = async (request: SettingsRequest, draftTaken = false): Promise<"done" | "deferred" | "failed"> => {
     const { sessionId } = depsRef.current;
     if (runningRef.current) { await enqueue(sessionId, request); return "deferred"; }
     runningRef.current = true;
     setApplying(true);
     let moved = false;
     let untouched = false;
+    let retryAfterTake = false;
     let result: "done" | "deferred" | "failed" = "done";
     const fail = (message: string) => { result = "failed"; depsRef.current.setSendError(message); };
     try {
@@ -332,6 +347,9 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
           // 其余（输入框有字等）说原因。
           if (mustDefer(depsRef.current.tone)) { result = "deferred"; await enqueue(sessionId, request); }
           else if (RETRY_WHEN_READY.has(outcome.reason ?? "")) { result = "deferred"; await enqueue(sessionId, { ...request, waitFor: "ready" }); }
+          // 输入框里有字：清掉并搬进对话页输入框，再切一次（只试一次，清不掉才说原因）。
+          else if (COMPOSER_BUSY.has(outcome.reason ?? "") && !draftTaken && depsRef.current.takeDraft
+            && ["moved", "empty"].includes(await attempt<DraftRescue>(() => depsRef.current.takeDraft?.(), "unknown"))) retryAfterTake = true;
           else fail(formatBackendError(outcome.reason ?? "", t.locale));
           break;
       }
@@ -347,6 +365,7 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
       runningRef.current = false;
       setApplying(false);
     }
+    if (retryAfterTake && depsRef.current.sessionId === sessionId) return applyBackend(request, true);
     return result;
   };
 

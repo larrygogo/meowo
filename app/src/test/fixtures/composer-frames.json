@@ -1,6 +1,6 @@
 {
- "comment": "composer 判定前后端一致性样例（做空 N2）。guards 与插件 composer_guard 的声明由 Rust 测试逐字核对；Rust session_settings::composer_state 与前端 composerCandidate 对每一帧（原样与去掉行尾空格两种）都必须给出 expect。 Gemini YOLO 档提示符是 *（做空 R2，g7-2 实拍）；OpenCode 一轮之后 / --session 打开后空输入框只剩 ┃（真机高 1，round3 实拍）。",
- "guards": {
+ "comment": "终端输入框识别的前后端一致性样例。specs 与各插件 composer() 的声明由 Rust 测试逐字核对；Rust meowo_agent::composer::read 与前端 readComposer 对每一帧（原样与去掉行尾空格两种）都必须给出 expect（empty / occupied / unknown / alt:<模式>），带 text 的还要读出同样的文字。cursor 是同一帧的硬件光标（行号按 lines 计）；没有 cursor 的帧只按文字判。Gemini YOLO 档提示符是 *（做空 R2，g7-2 实拍）；OpenCode 一轮之后 / --session 打开后空输入框只剩 ┃（真机高 1，round3 实拍）。2026-11-14 的帧取自 probe_tui_script（120×40），裁到输入框附近，光标行号按裁剪后重算。",
+ "specs": {
   "gemini": {
    "prompt_footer": false,
    "input_start_pattern": "^(\\s*[>*] )",
@@ -10,7 +10,30 @@
    "prompt_prefix": ">|*",
    "tail_rows": 0,
    "tail_pattern": null,
-   "empty_pattern": "^(?:Type your message or @path/to/file)?$"
+   "empty_pattern": "^(?:Type your message or @path/to/file|Press 'Esc' for NORMAL mode\\.|Press 'i' for INSERT mode\\.)?$",
+   "send_requires_recognition": true,
+   "stash": null,
+   "clear_inputs": [
+    "\u000b",
+    "\u0015",
+    ""
+   ],
+   "clear_rounds": 12,
+   "clear_while_running": true,
+   "alt_modes": [
+    {
+     "id": "shell",
+     "prompt_pattern": "^!(?:\\s|$)",
+     "below_pattern": null,
+     "exit_input": "\u001b"
+    },
+    {
+     "id": "vim_normal",
+     "prompt_pattern": null,
+     "below_pattern": "^\\s*\\[NORMAL\\]",
+     "exit_input": "i"
+    }
+   ]
   },
   "kimi": {
    "prompt_footer": false,
@@ -21,7 +44,15 @@
    "prompt_prefix": ">",
    "tail_rows": 0,
    "tail_pattern": null,
-   "empty_pattern": "^$"
+   "empty_pattern": "^$",
+   "send_requires_recognition": true,
+   "stash": null,
+   "clear_inputs": [
+    "\u0003"
+   ],
+   "clear_rounds": 1,
+   "clear_while_running": true,
+   "alt_modes": []
   },
   "codex": {
    "prompt_footer": true,
@@ -32,7 +63,15 @@
    "prompt_prefix": "",
    "tail_rows": 0,
    "tail_pattern": null,
-   "empty_pattern": "^(?:Ask Codex to do anything)?$"
+   "empty_pattern": "^(?:Ask Codex to do anything)?$",
+   "send_requires_recognition": true,
+   "stash": null,
+   "clear_inputs": [
+    "\u0003"
+   ],
+   "clear_rounds": 1,
+   "clear_while_running": true,
+   "alt_modes": []
   },
   "opencode": {
    "prompt_footer": false,
@@ -43,7 +82,38 @@
    "prompt_prefix": "",
    "tail_rows": 2,
    "tail_pattern": "^\\s*┃\\s+\\S.* · .+$",
-   "empty_pattern": "^(?:Ask anything…(?: \"[^\"\\r\\n]*\")?)?$"
+   "empty_pattern": "^(?:Ask anything…(?: \"[^\"\\r\\n]*\")?)?$",
+   "send_requires_recognition": true,
+   "stash": null,
+   "clear_inputs": [
+    "\u0003"
+   ],
+   "clear_rounds": 1,
+   "clear_while_running": true,
+   "alt_modes": []
+  },
+  "claude": {
+   "prompt_footer": false,
+   "input_start_pattern": "^(❯[ \\xa0]?)",
+   "top_pattern": "^\\s*─{3,}(?:\\s+\\S.*?\\s+─{1,3})?\\s*$",
+   "bottom_pattern": "^\\s*─{3,}\\s*$",
+   "row_pattern": "^(?:❯[ \\xa0]?|  |$)(.*)$",
+   "prompt_prefix": "",
+   "tail_rows": 0,
+   "tail_pattern": null,
+   "empty_pattern": "^(?:Try \"[^\"\\r\\n]*\")?$",
+   "send_requires_recognition": false,
+   "stash": {
+    "input": "\u0013",
+    "stashed_marker": "› stashed"
+   },
+   "clear_inputs": [
+    "\u001b",
+    "\u001b"
+   ],
+   "clear_rounds": 1,
+   "clear_while_running": false,
+   "alt_modes": []
   }
  },
  "frames": [
@@ -672,6 +742,361 @@
     " workspace (/directory)                                                                   sandbox                                    /model",
     " C:\\Users\\35122\\AppData\\Local\\Temp\\meowo-tms-gemini-5686398803\\cwd                        no sandbox                       gemini-3.8-flash"
    ]
+  },
+  {
+   "name": "claude-2.1.325-placeholder-cursor",
+   "provider": "claude",
+   "version": "2.1.325",
+   "source": "2026-11-14 probe_tui_script 实拍（占位是暗色，光标停在输入起点）",
+   "lines": [
+    "                                                                                                    ◐ medium · /effort",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "❯ Try \"fix typecheck errors\"",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "  Fable 5.2",
+    "  ⏵⏵ auto mode on (shift+tab to cycle)"
+   ],
+   "expect": "empty",
+   "cursor": {
+    "row": 2,
+    "col": 2,
+    "visible": true,
+    "dim": true
+   }
+  },
+  {
+   "name": "claude-2.1.325-placeholder-text-only",
+   "provider": "claude",
+   "version": "2.1.325",
+   "source": "2026-11-14 probe_tui_script 实拍（同一帧不带光标，按文字认占位）",
+   "lines": [
+    "                                                                                                    ◐ medium · /effort",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "❯ Try \"fix typecheck errors\"",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "  Fable 5.2",
+    "  ⏵⏵ auto mode on (shift+tab to cycle)"
+   ],
+   "expect": "empty"
+  },
+  {
+   "name": "claude-2.1.325-draft-multiline",
+   "provider": "claude",
+   "version": "2.1.325",
+   "source": "2026-11-14 probe_tui_script 实拍",
+   "lines": [
+    "                                                                                             ctrl+g to edit in Notepad",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "❯ DRAFT-ONE",
+    "  DRAFT-TWO",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "  Fable 5.2",
+    "  ⏵⏵ auto mode on (shift+tab to cycle)"
+   ],
+   "expect": "occupied",
+   "cursor": {
+    "row": 3,
+    "col": 11,
+    "visible": true,
+    "dim": false
+   },
+   "text": "DRAFT-ONE\nDRAFT-TWO"
+  },
+  {
+   "name": "claude-2.1.325-stashed",
+   "provider": "claude",
+   "version": "2.1.325",
+   "source": "2026-11-14 probe_tui_script 实拍（Ctrl-S 暂存后输入框回到占位）",
+   "lines": [
+    "                                                                                        ◐ medium · /effort · › stashed",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "❯ Try \"fix typecheck errors\"",
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "  Fable 5.2",
+    "  ⏵⏵ auto mode on (shift+tab to cycle)"
+   ],
+   "expect": "empty",
+   "cursor": {
+    "row": 2,
+    "col": 2,
+    "visible": true,
+    "dim": true
+   }
+  },
+  {
+   "name": "codex-0.167.2-placeholder-cursor",
+   "provider": "codex",
+   "version": "0.167.2",
+   "source": "2026-11-14 probe_tui_script 实拍（占位是暗色，光标停在列 2）",
+   "lines": [
+    "› Ask Codex to do anything",
+    "",
+    "  GPT-5.6-Terra high · ~\\AppData\\Local\\Temp\\meowo-tui-script-71860",
+    "  ← for agents · ? for shortcuts                                                               ⚠ 1 warning · f2 to view"
+   ],
+   "expect": "empty",
+   "cursor": {
+    "row": 0,
+    "col": 2,
+    "visible": true,
+    "dim": true
+   }
+  },
+  {
+   "name": "codex-0.167.2-same-text-draft",
+   "provider": "codex",
+   "version": "0.167.2",
+   "source": "2026-11-14 probe_tui_script 实拍（真打出与占位相同的一句：正常色，光标在文末（文字行与光标取自 cells，底部提示行取同次带草稿的帧））",
+   "lines": [
+    "› Ask Codex to do anything",
+    "",
+    "  GPT-5.6-Terra high · ~\\AppData\\Local\\Temp\\meowo-tui-script-71860",
+    "                                                                                               ⚠ 1 warning · f2 to view"
+   ],
+   "expect": "occupied",
+   "cursor": {
+    "row": 0,
+    "col": 26,
+    "visible": true,
+    "dim": false
+   },
+   "text": "Ask Codex to do anything"
+  },
+  {
+   "name": "gemini-0.68-placeholder-cursor",
+   "provider": "gemini",
+   "version": "0.68.0",
+   "source": "2026-11-14 probe_tui_script 实拍（占位是灰色、多缩进两格，光标停在列 3）",
+   "lines": [
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    " Shift+Tab to accept edits                                                                                    29 skills",
+    "▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄",
+    " >   Type your message or @path/to/file",
+    "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀",
+    " workspace (/directory)                                                   sandbox                                /model",
+    " ~\\AppData\\Local\\Temp\\meowo-tui-script-63372                              no sandbox                               Auto"
+   ],
+   "expect": "empty",
+   "cursor": {
+    "row": 3,
+    "col": 3,
+    "visible": true,
+    "dim": false
+   }
+  },
+  {
+   "name": "gemini-0.68-same-text-draft",
+   "provider": "gemini",
+   "version": "0.68.0",
+   "source": "2026-11-14 probe_tui_script 实拍（真打出与占位相同的一句，光标在文末）",
+   "lines": [
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    " Shift+Tab to accept edits                                                                                    29 skills",
+    "▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄",
+    " > Type your message or @path/to/file",
+    "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀",
+    " workspace (/directory)                                                   sandbox                                /model",
+    " ~\\AppData\\Local\\Temp\\meowo-tui-script-63372                              no sandbox                               Auto"
+   ],
+   "expect": "occupied",
+   "cursor": {
+    "row": 3,
+    "col": 37,
+    "visible": true,
+    "dim": false
+   },
+   "text": "Type your message or @path/to/file"
+  },
+  {
+   "name": "gemini-0.68-draft-multiline",
+   "provider": "gemini",
+   "version": "0.68.0",
+   "source": "2026-11-14 probe_tui_script 实拍",
+   "lines": [
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    " Shift+Tab to accept edits                                                                                    29 skills",
+    "▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄",
+    " > DRAFT-ONE",
+    "   DRAFT-TWO",
+    "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀",
+    " workspace (/directory)                                                   sandbox                                /model",
+    " ~\\AppData\\Local\\Temp\\meowo-tui-script-63372                              no sandbox                               Auto"
+   ],
+   "expect": "occupied",
+   "cursor": {
+    "row": 4,
+    "col": 12,
+    "visible": true,
+    "dim": false
+   },
+   "text": "DRAFT-ONE\nDRAFT-TWO"
+  },
+  {
+   "name": "gemini-0.68-shell-mode",
+   "provider": "gemini",
+   "version": "0.68.0",
+   "source": "2026-11-14 probe_tui_script 实拍（按 ! 进 shell 模式）",
+   "lines": [
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    "  shell mode enabled (esc to disable)                                                                         29 skills",
+    "▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄",
+    " !   Type your shell command",
+    "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀",
+    " workspace (/directory)                                                   sandbox                                /model",
+    " ~\\AppData\\Local\\Temp\\meowo-tui-script-63372                              no sandbox                               Auto"
+   ],
+   "expect": "alt:shell",
+   "cursor": {
+    "row": 3,
+    "col": 3,
+    "visible": true,
+    "dim": false
+   }
+  },
+  {
+   "name": "gemini-0.68-vim-insert-placeholder",
+   "provider": "gemini",
+   "version": "0.68.0",
+   "source": "2026-11-14 probe_tui_script 实拍（general.vimMode 打开后的空输入框）",
+   "lines": [
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    " Shift+Tab to accept edits                                                                                    29 skills",
+    "▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄",
+    " >   Press 'Esc' for NORMAL mode.",
+    "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀",
+    "                workspace (/directory)                                                          sandbox          /model",
+    " [INSERT]       ~\\...\\scratchpad\\chat-composer\\gvim        no sandbox         Auto"
+   ],
+   "expect": "empty",
+   "cursor": {
+    "row": 3,
+    "col": 3,
+    "visible": true,
+    "dim": false
+   }
+  },
+  {
+   "name": "gemini-0.68-vim-normal-empty",
+   "provider": "gemini",
+   "version": "0.68.0",
+   "source": "2026-11-14 probe_tui_script 实拍",
+   "lines": [
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    " Shift+Tab to accept edits                                                                                    29 skills",
+    "▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄",
+    " >   Press 'i' for INSERT mode.",
+    "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀",
+    "                workspace (/directory)                                                          sandbox          /model",
+    " [NORMAL]       ~\\...\\scratchpad\\chat-composer\\gvim        no sandbox         Auto"
+   ],
+   "expect": "alt:vim_normal",
+   "cursor": {
+    "row": 3,
+    "col": 3,
+    "visible": true,
+    "dim": false
+   }
+  },
+  {
+   "name": "gemini-0.68-vim-normal-draft",
+   "provider": "gemini",
+   "version": "0.68.0",
+   "source": "2026-11-14 probe_tui_script 实拍",
+   "lines": [
+    "────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────",
+    " Shift+Tab to accept edits                                                                                    29 skills",
+    "▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄",
+    " > hello",
+    "▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀",
+    "                workspace (/directory)                                                          sandbox          /model",
+    " [NORMAL]       ~\\...\\scratchpad\\chat-composer\\gvim        no sandbox         Auto"
+   ],
+   "expect": "alt:vim_normal",
+   "text": "hello"
+  },
+  {
+   "name": "opencode-1.19.5-placeholder-cursor",
+   "provider": "opencode",
+   "version": "1.19.5",
+   "source": "2026-11-14 probe_tui_script 实拍（占位是灰色，光标停在输入起点）",
+   "lines": [
+    "                       ┃",
+    "                       ┃  Ask anything… \"Fix a TODO in the codebase\"",
+    "                       ┃",
+    "                       ┃  Build · Qwen3.8-Flash-Next TensorFold (局域网)",
+    "                       ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀",
+    "                                                                       tab agents  ctrl+p commands"
+   ],
+   "expect": "empty",
+   "cursor": {
+    "row": 1,
+    "col": 26,
+    "visible": true,
+    "dim": false
+   }
+  },
+  {
+   "name": "opencode-1.19.5-draft-multiline",
+   "provider": "opencode",
+   "version": "1.19.5",
+   "source": "2026-11-14 probe_tui_script 实拍",
+   "lines": [
+    "                       ┃",
+    "                       ┃  DRAFT-ONE",
+    "                       ┃  DRAFT-TWO",
+    "                       ┃",
+    "                       ┃  Build · Qwen3.8-Flash-Next TensorFold (局域网)",
+    "                       ╹▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀",
+    "                                                                       tab agents  ctrl+p commands"
+   ],
+   "expect": "occupied",
+   "cursor": {
+    "row": 2,
+    "col": 35,
+    "visible": true,
+    "dim": false
+   },
+   "text": "DRAFT-ONE\nDRAFT-TWO"
+  },
+  {
+   "name": "kimi-2.6.1-draft",
+   "provider": "kimi",
+   "version": "2.6.1",
+   "source": "2026-11-14 probe_tui_script 实拍（硬件光标常年隐藏）",
+   "lines": [
+    " ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮",
+    " │ > DRAFT-TWO                                                                                                        │",
+    " ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯",
+    " Ask When Needed  K3.1 Pro thinking: high  C:\\Users\\x\\AppData\\Local\\Temp\\meowo-tui-script-85928"
+   ],
+   "expect": "occupied",
+   "cursor": {
+    "row": 1,
+    "col": 14,
+    "visible": false,
+    "dim": false
+   },
+   "text": "DRAFT-TWO"
+  },
+  {
+   "name": "kimi-2.6.1-cleared",
+   "provider": "kimi",
+   "version": "2.6.1",
+   "source": "2026-11-14 probe_tui_script 实拍（Ctrl-C 清空之后）",
+   "lines": [
+    " ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮",
+    " │ >                                                                                                                  │",
+    " ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯",
+    " Ask When Needed  K3.1 Pro thinking: high  C:\\Users\\x\\AppData\\Local\\Temp\\meowo-tui-script-85928",
+    " Press Ctrl+C again to exit                                                                          context: 0% (0/1M)"
+   ],
+   "expect": "empty",
+   "cursor": {
+    "row": 1,
+    "col": 5,
+    "visible": false,
+    "dim": false
+   }
   }
  ]
 }

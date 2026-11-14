@@ -211,7 +211,7 @@ pub fn auto_literals(p: &dyn crate::AgentPlugin) -> Vec<&'static str> {
         out.push(menu.ready_marker);
         out.push(menu.option_label);
     }
-    if let Some(stash) = p.draft_stash() {
+    if let Some(stash) = composer_for_scan(p).and_then(|c| c.stash) {
         out.push(stash.stashed_marker);
     }
     if let Some(view) = p.subagent_view() {
@@ -225,9 +225,38 @@ pub fn auto_literals(p: &dyn crate::AgentPlugin) -> Vec<&'static str> {
     out
 }
 
+/// 取插件的输入框规格用来抽文案。规格按 CLI 版本声明（旧版本返回 None），清单要的是「现行
+/// 版本的规则」：先按不带版本取，再按各主版本的一个很高的小版本取。
+pub fn composer_for_scan(p: &dyn crate::AgentPlugin) -> Option<crate::chat_ui::ComposerSpec> {
+    p.composer(None).or_else(|| {
+        (0..10).find_map(|major| p.composer(Some(&format!("{major}.9999.0"))))
+    })
+}
+
+/// 输入框规格里依赖 CLI 文案的正则：占位文字（`composer.empty`，没有占位的不算）与特殊输入
+/// 模式的标记（`composer.alt:<id>`）。
+fn composer_rules(p: &dyn crate::AgentPlugin) -> Vec<(String, Vec<&'static str>)> {
+    let Some(composer) = composer_for_scan(p) else {
+        return Vec::new();
+    };
+    let mut rules = Vec::new();
+    if composer.empty_pattern != "^$" {
+        rules.push(("composer.empty".to_string(), vec![composer.empty_pattern]));
+    }
+    for mode in composer.alt_modes {
+        let patterns: Vec<&'static str> = [mode.prompt_pattern, mode.below_pattern]
+            .into_iter()
+            .flatten()
+            .collect();
+        rules.push((format!("composer.alt:{}", mode.id), patterns));
+    }
+    rules
+}
+
 /// 插件里所有正则规则的键（声明完整的插件，每个键都要有样例）。
 pub fn regex_rule_keys(p: &dyn crate::AgentPlugin) -> Vec<String> {
     let mut keys = Vec::new();
+    keys.extend(composer_rules(p).into_iter().map(|(key, _)| key));
     if p.effort_control().is_some() {
         keys.push("effort.confirm".to_string());
         keys.push("effort.reject".to_string());
@@ -281,6 +310,12 @@ pub fn resolve(p: &dyn crate::AgentPlugin, rule: &str) -> Option<RuleText> {
         let mut regex = Vec::new();
         collect_regex(&found.matcher, &mut regex);
         return (!regex.is_empty()).then_some(RuleText::Regex(regex));
+    }
+    if rule.starts_with("composer.") {
+        return composer_rules(p)
+            .into_iter()
+            .find(|(key, _)| key == rule)
+            .map(|(_, patterns)| RuleText::Regex(patterns));
     }
     let one = |p: Option<&'static str>| p.map(|p| RuleText::Regex(vec![p]));
     match rule {

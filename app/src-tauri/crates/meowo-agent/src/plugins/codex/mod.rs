@@ -386,12 +386,18 @@ impl AgentPlugin for Codex {
     /// Esc 中断当前回合:codex 状态行自述 "esc to interrupt"(真机 capture 在档,
     /// 见 docs/research/tui-menu-captures-2026-07.md)。排队键 Tab 在空闲时同样直接提交
     /// (probe_tui_script,0.162.1,2026-10-16),运行态误判也不会卡住消息。
-    /// 2026-11-12 隔离无模型实拍（target/lead-provider-probes/composer）：文字只给候选，发送仍须核验原生光标。
-    fn composer_guard(&self, version: Option<&str>) -> Option<crate::chat_ui::ComposerGuard> {
+    /// 输入框规格（这一家唯一的一份，见 chat_ui::ComposerSpec）。
+    /// - 框体：2026-11-12 隔离无模型实拍（target/lead-provider-probes/composer）。
+    /// - 占位 `Ask Codex to do anything` 是暗色、光标停在列 2；真打出同一句是正常色、光标在文末
+    ///   （0.167.2，2026-11-14 probe_tui_script `cells`）。读屏带光标就能分开。
+    /// - 清空：Ctrl-C 清掉整段草稿，不留提示；回合进行中按，草稿清掉、回合照常继续（同日实拍：
+    ///   `Count from 1 to 300` 途中按下，数字接着往下出）。空输入框上的 Ctrl-C 是退出提示，
+    ///   所以只在认出有字时按。
+    fn composer(&self, version: Option<&str>) -> Option<crate::chat_ui::ComposerSpec> {
         if !crate::lead_install::version_at_least(version, (0, 167, 2)) {
             return None;
         }
-        Some(crate::chat_ui::ComposerGuard {
+        Some(crate::chat_ui::ComposerSpec {
             prompt_footer: true,
             input_start_pattern: r"^(› )",
             top_pattern: r"^› ",
@@ -401,6 +407,12 @@ impl AgentPlugin for Codex {
             tail_rows: 0,
             tail_pattern: None,
             empty_pattern: r"^(?:Ask Codex to do anything)?$",
+            send_requires_recognition: true,
+            stash: None,
+            clear_inputs: &["\x03"],
+            clear_rounds: 1,
+            clear_while_running: true,
+            alt_modes: &[],
         })
     }
     fn queue_input(&self) -> Option<&'static str> {

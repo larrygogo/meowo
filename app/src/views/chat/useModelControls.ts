@@ -12,7 +12,7 @@ import { managedTerminalSnapshot, setSessionLaunchSelection, writeManagedTermina
 import { useT } from "../../i18n";
 import { appendTerminalText, modeFromScreen, visibleTerminalText } from "../../terminalAttention";
 import { currentPresetId } from "./modelLabels";
-import { stashComposerDraft, submitToTerminal } from "./terminalSubmit";
+import { submitToTerminal } from "./terminalSubmit";
 import type { SendErrorExit } from "./SendErrorExits";
 import type { TerminalAction } from "./useSessionSettings";
 
@@ -33,6 +33,9 @@ export interface ModelControlsDeps {
   /** 外部占用被拒后，接管成功要重放的动作。 */
   retryRef: { current: (() => void | Promise<void>) | null };
   withSendGuard: (body: () => Promise<boolean>) => Promise<boolean>;
+  /** 往终端打命令之前收拾它的输入框（有草稿就收起或搬进对话页，见 chat/nativeDraft）；收不掉会抛错，
+   *  由 withSendGuard 落到错误条。 */
+  tidyComposer: () => Promise<unknown>;
   attentionAbort: () => string | null;
   isCurrentOperation: () => boolean;
   /** exit：错误条上的出路（重试 / 看终端画面），见 SendErrorExits。 */
@@ -46,7 +49,7 @@ export interface ModelControlsDeps {
 
 export function useModelControls({
   sessionId, chatUi, model, modelCatalog, sending, toneRef, retryRef,
-  withSendGuard, attentionAbort, isCurrentOperation, setSendError, setHistory, setStoredSelections, deferTerminal,
+  withSendGuard, tidyComposer, attentionAbort, isCurrentOperation, setSendError, setHistory, setStoredSelections, deferTerminal,
 }: ModelControlsDeps) {
   const t = useT();
   const selectModel = async (preset: ModelPreset) => {
@@ -55,7 +58,9 @@ export function useModelControls({
     if (toneRef.current === "running" || toneRef.current === "pending") { deferTerminal({ kind: "model", preset }, preset.label || preset.id); return; }
     await withSendGuard(async () => {
       const before = await managedTerminalSnapshot(sessionId);
-      if (chatUi?.draft_stash) await stashComposerDraft(sessionId, chatUi.draft_stash);
+      // 输入框收不干净时错误条的「重试」重做这次切换。
+      retryRef.current = () => selectModel(preset);
+      await tidyComposer();
       await submitToTerminal(sessionId, `${command} ${preset.id}`, attentionAbort);
       let since = before.endOffset;
       let tail = "";
@@ -118,7 +123,8 @@ export function useModelControls({
     try {
       await withSendGuard(async () => {
         const before = await managedTerminalSnapshot(sessionId);
-        if (chatUi?.draft_stash) await stashComposerDraft(sessionId, chatUi.draft_stash);
+        retryRef.current = () => selectEffort(level);
+        await tidyComposer();
         await submitToTerminal(sessionId, `${command} ${level}`, attentionAbort);
         let since = before.endOffset;
         let tail = "";

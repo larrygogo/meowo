@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { leaveSubagentView, readSubagentScreen } from "./subagentView";
-import { SUBAGENT_VIEW } from "../../test/agents";
+import { chatUi, SUBAGENT_VIEW } from "../../test/agents";
 
-const COMPOSER = { input: "\u0013", composer_prompt: "❯", composer_border: "─", stashed_marker: "› stashed" };
+// 输入框用 claude 插件声明的那一份规格认（与撤回、暂存同一份）。
+const COMPOSER = chatUi("claude")!.composer!;
 const RULE = "─".repeat(118);
 
 // 以下屏幕取自 2.1.322 真机探针（tests/probe_claude_subagent_view.rs）的末屏，只截底部、

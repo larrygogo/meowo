@@ -1,3 +1,4 @@
+import composerFrames from "./fixtures/composer-frames.json";
 import type { AgentDescriptor, ChatUi, LaunchChoice, LaunchOption, SlashCommand } from "../api";
 
 /** 与 plugins/claude 的 status_line_pattern 同一串（改一边必须同步另一边）。 */
@@ -190,6 +191,7 @@ const ATTENTION_PATTERNS: Record<string, { id: string; patterns: string[]; last:
 /** claude 插件 subagent_view() 的同值镜像(见 plugins/claude/mod.rs)。 */
 export const SUBAGENT_VIEW: NonNullable<ChatUi["subagent_view"]> = {
   placeholder_prefix: "Message @",
+  label_pattern: String.raw`^\s*─{3,}\s+(\S.*?)\s+─{1,3}\s*$`,
   panel_main_label: "main",
   panel_pointer: "❯",
   panel_viewed_marker: "●",
@@ -211,59 +213,15 @@ export function grammar(
   return { provider, selectorAnchors, attentionPatterns: ATTENTION_PATTERNS[provider] ?? [] };
 }
 
-// 与四家已实拍版本的 ComposerGuard 同值；未声明不表示终端可以直接写入。
+// 五家的输入框规格直接取共享样例里的那一份（Rust 测试逐字核对它与插件声明一致），不再手抄一遍。
+// 版本是各家规格取证过的版本；未声明不表示终端可以直接写入。
 const COMPOSER_VERSIONS: Record<string, string> = {
   "codex": "0.167.2",
   "kimi": "2.5.3",
   "gemini": "0.65.0",
   "opencode": "1.19.3"
 };
-const COMPOSER_GUARDS: Record<string, NonNullable<ChatUi["composer_guard"]>> = {
-  "codex": {
-    "prompt_footer": true,
-    "input_start_pattern": "^(› )",
-    "top_pattern": "^› ",
-    "bottom_pattern": "^  [A-Za-z0-9][^\\r\\n]* · .+$",
-    "row_pattern": "^(?:› |  )(.*)$",
-    "prompt_prefix": "",
-    "tail_rows": 0,
-    "tail_pattern": null,
-    "empty_pattern": "^(?:Ask Codex to do anything)?$"
-  },
-  "kimi": {
-    "prompt_footer": false,
-    "input_start_pattern": "^(\\s*│ > )",
-    "top_pattern": "^\\s*╭─+╮\\s*$",
-    "bottom_pattern": "^\\s*╰─+╯\\s*$",
-    "row_pattern": "^\\s*│(.*)│\\s*$",
-    "prompt_prefix": ">",
-    "tail_rows": 0,
-    "tail_pattern": null,
-    "empty_pattern": "^$"
-  },
-  "gemini": {
-    "prompt_footer": false,
-    "input_start_pattern": "^(\\s*[>*] )",
-    "top_pattern": "^(?:─+|▄+)\\s*$",
-    "bottom_pattern": "^(?:─+|▀+)\\s*$",
-    "row_pattern": "^ (.*)$",
-    "prompt_prefix": ">|*",
-    "tail_rows": 0,
-    "tail_pattern": null,
-    "empty_pattern": "^(?:Type your message or @path/to/file)?$"
-  },
-  "opencode": {
-    "prompt_footer": false,
-    "input_start_pattern": "^(\\s*┃  |\\s*┃$)",
-    "top_pattern": "^\\s*┃\\s*$",
-    "bottom_pattern": "^\\s*╹▀+\\s*$",
-    "row_pattern": "^\\s*┃(.*)$",
-    "prompt_prefix": "",
-    "tail_rows": 2,
-    "tail_pattern": "^\\s*┃\\s+\\S.* · .+$",
-    "empty_pattern": "^(?:Ask anything…(?: \"[^\"\\r\\n]*\")?)?$"
-  }
-};
+const COMPOSER_SPECS = composerFrames.specs as unknown as Record<string, NonNullable<ChatUi["composer"]>>;
 
 export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | null {
   const builtins = SLASH_COMMANDS[provider];
@@ -376,19 +334,18 @@ export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | 
     // 与后端同源:kimi `/undo N`(2.4.0 包内取证);opencode `/undo` 一次一轮、还原文件、
     // 原文放回它的输入框(1.19.3 probe_opencode_undo);claude `/rewind` 菜单(2.1.314 probe_claude_rewind)。
     undo: provider === "kimi"
-      ? { command: "/undo", count_arg: true, restores_files: false, reject_pattern: String.raw`cannot undo while streaming|cannot undo \d+ prompts?;|nothing to undo|failed to undo|run /undo again|usage: /undo|no active session`, input_clear: null, menu: null }
+      ? { command: "/undo", count_arg: true, restores_files: false, reject_pattern: String.raw`cannot undo while streaming|cannot undo \d+ prompts?;|nothing to undo|failed to undo|run /undo again|usage: /undo|no active session`, returns_input: false, menu: null }
       : provider === "opencode"
-        ? { command: "/undo", count_arg: false, restores_files: true, reject_pattern: null, input_clear: { inputs: ["\u0003"], composer: { kind: "block", row_prefix: "┃", bottom_prefix: "╹" } }, menu: null }
+        ? { command: "/undo", count_arg: false, restores_files: true, reject_pattern: null, returns_input: true, menu: null }
         : provider === "claude"
-          ? { command: "/rewind", count_arg: false, restores_files: false, reject_pattern: null, input_clear: { inputs: ["\u001b", "\u001b"], composer: { kind: "prompt", prompt: "❯", border: "─" } }, menu: { title: "Rewind", ready_marker: "❯ (current)", step_input: "\u001b[A", selected_prefix: "❯", enter_input: "\r", quote_prefix: "│", option_label: "Restore conversation", cancel_input: "\u001b" } }
+          ? { command: "/rewind", count_arg: false, restores_files: false, reject_pattern: null, returns_input: true, menu: { title: "Rewind", ready_marker: "❯ (current)", step_input: "\u001b[A", selected_prefix: "❯", enter_input: "\r", quote_prefix: "│", option_label: "Restore conversation", cancel_input: "\u001b" } }
           : null,
-    // 与后端同源:草稿暂存键只有 claude 经真机取证(issue #72)。
-    draft_stash: provider === "claude" ? { input: "\u0013", composer_prompt: "❯", composer_border: "─", stashed_marker: "› stashed" } : null,
     // 与后端同源:子代理视图只有 claude 有(2.1.322 真机取证)。
     subagent_view: provider === "claude" ? SUBAGENT_VIEW : null,
     // 与后端同源:仅 claude 取证过「TUI 权限框与 PermissionRequest hook 并行竞速」。
     permission_prompt_races_hook: provider === "claude",
-    composer_guard: COMPOSER_GUARDS[provider],
+    // 与后端同源:每家一份输入框规格（认框、暂存、清空、特殊输入模式）。
+    composer: COMPOSER_SPECS[provider] ?? null,
     version: COMPOSER_VERSIONS[provider] ?? null,
   };
 }

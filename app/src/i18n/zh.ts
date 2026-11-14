@@ -565,6 +565,18 @@ export const zh = {
     settingsQueueExpired: "等太久没切成，已取消，请重新选择",
     settingsApplying: "正在切换",
     settingsComposerUnknown: "认不出终端输入框，为免丢字没有重启",
+    settingsTerminalNotReady: "终端还没准备好，这次没有切换",
+    // 终端输入框里的草稿（见 views/chat/nativeDraft）：Meowo 自己收，收不掉才说原因并给出路。
+    nativeDraftMoved: "终端里的草稿已移到输入框",
+    composerUnrecognized: "认不出终端输入框，消息没有发出",
+    composerSendAnyway: "仍然发送",
+    composerModeShell: "终端在 shell 模式且没能退出",
+    composerModeVim: "终端在 vim 命令模式且没能退出",
+    composerModeOther: "终端在特殊输入模式，消息没有发出",
+    composerModeRunning: "回合结束后才能退出终端的输入模式",
+    composerDraftRunning: "回合结束后才能收起终端里的草稿",
+    composerDraftNoClear: "这个终端里的草稿 Meowo 清不了",
+    composerDraftStuck: "终端里的草稿没能收起，消息没有发出",
     settingsFirstTurn: "第一条消息正在处理，会话建好后再切",
     // 会话没在跑：选择记成下次打开的启动参数（做空 M4）。
     settingsNextOpen: "会话没在运行，下次打开时生效",

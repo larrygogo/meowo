@@ -19,7 +19,12 @@
  * 工作」，只有它停了才退出视图（2.1.322 源码），按错就把用户的子任务掐了。面板里的 Esc
  * 只取消选中（官方 sub-agents 文档「Observe and steer running forks」）。
  */
-export type SubagentView = { placeholder_prefix: string, panel_main_label: string, panel_pointer: string, panel_viewed_marker: string, 
+export type SubagentView = { placeholder_prefix: string, 
+/**
+ * 输入框上边框挂着子代理描述时的形态，捕获组 1 = 描述（`──── probe-sleeper ─`）。输入框本身
+ * 用 [`ComposerSpec`] 认，这里只负责从上边框那一行取出描述。
+ */
+label_pattern: string, panel_main_label: string, panel_pointer: string, panel_viewed_marker: string, 
 /**
  * 从 composer 把焦点移进面板、在面板里下移。
  */

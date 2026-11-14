@@ -153,6 +153,9 @@ impl ScreenProbe {
             cursor_row,
             cursor_col,
             cursor_visible: !screen.hide_cursor(),
+            cursor_dim: screen
+                .cell(cursor_row, cursor_col)
+                .is_some_and(|cell| cell.dim() && !cell.contents().trim().is_empty()),
         })
     }
 

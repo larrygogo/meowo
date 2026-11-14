@@ -772,16 +772,39 @@ impl AgentPlugin for Claude {
         Some("\x1b")
     }
 
-    /// Ctrl-S 暂存 composer 草稿(多行整段),下一次提交后 CLI 自动还原;有暂存时 composer
-    /// 上方常驻 `› stashed`,composer 夹在两条 `─` 横线之间、空时渲染为独行 `❯`。2.1.280 真机取证
-    /// (tests/probe_draft_residual.rs);Ctrl-U/Ctrl-Y 不可替代:多行只剪一行,且空
-    /// composer 时会粘出更早删掉的文本。
-    fn draft_stash(&self) -> Option<crate::chat_ui::DraftStash> {
-        Some(crate::chat_ui::DraftStash {
-            input: "\x13",
-            composer_prompt: "❯",
-            composer_border: '─',
-            stashed_marker: "› stashed",
+    /// 输入框规格（这一家唯一的一份，见 chat_ui::ComposerSpec）。
+    /// - 框体：composer 夹在两条 `─` 横线之间，首行 `❯` + 不换行空格 + 正文，续行缩进两格；子代理
+    ///   视图里上边框右侧挂描述（`──── probe-sleeper ─`）。空时渲染为独行 `❯`，或暗色占位
+    ///   （`Try "fix typecheck errors"`、预测的下一句，内容不固定）。2.1.280 / 2.1.325 真机取证
+    ///   （tests/probe_draft_residual.rs；2026-11-14 probe_tui_script `cells`：占位是 SGR dim，
+    ///   光标停在列 2；真打出来的字不暗、光标在文末）。bash 模式（`!`）等别的提示符不认。
+    /// - 暂存：Ctrl-S 暂存草稿(多行整段),下一次提交后 CLI 自动还原;有暂存时 composer 上方常驻
+    ///   `› stashed`,暂存后输入框回到占位。Ctrl-U/Ctrl-Y 不可替代:多行只剪一行,且空 composer
+    ///   时会粘出更早删掉的文本。
+    /// - 清空：双 Esc（多行整段；Ctrl-U 只清一行）；空 composer 的双 Esc 会打开回退菜单
+    ///   （tests/probe_claude_rewind.rs）。运行中 Esc 是中断，所以运行中不清，只用暂存。
+    /// - 认不出输入框时照发：这一家另有提示识别、子代理视图、启动标记兜着，认不出多半是画面
+    ///   被别的东西盖住了一角，拦发送只会让对话页发不出去。
+    fn composer(&self, _version: Option<&str>) -> Option<crate::chat_ui::ComposerSpec> {
+        Some(crate::chat_ui::ComposerSpec {
+            prompt_footer: false,
+            input_start_pattern: r"^(❯[ \xa0]?)",
+            top_pattern: r"^\s*─{3,}(?:\s+\S.*?\s+─{1,3})?\s*$",
+            bottom_pattern: r"^\s*─{3,}\s*$",
+            row_pattern: r"^(?:❯[ \xa0]?|  |$)(.*)$",
+            prompt_prefix: "",
+            tail_rows: 0,
+            tail_pattern: None,
+            empty_pattern: r#"^(?:Try "[^"\r\n]*")?$"#,
+            send_requires_recognition: false,
+            stash: Some(crate::chat_ui::ComposerStash {
+                input: "\x13",
+                stashed_marker: "› stashed",
+            }),
+            clear_inputs: &["\x1b", "\x1b"],
+            clear_rounds: 1,
+            clear_while_running: false,
+            alt_modes: &[],
         })
     }
 
@@ -792,6 +815,7 @@ impl AgentPlugin for Claude {
     fn subagent_view(&self) -> Option<crate::chat_ui::SubagentView> {
         Some(crate::chat_ui::SubagentView {
             placeholder_prefix: "Message @",
+            label_pattern: r"^\s*─{3,}\s+(\S.*?)\s+─{1,3}\s*$",
             panel_main_label: "main",
             panel_pointer: "❯",
             panel_viewed_marker: "●",
@@ -814,13 +838,7 @@ impl AgentPlugin for Claude {
             count_arg: false,
             restores_files: false,
             reject_pattern: None,
-            input_clear: Some(crate::chat_ui::UndoInputClear {
-                inputs: &["\x1b", "\x1b"],
-                composer: crate::chat_ui::UndoComposer::Prompt {
-                    prompt: "❯",
-                    border: '─',
-                },
-            }),
+            returns_input: true,
             menu: Some(crate::chat_ui::UndoMenu {
                 title: "Rewind",
                 ready_marker: "❯ (current)",

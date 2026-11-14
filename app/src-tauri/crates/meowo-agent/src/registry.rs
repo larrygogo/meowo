@@ -282,12 +282,9 @@ pub trait AgentPlugin: Sync {
         1
     }
 
-    /// 发送前收起 composer 残留草稿的按键与提示文案。默认 None:未经真机取证不声明。
-    fn draft_stash(&self) -> Option<crate::chat_ui::DraftStash> {
-        None
-    }
-
-    fn composer_guard(&self, _version: Option<&str>) -> Option<crate::chat_ui::ComposerGuard> {
+    /// 终端输入框的规格（见 [`crate::chat_ui::ComposerSpec`]）：认框、发送前收草稿、撤回后清原文、
+    /// 切模型前搬草稿共用这一份，**每个插件只声明这一处**。默认 None:未经真机取证不声明。
+    fn composer(&self, _version: Option<&str>) -> Option<crate::chat_ui::ComposerSpec> {
         None
     }
 
@@ -394,8 +391,7 @@ pub trait AgentPlugin: Sync {
                     .map(str::to_string)
                     .collect()
             },
-            draft_stash: self.draft_stash(),
-            composer_guard: self.composer_guard(ctx.version),
+            composer: self.composer(ctx.version),
             subagent_view: self.subagent_view(),
             model_switch: self.model_switch().map(crate::ModelSwitch::kind),
             awaiting_first_message_markers: self.awaiting_first_message_markers().to_vec(),
@@ -1414,13 +1410,23 @@ mod tests {
         // gemini 空闲时 Tab 不提交，运行态又是推断：只能用两种状态都成立的回车。
         assert_eq!(by_id("gemini").unwrap().queue_input(), Some("\r"));
 
-        // 草稿暂存键只有 claude 经真机取证(issue #72);别家未验证不盲按。
+        // 草稿暂存键只有 claude 经真机取证(issue #72);别家没有这种键，用各自取证过的清空键。
         assert_eq!(
-            by_id("claude").unwrap().draft_stash().map(|s| s.input),
+            by_id("claude")
+                .unwrap()
+                .composer(None)
+                .and_then(|c| c.stash)
+                .map(|s| s.input),
             Some("\x13")
         );
-        for id in ["codex", "kimi", "gemini", "opencode"] {
-            assert!(by_id(id).unwrap().draft_stash().is_none());
+        for (id, version) in [
+            ("codex", "0.167.2"),
+            ("gemini", "0.68.0"),
+            ("opencode", "1.19.5"),
+        ] {
+            let composer = by_id(id).unwrap().composer(Some(version)).unwrap();
+            assert!(composer.stash.is_none());
+            assert!(!composer.clear_inputs.is_empty(), "{id} 要有取证过的清空键");
         }
 
         // 目录信任不是 Claude 私有概念：Gemini 当前使用同一标题，Codex 使用 directory

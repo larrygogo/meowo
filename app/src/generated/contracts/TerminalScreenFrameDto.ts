@@ -11,4 +11,9 @@ cursorRow: number,
 /**
  * 从 0 起的终端格列，不是 UTF-16 字符索引。
  */
-cursorCol: number, cursorVisible: boolean, };
+cursorCol: number, cursorVisible: boolean, 
+/**
+ * 光标所在格是暗色（SGR dim）。占位文字的画法：输入框里那句话是 CLI 画的提示，还是用户
+ * 真打出来的字，文字相同时靠它和光标位置分开（见 meowo-agent 的 composer::read）。
+ */
+cursorDim?: boolean, };

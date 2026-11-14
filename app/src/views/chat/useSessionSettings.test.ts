@@ -35,6 +35,13 @@ import type { ChatHistory } from "../../api";
 
 const history = { agentModes: [{ dimension: "permission", value: "manual" }], model: "K3" } as unknown as ChatHistory;
 
+// 夹具里的终端输入框按真实声明分两种，不再默认「认得出、是空的」：旧夹具一律返回 "empty"，Claude 当时
+// 根本没有输入框规格（读出来永远是 unknown），排着的终端项回合结束后不执行这件事就这样漏了（走查输入 A1）。
+/** 插件声明了输入框规格，此刻读出来是空的（五家现行版本的常态）。 */
+const RECOGNIZED_EMPTY = { readsComposer: () => true, rescueDraft: async () => "empty" as const };
+/** 插件没有输入框规格（旧版本 CLI、修复前的 Claude）：读不出来，永远是 unknown。 */
+const UNDECLARED = { readsComposer: () => false, rescueDraft: async () => "unknown" as const };
+
 function deps(overrides: Partial<SessionSettingsDeps> = {}): SessionSettingsDeps {
   return {
     sessionId: 7,
@@ -43,7 +50,7 @@ function deps(overrides: Partial<SessionSettingsDeps> = {}): SessionSettingsDeps
     setHistory: vi.fn(),
     setSendError: vi.fn(),
     moveTo: vi.fn(),
-    rescueDraft: async () => "empty",
+    ...RECOGNIZED_EMPTY,
     restarts: () => true,
     readCurrent: async () => ({ permission: "manual", model: "kimi-code/k3" }),
     firstTurnPending: false,
@@ -199,6 +206,87 @@ describe("会话里切模型 / 模式的分派", () => {
     await waitFor(() => expect(applyTerminal).toHaveBeenCalledWith(action));
     expect(apply).not.toHaveBeenCalled();
     await waitFor(() => expect(result.current.notice).toBeNull());
+  });
+
+  /// 走查输入 A1：没有输入框规格的 CLI（修复前的 Claude、旧版本的另外几家）读输入框永远是 unknown。
+  /// 排着的终端项不能因此空等 10 秒再丢掉：没有规格可认就不等，回合结束照样执行。
+  it("没有输入框规格的 CLI：排着的终端项回合结束后照样执行", async () => {
+    const applyTerminal = vi.fn(async () => {});
+    const setSendError = vi.fn();
+    const action = { kind: "model" as const, preset: { id: "sonnet", label: "Sonnet", desc: null } };
+    let current = deps({ ...UNDECLARED, tone: "running", applyTerminal, setSendError });
+    const { result, rerender } = renderHook(() => useSessionSettings(current));
+    act(() => result.current.request({ label: "Sonnet", terminal: [action] }));
+    await waitFor(() => expect(result.current.notice).toBe("这一轮结束后切换到「Sonnet」（关闭应用会取消）"));
+    current = deps({ ...UNDECLARED, tone: "waiting", applyTerminal, setSendError });
+    rerender();
+    await waitFor(() => expect(applyTerminal).toHaveBeenCalledWith(action));
+    expect(setSendError).not.toHaveBeenCalled();
+    await waitFor(() => expect(result.current.notice).toBeNull());
+  });
+
+  /// 输入框里有草稿也算认得出：照样执行（收草稿是执行那一步自己的事，见 chat/nativeDraft）。
+  it("输入框里有草稿不挡排着的终端项", async () => {
+    const applyTerminal = vi.fn(async () => {});
+    const action = { kind: "effort" as const, level: "high" };
+    let current = deps({ tone: "running", applyTerminal, rescueDraft: async () => "occupied" });
+    const { result, rerender } = renderHook(() => useSessionSettings(current));
+    act(() => result.current.request({ label: "high", terminal: [action] }));
+    await waitFor(() => expect(result.current.notice).not.toBeNull());
+    current = deps({ tone: "waiting", applyTerminal, rescueDraft: async () => "occupied" });
+    rerender();
+    await waitFor(() => expect(applyTerminal).toHaveBeenCalledWith(action));
+  });
+
+  /// 认得出规格、但终端一直不是输入框的样子（菜单、对话框盖着）：等不到就如实说没切成，错误条的
+  /// 「重试」再执行同一条，不悄悄丢掉这次选择，也不再报不相干的「没有重启」。
+  it("终端迟迟不是输入框的样子：说明没切成并给重试，重试照原样执行", async () => {
+    vi.useFakeTimers();
+    try {
+      const applyTerminal = vi.fn(async () => {});
+      const setSendError = vi.fn();
+      let state: "unknown" | "empty" = "unknown";
+      const action = { kind: "model" as const, preset: { id: "sonnet", label: "Sonnet", desc: null } };
+      const current = deps({ applyTerminal, setSendError, rescueDraft: async () => state });
+      const { result } = renderHook(() => useSessionSettings(current));
+      act(() => result.current.request({ label: "Sonnet", terminal: [action] }));
+      await act(async () => { await vi.advanceTimersByTimeAsync(11_000); });
+      expect(applyTerminal).not.toHaveBeenCalled();
+      expect(setSendError).toHaveBeenCalledWith("终端还没准备好，这次没有切换", { retry: expect.any(Function), terminal: true });
+      state = "empty";
+      const retry = setSendError.mock.calls[0][1].retry as () => void;
+      act(() => retry());
+      await act(async () => { await vi.advanceTimersByTimeAsync(100); });
+      expect(applyTerminal).toHaveBeenCalledWith(action);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /// 不重启的路线（会话服务 / TUI 对话框）要求输入框是空的。后端说「输入框里有字」时，对话页自己把草稿
+  /// 清掉并搬进输入框，再切一次；不再只报「清空后再切」让用户去终端收拾（standards 2026-11-10）。
+  it.each(["settings/composer_not_empty", "lead/opencode_composer_not_empty"])("输入框里有字（%s）：搬走草稿后再切一次", async (reason) => {
+    apply.mockResolvedValueOnce({ kind: "not_now", reason }).mockResolvedValueOnce({ kind: "applied", confirmed: true });
+    const takeDraft = vi.fn(async () => "moved" as const);
+    const setSendError = vi.fn();
+    const current = deps({ restarts: () => false, rescueDraft: async () => "occupied", takeDraft, setSendError });
+    const { result } = renderHook(() => useSessionSettings(current));
+    act(() => result.current.request({ model: { id: "vendor/b", label: "B" }, label: "B" }));
+    await waitFor(() => expect(apply).toHaveBeenCalledTimes(2));
+    expect(takeDraft).toHaveBeenCalledTimes(1);
+    expect(setSendError).not.toHaveBeenCalled();
+  });
+
+  it("草稿清不掉时只试一次，说明原因", async () => {
+    apply.mockResolvedValue({ kind: "not_now", reason: "lead/opencode_composer_not_empty" });
+    const takeDraft = vi.fn(async () => "occupied" as const);
+    const setSendError = vi.fn();
+    const current = deps({ restarts: () => false, rescueDraft: async () => "occupied", takeDraft, setSendError });
+    const { result } = renderHook(() => useSessionSettings(current));
+    act(() => result.current.request({ model: { id: "vendor/b", label: "B" }, label: "B" }));
+    await waitFor(() => expect(setSendError).toHaveBeenCalled());
+    expect(apply).toHaveBeenCalledTimes(1);
+    expect(takeDraft).toHaveBeenCalledTimes(1);
   });
 
   /// 真机第四轮问题 3：OpenCode 只切 agent，后端当场读回模型，界面立刻显示并钉住。

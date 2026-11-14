@@ -294,15 +294,26 @@ impl AgentPlugin for Gemini {
     /// `Queued (press ↑ to edit)`，但空闲时 Tab 不提交、正文停在输入框里。对话页的运行态
     /// 是推断（DB 启动即 running、hook 执行期屏幕无 esc to cancel），推断错了按 Tab 就丢
     /// 消息，按回车两种状态都对。
-    /// 2026-11-12 隔离无模型实拍（target/lead-provider-probes/composer）：文字只给候选，发送仍须核验原生光标。
-    fn composer_guard(&self, version: Option<&str>) -> Option<crate::chat_ui::ComposerGuard> {
+    /// 输入框规格（这一家唯一的一份，见 chat_ui::ComposerSpec）。
+    /// - 框体：2026-11-12 隔离无模型实拍（target/lead-provider-probes/composer）。
+    /// - 占位是灰色、比真实草稿多缩进两格，光标停在列 3；真打出同一句光标在文末（0.68.0，
+    ///   2026-11-14 probe_tui_script `cells`）。开了 vim 模式（`general.vimMode`）占位换成
+    ///   `Press 'Esc' for NORMAL mode.` / `Press 'i' for INSERT mode.`，旧规则不认，开 vim 的人
+    ///   每次发送都被当成「已有草稿」。
+    /// - 清空：Ctrl-C 能清，但回合进行中它会取消当前请求（实拍 `Request cancelled.`），空闲时还会
+    ///   挂上「Press Ctrl+C again to exit.」。改用行编辑键 Ctrl-K、Ctrl-U、退格逐行清，每轮后复核：
+    ///   回合进行中两行草稿两轮清完，回合不受影响（同日实拍）。
+    /// - shell 模式：提示符 `!`（占位 `Type your shell command`，状态行 `shell mode enabled (esc to
+    ///   disable)`），按一次 Esc 回到普通输入框。vim NORMAL：状态行左侧 `[NORMAL]`，按 `i` 回到
+    ///   `[INSERT]`。这两种模式下写进去的字会被当成 shell 命令 / vim 命令，先退出再写（同日实拍）。
+    fn composer(&self, version: Option<&str>) -> Option<crate::chat_ui::ComposerSpec> {
         if !crate::lead_install::version_at_least(version, (0, 65, 0)) {
             return None;
         }
-        Some(crate::chat_ui::ComposerGuard {
+        Some(crate::chat_ui::ComposerSpec {
             prompt_footer: false,
             // 提示符按状态取值（0.68 interactiveCli-ZJ2ZELJM.js 约 22698 行）：平常 `>`，YOLO 档 `*`（做空 R2，
-            // 实拍 g7-2）；shell 模式 `!`、反向搜索 `(r:)` 有意不认——那时输入框里不是普通草稿，保守按认不出。
+            // 实拍 g7-2）；shell 模式 `!` 走 alt_modes；反向搜索 `(r:)` 有意不认，保守按认不出。
             input_start_pattern: r"^(\s*[>*] )",
             // 0.65 是整条细线 `─`；0.68 改画半块字符，上沿 `▄`、下沿 `▀`（真机验证 g2/g7/g8 四帧，
             // UTF-8 E2 96 84 / E2 96 80，做空 N2）。历史里每条用户消息也画同样的框，从屏幕底往上找到的
@@ -314,7 +325,26 @@ impl AgentPlugin for Gemini {
             prompt_prefix: ">|*",
             tail_rows: 0,
             tail_pattern: None,
-            empty_pattern: r"^(?:Type your message or @path/to/file)?$",
+            empty_pattern: r"^(?:Type your message or @path/to/file|Press 'Esc' for NORMAL mode\.|Press 'i' for INSERT mode\.)?$",
+            send_requires_recognition: true,
+            stash: None,
+            clear_inputs: &["\x0b", "\x15", "\x7f"],
+            clear_rounds: 12,
+            clear_while_running: true,
+            alt_modes: &[
+                crate::chat_ui::ComposerAltMode {
+                    id: "shell",
+                    prompt_pattern: Some(r"^!(?:\s|$)"),
+                    below_pattern: None,
+                    exit_input: "\x1b",
+                },
+                crate::chat_ui::ComposerAltMode {
+                    id: "vim_normal",
+                    prompt_pattern: None,
+                    below_pattern: Some(r"^\s*\[NORMAL\]"),
+                    exit_input: "i",
+                },
+            ],
         })
     }
     fn queue_input(&self) -> Option<&'static str> {

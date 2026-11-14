@@ -5,10 +5,9 @@
 /// 接到 React 生命周期和终端上的那一层。对照 Kimi 的 prompt 状态由一处推进、视图只订阅。
 
 import { useEffect, useRef, useState } from "react";
-import { managedTerminalScreen, writeManagedTerminal, type ChatItem, type ChatUi } from "../../api";
+import { writeManagedTerminal, type ChatItem, type ChatUi } from "../../api";
+import { composerHolds, readComposerFrame, terminalComposerIo } from "./composer";
 import { ECHO_CONFIRM_MS, outgoingStore, unseenPending, type OutgoingPrompt, type PromptAck } from "./outgoingPrompts";
-import { composerDraftText } from "./terminalSubmit";
-import { undoneInputRows } from "./undoTerminal";
 
 export function useOutgoingUpkeep({ sessionId, outgoing, loading, items, acks, lastUserText, ended, chatUi, isActive, running, onError }: {
   sessionId: number;
@@ -41,7 +40,7 @@ export function useOutgoingUpkeep({ sessionId, outgoing, loading, items, acks, l
   }, [outgoing.length]);
 
   // 未确认送达的回显：读一次终端画面，看这段话是不是还停在 CLI 输入框里（没按下回车）。
-  // 每条只读一次；认得出输入框的插件才判（claude 的 draft_stash、opencode 的撤回输入框规格）。
+  // 每条只读一次；声明了输入框规格的插件才判（五家共用同一份规格，见 composer.ts）。
   //
   // 加载窗口看不见的那条（unseenPending）由这里定去向，做空第二轮 N1（2026-11-12）：对账对它
   // 不超时也不收起，修前读一次画面、输入框是空的就什么都不做，发送一小时后回显仍挂在后续输出下、
@@ -54,8 +53,7 @@ export function useOutgoingUpkeep({ sessionId, outgoing, loading, items, acks, l
   const [stuck, setStuck] = useState<ReadonlySet<number>>(() => new Set());
   const probedRef = useRef(new Set<number>());
   useEffect(() => {
-    const stash = chatUi?.draft_stash;
-    const clear = chatUi?.undo?.input_clear;
+    const spec = chatUi?.composer;
     const now = Date.now();
     for (const echo of outgoing) {
       if (probedRef.current.has(echo.id)) continue;
@@ -66,7 +64,7 @@ export function useOutgoingUpkeep({ sessionId, outgoing, loading, items, acks, l
         : unseen && !running();
       if (!candidate) continue;
       const head = echo.attachmentOnly ? "" : echo.text.split(/\r?\n/).map((line) => line.trim()).find(Boolean)?.slice(0, 12) ?? "";
-      if ((!stash && !clear) || !head) {
+      if (!spec || !head) {
         // 认不出输入框 / 纯附件（占位文案对不上画面）：没法核对。看不见的当已送达收起，其余照旧。
         probedRef.current.add(echo.id);
         if (unseen) outgoingStore.settle(echo.id, null);
@@ -74,12 +72,10 @@ export function useOutgoingUpkeep({ sessionId, outgoing, loading, items, acks, l
       }
       probedRef.current.add(echo.id);
       const sid = sessionId;
-      void managedTerminalScreen(sid).catch(() => null).then((screen) => {
+      void terminalComposerIo(sid).frame().catch(() => null).then((frame) => {
         // 读画面途中切走了：这次不算，回来再读。
         if (!isActive(sid)) { probedRef.current.delete(echo.id); return; }
-        const held = stash
-          ? (composerDraftText(screen, stash) ?? "").startsWith(head)
-          : clear != null && (undoneInputRows(screen, clear, echo.text) ?? 0) > 0;
+        const held = composerHolds(readComposerFrame(frame, spec), echo.text);
         if (!held) {
           if (unseen) outgoingStore.settle(echo.id, null);
           return;
