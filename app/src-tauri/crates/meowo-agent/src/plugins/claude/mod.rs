@@ -872,6 +872,8 @@ impl AgentPlugin for Claude {
                 // 该提示每次恢复只出现一次，取首个匹配即可。
                 last: false,
                 details: crate::chat_ui::AttentionDetails::None,
+                kind: crate::chat_ui::AttentionKind::Choice,
+                confirms: None,
             },
             crate::chat_ui::AttentionPattern {
                 id: "claude:command-approval",
@@ -880,6 +882,8 @@ impl AgentPlugin for Claude {
                 patterns: &["this command requires approval", r"do you want to proceed\?"],
                 last: true,
                 details: crate::chat_ui::AttentionDetails::ProceedBox,
+                kind: crate::chat_ui::AttentionKind::Approval,
+                confirms: None,
             },
             crate::chat_ui::AttentionPattern {
                 id: "claude:plan-approval",
@@ -897,6 +901,8 @@ impl AgentPlugin for Claude {
                 patterns: &[r"written\s+up\s+a\s+plan\s+and\s+is\s+ready\s+to\s+execute"],
                 last: true,
                 details: crate::chat_ui::AttentionDetails::None,
+                kind: crate::chat_ui::AttentionKind::Plan,
+                confirms: None,
             },
         ]
     }

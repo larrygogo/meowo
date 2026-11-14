@@ -503,6 +503,8 @@ impl AgentPlugin for Kimi {
                 // kimi 重绘不清屏，上一页的表单残留在上方：取最后一次。
                 last: true,
                 details: crate::chat_ui::AttentionDetails::BracketForm,
+                kind: crate::chat_ui::AttentionKind::Question,
+                confirms: None,
             },
             crate::chat_ui::AttentionPattern {
                 id: "kimi:command-approval",
@@ -515,6 +517,8 @@ impl AgentPlugin for Kimi {
                 // 面板——用户看着 A 批准了 B。
                 last: true,
                 details: crate::chat_ui::AttentionDetails::ArrowPanel,
+                kind: crate::chat_ui::AttentionKind::Approval,
+                confirms: None,
             },
         ]
     }

@@ -3,7 +3,7 @@ import { chatUi } from "../../test/agents";
 import { zh } from "../../i18n/zh";
 import { en } from "../../i18n/en";
 import {
-  runningPlaceholder, runningReceipt, runningSendMode, runningSendVerb, sendBlockedMessage, unrecognizedPromptNotice,
+  runningPlaceholder, runningReceipt, runningSendMode, runningSendVerb, unrecognizedPromptNotice,
 } from "./sendCopy";
 
 const PROVIDERS = ["claude", "codex", "kimi", "gemini", "opencode"] as const;
@@ -63,11 +63,5 @@ describe("消息被拦下时的文案", () => {
     expect(unrecognizedPromptNotice(zh)).not.toMatch(/已发出|已发送/);
     expect(unrecognizedPromptNotice(en)).toMatch(/was not sent/i);
     expect(unrecognizedPromptNotice(en)).not.toMatch(/was sent|been sent/i);
-  });
-
-  it("错误条按拦下的原因说要先做什么", () => {
-    expect(sendBlockedMessage(zh, "question")).toBe(zh.chat.questionNeedsAnswer);
-    expect(sendBlockedMessage(zh, "interaction")).toBe(zh.chat.terminalNeedsAttention);
-    expect(sendBlockedMessage(en, "question")).toBe(en.chat.questionNeedsAnswer);
   });
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { modeFromScreen, terminalAttention, terminalNeedsAttention } from "./terminalAttention";
 import { chatUi, grammar } from "./test/agents";
+import { CLAUDE_APPROVAL_SCREEN, OPENCODE_ALWAYS_CONFIRM_SCREEN, OPENCODE_PERMISSION_SCREEN } from "./test/requestSamples";
 
 describe("terminalAttention", () => {
   it("returns the provider-declared trust screen for the GUI", () => {
@@ -517,20 +518,72 @@ describe("terminalAttention", () => {
     expect(terminalAttention("Allow execution of [Shell]?\n1. Allow once", [], false, false, grammar("gemini"))).toBeNull();
   });
 
-  /// opencode 权限框(1.19.2 真机):横排选项没有编号文法,只出卡不出选项按钮,
-  /// 由通用卡的 Enter(= 默认焦点 Allow once)/Esc(= Reject)作答。
-  it("recognizes OpenCode's permission prompt without inventing option buttons", () => {
-    const screen = [
-      "  ┃  △ Permission required",
-      "  ┃    ← Access external directory C:\\Windows",
-      "  ┃  Patterns",
-      "  ┃  - C:\\Windows\\*",
-      "  ┃   Allow once   Allow always   Reject          ctrl+f fullscreen  ⇆ select  enter confirm",
-    ].join("\n");
-    const attention = terminalAttention(screen, [], false, false, grammar("opencode"));
+  /// opencode 权限框(1.19.5 真机，2026-11-14 probe_tui_script):横排选项按 option_row 文法拆成按钮。
+  /// 焦点初始在第一项：Allow once = 回车，Allow always = → 回车，Reject = Esc(escapeKey，不依赖焦点)。
+  it("OpenCode 权限框：横排选项拆成三个按钮，Allow always 有入口", () => {
+    const attention = terminalAttention(OPENCODE_PERMISSION_SCREEN, [], false, false, grammar("opencode"));
     expect(attention?.id).toBe("opencode:command-approval");
-    expect(attention?.text).toContain("Access external directory");
+    expect(attention?.kind).toBe("approval");
+    expect(attention?.details).toBe("option_row");
+    expect(attention?.text).toBe("△ Permission required\n  ← Access external directory C:\\Windows\nPatterns\n- C:\\Windows\\*");
+    expect(attention?.options?.map((option) => [option.label, option.input])).toEqual([
+      ["Allow once", "\r"],
+      ["Allow always", "\x1b[C\r"],
+      ["Reject", "\x1b"],
+    ]);
+  });
+
+  /// 选 Allow always 后的确认页(同一次真机取证)：单列一条规则，种类是「等你选择」，
+  /// 并指明它确认的是权限框(confirms)，供对话页替用户按下确认。
+  it("OpenCode 的 Always allow 确认页：Confirm 回车、Cancel 走 Esc，标明它确认的是权限框", () => {
+    const attention = terminalAttention(OPENCODE_ALWAYS_CONFIRM_SCREEN, [], false, false, grammar("opencode"));
+    expect(attention?.id).toBe("opencode:always-allow-confirm");
+    expect(attention?.kind).toBe("choice");
+    expect(attention?.confirms).toBe("opencode:command-approval");
+    expect(attention?.text).toContain("until OpenCode is restarted");
+    expect(attention?.options?.map((option) => [option.label, option.input])).toEqual([["Confirm", "\r"], ["Cancel", "\x1b"]]);
+  });
+
+  /// 选项行还没画出来(重绘中途)：照样出审批卡，正文先给用户看，按钮由卡片按回车与 Esc 兜底。
+  it("OpenCode 权限框的选项行还没画出来时不编造选项", () => {
+    const attention = terminalAttention("  ┃  △ Permission required\n  ┃    ← Access external directory C:\\Windows", [], false, false, grammar("opencode"));
+    expect(attention?.kind).toBe("approval");
     expect(attention?.options).toBeUndefined();
+  });
+
+  /// claude 2.1.325 的审批框(真机，2026-11-14)：四个选项，多了一项「切到自动模式」。
+  it("Claude 2.1.325 审批框：四个选项按编号拆出，种类是审批", () => {
+    const attention = terminalAttention(CLAUDE_APPROVAL_SCREEN, [], false, false, grammar("claude"));
+    expect(attention?.id).toBe("claude:command-approval");
+    expect(attention?.kind).toBe("approval");
+    expect(attention?.options?.map((option) => option.label)).toEqual([
+      "Yes",
+      "Yes, and don’t ask again for: curl *",
+      "Yes, and switch to auto mode · auto mode handles these prompts for you",
+      "No",
+    ]);
+    // 焦点在第一项：从它做相对移动。
+    expect(attention?.options?.map((option) => option.input)).toEqual(["\r", "\x1b[B\r", "\x1b[B\x1b[B\r", "\x1b[B\x1b[B\x1b[B\r"]);
+  });
+
+  /// 种类由规则声明，不看 id：额度耗尽与长会话确认是「等你选择」，信任页是 trust，登录类是 startup。
+  it("每条识别结果都带种类：审批、提问、计划、等你选择、信任页、启动步骤、菜单", () => {
+    const usage = terminalAttention([
+      "╭──────────────────────────────────────────────╮",
+      "│ Usage limit reached for gemini-3.8-flash.    │",
+      "│ ● 1. Keep trying                             │",
+      "│   2. Stop                                    │",
+      "╰──────────────────────────────────────────────╯",
+    ].join("\n"), [], false, false, grammar("gemini"));
+    expect(usage?.kind).toBe("choice");
+    const plan = terminalAttention("Claude has written up a plan and is ready to execute. Would you like to proceed?\n❯ 1. Yes, and bypass permissions\n  2. Yes, manually approve edits", [], false, false, grammar("claude"));
+    expect(plan?.kind).toBe("plan");
+    const trust = terminalAttention("Do you trust the files in this folder?\n❯ 1. Yes, proceed\n  2. No, exit", ["do you trust the files in this folder"], false, false, grammar("codex"));
+    expect(trust?.kind).toBe("trust");
+    const login = terminalAttention("OAuth token has been revoked\nPress Enter to continue", [], false, false, grammar("claude"));
+    expect(login?.kind).toBe("startup");
+    const menu = terminalAttention("Select a model\n↑↓ navigate · Enter select · Esc cancel\n  K2.7 Coding\n❯ K3", [], false, true, grammar("kimi"));
+    expect(menu?.kind).toBe("menu");
   });
 
   /// gemini 额度耗尽框(0.64 真机):它取代输入框,不识别时对话页发的正文全被吞掉。
@@ -854,7 +907,7 @@ describe("kimi 提问表单", () => {
     expect(attention?.options?.map((o) => [o.label, o.input])).toEqual([["红色", "1"], ["绿色", "2"], ["蓝色", "3"]]);
   });
 
-  it("多选题：数字键按位置勾选，已勾的带 ✓；末尾一个 Tab 去下一页", () => {
+  it("多选题：数字键按位置勾选，已勾的记在 selected 上；末尾一个 Tab 去下一页", () => {
     const attention = terminalAttention(screen(
       "  (✓) 颜色   水果    Submit",
       "  ? 喜欢哪些水果？",
@@ -866,8 +919,13 @@ describe("kimi 提问表单", () => {
     ), [], false, false, grammar("kimi"));
     expect(attention?.id).toBe("kimi:question");
     expect(attention?.options?.map((o) => [o.label, o.input])).toEqual([
-      ["苹果", "1"], ["✓ 香蕉", "2"], ["橙子", "3"], ["Next ⇥", "\t"],
+      ["苹果", "1"], ["香蕉", "2"], ["橙子", "3"], ["Next ⇥", "\t"],
     ]);
+    // 勾选状态只在 selected 上：提问卡自己画勾，标签里再带一个「✓」就成了两个。
+    expect(attention?.options?.map((o) => o.selected ?? false)).toEqual([false, true, false, false]);
+    // 数字键直选：按钮发的键与焦点无关，卡片据此只翻转勾、不重算方向键。
+    expect(attention?.absoluteKeys).toBe(true);
+    expect(attention?.kind).toBe("question");
   });
 
   it("确认页：列出已选答案，Submit / Cancel 发数字键（1 直接提交，真机确认）", () => {

@@ -21,7 +21,7 @@ describe("软拦横幅与实际一致（走查输入 A2）", () => {
     fireEvent.change(adapter.box(), { target: { value: "这条会被拦下" } });
     fireEvent.keyDown(adapter.box(), { key: "Enter" });
     // 发送结果：终端里一个字都没写。
-    await screen.findByText(zh.chat.terminalNeedsAttention);
+    await screen.findByText(zh.chat.cardLockApproval);
     expect(adapter.writes(771)).toEqual([]);
     // 文案：横幅说的是「没有发出」，页面上不出现「消息已发出」。
     expect(screen.getByText(zh.chat.unrecognizedPromptNotice).textContent).toContain("没有发出");

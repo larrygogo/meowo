@@ -765,8 +765,11 @@ export const zh = {
     sendBackgroundKeysMovedYou: "后台会话不接受终端按键，请在这里直接发消息。",
     sendBackgroundQueued: "已发给后台会话。若它未处理，内容还在输入框，可直接重发。",
     sendBackgroundNoAttachments: "后台会话暂不支持附件，请只发文字。",
-    inputLocked: "终端正在等待选择，请先用上方卡片处理",
-    inputLockedRemote: "终端正在等待选择，请先用上方卡片处理",
+    // 有卡片待处理时输入框的说明（占位、发送键提示、按回车后的提示同一句），见 chat/composerCardLock。
+    cardLockApproval: "先处理上方的审批再发送",
+    cardLockQuestion: "先回答上方的提问再发送",
+    cardLockPrompt: "先处理上方的卡片再发送",
+    cardLockMenu: "先完成终端里的选择再发送",
     send: "发送",
     sending: "发送中…",
     attach: "添加图片或文件",
@@ -790,8 +793,12 @@ export const zh = {
     // 拼进发给 agent 的消息里，必须跟随界面语言——英文界面混入中文指令会把 agent 的回答语言带偏。
     attachmentInstruction: attachmentInstructionZh,
     approvalTitle: "Agent 请求权限",
-    // 卡片组件还在读这几个键：值引用词表。TODO(合并后)：卡片直接取 t.vocab.request，删掉这几个别名。
+    // 卡片徽章：每个状态一个词，五家、两条通道共用（见 chat/requestCard 的 cardBadge）。状态词取自词表。
     approvalPending: vocab.request.approval,
+    choicePending: "待选择",
+    confirmPending: "待确认",
+    cardExpired: vocab.request.expired,
+    choiceTitle: "终端正在等待你的选择",
     questionTitle: "Agent 正在等待你的回答",
     questionPending: vocab.request.question,
     questionFormLoading: "点选答案，终端表单就绪后自动作答",
@@ -813,6 +820,7 @@ export const zh = {
     customAnswerPlaceholder: "输入其他回答",
     addCustomAnswer: "添加回答",
     submitAnswer: "提交选择",
+    questionNext: "下一步",
     questionAnswered: "已作答",
     questionAnswerReady: "提交后 Agent 立即继续",
     questionAnswerIncomplete: (count: number) => `还有 ${count} 题未作答`,
@@ -834,6 +842,7 @@ export const zh = {
     allowOnce: "允许一次",
     allowRemember: "允许并记住",
     allowSession: "本会话内允许",
+    allowAutoMode: "允许并切到自动模式",
     allowLocalProject: "允许并记住（此项目、本机）",
     allowProject: "允许并记住（项目共享）",
     allowUser: "始终允许（全局）",
@@ -842,11 +851,13 @@ export const zh = {
     // Esc 两段式确认的第二段按钮文案（第一下 Esc 点亮后显示）。
     denyConfirmEsc: "再按 Esc 确认拒绝",
     // 审批卡被别处结算/超时收卡时的去向说明——凭空消失像 bug。
-    approvalClearedNotice: "该审批已在别处处理或已超时",
-    approvalClearedNoticeRemote: "该审批已在别处处理或已超时",
+    // 审批在卡片之外了结时的说明：过期、已取消各一句，分不清原因时用第一句。状态词与卡片徽章同一个。
+    approvalClearedNotice: "该审批已在别处处理或已过期",
+    approvalExpiredNotice: "该审批已过期，已交回终端处理",
+    approvalCancelledNotice: "该审批已取消",
     // 倒计时归零到后端结算事件到达之间的一拍空窗：徽章切这句，不留定格的 0:00。
     // 审批卡与题面卡共用（回落语义相同）。
-    approvalTimedOut: "已超时，回落终端处理中",
+    approvalTimedOut: "已过期，已交回终端处理",
     // 切到终端页的按钮一律用这个标签（7G-9：此前四处四种说法）。
     goTerminal: "去终端页",
     // 终端视图下作答卡的「放行给终端」按钮（题面无法卡内表达时）：人已在终端页，
@@ -1208,9 +1219,6 @@ export const zh = {
     // CLI 意外退出（二期 #7）：与后端 exit_report::crash_label 同文，灵动岛/通知里也是这句。
     agentCrashed: (code: number) => `Agent 意外退出（退出码 ${code}）`,
     resumeSession: "恢复会话",
-    terminalNeedsAttention: "Agent 有待处理的交互，请先完成卡片或终端里的确认，再重新发送。",
-    // 拦住发送的是提问卡时用这句：「启动确认」对一个回合中途的提问是错的说法（用户实拍）。
-    questionNeedsAnswer: "Agent 有提问待回答，答完再发送。",
     sendEchoTimeout: "消息没进入终端，未发出。终端可能停在启动询问上",
     terminalStreamStalled: "终端画面卡住了，不会自行恢复。点「结束并恢复」即可，对话记录不受影响。",
     // 初始化 25s 超时（撤遮罩后的黑屏说明，见 ManagedTerminal 的 initTimedOut）。
@@ -1254,10 +1262,8 @@ export const zh = {
     // 消息被拦下、没有发出时才出现：正文后的 Enter 可能落到原生审批的默认项上（走查输入 A2）。
     unrecognizedPromptNotice: "终端似乎在等待选择，消息没有发出",
     terminalPromptTitle: "Agent 需要你完成一个启动步骤",
-    terminalPromptHelp: "下面是终端的提示原文，用右侧按钮选择确认即可。",
+    terminalPromptHelp: "终端提示原文如下，用按钮确认或取消",
     trustPromptTitle: "是否信任此文件夹？",
-    longSessionPromptTitle: "如何恢复这个长会话？",
-    longSessionPromptHelp: "完整恢复会消耗较多额度，建议从摘要恢复。",
     terminalPromptConfirm: "确认",
     terminalPromptCancel: "取消 / 返回",
     // 「取消」实发 Esc 的后果说明：与零副作用的「仅收起」是两回事，必须对用户说出来。

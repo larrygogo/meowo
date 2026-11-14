@@ -204,7 +204,7 @@ describe("ChatWindow 适配回归", () => {
     await act(async () => { releaseStart(); });
     await waitFor(() => expect(writes(514)).toContain("\r"), { timeout: 5_000 });
     expect(writes(514)).toContain("切走也要发");
-    expect(screen.queryByText(zh.chat.terminalNeedsAttention)).toBeNull();
+    expect(screen.queryByText(zh.chat.cardLockPrompt)).toBeNull();
   });
 
   /// 「+」菜单（对照 Kimi 的 addMenu）：命令 / 提及原来只能靠打字触发，这里给入口。
@@ -401,7 +401,7 @@ describe("ChatWindow 适配回归", () => {
     fireEvent.click(await screen.findByRole("button", { name: "仅收起" }));
     fireEvent.change(box(), { target: { value: "不应该替我选择模型" } });
     fireEvent.keyDown(box(), { key: "Enter" });
-    await screen.findByText(zh.chat.terminalNeedsAttention);
+    await screen.findByText(zh.chat.cardLockPrompt);
     expect(writes(508)).toHaveLength(0);
     expect(box().value).toBe("不应该替我选择模型");
   });

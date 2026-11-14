@@ -49,18 +49,6 @@ export function runningSendVerb(t: Dict, mode: RunningSendMode): string {
   return mode === "unavailable" ? "" : t.chat.runningSend[mode].verb;
 }
 
-/** 发送被拦下的原因。 */
-export type SendBlockReason =
-  /** 提问卡在等回答。 */
-  | "question"
-  /** 审批卡、终端菜单等交互在等处理。 */
-  | "interaction";
-
-/** 发送被拦下时的错误条文案。消息没有发出，文案只说要先做什么。 */
-export function sendBlockedMessage(t: Dict, reason: SendBlockReason): string {
-  return reason === "question" ? t.chat.questionNeedsAnswer : t.chat.terminalNeedsAttention;
-}
-
 /**
  * 终端像是在等选择、但屏幕上没认出是哪一种时的横幅。此时消息被拦下、没有发出
  * （正文后的 Enter 可能落到原生审批的默认项上），横幅如实说「没有发出」。

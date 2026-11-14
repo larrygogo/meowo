@@ -93,18 +93,9 @@ const PREFIXED_COMPARISONS = (id: string) => [
 ];
 
 /**
- * 白名单：按带前缀标识分支、此刻确需保留的写法（文件 → 标识 → 理由）。每条都要写理由；
- * 标了 TODO(合并后) 的是落在别的并行分支负责的区域里、本轮不动的，合并后要清掉。
+ * 白名单：按带前缀标识分支、此刻确需保留的写法（文件 → 标识 → 理由）。每条都要写理由。现在是空的。
  */
-const PREFIXED_ALLOWED: Record<string, Record<string, string>> = {
-  "views/ChatWindow.tsx": {
-    // TODO(合并后)：通用终端提示卡的标题与正文按 claude:* 规则 id 拼（走查输入 A3、B13）。
-    // 卡片组件归「卡片」一路，它把标题、徽章改成由请求种类决定后，这三条要删掉。
-    "claude:long-session-resume": "TODO(合并后) 通用提示卡标题按规则 id 拼，卡片一路改成按请求种类",
-    "claude:plan-approval": "TODO(合并后) 同上",
-    "claude:command-approval": "TODO(合并后) 同上",
-  },
-};
+const PREFIXED_ALLOWED: Record<string, Record<string, string>> = {};
 
 /**
  * 以 Provider 为键的查表（`{ claude: …, kimi: … }`、`{ "gemini.approval.default": … }`）同样是按身份

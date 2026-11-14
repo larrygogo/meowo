@@ -22,6 +22,12 @@ pub(super) static DEPS: &[D] = &[
         "\u{25B3} Permission required",
         "1.19.3 opencode.exe：`c(x,k(\"\\u25b3\")),c(j,k(\"permission required\"))`，三角符号与文字分开渲染",
     ),
+    D::new(
+        "attention:opencode:always-allow-confirm",
+        "always allow",
+        "\u{25B3} Always allow",
+        "1.19.5 opencode.exe：权限框第二段 `title:\"Always allow\"`，三角符号与文字分开渲染；真机屏幕见 probe_tui_script 2026-11-14",
+    ),
     // ── 自动抽取的字面量 ──
     D::new(
         "literal:do you trust the files in this folder",

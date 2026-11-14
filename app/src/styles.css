@@ -5282,6 +5282,11 @@ button.scm-check-name:hover { text-decoration: underline; }
    把本次决定推到右端，形成「旁支在左、决定在右」的固定落点。 */
 .chat-approval-actions-side { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-8); margin-right: auto; }
 .chat-approval-actions-side:empty { display: none; }
+/* 持久放行的标签可能很长（规则原文、英文说明）：按钮最宽到卡片内宽，标签自己省略，不撑出卡片
+   （2026-11-14 量测：手机英文「Allow and remember (this project, local) · cargo test」超出卡片左右各 3px）。 */
+.chat-approval-actions-side { min-width: 0; max-width: 100%; }
+.chat-approval-actions-side > button.is-persistent { min-width: 0; max-width: 100%; }
+.chat-approval-persist-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 /* 「收起」进了左侧组，就得交出自己那份 margin-right:auto（原本靠它把自己顶到最左），
    否则组内两颗按钮被顶到行的两端。顺带对齐高度：is-inline 的 height:auto 特异性更高，
    不显式压回来它会比同行按钮矮一截。 */
@@ -5310,11 +5315,10 @@ button.scm-check-name:hover { text-decoration: underline; }
 /* Esc 两段式确认:第一下把拒绝按钮点亮为警示态并换文案「再按 Esc 确认拒绝」,
    第二下才真拒(见 ChatWindow 的 denyViaEsc)。 */
 .chat-approval button.is-deny.is-esc-armed { border-color: color-mix(in srgb, var(--cc-err) 55%, transparent); color: var(--cc-fail-text); background: color-mix(in srgb, var(--cc-err) 12%, transparent); }
-/* 屏幕识别卡在场时 composer 整体锁定:inert(由 ChatWindow 经 ref 设置)负责挡键盘
-   与焦点,这里管视觉降级 + 老 WebView 的指针兜底。不卸载的理由见 ChatWindow 注释。 */
-/* 降级只压工具行，不压文字区：整块 opacity .55 把那句告诉用户该做什么的提示一起压掉了
-   （实拍「终端正在等待选择，请先用上方卡片或终端页处理」深色 2.62:1、浅色 2.23:1；不锁时 5.88 / 5.66）。 */
-.chat-compose.is-locked { pointer-events: none; }
+/* 屏幕上的卡摆在眼前时（终端里正开着一个等按键的框）：工具行的控件逐个停用（见 chat/composerCardLock），
+   这里只管视觉降级。输入框不锁：草稿照常可写，所以不再对整块设 pointer-events:none，也不设 inert。 */
+/* 降级只压工具行，不压文字区：整块 opacity .55 会把占位里那句告诉用户该做什么的说明一起压掉
+   （实拍深色 2.62:1、浅色 2.23:1；不压时 5.88 / 5.66）。 */
 .chat-compose.is-locked > :not(textarea) { opacity: .55; }
 .chat-compose {
   /* 文档流内的 footer：margin 居中限宽、底部留 18px。position:relative 是给内部的
@@ -6694,13 +6698,16 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 /* ── 统一审批卡(ApprovalCard)──
    外壳/头部/徽章/左右动作组直接复用上面的 .chat-approval 一族;这里只放屏幕识别卡
    特有的部件:选择器选项列表、自定义回答输入行、pre-wrap 正文。卡片在场时 compose
-   锁定但不卸载(.chat-compose.is-locked),底部间距无需特判。 */
+   不卸载、输入框不禁用(工具行降级见 .chat-compose.is-locked),底部间距无需特判。 */
 .chat-approval-prewrap { white-space: pre-wrap; }
 /* 交互卡的「仅收起」:零副作用出口(不写 PTY)。× 形态绝对定位在卡片右上;文字形态
    (is-inline)混在动作行里,保持幽灵按钮的低调——它不是主要动作,不能与选项抢视觉。 */
 .chat-attention-dismiss { position: absolute; top: var(--sp-8); right: var(--sp-8); width: var(--icon-button-sm); height: var(--icon-button-sm); display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: var(--radius-sm); color: var(--cc-text-faint); background: transparent; font-size: var(--text-base); line-height: 1; cursor: pointer; }
 .chat-attention-dismiss:hover { color: var(--cc-text); background: var(--fill-selected); }
-.chat-attention-dismiss.is-inline { position: static; width: auto; height: auto; padding: var(--sp-6) var(--sp-10); font-size: var(--text-xs); margin-right: auto; }
+/* 文字形态回到文档流，但必须仍是定位元素（relative，不是 static）：手机页给每个按钮加了一块绝对定位的
+   外扩热区（mobile.css 的 button::after）。按钮是 static 时这块热区改以整张卡为参照，盖住了卡片正文——
+   手机上点选项、点命令、点复制，落点全是「仅收起」（2026-11-14 用 elementFromPoint 实测）。 */
+.chat-attention-dismiss.is-inline { position: relative; top: auto; right: auto; width: auto; height: auto; padding: var(--sp-6) var(--sp-10); font-size: var(--text-xs); margin-right: auto; }
 /* 收起后的折叠条(7C-2):挂在 overlay 底部、卡片的位置上,窄一条不挡消息。
    宽度与卡片同轴居中,视觉上就是那张卡压扁后的残留,点一下原样展开。 */
 .chat-attention-collapsed { width: min(var(--chat-col), calc(100% - 48px)); margin: 0 auto var(--sp-14); flex: 0 0 auto; padding: var(--sp-7) var(--sp-14); display: flex; align-items: center; gap: var(--sp-8); border: 0; border-radius: var(--radius-md); background: var(--cc-panel-raised); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--cc-warn-vivid) 70%, transparent), var(--shadow-sm); color: var(--cc-text-dim); font-size: var(--text-xs); text-align: left; cursor: pointer; }

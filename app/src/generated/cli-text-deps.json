@@ -87,14 +87,14 @@
           "needle": "type something",
           "note": "",
           "rule": "literal:type something",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:912"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:918"
         },
         {
           "legacy": false,
           "needle": "chat about this",
           "note": "",
           "rule": "literal:chat about this",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:916"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:922"
         },
         {
           "legacy": false,
@@ -610,21 +610,21 @@
           "needle": "This command requires approval",
           "note": "2.1.322 包内字面量",
           "rule": "attention:claude:command-approval",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:877"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:879"
         },
         {
           "legacy": false,
           "needle": "Do you want to proceed?",
           "note": "2.1.322 包内字面量",
           "rule": "attention:claude:command-approval",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:877"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:879"
         },
         {
           "legacy": false,
           "needle": "written up a plan and is ready to execute",
           "note": "2.1.227 实拍（插件注释）；2.1.322 包内原句仍在",
           "rule": "attention:claude:plan-approval",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:885"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs:889"
         },
         {
           "legacy": false,
@@ -886,28 +886,28 @@
           "needle": "thinking set to",
           "note": "2.5.1 kimi.EXE：`Thinking set to ` 2 处（/effort 成功后的回话）",
           "rule": "effort.confirm",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:598"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:602"
         },
         {
           "legacy": false,
           "needle": "unsupported thinking effort",
           "note": "2.5.1 kimi.EXE：`unsupported thinking effort` 1 处；同一规则里的 `cannot switch models while streaming` 0 处，留作旧版兼容",
           "rule": "effort.reject",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:599"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:603"
         },
         {
           "legacy": false,
           "needle": "cannot undo ",
           "note": "2.5.1 kimi.EXE formatUndoLimitMessage：`Cannot undo ` 4 处，后面的数字与原因是运行时拼的",
           "rule": "undo.reject",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:947"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:951"
         },
         {
           "legacy": false,
           "needle": "[image #",
           "note": "2.5.1 kimi.EXE：`[image #` 2 处（输入框里的贴图占位）；`[image:` 1 处是旧形态",
           "rule": "clipboard_image",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:722"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:726"
         },
         {
           "legacy": false,
@@ -921,7 +921,7 @@
           "needle": "run this command?",
           "note": "2.5.1 kimi.EXE：`Run this command?` 在审批问句表里（与 Write this file? 等并列）",
           "rule": "attention:kimi:command-approval",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:508"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:510"
         },
         {
           "legacy": true,
@@ -1399,14 +1399,14 @@
           "needle": "usage limit reached",
           "note": "0.65.0 bundle：`Usage limit reached`；高负载框 `We are currently experiencing high demand for ${model}.` 同规则",
           "rule": "attention:gemini:usage-limit",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:423"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:425"
         },
         {
           "legacy": false,
           "needle": "answer questions",
           "note": "0.65.0 bundle：ask_user 提问表单表头 `Answer Questions`",
           "rule": "attention:gemini:question",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:432"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:437"
         },
         {
           "legacy": false,
@@ -1463,21 +1463,21 @@
           "needle": "",
           "note": "运行时拼接：模式名与模型名在底栏分别渲染，中间点由模板插入；`build`、`plan` 在程序文件里是通用词，搜它们证明不了什么",
           "rule": "literal:build · ",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:397"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:418"
         },
         {
           "legacy": false,
           "needle": "",
           "note": "运行时拼接：同 build · ",
           "rule": "literal:plan · ",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:401"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:422"
         },
         {
           "legacy": false,
           "needle": "permission required",
           "note": "1.19.3 opencode.exe：三角符号 `\\u25b3` 与 `permission required` 分开渲染，后者 4 处",
           "rule": "literal:△ permission required",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:329"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:339"
         },
         {
           "legacy": false,
@@ -1596,14 +1596,21 @@
           "needle": "[image ",
           "note": "1.19.3 opencode.exe 内嵌 JS：`[image ${n+1}]`（与 `[pdf ${n+1}]` 并列的附件占位）",
           "rule": "clipboard_image",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:422"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:443"
         },
         {
           "legacy": false,
           "needle": "permission required",
           "note": "1.19.3 opencode.exe：`c(x,k(\"\\u25b3\")),c(j,k(\"permission required\"))`，三角符号与文字分开渲染",
           "rule": "attention:opencode:command-approval",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:328"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:338"
+        },
+        {
+          "legacy": false,
+          "needle": "always allow",
+          "note": "1.19.5 opencode.exe：权限框第二段 `title:\"Always allow\"`，三角符号与文字分开渲染；真机屏幕见 probe_tui_script 2026-11-14",
+          "rule": "attention:opencode:always-allow-confirm",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:346"
         },
         {
           "legacy": false,

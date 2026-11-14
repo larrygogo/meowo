@@ -321,15 +321,36 @@ impl AgentPlugin for Opencode {
     }
     /// 权限框（1.19.2 真机）：`△ Permission required` 标题 + 说明 + 横排选项
     /// `Allow once   Allow always   Reject`（⇆ 切换、Enter 确认）。插件桥上报的 permission.asked
-    /// 只是观察事件，GUI 代为决定只能走屏幕。横排选项没有编号文法，落到通用卡：确认 = Enter
-    /// = 默认焦点 Allow once、取消 = Esc = Reject 并停下当前回合（两键均经 probe_tui_script 实测）。
+    /// 只是观察事件，GUI 代为决定只能走屏幕。Enter = 默认焦点 Allow once、Esc = Reject 并停下
+    /// 当前回合（两键均经 probe_tui_script 实测）。
+    ///
+    /// 横排选项按 `OptionRow` 文法拆成按钮（1.19.5 程序文件内嵌 JS 取证，2026-11-14）：
+    /// 初始焦点在第一项，`right` 下一项、`return` 选中、`escape` = `reject`。此前横排选项不拆，
+    /// 对话页只有「确认 / 取消」两颗钮，「Allow always」没有入口。
+    ///
+    /// 选 Allow always 不直接生效，先进「△ Always allow」确认页（正文 `This will allow … until
+    /// OpenCode is restarted`，选项 `Confirm   Cancel`，Esc = Cancel 回到上一页）。1.19.5 真机
+    /// 走了一遍：`→ 回车` 进确认页、Esc 回权限框（焦点回到第一项）、再 Esc 拒绝
+    /// （tests/probe_tui_script.rs，2026-11-14）。确认页单列一条规则并标 `confirms`。
     fn attention_patterns(&self) -> &'static [crate::chat_ui::AttentionPattern] {
-        &[crate::chat_ui::AttentionPattern {
-            id: "opencode:command-approval",
-            patterns: &[r"△ permission required"],
-            last: true,
-            details: crate::chat_ui::AttentionDetails::None,
-        }]
+        &[
+            crate::chat_ui::AttentionPattern {
+                id: "opencode:command-approval",
+                patterns: &[r"△ permission required"],
+                last: true,
+                details: crate::chat_ui::AttentionDetails::OptionRow,
+                kind: crate::chat_ui::AttentionKind::Approval,
+                confirms: None,
+            },
+            crate::chat_ui::AttentionPattern {
+                id: "opencode:always-allow-confirm",
+                patterns: &[r"△ always allow"],
+                last: true,
+                details: crate::chat_ui::AttentionDetails::OptionRow,
+                kind: crate::chat_ui::AttentionKind::Choice,
+                confirms: Some("opencode:command-approval"),
+            },
+        ]
     }
     /// 运行中按 Enter 即排队：消息带 QUEUED 标记挂在输入区上方，当前回合结束后自动执行
     /// （probe_tui_script 实测，1.19.2）。

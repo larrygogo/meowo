@@ -194,6 +194,30 @@ pub enum AttentionDetails {
     /// 以 ● 焦点做相对移动，回车选中（gemini 0.65 AskUserDialog 源码取证，2026-11-12，未实拍）。
     /// 与 `FramedBox` 的区别在语义：这是提问，不是命令审批，前端出提问卡。
     FramedForm,
+    /// 横排选项行：标题行之下是正文，末行是 `Allow once   Allow always   Reject` 这样用多个空格
+    /// 隔开的选项，同行尾部带 `⇆ select  enter confirm` 按键说明。焦点只用底色表示，文本里
+    /// 认不出，按「初始焦点在第一项」从左往右做相对移动（→ 下一项、回车选中），Esc 等于末项。
+    /// opencode 1.19.2 真机屏幕 + 1.19.5 程序文件内嵌 JS 取证（权限框的 `left/right/return/escape`
+    /// 绑定，2026-11-14）。
+    OptionRow,
+}
+
+/// 屏幕上这条可操作提示**是什么事**。前端按它定卡片的标题、徽章和按钮形态，
+/// 不再从 `id` 的后缀猜（`gemini:usage-limit` 曾因此被说成「启动步骤」、徽章写「待批准」）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+pub enum AttentionKind {
+    /// 工具或命令在等用户放行。
+    Approval,
+    /// 计划写好了，等用户批准后执行。
+    Plan,
+    /// Agent 向用户提问。
+    Question,
+    /// CLI 自己要用户选一项才能继续（额度耗尽后重试还是停下、长会话怎么恢复），
+    /// 不是审批，也不是 Agent 的提问。
+    Choice,
 }
 
 /// 屏幕上**可操作**提示的识别规格：审批框、长会话确认这类需要用户当场决定的整句提示。
@@ -210,8 +234,8 @@ pub enum AttentionDetails {
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
 pub struct AttentionPattern {
-    /// 卡片标识（如 `"claude:command-approval"`）。前端按它决定卡片形态与按键语义，
-    /// 取值必须与前端已实现的分支一致，不能随意造新的。
+    /// 规则标识（如 `"claude:command-approval"`），只用来去重、写日志和对上漂移检查的清单。
+    /// 前端**不按它**决定卡片的标题、徽章或按钮：那些由 `kind` 与 `details` 决定。
     pub id: &'static str,
     /// JS 正则源码（不含分隔符与标志），**任一命中**即算命中该卡片。
     /// 前端统一以 `im`（+ `last` 时加 `g`）标志编译，故 `^`/`$` 按行匹配。
@@ -223,6 +247,12 @@ pub struct AttentionPattern {
     pub last: bool,
     /// 详情区的屏幕文法风格（见 [`AttentionDetails`]）。None = 不做结构化拆解。
     pub details: AttentionDetails,
+    /// 这条提示是什么事（见 [`AttentionKind`]）。卡片的标题、徽章由它决定。
+    pub kind: AttentionKind,
+    /// 这一屏是另一条规则里某个选项的二次确认页时，填那条规则的 id（opencode 选 Allow always
+    /// 后的「Always allow」确认页）。用户刚在 Meowo 的卡片上点了那个选项，Meowo 认出这一屏后
+    /// 替他按下确认，对话页上一次点击就完成；用户自己在终端里走到这一屏的，照常出卡。
+    pub confirms: Option<&'static str>,
 }
 
 /// 屏幕回显标记：TUI 状态栏上代表某个模式值的稳定文案片段（如 claude 的 "plan mode on"）。
