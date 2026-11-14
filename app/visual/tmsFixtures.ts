@@ -117,7 +117,10 @@ export function tmsChatMock(provider: TmsProvider, state: string, chat: (cmd: st
   const common = tmsCommonMock(provider);
   // ?modes=dim:value,dim:value 覆盖会话当前档。
   const overrides = Object.fromEntries((modes ?? "").split(",").filter(Boolean).map((pair) => pair.split(":") as [string, string]));
-  const agentModes = MODES[provider].map((mode) => ({ ...mode, value: overrides[mode.dimension] ?? mode.value }));
+  // sandbox：会话本来是「只读」，apply 返回 restarted（带沙箱重开）之后读回的是新档「必要时询问」。
+  let reopened = false;
+  const sandboxStart: Record<string, string> = state === "sandbox" ? { approval: "readOnly" } : {};
+  const modesNow = () => MODES[provider].map((mode) => ({ ...mode, value: overrides[mode.dimension] ?? (reopened ? undefined : sandboxStart[mode.dimension]) ?? mode.value }));
   return (cmd: string, args: unknown): unknown => {
     const hit = common(cmd, args);
     if (hit !== undefined) return hit;
@@ -132,7 +135,7 @@ export function tmsChatMock(provider: TmsProvider, state: string, chat: (cmd: st
           connected: state !== "open",
           model: MODEL_LABEL[provider],
           effort: provider === "kimi" ? "high" : null,
-          agentModes,
+          agentModes: modesNow(),
           contextPct: provider === "codex" || provider === "kimi" ? 18 : null,
           contextWindow: provider === "kimi" ? 262_144 : provider === "codex" ? 400_000 : null,
           items: (base.items as unknown[]).slice(0, -1),
@@ -168,6 +171,7 @@ export function tmsChatMock(provider: TmsProvider, state: string, chat: (cmd: st
         // OpenCode 只切 agent：CLI 换上该 agent 记住的模型，后端从底栏当场读回（outcome.model，真机第四轮问题 3）。
         if (state === "readback" && !(args as { model?: string | null }).model) return { kind: "applied", sessionId: CHAT_SESSION_ID, confirmed: true, reason: null, model: "Big Pickle" };
         // Codex 会话内切进 workspace-write 档、进程没带 Windows 沙箱参数：带参重开会话并说明原因。
+        if (state === "sandbox") reopened = true;
         if (state === "sandbox") return { kind: "restarted", sessionId: CHAT_SESSION_ID, confirmed: true, reason: "settings/sandbox_reopen" };
         if (state === "notnow") return { kind: "not_now", sessionId: CHAT_SESSION_ID, confirmed: false, reason: "settings/background_busy" };
         return { kind: "applied", sessionId: CHAT_SESSION_ID, confirmed: true, reason: null };

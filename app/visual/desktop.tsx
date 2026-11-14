@@ -327,6 +327,9 @@ async function boot(): Promise<React.ReactNode> {
         "island-alert-menubar": { sessionId: 1, kind: "approval", title: titles[0], project: "web-app", detail: null },
         "island-alert-error": { sessionId: 2, kind: "error", title: titles[3], project: "infrastructure-monorepo", detail: "API Error: 529 overloaded_error · the model is overloaded, please retry later" },
         "island-alert-done": { sessionId: 4, kind: "waiting", title: titles[2], project: "api", detail: lang === "en" ? "All 12 tests pass. Pushed to the remote branch." : "12 个测试全部通过，已经推到远端分支。" },
+        // 回合结束、排着只含终端项的切换（Kimi「计划：开」）：「等你回复」那条的说明行换成打开后切换（第七轮 R3，
+        // watch.rs 调 session_settings::terminal_reminder，只发这一条，不另弹）。
+        "island-alert-terminal": { sessionId: 4, kind: "waiting", title: titles[2], project: "api", detail: lang === "en" ? "Open this session to switch to \"Plan: on\"" : "打开这个会话后切换到「计划：开」" },
       };
       const alert = alerts[scene] ?? null;
       const compactStyle = scene.includes("focus") ? "focus" : scene.includes("minimal") ? "minimal" : "counts";
@@ -337,7 +340,7 @@ async function boot(): Promise<React.ReactNode> {
       const notch = scene.endsWith("-notch") ? { width: 200, height: 34 } : undefined;
       el = (
         <div style={alert ? { width: menubar ? 520 : 548, height: 68 } : { height: notch ? 34 : 46 }}>
-          <Island sessions={shown} compactStyle={compactStyle} alert={alert} alertQueued={alert && scene !== "island-alert-done" ? 2 : 0} usages={usages} onMeasure={noop} onActivate={noop} onOpenSession={noop} onPointerDownDrag={noop} onDismissAlert={noop} onDismissAllAlerts={noop} notch={notch} />
+          <Island sessions={shown} compactStyle={compactStyle} alert={alert} alertQueued={alert && scene !== "island-alert-done" && scene !== "island-alert-terminal" ? 2 : 0} usages={usages} onMeasure={noop} onActivate={noop} onOpenSession={noop} onPointerDownDrag={noop} onDismissAlert={noop} onDismissAllAlerts={noop} notch={notch} />
         </div>
       );
     }
