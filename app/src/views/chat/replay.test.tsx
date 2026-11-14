@@ -128,6 +128,8 @@ describe("五家回放：真实会话样本 → 解析 → 归并 → 渲染", (
     expect(patch.querySelector(".chat-tool-verb")?.textContent).toBe("编辑");
     expect(patch.querySelector(".chat-tool-delta")?.textContent).toMatch(/^\+\d+/);
     expect(patch.querySelectorAll(".chat-tool-udiff .chat-tool-line.is-add").length).toBeGreaterThan(0);
+    // 补丁不带行号：行号列收掉，不留一列空白。带行号的（gemini 用例里断言了行号 2348）不受影响。
+    expect(patch.querySelector(".chat-tool-udiff")?.classList.contains("is-unnumbered")).toBe(true);
     // 只新建文件的补丁是「写入」。
     expect(lines.some((line) => line.startsWith("工具[done]｜写入｜"))).toBe(true);
     // 一段脚本里先打补丁再跑命令：两行，各有各的回执。
@@ -163,6 +165,7 @@ describe("五家回放：真实会话样本 → 解析 → 归并 → 渲染", (
     expect(edits[0].querySelector(".chat-tool-delta")?.textContent).toBe("+3-3");
     // 回执带的 diff 有真实行号。
     expect(edits[0].querySelector(".chat-tool-udiff .chat-tool-ln")?.textContent).toBe("2348");
+    expect(edits[0].querySelector(".chat-tool-udiff")?.classList.contains("is-unnumbered")).toBe(false);
     expect(edits[1].getAttribute("data-state")).toBe("error");
     // 摘要不是半截 JSON。
     for (const tool of tools) expect(tool.querySelector(".chat-tool-summary")?.textContent ?? "").not.toMatch(/^\{/);

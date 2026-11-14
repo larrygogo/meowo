@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { useT } from "../../i18n";
+import { imeComposing } from "../../ime";
 import type { QuestionAnswerDraft, StructuredQuestion } from "./askUserQuestion";
 
 /** AskUserQuestion 的题面。多问题用 tab 切换——全部竖排会把卡片堆得比对话区还高，
@@ -122,9 +123,10 @@ export function QuestionPanels(props: QuestionPanelsProps) {
                 value={draft.custom}
                 onChange={(event) => props.onCustom(index, event.target.value)}
                 placeholder={t.chat.customAnswerPlaceholder}
-                // IME 合成中的 Enter 是选词，不是提交（同 composer 与新建面板的守卫）。
+                // 输入法合成中的回车是选词，不是提交。走公共守卫：WebKit 上确认候选词那一下回车
+                // 只有 keyCode 还是 229，只看合成标记会漏（见 ime.ts）。
                 onKeyDown={(event) => {
-                  if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+                  if (event.key !== "Enter" || imeComposing(event)) return;
                   event.preventDefault();
                   props.onSubmit?.();
                 }}

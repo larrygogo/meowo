@@ -7006,6 +7006,7 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .chat-tool-output .is-warn { color: var(--cc-warn-text); }
 /* 统一 diff（structuredPatch）：终端同款「行号 记号 代码」，增删交错带上下文。 */
 .chat-tool-udiff .chat-tool-ln { flex-basis: 4ch; }
+.chat-tool-udiff.is-unnumbered .chat-tool-line:not(.is-gap) .chat-tool-ln { display: none; }
 .chat-tool-mark { flex: 0 0 1ch; color: var(--cc-text-faint); user-select: none; }
 .chat-tool-udiff .chat-tool-line.is-del { background: color-mix(in srgb, var(--cc-err-vivid) 12%, transparent); }
 .chat-tool-udiff .chat-tool-line.is-del .chat-tool-mark, .chat-tool-udiff .chat-tool-line.is-del .chat-tool-ln { color: var(--cc-fail-text); }

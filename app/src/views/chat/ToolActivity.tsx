@@ -252,8 +252,11 @@ export function toolSummary(item: import("./shared").ToolUseItem, cwd: string | 
 export function UnifiedDiff({ hunks, lang }: { hunks: DiffHunk[]; lang: string | null }) {
   // hljs 懒加载：就绪前 highlightLines 给转义纯文本，到位后重渲染上色（见 highlight.ts）。
   useHighlighter(!!lang);
+  // 整段 diff 都不带行号（codex 的补丁只有上下文定位）时收掉行号列：留着是一列空白，
+  // 手机上白占四个字宽，正文更早折行（2026-11-14 截图自验）。
+  const unnumbered = hunks.every((hunk) => hunk.old_start <= 0 && hunk.new_start <= 0);
   return (
-    <div className="chat-tool-code chat-tool-udiff">
+    <div className={"chat-tool-code chat-tool-udiff" + (unnumbered ? " is-unnumbered" : "")}>
       {hunks.map((hunk, hunkIndex) => {
         const html = highlightLines(hunk.lines.map((line) => line.slice(1)), lang);
         let oldNo = hunk.old_start;

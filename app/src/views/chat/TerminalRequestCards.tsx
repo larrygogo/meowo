@@ -6,6 +6,7 @@
 
 import type { ReactNode, RefObject } from "react";
 import { useT } from "../../i18n";
+import { imeComposing } from "../../ime";
 import type { TerminalAttention, TerminalAttentionOption } from "../../terminalAttention";
 import { ApprovalCard } from "./ApprovalCard";
 import { cardBadge, cardKindOfAttention, cardTitle, type CardKind } from "./requestCard";
@@ -57,8 +58,8 @@ export function TerminalQuestionCard({ attention, kind, live, customText, return
       {options.filter((option) => option.kind === "input").map((option) => (
         <div className="chat-approval-custom" key={option.input}>
           <input value={customText} onChange={(event) => onCustomText(event.target.value)} placeholder={t.chat.customAnswerPlaceholder}
-            // 输入法合成中的回车是选词，不是提交。
-            onKeyDown={(event) => { if (event.key === "Enter" && !event.nativeEvent.isComposing) onCustomSubmit(option); }} />
+            // 输入法合成中的回车是选词，不是提交。走公共守卫（ime.ts）：WebKit 上确认候选词那一下只有 keyCode 229。
+            onKeyDown={(event) => { if (event.key === "Enter" && !imeComposing(event)) onCustomSubmit(option); }} />
           <button type="button" disabled={!live || !customText.trim() || !option.input} onClick={() => onCustomSubmit(option)}>{t.chat.addCustomAnswer}</button>
         </div>
       ))}
