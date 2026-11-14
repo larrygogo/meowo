@@ -47,18 +47,6 @@ export type SettingsRequest = {
   terminal?: TerminalAction[];
 };
 
-/** 刚切成功的模型（真机第四轮问题 2）：会话文件里的「当前模型」取最近一条回复，切完还没有新回复时
- *  它仍是旧模型；轮询合并、再切模式时都不能拿它把刚切的值盖回去。`replyModel` 是切换那一刻轮询报的
- *  模型；之后报的仍是它（或报不出），就以刚切的为准；报出别的模型（有了新回复）才以回复为准。 */
-export type ModelPin = { sessionId: number; label: string; replyModel: string | null };
-
-/** 轮询报的模型与钉住的值合并：返回该显示的模型，以及钉子还要不要留着。 */
-export function pinnedModel(pin: ModelPin | null, sessionId: number, polled: string | null | undefined): { model: string | null | undefined; keep: boolean } {
-  if (!pin || pin.sessionId !== sessionId) return { model: polled, keep: false };
-  if (!polled || polled === pin.replyModel) return { model: pin.label, keep: true };
-  return { model: polled, keep: false };
-}
-
 /** 一条要往终端里打字的切换（运行中排队用，参数原样存，执行时不再查表）。 */
 export type TerminalAction =
   | { kind: "mode"; dimension: string; value: string; inputs: { data: string; submit: boolean }[]; cycleInput?: string | null; markers?: ModeScreenMarker[] }
@@ -124,8 +112,6 @@ export interface SessionSettingsDeps {
   /** 读 TUI 输入框；`move` 为真且有字时搬进对话页输入框（要重启时 Meowo 先把用户内容保住），
    *  不重启的路线只读不搬，免得对话页与 TUI 各一份。 */
   rescueDraft: (move: boolean) => Promise<DraftRescue>;
-  /** 切模型成功后钉住新值（见 ModelPin）。 */
-  pinModel?: (pin: ModelPin) => void;
   /** 执行一条排着的终端项（对话页照原样打字切换，见 SettingsRequest.terminal）。 */
   applyTerminal?: (action: TerminalAction) => Promise<void>;
   /** 搬了草稿最后却没重启（排进队列、被拒、出错）：把搬进对话页的那份撤回，TUI 里原稿还在，免得发两遍。 */
@@ -180,10 +166,6 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
   const runningRef = useRef(false);
 
   const optimistic = (request: SettingsRequest) => {
-    if (request.model) {
-      const { sessionId, history } = depsRef.current;
-      depsRef.current.pinModel?.({ sessionId, label: request.model.label, replyModel: history?.model ?? null });
-    }
     depsRef.current.setHistory((current) => {
       if (!current) return current;
       const agentModes = [...current.agentModes];
@@ -212,45 +194,69 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
 
   const apply = async (request: SettingsRequest) => {
     const actions = request.terminal ?? [];
-    if (actions.length > 0) {
-      // 终端项（运行中排进来的 Kimi /plan、Claude /model 等）：回合结束照原样执行，再做其余经后端的部分。
-      const { sessionId } = depsRef.current;
-      if (runningRef.current) { await enqueue(sessionId, request); return; }
-      runningRef.current = true;
-      setApplying(true);
-      try {
-        for (const action of actions) await attempt(() => depsRef.current.applyTerminal?.(action), undefined);
-      } finally {
-        runningRef.current = false;
-        setApplying(false);
-      }
-      const rest = withoutTerminal(request);
-      if (!rest || depsRef.current.sessionId !== sessionId) return;
-      await applyBackend(rest);
-      return;
-    }
-    await applyBackend(request);
-  };
-
-  const applyBackend = async (request: SettingsRequest) => {
+    if (actions.length === 0) { await applyBackend(request); return; }
+    // 混合条目：先做经后端的部分（重启 / 会话服务 / 模型），再做终端项（Kimi /plan、Claude /model 等），
+    // 与宿主执行线程同一顺序（最终做空 P6）。后端那部分又排进了队列（Lead 在等、服务没就绪……），终端项
+    // 跟着一起等，不抢先打字。
     const { sessionId } = depsRef.current;
     if (runningRef.current) { await enqueue(sessionId, request); return; }
+    const rest = withoutTerminal(request);
+    const terminalPart: SettingsRequest = {
+      label: request.label,
+      terminal: actions,
+      modes: Object.fromEntries(actions.flatMap((action) => action.kind === "mode" ? [[action.dimension, action.value]] : [])),
+    };
+    if (rest && !(await applyBackend(rest))) {
+      if (depsRef.current.sessionId === sessionId) await enqueue(sessionId, terminalPart);
+      return;
+    }
+    if (depsRef.current.sessionId !== sessionId) return;
+    runningRef.current = true;
+    setApplying(true);
+    try {
+      // 刚带参重启过的话新 TUI 可能还没起来：等输入框认得出再打字（最多约 10 秒）。
+      if (!(await composerReady())) {
+        depsRef.current.setSendError(t.chat.settingsComposerUnknown);
+        return;
+      }
+      for (const action of actions) await attempt(() => depsRef.current.applyTerminal?.(action), undefined);
+    } finally {
+      runningRef.current = false;
+      setApplying(false);
+    }
+  };
+
+  /** 终端输入框认得出（空或有字都算）就算就绪。 */
+  const composerReady = async () => {
+    for (let attempt_ = 0; attempt_ < 20; attempt_ += 1) {
+      const state = await attempt<DraftRescue>(() => depsRef.current.rescueDraft(false), "unknown");
+      if (state !== "unknown") return true;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    return false;
+  };
+
+  /** 经后端切。返回 false 表示这次没做成、已排进队列等下一次（宿主 queued / not_now 排队 / 等就绪）。 */
+  const applyBackend = async (request: SettingsRequest): Promise<boolean> => {
+    const { sessionId } = depsRef.current;
+    if (runningRef.current) { await enqueue(sessionId, request); return false; }
     runningRef.current = true;
     setApplying(true);
     let moved = false;
     let untouched = false;
+    let deferred = false;
     try {
       const restarting = depsRef.current.restarts(request);
       if (restarting && depsRef.current.firstTurnPending) {
         depsRef.current.setSendError(t.chat.settingsFirstTurn);
-        return;
+        return true;
       }
       // 重启会杀掉 TUI 进程：先把输入框里没发的字搬进对话页；认不出输入框就不重启。
       // 不重启的路线（会话服务 / TUI 对话框）不搬：原稿留在 TUI 里，对话框路线见字就不动手（做空 N9）。
       const rescue = await attempt<DraftRescue>(() => depsRef.current.rescueDraft(restarting), "unknown");
       if (restarting && rescue !== "empty" && rescue !== "moved") {
         depsRef.current.setSendError(t.chat.settingsComposerUnknown);
-        return;
+        return true;
       }
       moved = rescue === "moved";
       const composerEmpty = rescue === "empty" || rescue === "moved";
@@ -269,15 +275,15 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
         tui,
       });
       untouched = PROCESS_UNTOUCHED.has(outcome.kind);
-      if (depsRef.current.sessionId !== sessionId) return;
+      if (depsRef.current.sessionId !== sessionId) return true;
       switch (outcome.kind) {
         case "applied":
         case "restarted":
           optimistic(request);
-          // 只切 agent 时 OpenCode 换成了该 agent 记住的模型：后端当场读回，立刻显示并钉住（真机第四轮问题 3）。
+          // 只切 agent 时 OpenCode 换成了该 agent 记住的模型：后端当场读回并钉在宿主存档里（之后的快照、
+          // 菜单同步都以它为准，最终做空 P2），这里先立刻显示。
           if (outcome.model && !request.model) {
             const readBack = outcome.model;
-            depsRef.current.pinModel?.({ sessionId, label: readBack, replyModel: depsRef.current.history?.model ?? null });
             depsRef.current.setHistory((current) => current && current.sessionId === sessionId ? { ...current, model: readBack } : current);
           }
           // TUI 对话框路线：回车后底栏没认出新值（终端太窄被截断等）不算失败，下一条消息再核对。
@@ -302,25 +308,27 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
         case "queued":
           // 宿主自己收进了队列、标了等什么（Lead 在等关卡答复 / 会话没在运行、打开后经服务补设）；
           // 把这次请求合并进去补上提示名，合并结果带着宿主标的 waitFor。
+          deferred = true;
           await enqueue(sessionId, request);
           break;
         case "not_now":
           // 服务端复核说此刻不能动：刚开始跑一轮的排到这一轮之后；服务 / TUI 没就绪的交给宿主等就绪；
           // 其余（输入框有字等）说原因。
-          if (mustDefer(depsRef.current.tone)) await enqueue(sessionId, request);
-          else if (RETRY_WHEN_READY.has(outcome.reason ?? "")) await enqueue(sessionId, { ...request, waitFor: "ready" });
+          if (mustDefer(depsRef.current.tone)) { deferred = true; await enqueue(sessionId, request); }
+          else if (RETRY_WHEN_READY.has(outcome.reason ?? "")) { deferred = true; await enqueue(sessionId, { ...request, waitFor: "ready" }); }
           else depsRef.current.setSendError(formatBackendError(outcome.reason ?? "", t.locale));
           break;
       }
     } catch (error) {
       // 会话服务还没握手（刚打开的 Codex 等）：放回宿主队列等就绪，不丢这次选择（做空 R5）。
-      if (typeof error === "string" && RETRY_WHEN_READY.has(error)) await enqueue(sessionId, { ...request, waitFor: "ready" });
+      if (typeof error === "string" && RETRY_WHEN_READY.has(error)) { deferred = true; await enqueue(sessionId, { ...request, waitFor: "ready" }); }
       else if (depsRef.current.sessionId === sessionId) depsRef.current.setSendError(formatBackendError(error, t.locale));
     } finally {
       if (moved && untouched && depsRef.current.sessionId === sessionId) depsRef.current.undoRescue?.();
       runningRef.current = false;
       setApplying(false);
     }
+    return !deferred;
   };
 
   /** 用户选了一项：能做就做；在跑、有审批、上一次还在路上的，排到这一轮之后。 */

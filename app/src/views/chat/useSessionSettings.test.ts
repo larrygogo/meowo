@@ -30,7 +30,7 @@ vi.mock("../../api", () => ({
   },
 }));
 
-import { mergeRequests, mustDefer, pinnedModel, useSessionSettings, type SessionSettingsDeps } from "./useSessionSettings";
+import { mergeRequests, mustDefer, useSessionSettings, type SessionSettingsDeps } from "./useSessionSettings";
 import type { ChatHistory } from "../../api";
 
 const history = { agentModes: [{ dimension: "permission", value: "manual" }], model: "K3" } as unknown as ChatHistory;
@@ -201,31 +201,22 @@ describe("会话里切模型 / 模式的分派", () => {
     await waitFor(() => expect(result.current.notice).toBeNull());
   });
 
-  /// 真机第四轮问题 2：切完模型还没有新回复时，轮询报的旧模型不能盖回刚切的值；有了新回复且模型
-  /// 不同才以回复为准。
-  it("刚切的模型在新回复前不被轮询盖回", async () => {
-    const pinModel = vi.fn();
-    apply.mockResolvedValue({ kind: "restarted", sessionId: 7, confirmed: false, reason: null });
-    const { result } = renderHook(() => useSessionSettings(deps({ pinModel })));
-    await act(async () => result.current.request({ model: { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro" }, label: "Gemini 2.5 Pro" }));
-    expect(pinModel).toHaveBeenCalledWith({ sessionId: 7, label: "Gemini 2.5 Pro", replyModel: "K3" });
-    const pin = pinModel.mock.calls[0][0];
-    expect(pinnedModel(pin, 7, "K3")).toEqual({ model: "Gemini 2.5 Pro", keep: true });
-    expect(pinnedModel(pin, 7, null)).toEqual({ model: "Gemini 2.5 Pro", keep: true });
-    expect(pinnedModel(pin, 7, "gemini-2.5-pro")).toEqual({ model: "gemini-2.5-pro", keep: false });
-    expect(pinnedModel(pin, 8, "K3")).toEqual({ model: "K3", keep: false });
-  });
-
   /// 真机第四轮问题 3：OpenCode 只切 agent，后端当场读回模型，界面立刻显示并钉住。
   it("只切 agent 后显示读回的模型", async () => {
-    const pinModel = vi.fn();
     const setHistory = vi.fn();
     apply.mockResolvedValue({ kind: "applied", sessionId: 7, confirmed: true, reason: null, model: "Fake One" });
-    const { result } = renderHook(() => useSessionSettings(deps({ pinModel, setHistory, restarts: () => false })));
+    const { result } = renderHook(() => useSessionSettings(deps({ setHistory, restarts: () => false })));
     await act(async () => result.current.request({ modes: { agent: "plan" }, label: "计划" }));
-    expect(pinModel).toHaveBeenCalledWith({ sessionId: 7, label: "Fake One", replyModel: "K3" });
     const update = setHistory.mock.calls.at(-1)![0] as (h: unknown) => { model: string };
     expect(update({ sessionId: 7, model: "Fake Two", agentModes: [] }).model).toBe("Fake One");
+    // 最终做空 P2：接着打开菜单（syncLive）。宿主 live 已按钉子给出读回的模型，显示不退回旧值，
+    // 写回存档的也是它。
+    live.mockResolvedValue({ model: "fake/fake-model", effort: null, modes: [{ dimension: "agent", value: "plan" }] });
+    setHistory.mockClear();
+    await act(async () => result.current.syncLive());
+    const synced = setHistory.mock.calls.at(0)![0] as (h: unknown) => { model: string };
+    expect(synced({ sessionId: 7, model: "Fake Two", agentModes: [] }).model).toBe("fake/fake-model");
+    await waitFor(() => expect(record).toHaveBeenCalledWith(7, "fake/fake-model", expect.objectContaining({ agent: "plan" })));
   });
 
   /// leader 2026-11-14：混合排队宿主先做经后端的部分（模型），终端项留给对话页；拆分后提示仍是同一句。
@@ -248,6 +239,29 @@ describe("会话里切模型 / 模式的分派", () => {
     rerender();
     await waitFor(() => expect(applyTerminal).toHaveBeenCalledWith(action));
     expect(apply).not.toHaveBeenCalled();
+  });
+
+  /// 最终做空 P6：对话页执行混合条目与宿主同一顺序——先后端（重启 / 服务 / 模型），再终端项；后端那部分
+  /// 又排进队列时终端项跟着等，不抢先打字。
+  it("混合条目先后端、再终端项；后端排队时终端项一起等", async () => {
+    const order: string[] = [];
+    const action = { kind: "mode" as const, dimension: "work", value: "plan", inputs: [{ data: "/plan on", submit: true }], cycleInput: null, markers: [] };
+    const applyTerminal = vi.fn(async () => { order.push("terminal"); });
+    apply.mockImplementation(async () => { order.push("backend"); return { kind: "restarted", sessionId: 7, confirmed: false, reason: null }; });
+    const { result } = renderHook(() => useSessionSettings(deps({ applyTerminal })));
+    await act(async () => result.current.request({ model: { id: "kimi-code/k3", label: "K3" }, modes: { work: "plan" }, label: "计划：开", terminal: [action] }));
+    await waitFor(() => expect(order).toEqual(["backend", "terminal"]));
+    expect(apply.mock.calls[0][0].modes).toEqual({});
+    // 后端被宿主收进队列（Lead 在等）：终端项不执行，跟着排队。
+    order.length = 0;
+    apply.mockImplementation(async (args: { sessionId: number }) => {
+      order.push("backend");
+      queue.set(args.sessionId, { modes: {}, model: { id: "kimi-code/k3" }, waitFor: "lead" });
+      return { kind: "queued", sessionId: 7, confirmed: false, reason: "settings/lead_waiting" };
+    });
+    await act(async () => result.current.request({ model: { id: "kimi-code/k3", label: "K3" }, modes: { work: "plan" }, label: "计划：开", terminal: [action] }));
+    await waitFor(() => expect(queue.get(7)).toMatchObject({ waitFor: "lead", terminal: [action], modes: { work: "plan" } }));
+    expect(order).toEqual(["backend"]);
   });
 
   it("服务没就绪时交给宿主等就绪", async () => {
