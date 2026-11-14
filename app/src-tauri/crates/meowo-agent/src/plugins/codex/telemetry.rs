@@ -630,9 +630,11 @@ fn parse_transcript_events(line: &str) -> Vec<TranscriptEvent> {
 ///
 /// 它不上屏（命令与输出已由主链的 exec 脚本承载，见 [`completed_item_events`]），但脚本只打印
 /// `r.output` 时主链回执里没有退出码，要靠它补（规则见 `transcript::ExitJoin`）。
-/// 本机 0.148 起的 30 份 rollout、2837 条记录（2026-11-14）：`command` 恒为
-/// `[shell, "-Command", 命令原文]`，`exit_code` 与 `duration` 恒有；较新的版本在 payload 上
-/// 另有 `started_at_ms`。只按需要的字段反序列化——`aggregated_output` 可以有几百 KB。
+/// 本机 0.148 起的 30 份 rollout、2837 条记录（2026-11-14）：`command` 是
+/// `[shell, "-Command", 命令原文]`（2702 条）或 `[shell, "-NoProfile", "-Command", 命令原文]`
+/// （135 条，调用带 `login:false` 时），命令原文恒在最后一项；`exit_code` 与 `duration` 恒有；
+/// 较新的版本在 payload 上另有 `started_at_ms`。只按需要的字段反序列化——`aggregated_output`
+/// 可以有几百 KB。
 fn command_exit(line: &str) -> Option<crate::transcript::CommandExit> {
     #[derive(serde::Deserialize)]
     struct Line<'a> {
@@ -687,10 +689,22 @@ fn command_exit(line: &str) -> Option<crate::transcript::CommandExit> {
         Some(finished - duration.secs * 1000 - duration.nanos / 1_000_000)
     });
     Some(crate::transcript::CommandExit {
-        command: command_text(&item.command)?,
+        command: executed_command(&item.command)?,
         exit_code,
         started_ms,
     })
+}
+
+/// CommandExecution 的 `command` 数组里真正执行的那段命令原文：紧跟在 shell 的「执行这段命令」
+/// 开关（`-Command` / `-lc` / `-c` / `/c`）后面的最后一项。认不出这个形态就不取——拿整个数组
+/// 拼起来的串去和调用实参比只会对不上，不如明说拿不到。
+fn executed_command(value: &serde_json::Value) -> Option<String> {
+    let parts = value.as_array()?;
+    let (script, head) = parts.split_last()?;
+    let flag = head.last()?.as_str()?;
+    (head.len() >= 2 && matches!(flag, "-lc" | "-c" | "-Command" | "/c"))
+        .then(|| script.as_str().map(str::to_string))
+        .flatten()
 }
 
 #[cfg(test)]
@@ -1518,6 +1532,21 @@ mod tests {
             command_exit(&value.to_string()).unwrap().started_ms,
             Some(1_794_493_056_174)
         );
+        // 调用带 login:false 时 shell 多一个 -NoProfile（本机实拍 135 条）：命令原文仍是最后一项。
+        let mut no_profile: serde_json::Value = serde_json::from_str(line).unwrap();
+        no_profile["payload"]["item"]["command"] = serde_json::json!([
+            "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+            "-NoProfile",
+            "-Command",
+            "Resolve-DnsName github.com -ErrorAction Continue | Select-Object Name,Type,IPAddress"
+        ]);
+        assert_eq!(
+            command_exit(&no_profile.to_string()).unwrap().command,
+            "Resolve-DnsName github.com -ErrorAction Continue | Select-Object Name,Type,IPAddress"
+        );
+        // 认不出的形态（没有「执行这段命令」的开关）不取。
+        no_profile["payload"]["item"]["command"] = serde_json::json!(["git", "status"]);
+        assert_eq!(command_exit(&no_profile.to_string()), None);
         // 没有退出码（还没跑完就落的记录）不算。
         value["payload"]["item"]["exit_code"] = serde_json::Value::Null;
         assert_eq!(command_exit(&value.to_string()), None);
