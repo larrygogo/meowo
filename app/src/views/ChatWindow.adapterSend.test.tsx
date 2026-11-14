@@ -406,3 +406,28 @@ describe("ChatWindow 适配回归", () => {
     expect(box().value).toBe("不应该替我选择模型");
   });
 });
+
+// 用户手机实拍：Kimi 新会话停在「已就绪，发第一条消息后开始」（首条消息前不建会话，还是临时负 id），
+// 发第一句报「sqlite error: Query returned no rows」、消息退回输入框。发送前重取状态时拿临时 id 读了
+// 会话记录，库里没有这一行。兄弟场景：其余读记录的入口（首屏刷新、预取、翻页）都已先挡 id <= 0。
+describe("临时会话发第一条消息", () => {
+  const { setup, box, writes } = adapter;
+  it("不读会话记录，正文和回车照常写进终端", async () => {
+    const base = setup(-7, "kimi", "waiting");
+    invoke.mockImplementation((command, args) => {
+      if (command === "get_chat_history" && Number(args?.sessionId) < 0) return Promise.reject("sqlite error: Query returned no rows");
+      if (command === "managed_terminal_pending_launch") return Promise.resolve({ provider: "kimi", cwd: "C:/repo" });
+      if (command === "managed_terminal_frame") return Promise.resolve(emptyComposerFrame("kimi"));
+      return base(command, args);
+    });
+    render(<ChatWindow />);
+    await waitFor(() => expect(invoke.mock.calls.some(([command]) => command === "agent_chat_ui")).toBe(true));
+    await act(async () => {});
+    fireEvent.change(box(), { target: { value: "本地还有什么没有推送的" } });
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await waitFor(() => expect(writes(-7)).toContain("\r"), { timeout: 3_000 });
+    expect(writes(-7).some((text) => String(text).includes("本地还有什么没有推送的"))).toBe(true);
+    expect(invoke.mock.calls.some(([command, args]) => command === "get_chat_history" && Number(args?.sessionId) < 0)).toBe(false);
+    expect(document.body.textContent).not.toMatch(/no rows/);
+  });
+});

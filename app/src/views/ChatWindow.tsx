@@ -3296,6 +3296,16 @@ export function ChatWindow() {
         await Promise.race([first.done, new Promise((resolve) => window.setTimeout(resolve, 60_000))]);
       }
       const currentSubmit = async () => {
+        // 临时负 id（Kimi 等首条消息前不建会话，hook 还没认领）库里没有会话行，读记录必报
+        // 「Query returned no rows」，第一条消息永远发不出去（用户手机实拍）。它也没有回合可排队，
+        // 状态只能看屏幕：发送守卫已按屏幕挡过等交互的情形，这里只按当前页的状态选提交键。
+        if (sid <= 0) {
+          const running = sid === activeSessionRef.current && toneRef.current === "running";
+          const key = running ? chatUi?.queue_input : "\r";
+          if (!key) throw new Error(t.chat.busySendUnavailable);
+          outgoingStore.settle(outgoingId, { kind: running ? "queued" : "echo" });
+          return key;
+        }
         // 读发起会话而非当前页：排队期间可能切了会话，toneRef此时属于另一条会话。
         // 只要状态字段：同一会话用已知的尾部偏移做增量读，不整段重读（长会话 transcript 可达几十 MB，
         // 每次发送全量解析会卡住发送，做空指出）；排队期间切走了才退回整读。
