@@ -24,6 +24,10 @@ export type IslandUsageMeta = { fetchedAt: number | null; failed: boolean };
 /** 账号可能变化的事件：登录完成、安装完成。岛常驻，原来只在挂载时读一次账号，之后新登录的
  *  provider 进不了刷新列表，要重启 Meowo 才出额度（backlog 仍存在 #1）。 */
 export const USAGE_ACCOUNT_EVENTS = ["login-done", "install-done"] as const;
+/** 这家当前用的账号变了（切换、删除、并回默认），payload 是 provider id。后端此刻已清掉它的用量缓存。
+ *  岛上那份数字属于上一个账号：立刻丢掉并重取，不等五分钟的定时刷新（用户实拍 2026-11-15：
+ *  「切换账号之后灵动岛上的用量没有刷新成新的账号的」）。 */
+export const ACTIVE_PROFILE_CHANGED = "active-profile-changed";
 
 export function useIslandUsage(): { usage: Record<string, ProviderUsage>; meta: Record<string, IslandUsageMeta> } {
   const [usage, setUsage] = useState<Record<string, ProviderUsage>>({});
@@ -33,6 +37,18 @@ export function useIslandUsage(): { usage: Record<string, ProviderUsage>; meta: 
   const bump = useCallback(() => setGeneration((g) => g + 1), []);
   useTauriEvent(USAGE_ACCOUNT_EVENTS[0], bump);
   useTauriEvent(USAGE_ACCOUNT_EVENTS[1], bump);
+  useTauriEvent<string>(ACTIVE_PROFILE_CHANGED, ({ payload: provider }) => {
+    // 先丢旧值再重取：留着它，新账号就顶着旧账号的额度，取数失败时还会被标成「缓存」继续显示。
+    const drop = <T,>(m: Record<string, T>) => {
+      if (!(provider in m)) return m;
+      const next = { ...m };
+      delete next[provider];
+      return next;
+    };
+    setUsage(drop);
+    setMeta(drop);
+    bump();
+  });
   useEffect(() => {
     let cancelled = false;
     const timers: number[] = [];

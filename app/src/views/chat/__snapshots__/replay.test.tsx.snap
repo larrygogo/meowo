@@ -59,10 +59,11 @@ exports[`五家回放：真实会话样本 → 解析 → 归并 → 渲染 > co
 工具[done]｜中断子任务｜lead_design_one｜｜{"previous_status":"running"}
 助手｜这需要把范围往基础兼容性上扩。Lead 的完整闭环依赖会话恢复、输入、中断、审批和状态识别；这些链路不稳，Lead 也做不完整。 我会把“其他 …
 用户｜继续
-过程块｜已运行 2 条命令 · 执行了 1 次工具调用 · 已编辑 1 处（1 失败） · 1 次已中断 · 47m18s
+过程块｜已运行 3 条命令（1 失败） · 执行了 1 次工具调用 · 已编辑 1 处（1 失败） · 1 次已中断 · 47m18s
 工具[done]｜运行｜Get-Content .lead/20261112-lead-providers/gate.json -Raw; git -C target/…｜｜
 工具[done]｜等待结果｜g9:1｜｜{ "answer": { "choice": "managed_sessions", … 还有 13 行
 工具[done]｜运行｜Get-Content app/src-tauri/CLAUDE.md -Raw; rg -n "managed_conversation|Ma…｜｜
+工具[error]｜运行｜$env:CARGO_TARGET_DIR='C:\\Users\\user\\Desktop\\workspace\\meowo\\app\\src-tau…｜｜退出码 101：warn: could not canonicalize path C:\\Users\\user
 工具[error]｜编辑｜.lead/20261112-lead-providers/gate.json, .lead/20261112-lead-providers/d…｜+4-2｜
 工具[interrupted]｜运行｜$env:CARGO_TARGET_DIR='C:\\Users\\user\\Desktop\\workspace\\meowo\\target\\prov…｜｜已中断
 助手｜我按关卡 B 的推荐路径继续：接受 Meowo 托管会话，保留可安全接入的原生 CLI 入口；现有会话需要显式交接，绝不双写。先把这一决策落盘，…

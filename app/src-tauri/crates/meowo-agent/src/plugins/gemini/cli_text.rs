@@ -9,6 +9,13 @@ use crate::cli_text::CliTextDep as D;
 
 const FRAMED: &str = "0.65.0 bundle 里有这句；框线 `│` 是运行时画的边框，去掉框线再搜";
 
+// 审批模式底栏的按键提示在 0.68.0 改成运行时格式化（见 mod.rs 的 mode_controls），整句在 bundle 里
+// 0 处。每条标记于是声明三样：老版本的整句（旧版兼容）、新版本的模板（静态文字与它拼进去的那个
+// 键位命令在同一个 interactiveCli chunk 里挨着）、默认键位（键位表在另一个 chunk，键与命令挨着）。
+// 模板与键位表分在两个文件，近邻按单个文件算，所以分两条。样例第一行是屏幕原文，其后是 bundle 里
+// 对应的那行源码原文——近邻片段要出现在样例里，命令名只在源码里有。
+const CYCLE_KEY: &str = "0.68.0 bundle keyBindings：`[\"app.cycleApprovalMode\", [new KeyBinding(\"shift+tab\")]]`，键与命令相距 66 字节（三个 chunk 各一份）；formatKeyBinding 把它格式化成 `Shift+Tab`。0.65.0 未核对（本机已无该版本）";
+
 pub(super) static DEPS: &[D] = &[
     // ── 输入框规格（composer）──
     D::new(
@@ -84,6 +91,70 @@ pub(super) static DEPS: &[D] = &[
         "",
         "Do you trust the contents of this directory?",
         "通用信任表（chat_ui.rs）里的句子，给别的 CLI 用；gemini 0.65.0 的信任页是 `Do you trust the files in this folder`（能搜到），这句 0 处",
+    ),
+    // ── 审批模式底栏（mode_controls 的屏幕标记）──
+    D::new(
+        "literal:shift+tab to accept edits",
+        "shift+tab to accept edits",
+        "Shift+Tab to accept edits",
+        "0.65.0 bundle 里是整句；0.68.0 里 0 处（按键提示改成运行时格式化）",
+    )
+    .legacy(),
+    D::near(
+        "literal:shift+tab to accept edits",
+        &[" to accept edits", "app.cycleApprovalMode"],
+        1600,
+        "Shift+Tab to accept edits\nconst cycleHint = formatCommand(\"app.cycleApprovalMode\" /* CYCLE_APPROVAL_MODE */);\nsubText = `${cycleHint} to accept edits`;",
+        "0.68.0 真机 2026-11-14（composer-frames gemini-0.68-g2-0）：default 档底栏。bundle ApprovalModeIndicator.tsx 的模板 `${cycleHint} to accept edits` 每个 interactiveCli chunk 1 处，离 formatCommand(\"app.cycleApprovalMode\") 782 字节",
+    ),
+    D::near(
+        "literal:shift+tab to accept edits",
+        &["\"shift+tab\"", "app.cycleApprovalMode"],
+        140,
+        "Shift+Tab to accept edits\n[\"app.cycleApprovalMode\" /* CYCLE_APPROVAL_MODE */, [new KeyBinding(\"shift+tab\")]]",
+        CYCLE_KEY,
+    ),
+    D::new(
+        "literal:yolo ctrl+y",
+        "yolo ctrl+y",
+        "YOLO Ctrl+Y",
+        "0.65.0 bundle 里是整句；0.68.0 里 0 处（按键提示改成运行时格式化）",
+    )
+    .legacy(),
+    D::near(
+        "literal:yolo ctrl+y",
+        &["\"yolo\"", "app.toggleYolo"],
+        1000,
+        "YOLO Ctrl+Y\nconst yoloHint = formatCommand(\"app.toggleYolo\" /* TOGGLE_YOLO */);\ntextContent = \"YOLO\";\nsubText = yoloHint;",
+        "0.68.0 真机 2026-11-14（composer-frames gemini-0.68-g7-2-yolo）：yolo 档底栏。bundle ApprovalModeIndicator.tsx 里 `textContent = \"YOLO\"` 离 formatCommand(\"app.toggleYolo\") 最远的一个 chunk 是 509 字节",
+    ),
+    D::near(
+        "literal:yolo ctrl+y",
+        &["\"ctrl+y\"", "app.toggleYolo"],
+        100,
+        "YOLO Ctrl+Y\n[\"app.toggleYolo\" /* TOGGLE_YOLO */, [new KeyBinding(\"ctrl+y\")]]",
+        "0.68.0 bundle keyBindings：`[\"app.toggleYolo\", [new KeyBinding(\"ctrl+y\")]]`，键与命令相距 51 字节；formatKeyBinding 把它格式化成 `Ctrl+Y`。0.65.0 未核对（本机已无该版本）",
+    ),
+    D::new(
+        "literal:plan shift+tab to manual",
+        "shift+tab to manual",
+        "plan Shift+Tab to manual",
+        "0.65.0 bundle 里 `shift+tab to manual` 是整句；0.68.0 里 0 处（按键提示改成运行时格式化）",
+    )
+    .legacy(),
+    D::near(
+        "literal:plan shift+tab to manual",
+        &["\"plan\"", " to manual"],
+        80,
+        "plan Shift+Tab to manual",
+        "0.68.0 真机 2026-11-14（composer-frames gemini-0.68-g8-0）：plan 档底栏。bundle ApprovalModeIndicator.tsx 里 `textContent = \"plan\"` 与下一行模板 `${cycleHint} to manual` 相距 35 到 37 字节",
+    ),
+    D::near(
+        "literal:plan shift+tab to manual",
+        &["\"shift+tab\"", "app.cycleApprovalMode"],
+        140,
+        "plan Shift+Tab to manual\n[\"app.cycleApprovalMode\" /* CYCLE_APPROVAL_MODE */, [new KeyBinding(\"shift+tab\")]]",
+        CYCLE_KEY,
     ),
     D::new(
         "literal:│ apply this change",
