@@ -64,16 +64,3 @@ export function liveTurnStart(items: ChatItem[]): number {
   }
   return -1;
 }
-
-/// 每次调用的回执（同一调用有多条时取第一条：后到的是委派的结局回执，归子任务块管）。
-/// 配对按整份时间线做，不限于相邻：回执可以隔着别的块才到（委派块把工具组切成两半、
-/// 后台任务的晚到回执），只在相邻的工具组里找会把它判成「没回执」。
-export function indexToolResults(items: ChatItem[]): Map<string, ToolResultItem> {
-  const results = new Map<string, ToolResultItem>();
-  for (const item of items) {
-    if (item.type === "tool_result" && item.tool_use_id && !results.has(item.tool_use_id)) {
-      results.set(item.tool_use_id, item);
-    }
-  }
-  return results;
-}

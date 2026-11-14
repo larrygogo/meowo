@@ -676,14 +676,10 @@ impl TranscriptParser for CodexParser {
     }
 }
 
-/// 看板轮询用的 rollout 定位缓存：session_id →（定位时刻，结果）。
-/// 分析每 ~2s 对每张 codex 卡片定位一次，而 [`find_rollout`] 要走一遍 sessions 目录树。
-/// 命中的路径记 30 秒（回溯后续写段会换文件，过期后重新找当前段），查不到的也记，
-/// 免得没有 rollout 的会话每轮都把目录树扫一遍。
-static POLLED_ROLLOUTS: std::sync::LazyLock<
-    std::sync::Mutex<std::collections::HashMap<String, (std::time::Instant, Option<PathBuf>)>>,
-> = std::sync::LazyLock::new(Default::default);
-const POLLED_ROLLOUT_TTL: std::time::Duration = std::time::Duration::from_secs(30);
+/// 看板轮询用的 rollout 定位缓存（见 [`crate::transcript::PolledPaths`]）。[`find_rollout`] 要走一遍
+/// sessions 目录树；命中的路径记 30 秒——回溯后续写段会换文件，过期后重新找当前段。
+static POLLED_ROLLOUTS: crate::transcript::PolledPaths =
+    crate::transcript::PolledPaths::new(std::time::Duration::from_secs(30));
 
 pub struct CodexTranscript;
 pub static CODEX_TRANSCRIPT: CodexTranscript = CodexTranscript;
@@ -694,21 +690,15 @@ impl TranscriptSpec for CodexTranscript {
     }
 
     /// 分析只要当前在写的那一段（出错信号在最新的回合里），不必拼接回溯前的历史。
-    fn resolve_transcript_path_polled(&self, _cwd: Option<&str>, session_id: &str) -> Option<PathBuf> {
-        let now = std::time::Instant::now();
-        if let Ok(cache) = POLLED_ROLLOUTS.lock() {
-            if let Some((at, path)) = cache.get(session_id) {
-                if now.duration_since(*at) < POLLED_ROLLOUT_TTL {
-                    return path.clone();
-                }
-            }
-        }
-        let path = find_rollout(session_id)
-            .map(|known| super::lineage::current_rollout(&known, session_id));
-        if let Ok(mut cache) = POLLED_ROLLOUTS.lock() {
-            cache.insert(session_id.to_string(), (now, path.clone()));
-        }
-        path
+    fn resolve_transcript_path_polled(
+        &self,
+        _cwd: Option<&str>,
+        session_id: &str,
+    ) -> Option<PathBuf> {
+        POLLED_ROLLOUTS.get_or_resolve(session_id, || {
+            find_rollout(session_id)
+                .map(|known| super::lineage::current_rollout(&known, session_id))
+        })
     }
 
     fn resolve_transcript_path(

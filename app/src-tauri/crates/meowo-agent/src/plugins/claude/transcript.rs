@@ -436,7 +436,7 @@ fn is_image_companion(v: &serde_json::Value, content: Option<&serde_json::Value>
 /// 用户按 Esc 中断回合后 CC 写进 transcript 的标记（2.1.312 实拍两种：回合中途
 /// `[Request interrupted by user]`，打断工具调用时 `… for tool use]`，后者与紧跟的新消息
 /// 同在一行的不同 text 块里）。它不是用户说的话：原样显示就是一个写着英文方括号的用户
-/// 气泡。转成「已手动终止」分隔标记（对照 Kimi 的 turnInterrupted）。整块恰为标记才认，
+/// 气泡。转成「已中断」分隔标记（对照 Kimi 的 turnInterrupted）。整块恰为标记才认，
 /// 用户在消息里引用这句不会被吞（见 transcript 引用污染的教训）。
 fn interrupt_marker(text: &str) -> bool {
     matches!(

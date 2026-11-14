@@ -23,7 +23,7 @@ import { TurnChanges } from "./TurnChanges";
 import { ReplyFold, TurnFold } from "./TurnFold";
 import { FoldScopeContext, foldScope } from "./foldMemory";
 import { isSubagentDelegation, type ToolResultItem } from "./shared";
-import { indexToolResults, liveTurnStart, SessionAliveContext, TurnLiveContext, type TurnActivity } from "./toolState";
+import { liveTurnStart, SessionAliveContext, TurnLiveContext, type TurnActivity } from "./toolState";
 
 type SubagentOutcomeInfo = NonNullable<ToolResultItem["subagent"]>;
 
@@ -38,7 +38,7 @@ type BlockRec = {
   start: number;
   lastDayBefore: string | null;
   subagentId: string | null;
-  /// 该块里还没等到回执的调用。回执可能隔着别的块才到（见 indexToolResults），到了就得
+  /// 该块里还没等到回执的调用。回执可能隔着别的块才到（见 collectSubagentReceipts 的 results），到了就得
   /// 从这块重算，不然它会一直显示成没回执的样子。
   unresolved: string[];
   nodes: JSX.Element[];
@@ -113,9 +113,8 @@ export const Transcript = memo(function Transcript({ sessionId, items, activity 
   // 的结局甚至挂在别的调用上，靠 task_id 归回原委派）。关联规则收敛在
   // collectSubagentReceipts——与标题栏进度面板同一份。没有回执 = 派出去了还没回来 = 在跑。
   // 每轮全量重扫:O(n) 的纯 Map 构建很便宜,贵的是按块生成 JSX——那部分走下面的缓存。
-  const { outcomes, settledAt, finishedTs } = collectSubagentReceipts(items);
-  // 调用与回执按整份时间线配对（同样是 O(n) 的纯 Map 构建）。
-  const results = indexToolResults(items);
+  // results：调用与回执按整份时间线配对，与委派结局同一趟扫描建出来。
+  const { outcomes, settledAt, finishedTs, results } = collectSubagentReceipts(items);
   const cacheRef = useRef<BlockCache | null>(null);
   const cache = cacheRef.current;
   let reuse: BlockRec[] = [];
@@ -272,7 +271,7 @@ export const Transcript = memo(function Transcript({ sessionId, items, activity 
           cursor += 1;
           continue;
         }
-        // 连续工具调用：逐行渲染，回执挂在各自的调用行上（配对见 indexToolResults）。
+        // 连续工具调用：逐行渲染，回执挂在各自的调用行上（配对见 collectSubagentReceipts 的 results）。
         // 回执本身不单独成行：它要么已经挂在调用上，要么是找不到调用的孤儿（委派的晚到结局
         // 归子任务块管；调用落在已加载窗口之外的，等「加载更早」把调用读进来再配上）。
         // 此前孤儿回执按旧样式画成一行「工具结果」，正文为空时是一个空行（走查 A10、C6）。

@@ -1610,14 +1610,14 @@
           "needle": "MessageAbortedError",
           "note": "1.19.x 库内实样经导出（用户中断，画中断分隔条而不是错误卡；本机 3 次）；opencode.exe 15 处",
           "rule": "record:MessageAbortedError",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/telemetry.rs:524"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/telemetry.rs:507"
         },
         {
           "legacy": false,
           "needle": "Tool execution aborted",
           "note": "1.19.x 库内实样经导出（用户中断时正在跑的工具以这句收场，工具行显示已中断而不是失败；本机 3 次）；opencode.exe 2 处",
           "rule": "record:Tool execution aborted",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/telemetry.rs:370"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/telemetry.rs:353"
         }
       ],
       "id": "opencode",

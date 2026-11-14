@@ -3,12 +3,12 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
 import type { ChatItem } from "../../api";
-import { reduceChatEvents } from "../../chat/reducer";
+import { collectSubagentReceipts, reduceChatEvents } from "../../chat/reducer";
 import { ChatCwdContext } from "./ToolActivity";
 import { Transcript } from "./Transcript";
 import { collectBackgroundTasks } from "./TasksPanel";
 import { resetFoldMemory } from "./foldMemory";
-import { indexToolResults, liveTurnStart, toolRunState, turnActivityOf, type TurnActivity } from "./toolState";
+import { liveTurnStart, toolRunState, turnActivityOf, type TurnActivity } from "./toolState";
 
 /// 运行态的显式终态（走查 A1、A3、A4、A10、C6）。
 ///
@@ -167,7 +167,7 @@ describe("没有回执的子任务", () => {
 describe("调用与回执的配对", () => {
   it("回执隔着别的块才到也能配上：codex 一段脚本两个调用，两条回执排在两个调用之后", () => {
     const items = reduceChatEvents([], raw("codex"), true);
-    const results = indexToolResults(items);
+    const { results } = collectSubagentReceipts(items);
     const calls = items.filter((item): item is Extract<ChatItem, { type: "tool_use" }> => item.type === "tool_use");
     // 样本里只有被打断之外的调用都有回执。
     const unresolved = calls.filter((call) => !results.has(call.id));

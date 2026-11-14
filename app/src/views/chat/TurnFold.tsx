@@ -92,7 +92,7 @@ export function ReplyFold({ id, durationMs, children }: { id: string; durationMs
 export const TurnFold = memo(function TurnFold({ id, items, results, durationMs, activity = "idle", children }: {
   id: string;
   items: ProcessItem[];
-  /** 各调用的回执（整份时间线配好的那张表，见 indexToolResults）。 */
+  /** 各调用的回执（整份时间线配好的那张表，见 collectSubagentReceipts 的 results）。 */
   results: Map<string, ToolResultItem>;
   durationMs: number | null;
   /** 这一段此刻的活动态：在跑 / 停在审批或提问上 / 已不在进行。 */

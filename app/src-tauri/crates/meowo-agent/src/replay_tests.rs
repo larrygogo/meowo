@@ -38,19 +38,31 @@ fn spec(agent: &str) -> &'static dyn TranscriptSpec {
 /// - opencode：对话在它的 SQLite 库里，样本是 Meowo 导出器对真实库的导出行（对话页读的
 ///   就是导出文件）；库 → 导出行这一步由 `plugins::opencode::store` 自己的测试覆盖。
 fn replay(agent: &str) -> Vec<ChatItem> {
-    let source = fixture_dir().join(format!("{agent}.jsonl"));
-    assert!(source.is_file(), "缺样本 {}", source.display());
-    let path = if agent == "gemini" {
-        let dir = std::env::temp_dir().join(format!("meowo_replay_gemini_{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        crate::plugins::gemini::materialize_for_test(&source, &dir).expect("gemini 样本物化失败")
-    } else {
-        source
-    };
-    let delta = crate::read_chat_delta(spec(agent), &path, 0, None);
+    let delta = crate::read_chat_delta(spec(agent), &sample_path(agent), 0, None);
     assert!(!delta.items.is_empty(), "{agent} 样本没解析出任何条目");
     delta.items
+}
+
+/// 对话页实际读的那个文件：gemini 是物化后的快照，其余就是样本本身。
+fn sample_path(agent: &str) -> PathBuf {
+    let source = fixture_dir().join(format!("{agent}.jsonl"));
+    assert!(source.is_file(), "缺样本 {}", source.display());
+    if agent == "gemini" {
+        // 物化只做一次：几个测试并行跑，各自清目录、各自物化会互相踩。
+        static MATERIALIZED: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+        MATERIALIZED
+            .get_or_init(|| {
+                let dir = std::env::temp_dir()
+                    .join(format!("meowo_replay_gemini_{}", std::process::id()));
+                let _ = std::fs::remove_dir_all(&dir);
+                std::fs::create_dir_all(&dir).unwrap();
+                crate::plugins::gemini::materialize_for_test(&source, &dir)
+                    .expect("gemini 样本物化失败")
+            })
+            .clone()
+    } else {
+        source
+    }
 }
 
 fn snapshot_text(items: &[ChatItem]) -> String {
@@ -153,6 +165,50 @@ fn replay_samples_cover_the_expected_blocks() {
         let have = blocks(&replay(agent));
         let want: BTreeSet<&str> = want.iter().copied().collect();
         assert_eq!(have, want, "{agent} 样本覆盖的块变了");
+    }
+}
+
+/// 回合出错时，会话级「出错」（侧栏状态点、灵动岛、通知读的分析口径）与时间线上的错误卡
+/// 说的是同一件事：把真实样本喂到出错那一行为止，分析解析器报的错误标签就是错误卡的标签。
+///
+/// 五家都声明了分析能力——此前 codex 与 opencode 没有，回合出错只出现在时间线里，
+/// 侧栏写着「等待输入」、也不弹通知（走查 A8）。codex 本机没有回合出错的真实记录，
+/// 它的判据由 `plugins::codex::telemetry` 里按 rollout 记录形态写的单测覆盖。
+#[test]
+fn replay_session_error_matches_the_timeline_error_card() {
+    for agent in PROVIDERS {
+        assert!(
+            spec(agent).supports_analysis(),
+            "{agent} 没有分析能力：它的回合出错进不了侧栏、灵动岛和通知"
+        );
+    }
+    for agent in ["claude", "kimi", "gemini", "opencode"] {
+        let spec = spec(agent);
+        let path = sample_path(agent);
+        let text = std::fs::read_to_string(&path).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        let (at, label) = lines
+            .iter()
+            .enumerate()
+            .find_map(|(index, line)| {
+                spec.parse_transcript_line_in(&path, line)
+                    .into_iter()
+                    .find_map(|event| match event {
+                        crate::transcript::TranscriptEvent::TurnError { label, .. } => Some(label),
+                        _ => None,
+                    })
+                    .map(|label| (index, label))
+            })
+            .unwrap_or_else(|| panic!("{agent} 样本里没有回合出错的记录"));
+        let mut parser = spec.new_parser();
+        for line in &lines[..=at] {
+            parser.fold_line(line);
+        }
+        let error = parser
+            .to_info()
+            .error
+            .unwrap_or_else(|| panic!("{agent}：时间线有错误卡，会话级却没报出错"));
+        assert_eq!(error.label, label, "{agent}：两处的错误标签不一致");
     }
 }
 

@@ -94,15 +94,10 @@ impl TranscriptParser for OpencodeParser {
     }
 }
 
-/// 看板轮询的导出节流：session_id →（上次导出时刻，路径）。分析每 ~2s 对每张 opencode
-/// 卡片定位一次，而「定位」对 opencode 意味着开库、比指纹、必要时增量导出。出错徽标
-/// 容忍几秒延迟，5 秒内直接用上次的路径。
-static POLLED_EXPORTS: std::sync::LazyLock<
-    std::sync::Mutex<
-        std::collections::HashMap<String, (std::time::Instant, Option<std::path::PathBuf>)>,
-    >,
-> = std::sync::LazyLock::new(Default::default);
-const POLLED_EXPORT_TTL: std::time::Duration = std::time::Duration::from_secs(5);
+/// 看板轮询的导出节流（见 [`crate::transcript::PolledPaths`]）：「定位」对 opencode 意味着开库、
+/// 比指纹、必要时增量导出。出错徽标容忍几秒延迟，5 秒内直接用上次的路径。
+static POLLED_EXPORTS: crate::transcript::PolledPaths =
+    crate::transcript::PolledPaths::new(std::time::Duration::from_secs(5));
 
 impl TranscriptSpec for OpencodeTranscript {
     fn new_parser(&self) -> Box<dyn TranscriptParser> {
@@ -114,19 +109,7 @@ impl TranscriptSpec for OpencodeTranscript {
         _cwd: Option<&str>,
         session_id: &str,
     ) -> Option<std::path::PathBuf> {
-        let now = std::time::Instant::now();
-        if let Ok(cache) = POLLED_EXPORTS.lock() {
-            if let Some((at, path)) = cache.get(session_id) {
-                if now.duration_since(*at) < POLLED_EXPORT_TTL {
-                    return path.clone();
-                }
-            }
-        }
-        let path = store::materialize(session_id);
-        if let Ok(mut cache) = POLLED_EXPORTS.lock() {
-            cache.insert(session_id.to_string(), (now, path.clone()));
-        }
-        path
+        POLLED_EXPORTS.get_or_resolve(session_id, || store::materialize(session_id))
     }
 
     /// 定位＝导出：每次调用把库里新定稿的内容追加进缓存（库没动时只比一次 mtime）。

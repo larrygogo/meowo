@@ -115,6 +115,52 @@ pub(crate) fn clip_text(text: &str, max: usize) -> String {
     out
 }
 
+/// 看板轮询路径上的 transcript 定位缓存：会话 id →（定位时刻，结果）。
+///
+/// 看板分析每 ~2s 对每张卡片定位一次 transcript。对有些 agent「定位」并不便宜——codex 要走
+/// 一遍 sessions 目录树，opencode 要开库并导出。在 `ttl` 之内直接用上次的结果；查不到的
+/// 也记，免得没有 transcript 的会话每轮都重找一遍。只给轮询路径用（出错徽标容忍几秒延迟），
+/// 对话页自己的读取不经这里。
+pub(crate) struct PolledPaths {
+    ttl: std::time::Duration,
+    entries: std::sync::Mutex<Option<PolledEntries>>,
+}
+
+type PolledEntries = std::collections::HashMap<String, (std::time::Instant, Option<PathBuf>)>;
+
+impl PolledPaths {
+    pub(crate) const fn new(ttl: std::time::Duration) -> Self {
+        Self {
+            ttl,
+            entries: std::sync::Mutex::new(None),
+        }
+    }
+
+    /// 取缓存里还新鲜的结果；没有或已过期就调 `resolve` 现找，并记下来。
+    pub(crate) fn get_or_resolve(
+        &self,
+        session_id: &str,
+        resolve: impl FnOnce() -> Option<PathBuf>,
+    ) -> Option<PathBuf> {
+        let now = std::time::Instant::now();
+        if let Ok(guard) = self.entries.lock() {
+            if let Some((at, path)) = guard.as_ref().and_then(|entries| entries.get(session_id)) {
+                if now.duration_since(*at) < self.ttl {
+                    return path.clone();
+                }
+            }
+        }
+        // 锁外定位：它可能要读盘、开库，不能把别的卡片堵在这把锁上。
+        let path = resolve();
+        if let Ok(mut guard) = self.entries.lock() {
+            guard
+                .get_or_insert_with(Default::default)
+                .insert(session_id.to_string(), (now, path.clone()));
+        }
+        path
+    }
+}
+
 /// 一条待读取的子任务侧车流。
 pub struct SubagentStream {
     /// 分支标签（kimi 的 `agent-3`）；单发委派可为 None。
