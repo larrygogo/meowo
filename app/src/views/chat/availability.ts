@@ -225,3 +225,28 @@ export function savesDefaultHint(
   if (effort) return t.chat.savesDefault.effort;
   return null;
 }
+
+// ── 模型菜单 ──────────────────────────────────────────────────────────────────
+
+/**
+ * 模型菜单此刻的状态（展开成 ModelMenu 的三个属性）：
+ * - queuedNote：选模型（或切思考档）会排到稍后自动执行，菜单里先说明。
+ * - blocked：只能靠 CLI 自己的菜单选、此刻开不了，模型项置灰并写明原因。
+ * - loadBlocked：此刻读不了模型清单，读取入口置灰并写明原因。
+ */
+export function modelMenuState(
+  t: Dict,
+  chatUi: Pick<ChatUi, "model_switch" | "model_select_command" | "model_menu_command" | "effort_switch"> | null | undefined,
+  tone: string | null,
+  hasEffort: boolean,
+): { queuedNote: string | null; blocked: string | null; loadBlocked: string | null } {
+  const pick = controlAvailability(t, { mechanism: modelMechanism(chatUi), tone });
+  const list = controlAvailability(t, { mechanism: modelListMechanism(chatUi), tone });
+  const effort = hasEffort ? controlAvailability(t, { mechanism: effortMechanism(chatUi), tone }) : null;
+  return {
+    queuedNote: pick.state === "queued" ? pick.note : effort?.state === "queued" ? effort.note : null,
+    // 这家没有任何切模型的通路时，菜单本来就没有可选的模型项，不必再挂一句「不支持」。
+    blocked: pick.state === "disabled" && modelMechanism(chatUi) !== null ? pick.reason : null,
+    loadBlocked: list.state === "disabled" && modelListMechanism(chatUi) !== null ? list.reason : null,
+  };
+}

@@ -4,7 +4,7 @@ import { zh } from "../../i18n/zh";
 import { en } from "../../i18n/en";
 import {
   controlAvailability, effortEntry, effortMechanism, modeButtonMechanism, modeMechanism, modeMenuAvailability,
-  modelListMechanism, modelMechanism, needsNewSession, savesDefaultHint, sessionBusy, type ControlMechanism,
+  modelListMechanism, modelMechanism, modelMenuState, needsNewSession, savesDefaultHint, sessionBusy, type ControlMechanism,
 } from "./availability";
 
 const PROVIDERS = ["claude", "codex", "kimi", "gemini", "opencode"] as const;
@@ -252,5 +252,36 @@ describe("斜杠命令说明（走查输入 B11、C4）", () => {
   it("撤回只有一个说法，不再叫撤销", () => {
     expect(zh.chat.slashDesc["/undo"]).toContain("撤回");
     expect(zh.chat.slashDesc["/undo"]).not.toContain("撤销");
+  });
+});
+
+describe("模型菜单此刻的状态（五家）", () => {
+  it("会话空闲：五家都没有排队说明，也没有置灰", () => {
+    for (const provider of PROVIDERS) {
+      expect(modelMenuState(zh, chatUi(provider), "waiting", true), provider).toEqual({ queuedNote: null, blocked: null, loadBlocked: null });
+    }
+  });
+
+  it("回合在跑：选模型五家都排队并先说明；有清单读取入口的置灰带原因", () => {
+    for (const provider of PROVIDERS) {
+      const state = modelMenuState(zh, chatUi(provider), "running", false);
+      expect(state.queuedNote, provider).toBe(zh.chat.availability.queuedAfterTurn);
+      expect(state.blocked, provider).toBeNull();
+      expect(state.loadBlocked, provider).toBe(chatUi(provider)!.model_menu_command ? zh.chat.availability.afterTurn : null);
+    }
+  });
+
+  it("只能靠 CLI 菜单选模型的：回合在跑时模型项置灰带原因，不是点了才报错", () => {
+    const menuOnly = { model_switch: null, model_select_command: null, model_menu_command: "/model", effort_switch: null };
+    expect(modelMenuState(zh, menuOnly, "running", false)).toEqual({
+      queuedNote: null, blocked: zh.chat.availability.afterTurn, loadBlocked: zh.chat.availability.afterTurn,
+    });
+    expect(modelMenuState(zh, menuOnly, "waiting", false)).toEqual({ queuedNote: null, blocked: null, loadBlocked: null });
+  });
+
+  it("没有任何切模型通路：不挂「不支持」，菜单里本来就没有可选项", () => {
+    const none = { model_switch: null, model_select_command: null, model_menu_command: null, effort_switch: null };
+    expect(modelMenuState(zh, none, "running", false)).toEqual({ queuedNote: null, blocked: null, loadBlocked: null });
+    expect(modelMenuState(zh, null, "waiting", false)).toEqual({ queuedNote: null, blocked: null, loadBlocked: null });
   });
 });

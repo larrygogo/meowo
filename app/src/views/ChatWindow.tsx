@@ -19,7 +19,7 @@ import { useT } from "../i18n";
 import { deliveryStatusLabel } from "../i18n/statusVocab";
 import { runningPlaceholder, runningReceipt, runningSendMode, sendBlockedMessage, unrecognizedPromptNotice } from "./chat/sendCopy";
 import { logChatEvent, maskScreenLine, useOutgoingDiag } from "./chat/chatDiag";
-import { controlAvailability, effortEntry, effortMechanism, modeButtonMechanism, savesDefaultHint, modeMenuAvailability, modelListMechanism, modelMechanism } from "./chat/availability";
+import { controlAvailability, effortEntry, modeButtonMechanism, savesDefaultHint, modeMenuAvailability, modelListMechanism, modelMenuState } from "./chat/availability";
 import { formatBackendError } from "../i18n/errors";
 import { useShowWhenReady } from "../useShowWhenReady";
 import { reduceChatEvents } from "../chat/reducer";
@@ -3547,16 +3547,7 @@ export function ChatWindow() {
     void selectEffort(level);
   };
   // 模型菜单此刻的状态：选模型会排队的先说明；只能靠 CLI 菜单选、此刻开不了的置灰；清单读取入口同理。
-  const modelMenuAvailability = (() => {
-    const pick = controlAvailability(t, { mechanism: modelMechanism(chatUi), tone });
-    const list = controlAvailability(t, { mechanism: modelListMechanism(chatUi), tone });
-    const effort = effortMenu ? controlAvailability(t, { mechanism: effortMechanism(chatUi), tone }) : null;
-    return {
-      queuedNote: pick.state === "queued" ? pick.note : effort?.state === "queued" ? effort.note : null,
-      blocked: pick.state === "disabled" ? pick.reason : null,
-      loadBlocked: list.state === "disabled" ? list.reason : null,
-    };
-  })();
+  const modelMenuAvailability = modelMenuState(t, chatUi, tone, effortMenu !== null);
   /// 移除一个附件。焦点交给下一个附件的「×」，没有了回输入框（走查 C-10）。
   const removeAttachment = (button: HTMLElement, path: string) => {
     focusAfterRemoval(button, { list: ".chat-attachments", item: "[data-attachment-remove]", fallback: () => promptInputRef.current });
