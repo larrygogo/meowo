@@ -85,7 +85,7 @@ const RETRY_WHEN_READY = new Set([
 
 /** 后端明确没动进程的结果：只有这些才把搬进对话页的草稿撤回（做空 R3）。出错、next_open（进程恰好
  *  没了）、restart_stuck 之类都可能已经杀了进程，TUI 里的原稿跟着没了，对话页这份必须留着。 */
-const PROCESS_UNTOUCHED = new Set<SettingsOutcome["kind"]>(["queued", "not_now", "unsupported", "needs_new_session"]);
+const PROCESS_UNTOUCHED = new Set<SettingsOutcome["kind"]>(["applied", "queued", "not_now", "unsupported", "needs_new_session"]);
 
 /** TUI 输入框此刻：空 / 有草稿已搬进对话页 / 有字没搬（不重启的路线不搬，做空 N9）/ 认不出。 */
 export type DraftRescue = "empty" | "moved" | "occupied" | "unknown";
@@ -164,6 +164,15 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
   const [applying, setApplying] = useState(false);
   const [nextOpen, setNextOpen] = useState<number | null>(null);
   const runningRef = useRef(false);
+  // 一次性的说明（Codex 为沙箱带参重开会话）：下一次选择或换会话时清掉，8 秒后自动消失。
+  const [info, setInfo] = useState<{ sessionId: number; text: string } | null>(null);
+  useEffect(() => {
+    if (!info) return;
+    const timer = setTimeout(() => setInfo(null), 8000);
+    return () => clearTimeout(timer);
+  }, [info]);
+  // 宿主执行的排队结果事件不带提示名：用队列里排着的那份。
+  const pendingLabelRef = useRef<string | null>(null);
 
   const optimistic = (request: SettingsRequest) => {
     depsRef.current.setHistory((current) => {
@@ -206,9 +215,11 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
       terminal: actions,
       modes: Object.fromEntries(actions.flatMap((action) => action.kind === "mode" ? [[action.dimension, action.value]] : [])),
     };
-    if (rest && !(await applyBackend(rest))) {
-      if (depsRef.current.sessionId === sessionId) await enqueue(sessionId, terminalPart);
-      return;
+    if (rest) {
+      const result = await applyBackend(rest);
+      // 后端那部分排进了队列：终端项跟着等。失败了：终端项也不做，整条按失败提示（第六轮 L3：不只生效一半）。
+      if (result === "deferred" && depsRef.current.sessionId === sessionId) await enqueue(sessionId, terminalPart);
+      if (result !== "done") return;
     }
     if (depsRef.current.sessionId !== sessionId) return;
     runningRef.current = true;
@@ -237,26 +248,29 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
   };
 
   /** 经后端切。返回 false 表示这次没做成、已排进队列等下一次（宿主 queued / not_now 排队 / 等就绪）。 */
-  const applyBackend = async (request: SettingsRequest): Promise<boolean> => {
+  /** 经后端切：done = 做成了；deferred = 没做成、已排进队列等下一次（宿主 queued / not_now 排队 / 等就绪）；
+   *  failed = 出错或被拒（已提示）。 */
+  const applyBackend = async (request: SettingsRequest): Promise<"done" | "deferred" | "failed"> => {
     const { sessionId } = depsRef.current;
-    if (runningRef.current) { await enqueue(sessionId, request); return false; }
+    if (runningRef.current) { await enqueue(sessionId, request); return "deferred"; }
     runningRef.current = true;
     setApplying(true);
     let moved = false;
     let untouched = false;
-    let deferred = false;
+    let result: "done" | "deferred" | "failed" = "done";
+    const fail = (message: string) => { result = "failed"; depsRef.current.setSendError(message); };
     try {
       const restarting = depsRef.current.restarts(request);
       if (restarting && depsRef.current.firstTurnPending) {
-        depsRef.current.setSendError(t.chat.settingsFirstTurn);
-        return true;
+        fail(t.chat.settingsFirstTurn);
+        return result;
       }
       // 重启会杀掉 TUI 进程：先把输入框里没发的字搬进对话页；认不出输入框就不重启。
       // 不重启的路线（会话服务 / TUI 对话框）不搬：原稿留在 TUI 里，对话框路线见字就不动手（做空 N9）。
       const rescue = await attempt<DraftRescue>(() => depsRef.current.rescueDraft(restarting), "unknown");
       if (restarting && rescue !== "empty" && rescue !== "moved") {
-        depsRef.current.setSendError(t.chat.settingsComposerUnknown);
-        return true;
+        fail(t.chat.settingsComposerUnknown);
+        return result;
       }
       moved = rescue === "moved";
       const composerEmpty = rescue === "empty" || rescue === "moved";
@@ -275,11 +289,13 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
         tui,
       });
       untouched = PROCESS_UNTOUCHED.has(outcome.kind);
-      if (depsRef.current.sessionId !== sessionId) return true;
+      if (depsRef.current.sessionId !== sessionId) return result;
       switch (outcome.kind) {
         case "applied":
         case "restarted":
           optimistic(request);
+          // Codex 会话内首次切进要沙箱的档：后端带沙箱参数重开了会话（第五轮 P3），说清楚为什么重开。
+          if (outcome.kind === "restarted" && outcome.reason === "settings/sandbox_reopen") setInfo({ sessionId, text: t.chat.settingsSandboxReopen(request.label) });
           // 只切 agent 时 OpenCode 换成了该 agent 记住的模型：后端当场读回并钉在宿主存档里（之后的快照、
           // 菜单同步都以它为准，最终做空 P2），这里先立刻显示。
           if (outcome.model && !request.model) {
@@ -297,7 +313,7 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
           setNextOpen(sessionId);
           break;
         case "needs_new_session":
-          depsRef.current.setSendError(t.chat.settingsNeedsNewSession);
+          fail(t.chat.settingsNeedsNewSession);
           break;
         case "unsupported": {
           if (request.model) depsRef.current.fallbackModel(request.model.id);
@@ -308,27 +324,30 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
         case "queued":
           // 宿主自己收进了队列、标了等什么（Lead 在等关卡答复 / 会话没在运行、打开后经服务补设）；
           // 把这次请求合并进去补上提示名，合并结果带着宿主标的 waitFor。
-          deferred = true;
+          result = "deferred";
           await enqueue(sessionId, request);
           break;
         case "not_now":
           // 服务端复核说此刻不能动：刚开始跑一轮的排到这一轮之后；服务 / TUI 没就绪的交给宿主等就绪；
           // 其余（输入框有字等）说原因。
-          if (mustDefer(depsRef.current.tone)) { deferred = true; await enqueue(sessionId, request); }
-          else if (RETRY_WHEN_READY.has(outcome.reason ?? "")) { deferred = true; await enqueue(sessionId, { ...request, waitFor: "ready" }); }
-          else depsRef.current.setSendError(formatBackendError(outcome.reason ?? "", t.locale));
+          if (mustDefer(depsRef.current.tone)) { result = "deferred"; await enqueue(sessionId, request); }
+          else if (RETRY_WHEN_READY.has(outcome.reason ?? "")) { result = "deferred"; await enqueue(sessionId, { ...request, waitFor: "ready" }); }
+          else fail(formatBackendError(outcome.reason ?? "", t.locale));
           break;
       }
     } catch (error) {
       // 会话服务还没握手（刚打开的 Codex 等）：放回宿主队列等就绪，不丢这次选择（做空 R5）。
-      if (typeof error === "string" && RETRY_WHEN_READY.has(error)) { deferred = true; await enqueue(sessionId, { ...request, waitFor: "ready" }); }
-      else if (depsRef.current.sessionId === sessionId) depsRef.current.setSendError(formatBackendError(error, t.locale));
+      if (typeof error === "string" && RETRY_WHEN_READY.has(error)) { result = "deferred"; await enqueue(sessionId, { ...request, waitFor: "ready" }); }
+      else {
+        result = "failed";
+        if (depsRef.current.sessionId === sessionId) depsRef.current.setSendError(formatBackendError(error, t.locale));
+      }
     } finally {
       if (moved && untouched && depsRef.current.sessionId === sessionId) depsRef.current.undoRescue?.();
       runningRef.current = false;
       setApplying(false);
     }
-    return !deferred;
+    return result;
   };
 
   /** 用户选了一项：能做就做；在跑、有审批、上一次还在路上的，排到这一轮之后。 */
@@ -345,6 +364,7 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
   useEffect(() => {
     setQueued(null);
     setNextOpen(null);
+    setInfo(null);
     const sessionId = deps.sessionId;
     void refreshQueued(sessionId);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- refreshQueued 只读 ref 与 setter
@@ -364,7 +384,10 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
       else if (payload.kind === "next_open") setNextOpen(payload.sessionId);
       else if (payload.kind === "needs_new_session") depsRef.current.setSendError(t.chat.settingsNeedsNewSession);
       else if ((payload.kind === "failed" || payload.kind === "not_now") && payload.reason) depsRef.current.setSendError(formatBackendError(payload.reason, t.locale));
-      else if (payload.kind === "applied" || payload.kind === "restarted") void syncLiveRef.current();
+      else if (payload.kind === "applied" || payload.kind === "restarted") {
+        if (payload.reason === "settings/sandbox_reopen") setInfo({ sessionId: payload.sessionId, text: t.chat.settingsSandboxReopen(pendingLabelRef.current ?? "") });
+        void syncLiveRef.current();
+      }
     }).then((fn) => { if (cancelled) fn(); else un = fn; }).catch(() => {});
     return () => { cancelled = true; un?.(); };
   // eslint-disable-next-line react-hooks/exhaustive-deps -- 只订阅一次，回调读 ref
@@ -424,12 +447,16 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
   // eslint-disable-next-line react-hooks/exhaustive-deps -- syncLive 读 depsRef，只由 tone 变化触发
   }, [deps.tone]);
 
+  pendingLabelRef.current = queued?.request.label ?? pendingLabelRef.current;
   const deferredText = (request: SettingsRequest) => request.waitFor === "lead" ? t.chat.settingsDeferredLead(request.label)
     : request.waitFor === "open" ? t.chat.settingsDeferredOpen(request.label)
     : request.waitFor === "ready" ? t.chat.settingsDeferredReady(request.label)
+    // 只含终端项、回合已结束：要对话页停在这个会话上才执行（第六轮 L4）。
+    : request.terminal?.length && !request.model && !mustDefer(deps.tone) ? t.chat.settingsDeferredOpenSession(request.label)
     : t.chat.settingsDeferred(request.label);
   const notice = queued && queued.sessionId === deps.sessionId ? deferredText(queued.request)
     : nextOpen === deps.sessionId ? t.chat.settingsNextOpen
+    : info && info.sessionId === deps.sessionId ? info.text
     : null;
   return { request, applying, notice, syncLive, deferredRequest: queued?.sessionId === deps.sessionId ? queued.request : null };
 }

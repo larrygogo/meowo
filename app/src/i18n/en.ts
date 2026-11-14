@@ -487,6 +487,8 @@ export const en: Dict = {
     settingsDeferredLead: (name: string) => `Switches to "${name}" after the turn that follows the gate answer (canceled if Meowo restarts)`,
     settingsDeferredOpen: (name: string) => `Switches to "${name}" once the session is opened (canceled if Meowo restarts)`,
     settingsDeferredReady: (name: string) => `Switches to "${name}" once the session is ready (canceled if Meowo restarts)`,
+    settingsSandboxReopen: (name: string) => `Reopened with sandbox to switch to "${name}"`,
+    settingsDeferredOpenSession: (name: string) => `Open this session to switch to "${name}"`,
     settingsQueueExpired: "Waited too long to switch, so it was canceled. Choose again",
     settingsApplying: "Switching",
     settingsComposerUnknown: "Couldn't read the terminal input box, so it wasn't restarted to keep your text",

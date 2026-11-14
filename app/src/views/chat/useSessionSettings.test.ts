@@ -31,6 +31,7 @@ vi.mock("../../api", () => ({
 }));
 
 import { mergeRequests, mustDefer, useSessionSettings, type SessionSettingsDeps } from "./useSessionSettings";
+import { zh } from "../../i18n/zh";
 import type { ChatHistory } from "../../api";
 
 const history = { agentModes: [{ dimension: "permission", value: "manual" }], model: "K3" } as unknown as ChatHistory;
@@ -262,6 +263,45 @@ describe("会话里切模型 / 模式的分派", () => {
     await act(async () => result.current.request({ model: { id: "kimi-code/k3", label: "K3" }, modes: { work: "plan" }, label: "计划：开", terminal: [action] }));
     await waitFor(() => expect(queue.get(7)).toMatchObject({ waitFor: "lead", terminal: [action], modes: { work: "plan" } }));
     expect(order).toEqual(["backend"]);
+  });
+
+  /// 第六轮 L2：前端按「可能重启」先搬了草稿，后端走会话服务没重启（applied）——进程没动，撤回对话页那份。
+  it("预搬草稿后后端没重启（applied）时撤回", async () => {
+    const undoRescue = vi.fn();
+    apply.mockResolvedValue({ kind: "applied", sessionId: 7, confirmed: true, reason: null });
+    const { result } = renderHook(() => useSessionSettings(deps({ rescueDraft: async () => "moved" as const, undoRescue })));
+    await act(async () => result.current.request({ modes: { approval: "ask" }, label: "必要时询问" }));
+    expect(undoRescue).toHaveBeenCalledTimes(1);
+  });
+
+  /// 第六轮 L3：混合条目后端那部分失败，终端项不执行，不只生效一半。
+  it("混合条目后端失败时终端项不执行", async () => {
+    const applyTerminal = vi.fn(async () => {});
+    const setSendError = vi.fn();
+    const action = { kind: "mode" as const, dimension: "work", value: "plan", inputs: [{ data: "/plan on", submit: true }], cycleInput: null, markers: [] };
+    apply.mockImplementation(async () => { throw "terminal/restart_stuck"; });
+    const { result } = renderHook(() => useSessionSettings(deps({ applyTerminal, setSendError })));
+    await act(async () => result.current.request({ model: { id: "kimi-code/k3", label: "K3" }, modes: { work: "plan" }, label: "计划：开", terminal: [action] }));
+    await waitFor(() => expect(setSendError).toHaveBeenCalled());
+    expect(applyTerminal).not.toHaveBeenCalled();
+    expect(queue.has(7)).toBe(false);
+  });
+
+  /// 第五轮 P3 低危：Codex 为沙箱带参重开会话时说明原因。
+  it("为沙箱重开会话时提示原因", async () => {
+    apply.mockResolvedValue({ kind: "restarted", sessionId: 7, confirmed: true, reason: "settings/sandbox_reopen" });
+    const { result } = renderHook(() => useSessionSettings(deps({ restarts: () => true })));
+    await act(async () => result.current.request({ modes: { approval: "ask" }, label: "必要时询问" }));
+    await waitFor(() => expect(result.current.notice).toBe("已带沙箱重开会话，切到「必要时询问」"));
+  });
+
+  /// 第六轮 L4：只含终端项的条目在回合结束后还没执行（刚回到会话等），提示要停在这个会话上。
+  it("只含终端项、回合已结束的排队提示打开这个会话后切换", async () => {
+    queue.set(7, { label: "计划：开", modes: { work: "plan" }, terminal: [{ kind: "mode", dimension: "work", value: "plan", inputs: [] }] });
+    const applyTerminal = vi.fn(() => new Promise<void>(() => {}));
+    const { result } = renderHook(() => useSessionSettings(deps({ tone: "running", applyTerminal })));
+    await waitFor(() => expect(result.current.notice).toBe("这一轮结束后切换到「计划：开」（重启 Meowo 会取消）"));
+    expect(zh.chat.settingsDeferredOpenSession("计划：开")).toBe("打开这个会话后切换到「计划：开」");
   });
 
   it("服务没就绪时交给宿主等就绪", async () => {

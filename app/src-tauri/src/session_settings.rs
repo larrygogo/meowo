@@ -859,6 +859,8 @@ fn apply_blocking(
             }
             outcome.kind = "restarted";
             outcome.confirmed = true;
+            // 告诉对话页这次为什么重开（第五轮 P3 低危：提示说明原因）。
+            outcome.reason = Some("settings/sandbox_reopen".into());
             return Ok(outcome);
         }
         match codex::update_settings(db, session_id, &header.cc_session_id, &update) {
@@ -1132,6 +1134,8 @@ struct Queued {
     blocked: Option<std::time::Instant>,
     /// 临时 id 的启动从何时起不见了（重开时有几秒空档，做空 R6），超过 [`GONE_GRACE`] 才算没了。
     gone: Option<std::time::Instant>,
+    /// 只含终端项的条目，已经发过「打开这个会话后切换」的提醒（第六轮 L4，只发一次）。
+    alerted: bool,
     /// 宿主**连续**几次认不出输入框，认出一次（不论空不空）就清零（做空 R8）。到 [`COMPOSER_MISS_LIMIT`]
     /// 就不再试，留给对话页（会先搬草稿）执行。
     misses: u32,
@@ -1146,6 +1150,7 @@ impl Queued {
             since: now,
             blocked: None,
             gone: None,
+            alerted: false,
             misses: 0,
         }
     }
@@ -1323,6 +1328,18 @@ pub(crate) fn expired_label(lang: &str, name: &str) -> String {
         (true, false) => format!("Switching to \"{name}\" waited too long and was canceled"),
         (false, true) => "排着的切换等太久，已取消".into(),
         (false, false) => format!("切换到「{name}」等太久，已取消"),
+    }
+}
+
+/// 只含终端项的条目在回合结束后多久还没被对话页执行，就提醒一次（第六轮 L4）。
+const TERMINAL_ALERT_AFTER: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// 只含终端项的条目等对话页执行时的提醒文案（与前端 chat.settingsDeferredOpenSession 同义）。
+pub(crate) fn open_session_label(lang: &str, name: &str) -> String {
+    if lang == "en" {
+        format!("Open this session to switch to \"{name}\"")
+    } else {
+        format!("打开这个会话后切换到「{name}」")
     }
 }
 
@@ -1508,8 +1525,38 @@ fn run_queued(app: &tauri::AppHandle, session_id: i64) {
     let (request, leftover) = split_terminal(&request);
     let Some(request) = request else {
         // 只含终端项的条目宿主不执行，但会话归档 / 删除时照样出队并提醒（最终做空 P5），队列空了线程退出。
-        if crate::open_store(&state.db_path).is_ok_and(|store| queued_session_gone(&store, session_id)) {
+        let Ok(store) = crate::open_store(&state.db_path) else {
+            return;
+        };
+        if queued_session_gone(&store, session_id) {
             drop_queued(app, session_id, "session_gone");
+            return;
+        }
+        // 第六轮 L4：回合已经结束、对话页却没来执行（多半不在这个会话上）——发一次提醒：打开这个会话后切换。
+        // 等 5 秒再发，对话页正停在这个会话上时它会先取走执行，不打扰。
+        let idle = store.session_header(session_id).is_ok_and(|header| header.status == "waiting");
+        if !idle {
+            not_blocked(session_id);
+            return;
+        }
+        mark_blocked(session_id);
+        let due = queue().get_mut(&session_id).and_then(|entry| {
+            let ready = !entry.alerted && entry.blocked.is_some_and(|at| at.elapsed() > TERMINAL_ALERT_AFTER);
+            if ready {
+                entry.alerted = true;
+            }
+            ready.then(|| entry.request["label"].as_str().unwrap_or_default().to_string())
+        });
+        if let Some(name) = due {
+            let lang = crate::settings::ui_lang(&crate::settings::load_settings());
+            let title = store.session_title(session_id).ok().flatten().unwrap_or_default();
+            let project = store
+                .session_cwd(session_id)
+                .ok()
+                .flatten()
+                .and_then(|cwd| std::path::Path::new(&cwd).file_name().map(|n| n.to_string_lossy().into_owned()))
+                .unwrap_or_default();
+            crate::watch::emit_island_alert(app, session_id, "waiting", &title, &project, Some(open_session_label(lang, &name)));
         }
         return;
     };
@@ -2539,6 +2586,9 @@ mod tests {
         assert_eq!(take_dropped(real, "session_gone", "zh"), Some(Some("会话已归档或删除，切换到「计划：开」已取消".to_string())));
         assert_eq!(take_dropped(temp, "session_gone", "zh"), Some(None));
         assert_eq!(take_dropped(real, "session_gone", "zh"), None);
+        // 第六轮 L4：对话页不在时的提醒文案，中英成对。
+        assert_eq!(open_session_label("zh", "计划：开"), "打开这个会话后切换到「计划：开」");
+        assert_eq!(open_session_label("en", "Plan: on"), "Open this session to switch to \"Plan: on\"");
 
         // 执行线程：队列空了这一轮返回 None（线程退出）并释放标记；有条目时接着跑。持着测试锁，别的测试
         // 不会同时往队列里放东西，这里的「空」是确定的。
