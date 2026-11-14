@@ -37,17 +37,20 @@ pub(super) static DEPS: &[D] = &[
         "0.166.0 codex.exe：` to interrupt)` 1 处（紧挨 `fast_mode` 与 ` • ` 分隔符）；`working (` 0 处，运行时拼。状态行没有 0.166 实拍",
     ),
     // ── 记录格式：--version 首行与 rollout 字段（做空第一轮 #7，2026-11-12）──
-    // 版本行 = clap 顶层命令名 + 空格 + 版本号，运行时拼，`codex-cli ` 带尾空格 0 处。单搜 `codex-cli` 的 19 处里
-    // 只有 1 处是命令名，其余是 `codex-client\src\retry.rs` 这类包名路径的前缀，codex 改了命令名也照样「找到」
-    //（做空第二轮 N2，2026-11-12）。改按近邻查：命令名紧跟在顶层命令 MultitoolCli 的 clap 常量后面，那串
-    // 常量是「about + 版本号 0.166.0 + usage 模板 `codex [OPTIONS] [PROMPT]`」连着存的，usage 全包仅 1 处。
-    // 样例第二行是同一个 clap 命令 `--help` 的 usage 行（模板原样，未实拍），只为让锚点出现在样例里。
-    D::record_near(
+    // 版本行 = clap 顶层命令名 + 空格 + 版本号，运行时拼，`codex-cli ` 带尾空格在程序文件里 0 处。单搜
+    // `codex-cli` 的 19 处里只有 1 处是命令名，其余是 `codex-client\src\retry.rs` 这类包名路径的前缀，codex
+    // 改了命令名也照样「找到」（做空第二轮 N2，2026-11-12）。此前改按近邻查（命令名与 usage 模板
+    // `codex [OPTIONS] [PROMPT]` 相距 ≤20000 字节）：0.166.0 里命令名在 usage 模板后 10022 字节，可
+    // 0.167.2 的链接布局变了——紧挨 clap 报错文案的那处 `codex-cli` 找不到了，离 usage 模板最近的一处在
+    // 它前面 160400 字节（挨着 cloud-tasks 的字符串），于是版本行没变、扫描却报缺失。2026-11-14 逐版本
+    // 量本机留着的 codex.exe，最近一处独立的 `codex-cli` 到 usage 模板的距离：0.152.0 是 121856、
+    // 0.162.1 是 39431、0.163.0 是 40548、0.166.0 是 10022、0.167.2 是 160400 字节——位置随版本乱跳，
+    // 不是可靠的锚。改为直接比对 `codex --version` 的真实首行。
+    D::version_line(
         "record:codex-cli",
-        &["codex-cli", "codex [options] [prompt]"],
-        20000,
-        "codex-cli 0.166.0\nUsage: codex [OPTIONS] [PROMPT]",
-        "0.166.0 `codex --version` 首行原样（research-cli-drift X2）；codex.exe 里命令名 `codex-cli` 在 usage 模板后 10022 字节，其余 18 处离 usage 模板最近也有 29 万字节",
+        "codex-cli ",
+        "codex-cli 0.167.2",
+        "0.167.2 `codex --version` 首行原样（2026-11-14 本机）；0.166.0 是 `codex-cli 0.166.0`（research-cli-drift X2）。parse_cli_semver 取首行里第一个 X.Y.Z 词，前缀变了也要回来确认版本号还取得到",
     ),
     D::record(
         "record:ContextCompaction",
