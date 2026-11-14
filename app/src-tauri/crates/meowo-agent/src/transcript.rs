@@ -442,6 +442,18 @@ pub enum ChatLineMark {
     Link { id: String, parent: Option<String> },
 }
 
+/// 一条「某条命令跑完了」的旁路记录：不是对话内容，只带退出码，读取层拿它给**没带退出码的
+/// 工具回执**补上结局（见 [`TranscriptSpec::chat_command_exit`] 与 [`ExitJoin`]）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandExit {
+    /// 命令原文，与对应工具调用的 [`ToolDetail::Command`] 逐字相同才算同一条。
+    pub command: String,
+    pub exit_code: i32,
+    /// 这条命令开始执行的时刻（Unix 毫秒）。缺了就不参与关联：没有它分不清
+    /// 「这次调用跑的」和「更早一次同名命令在后台才跑完」。
+    pub started_ms: Option<i64>,
+}
+
 /// Provider transcript 中观测到的一个独立模式维度。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AgentMode {
@@ -643,6 +655,23 @@ pub trait TranscriptSpec: Sync {
     /// 这一行对「撤回」的意义（见 [`ChatLineMark`]）。默认没有撤回语义。
     fn chat_line_mark(&self, _line: &str) -> Option<ChatLineMark> {
         None
+    }
+
+    /// 这一行若是「某条命令跑完了」的旁路记录，取出命令原文与退出码（见 [`CommandExit`]）。
+    /// 只有声明了 [`Self::command_exit_markers`] 的 provider 才会被问到。必须是这一行的纯函数。
+    /// 返回 Some 的行不再交给 [`Self::parse_transcript_line`]：旁路记录不产出对话内容。
+    fn chat_command_exit(&self, _line: &str) -> Option<CommandExit> {
+        None
+    }
+
+    /// 非空 = 这家的工具回执可能不带退出码、要靠旁路记录补（codex 的 exec 脚本只打印
+    /// `r.output` 时）。读取层据此做跨行关联，规则见 [`ExitJoin`]。
+    ///
+    /// 列的是字节子串：凡是会**开出工具调用、给出工具回执、开启或撤回一轮、或是旁路退出记录**
+    /// 的行，必含其一。增量读与尾读要回看窗口之前的一小段来还原关联状态，靠它跳过无关的行
+    /// （思考、正文、用量），不必整段解析。
+    fn command_exit_markers(&self) -> &'static [&'static str] {
+        &[]
     }
 
     /// 从文件头开始读取时使用的初始模式。只声明协议有确定默认值的维度；后续记录会覆盖它。
@@ -1021,6 +1050,8 @@ struct ParsedLine {
     start: u64,
     modes: Vec<AgentMode>,
     mark: Option<ChatLineMark>,
+    /// 旁路的命令退出记录（见 [`CommandExit`]）；没声明关联的 provider 恒为 None。
+    exit: Option<CommandExit>,
     items: Vec<ChatItem>,
 }
 
@@ -1029,6 +1060,7 @@ struct ParsedLine {
 fn parse_lines(spec: &dyn TranscriptSpec, path: &Path, base: u64, buf: &[u8]) -> Vec<ParsedLine> {
     let mut out = Vec::new();
     let mut pos = base;
+    let joins = !spec.command_exit_markers().is_empty();
     for chunk in buf.split_inclusive(|b| *b == b'\n') {
         let start = pos;
         pos += chunk.len() as u64;
@@ -1036,13 +1068,15 @@ fn parse_lines(spec: &dyn TranscriptSpec, path: &Path, base: u64, buf: &[u8]) ->
         let line = line.trim_end_matches(['\r', '\n']);
         let modes = spec.agent_modes_from_line(line);
         let mark = spec.chat_line_mark(line);
-        // 撤回行本身不产出消息（折叠时直接跳过），不必解析。
-        let items = if matches!(mark, Some(ChatLineMark::Undo(_))) {
+        let exit = if joins { spec.chat_command_exit(line) } else { None };
+        // 撤回行本身不产出消息（折叠时直接跳过），不必解析。旁路退出记录同理：它只带退出码，
+        // 不是对话内容——再整行解析一遍纯属白费（codex 的这种行带着整份命令输出）。
+        let items = if matches!(mark, Some(ChatLineMark::Undo(_))) || exit.is_some() {
             Vec::new()
         } else {
             spec.parse_transcript_line_in(path, line).into_iter().map(ChatItem::from).collect()
         };
-        out.push(ParsedLine { start, modes, mark, items });
+        out.push(ParsedLine { start, modes, mark, exit, items });
     }
     out
 }
@@ -1057,6 +1091,8 @@ struct Folded {
     ambiguous: bool,
     /// 尾读窗口的第一条消息就是用户消息：只差窗口前一行就能判双写，不必按块扩窗。
     lead_user: bool,
+    /// 跨行关联补出的退出码：（消息的平铺下标，退出码），按下标升序（见 [`ExitJoin`]）。
+    exits: Vec<(usize, i32)>,
 }
 
 impl Folded {
@@ -1065,15 +1101,28 @@ impl Folded {
     }
 
     fn into_region(self, parsed: Vec<ParsedLine>) -> ChatRegion {
+        let mut exits = self.exits.iter().peekable();
         let lines = parsed
             .into_iter()
             .enumerate()
             .map(|(i, line)| {
-                let kept = &self.kept[self.offsets[i]..self.offsets[i + 1]];
+                let first = self.offsets[i];
+                let kept = &self.kept[first..self.offsets[i + 1]];
                 let items = line
                     .items
                     .into_iter()
                     .zip(kept)
+                    .enumerate()
+                    .map(|(at, (mut item, kept))| {
+                        // 补退出码：只动回执的这两个字段，非零才算失败。
+                        if let Some(&(_, code)) = exits.next_if(|(flat, _)| *flat == first + at) {
+                            if let ChatItem::ToolResult { exit_code, is_error, .. } = &mut item {
+                                *exit_code = Some(code);
+                                *is_error |= code != 0;
+                            }
+                        }
+                        (item, kept)
+                    })
                     .filter(|(_, kept)| **kept)
                     .map(|(item, _)| item)
                     .collect();
@@ -1115,10 +1164,19 @@ fn fold_lines(spec: &dyn TranscriptSpec, path: &Path, base: u64, parsed: &[Parse
     let mut lead_user = false;
     let mut seed_link: Option<Option<String>> = None;
     let mut user_state_unknown = tail;
+    // 给没带退出码的回执补结局（见 ExitJoin）。本段不从文件头起时，先回看段前一小段还原状态。
+    let mut join = (!spec.command_exit_markers().is_empty()).then(ExitJoin::default);
+    let mut exits: Vec<(usize, i32)> = Vec::new();
+    if let Some(join) = join.as_mut().filter(|_| base > 0 && ExitJoin::wanted(parsed)) {
+        join.seed(spec, path, base);
+    }
     for (index, line) in parsed.iter().enumerate() {
         let line_at = kept.len();
         offsets.push(line_at);
         merge_modes(&mut agent_modes, line.modes.clone());
+        if let Some(join) = join.as_mut() {
+            join.line(line, line_at, &mut exits);
+        }
         let mut link = None;
         match &line.mark {
             Some(ChatLineMark::Link { id, parent }) => link = Some((id.as_str(), parent.as_deref())),
@@ -1212,7 +1270,187 @@ fn fold_lines(spec: &dyn TranscriptSpec, path: &Path, base: u64, parsed: &[Parse
         }
     }
     offsets.push(kept.len());
-    Folded { kept, offsets, agent_modes, undone, ambiguous, lead_user }
+    Folded { kept, offsets, agent_modes, undone, ambiguous, lead_user, exits }
+}
+
+/// 给**没带退出码的工具回执**补上结局的跨行关联。
+///
+/// 为什么需要：codex 的 exec 脚本写 `text(r.output)` 时，回执里只有命令输出、没有退出码
+/// （本机 98 份 rollout 里约四成的命令是这种写法），失败了也只能当成功显示。退出码其实另有
+/// 一条旁路记录（`item_completed/CommandExecution`），只是它和工具调用之间没有共同的 id。
+///
+/// 靠什么对上（本机 2837 条旁路记录的统计，2026-11-14）：
+/// - 位置：命令在脚本返回之前跑完的，旁路记录都落在「调用行」与「回执行」之间。
+/// - 命令原文：旁路记录的命令与调用实参逐字相同。
+/// - 时间：旁路记录的开始时刻不早于调用行（实测最少晚 0.17 秒）。让到后台的命令会在很久
+///   以后才落旁路记录，那时同名命令可能已被再跑一次——开始时刻早于调用行的一律不认。
+///
+/// 宁可漏标不可错标，下列情况一律不补：
+/// - 同一时刻有不止一个未收到回执的调用是这条命令（并行脚本、同一脚本里跑两遍）：分不清是谁的。
+/// - 同一个调用先后对上两条退出码不同的记录。
+/// - 回执自己带了退出码、已判失败、或是被打断的：以回执为准。
+/// - 旁路记录在回执之后才到（命令让到了后台）：回执那时已经下发，增量读收不回来。
+/// - 调用行与旁路记录或回执相距超过 [`ExitJoin::SPAN`]。
+///
+/// 最后一条是为了让三种读法（整读、尾读、增量读）结果逐字一致：有了距离上限，任何一行的
+/// 关联结果只取决于它之前 2×SPAN 字节内的行（候选只看「这条命令此刻有几个未收回执的调用」，
+/// 不看别的调用对上了没有，所以不会一环套一环地依赖更早的内容），于是不从文件头起的读法
+/// 回看这么一段（[`ExitJoin::seed`]）就能还原出与整读相同的状态。本机 7456 次脚本调用里，
+/// 调用行到回执行最远 442KB、千分位 98KB。
+#[derive(Default)]
+struct ExitJoin {
+    /// 还没收到回执的命令调用，按出现顺序。新一轮开始、收到回执、或超出距离时移除。
+    open: Vec<OpenRun>,
+}
+
+struct OpenRun {
+    /// 工具调用 id（codex 的脚本内调用是 `<call_id>#<序号>`）。
+    id: String,
+    command: String,
+    called_ms: Option<i64>,
+    /// 调用行的起始字节。
+    at: u64,
+    exit: Option<i32>,
+    /// 对不准（见 [`ExitJoin`] 的「一律不补」）：不再给它补退出码。
+    tainted: bool,
+}
+
+/// 同一次脚本调用里各条命令共用的前缀：`<call_id>#<序号>` 的 `<call_id>`。
+fn call_group(id: &str) -> &str {
+    id.rsplit_once('#').map_or(id, |(group, _)| group)
+}
+
+impl ExitJoin {
+    /// 调用行到旁路记录、到回执行的最大字节距离。
+    const SPAN: u64 = 512 << 10;
+    /// 开始时刻比调用行早多少以内仍认：两个时刻由 CLI 的不同环节各自打点，留 1 秒误差。
+    const CLOCK_SLACK_MS: i64 = 1_000;
+
+    /// 这一段里有没有用得上段前状态的行：旁路记录，或一条等着补退出码的回执。
+    /// 都没有就不必回看（增量轮询的大多数批次只是正文与思考）。
+    fn wanted(parsed: &[ParsedLine]) -> bool {
+        parsed
+            .iter()
+            .any(|line| line.exit.is_some() || line.items.iter().any(Self::needs_exit))
+    }
+
+    fn needs_exit(item: &ChatItem) -> bool {
+        matches!(
+            item,
+            ChatItem::ToolResult { tool_use_id: Some(_), exit_code: None, is_error: false, interrupted: false, .. }
+        )
+    }
+
+    /// 回看 `base` 之前 2×SPAN 字节，把其中的相关行按文件顺序过一遍，还原出整读到 `base` 时的
+    /// 状态。只解析含 [`TranscriptSpec::command_exit_markers`] 的行。读不到就当段前什么都没有
+    /// （少补，不会错补）。
+    fn seed(&mut self, spec: &dyn TranscriptSpec, path: &Path, base: u64) {
+        use std::io::{Read, Seek, SeekFrom};
+        let finders: Vec<_> = spec
+            .command_exit_markers()
+            .iter()
+            .map(|marker| memchr::memmem::Finder::new(marker.as_bytes()))
+            .collect();
+        let start = base.saturating_sub(Self::SPAN * 2);
+        let mut buf = vec![0; (base - start) as usize];
+        let read = std::fs::File::open(path).and_then(|mut file| {
+            file.seek(SeekFrom::Start(start))?;
+            file.read_exact(&mut buf)
+        });
+        if read.is_err() {
+            return;
+        }
+        // 窗口首行多半是半截，跳过（从文件头起则没有半截行）。
+        let mut pos = if start == 0 { 0 } else { memchr::memchr(b'\n', &buf).map_or(buf.len(), |i| i + 1) };
+        let mut sink = Vec::new();
+        while pos < buf.len() {
+            let end = memchr::memchr(b'\n', &buf[pos..]).map_or(buf.len(), |i| pos + i + 1);
+            let chunk = &buf[pos..end];
+            if finders.iter().any(|finder| finder.find(chunk).is_some()) {
+                for line in parse_lines(spec, path, start + pos as u64, chunk) {
+                    self.line(&line, 0, &mut sink);
+                    sink.clear();
+                }
+            }
+            pos = end;
+        }
+    }
+
+    /// 按文件顺序喂一行。`flat` = 这一行第一条消息的平铺下标；补出的退出码记进 `exits`。
+    fn line(&mut self, line: &ParsedLine, flat: usize, exits: &mut Vec<(usize, i32)>) {
+        // 新一轮开始或撤回：之前没等到回执的调用不会再有回执了。
+        if matches!(line.mark, Some(ChatLineMark::TurnStart | ChatLineMark::Undo(_))) {
+            self.open.clear();
+        }
+        if let Some(exit) = &line.exit {
+            self.exit(exit, line.start);
+        }
+        let mut closed = false;
+        for (at, item) in line.items.iter().enumerate() {
+            match item {
+                ChatItem::ToolUse { id, timestamp, detail: Some(ToolDetail::Command { command, .. }), .. } => {
+                    self.open.retain(|run| line.start - run.at <= Self::SPAN);
+                    self.open.push(OpenRun {
+                        id: id.clone(),
+                        command: command.clone(),
+                        called_ms: timestamp.as_deref().and_then(epoch_millis),
+                        at: line.start,
+                        exit: None,
+                        tainted: false,
+                    });
+                }
+                ChatItem::ToolResult { tool_use_id: Some(id), .. } => {
+                    closed = true;
+                    if !Self::needs_exit(item) {
+                        continue;
+                    }
+                    let code = self
+                        .open
+                        .iter()
+                        .find(|run| run.id == *id)
+                        .filter(|run| !run.tainted && line.start - run.at <= Self::SPAN)
+                        .and_then(|run| run.exit);
+                    if let Some(code) = code {
+                        exits.push((flat + at, code));
+                    }
+                }
+                _ => {}
+            }
+        }
+        // 一行回执收掉同一次脚本调用里的全部命令（回执段数可以少于调用数）。
+        if closed {
+            for item in &line.items {
+                if let ChatItem::ToolResult { tool_use_id: Some(id), .. } = item {
+                    let group = call_group(id);
+                    self.open.retain(|run| call_group(&run.id) != group);
+                }
+            }
+        }
+    }
+
+    fn exit(&mut self, exit: &CommandExit, at: u64) {
+        let Some(started) = exit.started_ms else {
+            return;
+        };
+        let mut hits = self.open.iter_mut().filter(|run| {
+            run.command == exit.command
+                && at - run.at <= Self::SPAN
+                && run.called_ms.is_some_and(|called| started + Self::CLOCK_SLACK_MS >= called)
+        });
+        let Some(first) = hits.next() else {
+            return;
+        };
+        let mut shared = false;
+        for other in hits {
+            other.tainted = true;
+            shared = true;
+        }
+        if shared || first.exit.is_some_and(|code| code != exit.exit_code) {
+            first.tainted = true;
+        } else {
+            first.exit = Some(exit.exit_code);
+        }
+    }
 }
 
 /// `base` 之前最后一个主链节点的 id（增量批次判分叉用：批次里第一条用户提示的 parent 该是它）。
@@ -1610,6 +1848,22 @@ fn within_double_write(prev: Option<&str>, next: Option<&str>) -> bool {
         }
         _ => false,
     }
+}
+
+/// `YYYY-MM-DDTHH:MM:SS(.fff)Z` → Unix 毫秒。只认 UTC `Z` 结尾的形态（同 [`day_millis`]）。
+pub(crate) fn epoch_millis(ts: &str) -> Option<i64> {
+    let num = |range: std::ops::Range<usize>| ts.get(range)?.parse::<i64>().ok();
+    let (year, month, day) = (num(0..4)?, num(5..7)?, num(8..10)?);
+    if ts.as_bytes().get(4) != Some(&b'-') || ts.as_bytes().get(7) != Some(&b'-') || !(1..=12).contains(&month) {
+        return None;
+    }
+    // 公历日期 → 自 1970-01-01 起的天数（Howard Hinnant 的 days_from_civil）。
+    let year = if month <= 2 { year - 1 } else { year };
+    let era = year.div_euclid(400);
+    let yoe = year.rem_euclid(400);
+    let doy = (153 * (if month > 2 { month - 3 } else { month + 9 }) + 2) / 5 + day - 1;
+    let days = era * 146_097 + yoe * 365 + yoe / 4 - yoe / 100 + doy - 719_468;
+    Some(days * 86_400_000 + day_millis(ts)? as i64)
 }
 
 /// `YYYY-MM-DDTHH:MM:SS(.fff)Z` 的当日毫秒数（日期另比）。只认 UTC `Z` 结尾的形态——
@@ -2503,6 +2757,12 @@ mod tests {
         fn supports_chat(&self) -> bool {
             self.0.supports_chat()
         }
+        fn chat_command_exit(&self, line: &str) -> Option<CommandExit> {
+            self.0.chat_command_exit(line)
+        }
+        fn command_exit_markers(&self) -> &'static [&'static str] {
+            self.0.command_exit_markers()
+        }
     }
 
     /// 尾读结果与整读逐字段比对（undone 除外，理由见 tail_first_page 注释）。返回尾读是否接管。
@@ -2700,6 +2960,12 @@ mod tests {
         }
         fn supports_chat(&self) -> bool {
             self.0.supports_chat()
+        }
+        fn chat_command_exit(&self, line: &str) -> Option<CommandExit> {
+            self.0.chat_command_exit(line)
+        }
+        fn command_exit_markers(&self) -> &'static [&'static str] {
+            self.0.command_exit_markers()
         }
         fn tail_read(&self) -> Option<TailRead> {
             self.0.tail_read()
@@ -3139,5 +3405,275 @@ mod tests {
                 end = window.start;
             }
         }
+    }
+
+    // ── 退出码的跨行关联（ExitJoin）──
+
+    /// codex rollout 的三种行，字段照本机 0.167.2 的真实记录（真实样本见
+    /// `tests/fixtures/chat-replay/codex-exit-join.jsonl`）：exec 脚本调用（只打印 `r.output`，
+    /// 回执里没有退出码）、命令执行完毕的旁路记录、脚本回执。
+    fn cx_stamp(second: u32) -> String {
+        format!("2026-11-12T14:{:02}:{:02}.000Z", second / 60, second % 60)
+    }
+
+    fn cx_call(second: u32, call: &str, commands: &[&str]) -> String {
+        let script: String = commands
+            .iter()
+            .enumerate()
+            .map(|(i, command)| {
+                format!("const r{i} = await tools.exec_command({});\ntext(r{i}.output);\n", serde_json::json!({ "cmd": command }))
+            })
+            .collect();
+        serde_json::json!({
+            "timestamp": cx_stamp(second), "type": "response_item",
+            "payload": {"type": "custom_tool_call", "status": "completed", "call_id": call, "name": "exec", "input": script},
+        })
+        .to_string()
+    }
+
+    /// `started` = 命令开始执行的时刻（秒，与 [`cx_stamp`] 同一条时间轴）；`pad` 撑大这一行。
+    fn cx_exit(second: u32, started: u32, command: &str, code: i32, pad: usize) -> String {
+        let started_ms = epoch_millis(&cx_stamp(started)).unwrap() + 300;
+        serde_json::json!({
+            "timestamp": cx_stamp(second), "type": "event_msg",
+            "payload": {
+                "type": "item_completed", "started_at_ms": started_ms,
+                "item": {
+                    "type": "CommandExecution", "id": format!("exec-{second}"),
+                    "command": ["C:\\Program Files\\PowerShell\\7\\pwsh.exe", "-Command", command],
+                    "status": if code == 0 { "completed" } else { "failed" },
+                    "aggregated_output": "x".repeat(pad), "exit_code": code,
+                    "duration": {"secs": 0, "nanos": 500_000_000},
+                },
+            },
+        })
+        .to_string()
+    }
+
+    fn cx_output(second: u32, call: &str, segments: &[&str]) -> String {
+        let mut output = vec![serde_json::json!({"type": "input_text", "text": "Script completed\nWall time 1.0 seconds\nOutput:\n"})];
+        output.extend(segments.iter().map(|text| serde_json::json!({"type": "input_text", "text": text})));
+        serde_json::json!({
+            "timestamp": cx_stamp(second), "type": "response_item",
+            "payload": {"type": "custom_tool_call_output", "call_id": call, "output": output},
+        })
+        .to_string()
+    }
+
+    fn cx_user(second: u32, text: &str) -> String {
+        serde_json::json!({"timestamp": cx_stamp(second), "type": "event_msg", "payload": {"type": "user_message", "message": text}})
+            .to_string()
+    }
+
+    /// 各条工具回执的（调用 id，是否失败，退出码）。
+    fn receipts(items: &[ChatItem]) -> Vec<(String, bool, Option<i32>)> {
+        items
+            .iter()
+            .filter_map(|item| match item {
+                ChatItem::ToolResult { tool_use_id: Some(id), is_error, exit_code, .. } => {
+                    Some((id.clone(), *is_error, *exit_code))
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// 一份把「该补」与「不该补」的情形都走一遍的 rollout。`pad` 撑大旁路记录，凑出跨块的体积。
+    fn cx_exit_cases(pad: usize) -> String {
+        let lines = [
+            cx_user(0, "跑一下"),
+            // a：失败的命令，回执没有退出码 → 标红并带上退出码。
+            cx_call(1, "a", &["cargo test"]),
+            cx_exit(2, 1, "cargo test", 101, pad),
+            cx_output(3, "a", &["error: test failed"]),
+            // b：成功的命令 → 补上退出码 0，不算失败。
+            cx_call(4, "b", &["git status"]),
+            cx_exit(5, 4, "git status", 0, pad),
+            cx_output(6, "b", &[" M a.rs"]),
+            // c：命令让到后台，旁路记录在回执之后才到 → 不补。
+            cx_call(7, "c", &["cargo build"]),
+            cx_output(8, "c", &["Compiling…"]),
+            cx_exit(9, 7, "cargo build", 1, pad),
+            // d：两个并行脚本跑同一条命令，一成一败 → 分不清是谁的，都不补。
+            cx_call(10, "d1", &["npm test"]),
+            cx_call(10, "d2", &["npm test"]),
+            cx_exit(11, 10, "npm test", 1, pad),
+            cx_exit(12, 10, "npm test", 0, pad),
+            cx_output(13, "d1", &["out 1"]),
+            cx_output(13, "d2", &["out 2"]),
+            // e：同一个脚本里把同一条命令跑了两遍 → 都不补。
+            cx_call(14, "e", &["ls", "ls"]),
+            cx_exit(15, 14, "ls", 1, pad),
+            cx_exit(16, 14, "ls", 0, pad),
+            cx_output(17, "e", &["one", "two"]),
+            // f：旁路记录的开始时刻早于调用行一分钟（更早一次同名命令在后台才跑完）→ 不补。
+            cx_call(80, "f", &["cargo clippy"]),
+            cx_exit(81, 20, "cargo clippy", 1, pad),
+            cx_output(82, "f", &["checking…"]),
+            // g：回执自己带了退出码 → 以回执为准，旁路记录说什么都不改。
+            cx_call(83, "g", &["rg foo"]),
+            cx_exit(84, 83, "rg foo", 1, pad),
+            cx_output(85, "g", &[r#"{"chunk_id":"1","exit_code":0,"output":"hit"}"#]),
+            // h：调用之后新一轮开始了（上一轮被打断）→ 之前的调用作废，不补。
+            cx_call(86, "h", &["sleep 5"]),
+            cx_user(87, "换个做法"),
+            cx_exit(88, 86, "sleep 5", 1, pad),
+            cx_output(89, "h", &["late"]),
+            // i：同一个调用先后对上两条退出码不同的记录 → 不补。
+            cx_call(90, "i", &["make"]),
+            cx_exit(91, 90, "make", 1, pad),
+            cx_exit(92, 90, "make", 2, pad),
+            cx_output(93, "i", &["oops"]),
+            // j：一个脚本两条不同的命令，各自对上 → 各补各的。
+            cx_call(94, "j", &["bun test", "bun run lint"]),
+            cx_exit(95, 94, "bun test", 0, pad),
+            cx_exit(96, 94, "bun run lint", 2, pad),
+            cx_output(97, "j", &["ok", "lint failed"]),
+        ];
+        lines.iter().map(|line| format!("{line}\n")).collect()
+    }
+
+    fn cx_expected() -> Vec<(String, bool, Option<i32>)> {
+        [
+            ("a#0", true, Some(101)),
+            ("b#0", false, Some(0)),
+            ("c#0", false, None),
+            ("d1#0", false, None),
+            ("d2#0", false, None),
+            ("e#0", false, None),
+            ("e#1", false, None),
+            ("f#0", false, None),
+            ("g#0", false, Some(0)),
+            ("h#0", false, None),
+            ("i#0", false, None),
+            ("j#0", false, Some(0)),
+            ("j#1", true, Some(2)),
+        ]
+        .into_iter()
+        .map(|(id, failed, code)| (id.to_string(), failed, code))
+        .collect()
+    }
+
+    /// 能确定失败的标红，对不上或有歧义的一律不动（宁可漏标不可错标）。
+    #[test]
+    fn exit_join_marks_only_what_it_can_prove() {
+        let path = write_tmp("exit_join_cases", &cx_exit_cases(0));
+        let items = read_chat_delta(spec_of("codex"), &path, 0, None).items;
+        assert_eq!(receipts(&items), cx_expected());
+        // 旁路记录本身不上屏：时间线里只有用户消息、工具调用与回执。
+        assert!(items
+            .iter()
+            .all(|item| matches!(item, ChatItem::UserText { .. } | ChatItem::ToolUse { .. } | ChatItem::ToolResult { .. })));
+        std::fs::remove_file(path).ok();
+    }
+
+    /// 同一份记录按任意行界切成两批（先读前半、文件长出后半再增量读），拼起来与一次整读逐字一致。
+    /// 增量批次里只有回执、调用行与旁路记录都在上一批的情形（真实会话的常态：命令跑完才落回执）
+    /// 就在这些切法里。
+    fn assert_chunked_equals_whole(spec: &dyn TranscriptSpec, label: &str, content: &str) {
+        let path = write_tmp(label, content);
+        let whole = read_chat_delta(spec, &path, 0, None);
+        assert!(!whole.undone, "{label}：样本里不该有撤回（撤回会触发整读重灌，另有测试）");
+        let mut cuts: Vec<usize> = content.match_indices('\n').map(|(at, _)| at + 1).collect();
+        cuts.pop();
+        for cut in cuts {
+            std::fs::write(&path, &content[..cut]).unwrap();
+            let first = read_chat_delta(spec, &path, 0, None);
+            assert_eq!(first.offset, cut as u64);
+            std::fs::write(&path, content).unwrap();
+            let rest = read_chat_delta(spec, &path, first.offset, None);
+            assert!(!rest.reset, "{label} cut {cut}");
+            let mut items = first.items;
+            items.extend(rest.items);
+            assert_eq!(items, whole.items, "{label}：在字节 {cut} 处切开后与整读不一致");
+        }
+        // 一行一批地喂到头。
+        std::fs::write(&path, "").unwrap();
+        let (mut offset, mut items) = (0u64, Vec::new());
+        let mut written = String::new();
+        for line in content.split_inclusive('\n') {
+            written.push_str(line);
+            std::fs::write(&path, &written).unwrap();
+            let delta = read_chat_delta(spec, &path, offset, None);
+            offset = delta.offset;
+            items.extend(delta.items);
+        }
+        assert_eq!(items, whole.items, "{label}：逐行喂入与整读不一致");
+        std::fs::remove_file(path).ok();
+    }
+
+    #[test]
+    fn exit_join_is_identical_for_whole_chunked_and_tail_reads() {
+        let spec = spec_of("codex");
+        // 小体积：每种切法都覆盖到。
+        assert_chunked_equals_whole(spec, "exit_join_chunks", &cx_exit_cases(0));
+        // 大体积（旁路记录带 4KB 输出，重复 12 遍 ≈ 0.7MB）：尾读窗口的起点会落在调用行与回执行
+        // 之间，靠回看窗口前的内容还原状态。
+        let big: String = (0..12).map(|_| cx_exit_cases(4_000)).collect();
+        let path = write_tmp("exit_join_big", &big);
+        let expected: Vec<_> = (0..12).flat_map(|_| cx_expected()).collect();
+        assert_eq!(receipts(&read_chat_delta(spec, &path, 0, None).items), expected);
+        std::fs::remove_file(path).ok();
+        assert_tail_equivalent(spec, "exit_join_tail", &big);
+    }
+
+    /// 距离上限：调用行到回执行超过 SPAN 的不补，且三种读法都不补（上限正是为了让它们一致）。
+    #[test]
+    fn exit_join_gives_up_beyond_the_span_in_every_read_mode() {
+        let spec = spec_of("codex");
+        let far = ExitJoin::SPAN as usize + 4096;
+        let content = [
+            cx_user(0, "跑"),
+            cx_call(1, "near", &["cargo test"]),
+            cx_exit(2, 1, "cargo test", 1, ExitJoin::SPAN as usize / 2),
+            cx_output(3, "near", &["failed"]),
+            cx_call(4, "far", &["cargo bench"]),
+            cx_exit(5, 4, "cargo bench", 1, far),
+            cx_output(6, "far", &["failed"]),
+            cx_call(7, "after", &["cargo doc"]),
+            cx_exit(8, 7, "cargo doc", 3, 0),
+            cx_output(9, "after", &["failed"]),
+        ]
+        .iter()
+        .map(|line| format!("{line}\n"))
+        .collect::<String>();
+        let path = write_tmp("exit_join_span", &content);
+        assert_eq!(
+            receipts(&read_chat_delta(spec, &path, 0, None).items),
+            vec![
+                ("near#0".to_string(), true, Some(1)),
+                ("far#0".to_string(), false, None),
+                ("after#0".to_string(), true, Some(3)),
+            ]
+        );
+        std::fs::remove_file(path).ok();
+        assert_chunked_equals_whole(spec, "exit_join_span_chunks", &content);
+    }
+
+    /// 本机真实 codex 0.167.2 rollout 的三组连续记录（已脱敏）：失败（退出码 101）、成功、
+    /// 让到后台后才失败。三组的回执都只有命令输出、没有退出码。
+    #[test]
+    fn exit_join_on_real_codex_records() {
+        let spec = spec_of("codex");
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/chat-replay/codex-exit-join.jsonl");
+        let content = std::fs::read_to_string(&path).unwrap().replace("\r\n", "\n");
+        let copy = write_tmp("exit_join_real", &content);
+        let got: Vec<(bool, Option<i32>)> = receipts(&read_chat_delta(spec, &copy, 0, None).items)
+            .into_iter()
+            .map(|(_, failed, code)| (failed, code))
+            .collect();
+        assert_eq!(got, vec![(true, Some(101)), (false, Some(0)), (false, None)]);
+        std::fs::remove_file(copy).ok();
+        assert_chunked_equals_whole(spec, "exit_join_real_chunks", &content);
+    }
+
+    #[test]
+    fn epoch_millis_matches_known_instants() {
+        assert_eq!(epoch_millis("1970-01-01T00:00:00Z"), Some(0));
+        assert_eq!(epoch_millis("2000-03-01T00:00:00.000Z"), Some(951_868_800_000));
+        // 本机 rollout 实拍：这条记录的 payload.completed_at_ms 就是它的落盘时刻。
+        assert_eq!(epoch_millis("2026-11-12T14:17:36.801Z"), Some(1_794_493_056_801));
+        assert_eq!(epoch_millis("2026-11-12 14:17:36"), None);
+        assert_eq!(epoch_millis("garbage"), None);
     }
 }

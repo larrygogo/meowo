@@ -375,8 +375,10 @@ pub(super) struct OutputPart {
 ///   之后由 `wait` 取）、被用户打断（`aborted by user after 20.9s`），或老版本的纯文本回执。
 ///
 /// 每段正文若是命令结果的 JSON（`{"chunk_id":…,"exit_code":1,"output":"…"}`，脚本写的是
-/// `text(await tools.exec_command(…))`），取出其中的 `output` 与退出码；脚本写
-/// `text(r.output)` 时那段本来就是纯输出，没有退出码可取。
+/// `text(await tools.exec_command(…))`），取出其中的 `output` 与退出码；老版本的
+/// `shell_command` 返回的是带文本头的字符串（见 [`shell_result`]），同样取出退出码。脚本写
+/// `text(r.output)` 时那段本来就是纯输出，没有退出码可取——那种由读取层按旁路的
+/// CommandExecution 记录补（`transcript::ExitJoin`）。
 pub(super) fn output_parts(output: &Value) -> Vec<OutputPart> {
     let segments: Vec<String> = match output {
         Value::Array(items) => items
@@ -437,10 +439,12 @@ pub(super) fn output_parts(output: &Value) -> Vec<OutputPart> {
         .into_iter()
         .enumerate()
         .map(|(index, body)| {
-            let mut part = command_result(&body).unwrap_or(OutputPart {
-                text: body,
-                ..OutputPart::default()
-            });
+            let mut part = command_result(&body)
+                .or_else(|| shell_result(&body))
+                .unwrap_or(OutputPart {
+                    text: body,
+                    ..OutputPart::default()
+                });
             // 脚本失败时，出错的是最后那一段（`Script error:\n…`）。
             if failed && index == last {
                 part.is_error = true;
@@ -489,6 +493,28 @@ fn command_result(body: &str) -> Option<OutputPart> {
         text: output.to_string(),
         exit_code,
         is_error: exit_code.is_some_and(|code| code != 0),
+        interrupted: false,
+    })
+}
+
+/// 老版本 `shell_command` 的返回值：一个带文本头的字符串
+/// `Exit code: 0\nWall time: 0.4 seconds\nOutput:\n<输出>`。非零退出时工具直接抛错，脚本以
+/// `Script failed` 收场，那一段多一行前缀 `Script error:\n`。本机 0.148 之前的 68 份 rollout
+/// 里这种段 1623 条（退出码 0 的 1360 条、非零 263 条，2026-11-14）。
+/// 只认这三行原样打头的：脚本自己拼的 `RESULT 1\nExit code: …` 之类不碰。
+fn shell_result(body: &str) -> Option<OutputPart> {
+    let rest = body.strip_prefix("Script error:\n").unwrap_or(body);
+    let rest = rest.strip_prefix("Exit code: ")?;
+    let (code, rest) = rest.split_once('\n')?;
+    let exit_code = code.trim().parse::<i32>().ok()?;
+    let (_, rest) = rest.strip_prefix("Wall time: ")?.split_once('\n')?;
+    let text = rest
+        .strip_prefix("Output:\n")
+        .or_else(|| (rest == "Output:").then_some(""))?;
+    Some(OutputPart {
+        text: text.to_string(),
+        exit_code: Some(exit_code),
+        is_error: exit_code != 0,
         interrupted: false,
     })
 }
@@ -653,6 +679,59 @@ mod tests {
                 },
             ]
         );
+    }
+
+    /// 老版本 `shell_command` 的回执（本机 0.14x rollout 实拍，输出截短）：成功时是带文本头的
+    /// 字符串；非零退出时工具抛错，脚本以 `Script failed` 收场。两种都要取出退出码、去掉文本头。
+    #[test]
+    fn shell_command_text_header_yields_exit_code() {
+        let ok = json!([
+            {"type": "input_text", "text": "Script completed\nWall time 0.6 seconds\nOutput:\n"},
+            {"type": "input_text", "text": "Exit code: 0\nWall time: 0.4 seconds\nOutput:\n M .gitignore\n M Cargo.lock\n"},
+        ]);
+        assert_eq!(
+            output_parts(&ok),
+            vec![OutputPart {
+                text: " M .gitignore\n M Cargo.lock\n".into(),
+                exit_code: Some(0),
+                is_error: false,
+                interrupted: false,
+            }]
+        );
+        let failed = json!([
+            {"type": "input_text", "text": "Script failed\nWall time 0.5 seconds\nOutput:\n"},
+            {"type": "input_text", "text": "Script error:\nExit code: 1\nWall time: 0.3 seconds\nOutput:\nParserError: \r\nLine |\r\n"},
+        ]);
+        assert_eq!(
+            output_parts(&failed),
+            vec![OutputPart {
+                text: "ParserError: \r\nLine |\r\n".into(),
+                exit_code: Some(1),
+                is_error: true,
+                interrupted: false,
+            }]
+        );
+        // 没有输出：文本头到 `Output:\n` 为止。
+        let empty = json!([
+            {"type": "input_text", "text": "Script completed\nWall time 0.6 seconds\nOutput:\n"},
+            {"type": "input_text", "text": "Exit code: 1\nWall time: 0.4 seconds\nOutput:\n"},
+        ]);
+        assert_eq!(output_parts(&empty)[0].exit_code, Some(1));
+        assert!(output_parts(&empty)[0].is_error);
+        // 脚本自己拼的输出（实拍：`RESULT 1\nExit code: 0…`）不是这个文本头，原样保留、不取退出码；
+        // 别的脚本错误（实拍：沙箱启动失败）也不是。
+        for text in [
+            "RESULT 1\nExit code: 0\nWall time: 6.3 seconds\nOutput:\n\nrunning 9 tests\n",
+            "Script error:\nexecution error: Io(Custom { kind: Other, error: \"windows sandbox: orchestrator_helper_launch_failed\" })",
+            "Exit code: abc\nWall time: 1 seconds\nOutput:\n",
+        ] {
+            let parts = output_parts(&json!([
+                {"type": "input_text", "text": "Script completed\nWall time 0.6 seconds\nOutput:\n"},
+                {"type": "input_text", "text": text},
+            ]));
+            assert_eq!(parts[0].text, text);
+            assert_eq!(parts[0].exit_code, None);
+        }
     }
 
     #[test]

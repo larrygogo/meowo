@@ -18,8 +18,9 @@ exports[`五家回放：真实会话样本 → 解析 → 归并 → 渲染 > cl
 
 exports[`五家回放：真实会话样本 → 解析 → 归并 → 渲染 > codex 的时间线大纲与快照一致 1`] = `
 "用户｜继续
-过程块｜已运行 5 条命令（1 失败） · 已写入 1 个文件 · 已编辑 3 处（1 失败） · 访问了 1 次网页 · 执行了 2 次工具调用 · …
+过程块｜已运行 6 条命令（2 失败） · 已写入 1 个文件 · 已编辑 3 处（1 失败） · 访问了 1 次网页 · 执行了 2 次工具调用 · …
 工具[done]｜运行｜Get-Content app/src-tauri/CLAUDE.md -Raw; rg -n "managed_conversation|Ma…｜｜
+工具[error]｜运行｜$env:CARGO_TARGET_DIR='C:\\Users\\user\\Desktop\\workspace\\meowo\\app\\src-tau…｜｜退出码 101：warn: could not canonicalize path C:\\Users\\user
 工具[done]｜运行｜$env:CARGO_TARGET_DIR='C:\\Users\\user\\Desktop\\workspace\\meowo\\target\\prov…｜｜
 工具[error]｜运行｜rustfmt --check --edition 2021 src/conversation/probe.rs; $env:CARGO_TAR…｜｜退出码 1：Diff in \\\\?\\C:\\Users\\user\\Desktop\\workspace\\meowo\\target\\provider-…
 工具[done]｜写入｜target/provider-compat-lead/app/src-tauri/crates/meowo-agent/src/convers…｜+11｜
