@@ -221,6 +221,7 @@ mod tests {
             timestamp: None,
             text: text.into(),
             interjected: false,
+            turn_id: None,
             to_agent: None,
         }
     }

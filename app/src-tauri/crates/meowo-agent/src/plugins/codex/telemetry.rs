@@ -79,6 +79,15 @@ fn completed_item_events(
                     timestamp,
                     text,
                     interjected: false,
+                    // 回合进行中用户又发的话，codex 不另起回合：这条记录带的 turn_id 与该回合
+                    // 第一条用户消息相同（本机 98 份 rollout 里 15 条回合中途的用户消息都是，
+                    // 例：01a13d51 那份的 1962、1966 行与回合 01a13e4c 同号）。把它交给前端判
+                    // 回合边界。不标 interjected：codex 的回溯把插话也算一轮（见 chat_line_mark），
+                    // 标了撤回会数错轮数。老版本的 `event_msg/user_message` 没有这个字段。
+                    turn_id: payload
+                        .get("turn_id")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string),
                 })
                 .into_iter()
                 .collect()
@@ -544,6 +553,7 @@ fn parse_transcript_events(line: &str) -> Vec<TranscriptEvent> {
                     timestamp,
                     text,
                     interjected: false,
+                    turn_id: None,
                 })
                 .into_iter()
                 .collect()
@@ -1526,5 +1536,23 @@ mod tests {
             r#"{"type":"event_msg","payload":{"type":"task_complete","last_agent_message":"done","error":null}}"#
         )
         .is_empty());
+    }
+
+    /// 回合中途送进去的话与回合开头那条写法相同，只有 turn_id 说明它们同属一个回合
+    /// （本机 rollout 01a13d51 的 1962、1966 行，回合 01a13e4c；正文已换成占位）。
+    #[test]
+    fn user_message_carries_the_turn_id_from_the_record() {
+        let line = r#"{"timestamp":"2026-10-15T06:49:36.271Z","ordinal":1965,"type":"event_msg","payload":{"type":"item_completed","thread_id":"01a13d51-8612-7a62-adab-5bdfe4daf61f","turn_id":"01a13e4c-2c55-7831-a8de-d0f6ddfb65d6","item":{"type":"UserMessage","id":"01a13e52-cd0e-7ae0-a8bc-4f7f2f45c10d","client_id":"6b982180-ed27-49ff-b20b-159a3d283a00","content":[{"type":"text","text":"clippy 也报错","text_elements":[]}]},"started_at_ms":1792046976271,"completed_at_ms":1792046976271}}"#;
+        assert!(matches!(
+            parse_chat_items(line).as_slice(),
+            [ChatItem::UserText { turn_id: Some(turn), interjected: false, .. }]
+                if turn == "01a13e4c-2c55-7831-a8de-d0f6ddfb65d6"
+        ));
+        // 老版本的 user_message 事件没有 turn_id。
+        let old = r#"{"timestamp":"t1","type":"event_msg","payload":{"type":"user_message","message":"修复测试"}}"#;
+        assert!(matches!(
+            parse_chat_items(old).as_slice(),
+            [ChatItem::UserText { turn_id: None, .. }]
+        ));
     }
 }

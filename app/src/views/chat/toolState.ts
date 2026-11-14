@@ -52,15 +52,38 @@ export function useToolRunState(result: ToolResultItem | undefined): ToolRunStat
   return toolRunState(result, useContext(TurnLiveContext));
 }
 
-/// 当前回合从哪条之后算起：最后一条「真正开启回合」的用户消息，或最后一条中断分隔。
-/// 回合中插话（interjected）和发给子代理的话（to_agent）不算边界——agent 读到插话后接着
-/// 干同一回合。中断分隔算：被打断的那一轮到此为止，之后即使会话又在跑，也是新的一轮。
-/// 没有边界返回 -1（整段都属于当前回合）。
+/// 当前回合从哪条之后算起。回合边界只认记录里的显式信号，不靠「后面又出现了一条用户消息」反推：
+/// - 中断分隔（meta interrupted）：被打断的那一轮到此为止，之后即使会话又在跑，也是新的一轮。
+/// - provider 的记录说明「这条开启了新回合」的用户消息。各家记录怎么写（2026-11-14 用本机真实会话核对）：
+///   - claude、kimi：回合中途送进去的话有专门的记录形态（queued_command、origin.inTurn），后端标成
+///     interjected；不带这个标记的用户消息只会写在回合开头。
+///   - codex：回合中途的话不另起回合，记录形态也和回合开头那条一样，只是 turn_id 与本回合第一条相同
+///     （本机 98 份 rollout 里 15 条都是）。所以带 turn_id 的用户消息，前面还有同一个 turn_id 的，
+///     就不是边界。
+///   - gemini、opencode：时间线里不会出现没有回执的调用（gemini 的调用连同结果一起落盘，opencode 的
+///     导出器只导出已收场的调用），这条边界对它们的运行态没有影响。
+/// 发给子代理的话（to_agent）不算边界。没有边界返回 -1（整段都属于当前回合）。
+///
+/// 此前 codex 的用户消息不带 turn_id，回合中途再发一条，它之前还在跑的调用就被显示成「已中断」
+/// （做空 ③，相对 main 的回退）。
 export function liveTurnStart(items: ChatItem[]): number {
   for (let index = items.length - 1; index >= 0; index -= 1) {
     const item = items[index];
-    if (item.type === "user_text" && !item.interjected && !item.to_agent) return index;
     if (item.type === "meta" && item.kind === "interrupted") return index;
+    if (item.type !== "user_text" || item.interjected || item.to_agent) continue;
+    if (item.turn_id && continuesTurn(items, index, item.turn_id)) continue;
+    return index;
   }
   return -1;
+}
+
+/// index 处的用户消息之前，紧挨着的那条用户消息是不是同一个回合的（同一个 turn_id）。
+/// 中间隔着中断分隔就不必再看：外层会先遇到那条分隔。
+function continuesTurn(items: ChatItem[], index: number, turnId: string): boolean {
+  for (let before = index - 1; before >= 0; before -= 1) {
+    const item = items[before];
+    if (item.type === "meta" && item.kind === "interrupted") return false;
+    if (item.type === "user_text" && !item.to_agent) return item.turn_id === turnId;
+  }
+  return false;
 }

@@ -236,6 +236,7 @@ fn user_events(
         timestamp,
         text,
         interjected: false,
+        turn_id: None,
     }]
 }
 

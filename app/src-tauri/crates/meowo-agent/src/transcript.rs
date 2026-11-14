@@ -184,6 +184,8 @@ pub enum TranscriptEvent {
         /// 回合进行中由 CLI 插入（不是一轮的开头）。只有能从日志结构上认出来的
         /// provider 才置 true（claude 的 queued_command），其余一律 false。
         interjected: bool,
+        /// 所属回合的 id，记录里有才填（见 `ChatItem::UserText::turn_id`）。
+        turn_id: Option<String>,
     },
     AssistantMessage {
         id: String,
@@ -273,11 +275,13 @@ impl From<TranscriptEvent> for ChatItem {
                 timestamp,
                 text,
                 interjected,
+                turn_id,
             } => Self::UserText {
                 id,
                 timestamp,
                 text,
                 interjected,
+                turn_id,
                 to_agent: None,
             },
             TranscriptEvent::SubagentPrompt {
@@ -290,6 +294,7 @@ impl From<TranscriptEvent> for ChatItem {
                 timestamp,
                 text,
                 interjected: false,
+                turn_id: None,
                 to_agent: Some(agent),
             },
             TranscriptEvent::AssistantMessage {
@@ -684,8 +689,7 @@ pub trait TranscriptSpec: Sync {
         true
     }
 
-    /// 子任务能力。None = 该 agent 没有子任务概念（codex 当前如此：工具只有 exec/wait，
-    /// `task_started` 是回合级事件而非委派），或其子任务过程不落在可读的侧车流里。
+    /// 子任务能力。None = 该 agent 没有子任务概念，或其子任务过程不落在可读的侧车流里。
     fn subagents(&self) -> Option<&'static dyn SubagentSpec> {
         None
     }
@@ -2778,6 +2782,7 @@ mod tests {
                     timestamp: (!ts.is_empty()).then(|| ts.to_string()),
                     text: text.to_string(),
                     interjected: false,
+                    turn_id: None,
                 }]
             };
             if let Some(rest) = line.strip_prefix("t:").or_else(|| line.strip_prefix("u:")) {

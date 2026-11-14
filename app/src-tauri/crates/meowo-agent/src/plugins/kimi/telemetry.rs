@@ -491,6 +491,7 @@ fn parse_events(line: &str, wire_dir: Option<&Path>) -> Vec<TranscriptEvent> {
                     failed: u32::from(failed),
                     background_running: false,
                     task_id: None,
+                    interrupted: false,
                 }),
                 patch: None,
                 text: String::new(),
@@ -512,6 +513,7 @@ fn parse_events(line: &str, wire_dir: Option<&Path>) -> Vec<TranscriptEvent> {
                             timestamp,
                             text,
                             interjected: false,
+                            turn_id: None,
                         })
                         .into_iter()
                         .collect();
@@ -532,6 +534,7 @@ fn parse_events(line: &str, wire_dir: Option<&Path>) -> Vec<TranscriptEvent> {
                     timestamp,
                     text,
                     interjected: false,
+                    turn_id: None,
                 })
                 .into_iter()
                 .collect()
@@ -575,6 +578,7 @@ fn parse_events(line: &str, wire_dir: Option<&Path>) -> Vec<TranscriptEvent> {
                     timestamp,
                     text,
                     interjected,
+                    turn_id: None,
                 })
                 .into_iter()
                 .collect()
@@ -1178,6 +1182,7 @@ impl SubagentSpec for KimiSubagents {
             background_running: false,
             // kimi 的结局直接写在委派自己的回执里，不存在需要跨调用路由的场景。
             task_id: None,
+            interrupted: false,
         };
         for (_, status) in &states {
             match status.as_deref() {
