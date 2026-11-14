@@ -100,11 +100,20 @@ pub(crate) fn split_argv(argv: &[String], owns: impl Fn(&str) -> bool) -> Option
     let mut positional = 0;
     let mut resuming = false;
     let mut permission = Vec::new();
+    // `-c` 一律交给 app-server；Windows 沙箱实现（`windows.*`）TUI 也要一份：远程模式下 TUI 自己读配置，
+    // 没配 Windows 沙箱时会先把 `--sandbox workspace-write` 降成 read-only 再交给服务端（真机第四轮 N7：
+    // 只给服务端时首轮仍是 read-only，服务端那侧已是 windows_sandbox）。
+    let config = |server: &mut Vec<String>, tui: &mut Vec<String>, value: String| {
+        if value.trim_start().starts_with("windows.") {
+            tui.extend(["-c".into(), value.clone()]);
+        }
+        server.extend(["-c".into(), value]);
+    };
     while let Some(arg) = rest.next() {
         let arg = arg.as_str();
         if let Some((flag, value)) = arg.split_once('=').filter(|(f, _)| f.starts_with("--")) {
             match flag {
-                "--config" => server.extend(["-c".into(), value.to_owned()]),
+                "--config" => config(&mut server, &mut tui, value.to_owned()),
                 "--enable" | "--disable" => server.extend([flag.to_owned(), value.to_owned()]),
                 "--profile" | "--remote" | "--remote-auth-token-env" => return None,
                 "--sandbox" | "--ask-for-approval" => permission.push(arg.to_owned()),
@@ -113,7 +122,7 @@ pub(crate) fn split_argv(argv: &[String], owns: impl Fn(&str) -> bool) -> Option
             continue;
         }
         match arg {
-            "-c" | "--config" => server.extend(["-c".into(), rest.next()?.clone()]),
+            "-c" | "--config" => config(&mut server, &mut tui, rest.next()?.clone()),
             "--enable" | "--disable" => server.extend([arg.to_owned(), rest.next()?.clone()]),
             "-p"
             | "--profile"
@@ -123,7 +132,7 @@ pub(crate) fn split_argv(argv: &[String], owns: impl Fn(&str) -> bool) -> Option
             | "--remote-auth-token-env"
             | "--oss" => return None,
             _ if arg.starts_with("-c") && !arg.starts_with("--") && arg.len() > 2 => {
-                server.extend(["-c".into(), arg[2..].to_owned()]);
+                config(&mut server, &mut tui, arg[2..].to_owned());
             }
             _ if PERMISSION_VALUE_FLAGS.contains(&arg) => {
                 permission.push(arg.to_owned());
@@ -1768,6 +1777,14 @@ mod tests {
         );
         // 恢复时权限参数丢弃（远程 resume 不接受，thread 沿用自己存下的权限）。
         assert_eq!(split.tui, s(&["resume", "019a-thread"]));
+        // 真机第四轮 N7：Windows 沙箱实现两边都要（TUI 自己读配置决定要不要把 workspace-write 降成只读）。
+        let n7 = split_argv(
+            &s(&[exe, "--sandbox", "workspace-write", "-c", "approvals_reviewer=auto_review", "-c", "windows.sandbox=unelevated"]),
+            owns,
+        )
+        .unwrap();
+        assert_eq!(n7.server, s(&["-c", "approvals_reviewer=auto_review", "-c", "windows.sandbox=unelevated"]));
+        assert_eq!(n7.tui, s(&["--sandbox", "workspace-write", "-c", "windows.sandbox=unelevated"]));
         let fresh = split_argv(
             &s(&[
                 "codex",
