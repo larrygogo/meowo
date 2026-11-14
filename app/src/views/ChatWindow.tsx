@@ -17,6 +17,7 @@ import { confirmMarkDone, markDoneEndsWork, useSessionActions } from "../hooks/u
 import { useHistoryLayer } from "../hooks/useHistoryLayer";
 import { useT } from "../i18n";
 import { deliveryStatusLabel } from "../i18n/statusVocab";
+import { runningPlaceholder, runningReceipt, runningSendMode, sendBlockedMessage, unrecognizedPromptNotice } from "./chat/sendCopy";
 import { formatBackendError } from "../i18n/errors";
 import { useShowWhenReady } from "../useShowWhenReady";
 import { reduceChatEvents } from "../chat/reducer";
@@ -585,7 +586,7 @@ export function ChatWindow() {
   const blockedByQuestionRef = useRef(false);
   blockedByQuestionRef.current = !!(structuredQuestion || dismissedQuestion || history?.pendingReview === "question")
     && !(terminalAttention || dismissedAttention || approval || terminalMenuOpenRef.current);
-  const blockedMessage = () => (blockedByQuestionRef.current ? t.chat.questionNeedsAnswer : t.chat.terminalNeedsAttention);
+  const blockedMessage = () => sendBlockedMessage(t, blockedByQuestionRef.current ? "question" : "interaction");
   const isCurrentOperation = () => mountedRef.current && activeSessionRef.current === sessionId
     && sessionEpochRef.current === operationEpoch;
   /// 最近一次认领(临时 id → 真 id)。在途的粘贴落盘回来时,本会话若已被认领,结果仍归它。
@@ -4620,7 +4621,7 @@ export function ChatWindow() {
         {!loading && queuedShown.length > 0 && (
           <section className="chat-queued-stack" aria-label={t.chat.queueLabel}>
             <div className="chat-queued-head">
-              <span>{queuedPending > 0 ? t.chat.queuePending(queuedPending, chatUi?.queue_delivery ?? null) : ""}</span>
+              <span>{runningReceipt(t, runningSendMode(chatUi), queuedPending)}</span>
               {/* 中断是升级动作：只在还有没读到的消息时给，整个栈一个。 */}
               {canInterrupt && queuedPending > 0 && (
                 <button type="button" className="chat-queued-interrupt" data-tip={t.chat.interjectNowTip} aria-disabled={interrupting || undefined}
@@ -5289,21 +5290,11 @@ export function ChatWindow() {
                 // 手机上 Enter/Shift+Enter 是不存在的键盘语义,占位只留一句短的。回合在跑时
                 // 照样要说清发出去会怎样（插入/排队/发不了）——此前手机上一律「发消息给 Agent」，
                 // 发完才知道是排队还是插进去了。停止另有圆钮，不在占位里讲。
-                : remoteUi()
-                  ? tone === "running"
-                    ? chatUi?.queue_input
-                      ? chatUi?.queue_delivery === "next_step" ? t.chat.inputPlaceholderRemoteSteer : t.chat.inputPlaceholderRemoteQueue
-                      : t.chat.inputPlaceholderBusy
-                    : t.chat.inputPlaceholderRemote
                 // 运行中把排队/插话语义写在占位里（对照 Kimi「输入会加入队列 · Ctrl+S 立即插入」），
-                // 此前只藏在发送钮的 tooltip 里。按 Agent 能力分三种说法，不承诺做不到的事。
+                // 此前只藏在发送钮的 tooltip 里。去向按 Agent 能力定，与排队栈回执同一个说法（chat/sendCopy）。
                 : tone === "running"
-                  ? chatUi?.queue_input
-                    ? chatUi?.queue_delivery === "next_step"
-                      ? (canInterrupt ? t.chat.inputPlaceholderSteer : t.chat.inputPlaceholderSteerOnly)
-                      : (canInterrupt ? t.chat.inputPlaceholderRunning : t.chat.inputPlaceholderQueue)
-                    : t.chat.inputPlaceholderBusy
-                  : t.chat.inputPlaceholder
+                  ? runningPlaceholder(t, runningSendMode(chatUi), { canInterrupt, remote: remoteUi() })
+                  : remoteUi() ? t.chat.inputPlaceholderRemote : t.chat.inputPlaceholder
           }
           onChange={(event) => {
             setPrompt(event.target.value);
@@ -5903,7 +5894,7 @@ export function ChatWindow() {
         {/* 题面未知时不提交普通消息，给跳终端/收起两个出口。
             terminalAttention 出现说明识别成功变成了卡片,此横幅即让位。 */}
         {softPromptNotice && !terminalAttention && <div className="chat-send-error" role="status">
-          <span>{remoteUi() ? t.chat.unrecognizedPromptNoticeRemote : t.chat.unrecognizedPromptNotice}</span>
+          <span>{unrecognizedPromptNotice(t)}</span>
           {!remoteUi() && <button type="button" className="chat-send-takeover" onClick={() => setView("terminal")}>{t.chat.goTerminal}</button>}
           {/* 远程的「去终端」：就地展开终端画面与按键（同降级审批卡）。 */}
           {remoteUi() && <button type="button" className="chat-send-takeover" aria-expanded={remoteKeysOpen} onClick={() => setRemoteKeysOpen((open) => !open)}>{t.chat.remoteOpenKeys}</button>}

@@ -726,17 +726,38 @@ export const zh = {
     // 自动重试优先于一切说法：此刻「没动静」的真正原因（重试不落对话记录，只在终端画面上）
     workingRetry: (attempt: number, max: number) => `请求失败，正在重试（第 ${attempt}/${max} 次）`,
     inputLabel: "发送消息给 Agent",
-    inputPlaceholderRunning: "Enter 排队 · Ctrl+Enter 中断并发送",
-    inputPlaceholderQueue: "Enter 排队，当前任务结束后发送",
-    // Agent 边干边读（claude）：运行中提交不是排队，而是插进当前回合
-    inputPlaceholderSteer: "Enter 插入当前回合 · Ctrl+Enter 中断并发送",
-    inputPlaceholderSteerOnly: "Enter 插入当前回合，不打断它",
+    // 回合在跑时发消息会怎样，按后端声明的能力分三种去向（chat/sendCopy.ts）。同一种去向的占位
+    //（发之前的许诺）与回执（发之后的说法）写在一起、共用一个动词：此前 Kimi 没声明送达时机，
+    // 占位许诺「排队」，回执却只说「已交给 Agent」（走查输入 B5）。
+    runningSend: {
+      // Agent 边干边读：下一步就读到，插进当前回合。
+      insert: {
+        verb: "插入",
+        placeholder: "Enter 插入当前回合 · Ctrl+Enter 中断并发送",
+        placeholderNoInterrupt: "Enter 插入当前回合，不打断它",
+        placeholderRemote: "发送会插入当前回合，不打断它",
+        receipt: (n: number) => `${n} 条插话等待插入当前回合`,
+      },
+      // 排到当前回合结束后处理。
+      queue: {
+        verb: "排队",
+        placeholder: "Enter 排队 · Ctrl+Enter 中断并发送",
+        placeholderNoInterrupt: "Enter 排队，当前任务结束后发送",
+        placeholderRemote: "发送后排队，当前任务结束再发",
+        receipt: (n: number) => `${n} 条消息排队中，本回合结束后处理`,
+      },
+      // 何时处理没有取证：只说交给了 Agent，不许诺时机。
+      handoff: {
+        verb: "交给 Agent",
+        placeholder: "Enter 交给 Agent · Ctrl+Enter 中断并发送",
+        placeholderNoInterrupt: "Enter 交给 Agent，由它安排处理",
+        placeholderRemote: "发送后交给 Agent，由它安排处理",
+        receipt: (n: number) => `${n} 条消息已交给 Agent`,
+      },
+    },
     inputPlaceholderBusy: "当前任务结束后才能发送",
     inputPlaceholder: "发消息给 Agent（Shift+Enter 换行）",
     inputPlaceholderRemote: "发消息给 Agent",
-    // 手机上回合在跑时的说法：没有 Enter/Ctrl+Enter 可讲，只说发出去会怎样。
-    inputPlaceholderRemoteSteer: "发送会插入当前回合，不打断它",
-    inputPlaceholderRemoteQueue: "发送后排队，当前任务结束再发",
     inputUnavailable: "接管后才能在这里发送",
     sendBackgroundSession: "后台会话由 Agent 托管。这里只能发消息和结束",
     sendBackgroundKeysMovedYou: "后台会话不接受终端按键，请在这里直接发消息。",
@@ -1194,11 +1215,6 @@ export const zh = {
     terminalInitTimeout: "终端长时间无输出，可能启动失败。可结束会话后重试，对话记录不受影响。",
     queuedInterjections: (n: number) => `${n} 条插话已排队，本回合结束后处理`,
     // composer 上方的队列折叠条（Kimi 式）：收起时一行提示，点开逐条查看/移除。
-    // 运行中发出的消息何时被读到，按插件声明照实说（null = 未取证，不许诺时机）
-    queuePending: (n: number, delivery: "next_step" | "turn_end" | null) =>
-      delivery === "next_step" ? `${n} 条插话等待插入当前回合`
-        : delivery === "turn_end" ? `${n} 条消息排队中，本回合结束后处理`
-        : `${n} 条消息已交给 Agent`,
     queueLabel: "排队中的消息",
     // 送达状态词（发送中、已排队、未确认送达、发送失败…）在词表 t.vocab.delivery，这里只留动作与说明。
     echoRetry: "重发",
@@ -1222,7 +1238,7 @@ export const zh = {
     interjectNowTip: "停下当前回合，立刻处理这些消息",
     queuedDismiss: "隐藏，不会取消",
     queuedDismissTip: "只是隐藏，消息仍会执行",
-    interruptAndSendTip: "Ctrl+Enter 中断并发送，Enter 排队",
+    interruptAndSendTip: "Ctrl+Enter 中断当前回合并发送",
     interruptNow: "中断",
     interruptNowTip: "中断当前回合，不发送",
     escInterruptArmed: "再按一次 Esc 中断当前回合",
@@ -1233,8 +1249,8 @@ export const zh = {
     attentionCollapsedRestore: "已收起提示，点击展开",
     questionCollapsedRestore: "已收起提问，点击展开",
     questionFoldedInTerminal: "终端里有待答的提问，点此展开卡片",
-    unrecognizedPromptNotice: "终端似乎在等待选择，消息已发出",
-    unrecognizedPromptNoticeRemote: "终端似乎在等待选择，消息已发出",
+    // 消息被拦下、没有发出时才出现：正文后的 Enter 可能落到原生审批的默认项上（走查输入 A2）。
+    unrecognizedPromptNotice: "终端似乎在等待选择，消息没有发出",
     terminalPromptTitle: "Agent 需要你完成一个启动步骤",
     terminalPromptHelp: "下面是终端的提示原文，用右侧按钮选择确认即可。",
     trustPromptTitle: "是否信任此文件夹？",
