@@ -127,6 +127,7 @@ fn completed_item_events(
         // 只认 ContextCompaction：`compacted` 在 0.144 与 context_compacted 成对出现（各 25 次），
         // 认它会让老会话每次压缩出两条分隔；`response_item/compaction` 还会出现在续写段开头
         // （ordinal 1，带入的旧压缩），不是这一刻发生的压缩。
+        "SubAgentActivity" => super::subagents::activity_events(item, timestamp),
         "ContextCompaction" => vec![TranscriptEvent::Metadata {
             id: id("compact"),
             timestamp,
@@ -421,7 +422,8 @@ fn tool_call_events(
             name: name.to_string(),
             kind,
             summary,
-            subagent: None,
+            // 派出子代理：与 claude、kimi 同一个子任务块（开始、结局、过程见 subagents.rs）。
+            subagent: (name == "spawn_agent").then(|| super::subagents::spawn_ref(arg)),
             detail,
             plan: None,
         }
@@ -533,7 +535,7 @@ fn tool_result_events(
     vec![result(base, call_id, merged)]
 }
 
-fn parse_transcript_events(line: &str) -> Vec<TranscriptEvent> {
+pub(super) fn parse_transcript_events(line: &str) -> Vec<TranscriptEvent> {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
         return Vec::new();
     };
@@ -745,6 +747,10 @@ impl TranscriptSpec for CodexTranscript {
         parse_transcript_events(line)
     }
 
+    fn subagents(&self) -> Option<&'static dyn crate::transcript::SubagentSpec> {
+        Some(&super::subagents::CodexSubagents)
+    }
+
     /// 回溯（TUI 双击 Esc 编辑上一条）不改写 rollout，追加 `event_msg/thread_rolled_back
     /// {num_turns}`（本机实拍 0.144），与 kimi 的 context.undo 同形，交给读取层回放。轮的边界
     /// 按 codex 源码 `is_user_turn_boundary`：每条非上下文注入的用户消息，插话也算一轮——即
@@ -858,7 +864,7 @@ pub fn codex_launch_prefix() -> Option<Vec<String>> {
 /// 没有该变量，profile 会话靠 `managed_codex_homes()` 兜底——漏了它，多账号下的 codex 会话
 /// 上下文/切换引擎/跨账号搬迁会全部静默落空（kimi 侧 `managed_share_dirs` 与 claude 侧
 /// `managed_projects_dirs` 是同一条纪律）。
-fn find_rollout(session_id: &str) -> Option<PathBuf> {
+pub(super) fn find_rollout(session_id: &str) -> Option<PathBuf> {
     let suffix = format!("{session_id}.jsonl");
     std::iter::once(codex_home())
         .flatten()

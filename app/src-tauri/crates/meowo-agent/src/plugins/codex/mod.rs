@@ -19,6 +19,7 @@ mod exec_script;
 mod lead;
 mod lineage;
 mod screen;
+mod subagents;
 pub mod setup;
 pub mod telemetry;
 
