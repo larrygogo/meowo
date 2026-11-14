@@ -209,7 +209,11 @@ pub enum AttentionDetails {
     FramedForm,
     /// 横排选项行：标题行之下是正文，末行是 `Allow once   Allow always   Reject` 这样用多个空格
     /// 隔开的选项，同行尾部带 `⇆ select  enter confirm` 按键说明。焦点只用底色表示，文本里
-    /// 认不出，按「初始焦点在第一项」从左往右做相对移动（→ 下一项、回车选中），Esc 等于末项。
+    /// 认不出，所以**不靠键盘焦点作答**：选项可以用鼠标点（程序文件里每个选项都挂着 `onMouseUp`），
+    /// 对话页按屏幕上那个选项的位置发一次点击，与焦点在哪无关。1.19.5 真机：把焦点挪到 Reject 之后点
+    /// `Allow once`，CLI 只放行这一次（tests/probe_tui_script.rs 的 click 步骤，2026-11-15）。
+    /// Esc 等于末项，同样与焦点无关。键盘的相对移动（→ 下一项、回车选中）只在确认页刚弹出、焦点
+    /// 确定在第一项时用。
     /// opencode 1.19.2 真机屏幕 + 1.19.5 程序文件内嵌 JS 取证（权限框的 `left/right/return/escape`
     /// 绑定，2026-11-14）。
     OptionRow,
@@ -375,6 +379,14 @@ pub struct AttentionPattern {
     pub unparsed_keys: &'static [RoleKey],
     /// 这张卡在问什么（见 [`AttentionNotice`]）。None = 卡片只用种类的通用标题。
     pub notice: Option<AttentionNotice>,
+    /// 同屏还必须有的几行（JS 正则，`im`，逐条都要在命中处**之后**匹配到）。整句规则只凭一句话出卡，
+    /// 正文里引用那句话（讨论这个页面、cat 出源码注释或测试样本）就会误弹卡并锁住输入框，点卡上的
+    /// 选项还会往正常的输入框里发按键（第二轮审查 2026-11-15）。全屏确认页把它的选项行、按键提示行
+    /// 都列在这里，缺一样不出卡。空 = 不加这层保护。
+    pub anchors: &'static [&'static str],
+    /// 最后一条 anchor 之后最多还能有几行非空内容。全屏确认页填 0：页面在屏幕末段，后面不会有
+    /// 输入框或别的输出。None = 不限。
+    pub tail_lines: Option<u8>,
 }
 
 /// 屏幕回显标记：TUI 状态栏上代表某个模式值的稳定文案片段（如 claude 的 "plan mode on"）。

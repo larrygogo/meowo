@@ -17,6 +17,14 @@ import {
   OPENCODE_ALWAYS_CONFIRM_SCREEN,
   OPENCODE_PERMISSION_SCREEN,
 } from "../test/requestSamples";
+import { clickSequence, pointerTarget } from "./chat/terminalPointer";
+
+/// 后端仿真屏幕此刻的内容（managed_terminal_frame 的返回）：showScreen 时一并记下。
+let frameLines: string[] = [];
+/// 在这一屏上点某个选项时写进终端的两段（按下、抬起）。opencode 的选项用鼠标点，不靠键盘焦点。
+const clicks = (screenText: string, label: string) => clickSequence(pointerTarget(screenText.split("\n"), label)!).map((data) => ["write_managed_terminal", data]);
+const CLICK_ONCE = clicks(OPENCODE_PERMISSION_SCREEN, "Allow once");
+const CLICK_ALWAYS = clicks(OPENCODE_PERMISSION_SCREEN, "Allow always");
 
 /// 起一个会话；broker 通道的把样本请求挂到 pending_interaction 上。
 function setup(sessionId: number, provider: string, approval: unknown = null) {
@@ -24,6 +32,7 @@ function setup(sessionId: number, provider: string, approval: unknown = null) {
   invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
     if (command === "get_chat_history") return Promise.resolve({ ...adapter.history(sessionId, provider, "running"), ptyManaged: true, pendingReview: approval ? "approval" : null });
     if (command === "pending_interaction") return Promise.resolve({ approval: approval ? { ...(approval as object), sessionId } : null, question: null });
+    if (command === "managed_terminal_frame" && provider === "opencode") return Promise.resolve({ lines: frameLines, cursorRow: 0, cursorCol: 0, cursorVisible: false });
     return base(command, args);
   });
 }
@@ -33,6 +42,7 @@ async function showScreen(provider: string, screenText: string) {
   await waitFor(() => expect(terminalProps.current?.onAttention).toBeTypeOf("function"));
   const attention = terminalAttention(screenText, [], false, false, grammar(provider));
   expect(attention).toBeTruthy();
+  frameLines = screenText.split("\n");
   act(() => (terminalProps.current!.onAttention as (value: unknown) => void)(attention));
 }
 
@@ -51,7 +61,8 @@ const DELIVERY: Record<string, { allow: unknown; deny: unknown }> = {
   "codex（broker）": { allow: ["respond_runtime_request", "allow_once"], deny: ["respond_runtime_request", "deny"] },
   "kimi（屏幕）": { allow: ["write_managed_terminal", "1"], deny: ["write_managed_terminal", "3"] },
   "gemini（屏幕）": { allow: ["write_managed_terminal", "\r"], deny: ["write_managed_terminal", "\x1b[B\x1b[B\r"] },
-  "opencode（屏幕）": { allow: ["write_managed_terminal", "\r"], deny: ["write_managed_terminal", "\x1b"] },
+  // opencode：允许是点屏幕上的 Allow once（两段写入，下面按段比对），拒绝是 Esc。
+  "opencode（屏幕）": { allow: CLICK_ONCE, deny: ["write_managed_terminal", "\x1b"] },
   "claude（屏幕兜底）": { allow: ["write_managed_terminal", "\r"], deny: ["write_managed_terminal", "\x1b[B\x1b[B\x1b[B\r"] },
 };
 
@@ -85,7 +96,8 @@ describe("审批卡在对话窗里：五家同一套", () => {
     expect(delivered(id)).toEqual([]);
     input.blur();
     fireEvent.keyDown(window, { key: "1" });
-    await waitFor(() => expect(delivered(id)).toEqual([DELIVERY[name].allow]));
+    const allow = DELIVERY[name].allow as unknown[];
+    await waitFor(() => expect(delivered(id)).toEqual(Array.isArray(allow[0]) ? allow : [allow]));
   });
 
   it.each(CARDS)("%s：Esc 两段式拒绝，第一下只点亮，第二下才拒", async (name, id, open) => {
@@ -121,10 +133,10 @@ describe("审批卡在对话窗里：五家同一套", () => {
       "codex（broker）": [],
       "kimi（屏幕）": [["write_managed_terminal", "2"]],
       "gemini（屏幕）": [["write_managed_terminal", "\x1b[B\r"]],
-      "opencode（屏幕）": [["write_managed_terminal", "\x1b[C\r"]],
+      "opencode（屏幕）": CLICK_ALWAYS,
       "claude（屏幕兜底）": [["write_managed_terminal", "\x1b[B\r"]],
     };
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 200)); });
     expect(delivered(id)).toEqual(expected[name]);
   });
 });
@@ -195,12 +207,13 @@ describe("有卡片待处理时的输入框：五家同一条规则", () => {
 });
 
 describe("OpenCode 的持久放行：点一下，确认页由 Meowo 认出后代按", () => {
-  it("点「本会话内允许」写「→ 回车」；认出 Always allow 确认页后再写回车，不出第二张卡", async () => {
+  it("点「本会话内允许」点的是屏幕上的 Allow always；认出 Always allow 确认页后再写回车，不出第二张卡", async () => {
     await CARDS[4][2](920);
     fireEvent.click(await screen.findByRole("button", { name: "本会话内允许" }));
-    await waitFor(() => expect(adapter.writes(920)).toEqual(["\x1b[C\r"]));
+    await waitFor(() => expect(delivered(920)).toEqual(CLICK_ALWAYS));
     await showScreen("opencode", OPENCODE_ALWAYS_CONFIRM_SCREEN);
-    await waitFor(() => expect(adapter.writes(920)).toEqual(["\x1b[C\r", "\r"]));
+    // 确认页刚弹出，焦点确定在第一项（Confirm）：回车。
+    await waitFor(() => expect(delivered(920)).toEqual([...CLICK_ALWAYS, ["write_managed_terminal", "\r"]]));
     // 确认页没有变成卡片。
     expect(screen.queryByRole("button", { name: "Confirm" })).toBeNull();
     expect(document.querySelectorAll(".chat-approval-overlay .chat-approval")).toHaveLength(0);
@@ -216,17 +229,18 @@ describe("OpenCode 的持久放行：点一下，确认页由 Meowo 认出后代
     expect(card.querySelector(".chat-approval-badge")?.textContent).toBe("待选择");
     expect(card.querySelector("pre")?.textContent).toContain("until OpenCode is restarted");
     expect(adapter.writes(921)).toEqual([]);
+    // 用户自己走到这一页的，焦点在哪不知道：点屏幕上的 Confirm，不按回车。
     fireEvent.click(confirm);
-    await waitFor(() => expect(adapter.writes(921)).toEqual(["\r"]));
+    await waitFor(() => expect(delivered(921)).toEqual(clicks(OPENCODE_ALWAYS_CONFIRM_SCREEN, "Confirm")));
   });
 
   it("点的是「允许一次」：之后出现的确认页不代按", async () => {
     await CARDS[4][2](922);
     fireEvent.click(await screen.findByRole("button", { name: "允许一次" }));
-    await waitFor(() => expect(adapter.writes(922)).toEqual(["\r"]));
+    await waitFor(() => expect(delivered(922)).toEqual(CLICK_ONCE));
     await showScreen("opencode", OPENCODE_ALWAYS_CONFIRM_SCREEN);
     await screen.findByRole("button", { name: "Confirm" });
-    expect(adapter.writes(922)).toEqual(["\r"]);
+    expect(delivered(922)).toEqual(CLICK_ONCE);
   });
 });
 
@@ -443,7 +457,7 @@ describe("选项角色在对话窗里：没有的角色不出按钮，认不出�
     // 等待期间焦点可能回到输入框（数字键在那里属于输入），再让一次。
     adapter.box().blur();
     fireEvent.keyDown(window, { key: "2" });
-    await waitFor(() => expect(delivered(971)).toEqual([["write_managed_terminal", "\r"]]));
+    await waitFor(() => expect(delivered(971)).toEqual(clicks(OPENCODE_PERMISSION_SCREEN.replace("Allow once   Allow always   Reject", "Allow always   Reject"), "Allow always")));
   });
 
   it.each([["桌面", 972, false], ["手机页", 973, true]] as const)("其他选项（%s）：按终端原文出按钮，点了按的是它那一项的键，数字键够不着它", async (_name, id, remote) => {
@@ -524,4 +538,27 @@ describe("kimi 提问表单的自定义答案：在卡片上填，不用去终�
     await screen.findByText(zh.chat.customAnswerNotSent, undefined, { timeout: 6_000 });
     expect(delivered(983)).toEqual([["write_managed_terminal", "3"]]);
   }, 10_000);
+});
+
+/// 第二轮审查 2026-11-15：opencode 的焦点只用底色表示，按「焦点在第一项」算方向键会选错项。
+describe("OpenCode 审批卡：作答不依赖终端里的焦点", () => {
+  it("屏幕上找不到这个选项（框已经变了）：什么都不发，提示条说明，卡片留着", async () => {
+    await CARDS[4][2](991);
+    await screen.findByRole("button", { name: "允许一次" });
+    frameLines = ["  ┃  something else"];
+    fireEvent.click(screen.getByRole("button", { name: "允许一次" }));
+    await screen.findByText(zh.chat.optionNotFound);
+    expect(delivered(991)).toEqual([]);
+    expect(screen.getByRole("button", { name: "允许一次" })).toBeTruthy();
+  });
+
+  it("写进终端的没有方向键也没有回车：与用户在终端里把焦点挪到哪无关", async () => {
+    await CARDS[4][2](992);
+    fireEvent.click(await screen.findByRole("button", { name: "允许一次" }));
+    await waitFor(() => expect(delivered(992)).toHaveLength(2));
+    for (const data of adapter.writes(992)) {
+      expect(data).not.toContain("\r");
+      expect(data).not.toMatch(/\x1b\[[ABCD]/);
+    }
+  });
 });

@@ -931,6 +931,8 @@ impl AgentPlugin for Claude {
                 options: &[],
                 unparsed_keys: &[],
                 notice: None,
+                anchors: &[],
+                tail_lines: None,
             },
             crate::chat_ui::AttentionPattern {
                 id: "claude:command-approval",
@@ -1013,6 +1015,8 @@ impl AgentPlugin for Claude {
                 ],
                 unparsed_keys: &[],
                 notice: None,
+                anchors: &[],
+                tail_lines: None,
             },
             // 以「都不问」档（`--dangerously-skip-permissions`）启动、而这个账号目录还没接受过时的确认页。
             // 2.1.325 真机（隔离配置目录加假密钥抓的，probe_tui_script，2026-11-15；与用户切账号后的实拍逐字一致）：
@@ -1029,7 +1033,8 @@ impl AgentPlugin for Claude {
             // CLI 直接退出（同一次真机都走过）。
             crate::chat_ui::AttentionPattern {
                 id: "claude:bypass-permissions-confirm",
-                patterns: &[r"^\s*WARNING: Claude Code running in Bypass Permissions mode\s*$"],
+                // 词间用 \s+：终端窄于约 58 列时这句折成两行（50 列真机帧），折行处是换行加缩进。
+                patterns: &[r"^\s*WARNING:\s+Claude\s+Code\s+running\s+in\s+Bypass\s+Permissions\s+mode\s*$"],
                 last: true,
                 details: crate::chat_ui::AttentionDetails::None,
                 kind: crate::chat_ui::AttentionKind::Choice,
@@ -1042,6 +1047,15 @@ impl AgentPlugin for Claude {
                 }],
                 unparsed_keys: &[],
                 notice: Some(crate::chat_ui::AttentionNotice::BypassPermissions),
+                // 两个选项行（其一带焦点）与按键提示行都在、且提示行之后没有别的内容，才是这一页。
+                // 正文里引用警告句、cat 出本文件的注释或测试样本都凑不齐这几行，或者后面跟着输入框。
+                anchors: &[
+                    r"^\s*(?:❯\s*)?No,\s+exit\s*$",
+                    r"^\s*(?:❯\s*)?Yes,\s+I\s+accept\s*$",
+                    r"^\s*❯\s*(?:No,\s+exit|Yes,\s+I\s+accept)\s*$",
+                    r"^\s*Enter\s+to\s+confirm\s+·\s+Esc\s+to\s+cancel\s*$",
+                ],
+                tail_lines: Some(0),
             },
             // 环境里带着 ANTHROPIC_API_KEY、而这个账号目录没有对它表过态时的确认页（2.1.325 真机，同上）：
             //   Detected a custom API key in your environment
@@ -1052,7 +1066,7 @@ impl AgentPlugin for Claude {
             // 两项都不退出、也不是放行或拒绝，照原文列出。
             crate::chat_ui::AttentionPattern {
                 id: "claude:custom-api-key-confirm",
-                patterns: &[r"^\s*Detected a custom API key in your environment\s*$"],
+                patterns: &[r"^\s*Detected\s+a\s+custom\s+API\s+key\s+in\s+your\s+environment\s*$"],
                 last: true,
                 details: crate::chat_ui::AttentionDetails::None,
                 kind: crate::chat_ui::AttentionKind::Choice,
@@ -1060,6 +1074,14 @@ impl AgentPlugin for Claude {
                 options: &[],
                 unparsed_keys: &[],
                 notice: Some(crate::chat_ui::AttentionNotice::CustomApiKey),
+                anchors: &[
+                    r"^\s*Do\s+you\s+want\s+to\s+use\s+this\s+API\s+key\?\s*$",
+                    r"^\s*(?:❯\s*)?Yes\s*$",
+                    r"^\s*(?:❯\s*)?No\s+\(recommended\)\s*$",
+                    r"^\s*❯\s*(?:Yes|No\s+\(recommended\))\s*$",
+                    r"^\s*Enter\s+to\s+confirm\s+·\s+Esc\s+to\s+cancel\s*$",
+                ],
+                tail_lines: Some(0),
             },
             // `/model`、`/effort` 的二次确认框（形态见 chat_ui::SwitchConfirm）。Meowo 自己发起的切换、且是
             // 「切到刚选的那一个」时由对话页代按，不出卡；其余情况（hook 要求确认、焦点在取消项上、
@@ -1075,6 +1097,12 @@ impl AgentPlugin for Claude {
                 options: &[],
                 unparsed_keys: &[],
                 notice: None,
+                anchors: &[
+                    r"^\s*(?:❯\s*)?(?:\d+\.\s*)?Yes, switch to \S.*$",
+                    r"^\s*(?:❯\s*)?(?:\d+\.\s*)?No, go back\s*$",
+                    r"^\s*❯\s*(?:\d+\.\s*)?(?:Yes, switch to|No, go back)\b",
+                ],
+                tail_lines: None,
             },
             crate::chat_ui::AttentionPattern {
                 id: "claude:plan-approval",
@@ -1097,6 +1125,8 @@ impl AgentPlugin for Claude {
                 options: &[],
                 unparsed_keys: &[],
                 notice: None,
+                anchors: &[],
+                tail_lines: None,
             },
         ]
     }

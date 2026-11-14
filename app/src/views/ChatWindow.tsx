@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type SetStateAction } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type Dispatch, type SetStateAction, useLayoutEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 // 文件拖入走 Tauri 的 drag-drop 事件(webview 原生 drop 被拦截,DOM 拿不到 File;
@@ -31,7 +31,8 @@ import { reduceChatEvents } from "../chat/reducer";
 import { ApprovalCard } from "./chat/ApprovalCard";
 import { ApprovalRequestCard } from "./chat/ApprovalRequestCard";
 import { TerminalPromptCard, TerminalQuestionCard } from "./chat/TerminalRequestCards";
-import { approvalCardModel, cardBadge, cardTitle, denyReasonOf, isApprovalEndedNotice, isPersistentChoice, terminalFeedbackFor, terminalInputForChoice, type ApprovalChoice } from "./chat/requestCard";
+import { approvalCardModel, cardBadge, cardTitle, denyReasonOf, isApprovalEndedNotice, isPersistentChoice, terminalFeedbackFor, terminalInputForChoice, terminalOptionForChoice, type ApprovalChoice } from "./chat/requestCard";
+import { clickOptionInTerminal } from "./chat/terminalPointer";
 import { typeAnswerIntoTerminal } from "./chat/terminalTypedAnswer";
 import { holdSwitchDialog } from "./chat/switchConfirm";
 import { cardLockHint, composerCardLock, lockForPendingReview, lockForScreenCard, screenCardLockKind } from "./chat/composerCardLock";
@@ -432,6 +433,8 @@ export function ChatWindow() {
   const followUpRef = useRef<PendingFollowUp | null>(null);
   /// 清掉「审批已在别处了结」的说明（只清这几句，别的错误不动）。每次渲染刷新，见下方定义处。
   const clearEndedNoticeRef = useRef<() => void>(() => {});
+  /// 会话的进程换了代：清掉上一个进程留下的东西。桌面由 pty-restarted 事件触发，手机页由轮询里的进程代次触发。
+  const processRestartedRef = useRef<() => void>(() => {});
   const revealTerminalAttention = useCallback((attention: TerminalAttention | null) => {
     // 屏幕不再匹配（提示已在终端里被处理掉）或换了一张新卡时，收起条一并作废。
     setDismissedAttention(null);
@@ -535,7 +538,7 @@ export function ChatWindow() {
     approvalAwaitingIds, setApprovalAwaitingIds,
     brokerOwnsReview, setBrokerOwnsReview,
     lastInteractiveQuestionRef, collapsedQuestionIdRef,
-  } = useApprovalChannel({ sessionId, activeSessionRef, viewRef, setView, setSendError });
+  } = useApprovalChannel({ sessionId, activeSessionRef, viewRef, setView, setSendError, onProcessRestart: () => processRestartedRef.current() });
   // 有卡片待处理时输入框怎么办：五家、两条通道同一条规则，见 chat/composerCardLock。
   // 发送是否被拦、控件是否停用、说明用哪一句，都从这一个结果取。
   const screenCard = terminalAttention ?? dismissedAttention;
@@ -2277,14 +2280,16 @@ export function ChatWindow() {
   // 留下一条「该审批已在别处处理或已过期」，一直挂在新进程的画面上（用户实拍 2026-11-15）；旧进程屏幕上认出的
   // 卡与它的收起条同理。手机页收不到宿主事件，靠上面「新卡到来时清掉」那一条兜底。
   clearEndedNoticeRef.current = () => setSendErrorText((current) => (isApprovalEndedNotice(current, tRef.current) ? "" : current));
+  processRestartedRef.current = () => {
+    clearEndedNoticeRef.current();
+    setDismissedAttention(null);
+    setTerminalAttention(null);
+  };
   useEffect(() => {
     let un: (() => void) | undefined;
     let cancelled = false;
     listen<{ sessionId: number }>("pty-restarted", (event) => {
-      if (event.payload.sessionId !== activeSessionRef.current) return;
-      clearEndedNoticeRef.current();
-      setDismissedAttention(null);
-      setTerminalAttention(null);
+      if (event.payload.sessionId === activeSessionRef.current) processRestartedRef.current();
     }).then((fn) => {
       if (cancelled) fn(); else un = fn;
     }).catch(() => {});
@@ -4022,7 +4027,7 @@ export function ChatWindow() {
   // 到卡片随 .then 收起之间有窗口,期间极快双击会把 option.input 落键两次——命令审批场景
   // 等于替用户答两次。只锁**会收卡的终止动作**,多选勾选(卡片留驻)的连点不受影响。
   const optionResolvingRef = useRef(false);
-  const chooseTerminalOption = (option: { input: string } | undefined, responseReady = terminalResponseReady) => {
+  const chooseTerminalOption = (option: { input: string; pointer?: boolean; label?: string } | undefined, responseReady = terminalResponseReady) => {
     if (!option || !responseReady || optionResolvingRef.current) return;
     // 选完这次菜单就结束了：关掉识别窗口，否则按钮会一直停在「收起」态。
     // 判据取 attention 本身的类型而不是识别窗口是否还开着——窗口会到点自灭，
@@ -4030,9 +4035,14 @@ export function ChatWindow() {
     const wasModelMenu = terminalAttention?.kind === "menu";
     setMenuWatchUntil(0);
     optionResolvingRef.current = true;
-    void writeManagedTerminal(sessionId, option.input)
-      .then(() => {
+    // 要用鼠标点的选项（横排选项行，焦点在屏幕文字里看不出）：现读屏幕定位再点，找不到就什么都不发（见 chat/terminalPointer）。
+    const answered = option.pointer && option.label
+      ? clickOptionInTerminal(sessionId, option.label)
+      : writeManagedTerminal(sessionId, option.input).then(() => true);
+    void answered
+      .then((sent) => {
         if (!isCurrentOperation()) return;
+        if (!sent) { setSendError(t.chat.optionNotFound, { terminal: true }); return; }
         terminalMenuOpenRef.current = false;
         terminalMenuSeenRef.current = false;
         setTerminalMenuOpen(false);
@@ -4073,7 +4083,7 @@ export function ChatWindow() {
     if (input === null) return;
     // 持久放行在有的 CLI 上还要过一道确认页：记一笔，认出确认页时替用户确认。
     if (isPersistentChoice(choice)) followUpRef.current = { session: sessionId, rule: commandAttention.id, at: Date.now() };
-    chooseTerminalOption({ input });
+    chooseTerminalOption(terminalOptionForChoice(commandAttention, choice) ?? { input });
   };
   /// 放弃这次静默选模型：收掉 CLI 菜单、停转圈、只报一句。kimi 菜单的 Esc 有搜索词时先清词，
   /// 第二下才关菜单（model-selector 的 handleInput），搜过就按两下；分两次写——合成一次写入
@@ -4147,7 +4157,9 @@ export function ChatWindow() {
   // 焦点在输入框/终端/按钮上时让开,那里的键另有主人（收补全菜单、写进 PTY、按钮自身）。
   // 无依赖数组是有意的:每次渲染重绑一个 keydown,换闭包永远新鲜。
   // 两条通道同一套键：数字键与 Esc 只认审批卡的模型，不分请求来自 broker 还是屏幕。
-  useEffect(() => {
+  // 用 layout effect：监听要和卡片（连同卡上的数字徽标）在同一次提交里生效。被动 effect 晚一个调度任务才跑，
+  // 那一小段时间里徽标已经亮着、按键却没人接（机器忙时测试稳定撞上：按键返回未处理、此后不再重试）。
+  useLayoutEffect(() => {
     const model = view === "chat" && approvalModel?.live && approvalModel.state === "pending" ? approvalModel : null;
     if (!model) return;
     const onKey = (event: KeyboardEvent) => {

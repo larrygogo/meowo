@@ -317,6 +317,9 @@ pub fn regex_rule_keys(p: &dyn crate::AgentPlugin) -> Vec<String> {
         keys.push(format!("attention:{}", a.id));
         // 选项角色规则同样是在认 CLI 的文案：选项改了说法，按钮就从「允许一次」掉成普通选项。
         // 一条规则一个键（`option:<提示 id>#<声明序号>`）；带现场打字流程的另有就绪标志一条。
+        for index in 0..a.anchors.len() {
+            keys.push(format!("anchor:{}#{index}", a.id));
+        }
         for (index, option) in a.options.iter().enumerate() {
             keys.push(format!("option:{}#{index}", a.id));
             if option.typed.is_some() {
@@ -365,6 +368,16 @@ pub fn resolve(p: &dyn crate::AgentPlugin, rule: &str) -> Option<RuleText> {
                 Some(RuleText::Regex(vec![option.pattern]))
             };
         }
+    }
+    if let Some(rest) = rule.strip_prefix("anchor:") {
+        let (id, index) = rest.rsplit_once('#')?;
+        let anchor = p
+            .attention_patterns()
+            .iter()
+            .find(|a| a.id == id)?
+            .anchors
+            .get(index.parse::<usize>().ok()?)?;
+        return Some(RuleText::Regex(vec![anchor]));
     }
     if let Some(id) = rule.strip_prefix("screen:") {
         let found = p.screen_rules().iter().find(|r| r.id == id)?;

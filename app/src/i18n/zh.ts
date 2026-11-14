@@ -825,6 +825,8 @@ export const zh = {
     },
     // 选了会让 CLI 退出的选项（启动确认页的 No, exit）：后果写在按钮上。
     optionExitsSession: "选它会结束这个会话",
+    // 要用鼠标点的终端选项（opencode 权限框）：屏幕上没找到它，什么都没发。
+    optionNotFound: "终端里没找到这个选项，请重试",
     questionTitle: "Agent 正在等待你的回答",
     questionPending: vocab.request.question,
     questionFormLoading: "点选答案，终端表单就绪后自动作答",

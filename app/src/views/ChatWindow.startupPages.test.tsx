@@ -54,6 +54,55 @@ describe("Bypass Permissions 确认页：认出来，出选择卡，不代按", 
     expect(keys("bypass-permissions-moved")).toEqual({ "No, exit": "\x1b[A\r", "Yes, I accept": "\r" });
   });
 
+  /// 第二轮审查 2026-11-15：只凭警告句整行匹配就出卡，在 Meowo 自己的仓库里讨论这一页时会误弹卡、
+  /// 锁住输入框，点卡上的选项还会往正常输入框里发按键。现在要同屏有两个选项行（其一带焦点）与按键提示行，
+  /// 且提示行之后没有别的内容。
+  describe("正文引用不出卡", () => {
+    const page = FRAMES["bypass-permissions"].screen;
+    const composer = ["", "────────────────────────────", "❯ ", "────────────────────────────", "  Opus 5.5 · 12% ctx"];
+    const quiet = (lines: string[]) => terminalAttention(lines.join("\n"), [], false, false, grammar("claude"), false);
+
+    it("整行的警告句，附近有一个带 ❯ 的列表，但没有这一页的选项与按键提示", () => {
+      expect(quiet(["● 这一页的第一行是：", "  WARNING: Claude Code running in Bypass Permissions mode", "  然后列出：", "  ❯ 第一项", "    第二项", ...composer])).toBeNull();
+    });
+
+    it("整页原文被贴进了回答里，后面是正常的输入框", () => {
+      expect(quiet(["● 页面原文如下：", ...page, ...composer])).toBeNull();
+    });
+
+    it("cat 出测试样本（JSON，每行带引号）与源码注释（行首是 //）", () => {
+      expect(quiet([...page.map((line) => `      ${JSON.stringify(line)},`), ...composer])).toBeNull();
+      expect(quiet([...page.map((line) => `            // ${line}`), ...composer])).toBeNull();
+    });
+
+    it.each([
+      ["少了 Yes, I accept", (lines: string[]) => lines.filter((line) => !/Yes, I accept/.test(line))],
+      ["少了 No, exit", (lines: string[]) => lines.filter((line) => !/No, exit/.test(line))],
+      ["两个选项都没有焦点标记", (lines: string[]) => lines.map((line) => line.replace("❯", " "))],
+      ["少了按键提示行", (lines: string[]) => lines.filter((line) => !/Enter to confirm/.test(line))],
+    ])("真机页面%s：不出卡", (_name, mutate) => {
+      expect(quiet(mutate(page))).toBeNull();
+    });
+
+    it("自定义 API 密钥确认页同样：原文贴在回答里、后面是输入框时不出卡", () => {
+      expect(quiet(["● 原文：", ...FRAMES["custom-api-key"].screen, ...composer])).toBeNull();
+      expect(quiet(["  Detected a custom API key in your environment", "  ❯ a", "    b", ...composer])).toBeNull();
+    });
+  });
+
+  it.each(["bypass-permissions-c50", "bypass-permissions-c80"])("窄终端真机帧 %s：警告句折行照样认，按键序列正确", (name) => {
+    const attention = recognize(name, false);
+    expect(attention?.id).toBe("claude:bypass-permissions-confirm");
+    expect(attention?.options?.map((option) => [option.label, option.input, option.role])).toEqual([
+      ["No, exit", "\r", "exit"],
+      ["Yes, I accept", "\x1b[B\r", "other"],
+    ]);
+  });
+
+  it("窄终端的自定义 API 密钥确认页（50 列真机帧）照样认", () => {
+    expect(recognize("custom-api-key-c50", false)?.options?.map((option) => [option.label, option.input])).toEqual([["Yes", "\x1b[A\r"], ["No (recommended)", "\r"]]);
+  });
+
   it("正文里提到这句警告（不是整行）不出卡", () => {
     expect(terminalAttention("● 启动时会显示 WARNING: Claude Code running in Bypass Permissions mode 这一页", [], false, false, grammar("claude"), false)).toBeNull();
   });
@@ -224,5 +273,45 @@ describe("进程换代后，上一个进程留下的提示条清掉", () => {
     expect(before).toBe(zh.chat.cardLockApproval);
     restart(1117);
     await waitFor(() => expect(adapter.box().placeholder).not.toBe(zh.chat.cardLockApproval));
+  });
+});
+
+/// 第二轮审查 2026-11-15：手机页收不到 pty-restarted，旧提示条要等新卡到来才清。现在已有的轮询
+/// （pending_interaction）带回进程代次，代次变了就清；没有新增远程桥命令。
+describe("手机页：进程代次变了就清旧提示条，不用等新卡", () => {
+  async function leave(id: number, remote: boolean) {
+    if (remote) markRemoteUi();
+    const state = { pending: CLAUDE_BROKER_APPROVAL as unknown, generation: 3 };
+    const base = adapter.setup(id, "claude", "running");
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "get_chat_history") return Promise.resolve({ ...adapter.history(id, "claude", "running"), ptyManaged: true, pendingReview: state.pending ? "approval" : null });
+      if (command === "pending_interaction") return Promise.resolve({ approval: state.pending ? { ...(state.pending as object), sessionId: id } : null, question: null, ptyGeneration: state.generation });
+      return base(command, args);
+    });
+    render(<ChatWindow />);
+    await screen.findByRole("button", { name: "允许一次" });
+    state.pending = null;
+    await screen.findByText(zh.chat.approvalClearedNotice, undefined, { timeout: 4000 });
+    return state;
+  }
+
+  it.each([["手机页", 1121, true], ["桌面（事件没到时的兜底）", 1122, false]] as const)("%s：代次从 3 变 4，提示条消失", async (_name, id, remote) => {
+    try {
+      const state = await leave(id, remote);
+      state.generation = 4;
+      await waitFor(() => expect(screen.queryByText(zh.chat.approvalClearedNotice)).toBeNull(), { timeout: 4000 });
+    } finally {
+      restoreDesktop();
+    }
+  });
+
+  it("代次没变：提示条留着（第一次看到的代次只当基线）", async () => {
+    try {
+      await leave(1123, true);
+      await act(async () => { await new Promise((resolve) => setTimeout(resolve, 1500)); });
+      expect(screen.getByText(zh.chat.approvalClearedNotice)).toBeTruthy();
+    } finally {
+      restoreDesktop();
+    }
   });
 });

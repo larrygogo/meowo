@@ -509,6 +509,7 @@ pub(crate) fn pending_interaction(
         question: state.ptys.interactive_question_dto(session_id),
         runtime_request: state.ptys.runtime_question(session_id),
         runtime_requests: state.ptys.runtime_requests(session_id),
+        pty_generation: crate::terminal::pty_generation(session_id),
     }
 }
 

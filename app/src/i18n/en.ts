@@ -724,6 +724,7 @@ export const en: Dict = {
       custom_api_key: "Use the API key found in your environment?",
     },
     optionExitsSession: "This ends the session",
+    optionNotFound: "Option not found in the terminal. Try again",
     questionTitle: "Agent is waiting for your answer",
     questionPending: vocab.request.question,
     questionFormLoading: "Pick an answer; it will be applied once the terminal form is ready",

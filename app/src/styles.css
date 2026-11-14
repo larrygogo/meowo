@@ -5264,7 +5264,8 @@ button.scm-check-name:hover { text-decoration: underline; }
 .chat-approval-copy details { margin-top: var(--sp-5); color: var(--cc-text-faint); font-size: var(--text-xs); }
 /* 命令正文是这张卡里真正要读的东西：下沉的代码底（--cc-code-bg）+ 正文色等宽字，不描边。
    留 max-height + 滚动——真实命令能有好几百字符，不能让它把卡撑到满屏。 */
-.chat-approval-copy pre { max-height: 160px; margin: 0; padding: var(--sp-8) var(--sp-12); overflow: auto; border-radius: var(--radius-md); background: var(--cc-code-bg); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--cc-text); font: var(--text-xs)/var(--leading-normal) var(--cc-mono); user-select: text; }
+/* 原文区限高按整行取：上内边距加 8 行。此前固定 160px，最后一行露半截（确认页原文 9 行以上时，第二轮审查截图）。 */
+.chat-approval-copy pre { max-height: calc(8lh + var(--sp-8)); margin: 0; padding: var(--sp-8) var(--sp-12); overflow: auto; border-radius: var(--radius-md); background: var(--cc-code-bg); white-space: pre-wrap; overflow-wrap: anywhere; color: var(--cc-text); font: var(--text-xs)/var(--leading-normal) var(--cc-mono); user-select: text; }
 /* 一行放不下时，掉行的必须是左边的旁支，不能是主按钮：正着排（row + wrap）是从左往右装，
    装不下的是最后一颗，也就是主按钮自己掉到第二行（实拍英文带「Allow and remember…」的卡：
    Allow once 宽 116 加 16 的间距放不下，独自靠右占一行，和「拒绝」分开了）。

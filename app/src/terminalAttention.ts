@@ -42,6 +42,9 @@ export type TerminalAttentionOption = {
   target?: string;
   /// 这一项可以带一句现场打的字（说明并拒绝的说明、自定义答案）。
   typed?: TypedAnswer;
+  /// 这一项要用鼠标点击作答（横排选项行：焦点只用底色表示，键盘的相对移动不可靠）。
+  /// 点哪里现读屏幕定位，见 chat/terminalPointer；`input` 留着键盘按键，只在焦点确定时用。
+  pointer?: boolean;
 };
 /// 审批详情区的屏幕文法风格（后端 `AttentionDetails` 的镜像，插件随 AttentionPattern 声明）：
 /// proceed_box = 「Do you want to proceed?」框式（光标移动选择、记住=持久规则）；
@@ -183,7 +186,39 @@ export type AttentionPattern = {
   options?: AttentionOptionRule[];
   unparsed_keys?: RoleKey[];
   notice?: AttentionNotice | null;
+  /// 同屏还必须有的几行与尾部限制（后端 `anchors` / `tail_lines`）：整句规则防正文引用误弹卡。
+  anchors?: string[];
+  tail_lines?: number | null;
 };
+
+/// 规则声明的页面保护是否成立：命中处之后每条 anchor 都匹配得到，且最后一条 anchor 之后的非空行数
+/// 不超过 tail_lines。没声明保护的规则恒成立。坏正则当作不成立（宁可不出卡）。
+function pageGuardsHold(rule: Pick<AttentionPattern, "anchors" | "tail_lines">, visible: string, index: number): boolean {
+  const anchors = rule.anchors ?? [];
+  if (anchors.length === 0 && rule.tail_lines == null) return true;
+  const after = visible.slice(index);
+  let lastEnd = 0;
+  for (const source of anchors) {
+    let end = -1;
+    try {
+      const re = new RegExp(source, "gim");
+      for (let m = re.exec(after); m; m = re.exec(after)) {
+        end = m.index + m[0].length;
+        if (m[0] === "") re.lastIndex += 1;
+      }
+    } catch {
+      return false;
+    }
+    if (end < 0) return false;
+    lastEnd = Math.max(lastEnd, end);
+  }
+  if (rule.tail_lines != null) {
+    // 第一段是 anchor 所在行的余下部分，之后才是它下面的行。
+    const tail = after.slice(lastEnd).split("\n").slice(1).filter((line) => line.trim()).length;
+    if (tail > rule.tail_lines) return false;
+  }
+  return true;
+}
 
 /// 解析阶段的选项：多带一个 `move`，是「把焦点移到这一项、但不回车」的按键。
 /// 靠焦点做相对移动的文法才有；数字键直选的没有。定完角色后不再往外带。
@@ -607,11 +642,11 @@ function parseOptionRow(visible: string, matchIndex: number): { text: string; op
   const row = strip(lines[rowAt]).replace(/\s{2,}(?:ctrl\+\S+\s+\S+\s+)?⇆\s*select.*$/i, "");
   const labels = row.trim().split(/\s{2,}/).map((label) => label.trim()).filter(Boolean);
   if (labels.length < 2) return { text };
-  const options = labels.map((label, position): TerminalAttentionOption => ({
-    label,
-    input: position === labels.length - 1 ? "\x1b" : "\x1b[C".repeat(position) + "\r",
-    position,
-  }));
+  // 末项是 Esc 的落点，与焦点无关；其余项用鼠标点（pointer），不靠焦点。input 里的方向键只在焦点
+  // 确定在第一项时用（确认页刚弹出、由 Meowo 接着按的那一下，见 chat/terminalFollowUp）。
+  const options = labels.map((label, position): TerminalAttentionOption => (position === labels.length - 1
+    ? { label, input: "\x1b", position }
+    : { label, input: "\x1b[C".repeat(position) + "\r", position, pointer: true }));
   return { text, options };
 }
 
@@ -744,6 +779,7 @@ export function terminalAttention(
   // 「你只会拿到自己的规则」。
   for (const rule of grammar.attentionPatterns ?? []) {
     const index = matchAttentionPattern(rule, visible);
+    if (index >= 0 && !pageGuardsHold(rule, visible, index)) continue;
     if (index >= 0 && (!best || index > best.index)) {
       best = { index, id: rule.id, kind: kindOfRule(rule), details: rule.details, confirms: rule.confirms ?? undefined, rule };
     }

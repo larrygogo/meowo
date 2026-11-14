@@ -340,12 +340,12 @@ describe("屏幕通道的说明并拒绝：由拒绝项的打字流程决定，�
 describe("选项没认出来时的按键：只用插件声明过的，不猜", () => {
   const bare = (provider: string, screen: string) => recognized(provider, screen);
 
-  it("opencode 选项行还没画出来：回车是允许一次、Esc 是拒绝（两键都真机走过）", () => {
+  it("opencode 选项行还没画出来：只有拒绝（Esc），不给允许一次（回车选的是焦点项，焦点看不出）", () => {
     const attention = bare("opencode", "  ┃  △ Permission required\n  ┃    ← Access external directory C:\\Windows");
     expect(attention.options).toBeUndefined();
     const card = approvalCardModel(asTerminalRuntimeRequest({ sessionId: 7, provider: "opencode", attention, writable: true }), zh);
-    expect(card.actions).toMatchObject({ allowOnce: true, deny: true, denyWithReason: false, persistent: [], others: [] });
-    expect(terminalInputForChoice(attention, "allow_once")).toBe("\r");
+    expect(card.actions).toMatchObject({ allowOnce: false, deny: true, denyWithReason: false, persistent: [], others: [] });
+    expect(terminalInputForChoice(attention, "allow_once")).toBeNull();
     expect(terminalInputForChoice(attention, "deny")).toBe("\x1b");
   });
 

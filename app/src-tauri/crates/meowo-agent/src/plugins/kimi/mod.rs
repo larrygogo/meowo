@@ -525,6 +525,8 @@ impl AgentPlugin for Kimi {
                 ],
                 unparsed_keys: &[],
                 notice: None,
+                anchors: &[],
+                tail_lines: None,
             },
             crate::chat_ui::AttentionPattern {
                 id: "kimi:command-approval",
@@ -581,6 +583,8 @@ impl AgentPlugin for Kimi {
                 ],
                 unparsed_keys: &[],
                 notice: None,
+                anchors: &[],
+                tail_lines: None,
             },
         ]
     }
