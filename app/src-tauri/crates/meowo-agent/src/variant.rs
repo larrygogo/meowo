@@ -9,8 +9,10 @@ use crate::{auth::AuthScheme, config::HookSpec, id::AgentId, launch::LaunchSpec}
 #[derive(Debug, Clone, Copy)]
 pub struct DataDirSpec {
     /// 环境变量覆盖名（如 `KIMI_CODE_HOME` / `CODEX_HOME` / `CLAUDE_CONFIG_DIR`）。
-    /// 三家语义一致：变量值**就是**数据目录本身。设了就优先于候选目录。
+    /// 设了就优先于候选目录；少数 CLI 覆盖 home 而非数据目录，由 env_suffix 描述。
     pub env: Option<&'static str>,
+    /// Gemini 0.65 的 Storage 在 GEMINI_CLI_HOME 后追加 .gemini（本机 bundle 取证）。
+    pub env_suffix: &'static str,
     /// 相对 home 的候选目录，按优先级排列。`probe` 取第一个**已存在**的。
     pub candidates: &'static [&'static str],
 }
@@ -20,7 +22,7 @@ impl DataDirSpec {
     fn env_override(&self) -> Option<PathBuf> {
         let key = self.env?;
         let v = std::env::var(key).ok()?;
-        (!v.is_empty()).then(|| PathBuf::from(v))
+        (!v.is_empty()).then(|| crate::join_rel(Path::new(&v), self.env_suffix))
     }
 
     /// **已存在**的数据目录：env 覆盖（须是目录）→ 首个存在的候选 → None（＝该变体未配置过）。
@@ -268,7 +270,11 @@ mod tests {
     fn variant(env: Option<&'static str>, candidates: &'static [&'static str]) -> Variant {
         Variant {
             tag: "modern",
-            data_dir: DataDirSpec { env, candidates },
+            data_dir: DataDirSpec {
+                env,
+                env_suffix: "",
+                candidates,
+            },
             hooks: &SPEC,
             auth: None,
             launch: &LAUNCH,
@@ -314,6 +320,7 @@ mod tests {
             tag: "t",
             data_dir: DataDirSpec {
                 env: None,
+                env_suffix: "",
                 candidates: &[".x"],
             },
             hooks: &SPEC,
@@ -399,10 +406,35 @@ mod tests {
     }
 
     #[test]
+    fn compatibility_gemini_home_contains_dot_gemini() {
+        let _env = crate::env_guard();
+        let root = tmp("gemini-home");
+        let spec = crate::by_id("gemini").unwrap().variants()[0].data_dir;
+        let old = std::env::var_os("GEMINI_CLI_HOME");
+        std::env::set_var("GEMINI_CLI_HOME", &root);
+        let actual = spec.default_dir(Path::new("/unrelated"));
+        let absent = spec.probe(Path::new("/unrelated"));
+        std::fs::create_dir_all(root.join(".gemini")).unwrap();
+        let present = spec.probe(Path::new("/unrelated"));
+        std::env::set_var("GEMINI_CLI_HOME", "");
+        let empty = spec.default_dir(&root);
+        match old {
+            Some(old) => std::env::set_var("GEMINI_CLI_HOME", old),
+            None => std::env::remove_var("GEMINI_CLI_HOME"),
+        }
+        assert_eq!(actual, Some(root.join(".gemini")));
+        assert_eq!(absent, None);
+        assert_eq!(present, Some(root.join(".gemini")));
+        assert_eq!(empty, Some(root.join(".gemini")));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn data_dir_probe_takes_first_existing_candidate() {
         let home = tmp("probe");
         let spec = DataDirSpec {
             env: None,
+            env_suffix: "",
             candidates: &[".modern", ".legacy"],
         };
 

@@ -7,9 +7,9 @@ use meowo_store::{
 fn open_in_memory_creates_tables() {
     let store = Store::open_in_memory().expect("open");
     let count: i64 = store.raw_table_count().expect("count tables");
-    // projects / sessions / tasks / todos / session_context / session_notes / work_groups
-    // （events 于 v16 丢弃：自建库起零读写；work_groups 是刻意保留的空表，见 store.rs）
-    assert_eq!(count, 7);
+    // 基础七张表外还有已删除的「Meowo 托管」会话留下的八张 managed_* 表：托管路线已删，
+    // 表与旧数据刻意保留（删数据须用户另行同意，见 managed.rs），新库也照建以免同版本结构分叉。
+    assert_eq!(count, 15);
 }
 
 // == Task 4 ==
@@ -374,7 +374,6 @@ fn image_only_prompt_keeps_placeholder_title() {
     assert_eq!(t.current_activity, None);
 }
 
-
 /// kimi 附图 prompt 的前置 `<system>…</system>` 注记不是用户文本——不进标题（实拍：
 /// 发图会话标题曾是「<system>Image compressed to fit model limits: origina…」）。
 #[test]
@@ -402,7 +401,10 @@ fn unclosed_system_segment_is_kept() {
     store
         .on_user_prompt(sid, "看这段 <system> 标签怎么用", 300)
         .unwrap();
-    assert_eq!(store.get_task(tid).unwrap().title, "看这段 <system> 标签怎么用");
+    assert_eq!(
+        store.get_task(tid).unwrap().title,
+        "看这段 <system> 标签怎么用"
+    );
 }
 
 /// meowo 自己的附件注入指令也不是用户文本——不进标题（实拍：发图会话标题
@@ -750,18 +752,24 @@ fn sync_todos_rebuild_does_not_revive_or_touch_session() {
     store
         .sync_todos_rebuild(
             sid,
-            &[TodoInput { content: "a".into(), status: TodoStatus::Pending }],
+            &[TodoInput {
+                content: "a".into(),
+                status: TodoStatus::Pending,
+            }],
             400,
         )
         .unwrap();
     let s = store.get_session(sid).unwrap();
     assert_eq!(s.status, "waiting"); // 没被顶回 running
     assert_eq!(s.last_event_at, 300); // 活跃时刻没被伪造
-    // hook 版(真实活动,迟到窗之外)仍照旧翻转。
+                                      // hook 版(真实活动,迟到窗之外)仍照旧翻转。
     store
         .sync_todos(
             sid,
-            &[TodoInput { content: "a".into(), status: TodoStatus::Completed }],
+            &[TodoInput {
+                content: "a".into(),
+                status: TodoStatus::Completed,
+            }],
             300 + 6_000,
         )
         .unwrap();
@@ -895,7 +903,10 @@ fn last_ai_text_keeps_the_closing_question() {
     };
 
     // 长回复以问句收尾:存问句,前面有话加「…」(截前 200 字会把它截掉)。
-    let long = format!("{}\n\n**要我接着把测试也补上吗？**", "已经改完了解析器。".repeat(40));
+    let long = format!(
+        "{}\n\n**要我接着把测试也补上吗？**",
+        "已经改完了解析器。".repeat(40)
+    );
     store.set_last_ai_text(sid, &long, 120).unwrap();
     assert_eq!(last(&store).as_deref(), Some("…要我接着把测试也补上吗？"));
 
@@ -907,7 +918,10 @@ fn last_ai_text_keeps_the_closing_question() {
     store
         .set_last_ai_text(sid, "选哪个方案？\n1. 灰度\n2. 全量", 120)
         .unwrap();
-    assert_eq!(last(&store).as_deref(), Some("选哪个方案？ 1. 灰度 2. 全量"));
+    assert_eq!(
+        last(&store).as_deref(),
+        Some("选哪个方案？ 1. 灰度 2. 全量")
+    );
 }
 
 // == Task 2: PendingReview ==
@@ -936,7 +950,11 @@ fn pending_review_set_and_clear() {
         .iter()
         .find(|l| l.session.cc_session_id == "cc1")
         .unwrap();
-    assert_eq!(s.pending_review.as_deref(), Some("approval"), "同毫秒交错不得清掉真实审批");
+    assert_eq!(
+        s.pending_review.as_deref(),
+        Some("approval"),
+        "同毫秒交错不得清掉真实审批"
+    );
 
     // 更晚的清除:置 NULL,且不改 last_event_at。
     store.clear_pending_review(sid, 501).unwrap();
@@ -1342,7 +1360,11 @@ fn straggler_activity_does_not_revive_a_cleanly_ended_session() {
     store.end_session(sid, 200).unwrap();
 
     store.revive_if_ended_running(sid, 202).unwrap(); // SessionEnd 后 2ms 的排队尾巴
-    assert_eq!(store.get_session(sid).unwrap().status, "ended", "尾巴不得诈尸");
+    assert_eq!(
+        store.get_session(sid).unwrap().status,
+        "ended",
+        "尾巴不得诈尸"
+    );
 
     // 迟到窗之外的活动 = 真实后续使用(如 orphan 误收后用户继续用),照常自愈。
     store.revive_if_ended_running(sid, 200 + 6_000).unwrap();
@@ -1445,7 +1467,11 @@ fn supersede_session_is_atomic() {
     let (c, _) = store.start_session(pid, "c", 400).unwrap();
     assert!(store.supersede_session(a, c, 500).is_err());
     assert_eq!(store.session_header(c).unwrap().predecessor_id, None);
-    assert_eq!(store.session_launch_args(c).unwrap(), None, "回滚必须连 launch_args 复制一起撤销");
+    assert_eq!(
+        store.session_launch_args(c).unwrap(),
+        None,
+        "回滚必须连 launch_args 复制一起撤销"
+    );
     assert_eq!(store.session_header(a).unwrap().superseded_by, Some(b));
     // 自环拒绝。
     assert!(store.supersede_session(c, c, 600).is_err());
@@ -1465,7 +1491,9 @@ fn rebuild_does_not_advance_todo_clock_nor_block_inflight_snapshots() {
         }]
     };
 
-    store.sync_todos(sid, &snap(TodoStatus::Pending), 300).unwrap();
+    store
+        .sync_todos(sid, &snap(TodoStatus::Pending), 300)
+        .unwrap();
     assert_eq!(store.get_task(tid).unwrap().updated_at, 300);
 
     // GUI 打开会话触发重建(墙钟 900,远超在途 hook 的到达章)。
@@ -1658,12 +1686,16 @@ fn rebuild_preserves_stale_on_identical_snapshot_and_overwrites_on_change() {
     store.mark_todos_stale(sid).unwrap();
 
     // 重建出与残留逐条相同的快照（日志最后一次待办仍是旧任务那版）→ 残留保留。
-    store.sync_todos_rebuild(sid, &snap("旧任务步骤"), 900).unwrap();
+    store
+        .sync_todos_rebuild(sid, &snap("旧任务步骤"), 900)
+        .unwrap();
     let todos = store.list_todos(tid).unwrap();
     assert!(todos[0].stale, "相同快照不得把残留洗白成当前进度");
 
     // 重建出不同内容（日志里已有新任务的清单）→ 按新快照覆盖，残留清零。
-    store.sync_todos_rebuild(sid, &snap("新任务步骤"), 1000).unwrap();
+    store
+        .sync_todos_rebuild(sid, &snap("新任务步骤"), 1000)
+        .unwrap();
     let todos = store.list_todos(tid).unwrap();
     assert_eq!(todos[0].content, "新任务步骤");
     assert!(!todos[0].stale);
@@ -1717,7 +1749,7 @@ fn migrate_drops_the_unused_events_table() {
 
     // 表本身消失（不是「还在但空了」）。
     let left: i64 = store.raw_table_count().expect("count tables");
-    assert_eq!(left, 7, "events 之外的七张表应原样保留");
+    assert_eq!(left, 15, "events 之外的基础表与停用的托管会话表应原样保留");
 
     // 其余表照常可用——迁移没把别的东西带走。
     let pid = store.upsert_project_by_root("/p", "p", 1).unwrap();

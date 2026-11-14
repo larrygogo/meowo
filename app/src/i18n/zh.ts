@@ -232,6 +232,8 @@ export const zh = {
       permission: "权限",
       approval: "审批",
       work: "工作模式",
+      collaboration: "协作模式",
+      agent: "Agent",
     } as Record<string, string>,
     launchChoice: {
       "model.default": "默认",
@@ -248,6 +250,8 @@ export const zh = {
       "permission.yolo": "按需询问（常规操作自动批准）",
       "work.default": "默认",
       "work.plan": "计划模式",
+      "collaboration.default": "默认",
+      "collaboration.plan": "计划模式",
     } as Record<string, string>,
     // 每档一行「什么自动做、什么仍会问你」（对照 Kimi 权限菜单的 *Desc）：档名只是代号，
     // 选档时真正要比较的是后果。键同 launchChoice；默认审批档 codex 与 gemini 语义不同，不配。
@@ -270,6 +274,106 @@ export const zh = {
   },
   // 会话管理页（对照 Kimi Code 的会话管理）。
   // 已合并 worktree 的清理（归档后的撤销条、已完成会话的菜单、会话管理页批量清理）。
+  // 模式的统一说法（任务 20261114-tui-model-switch）：各家原名不同、语义错位（Kimi yolo 危险仍问，
+  // Gemini yolo 都不问），界面按「改文件 / 跑命令要不要问、是否只出方案」三维说，原名放小字。
+  // 一句话说明按各家官方帮助或文档原文提炼，出处见 research-kimi-gemini §5、research-codex-opencode §9。
+  modes: {
+    // 改文件与跑命令同一档时合成一句（菜单宽度有限，实拍两段式被截断）。
+    both: {
+      always: "改文件和跑命令都先问你",
+      risky: "常规自动做，危险的才问",
+      never: "改文件和跑命令都不问",
+      blocked: "不改文件也不跑命令",
+      inherit: "问不问按权限档",
+    } as Record<string, string>,
+    edits: {
+      always: "改文件要问",
+      risky: "改文件危险才问",
+      never: "改文件不问",
+      blocked: "不改文件",
+      inherit: "改文件按权限档",
+    } as Record<string, string>,
+    commands: {
+      always: "命令要问",
+      risky: "命令危险才问",
+      never: "命令不问",
+      blocked: "不跑命令",
+      inherit: "命令按权限档",
+    } as Record<string, string>,
+    planOnly: "只出方案",
+    // 胶囊上的短名（中文界面说中文，CLI 原名放菜单小字）。键同 desc。
+    // 共用短名表（胶囊与菜单主文字）：同一语义跨家同一个名字，按三维（改文件 / 跑命令要不要问、
+    // 是否只出方案）查表，见 modeChoices.ts sharedShort。只有三维确实不同的档才用不同短名。
+    shared: {
+      ask: "每步都问",
+      readOnly: "只读",
+      autoEdits: "自动改文件",
+      risky: "必要时询问",
+      // Gemini default：改文件要问，工作区内已知安全的命令不问（官方说明），和「每步都问」语义不同（第四轮 M2）。
+      askChanges: "改动先问",
+      never: "都不问",
+      plan: "计划",
+    } as Record<string, string>,
+    // 三维相同、但同一栏里必须分开的档（Codex Approve for me 与 Ask for approval 三维一样，差别在越界请求
+    // 先交自动审查，0.167.2 `--help`），以及读不到配置的默认档。键同 desc。
+    short: {
+      "codex.approval.default": "按配置",
+      "codex.approval.approveForMe": "自动审查",
+    } as Record<string, string>,
+    // 计划开关（Kimi 工作模式、Codex 协作模式）：两档里一档只出方案，胶囊直接说开没开。
+    plan: (on: boolean): string => (on ? "计划：开" : "计划：关"),
+    // 说明里的分隔符（中文逗号，第三轮 C8）。
+    sep: "，",
+    // 新建页 CLI 配置的默认档：只留一行、名字旁标这个小字（不再列「默认（X）」与「X」两行，第三轮 C7）。
+    defaultTag: "默认",
+    followConfig: (name: string) => `默认（${name}）`,
+    followConfigUnknown: "按 CLI 配置",
+    // Kimi 没有改回「每步都问」的启动参数：CLI 配置默认是别的档时这一档选不到（做空 M1）。
+    configLocked: (name: string) => `CLI 配置默认是「${name}」，改配置才能选`,
+    uncertain: "能否使用以账号为准",
+    desc: {
+      // 菜单第二行：一律是各家官方原文那句的提炼（三维 traits 只用于短名与分组，2026-11-14 第三轮 C1）。
+      // 每句 ≤20 字、中文逗号分隔。出处：research-kimi-gemini.md「模式对照」、research-codex-opencode.md §9。
+      // Kimi 2.6 /permission 原文「Auto-read only; everything else needs your approval first.」
+      "kimi.permission.manual": "只自动读文件，其余都先问你",
+      // 「Routine edits and commands run automatically; risky actions, questions, and plans still ask.」
+      "kimi.permission.yolo": "常规自动做，危险操作和计划仍问",
+      // 「Everything runs and is decided automatically; only plans in Plan mode wait for your review.」
+      "kimi.permission.auto": "改文件和跑命令都不问，计划仍要你审",
+      "kimi.work.default": "按权限档执行",
+      // 提示词「MUST NOT make any edits (with the exception of the current plan file)」
+      "kimi.work.plan": "先出计划，除计划文件外不改文件",
+      // Gemini 0.68 cli-reference「default (prompt for approval)」+ policy-engine：工作区内已知安全的命令放行。
+      "gemini.approval.default": "工作区内已知安全的命令不问，其余先问",
+      // 「auto_edit (auto-approve edit tools)」
+      "gemini.approval.autoEdit": "自动改文件，跑命令仍先问",
+      // 「plan (read-only mode)」
+      "gemini.approval.plan": "只读，只出方案，不能跑命令",
+      // 「yolo (auto-approve all tools)」
+      "gemini.approval.yolo": "所有工具自动放行，含危险命令",
+      "codex.approval.default": "按 Codex 配置文件的设置",
+      // Codex 0.167 /permissions「Read workspace files, with approval required for edits or internet access」
+      "codex.approval.readOnly": "只读工作区，改文件或联网要问",
+      // 「Read and edit workspace files and run commands, with approval required for internet access or edits outside the workspace」
+      "codex.approval.ask": "工作区内自由改和跑，越界或联网要问",
+      // 「Only ask for actions detected as potentially unsafe」
+      "codex.approval.approveForMe": "越界先交自动审查，判为危险才问你",
+      // 「Codex can edit files outside this workspace and access the internet without approval」
+      "codex.approval.yolo": "可改工作区外文件和联网，不再问",
+      "codex.collaboration.default": "按权限档执行",
+      // rollout developer_instructions「may explore and execute non-mutating actions… must not perform mutating actions」
+      "codex.collaboration.plan": "只探索和出方案，不做改动",
+      // OpenCode API「The default agent. Executes tools based on configured permissions.」
+      "opencode.agent.build": "默认 agent，按配置的权限执行",
+      // API「Plan mode. Disallows all edit tools.」；文档「shell commands remain permission-controlled」
+      "opencode.agent.plan": "不能用编辑工具，命令按权限问",
+      "claude.permission.plan": "只读分析，最后给出方案",
+      "claude.permission.acceptEdits": "自动改文件，跑命令仍先问",
+      "claude.permission.bypassPermissions": "跳过所有权限确认",
+    } as Record<string, string>,
+    // 自定义 agent（opencode agent list）没有统一说法：权限由用户自己写。
+    customAgent: "自定义 agent，权限按你的配置",
+  },
   worktree: {
     remove: "删除 worktree",
     checking: "正在检查 worktree…",
@@ -445,6 +549,30 @@ export const zh = {
     // 会话 running 但 transcript 尚未落第一条时用它——此时说「没有记录」与运行指示自相矛盾。
     // 新建会话认领前（负数临时 id）：CLI 正在冷启动，说「没有记录」是谎报。
     emptyStarting: "会话正在启动…",
+    // 切模型 / 模式（任务 20261114-tui-model-switch）：运行中或有待批审批时不写终端、不重启，排到这一轮之后。
+    // 队列存在 Meowo 进程里：Meowo 重启会清空，界面写明（复核 M3）。
+    settingsDeferred: (name: string) => `这一轮结束后切换到「${name}」（关闭应用会取消）`,
+    // Lead 关卡等待中：带参重启会杀掉会话内的关卡等待器，接回后没有回合、没人再起等待器，答复后不会自动
+    // 继续（做空 N3；B7 真机探针 Kimi/Gemini 均证实，evidence/round3-n3），排到续跑那一轮跑完之后。
+    settingsDeferredLead: (name: string) => `关卡答复后那一轮跑完再切换到「${name}」（关闭应用会取消）`,
+    // 会话没在运行：Codex/OpenCode 恢复时不回放模型，打开后由宿主经会话服务补设（做空 N6）。
+    settingsDeferredOpen: (name: string) => `打开会话后切换到「${name}」（关闭应用会取消）`,
+    // 排了 30 分钟这一轮还没结束（或宿主一直没等到空闲）：出队，告诉用户（做空 N5）。
+    // 对话页执行时会话服务 / TUI 还没就绪：交给宿主等就绪再切（做空 R5）。
+    settingsDeferredReady: (name: string) => `会话就绪后切换到「${name}」（关闭应用会取消）`,
+    // Codex 会话内首次切进要沙箱的档（必要时询问 / 自动审查）：带沙箱参数重开了会话（第五轮 P3），≤20 字。
+    settingsSandboxReopen: (name: string) => `已带沙箱重开会话，切到「${name}」`,
+    settingsQueueExpired: "等太久没切成，已取消，请重新选择",
+    settingsApplying: "正在切换",
+    settingsComposerUnknown: "认不出终端输入框，为免丢字没有重启",
+    settingsFirstTurn: "第一条消息正在处理，会话建好后再切",
+    // 会话没在跑：选择记成下次打开的启动参数（做空 M4）。
+    settingsNextOpen: "会话没在运行，下次打开时生效",
+    settingsNeedsNewSession: "接回会话只能放宽权限，收紧要新建会话",
+    settingsModeUnsupported: "这个会话不能在对话里切这一项",
+    settingsUnconfirmed: "已切换，下一条消息时核对",
+    // Kimi 2.6 首条消息前不建会话（屏幕原文 No session yet），不是启动卡住。
+    awaitingFirstMessage: "已就绪，发第一条消息后开始",
     pickSession: "从侧栏选择一个会话",
     loadEarlier: "加载更早的对话",
     loadingEarlier: "正在加载…",
@@ -529,6 +657,9 @@ export const zh = {
     questionExpired: "提问卡已超时收起，表单就绪后可在此作答",
     // 远程没有终端页：超时放行后终端表单经屏幕识别回到手机上作答，不必回桌面端。
     questionExpiredRemote: "提问卡已超时收起，表单就绪后可在此作答",
+    questionSettledNotice: "该提问已在别处处理或已结束",
+    questionTransferredNotice: "已转到终端页，请继续作答",
+    questionTransferredNoticeRemote: "已转为逐题作答，表单就绪后可继续",
     terminalApprovalBanner: "有 1 条待批准的请求",
     terminalApprovalGo: "去处理",
     toolResult: "工具结果",
@@ -820,6 +951,9 @@ export const zh = {
     leadSectionEmpty: "暂无内容",
     leadGateWaiting: "待拍板",
     leadGateAnswered: "已答复·等 agent 接手",
+    leadDeliveryHandled: "Agent 已接手关卡",
+    leadDeliveryRetry: "继续送达",
+    leadDeliveryState: (state: string) => ({ saved: "回答已保存，等待送达", queued: "回答已排队", waiting: "回答已保存，打开会话后会自动送达", sending: "正在送达回答", accepted: "原生会话已接收，等待模型确认", consumed: "模型已收到回答，等待接手关卡", failed: "回答未送达", uncertain: "送达结果不确定，请在会话中核对后处理", native_manual: "回答已保存，在会话里发一句话即可继续", native_offline: "回答已保存，打开会话后说一句继续", native_on_open: "回答已保存，打开会话后会自动送达", native_owner_unknown: "回答已保存，回到主会话说一句继续", queued_stalled: "回答在队列里，会话已停下，在会话里发一句话即可继续" }[state] ?? state),
     // 不出现 A/B/C/D/Q：那是 skill 内部的代号，leader 看卡片只需要知道要自己做什么（2026-11-12 优化）。
     leadGateKind: { A: "确认规格", B: "拍板", C: "验收", D: "授权或操作", Q: "回答问题" },
     leadGateConfirm: "确认，开工",
@@ -1052,10 +1186,15 @@ export const zh = {
     // 一句说清现状与代价（用户实拍：两句长文把按钮挤到第二行）。点按钮后的确认框再写细节。
     sendNeedsTakeover: "会话在外部终端运行，接管会结束它",
     composerGateEnded: "会话已结束。恢复后即可继续对话。",
+    // 已删除的「Meowo 托管」会话在旧库里只读保留（对话依托官方 CLI，leader 2026-11-13）。
+    managedRetired: "这种会话已停用，对话改用官方 CLI",
+    managedRetiredOpenCli: "用官方 CLI 打开",
+    managedRetiredInputResumable: "已停用，用官方 CLI 打开后继续",
+    managedRetiredInputUnbound: "已停用，无法继续",
     // CLI 意外退出（二期 #7）：与后端 exit_report::crash_label 同文，灵动岛/通知里也是这句。
     agentCrashed: (code: number) => `Agent 意外退出（退出码 ${code}）`,
     resumeSession: "恢复会话",
-    terminalNeedsAttention: "Agent 在等启动确认，请先在交互卡片中选择，再重新发送。",
+    terminalNeedsAttention: "Agent 有待处理的交互，请先完成卡片或终端里的确认，再重新发送。",
     // 拦住发送的是提问卡时用这句：「启动确认」对一个回合中途的提问是错的说法（用户实拍）。
     questionNeedsAnswer: "Agent 有提问待回答，答完再发送。",
     sendEchoTimeout: "消息没进入终端，未发出。终端可能停在启动询问上",
@@ -1309,8 +1448,12 @@ export const zh = {
     menuBusy: "请等待当前任务结束后切换模型或模式。",
     errorRetry: "重试",
     menuBusyShort: "回合结束后才能切换",
+    // 打开终端里的选择菜单（只能在终端里挑）：运行中打开会把命令打进正在跑的回合。选定的模型 / 模式
+    // 运行中一律排到这一轮之后（SPEC 终态 2），只有「打开菜单」本身要等。
+    menuBusyOpen: "这一轮结束后再打开菜单",
     modelSwitchUnconfirmed: "没等到切换确认，模型可能没变。恢复配置未改",
     modelListUnavailable: (command: string) => `读不到模型清单，可直接发送 ${command} 再选`,
+    modelListUnavailableRemote: (command: string) => `读不到模型清单，可直接发送 ${command} 再选`,
     // CLI 明确拒绝或放弃切换时转述原话（claude 2.1.322 `Kept model as …`、hook 拦截、别名校验失败）。
     modelSwitchRejected: (line: string) => `模型未切换：${line}`,
     // CLI 确认的是别的模型（降档等），所选模型没生效，恢复配置不写。
@@ -1421,6 +1564,7 @@ export const zh = {
     // launchChoice 的完整说明，这里只负责按钮上的一行字。
     modeShortNames: {
       "permission.yolo": "必要时询问",
+      "permission.manual": "总是询问",
       "permission.auto": "自动",
       "permission.default": "默认",
       "permission.plan": "计划模式",
@@ -1574,6 +1718,17 @@ export const zh = {
     leadGroup: "Lead 工作流",
     leadWorkflow: "Lead 工作流",
     leadWorkflowDesc: "你只描述想要的结果，agent 访谈、写规格、出方案、实施并独立做空验证。只在确认规格、拍板、验收三个关卡找你。打开会装进 Claude Code，关闭会卸载干净",
+    leadProvidersDesc: "其他 CLI 可分别安装工作流与独立审查。安装后是否能自动继续会单独显示。卸载只移除 Meowo 管理的文件。",
+    leadRefresh: "刷新",
+    leadLoading: "正在检查安装状态…",
+    leadInstalled: "已安装 · 可自动继续",
+    leadInstalledNoContinue: "已安装 · 暂不可自动继续",
+    leadNeedsConfiguration: "已有 Lead 文件 · 需配置",
+    leadNotInstalled: "未安装",
+    leadInstall: "安装",
+    leadUninstall: "卸载",
+    leadRepair: "修复安装",
+    leadWorking: "正在处理…",
     leadKeepAwake: "关卡待拍板时防止休眠",
     leadKeepAwakeDesc: "有关卡待拍板时电脑不睡，方便在手机上作答",
     notifySound: "通知提示音",

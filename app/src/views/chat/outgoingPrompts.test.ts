@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import type { ChatItem } from "../../api";
 import {
   anchorFrom,
@@ -13,6 +13,8 @@ import {
   type OutgoingPrompt,
   type PromptAck,
 } from "./outgoingPrompts";
+
+beforeEach(() => localStorage.clear());
 
 const user = (id: string, text: string, interjected?: boolean): ChatItem =>
   ({ type: "user_text", id, timestamp: null, text, ...(interjected ? { interjected } : {}) });
@@ -38,7 +40,9 @@ describe("reconcileOutgoing", () => {
     expect(reconcileOutgoing(list, ev([...before, user("u2", "没写进去")]))).toBe(list);
     expect(reconcileOutgoing(list, ev(before, 1_000, { ended: true }))).toBe(list);
     const settled = [prompt("echo", "已写入", before)];
-    expect(reconcileOutgoing([...list, ...settled], ev(before, 1_000, { ended: true }))).toEqual(list);
+    expect(reconcileOutgoing([...list, ...settled], ev(before, 1_000, { ended: true }))).toEqual([
+      ...list, { ...settled[0], phase: "uncertain" },
+    ]);
   });
 
   it("回显在新落盘的同文消息出现时收走", () => {
@@ -114,20 +118,20 @@ describe("reconcileOutgoing", () => {
     expect(reconcileOutgoing(noTranscript, ev([], 1_000, { lastUserText: "插一句" }))).toMatchObject([{ phase: "inserted" }]);
   });
 
-  it("回显超时仍无证据转「未确认」并保留，后续有新消息落盘才收起", () => {
+  it("回显超时仍无证据转「未确认」并保留，无关消息不证明它已经送达", () => {
     const before = [reply("a0")];
     const list = [prompt("echo", "在吗", before, { at: 0 })];
     expect(reconcileOutgoing(list, ev(before, ECHO_CONFIRM_MS))).toBe(list);
     const uncertain = reconcileOutgoing(list, ev(before, ECHO_CONFIRM_MS + 1));
     expect(uncertain).toMatchObject([{ phase: "uncertain" }]);
     expect(reconcileOutgoing(uncertain, ev(before, 60_000))).toBe(uncertain);
-    expect(reconcileOutgoing(uncertain, ev([...before, user("u9", "别的话")], 60_000))).toEqual([]);
+    expect(reconcileOutgoing(uncertain, ev([...before, user("u9", "别的话")], 60_000))).toBe(uncertain);
   });
 
-  it("排队回执没有超时：长任务里一直等到真被读到", () => {
+  it("排队未获接收回执时也有未确认反馈；原文继续保留", () => {
     const before = [reply("a0")];
     const list = [prompt("queued", "等会再说", before, { at: 0 })];
-    expect(reconcileOutgoing(list, ev(before, 10 * 60_000))).toBe(list);
+    expect(reconcileOutgoing(list, ev(before, 10 * 60_000))).toMatchObject([{ phase: "uncertain", text: "等会再说" }]);
   });
 
   /// 锚点被翻页挤出窗口时退回「尾部 12 条里不在快照中的」，不把整窗旧消息都当新证据。
@@ -139,9 +143,10 @@ describe("reconcileOutgoing", () => {
     expect(reconcileOutgoing(list, ev([...shifted, user("u6", "ok")]))).toMatchObject([{ phase: "inserted" }]);
   });
 
-  it("会话结束整单清空", () => {
+  it("会话结束保留没有消费证据的原文", () => {
     const list = [prompt("queued", "x", []), prompt("echo", "y", [])];
-    expect(reconcileOutgoing(list, ev([], 0, { ended: true }))).toEqual([]);
+    expect(reconcileOutgoing(list, ev([], 0, { ended: true })).map((p) => [p.text, p.phase]))
+      .toEqual([["x", "uncertain"], ["y", "uncertain"]]);
   });
 
   // 用户实拍：发出后切到侧栏，回来时首读只给最新一屏。Agent 期间产出几十条，发送时的锚点
@@ -357,7 +362,7 @@ describe("createOutgoingStore", () => {
 
 /** 发送失败的回执落 localStorage：刷新/页面被回收后换一个仓库实例，失败的那条和原文还在。 */
 describe("createOutgoingStore 失败回执持久化", () => {
-  it("失败的回执跨仓库实例保留，收掉后不再恢复；发送中的不落盘", () => {
+  it("失败与发送中原文跨仓库实例保留，未知结果不自动重发", () => {
     localStorage.clear();
     const first = createOutgoingStore();
     const failedId = first.add(7, { kind: "echo", text: "没发出去", attachmentOnly: false, anchor: anchorFrom([], null), phase: "sending", draft: { prompt: "没发出去", attachments: [] } });
@@ -366,12 +371,13 @@ describe("createOutgoingStore 失败回执持久化", () => {
 
     const second = createOutgoingStore();
     const restored = second.get(7);
-    expect(restored.map((prompt) => [prompt.text, prompt.phase])).toEqual([["没发出去", "failed"]]);
+    expect(restored.map((prompt) => [prompt.text, prompt.phase])).toEqual([["没发出去", "failed"], ["还在发", "uncertain"]]);
     expect(restored[0].draft).toEqual({ prompt: "没发出去", attachments: [] });
     // 取快照是稳定引用（useSyncExternalStore 的要求）。
     expect(second.get(7)).toBe(restored);
 
     second.dismiss(7, restored[0].id);
+    second.dismiss(7, restored[1].id);
     expect(createOutgoingStore().get(7)).toEqual([]);
   });
   it("负数临时 id 的失败回执不落盘，认领搬到真 id 后才存（编号跨重启复用，存了会串号）", () => {

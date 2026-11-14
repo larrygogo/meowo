@@ -2,7 +2,7 @@
 // 夹具与 mock 见 chatWindow.harness.tsx（必须先于 ./ChatWindow 导入）。
 import { describe, expect, it } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { invoke, openDialog, setTitleMock, terminalProps, pickAttachments, b64utf8, respondWithHistory } from "./chatWindow.harness";
+import { emptyComposerFrame, invoke, openDialog, setTitleMock, terminalProps, pickAttachments, b64utf8, respondWithHistory } from "./chatWindow.harness";
 import { ChatWindow } from "./ChatWindow";
 import { zh } from "../i18n/zh";
 import { chatUi, descriptors } from "../test/agents";
@@ -238,6 +238,7 @@ describe("ChatWindow", () => {
     ].join("\r\n");
     let sentMenuCommand = false;
     invoke.mockImplementation((command: string, args: Record<string, unknown>) => {
+      if (command === "managed_terminal_frame") return Promise.resolve(emptyComposerFrame("kimi"));
       if (command === "get_chat_history") return Promise.resolve({
         sessionId: 18, title: "换模型", status: "waiting", provider: "kimi", cwd: "C:/repo",
         supported: true, offset: 0, reset: false, pendingReview: null, items: [], model: "K3",
@@ -381,7 +382,7 @@ describe("ChatWindow", () => {
     render(<ChatWindow />);
     const input = await screen.findByRole("combobox", { name: "发送消息给 Agent" });
     // 等 chatUi（menu_slash_commands 的来源）就位再回车，否则命中判断还没有数据。
-    await screen.findByRole("button", { name: "切换模式: 权限模式" });
+    await screen.findByRole("button", { name: /^切换模式: 权限模式 · / });
     fireEvent.change(input, { target: { value: "/config" } });
     fireEvent.keyDown(input, { key: "Enter" });
     // 命令原样送达 CLI，同时打开屏幕识别窗口（expectMenu 传给终端组件）。
@@ -405,6 +406,7 @@ describe("ChatWindow", () => {
     window.history.replaceState({}, "", "/?sessionId=77");
     let failSend: (() => void) | null = null;
     invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "managed_terminal_frame") return Promise.resolve(emptyComposerFrame("kimi"));
       if (command === "get_chat_history") return Promise.resolve({
         sessionId: 77, title: "换模型", status: "running", provider: "kimi", cwd: "C:/repo",
         supported: true, offset: 0, reset: false, pendingReview: null, items: [], model: "K3",
@@ -436,6 +438,7 @@ describe("ChatWindow", () => {
   it("菜单已打开时再点不重发命令（否则会打进搜索框把候选全过滤掉）", async () => {
     window.history.replaceState({}, "", "/?sessionId=19");
     invoke.mockImplementation((command: string) => {
+      if (command === "managed_terminal_frame") return Promise.resolve(emptyComposerFrame("kimi"));
       if (command === "get_chat_history") return Promise.resolve({
         sessionId: 19, title: "换模型", status: "running", provider: "kimi", cwd: "C:/repo",
         supported: true, offset: 0, reset: false, pendingReview: null, items: [], model: "K3",
@@ -571,7 +574,7 @@ describe("ChatWindow", () => {
   it("sends selected images and files through the managed PTY", async () => {
     window.history.replaceState({}, "", "/?sessionId=11");
     respondWithHistory({
-      sessionId: 11, title: "附件", status: "running", provider: "codex", cwd: "C:/repo",
+      sessionId: 11, title: "附件", status: "running", provider: "claude", cwd: "C:/repo",
       supported: true, offset: 0, reset: false, pendingReview: null, items: [],
     });
     openDialog.mockResolvedValue(["C:/tmp/design.png", "C:/tmp/spec.pdf"]);
@@ -598,6 +601,7 @@ describe("ChatWindow", () => {
     let started = false;
     let wrote = false;
     invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "agent_chat_ui") return Promise.resolve(chatUi("claude"));
       if (command === "get_chat_history") return Promise.resolve(history);
       if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
       if (command === "start_managed_terminal") { started = true; return Promise.resolve(); }
@@ -627,7 +631,7 @@ describe("ChatWindow", () => {
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 13, data: "\r" }), { timeout: 2_000 });
   });
 
-  it("恢复后发送:正文没有回显时撤销发送、绝不发回车", async () => {
+  it("恢复后发送:正文未回显时不发回车并保留未确认回执", async () => {
     // 实拍回归:接管长会话后 claude 弹 resume 确认选择器,而「可见+安静」的就绪判定
     // 认不出它——正文被选择器吞掉,旧逻辑的无条件回车还会替用户按下默认项:消息蒸发、
     // 恢复继续、没有任何报错(transcript 里根本没有那条 user 消息)。
@@ -639,6 +643,7 @@ describe("ChatWindow", () => {
     respondWithHistory(history);
     let started = false;
     invoke.mockImplementation((command: string) => {
+      if (command === "agent_chat_ui") return Promise.resolve(chatUi("claude"));
       if (command === "get_chat_history") return Promise.resolve(history);
       if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
       if (command === "start_managed_terminal") { started = true; return Promise.resolve(); }
@@ -658,9 +663,11 @@ describe("ChatWindow", () => {
     // 回显等满超时后:Ctrl-U 撤销、报错可见、输入框保留原文——唯独不能出现的是回车。
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 71, data: "\x15" }), { timeout: 5_000 });
     expect(invoke).not.toHaveBeenCalledWith("write_managed_terminal", { sessionId: 71, data: "\r" });
-    expect(await screen.findByText(/消息没进入终端/)).toBeTruthy();
-    // 先上屏再发送后，失败的原文退回输入框（人还在、输入框空着时）。
-    await waitFor(() => expect(input.value).toBe("go on"));
+    expect(await screen.findByText(zh.chat.sendEchoTimeout)).toBeTruthy();
+    // 已写正文不能谎称确定未发：保留原文回执，由用户核对后恢复草稿或重发。
+    expect(await screen.findByText(zh.chat.echoUncertain)).toBeTruthy();
+    expect(screen.getByText("go on")).toBeTruthy();
+    expect(input.value).toBe("");
   });
 
   it("opens a non-Claude startup trust prompt in the terminal without typing the chat message into it", async () => {
@@ -763,7 +770,8 @@ describe("ChatWindow", () => {
     // 信任卡要经过 pending 启动登记 → 对话 UI → 终端快照 → 屏幕识别四次异步往返；单跑约 0.8s，
     // 全量并发下偶发超过 findBy 默认的 1s（UI 优化集成分支实测一次），按本文件惯例放宽。
     expect(await screen.findByRole("button", { name: "Yes, I trust this folder" }, { timeout: 5000 })).toBeTruthy();
-    expect(screen.getByText("是否信任此文件夹？")).toBeTruthy();
+    // 读屏播报区（card-announcer）稍后也会念同一句：只认卡片里的标题，免得全量并发下两处都在时报重复。
+    expect(screen.getByText("是否信任此文件夹？", { selector: "strong" })).toBeTruthy();
   });
 
   it("renders assistant markdown but keeps user text verbatim", async () => {
@@ -889,14 +897,10 @@ describe("ChatWindow", () => {
     // accessible-name 会按 DOM 实现把相邻 code/span 拼成有空格或无空格，两种都等价。
     fireEvent.click(screen.getByRole("option", { name: /^\/deploy\s*部署到测试环境/ }));
     expect(input.value).toBe("/deploy ");
-    // 模型菜单：选择预设即向 PTY 发送 /model <id>。
-    // 回合在跑：菜单里先说原因、模型项不可选（走查 C-8），点了不往 PTY 写 /model。
+    // 模型菜单：运行中选的排到这一轮之后（同一套提示，SPEC 终态 2），不往 PTY 写。
     fireEvent.click(screen.getByRole("button", { name: "切换模型" }));
-    const sonnet = screen.getByRole("menuitem", { name: /^Sonnet/ });
-    expect(sonnet.getAttribute("aria-disabled")).toBe("true");
-    expect(screen.getByText(zh.chat.menuBusyShort)).toBeTruthy();
-    fireEvent.click(sonnet);
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    fireEvent.click(screen.getByRole("menuitem", { name: /^Sonnet/ }));
+    await screen.findByText(/^这一轮结束后切换到「Sonnet/);
     expect(invoke).not.toHaveBeenCalledWith("write_managed_terminal", { sessionId: 31, data: "/model sonnet" });
   });
 
@@ -970,7 +974,7 @@ describe("ChatWindow", () => {
     const actions = meter.parentElement!;
     const ordered = [
       actions.querySelector(".chat-attach-button")!,
-      screen.getByRole("button", { name: "切换模式: 权限模式" }),
+      screen.getByRole("button", { name: /^切换模式: 权限模式 · / }),
       meter,
       actions.querySelector(".chat-model-select")!,
     ];
@@ -979,7 +983,7 @@ describe("ChatWindow", () => {
     }
 
     // 权限模式现在是下拉（选项由屏幕回显标记派生）：点按钮开菜单、点某项才发 cycle 键。
-    fireEvent.click(screen.getByRole("button", { name: "切换模式: 权限模式" }));
+    fireEvent.click(screen.getByRole("button", { name: /^切换模式: 权限模式 · / }));
     fireEvent.click(screen.getByRole("menuitem", { name: /计划/ }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 21, data: "\u001b[Z" }));
 
@@ -1029,16 +1033,18 @@ describe("ChatWindow", () => {
       contextPct: null, contextWindow: null, currentActivity: null, hasMore: false, items: [],
     };
     invoke.mockImplementation((command: string) => {
+      if (command === "managed_terminal_frame") return Promise.resolve(emptyComposerFrame("kimi"));
       if (command === "get_chat_history") return Promise.resolve(history);
       if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
       if (command === "managed_terminal_snapshot") {
         return Promise.resolve({ sessionId: 41, active: true, managed: true, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
       }
       if (command === "agent_chat_ui") return Promise.resolve({
+        ...chatUi("kimi"),
         // 与 ChatUi 真实形状对齐(必填字段全给):此前缺 menu_slash_commands 等新字段,
         // 全靠生产码的可选链兜底侥幸通过,是唯一漏网的 mock。取值保持中性(空表/null),
         // 不引入本用例无关的菜单行为。
-        slash_commands: [], model_presets: [], model_select_command: null, queue_input: "\r", version: "2.2.0",
+        slash_commands: [], model_presets: [], model_select_command: null, queue_input: "\r", version: "2.5.3",
         model_menu_command: null, menu_slash_commands: [],
         startup_attention_markers: [], selector_anchors: [], interrupt_input: null, runtime_commands_pending: false,
         attachment_mention: false, clipboard_image_paste: null, clipboard_paste_input: null,
@@ -1058,10 +1064,10 @@ describe("ChatWindow", () => {
     });
     render(<ChatWindow />);
     // 模式按钮只显示当前值，维度名在 aria-label/tooltip 里。
-    await screen.findByRole("button", { name: "切换模式: 工作模式" });
+    await screen.findByRole("button", { name: /^切换模式: 工作模式 · / });
     expect(screen.getByText("默认")).toBeTruthy();
     expect(screen.getByText("手动确认")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "切换模式: 权限模式" }));
+    fireEvent.click(screen.getByRole("button", { name: /^切换模式: 权限模式 · / }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 41, data: "/permission" }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 41, data: "\r" }));
     expect(screen.getByText("手动确认")).toBeTruthy();
@@ -1102,16 +1108,18 @@ describe("ChatWindow", () => {
     // 空闲期：后续轮询不再带模式增量（真实后端普通增量的 agent_modes 就是空）。
     current = { ...base, agentModes: [] };
     // 只有 cycle 键的维度也给下拉：选项由屏幕回显标记派生，选中后循环按到位（cycleToMode）。
-    fireEvent.click(screen.getByRole("button", { name: "切换模式: 权限模式" }));
-    // 每档带一行后果说明（对照 Kimi 权限菜单）：启动项声明过的用启动说明，运行中才有的 auto 按值补。
-    // 说明不进名字，读屏名字仍只报档名。
-    expect(await screen.findByText("改文件自动，跑命令先问你")).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: /^切换模式: 权限模式 · / }));
+    // 每档名字是统一说法（任务 20261114-tui-model-switch），下一行一句话说明，行尾小字 CLI 原名；
+    // 运行中才有的 auto 不在启动项里，按值补说明。说明不进名字，读屏名字只报统一说法。
+    expect(await screen.findByText("自动改文件，跑命令仍先问")).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: "自动改文件" })).toBeTruthy();
+    expect(screen.getByText("Accept Edits")).toBeTruthy();
     const autoItem = screen.getByRole("menuitem", { name: "自动" });
     expect(document.getElementById(autoItem.getAttribute("aria-describedby") ?? "")?.textContent).toBe("安全操作自动，有风险的才问你");
-    fireEvent.click(screen.getByRole("menuitem", { name: /计划/ }));
+    fireEvent.click(screen.getByRole("menuitem", { name: "计划" }));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 51, data: "\u001b[Z" }));
     // transcript 静默，但屏幕是 CLI 自己画的权威状态——标签应据它回显为「计划」。
-    expect(await screen.findByText("计划模式")).toBeTruthy();
+    await waitFor(() => expect(screen.getByRole("button", { name: /^切换模式: 权限模式 · / }).textContent).toContain("计划"));
   });
 
   it("休眠会话的权限胶囊改卖「下一次恢复的权限」：选择只落启动参数，不碰终端", async () => {
@@ -1135,7 +1143,7 @@ describe("ChatWindow", () => {
       return Promise.resolve();
     });
     render(<ChatWindow />);
-    fireEvent.click(await screen.findByRole("button", { name: "切换模式: 权限模式" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^切换模式: 权限模式 · / }));
     // 菜单是启动档位（含「沿用原设置」与循环够不着的 bypassPermissions）；等 list_agents
     // 就位后条目才换装——findByRole 的重试恰好吸收这次异步。
     await screen.findByRole("menuitem", { name: "权限：沿用原设置" });
@@ -1178,13 +1186,13 @@ describe("ChatWindow", () => {
     render(<ChatWindow />);
     // 胶囊直接显示存的档（启动档位词），不再是 transcript 回读的旧模式词。
     expect(await screen.findByText("跳过权限确认")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "切换模式: 权限模式" }));
+    fireEvent.click(screen.getByRole("button", { name: /^切换模式: 权限模式 · / }));
     // 菜单里没有黑盒占位项；存的那档带高亮。
     const item = await screen.findByRole("menuitem", { name: "跳过权限确认" });
     expect(screen.queryByRole("menuitem", { name: "权限：沿用原设置" })).toBeNull();
     expect(item.className).toContain("is-active");
     // 高风险档（插件 risk 声明）：按钮与该菜单项都转危险色（对照 Kimi 的 perm-pill），普通档不带。
-    expect(screen.getByRole("button", { name: "切换模式: 权限模式" }).className).toContain("is-risk");
+    expect(screen.getByRole("button", { name: /^切换模式: 权限模式 · / }).className).toContain("is-risk");
     expect(item.className).toContain("is-risk");
     expect(screen.getByRole("menuitem", { name: /默认/ }).className).not.toContain("is-risk");
   });

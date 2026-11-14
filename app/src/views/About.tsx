@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { useAgentListRefresh } from "../useAgents";
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { availableTerminals, exportDiagLog, leadWorkflowInstalled, setLeadWorkflow, getLiveSessionsPage, listAgents, agentName, setArchived, type AgentId, type AgentDescriptor, type LiveSession, type PageCursor, type ThemeMode, type ResumeTerminal, type SessionOpenIn, type CardMenuMode, type StickerStyle, type TerminalLineHeight, type ChatContentWidth, type IslandCompactStyle } from "../api";
+import { availableTerminals, exportDiagLog, leadWorkflowInstalled, setLeadWorkflow, leadProviderInstallations, setLeadProviderEnabled, type LeadProviderInstallationDto, getLiveSessionsPage, listAgents, agentName, setArchived, type AgentId, type AgentDescriptor, type LiveSession, type PageCursor, type ThemeMode, type ResumeTerminal, type SessionOpenIn, type CardMenuMode, type StickerStyle, type TerminalLineHeight, type ChatContentWidth, type IslandCompactStyle } from "../api";
 import { folderName } from "../paths";
 import { fmtAgo } from "./sticker/helpers";
 import { useUpdate, type UpdateStatus } from "../useUpdate";
@@ -145,6 +145,73 @@ function ShortcutsSection() {
   );
 }
 
+// 每个账号读取实际安装状态；磁盘资产存在不能推导自动续跑已可用。
+export function LeadProviderRows({ onInstalledChange }: { onInstalledChange?: (installed: boolean) => void } = {}) {
+  const t = useT();
+  const [rows, setRows] = useState<LeadProviderInstallationDto[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const busyRef = useRef(false);
+  const request = useRef(0);
+  const mounted = useRef({ active: false });
+  const reload = useCallback(() => {
+    if (busyRef.current) return;
+    const generation = ++request.current;
+    const lifecycle = mounted.current;
+    leadProviderInstallations().then((states) => {
+      // 只认数组：旧后端或未知返回形状时按「没有」处理，不让设置窗整页渲染崩掉（合并 main 后的搜索测试暴露）。
+      if (lifecycle.active && generation === request.current) { setRows(Array.isArray(states) ? states : []); setError(null); }
+    }).catch((reason) => {
+      if (lifecycle.active && generation === request.current) setError(formatBackendError(reason, t.locale));
+    });
+  }, [t.locale]);
+  useEffect(() => {
+    const lifecycle = { active: true };
+    mounted.current = lifecycle;
+    reload();
+    // 本轮闭包持有独立取消标记，语言切换/StrictMode重新挂载不能复活旧请求。
+    return () => { lifecycle.active = false; };
+  }, [reload]);
+  useAgentListRefresh(reload);
+  useEffect(() => { onInstalledChange?.((rows ?? []).some((row) => row.installed)); }, [rows, onInstalledChange]);
+  const change = async (row: LeadProviderInstallationDto, enabled: boolean) => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    request.current++;
+    const key = JSON.stringify([row.provider, row.profileId]);
+    setBusy(key); setError(null);
+    try {
+      const updated = await setLeadProviderEnabled(row.provider, row.profileId, enabled);
+      if (mounted.current.active) setRows((previous) => previous?.map((item) => item.provider === updated.provider && item.profileId === updated.profileId ? updated : item) ?? [updated]);
+    } catch (reason) {
+      if (mounted.current.active) setError(formatBackendError(reason, t.locale));
+    } finally {
+      busyRef.current = false;
+      if (mounted.current.active) setBusy(null);
+    }
+  };
+  return <>
+    <div className="row"><div className="row-text"><div className="row-desc">{t.settings.leadProvidersDesc}</div></div>
+      <button type="button" className="sbtn" {...busyProps(busy !== null, reload)}>{t.settings.leadRefresh}</button>
+    </div>
+    <SettingsError error={error} onDismiss={() => setError(null)} preformatted />
+    {rows === null && !error && <div className="row"><div className="row-desc">{t.settings.leadLoading}</div></div>}
+    {(rows ?? []).map((row) => {
+      const key = JSON.stringify([row.provider, row.profileId]);
+      const title = row.profileId ? `${row.name} · ${row.profileName ?? row.profileId}` : row.name;
+      const status = row.managed ? row.installed ? row.automaticContinue ? t.settings.leadInstalled : t.settings.leadInstalledNoContinue : t.settings.leadNeedsConfiguration : t.settings.leadNotInstalled;
+      return <div className="row" key={key}>
+        <div className="row-text"><div className="row-label">{title}</div><div className="row-desc">{status}</div>
+          {row.automaticContinue && (row.notes ?? []).map((note) => <div className="row-desc" key={note}>{formatBackendError(note, t.locale)}</div>)}
+          {row.reason && <div className="row-desc">{formatBackendError(row.reason, t.locale)}</div>}
+        </div>
+        {row.managed && <button type="button" className="sbtn" {...busyProps(busy !== null, () => void change(row, false))} aria-label={`${t.settings.leadUninstall} ${title}`}>{t.settings.leadUninstall}</button>}
+        {!row.installed && <button type="button" className="sbtn" disabled={!row.configured || !row.supported} {...busyProps(busy !== null, () => void change(row, true))} aria-label={`${t.settings.leadInstall} ${title}`}>{busy === key ? t.settings.leadWorking : row.managed ? t.settings.leadRepair : t.settings.leadInstall}</button>}
+      </div>;
+    })}
+  </>;
+}
+
 // 通用：应用级设置（语言、自启、更新、通知）。会话与卡片的行为在 SessionsSection。
 export function GeneralSection() {
   const t = useT();
@@ -186,6 +253,7 @@ export function GeneralSection() {
   const leadAwakeOn = settings?.keep_awake_for_lead_gate ?? true;
   const toggleLeadAwake = () => patch({ keep_awake_for_lead_gate: !leadAwakeOn });
   const [leadOn, setLeadOn] = useState<boolean | null>(null);
+  const [providerLeadOn, setProviderLeadOn] = useState(false);
   const [leadError, setLeadError] = useState<string | null>(null);
   useEffect(() => {
     leadWorkflowInstalled().then(setLeadOn).catch(() => setLeadOn(false));
@@ -277,7 +345,8 @@ export function GeneralSection() {
           </div>
           <Switch checked={!!leadOn} onChange={toggleLead} label={t.settings.leadWorkflow} />
         </div>
-        {(IS_WIN || IS_MAC) && leadOn && <div className="row">
+        <LeadProviderRows onInstalledChange={setProviderLeadOn} />
+        {(IS_WIN || IS_MAC) && (leadOn || providerLeadOn) && <div className="row">
           <div className="row-text">
             <div className="row-label">{t.settings.leadKeepAwake}</div>
             <div className="row-desc">{t.settings.leadKeepAwakeDesc}</div>

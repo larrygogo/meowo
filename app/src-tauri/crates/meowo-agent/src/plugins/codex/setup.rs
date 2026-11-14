@@ -95,7 +95,12 @@ fn parse_cli_semver(line: &str) -> Option<(u32, u32, u32)> {
         Some((
             parts.next()?.parse::<u32>().ok()?,
             parts.next()?.parse::<u32>().ok()?,
-            parts.next()?.split(['-', '+']).next()?.parse::<u32>().ok()?,
+            parts
+                .next()?
+                .split(['-', '+'])
+                .next()?
+                .parse::<u32>()
+                .ok()?,
         ))
     })
 }
@@ -364,10 +369,7 @@ mod tests {
             let root: Value = serde_json::from_str(&amended).unwrap();
             assert_eq!(
                 root["hooks"].get("SessionEnd").is_some(),
-                matches!(
-                    version,
-                    Some("0.162.1" | "0.163.0" | "codex-cli 0.166.0")
-                ),
+                matches!(version, Some("0.162.1" | "0.163.0" | "codex-cli 0.166.0")),
                 "版本 {version:?}"
             );
             if version.is_none() {
@@ -398,7 +400,10 @@ mod tests {
         // codex 0.166.0 `--version` 首行原样（research-cli-drift X2）
         assert_eq!(parse_cli_semver("codex-cli 0.166.0"), Some((0, 166, 0)));
         assert_eq!(parse_cli_semver("0.162.1"), Some((0, 162, 1)));
-        assert_eq!(parse_cli_semver("codex-cli 0.170.0-alpha.2"), Some((0, 170, 0)));
+        assert_eq!(
+            parse_cli_semver("codex-cli 0.170.0-alpha.2"),
+            Some((0, 170, 0))
+        );
         assert_eq!(parse_cli_semver("v0.163.0"), Some((0, 163, 0)));
         assert_eq!(parse_cli_semver("codex-cli"), None);
     }

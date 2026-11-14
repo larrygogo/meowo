@@ -181,7 +181,15 @@ export function Dropdown<T extends string | number>({
   disabled,
 }: {
   value: T;
-  options: { value: T; label: string; icon?: ReactElement; muted?: boolean; risky?: boolean; sub?: string }[];
+  options: {
+    value: T; label: string; icon?: ReactElement; muted?: boolean; risky?: boolean; sub?: string;
+    /** 行尾小字列（模式的 CLI 原名），各行右缘对齐（与桌面 PillSelect 同一布局，第三轮 C8）。 */
+    detail?: string;
+    /** 名字旁的小字标签（新建页 CLI 配置的默认档标「默认」）。 */
+    tag?: string;
+    /** 选不到：按钮禁用，文字用禁用色（说明写原因）。 */
+    disabled?: boolean;
+  }[];
   onChange: (v: T) => void;
   /** 水平对齐：默认右对齐（设置页行尾）；`"left"` 左对齐并钉成按钮宽（新建会话的整宽表单）。 */
   align?: "left" | "right";
@@ -191,6 +199,8 @@ export function Dropdown<T extends string | number>({
   const { open, setOpen, pos, ref, btnRef, menuRef, toggle, onKeyDown } = useMenuPopup({ align });
   const cur = options.find((o) => o.value === value);
   const subId = useId();
+  // 有小字列时对勾占固定槽位，未选中行也占，小字列各行右缘对齐。
+  const columns = options.some((o) => o.detail);
   return (
     <div className="dd" ref={ref} onKeyDown={onKeyDown}>
       <button
@@ -226,7 +236,8 @@ export function Dropdown<T extends string | number>({
               aria-label={o.sub ? o.label : undefined}
               aria-describedby={o.sub ? `${subId}-${index}` : undefined}
               key={o.value}
-              className={"dd-item" + (o.value === value ? " sel" : "") + (o.muted ? " muted" : "") + (o.risky ? " risk" : "")}
+              disabled={o.disabled}
+              className={"dd-item" + (o.value === value ? " sel" : "") + (o.muted ? " muted" : "") + (o.risky ? " risk" : "") + (o.disabled ? " is-disabled" : "") + (columns ? " has-detail" : "")}
               onClick={() => {
                 onChange(o.value);
                 setOpen(false);
@@ -237,10 +248,14 @@ export function Dropdown<T extends string | number>({
                 {o.icon && <span className="dd-ico">{o.icon}</span>}
                 <span className="dd-label">
                   {o.label}
+                  {o.tag && <span className="chat-model-item-tag">{o.tag}</span>}
                   {o.sub && <span className="dd-sub" id={`${subId}-${index}`}>{o.sub}</span>}
                 </span>
               </span>
-              {o.value === value && <CheckIcon className="dd-check" />}
+              {o.detail && <span className="dd-detail">{o.detail}</span>}
+              {columns
+                ? <span className="dd-check-slot" aria-hidden="true">{o.value === value && <CheckIcon className="dd-check" />}</span>
+                : o.value === value && <CheckIcon className="dd-check" />}
             </button>
           ))}
         </div>

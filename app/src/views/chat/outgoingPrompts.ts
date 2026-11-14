@@ -74,6 +74,8 @@ export type OutgoingPrompt = {
   draft?: { prompt: string; attachments: readonly Attachment[] };
   /// 认领到的送达回执 id：一条回执只确认一条消息（连发两句「继续」各认各的）。
   ackId?: string;
+  /// 正文已写、提交结果未知；恢复/重试时必须先确认原生输入框，不能再拼一份正文。
+  bodyWritten?: boolean;
 };
 
 export type PromptAck = Extract<ChatItem, { type: "prompt_queued" }>;
@@ -206,12 +208,6 @@ export function reconcileOutgoing(
   evidence: OutgoingEvidence,
 ): readonly OutgoingPrompt[] {
   if (prompts.length === 0) return prompts;
-  // 会话结束：已写进终端的回执没了下文，收起。还在发送的（发送会先把会话拉起来）和发送
-  // 失败的留着——前者马上有结果，后者是用户还没处理的字。
-  if (evidence.ended) {
-    const kept = prompts.filter((prompt) => prompt.phase === "sending" || prompt.phase === "failed");
-    return kept.length === prompts.length ? prompts : kept;
-  }
   const used = new Set<string>();
   // 已被认领的回执跨轮次保留在消息身上，这里先全部记为占用。
   const usedAcks = new Set(prompts.flatMap((prompt) => (prompt.ackId ? [prompt.ackId] : [])));
@@ -245,13 +241,22 @@ export function reconcileOutgoing(
     const unseen = prompt.phase !== "sending" && !prompt.anchor.fresh
       && windowStartsAfter(evidence.items, prompt.anchor.lastItemAt);
     const deliveredUnseen = unseen && (prompt.phase === "received" || prompt.phase === "accepted");
-    // 看不见的 pending 不会超时转 uncertain，后面又有新消息落盘时同样按「被后续事实盖过」收起。
-    const overtaken = (prompt.phase === "uncertain" || prompt.phase === "received" || !!prompt.anchor.fresh || unseen)
-      && candidates.length > 0;
+    // 全新会话的第一句话、或窗口已完全翻过发送点且有后续用户消息时，沿用既有收尾规则；
+    // 窗口仍可见时，无关消息不能冒充送达证据。
+    const overtaken = (!!prompt.anchor.fresh || unseen) && candidates.length > 0;
     if (match || hookMatch || overtaken || deliveredUnseen) {
       if (match) used.add(match.id);
       changed = true;
-      if (prompt.kind === "queued") next.push({ ...prompt, phase: "inserted", settledAt: evidence.now });
+      if (prompt.kind === "queued" && !evidence.ended) next.push({ ...prompt, phase: "inserted", settledAt: evidence.now });
+      continue;
+    }
+    // 退出不代表模型收到；发送中与已失败的不改状态，其余没有消费证据的保留为未确认。
+    if (evidence.ended) {
+      if (prompt.phase === "sending") next.push(prompt);
+      else {
+        if (prompt.phase !== "uncertain") changed = true;
+        next.push({ ...prompt, phase: "uncertain" });
+      }
       continue;
     }
     // 送达回执：发出之后（按宿主机时钟晚于发送时窗口里最晚的一条）入队、正文对得上的那条。
@@ -277,7 +282,7 @@ export function reconcileOutgoing(
       continue;
     }
     // 看不见的窗口不下「未确认」的结论（11-01 实拍）。是否卡在输入框由 useOutgoingUpkeep 读画面判。
-    if (prompt.kind === "echo" && prompt.phase === "pending" && !unseen && evidence.now - prompt.at > ECHO_CONFIRM_MS) {
+    if (prompt.phase === "pending" && !unseen && evidence.now - prompt.at > ECHO_CONFIRM_MS) {
       changed = true;
       next.push({ ...prompt, phase: "uncertain" });
       continue;
@@ -294,11 +299,13 @@ export function reconcileOutgoing(
 
 const EMPTY: readonly OutgoingPrompt[] = [];
 
-/// 发送失败的回执按会话存进 localStorage：刷新页面、手机页被系统回收后，失败的那条和
-/// 它的原文（含附件路径）还在，回来照样能重发或放回输入框（对照微信保留发送失败的消息）。
-/// 只存 failed：发送中的那条页面没了就不知道到底写没写进去，存下来反而可能重复发送。
+/// 手机页面被回收不能丢原文；保存未完成的投递，恢复时将未知结果标为uncertain而不自动重发。
+/// 保留旧键名与旧failed格式，升级后用户仍能找回之前的草稿。
 const FAILED_KEY_PREFIX = "meowo-outgoing-failed:";
-type StoredFailed = Pick<OutgoingPrompt, "kind" | "text" | "attachmentOnly" | "at" | "draft">;
+type StoredFailed = Pick<OutgoingPrompt, "kind" | "text" | "attachmentOnly" | "at" | "draft" | "ackId" | "bodyWritten"> & {
+  phase?: OutgoingPhase;
+  anchor?: Omit<OutgoingAnchor, "priorItemIds"> & { priorItemIds: string[] };
+};
 
 function readFailed(sessionId: number): StoredFailed[] {
   // 负数临时 id 每次启动都从 -1 往下重新数：存过的失败回执会串进重启后同号的新会话（做空复现）。
@@ -317,8 +324,11 @@ function readFailed(sessionId: number): StoredFailed[] {
 function writeFailed(sessionId: number, list: readonly OutgoingPrompt[]) {
   if (sessionId < 0) return; // 同 readFailed：临时 id 不落盘，认领搬到真 id 后再存
   try {
-    const failed: StoredFailed[] = list.filter((prompt) => prompt.phase === "failed")
-      .map(({ kind, text, attachmentOnly, at, draft }) => ({ kind, text, attachmentOnly, at, draft }));
+    const failed: StoredFailed[] = list.filter((prompt) => prompt.phase !== "inserted")
+      .map(({ kind, text, attachmentOnly, at, draft, phase, ackId, bodyWritten, anchor }) => ({
+        kind, text, attachmentOnly, at, draft, phase, ackId, bodyWritten,
+        anchor: { ...anchor, priorItemIds: [...anchor.priorItemIds] },
+      }));
     if (failed.length === 0) localStorage.removeItem(FAILED_KEY_PREFIX + sessionId);
     else localStorage.setItem(FAILED_KEY_PREFIX + sessionId, JSON.stringify(failed));
   } catch {
@@ -326,13 +336,13 @@ function writeFailed(sessionId: number, list: readonly OutgoingPrompt[]) {
   }
 }
 
-/// 失败回执不参与对账，水位线用不上；恢复时给一个空的。
+/// 旧版failed回执没有水位线且不参与对账，保留其兼容默认。
 const EMPTY_ANCHOR: OutgoingAnchor = { lastItemId: null, lastItemAt: null, priorItemIds: new Set(), priorUserText: null };
 
 /// 本地记账（写入完成 / 写入失败 / 替用户按回车）推进回执。CLI 的记录已经把它推到
 /// received / accepted 之后，迟到的「写入完成」不能把它拨回 pending 重新计时，「写入失败」也
 /// 不能把 CLI 已收下的话标成失败（证据优先于记账，见文件头）。
-type OutgoingPatch = Partial<Pick<OutgoingPrompt, "phase" | "at" | "kind">>;
+type OutgoingPatch = Partial<Pick<OutgoingPrompt, "phase" | "at" | "kind" | "bodyWritten">>;
 
 function advance(prompt: OutgoingPrompt, patch: OutgoingPatch): OutgoingPrompt {
   if (patch.phase === "pending" && prompt.phase !== "sending" && prompt.phase !== "uncertain") return prompt;
@@ -351,7 +361,13 @@ export function createOutgoingStore() {
     hydrated.add(sessionId);
     const restored = readFailed(sessionId).map((entry): OutgoingPrompt => {
       nextId += 1;
-      return { ...entry, id: nextId, phase: "failed", settledAt: null, anchor: EMPTY_ANCHOR };
+      const saved = entry.anchor;
+      const anchor = saved && Array.isArray(saved.priorItemIds)
+        ? { ...saved, priorItemIds: new Set(saved.priorItemIds.filter((id) => typeof id === "string")) }
+        : EMPTY_ANCHOR;
+      const phase = entry.phase == null || entry.phase === "failed" ? "failed"
+        : entry.phase === "accepted" ? "accepted" : "uncertain";
+      return { ...entry, id: nextId, phase, settledAt: null, anchor };
     });
     // 不通知订阅者：可能正处在 useSyncExternalStore 的取快照里，只把数据就位。
     if (restored.length > 0) bySession.set(sessionId, [...restored, ...(bySession.get(sessionId) ?? EMPTY)]);
@@ -360,9 +376,8 @@ export function createOutgoingStore() {
     const before = bySession.get(sessionId) ?? EMPTY;
     if (list.length === 0) bySession.delete(sessionId);
     else bySession.set(sessionId, list);
-    // 失败回执有增减才写盘：发送中 → 已写入这类高频推进不碰 localStorage。
-    const failedCount = (items: readonly OutgoingPrompt[]) => items.filter((prompt) => prompt.phase === "failed").length;
-    if (failedCount(before) !== failedCount(list) || before.some((prompt) => prompt.phase === "failed" && !list.includes(prompt))) {
+    // 只在消息或阶段确实变化时保存；无新证据的轮询复用数组引用，不重复写盘。
+    if (before.length !== list.length || before.some((prompt, index) => prompt !== list[index])) {
       writeFailed(sessionId, list);
     }
     listeners.forEach((listener) => listener());
@@ -372,7 +387,7 @@ export function createOutgoingStore() {
       hydrate(sessionId);
       return bySession.get(sessionId) ?? EMPTY;
     },
-    add(sessionId: number, draft: { kind: OutgoingKind; text: string; attachmentOnly: boolean; anchor: OutgoingAnchor; at?: number; phase?: OutgoingPhase; draft?: OutgoingPrompt["draft"] }): number {
+    add(sessionId: number, draft: { kind: OutgoingKind; text: string; attachmentOnly: boolean; anchor: OutgoingAnchor; at?: number; phase?: OutgoingPhase; draft?: OutgoingPrompt["draft"]; bodyWritten?: boolean }): number {
       hydrate(sessionId);
       nextId += 1;
       const prompt: OutgoingPrompt = {
@@ -385,6 +400,7 @@ export function createOutgoingStore() {
         settledAt: null,
         anchor: draft.anchor,
         draft: draft.draft,
+        bodyWritten: draft.bodyWritten,
       };
       put(sessionId, [...(bySession.get(sessionId) ?? EMPTY), prompt]);
       return prompt.id;
@@ -400,7 +416,9 @@ export function createOutgoingStore() {
     move(from: number, to: number) {
       const list = bySession.get(from);
       if (!list || from === to) return;
+      hydrate(to);
       bySession.delete(from);
+      writeFailed(from, EMPTY);
       put(to, [...(bySession.get(to) ?? EMPTY), ...list]);
     },
     /// 按回执编号推进或撤掉（patch 为 null），不管它此刻挂在哪个会话下：编号全局唯一，

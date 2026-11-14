@@ -36,6 +36,18 @@ export const icPaperclip: Glyph = { body: <path d="m21.4 11.6-9.2 9.2a6 6 0 0 1-
 export const icPlusCircle: Glyph = { body: <><circle cx="12" cy="12" r="8.5" /><path d="M12 8.5v7M8.5 12h7" /></> };
 export const icPullRequest: Glyph = { body: <><circle cx="6" cy="6" r="2.2" /><circle cx="6" cy="18" r="2.2" /><circle cx="18" cy="18" r="2.2" /><path d="M6 8.2v7.6M18 15.8V9a3 3 0 0 0-3-3h-4M13 3.5 10.5 6 13 8.5" /></> };
 export const icShield: Glyph = { body: <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /> };
+// 权限档的盾牌（第四轮 L4：手机工具栏只剩图标，不点开也要看得出当前档）。同一外形，里面的记号区分档位：
+// 对勾 = 每步都问、锁 = 只读、半边 = 必要时询问、笔 = 自动改文件、星 = 自动审查、横线 = 只出方案、
+// 叹号 = 都不问（配危险色）。见 views/chat/modeIcon.ts。
+export const icShieldCheck: Glyph = { body: <><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /><path d="m9 12 2 2 4-4" /></> };
+export const icShieldLock: Glyph = { body: <><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /><path d="M9.5 12h5v4h-5zM10.5 12v-1.5a1.5 1.5 0 0 1 3 0V12" /></> };
+export const icShieldHalf: Glyph = { body: <><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /><path d="M12 2v20" /></> };
+export const icShieldPen: Glyph = { body: <><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /><path d="m9.5 15.5.6-2.4 3.6-3.6 1.8 1.8-3.6 3.6z" /></> };
+export const icShieldSpark: Glyph = { body: <><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /><path d="M12 8.5l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9z" /></> };
+export const icShieldPlan: Glyph = { body: <><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /><path d="M9 10h6M9 13h6M9 16h3.5" /></> };
+export const icShieldWarn: Glyph = { body: <><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /><path d="M12 8v4.5M12 15.6v.1" /></> };
+// 计划开着：实心灯泡（关着用 icLightbulb 空心）。实心图形不描边，底座两横改成小圆角块。
+export const icLightbulbOn: Glyph = { body: <><path d="M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z" /><rect x="9" y="18.2" width="6" height="1.6" rx=".8" /><rect x="10" y="21" width="4" height="1.6" rx=".8" /></>, fill: true };
 export const icSidebarLeft: Glyph = { body: <><rect x="3.5" y="4.5" width="17" height="15" rx="3" /><path d="M9.5 4.5v15" /></> };
 export const icSidebarRight: Glyph = { body: <><rect x="3.5" y="4.5" width="17" height="15" rx="3" /><path d="M14.5 4.5v15" /></> };
 export const icSlash: Glyph = { body: <path d="M15 4 9 20" /> };

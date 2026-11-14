@@ -11,8 +11,8 @@ import { icPlus } from "../../icons/glyphs";
 /// 走补全菜单。只剩「文件」一项时（agent 没有命令、不支持提及）退回原来的一点即选文件。
 export function AddMenu({ phone, onFiles, onCommand, commandBlocked, onMention, disabled = false }: {
   phone: boolean;
-  /** 输入框被锁（终端在等选择 / 外部占用 / 已结束 / 已被接替）时一并锁住：附件加了也发不出去
-   *  （backlog 仍存在第 3 条：此前 textarea 与发送钮锁了，「+」照样能点）。 */
+  /** 输入框被锁（终端在等选择 / 外部占用 / 已结束 / 已被接替 / 托管已停用）时一并锁住：
+   *  附件加了也发不出去，别让人以为还能附文件。 */
   disabled?: boolean;
   onFiles: () => void;
   /** 插入「/」打开命令补全；该 agent 没有可补全的命令时不传。 */

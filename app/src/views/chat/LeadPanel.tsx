@@ -8,7 +8,7 @@
 
 import { busyProps } from "../../busyButton";
 import { memo, useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
-import { answerLeadGate, leadTaskSnapshot, type LeadGateDto, type LeadTaskDto } from "../../api";
+import { answerLeadGate, leadTaskSnapshot, retryLeadGateDelivery, type LeadGateDto, type LeadTaskDto } from "../../api";
 import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
 import { useVisibleInterval } from "../../hooks/useVisibleInterval";
@@ -183,6 +183,17 @@ export const LeadPanel = memo(function LeadPanel({ task, onClose }: { task: Lead
   const tabs = useTablist({ keys: LEAD_SECTIONS, active: section, onSelect: setSection });
   // 展开看全文的验收项（默认两行截断）。
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
+  const [retrying, setRetrying] = useState(false);
+  const [deliveryError, setDeliveryError] = useState<string | null>(null);
+  useEffect(() => setDeliveryError(null), [task.slug, task.gate?.id]);
+  const retryDelivery = async () => {
+    if (!task.delivery || !task.gate || retrying) return;
+    setRetrying(true);
+    setDeliveryError(null);
+    try { await retryLeadGateDelivery(task.delivery.cwd, task.gate.id); }
+    catch (error) { setDeliveryError(formatBackendError(error, t.locale)); }
+    finally { setRetrying(false); }
+  };
   // 还要做的排前面，豁免的沉底：一眼看到剩下的事。
   const checks = [...task.checks].sort((a, b) => checkRank(a) - checkRank(b));
   const title = leadTaskTitle(task);
@@ -213,6 +224,14 @@ export const LeadPanel = memo(function LeadPanel({ task, onClose }: { task: Lead
         <LeadStages phase={task.phase} />
         {latest && <p className="lead-latest" title={latest}><span className="lead-latest-label">{t.chat.leadLatest}</span>{latest}</p>}
       </div>
+      {task.delivery && task.gate?.status !== "pending" && (
+        <div className="lead-delivery" role="status">
+          <span>{task.gate?.status === "consumed" ? t.chat.leadDeliveryHandled : t.chat.leadDeliveryState(task.delivery.state)}</span>
+          {task.gate?.status !== "consumed" && task.delivery.reason && <div>{formatBackendError(task.delivery.reason, t.locale)}</div>}
+          {task.gate?.status !== "consumed" && task.delivery.canRetry && <button type="button" disabled={retrying} onClick={() => void retryDelivery()}>{t.chat.leadDeliveryRetry}</button>}
+          {deliveryError && <div role="alert">{deliveryError}</div>}
+        </div>
+      )}
       <div className="lead-tabs" {...tabs.listProps}>
         {LEAD_SECTIONS.map((key) => (
           <button key={key} type="button" {...tabs.tabProps(key)}

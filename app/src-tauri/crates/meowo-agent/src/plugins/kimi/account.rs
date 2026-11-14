@@ -290,8 +290,14 @@ fn rotated_by_other(inst: &Installation, used_refresh_token: &str) -> Option<Str
     let creds = read_kimi_credentials(inst)?;
     let refresh = creds.get("refresh_token").and_then(|v| v.as_str())?;
     let access = creds.get("access_token").and_then(|v| v.as_str())?;
-    let expires_at = creds.get("expires_at").and_then(|v| v.as_i64()).unwrap_or(0);
-    if refresh == used_refresh_token || access.is_empty() || is_kimi_token_expired(expires_at, now_secs()) {
+    let expires_at = creds
+        .get("expires_at")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    if refresh == used_refresh_token
+        || access.is_empty()
+        || is_kimi_token_expired(expires_at, now_secs())
+    {
         return None;
     }
     Some(access.to_string())
@@ -923,7 +929,10 @@ mod tests {
                 std::fs::write(path, body).unwrap();
             }
             if self.reject {
-                return Err(HttpError::Status(400, r#"{"error":"invalid_grant"}"#.to_string()));
+                return Err(HttpError::Status(
+                    400,
+                    r#"{"error":"invalid_grant"}"#.to_string(),
+                ));
             }
             Ok(r#"{"access_token":"meowo_access","refresh_token":"meowo_refresh","expires_in":900}"#
                 .to_string())
@@ -957,7 +966,11 @@ mod tests {
     #[test]
     fn usage_polls_refresh_only_after_expiry() {
         let (root, inst, creds_path) = kimi_profile("poll");
-        let http = CountingRefresh { calls: std::sync::atomic::AtomicU32::new(0), reject: false, kimi_writes: None };
+        let http = CountingRefresh {
+            calls: std::sync::atomic::AtomicU32::new(0),
+            reject: false,
+            kimi_writes: None,
+        };
         let ports = Ports {
             http: &http,
             keychain: &crate::ports::NoKeychain,
@@ -967,9 +980,16 @@ mod tests {
             "expires_at": now_secs() + 120, "expires_in": 900, "scope":"kimi-code", "token_type":"Bearer"});
         std::fs::write(&creds_path, valid.to_string()).unwrap();
         for _ in 0..3 {
-            assert_eq!(ensure_valid_kimi_token(&inst, &ports).as_deref(), Some("kimi_access"));
+            assert_eq!(
+                ensure_valid_kimi_token(&inst, &ports).as_deref(),
+                Some("kimi_access")
+            );
         }
-        assert_eq!(http.calls.load(std::sync::atomic::Ordering::SeqCst), 0, "有效期内不该发刷新请求");
+        assert_eq!(
+            http.calls.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "有效期内不该发刷新请求"
+        );
         let untouched: Value =
             serde_json::from_str(&std::fs::read_to_string(&creds_path).unwrap()).unwrap();
         assert_eq!(untouched, valid, "有效期内不该写凭据文件");
@@ -978,7 +998,10 @@ mod tests {
         let mut expired = valid.clone();
         expired["expires_at"] = json!(now_secs() - 1);
         std::fs::write(&creds_path, expired.to_string()).unwrap();
-        assert_eq!(ensure_valid_kimi_token(&inst, &ports).as_deref(), Some("meowo_access"));
+        assert_eq!(
+            ensure_valid_kimi_token(&inst, &ports).as_deref(),
+            Some("meowo_access")
+        );
         assert_eq!(http.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
         let written: Value =
             serde_json::from_str(&std::fs::read_to_string(&creds_path).unwrap()).unwrap();
@@ -986,7 +1009,10 @@ mod tests {
         assert_eq!(written["scope"], json!("kimi-code"));
         // 接下来两次轮询（5、10 分钟后在真实节奏里）都用新 token，不再刷。
         for _ in 0..2 {
-            assert_eq!(ensure_valid_kimi_token(&inst, &ports).as_deref(), Some("meowo_access"));
+            assert_eq!(
+                ensure_valid_kimi_token(&inst, &ports).as_deref(),
+                Some("meowo_access")
+            );
         }
         assert_eq!(http.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
         let _ = std::fs::remove_dir_all(&root);
@@ -1021,9 +1047,13 @@ mod tests {
         let by_kimi = json!({"access_token":"kimi_new","refresh_token":"kimi_new_refresh",
             "expires_at": now_secs() + 900, "expires_in": 900})
         .to_string();
-        assert_eq!(run(Some(by_kimi.clone())), (Some("kimi_new".to_string()), by_kimi));
+        assert_eq!(
+            run(Some(by_kimi.clone())),
+            (Some("kimi_new".to_string()), by_kimi)
+        );
         // kimi 写的是撤销墓碑（空 token，kimi 2.5.1 revokedTombstone）：不拿来用，也不覆盖。
-        let tombstone = json!({"access_token":"","refresh_token":"","expires_at":0,"expires_in":0}).to_string();
+        let tombstone =
+            json!({"access_token":"","refresh_token":"","expires_at":0,"expires_in":0}).to_string();
         assert_eq!(run(Some(tombstone.clone())), (None, tombstone));
         let _ = std::fs::remove_dir_all(&root);
     }

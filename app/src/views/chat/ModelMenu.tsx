@@ -22,7 +22,7 @@ export function effortLabel(level: string): string {
   return level === "xhigh" ? "XHigh" : level.charAt(0).toUpperCase() + level.slice(1);
 }
 
-export function ModelMenu({ title, items, currentId, starred = [], effort, busy = false, probing, unavailable, cacheHint, onSelect, onLoad, onMore, onGoTerminal, phone, onClose }: {
+export function ModelMenu({ title, items, currentId, starred = [], effort, probing, unavailable, cacheHint, onSelect, onLoad, onMore, onGoTerminal, phone, onClose }: {
   /** 当前引擎名（分组头）。 */
   title: string;
   items: ModelMenuItem[];
@@ -33,10 +33,6 @@ export function ModelMenu({ title, items, currentId, starred = [], effort, busy 
   /// 思考程度分段控件（对照 Kimi 菜单里的「思考 Low/High/Max」）。当前模型不支持
   /// （CLI 没报档位）或引擎不支持时不传，整段不显示。
   effort?: { levels: readonly string[]; current: string; busy: boolean; onPick: (level: string) => void };
-  /// 回合在跑：切模型、切思考程度、读清单都要往终端写命令，CLI 正忙时会被拒（menuBusy）。
-  /// 此前菜单照开照点，选完才在底部报「请等待」（走查 C-8）。现在本引擎的模型与档位标成
-  /// 不可选，顶上写一行原因；收藏的其他引擎（另开会话，不碰这个终端）照常可点。
-  busy?: boolean;
   probing: boolean;
   /** 读不到清单时的说明；null = 不是这个状态。 */
   unavailable: string | null;
@@ -55,9 +51,6 @@ export function ModelMenu({ title, items, currentId, starred = [], effort, busy 
   const t = useT();
   const check = <Icon glyph={icCheck} size={16} className="chat-model-check" />;
   const sections: ReactNode[] = [];
-  if (busy && (items.length > 0 || effort || onLoad)) {
-    sections.push(<div className="chat-model-quick-section chat-model-quick-status" role="status" key="busy">{t.chat.menuBusyShort}</div>);
-  }
   if (starred.length > 0) {
     sections.push(
       <div className="chat-model-quick-section" key="starred">
@@ -86,10 +79,8 @@ export function ModelMenu({ title, items, currentId, starred = [], effort, busy 
         key={item.id}
         role="menuitem"
         className={"chat-model-item" + (active ? " is-active" : "")}
-        // aria-disabled 而不是 disabled：方向键照样走得到、读屏念得到，只是点了不动。
-        aria-disabled={busy && !active ? true : undefined}
         data-tip={item.desc}
-        onClick={() => { if (active) onClose(); else if (!busy) onSelect(item.id); }}
+        onClick={() => { if (!active) onSelect(item.id); else onClose(); }}
       >
         <span className="chat-model-item-name">{item.label}</span>
         {active && check}
@@ -104,7 +95,7 @@ export function ModelMenu({ title, items, currentId, starred = [], effort, busy 
         </div>
       )}
       {items.length === 0 && !probing && !unavailable && onLoad && (
-        <button type="button" role="menuitem" className="chat-model-item" aria-disabled={busy || undefined} onClick={() => { if (!busy) onLoad(); }}>
+        <button type="button" role="menuitem" className="chat-model-item" onClick={onLoad}>
           <span className="chat-model-item-name">{t.chat.modelLoad}</span>
         </button>
       )}
@@ -121,7 +112,8 @@ export function ModelMenu({ title, items, currentId, starred = [], effort, busy 
     <div className="chat-model-quick-section is-list" key="models">
       {[...groups.entries()].map(([group, groupItems], index, all) => (
         <div className="chat-model-quick-group" key={group}>
-          <div className="chat-model-quick-head">{group}</div>
+          {/* 只有一组时不写组名：一行组名说的就是当前引擎，纯占地方（2026-11-14 实拍「managed:kimi-code」）。 */}
+          {all.length > 1 && <div className="chat-model-quick-head">{group}</div>}
           {groupItems.map(renderItem)}
           {index === all.length - 1 && status}
         </div>
@@ -142,8 +134,8 @@ export function ModelMenu({ title, items, currentId, starred = [], effort, busy 
               className={effort.current === level ? "is-active" : undefined}
               // 切换在途用 aria-disabled：原先 disabled 会把刚按下、正聚焦的这颗钮的焦点踢到 body
               //（走查 C-1 同类：Chromium/WebView2 对被禁用的焦点元素一律失焦）。
-              aria-disabled={effort.busy || (busy && effort.current !== level) || undefined}
-              onClick={() => { if (effort.current !== level && !effort.busy && !busy) effort.onPick(level); }}
+              aria-disabled={effort.busy || undefined}
+              onClick={() => { if (effort.current !== level && !effort.busy) effort.onPick(level); }}
             >
               {effortLabel(level)}
             </button>

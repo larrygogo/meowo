@@ -1,4 +1,5 @@
 pub mod error;
+pub mod managed;
 pub mod migrations;
 pub mod models;
 pub mod query;

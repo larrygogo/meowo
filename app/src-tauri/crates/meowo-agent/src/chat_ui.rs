@@ -384,6 +384,26 @@ pub struct SideQuestion {
     pub close_input: &'static str,
 }
 
+/// 只认真实取证过的空输入框，非空或框体不完整时必须保留原稿并停止 GUI 提交。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+pub struct ComposerGuard {
+    /// Codex 用 prompt 与状态 footer 定界；有边框的 TUI 不启用这个布局。
+    pub prompt_footer: bool,
+    /// 捕获组 1 必须是输入起点之前的物理前缀；占位文字可能另有灰字缩进，不能反推光标。
+    pub input_start_pattern: &'static str,
+    pub top_pattern: &'static str,
+    pub bottom_pattern: &'static str,
+    /// 捕获组 1 为行内正文；必须锚定整行，不能把历史中的零散提示当成 composer。
+    pub row_pattern: &'static str,
+    pub prompt_prefix: &'static str,
+    /// 有些 TUI 把模式与模型放在同一个框内，必须验证后再排除这些固定尾行。
+    pub tail_rows: usize,
+    pub tail_pattern: Option<&'static str>,
+    pub empty_pattern: &'static str,
+}
+
 /// 子代理视图（claude 在提示框下方的子代理面板里「打开」某个子代理）：此时 composer 改发给
 /// 那个子代理，对话页（代表主会话）写进 PTY 的话会被它收走，主会话一个字也收不到。前端
 /// 发送前据此认出视图、按面板键选中主会话行并回车切回，确认回到主会话才写。
@@ -503,8 +523,15 @@ pub struct ChatUi {
     /// 发送前收起 composer 残留草稿的能力(见 [`DraftStash`])。None = 未取证,照旧直接写入
     /// ——残留会拼进消息,但盲按一个未验证的键可能触发对方的别的功能,宁缺勿滥。
     pub draft_stash: Option<DraftStash>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub composer_guard: Option<ComposerGuard>,
     /// 发送前切回主会话的能力(见 [`SubagentView`])。None = 该 agent 没有子代理视图或未取证。
     pub subagent_view: Option<SubagentView>,
+    /// 会话里切模型的机制（见 [`crate::ModelSwitch`]）。None = 没有确定方式，前端退回终端菜单兜底。
+    pub model_switch: Option<crate::ModelSwitchKind>,
+    /// CLI 已起好、只是在等第一条消息才建会话的屏幕原文（见 `AgentPlugin::awaiting_first_message_markers`）。
+    pub awaiting_first_message_markers: Vec<&'static str>,
     /// 探测到的 CLI 版本，原样回传（展示/排障）。
     pub version: Option<String>,
 }

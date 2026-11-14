@@ -54,7 +54,22 @@ pub(super) static DEPS: &[D] = &[
         "Do you trust the contents of this directory?",
         "通用信任表（chat_ui.rs）里的句子，给别的 CLI 用；gemini 0.65.0 的信任页是 `Do you trust the files in this folder`（能搜到），这句 0 处",
     ),
-    D::new("literal:│ apply this change", "apply this change", "\u{2502} Apply this change?", FRAMED),
-    D::new("literal:│ allow execution", "allow execution", "\u{2502} Allow execution of ls?", FRAMED),
-    D::new("literal:│ do you want to proceed", "do you want to proceed", "\u{2502} Do you want to proceed?", FRAMED),
+    D::new(
+        "literal:│ apply this change",
+        "apply this change",
+        "\u{2502} Apply this change?",
+        FRAMED,
+    ),
+    D::new(
+        "literal:│ allow execution",
+        "allow execution",
+        "\u{2502} Allow execution of ls?",
+        FRAMED,
+    ),
+    D::new(
+        "literal:│ do you want to proceed",
+        "do you want to proceed",
+        "\u{2502} Do you want to proceed?",
+        FRAMED,
+    ),
 ];

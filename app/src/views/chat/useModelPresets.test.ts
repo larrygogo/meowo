@@ -62,8 +62,8 @@ it("菜单型 CLI 读配置目录，换会话不串", async () => {
 it("claude 用模型目录改写预设标签", async () => {
   agentModels.mockResolvedValue([]);
   agentModelCatalog.mockResolvedValueOnce([
-    { id: "opus", label: "Opus 5.5", group: null, efforts: [] },
-    { id: "fable", label: "Fable 5.1", group: null, efforts: [] },
+    { id: "opus", label: "Opus 5.5", group: null, efforts: [], default_effort: null, is_default: false, uncertain: false },
+    { id: "fable", label: "Fable 5.1", group: null, efforts: [], default_effort: null, is_default: false, uncertain: false },
   ]);
   const ui = chatUi("claude");
   const { result } = renderHook(() => useModelPresets("claude", ui, 3));
@@ -76,7 +76,7 @@ it("claude 用模型目录改写预设标签", async () => {
 
 it("1M 变体跟随家族显示名", () => {
   const presets = [{ id: "opus", label: "Opus 5" }, { id: "opus[1m]", label: "Opus 5 (1M)" }, { id: "opusplan", label: "Opus Plan" }];
-  expect(applyCatalogLabels(presets, [{ id: "opus", label: "Opus 5.5", group: null, efforts: [] }]).map((p) => p.label))
+  expect(applyCatalogLabels(presets, [{ id: "opus", label: "Opus 5.5", group: null, efforts: [], default_effort: null, is_default: false, uncertain: false }]).map((p) => p.label))
     .toEqual(["Opus 5.5", "Opus 5.5 (1M)", "Opus Plan"]);
   expect(applyCatalogLabels(presets, [])).toBe(presets);
 });

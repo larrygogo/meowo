@@ -2,10 +2,10 @@ mod account;
 mod agent_updates;
 #[cfg(any(target_os = "macos", test))]
 mod app_bundle;
+mod bgpty;
 mod browser_agent;
 mod browser_pane;
 mod browser_permission;
-mod bgpty;
 mod chat;
 mod confirm;
 mod detect;
@@ -20,9 +20,10 @@ mod git;
 mod git_target;
 mod island;
 mod lead;
+mod lead_conversation;
+mod lead_native;
+mod lead_runtime;
 // 只有 macOS 的菜单栏用；放在 macos 模块外是为了 Windows 开发机上也能跑单测。
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-mod tray_anim;
 #[cfg(target_os = "windows")]
 mod openwith;
 mod ports;
@@ -32,6 +33,8 @@ mod push;
 mod relay;
 #[cfg(target_os = "windows")]
 mod seed;
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+mod tray_anim;
 // pub：集成测试 `tests/proxy_apply.rs` 要在**独立进程**里跑端到端写入（它会设 CLAUDE_CONFIG_DIR /
 // MEOWO_DB 这类进程级环境变量，与 lib 单测并行跑会互相串味）。
 #[cfg(target_os = "macos")]
@@ -56,6 +59,7 @@ mod proc;
 pub mod profile;
 mod session_command;
 mod session_query;
+mod session_settings;
 mod shell_terminal;
 mod snap_layout;
 mod terminal;
@@ -71,35 +75,41 @@ use chat::{
     refresh_session_todos, save_pasted_attachment, search_chat_transcripts,
 };
 use fsutil::{
-    list_dir_entries, list_file_openers, open_path_with, read_file_text, read_image_preview,
-    reveal_path_in_file_manager, reveal_terminal_path, search_project_files, file_mention_candidates,
+    file_mention_candidates, list_dir_entries, list_file_openers, open_path_with, read_file_text,
+    read_image_preview, reveal_path_in_file_manager, reveal_terminal_path, search_project_files,
 };
 use git::{
-    git_changes_overview, git_commit, git_diff_summary, git_discard, git_file_diff, git_ignore_dir, git_pull_request,
-    git_stage, git_unstage, git_untracked_dir_files,
+    git_changes_overview, git_commit, git_diff_summary, git_discard, git_file_diff, git_ignore_dir,
+    git_pull_request, git_stage, git_unstage, git_untracked_dir_files,
 };
-use lead::{answer_lead_gate, lead_task_snapshot, lead_workflow_installed, set_lead_workflow};
 use handoff::{copy_session_to_provider, get_session_lineage};
 use install::{
     add_agent_to_user_path, agent_path_gap, api_key_login, cancel_install, cancel_login,
     check_provider_hooks, install_agent, login_agent, logout_agent, open_install_log,
     repair_provider_hooks,
 };
+use lead::{
+    answer_lead_gate, lead_provider_installations, lead_task_snapshot, lead_workflow_installed,
+    retry_lead_gate_delivery, set_lead_provider_enabled, set_lead_workflow,
+};
 use managed_terminal::{
     attach_background_session, awaiting_interaction_sessions, dismiss_interactive_question,
-    managed_terminal_binding, managed_terminal_grid, managed_terminal_pending_launch,
-    managed_terminal_screen, managed_terminal_snapshot, open_attached_terminal,
-    pending_interaction, register_approval_consumer, register_terminal_viewer,
-    resize_managed_terminal, resolve_pending_approval, screen_detect_explain,
-    screen_detect_explain_text, send_background_prompt, start_managed_terminal,
-    stop_managed_terminal, unregister_approval_consumer, unregister_terminal_viewer,
-    write_managed_terminal,
+    managed_terminal_binding, managed_terminal_frame, managed_terminal_grid,
+    managed_terminal_pending_launch, managed_terminal_screen, managed_terminal_snapshot,
+    open_attached_terminal, pending_interaction, register_approval_consumer,
+    register_terminal_viewer, resize_managed_terminal, resolve_pending_approval,
+    respond_runtime_request, screen_detect_explain, screen_detect_explain_text,
+    send_background_prompt, start_managed_terminal, stop_managed_terminal,
+    unregister_approval_consumer, unregister_terminal_viewer, write_managed_terminal,
 };
 #[cfg(test)]
 use session_command::is_safe_id;
 use session_command::{move_session_rank, rename_session, set_archived};
 use session_command::{session_launch_selections, set_session_launch_selection};
-use session_query::{get_live_sessions_counts, get_live_sessions_page, get_session_admin_page, hide_workspace, recent_cwds};
+use session_query::{
+    get_live_sessions_counts, get_live_sessions_page, get_session_admin_page, hide_workspace,
+    recent_cwds,
+};
 #[cfg(test)]
 use session_query::{
     live_sessions_blocking, session_connected, tab_class, LiveContext, PageReq,
@@ -257,6 +267,8 @@ async fn check_update(
     {
         let handle = app.clone();
         builder = builder.on_before_exit(move || {
+            // Codex app-server 不在 TUI 的进程树里，收托管终端杀不到它（做空 R1）。
+            lead_native::codex_app_server::retire_all();
             handle.state::<AppState>().ptys.shutdown();
             // 面板里的普通终端平时靠对话窗 Destroyed 回调收（window.rs 关窗兜底的 kill_all），
             // 可插件直接 process::exit，窗口销毁事件同样不会来：pwsh 及其子孙（dev server
@@ -737,23 +749,24 @@ async fn list_agent_extensions() -> Vec<meowo_agent::extensions::AgentExtensions
 /// 正常亚秒返回，但一个挂死的 CLI 不该把 blocking 线程一起挂死——过 deadline 即 kill。
 /// `probe_cli_version`（`--version`，5s）与 `agent_models`（模型清单，15s）共用；
 /// 必须在 blocking 池调用（spawn + sleep 轮询，见 CLAUDE.md 线程纪律）。
-fn run_cli_capture(
-    plugin: &'static dyn meowo_agent::AgentPlugin,
-    extra_args: &[&str],
-    timeout: std::time::Duration,
-) -> Option<String> {
-    run_cli_capture_in(plugin, extra_args, timeout, &[], None)
-}
-
-fn run_cli_capture_in(
+pub(crate) fn run_cli_capture_in(
     plugin: &'static dyn meowo_agent::AgentPlugin,
     extra_args: &[&str],
     timeout: std::time::Duration,
     env: &[(String, String)],
     cwd: Option<&std::path::Path>,
 ) -> Option<String> {
-    let argv = plugin.launch_argv();
-    let mut cmd = std::process::Command::new(&argv[0]);
+    run_cli_capture_argv(&plugin.launch_argv(), extra_args, timeout, env, cwd)
+}
+
+fn run_cli_capture_argv(
+    argv: &[String],
+    extra_args: &[&str],
+    timeout: std::time::Duration,
+    env: &[(String, String)],
+    cwd: Option<&std::path::Path>,
+) -> Option<String> {
+    let mut cmd = std::process::Command::new(argv.first()?);
     cmd.args(&argv[1..])
         .args(extra_args)
         .stdin(std::process::Stdio::null())
@@ -805,44 +818,235 @@ fn run_cli_capture_in(
     Some(String::from_utf8_lossy(&bytes).into_owned())
 }
 
-/// `probe_cli_version` 的进程级缓存（版本只随重装变化，而 node 系 CLI 冷启动要一秒上下，
-/// 不能每开一个对话窗都付一次）。探测失败缓存 None，不反复重试。
-/// 模块级而非函数内：安装成功后 `invalidate_cli_version_cache` 要能清掉对应条目。
+// 外部包管理器升级不会经过安装命令：键包含实况与文件指纹，TTL 补足同路径同元数据替换。
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct CliVersionKey {
+    provider: String,
+    variant: String,
+    argv: Vec<String>,
+    files: Vec<(std::path::PathBuf, u64, Option<std::time::SystemTime>)>,
+}
+
+struct CliVersionEntry {
+    version: Option<String>,
+    checked_at: std::time::Instant,
+}
+
+impl CliVersionEntry {
+    fn fresh(&self, now: std::time::Instant) -> bool {
+        // 短暂失败允许自动重试；成功也有上界，不能要求用户重启 Meowo 才识别外部升级。
+        let ttl = if self.version.is_some() { 60 } else { 2 };
+        now.saturating_duration_since(self.checked_at) < std::time::Duration::from_secs(ttl)
+    }
+}
+
 static CLI_VERSION_CACHE: std::sync::LazyLock<
-    std::sync::Mutex<std::collections::HashMap<String, Option<String>>>,
+    std::sync::Mutex<std::collections::HashMap<CliVersionKey, CliVersionEntry>>,
 > = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
 
-/// 安装/更新成功后调用：清掉该 agent 的版本探测缓存，下次探测拿到新版本号。
 pub(crate) fn invalidate_cli_version_cache(provider: &str) {
     CLI_VERSION_CACHE
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .remove(provider);
+        .retain(|key, _| key.provider != provider);
 }
 
-/// 已装 CLI 的版本，`<launch_argv> --version` 探测，缓存见 [`CLI_VERSION_CACHE`]。
-pub(crate) fn probe_cli_version(plugin: &'static dyn meowo_agent::AgentPlugin) -> Option<String> {
-    let id = plugin.id().as_str().to_string();
-    // 中毒恢复而非 unwrap：缓存只是探测结果的备忘录，读到写一半的旧值无害；
-    // panic 则让之后每次开对话窗都失败（本函数跑在 blocking 池，用户只会看到「打不开」）。
-    if let Some(hit) = CLI_VERSION_CACHE
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .get(&id)
-    {
-        return hit.clone();
+fn cli_version_key(provider: &str, variant: &str, argv: Vec<String>) -> CliVersionKey {
+    let mut files = Vec::new();
+    for (index, arg) in argv.iter().enumerate() {
+        let direct = std::path::PathBuf::from(arg);
+        let path = if direct.is_file() {
+            Some(direct)
+        } else if index == 0 && direct.components().count() == 1 {
+            let extensions = if cfg!(windows) {
+                std::iter::once(String::new())
+                    .chain(
+                        std::env::var("PATHEXT")
+                            .unwrap_or_else(|_| ".EXE;.CMD;.BAT".into())
+                            .split(';')
+                            .map(str::to_string),
+                    )
+                    .collect::<Vec<_>>()
+            } else {
+                vec![String::new()]
+            };
+            std::env::var_os("PATH").and_then(|paths| {
+                std::env::split_paths(&paths).find_map(|dir| {
+                    extensions
+                        .iter()
+                        .map(|ext| dir.join(format!("{arg}{ext}")))
+                        .find(|path| path.is_file())
+                })
+            })
+        } else {
+            None
+        };
+        if let Some(path) = path {
+            if let Ok(meta) = std::fs::metadata(&path) {
+                files.push((
+                    path.canonicalize().unwrap_or(path),
+                    meta.len(),
+                    meta.modified().ok(),
+                ));
+            }
+        }
     }
-    let version = run_cli_capture(plugin, &["--version"], std::time::Duration::from_secs(5))
-        .and_then(|txt| {
-            txt.lines()
-                .map(str::trim)
-                .find(|l| !l.is_empty())
-                .map(str::to_string)
-        });
+    CliVersionKey {
+        provider: provider.into(),
+        variant: variant.into(),
+        argv,
+        files,
+    }
+}
+
+fn parse_cli_version(output: &str, product_names: &[&str]) -> Option<String> {
+    static VERSION: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"^(?:(?P<product>[A-Za-z][A-Za-z0-9 ._/-]*)[ \t]+)?v?([0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]+)?)(?:[ \t]+\([^\r\n]*\))?$").expect("版本正则必须有效")
+    });
+    let normalize = |name: &str| {
+        let name = name
+            .chars()
+            .filter(char::is_ascii_alphanumeric)
+            .collect::<String>()
+            .to_ascii_lowercase();
+        name.trim_end_matches("version")
+            .trim_end_matches("cli")
+            .to_string()
+    };
+    output.lines().find_map(|line| {
+        let caps = VERSION.captures(line.trim())?;
+        if let Some(product) = caps.name("product") {
+            let product = normalize(product.as_str());
+            if !product_names.iter().any(|name| normalize(name) == product) {
+                return None;
+            }
+        }
+        Some(caps[2].to_string())
+    })
+}
+
+#[cfg(test)]
+mod cli_version_tests {
+    use super::{cli_version_key, parse_cli_version, CliVersionEntry};
+
+    #[test]
+    fn parses_version_lines_and_rejects_banners() {
+        for (text, expected) in [
+            ("codex-cli 0.167.2", "0.167.2"),
+            ("2.1.322 (Claude Code)", "2.1.322"),
+            ("warning: ignored option\n2.5.3", "2.5.3"),
+            ("v1.19.3", "1.19.3"),
+            ("Gemini CLI 0.65.0-preview.1", "0.65.0-preview.1"),
+        ] {
+            assert_eq!(
+                parse_cli_version(text, &["codex", "Claude Code", "kimi", "gemini"]).as_deref(),
+                Some(expected)
+            );
+        }
+        for text in [
+            "login required",
+            "warning 1.2.3",
+            "",
+            "WARNING: update to 1.2.3",
+            "0.65",
+            "<html>1.2.3</html>",
+        ] {
+            assert_eq!(parse_cli_version(text, &["codex", "kimi"]), None, "{text}");
+        }
+    }
+
+    #[test]
+    fn cache_failure_retries_and_success_has_a_bounded_lifetime() {
+        let now = std::time::Instant::now();
+        let failed = CliVersionEntry {
+            version: None,
+            checked_at: now,
+        };
+        assert!(failed.fresh(now + std::time::Duration::from_secs(1)));
+        assert!(!failed.fresh(now + std::time::Duration::from_secs(2)));
+        let ok = CliVersionEntry {
+            version: Some("1.2.3".into()),
+            checked_at: now,
+        };
+        assert!(ok.fresh(now + std::time::Duration::from_secs(59)));
+        assert!(!ok.fresh(now + std::time::Duration::from_secs(60)));
+    }
+
+    #[test]
+    fn cache_key_distinguishes_executable_variant_and_file_replacement() {
+        let dir = std::env::temp_dir().join(format!(
+            "meowo-version-key-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let script = dir.join("cli.js");
+        std::fs::write(&script, "old").unwrap();
+        let argv = vec!["node".into(), script.to_string_lossy().into_owned()];
+        let old = cli_version_key("agent", "native", argv.clone());
+        assert_ne!(old, cli_version_key("agent", "legacy", argv.clone()));
+        assert_ne!(
+            old,
+            cli_version_key("agent", "native", vec!["different-exe".into()])
+        );
+        std::fs::write(&script, "updated content").unwrap();
+        assert_ne!(old, cli_version_key("agent", "native", argv));
+        std::fs::remove_file(script).unwrap();
+        std::fs::remove_dir(dir).unwrap();
+    }
+}
+
+/// 探测与缓存使用同一份 argv，避免 PATH/变体切换时拿另一安装的能力驱动当前界面。
+pub(crate) fn probe_cli_version(plugin: &'static dyn meowo_agent::AgentPlugin) -> Option<String> {
+    let installation = plugin.resolve();
+    probe_cli_version_in(plugin, installation.as_ref())
+}
+
+pub(crate) fn probe_cli_version_in(
+    plugin: &'static dyn meowo_agent::AgentPlugin,
+    installation: Option<&meowo_agent::variant::Installation>,
+) -> Option<String> {
+    let argv = installation.map_or_else(|| plugin.launch_argv(), |inst| inst.launch_argv());
+    let variant = installation.map_or("unknown", |inst| inst.variant_tag);
+    let key = cli_version_key(plugin.id().as_str(), variant, argv);
+    let now = std::time::Instant::now();
+    {
+        let mut cache = CLI_VERSION_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        cache.retain(|_, entry| entry.fresh(now));
+        if let Some(hit) = cache.get(&key) {
+            return hit.version.clone();
+        }
+    }
+    let version = run_cli_capture_argv(
+        &key.argv,
+        &["--version"],
+        std::time::Duration::from_secs(5),
+        &[],
+        None,
+    )
+    .and_then(|output| {
+        parse_cli_version(
+            &output,
+            &[
+                plugin.id().as_str(),
+                plugin.display_name(),
+                plugin.launch_stem(),
+            ],
+        )
+    });
     CLI_VERSION_CACHE
         .lock()
         .unwrap_or_else(|e| e.into_inner())
-        .insert(id, version.clone());
+        .insert(
+            key,
+            CliVersionEntry {
+                version: version.clone(),
+                checked_at: std::time::Instant::now(),
+            },
+        );
     version
 }
 
@@ -904,24 +1108,49 @@ async fn agent_models(provider: String, session_id: Option<i64>) -> Vec<String> 
 /// `AgentPlugin::model_catalog`）。对照 Kimi 桌面版：模型菜单一打开就列出，不必先往会话
 /// PTY 发 `/model` 弹一次菜单再靠屏幕识别读回来。读文件、不起进程，失败即空表。
 /// 多账号会话按其 profile 的环境找配置（kimi 的 `KIMI_CODE_HOME`）。
+///
+/// 2026-11-14 起清单是切模型的主路线（不再往终端敲 `/model` 识别菜单）：配置读不出时问 CLI 的离线子命令，
+/// TUI 对话框机制的会话有服务时用服务列的（见 session_settings::session_catalog）。打开菜单时现读，
+/// 用户改了 CLI 配置下次打开就跟上。
 #[tauri::command]
-async fn agent_model_catalog(provider: String, session_id: Option<i64>) -> Vec<meowo_agent::ModelCatalogEntry> {
+async fn agent_model_catalog(
+    app: tauri::AppHandle,
+    provider: String,
+    session_id: Option<i64>,
+) -> Vec<meowo_agent::ModelCatalogEntry> {
     tauri::async_runtime::spawn_blocking(move || {
         let Some(plugin) = meowo_agent::resolve(Some(&provider)) else {
             return Vec::new();
         };
-        let env = session_id
-            .and_then(|session_id| {
-                let store = open_store(&db_path()).ok()?;
-                let header = store.session_header(session_id).ok()?;
-                if header.provider != plugin.id().as_str() {
-                    return None;
-                }
-                let profile = store.session_profile(session_id).ok()?;
-                Some(profile::env_of(plugin.id(), profile.as_deref()))
-            })
-            .unwrap_or_default();
-        plugin.model_catalog(&env)
+        let session = session_id.filter(|id| *id > 0).and_then(|session_id| {
+            let store = open_store(&db_path()).ok()?;
+            let header = store.session_header(session_id).ok()?;
+            if header.provider != plugin.id().as_str() {
+                return None;
+            }
+            let profile = store.session_profile(session_id).ok()?;
+            Some((
+                session_id,
+                profile::env_of(plugin.id(), profile.as_deref()),
+                header.cwd,
+            ))
+        });
+        // 没有会话（新建页）时按当前活跃账号的环境读：启动时校验用的也是它（做空 L3）。
+        let (sid, env, cwd) = match session {
+            Some((sid, env, cwd)) => (Some(sid), env, cwd),
+            None => {
+                let active = profile::active_id(plugin.id().as_str());
+                (None, profile::env_of(plugin.id(), active.as_deref()), None)
+            }
+        };
+        session_settings::session_catalog(
+            &db_path(),
+            plugin,
+            sid,
+            &env,
+            cwd.as_deref(),
+            Some(&app),
+        )
     })
     .await
     .unwrap_or_default()
@@ -1276,6 +1505,7 @@ pub fn run() {
             managed_terminal_snapshot,
             managed_terminal_grid,
             managed_terminal_screen,
+            managed_terminal_frame,
             managed_terminal_binding,
             managed_terminal_pending_launch,
             write_managed_terminal,
@@ -1291,6 +1521,7 @@ pub fn run() {
             register_approval_consumer,
             unregister_approval_consumer,
             resolve_pending_approval,
+            respond_runtime_request,
             open_attached_terminal,
             attach_background_session,
             focus_session,
@@ -1308,8 +1539,11 @@ pub fn run() {
             git_changes_overview,
             lead_task_snapshot,
             answer_lead_gate,
+            retry_lead_gate_delivery,
             lead_workflow_installed,
             set_lead_workflow,
+            lead_provider_installations,
+            set_lead_provider_enabled,
             git_file_diff,
             git_pull_request,
             git_stage,
@@ -1421,6 +1655,14 @@ pub fn run() {
             agent_chat_ui,
             agent_models,
             agent_model_catalog,
+            session_settings::agent_launch_defaults,
+            session_settings::agent_dynamic_mode_choices,
+            session_settings::apply_session_settings,
+            session_settings::session_live_settings,
+            session_settings::record_session_settings,
+            session_settings::queue_session_settings,
+            session_settings::queued_session_settings,
+            session_settings::take_queued_session_settings,
             agent_updates::check_agent_updates,
             agent_updates::installed_agent_versions,
             profile::list_profiles,
@@ -1464,6 +1706,19 @@ pub fn run() {
             // 托管会话的屏幕状态检测（working/idle/blocked 角标）。在 set_app_handle 之后
             // 启动：状态变化要经 AppHandle 发看板刷新。
             approval_ptys.start_screen_detect();
+            // 收掉上次运行遗留的 codex app-server（Lead 原生续跑，TUI 已不在）；放后台线程，不卡启动。
+            std::thread::spawn(lead_native::codex_app_server::sweep_on_startup);
+            // 已停用的「Meowo 托管」会话：驱动它们的 worker 已删除，还挂着运行/等待的收尾为已结束，
+            // 否则看板上永远「运行中」。只改状态列，对话数据保留。后台线程，不卡启动。
+            // 用官方 CLI 恢复过、正在跑的（本实例刚启动没有 PTY，只可能在共库的另一个实例或外部终端里）
+            // 按进程事实判活，不收尾（做空 R8）。
+            std::thread::spawn(|| {
+                if let Ok(store) = open_store(&db_path()) {
+                    let _ = store.end_retired_managed_sessions(now_ms(), |sid| {
+                        crate::terminal::session_agent_alive(&store, sid).unwrap_or(true)
+                    });
+                }
+            });
             // macOS：纯菜单栏 App（隐藏 Dock 图标），main 窗口转 NSPanel，托盘走 menubar 模块。
             #[cfg(target_os = "macos")]
             {
@@ -1599,6 +1854,9 @@ pub fn run() {
             // 一并残留）。同时删掉 approval-broker.json，否则下一个 reporter 会拿着已失效的
             // 端点去连一个可能已被回收的端口。
             if matches!(event, tauri::RunEvent::Exit) {
+                // Codex app-server 由 Meowo 直接 spawn、不在 ConPTY 里：不收就会带着正在跑的回合在后台
+                // 无人看着继续（做空 R1）。
+                lead_native::codex_app_server::retire_all();
                 exit_ptys.shutdown();
                 // 面板终端也在这里收：托盘「退出」走 app.exit(0)，tauri-runtime-wry 直接把事件循环
                 // 设成 ExitWithCode 再发 RunEvent::Exit，不给窗口发 Destroyed（做空审查读
@@ -1757,7 +2015,10 @@ mod tests {
             ("bgpty.rs", include_str!("bgpty.rs")),
             ("browser_agent.rs", include_str!("browser_agent.rs")),
             ("browser_pane.rs", include_str!("browser_pane.rs")),
-            ("browser_permission.rs", include_str!("browser_permission.rs")),
+            (
+                "browser_permission.rs",
+                include_str!("browser_permission.rs"),
+            ),
             ("chat.rs", include_str!("chat.rs")),
             ("confirm.rs", include_str!("confirm.rs")),
             ("detect.rs", include_str!("detect.rs")),
@@ -1772,6 +2033,7 @@ mod tests {
             ("remote.rs", include_str!("remote.rs")),
             ("session_command.rs", include_str!("session_command.rs")),
             ("session_query.rs", include_str!("session_query.rs")),
+            ("session_settings.rs", include_str!("session_settings.rs")),
             ("shell_terminal.rs", include_str!("shell_terminal.rs")),
             ("settings.rs", include_str!("settings.rs")),
             ("snap.rs", include_str!("snap.rs")),
@@ -1789,6 +2051,19 @@ mod tests {
             ("macos/notify.rs", include_str!("macos/notify.rs")),
             ("macos/panel.rs", include_str!("macos/panel.rs")),
             ("macos/terminal.rs", include_str!("macos/terminal.rs")),
+            // 2026-11-13 补：Provider 兼容新增的宿主文件（做空第二轮指出守卫没覆盖到）。
+            ("lead.rs", include_str!("lead.rs")),
+            ("lead_conversation.rs", include_str!("lead_conversation.rs")),
+            ("lead_runtime.rs", include_str!("lead_runtime.rs")),
+            // 2026-11-13 补（第一轮做空 M7）：原生 TUI 续跑与账号共享。probe*.rs 是 #[cfg(test)] 的真机
+            // 探针模块（固件里写 provider 名是正常的），不在列。
+            ("lead_native/mod.rs", include_str!("lead_native/mod.rs")),
+            ("lead_native/server.rs", include_str!("lead_native/server.rs")),
+            ("lead_native/waiter.rs", include_str!("lead_native/waiter.rs")),
+            ("lead_native/ws.rs", include_str!("lead_native/ws.rs")),
+            ("lead_native/codex_app_server.rs", include_str!("lead_native/codex_app_server.rs")),
+            ("lead_native/opencode_http.rs", include_str!("lead_native/opencode_http.rs")),
+            ("profile/share.rs", include_str!("profile/share.rs")),
         ];
         for (name, source) in HOST_SOURCES {
             for (index, line) in production_lines(source) {

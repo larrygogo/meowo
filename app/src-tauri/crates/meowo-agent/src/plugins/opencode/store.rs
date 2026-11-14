@@ -84,7 +84,9 @@ pub(super) fn open_for_session(session_id: &str) -> Option<Connection> {
     for db in data_dirs().into_iter().filter(|db| db.is_file()) {
         let Some(conn) = open(&db) else { continue };
         let found = conn
-            .query_row("SELECT 1 FROM session WHERE id = ?1", [session_id], |_| Ok(()))
+            .query_row("SELECT 1 FROM session WHERE id = ?1", [session_id], |_| {
+                Ok(())
+            })
             .optional()
             .ok()
             .flatten()
@@ -199,8 +201,12 @@ fn export_locked(conn: &Connection, session_id: &str, dir: &Path, safe: &str) ->
         let cursor = last_cursor(path);
         let resumable = match &cursor {
             // 已导出到回退点或之后 = 刚撤回，尾部作废；/redo 撤销回退点时游标仍在前面，原地续写即可。
-            Some(cursor) => message_exists(conn, &cursor.msg)
-                && until.as_deref().is_none_or(|until| cursor.msg.as_str() < until),
+            Some(cursor) => {
+                message_exists(conn, &cursor.msg)
+                    && until
+                        .as_deref()
+                        .is_none_or(|until| cursor.msg.as_str() < until)
+            }
             // 空文件（还没导出过任何定稿内容）可以原地续写；非空却读不出游标＝文件坏了，重导。
             None => len == 0,
         };
@@ -283,7 +289,11 @@ fn cursor_of(line: &[u8]) -> Option<Cursor> {
 /// messageID；revert 另有 partID（撤到某条消息中途）的形态，`/undo` 不产生，按整条处理。
 fn revert_point(conn: &Connection, session_id: &str) -> Option<String> {
     let raw: String = conn
-        .query_row("SELECT revert FROM session WHERE id = ?1", [session_id], |row| row.get(0))
+        .query_row(
+            "SELECT revert FROM session WHERE id = ?1",
+            [session_id],
+            |row| row.get(0),
+        )
         .optional()
         .ok()??;
     let revert: Value = serde_json::from_str(&raw).ok()?;
@@ -399,7 +409,9 @@ fn collect_lines(
                 break;
             }
             let parts: Vec<Value> = parts.into_iter().map(|(_, p)| slim_user_part(p)).collect();
-            push(json!({"kind": "user", "msg": msg_id, "key": key.key, "time": created, "parts": parts}));
+            push(
+                json!({"kind": "user", "msg": msg_id, "key": key.key, "time": created, "parts": parts}),
+            );
             continue;
         }
         let summary = msg.get("summary").and_then(Value::as_bool).unwrap_or(false);
@@ -440,8 +452,13 @@ fn collect_lines(
                 key: ERROR_KEY.into(),
             };
             if !skip(&key) {
-                let time = msg.pointer("/time/completed").and_then(Value::as_i64).or(created);
-                push(json!({"kind": "error", "msg": msg_id, "key": key.key, "time": time, "error": error}));
+                let time = msg
+                    .pointer("/time/completed")
+                    .and_then(Value::as_i64)
+                    .or(created);
+                push(
+                    json!({"kind": "error", "msg": msg_id, "key": key.key, "time": time, "error": error}),
+                );
             }
         }
     }
@@ -464,7 +481,12 @@ fn slim_part(part: Value) -> Value {
         return part;
     }
     let state = part.get("state");
-    let field = |key: &str| state.and_then(|s| s.get(key)).cloned().unwrap_or(Value::Null);
+    let field = |key: &str| {
+        state
+            .and_then(|s| s.get(key))
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
     let output = state
         .and_then(|s| s.get("output"))
         .and_then(Value::as_str)
@@ -525,7 +547,10 @@ pub(super) fn last_reply(session_id: &str) -> Option<(Option<String>, Option<Str
             break;
         }
         if model.is_none() {
-            model = msg.get("modelID").and_then(Value::as_str).map(str::to_string);
+            model = msg
+                .get("modelID")
+                .and_then(Value::as_str)
+                .map(str::to_string);
         }
         if msg.get("summary").and_then(Value::as_bool).unwrap_or(false) {
             continue;
@@ -539,7 +564,8 @@ pub(super) fn last_reply(session_id: &str) -> Option<(Option<String>, Option<Str
 }
 
 fn message_text(conn: &Connection, msg_id: &str) -> String {
-    let Ok(mut stmt) = conn.prepare("SELECT data FROM part WHERE message_id = ?1 ORDER BY id") else {
+    let Ok(mut stmt) = conn.prepare("SELECT data FROM part WHERE message_id = ?1 ORDER BY id")
+    else {
         return String::new();
     };
     let Ok(rows) = stmt.query_map([msg_id], |row| row.get::<_, String>(0)) else {
@@ -549,7 +575,12 @@ fn message_text(conn: &Connection, msg_id: &str) -> String {
         .filter_map(|data| serde_json::from_str::<Value>(&data).ok())
         .filter(|p| p.get("type").and_then(Value::as_str) == Some("text"))
         .filter(|p| !p.get("synthetic").and_then(Value::as_bool).unwrap_or(false))
-        .filter_map(|p| p.get("text").and_then(Value::as_str).map(str::trim).map(str::to_string))
+        .filter_map(|p| {
+            p.get("text")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .map(str::to_string)
+        })
         .filter(|t| !t.is_empty())
         .collect::<Vec<_>>()
         .join("\n\n")
@@ -645,14 +676,42 @@ mod tests {
     use super::*;
 
     fn seed_turn(conn: &Connection) {
-        msg(conn, "msg_1", json!({"role": "user", "time": {"created": 1}}));
-        part(conn, "prt_1", "msg_1", json!({"type": "text", "text": "看看云端 bot"}));
-        msg(conn, "msg_2", json!({"role": "assistant", "time": {"created": 2}}));
+        msg(
+            conn,
+            "msg_1",
+            json!({"role": "user", "time": {"created": 1}}),
+        );
+        part(
+            conn,
+            "prt_1",
+            "msg_1",
+            json!({"type": "text", "text": "看看云端 bot"}),
+        );
+        msg(
+            conn,
+            "msg_2",
+            json!({"role": "assistant", "time": {"created": 2}}),
+        );
         part(conn, "prt_2", "msg_2", json!({"type": "step-start"}));
-        part(conn, "prt_3", "msg_2", json!({"type": "reasoning", "text": "先搜", "time": {"start": 3, "end": 4}}));
-        part(conn, "prt_4", "msg_2", json!({"type": "tool", "tool": "bash", "callID": "c1",
-            "state": {"status": "running", "input": {"command": "ls"}}}));
-        part(conn, "prt_5", "msg_2", json!({"type": "text", "text": "好的", "time": {"start": 5}}));
+        part(
+            conn,
+            "prt_3",
+            "msg_2",
+            json!({"type": "reasoning", "text": "先搜", "time": {"start": 3, "end": 4}}),
+        );
+        part(
+            conn,
+            "prt_4",
+            "msg_2",
+            json!({"type": "tool", "tool": "bash", "callID": "c1",
+            "state": {"status": "running", "input": {"command": "ls"}}}),
+        );
+        part(
+            conn,
+            "prt_5",
+            "msg_2",
+            json!({"type": "text", "text": "好的", "time": {"start": 5}}),
+        );
     }
 
     #[test]
@@ -670,8 +729,17 @@ mod tests {
         let conn = memory_db();
         seed_turn(&conn);
         // 中断后用户又发了一句：前一条 assistant 再也不会补完，必须整条放行。
-        msg(&conn, "msg_3", json!({"role": "user", "time": {"created": 9}}));
-        part(&conn, "prt_9", "msg_3", json!({"type": "text", "text": "继续"}));
+        msg(
+            &conn,
+            "msg_3",
+            json!({"role": "user", "time": {"created": 9}}),
+        );
+        part(
+            &conn,
+            "prt_9",
+            "msg_3",
+            json!({"type": "text", "text": "继续"}),
+        );
         let all = lines(&conn, None);
         assert_eq!(all.len(), 5, "{all:?}");
         // 增量：从游标之后只拿新增。
@@ -683,9 +751,18 @@ mod tests {
     #[test]
     fn turn_error_follows_its_message_parts() {
         let conn = memory_db();
-        msg(&conn, "msg_1", json!({"role": "assistant", "time": {"created": 1, "completed": 2},
-            "error": {"name": "APIError", "data": {"message": "boom"}}}));
-        part(&conn, "prt_1", "msg_1", json!({"type": "text", "text": "半句", "time": {"start": 1}}));
+        msg(
+            &conn,
+            "msg_1",
+            json!({"role": "assistant", "time": {"created": 1, "completed": 2},
+            "error": {"name": "APIError", "data": {"message": "boom"}}}),
+        );
+        part(
+            &conn,
+            "prt_1",
+            "msg_1",
+            json!({"type": "text", "text": "半句", "time": {"start": 1}}),
+        );
         let lines = lines(&conn, None);
         assert_eq!(lines.len(), 2);
         assert_eq!(cursor(&lines[1]), ("msg_1".into(), ERROR_KEY.into()));
@@ -697,7 +774,10 @@ mod tests {
         let slim = slim_part(json!({"type": "tool", "tool": "edit", "callID": "c",
             "state": {"status": "completed", "input": {}, "output": big, "metadata": {"diff": "…"}}}));
         assert!(slim.pointer("/state/metadata").is_none());
-        let out = slim.pointer("/state/output").and_then(Value::as_str).unwrap();
+        let out = slim
+            .pointer("/state/output")
+            .and_then(Value::as_str)
+            .unwrap();
         assert_eq!(out.chars().count(), TOOL_OUTPUT_MAX_CHARS + 1);
     }
 
@@ -713,9 +793,19 @@ mod tests {
         let len0 = std::fs::metadata(&first).unwrap().len();
 
         // 工具跑完、文本写完 → 原地追加，前缀字节不变（宿主的偏移因此仍然有效）。
-        part(&conn, "prt_4", "msg_2", json!({"type": "tool", "tool": "bash", "callID": "c1",
-            "state": {"status": "completed", "input": {"command": "ls"}, "output": "a"}}));
-        part(&conn, "prt_5", "msg_2", json!({"type": "text", "text": "好的", "time": {"start": 5, "end": 6}}));
+        part(
+            &conn,
+            "prt_4",
+            "msg_2",
+            json!({"type": "tool", "tool": "bash", "callID": "c1",
+            "state": {"status": "completed", "input": {"command": "ls"}, "output": "a"}}),
+        );
+        part(
+            &conn,
+            "prt_5",
+            "msg_2",
+            json!({"type": "text", "text": "好的", "time": {"start": 5, "end": 6}}),
+        );
         let same = export(&conn, &dir);
         assert_eq!(same, first);
         let text = std::fs::read_to_string(&same).unwrap();
@@ -723,8 +813,10 @@ mod tests {
         assert_eq!(text.lines().count(), 4);
 
         // /undo 删掉尾部消息 → 游标失效，重导到下一代文件，旧代删除。
-        conn.execute("DELETE FROM part WHERE message_id = 'msg_2'", []).unwrap();
-        conn.execute("DELETE FROM message WHERE id = 'msg_2'", []).unwrap();
+        conn.execute("DELETE FROM part WHERE message_id = 'msg_2'", [])
+            .unwrap();
+        conn.execute("DELETE FROM message WHERE id = 'msg_2'", [])
+            .unwrap();
         let next = export(&conn, &dir);
         assert!(next.ends_with("ses_1.1.jsonl"), "{next:?}");
         assert!(!first.exists());
@@ -738,20 +830,57 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let conn = memory_db();
-        msg(&conn, "msg_1", json!({"role": "user", "time": {"created": 1}}));
-        part(&conn, "prt_1", "msg_1", json!({"type": "text", "text": "先做甲"}));
-        msg(&conn, "msg_2", json!({"role": "assistant", "time": {"created": 2, "completed": 3}}));
-        part(&conn, "prt_2", "msg_2", json!({"type": "text", "text": "好", "time": {"start": 2, "end": 3}}));
-        msg(&conn, "msg_3", json!({"role": "user", "time": {"created": 4}}));
-        part(&conn, "prt_3", "msg_3", json!({"type": "text", "text": "再做乙"}));
-        msg(&conn, "msg_4", json!({"role": "assistant", "time": {"created": 5, "completed": 6}}));
-        part(&conn, "prt_4", "msg_4", json!({"type": "text", "text": "行", "time": {"start": 5, "end": 6}}));
+        msg(
+            &conn,
+            "msg_1",
+            json!({"role": "user", "time": {"created": 1}}),
+        );
+        part(
+            &conn,
+            "prt_1",
+            "msg_1",
+            json!({"type": "text", "text": "先做甲"}),
+        );
+        msg(
+            &conn,
+            "msg_2",
+            json!({"role": "assistant", "time": {"created": 2, "completed": 3}}),
+        );
+        part(
+            &conn,
+            "prt_2",
+            "msg_2",
+            json!({"type": "text", "text": "好", "time": {"start": 2, "end": 3}}),
+        );
+        msg(
+            &conn,
+            "msg_3",
+            json!({"role": "user", "time": {"created": 4}}),
+        );
+        part(
+            &conn,
+            "prt_3",
+            "msg_3",
+            json!({"type": "text", "text": "再做乙"}),
+        );
+        msg(
+            &conn,
+            "msg_4",
+            json!({"role": "assistant", "time": {"created": 5, "completed": 6}}),
+        );
+        part(
+            &conn,
+            "prt_4",
+            "msg_4",
+            json!({"type": "text", "text": "行", "time": {"start": 5, "end": 6}}),
+        );
         let first = export(&conn, &dir);
         assert_eq!(std::fs::read_to_string(&first).unwrap().lines().count(), 4);
 
         // /undo：只写回退点、消息行还在（真机形态）→ 换代重导，只剩回退点之前。
         let set_revert = |value: Option<&str>| {
-            conn.execute("UPDATE session SET revert = ?1", [value]).unwrap();
+            conn.execute("UPDATE session SET revert = ?1", [value])
+                .unwrap();
         };
         set_revert(Some(r#"{"messageID":"msg_3","snapshot":"abc","diff":""}"#));
         let undone = export(&conn, &dir);

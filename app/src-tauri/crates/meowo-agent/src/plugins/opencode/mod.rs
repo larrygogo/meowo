@@ -23,6 +23,8 @@
 
 pub mod account;
 mod cli_text;
+mod lead;
+mod models;
 mod screen;
 mod store;
 mod telemetry;
@@ -159,6 +161,7 @@ static VARIANTS: [Variant; 1] = [Variant {
     tag: "stable",
     data_dir: DataDirSpec {
         env: Some("OPENCODE_CONFIG_DIR"),
+        env_suffix: "",
         // `~/.opencode` 也在 opencode 的配置目录搜索链上（`config/paths.ts`），作次选。
         candidates: &[".config/opencode", ".opencode"],
     },
@@ -181,6 +184,9 @@ impl AgentPlugin for Opencode {
     fn display_name(&self) -> &'static str {
         "OpenCode"
     }
+    fn lead(&self) -> Option<&'static dyn crate::lead_install::LeadCap> {
+        Some(&lead::CAP)
+    }
     fn variants(&self) -> &'static [Variant] {
         &VARIANTS
     }
@@ -190,6 +196,18 @@ impl AgentPlugin for Opencode {
         &["opencode", "opencode.exe"]
     }
     /// `opencode --session <id>`（`--continue` 是「续最近一个」，不接 id，表达不了「恢复指定会话」）。
+    /// 原生 TUI 同进程也启动 HTTP server，attach/API 可让多个 session 并行；
+    /// 不能仅因命令行没有 serve 就推断此进程只属于当前卡片（opencode 1.19.3 server/attach 设计）。
+    fn process_scope(&self, argv: &[String]) -> crate::registry::ProcessScope {
+        if !argv
+            .first()
+            .is_some_and(|executable| self.owns_process(executable))
+        {
+            crate::registry::ProcessScope::Unknown
+        } else {
+            crate::registry::ProcessScope::Shared
+        }
+    }
     fn resume_args(&self) -> &'static [&'static str] {
         &["--session"]
     }
@@ -211,6 +229,82 @@ impl AgentPlugin for Opencode {
     /// 2026-08-06 / 1.18.14）。不经 TUI 菜单、一问就有，还不打扰正在跑的会话。
     fn model_list_command(&self) -> Option<&'static [&'static str]> {
         Some(&["models"])
+    }
+    /// 带 `--verbose` 才有显示名与思考档（variants），离线可用（设了
+    /// OPENCODE_DISABLE_MODELS_FETCH=1 也能跑，research-codex-opencode §1）。
+    fn model_catalog_command(&self) -> Option<&'static [&'static str]> {
+        Some(&["models", "--verbose"])
+    }
+    fn parse_model_catalog_output(&self, output: &str) -> Vec<crate::ModelCatalogEntry> {
+        models::parse_models_verbose(output)
+    }
+    /// 1.19.5 没有「设 TUI 当前模型」的服务端接口：`/api/session/:id/model` 返回 204 但 TUI 底栏
+    /// 不变、下一条仍用旧模型（oc2/oc3 实测）。唯一确定的路是 `POST /tui/open-models` 打开 TUI 自己的
+    /// 模型对话框，再输入显示名回车（oc4 实测选中、底栏变、草稿保留）。恢复时 `--session` 会用最后一条
+    /// 用户消息的模型盖掉 `-m`，所以 `-m` 只用于新会话。
+    fn model_switch(&self) -> Option<crate::ModelSwitch> {
+        Some(crate::ModelSwitch::TuiDialog)
+    }
+    fn model_launch_flag(&self) -> Option<&'static str> {
+        Some("-m")
+    }
+    fn launch_defaults(
+        &self,
+        _env: &[(String, String)],
+        cwd: Option<&std::path::Path>,
+    ) -> crate::LaunchDefaults {
+        self.resolve()
+            .map(|inst| models::launch_defaults(&inst.data_dir, cwd))
+            .unwrap_or_default()
+    }
+    /// 用户自定义的 primary agent（`opencode agent list`），新建时以 `--agent <名>` 启动。
+    fn dynamic_mode_choices(
+        &self,
+    ) -> Option<(&'static str, &'static [&'static str], &'static str)> {
+        Some(("agent", &["agent", "list"], "--agent"))
+    }
+    fn parse_dynamic_mode_choices(&self, output: &str) -> Vec<crate::DynamicModeChoice> {
+        models::parse_agent_list(output)
+    }
+    /// 新建会话的 agent（`--agent`，`opencode --help` 1.19.5）。会话里经 TUI 端口打开「Select agent」对话框
+    /// 选中（oc5/oc6 实测底栏 `Build →  Plan`、草稿保留）；没有服务时退回 Tab 轮换（mode_controls）。
+    /// 统一说法按 `GET /agent` 的权限规则（oc1 ev.json）与官方 agents 文档：build 规则 `* allow`，
+    /// 只有越出工作区与读 .env 才问；plan 规则 `edit * deny`（只放行 .opencode/plans/*.md），
+    /// 命令照样能跑。规则可被用户配置改写，这里说的是内置默认。
+    fn launch_options(&self) -> &'static [crate::LaunchOption] {
+        use crate::{Ask, LaunchChoice, LaunchOption, ModeSwitch, ModeTraits};
+        static OPTIONS: [LaunchOption; 1] = [LaunchOption {
+            id: "agent",
+            default: "build",
+            choices: &[
+                LaunchChoice {
+                    id: "build",
+                    label: "build",
+                    // 不传 --agent = 配置的 default_agent，缺省就是 build；配了别的时新建页按
+                    // launch_defaults 预选那一档。
+                    args: &[],
+                    risk: false,
+                    // 「The default agent. Executes tools based on configured permissions.」
+                    traits: Some(ModeTraits::new(Ask::Risky, Ask::Risky, false)),
+                    desc: Some("opencode.agent.build"),
+                    server: None,
+                },
+                LaunchChoice {
+                    id: "plan",
+                    label: "plan",
+                    args: &["--agent", "plan"],
+                    risk: false,
+                    // 「Plan mode. Disallows all edit tools.」
+                    traits: Some(ModeTraits::new(Ask::Blocked, Ask::Risky, true)),
+                    desc: Some("opencode.agent.plan"),
+                    server: None,
+                },
+            ],
+            switch: ModeSwitch::Dialog,
+            resume_upgrade_only: false,
+            in_session_only: false,
+        }];
+        &OPTIONS
     }
     /// Esc = opencode 默认 keybind `session_interrupt`（官方 keybinds 文档）。Windows 上它曾因
     /// 「ConPTY 输入整条不通」被停用，但那是探针的误判：输入框画出前就发键、没答 OpenConsole
@@ -239,6 +333,26 @@ impl AgentPlugin for Opencode {
     }
     /// 运行中按 Enter 即排队：消息带 QUEUED 标记挂在输入区上方，当前回合结束后自动执行
     /// （probe_tui_script 实测，1.19.2）。
+    /// 2026-11-12 隔离无模型 PTY 实拍（target/lead-provider-probes/composer）：只允许已验证空框，不清非空草稿。
+    fn composer_guard(&self, version: Option<&str>) -> Option<crate::chat_ui::ComposerGuard> {
+        if !crate::lead_install::version_at_least(version, (1, 19, 3)) {
+            return None;
+        }
+        Some(crate::chat_ui::ComposerGuard {
+            prompt_footer: false,
+            // 一轮之后、`--session` 打开后的空输入框只剩 `  ┃`（不带占位，去尾空格后是 `┃`；真机高 1，
+            // evidence/round3/opencode o1-idle-after-turn、N6opencode-1-opened）。这种行的捕获不是真实输入列，
+            // 严格确认（confirmComposerEmpty 比光标列）会按认不出处理，只用于判空。
+            input_start_pattern: r"^(\s*┃  |\s*┃$)",
+            top_pattern: r"^\s*┃\s*$",
+            bottom_pattern: r"^\s*╹▀+\s*$",
+            row_pattern: r"^\s*┃(.*)$",
+            prompt_prefix: "",
+            tail_rows: 2,
+            tail_pattern: Some(r"^\s*┃\s+\S.* · .+$"),
+            empty_pattern: r#"^(?:Ask anything…(?: "[^"\r\n]*")?)?$"#,
+        })
+    }
     fn queue_input(&self) -> Option<&'static str> {
         Some("\r")
     }

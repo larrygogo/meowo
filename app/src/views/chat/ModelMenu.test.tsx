@@ -1,7 +1,6 @@
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ModelMenu } from "./ModelMenu";
-import { zh } from "../../i18n/zh";
 
 afterEach(cleanup);
 
@@ -91,20 +90,17 @@ describe("ModelMenu 思考程度", () => {
     expect(document.activeElement).toBe(low);
   });
 
-  it("回合在跑（busy）：本引擎的模型与档位标成不可选并说明原因，收藏的其他引擎照常可点（走查 C-8）", () => {
+  it("菜单不自行拦忙碌点击：选择与档位交给上层排队，其他引擎也一样", () => {
     const onSelect = vi.fn();
     const onPick = vi.fn();
-    render(<ModelMenu {...base} busy onSelect={onSelect}
+    render(<ModelMenu {...base} onSelect={onSelect}
       items={[{ id: "opus", label: "Opus" }, { id: "sonnet", label: "Sonnet" }]} currentId="opus"
       starred={[{ id: "provider:kimi", label: "默认模型", detail: "Kimi" }]}
       effort={{ levels: ["low", "high"], current: "high", busy: false, onPick }} />);
-    expect(screen.getByRole("status").textContent).toBe(zh.chat.menuBusyShort);
-    const sonnet = screen.getByRole("menuitem", { name: "Sonnet" });
-    expect(sonnet.getAttribute("aria-disabled")).toBe("true");
-    fireEvent.click(sonnet);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Sonnet" }));
     fireEvent.click(screen.getByRole("radio", { name: "Low" }));
-    expect(onSelect).not.toHaveBeenCalled();
-    expect(onPick).not.toHaveBeenCalled();
+    expect(onSelect).toHaveBeenCalledWith("sonnet");
+    expect(onPick).toHaveBeenCalledWith("low");
     fireEvent.click(screen.getByRole("menuitem", { name: /默认模型/ }));
     expect(onSelect).toHaveBeenCalledWith("provider:kimi");
   });

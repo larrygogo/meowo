@@ -161,7 +161,9 @@ impl Store {
     /// 库的 `PRAGMA user_version`。配合 [`Store::open_readonly`] 做跨版本险闸：
     /// 与 [`Store::CURRENT_USER_VERSION`] 不一致就别拿本版本的 SQL 去查它。
     pub fn user_version(&self) -> Result<i64, StoreError> {
-        Ok(self.conn.query_row("PRAGMA user_version", [], |r| r.get(0))?)
+        Ok(self
+            .conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))?)
     }
 
     /// 本二进制认识的 schema 版本（对外只读暴露，险闸比对用）。
@@ -207,7 +209,14 @@ impl Store {
     ///     空表零成本), 勿一并删。
     /// v18: sessions 加 manual_rank 列（侧栏「手动排序」拖出来的位置）。
     /// v19: tasks 加 title_locked 列（用户改过名，agent 自起的标题不再覆盖）。
-    const USER_VERSION: i64 = 19;
+    /// v20: pid_shared 区分独占 CLI 与承载多会话的服务进程。
+    // v21：协议托管会话、稳定投递与按会话隔离的事件日志。
+    // v22：聊天消息投影与小型原生事实快照，避免每轮重放整条事件日志。
+    // v23：人类处置投递的幂等记录；双击重试不能复制出第二条替代消息。
+    // v24：区分人类消息与 Lead 内部续跑，内部消息不能解除人类暂停。
+    // v25：原生弱ID恢复记录单独索引，保留原始事实而不伪造与现场投影的去重关系。
+    // v21–v25 的 managed_* 表属于已删除的「Meowo 托管」会话：结构与数据刻意保留、只读（见 managed.rs），勿删勿复活。
+    const USER_VERSION: i64 = 26;
 
     /// 一次性建表 + 迁移 + 建索引，用 `PRAGMA user_version` 门控：已是最新版直接返回，
     /// 避免 statusline/hook 每次 open 都重跑 DDL 与注定失败的 ALTER（hot-path 浪费）。
@@ -221,9 +230,12 @@ impl Store {
             return Ok(());
         }
         conn.execute_batch(SCHEMA)?;
+        conn.execute_batch(crate::managed::SCHEMA)?;
         // 给旧库补列（新库 SCHEMA 已含这些列 → ALTER 必报 duplicate，忽略即可）。
-        const ALTERS: [&str; 20] = [
+        const ALTERS: [&str; 23] = [
+            "ALTER TABLE managed_deliveries ADD COLUMN origin TEXT NOT NULL DEFAULT 'user'",
             "ALTER TABLE sessions ADD COLUMN pid INTEGER",
+            "ALTER TABLE sessions ADD COLUMN pid_shared INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE sessions ADD COLUMN cwd TEXT",
             "ALTER TABLE sessions ADD COLUMN archived INTEGER NOT NULL DEFAULT 0",
             "ALTER TABLE sessions ADD COLUMN archived_at INTEGER",
@@ -256,6 +268,8 @@ impl Store {
             // 标题锁（v19）：老库补齐后全是 0 = 没改过名，agent 起的标题可以接管。老会话
             // 里用户改过的名字没留记录，会被 agent 标题覆盖一次——可接受（改名少，再改一次即锁）。
             "ALTER TABLE tasks ADD COLUMN title_locked INTEGER NOT NULL DEFAULT 0",
+            // 回合计数（v26）：老库补齐后全是 0，下一次 Stop 起累加；钉子只比较前后两次读数，起点无关。
+            "ALTER TABLE sessions ADD COLUMN turns INTEGER NOT NULL DEFAULT 0",
         ];
         for sql in ALTERS {
             if let Err(e) = conn.execute(sql, []) {
@@ -266,7 +280,8 @@ impl Store {
             }
         }
         // 索引：加速按 project / task / pid 的查询与「驱逐旧会话」（小库无感，大库防全表扫）。
-        const INDEXES: [&str; 6] = [
+        const INDEXES: [&str; 7] = [
+            "CREATE INDEX IF NOT EXISTS ix_managed_human_origin ON managed_deliveries(session_id,ordinal DESC) WHERE origin='user' AND gate_ref_json IS NULL",
             "CREATE INDEX IF NOT EXISTS ix_sessions_project ON sessions(project_id)",
             "CREATE INDEX IF NOT EXISTS ix_sessions_pid ON sessions(pid)",
             "CREATE INDEX IF NOT EXISTS ix_tasks_project_col ON tasks(project_id, column_name)",
@@ -374,7 +389,11 @@ impl Store {
     /// 写入某会话的思考程度（statusline 的 `effort.level`）。与上下文分开写、且 None 也照写：
     /// 换到不支持思考程度的模型后 CLI 不再报这个字段，旧档位必须清掉，否则控件会挂着
     /// 一个对当前模型无意义的值。只更新已有行——行由同一次 statusline 的 set_session_context 建。
-    pub fn set_session_effort(&self, cc_session_id: &str, effort: Option<&str>) -> Result<(), StoreError> {
+    pub fn set_session_effort(
+        &self,
+        cc_session_id: &str,
+        effort: Option<&str>,
+    ) -> Result<(), StoreError> {
         self.conn.execute(
             // `IS NOT` 而非 `!=`：NULL 也要参与比较（清空与已清空都要判得出），同值不写，理由同 set_session_context。
             "UPDATE session_context SET effort = ?2 WHERE cc_session_id = ?1 AND effort IS NOT ?2",
@@ -392,10 +411,15 @@ impl Store {
         let mut stmt = self.conn.prepare(
             "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name",
         )?;
-        let names: Vec<String> = stmt.query_map([], |r| r.get(0))?.filter_map(Result::ok).collect();
+        let names: Vec<String> = stmt
+            .query_map([], |r| r.get(0))?
+            .filter_map(Result::ok)
+            .collect();
         let mut out = Vec::new();
         for name in names {
-            let mut stmt = self.conn.prepare(&format!("SELECT * FROM \"{}\"", name.replace('"', "\"\"")))?;
+            let mut stmt = self
+                .conn
+                .prepare(&format!("SELECT * FROM \"{}\"", name.replace('"', "\"\"")))?;
             let cols = stmt.column_count();
             let mut rows = stmt.query([])?;
             let (mut count, mut hasher) = (0u64, std::collections::hash_map::DefaultHasher::new());
@@ -406,7 +430,9 @@ impl Store {
                         rusqlite::types::ValueRef::Null => 0u8.hash(&mut hasher),
                         rusqlite::types::ValueRef::Integer(v) => v.hash(&mut hasher),
                         rusqlite::types::ValueRef::Real(v) => v.to_bits().hash(&mut hasher),
-                        rusqlite::types::ValueRef::Text(v) | rusqlite::types::ValueRef::Blob(v) => v.hash(&mut hasher),
+                        rusqlite::types::ValueRef::Text(v) | rusqlite::types::ValueRef::Blob(v) => {
+                            v.hash(&mut hasher)
+                        }
                     }
                 }
             }
@@ -1126,7 +1152,9 @@ impl Store {
     /// 下一个事件补清（审批展示侧另有 pending_review_live 的 broker 校正兜底）。
     /// pending_review 为指定值的会话 id（Lead 关卡巡检据此清理残留标记，不依赖内存状态）。
     pub fn sessions_with_pending_review(&self, kind: &str) -> Result<Vec<i64>, StoreError> {
-        let mut stmt = self.conn.prepare("SELECT id FROM sessions WHERE pending_review = ?1")?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id FROM sessions WHERE pending_review = ?1")?;
         let rows = stmt.query_map([kind], |r| r.get(0))?;
         Ok(rows.collect::<Result<Vec<i64>, _>>()?)
     }
@@ -1136,7 +1164,11 @@ impl Store {
         use rusqlite::OptionalExtension;
         Ok(self
             .conn
-            .query_row("SELECT pending_review FROM sessions WHERE id = ?1", [session_id], |r| r.get(0))
+            .query_row(
+                "SELECT pending_review FROM sessions WHERE id = ?1",
+                [session_id],
+                |r| r.get(0),
+            )
             .optional()?
             .flatten())
     }
@@ -1173,19 +1205,54 @@ impl Store {
     /// 回合以一句问话收尾时(「要我接着改测试吗?」)存的是那句问话:长回复截前 200 字,
     /// 结尾的问题正好被截掉,看板卡片上只剩开头的总结,看不出 agent 停下来在等什么
     /// (对照 WorkBuddy 被吐槽最多的「做一半停下等回复」)。前面还有话时加「…」。
+    /// 回合结束（Stop）：最近 AI 正文、回合计数、状态在**同一事务**里写，先正文与计数、最后状态
+    /// （任务 20261114-tui-model-switch 第七轮 R1/R4）。别处看到 waiting 时，这一轮的正文和计数一定已经落库，
+    /// 不会出现「状态已是等你、正文还是上一轮」的窗口。正文规则同 [`Self::set_last_ai_text`]（空不覆盖）。
+    /// 已结束（ended）的会话不翻状态、不计数（迟到的 Stop 尾巴，见 set_session_status 的说明）。
+    pub fn finish_turn(
+        &self,
+        session_id: i64,
+        last_ai: Option<&str>,
+        now_ms: i64,
+    ) -> Result<(), StoreError> {
+        let tx = ImmediateTx::begin(&self.conn)?;
+        if let Some(text) = last_ai {
+            let cleaned = clean_ai_text(text);
+            if !cleaned.is_empty() {
+                self.conn.execute(
+                    "UPDATE sessions SET last_ai_text = ?1 WHERE id = ?2 AND last_event_at <= ?3 AND status <> 'ended'",
+                    rusqlite::params![cleaned, session_id, now_ms],
+                )?;
+            }
+        }
+        self.conn.execute(
+            "UPDATE sessions SET turns = turns + 1 WHERE id = ?1 AND status <> 'ended'",
+            [session_id],
+        )?;
+        self.conn.execute(
+            "UPDATE sessions SET status = 'waiting', last_event_at = ?1 \
+             WHERE id = ?2 AND last_event_at <= ?1 AND status <> 'ended'",
+            rusqlite::params![now_ms, session_id],
+        )?;
+        tx.commit()
+    }
+
+    /// 已结束的回合数（见 [`Self::finish_turn`]）；会话不存在时 0。
+    pub fn session_turns(&self, session_id: i64) -> Result<i64, StoreError> {
+        match self.conn.query_row("SELECT turns FROM sessions WHERE id = ?1", [session_id], |row| row.get(0)) {
+            Ok(turns) => Ok(turns),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(0),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     pub fn set_last_ai_text(
         &self,
         session_id: i64,
         text: &str,
         now_ms: i64,
     ) -> Result<(), StoreError> {
-        let full = sanitize_prompt(text);
-        let cleaned = match trailing_question(text) {
-            Some(question) if question.chars().count() < full.chars().count() => {
-                truncate_chars(&format!("…{question}"), 200)
-            }
-            _ => truncate_chars(&full, 200),
-        };
+        let cleaned = clean_ai_text(text);
         if cleaned.is_empty() {
             return Ok(());
         }
@@ -1285,7 +1352,7 @@ impl Store {
     /// 接管守卫应视其为「本会话进程已死」。也顺带自愈 end_session 清 pid 之前留下的存量脏行。
     pub fn pid_held_by_other_live(&self, session_id: i64, pid: i64) -> Result<bool, StoreError> {
         let r = self.conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM sessions WHERE pid = ?1 AND id <> ?2 AND status <> 'ended')",
+            "SELECT EXISTS(SELECT 1 FROM sessions WHERE pid = ?1 AND id <> ?2 AND status <> 'ended' AND pid_shared = 0) AND NOT EXISTS(SELECT 1 FROM sessions WHERE id = ?2 AND pid = ?1 AND pid_shared = 1)",
             rusqlite::params![pid, session_id],
             |row| row.get::<_, bool>(0),
         )?;
@@ -1305,7 +1372,11 @@ impl Store {
     /// 记录会话的启动选项选择 map（JSON 对象，option id → choice id）。claim 认领时写入；
     /// 接管时用户改选会合并后再次写入。resume/接管按 [`Self::session_launch_args`] 读出、
     /// 经插件声明表翻译成 flag 回放。
-    pub fn set_session_launch_args(&self, session_id: i64, launch_args: &str) -> Result<(), StoreError> {
+    pub fn set_session_launch_args(
+        &self,
+        session_id: i64,
+        launch_args: &str,
+    ) -> Result<(), StoreError> {
         self.conn.execute(
             "UPDATE sessions SET launch_args = ?1 WHERE id = ?2",
             rusqlite::params![launch_args, session_id],
@@ -1779,6 +1850,18 @@ impl Store {
         Ok(r)
     }
 
+    /// 同 [`Self::session_provider`]，但会话行不存在时返回 `None` 而非报错。
+    ///
+    /// 给「手里的 id 不一定已落库」的调用方用：PTY 托管表里有 start_pending 的临时负 id，
+    /// CLI 未 SessionStart 前库里没有它的行。
+    pub fn session_provider_opt(&self, session_id: i64) -> Result<Option<String>, StoreError> {
+        match self.session_provider(session_id) {
+            Ok(p) => Ok(Some(p)),
+            Err(StoreError::Sqlite(rusqlite::Error::QueryReturnedNoRows)) => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
     /// 取会话所属 agent。未知 id 原样返回；老数据的 NULL/空值回退历史默认值。
     pub fn session_provider(&self, session_id: i64) -> Result<String, StoreError> {
         let provider: Option<String> = self.conn.query_row(
@@ -1805,7 +1888,7 @@ impl Store {
         // 事务保证「本会话认领 + 旧会话收尾」原子完成，避免交错留下两个会话同持一个 pid。
         let tx = self.conn.unchecked_transaction()?;
         tx.execute(
-            "UPDATE sessions SET pid = ?1, last_event_at = ?2 WHERE id = ?3 AND last_event_at <= ?2",
+            "UPDATE sessions SET pid = ?1, pid_shared = 0, last_event_at = ?2 WHERE id = ?3 AND last_event_at <= ?2",
             rusqlite::params![pid, now_ms, session_id],
         )?;
         // 被同一进程的新会话顶替的旧会话：直接收尾为 ended（pid 清空、记 ended_at），
@@ -1828,6 +1911,34 @@ impl Store {
         )?;
         tx.commit()?;
         Ok(())
+    }
+
+    /// 只有运行时已证实共享引擎才调用；补标同 PID 的旧记录，避免升级后仍按独占行误判。
+    pub fn set_session_shared_pid(
+        &self,
+        session_id: i64,
+        pid: i64,
+        now_ms: i64,
+    ) -> Result<(), StoreError> {
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
+            "UPDATE sessions SET pid = ?1, pid_shared = 1, last_event_at = ?2 WHERE id = ?3 AND last_event_at <= ?2",
+            rusqlite::params![pid, now_ms, session_id],
+        )?;
+        tx.execute(
+            "UPDATE sessions SET pid_shared = 1 WHERE pid = ?1 AND pid_shared = 0",
+            [pid],
+        )?;
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn session_pid_shared(&self, session_id: i64) -> Result<bool, StoreError> {
+        Ok(self.conn.query_row(
+            "SELECT pid_shared FROM sessions WHERE id = ?1",
+            [session_id],
+            |row| row.get(0),
+        )?)
     }
 
     /// 取所有 live(running/waiting) 会话的 (id, pid, last_event_at)，供 app 做存活清理。
@@ -1869,7 +1980,9 @@ impl Store {
              ORDER BY MAX(last_event_at) DESC \
              LIMIT ?1",
         )?;
-        let rows = stmt.query_map([limit as i64], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+        let rows = stmt.query_map([limit as i64], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))
+        })?;
         let mut out = Vec::new();
         for row in rows {
             out.push(row?);
@@ -1927,6 +2040,17 @@ impl Store {
 }
 
 /// 按字符（非字节）截断，避免切坏多字节中文。
+/// 看板上显示的最近 AI 正文：折叠空白、截 200 字；以问句收尾时只留「…问句」。
+fn clean_ai_text(text: &str) -> String {
+    let full = sanitize_prompt(text);
+    match trailing_question(text) {
+        Some(question) if question.chars().count() < full.chars().count() => {
+            truncate_chars(&format!("…{question}"), 200)
+        }
+        _ => truncate_chars(&full, 200),
+    }
+}
+
 fn truncate_chars(s: &str, max: usize) -> String {
     s.chars().take(max).collect()
 }
@@ -2088,6 +2212,32 @@ mod latest_session_tests {
 #[cfg(test)]
 mod stale_pid_tests {
     use super::*;
+
+    #[test]
+    fn shared_engine_keeps_both_sessions_live_and_does_not_look_reclaimed() {
+        let store = Store::open_in_memory().unwrap();
+        let project = store
+            .upsert_project_by_root("C:/shared", "shared", 100)
+            .unwrap();
+        let (first, _) = store.start_session(project, "thread-first", 100).unwrap();
+        let (second, _) = store.start_session(project, "thread-second", 200).unwrap();
+        // 升级前记录也要补标，否则同引擎的新会话仍会把旧行判成换代残留。
+        store.set_session_pid(first, 74519, 100).unwrap();
+        store.set_session_shared_pid(second, 74519, 200).unwrap();
+        assert!(store.session_pid_shared(first).unwrap());
+        for id in [first, second] {
+            assert_eq!(store.session_pid(id).unwrap(), Some(74519));
+            assert!(!store.pid_held_by_other_live(id, 74519).unwrap());
+            assert_ne!(store.get_session(id).unwrap().status, "ended");
+        }
+        store.end_session(first, 300).unwrap();
+        assert_eq!(store.session_pid(second).unwrap(), Some(74519));
+        assert_ne!(store.get_session(second).unwrap().status, "ended");
+        let (third, _) = store.start_session(project, "private-third", 400).unwrap();
+        store.set_session_pid(third, 74519, 400).unwrap();
+        assert!(!store.session_pid_shared(third).unwrap());
+        assert_eq!(store.get_session(second).unwrap().status, "ended");
+    }
 
     /// /clear 只换会话不换进程：SessionEnd 先把旧会话收尾，随后新会话才认领同一 pid。
     /// end_session 若不清 pid，旧行会留着一个「活着但已归新会话」的 pid，接管守卫
@@ -2346,7 +2496,10 @@ mod multi_task_tests {
             .unwrap();
         let (sid, first_tid) = store.start_session(pid, "s1", 100).unwrap();
         // 正常路径唯一索引挡着造不出第二张卡，绕开索引直插模拟旧库遗留。
-        store.conn.execute("DROP INDEX ux_tasks_session", []).unwrap();
+        store
+            .conn
+            .execute("DROP INDEX ux_tasks_session", [])
+            .unwrap();
         store
             .conn
             .execute(
@@ -2375,7 +2528,10 @@ mod multi_task_tests {
         // 读侧同卡：标题/活动名也读最新一张，否则卡片显示与待办落点打架。
         store.set_session_title(sid, "新卡标题", 400).unwrap();
         assert_eq!(store.get_task(latest_tid).unwrap().title, "新卡标题");
-        assert_eq!(store.session_title(sid).unwrap().as_deref(), Some("新卡标题"));
+        assert_eq!(
+            store.session_title(sid).unwrap().as_deref(),
+            Some("新卡标题")
+        );
         assert_eq!(
             store.session_header(sid).unwrap().title.as_deref(),
             Some("新卡标题")
@@ -2532,7 +2688,12 @@ mod debug_fingerprint_tests {
     fn fingerprint_changes_on_in_place_update() {
         let store = Store::open_in_memory().unwrap();
         let of = |store: &Store, table: &str| {
-            store.debug_table_fingerprint().unwrap().into_iter().find(|(t, _)| t == table).map(|(_, v)| v)
+            store
+                .debug_table_fingerprint()
+                .unwrap()
+                .into_iter()
+                .find(|(t, _)| t == table)
+                .map(|(_, v)| v)
         };
         // 便签功能已取消、Store 不再有写 session_notes 的方法；表保留，这里直接用 SQL 当「原地更新同一行」的写入方。
         let note = |store: &Store, text: &str, at: i64| {
@@ -2599,26 +2760,43 @@ mod session_context_noop_tests {
         let writer = Store::open(&db).unwrap();
         let watcher = Store::open(&db).unwrap();
 
-        writer.set_session_context("s", Some(40), Some(200_000), Some("Opus"), 1).unwrap();
+        writer
+            .set_session_context("s", Some(40), Some(200_000), Some("Opus"), 1)
+            .unwrap();
         writer.set_session_effort("s", Some("high")).unwrap();
         let changes = writer.conn.total_changes();
         let v0 = watcher.data_version().unwrap();
-        writer.set_session_context("s", Some(40), Some(200_000), Some("Opus"), 2).unwrap();
-        writer.set_session_context("s", None, None, None, 3).unwrap();
+        writer
+            .set_session_context("s", Some(40), Some(200_000), Some("Opus"), 2)
+            .unwrap();
+        writer
+            .set_session_context("s", None, None, None, 3)
+            .unwrap();
         writer.set_session_effort("s", Some("high")).unwrap();
         assert_eq!(writer.conn.total_changes(), changes, "同值上报产生了写入");
-        assert_eq!(watcher.data_version().unwrap(), v0, "同值上报改变了 data_version");
+        assert_eq!(
+            watcher.data_version().unwrap(),
+            v0,
+            "同值上报改变了 data_version"
+        );
 
         // None = 不改该字段，已有值保留。
         let ctx = writer.session_context("s").unwrap();
-        assert_eq!((ctx.used_pct, ctx.window_size, ctx.model.as_deref()), (Some(40), Some(200_000), Some("Opus")));
+        assert_eq!(
+            (ctx.used_pct, ctx.window_size, ctx.model.as_deref()),
+            (Some(40), Some(200_000), Some("Opus"))
+        );
 
         // 值变了照写。
-        writer.set_session_context("s", Some(41), None, None, 4).unwrap();
+        writer
+            .set_session_context("s", Some(41), None, None, 4)
+            .unwrap();
         assert_eq!(writer.session_context("s").unwrap().used_pct, Some(41));
         assert_ne!(watcher.data_version().unwrap(), v0);
         // 时间倒流的迟到上报仍被单调守卫挡住。
-        writer.set_session_context("s", Some(10), None, None, 0).unwrap();
+        writer
+            .set_session_context("s", Some(10), None, None, 0)
+            .unwrap();
         assert_eq!(writer.session_context("s").unwrap().used_pct, Some(41));
 
         // effort 的 None 是刻意的「清空」（换到不支持思考程度的模型），不能被同值判断吞掉。
@@ -2628,7 +2806,10 @@ mod session_context_noop_tests {
         writer.set_session_effort("s", None).unwrap();
         assert_eq!(writer.conn.total_changes(), changes);
         writer.set_session_effort("s", Some("low")).unwrap();
-        assert_eq!(writer.session_context("s").unwrap().effort.as_deref(), Some("low"));
+        assert_eq!(
+            writer.session_context("s").unwrap().effort.as_deref(),
+            Some("low")
+        );
         drop((writer, watcher));
         let _ = std::fs::remove_dir_all(&dir);
     }

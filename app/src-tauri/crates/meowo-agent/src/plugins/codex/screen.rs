@@ -6,7 +6,8 @@
 use crate::screen::{Matcher, Region, ScreenRule, ScreenState};
 
 /// codex 的标题 spinner（盲文十连帧，独立成词出现）。
-const SPINNER: &str = "\u{280B}\u{2819}\u{2839}\u{2838}\u{283C}\u{2834}\u{2826}\u{2827}\u{2807}\u{280F}";
+const SPINNER: &str =
+    "\u{280B}\u{2819}\u{2839}\u{2838}\u{283C}\u{2834}\u{2826}\u{2827}\u{2807}\u{280F}";
 
 pub(super) static RULES: &[ScreenRule] = &[
     ScreenRule::new(

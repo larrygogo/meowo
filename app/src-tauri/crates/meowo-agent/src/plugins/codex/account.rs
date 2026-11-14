@@ -413,9 +413,14 @@ mod tests {
         }
         assert!(parse_login_status("Not logged in").is_none());
         // 0.166.0 与旧版的 API key 登录状态行（codex.exe 字符串）
-        for line in ["API key configured - sk-proj-***abcd", "Logged in using an API key - sk-***"] {
+        for line in [
+            "API key configured - sk-proj-***abcd",
+            "Logged in using an API key - sk-***",
+        ] {
             assert_eq!(
-                parse_login_status(line).and_then(|a| a.login_label).as_deref(),
+                parse_login_status(line)
+                    .and_then(|a| a.login_label)
+                    .as_deref(),
                 Some("API Key"),
                 "{line}"
             );
@@ -668,17 +673,25 @@ mod tests {
         };
         // 0.166.0
         assert_eq!(
-            with(json!({"has_credits": true, "unlimited": false, "balance": "60783.9282375000"})).as_deref(),
+            with(json!({"has_credits": true, "unlimited": false, "balance": "60783.9282375000"}))
+                .as_deref(),
             Some("credits:60783.93")
         );
         // 0.162.1
         assert_eq!(
-            with(json!({"has_credits": true, "unlimited": false, "balance": "62500.0000000000"})).as_deref(),
+            with(json!({"has_credits": true, "unlimited": false, "balance": "62500.0000000000"}))
+                .as_deref(),
             Some("credits:62500")
         );
         // 0.144：没买额度
-        assert_eq!(with(json!({"has_credits": false, "unlimited": false, "balance": "0"})), None);
-        assert_eq!(with(json!({"has_credits": false, "unlimited": false, "balance": null})), None);
+        assert_eq!(
+            with(json!({"has_credits": false, "unlimited": false, "balance": "0"})),
+            None
+        );
+        assert_eq!(
+            with(json!({"has_credits": false, "unlimited": false, "balance": null})),
+            None
+        );
         assert_eq!(with(Value::Null), None);
         // 旧的顶层数字形态仍认
         let top = parse_codex_usage(&json!({"credits": 45.5, "rate_limits": {"primary": null}}));

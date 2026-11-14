@@ -40,7 +40,7 @@ describe("对话窗：焦点", () => {
     respondWithHistory(idle(801));
     render(<ChatWindow />);
     await chatUiReady();
-    const mode = await screen.findByRole("button", { name: "切换模式: 权限模式" });
+    const mode = await screen.findByRole("button", { name: /^切换模式: 权限模式/ });
     mode.focus();
     fireEvent.click(mode);
     const item = screen.getByRole("menuitem", { name: /计划/ });
@@ -193,21 +193,17 @@ describe("输入框被锁时按钮一并锁（验收 21）", () => {
     const add = document.querySelector(".chat-compose .chat-attach-button") as HTMLButtonElement;
     expect(add.disabled).toBe(true);
     expect((screen.getByRole("button", { name: "切换模型" }) as HTMLButtonElement).disabled).toBe(true);
-    expect((screen.getByRole("button", { name: "切换模式: 权限模式" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: /^切换模式: 权限模式/ }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("运行中：模型菜单里本引擎的模型不可选并写明原因（C-8）", async () => {
+  it("运行中：模型选择排到本轮之后，说明等待条件且不写终端（C-8）", async () => {
     window.history.replaceState({}, "", "/?sessionId=810");
     respondWithHistory(idle(810, { status: "running" }));
     render(<ChatWindow />);
     await chatUiReady();
     fireEvent.click(await screen.findByRole("button", { name: "切换模型" }));
-    expect(screen.getByText(zh.chat.menuBusyShort)).toBeTruthy();
-    const sonnet = screen.getByRole("menuitem", { name: "Sonnet" });
-    expect(sonnet.getAttribute("aria-disabled")).toBe("true");
-    fireEvent.click(sonnet);
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    fireEvent.click(screen.getByRole("menuitem", { name: "Sonnet" }));
+    expect(await screen.findByText(zh.chat.settingsDeferred("Sonnet"))).toBeTruthy();
     expect(writes(810).some((data) => data.includes("/model"))).toBe(false);
-    expect(screen.queryByText(zh.chat.menuBusy)).toBeNull();
   });
 });

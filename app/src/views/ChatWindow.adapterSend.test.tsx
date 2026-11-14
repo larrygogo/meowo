@@ -2,7 +2,7 @@
 // 夹具与 mock 见 chatWindow.harness.tsx（必须先于 ./ChatWindow 导入）。
 import { describe, expect, it } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { invoke, openDialog, eventListeners, terminalProps, pickAttachments, adapter } from "./chatWindow.harness";
+import { emptyComposerFrame, invoke, openDialog, eventListeners, terminalProps, pickAttachments, adapter } from "./chatWindow.harness";
 import { ChatWindow } from "./ChatWindow";
 import { zh } from "../i18n/zh";
 import { terminalAttention } from "../terminalAttention";
@@ -10,26 +10,28 @@ import { terminalAttention } from "../terminalAttention";
 describe("ChatWindow 适配回归", () => {
   const { history, snapshot, setup, box, writes } = adapter;
 
-  it("codex 运行中发送使用 Tab 排队", async () => {
-    setup(501, "codex", "running");
+  // 2026-11-13 改定：认出输入框、只看到占位时照常发送（严格口径下 codex/gemini/opencode 永远
+  // 判不出空框，对话页就永远发不出去，main 上可发）。草稿与认不出画面的拦截见 manualSendVerdict 单测。
+  it("codex 原生只有占位符时照常发送", async () => {
+    const base = setup(501, "codex", "running");
+    invoke.mockImplementation((command, args) => command === "managed_terminal_frame" ? Promise.resolve(emptyComposerFrame("codex")) : base(command, args));
     render(<ChatWindow />);
     await screen.findByText("适配-501");
     await waitFor(() => expect(document.querySelector(".chat-model-label")).toBeTruthy());
     fireEvent.change(box(), { target: { value: "下一回合处理" } });
     fireEvent.keyDown(box(), { key: "Enter" });
-    await waitFor(() => expect(writes(501)).toContain("\t"));
-    expect(writes(501)).not.toContain("\r");
+    await waitFor(() => expect(writes(501).some((text) => String(text).includes("下一回合处理"))).toBe(true));
   });
 
   // 插话进了对话记录后，排队区不再挂它的回执：对话里已经有「回合中插入」的那条，
   // 回执再挂一份就是同一句话显示两遍（用户实拍）。
   it("插话出现在对话记录后，排队区不再重复显示", async () => {
-    const base = setup(508, "codex", "running");
+    const base = setup(508, "claude", "running");
     let landed = false;
     invoke.mockImplementation((command, args) => {
       if (command === "get_chat_history" && landed) {
         return Promise.resolve({
-          ...history(508, "codex", "running"),
+          ...history(508, "claude", "running"),
           items: [{ type: "user_text", id: "u-in", timestamp: null, text: "顺手改个名", interjected: true }],
           offset: 1,
         });
@@ -51,15 +53,15 @@ describe("ChatWindow 适配回归", () => {
     expect(screen.getAllByText("顺手改个名")).toHaveLength(1);
   });
 
-  // 对照 Kimi 的 prompt:accepted：CLI 记下入队就是送达回执。排队回执标「已收到」，
+  // 回执 reducer 与 Provider 无关；用已支持原生草稿暂存的 Claude 验证入队回执标「已收到」，
   // 回执本身不出现在对话里（它不是一句话，正文之后会以用户消息再出现）。
   it("CLI 的送达回执把排队消息标成已收到，回执不进对话", async () => {
-    const base = setup(509, "codex", "running");
+    const base = setup(509, "claude", "running");
     let acked = false;
     invoke.mockImplementation((command, args) => {
       if (command === "get_chat_history" && acked) {
         return Promise.resolve({
-          ...history(509, "codex", "running"),
+          ...history(509, "claude", "running"),
           items: [{ type: "prompt_queued", id: "queued:t:6", timestamp: "2026-11-01T08:00:00Z", text: "顺手改个名" }],
           offset: 1,
         });
@@ -79,27 +81,29 @@ describe("ChatWindow 适配回归", () => {
     expect(screen.getAllByText("顺手改个名")).toHaveLength(1);
   });
 
-  // gemini 启动即落 running、首条消息前无事件纠正：屏幕已停在输入框（idle）时必须按回车
-  // 提交，按 Tab 正文会停在输入框里发不出去（0.6.11 实机）。
-  it("gemini DB 残留 running 但屏幕空闲时，发送用回车而非排队键", async () => {
-    setup(507, "gemini", "running", "idle");
+  // 状态空闲只能决定提交键，不能证明CLI输入框没有草稿；2026-11-12实拍占位符仍须保守拒发。
+  it("gemini 屏幕空闲且仅有占位符时照常发送，不用 Tab", async () => {
+    const base = setup(507, "gemini", "running", "idle");
+    invoke.mockImplementation((command, args) => command === "managed_terminal_frame" ? Promise.resolve(emptyComposerFrame("gemini")) : base(command, args));
     render(<ChatWindow />);
     await screen.findByText("适配-507");
     await waitFor(() => expect(document.querySelector(".chat-model-label")).toBeTruthy());
     fireEvent.change(box(), { target: { value: "测试测试" } });
     fireEvent.keyDown(box(), { key: "Enter" });
-    await waitFor(() => expect(writes(507)).toContain("\r"));
+    await waitFor(() => expect(writes(507).some((text) => String(text).includes("测试测试"))).toBe(true));
     expect(writes(507)).not.toContain("\t");
   });
 
-  it("OpenCode 模型入口使用原生 /models，列举结果不会变成 /model id", async () => {
+  it("OpenCode 原生模型入口认不出输入框（画面是菜单）时不发送 slash 或 Esc", async () => {
     const base = setup(502, "opencode");
-    invoke.mockImplementation((command, args) => command === "agent_models"
+    const menu = { lines: ["  Select model", "  > anthropic/claude-sonnet"], cursorRow: 1, cursorCol: 0, cursorVisible: false };
+    invoke.mockImplementation((command, args) => command === "managed_terminal_frame" ? Promise.resolve(menu) : command === "agent_models"
       ? Promise.resolve(["anthropic/claude-sonnet"]) : base(command, args));
     render(<ChatWindow />);
     await screen.findByText("适配-502");
     fireEvent.click(await screen.findByRole("button", { name: "切换模型" }));
-    await waitFor(() => expect(writes(502)).toContain("/models"));
+    await waitFor(() => expect(document.querySelector(".chat-send-error")).toBeTruthy());
+    expect(writes(502)).toEqual([]);
     expect(writes(502).some((text) => String(text).startsWith("/model "))).toBe(false);
     expect(invoke.mock.calls.some(([command]) => command === "set_session_launch_selection")).toBe(false);
     expect(writes(502)).not.toContain("\x1b");

@@ -9,6 +9,7 @@
 
 pub mod account;
 mod cli_text;
+mod lead;
 mod screen;
 pub mod telemetry;
 
@@ -201,6 +202,7 @@ static VARIANTS: [Variant; 2] = [
             // transcript/上下文/改名全部静默落空。legacy 变体沿用 KIMI_SHARE_DIR 不动——
             // 那是旧 Python 版的世界，本机无从取证，且 profile 走不到它。
             env: Some("KIMI_CODE_HOME"),
+            env_suffix: "",
             candidates: &[".kimi-code"],
         },
         hooks: &HOOKS,
@@ -212,6 +214,7 @@ static VARIANTS: [Variant; 2] = [
         tag: "legacy",
         data_dir: DataDirSpec {
             env: Some("KIMI_SHARE_DIR"),
+            env_suffix: "",
             candidates: &[".kimi"],
         },
         hooks: &LEGACY_HOOKS,
@@ -321,32 +324,54 @@ impl crate::RelayCap for KimiRelay {
 }
 
 fn modern_launch_options() -> &'static [crate::LaunchOption] {
-    use crate::{LaunchChoice, LaunchOption};
+    use crate::{Ask, LaunchChoice, LaunchOption, ModeSwitch, ModeTraits};
+    // 统一说法依据 Kimi 2.6 权限策略链（kimi.exe 内嵌源码 K:327623 起）与 /permission 菜单原文，
+    // 见 research-kimi-gemini §5。`--yolo` 是「常规自动、危险仍问」，`--auto` 才是「都不问」。
     static OPTIONS: [LaunchOption; 2] = [
         LaunchOption {
             id: "permission",
-            default: "default",
+            // 「manual」与 wire 里 permission.set_mode 的值同名，会话里的当前档直接对得上。
+            // 旧会话存的 "default" 是未知 id，按声明表落回这一档（同样不带参数），行为不变。
+            default: "manual",
             choices: &[
                 LaunchChoice {
-                    id: "default",
-                    label: "Default",
+                    id: "manual",
+                    label: "Always Ask",
                     args: &[],
                     risk: false,
-                },
-                LaunchChoice {
-                    id: "auto",
-                    label: "Never Ask",
-                    args: &["--auto"],
-                    // Kimi 2.2.0 --help：auto 永不询问；yolo 仍询问高风险操作，不能按名字猜权限。
-                    risk: true,
+                    // 「Auto-read only; everything else needs your approval first.」
+                    traits: Some(ModeTraits::new(Ask::Always, Ask::Always, false)),
+                    desc: Some("kimi.permission.manual"),
+                    server: None,
                 },
                 LaunchChoice {
                     id: "yolo",
                     label: "Ask When Needed",
                     args: &["--yolo"],
                     risk: false,
+                    // 「Routine edits and commands run automatically; risky actions, questions,
+                    // and plans still ask.」
+                    traits: Some(ModeTraits::new(Ask::Risky, Ask::Risky, false)),
+                    desc: Some("kimi.permission.yolo"),
+                    server: None,
+                },
+                LaunchChoice {
+                    id: "auto",
+                    label: "Never Ask",
+                    args: &["--auto"],
+                    // 「Everything runs and is decided automatically; only plans in Plan mode
+                    // wait for your review.」
+                    risk: true,
+                    traits: Some(ModeTraits::new(Ask::Never, Ask::Never, false)),
+                    desc: Some("kimi.permission.auto"),
+                    server: None,
                 },
             ],
+            // 会话里改权限档：空闲时 `-r <id> --yolo|--auto` 重启接回。
+            switch: ModeSwitch::Restart,
+            // 2.6 接回时会话记住的档优先，参数只能放宽（K:558700），收紧到 Always Ask 做不到。
+            resume_upgrade_only: true,
+            in_session_only: false,
         },
         LaunchOption {
             id: "work",
@@ -357,20 +382,102 @@ fn modern_launch_options() -> &'static [crate::LaunchOption] {
                     label: "Default",
                     args: &[],
                     risk: false,
+                    traits: None,
+                    desc: Some("kimi.work.default"),
+                    server: None,
                 },
                 LaunchChoice {
                     id: "plan",
                     label: "Plan",
                     args: &["--plan"],
                     risk: false,
+                    // plan 只硬禁写文件（计划文件除外，K:268495 guardToolExecution），命令按权限档。
+                    traits: Some(ModeTraits::new(Ask::Blocked, Ask::Inherit, true)),
+                    desc: Some("kimi.work.plan"),
+                    server: None,
                 },
             ],
+            // 会话里用 `/plan on|off`（带参即生效，mode_controls 的 work 维度）。
+            switch: ModeSwitch::Control,
+            resume_upgrade_only: true,
+            in_session_only: false,
         },
     ];
     &OPTIONS
 }
 
+static BROKER_QUESTION: crate::caps::BrokerQuestionCap = crate::caps::BrokerQuestionCap;
+
+/// Kimi `config.toml` 顶层（第一个表头之前）的一个字符串 / 布尔键。
+fn top_level_value(content: &str, key: &str) -> Option<String> {
+    for line in content.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            break;
+        }
+        let Some((k, v)) = line.split_once('=') else {
+            continue;
+        };
+        if k.trim() == key {
+            let v = v.trim();
+            return Some(v.trim_matches('"').to_string());
+        }
+    }
+    None
+}
+
+/// 新建页默认值（K:558520 新建默认值：`default_permission_mode` 缺省 manual，旧字段 `yolo = true`
+/// 迁移成 yolo；`default_plan_mode = true` 开 plan，写法按 schema 推断，未实测）。
+fn parse_launch_defaults(content: &str) -> crate::LaunchDefaults {
+    let mut out = crate::LaunchDefaults {
+        model: top_level_value(content, "default_model").filter(|m| !m.is_empty()),
+        ..Default::default()
+    };
+    let permission = top_level_value(content, "default_permission_mode").or_else(|| {
+        (top_level_value(content, "yolo").as_deref() == Some("true")).then(|| "yolo".to_string())
+    });
+    if let Some(mode) = permission.filter(|m| matches!(m.as_str(), "manual" | "yolo" | "auto")) {
+        out.choices.insert("permission".into(), mode);
+    }
+    if top_level_value(content, "default_plan_mode").as_deref() == Some("true") {
+        out.choices.insert("work".into(), "plan".into());
+    }
+    out
+}
+
 impl AgentPlugin for Kimi {
+    fn process_scope(&self, argv: &[String]) -> crate::registry::ProcessScope {
+        use crate::registry::ProcessScope;
+        let own = argv.first().is_some_and(|arg| {
+            matches!(
+                arg.replace('\\', "/")
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or("")
+                    .to_ascii_lowercase()
+                    .as_str(),
+                "kimi" | "kimi.exe" | "kimi.cmd"
+            )
+        });
+        if !own {
+            return ProcessScope::Unknown;
+        }
+        // 服务可承载多个会话；即使参数位置不确定，也不能拿它当单会话进程结束。
+        if argv
+            .iter()
+            .skip(1)
+            .any(|arg| matches!(arg.as_str(), "web" | "server" | "rc" | "remote" | "acp"))
+        {
+            ProcessScope::Shared
+        } else {
+            ProcessScope::Exclusive
+        }
+    }
+
+    fn broker_question(&self) -> Option<&'static crate::caps::BrokerQuestionCap> {
+        Some(&BROKER_QUESTION)
+    }
+
     fn screen_rules(&self) -> &'static [crate::screen::ScreenRule] {
         screen::RULES
     }
@@ -383,32 +490,32 @@ impl AgentPlugin for Kimi {
     /// 按键提示行是面板的稳定签名；提示行被裁掉时退回标题行。
     fn attention_patterns(&self) -> &'static [crate::chat_ui::AttentionPattern] {
         &[
-        // 提问表单（AskUserQuestion，kimi 2.4.1 真机取证 2026-11-05）。底部按键提示行是签名，
-        // 三种页各一种：单选题 `1-3 / ↵ choose`、多选题 `1-4 / ↵ toggle`、确认页
-        // `1/2 choose  ↵ confirm`，后面都跟 `←/→/tab switch`（多页签表单独有）。注意和审批面板
-        // 的提示行不同：审批是 `↑/↓ select · … · ↵ confirm`（带斜杠与圆点），不会串。
-        // 此前 kimi 只声明了审批，提问在对话页不出卡片（用户实拍）。
-        crate::chat_ui::AttentionPattern {
-            id: "kimi:question",
-            patterns: &[
-                r"↑↓ select\s+(?:1-\d+ / ↵ (?:choose|toggle)|1/2 choose\s+↵ confirm)\s+←/→/tab switch",
-            ],
-            // kimi 重绘不清屏，上一页的表单残留在上方：取最后一次。
-            last: true,
-            details: crate::chat_ui::AttentionDetails::BracketForm,
-        },
-        crate::chat_ui::AttentionPattern {
-            id: "kimi:command-approval",
-            patterns: &[
-                r"↑/↓ select · [\d/]+ choose · ↵ confirm",
-                r"^\s*▶\s*(?:run this command|write this file|apply these edits|stop this task|ready to build with this plan|approve [^\n?]+)\?",
-            ],
-            // 必须取最后一次：kimi 重绘也不清屏，上一条命令的面板残留在缓冲上方。
-            // 取首个匹配会把标题/命令锁在残影上，而数字键打给的是屏幕最下方的活动
-            // 面板——用户看着 A 批准了 B。
-            last: true,
-            details: crate::chat_ui::AttentionDetails::ArrowPanel,
-        },
+            // 提问表单（AskUserQuestion，kimi 2.4.1 真机取证 2026-11-05）。底部按键提示行是签名，
+            // 三种页各一种：单选题 `1-3 / ↵ choose`、多选题 `1-4 / ↵ toggle`、确认页
+            // `1/2 choose  ↵ confirm`，后面都跟 `←/→/tab switch`（多页签表单独有）。注意和审批面板
+            // 的提示行不同：审批是 `↑/↓ select · … · ↵ confirm`（带斜杠与圆点），不会串。
+            // 此前 kimi 只声明了审批，提问在对话页不出卡片（用户实拍）。
+            crate::chat_ui::AttentionPattern {
+                id: "kimi:question",
+                patterns: &[
+                    r"↑↓ select\s+(?:1-\d+ / ↵ (?:choose|toggle)|1/2 choose\s+↵ confirm)\s+←/→/tab switch",
+                ],
+                // kimi 重绘不清屏，上一页的表单残留在上方：取最后一次。
+                last: true,
+                details: crate::chat_ui::AttentionDetails::BracketForm,
+            },
+            crate::chat_ui::AttentionPattern {
+                id: "kimi:command-approval",
+                patterns: &[
+                    r"↑/↓ select · [\d/]+ choose · ↵ confirm",
+                    r"^\s*▶\s*(?:run this command|write this file|apply these edits|stop this task|ready to build with this plan|approve [^\n?]+)\?",
+                ],
+                // 必须取最后一次：kimi 重绘也不清屏，上一条命令的面板残留在缓冲上方。
+                // 取首个匹配会把标题/命令锁在残影上，而数字键打给的是屏幕最下方的活动
+                // 面板——用户看着 A 批准了 B。
+                last: true,
+                details: crate::chat_ui::AttentionDetails::ArrowPanel,
+            },
         ]
     }
 
@@ -422,6 +529,10 @@ impl AgentPlugin for Kimi {
     fn display_name(&self) -> &'static str {
         "Kimi Code"
     }
+    fn lead(&self) -> Option<&'static dyn crate::lead_install::LeadCap> {
+        Some(&lead::CAP)
+    }
+
     fn variants(&self) -> &'static [Variant] {
         &VARIANTS
     }
@@ -510,30 +621,72 @@ impl AgentPlugin for Kimi {
     /// `displayName: e.display_name, supportEfforts: e.support_efforts`，kimi.exe 0.4x 包内）。
     /// 多账号会话的 `KIMI_CODE_HOME` 指向 profile 目录，配置也在那里。
     fn model_catalog(&self, env: &[(String, String)]) -> Vec<crate::ModelCatalogEntry> {
-        let home = env
-            .iter()
-            .find(|(key, value)| key == "KIMI_CODE_HOME" && !value.is_empty())
-            .map(|(_, value)| std::path::PathBuf::from(value));
-        let path = match home {
-            Some(home) => home.join("config.toml"),
-            None => match telemetry::kimi_install() {
-                Some(inst) => inst.config_path(),
-                None => return Vec::new(),
-            },
-        };
-        std::fs::read_to_string(path)
+        config_path(env)
+            .and_then(|path| std::fs::read_to_string(path).ok())
             .map(|content| parse_model_catalog(&content))
             .unwrap_or_default()
     }
-    /// `/model` 是交互式菜单（不接受内联参数，故无 model_presets）。声明它，GUI 就能
-    /// 发出这条命令再把弹出的菜单渲染成按钮——模型清单由 CLI 现给。
+    /// `/model <alias>` 仍弹菜单、Enter 会改写 config.toml 的 default_model（research-kimi-gemini
+    /// §2.2），所以菜单只作兜底；主路线是空闲时 `-r <id> -m <alias>` 重启接回（§2.3 e3 实测会话 id
+    /// 不变、历史回放、下一轮用新模型、不改配置）。还没建会话时直接带 `-m` 重开（p7）。
     fn model_menu_command(&self) -> Option<&'static str> {
         Some("/model")
+    }
+    /// 思考档不跟着新模型调整（research §2.3 p2：从不支持思考的 A 换到 B 后仍是 thinking disabled），
+    /// 这里不补：Kimi 2.6 没有指定思考档的启动参数（`kimi --help` 只有 -m），会话内的 `/effort <档>`
+    /// 走 confirmThenPerformEffortSwitch(…, "model") → persistModelSelection，会改写 config.toml 的
+    /// default_model 与 [thinking]（kimi.exe K:530950、K:529381），违反「不改用户 CLI 默认配置」。
+    /// 用户在模型菜单的思考档分段里自己选（同样经 /effort），是用户主动的改动。
+    fn model_switch(&self) -> Option<crate::ModelSwitch> {
+        Some(crate::ModelSwitch::RestartResume {
+            flag: "-m",
+            unsent_resume_args: None,
+        })
+    }
+    fn model_launch_flag(&self) -> Option<&'static str> {
+        Some("-m")
+    }
+    fn launch_defaults(
+        &self,
+        env: &[(String, String)],
+        _cwd: Option<&std::path::Path>,
+    ) -> crate::LaunchDefaults {
+        config_path(env)
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .map(|content| parse_launch_defaults(&content))
+            .unwrap_or_default()
+    }
+    /// 2.6 新开 TUI 在第一条消息前不建会话、不触发 SessionStart，屏幕原文
+    /// `No session yet — one will be created on your first message.`（research-kimi-gemini §2.6，
+    /// e4 Q1 实拍）。认出它 = CLI 已就绪，只是在等第一条消息。
+    fn awaiting_first_message_markers(&self) -> &'static [&'static str] {
+        &["No session yet — one will be created on your first message."]
     }
     /// Esc 中断当前回合。**用户在真实 app 里确认可用**(2026-07:运行中的 kimi 会话按
     /// 「打断并发送」→ Esc 确实停下当前回合)。自动探针抓不到证据(kimi.exe 的 launcher
     /// shim 在 ConPTY 下即退),故走真机人工确认——与 claude(官方文档)/codex(状态行)
     /// 同为确证级别。
+    /// 2026-11-12 隔离无模型 PTY 实拍（target/lead-provider-probes/composer）：只允许已验证空框，不清非空草稿。
+    fn composer_guard(&self, version: Option<&str>) -> Option<crate::chat_ui::ComposerGuard> {
+        if !crate::lead_install::version_at_least(version, (2, 5, 3))
+            || !self
+                .resolve()
+                .is_some_and(|inst| inst.variant_tag == "modern")
+        {
+            return None;
+        }
+        Some(crate::chat_ui::ComposerGuard {
+            prompt_footer: false,
+            input_start_pattern: r"^(\s*│ > )",
+            top_pattern: r"^\s*╭─+╮\s*$",
+            bottom_pattern: r"^\s*╰─+╯\s*$",
+            row_pattern: r"^\s*│(.*)│\s*$",
+            prompt_prefix: ">",
+            tail_rows: 0,
+            tail_pattern: None,
+            empty_pattern: r"^$",
+        })
+    }
     fn queue_input(&self) -> Option<&'static str> {
         Some("\r")
     }
@@ -694,6 +847,18 @@ impl AgentPlugin for Kimi {
     }
 }
 
+/// 该会话的 config.toml：多账号会话的 `KIMI_CODE_HOME` 指向 profile 目录，配置也在那里。
+fn config_path(env: &[(String, String)]) -> Option<std::path::PathBuf> {
+    let home = env
+        .iter()
+        .find(|(key, value)| key == "KIMI_CODE_HOME" && !value.is_empty())
+        .map(|(_, value)| std::path::PathBuf::from(value));
+    match home {
+        Some(home) => Some(home.join("config.toml")),
+        None => telemetry::kimi_install().map(|inst| inst.config_path()),
+    }
+}
+
 /// 逐行解析 `config.toml` 的 `[models."<别名>"]` 段（不引 toml 依赖，同 telemetry 的
 /// `context_window` 既有范式）。只取菜单要的三项：显示名、所属 provider、支持的思考档位。
 /// `[models."x".sub]` 这类子表不算模型段；多行数组不解析（kimi 自己写出的是单行）。
@@ -702,6 +867,7 @@ fn parse_model_catalog(content: &str) -> Vec<crate::ModelCatalogEntry> {
         let inner = value.trim().strip_prefix('"')?.strip_suffix('"')?;
         Some(inner.replace("\\\"", "\"").replace("\\\\", "\\"))
     }
+    let default_model = top_level_value(content, "default_model");
     let mut out = Vec::new();
     let mut current: Option<crate::ModelCatalogEntry> = None;
     // `always_thinking` 的模型没有 off 档（kimi 的 segmentsFor），段尾统一补。
@@ -715,12 +881,9 @@ fn parse_model_catalog(content: &str) -> Vec<crate::ModelCatalogEntry> {
                 .strip_prefix("[models.\"")
                 .and_then(|rest| rest.strip_suffix("\"]"))
             {
-                current = Some(crate::ModelCatalogEntry {
-                    id: alias.to_string(),
-                    label: alias.to_string(),
-                    group: None,
-                    efforts: Vec::new(),
-                });
+                let mut entry = crate::ModelCatalogEntry::new(alias, alias);
+                entry.is_default = default_model.as_deref() == Some(alias);
+                current = Some(entry);
             }
             continue;
         }
@@ -736,7 +899,8 @@ fn parse_model_catalog(content: &str) -> Vec<crate::ModelCatalogEntry> {
                     entry.label = label;
                 }
             }
-            "provider" => entry.group = toml_str(value),
+            "provider" => entry.group = toml_str(value).map(|provider| provider_label(&provider)),
+            "default_effort" => entry.default_effort = toml_str(value),
             "capabilities" => always_on = value.contains("\"always_thinking\""),
             "support_efforts" => {
                 entry.efforts = value
@@ -754,6 +918,17 @@ fn parse_model_catalog(content: &str) -> Vec<crate::ModelCatalogEntry> {
     out
 }
 
+/// 分组名用人话：`managed:kimi-code` 这类是 Kimi 自家托管的 provider（config.toml 里
+/// `[providers."managed:kimi-code"] type = "kimi"`，本机配置实拍），菜单写「Kimi」；用户自己加的
+/// provider 名本就是用户起的（「反向推理」「xbot」），原样用。
+fn provider_label(provider: &str) -> String {
+    if provider.starts_with("managed:") {
+        "Kimi".to_string()
+    } else {
+        provider.to_string()
+    }
+}
+
 /// kimi 的档位列表 = `support_efforts`，非 always_thinking 的模型前面多一个 `off`
 /// （kimi.exe `segmentsFor`）。没声明 support_efforts 的是开关型模型，不给档位。
 fn with_off(mut entry: crate::ModelCatalogEntry, always_on: bool) -> crate::ModelCatalogEntry {
@@ -769,8 +944,77 @@ pub(crate) const UNDO_REJECT_PATTERN: &str = r"cannot undo while streaming|canno
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compatibility_process_scope_preserves_multisession_services() {
+        use crate::registry::ProcessScope;
+        assert_eq!(Kimi.process_scope(&[]), ProcessScope::Unknown);
+        assert_eq!(
+            Kimi.process_scope(&["node".into(), "other.js".into()]),
+            ProcessScope::Unknown
+        );
+        assert_eq!(
+            Kimi.process_scope(&["C:/bin/kimi.exe".into(), "--session".into(), "sid".into()]),
+            ProcessScope::Exclusive
+        );
+        for service in ["web", "server", "acp", "rc", "remote"] {
+            assert_eq!(
+                Kimi.process_scope(&["kimi.exe".into(), service.into()]),
+                ProcessScope::Shared
+            );
+        }
+    }
     use crate::variant::Installation;
     use std::path::Path;
+
+    /// 新建页默认值读 config.toml 顶层键；子表里的同名键不算。
+    #[test]
+    fn launch_defaults_read_top_level_model_permission_and_plan() {
+        let content = r#"default_model = "kimi-code/k3"
+default_permission_mode = "yolo"
+default_plan_mode = true
+
+[models."kimi-code/k3"]
+default_permission_mode = "auto"
+"#;
+        let defaults = parse_launch_defaults(content);
+        assert_eq!(defaults.model.as_deref(), Some("kimi-code/k3"));
+        assert_eq!(
+            defaults.choices.get("permission").map(String::as_str),
+            Some("yolo")
+        );
+        assert_eq!(
+            defaults.choices.get("work").map(String::as_str),
+            Some("plan")
+        );
+        // 旧字段 yolo = true 迁移成 yolo（K:346047）。
+        let legacy = parse_launch_defaults(
+            "yolo = true
+",
+        );
+        assert_eq!(
+            legacy.choices.get("permission").map(String::as_str),
+            Some("yolo")
+        );
+        assert!(parse_launch_defaults(
+            "default_permission_mode = \"weird\"
+"
+        )
+        .choices
+        .is_empty());
+    }
+
+    /// 等第一条消息的屏幕原文（research-kimi-gemini §2.6 e4 Q1）。
+    #[test]
+    fn awaiting_first_message_marker_is_the_exact_kimi_text() {
+        let screen = "  Session:
+  No session yet — one will be created on your first message.
+";
+        assert!(Kimi
+            .awaiting_first_message_markers()
+            .iter()
+            .any(|marker| screen.contains(marker)));
+    }
 
     /// 样本形制取自本机 kimi-code 生成的 config.toml（2026-10，敏感字段已去）。
     #[test]
@@ -808,7 +1052,7 @@ display_name = "不是模型段"
         assert_eq!(catalog[1].efforts, vec!["low", "high"]);
         assert_eq!(catalog[0].id, "kimi-code/k3.1-pro");
         assert_eq!(catalog[0].label, "K3.1 Pro");
-        assert_eq!(catalog[0].group.as_deref(), Some("managed:kimi-code"));
+        assert_eq!(catalog[0].group.as_deref(), Some("Kimi"));
         assert_eq!(catalog[0].efforts, vec!["off", "low", "high", "max"]);
         // 没写 display_name 的回退别名，菜单上至少认得出是哪个。
         assert_eq!(catalog[2].label, "反向推理/DeepSeek-V4.1-Flash-1017");

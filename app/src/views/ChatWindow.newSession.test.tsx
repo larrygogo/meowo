@@ -2,7 +2,7 @@
 // 夹具与 mock 见 chatWindow.harness.tsx（必须先于 ./ChatWindow 导入）。
 import { describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { invoke, saveDialog, eventListeners, b64utf8, respondWithHistory } from "./chatWindow.harness";
+import { emptyComposerFrame, invoke, saveDialog, eventListeners, b64utf8, respondWithHistory } from "./chatWindow.harness";
 import { ChatWindow } from "./ChatWindow";
 import { zh } from "../i18n/zh";
 import { chatUi, descriptors } from "../test/agents";
@@ -57,6 +57,7 @@ describe("ChatWindow", () => {
     window.history.replaceState({}, "", "/?sessionId=61");
     let claimed = false;
     invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "managed_terminal_frame") return Promise.resolve(emptyComposerFrame("kimi"));
       const sid = Number(args?.sessionId);
       if (command === "get_chat_history") {
         if (sid === 61) return Promise.resolve({
@@ -65,7 +66,7 @@ describe("ChatWindow", () => {
           connected: true, predecessorId: null, supersededBy: null,
         });
         if (sid === 90) return Promise.resolve({
-          sessionId: 90, title: "认领后", status: "running", provider: "codex", cwd: "C:/repo",
+          sessionId: 90, title: "认领后", status: "running", provider: "kimi", cwd: "C:/repo",
           supported: true, offset: 0, reset: false, pendingReview: null, items: [], model: null,
           connected: true, predecessorId: null, supersededBy: null,
         });
@@ -73,15 +74,15 @@ describe("ChatWindow", () => {
       }
       if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
       if (command === "agent_chat_ui") return Promise.resolve(chatUi((args as { provider: string }).provider));
-      if (command === "list_agents") return Promise.resolve(descriptors(["claude", "codex"]));
+      if (command === "list_agents") return Promise.resolve(descriptors(["claude", "kimi"]));
       if (command === "copy_session_to_provider") {
         return Promise.resolve({ tempId: -5, handoffPath: "C:/tmp/meowo-handoff/1-61/handoff.md" });
       }
-      if (command === "managed_terminal_pending_launch") return Promise.resolve(sid === -5 ? { provider: "codex", cwd: "C:/repo" } : null);
+      if (command === "managed_terminal_pending_launch") return Promise.resolve(sid === -5 ? { provider: "kimi", cwd: "C:/repo" } : null);
       if (command === "managed_terminal_binding") return Promise.resolve(claimed ? 90 : null);
       if (command === "managed_terminal_snapshot") {
         // 首帧画出输入框，之后安静：700ms 后判就绪。
-        const data = Number(args?.since ?? 0) === 0 ? btoa("codex> ") : "";
+        const data = Number(args?.since ?? 0) === 0 ? btoa("kimi> ") : "";
         return Promise.resolve({ sessionId: sid, active: true, managed: true, data, startOffset: 0, endOffset: 7, exited: false, exitCode: null });
       }
       if (command === "write_managed_terminal") {
@@ -249,6 +250,7 @@ describe("ChatWindow", () => {
     const injectPrompt = zh.chat.handoffPrompt(handoffPath);
     let switched = false;
     invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "managed_terminal_frame") return Promise.resolve(emptyComposerFrame("kimi"));
       if (command === "get_chat_history") {
         const id = (args as { sessionId: number }).sessionId;
         if (id === 63) return Promise.resolve({
@@ -258,7 +260,7 @@ describe("ChatWindow", () => {
         });
         // 复制出来的新会话:目标 provider,独立会话没有接续链;注入语已落进 transcript。
         return Promise.resolve({
-          sessionId: 64, title: "新会话", status: "running", provider: "codex", cwd: "C:/repo",
+          sessionId: 64, title: "新会话", status: "running", provider: "kimi", cwd: "C:/repo",
           supported: true, offset: 0, reset: false, pendingReview: null,
           items: [{ type: "user_text", id: "h1", timestamp: null, text: injectPrompt }], model: null,
           connected: true, predecessorId: null, supersededBy: null,
@@ -266,7 +268,7 @@ describe("ChatWindow", () => {
       }
       if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
       if (command === "agent_chat_ui") return Promise.resolve(chatUi((args as { provider: string }).provider));
-      if (command === "list_agents") return Promise.resolve(descriptors(["claude", "codex"]));
+      if (command === "list_agents") return Promise.resolve(descriptors(["claude", "kimi"]));
       if (command === "copy_session_to_provider") {
         switched = true;
         return Promise.resolve({ tempId: -7, handoffPath });
@@ -565,7 +567,7 @@ describe("ChatWindow", () => {
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 71, data: "修一下登录页" }), { timeout: 8_000 });
   }, 20_000);
 
-  it("新建会话页:写入途中切走、随后发送失败,回到认领后的真 id 能看到失败气泡", async () => {
+  it("新建会话页:写入途中切走、随后发送失败,回到认领后的真 id 能看到未确认送达回执", async () => {
     window.history.replaceState({}, "", "/?newSession=1");
     let claimed = false;
     mockFirstPromptLaunch({ claimed: () => claimed, ready: () => true });
@@ -590,7 +592,7 @@ describe("ChatWindow", () => {
     claimed = true;
     act(() => eventListeners.get("chat-session-changed")?.({ payload: 71 }));
     // 回到真 id 先查一次认领关系，回执才搬过来。
-    expect(await screen.findByText(zh.chat.echoFailed, undefined, { timeout: 3_000 })).toBeTruthy();
+    expect(await screen.findByText(zh.chat.echoUncertain, undefined, { timeout: 3_000 })).toBeTruthy();
     expect(screen.getByText("修一下登录页")).toBeTruthy();
   }, 20_000);
 
@@ -732,10 +734,8 @@ describe("ChatWindow", () => {
     // 显式入口在回合运行中同样受「先等任务结束」保护，不往忙着的终端里写命令。
     // 走查 C-8：原因在菜单里先说（menuBusyShort），入口标成不可选，点了不动，不再选完才报 menuBusy。
     fireEvent.click(await screen.findByRole("button", { name: "切换模型" }));
-    const load = await screen.findByRole("menuitem", { name: "读取模型清单" });
-    expect(load.getAttribute("aria-disabled")).toBe("true");
-    expect(screen.getByText(zh.chat.menuBusyShort)).toBeTruthy();
-    fireEvent.click(load);
+    fireEvent.click(await screen.findByRole("menuitem", { name: "读取模型清单" }));
+    expect(await screen.findByText(zh.chat.menuBusyOpen)).toBeTruthy();
     expect(invoke.mock.calls.some(([command, args]) =>
       command === "write_managed_terminal" && (args as { data: string }).data === "/model")).toBe(false);
   });

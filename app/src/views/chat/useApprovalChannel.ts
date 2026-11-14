@@ -1,7 +1,8 @@
 /**
- * broker 审批与 AskUserQuestion 题面的接收通道（从 ChatWindow.tsx 原样抽出，行为不变）：
+ * broker 审批与 AskUserQuestion 题面的 RuntimeRequest 接收通道：
  * 消费者租约注册、push 事件监听（pending-approval / -cleared / interactive-question）、
  * pendingInteraction 合并轮询兜底、跨会话切换的题面领养、侧栏授权徽标集合、审批倒计时。
+ * 新集合可同时携带审批与提问；旧字段仅作兼容回退，不覆盖新契约的终态。
  * 作答/落键（decideApproval、queuedAnswer、dismiss 记账）仍在 ChatWindow——它们与
  * 终端写入和屏幕识别交织，是「回应」不是「接收」。
  */
@@ -20,7 +21,9 @@ import {
   registerApprovalConsumer,
   unregisterApprovalConsumer,
   type PendingApproval,
+  type RuntimeRequest,
 } from "../../api";
+import { asRuntimeApproval, asRuntimeRequest, runtimeRequestBrokerLive } from "./runtimeRequest";
 import { useT } from "../../i18n";
 import { remoteUi } from "../../remoteMode";
 import { WINDOW_CLOSE_CANCELLED_EVENT } from "./windowClose";
@@ -37,10 +40,10 @@ export function useApprovalChannel({ sessionId, activeSessionRef, viewRef, setVi
   setSendError: Dispatch<SetStateAction<string>>;
 }) {
   const t = useT();
-  const [approval, setApproval] = useState<PendingApproval | null>(null);
+  const [approval, setApproval] = useState<RuntimeRequest | null>(null);
   // 实时镜像：pending-approval-cleared 的 mount-once 监听里要判「卡是否还挂着」，
   // 闭包 state 是过期值。tRef 同理（提示文案随界面语言）。
-  const approvalLiveRef = useRef<PendingApproval | null>(null);
+  const approvalLiveRef = useRef<RuntimeRequest | null>(null);
   approvalLiveRef.current = approval;
   const tRef = useRef(t);
   tRef.current = t;
@@ -75,7 +78,7 @@ export function useApprovalChannel({ sessionId, activeSessionRef, viewRef, setVi
   const approvalTimedOut = !!approval && !!approvalSeenRef.current
     && approvalNow - approvalSeenRef.current.at >= APPROVAL_TIMEOUT_MS;
   // AskUserQuestion 的结构化题面（broker 自动放行后经 interactive-question 事件直达）。
-  const [structuredQuestion, setStructuredQuestion] = useState<PendingApproval | null>(null);
+  const [structuredQuestion, setStructuredQuestion] = useState<RuntimeRequest | null>(null);
   // broker 那头**此刻真的还挂着**的题面 requestId（无则 null）。与 structuredQuestion
   // 不是一回事：那张卡在挂起了结后还可能有意留一会儿（等 transcript 消解），而这个是
   // 事实本身。收起后的折叠条要靠它判活（7C-2 尾，复核指出：题面被收起后若在终端答掉
@@ -144,23 +147,60 @@ export function useApprovalChannel({ sessionId, activeSessionRef, viewRef, setVi
     if (sessionId <= 0) return;
     let cancelled = false;
     let timer: number | undefined;
-    const poll = () => pendingInteraction(sessionId).then(({ approval: nextApproval, question }) => {
+    const poll = () => pendingInteraction(sessionId).then((snapshot) => {
       if (cancelled) return;
-      if (nextApproval) setBrokerOwnsReview(true);
-      setApproval(nextApproval);
-      // 已有同一 requestId 的题面卡时不重复设置，避免打断点选状态；answerable 翻转
+      const { approval: legacyApproval, question, runtimeRequest, runtimeRequests } = snapshot;
+      // 首切片后端只有 runtimeRequest，旧后端连它也没有；集合出现后才以集合为权威，
+      // 这样审批与提问的终态/空快照都不会被旧字段里的残留重新复活。
+      const nextApproval = runtimeRequests === undefined
+        ? legacyApproval ? asRuntimeApproval(legacyApproval) : null
+        : runtimeRequests.find((request) => request.kind === "approval")
+          ?? (legacyApproval ? asRuntimeApproval(legacyApproval) : null);
+      const pendingApproval = nextApproval?.status === "pending" ? nextApproval : null;
+      if (pendingApproval) setBrokerOwnsReview(true);
+      setApproval((current) => {
+        if (current && (!nextApproval || nextApproval.status !== "pending")) {
+          if (nextApproval && current.requestId !== nextApproval.requestId) return current;
+          if (runtimeRequestBrokerLive(current)) {
+            setSendError(remoteUi() ? tRef.current.chat.approvalClearedNoticeRemote : tRef.current.chat.approvalClearedNotice);
+          }
+          return null;
+        }
+        return pendingApproval;
+      });
+      const nextQuestion = runtimeRequests === undefined
+        ? runtimeRequest ?? (question ? asRuntimeRequest(question) : null)
+        : runtimeRequests.find((request) => request.kind === "question")
+          ?? (question ? asRuntimeRequest(question) : null);
+      const pendingQuestion = nextQuestion?.status === "pending" ? nextQuestion : null;
+      // 已有同一 requestId 的题面卡时不重复设置，避免打断点选状态；回答能力翻转
       // （挂起结算/超时 → 作答卡降级为展示卡）必须放行——它正是靠这条轮询传递的。
-      setLiveQuestionId(question ? question.requestId : null);
-      if (question && question.requestId !== collapsedQuestionIdRef.current) {
-        setStructuredQuestion((current) => {
-          if (
-            current?.requestId === question.requestId
-            && current.answerable === question.answerable
-          ) return current;
-          setBrokerOwnsReview(true);
-          return question;
-        });
-      }
+      setLiveQuestionId(pendingQuestion ? pendingQuestion.requestId : null);
+      setStructuredQuestion((current) => {
+        // 旧后端没有 runtimeRequest 字段，空 question 不能充当新状态机的终态证据。
+        if (runtimeRequests === undefined && runtimeRequest === undefined && question === null) return current;
+        // 一端作答后，另一端可能先收到终态，也可能只收到空快照；两者都不能留下 live 假卡。
+        if (current && (!nextQuestion || nextQuestion.status !== "pending")) {
+          if (nextQuestion && current.requestId !== nextQuestion.requestId) return current;
+          if (runtimeRequestBrokerLive(current)) {
+            const passedToTerminal = nextQuestion?.responseCapability.type === "not_resumable"
+              && nextQuestion.responseCapability.reason === "passed_to_terminal";
+            setSendError(passedToTerminal
+              ? remoteUi() ? tRef.current.chat.questionTransferredNoticeRemote : tRef.current.chat.questionTransferredNotice
+              : tRef.current.chat.questionSettledNotice);
+          }
+          return null;
+        }
+        if (!pendingQuestion || pendingQuestion.requestId === collapsedQuestionIdRef.current) {
+          return current;
+        }
+        if (
+          current?.requestId === pendingQuestion.requestId
+          && runtimeRequestBrokerLive(current) === runtimeRequestBrokerLive(pendingQuestion)
+        ) return current;
+        setBrokerOwnsReview(true);
+        return pendingQuestion;
+      });
     }).catch(() => {});
     const tick = () => {
       void poll().then(() => {
@@ -170,7 +210,7 @@ export function useApprovalChannel({ sessionId, activeSessionRef, viewRef, setVi
     };
     tick();
     return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [sessionId]);
+  }, [sessionId, setSendError]);
 
   // 远程徽标扫描:pending-approval 系 push 事件到不了浏览器,非当前会话的审批/题面
   // 若不扫,侧栏永不亮徽标——远程挂多会话盯批正是主场景。3s 与看板刷新同量级。
@@ -210,7 +250,7 @@ export function useApprovalChannel({ sessionId, activeSessionRef, viewRef, setVi
     let unApproval: (() => void) | undefined;
     let unCleared: (() => void) | undefined;
     let cancelled = false;
-    listen<PendingApproval>("pending-approval", (event) => {
+    listen<PendingApproval | RuntimeRequest>("pending-approval", (event) => {
       pushProvenRef.current = true;
       if (event.payload.sessionId === activeSessionRef.current) {
         setApprovalAwaitingIds((prev) => {
@@ -220,7 +260,7 @@ export function useApprovalChannel({ sessionId, activeSessionRef, viewRef, setVi
           return next;
         });
         setBrokerOwnsReview(true);
-        setApproval(event.payload);
+        setApproval(asRuntimeApproval(event.payload));
         // 用户正在终端视图里操作时别把界面切回对话（焦点在 xterm，切换会打断输入）；
         // 不在终端才拉回来——审批卡在对话页，没人看就等于卡住。
         if (viewRef.current !== "terminal") setView("chat");
@@ -264,20 +304,21 @@ export function useApprovalChannel({ sessionId, activeSessionRef, viewRef, setVi
   // 领养窗口只有 3 秒且**收卡时立即清空**：这个 ref 存在的唯一理由是覆盖毫秒级的事件
   // 顺序竞态。窗口留长了就成了幽灵卡的来源——答完收卡后切走再切回来，effect 会把
   // 早已了结的问题重新弹出来（实测踩过）。
-  const lastInteractiveQuestionRef = useRef<{ payload: PendingApproval; at: number } | null>(null);
+  const lastInteractiveQuestionRef = useRef<{ payload: RuntimeRequest; at: number } | null>(null);
   useEffect(() => {
     let un: (() => void) | undefined;
     let cancelled = false;
-    listen<PendingApproval>("interactive-question", (event) => {
+    listen<PendingApproval | RuntimeRequest>("interactive-question", (event) => {
       pushProvenRef.current = true;
-      lastInteractiveQuestionRef.current = { payload: event.payload, at: Date.now() };
-      if (event.payload.sessionId === activeSessionRef.current) {
+      const payload = asRuntimeRequest(event.payload);
+      lastInteractiveQuestionRef.current = { payload, at: Date.now() };
+      if (payload.sessionId === activeSessionRef.current) {
         // 题面卡就是处理面：抑制 pendingReview 的「去终端处理」降级卡（与 broker 审批同理）。
         setBrokerOwnsReview(true);
-        setStructuredQuestion(event.payload);
+        setStructuredQuestion(payload);
         // push 到卡出现、用户在下一轮 poll 前就点收起时，liveQuestionId 还停在上一题
         // 的值（或 null），折叠条会被判死秒清——push 这条路径同样要同步（复核指出）。
-        setLiveQuestionId(event.payload.requestId);
+        setLiveQuestionId(payload.requestId);
         // 与审批一致：用户正在终端视图操作时不抢（提问卡两视图都渲染，人在哪边都能看见
         // 能作答），否则拉回对话页。
         if (viewRef.current !== "terminal") setView("chat");
@@ -285,9 +326,9 @@ export function useApprovalChannel({ sessionId, activeSessionRef, viewRef, setVi
         // 别的会话在提问：与审批同策略（后端不切窗只闪任务栏），侧栏亮徽标等用户自己
         // 过去；过去后题面靠 pendingInteraction 轮询从后端表里取回。
         setApprovalAwaitingIds((prev) => {
-          if (prev.has(event.payload.sessionId)) return prev;
+          if (prev.has(payload.sessionId)) return prev;
           const next = new Set(prev);
-          next.add(event.payload.sessionId);
+          next.add(payload.sessionId);
           return next;
         });
       }

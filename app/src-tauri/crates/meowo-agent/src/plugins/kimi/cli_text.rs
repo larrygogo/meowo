@@ -94,8 +94,18 @@ pub(super) static DEPS: &[D] = &[
         "2.5.1 kimi.EXE：`ensureActivitySpinner(\"braille\",\"Working…\")`，省略号是单个字符；重试时为 `Retrying (n/m)`",
     ),
     // ── 自动抽取的字面量 ──
-    D::new("literal:do you trust the files in this folder", "", "Do you trust the files in this folder?", TRUST_TABLE),
-    D::new("literal:do you trust the contents of this directory", "", "Do you trust the contents of this directory?", TRUST_TABLE),
+    D::new(
+        "literal:do you trust the files in this folder",
+        "",
+        "Do you trust the files in this folder?",
+        TRUST_TABLE,
+    ),
+    D::new(
+        "literal:do you trust the contents of this directory",
+        "",
+        "Do you trust the contents of this directory?",
+        TRUST_TABLE,
+    ),
     // 提问提示行：`${numberHint} / ↵ ${question.multi_select ? "toggle" : "choose"}`，整串 0 处，按两段近邻查
     //（做空第一轮 #7，2026-11-12）。
     D::near(
@@ -162,7 +172,25 @@ pub(super) static DEPS: &[D] = &[
         r#"{"type":"image_url","imageUrl":{"url":"kimi-file://f_0a1b"}}"#,
         "2.5.1 wire.jsonl 实样（粘贴图片的地址形态，research-cli-drift K3）；kimi.EXE 20 处",
     ),
-    D::new("literal:thinking...", "thinking...", "Thinking...", "2.5.1 之前的三个点写法；2.5.1 改用省略号字符 `Thinking…`").legacy(),
-    D::new("literal:working...", "working...", "Working...", "2.5.1 之前的三个点写法；2.5.1 改用省略号字符 `Working…`").legacy(),
-    D::new("literal:compacting...", "compacting...", "Compacting...", "2.5.1 之前的三个点写法；2.5.1 改用省略号字符 `Compacting…`").legacy(),
+    D::new(
+        "literal:thinking...",
+        "thinking...",
+        "Thinking...",
+        "2.5.1 之前的三个点写法；2.5.1 改用省略号字符 `Thinking…`",
+    )
+    .legacy(),
+    D::new(
+        "literal:working...",
+        "working...",
+        "Working...",
+        "2.5.1 之前的三个点写法；2.5.1 改用省略号字符 `Working…`",
+    )
+    .legacy(),
+    D::new(
+        "literal:compacting...",
+        "compacting...",
+        "Compacting...",
+        "2.5.1 之前的三个点写法；2.5.1 改用省略号字符 `Compacting…`",
+    )
+    .legacy(),
 ];

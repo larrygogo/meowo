@@ -143,6 +143,7 @@ fn wire_all_profiles(reporter: Option<&str>) {
             if !crate::profile::profile_root(provider, &p.id).is_dir() {
                 continue;
             }
+            crate::profile::sync_user_extensions(provider, &p.id);
             match crate::profile::wire_profile(agent.id(), &p.id) {
                 None => eprintln!("Meowo repair[{provider}/{}]: 已接线", p.id),
                 Some(reason) => {

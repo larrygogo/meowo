@@ -187,6 +187,15 @@ pub enum BrokerRequest {
         #[serde(default)]
         args: serde_json::Value,
     },
+    /// Lead工具只携带本机进程和CLI注入的执行身份，归属会话从scoped token反查。
+    LeadContext {
+        token: String,
+        process_id: u32,
+        #[serde(default)]
+        native_thread_id: Option<String>,
+        #[serde(default)]
+        catalog: bool,
+    },
 }
 
 impl From<LegacyHandshake> for BrokerRequest {

@@ -7,6 +7,7 @@ const api = vi.hoisted(() => ({
   getSettings: vi.fn(),
   setSettings: vi.fn(),
   leadWorkflowInstalled: vi.fn(),
+  leadProviderInstallations: vi.fn(),
   availableTerminals: vi.fn(),
   listAgents: vi.fn(),
 }));
@@ -22,6 +23,7 @@ const OLD = { browser_agent: true, preview_enabled: false, terminal_open_mode: "
 
 beforeEach(() => {
   api.leadWorkflowInstalled.mockResolvedValue(false);
+  api.leadProviderInstallations.mockResolvedValue([]);
   api.setSettings.mockResolvedValue(undefined);
   api.availableTerminals.mockResolvedValue([]);
   api.listAgents.mockResolvedValue([]);

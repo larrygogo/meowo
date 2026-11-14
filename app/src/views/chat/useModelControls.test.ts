@@ -43,6 +43,7 @@ function makeDeps(overrides: Partial<ModelControlsDeps> = {}) {
     attentionAbort: () => null,
     isCurrentOperation: () => true,
     setSendError: vi.fn(),
+    deferTerminal: vi.fn(),
     setHistory: vi.fn((update) => { history = typeof update === "function" ? update(history)! : update!; }),
     setStoredSelections: vi.fn((update) => { selections = typeof update === "function" ? update(selections) : update; }),
     ...overrides,
@@ -152,14 +153,20 @@ it("切模型：菜单里出现模型名不算确认，超时报未确认且不�
   expect(setSessionLaunchSelection).not.toHaveBeenCalled();
 });
 
-it("运行中拒绝切模型/档位/模式，不往终端写任何东西", async () => {
-  const { deps } = makeDeps({ toneRef: { current: "running" } });
+/// SPEC 终态 2（第四轮补）：运行中选的模型 / 档位 / 模式排到这一轮之后（同一个队列、同一套提示），
+/// 不再报「请等待当前任务结束后切换」；只有不知道目标档的盲切（按一次跳下一个）说要等。
+it.each(["running", "pending"] as const)("%s 时切模型/档位/模式排到这一轮之后，不往终端写任何东西", async (tone) => {
+  const { deps } = makeDeps({ toneRef: { current: tone } });
   const { result } = renderHook(() => useModelControls(deps));
   await settle(result.current.selectModel({ id: "opus", label: "Opus" }));
   await settle(result.current.selectEffort("high"));
+  await settle(result.current.changeMode("permission", [{ data: "/permission plan", submit: true }], "plan"));
+  expect(deps.deferTerminal).toHaveBeenNthCalledWith(1, { kind: "model", preset: { id: "opus", label: "Opus" } }, "Opus");
+  expect(deps.deferTerminal).toHaveBeenNthCalledWith(2, { kind: "effort", level: "high" }, "high");
+  expect(deps.deferTerminal).toHaveBeenNthCalledWith(3, { kind: "mode", dimension: "permission", value: "plan", inputs: [{ data: "/permission plan", submit: true }], markers: [] }, "plan");
+  expect(deps.setSendError).not.toHaveBeenCalled();
   await settle(result.current.changeMode("permission", [{ data: "\u001b[Z", submit: false }]));
-  expect(deps.setSendError).toHaveBeenCalledTimes(3);
-  expect(deps.setSendError).toHaveBeenCalledWith(zh.chat.menuBusy);
+  expect(deps.setSendError).toHaveBeenCalledWith(zh.chat.menuBusyOpen);
   expect(submitToTerminal).not.toHaveBeenCalled();
   expect(writeManagedTerminal).not.toHaveBeenCalled();
 });
@@ -238,8 +245,8 @@ it("档位清单：插件静态表优先，否则取模型目录里当前模型�
   const claude = renderHook(() => useModelControls(makeDeps().deps));
   expect(claude.result.current.effortLevels).toEqual(["low", "medium", "high", "xhigh", "max"]);
   const catalog: ModelCatalogEntry[] = [
-    { id: "kimi-a", label: "Kimi A", group: null, efforts: ["low", "high"] },
-    { id: "kimi-b", label: "Kimi B", group: null, efforts: ["off"] },
+    { id: "kimi-a", label: "Kimi A", group: null, efforts: ["low", "high"], default_effort: null, is_default: false, uncertain: false },
+    { id: "kimi-b", label: "Kimi B", group: null, efforts: ["off"], default_effort: null, is_default: false, uncertain: false },
   ];
   const kimi = renderHook(() => useModelControls(makeDeps({ chatUi: chatUi("kimi"), model: "kimi-a", modelCatalog: catalog }).deps));
   expect(kimi.result.current.effortLevels).toEqual(["low", "high"]);

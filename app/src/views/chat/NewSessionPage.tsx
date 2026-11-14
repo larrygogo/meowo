@@ -10,11 +10,10 @@ import { agentAssets, tintStyle } from "../../providers";
 import { normalizePath, pathKey } from "../../paths";
 import { PillSelect } from "./PillSelect";
 import { focusAfterRemoval } from "./focusAfterRemoval";
+import { modeIconGlyph, modeIconName } from "./modeIcon";
+import { initialChoice, modeChoiceViews, modelChoiceRows, planToggle } from "./modeChoices";
 import { AgentAppIcon } from "./AgentAppIcon";
 
-function ShieldIcon() {
-  return <Icon glyph={icShield} size={14} />;
-}
 import { useT } from "../../i18n";
 import { useNewSessionForm } from "../useNewSessionForm";
 import { WorkspacePicker } from "./WorkspacePicker";
@@ -44,7 +43,7 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched, onOpenSession
   const t = useT();
   const form = useNewSessionForm(normalizePath(prefill.cwd ?? ""), (prefill.provider ?? null) as AgentId | null);
   const { cwd, setCwd, provider, setProvider, recent, hooks, busy, phase, repairing, error, setError, agents, avail, opts, setOpts,
-    activeProfiles, relayPins, loginOperations, swappedFrom, launchOptions, warn, needLogin } = form;
+    activeProfiles, relayPins, loginOperations, swappedFrom, launchOptions, warn, needLogin, cliDefaults, modelCatalog, dynamicChoices } = form;
   const [message, setMessage] = useState("");
   // 粘进来的截图/文件（用户反馈：新建页粘不了图，只能等会话起来再贴一次）。和对话页同一套
   // 落盘与附件形状，发出去后交给对话页的发送通道，原生贴图 / 附路径降级都在那边。
@@ -199,6 +198,30 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched, onOpenSession
                   onChange={(value) => { setProvider(value); setError(null); }}
                 />
               )}
+              {/* 模型清单来自 CLI 自己（配置文件或离线子命令），默认档写成配置里的那个模型（leader 2026-11-14：
+                  新建页的选项与默认值来自 CLI 当前配置）。不选 = 不传 -m，CLI 照自己的配置。 */}
+              {modelCatalog.length > 0 && (() => {
+                const pinned = relayPins[provider];
+                const rows = modelChoiceRows(t, modelCatalog, cliDefaults);
+                return (
+                  <PillSelect
+                    testId="nsp-option-model"
+                    variant="model"
+                    label={t.newSession.launchOption.model}
+                    tip={pinned !== undefined ? t.newSession.relayPinnedModel(pinned) : t.newSession.launchOption.model}
+                    disabled={pinned !== undefined}
+                    // 存着的显式模型恰是默认那一行（值已折成空串）时，按默认行显示。
+                    value={rows.some((row) => row.value === (opts.model ?? "")) ? (opts.model ?? "") : ""}
+                    options={rows.map((row) => ({ ...row, group: row.group ?? undefined, short: row.value === "" && !row.tag ? t.newSession.defaultOf(t.newSession.launchOption.model) : row.label }))}
+                    onChange={(value) => setOpts((current) => {
+                      const next = { ...current };
+                      if (value) next.model = value;
+                      else delete next.model;
+                      return next;
+                    })}
+                  />
+                );
+              })()}
               {launchOptions.map((option) => {
                 // relay 启用时 model 档由中转固定：置灰，悬停说明固定成了什么。
                 const pinned = option.id === "model" ? relayPins[provider] : undefined;
@@ -206,28 +229,37 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched, onOpenSession
                 // 权限一类（权限 / 审批）配盾牌图标、胶囊用对话页的短名；「默认」带上维度名，
                 // 模型的默认档没有图标可认，写成「默认模型」。
                 const guard = option.id === "permission" || option.id === "approval";
+                // 图标与对话框的模式胶囊一致：计划开关是灯泡、OpenCode agent 是 agent 图标（第三轮 C8）。
+                const plan = !!planToggle(option);
+                const agentPill = option.id === "agent";
+                // 图标随选中的档变（第四轮 L4，与对话框的模式胶囊同一套，见 modeIcon.ts）。
+                const picked = initialChoice(option, opts[option.id], cliDefaults);
+                const modeIcon = guard || plan || agentPill ? <Icon glyph={modeIconGlyph(modeIconName(option, option.id, picked))} size={14} /> : undefined;
                 return (
                   <PillSelect
                     key={option.id}
                     testId={"nsp-option-" + option.id}
-                    variant={guard ? "mode" : "model"}
-                    icon={guard ? <ShieldIcon /> : undefined}
+                    variant={modeIcon ? "mode" : "model"}
+                    icon={modeIcon}
                     label={optionLabel}
                     tip={pinned !== undefined ? t.newSession.relayPinnedModel(pinned) : optionLabel}
                     disabled={pinned !== undefined}
-                    value={opts[option.id] ?? option.default}
-                    options={option.choices.map((choice) => {
-                      const name = t.newSession.launchChoice[`${option.id}.${choice.id}`] ?? choice.label;
-                      return {
-                        value: choice.id,
-                        label: name,
-                        short: t.chat.modeShortNames[`${option.id}.${choice.id}`]
-                          ?? (choice.id === "default" && !guard ? t.newSession.defaultOf(optionLabel) : name),
-                        risk: choice.risk,
-                        desc: t.newSession.launchChoiceDesc[`${option.id}.${choice.id}`]
-                          ?? (choice.risk ? t.newSession.riskyChoiceSub : undefined),
-                      };
-                    })}
+                    value={picked}
+                    options={option.choices.some((choice) => choice.traits)
+                      // 带统一说法的栏（四家模式）：名字是统一说法，下一行一句话说明，行尾小字 CLI 原名。
+                      ? modeChoiceViews(t, option, cliDefaults, dynamicChoices)
+                      : option.choices.map((choice) => {
+                        const name = t.newSession.launchChoice[`${option.id}.${choice.id}`] ?? choice.label;
+                        return {
+                          value: choice.id,
+                          label: name,
+                          short: t.chat.modeShortNames[`${option.id}.${choice.id}`]
+                            ?? (choice.id === "default" && !guard ? t.newSession.defaultOf(optionLabel) : name),
+                          risk: choice.risk,
+                          desc: t.newSession.launchChoiceDesc[`${option.id}.${choice.id}`]
+                            ?? (choice.risk ? t.newSession.riskyChoiceSub : undefined),
+                        };
+                      })}
                     onChange={(value) => setOpts((current) => ({ ...current, [option.id]: value }))}
                   />
                 );
