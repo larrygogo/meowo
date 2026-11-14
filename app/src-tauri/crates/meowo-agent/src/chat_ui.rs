@@ -331,6 +331,36 @@ pub struct CommandReply {
     pub reject_pattern: &'static str,
 }
 
+/// 带参切换命令（`/model sonnet`、`/effort high`）在对话进行到一半时弹出的二次确认框。
+///
+/// claude 2.1.325 真机取证（tests/probe_claude_model.rs，2026-11-14）：会话里已经有过回合、提示缓存
+/// 还热着时，`/model haiku` 不直接切，先弹：
+/// ```text
+///    Switch model?
+///    Your next response will be slower and use more tokens
+///    This conversation is cached for the current model. Switching to Haiku 5.5 means the full history gets re-read.
+///    ❯ 1. Yes, switch to Haiku 5.5
+///      2. No, go back
+/// ```
+/// 此前对话页不认识它：命令发出去后等不到确认行，报「未确认」，确认框留在终端里挡着输入框，
+/// 之后发的消息被它吞掉（回合结束后自动执行的切换同样撞上，验收 6）。
+///
+/// 用户已经在对话页选定了要切到哪一个，所以认出这个框、且框里要切到的正是所选的那一个、
+/// 焦点就在「Yes」那一行时，替他按下确认；对不上就不按，照旧报未确认并给看终端画面的出口。
+/// 三条正则都按**不区分大小写**、逐行匹配（前端带 i 标志编译）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+pub struct SwitchConfirm {
+    /// 确认框的标题行（整行）。
+    pub title_pattern: &'static str,
+    /// 带着焦点的确认项那一行，捕获组 1 = 要切到的目标（模型显示名或思考档）。
+    /// 前端核对它含所选的那一个才按键。
+    pub accept_pattern: &'static str,
+    /// 确认键（焦点已在确认项上时按）。
+    pub accept_input: &'static str,
+}
+
 /// 撤回最近几轮对话的能力（对照 Kimi 桌面版用户消息上的「撤回」：这条及之后移出上下文，
 /// 原文放回输入框）。轮数由前端按「非插话的用户消息」数——插件须保证 transcript 里插话标了
 /// interjected，否则计数与 CLI 对不上。撤回是否生效以 transcript 为准（被撤的消息从对话里
@@ -498,6 +528,8 @@ pub struct ChatUi {
     pub model_select_command: Option<&'static str>,
     /// `model_select_command` 之后 CLI 的回话（见 [`CommandReply`]）；None = 前端用通用确认文案兜底。
     pub model_select_reply: Option<CommandReply>,
+    /// 带参切换命令在对话中途弹的二次确认框（见 [`SwitchConfirm`]）；None = 这家没有这种框。
+    pub switch_confirm: Option<SwitchConfirm>,
     /// 打开「选模型」菜单的命令。预设为空但有它时，前端发这条命令并把 CLI 弹出的
     /// 交互菜单渲染成按钮——模型清单由 CLI 现给，不必宿主维护一份会过时的。
     pub model_menu_command: Option<&'static str>,

@@ -12,6 +12,7 @@ import type { SelectorAnchor } from "./SelectorAnchor";
 import type { SideQuestion } from "./SideQuestion";
 import type { SlashCommand } from "./SlashCommand";
 import type { SubagentView } from "./SubagentView";
+import type { SwitchConfirm } from "./SwitchConfirm";
 import type { UndoControl } from "./UndoControl";
 
 /**
@@ -26,6 +27,10 @@ model_select_command: string | null,
  * `model_select_command` 之后 CLI 的回话（见 [`CommandReply`]）；None = 前端用通用确认文案兜底。
  */
 model_select_reply: CommandReply | null, 
+/**
+ * 带参切换命令在对话中途弹的二次确认框（见 [`SwitchConfirm`]）；None = 这家没有这种框。
+ */
+switch_confirm: SwitchConfirm | null, 
 /**
  * 打开「选模型」菜单的命令。预设为空但有它时，前端发这条命令并把 CLI 弹出的
  * 交互菜单渲染成按钮——模型清单由 CLI 现给，不必宿主维护一份会过时的。

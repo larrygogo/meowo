@@ -220,6 +220,11 @@ pub trait AgentPlugin: Sync {
         None
     }
 
+    /// 带参切换命令在对话中途弹的二次确认框（见 [`crate::chat_ui::SwitchConfirm`]）。
+    fn switch_confirm(&self) -> Option<crate::chat_ui::SwitchConfirm> {
+        None
+    }
+
     /// 本插件依赖的 CLI 输出文案中，需要手工声明的部分（见 [`crate::cli_text`]）：正则规则的
     /// 真实样例，以及运行时拼接、在程序文件里搜不到原样的字面量。插件里的字面量规则
     /// （信任页、模式回显、屏幕规则的子串）由 `cli_text` 自动抽取，不必在这里重复。
@@ -368,6 +373,7 @@ pub trait AgentPlugin: Sync {
             model_presets: self.model_presets().to_vec(),
             model_select_command: self.model_select_command(),
             model_select_reply: self.model_select_reply(),
+            switch_confirm: self.switch_confirm(),
             model_menu_command: self.model_menu_command(),
             mode_controls: self.mode_controls().to_vec(),
             menu_slash_commands,
@@ -1232,6 +1238,66 @@ mod tests {
             screen_frames += 1;
         }
         assert!(screen_frames >= 3, "至少要有 claude、kimi、opencode 三家的屏幕样本");
+    }
+
+    /// 切换确认框的共享样例（前端 chat/switchConfirm.test.ts 也读）：样例里的规格与插件声明逐字
+    /// 一致；按同一套判据（最后一个标题行之后，带焦点的确认项里含所选目标）过每一帧，结论与样例
+    /// 写的一致。真机帧来自 tests/probe_claude_model.rs。
+    #[test]
+    fn switch_confirm_frames_agree_with_declared_spec() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../src/test/fixtures/switch-confirm.json"
+        ))
+        .unwrap();
+        for plugin in all() {
+            let declared = plugin
+                .switch_confirm()
+                .map(|spec| serde_json::to_value(spec).unwrap())
+                .unwrap_or(serde_json::Value::Null);
+            let listed = fixture["spec"]
+                .get(plugin.id().as_str())
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            assert_eq!(listed, declared, "{} 的 switch_confirm 与样例不一致", plugin.id());
+        }
+        let squash = |text: &str| -> String {
+            text.to_lowercase()
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric())
+                .collect()
+        };
+        let mut real = 0;
+        for frame in fixture["frames"].as_array().unwrap() {
+            let name = frame["name"].as_str().unwrap();
+            let spec = by_id(frame["provider"].as_str().unwrap())
+                .unwrap()
+                .switch_confirm()
+                .unwrap();
+            let title = regex::Regex::new(&format!("(?i){}", spec.title_pattern)).unwrap();
+            let accept = regex::Regex::new(&format!("(?i){}", spec.accept_pattern)).unwrap();
+            let lines: Vec<&str> = frame["lines"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|line| line.as_str().unwrap())
+                .collect();
+            let target = squash(frame["target"].as_str().unwrap());
+            let input = lines
+                .iter()
+                .rposition(|line| title.is_match(line))
+                .and_then(|at| {
+                    lines[at + 1..]
+                        .iter()
+                        .find_map(|line| accept.captures(line).map(|caps| squash(&caps[1])))
+                })
+                .filter(|shown| shown.contains(&target))
+                .map(|_| spec.accept_input);
+            assert_eq!(input, frame["expect"].as_str(), "{name}");
+            if frame["source"].as_str().unwrap().starts_with("probe") {
+                real += 1;
+            }
+        }
+        assert!(real >= 1, "至少要有一帧真机抓的确认框");
     }
 
     #[test]

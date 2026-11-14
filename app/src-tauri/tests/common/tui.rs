@@ -44,6 +44,10 @@ pub struct Tui {
 impl Tui {
     /// `env`：追加或覆盖的环境变量。外层会话（本探针常跑在 Meowo 托管的会话里）带进来的
     /// `MEOWO_PTY_*` 一律先摘掉：那是外层会话的审批通道与认领凭据，探针拉起的 CLI 不能拿去用。
+    /// 外层 claude 会话留下的 `CLAUDE*` 标记也摘掉，只留 `CLAUDE_CONFIG_DIR`（登录态在那个目录里）：
+    /// 带着 `CLAUDE_CODE_CHILD_SESSION` 起来的 claude 把自己当成子会话，不写会话记录
+    /// （2.1.325 状态栏原文 `Transcript saving is off — inherited CLAUDE_CODE_CHILD_SESSION marker`），
+    /// 与 Meowo 拉起的会话不是一回事。
     pub fn spawn(argv: &[String], cwd: &Path, env: &[(&str, String)]) -> Tui {
         let pair = native_pty_system()
             .openpty(PtySize {
@@ -56,7 +60,9 @@ impl Tui {
         let mut command = crate::common::agent_command(&argv[0], cwd);
         command.args(&argv[1..]);
         for (key, _) in std::env::vars() {
-            if key.starts_with("MEOWO_PTY_") {
+            if key.starts_with("MEOWO_PTY_")
+                || (key.starts_with("CLAUDE") && key != "CLAUDE_CONFIG_DIR")
+            {
                 command.env_remove(key);
             }
         }

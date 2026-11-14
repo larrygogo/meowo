@@ -33,6 +33,58 @@ describe("ChatWindow 适配回归", () => {
     }
   });
 
+  /// claude 2.1.325 真机（tests/probe_claude_model.rs）：会话里有过回合之后 `/model haiku` 不直接切，
+  /// 先弹 `Switch model?`。此前等不到确认行就报「未确认」，确认框留在终端里吞掉之后的消息。
+  /// 现在认出框里要切到的正是所选的模型，替用户按一次确认，等到 `Set model to` 才算切成。
+  const SWITCH_DIALOG = [
+    "   Switch model?",
+    "   Your next response will be slower and use more tokens",
+    "   This conversation is cached for the current model. Switching to Haiku 5.5 means the full history gets re-read.",
+    "   ❯ 1. Yes, switch to Haiku 5.5",
+    "     2. No, go back",
+  ].join("\r\n");
+
+  it("claude 对话中途切模型：认出确认框后替用户确认，等到确认行才记住选择", async () => {
+    const base = setup(520);
+    let enters = 0;
+    invoke.mockImplementation((command, args) => {
+      if (command === "write_managed_terminal" && args?.data === "\r") enters += 1;
+      if (command === "managed_terminal_snapshot") return Promise.resolve(snapshot(520,
+        enters === 0 ? "" : enters === 1 ? SWITCH_DIALOG
+          : `${SWITCH_DIALOG}\r\n  ⎿  Set model to Haiku 5.5 and saved as your default for new sessions`));
+      return base(command, args);
+    });
+    render(<ChatWindow />);
+    await screen.findByText("适配-520");
+    await chatUiReady();
+    fireEvent.click(await screen.findByRole("button", { name: "切换模型" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /^Haiku/ }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("set_session_launch_selection", expect.objectContaining({ sessionId: 520, option: "model", choice: "haiku" })), { timeout: 6000 });
+    // 命令一次回车，确认框一次回车，不多按。
+    expect(writes(520).filter((data) => data === "\r")).toHaveLength(2);
+    expect(writes(520)).toContain("/model haiku");
+    expect(screen.queryByText(zh.chat.modelSwitchUnconfirmed)).toBeNull();
+  }, 15_000);
+
+  it("claude 确认框里要切到的不是所选模型：不按确认键，报未确认并给看终端的出口", async () => {
+    const base = setup(521);
+    let enters = 0;
+    invoke.mockImplementation((command, args) => {
+      if (command === "write_managed_terminal" && args?.data === "\r") enters += 1;
+      // 选的是 Sonnet，框里写的却是 Haiku（屏幕上是别的切换留下的框）。
+      if (command === "managed_terminal_snapshot") return Promise.resolve(snapshot(521, enters === 0 ? "" : SWITCH_DIALOG));
+      return base(command, args);
+    });
+    render(<ChatWindow />);
+    await screen.findByText("适配-521");
+    await chatUiReady();
+    fireEvent.click(await screen.findByRole("button", { name: "切换模型" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /^Sonnet/ }));
+    await screen.findByText(zh.chat.modelSwitchUnconfirmed, {}, { timeout: 6000 });
+    expect(writes(521).filter((data) => data === "\r")).toHaveLength(1);
+    expect(invoke.mock.calls.some(([command]) => command === "set_session_launch_selection")).toBe(false);
+  }, 15_000);
+
   /// 菜单型 CLI（kimi 的 /model 不接受参数）：模型目录直接读配置列出，不必先读清单；
   /// 点选后发 /model，菜单画出来就按第一列名称替用户选中——K3 不能落到 K3-256k 上。
   /// 主路线（任务 20261114-tui-model-switch）：清单里的模型交给后端按机制切（Kimi 空闲时 -r <id> -m 重启接回），

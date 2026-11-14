@@ -67,6 +67,43 @@ describe("回合进行中选的切换，回合结束后真的执行", () => {
     await waitFor(() => expect(screen.queryByText(/^这一轮结束后切换到/)).toBeNull());
   }, 15_000);
 
+  // 真机走查（tests/probe_claude_model.rs，claude 2.1.325）：回合结束后发 `/model haiku`，CLI 不直接切，
+  // 先弹 `Switch model?`（会话里已有回合、缓存还热着时都会弹）。排了队的切换几乎每次都撞上它：
+  // 此前等不到确认行，报「未确认」，这次选择等于没执行。断言到确认键按下、选择被记住。
+  it("claude：回合结束后执行时 CLI 弹出切换确认框，替用户确认并等到确认行", async () => {
+    const dialog = [
+      "   Switch model?",
+      "   Your next response will be slower and use more tokens",
+      "   This conversation is cached for the current model. Switching to Haiku 5.5 means the full history gets re-read.",
+      "   ❯ 1. Yes, switch to Haiku 5.5",
+      "     2. No, go back",
+    ].join("\r\n");
+    let commandSent = false;
+    let enters = 0;
+    const session = runningSession(704, "claude", (command, args) => {
+      if (command === "write_managed_terminal" && args?.data === "/model haiku") commandSent = true;
+      if (command === "write_managed_terminal" && args?.data === "\r" && commandSent) enters += 1;
+      if (command === "managed_terminal_frame") return Promise.resolve(liveFrame("claude-2.1.325-placeholder-cursor"));
+      if (command === "managed_terminal_snapshot") return Promise.resolve(adapter.snapshot(704,
+        enters === 0 ? "" : enters === 1 ? dialog
+          : `${dialog}\r\n  ⎿  Set model to Haiku 5.5 and saved as your default for new sessions`));
+      return undefined;
+    });
+    render(<ChatWindow />);
+    await screen.findByText("适配-704");
+    await chatUiReady();
+    fireEvent.click(screen.getByRole("button", { name: "切换模型" }));
+    fireEvent.click(screen.getByRole("menuitem", { name: /^Haiku/ }));
+    await screen.findByText(/^这一轮结束后切换到「Haiku/);
+    expect(writes(704)).toEqual([]);
+    session.finish();
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("set_session_launch_selection",
+      expect.objectContaining({ sessionId: 704, option: "model", choice: "haiku" })), { timeout: 10_000 });
+    // `/model haiku` 之后正好两次回车：提交命令一次，确认框一次。
+    expect(enters).toBe(2);
+    expect(screen.queryByText(zh.chat.modelSwitchUnconfirmed)).toBeNull();
+  }, 20_000);
+
   it("claude：思考档排队后在回合结束时写入 /effort", async () => {
     const session = runningSession(702, "claude", (command) => command === "managed_terminal_frame"
       ? Promise.resolve(liveFrame("claude-2.1.325-placeholder-cursor")) : undefined, { effort: "low" });

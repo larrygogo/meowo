@@ -1,5 +1,6 @@
 import approvalFrames from "./fixtures/approval-frames.json";
 import composerFrames from "./fixtures/composer-frames.json";
+import switchConfirm from "./fixtures/switch-confirm.json";
 import type { AgentDescriptor, ChatUi, LaunchChoice, LaunchOption, SlashCommand } from "../api";
 
 /** 与 plugins/claude 的 status_line_pattern 同一串（改一边必须同步另一边）。 */
@@ -183,6 +184,8 @@ export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | 
     model_select_command: provider === "claude" ? "/model" : null,
     // 与后端同源:claude 插件 model_select_reply(2.1.322 包内模板取证)。
     model_select_reply: provider === "claude" ? { confirm_pattern: "set model to ", reject_pattern: CLAUDE_MODEL_REJECT_PATTERN } : null,
+    // 对话中途切换的二次确认框：取共享样例里的规格（Rust 测试逐字核对与插件声明一致）。
+    switch_confirm: (switchConfirm.spec as Record<string, NonNullable<ChatUi["switch_confirm"]>>)[provider] ?? null,
     queue_input: provider === "codex" ? "\t" : "\r",
     // 与后端插件声明同源：claude 边干边读，kimi 未取证，其余排到回合结束。
     queue_delivery: provider === "claude" ? "next_step" : provider === "kimi" ? null : "turn_end",
