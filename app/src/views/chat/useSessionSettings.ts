@@ -13,6 +13,7 @@
  *   （transcript 与底栏读到的），后端按它拼参数，不按存档回放（做空 H1）。
  */
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
+import { listen } from "@tauri-apps/api/event";
 import {
   applySessionSettings,
   queueSessionSettings,
@@ -207,6 +208,22 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
     }).catch(() => {});
   }, [deps.sessionId]);
 
+  // 宿主在回合结束时自己执行了排队的切换（不论对话页在看哪个会话）：清掉提示，结果按种类说一句。
+  useEffect(() => {
+    let un: (() => void) | undefined;
+    let cancelled = false;
+    listen<{ sessionId: number; kind: string; reason: string | null }>("session-settings-applied", ({ payload }) => {
+      if (payload.sessionId !== depsRef.current.sessionId) return;
+      setQueued(null);
+      if (payload.kind === "next_open") setNextOpen(payload.sessionId);
+      else if (payload.kind === "needs_new_session") depsRef.current.setSendError(t.chat.settingsNeedsNewSession);
+      else if ((payload.kind === "failed" || payload.kind === "not_now") && payload.reason) depsRef.current.setSendError(formatBackendError(payload.reason, t.locale));
+      else if (payload.kind === "applied" || payload.kind === "restarted") void syncLiveRef.current();
+    }).then((fn) => { if (cancelled) fn(); else un = fn; }).catch(() => {});
+    return () => { cancelled = true; un?.(); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 只订阅一次，回调读 ref
+  }, []);
+
   // 回到空闲（tone 离开 running / pending）、上一次切换落地后，执行排着的切换。
   useEffect(() => {
     if (!queued || queued.sessionId !== deps.sessionId) return;
@@ -248,6 +265,8 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
     const { model, ...modes } = { ...current, ...(live?.model ? { model: live.model } : {}), ...Object.fromEntries((live?.modes ?? []).map((mode) => [mode.dimension, mode.value])) };
     if (model || Object.keys(modes).length > 0) void recordSessionSettings(sessionId, model ?? null, modes).catch(() => {});
   };
+  const syncLiveRef = useRef(syncLive);
+  syncLiveRef.current = syncLive;
   // 回合结束（running → 空闲）读一次。
   const prevToneRef = useRef(deps.tone);
   useEffect(() => {

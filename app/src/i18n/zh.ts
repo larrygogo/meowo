@@ -520,7 +520,8 @@ export const zh = {
     // 新建会话认领前（负数临时 id）：CLI 正在冷启动，说「没有记录」是谎报。
     emptyStarting: "会话正在启动…",
     // 切模型 / 模式（任务 20261114-tui-model-switch）：运行中或有待批审批时不写终端、不重启，排到这一轮之后。
-    settingsDeferred: (name: string) => `这一轮结束后切换到 ${name}`,
+    // 队列存在 Meowo 进程里：Meowo 重启会清空，界面写明（复核 M3）。
+    settingsDeferred: (name: string) => `这一轮结束后切换到 ${name}（重启 Meowo 会取消）`,
     settingsApplying: "正在切换",
     settingsComposerUnknown: "认不出终端输入框，为免丢字没有重启",
     settingsFirstTurn: "第一条消息正在处理，会话建好后再切",

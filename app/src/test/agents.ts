@@ -409,7 +409,7 @@ const LAUNCH_OPTIONS: Record<string, LaunchOption[]> = {
       ch("default", "Default", [], false, { desc: "codex.approval.default" }),
       ch("readOnly", "Read Only", ["--sandbox", "read-only"], false, { traits: tr("always", "risky"), desc: "codex.approval.readOnly", server: '{"approval":"on-request","approvalsReviewer":"user","sandbox":"read-only"}' }),
       ch("ask", "Ask for approval", ["--sandbox", "workspace-write", "--ask-for-approval", "on-request"], false, { traits: tr("risky", "risky"), desc: "codex.approval.ask", server: '{"approval":"on-request","approvalsReviewer":"user","sandbox":"workspace-write"}' }),
-      ch("approveForMe", "Approve for me", ["--approve-for-me"], false, { traits: tr("risky", "risky"), desc: "codex.approval.approveForMe", server: '{"approval":"on-request","approvalsReviewer":"auto_review","sandbox":"workspace-write"}' }),
+      ch("approveForMe", "Approve for me", ["--sandbox", "workspace-write", "--ask-for-approval", "on-request", "-c", "approvals_reviewer=auto_review"], false, { traits: tr("risky", "risky"), desc: "codex.approval.approveForMe", server: '{"approval":"on-request","approvalsReviewer":"auto_review","sandbox":"workspace-write"}' }),
       ch("yolo", "Full Access", ["--sandbox", "danger-full-access", "--ask-for-approval", "never"], true, { traits: tr("never", "never"), desc: "codex.approval.yolo", server: '{"approval":"never","approvalsReviewer":"user","sandbox":"danger-full-access"}' }),
     ], { switch: "server" }),
     opt("collaboration", "default", [

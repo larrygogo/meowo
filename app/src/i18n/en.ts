@@ -477,7 +477,7 @@ export const en: Dict = {
     welcomeReview: "Review uncommitted changes",
     welcomeReviewPrompt: "Review my current uncommitted changes",
     emptyStarting: "Starting session…",
-    settingsDeferred: (name: string) => `Switches to ${name} after this turn`,
+    settingsDeferred: (name: string) => `Switches to ${name} after this turn (canceled if Meowo restarts)`,
     settingsApplying: "Switching",
     settingsComposerUnknown: "Couldn't read the terminal input box, so it wasn't restarted to keep your text",
     settingsFirstTurn: "The first message is being handled. Switch after the session is created",
