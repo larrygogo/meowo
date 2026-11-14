@@ -19,7 +19,7 @@ import { useT } from "../i18n";
 import { deliveryStatusLabel } from "../i18n/statusVocab";
 import { runningPlaceholder, runningReceipt, runningSendMode, unrecognizedPromptNotice } from "./chat/sendCopy";
 import { logChatEvent, maskScreenLine, useOutgoingDiag } from "./chat/chatDiag";
-import { controlAvailability, effortEntry, modeButtonMechanism, savesDefaultHint, modeMenuAvailability, modelListMechanism, modelMenuState } from "./chat/availability";
+import { controlAvailability, effortEntry, modeButtonMechanism, savesDefaultHint, modeMenuAvailability, modelListMechanism, modelMenuState, slashEntryAvailability, slashSendAvailability } from "./chat/availability";
 import { imeComposing } from "../ime";
 import { formatBackendError } from "../i18n/errors";
 import { useShowWhenReady } from "../useShowWhenReady";
@@ -109,7 +109,7 @@ import { remoteUi, SELECT_SESSION_EVENT } from "../remoteMode";
 import { busyProps } from "../busyButton";
 import { REMOTE_PREFS_EVENT, remoteTurnFolding } from "../remotePrefs";
 import { RemoteSessionList } from "../mobile/RemoteSessionList";
-import { performUndo, typedUndoTarget } from "./chat/undoTerminal";
+import { performUndo, typedUndoTarget, undoConfirmMessage } from "./chat/undoTerminal";
 import { useOutgoingUpkeep } from "./chat/useOutgoingUpkeep";
 import { useQuestionFormProbe } from "./chat/useQuestionFormProbe";
 import { SessionAdmin } from "./chat/SessionAdmin";
@@ -1472,6 +1472,11 @@ export function ChatWindow() {
     useAtFileCompletion({ cwd, prompt, setPrompt, promptInputRef });
   const { setSlashIndex, slashDismissed, setSlashDismissed, slashMenuRef, slashMatches, slashActive, slashArgHint } =
     useSlashCompletion(prompt, chatUi?.slash_commands);
+  /// 补全里的这一项此刻选不了的原因（回合在跑时要开 CLI 菜单的命令）；选得了回 null。
+  const slashBlocked = (name: string): string | null => {
+    const entry = slashEntryAvailability(t, chatUi, name, tone);
+    return entry.state === "disabled" ? entry.reason : null;
+  };
   // transcript 之外的兜底时间线：hook 落库的最近一问一答（UserPromptSubmit / Stop）。
   // transcript 尚未落盘/尚未定位到、或该 agent 不提供结构化 transcript 时用它渲染，
   // 让「会话已在工作」有真实内容可看。transcript 一旦就位（items 非空）即被完整记录取代。
@@ -2755,7 +2760,7 @@ export function ChatWindow() {
     const turns = list.slice(index).filter((item) => item.type === "user_text" && !item.interjected && !item.to_agent).length;
     if (turns === 0) return;
     if (!control.count_arg && !control.menu && turns !== 1) return;
-    const yes = confirmed || await appConfirm(control.restores_files ? t.chat.undoConfirmFiles : t.chat.undoConfirm, { title: t.chat.undoTitle, danger: true, confirmLabel: t.chat.undoConfirmLabel });
+    const yes = confirmed || await appConfirm(undoConfirmMessage(t, control), { title: t.chat.undoTitle, danger: true, confirmLabel: t.chat.undoConfirmLabel });
     if (!yes || !isCurrentOperation()) return;
     // 终端协议在 chat/undoTerminal；这里只管界面：收掉本地消息、原文放回输入框、按结局报错。
     await withSendGuard(async () => {
@@ -3245,6 +3250,9 @@ export function ChatWindow() {
       return;
     }
     if (attachments.length === 0 && (chatUi?.menu_slash_commands ?? []).includes(bare)) {
+      // 回合在跑时菜单打不开：说的是补全里置灰的那同一句，草稿留着，回合结束后再回车。
+      const menu = slashSendAvailability(t, chatUi, bare, toneRef.current);
+      if (menu.state === "disabled") { setSendError(menu.reason); return; }
       if (await openTerminalMenu(bare)) clearSubmittedDraft();
       return;
     }
@@ -5112,6 +5120,7 @@ export function ChatWindow() {
                   setSlashIndex((slashActive + step + slashMatches.length) % Math.max(1, slashMatches.length));
                 } else if (event.key === "Enter" && slashActive >= 0 && !imeComposing(event)) {
                   event.preventDefault();
+                  if (slashBlocked(slashMatches[slashActive].name)) return;
                   setPrompt(slashMatches[slashActive].name + " ");
                   setSlashIndex(0);
                   requestAnimationFrame(() => promptInputRef.current?.focus());
@@ -5123,13 +5132,15 @@ export function ChatWindow() {
                 ? <div className="chat-sheet-empty">{t.chat.slashSheetEmpty}</div>
                 : slashMatches.map((command, index) => (
                   <button type="button" key={command.name} role="option" aria-selected={index === slashActive} className="chat-slash-item"
+                    aria-disabled={slashBlocked(command.name) ? true : undefined}
                     onClick={() => {
+                      if (slashBlocked(command.name)) return;
                       setPrompt(command.name + " ");
                       setSlashIndex(0);
                       requestAnimationFrame(() => promptInputRef.current?.focus());
                     }}>
                     <code>{command.name}</code>
-                    <span>{command.description ?? t.chat.slashDesc[command.name] ?? ""}</span>
+                    <span>{slashBlocked(command.name) ?? command.description ?? t.chat.slashDesc[command.name] ?? ""}</span>
                   </button>
                 ))}
             </div>
@@ -5145,7 +5156,10 @@ export function ChatWindow() {
               // 没反应）。mousedown 阻止默认：不让按钮先抢走焦点，输入框的选区与 IME 状态都不动；
               // 再在下一帧补一次聚焦兜住键盘激活（Enter/空格落在按钮上）的路径。同 @ 补全 pickAtFile。
               onMouseDown={(event) => event.preventDefault()}
+              aria-disabled={slashBlocked(command.name) ? true : undefined}
               onClick={() => {
+                // 置灰的项点了不动：菜单不关、输入框不变，原因就写在这一行上。
+                if (slashBlocked(command.name)) return;
                 const next = command.name + " ";
                 setPrompt(next);
                 setSlashIndex(0);
@@ -5157,7 +5171,7 @@ export function ChatWindow() {
               }}>
               <code>{command.name}</code>
               {/* 自定义命令的描述从命令文件头里读出（后端下发）；内置命令的描述是翻译资产，走 i18n。 */}
-              <span>{command.description ?? t.chat.slashDesc[command.name] ?? ""}</span>
+              <span>{slashBlocked(command.name) ?? command.description ?? t.chat.slashDesc[command.name] ?? ""}</span>
             </button>
           ))}
         </div>}
@@ -5295,6 +5309,8 @@ export function ChatWindow() {
               if (event.key === "Tab" || (event.key === "Enter" && !event.shiftKey && !imeComposing(event))) {
                 event.preventDefault();
                 const command = slashMatches[slashActive];
+                // 高亮的是置灰项：回车、Tab 都不动（也不落到发送，半截命令不该发出去）。
+                if (command && slashBlocked(command.name)) return;
                 if (command) setPrompt(command.name + " ");
                 setSlashIndex(0);
                 return;

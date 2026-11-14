@@ -437,6 +437,8 @@ describe("ChatWindow 适配回归", () => {
     await waitFor(() => expect(writes(515)).toContain("/undo"));
     expect(writes(515)).not.toContain("/undo 1");
     expect(JSON.stringify(confirms)).toContain(zh.chat.undoConfirmFiles);
+    // 一次只能撤最近一轮，确认框里写明（走查输入 C3）。
+    expect((confirms[0] as { message: string }).message.endsWith(zh.chat.undoLatestOnly)).toBe(true);
     await waitFor(() => expect(screen.queryByText("甲做完了")).toBeNull(), { timeout: 4000 });
     // 旧消息消失与输入框回填是先后两步：CI 慢机器上断言落在两步之间就挂（v0.6.19 发版实遇）。
     await waitFor(() => expect(box().value).toBe("先做甲"), { timeout: 4000 });

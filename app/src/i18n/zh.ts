@@ -1513,6 +1513,8 @@ export const zh = {
     undoConfirm: "这条消息及之后的对话会移出上下文，原文放回输入框。已修改的文件不受影响。",
     // opencode 的撤回按快照回滚整个工作区（probe_opencode_undo 实测连没碰过的文件也回到当时）。
     undoConfirmFiles: "这条消息及之后的对话会撤回，原文放回输入框。工作区文件会一并还原到发这条消息之前。",
+    // 撤回命令一次只撤一轮的 CLI（OpenCode）在确认框里多这一句。
+    undoLatestOnly: "只能撤回最近一轮",
     undoConfirmLabel: "撤回",
     undoBusy: "任务运行中，结束后才能撤回",
     undoRejected: (line: string) => `撤回未完成：${line}`,
