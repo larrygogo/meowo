@@ -455,32 +455,119 @@ pub(super) fn read_model(ctx: &crate::caps::HookContext<'_>) -> Option<String> {
 }
 
 /// 见插件的 `prepare_unsent_resume`：找 CLI 自己的会话文件（不是 materialize 出的缓存副本）。
+/// 只有判定为「确定没发过消息」时才挪走它，挪到 Meowo 数据目录下备份（不直接删，做空 N1：判据一旦
+/// 出错删掉的就是用户的对话原文）；备份失败就不动它、按「有内容」走 `--resume`。
 pub(super) fn prepare_unsent_resume(session_id: &str) -> Option<bool> {
     let Some(path) = source_path(None, session_id) else {
         return Some(true);
     };
-    let text = fs::read_to_string(&path).ok()?;
-    if !has_no_messages(&text) {
-        return Some(false);
-    }
-    fs::remove_file(&path).ok().map(|_| true)
+    let backup = crate::meowo_data_root()?.join("backup").join("gemini-unsent");
+    prepare_unsent_at(&path, &backup)
 }
 
-/// 会话文件里一条消息都没有。启动时 CLI 就写了元数据行和一条合成的 `<session_context>` user 行
-/// （0.68 实拍会话文件第 1、2 行），它们不算用户发过的消息。读不出的行不算消息。
-pub(super) fn has_no_messages(text: &str) -> bool {
-    !text.lines().any(|line| {
-        let Ok(value) = serde_json::from_str::<Value>(line) else {
-            return false;
-        };
-        match value["type"].as_str() {
-            Some("gemini") => true,
-            Some("user") => !content_text(value.get("content"))
-                .trim_start()
-                .starts_with("<session_context>"),
-            _ => false,
+/// [`prepare_unsent_resume`] 找到会话文件之后的部分（单测用真实文件跑）。
+pub(super) fn prepare_unsent_at(path: &Path, backup: &Path) -> Option<bool> {
+    let text = fs::read_to_string(path).ok()?;
+    if session_content(path, &text) != SessionContent::Empty {
+        return Some(false);
+    }
+    Some(move_to_backup(path, backup).is_ok())
+}
+
+/// 把文件挪进备份目录、改名 `<原名>.bak`（同名已在就加序号）。跨盘时 rename 会失败，退回「复制成功再删原件」。
+pub(super) fn move_to_backup(path: &Path, backup: &Path) -> std::io::Result<PathBuf> {
+    fs::create_dir_all(backup)?;
+    let name = path
+        .file_name()
+        .ok_or_else(|| std::io::Error::other("no file name"))?
+        .to_string_lossy()
+        .into_owned();
+    // 改名成 .bak：CLI 只按 .json / .jsonl 列会话，备份不会被当成会话接回。
+    let mut target = backup.join(format!("{name}.bak"));
+    let mut n = 1;
+    while target.exists() {
+        target = backup.join(format!("{name}.{n}.bak"));
+        n += 1;
+    }
+    if fs::rename(path, &target).is_err() {
+        fs::copy(path, &target)?;
+        fs::remove_file(path)?;
+    }
+    Ok(target)
+}
+
+/// 会话文件里有没有用户发过的消息。三态：只有确定形态才判 `Empty`，认不准一律 `Unknown`（调用方当作
+/// 有内容，绝不删）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SessionContent {
+    Empty,
+    HasMessages,
+    Unknown,
+}
+
+/// 两种格式：
+/// - 0.68 的 `.jsonl`：首行元数据（带 `sessionId`），之后是消息行与 `$set` / `$rewindTo` 等更新行。启动时
+///   CLI 就写了元数据行和一条合成的 `<session_context>` user 行（0.68 实拍会话文件第 1、2 行），它们不算
+///   用户发过的消息。
+/// - 旧版 `.json`：单个对象，消息在 `messages` 数组里（一行或缩进都有；0.68 仍按 `.json || .jsonl` 列出
+///   并接回，做空 N1 读 chunk-RCB6BI5H.js）。
+pub(super) fn session_content(path: &Path, text: &str) -> SessionContent {
+    let is_message = |value: &Value| match value["type"].as_str() {
+        Some("user") => !content_text(value.get("content"))
+            .trim_start()
+            .starts_with("<session_context>"),
+        // gemini 回复、info（/model set）、error 等任何带类型的行都算会话里发生过事。
+        Some(_) => true,
+        None => false,
+    };
+    match path.extension().and_then(|ext| ext.to_str()) {
+        Some("jsonl") => {
+            let mut lines = text.lines().filter(|line| !line.trim().is_empty());
+            let Some(first) = lines.next() else {
+                return SessionContent::Unknown; // 空文件：不是 CLI 写的形态
+            };
+            let Ok(meta) = serde_json::from_str::<Value>(first) else {
+                return SessionContent::Unknown;
+            };
+            if !meta["sessionId"].is_string() || meta.get("type").is_some() {
+                return SessionContent::Unknown;
+            }
+            for line in lines {
+                let Ok(value) = serde_json::from_str::<Value>(line) else {
+                    return SessionContent::Unknown;
+                };
+                if is_message(&value) {
+                    return SessionContent::HasMessages;
+                }
+                let update = value.get("$set").is_some() || value.get("$rewindTo").is_some();
+                let synthetic = value["type"] == "user";
+                if !update && !synthetic {
+                    return SessionContent::Unknown;
+                }
+                // `$set` 里也可能整体换掉 messages（rewind 后重写）：里面有消息就算有内容。
+                if value
+                    .pointer("/$set/messages")
+                    .and_then(Value::as_array)
+                    .is_some_and(|messages| messages.iter().any(is_message))
+                {
+                    return SessionContent::HasMessages;
+                }
+            }
+            SessionContent::Empty
         }
-    })
+        Some("json") => {
+            let Ok(value) = serde_json::from_str::<Value>(text) else {
+                return SessionContent::Unknown;
+            };
+            // 旧版只判「有内容」，从不判空：0.68 不再写这种格式，没有「硬杀留下的空壳」要清，
+            // 判错的代价是删掉对话原文（做空 N1）。
+            match value.get("messages").and_then(Value::as_array) {
+                Some(messages) if messages.iter().any(is_message) => SessionContent::HasMessages,
+                _ => SessionContent::Unknown,
+            }
+        }
+        _ => SessionContent::Unknown,
+    }
 }
 
 /// 会话文件尾部最近的模型：回复行的 `model`，或 `/model set` 当场写的 info 行「Model set to X」

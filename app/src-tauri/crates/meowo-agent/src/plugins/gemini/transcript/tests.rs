@@ -327,24 +327,123 @@ fn model_follows_the_latest_reply_or_model_set_info_line() {
     assert_eq!(super::model_from_tail(r#"{"type":"info","content":"other"}"#), None);
 }
 
-/// 真机验证 G1：硬杀后留下只有元数据的会话文件，按「没发过消息」处理；有消息的不算。
+/// 真机验证 G1 + 做空 N1：只有确定「没发过消息」的形态才判空；旧版 `.json`（一行、缩进）有消息必须
+/// 判有内容；认不准的一律不判空。
 #[test]
-fn metadata_only_session_file_counts_as_unsent() {
+fn unsent_session_detection_is_exact_for_both_formats() {
+    use super::{session_content, SessionContent::*};
+    use std::path::Path;
+    let jsonl = Path::new("session-2026-11-13T16-46-8b42a13c.jsonl");
+    let json = Path::new("session-2026-07-20T05-45-1b135d85.json");
     // 0.68 实拍：没发消息的会话文件 = 元数据行 + 合成的 <session_context> user 行 + $set 行。
-    let meta = concat!(
-        r#"{"sessionId":"8b42a13c-8714-4a14-9d61-08036659e03e","projectHash":"edc4","startTime":"2026-11-13T16:46:15Z"}"#,
-        "
-",
-        r#"{"id":"d049","timestamp":"2026-11-13T16:46:15.353Z","type":"user","content":[{"text":"<session_context>
-This is the Gemini CLI."}]}"#,
-        "
-",
-        r#"{"$set":{"lastUpdated":"2026-11-13T16:46:15.354Z"}}"#
-    );
-    assert!(super::has_no_messages(meta));
-    assert!(super::has_no_messages(""));
-    let with_user = format!("{meta}\n{}", r#"{"type":"user","content":"hi"}"#);
-    assert!(!super::has_no_messages(&with_user));
+    let meta = [
+        r#"{"sessionId":"8b42a13c-8714-4a14-9d61-08036659e03e","projectHash":"edc4","startTime":"2026-11-13T16:46:15Z","kind":"main"}"#,
+        r#"{"id":"d049","timestamp":"2026-11-13T16:46:15.353Z","type":"user","content":[{"text":"<session_context>\nThis is the Gemini CLI."}]}"#,
+        r#"{"$set":{"lastUpdated":"2026-11-13T16:46:15.354Z"}}"#,
+    ]
+    .join("\n");
+    assert_eq!(session_content(jsonl, &meta), Empty);
+    let with_user = format!("{meta}\n{}", r#"{"id":"u1","type":"user","content":[{"text":"hi"}]}"#);
+    assert_eq!(session_content(jsonl, &with_user), HasMessages);
     let with_reply = format!("{meta}\n{}", r#"{"type":"gemini","model":"gemini-2.5-pro","content":"ok"}"#);
-    assert!(!super::has_no_messages(&with_reply));
+    assert_eq!(session_content(jsonl, &with_reply), HasMessages);
+    let with_info = format!("{meta}\n{}", r#"{"type":"info","content":"Model set to gemini-2.5-pro."}"#);
+    assert_eq!(session_content(jsonl, &with_info), HasMessages);
+    let rewritten = format!("{meta}\n{}", r#"{"$set":{"messages":[{"id":"u1","type":"user","content":"hi"}]}}"#);
+    assert_eq!(session_content(jsonl, &rewritten), HasMessages);
+    // 认不准：空文件、首行不是元数据、半截行、陌生行。
+    assert_eq!(session_content(jsonl, ""), Unknown);
+    assert_eq!(session_content(jsonl, r#"{"type":"user","content":"hi"}"#), Unknown);
+    assert_eq!(session_content(jsonl, &format!("{meta}\n{{\"type\":\"gem")), Unknown);
+    assert_eq!(session_content(jsonl, &format!("{meta}\n{{\"other\":1}}")), Unknown);
+
+    // 旧版单文件（ConversationRecord：元数据字段 + messages 数组），一行与缩进两种写法。
+    let old = serde_json::json!({
+        "sessionId": "1b135d85-0000-4000-8000-000000000000",
+        "projectHash": "9f1c",
+        "startTime": "2026-07-20T05:45:00.000Z",
+        "lastUpdated": "2026-07-20T05:47:12.000Z",
+        "messages": [
+            {"id": "m1", "timestamp": "2026-07-20T05:45:10.000Z", "type": "user", "content": "帮我看看这个报错"},
+            {"id": "m2", "timestamp": "2026-07-20T05:45:20.000Z", "type": "gemini", "content": "好的", "model": "gemini-2.5-pro"}
+        ]
+    });
+    assert_eq!(session_content(json, &old.to_string()), HasMessages);
+    assert_eq!(session_content(json, &serde_json::to_string_pretty(&old).unwrap()), HasMessages);
+    let mut empty_old = old.clone();
+    empty_old["messages"] = serde_json::json!([]);
+    // 旧版从不判空（只对 .jsonl 的确定形态判空）。
+    assert_eq!(session_content(json, &serde_json::to_string_pretty(&empty_old).unwrap()), Unknown);
+    assert_eq!(session_content(json, "{\"sessionId\":\"x\""), Unknown);
+    assert_eq!(session_content(json, r#"{"sessionId":"x"}"#), Unknown);
+    assert_eq!(session_content(Path::new("session-x.txt"), &meta), Unknown);
+}
+
+/// 判空的文件挪进备份目录（可恢复），不是删掉；同名已在时不覆盖旧备份。
+#[test]
+fn unsent_session_file_is_moved_to_backup_not_deleted() {
+    let root = std::env::temp_dir().join(format!("meowo-gemini-backup-{}", std::process::id()));
+    let chats = root.join("chats");
+    let backup = root.join("backup");
+    std::fs::create_dir_all(&chats).unwrap();
+    for round in 0..2 {
+        let file = chats.join("session-x.jsonl");
+        std::fs::write(&file, format!("round {round}")).unwrap();
+        let moved = super::move_to_backup(&file, &backup).unwrap();
+        assert!(!file.exists());
+        assert_eq!(std::fs::read_to_string(&moved).unwrap(), format!("round {round}"));
+        assert!(moved.extension().is_some_and(|ext| ext == "bak"));
+    }
+    assert_eq!(std::fs::read_dir(&backup).unwrap().count(), 2);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// 做空 N1 实跑：真实文件走完整的「判空 → 挪走」。旧版 .json（一行 / 缩进，有消息或空 messages）原样留着、
+/// 按有内容接回；只有 0.68 .jsonl 的确定空壳被挪成备份目录里的 .bak，内容不丢。
+#[test]
+fn old_format_sessions_survive_unsent_resume_on_disk() {
+    let root = std::env::temp_dir().join(format!("meowo-gemini-n1-{}", std::process::id()));
+    let chats = root.join("chats");
+    let backup = root.join("backup");
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&chats).unwrap();
+    let old = serde_json::json!({
+        "sessionId": "1b135d85-0000-4000-8000-000000000000",
+        "projectHash": "9f1c",
+        "startTime": "2026-07-20T05:45:00.000Z",
+        "messages": [
+            {"id": "m1", "type": "user", "content": "帮我看看这个报错"},
+            {"id": "m2", "type": "gemini", "content": "好的", "model": "gemini-2.5-pro"}
+        ]
+    });
+    let mut empty_old = old.clone();
+    empty_old["messages"] = serde_json::json!([]);
+    let files = [
+        ("session-2026-07-20T05-45-1b135d85.json", old.to_string(), false),
+        ("session-2026-07-21T05-45-2b135d85.json", serde_json::to_string_pretty(&old).unwrap(), false),
+        ("session-2026-07-22T05-45-3b135d85.json", serde_json::to_string_pretty(&empty_old).unwrap(), false),
+        (
+            "session-2026-11-13T16-46-8b42a13c.jsonl",
+            [
+                r#"{"sessionId":"8b42a13c-8714-4a14-9d61-08036659e03e","projectHash":"edc4","startTime":"2026-11-13T16:46:15Z","kind":"main"}"#,
+                r#"{"id":"d049","type":"user","content":[{"text":"<session_context>\nThis is the Gemini CLI."}]}"#,
+                r#"{"$set":{"lastUpdated":"2026-11-13T16:46:15.354Z"}}"#,
+            ]
+            .join("\n"),
+            true,
+        ),
+    ];
+    for (name, text, unsent) in &files {
+        let path = chats.join(name);
+        std::fs::write(&path, text).unwrap();
+        assert_eq!(super::prepare_unsent_at(&path, &backup), Some(*unsent), "{name}");
+        if *unsent {
+            assert!(!path.exists(), "{name} 应挪走");
+            let bak = backup.join(format!("{name}.bak"));
+            assert_eq!(&std::fs::read_to_string(bak).unwrap(), text);
+        } else {
+            assert_eq!(&std::fs::read_to_string(&path).unwrap(), text, "{name} 必须原样留着");
+        }
+    }
+    let _ = std::fs::remove_dir_all(root);
 }

@@ -573,8 +573,8 @@ pub trait AgentPlugin: Sync {
     }
 
     /// 带参重启接回前判断这个会话是不是「还没发过消息」（见 [`crate::ModelSwitch::RestartResume`] 的
-    /// `unsent_resume_args`）：Some(true) = 是（必要时替 CLI 清掉只有元数据的会话文件），Some(false) =
-    /// 已有消息、照常 resume，None = 判断不了（照常 resume）。看的是 CLI 自己的会话文件，不是 Meowo 的缓存副本。
+    /// `unsent_resume_args`）：Some(true) = 是（必要时把只有元数据的会话文件挪进 Meowo 备份目录），Some(false) =
+    /// 已有消息或认不准、照常 resume，None = 判断不了（照常 resume）。看的是 CLI 自己的会话文件，不是 Meowo 的缓存副本。
     fn prepare_unsent_resume(&self, _session_id: &str) -> Option<bool> {
         None
     }

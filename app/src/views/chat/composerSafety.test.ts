@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { composerCandidate, composerSafety, type ComposerGuard } from "./composerSafety";
+import sharedFrames from "../../test/fixtures/composer-frames.json";
 // 2026-11-12 无模型 PTY 物理行实拍：target/lead-provider-probes/composer/runs/{kimi-24600,opencode-83332}。
 // 仅裁输入框，保留实拍字符与空格，覆盖多行、中间光标与折叠粘贴。
 const captures = {
@@ -150,3 +151,15 @@ describe("无边框与水平边框的光标候选", () => {
 
 const codexWithShortcuts = ["› Ask Codex to do anything", "", "  GPT-6.1-Sol default · ~\\Desktop\\workspace\\meowo\\target\\provider-compat-lead\\target\\lead-provider-probes\\composer\\runs…", "  ← for agents · ? for shortcuts"];
 it("Codex 最下方的快捷键提示不是模型 footer", () => expect(composerCandidate(codexWithShortcuts,codex).state).toBe("empty"));
+
+// 做空 N2：与宿主 session_settings::composer_state 读同一份实拍帧与规则（Rust 测试另核对规则与插件声明一致），
+// 两边对每一帧必须给出同样的结论。Gemini 0.68 的输入框边框是 ▄/▀ 半块字符。
+describe("前后端输入框判定一致", () => {
+  for (const frame of sharedFrames.frames) {
+    it(frame.name, () => {
+      const guard = (sharedFrames.guards as Record<string, ComposerGuard>)[frame.provider];
+      expect(composerCandidate(frame.lines, guard).state).toBe(frame.expect);
+      expect(composerCandidate(frame.lines.map((line) => line.trimEnd()), guard).state).toBe(frame.expect);
+    });
+  }
+});

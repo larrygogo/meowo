@@ -256,7 +256,8 @@ impl AgentPlugin for Gemini {
     /// 没发过消息的会话：Gemini 正常退出时会删掉只有元数据的会话文件（research-kimi-gemini §3.3 e3-05），
     /// Meowo 硬杀进程（broker.stop）时来不及删，留着它 `--resume` 报「No previous sessions found」、
     /// `--session-id` 报「already exists」（0.68 bundle `sessionExists` 按 chats/ 下同 id 文件判，
-    /// 真机验证 G1，2026-11-14）。这里替 CLI 做完它本来会做的清理。
+    /// 真机验证 G1，2026-11-14）。这里替 CLI 做完它本来会做的清理，但只挪进备份目录、不删；
+    /// 判据只认确定形态（做空 N1：旧版 .json 曾被误判为空），见 transcript::session_content。
     fn prepare_unsent_resume(&self, session_id: &str) -> Option<bool> {
         transcript::prepare_unsent_resume(session_id)
     }
@@ -296,8 +297,11 @@ impl AgentPlugin for Gemini {
         Some(crate::chat_ui::ComposerGuard {
             prompt_footer: false,
             input_start_pattern: r"^(\s*> )",
-            top_pattern: r"^─+$",
-            bottom_pattern: r"^─+$",
+            // 0.65 是整条细线 `─`；0.68 改画半块字符，上沿 `▄`、下沿 `▀`（真机验证 g2/g7/g8 四帧，
+            // UTF-8 E2 96 84 / E2 96 80，做空 N2）。历史里每条用户消息也画同样的框，从屏幕底往上找到的
+            // 第一个下沿才是输入框；等审批时输入框被审批面板取代，认到的是历史框（有字），只会更保守。
+            top_pattern: r"^(?:─+|▄+)\s*$",
+            bottom_pattern: r"^(?:─+|▀+)\s*$",
             row_pattern: r"^ (.*)$",
             prompt_prefix: ">",
             tail_rows: 0,

@@ -232,8 +232,8 @@ const COMPOSER_GUARDS: Record<string, NonNullable<ChatUi["composer_guard"]>> = {
   "gemini": {
     "prompt_footer": false,
     "input_start_pattern": "^(\\s*> )",
-    "top_pattern": "^─+$",
-    "bottom_pattern": "^─+$",
+    "top_pattern": "^(?:─+|▄+)\\s*$",
+    "bottom_pattern": "^(?:─+|▀+)\\s*$",
     "row_pattern": "^ (.*)$",
     "prompt_prefix": ">",
     "tail_rows": 0,
