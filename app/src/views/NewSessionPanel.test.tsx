@@ -191,14 +191,16 @@ describe("NewSessionPanel (独立窗口)", () => {
   it("高风险启动档（契约 risk=true）渲染警示色与风险副标题", async () => {
     render(<NewSessionPanel />);
     fireEvent.click(within(await screen.findByTestId("ns-option-permission")).getByRole("button"));
-    // 名字是统一说法，副标题是一句话说明 + CLI 原名（任务 20261114-tui-model-switch）。
+    // 名字是统一说法，副标题是官方原文提炼的一句话，CLI 原名在右侧小字列（与桌面一致，第三轮 C1/C8）。
     const risky = screen.getByRole("option", { name: /^都不问/ });
     expect(risky.className).toContain("risk");
-    expect(within(risky).getByText("改文件和跑命令都不问 · Bypass Permissions")).toBeTruthy();
+    expect(within(risky).getByText("跳过所有权限确认")).toBeTruthy();
+    expect(within(risky).getByText("Bypass Permissions").className).toContain("dd-detail");
     // 普通档不带警示样式，副标题是它自己的三维说法。
     const plain = screen.getByRole("option", { name: /^计划/ });
     expect(plain.className).not.toContain("risk");
-    expect(within(plain).getByText("只出方案 · 不改文件也不跑命令 · Plan")).toBeTruthy();
+    expect(within(plain).getByText("只读分析，最后给出方案")).toBeTruthy();
+    expect(within(plain).getByText("Plan")).toBeTruthy();
   });
 
   it("relay 启用时 model 档置灰并注明「由中转固定为 X」，其余档不受影响", async () => {

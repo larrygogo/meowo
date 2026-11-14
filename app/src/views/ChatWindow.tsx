@@ -43,7 +43,7 @@ import { SubagentViewNotice } from "./chat/SubagentViewNotice";
 import { clearPartialImageDraft, composerDraftText, createSendQueue, IMAGE_PASTE_LANDING_POLLS, LATE_IMAGE_GRACE_MS, RESUME_VERIFY_WINDOW_MS, stashComposerDraft, submitToTerminal, terminalInput, waitForTerminalReady, type SubmitInput, type TerminalReadyMessages, type TerminalStartupResult } from "./chat/terminalSubmit";
 import { manualSendVerdict } from "./chat/composerConfirmation";
 import { composerCandidate } from "./chat/composerSafety";
-import { managedTerminalFrame } from "../api";
+import { managedTerminalFrame, agentDynamicModeChoices, type DynamicModeChoice } from "../api";
 import { BottomSheet, SheetOnPhone } from "./chat/BottomSheet";
 import { runningActivityView, RunningBar, SnakeSpinner, TurnAnnouncer, useCliStatusStore } from "./chat/RunningBar";
 import { arrowPanelApprovalDetails, framedBoxApprovalDetails, proceedBoxApprovalDetails } from "./chat/terminalApprovalDetails";
@@ -1195,6 +1195,18 @@ export function ChatWindow() {
   useEffect(() => {
     listAgents().then(setAgentsForOptions).catch(() => {});
   }, []);
+  // 运行时才知道的档（OpenCode 自定义 agent）：对话框的模式菜单与新建页同一份（第三轮 C6）。
+  // 只有声明了对话框切换栏的 agent 才去读（opencode agent list 要起进程）。
+  const [dynamicModeChoices, setDynamicModeChoices] = useState<DynamicModeChoice[]>([]);
+  const wantsDynamicModes = !!provider && !!agentsForOptions?.find((agent) => agent.id === provider)
+    ?.launch_options?.some((option) => option.switch === "dialog");
+  useEffect(() => {
+    setDynamicModeChoices([]);
+    if (!provider || !wantsDynamicModes) return;
+    let cancelled = false;
+    agentDynamicModeChoices(provider, cwd).then((value) => { if (!cancelled) setDynamicModeChoices(value ?? []); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [provider, cwd, wantsDynamicModes]);
   const permissionOption = (provider
     ? agentsForOptions
         ?.find((agent) => agent.id === provider)
@@ -5248,7 +5260,7 @@ export function ChatWindow() {
               const control = controls.get(dimension);
               const state = states.find((mode) => mode.dimension === dimension);
               const launchOption = switchable.find((option) => option.id === dimension);
-              const views = launchOption ? modeChoiceViews(t, launchOption) : null;
+              const views = launchOption ? modeChoiceViews(t, launchOption, null, dynamicModeChoices) : null;
               const viewOf = (value: string) => views?.find((view) => view.value === value);
               // 会话服务 / 带参重启的栏交给 useSessionSettings；Control 型（Kimi /plan、OpenCode Tab）仍用直达输入。
               const viaSettings = !!launchOption && launchOption.switch !== "control";
@@ -5411,7 +5423,8 @@ export function ChatWindow() {
                         {modeDesc(String(option.value)) && <span className="chat-model-item-desc" id={`chat-mode-desc-${dimension}-${option.value}`}>{modeDesc(String(option.value))}</span>}
                       </span>
                       {!resumePick && viewOf(String(option.value))?.detail && <span className="chat-model-item-detail">{viewOf(String(option.value))?.detail}</span>}
-                      {active && <Icon glyph={icCheck} size={16} className="chat-model-check" />}
+                      {/* 对勾占固定槽位（未选中行也占），右侧 CLI 原名列各行右缘对齐（第三轮 C5）。 */}
+                      <span className="chat-model-check-slot" aria-hidden="true">{active && <Icon glyph={icCheck} size={16} className="chat-model-check" />}</span>
                     </button>;
                   })}
                 </div></SheetOnPhone>}

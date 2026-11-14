@@ -2,10 +2,10 @@
  * 模式的统一说法：对话框（composer 模式菜单）与新建会话页（桌面与手机）共用这一份。
  *
  * 各家模式原名不同、语义错位（Kimi `--yolo` 是「危险仍问」，Gemini `--yolo` 才是「都不问」），
- * 菜单每档按插件声明的三维（改文件 / 跑命令要不要问、是否只出方案）说，下一行是一句话说明，
- * 右边小字是 CLI 原名（任务 20261114-tui-model-switch，leader：「模式最好在交互界面能有一个统一的解释」）。
+ * 菜单每档的名字按插件声明的三维（改文件 / 跑命令要不要问、是否只出方案）查共用短名，下一行一律是
+ * 各家官方原文提炼的一句话（t.modes.desc，三维只管短名与分组，第三轮 C1），右边小字是 CLI 原名（任务 20261114-tui-model-switch，leader：「模式最好在交互界面能有一个统一的解释」）。
  */
-import type { DynamicModeChoice, LaunchChoice, LaunchDefaults, LaunchOption, ModeTraits } from "../../api";
+import type { DynamicModeChoice, LaunchChoice, LaunchDefaults, LaunchOption, ModelCatalogEntry, ModeTraits } from "../../api";
 import type { Dict } from "../../i18n/zh";
 
 export type ModeChoiceView = {
@@ -14,8 +14,10 @@ export type ModeChoiceView = {
   label: string;
   /** 胶囊上的短名：CLI 原名（已有短名表的沿用）。 */
   short: string;
-  /** 第二行：三维统一说法（改文件 / 跑命令要不要问、是否只出方案）。 */
+  /** 第二行：官方原文提炼的一句话（t.modes.desc）；没有时退回三维统一说法。 */
   desc?: string;
+  /** 名字旁的小字标签：新建页里 CLI 配置的默认档标「默认」（第三轮 C7）。 */
+  tag?: string;
   /** 小字：CLI 原名。 */
   detail?: string;
   risk: boolean;
@@ -23,13 +25,13 @@ export type ModeChoiceView = {
   disabled?: boolean;
 };
 
-/** 三维统一说法，如「改文件不问 · 跑命令危险时才问」「只出方案 · 不改文件 · 跑命令按权限档」。 */
+/** 三维统一说法，如「改文件不问，命令危险才问」。说明里一律用中文逗号分隔（第三轮 C8）。 */
 export function traitsSummary(t: Dict, traits: ModeTraits): string {
   const parts = traits.edits === traits.commands
     ? [t.modes.both[traits.edits]]
     : [t.modes.edits[traits.edits], t.modes.commands[traits.commands]];
   if (traits.plan_only) parts.unshift(t.modes.planOnly);
-  return parts.filter(Boolean).join(" · ");
+  return parts.filter(Boolean).join(t.modes.sep);
 }
 
 /** 共用短名：按三维查表，同一语义跨家同一个名字（「统一解释」，2026-11-14 截图复核）。
@@ -61,7 +63,8 @@ export function planToggle(option: LaunchOption): { on: string; off: string } | 
   return plain ? { on: on.id, off: off.id } : null;
 }
 
-/** 一栏启动选项的每档视图。`defaults` 是 CLI 配置里的默认档：没有统一说法的「默认」档按它来说。
+/** 一栏启动选项的每档视图。`defaults` 是 CLI 配置里的默认档（只有新建页传）：没有统一说法的「默认」档
+ *  读得到配置时不单列一行（不出现「默认（X）」与「X」两行），改在 X 那行标「默认」（第三轮 C7）。
  *  `dynamic` 是运行时才知道的档（OpenCode 自定义 agent），附在末尾。 */
 export function modeChoiceViews(
   t: Dict,
@@ -75,7 +78,9 @@ export function modeChoiceViews(
     return id && id !== choice.id ? option.choices.find((candidate) => candidate.id === id && candidate.traits) : undefined;
   };
   const toggle = planToggle(option);
-  const views = option.choices.map((choice): ModeChoiceView => {
+  const official = (choice: LaunchChoice) => (choice.desc ? t.modes.desc[choice.desc] : undefined);
+  const configuredId = defaults?.choices[option.id];
+  const views = option.choices.flatMap((choice): ModeChoiceView[] => {
     // 胶囊短名：计划开关说开没开；其余用统一说法的短名（中文界面中文），CLI 原名只在菜单小字。
     const short = toggle ? t.modes.plan(choice.id === toggle.on)
       : (choice.traits ? sharedShort(t, choice.traits, choice.desc) : choice.desc ? t.modes.short[choice.desc] : undefined)
@@ -92,24 +97,23 @@ export function modeChoiceViews(
         : undefined;
       if (configuredChoice?.traits) {
         const name = sharedShort(t, configuredChoice.traits, configuredChoice.desc) ?? configuredChoice.label;
-        return { value: choice.id, label: short, short, desc: t.modes.configLocked(name), detail: choice.label, risk: choice.risk, disabled: true };
+        return [{ value: choice.id, label: short, short, desc: t.modes.configLocked(name), detail: choice.label, risk: choice.risk, disabled: true }];
       }
-      return { value: choice.id, label: short, short, desc: traitsSummary(t, choice.traits), detail: choice.label, risk: choice.risk };
+      const tag = defaults && configuredId === choice.id && option.choices.some((other) => !other.traits) ? t.modes.defaultTag : undefined;
+      return [{ value: choice.id, label: short, short, desc: official(choice) ?? traitsSummary(t, choice.traits), detail: choice.label, risk: choice.risk, ...(tag ? { tag } : {}) }];
     }
     // 「默认」档不传参数，行为由 CLI 配置决定：读得到配置就说成那一档；读不到用这档自己的说明
     // （「按权限档执行」「按 Codex 配置文件的设置」），连说明都没有才说「按 CLI 配置」。
-    if (effective?.traits) {
-      const name = t.modes.followConfig(sharedShort(t, effective.traits, effective.desc) ?? effective.label);
-      return { value: choice.id, label: name, short: name, desc: traitsSummary(t, effective.traits), detail: choice.label, risk: choice.risk || effective.risk };
-    }
-    return {
+    // 新建页读得到配置（defaults 只有新建页传）：这一行与配置那一档重复，省掉，由那一档标「默认」。
+    if (effective?.traits) return [];
+    return [{
       value: choice.id,
       label: short,
       short,
-      desc: choice.desc ? t.modes.desc[choice.desc] : t.modes.followConfigUnknown,
+      desc: official(choice) ?? t.modes.followConfigUnknown,
       detail: choice.label,
       risk: choice.risk,
-    };
+    }];
   });
   for (const extra of dynamic) {
     if (extra.option !== option.id || views.some((view) => view.value === extra.id)) continue;
@@ -118,9 +122,30 @@ export function modeChoiceViews(
   return views;
 }
 
+/** 新建页的模型清单行（桌面 NewSessionPage 与手机 NewSessionPanel 共用，第三轮 C3/C7）。
+ *  CLI 配置里的默认模型（配置写明的，或清单标 is_default 的）不另列「默认（X）」：X 那一行的值就是
+ *  「不传 -m」（空串），名字旁标「默认」。读不到默认模型时才留一行「默认（按 CLI 配置）」。 */
+export function modelChoiceRows(
+  t: Dict,
+  catalog: readonly ModelCatalogEntry[],
+  defaults?: LaunchDefaults | null,
+): { value: string; label: string; group?: string | null; detail?: string; tag?: string }[] {
+  const configured = catalog.find((entry) => entry.id === defaults?.model) ?? catalog.find((entry) => entry.is_default);
+  const rows = catalog.map((entry) => ({
+    value: entry === configured ? "" : entry.id,
+    label: entry.label,
+    group: entry.group,
+    detail: entry.uncertain ? t.modes.uncertain : undefined,
+    ...(entry === configured ? { tag: t.modes.defaultTag } : {}),
+  }));
+  if (configured) return rows;
+  return [{ value: "", label: t.modes.followConfig(defaults?.model ?? t.modes.followConfigUnknown), group: null, detail: undefined }, ...rows];
+}
+
 /** 新建页显示哪一档：用户明确选过非默认档的用它；否则按 CLI 配置的默认档显示（不传参数时 CLI 本来
  *  就用它，显示与实际一致）；都没有退回插件声明的 default。 */
 export function initialChoice(option: LaunchOption, stored: string | undefined, defaults?: LaunchDefaults | null): string {
+  // 存的是被省掉的「默认」行（见 modeChoiceViews）：显示成配置那一档。
   if (stored && stored !== option.default) return stored;
   const configured = defaults?.choices[option.id];
   if (configured && option.choices.some((choice) => choice.id === configured)) return configured;

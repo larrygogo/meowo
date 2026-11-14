@@ -31,7 +31,7 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "settings/current_unknown", exact: true, zh: "读不到会话当前的模式，没有重启，打开模式菜单后再试", en: "Couldn't read the session's current mode, so it wasn't restarted. Open the mode menu and retry" },
   { m: "settings/composer_not_empty", exact: true, zh: "终端输入框里还有字，没有重启", en: "The terminal input box still has text, so it wasn't restarted" },
   { m: "settings/server_unreachable", exact: true, zh: "连不上会话服务，没有切换", en: "Couldn't reach the session server. Nothing was switched" },
-  { m: "settings/lead_waiting", exact: true, zh: "Lead 在等关卡答复，续跑后再切", en: "Lead is waiting for a gate answer. Switches after it resumes" },
+  { m: "settings/lead_waiting", exact: true, zh: "Lead 在等关卡答复，答复后那一轮跑完再切", en: "Lead is waiting for a gate answer. Switches after the turn that follows it" },
   { m: "settings/applies_on_open", exact: true, zh: "会话没在运行，打开后再切", en: "The session isn't running. Switches once it's opened" },
   { m: "settings/busy_now", exact: true, zh: "会话刚开始忙，空闲后再切", en: "The session just got busy. Switches when it's idle" },
   { m: "settings/background_busy", exact: true, zh: "后台子任务还在跑，结束后再切", en: "Background subtasks are still running. Switch after they finish" },

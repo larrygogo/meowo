@@ -20,6 +20,7 @@ import { savePanel } from "../src/views/chat/panelTabs";
 import { SETTINGS_SECTION_KEY } from "../src/settingsNav";
 import { CHAT_SESSION_ID, FIXED_NOW, flowStateItems, markReady, questionInput, scmMock, withLongItems } from "./fixtures";
 import { qaFlowBoot, qaFlowMock } from "./qaFlow";
+import { tmsChatMock, tmsCommonMock, tmsProviderOf } from "./tmsFixtures";
 import type { ProviderUsage } from "../src/api";
 import type { IslandAlertEvent } from "../src/generated/contracts/IslandAlertEvent";
 import "../src/fonts";
@@ -99,6 +100,34 @@ const EXTENSIONS = [
 ];
 
 async function boot(): Promise<React.ReactNode> {
+  // 任务 20261114-tui-model-switch 截图验收：四家原生 TUI 会话（tms-<家>?state=…）与新建页（tms-new-<家>）。
+  if (scene.startsWith("tms-new-")) {
+    const provider = tmsProviderOf(scene);
+    setExtraMock(tmsCommonMock(provider));
+    installMocks("chat");
+    bootAppearance({ scale: true });
+    const { NewSessionPage } = await import("../src/views/chat/NewSessionPage");
+    return (
+      <div className="chat-window" style={{ position: "fixed", inset: 0 }}>
+        <div className="chat-body">
+          <div className="chat-main">
+            <NewSessionPage prefill={{ cwd: RECENT_DIRS[0], provider }} onLaunched={noop} onOpenSession={noop} onMoreSessions={noop} />
+          </div>
+        </div>
+      </div>
+    );
+  }
+  if (scene.startsWith("tms-")) {
+    const provider = tmsProviderOf(scene);
+    window.history.replaceState({}, "", `${location.pathname}?${q.toString()}&sessionId=${CHAT_SESSION_ID}`);
+    const chat = chatMock(lang);
+    const tms = tmsChatMock(provider, q.get("state") ?? "idle", chat);
+    setExtraMock((cmd, args) => tms(cmd, args) ?? scmMock(cmd) ?? chat(cmd));
+    installMocks("chat");
+    bootAppearance({ scale: true });
+    const { ChatWindow } = await import("../src/views/ChatWindow");
+    return <div className="demo-chat-frame" style={{ position: "fixed", inset: 0, overflow: "hidden" }}><ChatWindow /></div>;
+  }
   if (scene === "chat" || scene === "chat-long" || scene.startsWith("panel-")) {
     window.history.replaceState({}, "", `${location.pathname}?${q.toString()}&sessionId=${CHAT_SESSION_ID}`);
     const chat = chatMock(lang);

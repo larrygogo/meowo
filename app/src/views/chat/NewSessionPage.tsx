@@ -9,7 +9,7 @@ import { fmtShortAgo } from "../sticker/helpers";
 import { agentAssets, tintStyle } from "../../providers";
 import { normalizePath, pathKey } from "../../paths";
 import { PillSelect } from "./PillSelect";
-import { initialChoice, modeChoiceViews } from "./modeChoices";
+import { initialChoice, modeChoiceViews, modelChoiceRows, planToggle } from "./modeChoices";
 import { AgentAppIcon } from "./AgentAppIcon";
 
 function ShieldIcon() {
@@ -20,7 +20,7 @@ import { useNewSessionForm } from "../useNewSessionForm";
 import { WorkspacePicker } from "./WorkspacePicker";
 import { WorktreeOption } from "../WorktreeOption";
 import { Icon } from "../../icons/Icon";
-import { icArrowUp, icShield } from "../../icons/glyphs.chat";
+import { icAgents, icArrowUp, icLightbulb, icShield } from "../../icons/glyphs.chat";
 
 /// 对话窗里的新建会话页（对照 Kimi Code：新建会话不弹窗，主区就地换成一个输入框，
 /// 上方是工作区选择，下面一排 Agent / 启动选项的小下拉，写下第一句话发出去就开聊）。
@@ -194,8 +194,7 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched, onOpenSession
                   新建页的选项与默认值来自 CLI 当前配置）。不选 = 不传 -m，CLI 照自己的配置。 */}
               {modelCatalog.length > 0 && (() => {
                 const pinned = relayPins[provider];
-                const configured = modelCatalog.find((entry) => entry.id === cliDefaults?.model) ?? modelCatalog.find((entry) => entry.is_default);
-                const defaultLabel = t.modes.followConfig(configured?.label ?? cliDefaults?.model ?? t.modes.followConfigUnknown);
+                const rows = modelChoiceRows(t, modelCatalog, cliDefaults);
                 return (
                   <PillSelect
                     testId="nsp-option-model"
@@ -203,16 +202,9 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched, onOpenSession
                     label={t.newSession.launchOption.model}
                     tip={pinned !== undefined ? t.newSession.relayPinnedModel(pinned) : t.newSession.launchOption.model}
                     disabled={pinned !== undefined}
-                    value={opts.model ?? ""}
-                    options={[
-                      { value: "", label: defaultLabel, short: configured?.label ?? t.newSession.defaultOf(t.newSession.launchOption.model) },
-                      ...modelCatalog.map((entry) => ({
-                        value: entry.id,
-                        label: entry.label,
-                        group: entry.group ?? undefined,
-                        detail: entry.uncertain ? t.modes.uncertain : undefined,
-                      })),
-                    ]}
+                    // 存着的显式模型恰是默认那一行（值已折成空串）时，按默认行显示。
+                    value={rows.some((row) => row.value === (opts.model ?? "")) ? (opts.model ?? "") : ""}
+                    options={rows.map((row) => ({ ...row, group: row.group ?? undefined, short: row.value === "" && !row.tag ? t.newSession.defaultOf(t.newSession.launchOption.model) : row.label }))}
                     onChange={(value) => setOpts((current) => {
                       const next = { ...current };
                       if (value) next.model = value;
@@ -229,12 +221,16 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched, onOpenSession
                 // 权限一类（权限 / 审批）配盾牌图标、胶囊用对话页的短名；「默认」带上维度名，
                 // 模型的默认档没有图标可认，写成「默认模型」。
                 const guard = option.id === "permission" || option.id === "approval";
+                // 图标与对话框的模式胶囊一致：计划开关是灯泡、OpenCode agent 是 agent 图标（第三轮 C8）。
+                const plan = !!planToggle(option);
+                const agentPill = option.id === "agent";
+                const modeIcon = guard ? <ShieldIcon /> : plan ? <Icon glyph={icLightbulb} size={14} /> : agentPill ? <Icon glyph={icAgents} size={14} /> : undefined;
                 return (
                   <PillSelect
                     key={option.id}
                     testId={"nsp-option-" + option.id}
-                    variant={guard ? "mode" : "model"}
-                    icon={guard ? <ShieldIcon /> : undefined}
+                    variant={modeIcon ? "mode" : "model"}
+                    icon={modeIcon}
                     label={optionLabel}
                     tip={pinned !== undefined ? t.newSession.relayPinnedModel(pinned) : optionLabel}
                     disabled={pinned !== undefined}

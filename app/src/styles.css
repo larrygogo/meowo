@@ -5362,6 +5362,8 @@ button.scm-check-name:hover { text-decoration: underline; }
    破坏性动作按钮（.chat-send-takeover），条本身是「状态说明 + 出路」，中性即可。 */
 .chat-send-error { width: 100%; color: var(--cc-text-dim); font-size: var(--text-xs); line-height: var(--leading-normal); overflow-wrap: anywhere; order: 3; padding: var(--sp-7) var(--sp-10); border: 0; border-radius: var(--radius-md); background: var(--fill-hover); display: flex; align-items: center; gap: var(--sp-8); flex-wrap: wrap; }
 .chat-send-error > span { flex: 1 1 auto; min-width: 200px; }
+/* 输入框里的提示条：文字左缘与输入框占位文字对齐（同为 textarea 的左内边距 --sp-8，第三轮 C9，量得两者同 x）。 */
+.chat-compose > .chat-send-error { padding-left: var(--sp-8); padding-right: var(--sp-8); }
 
 /* 重设计段的骨架/消息/输入框基础规则已并入上方唯一定义；此处起只保留重设计新增的部分
    （扁平活动行、待办、子任务等），不再重复同名声明。 */
@@ -6215,9 +6217,19 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .chat-model-menu { position: absolute; bottom: calc(100% + var(--sp-8)); left: 0; min-width: 232px; width: max-content; max-width: min(360px, 80vw); }
 .chat-model-menu .chat-model-item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-model-menu .chat-model-item-text { min-width: 0; }
+/* 模式菜单的说明一句话（≤20 字）不折行：折出来的「要问」两个字单独一行（第三轮截图）。上限放到 440，
+   窄窗口仍按 90vw 收，收不下时才折行。 */
+.chat-model-menu:not(.chat-model-quick) { max-width: min(440px, 90vw); }
+.chat-model-menu:not(.chat-model-quick) .chat-model-item-desc { white-space: nowrap; }
+@media (max-width: 520px) { .chat-model-menu:not(.chat-model-quick) .chat-model-item-desc { white-space: normal; } }
 /* 靠右的模型按钮（.chat-model-select）菜单右对齐向左展开，否则长名字把菜单推出输入框（托管会话截图）。 */
 .chat-model-select > .chat-model-menu { left: auto; right: 0; }
-:is(.chat-compose, .nsp-composer) .chat-model-item:hover { background: var(--fill-selected); }
+/* 选中行铺底色（与模型菜单选中同一个 --fill-selected）；悬停用更浅的 --fill-hover，只在有悬停的指针下生效，
+   触屏点过不残留（第三轮 C4）。此前悬停与选中同色，选中行只靠一个勾认。 */
+:is(.chat-compose, .nsp-composer) .chat-model-item.is-active { background: var(--fill-selected); }
+@media (hover: hover) {
+  :is(.chat-compose, .nsp-composer) .chat-model-item:not(.is-active):not(:disabled):hover { background: var(--fill-hover); }
+}
 .chat-model-item { display: flex; align-items: center; gap: var(--sp-14); width: 100%; padding: var(--sp-9) var(--sp-11); border: 0; background: transparent; text-align: left; cursor: pointer; }
 .chat-model-item-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
 .chat-model-item-name { color: var(--cc-text); font-size: var(--text-sm); font-weight: 500; }
@@ -6233,7 +6245,8 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .chat-model-quick-section.is-list { flex: 0 1 auto; min-height: 0; overflow-y: auto; }
 .chat-model-quick-section { padding: var(--sp-4) 0; }
 .chat-model-quick-section + .chat-model-quick-section { border-top: var(--hairline) solid var(--cc-border); }
-.chat-model-quick-head { padding: var(--sp-8) var(--sp-12) var(--sp-4);  font-size: var(--text-xs); font-weight: 500; color: var(--cc-text-faint); }
+/* 分组标题左缘与条目文字对齐（条目左内边距 --sp-24，第三轮 C9）。 */
+.chat-model-quick-head { padding: var(--sp-8) var(--sp-12) var(--sp-4) var(--sp-24);  font-size: var(--text-xs); font-weight: 500; color: var(--cc-text-faint); }
 /* 模型行比分组头缩进一级（Kimi 同款层级）、行高按 36px 给足点击面；当前模型整行铺底色，
    不只靠行尾一个勾——扫一眼就知道停在哪。 */
 .chat-model-quick .chat-model-item { min-height: 32px; padding: var(--sp-7) var(--sp-12) var(--sp-7) var(--sp-24); border-radius: var(--radius-md); }
@@ -6273,8 +6286,24 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 /* 「+」菜单：图标 + 名字 + 一行说明，与权限菜单同款项（对照 Kimi 的 addMenu）。 */
 .chat-add-menu { min-width: 240px; }
 .chat-add-ico { flex: 0 0 auto; width: 20px; height: 20px; display: grid; place-items: center; color: var(--cc-text-dim); }
-.chat-model-item:disabled { opacity: .5; cursor: default; }
+/* 选不到的档：不压透明度，名字与小字改用现有的禁用文字色（与 .nsp-send:disabled 同一个 --cc-text-faint，第三轮 C8）。 */
+.chat-model-item:disabled { cursor: default; }
+.chat-model-item:disabled :is(.chat-model-item-name, .chat-model-item-detail) { color: var(--cc-text-faint); }
 .chat-model-item:disabled:hover { background: transparent; }
+/* 对勾固定槽位：未选中行也占 16px，右侧 CLI 原名列各行右缘对齐到同一 x（第三轮 C5）。 */
+.chat-model-check-slot, .dd-check-slot { flex: 0 0 16px; width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; }
+/* 名字旁的「默认」小字标签（新建页 CLI 配置的默认档，第三轮 C7）。 */
+.chat-model-item-tag { display: inline-block; margin-left: var(--sp-6); padding: 0 var(--sp-4); border-radius: var(--radius-sm); background: var(--fill-selected); color: var(--cc-text-dim); font-size: var(--text-2xs, 11px); font-weight: 400; line-height: 16px; vertical-align: 1px; }
+/* 手机新建页下拉的右侧小字列（CLI 原名），与桌面 PillSelect 同一布局。 */
+.dd-item.has-detail { display: flex; align-items: center; gap: var(--sp-12); }
+.dd-item.has-detail > .dd-val { flex: 1 1 auto; min-width: 0; }
+.dd-detail { flex: none; color: var(--cc-text-faint); font-size: var(--text-xs); }
+/* 带小字列的下拉（手机新建页）按按钮宽排，说明换行，不按 max-content 撑出屏幕（第三轮截图：菜单冲出右缘）。 */
+.dd .dd-menu:has(> .dd-item.has-detail) { min-width: 0; max-width: calc(100vw - 24px); }
+.dd-item.has-detail .dd-label { white-space: normal; }
+/* 选中行铺底（与模型菜单选中同一个 --fill-selected，第三轮 C4）。 */
+.dd-item.has-detail.sel { background: var(--fill-selected); }
+.dd-item.is-disabled, .dd-item.is-disabled:hover { color: var(--cc-text-faint); background: transparent; cursor: default; }
 /* 「切换引擎」分组（跨 provider 切换）：分组标题 + agent 行（可展开二级模型档）。 */
 .chat-model-group { margin: var(--sp-6) 0 var(--sp-2); padding: var(--sp-4) var(--sp-11) 0; border-top: var(--hairline) solid var(--cc-border); color: var(--cc-text-faint); font-size: var(--text-xs); font-weight: 500; }
 .chat-switch-agent-ico { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 16px; }
@@ -7615,7 +7644,9 @@ pre.chat-md-plain {
   font-size: var(--text-sm);
 }
 /* 条目规则用 :where() 降到零特异度：危险项、禁用项、双行模型卡片等变体的同名规则照常压过它。 */
-:where(.ctx-item, .dd-item, .relay-model-option, .chat-model-item):hover { background: var(--fill-hover); }
+@media (hover: hover) {
+  :where(.ctx-item, .dd-item, .relay-model-option, .chat-model-item):hover { background: var(--fill-hover); }
+}
 
 /* ===== 按钮基件（UI 调研 sys3 / sys15）=====
    放在样式表末尾：组件基类常写成 `.容器 button`（特异度 0,1,1），角色类写成
