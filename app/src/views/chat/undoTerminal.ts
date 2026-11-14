@@ -211,10 +211,11 @@ export async function performUndo(run: UndoRun): Promise<UndoOutcome> {
     // 的原文挤在一起。以前输入框不空就请用户去终端清（用户反馈：不要让用户去终端清）。现在
     // 读出整段草稿、用 CLI 自己的清空键清掉，草稿搬进对话页输入框，再撤回。认不出框或清不掉
     // 才退回原来的提示。
-    const draft = spec ? composerDraft(readComposerFrame(await io.frame().catch(() => null), spec)) ?? "" : "";
-    if (draft) {
-      if (!spec || !await clearComposerDraft(io, spec)) return { kind: "composer_busy" };
-      run.onDraftMoved?.(draft);
+    const held = spec ? readComposerFrame(await io.frame().catch(() => null), spec) : null;
+    if (held && composerDraft(held)) {
+      // 读不全就不清（保不住就不清，做空①）：草稿留在终端里，按「输入框里有字」报，不撤。
+      if (!spec || !held.draft?.complete || !await clearComposerDraft(io, spec)) return { kind: "composer_busy" };
+      run.onDraftMoved?.(held.draft.text);
     }
     await submitToTerminal(sessionId, control.command, run.attentionAbort);
     const outcome = await runUndoMenu(sessionId, menu, returned, turns, text);

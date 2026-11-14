@@ -37,6 +37,12 @@ pub(super) static DEPS: &[D] = &[
         "0.68.0 真机 2026-11-14：general.vimMode 打开、NORMAL 模式下空输入框的占位",
     ),
     D::new(
+        "composer.paste",
+        "[Pasted Text: ",
+        " > [Pasted Text: 60 lines]",
+        "0.68.0 真机 2026-11-14（tests/probe_draft_fidelity.rs）：粘贴 60 行后输入框里只剩这个占位，5120 字单行是 `[Pasted Text: 5120 chars]`；bundle/chunk-ASDLQWJU.js 48836 行的模板",
+    ),
+    D::new(
         "composer.alt:shell",
         "Type your shell command",
         "!   Type your shell command",

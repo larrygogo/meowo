@@ -15,6 +15,18 @@ pub(super) static DEPS: &[D] = &[
         "Ask Codex to do anything",
         "0.167.2 真机 2026-11-14（probe_tui_script cells）：空输入框的暗色占位",
     ),
+    D::new(
+        "composer.paste",
+        "Pasted Content ",
+        "\u{203a} [Pasted Content 5120 chars]",
+        "0.167.2 真机 2026-11-14（tests/probe_draft_fidelity.rs）：粘贴 5120 字后输入框里只剩这个占位（60 行的粘贴是 `[Pasted Content 2219 chars]`）；codex.exe 含模板 `[Pasted Content ` + 字数 + ` chars]`",
+    ),
+    D::new(
+        "composer.overflow",
+        "",
+        "\u{203a} row 24 of the tall draft                                                                                             \u{2191}",
+        "0.167.2 真机 2026-11-14（tests/probe_draft_fidelity.rs）：45 行草稿只画最后 22 行，首行最右一列画 `↑`。标记只有一个箭头字符，程序文件里没有可搜的原样片段，只做样例测试",
+    ),
     // ── 正则规则的样例 ──
     D::new(
         "clipboard_image",

@@ -87,3 +87,33 @@ describe("发出的消息落进失败或未确认", () => {
     expect(JSON.stringify(events)).not.toContain("这是用户写的正文");
   });
 });
+
+/// 做空⑧：错误条上显示过的每一句都要在日志里留一行，而且只留固定代码。
+describe("错误条上显示的失败写进日志", () => {
+  it("词典里的句子记它的键，后端错误记错误码，拼出来的句子记 unkeyed", async () => {
+    const { shownErrorReason } = await import("./chatDiag");
+    const { zh } = await import("../../i18n/zh");
+    const { en } = await import("../../i18n/en");
+    const { formatBackendError } = await import("../../i18n/errors");
+    expect(shownErrorReason(zh.chat.undoBusy, zh)).toBe("chat.undoBusy");
+    expect(shownErrorReason(en.chat.undoBusy, en)).toBe("chat.undoBusy");
+    expect(shownErrorReason(zh.chat.composerDraftPaste, zh)).toBe("chat.composerDraftPaste");
+    expect(shownErrorReason(formatBackendError("settings/server_unreachable", "zh-CN"), zh)).toBe("settings/server_unreachable");
+    expect(shownErrorReason(formatBackendError("settings/server_unreachable", "en"), en)).toBe("settings/server_unreachable");
+    expect(shownErrorReason("写入 C:/Users/someone/secret.txt 失败", zh)).toBe("unkeyed");
+  });
+
+  it("写一行 error_shown，日志里没有那句话本身；清空错误条不写", async () => {
+    const { logShownError } = await import("./chatDiag");
+    const { zh } = await import("../../i18n/zh");
+    bindChatDiagSession(9, "codex");
+    logShownError(9, "", zh);
+    expect(logged()).toEqual([]);
+    logShownError(9, zh.chat.interruptTimeout, zh);
+    logShownError(9, "CLI 说：path C:/Users/someone/private 不存在", zh);
+    expect(logged().map((entry) => entry.message)).toEqual([
+      "kind=error_shown · provider=codex · session=9 · reason=chat.interruptTimeout",
+      "kind=error_shown · provider=codex · session=9 · reason=unkeyed",
+    ]);
+  });
+});

@@ -18,7 +18,7 @@ import { useHistoryLayer } from "../hooks/useHistoryLayer";
 import { useT } from "../i18n";
 import { deliveryStatusLabel } from "../i18n/statusVocab";
 import { runningPlaceholder, runningReceipt, runningSendMode, unrecognizedPromptNotice } from "./chat/sendCopy";
-import { logChatEvent, maskScreenLine, useOutgoingDiag } from "./chat/chatDiag";
+import { logChatEvent, logShownError, maskScreenLine, useOutgoingDiag } from "./chat/chatDiag";
 import { controlAvailability, effortEntry, modeButtonMechanism, savesDefaultHint, modeMenuAvailability, modelListMechanism, modelMenuState, slashEntryAvailability, slashSendAvailability } from "./chat/availability";
 import { imeComposing } from "../ime";
 import { pickFilesViaInput } from "./chat/pickFiles";
@@ -56,7 +56,7 @@ import { pasteImagesNatively, useInterrupt, writeInterruptKeys } from "./chat/te
 import { leaveSubagentView } from "./chat/subagentView";
 import { SubagentViewNotice } from "./chat/SubagentViewNotice";
 import { clearPartialImageDraft, createSendQueue, IMAGE_PASTE_LANDING_POLLS, LATE_IMAGE_GRACE_MS, RESUME_VERIFY_WINDOW_MS, setSingleLinePaste, submitToTerminal, terminalInput, waitForTerminalReady, type SubmitInput, type TerminalReadyMessages, type TerminalStartupResult } from "./chat/terminalSubmit";
-import { ComposerBlocked, composerBlockNotice, useNativeDraft } from "./chat/nativeDraft";
+import { ComposerBlocked, composerBlockEvent, composerBlockExit, composerBlockNotice, useNativeDraft } from "./chat/nativeDraft";
 import { useSessionRef, useSessionScope, useSessionState, useSessionTimer } from "./chat/sessionScope";
 import { launchGrid } from "./chat/terminalGrid";
 import { managedTerminalFrame, agentDynamicModeChoices, type DynamicModeChoice } from "../api";
@@ -319,9 +319,13 @@ export function ChatWindow() {
   // 任何一次 setSendError（换成别的错误、打字清空、发送前复位）都把上一条的出路作废，
   // 「重试」不会挂到不相干的下一条错误上。
   const [sendErrorExit, setSendErrorExit] = useState<SendErrorExit | null>(null);
+  const shownErrorRef = useRef({ sessionId, t });
+  shownErrorRef.current = { sessionId, t };
   const setSendError = useCallback((value: SetStateAction<string>, exit: SendErrorExit | null = null) => {
     setSendErrorText(value);
     setSendErrorExit(exit);
+    // 上屏的每一句都留一行运行日志（见 chatDiag 的 logShownError）。
+    if (typeof value === "string") logShownError(shownErrorRef.current.sessionId, value, shownErrorRef.current.t);
   }, []);
   // 终端就绪等待(waitForTerminalReady,最长 45s)的已等秒数:null = 没在等。
   // 只转圈没有下文时用户分不清「还在启动」还是「卡死」——显示秒数并给「去终端页看」。
@@ -438,9 +442,8 @@ export function ChatWindow() {
   const failWithError = (error: unknown) => {
     // 终端输入框没收拾好：说清原因，给能在对话页完成的出路（重试 / 仍然发送、看终端画面）。
     if (error instanceof ComposerBlocked) {
-      const notice = composerBlockNotice(error.block, t);
-      const retry = () => { nativeDraft.forceNext(notice.force); void retryRef.current?.(); };
-      setSendError(notice.message, { terminal: true, retryLabel: notice.retryLabel, retry });
+      logChatEvent(sessionId, composerBlockEvent(error.block));
+      setSendError(composerBlockNotice(error.block, t).message, composerBlockExit(error.block, t, (next) => { nativeDraft.setNext(next); void retryRef.current?.(); }));
       return;
     }
     const message = formatBackendError(error, t.locale);
@@ -921,7 +924,7 @@ export function ChatWindow() {
   const [chatUi, setChatUi] = useState<ChatUi | null>(null);
   // 往终端写东西之前收拾它的输入框（有草稿就收起或搬进对话页，见 chat/nativeDraft）。
   const nativeDraft = useNativeDraft({
-    scope: sessionScope, sessionId, spec: chatUi?.composer, setPrompt,
+    scope: sessionScope, sessionId, spec: chatUi?.composer, newline: chatUi?.newline_input, setPrompt,
     isCurrent: () => isCurrentOperation(),
     running: () => toneRef.current === "running",
     storeDraft: (sid, merge) => {
@@ -2677,6 +2680,8 @@ export function ChatWindow() {
     }
     if (!strict && shown && shown.sid === sessionId && shown.name === result.name) return true;
     subagentStuckRef.current = { sid: sessionId, name: result.name };
+    // 这条走的是单独的横幅，不经错误条，日志要自己写。子代理的名字不落日志。
+    logChatEvent(sessionId, { kind: "send_blocked", reason: "subagent_view_stuck" });
     if (isCurrentOperation()) setSubagentStuck({ sid: sessionId, name: result.name });
     return false;
   };
@@ -2756,6 +2761,9 @@ export function ChatWindow() {
         },
         onPending: (pending) => { undoPendingRef.current = pending; },
       });
+      // 撤回没成或没确认：原因用结局的代码，CLI 拒绝时的那行原文不落日志。
+      if (outcome.kind !== "done" && outcome.kind !== "stale") logChatEvent(sessionId, { kind: "undo_failed", reason: outcome.kind });
+      else if (outcome.kind === "done" && !outcome.clean) logChatEvent(sessionId, { kind: "undo_failed", reason: outcome.retryClear ? "input_residue" : "input_unreadable" });
       switch (outcome.kind) {
         case "done":
           if (outcome.clean) setUndoNotice(true);
@@ -3174,6 +3182,12 @@ export function ChatWindow() {
         handoffRef.current = null;
         const here = fail(bodyWritten);
         finish();
+        // 新会话的第一句话（或复制到新会话的交接语）没发出去：此前只有错误条，日志里没有（做空⑧）。
+        logChatEvent(sessionId, {
+          kind: "send_failed",
+          reason: pending.failMessage === t.newSession.firstPromptFailed ? "first_prompt_failed" : "handoff_inject_failed",
+          detail: { body_written: bodyWritten, shown: here },
+        });
         if (here) setSendError(formatBackendError(error, t.locale));
       } finally {
         handoffInjectingRef.current = false;

@@ -692,8 +692,11 @@ impl AgentPlugin for Kimi {
         Some(crate::chat_ui::ComposerSpec {
             prompt_footer: false,
             input_start_pattern: r"^(\s*│ > )",
-            top_pattern: r"^\s*╭─+╮\s*$",
-            bottom_pattern: r"^\s*╰─+╯\s*$",
+            // 草稿超出可视高度时上边框中间嵌一段 `↑ 33 more`（2.6.1 真机，45 行草稿只画最后 12 行）。
+            // 不认它的话整框变成「认不出」，错误条说的是认不出输入框，而不是草稿没显示全。
+            // 底边的 `↓ N more` 是按同一画法推的，没有实拍。
+            top_pattern: r"^\s*╭─+(?: [↑↓] \d+ more ─+)?╮\s*$",
+            bottom_pattern: r"^\s*╰─+(?: [↑↓] \d+ more ─+)?╯\s*$",
             row_pattern: r"^\s*│(.*)│\s*$",
             prompt_prefix: ">",
             tail_rows: 0,
@@ -705,6 +708,19 @@ impl AgentPlugin for Kimi {
             clear_rounds: 1,
             clear_while_running: true,
             alt_modes: &[],
+            // 草稿保真（2.6.1 真机，tests/probe_draft_fidelity.rs，2026-11-14）：
+            // - 粘贴占位 `[paste #1 5120 chars]`（5120 字单行）、`[paste #1 +60 lines]`（60 行）；3 行小粘贴原样显示。
+            //   正则照它自己认占位的那条写（kimi.exe 内嵌 `\[paste #(\d+)( (\+\d+ lines|\d+ chars))?\]`，尾部可缺）。
+            //   图片占位 `[image #N (W×H)]` 见 clipboard_image_paste，按宽的认。
+            // - 超出可视高度：见 top_pattern 的 `↑ N more`。
+            // - 框宽 119 列时一行正文最多 110 格（正文从第 5 列起，离底边右端 4 格），按词折行；续行缩进 3 格。
+            fidelity: Some(crate::chat_ui::ComposerFidelity {
+                paste_pattern: r"\[paste #\d+(?: (?:\+\d+ lines|\d+ chars))?\]|\[[Ii]mage[^\]\r\n]*\]",
+                overflow_pattern: Some(r"[↑↓] \d+ more"),
+                overflow_rows: None,
+                wrap_edge: crate::chat_ui::ComposerWrapEdge::Border,
+                wrap_inset: 4,
+            }),
         })
     }
     fn queue_input(&self) -> Option<&'static str> {

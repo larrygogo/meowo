@@ -250,8 +250,9 @@ pub fn composer_for_scan(p: &dyn crate::AgentPlugin) -> Option<crate::chat_ui::C
     })
 }
 
-/// 输入框规格里依赖 CLI 文案的正则：占位文字（`composer.empty`，没有占位的不算）与特殊输入
-/// 模式的标记（`composer.alt:<id>`）。
+/// 输入框规格里依赖 CLI 文案的正则：占位文字（`composer.empty`，没有占位的不算）、特殊输入
+/// 模式的标记（`composer.alt:<id>`）、粘贴占位（`composer.paste`）与超出可视高度的滚动标记
+/// （`composer.overflow`，不画标记的家没有）。
 fn composer_rules(p: &dyn crate::AgentPlugin) -> Vec<(String, Vec<&'static str>)> {
     let Some(composer) = composer_for_scan(p) else {
         return Vec::new();
@@ -266,6 +267,14 @@ fn composer_rules(p: &dyn crate::AgentPlugin) -> Vec<(String, Vec<&'static str>)
             .flatten()
             .collect();
         rules.push((format!("composer.alt:{}", mode.id), patterns));
+    }
+    // 草稿保真（ComposerFidelity）：粘贴占位的格式变了，占位会被当成普通草稿清掉、原文丢失；
+    // 滚动标记变了，没显示全的草稿会被当成全文搬走。两条都要盯。
+    if let Some(fidelity) = composer.fidelity {
+        rules.push(("composer.paste".to_string(), vec![fidelity.paste_pattern]));
+        if let Some(overflow) = fidelity.overflow_pattern {
+            rules.push(("composer.overflow".to_string(), vec![overflow]));
+        }
     }
     rules
 }

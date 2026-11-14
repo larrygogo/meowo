@@ -16,4 +16,9 @@ cursorCol: number, cursorVisible: boolean,
  * 光标所在格是暗色（SGR dim）。占位文字的画法：输入框里那句话是 CLI 画的提示，还是用户
  * 真打出来的字，文字相同时靠它和光标位置分开（见 meowo-agent 的 composer::read）。
  */
-cursorDim?: boolean, };
+cursorDim?: boolean, 
+/**
+ * 终端列数。行尾空白不在 `lines` 里，没有框的输入框要靠它才知道一行最多能放多少字
+ * （草稿里相邻两行是折行还是换行，见 meowo-agent 的 ComposerFidelity）。旧宿主不带。
+ */
+cols?: number, };

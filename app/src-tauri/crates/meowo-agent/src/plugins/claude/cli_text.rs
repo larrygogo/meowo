@@ -14,6 +14,12 @@ pub(super) static DEPS: &[D] = &[
         "Try \"fix typecheck errors\"",
         "2.1.325 真机 2026-11-14（probe_tui_script cells）：空输入框的暗色占位。占位内容不固定（还有预测的下一句），带光标读屏时靠「光标在输入起点且该格暗色」认，这条正则只是没有光标信息时的退路",
     ),
+    D::new(
+        "composer.paste",
+        "Pasted text #",
+        "\u{276f} [Pasted text #2 +59 lines]",
+        "2.1.325 真机 2026-11-14（tests/probe_draft_fidelity.rs）：粘贴 60 行后输入框里只剩这个占位，5120 字单行是 `[Pasted text #1]`；claude.exe 含 `Pasted text #` 4 处",
+    ),
     // ── /effort ──
     D::new(
         "effort.confirm",
