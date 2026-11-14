@@ -2,7 +2,8 @@
 // 能力表与启动选项直接用 src/test/agents.ts（与后端插件声明同源的那份），模型清单与 CLI 默认值
 // 照本机 CLI 配置与后端解析器的真实形状造（codex models_cache.json、kimi config.toml、
 // gemini models.rs FULL 表、opencode `models --verbose` 的 provider/model）。
-// ?state=idle|running|lead|open|notnow 决定会话状态与切换结果。
+// ?state=idle|running|lead|open|notnow|ready 决定会话状态与切换结果；?modes=approval:yolo,collaboration:plan
+// 覆盖会话当前档（第四轮 L6 拍手机各档图标）；?cfg=proxy 让 CLI 配置的模型不在清单里（第四轮 M1）。
 import { chatUi, descriptors } from "../src/test/agents";
 import { makeSession } from "../src/demo/data";
 import { CHAT_SESSION_ID } from "./fixtures";
@@ -84,7 +85,7 @@ export function tmsProviderOf(scene: string): TmsProvider {
 }
 
 /** 新建页 / 对话页共用：能力表、启动选项、模型清单、CLI 默认值、自定义 agent。 */
-export function tmsCommonMock(provider: TmsProvider) {
+export function tmsCommonMock(provider: TmsProvider, cfg?: string | null) {
   return (cmd: string, args: unknown): unknown => {
     const p = (args as { provider?: string } | undefined)?.provider ?? provider;
     switch (cmd) {
@@ -94,8 +95,11 @@ export function tmsCommonMock(provider: TmsProvider) {
         return chatUi(p);
       case "agent_model_catalog":
         return CATALOG[p as TmsProvider] ?? [];
-      case "agent_launch_defaults":
-        return DEFAULTS[p as TmsProvider] ?? { model: null, choices: {} };
+      case "agent_launch_defaults": {
+        const defaults = DEFAULTS[p as TmsProvider] ?? { model: null, choices: {} };
+        // 第三方 / 旧模型写在 CLI 配置里、不在清单里（做空 M1 的 my-proxy-model 用例）。
+        return cfg === "proxy" ? { ...defaults, model: "my-proxy-model" } : defaults;
+      }
       case "agent_dynamic_mode_choices":
         return p === "opencode" ? [{ option: "agent", id: "review", label: "review" }] : [];
       case "check_provider_hooks":
@@ -109,8 +113,11 @@ export function tmsCommonMock(provider: TmsProvider) {
 }
 
 /** 对话页：会话状态 + 切换结果。chat 是 chatMock(lang)。 */
-export function tmsChatMock(provider: TmsProvider, state: string, chat: (cmd: string) => unknown) {
+export function tmsChatMock(provider: TmsProvider, state: string, chat: (cmd: string) => unknown, modes?: string | null) {
   const common = tmsCommonMock(provider);
+  // ?modes=dim:value,dim:value 覆盖会话当前档。
+  const overrides = Object.fromEntries((modes ?? "").split(",").filter(Boolean).map((pair) => pair.split(":") as [string, string]));
+  const agentModes = MODES[provider].map((mode) => ({ ...mode, value: overrides[mode.dimension] ?? mode.value }));
   return (cmd: string, args: unknown): unknown => {
     const hit = common(cmd, args);
     if (hit !== undefined) return hit;
@@ -125,7 +132,7 @@ export function tmsChatMock(provider: TmsProvider, state: string, chat: (cmd: st
           connected: state !== "open",
           model: MODEL_LABEL[provider],
           effort: provider === "kimi" ? "high" : null,
-          agentModes: MODES[provider],
+          agentModes,
           contextPct: provider === "codex" || provider === "kimi" ? 18 : null,
           contextWindow: provider === "kimi" ? 262_144 : provider === "codex" ? 400_000 : null,
           items: (base.items as unknown[]).slice(0, -1),
@@ -151,6 +158,8 @@ export function tmsChatMock(provider: TmsProvider, state: string, chat: (cmd: st
         return null;
       case "apply_session_settings":
         if (state === "lead" || state === "open") return { kind: "queued", sessionId: CHAT_SESSION_ID, confirmed: false, reason: null };
+        // 会话服务还没握手（刚打开的 Codex）：前端放回宿主队列，提示「会话就绪后切换到「X」」（做空 R5）。
+        if (state === "ready") throw "settings/server_not_ready";
         if (state === "notnow") return { kind: "not_now", sessionId: CHAT_SESSION_ID, confirmed: false, reason: "settings/background_busy" };
         return { kind: "applied", sessionId: CHAT_SESSION_ID, confirmed: true, reason: null };
       case "managed_terminal_frame": {

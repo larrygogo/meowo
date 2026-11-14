@@ -103,7 +103,7 @@ async function boot(): Promise<React.ReactNode> {
   // 任务 20261114-tui-model-switch 截图验收：四家原生 TUI 会话（tms-<家>?state=…）与新建页（tms-new-<家>）。
   if (scene.startsWith("tms-new-")) {
     const provider = tmsProviderOf(scene);
-    setExtraMock(tmsCommonMock(provider));
+    setExtraMock(tmsCommonMock(provider, q.get("cfg")));
     installMocks("chat");
     bootAppearance({ scale: true });
     const { NewSessionPage } = await import("../src/views/chat/NewSessionPage");
@@ -121,7 +121,7 @@ async function boot(): Promise<React.ReactNode> {
     const provider = tmsProviderOf(scene);
     window.history.replaceState({}, "", `${location.pathname}?${q.toString()}&sessionId=${CHAT_SESSION_ID}`);
     const chat = chatMock(lang);
-    const tms = tmsChatMock(provider, q.get("state") ?? "idle", chat);
+    const tms = tmsChatMock(provider, q.get("state") ?? "idle", chat, q.get("modes"));
     setExtraMock((cmd, args) => tms(cmd, args) ?? scmMock(cmd) ?? chat(cmd));
     installMocks("chat");
     bootAppearance({ scale: true });

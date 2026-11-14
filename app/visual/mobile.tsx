@@ -72,7 +72,7 @@ const SCREEN = [
   "  2. Yes, and always allow git push commands",
   "  3. No, and tell Claude what to do differently (esc)",
 ];
-const tmsMock = tmsChat ? tmsChatMock(tmsProviderOf(scene), q.get("state") ?? "idle", chat) : tmsNew ? tmsCommonMock(tmsProviderOf(scene)) : null;
+const tmsMock = tmsChat ? tmsChatMock(tmsProviderOf(scene), q.get("state") ?? "idle", chat, q.get("modes")) : tmsNew ? tmsCommonMock(tmsProviderOf(scene), q.get("cfg")) : null;
 setExtraMock((cmd, args) => {
   if (tmsMock && cmd !== "open_new_session_window") {
     const hit = tmsMock(cmd, args);
