@@ -1,16 +1,4 @@
-//! gemini 的遥测：只有一样——回合结束时的 AI 正文，且它就躺在 hook 负载里。
-//!
-//! Gemini 的 `AfterAgent`（＝规范的 `Stop`）负载带 `prompt_response` 字段，reporter 已把它 alias 到
-//! `last_assistant_message`，故这里直接取用，不必去读会话文件。
-//!
-//! 其余能力一概降级：
-//!
-//! - **模型**：claude 的模型名走 statusLine，codex/kimi 从会话日志读；gemini 的 hook 负载不带，
-//!   而为了一个模型名去解析它的会话文件不划算——卡片上不显示模型即可。
-//! - **上下文占用**：同上，负载里没有。
-//! - **transcript**：负载带 `transcript_path`，但标题走首条 prompt 已经够用（与 codex/kimi 一致），
-//!   不为此引入一套解析器。
-//! - **重命名回写**：Gemini 无对应写入面。
+//! AfterAgent 正文沿用 hook；0.65 原生 JSONL 由 transcript 模块归并更新后供统一聊天/分析读取。
 
 use crate::caps::{HookContext, StopOutputs, TelemetryCap};
 
@@ -19,19 +7,39 @@ pub static TELEMETRY: GeminiTelemetry = GeminiTelemetry;
 pub struct GeminiTelemetry;
 
 impl TelemetryCap for GeminiTelemetry {
-    /// 正文取 hook 携带的那条；模型无来源，留空。
+    /// hook 正文优先；模型取原生日志，避免只因 hook 没携带就把可读能力隐藏。
     fn stop_outputs(&self, ctx: &HookContext) -> StopOutputs {
+        let model = super::transcript::read_model(ctx);
         StopOutputs {
             last_ai: ctx.last_assistant_message.map(str::to_string),
-            model: None,
+            model,
             effort: None,
         }
+    }
+
+    fn transcript(&self) -> Option<&'static dyn crate::transcript::TranscriptSpec> {
+        Some(&super::transcript::TRANSCRIPT)
+    }
+
+    fn resolves_transcript_title(&self) -> bool {
+        true
+    }
+
+    fn transcript_title_generated(&self) -> bool {
+        true
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compatibility_gemini_structured_history_is_available() {
+        assert!(TELEMETRY
+            .transcript()
+            .is_some_and(|spec| spec.supports_chat()));
+    }
 
     #[test]
     fn stop_outputs_take_ai_text_from_hook_payload() {
@@ -51,11 +59,11 @@ mod tests {
         );
     }
 
-    /// 标题走首条 prompt，不解析 transcript——与 codex/kimi 同，registry 的能力槽测试也依赖这点。
+    /// 读取能力不能暗中开放未经验证的原生日志写回。
     #[test]
-    fn does_not_resolve_titles_from_transcript() {
-        assert!(TELEMETRY.transcript().is_none());
-        assert!(!TELEMETRY.resolves_transcript_title());
+    fn transcript_support_does_not_enable_unverified_rename_writes() {
+        assert!(TELEMETRY.transcript().is_some());
+        assert!(TELEMETRY.resolves_transcript_title());
         assert!(!TELEMETRY.write_rename("s", None, "t"));
     }
 }

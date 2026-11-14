@@ -179,8 +179,73 @@ fn completed_item_events(
                 },
             ]
         }
+        // 0.148 起压缩不再写 `event_msg/context_compacted`，改写 `compacted` +
+        // `item_completed/ContextCompaction` + `response_item/compaction` 三行（本机 0.162.1
+        // rollout 各 4/4/5 次，context_compacted 0 次；research-cli-drift X3，2026-11-12）。
+        // 只认 ContextCompaction：`compacted` 在 0.144 与 context_compacted 成对出现（各 25 次），
+        // 认它会让老会话每次压缩出两条分隔；`response_item/compaction` 还会出现在续写段开头
+        // （ordinal 1，带入的旧压缩），不是这一刻发生的压缩。
+        "ContextCompaction" => vec![TranscriptEvent::Metadata {
+            id: id("compact"),
+            timestamp,
+            kind: "compact".into(),
+            compaction: None,
+        }],
         _ => Vec::new(),
     }
+}
+
+/// `turn_context.approval_policy` → 审批维度的模式值。
+///
+/// 0.162.1 及以前是字符串（`never` / `on-request` / `untrusted`）。0.163.0 起默认启动写成对象
+/// `{"granular":{"sandbox_approval":false,"rules":false,"skill_approval":false,
+/// "request_permissions":true,"mcp_elicitations":true}}`（本机 0.163.0 与 0.166.0 rollout 的
+/// turn_context 共 11 份全是这个形态；codex.exe 里枚举为 UnlessTrusted/OnRequest/Granular/Never；
+/// research-cli-drift X4，2026-11-12）。按 `as_str` 取会落空，按钮退回显示维度名。
+/// 五个开关全开等于「按需审批」，全关等于「从不询问」，其余如实报 `granular`（分类审批）。
+/// rollout 的审批策略 + 沙箱类型 → 权限档 id（codex 插件 launch_options 的 approval 栏）。
+/// 宿主读会话当前设置时也用它换成同一套 id。
+/// 沙箱类型在 rollout 里是 kebab（`workspace-write`），在 app-server 里是驼峰（`workspaceWrite`），都认。
+pub fn permission_tier(
+    approval: Option<&str>,
+    sandbox: Option<&str>,
+    reviewer: Option<&str>,
+) -> Option<&'static str> {
+    let sandbox: String = sandbox?
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect::<String>()
+        .to_ascii_lowercase();
+    match sandbox.as_str() {
+        "readonly" => Some("readOnly"),
+        "dangerfullaccess" => Some("yolo"),
+        "workspacewrite" if approval == Some("on-request") => Some(
+            if matches!(reviewer, Some("auto_review" | "guardian_subagent")) {
+                "approveForMe"
+            } else {
+                "ask"
+            },
+        ),
+        _ => None,
+    }
+}
+
+fn approval_mode(policy: &serde_json::Value) -> Option<&str> {
+    if let Some(name) = policy.as_str() {
+        return Some(name);
+    }
+    let flags = policy.get("granular")?.as_object()?;
+    let values: Vec<bool> = flags
+        .values()
+        .filter_map(serde_json::Value::as_bool)
+        .collect();
+    Some(if !values.is_empty() && values.iter().all(|v| *v) {
+        "on-request"
+    } else if !values.is_empty() && values.iter().all(|v| !*v) {
+        "never"
+    } else {
+        "granular"
+    })
 }
 
 fn parse_transcript_events(line: &str) -> Vec<TranscriptEvent> {
@@ -426,14 +491,19 @@ impl TranscriptSpec for CodexTranscript {
             {
                 modes.push(crate::AgentMode::new("collaboration", mode));
             }
-            if let Some(approval) = payload.get("approval_policy").and_then(|v| v.as_str()) {
-                modes.push(crate::AgentMode::new("approval", approval));
-            }
-            if let Some(sandbox) = payload
+            // 审批策略与沙箱合成 TUI `/permissions` 的一档（0.167.2 四档：Read Only / Ask for approval /
+            // Approve for me / Full Access，research-codex-opencode §9），与新建页、会话里的权限菜单
+            // 同一套 id。对不上任何一档（granular、旧的 never+workspace-write）时退回审批策略原值。
+            let approval = payload.get("approval_policy").and_then(approval_mode);
+            let sandbox = payload
                 .pointer("/sandbox_policy/type")
-                .and_then(|v| v.as_str())
-            {
-                modes.push(crate::AgentMode::new("sandbox", sandbox));
+                .and_then(|v| v.as_str());
+            let reviewer = payload
+                .get("approvals_reviewer")
+                .or_else(|| payload.get("approvalsReviewer"))
+                .and_then(|v| v.as_str());
+            if let Some(tier) = permission_tier(approval, sandbox, reviewer).or(approval) {
+                modes.push(crate::AgentMode::new("approval", tier));
             }
         } else if outer == "event_msg"
             && payload.get("type").and_then(|v| v.as_str()) == Some("task_started")
@@ -566,36 +636,39 @@ fn read_head_lines(path: &Path, max_lines: usize) -> Option<String> {
     Some(out)
 }
 
-/// 纯解析：从 rollout 文本取第一条 `turn_context` 的 `payload.model`。便于单测，不碰文件系统。
+/// 取最后一轮的模型，避免 /model 切换后仍展示首轮（旧实现与旧单测曾固定取第一条）。
 pub fn parse_model(content: &str) -> Option<String> {
-    for line in content.lines() {
-        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
-            continue;
-        };
-        if v.get("type").and_then(|t| t.as_str()) == Some("turn_context") {
-            if let Some(m) = v
-                .get("payload")
-                .and_then(|p| p.get("model"))
-                .and_then(|m| m.as_str())
-                .filter(|s| !s.is_empty())
-            {
-                return Some(m.to_string());
-            }
+    content.lines().rev().find_map(|line| {
+        let value: serde_json::Value = serde_json::from_str(line).ok()?;
+        if value.get("type")?.as_str()? != "turn_context" {
+            return None;
         }
-    }
-    None
+        value
+            .pointer("/payload/model")?
+            .as_str()
+            .filter(|model| !model.is_empty())
+            .map(str::to_owned)
+    })
+}
+
+/// 会话当前在写的 rollout 段（回溯后续写段另起文件，见 lineage.rs）。宿主读当前设置用
+/// （lead_native::codex_app_server::read_rollout_settings，任务 20261114-tui-model-switch）。
+pub fn current_rollout_path(session_id: &str) -> Option<PathBuf> {
+    let known = find_rollout(session_id)?;
+    Some(super::lineage::current_rollout(&known, session_id))
 }
 
 /// 取某 codex 会话的模型展示名：优先用 hook 给的 transcript_path，否则按 session_id 在 sessions 下找。
-/// 读 rollout 前若干行解析 `turn_context.model`。定位/解析失败返回 None（卡片模型留空，不阻断）。
+/// 最新段尾部优先，尾部没有 turn_context 才退首轮；有界读取避免每轮扫描长会话。
 pub fn read_model(transcript_path: Option<&str>, session_id: &str) -> Option<String> {
     let path = transcript_path
         .map(PathBuf::from)
         .filter(|p| p.exists())
         .or_else(|| find_rollout(session_id))?;
-    // turn_context 在首回合、文件靠前；读前 200 行足够，避免长会话全量读。
-    let head = read_head_lines(&path, 200)?;
-    parse_model(&head)
+    let path = super::lineage::current_rollout(&path, session_id);
+    read_tail(&path, 128 * 1024)
+        .and_then(|tail| parse_model(&tail))
+        .or_else(|| read_head_lines(&path, 200).and_then(|head| parse_model(&head)))
 }
 
 /// 从 rollout 文本取**最后一条 info 非 null** 的 token_count 的 (input_tokens, model_context_window)。
@@ -732,18 +805,87 @@ mod tests {
     }
     use super::*;
 
+    /// 压缩分隔：0.144.1 写 `event_msg/context_compacted`（与 `compacted` 成对），0.162.1 起写
+    /// `compacted` + `item_completed/ContextCompaction` + `response_item/compaction`。两代各只出
+    /// 一条分隔（行原文取自本机 rollout，长字段截短；research-cli-drift X3）。
+    #[test]
+    fn compaction_divider_old_and_new_rollouts() {
+        let compacts = |lines: &[&str]| {
+            lines
+                .iter()
+                .flat_map(|l| parse_transcript_events(l))
+                .filter(
+                    |e| matches!(e, TranscriptEvent::Metadata { kind, .. } if kind == "compact"),
+                )
+                .count()
+        };
+        // 0.144.1
+        assert_eq!(
+            compacts(&[
+                r#"{"timestamp":"2026-07-13T07:00:00.000Z","type":"compacted","payload":{"message":"","replacement_history":[]}}"#,
+                r#"{"timestamp":"2026-07-13T07:00:00.001Z","type":"event_msg","payload":{"type":"context_compacted"}}"#,
+            ]),
+            1
+        );
+        // 0.162.1（2026-10-15 rollout ordinal 1485/1490 与续写段 ordinal 1）
+        assert_eq!(
+            compacts(&[
+                r#"{"timestamp":"2026-10-15T05:57:37.691Z","ordinal":1485,"type":"compacted","payload":{"message":"","replacement_history":[]}}"#,
+                r#"{"timestamp":"2026-10-15T05:57:37.698Z","ordinal":1490,"type":"event_msg","payload":{"type":"item_completed","thread_id":"01a13d51-8612-7a62-adab-5bdfe4daf61f","turn_id":"01a13e20-9e5f-7433-98a0-2224340e0a8f","item":{"type":"ContextCompaction","id":"01a13e21-69bd-7160-91c2-008b5d13e015"},"started_at_ms":1792043739581,"completed_at_ms":1792043857698}}"#,
+                r#"{"timestamp":"2026-10-15T06:05:57.748Z","ordinal":1,"type":"response_item","payload":{"type":"compaction","id":"cmp_0b0909f4","encrypted_content":"gAAAAABq0GtP"}}"#,
+            ]),
+            1
+        );
+    }
+
+    /// 审批档：0.162.1 字符串、0.163.0/0.166.0 granular 对象（本机 rollout turn_context 原文）。
+    #[test]
+    fn approval_policy_string_and_granular_object() {
+        let mode = |policy: &str| {
+            let line = format!(
+                r#"{{"type":"turn_context","payload":{{"approval_policy":{policy},"sandbox_policy":{{"type":"workspace-write"}}}}}}"#
+            );
+            CODEX_TRANSCRIPT
+                .agent_modes_from_line(&line)
+                .into_iter()
+                .find(|m| m.dimension == "approval")
+                .map(|m| m.value)
+        };
+        // never + workspace-write（旧 Full Auto）不是 0.167 的任何一档：退回审批策略原值。
+        assert_eq!(mode(r#""never""#).as_deref(), Some("never"));
+        assert_eq!(mode(r#""on-request""#).as_deref(), Some("ask"));
+        assert_eq!(
+            mode(r#"{"granular":{"sandbox_approval":false,"rules":false,"skill_approval":false,"request_permissions":true,"mcp_elicitations":true}}"#).as_deref(),
+            Some("granular")
+        );
+        assert_eq!(
+            mode(r#"{"granular":{"sandbox_approval":true,"rules":true,"skill_approval":true,"request_permissions":true,"mcp_elicitations":true}}"#).as_deref(),
+            Some("ask")
+        );
+        assert_eq!(
+            mode(r#"{"granular":{"sandbox_approval":false,"rules":false,"skill_approval":false,"request_permissions":false,"mcp_elicitations":false}}"#).as_deref(),
+            Some("never")
+        );
+    }
+
     /// 回溯记录 `thread_rolled_back {num_turns}`（本机 0.144 实拍形态）：插话也算一轮（codex
     /// is_user_turn_boundary）；增量读到时整读重灌，被撤的那轮从对话里收回。
     #[test]
     fn thread_rollback_retracts_recent_turns() {
         use std::io::Write;
-        let path = std::env::temp_dir().join(format!("meowo_codex_rollback_{}.jsonl", std::process::id()));
+        let path =
+            std::env::temp_dir().join(format!("meowo_codex_rollback_{}.jsonl", std::process::id()));
         let body = concat!(
-            r#"{"timestamp":"2026-07-17T03:00:00.000Z","type":"event_msg","payload":{"type":"user_message","message":"先做甲"}}"#, "\n",
-            r#"{"timestamp":"2026-07-17T03:00:01.000Z","type":"event_msg","payload":{"type":"agent_message","message":"甲好了"}}"#, "\n",
-            r#"{"timestamp":"2026-07-17T03:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"再做乙"}}"#, "\n",
-            r#"{"timestamp":"2026-07-17T03:00:03.000Z","type":"event_msg","payload":{"type":"user_message","message":"顺便看看"}}"#, "\n",
-            r#"{"timestamp":"2026-07-17T03:00:04.000Z","type":"event_msg","payload":{"type":"agent_message","message":"乙好了"}}"#, "\n",
+            r#"{"timestamp":"2026-07-17T03:00:00.000Z","type":"event_msg","payload":{"type":"user_message","message":"先做甲"}}"#,
+            "\n",
+            r#"{"timestamp":"2026-07-17T03:00:01.000Z","type":"event_msg","payload":{"type":"agent_message","message":"甲好了"}}"#,
+            "\n",
+            r#"{"timestamp":"2026-07-17T03:00:02.000Z","type":"event_msg","payload":{"type":"user_message","message":"再做乙"}}"#,
+            "\n",
+            r#"{"timestamp":"2026-07-17T03:00:03.000Z","type":"event_msg","payload":{"type":"user_message","message":"顺便看看"}}"#,
+            "\n",
+            r#"{"timestamp":"2026-07-17T03:00:04.000Z","type":"event_msg","payload":{"type":"agent_message","message":"乙好了"}}"#,
+            "\n",
         );
         std::fs::write(&path, body).unwrap();
         let first = crate::read_chat_delta(&CODEX_TRANSCRIPT, &path, 0, None);
@@ -754,10 +896,16 @@ mod tests {
             .unwrap();
         let next = crate::read_chat_delta(&CODEX_TRANSCRIPT, &path, first.offset, first.mtime);
         assert!(next.reset && next.undone);
-        let texts: Vec<String> = next.items.iter().filter_map(|item| match item {
-            ChatItem::UserText { text, .. } | ChatItem::AssistantText { text, .. } => Some(text.clone()),
-            _ => None,
-        }).collect();
+        let texts: Vec<String> = next
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                ChatItem::UserText { text, .. } | ChatItem::AssistantText { text, .. } => {
+                    Some(text.clone())
+                }
+                _ => None,
+            })
+            .collect();
         assert_eq!(texts, ["先做甲", "甲好了"]);
         std::fs::remove_file(path).ok();
     }
@@ -810,9 +958,27 @@ mod tests {
             modes,
             vec![
                 crate::AgentMode::new("collaboration", "plan"),
-                crate::AgentMode::new("approval", "on-request"),
-                crate::AgentMode::new("sandbox", "workspace-write"),
+                crate::AgentMode::new("approval", "ask"),
             ]
+        );
+        let tier = |line: &str| {
+            CODEX_TRANSCRIPT
+                .agent_modes_from_line(line)
+                .into_iter()
+                .find(|m| m.dimension == "approval")
+                .map(|m| m.value)
+        };
+        assert_eq!(
+            tier(r#"{"type":"turn_context","payload":{"approval_policy":"on-request","sandbox_policy":{"type":"read-only"}}}"#).as_deref(),
+            Some("readOnly")
+        );
+        assert_eq!(
+            tier(r#"{"type":"turn_context","payload":{"approval_policy":"never","sandbox_policy":{"type":"danger-full-access"}}}"#).as_deref(),
+            Some("yolo")
+        );
+        assert_eq!(
+            tier(r#"{"type":"turn_context","payload":{"approval_policy":"on-request","approvals_reviewer":"auto_review","sandbox_policy":{"type":"workspace-write"}}}"#).as_deref(),
+            Some("approveForMe")
         );
         assert_eq!(
             CODEX_TRANSCRIPT.agent_modes_from_line(
@@ -841,14 +1007,39 @@ mod tests {
     }
 
     #[test]
-    fn parse_model_takes_first_turn_context() {
+    fn parse_model_takes_latest_turn_context() {
         let rollout = r#"
 {"type":"session_meta","payload":{"id":"x","cwd":"/p","model_provider":"openai"}}
 {"type":"turn_context","payload":{"model":"gpt-5.5","cwd":"/p","effort":"medium"}}
 {"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"hi"}]}}
 {"type":"turn_context","payload":{"model":"gpt-5.3-codex"}}
 "#;
-        assert_eq!(parse_model(rollout).as_deref(), Some("gpt-5.5"));
+        assert_eq!(parse_model(rollout).as_deref(), Some("gpt-5.3-codex"));
+    }
+
+    #[test]
+    fn read_model_uses_latest_turn_beyond_the_original_head_window() {
+        let path = std::env::temp_dir().join(format!(
+            "meowo-model-{}-{}.jsonl",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut rollout = String::from(r#"{"type":"turn_context","payload":{"model":"first"}}"#);
+        for _ in 0..300 {
+            rollout.push_str("\n{\"type\":\"event_msg\",\"payload\":{}} ");
+        }
+        rollout.push_str(
+            r#"
+{"type":"turn_context","payload":{"model":"latest"}}
+"#,
+        );
+        std::fs::write(&path, rollout).unwrap();
+        let model = read_model(path.to_str(), "test-thread");
+        std::fs::remove_file(path).unwrap();
+        assert_eq!(model.as_deref(), Some("latest"));
     }
 
     #[test]

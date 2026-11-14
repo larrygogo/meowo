@@ -26,8 +26,16 @@
 //! `PreCompress` 没有完成配对，暂不写入「正在压缩」，避免手动压缩后永久挂起。
 
 pub mod account;
+mod lead;
+mod models;
+/// 单测用：gemini 是否打开了 modelSteering（见 lead::model_steering）。
+#[cfg(test)]
+pub(crate) fn lead_model_steering(data_dir: &std::path::Path) -> bool {
+    lead::model_steering(data_dir)
+}
 mod screen;
 pub mod telemetry;
+mod transcript;
 
 use crate::{
     auth::{AuthScheme, CredentialSource},
@@ -149,8 +157,9 @@ static PROXY: crate::proxy::ProxySpec = crate::proxy::ProxySpec {
 static VARIANTS: [Variant; 1] = [Variant {
     tag: "stable",
     data_dir: DataDirSpec {
-        // Gemini CLI 未见「数据目录」级别的环境变量覆盖（`GEMINI_API_KEY` 之类只管鉴权），故不声明。
-        env: None,
+        // 0.65 Storage.getGlobalGeminiDir 在覆盖的 home 下拼 .gemini，不能直接把变量当数据根。
+        env: Some("GEMINI_CLI_HOME"),
+        env_suffix: ".gemini",
         candidates: &[".gemini"],
     },
     hooks: &HOOKS,
@@ -162,6 +171,33 @@ static VARIANTS: [Variant; 1] = [Variant {
 pub struct Gemini;
 
 impl AgentPlugin for Gemini {
+    fn process_scope(&self, argv: &[String]) -> crate::registry::ProcessScope {
+        use crate::registry::ProcessScope;
+        let is_gemini = |arg: &String| {
+            let path = arg.replace('\\', "/").to_ascii_lowercase();
+            matches!(
+                path.rsplit('/').next(),
+                Some("gemini" | "gemini.exe" | "gemini.cmd")
+            ) || path.ends_with("/@google/gemini-cli/bundle/gemini.js")
+        };
+        // 入口是 argv[0]；node 启动时是 node 之后第一个非选项参数。0.68 会以
+        // `node --max-old-space-size=N … gemini.js` 重启自身（bundle/chunk-G62RLJX6.js:1927），
+        // gemini.js 不在前两项（做空复现）。
+        let script = argv.iter().skip(1).find(|arg| !arg.starts_with('-'));
+        let own = argv.first().is_some_and(is_gemini) || script.is_some_and(is_gemini);
+        if !own {
+            return ProcessScope::Unknown;
+        }
+        if argv.iter().any(|arg| {
+            matches!(arg.as_str(), "--acp" | "--experimental-acp")
+                || arg.starts_with("--acp=")
+                || arg.starts_with("--experimental-acp=")
+        }) {
+            ProcessScope::Shared
+        } else {
+            ProcessScope::Exclusive
+        }
+    }
     fn screen_rules(&self) -> &'static [crate::screen::ScreenRule] {
         screen::RULES
     }
@@ -172,6 +208,10 @@ impl AgentPlugin for Gemini {
     fn display_name(&self) -> &'static str {
         "Gemini CLI"
     }
+    fn lead(&self) -> Option<&'static dyn crate::lead_install::LeadCap> {
+        Some(&lead::CAP)
+    }
+
     fn variants(&self) -> &'static [Variant] {
         &VARIANTS
     }
@@ -205,33 +245,124 @@ impl AgentPlugin for Gemini {
     fn resume_args(&self) -> &'static [&'static str] {
         &["--resume"]
     }
-    /// `/model` 是交互式菜单（不接受内联参数，故无 model_presets）。声明它，GUI 就能
-    /// 发出这条命令再把弹出的菜单渲染成按钮——模型清单由 CLI 现给。
+    /// 裸 `/model` 弹对话框，只作清单为空时的兜底。0.68 其实有 `/model set <id>`，但它不校验模型名、
+    /// 运行中被拒的文字残留在输入框、有待批审批时打字会替用户批准（research-kimi-gemini §3.2/§3.4），
+    /// 所以主路线是空闲时 `--resume <uuid> -m <id>` 重启接回（§3.3 E3-A 实测 id 不变、历史完整、
+    /// 下一轮用新模型）。还没发过消息时会话文件退出即删，resume 报 Invalid session identifier，
+    /// 改用 `--session-id <同一 uuid>`（E3-D）。
     fn model_menu_command(&self) -> Option<&'static str> {
         Some("/model")
     }
+    /// 没发过消息的会话：Gemini 正常退出时会删掉只有元数据的会话文件（research-kimi-gemini §3.3 e3-05），
+    /// Meowo 硬杀进程（broker.stop）时来不及删，留着它 `--resume` 报「No previous sessions found」、
+    /// `--session-id` 报「already exists」（0.68 bundle `sessionExists` 按 chats/ 下同 id 文件判，
+    /// 真机验证 G1，2026-11-14）。这里替 CLI 做完它本来会做的清理，但只挪进备份目录、不删；
+    /// 判据只认确定形态（做空 N1：旧版 .json 曾被误判为空），见 transcript::session_content。
+    fn prepare_unsent_resume(&self, session_id: &str) -> Option<bool> {
+        transcript::prepare_unsent_resume(session_id)
+    }
+    fn model_switch(&self) -> Option<crate::ModelSwitch> {
+        Some(crate::ModelSwitch::RestartResume {
+            flag: "-m",
+            unsent_resume_args: Some(&["--session-id"]),
+        })
+    }
+    fn model_launch_flag(&self) -> Option<&'static str> {
+        Some("-m")
+    }
+    fn model_catalog(&self, _env: &[(String, String)]) -> Vec<crate::ModelCatalogEntry> {
+        self.resolve()
+            .map(|inst| models::catalog(&inst.data_dir, None))
+            .unwrap_or_default()
+    }
+    fn launch_defaults(
+        &self,
+        _env: &[(String, String)],
+        cwd: Option<&std::path::Path>,
+    ) -> crate::LaunchDefaults {
+        self.resolve()
+            .map(|inst| models::launch_defaults(&inst.data_dir, cwd))
+            .unwrap_or_default()
+    }
+
     /// 运行中排队用回车（probe_tui_script，0.64，2026-10-16）：回车与 Tab 运行中都会进
     /// `Queued (press ↑ to edit)`，但空闲时 Tab 不提交、正文停在输入框里。对话页的运行态
     /// 是推断（DB 启动即 running、hook 执行期屏幕无 esc to cancel），推断错了按 Tab 就丢
     /// 消息，按回车两种状态都对。
+    /// 2026-11-12 隔离无模型实拍（target/lead-provider-probes/composer）：文字只给候选，发送仍须核验原生光标。
+    fn composer_guard(&self, version: Option<&str>) -> Option<crate::chat_ui::ComposerGuard> {
+        if !crate::lead_install::version_at_least(version, (0, 65, 0)) {
+            return None;
+        }
+        Some(crate::chat_ui::ComposerGuard {
+            prompt_footer: false,
+            // 提示符按状态取值（0.68 interactiveCli-ZJ2ZELJM.js 约 22698 行）：平常 `>`，YOLO 档 `*`（做空 R2，
+            // 实拍 g7-2）；shell 模式 `!`、反向搜索 `(r:)` 有意不认——那时输入框里不是普通草稿，保守按认不出。
+            input_start_pattern: r"^(\s*[>*] )",
+            // 0.65 是整条细线 `─`；0.68 改画半块字符，上沿 `▄`、下沿 `▀`（真机验证 g2/g7/g8 四帧，
+            // UTF-8 E2 96 84 / E2 96 80，做空 N2）。历史里每条用户消息也画同样的框，从屏幕底往上找到的
+            // 第一个下沿才是输入框；等审批时输入框被审批面板取代，认到的是历史框（有字），只会更保守。
+            top_pattern: r"^(?:─+|▄+)\s*$",
+            bottom_pattern: r"^(?:─+|▀+)\s*$",
+            row_pattern: r"^ (.*)$",
+            // 多个提示符用 `|` 分隔（composer_read / composerCandidate 逐个试）。
+            prompt_prefix: ">|*",
+            tail_rows: 0,
+            tail_pattern: None,
+            empty_pattern: r"^(?:Type your message or @path/to/file)?$",
+        })
+    }
     fn queue_input(&self) -> Option<&'static str> {
         Some("\r")
     }
 
     /// 运行中回车进 `Queued (press ↑ to edit)`，当前回答结束后才发出（probe_tui_script，0.64）。
+    /// 打开 `experimental.modelSteering` 后（Lead 安装会打开，leader 2026-11-13 同意）语义变了：
+    /// 运行中回车是「插话」，在下一步模型请求前插进当前回合；回合先结束就在空闲时自动提交
+    /// （0.68 interactiveCli handleFinalSubmit → injectionService，等审批时不提交）。按用户此刻的
+    /// 设置如实说，Lead 装与不装两种情况都对。
     fn queue_delivery(&self) -> Option<crate::chat_ui::QueueDelivery> {
-        Some(crate::chat_ui::QueueDelivery::TurnEnd)
+        let steering = self
+            .resolve()
+            .is_some_and(|inst| lead::model_steering(&inst.data_dir));
+        Some(if steering {
+            crate::chat_ui::QueueDelivery::NextStep
+        } else {
+            crate::chat_ui::QueueDelivery::TurnEnd
+        })
     }
 
-    // https://geminicli.com/docs/reference/keyboard-shortcuts/：Shift-Tab 轮换审批模式。
-    // 未取证的屏幕标签不作乐观更新，避免把按键成功误当成某个权限档已经生效。
+    // 审批模式会话里改走带参重启（launch_options 的 switch: Restart）：Shift+Tab / Ctrl+Y 在有待批
+    // 审批时会**自动放行**挂起的调用（G:interactiveCli 29445-29478，research-kimi-gemini §3.4 e5-06
+    // 实测 gate-p2 被写入），不再作切换手段。保留维度只为屏幕回显：transcript 与 hook 都不带审批
+    // 模式，底栏原文是唯一来源（§3.5：「auto-accept edits」「YOLO Ctrl+Y」「plan Shift+Tab to manual」）。
     fn mode_controls(&self) -> &'static [crate::ModeControl] {
+        // default 档底栏只有「Shift+Tab to accept edits」（research §4.2），也认，才读得到「当前是每步都问」
+        // ——带参重启要按当前值拼参数，读不到就不重启（做空 H1）。
+        static MARKERS: [crate::ModeScreenMarker; 4] = [
+            crate::ModeScreenMarker {
+                marker: "shift+tab to accept edits",
+                value: "default",
+            },
+            crate::ModeScreenMarker {
+                marker: "auto-accept edits",
+                value: "autoEdit",
+            },
+            crate::ModeScreenMarker {
+                marker: "yolo ctrl+y",
+                value: "yolo",
+            },
+            crate::ModeScreenMarker {
+                marker: "shift+tab to manual",
+                value: "plan",
+            },
+        ];
         static MODES: [crate::ModeControl; 1] = [crate::ModeControl {
             dimension: "approval",
             menu_command: None,
-            cycle_input: Some("\x1b[Z"),
+            cycle_input: None,
             options: &[],
-            screen_markers: &[],
+            screen_markers: &MARKERS,
         }];
         &MODES
     }
@@ -326,33 +457,65 @@ impl AgentPlugin for Gemini {
             "/tools",
         ]
     }
-    /// 启动选项（实测 `gemini --help`）：审批形态。`auto_edit` 走 `--approval-mode`，
-    /// 全自动走更老且更稳的 `--yolo`。模型不声明——gemini 的模型名随版本更迭。
+    /// 启动选项（`gemini --help` 0.68）：审批模式四档。内部枚举 default / autoEdit / yolo / plan
+    /// （G:273739），对外写法 default / auto_edit / yolo / plan（G:gemini-Q2FNZWQG.js 8876-8935）。
+    /// 统一说法按 bundle/policies/*.toml 的策略优先级（research-kimi-gemini §5）。
+    /// 四档都显式带参数：「每步都问」就是 `--approval-mode default`，不随 settings 的 defaultApprovalMode
+    /// 漂移；新建页按 launch_defaults 预选配置里的那一档并显式传它。
     fn launch_options(&self) -> &'static [crate::LaunchOption] {
-        use crate::{LaunchChoice, LaunchOption};
+        use crate::{Ask, LaunchChoice, LaunchOption, ModeSwitch, ModeTraits};
         static OPTIONS: [LaunchOption; 1] = [LaunchOption {
             id: "approval",
             default: "default",
             choices: &[
                 LaunchChoice {
                     id: "default",
-                    label: "Default",
-                    args: &[],
+                    label: "default",
+                    // 显式传：不传时 CLI 用 settings 的 defaultApprovalMode（可能是 auto_edit / plan），
+                    // 界面说「每步都问」实际却不是（做空审查 M1）。
+                    args: &["--approval-mode", "default"],
                     risk: false,
+                    // 「default (prompt for approval)」；工作区内已知安全的命令（isKnownSafeCommand）
+                    // 不问，其余都问。
+                    traits: Some(ModeTraits::new(Ask::Always, Ask::Always, false)),
+                    desc: Some("gemini.approval.default"),
+                    server: None,
                 },
                 LaunchChoice {
                     id: "autoEdit",
-                    label: "Auto Edit",
+                    label: "auto_edit",
                     args: &["--approval-mode", "auto_edit"],
                     risk: false,
+                    // 「auto_edit (auto-approve edit tools)」；工作区外的路径仍问，命令照 default。
+                    traits: Some(ModeTraits::new(Ask::Never, Ask::Always, false)),
+                    desc: Some("gemini.approval.autoEdit"),
+                    server: None,
+                },
+                LaunchChoice {
+                    id: "plan",
+                    label: "plan",
+                    args: &["--approval-mode", "plan"],
+                    risk: false,
+                    // 「plan (read-only mode)」；只能写 plans 目录下的 .md，shell 工具不可用
+                    // （实测 `Tool "run_shell_command" not found`）。
+                    traits: Some(ModeTraits::new(Ask::Blocked, Ask::Blocked, true)),
+                    desc: Some("gemini.approval.plan"),
+                    server: None,
                 },
                 LaunchChoice {
                     id: "yolo",
-                    label: "YOLO",
+                    label: "yolo",
                     args: &["--yolo"],
                     risk: true,
+                    // 「yolo (auto-approve all tools)」；危险命令也放行（yolo.toml 优先级 998）。
+                    traits: Some(ModeTraits::new(Ask::Never, Ask::Never, false)),
+                    desc: Some("gemini.approval.yolo"),
+                    server: None,
                 },
             ],
+            switch: ModeSwitch::Restart,
+            resume_upgrade_only: false,
+            in_session_only: false,
         }];
         &OPTIONS
     }
@@ -400,8 +563,7 @@ impl AgentPlugin for Gemini {
     fn relay(&self) -> Option<&'static dyn crate::RelayCap> {
         Some(&RELAY)
     }
-    /// **上下文占用不支持**：Gemini 的 hook 负载里不带 token 计数（实测 0.50——`AfterAgent` 只给
-    /// `prompt_response` 正文），而为了一个百分比去解析它的会话文件不划算。见 telemetry.rs。
+    /// 0.65 日志有 token 计数，但没有可靠的模型窗口容量；不能把计数冒充占用百分比。
     fn provides_context(&self) -> bool {
         false
     }
@@ -471,6 +633,36 @@ impl crate::RelayCap for GeminiRelay {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compatibility_process_scope_rejects_unknown_and_acp() {
+        use crate::registry::ProcessScope;
+        assert_eq!(Gemini.process_scope(&[]), ProcessScope::Unknown);
+        assert_eq!(
+            Gemini.process_scope(&["node".into(), "unrelated.js".into()]),
+            ProcessScope::Unknown
+        );
+        let argv = vec![
+            "node".into(),
+            "C:/npm/node_modules/@google/gemini-cli/bundle/gemini.js".into(),
+        ];
+        assert_eq!(Gemini.process_scope(&argv), ProcessScope::Exclusive);
+        let mut acp = argv;
+        acp.push("--acp=true".into());
+        assert_eq!(Gemini.process_scope(&acp), ProcessScope::Shared);
+        // 0.68 重启自身的真实形态：node 选项在前，gemini.js 在第三项之后（做空复现，本机 63GB 内存）。
+        let relaunched: Vec<String> = vec![
+            "C:/Program Files/nodejs/node.exe".into(),
+            "--no-warnings=DEP0040".into(),
+            "--max-old-space-size=31553".into(),
+            "C:/Users/x/AppData/Roaming/npm/node_modules/@google/gemini-cli/bundle/gemini.js".into(),
+            "--resume".into(),
+        ];
+        assert_eq!(Gemini.process_scope(&relaunched), ProcessScope::Exclusive);
+        // node 选项后跟的不是 gemini.js，仍不认领。
+        let other: Vec<String> = vec!["node".into(), "--max-old-space-size=1".into(), "server.js".into(), "gemini.js".into()];
+        assert_eq!(Gemini.process_scope(&other), ProcessScope::Unknown);
+    }
     use crate::RelayCap;
 
     /// 代理：HTTP 走 HTTPS_PROXY/HTTP_PROXY；gemini **支持 SOCKS**（socks-proxy-agent），

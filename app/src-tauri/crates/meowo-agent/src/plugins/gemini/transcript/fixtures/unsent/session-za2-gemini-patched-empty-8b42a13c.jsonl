@@ -1,0 +1,4 @@
+{"sessionId":"8b42a13c-0000","projectHash":"p","startTime":"2026-11-14T00:00:00Z","lastUpdated":"2026-11-14T00:00:00Z","kind":"main"}
+{"id":"c0","type":"user","content":[{"text":"<session_context>x</session_context>"}]}
+{"id":"g1","type":"gemini","content":"ok"}
+{"$patch":{"id":"g1","content":""}}

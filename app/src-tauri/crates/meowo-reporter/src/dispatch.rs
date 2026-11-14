@@ -71,9 +71,7 @@ pub fn dispatch(
                     store.touch_session_turn_open(sid, now_ms)?;
                 }
                 // 给已注册（含压缩漏掉 SessionStart）的会话补抓 PID；每用户回合一次，开销可忽略。
-                if let Some(p) = crate::proc::owner_pid(provider) {
-                    store.set_session_pid(sid, p as i64, now_ms)?;
-                }
+                crate::proc::record_owner_pid(store, sid, provider, now_ms)?;
                 apply_title(store, ev, sid, now_ms, provider)?;
                 write_tab_token(store, sid, ev, provider);
             }
@@ -163,15 +161,15 @@ pub fn dispatch(
         "Stop" => {
             if let Some(sid) = lookup_or_create(store, ev, provider, now_ms)? {
                 store.clear_pending_review(sid, now_ms)?;
-                store.set_session_status(sid, SessionStatus::Waiting, now_ms)?;
                 // 最近 AI 正文 + 模型由 agent 决定来源：claude 用 Stop hook 携带的正文（模型走 statusline）；
                 // kimi 的 Stop hook 不带，读会话 wire.jsonl 一次出正文 + 模型。
                 let out = telemetry(provider)
                     .map(|t| t.stop_outputs(&ev.agent_ctx()))
                     .unwrap_or_default();
-                if let Some(msg) = out.last_ai {
-                    store.set_last_ai_text(sid, &msg, now_ms)?;
-                }
+                // 正文、回合计数、状态同一事务写，先正文与计数、最后状态（任务 20261114-tui-model-switch
+                // 第七轮 R4）：别处一看到 waiting，这一轮的正文和计数就已落库。模型紧随其后写（下面），
+                // 切模型的钉子只看回合计数，不看模型，不受这一点先后影响。
+                store.finish_turn(sid, out.last_ai.as_deref(), now_ms)?;
                 // stop_outputs 的模型(config.update 通道,/model 切换即时反映)比 usage 通道
                 // (最后一条 usage.record,切换后仍是旧回合的模型)更新。写过它之后,下面的
                 // read_context 就不许再带 model——否则后写的旧值把刚切换的模型顶回去。
@@ -413,9 +411,7 @@ fn create_session(
     } else {
         store.backfill_session_cwd(sid, cwd)?;
     }
-    if let Some(p) = crate::proc::owner_pid(provider) {
-        store.set_session_pid(sid, p as i64, now_ms)?;
-    }
+    crate::proc::record_owner_pid(store, sid, provider, now_ms)?;
     Ok(sid)
 }
 
@@ -504,7 +500,10 @@ fn git_config_path(root: &Path) -> Option<std::path::PathBuf> {
         return Some(dot_git.join("config"));
     }
     let text = std::fs::read_to_string(&dot_git).ok()?;
-    let gitdir = text.lines().find_map(|l| l.trim().strip_prefix("gitdir:"))?.trim();
+    let gitdir = text
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("gitdir:"))?
+        .trim();
     let gitdir = root.join(gitdir); // join 遇到绝对路径会整体替换
     match std::fs::read_to_string(gitdir.join("commondir")) {
         Ok(common) => Some(gitdir.join(common.trim()).join("config")),

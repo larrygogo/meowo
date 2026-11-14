@@ -193,7 +193,7 @@ export function QuickSwitcher({ activeId, commands, onPick, onCommand, onClose }
           <>
             <div className="chat-switcher-group" role="presentation">{t.chat.switcherGroupSessions}</div>
             {rows.map((row, index) => {
-              const tone = sessionTone(row.connected, row.session.status, row.pending_review, row.errored, row.busy_subagents, row.screen_state);
+              const tone = sessionTone(row.connected, row.session.status, row.pending_review, row.errored, row.busy_subagents, row.screen_state, row.screen_assumed);
               return (
                 <button
                   type="button"

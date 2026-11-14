@@ -45,7 +45,9 @@ pub(crate) fn handle(session_id: i64, tool: &str, args: &Value) -> Result<Value,
     // 开关关掉后，已经在跑的会话手上还挂着这组工具（启动参数/配置文件是开的时候给的），
     // 每次调用都要再看一眼，不然「关掉」管不住正在跑的 agent。
     if !crate::settings::load_settings().browser_agent {
-        return Err("用户在 Meowo 设置里关掉了「允许 agent 操作面板浏览器」，这组工具现在不能用。".into());
+        return Err(
+            "用户在 Meowo 设置里关掉了「允许 agent 操作面板浏览器」，这组工具现在不能用。".into(),
+        );
     }
     let app = APP.get().ok_or("Meowo 还没启动完")?;
     let panes = app.state::<BrowserPanes>();
@@ -757,7 +759,14 @@ const AUTO_ALLOWED: &[&str] = &[
 ///   agent 直接操作，用户随时能在页签上「接管」。
 /// - TomlOverride：配置覆盖参数，值用 TOML 单引号字符串。
 /// - DataDirJson：没有启动参数可用，走数据目录里的配置文件（见 sync_mcp_files），这里不追加。
-pub(crate) fn launch_args(provider: &str) -> Vec<String> {
+#[derive(Clone, Copy)]
+pub(crate) struct McpSessionEnv<'a> {
+    pub endpoint: &'a str,
+    pub token: &'a str,
+    pub protocol: u16,
+}
+
+pub(crate) fn launch_args(provider: &str, session: Option<McpSessionEnv<'_>>) -> Vec<String> {
     if !crate::settings::load_settings().browser_agent {
         return Vec::new();
     }
@@ -788,15 +797,34 @@ pub(crate) fn launch_args(provider: &str) -> Vec<String> {
             }
             args
         }
-        // TOML 单引号字符串里不能再有单引号；路径带单引号的极少见，那就不挂。
-        Some(meowo_agent::McpAttach::TomlOverride { flag }) if !reporter.contains('\'') => vec![
-            flag.to_string(),
-            format!("mcp_servers.{SERVER_NAME}.command='{reporter}'"),
-            flag.to_string(),
-            format!("mcp_servers.{SERVER_NAME}.args=['mcp']"),
-        ],
+        Some(meowo_agent::McpAttach::TomlOverride { flag }) => {
+            toml_mcp_args(flag, &reporter, session)
+        }
         _ => Vec::new(),
     }
+}
+
+/// Codex 0.167.2 同 daemon 双 thread 实测：隐式继承拿的是 daemon 的旧环境，显式 MCP env 才隔离。
+/// 本次 scoped token 只进入直接 spawn 的 argv，不写配置文件、不经 shell，也不输出参数日志。
+fn toml_mcp_args(flag: &str, reporter: &str, session: Option<McpSessionEnv<'_>>) -> Vec<String> {
+    let Some(session) = session else {
+        return Vec::new();
+    };
+    let mut env = toml_edit::InlineTable::new();
+    env.insert("MEOWO_PTY_ENDPOINT", session.endpoint.into());
+    env.insert("MEOWO_PTY_TOKEN", session.token.into());
+    env.insert("MEOWO_PTY_PROTOCOL", session.protocol.to_string().into());
+    vec![
+        flag.to_owned(),
+        format!(
+            "mcp_servers.{SERVER_NAME}.command={}",
+            toml_edit::Value::from(reporter)
+        ),
+        flag.to_owned(),
+        format!("mcp_servers.{SERVER_NAME}.args=['mcp']"),
+        flag.to_owned(),
+        format!("mcp_servers.{SERVER_NAME}.env={env}"),
+    ]
 }
 
 fn server_entry(reporter: &str) -> Value {
@@ -1080,6 +1108,41 @@ mod tests {
     use super::*;
 
     #[test]
+    fn toml_mcp_binding_is_explicit_and_different_for_each_session() {
+        let binding = |token| McpSessionEnv {
+            endpoint: "127.0.0.1:1234",
+            token,
+            protocol: 2,
+        };
+        let first = toml_mcp_args(
+            "-c",
+            "C:/O'Neil/reporter.exe",
+            Some(binding("first-'quoted")),
+        );
+        let second = toml_mcp_args("-c", "C:/O'Neil/reporter.exe", Some(binding("second")));
+        let config = first
+            .chunks_exact(2)
+            .map(|pair| pair[1].as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let doc: toml_edit::DocumentMut = config.parse().unwrap();
+        assert_eq!(
+            doc["mcp_servers"][SERVER_NAME]["command"].as_str(),
+            Some("C:/O'Neil/reporter.exe")
+        );
+        assert_eq!(
+            doc["mcp_servers"][SERVER_NAME]["env"]["MEOWO_PTY_TOKEN"].as_str(),
+            Some("first-'quoted")
+        );
+        assert_eq!(
+            doc["mcp_servers"][SERVER_NAME]["env"]["MEOWO_PTY_PROTOCOL"].as_str(),
+            Some("2")
+        );
+        assert_ne!(first.last(), second.last());
+        assert!(toml_mcp_args("-c", "reporter.exe", None).is_empty());
+    }
+
+    #[test]
     fn snapshot_tells_the_agent_when_the_page_waits_for_the_user() {
         use browser_pane::BrowserPermission;
         let ask = BrowserPermission::new("downloads", "https://httpbin.org/html");
@@ -1089,7 +1152,10 @@ mod tests {
         // 在等答复优先于「已阻止」。
         assert_eq!(permission_note(Some(&ask), Some(&ask)), note);
         let blocked = permission_note(None, Some(&ask));
-        assert!(blocked.contains("已阻止") && blocked.contains("刷新"), "{blocked}");
+        assert!(
+            blocked.contains("已阻止") && blocked.contains("刷新"),
+            "{blocked}"
+        );
         assert!(note.ends_with("\n\n") && blocked.ends_with("\n\n"));
         assert_eq!(permission_note(None, None), "");
     }
@@ -1156,9 +1222,21 @@ mod tests {
         std::fs::create_dir_all(&target).unwrap();
         sync_mcp_file(&target, true, Some("C:/m/meowo-reporter.exe"));
         assert!(target.is_dir(), "目录被替换了");
-        let siblings: Vec<_> = std::fs::read_dir(&dir).unwrap().flatten().map(|e| e.file_name()).collect();
-        assert_eq!(siblings, vec![std::ffi::OsString::from("mcp.json")], "不该落任何临时/新文件");
-        assert_eq!(std::fs::read_dir(&target).unwrap().count(), 0, "目录内容被改动");
+        let siblings: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name())
+            .collect();
+        assert_eq!(
+            siblings,
+            vec![std::ffi::OsString::from("mcp.json")],
+            "不该落任何临时/新文件"
+        );
+        assert_eq!(
+            std::fs::read_dir(&target).unwrap().count(),
+            0,
+            "目录内容被改动"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1190,7 +1268,10 @@ mod tests {
         std::fs::write(&path, original).unwrap();
         sync_mcp_file(&path, true, Some("C:/m/meowo-reporter.exe"));
         sync_mcp_file(&path, false, Some("C:/m/meowo-reporter.exe"));
-        assert_eq!(std::fs::read_to_string(dir.join("mcp.json.cckb-bak")).unwrap(), original);
+        assert_eq!(
+            std::fs::read_to_string(dir.join("mcp.json.cckb-bak")).unwrap(),
+            original
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

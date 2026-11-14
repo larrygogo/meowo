@@ -26,9 +26,9 @@ pub mod fleet;
 pub mod install;
 mod screen;
 pub mod setup;
+mod subagent_prompt;
 pub mod telemetry;
 pub mod transcript;
-mod subagent_prompt;
 
 use crate::{
     auth::{AuthScheme, CredentialSource, OAuthRefresh},
@@ -153,6 +153,7 @@ static VARIANTS: [Variant; 1] = [Variant {
     tag: "stable",
     data_dir: DataDirSpec {
         env: Some("CLAUDE_CONFIG_DIR"),
+        env_suffix: "",
         candidates: &[".claude"],
     },
     hooks: &HOOKS,
@@ -281,6 +282,34 @@ impl AgentPlugin for Claude {
         Some(&BROKER_APPROVAL)
     }
 
+    fn process_scope(&self, argv: &[String]) -> crate::registry::ProcessScope {
+        use crate::registry::ProcessScope;
+        let is_claude = |arg: &String| {
+            let path = arg.replace('\\', "/").to_ascii_lowercase();
+            matches!(
+                path.rsplit('/').next(),
+                Some("claude" | "claude.exe" | "claude.cmd")
+            ) || path.ends_with("/@anthropic-ai/claude-code/cli.js")
+        };
+        // node 启动时脚本是 node 之后第一个非选项参数（`node --max-old-space-size=N cli.js`），
+        // 只看前两项会漏判（同 gemini 0.68 重启自身的做空复现）。
+        let script = argv.iter().skip(1).find(|arg| !arg.starts_with('-'));
+        let own = argv.first().is_some_and(is_claude) || script.is_some_and(is_claude);
+        if !own {
+            return ProcessScope::Unknown;
+        }
+        // 后台服务/远程控制不等于一条交互会话，不能被「结束此会话」连带关闭。
+        if argv.iter().skip(1).any(|arg| {
+            matches!(
+                arg.as_str(),
+                "daemon" | "server" | "remote-control" | "--sdk-url"
+            ) || arg.starts_with("--sdk-url=")
+        }) {
+            ProcessScope::Shared
+        } else {
+            ProcessScope::Exclusive
+        }
+    }
     fn screen_rules(&self) -> &'static [crate::screen::ScreenRule] {
         screen::RULES
     }
@@ -390,7 +419,7 @@ impl AgentPlugin for Claude {
     /// <default|plan|acceptEdits|bypassPermissions>`。default 项一律不传 flag——CLI 的默认
     /// 行为由 CLI 自己决定，不替它猜。
     fn launch_options(&self) -> &'static [crate::LaunchOption] {
-        use crate::{LaunchChoice, LaunchOption};
+        use crate::{Ask, LaunchChoice, LaunchOption, ModeTraits};
         static OPTIONS: [LaunchOption; 2] = [
             LaunchOption {
                 id: "model",
@@ -401,6 +430,7 @@ impl AgentPlugin for Claude {
                         label: "Default",
                         args: &[],
                         risk: false,
+                        ..LaunchChoice::PLAIN
                     },
                     // 别名是 CLI 文档化的稳定契约（不带版本，由 CLI 解析到当期型号）；
                     // 这里的 label 只是**学到真实菜单之前的兜底**——GUI 会从 CLI 自己弹出的
@@ -411,30 +441,35 @@ impl AgentPlugin for Claude {
                         label: "Fable 5",
                         args: &["--model", "fable"],
                         risk: false,
+                        ..LaunchChoice::PLAIN
                     },
                     LaunchChoice {
                         id: "opus",
                         label: "Opus 5",
                         args: &["--model", "opus"],
                         risk: false,
+                        ..LaunchChoice::PLAIN
                     },
                     LaunchChoice {
                         id: "sonnet",
                         label: "Sonnet 5",
                         args: &["--model", "sonnet"],
                         risk: false,
+                        ..LaunchChoice::PLAIN
                     },
                     LaunchChoice {
                         id: "haiku",
                         label: "Haiku 4.5",
                         args: &["--model", "haiku"],
                         risk: false,
+                        ..LaunchChoice::PLAIN
                     },
                     LaunchChoice {
                         id: "opusplan",
                         label: "Opus Plan",
                         args: &["--model", "opusplan"],
                         risk: false,
+                        ..LaunchChoice::PLAIN
                     },
                     // `[m1]` 是字面方括号（CLI 文档化的 1M 上下文别名形式）。订阅计划下
                     // Fable/Opus 分 200K 与 1M 两档，裸别名落 200K 档——不提供这几个变体，
@@ -444,20 +479,24 @@ impl AgentPlugin for Claude {
                         label: "Fable 5 (1M)",
                         args: &["--model", "fable[1m]"],
                         risk: false,
+                        ..LaunchChoice::PLAIN
                     },
                     LaunchChoice {
                         id: "opus[1m]",
                         label: "Opus 5 (1M)",
                         args: &["--model", "opus[1m]"],
                         risk: false,
+                        ..LaunchChoice::PLAIN
                     },
                     LaunchChoice {
                         id: "sonnet[1m]",
                         label: "Sonnet 5 (1M)",
                         args: &["--model", "sonnet[1m]"],
                         risk: false,
+                        ..LaunchChoice::PLAIN
                     },
                 ],
+                ..LaunchOption::PLAIN
             },
             LaunchOption {
                 id: "permission",
@@ -468,26 +507,39 @@ impl AgentPlugin for Claude {
                         label: "Default",
                         args: &[],
                         risk: false,
+                        ..LaunchChoice::PLAIN
                     },
                     LaunchChoice {
                         id: "plan",
                         label: "Plan",
                         args: &["--permission-mode", "plan"],
                         risk: false,
+                        // 官方 permission-modes 文档：plan 只读、只出方案。
+                        traits: Some(ModeTraits::new(Ask::Blocked, Ask::Blocked, true)),
+                        desc: Some("claude.permission.plan"),
+                        ..LaunchChoice::PLAIN
                     },
                     LaunchChoice {
                         id: "acceptEdits",
                         label: "Accept Edits",
                         args: &["--permission-mode", "acceptEdits"],
                         risk: false,
+                        traits: Some(ModeTraits::new(Ask::Never, Ask::Always, false)),
+                        desc: Some("claude.permission.acceptEdits"),
+                        ..LaunchChoice::PLAIN
                     },
                     LaunchChoice {
                         id: "bypassPermissions",
                         label: "Bypass Permissions",
                         args: &["--permission-mode", "bypassPermissions"],
                         risk: true,
+                        traits: Some(ModeTraits::new(Ask::Never, Ask::Never, false)),
+                        desc: Some("claude.permission.bypassPermissions"),
+                        ..LaunchChoice::PLAIN
                     },
                 ],
+                switch: crate::ModeSwitch::Control,
+                ..LaunchOption::PLAIN
             },
         ];
         &OPTIONS
@@ -536,7 +588,9 @@ impl AgentPlugin for Claude {
     /// （2.1.303 实拍）。行首是闪烁 spinner 字形之一，动词 1~3 个词以「…」收尾；括号统计
     /// 刚开跑时没有，有则以耗时数字开头——挡掉正文里恰好以 spinner 字形起头的普通行。
     fn status_line_pattern(&self) -> Option<&'static str> {
-        Some(r"^\s*[✻✽✶✳✢·*✺✷✸✹]\s+([A-Z][A-Za-z'-]*(?: [A-Za-z'-]+){0,2}…)\s*(?:\((\d[^()]{0,160})\))?\s*$")
+        Some(
+            r"^\s*[✻✽✶✳✢·*✺✷✸✹]\s+([A-Z][A-Za-z'-]*(?: [A-Za-z'-]+){0,2}…)\s*(?:\((\d[^()]{0,160})\))?\s*$",
+        )
     }
     /// 请求失败自动重试时 spinner 区画的那一行（2.1.312 包内渲染源码，重试不落 transcript）：
     /// `<错误> · Retrying in 5s · attempt 2/10`、`No response from the API after 30s ·
@@ -544,7 +598,9 @@ impl AgentPlugin for Claude {
     /// 5s · attempt 2/10 · esc to interrupt`。只认带「上限」的三种；容量排队的 `next try in …
     /// · attempt 3`（无上限）是在等空位，不是失败，不算。锚在行尾，正文里引用的半句不会命中。
     fn retry_line_pattern(&self) -> Option<&'static str> {
-        Some(r"· (?:Retrying in|retrying, waiting up to|next try in) [^·]{1,60}· attempt (\d+)/(\d+)(?: · [^·]{0,40})?\s*$")
+        Some(
+            r"· (?:Retrying in|retrying, waiting up to|next try in) [^·]{1,60}· attempt (\d+)/(\d+)(?: · [^·]{0,40})?\s*$",
+        )
     }
     /// `/effort <档位>`（2.1.314 包内：immediate 命令，成功回 `Set effort level to <Level>: …`；
     /// 档位全集 low/medium/high/xhigh/max，xhigh/max 只部分模型支持，不支持时 CLI 报
@@ -865,6 +921,31 @@ impl AgentPlugin for Claude {
 mod tests {
     use super::*;
 
+    #[test]
+    fn compatibility_process_scope_allows_only_identified_session_processes() {
+        use crate::registry::ProcessScope;
+        assert_eq!(Claude.process_scope(&[]), ProcessScope::Unknown);
+        assert_eq!(
+            Claude.process_scope(&["node".into(), "other.js".into()]),
+            ProcessScope::Unknown
+        );
+        assert_eq!(
+            Claude.process_scope(&["C:/bin/claude.exe".into(), "--resume".into(), "sid".into()]),
+            ProcessScope::Exclusive
+        );
+        for service in [
+            "daemon",
+            "server",
+            "remote-control",
+            "--sdk-url=ws://127.0.0.1",
+        ] {
+            assert_eq!(
+                Claude.process_scope(&["claude.exe".into(), service.into()]),
+                ProcessScope::Shared
+            );
+        }
+    }
+
     /// 斜杠命令会话的标签停在默认 "Claude Code"，标题匹配落空 → 必须同时声明 token 兜底。
     #[test]
     fn terminal_title_capabilities_cover_slash_command_sessions() {
@@ -876,14 +957,18 @@ mod tests {
     /// 由前端 cliStatus.test.ts 用同一串正则测(本 crate 不依赖 regex)。
     #[test]
     fn declares_retry_line_pattern_anchored_at_line_end() {
-        let pattern = Claude.retry_line_pattern().expect("claude 应声明重试行正则");
+        let pattern = Claude
+            .retry_line_pattern()
+            .expect("claude 应声明重试行正则");
         assert!(pattern.ends_with('$'));
         assert!(pattern.contains(r"attempt (\d+)/(\d+)"));
     }
 
     #[test]
     fn declares_anchored_status_line_pattern() {
-        let pattern = Claude.status_line_pattern().expect("claude 应声明状态行正则");
+        let pattern = Claude
+            .status_line_pattern()
+            .expect("claude 应声明状态行正则");
         assert!(pattern.starts_with('^') && pattern.ends_with('$'));
         assert!(pattern.contains('…'));
     }
@@ -893,7 +978,10 @@ mod tests {
     fn clipboard_paste_input_is_alt_v_on_windows() {
         let expected = if cfg!(windows) { "\x1bv" } else { "\x16" };
         assert_eq!(Claude.clipboard_paste_input(None), Some(expected));
-        assert_eq!(Claude.clipboard_paste_input(Some("2.1.303")), Some(expected));
+        assert_eq!(
+            Claude.clipboard_paste_input(Some("2.1.303")),
+            Some(expected)
+        );
     }
 
     fn probe_in(home: &std::path::Path) -> Option<crate::Installation> {

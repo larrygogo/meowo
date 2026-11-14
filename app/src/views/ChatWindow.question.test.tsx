@@ -2,7 +2,7 @@
 // 夹具与 mock 见 chatWindow.harness.tsx（必须先于 ./ChatWindow 导入）。
 import { describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { invoke, openDialog, eventListeners, setTitleMock, terminalProps, pickAttachments, respondWithHistory } from "./chatWindow.harness";
+import { emptyComposerFrame, invoke, openDialog, eventListeners, setTitleMock, terminalProps, pickAttachments, respondWithHistory } from "./chatWindow.harness";
 import { ChatWindow } from "./ChatWindow";
 import { chatUi } from "../test/agents";
 import { terminalAttention } from "../terminalAttention";
@@ -1118,6 +1118,7 @@ describe("ChatWindow", () => {
     let pasted = 0;
     let saved = 0;
     invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "managed_terminal_frame") return Promise.resolve(emptyComposerFrame("kimi"));
       if (command === "get_chat_history") return Promise.resolve({
         sessionId: 23, title: "多图", status: "waiting", provider: "kimi", cwd: "C:/repo",
         supported: true, offset: 0, reset: false, pendingReview: null, items: [], connected: true,

@@ -2,7 +2,7 @@
 // 夹具与 mock 见 chatWindow.harness.tsx（必须先于 ./ChatWindow 导入）。
 import { describe, expect, it } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { invoke, openDialog, setTitleMock, pickAttachments, respondWithHistory, chatUiReady } from "./chatWindow.harness";
+import { emptyComposerFrame, invoke, openDialog, setTitleMock, pickAttachments, respondWithHistory, chatUiReady } from "./chatWindow.harness";
 import { ChatWindow } from "./ChatWindow";
 import { submitGapMs } from "./chat/terminalSubmit";
 import { zh } from "../i18n/zh";
@@ -370,6 +370,7 @@ describe("ChatWindow", () => {
     // 当前五家都声明了 Esc;这里显式造一个 null 的 chatUi(模拟未取证/未来新 agent),
     // 验证门控:没有中断键就没有能停下回合的手段,界面不许摆出停止的样子。
     invoke.mockImplementation((command: string) => {
+      if (command === "managed_terminal_frame") return Promise.resolve(emptyComposerFrame("kimi"));
       if (command === "get_chat_history") return Promise.resolve({
         sessionId: 95, title: "无中断键", status: "running", provider: "kimi", cwd: "C:/repo",
         supported: true, offset: 0, reset: false, pendingReview: null, items: [], connected: true,

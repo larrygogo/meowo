@@ -20,8 +20,20 @@ use std::path::{Path, PathBuf};
 const MAX_BLOCKS: u64 = 5;
 /// 用户明确叫停的说法。只收明确说法："停车场""就这样做吧"这类不能误判成叫停（实测踩过）。
 const STOP_WORDS: &[&str] = &[
-    "停下", "停一下", "先停", "暂停", "停止", "停掉", "先别做", "别做了", "不用做了",
-    "什么都不要做", "别的都不要做", "不要做别的", "到此为止", "结束吧",
+    "停下",
+    "停一下",
+    "先停",
+    "暂停",
+    "停止",
+    "停掉",
+    "先别做",
+    "别做了",
+    "不用做了",
+    "什么都不要做",
+    "别的都不要做",
+    "不要做别的",
+    "到此为止",
+    "结束吧",
 ];
 const STOP_WORDS_EN: &[&str] = &["stop", "pause"];
 const TRANSCRIPT_TAIL: u64 = 4 * 1024 * 1024;
@@ -62,7 +74,10 @@ fn run_inner(mode: &str, raw: &str, registry: &Path) -> Output {
         "wait" => return wait(&data, registry, WAIT_POLL, WAIT_MAX),
         _ => None,
     };
-    Output { stdout, ..Output::default() }
+    Output {
+        stdout,
+        ..Output::default()
+    }
 }
 
 // ---------------- 文件与解析 ----------------
@@ -101,8 +116,11 @@ fn is_word(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
 }
 
-fn slug_ok(slug: &str) -> bool {
-    !slug.is_empty() && slug != "." && slug != ".." && slug.chars().all(|c| is_word(c) || c == '.' || c == '-')
+pub(crate) fn slug_ok(slug: &str) -> bool {
+    !slug.is_empty()
+        && slug != "."
+        && slug != ".."
+        && slug.chars().all(|c| is_word(c) || c == '.' || c == '-')
 }
 
 /// 统一成 `/` 分隔的文本，方便匹配 Windows 路径（JSON 里的 `\\` 与裸 `\` 都换掉）。
@@ -112,8 +130,11 @@ fn norm(v: &Value) -> String {
 
 /// git 根目录；不在 git 里就是 cwd 本身。绝不越过项目边界向上找（初版踩过：主目录下的任务
 /// 注入到了所有非 git 目录）。
-fn project_root(cwd: &Path) -> PathBuf {
-    let start = cwd.canonicalize().map(strip_verbatim).unwrap_or_else(|_| cwd.to_path_buf());
+pub fn project_root(cwd: &Path) -> PathBuf {
+    let start = cwd
+        .canonicalize()
+        .map(strip_verbatim)
+        .unwrap_or_else(|_| cwd.to_path_buf());
     let mut d = Some(start.as_path());
     while let Some(dir) = d {
         if dir.join(".git").exists() {
@@ -169,7 +190,7 @@ fn find_task(cwd: Option<&str>) -> Option<PathBuf> {
 /// Git Bash 写法 `/c/Users/...` 换成 `C:/Users/...`（只在 Windows）：agent 在 Windows 上多半跑在 Git Bash 里，
 /// 写进度时命令里是这种路径，原样当路径用解析不到，任务一直认领不上，Lead 面板就停在别的任务上
 ///（用户 2026-11-09：Lead 面板的内容更新有很大延迟）。
-fn windows_path(path: &str) -> String {
+pub(crate) fn windows_path(path: &str) -> String {
     let bytes = path.as_bytes();
     let drive = cfg!(windows)
         && bytes.len() >= 3
@@ -177,7 +198,11 @@ fn windows_path(path: &str) -> String {
         && bytes[1].is_ascii_alphabetic()
         && bytes[2] == b'/';
     if drive {
-        format!("{}:/{}", (bytes[1] as char).to_ascii_uppercase(), &path[3..])
+        format!(
+            "{}:/{}",
+            (bytes[1] as char).to_ascii_uppercase(),
+            &path[3..]
+        )
     } else {
         path.to_owned()
     }
@@ -197,18 +222,32 @@ fn own_task(cwd: &str, sid: &str) -> Option<PathBuf> {
         .flat_map(|entries| entries.flatten())
         .map(|entry| entry.path())
         // 目录名过滤与 project_gates 一致（slug_ok 只挡非法字符，挡不住普通名字的子目录）。
-        .filter(|task| task.file_name().and_then(|n| n.to_str()).is_some_and(slug_ok))
+        .filter(|task| {
+            task.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(slug_ok)
+        })
         .filter(|task| task.is_dir() && owner_of(task) == sid && phase_of(task) != "done")
-        .max_by_key(|task| std::fs::metadata(task.join("progress.md")).and_then(|m| m.modified()).ok())
+        .max_by_key(|task| {
+            std::fs::metadata(task.join("progress.md"))
+                .and_then(|m| m.modified())
+                .ok()
+        })
 }
 
 /// 会话认领的任务：先在 cwd 所在项目里找（与面板 snapshot_for 同序），没有再查登记表——会话在
 /// 主目录启动、在 worktree 里干活时 cwd 对不上项目。wait 用它：只等自己任务上的关卡。
 fn claimed_task(cwd: Option<&str>, sid: &str, registry: &Path) -> Option<PathBuf> {
-    cwd.and_then(|c| own_task(c, sid)).or_else(|| task_of_session(sid, registry))
+    cwd.and_then(|c| own_task(c, sid))
+        .or_else(|| task_of_session(sid, registry))
 }
 
-fn task_of_session(sid: &str, registry: &Path) -> Option<PathBuf> {
+/// 会话认领的任务（与 wait 同一口径）。宿主切模型前据此查 Lead 等待器（做空 N3）。
+pub fn session_task(cwd: Option<&str>, sid: &str, registry: &Path) -> Option<PathBuf> {
+    claimed_task(cwd, sid, registry)
+}
+
+pub(crate) fn task_of_session(sid: &str, registry: &Path) -> Option<PathBuf> {
     let t = load_map(registry).get(sid)?.as_str()?.to_owned();
     let task = PathBuf::from(t);
     (task.is_dir() && read(&task.join(".owner")).trim() == sid).then_some(task)
@@ -219,12 +258,21 @@ pub fn phase_of(task: &Path) -> String {
     for line in read(&task.join("progress.md")).lines() {
         let rest = line.trim_start_matches(|c: char| !is_word(c));
         // 按字节取前 5 个，必须走 get：中文行（如「# 进度」）直接切会落在字符中间而 panic。
-        if !rest.get(..5).is_some_and(|w| w.eq_ignore_ascii_case("phase")) {
+        if !rest
+            .get(..5)
+            .is_some_and(|w| w.eq_ignore_ascii_case("phase"))
+        {
             continue;
         }
         let after = rest[5..].trim_start_matches(|c: char| !is_word(c) && c != ':');
-        let Some(after) = after.strip_prefix(':') else { continue };
-        let word: String = after.trim_start().chars().take_while(|c| is_word(*c)).collect();
+        let Some(after) = after.strip_prefix(':') else {
+            continue;
+        };
+        let word: String = after
+            .trim_start()
+            .chars()
+            .take_while(|c| is_word(*c))
+            .collect();
         if !word.is_empty() {
             return word.to_lowercase();
         }
@@ -234,7 +282,11 @@ pub fn phase_of(task: &Path) -> String {
 
 fn acceptance(task: &Path) -> Option<Vec<Value>> {
     let text = read(&task.join("acceptance.json"));
-    let text = if text.trim().is_empty() { "[]".to_owned() } else { text };
+    let text = if text.trim().is_empty() {
+        "[]".to_owned()
+    } else {
+        text
+    };
     match serde_json::from_str::<Value>(&text) {
         Ok(Value::Array(items)) => Some(items.into_iter().filter(Value::is_object).collect()),
         _ => None,
@@ -244,12 +296,18 @@ fn acceptance(task: &Path) -> Option<Vec<Value>> {
 /// 只有 `passes: true` 算通过；字符串 "false"、缺字段都算未通过。豁免项（`waived` 非空）不算：
 /// 实测三个任务带着没通过的项收工（leader 说"就这样吧"/选了不做），skill 又不许删项，只能挂红。
 fn failing(items: &[Value]) -> Vec<&Value> {
-    items.iter().filter(|i| i.get("passes") != Some(&Value::Bool(true)) && waived(i).is_none()).collect()
+    items
+        .iter()
+        .filter(|i| i.get("passes") != Some(&Value::Bool(true)) && waived(i).is_none())
+        .collect()
 }
 
 /// 豁免原因；空串、非字符串都不算豁免（豁免必须说清楚是谁、为什么定的）。
 fn waived(i: &Value) -> Option<&str> {
-    i.get("waived").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty())
+    i.get("waived")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
 }
 
 /// 这一条要 leader 亲自验收。agent 自己永远勾不上它，Stop hook 不该为它拦人；关卡 C 接受时由 Meowo 勾上
@@ -258,7 +316,9 @@ fn waived(i: &Value) -> Option<&str> {
 /// （本任务自己的验收 #3 就引用了这几个字）都被当成 leader 条目，Stop 放过、关卡 C 还会代勾。
 /// 代勾等于替 leader 签字，宁可多拦几次也不能误判；只写了文字的旧条目回到原来的行为（会被拦）。
 fn needs_leader(i: &Value) -> bool {
-    i.get("by").and_then(Value::as_str).is_some_and(|by| by.trim().eq_ignore_ascii_case("leader"))
+    i.get("by")
+        .and_then(Value::as_str)
+        .is_some_and(|by| by.trim().eq_ignore_ascii_case("leader"))
 }
 
 /// 只差环境实测或授权的原因；空串、非字符串不算。
@@ -294,16 +354,23 @@ pub fn shell_writes(cmd: &str) -> bool {
         }
         return true;
     }
-    let words: Vec<&str> = cmd.split(|c: char| c.is_whitespace() || c == ';' || c == '|' || c == '&').collect();
+    let words: Vec<&str> = cmd
+        .split(|c: char| c.is_whitespace() || c == ';' || c == '|' || c == '&')
+        .collect();
     let has_word = |w: &str| words.contains(&w);
     (cmd.contains("sed -i") || has_word("tee") || has_word("mv") || has_word("cp"))
-        || ["Set-Content", "Add-Content", "Out-File"].iter().any(|k| cmd.contains(k))
+        || ["Set-Content", "Add-Content", "Out-File"]
+            .iter()
+            .any(|k| cmd.contains(k))
 }
 
 fn is_write(name: &str, input: &Value) -> bool {
     match name {
         "Write" | "Edit" | "MultiEdit" => true,
-        "Bash" | "PowerShell" => input.get("command").and_then(Value::as_str).is_some_and(shell_writes),
+        "Bash" | "PowerShell" => input
+            .get("command")
+            .and_then(Value::as_str)
+            .is_some_and(shell_writes),
         _ => false,
     }
 }
@@ -313,7 +380,7 @@ fn is_write(name: &str, input: &Value) -> bool {
 /// `cat >> progress.md`、用 Write 写 SPEC.md），只认 progress.md 时任务一直认领不上，`.owner` 全是空的，
 /// 同项目每个会话都显示同一个 Lead（用户实拍 2026-11-09）。相对路径（`.lead/a/…`）也认：`.lead` 前是
 /// `/` 或词元边界；slug 后面得是 `/`、词元边界或结尾，`.lead/active` 这类文件交给调用方按「是不是目录」筛掉。
-fn find_task_refs(text: &str) -> Vec<String> {
+pub(crate) fn find_task_refs(text: &str) -> Vec<String> {
     let needle = ".lead/";
     let boundary = |c: char| c.is_whitespace() || "\"'<>|=:;&()".contains(c);
     let mut out = Vec::new();
@@ -326,7 +393,10 @@ fn find_task_refs(text: &str) -> Vec<String> {
             continue;
         }
         let after = &text[at + needle.len()..];
-        let slug: String = after.chars().take_while(|c| is_word(*c) || *c == '.' || *c == '-').collect();
+        let slug: String = after
+            .chars()
+            .take_while(|c| is_word(*c) || *c == '.' || *c == '-')
+            .collect();
         let next = after[slug.len()..].chars().next();
         if !slug_ok(&slug) || !next.is_none_or(|c| c == '/' || boundary(c)) {
             continue;
@@ -334,20 +404,36 @@ fn find_task_refs(text: &str) -> Vec<String> {
         let before = &text[..at];
         // 在引号里（之前出现了奇数个同种引号）：路径从那个左引号之后开始，允许含空格。
         let quoted = ['"', '\''].iter().find_map(|q| {
-            (before.matches(*q).count() % 2 == 1).then(|| before.rfind(*q).map(|i| i + 1)).flatten()
+            (before.matches(*q).count() % 2 == 1)
+                .then(|| before.rfind(*q).map(|i| i + 1))
+                .flatten()
         });
         let start = quoted.unwrap_or_else(|| {
-            let s = before.char_indices().rev().find(|(_, c)| boundary(*c)).map(|(i, c)| i + c.len_utf8()).unwrap_or(0);
+            let s = before
+                .char_indices()
+                .rev()
+                .find(|(_, c)| boundary(*c))
+                .map(|(i, c)| i + c.len_utf8())
+                .unwrap_or(0);
             // Windows 盘符 `C:/…` 的冒号不是边界
-            let drive = s >= 2 && before[..s].ends_with(':') && before[..s - 1].chars().next_back().is_some_and(|c| c.is_ascii_alphabetic());
-            if drive { s - 2 } else { s }
+            let drive = s >= 2
+                && before[..s].ends_with(':')
+                && before[..s - 1]
+                    .chars()
+                    .next_back()
+                    .is_some_and(|c| c.is_ascii_alphabetic());
+            if drive {
+                s - 2
+            } else {
+                s
+            }
         });
         out.push(text[start..at + needle.len() + slug.len()].to_owned());
     }
     out
 }
 
-fn contains_stop_word(text: &str) -> bool {
+pub fn contains_stop_word(text: &str) -> bool {
     if STOP_WORDS.iter().any(|w| text.contains(w)) {
         return true;
     }
@@ -370,16 +456,24 @@ fn session(data: &Value, registry: &Path) -> Option<String> {
         .and_then(|c| own_task(c, sid))
         .or_else(|| find_task(cwd))
         .or_else(|| task_of_session(sid, registry))?;
-    let phase = phase_of(&task);
+    session_context(&task, sid)
+}
+
+fn session_context(task: &Path, sid: &str) -> Option<String> {
+    let phase = phase_of(task);
     if phase == "done" {
         return None;
     }
     let lead = task.parent()?;
-    let items = acceptance(&task).unwrap_or_default();
+    let items = acceptance(task).unwrap_or_default();
     // 与 Stop、面板同口径：豁免项不进分母，leader 条目单独说「不用你勾」，免得恢复会话的 agent 去推进
     // 自己勾不上的条目（做空审查第 2 轮）。
     let open = failing(&items);
-    let fail: Vec<String> = open.iter().filter(|i| !needs_leader(i)).map(|i| format!("  {}", item_line(i))).collect();
+    let fail: Vec<String> = open
+        .iter()
+        .filter(|i| !needs_leader(i))
+        .map(|i| format!("  {}", item_line(i)))
+        .collect();
     let leader_n = open.len() - fail.len();
     let live = items.iter().filter(|i| waived(i).is_none()).count();
     let mut parts = vec![
@@ -400,9 +494,9 @@ fn session(data: &Value, registry: &Path) -> Option<String> {
     // 只有关卡的归属会话才拿到「按答复继续」：同项目新开的无关会话不能去执行别人的单向门决定
     // （做空审查第二轮 M1；第一轮只修了 wait）。
     // 归属看任务目录自己的 .owner：登记表一个会话只记最后认领的那个，会话认领过两个任务时会误判。
-    let owner = !sid.is_empty() && owner_of(&task) == sid;
-    if let Some(g) = read_gate(&task).filter(|g| g.status == "answered" && owner) {
-        parts.push(answer_message(&task, &g));
+    let owner = !sid.is_empty() && owner_of(task) == sid;
+    if let Some(g) = read_gate(task).filter(|g| g.status == "answered" && owner) {
+        parts.push(answer_message(task, &g));
     }
     for extra in ["product.md", "standards.md"] {
         let t = read(&lead.join(extra));
@@ -439,24 +533,55 @@ fn claim(data: &Value, registry: &Path) {
     let Some(text) = text else { return };
     let cwd = data.get("cwd").and_then(Value::as_str);
     // 第一个解析得到、确实是 `.lead/<slug>` 目录的引用就是被写的任务。
-    let task = find_task_refs(&text.replace('\\', "/")).into_iter().find_map(|r| {
-        let mut p = PathBuf::from(windows_path(&r));
-        if !p.is_absolute() {
-            p = Path::new(cwd?).join(p);
-        }
-        let task = p.canonicalize().ok().map(strip_verbatim)?;
-        (task.is_dir() && task.parent().and_then(Path::file_name).is_some_and(|n| n == ".lead")).then_some(task)
-    });
+    let task = find_task_refs(&text.replace('\\', "/"))
+        .into_iter()
+        .find_map(|r| {
+            let mut p = PathBuf::from(windows_path(&r));
+            if !p.is_absolute() {
+                p = Path::new(cwd?).join(p);
+            }
+            let task = p.canonicalize().ok().map(strip_verbatim)?;
+            (task.is_dir()
+                && task
+                    .parent()
+                    .and_then(Path::file_name)
+                    .is_some_and(|n| n == ".lead"))
+            .then_some(task)
+        });
     let Some(task) = task else { return };
+    // 协议worker都在同一宿主PID，原先tmp<PID>在并发read-modify-rename时会丢其他会话映射。
+    // std::fs::File::try_lock（Rust 1.89）也约束其他reporter进程，退出后内核自动释放锁。
+    let Ok(lock) = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(registry.with_extension("lock"))
+    else {
+        return;
+    };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+    loop {
+        match lock.try_lock() {
+            Ok(()) => break,
+            Err(std::fs::TryLockError::WouldBlock) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(2))
+            }
+            Err(_) => return,
+        }
+    }
     let _ = std::fs::write(task.join(".owner"), sid);
     let key = task.to_string_lossy().into_owned();
     let mut reg: BTreeMap<String, Value> = load_map(registry)
         .into_iter()
-        .filter(|(_, v)| v.as_str().is_some_and(|s| s != key && Path::new(s).is_dir()))
+        .filter(|(_, v)| {
+            v.as_str()
+                .is_some_and(|s| s != key && Path::new(s).is_dir())
+        })
         .collect();
     reg.insert(sid.to_owned(), Value::String(key)); // 一个任务只归一个会话
-    // 先写临时文件再 rename：直接 write 会先截断，并发认领时别的会话可能读到空表再写回，
-    // 把其他会话的映射冲掉（做空审查第二轮 L1）。
+                                                    // 先写临时文件再 rename：直接 write 会先截断，并发认领时别的会话可能读到空表再写回，
+                                                    // 把其他会话的映射冲掉（做空审查第二轮 L1）。
     let tmp = registry.with_extension(format!("tmp{}", std::process::id()));
     if std::fs::write(&tmp, serde_json::to_string(&reg).unwrap_or_default()).is_ok() {
         let _ = std::fs::rename(&tmp, registry);
@@ -649,12 +774,18 @@ fn now_secs() -> i64 {
 fn this_turn(text: &str) -> (String, Vec<Value>) {
     let mut calls = Vec::new();
     for line in text.lines().rev() {
-        let Ok(o) = serde_json::from_str::<Value>(line) else { continue };
+        let Ok(o) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
         let content = o.pointer("/message/content");
         let kind = o.get("type").and_then(Value::as_str);
         if kind == Some("assistant") {
             if let Some(Value::Array(arr)) = content {
-                calls.extend(arr.iter().filter(|x| x.get("type").and_then(Value::as_str) == Some("tool_use")).cloned());
+                calls.extend(
+                    arr.iter()
+                        .filter(|x| x.get("type").and_then(Value::as_str) == Some("tool_use"))
+                        .cloned(),
+                );
             }
             continue;
         }
@@ -664,7 +795,10 @@ fn this_turn(text: &str) -> (String, Vec<Value>) {
         let text = match content {
             Some(Value::String(s)) => s.clone(),
             Some(Value::Array(arr)) => {
-                if arr.iter().any(|x| x.get("type").and_then(Value::as_str) == Some("tool_result")) {
+                if arr
+                    .iter()
+                    .any(|x| x.get("type").and_then(Value::as_str) == Some("tool_result"))
+                {
                     continue;
                 }
                 arr.iter()
@@ -685,17 +819,43 @@ fn this_turn(text: &str) -> (String, Vec<Value>) {
 fn wrote_task(calls: &[Value], task: &Path) -> bool {
     // 不带前导 `/`：Bash 里常用相对路径 `.lead/<slug>/…`（真机实测漏拦过一次）。slug 带日期前缀，
     // 误撞别的目录的概率可以忽略。
-    let key = format!(".lead/{}/", task.file_name().map(|n| n.to_string_lossy()).unwrap_or_default());
+    let key = format!(
+        ".lead/{}/",
+        task.file_name()
+            .map(|n| n.to_string_lossy())
+            .unwrap_or_default()
+    );
     calls.iter().any(|c| {
         let input = c.get("input").cloned().unwrap_or(Value::Null);
-        norm(&input).contains(&key) && c.get("name").and_then(Value::as_str).is_some_and(|n| is_write(n, &input))
+        norm(&input).contains(&key)
+            && c.get("name")
+                .and_then(Value::as_str)
+                .is_some_and(|n| is_write(n, &input))
     })
 }
 
 fn stop(data: &Value, registry: &Path) -> Option<String> {
+    stop_inner(data, registry, None)
+}
+
+pub(crate) struct TurnEvidence {
+    pub user_text: String,
+    pub calls: Vec<Value>,
+}
+
+// 其他 CLI 的日志不是 Claude JSONL；适配器只能把原生 hook 已核实的事实交给共用规则。
+pub(crate) fn stop_with_evidence(data: &Value, registry: &Path, evidence: &TurnEvidence) -> Output {
+    std::panic::catch_unwind(|| Output {
+        stdout: stop_inner(data, registry, Some(evidence)),
+        ..Output::default()
+    })
+    .unwrap_or_default()
+}
+
+fn stop_inner(data: &Value, registry: &Path, evidence: Option<&TurnEvidence>) -> Option<String> {
     let sid = data.get("session_id").and_then(Value::as_str)?;
     let task = task_of_session(sid, registry)?; // 按会话找任务：不依赖工作目录
-    // verify 也拦：做空之后修问题就在这个阶段，此前只拦 implement，修到一半停下没人管（审查 2026-11-09）。
+                                                // verify 也拦：做空之后修问题就在这个阶段，此前只拦 implement，修到一半停下没人管（审查 2026-11-09）。
     let phase = phase_of(&task);
     if !["implement", "verify"].contains(&phase.as_str()) {
         return None;
@@ -704,7 +864,10 @@ fn stop(data: &Value, registry: &Path) -> Option<String> {
         return None; // 在等 leader 拍板，停下是对的
     }
     let items = acceptance(&task)?;
-    let fail: Vec<&Value> = failing(&items).into_iter().filter(|i| !needs_leader(i)).collect();
+    let fail: Vec<&Value> = failing(&items)
+        .into_iter()
+        .filter(|i| !needs_leader(i))
+        .collect();
     let state_f = task.join(".stop-state.json");
     let mut state = load_map(&state_f);
     if fail.is_empty() {
@@ -713,8 +876,13 @@ fn stop(data: &Value, registry: &Path) -> Option<String> {
         }
         return None;
     }
+    // 回合证据：四家 Provider 由各自的 hook 载荷正规化后传入；claude 从 transcript 尾部解析。
+    // tail 同时给后台任务判定用（claude 机制）；四家没有 claude 格式的 transcript，tail 为空、判为无后台任务。
     let tail = transcript_tail(data.get("transcript_path").and_then(Value::as_str));
-    let (user_text, calls) = this_turn(&tail);
+    let (user_text, calls) = match evidence {
+        Some(evidence) => (evidence.user_text.clone(), evidence.calls.clone()),
+        None => this_turn(&tail),
+    };
     if contains_stop_word(&user_text) {
         return None; // 用户明确叫停
     }
@@ -726,7 +894,14 @@ fn stop(data: &Value, registry: &Path) -> Option<String> {
     }
     // stop_hook_active=true：同一轮被拦后再次停下；否则是新的一轮，重新计数。
     let same_turn = data.get("stop_hook_active").and_then(Value::as_bool) == Some(true);
-    let prev = if same_turn { state.get(sid).and_then(|s| s.get("blocks")).and_then(Value::as_u64) } else { None };
+    let prev = if same_turn {
+        state
+            .get(sid)
+            .and_then(|s| s.get("blocks"))
+            .and_then(Value::as_u64)
+    } else {
+        None
+    };
     let blocks = prev.unwrap_or(0);
     if blocks >= MAX_BLOCKS {
         return None;
@@ -734,7 +909,10 @@ fn stop(data: &Value, registry: &Path) -> Option<String> {
     let blocks = blocks + 1;
     state.insert(sid.to_owned(), json!({"blocks": blocks}));
     let _ = std::fs::write(&state_f, Value::Object(state).to_string());
-    let slug = task.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let slug = task
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
     let list: Vec<String> = fail.iter().take(8).map(|i| item_line(i)).collect();
     // 只差实测的条目（blocked）：没向 leader 要过授权就催发关卡 D。不只在「剩下的全是 blocked」时催：
     // 起因那次正是混着几条没做完的，agent 打算等其余做完再攒批要授权，结果一直没发（云端 Xbot 第三期
@@ -770,7 +948,9 @@ fn stop(data: &Value, registry: &Path) -> Option<String> {
 
 // ---------------- 关卡（gate.json）与快照 ----------------
 
-use meowo_protocol::ipc::{LeadCheckDto, LeadGateAnswerDto, LeadGateDto, LeadGateOptionDto, LeadTaskDto};
+use meowo_protocol::ipc::{
+    LeadCheckDto, LeadGateAnswerDto, LeadGateDto, LeadGateOptionDto, LeadTaskDto,
+};
 
 /// A 确认规格 / B 拍板单向门 / C 看证据验收 / D 需要授权或亲手操作 / Q 访谈提问。
 /// D、Q 是 2026-11-09 审查补的：「要不要开云主机」「请在面板里登录」只能 blocked 干等，手机上收不到卡片；
@@ -789,7 +969,11 @@ fn fixed_choices(kind: &str) -> Option<&'static [&'static str]> {
 
 /// 读 gate.json；文件不存在或格式不合法返回 None。
 pub fn read_gate(task: &Path) -> Option<LeadGateDto> {
-    let v: Value = serde_json::from_str(&read(&task.join("gate.json"))).ok()?;
+    parse_gate(&read(&task.join("gate.json")))
+}
+
+pub(crate) fn parse_gate(raw: &str) -> Option<LeadGateDto> {
+    let v: Value = serde_json::from_str(raw).ok()?;
     let s = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_owned();
     let (id, kind, status) = (s("id"), s("type"), s("status"));
     if id.is_empty()
@@ -801,17 +985,39 @@ pub fn read_gate(task: &Path) -> Option<LeadGateDto> {
     let options = v
         .get("options")
         .and_then(Value::as_array)
-        .map(|a| a.iter().filter_map(|o| serde_json::from_value::<LeadGateOptionDto>(o.clone()).ok()).collect())
+        .map(|a| {
+            a.iter()
+                .filter_map(|o| serde_json::from_value::<LeadGateOptionDto>(o.clone()).ok())
+                .collect()
+        })
         .unwrap_or_default();
-    let answer = v.get("answer").and_then(|a| serde_json::from_value::<LeadGateAnswerDto>(a.clone()).ok());
-    Some(LeadGateDto { id, kind, title: s("title"), summary: s("summary"), options, status, answer })
+    let answer = v
+        .get("answer")
+        .and_then(|a| serde_json::from_value::<LeadGateAnswerDto>(a.clone()).ok());
+    Some(LeadGateDto {
+        id,
+        kind,
+        title: s("title"),
+        summary: s("summary"),
+        options,
+        status,
+        answer,
+    })
 }
 
 /// 唤醒 / 注入给 agent 的答复文本。内容以 gate.json 为准，这句话重复送达也无害。
 /// 带上任务目录：同项目常有几个任务，只说「读 gate.json」agent 可能去读 active 指向的那个。
-fn answer_message(task: &Path, g: &LeadGateDto) -> String {
-    let (choice, note) = g.answer.as_ref().map(|a| (a.choice.as_str(), a.note.as_str())).unwrap_or(("", ""));
-    let note = if note.trim().is_empty() { String::new() } else { format!("，意见：{note}") };
+pub fn answer_message(task: &Path, g: &LeadGateDto) -> String {
+    let (choice, note) = g
+        .answer
+        .as_ref()
+        .map(|a| (a.choice.as_str(), a.note.as_str()))
+        .unwrap_or(("", ""));
+    let note = if note.trim().is_empty() {
+        String::new()
+    } else {
+        format!("，意见：{note}")
+    };
     format!(
         "[lead] leader 已在 Meowo 里回答关卡 {}（{}）：选择 {choice}{note}。任务目录：{}。读这个目录里的 gate.json 确认，把答复记进 decisions.md，把 gate.json 的 status 改成 consumed，然后按答复继续。",
         g.kind,
@@ -824,7 +1030,8 @@ fn answer_message(task: &Path, g: &LeadGateDto) -> String {
 /// （手机断线重发）；关卡已换、已被消费或已用别的答案作答则报错（`模块/代码` 结构化 reason）。
 pub fn answer_gate(task: &Path, gate_id: &str, answer: &LeadGateAnswerDto) -> Result<(), String> {
     let path = task.join("gate.json");
-    let mut v: Value = serde_json::from_str(&read(&path)).map_err(|_| "lead/gate_missing".to_owned())?;
+    let mut v: Value =
+        serde_json::from_str(&read(&path)).map_err(|_| "lead/gate_missing".to_owned())?;
     let g = read_gate(task).ok_or("lead/gate_invalid")?;
     if g.id != gate_id {
         return Err("lead/gate_changed".into());
@@ -847,7 +1054,10 @@ pub fn answer_gate(task: &Path, gate_id: &str, answer: &LeadGateAnswerDto) -> Re
         Some(fixed) => fixed.contains(&answer.choice.as_str()),
         // Q 是访谈：开放式问题常常没有合适的选项，允许选 other 只写意见（意见必填）。agent 自己写了 id 为
         // other 的选项时，它就是普通选项（前端也不再追加「其他」）。
-        None if g.kind == "Q" && answer.choice == "other" && !g.options.iter().any(|o| o.id == "other") => {
+        None if g.kind == "Q"
+            && answer.choice == "other"
+            && !g.options.iter().any(|o| o.id == "other") =>
+        {
             !answer.note.trim().is_empty()
         }
         None => g.options.iter().any(|o| o.id == answer.choice),
@@ -873,10 +1083,15 @@ pub fn answer_gate(task: &Path, gate_id: &str, answer: &LeadGateAnswerDto) -> Re
 /// 只动这两个字段；条目顺序不变，条目内的键会按字母序重排（本仓 serde_json 没开 preserve_order），内容不变。
 fn mark_leader_checks(task: &Path) {
     let path = task.join("acceptance.json");
-    let Ok(Value::Array(mut items)) = serde_json::from_str::<Value>(&read(&path)) else { return };
+    let Ok(Value::Array(mut items)) = serde_json::from_str::<Value>(&read(&path)) else {
+        return;
+    };
     let mut changed = false;
     // 豁免项不勾：leader 已经决定不看它，再写一个「leader 已验收」就是错误的记录（做空审查第 2 轮）。
-    for i in items.iter_mut().filter(|i| i.is_object() && needs_leader(i) && waived(i).is_none()) {
+    for i in items
+        .iter_mut()
+        .filter(|i| i.is_object() && needs_leader(i) && waived(i).is_none())
+    {
         if i.get("passes") != Some(&Value::Bool(true)) {
             i["passes"] = json!(true);
             i["verified_by"] = json!("leader");
@@ -887,7 +1102,12 @@ fn mark_leader_checks(task: &Path) {
         return;
     }
     let tmp = task.join("acceptance.json.tmp");
-    if std::fs::write(&tmp, serde_json::to_string_pretty(&Value::Array(items)).unwrap_or_default()).is_ok() {
+    if std::fs::write(
+        &tmp,
+        serde_json::to_string_pretty(&Value::Array(items)).unwrap_or_default(),
+    )
+    .is_ok()
+    {
         let _ = std::fs::rename(&tmp, &path);
     }
 }
@@ -921,8 +1141,19 @@ pub fn snapshot_for(cwd: &str, session: Option<&str>) -> Option<LeadTaskDto> {
         .unwrap_or_default()
         .iter()
         .map(|i| LeadCheckDto {
-            id: i.get("id").map(|v| v.as_str().map(str::to_owned).unwrap_or_else(|| v.to_string())).unwrap_or_default(),
-            check: i.get("check").and_then(Value::as_str).unwrap_or("").to_owned(),
+            id: i
+                .get("id")
+                .map(|v| {
+                    v.as_str()
+                        .map(str::to_owned)
+                        .unwrap_or_else(|| v.to_string())
+                })
+                .unwrap_or_default(),
+            check: i
+                .get("check")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned(),
             passes: i.get("passes") == Some(&Value::Bool(true)),
             waived: waived(i).map(str::to_owned),
             leader: needs_leader(i),
@@ -930,19 +1161,22 @@ pub fn snapshot_for(cwd: &str, session: Option<&str>) -> Option<LeadTaskDto> {
         })
         .collect();
     Some(LeadTaskDto {
+        delivery: None,
         slug: task.file_name()?.to_string_lossy().into_owned(),
         phase: phase_of(&task),
         spec: truncate(&read(&task.join("SPEC.md")), 12000),
         checks,
         decisions: tail(&read(&task.join("decisions.md")), 6000),
         progress: tail(&read(&task.join("progress.md")), 6000),
-        gate: read_gate(&task).filter(|g| g.status != "consumed").or_else(|| {
-            project_gates(cwd)
-                .into_iter()
-                .filter(|(t, _)| visible_to(t, session))
-                .map(|(_, g)| g)
-                .find(|g| g.status == "pending")
-        }),
+        gate: read_gate(&task)
+            .filter(|g| g.status != "consumed")
+            .or_else(|| {
+                project_gates(cwd)
+                    .into_iter()
+                    .filter(|(t, _)| visible_to(t, session))
+                    .map(|(_, g)| g)
+                    .find(|g| g.status == "pending")
+            }),
     })
 }
 
@@ -968,7 +1202,10 @@ pub fn project_gates(cwd: &str) -> Vec<(PathBuf, LeadGateDto)> {
 
 /// 按关卡 id 找它所在的任务目录（作答用）。
 pub fn task_of_gate(cwd: &str, gate_id: &str) -> Option<PathBuf> {
-    project_gates(cwd).into_iter().find(|(_, g)| g.id == gate_id).map(|(t, _)| t)
+    project_gates(cwd)
+        .into_iter()
+        .find(|(_, g)| g.id == gate_id)
+        .map(|(t, _)| t)
 }
 
 // ---------------- wait（asyncRewake 后台 hook） ----------------
@@ -982,12 +1219,21 @@ pub fn task_of_gate(cwd: &str, gate_id: &str) -> Option<PathBuf> {
 /// - 等待者「后来者接管」：`.waiter` 记最新等待者的 `pid:关卡id`，旧等待者看到被换掉就自己退出。
 ///   不能靠「父进程还活着」判断：Windows 上 hook 的父进程是 bash 存根而不是 claude，claude 退出后
 ///   旧等待者会一直活着，挡住恢复后的新会话（做空审查复现过）。
-pub fn wait(data: &Value, registry: &Path, poll: std::time::Duration, max: std::time::Duration) -> Output {
+pub fn wait(
+    data: &Value,
+    registry: &Path,
+    poll: std::time::Duration,
+    max: std::time::Duration,
+) -> Output {
     let sid = data.get("session_id").and_then(Value::as_str).unwrap_or("");
     // 与 SessionStart 注入的同一个任务（登记表可能指着已做完的另一个任务，只看它就等错关卡）。
     let cwd = data.get("cwd").and_then(Value::as_str);
-    let Some(task) = claimed_task(cwd, sid, registry) else { return Output::default() };
-    let Some(first) = read_gate(&task) else { return Output::default() };
+    let Some(task) = claimed_task(cwd, sid, registry) else {
+        return Output::default();
+    };
+    let Some(first) = read_gate(&task) else {
+        return Output::default();
+    };
     // 每个关卡的答复只唤醒一次（`.delivered` 记关卡 id）。真机实测踩过：agent 醒来后没把关卡标成
     // consumed，下一次 Stop 的 wait 又看到 answered，再唤醒一次——agent 若一直不消费就成了死循环。
     // 例外是 SessionStart：那是新起的进程（例如崩溃后恢复），之前的唤醒可能没被处理完，再送一次。
@@ -995,7 +1241,11 @@ pub fn wait(data: &Value, registry: &Path, poll: std::time::Duration, max: std::
     let on_start = data.get("hook_event_name").and_then(Value::as_str) == Some("SessionStart");
     let wake = |g: &LeadGateDto| {
         let _ = std::fs::write(&delivered, &g.id);
-        Output { stderr: Some(answer_message(&task, g)), exit: 2, ..Output::default() }
+        Output {
+            stderr: Some(answer_message(&task, g)),
+            exit: 2,
+            ..Output::default()
+        }
     };
     match first.status.as_str() {
         "answered" if on_start || read(&delivered).trim() != first.id => return wake(&first),

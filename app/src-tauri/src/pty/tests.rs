@@ -318,7 +318,11 @@ fn stop_records_request_timestamp_and_kills() {
     broker.sessions.lock().unwrap().insert(7, managed.clone());
     assert!(broker.stop(7).is_ok());
     assert!(killed.load(Ordering::Acquire), "stop 应发出 kill");
-    let first = managed.stop_requested_at.lock().unwrap().expect("应落时间戳");
+    let first = managed
+        .stop_requested_at
+        .lock()
+        .unwrap()
+        .expect("应落时间戳");
     // 重复点击不重置计时，否则连点会把升级一直往后推。
     assert!(broker.stop(7).is_ok());
     assert_eq!(managed.stop_requested_at.lock().unwrap().unwrap(), first);
@@ -339,7 +343,9 @@ fn stale_temp_id_still_reaches_the_rebound_pty() {
     // 按键：找得到会话就不该再是「未运行」；假会话没有 writer 线程，止步于通道已关闭。
     assert_eq!(broker.write(-3, b"hi").unwrap_err(), "PTY 输入通道已关闭");
     // 网格自愈按旧 id 也要查得到真实尺寸，否则 TUI 停在占位宽度。
-    managed.last_size.store(pack_size(100, 30), Ordering::Release);
+    managed
+        .last_size
+        .store(pack_size(100, 30), Ordering::Release);
     assert_eq!(broker.grid(-3), (100, 30));
     // 结束会话同理，旧 id 一样要落到真 PTY 上。
     assert!(broker.stop(-3).is_ok());
@@ -353,14 +359,21 @@ fn stale_temp_id_still_reaches_the_rebound_pty() {
 #[test]
 fn claim_rebind_publishes_the_binding_inside_the_same_lock() {
     let broker = PtyBroker::default();
-    broker.sessions.lock().unwrap().insert(-5, dummy_managed(-5));
+    broker
+        .sessions
+        .lock()
+        .unwrap()
+        .insert(-5, dummy_managed(-5));
     let managed = broker
         .try_claim_rebind(-5, 88)
         .expect("锁未中毒")
         .expect("临时 id 已登记，应换绑成功");
     assert_eq!(managed.session_id.load(Ordering::Acquire), 88);
     assert_eq!(broker.binding(-5), Some(88), "绑定应与换绑同时可见");
-    assert!(broker.snapshot(-5, 0).active, "旧 id 拉快照仍要看到活着的终端");
+    assert!(
+        broker.snapshot(-5, 0).active,
+        "旧 id 拉快照仍要看到活着的终端"
+    );
 }
 
 /// 回归：同一个 PTY 换代多次（temp → A → B）后,最初的临时 id 和中间那代真实 id
@@ -368,9 +381,16 @@ fn claim_rebind_publishes_the_binding_inside_the_same_lock() {
 #[test]
 fn repeated_rebinds_compress_instead_of_chaining() {
     let broker = PtyBroker::default();
-    broker.sessions.lock().unwrap().insert(-7, dummy_managed(-7));
+    broker
+        .sessions
+        .lock()
+        .unwrap()
+        .insert(-7, dummy_managed(-7));
     broker.try_claim_rebind(-7, 10).unwrap().expect("首次认领");
-    broker.try_claim_rebind(10, 20).unwrap().expect("/clear 换代");
+    broker
+        .try_claim_rebind(10, 20)
+        .unwrap()
+        .expect("/clear 换代");
     assert_eq!(broker.binding(-7), Some(20), "临时 id 直指当前会话");
     assert_eq!(broker.binding(10), Some(20), "上一代真实 id 同样直指当前");
     assert!(broker.snapshot(-7, 0).active);
@@ -434,6 +454,32 @@ fn feed_screen(probe: &ScreenProbe, bytes: &[u8]) {
         .process(bytes);
 }
 
+#[test]
+fn screen_frame_keeps_text_cursor_and_temporary_binding_together() {
+    let broker = PtyBroker::default();
+    let managed = dummy_managed(9);
+    feed_screen(
+        &managed.probe,
+        b"\x1b[2J\x1b[4;6HAsk anything\x1b[4;6H\x1b[?25h",
+    );
+    broker.sessions.lock().unwrap().insert(9, managed.clone());
+    broker.attach.bindings.lock().unwrap().insert(-7, 9);
+    let first = broker.screen_frame(-7).unwrap();
+    assert_eq!((first.cursor_row, first.cursor_col), (3, 5));
+    assert!(first.cursor_visible);
+    assert!(first.lines[3].contains("Ask anything"));
+    assert_eq!(Some(first.clone()), broker.screen_frame(9));
+    feed_screen(&managed.probe, b"\x1b[C\x1b[?25l");
+    let moved = broker.screen_frame(-7).unwrap();
+    assert_eq!(moved.lines, first.lines);
+    assert_eq!((moved.cursor_row, moved.cursor_col), (3, 6));
+    assert!(!moved.cursor_visible);
+    assert!(broker.screen_frame(404).is_none());
+    assert!(ScreenProbe::new(24, 80, "unknown-provider".into())
+        .frame()
+        .is_none());
+}
+
 /// 并发实测：PTY reader 高频喂字节的同时检测线程持续扫描。二者共享 parser 锁
 /// （reader 每 chunk 写、ticker 每轮持锁导出整屏），锁序错了会死锁、导出期间
 /// panic 会毒化锁。这里用真实的两线程竞争跑一遍，并断言结束后状态仍正确——
@@ -479,8 +525,7 @@ fn screen_probe_survives_concurrent_feed_and_tick() {
     feed_screen(&probe, b"\x1b[2J\x1b[H");
     feed_screen(
         &probe,
-        " Bash command\r\n Do you want to proceed?\r\n \u{276F} 1. Yes\r\n   2. No\r\n"
-            .as_bytes(),
+        " Bash command\r\n Do you want to proceed?\r\n \u{276F} 1. Yes\r\n   2. No\r\n".as_bytes(),
     );
     let after_grace = probe.started_at + DETECT_STARTUP_GRACE + std::time::Duration::from_secs(1);
     assert_eq!(
@@ -557,8 +602,7 @@ fn interactive_question_survives_a_missed_event_and_clears_on_dismiss() {
         request_id: "request-11-ask".into(),
         provider: "claude".into(),
         tool_name: "AskUserQuestion".into(),
-        input: r#"{"questions":[{"question":"晚饭吃什么？","options":[{"label":"火锅"}]}]}"#
-            .into(),
+        input: r#"{"questions":[{"question":"晚饭吃什么？","options":[{"label":"火锅"}]}]}"#.into(),
         description: None,
         permission_suggestions: vec![],
         pre_tool_use: false,
@@ -619,14 +663,20 @@ fn stale_interactive_questions_expire() {
 #[test]
 fn marked_question_without_gui_passes_and_keeps_a_display_only_entry() {
     let broker = PtyBroker::default();
-    broker.sessions.lock().unwrap().insert(21, dummy_managed(21));
+    broker
+        .sessions
+        .lock()
+        .unwrap()
+        .insert(21, dummy_managed(21));
     let mut request = approval_request(21, "AskUserQuestion");
     request.pre_tool_use = true;
     let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
     let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
     let (server_side, _) = listener.accept().unwrap();
     let token = broker.attach.token.clone();
-    broker.handle_approval(&token, request, server_side).unwrap();
+    broker
+        .handle_approval(&token, request, server_side)
+        .unwrap();
     let mut reply = String::new();
     std::io::BufRead::read_line(&mut std::io::BufReader::new(client), &mut reply).unwrap();
     assert_eq!(reply.trim(), "pass");
@@ -634,7 +684,9 @@ fn marked_question_without_gui_passes_and_keeps_a_display_only_entry() {
         broker.attach.approvals.lock().unwrap().is_empty(),
         "降级后请求不得滞留在 approvals 表"
     );
-    let dto = broker.interactive_question_dto(21).expect("题面应留作展示卡");
+    let dto = broker
+        .interactive_question_dto(21)
+        .expect("题面应留作展示卡");
     assert!(!dto.answerable, "无 approvals 背书的题面不可作答");
 }
 
@@ -658,7 +710,11 @@ fn resolve_channel_answers_or_passes_a_held_question() {
     assert!(broker.pending_approval(31).is_none());
 
     broker
-        .resolve_approval_choice(31, &request.request_id, r#"answers:{"晚饭吃什么？":"火锅"}"#)
+        .resolve_approval_choice(
+            31,
+            &request.request_id,
+            r#"answers:{"晚饭吃什么？":"火锅"}"#,
+        )
         .unwrap();
     let decision = rx.recv().unwrap();
     let ApprovalDecision::Answer(answers) = decision else {
@@ -1042,11 +1098,17 @@ fn held_questions_survive_the_ttl_until_settled() {
             response: tx,
         },
     );
-    let dto = broker.interactive_question_dto(41).expect("挂起中的题面不得过期");
+    let dto = broker
+        .interactive_question_dto(41)
+        .expect("挂起中的题面不得过期");
     assert!(dto.answerable, "approvals 持有中应可作答");
     // 结算（出表）后，同一条陈旧题面恢复 TTL 语义被清掉。
     broker.attach.approvals.lock().unwrap().clear();
-    assert_eq!(broker.interactive_question(41), None, "结算后陈旧题面应过期");
+    assert_eq!(
+        broker.interactive_question(41),
+        None,
+        "结算后陈旧题面应过期"
+    );
 }
 
 /// 召唤策略:目标会话已有消费者→Ready;用户盯着别的会话(有租约+窗口在眼前)→Hold
@@ -1054,14 +1116,32 @@ fn held_questions_survive_the_ttl_until_settled() {
 #[test]
 fn summon_policy_never_yanks_a_watched_window() {
     use super::{approval_summon_action, SummonAction};
-    assert_eq!(approval_summon_action(true, true, true), SummonAction::Ready);
+    assert_eq!(
+        approval_summon_action(true, true, true),
+        SummonAction::Ready
+    );
     // 在眼前与否不影响 Ready:请求靠事件+轮询送达已注册的消费者。
-    assert_eq!(approval_summon_action(true, true, false), SummonAction::Ready);
-    assert_eq!(approval_summon_action(false, true, true), SummonAction::Hold);
+    assert_eq!(
+        approval_summon_action(true, true, false),
+        SummonAction::Ready
+    );
+    assert_eq!(
+        approval_summon_action(false, true, true),
+        SummonAction::Hold
+    );
     // 租约还在但窗口收进托盘:徽标没人看得见,必须召唤。
-    assert_eq!(approval_summon_action(false, true, false), SummonAction::Summon);
-    assert_eq!(approval_summon_action(false, false, true), SummonAction::Summon);
-    assert_eq!(approval_summon_action(false, false, false), SummonAction::Summon);
+    assert_eq!(
+        approval_summon_action(false, true, false),
+        SummonAction::Summon
+    );
+    assert_eq!(
+        approval_summon_action(false, false, true),
+        SummonAction::Summon
+    );
+    assert_eq!(
+        approval_summon_action(false, false, false),
+        SummonAction::Summon
+    );
 }
 
 /// 代答答案必须与挂起提问的题面一一对应：CC 按问题原文取答案，空键、多余键、漏题
@@ -1098,7 +1178,10 @@ fn answers_must_cover_exactly_the_held_questions() {
         r#"{"questions":[{"question":"  "}]}"#,
         r#"not json"#,
     ] {
-        assert!(!answers_match_questions(unkeyable, &one), "{unkeyable} 不可键控");
+        assert!(
+            !answers_match_questions(unkeyable, &one),
+            "{unkeyable} 不可键控"
+        );
     }
 }
 
@@ -1193,10 +1276,17 @@ fn approval_wait_settles_on_terminal_side_signals() {
     let (_client2, server2) = pair();
     let (_tx2, rx2) = mpsc::channel::<ApprovalDecision>();
     let mut ticks = 0;
-    let outcome = await_approval_outcome(&rx2, &server2, far(), tick, move || {
-        ticks += 1;
-        Some(ticks <= 2) // 两拍置位，此后清除
-    }, || false);
+    let outcome = await_approval_outcome(
+        &rx2,
+        &server2,
+        far(),
+        tick,
+        move || {
+            ticks += 1;
+            Some(ticks <= 2) // 两拍置位，此后清除
+        },
+        || false,
+    );
     assert_eq!(outcome, ApprovalWait::ResolvedElsewhere);
 
     // 从未观察到置位的「清除」不是本请求的结算（写库失败 / 迟到的上一工具事件）：
@@ -1220,10 +1310,17 @@ fn approval_wait_settles_on_terminal_side_signals() {
     let (_tx5, rx5) = mpsc::channel::<ApprovalDecision>();
     let mut probes = 0;
     assert_eq!(
-        await_approval_outcome(&rx5, &server5, far(), tick, || Some(false), move || {
-            probes += 1;
-            probes > 2 // 前两拍还在,之后手机租约过期
-        }),
+        await_approval_outcome(
+            &rx5,
+            &server5,
+            far(),
+            tick,
+            || Some(false),
+            move || {
+                probes += 1;
+                probes > 2 // 前两拍还在,之后手机租约过期
+            }
+        ),
         ApprovalWait::Abandoned
     );
 
@@ -1269,7 +1366,10 @@ fn screen_probe_detects_states_from_raw_ansi() {
     feed(&probe, b"\x1b[2J\x1b[H");
     feed(&probe, " Bash command\r\n".as_bytes());
     feed(&probe, "   cargo test --all\r\n".as_bytes());
-    feed(&probe, "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\r\n".as_bytes());
+    feed(
+        &probe,
+        "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\r\n".as_bytes(),
+    );
     feed(&probe, " Do you want to proceed?\r\n".as_bytes());
     feed(&probe, " \u{276F} 1. Yes\r\n".as_bytes());
     feed(&probe, "   2. No\r\n".as_bytes());
@@ -1283,9 +1383,15 @@ fn screen_probe_detects_states_from_raw_ansi() {
     feed(&probe, "\x1b]0;\u{2733} claude\x07".as_bytes());
     feed(&probe, b"\x1b[2J\x1b[H");
     feed(&probe, "  tool output done\r\n".as_bytes());
-    feed(&probe, "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\r\n".as_bytes());
+    feed(
+        &probe,
+        "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\r\n".as_bytes(),
+    );
     feed(&probe, " \u{276F} \r\n".as_bytes());
-    feed(&probe, "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\r\n".as_bytes());
+    feed(
+        &probe,
+        "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\r\n".as_bytes(),
+    );
     feed(&probe, "  ? for shortcuts\r\n".as_bytes());
     assert_eq!(
         probe.tick(3, after_grace),
@@ -1306,7 +1412,10 @@ fn only_working_to_stopped_transitions_are_downgrades() {
     assert!(!super::is_downgrade(Some(Idle), Working), "升级不高优");
     assert!(!super::is_downgrade(Some(Blocked), Working), "升级不高优");
     assert!(!super::is_downgrade(None, Idle), "首次发布不算降级");
-    assert!(!super::is_downgrade(Some(Idle), Blocked), "非运行中出发不算");
+    assert!(
+        !super::is_downgrade(Some(Idle), Blocked),
+        "非运行中出发不算"
+    );
 }
 
 /// 三态判定与订阅表严格同步：None 误判会新开重复窗口，Legacy/Pid 误判会不开新视图。
@@ -1687,7 +1796,9 @@ fn attach_server_rejects_bad_token_and_tokens_are_unique() {
         .lock()
         .unwrap()
         .insert("launch-token".into(), -7);
-    assert!(first.handle_claim("wrong", "launch-token", 9, None).is_err());
+    assert!(first
+        .handle_claim("wrong", "launch-token", 9, None)
+        .is_err());
     assert_eq!(
         first.attach.pending.lock().unwrap().get("launch-token"),
         Some(&-7)
@@ -1715,7 +1826,9 @@ fn reclaim_is_idempotent_on_replay_and_rejects_dead_session() {
     broker.attach.bindings.lock().unwrap().insert(-7, 9);
 
     // compact 等场景会对同一真实 id 重发 SessionStart：重放必须幂等成功。
-    broker.handle_claim(&token, "launch-token", 9, None).unwrap();
+    broker
+        .handle_claim(&token, "launch-token", 9, None)
+        .unwrap();
     // token 存续（/clear 换代还要靠它重认领），不随认领消费。
     assert_eq!(
         broker.attach.pending.lock().unwrap().get("launch-token"),
@@ -1723,7 +1836,9 @@ fn reclaim_is_idempotent_on_replay_and_rejects_dead_session() {
     );
 
     // 换代到新 id，但旧会话已不在 sessions（PTY 已退出）：报错，且绑定保持原值。
-    assert!(broker.handle_claim(&token, "launch-token", 10, None).is_err());
+    assert!(broker
+        .handle_claim(&token, "launch-token", 10, None)
+        .is_err());
     assert_eq!(broker.binding(-7), Some(9));
 }
 
@@ -1742,11 +1857,15 @@ fn claim_for_a_session_missing_from_the_db_is_rejected() {
         .unwrap()
         .insert("launch-ghost".into(), -17);
     // 首次认领：拒绝，不建绑定。
-    assert!(broker.handle_claim(&token, "launch-ghost", GHOST, None).is_err());
+    assert!(broker
+        .handle_claim(&token, "launch-ghost", GHOST, None)
+        .is_err());
     assert_eq!(broker.binding(-17), None);
     // 换代：拒绝，原绑定保持。
     broker.attach.bindings.lock().unwrap().insert(-17, 9);
-    let err = broker.handle_claim(&token, "launch-ghost", GHOST, None).unwrap_err();
+    let err = broker
+        .handle_claim(&token, "launch-ghost", GHOST, None)
+        .unwrap_err();
     assert!(err.contains("不在本库中"), "{err}");
     assert_eq!(broker.binding(-17), Some(9));
     MISSING_FOR_TEST.lock().unwrap().retain(|id| *id != GHOST);
@@ -2008,7 +2127,10 @@ fn deny_choice_carries_reason_to_model() {
     broker
         .respond_runtime_request(9, "request-deny-reason", "deny:  别动生产配置 ")
         .unwrap();
-    assert_eq!(rx.recv().unwrap(), ApprovalDecision::DenyWith("别动生产配置".into()));
+    assert_eq!(
+        rx.recv().unwrap(),
+        ApprovalDecision::DenyWith("别动生产配置".into())
+    );
     let rx = seed_pending_approval(&broker, 9, "request-deny-empty");
     broker
         .respond_runtime_request(9, "request-deny-empty", "deny:   ")

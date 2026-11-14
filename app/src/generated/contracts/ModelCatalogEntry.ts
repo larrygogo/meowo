@@ -20,4 +20,17 @@ group: string | null,
 /**
  * 该模型支持的思考档位（kimi `support_efforts`）；空 = 未声明。
  */
-efforts: Array<string>, };
+efforts: Array<string>, 
+/**
+ * 选中该模型时 CLI 默认用的思考档（kimi `default_effort`、codex `defaultReasoningEffort`）。
+ */
+default_effort: string | null, 
+/**
+ * CLI 配置里的默认模型（kimi `default_model`、codex `isDefault`）。新建页据此预选。
+ */
+is_default: boolean, 
+/**
+ * 这个模型能不能用要看服务端（Gemini 个人 Google 账号的预览模型取决于配额与实验开关，
+ * 离线算不准，research-kimi-gemini §3.1），菜单如实标出。
+ */
+uncertain: boolean, };

@@ -8,6 +8,10 @@ mod mcp;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().is_some_and(|arg| arg == "lead-mcp") {
+        meowo_reporter::lead_mcp::run();
+        return;
+    }
     // agent 拉起的 MCP 服务器（面板浏览器工具）。长驻读 stdin，必须在 run() 一次性读完
     // stdin 之前分流。
     if args.first().is_some_and(|arg| arg == "mcp") {
@@ -17,13 +21,38 @@ fn main() {
     // Lead 工作流 hook（用户在设置里打开 Lead 后才装）。与下面的主路径分开：只有它会输出
     // 改变 CLI 行为的内容；仍然吞掉一切错误、以 0 退出。
     if args.first().is_some_and(|arg| arg == "lead") {
+        // 原生 TUI 的关卡等待器（kimi/gemini 在后台命令里跑）：身份全在参数里，且绝不读 stdin——
+        // 后台命令的 stdin 可能是 TUI 的伪终端，读它会永远等不到 EOF。
+        if args.get(1).map(String::as_str) == Some("wait") {
+            if let Some(registry) =
+                db_path().and_then(|p| p.parent().map(|d| d.join("lead-sessions.json")))
+            {
+                if let Some(out) = meowo_reporter::lead_waiter::run_from_args(&args, &registry) {
+                    if let Some(text) = out.stdout {
+                        println!("{text}");
+                    }
+                    std::process::exit(out.exit);
+                }
+            }
+        }
         // wait 模式（asyncRewake）用退出码 2 + stderr 唤醒模型；其余模式恒为 0。
         let mut raw = String::new();
         let mut code = 0;
         if std::io::stdin().read_to_string(&mut raw).is_ok() {
-            if let Some(registry) = db_path().and_then(|p| p.parent().map(|d| d.join("lead-sessions.json"))) {
+            if let Some(registry) =
+                db_path().and_then(|p| p.parent().map(|d| d.join("lead-sessions.json")))
+            {
                 let mode = args.get(1).map(String::as_str).unwrap_or("");
-                let out = meowo_reporter::lead::run(mode, &raw, &registry);
+                let provider = args
+                    .windows(2)
+                    .find(|pair| pair[0] == "--provider")
+                    .map(|pair| pair[1].as_str());
+                let out = match provider {
+                    Some(provider) => {
+                        meowo_reporter::lead_provider::run(provider, mode, &raw, &registry)
+                    }
+                    None => meowo_reporter::lead::run(mode, &raw, &registry),
+                };
                 if let Some(text) = out.stdout {
                     print!("{text}");
                 }
@@ -369,7 +398,10 @@ mod tests {
         let (output, settled) =
             pretooluse_outcome(ApprovalDecision::DenyWith("旧答案".into()), Some(&input));
         assert!(settled);
-        assert_eq!(output.unwrap()["hookSpecificOutput"]["permissionDecision"], "deny");
+        assert_eq!(
+            output.unwrap()["hookSpecificOutput"]["permissionDecision"],
+            "deny"
+        );
 
         for decision in [
             ApprovalDecision::Allow,

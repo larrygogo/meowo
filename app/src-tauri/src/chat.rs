@@ -140,6 +140,7 @@ struct LiveSignals {
     runtimes: std::sync::Arc<super::session_query::SessionRuntimeIndex>,
     /// 托管 PTY 的屏幕状态(见 ChatHistoryDto.screen_state),纯内存查表。
     screen_state: Option<&'static str>,
+    screen_assumed: bool,
 }
 
 /// transcript 采样(错误徽标 + agent 起的标题)的重采样间隔:分析走共享 mtime 缓存,但 agent
@@ -157,6 +158,18 @@ struct ChatRead {
     before: Option<u64>,
 }
 
+/// 停用标记只在会话没有活着的进程时成立：「用官方 CLI 打开」后原生 PTY（或外部终端里的 CLI）在跑，
+/// 它就是普通原生会话，再下发停用标记会让对话页一直显示「已停用」、+ 菜单置灰（做空 R4）。
+/// `resumable` = 库里有停用记录时是否绑定过原生 id；None = 不是停用会话。
+fn retired_marker(
+    resumable: Option<bool>,
+    running: bool,
+) -> Option<meowo_protocol::ipc::RetiredManagedDto> {
+    resumable
+        .filter(|_| !running)
+        .map(|resumable| meowo_protocol::ipc::RetiredManagedDto { resumable })
+}
+
 fn load_chat_history(
     db_path: &Path,
     chat_mtimes: &Mutex<ChatMtimes>,
@@ -165,7 +178,11 @@ fn load_chat_history(
     session_id: i64,
     read: ChatRead,
 ) -> Result<ChatHistory, String> {
-    let ChatRead { offset, full, before } = read;
+    let ChatRead {
+        offset,
+        full,
+        before,
+    } = read;
     let prev = chat_mtimes
         .lock()
         .ok()
@@ -188,6 +205,7 @@ fn load_chat_history(
             &header.cc_session_id,
         );
     let mut history = ChatHistory {
+        retired_managed: None,
         session_id,
         cc_session_id: header.cc_session_id.clone(),
         title: header
@@ -207,6 +225,7 @@ fn load_chat_history(
             &header.provider,
             header.pending_review.as_deref(),
             live.broker_approval,
+            live.screen_state == Some("working") && !live.screen_assumed,
         )
         .and_then(PendingReviewKind::from_stored),
         model: context.model,
@@ -225,6 +244,7 @@ fn load_chat_history(
             super::now_ms(),
         ),
         screen_state: live.screen_state.map(str::to_string),
+        screen_assumed: live.screen_assumed,
         // 待办由 hook 落库（快照式待办工具），与 transcript 解析无关，故所有 provider 都取。
         todos: store
             .task_id_of_session_pub(session_id)
@@ -262,6 +282,19 @@ fn load_chat_history(
         predecessor_id: header.predecessor_id,
         superseded_by: header.superseded_by,
     };
+    // 刚切成功、还没有新回复的模型以宿主存档为准（最终做空 P1/P2）：对话页、手机、换会话回来、重启
+    // Meowo 后读到的都是它，不再靠前端内存里的钉子。
+    history.model = super::session_settings::pinned_history_model(&store, session_id, history.model.take());
+    // 已停用的「Meowo 托管」会话（PR #172 删除托管路线）：照常走原生记录读取——绑定过原生 id 的，
+    // cc_session_id 就是 CLI 自己的会话 id，对话页能看到 CLI 落盘的记录；前端据此换门卡文案。
+    let running = super::session_query::process_alive(header.pid, &live.alive, live.pty_live);
+    history.retired_managed = retired_marker(
+        store
+            .retired_managed(session_id)
+            .map_err(|error| error.to_string())?
+            .map(|retired| retired.native_session_id.is_some()),
+        running,
+    );
     // errored 与标题都和侧栏/贴纸走同一入口(session_query::analyze_transcript,同口径由代码保证)。
     // 5s 节流:agent 流式输出期间 transcript 每轮都在变,每轮全采样会对同一批新增字节
     // 做两遍解析(分析器 + 下面的聊天增量各一遍)且解析持共享缓存锁;错误徽标容忍 ~5s 延迟。
@@ -317,7 +350,9 @@ fn load_chat_history(
     // 「加载更早」向上翻页：before = 当前已加载窗口的首行字节（首读/上一屏响应里的
     // earliest）。只解析 [0, before) 这一段并取其尾部一屏，长会话反复上翻不再是
     // 整文件重读 × 页数。尾部增量的记账（offset/mtime）不在这条路径上动，轮询不受影响。
-    if let Some(end) = before {
+    // Gemini快照重写或跨账号恢复后，旧页的字节上界同样失效；不能先按before读取再检查路径。
+    let path_changed = prev.as_ref().is_some_and(|entry| entry.path != path);
+    if let Some(end) = before.filter(|_| !path_changed) {
         if let Some(window) = meowo_agent::read_chat_window(spec, &path, end, FIRST_PAGE_ITEMS) {
             history.items = window.items;
             history.has_more = window.has_more;
@@ -327,7 +362,6 @@ fn load_chat_history(
     }
     // 路径切换(跨 profile 恢复后解析到另一个数据目录里的延续文件):前端的字节偏移
     // 是对旧文件的记账,对新文件无意义——从头重读并向前端标记 reset,清空重灌。
-    let path_changed = prev.as_ref().is_some_and(|entry| entry.path != path);
     let (base_offset, base_mtime) = if path_changed {
         (0, None)
     } else {
@@ -340,16 +374,17 @@ fn load_chat_history(
         base_mtime,
         if full { 0 } else { FIRST_PAGE_ITEMS },
     );
-    if path_changed && offset > 0 {
+    if path_changed && (offset > 0 || before.is_some()) {
         delta.reset = true;
     }
     // 只有从头重读能判定「计划已不存在」；普通增量没带计划只表示没有新计划。
     let plan = if base_offset == 0 || delta.reset {
         delta.plan.clone()
     } else {
-        delta.plan.clone().or_else(|| {
-            prev.as_ref().and_then(|entry| entry.plan.clone())
-        })
+        delta
+            .plan
+            .clone()
+            .or_else(|| prev.as_ref().and_then(|entry| entry.plan.clone()))
     };
     if let (Ok(mut seen), Some(mtime)) = (chat_mtimes.lock(), delta.mtime) {
         seen.put_if_current(session_id, prev_version, mtime, path.clone(), plan.clone());
@@ -377,8 +412,6 @@ fn load_chat_history(
     Ok(history)
 }
 
-/// 读取一次子任务委派的完整时间线（用户在对话页展开时按需调用）。
-///
 /// 不走 [`load_chat_history`] 的增量路径：侧车流是已经写完的独立文件，整读一次即可，
 /// 也不该让历史轮询顺带承担它的成本。
 fn load_subagent_transcript(
@@ -602,11 +635,7 @@ pub(crate) async fn get_chat_history(
     let runtimes = state.session_runtimes.clone();
     let pty_live = state.ptys.is_active(session_id);
     let broker_approval = state.ptys.pending_approval(session_id).is_some();
-    let screen_state = state
-        .ptys
-        .screen_states()
-        .get(&session_id)
-        .map(|sight| sight.state);
+    let screen_sight = state.ptys.screen_states().get(&session_id).copied();
     tauri::async_runtime::spawn_blocking(move || {
         load_chat_history(
             &db_path,
@@ -617,7 +646,8 @@ pub(crate) async fn get_chat_history(
                 pty_live,
                 runtimes: runtimes.snapshot(),
                 broker_approval,
-                screen_state,
+                screen_state: screen_sight.map(|sight| sight.state),
+                screen_assumed: screen_sight.is_some_and(|sight| sight.fallback),
             },
             session_id,
             ChatRead {
@@ -629,6 +659,32 @@ pub(crate) async fn get_chat_history(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// 宿主自己读一次会话此刻的状态与模式（排队的切换在回合结束时由宿主执行，不依赖前端开着这个会话，
+/// 做空复核 M3）。与 get_chat_history 同一组原料，只读不翻页。
+pub(crate) fn session_snapshot(state: &super::AppState, session_id: i64) -> Option<ChatHistory> {
+    let screen_sight = state.ptys.screen_states().get(&session_id).copied();
+    load_chat_history(
+        &state.db_path,
+        &state.chat_mtimes,
+        &state.tx_cache,
+        LiveSignals {
+            alive: state.process_snapshots.snapshot(),
+            pty_live: state.ptys.is_active(session_id),
+            runtimes: state.session_runtimes.snapshot(),
+            broker_approval: state.ptys.pending_approval(session_id).is_some(),
+            screen_state: screen_sight.map(|sight| sight.state),
+            screen_assumed: screen_sight.is_some_and(|sight| sight.fallback),
+        },
+        session_id,
+        ChatRead {
+            offset: 0,
+            full: false,
+            before: None,
+        },
+    )
+    .ok()
 }
 
 // 粘贴附件的单文件上限与目录约定统一取自 fsutil（与排队插话图片同源，勿再各写一份）。
@@ -750,7 +806,9 @@ pub(crate) fn spawn_paste_cleanup() {
 /// 按 mtime 清掉 `root` 下过期的条目：一次性目录（`{时间戳}-…`）整目录删，
 /// 长期目录（paste 的 `queued/`）逐文件清。两个临时根的结构约定一致，共用这一份。
 fn cleanup_expired_under(root: &Path) {
-    let Ok(entries) = std::fs::read_dir(root) else { return };
+    let Ok(entries) = std::fs::read_dir(root) else {
+        return;
+    };
     let now = std::time::SystemTime::now();
     let expired = |meta: &std::fs::Metadata| {
         meta.modified()
@@ -762,7 +820,9 @@ fn cleanup_expired_under(root: &Path) {
         // queued/ 是长期目录（transcript 图片按内容名幂等复用，新旧文件混住）：
         // 按整目录 mtime 删会把仍在被回读的新图连坐，按单个文件逐个清。
         if entry.file_name() == "queued" {
-            let Ok(files) = std::fs::read_dir(entry.path()) else { continue };
+            let Ok(files) = std::fs::read_dir(entry.path()) else {
+                continue;
+            };
             for file in files.flatten() {
                 if file.metadata().is_ok_and(|meta| expired(&meta)) {
                     let _ = std::fs::remove_file(file.path());
@@ -893,9 +953,18 @@ fn capture_screen_region_blocking(generation: u64) -> Result<Option<String>, Str
             continue;
         }
         // 截图层往剪贴板里分几次写格式，序号一变就读可能还没有位图：读不到接着等。
-        let Ok(mut clipboard) = arboard::Clipboard::new() else { continue };
-        let Ok(image) = clipboard.get_image() else { continue };
-        return save_capture_png(image.width as u32, image.height as u32, image.bytes.into_owned()).map(Some);
+        let Ok(mut clipboard) = arboard::Clipboard::new() else {
+            continue;
+        };
+        let Ok(image) = clipboard.get_image() else {
+            continue;
+        };
+        return save_capture_png(
+            image.width as u32,
+            image.height as u32,
+            image.bytes.into_owned(),
+        )
+        .map(Some);
     }
     Ok(None)
 }
@@ -943,11 +1012,10 @@ fn save_capture_png(width: u32, height: u32, rgba: Vec<u8>) -> Result<String, St
 #[tauri::command]
 pub(crate) async fn clipboard_restore() -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(|| {
-        let snapshot = CLIPBOARD_SNAPSHOT
-            .lock()
-            .map_err(|e| e.to_string())?
-            .take();
-        let Some(snapshot) = snapshot else { return Ok(()) };
+        let snapshot = CLIPBOARD_SNAPSHOT.lock().map_err(|e| e.to_string())?.take();
+        let Some(snapshot) = snapshot else {
+            return Ok(());
+        };
         let mut clipboard = arboard::Clipboard::new().map_err(|e| e.to_string())?;
         if let Some(image) = snapshot.image {
             clipboard.set_image(image).map_err(|e| e.to_string())?;
@@ -1116,6 +1184,64 @@ pub(crate) async fn search_chat_transcripts(
 mod tests {
     use super::*;
 
+    /// 已停用的「Meowo 托管」会话：照常走原生读取，只多带一个停用标记；有没有原生 id 决定能否用官方 CLI 打开。
+    #[test]
+    fn retired_managed_session_reads_natively_and_reports_resumability() {
+        let dir = std::env::temp_dir().join(format!(
+            "meowo-retired-chat-{}",
+            crate::remote::generate_token().unwrap()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        let db = dir.join("board.db");
+        let store = super::super::open_store(&db).unwrap();
+        let project = store
+            .upsert_project_by_root(&dir.to_string_lossy(), "retired", 1)
+            .unwrap();
+        let (bound, _) = store.start_session(project, "thread-bound", 1).unwrap();
+        let (unbound, _) = store
+            .start_session(project, "meowo-managed-0000", 1)
+            .unwrap();
+        let (plain, _) = store.start_session(project, "plain-native", 1).unwrap();
+        // 旧版本写下的托管记录：本版本已没有写入口，直接按旧表结构插行模拟存量数据。
+        let raw = rusqlite::Connection::open(&db).unwrap();
+        for (id, native) in [(bound, Some("thread-bound")), (unbound, None)] {
+            raw.execute(
+                "INSERT INTO managed_conversations(session_id,provider,cwd,native_session_id,phase,created_at,updated_at) VALUES(?1,'codex',?2,?3,'failed',1,1)",
+                rusqlite::params![id, dir.to_string_lossy(), native],
+            )
+            .unwrap();
+        }
+        drop(raw);
+        let mtimes = Mutex::new(ChatMtimes::default());
+        let cache = Mutex::new(meowo_agent::TranscriptCache::default());
+        let read_with = |id, pty_live| {
+            load_chat_history(
+                &db,
+                &mtimes,
+                &cache,
+                LiveSignals {
+                    alive: Default::default(),
+                    pty_live,
+                    broker_approval: false,
+                    runtimes: Default::default(),
+                    screen_state: None,
+                    screen_assumed: false,
+                },
+                id,
+                ChatRead::default(),
+            )
+            .unwrap()
+        };
+        let resumable = |id| read_with(id, false).retired_managed.map(|retired| retired.resumable);
+        assert_eq!(resumable(bound), Some(true));
+        assert_eq!(resumable(unbound), Some(false));
+        assert_eq!(resumable(plain), None);
+        // 做空 R4：用官方 CLI 恢复后原生 PTY 在跑，它就是普通原生会话，不再带停用标记。
+        assert_eq!(read_with(bound, true).retired_managed, None);
+        drop(store);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
     #[test]
     fn pasted_attachment_roundtrip_keeps_name_and_content() {
         use base64::Engine;
@@ -1214,7 +1340,10 @@ mod tests {
         cache.put_if_current(7, version_b, newer, any_path(), Some("计划".into()));
         cache.put_if_current(7, version_a, base, any_path(), None);
         assert_eq!(cache.get(7).map(|entry| entry.mtime), Some(newer));
-        assert_eq!(cache.get(7).and_then(|entry| entry.plan).as_deref(), Some("计划"));
+        assert_eq!(
+            cache.get(7).and_then(|entry| entry.plan).as_deref(),
+            Some("计划")
+        );
     }
 
     /// 改名不该吃 5 秒节流：DB 标题一变，缓存里的旧 transcript 标题就得作废，
@@ -1230,7 +1359,9 @@ mod tests {
         cache.put_sample(7, 1_000, sample);
         let hit = cache.sample_cached(7, 1_000 + TRANSCRIPT_SAMPLE_MS - 1, Some("首条 prompt"));
         assert_eq!(hit.and_then(|s| s.title).as_deref(), Some("ai 起的"));
-        assert!(cache.sample_cached(7, 1_000 + TRANSCRIPT_SAMPLE_MS, Some("首条 prompt")).is_none());
+        assert!(cache
+            .sample_cached(7, 1_000 + TRANSCRIPT_SAMPLE_MS, Some("首条 prompt"))
+            .is_none());
         assert!(cache.sample_cached(7, 1_001, Some("新名字")).is_none());
         assert!(cache.sample_cached(7, 1_001, None).is_none());
     }

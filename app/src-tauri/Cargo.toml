@@ -79,6 +79,7 @@ tauri-plugin-wdio = { version = "1", optional = true }
 tauri-plugin-wdio-webdriver = { version = "1", optional = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+toml_edit = { workspace = true }
 notify = { workspace = true }
 # 剪贴板图像读写(原生图片附加:把附件写进剪贴板让 TUI 自己 Ctrl-V 读;发完还原快照)。
 # image-data 提供 get_image/set_image;关默认特性是去掉 Linux 的 wayland-data-control 附带依赖。
@@ -122,11 +123,14 @@ trash = "~5.2.9"
 # 远程目录浏览（remote.rs list_subdirectories）：std canonicalize 在 Windows 回 \\?\
 # 前缀路径，展示难看且回填 cwd 后部分 agent 不认。已在依赖树（tauri 传递），零新增。
 dunce = "1"
+# Lead 原生续跑：跨 Meowo 重启按 pid 认回自己起的 codex app-server 时核对命令行（防 pid 复用误杀）。
+# 与 meowo-reporter 同版本，已在依赖树里，不新增依赖。
+sysinfo = "0.32"
 # codex config.toml 的结构保持编辑（保注释与键序）。kimi 的已迁入 meowo-agent::config。
 # codex hook 预信任的 trusted_hash 计算（SHA-256）。
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_UI_WindowsAndMessaging", "Win32_Graphics_Dwm", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_Graphics_Gdi", "Win32_Foundation", "Win32_System_Threading", "Win32_System_Power", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Diagnostics_Debug", "Win32_System_LibraryLoader", "Win32_Security_Cryptography", "Win32_System_DataExchange", "Win32_System_Console", "Wdk_System_Threading"] }
+windows-sys = { version = "0.59", features = ["Win32_UI_WindowsAndMessaging", "Win32_Graphics_Dwm", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_Graphics_Gdi", "Win32_Foundation", "Win32_System_Threading", "Win32_System_Power", "Win32_System_Diagnostics_ToolHelp", "Win32_NetworkManagement_IpHelper", "Win32_System_Diagnostics_Debug", "Win32_System_LibraryLoader", "Win32_Security_Cryptography", "Win32_System_DataExchange", "Win32_System_Console", "Wdk_System_Threading"] }
 uiautomation = "0.25"
 tauri-winrt-notification = "0.7"
 # 点击 toast 后从"通知中心"移除本应用的已投递通知（tauri-winrt-notification 本身不暴露历史清除）。
@@ -178,3 +182,5 @@ unexpected_cfgs = "allow"
 [dev-dependencies]
 # test-util：看门狗单测用 paused time 快进时钟，不真等 60 秒。
 tokio = { version = "1", features = ["test-util", "macros", "rt", "time"] }
+# 已停用的「Meowo 托管」会话的回归测试要按旧表结构直插存量行（本版本已无写入口）；store 已依赖它，不新增 crate。
+rusqlite = { workspace = true }

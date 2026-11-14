@@ -41,6 +41,11 @@ pub(super) static RULES: &[ScreenRule] = &[
             "ctrl+c to interrupt",
             "press esc to interrupt",
             "esc again to interrupt",
+            // 1.19.3 的运行中底栏是 `esc ` + `interrupt`，按过一次 Esc 后是 `esc again to interrupt`
+            // （opencode.exe 内嵌 JS：`K("esc ")` 后接 `kU.interrupt>0?"again to interrupt":"interrupt"`，
+            // research-cli-drift O1，2026-11-12）。没有 "to"，前三条都认不出；关了动画的用户
+            // 又没有进度条，运行中就判成空闲。
+            "esc interrupt",
         ]),
     )
     .visible(),

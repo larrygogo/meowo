@@ -112,7 +112,8 @@ export function ModelMenu({ title, items, currentId, starred = [], effort, probi
     <div className="chat-model-quick-section is-list" key="models">
       {[...groups.entries()].map(([group, groupItems], index, all) => (
         <div className="chat-model-quick-group" key={group}>
-          <div className="chat-model-quick-head">{group}</div>
+          {/* 只有一组时不写组名：一行组名说的就是当前引擎，纯占地方（2026-11-14 实拍「managed:kimi-code」）。 */}
+          {all.length > 1 && <div className="chat-model-quick-head">{group}</div>}
           {groupItems.map(renderItem)}
           {index === all.length - 1 && status}
         </div>

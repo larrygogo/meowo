@@ -11,6 +11,7 @@ const api = vi.hoisted(() => ({
   listSubdirectories: vi.fn(),
   getSessionAdminPage: vi.fn(),
   savePastedAttachment: vi.fn(),
+  leadProviderInstallations: vi.fn(),
 }));
 vi.mock("../../api", async (orig) => ({ ...(await orig<typeof import("../../api")>()), ...api }));
 const dialog = vi.hoisted(() => ({ open: vi.fn() }));
@@ -29,6 +30,7 @@ beforeEach(() => {
   dialog.open.mockReset();
   api.recentCwds.mockResolvedValue(["C:/work/meowo", "C:/work/site"]);
   api.checkProviderHooks.mockResolvedValue("installed");
+  api.leadProviderInstallations.mockResolvedValue([]);
   api.getSettings.mockResolvedValue({ default_agent: "claude" });
   api.listAgents.mockResolvedValue(descriptors(["claude", "codex"]));
   api.getAccounts.mockResolvedValue([
@@ -39,6 +41,28 @@ beforeEach(() => {
 afterEach(() => cleanup());
 
 describe("新建会话页（对话窗主区，对照 Kimi）", () => {
+  // 新建会话一律原生 TUI（leader 2026-11-13：对话依托官方 CLI，托管会话路线已删除）。Lead 关卡的自动继续
+  // 由原生会话自己完成（lead_native）。兄弟场景：四家无论装没装 Lead 都走原生、保留启动选项，
+  // 新建页也不查 Lead 安装状态。
+  it.each(["codex", "kimi", "gemini", "opencode"])("%s always starts a native TUI session with its launch options, Lead or not", async (provider) => {
+    api.leadProviderInstallations.mockResolvedValue([{ provider, automaticContinue: true }]);
+    api.listAgents.mockResolvedValue(descriptors([provider]));
+    api.getSettings.mockResolvedValue({ default_agent: provider });
+    api.newSession.mockResolvedValue(-408);
+    render(<NewSessionPage prefill={{ cwd: "C:/isolated", provider }} onLaunched={vi.fn()} />);
+    await screen.findByTestId("nsp-send");
+    expect(screen.queryByRole("checkbox", { name: /托管/ })).toBeNull();
+    fireEvent.click(screen.getByTestId("nsp-send"));
+    await waitFor(() => expect(api.newSession).toHaveBeenCalled());
+    expect(api.leadProviderInstallations).not.toHaveBeenCalled();
+  });
+
+  it("codex keeps its approval launch option", async () => {
+    api.listAgents.mockResolvedValue(descriptors(["codex"]));
+    render(<NewSessionPage prefill={{ cwd: "C:/isolated", provider: "codex" }} onLaunched={vi.fn()} />);
+    expect(await screen.findByTestId("nsp-option-approval")).toBeTruthy();
+  });
+
   it("默认选中最近的工作区，写下第一句话回车即启动，并把这句话交回去", async () => {
     api.newSession.mockResolvedValue(-7);
     const onLaunched = vi.fn();

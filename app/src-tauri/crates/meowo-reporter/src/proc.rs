@@ -37,6 +37,77 @@ pub fn owner_pid(provider: &str) -> Option<u32> {
     None
 }
 
+/// 仅在需要归属/重启时读目标命令行；不可读、插件未声明都保守为 Unknown。
+/// 此处也复核旧数据库中的 PID，不能仅相信升级后新增的 shared 标记。
+pub fn process_scope(pid: u32) -> meowo_agent::registry::ProcessScope {
+    use meowo_agent::registry::ProcessScope;
+    use sysinfo::{ProcessRefreshKind, ProcessesToUpdate, System, UpdateKind};
+    let target = sysinfo::Pid::from_u32(pid);
+    let mut sys = System::new();
+    sys.refresh_processes_specifics(
+        ProcessesToUpdate::Some(&[target]),
+        false,
+        ProcessRefreshKind::new().with_cmd(UpdateKind::Always),
+    );
+    let Some(process) = sys.process(target) else {
+        return ProcessScope::Unknown;
+    };
+    let argv: Vec<String> = process
+        .cmd()
+        .iter()
+        .map(|arg| arg.to_string_lossy().into_owned())
+        .collect();
+    scope_for_command(&process.name().to_string_lossy(), &argv)
+}
+
+fn scope_for_command(name: &str, argv: &[String]) -> meowo_agent::registry::ProcessScope {
+    merge_scopes(
+        meowo_agent::all()
+            .iter()
+            .filter(|plugin| plugin.owns_process(name))
+            .map(|plugin| plugin.process_scope(argv)),
+    )
+}
+
+fn merge_scopes(
+    scopes: impl Iterator<Item = meowo_agent::registry::ProcessScope>,
+) -> meowo_agent::registry::ProcessScope {
+    use meowo_agent::registry::ProcessScope;
+    let mut known = None;
+    for scope in scopes.filter(|scope| *scope != ProcessScope::Unknown) {
+        if known.is_some_and(|previous| previous != scope) {
+            return ProcessScope::Unknown;
+        }
+        known = Some(scope);
+    }
+    known.unwrap_or(ProcessScope::Unknown)
+}
+
+/// 共享服务的多个会话合法持有同 PID，不能走独占 CLI 的换代驱逐。
+pub fn record_owner_pid(
+    store: &meowo_store::Store,
+    session_id: i64,
+    provider: &str,
+    now_ms: i64,
+) -> Result<(), meowo_store::StoreError> {
+    use meowo_agent::registry::ProcessScope;
+    if let Some(pid) = owner_pid(provider) {
+        match process_scope(pid) {
+            ProcessScope::Exclusive => store.set_session_pid(session_id, i64::from(pid), now_ms)?,
+            ProcessScope::Shared => {
+                store.set_session_shared_pid(session_id, i64::from(pid), now_ms)?
+            }
+            // 认不出作用域时仍要记下进程号：不记则判活失败，「接管」看不到原进程会再起一个
+            // 同会话进程（做空复现：gemini 带 --max-old-space-size 重启自身时）。按共享记，
+            // 判活照常、又不会被当成独占进程去结束或驱逐别的会话。
+            ProcessScope::Unknown => {
+                store.set_session_shared_pid(session_id, i64::from(pid), now_ms)?
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Unix（macOS/Linux）实现：用 `ps` 上溯进程树，而非 sysinfo。
 ///
 /// 实测 macOS 上 sysinfo 的 `parent()` 不可靠——会在某些进程（如 login）过早返回 None，
@@ -79,4 +150,42 @@ fn ps_comm(pid: u32) -> Option<String> {
         .ok()?;
     let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
     (!s.is_empty()).then_some(s)
+}
+
+#[cfg(test)]
+mod scope_tests {
+    use super::*;
+    use meowo_agent::registry::ProcessScope;
+
+    #[test]
+    fn unknown_name_candidate_does_not_mask_a_later_script_match() {
+        assert_eq!(
+            merge_scopes([ProcessScope::Unknown, ProcessScope::Exclusive].into_iter()),
+            ProcessScope::Exclusive
+        );
+        assert_eq!(
+            merge_scopes([ProcessScope::Shared, ProcessScope::Exclusive].into_iter()),
+            ProcessScope::Unknown
+        );
+        let args = [
+            "node.exe",
+            "C:/npm/node_modules/@google/gemini-cli/bundle/gemini.js",
+        ]
+        .map(str::to_owned);
+        assert_eq!(
+            scope_for_command("node.exe", &args),
+            ProcessScope::Exclusive
+        );
+        assert_eq!(
+            scope_for_command("node.exe", &["node.exe".into(), "unrelated.js".into()]),
+            ProcessScope::Unknown
+        );
+        assert_eq!(
+            scope_for_command(
+                "kimi.exe",
+                &["C:/Users/test/.kimi-code/bin/kimi.exe".into()]
+            ),
+            ProcessScope::Exclusive
+        );
+    }
 }

@@ -8,6 +8,7 @@ import { type AgentId, agentName, listSubdirectories, type DirListing } from "..
 import { agentAssets, tintStyle } from "../providers";
 import { normalizePath, unquotePath } from "../paths";
 import { Dropdown } from "./menu";
+import { initialChoice, modeChoiceViews, modelChoiceRows } from "./chat/modeChoices";
 import { useTauriEvent } from "../hooks/useTauriEvent";
 import { useT } from "../i18n";
 import { formatBackendError } from "../i18n/errors";
@@ -55,7 +56,7 @@ export function NewSessionPanel({ onClose, prefill, onLaunched }: {
   useShowWhenReady();
   const form = useNewSessionForm(startCwd, startProvider);
   const { cwd, setCwd, provider, setProvider, recent, hooks, busy, repairing, error, setError, agents, avail, opts, setOpts,
-    activeProfiles, relayPins, loginOperations, swappedFrom, launchOptions, canLaunch, repairHooks, doLogin, cancelLoginWait, warn, needLogin } = form;
+    activeProfiles, relayPins, loginOperations, swappedFrom, launchOptions, canLaunch, repairHooks, doLogin, cancelLoginWait, warn, needLogin, cliDefaults, modelCatalog, dynamicChoices } = form;
   // 7T-5：面板打开时没有任何初始焦点——目录已经预填好了，回车却什么都不发生（键盘用户
   // 得先 Tab 若干次才摸到控件）。挂载即聚焦目录框；已有预填时连带全选，一次输入就能整段
   // 改写，回车直接启动（Enter 与按钮共用 canLaunch 守卫，见 launch）。
@@ -338,8 +339,34 @@ export function NewSessionPanel({ onClose, prefill, onLaunched }: {
               {t.newSession.agentSwapped(agentName(agents ?? [], swappedFrom), agentName(agents ?? [], provider))}
             </div>
           )}
-          {launchOptions.length > 0 && (
+          {(launchOptions.length > 0 || modelCatalog.length > 0) && (() => {
+            const modelRows = modelChoiceRows(t, modelCatalog, cliDefaults);
+            return (
             <div className="ns-options" data-testid="ns-options">
+              {/* 模型清单来自 CLI 自己；默认档写成 CLI 配置里的那个模型，不选就不传 -m。 */}
+              {modelCatalog.length > 0 && (
+                <div className="ns-option" data-testid="ns-option-model">
+                  <span className="ns-option-label">{t.newSession.launchOption.model}</span>
+                  <Dropdown
+                    align="left"
+                    disabled={relayPins[provider] !== undefined}
+                    // 默认模型与桌面新建页同一口径：配置写明的，或清单标 is_default 的（第三轮 C3），只留一行标「默认」。
+                    value={modelRows.some((row) => row.value === (opts.model ?? "")) ? (opts.model ?? "") : ""}
+                    options={modelRows.map((row) => ({
+                      value: row.value,
+                      label: row.label,
+                      tag: row.tag,
+                      sub: [row.group, row.detail].filter(Boolean).join(t.modes.sep) || undefined,
+                    }))}
+                    onChange={(v) => setOpts((m) => {
+                      const next = { ...m };
+                      if (v) next.model = String(v);
+                      else delete next.model;
+                      return next;
+                    })}
+                  />
+                </div>
+              )}
               {/* 启动选项由插件声明（选择 → CLI flag），未声明的 agent 没有这块。
                   choice 文案：i18n 按 `<option>.<choice>` 取，缺省回退后端的产品词 label。
                   用自绘 Dropdown 而非原生 select：WebView2 的原生下拉跟随系统主题画白底，
@@ -353,8 +380,20 @@ export function NewSessionPanel({ onClose, prefill, onLaunched }: {
                   <Dropdown
                     align="left"
                     disabled={pinned !== undefined}
-                    value={opts[option.id] ?? option.default}
-                    options={option.choices.map((choice) => ({
+                    value={initialChoice(option, opts[option.id], cliDefaults)}
+                    options={option.choices.some((choice) => choice.traits)
+                      ? modeChoiceViews(t, option, cliDefaults, dynamicChoices).map((view) => ({
+                        value: view.value,
+                        label: view.label,
+                        risky: view.risk,
+                        // 选不到的档禁用、禁用色，说明写原因（第三轮 C8）。
+                        disabled: view.disabled,
+                        tag: view.tag,
+                        sub: view.desc,
+                        // CLI 原名放右侧小字列，与桌面一致（第三轮 C8）。
+                        detail: view.detail,
+                      }))
+                      : option.choices.map((choice) => ({
                       value: choice.id,
                       label: t.newSession.launchChoice[`${option.id}.${choice.id}`] ?? choice.label,
                       // 高风险档（契约 risk=true）警示色 + 副标题，与普通档拉开视觉。
@@ -363,7 +402,10 @@ export function NewSessionPanel({ onClose, prefill, onLaunched }: {
                       sub: t.newSession.launchChoiceDesc[`${option.id}.${choice.id}`]
                         ?? (choice.risk ? t.newSession.riskyChoiceSub : undefined),
                     }))}
-                    onChange={(v) => setOpts((m) => ({ ...m, [option.id]: v }))}
+                    onChange={(v) => {
+                      if (modeChoiceViews(t, option, cliDefaults, dynamicChoices).some((view) => view.value === v && view.disabled)) return;
+                      setOpts((m) => ({ ...m, [option.id]: v }));
+                    }}
                   />
                   {pinned !== undefined && (
                     <span className="ns-option-note" data-testid="ns-option-pinned">{t.newSession.relayPinnedModel(pinned)}</span>
@@ -372,7 +414,8 @@ export function NewSessionPanel({ onClose, prefill, onLaunched }: {
                 );
               })}
             </div>
-          )}
+            );
+          })()}
           {/* 修复接入项只是 Meowo 写自己的接入配置，2026-11-11 起进了远程白名单（remote.rs 模块头
               「例外」），手机上同样给按钮，不再写「请在桌面端处理」（UI 调研 m10）。警告文字必须留：
               整块藏掉的话，用户点「启动」会起一个 hook 没接、永远不显示状态的哑会话(审查 #10)。 */}

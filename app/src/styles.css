@@ -1791,7 +1791,11 @@ button.stab {
   cursor: pointer;
   transition: background var(--dur-fast) var(--ease-in-out);
 }
-.dd-btn:hover, .dd-btn.open { background: var(--fill-selected-hover); }
+/* 触屏点过会一直留着 :hover：菜单与下拉的悬停底色只在有悬停能力的指针下给（第四轮 L5，同 C4）。 */
+.dd-btn.open { background: var(--fill-selected-hover); }
+@media (hover: hover) {
+  .dd-btn:hover { background: var(--fill-selected-hover); }
+}
 .dd-chev { flex: none; opacity: 0.65; transition: transform var(--dur-base) var(--ease-out); }
 /* 值区（可选徽标 + 文字）：文字过长时省略，徽标不被挤掉。 */
 .dd-val { display: flex; align-items: center; gap: var(--sp-8); min-width: 0; }
@@ -1851,7 +1855,10 @@ button.stab {
 .dd-item.muted:hover .dd-ico, .dd-item.muted:hover svg { opacity: 0.85; }
 /* 高风险档（契约 LaunchChoice.risk，如跳过权限确认）：警示色，与普通档拉开视觉。 */
 .dd-item.risk { color: var(--cc-err); }
-.dd-item.risk:hover { background: color-mix(in srgb, var(--cc-err) 12%, transparent); color: var(--cc-err); }
+/* 触屏点过会一直留着 :hover：菜单与下拉的悬停底色只在有悬停能力的指针下给（第四轮 L5，同 C4）。 */
+@media (hover: hover) {
+  .dd-item.risk:hover { background: color-mix(in srgb, var(--cc-err) 12%, transparent); color: var(--cc-err); }
+}
 /* 选项下的风险副标题：独立成行、可换行（父级 .dd-item 整行 nowrap）。 */
 /* 说明行默认灰；只有高风险档（.risk）才转红。此前一律红字，普通档的说明也像警告
    （新建页权限菜单用户实拍「说明全是红的」）。 */
@@ -3252,7 +3259,10 @@ body:not(.remote-ui) .ns-actions .ns-btn { height: var(--btn-h-lg); min-width: 7
 
 /* 动作菜单里的危险项（删除账号）：连目录一起抹掉且不可逆，值得一眼看出来。 */
 .dd-item-danger { color: var(--cc-err); }
-.dd-item-danger:hover { background: color-mix(in srgb, var(--cc-err) 12%, transparent); }
+/* 触屏点过会一直留着 :hover：菜单与下拉的悬停底色只在有悬停能力的指针下给（第四轮 L5，同 C4）。 */
+@media (hover: hover) {
+  .dd-item-danger:hover { background: color-mix(in srgb, var(--cc-err) 12%, transparent); }
+}
 
 /* 独立会话对话窗：结构化 transcript 视图，不从 ANSI 终端输出反推消息。
    本段为各选择器的唯一定义（旧版与「重设计段」双份同名规则已逐条合并：布局/骨架取自旧段，
@@ -3378,11 +3388,17 @@ body:not(.remote-ui) .ns-actions .ns-btn { height: var(--btn-h-lg); min-width: 7
    accent 皮染成绿底，与提示条的中性灰和接管钮的红描边撞色（用户实拍反馈）。 */
 .chat-resume-permission { display: inline-flex; }
 .chat-resume-permission .dd-btn { min-width: 168px; height: calc(var(--btn-h-md) * var(--cc-ui)); padding: 0 var(--sp-9); font-size: var(--text-base); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-dim); }
-.chat-resume-permission .dd-btn:hover { background: var(--fill-hover); color: var(--cc-text); }
+/* 触屏点过会一直留着 :hover：菜单与下拉的悬停底色只在有悬停能力的指针下给（第四轮 L5，同 C4）。 */
+@media (hover: hover) {
+  .chat-resume-permission .dd-btn:hover { background: var(--fill-hover); color: var(--cc-text); }
+}
 /* 菜单项同样要防 `.chat-compose button` 的 accent 皮（38px 高、绿底绿描边——菜单里
    一排绿卡片，用户实拍反馈）：归位到 .dd-item 的中性默认。 */
 .chat-resume-permission .dd-item { height: auto; min-height: 0; padding: var(--sp-7) var(--sp-10); border: 0; border-radius: var(--radius-xs); background: transparent; color: var(--cc-text-dim); font-size: var(--text-base); }
-.chat-resume-permission .dd-item:hover { background: var(--fill-hover); color: var(--cc-text); }
+/* 触屏点过会一直留着 :hover：菜单与下拉的悬停底色只在有悬停能力的指针下给（第四轮 L5，同 C4）。 */
+@media (hover: hover) {
+  .chat-resume-permission .dd-item:hover { background: var(--fill-hover); color: var(--cc-text); }
+}
 .chat-resume-permission .dd-item.sel { color: var(--cc-text); }
 /* 标题是窗口拖拽区，不是可编辑文本：默认光标 + 禁选，否则悬停显示 I 形文本光标，
    拖窗时还会误选中标题文字。 */
@@ -3575,6 +3591,8 @@ body:not(.remote-ui) .ns-actions .ns-btn { height: var(--btn-h-lg); min-width: 7
    ——agent 图标有 11px 和 13px 两种宽，文字跟着错开。图标槽统一成 14px（与文件夹图标、勾选方框同宽），
    图标靠左放（墨迹左缘仍在第一条线 320 上），槽后间距凑成 6px，文字都落到 340。 */
 .nsp-chips .chat-model-button .nsp-agent-mark { width: 14px; margin-right: var(--sp-2); }
+/* 新建页输入框下方是空白，胶囊菜单向下展开：向上会盖住工作区选择器，只露出它顶边一截像个空胶囊（2026-11-14 实拍）。 */
+.nsp-chips .chat-model-menu { bottom: auto; top: calc(100% + var(--sp-8)); }
 /* 工作区选择：输入框上方左侧一枚小钮（对照 Kimi），菜单名字白、路径灰，选中整行底色加灰勾。 */
 .nsp-ws { align-self: flex-start; margin-left: var(--sp-10); }
 /* 新建页的对齐线（按视觉内容算，visual/ 截图量过）：输入框与 worktree 卡片的外框同宽；
@@ -5360,6 +5378,8 @@ button.scm-check-name:hover { text-decoration: underline; }
    破坏性动作按钮（.chat-send-takeover），条本身是「状态说明 + 出路」，中性即可。 */
 .chat-send-error { width: 100%; color: var(--cc-text-dim); font-size: var(--text-xs); line-height: var(--leading-normal); overflow-wrap: anywhere; order: 3; padding: var(--sp-7) var(--sp-10); border: 0; border-radius: var(--radius-md); background: var(--fill-hover); display: flex; align-items: center; gap: var(--sp-8); flex-wrap: wrap; }
 .chat-send-error > span { flex: 1 1 auto; min-width: 200px; }
+/* 输入框里的提示条：文字左缘与输入框占位文字对齐（同为 textarea 的左内边距 --sp-8，第三轮 C9，量得两者同 x）。 */
+.chat-compose > .chat-send-error { padding-left: var(--sp-8); padding-right: var(--sp-8); }
 
 /* 重设计段的骨架/消息/输入框基础规则已并入上方唯一定义；此处起只保留重设计新增的部分
    （扁平活动行、待办、子任务等），不再重复同名声明。 */
@@ -5660,6 +5680,10 @@ button.scm-check-name:hover { text-decoration: underline; }
 .lead-latest-label { color: var(--cc-text-faint); }
 /* 「附加意见」入口与「展开全部」同一种文字链接；单独一行，不和选项挤在一起。 */
 .chat-approval .lead-gate-add-note { align-self: flex-start; margin-top: var(--sp-2); }
+.lead-phase::before { content: "· "; }
+.lead-delivery { margin: var(--sp-8) var(--sp-16); font-size: var(--text-xs); overflow-wrap: anywhere; }
+.lead-delivery button { margin-top: var(--sp-4); }
+.lead-delivery [role="alert"] { color: var(--cc-warn); }
 .lead-head-end { display: inline-flex; align-items: center; gap: var(--sp-8); }
 .lead-progress { display: inline-flex; align-items: center; gap: var(--sp-4); color: var(--cc-text-dim); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
 .lead-ring circle:last-child { transition: stroke-dasharray var(--dur-slower) var(--ease-in-out); }
@@ -6201,11 +6225,30 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .chat-context.is-full .chat-context-ring-fg { stroke: var(--cc-err-vivid); }
 /* 输入区 :is(button) 通用样式会改按钮高度与底色，斜杠菜单条目压回菜单条目（尺寸、悬停底见文末「弹出菜单」）。 */
 .chat-compose .chat-slash-menu .dd-item { height: auto; border: 0; color: var(--cc-text-dim); background: transparent; }
-.chat-compose .chat-slash-menu .dd-item:hover { color: var(--cc-text); background: var(--fill-selected); }
+/* 触屏点过会一直留着 :hover：菜单与下拉的悬停底色只在有悬停能力的指针下给（第四轮 L5，同 C4）。 */
+@media (hover: hover) {
+  .chat-compose .chat-slash-menu .dd-item:hover { color: var(--cc-text); background: var(--fill-selected); }
+}
 :is(.chat-compose, .nsp-composer) .chat-model-item { height: auto; min-height: 0; padding: var(--sp-9) var(--sp-11); border: 0; border-radius: var(--radius-md); color: inherit; background: transparent; }
 /* 模型菜单：双行卡片项（名称 + 描述），当前模型右侧打勾。表面/阴影仍继承 .dd-menu。 */
-.chat-model-menu { position: absolute; bottom: calc(100% + var(--sp-8)); left: 0; min-width: 232px; }
-:is(.chat-compose, .nsp-composer) .chat-model-item:hover { background: var(--fill-selected); }
+/* 按内容定宽：浮层绝对定位在很窄的按钮容器里，只设 min-width 时长模型名会折成两行（托管会话截图，2026-11-13）。
+   上限防止超长名字把菜单撑出窗口，超出才省略。 */
+.chat-model-menu { position: absolute; bottom: calc(100% + var(--sp-8)); left: 0; min-width: 232px; width: max-content; max-width: min(360px, 80vw); }
+.chat-model-menu .chat-model-item-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-model-menu .chat-model-item-text { min-width: 0; }
+/* 模式菜单的说明一句话（≤20 字）不折行：折出来的「要问」两个字单独一行（第三轮截图）。上限放到 440，
+   窄窗口仍按 90vw 收，收不下时才折行。 */
+.chat-model-menu:not(.chat-model-quick) { max-width: min(440px, 90vw); }
+.chat-model-menu:not(.chat-model-quick) .chat-model-item-desc { white-space: nowrap; }
+@media (max-width: 520px) { .chat-model-menu:not(.chat-model-quick) .chat-model-item-desc { white-space: normal; } }
+/* 靠右的模型按钮（.chat-model-select）菜单右对齐向左展开，否则长名字把菜单推出输入框（托管会话截图）。 */
+.chat-model-select > .chat-model-menu { left: auto; right: 0; }
+/* 选中行铺底色（与模型菜单选中同一个 --fill-selected）；悬停用更浅的 --fill-hover，只在有悬停的指针下生效，
+   触屏点过不残留（第三轮 C4）。此前悬停与选中同色，选中行只靠一个勾认。 */
+:is(.chat-compose, .nsp-composer) .chat-model-item.is-active { background: var(--fill-selected); }
+@media (hover: hover) {
+  :is(.chat-compose, .nsp-composer) .chat-model-item:not(.is-active):not(:disabled):hover { background: var(--fill-hover); }
+}
 .chat-model-item { display: flex; align-items: center; gap: var(--sp-14); width: 100%; padding: var(--sp-9) var(--sp-11); border: 0; background: transparent; text-align: left; cursor: pointer; }
 .chat-model-item-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
 .chat-model-item-name { color: var(--cc-text); font-size: var(--text-sm); font-weight: 500; }
@@ -6221,7 +6264,8 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .chat-model-quick-section.is-list { flex: 0 1 auto; min-height: 0; overflow-y: auto; }
 .chat-model-quick-section { padding: var(--sp-4) 0; }
 .chat-model-quick-section + .chat-model-quick-section { border-top: var(--hairline) solid var(--cc-border); }
-.chat-model-quick-head { padding: var(--sp-8) var(--sp-12) var(--sp-4);  font-size: var(--text-xs); font-weight: 500; color: var(--cc-text-faint); }
+/* 分组标题左缘与条目文字对齐（条目左内边距 --sp-24，第三轮 C9）。 */
+.chat-model-quick-head { padding: var(--sp-8) var(--sp-12) var(--sp-4) var(--sp-24);  font-size: var(--text-xs); font-weight: 500; color: var(--cc-text-faint); }
 /* 模型行比分组头缩进一级（Kimi 同款层级）、行高按 36px 给足点击面；当前模型整行铺底色，
    不只靠行尾一个勾——扫一眼就知道停在哪。 */
 .chat-model-quick .chat-model-item { min-height: 32px; padding: var(--sp-7) var(--sp-12) var(--sp-7) var(--sp-24); border-radius: var(--radius-md); }
@@ -6261,8 +6305,24 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 /* 「+」菜单：图标 + 名字 + 一行说明，与权限菜单同款项（对照 Kimi 的 addMenu）。 */
 .chat-add-menu { min-width: 240px; }
 .chat-add-ico { flex: 0 0 auto; width: 20px; height: 20px; display: grid; place-items: center; color: var(--cc-text-dim); }
-.chat-model-item:disabled { opacity: .5; cursor: default; }
+/* 选不到的档：不压透明度，名字与小字改用现有的禁用文字色（与 .nsp-send:disabled 同一个 --cc-text-faint，第三轮 C8）。 */
+.chat-model-item:disabled { cursor: default; }
+.chat-model-item:disabled :is(.chat-model-item-name, .chat-model-item-detail) { color: var(--cc-text-faint); }
 .chat-model-item:disabled:hover { background: transparent; }
+/* 对勾固定槽位：未选中行也占 16px，右侧 CLI 原名列各行右缘对齐到同一 x（第三轮 C5）。 */
+.chat-model-check-slot, .dd-check-slot { flex: 0 0 16px; width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; }
+/* 名字旁的「默认」小字标签（新建页 CLI 配置的默认档，第三轮 C7）。 */
+.chat-model-item-tag { display: inline-block; margin-left: var(--sp-6); padding: 0 var(--sp-4); border-radius: var(--radius-sm); background: var(--fill-selected); color: var(--cc-text-dim); font-size: var(--text-2xs, 11px); font-weight: 400; line-height: 16px; vertical-align: 1px; }
+/* 手机新建页下拉的右侧小字列（CLI 原名），与桌面 PillSelect 同一布局。 */
+.dd-item.has-detail { display: flex; align-items: center; gap: var(--sp-12); }
+.dd-item.has-detail > .dd-val { flex: 1 1 auto; min-width: 0; }
+.dd-detail { flex: none; color: var(--cc-text-faint); font-size: var(--text-xs); }
+/* 带小字列的下拉（手机新建页）按按钮宽排，说明换行，不按 max-content 撑出屏幕（第三轮截图：菜单冲出右缘）。 */
+.dd .dd-menu:has(> .dd-item.has-detail) { min-width: 0; max-width: calc(100vw - 24px); }
+.dd-item.has-detail .dd-label { white-space: normal; }
+/* 选中行铺底（与模型菜单选中同一个 --fill-selected，第三轮 C4）。 */
+.dd-item.has-detail.sel { background: var(--fill-selected); }
+.dd-item.is-disabled, .dd-item.is-disabled:hover { color: var(--cc-text-faint); background: transparent; cursor: default; }
 /* 「切换引擎」分组（跨 provider 切换）：分组标题 + agent 行（可展开二级模型档）。 */
 .chat-model-group { margin: var(--sp-6) 0 var(--sp-2); padding: var(--sp-4) var(--sp-11) 0; border-top: var(--hairline) solid var(--cc-border); color: var(--cc-text-faint); font-size: var(--text-xs); font-weight: 500; }
 .chat-switch-agent-ico { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 16px; }
@@ -7603,7 +7663,9 @@ pre.chat-md-plain {
   font-size: var(--text-sm);
 }
 /* 条目规则用 :where() 降到零特异度：危险项、禁用项、双行模型卡片等变体的同名规则照常压过它。 */
-:where(.ctx-item, .dd-item, .relay-model-option, .chat-model-item):hover { background: var(--fill-hover); }
+@media (hover: hover) {
+  :where(.ctx-item, .dd-item, .relay-model-option, .chat-model-item):hover { background: var(--fill-hover); }
+}
 
 /* ===== 按钮基件（UI 调研 sys3 / sys15）=====
    放在样式表末尾：组件基类常写成 `.容器 button`（特异度 0,1,1），角色类写成

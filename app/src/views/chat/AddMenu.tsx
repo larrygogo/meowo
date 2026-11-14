@@ -9,8 +9,10 @@ import { icPlus } from "../../icons/glyphs";
 /// 输入框左下角的「+」（对照 Kimi 的 addMenu：文件 / 命令 / 提及）。斜杠命令和 @ 提及此前只能靠
 /// 打字触发，不知道的人永远发现不了；收进「+」里给个入口，选了就把触发符放进输入框，后面照常
 /// 走补全菜单。只剩「文件」一项时（agent 没有命令、不支持提及）退回原来的一点即选文件。
-export function AddMenu({ phone, onFiles, onCommand, commandBlocked, onMention }: {
+export function AddMenu({ phone, onFiles, onCommand, commandBlocked, onMention, disabled }: {
   phone: boolean;
+  /** 会话发不出消息时（如已停用的「Meowo 托管」会话）「+」一起置灰，别让人以为还能附文件。 */
+  disabled?: boolean;
   onFiles: () => void;
   /** 插入「/」打开命令补全；该 agent 没有可补全的命令时不传。 */
   onCommand?: () => void;
@@ -24,7 +26,7 @@ export function AddMenu({ phone, onFiles, onCommand, commandBlocked, onMention }
   const ui = useMenuPopup({ cssPositioned: true, open, setOpen });
   const plus = <Icon glyph={icPlus} size={20} />;
   if (!onCommand && !onMention) {
-    return <button type="button" className="chat-attach-button" aria-label={t.chat.attach} data-tip={t.chat.attach} onClick={onFiles}>{plus}</button>;
+    return <button type="button" className="chat-attach-button" aria-label={t.chat.attach} data-tip={t.chat.attach} disabled={disabled} onClick={onFiles}>{plus}</button>;
   }
   const pick = (action: () => void) => { setOpen(false); action(); };
   const items: { key: string; name: string; desc: string; icon: JSX.Element; action: () => void; disabled?: boolean; tip?: string }[] = [
@@ -52,6 +54,7 @@ export function AddMenu({ phone, onFiles, onCommand, commandBlocked, onMention }
         data-tip={t.chat.addMenu}
         aria-haspopup="menu"
         aria-expanded={open}
+        disabled={disabled}
         onClick={() => setOpen(!open)}
       >
         {plus}

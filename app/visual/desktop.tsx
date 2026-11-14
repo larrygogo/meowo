@@ -20,6 +20,7 @@ import { savePanel } from "../src/views/chat/panelTabs";
 import { SETTINGS_SECTION_KEY } from "../src/settingsNav";
 import { CHAT_SESSION_ID, FIXED_NOW, flowStateItems, markReady, questionInput, scmMock, withLongItems } from "./fixtures";
 import { qaFlowBoot, qaFlowMock } from "./qaFlow";
+import { tmsChatMock, tmsCommonMock, tmsProviderOf } from "./tmsFixtures";
 import type { ProviderUsage } from "../src/api";
 import type { IslandAlertEvent } from "../src/generated/contracts/IslandAlertEvent";
 import "../src/fonts";
@@ -99,6 +100,34 @@ const EXTENSIONS = [
 ];
 
 async function boot(): Promise<React.ReactNode> {
+  // 任务 20261114-tui-model-switch 截图验收：四家原生 TUI 会话（tms-<家>?state=…）与新建页（tms-new-<家>）。
+  if (scene.startsWith("tms-new-")) {
+    const provider = tmsProviderOf(scene);
+    setExtraMock(tmsCommonMock(provider, q.get("cfg")));
+    installMocks("chat");
+    bootAppearance({ scale: true });
+    const { NewSessionPage } = await import("../src/views/chat/NewSessionPage");
+    return (
+      <div className="chat-window" style={{ position: "fixed", inset: 0 }}>
+        <div className="chat-body">
+          <div className="chat-main">
+            <NewSessionPage prefill={{ cwd: RECENT_DIRS[0], provider }} onLaunched={noop} onOpenSession={noop} onMoreSessions={noop} />
+          </div>
+        </div>
+      </div>
+    );
+  }
+  if (scene.startsWith("tms-")) {
+    const provider = tmsProviderOf(scene);
+    window.history.replaceState({}, "", `${location.pathname}?${q.toString()}&sessionId=${CHAT_SESSION_ID}`);
+    const chat = chatMock(lang);
+    const tms = tmsChatMock(provider, q.get("state") ?? "idle", chat, q.get("modes"));
+    setExtraMock((cmd, args) => tms(cmd, args) ?? scmMock(cmd) ?? chat(cmd));
+    installMocks("chat");
+    bootAppearance({ scale: true });
+    const { ChatWindow } = await import("../src/views/ChatWindow");
+    return <div className="demo-chat-frame" style={{ position: "fixed", inset: 0, overflow: "hidden" }}><ChatWindow /></div>;
+  }
   if (scene === "chat" || scene === "chat-long" || scene.startsWith("panel-")) {
     window.history.replaceState({}, "", `${location.pathname}?${q.toString()}&sessionId=${CHAT_SESSION_ID}`);
     const chat = chatMock(lang);
@@ -298,6 +327,9 @@ async function boot(): Promise<React.ReactNode> {
         "island-alert-menubar": { sessionId: 1, kind: "approval", title: titles[0], project: "web-app", detail: null },
         "island-alert-error": { sessionId: 2, kind: "error", title: titles[3], project: "infrastructure-monorepo", detail: "API Error: 529 overloaded_error · the model is overloaded, please retry later" },
         "island-alert-done": { sessionId: 4, kind: "waiting", title: titles[2], project: "api", detail: lang === "en" ? "All 12 tests pass. Pushed to the remote branch." : "12 个测试全部通过，已经推到远端分支。" },
+        // 回合结束、排着只含终端项的切换（Kimi「计划：开」）：「等你回复」那条的说明行换成打开后切换（第七轮 R3，
+        // watch.rs 调 session_settings::terminal_reminder，只发这一条，不另弹）。
+        "island-alert-terminal": { sessionId: 4, kind: "waiting", title: titles[2], project: "api", detail: lang === "en" ? "Open this session to switch to \"Plan: on\"" : "打开这个会话后切换到「计划：开」" },
       };
       const alert = alerts[scene] ?? null;
       const compactStyle = scene.includes("focus") ? "focus" : scene.includes("minimal") ? "minimal" : "counts";
@@ -308,7 +340,7 @@ async function boot(): Promise<React.ReactNode> {
       const notch = scene.endsWith("-notch") ? { width: 200, height: 34 } : undefined;
       el = (
         <div style={alert ? { width: menubar ? 520 : 548, height: 68 } : { height: notch ? 34 : 46 }}>
-          <Island sessions={shown} compactStyle={compactStyle} alert={alert} alertQueued={alert && scene !== "island-alert-done" ? 2 : 0} usages={usages} onMeasure={noop} onActivate={noop} onOpenSession={noop} onPointerDownDrag={noop} onDismissAlert={noop} onDismissAllAlerts={noop} notch={notch} />
+          <Island sessions={shown} compactStyle={compactStyle} alert={alert} alertQueued={alert && scene !== "island-alert-done" && scene !== "island-alert-terminal" ? 2 : 0} usages={usages} onMeasure={noop} onActivate={noop} onOpenSession={noop} onPointerDownDrag={noop} onDismissAlert={noop} onDismissAllAlerts={noop} notch={notch} />
         </div>
       );
     }
