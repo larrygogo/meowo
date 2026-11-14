@@ -787,14 +787,7 @@ fn windows_sandbox_configured_in_layers(home: Option<&std::path::Path>, cwd: Opt
     let Some(cwd) = cwd else {
         return false;
     };
-    let fold = |path: &std::path::Path| {
-        let text = path.to_string_lossy().trim_end_matches(['\\', '/']).to_string();
-        if cfg!(windows) {
-            text.to_ascii_lowercase()
-        } else {
-            text
-        }
-    };
+    let fold = |path: &std::path::Path| trust_key(path);
     let trusted: Vec<String> = user
         .as_deref()
         .and_then(|content| content.parse::<toml_edit::DocumentMut>().ok())
@@ -835,6 +828,17 @@ fn windows_sandbox_configured_in_layers(home: Option<&std::path::Path>, cwd: Opt
         }
     }
     false
+}
+
+/// 信任键的比较口径：去掉末尾分隔符；Windows 上分隔符统一成 `\`、再小写（第七轮复核 R2：git 写进 worktree
+/// `.git` 文件的 gitdir 是正斜杠 `C:/Users/...`，Codex 记信任键是反斜杠 `c:\users\...`，不统一就永远对不上）。
+fn trust_key(path: &std::path::Path) -> String {
+    let text = path.to_string_lossy();
+    if cfg!(windows) {
+        text.replace('/', "\\").trim_end_matches('\\').to_ascii_lowercase()
+    } else {
+        text.trim_end_matches('/').to_string()
+    }
 }
 
 /// worktree 的主仓库根（与上游 `resolve_root_git_project_for_trust` 同口径，只按文件系统核对、不调 git）：
@@ -1014,6 +1018,111 @@ mod tests {
         std::fs::write(wt.join(".git"), format!("gitdir: {}\n", stray.display())).unwrap();
         assert_eq!(super::main_checkout_for_trust(&wt), None);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 第七轮复核 R2：用 `git worktree add` 建出真实目录（.git 文件里的 gitdir 是 git 写的正斜杠），信任键按
+    /// Codex 的写法（Windows 上反斜杠、小写）只给主仓库；worktree 与子目录都要认到项目层的 elevated。
+    #[test]
+    fn real_git_worktree_with_codex_style_trust_key() {
+        use super::windows_sandbox_configured_in_layers as configured;
+        let git = |dir: &std::path::Path, args: &[&str]| {
+            std::process::Command::new("git")
+                .args(["-c", "user.name=probe", "-c", "user.email=probe@example.invalid", "-c", "commit.gpgsign=false"])
+                .args(args)
+                .current_dir(dir)
+                .output()
+                .is_ok_and(|out| out.status.success())
+        };
+        let root = std::env::temp_dir().join(format!("meowo-codex-r2-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let main = root.join("Main");
+        let wt = root.join("WT");
+        let home = root.join("home");
+        std::fs::create_dir_all(&main).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        if !git(&main, &["init", "-q"]) {
+            eprintln!("没有 git，跳过");
+            return;
+        }
+        std::fs::write(main.join("a.txt"), "a").unwrap();
+        assert!(git(&main, &["add", "a.txt"]));
+        assert!(git(&main, &["commit", "-q", "-m", "init"]));
+        assert!(git(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
+        let dot_git = std::fs::read_to_string(wt.join(".git")).unwrap();
+        if cfg!(windows) {
+            assert!(dot_git.contains('/') && !dot_git.contains('\\'), "git 写的应是正斜杠：{dot_git}");
+        }
+        let sub = wt.join("pkg");
+        std::fs::create_dir_all(sub.join(".codex")).unwrap();
+        std::fs::create_dir_all(wt.join(".codex")).unwrap();
+        std::fs::write(wt.join(".codex").join("config.toml"), "[windows]\nsandbox = \"elevated\"\n").unwrap();
+        assert!(super::main_checkout_for_trust(&wt).is_some_and(|m| super::trust_key(&m) == super::trust_key(&main)));
+        // Codex 写信任键的样子：Windows 上反斜杠、小写（照本机 ~/.codex/config.toml）；TOML 单引号字面量。
+        let key = if cfg!(windows) {
+            main.to_string_lossy().replace('/', "\\").to_ascii_lowercase()
+        } else {
+            main.to_string_lossy().into_owned()
+        };
+        std::fs::write(home.join("config.toml"), "").unwrap();
+        assert!(!configured(Some(&home), Some(&wt)));
+        std::fs::write(home.join("config.toml"), format!("[projects.'{key}']\ntrust_level = \"trusted\"\n")).unwrap();
+        assert!(configured(Some(&home), Some(&wt)));
+        assert!(configured(Some(&home), Some(&sub)));
+        let codex = crate::by_id("codex").unwrap();
+        let env = vec![("CODEX_HOME".to_string(), home.to_string_lossy().into_owned())];
+        let pick = std::collections::HashMap::from([("approval".to_string(), "ask".to_string())]);
+        assert!(codex.extra_launch_args(&pick, &env, Some(&wt)).is_empty());
+        let _ = git(&main, &["worktree", "remove", "--force", wt.to_str().unwrap()]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// 第七轮复核 R2 真机：本机真实 worktree（默认 meowo-tui-codex，`MEOWO_R2_WORKTREE` 可改）。隔离的 CODEX_HOME 里
+    /// 只放主仓库的信任键（照本机写法：反斜杠、小写），worktree 项目层临时放一份配了 [windows] sandbox 的
+    /// .codex/config.toml，跑完删掉。`MEOWO_R2_OUT` 给出时把结果写成 JSON。不碰用户的 ~/.codex。
+    #[test]
+    #[ignore = "第七轮复核 R2：本机真实 worktree；手动跑"]
+    fn r2_real_worktree_on_this_machine() {
+        let wt = std::path::PathBuf::from(
+            std::env::var("MEOWO_R2_WORKTREE").unwrap_or_else(|_| r"C:\Users\35122\Desktop\workspace\meowo-tui-codex".into()),
+        );
+        let dot_git = std::fs::read_to_string(wt.join(".git")).expect("应是 worktree（.git 是文件）");
+        let main = super::main_checkout_for_trust(&wt).expect("认得出主仓库");
+        let key = super::trust_key(&main);
+        let home = std::env::temp_dir().join(format!("meowo-codex-r2-home-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(home.join("config.toml"), format!("[projects.'{key}']\ntrust_level = \"trusted\"\n")).unwrap();
+        let dot_codex = wt.join(".codex");
+        let created_dir = !dot_codex.exists();
+        let config = dot_codex.join("config.toml");
+        assert!(!config.exists(), "worktree 里已有 .codex/config.toml，不覆盖：{}", config.display());
+        std::fs::create_dir_all(&dot_codex).unwrap();
+        std::fs::write(&config, "[windows]\nsandbox = \"elevated\"\n").unwrap();
+        let codex = crate::by_id("codex").unwrap();
+        let env = vec![("CODEX_HOME".to_string(), home.to_string_lossy().into_owned())];
+        let pick = std::collections::HashMap::from([("approval".to_string(), "ask".to_string())]);
+        let with_layer = codex.extra_launch_args(&pick, &env, Some(&wt));
+        let sub = wt.join("app");
+        let with_layer_sub = codex.extra_launch_args(&pick, &env, Some(&sub));
+        // 对照：项目层拿掉后应补参数（说明是项目层让它不补，而不是别的原因）。
+        let _ = std::fs::remove_file(&config);
+        if created_dir {
+            let _ = std::fs::remove_dir(&dot_codex);
+        }
+        let without_layer = codex.extra_launch_args(&pick, &env, Some(&wt));
+        let _ = std::fs::remove_dir_all(&home);
+        let out = serde_json::json!({
+            "worktree": wt, "dot_git": dot_git.trim(), "main_checkout": main, "trust_key_in_isolated_home": key,
+            "extra_args_with_project_layer": with_layer, "extra_args_with_project_layer_from_subdir": with_layer_sub,
+            "extra_args_after_removing_layer": without_layer,
+            "cleanup": {"config_removed": !config.exists(), "dot_codex_removed_if_created": !created_dir || !dot_codex.exists(), "home_removed": !home.exists()},
+        });
+        if let Ok(path) = std::env::var("MEOWO_R2_OUT") {
+            std::fs::write(path, serde_json::to_string_pretty(&out).unwrap()).unwrap();
+        }
+        assert!(with_layer.is_empty() && with_layer_sub.is_empty(), "{out}");
+        assert_eq!(without_layer.is_empty(), !cfg!(windows), "{out}");
+        assert!(!config.exists());
     }
 
     /// workspace-write 的档（必要时询问、自动审查）在没配 Windows 沙箱时补 `-c windows.sandbox=unelevated`；
