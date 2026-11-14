@@ -663,7 +663,7 @@ describe("ChatWindow", () => {
     // 回显等满超时后:Ctrl-U 撤销、报错可见、输入框保留原文——唯独不能出现的是回车。
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 71, data: "\x15" }), { timeout: 5_000 });
     expect(invoke).not.toHaveBeenCalledWith("write_managed_terminal", { sessionId: 71, data: "\r" });
-    expect(await screen.findByText(/消息未进入终端/)).toBeTruthy();
+    expect(await screen.findByText(zh.chat.sendEchoTimeout)).toBeTruthy();
     // 已写正文不能谎称确定未发：保留原文回执，由用户核对后恢复草稿或重发。
     expect(await screen.findByText(zh.chat.echoUncertain)).toBeTruthy();
     expect(screen.getByText("go on")).toBeTruthy();

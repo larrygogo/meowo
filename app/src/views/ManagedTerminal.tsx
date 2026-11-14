@@ -45,6 +45,7 @@ import { isTerminalAppNavKey } from "./terminalKeys";
 import { Icon } from "../icons/Icon";
 import { icChevronUp } from "../icons/glyphs.chat";
 import { icChevronDown } from "../icons/glyphs";
+import { busyProps } from "../busyButton";
 
 /** 远程模式补查周期（ms）。手机端收不到 pty-output 事件,靠定时补查增量快照喂满屏幕识别
  *  （AskUserQuestion 表单检测跑在这条通道上）。带 nextOffset 只取增量,不重传 backlog。 */
@@ -1915,7 +1916,7 @@ export function ManagedTerminal({ sessionId, status, reviewPending = false, back
               还没拿到退出码时给「重新接入」——唯一对它有效的动作。 */}
           {background
             ? exitCode === undefined && (
-              <button type="button" onClick={() => void reattach()} disabled={starting}>
+              <button type="button" {...busyProps(starting, () => void reattach())}>
                 {starting ? t.chat.terminalStarting : t.chat.terminalBackgroundRetry}
               </button>
             )
@@ -1924,7 +1925,7 @@ export function ManagedTerminal({ sessionId, status, reviewPending = false, back
                  宽度互不相干的方块上下错落，读起来像散落的控件而不是一组操作。 */
               <div className="managed-terminal-cover-actions">
                 {takeoverExtra}
-                <button type="button" onClick={() => void (externalRunning ? takeover() : start())} disabled={starting}>
+                <button type="button" {...busyProps(starting, () => void (externalRunning ? takeover() : start()))}>
                   {starting ? t.chat.terminalStarting : externalRunning ? t.chat.terminalTakeover : t.chat.terminalStart}
                 </button>
               </div>
@@ -1961,10 +1962,10 @@ export function ManagedTerminal({ sessionId, status, reviewPending = false, back
         // 抵达仍自动收起(误报自愈)。
         <div className="managed-terminal-error is-stalled" role="alert">
           <span>{t.chat.terminalStreamStalled}</span>
-          <button type="button" disabled={stopping} onClick={restartFromBanner}>
+          <button type="button" {...busyProps(stopping, restartFromBanner)}>
             {stopping ? t.chat.terminalStopping : t.chat.endAndResume}
           </button>
-          <button type="button" disabled={stopping} onClick={stopFromBanner}>
+          <button type="button" {...busyProps(stopping, stopFromBanner)}>
             {stopping ? t.chat.terminalStopping : t.chat.endSession}
           </button>
           <button type="button" aria-label={t.chat.close} onClick={() => setStalledDismissed(true)}>×</button>
@@ -1978,11 +1979,11 @@ export function ManagedTerminal({ sessionId, status, reviewPending = false, back
         <div className="managed-terminal-error is-stalled" role="alert">
           <span>{t.chat.terminalInitTimeout}</span>
           {sessionId > 0 && (
-            <button type="button" disabled={stopping} onClick={restartFromBanner}>
+            <button type="button" {...busyProps(stopping, restartFromBanner)}>
               {stopping ? t.chat.terminalStopping : t.chat.endAndResume}
             </button>
           )}
-          <button type="button" disabled={stopping} onClick={stopFromBanner}>
+          <button type="button" {...busyProps(stopping, stopFromBanner)}>
             {stopping ? t.chat.terminalStopping : t.chat.endSession}
           </button>
           <button type="button" aria-label={t.chat.close} onClick={() => setInitTimedOut(false)}>×</button>

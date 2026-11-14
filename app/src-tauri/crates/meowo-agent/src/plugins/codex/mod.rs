@@ -14,6 +14,7 @@
 //! 接线还有一步**副作用**（往 `config.toml` 写 `[hooks.state]` 的 trusted_hash 预信任）——见 `setup.rs`。
 
 pub mod account;
+mod cli_text;
 mod lead;
 mod lineage;
 mod screen;
@@ -360,8 +361,18 @@ impl AgentPlugin for Codex {
             self.launch_options()
                 .iter()
                 .find(|option| option.id == "approval")
-                .and_then(|option| option.choices.iter().find(|choice| choice.id == picked.as_str()))
-                .is_some_and(|choice| choice.args.windows(2).any(|pair| pair == ["--sandbox", "workspace-write"]))
+                .and_then(|option| {
+                    option
+                        .choices
+                        .iter()
+                        .find(|choice| choice.id == picked.as_str())
+                })
+                .is_some_and(|choice| {
+                    choice
+                        .args
+                        .windows(2)
+                        .any(|pair| pair == ["--sandbox", "workspace-write"])
+                })
         });
         if !cfg!(windows) || !workspace_write {
             return Vec::new();
@@ -421,6 +432,10 @@ impl AgentPlugin for Codex {
     /// 未实测，ratatui 同为按格 diff 输出，按同一形态防）。
     fn clipboard_image_paste(&self, version: Option<&str>) -> Option<&'static str> {
         version.map(|_| r"\[Image ?#\d")
+    }
+    /// CLI 漂移检查的手工声明部分（正则规则的样例、旧版兼容与运行时拼接的字面量），见 cli_text.rs。
+    fn cli_text_deps(&self) -> &'static [crate::cli_text::CliTextDep] {
+        cli_text::DEPS
     }
     /// codex 的 `/model` 是交互式菜单（不接内联参数），故只列命令、不声明模型预设。
     /// Codex：自己的 `skills/`（跳过自带的 `.system`）与共享的 `~/.agents/skills`、
@@ -785,7 +800,10 @@ fn windows_sandbox_configured(content: &str) -> bool {
 /// 路径不分大小写）。与上游 codex-rs/config/src/loader/mod.rs `discover_project_layers` /
 /// `decision_for_dir` 同口径；未信任的项目层上游加载但禁用，这里不算。`$CODEX_HOME/.codex` 跳过（上游同）。
 /// 任何一层配了就算「用户配过」，不补参数。
-fn windows_sandbox_configured_in_layers(home: Option<&std::path::Path>, cwd: Option<&std::path::Path>) -> bool {
+fn windows_sandbox_configured_in_layers(
+    home: Option<&std::path::Path>,
+    cwd: Option<&std::path::Path>,
+) -> bool {
     let user = home.and_then(|home| std::fs::read_to_string(home.join("config.toml")).ok());
     if user.as_deref().is_some_and(windows_sandbox_configured) {
         return true;
@@ -799,18 +817,22 @@ fn windows_sandbox_configured_in_layers(home: Option<&std::path::Path>, cwd: Opt
         .as_deref()
         .and_then(|content| content.parse::<toml_edit::DocumentMut>().ok())
         .and_then(|doc| {
-            doc.get("projects").and_then(|projects| projects.as_table_like()).map(|projects| {
-                projects
-                    .iter()
-                    .filter(|(_, entry)| {
-                        entry.get("trust_level").and_then(|level| level.as_str()) == Some("trusted")
-                    })
-                    .flat_map(|(key, _)| trust_keys(std::path::Path::new(key)))
-                    .collect()
-            })
+            doc.get("projects")
+                .and_then(|projects| projects.as_table_like())
+                .map(|projects| {
+                    projects
+                        .iter()
+                        .filter(|(_, entry)| {
+                            entry.get("trust_level").and_then(|level| level.as_str())
+                                == Some("trusted")
+                        })
+                        .flat_map(|(key, _)| trust_keys(std::path::Path::new(key)))
+                        .collect()
+                })
         })
         .unwrap_or_default();
-    let is_trusted = |path: &std::path::Path| trust_keys(path).iter().any(|key| trusted.contains(key));
+    let is_trusted =
+        |path: &std::path::Path| trust_keys(path).iter().any(|key| trusted.contains(key));
     let root = cwd
         .ancestors()
         .find(|dir| dir.join(".git").exists())
@@ -842,7 +864,9 @@ fn windows_sandbox_configured_in_layers(home: Option<&std::path::Path>, cwd: Opt
 fn trust_key(path: &std::path::Path) -> String {
     let text = path.to_string_lossy();
     if cfg!(windows) {
-        text.replace('/', "\\").trim_end_matches('\\').to_ascii_lowercase()
+        text.replace('/', "\\")
+            .trim_end_matches('\\')
+            .to_ascii_lowercase()
     } else {
         text.trim_end_matches('/').to_string()
     }
@@ -890,7 +914,9 @@ fn main_checkout_for_trust(root: &std::path::Path) -> Option<std::path::PathBuf>
     const MAX: u64 = 64 * 1024;
     let read_small = |path: &Path| -> Option<String> {
         let meta = std::fs::symlink_metadata(path).ok()?;
-        (meta.is_file() && meta.len() <= MAX).then(|| std::fs::read_to_string(path).ok()).flatten()
+        (meta.is_file() && meta.len() <= MAX)
+            .then(|| std::fs::read_to_string(path).ok())
+            .flatten()
     };
     let dot_git = root.join(".git");
     let meta = std::fs::symlink_metadata(&dot_git).ok()?;
@@ -948,14 +974,22 @@ mod tests {
     fn windows_sandbox_configured_follows_upstream_keys() {
         use super::windows_sandbox_configured as configured;
         assert!(!configured(""));
-        assert!(!configured("model = \"gpt\"\n[projects.'C:/x']\ntrust_level = \"trusted\"\n"));
+        assert!(!configured(
+            "model = \"gpt\"\n[projects.'C:/x']\ntrust_level = \"trusted\"\n"
+        ));
         assert!(configured("[windows]\nsandbox = \"elevated\"\n"));
         assert!(configured("[windows]\nsandbox = \"unelevated\"\n"));
         assert!(configured("[windows]\nsandbox = \"mxc\"\n"));
-        assert!(configured("[features]\nexperimental_windows_sandbox = true\n"));
+        assert!(configured(
+            "[features]\nexperimental_windows_sandbox = true\n"
+        ));
         assert!(configured("[features]\nelevated_windows_sandbox = true\n"));
-        assert!(configured("[features]\nenable_experimental_windows_sandbox = true\n"));
-        assert!(!configured("[features]\nexperimental_windows_sandbox = false\n"));
+        assert!(configured(
+            "[features]\nenable_experimental_windows_sandbox = true\n"
+        ));
+        assert!(!configured(
+            "[features]\nexperimental_windows_sandbox = false\n"
+        ));
         assert!(configured("this is = = not toml"));
     }
 
@@ -973,10 +1007,18 @@ mod tests {
         std::fs::create_dir_all(&sub).unwrap();
         std::fs::create_dir_all(repo.join(".git")).unwrap();
         std::fs::create_dir_all(repo.join(".codex")).unwrap();
-        std::fs::write(repo.join(".codex").join("config.toml"), "[windows]\nsandbox = \"elevated\"\n").unwrap();
+        std::fs::write(
+            repo.join(".codex").join("config.toml"),
+            "[windows]\nsandbox = \"elevated\"\n",
+        )
+        .unwrap();
         let trust = |dir: &std::path::Path| {
             let key = dir.to_string_lossy().replace('\\', "\\\\");
-            std::fs::write(home.join("config.toml"), format!("[projects.\"{key}\"]\ntrust_level = \"trusted\"\n")).unwrap();
+            std::fs::write(
+                home.join("config.toml"),
+                format!("[projects.\"{key}\"]\ntrust_level = \"trusted\"\n"),
+            )
+            .unwrap();
         };
         // 没信任：项目层不算。
         std::fs::write(home.join("config.toml"), "").unwrap();
@@ -990,22 +1032,38 @@ mod tests {
         assert!(!configured(Some(&home), Some(&sub)));
         // 子目录自己的 .codex 配了、子目录受信任：算。
         std::fs::create_dir_all(sub.join(".codex")).unwrap();
-        std::fs::write(sub.join(".codex").join("config.toml"), "[windows]\nsandbox = \"unelevated\"\n").unwrap();
+        std::fs::write(
+            sub.join(".codex").join("config.toml"),
+            "[windows]\nsandbox = \"unelevated\"\n",
+        )
+        .unwrap();
         assert!(configured(Some(&home), Some(&sub)));
         // 用户层配了：不看项目层也算；没给 cwd 只看用户层。
-        std::fs::write(home.join("config.toml"), "[windows]\nsandbox = \"elevated\"\n").unwrap();
+        std::fs::write(
+            home.join("config.toml"),
+            "[windows]\nsandbox = \"elevated\"\n",
+        )
+        .unwrap();
         assert!(configured(Some(&home), None));
         std::fs::write(home.join("config.toml"), "").unwrap();
         assert!(!configured(Some(&home), None));
         // extra_launch_args 走同一判定。
         let codex = crate::by_id("codex").unwrap();
         trust(&repo);
-        let env = vec![("CODEX_HOME".to_string(), home.to_string_lossy().into_owned())];
+        let env = vec![(
+            "CODEX_HOME".to_string(),
+            home.to_string_lossy().into_owned(),
+        )];
         let pick = std::collections::HashMap::from([("approval".to_string(), "ask".to_string())]);
         assert!(codex.extra_launch_args(&pick, &env, Some(&repo)).is_empty());
         let other = root.join("elsewhere");
         std::fs::create_dir_all(&other).unwrap();
-        assert_eq!(codex.extra_launch_args(&pick, &env, Some(&other)).is_empty(), !cfg!(windows));
+        assert_eq!(
+            codex
+                .extra_launch_args(&pick, &env, Some(&other))
+                .is_empty(),
+            !cfg!(windows)
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1026,13 +1084,25 @@ mod tests {
         }
         std::fs::write(main.join(".git").join("HEAD"), "ref: refs/heads/main\n").unwrap();
         std::fs::write(wt.join(".git"), format!("gitdir: {}\n", admin.display())).unwrap();
-        std::fs::write(admin.join("gitdir"), format!("{}\n", wt.join(".git").display())).unwrap();
+        std::fs::write(
+            admin.join("gitdir"),
+            format!("{}\n", wt.join(".git").display()),
+        )
+        .unwrap();
         std::fs::write(admin.join("commondir"), "../..\n").unwrap();
         std::fs::create_dir_all(wt.join(".codex")).unwrap();
-        std::fs::write(wt.join(".codex").join("config.toml"), "[windows]\nsandbox = \"elevated\"\n").unwrap();
+        std::fs::write(
+            wt.join(".codex").join("config.toml"),
+            "[windows]\nsandbox = \"elevated\"\n",
+        )
+        .unwrap();
         let trust = |dir: &std::path::Path| {
             let key = dir.to_string_lossy().replace('\\', "\\\\");
-            std::fs::write(home.join("config.toml"), format!("[projects.\"{key}\"]\ntrust_level = \"trusted\"\n")).unwrap();
+            std::fs::write(
+                home.join("config.toml"),
+                format!("[projects.\"{key}\"]\ntrust_level = \"trusted\"\n"),
+            )
+            .unwrap();
         };
         assert_eq!(super::main_checkout_for_trust(&wt), Some(main.clone()));
         assert_eq!(super::main_checkout_for_trust(&main), Some(main.clone()));
@@ -1044,15 +1114,27 @@ mod tests {
         assert!(configured(Some(&home), Some(&wt)));
         assert!(configured(Some(&home), Some(&sub)));
         let codex = crate::by_id("codex").unwrap();
-        let env = vec![("CODEX_HOME".to_string(), home.to_string_lossy().into_owned())];
-        let pick = std::collections::HashMap::from([("approval".to_string(), "approveForMe".to_string())]);
+        let env = vec![(
+            "CODEX_HOME".to_string(),
+            home.to_string_lossy().into_owned(),
+        )];
+        let pick =
+            std::collections::HashMap::from([("approval".to_string(), "approveForMe".to_string())]);
         assert!(codex.extra_launch_args(&pick, &env, Some(&sub)).is_empty());
         // 登记对不上（worktrees/<名字>/gitdir 不指回这个 worktree）：不借主仓库的信任。
-        std::fs::write(admin.join("gitdir"), format!("{}\n", root.join("other").join(".git").display())).unwrap();
+        std::fs::write(
+            admin.join("gitdir"),
+            format!("{}\n", root.join("other").join(".git").display()),
+        )
+        .unwrap();
         assert_eq!(super::main_checkout_for_trust(&wt), None);
         assert!(!configured(Some(&home), Some(&wt)));
         // .git 文件指向的不在 worktrees/ 下：同样不借。
-        std::fs::write(admin.join("gitdir"), format!("{}\n", wt.join(".git").display())).unwrap();
+        std::fs::write(
+            admin.join("gitdir"),
+            format!("{}\n", wt.join(".git").display()),
+        )
+        .unwrap();
         let stray = root.join("stray");
         std::fs::create_dir_all(&stray).unwrap();
         std::fs::write(wt.join(".git"), format!("gitdir: {}\n", stray.display())).unwrap();
@@ -1067,7 +1149,14 @@ mod tests {
         use super::windows_sandbox_configured_in_layers as configured;
         let git = |dir: &std::path::Path, args: &[&str]| {
             std::process::Command::new("git")
-                .args(["-c", "user.name=probe", "-c", "user.email=probe@example.invalid", "-c", "commit.gpgsign=false"])
+                .args([
+                    "-c",
+                    "user.name=probe",
+                    "-c",
+                    "user.email=probe@example.invalid",
+                    "-c",
+                    "commit.gpgsign=false",
+                ])
                 .args(args)
                 .current_dir(dir)
                 .output()
@@ -1090,30 +1179,50 @@ mod tests {
         assert!(git(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
         let dot_git = std::fs::read_to_string(wt.join(".git")).unwrap();
         if cfg!(windows) {
-            assert!(dot_git.contains('/') && !dot_git.contains('\\'), "git 写的应是正斜杠：{dot_git}");
+            assert!(
+                dot_git.contains('/') && !dot_git.contains('\\'),
+                "git 写的应是正斜杠：{dot_git}"
+            );
         }
         let sub = wt.join("pkg");
         std::fs::create_dir_all(sub.join(".codex")).unwrap();
         std::fs::create_dir_all(wt.join(".codex")).unwrap();
-        std::fs::write(wt.join(".codex").join("config.toml"), "[windows]\nsandbox = \"elevated\"\n").unwrap();
+        std::fs::write(
+            wt.join(".codex").join("config.toml"),
+            "[windows]\nsandbox = \"elevated\"\n",
+        )
+        .unwrap();
         // 比较规范路径：CI 的临时目录可能经链接 / 短名到达，git 写的是解析后的长路径（PR #172 CI）。
-        assert!(super::main_checkout_for_trust(&wt).is_some_and(|m| super::trust_keys(&m)[0] == super::trust_keys(&main)[0]));
+        assert!(super::main_checkout_for_trust(&wt)
+            .is_some_and(|m| super::trust_keys(&m)[0] == super::trust_keys(&main)[0]));
         // Codex 写信任键的样子：Windows 上反斜杠、小写（照本机 ~/.codex/config.toml）；TOML 单引号字面量。
         let key = if cfg!(windows) {
-            main.to_string_lossy().replace('/', "\\").to_ascii_lowercase()
+            main.to_string_lossy()
+                .replace('/', "\\")
+                .to_ascii_lowercase()
         } else {
             main.to_string_lossy().into_owned()
         };
         std::fs::write(home.join("config.toml"), "").unwrap();
         assert!(!configured(Some(&home), Some(&wt)));
-        std::fs::write(home.join("config.toml"), format!("[projects.'{key}']\ntrust_level = \"trusted\"\n")).unwrap();
+        std::fs::write(
+            home.join("config.toml"),
+            format!("[projects.'{key}']\ntrust_level = \"trusted\"\n"),
+        )
+        .unwrap();
         assert!(configured(Some(&home), Some(&wt)));
         assert!(configured(Some(&home), Some(&sub)));
         let codex = crate::by_id("codex").unwrap();
-        let env = vec![("CODEX_HOME".to_string(), home.to_string_lossy().into_owned())];
+        let env = vec![(
+            "CODEX_HOME".to_string(),
+            home.to_string_lossy().into_owned(),
+        )];
         let pick = std::collections::HashMap::from([("approval".to_string(), "ask".to_string())]);
         assert!(codex.extra_launch_args(&pick, &env, Some(&wt)).is_empty());
-        let _ = git(&main, &["worktree", "remove", "--force", wt.to_str().unwrap()]);
+        let _ = git(
+            &main,
+            &["worktree", "remove", "--force", wt.to_str().unwrap()],
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 
@@ -1125,7 +1234,14 @@ mod tests {
         use super::windows_sandbox_configured_in_layers as configured;
         let git = |dir: &std::path::Path, args: &[&str]| {
             std::process::Command::new("git")
-                .args(["-c", "user.name=probe", "-c", "user.email=probe@example.invalid", "-c", "commit.gpgsign=false"])
+                .args([
+                    "-c",
+                    "user.name=probe",
+                    "-c",
+                    "user.email=probe@example.invalid",
+                    "-c",
+                    "commit.gpgsign=false",
+                ])
                 .args(args)
                 .current_dir(dir)
                 .output()
@@ -1138,7 +1254,13 @@ mod tests {
         std::fs::create_dir_all(&real).unwrap();
         #[cfg(windows)]
         let linked = std::process::Command::new("cmd")
-            .args(["/C", "mklink", "/J", alias.to_str().unwrap(), real.to_str().unwrap()])
+            .args([
+                "/C",
+                "mklink",
+                "/J",
+                alias.to_str().unwrap(),
+                real.to_str().unwrap(),
+            ])
             .output()
             .is_ok_and(|out| out.status.success());
         #[cfg(not(windows))]
@@ -1170,23 +1292,42 @@ mod tests {
         assert!(git(&main, &["commit", "-q", "-m", "init"]));
         assert!(git(&main, &["worktree", "add", "-q", wt.to_str().unwrap()]));
         std::fs::create_dir_all(wt.join(".codex")).unwrap();
-        std::fs::write(wt.join(".codex").join("config.toml"), "[windows]\nsandbox = \"elevated\"\n").unwrap();
+        std::fs::write(
+            wt.join(".codex").join("config.toml"),
+            "[windows]\nsandbox = \"elevated\"\n",
+        )
+        .unwrap();
         // Codex 写信任键的样子：Windows 上反斜杠、小写。
         let codex_key = |path: &std::path::Path| {
             if cfg!(windows) {
-                path.to_string_lossy().replace('/', "\\").to_ascii_lowercase()
+                path.to_string_lossy()
+                    .replace('/', "\\")
+                    .to_ascii_lowercase()
             } else {
                 path.to_string_lossy().into_owned()
             }
         };
         for key in [codex_key(&main), codex_key(&real.join("Main"))] {
-            std::fs::write(home.join("config.toml"), format!("[projects.'{key}']\ntrust_level = \"trusted\"\n")).unwrap();
-            assert!(configured(Some(&home), Some(&wt)), "别名路径的 worktree，信任键 {key}");
-            assert!(configured(Some(&home), Some(&real.join("WT"))), "真实路径的 worktree，信任键 {key}");
+            std::fs::write(
+                home.join("config.toml"),
+                format!("[projects.'{key}']\ntrust_level = \"trusted\"\n"),
+            )
+            .unwrap();
+            assert!(
+                configured(Some(&home), Some(&wt)),
+                "别名路径的 worktree，信任键 {key}"
+            );
+            assert!(
+                configured(Some(&home), Some(&real.join("WT"))),
+                "真实路径的 worktree，信任键 {key}"
+            );
         }
         std::fs::write(home.join("config.toml"), "").unwrap();
         assert!(!configured(Some(&home), Some(&wt)), "没信任就不读项目层");
-        let _ = git(&main, &["worktree", "remove", "--force", wt.to_str().unwrap()]);
+        let _ = git(
+            &main,
+            &["worktree", "remove", "--force", wt.to_str().unwrap()],
+        );
         cleanup();
     }
 
@@ -1197,23 +1338,36 @@ mod tests {
     #[ignore = "第七轮复核 R2：本机真实 worktree；手动跑"]
     fn r2_real_worktree_on_this_machine() {
         let wt = std::path::PathBuf::from(
-            std::env::var("MEOWO_R2_WORKTREE").unwrap_or_else(|_| r"C:\Users\35122\Desktop\workspace\meowo-tui-codex".into()),
+            std::env::var("MEOWO_R2_WORKTREE")
+                .unwrap_or_else(|_| r"C:\Users\35122\Desktop\workspace\meowo-tui-codex".into()),
         );
-        let dot_git = std::fs::read_to_string(wt.join(".git")).expect("应是 worktree（.git 是文件）");
+        let dot_git =
+            std::fs::read_to_string(wt.join(".git")).expect("应是 worktree（.git 是文件）");
         let main = super::main_checkout_for_trust(&wt).expect("认得出主仓库");
         let key = super::trust_key(&main);
         let home = std::env::temp_dir().join(format!("meowo-codex-r2-home-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(&home).unwrap();
-        std::fs::write(home.join("config.toml"), format!("[projects.'{key}']\ntrust_level = \"trusted\"\n")).unwrap();
+        std::fs::write(
+            home.join("config.toml"),
+            format!("[projects.'{key}']\ntrust_level = \"trusted\"\n"),
+        )
+        .unwrap();
         let dot_codex = wt.join(".codex");
         let created_dir = !dot_codex.exists();
         let config = dot_codex.join("config.toml");
-        assert!(!config.exists(), "worktree 里已有 .codex/config.toml，不覆盖：{}", config.display());
+        assert!(
+            !config.exists(),
+            "worktree 里已有 .codex/config.toml，不覆盖：{}",
+            config.display()
+        );
         std::fs::create_dir_all(&dot_codex).unwrap();
         std::fs::write(&config, "[windows]\nsandbox = \"elevated\"\n").unwrap();
         let codex = crate::by_id("codex").unwrap();
-        let env = vec![("CODEX_HOME".to_string(), home.to_string_lossy().into_owned())];
+        let env = vec![(
+            "CODEX_HOME".to_string(),
+            home.to_string_lossy().into_owned(),
+        )];
         let pick = std::collections::HashMap::from([("approval".to_string(), "ask".to_string())]);
         let with_layer = codex.extra_launch_args(&pick, &env, Some(&wt));
         let sub = wt.join("app");
@@ -1247,24 +1401,50 @@ mod tests {
         let home = std::env::temp_dir().join(format!("meowo-codex-n7-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(&home).unwrap();
-        let env = vec![("CODEX_HOME".to_string(), home.to_string_lossy().into_owned())];
-        let pick = |tier: &str| std::collections::HashMap::from([("approval".to_string(), tier.to_string())]);
+        let env = vec![(
+            "CODEX_HOME".to_string(),
+            home.to_string_lossy().into_owned(),
+        )];
+        let pick = |tier: &str| {
+            std::collections::HashMap::from([("approval".to_string(), tier.to_string())])
+        };
         let expect: Vec<String> = if cfg!(windows) {
             vec!["-c".into(), "windows.sandbox=unelevated".into()]
         } else {
             Vec::new()
         };
         // 没有 config.toml：没配。
-        assert_eq!(codex.extra_launch_args(&pick("approveForMe"), &env, None), expect);
-        std::fs::write(home.join("config.toml"), "check_for_update_on_startup = false\n").unwrap();
-        assert_eq!(codex.extra_launch_args(&pick("approveForMe"), &env, None), expect);
+        assert_eq!(
+            codex.extra_launch_args(&pick("approveForMe"), &env, None),
+            expect
+        );
+        std::fs::write(
+            home.join("config.toml"),
+            "check_for_update_on_startup = false\n",
+        )
+        .unwrap();
+        assert_eq!(
+            codex.extra_launch_args(&pick("approveForMe"), &env, None),
+            expect
+        );
         assert_eq!(codex.extra_launch_args(&pick("ask"), &env, None), expect);
         for other in ["default", "readOnly", "yolo", "nonsense"] {
-            assert!(codex.extra_launch_args(&pick(other), &env, None).is_empty(), "{other}");
+            assert!(
+                codex.extra_launch_args(&pick(other), &env, None).is_empty(),
+                "{other}"
+            );
         }
-        assert!(codex.extra_launch_args(&std::collections::HashMap::new(), &env, None).is_empty());
-        std::fs::write(home.join("config.toml"), "[windows]\nsandbox = \"elevated\"\n").unwrap();
-        assert!(codex.extra_launch_args(&pick("approveForMe"), &env, None).is_empty());
+        assert!(codex
+            .extra_launch_args(&std::collections::HashMap::new(), &env, None)
+            .is_empty());
+        std::fs::write(
+            home.join("config.toml"),
+            "[windows]\nsandbox = \"elevated\"\n",
+        )
+        .unwrap();
+        assert!(codex
+            .extra_launch_args(&pick("approveForMe"), &env, None)
+            .is_empty());
         assert!(codex.extra_launch_args(&pick("ask"), &env, None).is_empty());
         let _ = std::fs::remove_dir_all(&home);
     }
@@ -1301,9 +1481,15 @@ mod tests {
             "model = \"gpt-5.5\"\napproval_policy = \"never\"\nsandbox_mode = \"danger-full-access\"\n[profiles.x]\nmodel = \"other\"\n",
         );
         assert_eq!(defaults.model.as_deref(), Some("gpt-5.5"));
-        assert_eq!(defaults.choices.get("approval").map(String::as_str), Some("yolo"));
+        assert_eq!(
+            defaults.choices.get("approval").map(String::as_str),
+            Some("yolo")
+        );
         let ro = super::parse_config_defaults("sandbox_mode = \"read-only\"\n");
-        assert_eq!(ro.choices.get("approval").map(String::as_str), Some("readOnly"));
+        assert_eq!(
+            ro.choices.get("approval").map(String::as_str),
+            Some("readOnly")
+        );
         assert!(super::parse_config_defaults("").choices.is_empty());
     }
 

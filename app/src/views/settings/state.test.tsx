@@ -104,6 +104,17 @@ describe("useSettingsState", () => {
     });
 
     expect(result).toBe("已选自定义代理，请填写代理地址");
-    expect(hook.result.current[2]).toBe("已选自定义代理，请填写代理地址");
+    // T-2（2026-11-12）：分区底部的公共错误行统一冠「设置没保存：」；返回值不带，由调用方自己套语境。
+    expect(hook.result.current[2]).toBe("设置没保存：已选自定义代理，请填写代理地址");
+  });
+
+  // T-2：后端写盘失败的结构化 reason（settings.rs save_settings_unlocked）映射成人话，系统原话接在后面。
+  it("写盘失败 settings/write_failed 译成可读原因并保留系统原话", async () => {
+    api.getSettings.mockResolvedValue(SETTINGS_DEFAULTS);
+    api.setSettings.mockRejectedValue("settings/write_failed：拒绝访问。 (os error 5)");
+    const hook = renderHook(() => useSettingsState());
+    await act(async () => {});
+    await act(async () => { await hook.result.current[1]({ theme: "light" }); });
+    expect(hook.result.current[2]).toBe("设置没保存：配置文件可能只读或被占用：拒绝访问。 (os error 5)");
   });
 });

@@ -277,6 +277,11 @@ describe("ChatWindow 适配回归", () => {
     expect(writes(506)).not.toContain("\r");
     expect(box().value).toBe("看图");
     expect(screen.getByAltText("shot.png")).toBeTruthy();
+    // 认不出这个输入框、没法自动清残图：文案写原因，不叫人「到终端检查并清理」（第三轮验收 13）；
+    // 错误条给看终端画面与「已清理残图」两个出口。
+    expect(zh.chat.imagePasteUnconfirmed).not.toMatch(/到终端|去终端/);
+    expect([...document.querySelector(".chat-send-error")!.querySelectorAll("button")].map((button) => button.textContent))
+      .toEqual([zh.chat.goTerminal, zh.chat.imageDraftCleared]);
     fireEvent.keyDown(box(), { key: "Enter" });
     await new Promise((resolve) => setTimeout(resolve, 100));
     expect(writes(506).filter((text) => text === "\x16")).toHaveLength(1);

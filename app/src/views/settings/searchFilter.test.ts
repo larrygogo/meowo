@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applySettingsFilter } from "./searchFilter";
+import { applySettingsFilter, firstHitControl } from "./searchFilter";
 
 const NAV = { general: "通用", appearance: "外观", account: "账号与用量" };
 
@@ -184,5 +184,23 @@ describe("applySettingsFilter（设置搜索过滤，S-1）", () => {
       expect(shown(row(body, "approval"))).toBe(false);
       expect(shown(row(body, "lang"))).toBe(true);
     });
+  });
+});
+
+// T-4（2026-11-12 走查）：搜索框里按 Enter / ↓ 要直接落到第一条命中行的控件上。
+describe("firstHitControl（搜索后跳到第一条命中）", () => {
+  it("跳过被过滤掉的行与分区，取第一条可见命中行里的控件", () => {
+    const body = build();
+    body.querySelectorAll(".row").forEach((row, i) => {
+      const btn = document.createElement("button");
+      btn.textContent = `ctl${i}`;
+      row.appendChild(btn);
+    });
+    applySettingsFilter(body, "贴纸颜色", NAV);
+    expect(firstHitControl(body)?.textContent).toBe("ctl3");
+    applySettingsFilter(body, "开机", NAV);
+    expect(firstHitControl(body)?.textContent).toBe("ctl1");
+    applySettingsFilter(body, "完全不存在", NAV);
+    expect(firstHitControl(body)).toBeNull();
   });
 });

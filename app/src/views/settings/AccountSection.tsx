@@ -43,7 +43,7 @@ import { AgentAppIcon } from "../chat/AgentAppIcon";
 import { useT, repairFailMessage } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
 import type { Dict } from "../../i18n/zh";
-import { Switch } from "./widgets";
+import { Switch, SettingsError } from "./widgets";
 import { ActionMenu, Dropdown } from "../menu";
 import { useSettingsState } from "./state";
 import { RelayAccess } from "./RelayAccess";
@@ -54,6 +54,7 @@ import { isWindows } from "../../platform";
 import { Icon } from "../../icons/Icon";
 import { icDownload, icRefreshCw } from "../../icons/glyphs";
 import { icInfo } from "../../icons/glyphs.settings";
+import { busyProps } from "../../busyButton";
 
 function RefreshIcon({ spinning }: { spinning?: boolean }) {
   return (
@@ -331,7 +332,7 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsApiK
         setPathGapDir(null);
         setPathMsg(t.account.pathAdded);
       })
-      .catch(() => setPathMsg(t.account.pathAddFailed))
+      .catch((error) => setPathMsg(t.account.pathAddFailed(formatBackendError(error, t.locale))))
       .finally(() => setAddingPath(false));
   };
 
@@ -624,8 +625,7 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsApiK
             type="button"
             className="provider-card-action"
             data-testid={"agent-logout-" + provider}
-            onClick={startLogout}
-            disabled={logoutBusy}
+            {...busyProps(logoutBusy, startLogout)}
           >
             {logoutBusy ? t.account.loggingOut : t.account.logout}
           </button>
@@ -635,8 +635,7 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsApiK
             type="button"
             className="provider-card-action"
             data-testid={"agent-repair-hooks-" + provider}
-            onClick={repairHooks}
-            disabled={repairingHooks}
+            {...busyProps(repairingHooks, repairHooks)}
             // S-8：按钮凭空出现零解释——tooltip 说清它做什么、何时需要点。
             data-tip={t.newSession.repairHooksTip}
           >
@@ -666,19 +665,18 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsApiK
               type="button"
               className="provider-card-action btn-primary"
               data-testid={"agent-api-key-save-" + provider}
-              disabled={apiKeyBusy || !apiKeyValue.trim()}
-              onClick={saveApiKey}
+              disabled={!apiKeyValue.trim()}
+              {...busyProps(apiKeyBusy, saveApiKey)}
             >
               {apiKeyBusy ? t.account.apiKeySaving : t.account.apiKeySave}
             </button>
             <button
               type="button"
               className="provider-card-action"
-              disabled={apiKeyBusy}
-              onClick={() => {
+              {...busyProps(apiKeyBusy, () => {
                 setApiKeyOpen(false);
                 setApiKeyValue("");
-              }}
+              })}
             >
               {t.account.cancelEdit}
             </button>
@@ -740,8 +738,7 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsApiK
             type="button"
             className="agent-path-gap-btn"
             data-testid={"agent-add-path-" + provider}
-            onClick={addPath}
-            disabled={addingPath}
+            {...busyProps(addingPath, addPath)}
           >
             {addingPath ? t.account.addingToPath : t.account.addToPath}
           </button>
@@ -784,7 +781,7 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsApiK
                 {t.account.usageUpdatedAt(new Intl.DateTimeFormat(t.locale, { hour: "numeric", minute: "2-digit" }).format(usageRefreshedAt))}
               </span>
             )}
-            <button className="icon-btn" data-tip={t.account.refresh} aria-label={t.account.refresh} disabled={refreshing || err === "unsupported" || (!(payload?.usage_supported ?? false) && !usage)} onClick={onRefresh}>
+            <button className="icon-btn" data-tip={t.account.refresh} aria-label={t.account.refresh} disabled={err === "unsupported" || (!(payload?.usage_supported ?? false) && !usage)} {...busyProps(refreshing, onRefresh)}>
               <RefreshIcon spinning={refreshing} />
             </button>
           </div>
@@ -1058,8 +1055,7 @@ function ProfileList({ provider, movesSessionsAcrossAccounts, onChanged, loginSt
               type="button"
               className="profile-row-main"
               data-tip={t.account.switchProfile}
-              disabled={busy || p.active}
-              onClick={() => void switchTo(p)}
+              {...busyProps(busy || p.active, () => void switchTo(p))}
             >
               <span className="profile-name-row">
                 <span className="profile-name">{p.name || t.account.defaultProfile}</span>
@@ -1084,12 +1080,12 @@ function ProfileList({ provider, movesSessionsAcrossAccounts, onChanged, loginSt
                 type="button"
                 className="provider-card-action"
                 data-testid={"profile-login-" + provider + "-" + key}
-                disabled={busy || anotherLoginPending}
-                onClick={() => {
+                disabled={anotherLoginPending}
+                {...busyProps(busy, () => {
                   setErr(null);
                   const request = profileLoginPending ? onCancelLogin() : onStartLogin(p.id);
                   void request.catch((e) => setErr(formatBackendError(e, t.locale)));
-                }}
+                })}
               >
                 {profileLoginPending ? t.account.cancelLogin : t.account.login}
               </button>
@@ -1155,8 +1151,8 @@ function ProfileList({ provider, movesSessionsAcrossAccounts, onChanged, loginSt
             type="button"
             className="provider-card-action btn-primary"
             data-testid={"profile-add-confirm-" + provider}
-            disabled={busy || !name.trim()}
-            onClick={add}
+            disabled={!name.trim()}
+            {...busyProps(busy, add)}
           >
             {t.account.addProfile}
           </button>
@@ -1165,11 +1161,10 @@ function ProfileList({ provider, movesSessionsAcrossAccounts, onChanged, loginSt
             type="button"
             className="provider-card-action"
             data-testid={"profile-add-cancel-" + provider}
-            disabled={busy}
-            onClick={() => {
+            {...busyProps(busy, () => {
               setAdding(false);
               setName("");
-            }}
+            })}
           >
             {t.account.cancelEdit}
           </button>
@@ -1179,8 +1174,7 @@ function ProfileList({ provider, movesSessionsAcrossAccounts, onChanged, loginSt
           type="button"
           className="profile-add-btn"
           data-testid={"profile-add-" + provider}
-          disabled={busy}
-          onClick={() => setAdding(true)}
+          {...busyProps(busy, () => setAdding(true))}
         >
           + {t.account.addProfile}
         </button>
@@ -1473,21 +1467,8 @@ export function AccountSection() {
         usageRefreshedAt={usageRefreshedAt[cur.id] ?? null}
         updateInfo={updateMap[cur.id] ?? null}
       />
-      {patchError && (
-        <div className="sec-hint proxy-err" role="alert">
-          {patchError}
-          {/* 同款内联 ×（About.tsx SettingsError）：错误不会自己消失（下一次成功才清），
-              用户看完得有办法关掉；复用 useSettingsState 的 clearError 通道。 */}
-          <button
-            type="button"
-            aria-label={t.settings.close}
-            style={{ appearance: "none", background: "none", border: "none", padding: 0, marginLeft: 6, font: "inherit", color: "inherit", cursor: "pointer" }}
-            onClick={clearPatchError}
-          >
-            ×
-          </button>
-        </div>
-      )}
+      {/* T-6 兄弟场景（2026-11-12）：此前是手写的红字 + 内联样式 ×，与其余分区的 SettingsError 两套样式。 */}
+      <SettingsError preformatted error={patchError} onDismiss={clearPatchError} />
     </>
   );
 }

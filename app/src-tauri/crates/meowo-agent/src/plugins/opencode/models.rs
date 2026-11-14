@@ -18,7 +18,8 @@ const DECLARED: &[&str] = &["build", "plan"];
 pub(super) fn parse_models_verbose(output: &str) -> Vec<crate::ModelCatalogEntry> {
     let mut out = Vec::new();
     let mut current: Option<(String, String)> = None;
-    let flush = |current: &mut Option<(String, String)>, out: &mut Vec<crate::ModelCatalogEntry>| {
+    let flush = |current: &mut Option<(String, String)>,
+                 out: &mut Vec<crate::ModelCatalogEntry>| {
         let Some((id, body)) = current.take() else {
             return;
         };

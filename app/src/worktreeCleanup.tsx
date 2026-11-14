@@ -15,6 +15,7 @@ import { SESSION_ARCHIVED_EVENT } from "./hooks/useSessionActions";
 import { formatBackendError } from "./i18n/errors";
 import type { Dict } from "./i18n/zh";
 import { UNNAMED_SESSION_SENTINEL } from "./views/sticker/types";
+import { busyProps } from "./busyButton";
 
 /** 这些原因说明根本不是 worktree（或目录已经没了），菜单里不必出现「删除 worktree」这一项。 */
 const NOT_APPLICABLE = new Set(["not_worktree", "not_repo", "dir_missing"]);
@@ -197,8 +198,7 @@ export function WorktreeRemoveButton({
     <button
       type="button"
       className={className}
-      disabled={state === "busy"}
-      onClick={() => {
+      {...busyProps(state === "busy", () => {
         setState("busy");
         onEngage?.();
         void runWorktreeRemoval(t, sessionId, status).then((outcome) => {
@@ -207,7 +207,7 @@ export function WorktreeRemoveButton({
           else setState("idle");
           onSettled?.();
         });
-      }}
+      })}
     >
       {state === "busy" ? t.worktree.removing : t.worktree.remove}
     </button>

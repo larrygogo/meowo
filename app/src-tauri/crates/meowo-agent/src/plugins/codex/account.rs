@@ -150,14 +150,41 @@ pub fn parse_codex_usage(payload: &Value) -> ProviderUsage {
     lanes.sort_by_key(|l| matches!(l.kind, UsageKind::Weekly));
 
     // note：仅承载别处未展示的额外信息(credits)；plan_type 已作为账号 plan 徽标展示，不重复进 note。
-    let credits = payload.get("credits").and_then(|v| v.as_f64());
-    let note = credits.map(|c| format!("credits:{c}"));
+    let note = credits_balance(payload, rate_limits).map(|c| format!("credits:{c}"));
 
     ProviderUsage {
         lanes,
         note,
         plan: None,
     }
+}
+
+/// credits 余额。
+///
+/// 本机 0.144～0.166 的 token_count 里余额都在 `rate_limits.credits`，形如
+/// `{"has_credits":true,"unlimited":false,"balance":"60783.9282375000"}`，balance 是**字符串**
+/// （0.166.0 rollout 5 份、0.162 846 份；research-cli-drift X5，2026-11-12）。原先只读顶层数字
+/// `payload.credits`，本机样本里一次都没出现过，余额因此永不显示；顶层数字仍保留兜底。
+/// `has_credits:false` 时 balance 是 "0" 或 null，那是没买额度，不显示「余额 0」。
+fn credits_balance(payload: &Value, rate_limits: &Value) -> Option<String> {
+    if let Some(top) = payload.get("credits").and_then(Value::as_f64) {
+        return Some(top.to_string());
+    }
+    let credits = rate_limits.get("credits")?;
+    if credits.get("has_credits").and_then(Value::as_bool) == Some(false) {
+        return None;
+    }
+    let balance = credits.get("balance")?;
+    let amount = balance
+        .as_f64()
+        .or_else(|| balance.as_str().and_then(|s| s.trim().parse::<f64>().ok()))?;
+    // 原文带十位小数（"60783.9282375000"），面板只需两位；整数不带小数点。
+    let rounded = (amount * 100.0).round() / 100.0;
+    Some(if rounded.fract() == 0.0 {
+        format!("{rounded:.0}")
+    } else {
+        format!("{rounded}")
+    })
 }
 
 // ═══ 文件系统读取 ═══
@@ -312,10 +339,13 @@ fn parse_login_status(output: &str) -> Option<Account> {
         .any(|line| line.trim() == "Logged in using ChatGPT")
     {
         "chatgpt"
-    } else if output
-        .lines()
-        .any(|line| line.trim().starts_with("Logged in using an API key"))
-    {
+    } else if output.lines().any(|line| {
+        let line = line.trim();
+        // 0.166.0 的 `codex login status` 改成 `API key configured - <打码的 key>`，旧句
+        // `Logged in using an API key` 在 codex.exe 里 0 处（cli/src/login.rs 一带的字符串，
+        // research-cli-drift「有风险」项，2026-11-12 取证确认）。新旧都认。
+        line.starts_with("Logged in using an API key") || line.starts_with("API key configured - ")
+    }) {
         "API Key"
     } else {
         return None;
@@ -382,6 +412,19 @@ mod tests {
             }
         }
         assert!(parse_login_status("Not logged in").is_none());
+        // 0.166.0 与旧版的 API key 登录状态行（codex.exe 字符串）
+        for line in [
+            "API key configured - sk-proj-***abcd",
+            "Logged in using an API key - sk-***",
+        ] {
+            assert_eq!(
+                parse_login_status(line)
+                    .and_then(|a| a.login_label)
+                    .as_deref(),
+                Some("API Key"),
+                "{line}"
+            );
+        }
         std::fs::remove_dir_all(root).unwrap();
     }
 
@@ -609,6 +652,50 @@ mod tests {
 
         // plan_type 已作为账号 plan 徽标展示，不再进 note；无 credits 时 note 为空。
         assert!(pu.note.is_none());
+    }
+
+    /// credits 余额在 `rate_limits.credits.balance`（字符串）。样本取自本机 0.166.0 /
+    /// 0.144 rollout 的 token_count（research-cli-drift X5）。
+    #[test]
+    fn parse_codex_usage_reads_nested_string_credits_balance() {
+        let with = |credits: Value| {
+            parse_codex_usage(&json!({
+                "type": "token_count",
+                "rate_limits": {
+                    "limit_id": "codex",
+                    "primary": { "used_percent": 1.0, "window_minutes": 300, "resets_at": 1784518666i64 },
+                    "secondary": null,
+                    "credits": credits,
+                    "plan_type": "pro"
+                }
+            }))
+            .note
+        };
+        // 0.166.0
+        assert_eq!(
+            with(json!({"has_credits": true, "unlimited": false, "balance": "60783.9282375000"}))
+                .as_deref(),
+            Some("credits:60783.93")
+        );
+        // 0.162.1
+        assert_eq!(
+            with(json!({"has_credits": true, "unlimited": false, "balance": "62500.0000000000"}))
+                .as_deref(),
+            Some("credits:62500")
+        );
+        // 0.144：没买额度
+        assert_eq!(
+            with(json!({"has_credits": false, "unlimited": false, "balance": "0"})),
+            None
+        );
+        assert_eq!(
+            with(json!({"has_credits": false, "unlimited": false, "balance": null})),
+            None
+        );
+        assert_eq!(with(Value::Null), None);
+        // 旧的顶层数字形态仍认
+        let top = parse_codex_usage(&json!({"credits": 45.5, "rate_limits": {"primary": null}}));
+        assert_eq!(top.note.as_deref(), Some("credits:45.5"));
     }
 
     /// 回归：codex 的**新格式**——`primary` 装的是 7 天窗口（window_minutes=10080）、

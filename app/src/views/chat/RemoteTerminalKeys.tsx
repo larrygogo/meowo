@@ -17,6 +17,9 @@ const KEYS: { label: string; data: string }[] = [
   { label: "3", data: "3" },
   { label: "Tab", data: "\t" },
   { label: "Esc", data: "\x1b" },
+  // 退格：发图没贴完时终端输入框里留着残图占位（claude `[Image #1]`、kimi `[image #1 (W×H)]`，整块一删），
+  // Meowo 认不出那个输入框就清不了，手机上得能自己删掉（第三轮验收 13：此前手机上只有一个点了没反应的「去终端页」）。
+  { label: "⌫", data: "\x7f" },
 ];
 
 /** 画面轮询间隔：按键后的回显要跟得上手指，又不至于把远程桥打满。 */

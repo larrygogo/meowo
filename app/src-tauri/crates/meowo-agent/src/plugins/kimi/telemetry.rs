@@ -17,8 +17,8 @@ use std::path::{Path, PathBuf};
 #[cfg(test)]
 use crate::transcript::ChatItem;
 use crate::transcript::{
-    SubagentOutcome, SubagentRef, SubagentSpec, SubagentStream, ToolDetail, TranscriptEvent,
-    TranscriptInfo, TranscriptParser, TranscriptSpec, preview_text,
+    preview_text, SubagentOutcome, SubagentRef, SubagentSpec, SubagentStream, ToolDetail,
+    TranscriptEvent, TranscriptInfo, TranscriptParser, TranscriptSpec,
 };
 
 fn chat_id(prefix: &str, line: &str) -> String {
@@ -205,6 +205,9 @@ fn persist_image_url(
         let bytes = std::fs::read(&src).ok()?;
         return crate::fsutil::persist_paste_bytes(&format!("kimi-{sha}"), ext, &bytes);
     }
+    if let Some(rest) = url.strip_prefix(KIMI_FILE_SCHEME) {
+        return persist_kimi_file(wire_dir?, rest);
+    }
     if let Some(rest) = url.strip_prefix("data:") {
         let (mime, data) = rest.split_once(";base64,")?;
         let ext = image_ext(mime)?;
@@ -227,6 +230,87 @@ fn persist_image_url(
         return crate::fsutil::persist_paste_bytes(&format!("kimi-{safe_id}-{index}"), ext, &bytes);
     }
     None
+}
+
+/// kimi 2.5 起粘贴图片的 url 形态（包内 `KIMI_FILE_SCHEME` / parseDaemonFileUrl：取 12 个
+/// 字符后的部分，`?` 之后是查询串）。
+const KIMI_FILE_SCHEME: &str = "kimi-file://";
+
+/// `kimi-file://<文件 id>` 的正文有两处落点（本机 kimi 2.5.1 实样，2026-11-12）：
+///
+/// - 会话目录的 `media/<id>.<扩展名>`，旁边 `media/meta/<id>.json` 记着
+///   `{"key":"<id>.png","mediaType":"image/png"}`。wire.jsonl 在 `<会话>/agents/<agent>/`，
+///   所以会话目录是 wire 目录往上两级。
+/// - 数据目录的 `files/<id>`（无扩展名，FileServiceImpl 的 `BLOB_SCOPE = "files"`），
+///   数据目录是会话目录往上三级（`<数据目录>/sessions/<wd_…>/<会话>`）。
+///
+/// 只认图片：扩展名或文件头是 png/jpeg/gif/webp 才落盘。都找不到（kimi 会按期清理
+/// `files/`）就返回 None，正文照常显示。
+fn persist_kimi_file(wire_dir: &Path, rest: &str) -> Option<PathBuf> {
+    use crate::fsutil::PASTE_MAX_BYTES;
+    let raw_id = rest.split('?').next().unwrap_or("");
+    // id 直接拼进路径与文件名：只留 id 字符集，挡掉脏数据里的路径分隔符与 `..`。
+    let id: String = raw_id
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-')
+        .take(128)
+        .collect();
+    if id.is_empty() || id.len() != raw_id.len() {
+        return None;
+    }
+    let read_image = |path: &Path| -> Option<(Vec<u8>, &'static str)> {
+        let len = std::fs::metadata(path).ok()?.len();
+        if len == 0 || len > PASTE_MAX_BYTES as u64 {
+            return None;
+        }
+        let bytes = std::fs::read(path).ok()?;
+        let ext = sniff_image_ext(&bytes)?;
+        Some((bytes, ext))
+    };
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    let session = wire_dir.parent().and_then(Path::parent);
+    for dir in [session, Some(wire_dir)].into_iter().flatten() {
+        let media = dir.join("media");
+        if let Some(key) = std::fs::read_to_string(media.join("meta").join(format!("{id}.json")))
+            .ok()
+            .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+            .and_then(|meta| meta.get("key").and_then(|k| k.as_str()).map(str::to_string))
+        {
+            // key 同样过滤：只接受 `<id>.<扩展名>`，不让 meta 把路径带出 media 目录。
+            if key.strip_prefix(id.as_str()).is_some_and(|ext| {
+                ext.starts_with('.') && ext[1..].chars().all(|c| c.is_ascii_alphanumeric())
+            }) {
+                candidates.push(media.join(key));
+            }
+        }
+        for ext in ["png", "jpg", "jpeg", "gif", "webp"] {
+            candidates.push(media.join(format!("{id}.{ext}")));
+        }
+    }
+    if let Some(share) = session
+        .and_then(Path::parent)
+        .and_then(Path::parent)
+        .and_then(Path::parent)
+    {
+        candidates.push(share.join("files").join(&id));
+    }
+    let (bytes, ext) = candidates.iter().find_map(|path| read_image(path))?;
+    crate::fsutil::persist_paste_bytes(&format!("kimi-{id}"), ext, &bytes)
+}
+
+/// 按文件头认图片格式（`files/<id>` 没有扩展名）。扩展名不可信时也以文件头为准。
+fn sniff_image_ext(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("png")
+    } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        Some("jpg")
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        Some("gif")
+    } else if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        Some("webp")
+    } else {
+        None
+    }
 }
 
 /// 用户消息正文 + 图片。kimi 把粘贴的图片记成 `image_url` part（blobref 指向 wire.jsonl 旁
@@ -1130,10 +1214,13 @@ impl TranscriptSpec for KimiTranscript {
                 .map(|mode| vec![crate::AgentMode::new("permission", mode)])
                 .unwrap_or_default(),
             "plan_mode.enter" => vec![crate::AgentMode::new("work", "plan")],
-            // 用户自己关 plan（`/plan off`、Shift+Tab）时 2.6 写的是 plan_mode.cancel；exit 只在计划
-            // 审阅通过后写（kimi.exe K:267415 PlanModeCancel，research-kimi-gemini §1.5 实测 wire）。
-            // 只认 exit 的话用户关了 plan，对话页仍显示 plan。
-            "plan_mode.exit" | "plan_mode.cancel" => vec![crate::AgentMode::new("work", "default")],
+            // `plan_mode.cancel`：`/plan off` 与 Shift+Tab 关掉计划模式时写的是它，不是 exit
+            // （kimi 2.5.1 包内回放器 `case "plan_mode.cancel": case "plan_mode.exit":` 同样
+            // 落成 enabled:false；本机 wire.jsonl 实样 10 条，2026-11-12 取证）。只认 exit
+            // 时标签停在「计划」，直到下次 enter/exit 才纠正。exit 留着：计划批准后仍写 exit。
+            "plan_mode.exit" | "plan_mode.cancel" => {
+                vec![crate::AgentMode::new("work", "default")]
+            }
             _ => Vec::new(),
         }
     }
@@ -1557,29 +1644,62 @@ fn with_display_name(mut summary: WireSummary) -> WireSummary {
     summary
 }
 
-/// 从 wire.jsonl 文本取**最后一条** usage.record 的 (used_input_tokens, model_alias)。
-/// used = inputOther + inputCacheRead + inputCacheCreation（≈ 该回合请求发送时的 context 输入量，
-/// 每次请求都把整个 context 作为 input 发送）；output 不计（本轮新生成，尚未进 context）。
+/// 从 wire.jsonl 文本取**最后一次**上下文占用 (used_tokens, model_alias)。
+///
+/// 两类记录，谁在后谁说了算：
+/// - `usage.record`：used = inputOther + inputCacheRead + inputCacheCreation（≈ 该回合请求
+///   发送时的 context 输入量）；output 不计。模型别名只从这里来。
+/// - `token_counting.{measured,truncated,rebased,turn_recorded}` 的 `tokens`：kimi 2.5 起自己
+///   的上下文计数，TUI 的 Context 读的就是它（包内回放器 `case "token_counting.*":
+///   contextTokens = rec.tokens`）。压缩后写 `rebased`（实样 `"tokens":34584`），撤回后写
+///   `truncated`（撤到底时 `"tokens":0`）。
+///
+/// `usageScope:"session"` 的 usage.record 跳过：那是压缩请求自己的花费（实样
+/// `inputOther 263123`，紧跟着 context.apply_compaction），不是压缩后的上下文。修复前取到它，
+/// 压缩后 Context% 一直停在压缩前的值，直到下一回合（本机 wire.jsonl，2026-11-12）。
+/// 旧版没有 usageScope 和 token_counting，退回只看 usage.record，结果不变。
 pub fn parse_context(content: &str) -> Option<(i64, String)> {
-    let mut last: Option<(i64, String)> = None;
+    let mut used: Option<i64> = None;
+    let mut model: Option<String> = None;
     for line in content.lines() {
+        // 先做廉价的子串筛，避免为整份日志做全量 JSON 解析。
+        if !line.contains("usage.record") && !line.contains("token_counting.") {
+            continue;
+        }
         let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
             continue;
         };
-        if v.get("type").and_then(|t| t.as_str()) != Some("usage.record") {
+        let kind = v.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        if matches!(
+            kind,
+            "token_counting.measured"
+                | "token_counting.truncated"
+                | "token_counting.rebased"
+                | "token_counting.turn_recorded"
+        ) {
+            if let Some(tokens) = v.get("tokens").and_then(|x| x.as_i64()) {
+                used = Some(tokens.max(0));
+            }
+            continue;
+        }
+        if kind != "usage.record" {
+            continue;
+        }
+        if v.get("usageScope").and_then(|x| x.as_str()) == Some("session") {
             continue;
         }
         let Some(u) = v.get("usage") else { continue };
         let field = |k: &str| u.get(k).and_then(|x| x.as_i64()).unwrap_or(0);
-        let used = field("inputOther") + field("inputCacheRead") + field("inputCacheCreation");
-        let model = v
-            .get("model")
-            .and_then(|m| m.as_str())
-            .unwrap_or("")
-            .to_string();
-        last = Some((used, model));
+        used = Some(field("inputOther") + field("inputCacheRead") + field("inputCacheCreation"));
+        model = Some(
+            v.get("model")
+                .and_then(|m| m.as_str())
+                .unwrap_or("")
+                .to_string(),
+        );
     }
-    last
+    // 没有任何 usage.record 时没有模型别名可算窗口，与旧行为一致返回 None。
+    Some((used?, model?))
 }
 
 /// 读 config.toml 里 `[models."<alias>"]` 的 `max_context_size`；找不到回退 262144。
@@ -2060,15 +2180,31 @@ mod tests {
         );
     }
 
-    /// 2.6 用户关 plan 写 plan_mode.cancel（research-kimi-gemini §1.5 实验 wire 原文）。
+    /// kimi 2.5.1 关计划模式写 `plan_mode.cancel`（本机 wire.jsonl 实样，2026-11-12：
+    /// `wd_account-manage…/session_dffeea20…` 里 enter → cancel → enter → exit）。
+    /// 只认 exit 时标签停在「计划」。旧版的 exit 照认。
     #[test]
-    fn plan_mode_cancel_returns_work_mode_to_default() {
+    fn plan_mode_cancel_returns_to_default_work_mode() {
+        let lines = [
+            r#"{"type":"plan_mode.enter","id":"donna-troy-blue-beetle-orphan","time":1784863257505}"#,
+            r#"{"type":"plan_mode.cancel","time":1784863258011}"#,
+        ];
         assert_eq!(
-            KIMI_TRANSCRIPT.agent_modes_from_line(
-                r#"{"type":"plan_mode.cancel","agentId":"main","time":1763100000000}"#
-            ),
+            KIMI_TRANSCRIPT.agent_modes_from_line(lines[0]),
+            vec![crate::AgentMode::new("work", "plan")]
+        );
+        assert_eq!(
+            KIMI_TRANSCRIPT.agent_modes_from_line(lines[1]),
             vec![crate::AgentMode::new("work", "default")]
         );
+        // 尾读的模式标记必须含 cancel：长会话首开只读尾部，标记缺它就读不到最后一次关闭。
+        let markers = KIMI_TRANSCRIPT
+            .tail_read()
+            .expect("kimi 声明尾读")
+            .mode_markers;
+        assert!(markers
+            .iter()
+            .any(|m| lines[1].contains(m) && m.contains("cancel")));
     }
 
     /// 从会话日志重建待办：取**最后一次** TodoList 的整份快照，状态词原样带出
@@ -2216,6 +2352,64 @@ mod tests {
     fn parse_context_none_when_no_usage_record() {
         let wire = r#"{"type":"turn.prompt","input":"hi"}"#;
         assert_eq!(parse_context(wire), None);
+    }
+
+    /// kimi 2.5.1 手动压缩的真实序列（本机 `wd_meowo…/session_4f41d9c0…` 第 2226-2231 行，
+    /// 2026-11-12，summary 截短）：压缩请求写一条 `usageScope:"session"` 的 usage.record
+    /// （inputOther 263123，是压缩前的大上下文），随后 `token_counting.rebased` 给出压缩后的
+    /// 34584。修复前取最后一条 usage.record，Context% 停在压缩前。
+    #[test]
+    fn parse_context_after_compaction_uses_rebased_tokens_not_session_scope_usage() {
+        let wire = concat!(
+            r#"{"type":"usage.record","agentId":"main","model":"kimi-code/kimi-for-coding","usage":{"inputOther":2000,"output":300,"inputCacheRead":250000,"inputCacheCreation":0},"usageScope":"turn","time":1792043900000}"#,
+            "\n",
+            r#"{"type":"full_compaction.begin","source":"manual","agentId":"main","time":1792043918057}"#,
+            "\n",
+            r#"{"type":"usage.record","agentId":"main","model":"kimi-code/kimi-for-coding","usage":{"inputOther":263123,"output":1421,"inputCacheRead":16640,"inputCacheCreation":0},"usageScope":"session","time":1792043997320}"#,
+            "\n",
+            r#"{"type":"context.apply_compaction","agentId":"main","summary":"交接摘要","time":1792043997321}"#,
+            "\n",
+            r#"{"type":"token_counting.rebased","agentId":"main","length":12,"tokens":34584,"measured":false,"time":1792043997330}"#,
+            "\n",
+            r#"{"type":"full_compaction.complete","agentId":"main","time":1792043997331}"#,
+            "\n",
+        );
+        assert_eq!(
+            parse_context(wire),
+            Some((34584, "kimi-code/kimi-for-coding".to_string()))
+        );
+        // 只有 session 范围的那条、没有 rebased（中途截断的尾窗）：退回上一条 turn 记录，
+        // 不拿压缩请求的花费冒充上下文。
+        let no_rebase = wire.lines().take(3).collect::<Vec<_>>().join("\n");
+        assert_eq!(
+            parse_context(&no_rebase),
+            Some((252000, "kimi-code/kimi-for-coding".to_string()))
+        );
+        // 下一回合的 usage.record 在 rebased 之后，照常以它为准。
+        let next = format!(
+            "{wire}{}\n",
+            r#"{"type":"usage.record","agentId":"main","model":"kimi-code/kimi-for-coding","usage":{"inputOther":500,"output":20,"inputCacheRead":34560,"inputCacheCreation":0},"usageScope":"turn","time":1792044000000}"#
+        );
+        assert_eq!(
+            parse_context(&next),
+            Some((35060, "kimi-code/kimi-for-coding".to_string()))
+        );
+    }
+
+    /// `/undo` 撤回后 kimi 写 `token_counting.truncated`，撤到底时 `"tokens":0`（本机实样：
+    /// `context.undo` → `context.undone` → `token_counting.truncated`），Context% 跟着降。
+    #[test]
+    fn parse_context_truncated_resets_to_zero() {
+        let wire = concat!(
+            r#"{"type":"usage.record","model":"kimi-code/kimi-for-coding","usage":{"inputOther":727,"output":815,"inputCacheRead":20480,"inputCacheCreation":13}}"#,
+            "\n",
+            r#"{"type":"token_counting.truncated","agentId":"main","length":0,"tokens":0,"time":1}"#,
+            "\n",
+        );
+        assert_eq!(
+            parse_context(wire),
+            Some((0, "kimi-code/kimi-for-coding".to_string()))
+        );
     }
 
     /// usage 通道的模型展示名(read_context 会带出,PostToolUse 就落库,不必等 Stop):
@@ -2594,6 +2788,68 @@ mod tests {
         ));
     }
 
+    /// kimi 2.5.1 粘贴图片的 url 是 `kimi-file://f_<uuid>`（本机 wire.jsonl 实样，
+    /// 2026-11-12，`wd_meowo…/session_4f41d9c0…` 第 1914 行），正文在会话目录的
+    /// `media/<id>.png`（旁有 `media/meta/<id>.json`），或数据目录的 `files/<id>`（无扩展名）。
+    /// 修复前只认 blobref:/data:，对话页这张图不显示。
+    #[test]
+    fn user_message_kimi_file_images_are_persisted_from_media_and_files() {
+        let root = std::env::temp_dir().join(format!("kimi-file-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let session = root
+            .join("sessions")
+            .join("wd_meowo_ec7a1f97c4e4")
+            .join("session_x");
+        let wire_dir = session.join("agents").join("main");
+        std::fs::create_dir_all(&wire_dir).unwrap();
+        std::fs::create_dir_all(session.join("media").join("meta")).unwrap();
+        std::fs::create_dir_all(root.join("files")).unwrap();
+        let pid = std::process::id();
+        let media_id = format!("f_6b47c8a2-206e-419e-b7a7-{pid:012}");
+        let files_id = format!("f_1aa95065-8ae1-42a0-a961-{pid:012}");
+        let png = b"\x89PNG\r\n\x1a\nmedia-bytes".to_vec();
+        let jpg = b"\xFF\xD8\xFF\xE0files-bytes".to_vec();
+        std::fs::write(session.join("media").join(format!("{media_id}.png")), &png).unwrap();
+        std::fs::write(
+            session.join("media").join("meta").join(format!("{media_id}.json")),
+            format!(r#"{{"version":1,"key":"{media_id}.png","name":"pasted-image.png","mediaType":"image/png"}}"#),
+        )
+        .unwrap();
+        std::fs::write(root.join("files").join(&files_id), &jpg).unwrap();
+
+        let line = format!(
+            r#"{{"type":"context.append_message","agentId":"main","message":{{"role":"user","content":[{{"type":"image_url","imageUrl":{{"url":"kimi-file://{media_id}"}}}},{{"type":"image_url","imageUrl":{{"url":"kimi-file://{files_id}?v=1"}}}},{{"type":"image_url","imageUrl":{{"url":"kimi-file://f_gone"}}}},{{"type":"text","text":" 不要默认显示这个"}}],"id":"1e68cc97","toolCalls":[],"origin":{{"kind":"user"}}}},"time":1792036710952}}"#
+        );
+        let queued = crate::fsutil::paste_root().join("queued");
+        let path1 = queued.join(format!("kimi-{media_id}.png"));
+        let path2 = queued.join(format!("kimi-{files_id}.jpg"));
+        let _ = std::fs::remove_file(&path1);
+        let _ = std::fs::remove_file(&path2);
+
+        let items = parse_chat_items_in(Some(&wire_dir), &line);
+        let Some(ChatItem::UserText { text, .. }) = items.first() else {
+            panic!("应解析成用户消息：{items:?}");
+        };
+        // 找不到正文的那张（kimi 清理过 files/）不显示，文字和其余图照常。
+        assert_eq!(
+            text,
+            &format!(
+                " 不要默认显示这个\n[Image: source: {}]\n[Image: source: {}]",
+                path1.display(),
+                path2.display()
+            )
+        );
+        assert_eq!(std::fs::read(&path1).unwrap(), png);
+        assert_eq!(std::fs::read(&path2).unwrap(), jpg);
+
+        // 带路径分隔符的 id 是脏数据，不拼路径。
+        assert!(persist_kimi_file(&wire_dir, "../../files/x").is_none());
+
+        let _ = std::fs::remove_file(&path1);
+        let _ = std::fs::remove_file(&path2);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// 用户粘贴的图片在 wire.jsonl 里是 `image_url` part：blobref 指向 wire 旁的
     /// `blobs/<sha>`（无扩展名）。修复前只拼 text part——图片静默丢失、纯图消息整条消失
     /// （实拍反馈：kimi 会话的图在对话里看不到）。落盘到 paste_root/queued/（asset scope
@@ -2897,7 +3153,10 @@ mod tests {
     fn terminated_background_agent_overrides_the_running_launch_receipt() {
         let launch = r#"{"type":"context.append_loop_event","event":{"type":"tool.result","toolCallId":"tool_agent","output":"task_id: agent-task\nstatus: running\nagent_id: agent-2"}}"#;
         let done = r#"{"type":"task.terminated","info":{"taskId":"agent-task","status":"completed","kind":"agent","agentId":"agent-2","parentToolCallId":"tool_agent"},"time":1794650262185}"#;
-        let items = [launch, done].into_iter().flat_map(parse_chat_items).collect::<Vec<_>>();
+        let items = [launch, done]
+            .into_iter()
+            .flat_map(parse_chat_items)
+            .collect::<Vec<_>>();
         assert_eq!(items.len(), 2);
         let ChatItem::ToolResult {
             tool_use_id,

@@ -189,6 +189,11 @@ pub enum AttentionDetails {
     /// （多选），数字键直接选中 / 勾选；末页是 `[1] Submit` / `[2] Cancel` 的确认页
     /// （kimi 2.4.1 AskUserQuestion 表单，2026-11-05 真机取证）。
     BracketForm,
+    /// 圆角外框里的提问表单：`│ Answer Questions` 头行 + 问句 + `│ ● 1.  选项` 编号行
+    /// （多选另有 `[ ]`/`[x]` 勾选框与无编号的 `Done` 行），末页 `Review your answers:`。
+    /// 以 ● 焦点做相对移动，回车选中（gemini 0.65 AskUserDialog 源码取证，2026-11-12，未实拍）。
+    /// 与 `FramedBox` 的区别在语义：这是提问，不是命令审批，前端出提问卡。
+    FramedForm,
 }
 
 /// 屏幕上**可操作**提示的识别规格：审批框、长会话确认这类需要用户当场决定的整句提示。
@@ -264,7 +269,22 @@ pub struct EffortControl {
     /// 切换成功的屏幕确认行（捕获组 1 = 生效的档位）。只认命令之后的新输出。
     /// 两条正则都按**不区分大小写**匹配（前端带 i 标志编译，故不写内联 `(?i)`——JS 不认）。
     pub confirm_pattern: &'static str,
-    /// CLI 拒绝切换的屏幕行（整行原样带给用户）。
+    /// CLI 拒绝切换的屏幕行（整行原样带给用户）。可带捕获组 1 = CLI 实际改成的档位：
+    /// 组织/设置封顶时 claude 不拒绝而是降到上限（2.1.322 包内
+    /// `Effort '${e}' exceeds the cap for ${u} …; set to '${o}' instead`），前端据此把显示值
+    /// 落到实际档位，同时把原话告诉用户。
+    pub reject_pattern: &'static str,
+}
+
+/// 带参切换命令的屏幕回话（`/model sonnet`）：确认行与拒绝行。
+/// 两条都按**不区分大小写**匹配（同 [`EffortControl`]，不写内联 `(?i)`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+pub struct CommandReply {
+    /// 切换成功的确认行。前端另外核对行内含所选模型的家族名（CLI 有降档路径，会确认成别的模型）。
+    pub confirm_pattern: &'static str,
+    /// CLI 拒绝或放弃切换的行（整行原样带给用户，不再只报「未确认」）。
     pub reject_pattern: &'static str,
 }
 
@@ -427,6 +447,8 @@ pub struct ChatUi {
     pub model_presets: Vec<ModelPreset>,
     /// 只有支持内联选择的 CLI 才声明；列举模型不代表能用同一协议选择模型。
     pub model_select_command: Option<&'static str>,
+    /// `model_select_command` 之后 CLI 的回话（见 [`CommandReply`]）；None = 前端用通用确认文案兜底。
+    pub model_select_reply: Option<CommandReply>,
     /// 打开「选模型」菜单的命令。预设为空但有它时，前端发这条命令并把 CLI 弹出的
     /// 交互菜单渲染成按钮——模型清单由 CLI 现给，不必宿主维护一份会过时的。
     pub model_menu_command: Option<&'static str>,

@@ -1,7 +1,7 @@
 // 灵动岛展开后的黑色面板（照用户参考图：标题 + 日期时间、分页圆点、环形进度）。
 // 前几页：会话，和侧栏同一个顺序每页 3 个（不放额度，用户要求会话页只看会话）；最后一页（有额度数据才有）：
 // 各 agent 的额度。搜索、菜单、归档这些在对话窗口侧栏里，单击托盘图标打开。
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import type { ProviderUsage, UsageLane } from "../../api";
 import { agentAssets, tintStyle } from "../../providers";
 import { useT } from "../../i18n";
@@ -9,10 +9,11 @@ import { cardTone, fmtAgo } from "../sticker/helpers";
 import type { Item } from "../sticker/types";
 import { groupTone, sessionTitle, useSidebarOrder } from "../Island";
 import { AgentRing, Ring, useNow, usedColor, usedOf } from "./islandParts";
-import { primaryLane } from "./useIslandUsage";
+import { primaryLane, usageStaleTip, type IslandUsageMeta } from "./useIslandUsage";
+import type { IslandOpenError } from "./openSession";
 import { ChatIcon, GearIcon } from "../sticker/icons";
 import { Icon } from "../../icons/Icon";
-import { icChevronDown, icPlus, icStrip } from "../../icons/glyphs";
+import { icChevronDown, icClose, icPlus, icStrip } from "../../icons/glyphs";
 
 /** 极简模式图标：一条贴顶的细线。 */
 function StripIcon() {
@@ -91,6 +92,12 @@ export function IslandPanel({
   onOpenSettings,
   strip = false,
   onToggleStrip,
+  usageMeta = {},
+  openError = null,
+  onRetryOpen,
+  onOpenSettingsFromError,
+  onDismissOpenError,
+  focusOnOpen = true,
 }: {
   sessions: readonly Item[];
   usage: Record<string, ProviderUsage>;
@@ -111,6 +118,15 @@ export function IslandPanel({
   strip?: boolean;
   /** 切换极简模式。 */
   onToggleStrip?: () => void;
+  /** 每家额度的新鲜度：刷新失败的标成缓存（backlog 仍存在 #1）。 */
+  usageMeta?: Record<string, IslandUsageMeta>;
+  /** 点会话行「打开」失败（I-1/I-2）：面板留着，顶上显示原因和下一步。 */
+  openError?: IslandOpenError | null;
+  onRetryOpen?: (sessionId: number) => void;
+  onOpenSettingsFromError?: () => void;
+  onDismissOpenError?: () => void;
+  /** 展开时把焦点放到第一条会话（I-3）。菜单栏落点收起时面板仍挂着，此时为 false。 */
+  focusOnOpen?: boolean;
 }) {
   const t = useT();
   const now = useNow();
@@ -128,6 +144,38 @@ export function IslandPanel({
   const current = Math.min(page, pages - 1);
   const onUsagePage = current >= sessionPages;
   const rows = ordered.slice(current * MAX_ROWS, current * MAX_ROWS + MAX_ROWS);
+
+  // I-3（走查 2026-11-12）：展开时焦点在 body，第一下 Tab 落在「新建会话」，再 4 下才到第一条会话；
+  // ↓ 没反应，第 2、3 页的会话要先点页点才够得着。现在展开即聚焦第一条，↑↓ 在行间移动、
+  // 到页边自动翻页。翻页后的目标行下一拍才渲染，先记下要聚焦第几行。
+  const rowsRef = useRef<HTMLDivElement>(null);
+  const pendingFocusRef = useRef<number | null>(null);
+  const focusRow = (index: number) => {
+    rowsRef.current?.querySelectorAll<HTMLElement>(".isl-row")[index]?.focus({ preventScroll: true });
+  };
+  useEffect(() => {
+    if (focusOnOpen) focusRow(0);
+  }, [focusOnOpen]);
+  useLayoutEffect(() => {
+    if (pendingFocusRef.current == null) return;
+    const index = pendingFocusRef.current;
+    pendingFocusRef.current = null;
+    focusRow(index);
+  }, [current]);
+  const onRowKeyDown = (event: KeyboardEvent<HTMLElement>, indexInPage: number) => {
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    event.preventDefault();
+    const absolute = current * MAX_ROWS + indexInPage + (event.key === "ArrowDown" ? 1 : -1);
+    if (absolute < 0 || absolute >= ordered.length) return;
+    const targetPage = Math.floor(absolute / MAX_ROWS);
+    const targetIndex = absolute % MAX_ROWS;
+    if (targetPage === current) {
+      focusRow(targetIndex);
+      return;
+    }
+    pendingFocusRef.current = targetIndex;
+    setPage(targetPage);
+  };
 
   useLayoutEffect(() => {
     const el = panelRef.current;
@@ -214,9 +262,29 @@ export function IslandPanel({
           </span>
         </div>
 
+        {openError && (
+          // 打开失败（I-1/I-2）：说清原因，给下一步；不自动消失，× 或收起面板才关。
+          <div className="isl-panel-err" role="alert">
+            <span className="isl-panel-err-text">
+              <span className="isl-state is-error">{openError.kind === "lite" ? t.island.liteNoChat : t.island.openFailed}</span>
+              {openError.kind === "failed" && openError.reason && (
+                <><span className="isl-sep">·</span><span className="isl-alert-detail" title={openError.reason}>{openError.reason}</span></>
+              )}
+            </span>
+            {openError.kind === "lite"
+              ? onOpenSettingsFromError && <button type="button" className="isl-btn is-dark" onClick={onOpenSettingsFromError}>{t.island.openSettings}</button>
+              : onRetryOpen && <button type="button" className="isl-btn is-dark" onClick={() => onRetryOpen(openError.sessionId)}>{t.island.retry}</button>}
+            {onDismissOpenError && (
+              <button type="button" className="isl-alert-close" aria-label={t.island.dismissError} title={t.island.dismissError} onClick={onDismissOpenError}>
+                <Icon glyph={icClose} size={12} />
+              </button>
+            )}
+          </div>
+        )}
+
         {!onUsagePage ? (
           <div className="isl-panel-body">
-            <div className="isl-rows">
+            <div className="isl-rows" ref={rowsRef}>
               {rows.length === 0 && (
                 <div className="isl-empty">
                   <span>{t.island.idle}</span>
@@ -229,7 +297,7 @@ export function IslandPanel({
                   )}
                 </div>
               )}
-              {rows.map((item) => {
+              {rows.map((item, indexInPage) => {
                 const tone = cardTone(item);
                 // 不放 current_activity：那是原始工具串（Read: 加完整路径、› cd 加命令），塞进这一行
                 // 像调试输出（用户实拍嫌丑）。项目 · 多久前 · 待办 就够认出是哪个。
@@ -247,6 +315,7 @@ export function IslandPanel({
                     onClick={() => onOpenSession(item.session.id)}
                     // 空格也算（i8）：role=button 的约定，原来只认 Enter。
                     onKeyDown={(event) => {
+                      onRowKeyDown(event, indexInPage);
                       if (event.key !== "Enter" && event.key !== " ") return;
                       event.preventDefault();
                       onOpenSession(item.session.id);
@@ -270,13 +339,17 @@ export function IslandPanel({
                 用户问「为什么只有一个用量」。 */}
             {usageProviders.map((provider) => {
               const { Icon } = agentAssets(provider);
+              const m = usageMeta[provider];
+              const staleTip = m?.failed ? usageStaleTip(m.fetchedAt, t) : null;
               return (
-                <div key={provider} className="isl-usage-group">
+                // 刷新失败：旧值留着但降饱和，并写明上次更新时间（backlog 仍存在 #1，2026-11-12）。
+                <div key={provider} className={`isl-usage-group${staleTip ? " is-stale" : ""}`} title={staleTip ?? undefined}>
                   <span className="isl-usage-head">
                     <span className="isl-usage-head-logo" style={tintStyle(provider)}><Icon /></span>
                     {providerLabel(provider)}
                   </span>
                   <StackedRings lanes={shownLanes(usage[provider])} />
+                  {staleTip && <span className="isl-usage-stale">{staleTip}</span>}
                   {/* 图例：色点对应上面的圈，后面是这档的名字和已用量。快用完时数字变琥珀 / 红。 */}
                   <div className="isl-usage-lanes">
                     {shownLanes(usage[provider]).map((lane, i) => {

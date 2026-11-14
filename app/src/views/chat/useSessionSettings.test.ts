@@ -97,7 +97,7 @@ describe("会话里切模型 / 模式的分派", () => {
     let current = deps();
     const { result, rerender } = renderHook(() => useSessionSettings(current));
     await act(async () => result.current.request({ model: { id: "fake/b", label: "Fake B" }, label: "Fake B" }));
-    await waitFor(() => expect(result.current.notice).toBe("关卡答复后那一轮跑完再切换到「Fake B」（重启 Meowo 会取消）"));
+    await waitFor(() => expect(result.current.notice).toBe("关卡答复后那一轮跑完再切换到「Fake B」（关闭应用会取消）"));
     current = deps({ tone: "running" });
     rerender();
     current = deps({ tone: "waiting" });
@@ -106,7 +106,7 @@ describe("会话里切模型 / 模式的分派", () => {
     expect(queue.get(7)).toMatchObject({ label: "Fake B", waitFor: "lead" });
     queue.set(7, { label: "GPT-6", waitFor: "open" });
     const reopened = renderHook(() => useSessionSettings(deps()));
-    await waitFor(() => expect(reopened.result.current.notice).toBe("打开会话后切换到「GPT-6」（重启 Meowo 会取消）"));
+    await waitFor(() => expect(reopened.result.current.notice).toBe("打开会话后切换到「GPT-6」（关闭应用会取消）"));
   });
 
   /// 搬了草稿最后没重启（宿主排进队列 / 被拒）：撤回对话页那份，TUI 原稿还在；真重启了不撤。
@@ -192,7 +192,7 @@ describe("会话里切模型 / 模式的分派", () => {
     let current = deps({ tone: "running", applyTerminal });
     const { result, rerender } = renderHook(() => useSessionSettings(current));
     act(() => result.current.request({ modes: { work: "plan" }, label: "计划：开", terminal: [action] }));
-    await waitFor(() => expect(result.current.notice).toBe("这一轮结束后切换到「计划：开」（重启 Meowo 会取消）"));
+    await waitFor(() => expect(result.current.notice).toBe("这一轮结束后切换到「计划：开」（关闭应用会取消）"));
     expect(applyTerminal).not.toHaveBeenCalled();
     current = deps({ tone: "waiting", applyTerminal });
     rerender();
@@ -228,12 +228,12 @@ describe("会话里切模型 / 模式的分派", () => {
     await waitFor(() => expect(hostEvents.handler).not.toBeNull());
     act(() => result.current.request({ model: { id: "kimi-code/k3", label: "K3" }, label: "K3" }));
     act(() => result.current.request({ modes: { work: "plan" }, label: "计划：开", terminal: [action] }));
-    await waitFor(() => expect(result.current.notice).toBe("这一轮结束后切换到「计划：开」（重启 Meowo 会取消）"));
+    await waitFor(() => expect(result.current.notice).toBe("这一轮结束后切换到「计划：开」（关闭应用会取消）"));
     // 宿主在回合结束时做掉了模型（restarted），把终端项放回队列并发 queued。
     queue.set(7, { label: "计划：开", modes: { work: "plan" }, terminal: [action] });
     act(() => hostEvents.handler!({ payload: { sessionId: 7, kind: "restarted", reason: null } }));
     act(() => hostEvents.handler!({ payload: { sessionId: 7, kind: "queued", reason: null } }));
-    await waitFor(() => expect(result.current.notice).toBe("这一轮结束后切换到「计划：开」（重启 Meowo 会取消）"));
+    await waitFor(() => expect(result.current.notice).toBe("这一轮结束后切换到「计划：开」（关闭应用会取消）"));
     // 回合结束：对话页照原样执行终端项，不再走后端。
     current = deps({ tone: "waiting", applyTerminal });
     rerender();
@@ -302,7 +302,7 @@ describe("会话里切模型 / 模式的分派", () => {
     const applyTerminal = vi.fn(async () => {});
     let current = deps({ tone: "running", applyTerminal });
     const { result, rerender } = renderHook(() => useSessionSettings(current));
-    await waitFor(() => expect(result.current.notice).toBe("这一轮结束后切换到「计划：开」（重启 Meowo 会取消）"));
+    await waitFor(() => expect(result.current.notice).toBe("这一轮结束后切换到「计划：开」（关闭应用会取消）"));
     current = deps({ tone: "waiting", applyTerminal });
     rerender();
     await waitFor(() => expect(applyTerminal).toHaveBeenCalledWith(action));
@@ -315,7 +315,7 @@ describe("会话里切模型 / 模式的分派", () => {
     await act(async () => result.current.request({ model: { id: "gpt-6", label: "GPT-6" }, label: "GPT-6" }));
     expect(queue.get(7)).toMatchObject({ label: "GPT-6", waitFor: "ready" });
     expect(setSendError).not.toHaveBeenCalled();
-    await waitFor(() => expect(result.current.notice).toBe("会话就绪后切换到「GPT-6」（重启 Meowo 会取消）"));
+    await waitFor(() => expect(result.current.notice).toBe("会话就绪后切换到「GPT-6」（关闭应用会取消）"));
     expect(apply).toHaveBeenCalledTimes(1);
   });
 
@@ -330,7 +330,7 @@ describe("会话里切模型 / 模式的分派", () => {
     // 运行中又选了一档权限：两次合并，只执行一次。
     await act(async () => result.current.request({ modes: { permission: "yolo" }, label: "必要时询问" }));
     expect(apply).not.toHaveBeenCalled();
-    expect(result.current.notice).toBe("这一轮结束后切换到「必要时询问」（重启 Meowo 会取消）");
+    expect(result.current.notice).toBe("这一轮结束后切换到「必要时询问」（关闭应用会取消）");
     current = deps({ tone: "pending" });
     rerender();
     expect(apply).not.toHaveBeenCalled();
@@ -357,7 +357,7 @@ describe("会话里切模型 / 模式的分派", () => {
     first.unmount();
     current = deps({ tone: "running" });
     const again = renderHook(() => useSessionSettings(current));
-    await waitFor(() => expect(again.result.current.notice).toBe("这一轮结束后切换到「都不问」（重启 Meowo 会取消）"));
+    await waitFor(() => expect(again.result.current.notice).toBe("这一轮结束后切换到「都不问」（关闭应用会取消）"));
     current = deps({ tone: "waiting" });
     again.rerender();
     await waitFor(() => expect(apply).toHaveBeenCalledWith(expect.objectContaining({ modes: { permission: "auto" } })));

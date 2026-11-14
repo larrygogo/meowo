@@ -22,6 +22,7 @@
 //! 因此 opencode 的会话收尾与 codex 一样靠 Stop + 判活，而不是一条可靠的 SessionEnd。
 
 pub mod account;
+mod cli_text;
 mod lead;
 mod models;
 mod screen;
@@ -420,6 +421,10 @@ impl AgentPlugin for Opencode {
     fn clipboard_image_paste(&self, version: Option<&str>) -> Option<&'static str> {
         version.map(|_| r"\[Image \d")
     }
+    /// CLI 漂移检查的手工声明部分（正则规则的样例、旧版兼容与运行时拼接的字面量），见 cli_text.rs。
+    fn cli_text_deps(&self) -> &'static [crate::cli_text::CliTextDep] {
+        cli_text::DEPS
+    }
     /// opencode 的切模型命令是 `/models`（复数，弹选择器），没有 `/model`/`/status`/`/clear`
     /// ——清上下文对应 `/new`。此前前端的通用 fallback 把这三个都补给它了。
     /// opencode：配置目录下 `{skill,skills}/`、`{command,commands}/`、`{agent,agents}/`、
@@ -454,6 +459,9 @@ impl AgentPlugin for Opencode {
         .collect()
     }
 
+    /// 1.19.3 起 TUI 命令表里没有 `/share` 了（opencode.exe 内嵌 JS 的 slashName / slash 全表
+    /// 无 share，只剩 `command.session.share` 的翻译串；research-cli-drift O2，2026-11-12），
+    /// 补全给出它就是一条发出去没反应的命令。`/init` 来自服务端默认命令（`INIT:"init"`），仍在。
     fn slash_commands(&self) -> &'static [&'static str] {
         &[
             "/compact", "/exit", "/help", "/init", "/models", "/new", "/undo",

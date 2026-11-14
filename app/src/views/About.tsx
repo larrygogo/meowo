@@ -15,20 +15,21 @@ import { appAlert } from "../confirm";
 import logoUrl from "../../src-tauri/icons/128x128.png";
 import type { Dict } from "../i18n/zh";
 import { SETTINGS_DEFAULTS, useSettingsState } from "./settings/state";
-import { Switch, Segmented, SwatchPicker, FontSizeSlider, SettingsError } from "./settings/widgets";
+import { Switch, Segmented, SwatchPicker, FontSizeSlider, SettingsError, SavedNote, useSavedFlash } from "./settings/widgets";
 import { Dropdown } from "./menu";
 import { AccountSection } from "./settings/AccountSection";
 import { ExtensionsSection } from "./settings/ExtensionsSection";
 import { loadStoredOpts, saveStoredOpts } from "./useNewSessionForm";
 import { NetworkSection } from "./settings/NetworkSection";
 import { RemoteAccessCard } from "./settings/RemoteAccessCard";
-import { applySettingsFilter } from "./settings/searchFilter";
+import { applySettingsFilter, firstHitControl } from "./settings/searchFilter";
 import { useEscClose } from "../hooks/useEscClose";
 import { displayKeys, KeyCombos, shortcutGroups } from "./chat/WindowModals";
 import { SETTINGS_SECTION_KEY } from "../settingsNav";
 import { Icon } from "../icons/Icon";
 import { icClose, icContrast, icGlobe, icSearch, icSettings } from "../icons/glyphs";
 import { icBot, icCards, icInfo, icKeyboard, icPuzzle, icSmartphone } from "../icons/glyphs.settings";
+import { busyProps } from "../busyButton";
 
 const REPO = "github.com/larrygogo/meowo";
 const REPO_URL = "https://github.com/larrygogo/meowo";
@@ -130,7 +131,8 @@ function ShortcutsSection() {
           <div className={"sec-caption" + (index === 0 ? " is-first" : "")}>{group.title}</div>
           <div className="row-card shortcut-card">
             {group.rows.map(([keys, desc]) => (
-              <div className="row" key={keys}>
+              // Esc 一键两用（有审批时拒绝、没有时中断），键位当 key 会撞。
+              <div className="row" key={`${keys} ${desc}`}>
                 <div className="row-text"><div className="row-label">{desc}</div></div>
                 <KeyCombos keys={keys} />
               </div>
@@ -190,7 +192,7 @@ export function LeadProviderRows({ onInstalledChange }: { onInstalledChange?: (i
   };
   return <>
     <div className="row"><div className="row-text"><div className="row-desc">{t.settings.leadProvidersDesc}</div></div>
-      <button type="button" className="sbtn" disabled={busy !== null} onClick={reload}>{t.settings.leadRefresh}</button>
+      <button type="button" className="sbtn" {...busyProps(busy !== null, reload)}>{t.settings.leadRefresh}</button>
     </div>
     <SettingsError error={error} onDismiss={() => setError(null)} preformatted />
     {rows === null && !error && <div className="row"><div className="row-desc">{t.settings.leadLoading}</div></div>}
@@ -203,8 +205,8 @@ export function LeadProviderRows({ onInstalledChange }: { onInstalledChange?: (i
           {row.automaticContinue && (row.notes ?? []).map((note) => <div className="row-desc" key={note}>{formatBackendError(note, t.locale)}</div>)}
           {row.reason && <div className="row-desc">{formatBackendError(row.reason, t.locale)}</div>}
         </div>
-        {row.managed && <button type="button" className="sbtn" disabled={busy !== null} onClick={() => void change(row, false)} aria-label={`${t.settings.leadUninstall} ${title}`}>{t.settings.leadUninstall}</button>}
-        {!row.installed && <button type="button" className="sbtn" disabled={busy !== null || !row.configured || !row.supported} onClick={() => void change(row, true)} aria-label={`${t.settings.leadInstall} ${title}`}>{busy === key ? t.settings.leadWorking : row.managed ? t.settings.leadRepair : t.settings.leadInstall}</button>}
+        {row.managed && <button type="button" className="sbtn" {...busyProps(busy !== null, () => void change(row, false))} aria-label={`${t.settings.leadUninstall} ${title}`}>{t.settings.leadUninstall}</button>}
+        {!row.installed && <button type="button" className="sbtn" disabled={!row.configured || !row.supported} {...busyProps(busy !== null, () => void change(row, true))} aria-label={`${t.settings.leadInstall} ${title}`}>{busy === key ? t.settings.leadWorking : row.managed ? t.settings.leadRepair : t.settings.leadInstall}</button>}
       </div>;
     })}
   </>;
@@ -404,8 +406,15 @@ export function GeneralSection() {
           <Switch checked={flashOn} onChange={toggleFlash} label={t.settings.attentionFlash} />
         </div>}
       </div>
-      {autostartErr && <div className="sec-hint proxy-err" role="alert">{t.settings.autostartFailed}</div>}
-      <SettingsError error={patchError} onDismiss={clearPatchError} />
+      {/* T-6（2026-11-12 走查）：此前是单独一套红字、没有 ×，与下一行 SettingsError 两种样式（7S-7 漏的一处）。
+          失败时开关已弹回原值，「重试」就是再拨一次。 */}
+      <SettingsError
+        preformatted
+        error={autostartErr ? t.settings.autostartFailed : null}
+        action={{ label: t.settings.retry, onClick: toggleAutostart }}
+        onDismiss={() => setAutostartErr(false)}
+      />
+      <SettingsError preformatted error={patchError} onDismiss={clearPatchError} />
     </>
   );
 }
@@ -459,6 +468,17 @@ export function SessionsSection() {
   }, []);
   const reloadAgents = () => {
     listAgents().then(setAgents).catch(() => {});
+  };
+  // worktree 分支前缀：本地草稿，磁盘值变了（首帧拉回 / 别处改动 / 保存成功）再同步。
+  const diskPrefix = settings?.worktree?.branch_prefix ?? "";
+  const [prefixDraft, setPrefixDraft] = useState(diskPrefix);
+  useEffect(() => setPrefixDraft(diskPrefix), [diskPrefix]);
+  const prefixSaved = useSavedFlash();
+  const commitPrefix = (raw: string) => {
+    const value = raw.trim();
+    if (value === diskPrefix) return;
+    void patch({ worktree: { location: settings?.worktree?.location ?? "sibling", branch_prefix: value || null, trusted: settings?.worktree?.trusted ?? {} } })
+      .then((err) => { if (!err) prefixSaved.flash(); });
   };
   useEffect(reloadAgents, []);
   useAgentListRefresh(reloadAgents); // 装完新 agent 立刻反映
@@ -537,18 +557,19 @@ export function SessionsSection() {
             <div className="row-desc">{t.wtnew.settingsPrefixDesc}</div>
           </div>
           <input
-            // 设置是异步拉回来的：值变了就重挂，免得输入框停在首帧的空值。
-            key={settings?.worktree?.branch_prefix ?? ""}
+            // 受控草稿（不再用 key 重挂）：此前靠「值变了就换 key」跟上异步拉回的设置，可保存成功
+            // 也会换 key，回车提交后输入框整个重挂，焦点掉到 body（T-5）。
             className="ns-input wt-prefix-input"
             aria-label={t.wtnew.settingsPrefix}
-            defaultValue={settings?.worktree?.branch_prefix ?? ""}
+            value={prefixDraft}
             placeholder="meowo/"
-            onBlur={(e) => {
-              const value = e.target.value.trim();
-              if (value === (settings?.worktree?.branch_prefix ?? "")) return;
-              void patch({ worktree: { location: settings?.worktree?.location ?? "sibling", branch_prefix: value || null, trusted: settings?.worktree?.trusted ?? {} } });
-            }}
+            onChange={(e) => { setPrefixDraft(e.target.value); prefixSaved.hide(); }}
+            onBlur={(e) => commitPrefix(e.currentTarget.value)}
+            // T-5（2026-11-12 走查）：此前只在失焦时保存，回车毫无反应，用户分不清改动生效没有。
+            // 回车同样提交、焦点留在框里。
+            onKeyDown={(e) => { if (e.key === "Enter") commitPrefix(e.currentTarget.value); }}
           />
+          <SavedNote shown={prefixSaved.shown} />
         </div>
         {showTermRow && (
           <div className="row">
@@ -581,7 +602,7 @@ export function SessionsSection() {
           />
         </div>
       </div>
-      <SettingsError error={patchError} onDismiss={clearPatchError} />
+      <SettingsError preformatted error={patchError} onDismiss={clearPatchError} />
       {/* 已完成会话：开着对话功能时只给一个入口，去会话管理页（预选「已完成」）——那里能按工作区、
           时间筛，批量恢复；设置里再摆一份简陋的列表是两处管同一件事（用户确认）。轻量模式没有
           对话窗可去，留着原来的列表，否则没处把会话恢复成进行中。 */}
@@ -688,7 +709,7 @@ function ArchivedSessions() {
           ))}
           {cursor !== null && (
             <div className="row archived-more-row">
-              <button type="button" className="sbtn" disabled={loadingMore} onClick={() => loadPage(cursor)}>
+              <button type="button" className="sbtn" {...busyProps(loadingMore, () => loadPage(cursor))}>
                 {loadingMore ? t.chat.sidebarLoading : t.settings.archivedLoadMore}
               </button>
             </div>
@@ -974,7 +995,7 @@ function AppearanceSection() {
           />
         </div>
       </div>
-      <SettingsError error={patchError} onDismiss={clearPatchError} />
+      <SettingsError preformatted error={patchError} onDismiss={clearPatchError} />
       <div className="sec-hint">{t.settings.appearanceHint}</div>
     </>
   );
@@ -1223,6 +1244,12 @@ export function About() {
               setQuery(e.target.value);
             }}
             onKeyDown={(e) => {
+              // T-4（2026-11-12）：Enter / ↓ 直接进第一条命中行的控件，不用 Tab 穿过整排导航。
+              if ((e.key === "Enter" || e.key === "ArrowDown") && searching && !(e.nativeEvent as KeyboardEvent).isComposing) {
+                const target = bodyRef.current ? firstHitControl(bodyRef.current) : null;
+                if (target) { e.preventDefault(); target.focus(); }
+                return;
+              }
               if (e.key !== "Escape") return;
               if (query) {
                 setQuery("");
@@ -1298,7 +1325,15 @@ export function About() {
           </button>
         </div>
         <div className={"main-body" + (searching ? " is-searching" : "")} ref={bodyRef}>
-          {searching && noHits && <div className="settings-noresults">{t.settings.searchNoResults}</div>}
+          {/* T-4：无结果时给一个下一步（清除搜索并回到搜索框），而不是只有一行字。 */}
+          {searching && noHits && (
+            <div className="settings-noresults">
+              <span>{t.settings.searchNoResults}</span>
+              <button type="button" className="sbtn" onClick={() => { setQuery(""); searchInputRef.current?.focus(); }}>
+                {t.settings.searchClear}
+              </button>
+            </div>
+          )}
           {/* 搜索态挂载全部分区并平铺（data-sec 供过滤识别导航名命中），
               各分区的行级显隐由 searchFilter 直写 style.display（hidden 归 React 管）。
               代价：连带挂载 AccountSection 会触发配额联网扇出——这是 S-2「未访问不挂载」

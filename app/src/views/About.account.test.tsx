@@ -890,9 +890,14 @@ describe("AccountSection 多账号", () => {
     fireEvent.click(row.querySelector(".profile-row-main")!);
     await waitFor(() => expect(api.setActiveProfile).toHaveBeenCalledWith("claude", "work"));
 
-    // 活跃那行（默认账号）的主按钮是禁用的——点它没有意义。
+    // 活跃那行（默认账号）的主按钮不可点——点它没有意义。用 aria-disabled（做空第一轮 #4）：
+    // 刚切过去的那行会变成活跃，真 disabled 会把焦点踢到 body。
     const def = screen.getByTestId("profile-claude-__default__");
-    expect((def.querySelector(".profile-row-main") as HTMLButtonElement).disabled).toBe(true);
+    const main = def.querySelector(".profile-row-main") as HTMLButtonElement;
+    expect(main.getAttribute("aria-disabled")).toBe("true");
+    api.setActiveProfile.mockClear();
+    fireEvent.click(main);
+    expect(api.setActiveProfile).not.toHaveBeenCalled();
   });
 
   /**

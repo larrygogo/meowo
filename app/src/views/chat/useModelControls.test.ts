@@ -2,7 +2,9 @@ import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import type { ChatHistory, ModelCatalogEntry } from "../../api";
 import { zh } from "../../i18n/zh";
-import { chatUi } from "../../test/agents";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { CLAUDE_EFFORT_REJECT_PATTERN, CLAUDE_MODEL_REJECT_PATTERN, chatUi } from "../../test/agents";
 import { useModelControls, type ModelControlsDeps } from "./useModelControls";
 
 // 假 PTY：out 是终端累计输出；快照按 since 切片并 base64，与真实 managed_terminal_snapshot 同形。
@@ -10,7 +12,8 @@ const pty = vi.hoisted(() => ({ out: "", onWrite: null as null | ((sessionId: nu
 const managedTerminalSnapshot = vi.hoisted(() => vi.fn(async (_sessionId: number, since?: number) => ({
   active: true,
   endOffset: pty.out.length,
-  data: since === undefined ? "" : btoa(pty.out.slice(since)),
+  // 按 UTF-8 编码：CLI 回话里有 ⎿、—（btoa 只收 Latin-1）。
+  data: since === undefined ? "" : Buffer.from(pty.out.slice(since), "utf8").toString("base64"),
 })));
 const writeManagedTerminal = vi.hoisted(() => vi.fn(async (sessionId: number, data: string) => { pty.onWrite?.(sessionId, data); }));
 const setSessionLaunchSelection = vi.hoisted(() => vi.fn(async () => {}));
@@ -18,6 +21,9 @@ const submitToTerminal = vi.hoisted(() => vi.fn(async (sessionId: number, conten
 const stashComposerDraft = vi.hoisted(() => vi.fn(async () => {}));
 vi.mock("../../api", () => ({ managedTerminalSnapshot, writeManagedTerminal, setSessionLaunchSelection }));
 vi.mock("./terminalSubmit", () => ({ submitToTerminal, stashComposerDraft }));
+
+// 没等到确认时错误条带两条出路：重试（再走一遍同一个切换）与看终端画面（走查 C-4，不再只说「请到终端检查」）。
+const UNCONFIRMED_EXIT = { retry: expect.any(Function), terminal: true };
 
 beforeEach(() => { vi.useFakeTimers(); pty.out = ""; pty.onWrite = null; });
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.clearAllMocks(); });
@@ -78,13 +84,55 @@ it("切模型：新版确认行只有显示名（1M 档）也算确认，并记�
 });
 
 // 做空审查：CLI 有自动降档路径，降到别的家族时也会打印「Set model to <实际模型>」，不能当成切换成功。
-it("切模型：确认行报的是别的家族（被降档）不算确认", async () => {
+// 2026-11-12 起把这行原话告诉用户（以前只说「未确认」，看不出 CLI 换成了什么）。
+it("切模型：确认行报的是别的家族（被降档）不算确认，转述 CLI 原话", async () => {
   const { deps } = makeDeps();
   pty.onWrite = (_sid, data) => { if (data === "/model opus[1m]") pty.out += "Set model to `Sonnet 5`\r\n"; };
   const { result } = renderHook(() => useModelControls(deps));
   await settle(result.current.selectModel({ id: "opus[1m]", label: "Opus 5.5 (1M)" }));
-  expect(deps.setSendError).toHaveBeenCalledWith(zh.chat.modelSwitchUnconfirmed);
+  expect(deps.setSendError).toHaveBeenCalledWith(zh.chat.modelSwitchOther("Set model to `Sonnet 5`"));
   expect(setSessionLaunchSelection).not.toHaveBeenCalled();
+});
+
+// Claude Code 2.1.322 包内模板（2026-11-12 取证）：`var ift="Kept model as "`，额度/计费确认框被取消时输出，
+// 模型没变。改前没有拒绝规则，只能等满 2.4 秒报「未确认」，用户看不到原因。
+it("切模型：CLI 回 Kept model as（确认框被取消）时转述原话，不写恢复配置", async () => {
+  const { deps } = makeDeps();
+  pty.onWrite = (_sid, data) => { if (data === "/model fable") pty.out += "/model fable\r\n  ⎿  Kept model as Opus 5.5\r\n"; };
+  const { result } = renderHook(() => useModelControls(deps));
+  await settle(result.current.selectModel({ id: "fable", label: "Fable 5.2" }));
+  expect(deps.setSendError).toHaveBeenCalledWith(zh.chat.modelSwitchRejected("Kept model as Opus 5.5"));
+  expect(setSessionLaunchSelection).not.toHaveBeenCalled();
+});
+
+// 2.1.322 模板 `Model switch to ${uT(e)} was blocked by a PreModelSwitch hook${…}`。
+it("切模型：被 PreModelSwitch hook 拦下时转述原话", async () => {
+  const { deps } = makeDeps();
+  const line = "Model switch to claude-sonnet-5 was blocked by a PreModelSwitch hook: not allowed in this repo";
+  pty.onWrite = (_sid, data) => { if (data === "/model sonnet") pty.out += `  ⎿  ${line}\r\n`; };
+  const { result } = renderHook(() => useModelControls(deps));
+  await settle(result.current.selectModel({ id: "sonnet", label: "Sonnet 5" }));
+  expect(deps.setSendError).toHaveBeenCalledWith(zh.chat.modelSwitchRejected(line));
+  expect(setSessionLaunchSelection).not.toHaveBeenCalled();
+});
+
+// 拒绝规则锚在行首：正文里引用这句（比如助手在讨论这条规则）不算 CLI 的回话。
+it("切模型：正文中间引用 Kept model as 不算拒绝", async () => {
+  const { deps } = makeDeps();
+  pty.onWrite = (_sid, data) => { if (data === "/model opus") pty.out += "● 它会打印 Kept model as Opus 表示没切\r\n"; };
+  const { result } = renderHook(() => useModelControls(deps));
+  await settle(result.current.selectModel({ id: "opus", label: "Opus" }));
+  expect(deps.setSendError).toHaveBeenCalledWith(zh.chat.modelSwitchUnconfirmed, UNCONFIRMED_EXIT);
+});
+
+// 重绘可能把上一次的拒绝行与这次的确认行一起带进来：确认优先。
+it("切模型：同一屏里既有旧拒绝行又有本次确认行，按确认算", async () => {
+  const { deps, selections } = makeDeps();
+  pty.onWrite = (_sid, data) => { if (data === "/model opus") pty.out += "  ⎿  Kept model as Sonnet 5\r\n  ⎿  Set model to `Opus 5.5` and saved as your default for new sessions\r\n"; };
+  const { result } = renderHook(() => useModelControls(deps));
+  await settle(result.current.selectModel({ id: "opus", label: "Opus" }));
+  expect(deps.setSendError).not.toHaveBeenCalled();
+  expect(selections()).toEqual({ model: "opus" });
 });
 
 it("切模型：只有命令回显、没有确认行，仍报未确认", async () => {
@@ -92,7 +140,7 @@ it("切模型：只有命令回显、没有确认行，仍报未确认", async (
   pty.onWrite = (_sid, data) => { pty.out += `${data}\r\n`; };
   const { result } = renderHook(() => useModelControls(deps));
   await settle(result.current.selectModel({ id: "opus[1m]", label: "Opus 5.5 (1M)" }));
-  expect(deps.setSendError).toHaveBeenCalledWith(zh.chat.modelSwitchUnconfirmed);
+  expect(deps.setSendError).toHaveBeenCalledWith(zh.chat.modelSwitchUnconfirmed, UNCONFIRMED_EXIT);
   expect(setSessionLaunchSelection).not.toHaveBeenCalled();
 });
 
@@ -101,14 +149,14 @@ it("切模型：菜单里出现模型名不算确认，超时报未确认且不�
   pty.onWrite = () => { pty.out += "  1. opus  2. sonnet\r\n"; };
   const { result } = renderHook(() => useModelControls(deps));
   await settle(result.current.selectModel({ id: "opus", label: "Opus" }));
-  expect(deps.setSendError).toHaveBeenCalledWith(zh.chat.modelSwitchUnconfirmed);
+  expect(deps.setSendError).toHaveBeenCalledWith(zh.chat.modelSwitchUnconfirmed, UNCONFIRMED_EXIT);
   expect(setSessionLaunchSelection).not.toHaveBeenCalled();
 });
 
 /// SPEC 终态 2（第四轮补）：运行中选的模型 / 档位 / 模式排到这一轮之后（同一个队列、同一套提示），
 /// 不再报「请等待当前任务结束后切换」；只有不知道目标档的盲切（按一次跳下一个）说要等。
-it("运行中切模型/档位/模式排到这一轮之后，不往终端写任何东西", async () => {
-  const { deps } = makeDeps({ toneRef: { current: "running" } });
+it.each(["running", "pending"] as const)("%s 时切模型/档位/模式排到这一轮之后，不往终端写任何东西", async (tone) => {
+  const { deps } = makeDeps({ toneRef: { current: tone } });
   const { result } = renderHook(() => useModelControls(deps));
   await settle(result.current.selectModel({ id: "opus", label: "Opus" }));
   await settle(result.current.selectEffort("high"));
@@ -151,8 +199,46 @@ it("切档位：确认行报的是别的档位不算数，超时报未确认", a
   pty.onWrite = () => { pty.out += "Set effort level to High\r\n"; };
   const { result } = renderHook(() => useModelControls(deps));
   await settle(result.current.selectEffort("max"));
-  expect(deps.setSendError).toHaveBeenCalledWith(zh.chat.effortUnconfirmed);
+  expect(deps.setSendError).toHaveBeenCalledWith(zh.chat.effortUnconfirmed, UNCONFIRMED_EXIT);
   expect(history().effort).toBe("low");
+});
+
+// Claude Code 2.1.322 `/effort` 的拒绝出口全换了（包内模板逐条取证，2026-11-12）：旧句 `Effort '<x>' isn't …`
+// 已不存在，改前这些行一条都认不出，只报「未确认」。
+it.each([
+  "Invalid argument: maxx. Valid options are: low, medium, high, xhigh, max, auto",
+  "Failed to set effort level: EPERM: operation not permitted, open 'settings.json'",
+  "Not applied: CLAUDE_CODE_EFFORT_LEVEL=high overrides effort this session, and max is session-only (nothing saved)",
+  "CLAUDE_CODE_EFFORT_LEVEL=high overrides this session — clear it and max takes over",
+])("切档位：2.1.322 拒绝行原话转给用户：%s", async (line) => {
+  const { deps, history } = makeDeps();
+  pty.onWrite = () => { pty.out += `/effort max\r\n  ⎿  ${line}\r\n`; };
+  const { result } = renderHook(() => useModelControls(deps));
+  await settle(result.current.selectEffort("max"));
+  expect(deps.setSendError).toHaveBeenCalledWith(zh.chat.effortRejected(line));
+  expect(history().effort).toBe("low");
+});
+
+// 2.1.322 模板 `Effort '${e}' exceeds the cap for ${u} set by your settings or organization; set to '${o}' instead…`：
+// CLI 没拒绝，而是降到了上限档。改前报「未确认」、显示值也不动，和 CLI 实际状态对不上。
+it("切档位：组织/设置封顶时显示值落到实际档位，并告诉用户", async () => {
+  const { deps, history } = makeDeps();
+  const line = "Effort 'max' exceeds the cap for claude-opus-5-5 set by your settings or organization; set to 'high' instead (this session only): Comprehensive implementation";
+  pty.onWrite = () => { pty.out += `  ⎿  ${line}\r\n`; };
+  const { result } = renderHook(() => useModelControls(deps));
+  await settle(result.current.selectEffort("max"));
+  expect(deps.setSendError).toHaveBeenCalledWith(zh.chat.effortCapped(line));
+  expect(history().effort).toBe("high");
+});
+
+// 前端固件里的 claude 正则是后端插件声明的镜像；这里直接对照 Rust 源码，插件改了固件没跟就失败。
+it("固件里的 claude 回话正则与插件源码一致", () => {
+  const source = readFileSync(resolve(__dirname, "../../../src-tauri/crates/meowo-agent/src/plugins/claude/mod.rs"), "utf8");
+  const declared = [...source.matchAll(/reject_pattern: r"([^"]*)"/g)].map((m) => m[1]);
+  expect(declared).toEqual(expect.arrayContaining([CLAUDE_EFFORT_REJECT_PATTERN, CLAUDE_MODEL_REJECT_PATTERN]));
+  const ui = chatUi("claude")!;
+  expect(ui.effort?.reject_pattern).toBe(CLAUDE_EFFORT_REJECT_PATTERN);
+  expect(ui.model_select_reply?.reject_pattern).toBe(CLAUDE_MODEL_REJECT_PATTERN);
 });
 
 it("档位清单：插件静态表优先，否则取模型目录里当前模型声明的档位", () => {

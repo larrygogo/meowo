@@ -132,8 +132,10 @@ export function ModelMenu({ title, items, currentId, starred = [], effort, probi
               role="radio"
               aria-checked={effort.current === level}
               className={effort.current === level ? "is-active" : undefined}
-              disabled={effort.busy}
-              onClick={() => { if (effort.current !== level) effort.onPick(level); }}
+              // 切换在途用 aria-disabled：原先 disabled 会把刚按下、正聚焦的这颗钮的焦点踢到 body
+              //（走查 C-1 同类：Chromium/WebView2 对被禁用的焦点元素一律失焦）。
+              aria-disabled={effort.busy || undefined}
+              onClick={() => { if (effort.current !== level && !effort.busy) effort.onPick(level); }}
             >
               {effortLabel(level)}
             </button>

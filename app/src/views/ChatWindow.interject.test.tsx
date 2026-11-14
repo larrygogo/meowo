@@ -357,7 +357,7 @@ describe("ChatWindow", () => {
     fireEvent.click(screen.getByText("2 条插话等待插入当前回合"));
 
     const writesBefore = invoke.mock.calls.filter(([command]) => command === "write_managed_terminal").length;
-    fireEvent.click(screen.getAllByRole("button", { name: "移除这条回执" })[0]);
+    fireEvent.click(screen.getAllByRole("button", { name: "隐藏，不会取消" })[0]);
     expect((await screen.findAllByText("1 条插话等待插入当前回合")).length).toBeGreaterThan(0);
     // 被移除的是第一条,第二条还挂着(按 id 删,不受重复文本/自动消解并发影响)。
     expect(screen.queryByText("第一句")).toBeNull();

@@ -78,7 +78,30 @@ describe("ModelMenu 思考程度", () => {
     expect(onPick).not.toHaveBeenCalled();
     fireEvent.click(screen.getByRole("radio", { name: "Max" }));
     expect(onPick).toHaveBeenCalledWith("max");
+    // 切换在途：aria-disabled 而不是 disabled（走查 C-1 同类：disabled 会把正聚焦的档位钮的焦点踢到 body），
+    // 点了不再触发。
     rerender(<ModelMenu {...base} effort={{ levels: ["low", "high"], current: "high", busy: true, onPick }} />);
-    expect((screen.getByRole("radio", { name: "Low" }) as HTMLButtonElement).disabled).toBe(true);
+    const low = screen.getByRole("radio", { name: "Low" }) as HTMLButtonElement;
+    expect(low.getAttribute("aria-disabled")).toBe("true");
+    expect(low.disabled).toBe(false);
+    low.focus();
+    fireEvent.click(low);
+    expect(onPick).toHaveBeenCalledTimes(1);
+    expect(document.activeElement).toBe(low);
+  });
+
+  it("菜单不自行拦忙碌点击：选择与档位交给上层排队，其他引擎也一样", () => {
+    const onSelect = vi.fn();
+    const onPick = vi.fn();
+    render(<ModelMenu {...base} onSelect={onSelect}
+      items={[{ id: "opus", label: "Opus" }, { id: "sonnet", label: "Sonnet" }]} currentId="opus"
+      starred={[{ id: "provider:kimi", label: "默认模型", detail: "Kimi" }]}
+      effort={{ levels: ["low", "high"], current: "high", busy: false, onPick }} />);
+    fireEvent.click(screen.getByRole("menuitem", { name: "Sonnet" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Low" }));
+    expect(onSelect).toHaveBeenCalledWith("sonnet");
+    expect(onPick).toHaveBeenCalledWith("low");
+    fireEvent.click(screen.getByRole("menuitem", { name: /默认模型/ }));
+    expect(onSelect).toHaveBeenCalledWith("provider:kimi");
   });
 });

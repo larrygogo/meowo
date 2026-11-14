@@ -16,9 +16,14 @@ describe("SubagentViewNotice", () => {
   });
 
   it("发送在途时按钮不可点，名字缺失有兜底", () => {
-    render(<SubagentViewNotice name={null} busy onBack={() => {}} />);
+    const onBack = vi.fn();
+    render(<SubagentViewNotice name={null} busy onBack={onBack} />);
     expect(screen.getByRole("status").textContent).toContain("「未命名」");
-    expect((screen.getByRole("button", { name: "切回主会话" }) as HTMLButtonElement).disabled).toBe(true);
+    // aria-disabled + 拦截（做空第一轮 #4）：真 disabled 会把焦点踢到 body。
+    const back = screen.getByRole("button", { name: "切回主会话" }) as HTMLButtonElement;
+    expect(back.getAttribute("aria-disabled")).toBe("true");
+    fireEvent.click(back);
+    expect(onBack).not.toHaveBeenCalled();
   });
 
   it("文案守规矩：不超 20 字、不用破折号和分号，中英文都有", () => {

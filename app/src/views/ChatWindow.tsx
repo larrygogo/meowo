@@ -13,7 +13,8 @@ import { hasEscLayers } from "../escLayers";
 import { useTauriEvent } from "../hooks/useTauriEvent";
 import { useVisibleInterval } from "../hooks/useVisibleInterval";
 import { useSettingsEffect } from "../hooks/useSettings";
-import { useSessionActions } from "../hooks/useSessionActions";
+import { confirmMarkDone, markDoneEndsWork, useSessionActions } from "../hooks/useSessionActions";
+import { useHistoryLayer } from "../hooks/useHistoryLayer";
 import { useT } from "../i18n";
 import { formatBackendError } from "../i18n/errors";
 import { useShowWhenReady } from "../useShowWhenReady";
@@ -22,8 +23,9 @@ import { ApprovalCard, ApprovalCommandDetail, isRiskyCommand } from "./chat/Appr
 import { CardAnnouncer } from "./chat/cardAnnouncer";
 import { isSidebarToggleKey } from "./terminalKeys";
 import { copyPlainText } from "./chat/clipboard";
+import { ReviewBar } from "./chat/ReviewBar";
 import { readSideAnswer, sideQuestionText } from "./chat/sideQuestion";
-import { approvalChoiceForKey, BrokerApprovalCard, useBrokerResolver } from "./chat/BrokerApprovalCard";
+import { approvalChoiceForKey, BrokerApprovalCard, digitKeysOwnedElsewhere, useBrokerResolver } from "./chat/BrokerApprovalCard";
 import { answersRepresentable, composeAnswers, matchFocusedQuestion, matchOptionByLabel, observeTranscriptForDismiss, parseAskUserQuestions, planQueuedChoiceWrites, type QuestionAnswerDraft, type QuestionDismissTracker, type StructuredQuestion } from "./chat/askUserQuestion";
 import { detectAtToken, useAtFileCompletion, useSlashCompletion } from "./chat/composerCompletion";
 import { useApprovalChannel } from "./chat/useApprovalChannel";
@@ -94,10 +96,12 @@ import { WindowControls } from "./WindowControls";
 import { DevBadge } from "./DevBadge";
 import { isMac } from "../platform";
 import { remoteUi, SELECT_SESSION_EVENT } from "../remoteMode";
+import { busyProps } from "../busyButton";
 import { REMOTE_PREFS_EVENT, remoteTurnFolding } from "../remotePrefs";
 import { RemoteSessionList } from "../mobile/RemoteSessionList";
 import { performUndo } from "./chat/undoTerminal";
 import { useOutgoingUpkeep } from "./chat/useOutgoingUpkeep";
+import { useQuestionFormProbe } from "./chat/useQuestionFormProbe";
 import { SessionAdmin } from "./chat/SessionAdmin";
 import { NewSessionPage } from "./chat/NewSessionPage";
 import { ChatTitleBar } from "./chat/ChatTitleBar";
@@ -106,6 +110,8 @@ import { WorktreeSetupBar } from "./chat/WorktreeSetupBar";
 import { useConversationExport } from "./chat/useConversationExport";
 import { useMainPages } from "./chat/useMainPages";
 import { AddMenu } from "./chat/AddMenu";
+import { focusAfterRemoval } from "./chat/focusAfterRemoval";
+import { SendErrorExits, type SendErrorExit } from "./chat/SendErrorExits";
 import { DIFF_PANEL_MIN_WIDTH, useDiffPanelWidth } from "./chat/useDiffPanelWidth";
 import { fitPanes, surfaceGutter, useElementWidth } from "./chat/paneLayout";
 import { attachmentOf, base64OfBuffer, formatBytes, loadStoredDrafts, promptWithAttachments, saveStoredDraft, type Attachment } from "./chat/drafts";
@@ -118,7 +124,7 @@ import { agentAssets, tintStyle } from "../providers";
 import appLogoUrl from "../../src-tauri/icons/64x64.png";
 import { Icon } from "../icons/Icon";
 import { modeIconGlyph, modeIconName } from "./chat/modeIcon";
-import { icArrowLeftRight, icArrowUp, icChevronLeft, icCollapse, icExpand, icFile, icMessage, icSidebarLeft, icSparkles, icStop } from "../icons/glyphs.chat";
+import { icArrowLeftRight, icArrowUp, icChevronLeft, icCollapse, icExpand, icFile, icMessage, icShield, icSidebarLeft, icSparkles, icStop } from "../icons/glyphs.chat";
 import { icAlert, icCheck, icChevronDown, icClose, icPencil } from "../icons/glyphs";
 
 
@@ -335,7 +341,15 @@ export function ChatWindow() {
   }, [sessionId]);
   const [prompt, setPrompt] = useState("");
   const [sending, setSending] = useState(false);
-  const [sendError, setSendError] = useState("");
+  const [sendError, setSendErrorText] = useState("");
+  // 错误条上的出路（重试 / 看终端画面，见 chat/SendErrorExits）。和错误文案一起写、一起清：
+  // 任何一次 setSendError（换成别的错误、打字清空、发送前复位）都把上一条的出路作废，
+  // 「重试」不会挂到不相干的下一条错误上。
+  const [sendErrorExit, setSendErrorExit] = useState<SendErrorExit | null>(null);
+  const setSendError = useCallback((value: SetStateAction<string>, exit: SendErrorExit | null = null) => {
+    setSendErrorText(value);
+    setSendErrorExit(exit);
+  }, []);
   // 终端就绪等待(waitForTerminalReady,最长 45s)的已等秒数:null = 没在等。
   // 只转圈没有下文时用户分不清「还在启动」还是「卡死」——显示秒数并给「去终端页看」。
   const [terminalWaitSeconds, setTerminalWaitSeconds] = useState<number | null>(null);
@@ -436,10 +450,22 @@ export function ChatWindow() {
   // 已挂载的 ManagedTerminal 暴露的当前网格读取口：恢复/接管的 PTY 初始尺寸用它
   // （硬编码 100×30 会让 CLI 先按占位宽度排版，fit 落地后再 resize 整屏重排一遍）。
   const terminalGridRef = useRef<(() => { cols: number; rows: number } | null) | null>(null);
+  // 终端起不来的三种报错（启动后退出 / 拉不起 / 等不到就绪）以异常抛出，落到发送错误条。
+  // 原因都在终端画面上（退出前的输出、卡住的启动交互），错误条得给看画面的出口（手机上
+  // 就地展开画面与按键），此前文案写「请在终端页查看」，手机上没有终端页（走查 C-4 同类）。
+  // 记下产出过的文案，catch 里据此认出它们，挂上 terminal 出口。
+  const startupFailureTextsRef = useRef(new Set<string>());
+  const rememberStartupFailure = (text: string) => { startupFailureTextsRef.current.add(text); return text; };
   const terminalReadyMessages: TerminalReadyMessages = {
-    exited: t.chat.terminalStartExited,
-    failed: t.chat.terminalStartFailed,
-    timeout: t.chat.terminalReadyTimeout,
+    exited: (code, tail) => rememberStartupFailure(t.chat.terminalStartExited(code, tail)),
+    failed: rememberStartupFailure(t.chat.terminalStartFailed),
+    timeout: rememberStartupFailure(t.chat.terminalReadyTimeout),
+  };
+  /// 把异常写进错误条；终端启动类的报错带上看终端画面的出口。
+  const failWithError = (error: unknown) => {
+    const message = formatBackendError(error, t.locale);
+    const raw = error instanceof Error ? error.message : String(error ?? "");
+    setSendError(message, startupFailureTextsRef.current.has(raw) ? { terminal: true } : null);
   };
   // 这次终端菜单是我们为「选模型」发起的吗——识别到选项时据此学习真实清单（见 modelLabels）。
   const modelPickerOpenPendingRef = useRef(false);
@@ -708,11 +734,9 @@ export function ChatWindow() {
     const next = !history.archived;
     // 标记完成会顺带结束会话（后端 set_archived，用户要求两步合一）。Agent 正在干活时
     // 先确认：这颗钮就挨着「结束会话」，那边点了要确认，这边误触却直接停掉一个跑到一半的任务。
-    // 停在提示符上的会话（等你/空闲）不拦，勾掉就是勾掉。
-    if (next && toneRef.current === "running") {
-      const yes = await appConfirm(t.chat.markDoneRunningConfirm, { title: t.sticker.archive, danger: true, confirmLabel: t.sticker.archive });
-      if (!yes) return;
-    }
+    // 停在提示符上的会话（等你/空闲）不拦，勾掉就是勾掉。口径与侧栏、会话管理页共用（S-1，
+    // 2026-11-12）：卡在审批上的（pending）回合也没走完，同样先问。
+    if (next && markDoneEndsWork(toneRef.current) && !(await confirmMarkDone([{ working: true }], t))) return;
     setArchiving(true);
     // 乐观翻转:IPC 往返 + 下一轮轮询才回真值,期间按钮维持旧文案会让人以为没点上。
     // 失败回滚并报错——静默失败等于骗用户「已归档」。
@@ -1525,6 +1549,8 @@ export function ChatWindow() {
   insertIntoPromptRef.current = insertIntoPrompt;
   const mentionPrefix = chatUi?.attachment_mention ? "@" : "";
   const mentionPath = useCallback((rel: string) => insertIntoPromptRef.current(`${mentionPrefix}${rel} `), [mentionPrefix]);
+  // 「更改」面板的「交给 agent」（冲突、拉取冲突）：把现成的一句话放进输入框，用户看过再发。
+  const insertPanelPrompt = useCallback((text: string) => insertIntoPromptRef.current(text), []);
   const pickStarter = (text: string) => {
     setPrompt(text);
     // 预填后光标放到末尾:斜杠命令接着打参数,@ 接着触发文件补全。
@@ -1555,6 +1581,8 @@ export function ChatWindow() {
       provider: agent.display_name,
     })),
   ];
+  // 错误条「重试」要的是最新闭包（超时兜底的 timer 里拿到的是 12 秒前那次渲染的 onModelPick）。
+  const onModelPickRef = useRef<(id: string) => void>(() => {});
   /// 旧路线：往终端发 `/model` 再识别弹出的菜单替用户选中。只作兜底——清单为空、或会话够不着
   /// CLI 的服务（Lead 未装的 Codex / OpenCode）时才走（任务 20261114-tui-model-switch）。
   const pickViaTerminalMenu = (id: string) => {
@@ -1595,6 +1623,7 @@ export function ChatWindow() {
     const preset = modelPresets.find((candidate) => candidate.id === id);
     if (preset) void selectModel(preset);
   };
+  onModelPickRef.current = onModelPick;
   // ── 接续会话的前序段历史（跨 provider 切换的连续性）──
   // 切换引擎后新会话的时间线不从空白开始：前序段（已结束、内容静态）的完整消息内联在
   // 上方，段间以「切换至 X」分隔条衔接（见 timelineItems）。内容不变，进会话只取一次。
@@ -2305,7 +2334,8 @@ export function ChatWindow() {
       setStructuredQuestion(null);
       // 过期不能只是凭空消失（用户离开一会儿回来，分不清是自己漏点还是超时）——
       // 说清卡去哪了、该去哪继续。
-      setSendError(remoteUi() ? t.chat.questionExpiredRemote : t.chat.questionExpired);
+      // 表单在终端上：给看终端画面的出口（桌面去终端页，手机就地展开画面与按键）。
+      setSendError(remoteUi() ? t.chat.questionExpiredRemote : t.chat.questionExpired, { terminal: true });
     }, 180_000);
     return () => window.clearTimeout(timer);
   // eslint-disable-next-line react-hooks/exhaustive-deps -- 来自 useApprovalChannel 的 useState setter 与 ref，引用稳定
@@ -2596,7 +2626,7 @@ export function ChatWindow() {
       return await body();
     } catch (error) {
       // 切走后再报错会把错误横幅挂到别的会话上;只对仍在看的发起会话落错。
-      if (isCurrentOperation()) setSendError(formatBackendError(error, t.locale));
+      if (isCurrentOperation()) failWithError(error);
       return false;
     } finally {
       // 同理:切走后别用旧路径的收尾去动新会话的 sending(新会话的发送态归它自己管,
@@ -2666,7 +2696,8 @@ export function ChatWindow() {
   };
   const sendText = (content: string, submitInput: SubmitInput = "\r", detached = false, onBodyWritten?: () => void): Promise<boolean> => withSendGuard(async () => {
     const verify = Date.now() - resumedAtRef.current < RESUME_VERIFY_WINDOW_MS
-      ? { message: t.chat.sendEchoTimeout }
+      // 回显没来多半是终端停在恢复确认 / 启动询问上：同启动类报错，错误条给看终端画面的出口。
+      ? { message: rememberStartupFailure(t.chat.sendEchoTimeout) }
       : undefined;
     if (!await leaveSubagentViewBeforeWrite()) return false;
     await preserveNativeDraftBeforeWrite();
@@ -2681,7 +2712,7 @@ export function ChatWindow() {
   /// 生效以 transcript 为准——这条消息从对话里消失才算成，再把原文放回输入框；屏幕上的拒绝行
   /// 原样报给用户。菜单式撤回不写 transcript，以屏幕为准，成功后本地收掉被撤的消息（下一条
   /// 消息落盘时读取层按分叉收回，与本地一致）。
-  const undoFrom = async (id: string, text: string) => {
+  const undoFrom = async (id: string, text: string, confirmed = false) => {
     const control = chatUi?.undo;
     if (!control) return;
     if (toneRef.current === "running") { setSendError(t.chat.undoBusy); return; }
@@ -2691,7 +2722,7 @@ export function ChatWindow() {
     const turns = list.slice(index).filter((item) => item.type === "user_text" && !item.interjected && !item.to_agent).length;
     if (turns === 0) return;
     if (!control.count_arg && !control.menu && turns !== 1) return;
-    const yes = await appConfirm(control.restores_files ? t.chat.undoConfirmFiles : t.chat.undoConfirm, { title: t.chat.undoTitle, danger: true, confirmLabel: t.chat.undoConfirmLabel });
+    const yes = confirmed || await appConfirm(control.restores_files ? t.chat.undoConfirmFiles : t.chat.undoConfirm, { title: t.chat.undoTitle, danger: true, confirmLabel: t.chat.undoConfirmLabel });
     if (!yes || !isCurrentOperation()) return;
     // 终端协议在 chat/undoTerminal；这里只管界面：收掉本地消息、原文放回输入框、按结局报错。
     await withSendGuard(async () => {
@@ -2727,13 +2758,30 @@ export function ChatWindow() {
       switch (outcome.kind) {
         case "done":
           if (outcome.clean) setUndoNotice(true);
-          else setSendError(t.chat.undoInputResidue);
+          // 撤回成功，但 CLI 放回它自己输入框的原文没清掉：不清就会拼进下一条消息。Meowo 能再按一次
+          // CLI 的清空键（retryClear），不叫用户去终端清（用户 2026-11-10：「不要让用户去终端去清除」）。
+          else if (!outcome.retryClear) setSendError(t.chat.undoInputUnreadable, { terminal: true });
+          else {
+            const { retryClear } = outcome;
+            setSendError(t.chat.undoInputResidue, {
+            retryLabel: t.chat.undoClearInput,
+            retry: () => void withSendGuard(async () => {
+              if (await retryClear()) { setUndoNotice(true); return true; }
+              setSendError(t.chat.undoInputUnreadable, { terminal: true });
+              return false;
+            }),
+            terminal: true,
+            });
+          }
           promptInputRef.current?.focus();
           return true;
-        case "composer_busy": setSendError(t.chat.undoComposerBusy); return false;
+        // 终端输入框里有草稿、没能自动清空：什么都还没撤，原样再来一次是安全的（不再弹确认，
+        // 用户刚确认过）。
+        case "composer_busy": setSendError(t.chat.undoComposerBusy, { retry: () => void undoFromRef.current(id, text, true), terminal: true }); return false;
         case "mismatch": setSendError(t.chat.undoMenuMismatch); return false;
         case "rejected": setSendError(t.chat.undoRejected(outcome.line)); return false;
-        case "unconfirmed": setSendError(t.chat.undoUnconfirmed); return false;
+        // 没等到撤回生效：命令已经发出，可能只是 CLI 慢，重试有撤两轮的风险，只给看终端画面。
+        case "unconfirmed": setSendError(t.chat.undoUnconfirmed, { terminal: true }); return false;
         case "stale": return false;
       }
     });
@@ -2849,7 +2897,11 @@ export function ChatWindow() {
         return false;
       }
       // 后端确认进程仍活着 → 接管要杀掉外部进程，必须由用户显式确认，不能由一次发送代劳。
-      if (externalRunning) {
+      // 后端的拒绝本身就是权威判定（terminal.rs「会话仍在外部终端运行，请先在终端页选择接管」）：
+      // 前端的 externalRunning 还没跟上时也照样给就地接管入口，不把那句「请先在终端页选择接管」
+      // 甩给用户（手机上没有终端页，第三轮验收 13）。
+      const raw = error instanceof Error ? error.message : String(error ?? "");
+      if (externalRunning || raw.startsWith("会话仍在外部终端运行，请先在终端页")) {
         setNeedsTakeover(true);
         setSendError(t.chat.sendNeedsTakeover);
         return false;
@@ -2924,7 +2976,7 @@ export function ChatWindow() {
         return;
       }
     } catch (error) {
-      if (isCurrentOperation()) setSendError(formatBackendError(error, t.locale));
+      if (isCurrentOperation()) failWithError(error);
       return;
     } finally {
       reportWaitProgress(null);
@@ -3420,7 +3472,8 @@ export function ChatWindow() {
     modelProbeTimerRef.current = window.setTimeout(() => {
       endSilentProbe();
       setModelProbeFailed(true);
-      setSendError(remoteUi() ? t.chat.modelListUnavailableRemote(modelMenuCommand) : t.chat.modelListUnavailable(modelMenuCommand));
+      // 读不到清单：CLI 自己的菜单还能用，桌面给去终端页，手机就地展开终端画面与按键。
+      setSendError(t.chat.modelListUnavailable(modelMenuCommand), { terminal: true });
     }, 12_000);
   };
   /// 结束静默探测：收掉 CLI 菜单、关识别窗口、清忙态。
@@ -3466,6 +3519,11 @@ export function ChatWindow() {
     withSendGuard, attentionAbort, isCurrentOperation, setSendError, setHistory, setStoredSelections,
     deferTerminal: (action, label) => deferTerminalRef.current(action, label),
   });
+  /// 移除一个附件。焦点交给下一个附件的「×」，没有了回输入框（走查 C-10）。
+  const removeAttachment = (button: HTMLElement, path: string) => {
+    focusAfterRemoval(button, { list: ".chat-attachments", item: "[data-attachment-remove]", fallback: () => promptInputRef.current });
+    setAttachments((items) => items.filter((item) => item.path !== path));
+  };
   // 排着的终端项回合结束时由 useSessionSettings 调回来执行（见 applyTerminal）。
   terminalRunnerRef.current = async (action) => {
     if (action.kind === "model") await selectModel(action.preset);
@@ -3561,6 +3619,14 @@ export function ChatWindow() {
   }, [escArmed]);
   // 审批对象换了就撤下确认态:上一张卡上武装的 Esc 不能拒掉下一张。
   useEffect(() => { setEscArmed(false); }, [approval?.requestId, terminalAttention?.id, sessionId]);
+  // 空输入框 Esc 中断的两段式确认（走查 C-9），口径同上面的 Esc 拒绝：3 秒自动复位，
+  // 一开口打字、回合结束、换会话都撤销。
+  const [escInterruptArmed, setEscInterruptArmed] = useState(false);
+  useEffect(() => {
+    if (!escInterruptArmed) return;
+    const timer = window.setTimeout(() => setEscInterruptArmed(false), 3_000);
+    return () => window.clearTimeout(timer);
+  }, [escInterruptArmed]);
   const denyViaEsc = (deny: () => void) => {
     if (!escArmed) { setEscArmed(true); return; }
     setEscArmed(false);
@@ -3643,6 +3709,8 @@ export function ChatWindow() {
   const hasDraft = prompt.trim().length > 0 || attachments.length > 0;
   const canInterrupt = tone === "running" && !!chatUi?.interrupt_input;
   const stopMode = canInterrupt && !hasDraft;
+  // 开口打字（不再是停止态）、回合结束、换会话：武装的 Esc 中断作废。
+  useEffect(() => { setEscInterruptArmed(false); }, [stopMode, sessionId]);
 
   // 屏幕上有活的选择器/提示时锁住 composer——**禁用而非卸载**:卸载会让 textarea 变成
   // 全新节点(草稿的光标/滚动、聚焦全丢)、整个底栏跳没,而锁的目的只是「别把正文打进
@@ -3817,6 +3885,16 @@ export function ChatWindow() {
   // 作答卡（broker 挂起代答）：题面来自挂起路径且会话托管时，卡片就是作答面——
   // 多选/多问题/自定义输入全部可答，不再依赖屏幕识别与排队落键。
   const questionAnswerable = runtimeRequestBrokerLive(structuredQuestion) && history?.ptyManaged !== false;
+  // 展示形态的题面卡在等终端表单：除了 xterm 可视区，再读后端按 PTY 尺寸重建的屏幕认表单。
+  // xterm 网格漂移、可视区不在底部、手机上没有终端时，原先的识别永远等不到表单（11-03 实拍），
+  // 见 chat/useQuestionFormProbe。桌面与手机同一条路径。
+  const questionFormProbe = useQuestionFormProbe({
+    sessionId,
+    active: !!structuredQuestion && !questionAnswerable && history?.ptyManaged === true,
+    othersSeeForm: interactiveAttention != null,
+    grammar: () => attentionGrammarRef.current,
+    onAttention: revealTerminalAttention,
+  });
   // 题面卡在场、终端表单 8s 还没被屏幕识别接管：写一条诊断，带上识别看到的屏幕末尾。
   // 用户实拍过卡在这一步（卡上答不了、终端表单被盖住），当时没留下任何现场，只能等复现。
   // 每道题只记一次；手机端不写（远程桥不放行，写的也是宿主磁盘）。
@@ -3947,7 +4025,7 @@ export function ChatWindow() {
   /// 放弃这次静默选模型：收掉 CLI 菜单、停转圈、只报一句。kimi 菜单的 Esc 有搜索词时先清词，
   /// 第二下才关菜单（model-selector 的 handleInput），搜过就按两下；分两次写——合成一次写入
   /// 会被当成 Alt+Esc。
-  const abandonModelPick = (wanted: { searched?: boolean }, message: string) => {
+  const abandonModelPick = (wanted: { searched?: boolean }, message: string, exit: SendErrorExit | null = null) => {
     window.clearTimeout(modelPickTimerRef.current);
     pendingModelPickRef.current = null;
     setModelPicking(false);
@@ -3956,7 +4034,7 @@ export function ChatWindow() {
     terminalMenuSeenRef.current = false;
     setTerminalMenuOpen(false);
     void writeInterruptKeys((data) => writeManagedTerminal(sessionId, data), "\x1b", wanted.searched ? 2 : 1).catch(() => {});
-    setSendError(message);
+    setSendError(message, exit);
   };
   /// 菜单迟迟认不出（或搜索后没再画出来）：到点收尾并说清楚，不留一个永远转圈的按钮。
   const armModelPickTimeout = () => {
@@ -3964,7 +4042,9 @@ export function ChatWindow() {
     modelPickTimerRef.current = window.setTimeout(() => {
       const wanted = pendingModelPickRef.current;
       // 搜过之后再没认出菜单，多半是搜索结果为空（kimi 画 No matches，不成菜单）：照实说没找到。
-      if (wanted) abandonModelPick(wanted, wanted.searched ? t.chat.modelPickNotFound(wanted.label) : t.chat.modelSwitchUnconfirmed);
+      // 菜单没认出（超时）可以再试一次；搜过仍没有的是菜单里真没这个名字，重试也一样，只给看终端画面。
+      if (wanted) abandonModelPick(wanted, wanted.searched ? t.chat.modelPickNotFound(wanted.label) : t.chat.modelSwitchUnconfirmed,
+        wanted.searched ? { terminal: true } : { retry: () => onModelPickRef.current(wanted.id), terminal: true });
     }, 12_000);
   };
   // 配置目录里点选的模型：CLI 菜单画出来后按显示名找到那一项替用户选中（kimi 的 /model 菜单
@@ -3998,7 +4078,7 @@ export function ChatWindow() {
     if (!option?.input) {
       // 搜过仍认不出（菜单改版、名字对不上）：收掉 CLI 菜单，只报一句。用户点的是 GUI
       // 菜单，把 CLI 的整张菜单卡甩到对话页上是另一种界面闯进来（用户实拍反馈）。
-      abandonModelPick(wanted, t.chat.modelPickNotFound(wanted.label));
+      abandonModelPick(wanted, t.chat.modelPickNotFound(wanted.label), { terminal: true });
       return true;
     }
     // 自动选择在 reveal 写卡之前执行，派生请求此刻还是上一帧；当前菜单事件本身就是实时证明，
@@ -4022,8 +4102,8 @@ export function ChatWindow() {
       const active = document.activeElement;
       const editing = active instanceof HTMLElement && (active.tagName === "TEXTAREA" || active.tagName === "INPUT" || active.isContentEditable);
       if (brokerDeny && /^[1-9]$/.test(event.key) && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
-        if (editing || hasEscLayers() || resolvingApproval) return;
-        if (active instanceof HTMLElement && active.closest("button, a, [role='button'], summary")) return;
+        // 判据与卡上徽标的显隐同一份（digitKeysOwnedElsewhere）：徽标亮着时按下去就一定生效。
+        if (digitKeysOwnedElsewhere(active) || hasEscLayers() || resolvingApproval) return;
         const choice = approvalChoiceForKey(event.key, (brokerDeny.permissionSuggestions ?? []).length);
         if (choice) { event.preventDefault(); void decideApproval(choice); }
         return;
@@ -4175,8 +4255,13 @@ export function ChatWindow() {
     if (!remoteListMode) return;
     if ((window.history.state as { meowoChat?: boolean } | null)?.meowoChat === true) window.history.back();
   }, [remoteListMode]);
+  // M-2（走查 2026-11-12）：手机上「更改」页（全屏右侧面板）也压一条历史，右滑先关它回到对话，
+  // 原先一滑就连对话一起退回了会话列表。
+  useHistoryLayer(remoteBackMode && panelState.visible, panelActions.hide);
   const goBackToRemoteList = useCallback(() => {
-    if ((window.history.state as { meowoChat?: boolean } | null)?.meowoChat === true) window.history.back();
+    const state = window.history.state as { meowoChat?: boolean; meowoLayer?: string } | null;
+    // 栈顶是浮层记录（M-2）时退一步只会关掉浮层：直接回列表，浮层与对话两条记录由各自的收尾退掉。
+    if (state?.meowoChat === true && !state.meowoLayer) window.history.back();
     else showRemoteSessions();
   }, [showRemoteSessions]);
   // 手机远程用「列表 ↔ 对话」导航；其余平台保留侧栏折叠/展开按钮。
@@ -4218,8 +4303,11 @@ export function ChatWindow() {
           <span>{newSessionOpen ? t.newSession.dropToWorkspace : view === "terminal" ? t.chat.dropToTerminal : t.chat.dropToAttach}</span>
         </div>
       )}
-      {remoteListMode && (
+      {/* M-1（走查 2026-11-12）：进对话时列表只藏不卸载，返回时搜索词、页签、滚动位置都还在。
+          原先只在列表模式挂载，从对话返回一切重置。 */}
+      {remoteUi() && narrow && (
         <RemoteSessionList
+          hidden={!remoteListMode}
           activeId={sessionId}
           approvalAwaitingIds={approvalAwaitingIds}
           visibleOrderRef={sidebarOrderRef}
@@ -4477,7 +4565,7 @@ export function ChatWindow() {
               {/* 顶部哨兵：零高度的观察条，滚到它附近就自动补一段更早的历史（见 effect）。 */}
               <div ref={earlierSentinelRef} className="chat-earlier-sentinel" aria-hidden="true" />
               <div className="chat-load-earlier">
-                <button type="button" onClick={() => void loadEarlier()} disabled={loadingEarlier}>
+                <button type="button" {...busyProps(loadingEarlier, () => void loadEarlier())}>
                   {loadingEarlier ? t.chat.loadingEarlier : t.chat.loadEarlier}
                 </button>
                 {/* 失败不静默：按钮本身即重试，旁边这句负责说清「刚才是失败了」。 */}
@@ -4524,7 +4612,13 @@ export function ChatWindow() {
               <span>{queuedPending > 0 ? t.chat.queuePending(queuedPending, chatUi?.queue_delivery ?? null) : ""}</span>
               {/* 中断是升级动作：只在还有没读到的消息时给，整个栈一个。 */}
               {canInterrupt && queuedPending > 0 && (
-                <button type="button" className="chat-queued-interrupt" data-tip={t.chat.interjectNowTip} disabled={interrupting} onClick={sendInterrupt}>
+                <button type="button" className="chat-queued-interrupt" data-tip={t.chat.interjectNowTip} aria-disabled={interrupting || undefined}
+                  onClick={() => {
+                    if (interrupting) return;
+                    // 中断后排队栈随之收起，这颗钮跟着卸载：焦点先交给输入框，不掉到 body。
+                    if (!remoteUi()) promptInputRef.current?.focus();
+                    sendInterrupt();
+                  }}>
                   {interrupting ? t.chat.interrupting : t.chat.interjectNow}
                 </button>
               )}
@@ -4549,7 +4643,11 @@ export function ChatWindow() {
                   className="chat-queued-dismiss"
                   aria-label={t.chat.queuedDismiss}
                   data-tip={t.chat.queuedDismissTip}
-                  onClick={() => dismissQueued(item.id)}
+                  onClick={(event) => {
+                    // 同附件的「×」：这一条随之卸载，焦点交给下一条的「×」，没有了回输入框。
+                    focusAfterRemoval(event.currentTarget, { list: ".chat-queued-stack", item: ".chat-queued-dismiss", fallback: () => promptInputRef.current });
+                    dismissQueued(item.id);
+                  }}
                 >×</button>
               </div>
             ))}
@@ -4727,18 +4825,20 @@ export function ChatWindow() {
               变成作答卡回到手机上（此前一律「请在桌面端作答」，手机答不了题）。 */}
           {remoteUi()
             ? !questionCardRepresentable && (
-              <button type="button" disabled={resolvingApproval} onClick={() => void sendQuestionToTerminal()}>
+              <button type="button" aria-disabled={resolvingApproval || undefined} onClick={() => void sendQuestionToTerminal()}>
                 {t.chat.questionAnswerStepwise}
               </button>
             )
             // 终端视图下卡本身就是作答面，「去终端作答」只在卡内答不了（题面无法表达）
             // 时保留——按下即放行挂起、终端表单随即出现在眼前，文案换成「在终端作答」。
             : (view === "chat" || !questionCardRepresentable) && (
-              <button type="button" disabled={resolvingApproval} onClick={() => void sendQuestionToTerminal()}>
+              <button type="button" aria-disabled={resolvingApproval || undefined} onClick={() => void sendQuestionToTerminal()}>
                 {view === "terminal" ? t.chat.questionAnswerInTerminal : t.chat.goTerminal}
               </button>
             )}
-          <button type="button" className="btn-primary" disabled={resolvingApproval || !answerMap} onClick={() => void submitQuestionAnswers()}>{t.chat.submitAnswer}</button>
+          {/* 结算在途用 aria-disabled（同 broker 审批卡，走查 C-3 的兄弟场景）：提交失败时焦点
+              还在这颗钮上，可以原地重按；处理函数自己挡住在途的重复提交。 */}
+          <button type="button" className="btn-primary" disabled={!answerMap} aria-disabled={resolvingApproval || undefined} onClick={() => void submitQuestionAnswers()}>{t.chat.submitAnswer}</button>
         </>}
       >
         <QuestionPanels
@@ -4787,6 +4887,9 @@ export function ChatWindow() {
         />
         <span>{!history?.ptyManaged
           ? (remoteUi() ? t.chat.answerOnDesktop : t.chat.questionExternalHint)
+          // 后端屏幕上也认不出表单：照实说，不再一直写「就绪后自动作答」让人干等。
+          : questionFormProbe.missing
+          ? (remoteUi() ? t.chat.questionFormMissingRemote : t.chat.questionFormMissing)
           : !queueableInCard
           // 远程没有终端视图:托管会话的终端表单一就绪,屏幕识别的作答卡就会接替本卡出现在
           // 手机上(卡内有自定义输入),所以这里是「稍候」而不是「回桌面端」。
@@ -4794,6 +4897,8 @@ export function ChatWindow() {
           : queuedLabels.length > 0
           ? t.chat.queuedAnswerHint(queuedLabels.join("、"))
           : t.chat.questionFormLoading}</span>
+        {/* 手机上没有终端页：认不出表单时把终端画面和按键摆进卡里，就地作答（同降级审批卡）。 */}
+        {remoteUi() && history?.ptyManaged && questionFormProbe.missing && <RemoteTerminalKeys sessionId={sessionId} />}
       </ApprovalCard>}
       {/* broker 审批卡（Claude / Codex 的 RuntimeRequest），本体与卡内状态见 chat/BrokerApprovalCard。
           按 requestId 挂载：换请求即新卡，「说明并拒绝」的草稿不串卡。 */}
@@ -4913,7 +5018,7 @@ export function ChatWindow() {
       {view === "chat" && sessionId !== 0 && (
         <div className="chat-dock">
           {/* 停靠栏（计划/进度/后台任务）：状态、关闭规则与入口判定见 chat/DockWork。 */}
-          <DockWork sessionId={sessionId} cwd={cwd} ccSessionId={history?.ccSessionId ?? null} items={items} history={history} loading={loading} />
+          <DockWork sessionId={sessionId} cwd={cwd} ccSessionId={history?.ccSessionId ?? null} items={items} history={history} loading={loading} returnFocusTo={promptInputRef} />
           {sideAnswers.length > 0 && (
             <div className="chat-side-answers">
               {sideAnswers.map((entry) => (
@@ -4925,7 +5030,11 @@ export function ChatWindow() {
                       type="button"
                       className="chat-side-answer-close"
                       aria-label={t.chat.sideQuestionClose}
-                      onClick={() => setSideAnswers((prev) => prev.filter((item) => item.id !== entry.id))}
+                      onClick={(event) => {
+                        // 卡片随之卸载：焦点交给下一张侧问卡的关闭钮，没有了回输入框（同附件「×」，走查 C-10 同类）。
+                        focusAfterRemoval(event.currentTarget, { list: ".chat-side-answers", item: ".chat-side-answer-close", fallback: () => promptInputRef.current });
+                        setSideAnswers((prev) => prev.filter((item) => item.id !== entry.id));
+                      }}
                     >
                       <Icon glyph={icClose} size={12} />
                     </button>
@@ -4933,6 +5042,21 @@ export function ChatWindow() {
                   <div className={"chat-side-answer-body" + (entry.answer === null || entry.failed ? " is-muted" : "")} role="status">
                     {entry.answer === null ? t.chat.sideQuestionAnswering : entry.failed ? t.chat.sideQuestionFailed : entry.answer}
                   </div>
+                  {/* 没读到：答案只活在 CLI 的覆盖层里，覆盖层已经关了（读取到点会收掉它），终端上也
+                      找不回来——此前「请到终端查看」是一句空话。给「再问一次」：原样重发同一个侧问。 */}
+                  {entry.failed && chatUi?.side_question && (
+                    <button
+                      type="button"
+                      className="chat-send-takeover"
+                      onClick={() => {
+                        const command = chatUi.side_question?.command;
+                        if (!command) return;
+                        if (!remoteUi()) promptInputRef.current?.focus();
+                        setSideAnswers((prev) => prev.filter((item) => item.id !== entry.id));
+                        void sendPrompt({ prompt: `${command} ${entry.question}`, attachments: [] });
+                      }}
+                    >{t.chat.sideQuestionRetry}</button>
+                  )}
                 </section>
               ))}
             </div>
@@ -4986,8 +5110,7 @@ export function ChatWindow() {
               type="button"
               // 用官方 CLI 打开是正常主操作，用中性按钮（.sbtn）；红描边 .chat-send-takeover 留给接管这类破坏性动作。
               className={retiredManaged ? "sbtn" : "chat-send-takeover"}
-              disabled={sending}
-              onClick={() => { if (externalRunning && !retiredManaged) void takeoverAndRetry(() => {}); else resumeForChat(); }}
+              {...busyProps(sending, () => { if (externalRunning && !retiredManaged) void takeoverAndRetry(() => {}); else resumeForChat(); })}
             >{retiredManaged ? t.chat.managedRetiredOpenCli : externalRunning ? t.chat.terminalTakeover : t.chat.resumeSession}</button>
           </div>}
         </div>}
@@ -5041,7 +5164,20 @@ export function ChatWindow() {
               // styles.css 不在本次改动范围：键盘高亮复用 hover 的同一条表面色变量。
               style={index === slashActive ? { background: "var(--fill-selected)" } : undefined}
               onMouseEnter={() => setSlashIndex(index)}
-              onClick={() => { setPrompt(command.name + " "); setSlashIndex(0); }}>
+              // 点选后焦点留在输入框、光标停在命令后（走查 C-2：此前点完焦点在 BODY，接着按 Enter
+              // 没反应）。mousedown 阻止默认：不让按钮先抢走焦点，输入框的选区与 IME 状态都不动；
+              // 再在下一帧补一次聚焦兜住键盘激活（Enter/空格落在按钮上）的路径。同 @ 补全 pickAtFile。
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => {
+                const next = command.name + " ";
+                setPrompt(next);
+                setSlashIndex(0);
+                requestAnimationFrame(() => {
+                  const el = promptInputRef.current;
+                  el?.focus();
+                  el?.setSelectionRange(next.length, next.length);
+                });
+              }}>
               <code>{command.name}</code>
               {/* 自定义命令的描述从命令文件头里读出（后端下发）；内置命令的描述是翻译资产，走 i18n。 */}
               <span>{command.description ?? t.chat.slashDesc[command.name] ?? ""}</span>
@@ -5067,19 +5203,17 @@ export function ChatWindow() {
             </button>
           ))}
         </div>}
-        {sessionReviewComments.length > 0 && <div className="chat-review-bar">
-          <Icon glyph={icMessage} size={14} />
-          <span className="chat-review-bar-label">{t.chat.reviewComments(sessionReviewComments.length)}</span>
-          <button type="button" onClick={() => setSessionReviewComments(() => [])}>{t.chat.reviewCommentsClear}</button>
-          <button type="button" className="btn-primary" onClick={insertReviewComments}>{t.chat.reviewCommentsInsert}</button>
-        </div>}
+        {/* 「清空」可撤销（walkthrough P-7，见 ReviewBar.tsx）。key 按会话：撤销条不跟到别的会话去。 */}
+        <ReviewBar key={sessionId} comments={sessionReviewComments} onClear={() => setSessionReviewComments(() => [])}
+          onRestore={(list) => setSessionReviewComments(() => list)} onInsert={insertReviewComments}
+          onDismissFocus={() => promptInputRef.current?.focus({ preventScroll: true })} />
         {attachments.length > 0 && <div className="chat-attachments">
           {attachments.map((file) => file.image ? (
             /* 图片附件给真缩略图（点开进灯箱，与 transcript 图片同一套 ImageRef）；
                asset 协议读不到的路径（对话框选的任意目录）由 ImageRef 自行回退成文件名 chip。 */
             <div className="chat-attachment is-image" key={file.path} data-tip={file.path}>
               <ImageRef path={file.path} />
-              <button type="button" aria-label={`${t.chat.removeAttachment} ${file.name}`} onClick={() => setAttachments((items) => items.filter((item) => item.path !== file.path))}>×</button>
+              <button type="button" data-attachment-remove="" aria-label={`${t.chat.removeAttachment} ${file.name}`} onClick={(event) => removeAttachment(event.currentTarget, file.path)}>×</button>
               {/* 已有的图也能补标注(粘贴进来的截图最常见):标完换成带框的那张。 */}
               {!remoteUi() && <button type="button" className="chat-attachment-annotate" aria-label={`${t.chat.annotate} ${file.name}`} data-tip={t.chat.annotate} onClick={() => setAnnotating({ path: file.path, replace: file.path })}>
                 <Icon glyph={icPencil} size={12} />
@@ -5100,7 +5234,7 @@ export function ChatWindow() {
                   ].filter(Boolean).join(" · ")}
                 </span>
               </span>
-              <button type="button" aria-label={`${t.chat.removeAttachment} ${file.name}`} onClick={() => setAttachments((items) => items.filter((item) => item.path !== file.path))}>×</button>
+              <button type="button" data-attachment-remove="" aria-label={`${t.chat.removeAttachment} ${file.name}`} onClick={(event) => removeAttachment(event.currentTarget, file.path)}>×</button>
             </div>
           ))}
         </div>}
@@ -5130,8 +5264,11 @@ export function ChatWindow() {
           // 「尚未接管」占位只随 needsTakeover 翻：其它发送错误各有 sendError 条说明真实
           // 原因，占位符再跟着换成同一句话只会误导（此前任何错误都变「尚未接管」）。
           placeholder={
+            // Esc 中断的第一下：确认提示写在占位里——此刻输入框是空的，占位正是视线所在。
+            escInterruptArmed && stopMode
+              ? t.chat.escInterruptArmed
             // 停用的托管会话：输入框锁着，占位直接说清楚还能怎么继续，别让它看起来能输入。
-            retiredGate
+            : retiredGate
               ? (retiredGate.resumable ? t.chat.managedRetiredInputResumable : t.chat.managedRetiredInputUnbound)
               : composerLocked
               ? (remoteUi() ? t.chat.inputLockedRemote : t.chat.inputLocked)
@@ -5267,6 +5404,17 @@ export function ChatWindow() {
                 denyViaEsc(() => void decideApproval("deny"));
                 return;
               }
+              // 没有待审批时，空输入框里的 Esc = 中断当前回合（走查 C-9）。CLI 用户的肌肉记忆就是
+              // Esc 中断，此前这里什么也不做，键盘用户得 Tab 四下才摸到停止钮。同审批拒绝的
+              // 两段式：第一下只在占位里亮「再按 Esc 中断」，3 秒内第二下才中断——空框随手一个
+              // Esc（收心流、想取消聚焦）不该直接打断 agent 的活。浮层开着时 Esc 归浮层。
+              if (stopMode && !interrupting && !approval && !terminalAttention && !hasEscLayers()) {
+                event.preventDefault();
+                if (!escInterruptArmed) { setEscInterruptArmed(true); return; }
+                setEscInterruptArmed(false);
+                sendInterrupt();
+                return;
+              }
             }
             // Ctrl/⌘+Enter = 先中断当前回合再发送。原来这是 composer 上一颗常驻按钮，
             // 但它和右边的圆钮是两个「把话递出去」的入口，摆在一起只会让人先停下来
@@ -5287,11 +5435,11 @@ export function ChatWindow() {
         <div className="chat-compose-actions">
           <AddMenu
             phone={compactChrome}
+            disabled={composerDisabled || retiredGate != null}
             onFiles={() => void chooseAttachments()}
             onCommand={(chatUi?.slash_commands?.length ?? 0) > 0 ? () => insertIntoPrompt("/", true) : undefined}
             commandBlocked={prompt.trim().length > 0}
             onMention={chatUi?.attachment_mention ? () => insertIntoPrompt("@") : undefined}
-            disabled={retiredGate != null}
           />
           {(() => {
             const states = history?.agentModes ?? [];
@@ -5385,7 +5533,13 @@ export function ChatWindow() {
                   }}
                   type="button"
                   className={"chat-model-button chat-mode-button" + (risky ? " is-risk" : "")}
-                  disabled={!interactive || sending}
+                  // 输入框被锁（终端在等选择 / 外部占用 / 已结束 / 已被接替）时一并锁住：此时切模式
+                  // 会把按键打进 CLI 的选择器，或替一个发不出消息的会话改档（backlog 仍存在第 3 条）。
+                  // 休眠态的恢复改选例外：它只落状态不碰终端，门卡里「恢复会话」用的正是这个选择。
+                  disabled={!interactive || (composerDisabled && !resumePick)}
+                  // 发送在途用 aria-disabled 不用 disabled：刚从菜单选完、焦点正落回这颗钮时置 disabled，
+                  // 焦点会被踢到 body（走查 C-1，p3-mode-kbd-pick 选完 activeElement=BODY）。
+                  aria-disabled={sending || undefined}
                   // aria-label 保持简短的动作名（屏幕阅读器要的是「做什么」，不是解释）；
                   // 轮换与下拉的差异放在下面的 tooltip 里说。
                   // 带上当前档的短名（第四轮 L4）：手机上按钮只剩图标，读屏要能报出现在是哪一档。
@@ -5397,6 +5551,7 @@ export function ChatWindow() {
                   // 提示里带上当前值：窄主列下按钮只留图标（data-narrow），当前是哪个模式只能从这里看。
                   data-tip={resumePick ? t.chat.resumePermissionTip : interactive ? `${options.length > 0 ? t.chat.switchMode : t.chat.cycleMode}: ${value}` : undefined}
                   onClick={() => {
+                    if (sending) return;
                     // 与模型菜单互斥：同时只开一个。
                     if (options.length > 0) {
                       setModelPickerOpen(false);
@@ -5432,20 +5587,35 @@ export function ChatWindow() {
                 {/* 手机上换成底部面板（对照 Kimi 手机端的模式切换）：内容同一份，仍挂在 modeMenuUi.ref
                     容器里，点面板内不算「点外面」，Esc/点外关闭照旧由菜单负责。 */}
                 {modeMenu === dimension && options.length > 0 && <SheetOnPhone phone={compactChrome} title={label} onClose={() => setModeMenu(null)} ownsEscape={false}><div className={compactChrome ? "chat-sheet-list" : "dd-menu chat-model-menu"} role="menu">
+                  {/* 回合在跑时，走命令的档位（changeMode）会被拒（menuBusy）：先在菜单里说清楚、
+                      把这些项标成不可选，不让用户选完才知道白选了（走查 C-8）。只按键轮换的
+                      （claude 的 Shift+Tab）运行中照样能切，不受影响。 */}
+                  {!resumePick && tone === "running" && options.some((option) => option.inputs.length > 0) && (
+                    <div className="chat-model-quick-status" role="status">{t.chat.menuBusyShort}</div>
+                  )}
                   {options.map((option) => {
                     // 休眠态未改选时高亮存的那档（「沿用」的具象化）；没存值高亮空占位项。
                     const active = resumePick
                       ? (resumePermission || storedPermission?.id || "") === option.value
                       : state?.value === option.value;
+                    const busyBlocked = !resumePick && tone === "running" && option.inputs.length > 0 && !active;
                     return <button
                       type="button"
                       key={option.value}
                       role="menuitem"
+                      // aria-disabled 而不是 disabled：项仍可用方向键走到、读屏念得到，只是点了不动。
+                      aria-disabled={busyBlocked || undefined}
                       // 说明行不进名字（同 Dropdown 的 dd-sub），读屏名字只报档名。
                       aria-label={modeDesc(String(option.value)) ? option.label : undefined}
                       aria-describedby={modeDesc(String(option.value)) ? `chat-mode-desc-${dimension}-${option.value}` : undefined}
                       className={"chat-model-item" + (active ? " is-active" : "") + (riskOf(String(option.value)) ? " is-risk" : "")}
                       onClick={() => {
+                        if (busyBlocked) return;
+                        // 选完把焦点还给触发钮：菜单项随菜单卸载，不接住焦点就掉到 body，
+                        // 键盘用户得从窗口顶上重新 Tab（走查 C-1）。同 Dropdown/PillSelect 的做法。
+                        // 手机是底部面板、触屏操作，程序化聚焦只会在 WebKit 上画出一圈焦点环，不做。
+                        const trigger = modeMenuUi.btnRef.current;
+                        if (!compactChrome) trigger?.focus();
                         setModeMenu(null);
                         // 恢复改选只落状态、不碰终端——生效点在下一次恢复的启动参数上。
                         // 选回存的那档 = 沿用（置空，不写覆盖）。
@@ -5499,7 +5669,9 @@ export function ChatWindow() {
               ref={(node) => { assignRef(modelPickerOpenUi.btnRef, node); modelButtonRef.current = node; }}
               type="button"
               className="chat-model-button"
-              disabled={modelPresets.length === 0 && !modelMenuCommand && switchTargets.length === 0}
+              // 输入框被锁时一并锁（backlog 仍存在第 3 条）：切模型要往终端写命令，终端在等选择时
+              // 会打进选择器，外部占用 / 已结束 / 已被接替时则会替一个发不出消息的会话改模型。
+              disabled={(modelPresets.length === 0 && !modelMenuCommand && switchTargets.length === 0) || composerDisabled}
               aria-label={t.chat.switchModel}
               aria-expanded={modelPickerOpen}
               // 同权限按钮：提示里带上当前模型，窄主列只留图标时靠它看。
@@ -5566,9 +5738,11 @@ export function ChatWindow() {
                     .map((agent) => ({ id: `provider:${agent.id}`, label: t.chat.switchProvider, detail: agent.display_name }));
                 })()}
                 probing={modelProbing}
-                unavailable={modelProbeFailed ? (remoteUi() ? t.chat.modelListUnavailableRemote(modelMenuCommand ?? "/model") : t.chat.modelListUnavailableShort) : null}
+                unavailable={modelProbeFailed ? (remoteUi() ? t.chat.modelListUnavailable(modelMenuCommand ?? "/model") : t.chat.modelListUnavailableShort) : null}
                 cacheHint={timelineContentCount > 0}
-                onSelect={onModelPick}
+                // 选完把焦点还给模型钮（走查 C-1：p3-model-kbd-pick 选完 activeElement=BODY）。
+                // 手机是底部面板，程序化聚焦只会在 WebKit 上画焦点环，不做。
+                onSelect={(id) => { if (!compactChrome) modelButtonRef.current?.focus(); onModelPick(id); }}
                 // 有切换目标时不自动探测（会往终端写 /model、弹 TUI 菜单），清单没学到就给显式入口：
                 // 点一次学会，按 CLI 版本缓存，之后打开即是现成清单（Kimi 同款体验）。
                 onLoad={modelMenuCommand && modelCatalog.length === 0 && !modelDropdownReady && !modelProbeFailed ? () => void probeModelMenu() : undefined}
@@ -5578,7 +5752,7 @@ export function ChatWindow() {
                   : undefined}
                 onGoTerminal={remoteUi() ? undefined : () => { setModelPickerOpen(false); setView("terminal"); }}
                 phone={compactChrome}
-                onClose={() => setModelPickerOpen(false)}
+                onClose={() => { if (!compactChrome) modelButtonRef.current?.focus(); setModelPickerOpen(false); }}
               />
             )}
           </div>}
@@ -5593,8 +5767,7 @@ export function ChatWindow() {
               type="button"
               className="chat-send-button is-stop chat-stop-secondary"
               aria-label={interrupting ? t.chat.interrupting : t.chat.interruptNow}
-              onClick={() => sendInterrupt()}
-              disabled={interrupting}
+              {...busyProps(interrupting, () => sendInterrupt())}
             >
               {interrupting
                 ? <span className="chat-model-spinner" aria-hidden="true" />
@@ -5614,8 +5787,18 @@ export function ChatWindow() {
             // 7M-12：触屏上长按会弹这条 tip（G-15 给的长按提示），可它说的是 Ctrl+Enter——
             // 手机上根本没有这组键。远程不给 tip。
             data-tip={remoteUi() ? undefined : stopMode ? t.chat.interruptNowTip : canInterrupt ? t.chat.interruptAndSendTip : undefined}
-            onClick={() => { if (stopMode) sendInterrupt(); else void sendPrompt(); }}
-            disabled={composerDisabled || (stopMode ? interrupting : (!prompt.trim() && attachments.length === 0) || sending)}
+            onClick={() => {
+              if (stopMode) {
+                if (interrupting) return;
+                // 停下回合后这颗钮会变回「发送」，输入框空着它就是禁用的，焦点留在上面会被踢到 body。
+                // 停下来多半是要接着说话：把焦点交给输入框（走查 C-3 同类：在途动作把焦点踢走）。
+                if (!remoteUi()) promptInputRef.current?.focus();
+                sendInterrupt();
+              } else if (!sending) void sendPrompt();
+            }}
+            // 在途（中断中 / 发送中）用 aria-disabled：disabled 会把正聚焦的这颗钮的焦点踢到 body。
+            aria-disabled={(stopMode ? interrupting : sending) || undefined}
+            disabled={composerDisabled || (!stopMode && !sending && !prompt.trim() && attachments.length === 0)}
           >
             {/* sending 不再借停止方块——一个「点不动的停止键」读不出是正在发送,转圈才是。
                 中断在途同理:方块换转圈,直到回合真的停下来。 */}
@@ -5650,21 +5833,37 @@ export function ChatWindow() {
               setSendError("");
             }}>{t.chat.terminalMenuCleared}</button>}
           </>}
-          {imageDraftBlocked && <>
-            <button type="button" className="chat-send-takeover" onClick={() => setView("terminal")}>{t.chat.goTerminal}</button>
-            <button type="button" className="chat-send-takeover" onClick={() => {
+          {/* 残图拦截：这个 Agent 的输入框 Meowo 认不出，没法替用户清（能认出的在发送前已自动清掉，
+              见 withSendGuard）。给看终端画面的出口（手机就地展开画面与按键，此前手机上也给「去终端页」，
+              点了没反应），清完点「已清理」解除拦截。 */}
+          {imageDraftBlocked && <SendErrorExits
+            exit={{ terminal: true }}
+            sessionId={sessionId}
+            onGoTerminal={() => setView("terminal")}
+            dismissLabel={t.chat.imageDraftCleared}
+            onDismiss={() => {
               partialImageDraftsRef.current.delete(sessionId);
               setImageDraftBlocked(false);
               setSendError("");
-            }}>{t.chat.imageDraftCleared}</button>
-          </>}
+            }}
+            focusComposer={() => promptInputRef.current?.focus()}
+          />}
+          {/* 其余错误：带出路的给出路（重试 / 看终端画面），一律给「收起」——此前大多数错误
+              既没按钮也没关闭钮，只能靠打字清掉（走查 C-4）。key 跟着文案走，换一条错误终端画面收起。 */}
+          {sendError && !imageDraftBlocked && !needsTakeover && !(terminalMenuOpen && !terminalAttention) && <SendErrorExits
+            key={sendError}
+            exit={sendErrorExit ?? {}}
+            sessionId={sessionId}
+            onGoTerminal={() => setView("terminal")}
+            onDismiss={() => setSendError("")}
+            focusComposer={() => promptInputRef.current?.focus()}
+          />}
           {needsTakeover && <>
             {resumePermissionPicker}
             <button
               type="button"
               className="chat-send-takeover"
-              disabled={sending}
-              onClick={() => { const retry = retryRef.current; void takeoverAndRetry(() => retry?.()); }}
+              {...busyProps(sending, () => { const retry = retryRef.current; void takeoverAndRetry(() => retry?.()); })}
             >{t.chat.terminalTakeover}</button>
           </>}
         </div>}
@@ -5677,6 +5876,10 @@ export function ChatWindow() {
         {terminalWaitSeconds != null && terminalWaitSeconds >= TERMINAL_WAIT_NOTICE_S && !sendError && <div className="chat-send-error" role="status">
           <span>{t.chat.terminalWaitingReady(terminalWaitSeconds)}</span>
           {!remoteUi() && <button type="button" className="chat-send-takeover" onClick={() => setView("terminal")}>{t.chat.goTerminal}</button>}
+          {/* 手机没有终端页：就地展开启动画面与按键（启动卡在信任/登录询问时能当场按掉），
+              此前远程只有一句「可去终端页查看」，是死路。 */}
+          {remoteUi() && <button type="button" className="chat-send-takeover" aria-expanded={remoteKeysOpen} onClick={() => setRemoteKeysOpen((open) => !open)}>{t.chat.remoteOpenKeys}</button>}
+          {remoteUi() && remoteKeysOpen && <RemoteTerminalKeys sessionId={sessionId} />}
         </div>}
         {/* 静默探测（问模型清单）期间不出这条等待条：那次交互对用户是不可见的，
             忙态只体现在模型按钮上。用户主动发的斜杠菜单命令照旧显示。 */}
@@ -5780,6 +5983,7 @@ export function ChatWindow() {
                 turnTouchedPaths={turnTouchedPaths}
                 browserSuggestions={browserSuggestions}
                 onMention={mentionPath}
+                onInsertPrompt={insertPanelPrompt}
                 selectedRoot={scmRoot}
                 onSelectRoot={setScmRoot}
                 onChanged={refreshChanges}

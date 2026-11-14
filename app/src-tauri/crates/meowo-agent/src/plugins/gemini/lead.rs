@@ -155,7 +155,9 @@ impl LeadCap for GeminiLead {
         .then(|| "lead/reviewer_disabled".into())
     }
     fn reviewer(&self) -> String {
-        format!("---\nname: lead-redteam\ndescription: Independent adversarial review against the Lead specification.\nkind: local\ntools:\n  - read_file\n  - grep_search\n  - glob\n  - list_directory\n  - run_shell_command\n---\n\n{REVIEW}")
+        format!(
+            "---\nname: lead-redteam\ndescription: Independent adversarial review against the Lead specification.\nkind: local\ntools:\n  - read_file\n  - grep_search\n  - glob\n  - list_directory\n  - run_shell_command\n---\n\n{REVIEW}"
+        )
     }
     /// 打开 SETTINGS 两项；首次安装记下用户原值，卸载时只在值仍是 Meowo 写的那个时还原，
     /// 用户之后自己改过的不动。其余设置一概不碰。

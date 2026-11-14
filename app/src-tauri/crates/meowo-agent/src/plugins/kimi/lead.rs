@@ -227,7 +227,9 @@ impl LeadCap for KimiLead {
         (inst.variant_tag == "modern").then_some(&SPEC)
     }
     fn reviewer(&self) -> String {
-        format!("---\nname: lead-redteam\ndescription: Independent adversarial review against the Lead specification.\ntools:\n  - Read\n  - Grep\n  - Glob\n  - Bash\nsubagents: []\n---\n\n{REVIEW}")
+        format!(
+            "---\nname: lead-redteam\ndescription: Independent adversarial review against the Lead specification.\ntools:\n  - Read\n  - Grep\n  - Glob\n  - Bash\nsubagents: []\n---\n\n{REVIEW}"
+        )
     }
 }
 

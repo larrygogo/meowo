@@ -15,6 +15,8 @@ import { AgentRing, Clock, Eyes, EYES_BLUSH_AFTER_MS, EYES_BUSY_AT, UsageRing, u
 
 export type { IslandTone } from "./island/islandParts";
 import type { IslandCompactStyle } from "../api";
+import type { IslandOpenError } from "./island/openSession";
+import { usageStaleTip } from "./island/useIslandUsage";
 import { Icon } from "../icons/Icon";
 import { icCheck, icClose, icExclamation, icQuestion, icShieldAlert } from "../icons/glyphs";
 export type { IslandCompactStyle };
@@ -245,13 +247,15 @@ export function Island({
   onDismissAllAlerts,
   alertQueued = 0,
   notch,
+  openError = null,
+  onOpenSettingsFromError,
 }: {
   sessions: readonly Item[];
   compactStyle: IslandCompactStyle;
   /** 正在弹出的提醒；null = 收起态。 */
   alert: IslandAlertEvent | null;
   /** 各家额度（已按「正在用的」排好序）；空 = 没有额度数据，不画环。 */
-  usages: readonly { provider: string; pct: number }[];
+  usages: readonly { provider: string; pct: number; stale?: boolean; fetchedAt?: number | null }[];
   /** 刘海本体（不含耳朵）的实测宽度，App 据此让窗口贴合。 */
   onMeasure: (width: number) => void;
   /** 点一下空闲胶囊（没拖动）：展开面板。提醒在场时点正文走 onOpenSession。 */
@@ -270,6 +274,10 @@ export function Island({
   /** macOS 有刘海时刘海的宽高（逻辑点）。给了就把收起的内容分到刘海左右两翼，中间留空：
    *  刘海是摄像头，那块什么也画不出来。 */
   notch?: { width: number; height: number };
+  /** 「打开」失败（I-1/I-2）：只在它属于正在弹的这条提醒时显示。 */
+  openError?: IslandOpenError | null;
+  /** 轻量模式下跳不到外部终端时的「打开设置」。 */
+  onOpenSettingsFromError?: () => void;
 }) {
   const t = useT();
   const now = useNow();
@@ -318,6 +326,7 @@ export function Island({
   const alertTone: IslandTone = alert
     ? alert.kind === "error" ? "error" : alert.kind === "waiting" ? "waiting" : "pending"
     : tone;
+  const alertError = alert && openError && openError.sessionId === alert.sessionId ? openError : null;
 
   // 刘海两翼（macOS 有刘海时）：左翼放额度环和眼睛，右翼放会话。时间不放，菜单栏右上角本来就有。
   // 图标缩到能塞进刘海高度（约 32~38pt）。
@@ -341,7 +350,7 @@ export function Island({
     const more = listed.length - shown.length;
     return [
       <>
-        {usages.length > 0 && <UsageRing entries={usages} size={22} />}
+        {usages.length > 0 && <UsageRing entries={usages} size={22} staleTip={(at) => usageStaleTip(at, t)} />}
         <Eyes {...eyes} small />
       </>,
       shown.length > 0 ? (
@@ -398,7 +407,7 @@ export function Island({
     const more = listed.length - shown.length;
     return (
       <>
-        {usages.length > 0 && <UsageRing entries={usages} />}
+        {usages.length > 0 && <UsageRing entries={usages} staleTip={(at) => usageStaleTip(at, t)} />}
         <Eyes {...eyes} />
         <Clock now={now} locale={t.locale} />
         {shown.length > 0 && (
@@ -483,6 +492,15 @@ export function Island({
                 <span className="isl-alert-title-row">
                   <span className="isl-alert-title" title={alertTitle}>{alertTitle}</span>
                 </span>
+                {alertError ? (
+                  // 打开失败就地说清（I-1/I-2，走查 2026-11-12）：原因放在后面，按钮换成「重试」或「打开设置」。
+                  <span className="isl-alert-sub is-error">
+                    <span className="isl-state is-error">{alertError.kind === "lite" ? t.island.liteNoChat : t.island.openFailed}</span>
+                    {alertError.kind === "failed" && alertError.reason && (
+                      <><span className="isl-sep">·</span><span className="isl-alert-detail" title={alertError.reason}>{alertError.reason}</span></>
+                    )}
+                  </span>
+                ) : (
                 <span className="isl-alert-sub">
                   <span className={`isl-state is-${alertTone}`}>{alertLabel(alert)}</span>
                   {/* 跑完的提醒带 agent 最后一句话（后端取的第一行），比项目名更能说明它做完了什么。
@@ -492,6 +510,7 @@ export function Island({
                   )}
                   {alertDetail && <><span className="isl-sep">·</span><span className="isl-alert-detail" title={alertDetail}>{alertDetail}</span></>}
                 </span>
+                )}
               </span>
             </span>
             {/* 「全部忽略」只在后面还排着的时候出现：只有一条时它和 × 是一回事（i5：排了 12 条只能一条条等）。
@@ -517,9 +536,10 @@ export function Island({
               onKeyDown={stop}
               onClick={(event) => {
                 stop(event);
-                onOpenSession(alert.sessionId);
+                if (alertError?.kind === "lite" && onOpenSettingsFromError) onOpenSettingsFromError();
+                else onOpenSession(alert.sessionId);
               }}
-            >{t.island.open}</button>
+            >{alertError ? (alertError.kind === "lite" ? t.island.openSettings : t.island.retry) : t.island.open}</button>
             {onDismissAlert && (
               <button
                 type="button"
@@ -539,6 +559,8 @@ export function Island({
       </div>
       {/* 提醒出现时读屏播报（i8）。收起态不播：会话数变化太频繁，播起来没完。 */}
       <span className="chat-sronly" role="status" aria-live="polite">{alert ? t.island.alertAria(alertTitle, alertLabel(alert)) : ""}</span>
+      {/* 打开失败另走 role=alert 播报：上面那条只在提醒出现时念一次。 */}
+      <span className="chat-sronly" role="alert">{alertError ? (alertError.kind === "lite" ? t.island.liteNoChat : `${t.island.openFailed}，${alertError.reason}`) : ""}</span>
     </div>
   );
 }

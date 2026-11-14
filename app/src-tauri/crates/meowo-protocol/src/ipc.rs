@@ -972,6 +972,20 @@ pub struct PushResultDto {
     pub pushed: u32,
 }
 
+/// 一次拉取的结果（推送被拒后的「拉取并重试」，walkthrough P-1 2026-11-12）。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct PullResultDto {
+    pub remote: String,
+    pub branch: String,
+    /// 拉下来的提交数（远端有、本地没有的）。
+    pub pulled: u32,
+    /// `none`（已是最新）/ `ff`（快进）/ `merge`（合并提交）/ `rebase`（按 pull.rebase 变基）。
+    pub mode: String,
+}
+
 /// 后台 git 任务（手机端推送：手机 RPC 等不了 20–90 秒，先拿任务号再轮询）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -981,6 +995,9 @@ pub struct GitJobDto {
     /// `running` / `ok` / `failed`。
     pub state: String,
     pub push: Option<PushResultDto>,
+    /// 拉取任务的结果（推送被拒后「拉取并重试」，walkthrough P-1）。推送任务恒为 None；旧后端不发这个键。
+    #[serde(default)]
+    pub pull: Option<PullResultDto>,
     /// 失败原因（`git/push_auth` 之类，前端走 formatBackendError）。
     pub error: Option<String>,
 }

@@ -32,6 +32,9 @@ pub(super) static RULES: &[ScreenRule] = &[
             // 盒内标题行：`│` 前缀就是 gemini 提示框的左边框，自带锚定。
             Matcher::Contains(&["│ apply this change"]),
             Matcher::Contains(&["│ allow execution"]),
+            // 0.65 沙箱扩权审批（ToolConfirmationMessage 的 sandbox_expansion 分支，源码取证
+            // 2026-11-12）：`│ To run [Shell], allow access to the following?`，同在框内。
+            Matcher::LineRegex(r"^\s*│\s*to run \[[^\]]+\], allow access to the following\?"),
             // proceed 问句绝不单独作证（正文/回显引用它的场合太多），必须同屏配上
             // 真实的选项行：编号 yes 选项（`│ ● 1. Yes, allow once` / `❯ 1. Yes`），
             // yes 按**词边界**匹配——裸子串会命中 eyes/yesterday（曾是整屏分散包含
@@ -43,15 +46,34 @@ pub(super) static RULES: &[ScreenRule] = &[
                     "do you want to proceed?",
                 ]),
                 Matcher::Any(&[
-                    Matcher::LineRegex(
-                        r"^\s*│?\s*(?:[\x{276F}\x{25CF}\x{25CB}]\s*)?\d+\.\s*yes\b",
-                    ),
+                    Matcher::LineRegex(r"^\s*│?\s*(?:[\x{276F}\x{25CF}\x{25CB}]\s*)?\d+\.\s*yes\b"),
                     Matcher::LineStartsWithContaining("\u{276F}", &["yes", "allow"]),
                 ]),
             ]),
             // 选项指针行本身带 yes/allow —— 拆成两个谓词会误命中「指针在 A 行、
             // yes 在别处」的普通输出。
             Matcher::LineStartsWithContaining("\u{276F}", &["yes", "allow"]),
+        ]),
+    )
+    .visible(),
+    // 0.65 提问表单（ask_user，AskUserDialog）：绿框头行 `│ Answer Questions` + 底部按键
+    // 提示 `Enter to select · … · Esc to cancel`（单页）或 `Enter to submit · … · Esc to cancel`
+    // （文本题、确认页）。提示行里的 `Esc to cancel` 会让下面的兜底把在等回答的会话判成
+    // 运行中，所以本条要压过它（npm bundle 源码取证，2026-11-12，未实拍）。头行与提示行
+    // 两个都要：只有头行可能是滚走的残影，只有提示行可能是别的对话框。
+    // 提示行只要求行首的 `Enter to select/submit`：DialogFooter 把各段用 ` · ` 连成一个 Text，
+    // 多题时是 `Enter to select · ←/→ to switch questions · Esc to cancel`（57 列）、文本题是
+    // `Enter to submit · Tab/Shift+Tab to switch questions · Esc to cancel`（67 列），框窄于此
+    // Ink 就按词折行，`Esc to cancel` 落到下一行。要求整串单行时窄窗认不出，退回兜底判成运行中
+    // （做空第一轮 #8，2026-11-12；0.65.0 bundle 的 AskUserDialog keyboardHints 取证）。
+    ScreenRule::new(
+        "ask_user_dialog",
+        ScreenState::Blocked,
+        300,
+        Region::WholeScreen,
+        Matcher::All(&[
+            Matcher::LineRegex(r"^\s*│\s*answer questions\b"),
+            Matcher::LineRegex(r"^\s*│\s*enter to (?:select|submit)\b"),
         ]),
     )
     .visible(),

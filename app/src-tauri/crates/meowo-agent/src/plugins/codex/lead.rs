@@ -73,7 +73,9 @@ impl LeadCap for CodexLead {
     fn reviewer(&self) -> String {
         let mut doc = toml_edit::DocumentMut::new();
         doc["name"] = toml_edit::value("lead-redteam");
-        doc["description"]=toml_edit::value("Independent adversarial review against the Lead specification and acceptance evidence.");
+        doc["description"] = toml_edit::value(
+            "Independent adversarial review against the Lead specification and acceptance evidence.",
+        );
         doc["developer_instructions"] = toml_edit::value(REVIEW);
         format!("# {MANAGED_MARK}\n{doc}")
     }

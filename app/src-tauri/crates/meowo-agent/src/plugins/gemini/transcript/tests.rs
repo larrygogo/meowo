@@ -309,7 +309,11 @@ fn compatibility_gemini_materialization_benchmark() {
         let clock = Instant::now();
         let patched = materialize_in(&source, &root.join("cache")).unwrap();
         let patch_ms = clock.elapsed().as_secs_f64() * 1000.0;
-        println!("gemini records={count} source_bytes={} uncached_ms={uncached_ms:.3} first_ms={first_ms:.3} unchanged_poll_us={poll_us:.3} first_page_ms={read_page_ms:.3} append_ms={append_ms:.3} append_written_bytes={append_bytes} patch_ms={patch_ms:.3} patch_new_path={}", raw.len(), patched != appended);
+        println!(
+            "gemini records={count} source_bytes={} uncached_ms={uncached_ms:.3} first_ms={first_ms:.3} unchanged_poll_us={poll_us:.3} first_page_ms={read_page_ms:.3} append_ms={append_ms:.3} append_written_bytes={append_bytes} patch_ms={patch_ms:.3} patch_new_path={}",
+            raw.len(),
+            patched != appended
+        );
         let _ = fs::remove_dir_all(root);
     }
 }
@@ -320,11 +324,23 @@ fn model_follows_the_latest_reply_or_model_set_info_line() {
     let tail = r#"{"type":"gemini","model":"gemini-2.5-pro","content":"hi"}
 {"type":"info","content":"Model set to gemini-3.8-flash"}
 "#;
-    assert_eq!(super::model_from_tail(tail).as_deref(), Some("gemini-3.8-flash"));
-    let later = format!("{tail}{}
-", r#"{"type":"gemini","model":"gemini-3.5-flash-lite","content":"ok"}"#);
-    assert_eq!(super::model_from_tail(&later).as_deref(), Some("gemini-3.5-flash-lite"));
-    assert_eq!(super::model_from_tail(r#"{"type":"info","content":"other"}"#), None);
+    assert_eq!(
+        super::model_from_tail(tail).as_deref(),
+        Some("gemini-3.8-flash")
+    );
+    let later = format!(
+        "{tail}{}
+",
+        r#"{"type":"gemini","model":"gemini-3.5-flash-lite","content":"ok"}"#
+    );
+    assert_eq!(
+        super::model_from_tail(&later).as_deref(),
+        Some("gemini-3.5-flash-lite")
+    );
+    assert_eq!(
+        super::model_from_tail(r#"{"type":"info","content":"other"}"#),
+        None
+    );
 }
 
 /// 真机验证 G1 + 做空 N1/R1：.jsonl 按 CLI 口径判（info、半截行、陌生行不算内容）；旧版 `.json` 有消息必须
@@ -343,21 +359,42 @@ fn unsent_session_detection_is_exact_for_both_formats() {
     ]
     .join("\n");
     assert_eq!(session_content(jsonl, &meta), Empty);
-    let with_user = format!("{meta}\n{}", r#"{"id":"u1","type":"user","content":[{"text":"hi"}]}"#);
+    let with_user = format!(
+        "{meta}\n{}",
+        r#"{"id":"u1","type":"user","content":[{"text":"hi"}]}"#
+    );
     assert_eq!(session_content(jsonl, &with_user), HasMessages);
-    let with_reply = format!("{meta}\n{}", r#"{"id":"g1","type":"gemini","model":"gemini-2.5-pro","content":"ok"}"#);
+    let with_reply = format!(
+        "{meta}\n{}",
+        r#"{"id":"g1","type":"gemini","model":"gemini-2.5-pro","content":"ok"}"#
+    );
     assert_eq!(session_content(jsonl, &with_reply), HasMessages);
     // `/model` 留下的 info 行 CLI 不算可恢复内容（做空 R1）。
-    let with_info = format!("{meta}\n{}", r#"{"id":"i1","type":"info","content":"Model set to gemini-2.5-pro."}"#);
+    let with_info = format!(
+        "{meta}\n{}",
+        r#"{"id":"i1","type":"info","content":"Model set to gemini-2.5-pro."}"#
+    );
     assert_eq!(session_content(jsonl, &with_info), Empty);
-    let rewritten = format!("{meta}\n{}", r#"{"$set":{"messages":[{"id":"u1","type":"user","content":"hi"}]}}"#);
+    let rewritten = format!(
+        "{meta}\n{}",
+        r#"{"$set":{"messages":[{"id":"u1","type":"user","content":"hi"}]}}"#
+    );
     assert_eq!(session_content(jsonl, &rewritten), HasMessages);
     // CLI 不认（没有 sessionId + projectHash）：空文件、只有消息行。
     assert_eq!(session_content(jsonl, ""), Unknown);
-    assert_eq!(session_content(jsonl, r#"{"type":"user","content":"hi"}"#), Unknown);
+    assert_eq!(
+        session_content(jsonl, r#"{"type":"user","content":"hi"}"#),
+        Unknown
+    );
     // 半截行、陌生行 CLI 跳过。
-    assert_eq!(session_content(jsonl, &format!("{meta}\n{{\"type\":\"gem")), Empty);
-    assert_eq!(session_content(jsonl, &format!("{meta}\n{{\"other\":1}}")), Empty);
+    assert_eq!(
+        session_content(jsonl, &format!("{meta}\n{{\"type\":\"gem")),
+        Empty
+    );
+    assert_eq!(
+        session_content(jsonl, &format!("{meta}\n{{\"other\":1}}")),
+        Empty
+    );
 
     // 旧版单文件（ConversationRecord：元数据字段 + messages 数组），一行与缩进两种写法。
     let old = serde_json::json!({
@@ -371,11 +408,17 @@ fn unsent_session_detection_is_exact_for_both_formats() {
         ]
     });
     assert_eq!(session_content(json, &old.to_string()), HasMessages);
-    assert_eq!(session_content(json, &serde_json::to_string_pretty(&old).unwrap()), HasMessages);
+    assert_eq!(
+        session_content(json, &serde_json::to_string_pretty(&old).unwrap()),
+        HasMessages
+    );
     let mut empty_old = old.clone();
     empty_old["messages"] = serde_json::json!([]);
     // 旧版从不判空（只对 .jsonl 的确定形态判空）。
-    assert_eq!(session_content(json, &serde_json::to_string_pretty(&empty_old).unwrap()), Unknown);
+    assert_eq!(
+        session_content(json, &serde_json::to_string_pretty(&empty_old).unwrap()),
+        Unknown
+    );
     assert_eq!(session_content(json, "{\"sessionId\":\"x\""), Unknown);
     assert_eq!(session_content(json, r#"{"sessionId":"x"}"#), Unknown);
     assert_eq!(session_content(Path::new("session-x.txt"), &meta), Unknown);
@@ -387,7 +430,8 @@ fn unsent_session_detection_is_exact_for_both_formats() {
 #[test]
 fn unsent_detection_matches_gemini_cli_file_by_file() {
     use super::{session_content, SessionContent::*};
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/plugins/gemini/transcript/fixtures/unsent");
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("src/plugins/gemini/transcript/fixtures/unsent");
     let expected: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(dir.join("expected.json")).unwrap()).unwrap();
     let cases = expected["expect"].as_object().unwrap();
@@ -416,7 +460,10 @@ fn unsent_session_file_is_moved_to_backup_not_deleted() {
         std::fs::write(&file, format!("round {round}")).unwrap();
         let moved = super::move_to_backup(&file, &backup).unwrap();
         assert!(!file.exists());
-        assert_eq!(std::fs::read_to_string(&moved).unwrap(), format!("round {round}"));
+        assert_eq!(
+            std::fs::read_to_string(&moved).unwrap(),
+            format!("round {round}")
+        );
         assert!(moved.extension().is_some_and(|ext| ext == "bak"));
     }
     assert_eq!(std::fs::read_dir(&backup).unwrap().count(), 1);
@@ -461,13 +508,21 @@ fn old_format_sessions_survive_unsent_resume_on_disk() {
     for (name, text, unsent) in &files {
         let path = chats.join(name);
         std::fs::write(&path, text).unwrap();
-        assert_eq!(super::prepare_unsent_at(&path, &backup), Some(*unsent), "{name}");
+        assert_eq!(
+            super::prepare_unsent_at(&path, &backup),
+            Some(*unsent),
+            "{name}"
+        );
         if *unsent {
             assert!(!path.exists(), "{name} 应挪走");
             let bak = backup.join(format!("{name}.bak"));
             assert_eq!(&std::fs::read_to_string(bak).unwrap(), text);
         } else {
-            assert_eq!(&std::fs::read_to_string(&path).unwrap(), text, "{name} 必须原样留着");
+            assert_eq!(
+                &std::fs::read_to_string(&path).unwrap(),
+                text,
+                "{name} 必须原样留着"
+            );
         }
     }
     let _ = std::fs::remove_dir_all(root);

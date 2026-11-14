@@ -1579,6 +1579,7 @@ button.stab {
 .side-search-x::before { content: ""; position: absolute; inset: -4px; }
 /* 搜索零命中的提示行（此时各分区已被过滤隐藏，必须有一句解释，否则整页空白像故障）。 */
 .settings-noresults { padding: 72px 0; text-align: center; font-size: var(--text-sm); color: var(--cc-text-dim); }
+.settings-noresults { display: flex; flex-direction: column; align-items: center; gap: var(--sp-12); }
 
 /* 右内容 */
 .main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
@@ -1720,6 +1721,13 @@ button.stab {
 .settings-error-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .settings-error-close { flex: none; width: 22px; height: 22px; display: grid; place-items: center; margin: -1px 0; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: inherit; opacity: .7; cursor: pointer; }
 .settings-error-close:hover { opacity: 1; background: color-mix(in srgb, var(--cc-err) 14%, transparent); }
+/* 失败提示里的下一步按钮（2026-11-12 第三轮 T-1：重新生成令牌失败要能就地重试）。 */
+.settings-error-action { flex: none; margin: -2px 0; padding: 1px var(--sp-8); border: var(--hairline) solid color-mix(in srgb, var(--cc-err) 45%, transparent); border-radius: var(--radius-sm); background: transparent; color: inherit; font: inherit; cursor: pointer; }
+/* 文本类设置回车提交成功的轻提示（T-5）：空内容时宽度为 0。不用 display:none 藏，读屏的 live region 要常驻才念。 */
+.settings-saved { flex: none; color: var(--cc-text-dim); font-size: var(--text-sm); white-space: nowrap; }
+/* 空着时脱离 flex 流：否则空项也吃一份 gap，把旁边的输入框挤歪。 */
+.settings-saved:empty { position: absolute; }
+.settings-error-action:hover { background: color-mix(in srgb, var(--cc-err) 14%, transparent); }
 /* 分区内的页标题只在搜索态显示（各分区平铺时当分隔）；平时不显示，由左栏高亮表明所在页。 */
 .sec-title { display: none; margin: 0 0 var(--sp-12); font-size: var(--text-base); font-weight: 600; color: var(--cc-text); }
 .main-body.is-searching .sec-title { display: block; }
@@ -1770,8 +1778,8 @@ button.stab {
   padding: var(--sp-6) var(--sp-14);
   cursor: pointer;
 }
-.sbtn:not(.btn-primary):hover:not(:disabled) { background: var(--fill-selected-hover); }
-.sbtn:disabled { opacity: 0.55; cursor: default; }
+.sbtn:not(.btn-primary):hover:not(:disabled, [aria-disabled="true"]) { background: var(--fill-selected-hover); }
+.sbtn:is(:disabled, [aria-disabled="true"]) { opacity: 0.55; cursor: default; }
 
 /* 自定义暗色下拉（替代原生 select，使下拉列表也跟随主题） */
 .dd { position: relative; flex: none; }
@@ -1872,7 +1880,11 @@ button.stab {
 /* 代理地址单占一整行：塞进 .row 右侧只剩半截宽度，连 placeholder 都显示不全。 */
 /* 它是上一行（默认代理）的延续，不是新的一行：不画分隔线，否则输入框顶着线。 */
 .row.proxy-url-row { padding-top: 0; border-top: 0; }
-.proxy-url-row .ns-input { width: 100%; }
+.proxy-url-row .ns-input { width: auto; flex: 1; min-width: 0; }
+/* T-3：保存被拒时草稿留在框里标红、原因贴在框下（与端口框同款）。 */
+.row.proxy-url-row { flex-wrap: wrap; row-gap: 0; }
+.proxy-url-row .ns-input.is-invalid { border-color: var(--cc-err); }
+.proxy-url-row .remote-port-err { text-align: left; }
 /* 模型名不换行（「Claude Code」曾被右侧控件挤成两行）。 */
 .proxy-agent-name { white-space: nowrap; }
 /* 覆盖面：主句一行，理由弱化到次要色——三家能力不同是事实，但不该喧宾夺主。 */
@@ -2025,9 +2037,9 @@ button.stab {
   color: var(--cc-text-faint);
   cursor: pointer;
 }
-.relay-model-refresh:hover:not(:disabled) { color: var(--cc-text); background: var(--fill-selected); }
+.relay-model-refresh:hover:not(:disabled, [aria-disabled="true"]) { color: var(--cc-text); background: var(--fill-selected); }
 .relay-model-refresh.loading svg { animation: relay-spin var(--dur-spin) linear infinite; }
-.relay-model-refresh:disabled { cursor: default; }
+.relay-model-refresh:is(:disabled, [aria-disabled="true"]) { cursor: default; }
 .relay-model-chev { position: absolute; right: 9px; color: var(--cc-text-faint); pointer-events: none; transition: transform var(--dur-base) var(--ease-out); }
 .relay-model-picker.open .relay-model-chev { transform: rotate(180deg); }
 .relay-model-menu {
@@ -2425,10 +2437,10 @@ button.stab {
   cursor: pointer;
   transition: background var(--dur-fast) var(--ease-in-out), border-color var(--dur-fast) var(--ease-in-out), transform var(--dur-fast) var(--ease-out);
 }
-.provider-card-action:hover:not(:disabled) {
+.provider-card-action:hover:not(:disabled, [aria-disabled="true"]) {
   background: var(--fill-selected-hover);
 }
-.provider-card-action:disabled { opacity: 0.55; cursor: default; }
+.provider-card-action:is(:disabled, [aria-disabled="true"]) { opacity: 0.55; cursor: default; }
 /* 版本行里的小型动作按钮（更新/取消安装）：与标题区小字同排，取行内小动作那一档。 */
 .provider-card-action-sm {
   height: var(--btn-h-sm);
@@ -2475,11 +2487,11 @@ button.stab {
 .usage-updated + .icon-btn { margin-left: 0; }
 /* 图标按钮（如配额刷新）：透明底、悬停高亮，刷新中图标旋转。 */
 .icon-btn { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; padding: 0; border: none; background: transparent; color: var(--cc-text-dim); cursor: pointer; border-radius: var(--radius-sm); }
-.icon-btn:hover:not(:disabled) { color: var(--cc-text); background: var(--fill-hover); }
-.icon-btn:active:not(:disabled), .icon-btn[aria-expanded="true"] { color: var(--cc-text); background: var(--fill-selected); }
+.icon-btn:hover:not(:disabled, [aria-disabled="true"]) { color: var(--cc-text); background: var(--fill-hover); }
+.icon-btn:active:not(:disabled, [aria-disabled="true"]), .icon-btn[aria-expanded="true"] { color: var(--cc-text); background: var(--fill-selected); }
 /* 禁用要看得出来：同族 .sbtn/.ns-btn 都是「变淡 + 屏蔽 hover」，这里补齐——
    永久禁用的配额刷新钮曾照常亮 hover 底，点了没反应像坏了。 */
-.icon-btn:disabled { cursor: default; opacity: .45; }
+.icon-btn:is(:disabled, [aria-disabled="true"]) { cursor: default; opacity: .45; }
 .icon-btn svg { display: block; }
 .icon-btn svg.spin { animation: spin var(--dur-spin) linear infinite; }
 /* 刷新按钮旋转动画：原引用的 @keyframes spin 未定义(只有 run-spin)导致图标不转，补上。 */
@@ -2964,8 +2976,8 @@ select.ns-input {
   opacity: 0.9;
   transition: opacity var(--dur-fast) var(--ease-in-out), background var(--dur-fast) var(--ease-in-out);
 }
-.ns-repair:hover:not(:disabled) { opacity: 1; background: color-mix(in srgb, var(--cc-warn-vivid) 15%, transparent); }
-.ns-repair:disabled { opacity: 0.5; cursor: not-allowed; }
+.ns-repair:hover:not(:disabled, [aria-disabled="true"]) { opacity: 1; background: color-mix(in srgb, var(--cc-warn-vivid) 15%, transparent); }
+.ns-repair:is(:disabled, [aria-disabled="true"]) { opacity: 0.5; cursor: not-allowed; }
 .ns-error {
   color: var(--cc-fail-text);
   background: color-mix(in srgb, var(--cc-err-vivid) 10%, transparent);
@@ -3069,8 +3081,8 @@ body:not(.remote-ui) .ns-actions .ns-btn { height: var(--btn-h-lg); min-width: 7
   text-underline-offset: 2px;
   cursor: pointer;
 }
-.agent-path-gap-btn:hover:not(:disabled) { color: var(--cc-text); }
-.agent-path-gap-btn:disabled { cursor: default; opacity: 0.6; }
+.agent-path-gap-btn:hover:not(:disabled, [aria-disabled="true"]) { color: var(--cc-text); }
+.agent-path-gap-btn:is(:disabled, [aria-disabled="true"]) { cursor: default; opacity: 0.6; }
 .agent-path-msg {
   color: var(--cc-text-dim);
 }
@@ -3177,7 +3189,7 @@ body:not(.remote-ui) .ns-actions .ns-btn { height: var(--btn-h-lg); min-width: 7
   cursor: pointer;
   color: inherit;
 }
-.profile-row-main:disabled { cursor: default; }
+.profile-row-main:is(:disabled, [aria-disabled="true"]) { cursor: default; }
 .profile-name {
   font-size: var(--text-sm);
   color: var(--cc-text);
@@ -3247,7 +3259,7 @@ body:not(.remote-ui) .ns-actions .ns-btn { height: var(--btn-h-lg); min-width: 7
   cursor: pointer;
   transition: background var(--dur-fast) var(--ease-in-out), color var(--dur-fast) var(--ease-in-out);
 }
-.profile-add-btn:hover:not(:disabled) {
+.profile-add-btn:hover:not(:disabled, [aria-disabled="true"]) {
   color: var(--cc-text);
   background: var(--fill-hover);
 }
@@ -3372,7 +3384,7 @@ body:not(.remote-ui) .ns-actions .ns-btn { height: var(--btn-h-lg); min-width: 7
 .chat-title-actions-sep { height: var(--hairline); margin: var(--sp-4) var(--sp-6); background: var(--cc-border); }
 .chat-title-actions .dd-item .dd-check { margin-left: auto; }
 .chat-title-actions .dd-item { justify-content: flex-start; gap: var(--sp-8); padding: var(--sp-7) var(--sp-10); }
-.chat-title-actions .dd-item:disabled { opacity: .5; cursor: default; }
+.chat-title-actions .dd-item:is(:disabled, [aria-disabled="true"]) { opacity: .5; cursor: default; }
 .chat-title-action-ico { flex: 0 0 auto; display: inline-flex; color: var(--cc-text-faint); }
 /* 重命名 modal：独立弹层（用户指定，不做就地编辑）。点遮罩关闭，卡片截停冒泡。 */
 .chat-modal-overlay { position: fixed; inset: 0; z-index: var(--z-modal); display: grid; place-items: center; background: rgba(0, 0, 0, 0.38); }
@@ -3520,8 +3532,8 @@ body:not(.remote-ui) .ns-actions .ns-btn { height: var(--btn-h-lg); min-width: 7
 /* 「结束会话」：平时低调，hover 才显出破坏性的红——它常驻标题栏，不能一直红着抢戏。
    仅在本 GUI 托管该会话的 PTY 时渲染（ptyManaged）。 */
 .chat-end { white-space: nowrap; }
-.chat-end:hover:not(:disabled) { color: var(--cc-fail-text); background: color-mix(in srgb, var(--cc-err-vivid) 10%, transparent); }
-.chat-end:disabled { opacity: .6; cursor: default; }
+.chat-end:hover:not(:disabled, [aria-disabled="true"]) { color: var(--cc-fail-text); background: color-mix(in srgb, var(--cc-err-vivid) 10%, transparent); }
+.chat-end:is(:disabled, [aria-disabled="true"]) { opacity: .6; cursor: default; }
 /* 「归档」：与看板卡片菜单同一动作，做成图标按钮——标题栏横向已被状态徽标、结束会话、
    视图页签占满，再加一个文字按钮会把标题挤没。归档后按钮留在原位并高亮（is-on），
    它同时是「本会话已归档」的唯一提示。 */
@@ -3632,9 +3644,10 @@ body:not(.remote-ui) .ns-actions .ns-btn { height: var(--btn-h-lg); min-width: 7
 .nsp-ws-item.is-action .nsp-ws-item-name { color: var(--cc-text-dim); }
 .nsp-ws-item.is-action:hover .nsp-ws-item-name { color: var(--cc-text); }
 .nsp-send { flex: none; width: var(--icon-button-md); height: var(--icon-button-md); padding: 0; display: grid; place-items: center; border: 0; border-radius: 50%; color: var(--cc-on-accent); background: var(--cc-accent); cursor: pointer; transition: background var(--dur-fast) var(--ease-in-out), transform var(--dur-fast) var(--ease-out); }
-.nsp-send:hover:not(:disabled) { background: var(--cc-accent-dim); }
-.nsp-send:active:not(:disabled) { transform: scale(.98); }
-.nsp-send:disabled { color: var(--cc-text-faint); background: var(--fill-selected); cursor: default; }
+.nsp-send:hover:not(:disabled):not([aria-disabled="true"]) { background: var(--cc-accent-dim); }
+.nsp-send:active:not(:disabled):not([aria-disabled="true"]) { transform: scale(.98); }
+/* 启动中/粘贴落盘中用 aria-disabled（N-1：真 disabled 会把焦点踢到 body），外观与 disabled 同。 */
+.nsp-send:disabled, .nsp-send[aria-disabled="true"] { color: var(--cc-text-faint); background: var(--fill-selected); cursor: default; }
 .nsp-spin { width: 14px; height: 14px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: nsp-spin var(--dur-spin) linear infinite; }
 @keyframes nsp-spin { to { transform: rotate(360deg); } }
 /* 新建页「最近会话」（对照 Kimi）：输入框下方一小列，行 = agent 图标 + 标题 + 紧凑时间，与侧栏会话行同语汇。 */
@@ -3656,7 +3669,7 @@ body:not(.remote-ui) .ns-actions .ns-btn { height: var(--btn-h-lg); min-width: 7
 /* macOS 没有独立顶栏（红绿灯嵌在 52px 标题行），新建页顶上留一条拖拽区，窗口照样能拖。 */
 .nsp-drag { position: absolute; top: 0; left: 0; right: 0; height: 52px; }
 .nsp-note-btn { height: var(--btn-h-sm); padding: 0 var(--sp-8); border: var(--hairline) solid; border-radius: var(--radius-sm); font: inherit; cursor: pointer; }
-.nsp-note-btn:disabled { opacity: .5; cursor: default; }
+.nsp-note-btn:is(:disabled, [aria-disabled="true"]) { opacity: .5; cursor: default; }
 .session-admin { display: flex; flex-direction: column; min-width: 0; height: 100%; background: var(--cc-bg); position: relative; }
 .sa-head { flex: none; display: flex; align-items: center; gap: var(--sp-6); height: 48px; padding: 0 var(--sp-16); border-bottom: var(--hairline) solid var(--cc-border); }
 .sa-back { width: 28px; height: 28px; display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-dim); cursor: pointer; }
@@ -3701,7 +3714,7 @@ body:not(.remote-ui) .ns-actions .ns-btn { height: var(--btn-h-lg); min-width: 7
 .sa-batch-count { margin-right: var(--sp-2); color: var(--cc-text-dim); font-size: var(--text-sm); white-space: nowrap; }
 .sa-batch-link { display: inline-flex; align-items: center; height: 24px; padding: 0 var(--sp-2); border: 0; background: transparent; color: var(--cc-accent); font: inherit; font-size: var(--text-sm); font-weight: 500; white-space: nowrap; cursor: pointer; }
 .sa-batch-link:hover { text-decoration: underline; }
-.sa-batch-link:disabled { color: var(--cc-text-faint); cursor: default; text-decoration: none; }
+.sa-batch-link:is(:disabled, [aria-disabled="true"]) { color: var(--cc-text-faint); cursor: default; text-decoration: none; }
 .sa-batch-spacer { flex: 1; }
 .sa-table-card { border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-lg); background: var(--cc-bg); overflow-x: auto; transition: opacity var(--dur-fast) var(--ease-out); }
 .sa-table-card.is-loading { opacity: .45; pointer-events: none; }
@@ -3752,6 +3765,10 @@ body:not(.remote-ui) .ns-actions .ns-btn { height: var(--btn-h-lg); min-width: 7
 .sa-toast { position: absolute; left: 50%; bottom: var(--sp-16); transform: translateX(-50%); display: flex; align-items: center; gap: var(--sp-10); padding: var(--sp-8) var(--sp-14); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); background: var(--cc-menu-bg); box-shadow: var(--shadow-menu); color: var(--cc-text); font-size: var(--text-sm); white-space: nowrap; z-index: var(--z-float); }
 /* 批量清理 worktree 的结果要逐行列出失败项：多行时换行显示，限宽不撑出窗口。 */
 .sa-toast > span { white-space: pre-line; max-width: min(560px, 80vw); }
+/* 失败提示（走查 S-10/#14，2026-11-12）：原因另起一行、淡一档；右侧 × 关闭（失败提示不计时消失）。 */
+.sa-toast-reason { display: block; margin-top: var(--sp-2); color: var(--cc-text-dim); font-size: var(--text-xs); white-space: normal; overflow-wrap: anywhere; }
+.sa-toast.is-fail { align-items: flex-start; }
+.sa-toast-x { color: var(--cc-text-faint); }
 /* L1 内容面（.chat-surface）：对话列、会话信息栏、右侧面板合成一张圆角 12 的面，压在窗口底 L0 上。
    三个平台同一套：描边是 hairline 环（box-shadow，不占布局），外加 --shadow-sm；里面三栏只用细线分隔，
    各自不再有底色、圆角和上边线。右、下各留 8；侧栏不停靠（窄窗抽屉 / 手动收起）时左边也留 8，
@@ -4177,11 +4194,16 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 /* 批量清理 worktree 的结果：失败项逐行列出，按钮顶对齐不随多行居中。 */
 .chat-sidebar-error.is-multiline { align-items: flex-start; }
 .chat-sidebar-error.is-multiline span { flex: 1 1 auto; min-width: 0; white-space: pre-line; overflow-wrap: anywhere; }
+/* 侧栏失败/提示条（走查 S-5，2026-11-12）：不再 4 秒自动消失，右上角给 ×；原因另起一行、比结果句淡一档。 */
+.chat-sidebar-error.is-notice > span { color: var(--cc-text); }
+.chat-sidebar-error-reason { display: block; margin-top: var(--sp-2); color: var(--cc-text-dim); }
+.chat-sidebar-error.is-undo .chat-sidebar-error-x { min-height: var(--btn-h-sm); padding: 0 var(--sp-6); background: transparent; color: var(--cc-text-faint); }
+.chat-sidebar-error.is-undo .chat-sidebar-error-x:hover { background: var(--fill-hover); color: var(--cc-text); }
 /* 「已完成」页顶部的批量清理入口：轻量文字按钮，不和会话条目抢视觉。 */
 .chat-sidebar-cleanbar { display: flex; justify-content: flex-end; padding: var(--sp-4) var(--sp-10) var(--sp-2); }
 .chat-sidebar-cleanbar button { border: 0; border-radius: var(--radius-sm); padding: var(--sp-2) var(--sp-8); background: transparent; color: var(--cc-text-faint); font-size: var(--text-xs); cursor: pointer; }
-.chat-sidebar-cleanbar button:hover:not(:disabled) { background: var(--fill-hover); color: var(--cc-text); }
-.chat-sidebar-cleanbar button:disabled { cursor: default; }
+.chat-sidebar-cleanbar button:hover:not(:disabled, [aria-disabled="true"]) { background: var(--fill-hover); color: var(--cc-text); }
+.chat-sidebar-cleanbar button:is(:disabled, [aria-disabled="true"]) { cursor: default; }
 .chat-scroll {
   flex: 1;
   overflow: auto;
@@ -4358,6 +4380,10 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .shell-term-exit { position: absolute; left: 12px; right: 12px; bottom: 8px; z-index: calc(var(--z-raised) + 1); padding: var(--sp-6) var(--sp-10); border-radius: var(--radius-md); color: var(--term-fg-dim); background: rgba(35, 36, 33, 0.94); font-size: var(--text-xs); pointer-events: none; }
 /* 终端恒为深底，错误字取深色板的错误文字档，不跟主题。 */
 .shell-term-exit.is-error { color: #ff8580; }
+/* 退出条带「重启」（walkthrough P-13）：按钮要能点，整条不再穿透。 */
+.shell-term-exit.is-exited { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-6); pointer-events: auto; }
+.shell-term-exit.is-exited .scm-link-btn { margin-left: 0; }
+.shell-term-exit-hint { color: var(--term-fg-dim); opacity: 0.7; }
 /* 会话信息栏（同 Kimi Code 的 SessionInfoTabs）：面板收起时停靠在对话右侧，窄窗改成浮层。 */
 .session-info { display: flex; flex-direction: column; gap: var(--sp-16); padding: var(--sp-12) var(--sp-8); color: var(--cc-text); font-size: var(--text-sm); overflow-y: auto; }
 /* 宽度跟界面缩放走：150% 时字大了一半，240 定宽里「新建浏览器」「3 个文件有未提交…」都只剩省略号。 */
@@ -4432,7 +4458,7 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
    最小一档按钮高（--btn-h-sm），跟着界面缩放走。原先文字起点是三个位置（799 / 783 / 805），
    按钮 23px 高（qa-browser 实拍）。 */
 .browser-pane-notice button { flex: none; height: calc(var(--btn-h-sm) * var(--cc-ui)); padding: 0 var(--sp-10); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-sm); color: var(--cc-text); background: var(--cc-bg); font: inherit; cursor: pointer; }
-.browser-pane-notice button:disabled { opacity: .5; cursor: default; }
+.browser-pane-notice button:is(:disabled, [aria-disabled="true"]) { opacity: .5; cursor: default; }
 .browser-pane-notice .browser-pane-notice-close { padding: 0 var(--sp-6); border: 0; background: transparent; color: var(--cc-text-faint); font-size: var(--text-base); line-height: 1; }
 .browser-pane-notice .browser-pane-notice-close:hover { color: var(--cc-text); }
 .browser-pane-agent-dot { flex: none; margin-inline: 3px; width: 8px; height: 8px; border-radius: 50%; background: var(--cc-ok-vivid); animation: browser-agent-pulse var(--dur-pulse) var(--ease-in-out) infinite; }
@@ -4723,6 +4749,17 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .scm-commit-btn:disabled, .scm-commit-btn.btn-primary:disabled { opacity: 1; background: var(--fill-selected); color: var(--cc-text-faint); cursor: default; }
 .scm-error { color: var(--cc-fail-text); font-size: var(--text-xs); overflow-wrap: anywhere; }
 .scm-notice { color: var(--cc-text-dim); font-size: var(--text-xs); }
+/* 提示行（PanelMessage.tsx）：文字、能点的下一步、关闭，一行放不下就折行。 */
+.scm-msg { display: flex; flex-wrap: wrap; align-items: center; column-gap: var(--sp-2); row-gap: var(--sp-2); }
+.scm-msg-text { flex: 0 1 auto; min-width: 0; }
+.scm-msg-close { flex: 0 0 auto; display: grid; place-items: center; width: 20px; height: 20px; margin-left: auto; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-faint); cursor: pointer; }
+.scm-msg-close:hover { background: var(--fill-hover); color: var(--cc-text); }
+/* 进行中 / 不能点：aria-disabled 而不是 disabled（第三轮设计准则：disabled 会把焦点踢到 body），外观同禁用。 */
+.scm-commit-btn[aria-disabled="true"], .scm-commit-btn.btn-primary[aria-disabled="true"] { opacity: 1; background: var(--fill-selected); color: var(--cc-text-faint); cursor: default; }
+.scm-icon-btn[aria-disabled="true"] { opacity: 0.4; cursor: default; }
+.scm-forge-btn[aria-disabled="true"] { opacity: 0.45; cursor: default; }
+.scm-link-btn[aria-disabled="true"] { opacity: 0.45; cursor: default; }
+.ns-btn[aria-disabled="true"] { opacity: 0.4; cursor: not-allowed; }
 /* 推送 / PR / CI / 合并（ForgeBar.tsx）：提交框下面一段，按钮和提交按钮同高，次要动作用描边款。 */
 .scm-forge { flex: 0 0 auto; display: flex; flex-direction: column; gap: var(--sp-8); padding: var(--sp-4) var(--sp-12) var(--sp-12); }
 .scm-forge-btn { display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-6); height: calc(var(--btn-h-md) * var(--cc-ui)); padding: 0 var(--sp-10); border: 0; border-radius: var(--radius-md); background: var(--fill-selected); color: var(--cc-text); font: inherit; font-size: var(--text-sm); cursor: pointer; }
@@ -4902,8 +4939,8 @@ button.scm-check-name:hover { text-decoration: underline; }
 /* 出错卡的下一步提示：比原文弱一档，读完原文再看该做什么。 */
 .chat-turn-error-hint { margin-top: var(--sp-6); color: var(--cc-text-dim); font-size: var(--text-sm); }
 .chat-turn-error-continue { height: var(--btn-h-md); padding: 0 var(--sp-12); border: 0; border-radius: var(--radius-md); background: var(--fill-selected); color: var(--cc-text); font: inherit; font-size: var(--text-sm); cursor: pointer; }
-.chat-turn-error-continue:hover:not(:disabled) { background: var(--fill-selected-hover); }
-.chat-turn-error-continue:disabled { opacity: .5; cursor: default; }
+.chat-turn-error-continue:hover:not(:disabled, [aria-disabled="true"]) { background: var(--fill-selected-hover); }
+.chat-turn-error-continue:is(:disabled, [aria-disabled="true"]) { opacity: .5; cursor: default; }
 /* 原文用正文色：错误的身份由环与标签交代，整段染红在深色底上发粉、长报错读不动。 */
 .chat-message.is-turn-error .chat-text {
   font-size: var(--text-sm);
@@ -5250,10 +5287,11 @@ button.scm-check-name:hover { text-decoration: underline; }
    不显式压回来它会比同行按钮矮一截。 */
 .chat-approval-actions-side .chat-attention-dismiss.is-inline { height: calc(var(--btn-h-lg) * var(--cc-ui)); margin-right: 0; padding: 0 var(--sp-11); font-size: var(--text-sm); }
 .chat-approval button { display: inline-flex; align-items: center; gap: var(--sp-6); height: calc(var(--btn-h-lg) * var(--cc-ui)); padding: 0 var(--sp-12); border: var(--hairline) solid transparent; border-radius: var(--radius-md); color: var(--cc-text); background: var(--fill-selected); font-size: var(--text-sm); cursor: pointer; white-space: nowrap; }
-.chat-approval button:hover:not(:disabled) { background: var(--fill-selected-hover); }
-.chat-approval button:disabled { opacity: .55; cursor: default; }
+.chat-approval button:hover:not(:disabled, [aria-disabled="true"]) { background: var(--fill-selected-hover); }
+/* 结算在途的按钮用 aria-disabled（焦点不被踢走，失败后可原地重按，走查 C-3），长相同 disabled。 */
+.chat-approval button:is(:disabled, [aria-disabled="true"]) { opacity: .55; cursor: default; }
 /* 主按钮的禁用态不靠半透明：青柠打五五折是一块发闷的橄榄绿。退成中性底 + 弱字，一眼读出「还不能点」。 */
-.chat-approval button.btn-primary:disabled { opacity: 1; background: var(--fill-selected); color: var(--cc-text-faint); }
+.chat-approval button.btn-primary:is(:disabled, [aria-disabled="true"]) { opacity: 1; background: var(--fill-selected); color: var(--cc-text-faint); }
 /* 按钮里的快捷键徽章。aria-hidden 在 JSX 那边加了：它是给眼睛的提示，不该混进
    按钮的可访问名（屏幕阅读器用户有自己的导航方式，读出「拒绝 Esc」只是噪音）。 */
 .chat-approval kbd { padding: 0 var(--sp-5); border-radius: var(--radius-sm); background: var(--fill-selected); color: var(--cc-text-dim); font: var(--text-2xs)/var(--leading-body) inherit; }
@@ -5312,6 +5350,7 @@ button.scm-check-name:hover { text-decoration: underline; }
 .chat-review-bar { order: 0; flex: 0 0 100%; display: flex; align-items: center; gap: var(--sp-8); padding: var(--sp-2) var(--sp-2) var(--sp-4); color: var(--cc-text-dim); font-size: var(--text-xs); }
 .chat-review-bar svg { flex: none; color: var(--cc-text-dim); }
 .chat-review-bar-label { flex: 1; min-width: 0; }
+.chat-review-bar .chat-review-bar-close { display: grid; place-items: center; width: var(--btn-h-sm); padding: 0; }
 .chat-review-bar button { height: var(--btn-h-sm); padding: 0 var(--sp-8); border: 0; border-radius: var(--radius-sm); background: var(--fill-selected); color: var(--cc-text); font: inherit; cursor: pointer; }
 .chat-review-bar button:hover { background: var(--fill-selected-hover); }
 .chat-attachments { width: 100%; display: flex; gap: var(--sp-7); overflow-x: auto; padding-bottom: var(--sp-2); order: 0; flex: 0 0 100%; }
@@ -5372,7 +5411,7 @@ button.scm-check-name:hover { text-decoration: underline; }
    皮只剩被逐个用更高特异性「解毒」的份（两次用户实拍撞色都由它引起）。新按钮从此
    不再需要先中性化再上样式；既有的解毒规则同值保留（属冗余，视觉验证轮可清）。 */
 .chat-compose button { flex: 0 0 auto; cursor: pointer; }
-.chat-compose button:disabled { opacity: .45; cursor: default; }
+.chat-compose button:is(:disabled, [aria-disabled="true"]) { opacity: .45; cursor: default; }
 /* 发送错误/接管提示/斜杠菜单等待条：中性信息卡片，不再整句刷红——此前红字 + 权限下拉
    吃到的 accent 绿皮 + 红描边按钮三色打架（用户实拍反馈「太丑」）。红色只留给真正的
    破坏性动作按钮（.chat-send-takeover），条本身是「状态说明 + 出路」，中性即可。 */
@@ -6001,7 +6040,9 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 /* 模型钮与发送钮紧挨成一组（对照 Kimi：模型下拉锚在发送钮左侧 4px）；两者都没有时发送钮自己靠右。 */
 .chat-compose-actions > .chat-model-select + .chat-send-button { margin-left: calc(var(--sp-4) - var(--sp-8)); }
 .chat-compose-actions:not(:has(> .chat-context, > .chat-model-select)) > .chat-send-button:not(.chat-send-button ~ .chat-send-button) { margin-left: auto; }
-.chat-compose .chat-attach-button:hover { background: var(--fill-selected); }
+.chat-compose .chat-attach-button:hover:not(:disabled) { background: var(--fill-selected); }
+/* 输入框被锁时「+」一并置灰（与模型/模式胶囊的禁用态同一档 .8 弱化之外再降一点：它没有文字，只剩图标）。 */
+.chat-compose .chat-attach-button:disabled { opacity: .5; cursor: default; }
 /* min-width:0 + ellipsis：缩放到上限时动作行容量临界，提示文字（「Enter 发送…」）横向
    截断让位，而不是把发送钮顶出 composer（同 .chat-model-label 的既有范式）。 */
 .chat-compose-hint { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--cc-text-faint); font-size: var(--text-2xs); }
@@ -6018,9 +6059,10 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
   background: var(--cc-accent);
   transition: background var(--dur-fast) var(--ease-in-out), transform var(--dur-fast) var(--ease-out);
 }
-.chat-compose .chat-send-button:hover:not(:disabled) { background: var(--cc-accent-dim); }
-.chat-compose .chat-send-button:active:not(:disabled) { transform: scale(.94); }
-.chat-compose .chat-send-button:disabled { color: var(--cc-text-faint); background: var(--fill-selected); opacity: 1; }
+.chat-compose .chat-send-button:hover:not(:disabled, [aria-disabled="true"]) { background: var(--cc-accent-dim); }
+.chat-compose .chat-send-button:active:not(:disabled, [aria-disabled="true"]) { transform: scale(.94); }
+/* 发送中 / 中断中用 aria-disabled（焦点不被踢走），长相同 disabled。 */
+.chat-compose .chat-send-button:is(:disabled, [aria-disabled="true"]) { color: var(--cc-text-faint); background: var(--fill-selected); opacity: 1; }
 /* 远程有草稿时的独立停止钮(触屏无 Ctrl+Enter,主钮此时是发送):小一号,居于主钮左侧。 */
 .chat-compose .chat-send-button.chat-stop-secondary { width: 32px; height: 32px; }
 /* 停止态：主钮原地变成停止键，不换位置也不换形状——回合运行中输入框是空的时，右下角
@@ -6030,7 +6072,7 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
    还行，深色主题 --cc-text 是近白，混出来是一坨粉扑扑的淡粉（用户实拍反馈「很丑」）。 */
 /* 停止键不是主动作，退回中性反相（正文色底），不占青柠；悬停才亮出中止红，图标取卡面色保证对比度。 */
 .chat-compose .chat-send-button.is-stop { background: var(--cc-text); color: var(--cc-panel-raised); }
-.chat-compose .chat-send-button.is-stop:hover:not(:disabled) { background: var(--cc-err-vivid); color: var(--cc-panel-raised); }
+.chat-compose .chat-send-button.is-stop:hover:not(:disabled, [aria-disabled="true"]) { background: var(--cc-err-vivid); color: var(--cc-panel-raised); }
 /* 就地接管按钮：错误文案旁边直接给出出路，不必跨页去终端页找。
    .chat-compose 前缀压过 `.chat-compose button` 的 accent 皮肤：
    结束外部进程是破坏性动作，红描边小药丸，不该披发送键的大绿皮。 */
@@ -6071,8 +6113,8 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
   font-size: var(--text-sm);
   cursor: pointer;
 }
-.chat-compose .chat-send-takeover:hover:not(:disabled) { background: color-mix(in srgb, var(--cc-err-vivid) 12%, transparent); }
-.chat-compose .chat-send-takeover:disabled { opacity: 0.55; cursor: default; }
+.chat-compose .chat-send-takeover:hover:not(:disabled, [aria-disabled="true"]) { background: color-mix(in srgb, var(--cc-err-vivid) 12%, transparent); }
+.chat-compose .chat-send-takeover:is(:disabled, [aria-disabled="true"]) { opacity: 0.55; cursor: default; }
 /* 窄宽度统一一条 12px 边距（对照 Kimi 手机端：消息区、输入框、停靠栏同一条，横屏刘海再让出
    safe-area）。此前消息区 22px、输入框 12px、停靠胶囊约 40px，三者各对各的线。
    用户气泡封顶 88%：窄屏上整宽的用户消息与回复长得一样，分不出谁说的。封顶要加在收缩包裹的
@@ -6210,8 +6252,8 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 /* 无描边（实拍反馈「不要圆框」）：静态是纯文字，hover 的胶囊底自己就是可点暗示。
    留 1px 透明边占位，hover 出现底色时尺寸不跳。 */
 :is(.chat-compose, .nsp-composer) .chat-model-button { display: inline-flex; align-items: center; gap: var(--sp-4); height: calc(32px * var(--cc-ui)); min-height: 0; max-width: 100%; padding: 0 var(--sp-10); border: var(--hairline) solid transparent; border-radius: var(--radius-md); color: var(--cc-text-dim); background: transparent; font-size: var(--text-base); cursor: pointer; }
-:is(.chat-compose, .nsp-composer) .chat-model-button:hover:not(:disabled) { color: var(--cc-text); background: var(--fill-hover); }
-:is(.chat-compose, .nsp-composer) .chat-model-button:disabled { cursor: default; opacity: .8; }
+:is(.chat-compose, .nsp-composer) .chat-model-button:hover:not(:disabled, [aria-disabled="true"]) { color: var(--cc-text); background: var(--fill-hover); }
+:is(.chat-compose, .nsp-composer) .chat-model-button:is(:disabled, [aria-disabled="true"]) { cursor: default; opacity: .8; }
 .chat-model-icon, .chat-mode-icon { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; color: var(--cc-text-dim); }
 /* 上下文用量：可见区域只留高亮圆环，详情在 tooltip。60% 起转黄、85% 起转红。 */
 .chat-context { display: inline-flex; align-items: center; flex: 0 0 auto; color: var(--cc-text-faint); }
@@ -6287,7 +6329,7 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .chat-model-effort-seg button { padding: var(--sp-4) var(--sp-9); border: 0; border-radius: calc(var(--radius-md) - 2px); background: transparent; color: var(--cc-text-dim); font-size: var(--text-sm); cursor: pointer; }
 .chat-model-effort-seg button:hover:not(:disabled) { color: var(--cc-text); }
 .chat-model-effort-seg button.is-active { background: var(--cc-panel-raised); color: var(--cc-text); box-shadow: var(--shadow-sm); }
-.chat-model-effort-seg button:disabled { cursor: progress; }
+.chat-model-effort-seg button:is(:disabled, [aria-disabled="true"]) { cursor: progress; }
 /* 模型钮里的档位用强调色，与模型名一眼分开（Kimi 同款）。 */
 .chat-model-pill-effort { color: var(--cc-text-dim); }
 /* 模型钮照 Kimi 的 model-pill：全圆角、正文色、中等字重；菜单开着时铺一层强调色浅底、箭头朝上——
@@ -6305,6 +6347,9 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 /* 「+」菜单：图标 + 名字 + 一行说明，与权限菜单同款项（对照 Kimi 的 addMenu）。 */
 .chat-add-menu { min-width: 240px; }
 .chat-add-ico { flex: 0 0 auto; width: 20px; height: 20px; display: grid; place-items: center; color: var(--cc-text-dim); }
+/* aria-disabled 与 disabled 同一副长相：运行中不可选的模型/档位要能被方向键走到、读屏念到（走查 C-8），故不用 disabled。 */
+.chat-model-item:is(:disabled, [aria-disabled="true"]) { opacity: .5; cursor: default; }
+.chat-model-item:is(:disabled, [aria-disabled="true"]):hover { background: transparent; }
 /* 选不到的档：不压透明度，名字与小字改用现有的禁用文字色（与 .nsp-send:disabled 同一个 --cc-text-faint，第三轮 C8）。 */
 .chat-model-item:disabled { cursor: default; }
 .chat-model-item:disabled :is(.chat-model-item-name, .chat-model-item-detail) { color: var(--cc-text-faint); }
@@ -6408,6 +6453,9 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .chat-md code.chat-md-link-code { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
 .chat-md code.chat-md-link-code:hover, .chat-md code.chat-md-link-code:focus-visible { color: var(--cc-accent-text); text-decoration-style: solid; text-decoration-color: var(--cc-brand-line); outline: none; }
 .chat-md .chat-md-link-error { margin-left: 6px; font-size: 0.9em; color: var(--cc-err-text); }
+/* × 关掉链接打不开的提示（做空第一轮 #13）：提示不再自收，得有手动关的出口。 */
+.chat-md .chat-md-link-error-close { margin-left: var(--sp-4); padding: 0 var(--sp-4); border: 0; border-radius: var(--radius-xs); background: transparent; color: inherit; font: inherit; line-height: 1; cursor: pointer; }
+.chat-md .chat-md-link-error-close:hover { background: var(--fill-hover); }
 /* 表格外壳：表格自己横滚，「复制表格」压在右下角一行，弱色不抢正文。 */
 /* 贴表格的实际宽度：表格本身是 display:block（为了横向滚动），外壳原先铺满正文列，「复制表格」
    靠右对齐后离表格右端 256px（qa-md 实拍），面板越宽离得越远。 */
@@ -6475,8 +6523,8 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 /* 「加载更早」的失败行：复用 .chat-send-error 皮肤，落在按钮下一行（横排会挤歪居中胶囊）。 */
 .chat-load-earlier .chat-send-error { flex-basis: 100%; margin: 0 var(--sp-14); }
 .chat-load-earlier button { min-height: var(--btn-h-md); padding: 0 var(--sp-14); border: 0; border-radius: var(--radius-md); color: var(--cc-text-dim); background: var(--fill-selected); font-size: var(--text-xs); cursor: pointer; }
-.chat-load-earlier button:hover:not(:disabled) { color: var(--cc-text); background: var(--fill-selected-hover); }
-.chat-load-earlier button:disabled { opacity: .6; cursor: default; }
+.chat-load-earlier button:hover:not(:disabled, [aria-disabled="true"]) { color: var(--cc-text); background: var(--fill-selected-hover); }
+.chat-load-earlier button:is(:disabled, [aria-disabled="true"]) { opacity: .6; cursor: default; }
 
 /* 「回到最新」悬浮钮：sticky 钉在滚动视口底缘（贴底时组件不渲染，不占位）。
    底色必须不透明：--fill-hover 是半透明表面色，浮层压在消息上会被正文穿透成一团花字
@@ -6777,12 +6825,12 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
    边框限 :not(.open)——展开态保留 .dd-btn.open 的主题色描边。 */
 .managed-terminal-cover-actions .dd-btn { border-radius: var(--radius-md); font-size: var(--text-xs); background: rgba(255,255,255,.06); }
 .managed-terminal-cover-actions .dd-btn:not(.open) { border-color: rgba(255,255,255,.16); }
-.managed-terminal-cover > button:hover,
-.managed-terminal-exit-card > button:hover,
-.managed-terminal-cover-actions > button:hover { background: rgba(255,255,255,.14); }
-.managed-terminal-cover > button:disabled,
-.managed-terminal-exit-card > button:disabled,
-.managed-terminal-cover-actions > button:disabled { opacity: .55; cursor: default; }
+.managed-terminal-cover > button:hover:not([aria-disabled="true"]),
+.managed-terminal-exit-card > button:hover:not([aria-disabled="true"]),
+.managed-terminal-cover-actions > button:hover:not([aria-disabled="true"]) { background: rgba(255,255,255,.14); }
+.managed-terminal-cover > button:is(:disabled, [aria-disabled="true"]),
+.managed-terminal-exit-card > button:is(:disabled, [aria-disabled="true"]),
+.managed-terminal-cover-actions > button:is(:disabled, [aria-disabled="true"]) { opacity: .55; cursor: default; }
 .managed-terminal-actions { position: absolute; top: 8px; right: 20px; z-index: calc(var(--z-raised) + 3); display: flex; gap: var(--sp-6); opacity: 0; transition: opacity var(--dur-base) var(--ease-in-out); }
 .managed-terminal-error { position: absolute; left: 20px; right: 20px; bottom: 10px; z-index: calc(var(--z-raised) + 3); padding: var(--sp-6) var(--sp-10); border: 0; border-radius: var(--radius-md); color: #ff8580; background: rgba(34, 35, 37, 0.96); box-shadow: inset 0 0 0 1px rgba(255, 92, 87, 0.7); font-size: var(--text-xs); line-height: 1.35; text-align: left; overflow-wrap: anywhere; }
 /* 输出流停滞警示（ConPTY 管道疑似僵死，见 ManagedTerminal 的 terminalStreamStalled）：
@@ -6792,8 +6840,8 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .managed-terminal-error { display: flex; align-items: center; gap: var(--sp-8); }
 .managed-terminal-error > span { flex: 1 1 auto; }
 .managed-terminal-error button { flex: 0 0 auto; padding: var(--sp-3) var(--sp-8); border: 0; border-radius: var(--radius-sm); color: var(--term-fg); background: rgba(255,255,255,.1); font-size: var(--text-2xs); cursor: pointer; }
-.managed-terminal-error button:hover:not(:disabled) { background: rgba(255,255,255,.12); }
-.managed-terminal-error button:disabled { opacity: .55; cursor: default; }
+.managed-terminal-error button:hover:not(:disabled, [aria-disabled="true"]) { background: rgba(255,255,255,.12); }
+.managed-terminal-error button:is(:disabled, [aria-disabled="true"]) { opacity: .55; cursor: default; }
 .managed-terminal-actions button { padding: var(--sp-4) var(--sp-8); border: var(--hairline) solid rgba(255, 255, 255, 0.17); border-radius: var(--radius-md); color: var(--term-fg-dim); background: rgba(34, 35, 37, 0.96); font-size: var(--text-2xs); cursor: pointer; }
 /* ── 终端内搜索条(Ctrl+F,ManagedTerminal):浮在终端右上角,深色底不遮 TUI 主体;
    z 高于 hover 才显形的操作条(managed-terminal-actions),同区不打架。 ── */
@@ -7346,6 +7394,9 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .isl-panel-head > .isl-btn.isl-new { background: var(--isl-chip); margin-right: 4px; }
 .isl-panel-head > .isl-btn.isl-new:hover { background: var(--isl-chip-hover); }
 .isl-panel-body { display: flex; gap: 18px; margin-top: 10px; }
+/* 点会话「打开」失败的提示条（I-1/I-2，走查 2026-11-12）：标题行下、列表上，读完前不消失。 */
+.isl-panel-err { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 12px; min-width: 0; }
+.isl-panel-err-text { flex: 1; min-width: 0; display: flex; align-items: center; white-space: nowrap; overflow: hidden; }
 /* 有翻页时内容区至少三行会话高（行 54 = 8 + 19 + 2 + 17 + 8，行距 2）：额度页（约 164）和不满三条的末页
    都垫到同一个高度，翻页时底边和圆点不动。原来英文会话页 231、额度页 244，翻一页窗口伸缩 13px。
    窗口高度跟着面板实测高度走（IslandPanel 的 onMeasure），这里不变窗口就不变。 */
@@ -7389,6 +7440,12 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 /* 每家一栏：栏顶 logo + 名字，下面一个叠环（每档额度一圈）和图例；栏与栏之间一道细线。 */
 .isl-usage-group { display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 0 20px; }
 .isl-usage-group + .isl-usage-group { border-left: 1px solid var(--isl-line); } /* 保留 1px：同上 */
+/* 刷新失败的旧额度：降饱和压暗，并在环下写上次更新时间（backlog 仍存在 #1，2026-11-12）。
+   不藏起来：旧值总比空着强，只是不能冒充现在的值。 */
+.isl-usage-group.is-stale .isl-usage-stack,
+.isl-usage-group.is-stale .isl-usage-lanes,
+.isl-usage-wrap.is-stale { filter: saturate(0.2); opacity: 0.6; }
+.isl-usage-stale { max-width: 100%; font-size: 11px; color: var(--isl-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .isl-usage-head { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; color: var(--isl-text-2); }
 .isl-usage-head-logo { display: grid; place-items: center; width: 14px; height: 14px; }
 .isl-usage-head-logo svg, .isl-usage-head-logo img { width: 13px !important; height: 13px !important; }
@@ -7588,12 +7645,12 @@ pre.chat-md-plain {
 .wt-opt-path { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wt-opt-warn { display: flex; align-items: center; gap: var(--sp-8); flex-wrap: wrap; color: var(--cc-warn-text); }
 .wt-opt-btn { height: var(--btn-h-sm); padding: 0 var(--sp-8); border: var(--hairline) solid; border-radius: var(--radius-sm); font: inherit; font-size: var(--text-xs); cursor: pointer; white-space: nowrap; }
-.wt-opt-btn:disabled { opacity: .5; cursor: default; }
+.wt-opt-btn:is(:disabled, [aria-disabled="true"]) { opacity: .5; cursor: default; }
 /* 警告行里的修复动作（「改用 login-form-2」）是这条警告唯一的出路，给次级按钮的底色：
    并进幽灵按钮规则后它是灰字、无底无边，比旁边的琥珀色警告还弱一档，看不出能点。
    写成 button.xxx 是为了压过文件末尾幽灵按钮那条 .wt-opt-btn（同特异度靠后者赢）。 */
 .wt-opt-warn button.wt-opt-btn { background: var(--fill-selected); color: var(--cc-text); }
-.wt-opt-warn button.wt-opt-btn:hover:not(:disabled) { background: var(--fill-selected-hover); color: var(--cc-text); }
+.wt-opt-warn button.wt-opt-btn:hover:not(:disabled, [aria-disabled="true"]) { background: var(--fill-selected-hover); color: var(--cc-text); }
 /* 跟消息列走：它在 .chat-scroll 外面，左右外边距照抄滚动区的留白算式。原来是固定 14px，
    1280 宽时比消息列左右各凸出 22（254–1018 对 276–995），窗口越宽越长，2560 宽时横贯两千像素。
    内边距 16 与列内各卡片同一条内容线。 */
@@ -7680,16 +7737,19 @@ pre.chat-md-plain {
 .btn-secondary:is(button, a), .ns-btn { border-color: transparent; background: var(--fill-selected); color: var(--cc-text); }
 .btn-secondary:is(button, a):hover:not(:disabled), .ns-btn:hover:not(:disabled) { background: var(--fill-selected-hover); }
 .btn-ghost:is(button, a), .wt-opt-btn, .nsp-note-btn, .chat-review-bar button, .chat-diff-cmt-actions button { border-color: transparent; background: transparent; color: var(--cc-text-dim); }
-.btn-ghost:is(button, a):hover:not(:disabled), .wt-opt-btn:hover:not(:disabled), .nsp-note-btn:hover:not(:disabled),
+.btn-ghost:is(button, a):hover:not(:disabled), .wt-opt-btn:hover:not(:disabled, [aria-disabled="true"]), .nsp-note-btn:hover:not(:disabled, [aria-disabled="true"]),
 .chat-review-bar button:hover:not(:disabled), .chat-diff-cmt-actions button:hover:not(:disabled) { background: var(--fill-hover); color: var(--cc-text); }
 /* 主按钮写在次级/幽灵之后：组合在 .chat-review-bar button 这类幽灵基类上时，同特异度靠后者赢。 */
 .btn-primary:is(button, a) { border-color: transparent; background: var(--cc-accent); color: var(--cc-on-accent); font-weight: 500; }
 /* 禁用的主按钮退回中性：浅色主题主按钮是墨底青柠字，靠降透明度表示禁用会变成灰底青柠字，读不清。 */
-button.btn-primary:disabled { opacity: 1; background: var(--fill-selected); color: var(--cc-text-faint); cursor: default; }
+button.btn-primary:is(:disabled, [aria-disabled="true"]) { opacity: 1; background: var(--fill-selected); color: var(--cc-text-faint); cursor: default; }
 .btn-primary:is(button, a):hover:not(:disabled) { background: var(--cc-accent-dim); }
 :is(.btn-primary, .btn-secondary, .btn-ghost):is(button, a), .ns-btn, .sbtn { transition: background var(--dur-fast) var(--ease-in-out), color var(--dur-fast) var(--ease-in-out), transform var(--dur-fast) var(--ease-in); }
-:is(.btn-primary, .btn-secondary, .btn-ghost):is(button, a):active:not(:disabled), .ns-btn:active:not(:disabled), .sbtn:active:not(:disabled) { transform: scale(0.98); }
-:is(.btn-primary, .btn-secondary, .btn-ghost):is(button, a):disabled { opacity: 0.5; cursor: default; }
+:is(.btn-primary, .btn-secondary, .btn-ghost):is(button, a):active:not(:disabled), .ns-btn:active:not(:disabled), .sbtn:active:not(:disabled, [aria-disabled="true"]) { transform: scale(0.98); }
+:is(.btn-primary, .btn-secondary, .btn-ghost):is(button, a):is(:disabled, [aria-disabled="true"]) { opacity: 0.5; cursor: default; }
 @media (prefers-reduced-motion: reduce) {
-  :is(.btn-primary, .btn-secondary, .btn-ghost):is(button, a):active:not(:disabled), .ns-btn:active:not(:disabled), .sbtn:active:not(:disabled) { transform: none; }
+  :is(.btn-primary, .btn-secondary, .btn-ghost):is(button, a):active:not(:disabled), .ns-btn:active:not(:disabled), .sbtn:active:not(:disabled, [aria-disabled="true"]) { transform: none; }
 }
+/* 进行中只标 aria-disabled 的主按钮（busyButton.ts；做空第一轮 #4，2026-11-12）：上面的悬停/按下规则只排除 :disabled，
+   这里把悬停底色与按下缩放压回禁用态，长相与 disabled 一致。 */
+button.btn-primary[aria-disabled="true"]:is(:hover, :active) { background: var(--fill-selected); transform: none; }

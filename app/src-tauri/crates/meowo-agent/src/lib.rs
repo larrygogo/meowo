@@ -28,6 +28,7 @@ pub mod account;
 pub mod auth;
 pub mod caps;
 pub mod chat_ui;
+pub mod cli_text;
 pub mod codec;
 pub mod config;
 pub mod descriptor;

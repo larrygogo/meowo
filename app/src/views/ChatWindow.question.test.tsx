@@ -6,6 +6,7 @@ import { emptyComposerFrame, invoke, openDialog, eventListeners, setTitleMock, t
 import { ChatWindow } from "./ChatWindow";
 import { chatUi } from "../test/agents";
 import { terminalAttention } from "../terminalAttention";
+import { zh } from "../i18n/zh";
 
 describe("ChatWindow", () => {
   /**
@@ -998,7 +999,8 @@ describe("ChatWindow", () => {
     expect(screen.getByText("火锅")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /火锅/ })).toBeNull();
     expect(screen.queryByRole("button", { name: "去终端页" })).toBeNull();
-    expect(screen.getByText(/请回到运行它的终端作答/)).toBeTruthy();
+    // 外部会话 Meowo 写不进按键：写明做不到的原因，不再叫人「回到运行它的终端」（第三轮验收 13）。
+    expect(screen.getByText(zh.chat.questionExternalHint)).toBeTruthy();
   });
 
   /**

@@ -783,6 +783,114 @@ mod tests {
         );
     }
 
+    /// codex 0.166.0 审批框：整句 `press enter to confirm or esc to cancel` / `allow command?`
+    /// 在二进制里已经没有，底栏由按键 + ` to confirm` / ` to cancel` 拼出，选项固定带
+    /// `No, and tell Codex what to do differently`（codex.exe 字符串，research-cli-drift X7，
+    /// 2026-11-12；行布局按 ratatui 选择列表推断，未实拍）。光标停在哪一项都要认。
+    #[test]
+    fn codex_0166_approval_overlay_is_blocked() {
+        let cursor_first = snap(&[
+            "\u{203A} run the tests",
+            "  Would you like to run the following command?",
+            "  $ cargo test",
+            "\u{203A} 1. Yes, just this once",
+            "  2. Yes, and don't ask again for commands that start with `cargo test`",
+            "  3. No, and tell Codex what to do differently",
+            "  Press enter to confirm or esc to cancel",
+        ]);
+        assert_eq!(
+            state_of(evaluate("codex", &cursor_first)),
+            Some((ScreenState::Blocked, "live_strong_blocker"))
+        );
+        // 光标在最后一项：选项行本身是提示符标记行、不在区域内，靠底栏两段认
+        let cursor_last = snap(&[
+            "  Would you like to make the following edits?",
+            "  1. Yes, proceed",
+            "\u{203A} 2. No, and tell Codex what to do differently",
+            "  enter to confirm \u{00B7} esc to cancel",
+        ]);
+        assert_eq!(
+            state_of(evaluate("codex", &cursor_last)),
+            Some((ScreenState::Blocked, "live_strong_blocker"))
+        );
+        // 已答过的审批留在历史里（最后一个 `›` 之前）不算
+        let answered = snap(&[
+            "  3. No, and tell Codex what to do differently",
+            "  enter to confirm \u{00B7} esc to cancel",
+            "\u{203A} next prompt",
+        ]);
+        assert_ne!(
+            state_of(evaluate("codex", &answered)).map(|(state, _)| state),
+            Some(ScreenState::Blocked)
+        );
+    }
+
+    /// codex 0.166.0 的 transcript 覆盖层（Ctrl+T）：`q to quit` / `esc to edit prev` 已不在
+    /// 二进制里，pager_overlay 只剩 ` to scroll` / ` to page` / ` to jump`（research-cli-drift X6）。
+    /// 老版本的整套提示仍认。
+    #[test]
+    fn codex_transcript_pager_holds_state_old_and_new() {
+        let new = snap(&[
+            "  user: run the tests",
+            "  \u{2191}/\u{2193} to scroll   pgup/pgdn to page   home/end to jump",
+        ]);
+        assert!(matches!(
+            evaluate("codex", &new),
+            Some(Evaluation::Hold { rule_id: "transcript_viewer" })
+        ));
+        let old = snap(&[
+            "  user: run the tests",
+            "  \u{2191}/\u{2193} to scroll   pgup/pgdn to page   home/end to jump   q to quit   esc to edit prev",
+        ]);
+        assert!(matches!(
+            evaluate("codex", &old),
+            Some(Evaluation::Hold { rule_id: "transcript_viewer" })
+        ));
+        // 做空第二轮 N6（2026-11-12）：0.166.0 codex.exe 里另有带空格的 `pgup / pgdn` 常量（机器码立即数
+        // `pgup / p` + `pgdn` 拼出，看不出属于哪个界面）。键间换成 ` / ` 照样认，三组按键都覆盖。
+        let spaced = snap(&[
+            "  user: run the tests",
+            "  \u{2191} / \u{2193} to scroll   pgup / pgdn to page   home / end to jump",
+        ]);
+        assert!(matches!(
+            evaluate("codex", &spaced),
+            Some(Evaluation::Hold { rule_id: "transcript_viewer" })
+        ));
+    }
+
+    /// 做空第一轮 #9（2026-11-12）：正文里同时出现 to scroll / to page / to jump（agent 在讲分页器、
+    /// 用户贴的 README），状态行还在 Working。修前三段子串同屏就判记录查看页并 hold，运行中被冻住。
+    /// 底栏样本按 0.166.0 codex.exe 的按键显示表与 pager_overlay 三段说明拼出（非实拍）。
+    #[test]
+    fn codex_prose_mentioning_pager_hints_is_not_transcript_viewer() {
+        let prose = snap(&[
+            "  The pager supports arrow keys to scroll, PgUp to page and Home to jump.",
+            "  Scroll down to page two; swipe to jump; drag to scroll.",
+            " \u{2022} Working (3m 12s \u{00B7} esc to interrupt)",
+        ]);
+        assert_eq!(
+            state_of(evaluate("codex", &prose)),
+            Some((ScreenState::Working, "screen_working_fallback"))
+        );
+        // 只有说明、没有按键字形的残片也不算。
+        let fragments = snap(&["  scroll  to scroll   to page   to jump"]);
+        assert!(!matches!(
+            evaluate("codex", &fragments),
+            Some(Evaluation::Hold { .. })
+        ));
+        // 窄窗把底栏折成三行，各段仍带按键：照样认。
+        let wrapped = snap(&[
+            "  user: run the tests",
+            "  \u{2191}/\u{2193} to scroll",
+            "  pgup/pgdn to page",
+            "  home/end to jump",
+        ]);
+        assert!(matches!(
+            evaluate("codex", &wrapped),
+            Some(Evaluation::Hold { rule_id: "transcript_viewer" })
+        ));
+    }
+
     #[test]
     fn codex_working_status_line_is_working() {
         let s = snap(&[
@@ -979,6 +1087,80 @@ mod tests {
         );
     }
 
+    /// kimi 2.5.1 的盲文 spinner 状态词改成 Unicode 省略号（包内 MoonLoader.updateDisplay
+    /// 拼 `${frame} ${label}` + ` · Tip: …`，label 是 `"Working…"` / `"Compacting…"`，
+    /// 2026-11-12 取证）。旧规则只认 `working...`，这行与输入框同屏时整屏判成空闲。
+    /// 旧版三个点的写法（上面 `kimi_spinners_are_working`）仍认。
+    #[test]
+    fn kimi_251_ellipsis_spinner_outranks_composer_prompt() {
+        for line in [
+            " \u{280B} Working\u{2026} \u{00B7} Tip: ! to run a shell command",
+            " \u{2834} Working\u{2026}",
+            " \u{2819} Compacting\u{2026}",
+        ] {
+            let s = snap(&["  output", line, "\u{2502} >      \u{2502}", "context: 12%"]);
+            assert_eq!(
+                state_of(evaluate("kimi", &s)),
+                Some((ScreenState::Working, "braille_spinner_working")),
+                "{line}"
+            );
+        }
+        let old = snap(&[" \u{280B} Working... 3s", "\u{2502} >      \u{2502}"]);
+        assert_eq!(
+            state_of(evaluate("kimi", &old)),
+            Some((ScreenState::Working, "braille_spinner_working"))
+        );
+    }
+
+    /// kimi 2.5.1 提问表单的确认页（包内 question-dialog.ts renderSubmitTab 原文拼出，2026-11-12）：
+    /// 没有 `? 问题` 行，修复前判成空闲。
+    #[test]
+    fn kimi_251_question_submit_page_is_blocked() {
+        let s = snap(&[
+            "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
+            " question",
+            "",
+            " (\u{2713}) Database  (\u{2713}) Features   Submit ",
+            "",
+            " Review your answer before submit",
+            "",
+            "  Q  Which database should we use?",
+            "  \u{2192}  SQLite",
+            "",
+            " Ready to submit your answers?",
+            "",
+            "  \u{2192} [1] Submit",
+            "    [2] Cancel",
+            "",
+            "  \u{2191}\u{2193} select  1/2 choose  \u{21B5} confirm  \u{2190}/\u{2192}/tab switch  esc cancel",
+            "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
+        ]);
+        assert_eq!(
+            state_of(evaluate("kimi", &s)),
+            Some((ScreenState::Blocked, "question_submit_panel"))
+        );
+    }
+
+    /// kimi 2.5.1 重试时月相 spinner 带 `Retrying (n/m) · <错误名>` 标签（包内
+    /// formatStepRetryLabel，2026-11-12 取证）。没有 `(n/m)` 计数的 retrying 是正文，不认。
+    #[test]
+    fn kimi_251_retry_spinner_is_working() {
+        let s = snap(&[
+            "  output",
+            " \u{1F318} Retrying (2/5) \u{00B7} RateLimitError \u{00B7} in 4s",
+            "\u{2502} >      \u{2502}",
+        ]);
+        assert_eq!(
+            state_of(evaluate("kimi", &s)),
+            Some((ScreenState::Working, "moon_word_status_working"))
+        );
+        let prose = snap(&["\u{1F318} retrying later is fine", "\u{2502} >      \u{2502}"]);
+        assert_eq!(
+            state_of(evaluate("kimi", &prose)),
+            Some((ScreenState::Idle, "composer_prompt_idle"))
+        );
+    }
+
     // -- gemini --
 
     #[test]
@@ -1017,6 +1199,120 @@ mod tests {
         assert_eq!(
             state_of(evaluate("gemini", &s)),
             Some((ScreenState::Working, "esc_cancel_working"))
+        );
+    }
+
+    /// gemini 0.65 提问表单（ask_user）。画面按 npm bundle 源码拼出（2026-11-12，未实拍）：
+    /// ToolConfirmationQueue 的绿框 StickyHeader 头行 `Answer Questions`，AskUserDialog 的
+    /// BaseSelectionList（`● 1.  选项`）与 DialogFooter（`Enter to select · ↑/↓ to navigate ·
+    /// Esc to cancel`）。修复前提示行的 `Esc to cancel` 让兜底规则判成运行中。
+    #[test]
+    fn gemini_065_ask_user_dialog_is_blocked() {
+        let s = snap(&[
+            "\u{280F} Waiting for user confirmation...",
+            "\u{256D}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{256E}",
+            "\u{2502} Answer Questions                                  \u{2502}",
+            "\u{2502}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2502}",
+            "\u{2502} Which database should we use?                     \u{2502}",
+            "\u{2502}                                                   \u{2502}",
+            "\u{2502} \u{25CF} 1.  PostgreSQL                                  \u{2502}",
+            "\u{2502}   2.  SQLite                                      \u{2502}",
+            "\u{2502}   3.  Enter a custom value                        \u{2502}",
+            "\u{2502}                                                   \u{2502}",
+            "\u{2502} Enter to select \u{00B7} \u{2191}/\u{2193} to navigate \u{00B7} Esc to cancel \u{2502}",
+            "\u{2570}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{256F}",
+        ]);
+        assert_eq!(
+            state_of(evaluate("gemini", &s)),
+            Some((ScreenState::Blocked, "ask_user_dialog"))
+        );
+        // 只剩头行（表单已答完、头行滚成残影）不算在等回答。
+        let stale = snap(&["\u{2502} Answer Questions   \u{2502}", "  plain output"]);
+        assert_ne!(
+            state_of(evaluate("gemini", &stale)).map(|(state, _)| state),
+            Some(ScreenState::Blocked)
+        );
+    }
+
+    /// 做空第一轮 #8（2026-11-12）：提示行按框宽折行时也要认出。样本按 0.65.0 bundle
+    /// （interactiveCli-*.js 的 AskUserDialog keyboardHints + DialogFooter 用 ` · ` 连接）拼出，非实拍：
+    /// 多题选择 `Enter to select · ←/→ to switch questions · Esc to cancel`，多题文本
+    /// `Enter to submit · Tab/Shift+Tab to switch questions · Esc to cancel`，确认页
+    /// `Enter to submit · Tab/Shift+Tab to edit answers · Esc to cancel`。修前要求整串单行，窄窗
+    /// 下 `Esc to cancel` 折到下一行就落回兜底判运行中。
+    #[test]
+    fn gemini_065_ask_user_dialog_wrapped_and_multi_question() {
+        let frame = |body: &[&str]| {
+            let mut lines = vec![
+                "\u{280F} Waiting for user confirmation...",
+                "\u{256D}\u{2500}\u{2500}\u{2500}\u{2500}\u{256E}",
+                "\u{2502} Answer Questions              \u{2502}",
+                "\u{2502}\u{2500}\u{2500}\u{2500}\u{2500}\u{2502}",
+            ];
+            lines.extend_from_slice(body);
+            lines.push("\u{2570}\u{2500}\u{2500}\u{2500}\u{2500}\u{256F}");
+            snap(&lines)
+        };
+        let cases = [
+            // 多题选择，40 列框：导航段与取消段折到第二、三行。
+            frame(&[
+                "\u{2502} \u{2190} Q1 \u{2502} Q2 \u{2192}                   \u{2502}",
+                "\u{2502} Which database should we use?  \u{2502}",
+                "\u{2502} \u{25CF} 1.  PostgreSQL                \u{2502}",
+                "\u{2502}   2.  SQLite                    \u{2502}",
+                "\u{2502} Enter to select \u{00B7} \u{2190}/\u{2192} to switch  \u{2502}",
+                "\u{2502} questions \u{00B7} Esc to cancel       \u{2502}",
+            ]),
+            // 多题文本题，提示行折成两行。
+            frame(&[
+                "\u{2502} What should the table be named? \u{2502}",
+                "\u{2502} > users                         \u{2502}",
+                "\u{2502} Enter to submit \u{00B7} Tab/Shift+Tab to \u{2502}",
+                "\u{2502} switch questions \u{00B7} Esc to cancel \u{2502}",
+            ]),
+            // 确认页（多题答完），不折行。
+            frame(&[
+                "\u{2502} Review your answers:            \u{2502}",
+                "\u{2502} Q1 PostgreSQL                   \u{2502}",
+                "\u{2502} Enter to submit \u{00B7} Tab/Shift+Tab to edit answers \u{00B7} Esc to cancel \u{2502}",
+            ]),
+        ];
+        for s in &cases {
+            assert_eq!(
+                state_of(evaluate("gemini", s)),
+                Some((ScreenState::Blocked, "ask_user_dialog"))
+            );
+        }
+        // 正文里出现 Enter to select（没在框里、行首也不是它）不算。
+        let prose = snap(&[
+            "\u{2502} Answer Questions   \u{2502}",
+            "  Press Enter to select a file (esc to cancel, 3s)",
+        ]);
+        assert_ne!(
+            state_of(evaluate("gemini", &prose)).map(|(state, _)| state),
+            Some(ScreenState::Blocked)
+        );
+    }
+
+    /// gemini 0.65 沙箱扩权审批（ToolConfirmationMessage 的 sandbox_expansion 分支，源码取证
+    /// 2026-11-12）：问句 `To run [Shell], allow access to the following?` 在框内。
+    #[test]
+    fn gemini_065_sandbox_expansion_is_blocked() {
+        let s = snap(&[
+            "\u{2502} ? Shell  npm install                         \u{2502}",
+            "\u{2502} To run [Shell], allow access to the following? \u{2502}",
+            "\u{2502} \u{2022} Network: All Urls                        \u{2502}",
+            "\u{2502} \u{25CF} 1. Allow once                             \u{2502}",
+        ]);
+        assert_eq!(
+            state_of(evaluate("gemini", &s)),
+            Some((ScreenState::Blocked, "apply_or_allow_change"))
+        );
+        // 正文引用同一句（不在框里）不算。
+        let prose = snap(&["To run [Shell], allow access to the following?"]);
+        assert_eq!(
+            state_of(evaluate("gemini", &prose)),
+            Some((ScreenState::Idle, FALLBACK_RULE_ID))
         );
     }
 
@@ -1061,6 +1357,18 @@ mod tests {
             state_of(evaluate("opencode", &hint)),
             Some((ScreenState::Working, "interrupt_hint_working"))
         );
+        // 1.19.3 底栏：`esc ` + `interrupt`，按过一次 Esc 后 `esc again to interrupt`；关了动画时
+        // spinner 换成 `[⋯]`（opencode.exe 内嵌 JS，research-cli-drift O1，2026-11-12）。
+        for line in [
+            " [\u{22EF}] esc interrupt",
+            " [\u{22EF}] esc again to interrupt",
+        ] {
+            assert_eq!(
+                state_of(evaluate("opencode", &snap(&["  reading files", line]))),
+                Some((ScreenState::Working, "interrupt_hint_working")),
+                "应识别为运行中: {line:?}"
+            );
+        }
     }
 
     /// 所有内置规则的正则必须可编译。求值层遇到坏正则是「整条规则跳过」（不 panic），
@@ -1094,6 +1402,43 @@ mod tests {
             }
         }
         assert!(checked > 0, "应至少有一条规则用了正则");
+    }
+
+    /// kimi `/undo N` 的拒绝行：前端按插件声明的 reject_pattern（`i` 标志）逐行找，命中的整行
+    /// 原样转给用户，认不出就只报「未确认」。这里用产品里的那份正则（不是前端测试夹具）
+    /// 对 kimi 2.5.1 包内原文逐条核对（undo.ts 的 handleUndoCommand / formatUndoLimitMessage，
+    /// 2026-11-12 取证），旧版文案照认。放在这里是因为只有本 crate 依赖 regex。
+    #[test]
+    fn kimi_undo_reject_pattern_matches_251_wording() {
+        let pattern = meowo_agent::resolve(Some("kimi"))
+            .and_then(|plugin| plugin.undo_control())
+            .and_then(|control| control.reject_pattern)
+            .expect("kimi 声明了 /undo 拒绝规则");
+        let re = regex::RegexBuilder::new(pattern)
+            .case_insensitive(true)
+            .build()
+            .expect("拒绝规则可编译");
+        for line in [
+            // 2.5.1 新文案
+            "Cannot undo 3 prompts; only 1 can be undone in the active context.",
+            "Cannot undo 2 prompts; only 1 prompt can be undone in the active context after the last compaction.",
+            "Cannot undo 1 prompt; only 0 prompts can be undone in the active context.",
+            "Usage: /undo [count], where count is a positive integer.",
+            "No active session. Send a message to start one.",
+            "Cannot undo while streaming \u{2014} press Esc or Ctrl-C first.",
+            "Nothing to undo after the last compaction.",
+            "Loaded updates from another client. Review and run /undo again.",
+            "Failed to undo: session busy",
+            // 旧版文案
+            "Nothing to undo.",
+            "Cannot undo while streaming",
+        ] {
+            assert!(re.is_match(line), "应认出拒绝行：{line}");
+        }
+        // 普通正文里提到 undo 不能当成拒绝。
+        for line in ["Undid 1 prompt.", "我们可以 undo 一下吗", "cannot undo this, sorry"] {
+            assert!(!re.is_match(line), "不应当成拒绝：{line}");
+        }
     }
 
     /// 一次求值的开销必须远小于检测节拍（300ms），否则会话一多就会拖住 ticker 线程。

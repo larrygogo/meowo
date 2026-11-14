@@ -572,7 +572,10 @@ fn cli_part_string(value: Option<&Value>) -> String {
     match value {
         Value::Null => String::new(),
         Value::String(text) => text.clone(),
-        Value::Array(parts) => parts.iter().map(|part| cli_part_string(Some(part))).collect(),
+        Value::Array(parts) => parts
+            .iter()
+            .map(|part| cli_part_string(Some(part)))
+            .collect(),
         Value::Object(part) => {
             const PLACEHOLDERS: [(&str, &str); 4] = [
                 ("videoMetadata", "[Video Metadata]"),
@@ -581,7 +584,12 @@ fn cli_part_string(value: Option<&Value>) -> String {
                 ("fileData", "[File Data]"),
             ];
             if let Some(thought) = part.get("thought") {
-                return format!("[Thought: {}]", thought.as_str().map_or_else(|| thought.to_string(), str::to_owned));
+                return format!(
+                    "[Thought: {}]",
+                    thought
+                        .as_str()
+                        .map_or_else(|| thought.to_string(), str::to_owned)
+                );
             }
             for (key, text) in PLACEHOLDERS {
                 if part.contains_key(key) {
@@ -589,10 +597,16 @@ fn cli_part_string(value: Option<&Value>) -> String {
                 }
             }
             if let Some(call) = part.get("functionCall") {
-                return format!("[Function Call: {}]", call["name"].as_str().unwrap_or("undefined"));
+                return format!(
+                    "[Function Call: {}]",
+                    call["name"].as_str().unwrap_or("undefined")
+                );
             }
             if let Some(response) = part.get("functionResponse") {
-                return format!("[Function Response: {}]", response["name"].as_str().unwrap_or("undefined"));
+                return format!(
+                    "[Function Response: {}]",
+                    response["name"].as_str().unwrap_or("undefined")
+                );
             }
             if part.contains_key("inlineData") {
                 return "[Media]".to_string(); // 只用来判空，具体文字无关
@@ -641,7 +655,9 @@ pub(super) fn session_content(path: &Path, text: &str) -> SessionContent {
                 return SessionContent::Unknown;
             };
             match value.get("messages").and_then(Value::as_array) {
-                Some(messages) if messages.iter().any(is_resumable_record) => SessionContent::HasMessages,
+                Some(messages) if messages.iter().any(is_resumable_record) => {
+                    SessionContent::HasMessages
+                }
                 _ => SessionContent::Unknown,
             }
         }
@@ -693,7 +709,8 @@ fn replay_jsonl(text: &str) -> Option<bool> {
             }
         } else if let Some(patch) = record.get("$patch").filter(|patch| patch.is_object()) {
             let mut apply = |update: &Value| {
-                let (Some(id), Some(content)) = (update["id"].as_str(), update.get("content")) else {
+                let (Some(id), Some(content)) = (update["id"].as_str(), update.get("content"))
+                else {
                     return;
                 };
                 if let Some(kind) = kinds.get_mut(id) {
@@ -710,7 +727,12 @@ fn replay_jsonl(text: &str) -> Option<bool> {
             for update in patch["updates"].as_array().into_iter().flatten() {
                 apply(update);
             }
-            for remove in patch["removeIds"].as_array().into_iter().flatten().filter_map(Value::as_str) {
+            for remove in patch["removeIds"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+            {
                 if let Some(at) = ids.iter().position(|id| id == remove) {
                     ids.remove(at);
                 }

@@ -51,6 +51,7 @@ import {
 } from "./pathMenu";
 import { FileIcon, FolderIcon, LineCounts, readDiffLayout, saveDiffLayout, singleRepo, touchedInRoot } from "./diffShared";
 import { registerDiffModule } from "./lazyDiff";
+import { moveAmongRows } from "./listKeys";
 import { Icon } from "../../icons/Icon";
 import { icChevronLeft, icCollapse, icExpand, icGitBranch, icMenu, icSidebarLeft, icSidebarRight } from "../../icons/glyphs.chat";
 import { icCheck, icChevronDown, icCircleCheck, icFolder, icRefresh, icSettings } from "../../icons/glyphs";
@@ -62,6 +63,8 @@ export { FileIcon, FolderIcon, LineCounts, readDiffLayout, saveDiffLayout, singl
 
 /** 后端对二进制 diff 给的占位行（见 git.rs untracked_file_diff / GitFileDiffDto 注释）。 */
 const BINARY_PLACEHOLDER = "(binary file)";
+/** 文件列表 / 树里能用方向键移动的行（walkthrough P-12，listKeys.ts）。 */
+const TREE_ROWS = ".chat-diff-tree-file, .chat-diff-tree-dir";
 
 /** 估算等宽网格下最宽一行的列数（ASCII=1、宽字符按 2、tab 按 8）。行容器开了
  *  content-visibility 后，跳过渲染的行不参与 pre 的 max-content 测量——不用这个
@@ -644,6 +647,8 @@ export function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedP
   const anchors = useMemo(() => (activeDiff ? diffLineAnchors(activeDiff.diff) : []), [activeDiff]);
   // 旧/新两列行号（照 Kimi Code 的改动视图），槽宽按最大行号的位数。
   const lineNos = useMemo(() => (activeDiff ? diffLineNumbers(activeDiff.diff) : []), [activeDiff]);
+  // 能评论的第一行：「+」的 Tab 停靠点默认落在这里（P-9）。
+  const firstAnchorLine = useMemo(() => anchors.findIndex((anchor) => !!anchor), [anchors]);
   const lnDigits = useMemo(() => {
     let max = 0;
     for (const no of lineNos) if (no) max = Math.max(max, no.old ?? 0, no.new ?? 0);
@@ -681,25 +686,50 @@ export function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedP
     return counts;
   }, [comments]);
 
-  // 正在写评论的那一行（同一时间只开一个框）；换文件就关掉。
-  const [editing, setEditing] = useState<DiffLineAnchor | null>(null);
+  // 正在写评论的那一行（同一时间只开一个框），记着是哪个文件的。
+  //
+  // walkthrough P-6（2026-11-12，wk3-diff-cmt）：以前点另一行的「+」、按 Esc、换文件，写了一半的评论直接清空、
+  // 不说一声。现在只有点「取消」才丢；别的关法（换行、换文件、Esc、离开 diff 页）草稿非空就存成一条评论，
+  // 存下的评论旁有 × 可删，等于可撤销。兄弟场景：同一文件换行、换文件（selectedPath 变）、Esc、组件卸载（返回、切页签）。
+  const [editing, setEditing] = useState<(DiffLineAnchor & { path: string }) | null>(null);
   const [commentDraft, setCommentDraft] = useState("");
-  useEffect(() => {
-    setEditing(null);
-    setCommentDraft("");
-  }, [selectedPath]);
-  useEffect(() => {
-    if (!editing) return;
-    escOverrideRef.current = () => setEditing(null);
-    return () => { escOverrideRef.current = null; };
-  }, [editing, escOverrideRef]);
-  const saveComment = () => {
-    const text = commentDraft.trim();
-    if (!editing || !selectedPath || !text) return;
-    onAddComment({ path: selectedPath, side: editing.side, line: editing.line, code: editing.code, text });
+  const draftRef = useRef({ editing, commentDraft, onAddComment });
+  draftRef.current = { editing, commentDraft, onAddComment };
+  const keepDraft = () => {
+    const { editing: at, commentDraft: draft, onAddComment: add } = draftRef.current;
+    const text = draft.trim();
+    if (at && text) add({ path: at.path, side: at.side, line: at.line, code: at.code, text });
+  };
+  const closeEditor = () => {
+    keepDraft();
     setEditing(null);
     setCommentDraft("");
   };
+  useEffect(() => {
+    if (!draftRef.current.editing || draftRef.current.editing.path === selectedPath) return;
+    closeEditor();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 只在换文件时收起评论框；closeEditor 读的是 ref，不需要进依赖
+  }, [selectedPath]);
+  // 离开 diff 页（返回列表、切页签、面板卸载）：草稿同样存下。
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 只在卸载时跑一次；keepDraft 读的是 ref
+  useEffect(() => () => keepDraft(), []);
+  useEffect(() => {
+    if (!editing) return;
+    escOverrideRef.current = closeEditor;
+    return () => { escOverrideRef.current = null; };
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- closeEditor 读的是 ref，每次换框重挂即可
+  }, [editing, escOverrideRef]);
+  const saveComment = () => {
+    const text = commentDraft.trim();
+    if (!editing || !text) return;
+    onAddComment({ path: editing.path, side: editing.side, line: editing.line, code: editing.code, text });
+    setEditing(null);
+    setCommentDraft("");
+  };
+  // 「+」做成一个 Tab 停靠点（walkthrough P-9：27 行的 diff 就有 17 个停靠点，键盘走不出 diff）。
+  // 只有 rovingLine 那一行的「+」tabIndex=0，↑↓ 在各行的「+」之间移动，Enter 写评论。
+  const [rovingLine, setRovingLine] = useState<number | null>(null);
+  useEffect(() => { setRovingLine(null); }, [selectedPath]);
   const sameAnchor = (a: DiffLineAnchor, b: { side: string; line: number }) => a.side === b.side && a.line === b.line;
 
   const renderTree = (nodes: FileTreeNode[], depth: number): ReactNode =>
@@ -711,6 +741,8 @@ export function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedP
               type="button"
               className="chat-diff-tree-dir"
               style={{ paddingLeft: `calc(var(--sp-8) + ${depth * 14}px)` }}
+              data-depth={depth}
+              aria-expanded={!collapsed.has(node.path)}
               onClick={() => toggleDir(node.path)}
               onContextMenu={(event) => openCtxMenu(event, node.path, true)}
             >
@@ -728,6 +760,8 @@ export function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedP
             type="button"
             className="chat-diff-tree-file"
             style={{ paddingLeft: `calc(var(--sp-8) + ${depth * 14}px)` }}
+            data-depth={depth}
+            data-path={node.file?.path}
             onClick={() => node.file && setSelectedPath(node.file.path)}
             onContextMenu={node.file && node.file.status !== "D" ? (event) => openCtxMenu(event, node.file!.path, false) : undefined}
           >
@@ -776,6 +810,17 @@ export function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedP
           {/* min-width 钉住横向宽度（符号列、两列行号和内边距另加），理由见 estimateMaxColumns。
               换行时不钉，宽度跟着面板走。 */}
           <pre
+            onKeyDown={(event) => {
+              // 「+」之间用 ↑↓ 移动（P-9）。焦点在评论输入框里时不管。
+              const target = event.target instanceof HTMLElement ? event.target : null;
+              if (!target?.classList.contains("chat-diff-cmt-add") || (event.key !== "ArrowDown" && event.key !== "ArrowUp")) return;
+              const all = Array.from(event.currentTarget.querySelectorAll<HTMLElement>(".chat-diff-cmt-add"));
+              const at = all.indexOf(target);
+              const next = all[event.key === "ArrowDown" ? Math.min(all.length - 1, at + 1) : Math.max(0, at - 1)];
+              event.preventDefault();
+              next?.focus();
+              next?.scrollIntoView?.({ block: "nearest" });
+            }}
             className={"chat-diff-text is-diff" + (wrap ? " is-wrap" : "")}
             style={{ "--ln-w": `${lnDigits}ch`, minWidth: wrap ? undefined : `max(100%, ${diffMaxCols + 12 + 2 * lnDigits}ch)` } as CSSProperties}
           >
@@ -788,7 +833,7 @@ export function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedP
               const sign = cls === "is-add" ? "+" : cls === "is-del" ? "−" : "";
               const anchor = anchors[index];
               const lineComments = anchor ? comments.filter((comment) => comment.path === selectedPath && sameAnchor(anchor, comment)) : [];
-              const isEditing = !!anchor && !!editing && sameAnchor(anchor, editing);
+              const isEditing = !!anchor && !!editing && editing.path === selectedPath && sameAnchor(anchor, editing);
               return (
                 <Fragment key={index}>
                   <div className={(cls ? cls + " " : "") + "chat-diff-row"}>
@@ -800,7 +845,16 @@ export function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedP
                         className="chat-diff-cmt-add"
                         aria-label={t.chat.diffCommentAdd}
                         data-tip={t.chat.diffCommentAdd}
-                        onClick={() => { setEditing(anchor); setCommentDraft(""); }}
+                        data-line={index}
+                        tabIndex={index === (rovingLine ?? firstAnchorLine) ? 0 : -1}
+                        onFocus={() => setRovingLine(index)}
+                        onClick={() => {
+                          if (isEditing) return;
+                          // 换到另一行：手上那条草稿先存下（P-6），再开新框。
+                          keepDraft();
+                          setEditing({ ...anchor, path: selectedPath ?? "" });
+                          setCommentDraft("");
+                        }}
                       >+</button>
                     )}
                     <span className="chat-diff-ln is-old">{lineNos[index]?.old ?? ""}</span>
@@ -831,7 +885,8 @@ export function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedP
                         }}
                       />
                       <div className="chat-diff-cmt-actions">
-                        <button type="button" onClick={() => setEditing(null)}>{t.chat.diffCommentCancel}</button>
+                        {/* 只有「取消」是明说不要了：丢掉草稿。 */}
+                        <button type="button" onClick={() => { setEditing(null); setCommentDraft(""); }}>{t.chat.diffCommentCancel}</button>
                         <button type="button" className="btn-primary" disabled={!commentDraft.trim()} onClick={saveComment}>{t.chat.diffCommentSave}</button>
                       </div>
                     </div>
@@ -925,12 +980,13 @@ export function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedP
       )}
       {filterSession && visibleFiles.length === 0
         ? <div className="chat-diff-empty">{scope === "turn" ? t.chat.diffNoTurnChanges : t.chat.diffNoSessionChanges}</div>
-        : <div className="chat-diff-tree">{layout === "tree" ? renderTree(tree, 0) : listedFiles.map((file) => (
+        : <div className="chat-diff-tree" onKeyDown={(event) => moveAmongRows(event, TREE_ROWS)}>{layout === "tree" ? renderTree(tree, 0) : listedFiles.map((file) => (
           <div key={file.path} className="chat-diff-tree-row">
             <button
               type="button"
               className="chat-diff-tree-file is-flat"
               data-tip={file.path}
+              data-path={file.path}
               onClick={() => setSelectedPath(file.path)}
               onContextMenu={file.status !== "D" ? (event) => openCtxMenu(event, file.path, false) : undefined}
             >
@@ -1035,6 +1091,24 @@ export function FilesView({ cwd, live = false }: { cwd: string; /** 面板正显
   const [dirs, setDirs] = useState<Map<string, FetchEntry<DirEntryDto[]>>>(new Map());
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  // 从文件页返回树：焦点回到刚才打开的那一行（P-12：以前 Enter 打开、返回后焦点都落到 body）。
+  const filesRootRef = useRef<HTMLDivElement>(null);
+  const lastOpenedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (selectedPath) {
+      lastOpenedRef.current = selectedPath;
+      return;
+    }
+    const last = lastOpenedRef.current;
+    if (!last) return;
+    const frame = requestAnimationFrame(() => {
+      const active = document.activeElement;
+      if (active && active !== document.body) return;
+      const row = Array.from(filesRootRef.current?.querySelectorAll<HTMLElement>(".chat-diff-tree-file") ?? []).find((el) => el.dataset.path === last);
+      row?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [selectedPath]);
   const [files, setFiles] = useState<Map<string, FetchEntry<FileTextDto>>>(new Map());
   // 图片预览按路径缓存（data URL）；与文本缓存分开——同一 svg 两种形态都可能要。
   const [images, setImages] = useState<Map<string, FetchEntry<ImagePreviewDto>>>(new Map());
@@ -1235,6 +1309,8 @@ export function FilesView({ cwd, live = false }: { cwd: string; /** 面板正显
               type="button"
               className="chat-diff-tree-dir"
               style={indent(depth)}
+              data-depth={depth}
+              aria-expanded={expanded.has(entry.relPath)}
               onClick={() => toggleDir(entry.relPath)}
               onContextMenu={(event) => openCtxMenu(event, entry.relPath, true)}
             >
@@ -1254,6 +1330,8 @@ export function FilesView({ cwd, live = false }: { cwd: string; /** 面板正显
             className={"chat-diff-tree-file" + (entry.relPath === selectedPath ? " is-selected" : "")}
             aria-current={entry.relPath === selectedPath ? "true" : undefined}
             style={indent(depth)}
+            data-depth={depth}
+            data-path={entry.relPath}
             onClick={() => openFile(entry.relPath)}
             onContextMenu={(event) => openCtxMenu(event, entry.relPath, false)}
           >
@@ -1462,6 +1540,7 @@ export function FilesView({ cwd, live = false }: { cwd: string; /** 面板正显
   }
   return (
     <div
+      ref={filesRootRef}
       className={"chat-files" + (selectedPath ? " has-selection" : "") + (treeRight ? " is-tree-right" : "") + (selectedPath && !treeOpen ? " is-tree-hidden" : "")}
       style={{ "--tree-w": `${treeWidth}px` } as CSSProperties}
     >
@@ -1503,7 +1582,7 @@ export function FilesView({ cwd, live = false }: { cwd: string; /** 面板正显
         }}
         onCompositionEnd={(event) => setSearch(event.currentTarget.value)}
       />
-      {searchActive ? searchView : <div className="chat-diff-tree">{renderDir("", 0)}</div>}
+      {searchActive ? searchView : <div className="chat-diff-tree" onKeyDown={(event) => moveAmongRows(event, TREE_ROWS)}>{renderDir("", 0)}</div>}
       </div>
       <div
         className="chat-files-resizer"
@@ -1558,9 +1637,20 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+/** 文件 / diff 页的「返回」。打开文件时列表整个换掉，点开的那一行没了、焦点掉到 body（walkthrough P-3、P-12，
+ *  wk3b-open-back）：页面出来时焦点还在 body 就接到「返回」上。等一帧再看：窄面板里树是靠样式藏起来的，
+ *  焦点要等样式更新后才被浏览器挪走。 */
 function BackButton({ label, onClick }: { label: string; onClick: () => void }) {
+  const ref = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      const active = document.activeElement;
+      if (!active || active === document.body) ref.current?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, []);
   return (
-    <button type="button" className="chat-diff-back" onClick={onClick}>
+    <button type="button" ref={ref} className="chat-diff-back" onClick={onClick}>
       <Icon glyph={icChevronLeft} size={12} />
       {label}
     </button>

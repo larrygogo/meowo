@@ -206,6 +206,23 @@ export function usePanel(sessionId: number, cwd: string | null, onError: (messag
       if (!cwd) return;
       update((prev) => addTab(prev, { key: newTabKey("term"), type: "term", shellId: null, cwd }));
     },
+    /** 面板终端里的 shell 退出后「重启」：收掉旧进程的记录，同一个目录再起一个（walkthrough P-13，以前只剩一行
+     *  「进程已退出」，得关掉页签再点「+」、目录还要重选）。上面「切到没有活进程的终端页签」那段负责起新进程。 */
+    restartTerminal: (key: string) => {
+      const tab = stateRef.current.tabs.find((item) => item.key === key);
+      if (!tab || tab.type !== "term") return;
+      const old = tab.shellId;
+      if (old !== null) {
+        untrackShell(old);
+        void closeShellTerminal(old).catch(() => {});
+        setShells((prev) => {
+          const next = new Map(prev);
+          next.delete(old);
+          return next;
+        });
+      }
+      update((prev) => updateTab(prev, key, (item) => (item.type === "term" ? { ...item, shellId: null } : item)));
+    },
     newBrowser: (url?: string) => update((prev) => addTab(prev, { key: newTabKey("browser"), type: "browser", paneId: null, url: url ?? "about:blank", title: "" })),
     show: () => update((prev) => setVisible(prev, true)),
     hide: () => update((prev) => setVisible(prev, false)),

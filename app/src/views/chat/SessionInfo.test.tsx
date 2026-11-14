@@ -10,7 +10,7 @@ import type { PanelActions } from "./usePanel";
 afterEach(cleanup);
 
 const actions = () => ({
-  activate: vi.fn(), move: vi.fn(), close: vi.fn(), openDiff: vi.fn(), openFiles: vi.fn(), newTerminal: vi.fn(), newBrowser: vi.fn(),
+  activate: vi.fn(), move: vi.fn(), close: vi.fn(), openDiff: vi.fn(), openFiles: vi.fn(), newTerminal: vi.fn(), restartTerminal: vi.fn(), newBrowser: vi.fn(),
   show: vi.fn(), hide: vi.fn(), toggle: vi.fn(), toggleExpanded: vi.fn(), cycle: vi.fn(), toggleFiles: vi.fn(), toggleTerminal: vi.fn(), openUrl: vi.fn(),
 }) satisfies PanelActions;
 const summary: GitDiffSummaryDto = {

@@ -162,7 +162,7 @@ describe("ChatWindow 远程门控", () => {
     await waitFor(() => expect(localStorage.getItem("meowo-remote-last-session")).toBe("7"));
 
     fireEvent.click(screen.getByRole("button", { name: "返回会话列表" }));
-    await screen.findByText("继续桌面上的工作");
+    await waitFor(() => expect(document.querySelector(".chat-window.is-remote-list")).not.toBeNull());
     expect(screen.queryByRole("combobox", { name: "发送消息给 Agent" })).toBeNull();
     expect(localStorage.getItem("meowo-remote-last-session")).toBeNull();
   });
@@ -178,8 +178,47 @@ describe("ChatWindow 远程门控", () => {
     await screen.findByRole("combobox", { name: "发送消息给 Agent" });
     await waitFor(() => expect((window.history.state as { meowoChat?: boolean } | null)?.meowoChat).toBe(true));
     window.history.back();
-    await screen.findByText("继续桌面上的工作");
+    await waitFor(() => expect(document.querySelector(".chat-window.is-remote-list")).not.toBeNull());
     expect(screen.queryByRole("combobox", { name: "发送消息给 Agent" })).toBeNull();
+  });
+
+  // M-1（走查 2026-11-12）：从对话返回列表，搜索词与页签原先全部重置（列表进对话即卸载）。
+  // 兄弟场景：切到「设置」屏再回来（RemoteSessionList 本就只藏不卸）在 RemoteSessionList.test.tsx。
+  it("手机远程:从对话返回列表后,搜索词与列表实例都还在", async () => {
+    markRemoteUi();
+    setNarrow(true);
+    runningSessionWithRepo();
+    render(<ChatWindow />);
+    const box = await screen.findByRole("textbox", { name: "搜索" });
+    fireEvent.change(box, { target: { value: "门控" } });
+    fireEvent.click(await screen.findByRole("button", { name: /门控用例/ }));
+    await screen.findByRole("combobox", { name: "发送消息给 Agent" });
+    fireEvent.click(screen.getByRole("button", { name: "返回会话列表" }));
+    await waitFor(() => expect(document.querySelector(".chat-window.is-remote-list")).not.toBeNull());
+    expect((screen.getByRole("textbox", { name: "搜索" }) as HTMLInputElement).value).toBe("门控");
+    // 同一个列表实例（没卸载重建），滚动位置随 DOM 一起留着。
+    expect(screen.getByRole("textbox", { name: "搜索" })).toBe(box);
+  });
+
+  // M-2（走查 2026-11-12）：「更改」页打开时右滑（浏览器后退）原先连对话一起退回列表。
+  it("手机远程:「更改」页打开时后退只关「更改」页,留在对话", async () => {
+    markRemoteUi();
+    setNarrow(true);
+    runningSessionWithRepo();
+    render(<ChatWindow />);
+    fireEvent.click(await screen.findByRole("button", { name: /门控用例/ }));
+    await screen.findByRole("combobox", { name: "发送消息给 Agent" });
+    await waitFor(() => expect((window.history.state as { meowoChat?: boolean } | null)?.meowoChat).toBe(true));
+    fireEvent.click(await screen.findByRole("button", { name: "查看改动" }));
+    expect(await screen.findByText("工作区没有改动")).toBeTruthy();
+    await waitFor(() => expect((window.history.state as { meowoLayer?: string } | null)?.meowoLayer).toBeTruthy());
+    window.history.back();
+    await waitFor(() => expect(screen.getByRole("button", { name: "查看改动" }).getAttribute("aria-pressed")).toBe("false"));
+    expect(document.querySelector(".chat-window.is-remote-list")).toBeNull();
+    expect(screen.getByRole("combobox", { name: "发送消息给 Agent" })).toBeTruthy();
+    // 再后退才回到列表。
+    window.history.back();
+    await waitFor(() => expect(document.querySelector(".chat-window.is-remote-list")).not.toBeNull());
   });
 
   // 看过的会话再进：直接用快照出画面（对照 Kimi 的会话池），只从记住的 offset 续读增量，
@@ -192,7 +231,7 @@ describe("ChatWindow 远程门控", () => {
     fireEvent.click(await screen.findByRole("button", { name: /门控用例/ }));
     await screen.findByText("在跑");
     fireEvent.click(screen.getByRole("button", { name: "返回会话列表" }));
-    await screen.findByText("继续桌面上的工作");
+    await waitFor(() => expect(document.querySelector(".chat-window.is-remote-list")).not.toBeNull());
     const fullReads = () => invoke.mock.calls.filter(([c, a]) => c === "get_chat_history" && (a as { offset: number }).offset === 0).length;
     const before = fullReads();
     fireEvent.click(await screen.findByRole("button", { name: /门控用例/ }));
@@ -303,7 +342,7 @@ describe("ChatWindow 远程门控", () => {
       window.history.replaceState({}, "", "/?sessionId=7");
       runningSessionWithRepo();
       const { container } = render(<ChatWindow />);
-      await waitFor(() => expect(screen.getByText("门控用例")).toBeTruthy());
+      await waitFor(() => expect(document.querySelector(".chat-title")?.textContent).toBe("门控用例"));
 
       expect(container.querySelector(".chat-topbar")).toBeNull();
       expect(container.querySelector(".chat-window.is-remote-compact")).toBeTruthy();
@@ -329,7 +368,7 @@ describe("ChatWindow 远程底部面板", () => {
       window.history.replaceState({}, "", "/?sessionId=7");
       runningSessionWithRepo();
       render(<ChatWindow />);
-      await waitFor(() => expect(screen.getByText("门控用例")).toBeTruthy());
+      await waitFor(() => expect(document.querySelector(".chat-title")?.textContent).toBe("门控用例"));
       const composer = screen.getByRole("combobox", { name: "发送消息给 Agent" }) as HTMLTextAreaElement;
       fireEvent.change(composer, { target: { value: "/" } });
       const search = await screen.findByRole("textbox", { name: "搜索命令" }) as HTMLInputElement;

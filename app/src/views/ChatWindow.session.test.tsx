@@ -698,13 +698,13 @@ describe("ChatWindow", () => {
     await waitFor(() => expect(started).toBe(true));
     // 过了旧阈值(2s)仍在等:等待条不出。
     await new Promise((resolve) => setTimeout(resolve, 3_000));
-    expect(screen.queryByText(/正在等待 Agent 终端就绪/)).toBeNull();
+    expect(screen.queryByText(/等待 Agent 终端就绪/)).toBeNull();
     // 放行就绪:等待条收起、消息送达。把在途链路走完再收工,别留轮询污染后面的用例
     // (与上一个用例的「等回车落地」同一纪律)。
     ready = true;
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 17, data: "继续" }), { timeout: 3_000 });
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 17, data: "\r" }), { timeout: 3_000 });
-    await waitFor(() => expect(screen.queryByText(/正在等待 Agent 终端就绪/)).toBeNull());
+    await waitFor(() => expect(screen.queryByText(/等待 Agent 终端就绪/)).toBeNull());
   });
 
   it("keeps the prompt and reports a managed terminal that exits during startup", async () => {
@@ -944,6 +944,52 @@ describe("ChatWindow", () => {
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 47, data: "2" }));
     // terminal_live 只写原生 TUI；与 broker 共用 RuntimeRequest 后也不能误入统一 broker 回答命令。
     expect(invoke).not.toHaveBeenCalledWith("respond_runtime_request", expect.anything());
+  });
+
+  /// gemini 0.65 的 ask_user 提问表单（npm bundle 源码拼出的画面，2026-11-12，未实拍）：
+  /// 认成可作答的提问卡，点选项直接从 ● 焦点做相对移动 + 回车。修复前对话页不出卡，
+  /// 用户只能切到终端回答。兄弟场景：手机远程页渲染的是同一个 ChatWindow 卡片。
+  it("gemini 0.65 ask_user 表单在对话页出提问卡，点选项即作答", async () => {
+    window.history.replaceState({}, "", "/?sessionId=48");
+    const prompt = [
+      "\x1b[2J\u280f Waiting for user confirmation...",
+      "\u256d\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256e",
+      "\u2502 Answer Questions                         \u2502",
+      "\u2502\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2502",
+      "\u2502 Which database should we use?            \u2502",
+      "\u2502                                          \u2502",
+      "\u2502   1.  PostgreSQL                         \u2502",
+      "\u2502         Relational, strong consistency   \u2502",
+      "\u2502 \u25cf 2.  SQLite                             \u2502",
+      "\u2502   3.  Enter a custom value               \u2502",
+      "\u2502                                          \u2502",
+      "\u2502 Enter to select \u00b7 \u2191/\u2193 to navigate \u00b7 Esc to cancel \u2502",
+      "\u2570\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u256f",
+    ].join("\r\n");
+    invoke.mockImplementation((command: string) => {
+      if (command === "get_chat_history") return Promise.resolve({
+        sessionId: 48, title: "gemini 提问", status: "running", provider: "gemini", cwd: "C:/repo",
+        supported: true, offset: 0, reset: false, pendingReview: null, items: [],
+      });
+      if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
+      if (command === "agent_chat_ui") return Promise.resolve(chatUi("gemini"));
+      if (command === "managed_terminal_snapshot") return Promise.resolve({
+        sessionId: 48, active: true, managed: true,
+        data: btoa(String.fromCharCode(...new TextEncoder().encode(prompt))),
+        startOffset: 0, endOffset: prompt.length, exited: false, exitCode: null,
+      });
+      return Promise.resolve();
+    });
+    render(<ChatWindow />);
+
+    expect(await screen.findByText("Agent 正在等待你的回答")).toBeTruthy();
+    expect(screen.getByText("Which database should we use?")).toBeTruthy();
+    expect(screen.getByText("Relational, strong consistency")).toBeTruthy();
+    // 自定义答案项要现场打字，不出按钮；不是命令审批卡。
+    expect(screen.queryByRole("button", { name: /Enter a custom value/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "允许一次" })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /PostgreSQL/ }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 48, data: "\x1b[A\r" }));
   });
 
   it("shows a managed multi-select question without requiring a Terminal tab visit", async () => {

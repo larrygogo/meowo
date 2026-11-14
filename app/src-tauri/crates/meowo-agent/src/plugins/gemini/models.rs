@@ -49,7 +49,8 @@ fn settings(data_dir: &Path, cwd: Option<&Path>) -> Vec<Value> {
     if let Some(user) = read_json(&data_dir.join("settings.json")) {
         out.push(user);
     }
-    if let Some(project) = cwd.and_then(|cwd| read_json(&cwd.join(".gemini").join("settings.json"))) {
+    if let Some(project) = cwd.and_then(|cwd| read_json(&cwd.join(".gemini").join("settings.json")))
+    {
         out.push(project);
     }
     out
@@ -65,12 +66,14 @@ fn last_str<'a>(layers: &'a [Value], pointer: &str) -> Option<&'a str> {
 pub(super) fn catalog(data_dir: &Path, cwd: Option<&Path>) -> Vec<crate::ModelCatalogEntry> {
     let layers = settings(data_dir, cwd);
     // 环境变量里有 GEMINI_API_KEY 时 CLI 也走 api-key（未在 settings 里选时的回退），按同口径认。
-    let auth = last_str(&layers, "/security/auth/selectedType").map(str::to_owned).or_else(|| {
-        std::env::var("GEMINI_API_KEY")
-            .ok()
-            .filter(|key| !key.is_empty())
-            .map(|_| "gemini-api-key".to_string())
-    });
+    let auth = last_str(&layers, "/security/auth/selectedType")
+        .map(str::to_owned)
+        .or_else(|| {
+            std::env::var("GEMINI_API_KEY")
+                .ok()
+                .filter(|key| !key.is_empty())
+                .map(|_| "gemini-api-key".to_string())
+        });
     let certain = offline_certain(auth.as_deref());
     let table = if certain { FULL } else { CONSERVATIVE };
     let configured = last_str(&layers, "/model/name");
@@ -104,7 +107,11 @@ pub(super) fn launch_defaults(data_dir: &Path, cwd: Option<&Path>) -> crate::Lau
     let plan_enabled = layers
         .iter()
         .rev()
-        .find_map(|layer| layer.pointer("/general/plan/enabled").and_then(Value::as_bool))
+        .find_map(|layer| {
+            layer
+                .pointer("/general/plan/enabled")
+                .and_then(Value::as_bool)
+        })
         .unwrap_or(true);
     let approval = match last_str(&layers, "/general/defaultApprovalMode") {
         Some("auto_edit") => Some("autoEdit"),
@@ -125,10 +132,8 @@ mod tests {
     struct Dir(std::path::PathBuf);
     impl Dir {
         fn new(tag: &str) -> Self {
-            let path = std::env::temp_dir().join(format!(
-                "meowo-gemini-models-{tag}-{}",
-                std::process::id()
-            ));
+            let path = std::env::temp_dir()
+                .join(format!("meowo-gemini-models-{tag}-{}", std::process::id()));
             let _ = std::fs::remove_dir_all(&path);
             std::fs::create_dir_all(&path).unwrap();
             Self(path)
@@ -151,7 +156,10 @@ mod tests {
 
     #[test]
     fn api_key_auth_lists_the_full_offline_table() {
-        let dir = home("apikey", r#"{"security":{"auth":{"selectedType":"gemini-api-key"}}}"#);
+        let dir = home(
+            "apikey",
+            r#"{"security":{"auth":{"selectedType":"gemini-api-key"}}}"#,
+        );
         let list = catalog(dir.path(), None);
         let ids: Vec<&str> = list.iter().map(|e| e.id.as_str()).collect();
         assert_eq!(ids.len(), 8);
@@ -162,16 +170,24 @@ mod tests {
 
     #[test]
     fn oauth_gets_the_conservative_list_marked_uncertain() {
-        let dir = home("oauth", r#"{"security":{"auth":{"selectedType":"oauth-personal"}},"model":{"name":"gemini-2.5-pro"}}"#);
+        let dir = home(
+            "oauth",
+            r#"{"security":{"auth":{"selectedType":"oauth-personal"}},"model":{"name":"gemini-2.5-pro"}}"#,
+        );
         let list = catalog(dir.path(), None);
-        assert!(list.iter().any(|e| e.id == "gemini-2.5-pro" && e.is_default));
+        assert!(list
+            .iter()
+            .any(|e| e.id == "gemini-2.5-pro" && e.is_default));
         assert!(list.iter().filter(|e| e.id != "auto").all(|e| e.uncertain));
         assert!(!list.iter().any(|e| e.id == "gemini-3.1-pro-preview"));
     }
 
     #[test]
     fn defaults_merge_project_over_user_and_ignore_yolo() {
-        let dir = home("user", r#"{"model":{"name":"gemini-2.5-pro"},"general":{"defaultApprovalMode":"auto_edit"}}"#);
+        let dir = home(
+            "user",
+            r#"{"model":{"name":"gemini-2.5-pro"},"general":{"defaultApprovalMode":"auto_edit"}}"#,
+        );
         let project = Dir::new("project");
         std::fs::create_dir_all(project.path().join(".gemini")).unwrap();
         std::fs::write(
@@ -181,7 +197,10 @@ mod tests {
         .unwrap();
         let merged = launch_defaults(dir.path(), Some(project.path()));
         assert_eq!(merged.model.as_deref(), Some("gemini-2.5-pro"));
-        assert_eq!(merged.choices.get("approval").map(String::as_str), Some("plan"));
+        assert_eq!(
+            merged.choices.get("approval").map(String::as_str),
+            Some("plan")
+        );
         let yolo = home("yolo", r#"{"general":{"defaultApprovalMode":"yolo"}}"#);
         assert!(launch_defaults(yolo.path(), None).choices.is_empty());
     }

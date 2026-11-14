@@ -8,6 +8,7 @@
 //! 两者共用 TOML 格式与 stdin 载荷；事件集按实现区分，不能把新版事件写入旧 Python 配置。
 
 pub mod account;
+mod cli_text;
 mod lead;
 mod screen;
 pub mod telemetry;
@@ -518,6 +519,10 @@ impl AgentPlugin for Kimi {
         ]
     }
 
+    /// CLI 漂移检查的手工声明部分（正则规则的样例、旧版兼容与运行时拼接的字面量），见 cli_text.rs。
+    fn cli_text_deps(&self) -> &'static [crate::cli_text::CliTextDep] {
+        cli_text::DEPS
+    }
     fn id(&self) -> AgentId {
         id::KIMI
     }
@@ -597,14 +602,17 @@ impl AgentPlugin for Kimi {
     /// `/undo N` 撤最近 N 轮（kimi.exe 包内 `src/tui/commands/undo.ts`：带参直接撤，不弹菜单；
     /// 只在空闲时可用）。撤回在 wire 里追加 `context.undo {count}`，解析层据此收回消息
     /// （见 telemetry 的 chat_line_mark）。拒绝文案同取自该文件。
+    ///
+    /// kimi 2.5.1 超出可撤范围改报 `Cannot undo 3 prompts; only 1 can be undone in the active
+    /// context.`（包内 formatUndoLimitMessage，压缩后再加 ` after the last compaction`），
+    /// 另有 `Usage: /undo [count]…`、`No active session…` 两种拒绝（2026-11-12 取证）。
+    /// 匹配到的整行原样转给用户，所以每种拒绝都要认，不然只报「未确认」。旧文案保留。
     fn undo_control(&self) -> Option<crate::chat_ui::UndoControl> {
         Some(crate::chat_ui::UndoControl {
             command: "/undo",
             count_arg: true,
             restores_files: false,
-            reject_pattern: Some(
-                r"cannot undo while streaming|nothing to undo|failed to undo|run /undo again",
-            ),
+            reject_pattern: Some(UNDO_REJECT_PATTERN),
             input_clear: None,
             menu: None,
         })
@@ -930,6 +938,9 @@ fn with_off(mut entry: crate::ModelCatalogEntry, always_on: bool) -> crate::Mode
     entry
 }
 
+/// `/undo` 的拒绝行（见 `undo_control` 注释的出处）。宿主按 `(?i)` 编译、逐行匹配。
+pub(crate) const UNDO_REJECT_PATTERN: &str = r"cannot undo while streaming|cannot undo \d+ prompts?;|nothing to undo|failed to undo|run /undo again|usage: /undo|no active session";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -968,14 +979,29 @@ default_permission_mode = "auto"
 "#;
         let defaults = parse_launch_defaults(content);
         assert_eq!(defaults.model.as_deref(), Some("kimi-code/k3"));
-        assert_eq!(defaults.choices.get("permission").map(String::as_str), Some("yolo"));
-        assert_eq!(defaults.choices.get("work").map(String::as_str), Some("plan"));
+        assert_eq!(
+            defaults.choices.get("permission").map(String::as_str),
+            Some("yolo")
+        );
+        assert_eq!(
+            defaults.choices.get("work").map(String::as_str),
+            Some("plan")
+        );
         // 旧字段 yolo = true 迁移成 yolo（K:346047）。
-        let legacy = parse_launch_defaults("yolo = true
-");
-        assert_eq!(legacy.choices.get("permission").map(String::as_str), Some("yolo"));
-        assert!(parse_launch_defaults("default_permission_mode = \"weird\"
-").choices.is_empty());
+        let legacy = parse_launch_defaults(
+            "yolo = true
+",
+        );
+        assert_eq!(
+            legacy.choices.get("permission").map(String::as_str),
+            Some("yolo")
+        );
+        assert!(parse_launch_defaults(
+            "default_permission_mode = \"weird\"
+"
+        )
+        .choices
+        .is_empty());
     }
 
     /// 等第一条消息的屏幕原文（research-kimi-gemini §2.6 e4 Q1）。

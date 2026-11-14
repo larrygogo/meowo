@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { useState } from "react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { AppModal } from "./AppModal";
 import { hasEscLayers } from "../escLayers";
 
@@ -96,6 +97,45 @@ describe("AppModal（页内 modal 统一壳，G-3）", () => {
     void dlg;
     expect(document.activeElement).toBe(bg);
   });
+
+  /** walkthrough P-2（2026-11-12，wk3e-modal-restore）：弹层里有 autoFocus 的按钮（放弃确认框的「取消」、
+   *  合并框、开 PR 表单）时，以前在 effect 里记「打开前的焦点」，记到的是弹层自己的按钮，关掉后焦点落到 body。
+   *  兄弟场景：Esc 关、点「取消」关、点遮罩关，三条路都要回到触发按钮。 */
+  function Opener({ how }: { how: "esc" | "cancel" | "overlay" }) {
+    const [open, setOpen] = useState(false);
+    return (
+      <div>
+        <button type="button" data-testid="trigger" onClick={() => setOpen(true)}>打开</button>
+        {open && (
+          <AppModal label="确认" onClose={() => setOpen(false)}>
+            <button type="button" data-testid="cancel" autoFocus onClick={() => setOpen(false)}>取消</button>
+            <button type="button">确定</button>
+          </AppModal>
+        )}
+        <span data-how={how} />
+      </div>
+    );
+  }
+  for (const how of ["esc", "cancel", "overlay"] as const) {
+    it(`子元素 autoFocus 时，关闭（${how}）后焦点回到触发按钮`, () => {
+      render(<Opener how={how} />);
+      const trigger = screen.getByTestId("trigger");
+      trigger.focus();
+      fireEvent.click(trigger);
+      expect(document.activeElement).toBe(screen.getByTestId("cancel"));
+      act(() => {
+        if (how === "esc") fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+        else if (how === "cancel") fireEvent.click(screen.getByTestId("cancel"));
+        else {
+          const overlay = screen.getByRole("dialog").parentElement as HTMLElement;
+          fireEvent.mouseDown(overlay);
+          fireEvent.click(overlay);
+        }
+      });
+      expect(screen.queryByRole("dialog")).toBeNull();
+      expect(document.activeElement).toBe(trigger);
+    });
+  }
 
   it("无可聚焦元素时聚焦对话框本体（Esc/Tab 仍有落点）", () => {
     render(

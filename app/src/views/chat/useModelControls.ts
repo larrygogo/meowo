@@ -13,7 +13,13 @@ import { useT } from "../../i18n";
 import { appendTerminalText, modeFromScreen, visibleTerminalText } from "../../terminalAttention";
 import { currentPresetId } from "./modelLabels";
 import { stashComposerDraft, submitToTerminal } from "./terminalSubmit";
+import type { SendErrorExit } from "./SendErrorExits";
 import type { TerminalAction } from "./useSessionSettings";
+
+/** 屏幕上 CLI 的一行回话：去掉命令输出前的 `⎿` 引线与首尾空白，原话转给用户。 */
+function cliLine(line: string): string {
+  return line.replace(/^[\s⎿]+/, "").trim();
+}
 
 export interface ModelControlsDeps {
   sessionId: number;
@@ -22,14 +28,15 @@ export interface ModelControlsDeps {
   model: string | null | undefined;
   modelCatalog: ModelCatalogEntry[];
   sending: boolean;
-  /** 实时的会话色调（running 时一律拒绝切换，免得命令打进正在跑的回合）。 */
+  /** 实时的会话色调（running / pending 时排到本轮之后，免得命令打进正在跑或待批的回合）。 */
   toneRef: Readonly<{ current: string }>;
   /** 外部占用被拒后，接管成功要重放的动作。 */
   retryRef: { current: (() => void | Promise<void>) | null };
   withSendGuard: (body: () => Promise<boolean>) => Promise<boolean>;
   attentionAbort: () => string | null;
   isCurrentOperation: () => boolean;
-  setSendError: (message: string) => void;
+  /** exit：错误条上的出路（重试 / 看终端画面），见 SendErrorExits。 */
+  setSendError: (message: string, exit?: SendErrorExit) => void;
   setHistory: Dispatch<SetStateAction<ChatHistory | null>>;
   setStoredSelections: Dispatch<SetStateAction<Record<string, string>>>;
   /** 运行中（或有待批审批）选的：排到这一轮之后，和会话服务 / 重启路线同一个队列、同一套提示
@@ -45,7 +52,7 @@ export function useModelControls({
   const selectModel = async (preset: ModelPreset) => {
     const command = chatUi?.model_select_command;
     if (!command) return;
-    if (toneRef.current === "running") { deferTerminal({ kind: "model", preset }, preset.label || preset.id); return; }
+    if (toneRef.current === "running" || toneRef.current === "pending") { deferTerminal({ kind: "model", preset }, preset.label || preset.id); return; }
     await withSendGuard(async () => {
       const before = await managedTerminalSnapshot(sessionId);
       if (chatUi?.draft_stash) await stashComposerDraft(sessionId, chatUi.draft_stash);
@@ -53,27 +60,47 @@ export function useModelControls({
       let since = before.endOffset;
       let tail = "";
       const decoder = new TextDecoder();
-      let confirmed = false;
-      for (let attempt = 0; attempt < 12 && !confirmed; attempt += 1) {
+      // 确认/拒绝文案由插件声明（claude 2.1.322：确认 `Set model to …`，拒绝如 `Kept model as …`、
+      // `Model switch to … was blocked by a PreModelSwitch hook`，见 plugins/claude/mod.rs 的
+      // model_select_reply）。没声明的 CLI 用通用确认句兜底。
+      const reply = chatUi?.model_select_reply;
+      const confirmLine = new RegExp(reply?.confirm_pattern ?? "set model to|switched (?:the )?model to|model (?:changed|switched) to", "i");
+      const rejectLine = reply ? new RegExp(reply.reject_pattern, "i") : null;
+      // 比对时去掉 id 末尾的方括号变体（opus[1m] → opus）：Claude Code 2.1.322 起确认行只给显示名
+      //「Set model to `Opus 5.5` and saved as your default for new sessions」，整串 id「opus1m」在里面
+      // 永远找不到，于是 CLI 明明切过去了，这里却报未确认、也不记住选择（2026-11-12 leader 报
+      //「切模型无法生效」，transcript 实证）。仍要求家族名出现：CLI 有自动降档路径，降到别的家族时
+      // 也会打印「Set model to <实际模型>」，不比对就会把没生效的选择写进恢复配置（做空审查）。
+      const family = preset.id.replace(/\[[^\]]*\]$/, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+      let outcome: { kind: "ok" } | { kind: "rejected"; line: string } | null = null;
+      let otherModel: string | null = null;
+      for (let attempt = 0; attempt < 12 && outcome === null; attempt += 1) {
         await new Promise((resolve) => window.setTimeout(resolve, 200));
         if (!isCurrentOperation()) return false;
         const snapshot = await managedTerminalSnapshot(sessionId, since);
         if (!snapshot.active || snapshot.endOffset < since) break;
         since = snapshot.endOffset;
         tail = appendTerminalText(tail, snapshot.data, decoder);
-        // 只认本次命令之后 CLI 自己的确认行，菜单列表中出现模型名不算切换成功。
-        // 比对时去掉 id 末尾的方括号变体（opus[1m] → opus）：Claude Code 2.1.322 起确认行只给显示名
-        //「Set model to `Opus 5.5` and saved as your default for new sessions」，整串 id「opus1m」在里面
-        // 永远找不到，于是 CLI 明明切过去了，这里却报未确认、也不记住选择（2026-11-12 leader 报
-        //「切模型无法生效」，transcript 实证）。仍要求家族名出现：CLI 有自动降档路径，降到别的家族时
-        // 也会打印「Set model to <实际模型>」，不比对就会把没生效的选择写进恢复配置（做空审查）。
-        const family = preset.id.replace(/\[[^\]]*\]$/, "").toLowerCase().replace(/[^a-z0-9]/g, "");
-        confirmed = visibleTerminalText(tail).split(/\r?\n/).some((line) => {
-          if (!/set model to|switched (?:the )?model to|model (?:changed|switched) to/i.test(line)) return false;
-          return line.toLowerCase().replace(/[^a-z0-9]/g, "").includes(family);
-        });
+        // 只认本次命令之后 CLI 自己的回话，菜单列表中出现模型名不算切换成功。先整屏找确认行，
+        // 再找拒绝行：重绘可能把旧行与新行一起带进来，确认优先才不会被旧的拒绝行抢先。
+        const lines = visibleTerminalText(tail).split(/\r?\n/);
+        const confirmed = lines.filter((line) => confirmLine.test(line));
+        if (confirmed.some((line) => line.toLowerCase().replace(/[^a-z0-9]/g, "").includes(family))) { outcome = { kind: "ok" }; break; }
+        // 确认成了别的模型：先记下，继续等本家族的那一行（可能是重绘带进来的旧确认）。
+        if (confirmed.length > 0) otherModel = cliLine(confirmed[confirmed.length - 1]);
+        const rejected = rejectLine ? lines.find((line) => rejectLine.test(line)) : undefined;
+        if (rejected) outcome = { kind: "rejected", line: cliLine(rejected) };
       }
-      if (!confirmed) { setSendError(t.chat.modelSwitchUnconfirmed); return false; }
+      if (outcome?.kind !== "ok") {
+        // CLI 说了什么就转什么（2026-11-12 研究 C4：确认框被取消、hook 拦截、别名校验失败时
+        // 以前一律只报「未确认」，用户看不到原因）。
+        if (outcome?.kind === "rejected") setSendError(t.chat.modelSwitchRejected(outcome.line));
+        else if (otherModel) setSendError(t.chat.modelSwitchOther(otherModel));
+        // 没等到任何回话：切没切过去只有终端画面说得清，给「重试」与看终端画面两条出路，
+        // 不再只说「请到终端检查」（走查 C-4，手机上那句是死路）。
+        else setSendError(t.chat.modelSwitchUnconfirmed, { retry: () => void selectModel(preset), terminal: true });
+        return false;
+      }
       await setSessionLaunchSelection(sessionId, "model", preset.id);
       if (isCurrentOperation()) setStoredSelections((prev) => ({ ...prev, model: preset.id }));
       return true;
@@ -86,7 +113,7 @@ export function useModelControls({
   const selectEffort = async (level: string) => {
     const command = chatUi?.effort?.command;
     if (!command) return;
-    if (toneRef.current === "running") { deferTerminal({ kind: "effort", level }, level); return; }
+    if (toneRef.current === "running" || toneRef.current === "pending") { deferTerminal({ kind: "effort", level }, level); return; }
     setEffortBusy(true);
     try {
       await withSendGuard(async () => {
@@ -96,7 +123,10 @@ export function useModelControls({
         let since = before.endOffset;
         let tail = "";
         const decoder = new TextDecoder();
-        let outcome: "ok" | string | null = null;
+        // 确认/拒绝文案由插件声明（claude `Set effort level to X`、kimi `Thinking set to X.`）。
+        const confirm = new RegExp(chatUi.effort!.confirm_pattern, "i");
+        const reject = new RegExp(chatUi.effort!.reject_pattern, "i");
+        let outcome: { kind: "ok" } | { kind: "rejected"; line: string; actual: string | null } | null = null;
         for (let attempt = 0; attempt < 12 && outcome === null; attempt += 1) {
           await new Promise((resolve) => window.setTimeout(resolve, 200));
           if (!isCurrentOperation()) return false;
@@ -104,17 +134,25 @@ export function useModelControls({
           if (!snapshot.active || snapshot.endOffset < since) break;
           since = snapshot.endOffset;
           tail = appendTerminalText(tail, snapshot.data, decoder);
-          // 确认/拒绝文案由插件声明（claude `Set effort level to X`、kimi `Thinking set to X.`）。
-          const confirm = new RegExp(chatUi.effort!.confirm_pattern, "i");
-          const reject = new RegExp(chatUi.effort!.reject_pattern, "i");
-          for (const line of visibleTerminalText(tail).split(/\r?\n/)) {
-            const set = confirm.exec(line);
-            if (set && set[1].toLowerCase() === level) { outcome = "ok"; break; }
-            if (reject.test(line)) { outcome = line.trim(); break; }
+          const lines = visibleTerminalText(tail).split(/\r?\n/);
+          if (lines.some((line) => confirm.exec(line)?.[1]?.toLowerCase() === level)) { outcome = { kind: "ok" }; break; }
+          for (const line of lines) {
+            const hit = reject.exec(line);
+            // 捕获组 1 = CLI 实际改成的档位（claude 2.1.322 封顶：`… set to 'high' instead`）。
+            if (hit) { outcome = { kind: "rejected", line: cliLine(line), actual: hit[1]?.toLowerCase() ?? null }; break; }
           }
         }
-        if (outcome === null) { setSendError(t.chat.effortUnconfirmed); return false; }
-        if (outcome !== "ok") { setSendError(t.chat.effortRejected(outcome)); return false; }
+        if (outcome === null) { setSendError(t.chat.effortUnconfirmed, { retry: () => void selectEffort(level), terminal: true }); return false; }
+        if (outcome.kind === "rejected") {
+          const actual = outcome.actual;
+          if (actual) {
+            if (isCurrentOperation()) setHistory((current) => current ? { ...current, effort: actual } : current);
+            setSendError(t.chat.effortCapped(outcome.line));
+          } else {
+            setSendError(t.chat.effortRejected(outcome.line));
+          }
+          return false;
+        }
         if (isCurrentOperation()) setHistory((current) => current ? { ...current, effort: level } : current);
         return true;
       });
@@ -225,7 +263,7 @@ export function useModelControls({
   /// 模式动作完全由插件描述：快捷键原样发送，命令则用和人工输入一致的 paste + Enter 序列。
   const changeMode = async (dimension: string, inputs: { data: string; submit: boolean }[], optimisticValue?: string, screenMarkers: ModeScreenMarker[] = []) => {
     if (inputs.length === 0 || sending) return;
-    if (toneRef.current === "running") {
+    if (toneRef.current === "running" || toneRef.current === "pending") {
       if (optimisticValue) deferTerminal({ kind: "mode", dimension, value: optimisticValue, inputs, markers: screenMarkers }, optimisticValue);
       else setSendError(t.chat.menuBusyOpen); // 按一次跳下一个的盲切：不知道目标档，排不了
       return;

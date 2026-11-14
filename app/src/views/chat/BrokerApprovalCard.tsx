@@ -5,7 +5,7 @@
 /// 拒绝」的表单状态靠 effect 在换请求时手动清零。这里把结算收成一个 hook，卡片按 requestId
 /// 挂载（key），卡内状态随请求自然重置，不再需要「记得清」。
 
-import { useRef, useState, type RefObject } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { respondRuntimeRequest, resolvePendingApproval, type RuntimeRequest } from "../../api";
 import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
@@ -69,6 +69,35 @@ export function approvalChoiceForKey(key: string, suggestionCount: number): stri
   return digit - 2 < suggestionCount ? `suggestion:${digit - 2}` : null;
 }
 
+/// 焦点所在处另有数字键的主人：输入框 / 文本框（数字是要打的字）、按钮与链接（键归它自己）。
+/// 窗口级的数字键监听据此让开；卡上的「1」「2」徽标也按同一判据显隐——走查 C-5：默认焦点就在
+/// 输入框，徽标却一直亮着，按下去只把数字打进输入框（p2-digit-in-ta），徽标说了假话。
+/// 数字键刻意不像 Esc 那样在空输入框里放行：Esc 拒绝有两段式确认，放行一条命令没有，空框里
+/// 随手敲个「1」开头的消息就替用户放行了（ChatWindow.session.test「焦点在输入框：数字键属于输入」）。
+export function digitKeysOwnedElsewhere(active: Element | null): boolean {
+  if (!(active instanceof HTMLElement)) return false;
+  if (active.tagName === "TEXTAREA" || active.tagName === "INPUT" || active.isContentEditable) return true;
+  return !!active.closest("button, a, [role='button'], summary");
+}
+
+/// 数字键此刻是否归审批卡（徽标显隐用）：跟着焦点走，焦点进出输入框、按钮时重算。
+function useDigitKeysLive(enabled: boolean): boolean {
+  const [live, setLive] = useState(() => enabled && !digitKeysOwnedElsewhere(document.activeElement));
+  useEffect(() => {
+    if (!enabled) return;
+    // focusout 时 activeElement 还是旧元素，等这一轮焦点转移落定再读。
+    const update = () => window.setTimeout(() => setLive(!digitKeysOwnedElsewhere(document.activeElement)), 0);
+    update();
+    document.addEventListener("focusin", update);
+    document.addEventListener("focusout", update);
+    return () => {
+      document.removeEventListener("focusin", update);
+      document.removeEventListener("focusout", update);
+    };
+  }, [enabled]);
+  return enabled && live;
+}
+
 function suggestionParts(suggestion: unknown, index: number, t: Dict): { base: string; detail: string } {
   if (!suggestion || typeof suggestion !== "object" || Array.isArray(suggestion)) {
     return { base: t.chat.allowSuggested(index + 1), detail: "" };
@@ -126,6 +155,17 @@ export function BrokerApprovalCard({ approval, countdown, timedOut, resolving, e
   const [reason, setReason] = useState("");
   // 远程没有键盘快捷键可言，kbd 徽章只在桌面挂。
   const kbd = !remoteUi();
+  // 数字徽标只在按下去真生效时显示（Esc 徽标在空输入框里也生效，照常常驻）。
+  const digits = useDigitKeysLive(kbd);
+  // 结算在途：按钮用 aria-disabled 而不是 disabled（走查 C-3，p1-broker-fail）。disabled 会把刚
+  // 按下、正聚焦的按钮的焦点踢到 body，失败时用户找不回刚才的位置，只能从窗口顶上重新 Tab。
+  // 现在焦点留在原按钮上：失败可原地重按或换个选项；成功则卡片卸载，焦点由 returnFocusTo 交回输入框。
+  // 重复提交由 useBrokerResolver 的结算锁挡住，这里的 decide 只是不让点击发出去。
+  const busy = resolving || undefined;
+  const decide = (choice: string) => { if (!resolving) onDecide(choice); };
+  // 「说明并拒绝」空着提交多半是手快（走查 C-7：p3-reason-empty 截获 deny: 空理由），不算数。
+  // 想直接拒绝有旁边的「拒绝」。
+  const reasonReady = reason.trim().length > 0;
   return (
     <ApprovalCard
       returnFocusTo={returnFocusTo}
@@ -142,21 +182,21 @@ export function BrokerApprovalCard({ approval, countdown, timedOut, resolving, e
           className="is-persistent"
           key={index}
           data-tip={approvalSuggestionTip(suggestion, index, t)}
-          disabled={resolving}
-          onClick={() => onDecide(`suggestion:${index}`)}
-        >{approvalSuggestionLabel(suggestion, index, t)}{kbd && index < 8 && <kbd aria-hidden="true">{index + 2}</kbd>}</button>
+          aria-disabled={busy}
+          onClick={() => decide(`suggestion:${index}`)}
+        >{approvalSuggestionLabel(suggestion, index, t)}{digits && index < 8 && <kbd aria-hidden="true">{index + 2}</kbd>}</button>
       ))}
       actions={<>
         {/* 右端两颗是「就这一次」的决定：拒绝（中性，也是 Esc 的落点）、允许一次（主按钮）。
             危险命令时允许钮降级为红色警示主按钮(is-danger,判定见 isRiskyCommand)。 */}
-        <button ref={reasonButtonRef} type="button" className="is-deny-reason" disabled={resolving} aria-expanded={reasonOpen} onClick={() => setReasonOpen((open) => !open)}>
+        <button ref={reasonButtonRef} type="button" className="is-deny-reason" aria-disabled={busy} aria-expanded={reasonOpen} onClick={() => { if (!resolving) setReasonOpen((open) => !open); }}>
           {t.chat.denyWithReason}
         </button>
-        <button type="button" className={"is-deny" + (escArmed ? " is-esc-armed" : "")} disabled={resolving} onClick={() => onDecide("deny")}>
+        <button type="button" className={"is-deny" + (escArmed ? " is-esc-armed" : "")} aria-disabled={busy} onClick={() => decide("deny")}>
           {escArmed ? t.chat.denyConfirmEsc : t.chat.deny}{kbd && <kbd aria-hidden="true">Esc</kbd>}
         </button>
-        <button type="button" className={"btn-primary" + (isRiskyCommand(approval.input) ? " is-danger" : "")} disabled={resolving} onClick={() => onDecide("allow_once")}>
-          {t.chat.allowOnce}{kbd && <kbd aria-hidden="true">1</kbd>}
+        <button type="button" className={"btn-primary" + (isRiskyCommand(approval.input) ? " is-danger" : "")} aria-disabled={busy} onClick={() => decide("allow_once")}>
+          {t.chat.allowOnce}{digits && <kbd aria-hidden="true">1</kbd>}
         </button>
       </>}
     >
@@ -182,7 +222,7 @@ export function BrokerApprovalCard({ approval, countdown, timedOut, resolving, e
           className="chat-approval-reason"
           onSubmit={(event) => {
             event.preventDefault();
-            onDecide(`deny:${reason}`);
+            if (reasonReady) decide(`deny:${reason.trim()}`);
           }}
         >
           <input
@@ -197,7 +237,8 @@ export function BrokerApprovalCard({ approval, countdown, timedOut, resolving, e
               if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); setReasonOpen(false); reasonButtonRef.current?.focus(); }
             }}
           />
-          <button type="submit" disabled={resolving}>{t.chat.denyReasonSubmit}</button>
+          {/* 理由为空时提交钮不可用：此时焦点在理由框里，用 disabled 不会踢走焦点。 */}
+          <button type="submit" disabled={!reasonReady} aria-disabled={busy}>{t.chat.denyReasonSubmit}</button>
         </form>
       )}
       {/* 提交失败的原因写进卡内（此前空 catch 完全静默，用户点了没反应）。 */}

@@ -6,7 +6,9 @@ import {
   ECHO_CONFIRM_MS,
   freshAnchor,
   INSERTED_LINGER_MS,
+  promptKey,
   reconcileOutgoing,
+  SENDING_STALL_MS,
   type OutgoingKind,
   type OutgoingPrompt,
   type PromptAck,
@@ -30,12 +32,12 @@ const ev = (items: ChatItem[], now = 1_000, extra: { lastUserText?: string | nul
   ({ items, lastUserText: extra.lastUserText ?? null, ended: extra.ended ?? false, now });
 
 describe("reconcileOutgoing", () => {
-  // 先上屏再发送：还在写 / 没写进去的回执不参与对账，也不因会话结束被收走
+  // 先上屏再发送：没写进去的回执不参与对账；发送中、发送失败的都不因会话结束被收走
   // （给已结束会话发消息会先把它拉起来，那时历史还是 ended）。
-  it("发送中与发送失败的回执不对账、会话结束也不收走", () => {
+  it("发送失败的回执不对账，发送中与失败的会话结束也不收走", () => {
     const before = [reply("a1")];
     const list = [prompt("echo", "在写", before, { phase: "sending" }), prompt("echo", "没写进去", before, { phase: "failed", at: -ECHO_CONFIRM_MS * 2 })];
-    expect(reconcileOutgoing(list, ev([...before, user("u1", "在写"), user("u2", "没写进去")]))).toBe(list);
+    expect(reconcileOutgoing(list, ev([...before, user("u2", "没写进去")]))).toBe(list);
     expect(reconcileOutgoing(list, ev(before, 1_000, { ended: true }))).toBe(list);
     const settled = [prompt("echo", "已写入", before)];
     expect(reconcileOutgoing([...list, ...settled], ev(before, 1_000, { ended: true }))).toEqual([
@@ -107,11 +109,11 @@ describe("reconcileOutgoing", () => {
   });
 
   /// claude 在插话入队瞬间就改 lastUserText，正文要到工具边界才落盘：有 transcript 时
-  /// 不能认 hook，否则回执当场收走、消息却还没被读到。
-  it("hook 记的最近输入只在没有 transcript 时算证据", () => {
+  /// hook 只算「CLI 收下了」（已收到），不算已读到，否则回执当场收走、消息却还没被读到。
+  it("hook 记的最近输入：没有 transcript 时算读到，有 transcript 时只算收下", () => {
     const before = [reply("a0")];
     const withTranscript = [prompt("queued", "插一句", before)];
-    expect(reconcileOutgoing(withTranscript, ev(before, 1_000, { lastUserText: "插一句" }))).toBe(withTranscript);
+    expect(reconcileOutgoing(withTranscript, ev(before, 1_000, { lastUserText: "插一句" }))).toMatchObject([{ phase: "accepted" }]);
     const noTranscript = [prompt("queued", "插一句", [])];
     expect(reconcileOutgoing(noTranscript, ev([], 1_000, { lastUserText: "插一句" }))).toMatchObject([{ phase: "inserted" }]);
   });
@@ -177,6 +179,160 @@ describe("reconcileOutgoing", () => {
     expect(reconcileOutgoing(both, { ...ev(before, ECHO_CONFIRM_MS * 4), acks: [] })).toBe(both);
     const landed = reconcileOutgoing(both, ev([...before, { ...user("u1", "继续", true), timestamp: at(30) }, { ...user("u2", "继续"), timestamp: at(40) }], 50_000));
     expect(landed.map((p) => [p.kind, p.phase])).toEqual([["queued", "inserted"]]);
+  });
+});
+
+/// leader 历次实拍的送达误判（调研 real-usage #1），脱敏后只留对账要用的字段。
+/// 时间戳取自当次会话记录；正文换成同形的短句或保留无隐私的原文（公开仓库链接）。
+describe("送达对账：历次实拍回归", () => {
+  const at = (iso: string) => iso;
+  const stamped = (item: ChatItem, iso: string): ChatItem => ({ ...item, timestamp: at(iso) });
+
+  /// 11-09 07:27（code-review 会话，CC 2.1.3xx）：新建页开会话 2 秒后又发了一个链接。
+  /// 落盘形态：queue-operation enqueue 07:25:25.479 → attachment queued_command 07:25:25.367
+  /// （origin human、humanTurn，后端转成 interjected 的 user_text）。Meowo 写入途中临时编号
+  /// 换成正式编号，「写入完成」按旧编号结算落空，气泡一直「发送中」叠在真消息下面。
+  /// 修前：发送中的回执不参与对账，记录里有这句也无视。
+  it("11-09 07:27 发送中的回执：CLI 记录先到就按记录收起", () => {
+    const before = [stamped(user("0f0d05e0", "帮我装一下这个 code review 的skill"), "2026-11-09T07:25:25.069Z")];
+    const list = [prompt("echo", "https://github.com/mattpocock/skills", before, { phase: "sending", at: 0 })];
+    const landed = [...before, stamped(user("8608d6ee", "https://github.com/mattpocock/skills", true), "2026-11-09T07:25:25.367Z")];
+    expect(reconcileOutgoing(list, ev(landed, 2_000))).toEqual([]);
+  });
+
+  /// 同一实例在仓库层：临时编号下登记、写入途中搬到正式编号、CLI 记录先到收起，
+  /// 迟到的「写入完成」按回执编号结算时找不到它，也不会把它复活。
+  it("11-09 07:27 编号搬家后迟到的写入完成不复活已收起的回执", () => {
+    const store = createOutgoingStore();
+    const before = [stamped(reply("a0"), "2026-11-09T07:25:25.069Z")];
+    const id = store.add(-1, { kind: "echo", text: "https://github.com/mattpocock/skills", attachmentOnly: false, anchor: anchorFrom(before, null), phase: "sending" });
+    store.move(-1, 42);
+    store.reconcile(42, ev([...before, stamped(user("u1", "https://github.com/mattpocock/skills", true), "2026-11-09T07:25:25.367Z")], 2_000));
+    expect(store.get(42)).toEqual([]);
+    store.settle(id, { phase: "pending", at: 3_000 });
+    expect(store.get(42)).toEqual([]);
+  });
+
+  /// 写入的 promise 再不落定（链路卡死）也不能永远转圈：超时转「未确认送达」给出口。
+  it("发送中卡死超过上限转未确认，给重发与放回输入框", () => {
+    const before = [reply("a0")];
+    const list = [prompt("echo", "在吗", before, { phase: "sending", at: 0 })];
+    expect(reconcileOutgoing(list, ev(before, SENDING_STALL_MS))).toBe(list);
+    expect(reconcileOutgoing(list, ev(before, SENDING_STALL_MS + 1))).toMatchObject([{ phase: "uncertain" }]);
+  });
+
+  /// 11-01 08:19（a7bec18a，「为什么发消息现在经常提示未送达」）：发出后切回侧栏，回来时首读
+  /// 只给最新一屏（200 条），Agent 期间干的活把这条话和发送时的锚点都挤出了窗口。
+  /// 修前：窗口里找不到这条话，15 秒后标「未确认送达」。窗口整个晚于发送划线 = 看不见，不是没收到。
+  it("11-01 首读窗口整个落在发送之后：看不见不判未确认", () => {
+    const before = [stamped(user("u0", "继续"), "2026-11-01T08:00:00Z"), stamped(reply("a0"), "2026-11-01T08:00:01Z")];
+    const list = [prompt("echo", "修一下这个", before, { at: 0 })];
+    const page = Array.from({ length: 200 }, (_, i) => stamped(reply(`w${i}`), new Date(Date.UTC(2026, 10, 1, 8, 1, 0) + i * 1_000).toISOString()));
+    // 看不见只是不判未确认：停在 pending（不挂提示），不当送达收起（做空第一轮 #5，2026-11-12）。
+    expect(reconcileOutgoing(list, ev(page, ECHO_CONFIRM_MS * 2))).toBe(list);
+    // hook 记下了这句（CLI 收下了）：有送达证据，看不见就收起。
+    const hooked = reconcileOutgoing(list, ev(page, ECHO_CONFIRM_MS * 2, { lastUserText: "修一下这个" }));
+    expect(hooked).toMatchObject([{ phase: "received" }]);
+    expect(reconcileOutgoing(hooked, ev(page, ECHO_CONFIRM_MS * 3))).toEqual([]);
+    // 对照：窗口还包着发送前的记录、却没有这条话，照旧转未确认（真没送达的情形）。
+    expect(reconcileOutgoing(list, ev(before, ECHO_CONFIRM_MS * 2))).toMatchObject([{ phase: "uncertain" }]);
+  });
+
+  /// 做空第一轮 #5（2026-11-12，复现 redteam1/outgoing.rt.test.tsx）：agent 还在跑上一回合，窗口里
+  /// 全是发送之后的 assistant 记录，没有任何用户消息，这句其实卡在 CLI 输入框没提交。
+  /// 修前 echo/queued 的 pending、uncertain 四种组合一律当送达收起（=> []）。
+  it("做空 #5 窗口全在发送之后、没有匹配的用户消息：pending/uncertain 不当送达收起", () => {
+    const before = [stamped(user("u0", "上一句"), "2026-11-12T10:00:00Z")];
+    const page = [1, 2, 3].map((i) => stamped(reply(`b${i}`), `2026-11-12T10:00:0${i}Z`));
+    for (const kind of ["echo", "queued"] as const) {
+      for (const phase of ["pending", "uncertain"] as const) {
+        const list = [prompt(kind, "请把 README 改成英文", before, { at: 0, phase })];
+        expect(reconcileOutgoing(list, ev(page, ECHO_CONFIRM_MS * 2))).toBe(list);
+      }
+    }
+    // 之后真有新的用户消息落盘：这条的去向被后续事实盖过，照旧收起（看不见的 pending 不会自己超时）。
+    const list = [prompt("echo", "请把 README 改成英文", before, { at: 0 })];
+    const later = [...page, stamped(user("u9", "另一句"), "2026-11-12T10:00:09Z")];
+    expect(reconcileOutgoing(list, ev(later, ECHO_CONFIRM_MS * 2))).toEqual([]);
+  });
+
+  /// 11-09 08:27（新建会话「侧边栏与变更列表滚动」）：带三张图的第一句话，CLI 落盘成
+  /// 「[Image #1] [Image #2] [Image #3]1. …」，agent 跑了十几步后它已不在尾部 12 条。
+  it("11-09 08:27 新会话带图的第一句话：贴图前缀与挤出尾部都认得", () => {
+    const first = stamped(user("u1", "[Image #1] [Image #2] [Image #3]1. 新建会话为什么\n2. 列表无法滚动"), "2026-11-09T08:25:00Z");
+    const later = Array.from({ length: 20 }, (_, i) => stamped(reply(`a${i}`), `2026-11-09T08:25:${String(10 + i).padStart(2, "0")}Z`));
+    const list = [prompt("echo", "1. 新建会话为什么\n2. 列表无法滚动", [], { anchor: freshAnchor() })];
+    expect(reconcileOutgoing(list, ev([first, ...later]))).toEqual([]);
+  });
+
+  /// 11-11（2f8ca755）：终端停在子代理标签页，对话页发的话被 CLI 交给了子代理，主链没有这条。
+  /// 后端从子代理侧车取回、标 to_agent 挂到主时间线（#164），对账照常认领，不再报未确认。
+  it("11-11 发给子代理的话按 to_agent 记录认领", () => {
+    const before = [stamped(reply("a0"), "2026-11-11T06:00:00Z")];
+    const list = [prompt("echo", "这个先别改", before, { at: 0 })];
+    const landed = [...before, { ...stamped(user("s1", "这个先别改"), "2026-11-11T06:00:05Z"), to_agent: "general-purpose" } as ChatItem];
+    expect(reconcileOutgoing(list, ev(landed, ECHO_CONFIRM_MS * 2))).toEqual([]);
+  });
+
+  /// 11-02（0e34f0a6）：这段话停在 CLI 输入框里没提交（CLI 侧），记录里确实没有它。
+  /// 这一类 Meowo 无法从记录里确认，照实转未确认；读终端画面给「提交」在 useOutgoingUpkeep。
+  it("11-02 CLI 没收到（停在输入框）：照实转未确认，不悄悄消失", () => {
+    const before = [stamped(reply("a0"), "2026-11-02T03:00:00Z")];
+    const list = [prompt("echo", "继续", before, { at: 0 })];
+    expect(reconcileOutgoing(list, ev(before, ECHO_CONFIRM_MS + 1))).toMatchObject([{ phase: "uncertain" }]);
+  });
+
+  /// CC 2.1.218 交互式 --resume 后 transcript 静默不写（上游 #53417，memory cc-resume-writer-bug），
+  /// 但 UserPromptSubmit hook 照常触发。修前：有 transcript 时不认 hook，每条都报未确认。
+  it("transcript 不落盘、hook 已收到：回显标已收到，过 15 秒也不判未确认", () => {
+    const before = [stamped(reply("a0"), "2026-11-03T01:00:00Z")];
+    const list = [prompt("echo", "看下日志", before, { at: 0 })];
+    const received = reconcileOutgoing(list, ev(before, 1_000, { lastUserText: "看下日志\n\n请读取并结合以下本地附件…" }));
+    expect(received).toMatchObject([{ phase: "received" }]);
+    expect(reconcileOutgoing(received, ev(before, ECHO_CONFIRM_MS * 4, { lastUserText: "看下日志" }))).toBe(received);
+    // 正文晚些落盘照常收起
+    expect(reconcileOutgoing(received, ev([...before, stamped(user("u1", "看下日志"), "2026-11-03T01:00:09Z")], 20_000))).toEqual([]);
+    // 迟到的「写入完成」不把已收到拨回 pending 重新计时
+    const store = createOutgoingStore();
+    const id = store.add(7, { kind: "echo", text: "看下日志", attachmentOnly: false, anchor: anchorFrom(before, null), phase: "sending" });
+    store.reconcile(7, ev(before, 500, { lastUserText: "看下日志" }));
+    store.settle(id, { phase: "pending", at: 600 });
+    store.settle(id, { phase: "failed" });
+    expect(store.get(7)).toMatchObject([{ phase: "received" }]);
+  });
+
+  it("hook 只记最近一句：一次变化只确认一条，发送前就有的旧值不算", () => {
+    const before = [reply("a0")];
+    const list = [
+      prompt("echo", "继续", before, { anchor: anchorFrom(before, "继续") }),
+      prompt("echo", "继续吧", before),
+      prompt("echo", "继续吧", before),
+    ];
+    expect(reconcileOutgoing(list, ev(before, 1_000, { lastUserText: "继续" })).map((p) => p.phase)).toEqual(["pending", "pending", "pending"]);
+    expect(reconcileOutgoing(list, ev(before, 1_000, { lastUserText: "继续吧" })).map((p) => p.phase)).toEqual(["pending", "received", "pending"]);
+  });
+
+  /// CLI 改写落盘正文的几种形态（本机 transcript 实拍，CC 2.1.3xx）：斜杠命令包成三段标签，
+  /// ! 前缀包成 <bash-input>。修前按原文「包含」比，永远对不上，气泡叠成两遍。
+  it("斜杠命令与 bash 模式按 CLI 改写规则认领", () => {
+    const before = [stamped(reply("a0"), "2026-11-09T06:12:00Z")];
+    const list = [prompt("echo", "/model fable", before), prompt("echo", "! ls -la", before)];
+    const landed = [
+      ...before,
+      stamped(user("c1", "<command-name>/model</command-name>\n<command-message>model</command-message>\n<command-args>fable</command-args>"), "2026-11-09T06:12:01Z"),
+      stamped(user("b1", "<bash-input> ls -la</bash-input>"), "2026-11-09T06:12:02Z"),
+    ];
+    expect(reconcileOutgoing(list, ev(landed))).toEqual([]);
+  });
+});
+
+describe("promptKey", () => {
+  it("还原 CLI 的改写并去掉空白", () => {
+    expect(promptKey("<command-message>mp-code-review</command-message>\n<command-name>/mp-code-review</command-name>")).toBe("/mp-code-review");
+    expect(promptKey("<bash-input> ssh-copy-id -i x</bash-input>")).toBe(promptKey("! ssh-copy-id -i x"));
+    expect(promptKey("[Image #1] [Image #2]看下\r\n这里")).toBe(promptKey("看下\n这里"));
+    // 用户自己在正文中间提到标签不触发还原（只认行首的 bash-input）
+    expect(promptKey("为什么显示 <bash-input>x</bash-input>")).toContain("为什么显示");
   });
 });
 

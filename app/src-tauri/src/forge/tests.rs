@@ -362,6 +362,163 @@ fn 后台推送任务_同一仓库连点只推一次_结果可轮询() {
     assert_eq!(job_status("push-nope").unwrap_err(), "git/job_not_found");
 }
 
+// ═══ pull（walkthrough P-1：推送被拒后的「拉取并重试」）═══
+
+fn pull(sb: &Sandbox, dir: &Path) -> Result<PullResultDto, String> {
+    let owned = sb.env();
+    let env: Vec<(&str, Option<&str>)> = owned.iter().map(|(k, v)| (*k, v.as_deref())).collect();
+    pull_with(&s(dir), &env, Duration::from_secs(60))
+}
+
+/// 被拒的场景：另一个克隆往远端 main 推了 o.txt，本地 main 有自己的提交（同「推送_远端有新提交被拒」）。
+fn diverged_main(sb: &Sandbox, tag: &str, other_file: &str, other_text: &str) -> (PathBuf, PathBuf, PathBuf) {
+    let (repo, remote) = sb.repo_with_remote(tag);
+    let other = sb.root.join(format!("{tag}-other"));
+    sb.git(&sb.root, &["clone", "-q", &remote.to_string_lossy(), &other.to_string_lossy()]);
+    std::fs::write(other.join(other_file), other_text).unwrap();
+    sb.git(&other, &["add", "-A"]);
+    sb.git(&other, &["commit", "-q", "-m", "other"]);
+    sb.git(&other, &["push", "-q", "origin", "main"]);
+    sb.git(&repo, &["switch", "-q", "main"]);
+    sb.commit(&repo, "m.txt", "mine");
+    (repo, remote, other)
+}
+
+/// 合并提交要身份：沙箱的全局配置是空文件，测试里写进去（同用户在面板里填了身份）。
+fn with_identity(sb: &Sandbox) {
+    std::fs::write(&sb.config, "[user]\n\tname = t\n\temail = t@t\n[commit]\n\tgpgsign = false\n").unwrap();
+}
+
+#[test]
+fn 拉取_分叉无冲突_合并后再推就成功() {
+    let sb = Sandbox::new("pull-merge");
+    let (repo, remote, other) = diverged_main(&sb, "r", "o.txt", "other\n");
+    with_identity(&sb);
+    assert_eq!(push(&sb, &repo).unwrap_err(), "git/push_rejected");
+    let result = pull(&sb, &repo).unwrap();
+    assert_eq!((result.remote.as_str(), result.branch.as_str(), result.pulled, result.mode.as_str()), ("origin", "main", 1, "merge"));
+    assert!(repo.join("o.txt").exists(), "远端的提交接进来了");
+    // 合并后推送是快进，不用 force。
+    push(&sb, &repo).unwrap();
+    assert_eq!(sb.git(&remote, &["rev-parse", "main"]), sb.git(&repo, &["rev-parse", "HEAD"]));
+    let theirs = sb.git(&other, &["rev-parse", "HEAD"]);
+    sb.git(&remote, &["merge-base", "--is-ancestor", &theirs, "main"]);
+}
+
+#[test]
+fn 拉取_有冲突_不合并_仓库原样() {
+    let sb = Sandbox::new("pull-conflict");
+    let (repo, _, _) = diverged_main(&sb, "r", "m.txt", "theirs\n");
+    with_identity(&sb);
+    let head = sb.git(&repo, &["rev-parse", "HEAD"]);
+    assert_eq!(pull(&sb, &repo).unwrap_err(), "git/pull_conflict");
+    assert_eq!(sb.git(&repo, &["rev-parse", "HEAD"]), head, "HEAD 没动");
+    assert!(sb.git(&repo, &["status", "--porcelain"]).is_empty(), "工作区、暂存区都没动，没有冲突标记");
+    assert!(!repo.join(".git/MERGE_HEAD").exists(), "不停在合并中间");
+    assert_eq!(std::fs::read_to_string(repo.join("m.txt")).unwrap(), "mine\n");
+}
+
+#[test]
+fn 拉取_本地落后_快进_不要身份() {
+    let sb = Sandbox::new("pull-ff");
+    let (repo, _, other) = diverged_main(&sb, "r", "o.txt", "other\n");
+    sb.git(&repo, &["reset", "-q", "--hard", "HEAD~1"]);
+    let result = pull(&sb, &repo).unwrap();
+    assert_eq!((result.pulled, result.mode.as_str()), (1, "ff"));
+    assert_eq!(sb.git(&repo, &["rev-parse", "HEAD"]), sb.git(&other, &["rev-parse", "HEAD"]));
+    // 再拉一次：已是最新。
+    assert_eq!(pull(&sb, &repo).unwrap().mode, "none");
+}
+
+#[test]
+fn 拉取_没配身份_先说清楚_不动仓库() {
+    let sb = Sandbox::new("pull-ident");
+    let (repo, _, _) = diverged_main(&sb, "r", "o.txt", "other\n");
+    let head = sb.git(&repo, &["rev-parse", "HEAD"]);
+    // 没有 user.name / user.email 时 git var 会退回主机名猜的身份；EMAIL 等变量也清掉，逼出「没配身份」。
+    let owned: Vec<(&'static str, Option<String>)> = sb
+        .env()
+        .into_iter()
+        .chain([("GIT_AUTHOR_NAME", None), ("GIT_AUTHOR_EMAIL", None), ("GIT_COMMITTER_NAME", None), ("GIT_COMMITTER_EMAIL", None), ("EMAIL", None)])
+        .collect();
+    let env: Vec<(&str, Option<&str>)> = owned.iter().map(|(k, v)| (*k, v.as_deref())).collect();
+    std::fs::write(&sb.config, "[user]\n\tuseConfigOnly = true\n").unwrap();
+    assert_eq!(pull_with(&s(&repo), &env, Duration::from_secs(60)).unwrap_err(), "git/identity");
+    assert_eq!(sb.git(&repo, &["rev-parse", "HEAD"]), head);
+    // 面板里填了身份（写进全局配置）之后再拉就成了。
+    set_identity_with(&s(&repo), " Ada ", "ada@example.com", &env).unwrap();
+    let config = std::fs::read_to_string(&sb.config).unwrap();
+    assert!(config.contains("Ada") && config.contains("ada@example.com"), "{config}");
+    assert_eq!(pull_with(&s(&repo), &env, Duration::from_secs(60)).unwrap().mode, "merge");
+}
+
+#[test]
+fn 拉取_配了变基_按变基接_工作区有改动就不动() {
+    let sb = Sandbox::new("pull-rebase");
+    let (repo, _, other) = diverged_main(&sb, "r", "o.txt", "other\n");
+    with_identity(&sb);
+    sb.git(&repo, &["config", "pull.rebase", "true"]);
+    std::fs::write(repo.join("README.md"), "dirty\n").unwrap();
+    let head = sb.git(&repo, &["rev-parse", "HEAD"]);
+    assert_eq!(pull(&sb, &repo).unwrap_err(), "git/pull_dirty");
+    assert_eq!(sb.git(&repo, &["rev-parse", "HEAD"]), head);
+    assert_eq!(std::fs::read_to_string(repo.join("README.md")).unwrap(), "dirty\n", "未提交的改动原样");
+    sb.git(&repo, &["checkout", "--", "README.md"]);
+    assert_eq!(pull(&sb, &repo).unwrap().mode, "rebase");
+    // 变基后本地提交接在远端提交之后，历史是直的（没有合并提交）。
+    assert_eq!(sb.git(&repo, &["rev-parse", "HEAD~1"]), sb.git(&other, &["rev-parse", "HEAD"]));
+    // 不往 stash 列表里塞东西（不用 autostash）。
+    assert!(sb.git(&repo, &["stash", "list"]).is_empty());
+}
+
+#[test]
+fn 拉取失败归类() {
+    let out = |stderr: &str| CmdOut { code: Some(1), stderr: stderr.into(), ..Default::default() };
+    // git 2.5x 原文（LC_ALL=C）。
+    assert_eq!(classify_pull_failure(&out("error: Your local changes to the following files would be overwritten by merge:\n\tm.txt")), "git/pull_dirty");
+    assert_eq!(classify_pull_failure(&out("fatal: couldn't find remote ref refs/heads/feat")), "git/pull_no_branch");
+    assert_eq!(classify_pull_failure(&out("fatal: Unable to create '/r/.git/index.lock': File exists.")), "git/locked");
+    assert_eq!(classify_pull_failure(&out("fatal: unable to access 'https://x/': Could not resolve host: x")), "git/pull_network");
+    assert_eq!(classify_pull_failure(&out("remote: Invalid username or password.\nfatal: Authentication failed for 'https://x/'")), "git/pull_auth");
+    assert_eq!(classify_pull_failure(&CmdOut { timed_out: true, ..Default::default() }), "git/pull_timeout");
+}
+
+#[test]
+fn 设置身份_只收一行名字和像样的邮箱() {
+    let sb = Sandbox::new("ident-bad");
+    let repo = sb.repo("r");
+    let owned = sb.env();
+    let env: Vec<(&str, Option<&str>)> = owned.iter().map(|(k, v)| (*k, v.as_deref())).collect();
+    for (name, email) in [("", "a@b"), ("Ada", "no-at"), ("Ada\nx", "a@b"), ("Ada", "a b@c")] {
+        assert_eq!(set_identity_with(&s(&repo), name, email, &env).unwrap_err(), "git/identity_invalid", "{name:?} {email:?}");
+    }
+    assert_eq!(std::fs::read_to_string(&sb.config).unwrap(), "", "非法输入一个字都不写");
+}
+
+#[test]
+fn 后台拉取与推送任务各管各的() {
+    let (tx, rx) = std::sync::mpsc::channel::<()>();
+    let rx = std::sync::Mutex::new(rx);
+    let push_id = start_push_job("C:/forge-job-kinds".into(), move |_| {
+        let _ = rx.lock().unwrap().recv_timeout(Duration::from_secs(5));
+        Err("git/push_rejected".into())
+    });
+    let pull_id = start_pull_job("C:/forge-job-kinds".into(), |_| {
+        Ok(PullResultDto { remote: "origin".into(), branch: "main".into(), pulled: 1, mode: "merge".into() })
+    });
+    assert_ne!(push_id, pull_id, "推送在跑时拉取另起任务，不拿推送的任务号顶替");
+    tx.send(()).unwrap();
+    let start = Instant::now();
+    let done = loop {
+        let job = job_status(&pull_id).unwrap();
+        if job.state != "running" || start.elapsed() > Duration::from_secs(5) {
+            break job;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    assert_eq!((done.state.as_str(), done.push.is_none(), done.pull.map(|p| p.pulled)), ("ok", true, Some(1)));
+}
+
 // ═══ gh 解析 ═══
 
 #[test]

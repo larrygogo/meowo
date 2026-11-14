@@ -10,6 +10,7 @@ import { flushSync } from "react-dom";
 import { getPullRequest, openLink, type GitDiffSummaryDto, type PullRequestDto } from "../../api";
 import { useT } from "../../i18n";
 import { remoteUi } from "../../remoteMode";
+import { busyProps } from "../../busyButton";
 import { ArchiveIcon } from "../sticker/icons";
 import { GitStatusChip, OpenerIcon, OpenInEditor, PullRequestChip, useFolderOpeners } from "./TitleBarTools";
 import { planTitleBar, PROJECT_WANT_EM, sameOverflow, TITLE_WANT_EM, TitleOverflowContext, type TitleCompactKey, type TitleCompactSaving, type TitleOverflowItem, type TitleOverflowKey } from "./titleOverflow";
@@ -228,8 +229,7 @@ export function ChatTitleBar({
           className="chat-todo-btn chat-archive-btn"
           data-tip={t.sticker.archive}
           aria-label={t.sticker.archive}
-          disabled={archive.busy}
-          onClick={archive.onClick}
+          {...busyProps(archive.busy, archive.onClick)}
         >
           {/* 16px 与同排的文件/改动入口图标对齐（菜单里的同款是 13px）。 */}
           <ArchiveIcon archived={false} size={16} />
@@ -244,8 +244,7 @@ export function ChatTitleBar({
         <button
           type="button"
           className="chat-end"
-          disabled={end.busy}
-          onClick={end.onClick}
+          {...busyProps(end.busy, end.onClick)}
           aria-label={end.busy ? t.chat.terminalStopping : t.chat.endSession}
           data-tip={end.busy ? t.chat.terminalStopping : t.chat.endSession}
         >

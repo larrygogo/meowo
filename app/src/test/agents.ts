@@ -94,7 +94,7 @@ const SLASH_COMMANDS: Record<string, string[]> = {
   codex: ["/clear", "/compact", "/diff", "/help", "/model", "/new", "/review", "/status"],
   kimi: ["/clear", "/compact", "/help", "/model", "/status"],
   gemini: ["/chat", "/clear", "/compress", "/help", "/mcp", "/memory", "/stats", "/tools"],
-  opencode: ["/compact", "/exit", "/help", "/init", "/models", "/new", "/share", "/undo"],
+  opencode: ["/compact", "/exit", "/help", "/init", "/models", "/new", "/undo"],
 };
 
 /**
@@ -120,7 +120,7 @@ const MODEL_PRESETS: Record<string, ChatUi["model_presets"]> = {
  * 那边改了正则，这里也要跟上，否则前端测试测的是一套过期规则。
  * 未取证的 provider 为空（不做整句识别）。
  */
-const ATTENTION_PATTERNS: Record<string, { id: string; patterns: string[]; last: boolean; details: "none" | "proceed_box" | "arrow_panel" | "framed_box" | "bracket_form" }[]> = {
+const ATTENTION_PATTERNS: Record<string, { id: string; patterns: string[]; last: boolean; details: "none" | "proceed_box" | "arrow_panel" | "framed_box" | "bracket_form" | "framed_form" }[]> = {
   claude: [
     {
       id: "claude:long-session-resume",
@@ -162,11 +162,18 @@ const ATTENTION_PATTERNS: Record<string, { id: string; patterns: string[]; last:
         "^\\s*│\\s*allow execution of [^\\n]*\\?",
         "^\\s*│\\s*apply this change\\?",
         "^\\s*│\\s*do you want to proceed\\?",
+        "^\\s*│\\s*to run \\[[^\\]\\n]+\\], allow access to the following\\?",
       ],
       last: true,
       details: "framed_box",
     },
-    { id: "gemini:usage-limit", patterns: ["^\\s*│\\s*usage limit reached\\b"], last: true, details: "none" },
+    {
+      id: "gemini:usage-limit",
+      patterns: ["^\\s*│\\s*usage limit reached\\b", "^\\s*│\\s*we are currently experiencing high demand\\b"],
+      last: true,
+      details: "none",
+    },
+    { id: "gemini:question", patterns: ["^\\s*│\\s*answer questions\\b"], last: true, details: "framed_form" },
   ],
   opencode: [
     { id: "opencode:command-approval", patterns: ["△ permission required"], last: true, details: "none" },
@@ -191,6 +198,11 @@ export const SUBAGENT_VIEW: NonNullable<ChatUi["subagent_view"]> = {
   open_input: "\r",
   leave_panel_input: "\u001b",
 };
+
+/** claude 插件 effort_control().reject_pattern 的同值镜像（2.1.322 取证，见 plugins/claude/mod.rs）。 */
+export const CLAUDE_EFFORT_REJECT_PATTERN = String.raw`effort '[^']+' exceeds the cap(?:[^;]*; set to '(\w+)' instead)?|effort '[^']+' isn't|invalid argument: |failed to set effort level: |not applied: claude_code_effort_level=|claude_code_effort_level=\S+ overrides this session|is session-scoped and won't reach the remote process`;
+/** claude 插件 model_select_reply().reject_pattern 的同值镜像。 */
+export const CLAUDE_MODEL_REJECT_PATTERN = String.raw`^\s*(?:⎿\s*)?(?:kept model as |model switch cancelled|model switch (?:to .+ was )?blocked by a premodelswitch hook|model switch failed: |model '[^']+' is (?:restricted|not available|not currently available)|failed to validate model: |couldn't confirm model '|1m context is turned off|\S.* doesn['’]t have a 1m context window|'[^']+' isn['’]t available: the |(?:opus|sonnet) with 1m context is not available|\S.* isn['’]t available for your account yet)`;
 
 export function grammar(
   provider: string,
@@ -267,6 +279,8 @@ export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | 
     attention_patterns: ATTENTION_PATTERNS[provider] ?? [],
     model_presets: MODEL_PRESETS[provider] ?? [],
     model_select_command: provider === "claude" ? "/model" : null,
+    // 与后端同源:claude 插件 model_select_reply(2.1.322 包内模板取证)。
+    model_select_reply: provider === "claude" ? { confirm_pattern: "set model to ", reject_pattern: CLAUDE_MODEL_REJECT_PATTERN } : null,
     queue_input: provider === "codex" ? "\t" : "\r",
     // 与后端插件声明同源：claude 边干边读，kimi 未取证，其余排到回合结束。
     queue_delivery: provider === "claude" ? "next_step" : provider === "kimi" ? null : "turn_end",
@@ -311,7 +325,10 @@ export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | 
             : [],
     startup_attention_markers: provider === "claude"
       ? ["do you trust the files in this folder", "do you trust the contents of this directory", "trust this folder", "workspace not trusted", "workspace trust dialog"]
-      : ["do you trust the files in this folder", "do you trust the contents of this directory"],
+      : provider === "codex"
+        // 与后端 codex 插件同源：0.166.0 标题改成 "Trust this folder? ..."（research-cli-drift X1）。
+        ? ["do you trust the files in this folder", "do you trust the contents of this directory", "trust this folder?"]
+        : ["do you trust the files in this folder", "do you trust the contents of this directory"],
     // 与后端总装同源：claude 声明的五个 + 交互式 /model 型 CLI 并入的 model_menu_command。
     menu_slash_commands: provider === "claude"
       ? ["/config", "/mcp", "/memory", "/model", "/resume"]
@@ -343,7 +360,7 @@ export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | 
     retry_line_pattern: provider === "claude" ? CLAUDE_RETRY_LINE_PATTERN : null,
     // 与后端同源:思考程度切换 claude(2.1.314)与 kimi(2.4.0)都是 /effort <档位>。
     effort: provider === "claude"
-      ? { command: "/effort", levels: ["low", "medium", "high", "xhigh", "max"], confirm_pattern: String.raw`set effort level to (\w+)`, reject_pattern: String.raw`effort '[^']+' isn't` }
+      ? { command: "/effort", levels: ["low", "medium", "high", "xhigh", "max"], confirm_pattern: String.raw`set effort level to (\w+)`, reject_pattern: CLAUDE_EFFORT_REJECT_PATTERN }
       // kimi 档位随模型（模型目录的 support_efforts），静态表留空。
       : provider === "kimi"
         ? { command: "/effort", levels: [], confirm_pattern: String.raw`(?:thinking set to|with thinking) (\w+)`, reject_pattern: String.raw`unsupported thinking effort|cannot switch models while streaming|failed to switch model` }
@@ -359,7 +376,7 @@ export function chatUi(provider: string, custom: SlashCommand[] = []): ChatUi | 
     // 与后端同源:kimi `/undo N`(2.4.0 包内取证);opencode `/undo` 一次一轮、还原文件、
     // 原文放回它的输入框(1.19.3 probe_opencode_undo);claude `/rewind` 菜单(2.1.314 probe_claude_rewind)。
     undo: provider === "kimi"
-      ? { command: "/undo", count_arg: true, restores_files: false, reject_pattern: String.raw`cannot undo while streaming|nothing to undo|failed to undo|run /undo again`, input_clear: null, menu: null }
+      ? { command: "/undo", count_arg: true, restores_files: false, reject_pattern: String.raw`cannot undo while streaming|cannot undo \d+ prompts?;|nothing to undo|failed to undo|run /undo again|usage: /undo|no active session`, input_clear: null, menu: null }
       : provider === "opencode"
         ? { command: "/undo", count_arg: false, restores_files: true, reject_pattern: null, input_clear: { inputs: ["\u0003"], composer: { kind: "block", row_prefix: "┃", bottom_prefix: "╹" } }, menu: null }
         : provider === "claude"

@@ -11,7 +11,7 @@ import { remoteUi } from "../remoteMode";
 import { useAgents } from "../useAgents";
 import { openSettingsAt } from "../settingsNav";
 import { useBoardRefresh } from "../hooks/useBoardRefresh";
-import { useSessionActions } from "../hooks/useSessionActions";
+import { confirmMarkDone, markDoneEndsWork, pickNextAfterArchive, useSessionActions } from "../hooks/useSessionActions";
 import { useSettingsEffect } from "../hooks/useSettings";
 import { folderName, parentSegment, pathKey, worktreeNameOf } from "../paths";
 import { useMenuPopup } from "./menu";
@@ -32,6 +32,7 @@ import { ArchivedWorktreePrompt, WorktreeRemoveButton, runBatchCleanup, type Rem
 import { Icon, type Glyph } from "../icons/Icon";
 import { icChevronsDownUp, icChevronsUpDown, icClock, icFilter, icFolderTree, icGrip, icMenu, icMinus, icPlusCircle, icSidebarLeft, icSliders } from "../icons/glyphs.chat";
 import { icCheck, icFolder, icFolderOpen, icSearch, icSettings } from "../icons/glyphs";
+import { busyProps } from "../busyButton";
 
 /** 每翻一页新增的会话数。滚到底自动加载下一页，直到后端带回 next_cursor = null 为止。 */
 const PAGE_LIMIT = 60;
@@ -64,6 +65,9 @@ const TONE_RANK: Record<SessionTone, number> = {
 
 type DirGroup = SidebarDirGroup<LiveSession>;
 
+/** 侧栏底部的失败/提示条（S-4/S-5/S-6）：text 一句结果，reason 原因（另起一行），action 下一步。 */
+type SidebarNotice = { text: string; reason?: string; action?: { label: string; run: () => void } };
+
 
 /** 就地编辑输入框。草稿是**本组件的**局部状态：此前草稿放在 ChatSidebar 里，每次按键
  *  setState 都让整个侧栏（无虚拟化，几百条全在 DOM）重渲染一遍——重命名逐字卡顿的根因。
@@ -71,7 +75,8 @@ type DirGroup = SidebarDirGroup<LiveSession>;
 function EditorInput({ initial, placeholder, onSubmit, onCancel }: {
   initial: string;
   placeholder: string;
-  onSubmit: (value: string) => void;
+  /** byKey = 回车提交（焦点该回到那一行）；失焦提交时用户已点去别处，不抢焦点（S-3）。 */
+  onSubmit: (value: string, byKey: boolean) => void;
   onCancel: () => void;
 }) {
   const [value, setValue] = useState(initial);
@@ -83,8 +88,8 @@ function EditorInput({ initial, placeholder, onSubmit, onCancel }: {
       placeholder={placeholder}
       onClick={(event) => event.stopPropagation()}
       onChange={(event) => setValue(event.target.value)}
-      onKeyDown={editorKeyDown(() => onSubmit(value), onCancel)}
-      onBlur={() => onSubmit(value)}
+      onKeyDown={editorKeyDown(() => onSubmit(value, true), onCancel)}
+      onBlur={() => onSubmit(value, false)}
     />
   );
 }
@@ -281,6 +286,8 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
   // 行级结构共享的缓存（键 = session.id，只增不清，量级是本窗口见过的会话数）。
   const rowCacheRef = useRef<RowCache<LiveSession>>(new Map());
   const listRef = useRef<HTMLElement>(null);
+  // 搜索框句柄：父层的 searchInputRef 是可选的，侧栏自己的焦点兜底（S-2/S-8）另持一份。
+  const searchBoxRef = useRef<HTMLInputElement | null>(null);
   // 外部切换（贴纸/快捷键/审批召唤等不经由本列表点击的路径）后，当前项可能滚在视口外，
   // 高亮看不见等于没切。activeId 变化时把它滚回可视区；用户自己点击的切换本来就在
   // 视口内，block:"nearest" 下是 no-op，不打断浏览。
@@ -346,6 +353,8 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
     return q ? dirOptions.filter((option) => option.label.toLowerCase().includes(q) || option.value.toLowerCase().includes(q)) : dirOptions;
   }, [dirOptions, search]);
   const searchRef = useRef("");
+  // 当前列表是按哪个词拉回来的（S-8 的 Enter 打开首条命中要它：词与结果对得上才开）。
+  const loadedQueryRef = useRef("");
   // searchRef 是防抖后（300ms）才落的 load 读源;深度搜索判活性要的是**当前**词,故另用
   // 一个每渲染同步的镜像 ref(本仓 xxxRef.current = xxx 惯例),回包时与它比即可。
   const searchLiveRef = useRef(search);
@@ -358,14 +367,17 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
   const runDeepSearch = () => {
     const q = search.trim();
     if (!q || deepSearching) return;
+    setActionError(null);
     setDeepSearching(true);
     searchChatTranscripts(q)
       // 词已变则丢弃回包(与 load() 的词校验同款):在途期间用户改了搜索词,
       // useEffect([search]) 已把 deepHits 清成 null,旧词结果落地会在新词视图下显错命中。
       .then((hits) => { if (mountedRef.current && searchLiveRef.current.trim() === q) setDeepHits(hits); })
-      .catch(() => { if (mountedRef.current) setActionError(t.chat.sidebarActionFailed); })
+      .catch((error) => { if (mountedRef.current) fail(t.chat.sidebarSearchFailed, error, { label: t.chat.sidebarRetry, run: () => runDeepSearchRef.current() }); })
       .finally(() => { if (mountedRef.current) setDeepSearching(false); });
   };
+  const runDeepSearchRef = useRef(runDeepSearch);
+  runDeepSearchRef.current = runDeepSearch;
 
   // refresh = 整段重取替换（首载 / board-changed）；grow = 翻页，只把新条目**追加到尾部**。
   // 追加而非替换：后端对整页做 connected-first 排序，扩大 limit 可能把更深处的活会话
@@ -393,6 +405,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
         if ((searchRef.current.trim() || null) !== q) return;
         setReachedEnd(page.next_cursor === null);
         if (mode === "refresh") {
+          loadedQueryRef.current = q ?? "";
           setLoadFailed(false);
           refreshFailStreakRef.current = 0;
           setSyncLost(false);
@@ -596,39 +609,75 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
   // 重命名:与看板一样就地编辑。
   // 草稿文本不在这里——住在 EditorInput 的局部状态里,按键不触发侧栏整表重渲染。
   const [editingId, setEditingId] = useState<number | null>(null);
+  // 重命名失败时带回编辑框的草稿（S-4）：编辑框先关、再异步失败，不留住的话用户输的新名字就没了。
+  const [editDraft, setEditDraft] = useState<string | null>(null);
   // 动作失败必须可见:静默吞掉的话,用户点了「重命名」只会看到名字没变,以为是自己没点上。
-  const [actionError, setActionError] = useState<string | null>(null);
-  // 批量清理 worktree 的进行状态与结果（结果可能多行：失败项逐行列出），8s 后自动收起。
+  // S-4/S-5（走查 2026-11-12）：原先 4s 自动消失、多数只有「操作失败，请稍后再试」。现在
+  // text 说哪个动作没成，reason 是 formatBackendError 映射的原因，能重来的给 action 按钮；
+  // 不再计时消失，留到用户点 × 或做下一个动作（含原因的提示 4 秒读不完，worktree 删除失败
+  // 那种「某程序占着目录」更是要读完才知道下一步）。
+  const [actionError, setActionError] = useState<SidebarNotice | null>(null);
+  const fail = (text: string, error?: unknown, action?: SidebarNotice["action"]) => {
+    const reason = error === undefined ? "" : formatBackendError(error, t.locale).trim();
+    setActionError({ text, reason: reason || undefined, action });
+  };
+  // 批量清理 worktree 的进行状态与结果（结果可能多行：失败项逐行列出）。S-5（2026-11-12）：原先 8s
+  // 自动收起，逐行的失败原因读不完；改为留到点「好」（与失败提示同一条规则）。
   const [cleaning, setCleaning] = useState(false);
   const [cleanResult, setCleanResult] = useState<string | null>(null);
-  useEffect(() => {
-    if (!cleanResult) return;
-    const timer = window.setTimeout(() => setCleanResult(null), 8_000);
-    return () => window.clearTimeout(timer);
-  }, [cleanResult]);
-  useEffect(() => {
-    if (!actionError) return;
-    const timer = window.setTimeout(() => setActionError(null), 4_000);
-    return () => window.clearTimeout(timer);
-  }, [actionError]);
+
+  // 键盘动作之后把焦点放回列表里的某一行（S-2/S-3）：被操作的行卸载或重排后焦点会掉到 body，
+  // 键盘用户只能从窗口顶上重新 Tab。下一拍按 data-session-id 找（与 keyboardMove 同法）；
+  // 行已不在就退到搜索框，总之不留在 body。
+  const focusRow = (id: number | null) => {
+    window.setTimeout(() => {
+      if (!mountedRef.current) return;
+      const row = id == null ? null : listRef.current?.querySelector<HTMLElement>(`.chat-sidebar-item[data-session-id="${id}"]`);
+      if (row) row.focus();
+      else if (document.activeElement === document.body || !document.activeElement) searchBoxRef.current?.focus();
+    }, 0);
+  };
 
   const startRename = (item: LiveSession) => {
+    setActionError(null);
+    setEditDraft(null);
     setEditingId(item.session.id);
   };
-  const submitRename = (item: LiveSession, draft: string) => {
+  const submitRename = (item: LiveSession, draft: string, byKey = false) => {
     const title = draft.trim();
+    const id = item.session.id;
     if (title && title !== item.task_title) {
       renameSession(item.cwd, item.session.cc_session_id, title, item.provider)
-        .catch(() => setActionError(t.sticker.renameFailed));
+        .catch((error) => {
+          if (!mountedRef.current) return;
+          // S-4：带着草稿重新打开编辑框（autoFocus 接住焦点），用户改一个字再回车即重试。
+          setEditDraft(draft);
+          setEditingId(id);
+          fail(t.chat.sidebarRenameFailed, error);
+        });
     }
     setEditingId(null);
+    setEditDraft(null);
+    if (byKey) focusRow(id);
+  };
+  const cancelRename = (id: number) => {
+    setEditingId(null);
+    setEditDraft(null);
+    focusRow(id);
   };
   // 归档动作(单条/批量)与撤销条统一走 useSessionActions(C-13):与对话窗标题菜单同一条
   // set_archived、同一个「下一条」取序(按当前可见顺序取当前条之后的第一条)、同一个 8s 撤销窗。
   const { archive: archiveSessions } = useSessionActions({
     onNavigate: onSelect,
-    onError: setActionError,
+    onError: (reason) => setActionError({ text: t.chat.sidebarArchiveFailed, reason: reason || undefined }),
   });
+  // 「标记完成」会不会结束在干活的 Agent（S-1）：口径同状态点（sessionTone），外加待授权徽标那批。
+  const isWorking = (item: LiveSession) =>
+    approvalAwaitingIds.has(item.session.id)
+    || markDoneEndsWork(sessionTone(item.connected, item.session.status, item.pending_review, item.errored, item.busy_subagents, item.screen_state));
+  // 用户眼前的行序（折叠组里没画出来的不算）：连选、标记完成后的焦点去向都按它。
+  const visibleIds = () => (renderedGroups ? renderedGroups.flatMap((entry) => entry.shown) : (ordered ?? []))
+    .map((item) => item.session.id);
   // 批量标记完成:Ctrl/Cmd+点击(或右键菜单)进入多选,多选态下点整行即增删,
   // 底部「取消」或 Esc 清空退出。选中集按 id,刷新/翻页不受影响。
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<number>>(() => new Set());
@@ -665,9 +714,17 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
       }
       return next;
     });
-  const archiveSelected = () => {
+  const archiveSelected = async () => {
     const ids = [...selectedIds];
     if (ids.length === 0) return;
+    const targets = (sessions ?? []).filter((item) => selectedIds.has(item.session.id));
+    if (!(await confirmMarkDone(targets.map((item) => ({ working: isWorking(item) })), t))) return;
+    if (!mountedRef.current) return;
+    setActionError(null);
+    // S-2：操作条随选中集清空而卸载，焦点会掉到 body；落到被摘掉那批之后的第一条（没有就往前找）。
+    const shown = visibleIds();
+    const lastPicked = [...shown].reverse().find((id) => selectedIds.has(id)) ?? ids[ids.length - 1];
+    const focusNext = ids.includes(activeId) ? null : pickNextAfterArchive(shown, ids, lastPicked);
     setSelectedIds(new Set());
     // 乐观整批摘除;当前打开的也在其中时跳「下一条」(取序与对话窗归档一致,见 useSessionActions)。
     setSessions((prev) => prev?.filter((s) => !ids.includes(s.session.id)) ?? prev);
@@ -676,12 +733,19 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
       visibleOrder: (ordered ?? []).map((s) => s.session.id),
       activeId,
       onFailure: () => void loadRef.current("refresh"),
-      errorMessage: t.chat.sidebarActionFailed,
+      errorMessage: (reason) => formatBackendError(reason, t.locale),
     });
+    // 归档的含当前打开的会话时，跳到下一条并由对话窗接住焦点（输入框），这里不抢。
+    if (!ids.includes(activeId)) focusRow(focusNext);
   };
-  const toggleArchived = (item: LiveSession) => {
+  const toggleArchived = async (item: LiveSession) => {
     const target = !item.archived;
     const id = item.session.id;
+    if (target && !(await confirmMarkDone([{ working: isWorking(item) }], t))) return;
+    if (!mountedRef.current) return;
+    setActionError(null);
+    // S-2：被摘掉的那一行原本握着焦点（菜单关闭时还给它），落到下一条。
+    const focusNext = id === activeId ? null : pickNextAfterArchive(visibleIds(), [id], id);
     // 归档 = 从 "all" 里消失,乐观摘掉(不等 IPC 往返),失败重取拉回。当前打开的那条也照摘:
     // 已归档 = 已收纳,列表里就不该再有它,哪怕右边还开着它的对话。
     setSessions((prev) => prev?.filter((s) => s.session.id !== id) ?? prev);
@@ -692,18 +756,23 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
         visibleOrder: (ordered ?? []).map((s) => s.session.id),
         activeId,
         onFailure: () => void loadRef.current("refresh"),
-        errorMessage: t.chat.sidebarActionFailed,
+        errorMessage: (reason) => formatBackendError(reason, t.locale),
       });
+      if (id !== activeId) focusRow(focusNext);
       return;
     }
-    setArchived(id, false).catch(() => {
-      setActionError(t.chat.sidebarActionFailed);
+    // 「已完成」页里恢复进行中，同样从这一页消失。
+    if (id !== activeId) focusRow(pickNextAfterArchive(visibleIds(), [id], id));
+    setArchived(id, false).catch((error) => {
+      if (!mountedRef.current) return;
+      fail(t.chat.sidebarReopenFailed, error);
       void loadRef.current("refresh");
     });
   };
   const endSession = (item: LiveSession) => {
+    setActionError(null);
     void confirmStopSession(item.session.id, { title: t.chat.endSession, message: t.chat.endSessionConfirm })
-      .catch((error) => setActionError(formatBackendError(error, t.locale)));
+      .catch((error) => { if (mountedRef.current) fail(t.chat.sidebarEndFailed, error, { label: t.chat.sidebarRetry, run: () => endSession(item) }); });
   };
   const openMenuAt = (item: LiveSession, x: number, y: number) => setCtxMenu({ sid: item.session.id, x, y });
 
@@ -775,9 +844,9 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
       // 只写这一个字段（不走整份 setSettings）：读改写两步之间别处改的设置会被旧快照盖掉，
       // 且手机端调不了 setSettings。
       saveWorkspaceOrder(next)
-        .catch(() => {
+        .catch((error) => {
           if (!mountedRef.current) return;
-          setActionError(t.chat.sidebarActionFailed);
+          fail(t.chat.sidebarReorderFailed, error);
           void getSettings().then((settings) => setWorkspaceOrder(settings.workspace_order ?? [])).catch(() => {});
         });
     },
@@ -809,13 +878,21 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
   // 拖拽（手动排序、非多选态；手机长按后拖）：落下即本地先挪，再写后端；写失败重取回真实顺序。
   const moveSession = (id: number, above: number | null, below: number | null) => {
     setSessions((prev) => (prev ? moveNextTo(prev, (item) => item.session.id, id, above, below) : prev));
-    moveSessionRank(id, above, below).catch(() => {
+    setActionError(null);
+    moveSessionRank(id, above, below).catch((error) => {
       if (!mountedRef.current) return;
-      setActionError(t.chat.sidebarActionFailed);
+      fail(t.chat.sidebarReorderFailed, error);
       void loadRef.current("refresh");
     });
   };
   const reorderEnabled = sortMode === "manual" && selectedIds.size === 0;
+  // 键盘挪位的播报（S-7）。借全侧栏唯一的 live region（G-16）出声，几秒后让回状态汇总。
+  const [moveAnnounce, setMoveAnnounce] = useState("");
+  useEffect(() => {
+    if (!moveAnnounce) return;
+    const timer = window.setTimeout(() => setMoveAnnounce(""), 3_000);
+    return () => window.clearTimeout(timer);
+  }, [moveAnnounce]);
   // 键盘排序（调研 s8：原先只能鼠标拖）：焦点在条目上按 Ctrl/⌘+Shift+↑/↓ 在同一个桶里挪一位，
   // 与拖拽同一条写回路径。不用 Alt：Alt+↑/↓ 切会话、Alt+Shift+↓ 跳到下一个待处理会话。
   // 挪完 React 会搬动条目 DOM，焦点随之掉回 body，下一拍按 id 找回来。
@@ -828,6 +905,8 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
     const neighbors = dropNeighbors(list, id, { id: neighbor, after: dir > 0 });
     if (!neighbors) return true;
     moveSession(id, neighbors.above, neighbors.below);
+    // S-7：读屏只会把同一行再念一遍，听不出挪没挪成、挪到了哪。播报桶内新位置（第 N / 共 M）。
+    setMoveAnnounce(t.chat.sidebarMoved(list.indexOf(id) + dir + 1, list.length));
     window.setTimeout(() => {
       listRef.current?.querySelector<HTMLElement>(`.chat-sidebar-item[data-session-id="${id}"]`)?.focus();
     }, 0);
@@ -1043,9 +1122,33 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
         onKeyDown={(event) => {
           if (event.target !== event.currentTarget) return; // 内部按钮/输入框自理
           if ((event.ctrlKey || event.metaKey) && event.shiftKey && !event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
-            // 先拦住：列表上的 ↑/↓ roving 不看修饰键，冒泡上去会把焦点挪走。
-            if (keyboardMove(item.session.id, event.key === "ArrowUp" ? -1 : 1)) { event.preventDefault(); event.stopPropagation(); }
+            // 先拦住：列表上的 ↑/↓ roving 不看修饰键，冒泡上去会把焦点挪走。S-6（走查 2026-11-12）：
+            // 原先排序不可调时 keyboardMove 返回 false 不拦，焦点像普通 ↑↓ 一样下移，看着像挪了一位、
+            // 其实顺序没变。现在一律拦下；按最近活动排序时说明原因并给「改用手动排序」。
+            event.preventDefault();
+            event.stopPropagation();
+            if (!keyboardMove(item.session.id, event.key === "ArrowUp" ? -1 : 1) && sortMode !== "manual") {
+              setActionError({ text: t.chat.sidebarReorderNeedsManual, action: { label: t.chat.sidebarSwitchToManual, run: () => { changeSortMode("manual"); setActionError(null); focusRow(item.session.id); } } });
+            }
             return;
+          }
+          // S-9：多选态下 Shift+↑/↓ 从锚点连选（与 Shift+点击同一个 selectRange），Shift+空格连选到本行。
+          if (selectedIds.size > 0 && event.shiftKey && !event.ctrlKey && !event.metaKey && !event.altKey) {
+            if (event.key === "ArrowUp" || event.key === "ArrowDown") {
+              event.preventDefault();
+              event.stopPropagation();
+              const shown = visibleIds();
+              const nextId = shown[shown.indexOf(item.session.id) + (event.key === "ArrowUp" ? -1 : 1)];
+              if (nextId === undefined) return;
+              selectRange(nextId);
+              listRef.current?.querySelector<HTMLElement>(`.chat-sidebar-item[data-session-id="${nextId}"]`)?.focus();
+              return;
+            }
+            if (event.key === " ") {
+              event.preventDefault();
+              selectRange(item.session.id);
+              return;
+            }
           }
           if (event.key !== "Enter" && event.key !== " ") return;
           event.preventDefault(); // 空格不要滚动列表
@@ -1117,10 +1220,10 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
         <span className="chat-sidebar-text">
           {editing ? (
             <EditorInput
-              initial={item.task_title && item.task_title !== UNNAMED_SESSION_SENTINEL ? item.task_title : ""}
+              initial={editDraft ?? (item.task_title && item.task_title !== UNNAMED_SESSION_SENTINEL ? item.task_title : "")}
               placeholder={t.sticker.renamePlaceholder}
-              onSubmit={(value) => submitRename(item, value)}
-              onCancel={() => setEditingId(null)}
+              onSubmit={(value, byKey) => submitRename(item, value, byKey)}
+              onCancel={() => cancelRename(item.session.id)}
             />
           ) : (
             <span className="chat-sidebar-name">
@@ -1264,7 +1367,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
       <div className="chat-sidebar-search">
         <Icon glyph={icSearch} size={14} className="chat-sidebar-search-icon" />
         <input
-          ref={(el) => { if (searchInputRef) searchInputRef.current = el; }}
+          ref={(el) => { searchBoxRef.current = el; if (searchInputRef) searchInputRef.current = el; }}
           value={search}
           placeholder={t.chat.sidebarSearch}
           aria-label={t.chat.sidebarSearch}
@@ -1278,6 +1381,20 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
             if (e.key === "Escape" && search) {
               e.stopPropagation(); // 有词时 Esc 只清词，不落到窗口级「拒绝审批」
               setSearch("");
+              return;
+            }
+            // S-8（走查 2026-11-12）：搜索框里按 ↓ 原先不动，要 Tab 过清空钮、页签、筛选钮才到结果。
+            // ↓ 进第一条结果（之后列表自己的 roving 接手）；有词时 Enter 打开第一条命中，但只在结果
+            // 已按当前词刷新过时——防抖 300ms 内回车会打开旧词的第一条。
+            if (e.nativeEvent.isComposing || workspacesView) return;
+            const first = listRef.current?.querySelector<HTMLElement>(".chat-sidebar-item");
+            if (e.key === "ArrowDown" && first) {
+              e.preventDefault();
+              first.focus();
+            } else if (e.key === "Enter" && search.trim() && first && loadedQueryRef.current === search.trim()) {
+              e.preventDefault();
+              const id = Number(first.dataset.sessionId);
+              if (Number.isFinite(id)) onSelect(id);
             }
           }}
         />
@@ -1399,15 +1516,14 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
           <div className="chat-sidebar-cleanbar">
             <button
               type="button"
-              disabled={cleaning}
-              onClick={() => {
+              {...busyProps(cleaning, () => {
                 setCleaning(true);
                 void runBatchCleanup(t).then((text) => {
                   setCleaning(false);
                   if (text) setCleanResult(text);
                   void loadRef.current("refresh");
                 });
-              }}
+              })}
             >{cleaning ? t.worktree.batchScanning : t.worktree.batch}</button>
           </div>
         )}
@@ -1519,7 +1635,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
       </nav>
       )}
       {/* G-16：全侧栏唯一的读屏汇总播报源（视觉隐藏），取代每条会话一个 role=status。 */}
-      <div className="chat-sidebar-sronly" role="status">{liveSummary}</div>
+      <div className="chat-sidebar-sronly" role="status">{moveAnnounce || liveSummary}</div>
       {cleanResult && !actionError && (
         <div className="chat-sidebar-error is-undo is-multiline" role="status">
           <span>{cleanResult}</span>
@@ -1528,13 +1644,24 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
       )}
       {/* 归档后所在 worktree 能清理就提示（二期包 5，不自动删）。 */}
       {!actionError && <ArchivedWorktreePrompt t={t} className="chat-sidebar-error is-undo" />}
-      {/* 动作失败的唯一出口（重命名/归档）：4s 后自动消失。 */}
-      {actionError && <div className="chat-sidebar-error" role="status">{actionError}</div>}
+      {/* 动作失败/提示的唯一出口（S-5）：不计时消失，× 关闭或下一个动作时让位。 */}
+      {actionError && (
+        <div className="chat-sidebar-error is-undo is-multiline is-notice" role="alert">
+          <span>
+            {actionError.text}
+            {actionError.reason && <span className="chat-sidebar-error-reason">{actionError.reason}</span>}
+          </span>
+          {actionError.action && (
+            <button type="button" onClick={() => { const run = actionError.action!.run; setActionError(null); run(); }}>{actionError.action.label}</button>
+          )}
+          <button type="button" className="chat-sidebar-error-x" aria-label={t.chat.close} data-tip={t.chat.close} onClick={() => setActionError(null)}>×</button>
+        </div>
+      )}
       {/* 批量归档操作条:多选态常驻底部(Ctrl+点击增删,Esc 退出)。 */}
       {selectedIds.size > 0 && (
         <div className="chat-sidebar-batch" role="toolbar" aria-label={t.chat.selectedCount(selectedIds.size)}>
           <span data-tip={t.chat.selectRangeHint}>{t.chat.selectedCount(selectedIds.size)}</span>
-          <button type="button" className="btn-primary" onClick={archiveSelected}>{t.chat.archiveSelected}</button>
+          <button type="button" className="btn-primary" onClick={() => void archiveSelected()}>{t.chat.archiveSelected}</button>
           <button type="button" onClick={() => setSelectedIds(new Set())}>{t.chat.cancelSelect}</button>
         </div>
       )}
@@ -1546,7 +1673,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
           archived={ctxItem.archived}
           onStar={() => toggleStar(ctxItem.session.cc_session_id)}
           onRename={() => startRename(ctxItem)}
-          onArchive={() => toggleArchived(ctxItem)}
+          onArchive={() => void toggleArchived(ctxItem)}
           // 多选入口:Ctrl+点击对鼠标用户不可发现,菜单里给一个显式的起点。
           onSelectMode={() => {
             selectAnchorRef.current = ctxItem.session.id;
@@ -1560,9 +1687,9 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
           onEndSession={ctxItem.endable ? () => endSession(ctxItem) : null}
           worktreeSessionId={ctxItem.archived && !ctxItem.foreign && !ctxItem.cwd_missing ? ctxItem.session.id : null}
           onWorktreeDone={(outcome: RemovalOutcome) => {
-            if (outcome.kind === "failed") setActionError(outcome.message);
+            if (outcome.kind === "failed") setActionError({ text: outcome.message });
             else if (outcome.kind === "removed") {
-              if (!outcome.branchDeleted) setActionError(t.worktree.removedKeepBranch);
+              if (!outcome.branchDeleted) setActionError({ text: t.worktree.removedKeepBranch });
               void loadRef.current("refresh");
             }
           }}

@@ -92,11 +92,22 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "remote/port_in_use", exact: true, zh: "端口被其它程序占用，换个端口或关掉占用它的程序", en: "The port is in use; pick another or close the program using it" },
   // 「更改」面板的 git 写操作（git.rs git_stage / git_unstage / git_discard / git_commit）。
   { m: "git/locked", exact: true, zh: "另一个 git 操作正在进行（可能是 agent 在跑），稍后再试", en: "Another git operation is in progress (maybe the agent). Try again shortly." },
-  { m: "git/identity", exact: true, zh: "还没配置 git 用户名和邮箱，先在终端里运行 git config 设置", en: "Git user name and email aren't set. Run git config in a terminal first." },
-  { m: "git/conflict", exact: true, zh: "有未解决的合并冲突，先在终端或编辑器里解决再提交", en: "There are unresolved merge conflicts. Resolve them in a terminal or editor first." },
+  // walkthrough P-1（2026-11-12）：这两条以前叫人「先在终端里运行 git config」「在终端或编辑器里解决」，
+  // 面板里没有出路。现在面板在错误旁给按钮（设置身份 / 交给 agent），文案只说原因。
+  { m: "git/identity", exact: true, zh: "还没配置 git 用户名和邮箱", en: "Git user name and email aren't set" },
+  { m: "git/identity_invalid", exact: true, zh: "名字或邮箱格式不对", en: "The name or email doesn't look right" },
+  { m: "git/conflict", exact: true, zh: "有未解决的合并冲突，解决后才能提交", en: "There are unresolved merge conflicts. Resolve them before committing." },
   { m: "git/nothing_to_commit", exact: true, zh: "没有可提交的更改", en: "Nothing to commit" },
   { m: "git/empty_message", exact: true, zh: "请填写提交信息", en: "Enter a commit message" },
-  { m: "git/not_in_changes", exact: true, zh: "文件已不在更改列表里，刷新后再试", en: "The file is no longer in the change list. Refresh and try again." },
+  // 列表 5 秒自己重拉，不叫人「刷新」（walkthrough 共性：不许出现让用户刷新的文案）。
+  { m: "git/not_in_changes", exact: true, zh: "文件已不在更改列表里", en: "The file is no longer in the change list" },
+  // 放弃的撤销（git.rs undo_discard，walkthrough P-5）。
+  { m: "git/backup_failed", tail: true, zh: "没能备份改动，没有放弃", en: "Couldn't back up the changes, so nothing was discarded" },
+  // 恢复到一半失败（git.rs discard_with_ops）：后面还跟着撤销号和原因，SourceControl 拆开后各自翻译，
+  // 这里只出主句，不带 tail（tail 会把撤销号露给用户）。做空第一轮 #1，2026-11-12。
+  { m: "git/discard_partial", zh: "只放弃了一部分。", en: "Only some changes were discarded." },
+  { m: "git/undo_changed", exact: true, zh: "文件之后又改过，没有撤销", en: "The files changed since, so nothing was undone" },
+  { m: "git/undo_expired", exact: true, zh: "撤销已过期", en: "This undo has expired" },
   // 放弃更改时未跟踪文件进回收站失败（git.rs trash_to_recycle_bin）。文件原样保留、不会永久删。
   { m: "git/trash_failed", tail: true, zh: "没能移到回收站，文件已保留", en: "Couldn't move the file to the trash. It was kept." },
   // 整目录放弃（折叠的未跟踪目录，git.rs untracked_dir_to_trash）：里面有链接或嵌套仓库就不动。
@@ -113,7 +124,15 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "git/push_timeout", exact: true, zh: "推送超时", en: "Push timed out" },
   { m: "git/push_network", exact: true, zh: "连不上远端，检查网络", en: "Can't reach the remote. Check the network." },
   { m: "git/push_failed", tail: true, zh: "推送失败", en: "Push failed" },
-  { m: "git/job_not_found", exact: true, zh: "推送结果过期了，刷新看看", en: "The push result expired. Refresh to check." },
+  { m: "git/job_not_found", exact: true, zh: "结果已过期，列表会自己更新", en: "The result expired. The list updates on its own." },
+  // 拉取（forge.rs pull_with，推送被拒后的「拉取并重试」）。冲突与会覆盖改动时仓库原样不动，文案写明。
+  { m: "git/pull_conflict", exact: true, zh: "远端改动和本地冲突，没有合并", en: "Remote changes conflict with yours. Nothing was merged." },
+  { m: "git/pull_dirty", exact: true, zh: "未提交的改动会被覆盖，没有拉取", en: "Uncommitted changes would be overwritten. Nothing was pulled." },
+  { m: "git/pull_no_branch", exact: true, zh: "远端没有这个分支", en: "The remote doesn't have this branch" },
+  { m: "git/pull_auth", exact: true, zh: "拉取认证失败，检查 git 凭据", en: "Pull failed to sign in. Check your git credentials." },
+  { m: "git/pull_network", exact: true, zh: "连不上远端，检查网络", en: "Can't reach the remote. Check the network." },
+  { m: "git/pull_timeout", exact: true, zh: "拉取超时", en: "Pull timed out" },
+  { m: "git/pull_failed", tail: true, zh: "拉取失败", en: "Pull failed" },
   { m: "gh/not_installed", exact: true, zh: "没装 gh", en: "gh isn't installed" },
   { m: "gh/not_authed", exact: true, zh: "gh 没登录", en: "gh isn't signed in" },
   { m: "gh/too_old", exact: true, zh: "gh 版本太旧，升级后再合并", en: "gh is too old. Update it to merge." },
@@ -128,6 +147,9 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "gh/ambiguous_repo", exact: true, zh: "有多个 GitHub 远端，先选仓库", en: "Several GitHub remotes. Choose a repository first." },
   { m: "gh/failed", tail: true, zh: "gh 操作失败", en: "gh failed" },
   { m: "remote/bind_failed", tail: true, zh: "无法监听这个端口", en: "Couldn't listen on this port" },
+  // ── 设置落盘（settings.rs save_settings_unlocked）──
+  // T-2（2026-11-12）：写盘失败此前是系统原话（「拒绝访问。 (os error 5)」），没主语也没下一步。
+  { m: "settings/write_failed", tail: true, zh: "配置文件可能只读或被占用", en: "The settings file may be read-only or locked" },
   // ── 诊断日志（diaglog.rs）──
   { m: "diag/bad_extension", exact: true, zh: "只能导出成 .txt 或 .log 文件", en: "Export only to .txt or .log files" },
   { m: "diag/no_log", exact: true, zh: "还没有诊断日志，开发版不写日志", en: "No diagnostic log yet. Dev builds don't write one." },
@@ -170,11 +192,13 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "worktree/locked", exact: true, zh: "这个 worktree 被锁定了", en: "This worktree is locked" },
   { m: "worktree/target_changed", exact: true, zh: "目录和确认时看到的不一样了，没有删除，请重新检查", en: "The folder no longer matches what you confirmed. Nothing was deleted; check again." },
   { m: "worktree/partial_removed", tail: true, zh: "删到一半失败：目录里部分文件已经删掉，本地分支保留", en: "Deletion failed partway: some files in the folder were deleted; the local branch was kept" },
-  { m: "worktree/still_exists", exact: true, zh: "删完后目录还在，请手动检查", en: "The folder is still there after deleting; check it manually" },
+  { m: "worktree/still_exists", exact: true, zh: "文件已删，空目录被占用没能删掉", en: "Files removed, but the empty folder is in use and was left behind" },
   { m: "worktree/unlink_failed", tail: true, zh: "拆除目录里的链接失败", en: "Couldn't remove links inside the folder" },
   { m: "worktree/remove_failed", tail: true, zh: "删除目录失败（目录里的链接已拆掉，链接指向的内容没动）", en: "Couldn't delete the folder (links inside it were removed; what they pointed to is untouched)" },
   { m: "worktree/git_failed", tail: true, zh: "git 没能运行", en: "Couldn't run git" },
-  { m: "worktree/probe_restore", tail: true, zh: "检查占用时改名后没能改回，请手动检查目录", en: "The folder was renamed during the check and couldn't be restored; check it manually" },
+  // 做空第二轮 R10（2026-11-12）：原句只说了现名，没说删除停在哪一步。改名试探在动任何文件之前（worktree.rs
+  // rename_probe），所以如实说「没删任何文件」，用户知道文件都在、只是换了名字。
+  { m: "worktree/probe_restore", tail: true, zh: "没删任何文件。检查占用时目录改名后没改回，现名以 .meowo-probe 加数字结尾", en: "Nothing was deleted. The folder was renamed for a lock check and couldn't be renamed back. Its name now ends in .meowo-probe and a number" },
   // ── 在新 worktree 里开会话（wtnew）。撞名时后缀是建议名，新建页会单独给「改用」按钮 ──
   { m: "worktree/dir_exists", tail: true, zh: "目录已存在，可改用", en: "The folder already exists. Try" },
   { m: "worktree/branch_exists", tail: true, zh: "分支已存在，可改用", en: "The branch already exists. Try" },
@@ -209,25 +233,31 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "单次 PTY 输入过大", exact: true, zh: "输入内容过大", en: "Input too large" },
   // pty.rs 的 INPUT_BACKLOGGED / RESIZE_BUSY 常量:attach 循环把它们当临时状态跳帧,
   // 但 broker 直返调用方时会落到 UI——不进映射的话英文界面降级出中文原文。
-  { m: "Agent 未在读取输入，输入已积压，请稍后重试", exact: true, en: "The agent isn't reading input; input has backed up — try again in a moment" },
+  { m: "Agent 未在读取输入，输入已积压，请稍后重试", exact: true, en: "The agent isn't reading input and it has backed up. Try again in a moment" },
   { m: "PTY 尺寸通道忙（可能已僵死），本次调整跳过", exact: true, en: "The PTY resize channel is busy (possibly wedged); this resize was skipped" },
   { m: "原会话仍在运行，未重新打开", exact: true, zh: "原会话仍在运行，未重新打开", en: "The original session is still running; nothing was reopened" },
   { m: "无法结束原会话进程", exact: true, zh: "无法结束原会话进程", en: "Couldn't stop the original session process" },
-  { m: "会话进程已变化，请刷新后重试", exact: true, zh: "会话进程已变化，请刷新后重试", en: "The session process changed; refresh and retry" },
+  // terminal.rs restart_session_supported：进程号已过期，什么都没动。侧栏几秒内自己更新进程号，
+  // 再点一次即可，不叫人「刷新」（第三轮 #13）。
+  { m: "session/pid_changed", exact: true, zh: "会话进程已变，没有结束它，请再试一次", en: "The session process changed, so nothing was stopped. Try again." },
   // tail:后缀有两种——「请先在终端页选择接管」(terminal.rs)与「不能重复接管」(managed_terminal.rs),
   // 都是可执行指引,裁掉就只剩一句干巴巴的现状陈述。
   { m: "会话仍在外部终端运行", tail: true, zh: "会话仍在外部终端运行", en: "The session is still running in an external terminal" },
-  { m: "外部终端已在线，但没能带到前台，请手动切换", exact: true, zh: "外部终端已在线，但没能带到前台，请手动切换", en: "External terminal is online but couldn't be focused; switch manually" },
+  // 后端（terminal.rs focus_online_external_viewer）按进程找不到窗口或置前失败。只说发生了什么，
+  // 不叫人「手动切换」（做空第二轮 R10）。用户是在 Meowo 终端页点的「在外部终端打开」，这里的终端照常可用。
+  { m: "外部终端已在线，但没能带到前台，请手动切换", exact: true, zh: "外部终端已经开着，但没能切到它的窗口", en: "The external terminal is already open, but Meowo couldn't switch to its window" },
   { m: "打开外部同步终端失败", zh: "打开外部终端失败", en: "Couldn't open the external terminal" },
   { m: "打开外部终端失败", zh: "无法打开外部终端", en: "Couldn't open the external terminal" },
   { m: "同步会话失败", tail: true, zh: "同步会话失败", en: "Couldn't sync the session" },
   // tail 透传:后端秒退探测的报错带输出尾部(「…（退出码 N）：tail」),zh 必须原样保留;
   // 英文界面下该消息本就是英文,不会命中此中文前缀。
-  { m: "Agent 启动后立即退出", tail: true, zh: "Agent 启动后立即退出", en: "The agent exited right after starting; check the Terminal tab —" },
+  { m: "Agent 启动后立即退出", tail: true, zh: "Agent 启动后立即退出", en: "The agent exited right after starting" },
   { m: "该会话所属账号", zh: "会话所属账号已被删除，无法恢复", en: "This session's account was deleted; it can't be resumed" },
   { m: "请选择工作目录", exact: true, zh: "请选择工作目录", en: "Pick a working directory" },
   { m: "无法定位当前账号目录", exact: true, zh: "找不到当前账号的数据目录", en: "Couldn't locate the current account directory" },
-  { m: "内部状态异常", zh: "内部状态异常，请重启 Meowo", en: "Internal error — restart Meowo" },
+  // 后端是锁中毒（lib.rs / pty.rs LOCK_POISONED：别的线程持锁时崩了）。「重开 Meowo 可恢复」仍是叫人重启
+  // （做空第二轮 R10，2026-11-12）。Meowo 里没有能修好它的按钮，如实说发生了什么、这次操作没执行。
+  { m: "内部状态异常", zh: "后台任务出错中断，这次操作没执行", en: "A background task crashed, so this action didn't run" },
   // ── 审批 ──
   { m: "审批请求已结束", exact: true, zh: "审批请求已结束", en: "The approval request has ended" },
   { m: "审批请求不属于该会话", exact: true, zh: "该审批属于另一条会话", en: "This approval belongs to another session" },
@@ -276,8 +306,8 @@ export const ENTRIES: ErrorEntry[] = [
   // ── 多账号结构化 reason 码(profile/mod.rs 的 coded(),S-9)──
   // 前后端约定:错误串 = `profile/<code>: <detail>`,tail 把 detail(路径/错误原文)透传保留排障信息。
   // 长前缀在前:delete-dir-failed-unrestored 会被 delete-dir-failed 抢先命中。
-  { m: "profile/delete-dir-failed-unrestored", tail: true, zh: "删除账号目录失败，且恢复账号入口也失败，请手动检查账号列表", en: "Couldn't delete the account folder, and restoring the entry also failed — check the account list" },
-  { m: "profile/delete-dir-failed", tail: true, zh: "删除账号目录失败，账号入口已恢复，可关闭占用进程后重试", en: "Couldn't delete the account folder; the entry was restored — close whatever is using it and retry" },
+  { m: "profile/delete-dir-failed-unrestored", tail: true, zh: "账号已从列表移除，目录没能删掉", en: "Removed from the list, but its folder couldn't be deleted" },
+  { m: "profile/delete-dir-failed", tail: true, zh: "账号目录没能删掉，入口已恢复。关掉占用它的程序后重试", en: "Couldn't delete the account folder, so the entry was restored. Close whatever is using it and retry" },
   { m: "profile/has-live-sessions", tail: true, zh: "该账号还有进行中的会话，请先结束这些会话再合并；进行中会话数", en: "End this account's live sessions before merging; live sessions" },
   { m: "profile/create-dir-failed", tail: true, zh: "创建账号目录失败", en: "Couldn't create the account folder" },
   { m: "profile/read-dir-failed", tail: true, zh: "读取账号目录失败", en: "Couldn't read the account folder" },
@@ -316,7 +346,7 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "连接中转失败", anywhere: true, tail: true, en: "Couldn't reach the relay" },
   { m: "查询模型失败", tail: true, zh: "查询模型失败", en: "Couldn't fetch models" },
   // ── 代理 ──
-  { m: "已选「自定义代理」，但代理地址为空", exact: true, zh: "已选自定义代理，请填写代理地址", en: "Custom proxy selected — enter a proxy address" },
+  { m: "已选「自定义代理」，但代理地址为空", exact: true, zh: "已选自定义代理，请填写代理地址", en: "Custom proxy selected. Enter a proxy address" },
   { m: "代理地址为空", exact: true, zh: "代理地址为空", en: "Proxy address is empty" },
   { m: "代理地址不能含空格", exact: true, zh: "代理地址不能含空格", en: "Proxy address can't contain spaces" },
   // tail 带上「{scheme}」与可用协议列表,排障信息不丢(同「代理端口无效」的处理)。
@@ -350,8 +380,8 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "该打开方式已不可用", exact: true, zh: "该打开方式已不可用", en: "That app is no longer available" },
   { m: "terminal/process_not_exclusive", exact: true, zh: "这个进程可能还连着别的会话，或者认不出归属，Meowo 没有结束它，以免一起关掉。在原终端退出这个会话后再试", en: "This process may also serve other sessions, or its owner could not be confirmed, so Meowo left it running to avoid closing them. Exit this session in its original terminal, then try again" },
   { m: "terminal/composer_occupied", exact: true, zh: "终端输入框已有草稿，已原样保留。请先在终端发送或清空该草稿，再重试此消息", en: "The terminal already contains a draft, which was preserved. Send or clear it in the terminal, then retry this message" },
-  { m: "terminal/composer_unknown", exact: true, zh: "无法确认终端输入框是否为空，消息原文已保留。请查看终端，确认输入框就绪后重试", en: "Could not confirm that the terminal input is empty. Your message was preserved; check the terminal input and retry when ready" },
-  { m: "terminal/composer_partial", exact: true, zh: "上条消息的正文可能仍在终端输入框，暂未重复写入。请在终端检查并提交原有内容，消息原文已保留", en: "The previous message may still be in the terminal input. It was not written again. Check and submit the existing text in the terminal; your original message is preserved" },
+  { m: "terminal/composer_unknown", exact: true, zh: "无法确认终端输入框是否为空，消息原文已保留。待当前交互结束后再试", en: "Could not confirm that the terminal input is empty. Your message was preserved. Try again after the current interaction finishes" },
+  { m: "terminal/composer_partial", exact: true, zh: "上条消息的正文可能仍在终端输入框，暂未重复写入。消息原文已保留", en: "The previous message may still be in the terminal input. It was not written again. Your original message is preserved" },
   // ── Lead 工作流（reporter lead 模块的结构化 reason）──
   { m: "lead/claude_missing", exact: true, zh: "没找到 Claude Code 的配置目录，请先安装并登录 Claude Code", en: "Claude Code's config folder wasn't found. Install and sign in to Claude Code first" },
   { m: "lead/reporter_missing", exact: true, zh: "找不到 meowo-reporter，请重新安装 Meowo", en: "meowo-reporter is missing. Reinstall Meowo" },
@@ -361,7 +391,7 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "lead/provider_unsupported", exact: true, zh: "该 CLI 暂不支持安装 Lead 工作流", en: "Lead installation is not supported for this CLI yet" },
   { m: "lead/version_unsupported", exact: true, zh: "尚未验证此 CLI 版本的 Lead 接入，未修改配置", en: "Lead support has not been verified for this CLI version. Its configuration was left unchanged" },
   { m: "lead/variant_unsupported", exact: true, zh: "该 CLI 变体暂不支持 Lead 接入", en: "Lead is not supported for this CLI variant yet" },
-  { m: "lead/profile_missing", exact: true, zh: "该账号配置已不存在，请刷新账号列表后重试", en: "This account configuration no longer exists. Refresh the account list and retry" },
+  { m: "lead/profile_missing", exact: true, zh: "该账号配置已不存在，请重新选择账号", en: "This account configuration no longer exists. Choose another account and retry" },
   // 设置页 Lead 行的自动继续副作用说明（插件声明 LeadCap::continue_notes）；leader 在关卡 Q 接受了这条风险，要求写明。
   { m: "lead/note_dialog_starts_turn", exact: true, zh: "停在 /settings、登录等对话框时，手机作答也会直接开始新一轮", en: "Answering from your phone starts a new turn even while /settings or a sign-in dialog is open" },
   { m: "lead/reviewer_disabled", exact: true, zh: "CLI 已禁用审查角色所需的能力，请先在其设置中启用", en: "The CLI has disabled the capability required by the reviewer role. Enable it in the CLI settings first" },
@@ -377,7 +407,8 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "lead/gate_missing", exact: true, zh: "关卡已经不在了", en: "This gate no longer exists" },
   { m: "lead/gate_invalid", exact: true, zh: "关卡文件格式不对", en: "The gate file is malformed" },
   { m: "lead/gate_changed", exact: true, zh: "关卡已经更新，请看最新的卡片", en: "The gate has changed; check the latest card" },
-  { m: "lead/gate_bad_choice", exact: true, zh: "这个选项不属于当前关卡，请刷新后重选", en: "That option doesn't belong to this gate; refresh and pick again" },
+  // 卡片会在报这个错时自己重读关卡（LeadGateCard 的 STALE_GATE），不叫人去找对话窗里没有的「刷新」（走查 C-11）。
+  { m: "lead/gate_bad_choice", exact: true, zh: "选项不属于当前关卡，已重新读取，请重选", en: "That option isn't part of this gate. It was reloaded, so pick again." },
   { m: "lead/gate_closed", exact: true, zh: "这个关卡已经回答过了", en: "This gate has already been answered" },
   // ── 窗口 ──
   { m: "创建对话窗口失败", tail: true, zh: "打开对话窗口失败", en: "Couldn't open the chat window" },

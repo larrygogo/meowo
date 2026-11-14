@@ -173,9 +173,14 @@ async function clearComposerDraft(sessionId: number, inputs: readonly string[], 
   return false;
 }
 
-/// 撤回的结局。done.clean = CLI 放回它自己输入框的原文已确认清掉（没清掉要提醒用户手动清）。
+/// 撤回的结局。done.clean = CLI 放回它自己输入框的原文已确认清掉。没清掉时带 retryClear：
+/// 错误条的「重试」再按一次 CLI 的清空键（同一套核对，返回是否确认干净），不叫用户去终端手动清
+/// （用户 2026-11-10：「不要让用户去终端去清除」；走查 C-4）。
 export type UndoOutcome =
-  | { kind: "done"; clean: boolean }
+  | { kind: "done"; clean: true }
+  /// retryClear 缺省 = 撤回前就认不出输入框（baseline 为空）：不敢按清空键（空框上它是退出 / 回退菜单），
+  /// 重试注定失败，调用方只给看终端画面并写明原因。
+  | { kind: "done"; clean: false; retryClear?: () => Promise<boolean> }
   | { kind: "composer_busy" }
   | { kind: "mismatch" }
   | { kind: "unconfirmed" }
@@ -204,6 +209,14 @@ export type UndoRun = {
   onPending: (pending: boolean) => void;
 };
 
+/// 撤回已生效后清 CLI 输入框里的原文，清不掉时把「再清一次」交给调用方。
+async function undoneResult(sessionId: number, clear: UndoInputClearSpec | null | undefined, text: string, baseline: number | null): Promise<UndoOutcome> {
+  if (!clear) return { kind: "done", clean: true };
+  if (await clearUndoneInput(sessionId, clear, text, baseline)) return { kind: "done", clean: true };
+  if (baseline === null) return { kind: "done", clean: false };
+  return { kind: "done", clean: false, retryClear: () => clearUndoneInput(sessionId, clear, text, baseline) };
+}
+
 /// 跑一次撤回。菜单式（claude /rewind）以屏幕为准；其余发命令后等 transcript 里那条消失，
 /// 期间认插件声明的拒绝行（kimi 在不可撤时的提示）。写终端的异常照常抛给调用方。
 export async function performUndo(run: UndoRun): Promise<UndoOutcome> {
@@ -226,8 +239,7 @@ export async function performUndo(run: UndoRun): Promise<UndoOutcome> {
     if (!run.isCurrent()) return { kind: "stale" };
     if (outcome !== "done") return { kind: outcome === "mismatch" ? "mismatch" : "unconfirmed" };
     run.onUndone();
-    const clean = !control.input_clear || await clearUndoneInput(sessionId, control.input_clear, text, 0);
-    return { kind: "done", clean };
+    return await undoneResult(sessionId, control.input_clear, text, 0);
   }
   const before = await managedTerminalSnapshot(sessionId);
   if (run.draftStash) await stashComposerDraft(sessionId, run.draftStash);
@@ -246,8 +258,7 @@ export async function performUndo(run: UndoRun): Promise<UndoOutcome> {
       if (!run.isCurrent()) return { kind: "stale" };
       if (!await run.stillHas()) {
         run.onUndone();
-        const clean = !control.input_clear || await clearUndoneInput(sessionId, control.input_clear, text, inputBaseline);
-        return { kind: "done", clean };
+        return await undoneResult(sessionId, control.input_clear, text, inputBaseline);
       }
       if (!reject) continue;
       const snapshot = await managedTerminalSnapshot(sessionId, since);

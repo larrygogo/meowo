@@ -60,6 +60,12 @@ export const zh = {
     dismissAll: "全部忽略",
     // 「全部忽略」钮上的字：n = 正在弹的这条 + 后面排着的。
     dismissAllCount: (n: number) => `忽略 ${n} 条`,
+    // 灵动岛「打开」失败（I-1/I-2，走查 2026-11-12）：留在岛上说清原因与下一步。
+    openFailed: "没能打开对话窗",
+    liteNoChat: "轻量模式没有对话窗，可在设置里开启",
+    retry: "重试",
+    openSettings: "打开设置",
+    dismissError: "关闭提示",
   },
   sticker: {
     openChatWindow: "打开对话窗口",
@@ -115,14 +121,11 @@ export const zh = {
     usageStale: (time: string) => `用量刷新失败，上次更新 ${time}`,
     // 「全部」tab 里在线与历史会话的分界（7B-3）。
     historyDivider: (n: number) => `历史会话 · ${n}`,
-    renameFailed: "重命名失败，请稍后再试。",
     archiveFailed: "标记完成失败，请稍后再试。",
     archivedNotice: "已完成，可在「设置 → 会话」找回",
     archiveUndo: "撤销",
     focusConnecting: "会话正在连接，请稍后再试。",
-    focusHostOnly: "已打开终端，请手动切到对应标签页。",
     focusNotFound: "会话仍在运行，但找不到对应的终端标签页。",
-    focusUnsupported: "该终端不支持自动跳转，请手动切换。",
     focusPermission: "请允许 Meowo 控制终端，才能自动跳转。",
     openSystemSettings: "打开系统设置",
     // attach/恢复成功的正反馈：窗口在别的虚拟桌面时聚焦「成功」了用户却什么都看不到，
@@ -192,6 +195,9 @@ export const zh = {
     cancel: "取消",
     launch: "启动",
     launching: "正在启动…",
+    // 启动分步状态（N-2，走查 2026-11-12）：勾了 worktree 时先建 worktree 再起 agent。
+    phaseWorktree: "正在创建 worktree…",
+    phaseStarting: (agent: string) => `正在启动 ${agent}…`,
     hooksMissing: "该 Agent 尚未接入，新会话可能不显示状态",
     hooksUnknown: "无法确认该 Agent 的接入状态",
     noAgents: "未检测到已安装的 AI CLI，请先安装",
@@ -213,7 +219,8 @@ export const zh = {
     repairHooksTip: "重写接入配置，新会话不显示状态时点它",
     // 修复在后端进程内完成，没有「终端里的修复日志」可看——指向真实可行的下一步。
     repairFailed: "修复未生效，请重试或重装该 Agent",
-    repairNeedLogin: "请先在终端登录该 Agent，再点修复连接。",
+    // 不叫人「去终端登录」（2026-11-12 第三轮 #13）：登录入口就在同一块提示里的「登录」按钮。
+    repairNeedLogin: "Agent 还没登录。登录后再修复连接",
     repairNoReporter: "缺少组件 meowo-reporter，请重新安装 Meowo。",
     repairNotDetected: "未检测到该 Agent 的数据目录，请确认已安装。",
     newButton: "新建会话",
@@ -544,15 +551,15 @@ export const zh = {
     emptyStarting: "会话正在启动…",
     // 切模型 / 模式（任务 20261114-tui-model-switch）：运行中或有待批审批时不写终端、不重启，排到这一轮之后。
     // 队列存在 Meowo 进程里：Meowo 重启会清空，界面写明（复核 M3）。
-    settingsDeferred: (name: string) => `这一轮结束后切换到「${name}」（重启 Meowo 会取消）`,
+    settingsDeferred: (name: string) => `这一轮结束后切换到「${name}」（关闭应用会取消）`,
     // Lead 关卡等待中：带参重启会杀掉会话内的关卡等待器，接回后没有回合、没人再起等待器，答复后不会自动
     // 继续（做空 N3；B7 真机探针 Kimi/Gemini 均证实，evidence/round3-n3），排到续跑那一轮跑完之后。
-    settingsDeferredLead: (name: string) => `关卡答复后那一轮跑完再切换到「${name}」（重启 Meowo 会取消）`,
+    settingsDeferredLead: (name: string) => `关卡答复后那一轮跑完再切换到「${name}」（关闭应用会取消）`,
     // 会话没在运行：Codex/OpenCode 恢复时不回放模型，打开后由宿主经会话服务补设（做空 N6）。
-    settingsDeferredOpen: (name: string) => `打开会话后切换到「${name}」（重启 Meowo 会取消）`,
+    settingsDeferredOpen: (name: string) => `打开会话后切换到「${name}」（关闭应用会取消）`,
     // 排了 30 分钟这一轮还没结束（或宿主一直没等到空闲）：出队，告诉用户（做空 N5）。
     // 对话页执行时会话服务 / TUI 还没就绪：交给宿主等就绪再切（做空 R5）。
-    settingsDeferredReady: (name: string) => `会话就绪后切换到「${name}」（重启 Meowo 会取消）`,
+    settingsDeferredReady: (name: string) => `会话就绪后切换到「${name}」（关闭应用会取消）`,
     // Codex 会话内首次切进要沙箱的档（必要时询问 / 自动审查）：带沙箱参数重开了会话（第五轮 P3），≤20 字。
     settingsSandboxReopen: (name: string) => `已带沙箱重开会话，切到「${name}」`,
     settingsQueueExpired: "等太久没切成，已取消，请重新选择",
@@ -610,6 +617,8 @@ export const zh = {
     shortcutNewline: "换行",
     shortcutInterruptSend: "中断当前回合并发送",
     shortcutDeny: "拒绝待审批请求（输入框为空时，按两次确认）",
+    shortcutInterrupt: "中断当前回合（输入框为空时，按两次确认）",
+    shortcutApproveDigit: "允许待审批（焦点在输入框外）。2 起持久放行",
     shortcutSlashComplete: "选中斜杠命令补全",
     shortcutHistory: "取回上一条消息（输入框为空时）",
     shortcutSheet: "打开本速查表",
@@ -645,7 +654,7 @@ export const zh = {
     tableCopy: "复制表格",
     copyMessage: "复制消息",
     messageCopied: "已复制消息",
-    questionExpired: "提问卡已超时收起，可到终端页继续作答",
+    questionExpired: "提问卡已超时收起，表单就绪后可在此作答",
     // 远程没有终端页：超时放行后终端表单经屏幕识别回到手机上作答，不必回桌面端。
     questionExpiredRemote: "提问卡已超时收起，表单就绪后可在此作答",
     questionSettledNotice: "该提问已在别处处理或已结束",
@@ -738,12 +747,12 @@ export const zh = {
     // 手机上回合在跑时的说法：没有 Enter/Ctrl+Enter 可讲，只说发出去会怎样。
     inputPlaceholderRemoteSteer: "发送会插入当前回合，不打断它",
     inputPlaceholderRemoteQueue: "发送后排队，当前任务结束再发",
-    inputUnavailable: "会话尚未接管，请先切到终端页",
-    sendBackgroundSession: "后台会话可发消息和结束。斜杠菜单、审批等操作请回派出它的终端。",
+    inputUnavailable: "接管后才能在这里发送",
+    sendBackgroundSession: "后台会话由 Agent 托管。这里只能发消息和结束",
     sendBackgroundKeysMovedYou: "后台会话不接受终端按键，请在这里直接发消息。",
     sendBackgroundQueued: "已发给后台会话。若它未处理，内容还在输入框，可直接重发。",
     sendBackgroundNoAttachments: "后台会话暂不支持附件，请只发文字。",
-    inputLocked: "终端正在等待选择，请先用上方卡片或终端页处理",
+    inputLocked: "终端正在等待选择，请先用上方卡片处理",
     inputLockedRemote: "终端正在等待选择，请先用上方卡片处理",
     send: "发送",
     sending: "发送中…",
@@ -773,9 +782,9 @@ export const zh = {
     questionPending: "待回答",
     questionFormLoading: "点选答案，终端表单就绪后自动作答",
     queuedAnswerHint: (label: string) => `已选「${label}」，表单就绪后自动作答`,
-    questionExternalHint: "请回到运行它的终端作答，完成后本卡自动关闭",
-    questionMultiHint: "没有可点选的选项，请到终端作答，完成后本卡自动关闭",
-    answerOnDesktop: "请在桌面端作答，完成后本卡自动关闭",
+    questionExternalHint: "会话在外部终端运行，Meowo 无法代答。答完本卡自动关闭",
+    questionMultiHint: "没有可点选的选项，表单就绪后可在此作答",
+    answerOnDesktop: "会话在外部终端运行，Meowo 无法代答。答完本卡自动关闭",
     // 手机上认不出终端交互时的兜底作答面（RemoteTerminalKeys）。
     remoteKeysHint: "没认出选项，可直接操作终端",
     remoteOpenKeys: "操作终端",
@@ -794,7 +803,7 @@ export const zh = {
     questionAnswerReady: "提交后 Agent 立即继续",
     questionAnswerIncomplete: (count: number) => `还有 ${count} 题未作答`,
     // 题面无法按问题原文区分（空题面/同文重题），卡内提交会错位，只能交给终端表单。
-    questionNeedsTerminal: "这组问题无法在卡片内作答，请去终端作答",
+    questionNeedsTerminal: "这组问题无法在卡片内作答",
     chatAboutThis: "先和 Agent 讨论",
     planTitle: "Agent 正在等待计划审批",
     approvalTool: "请求工具",
@@ -819,7 +828,7 @@ export const zh = {
     // Esc 两段式确认的第二段按钮文案（第一下 Esc 点亮后显示）。
     denyConfirmEsc: "再按 Esc 确认拒绝",
     // 审批卡被别处结算/超时收卡时的去向说明——凭空消失像 bug。
-    approvalClearedNotice: "该审批已在别处处理或已超时，如需继续请查看终端",
+    approvalClearedNotice: "该审批已在别处处理或已超时",
     approvalClearedNoticeRemote: "该审批已在别处处理或已超时",
     // 倒计时归零到后端结算事件到达之间的一拍空窗：徽章切这句，不留定格的 0:00。
     // 审批卡与题面卡共用（回落语义相同）。
@@ -833,6 +842,9 @@ export const zh = {
     questionAnswerStepwise: "转为逐题作答",
     questionNeedsStepwiseRemote: "这组问题无法在卡片内作答，请转为逐题作答",
     questionFormPendingRemote: "表单就绪后可在此作答，请稍候",
+    // 题面卡等了 8s，后端屏幕上也认不出终端表单（chat/useQuestionFormProbe）：说清楚，给出路。
+    questionFormMissing: "没认出终端里的表单，可在终端页直接选",
+    questionFormMissingRemote: "没认出终端里的表单，可用下方按键作答",
     close: "关闭",
     renameSave: "保存",
     minimize: "最小化",
@@ -883,6 +895,8 @@ export const zh = {
     endSessionConfirm: "将终止正在运行的任务，对话记录保留。确定结束？",
     // 标记完成会顺带结束会话（后端 set_archived）。只在 Agent 正在干活时才拦一下。
     markDoneRunningConfirm: "Agent 还在运行，标记完成会结束它。",
+    // S-1（走查 2026-11-12）：侧栏/会话管理页批量标记完成里有在跑的会话时的确认。
+    markDoneRunningBatchConfirm: (n: number) => `其中 ${n} 个还在运行，标记完成会结束它们。`,
     terminalAttach: "在外部终端同步打开",
     // 悬停在终端里的链接/文件路径上时,右下角的操作提示(T-4:此前 Ctrl+点击无任何界面表达)。
     terminalLinkHint: "Ctrl+点击打开链接",
@@ -1065,6 +1079,9 @@ export const zh = {
     shellBusyMessage: "这些终端里还有程序在跑，关闭会把它们一起结束。",
     shellBusyConfirm: "结束程序并关闭",
     shellExited: "进程已退出（{code}）",
+    // walkthrough P-13：退出后给「重启」，同一目录再开一个（托管终端的退出卡早有出路，两者对齐）。
+    shellRestart: "重启",
+    shellRestartHint: "按 Enter 重启",
     diffSearchPlaceholder: "按名称搜索文件…",
     // 改动列表（对照 Kimi）：文件数、列表 / 树形切换、状态方块的读屏名。
     diffFileCount: (n: number) => `${n} 个文件`,
@@ -1134,6 +1151,9 @@ export const zh = {
     reviewComments: (n: number) => `${n} 条改动评论`,
     reviewCommentsInsert: "插入输入框",
     reviewCommentsClear: "清空",
+    // walkthrough P-7：清空可撤销（不弹确认，撤销优先于打断）。
+    reviewCommentsCleared: (n: number) => `已清空 ${n} 条评论`,
+    reviewCommentsUndo: "撤销",
     reviewCommentsIntro: "我对改动有几条意见：",
     reviewCommentsRemovedLine: "删除的行",
     todoPanelTitle: "进度",
@@ -1157,11 +1177,12 @@ export const zh = {
     subagentDurationHour: (h: number, m: number) => `${h} 小时 ${m} 分`,
     subagentLoading: "正在读取子任务记录…",
     subagentEmpty: "该子任务还没有留下记录",
-    terminalStartExited: (code: number | null, tail?: string) => `Agent 启动后退出${code == null ? "" : `（退出码 ${code}）`}${tail ? `：${tail}` : "，请在终端页查看输出"}`,
+    terminalStartExited: (code: number | null, tail?: string) => `Agent 启动后退出${code == null ? "" : `（退出码 ${code}）`}${tail ? `：${tail}` : ""}`,
     terminalStartFailed: "Agent 终端未能启动",
-    terminalReadyTimeout: "等待 Agent 终端就绪超时，请在终端页查看状态",
+    terminalReadyTimeout: "等待 Agent 终端就绪超时",
     // 就绪等待的进度横幅（waitForTerminalReady 报送整秒）：秒数 + 「去终端页看」。
-    terminalWaitingReady: (seconds: number) => `正在等待 Agent 终端就绪，已等 ${seconds} 秒。可去终端页查看启动进度。`,
+    // 两位秒数时原句 21 字超出 ≤20 的规范（做空第二轮 R10，2026-11-12），先说已等多久再说现状。
+    terminalWaitingReady: (seconds: number) => `已等 ${seconds} 秒，Agent 终端未就绪`,
     // 一句说清现状与代价（用户实拍：两句长文把按钮挤到第二行）。点按钮后的确认框再写细节。
     sendNeedsTakeover: "会话在外部终端运行，接管会结束它",
     composerGateEnded: "会话已结束。恢复后即可继续对话。",
@@ -1176,7 +1197,7 @@ export const zh = {
     terminalNeedsAttention: "Agent 有待处理的交互，请先完成卡片或终端里的确认，再重新发送。",
     // 拦住发送的是提问卡时用这句：「启动确认」对一个回合中途的提问是错的说法（用户实拍）。
     questionNeedsAnswer: "Agent 有提问待回答，答完再发送。",
-    sendEchoTimeout: "消息未进入终端，已撤回。请切到终端页确认状态后重试。",
+    sendEchoTimeout: "消息没进入终端，未发出。终端可能停在启动询问上",
     terminalStreamStalled: "终端画面卡住了，不会自行恢复。点「结束并恢复」即可，对话记录不受影响。",
     // 初始化 25s 超时（撤遮罩后的黑屏说明，见 ManagedTerminal 的 initTimedOut）。
     terminalInitTimeout: "终端长时间无输出，可能启动失败。可结束会话后重试，对话记录不受影响。",
@@ -1216,11 +1237,12 @@ export const zh = {
     queuedAttachmentOnly: "（附件）",
     interjectNow: "中断并处理",
     interjectNowTip: "停下当前回合，立刻处理这些消息",
-    queuedDismiss: "移除这条回执",
-    queuedDismissTip: "仅移除回执，消息仍会执行",
+    queuedDismiss: "隐藏，不会取消",
+    queuedDismissTip: "只是隐藏，消息仍会执行",
     interruptAndSendTip: "Ctrl+Enter 中断并发送，Enter 排队",
     interruptNow: "中断",
     interruptNowTip: "中断当前回合，不发送",
+    escInterruptArmed: "再按一次 Esc 中断当前回合",
     // 中断键已写入、等回合真正停下的过渡态（按钮禁用期间的文案/无障碍标签）。
     interrupting: "正在中断…",
     attentionDismiss: "仅收起",
@@ -1228,8 +1250,8 @@ export const zh = {
     attentionCollapsedRestore: "已收起提示，点击展开",
     questionCollapsedRestore: "已收起提问，点击展开",
     questionFoldedInTerminal: "终端里有待答的提问，点此展开卡片",
-    unrecognizedPromptNotice: "终端有尚未识别的交互，请到终端页处理后重新发送。原文已保留。",
-    unrecognizedPromptNoticeRemote: "终端有尚未识别的交互，请展开终端处理后重新发送。原文已保留。",
+    unrecognizedPromptNotice: "终端似乎在等待选择，消息已发出",
+    unrecognizedPromptNoticeRemote: "终端似乎在等待选择，消息已发出",
     terminalPromptTitle: "Agent 需要你完成一个启动步骤",
     terminalPromptHelp: "下面是终端的提示原文，用右侧按钮选择确认即可。",
     trustPromptTitle: "是否信任此文件夹？",
@@ -1244,7 +1266,19 @@ export const zh = {
     sidebarFilterGroup: "视图",
     sidebarFilterSort: "排序",
     sidebarCollapse: "收起会话列表",
-    sidebarActionFailed: "操作失败，请稍后再试。",
+    // 侧栏失败提示（走查 S-4/S-5，2026-11-12）：说清是哪个动作没成、结果停在哪，原因另起一行
+    // （formatBackendError 映射）。原先一律「操作失败，请稍后再试」，看不出是哪一步出的问题。
+    sidebarArchiveFailed: "没能标记完成，会话已放回列表",
+    sidebarReopenFailed: "没能恢复进行中",
+    sidebarRenameFailed: "没能重命名，新名字还在输入框里",
+    sidebarSearchFailed: "没能搜索对话内容",
+    sidebarReorderFailed: "顺序没保存，已恢复原来的顺序",
+    sidebarEndFailed: "没能结束会话",
+    // S-6：按最近活动排序时按 Ctrl+Shift+↑/↓，顺序由活动决定，手动挪不动。
+    sidebarReorderNeedsManual: "按最近活动排序时不能调整顺序",
+    sidebarSwitchToManual: "改用手动排序",
+    // S-7：键盘挪位后的读屏播报。
+    sidebarMoved: (n: number, total: number) => `已移到第 ${n} 位，共 ${total} 位`,
     // 斜杠命令在 transcript 里是一条 XML 包裹的用户消息，渲染成徽章而非标签原文。
     localCommand: "本地命令",
     commandOutput: "命令输出",
@@ -1258,7 +1292,7 @@ export const zh = {
     changesUncommitted: "未提交",
     wsHide: "从列表中移除",
     wsHidden: (name: string) => `已移除 ${name}`,
-    wsHideTip: "只是不在这里显示，文件夹和其中的会话都不动；之后在这里新建会话会自动回来",
+    wsHideTip: "只是不在这里显示，文件夹和会话都不动。在这里新建会话后会自动回来",
     changesCommitted: (base: string) => `已提交未合并 · 相对 ${base}`,
     scmRepos: "存储库",
     scmStaged: "暂存的更改",
@@ -1269,7 +1303,25 @@ export const zh = {
     scmCommit: "提交",
     scmCommitAll: "提交全部",
     scmCommitAllTip: "没有暂存的更改，会提交全部更改（含未跟踪文件）",
-    scmCommitFiltered: "筛选藏起了会被一起提交的文件。清除筛选后再提交",
+    scmCommitFiltered: "筛选藏起了会被一起提交的文件",
+    scmClearFilter: "清除筛选",
+    // walkthrough P-4：进行中的写操作要有字（钩子可能跑几十秒），和推送的「正在推送…」一致。
+    scmCommitting: "正在提交…",
+    scmRunning: { stage: "正在暂存…", unstage: "正在取消暂存…", discard: "正在放弃…", ignore: "正在加入 .gitignore…", undo: "正在撤销…" } as Record<string, string>,
+    scmBusyTip: "上一个操作还没完成",
+    scmDismiss: "关闭",
+    scmRetry: "重试",
+    // walkthrough P-5：放弃后原位给撤销（git.rs undo_discard）。
+    scmDiscarded: (n: number) => (n === 1 ? "已放弃这个文件的更改" : `已放弃 ${n} 个文件的更改`),
+    scmTrashed: "已移到回收站",
+    scmUndo: "撤销",
+    scmUndone: "已撤销放弃",
+    // 混合放弃（已跟踪 + 未跟踪）：撤销只写回已跟踪的，未跟踪的在回收站（做空第一轮 #2，2026-11-12）。
+    scmDiscardedMixed: (n: number, trashed: number) => `已放弃 ${n} 个，${trashed} 个移到回收站`,
+    scmUndoneMixed: (trashed: number) => `已撤销放弃，${trashed} 个仍在回收站`,
+    // 冲突的出路：把一句现成的话放进输入框交给 agent（用户自己点发送）。
+    scmAskAgent: "交给 agent",
+    scmConflictPrompt: "仓库里有未解决的合并冲突，请解决冲突后提交。",
     scmRepoGone: (repo: string) => `${repo} 已不在列表里，没有放弃任何文件`,
     scmDiscardIn: (repo: string) => `仓库：${repo}`,
     filesWorkdir: "工作目录",
@@ -1286,7 +1338,7 @@ export const zh = {
     scmNoChanges: "没有更改",
     scmLoadingDetail: "正在加载这个仓库的行数和已提交内容…",
     scmDiscardTitle: (n: number) => (n === 1 ? "放弃这个文件的更改？" : `放弃 ${n} 个文件的更改？`),
-    scmDiscardNote: "已跟踪文件的改动无法恢复。未跟踪的文件移到回收站。",
+    scmDiscardNote: "放弃后可以撤销。未跟踪的文件移到回收站。",
     scmDiscardMore: (n: number) => `还有 ${n} 个文件`,
     scmDiscardConfirm: "放弃更改",
     scmDirFiles: (n: number) => `${n} 个文件`,
@@ -1387,28 +1439,35 @@ export const zh = {
     modeUnreachable: "没能切到该模式，当前账号或参数下不可用",
     modelProbing: "正在读取模型清单…",
     sendSessionChanged: "会话已切换，已停止旧会话的发送。",
-    imagePasteUnconfirmed: "图片附加未完成，消息未确认提交。请先到终端检查并清理未发送内容，再重试。",
+    imagePasteUnconfirmed: "图片没贴完，消息未发出。这个输入框 Meowo 认不出，没法自动清掉残图",
     terminalMenuCleared: "已在终端完成选择，可以发送",
     closeTerminalMenu: "关闭终端里的菜单",
-    imageDraftCleared: "已在终端清理，可以重试",
+    imageDraftCleared: "已清理残图",
     interruptTimeout: "尚未确认任务已中断，草稿已保留。请稍后重试。",
     busySendUnavailable: "当前 Agent 尚未验证运行中排队，请等待当前任务结束后发送。",
+    menuBusy: "请等待当前任务结束后切换模型或模式。",
+    errorRetry: "重试",
+    menuBusyShort: "回合结束后才能切换",
     // 打开终端里的选择菜单（只能在终端里挑）：运行中打开会把命令打进正在跑的回合。选定的模型 / 模式
     // 运行中一律排到这一轮之后（SPEC 终态 2），只有「打开菜单」本身要等。
     menuBusyOpen: "这一轮结束后再打开菜单",
-    modelSwitchUnconfirmed: "尚未确认模型已切换，未修改恢复配置。请到终端检查。",
-    modelListUnavailable: (command: string) => `读不到模型清单，点这里到终端页用 ${command} 切换`,
+    modelSwitchUnconfirmed: "没等到切换确认，模型可能没变。恢复配置未改",
+    modelListUnavailable: (command: string) => `读不到模型清单，可直接发送 ${command} 再选`,
     modelListUnavailableRemote: (command: string) => `读不到模型清单，可直接发送 ${command} 再选`,
+    // CLI 明确拒绝或放弃切换时转述原话（claude 2.1.322 `Kept model as …`、hook 拦截、别名校验失败）。
+    modelSwitchRejected: (line: string) => `模型未切换：${line}`,
+    // CLI 确认的是别的模型（降档等），所选模型没生效，恢复配置不写。
+    modelSwitchOther: (line: string) => `CLI 换成了别的模型：${line}`,
     modelGoTerminal: "去终端页切换模型",
     modelListUnavailableShort: "读不到模型清单",
     // 就地模型菜单（对照 Kimi）：换模型的代价写在做决定的地方。
     modelCacheHint: "换模型或思考程度会使提示词缓存失效，多耗 token",
     modelMore: "更多模型…",
     modelLoad: "读取模型清单",
-    modelPickNotFound: (name: string) => `终端的模型菜单里没找到 ${name}，请到终端页切换`,
+    modelPickNotFound: (name: string) => `模型菜单里没有 ${name}`,
     modelStarred: "已收藏",
     effortLabel: "思考",
-    effortUnconfirmed: "尚未确认思考程度已切换，请到终端检查",
+    effortUnconfirmed: "没等到切换确认，思考程度可能没变",
     // 撤回（对照 Kimi 用户消息上的「撤回」）：这条及之后移出上下文，原文放回输入框
     undo: "撤回",
     undoTip: "撤回这条及之后的对话",
@@ -1419,9 +1478,11 @@ export const zh = {
     undoConfirmLabel: "撤回",
     undoBusy: "任务运行中，结束后才能撤回",
     undoRejected: (line: string) => `撤回未完成：${line}`,
-    undoUnconfirmed: "尚未确认已撤回，请到终端检查",
+    undoUnconfirmed: "没等到撤回生效，对话未改动",
     undoDone: "已撤回，原文已放回输入框",
-    undoInputResidue: "终端输入框还留着原文，请先清空",
+    undoInputResidue: "已撤回，但终端输入框还留着原文",
+    undoInputUnreadable: "已撤回。认不出终端输入框，原文没能自动清掉",
+    undoClearInput: "清空终端输入框",
     // 选中对话里的文字后浮出的按钮：以引用块带进输入框（对照 Kimi 选区浮条的「添加到对话」）。
     // 会话菜单的「分叉会话」（对照 Kimi）：用 CLI 原生分叉另开一条线，原会话不动。
     forkSession: "分叉会话",
@@ -1443,16 +1504,19 @@ export const zh = {
     sideQuestionTag: "侧问",
     sideQuestionTip: "不写入对话记录，关闭后消失",
     sideQuestionAnswering: "正在回答…",
-    sideQuestionFailed: "没读到回答，请到终端查看",
+    sideQuestionFailed: "没读到回答，侧问窗口已关闭",
+    sideQuestionRetry: "再问一次",
     sideQuestionClose: "关闭侧问",
     // 会话仍在本应用里跑：两边同时恢复会写乱同一份会话。
     resumeCommandCopiedLive: "已复制，先在这里结束会话再运行",
     copyFailed: "复制失败，请重试",
-    undoComposerBusy: "终端输入框没能自动清空，清空后再撤回",
+    undoComposerBusy: "终端输入框有草稿且没能自动清空，未撤回",
     // 菜单式撤回（claude /rewind）每一步核对屏幕，选中项或引文与要撤的消息对不上就退出菜单。
     undoMenuMismatch: "撤回菜单与所选消息对不上，已取消",
     // CLI 拒绝某档位时原样带出它的说法（如当前模型不支持 Max）。
     effortRejected: (line: string) => `思考程度未切换：${line}`,
+    // 组织或设置封顶时 CLI 降到上限档（claude 2.1.322 `… set to 'high' instead`），显示值随之落到实际档位。
+    effortCapped: (line: string) => `思考程度按上限调整：${line}`,
     // 复制到其他引擎（原会话不动，另起一个带上下文的新会话）：模型下拉的分组标题与交接注入语。
     switchProvider: "复制到新会话",
     switchProviderDefaultModel: "默认模型",
@@ -1461,7 +1525,8 @@ export const zh = {
       `请先完整阅读文件 ${path}，它是另一个 CLI 里一段会话的完整上下文。读完后接着其中的任务继续，不要复述文件内容。`,
     // 复制出来的会话开头，替代那条注入语显示。
     handoffCopied: "上下文从另一段会话复制而来",
-    handoffInjectFailed: "交接提示未自动发出，已放回输入框，请手动发送",
+    // 原句末尾「请手动发送」只是叫人自己来（做空第二轮 R10）。失败就是没写进终端，放回的输入框带发送键。
+    handoffInjectFailed: "交接提示没写进终端，已放回输入框",
     // 接续链的回看呈现：已被接替的旧段（禁发 + 引导去链尾）与新段的来历注脚。
     supersededBanner: "本会话已切换引擎，在新会话中继续。此处仅供回看",
     supersededGo: "前往新会话",
@@ -1489,6 +1554,8 @@ export const zh = {
       untrusted: "仅信任命令免审",
       "on-request": "按需审批",
       never: "从不询问",
+      // codex 0.163+ 的 approval_policy 对象形态（各类审批分开开关），见 codex telemetry approval_mode。
+      granular: "分类审批",
       "read-only": "只读",
       "workspace-write": "工作区可写",
       "danger-full-access": "完全访问",
@@ -1595,6 +1662,11 @@ export const zh = {
     searchPlaceholder: "搜索设置…",
     searchNoResults: "没有匹配的设置项",
     searchClear: "清除搜索",
+    // T-2（2026-11-12）：各分区保存失败统一一个主语（此前网络分区套「保存失败：」、其余只有原话）。
+    saveFailed: (e: string) => `设置没保存：${e}`,
+    // T-5：文本类设置回车提交后的轻量反馈（开关会自己翻，文本框提交没提交看不出来）。
+    saved: "已保存",
+    retry: "重试",
     archivedSessions: "已完成会话",
     archivedInAdmin: "在会话管理中查看",
     archivedInAdminDesc: "按工作区、时间筛选，批量恢复进行中",
@@ -1612,7 +1684,7 @@ export const zh = {
     close: "关闭",
     autostart: "开机自启",
     autostartDesc: "系统开机后自动启动",
-    autostartFailed: "开机自启设置失败，请重试",
+    autostartFailed: "开机自启没设置成功",
     notify: "桌面通知",
     notifyDesc: "会话需要你回复或出错时弹系统通知",
     // 系统通知分种类（二期 #6），种类与灵动岛的「自动弹出提醒」同一套。
@@ -1645,8 +1717,8 @@ export const zh = {
     keepAwakeDesc: "有会话在跑时电脑不睡，屏幕照常熄灭",
     leadGroup: "Lead 工作流",
     leadWorkflow: "Lead 工作流",
-    leadWorkflowDesc: "你只描述想要的结果，agent 访谈、写规格、出方案、实施并独立做空验证；只在确认规格、拍板、验收三个关卡找你。打开会装进 Claude Code，关闭会卸载干净",
-    leadProvidersDesc: "其他 CLI 可分别安装工作流与独立审查。安装后是否能自动继续会单独显示；卸载只移除 Meowo 管理的文件。",
+    leadWorkflowDesc: "你只描述想要的结果，agent 访谈、写规格、出方案、实施并独立做空验证。只在确认规格、拍板、验收三个关卡找你。打开会装进 Claude Code，关闭会卸载干净",
+    leadProvidersDesc: "其他 CLI 可分别安装工作流与独立审查。安装后是否能自动继续会单独显示。卸载只移除 Meowo 管理的文件。",
     leadRefresh: "刷新",
     leadLoading: "正在检查安装状态…",
     leadInstalled: "已安装 · 可自动继续",
@@ -1733,7 +1805,6 @@ export const zh = {
     followGlobal: "跟随默认",
     effective: (p: string) => `生效：${p}`,
     effectiveDirect: "生效：直连",
-    saveFailed: (e: string) => `保存失败：${e}`,
     // ——覆盖面：三家能力不同，必须如实告知，否则用户会以为哪儿都生效——
     coverageFull: "全部会话（含你自己在终端里敲的）",
     coverageFullWhy: "代理已写进它的配置文件，谁启动都生效",
@@ -1767,7 +1838,10 @@ export const zh = {
     copied: "已复制",
     regenerate: "重新生成令牌",
     regenerateConfirm: "重新生成后，已配对的手机需重新扫码。",
-    noIp: "取不到局域网地址，请在手机浏览器手动输入本机 IP",
+    // T-1（2026-11-12）：失败此前被 .catch(() => {}) 吞掉，用户以为泄露的令牌已吊销。
+    regenerateFailed: (reason: string) => `令牌没重新生成，旧令牌仍有效。${reason}`,
+    regenerateDone: "已重新生成，旧手机要重新扫码",
+    noIp: "取不到局域网地址，在手机浏览器输入本机 IP 也能连",
     offHint: "关闭时手机无法连接",
     // 手机推送（Bark）：远程页是 http，浏览器不给推送，改由电脑调 Bark 推到手机。
     pushLabel: "手机推送（Bark）",
@@ -1785,9 +1859,9 @@ export const zh = {
     gateConnect: "连接",
     gateConnecting: "正在连接…",
     gateLoading: "正在加载…",
-    gateErrExpired: "桌面端令牌已更换或失效，请重新扫码或粘贴新令牌",
+    gateErrExpired: "令牌已失效，请重新扫码或粘贴新令牌",
     gateErrInvalid: "令牌不对，请核对后重试",
-    gateErrUnreachable: "连不上桌面端，请检查网络或确认桌面端仍在运行",
+    gateErrUnreachable: "连不上桌面端，检查网络或桌面端是否开着",
     sessionListTitle: "会话",
     sessionListSubtitle: "继续桌面上的工作",
     // 手机页的明暗模式只存在这台手机上，与桌面设置无关。
@@ -1925,7 +1999,8 @@ export const zh = {
     addToPath: "加入 PATH",
     addingToPath: "写入中…",
     pathAdded: "已加入 PATH，请重开终端后生效",
-    pathAddFailed: "写入 PATH 失败，请手动添加",
+    // 带上后端原因（做空第二轮 R10）：原先只说「请手动添加」，看不出为什么失败。「加入 PATH」按钮还在，可直接重试。
+    pathAddFailed: (reason: string) => (reason ? `没能写入 PATH：${reason}` : "没能写入 PATH，可再点一次"),
     quota: "配额",
     relayBadge: "中转",
     relayActive: "正在使用 API 中转，官方配额不适用",
@@ -2031,6 +2106,20 @@ export const zh = {
     prDraft: "存为草稿",
     prCreate: "创建 PR",
     prCreating: "正在创建…",
+    prCreated: (n: number) => `已创建 PR #${n}`,
+    // walkthrough P-1：推送被拒的出路。
+    pullRetry: "拉取并重试",
+    pulling: "正在拉取…",
+    pulledPushed: (n: number, target: string) => `已拉取 ${n} 个提交并推送到 ${target}`,
+    pullConflictPrompt: (target: string) => `推送到 ${target} 被拒，远端有新提交，和本地改动冲突。请拉取远端改动，解决冲突后提交并推送。`,
+    identitySet: "设置身份",
+    identityTitle: "设置 git 身份",
+    identityName: "名字",
+    identityEmail: "邮箱",
+    identityNote: "写进全局 git 配置，所有仓库通用",
+    identitySave: "保存",
+    identitySaving: "正在保存…",
+    identitySaved: "已设置 git 身份",
     prPushFirst: (n: number) => `会先推送 ${n} 个提交`,
     prState: { open: "进行中", draft: "草稿", merged: "已合并", closed: "已关闭" } as Record<string, string>,
     checks: "检查",
