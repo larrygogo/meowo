@@ -8,8 +8,10 @@
 /// （Codex、Kimi、Gemini、OpenCode）终端里有草稿时只报「请先在终端发送或清空该草稿」，
 /// 错误条没有出口，手机上是死路（走查输入 B6）。
 
+import type { Dispatch, SetStateAction } from "react";
 import type { Dict } from "../../i18n/zh";
-import { prepareComposer, terminalComposerIo, type ComposerIo, type ComposerPrepared, type ComposerSpec } from "./composer";
+import { clearComposerDraft, prepareComposer, readComposerFrame, terminalComposerIo, type ComposerIo, type ComposerPrepared, type ComposerSpec, type ComposerState } from "./composer";
+import { useSessionRef, useSessionState, type SessionScope } from "./sessionScope";
 
 export type ComposerBlock = Extract<ComposerPrepared, { kind: "occupied" | "alt_mode" | "unrecognized" }>;
 
@@ -60,4 +62,63 @@ export function composerBlockNotice(block: ComposerBlock, t: Dict): { message: s
     : block.reason === "no_clear" ? t.chat.composerDraftNoClear
     : t.chat.composerDraftStuck;
   return { message, retryLabel: t.chat.errorRetry, force: false };
+}
+
+/// 对话窗里这一块的接线：收拾输入框、把搬来的草稿接进输入框、一次性的说明条、「仍然发送」。
+/// 状态都是会话级的（换会话归零，见 sessionScope）。
+export function useNativeDraft(deps: {
+  scope: SessionScope;
+  sessionId: number;
+  spec: ComposerSpec | null | undefined;
+  setPrompt: Dispatch<SetStateAction<string>>;
+  /// 用户还停在发起的那个会话。
+  isCurrent: () => boolean;
+  running: () => boolean;
+  /// 切走之后才搬来的草稿：记进那个会话存着的草稿里，切回去就能看到。
+  storeDraft: (sessionId: number, merge: (prev: string) => string) => void;
+}) {
+  const { scope, sessionId, spec } = deps;
+  // 终端里的草稿被搬进对话页输入框后的一句说明。
+  const [moved, setMoved] = useSessionState(scope, false);
+  // 错误条上点了「仍然发送」：这个会话的下一次发送认不出输入框也照发（只管一次）。
+  const forceRef = useSessionRef(scope, false);
+  const adopt = (draft: string) => {
+    if (!deps.isCurrent()) { deps.storeDraft(sessionId, (prev) => appendDraft(prev, draft)); return; }
+    deps.setPrompt((current) => appendDraft(current, draft));
+    setMoved(true);
+  };
+  return {
+    moved,
+    dismiss: () => setMoved(false),
+    forceNext: (force: boolean) => { forceRef.current = force; },
+    /// 往终端写正文或命令之前调用。`own`：Meowo 自己写进去、还没提交成的正文——清出来的若是它们，
+    /// 不当成用户的草稿搬进输入框（原文在各自的回执里，再搬一份用户会看到两遍）。
+    tidy: (own: readonly string[] = []) => {
+      const force = forceRef.current;
+      forceRef.current = false;
+      const squash = (text: string) => text.replace(/\s+/g, "");
+      const ownResidue = (draft: string) => squash(draft) !== "" && own.some((text) => squash(text).startsWith(squash(draft).slice(0, 24)));
+      // 切走的会话读不到实时状态：按在跑处理（不按可能打断回合的键）。
+      const running = !deps.isCurrent() || deps.running();
+      return tidyComposer(sessionId, spec, { running, force }, (draft) => { if (!ownResidue(draft)) adopt(draft); });
+    },
+    /// 只读：输入框此刻的状态与里面的字（切模型前判断要不要搬草稿）。
+    peek: async (): Promise<{ state: ComposerState; text: string }> => {
+      const read = readComposerFrame(await terminalComposerIo(sessionId).frame(), spec);
+      const text = read.text?.trim() ?? "";
+      return { state: read.state === "occupied" && !text ? "unknown" : read.state, text };
+    },
+    /// 把输入框里的草稿清掉并搬进对话页输入框（不重启的切换路线遇到「输入框里有字」时用）。
+    take: async (): Promise<"empty" | "moved" | "occupied" | "unknown"> => {
+      if (!spec) return "unknown";
+      const io = terminalComposerIo(sessionId);
+      const read = readComposerFrame(await io.frame(), spec);
+      if (read.state === "empty") return "empty";
+      const text = read.text?.trim();
+      if (read.state !== "occupied" || !text) return "unknown";
+      if (!await clearComposerDraft(io, spec)) return "occupied";
+      adopt(text);
+      return "moved";
+    },
+  };
 }

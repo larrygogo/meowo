@@ -140,6 +140,31 @@ export interface SessionSettingsDeps {
   modelLabel: (id: string) => string;
 }
 
+type RestartOption = { id: string; switch?: string | null; choices?: readonly { id: string; args: readonly string[] }[] };
+
+/** 这次请求会不会重启 / 重开 TUI 进程。按声明表判断，不按 agent 身份分支（架构守卫）：
+ *  - 还没建会话（临时 id）：重开；
+ *  - 模型的切换机制是带参重启接回；
+ *  - 某一栏声明了「重启生效」；
+ *  - 会话服务栏从别的档切进启动参数带 `--sandbox workspace-write` 的档：进程若没带 Windows 沙箱参数，后端改走
+ *    带参接回（做空第五轮 P3）。前端看不到进程参数，按「可能重启」先把 TUI 草稿搬走；已在这类档里互切不算。 */
+export function requestRestarts(request: SettingsRequest, context: {
+  sessionId: number;
+  modelSwitch: string | null | undefined;
+  options: readonly RestartOption[] | null | undefined;
+  currentModes: readonly { dimension: string; value: string }[] | null | undefined;
+}): boolean {
+  if (context.sessionId < 0) return true;
+  if (request.model && context.modelSwitch === "restart_resume") return true;
+  return Object.entries(request.modes ?? {}).some(([dimension, value]) => {
+    const option = context.options?.find((candidate) => candidate.id === dimension);
+    if (option?.switch === "restart") return true;
+    const choices = option?.switch === "server" ? option.choices : undefined;
+    const workspaceWrite = (id: string | undefined) => !!choices?.find((choice) => choice.id === id)?.args.join(" ").includes("--sandbox workspace-write");
+    return workspaceWrite(value) && !workspaceWrite(context.currentModes?.find((mode) => mode.dimension === dimension)?.value);
+  });
+}
+
 /** 在跑或有待批审批：不能动终端，也不能重启。 */
 export function mustDefer(tone: string | null): boolean {
   return tone === "running" || tone === "pending";

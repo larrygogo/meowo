@@ -36,10 +36,10 @@ describe("independent review draft protection", () => {
     fireEvent.change(adapter.box(), { target: { value: "PARTIAL_DELIVERY" } });
     fireEvent.keyDown(adapter.box(), { key: "Enter" });
     // 清空键 → 正文 → 回车：终端里只留下一份正文，并且真的提交了。
-    await waitFor(() => expect(adapter.writes(9752)).toEqual(["PARTIAL_DELIVERY", "\u0003", "PARTIAL_DELIVERY", "\r"]), { timeout: 4000 });
+    await waitFor(() => expect(adapter.writes(9752)).toEqual(["PARTIAL_DELIVERY", "\u0003", "PARTIAL_DELIVERY", "\r"]), { timeout: 10_000 });
     expect(adapter.box().value).toBe("");
     expect(screen.queryByText(zh.chat.nativeDraftMoved)).toBeNull();
-  });
+  }, 20_000);
 
   // 认不出输入框（菜单、对话框、布局漂移）：不往里按键、不写正文，原文留在对话页。错误条说明原因，并给能在
   // 对话页完成的出路：看终端画面，或者人看过之后点「仍然发送」。

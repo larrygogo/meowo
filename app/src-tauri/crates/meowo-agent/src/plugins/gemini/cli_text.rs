@@ -37,9 +37,9 @@ pub(super) static DEPS: &[D] = &[
     ),
     D::new(
         "composer.alt:vim_normal",
-        "[NORMAL]",
+        "",
         " [NORMAL]       ~\\repo        no sandbox         Auto",
-        "0.68.0 真机 2026-11-14：vim NORMAL 模式下状态行最左侧的标记（INSERT 时是 [INSERT]）",
+        "0.68.0 真机 2026-11-14：vim NORMAL 模式下状态行最左侧的标记（INSERT 时是 [INSERT]）。方括号是运行时拼的，bundle 里没有原样的 `[NORMAL]`；vim 模式是否还在由 composer.empty 的两句占位（for NORMAL mode. 与 for INSERT mode.）盯着",
     ),
     // ── 正则规则的样例 ──
     D::new(

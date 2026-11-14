@@ -30,7 +30,7 @@ vi.mock("../../api", () => ({
   },
 }));
 
-import { mergeRequests, mustDefer, useSessionSettings, type SessionSettingsDeps } from "./useSessionSettings";
+import { mergeRequests, mustDefer, requestRestarts, useSessionSettings, type SessionSettingsDeps } from "./useSessionSettings";
 import type { ChatHistory } from "../../api";
 
 const history = { agentModes: [{ dimension: "permission", value: "manual" }], model: "K3" } as unknown as ChatHistory;
@@ -529,6 +529,23 @@ describe("会话里切模型 / 模式的分派", () => {
     await waitFor(() => expect(state?.model).toBe("GPT-5.5"));
     expect(state?.agentModes).toEqual([{ dimension: "permission", value: "manual" }, { dimension: "approval", value: "yolo" }]);
     await waitFor(() => expect(record).toHaveBeenCalledWith(7, "gpt-5.5", { approval: "yolo" }));
+  });
+
+  it("会不会重启进程按声明表判断", () => {
+    const options = [
+      { id: "permission", switch: "restart", choices: [] },
+      { id: "approval", switch: "server", choices: [{ id: "ask", args: ["--sandbox", "workspace-write"] }, { id: "auto", args: ["--sandbox", "workspace-write", "-a", "never"] }, { id: "full", args: ["--yolo"] }] },
+    ];
+    const context = { sessionId: 7, modelSwitch: "server_settings", options, currentModes: [{ dimension: "approval", value: "full" }] };
+    const model = { model: { id: "m", label: "M" }, label: "M" };
+    expect(requestRestarts(model, context)).toBe(false);
+    expect(requestRestarts(model, { ...context, modelSwitch: "restart_resume" })).toBe(true);
+    expect(requestRestarts(model, { ...context, sessionId: -3 })).toBe(true);
+    expect(requestRestarts({ modes: { permission: "auto" }, label: "x" }, context)).toBe(true);
+    // 从别的档切进要沙箱的档可能重启；已在这类档里互切不算。
+    expect(requestRestarts({ modes: { approval: "ask" }, label: "x" }, context)).toBe(true);
+    expect(requestRestarts({ modes: { approval: "auto" }, label: "x" }, { ...context, currentModes: [{ dimension: "approval", value: "ask" }] })).toBe(false);
+    expect(requestRestarts({ modes: { approval: "full" }, label: "x" }, context)).toBe(false);
   });
 
   it("后来的选择覆盖先前的", () => {
