@@ -17,6 +17,8 @@ export type PillOption<T extends string> = {
   desc?: string;
   /** 行尾小字（模式的 CLI 原名、模型清单「以账号为准」一类）。 */
   detail?: string;
+  /** 名字旁的小字标签（新建页 CLI 配置的默认档标「默认」）。 */
+  tag?: string;
   /** 分组头（模型按 provider 分段）：与上一项不同时在它前面插一行组名。 */
   group?: string;
   /** 选不到（说明行写原因）。 */
@@ -90,11 +92,15 @@ export function PillSelect<T extends string>({ value, options, onChange, label, 
             >
               {option.icon && <span className="chat-model-icon" aria-hidden="true">{option.icon}</span>}
               <span className="chat-model-item-text">
-                <span className="chat-model-item-name">{option.label}</span>
+                <span className="chat-model-item-name">
+                  {option.label}
+                  {option.tag && <span className="chat-model-item-tag">{option.tag}</span>}
+                </span>
                 {option.desc && <span className="chat-model-item-desc">{option.desc}</span>}
               </span>
               {option.detail && <span className="chat-model-item-detail">{option.detail}</span>}
-              {active && <Icon glyph={icCheck} size={16} className="chat-model-check" />}
+              {/* 对勾占固定槽位（未选中行也占），右侧 CLI 原名列各行右缘对齐（第三轮 C5）。 */}
+              <span className="chat-model-check-slot" aria-hidden="true">{active && <Icon glyph={icCheck} size={16} className="chat-model-check" />}</span>
             </button>
           )];
         });
