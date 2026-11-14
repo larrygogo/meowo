@@ -558,6 +558,7 @@ pub trait AgentPlugin: Sync {
         &self,
         _selections: &std::collections::HashMap<String, String>,
         _env: &[(String, String)],
+        _cwd: Option<&Path>,
     ) -> Vec<String> {
         Vec::new()
     }

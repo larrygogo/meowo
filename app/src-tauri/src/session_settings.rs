@@ -82,7 +82,7 @@ pub(crate) fn args_for_selections(
     let mut args = meowo_agent::resolve_session_args(plugin, selections, &catalog, &dynamic, resuming);
     // 声明表表达不了、要按 CLI 当前配置现算的（Codex workspace-write 的档没配 Windows 沙箱时补沙箱实现，
     // 真机第四轮 N7）。新建与接回都加：接回时 thread 存下的 workspace-write 也要靠它才不被降成只读。
-    args.extend(plugin.extra_launch_args(selections, env));
+    args.extend(plugin.extra_launch_args(selections, env, cwd));
     args
 }
 

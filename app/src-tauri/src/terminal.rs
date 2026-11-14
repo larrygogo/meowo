@@ -1667,7 +1667,15 @@ fn splice_stored_launch_args(
         agent.id(),
         store.session_profile(sid).ok().flatten().as_deref(),
     );
-    let args = crate::session_settings::args_for_selections(agent, &selections, &env, None, true);
+    // 接回也带会话的项目目录：Codex 的项目层 `.codex/config.toml` 要据此看（做空第五轮 P4）。
+    let cwd = store.session_cwd(sid).ok().flatten();
+    let args = crate::session_settings::args_for_selections(
+        agent,
+        &selections,
+        &env,
+        cwd.as_deref().map(std::path::Path::new),
+        true,
+    );
     if args.is_empty() {
         return;
     }

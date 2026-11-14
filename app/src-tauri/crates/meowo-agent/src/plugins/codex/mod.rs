@@ -348,6 +348,7 @@ impl AgentPlugin for Codex {
         &self,
         selections: &std::collections::HashMap<String, String>,
         env: &[(String, String)],
+        cwd: Option<&std::path::Path>,
     ) -> Vec<String> {
         let workspace_write = selections.get("approval").is_some_and(|picked| {
             self.launch_options()
@@ -359,10 +360,7 @@ impl AgentPlugin for Codex {
         if !cfg!(windows) || !workspace_write {
             return Vec::new();
         }
-        let configured = codex_home(env)
-            .and_then(|home| std::fs::read_to_string(home.join("config.toml")).ok())
-            .is_some_and(|content| windows_sandbox_configured(&content));
-        if configured {
+        if windows_sandbox_configured_in_layers(codex_home(env).as_deref(), cwd) {
             Vec::new()
         } else {
             vec!["-c".into(), "windows.sandbox=unelevated".into()]
@@ -775,6 +773,66 @@ fn windows_sandbox_configured(content: &str) -> bool {
     })
 }
 
+/// 按 Codex 的配置分层看有没有配 Windows 沙箱（做空第五轮 P4）：用户层 `$CODEX_HOME/config.toml`，再加
+/// 项目层——从 cwd 往上到项目根（最近的含 `.git` 的目录，没有就是 cwd 本身）每一级的 `.codex/config.toml`，
+/// 只认已信任的（用户层 `[projects."<目录>"] trust_level = "trusted"`，目录本身或项目根信任即可；Windows 上
+/// 路径不分大小写）。与上游 codex-rs/config/src/loader/mod.rs `discover_project_layers` /
+/// `decision_for_dir` 同口径；未信任的项目层上游加载但禁用，这里不算。`$CODEX_HOME/.codex` 跳过（上游同）。
+/// 任何一层配了就算「用户配过」，不补参数。
+fn windows_sandbox_configured_in_layers(home: Option<&std::path::Path>, cwd: Option<&std::path::Path>) -> bool {
+    let user = home.and_then(|home| std::fs::read_to_string(home.join("config.toml")).ok());
+    if user.as_deref().is_some_and(windows_sandbox_configured) {
+        return true;
+    }
+    let Some(cwd) = cwd else {
+        return false;
+    };
+    let fold = |path: &std::path::Path| {
+        let text = path.to_string_lossy().trim_end_matches(['\\', '/']).to_string();
+        if cfg!(windows) {
+            text.to_ascii_lowercase()
+        } else {
+            text
+        }
+    };
+    let trusted: Vec<String> = user
+        .as_deref()
+        .and_then(|content| content.parse::<toml_edit::DocumentMut>().ok())
+        .and_then(|doc| {
+            doc.get("projects").and_then(|projects| projects.as_table_like()).map(|projects| {
+                projects
+                    .iter()
+                    .filter(|(_, entry)| {
+                        entry.get("trust_level").and_then(|level| level.as_str()) == Some("trusted")
+                    })
+                    .map(|(key, _)| fold(std::path::Path::new(key)))
+                    .collect()
+            })
+        })
+        .unwrap_or_default();
+    let root = cwd
+        .ancestors()
+        .find(|dir| dir.join(".git").exists())
+        .unwrap_or(cwd);
+    let root_trusted = trusted.contains(&fold(root));
+    let home_dot = home.map(fold);
+    for dir in cwd.ancestors() {
+        let dot = dir.join(".codex");
+        let trusted_here = root_trusted || trusted.contains(&fold(dir));
+        if trusted_here && home_dot.as_deref() != Some(fold(&dot).as_str()) {
+            if let Ok(content) = std::fs::read_to_string(dot.join("config.toml")) {
+                if windows_sandbox_configured(&content) {
+                    return true;
+                }
+            }
+        }
+        if dir == root {
+            break;
+        }
+    }
+    false
+}
+
 fn codex_home(env: &[(String, String)]) -> Option<std::path::PathBuf> {
     env.iter()
         .find(|(key, value)| key == "CODEX_HOME" && !value.is_empty())
@@ -800,6 +858,56 @@ mod tests {
         assert!(configured("this is = = not toml"));
     }
 
+    /// 做空第五轮 P4：项目层 `.codex/config.toml` 配了 Windows 沙箱、且项目已信任时不补；未信任的项目层不算；
+    /// 从 cwd 往上到项目根（含 .git 的目录）每一级都看。
+    #[test]
+    fn project_layer_windows_sandbox_counts_only_when_trusted() {
+        use super::windows_sandbox_configured_in_layers as configured;
+        let root = std::env::temp_dir().join(format!("meowo-codex-p4-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let home = root.join("home");
+        let repo = root.join("repo");
+        let sub = repo.join("pkg").join("app");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::create_dir_all(repo.join(".codex")).unwrap();
+        std::fs::write(repo.join(".codex").join("config.toml"), "[windows]\nsandbox = \"elevated\"\n").unwrap();
+        let trust = |dir: &std::path::Path| {
+            let key = dir.to_string_lossy().replace('\\', "\\\\");
+            std::fs::write(home.join("config.toml"), format!("[projects.\"{key}\"]\ntrust_level = \"trusted\"\n")).unwrap();
+        };
+        // 没信任：项目层不算。
+        std::fs::write(home.join("config.toml"), "").unwrap();
+        assert!(!configured(Some(&home), Some(&sub)));
+        // 信任项目根：从子目录启动也算（上游 decision_for_dir 退回项目根的信任）。
+        trust(&repo);
+        assert!(configured(Some(&home), Some(&sub)));
+        assert!(configured(Some(&home), Some(&repo)));
+        // 只信任子目录、项目层在根上：子目录本身被信任时根的 .codex 也在扫描路径上，但根不受信任，不算。
+        trust(&sub);
+        assert!(!configured(Some(&home), Some(&sub)));
+        // 子目录自己的 .codex 配了、子目录受信任：算。
+        std::fs::create_dir_all(sub.join(".codex")).unwrap();
+        std::fs::write(sub.join(".codex").join("config.toml"), "[windows]\nsandbox = \"unelevated\"\n").unwrap();
+        assert!(configured(Some(&home), Some(&sub)));
+        // 用户层配了：不看项目层也算；没给 cwd 只看用户层。
+        std::fs::write(home.join("config.toml"), "[windows]\nsandbox = \"elevated\"\n").unwrap();
+        assert!(configured(Some(&home), None));
+        std::fs::write(home.join("config.toml"), "").unwrap();
+        assert!(!configured(Some(&home), None));
+        // extra_launch_args 走同一判定。
+        let codex = crate::by_id("codex").unwrap();
+        trust(&repo);
+        let env = vec![("CODEX_HOME".to_string(), home.to_string_lossy().into_owned())];
+        let pick = std::collections::HashMap::from([("approval".to_string(), "ask".to_string())]);
+        assert!(codex.extra_launch_args(&pick, &env, Some(&repo)).is_empty());
+        let other = root.join("elsewhere");
+        std::fs::create_dir_all(&other).unwrap();
+        assert_eq!(codex.extra_launch_args(&pick, &env, Some(&other)).is_empty(), !cfg!(windows));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
     /// workspace-write 的档（必要时询问、自动审查）在没配 Windows 沙箱时补 `-c windows.sandbox=unelevated`；
     /// 其他档、配过的都不动。
     #[test]
@@ -816,17 +924,17 @@ mod tests {
             Vec::new()
         };
         // 没有 config.toml：没配。
-        assert_eq!(codex.extra_launch_args(&pick("approveForMe"), &env), expect);
+        assert_eq!(codex.extra_launch_args(&pick("approveForMe"), &env, None), expect);
         std::fs::write(home.join("config.toml"), "check_for_update_on_startup = false\n").unwrap();
-        assert_eq!(codex.extra_launch_args(&pick("approveForMe"), &env), expect);
-        assert_eq!(codex.extra_launch_args(&pick("ask"), &env), expect);
+        assert_eq!(codex.extra_launch_args(&pick("approveForMe"), &env, None), expect);
+        assert_eq!(codex.extra_launch_args(&pick("ask"), &env, None), expect);
         for other in ["default", "readOnly", "yolo", "nonsense"] {
-            assert!(codex.extra_launch_args(&pick(other), &env).is_empty(), "{other}");
+            assert!(codex.extra_launch_args(&pick(other), &env, None).is_empty(), "{other}");
         }
-        assert!(codex.extra_launch_args(&std::collections::HashMap::new(), &env).is_empty());
+        assert!(codex.extra_launch_args(&std::collections::HashMap::new(), &env, None).is_empty());
         std::fs::write(home.join("config.toml"), "[windows]\nsandbox = \"elevated\"\n").unwrap();
-        assert!(codex.extra_launch_args(&pick("approveForMe"), &env).is_empty());
-        assert!(codex.extra_launch_args(&pick("ask"), &env).is_empty());
+        assert!(codex.extra_launch_args(&pick("approveForMe"), &env, None).is_empty());
+        assert!(codex.extra_launch_args(&pick("ask"), &env, None).is_empty());
         let _ = std::fs::remove_dir_all(&home);
     }
 
