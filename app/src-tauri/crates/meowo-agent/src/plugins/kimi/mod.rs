@@ -617,7 +617,7 @@ impl AgentPlugin for Kimi {
             count_arg: true,
             restores_files: false,
             reject_pattern: Some(UNDO_REJECT_PATTERN),
-            input_clear: None,
+            returns_input: false,
             menu: None,
         })
     }
@@ -675,8 +675,13 @@ impl AgentPlugin for Kimi {
     /// 「打断并发送」→ Esc 确实停下当前回合)。自动探针抓不到证据(kimi.exe 的 launcher
     /// shim 在 ConPTY 下即退),故走真机人工确认——与 claude(官方文档)/codex(状态行)
     /// 同为确证级别。
-    /// 2026-11-12 隔离无模型 PTY 实拍（target/lead-provider-probes/composer）：只允许已验证空框，不清非空草稿。
-    fn composer_guard(&self, version: Option<&str>) -> Option<crate::chat_ui::ComposerGuard> {
+    /// 输入框规格（这一家唯一的一份，见 chat_ui::ComposerSpec）。
+    /// - 框体：2026-11-12 隔离无模型 PTY 实拍（target/lead-provider-probes/composer）。没有占位文字，
+    ///   硬件光标常年隐藏（自绘光标）。
+    /// - 清空：Ctrl-C 清掉整段草稿，随后状态行挂「Press Ctrl+C again to exit」；回合进行中按，草稿
+    ///   清掉、回合照常继续（2.6.1，2026-11-14 probe_tui_script：`Count from 1 to 300` 途中按下，
+    ///   数字接着往下出）。空输入框上的 Ctrl-C 是退出的第一下，所以只在认出有字时按。
+    fn composer(&self, version: Option<&str>) -> Option<crate::chat_ui::ComposerSpec> {
         if !crate::lead_install::version_at_least(version, (2, 5, 3))
             || !self
                 .resolve()
@@ -684,7 +689,7 @@ impl AgentPlugin for Kimi {
         {
             return None;
         }
-        Some(crate::chat_ui::ComposerGuard {
+        Some(crate::chat_ui::ComposerSpec {
             prompt_footer: false,
             input_start_pattern: r"^(\s*│ > )",
             top_pattern: r"^\s*╭─+╮\s*$",
@@ -694,6 +699,12 @@ impl AgentPlugin for Kimi {
             tail_rows: 0,
             tail_pattern: None,
             empty_pattern: r"^$",
+            send_requires_recognition: true,
+            stash: None,
+            clear_inputs: &["\x03"],
+            clear_rounds: 1,
+            clear_while_running: true,
+            alt_modes: &[],
         })
     }
     fn queue_input(&self) -> Option<&'static str> {

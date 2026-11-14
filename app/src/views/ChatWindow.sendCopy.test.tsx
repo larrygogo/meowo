@@ -38,7 +38,7 @@ describe("运行中发送的占位与回执同词（走查输入 B5）", () => {
   ] as const)("%s（手机=%s）：占位许诺的去向就是发出后回执说的去向", async (provider, remote) => {
     if (remote) (globalThis as Record<string, unknown>)[REMOTE_FLAG] = true;
     const base = adapter.setup(772, provider, "running");
-    // 四家发送前要读终端画面确认输入框是空的（composer_guard）。
+    // 四家发送前要读终端画面确认输入框是空的。
     invoke.mockImplementation((command, args) => command === "managed_terminal_frame"
       ? Promise.resolve(emptyComposerFrame(provider))
       : base(command, args));

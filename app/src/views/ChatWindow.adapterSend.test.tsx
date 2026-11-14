@@ -11,7 +11,7 @@ describe("ChatWindow 适配回归", () => {
   const { history, snapshot, setup, box, writes } = adapter;
 
   // 2026-11-13 改定：认出输入框、只看到占位时照常发送（严格口径下 codex/gemini/opencode 永远
-  // 判不出空框，对话页就永远发不出去，main 上可发）。草稿与认不出画面的拦截见 manualSendVerdict 单测。
+  // 判不出空框，对话页就永远发不出去，main 上可发）。草稿与认不出画面的处理见 chat/composerPrepare.test.ts。
   it("codex 原生只有占位符时照常发送", async () => {
     const base = setup(501, "codex", "running");
     invoke.mockImplementation((command, args) => command === "managed_terminal_frame" ? Promise.resolve(emptyComposerFrame("codex")) : base(command, args));
@@ -299,7 +299,7 @@ describe("ChatWindow 适配回归", () => {
       // 第一次贴图「没认出来」(占位符不进增量流)，第二次正常落出。
       if (command === "managed_terminal_snapshot") return Promise.resolve(snapshot(510, pastes >= 2 ? "[Image #1]" : ""));
       // 空 composer 显示的是灰色提示语而不是空行（2.1.303 实拍）。
-      if (command === "managed_terminal_screen") return Promise.resolve(!recognizable ? null : ["─".repeat(40), cleared ? "❯ Try \"refactor <filepath>\"" : "❯ [Image #1]"]);
+      if (command === "managed_terminal_screen") return Promise.resolve(!recognizable ? null : ["─".repeat(40), cleared ? "❯ Try \"refactor <filepath>\"" : "❯ [Image #1]", "─".repeat(40)]);
       return base(command, args);
     });
     openDialog.mockResolvedValueOnce(["C:\\repo\\shot.png"]);
@@ -327,7 +327,7 @@ describe("ChatWindow 适配回归", () => {
       if (command === "write_managed_terminal" && args?.data === "\x15") cleared = true;
       // 占位符始终不进增量流(超时),但整屏仿真里能看到 composer 上的残图。
       if (command === "managed_terminal_snapshot") return Promise.resolve(snapshot(511, ""));
-      if (command === "managed_terminal_screen") return Promise.resolve(["─".repeat(40), cleared ? "❯ Try \"refactor <filepath>\"" : "❯ [Image #1]"]);
+      if (command === "managed_terminal_screen") return Promise.resolve(["─".repeat(40), cleared ? "❯ Try \"refactor <filepath>\"" : "❯ [Image #1]", "─".repeat(40)]);
       return base(command, args);
     });
     openDialog.mockResolvedValueOnce(["C:\\repo\\shot.png"]);

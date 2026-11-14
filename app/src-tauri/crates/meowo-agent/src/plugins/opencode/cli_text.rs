@@ -9,6 +9,13 @@
 use crate::cli_text::CliTextDep as D;
 
 pub(super) static DEPS: &[D] = &[
+    // ── 输入框规格（composer）──
+    D::new(
+        "composer.empty",
+        "Ask anything",
+        "Ask anything… \"Fix a TODO in the codebase\"",
+        "1.19.5 真机 2026-11-14（probe_tui_script cells）：空输入框的灰色占位，引号里的示例会轮换",
+    ),
     // ── 正则规则的样例 ──
     D::new(
         "clipboard_image",

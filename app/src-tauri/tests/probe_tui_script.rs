@@ -181,6 +181,45 @@ fn tui_script() {
                 dump(arg);
                 true
             }
+            // cells=文本：打印最后一个含该文本的行的单元格样式分段（暗色、反显、前景色）与光标位置。
+            // 取证「占位文字与同文草稿」在画面上到底差在哪（输入框规格的 placeholder 判定依据）。
+            "cells" => {
+                let parser = screen.lock().unwrap();
+                let grid = parser.screen();
+                let (rows, cols) = grid.size();
+                let (cursor_row, cursor_col) = grid.cursor_position();
+                println!(
+                    "===== cells {arg} (cursor row={cursor_row} col={cursor_col} hidden={}) =====",
+                    grid.hide_cursor()
+                );
+                let lines: Vec<String> = grid.rows(0, cols).collect();
+                if let Some(row) = (0..rows).rev().find(|&row| {
+                    lines[row as usize].to_lowercase().contains(&arg.to_lowercase())
+                }) {
+                    let mut runs: Vec<(String, String)> = Vec::new();
+                    for col in 0..cols {
+                        let Some(cell) = grid.cell(row, col) else { continue };
+                        let style = format!(
+                            "dim={} inv={} bold={} fg={:?}",
+                            cell.dim(),
+                            cell.inverse(),
+                            cell.bold(),
+                            cell.fgcolor()
+                        );
+                        match runs.last_mut() {
+                            Some((last, text)) if *last == style => text.push_str(cell.contents()),
+                            _ => runs.push((style, cell.contents().to_string())),
+                        }
+                    }
+                    println!("row {row}:");
+                    for (style, text) in runs {
+                        if !text.trim().is_empty() {
+                            println!("  [{style}] {text:?}");
+                        }
+                    }
+                }
+                true
+            }
             // mark + raw：打印两步之间的原始输出（前端的回显/识别读的是增量流而非整屏）。
             "mark" => {
                 mark = raw.lock().unwrap().len();

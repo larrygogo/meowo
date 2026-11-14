@@ -49,7 +49,7 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "lead/codex_queue_failed", exact: true, zh: "Codex 没能排队这条消息", en: "Codex couldn't queue the message" },
   { m: "lead/opencode_tui_not_ready", exact: true, zh: "OpenCode 终端还没就绪，稍后再切", en: "OpenCode isn't ready yet. Try again shortly" },
   { m: "lead/opencode_busy", exact: true, zh: "OpenCode 正在回答，这一轮结束后再切", en: "OpenCode is replying. Switch after this turn" },
-  { m: "lead/opencode_composer_not_empty", exact: true, zh: "OpenCode 输入框里有字，清空后再切", en: "OpenCode's input box has text. Clear it first" },
+  { m: "lead/opencode_composer_not_empty", exact: true, zh: "OpenCode 输入框里的草稿没能收起，没有切换", en: "Couldn't put away the draft in OpenCode's input box, so nothing was switched" },
   { m: "lead/opencode_approval_pending", exact: true, zh: "OpenCode 有待处理的确认，处理后再切", en: "OpenCode has a pending prompt. Handle it first" },
   { m: "lead/opencode_dialog_open", exact: true, zh: "OpenCode 正开着别的对话框", en: "Another OpenCode dialog is open" },
   { m: "lead/opencode_dialog_not_open", exact: true, zh: "OpenCode 的选择框没弹出来，未做改动", en: "OpenCode's picker didn't open. Nothing changed" },
@@ -379,8 +379,8 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "该文件类型没有关联应用", exact: true, zh: "该文件类型没有关联应用", en: "No app is associated with this file type" },
   { m: "该打开方式已不可用", exact: true, zh: "该打开方式已不可用", en: "That app is no longer available" },
   { m: "terminal/process_not_exclusive", exact: true, zh: "这个进程可能还连着别的会话，或者认不出归属，Meowo 没有结束它，以免一起关掉。在原终端退出这个会话后再试", en: "This process may also serve other sessions, or its owner could not be confirmed, so Meowo left it running to avoid closing them. Exit this session in its original terminal, then try again" },
-  { m: "terminal/composer_occupied", exact: true, zh: "终端输入框已有草稿，已原样保留。请先在终端发送或清空该草稿，再重试此消息", en: "The terminal already contains a draft, which was preserved. Send or clear it in the terminal, then retry this message" },
-  { m: "terminal/composer_unknown", exact: true, zh: "无法确认终端输入框是否为空，消息原文已保留。待当前交互结束后再试", en: "Could not confirm that the terminal input is empty. Your message was preserved. Try again after the current interaction finishes" },
+  // 终端输入框里有草稿 / 认不出输入框不再走这张表：对话页自己收草稿，收不掉时错误条按结局给文案与出路
+  // （见 views/chat/nativeDraft 的 ComposerBlocked，文案在 zh.ts 的 composer* 几条）。
   { m: "terminal/composer_partial", exact: true, zh: "上条消息的正文可能仍在终端输入框，暂未重复写入。消息原文已保留", en: "The previous message may still be in the terminal input. It was not written again. Your original message is preserved" },
   // ── Lead 工作流（reporter lead 模块的结构化 reason）──
   { m: "lead/claude_missing", exact: true, zh: "没找到 Claude Code 的配置目录，请先安装并登录 Claude Code", en: "Claude Code's config folder wasn't found. Install and sign in to Claude Code first" },

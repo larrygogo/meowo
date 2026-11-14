@@ -6,7 +6,8 @@
 /// 界面提示仍归调用方（ChatWindow 的 withSendGuard / ensureWritableTerminal）。
 /// 同会话多条消息的先后顺序见 createSendQueue。
 
-import { managedTerminalScreen, managedTerminalSnapshot, writeManagedTerminal, type ChatUi } from "../../api";
+import { managedTerminalSnapshot, writeManagedTerminal } from "../../api";
+import { composerDraft, readComposerFrame, terminalComposerIo, type ComposerSpec } from "./composer";
 import { appendTerminalText, terminalAttention as detectTerminalAttention, visibleTerminalText, type AttentionGrammar, type TerminalAttention } from "../../terminalAttention";
 
 export function terminalInput(content: string): string {
@@ -101,86 +102,19 @@ export async function submitToTerminal(sessionId: number, content: string, abort
   await writeManagedTerminal(sessionId, input);
 }
 
-/// 定位 composer 首行,返回提示符之后的文本(已 trim);认不出返回 null。提示行的上一行须
-/// 整行是边框:历史区回显的用户消息也可能以同一提示符开头。
-export function composerDraftText(screen: string[] | null, stash: NonNullable<ChatUi["draft_stash"]>): string | null {
-  if (!screen) return null;
-  const isBorder = (line: string) => {
-    const trimmed = line.trim();
-    return trimmed !== "" && [...trimmed].every((char) => char === stash.composer_border);
-  };
-  for (let index = screen.length - 1; index > 0; index -= 1) {
-    const line = screen[index].trimStart();
-    if (isBorder(screen[index - 1]) && line.startsWith(stash.composer_prompt)) {
-      return line.slice(stash.composer_prompt.length).trim();
-    }
-  }
-  return null;
-}
-
-/// composer 里的完整草稿（多行）：提示符那行加上它下面、底边横线之前的各行，去掉续行缩进。
-/// 认不出 composer 返回 null，空 composer 返回 ""。软折行也会被当成换行，内容不丢，只是排版
-/// 可能和原样差一点（撤回时搬进对话页输入框给用户继续改，见 undoTerminal）。
-export function composerDraftBlock(screen: string[] | null, stash: NonNullable<ChatUi["draft_stash"]>): string | null {
-  if (!screen) return null;
-  const isBorder = (line: string) => {
-    const trimmed = line.trim();
-    return trimmed !== "" && [...trimmed].every((char) => char === stash.composer_border);
-  };
-  for (let index = screen.length - 1; index > 0; index -= 1) {
-    const line = screen[index].trimStart();
-    if (isBorder(screen[index - 1]) && line.startsWith(stash.composer_prompt)) {
-      const lines = [line.slice(stash.composer_prompt.length).trim()];
-      for (let next = index + 1; next < screen.length && !isBorder(screen[next]); next += 1) lines.push(screen[next].trim());
-      return lines.join("\n").trim();
-    }
-  }
-  return null;
-}
-
-/// 发送前收起 composer 里用户在终端输入行留下的未提交草稿(issue #72:残留会拼进
-/// 消息)。CLI 在下一次提交后自己还原草稿,终端里的输入原样回来。判断全看仿真后的整屏
-/// (规格与取证见后端 DraftStash / tests/probe_draft_residual.rs):
-/// - 认不出 composer(无屏幕仿真、提示符不在屏上)→ 不按:画面不在预期形态时盲按
-///   暂存键,可能触发对方别的功能;
-/// - composer 空 → 不按:暂存键是切换语义,空 composer 上按会把旧暂存放出来;
-/// - 非空才按;按前有暂存标记、按后消失 = 放出了用户手动暂存的内容,再按一次收回。
-/// 任何环节失败都静默放行:最坏退回修复前的行为(草稿拼进消息),不能挡住发送。
-/// 已知代价:composer 非空且用户**另有**手动暂存时,新暂存会覆盖旧的(CLI 只存一份)。
-export async function stashComposerDraft(sessionId: number, stash: NonNullable<ChatUi["draft_stash"]>): Promise<void> {
-  try {
-    const screen = await managedTerminalScreen(sessionId);
-    if (!composerDraftText(screen, stash)) return;
-    const hasMarker = (lines: string[] | null) => !!lines?.some((line) => line.includes(stash.stashed_marker));
-    const hadStash = hasMarker(screen);
-    await writeManagedTerminal(sessionId, stash.input);
-    // 成功条件是 composer 变空,不看标记出现:用户已有手动暂存时标记按前按后都在,
-    // 靠标记判定会白等满整个轮询窗(PR #73 评审)。
-    for (let attempt = 0; attempt < 8; attempt += 1) {
-      await new Promise((resolve) => window.setTimeout(resolve, 50));
-      const now = await managedTerminalScreen(sessionId);
-      if (composerDraftText(now, stash) === "") return;
-      if (hadStash && !hasMarker(now)) {
-        await writeManagedTerminal(sessionId, stash.input);
-        return;
-      }
-    }
-  } catch {
-    // 放行:见函数注释。
-  }
-}
-
 /// 上次发图失败留在 composer 里的占位符(`[Image #1]`)自动清掉,返回是否已确认干净。
 /// 失败那次只贴了图、正文没写(写前草稿已暂存),故 composer 里只有残图,Ctrl-U 整行删
 /// 不会误伤用户内容;原稿与附件仍在对话页输入框里,重发会重新贴。claude 2.1.303 实测:
 /// Ctrl-U 后再提交的 user 行不带 image 块,图随占位符一起丢弃。空 composer 显示灰色
 /// 提示语(`Try "…"`),所以判干净看「不再含占位符」而不是「为空」。
 /// 认不出 composer 或清后仍在 → false,调用方退回人工清理的拦截。
-export async function clearPartialImageDraft(sessionId: number, stash: NonNullable<ChatUi["draft_stash"]>, marker: string): Promise<boolean> {
+export async function clearPartialImageDraft(sessionId: number, spec: ComposerSpec, marker: string): Promise<boolean> {
   const pattern = new RegExp(marker, "i");
+  const io = terminalComposerIo(sessionId);
+  // 占位符算不算「有字」取决于光标，这里只关心输入框里还有没有它：直接看读到的文字。
   const residual = async () => {
-    const draft = composerDraftText(await managedTerminalScreen(sessionId), stash);
-    return draft === null ? null : pattern.test(draft);
+    const read = readComposerFrame(await io.frame(), spec);
+    return composerDraft(read) === null ? null : pattern.test(read.text ?? "");
   };
   try {
     const before = await residual();

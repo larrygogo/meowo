@@ -175,6 +175,8 @@ describe("ChatWindow 适配回归", () => {
         { id: "kimi-code/k3.1-pro", label: "K3.1 Pro", group: "managed:kimi-code", efforts: ["off", "low", "high", "max"] },
       ]);
       if (command === "write_managed_terminal" && args?.data === "\r") submitted = true;
+      // 往终端打命令前先认输入框（与发消息同一条规则）：给出实拍的空输入框。
+      if (command === "managed_terminal_frame") return Promise.resolve(emptyComposerFrame("kimi"));
       if (command === "managed_terminal_snapshot") return Promise.resolve(snapshot(513, submitted ? "Thinking set to max." : ""));
       return base(command, args);
     });
@@ -421,9 +423,10 @@ describe("ChatWindow 适配回归", () => {
       if (command === "confirm_dialog") { confirms.push(args); return Promise.resolve(true); }
       if (command === "write_managed_terminal" && args?.data === "\r") submitted = true;
       if (command === "write_managed_terminal" && args?.data === "\u0003") { presses += 1; cleared = mode !== "stubborn" || presses >= 2; }
+      // 真机形态（1.19.5）：历史区的用户消息块与输入框之间隔着回合状态行；输入框 = 顶线、正文、空行、状态行、底边。
       if (command === "managed_terminal_screen") return Promise.resolve(mode === "unrecognized"
         ? ["  先做甲"]
-        : ["  ┃  先做甲", "  ┃", ...(submitted && !cleared ? ["  ┃  先做甲"] : ["  ┃"]), "  ┃  Build · model", "  ╹▀▀▀▀"]);
+        : ["  ┃  先做甲", "     ▣  Build · model", "  ┃", submitted && !cleared ? "  ┃  先做甲" : "  ┃", "  ┃", "  ┃  Build · model", "  ╹▀▀▀▀"]);
       return base(command, args);
     });
     render(<ChatWindow />);

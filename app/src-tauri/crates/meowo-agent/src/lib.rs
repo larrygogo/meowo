@@ -30,6 +30,7 @@ pub mod caps;
 pub mod chat_ui;
 pub mod cli_text;
 pub mod codec;
+pub mod composer;
 pub mod config;
 pub mod descriptor;
 pub mod extensions;

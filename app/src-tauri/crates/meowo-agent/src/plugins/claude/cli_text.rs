@@ -7,6 +7,13 @@
 use crate::cli_text::CliTextDep as D;
 
 pub(super) static DEPS: &[D] = &[
+    // ── 输入框规格（composer）──
+    D::new(
+        "composer.empty",
+        "Try \"",
+        "Try \"fix typecheck errors\"",
+        "2.1.325 真机 2026-11-14（probe_tui_script cells）：空输入框的暗色占位。占位内容不固定（还有预测的下一句），带光标读屏时靠「光标在输入起点且该格暗色」认，这条正则只是没有光标信息时的退路",
+    ),
     // ── /effort ──
     D::new(
         "effort.confirm",

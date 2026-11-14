@@ -132,11 +132,10 @@ pub enum SelectorAnchorKind {
 
 /// composer 草稿的「收起 → 提交后自动还原」能力(issue #72)。对话页往 PTY 写正文前按
 /// `input` 收走用户在终端输入行里未提交的草稿,免得它拼进消息;CLI 在下一次提交后自己
-/// 还原草稿。判断全看**仿真后的整屏**(增量字节不可靠:渲染器按字符差分重绘):
-/// - 最下方「上一行整行都是 `composer_border` 字符、本行以 `composer_prompt` 开头」的行
-///   就是 composer 首行(边框约束防止把历史里回显的用户消息认成 composer);只剩提示符
-///   = 空,**不按键**。
-///   这一步不能省——键是切换语义,composer 空且已有暂存时按下 = 把暂存放回 composer。
+/// 还原草稿。认输入框用同一份 [`ComposerSpec`] 的框体规则；判断全看**仿真后的整屏**
+/// (增量字节不可靠:渲染器按字符差分重绘):
+/// - 输入框空 = **不按键**。这一步不能省——键是切换语义,composer 空且已有暂存时按下 =
+///   把暂存放回 composer。
 /// - 非空才按;`stashed_marker` 是「当前有暂存」的常驻标记,按前有、按后消失即误放出了
 ///   用户手动暂存的内容,再按一次收回。
 ///
@@ -144,11 +143,25 @@ pub enum SelectorAnchorKind {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
-pub struct DraftStash {
+pub struct ComposerStash {
     pub input: &'static str,
-    pub composer_prompt: &'static str,
-    pub composer_border: char,
     pub stashed_marker: &'static str,
+}
+
+/// 输入框处在另一种输入模式（Gemini 的 shell 模式、vim NORMAL）：这时写进去的字不是普通消息
+/// （会被当成 shell 命令 / vim 命令执行）。认出来之后先按 `exit_input` 退回普通模式，复核
+/// 退出了才写正文；退不出就不写，并按 `id` 给出说明。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+pub struct ComposerAltMode {
+    /// 模式标识（`shell` / `vim_normal`），前端按它选说明文案。
+    pub id: &'static str,
+    /// `prompt_pattern`：匹配输入框首行（去掉框线之后）；`below_pattern`：匹配输入框底边之下的
+    /// 任意一行（状态行）。二者任一命中即处在这个模式。
+    pub prompt_pattern: Option<&'static str>,
+    pub below_pattern: Option<&'static str>,
+    pub exit_input: &'static str,
 }
 
 /// 数字选择器的锚点项:该 provider 的选择器里**固有出现**的选项文案(小写子串匹配)。
@@ -335,40 +348,15 @@ pub struct UndoControl {
     pub restores_files: bool,
     /// CLI 拒绝撤回的屏幕行（整行原样带给用户；前端带 i 标志编译）。None = 未取证。
     pub reject_pattern: Option<&'static str>,
-    /// CLI 撤回后把原文放回**它自己的**输入框时（opencode / claude），清掉它的方式。原文已放进
-    /// 对话页输入框，终端里那份不清，下一次发送会拼在新消息前面（真机复现过）。None = 不放回。
-    pub input_clear: Option<UndoInputClear>,
+    /// CLI 撤回后把原文放回**它自己的**输入框（opencode / claude）。原文已放进对话页输入框，
+    /// 终端里那份不清，下一次发送会拼在新消息前面（真机复现过）。清它用 [`ComposerSpec`] 的
+    /// `clear_inputs`：先在屏幕上认出输入框、确认里面是原文才按——清空键在空输入框上另有含义
+    /// （opencode 的 Ctrl-C 空框是退出，claude 的双 Esc 空框是打开回退菜单）。按后复核。
+    pub returns_input: bool,
     /// 撤回命令打开的是选择菜单（claude `/rewind`）时的操作规格；None = 命令直接生效。
     /// 菜单式撤回**不写 transcript**（claude 回退零写入，下一条消息才长出新分支），成败只能
     /// 看屏幕：原文回到 CLI 输入框即成，前端随之在本地收掉被撤的消息。
     pub menu: Option<UndoMenu>,
-}
-
-/// 撤回后清终端输入框：先在屏幕上认出输入框、确认里面是原文才按键——清空键在空输入框上
-/// 另有含义（opencode 的 Ctrl-C 空框是退出，claude 的双 Esc 空框是打开回退菜单）。按后复核。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
-#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
-pub struct UndoInputClear {
-    /// 依次发送的清空键（分开写：两个 Esc 合成一次写入会被当成 Alt+Esc）。
-    pub inputs: &'static [&'static str],
-    pub composer: UndoComposer,
-}
-
-/// 屏幕上认输入框的方式。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[cfg_attr(test, derive(ts_rs::TS))]
-#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
-#[serde(tag = "kind", rename_all = "snake_case")]
-pub enum UndoComposer {
-    /// 底边行（`bottom_prefix` 开头）之上、连续以 `row_prefix` 开头的行（opencode 的 `┃`/`╹`）。
-    Block {
-        row_prefix: &'static str,
-        bottom_prefix: &'static str,
-    },
-    /// 以 `prompt` 开头、上一行整行是 `border` 的那行起（claude 的 `❯` 夹在 `─` 横线间，同
-    /// DraftStash）。
-    Prompt { prompt: &'static str, border: char },
 }
 
 /// 菜单式撤回的操作规格（claude `/rewind`，2.1.314 真机取证，tests/probe_claude_rewind.rs）：
@@ -414,11 +402,22 @@ pub struct SideQuestion {
     pub close_input: &'static str,
 }
 
-/// 只认真实取证过的空输入框，非空或框体不完整时必须保留原稿并停止 GUI 提交。
+/// 终端输入框的规格：**每家只有这一份**，认框、判空、收草稿、清原文、退出特殊输入模式全用它。
+///
+/// 此前有三份各认各的（草稿暂存用的只有 claude、撤回清原文用的只有 claude 与 opencode、
+/// 发送前判空用的只有另外四家），每个功能只接其中一份：某家缺哪一份，对应功能就静默失效或
+/// 退成「请到终端处理」（走查输入 A1、A4、B6）。现在发送前收草稿、撤回后清原文、切模型前搬
+/// 草稿、未确认回显核对、子代理视图定位都读这一份；架构测试拦着不让第二份再长出来。
+///
+/// 认框只认真实取证过的框体；框体不完整一律按「认不出」，不猜。
+///
+/// 占位文字与内容相同的真实草稿怎么分（2026-11-14 五家真机取证，见各插件注释）：占位时硬件
+/// 光标停在输入起点，真打出来的字光标在文末。读屏时带上光标位置即可分开；没有光标信息时
+/// 退回只看文字（`empty_pattern`）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
-pub struct ComposerGuard {
+pub struct ComposerSpec {
     /// Codex 用 prompt 与状态 footer 定界；有边框的 TUI 不启用这个布局。
     pub prompt_footer: bool,
     /// 捕获组 1 必须是输入起点之前的物理前缀；占位文字可能另有灰字缩进，不能反推光标。
@@ -432,6 +431,23 @@ pub struct ComposerGuard {
     pub tail_rows: usize,
     pub tail_pattern: Option<&'static str>,
     pub empty_pattern: &'static str,
+    /// 认不出输入框时对话页还发不发：false = 照发（claude 多年如此，另有提示识别、子代理视图等
+    /// 守卫兜着）；true = 不发，错误条给看终端画面与「仍然发送」的出口。
+    pub send_requires_recognition: bool,
+    /// 收起草稿、提交后 CLI 自己还原（见 [`ComposerStash`]）。有它时发送前优先用它：草稿留在
+    /// 终端里原样回来。None = 没有这种键，改用 `clear_inputs` 清空并把草稿搬进对话页输入框。
+    pub stash: Option<ComposerStash>,
+    /// 清空输入框的按键，逐个分开写（两个 Esc 合成一次写入会被当成 Alt+Esc）。**只在认出输入框
+    /// 里有字时才按**：这些键在空输入框上另有含义（退出、打开回退菜单）。空表 = 未取证，不清。
+    pub clear_inputs: &'static [&'static str],
+    /// 一轮 `clear_inputs` 清不完时最多重复几轮，每轮后复核（gemini 用行删除键逐行清）。
+    /// 1 = 一轮清空整段。
+    pub clear_rounds: u8,
+    /// 回合进行中按 `clear_inputs` 是否只清草稿、不打断回合（逐家真机取证）。false = 运行中不清，
+    /// 错误条说明原因。
+    pub clear_while_running: bool,
+    /// 特殊输入模式（见 [`ComposerAltMode`]）。
+    pub alt_modes: &'static [ComposerAltMode],
 }
 
 /// 子代理视图（claude 在提示框下方的子代理面板里「打开」某个子代理）：此时 composer 改发给
@@ -456,6 +472,9 @@ pub struct ComposerGuard {
 #[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
 pub struct SubagentView {
     pub placeholder_prefix: &'static str,
+    /// 输入框上边框挂着子代理描述时的形态，捕获组 1 = 描述（`──── probe-sleeper ─`）。输入框本身
+    /// 用 [`ComposerSpec`] 认，这里只负责从上边框那一行取出描述。
+    pub label_pattern: &'static str,
     pub panel_main_label: &'static str,
     pub panel_pointer: &'static str,
     pub panel_viewed_marker: &'static str,
@@ -559,12 +578,9 @@ pub struct ChatUi {
     /// 这类重试不落 transcript，屏幕是唯一证据；不认的话重试期间对话页像卡死。
     /// 同 status_line_pattern：对方界面文案，宁可漏认不可误认。None = 不解析。
     pub retry_line_pattern: Option<&'static str>,
-    /// 发送前收起 composer 残留草稿的能力(见 [`DraftStash`])。None = 未取证,照旧直接写入
-    /// ——残留会拼进消息,但盲按一个未验证的键可能触发对方的别的功能,宁缺勿滥。
-    pub draft_stash: Option<DraftStash>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(test, ts(optional))]
-    pub composer_guard: Option<ComposerGuard>,
+    /// 终端输入框的规格（见 [`ComposerSpec`]）：认框、收草稿、清原文共用这一份。None = 这个
+    /// 版本的输入框未取证，对话页不读也不动它。
+    pub composer: Option<ComposerSpec>,
     /// 发送前切回主会话的能力(见 [`SubagentView`])。None = 该 agent 没有子代理视图或未取证。
     pub subagent_view: Option<SubagentView>,
     /// 会话里切模型的机制（见 [`crate::ModelSwitch`]）。None = 没有确定方式，前端退回终端菜单兜底。

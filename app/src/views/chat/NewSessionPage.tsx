@@ -15,6 +15,7 @@ import { initialChoice, modeChoiceViews, modelChoiceRows, planToggle } from "./m
 import { AgentAppIcon } from "./AgentAppIcon";
 
 import { useT } from "../../i18n";
+import { imeComposing } from "../../ime";
 import { useNewSessionForm } from "../useNewSessionForm";
 import { WorkspacePicker } from "./WorkspacePicker";
 import { WorktreeOption } from "../WorktreeOption";
@@ -115,7 +116,7 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched, onOpenSession
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     // IME 合成中的回车是选候选词，不是发送。
-    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+    if (event.key === "Enter" && !event.shiftKey && !imeComposing(event)) {
       event.preventDefault();
       void submit();
     }

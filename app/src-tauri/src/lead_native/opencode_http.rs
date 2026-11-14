@@ -1224,7 +1224,7 @@ fn footer_shows(screen: &str, dialog: Dialog, name: &str) -> bool {
     }
 }
 
-/// 输入框下方的状态行（`┃  Build · Fake One Fake`，tail_pattern 同 composer_guard）。认不出返回 None。
+/// 输入框下方的状态行（`┃  Build · Fake One Fake`，与输入框规格的 tail_pattern 同一行）。认不出返回 None。
 fn footer_line(screen: &str) -> Option<&str> {
     screen.lines().rev().find(|line| {
         let body = line.trim_start().trim_start_matches('┃').trim();
