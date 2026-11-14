@@ -292,6 +292,9 @@ pub(crate) type TuiStateArg = meowo_protocol::bridge::SessionTuiState;
 /// - `unsupported`：这个会话够不着服务（Lead 未装、外部终端），前端退回终端内联命令兜底。
 /// - `next_open`：会话不在托管中，选择已记成下次打开的启动参数。
 /// - `not_now`：服务端复核此刻不能动（运行中 / 有审批 / 输入框有字），`reason` 说明，回合结束再试。
+/// - `queued`：此刻不能动、要等一个前端看不到的条件，宿主收进队列自己执行（`wait_for`）：
+///   `lead` = Lead 在等关卡答复，重启会杀掉会话内的等待器（做空 N3）；`open` = 会话没在运行，Codex /
+///   OpenCode 恢复时不回放模型，打开后经服务 / 对话框补一次（做空 N6）。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SettingsOutcome {
@@ -299,6 +302,9 @@ pub(crate) struct SettingsOutcome {
     pub session_id: i64,
     pub confirmed: bool,
     pub reason: Option<String>,
+    /// `queued` 时等的条件，调用方据此入队（不发给前端，前端从队列条目的 `waitFor` 读）。
+    #[serde(skip)]
+    pub wait_for: Option<&'static str>,
 }
 
 impl SettingsOutcome {
@@ -308,6 +314,15 @@ impl SettingsOutcome {
             session_id,
             confirmed: false,
             reason: None,
+            wait_for: None,
+        }
+    }
+
+    fn queued(session_id: i64, reason: &str, wait_for: &'static str) -> Self {
+        Self {
+            reason: Some(reason.into()),
+            wait_for: Some(wait_for),
+            ..Self::new("queued", session_id)
         }
     }
 }
@@ -469,18 +484,27 @@ pub(crate) async fn apply_session_settings(
     let broker = state.ptys.clone();
     let db = state.db_path.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        apply_blocking(
+        let modes = modes.unwrap_or_default();
+        let request = request_json(model.as_deref(), effort.as_deref(), &modes);
+        let outcome = apply_blocking(
             &app,
             &broker,
             &db,
             session_id,
             model,
             effort,
-            modes.unwrap_or_default(),
+            modes,
             current.unwrap_or_default(),
             tui.unwrap_or_default(),
+            None,
         )
-        .map_err(|reason| settings_reason(&reason))
+        .map_err(|reason| settings_reason(&reason))?;
+        // 宿主要等的条件前端看不到：收进队列，前端随后用同一请求合并进来补上提示名。
+        if let Some(wait) = outcome.wait_for {
+            enqueue_waiting(session_id, request, wait);
+            ensure_executor(app.clone());
+        }
+        Ok(outcome)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -554,6 +578,8 @@ fn validate_modes(
     Ok(())
 }
 
+/// `before_stop`：带参重启时 broker.stop 前一刻的复核（宿主执行排队时传，见 [`run_queued`]；前端路线是
+/// 用户当场触发、草稿已搬走，不传）。
 #[allow(clippy::too_many_arguments)]
 fn apply_blocking(
     app: &tauri::AppHandle,
@@ -565,6 +591,7 @@ fn apply_blocking(
     modes: HashMap<String, String>,
     current: HashMap<String, String>,
     tui: TuiStateArg,
+    before_stop: Option<&dyn Fn() -> Result<(), String>>,
 ) -> Result<SettingsOutcome, String> {
     // 还没建会话（临时 id）：没有任何东西会丢，直接带新参数重开（Kimi 2.6 首条消息前不建会话，
     // research-kimi-gemini §2.3 p7 实测 `kimi -m` 重开后第一条请求就用新模型、不改配置）。
@@ -603,6 +630,8 @@ fn apply_blocking(
             overrides.insert("model".into(), model.clone());
         }
         let new_id = reopen_pending(app, broker, session_id, &overrides)?;
+        // 重开前排进旧临时 id 的选择跟到新 id（做空 N5：否则谁都不会再取它）。
+        migrate_queued(session_id, new_id);
         return Ok(SettingsOutcome::new("reopened", new_id));
     }
     let store = crate::open_store(db)?;
@@ -649,13 +678,19 @@ fn apply_blocking(
         return Ok(SettingsOutcome::new("needs_new_session", session_id));
     }
     // 会话不在托管中（已退出、Meowo 重启后没恢复）：什么进程都动不了。把这次的选择记成下次打开的启动参数，
-    // 如实说「下次打开时生效」，不报成功（做空 M4）。
+    // 不报成功（做空 M4）。
     if !broker.is_active(session_id) {
         let mut next = modes.clone();
         if let Some(model) = &model {
             next.insert("model".into(), model.clone());
         }
         persist(&store, session_id, &next, None);
+        // 带参重启的两家（Kimi/Gemini）恢复时按存档回放，「下次打开时生效」属实。会话服务（Codex）与
+        // 对话框（OpenCode）恢复时不回放模型、Codex 协作模式也没有启动参数（做空 N6）：排进队列，
+        // 打开后由宿主经服务 / 对话框补一次。
+        if !plan.server.is_empty() || plan.dialog_model.is_some() || plan.dialog_agent.is_some() {
+            return Ok(SettingsOutcome::queued(session_id, "settings/applies_on_open", "open"));
+        }
         return Ok(SettingsOutcome::new("next_open", session_id));
     }
     let mut outcome = SettingsOutcome::new("applied", session_id);
@@ -707,7 +742,12 @@ fn apply_blocking(
                 return Ok(not_now);
             }
         }
-        if !restart(app, broker, &store, session_id, &header.provider, plan.restart.clone())? {
+        // Lead 在等关卡答复：Kimi/Gemini 的等待器是 TUI 里的后台进程，重启连它一起杀掉，答复后就不会
+        // 自动继续（宿主不代投）。排到续跑之后由宿主执行（做空 N3）。
+        if lead_holds_restart(&header) {
+            return Ok(SettingsOutcome::queued(session_id, "settings/lead_waiting", "lead"));
+        }
+        if !restart(app, broker, &store, session_id, &header.provider, plan.restart.clone(), before_stop)? {
             // 恰在此刻自己退出了：同上，记成下次打开的启动参数。
             persist(&store, session_id, &plan.restart, None);
             return Ok(SettingsOutcome::new("next_open", session_id));
@@ -822,9 +862,29 @@ pub(crate) fn apply_launch_server_settings(
 
 /// 「这一轮结束后切换」的排队（做空 M3）：存在宿主进程里、按会话 id 记，换会话、刷新手机页都还在；
 /// 后来的选择合并进同一份。内容是前端的请求原样（模型、各栏、提示名），执行仍走 apply_session_settings
-/// 的全部校验，这里不解释它。
-static QUEUED: std::sync::LazyLock<std::sync::Mutex<HashMap<i64, serde_json::Value>>> =
+/// 的全部校验，这里不解释它。宿主收进来的条目另带 `waitFor`（见 [`SettingsOutcome`] 的 `queued`）。
+struct Queued {
+    request: serde_json::Value,
+    /// 入队（或等待条件刚解除）的时刻：超过 [`QUEUE_TTL`] 出队并通知前端（做空 N5）。
+    since: std::time::Instant,
+    /// 宿主连续几次认不出输入框。到 [`COMPOSER_MISS_LIMIT`] 就不再试，留给对话页（会先搬草稿）执行。
+    misses: u32,
+}
+
+/// 排着的切换最多等多久。只算「等这一轮结束」的时间；等 Lead 关卡答复、等会话打开的期间不算（关卡可能
+/// 几个小时后才答，会话可能第二天才开），条件解除后重新起算。
+const QUEUE_TTL: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+/// Lead 关卡等待解除后再观望多久才动（见 [`run_queued`]）。
+const LEAD_GRACE: std::time::Duration = std::time::Duration::from_secs(15);
+/// 宿主连续认不出输入框的次数上限（执行线程 1.5 秒一轮，约 30 秒）。
+const COMPOSER_MISS_LIMIT: u32 = 20;
+
+static QUEUED: std::sync::LazyLock<std::sync::Mutex<HashMap<i64, Queued>>> =
     std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
+
+fn queue() -> std::sync::MutexGuard<'static, HashMap<i64, Queued>> {
+    QUEUED.lock().unwrap_or_else(|e| e.into_inner())
+}
 
 pub(crate) fn merge_queued(prev: Option<&serde_json::Value>, next: &serde_json::Value) -> serde_json::Value {
     let mut merged = prev.cloned().unwrap_or_else(|| serde_json::json!({}));
@@ -845,6 +905,19 @@ pub(crate) fn merge_queued(prev: Option<&serde_json::Value>, next: &serde_json::
     merged
 }
 
+/// apply 的参数写成与前端请求同形的 JSON（宿主自己收进队列时用；提示名由前端随后合并进来）。
+fn request_json(model: Option<&str>, effort: Option<&str>, modes: &HashMap<String, String>) -> serde_json::Value {
+    let mut request = serde_json::json!({ "modes": modes });
+    if let Some(model) = model {
+        request["model"] = serde_json::json!({ "id": model, "effort": effort });
+    }
+    request
+}
+
+fn wait_for(request: &serde_json::Value) -> Option<&str> {
+    request["waitFor"].as_str()
+}
+
 #[tauri::command]
 pub(crate) fn queue_session_settings(
     app: tauri::AppHandle,
@@ -856,20 +929,78 @@ pub(crate) fn queue_session_settings(
     merged
 }
 
-/// 合并进会话的队列，返回合并后的整份。
+/// 合并进会话的队列，返回合并后的整份。新的选择重新起算等待时间。
 pub(crate) fn enqueue(session_id: i64, request: &serde_json::Value) -> serde_json::Value {
-    let mut map = QUEUED.lock().unwrap_or_else(|e| e.into_inner());
-    let merged = merge_queued(map.get(&session_id), request);
-    map.insert(session_id, merged.clone());
+    let mut map = queue();
+    let merged = merge_queued(map.get(&session_id).map(|q| &q.request), request);
+    map.insert(
+        session_id,
+        Queued {
+            request: merged.clone(),
+            since: std::time::Instant::now(),
+            misses: 0,
+        },
+    );
     merged
+}
+
+/// 宿主收进队列、标上等待条件（见 [`SettingsOutcome`] 的 `queued`）。
+fn enqueue_waiting(session_id: i64, mut request: serde_json::Value, wait: &str) {
+    request["waitFor"] = wait.into();
+    enqueue(session_id, &request);
+}
+
+/// 临时 id 换了（重开未建会话、认领成真实 id）：条目跟过去，与新 id 上已有的合并（做空 N5）。
+pub(crate) fn migrate_queued(from: i64, to: i64) {
+    let mut map = queue();
+    let Some(entry) = map.remove(&from) else {
+        return;
+    };
+    let request = match map.get(&to) {
+        Some(newer) => merge_queued(Some(&entry.request), &newer.request),
+        None => entry.request,
+    };
+    map.insert(to, Queued { request, ..entry });
+}
+
+/// 取走执行后又放回（此刻还不能动）：期间前端又排进来的，以新的为准合并。
+fn put_back(session_id: i64, entry: Queued) {
+    let mut map = queue();
+    let request = match map.get(&session_id) {
+        Some(newer) => merge_queued(Some(&entry.request), &newer.request),
+        None => entry.request,
+    };
+    map.insert(session_id, Queued { request, ..entry });
+}
+
+fn emit_settings(app: &tauri::AppHandle, session_id: i64, kind: &str, reason: Option<String>) {
+    use tauri::Emitter as _;
+    let _ = app.emit(
+        "session-settings-applied",
+        serde_json::json!({ "sessionId": session_id, "kind": kind, "reason": reason }),
+    );
+}
+
+/// 出队并告诉前端为什么（`expired` / `session_gone`），不让选择悄悄消失（做空 N5）。
+fn drop_queued(app: &tauri::AppHandle, session_id: i64, kind: &str) {
+    if queue().remove(&session_id).is_some() {
+        emit_settings(app, session_id, kind, None);
+    }
+}
+
+/// 等待条件还没解除：等待时间从头算。
+fn touch_queued(session_id: i64) {
+    if let Some(entry) = queue().get_mut(&session_id) {
+        entry.since = std::time::Instant::now();
+    }
 }
 
 static EXECUTOR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// 排队的切换由宿主在回合结束时自己执行（复核 M3：不依赖对话页正停在这个会话上）。只在队列非空时
-/// 跑，每 1.5 秒看一眼排着的几个会话，队列空了线程就退出。会话空闲的判定与看板 tab_class 同一阶梯
-/// （activityTone 的宿主版）；带参重启还要求 TUI 输入框是空的、读得到当前值——宿主没法把草稿搬进对话页，
-/// 输入框有字或认不出时留在队列里，等对话页打开这个会话时由前端（会先搬草稿）执行。
+/// 跑，每 1.5 秒看一眼排着的几个会话，队列空了线程就退出；条目超时、会话没了会出队（做空 N5），所以
+/// 线程总能退出。会话空闲的判定见 [`host_idle`]；带参重启与对话框路线还要求 TUI 输入框是空的——宿主没法
+/// 把草稿搬进对话页，输入框有字时留在队列里，等对话页打开这个会话时由前端（会先搬草稿）执行。
 fn ensure_executor(app: tauri::AppHandle) {
     use std::sync::atomic::Ordering;
     if EXECUTOR.swap(true, Ordering::AcqRel) {
@@ -878,48 +1009,69 @@ fn ensure_executor(app: tauri::AppHandle) {
     std::thread::spawn(move || {
         loop {
             std::thread::sleep(std::time::Duration::from_millis(1500));
-            let ids: Vec<i64> = QUEUED
-                .lock()
-                .map(|map| map.keys().copied().collect())
-                .unwrap_or_default();
+            let ids: Vec<i64> = queue().keys().copied().collect();
             if ids.is_empty() {
                 EXECUTOR.store(false, Ordering::Release);
                 // 释放标记后若又有人排进来，接着跑。
-                if QUEUED.lock().map(|map| map.is_empty()).unwrap_or(true)
-                    || EXECUTOR.swap(true, Ordering::AcqRel)
-                {
+                if queue().is_empty() || EXECUTOR.swap(true, Ordering::AcqRel) {
                     return;
                 }
                 continue;
             }
             for sid in ids {
-                run_queued_if_idle(&app, sid);
+                run_queued(&app, sid);
             }
         }
     });
 }
 
-fn run_queued_if_idle(app: &tauri::AppHandle, session_id: i64) {
-    use tauri::{Emitter as _, Manager as _};
-    if session_id <= 0 {
-        return; // 未认领会话由前端处理（重开要切到新的临时 id）
+/// 这次请求要不要求 TUI 输入框是空的：带参重启会杀进程（草稿跟着没），对话框路线要往输入框里打字。
+/// 会话服务（Codex）不碰输入框。
+pub(crate) fn needs_empty_composer(
+    plugin: &dyn AgentPlugin,
+    has_model: bool,
+    modes: &HashMap<String, String>,
+) -> bool {
+    let model = has_model
+        && matches!(
+            plugin.model_switch(),
+            Some(meowo_agent::ModelSwitch::RestartResume { .. } | meowo_agent::ModelSwitch::TuiDialog)
+        );
+    model
+        || modes.keys().any(|id| {
+            plugin.launch_options().iter().any(|o| {
+                o.id == id
+                    && matches!(o.switch, meowo_agent::ModeSwitch::Restart | meowo_agent::ModeSwitch::Dialog)
+            })
+        })
+}
+
+/// 宿主眼里会话此刻空闲、可以动：主回合停了、后台子任务不忙、没有待批审批。屏幕上挂着审批 / 提问
+/// （screen_state = blocked）直接算不空闲（做空 N10：tab_class 把 blocked 也归为 waiting，原先只靠
+/// 认不出输入框碰巧挡住）。
+pub(crate) fn screen_allows_switch(
+    connected: bool,
+    status: &str,
+    pending_review: bool,
+    screen: Option<&str>,
+    background_busy: impl FnOnce() -> bool,
+) -> bool {
+    if pending_review || screen == Some("blocked") {
+        return false;
     }
-    let Some(state) = app.try_state::<crate::AppState>() else {
-        return;
-    };
-    let Some(history) = crate::chat::session_snapshot(&state, session_id) else {
-        return;
-    };
+    crate::session_query::tab_class(connected, status, None, screen, background_busy) == Some("waiting")
+}
+
+fn host_idle(state: &crate::AppState, history: &meowo_protocol::ipc::ChatHistoryDto) -> bool {
     let screen = if history.screen_assumed {
         None
     } else {
         history.screen_state.as_deref()
     };
-    let pending = history.pending_review.map(|_| "review");
-    let class = crate::session_query::tab_class(
+    screen_allows_switch(
         history.connected,
         &history.status,
-        pending,
+        history.pending_review.is_some(),
         screen,
         || {
             crate::session_query::subagents_busy(
@@ -929,21 +1081,99 @@ fn run_queued_if_idle(app: &tauri::AppHandle, session_id: i64) {
                 &history.cc_session_id,
             )
         },
-    );
-    // 连着且在跑 / 等审批：继续等。没连着：执行（会记成下次打开的启动参数，见 apply_blocking）。
-    if history.connected && (pending.is_some() || class != Some("waiting")) {
-        return;
-    }
-    let Some(plugin) = meowo_agent::resolve(Some(&history.provider)) else {
+    )
+}
+
+/// Lead 在这个会话里等关卡答复（会话内等待器活着 / 关卡挂起 / 答复还没交给模型），见
+/// meowo_reporter::lead_waiter::holds_restart。
+fn lead_holds_restart(header: &meowo_store::store::SessionHeader) -> bool {
+    let Some(registry) = crate::lead::lead_registry() else {
+        return false;
+    };
+    meowo_reporter::lead::session_task(header.cwd.as_deref(), &header.cc_session_id, &registry)
+        .is_some_and(|task| meowo_reporter::lead_waiter::holds_restart(&task, &header.cc_session_id))
+}
+
+/// 执行结果里「此刻还不能动、稍后再试」的那些：放回队列，不打扰前端。
+const RETRY_LATER: &[&str] = &[
+    "settings/composer_not_empty",
+    "settings/server_not_ready",
+    "settings/busy_now",
+    "settings/background_busy",
+];
+
+fn run_queued(app: &tauri::AppHandle, session_id: i64) {
+    use tauri::Manager as _;
+    let Some(state) = app.try_state::<crate::AppState>() else {
         return;
     };
-    let Some(request) = QUEUED
-        .lock()
-        .ok()
-        .and_then(|map| map.get(&session_id).cloned())
+    let Some((request, since, misses)) = queue()
+        .get(&session_id)
+        .map(|q| (q.request.clone(), q.since, q.misses))
     else {
         return;
     };
+    let expired = since.elapsed() > QUEUE_TTL;
+    if session_id < 0 {
+        // 未认领会话由前端处理（重开要切到新的临时 id）；启动已经没了、或等太久的出队。
+        if state.ptys.pending_launch(session_id).is_none() {
+            drop_queued(app, session_id, "session_gone");
+        } else if expired {
+            drop_queued(app, session_id, "expired");
+        }
+        return;
+    }
+    let Ok(store) = crate::open_store(&state.db_path) else {
+        return;
+    };
+    // 会话行没了（被删）：出队；读库出错只是这一轮跳过。
+    if matches!(store.session_provider_opt(session_id), Ok(None)) {
+        drop_queued(app, session_id, "session_gone");
+        return;
+    }
+    let Ok(header) = store.session_header(session_id) else {
+        return;
+    };
+    // 等待条件（便宜的判断，先于读聊天历史）：没解除就重新起算。
+    match wait_for(&request) {
+        Some("open") if !state.ptys.is_active(session_id) => return touch_queued(session_id),
+        Some("lead") if lead_holds_restart(&header) => return touch_queued(session_id),
+        // 等待器交出答复就退出，CLI 要过一会儿才在空闲时开新回合：解除后再观望一段，免得赶在
+        // 续跑那一轮开始前把它杀掉。
+        Some("lead") if since.elapsed() < LEAD_GRACE => return,
+        Some(_) => {
+            // 条件解除：变回普通的「空闲后切换」，前端也能取走执行（宿主认不出输入框时靠它），提示跟着改。
+            if let Some(entry) = queue().get_mut(&session_id) {
+                if let Some(map) = entry.request.as_object_mut() {
+                    map.remove("waitFor");
+                }
+                entry.since = std::time::Instant::now();
+            }
+            emit_settings(app, session_id, "queued", None);
+            return;
+        }
+        None => {}
+    }
+    if expired {
+        drop_queued(app, session_id, "expired");
+        return;
+    }
+    if misses >= COMPOSER_MISS_LIMIT {
+        return; // 宿主认不出输入框，不再每轮读历史；等对话页执行或到期出队
+    }
+    let Some(plugin) = meowo_agent::resolve(Some(&header.provider)) else {
+        return;
+    };
+    // 版本探测缓存失效时要起 `<cli> --version`（最长 5 秒）：放在看屏之前，免得拿旧画面做决定（做空 N4）。
+    let version = crate::probe_cli_version(plugin);
+    let Some(history) = crate::chat::session_snapshot(&state, session_id) else {
+        return; // 会话行在（上面查过），读不出来只是这一轮跳过
+    };
+    // 连着且在跑 / 等审批：继续等。没连着：执行（Kimi/Gemini 记成下次打开的启动参数，Codex/OpenCode
+    // 转成等打开，见 apply_blocking）。
+    if history.connected && !host_idle(&state, &history) {
+        return;
+    }
     let model = request["model"]["id"].as_str().map(str::to_owned);
     let effort = request["model"]["effort"].as_str().map(str::to_owned);
     let modes: HashMap<String, String> = request["modes"]
@@ -978,23 +1208,45 @@ fn run_queued_if_idle(app: &tauri::AppHandle, session_id: i64) {
             current.insert("model".into(), id);
         }
     }
-    let version = crate::probe_cli_version(plugin);
-    let composer_empty = history.connected
-        && plugin
-            .composer_guard(version.as_deref())
-            .and_then(|guard| composer_state(&lines, &guard))
-            == Some(true);
-    if history.connected && !composer_empty {
-        return; // 输入框有字或认不出：等前端（会先把草稿搬进对话页）
+    let guard = plugin.composer_guard(version.as_deref());
+    let composer = guard.as_ref().and_then(|guard| composer_state(&lines, guard));
+    if history.connected && needs_empty_composer(plugin, model.is_some(), &modes) {
+        match composer {
+            Some(true) => {}
+            // 有字：等用户发出去，或对话页打开时由前端先搬草稿再执行。
+            Some(false) => return,
+            None => {
+                if let Some(entry) = queue().get_mut(&session_id) {
+                    entry.misses += 1;
+                }
+                return;
+            }
+        }
     }
     // 取走再执行：前端与宿主谁先拿到谁执行，不会执行两次。
-    if QUEUED.lock().ok().and_then(|mut map| map.remove(&session_id)).is_none() {
+    let Some(taken) = queue().remove(&session_id) else {
         return;
-    }
+    };
     let tui = TuiStateArg {
         idle: true,
-        composer_empty,
+        composer_empty: composer == Some(true),
         approval_pending: false,
+    };
+    // broker.stop 前一刻复核：重新取屏和状态，仍空闲、无审批、输入框仍空才杀（做空 N4）。
+    let recheck = || -> Result<(), String> {
+        let history = crate::chat::session_snapshot(&state, session_id).ok_or("settings/session_gone")?;
+        if !history.connected || !host_idle(&state, &history) {
+            return Err("settings/busy_now".into());
+        }
+        let lines = state
+            .ptys
+            .screen_probe_snapshot(session_id)
+            .map(|(snapshot, _)| snapshot.lines)
+            .unwrap_or_default();
+        match guard.as_ref().and_then(|guard| composer_state(&lines, guard)) {
+            Some(true) => Ok(()),
+            _ => Err("settings/composer_not_empty".into()),
+        }
     };
     let result = apply_blocking(
         app,
@@ -1006,15 +1258,27 @@ fn run_queued_if_idle(app: &tauri::AppHandle, session_id: i64) {
         modes,
         current,
         tui,
+        Some(&recheck),
     );
-    let (kind, reason) = match result {
-        Ok(outcome) => (outcome.kind.to_string(), outcome.reason),
-        Err(reason) => ("failed".to_string(), Some(settings_reason(&reason))),
-    };
-    let _ = app.emit(
-        "session-settings-applied",
-        serde_json::json!({ "sessionId": session_id, "kind": kind, "reason": reason }),
-    );
+    match result {
+        Ok(outcome) if outcome.wait_for.is_some() => {
+            let mut request = taken.request;
+            request["waitFor"] = outcome.wait_for.unwrap_or_default().into();
+            put_back(
+                session_id,
+                Queued {
+                    request,
+                    since: std::time::Instant::now(),
+                    misses: 0,
+                },
+            );
+            emit_settings(app, session_id, "queued", outcome.reason);
+        }
+        Ok(outcome) if outcome.kind == "not_now" => put_back(session_id, taken),
+        Err(reason) if RETRY_LATER.contains(&reason.as_str()) => put_back(session_id, taken),
+        Ok(outcome) => emit_settings(app, session_id, outcome.kind, outcome.reason),
+        Err(reason) => emit_settings(app, session_id, "failed", Some(settings_reason(&reason))),
+    }
 }
 
 /// 底栏模式标记（前端 modeFromScreen 的宿主版）：小写子串，取画面里最靠后出现的那个。
@@ -1054,6 +1318,14 @@ fn catalog_id_for(catalog: &[ModelCatalogEntry], current: &str) -> Option<String
 /// 托管终端输入框是不是空的（前端 composerSafety.composerCandidate 的宿主版）：Some(true) 空、
 /// Some(false) 有字、None 认不出。规则全来自插件声明的 ComposerGuard。
 pub(crate) fn composer_state(screen: &[String], guard: &meowo_agent::chat_ui::ComposerGuard) -> Option<bool> {
+    composer_read(screen, guard).map(|(empty, _)| empty)
+}
+
+/// 同 [`composer_state`]，另带输入框里的文字（去掉提示符与首尾空白；占位文字原样）。
+pub(crate) fn composer_read(
+    screen: &[String],
+    guard: &meowo_agent::chat_ui::ComposerGuard,
+) -> Option<(bool, String)> {
     let re = |pattern: &str| regex::Regex::new(pattern).ok();
     let top = re(guard.top_pattern)?;
     let bottom = re(guard.bottom_pattern)?;
@@ -1116,24 +1388,23 @@ pub(crate) fn composer_state(screen: &[String], guard: &meowo_agent::chat_ui::Co
     re(guard.input_start_pattern)?.captures(body[0])?.get(1)?;
     text[0] = text[0][guard.prompt_prefix.len()..].trim_start().to_string();
     let content = text.join("\n");
-    Some(re(guard.empty_pattern)?.is_match(content.trim()))
+    let content = content.trim();
+    Some((re(guard.empty_pattern)?.is_match(content), content.to_string()))
 }
 
 #[tauri::command]
 pub(crate) fn queued_session_settings(session_id: i64) -> Option<serde_json::Value> {
-    QUEUED
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .get(&session_id)
-        .cloned()
+    queue().get(&session_id).map(|q| q.request.clone())
 }
 
+/// 前端在回合结束时取走执行。宿主标了等待条件的（Lead 关卡 / 等会话打开）不给：前端看不到那些条件。
 #[tauri::command]
 pub(crate) fn take_queued_session_settings(session_id: i64) -> Option<serde_json::Value> {
-    QUEUED
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .remove(&session_id)
+    let mut map = queue();
+    if map.get(&session_id).is_some_and(|q| wait_for(&q.request).is_some()) {
+        return None;
+    }
+    map.remove(&session_id).map(|q| q.request)
 }
 
 /// 经服务 / 对话框改过的也记进会话的启动选项：恢复时按它回放（模型是否回放由插件机制决定，见
@@ -1258,8 +1529,17 @@ fn restart(
     session_id: i64,
     provider: &str,
     overrides: HashMap<String, String>,
+    before_stop: Option<&dyn Fn() -> Result<(), String>>,
 ) -> Result<bool, String> {
-    crate::terminal::restart_session_with(app, broker, store, session_id, provider, Some(overrides))
+    crate::terminal::restart_session_checked(
+        app,
+        broker,
+        store,
+        session_id,
+        provider,
+        Some(overrides),
+        before_stop,
+    )
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
@@ -1270,6 +1550,7 @@ fn restart(
     _session_id: i64,
     _provider: &str,
     _overrides: HashMap<String, String>,
+    _before_stop: Option<&dyn Fn() -> Result<(), String>>,
 ) -> Result<bool, String> {
     Err("settings/unsupported".into())
 }
@@ -1464,6 +1745,55 @@ mod tests {
         assert_eq!(composer_state(&["随便一行".to_string()], &guard), None);
     }
 
+    /// 做空 N2：宿主与前端的输入框判定对同一批实拍帧必须给出同样的结论。帧与规则放在前端测试也读的
+    /// app/src/test/fixtures/composer-frames.json；规则先与插件声明逐字核对，免得样例里的规则过期。
+    #[test]
+    fn host_composer_check_agrees_with_shared_frames() {
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../../src/test/fixtures/composer-frames.json")).unwrap();
+        let leak = |value: &serde_json::Value| -> &'static str {
+            Box::leak(value.as_str().unwrap().to_string().into_boxed_str())
+        };
+        let mut checked = 0;
+        for frame in fixture["frames"].as_array().unwrap() {
+            let provider = frame["provider"].as_str().unwrap();
+            let declared = &fixture["guards"][provider];
+            let plugin = meowo_agent::by_id(provider).unwrap();
+            // Kimi 的规则还要求装着 modern 版，本机没装时插件返回 None，只用样例里的规则测判定。
+            if let Some(guard) = plugin.composer_guard(frame["version"].as_str()) {
+                assert_eq!(&serde_json::to_value(guard).unwrap(), declared, "{provider} 规则与插件声明不一致");
+            }
+            let guard = meowo_agent::chat_ui::ComposerGuard {
+                prompt_footer: declared["prompt_footer"].as_bool().unwrap(),
+                input_start_pattern: leak(&declared["input_start_pattern"]),
+                top_pattern: leak(&declared["top_pattern"]),
+                bottom_pattern: leak(&declared["bottom_pattern"]),
+                row_pattern: leak(&declared["row_pattern"]),
+                prompt_prefix: leak(&declared["prompt_prefix"]),
+                tail_rows: declared["tail_rows"].as_u64().unwrap() as usize,
+                tail_pattern: declared["tail_pattern"].as_str().map(|_| leak(&declared["tail_pattern"])),
+                empty_pattern: leak(&declared["empty_pattern"]),
+            };
+            let lines: Vec<String> = frame["lines"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|line| line.as_str().unwrap().to_string())
+                .collect();
+            let trimmed: Vec<String> = lines.iter().map(|line| line.trim_end().to_string()).collect();
+            let expect = match frame["expect"].as_str().unwrap() {
+                "empty" => Some(true),
+                "occupied" => Some(false),
+                _ => None,
+            };
+            for screen in [&lines, &trimmed] {
+                assert_eq!(composer_state(screen, &guard), expect, "{}", frame["name"]);
+            }
+            checked += 1;
+        }
+        assert!(checked >= 10);
+    }
+
     #[test]
     fn host_reads_modes_from_footer_and_maps_model_labels() {
         let markers = [
@@ -1505,6 +1835,68 @@ mod tests {
         assert_eq!(queued_session_settings(sid), Some(merged.clone()));
         assert_eq!(take_queued_session_settings(sid), Some(merged));
         assert_eq!(queued_session_settings(sid), None);
+    }
+
+    /// 做空 N3 / N5 / N6：宿主标了等待条件的前端取不走；前端合并进提示名后等待条件还在；临时 id 换号时
+    /// 条目跟过去并与新 id 上的合并；取走后放回时以期间新排的为准。
+    #[test]
+    fn host_queue_keeps_wait_conditions_and_follows_id_changes() {
+        let modes = HashMap::from([("permission".to_string(), "yolo".to_string())]);
+        let sid = 987_655;
+        enqueue_waiting(sid, request_json(Some("kimi-code/k3"), None, &modes), "lead");
+        assert_eq!(take_queued_session_settings(sid), None);
+        let merged = enqueue(sid, &serde_json::json!({ "model": { "id": "kimi-code/k3", "label": "K3" }, "label": "K3" }));
+        assert_eq!(merged["waitFor"], "lead");
+        assert_eq!(merged["label"], "K3");
+        assert_eq!(merged["modes"]["permission"], "yolo");
+
+        let (temp, next, real) = (-987_001, -987_002, 987_656);
+        enqueue(temp, &serde_json::json!({ "modes": { "permission": "auto" }, "label": "都不问" }));
+        migrate_queued(temp, next);
+        enqueue(real, &serde_json::json!({ "model": { "id": "m" }, "label": "M" }));
+        migrate_queued(next, real);
+        assert_eq!(queued_session_settings(temp), None);
+        assert_eq!(queued_session_settings(next), None);
+        let moved = take_queued_session_settings(real).unwrap();
+        assert_eq!(moved["modes"]["permission"], "auto");
+        assert_eq!(moved["model"]["id"], "m");
+        assert_eq!(moved["label"], "M");
+
+        let taken = queue().remove(&sid).unwrap();
+        enqueue(sid, &serde_json::json!({ "modes": { "permission": "manual" }, "label": "每步都问" }));
+        put_back(sid, taken);
+        let back = queued_session_settings(sid).unwrap();
+        assert_eq!(back["modes"]["permission"], "manual");
+        assert_eq!(back["waitFor"], "lead");
+        queue().remove(&sid);
+    }
+
+    /// 做空 N10：屏幕挂着审批 / 提问（blocked）时宿主不动，不靠 tab_class 把它归成 waiting 后再碰巧被挡。
+    #[test]
+    fn host_never_switches_while_screen_is_blocked() {
+        assert!(screen_allows_switch(true, "waiting", false, Some("idle"), || false));
+        assert!(!screen_allows_switch(true, "waiting", false, Some("blocked"), || false));
+        assert!(!screen_allows_switch(true, "running", false, Some("working"), || false));
+        assert!(!screen_allows_switch(true, "waiting", true, Some("idle"), || false));
+        assert!(!screen_allows_switch(true, "waiting", false, Some("idle"), || true));
+    }
+
+    /// 只有会杀进程 / 要往输入框打字的路线才要求输入框是空的；Codex 经会话服务不碰输入框。
+    #[test]
+    fn only_restart_and_dialog_routes_need_an_empty_composer() {
+        let none = HashMap::new();
+        let kimi = meowo_agent::by_id("kimi").unwrap();
+        let codex = meowo_agent::by_id("codex").unwrap();
+        let opencode = meowo_agent::by_id("opencode").unwrap();
+        assert!(needs_empty_composer(kimi, true, &none));
+        assert!(needs_empty_composer(opencode, true, &none));
+        assert!(!needs_empty_composer(codex, true, &none));
+        let codex_mode = codex.launch_options().iter().find(|o| o.switch == meowo_agent::ModeSwitch::Server).unwrap();
+        let picks = HashMap::from([(codex_mode.id.to_string(), codex_mode.choices[0].id.to_string())]);
+        assert!(!needs_empty_composer(codex, false, &picks));
+        let kimi_mode = kimi.launch_options().iter().find(|o| o.switch == meowo_agent::ModeSwitch::Restart).unwrap();
+        let picks = HashMap::from([(kimi_mode.id.to_string(), kimi_mode.choices[0].id.to_string())]);
+        assert!(needs_empty_composer(kimi, false, &picks));
     }
 
     /// 清单外的模型、未知的档一律拒绝（防注入）；OpenCode 的模型走对话框。

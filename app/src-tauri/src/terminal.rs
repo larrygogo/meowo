@@ -2468,6 +2468,21 @@ pub(crate) fn restart_session_with(
     provider: &str,
     overrides: Option<std::collections::HashMap<String, String>>,
 ) -> Result<bool, String> {
+    restart_session_checked(app, broker, store, sid, provider, overrides, None)
+}
+
+/// 同 [`restart_session_with`]，`before_stop` 在杀进程前一刻复核（宿主自己执行排队的切模型时用：
+/// 从看屏到这里之间用户可能打了字、CLI 可能自己开了新回合，做空 N4）。复核不过就不杀、原样返回它的错误。
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+pub(crate) fn restart_session_checked(
+    app: &tauri::AppHandle,
+    broker: &crate::pty::PtyBroker,
+    store: &meowo_store::Store,
+    sid: i64,
+    provider: &str,
+    overrides: Option<std::collections::HashMap<String, String>>,
+    before_stop: Option<&dyn Fn() -> Result<(), String>>,
+) -> Result<bool, String> {
     let session = store.get_session(sid).map_err(|e| e.to_string())?;
     let cwd = store.session_cwd(sid).map_err(|e| e.to_string())?;
     // 尺寸必须在杀之前取：PTY 记录一收走，grid 就只剩 (0,0)。取不到时退回与看板恢复
@@ -2478,6 +2493,9 @@ pub(crate) fn restart_session_with(
     } else {
         crate::pty::TerminalSize::new(cols, rows)
     };
+    if let Some(check) = before_stop {
+        check()?;
+    }
     // 与「结束会话」同一条路（stop 会武装 waiter 的升级链——Windows 上 kill 恒报成功
     // 却未必真死，只发一刀会永远等不到收尾）。
     if let Err(error) = broker.stop(sid) {

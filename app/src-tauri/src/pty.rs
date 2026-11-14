@@ -3082,6 +3082,8 @@ impl PtyBroker {
         // 新会话在认领前（还是临时编号）就可能开了面板终端 / 浏览器：归属跟着换到真实编号，
         // 否则换号后页签消失、进程还在跑却没处关。
         crate::browser_agent::reassign_panels(temp_id, real_id);
+        // 认领前排进临时 id 的切模型 / 模式跟到真实 id（做空 N5：否则没人再取它）。
+        crate::session_settings::migrate_queued(temp_id, real_id);
         // 占位卡使命达成：真实会话行已由 hook 落库（先于 claim），看板下一次刷新用真实卡
         // 顶替——元数据此刻摘除，占位与真卡不会同屏并存（前端另有 provider/cwd 对账兜底）。
         if let Ok(mut map) = self.attach.pending_launches.lock() {

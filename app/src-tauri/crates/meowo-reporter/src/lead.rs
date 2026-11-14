@@ -242,6 +242,11 @@ fn claimed_task(cwd: Option<&str>, sid: &str, registry: &Path) -> Option<PathBuf
         .or_else(|| task_of_session(sid, registry))
 }
 
+/// 会话认领的任务（与 wait 同一口径）。宿主切模型前据此查 Lead 等待器（做空 N3）。
+pub fn session_task(cwd: Option<&str>, sid: &str, registry: &Path) -> Option<PathBuf> {
+    claimed_task(cwd, sid, registry)
+}
+
 pub(crate) fn task_of_session(sid: &str, registry: &Path) -> Option<PathBuf> {
     let t = load_map(registry).get(sid)?.as_str()?.to_owned();
     let task = PathBuf::from(t);

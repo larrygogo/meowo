@@ -91,6 +91,22 @@ pub fn needs_waiter(task: &Path, session: &str) -> Option<LeadGateDto> {
     (gate.status == "pending" && live_waiter(task, &gate.id).is_none()).then_some(gate)
 }
 
+/// 会话里 Lead 在等关卡答复（有活着的等待器、或关卡挂起）、或答复还没交给模型：这时重启 CLI 会把
+/// 会话内的等待器连同进程一起杀掉，答复后就不会自动继续（宿主不代投，见 meowo-app lead_native::waiter）。
+/// Meowo 切模型 / 模式的带参重启据此推迟到续跑之后（做空 N3）。
+pub fn holds_restart(task: &Path, session: &str) -> bool {
+    if session.is_empty()
+        || std::fs::read_to_string(task.join(".owner"))
+            .ok()
+            .is_none_or(|owner| owner.trim() != session)
+    {
+        return false;
+    }
+    any_live_waiter(task)
+        || lead::read_gate(task).is_some_and(|gate| gate.status == "pending")
+        || undelivered_answer(task, session).is_some()
+}
+
 /// 已作答、本会话还没被送达过的关卡（`.delivered` 记关卡 id，与 Claude 的 wait 共用）。
 pub fn undelivered_answer(task: &Path, session: &str) -> Option<LeadGateDto> {
     if session.is_empty() || std::fs::read_to_string(task.join(".owner")).ok()?.trim() != session {
@@ -656,6 +672,27 @@ mod tests {
     }
     const P: Duration = Duration::from_millis(20);
     const M: Duration = Duration::from_secs(20);
+
+    /// 做空 N3：关卡挂起、答复未送达时拦住重启；送达后、别的会话不拦。
+    #[test]
+    fn restart_is_held_while_the_gate_waits_or_the_answer_is_undelivered() {
+        let fx = Fx::new("pending");
+        assert!(holds_restart(&fx.task, "session_abc"));
+        assert!(!holds_restart(&fx.task, "session_other"));
+        assert!(!holds_restart(&fx.task, ""));
+        fx.answer();
+        assert!(holds_restart(&fx.task, "session_abc"));
+        std::fs::write(fx.task.join(".delivered"), "Q-1").unwrap();
+        assert!(!holds_restart(&fx.task, "session_abc"));
+        // 关卡已了结但等待器还活着（在等下一个关卡）：仍然拦。
+        std::fs::write(
+            waiter_path(&fx.task),
+            json!({"pid": std::process::id(), "started": process_started(std::process::id()).unwrap(), "gate": "", "session": "session_abc", "provider": "kimi", "cli_pid": null, "cli_started": null}).to_string(),
+        )
+        .unwrap();
+        assert!(read_record(&fx.task).is_some());
+        assert!(holds_restart(&fx.task, "session_abc"));
+    }
 
     #[test]
     fn answer_arriving_later_is_printed_and_marks_delivered() {

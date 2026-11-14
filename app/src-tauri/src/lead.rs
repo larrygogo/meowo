@@ -424,7 +424,7 @@ pub(crate) fn install_into_profile_if_enabled(profile_dir: &Path) {
 }
 
 /// reporter lead 子命令用的登记表（与 board.db 同目录，见 meowo-reporter main.rs）。
-fn lead_registry() -> Option<PathBuf> {
+pub(crate) fn lead_registry() -> Option<PathBuf> {
     meowo_reporter::db_path().and_then(|p| p.parent().map(|d| d.join("lead-sessions.json")))
 }
 
