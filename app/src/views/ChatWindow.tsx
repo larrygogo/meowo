@@ -1664,6 +1664,8 @@ export function ChatWindow() {
   );
   // 前序内容没取到（或本来就没有）时的来历注脚；取到后由分隔条接力表达同一事实。
   const showHandoffNote = history?.predecessorId != null && prefixSegments.every((segment) => segment.items.length === 0);
+  // 切模型 / 模式前从 TUI 搬进对话页的草稿（没重启时撤回用）。
+  const rescuedRef = useRef<string | null>(null);
   // 切模型 / 模式（清单预先列好、选中按机制生效、在跑时排到这一轮之后，见 useSessionSettings）。
   const sessionSettings = useSessionSettings({
     sessionId,
@@ -1673,15 +1675,25 @@ export function ChatWindow() {
     setSendError,
     moveTo: (id) => resetToRef.current(id, true),
     // 重启前把 TUI 输入框里没发的字搬进对话页输入框（standards：Meowo 先把用户内容保住，做空 H2）。
-    rescueDraft: async () => {
+    rescueDraft: async (move) => {
       // 与发送前的输入框判定同一来源（manualSendVerdict 读的 frame）。
       const frame = await managedTerminalFrame(sessionId).catch(() => null);
       const candidate = composerCandidate(frame?.lines ?? null, chatUi?.composer_guard);
       if (candidate.state === "empty") return "empty";
       const text = candidate.text?.trim();
       if (candidate.state !== "occupied" || !text) return "unknown";
+      // 不重启的路线只报「有字」：TUI 里的原稿还在，再搬一份用户会发两遍（做空 N9）。
+      if (!move) return "occupied";
+      rescuedRef.current = text;
       setPrompt((prev) => (prev.trim() ? `${prev}\n${text}` : text));
       return "moved";
+    },
+    // 搬了却没重启（排进队列、被拒）：TUI 里原稿还在，撤回对话页这份；只撤刚追加的那段，用户改过就不动。
+    undoRescue: () => {
+      const text = rescuedRef.current;
+      rescuedRef.current = null;
+      if (!text) return;
+      setPrompt((prev) => (prev === text ? "" : prev.endsWith(`\n${text}`) ? prev.slice(0, -(text.length + 1)) : prev));
     },
     restarts: (request) => sessionId < 0
       || (!!request.model && chatUi?.model_switch === "restart_resume")

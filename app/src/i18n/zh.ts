@@ -522,6 +522,12 @@ export const zh = {
     // 切模型 / 模式（任务 20261114-tui-model-switch）：运行中或有待批审批时不写终端、不重启，排到这一轮之后。
     // 队列存在 Meowo 进程里：Meowo 重启会清空，界面写明（复核 M3）。
     settingsDeferred: (name: string) => `这一轮结束后切换到 ${name}（重启 Meowo 会取消）`,
+    // Lead 关卡等待中：带参重启会杀掉会话内的关卡等待器，答复后就不会自动继续（做空 N3），排到续跑之后。
+    settingsDeferredLead: (name: string) => `关卡答复并续跑后切换到 ${name}（重启 Meowo 会取消）`,
+    // 会话没在运行：Codex/OpenCode 恢复时不回放模型，打开后由宿主经会话服务补设（做空 N6）。
+    settingsDeferredOpen: (name: string) => `打开会话后切换到 ${name}（重启 Meowo 会取消）`,
+    // 排了 30 分钟这一轮还没结束（或宿主一直没等到空闲）：出队，告诉用户（做空 N5）。
+    settingsQueueExpired: "等太久没切成，已取消，请重新选择",
     settingsApplying: "正在切换",
     settingsComposerUnknown: "认不出终端输入框，为免丢字没有重启",
     settingsFirstTurn: "第一条消息正在处理，会话建好后再切",

@@ -19,6 +19,7 @@ vi.mock("../../api", () => ({
   queuedSessionSettings: async (sessionId: number) => queue.get(sessionId) ?? null,
   takeQueuedSessionSettings: async (sessionId: number) => {
     const value = queue.get(sessionId) ?? null;
+    if (value?.waitFor) return null; // 宿主标了等待条件的不给前端
     queue.delete(sessionId);
     return value;
   },
@@ -53,7 +54,71 @@ describe("会话里切模型 / 模式的分派", () => {
     apply.mockReset();
     live.mockReset();
     record.mockReset();
+    // 真实接口一律返回 Promise（做空 N8：reset 后返回 undefined 曾在实现里 .catch 出 Unhandled Rejection）。
+    live.mockResolvedValue({ model: null, effort: null, modes: [] });
+    record.mockResolvedValue(undefined);
     queue.clear();
+  });
+
+  /// 做空 N8：后端调用同步抛错或返回 undefined 时不留未处理的 rejection，流程照常走完。
+  it("后端返回 undefined 或同步抛错不留 Unhandled Rejection", async () => {
+    live.mockReturnValue(undefined);
+    record.mockImplementation(() => { throw new Error("boom"); });
+    let current = deps({ tone: "running" });
+    const { rerender } = renderHook(() => useSessionSettings(current));
+    current = deps({ tone: "waiting" });
+    rerender();
+    await waitFor(() => expect(live).toHaveBeenCalled());
+    await waitFor(() => expect(record).toHaveBeenCalled());
+  });
+
+  /// 做空 N9：不重启的路线只读不搬草稿；有字时如实报给后端（对话框路线见字不动手）。
+  it("不重启的路线不搬草稿", async () => {
+    apply.mockResolvedValue({ kind: "not_now", sessionId: 7, confirmed: false, reason: "lead/opencode_composer_not_empty" });
+    const rescueDraft = vi.fn(async (move: boolean) => (move ? "moved" as const : "occupied" as const));
+    const { result } = renderHook(() => useSessionSettings(deps({ rescueDraft, restarts: () => false })));
+    await act(async () => result.current.request({ modes: { agent: "plan" }, label: "计划" }));
+    expect(rescueDraft).toHaveBeenCalledWith(false);
+    expect(apply.mock.calls[0][0].tui.composerEmpty).toBe(false);
+  });
+
+  /// 做空 N3 / N6：宿主收进队列（Lead 在等关卡答复 / 会话没在运行），提示说等的是什么；前端不去取走执行。
+  it("宿主收进队列时说清等什么，前端不抢着执行", async () => {
+    // 宿主收进队列的条目没有提示名（apply 不带 label），前端随后合并进来。
+    apply.mockImplementation(async (args: { sessionId: number }) => {
+      queue.set(args.sessionId, { model: { id: "fake/b", effort: null }, modes: {}, waitFor: "lead" });
+      return { kind: "queued", sessionId: 7, confirmed: false, reason: "settings/lead_waiting" };
+    });
+    let current = deps();
+    const { result, rerender } = renderHook(() => useSessionSettings(current));
+    await act(async () => result.current.request({ model: { id: "fake/b", label: "Fake B" }, label: "Fake B" }));
+    await waitFor(() => expect(result.current.notice).toBe("关卡答复并续跑后切换到 Fake B（重启 Meowo 会取消）"));
+    current = deps({ tone: "running" });
+    rerender();
+    current = deps({ tone: "waiting" });
+    rerender();
+    expect(apply).toHaveBeenCalledTimes(1);
+    expect(queue.get(7)).toMatchObject({ label: "Fake B", waitFor: "lead" });
+    queue.set(7, { label: "GPT-6", waitFor: "open" });
+    const reopened = renderHook(() => useSessionSettings(deps()));
+    await waitFor(() => expect(reopened.result.current.notice).toBe("打开会话后切换到 GPT-6（重启 Meowo 会取消）"));
+  });
+
+  /// 搬了草稿最后没重启（宿主排进队列 / 被拒）：撤回对话页那份，TUI 原稿还在；真重启了不撤。
+  it("搬了草稿却没重启时撤回", async () => {
+    const undoRescue = vi.fn();
+    const rescueDraft = async () => "moved" as const;
+    apply.mockImplementation(async () => {
+      queue.set(7, { modes: {}, waitFor: "lead" });
+      return { kind: "queued", sessionId: 7, confirmed: false, reason: "settings/lead_waiting" };
+    });
+    const first = renderHook(() => useSessionSettings(deps({ rescueDraft, undoRescue })));
+    await act(async () => first.result.current.request({ model: { id: "fake/b", label: "Fake B" }, label: "Fake B" }));
+    expect(undoRescue).toHaveBeenCalledTimes(1);
+    apply.mockResolvedValue({ kind: "restarted", sessionId: 7, confirmed: false, reason: null });
+    const second = renderHook(() => useSessionSettings(deps({ rescueDraft, undoRescue })));
+    await act(async () => second.result.current.request({ model: { id: "fake/c", label: "Fake C" }, label: "Fake C" }));
+    expect(undoRescue).toHaveBeenCalledTimes(1);
   });
 
   it("在跑或有待批审批时不调后端（不写终端、不重启），回合结束再执行", async () => {

@@ -22,6 +22,7 @@ import {
   sessionLiveSettings,
   takeQueuedSessionSettings,
   type ChatHistory,
+  type LiveSettings,
   type SessionTuiState,
   type SettingsOutcome,
 } from "../../api";
@@ -35,10 +36,23 @@ export type SettingsRequest = {
   modes?: Record<string, string>;
   /** 提示里说「切换到 X」用的名字。 */
   label: string;
+  /** 宿主队列里标的等待条件：lead = Lead 关卡答复并续跑后（重启会杀掉会话内等待器，做空 N3）；
+   *  open = 会话打开、TUI 握手后由宿主经服务补设（做空 N6）。有它时只由宿主执行。 */
+  waitFor?: "lead" | "open";
 };
 
-/** TUI 输入框此刻：空 / 有草稿已搬进对话页 / 认不出。 */
-export type DraftRescue = "empty" | "moved" | "unknown";
+/** TUI 输入框此刻：空 / 有草稿已搬进对话页 / 有字没搬（不重启的路线不搬，做空 N9）/ 认不出。 */
+export type DraftRescue = "empty" | "moved" | "occupied" | "unknown";
+
+/** 调后端：同步抛错、返回 undefined（mock 被 reset）、异步失败都落到 fallback，不留未处理的 rejection（做空 N8）。 */
+async function attempt<T>(run: () => Promise<T> | T | undefined, fallback: T): Promise<T> {
+  try {
+    const value = await run();
+    return value === undefined ? fallback : value;
+  } catch {
+    return fallback;
+  }
+}
 
 export interface SessionSettingsDeps {
   sessionId: number;
@@ -49,8 +63,11 @@ export interface SessionSettingsDeps {
   setSendError: (message: string) => void;
   /** 未建会话重开后切到新的临时 id（草稿跟着走）。 */
   moveTo: (sessionId: number) => void;
-  /** 读 TUI 输入框；有字就搬进对话页输入框（Meowo 先把用户内容保住）。 */
-  rescueDraft: () => Promise<DraftRescue>;
+  /** 读 TUI 输入框；`move` 为真且有字时搬进对话页输入框（要重启时 Meowo 先把用户内容保住），
+   *  不重启的路线只读不搬，免得对话页与 TUI 各一份。 */
+  rescueDraft: (move: boolean) => Promise<DraftRescue>;
+  /** 搬了草稿最后却没重启（排进队列、被拒、出错）：把搬进对话页的那份撤回，TUI 里原稿还在，免得发两遍。 */
+  undoRescue?: () => void;
   /** 这次请求会不会重启 / 重开 TUI 进程（带参重启机制、未建会话重开）。 */
   restarts: (request: SettingsRequest) => boolean;
   /** 会话此刻的实际值：栏 id → 档 id，`model` = 当前模型 id。transcript 与底栏读到的，读不到的不写。 */
@@ -83,7 +100,9 @@ export function mergeRequests(prev: SettingsRequest | null, next: SettingsReques
 function asRequest(value: unknown): SettingsRequest | null {
   if (!value || typeof value !== "object") return null;
   const raw = value as Partial<SettingsRequest>;
-  return typeof raw.label === "string" ? { model: raw.model ?? undefined, modes: raw.modes ?? undefined, label: raw.label } : null;
+  if (typeof raw.label !== "string") return null;
+  const waitFor = raw.waitFor === "lead" || raw.waitFor === "open" ? raw.waitFor : undefined;
+  return { model: raw.model ?? undefined, modes: raw.modes ?? undefined, label: raw.label, ...(waitFor ? { waitFor } : {}) };
 }
 
 export function useSessionSettings(deps: SessionSettingsDeps) {
@@ -110,15 +129,25 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
 
   /** 排进宿主的队列（合并后的结果回来作为界面显示）。 */
   const enqueue = async (sessionId: number, request: SettingsRequest) => {
-    const merged = asRequest(await queueSessionSettings(sessionId, request).catch(() => request)) ?? request;
+    const merged = asRequest(await attempt<unknown>(() => queueSessionSettings(sessionId, request), request)) ?? request;
     if (depsRef.current.sessionId === sessionId) setQueued({ sessionId, request: merged });
   };
+
+  /** 重读宿主队列里这个会话排着的（宿主收进队列、改了等待条件之后）。 */
+  const refreshQueued = async (sessionId: number) => {
+    const pending = asRequest(await attempt<unknown>(() => queuedSessionSettings(sessionId), null));
+    if (depsRef.current.sessionId === sessionId) setQueued(pending ? { sessionId, request: pending } : null);
+  };
+  const refreshQueuedRef = useRef(refreshQueued);
+  refreshQueuedRef.current = refreshQueued;
 
   const apply = async (request: SettingsRequest) => {
     const { sessionId } = depsRef.current;
     if (runningRef.current) { await enqueue(sessionId, request); return; }
     runningRef.current = true;
     setApplying(true);
+    let moved = false;
+    let restarted = false;
     try {
       const restarting = depsRef.current.restarts(request);
       if (restarting && depsRef.current.firstTurnPending) {
@@ -126,16 +155,15 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
         return;
       }
       // 重启会杀掉 TUI 进程：先把输入框里没发的字搬进对话页；认不出输入框就不重启。
-      let composerEmpty = true;
-      const rescue = await depsRef.current.rescueDraft().catch((): DraftRescue => "unknown");
-      if (rescue === "unknown") {
-        if (restarting) {
-          depsRef.current.setSendError(t.chat.settingsComposerUnknown);
-          return;
-        }
-        composerEmpty = false;
+      // 不重启的路线（会话服务 / TUI 对话框）不搬：原稿留在 TUI 里，对话框路线见字就不动手（做空 N9）。
+      const rescue = await attempt<DraftRescue>(() => depsRef.current.rescueDraft(restarting), "unknown");
+      if (restarting && rescue !== "empty" && rescue !== "moved") {
+        depsRef.current.setSendError(t.chat.settingsComposerUnknown);
+        return;
       }
-      const current = await depsRef.current.readCurrent().catch(() => ({}));
+      moved = rescue === "moved";
+      const composerEmpty = rescue === "empty" || rescue === "moved";
+      const current = await attempt<Record<string, string>>(() => depsRef.current.readCurrent(), {});
       const tui: SessionTuiState = {
         idle: !mustDefer(depsRef.current.tone),
         composerEmpty,
@@ -149,6 +177,7 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
         current,
         tui,
       });
+      restarted = outcome.kind === "restarted" || outcome.kind === "reopened";
       if (depsRef.current.sessionId !== sessionId) return;
       switch (outcome.kind) {
         case "applied":
@@ -173,6 +202,11 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
           if (unhandled.length > 0) depsRef.current.setSendError(t.chat.settingsModeUnsupported);
           break;
         }
+        case "queued":
+          // 宿主自己收进了队列、标了等什么（Lead 在等关卡答复 / 会话没在运行、打开后经服务补设）；
+          // 把这次请求合并进去补上提示名，合并结果带着宿主标的 waitFor。
+          await enqueue(sessionId, request);
+          break;
         case "not_now":
           // 服务端复核说此刻不能动：刚开始跑一轮的排到这一轮之后；不在跑却被拒的（后台子任务、输入框有字）说原因。
           if (mustDefer(depsRef.current.tone)) await enqueue(sessionId, request);
@@ -182,6 +216,7 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
     } catch (error) {
       if (depsRef.current.sessionId === sessionId) depsRef.current.setSendError(formatBackendError(error, t.locale));
     } finally {
+      if (moved && !restarted && depsRef.current.sessionId === sessionId) depsRef.current.undoRescue?.();
       runningRef.current = false;
       setApplying(false);
     }
@@ -202,10 +237,8 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
     setQueued(null);
     setNextOpen(null);
     const sessionId = deps.sessionId;
-    void queuedSessionSettings(sessionId).then((value) => {
-      const pending = asRequest(value);
-      if (pending && depsRef.current.sessionId === sessionId) setQueued({ sessionId, request: pending });
-    }).catch(() => {});
+    void refreshQueued(sessionId);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- refreshQueued 只读 ref 与 setter
   }, [deps.sessionId]);
 
   // 宿主在回合结束时自己执行了排队的切换（不论对话页在看哪个会话）：清掉提示，结果按种类说一句。
@@ -214,8 +247,12 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
     let cancelled = false;
     listen<{ sessionId: number; kind: string; reason: string | null }>("session-settings-applied", ({ payload }) => {
       if (payload.sessionId !== depsRef.current.sessionId) return;
+      // 宿主改了等待条件（如回合结束时发现 Lead 在等关卡答复），重读显示。
+      if (payload.kind === "queued") { void refreshQueuedRef.current(payload.sessionId); return; }
       setQueued(null);
-      if (payload.kind === "next_open") setNextOpen(payload.sessionId);
+      // 排太久（30 分钟）出队：说一声，不让选择悄悄消失（做空 N5）。会话没了的不用说。
+      if (payload.kind === "expired") depsRef.current.setSendError(t.chat.settingsQueueExpired);
+      else if (payload.kind === "next_open") setNextOpen(payload.sessionId);
       else if (payload.kind === "needs_new_session") depsRef.current.setSendError(t.chat.settingsNeedsNewSession);
       else if ((payload.kind === "failed" || payload.kind === "not_now") && payload.reason) depsRef.current.setSendError(formatBackendError(payload.reason, t.locale));
       else if (payload.kind === "applied" || payload.kind === "restarted") void syncLiveRef.current();
@@ -227,13 +264,15 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
   // 回到空闲（tone 离开 running / pending）、上一次切换落地后，执行排着的切换。
   useEffect(() => {
     if (!queued || queued.sessionId !== deps.sessionId) return;
-    if (mustDefer(deps.tone) || applying) return;
+    // 标了等待条件的只由宿主执行（它看得到 Lead 等待器与 TUI 握手）；宿主那边取走也会拒绝。
+    if (queued.request.waitFor || mustDefer(deps.tone) || applying) return;
     const sessionId = queued.sessionId;
-    setQueued(null);
-    void takeQueuedSessionSettings(sessionId).then((value) => {
+    void attempt<unknown>(() => takeQueuedSessionSettings(sessionId), null).then((value) => {
       const pending = asRequest(value);
-      if (pending && depsRef.current.sessionId === sessionId) void apply(pending);
-    }).catch(() => {});
+      if (!pending || depsRef.current.sessionId !== sessionId) return;
+      setQueued(null);
+      void apply(pending);
+    });
   // eslint-disable-next-line react-hooks/exhaustive-deps -- apply 读 depsRef，只该由 tone / 会话 / 队列变化触发
   }, [deps.tone, deps.sessionId, queued, applying]);
 
@@ -242,7 +281,7 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
   const syncLive = async () => {
     const { sessionId } = depsRef.current;
     if (sessionId <= 0) return;
-    const live = await sessionLiveSettings(sessionId).catch(() => null);
+    const live = await attempt<LiveSettings | null>(() => sessionLiveSettings(sessionId), null);
     if (live && depsRef.current.sessionId === sessionId && (live.model || live.modes.length > 0)) {
       depsRef.current.setHistory((current) => {
         if (!current || current.sessionId !== sessionId) return current;
@@ -260,10 +299,10 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
         };
       });
     }
-    const current = await depsRef.current.readCurrent().catch((): Record<string, string> => ({}));
+    const current = await attempt<Record<string, string>>(() => depsRef.current.readCurrent(), {});
     if (depsRef.current.sessionId !== sessionId) return;
     const { model, ...modes } = { ...current, ...(live?.model ? { model: live.model } : {}), ...Object.fromEntries((live?.modes ?? []).map((mode) => [mode.dimension, mode.value])) };
-    if (model || Object.keys(modes).length > 0) void recordSessionSettings(sessionId, model ?? null, modes).catch(() => {});
+    if (model || Object.keys(modes).length > 0) void attempt(() => recordSessionSettings(sessionId, model ?? null, modes), undefined);
   };
   const syncLiveRef = useRef(syncLive);
   syncLiveRef.current = syncLive;
@@ -276,7 +315,10 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
   // eslint-disable-next-line react-hooks/exhaustive-deps -- syncLive 读 depsRef，只由 tone 变化触发
   }, [deps.tone]);
 
-  const notice = queued && queued.sessionId === deps.sessionId ? t.chat.settingsDeferred(queued.request.label)
+  const deferredText = (request: SettingsRequest) => request.waitFor === "lead" ? t.chat.settingsDeferredLead(request.label)
+    : request.waitFor === "open" ? t.chat.settingsDeferredOpen(request.label)
+    : t.chat.settingsDeferred(request.label);
+  const notice = queued && queued.sessionId === deps.sessionId ? deferredText(queued.request)
     : nextOpen === deps.sessionId ? t.chat.settingsNextOpen
     : null;
   return { request, applying, notice, syncLive, deferredRequest: queued?.sessionId === deps.sessionId ? queued.request : null };

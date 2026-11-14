@@ -1343,7 +1343,8 @@ export function sessionLiveSettings(sessionId: number): Promise<LiveSettings> {
 
 /** 会话里切模型 / 模式的结果（后端 session_settings::SettingsOutcome）。 */
 export type SettingsOutcome = {
-  kind: "applied" | "restarted" | "reopened" | "next_open" | "needs_new_session" | "unsupported" | "not_now";
+  // queued = 宿主收进了队列，等条件满足自己执行（Lead 关卡答复并续跑后 / 会话打开握手后），队列里的 waitFor 说等什么。
+  kind: "applied" | "restarted" | "reopened" | "next_open" | "needs_new_session" | "unsupported" | "not_now" | "queued";
   sessionId: number;
   confirmed: boolean;
   reason: string | null;
