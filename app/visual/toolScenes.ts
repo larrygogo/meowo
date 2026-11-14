@@ -1,36 +1,57 @@
 // 工具行与运行状态的场景：五家各一份时间线，桌面是 flow-tools-<家>-<状态>，手机是 mobile-tools-<家>-<状态>，
 // 两边用同一份数据。
 //
-// 条目直接取五家的回放样本（src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/<家>.items.json，
-// 本机真实会话经后端完整解析的产物，与 views/chat/replay.test.tsx 读的是同一份），这里不改内容，只做三件事：
-//   1. 按状态截取一段（见 CUTS）：运行中、等待审批取「到某条命令为止、去掉它的回执」的前缀。
-//   2. 重排时间戳。样本是从多次会话里拼的，原始时间互相错开几天，直接用会拍出「工作了 17181 分钟」。
-//      每条调用到回执的间隔保留原值，其余按 2 秒一条往后排，末条落在冻结时刻前 30 秒。
-//   3. 样本里没有的两类单独补，并在下面写明出处：待办（五家样本都没有）、Codex 的回合出错（本机没有真实记录）。
+// 条目直接取五家的回放样本（src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/<家>.<会话>.items.json，
+// 本机真实会话经后端完整解析的产物，与 views/chat/replay.test.tsx 读的是同一份）。每个场景只用**一场会话**的
+// 片段、保持原顺序，这里不改内容，只做三件事：
+//   1. 按状态截取一段：运行中、等待审批取「那条命令所在的一轮开头 → 那条命令」，去掉它的回执。
+//   2. 把时间平移到冻结时刻附近。样本是长会话里裁出来的片段，两条之间可能隔着几小时，演示页的时钟又是冻结的，
+//      原样用会拍出「工作了 196 分钟」。每条调用到回执的间隔保留原值，其余按 2 秒一条往后排，末条落在冻结时刻前 30 秒。
+//   3. 样本里没有的单独补，并在下面写明出处：待办（五家样本都没有）、Codex 的回合出错（本机没有真实记录）、
+//      claude 与 kimi 回合中途的那句话（样本里没有，按后端产出的形态）。
 import type { ChatItem } from "../src/api";
 import { chatUi } from "../src/test/agents";
 import { cardSceneMock } from "./cardScenes";
 import { FIXED_NOW } from "./fixtures";
-import claudeItems from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/claude.items.json";
-import codexItems from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/codex.items.json";
-import geminiItems from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/gemini.items.json";
-import kimiItems from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/kimi.items.json";
-import opencodeItems from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/opencode.items.json";
+import claudeMain from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/claude.152e4c8e.items.json";
+import claudeError from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/claude.15a3c5a2.items.json";
+import claudeAgent from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/claude.e903be8f.items.json";
+import codexMain from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/codex.01a1cea4.items.json";
+import geminiMain from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/gemini.1b135d85.items.json";
+import geminiError from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/gemini.882f0730.items.json";
+import kimiMain from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/kimi.658d0ccd.items.json";
+import kimiError from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/kimi.aa711c07.items.json";
+import opencodeMain from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/opencode.bzQ2Bs.items.json";
+import opencodeError from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/opencode.u5cG8m.items.json";
+import opencodeMidTurn from "../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/opencode.KbLGZo.items.json";
 
 type Lang = "zh" | "en";
 export type ToolProvider = "claude" | "codex" | "kimi" | "gemini" | "opencode";
 export const TOOL_PROVIDERS: ToolProvider[] = ["claude", "codex", "kimi", "gemini", "opencode"];
-/// all：整份样本，回合已结束。running：最后一条命令还没回执、会话在跑。waiting：同一段，停在审批上。
+/// all：一场会话的片段，回合已结束。running：最后一条命令还没回执、会话在跑。waiting：同一段，停在审批上。
 /// stale：同一段，但会话已经停了（没回执的调用应显示「已中断」，不再计时）。error：以回合出错收尾。
 /// todo：整份样本前插一条待办调用。
-export type ToolState = "all" | "running" | "waiting" | "stale" | "error" | "todo";
+/// midturn：运行中又发了一条——命令还在跑，后面跟着回合中途送进去的那句话（做空 ③ 的场景）。
+/// agents：子任务块（claude、kimi、codex）。agents-running：子任务刚派出、还在跑（codex）。
+export type ToolState = "all" | "running" | "waiting" | "stale" | "error" | "todo" | "midturn" | "agents" | "agents-running";
 
-const SAMPLES: Record<ToolProvider, ChatItem[]> = {
-  claude: claudeItems as unknown as ChatItem[],
-  codex: codexItems as unknown as ChatItem[],
-  kimi: kimiItems as unknown as ChatItem[],
-  gemini: geminiItems as unknown as ChatItem[],
-  opencode: opencodeItems as unknown as ChatItem[],
+const items = (json: unknown) => json as ChatItem[];
+type Sample = {
+  /** 主样本：一场会话的原顺序片段。 */
+  main: ChatItem[];
+  /** 运行中、等待审批用的那条命令（摘要里含这段文字）；场景取「它所在的那一轮开头 → 它」，不带回执。 */
+  live: string;
+  /** 以回合出错收尾的那场会话；codex 没有，见 CODEX_TURN_ERROR。 */
+  error: ChatItem[] | null;
+  /** 子任务块所在的会话片段。gemini、opencode 本机没有派过子任务。 */
+  agents: ChatItem[] | null;
+};
+const SAMPLES: Record<ToolProvider, Sample> = {
+  claude: { main: items(claudeMain), live: "gh issue view", error: items(claudeError), agents: items(claudeAgent) },
+  codex: { main: items(codexMain), live: "Get-Content app/src-tauri/CLAUDE.md", error: null, agents: items(codexMain) },
+  kimi: { main: items(kimiMain), live: "cargo test", error: items(kimiError), agents: items(kimiMain) },
+  gemini: { main: items(geminiMain), live: "npm test", error: items(geminiError), agents: null },
+  opencode: { main: items(opencodeMain), live: "node --version", error: items(opencodeError), agents: null },
 };
 
 /// 样本所在的工作目录（脱敏后的路径）：落在它下面的路径显示成相对路径，与真实会话一致。
@@ -42,17 +63,29 @@ const CWD: Record<ToolProvider, string> = {
   opencode: "C:\\Users\\user\\Desktop\\workspace\\meowo",
 };
 
-/// 各家样本的截取位置（条目下标，含两端）。live：到一条「运行」调用为止，它的回执不带。
-/// error：以 turn_error 结尾的那一段。codex 的 error 为 null：样本里没有，见 CODEX_TURN_ERROR。
-const CUTS: Record<ToolProvider, { live: [number, number]; error: [number, number] | null }> = {
-  claude: { live: [0, 11], error: [0, 16] },
-  codex: { live: [0, 19], error: null },
-  kimi: { live: [0, 13], error: [0, 17] },
-  gemini: { live: [0, 12], error: [21, 22] },
-  opencode: { live: [5, 19], error: [21, 22] },
-};
+/// 运行中的那一段：从那条命令所在的那一轮开头（往回数最近的一条用户消息；没有就从头）到那条命令，
+/// 它的回执不带。
+function liveSlice(sample: Sample): ChatItem[] {
+  const at = sample.main.findIndex((item) => item.type === "tool_use" && item.summary.includes(sample.live));
+  let from = at;
+  while (from > 0 && sample.main[from].type !== "user_text") from -= 1;
+  return sample.main.slice(from, at + 1);
+}
 
-/// Codex 的回合出错：本机 68 份 rollout 里没有一条带错收尾的回合（回放样本的缺口），这一条按
+/// 回合中途送进去的那句话，各按自己记录的形态：claude 的 queued_command、kimi 的 origin.inTurn 由后端标成
+/// interjected；codex 的写法与回合开头那条相同，turn_id 也相同（本机 15 次都是）。
+/// claude、kimi 的样本里没有这样一句，文字是这里写的；codex 用样本里真实的那一句（会话 01a1cea4）。
+function midTurnMessage(provider: ToolProvider, before: ChatItem[]): ChatItem {
+  const base = { type: "user_text", id: `visual-mid-${provider}`, timestamp: null, text: "顺便把日志也看一下" };
+  if (provider === "codex") {
+    const opener = [...before].reverse().find((item) => item.type === "user_text" && !!item.turn_id);
+    const real = SAMPLES.codex.main.find((item) => item.type === "user_text" && item.text.includes("其他的provider的兼容都很差"));
+    return { ...base, text: real?.type === "user_text" ? real.text : base.text, turn_id: opener?.type === "user_text" ? opener.turn_id : undefined } as ChatItem;
+  }
+  return { ...base, interjected: true } as ChatItem;
+}
+
+/// Codex 的回合出错：本机 98 份 rollout 里没有一条带错收尾的回合（回放样本的缺口），这一条按
 /// plugins/codex/telemetry.rs 单测 task_complete_error_becomes_turn_error 的记录形态与它的解析结果写：
 /// codex_error_info=unauthorized → 标签「需要重新登录」，正文是 error.message。
 const CODEX_TURN_ERROR = { type: "turn_error", id: "codex-error-unit", timestamp: null, label: "需要重新登录", text: "Your access token could not be refreshed." } as unknown as ChatItem;
@@ -68,13 +101,13 @@ const TODO_CALL: Record<ToolProvider, { name: string; summary: string }> = {
   opencode: { name: "todowrite", summary: '{"todos":[{"content":"run ping","status":"completed","priority":"high"},{"content":"say DONE1","status":"pending","priority":"medium"}]}' },
 };
 
-function restamp(items: ChatItem[]): ChatItem[] {
+function restamp(source: ChatItem[]): ChatItem[] {
   const startOf = new Map<string, number>();
-  for (const item of items) if (item.type === "tool_use") startOf.set(item.id, Date.parse(item.timestamp ?? ""));
+  for (const item of source) if (item.type === "tool_use") startOf.set(item.id, Date.parse(item.timestamp ?? ""));
   const offsets: number[] = [];
   let cursor = 0;
   const newStart = new Map<string, number>();
-  for (const item of items) {
+  for (const item of source) {
     if (item.type === "tool_result" && item.tool_use_id && newStart.has(item.tool_use_id)) {
       const began = startOf.get(item.tool_use_id) ?? NaN;
       const ended = Date.parse(item.timestamp ?? "");
@@ -87,12 +120,12 @@ function restamp(items: ChatItem[]): ChatItem[] {
     offsets.push(cursor);
   }
   const base = FIXED_NOW - 30_000 - cursor;
-  return items.map((item, index) => ({ ...item, timestamp: new Date(base + offsets[index]).toISOString() }) as ChatItem);
+  return source.map((item, index) => ({ ...item, timestamp: new Date(base + offsets[index]).toISOString() }) as ChatItem);
 }
 
 export function toolSceneItems(provider: ToolProvider, state: ToolState): ChatItem[] {
-  const all = SAMPLES[provider];
-  const cut = CUTS[provider];
+  const sample = SAMPLES[provider];
+  const all = sample.main;
   if (state === "all") return restamp(all);
   if (state === "todo") {
     const at = all.findIndex((item) => item.type === "tool_use");
@@ -101,16 +134,38 @@ export function toolSceneItems(provider: ToolProvider, state: ToolState): ChatIt
     return restamp([...all.slice(0, at), call, receipt, ...all.slice(at)]);
   }
   if (state === "error") {
-    if (cut.error) return restamp(all.slice(cut.error[0], cut.error[1] + 1));
-    // codex：真实样本的前半段（到第一段正文为止）之后接那条按单测形态写的出错记录。
-    const upto = all.findIndex((item) => item.type === "assistant_text");
-    return restamp([...all.slice(0, upto + 1), CODEX_TURN_ERROR]);
+    if (sample.error) return restamp(sample.error);
+    // codex：真实样本里「继续」那一轮的开头（到第一段正文为止）之后接那条按单测形态写的出错记录。
+    const from = all.findIndex((item) => item.type === "user_text" && item.text === "继续");
+    const upto = all.findIndex((item, index) => index > from && item.type === "assistant_text");
+    return restamp([...all.slice(from, upto + 1), CODEX_TURN_ERROR]);
   }
-  return restamp(all.slice(cut.live[0], cut.live[1] + 1));
+  if (state === "midturn") {
+    // opencode：真实的一场（KbLGZo）——ping 还在跑时用户又发了一句，记录里它排在跑完的 ping 之后。
+    // gemini 的调用连同结果一起落盘，不存在「命令在跑、后面又来了一条用户消息」的时间线，退回运行中那一段。
+    if (provider === "opencode") {
+      const real = items(opencodeMidTurn);
+      return restamp(real.slice(0, real.findIndex((item) => item.type === "user_text" && item.text.includes("QUEUED-OK")) + 1));
+    }
+    const live = liveSlice(sample);
+    return restamp(provider === "gemini" ? live : [...live, midTurnMessage(provider, live)]);
+  }
+  if (state === "agents" || state === "agents-running") {
+    const source = sample.agents ?? all;
+    if (provider !== "codex") return restamp(source);
+    // codex：会话 01a1cea4 里「- 完整闭环」那一轮——派出两个子代理，各自跑完，之后其中一个被叫停。
+    const from = source.findIndex((item) => item.type === "user_text" && item.text === "- 完整闭环");
+    const until = state === "agents-running"
+      // 两个都刚开始（started 已到，completed 还没到）。
+      ? source.findIndex((item) => item.type === "tool_result" && item.subagent?.task_id === "/root/lead_design_two" && item.subagent.running === 1) + 1
+      : source.findIndex((item) => item.type === "user_text" && item.text === "继续");
+    return restamp(source.slice(from, until));
+  }
+  return restamp(liveSlice(sample));
 }
 
 export function parseToolScene(name: string): { provider: ToolProvider; state: ToolState } | null {
-  const hit = /^(claude|codex|kimi|gemini|opencode)-(all|running|waiting|stale|error|todo)$/.exec(name);
+  const hit = /^(claude|codex|kimi|gemini|opencode)-(all|running|waiting|stale|error|todo|midturn|agents-running|agents)$/.exec(name);
   return hit ? { provider: hit[1] as ToolProvider, state: hit[2] as ToolState } : null;
 }
 
@@ -119,15 +174,15 @@ export function toolSceneMock(name: string, lang: Lang, chat: (cmd: string) => u
   const scene = parseToolScene(name);
   if (!scene) return () => undefined;
   const { provider, state } = scene;
-  const items = toolSceneItems(provider, state);
+  const timeline = toolSceneItems(provider, state);
   // 等待审批：审批请求沿用卡片场景那一份（五家各自的真实样本），这里只换时间线。
   const card = state === "waiting" ? cardSceneMock(`${provider}-approval`, lang, chat) : null;
   return (cmd, args) => {
     if (cmd === "get_chat_history") {
       const base = (card?.(cmd, args) ?? chat(cmd)) as Record<string, unknown>;
-      const live = state === "running" || state === "waiting";
+      const live = state === "running" || state === "waiting" || state === "midturn" || state === "agents-running";
       return {
-        ...base, provider, cwd: CWD[provider], ptyManaged: true, items, todos: [], model: null,
+        ...base, provider, cwd: CWD[provider], ptyManaged: true, items: timeline, todos: [], model: null,
         status: live ? "running" : "waiting",
         pendingReview: state === "waiting" ? base.pendingReview ?? null : null,
         // 屏幕通道的审批（kimi、gemini、opencode）不经 broker，会话记录不报 pendingReview；真实后端此时由 PTY 的
@@ -140,7 +195,7 @@ export function toolSceneMock(name: string, lang: Lang, chat: (cmd: string) => u
     if (cmd === "pending_interaction" && hit) {
       // broker 审批（claude、codex）的请求带命令本身：换成时间线上等着批准的那条命令，卡片与工具行说的才是
       // 同一件事。屏幕通道（kimi、gemini、opencode）的卡片内容来自终端画面样本，画面是整屏取证的，不改。
-      const pending = [...items].reverse().find((item) => item.type === "tool_use");
+      const pending = [...timeline].reverse().find((item) => item.type === "tool_use");
       const command = pending?.type === "tool_use" && pending.detail?.kind === "command" ? pending.detail.command : null;
       const approval = (hit as { approval?: { input?: string } | null }).approval;
       if (command && approval?.input?.startsWith("{")) {

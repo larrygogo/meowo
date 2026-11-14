@@ -1,0 +1,15 @@
+[
+  {
+    "type": "user_text",
+    "id": "msg_1da24414f001y3v0pOwujws6Ub",
+    "timestamp": "2026-11-14T12:59:31.535Z",
+    "text": "Count from 1 to 300, one number per line, no other text."
+  },
+  {
+    "type": "turn_error",
+    "id": "msg_1da24424e001dtrC6g8O9K6I1H:error",
+    "timestamp": "2026-11-14T12:59:32.532Z",
+    "label": "回合出错",
+    "text": "invalid API key"
+  }
+]

@@ -100,6 +100,21 @@ export const QA_SHOTS = [
   { name: "qa-m-tools-gemini-diff", page: "mobile", scene: "mobile-tools-gemini-all", size: PHONE, sel: ".chat-tool[open] .chat-tool-udiff", steps: [OPEN_FOLDS, ["click", '.chat-tool[data-state="done"]:has(.chat-tool-verb[data-kind="edit"]) > summary']] },
   { name: "qa-tools-claude-fail", scene: "flow-tools-claude-all", size: W620, sel: ".chat-tool.is-error[open]", steps: [OPEN_FOLDS, ["click", ".chat-tool.is-error > summary"]] },
   { name: "qa-tools-claude-todo", scene: "flow-tools-claude-todo", size: W620, sel: '.chat-tool-icon[data-kind="todo"]', steps: [OPEN_FOLDS, ["eval", "document.querySelector('.chat-scroll').scrollTop = 0"]] },
+  // 运行中又发了一条：命令还在跑，后面跟着回合中途送进去的那句话，那条命令仍是运行中（做空 ③）。
+  // opencode 是真实的一场：那句话排在跑完的 ping 之后。gemini 没有这种时间线（调用连同结果一起落盘）。
+  ...["claude", "codex", "kimi"].flatMap((agent) => [
+    { name: `qa-tools-${agent}-midturn`, scene: `flow-tools-${agent}-midturn`, size: W620, sel: '.chat-tool[data-state="running"]' },
+    { name: `qa-m-tools-${agent}-midturn`, page: "mobile", scene: `mobile-tools-${agent}-midturn`, size: PHONE, sel: '.chat-tool[data-state="running"]' },
+  ]),
+  { name: "qa-tools-opencode-midturn", scene: "flow-tools-opencode-midturn", size: W620, sel: '.chat-tool[data-state="done"]' },
+  { name: "qa-m-tools-opencode-midturn", page: "mobile", scene: "mobile-tools-opencode-midturn", size: PHONE, sel: '.chat-tool[data-state="done"]' },
+  // 子任务块：claude、kimi、codex 同一个组件。codex 的状态取自记录里的开始与结局（在跑、跑完、被叫停）。
+  ...["claude", "codex", "kimi"].flatMap((agent) => [
+    { name: `qa-tools-${agent}-agents`, scene: `flow-tools-${agent}-agents`, size: W620, sel: "details.chat-subagent", steps: [OPEN_FOLDS] },
+    { name: `qa-m-tools-${agent}-agents`, page: "mobile", scene: `mobile-tools-${agent}-agents`, size: PHONE, sel: "details.chat-subagent", steps: [OPEN_FOLDS] },
+  ]),
+  { name: "qa-tools-codex-agents-running", scene: "flow-tools-codex-agents-running", size: W620, sel: ".chat-subagent-status.is-running" },
+  { name: "qa-m-tools-codex-agents-running", page: "mobile", scene: "mobile-tools-codex-agents-running", size: PHONE, sel: ".chat-subagent-status.is-running" },
   { name: "qa-image", scene: "flow-image", sel: ".chat-image-thumb-btn" },
   { name: "qa-lightbox", scene: "flow-image", sel: ".chat-lightbox", steps: [["click", ".chat-image-thumb-btn"]] },
   { name: "qa-drop", scene: "flow-drop", sel: ".chat-drop-overlay" },

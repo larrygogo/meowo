@@ -1,0 +1,4 @@
+{"key":"","kind":"user","msg":"msg_142cd3617001ghiADMo7rqW2Yj","parts":[{"text":"run the shell command: ping -n 30 127.0.0.1","type":"text"}],"time":1792122107415}
+{"key":"prt_142cd44b3001GGaaRHUCEOzV1K","kind":"part","msg":"msg_142cd36290011e33OiUHQ20U5k","part":{"callID":"toolu_vrtx_01EovD7PdqAvn6jtAi7cH1Mc","state":{"error":"Tool execution aborted","input":{"command":"ping -n 30 127.0.0.1","timeout":60000},"output":null,"status":"error","time":{"end":1792122113432,"start":1792122111379},"title":null},"tool":"bash","type":"tool"},"summary":false,"time":1792122111379}
+{"error":{"data":{"message":"Aborted"},"name":"MessageAbortedError"},"key":"~error","kind":"error","msg":"msg_142cd36290011e33OiUHQ20U5k","time":1792122113434}
+{"key":"prt_142cd6ae2001kpaBiLy00SsRdK","kind":"part","msg":"msg_142cd6549001FeuxYi45VZ4ZSM","part":{"text":"PELICAN","time":{"end":1792122120933,"start":1792122120930},"type":"text"},"summary":false,"time":1792122120930}

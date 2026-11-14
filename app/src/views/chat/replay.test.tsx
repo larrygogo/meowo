@@ -1,30 +1,26 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, fireEvent, render } from "@testing-library/react";
-import type { ChatItem } from "../../api";
 import { reduceChatEvents } from "../../chat/reducer";
 import { ChatCwdContext } from "./ToolActivity";
 import { Transcript } from "./Transcript";
 import { resetFoldMemory } from "./foldMemory";
+import { REPLAY_AGENTS, replaySamples, type ReplayAgent } from "../../test/replaySamples";
 
 /// 五家回放测试（前端半程）。
 ///
-/// 输入是后端回放测试产出的快照（`src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/<家>.items.json`，
+/// 输入是后端回放测试产出的快照（`src-tauri/crates/meowo-agent/tests/fixtures/chat-replay/<家>.<会话>.items.json`，
 /// 由各家**本机真实会话样本**经完整解析得到，见 `meowo-agent/src/replay_tests.rs`）。这里接着走
 /// 归并（reduceChatEvents）与渲染（Transcript），把用户看到的时间线摘成一份文字大纲做快照，
 /// 并对关键结果逐条断言——文案、是否标红、落到哪种块。
 ///
+/// 每份样本是同一场会话的原顺序片段，各自渲染成一条时间线（一家有若干份）。此前每家一份、由几场
+/// 会话拼成，当一条时间线渲染出来，过程块的耗时是「17181m29s」（做空 ⑨）。
+///
 /// 接一个新 CLI 版本、改一处解析或渲染，五家的结果都会在这里被比对。
 /// 样本缺哪类块（本机没有对应的真实数据）写在后端那份测试的期望表里。
 
-const FIXTURES = join(__dirname, "../../../src-tauri/crates/meowo-agent/tests/fixtures/chat-replay");
 const CWD = "C:\\Users\\user\\Desktop\\workspace\\meowo";
 
-function load(agent: string): ChatItem[] {
-  const raw = JSON.parse(readFileSync(join(FIXTURES, `${agent}.items.json`), "utf8")) as ChatItem[];
-  return reduceChatEvents([], raw, true);
-}
 
 const flat = (text: string | null | undefined, max = 72) => {
   const one = (text ?? "").replace(/\s+/g, " ").trim();
@@ -61,19 +57,28 @@ function outline(root: HTMLElement): string[] {
   });
 }
 
-function replay(agent: string) {
+/// 一家的样本逐份渲染，每份一条独立的时间线（各有各的会话 id）。`only` 只渲染其中一份。
+/// 大纲里每份以一行「样本｜名字」开头。
+function replay(agent: ReplayAgent, only?: string) {
+  const samples = replaySamples(agent).filter((sample) => !only || sample.name === only);
+  expect(samples.length, `${agent} ${only ?? ""} 没有样本`).toBeGreaterThan(0);
   const view = render(
     <ChatCwdContext.Provider value={CWD}>
-      <Transcript sessionId={900 + agent.length} items={load(agent)} />
+      {samples.map((sample, index) => (
+        <section key={sample.name} data-sample={sample.name}>
+          <Transcript sessionId={900 + agent.length * 20 + index} items={reduceChatEvents([], sample.items, true)} />
+        </section>
+      ))}
     </ChatCwdContext.Provider>,
   );
   // 历史回合的过程块默认收起（只露一行摘要）：像用户那样逐个点开，才看得到里面的工具行。
-  for (let guard = 0; guard < 20; guard += 1) {
+  for (let guard = 0; guard < 60; guard += 1) {
     const closed = view.container.querySelector<HTMLElement>(".turn-fold:not(.is-open) > .turn-fold-head");
     if (!closed) break;
     fireEvent.click(closed);
   }
-  const lines = outline(view.container);
+  const lines = [...view.container.querySelectorAll<HTMLElement>("section[data-sample]")]
+    .flatMap((section) => [`样本｜${section.dataset.sample}`, ...outline(section)]);
   const tools = [...view.container.querySelectorAll<HTMLElement>("details.chat-tool")];
   /** 摘要里含某段文字的工具行。 */
   const toolsWith = (needle: string) => tools.filter((tool) => tool.querySelector(".chat-tool-summary")?.textContent?.includes(needle));
@@ -86,7 +91,7 @@ afterEach(() => {
 });
 
 describe("五家回放：真实会话样本 → 解析 → 归并 → 渲染", () => {
-  it.each(["claude", "kimi", "codex", "gemini", "opencode"])("%s 的时间线大纲与快照一致", (agent) => {
+  it.each(REPLAY_AGENTS)("%s 的时间线大纲与快照一致", (agent) => {
     expect(replay(agent).lines.join("\n")).toMatchSnapshot();
   });
 
@@ -103,11 +108,15 @@ describe("五家回放：真实会话样本 → 解析 → 归并 → 渲染", (
     expect(container.querySelector("details.chat-subagent .chat-subagent-desc")?.textContent).toBe("查 /model 不显示模型列表的原因");
     expect(container.querySelector(".chat-turn-error-label")?.textContent).toBe("需要重新登录");
     expect(lines).toContain("分隔｜已中断");
-    expect(lines.some((line) => line.startsWith("改动卡｜2 个文件已修改"))).toBe(true);
+    // 写文件与改文件在两场会话里，各有一张改动卡。
+    expect(lines.filter((line) => line.startsWith("改动卡｜1 个文件已修改"))).toHaveLength(2);
+    // 会话在调用途中结束、CC 补写了回执的那次提问：已中断，不是失败。
+    expect(lines.some((line) => line.startsWith("工具[interrupted]｜提问｜") && line.endsWith("｜已中断"))).toBe(true);
   });
 
   it("codex：脚本解开成真实命令，非零退出标红，一次文件修改只显示一遍，补丁有 diff 与增删行数", () => {
-    const { lines, tools, container } = replay("codex");
+    // 主线程那场会话（01a1cea4，两段 rollout 是同一条线程）。
+    const { lines, tools, container } = replay("codex", "codex.01a1cea4");
     // 工具行是命令本身，不是包着它的 JS。
     expect(tools.length).toBeGreaterThan(8);
     for (const tool of tools) {
@@ -130,17 +139,17 @@ describe("五家回放：真实会话样本 → 解析 → 归并 → 渲染", (
     expect(patch.querySelectorAll(".chat-tool-udiff .chat-tool-line.is-add").length).toBeGreaterThan(0);
     // 补丁不带行号：行号列收掉，不留一列空白。带行号的（gemini 用例里断言了行号 2348）不受影响。
     expect(patch.querySelector(".chat-tool-udiff")?.classList.contains("is-unnumbered")).toBe(true);
-    // 只新建文件的补丁是「写入」。
-    expect(lines.some((line) => line.startsWith("工具[done]｜写入｜"))).toBe(true);
     // 一段脚本里先打补丁再跑命令：两行，各有各的回执。
     expect(lines.some((line) => line.startsWith("工具[done]｜编辑｜app/src-tauri/tests/probe_lead_codex.rs"))).toBe(true);
     expect(lines.some((line) => line.startsWith("工具[done]｜运行｜rustfmt --edition 2021 --config max_width=120"))).toBe(true);
-    // 协作类工具不是「子任务」：只有 spawn_agent 是。
-    const agents = lines.filter((line) => line.includes("｜子任务｜"));
-    expect(agents).toHaveLength(1);
-    // 摘要是任务名，不是加密的 message。
-    expect(agents[0].startsWith("工具[done]｜子任务｜gemini_e2e｜")).toBe(true);
+    // 派出子代理是子任务块（与 claude、kimi 同一个组件），标题是任务名，不是加密的 message；
+    // 状态取自记录里的开始与结局。协作类的其它工具（等待、叫停）仍是普通工具行。
+    expect(lines.filter((line) => line.startsWith("子任务｜"))).toEqual([
+      "子任务｜lead_design_one｜已中断", "子任务｜lead_design_two｜已完成", "子任务｜gemini_e2e｜已完成",
+    ]);
+    expect(lines.some((line) => line.startsWith("工具[") && line.includes("｜子任务｜"))).toBe(false);
     expect(lines.some((line) => line.includes("｜等待子任务｜"))).toBe(true);
+    expect(lines.some((line) => line.startsWith("工具[done]｜中断子任务｜lead_design_one｜"))).toBe(true);
     // 被用户打断的命令是「已中断」，不是失败；打断处有分隔。
     const aborted = tools.filter((tool) => tool.getAttribute("data-state") === "interrupted");
     expect(aborted).toHaveLength(1);
@@ -148,6 +157,9 @@ describe("五家回放：真实会话样本 → 解析 → 归并 → 渲染", (
     expect(aborted[0].querySelector(".chat-tool-out")?.textContent).toBe("已中断");
     expect(lines).toContain("分隔｜已中断");
     expect(container.querySelector(".chat-turn-changes-head")?.textContent).toMatch(/^\d+ 个文件已修改$/);
+    cleanup();
+    // 只新建文件的补丁是「写入」（子线程 01a1cefb 那份）。
+    expect(replay("codex", "codex.01a1cefb").lines.some((line) => line.startsWith("工具[done]｜写入｜"))).toBe(true);
   });
 
   it("gemini：读写改归类正确，摘要是路径，条数与行数是真实数字，有 diff 和改动卡，首行系统记录不上屏", () => {
@@ -194,15 +206,16 @@ describe("五家回放：真实会话样本 → 解析 → 归并 → 渲染", (
     expect(aborted[0].querySelector(".chat-tool-summary")?.textContent).toBe("ping -n 30 127.0.0.1");
     expect(aborted[0].querySelector(".chat-tool-out")?.textContent).toBe("已中断");
     expect(aborted[0].classList.contains("is-error")).toBe(false);
+    // 两次被用户拒绝：一次读取（BJUbsS）、一次命令（bzQ2Bs）。
     const failed = tools.filter((tool) => tool.getAttribute("data-state") === "error");
-    expect(failed.map((tool) => tool.querySelector(".chat-tool-verb")?.textContent)).toEqual(["读取"]);
+    expect(failed.map((tool) => tool.querySelector(".chat-tool-verb")?.textContent)).toEqual(["读取", "运行"]);
     expect(container.querySelector(".chat-turn-error-label")?.textContent).toBe("回合出错");
     expect(lines).toContain("分隔｜已中断");
   });
 
   it("五家同类工具落到同一个展示组件：动作词与类别标记一致", () => {
     const kinds = new Map<string, Set<string>>();
-    for (const agent of ["claude", "kimi", "codex", "gemini", "opencode"]) {
+    for (const agent of REPLAY_AGENTS) {
       const { container } = replay(agent);
       for (const verb of container.querySelectorAll<HTMLElement>(".chat-tool-verb")) {
         const kind = verb.getAttribute("data-kind") ?? "";
