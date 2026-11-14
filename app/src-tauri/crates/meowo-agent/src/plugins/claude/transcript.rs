@@ -8,8 +8,9 @@
 #[cfg(test)]
 use crate::transcript::ChatItem;
 use crate::transcript::{
-    preview_text, DiffHunk, CompactionDetail, SubagentOutcome, SubagentRef, SubagentSpec, SubagentStream, ToolDetail,
-    TranscriptEvent, TranscriptInfo, TranscriptParser, TranscriptSpec, TurnError,
+    preview_text, CompactionDetail, DiffHunk, SubagentOutcome, SubagentRef, SubagentSpec,
+    SubagentStream, ToolDetail, ToolFacts, ToolKind, TranscriptEvent, TranscriptInfo,
+    TranscriptParser, TranscriptSpec, TurnError,
 };
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
@@ -82,6 +83,7 @@ fn task_notification_result(
             task_id,
         }),
         patch: None,
+        facts: ToolFacts::default(),
     })
 }
 
@@ -130,6 +132,7 @@ fn peer_handback_result(
             task_id: Some(task_id),
         }),
         patch: None,
+        facts: ToolFacts::default(),
     })
 }
 
@@ -262,6 +265,65 @@ fn tool_detail(name: &str, input: Option<&serde_json::Value>) -> Option<ToolDeta
     }
 }
 
+/// CC 内置工具 → 语义类别。表里没有的（MCP、harness 内部工具如 TaskCreate / ToolSearch /
+/// KillShell / BashOutput）一律 Other，界面显示工具自己的名字——此前前端按名字子串猜，
+/// ToolSearch 因含 search 被当成「搜索」，KillShell 因含 shell 被当成「运行」。
+fn tool_kind(name: &str) -> ToolKind {
+    match name {
+        "Bash" | "PowerShell" => ToolKind::Run,
+        "Read" | "NotebookRead" => ToolKind::Read,
+        "Write" => ToolKind::Write,
+        "Edit" | "MultiEdit" | "NotebookEdit" => ToolKind::Edit,
+        "Grep" | "Glob" => ToolKind::Search,
+        "WebFetch" | "WebSearch" => ToolKind::Web,
+        "Agent" | "Task" => ToolKind::Agent,
+        "TodoWrite" => ToolKind::Todo,
+        _ => ToolKind::Other,
+    }
+}
+
+/// 回执行上的 `toolUseResult` 里的显式事实：读到的真实行数、搜索命中数、命令是否被打断。
+/// 回执正文在下面被截到 4000 字符，前端按正文行数去数，读一个大文件会被严重少报
+/// （走查 A5）；CC 自己记了真实数字，直接用。
+/// - Read：`file.numLines`（本次读到的行数）。
+/// - Grep：`mode == "content"` 时 `numLines`，否则 `numFiles`；Glob：`numFiles`。
+/// - Bash：`interrupted`。退出码 CC 不单独记，失败回执正文以 `Exit code N` 起头，从那里取。
+fn tool_facts(v: &serde_json::Value, text: &str, is_error: bool) -> ToolFacts {
+    let result = v.get("toolUseResult");
+    let num = |pointer: &str| {
+        result
+            .and_then(|r| r.pointer(pointer))
+            .and_then(|x| x.as_u64())
+            .map(|n| n.min(u32::MAX as u64) as u32)
+    };
+    let count = num("/file/numLines").or_else(|| {
+        let result = result?;
+        if result.get("mode").and_then(|x| x.as_str()) == Some("content") {
+            num("/numLines")
+        } else {
+            num("/numFiles")
+        }
+    });
+    let exit_code = is_error
+        .then(|| {
+            text.trim_start()
+                .strip_prefix("Exit code ")?
+                .split(|c: char| !c.is_ascii_digit() && c != '-')
+                .next()?
+                .parse::<i32>()
+                .ok()
+        })
+        .flatten();
+    ToolFacts {
+        exit_code,
+        count,
+        interrupted: result
+            .and_then(|r| r.get("interrupted"))
+            .and_then(|x| x.as_bool())
+            .unwrap_or(false),
+    }
+}
+
 /// Skill 调用的展示形态:`/<skill> <args>`(args 为空则只有 `/<skill>`)。
 ///
 /// 这个串同时是 forked skill 的**外键**:侧车 meta 的 `description` 恰好是同一形态
@@ -374,7 +436,7 @@ fn is_image_companion(v: &serde_json::Value, content: Option<&serde_json::Value>
 /// 用户按 Esc 中断回合后 CC 写进 transcript 的标记（2.1.312 实拍两种：回合中途
 /// `[Request interrupted by user]`，打断工具调用时 `… for tool use]`，后者与紧跟的新消息
 /// 同在一行的不同 text 块里）。它不是用户说的话：原样显示就是一个写着英文方括号的用户
-/// 气泡。转成「已手动终止」分隔标记（对照 Kimi 的 turnInterrupted）。整块恰为标记才认，
+/// 气泡。转成「已中断」分隔标记（对照 Kimi 的 turnInterrupted）。整块恰为标记才认，
 /// 用户在消息里引用这句不会被吞（见 transcript 引用污染的教训）。
 fn interrupt_marker(text: &str) -> bool {
     matches!(
@@ -665,6 +727,12 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                             // 判(哨兵在文首,截断本伤不到,防御截断策略变化)。
                             let answered_by_meowo =
                                 text.contains(meowo_protocol::broker::QUESTION_ANSWER_MARKER);
+                            let is_error = block
+                                .get("is_error")
+                                .and_then(|x| x.as_bool())
+                                .unwrap_or(false)
+                                && !answered_by_meowo;
+                            let facts = tool_facts(&v, &text, is_error);
                             Some(TranscriptEvent::ToolResult {
                                 id: format!("{base_id}:{i}"),
                                 timestamp: timestamp.clone(),
@@ -673,13 +741,10 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                                     .and_then(|x| x.as_str())
                                     .map(str::to_string),
                                 text: compact_json(Some(&serde_json::Value::String(text)), 4000),
-                                is_error: block
-                                    .get("is_error")
-                                    .and_then(|x| x.as_bool())
-                                    .unwrap_or(false)
-                                    && !answered_by_meowo,
+                                is_error,
                                 subagent,
                                 patch: structured_patch(&v),
+                                facts,
                             })
                         }
                         _ => None,
@@ -774,6 +839,7 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                                 .to_string(),
                             timestamp: timestamp.clone(),
                             name: name.to_string(),
+                            kind: tool_kind(name),
                             summary: tool_summary(name, block.get("input")),
                             subagent: CLAUDE_SUBAGENTS.detect_call(name, block.get("input")),
                             detail: tool_detail(name, block.get("input")),
@@ -2485,9 +2551,7 @@ impl TranscriptSpec for ClaudeTranscript {
 
 /// 统一 diff 的行数上限：超过就不搬（前端退回旧段/新段展示）。一次 Write 覆盖大文件时
 /// structuredPatch 可达上万行，原样进 ChatItem 会把每轮历史轮询的载荷撑大几个数量级。
-const PATCH_MAX_LINES: usize = 400;
-/// 单行截断：压缩过的 JS/CSS 一行能有几十 KB。
-const PATCH_MAX_LINE_CHARS: usize = 400;
+use crate::transcript::{PATCH_MAX_LINES, PATCH_MAX_LINE_CHARS};
 
 /// 读编辑类回执的 `toolUseResult.structuredPatch`（2.1.303 实测：Edit/Write/MultiEdit 都有，
 /// 每段 `oldStart/newStart/lines`，行首 ` `/`-`/`+`）。空数组、缺字段、超限都返回 None。

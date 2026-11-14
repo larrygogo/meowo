@@ -51,9 +51,16 @@ screenState: string | null,
 screenAssumed: boolean, 
 /**
  * 最近一轮以错误收场（transcript 分析口径，与侧栏/贴纸的 `LiveItem.errored` 同源）。
- * 不做 transcript 分析的 agent（codex/kimi）恒为 false。
+ * 五家都报：claude / gemini / kimi 的分析解析器本来就有，codex 与 opencode 的错误判据
+ * 与各自时间线的错误卡共用一个函数。
  */
 errored: boolean, 
+/**
+ * 还在跑的后台子任务数（与侧栏/贴纸的 `LiveItem.busy_subagents` 同源）。主回合停了但
+ * 后台子任务还在跑时，活动态是「运行中」：此前对话窗拿不到这个数，侧栏和灵动岛是
+ * 「运行中」，对话窗里却没有运行条，撤回、分叉、发送键都按空闲处理（走查 A9）。
+ */
+busySubagents: number, 
 /**
  * 本 GUI 进程正托管着该会话的 PTY。决定「结束会话」入口的可见性：只有自己托管的
  * 进程才能从 GUI 结束；外部终端里跑的会话（connected 但非托管）不该亮这个入口。

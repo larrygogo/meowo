@@ -37,6 +37,8 @@ pub(crate) fn lead_model_steering(data_dir: &std::path::Path) -> bool {
 mod screen;
 pub mod telemetry;
 mod transcript;
+#[cfg(test)]
+pub(crate) use transcript::materialize_for_test;
 
 use crate::{
     auth::{AuthScheme, CredentialSource},

@@ -673,7 +673,7 @@ export const zh = {
       write: (count: number) => `已写入 ${count} 个文件`,
       edit: (count: number) => `已编辑 ${count} 处`,
       search: (count: number) => `搜索了 ${count} 个模式`,
-      web: (count: number) => `已执行 ${count} 次浏览器操作`,
+      web: (count: number) => `访问了 ${count} 次网页`,
       todo: (count: number) => `已更新 ${count} 次清单`,
       agent: (count: number) => `已派出 ${count} 个子任务`,
       other: (count: number) => `执行了 ${count} 次工具调用`,
@@ -696,13 +696,15 @@ export const zh = {
       edit: (subject: string) => `正在编辑 ${subject}`,
       write: (subject: string) => `正在写入 ${subject}`,
       search: (subject: string) => `正在搜索 ${subject}`,
-      web: (subject: string) => `正在抓取 ${subject}`,
+      web: (subject: string) => `正在访问 ${subject}`,
       other: "正在执行…",
     },
     turnToolFailed: (count: number) => `（${count} 失败）`,
+    // 过程块摘要里没跑完的调用：单列一句，不计入「已运行」。
+    turnToolInterrupted: (count: number) => `${count} 次已中断`,
     compact: "上下文已压缩",
-    // 用户按 Esc 中断回合后 CLI 写下的标记，时间线里以分隔条出现（对照 Kimi 的 turnInterrupted）。
-    turnInterrupted: vocab.session.interrupted,
+    // 没跑完就停了：用户中断处的分隔条、没等到结果的工具调用与子任务，都是这一个词。
+    interrupted: vocab.session.interrupted,
     // 压缩分隔条的细节（对照 Kimi 的 compactedAuto / viewSummary）：CLI 自己压的要说清是自动，
     // 压缩前规模与摘要回答「它还记得什么」。
     compactAuto: "已自动压缩上下文",
@@ -999,7 +1001,7 @@ export const zh = {
     tasksRunningCount: (count: number) => `${count} ${vocab.session.running}`,
     taskFilters: { recent: "最近", running: vocab.session.running, done: "已完成", all: "全部" },
     taskEmpty: { recent: "暂无最近任务", running: "暂无运行中的任务", done: "暂无已完成的任务", all: "暂无任务" },
-    taskStates: { run: vocab.session.running, done: "已完成", fail: "失败" },
+    taskStates: { run: vocab.session.running, done: "已完成", fail: "失败", stop: vocab.session.interrupted },
     // 模型市场（Kimi ModelPicker）：搜索、收藏、空结果。
     modelSearchPlaceholder: "搜索模型或提供商…",
     modelStar: "收藏模型",
@@ -1431,6 +1433,10 @@ export const zh = {
     toolReadLines: (count: number) => `读取了 ${count} 行`,
     toolReadFailed: "读取失败",
     toolFoundLines: (count: number) => `找到 ${count} 条结果`,
+    // 命令非零退出：退出码放在最前，后面跟输出的第一行。
+    toolExitCode: (code: number, first: string) => (first ? `退出码 ${code}：${first}` : `退出码 ${code}`),
+    // 一次调用带了几个地址或查询时，摘要只列第一个。
+    toolMoreTargets: (count: number) => `另有 ${count} 个`,
     model: "模型",
     switchModel: "切换模型",
     mode: "模式",
@@ -1622,6 +1628,29 @@ export const zh = {
       PushNotification: "推送通知",
       ExitPlanMode: "提交计划",
       EnterPlanMode: "进入计划",
+      // 其余四家归不进类别的常用工具（本机会话实测出现过的名字）。
+      // Codex
+      exec: "脚本",
+      write_stdin: "终端输入",
+      wait: "等待结果",
+      sleep: "等待",
+      wait_agent: "等待子任务",
+      list_agents: "子任务列表",
+      interrupt_agent: "中断子任务",
+      send_message: "发消息",
+      followup_task: "追加任务",
+      request_user_input_async: "提问",
+      // Gemini
+      list_directory: "列出目录",
+      update_topic: "更新主题",
+      enter_plan_mode: "进入计划",
+      exit_plan_mode: "提交计划",
+      save_memory: "保存记忆",
+      // Kimi
+      NotifyUser: "通知",
+      WaitFor: "等待",
+      // OpenCode
+      list: "列出目录",
     } as Record<string, string>,
     modelDesc: {
       fable: "能力高于 Opus 的旗舰档",

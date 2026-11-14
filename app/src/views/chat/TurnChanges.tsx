@@ -1,7 +1,6 @@
 import { memo, useContext, useState } from "react";
 import type { ChatItem } from "../../api";
 import { useT } from "../../i18n";
-import { toolKind } from "./ToolIcon";
 import { ChatCwdContext, editOutcome, relativize } from "./ToolActivity";
 import type { ToolResultItem, ToolUseItem } from "./shared";
 import { Icon } from "../../icons/Icon";
@@ -22,18 +21,18 @@ export function collectFileChanges(items: ChatItem[], cwd: string | null): FileC
   const byPath = new Map<string, FileChange>();
   for (const item of items) {
     if (item.type !== "tool_use") continue;
-    const kind = toolKind(item.name);
-    if (kind !== "edit" && kind !== "write") continue;
+    if (item.kind !== "edit" && item.kind !== "write") continue;
     const result = results.get(item.id);
-    if (result?.is_error) continue;
-    const { detail, delta } = editOutcome(item as ToolUseItem, result);
-    if (!detail) continue;
-    const path = relativize(detail.path, cwd).replace(/\\/g, "/");
-    const key = path.toLowerCase();
-    const entry = byPath.get(key) ?? { path, added: 0, removed: 0 };
-    entry.added += delta?.added ?? 0;
-    entry.removed += delta?.removed ?? 0;
-    byPath.set(key, entry);
+    // 失败、被打断的调用没落盘，不计。
+    if (result?.is_error || result?.interrupted) continue;
+    for (const file of editOutcome(item as ToolUseItem, result).files) {
+      const path = relativize(file.path, cwd).replace(/\\/g, "/");
+      const key = path.toLowerCase();
+      const entry = byPath.get(key) ?? { path, added: 0, removed: 0 };
+      entry.added += file.delta?.added ?? 0;
+      entry.removed += file.delta?.removed ?? 0;
+      byPath.set(key, entry);
+    }
   }
   return [...byPath.values()];
 }
@@ -58,7 +57,7 @@ export const TurnChanges = memo(function TurnChanges({ items }: { items: ChatIte
         {shown.map((file) => {
           const cut = file.path.lastIndexOf("/");
           return (
-            <li key={file.path} className="chat-turn-changes-row" title={file.path}>
+            <li key={file.path} className="chat-turn-changes-row" data-tip={file.path}>
               <span className="chat-turn-changes-path">
                 {cut >= 0 && <span className="chat-turn-changes-dir">{file.path.slice(0, cut + 1)}</span>}
                 <span className="chat-turn-changes-name">{file.path.slice(cut + 1)}</span>

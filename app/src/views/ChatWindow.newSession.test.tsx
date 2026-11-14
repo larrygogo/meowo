@@ -811,7 +811,7 @@ describe("ChatWindow", () => {
       ...(newMessageArrived
         ? [
           { type: "reasoning", id: "r2", timestamp: null, text: "想一想" },
-          { type: "tool_use", id: "t2", timestamp: null, name: "Bash", summary: "cargo test" },
+          { type: "tool_use", id: "t2", timestamp: null, name: "Bash", kind: "run", summary: "cargo test" },
           { type: "tool_result", id: "tr2", timestamp: null, tool_use_id: "t2", text: "ok", is_error: false },
           { type: "assistant_text", id: "a2", timestamp: null, text: "刚落地的新消息" },
         ]

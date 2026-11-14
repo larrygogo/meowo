@@ -24,6 +24,8 @@ pub(crate) struct ChatMtimes {
 #[derive(Clone, Default)]
 struct TranscriptSample {
     errored: bool,
+    /// 还在跑的后台子任务数（见 ChatHistoryDto::busy_subagents）。
+    busy_subagents: u32,
     /// agent 自己起的标题(claude 的 ai-title / custom-title)。None = 还没起或该 agent 不从
     /// transcript 取标题,此时顶栏用 DB 标题。
     title: Option<String>,
@@ -263,6 +265,7 @@ fn load_chat_history(
         has_more: false,
         earliest: 0,
         errored: false,
+        busy_subagents: 0,
         pty_managed: live.pty_live,
         // 结束入口放宽到「进程仍存活」：broker 已收掉 PTY 记录但进程成孤儿（ConPTY kill
         // 静默无效的实拍事故）时，pty_managed 已翻 false，没有它用户将无任何结束入口。
@@ -315,6 +318,7 @@ fn load_chat_history(
                 );
                 let value = TranscriptSample {
                     errored: info.as_ref().is_some_and(|info| info.error.is_some()),
+                    busy_subagents: info.as_ref().map_or(0, |info| info.busy_subagents),
                     title: info
                         .and_then(|info| info.title)
                         .filter(|_| super::agent_resolves_transcript_title(&history.provider)),
@@ -327,6 +331,7 @@ fn load_chat_history(
             }
         };
         history.errored = sample.errored;
+        history.busy_subagents = sample.busy_subagents;
         // 侧栏/看板列表显示的是 transcript 里 claude 起的标题(live_item 覆盖 task_title),
         // DB 要等这一回合的 Stop hook 才同步。顶栏只读 DB 时首回合内两边对不上
         // (2026-11-04 手机实拍:顶栏是首条 prompt,侧栏已是 ai-title)。
@@ -1353,6 +1358,7 @@ mod tests {
         let mut cache = ChatMtimes::default();
         let sample = TranscriptSample {
             errored: false,
+            busy_subagents: 0,
             title: Some("ai 起的".into()),
             db_title: Some("首条 prompt".into()),
         };

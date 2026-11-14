@@ -51,8 +51,8 @@ export function isBackgroundShell(
   item: ToolUseItem,
   outcomes: Map<string, unknown>,
 ): boolean {
-  // PowerShell 工具(Windows 上的 CC)同样有 run_in_background,判据一致。
-  return (item.name === "Bash" || item.name === "PowerShell") && outcomes.has(item.id);
+  // 「是不是终端命令」看后端给的类别，不看工具名（PowerShell 工具同样有 run_in_background）。
+  return item.kind === "run" && outcomes.has(item.id);
 }
 
 /// 过程类条目的耗时短格式：<1 分钟写秒，再长写「分秒」。等宽短码，与时间线标签同一副终端腔

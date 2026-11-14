@@ -17,7 +17,7 @@ import { useRememberedDetails, useRememberedOpen } from "./foldMemory";
 import { FILE_TOKEN_REFRESHED_EVENT, IMAGE_LOAD_FAILED_EVENT, remoteUi } from "../../remoteMode";
 import { openSettingsAt } from "../../settingsNav";
 import { Icon } from "../../icons/Icon";
-import { icCopy, icFile, icImage, icLightbulb, icSwap, icUndo } from "../../icons/glyphs.chat";
+import { icCopy, icImage, icLightbulb, icSwap, icUndo } from "../../icons/glyphs.chat";
 import { icAlert, icCheck, icClose, icTerminal } from "../../icons/glyphs";
 import { busyProps } from "../../busyButton";
 
@@ -352,10 +352,10 @@ export function UserImageGroup({ paths, anchorId }: { paths: string[]; anchorId?
 /** 思考过程块：恒为收起的一行灰字，点开看全文。2026-10 用户对照 Kimi 客户端实拍
  *  嫌对话区拥挤，定为「思考过程收成一行」——此前短思考摊开、长思考露 6 行预览，
  *  每轮都多出一段灰字。开合只随用户点击变（按会话记住），流式更新不会把它弹开。 */
-function ReasoningBlock({ item, nextStamp = null }: { item: Extract<ChatItem, { type: "reasoning" | "reasoning_delta" }>; nextStamp?: string | null }) {
+function ReasoningBlock({ item, nextStamp = null, live = false }: { item: Extract<ChatItem, { type: "reasoning" | "reasoning_delta" }>; nextStamp?: string | null; live?: boolean }) {
   const t = useT();
-  // reasoning_delta 是还在流的那条，reasoning 是收尾后的定稿——用它区分「在跑 / 跑完」。
-  const live = item.type === "reasoning_delta";
+  // live 由时间线给：逐块流进来的思考排在最后、且会话在跑，才是「此刻正在想」。
+  // 此前这里按条目类型判，而归并层把增量全转成了定稿类型，「思考中」从未出现过（走查 A3）。
   const reasoningDetails = useRememberedDetails(`reasoning:${item.id}`);
   const startedAt = Date.parse(item.timestamp ?? "");
   const [elapsed, setElapsed] = useState(() => (live && Number.isFinite(startedAt) ? Date.now() - startedAt : null));
@@ -564,7 +564,14 @@ function RememberedDetails({ memoryKey, className, children }: { memoryKey: stri
   return <details className={className} {...useRememberedDetails(memoryKey)}>{children}</details>;
 }
 
-type MessageProps = { item: ChatItem; nextStamp?: string | null; latest?: boolean; compactSummary?: string | null };
+type MessageProps = {
+  item: ChatItem;
+  nextStamp?: string | null;
+  latest?: boolean;
+  compactSummary?: string | null;
+  /** 思考块：此刻还在想（见 Transcript）。 */
+  live?: boolean;
+};
 
 /** 消息级兜底：这一条渲染抛错时只把它换成原文，别的消息照常（ErrorBoundary.tsx）。
  *  正文变了（流式追加）就重试一次；按内容而不是对象比，轮询每次换新对象时不必反复重试、反复报错。 */
@@ -588,7 +595,7 @@ function MessageFallback({ item }: { item: ChatItem }) {
   );
 }
 
-function MessageBody({ item, nextStamp = null, latest = false, compactSummary = null }: MessageProps) {
+function MessageBody({ item, nextStamp = null, latest = false, compactSummary = null, live = false }: MessageProps) {
   const t = useT();
   const echoPhase = useContext(EchoPhaseContext).get(item.id);
   const echoActions = useContext(EchoActionsContext);
@@ -692,30 +699,11 @@ function MessageBody({ item, nextStamp = null, latest = false, compactSummary = 
     // 长推理默认收成**预览**（显示开头几行并渐隐），而不是整段藏起来——既能一眼看到
     // agent 在想什么，又不会让上百行把结论和后续对话挤出屏幕。短的直接摊开，
     // 没必要为几行内容加一次点击。开合定夺在 ReasoningBlock(首挂载一次,流式不翻转)。
-    return <ReasoningBlock item={item} nextStamp={nextStamp} />;
+    return <ReasoningBlock item={item} nextStamp={nextStamp} live={live} />;
   }
-  if (item.type === "tool_use") {
-    return (
-      <RememberedDetails className="chat-tool" memoryKey={`tool:${item.id}`}>
-        <summary>
-          <span className="chat-tool-icon"><Icon glyph={icTerminal} size={16} /></span>
-          <span className="chat-tool-name">{item.name}</span><span className="chat-tool-summary">{item.summary}</span><span className="chat-tool-chevron">›</span>
-        </summary>
-        <pre>{item.summary}</pre>
-      </RememberedDetails>
-    );
-  }
-  if (item.type === "tool_result") {
-    return (
-      <RememberedDetails className={"chat-tool chat-result" + (item.is_error ? " is-error" : "")} memoryKey={`result:${item.id}`}>
-        <summary>
-          <span className="chat-tool-icon is-file"><Icon glyph={icFile} size={16} /></span>
-          <span className="chat-tool-name">{t.chat.toolResult}</span><span className="chat-tool-summary">{stripAnsi(item.text)}</span><span className="chat-tool-chevron">›</span>
-        </summary>
-        <pre>{stripAnsi(item.text)}</pre>
-      </RememberedDetails>
-    );
-  }
+  // 工具调用与回执不经这里：时间线把它们交给 ToolActivity（调用行带着自己的回执）。
+  // 这里曾留着一套旧样式（终端图标 + 原始工具名、「工具结果」行），与那套并存。
+  if (item.type === "tool_use" || item.type === "tool_result") return null;
   if (item.type === "meta" && item.kind.startsWith("handoff:")) {
     // 跨 provider 接续的段间分隔条（kind = "handoff:<目标引擎展示名>"，见 ChatWindow 的
     // prefixItems 组装）：前序段历史内联在上方，分隔条标明从哪一段起换了引擎。
@@ -727,7 +715,7 @@ function MessageBody({ item, nextStamp = null, latest = false, compactSummary = 
   }
   // 中断分隔条：CLI 记下的「用户按了 Esc」，标明上方那轮回复是被打断的、不是自然结束。
   if (item.type === "meta" && item.kind === "interrupted") {
-    return <div className="chat-meta"><span />{t.chat.turnInterrupted}<span /></div>;
+    return <div className="chat-meta"><span />{t.chat.interrupted}<span /></div>;
   }
   // 送达回执在 reduceChatEvents 就滤掉了，走到这里说明有绕过它的来源，不画。
   if (item.type === "prompt_queued") return null;

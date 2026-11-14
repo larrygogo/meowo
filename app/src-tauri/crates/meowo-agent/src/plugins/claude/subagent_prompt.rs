@@ -11,7 +11,7 @@
 //! 只在通知行上读侧车：通知一次用户续上一次，读的次数跟着用户发的次数走，不进每轮轮询。
 //! 子代理**还在跑**时发给它的话主链是否留痕未取到样本，这条路径覆盖不到（见报告）。
 
-use crate::transcript::{day_millis, SubagentOutcome, TranscriptEvent};
+use crate::transcript::{day_millis, SubagentOutcome, ToolFacts, TranscriptEvent};
 use std::io::BufRead;
 use std::path::Path;
 
@@ -88,6 +88,7 @@ pub(super) fn resumed_agent_prompt(main_transcript: &Path, line: &str) -> Option
             task_id: Some(task_id.to_string()),
         }),
         patch: None,
+        facts: ToolFacts::default(),
     };
     // id 要拼进路径：只收纯 id，不让通知正文把读取引出 subagents 目录。
     if !task_id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {

@@ -4,7 +4,7 @@ import { finalAnswer, transcriptMarkdown } from "./exportMarkdown";
 
 const user = (id: string, text: string): ChatItem => ({ type: "user_text", id, timestamp: null, text } as ChatItem);
 const agent = (id: string, text: string): ChatItem => ({ type: "assistant_text", id, timestamp: null, text } as ChatItem);
-const tool = (id: string): ChatItem => ({ type: "tool_use", id, timestamp: null, name: "Read", summary: "a.ts" } as ChatItem);
+const tool = (id: string): ChatItem => ({ type: "tool_use", id, timestamp: null, name: "Read", kind: "read", summary: "a.ts" } as ChatItem);
 
 describe("对话导出成 Markdown（对照 Kimi「复制全部对话」）", () => {
   it("只留人说的话与 agent 正文，按角色分段；工具调用与后台通知不进", () => {

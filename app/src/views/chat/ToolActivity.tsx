@@ -3,33 +3,13 @@ import { useT } from "../../i18n";
 import type { DiffHunk } from "../../generated/contracts/DiffHunk";
 import type { ToolDetail } from "../../generated/contracts/ToolDetail";
 import { highlightLines, languageForPath, useHighlighter } from "./highlight";
-import { toolKind } from "./ToolIcon";
 import { BashTool } from "./tools/BashTool";
 import { ReadTool } from "./tools/ReadTool";
 import { EditTool } from "./tools/EditTool";
 import { GenericTool } from "./tools/GenericTool";
 
-export { toolKind, ToolIcon, toolShortName } from "./ToolIcon";
+export { ToolIcon, toolKindLabel, toolShortName } from "./ToolIcon";
 export type { ToolKind } from "./ToolIcon";
-
-/// 工具名的展示词。命中不了的原样回落成工具 id——比编一个错译好，但**常见工具**
-/// 必须都译到：此前只译了 Bash/Read/Write 三家，一组活动摘要读起来是
-/// 「运行终端 ×2 · Grep · WebFetch」这样的中英混排（7C-9）。
-/// 判定顺序有讲究：web_search 含 "search"，网络类必须排在搜索类之前。
-export function friendlyToolName(name: string, t: ReturnType<typeof useT>): string {
-  const normalized = name.toLowerCase();
-  if (normalized === "bash" || normalized === "exec" || normalized.includes("shell") || normalized.includes("terminal")) return t.chat.runTerminal;
-  if (normalized.includes("web") || normalized.includes("fetch") || normalized.includes("http")) return t.chat.fetchWeb;
-  if (normalized.includes("grep") || normalized.includes("glob") || normalized.includes("search")) return t.chat.searchFiles;
-  if (normalized === "read" || normalized.includes("view_image")) return t.chat.readFile;
-  // Write 与 Edit 分开叫：终端里就是两个词，「写入 225 行」挂在「编辑文件」下面读着别扭。
-  if (normalized === "write") return t.chat.writeFile;
-  if (normalized === "edit" || normalized.includes("patch") || normalized.includes("notebook")) return t.chat.editFile;
-  if (normalized.includes("todo")) return t.chat.updateTodos;
-  if (normalized === "task" || normalized.includes("agent")) return t.chat.runAgent;
-  if (normalized === "ls" || normalized.includes("list_dir") || normalized.includes("listdir")) return t.chat.listDir;
-  return name;
-}
 
 type DiffOperation = { kind: " " | "-" | "+"; text: string };
 export type TextDiff = { hunks: DiffHunk[]; added: number; removed: number };
@@ -138,20 +118,59 @@ export function lineDelta(detail: ToolDetail | null | undefined): { added: numbe
     const { added, removed } = diffText(detail.old, detail.new);
     return { added, removed };
   }
+  if (detail?.kind === "patch") {
+    return detail.files.reduce(
+      (sum, file) => ({ added: sum.added + file.added, removed: sum.removed + file.removed }),
+      { added: 0, removed: 0 },
+    );
+  }
   return null;
 }
 
-/// 一次 Edit/Write 的落地结果：优先用回执里的真实 patch，没有就按 old/new 现算。
-/// 工具行与回合末尾的「文件已修改」卡片共用这一份口径，两处的增删数才对得上。
-export function editOutcome(item: import("./shared").ToolUseItem, result?: import("./shared").ToolResultItem) {
-  const detail = item.detail && (item.detail.kind === "edit" || item.detail.kind === "write") ? item.detail : null;
-  const generated = !result?.patch?.length && detail?.kind === "edit" ? diffText(detail.old, detail.new) : null;
-  const patch = result?.patch?.length ? result.patch : generated?.hunks ?? null;
-  const delta = generated ? { added: generated.added, removed: generated.removed } : patch ? {
+/** 一次修改里落到单个文件上的那部分：路径、diff、增删行数。 */
+export type FileEdit = {
+  path: string;
+  /** 新建 / 修改 / 删除。删除没有 diff 可看，卡片上只有路径。 */
+  op: "add" | "update" | "delete";
+  patch: DiffHunk[] | null;
+  delta: { added: number; removed: number } | null;
+  /** diff 超过预览上限，后面的行没收进来（增删行数仍是完整的）。 */
+  truncated: boolean;
+};
+
+function patchDelta(patch: DiffHunk[]): { added: number; removed: number } {
+  return {
     added: patch.reduce((n, hunk) => n + hunk.lines.filter((line) => line[0] === "+").length, 0),
     removed: patch.reduce((n, hunk) => n + hunk.lines.filter((line) => line[0] === "-").length, 0),
-  } : lineDelta(detail);
-  return { detail, path: detail?.path ?? item.summary, patch, delta };
+  };
+}
+
+/// 一次写入/编辑的落地结果。五家的数据形态不同，都在这里归成「逐文件的修改」：
+/// - claude / gemini：调用带旧段新段，回执带真实行号的 diff（优先用回执的）；
+/// - kimi / opencode：只有旧段新段，按它们现算 diff；
+/// - codex：调用就是补丁，一次可以改几个文件，diff 与增删行数随调用下发。
+/// 工具行与回合末尾的「文件已修改」卡片共用这一份口径，两处的增删数才对得上。
+export function editOutcome(item: import("./shared").ToolUseItem, result?: import("./shared").ToolResultItem) {
+  const raw = item.detail ?? null;
+  if (raw?.kind === "patch") {
+    const files: FileEdit[] = raw.files.map((file) => ({
+      path: file.move_to ?? file.path,
+      op: file.op === "add" || file.op === "delete" ? file.op : "update",
+      patch: file.hunks.length ? file.hunks : null,
+      delta: { added: file.added, removed: file.removed },
+      truncated: file.truncated,
+    }));
+    return { detail: null, path: files[0]?.path ?? item.summary, patch: files[0]?.patch ?? null, delta: lineDelta(raw), files };
+  }
+  const detail = raw && (raw.kind === "edit" || raw.kind === "write") ? raw : null;
+  const generated = !result?.patch?.length && detail?.kind === "edit" ? diffText(detail.old, detail.new) : null;
+  const patch = result?.patch?.length ? result.patch : generated?.hunks ?? null;
+  const delta = generated ? { added: generated.added, removed: generated.removed } : patch ? patchDelta(patch) : lineDelta(detail);
+  const path = detail?.path ?? item.summary;
+  const files: FileEdit[] = detail
+    ? [{ path, op: detail.kind === "write" ? "add" : "update", patch, delta, truncated: detail.truncated }]
+    : [];
+  return { detail, path, patch, delta, files };
 }
 
 /// 会话工作目录：工具行里落在它下面的路径显示成相对路径（终端里就是这样），
@@ -182,6 +201,8 @@ export function toolSummary(item: import("./shared").ToolUseItem, cwd: string | 
     return index >= 0 ? `${path.slice(0, index + 1)} ${path.slice(index + 1)}` : path;
   }
   if (detail?.kind === "search") return [detail.pattern, detail.path && relativize(detail.path, cwd)].filter(Boolean).join(" ");
+  if (detail?.kind === "patch") return detail.files.map((file) => relativize(file.move_to ?? file.path, cwd).replace(/\\/g, "/")).join(", ");
+  if (detail?.kind === "web") return detail.url ?? detail.query ?? "";
   const raw = item.summary.trim();
   if (raw.startsWith("{")) {
     try {
@@ -219,7 +240,8 @@ export function UnifiedDiff({ hunks, lang }: { hunks: DiffHunk[]; lang: string |
               else { number = newNo++; oldNo++; }
               return (
                 <div className={"chat-tool-line" + (mark === "-" ? " is-del" : mark === "+" ? " is-add" : "")} key={index}>
-                  <span className="chat-tool-ln" aria-hidden="true">{number}</span>
+                  {/* 起始行号为 0 = 这段 diff 不带行号（codex 的补丁只有上下文定位），行号列留空。 */}
+                  <span className="chat-tool-ln" aria-hidden="true">{(mark === "-" ? hunk.old_start : hunk.new_start) > 0 ? number : ""}</span>
                   <span className="chat-tool-mark" aria-hidden="true">{mark}</span>
                   <span className="chat-tool-src" dangerouslySetInnerHTML={{ __html: html[index] || " " }} />
                 </div>
@@ -233,9 +255,9 @@ export function UnifiedDiff({ hunks, lang }: { hunks: DiffHunk[]; lang: string |
 }
 
 /// 工具调用按类型分派到独立渲染器（对照 Kimi 的 ToolCall → BashTool/ReadTool/EditTool/GenericTool）。
+/// 类别来自后端（`item.kind`）：五家的读、写、改、命令各落到同一个渲染器。
 export const ToolActivity = memo(function ToolActivity({ item, result }: { item: import("./shared").ToolUseItem; result?: import("./shared").ToolResultItem }) {
-  const kind = toolKind(item.name);
-  switch (kind) {
+  switch (item.kind) {
     case "run": return <BashTool item={item} result={result} />;
     case "read": return <ReadTool item={item} result={result} />;
     case "write":

@@ -7,7 +7,7 @@ afterEach(cleanup);
 
 /// 后台 Bash 的判据是「回执带子任务结局」（与 TasksPanel 同口径）：一条调用 + 一条回执。
 const bash = (id: string): ChatItem[] => [
-  { type: "tool_use", id, timestamp: null, name: "Bash", summary: "npm run dev", detail: { kind: "command", command: "npm run dev", description: "起开发服务" } },
+  { type: "tool_use", id, timestamp: null, name: "Bash", kind: "run", summary: "npm run dev", detail: { kind: "command", command: "npm run dev", description: "起开发服务" } },
   { type: "tool_result", id: `r-${id}`, timestamp: null, tool_use_id: id, text: "started", is_error: false, subagent: { running: 1, completed: 0, failed: 0, task_id: `task-${id}` } },
 ];
 

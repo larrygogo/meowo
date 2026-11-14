@@ -69,6 +69,7 @@ import { openFolderWith, useFolderOpeners } from "./chat/TitleBarTools";
 import { attentionTone, nextAttentionSession } from "./chat/nextAttention";
 import { isBackgroundShell, isSubagentDelegation } from "./chat/shared";
 import { Transcript, type TranscriptAgent } from "./chat/Transcript";
+import { turnActivityOf } from "./chat/toolState";
 import { UserMessageNav } from "./chat/UserMessageNav";
 import { TranscriptSearch } from "./chat/TranscriptSearch";
 import { formatReviewComments, type ReviewComment } from "./chat/diffComments";
@@ -613,7 +614,9 @@ export function ChatWindow() {
   // history 未加载时按离线处理,避免首帧闪一下运行态。屏幕状态与侧栏同口径带上:gemini
   // 启动即落 running、首条消息前无事件纠正,只看 DB 会把空闲会话当运行中、发送改按排队键
   // Tab——正文停在输入框里发不出去(0.6.11 实机)。
-  const tone = sessionTone(history?.connected ?? false, history?.status, history?.pendingReview, history?.errored, undefined, history?.screenState, history?.screenAssumed);
+  // 后台子任务数与侧栏同源（后端同一份 transcript 分析）：主回合停了、后台子任务还在跑时，
+  // 这里和侧栏一样是「运行中」。此前这一位传的是 undefined，对话窗按空闲处理。
+  const tone = sessionTone(history?.connected ?? false, history?.status, history?.pendingReview, history?.errored, history?.busySubagents, history?.screenState, history?.screenAssumed);
   // 要在终端里答的交互。Lead 关卡（gate）不算：它有自己的卡片（DockWork 的 LeadGateCard），
   // 不能再冒出一张「Agent 请求权限 / 去终端批准」的降级卡和发送软拦（做空审查 M2）。
   const terminalReview = history?.pendingReview && history.pendingReview !== "gate" ? history.pendingReview : null;
@@ -4611,7 +4614,7 @@ export function ChatWindow() {
             {showHandoffNote && !hasEarlier && (
               <div className="chat-empty is-note">{t.chat.handoffContinued}</div>
             )}
-            <Transcript sessionId={sessionId} items={timelineItems} agent={transcriptAgent} working={tone === "running"} foldTurns={foldTurns} />
+            <Transcript sessionId={sessionId} items={timelineItems} agent={transcriptAgent} activity={turnActivityOf(tone)} alive={history?.connected ?? false} foldTurns={foldTurns} />
             {/* 上翻后回到底部的悬浮出口：sticky 钉在滚动视口底缘，贴底时不渲染。
                 附带未读计数——用户据此判断「值不值得现在跳下去」。 */}
             {!atBottom && (
@@ -5053,7 +5056,7 @@ export function ChatWindow() {
       {view === "chat" && sessionId !== 0 && (
         <div className="chat-dock">
           {/* 停靠栏（计划/进度/后台任务）：状态、关闭规则与入口判定见 chat/DockWork。 */}
-          <DockWork sessionId={sessionId} cwd={cwd} ccSessionId={history?.ccSessionId ?? null} items={items} history={history} loading={loading} returnFocusTo={promptInputRef} />
+          <DockWork sessionId={sessionId} cwd={cwd} ccSessionId={history?.ccSessionId ?? null} items={items} history={history} loading={loading} returnFocusTo={promptInputRef} live={{ activity: turnActivityOf(tone), alive: history?.connected ?? false }} />
           {sideAnswers.length > 0 && (
             <div className="chat-side-answers">
               {sideAnswers.map((entry) => (

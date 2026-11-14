@@ -2,7 +2,8 @@
 //! $patch/$rewindTo 会修改已有历史。先归并成稳定快照，避免把原生日志的更新误当新消息。
 
 use crate::transcript::{
-    preview_text, TranscriptEvent, TranscriptInfo, TranscriptParser, TranscriptSpec, TurnError,
+    clip_text, parse_unified_diff, preview_text, DiffHunk, ToolDetail, ToolFacts, ToolKind,
+    TranscriptEvent, TranscriptInfo, TranscriptParser, TranscriptSpec, TurnError,
 };
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -196,6 +197,12 @@ fn prefix_matches(file: &mut fs::File, length: u64, expected: &Sha256) -> Option
 fn materialize(source: &Path) -> Option<PathBuf> {
     let dir = crate::meowo_data_root()?.join("cache/gemini/v1");
     materialize_in(source, &dir)
+}
+
+/// 回放测试用：把原始日志物化到指定目录（不碰用户数据目录）。
+#[cfg(test)]
+pub(crate) fn materialize_for_test(source: &Path, dir: &Path) -> Option<PathBuf> {
+    materialize_in(source, dir)
 }
 
 fn materialize_in(source: &Path, dir: &Path) -> Option<PathBuf> {
@@ -804,6 +811,234 @@ fn content_text(value: Option<&Value>) -> String {
     }
 }
 
+/// Gemini CLI 内置工具 → 语义类别（工具名取自本机会话与 0.6x 的工具注册表）。此前前端按
+/// 名字子串猜，read_file / write_file / replace 全落进「其他」（走查 B1）。
+fn tool_kind(name: &str) -> ToolKind {
+    match name {
+        "run_shell_command" => ToolKind::Run,
+        "read_file" | "read_many_files" => ToolKind::Read,
+        "write_file" => ToolKind::Write,
+        "replace" | "edit" => ToolKind::Edit,
+        "grep_search" | "search_file_content" | "glob" => ToolKind::Search,
+        "google_web_search" | "web_fetch" => ToolKind::Web,
+        "write_todos" => ToolKind::Todo,
+        _ => ToolKind::Other,
+    }
+}
+
+/// 详情正文上限（字符），与 claude 侧同值。
+const DETAIL_TEXT_MAX_CHARS: usize = 16_000;
+/// 摘要上限（字符），与 claude / opencode 同值。
+const SUMMARY_MAX_CHARS: usize = 800;
+/// 回执正文上限（字符）。
+const RESULT_MAX_CHARS: usize = 16_000;
+
+fn clip_detail(text: &str) -> (String, bool) {
+    if text.chars().count() > DETAIL_TEXT_MAX_CHARS {
+        (text.chars().take(DETAIL_TEXT_MAX_CHARS).collect(), true)
+    } else {
+        (text.to_string(), false)
+    }
+}
+
+/// 结构化详情（入参名取自本机会话实拍：`file_path` / `old_string` / `new_string` /
+/// `allow_multiple` / `start_line` / `end_line` / `dir_path`）。
+fn tool_detail(name: &str, args: Option<&Value>) -> Option<ToolDetail> {
+    let args = args?;
+    let text = |key: &str| args.get(key).and_then(Value::as_str).map(str::to_string);
+    let num = |key: &str| {
+        args.get(key)
+            .and_then(Value::as_u64)
+            .map(|v| v.min(u32::MAX as u64) as u32)
+    };
+    let path = || {
+        text("file_path")
+            .or_else(|| text("absolute_path"))
+            .or_else(|| text("path"))
+    };
+    match name {
+        "run_shell_command" => Some(ToolDetail::Command {
+            command: text("command")?,
+            description: text("description"),
+        }),
+        "read_file" => {
+            // 0.6x 用 start_line / end_line（闭区间），更早的版本用 offset / limit。
+            let offset = num("start_line").or_else(|| num("offset"));
+            let limit = match (num("start_line"), num("end_line")) {
+                (Some(start), Some(end)) if end >= start => Some(end - start),
+                _ => num("limit"),
+            };
+            Some(ToolDetail::Read {
+                path: path()?,
+                offset,
+                limit,
+            })
+        }
+        "write_file" => {
+            let full = text("content")?;
+            let lines = full.lines().count() as u32;
+            let (content, truncated) = clip_detail(&full);
+            Some(ToolDetail::Write {
+                path: path()?,
+                content,
+                lines,
+                truncated,
+            })
+        }
+        "replace" | "edit" => {
+            let (old, old_cut) = clip_detail(&text("old_string")?);
+            let (new, new_cut) = clip_detail(&text("new_string")?);
+            Some(ToolDetail::Edit {
+                path: path()?,
+                old,
+                new,
+                replace_all: args
+                    .get("allow_multiple")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+                truncated: old_cut || new_cut,
+            })
+        }
+        "grep_search" | "search_file_content" | "glob" => Some(ToolDetail::Search {
+            pattern: text("pattern")?,
+            path: text("dir_path").or_else(|| text("path")),
+            glob: text("include").or_else(|| text("include_pattern")),
+        }),
+        "google_web_search" => Some(ToolDetail::Web {
+            url: None,
+            query: Some(text("query")?),
+            more: 0,
+        }),
+        _ => None,
+    }
+}
+
+/// 摘要取最能说明「在干什么」的那个入参；认不得的工具退回整包入参（截断带省略号）。
+/// 此前是整包 JSON 硬截 300 字符：serde_json 按字母序排键，write_file 的 `content` 排在
+/// `file_path` 前面，摘要永远是半截正文、看不到路径（走查 A7）。
+fn tool_summary(args: Option<&Value>) -> String {
+    const KEYS: [&str; 10] = [
+        "command",
+        "file_path",
+        "absolute_path",
+        "path",
+        "pattern",
+        "query",
+        "dir_path",
+        "url",
+        "title",
+        "prompt",
+    ];
+    let picked = KEYS
+        .iter()
+        .find_map(|key| args.and_then(|args| args.get(key)).and_then(Value::as_str));
+    match picked {
+        Some(text) => clip_text(text, SUMMARY_MAX_CHARS),
+        None => clip_text(
+            &args
+                .filter(|args| !args.is_null())
+                .map(Value::to_string)
+                .unwrap_or_default(),
+            SUMMARY_MAX_CHARS,
+        ),
+    }
+}
+
+/// 回执正文：取 `functionResponse.response` 里给人看的那段（`output`，失败时 `error`），
+/// 两样都没有才退回整包 JSON。此前一律整包 `to_string()`，回执是一行转义过的 JSON。
+fn result_text(result: &Value) -> String {
+    let Some(parts) = result.as_array() else {
+        return result
+            .as_str()
+            .map_or_else(|| result.to_string(), str::to_string);
+    };
+    parts
+        .iter()
+        .filter_map(|part| part.pointer("/functionResponse/response"))
+        .map(|response| {
+            response
+                .get("output")
+                .or_else(|| response.get("error"))
+                .and_then(Value::as_str)
+                .map_or_else(|| response.to_string(), str::to_string)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// 回执上的显式事实，来自 CLI 自己记的 `resultDisplay`：
+/// - 搜索：`matches` 的条数；列目录：`files` 的条数；glob 是一句「Found N matching file(s)」
+///   或「No files found」。
+/// - 读文件：`Read lines A-B of N from …` 取 B-A+1；整读时数正文行。
+/// - 命令：正文里的 `Exit Code: N`。
+fn result_facts(name: &str, call: &Value, text: &str, is_error: bool) -> ToolFacts {
+    let display = call.get("resultDisplay");
+    let leading_number = |s: &str, prefix: &str| {
+        s.trim_start()
+            .strip_prefix(prefix)?
+            .trim_start()
+            .split(|c: char| !c.is_ascii_digit())
+            .next()?
+            .parse::<u32>()
+            .ok()
+    };
+    let count = if is_error {
+        None
+    } else {
+        match tool_kind(name) {
+            ToolKind::Search => display
+                .and_then(|d| d.get("matches"))
+                .and_then(Value::as_array)
+                .map(|list| list.len() as u32)
+                .or_else(|| {
+                    let line = display.and_then(Value::as_str)?;
+                    if line.starts_with("No ") {
+                        Some(0)
+                    } else {
+                        leading_number(line, "Found")
+                    }
+                }),
+            ToolKind::Read => display
+                .and_then(Value::as_str)
+                .and_then(|line| {
+                    let range = line.strip_prefix("Read lines ")?.split(' ').next()?;
+                    let (from, to) = range.split_once('-')?;
+                    let (from, to) = (from.parse::<u32>().ok()?, to.parse::<u32>().ok()?);
+                    (to >= from).then(|| to - from + 1)
+                })
+                .or_else(|| Some(text.lines().count() as u32)),
+            _ => display
+                .and_then(|d| d.get("files"))
+                .and_then(Value::as_array)
+                .map(|list| list.len() as u32),
+        }
+    };
+    let exit_code = (tool_kind(name) == ToolKind::Run)
+        .then(|| {
+            text.lines().find_map(|line| {
+                line.trim()
+                    .strip_prefix("Exit Code:")?
+                    .trim()
+                    .parse::<i32>()
+                    .ok()
+            })
+        })
+        .flatten();
+    ToolFacts {
+        exit_code,
+        count,
+        interrupted: false,
+    }
+}
+
+/// 编辑类回执的统一 diff：`resultDisplay.fileDiff` 是现成的带行号 diff。超过预览上限时
+/// 不给（与 claude 同口径），前端退回按详情里的旧段、新段现算。
+fn result_patch(call: &Value) -> Option<Vec<DiffHunk>> {
+    let diff = call.pointer("/resultDisplay/fileDiff")?.as_str()?;
+    let parsed = parse_unified_diff(diff);
+    (!parsed.truncated && !parsed.hunks.is_empty()).then_some(parsed.hunks)
+}
+
 fn parse_line(line: &str) -> Vec<TranscriptEvent> {
     let Ok(value) = serde_json::from_str::<Value>(line) else {
         return Vec::new();
@@ -823,12 +1058,28 @@ fn parse_line(line: &str) -> Vec<TranscriptEvent> {
     );
     let mut events = Vec::new();
     match value.get("type").and_then(Value::as_str) {
+        // `<session_context>`（目录树等，约 5000 字符）与 Lead 注入的 `<hook_context>` 是 CLI
+        // 写给模型的，以 user 记录落盘。它们不是用户说的话：此前每个会话的第一条都被前端
+        // 兜底收成一行「系统记录」（走查 B6），与 claude 一样在这里丢掉。
+        Some("user")
+            if text.trim_start().starts_with("<session_context>")
+                || text.trim_start().starts_with("<hook_context>") => {}
         Some("user") if !text.trim().is_empty() => events.push(TranscriptEvent::UserMessage {
             id: format!("gemini-user-{id}"),
             timestamp,
             text,
             interjected: false,
         }),
+        // 用户按 Esc 打断：CLI 记一条 info「Request cancelled.」。画成中断分隔条；
+        // 其余 info（升级提示、切换回退模型）仍不上屏。
+        Some("info") if text.trim() == "Request cancelled." => {
+            events.push(TranscriptEvent::Metadata {
+                id: format!("gemini-interrupted-{id}"),
+                timestamp,
+                kind: "interrupted".into(),
+                compaction: None,
+            })
+        }
         Some("error") if !text.trim().is_empty() => events.push(TranscriptEvent::TurnError {
             id: format!("gemini-error-{id}"),
             timestamp,
@@ -843,7 +1094,8 @@ fn parse_line(line: &str) -> Vec<TranscriptEvent> {
                         .flatten()
                         .filter_map(Value::as_str)
                         .collect::<Vec<_>>()
-                        .join("\n");
+                        // 空一行：标题和正文各成一段，单个换行会被 markdown 并成一段。
+                        .join("\n\n");
                     if !text.is_empty() {
                         events.push(TranscriptEvent::Reasoning {
                             id: format!("gemini-thought-{id}-{index}"),
@@ -866,31 +1118,20 @@ fn parse_line(line: &str) -> Vec<TranscriptEvent> {
                         continue;
                     };
                     let name = call.get("name").and_then(Value::as_str).unwrap_or("tool");
-                    let arguments = call.get("args").map(Value::to_string).unwrap_or_default();
+                    let args = call.get("args");
                     events.push(TranscriptEvent::ToolCall {
                         id: format!("gemini-call-{call_id}"),
                         timestamp: timestamp.clone(),
                         name: name.into(),
-                        summary: arguments.chars().take(300).collect(),
+                        kind: tool_kind(name),
+                        summary: tool_summary(args),
                         subagent: None,
-                        detail: None,
+                        detail: tool_detail(name, args),
                         plan: None,
                     });
                     if let Some(result) = call.get("result").filter(|value| !value.is_null()) {
-                        let text = if let Some(parts) = result.as_array() {
-                            parts
-                                .iter()
-                                .filter_map(|part| {
-                                    part.get("functionResponse")
-                                        .and_then(|response| response.get("response"))
-                                })
-                                .map(Value::to_string)
-                                .collect::<Vec<_>>()
-                                .join("\n")
-                        } else {
-                            result.to_string()
-                        };
-                        let is_error = call["status"] == "error"
+                        let text = result_text(result);
+                        let is_error = matches!(call["status"].as_str(), Some("error" | "cancelled"))
                             || result.as_array().is_some_and(|parts| {
                                 parts.iter().any(|part| {
                                     part.pointer("/functionResponse/response/error").is_some()
@@ -900,10 +1141,11 @@ fn parse_line(line: &str) -> Vec<TranscriptEvent> {
                             id: format!("gemini-result-{call_id}"),
                             timestamp: timestamp.clone(),
                             tool_call_id: Some(format!("gemini-call-{call_id}")),
-                            text: text.chars().take(16_000).collect(),
+                            facts: result_facts(name, call, &text, is_error),
+                            text: clip_text(&text, RESULT_MAX_CHARS),
                             is_error,
                             subagent: None,
-                            patch: None,
+                            patch: result_patch(call),
                         });
                     }
                 }

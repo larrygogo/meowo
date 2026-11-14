@@ -43,7 +43,9 @@ export function reduceChatEvents(
       continue;
     }
 
-    const target = item.type === "assistant_delta" ? "assistant_text" : "reasoning";
+    // 正文增量并成定稿类型；思考增量并完仍是 reasoning_delta——「这条是逐块流进来的」是时间线
+    // 判断「此刻还在想」的依据（见 Transcript），并成 reasoning 就把它抹掉了。
+    const target = item.type === "assistant_delta" ? "assistant_text" : "reasoning_delta";
     if (last?.type === target) {
       const items = writable();
       items[items.length - 1] = { ...last, text: last.text + item.text };
@@ -70,13 +72,19 @@ export function collectSubagentReceipts(items: ChatItem[]): {
   /** 各 tool_use 最后一次回执的时间戳（路由归属后同步刷新）。子任务块用
    *  「委派时刻 → 最终回执时刻」算执行时长；无时间戳的 provider 为 null。 */
   finishedTs: Map<string, string | null>;
+  /** 各 tool_use 的**第一条**回执：工具行挂的就是它（后到的是委派的结局回执，归子任务块管）。
+   *  配对按整份时间线做，不限于相邻——回执可以隔着别的块才到。与上面几张表同一趟扫描建出来，
+   *  流式期间不为它多扫一遍。 */
+  results: Map<string, Extract<ChatItem, { type: "tool_result" }>>;
 } {
   const outcomes = new Map<string, SubagentOutcome>();
   const settledAt = new Map<string, number>();
   const finishedTs = new Map<string, string | null>();
+  const results = new Map<string, Extract<ChatItem, { type: "tool_result" }>>();
   const taskOwner = new Map<string, string>();
   items.forEach((item, index) => {
     if (item.type !== "tool_result" || !item.tool_use_id) return;
+    if (!results.has(item.tool_use_id)) results.set(item.tool_use_id, item);
     settledAt.set(item.tool_use_id, index);
     finishedTs.set(item.tool_use_id, item.timestamp ?? null);
     const sub = item.subagent;
@@ -93,5 +101,5 @@ export function collectSubagentReceipts(items: ChatItem[]): {
       finishedTs.set(owner, item.timestamp ?? null);
     }
   });
-  return { outcomes, settledAt, finishedTs };
+  return { outcomes, settledAt, finishedTs, results };
 }

@@ -65,7 +65,7 @@ describe("Message 用户消息标注", () => {
   });
 });
 
-/// 中断标记（后端把 CLI 的 `[Request interrupted by user]` 转成 meta）：分隔条写「已中断」，
+/// 中断标记（后端把各家 CLI 记下的用户中断转成 meta）：分隔条写「已中断」，
 /// 不再冒充用户气泡，也不能落进兜底的「上下文已压缩」。
 describe("Message 分隔条", () => {
   it("interrupted 显示已中断，compact 照旧", () => {

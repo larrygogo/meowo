@@ -53,6 +53,9 @@ pub mod trust;
 pub mod variant;
 pub mod wiring;
 
+#[cfg(test)]
+mod replay_tests;
+
 pub use account::{
     Account, AccountCap, ApiKeyLoginCap, ProviderUsage, UsageKind, UsageLane, USAGE_UNSUPPORTED,
 };

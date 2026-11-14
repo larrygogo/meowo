@@ -186,6 +186,12 @@ pub(super) static DEPS: &[D] = &[
         "2.5.1 之前的三个点写法；2.5.1 改用省略号字符 `Working…`",
     )
     .legacy(),
+    D::record(
+        "record:turn.ended",
+        "turn.ended",
+        r#"{"type":"turn.ended","agentId":"main","turnId":1,"reason":"cancelled","durationMs":1433879,"time":1793173662714}"#,
+        "2.6.1 wire.jsonl 实样（reason=cancelled 画中断分隔条、failed 出错误卡；本机 164 份主链里 cancelled 17 次）；kimi.exe 73 处",
+    ),
     D::new(
         "literal:compacting...",
         "compacting...",

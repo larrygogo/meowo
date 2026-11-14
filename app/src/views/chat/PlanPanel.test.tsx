@@ -8,8 +8,8 @@ vi.mock("@tauri-apps/api/event", () => ({ listen: vi.fn(() => Promise.resolve(()
 import { latestPlan, PlanPanel } from "./PlanPanel";
 
 const items: ChatItem[] = [
-  { type: "tool_use", id: "todo-1", timestamp: null, name: "TodoWrite", summary: "拆分待办" },
-  { type: "tool_use", id: "plan-1", timestamp: null, name: "ExitPlanMode", summary: "提交计划", plan: "# 改造目标\n\n## 实施步骤\n\n保留完整计划文档。" },
+  { type: "tool_use", id: "todo-1", timestamp: null, name: "TodoWrite", kind: "todo", summary: "拆分待办" },
+  { type: "tool_use", id: "plan-1", timestamp: null, name: "ExitPlanMode", kind: "other", summary: "提交计划", plan: "# 改造目标\n\n## 实施步骤\n\n保留完整计划文档。" },
 ];
 
 afterEach(cleanup);
@@ -32,8 +32,8 @@ describe("PlanPanel 计划文档", () => {
   it("取最近一次计划，空白文档不能覆盖已有计划", () => {
     const history = [
       ...items,
-      { type: "tool_use", id: "plan-2", timestamp: null, name: "ExitPlanMode", summary: "更新计划", plan: "# 最新计划" },
-      { type: "tool_use", id: "plan-3", timestamp: null, name: "ExitPlanMode", summary: "空计划", plan: "  " },
+      { type: "tool_use", id: "plan-2", timestamp: null, name: "ExitPlanMode", kind: "other", summary: "更新计划", plan: "# 最新计划" },
+      { type: "tool_use", id: "plan-3", timestamp: null, name: "ExitPlanMode", kind: "other", summary: "空计划", plan: "  " },
     ] satisfies ChatItem[];
     expect(latestPlan(history)).toBe("# 最新计划");
   });

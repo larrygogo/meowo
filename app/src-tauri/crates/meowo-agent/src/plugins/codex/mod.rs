@@ -15,6 +15,7 @@
 
 pub mod account;
 mod cli_text;
+mod exec_script;
 mod lead;
 mod lineage;
 mod screen;

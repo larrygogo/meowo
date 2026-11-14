@@ -72,4 +72,10 @@ pub(super) static DEPS: &[D] = &[
         "\u{2502} Do you want to proceed?",
         FRAMED,
     ),
+    D::record(
+        "record:Request cancelled.",
+        "Request cancelled.",
+        r#"{"id":"0f6f6a2e","timestamp":"2026-07-20T06:10:40.000Z","type":"info","content":"Request cancelled."}"#,
+        "0.6x 会话日志实样（用户按 Esc 后的 info 记录，对话页据此画中断分隔条）；0.68.0 bundle 里 18 处",
+    ),
 ];

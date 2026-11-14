@@ -6,6 +6,8 @@ import { durationText, isBackgroundShell, isSubagentDelegation, type ToolUseItem
 import type { ChatItem } from "../../api";
 import { Icon } from "../../icons/Icon";
 import { icCircleCheck, icClose } from "../../icons/glyphs";
+import { TodoBadge } from "./TodoBadge";
+import { ASSUME_LIVE, liveTurnStart, type SessionLive } from "./toolState";
 
 export type BackgroundTask = {
   id: string;
@@ -13,7 +15,8 @@ export type BackgroundTask = {
   name: string;
   /** 次要信息：后台 Bash 是「$ 命令」，子代理没有。 */
   meta: string | null;
-  state: "run" | "done" | "fail";
+  /** stop = 已中断：没等到结局，也不会再有（所在回合被打断、会话进程没了）。 */
+  state: "run" | "done" | "fail" | "stop";
   /** 子代理交了结论、它派出的后台活儿还在跑：仍按完成算，行里提示「后台仍在运行」。 */
   backgroundRunning?: boolean;
   durationMs: number | null;
@@ -25,16 +28,24 @@ export type TaskFilter = "recent" | "running" | "done" | "all";
 
 /// 后台 Bash 与子代理的任务清单。状态读委派回执上的结局统计（running/failed），
 /// 与对话流里子任务块同一份关联规则（collectSubagentReceipts），两处不会各说各话。
-export function collectBackgroundTasks(items: ChatItem[]): { bash: BackgroundTask[]; subagents: BackgroundTask[] } {
+///
+/// 「运行中」不再只凭「没有结局」：还没回执的委派，要它所在的回合此刻还在进行才算在跑；
+/// 回执说在跑的后台任务，要会话进程还活着才算。否则是已中断——此前这两种都记成运行中，
+/// 面板头永远挂着「N 运行中」（走查 A1）。
+export function collectBackgroundTasks(items: ChatItem[], live: SessionLive = ASSUME_LIVE): { bash: BackgroundTask[]; subagents: BackgroundTask[] } {
   const { outcomes, finishedTs } = collectSubagentReceipts(items);
   const bash: BackgroundTask[] = [];
   const subagents: BackgroundTask[] = [];
-  for (const item of items) {
+  const turnStart = liveTurnStart(items);
+  for (const [index, item] of items.entries()) {
     if (item.type !== "tool_use") continue;
     const isShell = isBackgroundShell(item, outcomes);
     if (!isShell && !isSubagentDelegation(item, outcomes)) continue;
     const outcome = outcomes.get(item.id);
-    const state = !outcome || outcome.running > 0 ? "run" : outcome.failed > 0 ? "fail" : "done";
+    const state: BackgroundTask["state"] = !outcome
+      ? (live.activity !== "idle" && index > turnStart ? "run" : "stop")
+      : outcome.running > 0 ? (live.alive ? "run" : "stop")
+      : outcome.failed > 0 ? "fail" : "done";
     const started = Date.parse(item.timestamp ?? "");
     const ended = Date.parse(finishedTs.get(item.id) ?? "");
     const durationMs = state !== "run" && Number.isFinite(started) && Number.isFinite(ended) && ended >= started ? ended - started : null;
@@ -106,11 +117,13 @@ export const TasksPanel = memo(function TasksPanel({ tasks, filter }: { tasks: B
   return (
     <ul className="chat-task-list">
       {shown.map((task) => (
-        <li key={task.id} className={"chat-task-row is-" + task.state} title={task.meta ?? task.name}>
+        <li key={task.id} className={"chat-task-row is-" + task.state} data-tip={task.meta ?? task.name}>
           <span className="chat-task-glyph" role="img" aria-label={t.chat.taskStates[task.state]}>
             {task.state === "run" ? <span className="chat-task-spin" aria-hidden="true" />
               : task.state === "done"
                 ? <Icon glyph={icCircleCheck} size={14} />
+                // 已中断用待办同款的空圈：它没有完成，也不是失败。
+                : task.state === "stop" ? <TodoBadge status="pending" small />
                 : <Icon glyph={icClose} size={14} />}
           </span>
           <span className="chat-task-name">{task.name}</span>

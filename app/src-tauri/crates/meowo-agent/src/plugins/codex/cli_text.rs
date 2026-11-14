@@ -134,4 +134,23 @@ pub(super) static DEPS: &[D] = &[
         "enter to submit all",
         "0.166.0 提问表单底栏是按键 + `to submit all`；程序文件里 `submit all` 1 处",
     ),
+    // ── 对话页工具行与中断分隔依赖的 rollout 记录（2026-11-14，本机 0.167.2 的 68 份 rollout 与 codex.exe）──
+    D::record(
+        "record:turn_aborted",
+        "turn_aborted",
+        r#"{"timestamp":"2026-11-12T15:16:16.944Z","type":"event_msg","payload":{"type":"turn_aborted","turn_id":"01a1d032","reason":"interrupted","duration_ms":1521570}}"#,
+        "0.167.2 rollout 实样（用户中断处的分隔条，68 份里 64 次）；codex.exe 17 处",
+    ),
+    D::record(
+        "record:Script running",
+        "Script running",
+        "Script running with cell ID g9:1\nWall time 0.0 seconds\nOutput:\n",
+        "0.167.2 rollout 实样（exec 脚本让到后台时的回执头，结果之后由 wait 取）；codex.exe `Script running with cell ID` 2 处",
+    ),
+    D::record(
+        "record:aborted by user",
+        "aborted by user",
+        "aborted by user after 20.9s",
+        "0.167.2 rollout 实样（脚本被用户打断时的回执，工具行据此显示已中断）；codex.exe 4 处",
+    ),
 ];

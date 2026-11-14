@@ -173,16 +173,15 @@ describe("状态词表", () => {
   });
 
   it("后端插件不把状态词当正文硬编码下发", () => {
-    // TODO(合并后)：OpenCode 给越过的工具补的失败回执正文是硬编码中文「已中断」（走查显示 B15），
-    // 英文界面会露中文。「显示」一路把它改成显式终态后，这条白名单要删掉。
-    const allowed = new Set(["plugins/opencode/telemetry.rs"]);
+    // 状态词由前端按界面语言给：后端下发中文正文，英文界面就会露中文（走查显示 B15）。
     const root = join(SRC, "../src-tauri/crates/meowo-agent/src");
     const files: string[] = [];
     const collect = (dir: string) => {
       for (const entry of readdirSync(dir, { withFileTypes: true })) {
         const path = join(dir, entry.name);
         if (entry.isDirectory()) collect(path);
-        else if (entry.name.endsWith(".rs")) files.push(path);
+        // *_tests.rs 是整份的测试模块（回放测试的块标签等），不是下发给界面的正文。
+        else if (entry.name.endsWith(".rs") && !entry.name.endsWith("_tests.rs")) files.push(path);
       }
     };
     collect(root);
@@ -197,13 +196,11 @@ describe("状态词表", () => {
         const code = line.trim();
         if (code.startsWith("//")) return;
         for (const word of zhWords) {
-          if (code.includes(`"${word}"`) && !allowed.has(name)) offences.push(`${name}:${index + 1} 硬编码「${word}」`);
+          if (code.includes(`"${word}"`)) offences.push(`${name}:${index + 1} 硬编码「${word}」`);
         }
       });
     }
     expect(offences).toEqual([]);
-    // 白名单里的文件确实还有这个问题：修掉后这条会失败，提醒删白名单。
-    expect(read(join(root, "plugins/opencode/telemetry.rs"))).toContain(`"已中断"`);
   });
 
   it("后端通知标题的状态词取自同一份词表，不再各写一句", () => {
