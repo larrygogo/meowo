@@ -2066,6 +2066,13 @@ fn reopen_pending(
 mod tests {
     use super::*;
 
+    /// 排队是进程级全局状态（QUEUED、EXECUTOR）：碰它的测试一律先拿这把锁，串行执行，互不干扰
+    /// （cargo test 默认多线程并行）。某个测试 panic 后锁会中毒，照样拿来用，后面的测试不受牵连。
+    fn queue_test_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     fn modes(pairs: &[(&str, &str)]) -> HashMap<String, String> {
         pairs
             .iter()
@@ -2365,6 +2372,7 @@ mod tests {
     /// 做空 M3：排队按会话记，后选的合并进同一份（各栏逐个覆盖），取走后清空。
     #[test]
     fn queued_settings_merge_and_survive_until_taken() {
+        let _queue = queue_test_lock();
         let sid = 987_654;
         enqueue(sid, &serde_json::json!({ "model": { "id": "a", "label": "A" }, "modes": { "permission": "yolo" }, "label": "A" }));
         let merged = enqueue(sid, &serde_json::json!({ "modes": { "work": "plan" }, "label": "计划：开" }));
@@ -2381,6 +2389,7 @@ mod tests {
     /// 条目跟过去并与新 id 上的合并；取走后放回时以期间新排的为准。
     #[test]
     fn host_queue_keeps_wait_conditions_and_follows_id_changes() {
+        let _queue = queue_test_lock();
         let modes = HashMap::from([("permission".to_string(), "yolo".to_string())]);
         let sid = 987_655;
         enqueue_waiting(sid, request_json(Some("kimi-code/k3"), None, &modes), "lead");
@@ -2466,6 +2475,7 @@ mod tests {
     /// 最终做空 P5：只含终端项的条目，会话归档 / 删除时出队并带提醒文案；队列空了执行线程退出。
     #[test]
     fn terminal_only_entries_leave_on_archive_and_executor_exits() {
+        let _queue = queue_test_lock();
         let dir = std::env::temp_dir().join(format!("meowo-p5-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let db = dir.join("board.db");
@@ -2492,13 +2502,12 @@ mod tests {
         assert_eq!(take_dropped(temp, "session_gone", "zh"), Some(None));
         assert_eq!(take_dropped(real, "session_gone", "zh"), None);
 
-        // 执行线程：队列空了这一轮返回 None（线程退出）并释放标记；有条目时接着跑。
-        let others: Vec<i64> = queue().keys().copied().collect();
-        if others.is_empty() {
-            EXECUTOR.store(true, std::sync::atomic::Ordering::Release);
-            assert_eq!(executor_round(), None);
-            assert!(!EXECUTOR.load(std::sync::atomic::Ordering::Acquire));
-        }
+        // 执行线程：队列空了这一轮返回 None（线程退出）并释放标记；有条目时接着跑。持着测试锁，别的测试
+        // 不会同时往队列里放东西，这里的「空」是确定的。
+        assert!(queue().is_empty(), "其他测试都应清理掉自己的条目");
+        EXECUTOR.store(true, std::sync::atomic::Ordering::Release);
+        assert_eq!(executor_round(), None);
+        assert!(!EXECUTOR.load(std::sync::atomic::Ordering::Acquire));
         enqueue(real, &terminal_only);
         assert!(executor_round().is_some_and(|ids| ids.contains(&real)));
         queue().remove(&real);
@@ -2600,6 +2609,7 @@ mod tests {
     /// 做空 R4：超时只算「空闲却切不了」，新入队 / 重新选择时不在计时；取消提醒带上要切的名字。
     #[test]
     fn queue_timeout_only_counts_blocked_idle_time() {
+        let _queue = queue_test_lock();
         let sid = 987_657;
         enqueue(sid, &serde_json::json!({ "label": "K2" }));
         assert!(queue().get(&sid).unwrap().blocked.is_none());
