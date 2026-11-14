@@ -6,6 +6,8 @@ const TA = ".chat-compose textarea";
 const W620 = [620, 760];
 const PHONE = [375, 812];
 const SETTINGS = [620, 460];
+// 已结束回合的过程块默认收起：点开才看得到里面的工具行。
+const OPEN_FOLDS = ["eval", "document.querySelectorAll('.turn-fold:not(.is-open) > .turn-fold-head').forEach((b) => b.click())"];
 const MODEL_BTN = ".chat-compose .chat-model-select .chat-model-button";
 
 export const QA_SHOTS = [
@@ -81,6 +83,23 @@ export const QA_SHOTS = [
   // 长命令：卡内滚动，输入框不被挤（矮窗与键盘弹出各一张）。
   { name: "qa-card-long-command-short", scene: "flow-card-long-command", size: [620, 480], sel: ".chat-approval-actions" },
   { name: "qa-m-card-long-command-kbd", page: "mobile", scene: "mobile-card-long-command", size: [375, 476], sel: ".chat-approval-actions" },
+  // 手机页审批卡「已过期」：假时钟一次拨快 302 秒（jump），倒计时归零。?clock=live 让 Date.now 跟着假时钟走。
+  { name: "qa-m-card-expired", page: "mobile", scene: "mobile-card-claude-approval", params: "clock=live", size: PHONE, sel: ".chat-approval-actions", steps: [["jump", 302000]] },
+  // ── 五家的工具行与运行状态（harness 见 toolScenes.ts，条目取自五家回放样本）──
+  // 整份时间线（过程块点开）、运行中、等待审批（工具行写待批准、过程块不收起）、回合出错。手机拍等待审批与整份时间线的底部。
+  ...["claude", "codex", "kimi", "gemini", "opencode"].flatMap((agent) => [
+    { name: `qa-tools-${agent}`, scene: `flow-tools-${agent}-all`, size: W620, sel: ".chat-flat-steps .chat-tool", steps: [OPEN_FOLDS, ["eval", "document.querySelector('.chat-scroll').scrollTop = 0"]] },
+    { name: `qa-tools-${agent}-running`, scene: `flow-tools-${agent}-running`, size: W620, sel: '.chat-tool[data-state="running"]' },
+    { name: `qa-tools-${agent}-waiting`, scene: `flow-tools-${agent}-waiting`, size: W620, sel: ".chat-tool-status.is-waiting" },
+    { name: `qa-tools-${agent}-error`, scene: `flow-tools-${agent}-error`, size: W620, sel: ".chat-message.is-turn-error" },
+    { name: `qa-m-tools-${agent}-waiting`, page: "mobile", scene: `mobile-tools-${agent}-waiting`, size: PHONE, sel: ".chat-tool-status.is-waiting" },
+    { name: `qa-m-tools-${agent}`, page: "mobile", scene: `mobile-tools-${agent}-all`, size: PHONE, sel: ".chat-flat-steps .chat-tool", steps: [OPEN_FOLDS] },
+  ]),
+  // 展开一行 diff（codex 的补丁不带行号）、一行失败的命令；待办行（样本里没有，场景里按各家规则补的一条）。
+  { name: "qa-tools-codex-diff", scene: "flow-tools-codex-all", size: W620, sel: ".chat-tool[open] .chat-tool-udiff", steps: [OPEN_FOLDS, ["click", '.chat-tool[data-state="done"]:has(.chat-tool-verb[data-kind="edit"]) > summary']] },
+  { name: "qa-m-tools-gemini-diff", page: "mobile", scene: "mobile-tools-gemini-all", size: PHONE, sel: ".chat-tool[open] .chat-tool-udiff", steps: [OPEN_FOLDS, ["click", '.chat-tool[data-state="done"]:has(.chat-tool-verb[data-kind="edit"]) > summary']] },
+  { name: "qa-tools-claude-fail", scene: "flow-tools-claude-all", size: W620, sel: ".chat-tool.is-error[open]", steps: [OPEN_FOLDS, ["click", ".chat-tool.is-error > summary"]] },
+  { name: "qa-tools-claude-todo", scene: "flow-tools-claude-todo", size: W620, sel: '.chat-tool-icon[data-kind="todo"]', steps: [OPEN_FOLDS, ["eval", "document.querySelector('.chat-scroll').scrollTop = 0"]] },
   { name: "qa-image", scene: "flow-image", sel: ".chat-image-thumb-btn" },
   { name: "qa-lightbox", scene: "flow-image", sel: ".chat-lightbox", steps: [["click", ".chat-image-thumb-btn"]] },
   { name: "qa-drop", scene: "flow-drop", sel: ".chat-drop-overlay" },

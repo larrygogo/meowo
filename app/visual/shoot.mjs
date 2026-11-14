@@ -212,6 +212,9 @@ async function runSteps(page, ctx, steps, netIdle) {
     else if (op === "log") console.log("  · " + JSON.stringify(await page.evaluate(a)));
     else if (op === "wait") await loc().waitFor({ state: "attached", timeout: 8000 }).catch(() => {});
     else if (op === "tick") { await ctx.clock.runFor(a); await netIdle(60); continue; }
+    // jump：把假时钟一次拨快 a 毫秒，期间到点的定时器各只触发一次。拍「等很久才出现」的状态用它（审批卡 300 秒
+    // 过期）：tick 会把这段时间里每一次轮询都真跑一遍，手机页推 302 秒十分钟都跑不完。
+    else if (op === "jump") { await ctx.clock.fastForward(a); await netIdle(60); }
     else if (op === "mouse") await page.mouse.move(a, b);
     else throw new Error("未知动作：" + op);
     for (let i = 0; i < 4; i++) { await ctx.clock.runFor(STEP_MS); await netIdle(60); }

@@ -158,7 +158,7 @@ describe("等待审批时的过程块", () => {
     const items = upTo("claude", (item) => item.type === "tool_use" && item.kind === "write");
     const waiting = show(items, "waiting");
     const label = (root: HTMLElement) => lastTool(root).querySelector(":scope > summary > .chat-tool-status");
-    expect(lastTool(waiting.container).open).toBe(false);
+    expect(lastTool(waiting.container).hasAttribute("open")).toBe(false);
     expect(label(waiting.container)?.textContent).toBe("待批准");
     expect(label(waiting.container)?.classList.contains("is-waiting")).toBe(true);
     waiting.unmount();

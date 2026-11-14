@@ -107,7 +107,7 @@ describe("提问卡（屏幕通道）：三家的表单同一张卡", () => {
   });
 
   it("自定义答案输入框：输入法合成中的回车不提交，WebKit 只剩 keyCode 229 的那一下也不提交", () => {
-    const withInput = cases.map(([, attention]) => attention).find((attention) => attention.options.some((option) => option.kind === "input"))!;
+    const withInput = cases.map(([, attention]) => attention).find((attention) => (attention.options ?? []).some((option) => option.kind === "input"))!;
     expect(withInput, "样本里应有带自定义答案的表单").toBeTruthy();
     const onCustomSubmit = vi.fn();
     render(<TerminalQuestionCard attention={withInput} kind="question" live customText="zhong" returnFocusTo={focus}
