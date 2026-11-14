@@ -458,7 +458,10 @@ pub trait AgentPlugin: Sync {
     fn effort_switch(&self) -> Option<crate::EffortSwitchKind> {
         if self.effort_control().is_some() {
             Some(crate::EffortSwitchKind::Command)
-        } else if self.model_switch().is_some_and(crate::ModelSwitch::carries_effort) {
+        } else if self
+            .model_switch()
+            .is_some_and(crate::ModelSwitch::carries_effort)
+        {
             Some(crate::EffortSwitchKind::ServerSettings)
         } else {
             None
@@ -1294,7 +1297,9 @@ mod tests {
         }
         // 侧问命令进补全：只有声明了侧问能力的 Claude 有 /btw。
         for id in ["claude", "codex", "kimi", "gemini", "opencode"] {
-            let ui = by_id(id).unwrap().chat_ui(&crate::chat_ui::ChatUiContext::default());
+            let ui = by_id(id)
+                .unwrap()
+                .chat_ui(&crate::chat_ui::ChatUiContext::default());
             assert_eq!(
                 ui.slash_commands.iter().any(|c| c.name == "/btw"),
                 id == "claude",
