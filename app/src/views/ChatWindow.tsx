@@ -1719,8 +1719,10 @@ export function ChatWindow() {
         ?.find((option) => option.id === dimension)?.switch === "restart")
       // Codex 从别的档切进 workspace-write 档（必要时询问 / 自动审查）时，进程若没带 Windows 沙箱参数，后端改走带参
       // 接回（做空第五轮 P3）。前端看不到进程参数，按「可能重启」先把 TUI 草稿搬走；已在 workspace-write 档里互切不算。
-      || (provider === "codex" && Object.entries(request.modes ?? {}).some(([dimension, value]) => {
-        const choices = agentsForOptions?.find((agent) => agent.id === provider)?.launch_options?.find((option) => option.id === dimension)?.choices;
+      // 按声明表判断（会话服务栏、档的启动参数带 --sandbox workspace-write），不按 agent 身份分支（架构守卫）。
+      || (Object.entries(request.modes ?? {}).some(([dimension, value]) => {
+        const option = agentsForOptions?.find((agent) => agent.id === provider)?.launch_options?.find((candidate) => candidate.id === dimension);
+        const choices = option?.switch === "server" ? option.choices : undefined;
         const workspaceWrite = (id: string | undefined) => !!choices?.find((choice) => choice.id === id)?.args.join(" ").includes("--sandbox workspace-write");
         return workspaceWrite(value) && !workspaceWrite(history?.agentModes.find((mode) => mode.dimension === dimension)?.value);
       })),
