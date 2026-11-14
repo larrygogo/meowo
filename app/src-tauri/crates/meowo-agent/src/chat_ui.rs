@@ -438,8 +438,15 @@ pub struct CommandReply {
 /// 之后发的消息被它吞掉（回合结束后自动执行的切换同样撞上，验收 6）。
 ///
 /// 用户已经在对话页选定了要切到哪一个，所以认出这个框、且框里要切到的正是所选的那一个、
-/// 焦点就在「Yes」那一行时，替他按下确认；对不上就不按，照旧报未确认并给看终端画面的出口。
-/// 三条正则都按**不区分大小写**、逐行匹配（前端带 i 标志编译）。
+/// 焦点就在「Yes」那一行时，替他按下确认。
+///
+/// **只替用户确认这一种**。同一个确认组件还用于别的事：2.1.325 程序文件里与上面几句相邻的还有
+/// `A PreModelSwitch hook asked you to confirm`，那是用户自己配的 hook 要求人来确认，Meowo 不能代按
+/// （做空审查 2026-11-14）。所以自动确认要同时满足：框里有 `auto_pattern` 那一行（「因为缓存，下一条
+/// 回复更慢」这个已知的、用户选模型时就隐含同意的理由）、没有 `manual_pattern` 那一行、焦点在确认项上、
+/// 目标对得上。任何一条不满足都不按键，这个框作为一张普通的选择卡交给用户（规则
+/// `claude:switch-confirm`），不留在终端里。
+/// 几条正则都按**不区分大小写**、逐行匹配（前端带 i 标志编译）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 #[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
@@ -451,6 +458,10 @@ pub struct SwitchConfirm {
     pub accept_pattern: &'static str,
     /// 确认键（焦点已在确认项上时按）。
     pub accept_input: &'static str,
+    /// 标题与确认项之间必须有的那一行：有它才是「切到刚选的那一个」这种可以代按的确认。
+    pub auto_pattern: &'static str,
+    /// 标题与确认项之间出现它就不代按（hook 要求人来确认）。None = 没有这种情况。
+    pub manual_pattern: Option<&'static str>,
 }
 
 /// 撤回最近几轮对话的能力（对照 Kimi 桌面版用户消息上的「撤回」：这条及之后移出上下文，

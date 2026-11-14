@@ -270,6 +270,10 @@ pub fn regex_rule_keys(p: &dyn crate::AgentPlugin) -> Vec<String> {
     if p.switch_confirm().is_some() {
         keys.push("switch_confirm.title".to_string());
         keys.push("switch_confirm.accept".to_string());
+        keys.push("switch_confirm.auto".to_string());
+    }
+    if p.switch_confirm().and_then(|c| c.manual_pattern).is_some() {
+        keys.push("switch_confirm.manual".to_string());
     }
     if p.undo_control().and_then(|u| u.reject_pattern).is_some() {
         keys.push("undo.reject".to_string());
@@ -356,6 +360,8 @@ pub fn resolve(p: &dyn crate::AgentPlugin, rule: &str) -> Option<RuleText> {
         "model.reject" => one(p.model_select_reply().map(|r| r.reject_pattern)),
         "switch_confirm.title" => one(p.switch_confirm().map(|c| c.title_pattern)),
         "switch_confirm.accept" => one(p.switch_confirm().map(|c| c.accept_pattern)),
+        "switch_confirm.auto" => one(p.switch_confirm().map(|c| c.auto_pattern)),
+        "switch_confirm.manual" => one(p.switch_confirm().and_then(|c| c.manual_pattern)),
         "undo.reject" => one(p.undo_control().and_then(|u| u.reject_pattern)),
         "status_line" => one(p.status_line_pattern()),
         "retry_line" => one(p.retry_line_pattern()),

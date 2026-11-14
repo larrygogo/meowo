@@ -84,6 +84,18 @@
       {
         "confirms": null,
         "details": "none",
+        "id": "claude:switch-confirm",
+        "kind": "choice",
+        "last": true,
+        "options": [],
+        "patterns": [
+          "^\\s*(?:switch model|change effort level)\\?\\s*$"
+        ],
+        "unparsed_keys": []
+      },
+      {
+        "confirms": null,
+        "details": "none",
         "id": "claude:plan-approval",
         "kind": "plan",
         "last": true,

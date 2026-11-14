@@ -83,6 +83,24 @@ pub(super) static DEPS: &[D] = &[
         "   ❯ 1. Yes, switch to Haiku 5.5",
         "2.1.325 真机屏幕 2026-11-14；模板 `Yes, switch to ${Bt}`",
     ),
+    D::new(
+        "switch_confirm.auto",
+        "Your next response will be slower and use more tokens",
+        "   Your next response will be slower and use more tokens",
+        "2.1.325 真机屏幕 2026-11-14（tests/probe_claude_model.rs，/model haiku 与 /model fable 两帧都有）",
+    ),
+    D::new(
+        "switch_confirm.manual",
+        "A PreModelSwitch hook asked you to confirm",
+        "   A PreModelSwitch hook asked you to confirm",
+        "2.1.325 程序文件：与 `Switch model?` 相邻的字面量；没有真机画面（要触发得给用户配 hook）",
+    ),
+    D::new(
+        "attention:claude:switch-confirm",
+        "Switch model?",
+        "   Switch model?",
+        "2.1.325 真机屏幕 2026-11-14（tests/probe_claude_model.rs）；另一句标题 Change effort level? 由 switch_confirm.title 盯着",
+    ),
     // ── /model ──
     D::new(
         "model.confirm",

@@ -687,6 +687,11 @@ impl AgentPlugin for Claude {
             title_pattern: r"^\s*(?:switch model|change effort level)\?\s*$",
             accept_pattern: r"^\s*❯\s*(?:\d+\.\s*)?yes, switch to (.+?)\s*$",
             accept_input: "\r",
+            // 真机两帧（/model haiku、/model fable）都有这一行；/effort 的同款框按程序文件也是它。
+            auto_pattern: r"^\s*your next response will be slower and use more tokens\s*$",
+            // 2.1.325 程序文件：`A PreModelSwitch hook asked you to confirm`（没有真机画面：要触发它得给
+            // 用户配一个 hook）。只认关键词，hook 给的理由拼在哪里不影响判断。
+            manual_pattern: Some(r"premodelswitch hook"),
         })
     }
 
@@ -992,6 +997,20 @@ impl AgentPlugin for Claude {
                         typed: None,
                     },
                 ],
+                unparsed_keys: &[],
+            },
+            // `/model`、`/effort` 的二次确认框（形态见 chat_ui::SwitchConfirm）。Meowo 自己发起的切换、且是
+            // 「切到刚选的那一个」时由对话页代按，不出卡；其余情况（hook 要求确认、焦点在取消项上、
+            // 用户自己在终端里打的命令）这个框就是一张选择卡，选项照原文列出。标题是整行才认：
+            // 正文里引用这句不弹卡。
+            crate::chat_ui::AttentionPattern {
+                id: "claude:switch-confirm",
+                patterns: &[r"^\s*(?:switch model|change effort level)\?\s*$"],
+                last: true,
+                details: crate::chat_ui::AttentionDetails::None,
+                kind: crate::chat_ui::AttentionKind::Choice,
+                confirms: None,
+                options: &[],
                 unparsed_keys: &[],
             },
             crate::chat_ui::AttentionPattern {

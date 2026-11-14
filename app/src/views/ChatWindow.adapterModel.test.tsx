@@ -5,6 +5,7 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { emptyComposerFrame, invoke, terminalProps, adapter, chatUiReady } from "./chatWindow.harness";
 import { ChatWindow } from "./ChatWindow";
 import { zh } from "../i18n/zh";
+import { markRemoteUi } from "../remoteMode";
 import { chatUi } from "../test/agents";
 import { terminalAttention } from "../terminalAttention";
 
@@ -540,4 +541,77 @@ describe("ChatWindow 适配回归", () => {
       await screen.findByText(zh.chat.effortRejected("Effort 'max' isn't supported by this model"), {}, { timeout: 4000 });
     }
   });
+});
+
+/// 做空审查 2026-11-14 ⑬：hook 要求确认的框不代按，作为选择卡交给用户；用户在卡上选了，切换照样记住。
+describe("claude 切模型撞上 hook 要求确认的框", () => {
+  const { snapshot, setup, writes } = adapter;
+  const HOOK_DIALOG = ["   Switch model?", "   A PreModelSwitch hook asked you to confirm", "   ❯ 1. Yes, switch to Haiku 5.5", "     2. No, go back"];
+  const recognize = (lines: string[]) => terminalAttention(lines.join("\n"), [], false, false,
+    { provider: "claude", selectorAnchors: [], attentionPatterns: chatUi("claude")!.attention_patterns });
+
+  it.each([["桌面", 531, false], ["手机页", 532, true]] as const)("%s：不按确认键，出选择卡；用户点确认项后等到确认行才记住选择", async (_name, id, remote) => {
+    if (remote) markRemoteUi();
+    try {
+      const base = setup(id);
+      let enters = 0;
+      invoke.mockImplementation((command, args) => {
+        if (command === "write_managed_terminal" && args?.data === "\r") enters += 1;
+        if (command === "managed_terminal_snapshot") return Promise.resolve(snapshot(id,
+          enters === 0 ? "" : enters === 1 ? HOOK_DIALOG.join("\r\n")
+            : `${HOOK_DIALOG.join("\r\n")}\r\n  ⎿  Set model to Haiku 5.5 and saved as your default for new sessions`));
+        return base(command, args);
+      });
+      render(<ChatWindow />);
+      await screen.findByText(`适配-${id}`);
+      await chatUiReady();
+      fireEvent.click(await screen.findByRole("button", { name: "切换模型" }));
+      fireEvent.click(await screen.findByRole("menuitem", { name: /^Haiku/ }));
+      await waitFor(() => expect(writes(id)).toContain("/model haiku"));
+      await waitFor(() => expect(enters).toBe(1));
+      // 屏幕识别认出确认框（与生产同一个解析器）。
+      const attention = recognize(HOOK_DIALOG);
+      expect(attention?.kind).toBe("choice");
+      act(() => (terminalProps.current!.onAttention as (value: unknown) => void)(attention));
+      // 卡片上屏，确认键没有被代按。
+      const yes = await screen.findByRole("button", { name: "Yes, switch to Haiku 5.5" }, { timeout: 4000 });
+      expect(screen.getByRole("button", { name: "No, go back" })).toBeTruthy();
+      expect(enters).toBe(1);
+      expect(screen.queryByText(zh.chat.modelSwitchUnconfirmed)).toBeNull();
+      expect(invoke.mock.calls.some(([command]) => command === "set_session_launch_selection")).toBe(false);
+      // 用户自己点确认项。
+      fireEvent.click(yes);
+      await waitFor(() => expect(invoke).toHaveBeenCalledWith("set_session_launch_selection", expect.objectContaining({ sessionId: id, option: "model", choice: "haiku" })), { timeout: 6000 });
+      expect(enters).toBe(2);
+    } finally {
+      (globalThis as Record<string, unknown>).__MEOWO_REMOTE__ = undefined;
+      document.body.classList.remove("remote-ui");
+    }
+  }, 20_000);
+
+  it("正常的确认框：照旧代按，卡片不闪出来", async () => {
+    const base = setup(533);
+    const DIALOG = ["   Switch model?", "   Your next response will be slower and use more tokens", "   ❯ 1. Yes, switch to Haiku 5.5", "     2. No, go back"];
+    let enters = 0;
+    let hold = true;
+    invoke.mockImplementation((command, args) => {
+      if (command === "write_managed_terminal" && args?.data === "\r") enters += 1;
+      if (command === "managed_terminal_snapshot") return Promise.resolve(snapshot(533,
+        enters === 0 || hold ? "" : enters === 1 ? DIALOG.join("\r\n") : `${DIALOG.join("\r\n")}\r\n  ⎿  Set model to Haiku 5.5 and saved as your default for new sessions`));
+      return base(command, args);
+    });
+    render(<ChatWindow />);
+    await screen.findByText("适配-533");
+    await chatUiReady();
+    fireEvent.click(await screen.findByRole("button", { name: "切换模型" }));
+    fireEvent.click(await screen.findByRole("menuitem", { name: /^Haiku/ }));
+    await waitFor(() => expect(enters).toBe(1));
+    // 屏幕识别先于切换流程的轮询认出了框：压着，不上屏。
+    act(() => (terminalProps.current!.onAttention as (value: unknown) => void)(recognize(DIALOG)));
+    expect(screen.queryByRole("button", { name: "Yes, switch to Haiku 5.5" })).toBeNull();
+    hold = false;
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("set_session_launch_selection", expect.objectContaining({ sessionId: 533, choice: "haiku" })), { timeout: 6000 });
+    expect(enters).toBe(2);
+    expect(screen.queryByRole("button", { name: "Yes, switch to Haiku 5.5" })).toBeNull();
+  }, 15_000);
 });

@@ -1282,6 +1282,10 @@ mod tests {
                 .unwrap();
             let title = regex::Regex::new(&format!("(?i){}", spec.title_pattern)).unwrap();
             let accept = regex::Regex::new(&format!("(?i){}", spec.accept_pattern)).unwrap();
+            let auto = regex::Regex::new(&format!("(?i){}", spec.auto_pattern)).unwrap();
+            let manual = spec
+                .manual_pattern
+                .map(|pattern| regex::Regex::new(&format!("(?i){pattern}")).unwrap());
             let lines: Vec<&str> = frame["lines"]
                 .as_array()
                 .unwrap()
@@ -1293,9 +1297,16 @@ mod tests {
                 .iter()
                 .rposition(|line| title.is_match(line))
                 .and_then(|at| {
-                    lines[at + 1..]
-                        .iter()
-                        .find_map(|line| accept.captures(line).map(|caps| squash(&caps[1])))
+                    let body = &lines[at + 1..];
+                    let accept_at = body.iter().position(|line| accept.is_match(line))?;
+                    // 标题与确认项之间：要有可代按的理由行，不能有 hook 要求确认的那一行。
+                    let between = &body[..accept_at];
+                    if !between.iter().any(|line| auto.is_match(line))
+                        || manual.as_ref().is_some_and(|m| between.iter().any(|line| m.is_match(line)))
+                    {
+                        return None;
+                    }
+                    accept.captures(body[accept_at]).map(|caps| squash(&caps[1]))
                 })
                 .filter(|shown| shown.contains(&target))
                 .map(|_| spec.accept_input);

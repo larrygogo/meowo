@@ -31,6 +31,7 @@ import { ApprovalRequestCard } from "./chat/ApprovalRequestCard";
 import { TerminalPromptCard, TerminalQuestionCard } from "./chat/TerminalRequestCards";
 import { approvalCardModel, cardBadge, cardTitle, denyReasonOf, isPersistentChoice, terminalFeedbackFor, terminalInputForChoice, type ApprovalChoice } from "./chat/requestCard";
 import { typeAnswerIntoTerminal } from "./chat/terminalTypedAnswer";
+import { holdSwitchDialog } from "./chat/switchConfirm";
 import { cardLockHint, composerCardLock, lockForPendingReview, lockForScreenCard, screenCardLockKind } from "./chat/composerCardLock";
 import { followUpInput, type PendingFollowUp } from "./chat/terminalFollowUp";
 import { CardAnnouncer } from "./chat/cardAnnouncer";
@@ -503,6 +504,8 @@ export function ChatWindow() {
       void writeManagedTerminal(activeSessionRef.current, followUp).catch(() => setTerminalAttention(attention));
       return;
     }
+    // 切模型、切思考档的命令刚发出：CLI 的二次确认框先不上屏，等切换流程决定代按还是交给用户（见 chat/switchConfirm）。
+    if (holdSwitchDialog(activeSessionRef.current, attention, (held) => setTerminalAttention(held))) return;
     setTerminalAttention((current) => current?.id === attention.id
       && current.text === attention.text
       && JSON.stringify(current.options) === JSON.stringify(attention.options)

@@ -1,10 +1,12 @@
 {
-  "note": "对话中途切换时 CLI 弹的二次确认框。spec 是插件声明的 switch_confirm（Rust 测试逐字核对）；frames 里 source 为 probe 的是 tests/probe_claude_model.rs 真机抓的屏幕原文，其余是在真机原文上改一处造的反例。前端 chat/switchConfirm.test.ts 与后端同一份判据都读它。",
+  "note": "对话中途切换时 CLI 弹的二次确认框。spec 是插件声明的 switch_confirm（Rust 测试逐字核对）；frames 里 source 为 probe 的是 tests/probe_claude_model.rs 真机抓的屏幕原文，其余是在真机原文上改一处造的反例。前端 chat/switchConfirm.test.ts 与后端同一份判据都读它。 verdict 是这一帧的处置：confirm 代按、manual 交给用户（出选择卡）、none 不是确认框。",
   "spec": {
     "claude": {
       "title_pattern": "^\\s*(?:switch model|change effort level)\\?\\s*$",
       "accept_pattern": "^\\s*❯\\s*(?:\\d+\\.\\s*)?yes, switch to (.+?)\\s*$",
-      "accept_input": "\r"
+      "accept_input": "\r",
+      "auto_pattern": "^\\s*your next response will be slower and use more tokens\\s*$",
+      "manual_pattern": "premodelswitch hook"
     }
   },
   "frames": [
@@ -20,7 +22,8 @@
         "   ❯ 1. Yes, switch to Haiku 5.5",
         "     2. No, go back"
       ],
-      "expect": "\r"
+      "expect": "\r",
+      "verdict": "confirm"
     },
     {
       "name": "claude-2.1.325-model-fable",
@@ -34,7 +37,8 @@
         "   ❯ 1. Yes, switch to Fable 5.2",
         "     2. No, go back"
       ],
-      "expect": "\r"
+      "expect": "\r",
+      "verdict": "confirm"
     },
     {
       "name": "claude-other-model",
@@ -48,7 +52,8 @@
         "   ❯ 1. Yes, switch to Haiku 5.5",
         "     2. No, go back"
       ],
-      "expect": null
+      "expect": null,
+      "verdict": "manual"
     },
     {
       "name": "claude-focus-on-cancel",
@@ -62,7 +67,8 @@
         "     1. Yes, switch to Haiku 5.5",
         "   ❯ 2. No, go back"
       ],
-      "expect": null
+      "expect": null,
+      "verdict": "manual"
     },
     {
       "name": "claude-no-index",
@@ -76,7 +82,8 @@
         "   ❯ Yes, switch to Haiku 5.5",
         "     No, go back"
       ],
-      "expect": "\r"
+      "expect": "\r",
+      "verdict": "confirm"
     },
     {
       "name": "claude-effort-high",
@@ -89,7 +96,8 @@
         "   ❯ 1. Yes, switch to high",
         "     2. No, go back"
       ],
-      "expect": "\r"
+      "expect": "\r",
+      "verdict": "confirm"
     },
     {
       "name": "claude-quoted-in-chat",
@@ -100,7 +108,51 @@
         "● The dialog offers:",
         "   ❯ 1. Yes, switch to Haiku 5.5"
       ],
-      "expect": null
+      "expect": null,
+      "verdict": "none"
+    },
+    {
+      "name": "claude-hook-asked",
+      "provider": "claude",
+      "source": "按程序文件造：PreModelSwitch hook 要求确认（2.1.325 字面量 A PreModelSwitch hook asked you to confirm），没有真机画面。不代按",
+      "target": "haiku",
+      "lines": [
+        "   Switch model?",
+        "   A PreModelSwitch hook asked you to confirm",
+        "   ❯ 1. Yes, switch to Haiku 5.5",
+        "     2. No, go back"
+      ],
+      "expect": null,
+      "verdict": "manual"
+    },
+    {
+      "name": "claude-hook-asked-with-cache-note",
+      "provider": "claude",
+      "source": "按程序文件造：hook 要求确认，同时带着缓存说明。有 hook 那一行就不代按",
+      "target": "haiku",
+      "lines": [
+        "   Switch model?",
+        "   A PreModelSwitch hook asked you to confirm: team policy",
+        "   Your next response will be slower and use more tokens",
+        "   ❯ 1. Yes, switch to Haiku 5.5",
+        "     2. No, go back"
+      ],
+      "expect": null,
+      "verdict": "manual"
+    },
+    {
+      "name": "claude-unknown-reason",
+      "provider": "claude",
+      "source": "反例：确认框里没有已知的理由行（将来这个组件被用在别的事上）。不代按",
+      "target": "haiku",
+      "lines": [
+        "   Switch model?",
+        "   Something new that needs a human",
+        "   ❯ 1. Yes, switch to Haiku 5.5",
+        "     2. No, go back"
+      ],
+      "expect": null,
+      "verdict": "manual"
     }
   ]
 }
