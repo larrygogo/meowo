@@ -711,6 +711,11 @@ fn apply_blocking(
         persist(&store, session_id, &modes, model.as_deref());
     }
     if plan.dialog_model.is_some() || plan.dialog_agent.is_some() {
+        // 宿主执行时，往 TUI 输入框打字之前重新看一次屏（做空 R9）：从取屏到这里要读清单，用户可能
+        // 刚打了字，对话框路线「输入框原本是空的」前提就不成立了。
+        if let Some(check) = before_stop {
+            check()?;
+        }
         match dialog_switch(app, broker, db, session_id, &header, &catalog, &plan, tui) {
             Ok(confirmed) => outcome.confirmed = confirmed,
             Err(DialogError::Unsupported) => {
@@ -878,15 +883,40 @@ pub(crate) fn apply_launch_server_settings(
 /// 的全部校验，这里不解释它。宿主收进来的条目另带 `waitFor`（见 [`SettingsOutcome`] 的 `queued`）。
 struct Queued {
     request: serde_json::Value,
-    /// 入队（或等待条件刚解除）的时刻：超过 [`QUEUE_TTL`] 出队并通知前端（做空 N5）。
+    /// 这份选择最近一次被（重新）选的时刻：等 Lead / 等打开的条目超过 [`HOLD_CAP`] 出队（做空 R7）。
+    created: std::time::Instant,
+    /// 等待条件最近一次仍成立的时刻（Lead 关卡解除后观望 [`LEAD_GRACE`] 用）。
     since: std::time::Instant,
-    /// 宿主连续几次认不出输入框。到 [`COMPOSER_MISS_LIMIT`] 就不再试，留给对话页（会先搬草稿）执行。
+    /// 「会话空闲、却仍切不了」（输入框有字 / 认不出、服务没就绪、被复核拦下）从何时起。会话在跑、在等
+    /// Lead、没打开时清空、不计时（做空 R4：一轮跑多久都不该把排着的切换取消）。超过 [`QUEUE_TTL`] 出队。
+    blocked: Option<std::time::Instant>,
+    /// 临时 id 的启动从何时起不见了（重开时有几秒空档，做空 R6），超过 [`GONE_GRACE`] 才算没了。
+    gone: Option<std::time::Instant>,
+    /// 宿主**连续**几次认不出输入框，认出一次（不论空不空）就清零（做空 R8）。到 [`COMPOSER_MISS_LIMIT`]
+    /// 就不再试，留给对话页（会先搬草稿）执行。
     misses: u32,
 }
 
-/// 排着的切换最多等多久。只算「等这一轮结束」的时间；等 Lead 关卡答复、等会话打开的期间不算（关卡可能
-/// 几个小时后才答，会话可能第二天才开），条件解除后重新起算。
+impl Queued {
+    fn new(request: serde_json::Value) -> Self {
+        let now = std::time::Instant::now();
+        Self {
+            request,
+            created: now,
+            since: now,
+            blocked: None,
+            gone: None,
+            misses: 0,
+        }
+    }
+}
+
+/// 「空闲却切不了」最多耗多久（见 [`Queued::blocked`]）。
 const QUEUE_TTL: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+/// 等 Lead 关卡答复、等会话打开的条目最多留多久：归档了或再也不打开的会话，条目不能永远留着（做空 R7）。
+const HOLD_CAP: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+/// 临时 id 的启动不见了多久才算真没了（重开要先停旧进程、等收尾、再起新的，见 reopen_pending_with）。
+const GONE_GRACE: std::time::Duration = std::time::Duration::from_secs(20);
 /// Lead 关卡等待解除后再观望多久才动（见 [`run_queued`]）。
 const LEAD_GRACE: std::time::Duration = std::time::Duration::from_secs(15);
 /// 宿主连续认不出输入框的次数上限（执行线程 1.5 秒一轮，约 30 秒）。
@@ -946,14 +976,7 @@ pub(crate) fn queue_session_settings(
 pub(crate) fn enqueue(session_id: i64, request: &serde_json::Value) -> serde_json::Value {
     let mut map = queue();
     let merged = merge_queued(map.get(&session_id).map(|q| &q.request), request);
-    map.insert(
-        session_id,
-        Queued {
-            request: merged.clone(),
-            since: std::time::Instant::now(),
-            misses: 0,
-        },
-    );
+    map.insert(session_id, Queued::new(merged.clone()));
     merged
 }
 
@@ -994,18 +1017,57 @@ fn emit_settings(app: &tauri::AppHandle, session_id: i64, kind: &str, reason: Op
     );
 }
 
-/// 出队并告诉前端为什么（`expired` / `session_gone`），不让选择悄悄消失（做空 N5）。
+/// 出队并告诉前端为什么（`expired` / `session_gone`），不让选择悄悄消失（做空 N5）。超时取消另发一条
+/// 灵动岛提醒：对话页不在这个会话上时也看得到（做空 R4）。
 fn drop_queued(app: &tauri::AppHandle, session_id: i64, kind: &str) {
-    if queue().remove(&session_id).is_some() {
-        emit_settings(app, session_id, kind, None);
+    let Some(entry) = queue().remove(&session_id) else {
+        return;
+    };
+    emit_settings(app, session_id, kind, None);
+    if kind == "expired" {
+        let lang = crate::settings::ui_lang(&crate::settings::load_settings());
+        let name = entry.request["label"].as_str().unwrap_or_default();
+        let store = crate::open_store(&crate::db_path()).ok();
+        let title = store
+            .as_ref()
+            .and_then(|store| store.session_title(session_id).ok().flatten())
+            .unwrap_or_default();
+        let project = store
+            .as_ref()
+            .and_then(|store| store.session_cwd(session_id).ok().flatten())
+            .and_then(|cwd| std::path::Path::new(&cwd).file_name().map(|n| n.to_string_lossy().into_owned()))
+            .unwrap_or_default();
+        crate::watch::emit_island_alert(app, session_id, "error", &title, &project, Some(expired_label(lang, name)));
     }
 }
 
-/// 等待条件还没解除：等待时间从头算。
-fn touch_queued(session_id: i64) {
-    if let Some(entry) = queue().get_mut(&session_id) {
-        entry.since = std::time::Instant::now();
+/// 超时取消的提醒文案（与前端 chat.settingsQueueExpired 同义，带上要切的名字）。
+pub(crate) fn expired_label(lang: &str, name: &str) -> String {
+    match (lang == "en", name.is_empty()) {
+        (true, true) => "The queued switch waited too long and was canceled".into(),
+        (true, false) => format!("Switching to \"{name}\" waited too long and was canceled"),
+        (false, true) => "排着的切换等太久，已取消".into(),
+        (false, false) => format!("切换到「{name}」等太久，已取消"),
     }
+}
+
+/// 改条目上的计时状态（条目可能刚被前端取走，不在了就算了）。
+fn with_queued(session_id: i64, update: impl FnOnce(&mut Queued)) {
+    if let Some(entry) = queue().get_mut(&session_id) {
+        update(entry);
+    }
+}
+
+/// 会话在跑 / 等待条件仍成立：不算「空闲却切不了」。
+fn not_blocked(session_id: i64) {
+    with_queued(session_id, |entry| entry.blocked = None);
+}
+
+/// 会话空闲却切不了：开始（或继续）计时。
+fn mark_blocked(session_id: i64) {
+    with_queued(session_id, |entry| {
+        entry.blocked.get_or_insert_with(std::time::Instant::now);
+    });
 }
 
 static EXECUTOR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -1113,6 +1175,7 @@ const RETRY_LATER: &[&str] = &[
     "settings/server_not_ready",
     "settings/busy_now",
     "settings/background_busy",
+    "settings/session_gone",
 ];
 
 fn run_queued(app: &tauri::AppHandle, session_id: i64) {
@@ -1120,59 +1183,98 @@ fn run_queued(app: &tauri::AppHandle, session_id: i64) {
     let Some(state) = app.try_state::<crate::AppState>() else {
         return;
     };
-    let Some((request, since, misses)) = queue()
+    let Some((request, created, since, blocked, gone, misses)) = queue()
         .get(&session_id)
-        .map(|q| (q.request.clone(), q.since, q.misses))
+        .map(|q| (q.request.clone(), q.created, q.since, q.blocked, q.gone, q.misses))
     else {
         return;
     };
-    let expired = since.elapsed() > QUEUE_TTL;
+    let expired = blocked.is_some_and(|at| at.elapsed() > QUEUE_TTL);
     if session_id < 0 {
-        // 未认领会话由前端处理（重开要切到新的临时 id）；启动已经没了、或等太久的出队。
-        if state.ptys.pending_launch(session_id).is_none() {
+        // 未认领会话由前端处理（重开要切到新的临时 id）。启动不见了一小段（重开的空档）不算没了，
+        // 持续不见才出队（做空 R6）。
+        if state.ptys.pending_launch(session_id).is_some() {
+            with_queued(session_id, |entry| {
+                entry.gone = None;
+                entry.blocked.get_or_insert_with(std::time::Instant::now);
+            });
+            if expired {
+                drop_queued(app, session_id, "expired");
+            }
+        } else if gone.is_some_and(|at| at.elapsed() > GONE_GRACE) {
             drop_queued(app, session_id, "session_gone");
-        } else if expired {
-            drop_queued(app, session_id, "expired");
+        } else if gone.is_none() {
+            with_queued(session_id, |entry| entry.gone = Some(std::time::Instant::now()));
+        }
+        return;
+    }
+    let wait = wait_for(&request).map(str::to_owned);
+    // 等打开：只看 PTY 在不在（不开库），一直不打开的到上限出队（做空 R7）。
+    if wait.as_deref() == Some("open") && !state.ptys.is_active(session_id) {
+        if created.elapsed() > HOLD_CAP {
+            drop_queued(app, session_id, "session_gone");
+        } else {
+            not_blocked(session_id);
         }
         return;
     }
     let Ok(store) = crate::open_store(&state.db_path) else {
         return;
     };
-    // 会话行没了（被删）：出队；读库出错只是这一轮跳过。
-    if matches!(store.session_provider_opt(session_id), Ok(None)) {
+    let Ok(header) = store.session_header(session_id) else {
+        // 会话行没了：出队；读库出错只是这一轮跳过。
+        if matches!(store.session_provider_opt(session_id), Ok(None)) {
+            drop_queued(app, session_id, "session_gone");
+        }
+        return;
+    };
+    // 归档了的会话不会再被打开、也不会再有回合结束（做空 R7）。
+    if header.archived {
         drop_queued(app, session_id, "session_gone");
         return;
     }
-    let Ok(header) = store.session_header(session_id) else {
-        return;
-    };
-    // 等待条件（便宜的判断，先于读聊天历史）：没解除就重新起算。
-    match wait_for(&request) {
-        Some("open") if !state.ptys.is_active(session_id) => return touch_queued(session_id),
-        Some("lead") if lead_holds_restart(&header) => return touch_queued(session_id),
-        // 等待器交出答复就退出，CLI 要过一会儿才在空闲时开新回合：解除后再观望一段，免得赶在
-        // 续跑那一轮开始前把它杀掉。
-        Some("lead") if since.elapsed() < LEAD_GRACE => return,
-        Some(_) => {
-            // 条件解除：变回普通的「空闲后切换」，前端也能取走执行（宿主认不出输入框时靠它），提示跟着改。
-            if let Some(entry) = queue().get_mut(&session_id) {
-                if let Some(map) = entry.request.as_object_mut() {
-                    map.remove("waitFor");
-                }
-                entry.since = std::time::Instant::now();
+    if wait.as_deref() == Some("lead") {
+        if lead_holds_restart(&header) {
+            if created.elapsed() > HOLD_CAP {
+                drop_queued(app, session_id, "expired");
+            } else {
+                with_queued(session_id, |entry| {
+                    entry.since = std::time::Instant::now();
+                    entry.blocked = None;
+                });
             }
-            emit_settings(app, session_id, "queued", None);
             return;
         }
-        None => {}
+        // 等待器交出答复就退出，CLI 要过一会儿才在空闲时开新回合：解除后再观望一段，免得赶在
+        // 续跑那一轮开始前把它杀掉。之后变回普通的「空闲后切换」（前端也能取走，后端会再查一次 Lead）。
+        if since.elapsed() < LEAD_GRACE {
+            return;
+        }
+        with_queued(session_id, |entry| {
+            if let Some(map) = entry.request.as_object_mut() {
+                map.remove("waitFor");
+            }
+        });
+        emit_settings(app, session_id, "queued", None);
+        return;
     }
     if expired {
         drop_queued(app, session_id, "expired");
         return;
     }
     if misses >= COMPOSER_MISS_LIMIT {
-        return; // 宿主认不出输入框，不再每轮读历史；等对话页执行或到期出队
+        // 宿主连续认不出输入框，不再每轮读历史。等打开 / 等就绪的条目前端取不走，这时去掉等待条件交给
+        // 对话页（会先搬草稿再执行）；计时照走，到期出队。
+        if wait.is_some() {
+            with_queued(session_id, |entry| {
+                if let Some(map) = entry.request.as_object_mut() {
+                    map.remove("waitFor");
+                }
+            });
+            emit_settings(app, session_id, "queued", None);
+        }
+        mark_blocked(session_id);
+        return;
     }
     let Some(plugin) = meowo_agent::resolve(Some(&header.provider)) else {
         return;
@@ -1182,9 +1284,10 @@ fn run_queued(app: &tauri::AppHandle, session_id: i64) {
     let Some(history) = crate::chat::session_snapshot(&state, session_id) else {
         return; // 会话行在（上面查过），读不出来只是这一轮跳过
     };
-    // 连着且在跑 / 等审批：继续等。没连着：执行（Kimi/Gemini 记成下次打开的启动参数，Codex/OpenCode
-    // 转成等打开，见 apply_blocking）。
+    // 连着且在跑 / 等审批：继续等，不计时。没连着：执行（Kimi/Gemini 记成下次打开的启动参数，
+    // Codex/OpenCode 转成等打开，见 apply_blocking）。
     if history.connected && !host_idle(&state, &history) {
+        not_blocked(session_id);
         return;
     }
     let model = request["model"]["id"].as_str().map(str::to_owned);
@@ -1225,13 +1328,20 @@ fn run_queued(app: &tauri::AppHandle, session_id: i64) {
     let composer = guard.as_ref().and_then(|guard| composer_state(&lines, guard));
     if history.connected && needs_empty_composer(plugin, model.is_some(), &modes) {
         match composer {
-            Some(true) => {}
-            // 有字：等用户发出去，或对话页打开时由前端先搬草稿再执行。
-            Some(false) => return,
+            Some(true) => with_queued(session_id, |entry| entry.misses = 0),
+            // 有字：等用户发出去，或对话页打开时由前端先搬草稿再执行。认出来了，连续认不出的计数清零。
+            Some(false) => {
+                with_queued(session_id, |entry| {
+                    entry.misses = 0;
+                    entry.blocked.get_or_insert_with(std::time::Instant::now);
+                });
+                return;
+            }
             None => {
-                if let Some(entry) = queue().get_mut(&session_id) {
+                with_queued(session_id, |entry| {
                     entry.misses += 1;
-                }
+                    entry.blocked.get_or_insert_with(std::time::Instant::now);
+                });
                 return;
             }
         }
@@ -1245,7 +1355,8 @@ fn run_queued(app: &tauri::AppHandle, session_id: i64) {
         composer_empty: composer == Some(true),
         approval_pending: false,
     };
-    // broker.stop 前一刻复核：重新取屏和状态，仍空闲、无审批、输入框仍空才杀（做空 N4）。
+    // 动手前一刻复核（带参重启在 broker.stop 前、对话框路线在打字前）：重新取屏和状态，仍空闲、无审批、
+    // 输入框仍空才动（做空 N4 / R9）。
     let recheck = || -> Result<(), String> {
         let history = crate::chat::session_snapshot(&state, session_id).ok_or("settings/session_gone")?;
         if !history.connected || !host_idle(&state, &history) {
@@ -1273,22 +1384,26 @@ fn run_queued(app: &tauri::AppHandle, session_id: i64) {
         tui,
         Some(&recheck),
     );
+    // 放回时保留计时状态；「空闲却切不了」从这次起算（若还没在计）。
+    let retry = |mut entry: Queued| {
+        entry.blocked.get_or_insert_with(std::time::Instant::now);
+        put_back(session_id, entry);
+    };
     match result {
         Ok(outcome) if outcome.wait_for.is_some() => {
-            let mut request = taken.request;
-            request["waitFor"] = outcome.wait_for.unwrap_or_default().into();
-            put_back(
-                session_id,
-                Queued {
-                    request,
-                    since: std::time::Instant::now(),
-                    misses: 0,
-                },
-            );
+            let mut entry = taken;
+            entry.request["waitFor"] = outcome.wait_for.unwrap_or_default().into();
+            entry.since = std::time::Instant::now();
+            entry.created = std::time::Instant::now();
+            entry.blocked = None;
+            entry.misses = 0;
+            put_back(session_id, entry);
             emit_settings(app, session_id, "queued", outcome.reason);
         }
-        Ok(outcome) if outcome.kind == "not_now" => put_back(session_id, taken),
-        Err(reason) if RETRY_LATER.contains(&reason.as_str()) => put_back(session_id, taken),
+        // 服务端复核说此刻不能动（Codex 服务没握手、OpenCode TUI 没就绪 / 在忙 / 输入框有字）：放回，
+        // 等打开的条目保留 waitFor，前端取不走（做空 R5）。
+        Ok(outcome) if outcome.kind == "not_now" => retry(taken),
+        Err(reason) if RETRY_LATER.contains(&reason.as_str()) => retry(taken),
         Ok(outcome) => emit_settings(app, session_id, outcome.kind, outcome.reason),
         Err(reason) => emit_settings(app, session_id, "failed", Some(settings_reason(&reason))),
     }
@@ -1898,6 +2013,26 @@ mod tests {
         assert_eq!(back["modes"]["permission"], "manual");
         assert_eq!(back["waitFor"], "lead");
         queue().remove(&sid);
+    }
+
+    /// 做空 R4：超时只算「空闲却切不了」，新入队 / 重新选择时不在计时；取消提醒带上要切的名字。
+    #[test]
+    fn queue_timeout_only_counts_blocked_idle_time() {
+        let sid = 987_657;
+        enqueue(sid, &serde_json::json!({ "label": "K2" }));
+        assert!(queue().get(&sid).unwrap().blocked.is_none());
+        mark_blocked(sid);
+        let first = queue().get(&sid).unwrap().blocked.unwrap();
+        mark_blocked(sid);
+        assert_eq!(queue().get(&sid).unwrap().blocked, Some(first), "继续切不了时不重新起算");
+        not_blocked(sid);
+        assert!(queue().get(&sid).unwrap().blocked.is_none(), "会话在跑时清掉");
+        mark_blocked(sid);
+        enqueue(sid, &serde_json::json!({ "label": "K3" }));
+        assert!(queue().get(&sid).unwrap().blocked.is_none(), "重新选择从头算");
+        queue().remove(&sid);
+        assert_eq!(expired_label("zh", "只读"), "切换到「只读」等太久，已取消");
+        assert_eq!(expired_label("en", "Read only"), "Switching to \"Read only\" waited too long and was canceled");
     }
 
     /// 做空 N10：屏幕挂着审批 / 提问（blocked）时宿主不动，不靠 tab_class 把它归成 waiting 后再碰巧被挡。

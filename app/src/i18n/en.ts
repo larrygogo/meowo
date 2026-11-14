@@ -480,6 +480,7 @@ export const en: Dict = {
     settingsDeferred: (name: string) => `Switches to ${name} after this turn (canceled if Meowo restarts)`,
     settingsDeferredLead: (name: string) => `Switches to ${name} after the Lead gate is answered and the work resumes (canceled if Meowo restarts)`,
     settingsDeferredOpen: (name: string) => `Switches to ${name} once the session is opened (canceled if Meowo restarts)`,
+    settingsDeferredReady: (name: string) => `Switches to "${name}" once the session is ready (canceled if Meowo restarts)`,
     settingsQueueExpired: "Waited too long to switch, so it was canceled. Choose again",
     settingsApplying: "Switching",
     settingsComposerUnknown: "Couldn't read the terminal input box, so it wasn't restarted to keep your text",

@@ -121,6 +121,62 @@ describe("会话里切模型 / 模式的分派", () => {
     expect(undoRescue).toHaveBeenCalledTimes(1);
   });
 
+  /// 做空 R3 回归（原样移植 redteam-3 的 vt/undo.test.ts，期望反过来）：进程可能已被杀的失败路径上，
+  /// 对话页那份草稿必须留着——TUI 里的原稿已经随进程没了。rescueDraft / undoRescue 照抄 ChatWindow.tsx。
+  describe("重启失败时保住草稿", () => {
+    function run(outcome: () => Promise<unknown>) {
+      let prompt = "";
+      let rescued: string | null = null;
+      const tuiDraft = "这段只在 TUI 输入框里";
+      apply.mockImplementation(outcome);
+      const d = deps({
+        rescueDraft: async (move: boolean) => {
+          if (!move) return "occupied" as const;
+          rescued = tuiDraft;
+          prompt = prompt.trim() ? prompt + "\n" + tuiDraft : tuiDraft;
+          return "moved" as const;
+        },
+        undoRescue: () => {
+          const text = rescued;
+          rescued = null;
+          if (!text) return;
+          prompt = prompt === text ? "" : prompt.endsWith("\n" + text) ? prompt.slice(0, -(text.length + 1)) : prompt;
+        },
+      });
+      return { d, get prompt() { return prompt; } };
+    }
+    it("restart_stuck（stop 之后没收掉）：草稿留着", async () => {
+      const r = run(async () => { throw "terminal/restart_stuck"; });
+      const { result } = renderHook(() => useSessionSettings(r.d));
+      await act(async () => result.current.request({ model: { id: "kimi-code/k2", label: "K2" }, label: "K2" }));
+      expect(r.prompt).toBe("这段只在 TUI 输入框里");
+    });
+    it("stop 之后恰好退出被记成 next_open：草稿留着", async () => {
+      const r = run(async () => ({ kind: "next_open", sessionId: 7, confirmed: false, reason: null }));
+      const { result } = renderHook(() => useSessionSettings(r.d));
+      await act(async () => result.current.request({ model: { id: "kimi-code/k2", label: "K2" }, label: "K2" }));
+      expect(r.prompt).toBe("这段只在 TUI 输入框里");
+    });
+    it("后端明确没动进程（not_now）：撤回对话页那份", async () => {
+      const r = run(async () => ({ kind: "not_now", sessionId: 7, confirmed: false, reason: "settings/composer_not_empty" }));
+      const { result } = renderHook(() => useSessionSettings(r.d));
+      await act(async () => result.current.request({ model: { id: "kimi-code/k2", label: "K2" }, label: "K2" }));
+      expect(r.prompt).toBe("");
+    });
+  });
+
+  /// 做空 R5：对话页执行时服务没就绪（刚打开的 Codex），放回宿主队列等就绪，不丢、不报错，前端也不再抢。
+  it("服务没就绪时交给宿主等就绪", async () => {
+    apply.mockImplementation(async () => { throw "settings/server_not_ready"; });
+    const setSendError = vi.fn();
+    const { result } = renderHook(() => useSessionSettings(deps({ setSendError, restarts: () => false })));
+    await act(async () => result.current.request({ model: { id: "gpt-6", label: "GPT-6" }, label: "GPT-6" }));
+    expect(queue.get(7)).toMatchObject({ label: "GPT-6", waitFor: "ready" });
+    expect(setSendError).not.toHaveBeenCalled();
+    await waitFor(() => expect(result.current.notice).toBe("会话就绪后切换到「GPT-6」（重启 Meowo 会取消）"));
+    expect(apply).toHaveBeenCalledTimes(1);
+  });
+
   it("在跑或有待批审批时不调后端（不写终端、不重启），回合结束再执行", async () => {
     expect(mustDefer("running")).toBe(true);
     expect(mustDefer("pending")).toBe(true);

@@ -527,6 +527,8 @@ export const zh = {
     // 会话没在运行：Codex/OpenCode 恢复时不回放模型，打开后由宿主经会话服务补设（做空 N6）。
     settingsDeferredOpen: (name: string) => `打开会话后切换到 ${name}（重启 Meowo 会取消）`,
     // 排了 30 分钟这一轮还没结束（或宿主一直没等到空闲）：出队，告诉用户（做空 N5）。
+    // 对话页执行时会话服务 / TUI 还没就绪：交给宿主等就绪再切（做空 R5）。
+    settingsDeferredReady: (name: string) => `会话就绪后切换到「${name}」（重启 Meowo 会取消）`,
     settingsQueueExpired: "等太久没切成，已取消，请重新选择",
     settingsApplying: "正在切换",
     settingsComposerUnknown: "认不出终端输入框，为免丢字没有重启",

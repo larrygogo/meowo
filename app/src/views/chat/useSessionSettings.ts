@@ -37,9 +37,23 @@ export type SettingsRequest = {
   /** 提示里说「切换到 X」用的名字。 */
   label: string;
   /** 宿主队列里标的等待条件：lead = Lead 关卡答复并续跑后（重启会杀掉会话内等待器，做空 N3）；
-   *  open = 会话打开、TUI 握手后由宿主经服务补设（做空 N6）。有它时只由宿主执行。 */
-  waitFor?: "lead" | "open";
+   *  open = 会话打开、服务 / TUI 就绪后由宿主补设（做空 N6/R5）；ready = 对话页执行时会话服务或 TUI
+   *  还没就绪，交给宿主等就绪再执行（做空 R5）。有它时只由宿主执行。 */
+  waitFor?: "lead" | "open" | "ready";
 };
+
+/** 「此刻还不能动、等一会儿就行」的失败原因：放回宿主队列等就绪，不丢这次选择（做空 R5）。 */
+const RETRY_WHEN_READY = new Set([
+  "settings/server_not_ready",
+  "settings/busy_now",
+  "settings/background_busy",
+  "lead/opencode_tui_not_ready",
+  "lead/opencode_busy",
+]);
+
+/** 后端明确没动进程的结果：只有这些才把搬进对话页的草稿撤回（做空 R3）。出错、next_open（进程恰好
+ *  没了）、restart_stuck 之类都可能已经杀了进程，TUI 里的原稿跟着没了，对话页这份必须留着。 */
+const PROCESS_UNTOUCHED = new Set<SettingsOutcome["kind"]>(["queued", "not_now", "unsupported", "needs_new_session"]);
 
 /** TUI 输入框此刻：空 / 有草稿已搬进对话页 / 有字没搬（不重启的路线不搬，做空 N9）/ 认不出。 */
 export type DraftRescue = "empty" | "moved" | "occupied" | "unknown";
@@ -101,7 +115,7 @@ function asRequest(value: unknown): SettingsRequest | null {
   if (!value || typeof value !== "object") return null;
   const raw = value as Partial<SettingsRequest>;
   if (typeof raw.label !== "string") return null;
-  const waitFor = raw.waitFor === "lead" || raw.waitFor === "open" ? raw.waitFor : undefined;
+  const waitFor = raw.waitFor === "lead" || raw.waitFor === "open" || raw.waitFor === "ready" ? raw.waitFor : undefined;
   return { model: raw.model ?? undefined, modes: raw.modes ?? undefined, label: raw.label, ...(waitFor ? { waitFor } : {}) };
 }
 
@@ -147,7 +161,7 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
     runningRef.current = true;
     setApplying(true);
     let moved = false;
-    let restarted = false;
+    let untouched = false;
     try {
       const restarting = depsRef.current.restarts(request);
       if (restarting && depsRef.current.firstTurnPending) {
@@ -177,7 +191,7 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
         current,
         tui,
       });
-      restarted = outcome.kind === "restarted" || outcome.kind === "reopened";
+      untouched = PROCESS_UNTOUCHED.has(outcome.kind);
       if (depsRef.current.sessionId !== sessionId) return;
       switch (outcome.kind) {
         case "applied":
@@ -208,15 +222,19 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
           await enqueue(sessionId, request);
           break;
         case "not_now":
-          // 服务端复核说此刻不能动：刚开始跑一轮的排到这一轮之后；不在跑却被拒的（后台子任务、输入框有字）说原因。
+          // 服务端复核说此刻不能动：刚开始跑一轮的排到这一轮之后；服务 / TUI 没就绪的交给宿主等就绪；
+          // 其余（输入框有字等）说原因。
           if (mustDefer(depsRef.current.tone)) await enqueue(sessionId, request);
+          else if (RETRY_WHEN_READY.has(outcome.reason ?? "")) await enqueue(sessionId, { ...request, waitFor: "ready" });
           else depsRef.current.setSendError(formatBackendError(outcome.reason ?? "", t.locale));
           break;
       }
     } catch (error) {
-      if (depsRef.current.sessionId === sessionId) depsRef.current.setSendError(formatBackendError(error, t.locale));
+      // 会话服务还没握手（刚打开的 Codex 等）：放回宿主队列等就绪，不丢这次选择（做空 R5）。
+      if (typeof error === "string" && RETRY_WHEN_READY.has(error)) await enqueue(sessionId, { ...request, waitFor: "ready" });
+      else if (depsRef.current.sessionId === sessionId) depsRef.current.setSendError(formatBackendError(error, t.locale));
     } finally {
-      if (moved && !restarted && depsRef.current.sessionId === sessionId) depsRef.current.undoRescue?.();
+      if (moved && untouched && depsRef.current.sessionId === sessionId) depsRef.current.undoRescue?.();
       runningRef.current = false;
       setApplying(false);
     }
@@ -317,6 +335,7 @@ export function useSessionSettings(deps: SessionSettingsDeps) {
 
   const deferredText = (request: SettingsRequest) => request.waitFor === "lead" ? t.chat.settingsDeferredLead(request.label)
     : request.waitFor === "open" ? t.chat.settingsDeferredOpen(request.label)
+    : request.waitFor === "ready" ? t.chat.settingsDeferredReady(request.label)
     : t.chat.settingsDeferred(request.label);
   const notice = queued && queued.sessionId === deps.sessionId ? deferredText(queued.request)
     : nextOpen === deps.sessionId ? t.chat.settingsNextOpen
