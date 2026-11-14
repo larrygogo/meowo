@@ -65,7 +65,8 @@ export const ToolResultLine = memo(function ToolResultLine({ item, result, kind,
   // 行数、条数优先用后端给的真实数字：回执正文会被截断，按正文去数会少报。
   const count = result.count ?? lines.length;
   if (kind === "read") return <span className="chat-tool-out">{t.chat.toolReadLines(count)}</span>;
-  if (kind === "search") return <span className="chat-tool-out">{count ? t.chat.toolFoundLines(count) : t.chat.toolNoOutput}</span>;
+  // 后端明确给了 0 条就照实说「找到 0 条结果」；只有靠数正文、正文又是空的，才说无输出。
+  if (kind === "search") return <span className="chat-tool-out">{count || result.count === 0 ? t.chat.toolFoundLines(count) : t.chat.toolNoOutput}</span>;
   if (lines.length === 0) return <span className="chat-tool-out">{t.chat.toolNoOutput}</span>;
   const head = dedent(lines.slice(0, OUTPUT_HEAD_LINES));
   return (

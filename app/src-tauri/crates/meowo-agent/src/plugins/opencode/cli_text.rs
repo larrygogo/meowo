@@ -86,4 +86,17 @@ pub(super) static DEPS: &[D] = &[
         "esc interrupt",
         "1.19.3：`K(\"esc \")` 与 `\"interrupt\"` 相距 1677 字节（research-cli-drift O1）",
     ),
+    // ── 对话页中断分隔与工具行依赖的库内记录（2026-11-14，本机 1.19.5 的 opencode.db 与 opencode.exe）──
+    D::record(
+        "record:MessageAbortedError",
+        "MessageAbortedError",
+        r#"{"error":{"data":{"message":"Aborted"},"name":"MessageAbortedError"},"key":"~error","kind":"error","msg":"msg_142cd36290011e33OiUHQ20U5k","time":1792122113434}"#,
+        "1.19.x 库内实样经导出（用户中断，画中断分隔条而不是错误卡；本机 3 次）；opencode.exe 15 处",
+    ),
+    D::record(
+        "record:Tool execution aborted",
+        "Tool execution aborted",
+        r#"{"kind":"part","part":{"callID":"toolu_vrtx_01EovD7P","state":{"error":"Tool execution aborted","input":{"command":"ping -n 30 127.0.0.1"},"status":"error"},"tool":"bash","type":"tool"}}"#,
+        "1.19.x 库内实样经导出（用户中断时正在跑的工具以这句收场，工具行显示已中断而不是失败；本机 3 次）；opencode.exe 2 处",
+    ),
 ];

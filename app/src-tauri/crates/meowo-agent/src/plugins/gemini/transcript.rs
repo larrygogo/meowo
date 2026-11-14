@@ -199,6 +199,12 @@ fn materialize(source: &Path) -> Option<PathBuf> {
     materialize_in(source, &dir)
 }
 
+/// 回放测试用：把原始日志物化到指定目录（不碰用户数据目录）。
+#[cfg(test)]
+pub(crate) fn materialize_for_test(source: &Path, dir: &Path) -> Option<PathBuf> {
+    materialize_in(source, dir)
+}
+
 fn materialize_in(source: &Path, dir: &Path) -> Option<PathBuf> {
     let metadata = fs::metadata(source).ok()?;
     let stamp = (

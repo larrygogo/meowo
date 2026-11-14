@@ -360,15 +360,19 @@ fn tool_events(key: &str, part: &Value, timestamp: Option<String>) -> Vec<Transc
             false,
             false,
         ),
-        "error" => (
-            state
+        "error" => {
+            let error = state
                 .and_then(|s| s.get("error"))
                 .and_then(Value::as_str)
-                .unwrap_or_default()
-                .to_string(),
-            true,
-            false,
-        ),
+                .unwrap_or_default();
+            // 用户按 Esc 时，正在跑的工具以 error 收场，文案固定是这一句（本机 3 次中断都是）。
+            // 它是被打断，不是失败：不标红，由前端显示「已中断」。
+            if error == "Tool execution aborted" {
+                (String::new(), false, true)
+            } else {
+                (error.to_string(), true, false)
+            }
+        }
         // 只有「所在消息被后续消息越过」时才会导出未终态的工具（见 store::collect_lines）：
         // 它再也不会有结果了。补一条回执并标成被打断，否则对话页会永远挂着「运行中」。
         // 「已中断」这个词由前端按界面语言给：此前这里把中文当回执正文下发，英文界面露中文。

@@ -1020,6 +1020,13 @@
           "note": "2.5.1 wire.jsonl 实样（粘贴图片的地址形态，research-cli-drift K3）；kimi.EXE 20 处",
           "rule": "record:kimi-file://",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/telemetry.rs:253"
+        },
+        {
+          "legacy": false,
+          "needle": "turn.ended",
+          "note": "2.6.1 wire.jsonl 实样（reason=cancelled 画中断分隔条、failed 出错误卡；本机 164 份主链里 cancelled 17 次）；kimi.exe 73 处",
+          "rule": "record:turn.ended",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/telemetry.rs:435"
         }
       ],
       "id": "kimi",
@@ -1259,6 +1266,27 @@
           ],
           "rule": "screen:transcript_viewer",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/screen.rs:30"
+        },
+        {
+          "legacy": false,
+          "needle": "turn_aborted",
+          "note": "0.167.2 rollout 实样（用户中断处的分隔条，68 份里 64 次）；codex.exe 17 处",
+          "rule": "record:turn_aborted",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/telemetry.rs:601"
+        },
+        {
+          "legacy": false,
+          "needle": "Script running",
+          "note": "0.167.2 rollout 实样（exec 脚本让到后台时的回执头，结果之后由 wait 取）；codex.exe `Script running with cell ID` 2 处",
+          "rule": "record:Script running",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/exec_script.rs:423"
+        },
+        {
+          "legacy": false,
+          "needle": "aborted by user",
+          "note": "0.167.2 rollout 实样（脚本被用户打断时的回执，工具行据此显示已中断）；codex.exe 4 处",
+          "rule": "record:aborted by user",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/exec_script.rs:404"
         }
       ],
       "id": "codex",
@@ -1287,28 +1315,28 @@
           "needle": "shift+tab to accept edits",
           "note": "",
           "rule": "literal:shift+tab to accept edits",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:349"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:351"
         },
         {
           "legacy": false,
           "needle": "auto-accept edits",
           "note": "",
           "rule": "literal:auto-accept edits",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:353"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:355"
         },
         {
           "legacy": false,
           "needle": "yolo ctrl+y",
           "note": "",
           "rule": "literal:yolo ctrl+y",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:357"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:359"
         },
         {
           "legacy": false,
           "needle": "shift+tab to manual",
           "note": "",
           "rule": "literal:shift+tab to manual",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:361"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:363"
         },
         {
           "legacy": false,
@@ -1364,21 +1392,21 @@
           "needle": "allow execution of",
           "note": "0.65.0 bundle：`Allow execution of` 在工具确认框里；同规则还认 Apply this change? / Do you want to proceed? / 沙箱扩权 To run [Shell] …",
           "rule": "attention:gemini:command-approval",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:409"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:411"
         },
         {
           "legacy": false,
           "needle": "usage limit reached",
           "note": "0.65.0 bundle：`Usage limit reached`；高负载框 `We are currently experiencing high demand for ${model}.` 同规则",
           "rule": "attention:gemini:usage-limit",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:421"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:423"
         },
         {
           "legacy": false,
           "needle": "answer questions",
           "note": "0.65.0 bundle：ask_user 提问表单表头 `Answer Questions`",
           "rule": "attention:gemini:question",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:430"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/mod.rs:432"
         },
         {
           "legacy": false,
@@ -1400,6 +1428,13 @@
           "note": "0.65.0 bundle：表头 `Answer Questions`，底部提示 `Enter to select` 各段以 ` \\xB7 ` 连接，整串搜不到原样",
           "rule": "screen:ask_user_dialog",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/screen.rs:70"
+        },
+        {
+          "legacy": false,
+          "needle": "Request cancelled.",
+          "note": "0.6x 会话日志实样（用户按 Esc 后的 info 记录，对话页据此画中断分隔条）；0.68.0 bundle 里 18 处",
+          "rule": "record:Request cancelled.",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/gemini/transcript.rs:1075"
         }
       ],
       "id": "gemini",
@@ -1569,6 +1604,20 @@
           "note": "1.19.3 opencode.exe：`c(x,k(\"\\u25b3\")),c(j,k(\"permission required\"))`，三角符号与文字分开渲染",
           "rule": "attention:opencode:command-approval",
           "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/mod.rs:328"
+        },
+        {
+          "legacy": false,
+          "needle": "MessageAbortedError",
+          "note": "1.19.x 库内实样经导出（用户中断，画中断分隔条而不是错误卡；本机 3 次）；opencode.exe 15 处",
+          "rule": "record:MessageAbortedError",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/telemetry.rs:524"
+        },
+        {
+          "legacy": false,
+          "needle": "Tool execution aborted",
+          "note": "1.19.x 库内实样经导出（用户中断时正在跑的工具以这句收场，工具行显示已中断而不是失败；本机 3 次）；opencode.exe 2 处",
+          "rule": "record:Tool execution aborted",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/opencode/telemetry.rs:370"
         }
       ],
       "id": "opencode",

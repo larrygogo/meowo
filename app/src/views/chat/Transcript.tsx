@@ -306,9 +306,19 @@ export const Transcript = memo(function Transcript({ sessionId, items, activity 
     const units = processItems.filter((entry) => entry.type !== "tool_result").length;
     // 这一段过程还在进行 = 会话在进行、这一段在末尾、后面还没有正文（正文一到，这段过程就算结束）。
     const foldActivity: TurnActivity = isLive && bodyItems.length === 0 ? blockActivity : "idle";
+    // 一条调用都没有、只剩回执的段（调用落在已加载窗口之外）什么都不画：不单列这一档的话，
+    // 它会被套成一个空的过程块，摘要写着「思考过程」。为它插的日期分隔条也撤掉，游标还原，
+    // 留给下一段去插。
+    if (units === 0 && bodyItems.length === 0) {
+      if (record.daySep) lastDay = record.lastDayBefore;
+      record.nodes = [];
+      record.daySep = false;
+      index = next;
+      continue;
+    }
     if (units === 1) {
       record.nodes.push(...renderProcess());
-    } else if (processItems.length > 0) {
+    } else if (units > 1) {
       record.nodes.push(
         <TurnFold
           key={`fold-${turnItems[0].id}`}
