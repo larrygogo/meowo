@@ -1076,6 +1076,16 @@ mod tests {
         );
     }
 
+    /// 2.6.1 的 live 回合标签是 `Working for <时长>`（workingLabel）；同屏输入框不得抢成等待。
+    #[test]
+    fn kimi_working_for_duration_outranks_composer_prompt() {
+        let s = snap(&[" \u{280B} Working for 12s", "\u{2502} >      \u{2502}"]);
+        assert_eq!(
+            state_of(evaluate("kimi", &s)),
+            Some((ScreenState::Working, "braille_spinner_working"))
+        );
+    }
+
     /// 反向钉子：转录里用户消息是 bullet 开头的 `> ...`（user-message.ts），没有
     /// `│` 边框——不能认成空闲输入框，只能落 fallback。
     #[test]

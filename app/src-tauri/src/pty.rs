@@ -3289,6 +3289,9 @@ impl PtyBroker {
             }
             bindings.insert(from_id, to_id);
         }
+        drop(sessions);
+        #[cfg(not(test))]
+        crate::prompt_queue::move_prompt_queue(&crate::db_path(), from_id, to_id);
         Ok(Some(managed))
     }
 

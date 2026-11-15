@@ -76,6 +76,8 @@ export type OutgoingPrompt = {
   ackId?: string;
   /// 正文已写、提交结果未知；恢复/重试时必须先确认原生输入框，不能再拼一份正文。
   bodyWritten?: boolean;
+  /// 宿主队列条目 id：投递中与原生回执共用一条显示，不渲染成两张卡。
+  queueId?: number;
 };
 
 export type PromptAck = Extract<ChatItem, { type: "prompt_queued" }>;
@@ -302,7 +304,7 @@ const EMPTY: readonly OutgoingPrompt[] = [];
 /// 手机页面被回收不能丢原文；保存未完成的投递，恢复时将未知结果标为uncertain而不自动重发。
 /// 保留旧键名与旧failed格式，升级后用户仍能找回之前的草稿。
 const FAILED_KEY_PREFIX = "meowo-outgoing-failed:";
-type StoredFailed = Pick<OutgoingPrompt, "kind" | "text" | "attachmentOnly" | "at" | "draft" | "ackId" | "bodyWritten"> & {
+type StoredFailed = Pick<OutgoingPrompt, "kind" | "text" | "attachmentOnly" | "at" | "draft" | "ackId" | "bodyWritten" | "queueId"> & {
   phase?: OutgoingPhase;
   anchor?: Omit<OutgoingAnchor, "priorItemIds"> & { priorItemIds: string[] };
 };
@@ -325,8 +327,8 @@ function writeFailed(sessionId: number, list: readonly OutgoingPrompt[]) {
   if (sessionId < 0) return; // 同 readFailed：临时 id 不落盘，认领搬到真 id 后再存
   try {
     const failed: StoredFailed[] = list.filter((prompt) => prompt.phase !== "inserted")
-      .map(({ kind, text, attachmentOnly, at, draft, phase, ackId, bodyWritten, anchor }) => ({
-        kind, text, attachmentOnly, at, draft, phase, ackId, bodyWritten,
+      .map(({ kind, text, attachmentOnly, at, draft, phase, ackId, bodyWritten, queueId, anchor }) => ({
+        kind, text, attachmentOnly, at, draft, phase, ackId, bodyWritten, queueId,
         anchor: { ...anchor, priorItemIds: [...anchor.priorItemIds] },
       }));
     if (failed.length === 0) localStorage.removeItem(FAILED_KEY_PREFIX + sessionId);
@@ -387,7 +389,7 @@ export function createOutgoingStore() {
       hydrate(sessionId);
       return bySession.get(sessionId) ?? EMPTY;
     },
-    add(sessionId: number, draft: { kind: OutgoingKind; text: string; attachmentOnly: boolean; anchor: OutgoingAnchor; at?: number; phase?: OutgoingPhase; draft?: OutgoingPrompt["draft"]; bodyWritten?: boolean }): number {
+    add(sessionId: number, draft: { kind: OutgoingKind; text: string; attachmentOnly: boolean; anchor: OutgoingAnchor; at?: number; phase?: OutgoingPhase; draft?: OutgoingPrompt["draft"]; bodyWritten?: boolean; queueId?: number }): number {
       hydrate(sessionId);
       nextId += 1;
       const prompt: OutgoingPrompt = {
@@ -401,6 +403,7 @@ export function createOutgoingStore() {
         anchor: draft.anchor,
         draft: draft.draft,
         bodyWritten: draft.bodyWritten,
+        queueId: draft.queueId,
       };
       put(sessionId, [...(bySession.get(sessionId) ?? EMPTY), prompt]);
       return prompt.id;

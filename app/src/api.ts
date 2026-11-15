@@ -82,6 +82,25 @@ import type { ResizeManagedTerminalArgs } from "./generated/contracts/bridge/Res
 import type { ResolvePendingApprovalArgs } from "./generated/contracts/bridge/ResolvePendingApprovalArgs";
 import type { RespondRuntimeRequestArgs } from "./generated/contracts/bridge/RespondRuntimeRequestArgs";
 import type { SavePastedAttachmentArgs } from "./generated/contracts/bridge/SavePastedAttachmentArgs";
+import type { PromptQueueEnqueueArgs } from "./generated/contracts/bridge/PromptQueueEnqueueArgs";
+import type { PromptQueueEditArgs } from "./generated/contracts/bridge/PromptQueueEditArgs";
+import type { PromptQueueEntryArgs } from "./generated/contracts/bridge/PromptQueueEntryArgs";
+import type { PromptQueueFinishArgs } from "./generated/contracts/bridge/PromptQueueFinishArgs";
+import type { QueueDraftDto } from "./generated/contracts/QueueDraftDto";
+import type { QueuedPromptDto } from "./generated/contracts/QueuedPromptDto";
+import type { PromptQueueChangedDto } from "./generated/contracts/PromptQueueChangedDto";
+import type { CheckpointTurnDto } from "./generated/contracts/CheckpointTurnDto";
+import type { CheckpointRestoreDto } from "./generated/contracts/CheckpointRestoreDto";
+import type { CheckpointTurnArgs } from "./generated/contracts/bridge/CheckpointTurnArgs";
+import type { CheckpointFileArgs } from "./generated/contracts/bridge/CheckpointFileArgs";
+import type { CheckpointRestoreArgs } from "./generated/contracts/bridge/CheckpointRestoreArgs";
+import type { CheckpointUndoArgs } from "./generated/contracts/bridge/CheckpointUndoArgs";
+import type { PrReviewDto } from "./generated/contracts/PrReviewDto";
+import type { PrReviewArgs } from "./generated/contracts/bridge/PrReviewArgs";
+import type { PrCommentArgs } from "./generated/contracts/bridge/PrCommentArgs";
+import type { PrLineCommentArgs } from "./generated/contracts/bridge/PrLineCommentArgs";
+import type { PrMonitorSetArgs } from "./generated/contracts/bridge/PrMonitorSetArgs";
+import type { PrMonitorWakeArgs } from "./generated/contracts/bridge/PrMonitorWakeArgs";
 import type { SearchChatTranscriptsArgs } from "./generated/contracts/bridge/SearchChatTranscriptsArgs";
 import type { SendBackgroundPromptArgs } from "./generated/contracts/bridge/SendBackgroundPromptArgs";
 import type { SessionArg } from "./generated/contracts/bridge/SessionArg";
@@ -332,6 +351,42 @@ export function openLink(url: string): Promise<void> {
  */
 export function savePastedAttachment(fileName: string, dataBase64: string): Promise<string> {
   return invoke("save_pasted_attachment", { fileName, dataBase64 } satisfies SavePastedAttachmentArgs);
+}
+
+export type { QueueDraftDto, QueuedPromptDto, PromptQueueChangedDto };
+
+export function promptQueueList(sessionId: number): Promise<QueuedPromptDto[]> {
+  return invoke("prompt_queue_list", { sessionId } satisfies SessionArg);
+}
+
+export function promptQueueEnqueue(sessionId: number, draft: QueueDraftDto): Promise<QueuedPromptDto> {
+  return invoke("prompt_queue_enqueue", { sessionId, draft } satisfies PromptQueueEnqueueArgs);
+}
+
+export function promptQueueEdit(sessionId: number, id: number, draft: QueueDraftDto): Promise<boolean> {
+  return invoke("prompt_queue_edit", { sessionId, id, draft } satisfies PromptQueueEditArgs);
+}
+
+export function promptQueueCancel(sessionId: number, id: number): Promise<boolean> {
+  return invoke("prompt_queue_cancel", { sessionId, id } satisfies PromptQueueEntryArgs);
+}
+
+export function promptQueueClaim(sessionId: number, id: number): Promise<QueuedPromptDto | null> {
+  return invoke("prompt_queue_claim", { sessionId, id } satisfies PromptQueueEntryArgs);
+}
+
+export function promptQueueFinish(sessionId: number, id: number, delivered: boolean): Promise<boolean> {
+  return invoke("prompt_queue_finish", { sessionId, id, delivered } satisfies PromptQueueFinishArgs);
+}
+
+export function promptQueueRetry(sessionId: number, id: number): Promise<boolean> {
+  return invoke("prompt_queue_retry", { sessionId, id } satisfies PromptQueueEntryArgs);
+}
+export function promptQueueOrphans(): Promise<QueuedPromptDto[]> {
+  return invoke("prompt_queue_orphans");
+}
+export function promptQueueRestoreOrphan(sessionId: number, id: number): Promise<QueuedPromptDto | null> {
+  return invoke("prompt_queue_restore_orphan", { sessionId, id } satisfies PromptQueueEntryArgs);
 }
 
 /**
@@ -775,7 +830,39 @@ export function openProjectDir(cwd: string): Promise<void> {
 export function getPullRequest(cwd: string): Promise<PullRequestDto | null> {
   return invoke("git_pull_request", { cwd });
 }
-export type { PullRequestDto };
+export type { PullRequestDto, PrReviewDto };
+export function prReview(cwd: string, sessionId: number, sessionCwd?: string | null): Promise<PrReviewDto | null> {
+  return invoke("pr_review", { cwd, sessionId, ...(sessionCwd ? { sessionCwd } : {}) } satisfies PrReviewArgs);
+}
+export function prComment(cwd: string, number: number, body: string, review: boolean, sessionCwd?: string | null): Promise<void> {
+  return invoke("pr_comment", { cwd, number, body, review, ...(sessionCwd ? { sessionCwd } : {}) } satisfies PrCommentArgs);
+}
+export function prLineComment(cwd: string, number: number, path: string, line: number, side: "NEW" | "OLD", body: string, sessionCwd?: string | null): Promise<void> {
+  return invoke("pr_line_comment", { cwd, number, path, line, side, body, ...(sessionCwd ? { sessionCwd } : {}) } satisfies PrLineCommentArgs);
+}
+export function prMonitorSet(cwd: string, sessionId: number, enabled: boolean, sessionCwd?: string | null, key?: string): Promise<void> {
+  return invoke("pr_monitor_set", { cwd, sessionId, enabled, ...(key ? { key } : {}), ...(sessionCwd ? { sessionCwd } : {}) } satisfies PrMonitorSetArgs);
+}
+export function prMonitorWake(sessionId: number, monitorKey: string, eventId: string): Promise<string> {
+  return invoke("pr_monitor_wake", { sessionId, monitorKey, eventId } satisfies PrMonitorWakeArgs);
+}
+
+export function checkpointTurns(sessionId: number): Promise<CheckpointTurnDto[]> {
+  return invoke("checkpoint_turns", { sessionId } satisfies SessionArg);
+}
+export function checkpointTurnDetail(sessionId: number, turn: number): Promise<CheckpointTurnDto | null> {
+  return invoke("checkpoint_turn_detail", { sessionId, turn } satisfies CheckpointTurnArgs);
+}
+export function checkpointFileDiff(sessionId: number, turn: number, repoRoot: string, path: string): Promise<GitFileDiffDto> {
+  return invoke("checkpoint_file_diff", { sessionId, turn, repoRoot, path } satisfies CheckpointFileArgs);
+}
+export function checkpointRestore(sessionId: number, turn: number, phase: "start" | "end"): Promise<CheckpointRestoreDto> {
+  return invoke("checkpoint_restore", { sessionId, turn, phase } satisfies CheckpointRestoreArgs);
+}
+export function checkpointUndo(sessionId: number, id: number): Promise<CheckpointRestoreDto> {
+  return invoke("checkpoint_undo", { sessionId, id } satisfies CheckpointUndoArgs);
+}
+export type { CheckpointTurnDto, CheckpointRestoreDto };
 
 export function getGitDiffSummary(cwd: string): Promise<GitDiffSummaryDto> {
   return invoke("git_diff_summary", { cwd } satisfies GitDiffSummaryArgs);

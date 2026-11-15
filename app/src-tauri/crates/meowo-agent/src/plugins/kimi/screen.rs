@@ -114,6 +114,8 @@ pub(super) static RULES: &[ScreenRule] = &[
             "working...",
             "using ",
             "working\u{2026}",
+            // 2.6.1 `workingLabel`：live 回合显示 `Working for <时长>`，不是省略号形态。
+            "working for ",
             "thinking\u{2026}",
             "compacting\u{2026}",
             "compacting...",

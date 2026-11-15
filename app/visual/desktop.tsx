@@ -15,6 +15,8 @@ import { installInputModality } from "../src/input-modality";
 import { installMocks, setExtraMock, store } from "../src/demo/mock";
 import { chatMock } from "../src/demo/chatData";
 import { panelMock } from "../src/demo/panelData";
+import { checkpointSceneMock } from "./checkpointScene";
+import { reviewSceneMock } from "./reviewScene";
 import { makeSession } from "../src/demo/data";
 import { savePanel } from "../src/views/chat/panelTabs";
 import { SETTINGS_SECTION_KEY } from "../src/settingsNav";
@@ -149,7 +151,7 @@ async function boot(): Promise<React.ReactNode> {
         }
         return chat(cmd);
       }
-      return scmMock(cmd) ?? panel(cmd, args) ?? chat(cmd);
+      return checkpointSceneMock(cmd) ?? reviewSceneMock(cmd) ?? scmMock(cmd) ?? panel(cmd, args) ?? chat(cmd);
     });
     installMocks("chat");
     bootAppearance({ scale: true });
@@ -172,6 +174,18 @@ async function boot(): Promise<React.ReactNode> {
           scroller.scrollTop += table.getBoundingClientRect().top - scroller.getBoundingClientRect().top - 240;
         }
         if (performance.now() - started > 1500) window.clearInterval(timer);
+      }, 100);
+    }
+    if (scene === "panel-pr-review") {
+      const timer = window.setInterval(() => {
+        const button = [...document.querySelectorAll<HTMLButtonElement>(".scm-forge-btn")].find((el) => el.getAttribute("aria-expanded") === "false");
+        if (button) { button.click(); window.clearInterval(timer); }
+      }, 100);
+    }
+    if (scene === "panel-checkpoints") {
+      const timer = window.setInterval(() => {
+        const button = [...document.querySelectorAll<HTMLButtonElement>(".chat-diff-scope button")].find((el) => el.textContent === (lang === "zh" ? "快照" : "Checkpoints"));
+        if (button) { button.click(); window.clearInterval(timer); }
       }, 100);
     }
     if (scene === "panel-diff") {

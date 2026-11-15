@@ -2,7 +2,7 @@
 // 夹具与 mock 见 chatWindow.harness.tsx（必须先于 ./ChatWindow 导入）。
 import { describe, expect, it } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { emptyComposerFrame, invoke, openDialog, setTitleMock, pickAttachments, respondWithHistory, chatUiReady } from "./chatWindow.harness";
+import { emptyComposerFrame, invoke, openDialog, setTitleMock, pickAttachments, respondWithHistory, chatUiReady, queueFallback, deliverQueuedNow } from "./chatWindow.harness";
 import { ChatWindow } from "./ChatWindow";
 import { submitGapMs } from "./chat/terminalSubmit";
 import { zh } from "../i18n/zh";
@@ -20,18 +20,19 @@ describe("ChatWindow", () => {
       sessionId: 93, title: "排队回执", status: "running", provider: "claude", cwd: "C:/repo",
       supported: true, offset: 0, reset: false, pendingReview: null, items: [], connected: true,
     };
-    invoke.mockImplementation((command: string) => {
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
       if (command === "get_chat_history") return Promise.resolve(current);
       if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
       if (command === "agent_chat_ui") return Promise.resolve(chatUi("claude"));
       if (command === "managed_terminal_snapshot") return Promise.resolve({ sessionId: 93, active: true, managed: true, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
-      return Promise.resolve();
+      return queueFallback(command, args) ?? Promise.resolve();
     });
     render(<ChatWindow />);
     await chatUiReady();
     const input = await screen.findByRole("combobox", { name: "发送消息给 Agent" });
     fireEvent.change(input, { target: { value: "插一句" } });
     fireEvent.keyDown(input, { key: "Enter" });
+    await deliverQueuedNow();
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 93, data: "插一句" }), { timeout: 3_000 });
     expect(await screen.findByText("1 条插话等待插入当前回合")).toBeTruthy();
     // 对话末尾的运行行先说插话的去向（用户此刻最关心的事），压过「工作中/请求中」。
@@ -47,7 +48,7 @@ describe("ChatWindow", () => {
 
     current = { ...current, status: "waiting" };
     await new Promise((resolve) => setTimeout(resolve, 800));
-    expect(screen.getAllByText(/等待插入/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("插一句").length).toBeGreaterThan(0);
     current = { ...current, lastUserText: "插一句" };
     await waitFor(() => expect(screen.queryByText(/等待插入/)).toBeNull(), { timeout: 3_000 });
   });
@@ -63,17 +64,18 @@ describe("ChatWindow", () => {
       sessionId: 95, title: "插话消解", status: "running", provider: "claude", cwd: "C:/repo",
       supported: true, offset: 0, reset: false, pendingReview: null, items: [], connected: true,
     };
-    invoke.mockImplementation((command: string) => {
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
       if (command === "get_chat_history") return Promise.resolve(current);
       if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
       if (command === "agent_chat_ui") return Promise.resolve(chatUi("claude"));
       if (command === "managed_terminal_snapshot") return Promise.resolve({ sessionId: 95, active: true, managed: true, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
-      return Promise.resolve();
+      return queueFallback(command, args) ?? Promise.resolve();
     });
     render(<ChatWindow />);
     const input = await screen.findByRole("combobox", { name: "发送消息给 Agent" });
     fireEvent.change(input, { target: { value: "插一句" } });
     fireEvent.keyDown(input, { key: "Enter" });
+    await deliverQueuedNow();
     expect(await screen.findByText("1 条插话等待插入当前回合")).toBeTruthy();
 
     current = {
@@ -100,12 +102,12 @@ describe("ChatWindow", () => {
       lastUserText: "ok, run the tests",
       items: [{ type: "user_text", id: "u1", timestamp: null, text: "ok, run the tests" }],
     };
-    invoke.mockImplementation((command: string) => {
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
       if (command === "get_chat_history") return Promise.resolve(current);
       if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
       if (command === "agent_chat_ui") return Promise.resolve(chatUi("claude"));
       if (command === "managed_terminal_snapshot") return Promise.resolve({ sessionId: 97, active: true, managed: true, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
-      return Promise.resolve();
+      return queueFallback(command, args) ?? Promise.resolve();
     });
     render(<ChatWindow />);
     const input = await screen.findByRole("combobox", { name: "发送消息给 Agent" });
@@ -113,6 +115,7 @@ describe("ChatWindow", () => {
     await screen.findByText("ok, run the tests");
     fireEvent.change(input, { target: { value: "ok" } });
     fireEvent.keyDown(input, { key: "Enter" });
+    await deliverQueuedNow();
     expect(await screen.findByText("1 条插话等待插入当前回合")).toBeTruthy();
     // 多轮轮询过去,旧证据不变:回执必须还在。
     await new Promise((resolve) => setTimeout(resolve, 1_500));
@@ -142,14 +145,14 @@ describe("ChatWindow", () => {
       sessionId: 98, title: "纯附件回执", status: "running", provider: "claude", cwd: "C:/repo",
       supported: true, offset: 0, reset: false, pendingReview: null, items: [], connected: true,
     };
-    invoke.mockImplementation((command: string) => {
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
       if (command === "get_chat_history") return Promise.resolve(current);
       if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
       if (command === "agent_chat_ui") return Promise.resolve(chatUi("claude"));
       // 剪贴板写不进去 → 退回指令文本通道;记账不受影响,占位回执照样进排队清单。
       if (command === "clipboard_set_image") return Promise.reject(new Error("clipboard occupied"));
       if (command === "managed_terminal_snapshot") return Promise.resolve({ sessionId: 98, active: true, managed: true, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
-      return Promise.resolve();
+      return queueFallback(command, args) ?? Promise.resolve();
     });
     render(<ChatWindow />);
     await waitFor(() => expect(screen.getByText("纯附件回执")).toBeTruthy());
@@ -159,6 +162,7 @@ describe("ChatWindow", () => {
     pickAttachments();
     await waitFor(() => expect(screen.getByAltText("shot.png")).toBeTruthy());
     fireEvent.keyDown(box(), { key: "Enter" });
+    await deliverQueuedNow();
     expect(await screen.findByText("1 条插话等待插入当前回合")).toBeTruthy();
     // transcript 落盘的是图片引用行,不含占位文本——旧的包含匹配在此永不消解。
     current = {
@@ -203,7 +207,7 @@ describe("ChatWindow", () => {
           // 真机切换语义:非空 → 暂存;空且有暂存 → 放回 composer。
           if (composer) { stashed = true; composer = ""; } else if (stashed) { stashed = false; composer = "旧暂存"; }
         }
-        return Promise.resolve();
+        return queueFallback(command, args) ?? Promise.resolve();
       });
       render(<ChatWindow />);
       const input = await screen.findByRole("combobox", { name: "发送消息给 Agent" });
@@ -249,7 +253,7 @@ describe("ChatWindow", () => {
       if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
       if (command === "agent_chat_ui") return Promise.resolve(chatUi("claude"));
       if (command === "managed_terminal_snapshot") return Promise.resolve({ sessionId: 94, active: true, managed: true, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
-      return Promise.resolve();
+      return queueFallback(command, args) ?? Promise.resolve();
     });
     render(<ChatWindow />);
     const input = await screen.findByRole("combobox", { name: "发送消息给 Agent" });
@@ -272,7 +276,7 @@ describe("ChatWindow", () => {
    */
   it("运行中无草稿:主圆钮变停止键,点击只发中断键", async () => {
     window.history.replaceState({}, "", "/?sessionId=96");
-    invoke.mockImplementation((command: string) => {
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
       if (command === "get_chat_history") return Promise.resolve({
         sessionId: 96, title: "裸中断", status: "running", provider: "claude", cwd: "C:/repo",
         supported: true, offset: 0, reset: false, pendingReview: null, items: [], connected: true,
@@ -280,7 +284,7 @@ describe("ChatWindow", () => {
       if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
       if (command === "agent_chat_ui") return Promise.resolve(chatUi("claude"));
       if (command === "managed_terminal_snapshot") return Promise.resolve({ sessionId: 96, active: true, managed: true, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
-      return Promise.resolve();
+      return queueFallback(command, args) ?? Promise.resolve();
     });
     render(<ChatWindow />);
     const button = await screen.findByRole("button", { name: "中断" });
@@ -310,7 +314,7 @@ describe("ChatWindow", () => {
   /// 插件声明 interrupt_presses=2 时,中断键必须**分两次**写。
   it("中断键声明连按两次的 agent(opencode):Esc 分两次写入", async () => {
     window.history.replaceState({}, "", "/?sessionId=196");
-    invoke.mockImplementation((command: string) => {
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
       if (command === "get_chat_history") return Promise.resolve({
         sessionId: 196, title: "双 Esc", status: "running", provider: "opencode", cwd: "C:/repo",
         supported: true, offset: 0, reset: false, pendingReview: null, items: [], connected: true,
@@ -318,7 +322,7 @@ describe("ChatWindow", () => {
       if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
       if (command === "agent_chat_ui") return Promise.resolve(chatUi("opencode"));
       if (command === "managed_terminal_snapshot") return Promise.resolve({ sessionId: 196, active: true, managed: true, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
-      return Promise.resolve();
+      return queueFallback(command, args) ?? Promise.resolve();
     });
     render(<ChatWindow />);
     fireEvent.click(await screen.findByRole("button", { name: "中断" }));
@@ -333,7 +337,7 @@ describe("ChatWindow", () => {
    */
   it("排队回执可逐条移除,且不向终端写任何按键", async () => {
     window.history.replaceState({}, "", "/?sessionId=97");
-    invoke.mockImplementation((command: string) => {
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
       if (command === "get_chat_history") return Promise.resolve({
         sessionId: 97, title: "移除回执", status: "running", provider: "claude", cwd: "C:/repo",
         supported: true, offset: 0, reset: false, pendingReview: null, items: [], connected: true,
@@ -341,17 +345,21 @@ describe("ChatWindow", () => {
       if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
       if (command === "agent_chat_ui") return Promise.resolve(chatUi("claude"));
       if (command === "managed_terminal_snapshot") return Promise.resolve({ sessionId: 97, active: true, managed: true, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
-      return Promise.resolve();
+      return queueFallback(command, args) ?? Promise.resolve();
     });
     render(<ChatWindow />);
     const input = await screen.findByRole("combobox", { name: "发送消息给 Agent" });
     fireEvent.change(input, { target: { value: "第一句" } });
     fireEvent.keyDown(input, { key: "Enter" });
+    await deliverQueuedNow();
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 97, data: "第一句" }), { timeout: 3_000 });
     // 发送成功后组件才清空输入框——不等它,第二句会被那次 setPrompt("") 抹掉。
     await waitFor(() => expect((input as HTMLTextAreaElement).value).toBe(""));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "现在交给 Agent" })).toBeNull());
     fireEvent.change(input, { target: { value: "第二句" } });
     fireEvent.keyDown(input, { key: "Enter" });
+    await deliverQueuedNow();
+    await waitFor(() => expect(invoke.mock.calls.filter(([command, args]) => command === "prompt_queue_claim" && (args as { sessionId: number }).sessionId === 97)).toHaveLength(2));
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 97, data: "第二句" }), { timeout: 3_000 });
     expect(await screen.findByText("2 条插话等待插入当前回合")).toBeTruthy();
     fireEvent.click(screen.getByText("2 条插话等待插入当前回合"));
@@ -369,7 +377,7 @@ describe("ChatWindow", () => {
     window.history.replaceState({}, "", "/?sessionId=95");
     // 当前五家都声明了 Esc;这里显式造一个 null 的 chatUi(模拟未取证/未来新 agent),
     // 验证门控:没有中断键就没有能停下回合的手段,界面不许摆出停止的样子。
-    invoke.mockImplementation((command: string) => {
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
       if (command === "managed_terminal_frame") return Promise.resolve(emptyComposerFrame("kimi"));
       if (command === "get_chat_history") return Promise.resolve({
         sessionId: 95, title: "无中断键", status: "running", provider: "kimi", cwd: "C:/repo",
@@ -378,7 +386,7 @@ describe("ChatWindow", () => {
       if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
       if (command === "agent_chat_ui") return Promise.resolve({ ...chatUi("kimi")!, interrupt_input: null });
       if (command === "managed_terminal_snapshot") return Promise.resolve({ sessionId: 95, active: true, managed: true, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
-      return Promise.resolve();
+      return queueFallback(command, args) ?? Promise.resolve();
     });
     render(<ChatWindow />);
     const input = await screen.findByRole("combobox", { name: "发送消息给 Agent" });
@@ -386,6 +394,7 @@ describe("ChatWindow", () => {
     await waitFor(() => expect((input as HTMLTextAreaElement).value).toBe("插话"));
     // Ctrl+Enter 退化成普通发送:降级要静默,不能凭空发一个这家 CLI 不认的按键。
     fireEvent.keyDown(input, { key: "Enter", ctrlKey: true });
+    await deliverQueuedNow();
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 95, data: "插话" }), { timeout: 3_000 });
     expect(invoke.mock.calls.filter(([command, args]) =>
       command === "write_managed_terminal" && (args as { data: string }).data === "\x1b")).toHaveLength(0);
@@ -404,7 +413,7 @@ describe("ChatWindow", () => {
    */
   it("普通发送错误不改变输入框占位符", async () => {
     window.history.replaceState({}, "", "/?sessionId=99");
-    invoke.mockImplementation((command: string) => {
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
       if (command === "get_chat_history") return Promise.resolve({
         sessionId: 99, title: "发送失败", status: "running", provider: "claude", cwd: "C:/repo",
         supported: true, offset: 0, reset: false, pendingReview: null, items: [], connected: true,
@@ -413,7 +422,7 @@ describe("ChatWindow", () => {
       if (command === "agent_chat_ui") return Promise.resolve(chatUi("claude"));
       if (command === "managed_terminal_snapshot") return Promise.resolve({ sessionId: 99, active: true, managed: true, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
       if (command === "write_managed_terminal") return Promise.reject(new Error("pty write broke"));
-      return Promise.resolve();
+      return queueFallback(command, args) ?? Promise.resolve();
     });
     render(<ChatWindow />);
     const input = await screen.findByRole("combobox", { name: "发送消息给 Agent" });
@@ -422,8 +431,9 @@ describe("ChatWindow", () => {
     expect(before).not.toBe(zh.chat.inputUnavailable);
     fireEvent.change(input, { target: { value: "发不出去" } });
     fireEvent.keyDown(input, { key: "Enter" });
+    await deliverQueuedNow();
     // 错误条出现（真实原因），占位符纹丝不动，也不冒出接管入口。
-    await screen.findByRole("alert");
+    await screen.findByText("pty write broke");
     expect((input as HTMLTextAreaElement).placeholder).toBe(before);
     expect(screen.queryByRole("button", { name: zh.chat.terminalTakeover })).toBeNull();
   });
@@ -437,7 +447,7 @@ describe("ChatWindow", () => {
     window.history.replaceState({}, "", "/?sessionId=92");
     // 确认走应用内原生小窗(invoke confirm_dialog):按队列给答案。
     const confirmAnswers: boolean[] = [false, true];
-    invoke.mockImplementation((command: string) => {
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
       if (command === "get_chat_history") return Promise.resolve({
         sessionId: 92, title: "托管会话", status: "running", provider: "claude", cwd: "C:/repo",
         supported: true, offset: 0, reset: false, pendingReview: null, items: [],
@@ -447,7 +457,7 @@ describe("ChatWindow", () => {
       if (command === "agent_chat_ui") return Promise.resolve(chatUi("claude"));
       if (command === "confirm_dialog") return Promise.resolve(confirmAnswers.shift() ?? false);
       if (command === "managed_terminal_snapshot") return Promise.resolve({ sessionId: 92, active: true, managed: true, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
-      return Promise.resolve();
+      return queueFallback(command, args) ?? Promise.resolve();
     });
     render(<ChatWindow />);
     const button = await screen.findByRole("button", { name: "结束会话" });
@@ -467,7 +477,7 @@ describe("ChatWindow", () => {
    */
   it("ptyManaged=false 但进程仍活(endable)的孤儿会话仍有结束入口", async () => {
     window.history.replaceState({}, "", "/?sessionId=93");
-    invoke.mockImplementation((command: string) => {
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
       if (command === "get_chat_history") return Promise.resolve({
         sessionId: 93, title: "孤儿会话", status: "running", provider: "kimi", cwd: "C:/repo",
         supported: true, offset: 0, reset: false, pendingReview: null, items: [],
@@ -476,7 +486,7 @@ describe("ChatWindow", () => {
       if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
       if (command === "agent_chat_ui") return Promise.resolve(chatUi("kimi"));
       if (command === "confirm_dialog") return Promise.resolve(true);
-      return Promise.resolve();
+      return queueFallback(command, args) ?? Promise.resolve();
     });
     render(<ChatWindow />);
     const button = await screen.findByRole("button", { name: "结束会话" });

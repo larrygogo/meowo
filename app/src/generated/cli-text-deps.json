@@ -1100,6 +1100,13 @@
         },
         {
           "legacy": false,
+          "needle": "working for ",
+          "note": "2.6.1 kimi.EXE：`workingLabel` 对 live 回合返回 `Working for ${formatDuration(now - turn.start)}`；时长运行时拼接",
+          "rule": "literal:working for ",
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/screen.rs:118"
+        },
+        {
+          "legacy": false,
           "needle": "thinking…",
           "note": "",
           "rule": "literal:thinking…",
@@ -1117,7 +1124,7 @@
           "needle": "compacting...",
           "note": "2.5.1 之前的三个点写法；2.5.1 改用省略号字符 `Compacting…`",
           "rule": "literal:compacting...",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/screen.rs:119"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/screen.rs:121"
         },
         {
           "legacy": false,
@@ -1257,21 +1264,21 @@
           "needle": "running (",
           "note": "2.5.1 之前的子代理运行行；2.5.1 里 0 处",
           "rule": "screen:agent_running_status_working",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/screen.rs:129"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/screen.rs:131"
         },
         {
           "legacy": false,
           "needle": "· tip:",
           "note": "2.5.1 kimi.EXE：月相 spinner 后接 ` · Tip:` 2 处",
           "rule": "screen:moon_tip_status_working",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/screen.rs:140"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/screen.rs:142"
         },
         {
           "legacy": false,
           "needle": "working…",
           "note": "2.5.1 kimi.EXE：`ensureActivitySpinner(\"braille\",\"Working…\")`，省略号是单个字符；重试时为 `Retrying (n/m)`",
           "rule": "screen:moon_word_status_working",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/screen.rs:160"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/screen.rs:162"
         },
         {
           "legacy": false,

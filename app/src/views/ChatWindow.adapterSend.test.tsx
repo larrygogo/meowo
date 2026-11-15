@@ -2,10 +2,12 @@
 // 夹具与 mock 见 chatWindow.harness.tsx（必须先于 ./ChatWindow 导入）。
 import { describe, expect, it } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { emptyComposerFrame, invoke, openDialog, eventListeners, terminalProps, pickAttachments, adapter } from "./chatWindow.harness";
+import { emptyComposerFrame, invoke, openDialog, eventListeners, terminalProps, pickAttachments, adapter, chatUiReady, queueFallback, deliverQueuedNow } from "./chatWindow.harness";
 import { ChatWindow } from "./ChatWindow";
 import { zh } from "../i18n/zh";
 import { terminalAttention } from "../terminalAttention";
+import type { QueuedPromptDto } from "../api";
+import { markRemoteUi } from "../remoteMode";
 
 describe("ChatWindow 适配回归", () => {
   const { history, snapshot, setup, box, writes } = adapter;
@@ -20,6 +22,10 @@ describe("ChatWindow 适配回归", () => {
     await waitFor(() => expect(document.querySelector(".chat-model-label")).toBeTruthy());
     fireEvent.change(box(), { target: { value: "下一回合处理" } });
     fireEvent.keyDown(box(), { key: "Enter" });
+    await screen.findByText("下一回合处理", { selector: ".chat-queued-bubble" });
+    await deliverQueuedNow();
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("prompt_queue_enqueue", expect.objectContaining({ sessionId: 501 })));
+    await deliverQueuedNow();
     await waitFor(() => expect(writes(501).some((text) => String(text).includes("下一回合处理"))).toBe(true));
   });
 
@@ -44,6 +50,7 @@ describe("ChatWindow 适配回归", () => {
     fireEvent.change(box(), { target: { value: "顺手改个名" } });
     fireEvent.keyDown(box(), { key: "Enter" });
     await waitFor(() => expect(document.querySelector(".chat-queued-bubble")?.textContent).toBe("顺手改个名"));
+    await deliverQueuedNow();
     landed = true;
     // 时限短于旧版「已插入」回执的 2.5s 停留：对话里一出现，排队区就该同时没有它。
     await waitFor(() => {
@@ -66,6 +73,7 @@ describe("ChatWindow 适配回归", () => {
     await waitFor(() => expect(document.querySelector(".chat-model-label")).toBeTruthy());
     fireEvent.change(box(), { target: { value: "等它们跑完再汇总" } });
     fireEvent.keyDown(box(), { key: "Enter" });
+    await deliverQueuedNow();
     await waitFor(() => expect(writes(513).some((text) => String(text).includes("等它们跑完再汇总"))).toBe(true));
     // 写进终端之后仍在排队区，没有变成对话里的回显气泡。
     await waitFor(() => expect(document.querySelector(".chat-queued-bubble")?.textContent).toBe("等它们跑完再汇总"));
@@ -94,6 +102,7 @@ describe("ChatWindow 适配回归", () => {
     fireEvent.keyDown(box(), { key: "Enter" });
     await waitFor(() => expect(document.querySelector(".chat-queued-bubble")?.textContent).toBe("顺手改个名"));
     expect(screen.queryByText(zh.vocab.delivery.accepted)).toBeNull();
+    await deliverQueuedNow();
     acked = true;
     await screen.findByText(zh.vocab.delivery.accepted, {}, { timeout: 4000 });
     expect(document.querySelector(".chat-message.is-user")).toBeNull();
@@ -448,5 +457,115 @@ describe("临时会话发第一条消息", () => {
     expect(writes(-7).some((text) => String(text).includes("本地还有什么没有推送的"))).toBe(true);
     expect(invoke.mock.calls.some(([command, args]) => command === "get_chat_history" && Number(args?.sessionId) < 0)).toBe(false);
     expect(document.body.textContent).not.toMatch(/no rows/);
+  });
+});
+
+
+describe("持久队列的真实投递", () => {
+  function harness() {
+    let status = "running";
+    let queued: QueuedPromptDto[] = [];
+    const base = adapter.setup(771, "claude", status);
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "get_chat_history") return Promise.resolve(adapter.history(771, "claude", status));
+      if (command === "prompt_queue_list") return Promise.resolve(queued.filter((entry) => ["held", "delivering", "failed"].includes(entry.state)));
+      if (command === "prompt_queue_enqueue") {
+        const draft = args?.draft as QueuedPromptDto["draft"];
+        const item: QueuedPromptDto = { id: 1, sessionId: 771, draft, state: "held", createdAt: 100, updatedAt: 100 };
+        queued = [...queued, item];
+        return Promise.resolve(item);
+      }
+      if (command === "prompt_queue_claim") {
+        const found = queued.find((entry) => entry.id === args?.id && entry.state === "held");
+        if (!found) return Promise.resolve(null);
+        queued = queued.map((entry) => entry.id === found.id ? { ...entry, state: "delivering" } : entry);
+        return Promise.resolve({ ...found, state: "delivering" });
+      }
+      if (command === "prompt_queue_finish") {
+        queued = queued.map((entry) => entry.id === args?.id ? { ...entry, state: args.delivered ? "delivered" : "failed" } : entry);
+        return Promise.resolve(true);
+      }
+      if (command === "prompt_queue_cancel") {
+        const found = queued.find((entry) => entry.id === args?.id && entry.state === "held");
+        if (!found) return Promise.resolve(false);
+        queued = queued.map((entry) => entry.id === found.id ? { ...entry, state: "cancelled" } : entry);
+        return Promise.resolve(true);
+      }
+      return base(command, args);
+    });
+    return {
+      writes: () => adapter.writes(771),
+      idle: () => { status = "waiting"; },
+      state: () => queued[0]?.state,
+    };
+  }
+
+  it("回合结束后才领取并写入，结算后不再重复投递", async () => {
+    markRemoteUi();
+    const current = harness();
+    render(<ChatWindow />);
+    await chatUiReady();
+    const box = await adapter.box();
+    fireEvent.change(box, { target: { value: "回合结束后继续" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    await screen.findByText("回合结束后继续", { selector: ".chat-queued-bubble" });
+    expect(current.writes()).toEqual([]);
+    expect(current.state()).toBe("held");
+
+    current.idle();
+    await waitFor(() => expect(current.writes().some((text) => String(text).includes("回合结束后继续"))).toBe(true), { timeout: 4_000 });
+    await waitFor(() => expect(current.state()).toBe("delivered"));
+    const delivered = current.writes().filter((text) => String(text).includes("回合结束后继续")).length;
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    expect(current.writes().filter((text) => String(text).includes("回合结束后继续"))).toHaveLength(delivered);
+  });
+
+  it("用户在运行中主动提前交付才写官方 TUI", async () => {
+    markRemoteUi();
+    const current = harness();
+    render(<ChatWindow />);
+    await chatUiReady();
+    const box = await adapter.box();
+    fireEvent.change(box, { target: { value: "现在看一眼" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    const button = await screen.findByRole("button", { name: "现在交给 Agent" });
+    expect(current.writes()).toEqual([]);
+    fireEvent.click(button);
+    await waitFor(() => expect(current.writes().some((text) => String(text).includes("现在看一眼"))).toBe(true));
+    await waitFor(() => expect(current.state()).toBe("delivered"));
+  });
+
+  it("取消后回合结束也不会再写 CLI", async () => {
+    markRemoteUi();
+    const current = harness();
+    render(<ChatWindow />);
+    await chatUiReady();
+    const box = await adapter.box();
+    fireEvent.change(box, { target: { value: "不要执行" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    fireEvent.click(await screen.findByRole("button", { name: "取消排队" }));
+    await waitFor(() => expect(current.state()).toBe("cancelled"));
+    current.idle();
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    expect(current.writes()).toEqual([]);
+    expect(screen.queryByText("不要执行")).toBeNull();
+  });
+
+  it.each([
+    ["claude", "\r"], ["kimi", "\r"], ["codex", "\t"], ["gemini", "\r"], ["opencode", "\r"],
+  ])("%s 提前执行只用本家队列键，不隐式中断", async (provider, submit) => {
+    const sessionId = 780 + invoke.mock.calls.length;
+    const base = adapter.setup(sessionId, provider, "running");
+    invoke.mockImplementation((command, args) => command === "managed_terminal_frame"
+      ? Promise.resolve(emptyComposerFrame(provider))
+      : base(command, args));
+    render(<ChatWindow />);
+    await chatUiReady();
+    const box = await adapter.box();
+    fireEvent.change(box, { target: { value: `提前交给 ${provider}` } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    await deliverQueuedNow();
+    expect(adapter.writes(sessionId).at(-1)).toBe(submit);
+    expect(adapter.writes(sessionId)).not.toContain("\x1b");
   });
 });

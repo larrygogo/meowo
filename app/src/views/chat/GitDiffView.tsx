@@ -452,7 +452,7 @@ function GitDiffViewImpl({ cwd, summary, repos = null, width, collapsed, maximiz
 }
 
 /** 「更改」页签：可搜索的变更目录树 + 单文件 diff（返回行 + 着色行）。 */
-export function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedPaths, onAddComment, onRemoveComment, escOverrideRef, live = false, diffBase = null, sessionCwd = null, initialPath = null, onBack, onSelectPath }: {
+export function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedPaths, onAddComment, onRemoveComment, escOverrideRef, live = false, diffBase = null, sessionCwd = null, initialPath = null, onBack, onSelectPath, fetchDiff = null }: {
   cwd: string;
   summary: GitDiffSummaryDto;
   comments: readonly ReviewComment[];
@@ -473,6 +473,8 @@ export function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedP
   onBack?: () => void;
   /** 打开 / 关上的文件告诉外层：轮询让面板在单仓库与分组形态间切换时，外层据此把它重新打开。 */
   onSelectPath?: (path: string | null) => void;
+  /** 回合快照等历史 diff：由调用方按不可变起止 ref 读取，不读当前工作区。 */
+  fetchDiff?: ((path: string) => Promise<GitFileDiffDto>) | null;
 }) {
   const t = useT();
   // 当前查看的文件（null = 文件树形态）；diff 结果按路径缓存，往返切换不重复拉取。
@@ -486,13 +488,13 @@ export function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedP
   // 刚生成的截图毫无帮助(实拍反馈)。
   const [images, setImages] = useState<Map<string, FetchEntry<ImagePreviewDto>>>(new Map());
   useEffect(() => {
-    if (!selectedPath || previewKindOf(selectedPath) !== "image" || images.has(selectedPath)) return;
+    if (fetchDiff || !selectedPath || previewKindOf(selectedPath) !== "image" || images.has(selectedPath)) return;
     const rel = selectedPath;
     setImages((prev) => new Map(prev).set(rel, { loading: true, error: null, data: null }));
     readImagePreview(cwd, rel)
       .then((data) => setImages((prev) => new Map(prev).set(rel, { loading: false, error: null, data })))
       .catch((error) => setImages((prev) => new Map(prev).set(rel, { loading: false, error: formatBackendError(error, t.locale), data: null })));
-  }, [selectedPath, images, cwd, t.locale]);
+  }, [selectedPath, images, cwd, t.locale, fetchDiff]);
   const [search, setSearch] = useState("");
   // 目录树默认全部展开，这里只记录被手动折叠的目录路径。
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -577,7 +579,7 @@ export function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedP
     const file = fileByPath.get(selectedPath);
     const path = selectedPath;
     setEntries((prev) => new Map(prev).set(path, { loading: true, error: null, data: null }));
-    getGitFileDiff(cwd, path, !diffBase && file?.status === "U", diffBase, sessionCwd)
+    (fetchDiff ? fetchDiff(path) : getGitFileDiff(cwd, path, !diffBase && file?.status === "U", diffBase, sessionCwd))
       .then((data) => setEntries((prev) => new Map(prev).set(path, { loading: false, error: null, data })))
       .catch((error) => setEntries((prev) => new Map(prev).set(path, { loading: false, error: formatBackendError(error, t.locale), data: null })));
   // eslint-disable-next-line react-hooks/exhaustive-deps -- 组件按仓库与分段 key 挂载，diffBase/sessionCwd 随 key 一起换；t.locale 只用来格式化报错文案
@@ -658,7 +660,7 @@ export function ChangesView({ cwd, summary, comments, touchedPaths, turnTouchedP
   const staleDiff = useStaleWatch(
     selectedPath,
     activeDiff,
-    () => getGitFileDiff(cwd, selectedPath ?? "", !diffBase && fileByPath.get(selectedPath ?? "")?.status === "U", diffBase, sessionCwd),
+    () => fetchDiff ? fetchDiff(selectedPath ?? "") : getGitFileDiff(cwd, selectedPath ?? "", !diffBase && fileByPath.get(selectedPath ?? "")?.status === "U", diffBase, sessionCwd),
     (a, b) => a.diff === b.diff && a.truncated === b.truncated,
     live,
     summary,

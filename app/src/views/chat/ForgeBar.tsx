@@ -38,6 +38,7 @@ import { Icon } from "../../icons/Icon";
 import { icArrowUp, icClock, icMinus } from "../../icons/glyphs.chat";
 import { icCheck, icClose, icRefresh } from "../../icons/glyphs";
 import { busyProps } from "../../busyButton";
+import { PrReviewPanel } from "./PrReviewPanel";
 
 /// 轮询间隔：每个仓库最多 60 秒查一次 GitHub。
 export const FORGE_POLL_MS = 60_000;
@@ -127,6 +128,7 @@ export function ForgeBar({ repo, sessionCwd, sessionId, active, onChanged }: {
   const [cleanup, setCleanup] = useState<WorktreeStatusDto | null>(null);
   const [cleanState, setCleanState] = useState<"idle" | "busy">("idle");
   const [repoDlg, setRepoDlg] = useState<string | null>(null);
+  const [reviewOpen, setReviewOpen] = useState(false);
 
   const summary = repo.summary;
   const branch = summary.branch;
@@ -399,10 +401,12 @@ export function ForgeBar({ repo, sessionCwd, sessionId, active, onChanged }: {
                     </button>
                   )}
               {block && !pr.queued && !isConflict(pr) && <div className="scm-notice">{block}</div>}
+              {sessionId != null && <button type="button" className="scm-forge-btn is-ghost" aria-expanded={reviewOpen} onClick={() => setReviewOpen((value) => !value)}>{reviewOpen ? t.forge.reviewClose : t.forge.reviewOpen}</button>}
             </>
           )}
         </div>
       )}
+      {showPr && pr && reviewOpen && sessionId != null && <PrReviewPanel cwd={root} sessionCwd={sessionCwd} sessionId={sessionId} number={pr.number} active />}
 
       {showPr && forge && forge.repoChoices.length > 0 && (
         forge.repoNeedsChoice

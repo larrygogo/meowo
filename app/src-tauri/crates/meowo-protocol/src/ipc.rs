@@ -795,6 +795,55 @@ pub struct IslandAlertEvent {
     pub detail: Option<String>,
 }
 
+/// 持久队列保留附件路径；投递前仍可编辑或移除。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct QueueAttachmentDto {
+    pub path: String,
+    pub name: String,
+    pub image: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(type = "number", optional))]
+    pub size: Option<u64>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct QueueDraftDto {
+    pub prompt: String,
+    pub attachments: Vec<QueueAttachmentDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct QueuedPromptDto {
+    #[cfg_attr(test, ts(type = "number"))]
+    pub id: i64,
+    #[cfg_attr(test, ts(type = "number"))]
+    pub session_id: i64,
+    pub draft: QueueDraftDto,
+    pub state: String,
+    #[cfg_attr(test, ts(type = "number"))]
+    pub created_at: i64,
+    #[cfg_attr(test, ts(type = "number"))]
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct PromptQueueChangedDto {
+    #[cfg_attr(test, ts(type = "number"))]
+    pub session_id: i64,
+}
+
 /// 对话页 transcript 变更推送（`chat-transcript`，C-14）。后端 watch 到该会话的
 /// transcript 文件写入时直发（不走 board 合流），对话窗据此提前拉增量——外部终端
 /// 会话没有 pty-output，这条是它的实时通道；定时轮询降级为最终兜底。
@@ -981,6 +1030,73 @@ pub struct PrCheckDto {
     /// `pass` / `fail` / `pending` / `skipped`。
     pub state: String,
     pub url: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct PrCommentDto {
+    pub id: String,
+    pub author: String,
+    pub body: String,
+    pub created_at: String,
+    pub url: Option<String>,
+    pub state: Option<String>,
+    pub path: Option<String>,
+    #[cfg_attr(test, ts(type = "number | null"))]
+    pub line: Option<i64>,
+    pub side: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct PrFileDto {
+    pub path: String,
+    pub status: String,
+    #[cfg_attr(test, ts(type = "number"))]
+    pub additions: u32,
+    #[cfg_attr(test, ts(type = "number"))]
+    pub deletions: u32,
+    pub patch: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct PrMonitorEventDto {
+    pub id: String,
+    pub kind: String,
+    pub summary: String,
+    #[cfg_attr(test, ts(type = "number"))]
+    pub created_at: i64,
+    pub wake_state: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct PrMonitorDto {
+    pub key: String,
+    pub enabled: bool,
+    pub last_error: Option<String>,
+    pub events: Vec<PrMonitorEventDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct PrReviewDto {
+    pub pr: PullRequestDto,
+    pub comments: Vec<PrCommentDto>,
+    pub reviews: Vec<PrCommentDto>,
+    pub files: Vec<PrFileDto>,
+    pub monitor: Option<PrMonitorDto>,
 }
 
 /// 「更改」面板的 GitHub 区块（`git_forge_status`）：gh 能不能用、开 PR 的默认值、当前分支的 PR 与检查。
@@ -1181,6 +1297,49 @@ pub struct CleanableWorktreeDto {
     #[cfg_attr(test, ts(type = "number[]"))]
     pub session_ids: Vec<i64>,
     pub status: WorktreeStatusDto,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct CheckpointRepoDto {
+    pub root: String,
+    pub name: String,
+    pub start_ref: String,
+    pub end_ref: Option<String>,
+    pub files: Vec<GitChangedFileDto>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct CheckpointTurnDto {
+    #[cfg_attr(test, ts(type = "number"))]
+    pub turn: i64,
+    pub repos: Vec<CheckpointRepoDto>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct CheckpointRestoreResultDto {
+    pub root: String,
+    pub restored: bool,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase")]
+pub struct CheckpointRestoreDto {
+    #[cfg_attr(test, ts(type = "number"))]
+    pub undo_id: i64,
+    pub results: Vec<CheckpointRestoreResultDto>,
 }
 
 /// 单个文件的统一 diff 文本。未跟踪文件的 `diff` 是合成的伪 diff

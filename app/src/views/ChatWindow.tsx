@@ -64,7 +64,9 @@ import { clearPartialImageDraft, createSendQueue, IMAGE_PASTE_LANDING_POLLS, LAT
 import { ComposerBlocked, composerBlockEvent, composerBlockExit, composerBlockNotice, useNativeDraft } from "./chat/nativeDraft";
 import { useSessionRef, useSessionScope, useSessionState, useSessionTimer } from "./chat/sessionScope";
 import { launchGrid } from "./chat/terminalGrid";
-import { managedTerminalFrame, agentDynamicModeChoices, type DynamicModeChoice } from "../api";
+import { managedTerminalFrame, agentDynamicModeChoices, promptQueueClaim, promptQueueEnqueue, promptQueueFinish, promptQueueRetry, type DynamicModeChoice, type QueuedPromptDto } from "../api";
+import { QueuedPrompts, queueAttachments } from "./chat/QueuedPrompts";
+import { usePromptQueue } from "./chat/usePromptQueue";
 import { BottomSheet, SheetOnPhone } from "./chat/BottomSheet";
 import { runningActivityView, RunningBar, SnakeSpinner, TurnAnnouncer, useCliStatusStore } from "./chat/RunningBar";
 import { ModelPicker, readStarred, type ModelPickerItem } from "./chat/ModelPicker";
@@ -323,10 +325,15 @@ export function ChatWindow() {
   // 发出的消息（空闲态回显 + 运行中插话回执）：生命周期与对账在 chat/outgoingPrompts，
   // 按会话分仓。这里只读视图、在发送成功时登记、在证据变化时触发对账。
   const outgoing = useOutgoingPrompts(sessionId);
+  const { items: persistedQueue, refresh: refreshPromptQueue, upsert: upsertPromptQueue } = usePromptQueue(sessionId);
+  const [queueBusy, setQueueBusy] = useState(false);
   const queuedInterjections = useMemo(() => outgoing.filter((prompt) => prompt.kind === "queued"), [outgoing]);
   const pendingEchoes = useMemo(() => outgoing.filter((prompt) => prompt.kind === "echo"), [outgoing]);
-  const queuedPending = queuedInterjections.filter((prompt) => prompt.phase === "pending" || prompt.phase === "accepted").length;
+  const queuedPending = queuedInterjections.filter((prompt) => prompt.phase === "pending" || prompt.phase === "accepted").length
+    + persistedQueue.filter((prompt) => prompt.state === "held").length;
   const queuedInserted = queuedInterjections.some((prompt) => prompt.phase === "inserted");
+  const persistedQueueShown = useMemo(() => persistedQueue.filter((queued) =>
+    !outgoing.some((prompt) => prompt.queueId === queued.id)), [persistedQueue, outgoing]);
   // 排队区只放还没进对话的：已插入的那条此刻已经以「回合中插入」的气泡出现在对话里，
   // 回执再挂一份就是同一句话显示两遍（用户实拍）。已插入的状态仍由运行条那句交代。
   const queuedShown = useMemo(() => queuedInterjections.filter((prompt) => prompt.phase !== "inserted"), [queuedInterjections]);
@@ -3187,7 +3194,11 @@ export function ChatWindow() {
 
   const composerDraft = { prompt, attachments };
   /// override：重发一条失败的消息（气泡上的「重发」），内容取自它当时的草稿而不是输入框。
-  const sendPrompt = async (override?: { prompt: string; attachments: Attachment[] }) => {
+  const sendPrompt = async (
+    override?: { prompt: string; attachments: Attachment[] },
+    _queueId?: number,
+    onQueueSettled?: (handedOff: boolean) => void,
+  ) => {
     const { prompt, attachments } = override ?? composerDraft;
     if ((!prompt.trim() && attachments.length === 0) || sending || !isCurrentOperation()
       || sendLockRef.current || interruptLockRef.current) return;
@@ -3266,7 +3277,6 @@ export function ChatWindow() {
       }
       return;
     }
-    if (!submitInput) { setSendError(t.chat.busySendUnavailable); return; }
     // 手打 `/add-dir <path>`（7T-4 尾，用户实拍）：claude 的 /add-dir 取命令后整行原样
     // resolve，不剥引号——资源管理器「复制为路径」带来的成对引号进了路径字面量，还让它
     // 不再以盘符开头、被当相对路径拼到 cwd 后面（报 `…front"C:\…" was not found`）。
@@ -3276,10 +3286,11 @@ export function ChatWindow() {
     const addDirArg = attachments.length === 0 ? /^\/add-dir\s+(\S[\s\S]*)$/.exec(bare)?.[1] : undefined;
     if (addDirArg !== undefined) outgoingPrompt = `/add-dir ${unquotePath(addDirArg)}`;
     const outgoingBare = outgoingPrompt.trim();
-    // 运行中使用插件声明的排队键提交；Enter 在 Codex 上并非排队协议（是插话进当前回合）。
-    // ——不记下来的话,消息在 GUI 上像消失了一样。点发送就登记进 outgoingStore(发送中),
-    // 写进终端后转 pending,它出现在 transcript 里才算被读到。
-    const interjecting = toneRef.current === "running";
+    // 运行中先进入宿主队列；只有领取成功才用插件声明的键写 CLI。此后由 outgoingStore
+    // 对账：正文出现在 transcript 里才算被读到，写入途中取消不再伪装成可行。
+    // 临时负 id 在 hook 认领前没有 history；pending launch 是后端登记的在线事实，先持久入队，
+    // 若其实已经空闲，下面的自动投递会立即领取，不会把第一句话卡在没有历史状态的占位里。
+    const interjecting = _queueId == null && (toneRef.current === "running" || (sessionId < 0 && !history && launchInfo != null));
     const queuedText = outgoingBare || t.chat.queuedAttachmentOnly;
     // 纯附件消息的回执文本是占位「（附件）」,它永不落盘——打标让消解侧改认
     // 「水位线后任意新 user_text」而非文本包含(见 outgoingPrompts.reconcileOutgoing)。
@@ -3288,6 +3299,23 @@ export function ChatWindow() {
     // 接着打下一条；写进终端后转 pending，失败转 failed 留在原处给「重发 / 放回输入框」。
     // 水位线随消息一起登记：此刻已有的条目都算旧证据（见 outgoingPrompts.anchorFrom）。
     const sid = sessionId;
+    if (interjecting) {
+      if (interactionBlockedRef.current) {
+        setSendError(blockedMessage());
+        return;
+      }
+      try {
+        if (!await leaveSubagentViewBeforeWrite()) return;
+        const queued = await promptQueueEnqueue(sid, { prompt, attachments });
+        upsertPromptQueue(queued);
+        clearSubmittedDraft();
+        await refreshPromptQueue();
+      } catch (error) {
+        if (isCurrentOperation()) setSendError(formatBackendError(error, t.locale));
+      }
+      return;
+    }
+    if (!submitInput) { setSendError(t.chat.busySendUnavailable); return; }
     const outgoingId = outgoingStore.add(sid, {
       kind: interjecting ? "queued" : "echo",
       text: queuedText,
@@ -3295,6 +3323,7 @@ export function ChatWindow() {
       anchor: anchorFrom(items, history?.lastUserText),
       phase: "sending",
       draft: { prompt, attachments },
+      queueId: _queueId,
     });
     clearSubmittedDraft();
     // 需要接管时，接管成功后重放的是这一条（输入框此刻已经空了）。
@@ -3348,6 +3377,7 @@ export function ChatWindow() {
     // 真 id 下，按旧 id 找会落空，气泡永远停在「发送中」（实拍 2026-11-09，消息其实已送达）。
     outgoingStore.settle(outgoingId, sent ? { phase: "pending", at: Date.now() }
       : bodyWritten ? { phase: "uncertain", bodyWritten: true } : { phase: "failed" });
+    onQueueSettled?.(sent || bodyWritten);
     // 失败时人还在这个会话、输入框也空着：直接退回输入框（原因在上方错误条里），不多留一个
     // 失败气泡让人再点一次。切走了或已经在写新内容，就留着失败气泡，由用户决定重发还是放回。
     if (!sent && !bodyWritten && isCurrentOperation() && !promptRef.current.trim() && attachmentsRef.current.length === 0) {
@@ -3356,6 +3386,36 @@ export function ChatWindow() {
       retryRef.current = () => sendPrompt({ prompt, attachments });
     }
   };
+  const deliverQueued = async (item: QueuedPromptDto) => {
+    if (queueBusy) return;
+    setQueueBusy(true);
+    let claimed = false;
+    let handedOff = false;
+    try {
+      const current = await promptQueueClaim(item.sessionId, item.id);
+      if (!current) return;
+      claimed = true;
+      await sendPrompt({
+        prompt: current.draft.prompt,
+        attachments: queueAttachments(current.draft),
+      }, item.id, (value) => { handedOff = value; });
+    } catch (error) {
+      if (isCurrentOperation()) setSendError(formatBackendError(error, t.locale));
+    } finally {
+      if (claimed) {
+        await promptQueueFinish(item.sessionId, item.id, handedOff).catch(() => {});
+      }
+      setQueueBusy(false);
+      await refreshPromptQueue().catch(() => {});
+    }
+  };
+  useEffect(() => {
+    const connected = history?.connected ?? (sessionId < 0 && launchInfo != null);
+    if (tone === "running" || queueBusy || loading || !connected) return;
+    const next = persistedQueue.find((item) => item.state === "held");
+    if (next) void deliverQueued(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 投递函数读取当前会话快照；队列、忙闲与连接变化才触发
+  }, [tone, persistedQueue, queueBusy, loading, history?.connected, sessionId, launchInfo]);
   /// 失败气泡的「重发」：收掉这条失败回执，用它当时的草稿重新走一遍发送。
   const retryOutgoing = (id: number) => {
     const entry = outgoingStore.get(sessionId).find((item) => item.id === id);
@@ -4693,9 +4753,8 @@ export function ChatWindow() {
             activity={runningActivity}
           />
         )}
-        {/* 排队中的插话是对话的「下一轮」，就排在它将要出现的地方（对照 Kimi 的 q-stack：
-            运行行之下、右对齐、淡一档的用户气泡）。不像 Kimi 那样给拖拽排序和编辑——
-            消息已经写进 CLI，队列归它管，界面只说真话：状态、升级为中断、撤掉回执。 */}
+        {/* 已写进 CLI 的排队回执由 outgoingStore 对账；尚未交付的持久队列在下一组件，
+            两者分界就是能否取消：领取后不再提供假取消。 */}
         {!loading && queuedShown.length > 0 && (
           <section className="chat-queued-stack" aria-label={t.chat.queueLabel}>
             <div className="chat-queued-head">
@@ -4744,6 +4803,14 @@ export function ChatWindow() {
             ))}
           </section>
         )}
+        <QueuedPrompts
+          sessionId={sessionId}
+          items={persistedQueueShown}
+          busy={queueBusy}
+          onDeliver={(item) => void deliverQueued(item)}
+          onRetry={(item) => void promptQueueRetry(sessionId, item.id).then(() => refreshPromptQueue()).catch((error) => setSendError(formatBackendError(error, t.locale)))}
+          onError={(error) => setSendError(formatBackendError(error, t.locale))}
+        />
         {/* 审批卡的让位占位块（高度 = --chat-overlay-h，见 overlayRef 的观察者）：跟内容一起滚，
             不抬高滚动区的最小高度。必须是滚动内容的最后一个子块。 */}
         <div className="chat-overlay-spacer" aria-hidden="true" />
