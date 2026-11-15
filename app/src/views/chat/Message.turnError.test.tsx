@@ -84,4 +84,64 @@ describe("Message turn_error", () => {
     expect(screen.queryByText("检查网络或代理后点「继续」")).toBeNull();
     expect(screen.queryByRole("button", { name: "去登录" })).toBeNull();
   });
+
+  // 实拍：读了动图的会话每轮 400；但 blob 丢失的会话连错 6 次后又恢复了。推荐出路在前，「继续」保留。
+  it("请求被拒且撤不回：推荐「新开会话」，「继续」仍在", () => {
+    const sendText = vi.fn().mockResolvedValue(true);
+    const newSession = vi.fn();
+    render(
+      <ChatActionsContext.Provider value={{ sendText, newSession }}>
+        <Message item={{ ...item, label: "请求被拒", text: "Invalid request Error" }} latest />
+      </ChatActionsContext.Provider>,
+    );
+    expect(screen.getByText("请求被拒")).toBeTruthy();
+    expect(screen.getByText("重发多半还会被拒，建议新开会话")).toBeTruthy();
+    expect(screen.getAllByRole("button").map((b) => b.textContent)).toEqual(["新开会话", "继续"]);
+    fireEvent.click(screen.getByRole("button", { name: "新开会话" }));
+    expect(newSession).toHaveBeenCalledTimes(1);
+    expect(sendText).not.toHaveBeenCalled();
+  });
+
+  it("请求被拒且撤得回：主出路是「撤回到出错前」，「新开会话」作后备", () => {
+    const sendText = vi.fn().mockResolvedValue(true);
+    const newSession = vi.fn();
+    const undoRejected = vi.fn();
+    render(
+      <ChatActionsContext.Provider value={{ sendText, newSession, undoRejected }}>
+        <Message item={{ ...item, label: "请求被拒", text: "Invalid request Error" }} latest />
+      </ChatActionsContext.Provider>,
+    );
+    expect(screen.getByText("重发多半还会被拒，建议撤回出错那轮")).toBeTruthy();
+    const buttons = screen.getAllByRole("button").map((b) => b.textContent);
+    expect(buttons).toEqual(["撤回到出错前", "新开会话", "继续"]);
+    fireEvent.click(screen.getByRole("button", { name: "撤回到出错前" }));
+    expect(undoRejected).toHaveBeenCalledTimes(1);
+    expect(sendText).not.toHaveBeenCalled();
+  });
+
+  it("请求被拒的旧卡不出按钮；其他错误不出「新开会话」", () => {
+    const sendText = vi.fn().mockResolvedValue(true);
+    const newSession = vi.fn();
+    const { rerender } = render(
+      <ChatActionsContext.Provider value={{ sendText, newSession }}>
+        <Message item={{ ...item, label: "请求被拒" }} />
+      </ChatActionsContext.Provider>,
+    );
+    expect(screen.queryByRole("button")).toBeNull();
+    rerender(
+      <ChatActionsContext.Provider value={{ sendText, newSession }}>
+        <Message item={item} latest />
+      </ChatActionsContext.Provider>,
+    );
+    expect(screen.queryByRole("button", { name: "新开会话" })).toBeNull();
+    expect(screen.getByRole("button", { name: "继续" })).toBeTruthy();
+  });
+});
+
+describe("请求被拒的英文文案", () => {
+  it("标签与提示都有英文", async () => {
+    const { en } = await import("../../i18n/en");
+    expect(en.errorLabels["请求被拒"]).toBe("Request rejected");
+    expect(en.chat.turnErrorNewSession).toBe("New session");
+  });
 });

@@ -12,6 +12,7 @@ import { parseUserText, type CrossMessage } from "./localCommand";
 import { copyPlainText } from "./clipboard";
 import { fmtSpan, stripAnsi } from "./shared";
 import { ChatActionsContext } from "./chatActions";
+import { REJECTED_LABEL } from "./rejectedRecovery";
 import { EchoActionsContext, EchoPhaseContext, outgoingIdOf, type EchoActions } from "./outgoingPrompts";
 import { useRememberedDetails, useRememberedOpen } from "./foldMemory";
 import { FILE_TOKEN_REFRESHED_EVENT, IMAGE_LOAD_FAILED_EVENT, remoteUi } from "../../remoteMode";
@@ -405,13 +406,22 @@ function ReasoningBlock({ item, nextStamp = null, live = false }: { item: Extrac
 /// 插件共用，见 claude classify_error / codex / opencode），其余标签照旧只给「继续」。
 const LOGIN_ERROR_LABELS = new Set(["需要重新登录", "认证失败"]);
 const NETWORK_ERROR_LABELS = new Set(["无法连接 API"]);
+/// 接口拒收上下文本身（Kimi 不可重试的 400/413，见 kimi telemetry::failure）：重发同一段上下文
+/// 多半再错（读了动图的会话连错 5 次），推荐撤回到出错那一轮之前（原话放回输入框，见
+/// rejectedRecovery），撤不回时新开会话。「继续」仍保留：图片 blob 丢失的会话连错 6 次后，
+/// 同一段上下文又重试成功了，两种 400 的字段一模一样，分不出哪种是死路。
+const REJECTED_ERROR_LABELS = new Set([REJECTED_LABEL]);
 
 function TurnErrorCard({ item, latest }: { item: Extract<ChatItem, { type: "turn_error" }>; latest: boolean }) {
   const t = useT();
   const actions = useContext(ChatActionsContext);
   const [busy, setBusy] = useState(false);
   const login = LOGIN_ERROR_LABELS.has(item.label);
-  const hint = login ? t.chat.turnErrorLoginHint : NETWORK_ERROR_LABELS.has(item.label) ? t.chat.turnErrorNetworkHint : null;
+  const rejected = REJECTED_ERROR_LABELS.has(item.label);
+  const hint = login ? t.chat.turnErrorLoginHint
+    : rejected ? (actions?.undoRejected ? t.chat.turnErrorRejectedUndoHint : t.chat.turnErrorRejectedHint)
+    : NETWORK_ERROR_LABELS.has(item.label) ? t.chat.turnErrorNetworkHint
+    : null;
   return (
     <article className="chat-message is-turn-error" role="alert">
       <div className="chat-turn-error-label">
@@ -427,6 +437,16 @@ function TurnErrorCard({ item, latest }: { item: Extract<ChatItem, { type: "turn
           {login && !remoteUi() && (
             <button type="button" className="chat-turn-error-continue" onClick={() => openSettingsAt("account")}>
               {t.chat.turnErrorLoginGo}
+            </button>
+          )}
+          {rejected && actions.undoRejected && (
+            <button type="button" className="chat-turn-error-continue" onClick={actions.undoRejected}>
+              {t.chat.turnErrorUndo}
+            </button>
+          )}
+          {rejected && actions.newSession && (
+            <button type="button" className="chat-turn-error-continue" onClick={actions.newSession}>
+              {t.chat.turnErrorNewSession}
             </button>
           )}
           <button

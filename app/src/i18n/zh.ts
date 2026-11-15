@@ -710,6 +710,11 @@ export const zh = {
     turnErrorLoginHint: "重新登录后点「继续」",
     turnErrorLoginGo: "去登录",
     turnErrorNetworkHint: "检查网络或代理后点「继续」",
+    // 接口拒收了上下文本身（如读进了它不收的图片），重发同一段上下文必然再错。
+    turnErrorRejectedHint: "重发多半还会被拒，建议新开会话",
+    turnErrorNewSession: "新开会话",
+    turnErrorRejectedUndoHint: "重发多半还会被拒，建议撤回出错那轮",
+    turnErrorUndo: "撤回到出错前",
     reasoningLive: "思考中…",
     turnToolDoing: {
       run: "正在运行命令",
@@ -1762,6 +1767,7 @@ export const zh = {
     "认证失败": "认证失败",
     "无法连接 API": "无法连接 API",
     "API 请求出错": "API 请求出错",
+    "请求被拒": "请求被拒",
     "回合出错": "回合出错",
   } as Record<string, string>,
   settings: {

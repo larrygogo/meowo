@@ -631,6 +631,10 @@ export const en: Dict = {
     turnErrorLoginHint: "Sign in again, then press Continue",
     turnErrorLoginGo: "Sign in",
     turnErrorNetworkHint: "Check your network or proxy, then press Continue",
+    turnErrorRejectedHint: "Resending will likely fail again. Try a new session",
+    turnErrorNewSession: "New session",
+    turnErrorRejectedUndoHint: "Resending will likely fail again. Try undoing the failed turns",
+    turnErrorUndo: "Undo to before the error",
     reasoningLive: "Thinking…",
     turnToolDoing: {
       run: "Running a command",
@@ -1548,6 +1552,7 @@ export const en: Dict = {
     "认证失败": "Authentication failed",
     "无法连接 API": "Can't reach the API",
     "API 请求出错": "API request failed",
+    "请求被拒": "Request rejected",
     "回合出错": "Turn failed",
   },
   settings: {

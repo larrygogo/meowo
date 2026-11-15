@@ -27,8 +27,11 @@ use crate::{
 /// 用于卡片「待交互」显示。PreCompact/PostCompact 是压缩进行期间的「正在压缩」指示通道
 /// （transcript 在压缩期间零新增字节，只能靠 hook；白名单 EVENT_WHITELIST 已含这两个名字，
 /// kimi 0.29 二进制确认支持）。
-static EVENTS: [HookEvent; 11] = [
+/// PreToolUse 只接 ReadMediaFile（matcher 是正则，kimi 源码 matches$1 = new RegExp）：读图前拦下
+/// kimi 自己压不下去的大图，见 reporter media_guard。
+static EVENTS: [HookEvent; 12] = [
     HookEvent::plain("SessionStart"),
+    HookEvent::matched("PreToolUse", "^ReadMediaFile$"),
     HookEvent::plain("UserPromptSubmit"),
     HookEvent::plain("PostToolUse"),
     HookEvent::plain("Stop"),
