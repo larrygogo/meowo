@@ -175,6 +175,82 @@ bridged_args!(GitRepoArgs {
     session_cwd: Option<String>
 });
 
+bridged_args!(CheckpointTurnArgs {
+    #[cfg_attr(test, ts(type = "number"))]
+    session_id: i64,
+    #[cfg_attr(test, ts(type = "number"))]
+    turn: i64
+});
+
+bridged_args!(CheckpointFileArgs {
+    #[cfg_attr(test, ts(type = "number"))]
+    session_id: i64,
+    #[cfg_attr(test, ts(type = "number"))]
+    turn: i64,
+    repo_root: String,
+    path: String
+});
+
+bridged_args!(CheckpointRestoreArgs {
+    #[cfg_attr(test, ts(type = "number"))]
+    session_id: i64,
+    #[cfg_attr(test, ts(type = "number"))]
+    turn: i64,
+    phase: String
+});
+
+bridged_args!(CheckpointUndoArgs {
+    #[cfg_attr(test, ts(type = "number"))]
+    session_id: i64,
+    #[cfg_attr(test, ts(type = "number"))]
+    id: i64
+});
+
+bridged_args!(PrReviewArgs {
+    cwd: String,
+    #[cfg_attr(test, ts(type = "number"))]
+    session_id: i64,
+    #[serde(default)]
+    session_cwd: Option<String>
+});
+bridged_args!(PrCommentArgs {
+    cwd: String,
+    #[cfg_attr(test, ts(type = "number"))]
+    number: u32,
+    body: String,
+    review: bool,
+    #[serde(default)]
+    session_cwd: Option<String>
+});
+bridged_args!(PrLineCommentArgs {
+    cwd: String,
+    #[cfg_attr(test, ts(type = "number"))]
+    number: u32,
+    path: String,
+    #[cfg_attr(test, ts(type = "number"))]
+    line: i64,
+    side: String,
+    body: String,
+    #[serde(default)]
+    session_cwd: Option<String>
+});
+bridged_args!(PrMonitorSetArgs {
+    cwd: String,
+    #[cfg_attr(test, ts(type = "number"))]
+    session_id: i64,
+    enabled: bool,
+    #[serde(default)]
+    key: Option<String>,
+    #[serde(default)]
+    session_cwd: Option<String>
+});
+bridged_args!(PrMonitorWakeArgs {
+    #[cfg_attr(test, ts(type = "number"))]
+    session_id: i64,
+    monitor_key: String,
+    event_id: String
+});
+
 bridged_args!(GitJobStatusArgs { job_id: String });
 
 // 撤销一次放弃（walkthrough P-5）：undoId 是 git_discard 的返回值，只在桌面端进程内有效。
@@ -415,6 +491,35 @@ bridged_args!(RespondRuntimeRequestArgs {
     session_id: i64,
     request_id: String,
     choice: String
+});
+
+bridged_args!(PromptQueueEnqueueArgs {
+    #[cfg_attr(test, ts(type = "number"))]
+    session_id: i64,
+    draft: crate::ipc::QueueDraftDto
+});
+
+bridged_args!(PromptQueueEditArgs {
+    #[cfg_attr(test, ts(type = "number"))]
+    session_id: i64,
+    #[cfg_attr(test, ts(type = "number"))]
+    id: i64,
+    draft: crate::ipc::QueueDraftDto
+});
+
+bridged_args!(PromptQueueEntryArgs {
+    #[cfg_attr(test, ts(type = "number"))]
+    session_id: i64,
+    #[cfg_attr(test, ts(type = "number"))]
+    id: i64
+});
+
+bridged_args!(PromptQueueFinishArgs {
+    #[cfg_attr(test, ts(type = "number"))]
+    session_id: i64,
+    #[cfg_attr(test, ts(type = "number"))]
+    id: i64,
+    delivered: bool
 });
 
 bridged_args!(SavePastedAttachmentArgs {

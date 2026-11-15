@@ -24,6 +24,7 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 pub(crate) mod badge;
+pub(crate) mod review;
 pub(crate) use badge::sidebar_git_badges_for;
 
 #[cfg(test)]

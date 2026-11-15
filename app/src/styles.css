@@ -3519,6 +3519,13 @@ body:not(.remote-ui) .ns-actions .ns-btn { height: var(--btn-h-lg); min-width: 7
 .chat-queued-bubble { min-width: 0; max-width: min(100%, 560px); padding: var(--sp-8) calc(15px * var(--cc-ui)); border-radius: var(--radius-xl) var(--radius-xl) var(--radius-sm) var(--radius-xl); background: var(--cc-user-bubble); color: var(--cc-chat-text); font-size: var(--text-base); line-height: var(--leading-body); white-space: pre-wrap; overflow-wrap: anywhere; opacity: .7; }
 .chat-queued-dismiss { flex: 0 0 auto; width: 18px; height: 18px; padding: 0; display: grid; place-items: center; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-faint); font: inherit; font-size: var(--text-xs); line-height: 1; cursor: pointer; }
 .chat-queued-dismiss:hover { color: var(--cc-text); background: var(--fill-selected); }
+.chat-prompt-queue .chat-queued-turn { width: 100%; flex-wrap: wrap; }
+.chat-queue-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: var(--sp-8); }
+.chat-queue-edit { width: 100%; min-height: 72px; max-height: 180px; resize: vertical; padding: var(--sp-8); border: var(--hairline) solid var(--cc-line); border-radius: var(--radius-lg); background: var(--cc-l0); color: var(--cc-text); font: inherit; line-height: var(--leading-body); }
+.chat-queue-attachments { display: flex; flex-wrap: wrap; gap: var(--sp-4); color: var(--cc-text-dim); font-size: var(--text-xs); }
+.chat-queue-attachments span { display: inline-flex; align-items: center; gap: var(--sp-2); }
+.chat-queue-attachments button { border: 0; background: transparent; color: inherit; cursor: pointer; }
+.chat-queue-attachment-count { color: var(--cc-text-faint); font-size: var(--text-xs); }
 .chat-queued-tag { flex: 0 0 auto; color: var(--cc-text-faint); font-size: var(--text-xs); }
 /* 「打断并发送」:破坏性次级动作,琥珀描边与发送按钮区分,不抢主视觉。
    .chat-compose 前缀必须有:compose 里有一条 `.chat-compose button` 的 accent 皮肤
@@ -4749,6 +4756,31 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .scm-commit-btn:disabled, .scm-commit-btn.btn-primary:disabled { opacity: 1; background: var(--fill-selected); color: var(--cc-text-faint); cursor: default; }
 .scm-error { color: var(--cc-fail-text); font-size: var(--text-xs); overflow-wrap: anywhere; }
 .scm-notice { color: var(--cc-text-dim); font-size: var(--text-xs); }
+.checkpoint-panel { box-sizing: border-box; width: 100%; max-width: 880px; align-self: center; padding: 0 var(--sp-12); }
+.checkpoint-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-4); margin-bottom: var(--sp-8); }
+.checkpoint-toolbar strong { font-size: var(--text-sm); font-weight: 500; }
+.checkpoint-actions { display: flex; flex-wrap: wrap; gap: var(--sp-8); margin-left: auto; }
+.checkpoint-repos { display: flex; flex-wrap: wrap; gap: var(--sp-4); margin-bottom: var(--sp-8); }
+.checkpoint-repos button { border: 0; border-radius: var(--radius-sm); padding: var(--sp-2) var(--sp-6); background: transparent; color: var(--cc-text-dim); }
+.checkpoint-repos button.is-selected { background: var(--fill-hover); color: var(--cc-text); }
+.pr-review { display: flex; flex-direction: column; gap: var(--sp-8); padding: var(--sp-8); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-lg); }
+.pr-comments, .pr-monitor { display: flex; flex-direction: column; gap: var(--sp-6); max-height: 360px; overflow-y: auto; }
+.pr-comment, .pr-event { padding: var(--sp-6); border-radius: var(--radius-md); background: var(--fill-hover); }
+.pr-comment header { color: var(--cc-text-dim); font-size: var(--text-xs); }
+.pr-comment p, .pr-event p { margin: var(--sp-2) 0 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.pr-file-list { display: flex; flex-direction: column; max-height: 180px; overflow-y: auto; }
+.pr-file-list button { display: flex; justify-content: space-between; gap: var(--sp-4); border: 0; padding: var(--sp-4); background: transparent; color: var(--cc-text); text-align: left; overflow-wrap: anywhere; }
+.pr-file-list button.is-selected { background: var(--fill-hover); }
+.pr-file-list span { flex: none; color: var(--cc-text-dim); }
+.pr-patch { max-height: 360px; overflow: auto; padding: var(--sp-4); font: var(--text-xs)/1.6 var(--cc-mono); }
+.pr-patch > div { position: relative; min-height: 1.6em; white-space: pre; }
+.pr-patch .chat-diff-cmt-add { margin-right: var(--sp-4); }
+.pr-compose textarea { box-sizing: border-box; width: 100%; min-height: 72px; resize: vertical; padding: var(--sp-6); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); background: var(--cc-panel); color: var(--cc-text); }
+.pr-compose .checkpoint-actions { justify-content: flex-end; margin-top: var(--sp-4); }
+.pr-confirm-body { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 240px; overflow-y: auto; }
+.nsp-orphans { display: flex; flex-direction: column; gap: var(--sp-4); margin-bottom: var(--sp-8); color: var(--cc-text-dim); font-size: var(--text-xs); }
+.nsp-orphan { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-8); padding: var(--sp-6); border-radius: var(--radius-md); background: var(--fill-hover); }
+.nsp-orphan > span { overflow-wrap: anywhere; }
 /* 提示行（PanelMessage.tsx）：文字、能点的下一步、关闭，一行放不下就折行。 */
 .scm-msg { display: flex; flex-wrap: wrap; align-items: center; column-gap: var(--sp-2); row-gap: var(--sp-2); }
 .scm-msg-text { flex: 0 1 auto; min-width: 0; }

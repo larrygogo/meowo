@@ -1,6 +1,7 @@
 //! hook 上报器。agent 的身份、能力与会话解析全部住在 `meowo_agent` 插件注册表——本 crate
 //! 只负责「把 hook 事件落库」这件事，不再持有第二张 agent 注册表。
 
+pub mod checkpoint;
 pub mod dispatch;
 pub mod hook;
 pub mod import;

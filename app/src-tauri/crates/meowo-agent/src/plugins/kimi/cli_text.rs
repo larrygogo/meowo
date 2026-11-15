@@ -149,6 +149,12 @@ pub(super) static DEPS: &[D] = &[
         "\u{1F317} Working…",
         "2.5.1 kimi.EXE：`ensureActivitySpinner(\"braille\",\"Working…\")`，省略号是单个字符；重试时为 `Retrying (n/m)`",
     ),
+    D::new(
+        "literal:working for ",
+        "working for ",
+        "\u{280B} Working for 12s",
+        "2.6.1 kimi.EXE：`workingLabel` 对 live 回合返回 `Working for ${formatDuration(now - turn.start)}`；时长运行时拼接",
+    ),
     // ── 自动抽取的字面量 ──
     D::new(
         "literal:do you trust the files in this folder",

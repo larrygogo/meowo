@@ -6,7 +6,7 @@
 import { afterEach, expect, vi } from "vitest";
 import { act, cleanup, fireEvent, screen, waitFor } from "@testing-library/react";
 import { chatUi } from "../test/agents";
-import type { TerminalScreenFrameDto } from "../api";
+import type { QueuedPromptDto, TerminalScreenFrameDto } from "../api";
 import { outgoingStore } from "./chat/outgoingPrompts";
 
 const invoke = vi.hoisted(() => vi.fn());
@@ -83,7 +83,7 @@ export function respondWithHistory(history: unknown, approval: unknown = null) {
     if (command === "agent_chat_ui") return Promise.resolve(chatUi((history as { provider: string }).provider));
     if (command === "managed_terminal_binding") return Promise.resolve(null);
     if (command === "managed_terminal_snapshot") return Promise.resolve({ sessionId: 1, active: true, managed: true, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
-    return Promise.resolve();
+    return queueFallback(command, args) ?? Promise.resolve();
   });
 }
 
@@ -97,8 +97,74 @@ export async function chatUiReady() {
   await act(async () => {});
 }
 
+export async function deliverQueuedNow() {
+  const before = invoke.mock.calls.filter(([command]) => command === "prompt_queue_finish").length;
+  await act(async () => {});
+  if (before > 0 && !document.querySelector(".chat-prompt-queue")) return;
+  await waitFor(() => expect(Boolean(screen.queryByRole("button", { name: "现在交给 Agent" }) || invoke.mock.calls.filter(([command]) => command === "prompt_queue_finish").length > before)).toBe(true), { timeout: 4_000 });
+  const button = screen.queryByRole("button", { name: "现在交给 Agent" });
+  if (button) fireEvent.click(button);
+  await waitFor(() => expect(invoke.mock.calls.filter(([command]) => command === "prompt_queue_finish").length).toBeGreaterThan(before), { timeout: 4_000 });
+  await act(async () => {});
+}
+
+const promptQueues = new Map<number, QueuedPromptDto[]>();
+let nextPromptId = 0;
+
+/// 自定义 invoke 的测试也走同一份有状态队列，避免只 mock 出「undefined = 空队列」的假象。
+export function queueFallback(command: string, args?: Record<string, unknown>): Promise<unknown> | null {
+  if (!command.startsWith("prompt_queue_")) return null;
+  const sessionId = Number(args?.sessionId);
+  const current = () => promptQueues.get(sessionId) ?? [];
+  const put = (next: QueuedPromptDto[]) => promptQueues.set(sessionId, next);
+  const id = Number(args?.id);
+  if (command === "prompt_queue_list") return Promise.resolve(current().filter((entry) => ["held", "delivering", "failed"].includes(entry.state)));
+  if (command === "prompt_queue_enqueue") {
+    nextPromptId += 1;
+    const item: QueuedPromptDto = {
+      id: nextPromptId,
+      sessionId,
+      draft: args?.draft as QueuedPromptDto["draft"],
+      state: "held",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    put([...current(), item]);
+    return Promise.resolve(item);
+  }
+  const item = current().find((entry) => entry.id === id);
+  if (!item) return Promise.resolve(null);
+  if (command === "prompt_queue_claim") {
+    if (item.state !== "held") return Promise.resolve(null);
+    const claimed = { ...item, state: "delivering" };
+    put(current().map((entry) => entry.id === id ? claimed : entry));
+    return Promise.resolve(claimed);
+  }
+  if (command === "prompt_queue_finish") {
+    put(current().map((entry) => entry.id === id ? { ...entry, state: args?.delivered ? "delivered" : "failed" } : entry));
+    return Promise.resolve(item.state === "delivering");
+  }
+  if (command === "prompt_queue_edit") {
+    if (item.state !== "held") return Promise.resolve(false);
+    put(current().map((entry) => entry.id === id ? { ...entry, draft: args?.draft as QueuedPromptDto["draft"] } : entry));
+    return Promise.resolve(true);
+  }
+  if (command === "prompt_queue_cancel") {
+    if (item.state !== "held") return Promise.resolve(false);
+    put(current().map((entry) => entry.id === id ? { ...entry, state: "cancelled" } : entry));
+    return Promise.resolve(true);
+  }
+  if (command === "prompt_queue_retry") {
+    if (item.state !== "failed") return Promise.resolve(false);
+    put(current().map((entry) => entry.id === id ? { ...entry, state: "held" } : entry));
+    return Promise.resolve(true);
+  }
+  return null;
+}
+
 afterEach(() => {
   cleanup();
+  promptQueues.clear();
   invoke.mockReset();
   openDialog.mockReset();
   eventListeners.clear();
@@ -107,6 +173,8 @@ afterEach(() => {
   window.history.replaceState({}, "", "/");
   // 侧栏折叠状态持久化在 localStorage，不清会串到下一个用例。
   localStorage.clear();
+  delete (globalThis as Record<string, unknown>).__MEOWO_REMOTE__;
+  document.body.classList.remove("remote-ui");
 });
 
 // 「ChatWindow 适配回归」两份文件共用的会话夹具（原 describe 头部的五个辅助，原样搬出）。
@@ -126,7 +194,7 @@ const adapterHelpers = () => {
       if (command === "agent_chat_ui") return Promise.resolve(chatUi(provider));
       if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
       if (command === "managed_terminal_snapshot") return Promise.resolve(snapshot(Number(args?.sessionId)));
-      return Promise.resolve();
+      return queueFallback(command, args) ?? Promise.resolve();
     });
     return invoke.getMockImplementation()!;
   };

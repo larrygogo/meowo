@@ -94,6 +94,71 @@ CREATE TABLE IF NOT EXISTS todos (
     stale INTEGER NOT NULL DEFAULT 0
 );
 
+CREATE TABLE IF NOT EXISTS prompt_queue (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    -- 临时会话尚未落 sessions 表，不能用外键；认领时整批搬到正式 id。
+    session_id  INTEGER NOT NULL,
+    draft_json  TEXT NOT NULL,
+    state       TEXT NOT NULL,
+    created_at  INTEGER NOT NULL,
+    updated_at  INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS ix_prompt_queue_active ON prompt_queue(session_id, id)
+    WHERE state IN ('held', 'delivering', 'failed');
+
+CREATE TABLE IF NOT EXISTS turn_checkpoints (
+    session_id  INTEGER NOT NULL,
+    turn        INTEGER NOT NULL,
+    repo_root   TEXT NOT NULL,
+    start_ref   TEXT NOT NULL,
+    end_ref     TEXT,
+    error       TEXT,
+    updated_at  INTEGER NOT NULL,
+    PRIMARY KEY(session_id, turn, repo_root)
+);
+
+CREATE TABLE IF NOT EXISTS checkpoint_restores (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id  INTEGER NOT NULL,
+    created_at  INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS checkpoint_restore_repos (
+    restore_id   INTEGER NOT NULL REFERENCES checkpoint_restores(id) ON DELETE CASCADE,
+    repo_root    TEXT NOT NULL,
+    snapshot_ref TEXT NOT NULL,
+    PRIMARY KEY(restore_id, repo_root)
+);
+
+CREATE TABLE IF NOT EXISTS pr_monitors (
+    key            TEXT PRIMARY KEY,
+    cwd            TEXT NOT NULL,
+    session_id     INTEGER NOT NULL,
+    slug           TEXT NOT NULL,
+    number         INTEGER NOT NULL,
+    enabled        INTEGER NOT NULL DEFAULT 1,
+    seeded         INTEGER NOT NULL DEFAULT 0,
+    checks_state   TEXT,
+    mergeable      TEXT,
+    head_oid       TEXT,
+    known_comments TEXT NOT NULL DEFAULT '[]',
+    last_error     TEXT,
+    updated_at     INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS pr_monitor_events (
+    id           TEXT NOT NULL,
+    monitor_key  TEXT NOT NULL REFERENCES pr_monitors(key) ON DELETE CASCADE,
+    kind         TEXT NOT NULL,
+    summary      TEXT NOT NULL,
+    created_at   INTEGER NOT NULL,
+    wake_state   TEXT NOT NULL DEFAULT 'pending',
+    PRIMARY KEY(monitor_key, id)
+);
+
+CREATE INDEX IF NOT EXISTS ix_pr_monitor_events_key ON pr_monitor_events(monitor_key, created_at DESC);
+
 CREATE UNIQUE INDEX IF NOT EXISTS ux_tasks_session ON tasks(session_id) WHERE session_id IS NOT NULL;
 
 -- session_context: 来自 Claude Code statusline 的上下文用量（准确窗口与百分比）。

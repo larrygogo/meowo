@@ -179,6 +179,22 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     "dismiss_interactive_question",
     // 附件（落盘到 %TEMP%/meowo-paste，路径由后端生成）
     "save_pasted_attachment",
+    // 尚未交给 CLI 的持久队列；领取是原子的，桌面与手机不能同时投递同一条。
+    "prompt_queue_list",
+    "prompt_queue_enqueue",
+    "prompt_queue_edit",
+    "prompt_queue_cancel",
+    "prompt_queue_claim",
+    "prompt_queue_finish",
+    "prompt_queue_retry",
+    "prompt_queue_orphans",
+    "prompt_queue_restore_orphan",
+    // 回合快照：目录和文件只能从该会话已登记的 checkpoint 反查，恢复前服务端再查忙闲。
+    "checkpoint_turns",
+    "checkpoint_turn_detail",
+    "checkpoint_file_diff",
+    "checkpoint_restore",
+    "checkpoint_undo",
     // 新建会话
     "list_agents",
     "agent_chat_ui",
@@ -227,6 +243,11 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     "git_forge_status",
     "gh_pr_create",
     "gh_pr_merge",
+    "pr_review",
+    "pr_comment",
+    "pr_line_comment",
+    "pr_monitor_set",
+    "pr_monitor_wake",
     "forge_choose_repo",
     // 侧栏会话行的 PR / CI 与改动数（UI 优化 #54）：只读，每个目录逐一过会话目录收口，不是的直接丢掉。
     "sidebar_git_badges",
@@ -1210,6 +1231,30 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
             }
             reply(crate::forge::gh_pr_merge(a.cwd, a.number, a.method, a.expected_head_oid).await)
         }
+        "pr_review" => {
+            let a = args!(PrReviewArgs);
+            if let Err(e) = ensure_git_repo_dir(app, &a.cwd, a.session_cwd.as_deref()).await { return reply::<()>(Err(e)); }
+            reply(crate::forge::review::pr_review(state, a.cwd, a.session_id).await)
+        }
+        "pr_comment" => {
+            let a = args!(PrCommentArgs);
+            if let Err(e) = ensure_git_repo_dir(app, &a.cwd, a.session_cwd.as_deref()).await { return reply::<()>(Err(e)); }
+            reply(crate::forge::review::pr_comment(a.cwd, a.number, a.body, a.review).await)
+        }
+        "pr_line_comment" => {
+            let a = args!(PrLineCommentArgs);
+            if let Err(e) = ensure_git_repo_dir(app, &a.cwd, a.session_cwd.as_deref()).await { return reply::<()>(Err(e)); }
+            reply(crate::forge::review::pr_line_comment(a.cwd, a.number, a.path, a.line, a.side, a.body).await)
+        }
+        "pr_monitor_set" => {
+            let a = args!(PrMonitorSetArgs);
+            if a.enabled { if let Err(e) = ensure_git_repo_dir(app, &a.cwd, a.session_cwd.as_deref()).await { return reply::<()>(Err(e)); } }
+            reply(crate::forge::review::pr_monitor_set(state, a.cwd, a.session_id, a.enabled, a.key).await)
+        }
+        "pr_monitor_wake" => {
+            let a = args!(PrMonitorWakeArgs);
+            reply(crate::forge::review::pr_monitor_wake(app.clone(), state, a.session_id, a.monitor_key, a.event_id).await)
+        }
         "forge_choose_repo" => {
             let a = args!(ForgeChooseRepoArgs);
             if let Err(e) = ensure_git_repo_dir(app, &a.cwd, a.session_cwd.as_deref()).await {
@@ -1496,6 +1541,61 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
         "save_pasted_attachment" => {
             let a = args!(SavePastedAttachmentArgs);
             reply(crate::chat::save_pasted_attachment(a.file_name, a.data_base64).await)
+        }
+        "prompt_queue_list" => {
+            let a = args!(SessionArg);
+            reply(crate::prompt_queue::prompt_queue_list(state, a.session_id))
+        }
+        "prompt_queue_orphans" => {
+            reply(crate::prompt_queue::prompt_queue_orphans(state))
+        }
+        "prompt_queue_restore_orphan" => {
+            let a = args!(PromptQueueEntryArgs);
+            reply(crate::prompt_queue::prompt_queue_restore_orphan(state, a.session_id, a.id))
+        }
+        "checkpoint_turns" => {
+            let a = args!(SessionArg);
+            reply(crate::checkpoints::checkpoint_turns(state, a.session_id))
+        }
+        "checkpoint_turn_detail" => {
+            let a = args!(CheckpointTurnArgs);
+            reply(crate::checkpoints::checkpoint_turn_detail(state, a.session_id, a.turn).await)
+        }
+        "checkpoint_file_diff" => {
+            let a = args!(CheckpointFileArgs);
+            reply(crate::checkpoints::checkpoint_file_diff(state, a.session_id, a.turn, a.repo_root, a.path).await)
+        }
+        "checkpoint_restore" => {
+            let a = args!(CheckpointRestoreArgs);
+            reply(crate::checkpoints::checkpoint_restore(state, a.session_id, a.turn, a.phase).await)
+        }
+        "checkpoint_undo" => {
+            let a = args!(CheckpointUndoArgs);
+            reply(crate::checkpoints::checkpoint_undo(state, a.session_id, a.id).await)
+        }
+        "prompt_queue_enqueue" => {
+            let a = args!(PromptQueueEnqueueArgs);
+            reply(crate::prompt_queue::prompt_queue_enqueue(app.clone(), state, a.session_id, a.draft))
+        }
+        "prompt_queue_edit" => {
+            let a = args!(PromptQueueEditArgs);
+            reply(crate::prompt_queue::prompt_queue_edit(app.clone(), state, a.session_id, a.id, a.draft))
+        }
+        "prompt_queue_cancel" => {
+            let a = args!(PromptQueueEntryArgs);
+            reply(crate::prompt_queue::prompt_queue_cancel(app.clone(), state, a.session_id, a.id))
+        }
+        "prompt_queue_claim" => {
+            let a = args!(PromptQueueEntryArgs);
+            reply(crate::prompt_queue::prompt_queue_claim(app.clone(), state, a.session_id, a.id))
+        }
+        "prompt_queue_finish" => {
+            let a = args!(PromptQueueFinishArgs);
+            reply(crate::prompt_queue::prompt_queue_finish(app.clone(), state, a.session_id, a.id, a.delivered))
+        }
+        "prompt_queue_retry" => {
+            let a = args!(PromptQueueEntryArgs);
+            reply(crate::prompt_queue::prompt_queue_retry(app.clone(), state, a.session_id, a.id))
         }
         "list_agents" => reply_ok(crate::list_agents().await),
         "agent_chat_ui" => {
@@ -2520,6 +2620,11 @@ mod tests {
                 br#"{"cwd":"C:/work-wt","number":12,"method":"squash","expectedHeadOid":"a72e75f81e6c99f272c5e963927fcd7ed06fef32","sessionCwd":"C:/work"}"#,
             )
             .map(|_| ()),
+            "pr_review" => parse::<PrReviewArgs>(br#"{"cwd":"C:/work-wt","sessionId":42,"sessionCwd":"C:/work"}"#).map(|_| ()),
+            "pr_comment" => parse::<PrCommentArgs>(br#"{"cwd":"C:/work-wt","number":12,"body":"looks good","review":true,"sessionCwd":"C:/work"}"#).map(|_| ()),
+            "pr_line_comment" => parse::<PrLineCommentArgs>(br#"{"cwd":"C:/work-wt","number":12,"path":"src/a.ts","line":3,"side":"NEW","body":"check this","sessionCwd":"C:/work"}"#).map(|_| ()),
+            "pr_monitor_set" => parse::<PrMonitorSetArgs>(br#"{"cwd":"C:/work-wt","sessionId":42,"enabled":true,"key":"acme/repo#12","sessionCwd":"C:/work"}"#).map(|_| ()),
+            "pr_monitor_wake" => parse::<PrMonitorWakeArgs>(br#"{"sessionId":42,"monitorKey":"acme/repo#12","eventId":"comment:1"}"#).map(|_| ()),
             // api.ts:451（renameSession：cwd/provider 可 null，sessionId 是 cc_session_id 字符串）
             "rename_session" => parse::<RenameSessionArgs>(
                 br#"{"cwd":"C:/repo","sessionId":"cc-abc","title":"renamed","provider":"claude"}"#,
@@ -2632,6 +2737,26 @@ mod tests {
             "save_pasted_attachment" => {
                 parse::<SavePastedAttachmentArgs>(br#"{"fileName":"a.png","dataBase64":"aGk="}"#)
                     .map(|_| ())
+            }
+            "prompt_queue_orphans" => Ok(()),
+            "prompt_queue_restore_orphan" => parse::<PromptQueueEntryArgs>(br#"{"sessionId":-1,"id":1}"#).map(|_| ()),
+            "prompt_queue_list" => parse::<SessionArg>(br#"{"sessionId":42}"#).map(|_| ()),
+            "checkpoint_turns" => parse::<SessionArg>(br#"{"sessionId":42}"#).map(|_| ()),
+            "checkpoint_turn_detail" => parse::<CheckpointTurnArgs>(br#"{"sessionId":42,"turn":1}"#).map(|_| ()),
+            "checkpoint_file_diff" => parse::<CheckpointFileArgs>(br#"{"sessionId":42,"turn":1,"repoRoot":"C:/repo","path":"src/a.ts"}"#).map(|_| ()),
+            "checkpoint_restore" => parse::<CheckpointRestoreArgs>(br#"{"sessionId":42,"turn":1,"phase":"start"}"#).map(|_| ()),
+            "checkpoint_undo" => parse::<CheckpointUndoArgs>(br#"{"sessionId":42,"id":1}"#).map(|_| ()),
+            "prompt_queue_enqueue" => parse::<PromptQueueEnqueueArgs>(
+                br#"{"sessionId":42,"draft":{"prompt":"continue","attachments":[]}}"#,
+            ).map(|_| ()),
+            "prompt_queue_edit" => parse::<PromptQueueEditArgs>(
+                br#"{"sessionId":42,"id":1,"draft":{"prompt":"edited","attachments":[]}}"#,
+            ).map(|_| ()),
+            "prompt_queue_cancel" | "prompt_queue_claim" | "prompt_queue_retry" => {
+                parse::<PromptQueueEntryArgs>(br#"{"sessionId":42,"id":1}"#).map(|_| ())
+            }
+            "prompt_queue_finish" => {
+                parse::<PromptQueueFinishArgs>(br#"{"sessionId":42,"id":1,"delivered":true}"#).map(|_| ())
             }
             // api.ts:810（cwd/sessionId 可 null）
             "agent_chat_ui" => {

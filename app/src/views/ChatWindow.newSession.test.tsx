@@ -2,7 +2,7 @@
 // 夹具与 mock 见 chatWindow.harness.tsx（必须先于 ./ChatWindow 导入）。
 import { describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { emptyComposerFrame, invoke, saveDialog, eventListeners, b64utf8, respondWithHistory } from "./chatWindow.harness";
+import { emptyComposerFrame, invoke, saveDialog, eventListeners, b64utf8, respondWithHistory, queueFallback, deliverQueuedNow } from "./chatWindow.harness";
 import { ChatWindow } from "./ChatWindow";
 import { zh } from "../i18n/zh";
 import { chatUi, descriptors } from "../test/agents";
@@ -487,7 +487,7 @@ describe("ChatWindow", () => {
           ? { sessionId: sid, active: true, managed: true, data: b64utf8("claude ready" + typed), startOffset: 0, endOffset: 64 + typed.length, exited: false, exitCode: null }
           : { sessionId: sid, active: true, managed: true, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
       }
-      return Promise.resolve();
+      return queueFallback(command, args) ?? Promise.resolve();
     });
   }
   async function sendFirstPrompt(text: string) {
@@ -530,9 +530,13 @@ describe("ChatWindow", () => {
     });
     await sendFirstPrompt("第一句");
     await waitFor(() => expect(writesOf()).toContain("第一句"), { timeout: 8_000 });
+    await waitFor(() => expect(writesOf()).toContain("\r"));
+    await waitFor(() => expect(document.querySelector(".is-sending")).toBeNull());
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 300)); });
     const composer = await screen.findByRole("combobox", { name: "发送消息给 Agent" });
     fireEvent.change(composer, { target: { value: "第二句" } });
     fireEvent.keyDown(composer, { key: "Enter" });
+    await deliverQueuedNow();
     await waitFor(() => expect(writesOf()).toContain("第二句"), { timeout: 8_000 });
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("get_chat_history", expect.objectContaining({ sessionId: 71 })), { timeout: 5_000 });
     await waitFor(() => expect(document.querySelector(".is-sending")).toBeNull(), { timeout: 8_000 });
@@ -552,6 +556,7 @@ describe("ChatWindow", () => {
     await new Promise((resolve) => setTimeout(resolve, 1_000));
     expect(writesOf()).not.toContain("第二句");
     ready = true;
+    await deliverQueuedNow();
     await waitFor(() => expect(writesOf()).toContain("第二句"), { timeout: 10_000 });
     const writes = writesOf();
     expect(writes.indexOf("第一句")).toBeGreaterThanOrEqual(0);

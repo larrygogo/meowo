@@ -2,7 +2,7 @@
 // 夹具与 mock 见 chatWindow.harness.tsx（必须先于 ./ChatWindow 导入）。
 import { describe, expect, it } from "vitest";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { emptyComposerFrame, invoke, openDialog, setTitleMock, terminalProps, pickAttachments, b64utf8, respondWithHistory } from "./chatWindow.harness";
+import { emptyComposerFrame, invoke, openDialog, setTitleMock, terminalProps, pickAttachments, b64utf8, respondWithHistory, deliverQueuedNow } from "./chatWindow.harness";
 import { ChatWindow } from "./ChatWindow";
 import { zh } from "../i18n/zh";
 import { chatUi, descriptors } from "../test/agents";
@@ -77,6 +77,7 @@ describe("ChatWindow", () => {
     expect(invoke).toHaveBeenCalledWith("get_chat_history", { sessionId: 7, offset: 0 });
     fireEvent.change(screen.getByRole("combobox", { name: "发送消息给 Agent" }), { target: { value: "继续实现" } });
     fireEvent.keyDown(screen.getByRole("combobox", { name: "发送消息给 Agent" }), { key: "Enter" });
+    await deliverQueuedNow();
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 7, data: "继续实现" }));
     // Enter 在正文之后隔 SUBMIT_GAP_MS 才发（等 TUI 的斜杠补全渲染完，否则 Enter 会被
     // 补全菜单吃掉、只换行不提交），故这里同样要 waitFor。
@@ -586,6 +587,7 @@ describe("ChatWindow", () => {
     expect(await screen.findByAltText("design.png")).toBeTruthy();
     expect(screen.getByText("spec.pdf")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await deliverQueuedNow();
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", {
       sessionId: 11,
       data: expect.stringContaining("C:/tmp/design.png"),

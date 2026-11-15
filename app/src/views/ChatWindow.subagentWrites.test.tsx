@@ -3,7 +3,7 @@
 // 夹具与 mock 见 chatWindow.harness.tsx（必须先于 ./ChatWindow 导入）。
 import { describe, expect, it } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { invoke, openDialog, pickAttachments, adapter } from "./chatWindow.harness";
+import { invoke, openDialog, pickAttachments, adapter, deliverQueuedNow } from "./chatWindow.harness";
 import { ChatWindow } from "./ChatWindow";
 import { zh } from "../i18n/zh";
 
@@ -116,6 +116,7 @@ describe("终端停在子代理视图：写入前先切回主会话", () => {
     await notice();
     // 看过提示仍点发送：正文照发给它（既有约定），于是有了排队回执和「中断并处理」。
     fireEvent.keyDown(box(), { key: "Enter" });
+    await deliverQueuedNow();
     await waitFor(() => expect(writes(608)).toContain("插一句"), { timeout: 4000 });
     fireEvent.click(await screen.findByRole("button", { name: "中断并处理" }));
     await new Promise((resolve) => setTimeout(resolve, 600));

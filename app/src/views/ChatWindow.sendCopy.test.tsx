@@ -1,7 +1,7 @@
 // 发送文案与发送结果对应（验收 2）。夹具与 mock 见 chatWindow.harness.tsx（必须先于 ./ChatWindow 导入）。
 import { afterEach, describe, expect, it } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { invoke, adapter, chatUiReady, emptyComposerFrame } from "./chatWindow.harness";
+import { invoke, adapter, chatUiReady, emptyComposerFrame, deliverQueuedNow } from "./chatWindow.harness";
 import { ChatWindow } from "./ChatWindow";
 import { zh } from "../i18n/zh";
 import { chatUi } from "../test/agents";
@@ -54,6 +54,7 @@ describe("运行中发送的占位与回执同词（走查输入 B5）", () => {
     // 发出去。
     fireEvent.change(adapter.box(), { target: { value: "运行中再发一条" } });
     fireEvent.keyDown(adapter.box(), { key: "Enter" });
+    await deliverQueuedNow();
     await waitFor(() => expect(adapter.writes(772)).toContain("运行中再发一条"), { timeout: 3_000 });
     // 发之后：排队栈回执，与占位同一个动词。
     const receipt = await screen.findByText(runningReceipt(zh, mode, 1), {}, { timeout: 3_000 });
