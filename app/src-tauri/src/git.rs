@@ -1130,7 +1130,14 @@ pub(crate) fn path_under(path: &str, root: &str) -> bool {
 
 /// 远程桥用：两个仓库根是不是同一个目录。
 pub(crate) fn same_root(a: &str, b: &str) -> bool {
-    same_path(a, b)
+    if same_path(a, b) {
+        return true;
+    }
+    // macOS 的 /var 是指向 /private/var 的符号链接；PR #177 的恢复测试因此把同一仓库误判成已变化。
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => same_path(&a.to_string_lossy(), &b.to_string_lossy()),
+        _ => false,
+    }
 }
 
 fn same_path(a: &str, b: &str) -> bool {
