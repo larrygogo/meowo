@@ -43,13 +43,16 @@ describe("RuntimeRequest compatibility", () => {
     expect(runtimeRequestBrokerLive(request)).toBe(true);
   });
 
-  it("classifies terminal questions, approvals and generic prompts from rule semantics", () => {
+  /// 种类由规则声明（attention.kind），不从 id 的后缀猜。信任页此前因为「id 以 provider: 开头且有
+  /// 选项」被算成审批，现在照实是提示。
+  it("屏幕请求的种类取自规则声明：提问、审批（含计划批准）、其余提示", () => {
     const base = { text: "screen", provider: "kimi", sessionId: 7, writable: true };
-    expect(asTerminalRuntimeRequest({ ...base, attention: { id: "kimi:question", text: "question", details: "bracket_form" } }).kind).toBe("question");
-    expect(asTerminalRuntimeRequest({ ...base, attention: { id: "kimi:command-approval", text: "approval", details: "arrow_panel" } }).kind).toBe("approval");
-    expect(asTerminalRuntimeRequest({ ...base, attention: { id: "claude:plan-approval", text: "plan" } }).kind).toBe("approval");
-    expect(asTerminalRuntimeRequest({ ...base, attention: { id: "provider:trust", text: "trust", options: [{ label: "Yes", input: "1" }] } }).kind).toBe("approval");
-    expect(asTerminalRuntimeRequest({ ...base, attention: { id: "claude:long-session-resume", text: "continue" } }).kind).toBe("prompt");
+    expect(asTerminalRuntimeRequest({ ...base, attention: { id: "kimi:question", kind: "question", text: "question" } }).kind).toBe("question");
+    expect(asTerminalRuntimeRequest({ ...base, attention: { id: "kimi:command-approval", kind: "approval", text: "approval", details: "arrow_panel" } }).kind).toBe("approval");
+    expect(asTerminalRuntimeRequest({ ...base, attention: { id: "claude:plan-approval", kind: "plan", text: "plan" } }).kind).toBe("approval");
+    expect(asTerminalRuntimeRequest({ ...base, attention: { id: "provider:trust", kind: "trust", text: "trust", options: [{ label: "Yes", input: "1" }] } }).kind).toBe("prompt");
+    expect(asTerminalRuntimeRequest({ ...base, attention: { id: "claude:long-session-resume", kind: "choice", text: "continue" } }).kind).toBe("prompt");
+    expect(asTerminalRuntimeRequest({ ...base, attention: { id: "gemini:usage-limit", kind: "choice", text: "limit" } }).kind).toBe("prompt");
   });
 
   it("keeps terminal identity stable across repaints and preserves native options", () => {
@@ -57,13 +60,13 @@ describe("RuntimeRequest compatibility", () => {
       sessionId: 42,
       provider: "gemini",
       writable: true,
-      attention: { id: "gemini:command-approval", text: "Allow once?", details: "framed_box", options: [{ label: "Allow once", input: "\r", focused: true }] },
+      attention: { id: "gemini:command-approval", kind: "approval", text: "Allow once?", details: "framed_box", options: [{ label: "Allow once", input: "\r", focused: true }] },
     });
     const repainted = asTerminalRuntimeRequest({
       sessionId: 42,
       provider: "gemini",
       writable: true,
-      attention: { id: "gemini:command-approval", text: "Allow once?\nnew detail", details: "framed_box", options: [{ label: "Allow once", input: "\r" }] },
+      attention: { id: "gemini:command-approval", kind: "approval", text: "Allow once?\nnew detail", details: "framed_box", options: [{ label: "Allow once", input: "\r" }] },
     });
     expect(first.requestId).toBe("terminal:42:gemini:command-approval");
     expect(repainted.requestId).toBe(first.requestId);
@@ -77,7 +80,7 @@ describe("RuntimeRequest compatibility", () => {
       sessionId: 7,
       provider: "opencode",
       writable: false,
-      attention: { id: "opencode:command-approval", text: "Allow this action?" },
+      attention: { id: "opencode:command-approval", kind: "approval", text: "Allow this action?" },
     });
     expect(request.responseCapability).toEqual({ type: "not_resumable", reason: "terminal_read_only" });
     expect(request.terminal?.text).toBe("Allow this action?");

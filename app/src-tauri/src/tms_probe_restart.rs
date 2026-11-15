@@ -46,8 +46,10 @@ impl Tui {
         command.cwd(cwd);
         command.env("TERM", "xterm-256color");
         // 本进程跑在 Meowo 托管的会话里：外层 PTY 凭据一律摘掉，防探针认领外层会话（memory 嵌套污染）。
+        // 外层会话的账号标识（MEOWO_PROFILE）也摘掉：hook 会把它记成探针会话的账号，接回时按那个账号的
+        // 目录读模型清单，读不到，`-m` 被丢掉（2026-11-14 在非默认账号的托管会话里跑，K2 三项因此失败）。
         for (key, _) in std::env::vars() {
-            if key.starts_with("MEOWO_PTY_") || key.starts_with("CLAUDE") {
+            if key.starts_with("MEOWO_PTY_") || key.starts_with("CLAUDE") || key == "MEOWO_PROFILE" {
                 command.env_remove(key);
             }
         }

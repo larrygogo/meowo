@@ -3,11 +3,11 @@ import type { ChatItem } from "../api";
 import { buildTranscriptTodos, parseTaskUpdate, type TaskUpdateCache } from "./transcriptTodos";
 
 const update = (id: string, payload: Record<string, unknown>): ChatItem => ({
-  type: "tool_use", id, timestamp: null, name: "TaskUpdate",
+  type: "tool_use", id, timestamp: null, name: "TaskUpdate", kind: "other",
   summary: JSON.stringify(payload), subagent: null,
 } as ChatItem);
 const create = (id: string, subject: string): ChatItem => ({
-  type: "tool_use", id, timestamp: null, name: "TaskCreate", summary: subject, subagent: null,
+  type: "tool_use", id, timestamp: null, name: "TaskCreate", kind: "other", summary: subject, subagent: null,
 } as ChatItem);
 const receipt = (id: string, toolUseId: string, text: string): ChatItem => ({
   type: "tool_result", id, timestamp: null, tool_use_id: toolUseId, text, is_error: false, subagent: null,

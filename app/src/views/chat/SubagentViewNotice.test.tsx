@@ -7,10 +7,10 @@ import { en } from "../../i18n/en";
 afterEach(cleanup);
 
 describe("SubagentViewNotice", () => {
-  it("说清楚终端停在哪个子代理，点按钮切回", () => {
+  it("说清楚终端停在哪个子任务，点按钮切回", () => {
     const onBack = vi.fn();
     render(<SubagentViewNotice name="后端实现 Excel 附件解析" busy={false} onBack={onBack} />);
-    expect(screen.getByRole("status").textContent).toBe("终端停在子代理「后端实现 Excel 附件解析」，发送会交给它");
+    expect(screen.getByRole("status").textContent).toBe("终端停在子任务「后端实现 Excel 附件解析」，发送会交给它");
     fireEvent.click(screen.getByRole("button", { name: "切回主会话" }));
     expect(onBack).toHaveBeenCalledTimes(1);
   });

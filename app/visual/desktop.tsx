@@ -15,6 +15,8 @@ import { installInputModality } from "../src/input-modality";
 import { installMocks, setExtraMock, store } from "../src/demo/mock";
 import { chatMock } from "../src/demo/chatData";
 import { panelMock } from "../src/demo/panelData";
+import { checkpointSceneMock } from "./checkpointScene";
+import { reviewSceneMock } from "./reviewScene";
 import { makeSession } from "../src/demo/data";
 import { savePanel } from "../src/views/chat/panelTabs";
 import { SETTINGS_SECTION_KEY } from "../src/settingsNav";
@@ -31,7 +33,9 @@ const lang: "zh" | "en" = q.get("lang") === "en" ? "en" : "zh";
 const theme = q.get("theme") === "light" ? "light" : "dark";
 const scene = q.get("scene") ?? "chat";
 
-Date.now = () => FIXED_NOW;
+// 默认把 Date.now 冻结在 FIXED_NOW。?clock=live：不冻结，时间跟着截图脚本的假时钟走（它同样从 FIXED_NOW 起步，
+// 只在脚本推进时前进），用来拍要等时间过去才出现的状态（审批卡倒计时归零后的「已过期」）。
+if (q.get("clock") !== "live") Date.now = () => FIXED_NOW;
 // 截图里关掉 WebGL，让 xterm 退回 DOM 渲染（ManagedTerminal / ShellTerminal 加载 WebglAddon 失败时自己兜底）：
 // WebGL 画布不保留绘制缓冲，Playwright 截图那一帧重新合成时画布是空的，托管终端的八个场景
 // （qa-term*）终端区整片漆黑，搜索命中、链接提示都看不到（做空审查 2026-11-11）。
@@ -147,7 +151,7 @@ async function boot(): Promise<React.ReactNode> {
         }
         return chat(cmd);
       }
-      return scmMock(cmd) ?? panel(cmd, args) ?? chat(cmd);
+      return checkpointSceneMock(cmd) ?? reviewSceneMock(cmd) ?? scmMock(cmd) ?? panel(cmd, args) ?? chat(cmd);
     });
     installMocks("chat");
     bootAppearance({ scale: true });
@@ -170,6 +174,18 @@ async function boot(): Promise<React.ReactNode> {
           scroller.scrollTop += table.getBoundingClientRect().top - scroller.getBoundingClientRect().top - 240;
         }
         if (performance.now() - started > 1500) window.clearInterval(timer);
+      }, 100);
+    }
+    if (scene === "panel-pr-review") {
+      const timer = window.setInterval(() => {
+        const button = [...document.querySelectorAll<HTMLButtonElement>(".scm-forge-btn")].find((el) => el.getAttribute("aria-expanded") === "false");
+        if (button) { button.click(); window.clearInterval(timer); }
+      }, 100);
+    }
+    if (scene === "panel-checkpoints") {
+      const timer = window.setInterval(() => {
+        const button = [...document.querySelectorAll<HTMLButtonElement>(".chat-diff-scope button")].find((el) => el.textContent === (lang === "zh" ? "快照" : "Checkpoints"));
+        if (button) { button.click(); window.clearInterval(timer); }
       }, 100);
     }
     if (scene === "panel-diff") {

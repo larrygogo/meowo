@@ -220,6 +220,11 @@ pub trait AgentPlugin: Sync {
         None
     }
 
+    /// 带参切换命令在对话中途弹的二次确认框（见 [`crate::chat_ui::SwitchConfirm`]）。
+    fn switch_confirm(&self) -> Option<crate::chat_ui::SwitchConfirm> {
+        None
+    }
+
     /// 本插件依赖的 CLI 输出文案中，需要手工声明的部分（见 [`crate::cli_text`]）：正则规则的
     /// 真实样例，以及运行时拼接、在程序文件里搜不到原样的字面量。插件里的字面量规则
     /// （信任页、模式回显、屏幕规则的子串）由 `cli_text` 自动抽取，不必在这里重复。
@@ -282,12 +287,9 @@ pub trait AgentPlugin: Sync {
         1
     }
 
-    /// 发送前收起 composer 残留草稿的按键与提示文案。默认 None:未经真机取证不声明。
-    fn draft_stash(&self) -> Option<crate::chat_ui::DraftStash> {
-        None
-    }
-
-    fn composer_guard(&self, _version: Option<&str>) -> Option<crate::chat_ui::ComposerGuard> {
+    /// 终端输入框的规格（见 [`crate::chat_ui::ComposerSpec`]）：认框、发送前收草稿、撤回后清原文、
+    /// 切模型前搬草稿共用这一份，**每个插件只声明这一处**。默认 None:未经真机取证不声明。
+    fn composer(&self, _version: Option<&str>) -> Option<crate::chat_ui::ComposerSpec> {
         None
     }
 
@@ -301,6 +303,12 @@ pub trait AgentPlugin: Sync {
     /// 「换行」CLI 收到的却是「提交」——声明此序列后 GUI 终端替用户注入。None = 未经
     /// 取证不注入:ESC 前缀在 crossterm 系 TUI 可能被拆成裸 Esc(= 中断回合),宁缺勿滥。
     fn newline_input(&self) -> Option<&'static str> {
+        None
+    }
+
+    /// 单行正文命中时也包成 bracketed paste 的正则（见 [`crate::chat_ui::ChatUi::single_line_paste_pattern`]）。
+    /// None = 单行直接写。只在真机取证到「直接写会丢字」的家声明。
+    fn single_line_paste_pattern(&self) -> Option<&'static str> {
         None
     }
 
@@ -359,11 +367,19 @@ pub trait AgentPlugin: Sync {
                 }
             }
         }
+        // 侧问命令声明了能力就进补全：此前只能手敲，补全里没有、界面上也没有入口（走查输入 C4）。
+        let mut builtin_commands = self.slash_commands().to_vec();
+        if let Some(side) = self.side_question() {
+            if !builtin_commands.contains(&side.command) {
+                builtin_commands.push(side.command);
+            }
+        }
         crate::chat_ui::ChatUi {
-            slash_commands: crate::chat_ui::merge_commands(self.slash_commands(), custom),
+            slash_commands: crate::chat_ui::merge_commands(&builtin_commands, custom),
             model_presets: self.model_presets().to_vec(),
             model_select_command: self.model_select_command(),
             model_select_reply: self.model_select_reply(),
+            switch_confirm: self.switch_confirm(),
             model_menu_command: self.model_menu_command(),
             mode_controls: self.mode_controls().to_vec(),
             menu_slash_commands,
@@ -376,6 +392,7 @@ pub trait AgentPlugin: Sync {
             queue_input: self.queue_input(),
             queue_delivery: self.queue_delivery(),
             newline_input: self.newline_input(),
+            single_line_paste_pattern: self.single_line_paste_pattern(),
             runtime_commands_pending,
             attachment_mention: self.attachment_mention(ctx.version),
             clipboard_image_paste: self.clipboard_image_paste(ctx.version),
@@ -383,6 +400,9 @@ pub trait AgentPlugin: Sync {
             status_line_pattern: self.status_line_pattern(),
             retry_line_pattern: self.retry_line_pattern(),
             effort: self.effort_control(),
+            effort_switch: self.effort_switch(),
+            model_select_saves_default: self.model_select_saves_default(),
+            effort_saves_default: self.effort_saves_default(),
             undo: self.undo_control(),
             side_question: self.side_question(),
             fork: self.fork_mode().is_some(),
@@ -394,8 +414,7 @@ pub trait AgentPlugin: Sync {
                     .map(str::to_string)
                     .collect()
             },
-            draft_stash: self.draft_stash(),
-            composer_guard: self.composer_guard(ctx.version),
+            composer: self.composer(ctx.version),
             subagent_view: self.subagent_view(),
             model_switch: self.model_switch().map(crate::ModelSwitch::kind),
             awaiting_first_message_markers: self.awaiting_first_message_markers().to_vec(),
@@ -430,6 +449,32 @@ pub trait AgentPlugin: Sync {
     /// 自动重试行的匹配正则（见 [`ChatUi::retry_line_pattern`]）。默认不声明。
     fn retry_line_pattern(&self) -> Option<&'static str> {
         None
+    }
+
+    /// 对话页选模型会不会改写用户 CLI 的默认模型（见 [`ChatUi::model_select_saves_default`]）。
+    /// 默认 false：没取证到会改的不声明。
+    fn model_select_saves_default(&self) -> bool {
+        false
+    }
+
+    /// 对话页切思考档会不会改写用户 CLI 的默认配置（见 [`ChatUi::effort_saves_default`]）。
+    fn effort_saves_default(&self) -> bool {
+        false
+    }
+
+    /// 思考档在会话里怎么切：声明了 `/effort` 命令的走命令；否则切模型的通路能带 effort 的
+    /// （会话服务）随模型下发；两者都没有 = 会话里切不了。由已有的两项声明推出，插件不必再写一遍。
+    fn effort_switch(&self) -> Option<crate::EffortSwitchKind> {
+        if self.effort_control().is_some() {
+            Some(crate::EffortSwitchKind::Command)
+        } else if self
+            .model_switch()
+            .is_some_and(crate::ModelSwitch::carries_effort)
+        {
+            Some(crate::EffortSwitchKind::ServerSettings)
+        } else {
+            None
+        }
     }
 
     /// 思考程度切换（见 [`ChatUi::effort`]）。默认不声明。
@@ -1126,6 +1171,153 @@ mod tests {
     }
 
     /// 启动 argv 非空，且首元素（绝对路径或回退裸名）指向该 agent 自己。
+    /// 真机抓的审批样本（`tests/probe_approval.rs`，前端 `views/chat/approvalFrames.test.ts` 也读）：
+    /// - 样例里的 `patterns` 与各插件声明逐字一致，前端回放用的才是生产规则而不是手抄的一份；
+    /// - 屏幕通道的每一帧，声明的那条规则在真机屏幕上确实命中（规则是 JS 正则，`im` 标志；
+    ///   这里按同样的标志用 Rust 编译，用到的语法两边通用）。
+    ///
+    /// 规则改了之后更新样例：`MEOWO_DUMP_ATTENTION_PATTERNS=<文件> cargo test -p meowo-agent --lib
+    /// approval_frames`，把写出来的 JSON 填进样例的 `patterns`。
+    #[test]
+    fn approval_frames_carry_declared_patterns_and_match_real_screens() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../src/test/fixtures/approval-frames.json"
+        ))
+        .unwrap();
+        let declared: serde_json::Map<String, serde_json::Value> = all()
+            .iter()
+            .map(|plugin| {
+                (
+                    plugin.id().as_str().to_string(),
+                    serde_json::to_value(plugin.attention_patterns()).unwrap(),
+                )
+            })
+            .collect();
+        let declared = serde_json::Value::Object(declared);
+        if let Ok(path) = std::env::var("MEOWO_DUMP_ATTENTION_PATTERNS") {
+            std::fs::write(path, serde_json::to_string_pretty(&declared).unwrap()).unwrap();
+        }
+        assert_eq!(
+            fixture["patterns"], declared,
+            "approval-frames.json 的 patterns 与插件声明不一致，按本测试的注释更新"
+        );
+        let mut screen_frames = 0;
+        for (agent, frame) in fixture["frames"].as_object().unwrap() {
+            let plugin = by_id(agent).unwrap_or_else(|| panic!("样例里的 {agent} 不是已注册的 agent"));
+            let channel = frame["channel"].as_str().unwrap();
+            // 通道与插件声明对得上：hook 说了算的家走 broker，其余走屏幕。
+            assert_eq!(
+                channel == "broker",
+                plugin.permission_hook_decides(),
+                "{agent} 的样本通道与 permission_hook_decides 不符"
+            );
+            let Some(rule) = frame["rule"].as_str() else {
+                // 没有屏幕规则命中：只能是终端不画权限框的 broker 家。
+                assert!(
+                    channel == "broker" && !plugin.permission_prompt_races_hook(),
+                    "{agent} 的屏幕样本没有命中任何规则"
+                );
+                continue;
+            };
+            let screen: Vec<&str> = frame["screen"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|line| line.as_str().unwrap())
+                .collect();
+            let screen = screen.join("
+");
+            let pattern = plugin
+                .attention_patterns()
+                .iter()
+                .find(|pattern| pattern.id == rule)
+                .unwrap_or_else(|| panic!("{agent} 没有规则 {rule}"));
+            assert_eq!(pattern.kind, crate::chat_ui::AttentionKind::Approval);
+            assert!(
+                pattern.patterns.iter().any(|source| {
+                    regex::Regex::new(&format!("(?im){source}"))
+                        .unwrap()
+                        .is_match(&screen)
+                }),
+                "{agent} {} 的真机屏幕没有被 {rule} 认出来",
+                frame["version"]
+            );
+            screen_frames += 1;
+        }
+        assert!(screen_frames >= 3, "至少要有 claude、kimi、opencode 三家的屏幕样本");
+    }
+
+    /// 切换确认框的共享样例（前端 chat/switchConfirm.test.ts 也读）：样例里的规格与插件声明逐字
+    /// 一致；按同一套判据（最后一个标题行之后，带焦点的确认项里含所选目标）过每一帧，结论与样例
+    /// 写的一致。真机帧来自 tests/probe_claude_model.rs。
+    #[test]
+    fn switch_confirm_frames_agree_with_declared_spec() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../src/test/fixtures/switch-confirm.json"
+        ))
+        .unwrap();
+        for plugin in all() {
+            let declared = plugin
+                .switch_confirm()
+                .map(|spec| serde_json::to_value(spec).unwrap())
+                .unwrap_or(serde_json::Value::Null);
+            let listed = fixture["spec"]
+                .get(plugin.id().as_str())
+                .cloned()
+                .unwrap_or(serde_json::Value::Null);
+            assert_eq!(listed, declared, "{} 的 switch_confirm 与样例不一致", plugin.id());
+        }
+        let squash = |text: &str| -> String {
+            text.to_lowercase()
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric())
+                .collect()
+        };
+        let mut real = 0;
+        for frame in fixture["frames"].as_array().unwrap() {
+            let name = frame["name"].as_str().unwrap();
+            let spec = by_id(frame["provider"].as_str().unwrap())
+                .unwrap()
+                .switch_confirm()
+                .unwrap();
+            let title = regex::Regex::new(&format!("(?i){}", spec.title_pattern)).unwrap();
+            let accept = regex::Regex::new(&format!("(?i){}", spec.accept_pattern)).unwrap();
+            let auto = regex::Regex::new(&format!("(?i){}", spec.auto_pattern)).unwrap();
+            let manual = spec
+                .manual_pattern
+                .map(|pattern| regex::Regex::new(&format!("(?i){pattern}")).unwrap());
+            let lines: Vec<&str> = frame["lines"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|line| line.as_str().unwrap())
+                .collect();
+            let target = squash(frame["target"].as_str().unwrap());
+            let input = lines
+                .iter()
+                .rposition(|line| title.is_match(line))
+                .and_then(|at| {
+                    let body = &lines[at + 1..];
+                    let accept_at = body.iter().position(|line| accept.is_match(line))?;
+                    // 标题与确认项之间：要有可代按的理由行，不能有 hook 要求确认的那一行。
+                    let between = &body[..accept_at];
+                    if !between.iter().any(|line| auto.is_match(line))
+                        || manual.as_ref().is_some_and(|m| between.iter().any(|line| m.is_match(line)))
+                    {
+                        return None;
+                    }
+                    accept.captures(body[accept_at]).map(|caps| squash(&caps[1]))
+                })
+                .filter(|shown| shown.contains(&target))
+                .map(|_| spec.accept_input);
+            assert_eq!(input, frame["expect"].as_str(), "{name}");
+            if frame["source"].as_str().unwrap().starts_with("probe") {
+                real += 1;
+            }
+        }
+        assert!(real >= 1, "至少要有一帧真机抓的确认框");
+    }
+
     #[test]
     fn launch_argv_is_nonempty_and_points_at_the_agent() {
         let _env = crate::env_guard();
@@ -1237,6 +1429,40 @@ mod tests {
             }
         }
 
+        // 思考档在会话里怎么切：Claude / Kimi 打 `/effort`，Codex 随模型经会话服务下发
+        // （tms_probe_codex 实测 reasoning.effort 生效）；Gemini 没有思考档，OpenCode 的模型变体
+        // 只能在它自己的对话框里选、上游没有可调的接口，两家不出入口。
+        use crate::EffortSwitchKind;
+        for (id, want) in [
+            ("claude", Some(EffortSwitchKind::Command)),
+            ("kimi", Some(EffortSwitchKind::Command)),
+            ("codex", Some(EffortSwitchKind::ServerSettings)),
+            ("gemini", None),
+            ("opencode", None),
+        ] {
+            assert_eq!(by_id(id).unwrap().effort_switch(), want, "{id}");
+        }
+
+        // 对话页的切换会不会顺带改用户 CLI 的默认配置（走查输入 C1）：Claude `/model X` 的确认行
+        // 原文「saved as your default for new sessions」；Kimi `/effort` 走 persistModelSelection
+        // 改写 config.toml。其余通路（会话服务、带参重启、TUI 对话框）特意选了不改配置的路线。
+        for id in ["claude", "codex", "kimi", "gemini", "opencode"] {
+            let p = by_id(id).unwrap();
+            assert_eq!(p.model_select_saves_default(), id == "claude", "{id}");
+            assert_eq!(p.effort_saves_default(), id == "kimi", "{id}");
+        }
+        // 侧问命令进补全：只有声明了侧问能力的 Claude 有 /btw。
+        for id in ["claude", "codex", "kimi", "gemini", "opencode"] {
+            let ui = by_id(id)
+                .unwrap()
+                .chat_ui(&crate::chat_ui::ChatUiContext::default());
+            assert_eq!(
+                ui.slash_commands.iter().any(|c| c.name == "/btw"),
+                id == "claude",
+                "{id}"
+            );
+        }
+
         // 只有 claude 的 `/model` 接受内联参数——其余四家是交互式菜单，声明预设＝给出一个
         // 点了没反应的菜单。
         let presets = by_id("claude").unwrap().model_presets();
@@ -1283,8 +1509,13 @@ mod tests {
             .unwrap()
             .clipboard_image_paste(Some("1.0.0"))
             .is_none());
-        // 换行注入:claude 是 ESC+CR,其余四家是 ctrl+j(裸 LF,不带会被拆成 Esc 的前缀)。
-        for id in ["codex", "gemini", "kimi", "opencode"] {
+        // 换行注入:claude 与 codex 是 ESC+CR(Alt+Enter)。codex 原来也是裸 LF,0.167.2 真机上
+        // 裸 LF 已不换行(两段字连成一行),Alt+Enter 在 0.162.1 与 0.167.2 都成立,见插件注释。
+        // 其余三家是 ctrl+j(裸 LF,不带会被拆成 Esc 的前缀)。
+        for id in ["claude", "codex"] {
+            assert_eq!(by_id(id).unwrap().newline_input(), Some("\x1b\r"), "{id}");
+        }
+        for id in ["gemini", "kimi", "opencode"] {
             assert_eq!(by_id(id).unwrap().newline_input(), Some("\n"), "{id}");
         }
 
@@ -1389,17 +1620,46 @@ mod tests {
             let presses = if id == "opencode" { 2 } else { 1 };
             assert_eq!(by_id(id).unwrap().interrupt_presses(), presses, "{id}");
         }
-        // 审批卡统一 id 约定 `<agent>:command-approval`(前端按后缀定卡片标题)。gemini 的确认框
-        // 有框线编号文法;opencode 是横排选项,不做结构化拆解、落通用卡。
+        // 审批框的规则 id 沿用 `<agent>:command-approval`，但卡片形态只看 kind 与 details。
+        // gemini 的确认框有框线编号文法；opencode 是横排选项文法。
         for (id, details) in [
             ("gemini", crate::chat_ui::AttentionDetails::FramedBox),
-            ("opencode", crate::chat_ui::AttentionDetails::None),
+            ("opencode", crate::chat_ui::AttentionDetails::OptionRow),
         ] {
             let pattern = by_id(id).unwrap().attention_patterns()[0];
             assert_eq!(pattern.id, format!("{id}:command-approval"));
             assert!(pattern.last, "{id} 审批框会残留在缓冲上方,必须取最后一次");
             assert_eq!(pattern.details, details);
+            assert_eq!(pattern.kind, crate::chat_ui::AttentionKind::Approval);
         }
+        // 每条规则都声明了种类：四家的审批框是 approval，提问表单是 question，
+        // 计划批准是 plan，额度耗尽与长会话确认是 choice（不是审批，也不是启动步骤）。
+        let kind_of = |agent: &str, rule: &str| {
+            by_id(agent)
+                .unwrap()
+                .attention_patterns()
+                .iter()
+                .find(|pattern| pattern.id == rule)
+                .unwrap_or_else(|| panic!("{agent} 缺规则 {rule}"))
+                .kind
+        };
+        use crate::chat_ui::AttentionKind as Kind;
+        assert_eq!(kind_of("claude", "claude:command-approval"), Kind::Approval);
+        assert_eq!(kind_of("claude", "claude:plan-approval"), Kind::Plan);
+        assert_eq!(
+            kind_of("claude", "claude:long-session-resume"),
+            Kind::Choice
+        );
+        assert_eq!(kind_of("kimi", "kimi:command-approval"), Kind::Approval);
+        assert_eq!(kind_of("kimi", "kimi:question"), Kind::Question);
+        assert_eq!(kind_of("gemini", "gemini:usage-limit"), Kind::Choice);
+        assert_eq!(kind_of("gemini", "gemini:question"), Kind::Question);
+        // opencode 选 Allow always 后的确认页：单列一条规则，指明它确认的是权限框。
+        let confirm = by_id("opencode").unwrap().attention_patterns()[1];
+        assert_eq!(confirm.id, "opencode:always-allow-confirm");
+        assert_eq!(confirm.confirms, Some("opencode:command-approval"));
+        assert_eq!(confirm.kind, Kind::Choice);
+        assert_eq!(confirm.details, crate::chat_ui::AttentionDetails::OptionRow);
         // gemini 额度耗尽框取代输入框：不识别，对话页发出的正文会被它吞掉(插件注释有实测)。
         let limit = by_id("gemini").unwrap().attention_patterns()[1];
         assert_eq!(limit.id, "gemini:usage-limit");
@@ -1414,13 +1674,23 @@ mod tests {
         // gemini 空闲时 Tab 不提交，运行态又是推断：只能用两种状态都成立的回车。
         assert_eq!(by_id("gemini").unwrap().queue_input(), Some("\r"));
 
-        // 草稿暂存键只有 claude 经真机取证(issue #72);别家未验证不盲按。
+        // 草稿暂存键只有 claude 经真机取证(issue #72);别家没有这种键，用各自取证过的清空键。
         assert_eq!(
-            by_id("claude").unwrap().draft_stash().map(|s| s.input),
+            by_id("claude")
+                .unwrap()
+                .composer(None)
+                .and_then(|c| c.stash)
+                .map(|s| s.input),
             Some("\x13")
         );
-        for id in ["codex", "kimi", "gemini", "opencode"] {
-            assert!(by_id(id).unwrap().draft_stash().is_none());
+        for (id, version) in [
+            ("codex", "0.167.2"),
+            ("gemini", "0.68.0"),
+            ("opencode", "1.19.5"),
+        ] {
+            let composer = by_id(id).unwrap().composer(Some(version)).unwrap();
+            assert!(composer.stash.is_none());
+            assert!(!composer.clear_inputs.is_empty(), "{id} 要有取证过的清空键");
         }
 
         // 目录信任不是 Claude 私有概念：Gemini 当前使用同一标题，Codex 使用 directory

@@ -27,6 +27,20 @@ export const ENTRIES: ErrorEntry[] = [
   // 端口上的服务不是 Meowo 带密码起的那个 TUI（端口被别的程序抢了，做空 L4）：不投递，重开会话会换端口。
   { m: "lead/opencode_http_identity", exact: true, zh: "回答已保存，端口被别的程序占用，重开会话后重试", en: "Answer saved. Another program took the session's port; reopen the session and retry." },
   { m: "lead/opencode_parent_unresolved", exact: true, zh: "回答已保存；找不到子任务所属的主会话，请打开会话发一句话继续", en: "Answer saved. The main session for this subtask was not found; open it and send any message to continue." },
+  { m: "queue/not_editable", exact: true, zh: "这条消息已开始交给 Agent，不能再编辑", en: "This message is already being handed to the agent and can no longer be edited" },
+  { m: "queue/not_cancellable", exact: true, zh: "这条消息已开始交给 Agent，不能取消", en: "This message is already being handed to the agent and cannot be cancelled" },
+  { m: "queue/empty", exact: true, zh: "消息和附件都为空，没有加入队列", en: "The message and attachments are empty, so nothing was queued" },
+  { m: "queue/draft_invalid", exact: true, zh: "队列里的草稿读不出来，没有交给 Agent", en: "The queued draft could not be read and was not handed to the agent" },
+  { m: "checkpoint/session_running", exact: true, zh: "回合还在运行，等它结束后再恢复文件", en: "This turn is still running. Wait for it to finish before restoring files." },
+  { m: "checkpoint/not_ready", exact: true, zh: "这个回合还没有可恢复的完整快照", en: "This turn does not have a complete snapshot to restore" },
+  { m: "checkpoint/repo_changed", exact: true, zh: "仓库目录已经变化，没有恢复这个仓库", en: "The repository location changed, so it was not restored" },
+  { m: "checkpoint/not_finished", exact: true, zh: "回合还没结束，快照尚不完整", en: "The turn is still running and its snapshot is incomplete" },
+  { m: "checkpoint/path_outside", exact: true, zh: "快照路径越出仓库，已拒绝操作", en: "The checkpoint path leaves the repository, so the operation was refused" },
+  { m: "pr/empty_comment", exact: true, zh: "评论内容为空", en: "The comment is empty" },
+  { m: "pr/invalid_line", exact: true, zh: "这个 diff 行不能评论", en: "This diff line cannot be commented on" },
+  { m: "pr/not_found", exact: true, zh: "没有找到这个 PR", en: "The pull request was not found" },
+  { m: "pr/event_not_found", exact: true, zh: "这条监控事件不属于当前会话", en: "This monitor event does not belong to the current session" },
+  { m: "pr/monitor_not_found", exact: true, zh: "这个 PR 监控不属于当前会话", en: "This PR monitor does not belong to the current session" },
   // 会话里切模型 / 模式（任务 20261114-tui-model-switch，src-tauri/src/session_settings.rs 与 lead_native 两个服务模块）。
   { m: "settings/current_unknown", exact: true, zh: "读不到会话当前的模式，没有重启，打开模式菜单后再试", en: "Couldn't read the session's current mode, so it wasn't restarted. Open the mode menu and retry" },
   { m: "settings/composer_not_empty", exact: true, zh: "终端输入框里还有字，没有重启", en: "The terminal input box still has text, so it wasn't restarted" },
@@ -49,7 +63,7 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "lead/codex_queue_failed", exact: true, zh: "Codex 没能排队这条消息", en: "Codex couldn't queue the message" },
   { m: "lead/opencode_tui_not_ready", exact: true, zh: "OpenCode 终端还没就绪，稍后再切", en: "OpenCode isn't ready yet. Try again shortly" },
   { m: "lead/opencode_busy", exact: true, zh: "OpenCode 正在回答，这一轮结束后再切", en: "OpenCode is replying. Switch after this turn" },
-  { m: "lead/opencode_composer_not_empty", exact: true, zh: "OpenCode 输入框里有字，清空后再切", en: "OpenCode's input box has text. Clear it first" },
+  { m: "lead/opencode_composer_not_empty", exact: true, zh: "OpenCode 输入框里的草稿没能收起，没有切换", en: "Couldn't put away the draft in OpenCode's input box, so nothing was switched" },
   { m: "lead/opencode_approval_pending", exact: true, zh: "OpenCode 有待处理的确认，处理后再切", en: "OpenCode has a pending prompt. Handle it first" },
   { m: "lead/opencode_dialog_open", exact: true, zh: "OpenCode 正开着别的对话框", en: "Another OpenCode dialog is open" },
   { m: "lead/opencode_dialog_not_open", exact: true, zh: "OpenCode 的选择框没弹出来，未做改动", en: "OpenCode's picker didn't open. Nothing changed" },
@@ -261,7 +275,6 @@ export const ENTRIES: ErrorEntry[] = [
   // ── 审批 ──
   { m: "审批请求已结束", exact: true, zh: "审批请求已结束", en: "The approval request has ended" },
   { m: "审批请求不属于该会话", exact: true, zh: "该审批属于另一条会话", en: "This approval belongs to another session" },
-  { m: "Agent 已不再等待审批", exact: true, zh: "Agent 已不再等待审批", en: "The agent is no longer waiting for approval" },
   { m: "无效的审批选项", exact: true, zh: "该审批选项已失效", en: "That approval option is no longer valid" },
   { m: "审批选项已失效", exact: true, zh: "该审批选项已失效", en: "That approval option is no longer valid" },
   { m: "runtime_request/not_resumable", exact: true, zh: "该提问已结束，不能再通过此卡片回答", en: "This question has ended and can no longer be answered from this card" },
@@ -379,8 +392,8 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "该文件类型没有关联应用", exact: true, zh: "该文件类型没有关联应用", en: "No app is associated with this file type" },
   { m: "该打开方式已不可用", exact: true, zh: "该打开方式已不可用", en: "That app is no longer available" },
   { m: "terminal/process_not_exclusive", exact: true, zh: "这个进程可能还连着别的会话，或者认不出归属，Meowo 没有结束它，以免一起关掉。在原终端退出这个会话后再试", en: "This process may also serve other sessions, or its owner could not be confirmed, so Meowo left it running to avoid closing them. Exit this session in its original terminal, then try again" },
-  { m: "terminal/composer_occupied", exact: true, zh: "终端输入框已有草稿，已原样保留。请先在终端发送或清空该草稿，再重试此消息", en: "The terminal already contains a draft, which was preserved. Send or clear it in the terminal, then retry this message" },
-  { m: "terminal/composer_unknown", exact: true, zh: "无法确认终端输入框是否为空，消息原文已保留。待当前交互结束后再试", en: "Could not confirm that the terminal input is empty. Your message was preserved. Try again after the current interaction finishes" },
+  // 终端输入框里有草稿 / 认不出输入框不再走这张表：对话页自己收草稿，收不掉时错误条按结局给文案与出路
+  // （见 views/chat/nativeDraft 的 ComposerBlocked，文案在 zh.ts 的 composer* 几条）。
   { m: "terminal/composer_partial", exact: true, zh: "上条消息的正文可能仍在终端输入框，暂未重复写入。消息原文已保留", en: "The previous message may still be in the terminal input. It was not written again. Your original message is preserved" },
   // ── Lead 工作流（reporter lead 模块的结构化 reason）──
   { m: "lead/claude_missing", exact: true, zh: "没找到 Claude Code 的配置目录，请先安装并登录 Claude Code", en: "Claude Code's config folder wasn't found. Install and sign in to Claude Code first" },
@@ -418,6 +431,20 @@ export const ENTRIES: ErrorEntry[] = [
 
 /** 是否含汉字(CJK 统一表意文字基本区,后端 sentinel 均落在此区间)。 */
 const hasHan = (text: string): boolean => /[一-鿿]/.test(text);
+
+/**
+ * 反查:一句已经格式化好的用户文案对应哪个后端错误码(`模块/代码`)。给运行日志用——日志只记代码,
+ * 不记可能带路径或正文的原文。只认结构化的错误码,老的中文原文前缀不算。认不出返回 null。
+ */
+export function backendErrorCode(message: string, locale: string): string | null {
+  const isZh = locale.startsWith("zh");
+  for (const entry of ENTRIES) {
+    if (!/^[a-z_]+\/[a-z0-9_]+$/.test(entry.m)) continue;
+    const base = isZh ? entry.zh : entry.en;
+    if (base === undefined ? message.startsWith(entry.m) : message === base || (entry.tail && message.startsWith(base))) return entry.m;
+  }
+  return null;
+}
 
 /**
  * 把后端错误(通常是 `invoke` reject 出来的 String)格式化成当前语言的用户文案。

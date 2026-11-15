@@ -6,7 +6,8 @@ import { reduceChatEvents } from "../../chat/reducer";
 import { TodoBadge } from "./TodoBadge";
 import { Transcript } from "./Transcript";
 import { durationText, type ToolUseItem } from "./shared";
-import { useRememberedOpen } from "./foldMemory";
+import { useRememberedDetails, useRememberedOpen } from "./foldMemory";
+import { SessionAliveContext, TurnLiveContext } from "./toolState";
 import { Icon } from "../../icons/Icon";
 import { icAgents } from "../../icons/glyphs.chat";
 
@@ -24,7 +25,8 @@ function statusText(status: string, t: ReturnType<typeof useT>): string {
 function StatusBadge({ tone, text }: { tone: string; text: string }) {
   return (
     <span className={"chat-subagent-status is-" + tone}>
-      <TodoBadge status={tone === "running" ? "in_progress" : tone} small />
+      {/* 已中断用待办同款的空圈：它没有完成，也不是失败。 */}
+      <TodoBadge status={tone === "running" ? "in_progress" : tone === "interrupted" ? "pending" : tone} small />
       {text}
     </span>
   );
@@ -32,7 +34,7 @@ function StatusBadge({ tone, text }: { tone: string; text: string }) {
 
 /// 子任务时间线的容器：限高 + 内部滚动。子任务动辄几十上百条，直接铺开会把主对话
 /// 挤到几屏之外，用户想收起时还得一路往回滚。
-function SubagentTimeline({ sessionId, items, launchId }: { sessionId: number; items: ChatItem[]; launchId: string }) {
+function SubagentTimeline({ sessionId, items, launchId, running }: { sessionId: number; items: ChatItem[]; launchId: string; running: boolean }) {
   const t = useT();
   const ancestors = useContext(SubagentAncestors);
   const chain = useMemo(() => new Set(ancestors).add(launchId), [ancestors, launchId]);
@@ -40,7 +42,8 @@ function SubagentTimeline({ sessionId, items, launchId }: { sessionId: number; i
   return (
     <div className="chat-subagent-scroll">
       <SubagentAncestors.Provider value={chain}>
-        <Transcript sessionId={sessionId} items={items} />
+        {/* 子任务自己的时间线：它还在跑时，里面没回执的调用才算在跑。 */}
+        <Transcript sessionId={sessionId} items={items} activity={running ? "running" : "idle"} />
       </SubagentAncestors.Provider>
     </div>
   );
@@ -55,10 +58,12 @@ const SubagentAncestors = createContext<ReadonlySet<string>>(new Set());
 /// 结局统计 → 徽标。多个分支时报出数量，单个只说状态。
 /// background_running：子代理交了结论、它派出的后台活儿还在跑（claude「is waiting on its own background
 /// work」）。按完成算，另给次行小字 note；不算进行中——本机实拍 9 次里 4 次之后再无 finished（做空第二轮）。
+/// interrupted：这个子任务被叫停了（codex 的 interrupt_agent），三个计数都是 0。没跑完，也不是失败。
 export function outcomeBadge(
-  outcome: { running: number; completed: number; failed: number; background_running?: boolean },
+  outcome: { running: number; completed: number; failed: number; background_running?: boolean; interrupted?: boolean },
   t: ReturnType<typeof useT>,
 ): { tone: string; text: string; note?: string } | null {
+  if (outcome.interrupted) return { tone: "interrupted", text: t.chat.interrupted };
   const badge = tallyBadge(outcome, t);
   return badge && outcome.background_running ? { ...badge, note: t.chat.subagentBackgroundRunning } : badge;
 }
@@ -88,7 +93,7 @@ type SubagentBlockProps = {
   sessionId: number;
   item: ToolUseItem;
   /// 主链回执带来的结局统计——**不必展开**就有，展开才拉的是时间线本身。
-  outcome?: { running: number; completed: number; failed: number } | null;
+  outcome?: { running: number; completed: number; failed: number; interrupted?: boolean } | null;
   /// 主链上是否已有这次委派的回执。没有 = 还没回来 = 在跑。
   settled?: boolean;
   /// 最终回执的时间戳(TaskOutput 拉取的结局已按 task_id 归回)。与委派时刻相减得
@@ -102,8 +107,16 @@ export const SubagentBlock = memo(function SubagentBlock(props: SubagentBlockPro
   return <SubagentBlockBody {...props} />;
 });
 
+/// 一批委派里的单个分支：开合按会话记住（与工具、思考、子任务本体同一套记忆）。
+function SubagentBranch({ memoryKey, children }: { memoryKey: string; children: React.ReactNode }) {
+  return <details className="chat-subagent-branch" {...useRememberedDetails(memoryKey)}>{children}</details>;
+}
+
 function SubagentBlockBody({ sessionId, item, outcome, settled, finishedAt }: SubagentBlockProps) {
   const t = useT();
+  // 所在回合此刻的活动态，与会话进程是否还活着（Transcript 注入）。
+  const live = useContext(TurnLiveContext);
+  const alive = useContext(SessionAliveContext);
   const [runs, setRuns] = useState<SubagentRun[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -150,6 +163,7 @@ function SubagentBlockBody({ sessionId, item, outcome, settled, finishedAt }: Su
   const count = subagent?.count ?? 1;
   // 展开取过时用逐分支的实时状态；没展开则用主链回执带来的统计（这正是「不展开也能看状态」）。
   const summary = (() => {
+    const interrupted: { tone: string; text: string; note?: string } = { tone: "interrupted", text: t.chat.interrupted };
     if (runs?.length) {
       const tally = { completed: 0, failed: 0, running: 0 };
       for (const run of runs) {
@@ -157,13 +171,20 @@ function SubagentBlockBody({ sessionId, item, outcome, settled, finishedAt }: Su
           tally[run.status] += 1;
         }
       }
+      // 侧车里写着在跑，可会话进程已经没了：它不会再有进展。
+      if (tally.running > 0 && !alive) return interrupted;
       const badge = outcomeBadge(tally, t);
       if (badge) return badge;
     }
-    if (outcome) return outcomeBadge(outcome, t);
+    if (outcome) {
+      // 后台委派的启动回执只说「派出去了」；进程没了，「进行中」就不成立。
+      if (outcome.running > 0 && !alive) return interrupted;
+      return outcomeBadge(outcome, t);
+    }
     // 回执还没写进主链 = 这批子任务派出去了还没回来。一批 fan-out 的结局要等整批结束
     // 才落盘，若只认回执，正在跑的那段时间反而什么都不显示——那恰是最该显示的时候。
-    if (!settled) return outcomeBadge({ running: count, completed: 0, failed: 0 }, t);
+    // 但所在回合已经不在进行（被打断、进程没了）时，它等不到回执了：已中断，不再计时。
+    if (!settled) return live === "idle" ? interrupted : outcomeBadge({ running: count, completed: 0, failed: 0 }, t);
     return null;
   })();
   const isRunning = summary?.tone === "running";
@@ -213,17 +234,17 @@ function SubagentBlockBody({ sessionId, item, outcome, settled, finishedAt }: Su
           // 单个分支直接铺开；一次派一批（swarm 可达十几个）则每个分支各自折叠，
           // 否则一次展开会把十几条完整时间线全部倒进页面。
           : runs.length === 1
-          ? <SubagentTimeline sessionId={sessionId} items={runs[0].items} launchId={item.id} />
+          ? <SubagentTimeline sessionId={sessionId} items={runs[0].items} launchId={item.id} running={runs[0].status === "running" && alive} />
           : runs.map((run, index) => (
-            <details className="chat-subagent-branch" key={run.label ?? index}>
+            <SubagentBranch memoryKey={`subagent:${item.id}:branch:${run.label ?? index}`} key={run.label ?? index}>
               <summary>
                 <span className="chat-subagent-branch-label">{run.label ?? `#${index + 1}`}</span>
                 {run.status && <StatusBadge tone={run.status} text={statusText(run.status, t)} />}
                 <span className="chat-subagent-branch-count">{t.chat.subagentSteps(run.items.length)}</span>
                 <span className="chat-tool-chevron">›</span>
               </summary>
-              <SubagentTimeline sessionId={sessionId} items={run.items} launchId={item.id} />
-            </details>
+              <SubagentTimeline sessionId={sessionId} items={run.items} launchId={item.id} running={run.status === "running" && alive} />
+            </SubagentBranch>
           )))}
       </div>
     </details>

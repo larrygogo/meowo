@@ -2,16 +2,18 @@
 // 夹具与 mock 见 chatWindow.harness.tsx（必须先于 ./ChatWindow 导入）。
 import { describe, expect, it } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { emptyComposerFrame, invoke, openDialog, eventListeners, terminalProps, pickAttachments, adapter } from "./chatWindow.harness";
+import { emptyComposerFrame, invoke, openDialog, eventListeners, terminalProps, pickAttachments, adapter, chatUiReady, queueFallback, deliverQueuedNow } from "./chatWindow.harness";
 import { ChatWindow } from "./ChatWindow";
 import { zh } from "../i18n/zh";
 import { terminalAttention } from "../terminalAttention";
+import type { QueuedPromptDto } from "../api";
+import { markRemoteUi } from "../remoteMode";
 
 describe("ChatWindow 适配回归", () => {
   const { history, snapshot, setup, box, writes } = adapter;
 
   // 2026-11-13 改定：认出输入框、只看到占位时照常发送（严格口径下 codex/gemini/opencode 永远
-  // 判不出空框，对话页就永远发不出去，main 上可发）。草稿与认不出画面的拦截见 manualSendVerdict 单测。
+  // 判不出空框，对话页就永远发不出去，main 上可发）。草稿与认不出画面的处理见 chat/composerPrepare.test.ts。
   it("codex 原生只有占位符时照常发送", async () => {
     const base = setup(501, "codex", "running");
     invoke.mockImplementation((command, args) => command === "managed_terminal_frame" ? Promise.resolve(emptyComposerFrame("codex")) : base(command, args));
@@ -20,7 +22,31 @@ describe("ChatWindow 适配回归", () => {
     await waitFor(() => expect(document.querySelector(".chat-model-label")).toBeTruthy());
     fireEvent.change(box(), { target: { value: "下一回合处理" } });
     fireEvent.keyDown(box(), { key: "Enter" });
+    await screen.findByText("下一回合处理", { selector: ".chat-queued-bubble" });
+    await deliverQueuedNow();
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("prompt_queue_enqueue", expect.objectContaining({ sessionId: 501 })));
+    await deliverQueuedNow();
     await waitFor(() => expect(writes(501).some((text) => String(text).includes("下一回合处理"))).toBe(true));
+  });
+
+  // Kimi 2.6.1 长工具运行时可只剩常驻输入框，屏幕检测因此回退 idle；DB 的 running
+  // 必须继续决定发送记账，否则会绕过持久队列，提前投递时还会把原生排队错记成 echo。
+  it("Kimi 输入框回退 idle 时仍按运行中排队", async () => {
+    const base = setup(510, "kimi", "running", "idle");
+    invoke.mockImplementation((command, args) => {
+      if (command === "get_chat_history") return Promise.resolve({ ...history(510, "kimi", "running", "idle"), screenAssumed: true });
+      if (command === "managed_terminal_frame") return Promise.resolve(emptyComposerFrame("kimi"));
+      return base(command, args);
+    });
+    render(<ChatWindow />);
+    await screen.findByText("适配-510");
+    await waitFor(() => expect(document.querySelector(".chat-model-label")).toBeTruthy());
+    fireEvent.change(box(), { target: { value: "长工具期间插一句" } });
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await waitFor(() => expect(document.querySelector(".chat-queued-bubble")?.textContent).toBe("长工具期间插一句"));
+    expect(writes(510)).toEqual([]);
+    await deliverQueuedNow();
+    await waitFor(() => expect(writes(510)).toContain("\r"));
   });
 
   // 插话进了对话记录后，排队区不再挂它的回执：对话里已经有「回合中插入」的那条，
@@ -44,6 +70,7 @@ describe("ChatWindow 适配回归", () => {
     fireEvent.change(box(), { target: { value: "顺手改个名" } });
     fireEvent.keyDown(box(), { key: "Enter" });
     await waitFor(() => expect(document.querySelector(".chat-queued-bubble")?.textContent).toBe("顺手改个名"));
+    await deliverQueuedNow();
     landed = true;
     // 时限短于旧版「已插入」回执的 2.5s 停留：对话里一出现，排队区就该同时没有它。
     await waitFor(() => {
@@ -51,6 +78,26 @@ describe("ChatWindow 适配回归", () => {
       expect(document.querySelector(".chat-queued-stack")).toBeNull();
     }, { timeout: 1_500 });
     expect(screen.getAllByText("顺手改个名")).toHaveLength(1);
+  });
+
+  // 主回合停了、后台子任务还在跑：标题栏说运行中，发送也按运行中处理（进排队区），两处用的是同一批
+  // 事实。此前发送路径算状态时没带后台子任务数：点发送先进了排队区，写终端前又被改判成空闲，
+  // 气泡从排队区跳到对话里（做空 ⑩）。
+  it("后台子任务还在跑时发送：按运行中排队，与标题栏的状态一致", async () => {
+    const base = setup(513, "claude", "waiting");
+    invoke.mockImplementation((command, args) => command === "get_chat_history"
+      ? Promise.resolve({ ...history(513, "claude", "waiting"), busySubagents: 2 })
+      : base(command, args));
+    render(<ChatWindow />);
+    await screen.findByText("适配-513");
+    await waitFor(() => expect(document.querySelector(".chat-model-label")).toBeTruthy());
+    fireEvent.change(box(), { target: { value: "等它们跑完再汇总" } });
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await deliverQueuedNow();
+    await waitFor(() => expect(writes(513).some((text) => String(text).includes("等它们跑完再汇总"))).toBe(true));
+    // 写进终端之后仍在排队区，没有变成对话里的回显气泡。
+    await waitFor(() => expect(document.querySelector(".chat-queued-bubble")?.textContent).toBe("等它们跑完再汇总"));
+    expect(document.querySelector(".chat-message.is-user")).toBeNull();
   });
 
   // 回执 reducer 与 Provider 无关；用已支持原生草稿暂存的 Claude 验证入队回执标「已收到」，
@@ -74,9 +121,10 @@ describe("ChatWindow 适配回归", () => {
     fireEvent.change(box(), { target: { value: "顺手改个名" } });
     fireEvent.keyDown(box(), { key: "Enter" });
     await waitFor(() => expect(document.querySelector(".chat-queued-bubble")?.textContent).toBe("顺手改个名"));
-    expect(screen.queryByText(zh.chat.queuedAccepted)).toBeNull();
+    expect(screen.queryByText(zh.vocab.delivery.accepted)).toBeNull();
+    await deliverQueuedNow();
     acked = true;
-    await screen.findByText(zh.chat.queuedAccepted, {}, { timeout: 4000 });
+    await screen.findByText(zh.vocab.delivery.accepted, {}, { timeout: 4000 });
     expect(document.querySelector(".chat-message.is-user")).toBeNull();
     expect(screen.getAllByText("顺手改个名")).toHaveLength(1);
   });
@@ -144,12 +192,12 @@ describe("ChatWindow 适配回归", () => {
     fireEvent.change(box(), { target: { value: "先上屏" } });
     fireEvent.keyDown(box(), { key: "Enter" });
     expect((await screen.findAllByText("先上屏")).length).toBeGreaterThan(0);
-    expect(screen.getByText(zh.chat.echoSending)).toBeTruthy();
+    expect(screen.getByText(zh.vocab.delivery.sending)).toBeTruthy();
     expect(box().value).toBe("");
     await waitFor(() => expect(release).toBeTypeOf("function"));
     await act(async () => { release(); });
     await waitFor(() => expect(writes(511)).toContain("\r"));
-    await waitFor(() => expect(screen.queryByText(zh.chat.echoSending)).toBeNull());
+    await waitFor(() => expect(screen.queryByText(zh.vocab.delivery.sending)).toBeNull());
   });
 
   // 失败时输入框里已经在写新内容：不覆盖它，留一个「发送失败」气泡，放回输入框接在新内容前面。
@@ -165,12 +213,12 @@ describe("ChatWindow 适配回归", () => {
     await waitFor(() => expect(fail).toBeTypeOf("function"));
     fireEvent.change(box(), { target: { value: "新草稿" } });
     await act(async () => { fail("写入终端失败"); });
-    expect(await screen.findByText(zh.chat.echoFailed)).toBeTruthy();
+    expect(await screen.findByText(zh.vocab.delivery.failed)).toBeTruthy();
     expect(box().value).toBe("新草稿");
     expect(writes(512)).not.toContain("\r");
     fireEvent.click(screen.getByRole("button", { name: zh.chat.echoRestore }));
     expect(box().value).toBe("会失败的话\n\n新草稿");
-    expect(screen.queryByText(zh.chat.echoFailed)).toBeNull();
+    expect(screen.queryByText(zh.vocab.delivery.failed)).toBeNull();
   });
 
   // 终端没起来时发送、拉起终端期间切走：照样拉起、等就绪、写完回车（用户要求切走不取消）；
@@ -204,7 +252,7 @@ describe("ChatWindow 适配回归", () => {
     await act(async () => { releaseStart(); });
     await waitFor(() => expect(writes(514)).toContain("\r"), { timeout: 5_000 });
     expect(writes(514)).toContain("切走也要发");
-    expect(screen.queryByText(zh.chat.terminalNeedsAttention)).toBeNull();
+    expect(screen.queryByText(zh.chat.cardLockPrompt)).toBeNull();
   });
 
   /// 「+」菜单（对照 Kimi 的 addMenu）：命令 / 提及原来只能靠打字触发，这里给入口。
@@ -299,7 +347,7 @@ describe("ChatWindow 适配回归", () => {
       // 第一次贴图「没认出来」(占位符不进增量流)，第二次正常落出。
       if (command === "managed_terminal_snapshot") return Promise.resolve(snapshot(510, pastes >= 2 ? "[Image #1]" : ""));
       // 空 composer 显示的是灰色提示语而不是空行（2.1.303 实拍）。
-      if (command === "managed_terminal_screen") return Promise.resolve(!recognizable ? null : ["─".repeat(40), cleared ? "❯ Try \"refactor <filepath>\"" : "❯ [Image #1]"]);
+      if (command === "managed_terminal_screen") return Promise.resolve(!recognizable ? null : ["─".repeat(40), cleared ? "❯ Try \"refactor <filepath>\"" : "❯ [Image #1]", "─".repeat(40)]);
       return base(command, args);
     });
     openDialog.mockResolvedValueOnce(["C:\\repo\\shot.png"]);
@@ -327,7 +375,7 @@ describe("ChatWindow 适配回归", () => {
       if (command === "write_managed_terminal" && args?.data === "\x15") cleared = true;
       // 占位符始终不进增量流(超时),但整屏仿真里能看到 composer 上的残图。
       if (command === "managed_terminal_snapshot") return Promise.resolve(snapshot(511, ""));
-      if (command === "managed_terminal_screen") return Promise.resolve(["─".repeat(40), cleared ? "❯ Try \"refactor <filepath>\"" : "❯ [Image #1]"]);
+      if (command === "managed_terminal_screen") return Promise.resolve(["─".repeat(40), cleared ? "❯ Try \"refactor <filepath>\"" : "❯ [Image #1]", "─".repeat(40)]);
       return base(command, args);
     });
     openDialog.mockResolvedValueOnce(["C:\\repo\\shot.png"]);
@@ -401,7 +449,7 @@ describe("ChatWindow 适配回归", () => {
     fireEvent.click(await screen.findByRole("button", { name: "仅收起" }));
     fireEvent.change(box(), { target: { value: "不应该替我选择模型" } });
     fireEvent.keyDown(box(), { key: "Enter" });
-    await screen.findByText(zh.chat.terminalNeedsAttention);
+    await screen.findByText(zh.chat.cardLockPrompt);
     expect(writes(508)).toHaveLength(0);
     expect(box().value).toBe("不应该替我选择模型");
   });
@@ -429,5 +477,115 @@ describe("临时会话发第一条消息", () => {
     expect(writes(-7).some((text) => String(text).includes("本地还有什么没有推送的"))).toBe(true);
     expect(invoke.mock.calls.some(([command, args]) => command === "get_chat_history" && Number(args?.sessionId) < 0)).toBe(false);
     expect(document.body.textContent).not.toMatch(/no rows/);
+  });
+});
+
+
+describe("持久队列的真实投递", () => {
+  function harness() {
+    let status = "running";
+    let queued: QueuedPromptDto[] = [];
+    const base = adapter.setup(771, "claude", status);
+    invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
+      if (command === "get_chat_history") return Promise.resolve(adapter.history(771, "claude", status));
+      if (command === "prompt_queue_list") return Promise.resolve(queued.filter((entry) => ["held", "delivering", "failed"].includes(entry.state)));
+      if (command === "prompt_queue_enqueue") {
+        const draft = args?.draft as QueuedPromptDto["draft"];
+        const item: QueuedPromptDto = { id: 1, sessionId: 771, draft, state: "held", createdAt: 100, updatedAt: 100 };
+        queued = [...queued, item];
+        return Promise.resolve(item);
+      }
+      if (command === "prompt_queue_claim") {
+        const found = queued.find((entry) => entry.id === args?.id && entry.state === "held");
+        if (!found) return Promise.resolve(null);
+        queued = queued.map((entry) => entry.id === found.id ? { ...entry, state: "delivering" } : entry);
+        return Promise.resolve({ ...found, state: "delivering" });
+      }
+      if (command === "prompt_queue_finish") {
+        queued = queued.map((entry) => entry.id === args?.id ? { ...entry, state: args.delivered ? "delivered" : "failed" } : entry);
+        return Promise.resolve(true);
+      }
+      if (command === "prompt_queue_cancel") {
+        const found = queued.find((entry) => entry.id === args?.id && entry.state === "held");
+        if (!found) return Promise.resolve(false);
+        queued = queued.map((entry) => entry.id === found.id ? { ...entry, state: "cancelled" } : entry);
+        return Promise.resolve(true);
+      }
+      return base(command, args);
+    });
+    return {
+      writes: () => adapter.writes(771),
+      idle: () => { status = "waiting"; },
+      state: () => queued[0]?.state,
+    };
+  }
+
+  it("回合结束后才领取并写入，结算后不再重复投递", async () => {
+    markRemoteUi();
+    const current = harness();
+    render(<ChatWindow />);
+    await chatUiReady();
+    const box = await adapter.box();
+    fireEvent.change(box, { target: { value: "回合结束后继续" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    await screen.findByText("回合结束后继续", { selector: ".chat-queued-bubble" });
+    expect(current.writes()).toEqual([]);
+    expect(current.state()).toBe("held");
+
+    current.idle();
+    await waitFor(() => expect(current.writes().some((text) => String(text).includes("回合结束后继续"))).toBe(true), { timeout: 4_000 });
+    await waitFor(() => expect(current.state()).toBe("delivered"));
+    const delivered = current.writes().filter((text) => String(text).includes("回合结束后继续")).length;
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    expect(current.writes().filter((text) => String(text).includes("回合结束后继续"))).toHaveLength(delivered);
+  });
+
+  it("用户在运行中主动提前交付才写官方 TUI", async () => {
+    markRemoteUi();
+    const current = harness();
+    render(<ChatWindow />);
+    await chatUiReady();
+    const box = await adapter.box();
+    fireEvent.change(box, { target: { value: "现在看一眼" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    const button = await screen.findByRole("button", { name: "现在交给 Agent" });
+    expect(current.writes()).toEqual([]);
+    fireEvent.click(button);
+    await waitFor(() => expect(current.writes().some((text) => String(text).includes("现在看一眼"))).toBe(true));
+    await waitFor(() => expect(current.state()).toBe("delivered"));
+  });
+
+  it("取消后回合结束也不会再写 CLI", async () => {
+    markRemoteUi();
+    const current = harness();
+    render(<ChatWindow />);
+    await chatUiReady();
+    const box = await adapter.box();
+    fireEvent.change(box, { target: { value: "不要执行" } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    fireEvent.click(await screen.findByRole("button", { name: "取消排队" }));
+    await waitFor(() => expect(current.state()).toBe("cancelled"));
+    current.idle();
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    expect(current.writes()).toEqual([]);
+    expect(screen.queryByText("不要执行")).toBeNull();
+  });
+
+  it.each([
+    ["claude", "\r"], ["kimi", "\r"], ["codex", "\t"], ["gemini", "\r"], ["opencode", "\r"],
+  ])("%s 提前执行只用本家队列键，不隐式中断", async (provider, submit) => {
+    const sessionId = 780 + invoke.mock.calls.length;
+    const base = adapter.setup(sessionId, provider, "running");
+    invoke.mockImplementation((command, args) => command === "managed_terminal_frame"
+      ? Promise.resolve(emptyComposerFrame(provider))
+      : base(command, args));
+    render(<ChatWindow />);
+    await chatUiReady();
+    const box = await adapter.box();
+    fireEvent.change(box, { target: { value: `提前交给 ${provider}` } });
+    fireEvent.keyDown(box, { key: "Enter" });
+    await deliverQueuedNow();
+    expect(adapter.writes(sessionId).at(-1)).toBe(submit);
+    expect(adapter.writes(sessionId)).not.toContain("\x1b");
   });
 });

@@ -19,13 +19,13 @@ memchr = "2"
 # 只给 opencode 用：它不写会话日志，对话全在自己的 SQLite 库里（见 plugins/opencode/store.rs）。
 # reporter 经 meowo-store 早已链接同一份 bundled sqlite，不增加二进制体积。
 rusqlite = { workspace = true }
+# 读终端输入框（composer.rs）按插件声明的正则认框。regex 早在工作区依赖树里，不新增下载。
+regex = "1"
 
 [dev-dependencies]
 # 与 meowo-protocol 同一套契约生成机制：cfg(test) 下 derive(TS)，
 # `cargo test -p meowo-agent --lib` 导出 app/src/generated/contracts/*.ts，CI diff 把关。
 ts-rs = "12"
-# cli_text 测试按宿主同一口径编译插件的正则规则（regex 早在工作区依赖树里，不新增下载）。
-regex = "1"
 
 [[test]]
 name = "agent_urls_live"

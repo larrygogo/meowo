@@ -15,9 +15,11 @@
 
 pub mod account;
 mod cli_text;
+mod exec_script;
 mod lead;
 mod lineage;
 mod screen;
+mod subagents;
 pub mod setup;
 pub mod telemetry;
 
@@ -386,12 +388,18 @@ impl AgentPlugin for Codex {
     /// Esc 中断当前回合:codex 状态行自述 "esc to interrupt"(真机 capture 在档,
     /// 见 docs/research/tui-menu-captures-2026-07.md)。排队键 Tab 在空闲时同样直接提交
     /// (probe_tui_script,0.162.1,2026-10-16),运行态误判也不会卡住消息。
-    /// 2026-11-12 隔离无模型实拍（target/lead-provider-probes/composer）：文字只给候选，发送仍须核验原生光标。
-    fn composer_guard(&self, version: Option<&str>) -> Option<crate::chat_ui::ComposerGuard> {
+    /// 输入框规格（这一家唯一的一份，见 chat_ui::ComposerSpec）。
+    /// - 框体：2026-11-12 隔离无模型实拍（target/lead-provider-probes/composer）。
+    /// - 占位 `Ask Codex to do anything` 是暗色、光标停在列 2；真打出同一句是正常色、光标在文末
+    ///   （0.167.2，2026-11-14 probe_tui_script `cells`）。读屏带光标就能分开。
+    /// - 清空：Ctrl-C 清掉整段草稿，不留提示；回合进行中按，草稿清掉、回合照常继续（同日实拍：
+    ///   `Count from 1 to 300` 途中按下，数字接着往下出）。空输入框上的 Ctrl-C 是退出提示，
+    ///   所以只在认出有字时按。
+    fn composer(&self, version: Option<&str>) -> Option<crate::chat_ui::ComposerSpec> {
         if !crate::lead_install::version_at_least(version, (0, 167, 2)) {
             return None;
         }
-        Some(crate::chat_ui::ComposerGuard {
+        Some(crate::chat_ui::ComposerSpec {
             prompt_footer: true,
             input_start_pattern: r"^(› )",
             top_pattern: r"^› ",
@@ -401,6 +409,26 @@ impl AgentPlugin for Codex {
             tail_rows: 0,
             tail_pattern: None,
             empty_pattern: r"^(?:Ask Codex to do anything)?$",
+            send_requires_recognition: true,
+            stash: None,
+            clear_inputs: &["\x03"],
+            clear_rounds: 1,
+            clear_while_running: true,
+            alt_modes: &[],
+            // 草稿保真（0.167.2 真机，tests/probe_draft_fidelity.rs，2026-11-14）：
+            // - 粘贴占位 `[Pasted Content 5120 chars]`（5120 字单行）、`[Pasted Content 2219 chars]`（60 行）；
+            //   3 行小粘贴原样显示。图片占位没有实拍，按宽的认。
+            // - 超出可视高度（120×40 时最多画 22 行）：首行最右一列画 `↑`，上面的行不显示；`↓` 是按同一
+            //   画法推的，没有实拍。
+            // - 120 列时一行正文最多 117 格（提示符 2 格，最右一列留给滚动标记），按词折行；续行缩进 2 格。
+            fidelity: Some(crate::chat_ui::ComposerFidelity {
+                paste_pattern: r"\[Pasted Content \d+ chars\]|\[[Ii]mage[^\]\r\n]*\]",
+                overflow_pattern: Some(r"\s[↑↓]\s*$"),
+                overflow_rows: None,
+                overflow_height: None,
+                wrap_edge: crate::chat_ui::ComposerWrapEdge::Terminal,
+                wrap_inset: 1,
+            }),
         })
     }
     fn queue_input(&self) -> Option<&'static str> {
@@ -415,11 +443,20 @@ impl AgentPlugin for Codex {
     fn interrupt_input(&self) -> Option<&'static str> {
         Some("\x1b")
     }
-    /// Ctrl+J（裸 LF）在 composer 里换行、不提交（tests/probe_tui_script.rs，0.162.1，
-    /// 2026-10-16）。Alt+Enter 同样可用，但取不带 ESC 前缀的那个——crossterm 拆包时 ESC 可能
-    /// 被单独认成 Esc，运行中就是一次中断。
+    /// Alt+Enter（ESC+CR）在 composer 里换行、不提交。
+    ///
+    /// 此前声明的是 Ctrl+J（裸 LF，0.162.1 取证 2026-10-16），理由是它不带 ESC 前缀。0.167.2 上它
+    /// 已经不换行：真机 `line one` + LF + `line two` 在输入框里连成一行 `line oneline two`
+    /// （tests/probe_tui_script.rs，2026-11-14），对话页终端里的 Ctrl/Shift+Enter 因此失效。
+    /// 同一轮取证：Alt+Enter 与 Shift+Enter 的 CSI-u 序列（`ESC[13;2u`）都换行；Ctrl+J 的 CSI-u
+    /// 序列（`ESC[106;5u`）被当成字面文字。取 Alt+Enter：0.162.1 上它同样可用（当时的注释），
+    /// 两个版本都成立。
+    ///
+    /// 当初担心的「ESC 被单独认成 Esc，运行中就是一次中断」：0.167.2 回合进行中各发一次 Alt+Enter 与
+    /// CSI-u，输入框里都是两行，回合照常数完，屏幕上没有 interrupted（同日实拍）。序列是一次写入，
+    /// 不拆开发。
     fn newline_input(&self) -> Option<&'static str> {
-        Some("\n")
+        Some("\x1b\r")
     }
     /// `@绝对路径 正文` 提交后模型自行读取该文件（实测 0.162.1：Read secret.txt → 答对）。
     /// 与 kimi 同为文本级惯例。版本探测不到时兜底 false。

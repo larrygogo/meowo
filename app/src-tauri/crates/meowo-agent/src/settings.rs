@@ -97,7 +97,26 @@ pub enum ModelSwitchKind {
     TuiDialog,
 }
 
+/// 会话里切思考档（effort）的机制。前端按它决定思考档入口怎么切，不按 Provider 名字判断。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+pub enum EffortSwitchKind {
+    /// 往终端打一条带档位的命令（插件声明了 [`crate::chat_ui::EffortControl`]，Claude / Kimi 的 `/effort <档>`）。
+    Command,
+    /// 随模型一起经会话服务下发（Codex `thread/settings/update {model, effort}`），不碰终端。
+    /// 档位随模型变，由模型目录给（[`crate::ModelCatalogEntry::efforts`]）。
+    ServerSettings,
+}
+
 impl ModelSwitch {
+    /// 这条切模型的通路能不能同时带上思考档。只有会话服务的设置接口收 effort；
+    /// 带参重启与 TUI 对话框两条路上游都没有对应参数。
+    pub fn carries_effort(self) -> bool {
+        matches!(self, Self::ServerSettings)
+    }
+
     pub fn kind(self) -> ModelSwitchKind {
         match self {
             Self::ServerSettings => ModelSwitchKind::ServerSettings,

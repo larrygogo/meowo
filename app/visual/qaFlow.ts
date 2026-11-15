@@ -2,7 +2,8 @@
 // 都挂真实 ChatWindow，这里只决定各条 IPC 返回什么、挂载前往本地状态里放什么。
 // 出现条件逐条对过源码（ChatWindow.tsx / LeadPanel.tsx / WorktreeSetupBar.tsx / terminalAttention.ts）。
 import { CHAT_SESSION_ID, FIXED_NOW, leadTask, MENTION_CANDIDATES, MODE_MARKERS } from "./fixtures";
-import { outgoingStore } from "../src/views/chat/outgoingPrompts";
+import { cardSceneMock } from "./cardScenes";
+import { toolSceneMock } from "./toolScenes";
 import { demoChatUi } from "../src/demo/mock";
 import { panelMock } from "../src/demo/panelData";
 import { makeSession } from "../src/demo/data";
@@ -54,8 +55,8 @@ const SCREENS: Record<string, string[]> = {
 };
 
 const ATTENTION_PATTERNS = [
-  { id: "claude:command-approval", patterns: ["this command requires approval", "do you want to proceed\\?"], last: true, details: "proceed_box" },
-  { id: "claude:plan-approval", patterns: ["written\\s+up\\s+a\\s+plan\\s+and\\s+is\\s+ready\\s+to\\s+execute"], last: true, details: "none" },
+  { id: "claude:command-approval", patterns: ["this command requires approval", "do you want to proceed\\?"], last: true, details: "proceed_box", kind: "approval", confirms: null },
+  { id: "claude:plan-approval", patterns: ["written\\s+up\\s+a\\s+plan\\s+and\\s+is\\s+ready\\s+to\\s+execute"], last: true, details: "none", kind: "plan", confirms: null },
 ];
 
 function worktreeSetup(state: string): unknown {
@@ -94,15 +95,21 @@ export function qaFlowBoot(scene: string, lang: Lang): void {
     const expanded = new URLSearchParams(location.search).get("max") === "1";
     savePanel(CHAT_SESSION_ID, { tabs, active: (tabs[1] as { key: string }).key, visible: true, expanded } as never);
   }
-  if (scene === "flow-queued") {
-    // 排队消息只来自本地的 outgoingStore（history 里的 prompt_queued 只是回执）：发送中、已排队、失败各一条。
-    const anchor = { lastItemId: "t6", lastItemAt: null, priorItemIds: new Set<string>(), priorUserText: null };
-    const add = (text: string, phase: "sending" | "pending" | "failed") =>
-      outgoingStore.add(CHAT_SESSION_ID, { kind: "queued", text, attachmentOnly: false, phase, anchor } as never);
-    add(zh ? "跑完之后再开一个 PR。" : "Open a PR after that finishes.", "pending");
-    add(zh ? "顺便把 README 里登录那一节也更新一下，旧的截图可以先删掉，等新界面定了我再补一张；另外迁移说明里要写清楚密码长度下限变了。" : "Also update the sign-in section of the README; drop the old screenshot for now, I will add a new one once the UI settles. The migration notes must mention the new minimum password length.", "sending");
-    add(zh ? "这条没发出去" : "This one did not go out", "failed");
-  }
+}
+
+export function promptQueueScene(lang: Lang): unknown[] {
+  const zh = lang === "zh";
+  const item = (id: number, prompt: string, state: string, attachments: unknown[] = []) => ({
+    id, sessionId: CHAT_SESSION_ID, draft: { prompt, attachments }, state,
+    createdAt: FIXED_NOW + id, updatedAt: FIXED_NOW + id,
+  });
+  return [
+    item(1, zh ? "跑完之后再开一个 PR。" : "Open a PR after that finishes.", "held", [
+      { path: "C:/tmp/login.png", name: "login.png", image: true },
+    ]),
+    item(2, zh ? "顺便把 README 里登录那一节也更新一下，迁移说明里写清楚密码长度下限变了。" : "Also update the sign-in section of the README and mention the new minimum password length.", "held"),
+    item(3, zh ? "这条还没交给 Agent" : "This one has not been handed off", "failed"),
+  ];
 }
 
 /// 场景对应的 IPC 返回值；返回 undefined 表示这条不归它管。
@@ -120,8 +127,15 @@ export function qaFlowMock(scene: string, lang: Lang, chat: (cmd: string) => unk
     return { sessionId: CHAT_SESSION_ID, managed: true, data: b64(text), startOffset: 0, endOffset: new TextEncoder().encode(text).length,
       exitTail: null, cols: 120, rows: 40, modes: [], externalViewers: false, exitUnexpected: false };
   };
+  // 卡片场景（flow-card-<名字>）：五家的审批卡、提问卡、提示卡，数据在 cardScenes.ts，手机 harness 共用。
+  // 工具行场景（flow-tools-<家>-<状态>）：五家回放样本的时间线，数据在 toolScenes.ts，手机 harness 共用。
+  const card = kind.startsWith("card-") ? cardSceneMock(kind.slice("card-".length), lang, chat)
+    : kind.startsWith("tools-") ? toolSceneMock(kind.slice("tools-".length), lang, chat) : null;
   return (cmd, args) => {
+    const cardHit = card?.(cmd, args);
+    if (cardHit !== undefined) return cardHit;
     if (cmd === "file_mention_candidates") return MENTION_CANDIDATES;
+    if (cmd === "prompt_queue_list" && kind === "queued") return promptQueueScene(lang);
     // @ 补全：桌面走目录列举与项目搜索。
     if (cmd === "list_dir_entries") return panel(cmd, args);
     if (cmd === "search_project_files") return { files: MENTION_CANDIDATES.filter((f) => !f.endsWith("/")).map((relPath) => ({ relPath, isDir: false, nameMatch: true, lines: [], totalLineMatches: 0 })), truncated: false };

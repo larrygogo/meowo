@@ -18,9 +18,8 @@ const managedTerminalSnapshot = vi.hoisted(() => vi.fn(async (_sessionId: number
 const writeManagedTerminal = vi.hoisted(() => vi.fn(async (sessionId: number, data: string) => { pty.onWrite?.(sessionId, data); }));
 const setSessionLaunchSelection = vi.hoisted(() => vi.fn(async () => {}));
 const submitToTerminal = vi.hoisted(() => vi.fn(async (sessionId: number, content: string) => { pty.onWrite?.(sessionId, content); }));
-const stashComposerDraft = vi.hoisted(() => vi.fn(async () => {}));
 vi.mock("../../api", () => ({ managedTerminalSnapshot, writeManagedTerminal, setSessionLaunchSelection }));
-vi.mock("./terminalSubmit", () => ({ submitToTerminal, stashComposerDraft }));
+vi.mock("./terminalSubmit", () => ({ submitToTerminal }));
 
 // 没等到确认时错误条带两条出路：重试（再走一遍同一个切换）与看终端画面（走查 C-4，不再只说「请到终端检查」）。
 const UNCONFIRMED_EXIT = { retry: expect.any(Function), terminal: true };
@@ -40,6 +39,7 @@ function makeDeps(overrides: Partial<ModelControlsDeps> = {}) {
     toneRef: { current: "idle" },
     retryRef: { current: null },
     withSendGuard: vi.fn(async (body: () => Promise<boolean>) => body()),
+    tidyComposer: vi.fn(async () => ({ kind: "clean" })),
     attentionAbort: () => null,
     isCurrentOperation: () => true,
     setSendError: vi.fn(),

@@ -82,6 +82,25 @@ import type { ResizeManagedTerminalArgs } from "./generated/contracts/bridge/Res
 import type { ResolvePendingApprovalArgs } from "./generated/contracts/bridge/ResolvePendingApprovalArgs";
 import type { RespondRuntimeRequestArgs } from "./generated/contracts/bridge/RespondRuntimeRequestArgs";
 import type { SavePastedAttachmentArgs } from "./generated/contracts/bridge/SavePastedAttachmentArgs";
+import type { PromptQueueEnqueueArgs } from "./generated/contracts/bridge/PromptQueueEnqueueArgs";
+import type { PromptQueueEditArgs } from "./generated/contracts/bridge/PromptQueueEditArgs";
+import type { PromptQueueEntryArgs } from "./generated/contracts/bridge/PromptQueueEntryArgs";
+import type { PromptQueueFinishArgs } from "./generated/contracts/bridge/PromptQueueFinishArgs";
+import type { QueueDraftDto } from "./generated/contracts/QueueDraftDto";
+import type { QueuedPromptDto } from "./generated/contracts/QueuedPromptDto";
+import type { PromptQueueChangedDto } from "./generated/contracts/PromptQueueChangedDto";
+import type { CheckpointTurnDto } from "./generated/contracts/CheckpointTurnDto";
+import type { CheckpointRestoreDto } from "./generated/contracts/CheckpointRestoreDto";
+import type { CheckpointTurnArgs } from "./generated/contracts/bridge/CheckpointTurnArgs";
+import type { CheckpointFileArgs } from "./generated/contracts/bridge/CheckpointFileArgs";
+import type { CheckpointRestoreArgs } from "./generated/contracts/bridge/CheckpointRestoreArgs";
+import type { CheckpointUndoArgs } from "./generated/contracts/bridge/CheckpointUndoArgs";
+import type { PrReviewDto } from "./generated/contracts/PrReviewDto";
+import type { PrReviewArgs } from "./generated/contracts/bridge/PrReviewArgs";
+import type { PrCommentArgs } from "./generated/contracts/bridge/PrCommentArgs";
+import type { PrLineCommentArgs } from "./generated/contracts/bridge/PrLineCommentArgs";
+import type { PrMonitorSetArgs } from "./generated/contracts/bridge/PrMonitorSetArgs";
+import type { PrMonitorWakeArgs } from "./generated/contracts/bridge/PrMonitorWakeArgs";
 import type { SearchChatTranscriptsArgs } from "./generated/contracts/bridge/SearchChatTranscriptsArgs";
 import type { SendBackgroundPromptArgs } from "./generated/contracts/bridge/SendBackgroundPromptArgs";
 import type { SessionArg } from "./generated/contracts/bridge/SessionArg";
@@ -334,6 +353,42 @@ export function savePastedAttachment(fileName: string, dataBase64: string): Prom
   return invoke("save_pasted_attachment", { fileName, dataBase64 } satisfies SavePastedAttachmentArgs);
 }
 
+export type { QueueDraftDto, QueuedPromptDto, PromptQueueChangedDto };
+
+export function promptQueueList(sessionId: number): Promise<QueuedPromptDto[]> {
+  return invoke("prompt_queue_list", { sessionId } satisfies SessionArg);
+}
+
+export function promptQueueEnqueue(sessionId: number, draft: QueueDraftDto): Promise<QueuedPromptDto> {
+  return invoke("prompt_queue_enqueue", { sessionId, draft } satisfies PromptQueueEnqueueArgs);
+}
+
+export function promptQueueEdit(sessionId: number, id: number, draft: QueueDraftDto): Promise<boolean> {
+  return invoke("prompt_queue_edit", { sessionId, id, draft } satisfies PromptQueueEditArgs);
+}
+
+export function promptQueueCancel(sessionId: number, id: number): Promise<boolean> {
+  return invoke("prompt_queue_cancel", { sessionId, id } satisfies PromptQueueEntryArgs);
+}
+
+export function promptQueueClaim(sessionId: number, id: number): Promise<QueuedPromptDto | null> {
+  return invoke("prompt_queue_claim", { sessionId, id } satisfies PromptQueueEntryArgs);
+}
+
+export function promptQueueFinish(sessionId: number, id: number, delivered: boolean): Promise<boolean> {
+  return invoke("prompt_queue_finish", { sessionId, id, delivered } satisfies PromptQueueFinishArgs);
+}
+
+export function promptQueueRetry(sessionId: number, id: number): Promise<boolean> {
+  return invoke("prompt_queue_retry", { sessionId, id } satisfies PromptQueueEntryArgs);
+}
+export function promptQueueOrphans(): Promise<QueuedPromptDto[]> {
+  return invoke("prompt_queue_orphans");
+}
+export function promptQueueRestoreOrphan(sessionId: number, id: number): Promise<QueuedPromptDto | null> {
+  return invoke("prompt_queue_restore_orphan", { sessionId, id } satisfies PromptQueueEntryArgs);
+}
+
 /**
  * 把本地图片文件写进系统剪贴板，供紧随其后的 Ctrl-V 走 TUI 原生图片附加（支持多张：
  * 逐张写入、逐张等占位符）。首次写入前后端自动快照现有剪贴板内容；发送结束（无论
@@ -421,6 +476,18 @@ export function sessionTone(
   // 阶梯没结论:已 ended(PTY 还挂着才算连着)如实归「已结束」,别再画成等你输入;
   // 其余按「在等你」兜底——连着又说不出在干嘛,最可能就是停在提示符上。
   return status === "ended" ? "ended" : "waiting";
+}
+
+/// 一条会话记录 → 会话状态。界面上的调用点都走这两个入口（对话窗手里的 ChatHistory、侧栏与名单手里的
+/// LiveSession），不再逐个字段手传：手传的地方漏过字段——对话窗发送路径没传后台子任务数（主回合停了、
+/// 后台子任务还在跑时，标题栏说运行中、发送却按空闲处理），两处「标记完成」的确认没传 screen_assumed
+/// （做空 ⑩）。`sessionToneCallSites.test.ts` 扫描源码，保证没有别处再直接调 sessionTone。
+export function historyTone(history: Pick<ChatHistory, "connected" | "status" | "pendingReview" | "errored" | "busySubagents" | "screenState" | "screenAssumed"> | null | undefined): SessionTone {
+  return sessionTone(history?.connected ?? false, history?.status, history?.pendingReview, history?.errored, history?.busySubagents, history?.screenState, history?.screenAssumed);
+}
+
+export function liveSessionTone(row: Pick<LiveSession, "connected" | "session" | "pending_review" | "errored" | "busy_subagents" | "screen_state" | "screen_assumed">): SessionTone {
+  return sessionTone(row.connected, row.session.status, row.pending_review, row.errored, row.busy_subagents, row.screen_state, row.screen_assumed);
 }
 
 export type ManagedTerminalSnapshot = ManagedTerminalSnapshotDto;
@@ -763,7 +830,39 @@ export function openProjectDir(cwd: string): Promise<void> {
 export function getPullRequest(cwd: string): Promise<PullRequestDto | null> {
   return invoke("git_pull_request", { cwd });
 }
-export type { PullRequestDto };
+export type { PullRequestDto, PrReviewDto };
+export function prReview(cwd: string, sessionId: number, sessionCwd?: string | null): Promise<PrReviewDto | null> {
+  return invoke("pr_review", { cwd, sessionId, ...(sessionCwd ? { sessionCwd } : {}) } satisfies PrReviewArgs);
+}
+export function prComment(cwd: string, number: number, body: string, review: boolean, sessionCwd?: string | null): Promise<void> {
+  return invoke("pr_comment", { cwd, number, body, review, ...(sessionCwd ? { sessionCwd } : {}) } satisfies PrCommentArgs);
+}
+export function prLineComment(cwd: string, number: number, path: string, line: number, side: "NEW" | "OLD", body: string, sessionCwd?: string | null): Promise<void> {
+  return invoke("pr_line_comment", { cwd, number, path, line, side, body, ...(sessionCwd ? { sessionCwd } : {}) } satisfies PrLineCommentArgs);
+}
+export function prMonitorSet(cwd: string, sessionId: number, enabled: boolean, sessionCwd?: string | null, key?: string): Promise<void> {
+  return invoke("pr_monitor_set", { cwd, sessionId, enabled, ...(key ? { key } : {}), ...(sessionCwd ? { sessionCwd } : {}) } satisfies PrMonitorSetArgs);
+}
+export function prMonitorWake(sessionId: number, monitorKey: string, eventId: string): Promise<string> {
+  return invoke("pr_monitor_wake", { sessionId, monitorKey, eventId } satisfies PrMonitorWakeArgs);
+}
+
+export function checkpointTurns(sessionId: number): Promise<CheckpointTurnDto[]> {
+  return invoke("checkpoint_turns", { sessionId } satisfies SessionArg);
+}
+export function checkpointTurnDetail(sessionId: number, turn: number): Promise<CheckpointTurnDto | null> {
+  return invoke("checkpoint_turn_detail", { sessionId, turn } satisfies CheckpointTurnArgs);
+}
+export function checkpointFileDiff(sessionId: number, turn: number, repoRoot: string, path: string): Promise<GitFileDiffDto> {
+  return invoke("checkpoint_file_diff", { sessionId, turn, repoRoot, path } satisfies CheckpointFileArgs);
+}
+export function checkpointRestore(sessionId: number, turn: number, phase: "start" | "end"): Promise<CheckpointRestoreDto> {
+  return invoke("checkpoint_restore", { sessionId, turn, phase } satisfies CheckpointRestoreArgs);
+}
+export function checkpointUndo(sessionId: number, id: number): Promise<CheckpointRestoreDto> {
+  return invoke("checkpoint_undo", { sessionId, id } satisfies CheckpointUndoArgs);
+}
+export type { CheckpointTurnDto, CheckpointRestoreDto };
 
 export function getGitDiffSummary(cwd: string): Promise<GitDiffSummaryDto> {
   return invoke("git_diff_summary", { cwd } satisfies GitDiffSummaryArgs);

@@ -47,18 +47,18 @@ export function chatMock(lang: DemoLang) {
   const items = [
     { type: "user_text", id: "u1", timestamp: ts, text: t.ask },
     { type: "assistant_text", id: "a1", timestamp: ts, text: t.a1 },
-    { type: "tool_use", id: "t1", timestamp: ts, name: "Read", summary: "src/components/LoginForm.tsx" },
+    { type: "tool_use", id: "t1", timestamp: ts, name: "Read", kind: "read", summary: "src/components/LoginForm.tsx" },
     { type: "tool_result", id: "r1", timestamp: ts, tool_use_id: "t1", text: "182 lines", is_error: false },
-    { type: "tool_use", id: "t2", timestamp: ts, name: "Grep", summary: "validate|isValid" },
+    { type: "tool_use", id: "t2", timestamp: ts, name: "Grep", kind: "search", summary: "validate|isValid" },
     { type: "tool_result", id: "r2", timestamp: ts, tool_use_id: "t2", text: "6 matches", is_error: false },
-    { type: "tool_use", id: "t3", timestamp: ts, name: "Write", summary: "src/schemas/login.ts" },
+    { type: "tool_use", id: "t3", timestamp: ts, name: "Write", kind: "write", summary: "src/schemas/login.ts" },
     { type: "tool_result", id: "r3", timestamp: ts, tool_use_id: "t3", text: "ok", is_error: false },
-    { type: "tool_use", id: "t4", timestamp: ts, name: "Edit", summary: "src/components/LoginForm.tsx" },
+    { type: "tool_use", id: "t4", timestamp: ts, name: "Edit", kind: "edit", summary: "src/components/LoginForm.tsx" },
     { type: "tool_result", id: "r4", timestamp: ts, tool_use_id: "t4", text: "ok", is_error: false },
-    { type: "tool_use", id: "t5", timestamp: ts, name: "Bash", summary: "npm test -- login" },
+    { type: "tool_use", id: "t5", timestamp: ts, name: "Bash", kind: "run", summary: "npm test -- login" },
     { type: "tool_result", id: "r5", timestamp: ts, tool_use_id: "t5", text: "Tests: 12 passed, 12 total", is_error: false },
     { type: "assistant_text", id: "a3", timestamp: ts, text: t.a3 },
-    { type: "tool_use", id: "t6", timestamp: ts, name: "Bash", summary: "git push -u origin refactor/login-schema" },
+    { type: "tool_use", id: "t6", timestamp: ts, name: "Bash", kind: "run", summary: "git push -u origin refactor/login-schema" },
   ];
   const todos = t.todos.map((content, i) => ({ content, status: i < 3 ? "completed" : "in_progress", stale: false }));
 

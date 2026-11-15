@@ -321,24 +321,94 @@ impl AgentPlugin for Opencode {
     }
     /// 权限框（1.19.2 真机）：`△ Permission required` 标题 + 说明 + 横排选项
     /// `Allow once   Allow always   Reject`（⇆ 切换、Enter 确认）。插件桥上报的 permission.asked
-    /// 只是观察事件，GUI 代为决定只能走屏幕。横排选项没有编号文法，落到通用卡：确认 = Enter
-    /// = 默认焦点 Allow once、取消 = Esc = Reject 并停下当前回合（两键均经 probe_tui_script 实测）。
+    /// 只是观察事件，GUI 代为决定只能走屏幕。Enter = 默认焦点 Allow once、Esc = Reject 并停下
+    /// 当前回合（两键均经 probe_tui_script 实测）。
+    ///
+    /// 横排选项按 `OptionRow` 文法拆成按钮（1.19.5 程序文件内嵌 JS 取证，2026-11-14）：
+    /// 初始焦点在第一项，`right` 下一项、`return` 选中、`escape` = `reject`。此前横排选项不拆，
+    /// 对话页只有「确认 / 取消」两颗钮，「Allow always」没有入口。
+    ///
+    /// 选 Allow always 不直接生效，先进「△ Always allow」确认页（正文 `This will allow … until
+    /// OpenCode is restarted`，选项 `Confirm   Cancel`，Esc = Cancel 回到上一页）。1.19.5 真机
+    /// 走了一遍：`→ 回车` 进确认页、Esc 回权限框（焦点回到第一项）、再 Esc 拒绝
+    /// （tests/probe_tui_script.rs，2026-11-14）。确认页单列一条规则并标 `confirms`。
     fn attention_patterns(&self) -> &'static [crate::chat_ui::AttentionPattern] {
-        &[crate::chat_ui::AttentionPattern {
-            id: "opencode:command-approval",
-            patterns: &[r"△ permission required"],
-            last: true,
-            details: crate::chat_ui::AttentionDetails::None,
-        }]
+        &[
+            crate::chat_ui::AttentionPattern {
+                id: "opencode:command-approval",
+                patterns: &[r"△ permission required"],
+                last: true,
+                details: crate::chat_ui::AttentionDetails::OptionRow,
+                kind: crate::chat_ui::AttentionKind::Approval,
+                confirms: None,
+                // 选项角色（1.19.5 程序文件 `options:{once:"Allow once",always:"Allow always",reject:"Reject"}`）。
+                // `Allow always` 只到 OpenCode 重启前有效（确认页原文 `until OpenCode is restarted`），
+                // 一个会话就是一个进程，范围按本会话说。
+                // 没有「说明并拒绝」：主会话里选 Reject 直接拒绝；带说明的 `Reject permission` 页只有
+                // 子代理会话才进（同一段代码 `if(parentID) stage = "reject"`），没有真机走过，不声明。
+                //
+                // unparsed_keys：选项行还没画出来时，框一出现焦点恒在第一项（程序文件 `selected: 第一项`），
+                // 回车就是 Allow once；Esc 是 `escapeKey: "reject"`，与焦点无关。两键都真机走过
+                // （probe_tui_script、probe_approval，1.19.5）。
+                options: &[
+                    crate::chat_ui::AttentionOptionRule {
+                        pattern: r"^allow once$",
+                        role: crate::chat_ui::OptionRole::AllowOnce,
+                        scope: None,
+                        typed: None,
+                    },
+                    crate::chat_ui::AttentionOptionRule {
+                        pattern: r"^allow always$",
+                        role: crate::chat_ui::OptionRole::AllowPersistent,
+                        scope: Some(crate::chat_ui::PersistScope::Session),
+                        typed: None,
+                    },
+                    crate::chat_ui::AttentionOptionRule {
+                        pattern: r"^reject$",
+                        role: crate::chat_ui::OptionRole::Deny,
+                        scope: None,
+                        typed: None,
+                    },
+                ],
+                // 只留拒绝：Esc 与焦点无关。回车选的是焦点项，而焦点只用底色表示、文本里看不出，用户在终端里
+                // 动过方向键之后回车可能落到 Allow always 或 Reject 上（第二轮审查 2026-11-15），所以不给。
+                unparsed_keys: &[crate::chat_ui::RoleKey {
+                    role: crate::chat_ui::OptionRole::Deny,
+                    input: "\x1b",
+                }],
+                notice: None,
+                anchors: &[],
+                tail_lines: None,
+            },
+            crate::chat_ui::AttentionPattern {
+                id: "opencode:always-allow-confirm",
+                patterns: &[r"△ always allow"],
+                last: true,
+                details: crate::chat_ui::AttentionDetails::OptionRow,
+                kind: crate::chat_ui::AttentionKind::Choice,
+                confirms: Some("opencode:command-approval"),
+                options: &[],
+                unparsed_keys: &[],
+                notice: None,
+                anchors: &[],
+                tail_lines: None,
+            },
+        ]
     }
     /// 运行中按 Enter 即排队：消息带 QUEUED 标记挂在输入区上方，当前回合结束后自动执行
     /// （probe_tui_script 实测，1.19.2）。
-    /// 2026-11-12 隔离无模型 PTY 实拍（target/lead-provider-probes/composer）：只允许已验证空框，不清非空草稿。
-    fn composer_guard(&self, version: Option<&str>) -> Option<crate::chat_ui::ComposerGuard> {
+    /// 输入框规格（这一家唯一的一份，见 chat_ui::ComposerSpec）。
+    /// - 框体：2026-11-12 隔离无模型 PTY 实拍（target/lead-provider-probes/composer）。
+    /// - 占位 `Ask anything… "…"` 是灰色，光标停在输入起点；真打出来的字光标在文末（1.19.5，
+    ///   2026-11-14 probe_tui_script `cells`）。
+    /// - 清空：默认 keybind `input_clear`（Ctrl-C，多行整段清；Ctrl-U 只清当前行且在行首不并行，
+    ///   实测清不净）。回合进行中按，草稿清掉、回合照常继续（同日实拍，`--model opencode/big-pickle`
+    ///   数到 900）。Ctrl-C 在空输入框上是退出，所以只在认出有字时按。
+    fn composer(&self, version: Option<&str>) -> Option<crate::chat_ui::ComposerSpec> {
         if !crate::lead_install::version_at_least(version, (1, 19, 3)) {
             return None;
         }
-        Some(crate::chat_ui::ComposerGuard {
+        Some(crate::chat_ui::ComposerSpec {
             prompt_footer: false,
             // 一轮之后、`--session` 打开后的空输入框只剩 `  ┃`（不带占位，去尾空格后是 `┃`；真机高 1，
             // evidence/round3/opencode o1-idle-after-turn、N6opencode-1-opened）。这种行的捕获不是真实输入列，
@@ -350,7 +420,32 @@ impl AgentPlugin for Opencode {
             prompt_prefix: "",
             tail_rows: 2,
             tail_pattern: Some(r"^\s*┃\s+\S.* · .+$"),
-            empty_pattern: r#"^(?:Ask anything…(?: "[^"\r\n]*")?)?$"#,
+            // 窄窗里占位文字自己会折行：60 列时 `Ask anything… "What is the tech stack of this` /
+            // `project?"` 占两行（1.19.5，tests/probe_draft_fidelity.rs，2026-11-15）。只认单行的话空输入框
+            // 被当成有草稿，发送被拦下。所以词与词之间按任意空白认，引号里允许换行。
+            empty_pattern: r#"^(?:Ask\s+anything…(?:\s+"[^"]*")?)?$"#,
+            send_requires_recognition: true,
+            stash: None,
+            clear_inputs: &["\x03"],
+            clear_rounds: 1,
+            clear_while_running: true,
+            alt_modes: &[],
+            // 草稿保真（1.19.5 真机，tests/probe_draft_fidelity.rs，2026-11-14）：
+            // - 粘贴占位 `[Pasted ~3 lines]`：3 行的小粘贴就折，5120 字单行是 `[Pasted ~1 lines]`
+            //   （程序文件里的模板 `[Pasted ~${n} lines]`）。图片占位没有实拍，按宽的认。
+            // - 超出可视高度不画任何标记：45 行草稿在 40 行的终端里只画最后 13 行。上限是
+            //   `max(6, floor(终端行数 / 3))`（程序文件原文 `prompt?.max_height??Math.max(6,Math.floor(F().height/3))`），
+            //   取下限 6。用户在配置里把 `prompt.max_height` 调到 6 以下时这条规则不成立。
+            // - 首页布局实拍：底边右端在第 98 列，正文最多 70 格（从第 26 列起），离底边右端 2 格，按词折行。
+            //   会话内的布局（框靠左、变宽）没有实拍，多留 2 格。
+            fidelity: Some(crate::chat_ui::ComposerFidelity {
+                paste_pattern: r"\[Pasted ~\d+ lines\]|\[[Ii]mage[^\]\r\n]*\]",
+                overflow_pattern: None,
+                overflow_rows: Some(6),
+                overflow_height: None,
+                wrap_edge: crate::chat_ui::ComposerWrapEdge::Border,
+                wrap_inset: 4,
+            }),
         })
     }
     fn queue_input(&self) -> Option<&'static str> {
@@ -363,22 +458,15 @@ impl AgentPlugin for Opencode {
     }
     /// 1.19.3 真机取证（tests/probe_opencode_undo.rs）：`/undo` 不收参数、一次撤最近一轮；
     /// 库里只在 session.revert 记回退点（导出按它截断，见 store.rs），下次发言才真删；工作区
-    /// 文件按快照一并回滚（连 agent 没碰过的文件也回到当时的样子）；原文放回它自己的输入框。
-    /// 清输入框用默认 keybind `input_clear`（Ctrl-C，多行整段清；Ctrl-U 只清当前行且在行首
-    /// 不并行，实测清不净）。Ctrl-C 在空输入框上是退出，故前端先认出输入框里的原文才按。
+    /// 文件按快照一并回滚（连 agent 没碰过的文件也回到当时的样子）；原文放回它自己的输入框，
+    /// 清它用输入框规格里的清空键（见 composer）。
     fn undo_control(&self) -> Option<crate::chat_ui::UndoControl> {
         Some(crate::chat_ui::UndoControl {
             command: "/undo",
             count_arg: false,
             restores_files: true,
             reject_pattern: None,
-            input_clear: Some(crate::chat_ui::UndoInputClear {
-                inputs: &["\x03"],
-                composer: crate::chat_ui::UndoComposer::Block {
-                    row_prefix: "┃",
-                    bottom_prefix: "╹",
-                },
-            }),
+            returns_input: true,
             menu: None,
         })
     }

@@ -23,14 +23,14 @@ function Thrower(): never {
 }
 
 describe("窗口级 ErrorBoundary", () => {
-  it("子树抛错：显示「出错了」和「重新加载」，并记录日志，不白屏", () => {
+  it("子树抛错：显示「窗口遇到问题」和「重新加载」，并记录日志，不白屏", () => {
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});
     const reload = vi.fn();
     const original = window.location;
     Object.defineProperty(window, "location", { configurable: true, value: { ...original, reload } });
     try {
       render(<WindowErrorBoundary><Thrower /></WindowErrorBoundary>);
-      expect(screen.getByRole("alert").textContent).toContain("出错了");
+      expect(screen.getByRole("alert").textContent).toContain("窗口遇到问题");
       fireEvent.click(screen.getByRole("button", { name: "重新加载" }));
       expect(reload).toHaveBeenCalled();
       expect(logged.mock.calls.some((args) => String(args[0]).includes("[window]"))).toBe(true);

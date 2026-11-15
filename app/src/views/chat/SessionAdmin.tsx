@@ -7,7 +7,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { useT } from "../../i18n";
-import { getSessionAdminPage, recentCwds, sessionTone, setArchived, type LiveSession } from "../../api";
+import { getSessionAdminPage, recentCwds, setArchived, type LiveSession, liveSessionTone } from "../../api";
 import { formatBackendError } from "../../i18n/errors";
 import { confirmMarkDone, markDoneEndsWork } from "../../hooks/useSessionActions";
 import { useLingerTimer } from "../../hooks/useLingerTimer";
@@ -164,7 +164,7 @@ type Picked = { done: boolean; working: boolean; cwd: string | null };
 const pickOf = (row: LiveSession): Picked => ({
   done: row.archived,
   cwd: row.cwd,
-  working: markDoneEndsWork(sessionTone(row.connected, row.session.status, row.pending_review, row.errored, row.busy_subagents, row.screen_state)),
+  working: markDoneEndsWork(liveSessionTone(row)),
 });
 
 /// 页码条：首页、末页、当前页前后各一页，其余折成「…」。

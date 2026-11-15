@@ -399,6 +399,8 @@ mod tests {
     fn parse_cli_semver_accepts_prefixed_and_bare_lines() {
         // codex 0.166.0 `--version` 首行原样（research-cli-drift X2）
         assert_eq!(parse_cli_semver("codex-cli 0.166.0"), Some((0, 166, 0)));
+        // codex 0.167.2 `--version` 首行原样（2026-11-14 本机，cli-drift 的版本行比对同一句）
+        assert_eq!(parse_cli_semver("codex-cli 0.167.2"), Some((0, 167, 2)));
         assert_eq!(parse_cli_semver("0.162.1"), Some((0, 162, 1)));
         assert_eq!(
             parse_cli_semver("codex-cli 0.170.0-alpha.2"),

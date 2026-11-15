@@ -54,6 +54,10 @@ pub fn dispatch(
         }
         "UserPromptSubmit" => {
             if let Some(sid) = lookup_or_create(store, ev, provider, now_ms)? {
+                let checkpoint_cwd = ev.cwd.clone().or(store.session_cwd(sid)?);
+                if let Some(cwd) = checkpoint_cwd {
+                    crate::checkpoint::start_turn(store, sid, store.session_turns(sid)? + 1, Path::new(&cwd), now_ms);
+                }
                 store.clear_pending_review(sid, now_ms)?;
                 // 新回合开始:上一回合的活动名已是过时信息,清掉(方法内不 touch,下面的
                 // on_user_prompt / touch_session 才是本事件的状态翻转)。
@@ -169,6 +173,7 @@ pub fn dispatch(
                 // 正文、回合计数、状态同一事务写，先正文与计数、最后状态（任务 20261114-tui-model-switch
                 // 第七轮 R4）：别处一看到 waiting，这一轮的正文和计数就已落库。模型紧随其后写（下面），
                 // 切模型的钉子只看回合计数，不看模型，不受这一点先后影响。
+                crate::checkpoint::finish_turn(store, sid, store.session_turns(sid)? + 1, now_ms);
                 store.finish_turn(sid, out.last_ai.as_deref(), now_ms)?;
                 // stop_outputs 的模型(config.update 通道,/model 切换即时反映)比 usage 通道
                 // (最后一条 usage.record,切换后仍是旧回合的模型)更新。写过它之后,下面的
@@ -200,6 +205,7 @@ pub fn dispatch(
         "StopFailure" | "Interrupt" => {
             // Claude/Kimi 官方 hooks 文档：失败或手动中断替代 Stop。只收尾已有会话，且不把错误串当 AI 正文。
             if let Some(sid) = lookup_session(store, ev)? {
+                crate::checkpoint::finish_turn(store, sid, store.session_turns(sid)? + 1, now_ms);
                 store.clear_pending_review(sid, now_ms)?;
                 store.clear_current_activity(sid, now_ms)?;
                 store.set_session_status(sid, SessionStatus::Waiting, now_ms)?;
@@ -269,6 +275,9 @@ pub fn dispatch(
         }
         "PreToolUse" => {
             if let Some(sid) = lookup_session(store, ev)? {
+                if let Some(cwd) = ev.cwd.as_deref() {
+                    crate::checkpoint::before_tool(store, sid, store.session_turns(sid)? + 1, Path::new(cwd), ev.tool_input.as_ref(), now_ms);
+                }
                 let kind = match ev.tool_name.as_deref() {
                     Some("AskUserQuestion") => Some(PendingReview::Question),
                     Some("ExitPlanMode") => Some(PendingReview::Plan),

@@ -22,7 +22,7 @@ export function effortLabel(level: string): string {
   return level === "xhigh" ? "XHigh" : level.charAt(0).toUpperCase() + level.slice(1);
 }
 
-export function ModelMenu({ title, items, currentId, starred = [], effort, probing, unavailable, cacheHint, onSelect, onLoad, onMore, onGoTerminal, phone, onClose }: {
+export function ModelMenu({ title, items, currentId, starred = [], effort, probing, unavailable, cacheHint, savesDefault, queuedNote, blocked, loadBlocked, onSelect, onLoad, onMore, onGoTerminal, phone, onClose }: {
   /** 当前引擎名（分组头）。 */
   title: string;
   items: ModelMenuItem[];
@@ -38,6 +38,14 @@ export function ModelMenu({ title, items, currentId, starred = [], effort, probi
   unavailable: string | null;
   /** 会话已有内容：换模型会让已缓存的提示词作废，提醒一句。 */
   cacheHint: boolean;
+  /** 在这里切换会顺带改写用户 CLI 默认配置时的提醒（chat/availability 的 savesDefaultHint）；不改的不传。 */
+  savesDefault?: string | null;
+  /** 此刻选了不会立刻切、会排到稍后自动执行时的说明（chat/availability 的 queued）；先说清楚再让人选。 */
+  queuedNote?: string | null;
+  /** 此刻选模型做不成的原因（availability 的 disabled）：模型项置灰，原因写在清单下面。 */
+  blocked?: string | null;
+  /** 此刻读不了模型清单的原因：读取入口置灰并写明原因，不再点了才报错。 */
+  loadBlocked?: string | null;
   onSelect: (id: string) => void;
   /** 清单还没学到、也没自动去学时的显式入口：点了才让 CLI 弹一次菜单读清单（会往终端写命令）。 */
   onLoad?: () => void;
@@ -80,7 +88,9 @@ export function ModelMenu({ title, items, currentId, starred = [], effort, probi
         role="menuitem"
         className={"chat-model-item" + (active ? " is-active" : "")}
         data-tip={item.desc}
-        onClick={() => { if (!active) onSelect(item.id); else onClose(); }}
+        // aria-disabled 而不是 disabled：项仍可用方向键走到、读屏念得到，只是点了不动。
+        aria-disabled={(!active && !!blocked) || undefined}
+        onClick={() => { if (active) onClose(); else if (!blocked) onSelect(item.id); }}
       >
         <span className="chat-model-item-name">{item.label}</span>
         {active && check}
@@ -95,8 +105,11 @@ export function ModelMenu({ title, items, currentId, starred = [], effort, probi
         </div>
       )}
       {items.length === 0 && !probing && !unavailable && onLoad && (
-        <button type="button" role="menuitem" className="chat-model-item" onClick={onLoad}>
-          <span className="chat-model-item-name">{t.chat.modelLoad}</span>
+        <button type="button" role="menuitem" className="chat-model-item" aria-disabled={!!loadBlocked || undefined} onClick={() => { if (!loadBlocked) onLoad(); }}>
+          <span className="chat-model-item-text">
+            <span className="chat-model-item-name">{t.chat.modelLoad}</span>
+            {loadBlocked && <span className="chat-model-item-desc">{loadBlocked}</span>}
+          </span>
         </button>
       )}
       {items.length === 0 && !probing && unavailable && (
@@ -143,6 +156,14 @@ export function ModelMenu({ title, items, currentId, starred = [], effort, probi
         </div>
       </div>,
     );
+  }
+  // 排队与置灰的说明放在清单与思考档之后、缓存提醒之前：它说的是「现在点会怎样」。
+  const stateNote = blocked ?? queuedNote;
+  if (stateNote && items.length > 0) {
+    sections.push(<div className="chat-model-quick-section chat-model-quick-hint" key="state" role="status">{stateNote}</div>);
+  }
+  if (savesDefault && (items.length > 0 || effort)) {
+    sections.push(<div className="chat-model-quick-section chat-model-quick-hint" key="saves">{savesDefault}</div>);
   }
   if (cacheHint && items.length > 0) {
     sections.push(<div className="chat-model-quick-section chat-model-quick-hint" key="hint">{t.chat.modelCacheHint}</div>);

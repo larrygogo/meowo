@@ -29,6 +29,7 @@ import { OpenIcon, PathContextMenu, RowMore } from "./pathMenu";
 // ChangesView 住在 GitDiffView 里，静态引会把整个改动面板并进 SidePanel / 对话窗 chunk（见 lazyDiff.tsx）。
 import { LazyChangesView as ChangesView } from "./lazyDiff";
 import { ForgeBar } from "./ForgeBar";
+import { CheckpointPanel } from "./CheckpointPanel";
 import { IdentityDialog } from "./IdentityDialog";
 import { moveAmongRows } from "./listKeys";
 import { errorCode, PanelMessage, type PanelAction } from "./PanelMessage";
@@ -121,7 +122,7 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
   const repo = pickRepo(repos, selectedRoot);
   const [open, setOpen] = useState<{ root: string; kind: GroupKind; path: string } | null>(null);
   const [search, setSearch] = useState("");
-  const [scopeChoice, setScope] = useState<"all" | "session" | "turn">("all");
+  const [scopeChoice, setScope] = useState<"all" | "session" | "turn" | "checkpoints">("all");
   const [layout, setLayoutState] = useState<"list" | "tree">(readDiffLayout);
   const setLayout = (next: "list" | "tree") => { setLayoutState(next); saveDiffLayout(next); };
   const [folded, setFolded] = useState<ReadonlySet<string>>(() => new Set(["committed"]));
@@ -223,7 +224,7 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
   // 筛选按钮只在认得出本会话改了什么时出现；按钮没了（/clear 换代、编辑记录滑出加载窗口）就退回「全部」，
   // 不然列表一片空、提交被禁、又找不到清除筛选的入口（做空第 2 轮复现）。
   const hasSession = touchedPaths.length > 0;
-  const scope = hasSession ? scopeChoice : "all";
+  const scope = scopeChoice === "checkpoints" || hasSession ? scopeChoice : "all";
 
   if (open && sameRoot(open.root, root)) {
     // 目录条目不是文件，不进单文件 diff 的清单；从折叠目录里点开的文件不在摘要里，补进去（ChangesView 靠清单认
@@ -643,7 +644,7 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
       {/* 推送 / PR / CI / 合并（二期包 5）。key 按仓库：切仓库时轮询、表单、提示都换成那个仓库的。 */}
       <ForgeBar key={key} repo={repo} sessionCwd={sessionCwd} sessionId={sessionId} active={visible} onChanged={onChanged} />
 
-      <div className="scm-tools">
+      {scope !== "checkpoints" && <div className="scm-tools">
         <input
           type="text"
           className="chat-diff-search"
@@ -663,20 +664,30 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
             <Icon glyph={icTree} size={12} />
           </button>
         </div>
-      </div>
-      {hasSession && (
+      </div>}
+      {(hasSession || sessionId != null) && (
         <div className="chat-diff-scope" role="group" aria-label={t.chat.diffScopeLabel}>
           <button type="button" aria-pressed={scope === "all"} onClick={() => setScope("all")}>{t.chat.diffScopeAll}</button>
-          <button type="button" aria-pressed={scope === "session"} data-tip={t.chat.diffOnlySessionTip} onClick={() => setScope("session")}>
+          {hasSession && <button type="button" aria-pressed={scope === "session"} data-tip={t.chat.diffOnlySessionTip} onClick={() => setScope("session")}>
             {t.chat.diffScopeSession(files.filter((file) => touchedInRoot(touchedPaths, root, file.path)).length)}
-          </button>
-          <button type="button" aria-pressed={scope === "turn"} data-tip={t.chat.diffOnlyTurnTip} onClick={() => setScope("turn")}>
+          </button>}
+          {hasSession && <button type="button" aria-pressed={scope === "turn"} data-tip={t.chat.diffOnlyTurnTip} onClick={() => setScope("turn")}>
             {t.chat.diffScopeTurn(files.filter((file) => touchedInRoot(turnTouchedPaths, root, file.path)).length)}
-          </button>
+          </button>}
+          <button type="button" aria-pressed={scope === "checkpoints"} onClick={() => setScope("checkpoints")}>{t.chat.checkpointScope}</button>
         </div>
       )}
 
-      <div className="scm-groups" onKeyDown={(event) => moveAmongRows(event, ROW_MAIN)}>
+      {scope === "checkpoints" && sessionId != null ? <CheckpointPanel
+        sessionId={sessionId}
+        cwd={cwd}
+        summary={repo.summary}
+        comments={repoComments}
+        onAddComment={(comment) => onAddComment(comment, root)}
+        onRemoveComment={onRemoveComment}
+        escOverrideRef={escOverrideRef}
+        onChanged={onChanged}
+      /> : <div className="scm-groups" onKeyDown={(event) => moveAmongRows(event, ROW_MAIN)}>
         {nothing && <div className="scm-empty is-clean">{t.chat.scmNoChanges}</div>}
         {group("staged", t.chat.scmStaged, staged, (shown) => (
           <button type="button" className="scm-icon-btn" aria-label={t.chat.scmUnstageAll} data-tip={busy ? t.chat.scmBusyTip : t.chat.scmUnstageAll} aria-disabled={busyAttr} onClick={() => unstage(shown)}><MinusIcon /></button>
@@ -688,7 +699,7 @@ export function SourceControl({ cwd, repos, selectedRoot, onSelectRoot, onChange
         {group("committed", t.chat.scmCommitted(repo.baseLabel ?? "main"), committed, null)}
         {/* 没选中过的仓库后端只给了文件清单：行数和「本分支已提交」正在拉。 */}
         {repo.detailed === false && <div className="scm-empty">{t.chat.scmLoadingDetail}</div>}
-      </div>
+      </div>}
 
       {ctxMenu && <PathContextMenu cwd={root} rel={ctxMenu.rel} isDir={false} x={ctxMenu.x} y={ctxMenu.y} onClose={() => setCtxMenu(null)} />}
       {identityFor && (

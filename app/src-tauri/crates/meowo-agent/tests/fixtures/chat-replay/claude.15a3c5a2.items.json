@@ -1,0 +1,9 @@
+[
+  {
+    "type": "turn_error",
+    "id": "916a8769-2efa-456d-8fbe-a1a67c71dea2:0",
+    "timestamp": "2026-11-14T00:37:15.202Z",
+    "label": "需要重新登录",
+    "text": "Not logged in · Please run /login"
+  }
+]

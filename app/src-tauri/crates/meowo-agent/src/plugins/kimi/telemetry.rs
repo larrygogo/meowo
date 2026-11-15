@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use crate::transcript::ChatItem;
 use crate::transcript::{
     preview_text, SubagentOutcome, SubagentRef, SubagentSpec, SubagentStream, ToolDetail,
-    TranscriptEvent, TranscriptInfo, TranscriptParser, TranscriptSpec,
+    ToolFacts, ToolKind, TranscriptEvent, TranscriptInfo, TranscriptParser, TranscriptSpec,
 };
 
 fn chat_id(prefix: &str, line: &str) -> String {
@@ -143,6 +143,22 @@ fn tool_detail(name: &str, input: Option<&serde_json::Value>) -> Option<ToolDeta
             glob: text("glob"),
         }),
         _ => None,
+    }
+}
+
+/// Kimi 内置工具 → 语义类别（工具名取自本机 164 份主链 wire 的实际调用）。MCP 与其余
+/// 内部工具（TaskOutput / NotifyUser / WaitFor…）为 Other。
+fn tool_kind(name: &str) -> ToolKind {
+    match name {
+        "Bash" => ToolKind::Run,
+        "Read" | "ReadMediaFile" => ToolKind::Read,
+        "Write" => ToolKind::Write,
+        "Edit" => ToolKind::Edit,
+        "Grep" | "Glob" => ToolKind::Search,
+        "FetchURL" | "WebSearch" => ToolKind::Web,
+        "Agent" | "AgentSwarm" => ToolKind::Agent,
+        "TodoList" => ToolKind::Todo,
+        _ => ToolKind::Other,
     }
 }
 
@@ -414,6 +430,22 @@ fn parse_events(line: &str, wire_dir: Option<&Path>) -> Vec<TranscriptEvent> {
         None => chat_id(prefix, line),
     };
     match value.get("type").and_then(|v| v.as_str()).unwrap_or("") {
+        // 用户按 Esc 打断主回合：kimi 记 `turn.ended reason=cancelled`（本机 164 份主链里 17 次）。
+        // 画成与 claude 同款的中断分隔条，标明上方那轮不是自然结束。子代理的回合不算。
+        "turn.ended"
+            if value.get("reason").and_then(|v| v.as_str()) == Some("cancelled")
+                && value
+                    .get("agentId")
+                    .and_then(|v| v.as_str())
+                    .is_none_or(|id| id == "main") =>
+        {
+            vec![TranscriptEvent::Metadata {
+                id: chat_id("interrupted", line),
+                timestamp,
+                kind: "interrupted".into(),
+                compaction: None,
+            }]
+        }
         "turn.ended" => failure(&value)
             .map(|error| TranscriptEvent::TurnError {
                 id: chat_id("error", line),
@@ -459,10 +491,12 @@ fn parse_events(line: &str, wire_dir: Option<&Path>) -> Vec<TranscriptEvent> {
                     failed: u32::from(failed),
                     background_running: false,
                     task_id: None,
+                    interrupted: false,
                 }),
                 patch: None,
                 text: String::new(),
                 is_error: failed,
+                facts: ToolFacts::default(),
             }]
         }
         "turn.prompt" => {
@@ -479,6 +513,7 @@ fn parse_events(line: &str, wire_dir: Option<&Path>) -> Vec<TranscriptEvent> {
                             timestamp,
                             text,
                             interjected: false,
+                            turn_id: None,
                         })
                         .into_iter()
                         .collect();
@@ -499,6 +534,7 @@ fn parse_events(line: &str, wire_dir: Option<&Path>) -> Vec<TranscriptEvent> {
                     timestamp,
                     text,
                     interjected: false,
+                    turn_id: None,
                 })
                 .into_iter()
                 .collect()
@@ -542,6 +578,7 @@ fn parse_events(line: &str, wire_dir: Option<&Path>) -> Vec<TranscriptEvent> {
                     timestamp,
                     text,
                     interjected,
+                    turn_id: None,
                 })
                 .into_iter()
                 .collect()
@@ -580,8 +617,10 @@ fn parse_events(line: &str, wire_dir: Option<&Path>) -> Vec<TranscriptEvent> {
                     is_error: event
                         .get("isError")
                         .or_else(|| event.get("is_error"))
+                        .or_else(|| event.pointer("/result/isError"))
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false),
+                    facts: ToolFacts::default(),
                 }];
             }
             let part = if event_type == "content.part" {
@@ -641,6 +680,7 @@ fn parse_events(line: &str, wire_dir: Option<&Path>) -> Vec<TranscriptEvent> {
                             .map(str::to_string)
                             .unwrap_or_else(|| stable_id("tool")),
                         timestamp,
+                        kind: tool_kind(&name),
                         name: name.clone(),
                         // 子任务的摘要取那句描述；否则整包 args（含上千字 prompt）会把摘要行淹掉。
                         summary: subagent
@@ -1142,6 +1182,7 @@ impl SubagentSpec for KimiSubagents {
             background_running: false,
             // kimi 的结局直接写在委派自己的回执里，不存在需要跨调用路由的场景。
             task_id: None,
+            interrupted: false,
         };
         for (_, status) in &states {
             match status.as_deref() {

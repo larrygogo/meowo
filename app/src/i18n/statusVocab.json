@@ -1,0 +1,66 @@
+{
+  "zh": {
+    "session": {
+      "running": "运行中",
+      "pending": "待处理",
+      "waiting": "等待输入",
+      "offline": "已断开",
+      "ended": "已结束",
+      "error": "出错",
+      "interrupted": "已中断",
+      "online": "在线"
+    },
+    "request": {
+      "approval": "待批准",
+      "question": "待回答",
+      "plan": "待批计划",
+      "gate": "待拍板",
+      "blocked": "待处理",
+      "expired": "已过期",
+      "cancelled": "已取消"
+    },
+    "delivery": {
+      "sending": "发送中",
+      "pending": "已发出",
+      "accepted": "已排队",
+      "inserted": "已插入",
+      "uncertain": "未确认送达",
+      "failed": "发送失败"
+    },
+    "concept": {
+      "subagent": "子任务"
+    }
+  },
+  "en": {
+    "session": {
+      "running": "Running",
+      "pending": "Needs action",
+      "waiting": "Waiting for input",
+      "offline": "Disconnected",
+      "ended": "Ended",
+      "error": "Error",
+      "interrupted": "Interrupted",
+      "online": "Online"
+    },
+    "request": {
+      "approval": "Needs approval",
+      "question": "Needs answer",
+      "plan": "Plan review",
+      "gate": "Your call",
+      "blocked": "Needs action",
+      "expired": "Expired",
+      "cancelled": "Cancelled"
+    },
+    "delivery": {
+      "sending": "Sending",
+      "pending": "Sent",
+      "accepted": "Queued",
+      "inserted": "Inserted",
+      "uncertain": "Not confirmed",
+      "failed": "Failed to send"
+    },
+    "concept": {
+      "subagent": "Subtask"
+    }
+  }
+}

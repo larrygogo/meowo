@@ -2,7 +2,7 @@
 // 夹具与 mock 见 chatWindow.harness.tsx（必须先于 ./ChatWindow 导入）。
 import { describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { emptyComposerFrame, invoke, saveDialog, eventListeners, b64utf8, respondWithHistory } from "./chatWindow.harness";
+import { emptyComposerFrame, invoke, saveDialog, eventListeners, b64utf8, respondWithHistory, queueFallback, deliverQueuedNow } from "./chatWindow.harness";
 import { ChatWindow } from "./ChatWindow";
 import { zh } from "../i18n/zh";
 import { chatUi, descriptors } from "../test/agents";
@@ -437,6 +437,10 @@ describe("ChatWindow", () => {
     await waitFor(() => expect(composer.value).toBe("修一下登录页"), { timeout: 8_000 });
     expect(screen.queryByText("修一下登录页", { selector: ".chat-user-text, .chat-user-text *" })).toBeNull();
     expect(document.querySelector(".chat-send-error")?.textContent ?? "").toContain("boom");
+    // 做空⑧：这次失败要进运行日志（此前只有错误条），而且日志里没有那句话。
+    const logged = invoke.mock.calls.filter(([command]) => command === "diag_log").map(([, args]) => (args as { message: string }).message);
+    expect(logged.some((line) => line.includes("kind=send_failed") && line.includes("reason=first_prompt_failed"))).toBe(true);
+    for (const line of logged) expect(line).not.toContain("修一下登录页");
   }, 15_000);
 
   /// 做空复现过的几种时序:认领发生在写入途中、等就绪时又发一句、启动中切走再回来、
@@ -483,7 +487,7 @@ describe("ChatWindow", () => {
           ? { sessionId: sid, active: true, managed: true, data: b64utf8("claude ready" + typed), startOffset: 0, endOffset: 64 + typed.length, exited: false, exitCode: null }
           : { sessionId: sid, active: true, managed: true, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
       }
-      return Promise.resolve();
+      return queueFallback(command, args) ?? Promise.resolve();
     });
   }
   async function sendFirstPrompt(text: string) {
@@ -526,9 +530,13 @@ describe("ChatWindow", () => {
     });
     await sendFirstPrompt("第一句");
     await waitFor(() => expect(writesOf()).toContain("第一句"), { timeout: 8_000 });
+    await waitFor(() => expect(writesOf()).toContain("\r"));
+    await waitFor(() => expect(document.querySelector(".is-sending")).toBeNull());
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 300)); });
     const composer = await screen.findByRole("combobox", { name: "发送消息给 Agent" });
     fireEvent.change(composer, { target: { value: "第二句" } });
     fireEvent.keyDown(composer, { key: "Enter" });
+    await deliverQueuedNow();
     await waitFor(() => expect(writesOf()).toContain("第二句"), { timeout: 8_000 });
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("get_chat_history", expect.objectContaining({ sessionId: 71 })), { timeout: 5_000 });
     await waitFor(() => expect(document.querySelector(".is-sending")).toBeNull(), { timeout: 8_000 });
@@ -548,6 +556,7 @@ describe("ChatWindow", () => {
     await new Promise((resolve) => setTimeout(resolve, 1_000));
     expect(writesOf()).not.toContain("第二句");
     ready = true;
+    await deliverQueuedNow();
     await waitFor(() => expect(writesOf()).toContain("第二句"), { timeout: 10_000 });
     const writes = writesOf();
     expect(writes.indexOf("第一句")).toBeGreaterThanOrEqual(0);
@@ -592,7 +601,7 @@ describe("ChatWindow", () => {
     claimed = true;
     act(() => eventListeners.get("chat-session-changed")?.({ payload: 71 }));
     // 回到真 id 先查一次认领关系，回执才搬过来。
-    expect(await screen.findByText(zh.chat.echoUncertain, undefined, { timeout: 3_000 })).toBeTruthy();
+    expect(await screen.findByText(zh.vocab.delivery.uncertain, undefined, { timeout: 3_000 })).toBeTruthy();
     expect(screen.getByText("修一下登录页")).toBeTruthy();
   }, 20_000);
 
@@ -609,7 +618,7 @@ describe("ChatWindow", () => {
     await waitFor(() => expect(screen.queryByTestId("new-session-page")).toBeNull());
     act(() => eventListeners.get("chat-session-changed")?.({ payload: -9 }));
     await waitFor(() => expect(screen.getByText("A的第一句")).toBeTruthy());
-    expect(await screen.findByText(zh.chat.echoFailed)).toBeTruthy();
+    expect(await screen.findByText(zh.vocab.delivery.failed)).toBeTruthy();
   }, 20_000);
 
   it("新建会话页:切走后过期,不把第一句话塞进正在看的别的会话", async () => {
@@ -724,18 +733,21 @@ describe("ChatWindow", () => {
     render(<ChatWindow />);
     fireEvent.click(await screen.findByRole("button", { name: "切换模型" }));
     // 就地菜单照开:清单没学到时给「读取模型清单」显式入口,「更多模型…」进市场切引擎。
-    expect(await screen.findByRole("menuitem", { name: "读取模型清单" })).toBeTruthy();
+    // 回合在跑：入口置灰，原因（什么时候能用）就写在入口上（验收 7，走查输入 B1）。
+    const load = await screen.findByRole("menuitem", { name: /读取模型清单/ });
+    expect(load.getAttribute("aria-disabled")).toBe("true");
+    expect(load.textContent).toContain(zh.chat.availability.afterTurn);
     fireEvent.click(screen.getByRole("menuitem", { name: "更多模型…" }));
     expect(await screen.findByText("复制到新会话 · Claude Code")).toBeTruthy();
     expect(screen.getByRole("menuitem", { name: "默认模型" })).toBeTruthy();
     // 没学到清单不该触发 /model 探测(那会往终端里写命令、弹 TUI 菜单)。
     expect(invoke.mock.calls.some(([command, args]) =>
       command === "write_managed_terminal" && (args as { data: string }).data === "/model")).toBe(false);
-    // 显式入口在回合运行中同样受「先等任务结束」保护，不往忙着的终端里写命令。
-    // 走查 C-8：原因在菜单里先说（menuBusyShort），入口标成不可选，点了不动，不再选完才报 menuBusy。
+    // 置灰的入口点了不动：不往忙着的终端里写命令，也不再点完才弹一条报错。
     fireEvent.click(await screen.findByRole("button", { name: "切换模型" }));
-    fireEvent.click(await screen.findByRole("menuitem", { name: "读取模型清单" }));
-    expect(await screen.findByText(zh.chat.menuBusyOpen)).toBeTruthy();
+    fireEvent.click(await screen.findByRole("menuitem", { name: /读取模型清单/ }));
+    await act(async () => {});
+    expect(screen.queryByText(zh.chat.menuBusyOpen)).toBeNull();
     expect(invoke.mock.calls.some(([command, args]) =>
       command === "write_managed_terminal" && (args as { data: string }).data === "/model")).toBe(false);
   });
@@ -808,7 +820,7 @@ describe("ChatWindow", () => {
       ...(newMessageArrived
         ? [
           { type: "reasoning", id: "r2", timestamp: null, text: "想一想" },
-          { type: "tool_use", id: "t2", timestamp: null, name: "Bash", summary: "cargo test" },
+          { type: "tool_use", id: "t2", timestamp: null, name: "Bash", kind: "run", summary: "cargo test" },
           { type: "tool_result", id: "tr2", timestamp: null, tool_use_id: "t2", text: "ok", is_error: false },
           { type: "assistant_text", id: "a2", timestamp: null, text: "刚落地的新消息" },
         ]

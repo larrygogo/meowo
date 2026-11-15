@@ -5,6 +5,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from
 import type { ProviderUsage, UsageLane } from "../../api";
 import { agentAssets, tintStyle } from "../../providers";
 import { useT } from "../../i18n";
+import { sessionToneLabels } from "../../i18n/statusVocab";
 import { cardTone, fmtAgo } from "../sticker/helpers";
 import type { Item } from "../sticker/types";
 import { groupTone, sessionTitle, useSidebarOrder } from "../Island";
@@ -326,7 +327,7 @@ export function IslandPanel({
                       <span className="isl-row-title" title={sessionTitle(item, t.sticker.waitingFirstInput)}>{sessionTitle(item, t.sticker.waitingFirstInput)}</span>
                       <span className="isl-row-sub">{detail}</span>
                     </span>
-                    <span className={`isl-state is-${tone}`}>{t.island.toneLabel[tone] ?? ""}</span>
+                    <span className={`isl-state is-${tone}`}>{sessionToneLabels(t)[tone] ?? ""}</span>
                     <span className="isl-btn is-dark" aria-hidden="true">{t.island.open}</span>
                   </div>
                 );

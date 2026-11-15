@@ -1099,7 +1099,7 @@ describe("ChatWindow", () => {
     fireEvent.change(input, { target: { value: "继续" } });
 
     fireEvent.keyDown(input, { key: "Enter" });
-    expect(await screen.findByText(/Agent 有提问待回答/)).toBeTruthy();
+    expect(await screen.findByText(zh.chat.cardLockQuestion)).toBeTruthy();
     expect(invoke.mock.calls.some(([command, args]) => command === "write_managed_terminal" && args?.sessionId === 48)).toBe(false);
     expect((input as HTMLTextAreaElement).value).toBe("继续");
     expect(invoke.mock.calls.some(([command]) => command === "confirm_dialog")).toBe(false);

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
-import { type AgentId, type LiveSession, agentName, getSessionAdminPage, listSubdirectories, savePastedAttachment } from "../../api";
+import { type AgentId, type LiveSession, type QueuedPromptDto, agentName, getSessionAdminPage, listSubdirectories, promptQueueOrphans, promptQueueRestoreOrphan, savePastedAttachment } from "../../api";
 import { formatBackendError } from "../../i18n/errors";
 import { type Attachment, attachmentOf, base64OfBuffer } from "./drafts";
 import { ImageRef } from "./Message";
@@ -15,6 +15,7 @@ import { initialChoice, modeChoiceViews, modelChoiceRows, planToggle } from "./m
 import { AgentAppIcon } from "./AgentAppIcon";
 
 import { useT } from "../../i18n";
+import { imeComposing } from "../../ime";
 import { useNewSessionForm } from "../useNewSessionForm";
 import { WorkspacePicker } from "./WorkspacePicker";
 import { WorktreeOption } from "../WorktreeOption";
@@ -48,6 +49,18 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched, onOpenSession
   // 粘进来的截图/文件（用户反馈：新建页粘不了图，只能等会话起来再贴一次）。和对话页同一套
   // 落盘与附件形状，发出去后交给对话页的发送通道，原生贴图 / 附路径降级都在那边。
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [orphans, setOrphans] = useState<QueuedPromptDto[]>([]);
+  useEffect(() => {
+    promptQueueOrphans().then((items) => setOrphans(Array.isArray(items) ? items : [])).catch(() => {});
+  }, []);
+  const restoreOrphan = async (item: QueuedPromptDto) => {
+    const restored = await promptQueueRestoreOrphan(item.sessionId, item.id).catch(() => null);
+    if (!restored) return;
+    setMessage(restored.draft.prompt);
+    setAttachments(restored.draft.attachments.map((file) => ({ ...file })));
+    setOrphans((current) => current.filter((entry) => entry.id !== item.id));
+    textRef.current?.focus();
+  };
   // 还在落盘的粘贴数：大截图写盘要一会儿，「Ctrl+V 紧接回车」会在图回来之前就把会话发出去，
   // 图静默丢掉（做空复现）。落盘期间先不让发。
   const [pasting, setPasting] = useState(0);
@@ -115,7 +128,7 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched, onOpenSession
 
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     // IME 合成中的回车是选候选词，不是发送。
-    if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+    if (event.key === "Enter" && !event.shiftKey && !imeComposing(event)) {
       event.preventDefault();
       void submit();
     }
@@ -146,6 +159,13 @@ export function NewSessionPage({ prefill, droppedPath, onLaunched, onOpenSession
         />
         {/* 包 5：在新 worktree 里开（默认不勾）。放在工作区下面：它是「在哪跑」的一部分。 */}
         <WorktreeOption choice={form.worktree} disabled={busy} />
+        {orphans.length > 0 && <section className="nsp-orphans" aria-label={t.newSession.orphanedQueue}>
+          <span>{t.newSession.orphanedQueue}</span>
+          {orphans.map((item) => <div key={item.id} className="nsp-orphan">
+            <span>{item.draft.prompt || t.chat.queuedAttachmentOnly}</span>
+            <button type="button" className="nsp-note-btn" onClick={() => void restoreOrphan(item)}>{t.newSession.orphanedRestore}</button>
+          </div>)}
+        </section>}
         <div className={"nsp-composer" + (busy ? " is-busy" : "")}>
           <textarea
             ref={textRef}

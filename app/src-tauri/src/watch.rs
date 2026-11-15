@@ -1150,7 +1150,10 @@ pub(crate) fn spawn_liveness_watch(
                     } = agent_transcript(&s.provider)
                         .filter(|spec| spec.supports_analysis())
                         .and_then(|spec| {
-                            spec.resolve_transcript_path(None, s.cwd.as_deref(), &sid)
+                            // 与侧栏/对话窗的分析（session_query::analyze_transcript）走同一个定位入口：
+                            // 同一份文件、同一份缓存，出错通知与侧栏状态点不会各读各的。轮询版对
+                            // codex / opencode 还带节流（定位要走目录树、要开库导出）。
+                            spec.resolve_transcript_path_polled(s.cwd.as_deref(), &sid)
                                 .and_then(|p| p.to_str().map(str::to_string))
                                 .map(|path| {
                                     // 锁外 IO 版：大文件首读不阻塞 get_live_sessions（见 analyze_shared）。

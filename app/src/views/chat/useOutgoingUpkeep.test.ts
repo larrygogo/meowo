@@ -10,10 +10,9 @@ vi.mock("../../api", () => api);
 
 import { anchorFrom, outgoingStore, type OutgoingPrompt } from "./outgoingPrompts";
 import { useOutgoingUpkeep } from "./useOutgoingUpkeep";
+import { chatUi } from "../../test/agents";
 
-const claudeUi = {
-  draft_stash: { input: "\x13", composer_prompt: "❯", composer_border: "─", stashed_marker: "› stashed" },
-} as unknown as ChatUi;
+const claudeUi = { composer: chatUi("claude")!.composer } as unknown as ChatUi;
 
 const echo = (id: number, text: string): OutgoingPrompt => ({
   id, kind: "echo", text, attachmentOnly: false, at: 0, phase: "uncertain", settledAt: null, anchor: anchorFrom([], null),

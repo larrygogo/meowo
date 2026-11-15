@@ -13,7 +13,11 @@ import { I18nProvider } from "../src/i18n";
 import { TooltipLayer } from "../src/Tooltip";
 import { installInputModality } from "../src/input-modality";
 import { demoChatUi, installMocks, setExtraMock, store } from "../src/demo/mock";
-import { patchChatUi } from "./qaFlow";
+import { patchChatUi, promptQueueScene } from "./qaFlow";
+import { checkpointSceneMock } from "./checkpointScene";
+import { reviewSceneMock } from "./reviewScene";
+import { cardSceneMock } from "./cardScenes";
+import { toolSceneMock } from "./toolScenes";
 import { tmsChatMock, tmsCommonMock, tmsProviderOf } from "./tmsFixtures";
 import { chatMock } from "../src/demo/chatData";
 import { panelMock } from "../src/demo/panelData";
@@ -29,12 +33,14 @@ const lang: "zh" | "en" = q.get("lang") === "en" ? "en" : "zh";
 const theme = q.get("theme") === "light" ? "light" : "dark";
 const scene = q.get("scene") ?? "mobile-chat";
 
-Date.now = () => FIXED_NOW;
+// 默认把 Date.now 冻结在 FIXED_NOW。?clock=live：不冻结，时间跟着截图脚本的假时钟走（它同样从 FIXED_NOW 起步，
+// 只在脚本推进时前进），用来拍要等时间过去才出现的状态（审批卡倒计时归零后的「已过期」）。
+if (q.get("clock") !== "live") Date.now = () => FIXED_NOW;
 
 markRemoteUi();
 setHostOsUnknown();
 installInputModality();
-if (scene === "mobile-changes") {
+if (scene === "mobile-changes" || scene === "mobile-checkpoints" || scene === "mobile-pr-review") {
   savePanel(CHAT_SESSION_ID, { tabs: [{ key: "diff", type: "diff" }], active: "diff", visible: true, expanded: false });
 }
 // mobile-idle：对话页但没有待批准的请求（拍补全、菜单用）；mobile-lead：再加一张 Lead 关卡卡。
@@ -42,7 +48,11 @@ if (scene === "mobile-changes") {
 // mobile-tasks：派过后台 Bash（一条在跑、三条跑完）和一个在跑的子代理，拍底栏胶囊与后台任务面板。
 const tmsChat = scene.startsWith("mobile-tms-") && !scene.startsWith("mobile-tms-new-");
 const tmsNew = scene.startsWith("mobile-tms-new-");
-const inChat = tmsChat || scene === "mobile-chat" || scene === "mobile-changes" || scene === "mobile-idle" || scene === "mobile-lead" || scene === "mobile-lead-c" || scene === "mobile-question" || scene === "mobile-tasks";
+// mobile-card-<名字>：五家的审批卡、提问卡、提示卡（数据在 cardScenes.ts，与桌面 flow-card-* 同一份）。
+const cardScene = scene.startsWith("mobile-card-") ? scene.slice("mobile-card-".length) : null;
+// mobile-tools-<家>-<状态>：五家的工具行与运行状态（数据在 toolScenes.ts，与桌面 flow-tools-* 同一份）。
+const toolScene = scene.startsWith("mobile-tools-") ? scene.slice("mobile-tools-".length) : null;
+const inChat = tmsChat || cardScene !== null || toolScene !== null || scene === "mobile-chat" || scene === "mobile-changes" || scene === "mobile-idle" || scene === "mobile-lead" || scene === "mobile-lead-c" || scene === "mobile-question" || scene === "mobile-tasks" || scene === "mobile-queued" || scene === "mobile-checkpoints" || scene === "mobile-pr-review";
 /// 后台任务的假数据：判据是「回执带子任务结局」（与 TasksPanel 同口径），一条调用配一条回执。
 function taskItems(zh: boolean): unknown[] {
   const at = (minutes: number) => new Date(FIXED_NOW - minutes * 60_000).toISOString();
@@ -73,7 +83,10 @@ const SCREEN = [
   "  3. No, and tell Claude what to do differently (esc)",
 ];
 const tmsMock = tmsChat ? tmsChatMock(tmsProviderOf(scene), q.get("state") ?? "idle", chat, q.get("modes")) : tmsNew ? tmsCommonMock(tmsProviderOf(scene), q.get("cfg")) : null;
+const cardMock = cardScene !== null ? cardSceneMock(cardScene, lang, chat) : toolScene !== null ? toolSceneMock(toolScene, lang, chat) : null;
 setExtraMock((cmd, args) => {
+  const cardHit = cardMock?.(cmd, args);
+  if (cardHit !== undefined) return cardHit;
   if (tmsMock && cmd !== "open_new_session_window") {
     const hit = tmsMock(cmd, args);
     if (hit !== undefined) return hit;
@@ -85,6 +98,9 @@ setExtraMock((cmd, args) => {
   }
   if (cmd === "managed_terminal_screen" && scene === "mobile-keys") return SCREEN;
   if (cmd === "file_mention_candidates") return MENTION_CANDIDATES;
+  if (scene === "mobile-queued" && cmd === "prompt_queue_list") return promptQueueScene(lang);
+  if (scene === "mobile-queued" && cmd === "pending_interaction") return { approval: null, question: null };
+  if (scene === "mobile-queued" && cmd === "get_chat_history") return { ...(chat(cmd) as object), pendingReview: null };
   // 模型菜单要有切换命令才点得开；权限模式要有可选项才出菜单（与桌面补看场景同一份补丁）。
   if (cmd === "agent_chat_ui" && (scene === "mobile-idle" || scene === "mobile-lead" || scene === "mobile-lead-c")) return patchChatUi(demoChatUi());
   if (cmd === "lead_task_snapshot" && scene === "mobile-lead") return leadTask(lang);
@@ -105,7 +121,7 @@ setExtraMock((cmd, args) => {
   // 列表的空态与首载失败。
   if (cmd === "get_live_sessions_page" && scene === "mobile-list-empty") return [];
   if (cmd === "get_live_sessions_page" && scene === "mobile-list-error") throw new Error("offline");
-  return scmMock(cmd) ?? panel(cmd, args) ?? chat(cmd);
+  return checkpointSceneMock(cmd) ?? reviewSceneMock(cmd) ?? scmMock(cmd) ?? panel(cmd, args) ?? chat(cmd);
 });
 installMocks("chat");
 store.settings.language = lang;

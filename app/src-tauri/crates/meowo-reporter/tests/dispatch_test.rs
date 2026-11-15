@@ -1402,3 +1402,34 @@ fn owner_repo_follows_worktree_git_file_to_the_common_config() {
     // 主检出照旧。
     assert_eq!(meowo_reporter::dispatch::project_root_and_name_pub(main.to_str().unwrap()).1, "acme/rocket");
 }
+
+
+#[test]
+fn prompt_without_cwd_uses_session_root_for_checkpoint_and_stop_seals_it() {
+    let temp = tempfile::tempdir().unwrap();
+    let repo = temp.path();
+    let git = |args: &[&str]| {
+        let out = std::process::Command::new("git").current_dir(repo).args(args).output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    };
+    git(&["init", "-q"]);
+    git(&["config", "user.name", "Test"]);
+    git(&["config", "user.email", "test@localhost"]);
+    git(&["config", "core.autocrlf", "false"]);
+    std::fs::write(repo.join("a.txt"), "before\n").unwrap();
+    git(&["add", "a.txt"]);
+    git(&["commit", "-qm", "base"]);
+    let store = Store::open_in_memory().unwrap();
+    let start = serde_json::json!({"hook_event_name":"SessionStart","session_id":"checkpoint-hook","cwd":repo});
+    disp(&store, &ev(&start.to_string()), 100).unwrap();
+    // Claude 的 UserPromptSubmit 实测可以不带 cwd；快照必须读 SessionStart 已保存的目录。
+    disp(&store, &ev(r#"{"hook_event_name":"UserPromptSubmit","session_id":"checkpoint-hook","prompt":"change"}"#), 200).unwrap();
+    std::fs::write(repo.join("a.txt"), "after\n").unwrap();
+    disp(&store, &ev(r#"{"hook_event_name":"Stop","session_id":"checkpoint-hook"}"#), 300).unwrap();
+    let sid = store.find_session_id_pub("checkpoint-hook").unwrap().unwrap();
+    let rows = store.turn_checkpoint_repos(sid, 1).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert!(rows[0].end_ref.is_some(), "Stop 应封上本回合结束快照");
+    let files = meowo_reporter::checkpoint::changed_files(&rows[0]).unwrap();
+    assert_eq!(files[0].path, "a.txt");
+}

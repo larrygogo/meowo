@@ -1,0 +1,42 @@
+[
+  {
+    "type": "user_text",
+    "id": "msg_142cd3617001ghiADMo7rqW2Yj",
+    "timestamp": "2026-10-16T03:41:47.415Z",
+    "text": "run the shell command: ping -n 30 127.0.0.1"
+  },
+  {
+    "type": "tool_use",
+    "id": "toolu_vrtx_01EovD7PdqAvn6jtAi7cH1Mc",
+    "timestamp": "2026-10-16T03:41:51.379Z",
+    "name": "bash",
+    "kind": "run",
+    "summary": "ping -n 30 127.0.0.1",
+    "detail": {
+      "kind": "command",
+      "command": "ping -n 30 127.0.0.1",
+      "description": null
+    }
+  },
+  {
+    "type": "tool_result",
+    "id": "toolu_vrtx_01EovD7PdqAvn6jtAi7cH1Mc:result",
+    "timestamp": "2026-10-16T03:41:53.432Z",
+    "tool_use_id": "toolu_vrtx_01EovD7PdqAvn6jtAi7cH1Mc",
+    "text": "",
+    "is_error": false,
+    "interrupted": true
+  },
+  {
+    "type": "meta",
+    "id": "msg_142cd36290011e33OiUHQ20U5k:interrupted",
+    "timestamp": "2026-10-16T03:41:53.434Z",
+    "kind": "interrupted"
+  },
+  {
+    "type": "assistant_text",
+    "id": "prt_142cd6ae2001kpaBiLy00SsRdK",
+    "timestamp": "2026-10-16T03:42:00.930Z",
+    "text": "PELICAN"
+  }
+]

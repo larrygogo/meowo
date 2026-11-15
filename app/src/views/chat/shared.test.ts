@@ -7,6 +7,8 @@ const toolUse = (id: string, name: string, subagent?: ToolUseItem["subagent"]): 
   id,
   timestamp: null,
   name,
+  // 类别由后端给：这里照 claude 的工具名表填。
+  kind: name === "Bash" || name === "PowerShell" ? "run" : name === "Agent" ? "agent" : "other",
   summary: "",
   subagent: subagent ?? null,
 });

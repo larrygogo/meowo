@@ -7,6 +7,7 @@ mod browser_agent;
 mod browser_pane;
 mod browser_permission;
 mod chat;
+mod checkpoints;
 mod confirm;
 mod detect;
 mod diaglog;
@@ -28,6 +29,7 @@ mod lead_runtime;
 mod openwith;
 mod ports;
 mod power;
+mod prompt_queue;
 mod pty;
 mod push;
 mod relay;
@@ -1595,6 +1597,25 @@ pub fn run() {
             forge::gh_pr_merge,
             forge::forge_choose_repo,
             forge::badge::sidebar_git_badges,
+            forge::review::pr_review,
+            forge::review::pr_comment,
+            forge::review::pr_line_comment,
+            forge::review::pr_monitor_set,
+            forge::review::pr_monitor_wake,
+            prompt_queue::prompt_queue_list,
+            prompt_queue::prompt_queue_enqueue,
+            prompt_queue::prompt_queue_edit,
+            prompt_queue::prompt_queue_cancel,
+            prompt_queue::prompt_queue_claim,
+            prompt_queue::prompt_queue_finish,
+            prompt_queue::prompt_queue_retry,
+            prompt_queue::prompt_queue_orphans,
+            prompt_queue::prompt_queue_restore_orphan,
+            checkpoints::checkpoint_turns,
+            checkpoints::checkpoint_turn_detail,
+            checkpoints::checkpoint_file_diff,
+            checkpoints::checkpoint_restore,
+            checkpoints::checkpoint_undo,
             list_dir_entries,
             read_file_text,
             read_image_preview,
@@ -1822,6 +1843,9 @@ pub fn run() {
             } else {
                 eprintln!("Meowo dev: 跳过启动自动接线(hooks/statusline)；需要时用设置页「修复连接」或设 MEOWO_DEV_WIRE=1");
             }
+            // 上次进程在写入途中消失时只恢复成失败，不自动重写 CLI。
+            prompt_queue::recover_prompt_deliveries(app.handle());
+            forge::review::start_monitor_worker(app.handle());
             // 远程访问桥（手机浏览器）：manage 生命周期状态后按 settings 决定是否启动。
             // 默认关闭时 apply 是 no-op，不监听任何端口。
             app.manage(shell_terminal::ShellTerminals::default());

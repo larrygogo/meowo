@@ -409,16 +409,39 @@ pub(crate) fn ui_lang(settings: &Settings) -> &'static str {
     }
 }
 
+/// 状态词表：与前端同一份 JSON（app/src/i18n/statusVocab.json），编译期读入。
+/// 通知标题里的状态词从它取，侧栏、灵动岛、通知说的是同一个词（走查显示 B7）。
+static STATUS_VOCAB: std::sync::LazyLock<serde_json::Value> = std::sync::LazyLock::new(|| {
+    serde_json::from_str(include_str!("../../src/i18n/statusVocab.json"))
+        .expect("statusVocab.json 必须是合法 JSON")
+});
+
+/// 通知用的状态键 → 词表里的（分组，键）。不在表里的键不是状态词，走下面的字面量。
+fn notify_status_slot(key: &str) -> Option<(&'static str, &'static str)> {
+    Some(match key {
+        "notify.error" => ("session", "error"),
+        "notify.waiting" => ("session", "waiting"),
+        "notify.pending.approval" => ("request", "approval"),
+        "notify.pending.question" => ("request", "question"),
+        "notify.pending.plan" => ("request", "plan"),
+        "notify.pending.gate" => ("request", "gate"),
+        "notify.blocked" => ("request", "blocked"),
+        _ => return None,
+    })
+}
+
+/// 取词表里的一个词。语言只认 zh / en，其余按 zh。
+pub(crate) fn status_word(lang: &str, group: &str, key: &str) -> &'static str {
+    let lang = if lang == "en" { "en" } else { "zh" };
+    STATUS_VOCAB[lang][group][key].as_str().unwrap_or("")
+}
+
 /// Rust 侧用户可见文案（仅通知/托盘/窗口标题数条，不引 i18n 库）。
 pub(crate) fn tr(lang: &str, key: &str) -> &'static str {
+    if let Some((group, word)) = notify_status_slot(key) {
+        return status_word(lang, group, word);
+    }
     match (lang, key) {
-        ("en", "notify.error") => "Session error",
-        ("en", "notify.waiting") => "Waiting for your reply",
-        ("en", "notify.pending.approval") => "Approve a tool call?",
-        ("en", "notify.pending.question") => "A session is asking you a question",
-        ("en", "notify.pending.plan") => "Plan awaiting approval",
-        ("en", "notify.pending.gate") => "A Lead gate is waiting for your call",
-        ("en", "notify.blocked") => "The Agent is waiting for input",
         ("en", "notify.open") => "Open session",
         ("en", "notify.pushTest") => "Phone push is working",
         ("en", "tray.chat") => "Open chat window",
@@ -454,13 +477,6 @@ pub(crate) fn tr(lang: &str, key: &str) -> &'static str {
         ("en", "menu.window") => "Window",
         ("en", "menu.minimize") => "Minimize",
         ("en", "menu.close") => "Close Window",
-        (_, "notify.error") => "会话出错",
-        (_, "notify.waiting") => "等待你回复",
-        (_, "notify.pending.approval") => "需要你批准工具调用",
-        (_, "notify.pending.question") => "会话在问你问题",
-        (_, "notify.pending.plan") => "计划待批准",
-        (_, "notify.pending.gate") => "Lead 关卡待拍板",
-        (_, "notify.blocked") => "Agent 正在等待输入",
         (_, "notify.open") => "打开会话",
         (_, "notify.pushTest") => "手机推送已接通",
         (_, "tray.chat") => "打开对话窗口",
@@ -1118,6 +1134,34 @@ mod tests {
             assert!(!tr(lang, "quit.confirmQuit").is_empty(), "{lang}");
             assert!(!tr(lang, "quit.shellBusy").is_empty(), "{lang}");
         }
+    }
+
+    /// 通知标题里的状态词取自词表（与侧栏、灵动岛同一个词），两种语言每个键都有词。
+    #[test]
+    fn notify_status_words_come_from_the_shared_vocab() {
+        assert_eq!(tr("zh", "notify.error"), "出错");
+        assert_eq!(tr("zh", "notify.waiting"), "等待输入");
+        assert_eq!(tr("zh", "notify.pending.approval"), "待批准");
+        assert_eq!(tr("zh", "notify.blocked"), "待处理");
+        assert_eq!(tr("en", "notify.error"), "Error");
+        assert_eq!(tr("en", "notify.pending.approval"), "Needs approval");
+        for lang in ["zh", "en"] {
+            for key in [
+                "notify.error",
+                "notify.waiting",
+                "notify.pending.approval",
+                "notify.pending.question",
+                "notify.pending.plan",
+                "notify.pending.gate",
+                "notify.blocked",
+            ] {
+                let (group, word) = notify_status_slot(key).expect(key);
+                assert_eq!(tr(lang, key), status_word(lang, group, word), "{lang} {key}");
+                assert!(!tr(lang, key).is_empty(), "{lang} {key}");
+            }
+        }
+        // 系统语言等其他取值按中文说，不落空串。
+        assert_eq!(status_word("auto", "session", "error"), "出错");
     }
 
     #[test]

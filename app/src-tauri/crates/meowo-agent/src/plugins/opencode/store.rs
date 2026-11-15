@@ -385,17 +385,29 @@ fn collect_lines(
     let from = after.map(|c| c.msg.as_str()).unwrap_or("");
     let messages = load_messages(conn, session_id, from, until)?;
     let total = messages.len();
+    // 最后一条 assistant 消息的位置：它之前的 assistant 消息都已被后面的一步越过。
+    let last_assistant = messages.iter().rposition(|(_, msg, _)| {
+        msg.get("role").and_then(Value::as_str) == Some("assistant")
+    });
     let mut lines = Vec::new();
     let mut push = |line: Value| lines.push(format!("{line}\n"));
     let skip = |key: &Cursor| after.is_some_and(|after| key <= after);
     for (index, (msg_id, msg, parts)) in messages.into_iter().enumerate() {
         let created = msg.pointer("/time/created").and_then(Value::as_i64);
         let role = msg.get("role").and_then(Value::as_str).unwrap_or("");
-        // 消息整体定稿：有了 completed 时刻，或后面已经有新消息——后者兜住进程被杀、中断后
-        // 再也不会补完的消息（实测：「继续」之前那条 assistant 消息永远停在 running 的 bash 上），
-        // 不然它会永远卡住其后全部内容的导出。
+        // 消息整体定稿：有了 completed 时刻，或后面已经有了新的 assistant 消息——后者兜住进程
+        // 被杀、中断后再也不会补完的消息（实测：「继续」之前那条 assistant 消息永远停在 running 的
+        // bash 上），不然它会永远卡住其后全部内容的导出。
+        //
+        // 只认「后面有新的 assistant 消息」，不认「后面有新消息」：opencode 的回合循环是串行的，
+        // 上一步收场之后才会建下一条 assistant 消息，所以它出现了，前一条就确实不会再动。而用户
+        // 消息不是这个信号——回合进行中再发一条，用户消息当场落库，排在还在跑的那一步后面
+        // （本机会话 ses_e83f…EWV2：用户消息 14:44:33 落库，前一步的 bash 14:44:35 才跑完；
+        // 另两次分别早 6 秒、17 秒）。此前按「有新消息」放行，轮询正好落在这几秒里，就把还在跑的
+        // 调用当成被打断导出；导出是只追加的，之后它跑完了也改不回来（做空 ③ 在 opencode 的样子）。
         let has_later = index + 1 < total;
-        let msg_done = msg.pointer("/time/completed").is_some() || has_later;
+        let superseded = last_assistant.is_some_and(|last| index < last);
+        let msg_done = msg.pointer("/time/completed").is_some() || superseded;
         if role == "user" {
             let key = Cursor {
                 msg: msg_id.clone(),
@@ -502,6 +514,8 @@ fn slim_part(part: Value) -> Value {
             "input": field("input"),
             "output": output,
             "error": field("error"),
+            // 起止时刻：回执用结束时刻，工具耗时才算得出来。
+            "time": field("time"),
         },
     })
 }
@@ -728,7 +742,7 @@ mod tests {
     fn later_message_settles_an_abandoned_one() {
         let conn = memory_db();
         seed_turn(&conn);
-        // 中断后用户又发了一句：前一条 assistant 再也不会补完，必须整条放行。
+        // 中断后用户又发了一句，新的一步随即开始：前一条 assistant 再也不会补完，必须整条放行。
         msg(
             &conn,
             "msg_3",
@@ -740,11 +754,64 @@ mod tests {
             "msg_3",
             json!({"type": "text", "text": "继续"}),
         );
+        msg(
+            &conn,
+            "msg_4",
+            json!({"role": "assistant", "time": {"created": 9}}),
+        );
         let all = lines(&conn, None);
         assert_eq!(all.len(), 5, "{all:?}");
         // 增量：从游标之后只拿新增。
         let tail = lines(&conn, Some(("msg_2", "prt_3")));
         assert_eq!(tail.len(), 3);
+        assert_eq!(cursor(&tail[2]), ("msg_3".into(), USER_KEY.into()));
+    }
+
+    /// 回合进行中用户又发了一条：用户消息当场落库，可前一步的工具还在跑。这时不能把它当成
+    /// 被打断导出——等它自己收场（本机真实时序见 collect_lines 里的说明）。
+    #[test]
+    fn a_message_sent_mid_turn_does_not_settle_the_running_step() {
+        let conn = memory_db();
+        seed_turn(&conn);
+        msg(
+            &conn,
+            "msg_3",
+            json!({"role": "user", "time": {"created": 9}}),
+        );
+        part(
+            &conn,
+            "prt_9",
+            "msg_3",
+            json!({"type": "text", "text": "顺便看下日志"}),
+        );
+        // 还在跑：导出停在运行中的 bash 之前，用户消息也先不出（它排在这一步后面）。
+        let waiting = lines(&conn, None);
+        assert_eq!(waiting.len(), 2, "{waiting:?}");
+        assert_eq!(cursor(&waiting[1]), ("msg_2".into(), "prt_3".into()));
+        // 工具跑完、这一步收场：按真实结果导出，不是「被打断」。
+        conn.execute(
+            "UPDATE part SET data = ?1 WHERE id = 'prt_4'",
+            [json!({"type": "tool", "tool": "bash", "callID": "c1",
+                "state": {"status": "completed", "input": {"command": "ls"}, "output": "a.txt",
+                    "time": {"start": 5, "end": 6}}})
+            .to_string()],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE part SET data = ?1 WHERE id = 'prt_5'",
+            [json!({"type": "text", "text": "好的", "time": {"start": 5, "end": 7}}).to_string()],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE message SET data = ?1 WHERE id = 'msg_2'",
+            [json!({"role": "assistant", "finish": "tool-calls", "time": {"created": 2, "completed": 8}})
+                .to_string()],
+        )
+        .unwrap();
+        let tail = lines(&conn, Some(("msg_2", "prt_3")));
+        assert_eq!(tail.len(), 3, "{tail:?}");
+        let tool: Value = serde_json::from_str(&tail[0]).unwrap();
+        assert_eq!(tool.pointer("/part/state/status").and_then(Value::as_str), Some("completed"));
         assert_eq!(cursor(&tail[2]), ("msg_3".into(), USER_KEY.into()));
     }
 

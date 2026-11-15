@@ -366,7 +366,7 @@ describe("App", () => {
       emitIslandAlert({ payload: { sessionId: 7, kind: "approval", title: "修登录页", project: "web", detail: null } });
     });
     expect(await screen.findByText("修登录页")).toBeTruthy();
-    expect(screen.getByText(zh.pending.approval)).toBeTruthy();
+    expect(screen.getByText(zh.vocab.request.approval)).toBeTruthy();
     expect(layoutCalls()).toContainEqual({ width: 548, height: 68, centerRatio: null });
     fireEvent.click(screen.getByRole("button", { name: zh.island.open }));
     await waitFor(() => expect(vi.mocked(invoke)).toHaveBeenCalledWith("open_chat_window", { sessionId: 7 }));

@@ -30,6 +30,7 @@ pub mod caps;
 pub mod chat_ui;
 pub mod cli_text;
 pub mod codec;
+pub mod composer;
 pub mod config;
 pub mod descriptor;
 pub mod extensions;
@@ -52,6 +53,9 @@ pub mod transcript;
 pub mod trust;
 pub mod variant;
 pub mod wiring;
+
+#[cfg(test)]
+mod replay_tests;
 
 pub use account::{
     Account, AccountCap, ApiKeyLoginCap, ProviderUsage, UsageKind, UsageLane, USAGE_UNSUPPORTED,
@@ -77,8 +81,8 @@ pub use install::{
 pub use launch::{exe_on_path, LaunchCandidate, LaunchSpec, Root};
 pub use launch_options::{resolve_launch_args, LaunchChoice, LaunchOption};
 pub use settings::{
-    model_id_allowed, Ask, DynamicModeChoice, LaunchDefaults, ModeSwitch, ModeTraits, ModelSwitch,
-    ModelSwitchKind,
+    model_id_allowed, Ask, DynamicModeChoice, EffortSwitchKind, LaunchDefaults, ModeSwitch,
+    ModeTraits, ModelSwitch, ModelSwitchKind,
 };
 pub use plugins::claude::setup::remove_generated_wrapper;
 pub use ports::{Body, HttpError, HttpPort, HttpRequest, KeychainPort, NoKeychain, Ports};

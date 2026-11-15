@@ -74,6 +74,9 @@ export function useStickToBottom({ scrollRef, visible, timelineItems, contentCou
   const savedScrollRef = useRef<{ top: number; follow: boolean } | null>(null);
   // 最后一次「可见状态下」的滚动位置，由 onScroll 持续写入（见那里的理由）。
   const lastScrollTopRef = useRef(0);
+  // 消息数的实时镜像：只挂载一次的滚轮监听里读得到当前值。
+  const contentCountRef = useRef(contentCount);
+  contentCountRef.current = contentCount;
 
   // compose 进入文档流后不再浮在滚动区上：textarea 变高、审批卡出现/消失都会改变
   // .chat-scroll 的视口高度。用户停在底部时 scrollTop 不变、视口变矮，尾条消息会
@@ -181,30 +184,49 @@ export function useStickToBottom({ scrollRef, visible, timelineItems, contentCou
         return;
       }
     }
-    if (!followRef.current || touchingRef.current) return;
+    if (touchingRef.current) return;
+    if (!followRef.current) {
+      // 自动跟随关着（比如滚轮刚落在内层容器上）时来了新内容：主区没有滚动事件，「在不在底部」
+      // 得在这里重量一次。不量的话内容已经长出视口，「回到最新」却不出现，新消息悄悄堆在下面。
+      syncAtBottom(el);
+      return;
+    }
     if (timelineItems.length === 0) return;
     stickToBottom(el);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- syncAtBottom 只读 ref 与 setState，不随渲染变
   }, [timelineItems, visible, scrollRef]);
 
   // 滚轮落在能自己滚的子容器上（长日志的 pre、diff 表）时关掉自动跟随：这一发是子容器在
-  // 读它自己的内容，下一批 delta 到达时的吸底会把人正在看的那几行拽走。只改 followRef，
-  // atBottom 交给下一次真实的主区滚动去同步——子容器里滚不需要「回到最新」这颗钮冒出来。
+  // 读它自己的内容，下一批 delta 到达时的吸底会把人正在看的那几行拽走。此刻主区还在底部，
+  // 「回到最新」不该冒出来；等真有新内容把底部推出视口，上面的 layout effect 会重量并让它出现。
+  // 未读数从这一刻的消息数算起。
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     const onWheelCapture = (event: WheelEvent) => {
       const target = event.target;
       if (!(target instanceof Element) || target === el) return;
-      if (innerScrollOwns(el, target, event.deltaY)) followRef.current = false;
+      if (!innerScrollOwns(el, target, event.deltaY)) return;
+      followRef.current = false;
+      if (awayCountRef.current === null) awayCountRef.current = contentCountRef.current;
     };
     el.addEventListener("wheel", onWheelCapture, { passive: true });
     return () => el.removeEventListener("wheel", onWheelCapture);
   }, [scrollRef]);
 
+  /// 「在不在底部」的唯一量法：量一次滚动区，更新悬浮钮的显隐。主区滚动（onScroll）与
+  /// 「自动跟随关着时来了新内容」共用——此前只有前者会量，两个状态（跟不跟随 / 在不在底部）
+  /// 各管各的，会出现不跟随、也不提示的静默（走查 A6）。
+  const syncAtBottom = (el: HTMLElement): boolean => {
+    const at = el.scrollHeight - el.scrollTop - el.clientHeight <= FOLLOW_PX;
+    // 驱动「回到最新」悬浮钮的显隐；同值短路避免滚动过程反复重渲染。
+    setAtBottom((prev) => (prev === at ? prev : at));
+    return at;
+  };
   const onScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
-    const at = el.scrollHeight - el.scrollTop - el.clientHeight <= FOLLOW_PX;
+    const at = syncAtBottom(el);
     followRef.current = at;
     // 7C-7：切去终端页时 main 变 display:none，scrollTop 被浏览器清零，等 layout effect
     // 跑到时已经量不到了。唯一可靠的时机是「还看得见的时候」——每次滚动都记一份，切回时直接用。
@@ -212,8 +234,6 @@ export function useStickToBottom({ scrollRef, visible, timelineItems, contentCou
     // 脱离底部的瞬间记下时间线内容项数快照，贴回底部即清：悬浮钮的未读徽章由差值派生。
     if (at) awayCountRef.current = null;
     else if (awayCountRef.current === null) awayCountRef.current = contentCount;
-    // 驱动「回到最新」悬浮钮的显隐；同值短路避免滚动过程反复重渲染。
-    setAtBottom((prev) => (prev === at ? prev : at));
   };
   // 上翻后回到底部的唯一出口（此前只能手动滚回去，新消息静默追加在视口外）。
   const jumpToLatest = () => {
@@ -230,6 +250,8 @@ export function useStickToBottom({ scrollRef, visible, timelineItems, contentCou
     followRef.current = true;
     savedScrollRef.current = null;
     lastScrollTopRef.current = 0;
+    // 「回到最新」也一起收掉：新会话不足一屏时不会有滚动事件来纠正它，旧会话留下的钮会一直挂着。
+    setAtBottom(true);
   };
   // 「回到最新」悬浮钮的未读数：脱离底部时的消息数为快照（口径见 countsAsUnseen），
   // 之后追加的算未读（前插的「加载更早」与接续段旧历史不算——调用方同步抬高 awayCountRef）。

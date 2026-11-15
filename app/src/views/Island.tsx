@@ -7,6 +7,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { IslandAlertEvent } from "../generated/contracts/IslandAlertEvent";
 import { useT } from "../i18n";
+import { requestStatusLabel, sessionStatusLabel, sessionToneLabels } from "../i18n/statusVocab";
 import { useSettingsEffect } from "../hooks/useSettings";
 import { cardTone, readSidebarGroupMode, readSidebarSortMode, useStarred, type SidebarGroupMode, type SidebarSortMode } from "./sticker/helpers";
 import { sidebarDirGroups } from "./sidebarDrag";
@@ -107,7 +108,7 @@ export function groupTone(items: readonly Item[]): IslandTone {
 export function islandAriaSummary(counts: Counts, t: ReturnType<typeof useT>): string {
   const order = ["pending", "error", "running", "waiting"] as const;
   return t.island.ariaSummary(
-    order.filter((tone) => counts[tone] > 0).map((tone) => t.island.ariaCount(counts[tone], t.island.toneLabel[tone])),
+    order.filter((tone) => counts[tone] > 0).map((tone) => t.island.ariaCount(counts[tone], sessionStatusLabel(t, tone))),
   );
 }
 
@@ -309,13 +310,13 @@ export function Island({
 
   const alertLabel = (event: IslandAlertEvent) => {
     switch (event.kind) {
-      case "approval": return t.pending.approval;
-      case "question": return t.pending.question;
-      case "plan": return t.pending.plan;
-      case "blocked": return t.pending.blocked;
+      case "approval":
+      case "question":
+      case "plan":
+      case "blocked": return requestStatusLabel(t, event.kind);
       // 出错时状态词固定，详情另放进可省略的 detail（i12：此前整段详情塞进不收缩的状态词，字中间被硬切）。
-      case "error": return t.island.toneLabel.error;
-      default: return t.island.finished;
+      case "error": return sessionStatusLabel(t, "error");
+      default: return sessionStatusLabel(t, "waiting");
     }
   };
   const alertTitle = alert && alert.title && alert.title !== UNNAMED_SESSION_SENTINEL ? alert.title : t.sticker.waitingFirstInput;
@@ -342,7 +343,7 @@ export function Island({
       return [
         <Eyes key="eyes" {...eyes} small />,
         focus
-          ? <span key="focus" className={`isl-state is-${cardTone(focus)}`}>{t.island.toneLabel[cardTone(focus)] ?? ""}</span>
+          ? <span key="focus" className={`isl-state is-${cardTone(focus)}`}>{sessionToneLabels(t)[cardTone(focus)] ?? ""}</span>
           : null,
       ];
     }
@@ -360,7 +361,7 @@ export function Island({
               key={item.session.id}
               item={item}
               size={22}
-              tip={`${sessionTitle(item, t.sticker.waitingFirstInput)} · ${t.island.toneLabel[cardTone(item)] ?? ""}`}
+              tip={`${sessionTitle(item, t.sticker.waitingFirstInput)} · ${sessionToneLabels(t)[cardTone(item)] ?? ""}`}
             />
           ))}
           {more > 0 && <span className={`isl-more is-${groupTone(listed.slice(MAX_AGENTS))}`}>+{more}</span>}
@@ -396,7 +397,7 @@ export function Island({
           {focus ? (
             <span className="isl-focus">
               <span className="isl-focus-title" title={sessionTitle(focus, t.sticker.waitingFirstInput)}>{sessionTitle(focus, t.sticker.waitingFirstInput)}</span>
-              <span className={`isl-state is-${cardTone(focus)}`}>{t.island.toneLabel[cardTone(focus)] ?? ""}</span>
+              <span className={`isl-state is-${cardTone(focus)}`}>{sessionToneLabels(t)[cardTone(focus)] ?? ""}</span>
             </span>
           ) : <span className="isl-faint">{t.island.idle}</span>}
         </>
@@ -417,7 +418,7 @@ export function Island({
               <AgentRing
                 key={item.session.id}
                 item={item}
-                tip={`${sessionTitle(item, t.sticker.waitingFirstInput)} · ${t.island.toneLabel[cardTone(item)] ?? ""}`}
+                tip={`${sessionTitle(item, t.sticker.waitingFirstInput)} · ${sessionToneLabels(t)[cardTone(item)] ?? ""}`}
               />
             ))}
             {more > 0 && <span className={`isl-more is-${groupTone(listed.slice(MAX_AGENTS))}`}>+{more}</span>}

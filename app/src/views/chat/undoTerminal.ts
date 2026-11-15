@@ -4,52 +4,61 @@
 /// 不碰 React 状态；对话窗只负责确认弹窗、把原文放回输入框、按结果报错。拆出来之后协议的
 /// 每一种结局都是一个明确的返回值，ChatWindow 里不再夹着百来行的轮询循环。
 
-import { managedTerminalScreen, managedTerminalSnapshot, writeManagedTerminal, type ChatUi } from "../../api";
+import { managedTerminalScreen, managedTerminalSnapshot, writeManagedTerminal, type ChatItem, type ChatUi } from "../../api";
 import { appendTerminalText, visibleTerminalText } from "../../terminalAttention";
-import { composerDraftBlock, composerDraftText, stashComposerDraft, submitToTerminal } from "./terminalSubmit";
+import { clearComposerDraft, composerDraft, composerHolds, prepareComposer, readComposerFrame, terminalComposerIo, type ComposerIo, type ComposerSpec } from "./composer";
+import { submitToTerminal } from "./terminalSubmit";
+import type { Dict } from "../../i18n/zh";
 
 export type UndoControl = NonNullable<ChatUi["undo"]>;
 
-export type UndoInputClearSpec = NonNullable<NonNullable<ChatUi["undo"]>["input_clear"]>;
+/// 撤回确认框的正文：后果按能力说（会不会连带还原文件）。撤回命令不带轮数、也不是菜单式的
+/// （OpenCode）一次只撤最近一轮，多写一句，不让用户以为和别家一样能从更早的消息撤（走查输入 C3）。
+export function undoConfirmMessage(t: Dict, control: Pick<UndoControl, "count_arg" | "menu" | "restores_files">): string {
+  const consequence = control.restores_files ? t.chat.undoConfirmFiles : t.chat.undoConfirm;
+  return !control.count_arg && !control.menu ? `${consequence}
+${t.chat.undoLatestOnly}` : consequence;
+}
+
 type UndoMenuSpec = NonNullable<NonNullable<ChatUi["undo"]>["menu"]>;
+
+/// 输入框里手敲的是不是撤回命令（OpenCode `/undo`、Kimi `/undo 2`）：是的话返回要撤的那条用户消息，
+/// 调用方改走与消息上「撤回」按钮同一条流程（确认、放回原文、清 CLI 输入框）。菜单式撤回（claude
+/// `/rewind`）不在此列：它本来就走菜单识别。不带轮数 = 最近一轮；插话不算一轮（同按钮的数法）。
+export function typedUndoTarget(text: string, control: UndoControl | null | undefined, items: readonly ChatItem[]): { id: string; text: string } | null {
+  if (!control || control.menu) return null;
+  let turns = 1;
+  if (text !== control.command) {
+    if (!control.count_arg || !text.startsWith(`${control.command} `)) return null;
+    const count = text.slice(control.command.length).trim();
+    if (!/^\d+$/.test(count)) return null;
+    turns = Number(count);
+  }
+  if (turns < 1) return null;
+  const turnsOf = items.flatMap((item) => item.type === "user_text" && !item.interjected && !item.to_agent ? [item] : []);
+  const target = turnsOf[turnsOf.length - turns];
+  return target ? { id: target.id, text: target.text } : null;
+}
 
 /// 原文非空行（trim 后）。屏幕核对只拿行首一小段比：从行首起排，不受折行影响。
 function undoTextLines(text: string): string[] {
   return text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
 }
 
-/// 输入框里含原文的行数（规格见后端 UndoInputClear / UndoComposer），认不出输入框返回 null。
-/// - block（opencode）：底边行之上连续以 row_prefix 开头的行，数含原文末行开头的行。计数而非
-///   判有无：历史区里同样带前缀的行可能和输入框连成一片，撤回前后比数才分得清。
-/// - prompt（claude）：以 prompt 开头、上一行整行是 border 的那行（同 DraftStash 的认法），
-///   首行以原文首行开头记 1。历史区的用户消息也以 prompt 开头，但上一行不是横线。
-export function undoneInputRows(screen: string[] | null, clear: UndoInputClearSpec, text: string): number | null {
-  const lines = undoTextLines(text);
-  if (!screen || lines.length === 0) return null;
-  const composer = clear.composer;
-  if (composer.kind === "prompt") {
-    const draft = composerDraftText(screen, { input: "", composer_prompt: composer.prompt, composer_border: composer.border, stashed_marker: "" });
-    if (draft === null) return null;
-    return draft !== "" && draft.startsWith(lines[0].slice(0, 12)) ? 1 : 0;
-  }
-  const snippet = lines[lines.length - 1].slice(0, 12);
-  let bottom = screen.length - 1;
-  while (bottom >= 0 && !screen[bottom].trimStart().startsWith(composer.bottom_prefix)) bottom -= 1;
-  if (bottom < 0) return null;
-  let rows = 0;
-  let count = 0;
-  for (let index = bottom - 1; index >= 0 && screen[index].trimStart().startsWith(composer.row_prefix); index -= 1) {
-    rows += 1;
-    if (screen[index].includes(snippet)) count += 1;
-  }
-  return rows > 0 ? count : null;
+/// 被撤的原文是不是回到了 CLI 自己的输入框：1 在、0 不在、null 认不出输入框。认框用插件那一份
+/// 输入框规格（composer.ts），不另起一套。
+async function heldRows(io: ComposerIo, spec: ComposerSpec, text: string): Promise<number | null> {
+  const read = readComposerFrame(await io.frame().catch(() => null), spec);
+  if (read.state === "unknown") return null;
+  return composerHolds(read, text) ? 1 : 0;
 }
 
 /// 菜单式撤回（claude /rewind，规格见后端 UndoMenu）：打开菜单 → 上移 turns 格 → 核对选中行
 /// → 回车 → 核对确认页引文 → 按「option_label」那一项的数字 → 等原文回到 CLI 输入框。
 /// 每一步先看屏幕再按键：要撤的是哪条消息只有屏幕上那份列表说了算，计数与 CLI 对不上时宁可
 /// 退出菜单报错，也不能撤错。菜单已由调用方用撤回命令打开。
-async function runUndoMenu(sessionId: number, menu: UndoMenuSpec, clear: UndoInputClearSpec | null, turns: number, text: string): Promise<"done" | "mismatch" | "timeout"> {
+async function runUndoMenu(sessionId: number, menu: UndoMenuSpec, returned: ComposerSpec | null, turns: number, text: string): Promise<"done" | "mismatch" | "timeout"> {
+  const io = terminalComposerIo(sessionId);
   const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
   const first = undoTextLines(text)[0] ?? "";
   // 标题行之下才是菜单区：历史区里的用户消息同样以 ❯ 开头。
@@ -106,8 +115,13 @@ async function runUndoMenu(sessionId: number, menu: UndoMenuSpec, clear: UndoInp
     if (digit === null) { await cancel(); return "mismatch"; }
     await writeManagedTerminal(sessionId, digit);
     // 生效 = 菜单收起、原文回到 CLI 输入框（菜单式撤回不写 transcript，只能看屏幕）。
-    const done = await poll((rows, screen) => rows === null && (!clear || (undoneInputRows(screen, clear, text) ?? 0) > 0) ? true : null);
-    if (done === null) { await cancel(); return "timeout"; }
+    let done = false;
+    for (let attempt = 0; attempt < 20 && !done; attempt += 1) {
+      const closed = menuRows(await managedTerminalScreen(sessionId)) === null;
+      done = closed && (!returned || (await heldRows(io, returned, text) ?? 0) > 0);
+      if (!done) await sleep(150);
+    }
+    if (!done) { await cancel(); return "timeout"; }
     return "done";
   } catch {
     await cancel().catch(() => undefined);
@@ -117,56 +131,21 @@ async function runUndoMenu(sessionId: number, menu: UndoMenuSpec, clear: UndoInp
 
 /// 撤回后清掉 CLI 放回它自己输入框的原文（opencode / claude）。原文已在对话页输入框里，终端那份
 /// 不清会拼进下一条消息（真机复现过）。清空键在空输入框上另有含义（退出 / 打开回退菜单），所以
-/// 只在「比撤回前多出了原文行」时才按，按后数回基线才算干净。baseline = 发撤回命令前的
-/// undoneInputRows。
+/// 只在「比撤回前多出了原文」时才按，按后确认空了才算干净。baseline = 发撤回命令前的 heldRows。
 /// 返回是否已确认干净。
-async function clearUndoneInput(sessionId: number, clear: UndoInputClearSpec, text: string, baseline: number | null): Promise<boolean> {
+async function clearUndoneInput(io: ComposerIo, spec: ComposerSpec, text: string, baseline: number | null): Promise<boolean> {
   if (baseline === null) return false;
-  const rows = async () => undoneInputRows(await managedTerminalScreen(sessionId), clear, text);
   try {
     let now: number | null = null;
     for (let attempt = 0; attempt < 10; attempt += 1) {
-      now = await rows();
+      now = await heldRows(io, spec, text);
       if (now !== null && now > baseline) break;
       await new Promise((resolve) => window.setTimeout(resolve, 100));
     }
     // 认得出输入框、没多出原文 = 本来就干净；认不出输入框则不敢按。
     if (now === null) return false;
     if (now <= baseline) return true;
-    // 逐个分开写：两个 Esc 合成一次写入会被当成 Alt+Esc（claude 的清空是双 Esc）。
-    for (const [index, input] of clear.inputs.entries()) {
-      if (index > 0) await new Promise((resolve) => window.setTimeout(resolve, 300));
-      await writeManagedTerminal(sessionId, input);
-    }
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-      await new Promise((resolve) => window.setTimeout(resolve, 100));
-      const after = await rows();
-      if (after !== null && after <= baseline) return true;
-    }
-  } catch {
-    // 落到调用方的提示。
-  }
-  return false;
-}
-
-/// 清空 CLI 输入框里的草稿（claude 是双 Esc，多行整段清）。每按一下就看一眼：第一下已经清空
-/// 就不按第二下，空输入框上的双 Esc 会打开回退菜单。逐个分开写，合成一次写入会被当成 Alt+Esc。
-/// 返回是否确认清空。
-async function clearComposerDraft(sessionId: number, inputs: readonly string[], stash: NonNullable<ChatUi["draft_stash"]>): Promise<boolean> {
-  const sleep = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
-  const empty = async () => composerDraftText(await managedTerminalScreen(sessionId).catch(() => null), stash) === "";
-  try {
-    for (const [index, input] of inputs.entries()) {
-      if (index > 0) {
-        await sleep(300);
-        if (await empty()) return true;
-      }
-      await writeManagedTerminal(sessionId, input);
-    }
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-      await sleep(100);
-      if (await empty()) return true;
-    }
+    return await clearComposerDraft(io, spec);
   } catch {
     // 落到调用方的提示。
   }
@@ -194,7 +173,8 @@ export type UndoRun = {
   turns: number;
   /// 被撤那条用户消息的原文。
   text: string;
-  draftStash: ChatUi["draft_stash"] | null | undefined;
+  /// 这一家的输入框规格（认框、收草稿、清原文共用的那一份）。
+  composer: ComposerSpec | null | undefined;
   attentionAbort: () => string | null;
   /// 用户还停在发起撤回的那个会话。切走了就不再推进，返回 stale。
   isCurrent: () => boolean;
@@ -210,11 +190,11 @@ export type UndoRun = {
 };
 
 /// 撤回已生效后清 CLI 输入框里的原文，清不掉时把「再清一次」交给调用方。
-async function undoneResult(sessionId: number, clear: UndoInputClearSpec | null | undefined, text: string, baseline: number | null): Promise<UndoOutcome> {
-  if (!clear) return { kind: "done", clean: true };
-  if (await clearUndoneInput(sessionId, clear, text, baseline)) return { kind: "done", clean: true };
+async function undoneResult(io: ComposerIo, returned: ComposerSpec | null, text: string, baseline: number | null): Promise<UndoOutcome> {
+  if (!returned) return { kind: "done", clean: true };
+  if (await clearUndoneInput(io, returned, text, baseline)) return { kind: "done", clean: true };
   if (baseline === null) return { kind: "done", clean: false };
-  return { kind: "done", clean: false, retryClear: () => clearUndoneInput(sessionId, clear, text, baseline) };
+  return { kind: "done", clean: false, retryClear: () => clearUndoneInput(io, returned, text, baseline) };
 }
 
 /// 跑一次撤回。菜单式（claude /rewind）以屏幕为准；其余发命令后等 transcript 里那条消失，
@@ -222,30 +202,36 @@ async function undoneResult(sessionId: number, clear: UndoInputClearSpec | null 
 export async function performUndo(run: UndoRun): Promise<UndoOutcome> {
   const { sessionId, control, turns, text } = run;
   const menu = control.menu;
+  const spec = run.composer ?? null;
+  const io = terminalComposerIo(sessionId);
+  // CLI 会把被撤的原文放回它自己的输入框、而且这一家的输入框认得出：撤完要把那份清掉。
+  const returned = control.returns_input ? spec : null;
   if (menu) {
     // 不走草稿暂存：claude 的暂存在下一次提交（就是这条 /rewind）后自动还原，会和撤回放回
     // 的原文挤在一起。以前输入框不空就请用户去终端清（用户反馈：不要让用户去终端清）。现在
     // 读出整段草稿、用 CLI 自己的清空键清掉，草稿搬进对话页输入框，再撤回。认不出框或清不掉
     // 才退回原来的提示。
-    const draft = run.draftStash ? composerDraftBlock(await managedTerminalScreen(sessionId).catch(() => null), run.draftStash) : "";
-    if (draft) {
-      if (!run.draftStash || !control.input_clear || !await clearComposerDraft(sessionId, control.input_clear.inputs, run.draftStash)) {
-        return { kind: "composer_busy" };
-      }
-      run.onDraftMoved?.(draft);
+    const held = spec ? readComposerFrame(await io.frame().catch(() => null), spec) : null;
+    if (held && composerDraft(held)) {
+      // 读不全就不清（保不住就不清，做空①）：草稿留在终端里，按「输入框里有字」报，不撤。
+      if (!spec || !held.draft?.complete || !await clearComposerDraft(io, spec)) return { kind: "composer_busy" };
+      run.onDraftMoved?.(held.draft.text);
     }
     await submitToTerminal(sessionId, control.command, run.attentionAbort);
-    const outcome = await runUndoMenu(sessionId, menu, control.input_clear, turns, text);
+    const outcome = await runUndoMenu(sessionId, menu, returned, turns, text);
     if (!run.isCurrent()) return { kind: "stale" };
     if (outcome !== "done") return { kind: outcome === "mismatch" ? "mismatch" : "unconfirmed" };
     run.onUndone();
-    return await undoneResult(sessionId, control.input_clear, text, 0);
+    return await undoneResult(io, returned, text, 0);
   }
   const before = await managedTerminalSnapshot(sessionId);
-  if (run.draftStash) await stashComposerDraft(sessionId, run.draftStash);
-  const inputBaseline = control.input_clear
-    ? undoneInputRows(await managedTerminalScreen(sessionId).catch(() => null), control.input_clear, text)
-    : null;
+  // 输入框里原有的草稿先收起：能暂存的暂存，否则清掉并搬进对话页输入框。留着的话撤回命令会接在
+  // 草稿后面一起提交。收不掉就不撤（撤回只在空闲时做，running 恒为 false）。认不出输入框照旧发命令
+  // （force）：撤完按「认不出，原文没能自动清掉」如实说，不把撤回整个拦下。
+  const prepared = await prepareComposer(io, spec, { running: false, force: true });
+  if (prepared.kind === "moved") run.onDraftMoved?.(prepared.draft);
+  else if (prepared.kind !== "clean" && prepared.kind !== "stashed") return { kind: "composer_busy" };
+  const inputBaseline = returned ? await heldRows(io, returned, text) : null;
   await submitToTerminal(sessionId, control.count_arg ? `${control.command} ${turns}` : control.command, run.attentionAbort);
   const reject = control.reject_pattern ? new RegExp(control.reject_pattern, "i") : null;
   const decoder = new TextDecoder();
@@ -258,7 +244,7 @@ export async function performUndo(run: UndoRun): Promise<UndoOutcome> {
       if (!run.isCurrent()) return { kind: "stale" };
       if (!await run.stillHas()) {
         run.onUndone();
-        return await undoneResult(sessionId, control.input_clear, text, inputBaseline);
+        return await undoneResult(io, returned, text, inputBaseline);
       }
       if (!reject) continue;
       const snapshot = await managedTerminalSnapshot(sessionId, since);

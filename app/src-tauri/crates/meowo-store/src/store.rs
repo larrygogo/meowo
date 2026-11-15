@@ -216,7 +216,11 @@ impl Store {
     // v24：区分人类消息与 Lead 内部续跑，内部消息不能解除人类暂停。
     // v25：原生弱ID恢复记录单独索引，保留原始事实而不伪造与现场投影的去重关系。
     // v21–v25 的 managed_* 表属于已删除的「Meowo 托管」会话：结构与数据刻意保留、只读（见 managed.rs），勿删勿复活。
-    const USER_VERSION: i64 = 26;
+    /// v27: prompt_queue 保存尚未交给官方 CLI 的用户消息；取消与领取靠状态条件原子互斥。
+    /// v28: 逐回合 checkpoint 元数据与恢复前快照；Git 对象与隐藏 ref 留在所属仓库。
+    /// v29: PR 显式监控、轮询基线与去重事件；唤醒状态持久化，重启后不重复注入。
+    /// v30: 监控事件按 (monitor_key, id) 去重，避免不同 PR 的同 SHA 检查互相吞掉。
+    const USER_VERSION: i64 = 30;
 
     /// 一次性建表 + 迁移 + 建索引，用 `PRAGMA user_version` 门控：已是最新版直接返回，
     /// 避免 statusline/hook 每次 open 都重跑 DDL 与注定失败的 ALTER（hot-path 浪费）。
@@ -231,6 +235,25 @@ impl Store {
         }
         conn.execute_batch(SCHEMA)?;
         conn.execute_batch(crate::managed::SCHEMA)?;
+        if version == 29 {
+            let tx = ImmediateTx::begin(conn)?;
+            tx.conn.execute_batch(
+                "ALTER TABLE pr_monitor_events RENAME TO pr_monitor_events_v29;
+                 CREATE TABLE pr_monitor_events (
+                    id TEXT NOT NULL,
+                    monitor_key TEXT NOT NULL REFERENCES pr_monitors(key) ON DELETE CASCADE,
+                    kind TEXT NOT NULL,
+                    summary TEXT NOT NULL,
+                    created_at INTEGER NOT NULL,
+                    wake_state TEXT NOT NULL DEFAULT 'pending',
+                    PRIMARY KEY(monitor_key, id)
+                 );
+                 INSERT INTO pr_monitor_events SELECT * FROM pr_monitor_events_v29;
+                 DROP TABLE pr_monitor_events_v29;
+                 CREATE INDEX ix_pr_monitor_events_key ON pr_monitor_events(monitor_key, created_at DESC);",
+            )?;
+            tx.commit()?;
+        }
         // 给旧库补列（新库 SCHEMA 已含这些列 → ALTER 必报 duplicate，忽略即可）。
         const ALTERS: [&str; 23] = [
             "ALTER TABLE managed_deliveries ADD COLUMN origin TEXT NOT NULL DEFAULT 'user'",

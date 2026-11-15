@@ -7,6 +7,32 @@
 use crate::cli_text::CliTextDep as D;
 
 pub(super) static DEPS: &[D] = &[
+    // ── 记录格式：CC 给没跑完的调用补写的回执（transcript.rs 的 unfinished_receipt）──
+    D::record(
+        "record:tool-interrupted-session-ended",
+        "[Tool call interrupted: the session ended before this call's result was recorded",
+        "[Tool call interrupted: the session ended before this call's result was recorded, so its outcome is unknown. Check whether it took effect before relying on it or running it again.]",
+        "2.1.316 transcript 实样（meowo 项目会话 a7bec18a 第 19706 行，2026-10-31）；本机 2.1.303 到 2.1.323 共 16 次，文案一致",
+    ),
+    D::record(
+        "record:tool-interrupted-response-stopped",
+        "Interrupted: the response that made this tool call was stopped",
+        "Interrupted: the response that made this tool call was stopped by a safety classifier while the call was running; it may have partially or fully completed.",
+        "2.1.322 transcript 实样（2026-11-11）；本机 2.1.302、2.1.322 共 11 次",
+    ),
+    // ── 输入框规格（composer）──
+    D::new(
+        "composer.empty",
+        "Try \"",
+        "Try \"fix typecheck errors\"",
+        "2.1.325 真机 2026-11-14（probe_tui_script cells）：空输入框的暗色占位。占位内容不固定（还有预测的下一句），带光标读屏时靠「光标在输入起点且该格暗色」认，这条正则只是没有光标信息时的退路",
+    ),
+    D::new(
+        "composer.paste",
+        "Pasted text #",
+        "\u{276f} [Pasted text #2 +59 lines]",
+        "2.1.325 真机 2026-11-14（tests/probe_draft_fidelity.rs）：粘贴 60 行后输入框里只剩这个占位，5120 字单行是 `[Pasted text #1]`；claude.exe 含 `Pasted text #` 4 处",
+    ),
     // ── /effort ──
     D::new(
         "effort.confirm",
@@ -57,6 +83,133 @@ pub(super) static DEPS: &[D] = &[
         "2.1.314 的旧拒绝句 `Effort '<x>' isn't …`（插件旧注释），2.1.322 全包已无；只存了前半句，不搜",
     )
     .legacy(),
+    // ── /model、/effort 在对话中途的二次确认框 ──
+    D::new(
+        "switch_confirm.title",
+        "Switch model?",
+        "   Switch model?",
+        "2.1.325 真机屏幕 2026-11-14（tests/probe_claude_model.rs：有过回合之后 `/model haiku`）",
+    ),
+    D::new(
+        "switch_confirm.title",
+        "Change effort level?",
+        "   Change effort level?",
+        "2.1.325 程序文件：与 `Switch model?` 相邻的另一句标题，同一个确认组件；没有真机走过",
+    ),
+    D::new(
+        "switch_confirm.accept",
+        "Yes, switch to ",
+        "   ❯ 1. Yes, switch to Haiku 5.5",
+        "2.1.325 真机屏幕 2026-11-14；模板 `Yes, switch to ${Bt}`",
+    ),
+    D::new(
+        "switch_confirm.auto",
+        "Your next response will be slower and use more tokens",
+        "   Your next response will be slower and use more tokens",
+        "2.1.325 真机屏幕 2026-11-14（tests/probe_claude_model.rs，/model haiku 与 /model fable 两帧都有）",
+    ),
+    D::new(
+        "switch_confirm.manual",
+        "A PreModelSwitch hook asked you to confirm",
+        "   A PreModelSwitch hook asked you to confirm",
+        "2.1.325 程序文件：与 `Switch model?` 相邻的字面量；没有真机画面（要触发得给用户配 hook）",
+    ),
+    D::new(
+        "attention:claude:bypass-permissions-confirm",
+        "WARNING: Claude Code running in Bypass Permissions mode",
+        "  WARNING: Claude Code running in Bypass Permissions mode",
+        "2.1.325 真机屏幕 2026-11-15（隔离配置目录，probe_tui_script）；用户切账号后的实拍同文",
+    ),
+    D::new(
+        "option:claude:bypass-permissions-confirm#0",
+        "No, exit",
+        "No, exit",
+        "2.1.325 真机屏幕 2026-11-15：确认页的第一项，回车后 CLI 退出",
+    ),
+    D::new(
+        "attention:claude:custom-api-key-confirm",
+        "Detected a custom API key in your environment",
+        "  Detected a custom API key in your environment",
+        "2.1.325 真机屏幕 2026-11-15（隔离配置目录加假密钥，probe_tui_script）",
+    ),
+    D::new(
+        "anchor:claude:bypass-permissions-confirm#0",
+        "No, exit",
+        "  ❯ No, exit",
+        "2.1.325 真机屏幕 2026-11-15（隔离配置目录，probe_tui_script，120、80、50 列各一帧）",
+    ),
+    D::new(
+        "anchor:claude:bypass-permissions-confirm#1",
+        "Yes, I accept",
+        "    Yes, I accept",
+        "2.1.325 真机屏幕 2026-11-15（隔离配置目录，probe_tui_script，120、80、50 列各一帧）",
+    ),
+    D::new(
+        "anchor:claude:bypass-permissions-confirm#2",
+        "",
+        "  ❯ No, exit",
+        "2.1.325 真机屏幕 2026-11-15（隔离配置目录，probe_tui_script，120、80、50 列各一帧）：带焦点标记的选项行。通用词，搜程序文件证明不了什么，这一行在不在由同页的标题规则盯着",
+    ),
+    D::new(
+        "anchor:claude:bypass-permissions-confirm#3",
+        "Enter to confirm",
+        "  Enter to confirm · Esc to cancel",
+        "2.1.325 真机屏幕 2026-11-15（隔离配置目录，probe_tui_script，120、80、50 列各一帧）",
+    ),
+    D::new(
+        "anchor:claude:custom-api-key-confirm#0",
+        "Do you want to use this API key?",
+        "  Do you want to use this API key?",
+        "2.1.325 真机屏幕 2026-11-15（隔离配置目录，probe_tui_script，120、80、50 列各一帧）",
+    ),
+    D::new(
+        "anchor:claude:custom-api-key-confirm#1",
+        "",
+        "    Yes",
+        "2.1.325 真机屏幕 2026-11-15（隔离配置目录，probe_tui_script，120、80、50 列各一帧）。通用词，搜程序文件证明不了什么，这一行在不在由同页的标题规则盯着",
+    ),
+    D::new(
+        "anchor:claude:custom-api-key-confirm#2",
+        "",
+        "  ❯ No (recommended)",
+        "2.1.325 真机屏幕 2026-11-15（隔离配置目录，probe_tui_script，120、80、50 列各一帧）。选项文字是运行时拼的（No 加 (recommended)），程序文件里没有原样，不搜",
+    ),
+    D::new(
+        "anchor:claude:custom-api-key-confirm#3",
+        "",
+        "  ❯ No (recommended)",
+        "2.1.325 真机屏幕 2026-11-15（隔离配置目录，probe_tui_script，120、80、50 列各一帧）：带焦点标记的选项行。通用词，搜程序文件证明不了什么，这一行在不在由同页的标题规则盯着",
+    ),
+    D::new(
+        "anchor:claude:custom-api-key-confirm#4",
+        "Enter to confirm",
+        "  Enter to confirm · Esc to cancel",
+        "2.1.325 真机屏幕 2026-11-15（隔离配置目录，probe_tui_script，120、80、50 列各一帧）",
+    ),
+    D::new(
+        "anchor:claude:switch-confirm#0",
+        "Yes, switch to ",
+        "   ❯ 1. Yes, switch to Haiku 5.5",
+        "2.1.325 真机屏幕 2026-11-14（tests/probe_claude_model.rs）",
+    ),
+    D::new(
+        "anchor:claude:switch-confirm#1",
+        "No, go back",
+        "     2. No, go back",
+        "2.1.325 真机屏幕 2026-11-14（tests/probe_claude_model.rs）",
+    ),
+    D::new(
+        "anchor:claude:switch-confirm#2",
+        "",
+        "   ❯ 1. Yes, switch to Haiku 5.5",
+        "2.1.325 真机屏幕 2026-11-14（tests/probe_claude_model.rs）：带焦点标记的选项行。通用词，搜程序文件证明不了什么，这一行在不在由同页的标题规则盯着",
+    ),
+    D::new(
+        "attention:claude:switch-confirm",
+        "Switch model?",
+        "   Switch model?",
+        "2.1.325 真机屏幕 2026-11-14（tests/probe_claude_model.rs）；另一句标题 Change effort level? 由 switch_confirm.title 盯着",
+    ),
     // ── /model ──
     D::new(
         "model.confirm",
@@ -184,6 +337,62 @@ pub(super) static DEPS: &[D] = &[
         "[Image #",
         "[Image #1]",
         "2.1.303 pywinpty 实测占位符（插件注释）；2.1.322 包内 `[Image #` 仍在",
+    ),
+    // ── 审批框选项的角色规则（见 mod.rs attention_patterns 的 options）──
+    D::new(
+        "option:claude:command-approval#0",
+        "",
+        "Yes",
+        "2.1.325 真机屏幕 2026-11-14（probe_approval）。选项只有一个通用词，搜程序文件证明不了什么；这一项在不在由同屏的问句规则盯着",
+    ),
+    D::new(
+        "option:claude:command-approval#1",
+        "Yes, and switch to auto mode",
+        "Yes, and switch to auto mode · auto mode handles these prompts for you",
+        "2.1.325 真机屏幕 2026-11-14；程序文件里另有同义的 `Yes, and use auto mode`",
+    ),
+    D::new(
+        "option:claude:command-approval#2",
+        "",
+        "Yes, allow all edits during this session (shift+tab)",
+        "旧版的只管本会话的放行项（2.1.2xx 实拍）；2.1.325 的句子是运行时拼的，不搜",
+    )
+    .legacy(),
+    D::new(
+        "option:claude:command-approval#3",
+        "Yes, and don't ask again for",
+        "Yes, and don't ask again for: curl *",
+        "2.1.325 真机屏幕 2026-11-14（probe_tui_script，屏幕上是弯引号）；程序文件里是直引号，样例按程序文件写，规则两种都认",
+    ),
+    D::new(
+        "option:claude:command-approval#4",
+        "",
+        "Yes, and always allow access to C:\\Users\\me\\AppData\\Local\\Temp\\meowo-approval-probe-29232 from this",
+        "2.1.325 真机屏幕 2026-11-14（probe_approval；放行目录的建议，长了折行所以句尾只到 from this）。句子是运行时拼的，程序文件里没有原样，不搜",
+    ),
+    D::new(
+        "option:claude:command-approval#5",
+        "",
+        "Yes, and always allow",
+        "兜底：记住类放行项的句首（上两条认不出对象时落到这里）；运行时拼接，不搜",
+    ),
+    D::new(
+        "option:claude:command-approval#6",
+        "",
+        "No",
+        "2.1.325 真机屏幕 2026-11-14。选项只有一个通用词，搜程序文件证明不了什么；这一项在不在由同屏的问句规则盯着",
+    ),
+    D::new(
+        "option-ready:claude:command-approval#6",
+        "tell Claude what to do differently",
+        " ❯ 4. No, and tell Claude what to do differently",
+        "2.1.325 真机屏幕 2026-11-14（probe_deny_feedback：焦点在 No 上按 Tab 之后这一行的样子）",
+    ),
+    D::new(
+        "option:claude:command-approval#7",
+        "No, and tell Claude what to do differently",
+        "No, and tell Claude what to do differently (esc)",
+        "旧版直接列出的拒绝项；2.1.325 程序文件里原句仍在（No 按 Tab 之后显示）",
     ),
     D::new(
         "attention:claude:long-session-resume",

@@ -7,7 +7,7 @@ import { zh } from "../../i18n/zh";
 afterEach(cleanup);
 
 function edit(id: string, path: string, oldText: string, newText: string): ChatItem {
-  return { type: "tool_use", id, timestamp: null, name: "Edit", summary: path, detail: { kind: "edit", path, old: oldText, new: newText, replace_all: false, truncated: false } };
+  return { type: "tool_use", id, timestamp: null, name: "Edit", kind: "edit", summary: path, detail: { kind: "edit", path, old: oldText, new: newText, replace_all: false, truncated: false } };
 }
 
 function done(id: string, isError = false): ChatItem {
@@ -34,7 +34,7 @@ describe("TurnChanges", () => {
   });
 
   it("没有改动文件时不渲染", () => {
-    render(<TurnChanges items={[{ type: "tool_use", id: "t", timestamp: null, name: "Read", summary: "a.ts" }]} />);
+    render(<TurnChanges items={[{ type: "tool_use", id: "t", timestamp: null, name: "Read", kind: "read", summary: "a.ts" }]} />);
     expect(document.querySelector(".chat-turn-changes")).toBeNull();
   });
 });

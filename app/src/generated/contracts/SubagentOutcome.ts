@@ -17,4 +17,9 @@ background_running?: boolean,
  * task-notification，而是主 agent 用 `TaskOutput` 拉取——那条回执挂在 TaskOutput 自己的
  * 调用上，只有这个 id 能把它归回原委派。前端按「同 id 首见者为委派本体」路由。
  */
-task_id?: string | null, };
+task_id?: string | null, 
+/**
+ * 这个子任务被叫停了（codex 的 `interrupt_agent`）：没跑完，也不是失败。此时三个计数都是 0，
+ * 前端显示「已中断」。false 时不下发。
+ */
+interrupted?: boolean, };

@@ -4,7 +4,7 @@ import { dropNeighbors, moveNextTo, orderKey, sidebarDirGroups, usePointerReorde
 import { WorkspaceDirectory } from "./chat/WorkspaceDirectory";
 import { useTablist } from "./useTablist";
 import { tipWithKeys } from "./chat/WindowModals";
-import { confirmStopSession, getLiveSessionsPage, getSettings, moveSessionRank, setWorkspaceOrder as saveWorkspaceOrder, openNewSessionWindow, openProjectDir, recentCwds, renameSession, searchChatTranscripts, sessionTone, setArchived, type CardMenuMode, type LiveSession, type SessionTone, type TranscriptSearchHit } from "../api";
+import { confirmStopSession, getLiveSessionsPage, getSettings, moveSessionRank, setWorkspaceOrder as saveWorkspaceOrder, openNewSessionWindow, openProjectDir, recentCwds, renameSession, searchChatTranscripts, setArchived, type CardMenuMode, type LiveSession, type SessionTone, type TranscriptSearchHit, liveSessionTone } from "../api";
 import { noteSessionMeta } from "./chat/historyCache";
 import { attentionTone } from "./chat/nextAttention";
 import { remoteUi } from "../remoteMode";
@@ -23,6 +23,7 @@ import { editorKeyDown, fmtAgo, fmtShortAgo, fmtWaited, readSidebarGroupMode, re
 import { UNNAMED_SESSION_SENTINEL } from "./sticker/types";
 import { CheckIcon, MoreIcon, TopIcon } from "./sticker/icons";
 import { useT } from "../i18n";
+import { sessionRowLabel, sessionStatusLabel } from "../i18n/statusVocab";
 import { formatBackendError } from "../i18n/errors";
 import { isMac } from "../platform";
 import { RemoteSettings } from "../mobile/RemoteSettings";
@@ -674,7 +675,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
   // 「标记完成」会不会结束在干活的 Agent（S-1）：口径同状态点（sessionTone），外加待授权徽标那批。
   const isWorking = (item: LiveSession) =>
     approvalAwaitingIds.has(item.session.id)
-    || markDoneEndsWork(sessionTone(item.connected, item.session.status, item.pending_review, item.errored, item.busy_subagents, item.screen_state));
+    || markDoneEndsWork(liveSessionTone(item));
   // 用户眼前的行序（折叠组里没画出来的不算）：连选、标记完成后的焦点去向都按它。
   const visibleIds = () => (renderedGroups ? renderedGroups.flatMap((entry) => entry.shown) : (ordered ?? []))
     .map((item) => item.session.id);
@@ -935,7 +936,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
     if (!attentionIdsRef) return;
     attentionIdsRef.current = new Set((ordered ?? [])
       .filter((item) => approvalAwaitingIds.has(item.session.id)
-        || attentionTone(sessionTone(item.connected, item.session.status, item.pending_review, item.errored, item.busy_subagents, item.screen_state, item.screen_assumed)))
+        || attentionTone(liveSessionTone(item)))
       .map((item) => item.session.id));
   }, [ordered, approvalAwaitingIds, attentionIdsRef]);
   useEffect(() => () => { if (attentionIdsRef) attentionIdsRef.current = new Set(); }, [attentionIdsRef]);
@@ -1049,7 +1050,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
     let approval = 0, waiting = 0, error = 0;
     for (const item of ordered) {
       if (approvalAwaitingIds.has(item.session.id)) approval += 1;
-      const tone = sessionTone(item.connected, item.session.status, item.pending_review, item.errored, item.busy_subagents, item.screen_state, item.screen_assumed);
+      const tone = liveSessionTone(item);
       if (tone === "waiting") waiting += 1;
       else if (tone === "error") error += 1;
     }
@@ -1063,7 +1064,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
     // 与对话窗标题栏同一套口径(sessionTone,含 errored——贴纸的错误优先级由此
     // 对齐,不再出现「贴纸报错、侧栏亮绿点」)。offline/ended 不加点——图标置灰
     // (is-off)已表达「不活跃」,再叠一个灰点是噪声。
-    const tone = sessionTone(item.connected, item.session.status, item.pending_review, item.errored, item.busy_subagents, item.screen_state, item.screen_assumed);
+    const tone = liveSessionTone(item);
     const showDot = tone === "running" || tone === "pending" || tone === "waiting" || tone === "error";
     // 待授权徽标优先于状态点：授权在等用户决策，比「在跑/待处理」都紧急；
     // 且不依附 connected——离线会话恢复的 agent 同样可能来要权限。
@@ -1209,9 +1210,9 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
             没有状态就空着，标题照样对齐。agent 徽标不再占位：一行只留标题和时间。 */}
         <span className="chat-sidebar-lead">
           {awaitingApproval
-            ? <i className="chat-sidebar-dot is-approval" role="img" aria-label={t.chat.sidebarApproval} data-tip={t.chat.sidebarApproval} />
+            ? <i className="chat-sidebar-dot is-approval" role="img" aria-label={t.vocab.request.approval} data-tip={t.vocab.request.approval} />
             : showDot
-              ? <i className={`chat-sidebar-dot is-${tone}`} role="img" aria-label={t.chat.status[tone]} data-tip={t.chat.status[tone]} />
+              ? <i className={`chat-sidebar-dot is-${tone}`} role="img" aria-label={sessionStatusLabel(t, tone)} data-tip={sessionStatusLabel(t, tone)} />
               // 未读点（对照 Kimi 的 unread-dot）：回合结束时你没在看；当前会话不显示（正在看就是已读）。
               : item.unread && item.session.id !== activeId && (
                 <i className="chat-sidebar-unread" role="img" aria-label={t.chat.unread} data-tip={t.chat.unread} />
@@ -1277,7 +1278,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
               读屏名，这里对读屏隐藏免得念两遍。桌面侧栏不渲染。 */}
           {remoteUi() && selectedIds.size === 0 && (awaitingApproval || showDot) && (
             <span className={"chat-sidebar-status is-" + (awaitingApproval ? "approval" : tone)} aria-hidden="true">
-              {awaitingApproval ? t.chat.sidebarApproval : t.chat.status[tone]}
+              {sessionRowLabel(t, tone, awaitingApproval)}
             </span>
           )}
           {selectedIds.size === 0 && Number.isFinite(item.session.last_event_at) && (
@@ -1532,7 +1533,7 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
               // 组头汇总点:折起来时它是这一组唯一的状态出口,取组内最强的召唤。
               const approval = group.items.some((item) => approvalAwaitingIds.has(item.session.id));
               const tone = group.items
-                .map((item) => sessionTone(item.connected, item.session.status, item.pending_review, item.errored, item.busy_subagents, item.screen_state, item.screen_assumed))
+                .map((item) => liveSessionTone(item))
                 .reduce<SessionTone | null>((best, cur) => (best && TONE_RANK[best] >= TONE_RANK[cur] ? best : cur), null);
               const showDot = !!tone && TONE_RANK[tone] > 0;
               // 未读排在出错之后、等待/运行之前（对照 Kimi 分组汇总：审批 > 提问 > 失败 > 未读）：
@@ -1541,13 +1542,13 @@ function ChatSidebarImpl({ activeId, newSessionActive, approvalAwaitingIds, visi
               const unread = (!tone || TONE_RANK[tone] < TONE_RANK.error)
                 && group.items.some((item) => item.unread && item.session.id !== activeId);
               const groupDot = approval
-                ? <i className="chat-sidebar-dot is-approval" role="img" aria-label={t.chat.sidebarApproval} data-tip={t.chat.sidebarApproval} />
+                ? <i className="chat-sidebar-dot is-approval" role="img" aria-label={t.vocab.request.approval} data-tip={t.vocab.request.approval} />
                 : unread
                   ? <i className="chat-sidebar-dot is-unread" role="img" aria-label={t.chat.unread} data-tip={t.chat.unread} />
-                  : showDot && <i className={`chat-sidebar-dot is-${tone}`} role="img" aria-label={t.chat.status[tone]} data-tip={t.chat.status[tone]} />;
+                  : showDot && <i className={`chat-sidebar-dot is-${tone}`} role="img" aria-label={sessionStatusLabel(t, tone)} data-tip={sessionStatusLabel(t, tone)} />;
               // 目录分组的组头汇总「N 项待处理」（对照 Kimi 的 attentionTitle）：组折起来也知道里面有几件要你决定。
               const attention = group.items.filter((item) => approvalAwaitingIds.has(item.session.id)
-                || sessionTone(item.connected, item.session.status, item.pending_review, item.errored, item.busy_subagents, item.screen_state, item.screen_assumed) === "pending").length;
+                || liveSessionTone(item) === "pending").length;
               return (
                 <div
                   key={group.key}

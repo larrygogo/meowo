@@ -359,3 +359,32 @@ describe("沿用的功能", () => {
     expect(await screen.findByRole("button", { name: "返回" })).toBeTruthy();
   });
 });
+
+
+describe("逐回合快照", () => {
+  it("按回合看历史 diff，确认后恢复并可撤销", async () => {
+    const checkpointRepo = {
+      root: "C:/w/meowo", name: "meowo", startRef: "refs/meowo/start", endRef: "refs/meowo/end", error: null,
+      files: [file("src/a.ts", null, "M")],
+    };
+    vi.mocked(invoke).mockImplementation(async (command: string) => {
+      if (command === "checkpoint_turns") return [{ turn: 1, repos: [{ ...checkpointRepo, files: [] }] }];
+      if (command === "checkpoint_turn_detail") return { turn: 1, repos: [checkpointRepo] };
+      if (command === "checkpoint_file_diff") return { path: "src/a.ts", status: "M", diff: DIFF, truncated: false };
+      if (command === "checkpoint_restore" || command === "checkpoint_undo") return { undoId: 9, results: [{ root: "C:/w/meowo", restored: true, error: null }] };
+      return [];
+    });
+    const { onChanged } = renderScm([repo({})], { sessionId: 42 });
+    fireEvent.click(screen.getByRole("button", { name: "快照" }));
+    fireEvent.click(await screen.findByText("src/a.ts"));
+    await waitFor(() => expect([...document.querySelectorAll(".chat-diff-code")].some((el) => el.textContent === "new")).toBe(true));
+    fireEvent.click(screen.getByRole("button", { name: "恢复到回合前" }));
+    const dialog = await screen.findByRole("dialog", { name: "恢复第 1 回合的文件" });
+    expect(dialog.textContent).toContain("不回滚 CLI 对话");
+    fireEvent.click(within(dialog).getByRole("button", { name: "恢复到回合前" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("checkpoint_restore", { sessionId: 42, turn: 1, phase: "start" }));
+    fireEvent.click(await screen.findByRole("button", { name: "撤销" }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("checkpoint_undo", { sessionId: 42, id: 9 }));
+    expect(onChanged).toHaveBeenCalled();
+  });
+});
