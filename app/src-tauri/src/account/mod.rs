@@ -228,6 +228,15 @@ static PROFILE_USAGE_CACHE: std::sync::LazyLock<std::sync::Mutex<ProfileUsageCac
     std::sync::LazyLock::new(Default::default);
 const PROFILE_USAGE_FAIL_FRESH_MS: i64 = 10_000;
 
+/// 这家的活跃账号变了（切换、删除、并回默认）：丢掉它所有账号的内存用量。刚被切成活跃
+/// 的账号此后走活跃路径；切走的那个下次查看要拿新数，不能把切换前的值当「刚刚更新」再给一遍。
+pub fn forget_profile_usage(provider: &str) {
+    PROFILE_USAGE_CACHE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .retain(|(p, _), _| p != provider);
+}
+
 /// 命中则返回 `Some(结果)`（结果本身可能是「上次失败」的 None）；过期或没有返回 None。
 fn profile_usage_cache_hit(
     cache: &ProfileUsageCache,

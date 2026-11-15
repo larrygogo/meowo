@@ -791,6 +791,21 @@ body.remote-ui .remote-session-list .chat-sidebar-empty { display: flex; flex-di
 .remote-usage-for { margin-top: 10px; color: var(--cc-text-faint); font-size: 12px; }
 .remote-usage-hint { margin: 8px 4px 0; color: var(--cc-text-faint); font-size: 12px; }
 
+/* 手机确认层（remoteConfirm）：桌面确认卡 .app-confirm 本体靠独立小窗铺底，这里补卡面。
+   按钮保持桌面同档的视觉高度，触屏命中面用看不见的外扩热区补（standards 2026-11-11）。 */
+.remote-confirm {
+  width: min(340px, calc(100vw - 32px));
+  box-sizing: border-box;
+  padding: 18px 18px 14px;
+  border: var(--hairline) solid var(--cc-border);
+  border-radius: var(--radius-lg);
+  background: var(--cc-panel-raised);
+  box-shadow: var(--shadow-menu);
+}
+.remote-confirm p { max-height: 50vh; overflow: auto; }
+.remote-confirm .app-confirm-actions button { position: relative; height: var(--btn-h-lg); }
+.remote-confirm .app-confirm-actions button::after { content: ""; position: absolute; inset: -6px -4px; }
+
 .remote-settings-screen {
   flex: 1;
   min-height: 0;

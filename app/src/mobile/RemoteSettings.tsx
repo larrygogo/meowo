@@ -124,7 +124,7 @@ function RemoteSettingsBody({ active }: { active: boolean }) {
       </div>
     )}
     </div>
-    <RemoteUsage />
+    <RemoteUsage activeProfiles={settings?.active_profile} />
     {error && <div className="remote-settings-error" role="alert">{t.remote.settingFailed}</div>}
     </>
   );

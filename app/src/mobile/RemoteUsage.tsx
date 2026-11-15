@@ -123,7 +123,10 @@ function UsageLanes({ usage }: { usage: ProviderUsage }) {
 /// 用户点刷新或点开非当前账号才查用量（后端仍有 60s 限频）。
 /// 账号切换在手机上放开（2026-11-15 leader：「手机上也能看到多个账号，以及切换」）；
 /// 登录、退出、新建、删除、改名、合并要交互式终端或不可逆，仍只在电脑上做。
-export function RemoteUsage() {
+export function RemoteUsage({ activeProfiles }: {
+  /** 电脑设置里各家的活跃账号 id（设置轮询带来）。别处切了账号时据此重载那一家。 */
+  activeProfiles?: Partial<Record<string, string>>;
+} = {}) {
   const t = useT();
   const mounted = useRef(true);
   const [accounts, setAccounts] = useState<ProviderAccountPayload[] | null>(null);
@@ -133,18 +136,24 @@ export function RemoteUsage() {
   const [generation, setGeneration] = useState<Record<string, number>>({});
   // 「账号已切、重启会话失败」的错误由这里保管：小节重挂载后仍要就地显示。
   const [switchErrors, setSwitchErrors] = useState<Record<string, string | undefined>>({});
+  // 刚换过账号的那几家：重挂载后自动拉一次新账号的用量。后端切换时清了缓存，不拉就是一片
+  // 「暂无缓存」——而换账号正是因为额度用完，切完第一眼要看新账号还剩多少（桌面同样自动刷新；
+  // 独立审查 2026-11-15）。
+  const [refreshOnMount, setRefreshOnMount] = useState<Record<string, boolean>>({});
 
-  const load = useCallback(() => {
-    getAccounts()
-      .then((list) => {
-        if (!mounted.current) return;
-        setLoadFailed(false);
-        setAccounts(list);
-      })
-      .catch(() => {
-        if (mounted.current) setLoadFailed(true);
-      });
-  }, []);
+  const load = useCallback(
+    () =>
+      getAccounts()
+        .then((list) => {
+          if (!mounted.current) return;
+          setLoadFailed(false);
+          setAccounts(list);
+        })
+        .catch(() => {
+          if (mounted.current) setLoadFailed(true);
+        }),
+    [],
+  );
 
   useEffect(() => {
     mounted.current = true;
@@ -154,10 +163,40 @@ export function RemoteUsage() {
 
   const onSwitchStart = (provider: string) =>
     setSwitchErrors((current) => ({ ...current, [provider]: undefined }));
-  const onSwitched = (provider: string, error: string | null) => {
-    setSwitchErrors((current) => ({ ...current, [provider]: error ?? undefined }));
-    setGeneration((current) => ({ ...current, [provider]: (current[provider] ?? 0) + 1 }));
-    load();
+  // 新快照到手后才重挂载：先重挂载再等快照，新小节会先顶着旧账号的缓存额度闪一下，
+  // 自动刷新回来的新值还会被随后到达的快照（缓存已清 = 空）盖掉。
+  const remount = (provider: string, error: string | null) => {
+    void load().then(() => {
+      if (!mounted.current) return;
+      setSwitchErrors((current) => ({ ...current, [provider]: error ?? undefined }));
+      setRefreshOnMount((current) => ({ ...current, [provider]: true }));
+      setGeneration((current) => ({ ...current, [provider]: (current[provider] ?? 0) + 1 }));
+    });
+  };
+
+  // 上次见到的各家活跃账号（"" = 默认账号）。手机远程收不到桌面事件，只能靠设置轮询发现
+  // 别处切了账号（独立审查 2026-11-15）；自己切的在 onSwitched 里先记下，轮询回来不重复重载。
+  const seenActive = useRef<Record<string, string> | null>(null);
+  useEffect(() => {
+    if (!activeProfiles) return;
+    const next: Record<string, string> = {};
+    for (const [provider, id] of Object.entries(activeProfiles)) next[provider] = id ?? "";
+    const prev = seenActive.current;
+    seenActive.current = { ...prev, ...next };
+    if (!prev) return;
+    const changed = new Set([...Object.keys(prev), ...Object.keys(next)]);
+    for (const provider of changed) {
+      if ((prev[provider] ?? "") !== (next[provider] ?? "")) {
+        seenActive.current[provider] = next[provider] ?? "";
+        remount(provider, null);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 只看活跃账号映射的变化；remount 每次渲染新建
+  }, [JSON.stringify(activeProfiles ?? null)]);
+
+  const onSwitched = (provider: string, newId: string | null, error: string | null) => {
+    if (seenActive.current) seenActive.current = { ...seenActive.current, [provider]: newId ?? "" };
+    remount(provider, error);
   };
 
   return (
@@ -175,8 +214,9 @@ export function RemoteUsage() {
             key={`${account.provider}#${generation[account.provider] ?? 0}`}
             account={account}
             switchError={switchErrors[account.provider] ?? null}
+            refreshOnMount={!!refreshOnMount[account.provider]}
             onSwitchStart={() => onSwitchStart(account.provider)}
-            onSwitched={(error) => onSwitched(account.provider, error)}
+            onSwitched={(newId, error) => onSwitched(account.provider, newId, error)}
           />
         ))}
       </div>
@@ -185,12 +225,14 @@ export function RemoteUsage() {
   );
 }
 
-function ProviderUsageSection({ account, switchError, onSwitchStart, onSwitched }: {
+function ProviderUsageSection({ account, switchError, refreshOnMount, onSwitchStart, onSwitched }: {
   account: ProviderAccountPayload;
   switchError: string | null;
+  /** 刚换过账号：挂载即拉一次新账号的用量。 */
+  refreshOnMount: boolean;
   onSwitchStart: () => void;
-  /** 账号已切成（error 非空 = 切了但重启会话失败）。由父级重载整页。 */
-  onSwitched: (error: string | null) => void;
+  /** 账号已切到 newId（error 非空 = 切了但重启会话失败）。由父级重载这一家。 */
+  onSwitched: (newId: string | null, error: string | null) => void;
 }) {
   const t = useT();
   const provider = account.provider;
@@ -207,8 +249,8 @@ function ProviderUsageSection({ account, switchError, onSwitchStart, onSwitched 
   const [error, setError] = useState<UsageError | undefined>(undefined);
   const [refreshing, setRefreshing] = useState(false);
   const [updatedAt, setUpdatedAt] = useState<number | null>(null);
-  // 父级重载后（切换完成）缓存跟着换。
-  useEffect(() => { setUsage(account.usage); }, [account.usage]);
+  // 换账号靠父级换 key 重挂载拿新缓存；这里不跟随 account.usage 变化——别家切换时父级会重读
+  // 整份快照，跟随的话刚刷新到的新值会被缓存旧值盖回去。
 
   // 账号列表：只读本地文件。多于一条才出列表（gemini 这类单账号家恒为一条）。
   const [profiles, setProfiles] = useState<ProfileView[] | null>(null);
@@ -253,6 +295,11 @@ function ProviderUsageSection({ account, switchError, onSwitchStart, onSwitched 
         if (mounted.current) setRefreshing(false);
       });
   };
+
+  useEffect(() => {
+    if (refreshOnMount && account.account != null && account.usage_supported && !account.relay_enabled) refreshActive();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- 只在（换账号后的）挂载时拉一次
+  }, []);
 
   const loadViewUsage = (profile: ProfileView) => {
     const request = ++viewRequest.current;
@@ -312,7 +359,8 @@ function ProviderUsageSection({ account, switchError, onSwitchStart, onSwitched 
     try {
       // 必须切完再问：判据是「和当前活跃账号不同」。
       const running = await sessionsOffActiveProfileCount(provider);
-      if (running > 0) {
+      // 切换途中离开了设置页：不在别的页面上凭空弹「要不要重启」，按不重启收场（账号已切）。
+      if (running > 0 && mounted.current) {
         const ok = await appConfirm(t.account.switchRestartConfirm(running), {
           title: t.account.switchProfile,
           // 会杀进程（正在生成的那一轮回答会丢），按危险操作办。
@@ -324,7 +372,7 @@ function ProviderUsageSection({ account, switchError, onSwitchStart, onSwitched 
     } catch (e) {
       restartError = formatBackendError(e, t.locale);
     }
-    onSwitched(restartError);
+    onSwitched(profile.id, restartError);
   };
 
   const multi = profiles != null && profiles.length > 1;

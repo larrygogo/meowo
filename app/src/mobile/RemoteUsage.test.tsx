@@ -222,17 +222,88 @@ describe("RemoteUsage", () => {
       expect(list.queryByRole("button", { name: "切换到工作" })).toBeNull();
     });
 
-    it("切换后丢掉旧账号的用量，换上新快照", async () => {
+    it("切换后丢掉旧账号的用量，自动拉一次新账号的", async () => {
       api.getAccounts
         .mockResolvedValueOnce([payload("claude", { usage: usage(30) })])
         .mockResolvedValue([payload("claude", { usage: null, active_profile_name: "工作" })]);
       api.listProfiles.mockResolvedValue(twoProfiles());
+      api.refreshUsage.mockResolvedValue(usage(5));
       render(<RemoteUsage />);
 
       expect((await screen.findByRole("progressbar", { name: "5 小时配额" })).getAttribute("aria-valuenow")).toBe("30");
       fireEvent.click(screen.getByRole("button", { name: "切换到工作" }));
-      expect(await screen.findByText("暂无缓存用量，点刷新获取")).toBeTruthy();
+      await waitFor(() => expect(screen.getByRole("progressbar", { name: "5 小时配额" }).getAttribute("aria-valuenow")).toBe("5"));
+      expect(api.refreshUsage).toHaveBeenCalledTimes(1);
+      expect(api.refreshUsage).toHaveBeenCalledWith("claude");
+    });
+
+    it("新账号的用量没拉到：显示失败说法，不拿旧账号的数字顶替", async () => {
+      api.getAccounts
+        .mockResolvedValueOnce([payload("claude", { usage: usage(30) })])
+        .mockResolvedValue([payload("claude", { usage: null, active_profile_name: "工作" })]);
+      api.listProfiles.mockResolvedValue(twoProfiles());
+      api.refreshUsage.mockRejectedValue("network down");
+      render(<RemoteUsage />);
+
+      await screen.findByRole("progressbar", { name: "5 小时配额" });
+      fireEvent.click(screen.getByRole("button", { name: "切换到工作" }));
+      expect((await screen.findByRole("alert")).textContent).toContain("用量获取失败");
       expect(screen.queryByRole("progressbar")).toBeNull();
+    });
+
+    it("电脑上切了账号（设置轮询带来新的活跃账号）：手机这一家跟着重载，别家不动", async () => {
+      let active: string | undefined;
+      api.getAccounts.mockImplementation(async () => [
+        payload("claude", { usage: active ? null : usage(30), active_profile_name: active ? "工作" : null }),
+        payload("codex", { usage: usage(44) }),
+      ]);
+      api.listProfiles.mockImplementation(async (provider: string) =>
+        provider === "claude"
+          ? [profile(null, "", !active), profile("work", "工作", !!active)]
+          : [profile(null, "", true)],
+      );
+      api.refreshUsage.mockResolvedValue(usage(7));
+      const view = render(<RemoteUsage activeProfiles={{}} />);
+      const claude = within(await screen.findByRole("region", { name: "Claude" }));
+      await waitFor(() => expect(claude.getByRole("button", { name: "切换到工作" })).toBeTruthy());
+
+      active = "work";
+      view.rerender(<RemoteUsage activeProfiles={{ claude: "work" }} />);
+      await waitFor(() =>
+        expect(within(screen.getByRole("region", { name: "Claude" })).getByRole("button", { name: "切换到默认账号" })).toBeTruthy(),
+      );
+      await waitFor(() =>
+        expect(within(screen.getByRole("region", { name: "Claude" })).getByRole("progressbar", { name: "5 小时配额" }).getAttribute("aria-valuenow")).toBe("7"),
+      );
+      expect(api.refreshUsage).toHaveBeenCalledTimes(1);
+      expect(api.refreshUsage).toHaveBeenCalledWith("claude");
+      expect(within(screen.getByRole("region", { name: "Codex" })).getByRole("progressbar", { name: "5 小时配额" }).getAttribute("aria-valuenow")).toBe("44");
+    });
+
+    it("自己切的账号，设置轮询回来时不再重载第二次", async () => {
+      api.getAccounts.mockResolvedValue([payload("claude", { usage: usage(30) })]);
+      api.listProfiles.mockResolvedValue(twoProfiles());
+      const view = render(<RemoteUsage activeProfiles={{}} />);
+      fireEvent.click(await screen.findByRole("button", { name: "切换到工作" }));
+      await waitFor(() => expect(api.getAccounts).toHaveBeenCalledTimes(2));
+      view.rerender(<RemoteUsage activeProfiles={{ claude: "work" }} />);
+      await new Promise((r) => setTimeout(r, 20));
+      expect(api.getAccounts).toHaveBeenCalledTimes(2);
+    });
+
+    it("切换途中离开设置页：不在别处弹重启确认", async () => {
+      api.getAccounts.mockResolvedValue([payload("claude")]);
+      api.listProfiles.mockResolvedValue(twoProfiles());
+      let releaseCount!: (n: number) => void;
+      api.sessionsOffActiveProfileCount.mockImplementation(() => new Promise<number>((r) => { releaseCount = r; }));
+      const view = render(<RemoteUsage />);
+      fireEvent.click(await screen.findByRole("button", { name: "切换到工作" }));
+      await waitFor(() => expect(api.sessionsOffActiveProfileCount).toHaveBeenCalled());
+      view.unmount();
+      releaseCount(3);
+      await new Promise((r) => setTimeout(r, 20));
+      expect(confirm.appConfirm).not.toHaveBeenCalled();
+      expect(api.applyActiveProfileToSessions).not.toHaveBeenCalled();
     });
 
     it("用户不同意重启时不调 apply；没有要搬的会话（含搬不了会话的家）不问", async () => {
