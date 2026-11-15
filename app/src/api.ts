@@ -46,6 +46,9 @@ import type { RetryLeadGateDeliveryArgs } from "./generated/contracts/bridge/Ret
 import type { CheckProviderHooksArgs } from "./generated/contracts/bridge/CheckProviderHooksArgs";
 import type { RepairProviderHooksArgs } from "./generated/contracts/bridge/RepairProviderHooksArgs";
 import type { RefreshUsageArgs } from "./generated/contracts/bridge/RefreshUsageArgs";
+import type { ProviderArg } from "./generated/contracts/bridge/ProviderArg";
+import type { SetActiveProfileArgs } from "./generated/contracts/bridge/SetActiveProfileArgs";
+import type { RefreshProfileUsageArgs } from "./generated/contracts/bridge/RefreshProfileUsageArgs";
 import type { FileMentionCandidatesArgs } from "./generated/contracts/bridge/FileMentionCandidatesArgs";
 import type { ForkSessionArgs } from "./generated/contracts/bridge/ForkSessionArgs";
 import type { GetChatHistoryArgs } from "./generated/contracts/bridge/GetChatHistoryArgs";
@@ -1644,7 +1647,7 @@ export function refreshUsage(provider: string): Promise<ProviderUsage> {
 
 /** 查看指定账号的用量，不切换 active；非 active 结果不写 active 缓存。桌面账号页专用。 */
 export function refreshProfileUsage(provider: AgentId, profile: string | null): Promise<ProviderUsage> {
-  return invoke("refresh_profile_usage", { provider, profile });
+  return invoke("refresh_profile_usage", { provider, profile } satisfies RefreshProfileUsageArgs);
 }
 
 /** 某 provider 的 meowo-reporter hooks 接入状态。unknown = 无法确认（读取失败/位置未知）。 */
@@ -1816,7 +1819,7 @@ export type ProfileView = {
  * 前端据此不给「添加账号」入口。
  */
 export function listProfiles(provider: AgentId): Promise<ProfileView[]> {
-  return invoke("list_profiles", { provider });
+  return invoke("list_profiles", { provider } satisfies ProviderArg);
 }
 
 /** 新建账号（建目录 + 接线）。返回它的 id。不会自动切过去，也不会自动登录。 */
@@ -1844,7 +1847,7 @@ export function renameProfile(
  * {@link applyActiveProfileToSessions}。
  */
 export function setActiveProfile(provider: AgentId, id: string | null): Promise<void> {
-  return invoke("set_active_profile", { provider, id });
+  return invoke("set_active_profile", { provider, id } satisfies SetActiveProfileArgs);
 }
 
 /**
@@ -1855,7 +1858,7 @@ export function setActiveProfile(provider: AgentId, id: string | null): Promise<
  * 旧账号跟自己比，恒为 0。计数与重启在后端共用同一条判据，两个数字因此不会各说各话。
  */
 export function sessionsOffActiveProfileCount(provider: AgentId): Promise<number> {
-  return invoke("sessions_off_active_profile_count", { provider });
+  return invoke("sessions_off_active_profile_count", { provider } satisfies ProviderArg);
 }
 
 /**
@@ -1867,7 +1870,7 @@ export function sessionsOffActiveProfileCount(provider: AgentId): Promise<number
  * `moves_sessions_across_accounts` 为 false）后端直接返回 0，不动任何会话。
  */
 export function applyActiveProfileToSessions(provider: AgentId): Promise<number> {
-  return invoke("apply_active_profile_to_sessions", { provider });
+  return invoke("apply_active_profile_to_sessions", { provider } satisfies ProviderArg);
 }
 
 /** 删除账号，**连同它的整个目录**（凭据、配置、该账号的会话历史）。不可逆。 */

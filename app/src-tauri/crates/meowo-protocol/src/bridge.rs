@@ -623,6 +623,22 @@ bridged_args!(NewSessionArgs {
 
 bridged_args!(RefreshUsageArgs { provider: String });
 
+// 手机设置「账号与用量」：列账号、按账号看用量、切换活跃账号并把运行中的会话重启过去。
+// list_profiles / sessions_off_active_profile_count / apply_active_profile_to_sessions 共用。
+bridged_args!(ProviderArg { provider: String });
+
+bridged_args!(SetActiveProfileArgs {
+    provider: String,
+    #[serde(default)]
+    id: Option<String>
+});
+
+bridged_args!(RefreshProfileUsageArgs {
+    provider: String,
+    #[serde(default)]
+    profile: Option<String>
+});
+
 bridged_args!(CheckProviderHooksArgs { provider: String });
 
 bridged_args!(RepairProviderHooksArgs { provider: String });

@@ -267,6 +267,15 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     "get_accounts",
     // 手机设置里的 provider 用量：只按 provider 刷新官方配额，沿用桌面 60s 限频，不读写凭据。
     "refresh_usage",
+    // 手机设置「账号与用量」（2026-11-15 leader：「手机上也能看到多个账号，以及切换」）：
+    // 列账号只回展示字段（同 get_accounts，无密钥）；按账号看用量不写活跃账号缓存；切换只改
+    // 设置、可逆。切完把运行中的会话重启到新账号，前端先确认——效果等同已放行的
+    // stop_managed_terminal + 恢复，不新增暴露面。登录、退出、新建、删除、改名、合并仍拒。
+    "list_profiles",
+    "refresh_profile_usage",
+    "set_active_profile",
+    "sessions_off_active_profile_count",
+    "apply_active_profile_to_sessions",
 ];
 
 /// server 运行态。独立 `app.manage`（不进 AppState：那是命令数据面的托管，这里是
@@ -1708,6 +1717,27 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
             let a = args!(RefreshUsageArgs);
             reply(crate::refresh_usage(a.provider).await)
         }
+        // reply_ok 前提同 get_accounts：list_profiles 返回 Vec 而非 Result。
+        "list_profiles" => {
+            let a = args!(ProviderArg);
+            reply_ok(crate::profile::list_profiles(a.provider).await)
+        }
+        "refresh_profile_usage" => {
+            let a = args!(RefreshProfileUsageArgs);
+            reply(crate::refresh_profile_usage(a.provider, a.profile).await)
+        }
+        "set_active_profile" => {
+            let a = args!(SetActiveProfileArgs);
+            reply(crate::profile::set_active_profile(app.clone(), a.provider, a.id).await)
+        }
+        "sessions_off_active_profile_count" => {
+            let a = args!(ProviderArg);
+            reply(crate::terminal::sessions_off_active_profile_count(state, a.provider).await)
+        }
+        "apply_active_profile_to_sessions" => {
+            let a = args!(ProviderArg);
+            reply(crate::terminal::apply_active_profile_to_sessions(app.clone(), state, a.provider).await)
+        }
         // BRIDGED_COMMANDS 有而这里漏写的项落到此处：fail-closed，宁 404 不放行。
         _ => err_status(StatusCode::NOT_FOUND, "remote/unknown_command"),
     }
@@ -2050,6 +2080,12 @@ mod tests {
             "confirm_dialog",
             "login_agent",
             "api_key_login",
+            // 账号管理里需要交互式终端或不可逆的部分仍只在电脑上做（2026-11-15 只放行看与切换）。
+            "logout_agent",
+            "create_profile",
+            "rename_profile",
+            "delete_profile",
+            "merge_profile_into_default",
             "install_agent",
             "check_update",
             "download_update",
@@ -2110,6 +2146,9 @@ mod tests {
             "list_subdirectories",
             "get_accounts",
             "refresh_usage",
+            "list_profiles",
+            "set_active_profile",
+            "apply_active_profile_to_sessions",
         ] {
             assert!(BRIDGED_COMMANDS.contains(&cmd), "{cmd} 应在白名单");
         }
@@ -2799,6 +2838,18 @@ mod tests {
             .map(|_| ()),
             // api.ts refreshUsage
             "refresh_usage" => parse::<RefreshUsageArgs>(br#"{"provider":"claude"}"#).map(|_| ()),
+            // api.ts listProfiles / sessionsOffActiveProfileCount / applyActiveProfileToSessions
+            "list_profiles" | "sessions_off_active_profile_count" | "apply_active_profile_to_sessions" => {
+                parse::<ProviderArg>(br#"{"provider":"claude"}"#).map(|_| ())
+            }
+            // api.ts setActiveProfile（切回默认账号时 id 显式发 null）
+            "set_active_profile" => parse::<SetActiveProfileArgs>(br#"{"provider":"claude","id":null}"#)
+                .and_then(|_| parse::<SetActiveProfileArgs>(br#"{"provider":"claude","id":"work"}"#))
+                .map(|_| ()),
+            // api.ts refreshProfileUsage（默认账号 profile 显式发 null）
+            "refresh_profile_usage" => {
+                parse::<RefreshProfileUsageArgs>(br#"{"provider":"claude","profile":null}"#).map(|_| ())
+            }
             // api.ts:972
             "check_provider_hooks" => {
                 parse::<CheckProviderHooksArgs>(br#"{"provider":"claude"}"#).map(|_| ())

@@ -1,12 +1,19 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ProviderAccountPayload, ProviderUsage } from "../api";
+import type { ProfileView, ProviderAccountPayload, ProviderUsage } from "../api";
 
 const api = vi.hoisted(() => ({
   getAccounts: vi.fn(),
   refreshUsage: vi.fn(),
+  listProfiles: vi.fn(),
+  refreshProfileUsage: vi.fn(),
+  setActiveProfile: vi.fn(),
+  sessionsOffActiveProfileCount: vi.fn(),
+  applyActiveProfileToSessions: vi.fn(),
 }));
+const confirm = vi.hoisted(() => ({ appConfirm: vi.fn() }));
 vi.mock("../api", async (importOriginal) => ({ ...(await importOriginal<typeof import("../api")>()), ...api }));
+vi.mock("../confirm", async (importOriginal) => ({ ...(await importOriginal<typeof import("../confirm")>()), ...confirm }));
 
 import { RemoteUsage } from "./RemoteUsage";
 
@@ -25,10 +32,26 @@ function payload(provider: string, patch: Partial<ProviderAccountPayload> = {}):
   };
 }
 
+function profile(id: string | null, name: string, active: boolean, patch: Partial<ProfileView> = {}): ProfileView {
+  return {
+    id,
+    name,
+    active,
+    account: { email: `${id ?? "default"}@example.com`, display_name: null, organization: null, plan: null, login_label: null },
+    ...patch,
+  };
+}
+
 describe("RemoteUsage", () => {
   beforeEach(() => {
     api.getAccounts.mockResolvedValue([]);
     api.refreshUsage.mockResolvedValue(usage(60));
+    // 默认每家只有默认账号一条：不出列表，与改版前一致。
+    api.listProfiles.mockImplementation(async () => [profile(null, "", true)]);
+    api.setActiveProfile.mockResolvedValue(undefined);
+    api.sessionsOffActiveProfileCount.mockResolvedValue(0);
+    api.applyActiveProfileToSessions.mockResolvedValue(0);
+    confirm.appConfirm.mockResolvedValue(true);
   });
   afterEach(() => {
     cleanup();
@@ -101,5 +124,162 @@ describe("RemoteUsage", () => {
     api.getAccounts.mockRejectedValue("offline");
     render(<RemoteUsage />);
     expect((await screen.findByRole("alert")).textContent).toContain("账号信息加载失败");
+  });
+
+  describe("多账号", () => {
+    const twoProfiles = () => [
+      profile(null, "", true, { account: { email: "me@home.com", display_name: null, organization: null, plan: "Max", login_label: null } }),
+      profile("work", "工作", false, { account: { email: null, display_name: null, organization: null, plan: null, login_label: "API Key" } }),
+    ];
+
+    it("多账号的家列出全部账号（名字、描述、套餐、使用中），单账号家不出列表", async () => {
+      api.getAccounts.mockResolvedValue([payload("claude", { usage: usage(30) }), payload("gemini")]);
+      api.listProfiles.mockImplementation(async (provider: string) =>
+        provider === "claude" ? twoProfiles() : [profile(null, "", true)],
+      );
+      render(<RemoteUsage />);
+
+      const list = within(await screen.findByRole("group", { name: "Claude 账号" }));
+      const def = list.getByRole("button", { name: "查看默认账号的用量" });
+      expect(def.textContent).toContain("默认账号");
+      expect(def.textContent).toContain("me@home.com");
+      expect(def.textContent).toContain("Max");
+      expect(def.getAttribute("aria-pressed")).toBe("true");
+      expect(list.getByText("使用中")).toBeTruthy();
+      expect(list.getByRole("button", { name: "查看工作的用量" }).textContent).toContain("API Key");
+      expect(list.getByRole("button", { name: "切换到工作" })).toBeTruthy();
+      // 当前账号不给切换按钮
+      expect(list.queryByRole("button", { name: "切换到默认账号" })).toBeNull();
+
+      const gemini = within(screen.getByRole("region", { name: "Gemini" }));
+      expect(gemini.queryByRole("group")).toBeNull();
+      expect(gemini.queryByText("使用中")).toBeNull();
+      expect(screen.getByText("登录、退出和管理账号请在电脑上操作")).toBeTruthy();
+      // 打开只读本地：不联网查用量
+      expect(api.refreshUsage).not.toHaveBeenCalled();
+      expect(api.refreshProfileUsage).not.toHaveBeenCalled();
+      expect(api.listProfiles).toHaveBeenCalledTimes(2);
+    });
+
+    it("点非当前账号查它的用量，点回当前账号显示缓存；失败与不支持各有说法", async () => {
+      api.getAccounts.mockResolvedValue([payload("claude", { usage: usage(30) })]);
+      api.listProfiles.mockResolvedValue(twoProfiles());
+      api.refreshProfileUsage.mockResolvedValueOnce(usage(77));
+      render(<RemoteUsage />);
+
+      const work = await screen.findByRole("button", { name: "查看工作的用量" });
+      fireEvent.click(work);
+      await waitFor(() => expect(screen.getByRole("progressbar", { name: "5 小时配额" }).getAttribute("aria-valuenow")).toBe("77"));
+      expect(api.refreshProfileUsage).toHaveBeenCalledWith("claude", "work");
+      expect(work.getAttribute("aria-pressed")).toBe("true");
+      expect(screen.getByText("工作 · 用量")).toBeTruthy();
+
+      fireEvent.click(screen.getByRole("button", { name: "查看默认账号的用量" }));
+      expect(screen.getByRole("progressbar", { name: "5 小时配额" }).getAttribute("aria-valuenow")).toBe("30");
+      expect(api.refreshProfileUsage).toHaveBeenCalledTimes(1);
+      expect(api.refreshUsage).not.toHaveBeenCalled();
+
+      api.refreshProfileUsage.mockRejectedValueOnce("network down");
+      fireEvent.click(work);
+      expect((await screen.findByRole("alert")).textContent).toContain("用量获取失败");
+
+      api.refreshProfileUsage.mockRejectedValueOnce("usage/USAGE_UNSUPPORTED");
+      fireEvent.click(screen.getByRole("button", { name: "查看默认账号的用量" }));
+      fireEvent.click(work);
+      expect(await screen.findByText("当前账号不支持用量查询")).toBeTruthy();
+      expect(screen.queryByRole("alert")).toBeNull();
+    });
+
+    it("切换：setActive → 问后端计数 → 确认 → 重启，再整页重载", async () => {
+      api.getAccounts.mockResolvedValue([payload("claude", { usage: usage(30) })]);
+      api.listProfiles.mockResolvedValueOnce(twoProfiles()).mockResolvedValue([
+        profile(null, "", false),
+        profile("work", "工作", true),
+      ]);
+      const calls: string[] = [];
+      api.setActiveProfile.mockImplementation(async () => { calls.push("set"); });
+      api.sessionsOffActiveProfileCount.mockImplementation(async () => { calls.push("count"); return 2; });
+      confirm.appConfirm.mockImplementation(async () => { calls.push("confirm"); return true; });
+      api.applyActiveProfileToSessions.mockImplementation(async () => { calls.push("apply"); return 2; });
+      render(<RemoteUsage />);
+
+      const button = await screen.findByRole("button", { name: "切换到工作" });
+      fireEvent.click(button);
+      // 进行中再点不重复调用
+      fireEvent.click(button);
+      await waitFor(() => expect(api.getAccounts).toHaveBeenCalledTimes(2));
+      expect(calls).toEqual(["set", "count", "confirm", "apply"]);
+      expect(api.setActiveProfile).toHaveBeenCalledWith("claude", "work");
+      expect(api.sessionsOffActiveProfileCount).toHaveBeenCalledWith("claude");
+      expect(api.applyActiveProfileToSessions).toHaveBeenCalledWith("claude");
+      expect(String(confirm.appConfirm.mock.calls[0][0])).toContain("2 个会话");
+      // 重载后「使用中」到了工作账号上
+      const list = within(await screen.findByRole("group", { name: "Claude 账号" }));
+      await waitFor(() => expect(list.getByRole("button", { name: "切换到默认账号" })).toBeTruthy());
+      expect(list.queryByRole("button", { name: "切换到工作" })).toBeNull();
+    });
+
+    it("切换后丢掉旧账号的用量，换上新快照", async () => {
+      api.getAccounts
+        .mockResolvedValueOnce([payload("claude", { usage: usage(30) })])
+        .mockResolvedValue([payload("claude", { usage: null, active_profile_name: "工作" })]);
+      api.listProfiles.mockResolvedValue(twoProfiles());
+      render(<RemoteUsage />);
+
+      expect((await screen.findByRole("progressbar", { name: "5 小时配额" })).getAttribute("aria-valuenow")).toBe("30");
+      fireEvent.click(screen.getByRole("button", { name: "切换到工作" }));
+      expect(await screen.findByText("暂无缓存用量，点刷新获取")).toBeTruthy();
+      expect(screen.queryByRole("progressbar")).toBeNull();
+    });
+
+    it("用户不同意重启时不调 apply；没有要搬的会话（含搬不了会话的家）不问", async () => {
+      api.getAccounts.mockResolvedValue([payload("claude"), payload("kimi")]);
+      api.listProfiles.mockResolvedValue(twoProfiles());
+      api.sessionsOffActiveProfileCount.mockImplementation(async (provider: string) => (provider === "claude" ? 1 : 0));
+      confirm.appConfirm.mockResolvedValue(false);
+      render(<RemoteUsage />);
+
+      const claude = within(await screen.findByRole("group", { name: "Claude 账号" }));
+      fireEvent.click(claude.getByRole("button", { name: "切换到工作" }));
+      await waitFor(() => expect(api.getAccounts).toHaveBeenCalledTimes(2));
+      expect(confirm.appConfirm).toHaveBeenCalledTimes(1);
+      expect(api.applyActiveProfileToSessions).not.toHaveBeenCalled();
+
+      const kimi = within(await screen.findByRole("group", { name: "Kimi 账号" }));
+      fireEvent.click(kimi.getByRole("button", { name: "切换到工作" }));
+      await waitFor(() => expect(api.getAccounts).toHaveBeenCalledTimes(3));
+      expect(api.setActiveProfile).toHaveBeenLastCalledWith("kimi", "work");
+      expect(confirm.appConfirm).toHaveBeenCalledTimes(1);
+      expect(api.applyActiveProfileToSessions).not.toHaveBeenCalled();
+    });
+
+    it("切换失败就地报错、不重载；切了但重启失败也报错，账号照样算切了", async () => {
+      api.getAccounts.mockResolvedValue([payload("claude")]);
+      api.listProfiles.mockResolvedValue(twoProfiles());
+      api.setActiveProfile.mockRejectedValueOnce("profile/not_found");
+      render(<RemoteUsage />);
+
+      fireEvent.click(await screen.findByRole("button", { name: "切换到工作" }));
+      expect(await screen.findByRole("alert")).toBeTruthy();
+      expect(api.getAccounts).toHaveBeenCalledTimes(1);
+      expect(api.sessionsOffActiveProfileCount).not.toHaveBeenCalled();
+
+      api.sessionsOffActiveProfileCount.mockResolvedValue(1);
+      api.applyActiveProfileToSessions.mockRejectedValueOnce("terminal/restart_failed");
+      fireEvent.click(screen.getByRole("button", { name: "切换到工作" }));
+      await waitFor(() => expect(api.getAccounts).toHaveBeenCalledTimes(2));
+      expect(api.applyActiveProfileToSessions).toHaveBeenCalledTimes(1);
+      // 重载后（小节重挂载）错误仍在
+      expect(await screen.findByRole("alert")).toBeTruthy();
+      expect(api.setActiveProfile).toHaveBeenCalledTimes(2);
+    });
+
+    it("账号列表读取失败有说法，用量照常显示", async () => {
+      api.getAccounts.mockResolvedValue([payload("claude", { usage: usage(30) })]);
+      api.listProfiles.mockRejectedValue("io");
+      render(<RemoteUsage />);
+      expect((await screen.findByRole("alert")).textContent).toContain("账号列表读取失败");
+      expect(screen.getByRole("progressbar", { name: "5 小时配额" })).toBeTruthy();
+    });
   });
 });

@@ -1995,10 +1995,16 @@ export const zh = {
     pushToggle: "手机推送",
     pushToggleDesc: "暂停后地址保留",
     settingFailed: "没改成，请稍后再试",
-    usageTitle: "Provider 用量",
+    usageTitle: "账号与用量",
     usageEmpty: "暂无支持用量查询的 provider",
     usageNoCache: "暂无缓存用量，点刷新获取",
     usageRefreshProvider: (provider: string) => `刷新 ${provider} 用量`,
+    // 手机「账号与用量」：只放开看与切换；登录要交互式终端，删除合并不可逆，留在电脑上。
+    profilesOf: (provider: string) => `${provider} 账号`,
+    switchProfile: "切换",
+    switchToProfile: (name: string) => `切换到${name}`,
+    profilesLoadFailed: "账号列表读取失败",
+    profilesDesktopOnly: "登录、退出和管理账号请在电脑上操作",
     backToSessions: "返回会话列表",
     // 配置端口与实际监听分叉（多实例共享 settings.json，另一实例改端口本实例不跟随）。
     boundMismatch: (configured: number, actual: number) =>
