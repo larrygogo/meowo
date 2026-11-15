@@ -53,6 +53,7 @@ import { ContextMeter } from "./chat/ContextMeter";
 import { ImageRef, splitUserText } from "./chat/Message";
 import { parseUserText } from "./chat/localCommand";
 import { ChatActionsContext, type ChatActions } from "./chat/chatActions";
+import { rejectedUndoTarget } from "./chat/rejectedRecovery";
 import { anchorFrom, echoItemId, freshAnchor, EchoActionsContext, EchoPhaseContext, outgoingStore, useOutgoingPrompts, type PromptAck } from "./chat/outgoingPrompts";
 import { DockWork } from "./chat/DockWork";
 import { ANCHOR_PX, countsAsUnseen, stickToBottom, useStickToBottom } from "./chat/useStickToBottom";
@@ -2806,12 +2807,14 @@ export function ChatWindow() {
   }, [undoAvailable, undoStepwise, items]);
   // 给对话流里消息用的动作（出错卡「继续」、用户消息「撤回」）。引用保持稳定：用户消息
   // 也读这个 context，每次渲染都换新对象会让所有消息跟着重渲染。
+  const rejectedUndo = useMemo(() => rejectedUndoTarget(items, undoableIds), [items, undoableIds]);
   const chatActions = useMemo<ChatActions>(() => ({
     sendText: (text) => sendTextRef.current(text),
     undoFrom: undoableIds ? (id, text) => void undoFromRef.current(id, text) : undefined,
     undoableIds,
     newSession: () => void openNewSessionWindow({ cwd, provider }).catch(() => {}),
-  }), [undoableIds, cwd, provider]);
+    undoRejected: rejectedUndo ? () => void undoFromRef.current(rejectedUndo.id, rejectedUndo.text) : undefined,
+  }), [undoableIds, cwd, provider, rejectedUndo]);
   /// 原生图片附加：逐张把附件写进系统剪贴板 → 发插件声明的粘贴键（claude 的 Ctrl-V、
   /// kimi 在 Windows 上的 Alt+V——发 Ctrl-V 会被它的 composer 无视，真机实拍）让 TUI
   /// 自己读（claude 的 `[Image #N]`、kimi 的 `[image #N (W×H)]`）→ 等第 N 个占位符出现

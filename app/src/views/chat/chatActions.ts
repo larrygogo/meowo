@@ -9,8 +9,10 @@ export type ChatActions = {
   undoFrom?: (id: string, text: string) => void;
   /// 此刻可撤回的用户消息 id（当前段、非插话、会话空闲）。
   undoableIds?: ReadonlySet<string>;
-  /// 打开新建会话，预选本会话的目录和 Provider（出错卡「请求被拒」的出路）。
+  /// 打开新建会话，预选本会话的目录和 Provider（出错卡「请求被拒」撤不回时的后备出路）。
   newSession?: () => void;
+  /// 「请求被拒」时撤回到出错那一轮之前（见 rejectedRecovery）。此刻撤不回时缺省。
+  undoRejected?: () => void;
 };
 
 export const ChatActionsContext = createContext<ChatActions | null>(null);

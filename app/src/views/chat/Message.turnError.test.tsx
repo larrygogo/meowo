@@ -102,6 +102,23 @@ describe("Message turn_error", () => {
     expect(sendText).not.toHaveBeenCalled();
   });
 
+  it("请求被拒且撤得回：主出路是「撤回到出错前」，「新开会话」作后备", () => {
+    const sendText = vi.fn().mockResolvedValue(true);
+    const newSession = vi.fn();
+    const undoRejected = vi.fn();
+    render(
+      <ChatActionsContext.Provider value={{ sendText, newSession, undoRejected }}>
+        <Message item={{ ...item, label: "请求被拒", text: "Invalid request Error" }} latest />
+      </ChatActionsContext.Provider>,
+    );
+    expect(screen.getByText("撤回出错那轮，原话会放回输入框")).toBeTruthy();
+    const buttons = screen.getAllByRole("button").map((b) => b.textContent);
+    expect(buttons).toEqual(["撤回到出错前", "新开会话"]);
+    fireEvent.click(screen.getByRole("button", { name: "撤回到出错前" }));
+    expect(undoRejected).toHaveBeenCalledTimes(1);
+    expect(sendText).not.toHaveBeenCalled();
+  });
+
   it("请求被拒的旧卡不出按钮；其他错误不出「新开会话」", () => {
     const sendText = vi.fn().mockResolvedValue(true);
     const newSession = vi.fn();

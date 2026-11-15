@@ -633,6 +633,8 @@ export const en: Dict = {
     turnErrorNetworkHint: "Check your network or proxy, then press Continue",
     turnErrorRejectedHint: "The API won't accept this chat. Start a new session",
     turnErrorNewSession: "New session",
+    turnErrorRejectedUndoHint: "Undo the failed turns. Your message goes back to the input",
+    turnErrorUndo: "Undo to before the error",
     reasoningLive: "Thinking…",
     turnToolDoing: {
       run: "Running a command",

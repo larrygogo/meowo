@@ -713,6 +713,8 @@ export const zh = {
     // 接口拒收了上下文本身（如读进了它不收的图片），重发同一段上下文必然再错。
     turnErrorRejectedHint: "对话里有接口不收的内容，请新开会话",
     turnErrorNewSession: "新开会话",
+    turnErrorRejectedUndoHint: "撤回出错那轮，原话会放回输入框",
+    turnErrorUndo: "撤回到出错前",
     reasoningLive: "思考中…",
     turnToolDoing: {
       run: "正在运行命令",
