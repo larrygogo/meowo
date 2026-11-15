@@ -239,6 +239,7 @@ pub(crate) const ACTIVE_PROFILE_CHANGED: &str = "active-profile-changed";
 
 fn notify_active_profile_changed(app: &tauri::AppHandle, provider: &str) {
     use tauri::Emitter;
+    crate::account::forget_profile_usage(provider);
     let _ = app.emit(ACTIVE_PROFILE_CHANGED, provider);
 }
 

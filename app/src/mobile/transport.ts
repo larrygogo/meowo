@@ -351,10 +351,11 @@ export function installRemoteTransport(): void {
     // — 宿主执行类:后端 default-deny,前端就地兑现或转页内 —
     switch (cmd) {
       case "confirm_dialog": {
-        // 真浏览器里 window.confirm 可用(桌面 Tauri webview 会吞掉才改走原生小窗,见 confirm.tsx)。
-        const a = args as { message?: string; title?: string } | undefined;
-        const text = [a?.title, a?.message].filter(Boolean).join("\n\n");
-        return window.confirm(text || "确认?");
+        // 应用内确认层(remoteConfirm),不用 window.confirm:原生框样式脱节,还丢了 danger 与
+        // 主按钮文案,会杀进程的操作只剩一个「确定」(独立审查 2026-11-15)。动态加载:入口保持轻。
+        const a = args as { message?: string; title?: string; danger?: boolean; confirmLabel?: string | null } | undefined;
+        const { remoteConfirm } = await import("./remoteConfirm");
+        return remoteConfirm(a ?? {});
       }
       case "open_link":
       case "open_url": {

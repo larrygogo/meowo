@@ -746,6 +746,65 @@ body.remote-ui .remote-session-list .chat-sidebar-empty { display: flex; flex-di
 .remote-usage-body { padding-top: 4px; }
 .remote-usage-body .usage-row { margin: 10px 0; }
 .remote-usage-body .usage-stale { padding: 6px 0 0; }
+/* 多账号列表：行文字与上方 Provider 名、下方用量条同一左边（行靠负外边距把底色外扩出去，
+   文字不随之内缩）。选中只用底色，不用竖条或描边（standards 2026-11-11）。 */
+.remote-profile-list { display: flex; flex-direction: column; gap: 2px; margin: 6px -8px 0; }
+.remote-profile-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 48px;
+  padding: 0 8px;
+  border-radius: var(--radius-md);
+}
+.remote-profile-row.is-selected { background: var(--fill-selected); }
+@media (hover: hover) {
+  .remote-profile-row:not(.is-selected):hover { background: var(--fill-hover); }
+}
+.remote-profile-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 6px 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+}
+.remote-profile-name-row { display: flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; }
+.remote-profile-name { min-width: 0; overflow: hidden; font-size: 14px; white-space: nowrap; text-overflow: ellipsis; }
+.remote-profile-desc {
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--cc-text-faint);
+  font-size: 12px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* 视觉是桌面那档小按钮，触屏命中面用看不见的外扩热区补到约 44px（standards 2026-11-11）。 */
+.remote-profile-switch { position: relative; }
+.remote-profile-switch::after { content: ""; position: absolute; inset: -10px -6px; }
+.remote-usage-for { margin-top: 10px; color: var(--cc-text-faint); font-size: 12px; }
+.remote-usage-hint { margin: 8px 4px 0; color: var(--cc-text-faint); font-size: 12px; }
+
+/* 手机确认层（remoteConfirm）：桌面确认卡 .app-confirm 本体靠独立小窗铺底，这里补卡面。
+   按钮保持桌面同档的视觉高度，触屏命中面用看不见的外扩热区补（standards 2026-11-11）。 */
+.remote-confirm {
+  width: min(340px, calc(100vw - 32px));
+  box-sizing: border-box;
+  padding: 18px 18px 14px;
+  border: var(--hairline) solid var(--cc-border);
+  border-radius: var(--radius-lg);
+  background: var(--cc-panel-raised);
+  box-shadow: var(--shadow-menu);
+}
+.remote-confirm p { max-height: 50vh; overflow: auto; }
+.remote-confirm .app-confirm-actions button { position: relative; height: var(--btn-h-lg); }
+.remote-confirm .app-confirm-actions button::after { content: ""; position: absolute; inset: -6px -4px; }
 
 .remote-settings-screen {
   flex: 1;

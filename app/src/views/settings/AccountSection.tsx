@@ -49,6 +49,7 @@ import { ActionMenu, Dropdown } from "../menu";
 import { useSettingsState } from "./state";
 import { RelayAccess } from "./RelayAccess";
 import { useTauriEvent } from "../../hooks/useTauriEvent";
+import { ACTIVE_PROFILE_CHANGED } from "../island/useIslandUsage";
 import { useLoginOperations, type LoginOperationState } from "../../hooks/useLoginOperations";
 import { useInstallOperations, type InstallOperationState } from "../../hooks/useInstallOperations";
 import { isWindows } from "../../platform";
@@ -275,6 +276,17 @@ function ProviderCard({ provider, name, installed, supportsAccount, supportsApiK
     setProfileUpdatedAt(null);
     onLoggedIn();
   };
+  // 别处（手机远程、另一个窗口）切了这家的账号：正在看的「某账号用量」可能就是新的当前账号，
+  // 或已不再成立，退回看当前账号。账号列表和额度由 ProfileList / 页面级各自跟上。
+  useTauriEvent<string>(ACTIVE_PROFILE_CHANGED, ({ payload }) => {
+    if (payload !== provider) return;
+    profileRequest.current += 1;
+    setViewingProfile(null);
+    setProfileUsage(null);
+    setProfileErr(null);
+    setProfileRefreshing(false);
+    setProfileUpdatedAt(null);
+  });
   const shownUsage = viewingProfile ? profileUsage : usage;
   const shownErr = viewingProfile ? profileErr : err;
   const shownRefreshing = viewingProfile ? profileRefreshing : refreshing;
@@ -939,6 +951,10 @@ function ProfileList({ provider, movesSessionsAcrossAccounts, onChanged, viewing
 
   // 登录完成 → 该账号的登录态变了，重查。
   useTauriEvent("login-done", () => reload());
+  // 手机远程切换账号后桌面要跟上（2026-11-15 手机切换上线，独立审查指出列表停在旧的「使用中」）。
+  useTauriEvent<string>(ACTIVE_PROFILE_CHANGED, ({ payload }) => {
+    if (payload === provider) reload();
+  });
 
   const run = async (fn: () => Promise<unknown>) => {
     if (busy) return;
@@ -1397,6 +1413,30 @@ export function AccountSection() {
         }, wait);
       });
   };
+
+  // 这家换了账号（手机远程或别的窗口切的）：后端已清掉它的用量缓存。先丢掉页面里属于旧账号的
+  // 额度、刷新时刻和错误，再按新快照重取——聚焦回填只补空位，不处理就一直顶着旧账号的数字
+  // （独立审查 2026-11-15）。只动这一家，不像 loadAccounts 那样扇出全部 provider 联网。
+  useTauriEvent<string>(ACTIVE_PROFILE_CHANGED, ({ payload: provider }) => {
+    const drop = <T,>(m: Record<string, T>) => {
+      if (!(provider in m)) return m;
+      const next = { ...m };
+      delete next[provider];
+      return next;
+    };
+    setUsageMap(drop);
+    setUsageRefreshedAt(drop);
+    setErrMap(drop);
+    getAccounts()
+      .then((ps) => {
+        setAccountsError(false);
+        setPayloads(ps);
+        const row = ps.find((p) => p.provider === provider);
+        if (row?.usage) setUsageMap((m) => ({ ...m, [provider]: row.usage! }));
+        if (row && row.account != null && row.usage_supported && !row.relay_enabled) doRefresh(provider);
+      })
+      .catch(() => setAccountsError(true));
+  });
 
   // 先从 getAccounts 拿缓存数据快速渲染，再对每个 usage_supported provider 联网刷新。
   // 挂载时与登录成功后各调一次（登录成功前该 provider 的 account 为 null，卡片显示「未登录」）。

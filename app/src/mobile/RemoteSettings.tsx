@@ -14,7 +14,8 @@ import { RemoteUsage } from "./RemoteUsage";
 /// 宽屏（平板横屏、电脑浏览器）是侧栏头齿轮下的小面板（RemoteSettings）。
 /// - 这台手机：明暗模式、消息自动折叠。只存手机浏览器里，不碰电脑。
 /// - 电脑：运行时防止休眠、暂停手机推送。各走一个只改该字段的接口，整份 set_settings 远程仍禁止。
-/// - Provider 用量：只读展示电脑缓存，单家刷新；登录、退出和账号切换仍只能在电脑上做。
+/// - 账号与用量：展示电脑缓存、单家刷新；多账号的家可看各账号用量并切换（2026-11-15 放开）。
+///   登录、退出、新建、删除、改名、合并仍只在电脑上做。
 /// 代理、账号登录/退出、远程访问本身这些不放：手机令牌泄露时影响太大，改错了还可能连不回来。
 /// 每组的行包在 .remote-settings-card 里：整屏形态下它是一张 L2 分组卡，小面板里只是个透明容器。
 function RemoteSettingsBody({ active }: { active: boolean }) {
@@ -123,7 +124,7 @@ function RemoteSettingsBody({ active }: { active: boolean }) {
       </div>
     )}
     </div>
-    <RemoteUsage />
+    <RemoteUsage activeProfiles={settings?.active_profile} />
     {error && <div className="remote-settings-error" role="alert">{t.remote.settingFailed}</div>}
     </>
   );

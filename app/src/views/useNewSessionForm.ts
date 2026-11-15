@@ -20,6 +20,8 @@ import {
 } from "../api";
 import { normalizePath, pathKey, unquotePath } from "../paths";
 import { useAgentListRefresh } from "../useAgents";
+import { useTauriEvent } from "../hooks/useTauriEvent";
+import { ACTIVE_PROFILE_CHANGED } from "./island/useIslandUsage";
 import { useLoginOperations } from "../hooks/useLoginOperations";
 import { useT, repairFailMessage } from "../i18n";
 import { formatBackendError } from "../i18n/errors";
@@ -175,6 +177,9 @@ export function useNewSessionForm(startCwd: string, startProvider: AgentId | nul
   }, []);
   // 装完一个 agent，这里的可选项就该多一个——不必关掉面板重开。
   useAgentListRefresh(reloadAgents);
+  // 别处切了账号（手机远程、设置页）：开着的新建页要换上新账号名与登录态，否则会以为
+  // 新会话还开在旧账号上（独立审查 2026-11-15）。
+  useTauriEvent(ACTIVE_PROFILE_CHANGED, () => reloadAgents());
 
   // default_agent 若未装，则退到首个已装 agent（avail 加载后校正）。
   // 7T-9：换过这一手此前完全静默——用户从卡片菜单带着 codex 的预填点进来，面板上

@@ -49,11 +49,13 @@ vi.mock("../confirm", () => ({ appConfirm: dialog.confirm }));
 const ev = vi.hoisted(() => ({
   doneCbs: [] as Array<(e: unknown) => void>,
   loginCbs: [] as Array<(e: unknown) => void>,
+  profileCbs: [] as Array<(e: unknown) => void>,
 }));
 vi.mock("@tauri-apps/api/event", () => ({
   listen: (event: string, cb: (e: unknown) => void) => {
     if (event === "install-done") ev.doneCbs.push(cb);
     if (event === "login-done") ev.loginCbs.push(cb);
+    if (event === "active-profile-changed") ev.profileCbs.push(cb);
     return Promise.resolve(() => {});
   },
 }));
@@ -142,6 +144,7 @@ beforeEach(() => {
   ]);
   ev.doneCbs.length = 0;
   ev.loginCbs.length = 0;
+  ev.profileCbs.length = 0;
 });
 afterEach(() => cleanup());
 
@@ -977,6 +980,55 @@ describe("AccountSection 多账号", () => {
     await act(async () => { resolveWork(usageAt(88)); });
     expect(screen.getByRole("progressbar", { name: zh.account.laneFiveHour }).getAttribute("aria-valuenow")).toBe("21");
     expect(screen.getByText(zh.account.usageFor("个人"))).toBeTruthy();
+  });
+
+  it("别处（手机远程）切了账号：列表、正在看的账号、额度都跟上，不留旧账号的数字", async () => {
+    let active: "default" | "work" = "default";
+    api.getAccounts.mockImplementation(async () => [
+      // 后端切换时已清掉这家的用量缓存：新快照不带额度。
+      { provider: "claude", account: { email: "a@b.c" }, usage: active === "default" ? usageAt(11) : null, usage_supported: true },
+    ]);
+    api.refreshUsage.mockImplementation(async () => usageAt(active === "default" ? 11 : 64));
+    api.listProfiles.mockImplementation(async () => [
+      { id: null, name: "", active: active === "default", account: { email: "a@b.c" } },
+      { id: "work", name: "工作", active: active === "work", account: { email: "w@b.c" } },
+    ]);
+    api.refreshProfileUsage.mockResolvedValue(usageAt(40));
+    render(<AccountSection />);
+
+    await waitFor(() => expect(screen.getByRole("progressbar", { name: zh.account.laneFiveHour }).getAttribute("aria-valuenow")).toBe("11"));
+    // 桌面上正在看「工作」的用量
+    fireEvent.click(await screen.findByTestId("profile-usage-claude-work"));
+    await waitFor(() => expect(screen.getByText(zh.account.usageFor("工作"))).toBeTruthy());
+
+    active = "work";
+    act(() => ev.profileCbs.forEach((cb) => cb({ payload: "claude" })));
+
+    // 「使用中」移到工作账号
+    await waitFor(() =>
+      expect(screen.getByTestId("profile-claude-work").textContent).toContain(zh.account.activeProfile),
+    );
+    expect(screen.getByTestId("profile-claude-__default__").textContent).not.toContain(zh.account.activeProfile);
+    // 退回看当前账号，额度是新账号的
+    expect(screen.getByText(zh.account.quota)).toBeTruthy();
+    await waitFor(() => expect(screen.getByRole("progressbar", { name: zh.account.laneFiveHour }).getAttribute("aria-valuenow")).toBe("64"));
+    expect(api.setActiveProfile).not.toHaveBeenCalled();
+  });
+
+  it("别家切了账号不影响这一家", async () => {
+    api.getAccounts.mockResolvedValue([{ provider: "claude", account: { email: "a@b.c" }, usage: usageAt(11), usage_supported: true }]);
+    api.refreshUsage.mockResolvedValue(usageAt(11));
+    api.listProfiles.mockResolvedValue([
+      { id: null, name: "", active: true, account: { email: "a@b.c" } },
+      { id: "work", name: "工作", active: false, account: { email: "w@b.c" } },
+    ]);
+    render(<AccountSection />);
+    await screen.findByTestId("profile-claude-work");
+    const lists = api.listProfiles.mock.calls.length;
+    act(() => ev.profileCbs.forEach((cb) => cb({ payload: "codex" })));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(api.listProfiles.mock.calls.length).toBe(lists);
+    expect(screen.getByRole("progressbar", { name: zh.account.laneFiveHour }).getAttribute("aria-valuenow")).toBe("11");
   });
 
   it("点账号行即切换；已是活跃的那行不可点", async () => {
