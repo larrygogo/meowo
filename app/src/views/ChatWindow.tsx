@@ -2810,7 +2810,8 @@ export function ChatWindow() {
     sendText: (text) => sendTextRef.current(text),
     undoFrom: undoableIds ? (id, text) => void undoFromRef.current(id, text) : undefined,
     undoableIds,
-  }), [undoableIds]);
+    newSession: () => void openNewSessionWindow({ cwd, provider }).catch(() => {}),
+  }), [undoableIds, cwd, provider]);
   /// 原生图片附加：逐张把附件写进系统剪贴板 → 发插件声明的粘贴键（claude 的 Ctrl-V、
   /// kimi 在 Windows 上的 Alt+V——发 Ctrl-V 会被它的 composer 无视，真机实拍）让 TUI
   /// 自己读（claude 的 `[Image #N]`、kimi 的 `[image #N (W×H)]`）→ 等第 N 个占位符出现

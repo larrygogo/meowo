@@ -390,11 +390,24 @@ mod kimi_toml {
                     t.insert("command", value(desired_cmd.clone()));
                     changed = true;
                 }
+                // matcher 跟声明走（kimi 的 matcher 是工具名正则）：声明了就补上或改正，
+                // 没声明却带着（我方旧条目被手改）就去掉，免得该接的事件被过滤掉。
+                let current = t.get("matcher").and_then(|v| v.as_str());
+                if current != ev.matcher {
+                    match ev.matcher {
+                        Some(m) => t.insert("matcher", value(m)),
+                        None => t.remove("matcher"),
+                    };
+                    changed = true;
+                }
                 i += 1;
             }
             if !found {
                 let mut t = Table::new();
                 t.insert("event", value(ev.name));
+                if let Some(m) = ev.matcher {
+                    t.insert("matcher", value(m));
+                }
                 t.insert("command", value(desired_cmd.clone()));
                 t.insert("timeout", value(5));
                 arr.push(t);
@@ -1577,6 +1590,34 @@ mod tests {
     }
 
     // ── KimiToml::ensure_hooks ──
+
+    /// kimi 读图拦截：PreToolUse 带 matcher 写入；已有条目缺 matcher 时补上；Lead 自己的
+    /// PreToolUse（`lead gate`，参数不同、不归基础 hook 认领）原样保留。
+    #[test]
+    fn kimi_matcher_is_written_and_lead_pre_tool_use_survives() {
+        static EVENTS: [HookEvent; 1] = [HookEvent::matched("PreToolUse", "^ReadMediaFile$")];
+        static SPEC: HookSpec = HookSpec {
+            events: &EVENTS,
+            ..KT
+        };
+        let lead = "[[hooks]]\nevent = \"PreToolUse\"\ncommand = '\"C:/x/meowo-reporter.exe\" lead gate --provider kimi'\ntimeout = 10\n";
+        let EnsureOutcome::Changed(out) = SPEC.ensure_hooks(lead, "C:/x/meowo-reporter.exe", "kimi") else {
+            panic!("应写入");
+        };
+        assert!(out.contains("lead gate --provider kimi"), "{out}");
+        assert!(out.contains(r#"matcher = "^ReadMediaFile$""#), "{out}");
+        assert_eq!(out.matches("event = \"PreToolUse\"").count(), 2, "{out}");
+        assert_eq!(
+            SPEC.ensure_hooks(&out, "C:/x/meowo-reporter.exe", "kimi"),
+            EnsureOutcome::Unchanged
+        );
+        // 我方旧条目没有 matcher（会拦下所有工具调用）：补上。
+        let bare = "[[hooks]]\nevent = \"PreToolUse\"\ncommand = \"C:/x/meowo-reporter.exe --provider kimi\"\ntimeout = 5\n";
+        let EnsureOutcome::Changed(out) = SPEC.ensure_hooks(bare, "C:/x/meowo-reporter.exe", "kimi") else {
+            panic!("应补 matcher");
+        };
+        assert!(out.contains(r#"matcher = "^ReadMediaFile$""#), "{out}");
+    }
 
     #[test]
     fn adds_all_when_absent_and_preserves_content() {

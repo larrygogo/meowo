@@ -405,13 +405,20 @@ function ReasoningBlock({ item, nextStamp = null, live = false }: { item: Extrac
 /// 插件共用，见 claude classify_error / codex / opencode），其余标签照旧只给「继续」。
 const LOGIN_ERROR_LABELS = new Set(["需要重新登录", "认证失败"]);
 const NETWORK_ERROR_LABELS = new Set(["无法连接 API"]);
+/// 接口拒收上下文本身（Kimi 不可重试的 400/413，见 kimi telemetry::failure）：重发同一段
+/// 上下文必然再错（实拍连错 5、6 次），「继续」是死路，出路只有新开会话。
+const REJECTED_ERROR_LABELS = new Set(["请求被拒"]);
 
 function TurnErrorCard({ item, latest }: { item: Extract<ChatItem, { type: "turn_error" }>; latest: boolean }) {
   const t = useT();
   const actions = useContext(ChatActionsContext);
   const [busy, setBusy] = useState(false);
   const login = LOGIN_ERROR_LABELS.has(item.label);
-  const hint = login ? t.chat.turnErrorLoginHint : NETWORK_ERROR_LABELS.has(item.label) ? t.chat.turnErrorNetworkHint : null;
+  const rejected = REJECTED_ERROR_LABELS.has(item.label);
+  const hint = login ? t.chat.turnErrorLoginHint
+    : rejected ? t.chat.turnErrorRejectedHint
+    : NETWORK_ERROR_LABELS.has(item.label) ? t.chat.turnErrorNetworkHint
+    : null;
   return (
     <article className="chat-message is-turn-error" role="alert">
       <div className="chat-turn-error-label">
@@ -429,16 +436,23 @@ function TurnErrorCard({ item, latest }: { item: Extract<ChatItem, { type: "turn
               {t.chat.turnErrorLoginGo}
             </button>
           )}
-          <button
-            type="button"
-            className="chat-turn-error-continue"
-            {...busyProps(busy, () => {
-              setBusy(true);
-              void actions.sendText(t.chat.turnErrorContinueText).finally(() => setBusy(false));
-            })}
-          >
-            {t.chat.turnErrorContinue}
-          </button>
+          {rejected && actions.newSession && (
+            <button type="button" className="chat-turn-error-continue" onClick={actions.newSession}>
+              {t.chat.turnErrorNewSession}
+            </button>
+          )}
+          {!rejected && (
+            <button
+              type="button"
+              className="chat-turn-error-continue"
+              {...busyProps(busy, () => {
+                setBusy(true);
+                void actions.sendText(t.chat.turnErrorContinueText).finally(() => setBusy(false));
+              })}
+            >
+              {t.chat.turnErrorContinue}
+            </button>
+          )}
         </div>
       )}
     </article>

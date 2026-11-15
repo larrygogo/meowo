@@ -98,6 +98,20 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let ev = HookEvent::parse(&buf)?;
+    // Kimi 读图前拦下它压不下去的大图（见 media_guard）：原图直发会让接口拒收整段对话。
+    // 这是主路径里唯一改变 CLI 行为的输出：退出码 2 + stderr，kimi 把原因交给模型、跳过这次调用。
+    // 只看文件头，不碰库，远在 5 秒超时之内。
+    if ev.hook_event_name == "PreToolUse" && parse_provider() == "kimi" {
+        if let Some(reason) = meowo_reporter::media_guard::kimi_read_media_denial(
+            ev.tool_name.as_deref(),
+            ev.tool_input.as_ref(),
+            ev.cwd.as_deref(),
+        ) {
+            eprint!("{reason}");
+            std::process::exit(2);
+        }
+        return Ok(());
+    }
     // 解析不到 home 就没有库可写——连审批桥的 discovery 文件都躺在库旁边，整条链路无从
     // 谈起。直接 no-op 返回：main 最终以 0 退出，绝不阻塞 agent。
     let Some(path) = db_path() else {

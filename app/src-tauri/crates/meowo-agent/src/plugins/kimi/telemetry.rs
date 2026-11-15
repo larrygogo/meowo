@@ -1341,20 +1341,36 @@ fn failure(value: &serde_json::Value) -> Option<crate::transcript::TurnError> {
         .get("code")
         .and_then(|v| v.as_str())
         .unwrap_or("provider.error");
-    let raw = error
+    let status = error
+        .pointer("/details/statusCode")
+        .and_then(|v| v.as_u64());
+    // 本机实拍：413 请求体过大时 message 是空串。此前整条失败被吞，出错卡和侧栏都不出，
+    // 会话静静停着。有状态码就拿它当原文。
+    let raw = match error
         .get("message")
         .and_then(|v| v.as_str())
-        .filter(|s| !s.is_empty())?;
+        .filter(|s| !s.is_empty())
+    {
+        Some(message) => message.to_string(),
+        None => format!("HTTP {}", status?),
+    };
+    // 不可重试的 400/413：接口拒收的是上下文本身（实拍：Kimi 自己读了动图 webp 后
+    // 「Invalid request Error」连错 5 次；image_url blob 不存在连错 6 次）。重发同一段
+    // 上下文必然再错，单独成类，出错卡据此不给「继续」、改给「新开会话」。
+    let rejected = error.get("retryable").and_then(|v| v.as_bool()) == Some(false)
+        && matches!(status, Some(400 | 413));
     let label = if code.contains("connection") {
         "无法连接 API"
     } else if code.contains("auth") {
         "认证失败"
+    } else if rejected {
+        "请求被拒"
     } else {
         "API 请求出错"
     };
     Some(crate::transcript::TurnError {
         label: label.into(),
-        raw: raw.into(),
+        raw,
         fingerprint: format!("kimi:{code}"),
     })
 }
@@ -1390,6 +1406,52 @@ mod compatibility_errors {
         assert!(
             matches!(events.as_slice(), [TranscriptEvent::TurnError { label, .. }] if label == "无法连接 API")
         );
+    }
+
+    fn turn_error_of(line: &str) -> Option<(String, String)> {
+        match parse_events(line, None).as_slice() {
+            [TranscriptEvent::TurnError { label, text, .. }] => Some((label.clone(), text.clone())),
+            _ => None,
+        }
+    }
+
+    /// 真实 wire（kimi-code 2.6.1）：Kimi 自己读了动图 webp 后每轮都 400，重发必错。
+    /// 对话流和侧栏都要标成「请求被拒」，出错卡据此改给「新开会话」。
+    #[test]
+    fn compatibility_kimi_non_retryable_400_is_request_rejected() {
+        let samples = [
+            r#"{"type":"turn.ended","agentId":"main","turnId":1,"reason":"failed","error":{"code":"provider.api_error","message":"Invalid request Error","name":"APIStatusError","details":{"statusCode":400,"requestId":null,"traceId":"8cb46f81222dc4b02f45827fec180e12","diagnostics":{"requestId":"8cb46f81222dc4b02f45827fec180e12"}},"retryable":false},"durationMs":730,"time":1794712270553}"#,
+            r#"{"type":"turn.ended","agentId":"main","turnId":0,"reason":"failed","error":{"code":"provider.api_error","message":"Invalid request: failed to validate image_url content: blob ID k3.FvdBQWLEe1d9ZibiH6bKyO6wiX3u does not exist","name":"APIStatusError","details":{"statusCode":400,"requestId":null,"traceId":"e53bbe75ab544831f4e455aac5a81bf3"},"retryable":false},"durationMs":75,"time":1793866417860}"#,
+        ];
+        for line in samples {
+            let (label, _) = turn_error_of(line).expect("出错卡");
+            assert_eq!(label, "请求被拒");
+            let mut parser = KimiParser::default();
+            parser.fold_line(line);
+            assert_eq!(parser.to_info().error.map(|e| e.label), Some("请求被拒".into()));
+        }
+        // 可重试的 400、未标 retryable 的 500 照旧是一般 API 错误；401 仍是认证失败。
+        let retryable = r#"{"type":"turn.ended","agentId":"main","reason":"failed","error":{"code":"provider.api_error","message":"busy","details":{"statusCode":400},"retryable":true}}"#;
+        assert_eq!(turn_error_of(retryable).unwrap().0, "API 请求出错");
+        let server = r#"{"type":"turn.ended","agentId":"main","reason":"failed","error":{"code":"provider.api_error","message":"oops","details":{"statusCode":500},"retryable":false}}"#;
+        assert_eq!(turn_error_of(server).unwrap().0, "API 请求出错");
+        let auth = r#"{"type":"turn.ended","agentId":"main","turnId":0,"reason":"failed","error":{"code":"provider.auth_error","message":"401 A valid API key is required","name":"APIStatusError","details":{"statusCode":401,"requestId":null,"traceId":null},"retryable":false},"durationMs":28,"time":1793868198089}"#;
+        assert_eq!(turn_error_of(auth).unwrap().0, "认证失败");
+    }
+
+    /// 真实 wire：413 请求体过大时 message 是空串。此前整条失败被吞，出错卡不出、侧栏不报错。
+    #[test]
+    fn compatibility_kimi_empty_message_failure_still_reported() {
+        let line = r#"{"type":"turn.ended","agentId":"main","turnId":9,"reason":"failed","error":{"code":"provider.api_error","message":"","name":"APIStatusError","details":{"statusCode":413,"requestId":null,"traceId":null},"retryable":false},"durationMs":75,"time":1793866417860}"#;
+        assert_eq!(
+            turn_error_of(line),
+            Some(("请求被拒".to_string(), "HTTP 413".to_string()))
+        );
+        let mut parser = KimiParser::default();
+        parser.fold_line(line);
+        assert!(parser.to_info().error.is_some());
+        // 既没有 message 也没有状态码：仍不凭空造错。
+        assert!(turn_error_of(r#"{"type":"turn.ended","agentId":"main","reason":"failed","error":{"code":"provider.api_error","message":""}}"#).is_none());
     }
 }
 
