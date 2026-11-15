@@ -401,7 +401,9 @@ function ProviderUsageSection({ account, switchError, onSwitchStart, onSwitched 
             const key = profileKey(p);
             const label = p.name || t.account.defaultProfile;
             // 描述行说「这是哪个账号」，套餐是徽章（同桌面 ProfileList）。
-            const desc = p.account?.email ?? p.account?.display_name ?? p.account?.login_label ?? t.account.notLoggedIn;
+            // 未登录的账号手机上登不了：切过去（还可能把会话重启过去）就是一条手机上修不好的路，
+            // 不给切换，描述行说清去哪登录（桌面同一行就有「登录」，手机没有；独立审查 2026-11-15）。
+            const desc = p.account?.email ?? p.account?.display_name ?? p.account?.login_label ?? t.remote.profileLoginOnDesktop;
             const selected = viewingKey ? viewingKey === key : p.active;
             return (
               <div key={key} className={"remote-profile-row" + (selected ? " is-selected" : "")}>
@@ -422,7 +424,7 @@ function ProviderUsageSection({ account, switchError, onSwitchStart, onSwitched 
                 </button>
                 {p.active ? (
                   <span className="profile-badge">{t.account.activeProfile}</span>
-                ) : (
+                ) : !p.account ? null : (
                   <button
                     type="button"
                     className="provider-card-action provider-card-action-sm remote-profile-switch"

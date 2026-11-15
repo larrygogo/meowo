@@ -188,15 +188,59 @@ pub fn usage_of_profile(id: AgentId, profile: Option<&str>) -> Option<ProviderUs
     if crate::settings::load_settings().relay.enabled(id) {
         return None;
     }
+    let key = (id.as_str().to_owned(), requested);
+    let now = now_ms();
+    if let Some(hit) = profile_usage_cache_hit(
+        &PROFILE_USAGE_CACHE
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()),
+        &key,
+        now,
+    ) {
+        return hit;
+    }
     let inst = installation_for_profile(id, profile)?;
     let p = crate::ports::HostPorts::for_agent(id);
-    match account_cap(id)?.fetch_usage(&inst, &p.as_ports()) {
+    let result = match account_cap(id)?.fetch_usage(&inst, &p.as_ports()) {
         Ok(usage) => Some(usage),
         Err(e) => {
             eprintln!("Meowo usage[{id}/{profile:?}]: {e}");
             None
         }
-    }
+    };
+    PROFILE_USAGE_CACHE
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(key, (now, result.clone()));
+    result
+}
+
+/// 非活跃账号的用量结果，只住内存（不写磁盘缓存：那份按 agent 分键，讲的是活跃账号）。
+///
+/// 为什么要限频：活跃账号走 `usage_of` 有 60s 新鲜度复用，非活跃账号原来每点一次就打一次官方
+/// 用量接口。手机远程放开「按账号看用量」后（2026-11-15），连点刷新或令牌外泄都能把官方接口
+/// 打到 429，连带活跃账号也查不了（独立审查 2026-11-15 指出）。失败也记一下、窗口更短：
+/// 被限流时正是最不该接着打的时候。
+type ProfileUsageKey = (String, Option<String>);
+/// （记下的时刻 ms，结果；None = 那次失败）。
+type ProfileUsageCache = std::collections::HashMap<ProfileUsageKey, (i64, Option<ProviderUsage>)>;
+static PROFILE_USAGE_CACHE: std::sync::LazyLock<std::sync::Mutex<ProfileUsageCache>> =
+    std::sync::LazyLock::new(Default::default);
+const PROFILE_USAGE_FAIL_FRESH_MS: i64 = 10_000;
+
+/// 命中则返回 `Some(结果)`（结果本身可能是「上次失败」的 None）；过期或没有返回 None。
+fn profile_usage_cache_hit(
+    cache: &ProfileUsageCache,
+    key: &ProfileUsageKey,
+    now: i64,
+) -> Option<Option<ProviderUsage>> {
+    let (at, result) = cache.get(key)?;
+    let window = if result.is_some() {
+        USAGE_FRESH_MS
+    } else {
+        PROFILE_USAGE_FAIL_FRESH_MS
+    };
+    (now - at < window).then(|| result.clone())
 }
 
 /// 所有注册了账号能力的 agent（供 get_accounts 遍历）。
@@ -340,6 +384,30 @@ pub fn cache_is_fresh(id: AgentId, fresh_ms: i64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn profile_usage_cache_reuses_success_for_60s_and_failure_for_10s() {
+        let mut cache = std::collections::HashMap::new();
+        let work: ProfileUsageKey = ("claude".into(), Some("work".into()));
+        let spare: ProfileUsageKey = ("claude".into(), Some("spare".into()));
+        assert_eq!(profile_usage_cache_hit(&cache, &work, 1_000), None);
+        cache.insert(work.clone(), (1_000, Some(ProviderUsage::default())));
+        cache.insert(spare.clone(), (1_000, None));
+        // 成功结果 60s 内复用，不再打上游
+        assert_eq!(
+            profile_usage_cache_hit(&cache, &work, 60_999),
+            Some(Some(ProviderUsage::default()))
+        );
+        assert_eq!(profile_usage_cache_hit(&cache, &work, 61_000), None);
+        // 失败 10s 内也不重打，之后放行重试
+        assert_eq!(profile_usage_cache_hit(&cache, &spare, 10_999), Some(None));
+        assert_eq!(profile_usage_cache_hit(&cache, &spare, 11_000), None);
+        // 按 (家, 账号) 分键：别的账号不命中
+        assert_eq!(
+            profile_usage_cache_hit(&cache, &("codex".into(), Some("work".into())), 2_000),
+            None
+        );
+    }
 
     #[test]
     fn usage_kind_as_str_roundtrip() {

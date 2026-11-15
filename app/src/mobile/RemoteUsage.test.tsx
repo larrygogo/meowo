@@ -135,7 +135,7 @@ describe("RemoteUsage", () => {
     it("多账号的家列出全部账号（名字、描述、套餐、使用中），单账号家不出列表", async () => {
       api.getAccounts.mockResolvedValue([payload("claude", { usage: usage(30) }), payload("gemini")]);
       api.listProfiles.mockImplementation(async (provider: string) =>
-        provider === "claude" ? twoProfiles() : [profile(null, "", true)],
+        provider === "claude" ? [...twoProfiles(), profile("spare", "备用", false, { account: null })] : [profile(null, "", true)],
       );
       render(<RemoteUsage />);
 
@@ -148,6 +148,9 @@ describe("RemoteUsage", () => {
       expect(list.getByText("使用中")).toBeTruthy();
       expect(list.getByRole("button", { name: "查看工作的用量" }).textContent).toContain("API Key");
       expect(list.getByRole("button", { name: "切换到工作" })).toBeTruthy();
+      // 未登录的账号手机上登不了：不给切换，说清去电脑上登录
+      expect(list.getByRole("button", { name: "查看备用的用量" }).textContent).toContain("未登录，在电脑上登录后可切换");
+      expect(list.queryByRole("button", { name: "切换到备用" })).toBeNull();
       // 当前账号不给切换按钮
       expect(list.queryByRole("button", { name: "切换到默认账号" })).toBeNull();
 

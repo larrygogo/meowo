@@ -20,11 +20,12 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
 const closeMock = vi.hoisted(() => vi.fn());
 vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({ close: closeMock }) }));
 // 收集 login-done 回调，测试里手动广播（模拟 Tauri emit）。其余事件（ns-prefill）照常返回 unlisten。
-const ev = vi.hoisted(() => ({ loginCbs: [] as Array<(e: unknown) => void> }));
+const ev = vi.hoisted(() => ({ loginCbs: [] as Array<(e: unknown) => void>, profileCbs: [] as Array<(e: unknown) => void> }));
 const emitMock = vi.hoisted(() => vi.fn((_event: string, _payload?: unknown) => Promise.resolve()));
 vi.mock("@tauri-apps/api/event", () => ({
   listen: (event: string, cb: (e: unknown) => void) => {
     if (event === "login-done") ev.loginCbs.push(cb);
+    if (event === "active-profile-changed") ev.profileCbs.push(cb);
     return Promise.resolve(() => {});
   },
   emit: emitMock,
@@ -52,6 +53,7 @@ beforeEach(() => {
   closeMock.mockReset();
   emitMock.mockClear();
   ev.loginCbs.length = 0;
+  ev.profileCbs.length = 0;
   api.recentCwds.mockResolvedValue([]);
   api.checkProviderHooks.mockResolvedValue("installed");
   api.availableTerminals.mockResolvedValue(["wt"]);
@@ -117,6 +119,18 @@ describe("NewSessionPanel (独立窗口)", () => {
     render(<NewSessionPanel />);
     const hint = await screen.findByTestId("ns-active-profile");
     expect(hint.textContent).toBe(zh.newSession.activeProfile("工作"));
+  });
+
+  it("开着新建页时别处（手机远程）切了账号：提示跟着换成新账号", async () => {
+    render(<NewSessionPanel />);
+    await screen.findByTestId("ns-launch");
+    expect(screen.queryByTestId("ns-active-profile")).toBeNull();
+
+    api.getAccounts.mockResolvedValue([
+      { provider: "claude", account: { email: "a@b.c" }, usage: null, usage_supported: true, active_profile_name: "工作" },
+    ]);
+    act(() => ev.profileCbs.forEach((cb) => cb({ payload: "claude" })));
+    expect((await screen.findByTestId("ns-active-profile")).textContent).toBe(zh.newSession.activeProfile("工作"));
   });
 
   it("启动失败显示错误，不关窗", async () => {

@@ -2004,6 +2004,7 @@ export const zh = {
     switchProfile: "切换",
     switchToProfile: (name: string) => `切换到${name}`,
     profilesLoadFailed: "账号列表读取失败",
+    profileLoginOnDesktop: "未登录，在电脑上登录后可切换",
     profilesDesktopOnly: "登录、退出和管理账号请在电脑上操作",
     backToSessions: "返回会话列表",
     // 配置端口与实际监听分叉（多实例共享 settings.json，另一实例改端口本实例不跟随）。

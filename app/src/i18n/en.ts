@@ -1771,6 +1771,7 @@ export const en: Dict = {
     switchProfile: "Switch",
     switchToProfile: (name) => `Switch to ${name}`,
     profilesLoadFailed: "Couldn't load accounts",
+    profileLoginOnDesktop: "Not signed in. Sign in on your computer to switch",
     profilesDesktopOnly: "Sign in, sign out and manage accounts on your computer",
     backToSessions: "Back to sessions",
     boundMismatch: (configured, actual) =>
