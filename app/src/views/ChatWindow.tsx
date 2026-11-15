@@ -4813,6 +4813,14 @@ export function ChatWindow() {
           busy={queueBusy}
           onDeliver={(item) => void deliverQueued(item)}
           onRetry={(item) => void promptQueueRetry(sessionId, item.id).then(() => refreshPromptQueue()).catch((error) => setSendError(formatBackendError(error, t.locale)))}
+          onRestore={(item) => {
+            const text = item.draft.prompt;
+            const files = queueAttachments(item.draft);
+            setPrompt((current) => (current.trim() && text ? `${text}\n\n${current}` : current || text));
+            setAttachments((current) => [...files.filter((file) => !current.some((kept) => kept.path === file.path)), ...current]);
+            promptInputRef.current?.focus();
+          }}
+          onChanged={() => void refreshPromptQueue().catch((error) => setSendError(formatBackendError(error, t.locale)))}
           onError={(error) => setSendError(formatBackendError(error, t.locale))}
         />
         {/* 审批卡的让位占位块（高度 = --chat-overlay-h，见 overlayRef 的观察者）：跟内容一起滚，

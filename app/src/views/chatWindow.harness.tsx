@@ -150,7 +150,7 @@ export function queueFallback(command: string, args?: Record<string, unknown>): 
     return Promise.resolve(true);
   }
   if (command === "prompt_queue_cancel") {
-    if (item.state !== "held") return Promise.resolve(false);
+    if (item.state !== "held" && item.state !== "failed") return Promise.resolve(false);
     put(current().map((entry) => entry.id === id ? { ...entry, state: "cancelled" } : entry));
     return Promise.resolve(true);
   }

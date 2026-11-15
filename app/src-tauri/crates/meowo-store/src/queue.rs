@@ -71,9 +71,10 @@ impl Store {
         Ok(changed == 1)
     }
 
+    /// held/failed 可从列表清理；delivering 必须先结算，不能把可能在写的消息直接说成已取消。
     pub fn cancel_queued_prompt(&self, session_id: i64, id: i64, now_ms: i64) -> Result<bool, StoreError> {
         let changed = self.conn.execute(
-            "UPDATE prompt_queue SET state = 'cancelled', updated_at = ?3 WHERE session_id = ?1 AND id = ?2 AND state = 'held'",
+            "UPDATE prompt_queue SET state = 'cancelled', updated_at = ?3 WHERE session_id = ?1 AND id = ?2 AND state IN ('held', 'failed')",
             rusqlite::params![session_id, id, now_ms],
         )?;
         Ok(changed == 1)
@@ -153,6 +154,17 @@ mod tests {
         assert!(store.claim_queued_prompt(9, item.id, 104).unwrap().is_some());
         store.recover_prompt_deliveries().unwrap();
         assert_eq!(store.queued_prompts(9).unwrap()[0].state, "failed");
+    }
+
+    #[test]
+    fn failed_delivery_can_be_dismissed_without_retrying() {
+        let store = Store::open_in_memory().unwrap();
+        let item = store.enqueue_prompt(10, "draft", 100).unwrap();
+        store.claim_queued_prompt(10, item.id, 101).unwrap();
+        store.finish_prompt_delivery(10, item.id, false, 102).unwrap();
+        assert!(store.cancel_queued_prompt(10, item.id, 103).unwrap());
+        assert!(store.queued_prompts(10).unwrap().is_empty());
+        assert!(!store.retry_queued_prompt(10, item.id, 104).unwrap());
     }
 
     #[test]

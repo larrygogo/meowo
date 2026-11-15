@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { promptQueueCancel, promptQueueEdit, type QueueDraftDto, type QueuedPromptDto } from "../../api";
+import { promptQueueCancel, promptQueueEdit, promptQueueFinish, type QueueDraftDto, type QueuedPromptDto } from "../../api";
 import { useT } from "../../i18n";
 import type { Attachment } from "./drafts";
 import { busyProps } from "../../busyButton";
@@ -10,6 +10,8 @@ export function QueuedPrompts({
   busy,
   onDeliver,
   onRetry,
+  onRestore,
+  onChanged,
   onError,
 }: {
   sessionId: number;
@@ -17,12 +19,37 @@ export function QueuedPrompts({
   busy: boolean;
   onDeliver: (item: QueuedPromptDto) => void;
   onRetry: (item: QueuedPromptDto) => void;
+  onRestore: (item: QueuedPromptDto) => void;
+  onChanged: () => void;
   onError: (error: unknown) => void;
 }) {
   const t = useT();
   const [editing, setEditing] = useState<number | null>(null);
   const [draft, setDraft] = useState<QueueDraftDto | null>(null);
+  const [dismissing, setDismissing] = useState<number | null>(null);
   if (items.length === 0) return null;
+
+  const dismiss = async (item: QueuedPromptDto): Promise<boolean> => {
+    if (dismissing != null) return false;
+    setDismissing(item.id);
+    try {
+      // 卡在 delivering 时原发送 Promise 可能永不返回；这里只结束宿主记账，不冒充撤回 CLI 输入。
+      if (item.state === "delivering") await promptQueueFinish(sessionId, item.id, false);
+      const cancelled = await promptQueueCancel(sessionId, item.id);
+      if (!cancelled) onError("queue/not_cancellable");
+      return cancelled;
+    } catch (error) {
+      onError(error);
+      return false;
+    } finally {
+      setDismissing(null);
+      onChanged();
+    }
+  };
+  const restore = async (item: QueuedPromptDto) => {
+    // 只恢复草稿，不自动重发：原写入结果不明，重试必须由用户确认。
+    if (await dismiss(item)) onRestore(item);
+  };
 
   const startEdit = (item: QueuedPromptDto) => {
     setEditing(item.id);
@@ -72,12 +99,18 @@ export function QueuedPrompts({
             <button type="button" className="chat-user-action" {...busyProps(busy, () => startEdit(item))}>{t.chat.queueEdit}</button>
             <button type="button" className="chat-user-action" {...busyProps(busy, () => void promptQueueCancel(sessionId, item.id).then((cancelled) => {
               if (!cancelled) onError("queue/not_cancellable");
-            }).catch(onError))}>{t.chat.queueCancel}</button>
+            }).catch(onError).finally(onChanged))}>{t.chat.queueCancel}</button>
           </>}
-          {item.state === "delivering" && <span className="chat-queued-tag" role="status">{t.chat.queueDelivering}</span>}
+          {item.state === "delivering" && <>
+            <span className="chat-queued-tag" role="status">{t.chat.queueDelivering}</span>
+            <button type="button" className="chat-user-action" {...busyProps(dismissing === item.id, () => void restore(item))}>{t.chat.echoRestore}</button>
+            <button type="button" className="chat-user-action" data-tip={t.chat.queuedDismissTip} {...busyProps(dismissing === item.id, () => void dismiss(item))}>{t.chat.queuedDismiss}</button>
+          </>}
           {item.state === "failed" && <>
             <span className="chat-queued-tag is-warn" role="alert">{t.chat.queueFailed}</span>
             <button type="button" className="chat-user-action" {...busyProps(busy, () => onRetry(item))}>{t.chat.echoRetry}</button>
+            <button type="button" className="chat-user-action" {...busyProps(dismissing === item.id, () => void restore(item))}>{t.chat.echoRestore}</button>
+            <button type="button" className="chat-user-action" data-tip={t.chat.queuedDismissTip} {...busyProps(dismissing === item.id, () => void dismiss(item))}>{t.chat.queuedDismiss}</button>
           </>}
         </div>
       </>}

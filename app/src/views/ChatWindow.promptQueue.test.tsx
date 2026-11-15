@@ -14,7 +14,7 @@ function queueHarness() {
   const base = adapter.setup(771, "claude", status);
   invoke.mockImplementation((command: string, args?: Record<string, unknown>) => {
     if (command === "get_chat_history") return Promise.resolve(adapter.history(771, "claude", status));
-    if (command === "prompt_queue_list") return Promise.resolve(queued);
+    if (command === "prompt_queue_list") return Promise.resolve(queued.filter((entry) => ["held", "delivering", "failed"].includes(entry.state)));
     if (command === "prompt_queue_enqueue") {
       const draft = args?.draft as QueuedPromptDto["draft"];
       const item: QueuedPromptDto = { id: 1, sessionId: 771, draft, state: "held", createdAt: 100, updatedAt: 100 };
@@ -31,11 +31,20 @@ function queueHarness() {
       queued = queued.map((entry) => entry.id === args?.id ? { ...entry, state: args.delivered ? "delivered" : "failed" } : entry);
       return Promise.resolve(true);
     }
+    if (command === "prompt_queue_cancel") {
+      const found = queued.find((entry) => entry.id === args?.id);
+      if (!found || (found.state !== "held" && found.state !== "failed")) return Promise.resolve(false);
+      queued = queued.map((entry) => entry.id === found.id ? { ...entry, state: "cancelled" } : entry);
+      return Promise.resolve(true);
+    }
     return base(command, args);
   });
   return {
     writes: () => adapter.writes(771),
     idle: () => { status = "waiting"; },
+    seed: (state: string) => {
+      queued = [{ id: 1, sessionId: 771, draft: { prompt: "卡住的消息", attachments: [] }, state, createdAt: 100, updatedAt: 100 }];
+    },
     state: () => queued[0]?.state,
   };
 }
@@ -57,6 +66,18 @@ describe("ChatWindow 持久队列", () => {
     const delivered = harness.writes().filter((text) => String(text).includes("回合结束后继续")).length;
     await new Promise((resolve) => setTimeout(resolve, 800));
     expect(harness.writes().filter((text) => String(text).includes("回合结束后继续"))).toHaveLength(delivered);
+  });
+
+  it("卡在正在交给 Agent 的消息可放回输入框，不向 CLI 重发", async () => {
+    const harness = queueHarness();
+    harness.seed("delivering");
+    render(<ChatWindow />);
+    const restore = await screen.findByRole("button", { name: "放回输入框" });
+    fireEvent.click(restore);
+    await waitFor(() => expect(harness.state()).toBe("cancelled"));
+    await waitFor(() => expect(screen.queryByText("卡住的消息", { selector: ".chat-queued-bubble" })).toBeNull(), { timeout: 4_000 });
+    expect((await adapter.box()).value).toBe("卡住的消息");
+    expect(harness.writes()).toEqual([]);
   });
 
   it("用户在运行中主动提前交付才写官方 TUI", async () => {
