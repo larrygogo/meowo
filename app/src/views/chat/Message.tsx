@@ -406,9 +406,10 @@ function ReasoningBlock({ item, nextStamp = null, live = false }: { item: Extrac
 /// 插件共用，见 claude classify_error / codex / opencode），其余标签照旧只给「继续」。
 const LOGIN_ERROR_LABELS = new Set(["需要重新登录", "认证失败"]);
 const NETWORK_ERROR_LABELS = new Set(["无法连接 API"]);
-/// 接口拒收上下文本身（Kimi 不可重试的 400/413，见 kimi telemetry::failure）：重发同一段
-/// 上下文必然再错（实拍连错 5、6 次），「继续」是死路。出路是撤回到出错那一轮之前（原话放回
-/// 输入框，见 rejectedRecovery），撤不回时新开会话。
+/// 接口拒收上下文本身（Kimi 不可重试的 400/413，见 kimi telemetry::failure）：重发同一段上下文
+/// 多半再错（读了动图的会话连错 5 次），推荐撤回到出错那一轮之前（原话放回输入框，见
+/// rejectedRecovery），撤不回时新开会话。「继续」仍保留：图片 blob 丢失的会话连错 6 次后，
+/// 同一段上下文又重试成功了，两种 400 的字段一模一样，分不出哪种是死路。
 const REJECTED_ERROR_LABELS = new Set([REJECTED_LABEL]);
 
 function TurnErrorCard({ item, latest }: { item: Extract<ChatItem, { type: "turn_error" }>; latest: boolean }) {
@@ -448,18 +449,16 @@ function TurnErrorCard({ item, latest }: { item: Extract<ChatItem, { type: "turn
               {t.chat.turnErrorNewSession}
             </button>
           )}
-          {!rejected && (
-            <button
-              type="button"
-              className="chat-turn-error-continue"
-              {...busyProps(busy, () => {
-                setBusy(true);
-                void actions.sendText(t.chat.turnErrorContinueText).finally(() => setBusy(false));
-              })}
-            >
-              {t.chat.turnErrorContinue}
-            </button>
-          )}
+          <button
+            type="button"
+            className="chat-turn-error-continue"
+            {...busyProps(busy, () => {
+              setBusy(true);
+              void actions.sendText(t.chat.turnErrorContinueText).finally(() => setBusy(false));
+            })}
+          >
+            {t.chat.turnErrorContinue}
+          </button>
         </div>
       )}
     </article>

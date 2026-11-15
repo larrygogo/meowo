@@ -85,8 +85,8 @@ describe("Message turn_error", () => {
     expect(screen.queryByRole("button", { name: "去登录" })).toBeNull();
   });
 
-  // 实拍：Kimi 读了动图 webp 后每轮 400，用户连点三次「继续」全错。「继续」是死路。
-  it("请求被拒：说明原因，只给「新开会话」，不给必错的「继续」", () => {
+  // 实拍：读了动图的会话每轮 400；但 blob 丢失的会话连错 6 次后又恢复了。推荐出路在前，「继续」保留。
+  it("请求被拒且撤不回：推荐「新开会话」，「继续」仍在", () => {
     const sendText = vi.fn().mockResolvedValue(true);
     const newSession = vi.fn();
     render(
@@ -95,8 +95,8 @@ describe("Message turn_error", () => {
       </ChatActionsContext.Provider>,
     );
     expect(screen.getByText("请求被拒")).toBeTruthy();
-    expect(screen.getByText("对话里有接口不收的内容，请新开会话")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "继续" })).toBeNull();
+    expect(screen.getByText("重发多半还会被拒，建议新开会话")).toBeTruthy();
+    expect(screen.getAllByRole("button").map((b) => b.textContent)).toEqual(["新开会话", "继续"]);
     fireEvent.click(screen.getByRole("button", { name: "新开会话" }));
     expect(newSession).toHaveBeenCalledTimes(1);
     expect(sendText).not.toHaveBeenCalled();
@@ -111,9 +111,9 @@ describe("Message turn_error", () => {
         <Message item={{ ...item, label: "请求被拒", text: "Invalid request Error" }} latest />
       </ChatActionsContext.Provider>,
     );
-    expect(screen.getByText("撤回出错那轮，原话会放回输入框")).toBeTruthy();
+    expect(screen.getByText("重发多半还会被拒，建议撤回出错那轮")).toBeTruthy();
     const buttons = screen.getAllByRole("button").map((b) => b.textContent);
-    expect(buttons).toEqual(["撤回到出错前", "新开会话"]);
+    expect(buttons).toEqual(["撤回到出错前", "新开会话", "继续"]);
     fireEvent.click(screen.getByRole("button", { name: "撤回到出错前" }));
     expect(undoRejected).toHaveBeenCalledTimes(1);
     expect(sendText).not.toHaveBeenCalled();

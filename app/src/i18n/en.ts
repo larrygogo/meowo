@@ -631,9 +631,9 @@ export const en: Dict = {
     turnErrorLoginHint: "Sign in again, then press Continue",
     turnErrorLoginGo: "Sign in",
     turnErrorNetworkHint: "Check your network or proxy, then press Continue",
-    turnErrorRejectedHint: "The API won't accept this chat. Start a new session",
+    turnErrorRejectedHint: "Resending will likely fail again. Try a new session",
     turnErrorNewSession: "New session",
-    turnErrorRejectedUndoHint: "Undo the failed turns. Your message goes back to the input",
+    turnErrorRejectedUndoHint: "Resending will likely fail again. Try undoing the failed turns",
     turnErrorUndo: "Undo to before the error",
     reasoningLive: "Thinking…",
     turnToolDoing: {

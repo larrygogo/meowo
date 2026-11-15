@@ -711,9 +711,9 @@ export const zh = {
     turnErrorLoginGo: "去登录",
     turnErrorNetworkHint: "检查网络或代理后点「继续」",
     // 接口拒收了上下文本身（如读进了它不收的图片），重发同一段上下文必然再错。
-    turnErrorRejectedHint: "对话里有接口不收的内容，请新开会话",
+    turnErrorRejectedHint: "重发多半还会被拒，建议新开会话",
     turnErrorNewSession: "新开会话",
-    turnErrorRejectedUndoHint: "撤回出错那轮，原话会放回输入框",
+    turnErrorRejectedUndoHint: "重发多半还会被拒，建议撤回出错那轮",
     turnErrorUndo: "撤回到出错前",
     reasoningLive: "思考中…",
     turnToolDoing: {
