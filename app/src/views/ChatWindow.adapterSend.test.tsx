@@ -29,6 +29,26 @@ describe("ChatWindow 适配回归", () => {
     await waitFor(() => expect(writes(501).some((text) => String(text).includes("下一回合处理"))).toBe(true));
   });
 
+  // Kimi 2.6.1 长工具运行时可只剩常驻输入框，屏幕检测因此回退 idle；DB 的 running
+  // 必须继续决定发送记账，否则会绕过持久队列，提前投递时还会把原生排队错记成 echo。
+  it("Kimi 输入框回退 idle 时仍按运行中排队", async () => {
+    const base = setup(510, "kimi", "running", "idle");
+    invoke.mockImplementation((command, args) => {
+      if (command === "get_chat_history") return Promise.resolve({ ...history(510, "kimi", "running", "idle"), screenAssumed: true });
+      if (command === "managed_terminal_frame") return Promise.resolve(emptyComposerFrame("kimi"));
+      return base(command, args);
+    });
+    render(<ChatWindow />);
+    await screen.findByText("适配-510");
+    await waitFor(() => expect(document.querySelector(".chat-model-label")).toBeTruthy());
+    fireEvent.change(box(), { target: { value: "长工具期间插一句" } });
+    fireEvent.keyDown(box(), { key: "Enter" });
+    await waitFor(() => expect(document.querySelector(".chat-queued-bubble")?.textContent).toBe("长工具期间插一句"));
+    expect(writes(510)).toEqual([]);
+    await deliverQueuedNow();
+    await waitFor(() => expect(writes(510)).toContain("\r"));
+  });
+
   // 插话进了对话记录后，排队区不再挂它的回执：对话里已经有「回合中插入」的那条，
   // 回执再挂一份就是同一句话显示两遍（用户实拍）。
   it("插话出现在对话记录后，排队区不再重复显示", async () => {

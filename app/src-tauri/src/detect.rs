@@ -1035,13 +1035,13 @@ mod tests {
         );
     }
 
-    /// 空闲输入框是**正向** idle 证据（0.29 源码取证：custom-editor.ts 的
-    /// injectPromptSymbol + wrapWithSideBorders，行呈 `│ > `，bash 模式 `│ ! `）。
-    /// 此前 kimi 没有 idle 规则，空闲屏恒落 fallback——卡片挂「认不出来」灰点。
+    /// 2.6.1 跑长工具时 spinner 可以滚出末屏，但输入框仍常驻底部；此时不能再凭输入框
+    /// 发布确凿 idle，否则它会覆盖 hook 的 running，让排队消息按 echo 记账并报未确认送达。
     #[test]
-    fn kimi_idle_composer_prompt_is_confident_idle() {
+    fn kimi_composer_prompt_falls_back_instead_of_claiming_idle() {
         let s = snap(&[
-            "  earlier output",
+            "  cargo test",
+            "     Running unittests src/main.rs",
             "\u{256D}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{256E}",
             "\u{2502} >      \u{2502}",
             "\u{2570}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{256F}",
@@ -1050,20 +1050,19 @@ mod tests {
         ]);
         assert_eq!(
             state_of(evaluate("kimi", &s)),
-            Some((ScreenState::Idle, "composer_prompt_idle"))
+            Some((ScreenState::Idle, FALLBACK_RULE_ID))
         );
-        // bash 模式的 `!` 提示符同样认。
+        // bash 模式同样只是输入框形态，不能单独证明回合已结束。
         let bash = snap(&["\u{2502} !      \u{2502}", "context: 1%"]);
         assert_eq!(
             state_of(evaluate("kimi", &bash)),
-            Some((ScreenState::Idle, "composer_prompt_idle"))
+            Some((ScreenState::Idle, FALLBACK_RULE_ID))
         );
     }
 
-    /// 优先级钉子：工作状态行与输入框同屏（工作中输入框照画）时，working 规则
-    /// 必须压过 composer_prompt_idle——否则转着的会话会被谎报成等你输入。
+    /// 工作状态行与常驻输入框同屏时，仍以 spinner 的可见 working 证据为准。
     #[test]
-    fn kimi_working_status_outranks_composer_prompt() {
+    fn kimi_working_status_with_composer_prompt_is_working() {
         let s = snap(&[
             "  output",
             " \u{1F318} \u{00B7} Tip: ! to run a shell command",
@@ -1086,8 +1085,7 @@ mod tests {
         );
     }
 
-    /// 反向钉子：转录里用户消息是 bullet 开头的 `> ...`（user-message.ts），没有
-    /// `│` 边框——不能认成空闲输入框，只能落 fallback。
+    /// 转录里的普通输出与 bullet 用户消息都没有可见工作证据，只能落 fallback。
     #[test]
     fn kimi_bare_gt_transcript_line_is_not_composer() {
         let s = snap(&["> 刚才发的那条消息", "  nothing pending"]);
@@ -1099,10 +1097,10 @@ mod tests {
 
     /// kimi 2.5.1 的盲文 spinner 状态词改成 Unicode 省略号（包内 MoonLoader.updateDisplay
     /// 拼 `${frame} ${label}` + ` · Tip: …`，label 是 `"Working…"` / `"Compacting…"`，
-    /// 2026-11-12 取证）。旧规则只认 `working...`，这行与输入框同屏时整屏判成空闲。
+    /// 2026-11-12 取证）。旧规则只认 `working...`，会漏掉这种工作屏。
     /// 旧版三个点的写法（上面 `kimi_spinners_are_working`）仍认。
     #[test]
-    fn kimi_251_ellipsis_spinner_outranks_composer_prompt() {
+    fn kimi_251_ellipsis_spinner_with_composer_prompt_is_working() {
         for line in [
             " \u{280B} Working\u{2026} \u{00B7} Tip: ! to run a shell command",
             " \u{2834} Working\u{2026}",
@@ -1167,7 +1165,7 @@ mod tests {
         let prose = snap(&["\u{1F318} retrying later is fine", "\u{2502} >      \u{2502}"]);
         assert_eq!(
             state_of(evaluate("kimi", &prose)),
-            Some((ScreenState::Idle, "composer_prompt_idle"))
+            Some((ScreenState::Idle, FALLBACK_RULE_ID))
         );
     }
 

@@ -168,22 +168,8 @@ pub(super) static RULES: &[ScreenRule] = &[
         ),
     )
     .visible(),
-    // 空闲输入框（0.29 源码取证，`custom-editor.ts`）：`injectPromptSymbol` 把提示符
-    // 写进首条内容行的第 2 列（普通模式 `>`、bash 模式 `!`），`wrapWithSideBorders`
-    // 再把 0 列叠上 `│` 边框——行呈 `│ > ` / `│ ! `。转录里的用户消息走 bullet
-    // （user-message.ts），不带这个边框，不会撞车。
-    //
-    // 本条补的是 kimi 规则集**没有 idle 正向证据**的缺口：此前空闲屏一条规则都不命中，
-    // 恒落 FALLBACK_RULE_ID——卡片挂着「认不出来」的中性灰点，而不是有根据的「等你输入」
-    // （2026-09-01 实拍）。优先级压在所有 working/blocked 规则之下：转动的 spinner 与
-    // 审批/提问面板同屏时照旧胜；底部 8 个非空行盖住输入框三行（含草稿数行）+ footer
-    // 两行。框线 + 提示符是屏幕上确实画着的可见证据，与 claude 的 live_prompt_box 同级。
-    ScreenRule::new(
-        "composer_prompt_idle",
-        ScreenState::Idle,
-        80,
-        Region::BottomNonEmpty(8),
-        Matcher::LineStartsWith(&["│ > ", "│ ! "]),
-    )
-    .visible(),
+    // 这里刻意不为 `│ > ` / `│ ! ` 输入框声明 idle 规则：Kimi 2.6.1 跑长工具时输入框
+    // 仍在底部，而 spinner 可能已滚出末屏（2026-11-15 cargo test 实拍）。把常驻输入框当成
+    // 空闲确证会覆盖 hook 的 running，并把排队消息错记成等待 echo；无规则命中时落回
+    // fallback，activityTone 才会继续采用回合状态。真正的 spinner 与审批面板仍按上面规则识别。
 ];
