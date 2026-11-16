@@ -11,6 +11,7 @@ mod checkpoints;
 mod confirm;
 mod detect;
 mod diaglog;
+mod dropzone;
 mod editors;
 #[cfg(target_os = "windows")]
 mod envpath;

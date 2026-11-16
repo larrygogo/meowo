@@ -793,6 +793,9 @@ pub(crate) fn open_chat_window_target(
     // 标题/按钮错位；挂空 toolbar 让系统把它垂直居中（备忘录式侧栏惯例）。
     #[cfg(target_os = "macos")]
     unify_titlebar_toolbar(&win);
+    // Windows 文件拖入的兜底注册（wry 一次性枚举赶不上 WebView2 后挂上的 browser 进程
+    // 窗口，详见 dropzone.rs 头注）；必须挂在建窗之后，非 Windows 是 no-op。
+    crate::dropzone::watch(&win);
     show_after_grace(&win, activate);
     let app_handle = app.clone();
     win.on_window_event(move |e| {

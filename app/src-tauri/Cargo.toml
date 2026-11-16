@@ -141,6 +141,10 @@ windows = { version = "0.62", features = [
   "UI_Notifications",
   "Win32_Foundation",
   "Win32_System_Com",
+  # dropzone.rs：OLE 拖放目标注册（IDropTarget/RegisterDragDrop）与 WinEvent 钩子。
+  "Win32_System_Ole",
+  "Win32_System_SystemServices",
+  "Win32_UI_Accessibility",
   "Win32_UI_Shell",
   "Win32_UI_Shell_Common",
   "Win32_UI_WindowsAndMessaging",
@@ -151,6 +155,9 @@ winreg = "0.55"
 # 生产构建关 WebView2 浏览器加速键（window.rs disable_browser_accelerators）。
 # tauri/wry 已传递依赖同版本（0.39，windows-core 0.62 系），提为直接依赖不引第二份副本。
 webview2-com = "0.39"
+# dropzone.rs 的 #[implement(IDropTarget)] 宏展开要在 crate 根部找 windows_core；
+# 与 windows 0.62 同版本，已在依赖树里。
+windows-core = "0.62"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # 诊断日志把 stderr dup2 到管道（diaglog.rs）。
