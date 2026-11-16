@@ -67,6 +67,7 @@ import { useSessionRef, useSessionScope, useSessionState, useSessionTimer } from
 import { launchGrid } from "./chat/terminalGrid";
 import { managedTerminalFrame, agentDynamicModeChoices, promptQueueClaim, promptQueueEnqueue, promptQueueFinish, promptQueueRetry, type DynamicModeChoice, type QueuedPromptDto } from "../api";
 import { QueuedPrompts, queueAttachments } from "./chat/QueuedPrompts";
+import { SessionPrsContext, sessionPullRequestUrls } from "./chat/sessionPrs";
 import { usePromptQueue } from "./chat/usePromptQueue";
 import { BottomSheet, SheetOnPhone } from "./chat/BottomSheet";
 import { runningActivityView, RunningBar, SnakeSpinner, TurnAnnouncer, useCliStatusStore } from "./chat/RunningBar";
@@ -893,6 +894,9 @@ export function ChatWindow() {
   const permissionButtonRef = useRef<HTMLButtonElement | null>(null);
   // 标题栏查到的 PR（ChatTitleBar 回报），命令面板的「打开 PR」用它。
   const [titlePullRequest, setTitlePullRequest] = useState<PullRequestDto | null>(null);
+  // 会话里 agent 最近用 gh 建过、动过的 PR：标题栏先看它，不看目录分支（见 chat/sessionPrs）。
+  const sessionPrUrls = useMemo(() => sessionPullRequestUrls(items), [items]);
+  const sessionPrUrl = sessionPrUrls[sessionPrUrls.length - 1] ?? null;
   // 对话页能力由安装实况组装（基础命令 ∪ 用户/项目命令 ∪ 当前会话 runtime skill 清单），
   // 按 provider+cwd 查询——换会话、换项目都重取，装了新命令下次打开就见。
   // 未知 provider / 查询未回时为空：不补全、不给菜单，宁缺毋滥。
@@ -4627,6 +4631,7 @@ export function ChatWindow() {
         end={history?.endable ? { busy: endingSession, onClick: () => void endSession() } : null}
         cwd={cwd}
         prCwd={gitSummary?.isRepo ? cwd : (repoChanges?.[0]?.root ?? cwd)}
+        sessionPrUrl={sessionPrUrl}
         gitSummary={effectiveSummary}
         changesOpen={panelState.visible && panel.active?.type === "diff"}
         panelOpen={panelState.visible}
@@ -6039,6 +6044,8 @@ export function ChatWindow() {
           />}
           {/* fallback=null:桌面端已在挂载时预取 chunk,点开即到;真等到的话面板位置
               短暂空着比塞一个骨架更安静(分栏柄已经先渲染出来占位了)。 */}
+          {/* 「更改」面板里按仓库列出这个会话建过的 PR（见 chat/sessionPrs）。 */}
+          <SessionPrsContext.Provider value={sessionPrUrls}>
           <Suspense fallback={null}>
           {remoteUi()
             ? (
@@ -6089,6 +6096,7 @@ export function ChatWindow() {
               />
             )}
           </Suspense>
+          </SessionPrsContext.Provider>
         </>
       )}
       </div>

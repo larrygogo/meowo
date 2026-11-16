@@ -36,6 +36,8 @@ export const QA_SHOTS = [
   { name: "qa-md-max-2560", scene: "flow-md", params: "max=1", size: [2560, 1440], sel: ".chat-diff-mdview", steps: [["click", ".chat-diff-tree-file:has-text('README.md')"]] },
   { name: "qa-md-max", scene: "flow-md", params: "max=1", sel: ".chat-diff-mdview", steps: [["click", ".chat-diff-tree-file:has-text('README.md')"]] },
   // 「更改」的树状视图、缩放 150% 下的「文件」页签：行高与图标列要跟着缩放和层级走。
+  // 会话里另切分支建的 PR：标题栏显示新建的 #171，面板分开列「本会话的 PR」与「当前分支的 PR」。
+  { name: "qa-panel-session-pr", scene: "panel-session-pr", sel: "[data-testid=scm-session-prs]" },
   { name: "qa-panel-tree", scene: "panel-changes", sel: ".scm-row.is-dir", steps: [["click", ".scm-tools .chat-diff-layout button >> nth=1"]] },
   { name: "qa-files-ui150", scene: "panel-files", params: "ui=1.5", sel: ".chat-diff-tree-file" },
   // ── 对话流里靠后端状态出现的东西（harness 见 qaFlow.ts）──

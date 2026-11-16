@@ -4841,6 +4841,8 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .scm-forge-btn:disabled { opacity: 0.45; cursor: default; }
 .scm-forge-btn.is-ghost { color: var(--cc-text-dim); }
 .scm-pr { display: flex; flex-direction: column; gap: var(--sp-6); padding: var(--sp-12); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-lg); background: var(--cc-panel-raised); }
+/* 「本会话的 PR」「当前分支的 PR」小标题：只在两类同时出现时标，分清哪个是哪个。 */
+.scm-pr-label { font-size: var(--text-2xs); color: var(--cc-text-faint); }
 .scm-pr-head { display: flex; align-items: center; gap: var(--sp-8); min-width: 0; padding: 0; border: 0; background: transparent; color: var(--cc-text); font: inherit; font-size: var(--text-sm); font-weight: 500; text-align: left; cursor: pointer; }
 .scm-pr-head:hover .scm-pr-title { text-decoration: underline; }
 .scm-pr-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

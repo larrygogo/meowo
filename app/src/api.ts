@@ -839,6 +839,10 @@ export function openProjectDir(cwd: string): Promise<void> {
 export function getPullRequest(cwd: string): Promise<PullRequestDto | null> {
   return invoke("git_pull_request", { cwd });
 }
+/// 按链接查会话里 agent 建过、动过的 PR（不看目录的当前分支，见 views/chat/sessionPrs）。桌面专用，手机不查。
+export function getPullRequestByUrl(cwd: string, url: string): Promise<PullRequestDto | null> {
+  return invoke("git_pull_request_by_url", { cwd, url });
+}
 export type { PullRequestDto, PrReviewDto };
 export function prReview(cwd: string, sessionId: number, sessionCwd?: string | null): Promise<PrReviewDto | null> {
   return invoke("pr_review", { cwd, sessionId, ...(sessionCwd ? { sessionCwd } : {}) } satisfies PrReviewArgs);

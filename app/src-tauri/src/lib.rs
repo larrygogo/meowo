@@ -83,7 +83,7 @@ use fsutil::{
 };
 use git::{
     git_changes_overview, git_commit, git_diff_summary, git_discard, git_file_diff, git_ignore_dir,
-    git_pull_request, git_stage, git_unstage, git_untracked_dir_files,
+    git_pull_request, git_pull_request_by_url, git_stage, git_unstage, git_untracked_dir_files,
 };
 use handoff::{copy_session_to_provider, get_session_lineage};
 use install::{
@@ -1574,6 +1574,7 @@ pub fn run() {
             set_lead_provider_enabled,
             git_file_diff,
             git_pull_request,
+            git_pull_request_by_url,
             git_stage,
             git_unstage,
             git_discard,

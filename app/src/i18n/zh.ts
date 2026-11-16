@@ -2228,6 +2228,9 @@ export const zh = {
   },
   // 「更改」面板的推送 / PR / CI / 合并（二期包 5，forge.rs）。文案按 meowo 文案规范：≤20 字、不用破折号和分号。
   forge: {
+    // 「更改」面板里这个会话建过、动过的 PR（常在临时 worktree 里另切分支建），与当前分支的 PR 分开列。
+    sessionPrs: "本会话的 PR",
+    branchPr: "当前分支的 PR",
     reviewOpen: "评论与监控",
     reviewClose: "收起评论",
     reviewDiscussion: "讨论",

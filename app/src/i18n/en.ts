@@ -1972,6 +1972,8 @@ export const en: Dict = {
     fullChangelog: "View full changelog",
   },
   forge: {
+    sessionPrs: "PRs from this session",
+    branchPr: "PR for the current branch",
     reviewOpen: "Review & monitor",
     reviewClose: "Close review",
     reviewDiscussion: "Discussion",
