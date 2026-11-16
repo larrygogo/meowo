@@ -1260,6 +1260,33 @@ impl Store {
         tx.commit()
     }
 
+    /// Stop 漏报时按正式完成记录校准；CAS 防止扫描期间的新回合被旧记录收尾。
+    /// 不补回合计数：迟到的 Stop 仍可能到达，不能把同一回合重复计数。
+    pub fn reconcile_completed_turn(
+        &self,
+        session_id: i64,
+        expected_last_event_at: i64,
+        completed_at: i64,
+        last_ai: Option<&str>,
+    ) -> Result<bool, StoreError> {
+        if completed_at <= 0 || completed_at < expected_last_event_at {
+            return Ok(false);
+        }
+        let tx = ImmediateTx::begin(&self.conn)?;
+        let last_ai = last_ai.map(clean_ai_text).filter(|text| !text.is_empty());
+        let changed = self.conn.execute(
+            "UPDATE sessions SET status = 'waiting', last_event_at = ?1, pending_review = NULL, \
+             last_ai_text = COALESCE(?4, last_ai_text) \
+             WHERE id = ?2 AND last_event_at = ?3 AND status = 'running'",
+            rusqlite::params![completed_at, session_id, expected_last_event_at, last_ai],
+        )? > 0;
+        if changed {
+            self.clear_current_activity(session_id, completed_at)?;
+        }
+        tx.commit()?;
+        Ok(changed)
+    }
+
     /// 已结束的回合数（见 [`Self::finish_turn`]）；会话不存在时 0。
     pub fn session_turns(&self, session_id: i64) -> Result<i64, StoreError> {
         match self.conn.query_row("SELECT turns FROM sessions WHERE id = ?1", [session_id], |row| row.get(0)) {

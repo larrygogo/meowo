@@ -1299,14 +1299,14 @@
           "needle": "token_counting.rebased",
           "note": "2.5.1 wire.jsonl 实样（压缩后 Context% 读它，research-cli-drift K4）；kimi.EXE 3 处",
           "rule": "record:token_counting.rebased",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/telemetry.rs:1780"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/telemetry.rs:1823"
         },
         {
           "legacy": false,
           "needle": "usageScope",
           "note": "2.5.1 wire.jsonl 实样（压缩请求记 session 档，不能当上下文，research-cli-drift K4）；kimi.EXE 5 处",
           "rule": "record:usageScope",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/telemetry.rs:1791"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/telemetry.rs:1834"
         },
         {
           "legacy": false,
