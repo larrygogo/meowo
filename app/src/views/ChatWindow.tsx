@@ -5302,7 +5302,8 @@ export function ChatWindow() {
         {attachments.length > 0 && <div className="chat-attachments">
           {attachments.map((file) => file.image ? (
             /* 图片附件给真缩略图（点开进灯箱，与 transcript 图片同一套 ImageRef）；
-               asset 协议读不到的路径（对话框选的任意目录）由 ImageRef 自行回退成文件名 chip。 */
+               拖进来、对话框选的任意目录不在 asset 白名单里：ImageRef 第一次读失败时请宿主只放行这一张再重试，
+               仍读不到才回退成文件名 chip（这时不给标注按钮，见样式表）。 */
             <div className="chat-attachment is-image" key={file.path} data-tip={file.path}>
               <ImageRef path={file.path} />
               <button type="button" data-attachment-remove="" aria-label={`${t.chat.removeAttachment} ${file.name}`} onClick={(event) => removeAttachment(event.currentTarget, file.path)}>×</button>

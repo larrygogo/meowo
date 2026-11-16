@@ -75,7 +75,7 @@ mod wtnew;
 use chat::{
     capture_screen_region, clipboard_restore, clipboard_set_image, clipboard_text,
     get_chat_history, get_subagent_transcript, probe_subagent_states, refresh_session_model,
-    refresh_session_todos, save_pasted_attachment, search_chat_transcripts,
+    allow_image_preview, refresh_session_todos, save_pasted_attachment, search_chat_transcripts,
 };
 use fsutil::{
     file_mention_candidates, list_dir_entries, list_file_openers, open_path_with, read_file_text,
@@ -1518,6 +1518,7 @@ pub fn run() {
             refresh_session_model,
             refresh_session_todos,
             save_pasted_attachment,
+            allow_image_preview,
             clipboard_set_image,
             capture_screen_region,
             clipboard_restore,

@@ -353,6 +353,12 @@ export function openLink(url: string): Promise<void> {
  * webview 剪贴板拿不到源文件路径（File 只有内容），附件协议却是「路径列表交给 CLI 读」，
  * 只能由宿主代为落盘。
  */
+/// 让任意目录里的一张图能经 asset 协议预览（只放行这一个文件）。拖进来或文件对话框选的图不在
+/// asset 白名单里，缩略图第一次加载失败时调它。桌面专用，手机走 /file 不需要。
+export function allowImagePreview(path: string): Promise<boolean> {
+  return invoke("allow_image_preview", { path });
+}
+
 export function savePastedAttachment(fileName: string, dataBase64: string): Promise<string> {
   return invoke("save_pasted_attachment", { fileName, dataBase64 } satisfies SavePastedAttachmentArgs);
 }

@@ -5,7 +5,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { useT } from "../../i18n";
 import { deliveryStatusLabel } from "../../i18n/statusVocab";
 import { attachmentInstructionEn, attachmentInstructionZh } from "../../i18n/attachmentInstruction";
-import { type ChatItem } from "../../api";
+import { allowImagePreview, type ChatItem } from "../../api";
 import { ChatMarkdown, PlainMarkdown } from "../ChatMarkdown";
 import { ErrorBoundary } from "../../ErrorBoundary";
 import { parseUserText, type CrossMessage } from "./localCommand";
@@ -292,6 +292,10 @@ function CrossMessageBlock({ message }: { message: CrossMessage }) {
 export function ImageRef({ path }: { path: string }) {
   const [failed, setFailed] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  // 第一次加载失败多半是 asset 白名单没放行这个目录（拖进来、文件对话框选的图）：请宿主只放行这一个
+  // 文件，带着新参数重试一次（失败的那次结果浏览器可能缓存着）。放行不了或重试还失败才退回文件名。
+  // first：原地址；allowing：已失败、等宿主放行（地址不变，不会再触发 onError）；retry：放行后换地址重试。
+  const [stage, setStage] = useState<"first" | "allowing" | "retry">("first");
   const name = path.split(/[\\/]/).pop() || path;
   // 远程端失败时可能只是 /file 凭据过期（桌面重启换代），挂着等 transport 重领后重试。
   // 桌面端没人派发该事件，失败即终态，行为不变。
@@ -309,11 +313,19 @@ export function ImageRef({ path }: { path: string }) {
       </span>
     );
   }
-  const src = convertFileSrc(path);
+  const base = convertFileSrc(path);
+  const src = stage === "retry" ? `${base}${base.includes("?") ? "&" : "?"}preview=1` : base;
   return (
     <>
       <button type="button" className="chat-image-thumb-btn" data-tip={name} onClick={() => setExpanded(true)}>
         <img className="chat-image-thumb" src={src} alt={name} loading="lazy" referrerPolicy="no-referrer" onError={() => {
+          if (stage === "first" && !remoteUi()) {
+            setStage("allowing");
+            const giveUp = () => { setFailed(true); window.dispatchEvent(new CustomEvent(IMAGE_LOAD_FAILED_EVENT)); };
+            void allowImagePreview(path).then((allowed) => { if (allowed) setStage("retry"); else giveUp(); }).catch(giveUp);
+            return;
+          }
+          if (stage === "allowing") return;
           setFailed(true);
           window.dispatchEvent(new CustomEvent(IMAGE_LOAD_FAILED_EVENT));
         }} />
