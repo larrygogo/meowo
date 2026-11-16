@@ -1159,14 +1159,14 @@
           "needle": "cannot undo ",
           "note": "2.5.1 kimi.EXE formatUndoLimitMessage：`Cannot undo ` 4 处，后面的数字与原因是运行时拼的",
           "rule": "undo.reject",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:1048"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:1054"
         },
         {
           "legacy": false,
           "needle": "[image #",
           "note": "2.5.1 kimi.EXE：`[image #` 2 处（输入框里的贴图占位）；`[image:` 1 处是旧形态",
           "rule": "clipboard_image",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:823"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/mod.rs:829"
         },
         {
           "legacy": false,

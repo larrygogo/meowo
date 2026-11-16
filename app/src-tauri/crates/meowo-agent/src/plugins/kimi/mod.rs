@@ -797,6 +797,12 @@ impl AgentPlugin for Kimi {
         Some("\r")
     }
 
+    /// 运行中提交的消息挪到输入框上方排队，下面一行提示 `↑ to edit · ctrl-s to steer immediately`
+    /// （2026-11-16 用户实拍）。排队时 wire 不落记录、UserPromptSubmit 也不触发，只有画面能证明收下了。
+    fn queued_hint(&self) -> Option<&'static str> {
+        Some("ctrl-s to steer immediately")
+    }
+
     fn interrupt_input(&self) -> Option<&'static str> {
         Some("\x1b")
     }
