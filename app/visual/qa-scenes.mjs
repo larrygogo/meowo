@@ -44,6 +44,8 @@ export const QA_SHOTS = [
   // 子代理发回来的话（<agent-message>）：改前整段当用户气泡摊开（leader 2026-11-12 截图），改后是「子代理消息」块。
   // 它在 flow-states 的中段偏下，滚到它露出来再拍。
   { name: "qa-agent-msg", scene: "flow-states", sel: ".chat-crossmsg", langs: ["zh", "en"], steps: [["eval", "(() => { const t0 = performance.now(); const id = setInterval(() => { const el = [...document.querySelectorAll('.chat-crossmsg')].pop(); el && el.scrollIntoView({ block: 'center' }); if (performance.now() - t0 > 1200) clearInterval(id); }, 100); })()"], ["tick", 1500]] },
+  // Lead hook 与用户正文同条落盘：正文仍是气泡，hook 收成下面的系统记录（实拍 IMG_2252）。
+  { name: "qa-mixed-user", scene: "flow-mixed-user", size: W620, sel: ".chat-user-bubble" },
   { name: "qa-lead", scene: "flow-lead", sel: ".lead-gate-card", langs: ["zh", "en"] },
   { name: "qa-lead-open", scene: "flow-lead", sel: ".lead-gate-card", steps: [["click", ".lead-gate-more"], ["click", ".lead-gate-option >> nth=1"]] },
   { name: "qa-lead-620", scene: "flow-lead", sel: ".lead-gate-card", size: W620 },
@@ -132,6 +134,7 @@ export const QA_SHOTS = [
   { name: "qa-tools-codex-agents-running", scene: "flow-tools-codex-agents-running", size: W620, sel: ".chat-subagent-status.is-running" },
   { name: "qa-m-tools-codex-agents-running", page: "mobile", scene: "mobile-tools-codex-agents-running", size: PHONE, sel: ".chat-subagent-status.is-running" },
   { name: "qa-image", scene: "flow-image", sel: ".chat-image-thumb-btn" },
+  { name: "qa-browser-receipt", scene: "flow-browser-receipt", sel: ".chat-tool-browser-images img", steps: [["click", ".chat-tool > summary"]] },
   { name: "qa-lightbox", scene: "flow-image", sel: ".chat-lightbox", steps: [["click", ".chat-image-thumb-btn"]] },
   { name: "qa-drop", scene: "flow-drop", sel: ".chat-drop-overlay" },
   { name: "qa-search", scene: "flow-states", sel: ".chat-search-host", steps: [["key", "Control+f"], ["type", ".chat-search-input", "schema"]] },
@@ -166,6 +169,8 @@ export const QA_SHOTS = [
   // ── 右侧面板 ──
   { name: "qa-md", scene: "flow-md", sel: ".chat-diff-mdview", steps: [["click", ".chat-diff-tree-file:has-text('README.md')"]] },
   { name: "qa-browser", scene: "flow-browser", sel: ".browser-pane", langs: ["zh", "en"] },
+  { name: "qa-browser-paused", scene: "flow-browser-paused", sel: ".browser-pane" },
+  { name: "qa-browser-idle", scene: "flow-browser-idle", sel: ".browser-pane" },
   { name: "qa-browser-blank", scene: "flow-browser-blank", sel: ".browser-pane" },
   { name: "qa-shell", scene: "flow-shell", sel: ".shell-term" },
   // ── 托管终端页签 ──

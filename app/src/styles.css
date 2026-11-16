@@ -4492,6 +4492,7 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 @keyframes browser-pane-spin { to { transform: rotate(360deg); } }
 .browser-pane-url { flex: 1; min-width: 0; height: 28px; padding: 0 var(--sp-10); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); color: var(--cc-text); background: var(--cc-panel-raised); font: inherit; font-size: var(--text-sm); }
 .browser-pane-url:focus { outline: none; border-color: var(--cc-accent); }
+.browser-pane-url:disabled { opacity: .55; cursor: default; }
 .browser-pane-error { flex: none; padding: var(--sp-6) var(--sp-10); color: var(--cc-fail-text); font-size: var(--text-xs); }
 /* agent 操作提示条：在工具栏下方，网页之上（不压在原生视图上，原生视图在它下面开始）。 */
 .browser-pane-agent { flex: none; display: flex; align-items: center; gap: var(--sp-8); padding: var(--sp-6) var(--sp-10); border-bottom: var(--hairline) solid var(--cc-border); color: var(--cc-text); background: var(--fill-hover); font-size: var(--text-xs); }
@@ -5520,6 +5521,7 @@ button.scm-check-name:hover { text-decoration: underline; }
 .chat-tool-verb { flex: 0 0 auto; color: var(--cc-text-dim); font-weight: var(--cc-tool-verb-weight); }
 .chat-tool-paren { flex: 0 0 auto; color: var(--cc-text-faint); }
 .chat-tool-result { min-width: 0; flex: 0 0 100%; display: flex; gap: var(--sp-6); padding-left: var(--sp-6); color: var(--cc-text-faint); font: var(--text-xs)/var(--leading-normal) var(--cc-mono); }
+.chat-tool-browser-images { justify-content: flex-start; margin: var(--sp-8) 0; }
 .chat-tool-elbow { flex: 0 0 auto; }
 .chat-tool-out { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 .chat-tool-out.is-output { color: var(--cc-text-dim); }

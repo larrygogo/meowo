@@ -430,6 +430,19 @@ fn inline_image_ref(base_id: &str, index: usize, block: &serde_json::Value) -> O
 /// image-cache，历史图必坏（实测本机两处 image-cache 目录均已不存在，终端贴图在对话里
 /// 看不到的根因）。图片改由同 promptId 主行的内嵌 base64 落盘提供（实测 412 条伴随行
 /// 全部配对到带 image 块的主行），伴随行整条丢弃，否则同一张图出两次。
+/// MCP browser_screenshot 的 tool_result.content 同时带 text 与 image。沿用用户图片的
+/// 引用格式，ToolActivity 拆成截图缩略图；base64 不进聊天 DTO。
+fn tool_result_image_refs(base_id: &str, block: &serde_json::Value) -> Vec<String> {
+    block
+        .get("content")
+        .and_then(|content| content.as_array())
+        .into_iter()
+        .flatten()
+        .enumerate()
+        .filter_map(|(index, part)| inline_image_ref(base_id, index, part))
+        .collect()
+}
+
 fn is_image_companion(v: &serde_json::Value, content: Option<&serde_json::Value>) -> bool {
     if v.get("isMeta").and_then(|x| x.as_bool()) != Some(true) {
         return false;
@@ -757,6 +770,11 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                                 && !answered_by_meowo
                                 && !unfinished_receipt(&text);
                             let facts = tool_facts(&v, &text, is_error);
+                            let mut result_text = compact_json(Some(&serde_json::Value::String(text)), 4000);
+                            for image_ref in tool_result_image_refs(&format!("{base_id}:{i}"), block) {
+                                if !result_text.is_empty() { result_text.push('\n'); }
+                                result_text.push_str(&image_ref);
+                            }
                             Some(TranscriptEvent::ToolResult {
                                 id: format!("{base_id}:{i}"),
                                 timestamp: timestamp.clone(),
@@ -764,7 +782,7 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                                     .get("tool_use_id")
                                     .and_then(|x| x.as_str())
                                     .map(str::to_string),
-                                text: compact_json(Some(&serde_json::Value::String(text)), 4000),
+                                text: result_text,
                                 is_error,
                                 subagent,
                                 patch: structured_patch(&v),
@@ -3014,6 +3032,17 @@ mod tests {
 
         let skill = r#"{"type":"attachment","uuid":"s1","attachment":{"type":"skill_listing","content":"..."}}"#;
         assert!(parse_chat_items(skill).is_empty());
+    }
+
+    #[test]
+    fn browser_tool_result_image_becomes_receipt_reference() {
+        let line = r#"{"type":"user","uuid":"browser-shot","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_browser","content":[{"type":"text","text":"面板浏览器截图"},{"type":"image","source":{"type":"base64","media_type":"image/jpeg","data":"/9j/4A=="}}]}]}}"#;
+        let items = parse_chat_items(line);
+        let ChatItem::ToolResult { text, .. } = &items[0] else { panic!("expected ToolResult") };
+        assert!(text.starts_with("面板浏览器截图\n[Image: source: "), "{text}");
+        let path = text.split("[Image: source: ").nth(1).and_then(|rest| rest.strip_suffix(']')).map(PathBuf::from).unwrap();
+        assert!(path.exists());
+        std::fs::remove_file(path).ok();
     }
 
     /// 终端 Ctrl-V 贴图的实拍形态：主行「text + 内嵌 base64 image 块」，紧跟一条 isMeta

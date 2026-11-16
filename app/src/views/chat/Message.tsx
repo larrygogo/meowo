@@ -662,7 +662,7 @@ function MessageBody({ item, nextStamp = null, latest = false, compactSummary = 
             <CrossMessageBlock message={message} key={`cross-${index}`} />
           ))}
           {images.length > 0 && <ImageRow images={images} />}
-          {body && <div className="chat-text">{body}</div>}
+          {body && <UserBubbleText id={item.id} body={body} />}
           {/* 机器记录一律默认收起、按原文顺序排（命令输出 /cost、/status 能刷一屏；通知是整段
               XML+JSON；兜底的系统记录、hook 反馈同理），一行摘要足够定位，想看细节再展开。
               记忆键按类别各自计数，沿用旧前缀，用户此前展开过的不因改版全部收回。 */}
