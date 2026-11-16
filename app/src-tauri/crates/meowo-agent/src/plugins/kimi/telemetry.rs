@@ -194,6 +194,30 @@ fn image_part_url(part: &serde_json::Value) -> Option<&str> {
 /// 统一落在 `paste_root()/queued/`（asset 协议 scope 内，前端才能渲染缩略图），按内容 sha /
 /// 行 id 命名做幂等——增量解析 reset 时会重放同一行。任何失败返回 None：正文照常显示，
 /// 这张图退化为不显示。
+fn mcp_image_url(part: &serde_json::Value) -> Option<String> {
+    if let Some(url) = image_part_url(part) { return Some(url.to_string()); }
+    if part.get("type").and_then(|v| v.as_str()) != Some("image") { return None; }
+    if let Some(source) = part.get("source") {
+        return Some(format!("data:{};base64,{}", source.get("media_type")?.as_str()?, source.get("data")?.as_str()?));
+    }
+    let mime = part.get("mimeType").or_else(|| part.get("mime_type")).or_else(|| part.get("media_type"))?.as_str()?;
+    Some(format!("data:{mime};base64,{}", part.get("data")?.as_str()?))
+}
+
+fn tool_result_media(value: Option<&serde_json::Value>, wire_dir: Option<&Path>, base_id: &str) -> (Option<String>, Vec<String>) {
+    let Some(value) = value else { return (None, Vec::new()) };
+    let owned = match value { serde_json::Value::String(raw) => serde_json::from_str::<serde_json::Value>(raw).ok(), _ => None };
+    let value = owned.as_ref().unwrap_or(value);
+    let Some(parts) = value.as_array().or_else(|| value.get("content").and_then(|v| v.as_array())) else { return (None, Vec::new()) };
+    let text = parts.iter().filter_map(|part| part.get("text").and_then(|v| v.as_str())).collect::<Vec<_>>().join("\n");
+    let images = parts.iter().enumerate().filter_map(|(index, part)| {
+        let url = mcp_image_url(part)?;
+        let path = persist_image_url(wire_dir, base_id, index, &url)?;
+        Some(format!("[Image: source: {}]", path.display()))
+    }).collect();
+    (Some(text), images)
+}
+
 fn persist_image_url(
     wire_dir: Option<&Path>,
     base_id: &str,
@@ -589,37 +613,26 @@ fn parse_events(line: &str, wire_dir: Option<&Path>) -> Vec<TranscriptEvent> {
             };
             let event_type = event.get("type").and_then(|v| v.as_str()).unwrap_or("");
             if matches!(event_type, "tool.result" | "tool_result") {
-                let text = event
-                    .get("output")
-                    .or_else(|| event.pointer("/result/output"))
-                    .or_else(|| event.get("result"))
-                    .map(value_text)
-                    .unwrap_or_default();
-                let tool_call_id = event
-                    .get("callId")
-                    .or_else(|| event.get("call_id"))
-                    .or_else(|| event.get("toolCallId"))
-                    .and_then(|v| v.as_str())
-                    .map(str::to_string);
+                let output = event.get("output").or_else(|| event.pointer("/result/output")).or_else(|| event.get("result"));
+                let mut text = output.map(value_text).unwrap_or_default();
+                let tool_call_id = event.get("callId").or_else(|| event.get("call_id")).or_else(|| event.get("toolCallId")).and_then(|v| v.as_str()).map(str::to_string);
+                let id = event_uuid.map(|uuid| format!("kimi-result-{uuid}")).or_else(|| tool_call_id.as_ref().map(|id| format!("kimi-result-{id}"))).unwrap_or_else(|| chat_id("result", line));
+                let (plain, images) = tool_result_media(output, wire_dir, &id);
+                if !images.is_empty() {
+                    if let Some(plain) = plain { text = plain; }
+                    for image in images {
+                        if !text.is_empty() { text.push('\n'); }
+                        text.push_str(&image);
+                    }
+                }
                 return vec![TranscriptEvent::ToolResult {
-                    // 实档的 tool.result 事件没有 uuid，callId 是它的稳定唯一键
-                    // （一次调用恰一份结果）；两者都缺才退回整行哈希。
-                    id: event_uuid
-                        .map(|uuid| format!("kimi-result-{uuid}"))
-                        .or_else(|| tool_call_id.as_ref().map(|id| format!("kimi-result-{id}")))
-                        .unwrap_or_else(|| chat_id("result", line)),
+                    id,
                     timestamp,
                     tool_call_id,
-                    // 子任务状态就写在这条结果里；顺手取出，折叠态才能显示进度。
                     subagent: KIMI_SUBAGENTS.detect_result(&text),
                     patch: None,
                     text,
-                    is_error: event
-                        .get("isError")
-                        .or_else(|| event.get("is_error"))
-                        .or_else(|| event.pointer("/result/isError"))
-                        .and_then(|v| v.as_bool())
-                        .unwrap_or(false),
+                    is_error: event.get("isError").or_else(|| event.get("is_error")).or_else(|| event.pointer("/result/isError")).and_then(|v| v.as_bool()).unwrap_or(false),
                     facts: ToolFacts::default(),
                 }];
             }
@@ -2097,6 +2110,18 @@ impl crate::caps::TelemetryCap for KimiTelemetry {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn browser_mcp_image_becomes_text_and_receipt_reference() {
+        use serde_json::json;
+        let value = json!({"content":[{"type":"text","text":"面板浏览器截图"},{"type":"image","mimeType":"image/jpeg","data":"/9j/4A=="}]});
+        let (plain, images) = super::tool_result_media(Some(&value), None, "kimi-browser-test");
+        assert_eq!(plain.as_deref(), Some("面板浏览器截图"));
+        assert_eq!(images.len(), 1);
+        let path = images[0].split("[Image: source: ").nth(1).and_then(|rest| rest.strip_suffix(']')).map(std::path::PathBuf::from).unwrap();
+        assert!(path.exists());
+        std::fs::remove_file(path).ok();
+    }
+
 
     #[test]
     fn state_title_only_counts_generated_or_custom() {

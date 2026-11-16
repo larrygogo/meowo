@@ -4080,6 +4080,24 @@ export function ChatWindow() {
     () => (approvalRequest ? approvalCardModel(approvalRequest, t, approvalTimedOut) : null),
     [approvalRequest, t, approvalTimedOut],
   );
+  // 手机端 history.pendingReview 往往比 broker 结构化审批早到一拍。立即渲染 RemoteTerminalKeys
+  // 会先闪一张终端按键卡，再换成正常审批卡（2026-11-16 用户两张实拍）。给接收通道一个短交接窗；
+  // 超过窗口仍没有结构化卡，才展示真正的终端兜底。
+  const terminalFallbackCandidate = view === "chat" && !terminalAttention && !approval && !brokerOwnsReview
+    && !!terminalReview && history?.ptyManaged !== false;
+  const terminalFallbackKey = terminalFallbackCandidate && remoteUi() ? `${sessionId}:${terminalReview}` : null;
+  const [terminalFallbackReadyKey, setTerminalFallbackReadyKey] = useState<string | null>(null);
+  useEffect(() => {
+    if (!terminalFallbackKey) {
+      setTerminalFallbackReadyKey(null);
+      return;
+    }
+    const timer = window.setTimeout(() => setTerminalFallbackReadyKey(terminalFallbackKey), 800);
+    return () => window.clearTimeout(timer);
+  }, [terminalFallbackKey]);
+  const terminalFallbackShown = terminalFallbackCandidate
+    && (!remoteUi() || terminalFallbackReadyKey === terminalFallbackKey);
+
   // C-9：overlay 层是否有卡在场(供 wrapper 挂 is-active,消息列表底部淡出过渡随之启停)。
   // 条件镜像下方渲染分支:屏幕识别三卡互斥,题面两形态互斥,三类之间可并存(overlay 内纵向堆叠)。
   // 提问卡（屏幕识别选择器 + 题面两形态）用户要求两视图都出：broker 挂起时终端画面上
@@ -4090,7 +4108,7 @@ export function ChatWindow() {
     || (view === "chat" && (
       commandAttention
       || (terminalAttention && !commandAttention && !interactiveAttention)
-      || (!terminalAttention && (approval || (!brokerOwnsReview && terminalReview && history?.ptyManaged !== false)))
+      || (!terminalAttention && (approval || terminalFallbackShown))
     )),
   );
   // 屏幕菜单/审批「一次性作答」的在途去重(对应 broker 审批的 resolvingApproval):写 PTY
@@ -5006,7 +5024,7 @@ export function ChatWindow() {
           会话的提问/审批一律留在终端处理（broker 同口径整段短路，见 pty.rs handle_approval），
           对着它弹一张只能「打开终端」的卡，和不弹相比只多一次打扰。ptyManaged 用严格
           === false（与 composerGated 同哲学）：DTO 必填，信号缺失只可能是错配，退回旧路径。 */}
-      {view === "chat" && !terminalAttention && !approval && !brokerOwnsReview && terminalReview && history?.ptyManaged !== false && <ApprovalCard
+      {terminalFallbackShown && <ApprovalCard
         returnFocusTo={promptInputRef}
         title={cardTitle(terminalReview, t)}
         badge={cardBadge(terminalReview, "pending", t)}

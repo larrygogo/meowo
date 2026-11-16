@@ -1651,6 +1651,10 @@ pub fn run() {
             browser_pane::browser_pane_set_agent_paused,
             browser_pane::browser_pane_answer_permission,
             browser_pane::browser_pane_reveal_download,
+            #[cfg(feature = "e2e")]
+            browser_agent::browser_agent_e2e,
+            #[cfg(all(feature = "e2e", windows))]
+            browser_pane::browser_pane_e2e_native_click,
             shell_terminal::shell_terminal_open,
             shell_terminal::shell_terminal_list,
             shell_terminal::shell_terminal_attach,

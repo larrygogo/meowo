@@ -11,7 +11,8 @@ app/e2e/
 ├── wdio.capability.json   # WDIO 插件权限（构建期临时拷入 capabilities/，见下）
 ├── run.mjs                # 编排器：构建 E2E 二进制 → 跑 wdio → 清理
 ├── specs/
-│   └── board-refresh.e2e.ts   # 空闲刷新回归
+│   ├── board-refresh.e2e.ts   # 空闲刷新回归
+│   └── browser-control.e2e.ts # 原生浏览器控制、iframe 与接管回归
 └── README.md
 ```
 
@@ -25,6 +26,7 @@ WDIO 要能驱动 Tauri，需要把一个内嵌 WebDriver 服务器 + JS 执行/
 | `withGlobalTauri: true` | `tauri build --config src-tauri/tauri.e2e.conf.json` 合并覆盖 | ❌ |
 | `@wdio/tauri-plugin` 前端桥 + `board-changed` 观测计数 | `VITE_E2E=1` 构建，Vite 死代码消除 | ❌ |
 | `wdio:default` capability 权限 | `run.mjs` 构建前临时拷 `wdio.capability.json → capabilities/wdio.json`，跑完即删（gitignored） | ❌ |
+| Windows 原生鼠标点击 | `browser_pane_e2e_native_click` 同时受 `feature=e2e` 与 Windows `cfg` 门控，仅用系统鼠标事件验证输入锁 | ❌ |
 
 ## 运行
 

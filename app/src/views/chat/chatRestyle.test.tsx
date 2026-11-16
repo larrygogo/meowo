@@ -8,6 +8,11 @@ import { WelcomePanel, type WelcomeInfo } from "./WelcomePanel";
 import { stripAnsi } from "./shared";
 import { CommandLines, dedent, OutputBlock } from "./terminalText";
 
+vi.mock("@tauri-apps/api/core", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@tauri-apps/api/core")>()),
+  convertFileSrc: (path: string) => `asset://local/${path}`,
+}));
+
 afterEach(cleanup);
 
 const agent = { provider: "claude", name: "Claude Code", model: "Opus 5.5" };
@@ -102,6 +107,16 @@ describe("终端式工具行", () => {
     render(<ToolActivity item={{ type: "tool_use", id: "t3", timestamp: null, name: "mcp__x__do", kind: "other", summary: "" }} />);
     expect(document.querySelector(".chat-tool-verb")?.textContent).toBe("x · do");
   });
+
+  it("浏览器 MCP 回执显示截图数量与缩略图，不把本地引用路径摊在正文", () => {
+    const item = { type: "tool_use" as const, id: "browser-shot", timestamp: null, name: "mcp__meowo__browser_screenshot", kind: "other" as const, summary: "" };
+    const receipt = result("browser-shot", "面板浏览器截图（12 KB）\n[Image: source: C:\\tmp\\browser-shot.jpg]");
+    render(<ToolActivity item={item} result={receipt} />);
+    expect(document.querySelector(".chat-tool-count")?.textContent).toBe("1 张截图");
+    expect(document.querySelector(".chat-tool-browser-images img")?.getAttribute("alt")).toBe("browser-shot.jpg");
+    expect(document.body.textContent).not.toContain("[Image: source:");
+  });
+
 });
 
 describe("命令与输出着色", () => {

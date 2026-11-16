@@ -1107,6 +1107,7 @@ export const zh = {
     tabCloseRight: "关闭右侧",
     tabCloseAll: "关闭所有",
     browserAgentActive: "Agent 正在操作",
+    browserAgentActiveDetail: "Agent 正在操作，网页输入已锁定",
     browserAgentPaused: "你已接管，Agent 暂时不能操作",
     browserAgentTakeOver: "接管",
     browserAgentResume: "交还",
@@ -1514,6 +1515,7 @@ export const zh = {
     toolExitCode: (code: number, first: string) => (first ? `退出码 ${code}：${first}` : `退出码 ${code}`),
     // 一次调用带了几个地址或查询时，摘要只列第一个。
     toolMoreTargets: (count: number) => `另有 ${count} 个`,
+    toolBrowserShots: (count: number) => `${count} 张截图`,
     model: "模型",
     switchModel: "切换模型",
     mode: "模式",

@@ -7,6 +7,7 @@ import { Icon } from "../../icons/Icon";
 import { icDownload, icMore, icRefresh } from "../../icons/glyphs";
 import { icArrowLeft, icArrowRight, icBan, icExternal } from "../../icons/glyphs.scm";
 import { icShield } from "../../icons/glyphs.chat";
+import { isWindows } from "../../platform";
 import { busyProps } from "../../busyButton";
 // 老调用方（测试）从这里拿；ChatWindow 直接引 localUrls，免得把面板浏览器拖进主 chunk。
 export { localUrlsIn } from "./localUrls";
@@ -46,6 +47,7 @@ export function BrowserPane({ info, visible, suggestions }: {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const blank = info.url === "about:blank";
+  const inputLocked = info.agentActive && !info.agentPaused;
   const [draft, setDraft] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const showNative = visible && !blank;
@@ -95,6 +97,7 @@ export function BrowserPane({ info, visible, suggestions }: {
   }, [visible, blank]);
 
   const go = (url: string) => {
+    if (inputLocked) return;
     setError(null);
     setDraft(null);
     void navigateBrowserPane(info.id, url).catch((e) => setError(formatBackendError(e, t.locale)));
@@ -105,7 +108,9 @@ export function BrowserPane({ info, visible, suggestions }: {
     if (text) go(text);
   };
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  useEffect(() => { if (inputLocked) setMenu(null); }, [inputLocked]);
   const act = (action: Parameters<typeof browserPaneAction>[1]) => {
+    if (inputLocked) return;
     void browserPaneAction(info.id, action).catch((e) => setError(formatBackendError(e, t.locale)));
   };
 
@@ -136,13 +141,13 @@ export function BrowserPane({ info, visible, suggestions }: {
   return (
     <div className="browser-pane" style={visible ? undefined : { display: "none" }}>
       <form className="browser-pane-bar" onSubmit={submit}>
-        <button type="button" className="chat-diff-action" data-tip-placement="top" aria-label={t.chat.browserBack} data-tip={t.chat.browserBack} disabled={blank} onClick={() => act("back")}>
+        <button type="button" className="chat-diff-action" data-tip-placement="top" aria-label={t.chat.browserBack} data-tip={t.chat.browserBack} disabled={blank || inputLocked} onClick={() => act("back")}>
           <Icon glyph={icArrowLeft} size={14} />
         </button>
-        <button type="button" className="chat-diff-action" data-tip-placement="top" aria-label={t.chat.browserForward} data-tip={t.chat.browserForward} disabled={blank} onClick={() => act("forward")}>
+        <button type="button" className="chat-diff-action" data-tip-placement="top" aria-label={t.chat.browserForward} data-tip={t.chat.browserForward} disabled={blank || inputLocked} onClick={() => act("forward")}>
           <Icon glyph={icArrowRight} size={14} />
         </button>
-        <button type="button" className={"chat-diff-action" + (info.loading ? " is-loading" : "")} aria-label={t.chat.browserReload} data-tip-placement="top" data-tip={t.chat.browserReload} disabled={blank} onClick={() => act("reload")}>
+        <button type="button" className={"chat-diff-action" + (info.loading ? " is-loading" : "")} aria-label={t.chat.browserReload} data-tip-placement="top" data-tip={t.chat.browserReload} disabled={blank || inputLocked} onClick={() => act("reload")}>
           <Icon glyph={icRefresh} size={14} />
         </button>
         <input
@@ -151,6 +156,7 @@ export function BrowserPane({ info, visible, suggestions }: {
           value={draft ?? (blank ? "" : info.url)}
           placeholder={t.chat.browserAddress}
           aria-label={t.chat.browserAddress}
+          disabled={inputLocked}
           spellCheck={false}
           onChange={(event) => setDraft(event.target.value)}
           onFocus={(event) => event.target.select()}
@@ -164,7 +170,7 @@ export function BrowserPane({ info, visible, suggestions }: {
             }
           }}
         />
-        <button type="button" className="chat-diff-action" aria-label={t.chat.browserOpenExternal} data-tip-placement="top" data-tip={t.chat.browserOpenExternal} disabled={blank} onClick={() => void openLink(info.url).catch((e) => setError(formatBackendError(e, t.locale)))}>
+        <button type="button" className="chat-diff-action" aria-label={t.chat.browserOpenExternal} data-tip-placement="top" data-tip={t.chat.browserOpenExternal} disabled={blank || inputLocked} onClick={() => void openLink(info.url).catch((e) => setError(formatBackendError(e, t.locale)))}>
           <Icon glyph={icExternal} size={14} />
         </button>
         {/* 「…」菜单：缩放、打印、复制网址。网页里 Ctrl+F / Ctrl+P / Ctrl+滚轮这些 WebView2
@@ -176,7 +182,7 @@ export function BrowserPane({ info, visible, suggestions }: {
           aria-label={t.chat.browserMore}
           data-tip={t.chat.browserMore}
           aria-haspopup="menu"
-          disabled={blank}
+          disabled={blank || inputLocked}
           onClick={(event) => {
             const rect = event.currentTarget.getBoundingClientRect();
             setMenu(menu ? null : { x: rect.right - 200, y: rect.bottom + 4 });
@@ -204,7 +210,7 @@ export function BrowserPane({ info, visible, suggestions }: {
       {(info.agentActive || info.agentPaused) && (
         <div className={"browser-pane-agent" + (info.agentPaused ? " is-paused" : "")} role="status">
           <span className="browser-pane-agent-dot" aria-hidden="true" />
-          <span>{info.agentPaused ? t.chat.browserAgentPaused : t.chat.browserAgentActive}</span>
+          <span>{info.agentPaused ? t.chat.browserAgentPaused : inputLocked && isWindows() ? t.chat.browserAgentActiveDetail : t.chat.browserAgentActive}</span>
           <button type="button" onClick={() => void setBrowserPaneAgentPaused(info.id, !info.agentPaused).catch(() => {})}>
             {info.agentPaused ? t.chat.browserAgentResume : t.chat.browserAgentTakeOver}
           </button>
@@ -242,7 +248,7 @@ export function BrowserPane({ info, visible, suggestions }: {
             {suggestions.length > 0 && (
               <ul>
                 {suggestions.map((url) => (
-                  <li key={url}><button type="button" onClick={() => go(url)}>{url}</button></li>
+                  <li key={url}><button type="button" disabled={inputLocked} onClick={() => go(url)}>{url}</button></li>
                 ))}
               </ul>
             )}

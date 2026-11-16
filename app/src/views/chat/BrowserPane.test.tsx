@@ -3,6 +3,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn((_cmd: string, _args?: unknown) => Promise.resolve(null as unknown)) }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke }));
+vi.mock("../../platform", () => ({ isWindows: () => true }));
 import type { BrowserPaneInfo } from "../../api";
 import { BrowserPane, browserTabTitle, localUrlsIn, occluded } from "./BrowserPane";
 import { isLocalDevUrl, openInPanel, setPanelLinkHandler } from "./panelLinks";
@@ -64,14 +65,25 @@ describe("面板浏览器", () => {
 
   it("agent 操作时显示提示，可以接管；接管后可以交还", () => {
     const { rerender } = render(<BrowserPane info={pane({ agentActive: true })} visible suggestions={[]} />);
-    expect(screen.getByRole("status").textContent).toContain("Agent 正在操作");
+    expect(screen.getByRole("status").textContent).toContain("网页输入已锁定");
+    expect(screen.getByRole("textbox", { name: "搜索或输入网址" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "后退" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "接管" }).hasAttribute("disabled")).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "接管" }));
     expect(invoke).toHaveBeenCalledWith("browser_pane_set_agent_paused", { id: 5, paused: true });
     rerender(<BrowserPane info={pane({ agentPaused: true })} visible suggestions={[]} />);
+    expect(screen.getByRole("textbox", { name: "搜索或输入网址" }).hasAttribute("disabled")).toBe(false);
+    expect(screen.getByRole("button", { name: "后退" }).hasAttribute("disabled")).toBe(false);
     fireEvent.click(screen.getByRole("button", { name: "交还" }));
     expect(invoke).toHaveBeenCalledWith("browser_pane_set_agent_paused", { id: 5, paused: false });
     rerender(<BrowserPane info={pane()} visible suggestions={[]} />);
     expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("agent 控制时网页权限仍由用户答复，不随人工导航一起锁住", () => {
+    render(<BrowserPane info={pane({ agentActive: true, permission: { id: 1, kind: "camera", host: "a.test" } })} visible suggestions={[]} />);
+    fireEvent.click(screen.getByRole("button", { name: "允许" }));
+    expect(invoke).toHaveBeenCalledWith("browser_pane_answer_permission", { id: 5, permission: 1, allow: true });
   });
 
   it("「…」菜单：显示当前缩放，能放大、打印", () => {

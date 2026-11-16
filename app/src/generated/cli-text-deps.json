@@ -1285,56 +1285,56 @@
           "needle": "plan_mode.cancel",
           "note": "2.5.1 wire.jsonl 实样（/plan off 与 Shift+Tab 关计划模式都写它，research-cli-drift K1）；kimi.EXE 6 处",
           "rule": "record:plan_mode.cancel",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/telemetry.rs:1262"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/telemetry.rs:1275"
         },
         {
           "legacy": false,
           "needle": "plan_mode.enter",
           "note": "2.5.1 kimi.EXE 6 处（包内回放器 case）",
           "rule": "record:plan_mode.enter",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/telemetry.rs:1257"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/telemetry.rs:1270"
         },
         {
           "legacy": false,
           "needle": "token_counting.rebased",
           "note": "2.5.1 wire.jsonl 实样（压缩后 Context% 读它，research-cli-drift K4）；kimi.EXE 3 处",
           "rule": "record:token_counting.rebased",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/telemetry.rs:1823"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/telemetry.rs:1836"
         },
         {
           "legacy": false,
           "needle": "usageScope",
           "note": "2.5.1 wire.jsonl 实样（压缩请求记 session 档，不能当上下文，research-cli-drift K4）；kimi.EXE 5 处",
           "rule": "record:usageScope",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/telemetry.rs:1834"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/telemetry.rs:1847"
         },
         {
           "legacy": false,
           "needle": "full_compaction.complete",
           "note": "2.5.1 wire.jsonl 实样（已压缩分隔条）；kimi.EXE 2 处",
           "rule": "record:full_compaction.complete",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/telemetry.rs:711"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/telemetry.rs:724"
         },
         {
           "legacy": false,
           "needle": "permission.set_mode",
           "note": "2.5.1 wire.jsonl 实样（权限档显示）；kimi.EXE 5 处",
           "rule": "record:permission.set_mode",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/telemetry.rs:1252"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/telemetry.rs:1265"
         },
         {
           "legacy": false,
           "needle": "kimi-file://",
           "note": "2.5.1 wire.jsonl 实样（粘贴图片的地址形态，research-cli-drift K3）；kimi.EXE 20 处",
           "rule": "record:kimi-file://",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/telemetry.rs:253"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/telemetry.rs:277"
         },
         {
           "legacy": false,
           "needle": "turn.ended",
           "note": "2.6.1 wire.jsonl 实样（reason=cancelled 画中断分隔条、failed 出错误卡；本机 164 份主链里 cancelled 17 次）；kimi.exe 73 处",
           "rule": "record:turn.ended",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/telemetry.rs:435"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/kimi/telemetry.rs:459"
         }
       ],
       "id": "kimi",
@@ -1597,7 +1597,7 @@
           "needle": "turn_aborted",
           "note": "0.167.2 rollout 实样（用户中断处的分隔条，68 份里 64 次）；codex.exe 17 处",
           "rule": "record:turn_aborted",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/telemetry.rs:613"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/codex/telemetry.rs:652"
         },
         {
           "legacy": false,

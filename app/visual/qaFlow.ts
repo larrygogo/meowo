@@ -86,6 +86,8 @@ export function qaFlowBoot(scene: string, lang: Lang): void {
   const panelTabs: Record<string, unknown[]> = {
     "flow-md": [{ key: "files", type: "files" }],
     "flow-browser": [{ key: "b1", type: "browser", paneId: 7, url: "http://localhost:5173/", title: "Vite" }],
+    "flow-browser-paused": [{ key: "b1", type: "browser", paneId: 7, url: "http://localhost:5173/", title: "Vite" }],
+    "flow-browser-idle": [{ key: "b1", type: "browser", paneId: 7, url: "http://localhost:5173/", title: "Vite" }],
     "flow-browser-blank": [{ key: "b1", type: "browser", paneId: 7, url: "about:blank", title: "" }],
     "flow-shell": [{ key: "t1", type: "term", shellId: 5, cwd: "C:/dev/web-app" }],
   };
@@ -183,7 +185,7 @@ export function qaFlowMock(scene: string, lang: Lang, chat: (cmd: string) => unk
     if (cmd === "read_file_text") return { relPath: "README.md", truncated: false, binary: false, text: zh
       ? "# web-app\n\n登录、注册与找回密码的前端。\n\n## 开发\n\n```bash\nbun install\nbun run dev\n```\n\n- 校验规则在 `src/schemas/`\n- 组件在 `src/components/`\n\n> 改校验规则前先看 [迁移说明](docs/migration.md)。\n\n| 命令 | 作用 |\n|---|---|\n| `bun run test` | 跑单测 |\n| `bun run build` | 打包 |\n"
       : "# web-app\n\nFront end for sign-in, sign-up and password reset.\n\n## Development\n\n```bash\nbun install\nbun run dev\n```\n\n- Validation rules live in `src/schemas/`\n- Components live in `src/components/`\n\n> Read the [migration notes](docs/migration.md) before changing a rule.\n\n| Command | What it does |\n|---|---|\n| `bun run test` | Unit tests |\n| `bun run build` | Bundle |\n" };
-    if (cmd === "browser_pane_list") return [{ id: 7, owner: CHAT_SESSION_ID, url: kind === "browser-blank" ? "about:blank" : "http://localhost:5173/", title: "Vite", loading: false, agentActive: kind === "browser", agentPaused: false, zoom: 1,
+    if (cmd === "browser_pane_list") return [{ id: 7, owner: CHAT_SESSION_ID, url: kind === "browser-blank" ? "about:blank" : "http://localhost:5173/", title: "Vite", loading: false, agentActive: kind === "browser" || kind === "browser-paused", agentPaused: kind === "browser-paused", zoom: 1,
       downloads: kind === "browser" ? [{ id: 1, fileName: "report-2026-11.pdf", state: "done" }] : [], permission: kind === "browser" ? { id: 3, kind: "camera", host: "localhost:5173" } : null, blocked: null }];
     if (cmd === "shell_terminal_list") return [{ id: 5, owner: CHAT_SESSION_ID, title: "pwsh", exited: false }];
     if (cmd === "shell_terminal_attach") {
@@ -239,6 +241,19 @@ export function qaFlowMock(scene: string, lang: Lang, chat: (cmd: string) => unk
       if (kind === "unsupported") return { ...h, ...calm, supported: false, items: [] };
       if (kind === "earlier") return { ...h, ...calm, hasMore: true, earliest: 12 };
       if (kind === "handoff") return { ...h, ...calm, predecessorId: 99 };
+      if (kind === "mixed-user") {
+        const text = `<hook_result hook_event="UserPromptSubmit">[lead] ${zh ? "这个项目有进行中的任务" : "This project has an active task"}</hook_result>\n${zh ? "为什么本会话一直有一个 Lead 面板？" : "Why does this session keep showing a Lead panel?"}`;
+        return { ...h, ...calm, items: [{ type: "user_text", id: "qa-mixed-user", timestamp: ts, text }] };
+      }
+      if (kind === "browser-receipt") {
+        const items = [
+          { type: "user_text", id: "qa-browser-user", timestamp: ts, text: zh ? "看看登录页现在的样子" : "Show me the current login page" },
+          { type: "tool_use", id: "qa-browser-shot", timestamp: ts, name: "mcp__meowo__browser_screenshot", kind: "other", summary: "" },
+          { type: "tool_result", id: "qa-browser-shot-r", timestamp: ts, tool_use_id: "qa-browser-shot", text: (zh ? "面板浏览器截图（18 KB）" : "Panel browser screenshot (18 KB)") + "\n[Image: source: C:\\tmp\\shot.png]", is_error: false },
+          { type: "assistant_text", id: "qa-browser-reply", timestamp: ts, text: zh ? "页面已经打开，截图里能看到登录表单。" : "The page is open and the login form is visible in the screenshot." },
+        ];
+        return { ...h, ...calm, items };
+      }
       if (kind === "image") {
         const items = [...h.items];
         items.splice(1, 0, { type: "user_text", id: "qa-img", timestamp: ts, text: (zh ? "这个报错是什么意思？" : "What does this error mean?") + "\n[Image #1: source: C:\\Users\\demo\\shot.png]" });
