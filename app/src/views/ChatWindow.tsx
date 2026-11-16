@@ -144,8 +144,8 @@ import { agentAssets, tintStyle } from "../providers";
 import appLogoUrl from "../../src-tauri/icons/64x64.png";
 import { Icon } from "../icons/Icon";
 import { modeIconGlyph, modeIconName } from "./chat/modeIcon";
-import { icArrowLeftRight, icArrowUp, icChevronLeft, icCollapse, icExpand, icFile, icMessage, icShield, icSidebarLeft, icSparkles, icStop } from "../icons/glyphs.chat";
-import { icAlert, icCheck, icChevronDown, icClose, icPencil } from "../icons/glyphs";
+import { icArrowLeftRight, icArrowUp, icChevronLeft, icCollapse, icExpand, icFile, icMessage, icShield, icSidebarLeft, icSparkles, icStop, icUndo } from "../icons/glyphs.chat";
+import { icAlert, icCheck, icChevronDown, icClose, icPencil, icRefreshCw } from "../icons/glyphs";
 
 
 /// 对话页意外退出说明附几行终端输出：够看出报错，不把输入框上方铺满。
@@ -4779,32 +4779,35 @@ export function ChatWindow() {
               )}
             </div>
             {queuedShown.map((item) => (
-              <div key={item.id} className={"chat-queued-turn" + (item.phase === "failed" ? " is-failed" : "")}>
-                {item.phase === "sending" && <span className="chat-queued-tag" role="status"><span className="chat-model-spinner" aria-hidden="true" />{deliveryStatusLabel(t, "sending")}</span>}
-                {/* CLI 回了送达回执：确实进了它的队列，只是还没轮到（对照 Kimi 的「等待前序步骤收尾」）。 */}
-                {item.phase === "accepted" && <span className="chat-queued-tag" data-tip={t.chat.echoQueuedTip}>{deliveryStatusLabel(t, "accepted")}</span>}
-                {item.phase === "uncertain" && <>
-                  <span className="chat-queued-tag is-warn" role="status" data-tip={t.chat.echoUncertainTip}>{deliveryStatusLabel(t, "uncertain")}</span>
-                  <button type="button" className="chat-user-action" onClick={() => retryOutgoing(item.id)}>{t.chat.echoRetry}</button>
-                  <button type="button" className="chat-user-action" onClick={() => restoreOutgoing(item.id)}>{t.chat.echoRestore}</button>
-                </>}
-                {item.phase === "failed" && <>
-                  <span className="chat-queued-tag is-warn" role="alert">{deliveryStatusLabel(t, "failed")}</span>
-                  <button type="button" className="chat-user-action" onClick={() => retryOutgoing(item.id)}>{t.chat.echoRetry}</button>
-                  <button type="button" className="chat-user-action" onClick={() => restoreOutgoing(item.id)}>{t.chat.echoRestore}</button>
-                </>}
-                <div className="chat-queued-bubble">{item.text}</div>
-                <button
-                  type="button"
-                  className="chat-queued-dismiss"
-                  aria-label={t.chat.queuedDismiss}
-                  data-tip={t.chat.queuedDismissTip}
-                  onClick={(event) => {
-                    // 同附件的「×」：这一条随之卸载，焦点交给下一条的「×」，没有了回输入框。
-                    focusAfterRemoval(event.currentTarget, { list: ".chat-queued-stack", item: ".chat-queued-dismiss", fallback: () => promptInputRef.current });
-                    dismissQueued(item.id);
-                  }}
-                >×</button>
+              // 与 Meowo 攒着的排队消息同一种长相（见 QueuedPrompts）：状态写在气泡里，动作是气泡里的小图标。
+              <div key={item.id} className={"chat-queued-turn" + (item.phase === "failed" || item.phase === "uncertain" ? " is-failed" : "")}>
+                <div className="chat-queued-bubble chat-queue-bubble">
+                  <div className="chat-queue-text">
+                    <div className="chat-queue-body">{item.text}</div>
+                    {item.phase === "sending" && <span className="chat-queued-tag" role="status"><span className="chat-model-spinner" aria-hidden="true" />{deliveryStatusLabel(t, "sending")}</span>}
+                    {/* CLI 回了送达回执：确实进了它的队列，只是还没轮到（对照 Kimi 的「等待前序步骤收尾」）。 */}
+                    {item.phase === "accepted" && <span className="chat-queued-tag" data-tip={t.chat.echoQueuedTip}>{deliveryStatusLabel(t, "accepted")}</span>}
+                    {item.phase === "uncertain" && <span className="chat-queued-tag is-warn" role="status" data-tip={t.chat.echoUncertainTip}>{deliveryStatusLabel(t, "uncertain")}</span>}
+                    {item.phase === "failed" && <span className="chat-queued-tag is-warn" role="alert">{deliveryStatusLabel(t, "failed")}</span>}
+                  </div>
+                  <span className="chat-queue-tools">
+                    {(item.phase === "uncertain" || item.phase === "failed") && <>
+                      <button type="button" className="chat-queue-tool" aria-label={t.chat.echoRetry} data-tip={t.chat.echoRetry} onClick={() => retryOutgoing(item.id)}><Icon glyph={icRefreshCw} size={14} /></button>
+                      <button type="button" className="chat-queue-tool" aria-label={t.chat.echoRestore} data-tip={t.chat.echoRestore} onClick={() => restoreOutgoing(item.id)}><Icon glyph={icUndo} size={14} /></button>
+                    </>}
+                    <button
+                      type="button"
+                      className="chat-queue-tool chat-queued-dismiss"
+                      aria-label={t.chat.queuedDismiss}
+                      data-tip={t.chat.queuedDismissTip}
+                      onClick={(event) => {
+                        // 同附件的「×」：这一条随之卸载，焦点交给下一条的「×」，没有了回输入框。
+                        focusAfterRemoval(event.currentTarget, { list: ".chat-queued-stack", item: ".chat-queued-dismiss", fallback: () => promptInputRef.current });
+                        dismissQueued(item.id);
+                      }}
+                    ><Icon glyph={icClose} size={14} /></button>
+                  </span>
+                </div>
               </div>
             ))}
           </section>

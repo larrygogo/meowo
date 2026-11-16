@@ -52,7 +52,7 @@ export const QA_SHOTS = [
   { name: "qa-lead-c-620", scene: "flow-lead-c", sel: ".lead-gate-card", size: W620 },
   { name: "qa-lead-c-panel", scene: "flow-lead-c", sel: ".panel-lead", steps: [["click", ".dock-workbar .ui-pill"]], langs: ["zh", "en"] },
   { name: "qa-queued", scene: "flow-queued", sel: ".chat-queued-turn" },
-  { name: "qa-queued-edit", scene: "flow-queued", sel: ".chat-queue-edit", steps: [["click", ".chat-prompt-queue .chat-user-action >> nth=1"]] },
+  { name: "qa-queued-edit", scene: "flow-queued", sel: ".chat-queue-edit", steps: [["click", ".chat-prompt-queue .chat-queue-tool[aria-label=\"编辑\"] >> nth=0"]] },
   { name: "qa-m-queued", page: "mobile", scene: "mobile-queued", size: PHONE, sel: ".chat-queued-turn" },
   { name: "qa-checkpoints", scene: "panel-checkpoints", size: W620, sel: ".checkpoint-panel .chat-diff-tree-file" },
   { name: "qa-checkpoints-confirm", scene: "panel-checkpoints", size: W620, sel: ".chat-modal", steps: [["click", ".checkpoint-actions button >> nth=0"]] },

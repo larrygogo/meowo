@@ -1311,6 +1311,8 @@ export const zh = {
     queueFailed: "没有交给 Agent",
     queueRemoveAttachment: "移除附件",
     queueAttachmentCount: (n: number) => `${n} 个附件`,
+    // Meowo 替你攒着、当前任务结束后才发的消息（还没交给 CLI）。队列上方一行，对照 Kimi Code 的「队列 · N 个任务等待发送」。
+    queueHeldHead: (n: number) => `${n} 条消息在当前任务结束后发送`,
     interruptAndSendTip: "Ctrl+Enter 中断当前回合并发送",
     interruptNow: "中断",
     interruptNowTip: "中断当前回合，不发送",

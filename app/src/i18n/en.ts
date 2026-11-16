@@ -1165,6 +1165,7 @@ export const en: Dict = {
     queueFailed: "Not handed to the agent",
     queueRemoveAttachment: "Remove attachment",
     queueAttachmentCount: (n: number) => n === 1 ? "1 attachment" : `${n} attachments`,
+    queueHeldHead: (n: number) => n === 1 ? "1 message sends after the current task" : `${n} messages send after the current task`,
     interruptAndSendTip: "Ctrl+Enter: interrupt the turn and send",
     interruptNow: "Interrupt",
     interruptNowTip: "Interrupt the turn without sending",

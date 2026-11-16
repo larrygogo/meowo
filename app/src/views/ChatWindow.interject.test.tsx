@@ -38,7 +38,7 @@ describe("ChatWindow", () => {
     // 对话末尾的运行行先说插话的去向（用户此刻最关心的事），压过「工作中/请求中」。
     expect(screen.getByText("等这一步完成后插入你的插话").closest(".chat-running")).toBeTruthy();
     // 排队的插话以气泡排在对话末尾（下一轮将出现的位置），不再藏进输入框上方的胶囊。
-    const bubble = screen.getByText("插一句", { selector: ".chat-queued-bubble" });
+    const bubble = screen.getByText("插一句", { selector: ".chat-queue-body" });
     expect(bubble.closest(".chat-scroll")).toBeTruthy();
     expect(document.querySelector(".dock-workbar")?.textContent ?? "").not.toContain("等待插入");
     fireEvent.click(screen.getByText("1 条插话等待插入当前回合"));

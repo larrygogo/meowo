@@ -3519,7 +3519,37 @@ body:not(.remote-ui) .ns-actions .ns-btn { height: var(--btn-h-lg); min-width: 7
 .chat-queued-bubble { min-width: 0; max-width: min(100%, 560px); padding: var(--sp-8) calc(15px * var(--cc-ui)); border-radius: var(--radius-xl) var(--radius-xl) var(--radius-sm) var(--radius-xl); background: var(--cc-user-bubble); color: var(--cc-chat-text); font-size: var(--text-base); line-height: var(--leading-body); white-space: pre-wrap; overflow-wrap: anywhere; opacity: .7; }
 .chat-queued-dismiss { flex: 0 0 auto; width: 18px; height: 18px; padding: 0; display: grid; place-items: center; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-faint); font: inherit; font-size: var(--text-xs); line-height: 1; cursor: pointer; }
 .chat-queued-dismiss:hover { color: var(--cc-text); background: var(--fill-selected); }
-.chat-prompt-queue .chat-queued-turn { width: 100%; flex-wrap: wrap; }
+/* Meowo 攒着的排队消息（还没交给 CLI）。对照 Kimi Code 客户端的队列：右对齐的一列气泡，
+   编辑、取消是气泡里的小图标（悬停或聚焦才亮，触屏常亮），只有队首左边常显一颗「现在交给 Agent」。
+   此前每条后面跟一排品牌色文字链接，三条就是三排，手机上还折行。 */
+.chat-prompt-queue .chat-queued-turn { position: relative; }
+.chat-queue-bubble { display: flex; align-items: flex-end; gap: var(--sp-6); padding-right: var(--sp-6); opacity: 1; }
+.chat-queue-text { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-4); }
+.chat-queue-body { min-width: 0; opacity: .72; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; transition: opacity var(--dur-fast) var(--ease-out); }
+.chat-queued-turn.is-held .chat-queue-body { cursor: text; }
+.chat-queue-bubble:hover .chat-queue-body { opacity: .9; }
+.chat-queue-chip { display: inline-flex; align-items: center; gap: var(--sp-4); color: var(--cc-text-faint); font-size: var(--text-xs); }
+.chat-queue-tools { flex: 0 0 auto; display: inline-flex; align-items: center; gap: var(--sp-2); opacity: 0; transition: opacity var(--dur-fast) var(--ease-out); }
+.chat-queue-bubble:hover .chat-queue-tools, .chat-queue-bubble:focus-within .chat-queue-tools,
+.chat-queued-turn:is(.is-failed, .is-delivering) .chat-queue-tools { opacity: 1; }
+.chat-queue-tool { position: relative; width: 22px; height: 22px; padding: 0; display: grid; place-items: center; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-faint); cursor: pointer; }
+.chat-queue-tool:hover:not([aria-disabled="true"]) { background: var(--fill-selected); color: var(--cc-text); }
+.chat-queue-tool[aria-disabled="true"] { cursor: default; opacity: .5; }
+.chat-queue-send { flex: 0 0 auto; width: 24px; height: 24px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 50%; color: var(--cc-on-accent); background: var(--cc-accent); cursor: pointer; opacity: 0; transition: opacity var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-in-out), transform var(--dur-fast) var(--ease-out); }
+.chat-queue-send.is-first, .chat-queued-turn:hover .chat-queue-send, .chat-queue-send:focus-visible { opacity: 1; }
+.chat-queue-send:hover:not([aria-disabled="true"]) { background: var(--cc-accent-dim); }
+.chat-queue-send:active:not([aria-disabled="true"]) { transform: scale(.92); }
+.chat-queue-send[aria-disabled="true"] { cursor: default; color: var(--cc-text-faint); background: var(--fill-selected); }
+.chat-prompt-queue .chat-queued-turn:has(> .chat-queue-editor) { width: min(100%, 560px); }
+.chat-queue-editor { width: 100%; display: flex; flex-direction: column; gap: var(--sp-6); }
+/* 触屏没有悬停：图标常亮，44px 命中面用看不见的外扩热区补，视觉尺寸不变。 */
+@media (hover: none) {
+  /* 发送钮仍只给队首（与 Kimi 手机端一致）：触屏常亮所有发送钮又会堆回一列主按钮。 */
+  .chat-queue-tools, .chat-queue-send.is-first { opacity: 1; }
+  .chat-queue-send:not(.is-first) { display: none; }
+  .chat-queue-tool::before, .chat-queue-send::before { content: ""; position: absolute; inset: -11px; }
+  .chat-queue-send { position: relative; }
+}
 .chat-queue-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: var(--sp-8); }
 .chat-queue-edit { width: 100%; min-height: 72px; max-height: 180px; resize: vertical; padding: var(--sp-8); border: var(--hairline) solid var(--cc-line); border-radius: var(--radius-lg); background: var(--cc-l0); color: var(--cc-text); font: inherit; line-height: var(--leading-body); }
 .chat-queue-attachments { display: flex; flex-wrap: wrap; gap: var(--sp-4); color: var(--cc-text-dim); font-size: var(--text-xs); }

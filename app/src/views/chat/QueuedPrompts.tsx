@@ -1,4 +1,7 @@
-import { useState } from "react";
+import { useState, type MouseEvent } from "react";
+import { Icon, type Glyph } from "../../icons/Icon";
+import { icClose, icPencil, icRefreshCw } from "../../icons/glyphs";
+import { icArrowUp, icPaperclip, icUndo } from "../../icons/glyphs.chat";
 import { promptQueueCancel, promptQueueEdit, promptQueueFinish, type QueueDraftDto, type QueuedPromptDto } from "../../api";
 import { useT } from "../../i18n";
 import type { Attachment } from "./drafts";
@@ -65,9 +68,21 @@ export function QueuedPrompts({
     }
   };
 
+  // 排在最前、还没交出去的那条：它左边的「现在交给 Agent」常显，其余几条悬停或聚焦时才出现
+  // （对照 Kimi Code 客户端的队列：只有队首有立即发送，整列不堆一排主按钮）。
+  const firstHeld = items.find((item) => item.state === "held")?.id;
+  const heldCount = items.filter((item) => item.state === "held").length;
+  const tool = (label: string, glyph: Glyph, props: { "aria-disabled"?: true; onClick: (event: MouseEvent<HTMLButtonElement>) => void }, tip = label) => (
+    <button type="button" className="chat-queue-tool" aria-label={label} data-tip={tip} {...props}>
+      <Icon glyph={glyph} size={14} />
+    </button>
+  );
+
   return <section className="chat-queued-stack chat-prompt-queue" aria-label={t.chat.queueLabel}>
-    {items.map((item) => <div key={item.id} className={"chat-queued-turn" + (item.state === "failed" ? " is-failed" : "")}>
-      {editing === item.id && draft ? <>
+    {/* 只数还会自动发出的；投递失败的不会自己走，不算进「结束后发送」。 */}
+    {heldCount > 0 && <div className="chat-queued-head"><span>{t.chat.queueHeldHead(heldCount)}</span></div>}
+    {items.map((item) => <div key={item.id} className={"chat-queued-turn is-" + item.state}>
+      {editing === item.id && draft ? <div className="chat-queue-editor">
         <textarea
           className="chat-queue-edit"
           value={draft.prompt}
@@ -87,31 +102,43 @@ export function QueuedPrompts({
           })}>×</button>
         </span>)}</div>}
         <div className="chat-queue-actions">
-          <button type="button" className="chat-user-action" onClick={() => void save()}>{t.chat.queueSave}</button>
           <button type="button" className="chat-user-action" onClick={() => setEditing(null)}>{t.chat.queueEditCancel}</button>
+          <button type="button" className="chat-user-action" onClick={() => void save()}>{t.chat.queueSave}</button>
         </div>
-      </> : <>
-        <div className="chat-queued-bubble">{item.draft.prompt || t.chat.queuedAttachmentOnly}</div>
-        {item.draft.attachments.length > 0 && <div className="chat-queue-attachment-count">{t.chat.queueAttachmentCount(item.draft.attachments.length)}</div>}
-        <div className="chat-queue-actions">
-          {item.state === "held" && <>
-            <button type="button" className="chat-user-action" {...busyProps(busy, () => onDeliver(item))}>{t.chat.queueDeliver}</button>
-            <button type="button" className="chat-user-action" {...busyProps(busy, () => startEdit(item))}>{t.chat.queueEdit}</button>
-            <button type="button" className="chat-user-action" {...busyProps(busy, () => void promptQueueCancel(sessionId, item.id).then((cancelled) => {
-              if (!cancelled) onError("queue/not_cancellable");
-            }).catch(onError).finally(onChanged))}>{t.chat.queueCancel}</button>
-          </>}
-          {item.state === "delivering" && <>
-            <span className="chat-queued-tag" role="status">{t.chat.queueDelivering}</span>
-            <button type="button" className="chat-user-action" {...busyProps(dismissing === item.id, () => void restore(item))}>{t.chat.echoRestore}</button>
-            <button type="button" className="chat-user-action" data-tip={t.chat.queuedDismissTip} {...busyProps(dismissing === item.id, () => void dismiss(item))}>{t.chat.queuedDismiss}</button>
-          </>}
-          {item.state === "failed" && <>
-            <span className="chat-queued-tag is-warn" role="alert">{t.chat.queueFailed}</span>
-            <button type="button" className="chat-user-action" {...busyProps(busy, () => onRetry(item))}>{t.chat.echoRetry}</button>
-            <button type="button" className="chat-user-action" {...busyProps(dismissing === item.id, () => void restore(item))}>{t.chat.echoRestore}</button>
-            <button type="button" className="chat-user-action" data-tip={t.chat.queuedDismissTip} {...busyProps(dismissing === item.id, () => void dismiss(item))}>{t.chat.queuedDismiss}</button>
-          </>}
+      </div> : <>
+        {item.state === "held" && <button
+          type="button"
+          className={"chat-queue-send" + (item.id === firstHeld ? " is-first" : "")}
+          aria-label={t.chat.queueDeliver}
+          data-tip={t.chat.queueDeliver}
+          {...busyProps(busy, () => onDeliver(item))}
+        ><Icon glyph={icArrowUp} size={14} /></button>}
+        <div className="chat-queued-bubble chat-queue-bubble">
+          <div className="chat-queue-text">
+            {/* 点正文进编辑，与 Kimi 一致；读屏和键盘走旁边的编辑钮，这里不再做成按钮（免得两个「编辑」）。 */}
+            <div className="chat-queue-body" onClick={item.state === "held" && !busy ? () => startEdit(item) : undefined}>
+              {item.draft.prompt || t.chat.queuedAttachmentOnly}
+            </div>
+            {/* 状态写在气泡里（附件行同一位置），不挤在气泡左边把它压窄。 */}
+            {item.state === "delivering" && <span className="chat-queued-tag" role="status"><span className="chat-model-spinner" aria-hidden="true" />{t.chat.queueDelivering}</span>}
+            {item.state === "failed" && <span className="chat-queued-tag is-warn" role="alert">{t.chat.queueFailed}</span>}
+            {item.draft.attachments.length > 0 && <span className="chat-queue-chip">
+              <Icon glyph={icPaperclip} size={12} />{t.chat.queueAttachmentCount(item.draft.attachments.length)}
+            </span>}
+          </div>
+          <span className="chat-queue-tools">
+            {item.state === "held" && <>
+              {tool(t.chat.queueEdit, icPencil, busyProps(busy, () => startEdit(item)))}
+              {tool(t.chat.queueCancel, icClose, busyProps(busy, () => void promptQueueCancel(sessionId, item.id).then((cancelled) => {
+                if (!cancelled) onError("queue/not_cancellable");
+              }).catch(onError).finally(onChanged)))}
+            </>}
+            {item.state === "failed" && tool(t.chat.echoRetry, icRefreshCw, busyProps(busy, () => onRetry(item)))}
+            {item.state !== "held" && <>
+              {tool(t.chat.echoRestore, icUndo, busyProps(dismissing === item.id, () => void restore(item)))}
+              {tool(t.chat.queuedDismiss, icClose, busyProps(dismissing === item.id, () => void dismiss(item)), t.chat.queuedDismissTip)}
+            </>}
+          </span>
         </div>
       </>}
     </div>)}

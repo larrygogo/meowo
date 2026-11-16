@@ -56,7 +56,7 @@ describe("ChatWindow 持久队列", () => {
     const box = await adapter.box();
     fireEvent.change(box, { target: { value: "回合结束后继续" } });
     fireEvent.keyDown(box, { key: "Enter" });
-    await screen.findByText("回合结束后继续", { selector: ".chat-queued-bubble" });
+    await screen.findByText("回合结束后继续", { selector: ".chat-queue-body" });
     expect(harness.writes()).toEqual([]);
     expect(harness.state()).toBe("held");
 
@@ -75,7 +75,7 @@ describe("ChatWindow 持久队列", () => {
     const restore = await screen.findByRole("button", { name: "放回输入框" });
     fireEvent.click(restore);
     await waitFor(() => expect(harness.state()).toBe("cancelled"));
-    await waitFor(() => expect(screen.queryByText("卡住的消息", { selector: ".chat-queued-bubble" })).toBeNull(), { timeout: 4_000 });
+    await waitFor(() => expect(screen.queryByText("卡住的消息", { selector: ".chat-queue-body" })).toBeNull(), { timeout: 4_000 });
     expect((await adapter.box()).value).toBe("卡住的消息");
     expect(harness.writes()).toEqual([]);
   });

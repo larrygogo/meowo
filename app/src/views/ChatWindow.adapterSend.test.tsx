@@ -22,7 +22,7 @@ describe("ChatWindow 适配回归", () => {
     await waitFor(() => expect(document.querySelector(".chat-model-label")).toBeTruthy());
     fireEvent.change(box(), { target: { value: "下一回合处理" } });
     fireEvent.keyDown(box(), { key: "Enter" });
-    await screen.findByText("下一回合处理", { selector: ".chat-queued-bubble" });
+    await screen.findByText("下一回合处理", { selector: ".chat-queue-body" });
     await deliverQueuedNow();
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("prompt_queue_enqueue", expect.objectContaining({ sessionId: 501 })));
     await deliverQueuedNow();
@@ -43,7 +43,7 @@ describe("ChatWindow 适配回归", () => {
     await waitFor(() => expect(document.querySelector(".chat-model-label")).toBeTruthy());
     fireEvent.change(box(), { target: { value: "长工具期间插一句" } });
     fireEvent.keyDown(box(), { key: "Enter" });
-    await waitFor(() => expect(document.querySelector(".chat-queued-bubble")?.textContent).toBe("长工具期间插一句"));
+    await waitFor(() => expect(document.querySelector(".chat-queue-body")?.textContent).toBe("长工具期间插一句"));
     expect(writes(510)).toEqual([]);
     await deliverQueuedNow();
     await waitFor(() => expect(writes(510)).toContain("\r"));
@@ -69,7 +69,7 @@ describe("ChatWindow 适配回归", () => {
     await waitFor(() => expect(document.querySelector(".chat-model-label")).toBeTruthy());
     fireEvent.change(box(), { target: { value: "顺手改个名" } });
     fireEvent.keyDown(box(), { key: "Enter" });
-    await waitFor(() => expect(document.querySelector(".chat-queued-bubble")?.textContent).toBe("顺手改个名"));
+    await waitFor(() => expect(document.querySelector(".chat-queue-body")?.textContent).toBe("顺手改个名"));
     await deliverQueuedNow();
     landed = true;
     // 时限短于旧版「已插入」回执的 2.5s 停留：对话里一出现，排队区就该同时没有它。
@@ -96,7 +96,7 @@ describe("ChatWindow 适配回归", () => {
     await deliverQueuedNow();
     await waitFor(() => expect(writes(513).some((text) => String(text).includes("等它们跑完再汇总"))).toBe(true));
     // 写进终端之后仍在排队区，没有变成对话里的回显气泡。
-    await waitFor(() => expect(document.querySelector(".chat-queued-bubble")?.textContent).toBe("等它们跑完再汇总"));
+    await waitFor(() => expect(document.querySelector(".chat-queue-body")?.textContent).toBe("等它们跑完再汇总"));
     expect(document.querySelector(".chat-message.is-user")).toBeNull();
   });
 
@@ -120,7 +120,7 @@ describe("ChatWindow 适配回归", () => {
     await waitFor(() => expect(document.querySelector(".chat-model-label")).toBeTruthy());
     fireEvent.change(box(), { target: { value: "顺手改个名" } });
     fireEvent.keyDown(box(), { key: "Enter" });
-    await waitFor(() => expect(document.querySelector(".chat-queued-bubble")?.textContent).toBe("顺手改个名"));
+    await waitFor(() => expect(document.querySelector(".chat-queue-body")?.textContent).toBe("顺手改个名"));
     expect(screen.queryByText(zh.vocab.delivery.accepted)).toBeNull();
     await deliverQueuedNow();
     acked = true;
@@ -528,7 +528,7 @@ describe("持久队列的真实投递", () => {
     const box = await adapter.box();
     fireEvent.change(box, { target: { value: "回合结束后继续" } });
     fireEvent.keyDown(box, { key: "Enter" });
-    await screen.findByText("回合结束后继续", { selector: ".chat-queued-bubble" });
+    await screen.findByText("回合结束后继续", { selector: ".chat-queue-body" });
     expect(current.writes()).toEqual([]);
     expect(current.state()).toBe("held");
 
