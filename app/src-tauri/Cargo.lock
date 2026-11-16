@@ -2725,6 +2725,7 @@ dependencies = [
  "meowo-agent",
  "meowo-protocol",
  "meowo-store",
+ "rusqlite",
  "serde",
  "serde_json",
  "sysinfo",

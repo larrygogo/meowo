@@ -1,4 +1,4 @@
-use meowo_reporter::{db_path, dispatch::dispatch, hook::HookEvent};
+use meowo_reporter::{db_path, dispatch::dispatch, hook::HookEvent, timing};
 use meowo_store::Store;
 use std::io::Read;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -82,6 +82,7 @@ fn main() {
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
+    let started = std::time::Instant::now();
     let mut buf = String::new();
     std::io::stdin().read_to_string(&mut buf)?;
 
@@ -117,17 +118,46 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let Some(path) = db_path() else {
         return Ok(());
     };
-    let store = Store::open(path)?;
-    let now = now_ms();
     // agent 提供方：kimi 的 hook 命令带 `--provider kimi`；Claude 不带 → 默认 claude。
     let provider = parse_provider();
     let canonical_event = meowo_agent::by_id(&provider).map_or(ev.hook_event_name.as_str(), |p| {
         p.canonical_event(&ev.hook_event_name)
     });
+    let hook_decides = meowo_agent::by_id(&provider).is_some_and(|p| p.permission_hook_decides());
+    // 会挂起等 GUI 作答的两类事件（审批、提问代答）声明了几分钟的时限，不能按普通事件掐断。
+    let waits_for_user = hook_decides
+        && (canonical_event == "PermissionRequest"
+            || (canonical_event == "PreToolUse"
+                && ev.tool_name.as_deref() == Some("AskUserQuestion")));
+    if !waits_for_user {
+        timing::arm_watchdog(timing::budget(), started, ev.hook_event_name.clone(), provider.clone());
+    }
+    let result = handle(&ev, &path, &provider, canonical_event, hook_decides);
+    let elapsed = started.elapsed();
+    if !waits_for_user && elapsed > timing::SLOW {
+        timing::log_slow(&ev.hook_event_name, &provider, elapsed, timing::phase(), false);
+    }
+    result
+}
+
+/// 落库并按需走 GUI 审批桥。从 run 拆出来，是为了在它前后统一计时（见 timing）。
+fn handle(
+    ev: &HookEvent,
+    path: &std::path::Path,
+    provider: &str,
+    canonical_event: &str,
+    hook_decides: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    timing::set_phase(timing::Phase::OpenDb);
+    let store = Store::open(path)?;
+    let now = now_ms();
+    let provider = provider.to_string();
+    timing::set_phase(timing::Phase::Dispatch);
     // Codex 的 hook 可能继承 workspace 沙箱：能读 ~/.meowo/board.db，却不能写。审批桥不能被
     // 这次遥测写入失败短路，否则 PermissionRequest 永远只会落回终端。先记下错误，完成所有
     // 不依赖写库的 broker 工作后再返回；main 最终仍按契约吞错并以 0 退出。
-    let dispatch_error = dispatch(&store, &ev, now, &provider).err();
+    let dispatch_error = dispatch(&store, ev, now, &provider).err();
+    timing::set_phase(timing::Phase::Broker);
     if canonical_event == "SessionStart" {
         if let Some(session_id) = store.find_session_id_pub(&ev.session_id)? {
             // claim 带上会话本体 pid：broker 靠它区分「/clear 原地换代」与「会话内 Bash
@@ -140,7 +170,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     // 超时：若也弹 GUI 审批卡，卡片控制不了真实审批，点「允许」还会错误清掉
     // pending_review——真实提示仍留在终端里等人。这类 provider 的待批状态仍由 dispatch
     // 落库（卡片显示「去终端处理」），只是不接管决策。
-    let hook_decides = meowo_agent::by_id(&provider).is_some_and(|p| p.permission_hook_decides());
     if canonical_event == "PermissionRequest" && hook_decides {
         if let Some(session_id) = store.find_session_id_pub(&ev.session_id)? {
             if let Some(decision) = attach::request_approval(

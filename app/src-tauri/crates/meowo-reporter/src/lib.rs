@@ -14,6 +14,7 @@ pub mod media_guard;
 pub mod proc;
 pub mod statusline;
 pub mod tabtitle;
+pub mod timing;
 
 use std::path::PathBuf;
 
