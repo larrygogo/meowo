@@ -6,9 +6,9 @@ import { check } from "./check-release-notes.mjs";
 
 const dir = new URL("../docs/release-notes/", import.meta.url);
 
-test("v0.7.1 起的正式版说明都通过检查", () => {
-  const files = readdirSync(dir).filter((f) => /^v0\.(7\.[1-9]|[89]\.\d+|\d{2,}\.\d+)(-[\w.]+)?\.md$/.test(f) || /^v[1-9]/.test(f));
-  assert.ok(files.length >= 6);
+test("所有版本的说明都通过检查", () => {
+  const files = readdirSync(dir).filter((f) => /^v\d+\.\d+\.\d+(-[\w.]+)?\.md$/.test(f));
+  assert.ok(files.length >= 50);
   for (const f of files) assert.deepEqual(check(readFileSync(new URL(f, dir), "utf8")), [], f);
 });
 
@@ -23,6 +23,7 @@ test("拦下开发者内容", () => {
     "- 持续集成改成 Node 26，CI 全绿",
     "- 更新了官网和文档",
     "- 轮询间隔改成 5 秒",
+    "- 结束会话更可靠——几秒内一定退出",
   ];
   for (const line of dev) assert.notDeepEqual(check(`一句话。\n\n## 其它\n\n${line}\n`), [], line);
 });

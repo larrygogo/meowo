@@ -26,5 +26,6 @@ plans（`plans/*.md`）。这些功能都已上线，但**实现已被后续重�
 特别注意：`archive/superpowers/specs/2026-07-03-chat-window-design.md` 选定的方案从未实施，
 对话窗实际走 PTY 路线（详见文件头横幅与 overview.md）。
 
-`archive/release-notes-v0.1.*.md` 是仅有的两份手写 release notes；0.2 起改由
-GitHub Releases 承载，官网 changelog 构建期抓取。
+`release-notes/` 收着 v0.1.1 起每一版的发布说明，GitHub Release 正文取自它，官网
+changelog 构建期从 Release 抓取。写法见 `release-notes/README.md`。`archive/release-notes-v0.1.*.md`
+是早期的手写稿，只作留档。
