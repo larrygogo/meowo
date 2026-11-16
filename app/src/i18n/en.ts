@@ -1072,6 +1072,7 @@ export const en: Dict = {
     checkpointNext: "Older turn",
     checkpointEmpty: "No completed turn checkpoints yet",
     checkpointLoading: "Loading turn checkpoint…",
+    checkpointPreviewNote: "Preview of what this turn changed. Your files stay as they are.",
     checkpointRestoreStart: "Restore before turn",
     checkpointRestoreEnd: "Restore after turn",
     checkpointRestoreTitle: (turn: number) => `Restore files from turn ${turn}`,

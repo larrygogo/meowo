@@ -1206,6 +1206,8 @@ export const zh = {
     checkpointNext: "较早回合",
     checkpointEmpty: "还没有已结束的回合快照",
     checkpointLoading: "正在读取回合快照…",
+    // 快照页是只读预览：看这一回合改了什么。只有点「恢复」并确认后才改文件。
+    checkpointPreviewNote: "只看这一回合改了什么，不改动你的文件",
     checkpointRestoreStart: "恢复到回合前",
     checkpointRestoreEnd: "恢复到回合后",
     checkpointRestoreTitle: (turn: number) => `恢复第 ${turn} 回合的文件`,

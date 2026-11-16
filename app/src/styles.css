@@ -4802,6 +4802,8 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .checkpoint-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-4); margin-bottom: var(--sp-8); }
 .checkpoint-toolbar strong { font-size: var(--text-sm); font-weight: 500; }
 .checkpoint-actions { display: flex; flex-wrap: wrap; gap: var(--sp-8); margin-left: auto; }
+/* 左边与下面的「N 个文件」行对齐（那一行是 margin 8 + padding 8）。 */
+.checkpoint-preview-note { margin: calc(var(--sp-4) * -1) 0 var(--sp-8); padding: 0 calc(var(--sp-8) * 2); color: var(--cc-text-faint); font-size: var(--text-xs); }
 .checkpoint-repos { display: flex; flex-wrap: wrap; gap: var(--sp-4); margin-bottom: var(--sp-8); }
 .checkpoint-repos button { border: 0; border-radius: var(--radius-sm); padding: var(--sp-2) var(--sp-6); background: transparent; color: var(--cc-text-dim); }
 .checkpoint-repos button.is-selected { background: var(--fill-hover); color: var(--cc-text); }

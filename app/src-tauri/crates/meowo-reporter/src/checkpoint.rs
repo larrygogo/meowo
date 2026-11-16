@@ -36,6 +36,14 @@ fn run(cwd: &Path, args: &[&str], index: Option<&Path>) -> Result<Output, String
     if let Some(index) = index {
         command.env("GIT_INDEX_FILE", index);
     }
+    // 不弹控制台窗口。这个模块除了在 hook 里跑（父进程本就是 CLI 的控制台），还被桌面应用拿去
+    // 读快照差异、恢复文件；窗口程序起控制台程序，Windows 默认给它开一个新控制台，每条 git
+    // 都闪一下黑框（2026-11-16 用户反馈：查看、切换快照时每次都闪）。与 app 里其它 git 调用一致。
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
     command.output().map_err(|e| format!("checkpoint/git_spawn:{e}"))
 }
 
@@ -308,6 +316,11 @@ pub fn restore(repo: &Path, reference: &str) -> Result<(), String> {
     output(repo, &["read-tree", reference], Some(&index.0))?;
     let mut command = Command::new("git");
     command.current_dir(repo).env("GIT_INDEX_FILE", &index.0).env("GIT_WORK_TREE", repo).args(["checkout-index", "--all", "--force"]);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW，同 run()
+    }
     let out = command.output().map_err(|e| format!("checkpoint/git_spawn:{e}"))?;
     if !out.status.success() {
         return Err(format!("checkpoint/checkout_failed:{}", String::from_utf8_lossy(&out.stderr).trim()));
@@ -319,6 +332,18 @@ pub fn restore(repo: &Path, reference: &str) -> Result<(), String> {
 mod tests {
     use super::*;
     use meowo_store::RestoreCheckpoint;
+
+    /// 桌面应用也调这个模块（读快照差异、恢复）：每处起 git 都要带 CREATE_NO_WINDOW，不然 Windows 上
+    /// 每条命令闪一下黑框（2026-11-16 用户反馈）。新加的 git 调用忘了带，这里就红。
+    #[test]
+    fn every_git_spawn_hides_the_console_window() {
+        let source = include_str!("checkpoint.rs");
+        let body = source.split("#[cfg(test)]").next().unwrap();
+        let spawns = body.matches("Command::new(\"git\")").count();
+        let hidden = body.matches("creation_flags(0x0800_0000)").count();
+        assert!(spawns > 0);
+        assert_eq!(spawns, hidden, "checkpoint.rs 里有 {spawns} 处起 git，只有 {hidden} 处带 CREATE_NO_WINDOW");
+    }
 
     fn git(repo: &Path, args: &[&str]) -> String {
         let out = Command::new("git").current_dir(repo).args(args).output().unwrap();
