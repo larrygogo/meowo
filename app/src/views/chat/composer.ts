@@ -227,6 +227,28 @@ export function composerHolds(read: ComposerRead, message: string): boolean {
   return rows[0].startsWith(first) || rows.some((row) => row.includes(last));
 }
 
+/// 某段话是不是已经被 CLI 挪到输入框上方排队了（Kimi：`❯ 原文` 一行或几行，下面紧跟
+/// `↑ to edit · ctrl-s to steer immediately`，2026-11-16 实拍）。hint 是插件声明的提示行固定文字
+/// （ChatUi.queued_hint）。只认最后一条提示行正上方连着的那几行：更早的对话正文里引用同一句不算。
+export function queuedInCli(lines: readonly string[] | null | undefined, hint: string | null | undefined, message: string): boolean {
+  if (!lines || !hint) return false;
+  const needle = hint.toLowerCase();
+  let at = -1;
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (lines[index].toLowerCase().includes(needle)) { at = index; break; }
+  }
+  if (at < 0) return false;
+  const block: string[] = [];
+  // 往上收连着的非空行（排队区可能有好几条、每条折成好几行），遇到空行或分隔线就停。
+  for (let index = at - 1; index >= 0 && block.length < 24; index -= 1) {
+    const line = lines[index];
+    if (!line.trim() || /^[\s─━═]+$/.test(line)) break;
+    block.unshift(line.replace(/^\s*[❯›>]\s?/, "").trim());
+  }
+  const head = message.split(/\r?\n/).map((line) => line.trim()).find(Boolean)?.slice(0, 12);
+  return !!head && block.join("").replace(/\s+/g, "").includes(head.replace(/\s+/g, ""));
+}
+
 /// 读屏与按键的出入口。测试里换成回放实拍帧的假终端。
 export type ComposerIo = {
   frame: () => Promise<TerminalScreenFrameDto | null>;

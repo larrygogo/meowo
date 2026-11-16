@@ -45,6 +45,8 @@ pub(crate) struct DiffCache {
     targets: Mutex<HashMap<String, TargetEntry>>,
     /// 标题栏直查 gh 的结果，按目录缓存（forge 解析不出仓库的远端才走，见 [`title_pr_with`]）。
     direct_prs: Mutex<HashMap<String, (Instant, Option<PullRequestDto>)>>,
+    /// 会话里 agent 建过、动过的 PR，按链接缓存（见 [`url_pr_with`]）。
+    url_prs: Mutex<HashMap<String, (Instant, Option<PullRequestDto>)>>,
 }
 
 /// 一个目录的 PR 去向：(缓存键, 仓库 owner/name, gh 认的 head)。没有 GitHub 远端、detached 时为 None。
@@ -172,6 +174,47 @@ fn direct_pr(ctx: &Ctx, diffs: &DiffCache, dir: &str) -> Option<PullRequestDto> 
         .and_then(|out| crate::git::parse_pull_request(&out.stdout));
     lock(&diffs.direct_prs).insert(dir.to_string(), (Instant::now(), pr.clone()));
     pr
+}
+
+/// 会话里 agent 用 gh 建过、动过的 PR：前端从时间线的命令输出里抠出链接，这里按链接问 gh 现状
+/// （开着、草稿、已合并、已关闭），按链接缓存 60 秒。
+///
+/// 为什么不按分支：agent 常在临时 worktree 里另切分支建 PR，建完把 worktree 删掉，会话目录停在
+/// 原来的分支上，按分支查到的是那个分支的旧 PR（2026-11-16 实拍：刚建了 #536，标题栏仍是已合并的 #530）。
+/// 链接里已经带了仓库和编号，不依赖目录的当前分支；目录只当 gh 的工作目录（企业版主机靠 gh 自己的配置认）。
+pub(crate) fn url_pr_with(ctx: &Ctx, diffs: &DiffCache, cwd: &str, url: &str) -> Option<PullRequestDto> {
+    let url = url.trim();
+    if !is_pr_url(url) {
+        return None;
+    }
+    if let Some((at, pr)) = lock(&diffs.url_prs).get(url) {
+        if at.elapsed() < PR_TTL {
+            return pr.clone();
+        }
+    }
+    let dir = if std::path::Path::new(cwd.trim()).is_dir() { cwd.trim().to_string() } else { std::env::temp_dir().to_string_lossy().into_owned() };
+    let pr = (ctx.gh)(&dir, &["pr", "view", url, "--json", "number,state,isDraft,url,title"])
+        .filter(|out| out.ok())
+        .and_then(|out| crate::git::parse_pull_request(&out.stdout));
+    lock(&diffs.url_prs).insert(url.to_string(), (Instant::now(), pr.clone()));
+    pr
+}
+
+/// `https://<主机>/<owner>/<repo>/pull/<编号>`：只认这一种形状，别的字符串不交给 gh。
+pub(crate) fn is_pr_url(url: &str) -> bool {
+    let Some(rest) = url.strip_prefix("https://") else {
+        return false;
+    };
+    let parts: Vec<&str> = rest.split('/').collect();
+    parts.len() == 5
+        && parts.iter().all(|part| !part.is_empty() && !part.chars().any(char::is_whitespace))
+        && parts[3] == "pull"
+        && parts[4].chars().all(|c| c.is_ascii_digit())
+}
+
+/// 正式的按链接查询：真 gh、进程内共用的缓存。
+pub(crate) fn url_pull_request(cwd: &str, url: &str) -> Option<PullRequestDto> {
+    url_pr_with(&Ctx::real(), &DIFFS, cwd, url)
 }
 
 /// 正式的标题栏查询：真 gh、进程内共用的缓存。

@@ -100,6 +100,8 @@ export function CheckpointPanel({ sessionId, cwd, summary, comments, onAddCommen
         <button type="button" className="chat-user-action" {...busyProps(busy, () => setConfirm("end"))}>{t.chat.checkpointRestoreEnd}</button>
       </span>}
     </div>
+    {/* 只读预览要说出来：下面的文件列表和「当前改动」长得一样，不说就像代码已经被切过去了（2026-11-16 用户反馈）。 */}
+    {turn != null && <div className="checkpoint-preview-note">{t.chat.checkpointPreviewNote}</div>}
     {detail && detail.repos.length > 1 && <div className="checkpoint-repos">{detail.repos.map((item) => <button type="button" key={item.root} className={repo?.root === item.root ? "is-selected" : ""} onClick={() => setRepoRoot(item.root)}>{item.name}</button>)}</div>}
     {error && <div className="scm-notice is-error" role="alert">{error}</div>}
     {result && <div className="scm-notice" role="status">
@@ -114,7 +116,8 @@ export function CheckpointPanel({ sessionId, cwd, summary, comments, onAddCommen
       : <ChangesView
           key={`${turn}:${repo.root}`}
           cwd={repo.root}
-          summary={{ ...summary, files: repo.files, ahead: null, behind: null }}
+          // 不显示分支名：这是某一回合当时的改动，不是当前分支的状态，挂着分支名会被当成工作区已经变了。
+          summary={{ ...summary, branch: null, files: repo.files, ahead: null, behind: null }}
           comments={comments}
           touchedPaths={[]}
           turnTouchedPaths={[]}

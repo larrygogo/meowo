@@ -1206,6 +1206,8 @@ export const zh = {
     checkpointNext: "较早回合",
     checkpointEmpty: "还没有已结束的回合快照",
     checkpointLoading: "正在读取回合快照…",
+    // 快照页是只读预览：看这一回合改了什么。只有点「恢复」并确认后才改文件。
+    checkpointPreviewNote: "只看这一回合改了什么，不改动你的文件",
     checkpointRestoreStart: "恢复到回合前",
     checkpointRestoreEnd: "恢复到回合后",
     checkpointRestoreTitle: (turn: number) => `恢复第 ${turn} 回合的文件`,
@@ -1307,10 +1309,15 @@ export const zh = {
     queueSave: "保存",
     queueCancel: "取消排队",
     queueDeliver: "现在交给 Agent",
+    // 这家 CLI 下一步就读到排队输入（queue_delivery = next_step）：交出去等于插进正在跑的回合。对照 Kimi Code「立即发送到当前回合」。
+    queueInsertNow: "立即插入当前回合",
+    queueDragHandle: "拖拽排序，或按上下方向键调整",
     queueDelivering: "正在交给 Agent",
     queueFailed: "没有交给 Agent",
     queueRemoveAttachment: "移除附件",
     queueAttachmentCount: (n: number) => `${n} 个附件`,
+    // Meowo 替你攒着、当前任务结束后才发的消息（还没交给 CLI）。队列上方一行，对照 Kimi Code 的「队列 · N 个任务等待发送」。
+    queueHeldHead: (n: number) => `${n} 条消息在当前任务结束后发送`,
     interruptAndSendTip: "Ctrl+Enter 中断当前回合并发送",
     interruptNow: "中断",
     interruptNowTip: "中断当前回合，不发送",
@@ -2223,6 +2230,9 @@ export const zh = {
   },
   // 「更改」面板的推送 / PR / CI / 合并（二期包 5，forge.rs）。文案按 meowo 文案规范：≤20 字、不用破折号和分号。
   forge: {
+    // 「更改」面板里这个会话建过、动过的 PR（常在临时 worktree 里另切分支建），与当前分支的 PR 分开列。
+    sessionPrs: "本会话的 PR",
+    branchPr: "当前分支的 PR",
     reviewOpen: "评论与监控",
     reviewClose: "收起评论",
     reviewDiscussion: "讨论",

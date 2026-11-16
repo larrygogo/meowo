@@ -502,6 +502,8 @@ pub struct TranscriptInfo {
     /// （含排队形态）/ TaskOutput 拉取都算结局）。主回合 Stop 后它们仍在独立干活，
     /// 状态判定据此把「等待中」翻成「运行中」。不支持后台委派的 agent 恒 0。
     pub busy_subagents: u32,
+    /// 最近主回合的正式完成时间；新回合开始即清空，不能用旧完成记录压掉新活动。
+    pub completed_at: Option<i64>,
 }
 
 /// 增量解析单元：逐行 fold、按需产出 TranscriptInfo。

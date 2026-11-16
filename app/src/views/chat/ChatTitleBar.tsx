@@ -7,7 +7,7 @@
  */
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { flushSync } from "react-dom";
-import { getPullRequest, openLink, type GitDiffSummaryDto, type PullRequestDto } from "../../api";
+import { getPullRequest, getPullRequestByUrl, openLink, type GitDiffSummaryDto, type PullRequestDto } from "../../api";
 import { useT } from "../../i18n";
 import { remoteUi } from "../../remoteMode";
 import { busyProps } from "../../busyButton";
@@ -139,27 +139,31 @@ import { Icon, type IconSize } from "../../icons/Icon";
 import { icGitBranch, icList, icPullRequest, icSidebarRight, icTerminalBox } from "../../icons/glyphs.chat";
 import { icStopCircle } from "../../icons/glyphs";
 
-/// 当前分支的 PR（对照 Kimi 标题栏）：换目录 / 换分支时查一次，之后 3 分钟一次——gh 要联网，
-/// 不跟改动摘要的轮询走（后端另按目录缓存 60s）。手机不查：桌面专用命令，桥上不放行。
-function usePullRequest(cwd: string | null, branch: string | null): PullRequestDto | null {
+/// 标题栏的 PR（对照 Kimi 标题栏）：会话里 agent 用 gh 建过、动过 PR 时看最近的那个（按链接查，
+/// 见 sessionPrs：agent 常在临时 worktree 里另切分支建 PR，按目录分支只能查到旧的）；一个都没有、
+/// 或按链接查不到时，看当前分支的 PR。换目录 / 换分支 / 换 PR 时查一次，之后 3 分钟一次——gh 要联网，
+/// 不跟改动摘要的轮询走（后端另按目录、按链接各缓存 60s）。手机不查：桌面专用命令，桥上不放行。
+function usePullRequest(cwd: string | null, branch: string | null, sessionPrUrl: string | null): PullRequestDto | null {
   const [pullRequest, setPullRequest] = useState<PullRequestDto | null>(null);
   useEffect(() => {
     setPullRequest(null);
-    if (!cwd || !branch || remoteUi()) return;
+    if (!cwd || (!branch && !sessionPrUrl) || remoteUi()) return;
     let alive = true;
-    const fetchPr = () => void getPullRequest(cwd).then((pr) => { if (alive) setPullRequest(pr ?? null); }).catch(() => {});
+    const byBranch = () => (branch ? getPullRequest(cwd) : Promise.resolve(null));
+    const lookup = () => (sessionPrUrl ? getPullRequestByUrl(cwd, sessionPrUrl).then((pr) => pr ?? byBranch()) : byBranch());
+    const fetchPr = () => void lookup().then((pr) => { if (alive) setPullRequest(pr ?? null); }).catch(() => {});
     fetchPr();
     // 窗口隐藏时不查（规格：PR/CI 轮询隐藏时 0 次），首次查询照常。
     const timer = window.setInterval(() => { if (document.visibilityState !== "hidden") fetchPr(); }, 180_000);
     return () => { alive = false; window.clearInterval(timer); };
-  }, [cwd, branch]);
+  }, [cwd, branch, sessionPrUrl]);
   return pullRequest;
 }
 
 export function ChatTitleBar({
   leading, title, archive, end, cwd, prCwd, gitSummary, changesOpen, panelOpen, terminalOn,
   onToggleChanges, onTogglePanel, onToggleTerminal, onError, panelAgentBusy = false, panelWaiting = false, info = null,
-  onPullRequest,
+  onPullRequest, sessionPrUrl = null,
 }: {
   /** 标题前的侧栏开关（macOS 侧栏收起时 / 手机紧凑形态才有）。 */
   leading: ReactNode;
@@ -189,9 +193,11 @@ export function ChatTitleBar({
   info?: { open: boolean; onToggle: () => void } | null;
   /** 查到的 PR 报给对话窗：Ctrl+K 的「打开 PR」用同一份，不再多打一次 gh（UI 优化 #53）。 */
   onPullRequest?: (pr: PullRequestDto | null) => void;
+  /** 会话里 agent 最近建过、动过的 PR 链接（见 sessionPrs）。有它就先看它，不看目录分支。 */
+  sessionPrUrl?: string | null;
 }) {
   const t = useT();
-  const pullRequest = usePullRequest(prCwd ?? cwd, gitSummary?.isRepo ? gitSummary.branch : null);
+  const pullRequest = usePullRequest(prCwd ?? cwd, gitSummary?.isRepo ? gitSummary.branch : null, sessionPrUrl);
   useEffect(() => { onPullRequest?.(pullRequest); }, [pullRequest, onPullRequest]);
   const barRef = useRef<HTMLElement>(null);
   const { hidden, compact } = useTitleBarOverflow(barRef, remoteUi());

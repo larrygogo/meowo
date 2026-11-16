@@ -36,6 +36,14 @@ fn run(cwd: &Path, args: &[&str], index: Option<&Path>) -> Result<Output, String
     if let Some(index) = index {
         command.env("GIT_INDEX_FILE", index);
     }
+    // 不弹控制台窗口。这个模块除了在 hook 里跑（父进程本就是 CLI 的控制台），还被桌面应用拿去
+    // 读快照差异、恢复文件；窗口程序起控制台程序，Windows 默认给它开一个新控制台，每条 git
+    // 都闪一下黑框（2026-11-16 用户反馈：查看、切换快照时每次都闪）。与 app 里其它 git 调用一致。
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
     command.output().map_err(|e| format!("checkpoint/git_spawn:{e}"))
 }
 
@@ -88,16 +96,45 @@ fn checkpoint_ref(session_id: i64, turn: i64, phase: &str) -> String {
     format!("refs/meowo/checkpoints/{session_id}/turn/{turn}/{phase}")
 }
 
+/// 把仓库自己的 index 复制成临时 index 的起点。
+///
+/// 为什么不从 `read-tree HEAD` 起步：那样的 index 没有文件的 stat 缓存，随后的 `add -A` 要把
+/// 每个跟踪文件重新读一遍、算一遍哈希，耗时随仓库体积线性增长。这一步跑在 UserPromptSubmit
+/// 和 Stop 的 hook 里，各家 CLI 只给 5 秒（2026-11-16 实拍超时；本仓库 1500 个文件时
+/// add 一步 261ms，复制 index 起步后 58ms，生成的树完全相同）。复制来的 index 带着有效的
+/// stat 缓存，`add -A` 只需比对改过的文件；结果同样是「工作区去掉 ignored」，与旧做法等价。
+/// 只读真实 index、写的是副本，用户的暂存区不受影响。
+fn seed_index(repo: &Path, index: &Path) -> bool {
+    let Ok(out) = run(repo, &["rev-parse", "--git-path", "index"], None) else {
+        return false;
+    };
+    let rel = text(&out.stdout);
+    if !out.status.success() || rel.is_empty() {
+        return false;
+    }
+    // linked worktree 的 index 在主仓库的 .git/worktrees/<名>/ 下，--git-path 已经指过去；
+    // 它可能是相对 repo 的路径，也可能是绝对路径，join 两种都对。
+    std::fs::copy(repo.join(rel), index).is_ok()
+}
+
 pub fn capture(repo: &Path, session_id: i64, turn: i64, phase: &str) -> Result<String, String> {
+    let _phase = crate::timing::enter(crate::timing::Phase::Checkpoint);
     let head = head(repo);
     let index = temp_index();
-    if head.is_some() {
-        output(repo, &["read-tree", "HEAD"], Some(&index.0))?;
-    } else {
-        output(repo, &["read-tree", "--empty"], Some(&index.0))?;
-    }
     // add 只写临时 index；默认排除 ignored，同时收进 tracked 删除和未跟踪文件。
-    output(repo, &["add", "-A", "--", "."], Some(&index.0))?;
+    let seeded = seed_index(repo, &index.0)
+        && output(repo, &["add", "-A", "--", "."], Some(&index.0)).is_ok();
+    if !seeded {
+        // 没有可复制的 index（新仓库还没 add 过）、复制到一半的 index（正好碰上 git 在写）
+        // 或 add 失败：丢掉副本，按旧做法从 HEAD 重建。
+        let _ = std::fs::remove_file(&index.0);
+        if head.is_some() {
+            output(repo, &["read-tree", "HEAD"], Some(&index.0))?;
+        } else {
+            output(repo, &["read-tree", "--empty"], Some(&index.0))?;
+        }
+        output(repo, &["add", "-A", "--", "."], Some(&index.0))?;
+    }
     let tree = text(&output(repo, &["write-tree"], Some(&index.0))?);
     if tree.is_empty() {
         return Err("checkpoint/empty_tree".into());
@@ -279,6 +316,11 @@ pub fn restore(repo: &Path, reference: &str) -> Result<(), String> {
     output(repo, &["read-tree", reference], Some(&index.0))?;
     let mut command = Command::new("git");
     command.current_dir(repo).env("GIT_INDEX_FILE", &index.0).env("GIT_WORK_TREE", repo).args(["checkout-index", "--all", "--force"]);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW，同 run()
+    }
     let out = command.output().map_err(|e| format!("checkpoint/git_spawn:{e}"))?;
     if !out.status.success() {
         return Err(format!("checkpoint/checkout_failed:{}", String::from_utf8_lossy(&out.stderr).trim()));
@@ -290,6 +332,18 @@ pub fn restore(repo: &Path, reference: &str) -> Result<(), String> {
 mod tests {
     use super::*;
     use meowo_store::RestoreCheckpoint;
+
+    /// 桌面应用也调这个模块（读快照差异、恢复）：每处起 git 都要带 CREATE_NO_WINDOW，不然 Windows 上
+    /// 每条命令闪一下黑框（2026-11-16 用户反馈）。新加的 git 调用忘了带，这里就红。
+    #[test]
+    fn every_git_spawn_hides_the_console_window() {
+        let source = include_str!("checkpoint.rs");
+        let body = source.split("#[cfg(test)]").next().unwrap();
+        let spawns = body.matches("Command::new(\"git\")").count();
+        let hidden = body.matches("creation_flags(0x0800_0000)").count();
+        assert!(spawns > 0);
+        assert_eq!(spawns, hidden, "checkpoint.rs 里有 {spawns} 处起 git，只有 {hidden} 处带 CREATE_NO_WINDOW");
+    }
 
     fn git(repo: &Path, args: &[&str]) -> String {
         let out = Command::new("git").current_dir(repo).args(args).output().unwrap();
@@ -338,6 +392,51 @@ mod tests {
         git(&repo, &["add", "later.txt"]);
         git(&repo, &["commit", "-qm", "later"]);
         assert_eq!(changed_files(&row).unwrap().iter().map(|file| file.path.as_str()).collect::<BTreeSet<_>>(), paths);
+    }
+
+    /// 从仓库 index 起步拍的快照，要和旧做法（read-tree HEAD 后 add -A）得到同一棵树：
+    /// 改过、暂存过、删掉、新建、被忽略的文件各一份，真实 index 原样不动。
+    #[test]
+    fn seeded_snapshot_matches_snapshot_rebuilt_from_head() {
+        let (repo, _store) = fixture();
+        std::fs::write(repo.join("tracked.txt"), "changed\n").unwrap();
+        std::fs::write(repo.join("staged.txt"), "staged\n").unwrap();
+        git(&repo, &["add", "staged.txt"]);
+        std::fs::write(repo.join("staged.txt"), "staged then edited\n").unwrap();
+        std::fs::remove_file(repo.join("delete.txt")).unwrap();
+        std::fs::write(repo.join("untracked.txt"), "new\n").unwrap();
+        std::fs::write(repo.join("ignored.txt"), "skip\n").unwrap();
+        let real_index = std::fs::read(repo.join(".git/index")).unwrap();
+
+        let seeded = temp_index();
+        assert!(seed_index(&repo, &seeded.0));
+        output(&repo, &["add", "-A", "--", "."], Some(&seeded.0)).unwrap();
+        let seeded_tree = text(&output(&repo, &["write-tree"], Some(&seeded.0)).unwrap());
+
+        let rebuilt = temp_index();
+        output(&repo, &["read-tree", "HEAD"], Some(&rebuilt.0)).unwrap();
+        output(&repo, &["add", "-A", "--", "."], Some(&rebuilt.0)).unwrap();
+        let rebuilt_tree = text(&output(&repo, &["write-tree"], Some(&rebuilt.0)).unwrap());
+
+        assert_eq!(seeded_tree, rebuilt_tree);
+        assert_eq!(std::fs::read(repo.join(".git/index")).unwrap(), real_index);
+        // capture 走的就是这条路，产出的提交指向同一棵树。
+        let reference = capture(&repo, 9, 1, "start").unwrap();
+        assert_eq!(git(&repo, &["rev-parse", &format!("{reference}^{{tree}}")]), rebuilt_tree);
+    }
+
+    /// 还没有 index 的新仓库（一次都没 add 过）退回从空树重建，照样拍得出来。
+    #[test]
+    fn repo_without_index_falls_back_to_rebuild() {
+        let unique = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let root = std::env::temp_dir().join(format!("meowo-checkpoint-noindex-{}-{unique}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        git(&root, &["init", "-q"]);
+        std::fs::write(root.join("first.txt"), "hello\n").unwrap();
+        assert!(!root.join(".git/index").exists());
+        let reference = capture(&root, 9, 1, "start").unwrap();
+        assert_eq!(git(&root, &["ls-tree", "--name-only", &reference]), "first.txt");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

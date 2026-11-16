@@ -757,6 +757,52 @@ function detectAnchoredCursorMenu(
 /// `expectMenu`：刚发出一条会弹交互菜单的命令（如 `/model`）。只在这段窗口里认光标菜单——
 /// 常开的话，agent 平时画的任何带 ❯ 的列表都会弹成卡片，噪声大于价值。
 /// `startupPrompts`：是否启用 GENERIC_STARTUP_PROMPTS(登录/凭据类通用启动提示)。这些
+const SELECT_FOOTER = /enter to select/i;
+
+/// 此刻正在等选择的那组编号：最后一个「Enter to select」提示行之后没有别的内容，
+/// 提示行之上最近的一组编号紧挨着它（中间只有空行或该组最后一项的描述行），组里有 ❯ 光标、
+/// 至少两项。返回组号，不成立返回 null。
+function liveSelectorGroup(
+  lines: string[],
+  occurrences: { group?: number; line?: number; focused?: boolean; kind?: string }[],
+): number | null {
+  let footer = -1;
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (!lines[index].trim()) continue;
+    if (SELECT_FOOTER.test(lines[index])) footer = index;
+    break;
+  }
+  if (footer < 0) return null;
+  const before = occurrences.filter((occurrence) => (occurrence.line ?? Infinity) < footer);
+  const last = before.at(-1);
+  if (!last || last.line == null || last.group == null) return null;
+  // 最后一项与提示行之间：空行，或缩进的描述行；出现分隔线、问句之类说明它们不是同一个框。
+  for (const line of lines.slice(last.line + 1, footer)) {
+    if (!line.trim()) continue;
+    if (/^[─━═\s]+$/.test(line) || /[?？]\s*$/.test(line) || !/^\s{2,}/.test(line)) return null;
+  }
+  const group = before.filter((occurrence) => occurrence.group === last.group && occurrence.kind === "choice");
+  return group.length >= 2 && group.some((occurrence) => occurrence.focused) ? last.group : null;
+}
+
+/// 框体：第一个选项之上、最近一条分隔线之下的非空行。找不到分隔线就只取选项之上 12 行。
+/// 卡内原文限高 8 行，问句又总在最后（紧挨选项），原样摆会被挤到滚动区外：标题行和问句
+/// 提到最前，说明性的细节行跟在后面。
+function liveSelectorBody(lines: string[], firstOption: number): string {
+  if (firstOption <= 0) return "";
+  let top = Math.max(0, firstOption - 12);
+  for (let index = firstOption - 1; index >= top; index -= 1) {
+    if (/^\s*[─━═]{3,}\s*$/.test(lines[index])) { top = index + 1; break; }
+  }
+  const body = lines.slice(top, firstOption).map((line) => line.trim()).filter(Boolean);
+  let questionAt = -1;
+  for (let index = body.length - 1; index >= 0 && questionAt < 0; index -= 1) {
+    if (/[?？]$/.test(body[index])) questionAt = index;
+  }
+  if (questionAt <= 1) return body.join("\n");
+  return [body[0], body[questionAt], ...body.slice(1, questionAt), ...body.slice(questionAt + 1)].join("\n");
+}
+
 /// 提示只在**会话启动阶段**有意义——正跑着的会话输出里引用登录话术(读 auth 文件、讨论
 /// 登录流程)不该弹卡锁输入。启动路径(waitForTerminalReady/挂载后的启动窗口)传 true,
 /// 稳态 150ms 扫描传 false;provider 声明的 markers 与 attentionPatterns 不受影响。
@@ -918,12 +964,12 @@ export function terminalAttention(
     // 「连续编号 run」；纯编号 run 只有当其中含 Claude 选择器固有的锚点项（Type
     // something / Chat about this / Submit）时才算选择器本体，正文列表 run 整组丢弃。
     // 复选框菜单照旧只认复选框项。
-    type NumberedOccurrence = TerminalAttentionOption & { plain?: boolean; group?: number };
+    type NumberedOccurrence = TerminalAttentionOption & { plain?: boolean; group?: number; line?: number };
     const occurrences: NumberedOccurrence[] = [];
     let current: NumberedOccurrence | null = null;
     let run = 0;
     let lastIndex = -1;
-    for (const line of lines) {
+    for (const [lineNo, line] of lines.entries()) {
       const numbered = line.match(/^\s*([❯›>]?)\s*(\d+)[.)]\s*(?:\[([ x*✓✔])\]\s*)?(.+?)\s*$/i);
       const checkbox = numbered?.[3];
       if (numbered) {
@@ -943,6 +989,7 @@ export function terminalAttention(
           kind: special ?? "choice",
           plain: checkbox === undefined && !special,
           group: run,
+          line: lineNo,
         };
         occurrences.push(current);
         continue;
@@ -981,12 +1028,17 @@ export function terminalAttention(
         .filter((occurrence) => occurrence.kind === "input" || occurrence.kind === "chat")
         .map((occurrence) => occurrence.group),
     );
+    // 没有锚点项的单选框（Claude 自己弹的 LSP 插件推荐、插件推荐、Remote Control 这类，
+    // 2026-11-16 实拍 LSP 推荐框没认出，对话页只能叫人去终端）：编号组紧贴在屏幕最底部的
+    // 「Enter to select」提示上方、组里有 ❯ 光标、提示之后再没有内容——这就是此刻正在等选择的
+    // 那个框，正文里的编号列表不会同时满足这三条。
+    const liveGroup = hasCheckbox ? null : liveSelectorGroup(lines, occurrences);
     const kept = occurrences.filter((occurrence) =>
-      !occurrence.plain || (!hasCheckbox && anchoredGroups.has(occurrence.group)));
+      !occurrence.plain || (!hasCheckbox && (anchoredGroups.has(occurrence.group) || occurrence.group === liveGroup)));
     // 全屏 TUI 重绘可能把同一块内容多次留在 scrollback。按动作+标签合并，选中状态取
     // 最后一次重绘，描述取最短的完整版本（长版本通常混进了下一轮提示文字）。
     const unique = new Map<string, TerminalAttentionOption>();
-    for (const { plain: _plain, group: _group, ...occurrence } of kept) {
+    for (const { plain: _plain, group: _group, line: _line, ...occurrence } of kept) {
       const key = `${occurrence.kind}:${occurrence.label.toLowerCase()}`;
       const existing = unique.get(key);
       if (!existing) {
@@ -1025,10 +1077,17 @@ export function terminalAttention(
     if (choices.length === 0) return null;
     const questionLine = [...lines].reverse().find((line) => /[?？]/.test(line) && !/enter to select/i.test(line));
     const question = questionLine?.split(/→|->/).at(-1)?.trim() ?? "";
+    // 没有锚点的框只有一句问话不够看（「要装这个插件吗」没说是哪个插件）：带上框体，
+    // 从选项上方最近的分隔线取到第一个选项之前。
+    const liveBody = liveGroup != null && !anchoredGroups.has(liveGroup)
+      ? liveSelectorBody(lines, occurrences.find((occurrence) => occurrence.group === liveGroup)?.line ?? -1)
+      : "";
     return {
       id: best.id,
-      kind: best.kind,
-      text: question,
+      // 没有锚点的框是 CLI 自己在问（装不装插件、要不要开远程），不是 agent 的提问：出提示卡
+      // （「终端正在等待你的选择」、一项一个按钮），不出带复选框的提问卡。
+      kind: liveBody ? "choice" : best.kind,
+      text: liveBody || question,
       options: choices,
     };
   }

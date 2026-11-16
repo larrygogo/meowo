@@ -6,7 +6,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { writeManagedTerminal, type ChatItem, type ChatUi } from "../../api";
-import { composerHolds, readComposerFrame, terminalComposerIo } from "./composer";
+import { composerHolds, queuedInCli, readComposerFrame, terminalComposerIo } from "./composer";
 import { ECHO_CONFIRM_MS, outgoingStore, unseenPending, type OutgoingPrompt, type PromptAck } from "./outgoingPrompts";
 
 export function useOutgoingUpkeep({ sessionId, outgoing, loading, items, acks, lastUserText, ended, chatUi, isActive, running, onError }: {
@@ -59,9 +59,13 @@ export function useOutgoingUpkeep({ sessionId, outgoing, loading, items, acks, l
       if (probedRef.current.has(echo.id)) continue;
       const overdue = echo.phase === "pending" && now - echo.at > ECHO_CONFIRM_MS;
       const unseen = overdue && unseenPending(echo, items);
+      // CLI 把消息挪到输入框上方排队（插件声明了排队区提示行，见 ChatUi.queued_hint）：这类 CLI 排队时
+      // 不写会话记录、不触发提交 hook，等不到证据就会误报「未确认送达」（2026-11-16 Kimi 实拍）。
+      // 未确认或超时没回音的排队消息也读一次画面。
+      const queuedInScreen = !!chatUi?.queued_hint && (echo.phase === "uncertain" || overdue);
       const candidate = echo.kind === "echo"
         ? echo.phase === "uncertain" || overdue
-        : unseen && !running();
+        : unseen && !running() || queuedInScreen;
       if (!candidate) continue;
       const head = echo.attachmentOnly ? "" : echo.text.split(/\r?\n/).map((line) => line.trim()).find(Boolean)?.slice(0, 12) ?? "";
       if (!spec || !head) {
@@ -75,6 +79,11 @@ export function useOutgoingUpkeep({ sessionId, outgoing, loading, items, acks, l
       void terminalComposerIo(sid).frame().catch(() => null).then((frame) => {
         // 读画面途中切走了：这次不算，回来再读。
         if (!isActive(sid)) { probedRef.current.delete(echo.id); return; }
+        // 已经排在 CLI 自己的队列里：收下了，只是还没轮到。标「已排队」，正文不在输入框，重发也不拦。
+        if (queuedInCli(frame?.lines, chatUi?.queued_hint, echo.text)) {
+          outgoingStore.settle(echo.id, { phase: "accepted", bodyWritten: false });
+          return;
+        }
         const held = composerHolds(readComposerFrame(frame, spec), echo.text);
         if (!held) {
           if (unseen) outgoingStore.settle(echo.id, null);

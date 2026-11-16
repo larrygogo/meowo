@@ -186,6 +186,7 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     "prompt_queue_cancel",
     "prompt_queue_claim",
     "prompt_queue_finish",
+    "prompt_queue_reorder",
     "prompt_queue_retry",
     "prompt_queue_orphans",
     "prompt_queue_restore_orphan",
@@ -1602,6 +1603,10 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
             let a = args!(PromptQueueFinishArgs);
             reply(crate::prompt_queue::prompt_queue_finish(app.clone(), state, a.session_id, a.id, a.delivered))
         }
+        "prompt_queue_reorder" => {
+            let a = args!(PromptQueueReorderArgs);
+            reply(crate::prompt_queue::prompt_queue_reorder(app.clone(), state, a.session_id, a.ids).await)
+        }
         "prompt_queue_retry" => {
             let a = args!(PromptQueueEntryArgs);
             reply(crate::prompt_queue::prompt_queue_retry(app.clone(), state, a.session_id, a.id))
@@ -2796,6 +2801,9 @@ mod tests {
             }
             "prompt_queue_finish" => {
                 parse::<PromptQueueFinishArgs>(br#"{"sessionId":42,"id":1,"delivered":true}"#).map(|_| ())
+            }
+            "prompt_queue_reorder" => {
+                parse::<PromptQueueReorderArgs>(br#"{"sessionId":42,"ids":[3,1,2]}"#).map(|_| ())
             }
             // api.ts:810（cwd/sessionId 可 null）
             "agent_chat_ui" => {

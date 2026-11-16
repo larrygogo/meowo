@@ -1305,7 +1305,7 @@ impl TranscriptSpec for KimiTranscript {
     }
 }
 
-/// kimi 的看板分析解析器：目前只产**卡片预览**（最近一条 AI 正文）。
+/// kimi 的看板分析解析器：预览、主回合错误与正式完成时间。
 ///
 /// 为什么非要有它：kimi 的 Stop hook 不带 AI 正文（见模块头），`last_ai_text` 要等一轮
 /// 结束才落库——于是整个「正在干活」的时段里，卡片的 AI 动态行是空的，而同屏的 claude
@@ -1324,6 +1324,7 @@ struct KimiParser {
     chunk_id: Option<String>,
     text: String,
     error: Option<crate::transcript::TurnError>,
+    completed_at: Option<i64>,
 }
 
 // 2.5.3 隔离探针在连接失败时写下 turn.ended/error；按结构判断，避免正文提到错误时误报。
@@ -1378,6 +1379,38 @@ fn failure(value: &serde_json::Value) -> Option<crate::transcript::TurnError> {
 #[cfg(test)]
 mod compatibility_errors {
     use super::*;
+
+    #[test]
+    fn completed_main_turn_is_cleared_only_by_the_next_main_turn() {
+        let mut parser = KimiParser::default();
+        parser.fold_line(r#"{"type":"turn.ended","agentId":"main","reason":"completed","time":1794802683220}"#);
+        assert_eq!(parser.to_info().completed_at, Some(1794802683220));
+        parser.fold_line(r#"{"type":"turn.prompt","agentId":"agent-1","time":1794802683221}"#);
+        parser.fold_line(r#"{"type":"turn.ended","agentId":"agent-1","reason":"failed","time":1794802683222}"#);
+        assert_eq!(parser.to_info().completed_at, Some(1794802683220));
+        parser.fold_line(r#"{"type":"turn.prompt","agentId":"main","time":1794802683223}"#);
+        assert_eq!(parser.to_info().completed_at, None);
+        parser.fold_line(r#"{"type":"turn.ended","agentId":"agent-1","reason":"completed","time":1794802683224}"#);
+        assert_eq!(parser.to_info().completed_at, None);
+    }
+
+    #[test]
+    fn completion_requires_an_explicit_reason_and_valid_timestamp() {
+        for ending in [
+            r#"{"type":"turn.ended","reason":"completed"}"#,
+            r#"{"type":"turn.ended","reason":"completed","time":0}"#,
+            r#"{"type":"turn.ended","reason":"completed","time":-1}"#,
+            r#"{"type":"turn.ended","reason":"completed","time":"100"}"#,
+            r#"{"type":"turn.ended","reason":"cancelled","time":100}"#,
+            r#"{"type":"turn.ended","reason":"failed","time":100}"#,
+            r#"{"type":"turn.ended","reason":"unknown","time":100}"#,
+        ] {
+            let mut parser = KimiParser::default();
+            parser.fold_line(r#"{"type":"turn.ended","reason":"completed","time":50}"#);
+            parser.fold_line(ending);
+            assert_eq!(parser.to_info().completed_at, None, "{ending}");
+        }
+    }
 
     #[test]
     fn compatibility_kimi_failure_is_reported_then_cleared() {
@@ -1459,17 +1492,26 @@ impl TranscriptParser for KimiParser {
     fn fold_line(&mut self, line: &str) {
         if line.contains("turn.ended") || line.contains("turn.prompt") {
             if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
-                match value.get("type").and_then(|v| v.as_str()) {
-                    Some("turn.prompt") => self.error = None,
-                    Some("turn.ended")
-                        if value
-                            .get("agentId")
-                            .and_then(|v| v.as_str())
-                            .is_none_or(|id| id == "main") =>
-                    {
-                        self.error = failure(&value)
+                if value
+                    .get("agentId")
+                    .and_then(|v| v.as_str())
+                    .is_none_or(|id| id == "main")
+                {
+                    match value.get("type").and_then(|v| v.as_str()) {
+                        Some("turn.prompt") => {
+                            self.error = None;
+                            self.completed_at = None;
+                        }
+                        Some("turn.ended") => {
+                            self.error = failure(&value);
+                            self.completed_at = (value.get("reason").and_then(|v| v.as_str())
+                                == Some("completed"))
+                                .then(|| value.get("time").and_then(|v| v.as_i64()))
+                                .flatten()
+                                .filter(|time| *time > 0);
+                        }
+                        _ => {}
                     }
-                    _ => {}
                 }
             }
         }
@@ -1497,6 +1539,7 @@ impl TranscriptParser for KimiParser {
         TranscriptInfo {
             preview: preview_text(&self.text),
             error: self.error.clone(),
+            completed_at: self.completed_at,
             ..TranscriptInfo::default()
         }
     }

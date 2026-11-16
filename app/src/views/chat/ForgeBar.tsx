@@ -14,6 +14,7 @@ import { useCallback, useContext, useEffect, useRef, useState } from "react";
 import {
   forgeChooseRepo,
   getForgeStatus,
+  getPullRequestByUrl,
   ghPrCreate,
   ghPrMerge,
   gitPull,
@@ -26,6 +27,7 @@ import {
   type WorktreeStatusDto,
 } from "../../api";
 import { useT } from "../../i18n";
+import { SessionPrsContext, sessionPrsInRepo } from "./sessionPrs";
 import { formatBackendError } from "../../i18n/errors";
 import { remoteUi } from "../../remoteMode";
 import { runWorktreeRemoval } from "../../worktreeCleanup";
@@ -47,6 +49,24 @@ const sameRoot = (a: string, b: string) => normPath(a).toLowerCase() === normPat
 
 /// 拉 forge 状态：挂载时一次，之后可见时每 60 秒一次；窗口隐藏时不拉，回到可见或重新聚焦时距上次满 60 秒才补一次
 ///（聚焦时带 force，顺手让后端重查 gh 登录状态）。active=false（面板收起）时整个停掉。
+/// 这个会话在本仓库里建过、动过的 PR（链接来自时间线，见 sessionPrs），按链接问现状。最多 3 个，最新在前；
+/// 面板已经按分支显示的那个不重复。面板收起、手机上都不查（按链接查是桌面专用命令）。
+function useSessionPrs(root: string, repoUrl: string | null | undefined, shown: string | null | undefined, active: boolean): PullRequestDto[] {
+  const urls = useContext(SessionPrsContext);
+  // 链接里没有空格，用空格拼成一个键：数组每次渲染都是新的，拿它当依赖会每次重查。
+  const key = sessionPrsInRepo(urls, repoUrl, shown).join(" ");
+  const [prs, setPrs] = useState<PullRequestDto[]>([]);
+  useEffect(() => {
+    setPrs([]);
+    if (!key || !active || remoteUi()) return;
+    let alive = true;
+    void Promise.all(key.split(" ").map((url) => getPullRequestByUrl(root, url).catch(() => null)))
+      .then((list) => { if (alive) setPrs(list.filter((item): item is PullRequestDto => !!item)); });
+    return () => { alive = false; };
+  }, [root, key, active]);
+  return prs;
+}
+
 export function useForgeStatus(root: string, sessionCwd: string | null, active: boolean) {
   const [forge, setForge] = useState<ForgeStatusDto | null>(null);
   const lastRef = useRef(0);
@@ -112,6 +132,7 @@ export function ForgeBar({ repo, sessionCwd, sessionId, active, onChanged }: {
   const t = useT();
   const root = repo.root;
   const { forge, refresh } = useForgeStatus(root, sessionCwd, active);
+  const sessionPrs = useSessionPrs(root, forge?.gh === "ok" ? forge.repoUrl : null, forge?.pr?.url, active);
   const [busy, setBusyState] = useState<Busy>(null);
   // 进行中拦重复点击用 ref，按钮不 disabled（disabled 会把正拿着焦点的按钮的焦点踢到 body，第三轮设计准则）。
   const busyRef = useRef<Busy>(null);
@@ -305,7 +326,7 @@ export function ForgeBar({ repo, sessionCwd, sessionId, active, onChanged }: {
   const offGh = forge?.gh === "missing" || forge?.gh === "unauthenticated";
   const showPush = !!branch && unpushed > 0;
   const showPr = !!forge && !!branch && (forge.gh === "ok" || offGh);
-  if (!showPush && !showPr && !error && !notice && !cleanup && !identityFor) return null;
+  if (!showPush && !showPr && !error && !notice && !cleanup && !identityFor && sessionPrs.length === 0) return null;
   const busyAttr = busy !== null ? true : undefined;
   const openPrForm = () => {
     if (busyRef.current || !forge?.prDefaults) return;
@@ -365,8 +386,21 @@ export function ForgeBar({ repo, sessionCwd, sessionId, active, onChanged }: {
         </button>
       )}
 
+      {/* 这个会话在本仓库建过、动过的其他 PR（常在临时 worktree 里另切分支建，不是当前分支的那个）。 */}
+      {sessionPrs.length > 0 && (
+        <div className="scm-pr" data-testid="scm-session-prs">
+          <span className="scm-pr-label">{t.forge.sessionPrs}</span>
+          {sessionPrs.map((item) => (
+            <button key={item.url} type="button" className={`scm-pr-head is-${item.state}`} data-tip={item.url} onClick={() => void openLink(item.url).catch(() => {})}>
+              <span className="scm-pr-state">{t.forge.prState[item.state] ?? item.state}</span>
+              <span className="scm-pr-title">#{item.number} {item.title}</span>
+            </button>
+          ))}
+        </div>
+      )}
       {showPr && pr && (
         <div className="scm-pr" data-testid="scm-pr">
+          {sessionPrs.length > 0 && <span className="scm-pr-label">{t.forge.branchPr}</span>}
           <button type="button" className={`scm-pr-head is-${pr.state}`} data-tip={pr.url} onClick={() => void openLink(pr.url).catch(() => {})}>
             <span className="scm-pr-state">{t.forge.prState[pr.state] ?? pr.state}</span>
             <span className="scm-pr-title">#{pr.number} {pr.title}</span>

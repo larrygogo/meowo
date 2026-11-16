@@ -75,7 +75,7 @@ mod wtnew;
 use chat::{
     capture_screen_region, clipboard_restore, clipboard_set_image, clipboard_text,
     get_chat_history, get_subagent_transcript, probe_subagent_states, refresh_session_model,
-    refresh_session_todos, save_pasted_attachment, search_chat_transcripts,
+    allow_image_preview, refresh_session_todos, save_pasted_attachment, search_chat_transcripts,
 };
 use fsutil::{
     file_mention_candidates, list_dir_entries, list_file_openers, open_path_with, read_file_text,
@@ -83,7 +83,7 @@ use fsutil::{
 };
 use git::{
     git_changes_overview, git_commit, git_diff_summary, git_discard, git_file_diff, git_ignore_dir,
-    git_pull_request, git_stage, git_unstage, git_untracked_dir_files,
+    git_pull_request, git_pull_request_by_url, git_stage, git_unstage, git_untracked_dir_files,
 };
 use handoff::{copy_session_to_provider, get_session_lineage};
 use install::{
@@ -1518,6 +1518,7 @@ pub fn run() {
             refresh_session_model,
             refresh_session_todos,
             save_pasted_attachment,
+            allow_image_preview,
             clipboard_set_image,
             capture_screen_region,
             clipboard_restore,
@@ -1574,6 +1575,7 @@ pub fn run() {
             set_lead_provider_enabled,
             git_file_diff,
             git_pull_request,
+            git_pull_request_by_url,
             git_stage,
             git_unstage,
             git_discard,
@@ -1609,6 +1611,7 @@ pub fn run() {
             prompt_queue::prompt_queue_cancel,
             prompt_queue::prompt_queue_claim,
             prompt_queue::prompt_queue_finish,
+            prompt_queue::prompt_queue_reorder,
             prompt_queue::prompt_queue_retry,
             prompt_queue::prompt_queue_orphans,
             prompt_queue::prompt_queue_restore_orphan,

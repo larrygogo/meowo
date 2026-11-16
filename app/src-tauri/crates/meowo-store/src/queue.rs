@@ -57,10 +57,47 @@ impl Store {
 
     pub fn queued_prompts(&self, session_id: i64) -> Result<Vec<QueuedPrompt>, StoreError> {
         let mut stmt = self.conn.prepare(&format!(
-            "{SELECT} WHERE session_id = ?1 AND state IN ('held', 'delivering', 'failed') ORDER BY id"
+            "{SELECT} WHERE session_id = ?1 AND state IN ('held', 'delivering', 'failed') ORDER BY COALESCE(position, id), id"
         ))?;
         let rows = stmt.query_map([session_id], from_row)?;
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// 拖拽排序：`ids` 是用户排好的新顺序，只能是这个会话里仍在等待（held）的消息。
+    ///
+    /// 不给整列重新编号，只把这几条原有的位置值按新顺序重新发给它们：没参与排序的（正在投递、
+    /// 投递失败）留在原位，新入队的 id 比所有已有位置都大，照样排在最后。
+    /// 有一条已经不是 held（另一端刚领走、取消了）就整批不动、返回 false，界面据此刷新列表。
+    pub fn reorder_queued_prompts(&self, session_id: i64, ids: &[i64], now_ms: i64) -> Result<bool, StoreError> {
+        if ids.is_empty() {
+            return Ok(true);
+        }
+        // 读位置和改位置在同一个写事务里：两端同时拖时，后到的一方读到的是前一方排好的结果。
+        let tx = crate::store::ImmediateTx::begin(&self.conn)?;
+        let mut slots = Vec::with_capacity(ids.len());
+        for id in ids {
+            let slot: Option<i64> = self
+                .conn
+                .query_row(
+                    "SELECT COALESCE(position, id) FROM prompt_queue WHERE session_id = ?1 AND id = ?2 AND state = 'held'",
+                    [session_id, *id],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            match slot {
+                Some(slot) if !slots.contains(&slot) => slots.push(slot),
+                _ => return Ok(false),
+            }
+        }
+        slots.sort_unstable();
+        for (id, slot) in ids.iter().zip(slots) {
+            self.conn.execute(
+                "UPDATE prompt_queue SET position = ?3, updated_at = ?4 WHERE session_id = ?1 AND id = ?2",
+                rusqlite::params![session_id, id, slot, now_ms],
+            )?;
+        }
+        tx.commit()?;
+        Ok(true)
     }
 
     pub fn edit_queued_prompt(&self, session_id: i64, id: i64, draft_json: &str, now_ms: i64) -> Result<bool, StoreError> {
@@ -126,6 +163,39 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reorder_moves_held_prompts_and_keeps_new_ones_last() {
+        let store = Store::open_in_memory().unwrap();
+        let a = store.enqueue_prompt(7, "a", 100).unwrap();
+        let b = store.enqueue_prompt(7, "b", 101).unwrap();
+        let c = store.enqueue_prompt(7, "c", 102).unwrap();
+        let order = |store: &Store| store.queued_prompts(7).unwrap().into_iter().map(|item| item.draft_json).collect::<Vec<_>>();
+        assert!(store.reorder_queued_prompts(7, &[c.id, a.id, b.id], 103).unwrap());
+        assert_eq!(order(&store), ["c", "a", "b"]);
+        // 新入队的排在最后，不会插进拖过的几条中间。
+        store.enqueue_prompt(7, "d", 104).unwrap();
+        assert_eq!(order(&store), ["c", "a", "b", "d"]);
+        // 只挪其中两条：其余留在原位。
+        assert!(store.reorder_queued_prompts(7, &[b.id, c.id], 105).unwrap());
+        assert_eq!(order(&store), ["b", "a", "c", "d"]);
+    }
+
+    #[test]
+    fn reorder_refuses_prompts_that_are_no_longer_held() {
+        let store = Store::open_in_memory().unwrap();
+        let a = store.enqueue_prompt(7, "a", 100).unwrap();
+        let b = store.enqueue_prompt(7, "b", 101).unwrap();
+        let other = store.enqueue_prompt(8, "other", 101).unwrap();
+        store.claim_queued_prompt(7, a.id, 102).unwrap();
+        // 另一端刚领走 a：整批不动。
+        assert!(!store.reorder_queued_prompts(7, &[b.id, a.id], 103).unwrap());
+        // 别的会话的消息、重复的 id 都不行。
+        assert!(!store.reorder_queued_prompts(7, &[b.id, other.id], 103).unwrap());
+        assert!(!store.reorder_queued_prompts(7, &[b.id, b.id], 103).unwrap());
+        let order: Vec<_> = store.queued_prompts(7).unwrap().into_iter().map(|item| item.draft_json).collect();
+        assert_eq!(order, ["a", "b"]);
+    }
 
     #[test]
     fn edit_cancel_and_claim_respect_ownership() {

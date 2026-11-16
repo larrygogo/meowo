@@ -413,3 +413,42 @@ describe("推送去向与 PR 所在仓库", () => {
     await waitFor(() => expect(calls("forge_choose_repo").length).toBe(1));
   });
 });
+
+/** 2026-11-16 实拍：agent 在临时 worktree 里建了 #536，会话目录还在旧分支上，面板只列出已合并的 #530。
+ *  本仓库里会话建过、动过的 PR 另列一块，按链接查现状；当前分支的那个不重复列。 */
+describe("「更改」面板列出本会话的 PR", () => {
+  it("本仓库的会话 PR 按链接查、最新在前；别的仓库、当前分支那个不列", async () => {
+    const { SessionPrsContext } = await import("./sessionPrs");
+    status = forge({ pr: pr({ number: 530, state: "merged", url: "https://github.com/o/r/pull/530", title: "旧的" }) });
+    handler = (command, args) => command === "git_pull_request_by_url"
+      ? { number: Number(String(args.url).split("/").pop()), state: "open", url: args.url, title: `新的 ${String(args.url).split("/").pop()}` }
+      : null;
+    const urls = [
+      "https://github.com/o/r/pull/530",
+      "https://github.com/o/r/pull/536",
+      "https://github.com/o/other/pull/213",
+      "https://github.com/o/r/pull/540",
+    ];
+    render(<SessionPrsContext.Provider value={urls}><ForgeBar repo={repo()} sessionCwd="C:/w/meowo" sessionId={7} active onChanged={() => {}} /></SessionPrsContext.Provider>);
+    const block = await screen.findByTestId("scm-session-prs");
+    await waitFor(() => expect(within(block).getAllByRole("button").map((b) => b.textContent)).toEqual([
+      `${zh.forge.prState.open}#540 新的 540`,
+      `${zh.forge.prState.open}#536 新的 536`,
+    ]));
+    expect(within(block).getByText(zh.forge.sessionPrs)).toBeTruthy();
+    // 当前分支的 PR 照旧在，并标明它是当前分支的。
+    expect(within(screen.getByTestId("scm-pr")).getByText(zh.forge.branchPr)).toBeTruthy();
+    expect(calls("git_pull_request_by_url").map(([, a]) => (a as { url: string }).url).sort()).toEqual([
+      "https://github.com/o/r/pull/536", "https://github.com/o/r/pull/540",
+    ]);
+  });
+
+  it("会话里没动过 PR：面板和以前一样，不出这一块、不多问 gh", async () => {
+    status = forge({ pr: pr() });
+    render(<ForgeBar repo={repo()} sessionCwd="C:/w/meowo" sessionId={7} active onChanged={() => {}} />);
+    await screen.findByTestId("scm-pr");
+    expect(screen.queryByTestId("scm-session-prs")).toBeNull();
+    expect(screen.queryByText(zh.forge.branchPr)).toBeNull();
+    expect(calls("git_pull_request_by_url")).toHaveLength(0);
+  });
+});

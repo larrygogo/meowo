@@ -87,6 +87,7 @@ import type { RespondRuntimeRequestArgs } from "./generated/contracts/bridge/Res
 import type { SavePastedAttachmentArgs } from "./generated/contracts/bridge/SavePastedAttachmentArgs";
 import type { PromptQueueEnqueueArgs } from "./generated/contracts/bridge/PromptQueueEnqueueArgs";
 import type { PromptQueueEditArgs } from "./generated/contracts/bridge/PromptQueueEditArgs";
+import type { PromptQueueReorderArgs } from "./generated/contracts/bridge/PromptQueueReorderArgs";
 import type { PromptQueueEntryArgs } from "./generated/contracts/bridge/PromptQueueEntryArgs";
 import type { PromptQueueFinishArgs } from "./generated/contracts/bridge/PromptQueueFinishArgs";
 import type { QueueDraftDto } from "./generated/contracts/QueueDraftDto";
@@ -352,6 +353,12 @@ export function openLink(url: string): Promise<void> {
  * webview 剪贴板拿不到源文件路径（File 只有内容），附件协议却是「路径列表交给 CLI 读」，
  * 只能由宿主代为落盘。
  */
+/// 让任意目录里的一张图能经 asset 协议预览（只放行这一个文件）。拖进来或文件对话框选的图不在
+/// asset 白名单里，缩略图第一次加载失败时调它。桌面专用，手机走 /file 不需要。
+export function allowImagePreview(path: string): Promise<boolean> {
+  return invoke("allow_image_preview", { path });
+}
+
 export function savePastedAttachment(fileName: string, dataBase64: string): Promise<string> {
   return invoke("save_pasted_attachment", { fileName, dataBase64 } satisfies SavePastedAttachmentArgs);
 }
@@ -368,6 +375,11 @@ export function promptQueueEnqueue(sessionId: number, draft: QueueDraftDto): Pro
 
 export function promptQueueEdit(sessionId: number, id: number, draft: QueueDraftDto): Promise<boolean> {
   return invoke("prompt_queue_edit", { sessionId, id, draft } satisfies PromptQueueEditArgs);
+}
+
+/** 拖拽排序：ids 是排好的新顺序（只含还在等待的消息）。有一条已被领走或取消就整批不动、返回 false。 */
+export function promptQueueReorder(sessionId: number, ids: number[]): Promise<boolean> {
+  return invoke("prompt_queue_reorder", { sessionId, ids } satisfies PromptQueueReorderArgs);
 }
 
 export function promptQueueCancel(sessionId: number, id: number): Promise<boolean> {
@@ -832,6 +844,10 @@ export function openProjectDir(cwd: string): Promise<void> {
 /** 当前分支的 Pull Request（gh pr view；没装 gh / 没有 PR 时 null）。后端按目录缓存 60s。桌面专用。 */
 export function getPullRequest(cwd: string): Promise<PullRequestDto | null> {
   return invoke("git_pull_request", { cwd });
+}
+/// 按链接查会话里 agent 建过、动过的 PR（不看目录的当前分支，见 views/chat/sessionPrs）。桌面专用，手机不查。
+export function getPullRequestByUrl(cwd: string, url: string): Promise<PullRequestDto | null> {
+  return invoke("git_pull_request_by_url", { cwd, url });
 }
 export type { PullRequestDto, PrReviewDto };
 export function prReview(cwd: string, sessionId: number, sessionCwd?: string | null): Promise<PrReviewDto | null> {

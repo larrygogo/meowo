@@ -1019,7 +1019,34 @@ fn flash_chat_window_if_unfocused(app: &tauri::AppHandle) {
     }
 }
 
-/// 周期轮询：收尾进程已死的卡住会话；存活集合变化或有收尾时发 board-changed 让前端刷新。
+fn reconcile_transcript_completion(
+    store: &Store,
+    session: &mut meowo_store::LiveSession,
+    info: &meowo_agent::TranscriptInfo,
+) -> Result<bool, meowo_store::StoreError> {
+    let Some(completed_at) = info.completed_at else {
+        return Ok(false);
+    };
+    if session.session.status != "running"
+        || !store.reconcile_completed_turn(
+            session.session.id,
+            session.session.last_event_at,
+            completed_at,
+            info.preview.as_deref(),
+        )?
+    {
+        return Ok(false);
+    }
+    session.session = store.get_session(session.session.id)?;
+    session.pending_review = None;
+    session.current_activity = None;
+    if let Some(preview) = &info.preview {
+        session.last_ai_text = Some(preview.clone());
+    }
+    Ok(true)
+}
+
+/// 周期轮询：收尾进程已死或主回合已正式完成的卡住会话；状态变化时发 board-changed。
 /// 同时对「连接中」会话做去重桌面通知：出错（优先）或进入待交互时各弹一次。
 /// 通知开关（总开关 + 按种类，见 notify_kind_enabled）只门控是否 .show()，去重 map 始终更新，
 /// 故中途打开开关不会把积压的旧错误/待交互一次性炸出来。启动首扫**分类播种**：
@@ -1142,12 +1169,7 @@ pub(crate) fn spawn_liveness_watch(
                     let sid = s.session.cc_session_id.clone();
                     present.insert(sid.clone(), String::new()); // 标记本轮已扫描；retain 只清理本轮彻底消失的会话
 
-                    let meowo_agent::TranscriptInfo {
-                        mut title,
-                        error,
-                        busy_subagents,
-                        ..
-                    } = agent_transcript(&s.provider)
+                    let info = agent_transcript(&s.provider)
                         .filter(|spec| spec.supports_analysis())
                         .and_then(|spec| {
                             // 与侧栏/对话窗的分析（session_query::analyze_transcript）走同一个定位入口：
@@ -1163,6 +1185,15 @@ pub(crate) fn spawn_liveness_watch(
                                 })
                         })
                         .unwrap_or_default();
+                    if reconcile_transcript_completion(&store, &mut s, &info).unwrap_or(false) {
+                        emit_board_changed(&app, "transcript-completed");
+                    }
+                    let meowo_agent::TranscriptInfo {
+                        mut title,
+                        error,
+                        busy_subagents,
+                        ..
+                    } = info;
                     if !crate::agent_resolves_transcript_title(&s.provider) {
                         title = None;
                     }
@@ -1556,6 +1587,51 @@ pub(crate) fn take_first_import_notice(dir: &Path) -> Option<u32> {
     }
     let _ = std::fs::write(&noticed, &body);
     Some(count as u32)
+}
+
+#[cfg(test)]
+mod completion_reconciliation_tests {
+    use super::*;
+
+    fn running(store: &Store, at: i64) -> meowo_store::LiveSession {
+        let project = store.upsert_project_by_root("/p", "p", at).unwrap();
+        let (sid, _) = store.start_session(project, "kimi-completion", at).unwrap();
+        store.set_current_activity(sid, "NotifyUser", at).unwrap();
+        store.live_sessions(Some("all"), None, None, None, 10).unwrap().remove(0)
+    }
+
+    #[test]
+    fn missing_stop_is_recovered_from_wire_without_settling_the_next_turn() {
+        let store = Store::open_in_memory().unwrap();
+        let mut session = running(&store, 1794802674814);
+        let spec = agent_transcript("kimi").unwrap();
+        let mut parser = spec.new_parser();
+        parser.fold_line(r#"{"type":"turn.ended","agentId":"main","turnId":4,"reason":"completed","time":1794802683220}"#);
+        assert!(reconcile_transcript_completion(&store, &mut session, &parser.to_info()).unwrap());
+        assert_eq!(session.session.status, "waiting");
+        assert_eq!(session.current_activity, None);
+        assert!(!reconcile_transcript_completion(&store, &mut session, &parser.to_info()).unwrap());
+        store.touch_session_turn_open(session.session.id, 1794802684000).unwrap();
+        session.session = store.get_session(session.session.id).unwrap();
+        assert!(!reconcile_transcript_completion(&store, &mut session, &parser.to_info()).unwrap());
+        parser.fold_line(r#"{"type":"turn.prompt","agentId":"main","time":1794802684001}"#);
+        assert!(!reconcile_transcript_completion(&store, &mut session, &parser.to_info()).unwrap());
+        assert_eq!(session.session.status, "running");
+    }
+
+    #[test]
+    #[ignore = "只读回放指定的本机 Kimi wire，状态写入内存隔离库"]
+    fn replay_local_completed_kimi_session() {
+        let path = std::env::var("MEOWO_PROBE_KIMI_WIRE").expect("MEOWO_PROBE_KIMI_WIRE");
+        let spec = agent_transcript("kimi").unwrap();
+        let info = meowo_agent::TranscriptCache::default().analyze(spec, &path);
+        let completed_at = info.completed_at.expect("主回合必须已正式完成");
+        let store = Store::open_in_memory().unwrap();
+        let mut session = running(&store, completed_at - 1);
+        assert!(reconcile_transcript_completion(&store, &mut session, &info).unwrap());
+        assert_eq!(store.get_session(session.session.id).unwrap().status, "waiting");
+        assert_eq!(session.current_activity, None);
+    }
 }
 
 #[cfg(test)]

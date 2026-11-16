@@ -703,6 +703,31 @@ use meowo_agent::fsutil::{paste_root, PASTE_MAX_BYTES};
 /// 文件名只取 basename 并过滤路径分隔符（杜绝 `..\` 穿越），落进带时间戳的独立子目录，
 /// 既避免同名互踩，附件条上又能显示原始文件名。扩展名过白名单（见
 /// [`PASTE_EXT_ALLOWLIST`]）：名单外一律追加 `.bin`，杜绝可执行文件借「粘贴」落盘。
+/// 附件缩略图能预览的图片扩展名（与前端 drafts.ts 的 IMAGE_EXTENSIONS 同一口径）。
+const PREVIEW_IMAGE_EXTS: [&str; 7] = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"];
+
+/// 让这一张图能经 asset 协议预览：只放行这一个文件，不放开它所在的目录。
+///
+/// asset 协议的静态白名单只有粘贴临时目录和 CLI 的图片缓存（tauri.conf.json）；从桌面、下载目录
+/// 拖进来或在文件对话框里选的图，读取被拒，附件条只剩文件名（2026-11-16 用户反馈「拖拽进来的图片
+/// 看不到预览」）。缩略图第一次加载失败时由前端调这里，放行后重试一次。不是图片扩展名、不是
+/// 存在的文件就不放行（返回 false，前端照旧显示文件名）。
+#[tauri::command]
+pub(crate) async fn allow_image_preview(app: tauri::AppHandle, path: String) -> Result<bool, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let file = std::path::Path::new(&path);
+        let ext = file.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).unwrap_or_default();
+        if !PREVIEW_IMAGE_EXTS.contains(&ext.as_str()) || !file.is_file() {
+            return Ok(false);
+        }
+        use tauri::Manager;
+        app.asset_protocol_scope().allow_file(file).map_err(|e| e.to_string())?;
+        Ok(true)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
 pub(crate) async fn save_pasted_attachment(
     file_name: String,

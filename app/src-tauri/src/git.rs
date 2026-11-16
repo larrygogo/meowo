@@ -1279,6 +1279,15 @@ pub(crate) async fn git_pull_request(cwd: String) -> Result<Option<PullRequestDt
         .map_err(|e| e.to_string())?
 }
 
+/// 会话里 agent 建过、动过的 PR（按链接，不看目录的当前分支）。查不到、链接不对都是 None，不报错。
+/// 见 forge::badge::url_pr_with。
+#[tauri::command]
+pub(crate) async fn git_pull_request_by_url(cwd: String, url: String) -> Result<Option<PullRequestDto>, String> {
+    tauri::async_runtime::spawn_blocking(move || Ok(crate::forge::badge::url_pull_request(&cwd, &url)))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
 /// `gh pr view --json number,state,isDraft,url,title` 的输出 → DTO。草稿是 OPEN + isDraft。
 pub(crate) fn parse_pull_request(json: &str) -> Option<PullRequestDto> {
     let value: serde_json::Value = serde_json::from_str(json).ok()?;

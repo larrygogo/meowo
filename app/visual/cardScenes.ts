@@ -29,6 +29,8 @@ type Scene = {
   question?: (lang: Lang) => string;
   /// 会话记录里报的待处理交互。
   pendingReview?: "approval" | "question" | "plan" | null;
+  /// 后端读屏的判定（Claude 自己弹的框不进会话记录，只有读屏知道它在等选择）。
+  screenState?: "blocked";
   /// 回合是否在跑（审批都发生在回合中途；信任页、长会话确认在回合之外）。
   running?: boolean;
   /// broker 审批出现几次轮询之后，后端改报这个终态（卡片收走，提示条说明）。
@@ -102,6 +104,17 @@ export const CARD_SCENES: Record<string, Scene> = {
   "claude-selector": { provider: "claude", pendingReview: "question", running: true, screen: [
     "Which validation library should we use?", "", "❯ 1. Zod", "     TypeScript-first, already in the project", "  2. Yup", "     Larger bundle",
     "  3. Type something.", "  4. Chat about this", "", "Enter to select · ↑/↓ to navigate · Esc to cancel",
+  ].join("\n") },
+  // Claude 自己弹的 LSP 插件推荐框：没有 pendingReview，只有读屏判了 blocked（2026-11-16 实拍）。
+  "claude-lsp": { provider: "claude", screenState: "blocked", running: true, screen: [
+    " " + "─".repeat(60), " LSP plugin recommendation", "",
+    "   LSP provides code intelligence like go-to-definition and error checking", "",
+    "   Plugin: rust-analyzer-lsp", "   Marketplace: claude-plugins-official", "   Triggered by: .rs files",
+    "   Description: Rust language server for code intelligence and analysis", "",
+    "   Plugins can run code on your computer, with access to your files and shell.",
+    "   Would you like to install this LSP plugin?",
+    "   ❯ 1. Yes, install", "     2. No, not now", "     3. Never for this plugin", "     4. Disable all LSP recommendations",
+    "", " Enter to select · ↑/↓ to navigate · Esc to cancel",
   ].join("\n") },
   // ── 提示卡 ──
   "gemini-limit": { provider: "gemini", running: true, screen: [
@@ -184,7 +197,7 @@ export function cardSceneMock(name: string, lang: Lang, chat: (cmd: string) => u
       const history = chat(cmd) as Record<string, unknown>;
       // 请求了结之后会话记录也不再报待处理（真实后端同样如此），否则会留下一张「正在读取选项」的降级卡。
       const ended = !!scene.endsAs && interactionCalls > 3;
-      return { ...history, provider: scene.provider, ptyManaged: true, status: scene.running && !ended ? "running" : "waiting", pendingReview: ended ? null : scene.pendingReview ?? null };
+      return { ...history, provider: scene.provider, ptyManaged: true, status: scene.running && !ended ? "running" : "waiting", pendingReview: ended ? null : scene.pendingReview ?? null, screenState: scene.screenState ?? null };
     }
     if (cmd === "pending_interaction") {
       const base = (chat(cmd) as { approval: Record<string, unknown> }).approval;

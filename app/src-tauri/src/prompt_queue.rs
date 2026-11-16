@@ -111,6 +111,31 @@ pub(crate) fn prompt_queue_claim(
     item.map(dto).transpose()
 }
 
+/// 拖拽排序（对照 Kimi Code 客户端的队列）。`ids` 是排好的新顺序，只含还在等待的消息；
+/// 有一条已被别处领走或取消就整批不动、返回 false，界面映射 queue/not_reorderable 并刷新列表。
+/// 碰数据库，按线程纪律走 async + spawn_blocking（见 src-tauri/CLAUDE.md）。
+#[tauri::command]
+pub(crate) async fn prompt_queue_reorder(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, crate::AppState>,
+    session_id: i64,
+    ids: Vec<i64>,
+) -> Result<bool, String> {
+    let db = state.db_path.clone();
+    let changed = tauri::async_runtime::spawn_blocking(move || {
+        crate::open_store(&db)
+            .map_err(|e| e.to_string())?
+            .reorder_queued_prompts(session_id, &ids, crate::now_ms())
+            .map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+    if changed {
+        emit(&app, session_id);
+    }
+    Ok(changed)
+}
+
 #[tauri::command]
 pub(crate) fn prompt_queue_finish(
     app: tauri::AppHandle,

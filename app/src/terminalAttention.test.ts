@@ -65,6 +65,71 @@ describe("terminalAttention", () => {
     expect(terminalAttention(prompt, [])).toBeNull();
   });
 
+  /**
+   * Claude 自己弹的 LSP 插件推荐框（2026-11-16 实拍；文案取自本机 Claude Code 程序包里的
+   * 对话框源码：标题、Plugin/Marketplace/Triggered by 三行、问句、四个选项）。没有 Type something
+   * 这类锚点，此前整组被当成正文丢掉，读屏判了「在等选择」却不出卡，对话页只能叫人去终端。
+   */
+  const LSP_RECOMMENDATION = [
+    "\x1b[2J● 读完了 checkpoint.rs",
+    "  1. 先看 capture",
+    "  2. 再看 finish_turn",
+    "────────────────────────────────────────",
+    " LSP plugin recommendation",
+    "",
+    "   LSP provides code intelligence like go-to-definition and error checking",
+    "",
+    "   Plugin: rust-analyzer-lsp",
+    "   Marketplace: claude-plugins-official",
+    "   Triggered by: .rs files",
+    "   Description: Rust language server for code intelligence and analysis",
+    "",
+    "   Plugins can run code on your computer, with access to your files and shell.",
+    "   Would you like to install this LSP plugin?",
+    "   ❯ 1. Yes, install",
+    "     2. No, not now",
+    "     3. Never for this plugin",
+    "     4. Disable all LSP recommendations",
+    "",
+    " Enter to select · ↑/↓ to navigate · Esc to cancel",
+  ];
+
+  it("认得紧贴选择提示、带光标的无锚点选择框（LSP 插件推荐）", () => {
+    const attention = terminalAttention(LSP_RECOMMENDATION.join("\r\n"), [], true);
+    expect(attention?.id).toBe("interactive:numbered-selector");
+    // CLI 自己在问，不是 agent 的提问：出提示卡。
+    expect(attention?.kind).toBe("choice");
+    // 正文里的编号列表（先看 capture / 再看 finish_turn）不混进选项。
+    expect(attention?.options?.map((option) => option.label)).toEqual([
+      "Yes, install", "No, not now", "Never for this plugin", "Disable all LSP recommendations",
+    ]);
+    expect(attention?.options?.[0].focused).toBe(true);
+    expect(attention?.options?.[0].input).toBe("\r");
+    expect(attention?.options?.[2].input).toBe("\x1b[B\x1b[B\r");
+    // 卡面带上框体：光一句「要装这个插件吗」看不出是哪个插件。
+    expect(attention?.text).toContain("Plugin: rust-analyzer-lsp");
+    // 卡内原文限高 8 行：标题与问句排最前，不被说明行挤到滚动区外。
+    expect(attention?.text.split("\n").slice(0, 2)).toEqual([
+      "LSP plugin recommendation", "Would you like to install this LSP plugin?",
+    ]);
+    expect(attention?.text).not.toContain("先看 capture");
+  });
+
+  it("无锚点的编号列表不贴着屏幕底部的选择提示时仍当正文", () => {
+    // 框已经关掉、底下又出了正文：最后一行不是选择提示。
+    const closed = [...LSP_RECOMMENDATION, "", "● 好的，继续"].join("\r\n");
+    expect(terminalAttention(closed, [], true)).toBeNull();
+    // 没有 ❯ 光标的编号列表（正文）后面跟着一句引用的提示文字。
+    const prose = [
+      "\x1b[2J步骤如下：",
+      "  1. 打开设置",
+      "  2. 关掉推荐",
+      "",
+      " Enter to select · ↑/↓ to navigate · Esc to cancel",
+    ].join("\r\n");
+    expect(terminalAttention(prose, [], true)).toBeNull();
+  });
+
   it("surfaces a numbered TUI selector only when the session is waiting for an answer", () => {
     const prompt = [
       "\x1b[2J剩下这几个点要不要继续做？",
@@ -287,8 +352,13 @@ describe("terminalAttention", () => {
     expect(declared?.id).toBe("interactive:numbered-selector");
     expect(declared?.options?.map((option) => option.label)).toEqual(["继续", "停止", "输入其他内容"]);
     expect(declared?.options?.[2].kind).toBe("input");
-    // 同一屏,未声明锚点 → 不出没有任何可点项的空卡。
-    expect(terminalAttention(prompt, [], true, false, grammar("someagent"))).toBeNull();
+    // 同一屏,未声明锚点:编号组带 ❯ 光标、紧贴屏幕底部的选择提示,照样认作选择框,
+    // 只是没有锚点就不知道哪项是自由输入,三项都按普通选项给。
+    const undeclared = terminalAttention(prompt, [], true, false, grammar("someagent"));
+    expect(undeclared?.options?.map((option) => option.label)).toEqual(["继续", "停止", "输入其他内容"]);
+    expect(undeclared?.options?.every((option) => option.kind === "choice")).toBe(true);
+    // 没有光标的同款编号列表仍算正文,不出空卡、不出会乱按方向键的按钮。
+    expect(terminalAttention(prompt.replace("❯ 1.", "  1."), [], true, false, grammar("someagent"))).toBeNull();
   });
 
   /// gemini `/model` 对话框(真机 PTY 取证,gemini-cli 0.51):框线包裹的编号项 + ● 焦点,

@@ -210,3 +210,18 @@ describe("占位与同文草稿", () => {
     expect(readComposer(lines, specs.claude, { ...base.cursor!, dim: false }).state).toBe("occupied");
   });
 });
+
+describe("queuedInCli：消息排在 CLI 输入框上方的队列里（Kimi，2026-11-16 实拍）", () => {
+  const hint = "ctrl-s to steer immediately";
+  it("提示行正上方连着的几行里有这句（含折行）才算", async () => {
+    const { queuedInCli } = await import("./composer");
+    const screen = ["● 回复", "", "❯ 第一条排队的话", "❯ AI Bot 沟通群里也发了很多涉及", "  的仓库，你都看一下", "↑ to edit · ctrl-s to steer immediately", "│ >   │"];
+    expect(queuedInCli(screen, hint, "AI Bot 沟通群里也发了很多涉及的仓库，你都看一下")).toBe(true);
+    expect(queuedInCli(screen, hint, "第一条排队的话")).toBe(true);
+    expect(queuedInCli(screen, hint, "不在队列里的话")).toBe(false);
+    // 没有提示行（没在排队）、隔着空行的更早正文、没声明提示：都不算。
+    expect(queuedInCli(["❯ AI Bot 沟通群里也发了", "│ > │"], hint, "AI Bot 沟通群里也发了")).toBe(false);
+    expect(queuedInCli(["AI Bot 沟通群里也发了", "", "❯ 别的", "↑ to edit · ctrl-s to steer immediately"], hint, "AI Bot 沟通群里也发了")).toBe(false);
+    expect(queuedInCli(screen, null, "第一条排队的话")).toBe(false);
+  });
+});

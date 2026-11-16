@@ -149,7 +149,24 @@ async function boot(): Promise<React.ReactNode> {
           const tool = h.items.find((item) => item.type === "tool_use");
           if (tool) return { ...h, items: [...h.items, { ...tool, id: "visual-max-edit", detail: { kind: "edit", path: "C:/dev/web-app/src/components/LoginForm.tsx" } }] };
         }
+        // 会话里 agent 在临时 worktree 里另切分支建了 #171（2026-11-16 实拍的形状）：
+        // 标题栏和「更改」面板要显示它，而不只是当前分支上已合并的 #162。
+        if (scene === "panel-session-pr") {
+          const h = chat(cmd) as { items: unknown[] };
+          return { ...h, items: [...h.items,
+            { type: "tool_use", id: "visual-gh-pr", timestamp: null, name: "Bash", kind: "run", summary: "gh pr create", detail: { kind: "command", command: "cd /tmp/wt-captcha && gh pr create --base main --fill", description: null } },
+            { type: "tool_result", id: "visual-gh-pr-r", timestamp: null, tool_use_id: "visual-gh-pr", text: "https://github.com/example/web-app/pull/171\n", is_error: false },
+          ] };
+        }
         return chat(cmd);
+      }
+      if (scene === "panel-session-pr") {
+        if (cmd === "git_pull_request_by_url") return { number: 171, state: "open", url: "https://github.com/example/web-app/pull/171", title: lang === "zh" ? "登录页加图形验证码" : "Add a captcha to the sign-in page" };
+        if (cmd === "git_pull_request") return { number: 162, state: "merged", url: "https://github.com/example/web-app/pull/162", title: lang === "zh" ? "重构登录页表单校验" : "Refactor login form validation" };
+        if (cmd === "git_forge_status") {
+          const status = scmMock(cmd) as { pr: Record<string, unknown> };
+          return { ...status, pr: { ...status.pr, state: "merged" } };
+        }
       }
       return checkpointSceneMock(cmd) ?? reviewSceneMock(cmd) ?? scmMock(cmd) ?? panel(cmd, args) ?? chat(cmd);
     });

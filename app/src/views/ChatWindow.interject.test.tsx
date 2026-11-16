@@ -38,7 +38,7 @@ describe("ChatWindow", () => {
     // 对话末尾的运行行先说插话的去向（用户此刻最关心的事），压过「工作中/请求中」。
     expect(screen.getByText("等这一步完成后插入你的插话").closest(".chat-running")).toBeTruthy();
     // 排队的插话以气泡排在对话末尾（下一轮将出现的位置），不再藏进输入框上方的胶囊。
-    const bubble = screen.getByText("插一句", { selector: ".chat-queued-bubble" });
+    const bubble = screen.getByText("插一句", { selector: ".chat-queue-body" });
     expect(bubble.closest(".chat-scroll")).toBeTruthy();
     expect(document.querySelector(".dock-workbar")?.textContent ?? "").not.toContain("等待插入");
     fireEvent.click(screen.getByText("1 条插话等待插入当前回合"));
@@ -355,7 +355,7 @@ describe("ChatWindow", () => {
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 97, data: "第一句" }), { timeout: 3_000 });
     // 发送成功后组件才清空输入框——不等它,第二句会被那次 setPrompt("") 抹掉。
     await waitFor(() => expect((input as HTMLTextAreaElement).value).toBe(""));
-    await waitFor(() => expect(screen.queryByRole("button", { name: "现在交给 Agent" })).toBeNull());
+    await waitFor(() => expect(document.querySelector(".chat-prompt-queue .chat-queue-send")).toBeNull());
     fireEvent.change(input, { target: { value: "第二句" } });
     fireEvent.keyDown(input, { key: "Enter" });
     await deliverQueuedNow();

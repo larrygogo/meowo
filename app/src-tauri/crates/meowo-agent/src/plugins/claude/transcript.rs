@@ -1357,6 +1357,7 @@ impl ParseState {
             // 没到点的唤醒按一件后台工作计：状态判定只看「有没有」，不展示具体数目。
             busy_subagents: self.running_tasks.len() as u32
                 + u32::from(self.wakeup_until_ms.is_some_and(|at| at > now_ms)),
+            completed_at: None,
         }
     }
 }

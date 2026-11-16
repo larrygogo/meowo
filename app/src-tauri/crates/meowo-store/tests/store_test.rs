@@ -4,6 +4,42 @@ use meowo_store::{
 };
 
 #[test]
+fn completed_turn_reconciliation_is_atomic_idempotent_and_preserves_turn_count() {
+    let store = Store::open_in_memory().unwrap();
+    let project = store.upsert_project_by_root("/p", "p", 100).unwrap();
+    let (sid, tid) = store.start_session(project, "completed", 100).unwrap();
+    store.set_current_activity(sid, "NotifyUser", 200).unwrap();
+    store.set_pending_review(sid, PendingReview::Approval, 250).unwrap();
+    let before = store.get_session(sid).unwrap().last_event_at;
+    assert!(store.reconcile_completed_turn(sid, before, 300, Some("已完成 PRD")).unwrap());
+    let session = store.get_session(sid).unwrap();
+    assert_eq!(session.status, "waiting");
+    assert_eq!(session.last_event_at, 300);
+    assert_eq!(store.session_pending_review(sid).unwrap(), None);
+    assert_eq!(store.get_task(tid).unwrap().current_activity, None);
+    assert_eq!(store.session_turns(sid).unwrap(), 0);
+    assert!(!store.reconcile_completed_turn(sid, 300, 300, None).unwrap());
+    store.finish_turn(sid, None, 400).unwrap();
+    assert_eq!(store.session_turns(sid).unwrap(), 1);
+}
+
+#[test]
+fn completed_turn_reconciliation_does_not_override_new_activity_or_ended_sessions() {
+    let store = Store::open_in_memory().unwrap();
+    let project = store.upsert_project_by_root("/p", "p", 100).unwrap();
+    let (sid, tid) = store.start_session(project, "newer", 100).unwrap();
+    store.set_current_activity(sid, "Bash", 400).unwrap();
+    for (expected, completed) in [(100, 500), (400, 300), (400, 0), (400, -1)] {
+        assert!(!store.reconcile_completed_turn(sid, expected, completed, Some("旧回复")).unwrap());
+        assert_eq!(store.get_session(sid).unwrap().status, "running");
+        assert_eq!(store.get_task(tid).unwrap().current_activity.as_deref(), Some("Bash"));
+    }
+    store.end_session(sid, 500).unwrap();
+    assert!(!store.reconcile_completed_turn(sid, 500, 600, None).unwrap());
+    assert_eq!(store.get_session(sid).unwrap().status, "ended");
+}
+
+#[test]
 fn open_in_memory_creates_tables() {
     let store = Store::open_in_memory().expect("open");
     let count: i64 = store.raw_table_count().expect("count tables");

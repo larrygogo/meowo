@@ -776,6 +776,11 @@ pub struct ChatUi {
     pub queue_input: Option<&'static str>,
     /// 用 queue_input 提交的消息何时被读到。None = 未取证，GUI 只说「已交给 Agent」。
     pub queue_delivery: Option<QueueDelivery>,
+    /// TUI 把运行中提交的消息挪到输入框上方排队时，排队区下面那行提示里的固定文字（小写比对）。
+    /// 对话页读画面：这行之上列着刚发的那句，就算 CLI 已经收下排队了。这类 CLI 排队时不写
+    /// 会话记录、也不触发提交 hook，画面是唯一证据；不认的话十几秒后误报「未确认送达」。
+    /// None = 未取证。
+    pub queued_hint: Option<&'static str>,
     /// Ctrl/Shift+Enter 在 composer 插入换行的注入序列(如 claude 的 ESC+CR)。
     /// None = 未声明,前端保持终端原生语义(带修饰的 Enter 与裸 Enter 同码 `\r`)。
     pub newline_input: Option<&'static str>,

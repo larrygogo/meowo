@@ -101,7 +101,10 @@ CREATE TABLE IF NOT EXISTS prompt_queue (
     draft_json  TEXT NOT NULL,
     state       TEXT NOT NULL,
     created_at  INTEGER NOT NULL,
-    updated_at  INTEGER NOT NULL
+    updated_at  INTEGER NOT NULL,
+    -- 拖拽排序后的位置（v31）。NULL = 没拖过，按 id（入队先后）排；拖过的取被挪动那几条原有的位置值
+    -- 重新分配，所以新入队的（id 更大）照样排在最后。
+    position    INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS ix_prompt_queue_active ON prompt_queue(session_id, id)

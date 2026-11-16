@@ -139,3 +139,53 @@ describe("useOutgoingUpkeep：窗口看不见的消息由终端画面定去向",
     expect(outgoingStore.get(7).map((p) => p.phase)).toEqual(["uncertain"]);
   });
 });
+
+/** 2026-11-16 Kimi 实拍：运行中发的话被 Kimi 挪到输入框上方排队（`❯ 原文` + `↑ to edit · ctrl-s to steer
+ *  immediately`）。Kimi 排队时不写会话记录、不触发提交 hook，Meowo 等不到证据，误报「未确认送达」，
+ *  点重发又说「正文可能仍在终端输入框」。现在读画面认出排队区就标「已排队」。 */
+describe("useOutgoingUpkeep：消息排在 CLI 自己的队列里", () => {
+  const kimiUi = { composer: chatUi("kimi")!.composer, queued_hint: chatUi("kimi")!.queued_hint } as unknown as ChatUi;
+  const kimiQueued = [
+    "● Read 6 files · 1050 lines",
+    "",
+    "🌗 Tip: /goal for multi-step work with a clear finish line",
+    "──────────────────────────────────────────────────────",
+    "❯ AI Bot 沟通群里也发了很多涉及的仓库，你都看一下",
+    "↑ to edit · ctrl-s to steer immediately",
+    "╭────────────────────────────────────────────────────╮",
+    "│ >                                                  │",
+    "╰────────────────────────────────────────────────────╯",
+    "Ask When Needed  K3.1 Pro thinking: high",
+  ];
+  const queued = (id: number, text: string, phase: OutgoingPrompt["phase"]): OutgoingPrompt => ({
+    id, kind: "queued", text, attachmentOnly: false, at: 0, phase, settledAt: null, anchor: anchorFrom([], null), bodyWritten: true,
+  } as OutgoingPrompt);
+  const mountRunning = (outgoing: OutgoingPrompt[], ui: ChatUi) => renderHook(() => useOutgoingUpkeep({
+    sessionId: 7, outgoing, loading: false, items: [], acks: [], lastUserText: null, ended: false,
+    chatUi: ui, isActive: () => true, running: () => true, onError: () => {},
+  }));
+
+  it("未确认送达的排队消息：画面上排在 Kimi 队列里就标已排队，不算卡在输入框", async () => {
+    api.managedTerminalScreen.mockResolvedValue(kimiQueued);
+    const text = "AI Bot 沟通群里也发了很多涉及的仓库，你都看一下";
+    const id = outgoingStore.add(7, { kind: "queued", text, attachmentOnly: false, anchor: anchorFrom([], null), phase: "uncertain", bodyWritten: true });
+    const { result } = mountRunning([queued(id, text, "uncertain")], kimiUi);
+    await waitFor(() => expect(outgoingStore.get(7)[0].phase).toBe("accepted"));
+    expect(outgoingStore.get(7)[0].bodyWritten).toBe(false);
+    expect(result.current.stuck.has(id)).toBe(false);
+  });
+
+  it("排队区里是别的话、或者这家没声明排队提示：不当成已排队", async () => {
+    api.managedTerminalScreen.mockResolvedValue(kimiQueued);
+    const id = outgoingStore.add(7, { kind: "queued", text: "另一句完全不同的话", attachmentOnly: false, anchor: anchorFrom([], null), phase: "uncertain", bodyWritten: true });
+    mountRunning([queued(id, "另一句完全不同的话", "uncertain")], kimiUi);
+    await waitFor(() => expect(api.managedTerminalScreen).toHaveBeenCalled());
+    await act(async () => {});
+    expect(outgoingStore.get(7)[0].phase).toBe("uncertain");
+    vi.clearAllMocks();
+    // 没声明排队提示的家（运行中的排队消息照旧等证据，不读画面）。
+    mountRunning([queued(99, "AI Bot 沟通群里也发了很多涉及的仓库", "uncertain")], { composer: chatUi("kimi")!.composer } as unknown as ChatUi);
+    await act(async () => {});
+    expect(api.managedTerminalScreen).not.toHaveBeenCalled();
+  });
+});

@@ -3519,7 +3519,49 @@ body:not(.remote-ui) .ns-actions .ns-btn { height: var(--btn-h-lg); min-width: 7
 .chat-queued-bubble { min-width: 0; max-width: min(100%, 560px); padding: var(--sp-8) calc(15px * var(--cc-ui)); border-radius: var(--radius-xl) var(--radius-xl) var(--radius-sm) var(--radius-xl); background: var(--cc-user-bubble); color: var(--cc-chat-text); font-size: var(--text-base); line-height: var(--leading-body); white-space: pre-wrap; overflow-wrap: anywhere; opacity: .7; }
 .chat-queued-dismiss { flex: 0 0 auto; width: 18px; height: 18px; padding: 0; display: grid; place-items: center; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-faint); font: inherit; font-size: var(--text-xs); line-height: 1; cursor: pointer; }
 .chat-queued-dismiss:hover { color: var(--cc-text); background: var(--fill-selected); }
-.chat-prompt-queue .chat-queued-turn { width: 100%; flex-wrap: wrap; }
+/* Meowo 攒着的排队消息（还没交给 CLI）。对照 Kimi Code 客户端的队列：右对齐的一列气泡，
+   编辑、取消是气泡里的小图标（悬停或聚焦才亮，触屏常亮），只有队首左边常显一颗「现在交给 Agent」。
+   此前每条后面跟一排品牌色文字链接，三条就是三排，手机上还折行。 */
+.chat-prompt-queue .chat-queued-turn { position: relative; }
+.chat-queue-bubble { display: flex; align-items: flex-end; gap: var(--sp-6); padding-right: var(--sp-6); opacity: 1; }
+.chat-queue-text { min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-4); }
+.chat-queue-body { min-width: 0; opacity: .72; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; transition: opacity var(--dur-fast) var(--ease-out); }
+.chat-queued-turn.is-held .chat-queue-body { cursor: text; }
+.chat-queue-bubble:hover .chat-queue-body { opacity: .9; }
+.chat-queue-chip { display: inline-flex; align-items: center; gap: var(--sp-4); color: var(--cc-text-faint); font-size: var(--text-xs); }
+.chat-queue-tools { flex: 0 0 auto; display: inline-flex; align-items: center; gap: var(--sp-2); opacity: 0; transition: opacity var(--dur-fast) var(--ease-out); }
+.chat-queue-bubble:hover .chat-queue-tools, .chat-queue-bubble:focus-within .chat-queue-tools,
+.chat-queued-turn:is(.is-failed, .is-delivering) .chat-queue-tools { opacity: 1; }
+.chat-queue-tool { position: relative; width: 22px; height: 22px; padding: 0; display: grid; place-items: center; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-faint); cursor: pointer; }
+.chat-queue-tool:hover:not([aria-disabled="true"]) { background: var(--fill-selected); color: var(--cc-text); }
+.chat-queue-tool[aria-disabled="true"] { cursor: default; opacity: .5; }
+.chat-queue-send { flex: 0 0 auto; width: 24px; height: 24px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 50%; color: var(--cc-on-accent); background: var(--cc-accent); cursor: pointer; opacity: 0; transition: opacity var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-in-out), transform var(--dur-fast) var(--ease-out); }
+.chat-queue-send.is-first, .chat-queued-turn:hover .chat-queue-send, .chat-queue-send:focus-visible { opacity: 1; }
+.chat-queue-send:hover:not([aria-disabled="true"]) { background: var(--cc-accent-dim); }
+.chat-queue-send:active:not([aria-disabled="true"]) { transform: scale(.92); }
+.chat-queue-send[aria-disabled="true"] { cursor: default; color: var(--cc-text-faint); background: var(--fill-selected); }
+/* 拖拽排序（对照 Kimi）：手柄在气泡左侧常显淡色，拖动时原条变淡，落点上下画一条强调色细线。
+   触屏没有拖放，手柄不出（见下方 hover: none）。 */
+.chat-queue-bubble:has(> .chat-queue-grip) { padding-left: var(--sp-6); }
+.chat-queue-grip { flex: 0 0 auto; align-self: center; width: 18px; height: 22px; padding: 0; display: grid; place-items: center; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-faint); opacity: .6; cursor: grab; }
+.chat-queue-grip:hover, .chat-queue-grip:focus-visible { opacity: 1; background: var(--fill-selected); }
+.chat-queue-grip:active { cursor: grabbing; }
+.chat-queued-turn.is-dragging .chat-queue-bubble { opacity: .45; }
+.chat-queued-turn.drop-before::before, .chat-queued-turn.drop-after::after { content: ""; position: absolute; left: 0; right: 0; height: 2px; border-radius: var(--radius-full, 999px); background: var(--cc-accent); pointer-events: none; }
+.chat-queued-turn.drop-before::before { top: calc(var(--sp-8) / -2 - 1px); }
+.chat-queued-turn.drop-after::after { bottom: calc(var(--sp-8) / -2 - 1px); }
+.chat-prompt-queue .chat-queued-turn:has(> .chat-queue-editor) { width: min(100%, 560px); }
+.chat-queue-editor { width: 100%; display: flex; flex-direction: column; gap: var(--sp-6); }
+/* 触屏没有悬停：图标常亮，44px 命中面用看不见的外扩热区补，视觉尺寸不变。 */
+@media (hover: none) {
+  /* 发送钮仍只给队首（与 Kimi 手机端一致）：触屏常亮所有发送钮又会堆回一列主按钮。 */
+  .chat-queue-tools, .chat-queue-send.is-first { opacity: 1; }
+  .chat-queue-send:not(.is-first) { display: none; }
+  .chat-queue-grip { display: none; }
+  .chat-queue-bubble:has(> .chat-queue-grip) { padding-left: calc(15px * var(--cc-ui)); }
+  .chat-queue-tool::before, .chat-queue-send::before { content: ""; position: absolute; inset: -11px; }
+  .chat-queue-send { position: relative; }
+}
 .chat-queue-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: var(--sp-8); }
 .chat-queue-edit { width: 100%; min-height: 72px; max-height: 180px; resize: vertical; padding: var(--sp-8); border: var(--hairline) solid var(--cc-line); border-radius: var(--radius-lg); background: var(--cc-l0); color: var(--cc-text); font: inherit; line-height: var(--leading-body); }
 .chat-queue-attachments { display: flex; flex-wrap: wrap; gap: var(--sp-4); color: var(--cc-text-dim); font-size: var(--text-xs); }
@@ -4760,6 +4802,8 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .checkpoint-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-4); margin-bottom: var(--sp-8); }
 .checkpoint-toolbar strong { font-size: var(--text-sm); font-weight: 500; }
 .checkpoint-actions { display: flex; flex-wrap: wrap; gap: var(--sp-8); margin-left: auto; }
+/* 左边与下面的「N 个文件」行对齐（那一行是 margin 8 + padding 8）。 */
+.checkpoint-preview-note { margin: calc(var(--sp-4) * -1) 0 var(--sp-8); padding: 0 calc(var(--sp-8) * 2); color: var(--cc-text-faint); font-size: var(--text-xs); }
 .checkpoint-repos { display: flex; flex-wrap: wrap; gap: var(--sp-4); margin-bottom: var(--sp-8); }
 .checkpoint-repos button { border: 0; border-radius: var(--radius-sm); padding: var(--sp-2) var(--sp-6); background: transparent; color: var(--cc-text-dim); }
 .checkpoint-repos button.is-selected { background: var(--fill-hover); color: var(--cc-text); }
@@ -4799,6 +4843,8 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .scm-forge-btn:disabled { opacity: 0.45; cursor: default; }
 .scm-forge-btn.is-ghost { color: var(--cc-text-dim); }
 .scm-pr { display: flex; flex-direction: column; gap: var(--sp-6); padding: var(--sp-12); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-lg); background: var(--cc-panel-raised); }
+/* 「本会话的 PR」「当前分支的 PR」小标题：只在两类同时出现时标，分清哪个是哪个。 */
+.scm-pr-label { font-size: var(--text-2xs); color: var(--cc-text-faint); }
 .scm-pr-head { display: flex; align-items: center; gap: var(--sp-8); min-width: 0; padding: 0; border: 0; background: transparent; color: var(--cc-text); font: inherit; font-size: var(--text-sm); font-weight: 500; text-align: left; cursor: pointer; }
 .scm-pr-head:hover .scm-pr-title { text-decoration: underline; }
 .scm-pr-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -5425,6 +5471,8 @@ button.scm-check-name:hover { text-decoration: underline; }
 /* 图片附件左下角的「标注」：悬停才出，不和右上角的 × 抢位置。 */
 .chat-compose .chat-attachment button.chat-attachment-annotate { top: auto; right: auto; bottom: 3px; left: 3px; opacity: 0; }
 .chat-attachment:hover button.chat-attachment-annotate, .chat-compose .chat-attachment button.chat-attachment-annotate:focus-visible { opacity: 1; }
+/* 预览不出来、退回成文件名小标签时，标注按钮会压在文件名上（2026-11-16 截图），而图读不出来也标不了：不给。 */
+.chat-compose .chat-attachment.is-image:has(.chat-image-chip) button.chat-attachment-annotate { display: none; }
 /* 截图标注弹层（ImageAnnotator）：画布按可用区域等比缩小，框画在原图坐标上。 */
 .chat-modal.chat-annotator { width: min(800px, calc(100vw - 48px)); max-height: calc(100vh - 48px); overflow: auto; }
 .chat-annotator-hint { color: var(--cc-text-dim); font-size: var(--text-xs); }

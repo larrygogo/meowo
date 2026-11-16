@@ -1,7 +1,7 @@
 //! 标题栏的 PR（git_pull_request）与侧栏徽标、「更改」面板共用 forge 的 PR 缓存（UI 优化收尾 #3）。
 //! 以前标题栏按目录另存一份 60 秒缓存、自己调 `gh pr view`，同一仓库前台时每分钟可能多打一次 gh。
 
-use super::super::badge::{badges_with, title_pr_with, DiffCache};
+use super::super::badge::{badges_with, is_pr_url, title_pr_with, url_pr_with, DiffCache};
 use super::*;
 
 fn title(fake: &FakeGh, caches: &Caches, diffs: &DiffCache, prefs: &Path, cwd: &Path) -> Option<PullRequestDto> {
@@ -33,6 +33,37 @@ fn 标题栏_侧栏_面板_同仓库同分支六十秒内合计只查一次_pr()
     let panel = status(&fake, &caches, &prefs, &repo, false).pr.expect("面板有 PR");
     assert_eq!((pr.number, pr.state.as_str(), pr.url.as_str(), pr.title.as_str()), (panel.number, panel.state.as_str(), panel.url.as_str(), panel.title.as_str()));
     assert_eq!(pr, PullRequestDto { number: pr.number, state: pr.state.clone(), url: pr.url.clone(), title: pr.title.clone(), ..Default::default() });
+}
+
+/// 会话里 agent 建的 PR 按链接查（2026-11-16 实拍：临时 worktree 里建了 #536，会话目录还在旧分支上，
+/// 按分支只能查到已合并的 #530）。链接里有仓库和编号，不看目录在哪个分支；60 秒内同一链接只问一次。
+#[test]
+fn 按链接查会话里建的_pr_不看目录分支_六十秒只调一次() {
+    let sb = Sandbox::new("url-pr");
+    let repo = github_repo(&sb);
+    let fake = FakeGh::new().views(vec![ok(&fixture("pr_checkrun_fail.json"))]);
+    let (caches, diffs) = (Caches::default(), DiffCache::default());
+    let gh = |dir: &str, args: &[&str]| fake.run(dir, args);
+    let ctx = Ctx { gh: &gh, caches: &caches, prefs: sb.root.join("forge.json"), env: &[] };
+    let url = "https://github.com/larrygogo/meowo/pull/161";
+    let pr = url_pr_with(&ctx, &diffs, &s(&repo), url).expect("按链接查到 PR");
+    url_pr_with(&ctx, &diffs, &s(&repo), url);
+    assert_eq!(fake.count("pr view"), 1, "{:?}", fake.calls.lock().unwrap());
+    // 问 gh 时带的是链接本身，不是分支名。
+    assert!(fake.calls.lock().unwrap().iter().any(|call| call.contains(url)), "{:?}", fake.calls.lock().unwrap());
+    assert_eq!(pr, PullRequestDto { number: pr.number, state: pr.state.clone(), url: pr.url.clone(), title: pr.title.clone(), ..Default::default() });
+    // 不是 PR 链接的字符串不交给 gh。
+    assert_eq!(url_pr_with(&ctx, &diffs, &s(&repo), "https://github.com/o/r/issues/1"), None);
+    assert_eq!(fake.count("pr view"), 1);
+}
+
+#[test]
+fn 只认_pr_链接的形状() {
+    assert!(is_pr_url("https://github.com/o/r/pull/536"));
+    assert!(is_pr_url("https://github.example.com/o/r/pull/7"));
+    for bad in ["http://github.com/o/r/pull/1", "https://github.com/o/r/issues/1", "https://github.com/o/r/pull/1/files", "https://github.com/o/r/pull/abc", "https://github.com/o/r/pull/1 --web", "pull/1"] {
+        assert!(!is_pr_url(bad), "{bad}");
+    }
 }
 
 #[test]

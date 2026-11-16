@@ -67,6 +67,7 @@ import { useSessionRef, useSessionScope, useSessionState, useSessionTimer } from
 import { launchGrid } from "./chat/terminalGrid";
 import { managedTerminalFrame, agentDynamicModeChoices, promptQueueClaim, promptQueueEnqueue, promptQueueFinish, promptQueueRetry, type DynamicModeChoice, type QueuedPromptDto } from "../api";
 import { QueuedPrompts, queueAttachments } from "./chat/QueuedPrompts";
+import { SessionPrsContext, sessionPullRequestUrls } from "./chat/sessionPrs";
 import { usePromptQueue } from "./chat/usePromptQueue";
 import { BottomSheet, SheetOnPhone } from "./chat/BottomSheet";
 import { runningActivityView, RunningBar, SnakeSpinner, TurnAnnouncer, useCliStatusStore } from "./chat/RunningBar";
@@ -144,8 +145,8 @@ import { agentAssets, tintStyle } from "../providers";
 import appLogoUrl from "../../src-tauri/icons/64x64.png";
 import { Icon } from "../icons/Icon";
 import { modeIconGlyph, modeIconName } from "./chat/modeIcon";
-import { icArrowLeftRight, icArrowUp, icChevronLeft, icCollapse, icExpand, icFile, icMessage, icShield, icSidebarLeft, icSparkles, icStop } from "../icons/glyphs.chat";
-import { icAlert, icCheck, icChevronDown, icClose, icPencil } from "../icons/glyphs";
+import { icArrowLeftRight, icArrowUp, icChevronLeft, icCollapse, icExpand, icFile, icMessage, icShield, icSidebarLeft, icSparkles, icStop, icUndo } from "../icons/glyphs.chat";
+import { icAlert, icCheck, icChevronDown, icClose, icPencil, icRefreshCw } from "../icons/glyphs";
 
 
 /// 对话页意外退出说明附几行终端输出：够看出报错，不把输入框上方铺满。
@@ -893,6 +894,9 @@ export function ChatWindow() {
   const permissionButtonRef = useRef<HTMLButtonElement | null>(null);
   // 标题栏查到的 PR（ChatTitleBar 回报），命令面板的「打开 PR」用它。
   const [titlePullRequest, setTitlePullRequest] = useState<PullRequestDto | null>(null);
+  // 会话里 agent 最近用 gh 建过、动过的 PR：标题栏先看它，不看目录分支（见 chat/sessionPrs）。
+  const sessionPrUrls = useMemo(() => sessionPullRequestUrls(items), [items]);
+  const sessionPrUrl = sessionPrUrls[sessionPrUrls.length - 1] ?? null;
   // 对话页能力由安装实况组装（基础命令 ∪ 用户/项目命令 ∪ 当前会话 runtime skill 清单），
   // 按 provider+cwd 查询——换会话、换项目都重取，装了新命令下次打开就见。
   // 未知 provider / 查询未回时为空：不补全、不给菜单，宁缺毋滥。
@@ -1274,8 +1278,10 @@ export function ChatWindow() {
   // 屏幕识别要不要去认编号选择表单。hook 写的 pendingReview 之外，broker 带来的结构化题面
   // 也算：hook 漏写或被后台任务的事件冲掉时（用户实拍：会话挂着后台 Bash），题面卡照样
   // 显示、照样收下点选的答案，识别却一直不开，答案永远等不到「表单就绪」，去终端页也一样。
+  // 后端读屏判定「在等选择」（screenState blocked）时也要认选择器：Claude 自己弹的框（LSP 插件推荐等）
+  // 不经会话记录，没有 pendingReview。只认不出卡的话，发送被拦、对话页只能叫人去终端（2026-11-16 实拍）。
   const terminalInteractivePrompt = history?.pendingReview === "question" || history?.pendingReview === "plan"
-    || structuredQuestion != null;
+    || structuredQuestion != null || history?.screenState === "blocked";
   // 识别文法:provider 门控(claude 专有整句规则只对 claude 生效)+ 插件声明的选择器
   // 锚点。chatUi 未就绪时锚点为空——ManagedTerminal 的 grammarKey 复扫会在其到达后补投。
   const attentionGrammar = useMemo<AttentionGrammar>(() => ({
@@ -4625,6 +4631,7 @@ export function ChatWindow() {
         end={history?.endable ? { busy: endingSession, onClick: () => void endSession() } : null}
         cwd={cwd}
         prCwd={gitSummary?.isRepo ? cwd : (repoChanges?.[0]?.root ?? cwd)}
+        sessionPrUrl={sessionPrUrl}
         gitSummary={effectiveSummary}
         changesOpen={panelState.visible && panel.active?.type === "diff"}
         panelOpen={panelState.visible}
@@ -4777,32 +4784,35 @@ export function ChatWindow() {
               )}
             </div>
             {queuedShown.map((item) => (
-              <div key={item.id} className={"chat-queued-turn" + (item.phase === "failed" ? " is-failed" : "")}>
-                {item.phase === "sending" && <span className="chat-queued-tag" role="status"><span className="chat-model-spinner" aria-hidden="true" />{deliveryStatusLabel(t, "sending")}</span>}
-                {/* CLI 回了送达回执：确实进了它的队列，只是还没轮到（对照 Kimi 的「等待前序步骤收尾」）。 */}
-                {item.phase === "accepted" && <span className="chat-queued-tag" data-tip={t.chat.echoQueuedTip}>{deliveryStatusLabel(t, "accepted")}</span>}
-                {item.phase === "uncertain" && <>
-                  <span className="chat-queued-tag is-warn" role="status" data-tip={t.chat.echoUncertainTip}>{deliveryStatusLabel(t, "uncertain")}</span>
-                  <button type="button" className="chat-user-action" onClick={() => retryOutgoing(item.id)}>{t.chat.echoRetry}</button>
-                  <button type="button" className="chat-user-action" onClick={() => restoreOutgoing(item.id)}>{t.chat.echoRestore}</button>
-                </>}
-                {item.phase === "failed" && <>
-                  <span className="chat-queued-tag is-warn" role="alert">{deliveryStatusLabel(t, "failed")}</span>
-                  <button type="button" className="chat-user-action" onClick={() => retryOutgoing(item.id)}>{t.chat.echoRetry}</button>
-                  <button type="button" className="chat-user-action" onClick={() => restoreOutgoing(item.id)}>{t.chat.echoRestore}</button>
-                </>}
-                <div className="chat-queued-bubble">{item.text}</div>
-                <button
-                  type="button"
-                  className="chat-queued-dismiss"
-                  aria-label={t.chat.queuedDismiss}
-                  data-tip={t.chat.queuedDismissTip}
-                  onClick={(event) => {
-                    // 同附件的「×」：这一条随之卸载，焦点交给下一条的「×」，没有了回输入框。
-                    focusAfterRemoval(event.currentTarget, { list: ".chat-queued-stack", item: ".chat-queued-dismiss", fallback: () => promptInputRef.current });
-                    dismissQueued(item.id);
-                  }}
-                >×</button>
+              // 与 Meowo 攒着的排队消息同一种长相（见 QueuedPrompts）：状态写在气泡里，动作是气泡里的小图标。
+              <div key={item.id} className={"chat-queued-turn" + (item.phase === "failed" || item.phase === "uncertain" ? " is-failed" : "")}>
+                <div className="chat-queued-bubble chat-queue-bubble">
+                  <div className="chat-queue-text">
+                    <div className="chat-queue-body">{item.text}</div>
+                    {item.phase === "sending" && <span className="chat-queued-tag" role="status"><span className="chat-model-spinner" aria-hidden="true" />{deliveryStatusLabel(t, "sending")}</span>}
+                    {/* CLI 回了送达回执：确实进了它的队列，只是还没轮到（对照 Kimi 的「等待前序步骤收尾」）。 */}
+                    {item.phase === "accepted" && <span className="chat-queued-tag" data-tip={t.chat.echoQueuedTip}>{deliveryStatusLabel(t, "accepted")}</span>}
+                    {item.phase === "uncertain" && <span className="chat-queued-tag is-warn" role="status" data-tip={t.chat.echoUncertainTip}>{deliveryStatusLabel(t, "uncertain")}</span>}
+                    {item.phase === "failed" && <span className="chat-queued-tag is-warn" role="alert">{deliveryStatusLabel(t, "failed")}</span>}
+                  </div>
+                  <span className="chat-queue-tools">
+                    {(item.phase === "uncertain" || item.phase === "failed") && <>
+                      <button type="button" className="chat-queue-tool" aria-label={t.chat.echoRetry} data-tip={t.chat.echoRetry} onClick={() => retryOutgoing(item.id)}><Icon glyph={icRefreshCw} size={14} /></button>
+                      <button type="button" className="chat-queue-tool" aria-label={t.chat.echoRestore} data-tip={t.chat.echoRestore} onClick={() => restoreOutgoing(item.id)}><Icon glyph={icUndo} size={14} /></button>
+                    </>}
+                    <button
+                      type="button"
+                      className="chat-queue-tool chat-queued-dismiss"
+                      aria-label={t.chat.queuedDismiss}
+                      data-tip={t.chat.queuedDismissTip}
+                      onClick={(event) => {
+                        // 同附件的「×」：这一条随之卸载，焦点交给下一条的「×」，没有了回输入框。
+                        focusAfterRemoval(event.currentTarget, { list: ".chat-queued-stack", item: ".chat-queued-dismiss", fallback: () => promptInputRef.current });
+                        dismissQueued(item.id);
+                      }}
+                    ><Icon glyph={icClose} size={14} /></button>
+                  </span>
+                </div>
               </div>
             ))}
           </section>
@@ -4811,6 +4821,11 @@ export function ChatWindow() {
           sessionId={sessionId}
           items={persistedQueueShown}
           busy={queueBusy}
+          // 交出去之后这家 CLI 怎么处理，就怎么说：下一步就读到 = 插进当前回合；运行中不收输入就不给钮。
+          deliverLabel={(() => {
+            const mode = runningSendMode(chatUi);
+            return mode === "unavailable" ? null : mode === "insert" ? t.chat.queueInsertNow : t.chat.queueDeliver;
+          })()}
           onDeliver={(item) => void deliverQueued(item)}
           onRetry={(item) => void promptQueueRetry(sessionId, item.id).then(() => refreshPromptQueue()).catch((error) => setSendError(formatBackendError(error, t.locale)))}
           onRestore={(item) => {
@@ -5287,7 +5302,8 @@ export function ChatWindow() {
         {attachments.length > 0 && <div className="chat-attachments">
           {attachments.map((file) => file.image ? (
             /* 图片附件给真缩略图（点开进灯箱，与 transcript 图片同一套 ImageRef）；
-               asset 协议读不到的路径（对话框选的任意目录）由 ImageRef 自行回退成文件名 chip。 */
+               拖进来、对话框选的任意目录不在 asset 白名单里：ImageRef 第一次读失败时请宿主只放行这一张再重试，
+               仍读不到才回退成文件名 chip（这时不给标注按钮，见样式表）。 */
             <div className="chat-attachment is-image" key={file.path} data-tip={file.path}>
               <ImageRef path={file.path} />
               <button type="button" data-attachment-remove="" aria-label={`${t.chat.removeAttachment} ${file.name}`} onClick={(event) => removeAttachment(event.currentTarget, file.path)}>×</button>
@@ -6029,6 +6045,8 @@ export function ChatWindow() {
           />}
           {/* fallback=null:桌面端已在挂载时预取 chunk,点开即到;真等到的话面板位置
               短暂空着比塞一个骨架更安静(分栏柄已经先渲染出来占位了)。 */}
+          {/* 「更改」面板里按仓库列出这个会话建过的 PR（见 chat/sessionPrs）。 */}
+          <SessionPrsContext.Provider value={sessionPrUrls}>
           <Suspense fallback={null}>
           {remoteUi()
             ? (
@@ -6079,6 +6097,7 @@ export function ChatWindow() {
               />
             )}
           </Suspense>
+          </SessionPrsContext.Provider>
         </>
       )}
       </div>
