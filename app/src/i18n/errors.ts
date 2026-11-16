@@ -29,6 +29,8 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "lead/opencode_parent_unresolved", exact: true, zh: "回答已保存；找不到子任务所属的主会话，请打开会话发一句话继续", en: "Answer saved. The main session for this subtask was not found; open it and send any message to continue." },
   { m: "queue/not_editable", exact: true, zh: "这条消息已开始交给 Agent，不能再编辑", en: "This message is already being handed to the agent and can no longer be edited" },
   { m: "queue/not_cancellable", exact: true, zh: "这条消息已开始交给 Agent，不能取消", en: "This message is already being handed to the agent and cannot be cancelled" },
+  // 拖拽排序时有一条刚被领走或取消：整批不动，列表随即刷新成最新顺序。
+  { m: "queue/not_reorderable", exact: true, zh: "有消息刚交给 Agent 或被取消，顺序没有调整", en: "A message was just handed to the agent or cancelled, so the order was not changed" },
   { m: "queue/empty", exact: true, zh: "消息和附件都为空，没有加入队列", en: "The message and attachments are empty, so nothing was queued" },
   { m: "queue/draft_invalid", exact: true, zh: "队列里的草稿读不出来，没有交给 Agent", en: "The queued draft could not be read and was not handed to the agent" },
   { m: "checkpoint/session_running", exact: true, zh: "回合还在运行，等它结束后再恢复文件", en: "This turn is still running. Wait for it to finish before restoring files." },

@@ -101,8 +101,10 @@ export async function deliverQueuedNow() {
   const before = invoke.mock.calls.filter(([command]) => command === "prompt_queue_finish").length;
   await act(async () => {});
   if (before > 0 && !document.querySelector(".chat-prompt-queue")) return;
-  await waitFor(() => expect(Boolean(screen.queryByRole("button", { name: "现在交给 Agent" }) || invoke.mock.calls.filter(([command]) => command === "prompt_queue_finish").length > before)).toBe(true), { timeout: 4_000 });
-  const button = screen.queryByRole("button", { name: "现在交给 Agent" });
+  // 队首发送钮的名字随这家 CLI 的处理方式变（立即插入当前回合 / 现在交给 Agent），按钮本身认类名。
+  const sendButton = () => document.querySelector<HTMLButtonElement>(".chat-prompt-queue .chat-queue-send.is-first");
+  await waitFor(() => expect(Boolean(sendButton() || invoke.mock.calls.filter(([command]) => command === "prompt_queue_finish").length > before)).toBe(true), { timeout: 4_000 });
+  const button = sendButton();
   if (button) fireEvent.click(button);
   await waitFor(() => expect(invoke.mock.calls.filter(([command]) => command === "prompt_queue_finish").length).toBeGreaterThan(before), { timeout: 4_000 });
   await act(async () => {});

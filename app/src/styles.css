@@ -3540,6 +3540,16 @@ body:not(.remote-ui) .ns-actions .ns-btn { height: var(--btn-h-lg); min-width: 7
 .chat-queue-send:hover:not([aria-disabled="true"]) { background: var(--cc-accent-dim); }
 .chat-queue-send:active:not([aria-disabled="true"]) { transform: scale(.92); }
 .chat-queue-send[aria-disabled="true"] { cursor: default; color: var(--cc-text-faint); background: var(--fill-selected); }
+/* 拖拽排序（对照 Kimi）：手柄在气泡左侧常显淡色，拖动时原条变淡，落点上下画一条强调色细线。
+   触屏没有拖放，手柄不出（见下方 hover: none）。 */
+.chat-queue-bubble:has(> .chat-queue-grip) { padding-left: var(--sp-6); }
+.chat-queue-grip { flex: 0 0 auto; align-self: center; width: 18px; height: 22px; padding: 0; display: grid; place-items: center; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-faint); opacity: .6; cursor: grab; }
+.chat-queue-grip:hover, .chat-queue-grip:focus-visible { opacity: 1; background: var(--fill-selected); }
+.chat-queue-grip:active { cursor: grabbing; }
+.chat-queued-turn.is-dragging .chat-queue-bubble { opacity: .45; }
+.chat-queued-turn.drop-before::before, .chat-queued-turn.drop-after::after { content: ""; position: absolute; left: 0; right: 0; height: 2px; border-radius: var(--radius-full, 999px); background: var(--cc-accent); pointer-events: none; }
+.chat-queued-turn.drop-before::before { top: calc(var(--sp-8) / -2 - 1px); }
+.chat-queued-turn.drop-after::after { bottom: calc(var(--sp-8) / -2 - 1px); }
 .chat-prompt-queue .chat-queued-turn:has(> .chat-queue-editor) { width: min(100%, 560px); }
 .chat-queue-editor { width: 100%; display: flex; flex-direction: column; gap: var(--sp-6); }
 /* 触屏没有悬停：图标常亮，44px 命中面用看不见的外扩热区补，视觉尺寸不变。 */
@@ -3547,6 +3557,8 @@ body:not(.remote-ui) .ns-actions .ns-btn { height: var(--btn-h-lg); min-width: 7
   /* 发送钮仍只给队首（与 Kimi 手机端一致）：触屏常亮所有发送钮又会堆回一列主按钮。 */
   .chat-queue-tools, .chat-queue-send.is-first { opacity: 1; }
   .chat-queue-send:not(.is-first) { display: none; }
+  .chat-queue-grip { display: none; }
+  .chat-queue-bubble:has(> .chat-queue-grip) { padding-left: calc(15px * var(--cc-ui)); }
   .chat-queue-tool::before, .chat-queue-send::before { content: ""; position: absolute; inset: -11px; }
   .chat-queue-send { position: relative; }
 }

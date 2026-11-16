@@ -119,6 +119,8 @@ export function qaFlowMock(scene: string, lang: Lang, chat: (cmd: string) => unk
   const kind = scene.slice("flow-".length);
   const screenKind = kind.startsWith("screen-") ? kind.slice("screen-".length) : null;
   let historyCalls = 0;
+  // 排队消息拖拽排序：记住排好的顺序，列表按它返回（截图里能看到挪动后的结果）。
+  let queueOrder: number[] | null = null;
   const base = () => chat("get_chat_history") as Record<string, unknown> & { items: unknown[] };
   const calm = { pendingReview: null, status: "waiting" };
   const panel = panelMock();
@@ -135,7 +137,17 @@ export function qaFlowMock(scene: string, lang: Lang, chat: (cmd: string) => unk
     const cardHit = card?.(cmd, args);
     if (cardHit !== undefined) return cardHit;
     if (cmd === "file_mention_candidates") return MENTION_CANDIDATES;
-    if (cmd === "prompt_queue_list" && kind === "queued") return promptQueueScene(lang);
+    if (cmd === "prompt_queue_list" && kind === "queued") {
+      const items = promptQueueScene(lang) as { id: number }[];
+      const order = queueOrder;
+      if (!order) return items;
+      const rank = (id: number) => { const at = order.indexOf(id); return at < 0 ? order.length + id : at; };
+      return [...items].sort((a, b) => rank(a.id) - rank(b.id));
+    }
+    if (cmd === "prompt_queue_reorder" && kind === "queued") {
+      queueOrder = (args as { ids: number[] }).ids;
+      return true;
+    }
     // @ 补全：桌面走目录列举与项目搜索。
     if (cmd === "list_dir_entries") return panel(cmd, args);
     if (cmd === "search_project_files") return { files: MENTION_CANDIDATES.filter((f) => !f.endsWith("/")).map((relPath) => ({ relPath, isDir: false, nameMatch: true, lines: [], totalLineMatches: 0 })), truncated: false };
@@ -188,7 +200,11 @@ export function qaFlowMock(scene: string, lang: Lang, chat: (cmd: string) => unk
       return { ...termText(lines), active: true, exited: false, exitCode: null };
     }
     if (cmd === "open_attached_terminal" && kind === "term-error") throw new Error("terminal/spawn_failed: wt.exe not found");
-    if (cmd === "agent_chat_ui" && (args as { provider?: string })?.provider === "claude") return patchChatUi(demoChatUi());
+    // 排队场景按真实 Claude 的声明（插件 queue_input = 回车、queue_delivery = next_step）：队首钮说「立即插入当前回合」。
+    if (cmd === "agent_chat_ui" && (args as { provider?: string })?.provider === "claude") {
+      const ui = patchChatUi(demoChatUi()) as Record<string, unknown>;
+      return kind === "queued" ? { ...ui, queue_input: "\r", queue_delivery: "next_step" } : ui;
+    }
     if (cmd === "lead_task_snapshot" && (kind === "lead" || kind === "lead-panel")) return leadTask(lang);
     if (cmd === "lead_task_snapshot" && kind === "lead-c") return leadTask(lang, "C");
     if (cmd === "worktree_setup" && kind.startsWith("wt-")) return worktreeSetup(kind === "wt-failed" ? "failed" : kind === "wt-trust" ? "needs_trust" : "running");

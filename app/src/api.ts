@@ -87,6 +87,7 @@ import type { RespondRuntimeRequestArgs } from "./generated/contracts/bridge/Res
 import type { SavePastedAttachmentArgs } from "./generated/contracts/bridge/SavePastedAttachmentArgs";
 import type { PromptQueueEnqueueArgs } from "./generated/contracts/bridge/PromptQueueEnqueueArgs";
 import type { PromptQueueEditArgs } from "./generated/contracts/bridge/PromptQueueEditArgs";
+import type { PromptQueueReorderArgs } from "./generated/contracts/bridge/PromptQueueReorderArgs";
 import type { PromptQueueEntryArgs } from "./generated/contracts/bridge/PromptQueueEntryArgs";
 import type { PromptQueueFinishArgs } from "./generated/contracts/bridge/PromptQueueFinishArgs";
 import type { QueueDraftDto } from "./generated/contracts/QueueDraftDto";
@@ -368,6 +369,11 @@ export function promptQueueEnqueue(sessionId: number, draft: QueueDraftDto): Pro
 
 export function promptQueueEdit(sessionId: number, id: number, draft: QueueDraftDto): Promise<boolean> {
   return invoke("prompt_queue_edit", { sessionId, id, draft } satisfies PromptQueueEditArgs);
+}
+
+/** 拖拽排序：ids 是排好的新顺序（只含还在等待的消息）。有一条已被领走或取消就整批不动、返回 false。 */
+export function promptQueueReorder(sessionId: number, ids: number[]): Promise<boolean> {
+  return invoke("prompt_queue_reorder", { sessionId, ids } satisfies PromptQueueReorderArgs);
 }
 
 export function promptQueueCancel(sessionId: number, id: number): Promise<boolean> {

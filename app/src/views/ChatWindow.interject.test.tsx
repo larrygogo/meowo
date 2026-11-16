@@ -355,7 +355,7 @@ describe("ChatWindow", () => {
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 97, data: "第一句" }), { timeout: 3_000 });
     // 发送成功后组件才清空输入框——不等它,第二句会被那次 setPrompt("") 抹掉。
     await waitFor(() => expect((input as HTMLTextAreaElement).value).toBe(""));
-    await waitFor(() => expect(screen.queryByRole("button", { name: "现在交给 Agent" })).toBeNull());
+    await waitFor(() => expect(document.querySelector(".chat-prompt-queue .chat-queue-send")).toBeNull());
     fireEvent.change(input, { target: { value: "第二句" } });
     fireEvent.keyDown(input, { key: "Enter" });
     await deliverQueuedNow();

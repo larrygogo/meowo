@@ -99,6 +99,8 @@ setExtraMock((cmd, args) => {
   if (cmd === "managed_terminal_screen" && scene === "mobile-keys") return SCREEN;
   if (cmd === "file_mention_candidates") return MENTION_CANDIDATES;
   if (scene === "mobile-queued" && cmd === "prompt_queue_list") return promptQueueScene(lang);
+  // 与桌面排队场景同一份声明（真实 Claude：回车排队、下一步就读到），队首钮才会出现。
+  if (scene === "mobile-queued" && cmd === "agent_chat_ui") return { ...(patchChatUi(demoChatUi()) as Record<string, unknown>), queue_input: "\r", queue_delivery: "next_step" };
   if (scene === "mobile-queued" && cmd === "pending_interaction") return { approval: null, question: null };
   if (scene === "mobile-queued" && cmd === "get_chat_history") return { ...(chat(cmd) as object), pendingReview: null };
   // 模型菜单要有切换命令才点得开；权限模式要有可选项才出菜单（与桌面补看场景同一份补丁）。

@@ -548,7 +548,8 @@ describe("持久队列的真实投递", () => {
     const box = await adapter.box();
     fireEvent.change(box, { target: { value: "现在看一眼" } });
     fireEvent.keyDown(box, { key: "Enter" });
-    const button = await screen.findByRole("button", { name: "现在交给 Agent" });
+    // 测试夹具的 Claude 下一步就读到排队输入：队首钮说「立即插入当前回合」。
+    const button = await screen.findByRole("button", { name: "立即插入当前回合" });
     expect(current.writes()).toEqual([]);
     fireEvent.click(button);
     await waitFor(() => expect(current.writes().some((text) => String(text).includes("现在看一眼"))).toBe(true));

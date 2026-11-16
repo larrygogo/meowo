@@ -1161,6 +1161,8 @@ export const en: Dict = {
     queueSave: "Save",
     queueCancel: "Cancel queued message",
     queueDeliver: "Hand to agent now",
+    queueInsertNow: "Insert into the running turn now",
+    queueDragHandle: "Drag to reorder, or use the up and down arrow keys",
     queueDelivering: "Handing to agent",
     queueFailed: "Not handed to the agent",
     queueRemoveAttachment: "Remove attachment",

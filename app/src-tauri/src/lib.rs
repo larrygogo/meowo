@@ -1609,6 +1609,7 @@ pub fn run() {
             prompt_queue::prompt_queue_cancel,
             prompt_queue::prompt_queue_claim,
             prompt_queue::prompt_queue_finish,
+            prompt_queue::prompt_queue_reorder,
             prompt_queue::prompt_queue_retry,
             prompt_queue::prompt_queue_orphans,
             prompt_queue::prompt_queue_restore_orphan,

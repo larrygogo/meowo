@@ -4816,6 +4816,11 @@ export function ChatWindow() {
           sessionId={sessionId}
           items={persistedQueueShown}
           busy={queueBusy}
+          // 交出去之后这家 CLI 怎么处理，就怎么说：下一步就读到 = 插进当前回合；运行中不收输入就不给钮。
+          deliverLabel={(() => {
+            const mode = runningSendMode(chatUi);
+            return mode === "unavailable" ? null : mode === "insert" ? t.chat.queueInsertNow : t.chat.queueDeliver;
+          })()}
           onDeliver={(item) => void deliverQueued(item)}
           onRetry={(item) => void promptQueueRetry(sessionId, item.id).then(() => refreshPromptQueue()).catch((error) => setSendError(formatBackendError(error, t.locale)))}
           onRestore={(item) => {

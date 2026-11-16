@@ -514,6 +514,13 @@ bridged_args!(PromptQueueEntryArgs {
     id: i64
 });
 
+bridged_args!(PromptQueueReorderArgs {
+    #[cfg_attr(test, ts(type = "number"))]
+    session_id: i64,
+    #[cfg_attr(test, ts(type = "Array<number>"))]
+    ids: Vec<i64>
+});
+
 bridged_args!(PromptQueueFinishArgs {
     #[cfg_attr(test, ts(type = "number"))]
     session_id: i64,

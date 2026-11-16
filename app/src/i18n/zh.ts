@@ -1307,6 +1307,9 @@ export const zh = {
     queueSave: "保存",
     queueCancel: "取消排队",
     queueDeliver: "现在交给 Agent",
+    // 这家 CLI 下一步就读到排队输入（queue_delivery = next_step）：交出去等于插进正在跑的回合。对照 Kimi Code「立即发送到当前回合」。
+    queueInsertNow: "立即插入当前回合",
+    queueDragHandle: "拖拽排序，或按上下方向键调整",
     queueDelivering: "正在交给 Agent",
     queueFailed: "没有交给 Agent",
     queueRemoveAttachment: "移除附件",

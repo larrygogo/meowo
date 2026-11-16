@@ -220,7 +220,8 @@ impl Store {
     /// v28: 逐回合 checkpoint 元数据与恢复前快照；Git 对象与隐藏 ref 留在所属仓库。
     /// v29: PR 显式监控、轮询基线与去重事件；唤醒状态持久化，重启后不重复注入。
     /// v30: 监控事件按 (monitor_key, id) 去重，避免不同 PR 的同 SHA 检查互相吞掉。
-    const USER_VERSION: i64 = 30;
+    /// v31: 持久排队消息可拖拽排序（prompt_queue.position）。
+    const USER_VERSION: i64 = 31;
 
     /// 一次性建表 + 迁移 + 建索引，用 `PRAGMA user_version` 门控：已是最新版直接返回，
     /// 避免 statusline/hook 每次 open 都重跑 DDL 与注定失败的 ALTER（hot-path 浪费）。
@@ -255,7 +256,7 @@ impl Store {
             tx.commit()?;
         }
         // 给旧库补列（新库 SCHEMA 已含这些列 → ALTER 必报 duplicate，忽略即可）。
-        const ALTERS: [&str; 23] = [
+        const ALTERS: [&str; 24] = [
             "ALTER TABLE managed_deliveries ADD COLUMN origin TEXT NOT NULL DEFAULT 'user'",
             "ALTER TABLE sessions ADD COLUMN pid INTEGER",
             "ALTER TABLE sessions ADD COLUMN pid_shared INTEGER NOT NULL DEFAULT 0",
@@ -293,6 +294,8 @@ impl Store {
             "ALTER TABLE tasks ADD COLUMN title_locked INTEGER NOT NULL DEFAULT 0",
             // 回合计数（v26）：老库补齐后全是 0，下一次 Stop 起累加；钉子只比较前后两次读数，起点无关。
             "ALTER TABLE sessions ADD COLUMN turns INTEGER NOT NULL DEFAULT 0",
+            // 排队消息拖拽排序（v31）：老库补齐后全是 NULL = 没拖过，按入队先后，正是我们要的。
+            "ALTER TABLE prompt_queue ADD COLUMN position INTEGER",
         ];
         for sql in ALTERS {
             if let Err(e) = conn.execute(sql, []) {

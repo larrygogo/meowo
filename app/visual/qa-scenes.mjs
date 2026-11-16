@@ -54,6 +54,10 @@ export const QA_SHOTS = [
   { name: "qa-queued", scene: "flow-queued", sel: ".chat-queued-turn" },
   { name: "qa-queued-edit", scene: "flow-queued", sel: ".chat-queue-edit", steps: [["click", ".chat-prompt-queue .chat-queue-tool[aria-label=\"编辑\"] >> nth=0"]] },
   { name: "qa-m-queued", page: "mobile", scene: "mobile-queued", size: PHONE, sel: ".chat-queued-turn" },
+  // 悬停第二条：拖拽手柄、发送钮、编辑与取消图标一起亮出来。
+  { name: "qa-queued-hover", scene: "flow-queued", sel: ".chat-queue-grip", steps: [["hover", ".chat-prompt-queue .chat-queue-bubble >> nth=1"]] },
+  // 键盘排序：第二条的手柄上按上方向键，挪到队首（发送钮跟着换到它左边）。
+  { name: "qa-queued-reorder", scene: "flow-queued", sel: ".chat-queue-grip", steps: [["focus", ".chat-prompt-queue .chat-queue-grip >> nth=1"], ["key", "ArrowUp"], ["tick", 600]] },
   { name: "qa-checkpoints", scene: "panel-checkpoints", size: W620, sel: ".checkpoint-panel .chat-diff-tree-file" },
   { name: "qa-checkpoints-confirm", scene: "panel-checkpoints", size: W620, sel: ".chat-modal", steps: [["click", ".checkpoint-actions button >> nth=0"]] },
   { name: "qa-m-checkpoints", page: "mobile", scene: "mobile-checkpoints", size: PHONE, sel: ".checkpoint-panel .chat-diff-tree-file", steps: [["click", ".chat-diff-scope button:last-child"]] },
