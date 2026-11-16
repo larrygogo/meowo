@@ -310,7 +310,7 @@ describe("关卡卡片", () => {
   it("Q 改选后，藏起来的回答不发；可选意见可以收回，收回即清空", async () => {
     answer.mockResolvedValue();
     render(<LeadGateCard cwd="C:/repo" gate={gate("Q")} onAnswered={() => {}} />);
-    fireEvent.click(screen.getByLabelText("其他（写在意见里）"));
+    fireEvent.click(screen.getByLabelText("以上都不合适，我自己写回答"));
     fireEvent.change(screen.getByPlaceholderText("写下你的回答（必填）"), { target: { value: "按周统计" } });
     fireEvent.click(screen.getByLabelText(/方案一/));
     expect(screen.queryByRole("textbox")).toBeNull();
@@ -473,7 +473,7 @@ describe("验收清单与新关卡", () => {
   it("关卡 Q 没有选项时也能选「其他」只写意见作答，意见必填", async () => {
     answer.mockResolvedValue(undefined);
     render(<LeadGateCard cwd="C:/repo" gate={gate("Q", { options: [] })} onAnswered={() => {}} />);
-    fireEvent.click(screen.getByLabelText("其他（写在意见里）"));
+    fireEvent.click(screen.getByLabelText("以上都不合适，我自己写回答"));
     const submit = screen.getByRole("button", { name: "提交" }) as HTMLButtonElement;
     expect(submit.disabled).toBe(true);
     fireEvent.change(screen.getByPlaceholderText("写下你的回答（必填）"), { target: { value: "按周统计" } });
@@ -484,7 +484,7 @@ describe("验收清单与新关卡", () => {
   it("agent 自己写了 id 为 other 的选项时不再追加「其他」", () => {
     render(<LeadGateCard cwd="C:/repo" gate={gate("Q", { options: [{ id: "other", label: "别的城市", detail: "", recommended: false }] })} onAnswered={() => {}} />);
     expect(screen.getAllByRole("radio")).toHaveLength(1);
-    expect(screen.queryByLabelText("其他（写在意见里）")).toBeNull();
+    expect(screen.queryByLabelText("以上都不合适，我自己写回答")).toBeNull();
   });
 });
 

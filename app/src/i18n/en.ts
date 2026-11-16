@@ -899,7 +899,7 @@ export const en: Dict = {
     leadGateApprove: "Allow",
     leadGateDone: "I've done it",
     leadGateDeny: "Don't allow",
-    leadGateOther: "Other (write it in the note)",
+    leadGateOther: "None of these — write my own answer",
     leadGateAnswerRequired: "Write your answer (required)",
     leadGateRecommended: "Recommended",
     leadGateSubmit: "Submit",
