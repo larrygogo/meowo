@@ -86,7 +86,7 @@ export const QA_SHOTS = [
     { name: `qa-m-card-${card}`, page: "mobile", scene: `mobile-card-${card}`, size: PHONE, sel: ".chat-approval-actions" },
   ]),
   // 屏幕上认出的提问表单（kimi 方括号、gemini 框线）与提示卡（gemini 额度耗尽、opencode 的二次确认页）。
-  ...["kimi-form", "gemini-form", "gemini-limit", "opencode-confirm"].flatMap((card) => [
+  ...["kimi-form", "gemini-form", "gemini-limit", "opencode-confirm", "claude-lsp"].flatMap((card) => [
     { name: `qa-card-${card}`, scene: `flow-card-${card}`, size: W620, sel: ".chat-screen-approval" },
     { name: `qa-m-card-${card}`, page: "mobile", scene: `mobile-card-${card}`, size: PHONE, sel: ".chat-screen-approval" },
   ]),

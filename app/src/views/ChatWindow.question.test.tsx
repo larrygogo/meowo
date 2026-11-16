@@ -1460,3 +1460,42 @@ describe("ChatWindow", () => {
     expect(invoke).not.toHaveBeenCalledWith("respond_runtime_request", expect.anything());
   });
 });
+
+/** 2026-11-16 实拍：Claude 自己弹的 LSP 插件推荐框，读屏判了「在等选择」，对话页却不出卡，
+ *  发送被拦、只能叫人去终端。现在读屏判了 blocked 就开选择器识别，卡在对话页里，点选项直接落键。 */
+describe("读屏判定在等选择时，Claude 自己弹的框在对话页出卡", () => {
+  it("LSP 插件推荐框：开识别、出卡、点「No, not now」下移一格回车", async () => {
+    window.history.replaceState({}, "", "/?sessionId=58");
+    invoke.mockImplementation((command: string) => {
+      if (command === "get_chat_history") return Promise.resolve({
+        sessionId: 58, title: "LSP 会话", status: "running", provider: "claude", cwd: "C:/repo",
+        supported: true, offset: 0, reset: false, pendingReview: null, items: [], connected: true,
+        ptyManaged: true, screenState: "blocked",
+      });
+      if (command === "pending_interaction") return Promise.resolve({ approval: null, question: null });
+      if (command === "managed_terminal_binding") return Promise.resolve(null);
+      if (command === "managed_terminal_snapshot") return Promise.resolve({ sessionId: 58, active: true, managed: true, data: "", startOffset: 0, endOffset: 0, exited: false, exitCode: null });
+      return Promise.resolve();
+    });
+    render(<ChatWindow />);
+    await waitFor(() => expect(screen.getByText("LSP 会话")).toBeTruthy());
+    await waitFor(() => expect(terminalProps.current?.interactivePrompt).toBe(true));
+    const frame = [
+      "\x1b[2J────────────────────────────────────────",
+      " LSP plugin recommendation",
+      "   Plugin: rust-analyzer-lsp",
+      "   Would you like to install this LSP plugin?",
+      "   ❯ 1. Yes, install",
+      "     2. No, not now",
+      "     3. Never for this plugin",
+      "     4. Disable all LSP recommendations",
+      "",
+      " Enter to select · ↑/↓ to navigate · Esc to cancel",
+    ].join("\r\n");
+    const attention = terminalAttention(frame, [], true);
+    act(() => { (terminalProps.current?.onAttention as (a: unknown) => void)(attention); });
+    fireEvent.click(await screen.findByRole("button", { name: /No, not now/ }));
+    await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 58, data: "\x1b[B\r" }));
+    expect(screen.queryByText(zh.chat.cardLockMenu)).toBeNull();
+  });
+});

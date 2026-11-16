@@ -1274,8 +1274,10 @@ export function ChatWindow() {
   // 屏幕识别要不要去认编号选择表单。hook 写的 pendingReview 之外，broker 带来的结构化题面
   // 也算：hook 漏写或被后台任务的事件冲掉时（用户实拍：会话挂着后台 Bash），题面卡照样
   // 显示、照样收下点选的答案，识别却一直不开，答案永远等不到「表单就绪」，去终端页也一样。
+  // 后端读屏判定「在等选择」（screenState blocked）时也要认选择器：Claude 自己弹的框（LSP 插件推荐等）
+  // 不经会话记录，没有 pendingReview。只认不出卡的话，发送被拦、对话页只能叫人去终端（2026-11-16 实拍）。
   const terminalInteractivePrompt = history?.pendingReview === "question" || history?.pendingReview === "plan"
-    || structuredQuestion != null;
+    || structuredQuestion != null || history?.screenState === "blocked";
   // 识别文法:provider 门控(claude 专有整句规则只对 claude 生效)+ 插件声明的选择器
   // 锚点。chatUi 未就绪时锚点为空——ManagedTerminal 的 grammarKey 复扫会在其到达后补投。
   const attentionGrammar = useMemo<AttentionGrammar>(() => ({
