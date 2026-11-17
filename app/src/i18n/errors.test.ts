@@ -2,6 +2,21 @@ import { describe, it, expect } from "vitest";
 import { formatBackendError } from "./errors";
 
 describe("formatBackendError", () => {
+  it("Lead 发布错误有双语映射且不冒称答复已保存", () => {
+    const codes = ["gate_unreadable", "publication_unreadable", "publication_invalid", "publication_history_missing", "publication_too_large", "publication_write_failed", "publication_busy", "publication_initialize_required", "answer_too_large", "gate_id_reused", "decision_unconsumed", "command_invalid", "task_missing"];
+    for (const code of codes) {
+      const reason = `lead/${code}`;
+      const zh = formatBackendError(reason, "zh-CN");
+      const en = formatBackendError(reason, "en-US");
+      expect(zh).not.toBe(reason);
+      expect(en).not.toBe(reason);
+      expect(en).not.toMatch(/[一-鿿]/);
+      expect(zh).not.toContain("回答已保存");
+      expect(en).not.toContain("Answer saved");
+    }
+    expect(formatBackendError("lead/answer_too_large", "zh-CN")).toContain("未保存");
+    expect(formatBackendError("lead/publication_history_missing", "en-US")).toContain("cannot be replayed");
+  });
   it("精确匹配:中英各取对应文案", () => {
     expect(formatBackendError("无效 session_id", "zh-CN")).toBe("会话已失效，请重新打开");
     expect(formatBackendError("无效 session_id", "en-US")).toBe("Session is no longer valid; reopen it");

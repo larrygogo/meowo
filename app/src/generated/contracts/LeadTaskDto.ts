@@ -33,4 +33,4 @@ progress: string,
 /**
  * 正在挂起或已作答未消费的关卡；没有关卡或 gate.json 损坏为 None。
  */
-gate: LeadGateDto | null, delivery?: LeadDeliveryDto, };
+gate: LeadGateDto | null, delivery?: LeadDeliveryDto, issues?: Array<string>, };

@@ -32,6 +32,7 @@ describe("Lead 检查项", () => {
 
   it("状态图标有可读名：已通过、未通过、已豁免", () => {
     render(<LeadPanel task={task()} onClose={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "已通过与豁免 · 2" }));
     for (const name of ["已通过", "未通过", "已豁免"]) expect(screen.getByRole("img", { name })).toBeTruthy();
     // 按钮的可访问名里带上状态，读屏一次就知道这条过没过。
     expect(screen.getByRole("button", { name: /已通过.*测试全过/ })).toBeTruthy();

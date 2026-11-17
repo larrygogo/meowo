@@ -1,23 +1,23 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LeadGateDto, LeadTaskDto } from "../../api";
 import { zh } from "../../i18n/zh";
 
 const snapshot = vi.fn<(cwd: string, session?: string | null) => Promise<LeadTaskDto | null>>();
-const answer = vi.fn<(cwd: string, gateId: string, choice: string, note: string) => Promise<void>>();
+const answer = vi.fn<(cwd: string, gateId: string, choice: string, note: string, version?: string) => Promise<void>>();
 const retryDelivery = vi.fn<(cwd: string, gateId: string) => Promise<void>>();
 vi.mock("../../api", async (importActual) => ({
   ...(await importActual<typeof import("../../api")>()),
   leadTaskSnapshot: (cwd: string, session?: string | null) => snapshot(cwd, session),
-  answerLeadGate: (cwd: string, gateId: string, choice: string, note: string) => answer(cwd, gateId, choice, note),
+  answerLeadGate: (...args: Parameters<typeof answer>) => answer(...args),
   retryLeadGateDelivery: (cwd: string, gateId: string) => retryDelivery(cwd, gateId),
 }));
 
 const { DockWork } = await import("./DockWork");
-const { LeadGateCard, LeadPanel, gateWaiting, leadLatest, leadProgress, leadTaskTitle } = await import("./LeadPanel");
+const { LeadGateCard, LeadPanel, useLeadTask, gateWaiting, leadLatest, leadProgress, leadTaskTitle } = await import("./LeadPanel");
 
 const history = { plan: undefined, agentModes: [], pendingReview: null, todos: [] };
 
@@ -46,6 +46,8 @@ function gate(kind: "A" | "B" | "C" | "D" | "Q", over: Partial<LeadGateDto> = {}
     options: kind === "B" || kind === "Q" ? [{ id: "1", label: "方案一", detail: "持久化", recommended: true }, { id: "2", label: "方案二", detail: "", recommended: false }] : [],
     status: "pending",
     answer: null,
+    review: kind === "C" ? { revision: "build-1", checks: [{ id: "business", check: "确认业务范围", passes: false, leader: true, waived: null, blocked: null }] } : undefined,
+    version: "frozen-v1",
     ...over,
   };
 }
@@ -113,11 +115,10 @@ describe("Lead 入口", () => {
     expect(screen.queryByRole("button", { name: /Lead/ })).toBeNull();
   });
 
-  it("读快照失败（文件损坏、目录不是会话目录）按没有任务处理，不崩", async () => {
+  it("旧后端拒绝快照请求时显示异常，不当作确认没有任务", async () => {
     snapshot.mockRejectedValue("lead/no_task");
     render(<DockWork sessionId={1} cwd="C:/repo" ccSessionId="cc-1" items={[]} history={history} loading={false} />);
-    await waitFor(() => expect(snapshot).toHaveBeenCalled());
-    expect(screen.queryByRole("button", { name: /Lead/ })).toBeNull();
+    expect(await screen.findByRole("button", { name: /Lead.*数据待更新/ })).toBeTruthy();
   });
 
   it("有任务时入口显示验收进度，点开面板显示阶段与逐条验收", async () => {
@@ -131,8 +132,10 @@ describe("Lead 入口", () => {
     expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("1");
     expect(screen.getByText("手机能用")).toBeTruthy();
     // 用户选定的样式（2026-11-09）：没通过的排前面、不显示 #编号；点一条展开全文。
+    expect(screen.queryByText("测试全过")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "已通过与豁免 · 1" }));
     const rows = [...document.querySelectorAll(".lead-check")];
-    expect(rows.map((row) => row.textContent)).toEqual(["手机能用", "测试全过"]);
+    expect(rows.map((row) => row.querySelector(".lead-check-text")?.textContent)).toEqual(["手机能用", "测试全过"]);
     expect(document.body.textContent).not.toContain("#1");
     fireEvent.click(rows[0]);
     expect(rows[0].className).toContain("is-open");
@@ -229,7 +232,7 @@ describe("关卡卡片", () => {
     fireEvent.click(screen.getByRole("button", { name: "要改" }));
     fireEvent.change(screen.getByPlaceholderText("写下要改什么（必填）"), { target: { value: "验收 3 太宽" } });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "发送" })); });
-    expect(answer).toHaveBeenCalledWith("C:/repo", "A-1", "revise", "验收 3 太宽");
+    expect(answer).toHaveBeenCalledWith("C:/repo", "A-1", "revise", "验收 3 太宽", "frozen-v1");
     expect(onAnswered).toHaveBeenCalled();
   });
 
@@ -237,7 +240,7 @@ describe("关卡卡片", () => {
     answer.mockResolvedValue();
     render(<LeadGateCard cwd="C:/repo" gate={gate("A")} onAnswered={() => {}} />);
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "确认，开工" })); });
-    expect(answer).toHaveBeenCalledWith("C:/repo", "A-1", "confirm", "");
+    expect(answer).toHaveBeenCalledWith("C:/repo", "A-1", "confirm", "", "frozen-v1");
   });
 
   it("标题说要你做什么，不带关卡代号，也没有重复的「待拍板」徽标", () => {
@@ -276,7 +279,7 @@ describe("关卡卡片", () => {
     expect(document.activeElement).toBe(screen.getByPlaceholderText("附加意见（可选）"));
     fireEvent.click(screen.getByLabelText(/方案二/));
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "提交" })); });
-    expect(answer).toHaveBeenCalledWith("C:/repo", "B-1", "2", "");
+    expect(answer).toHaveBeenCalledWith("C:/repo", "B-1", "2", "", "frozen-v1");
   });
 
   it("C：驳回必须写意见；后端报错时显示双语映射后的文案，不收卡", async () => {
@@ -286,7 +289,7 @@ describe("关卡卡片", () => {
     fireEvent.click(screen.getByRole("button", { name: "驳回" }));
     fireEvent.change(screen.getByPlaceholderText("写下要改什么（必填）"), { target: { value: "截图对不上" } });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "发送" })); });
-    expect(answer).toHaveBeenCalledWith("C:/repo", "C-1", "reject", "截图对不上");
+    expect(answer).toHaveBeenCalledWith("C:/repo", "C-1", "reject", "截图对不上", "frozen-v1");
     expect((await screen.findByRole("alert")).textContent).toBe("这个关卡已经回答过了");
     expect(onAnswered).not.toHaveBeenCalled();
     // 失败不收卡、意见还在，可以再发
@@ -302,7 +305,7 @@ describe("关卡卡片", () => {
       fireEvent.change(screen.getByRole("textbox"), { target: { value: "别合" } });
       fireEvent.click(screen.getByRole("button", { name: "取消" }));
       await act(async () => { fireEvent.click(screen.getByRole("button", { name: ok })); });
-      expect(answer).toHaveBeenCalledWith("C:/repo", `${kind}-1`, id, "");
+      expect(answer).toHaveBeenCalledWith("C:/repo", `${kind}-1`, id, "", "frozen-v1");
       unmount();
     }
   });
@@ -319,7 +322,7 @@ describe("关卡卡片", () => {
     fireEvent.click(screen.getByRole("button", { name: "不写意见了" }));
     expect(screen.queryByRole("textbox")).toBeNull();
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "提交" })); });
-    expect(answer).toHaveBeenCalledWith("C:/repo", "Q-1", "1", "");
+    expect(answer).toHaveBeenCalledWith("C:/repo", "Q-1", "1", "", "frozen-v1");
   });
 
   it("一步提交的按钮在请求中显示「提交中…」", async () => {
@@ -331,11 +334,25 @@ describe("关卡卡片", () => {
     await act(async () => { resolve(); });
   });
 
+  it("旧 C 不允许无范围签署，新 C 展示冻结条目和版本", () => {
+    const { unmount } = render(<LeadGateCard cwd="C:/repo" gate={gate("C", { review: undefined })} onAnswered={() => {}} />);
+    expect((screen.getByRole("button", { name: "验收通过" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/旧验收卡没有绑定清单和版本/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "验收通过" }));
+    expect(answer).not.toHaveBeenCalled();
+    unmount();
+    render(<LeadGateCard cwd="C:/repo" gate={gate("C")} onAnswered={() => {}} />);
+    expect(screen.getByText("验收版本：build-1")).toBeTruthy();
+    const scope = screen.getByRole("list", { name: "本次签署的验收项" });
+    expect(scope.textContent).toContain("确认业务范围");
+    expect(scope.parentElement?.classList.contains("is-expanded")).toBe(true);
+  });
+
   it("C：「验收通过」一步提交", async () => {
     answer.mockResolvedValue();
     render(<LeadGateCard cwd="C:/repo" gate={gate("C")} onAnswered={() => {}} />);
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "验收通过" })); });
-    expect(answer).toHaveBeenCalledWith("C:/repo", "C-1", "accept", "");
+    expect(answer).toHaveBeenCalledWith("C:/repo", "C-1", "accept", "", "frozen-v1");
   });
 });
 
@@ -436,6 +453,7 @@ describe("验收清单与新关卡", () => {
       { id: "4", check: "还要做的", passes: false, waived: null, leader: false, blocked: null },
     ];
     const { container } = render(<LeadPanel task={task({ checks })} onClose={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "已通过与豁免 · 2" }));
     const order = [...container.querySelectorAll(".lead-check-text")].map((n) => n.textContent);
     expect(order).toEqual(["还要做的", "视觉（由 leader 验收）", "已通过的", "已豁免的"]);
     expect(screen.getByText("已豁免：leader 选了不做")).toBeTruthy();
@@ -450,7 +468,7 @@ describe("验收清单与新关卡", () => {
     expect(screen.getByText("授权或操作 · 开一台云主机")).toBeTruthy();
     for (const label of ["允许", "我已完成", "不允许"]) expect(screen.getByRole("button", { name: label })).toBeTruthy();
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "我已完成" })); });
-    expect(answer).toHaveBeenCalledWith("C:/repo", "D-1", "done", "");
+    expect(answer).toHaveBeenCalledWith("C:/repo", "D-1", "done", "", "frozen-v1");
     expect(onAnswered).toHaveBeenCalled();
   });
 
@@ -461,7 +479,7 @@ describe("验收清单与新关卡", () => {
     expect(answer).not.toHaveBeenCalled();
     expect(screen.getByPlaceholderText("附加意见（可选）")).toBeTruthy();
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "发送" })); });
-    expect(answer).toHaveBeenCalledWith("C:/repo", "D-1", "deny", "");
+    expect(answer).toHaveBeenCalledWith("C:/repo", "D-1", "deny", "", "frozen-v1");
   });
 
   it("关卡 Q 用 agent 写的选项", () => {
@@ -478,7 +496,7 @@ describe("验收清单与新关卡", () => {
     expect(submit.disabled).toBe(true);
     fireEvent.change(screen.getByPlaceholderText("写下你的回答（必填）"), { target: { value: "按周统计" } });
     await act(async () => { fireEvent.click(submit); });
-    expect(answer).toHaveBeenCalledWith("C:/repo", "Q-1", "other", "按周统计");
+    expect(answer).toHaveBeenCalledWith("C:/repo", "Q-1", "other", "按周统计", "frozen-v1");
   });
 
   it("agent 自己写了 id 为 other 的选项时不再追加「其他」", () => {
@@ -567,6 +585,7 @@ describe("待实测的条目", () => {
       { id: "4", check: "不做了", passes: false, waived: "leader 定的", leader: false, blocked: "要真机" },
     ];
     const { container } = render(<LeadPanel task={task({ checks })} onClose={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "已通过与豁免 · 2" }));
     const order = [...container.querySelectorAll(".lead-check-text")].map((n) => n.textContent);
     expect(order).toEqual(["还要做的", "等 beta", "已通过的", "不做了"]);
     expect(screen.getByText("待实测：要 beta 开机")).toBeTruthy();
@@ -597,4 +616,125 @@ describe("待实测的条目", () => {
     const { container } = render(<LeadPanel task={task()} onClose={() => {}} />);
     expect(container.querySelector(".lead-blocked-count")).toBeNull();
   });
+});
+
+
+it("切换任务不继承完成项展开状态和文档页签", () => {
+  const { rerender } = render(<LeadPanel task={task()} onClose={() => {}} />);
+  fireEvent.click(screen.getByRole("button", { name: "已通过与豁免 · 1" }));
+  expect(screen.getByText("测试全过")).toBeTruthy();
+  fireEvent.click(screen.getByRole("tab", { name: "规格" }));
+  rerender(<LeadPanel task={task({ slug: "another-task" })} onClose={() => {}} />);
+  expect(screen.getByRole("tab", { name: "验收" }).getAttribute("aria-selected")).toBe("true");
+  expect(screen.queryByText("测试全过")).toBeNull();
+});
+
+it("最后一项完成后仍保持折叠，完成组可反复展开收起", () => {
+  const { rerender } = render(<LeadPanel task={task()} onClose={() => {}} />);
+  rerender(<LeadPanel task={task({ checks: task().checks.map((check) => ({ ...check, passes: true })) })} onClose={() => {}} />);
+  const toggle = screen.getByRole("button", { name: "已通过与豁免 · 2" });
+  expect(toggle.getAttribute("aria-expanded")).toBe("false");
+  expect(screen.queryByText("测试全过")).toBeNull();
+  fireEvent.click(toggle);
+  expect(screen.getByText("测试全过")).toBeTruthy();
+  fireEvent.click(toggle);
+  expect(screen.queryByText("测试全过")).toBeNull();
+});
+
+it("首次打开全完成任务保留进度摘要与展开入口", () => {
+  render(<LeadPanel task={task({ checks: task().checks.map((check) => ({ ...check, passes: true })) })} onClose={() => {}} />);
+  expect(screen.getByRole("progressbar").getAttribute("aria-valuenow")).toBe("2");
+  fireEvent.click(screen.getByRole("button", { name: "已通过与豁免 · 2" }));
+  expect(screen.getByText("手机能用")).toBeTruthy();
+});
+
+describe("Lead 快照异常与会话隔离", () => {
+  it("首次失败显示入口，点击重试后可确认没有任务", async () => {
+    snapshot.mockRejectedValueOnce(new Error("offline"));
+    render(<DockWork sessionId={1} cwd="C:/repo" ccSessionId="cc-1" items={[]} history={history} loading={false} />);
+    const retry = await screen.findByRole("button", { name: /Lead.*数据待更新/ });
+    snapshot.mockResolvedValue(null);
+    fireEvent.click(retry);
+    await waitFor(() => expect(screen.queryByRole("button", { name: /Lead/ })).toBeNull());
+    expect(snapshot).toHaveBeenCalledTimes(2);
+  });
+
+  it("读失败保留上次内容并提示，恢复后清除提示", async () => {
+    snapshot.mockResolvedValue(task());
+    const { result } = renderHook(() => useLeadTask("C:/repo", "s1"));
+    await waitFor(() => expect(result.current[0]?.slug).toBe("20261109-demo"));
+    snapshot.mockRejectedValueOnce(new Error("offline"));
+    await act(async () => result.current[1]());
+    expect(result.current[0]?.checks).toHaveLength(2);
+    expect(result.current[0]?.issues).toContain("lead/snapshot_stale");
+    await act(async () => result.current[1]());
+    expect(result.current[0]?.issues ?? []).toEqual([]);
+  });
+
+  it("坏清单保留同任务上次内容，切换会话不保留旧任务", async () => {
+    snapshot.mockResolvedValue(task());
+    const { result, rerender } = renderHook(({ session }) => useLeadTask("C:/repo", session), { initialProps: { session: "s1" } });
+    await waitFor(() => expect(result.current[0]?.checks).toHaveLength(2));
+    snapshot.mockResolvedValueOnce(task({ checks: [], issues: ["lead/acceptance_invalid"] }));
+    await act(async () => result.current[1]());
+    expect(result.current[0]?.checks).toHaveLength(2);
+    expect(result.current[0]?.issues).toContain("lead/acceptance_invalid");
+    snapshot.mockRejectedValue(new Error("offline"));
+    await act(async () => rerender({ session: "s2" }));
+    expect(result.current[0]).toBeNull();
+  });
+});
+
+it("验收项展开后显示对应版本的证据，不给旧条目造证据", () => {
+  const evidence = { command: "cargo test scoped", result: "3 passed", revision: "build-proof", reference: "evidence/test.log", limitations: "macOS 未验证" };
+  render(<LeadPanel task={task({ checks: [{ id: "proof", check: "验证冻结签署", passes: true, leader: false, waived: null, blocked: null, evidence: [evidence] }] })} onClose={() => {}} />);
+  expect(screen.queryByText(/cargo test scoped/)).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "已通过与豁免 · 1" }));
+  fireEvent.click(screen.getByRole("button", { name: /验证冻结签署/ }));
+  expect(screen.getByText("cargo test scoped")).toBeTruthy();
+  expect(screen.getByText("cargo test scoped").closest("button")).toBeNull();
+  expect(screen.getByText("验收版本：build-proof")).toBeTruthy();
+  expect(screen.getByText("evidence/test.log")).toBeTruthy();
+  expect(screen.getByText("macOS 未验证")).toBeTruthy();
+});
+
+it("决策与进度按条目展示且保留原始内容", async () => {
+  render(<LeadPanel task={task({
+    decisions: "- D-17（publication-2）：采用显式发布，保留旧答复。\n- D-18：继续验证。",
+    progress: "phase: verify\n- 完成第一轮验证\n- 修复后复验通过",
+  })} onClose={() => {}} />);
+  fireEvent.click(screen.getByRole("tab", { name: "决策" }));
+  expect(screen.getByRole("heading", { name: "D-17（publication-2）" })).toBeTruthy();
+  expect(screen.getByText("采用显式发布，保留旧答复。")).toBeTruthy();
+  expect(screen.getByRole("heading", { name: "D-18" })).toBeTruthy();
+  expect(screen.getByText("继续验证。")).toBeTruthy();
+  fireEvent.click(screen.getByRole("tab", { name: "进度" }));
+  expect(document.querySelector(".lead-notes-phase")?.textContent).toBe("phase: verify");
+  expect(document.querySelectorAll(".lead-notes.is-progress .lead-note")).toHaveLength(2);
+  expect(document.querySelector(".lead-notes.is-progress .lead-note:last-child")?.textContent).toContain("修复后复验通过");
+});
+
+it("历史缺少会话 id 时只查询并展示后端允许的未认领任务", async () => {
+  snapshot.mockResolvedValue(task());
+  render(<DockWork sessionId={1} cwd="C:/repo" ccSessionId={null} items={[]} history={history} loading={false} />);
+  await waitFor(() => expect(snapshot).toHaveBeenCalledWith("C:/repo", undefined));
+  expect(await screen.findByRole("button", { name: /Lead.*1\/2/ })).toBeTruthy();
+});
+
+it("验收显示稳定编号，决策保留表格，进度使用时间轴", () => {
+  render(<LeadPanel task={task({
+    checks: [
+      { id: "L17", check: "恢复未认领任务入口", passes: false, leader: false, blocked: null, waived: null },
+      { id: "L18", check: "移动端表格", passes: true, leader: false, blocked: null, waived: null },
+    ],
+    decisions: "- D-20：保留原始表格\n\n| 日期 | 决策 | 理由 |\n| --- | --- | --- |\n| 11-17 | 时间轴 | 保持顺序 |",
+    progress: "phase: verify\n- 第一条记录\n- 第二条记录",
+  })} onClose={() => {}} />);
+  expect(document.querySelector(".lead-check-id")?.textContent).toBe("L17");
+  fireEvent.click(screen.getByRole("tab", { name: "决策" }));
+  expect(screen.getByRole("table")).toBeTruthy();
+  expect(screen.getByRole("columnheader", { name: "决策" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("tab", { name: "进度" }));
+  expect(document.querySelectorAll(".lead-timeline .lead-timeline-marker")).toHaveLength(2);
+  expect(document.querySelectorAll(".lead-timeline .lead-note")[1].textContent).toContain("第二条记录");
 });

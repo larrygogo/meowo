@@ -1052,7 +1052,7 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
                 return reply::<()>(Err(e));
             }
             reply(
-                crate::lead::answer_lead_gate(app.clone(), a.cwd, a.gate_id, a.choice, a.note)
+                crate::lead::answer_lead_gate(app.clone(), a.cwd, a.gate_id, a.choice, a.note, a.version)
                     .await,
             )
         }
@@ -2838,7 +2838,10 @@ mod tests {
             // api.ts fileMentionCandidates
             "file_mention_candidates" => parse::<FileMentionCandidatesArgs>(br#"{"cwd":"C:/repo","query":"src/ma"}"#).map(|_| ()),
             "lead_task_snapshot" => parse::<LeadTaskSnapshotArgs>(br#"{"cwd":"C:/repo","session":"cc-abc"}"#).map(|_| ()),
-            "answer_lead_gate" => parse::<AnswerLeadGateArgs>(br#"{"cwd":"C:/repo","gateId":"B-1","choice":"1","note":""}"#).map(|_| ()),
+            "answer_lead_gate" => parse::<AnswerLeadGateArgs>(br#"{"cwd":"C:/repo","gateId":"B-1","choice":"1","note":"","version":"frozen-v1"}"#)
+                .and_then(|_| parse::<AnswerLeadGateArgs>(br#"{"cwd":"C:/repo","gateId":"B-1","choice":"1","note":"","version":null}"#))
+                .and_then(|_| parse::<AnswerLeadGateArgs>(br#"{"cwd":"C:/repo","gateId":"B-1","choice":"1","note":""}"#))
+                .map(|_| ()),
             "retry_lead_gate_delivery" => parse::<RetryLeadGateDeliveryArgs>(br#"{"cwd":"C:/repo","gateId":"B-1"}"#).map(|_| ()),
             "new_session" => parse::<NewSessionArgs>(
                 br#"{"cwd":"C:/repo","provider":"claude","options":{"permissionMode":"default"},"extraDirs":["C:/other"]}"#,

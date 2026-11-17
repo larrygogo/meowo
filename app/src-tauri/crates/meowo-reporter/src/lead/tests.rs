@@ -391,6 +391,32 @@ fn ans(choice: &str, note: &str) -> LeadGateAnswerDto {
 }
 
 #[test]
+fn concurrent_gate_answers_are_serialized_and_same_answer_is_idempotent() {
+    let e = env();
+    let root = e.d.join("concurrent");
+    fs::create_dir_all(root.join(".git")).unwrap();
+    let task = make_with(&root, "design", &[json!(false)], SLUG);
+    for same in [false, true] {
+        write_gate(&task, "race", "B", "pending");
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+        let handles: Vec<_> = (0..8).map(|index| {
+            let task = task.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                let note = if same { String::new() } else { index.to_string() };
+                answer_gate(&task, "race", &ans("1", &note))
+            })
+        }).collect();
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        assert_eq!(results.iter().filter(|r| r.is_ok()).count(), if same { 8 } else { 1 });
+        assert!(results.iter().all(|r| r.is_ok() || r.as_ref().unwrap_err() == "lead/gate_closed"));
+        assert_eq!(read_gate(&task).unwrap().status, "answered");
+        assert!(!task.join("gate.json.tmp").exists());
+    }
+}
+
+#[test]
 fn gate_answer_is_checked_and_idempotent() {
     let e = env();
     let root = e.d.join("p");
@@ -402,6 +428,11 @@ fn gate_answer_is_checked_and_idempotent() {
     );
     write_gate(&t, "g1", "B", "pending");
     let g = read_gate(&t).unwrap();
+    let mut changed: Value = serde_json::from_str(&read(&t.join("gate.json"))).unwrap();
+    changed["summary"] = json!("新的决定内容");
+    fs::write(t.join("gate.json"), changed.to_string()).unwrap();
+    assert_eq!(answer_gate_checked(&t, "g1", &ans("1", ""), g.version.as_deref()), Err("lead/gate_changed".into()));
+    write_gate(&t, "g1", "B", "pending");
     assert_eq!(
         (g.kind.as_str(), g.options.len(), g.options[0].recommended),
         ("B", 2, true)
@@ -511,13 +542,42 @@ fn snapshot_is_only_for_the_owning_session() {
     fs::create_dir_all(root.join(".git")).unwrap();
     let t = make(&root);
     let cwd = root.to_str().unwrap();
-    // 还没认领：谁都看得到。
+    // 还没认领：包括缺少原生会话 id 的历史会话，谁都看得到。
     assert!(snapshot_for(cwd, Some("other")).is_some());
+    assert!(snapshot_for(cwd, None).is_some());
     fs::write(t.join(".owner"), "mine\n").unwrap();
     assert!(snapshot_for(cwd, Some("mine")).is_some());
     assert!(snapshot_for(cwd, Some("other")).is_none());
-    // 不带会话 = 不过滤（看板、防休眠等宿主内部用）。
+    // 面板缺少会话 id 时不能泄露别人的任务；内部汇总仍不过滤（看板、防休眠等）。
+    assert!(snapshot_for(cwd, None).is_none());
     assert!(snapshot(cwd).is_some());
+}
+
+#[test]
+fn unrelated_legacy_invalid_gate_does_not_block_current_answer() {
+    let e = env();
+    let root = e.d.join("p");
+    fs::create_dir_all(root.join(".git")).unwrap();
+    let task = make(&root);
+    write_gate(&task, "current", "Q", "pending");
+    let stale = root.join(".lead/20261101-old");
+    fs::create_dir_all(&stale).unwrap();
+    let invalid = json!({"id":"legacy-open","type":"D","status":"open","title":"旧格式"}).to_string();
+    fs::write(stale.join("gate.json"), &invalid).unwrap();
+    let cwd = root.to_str().unwrap();
+
+    let found = task_of_gate_checked(cwd, "current").unwrap();
+    assert_eq!(found, task.canonicalize().unwrap());
+    let version = read_gate(&task).and_then(|gate| gate.version);
+    answer_gate_checked(&found, "current", &ans("other", "保留这条意见"), version.as_deref()).unwrap();
+    let answered = read_gate(&task).unwrap();
+    assert_eq!(answered.status, "answered");
+    assert_eq!(answered.answer.unwrap().note, "保留这条意见");
+    assert_eq!(fs::read_to_string(stale.join("gate.json")).unwrap(), invalid);
+    assert_eq!(task_of_gate_checked(cwd, "missing"), Err("lead/gate_invalid".into()));
+    // 坏文件若可能属于同一个 id，不能猜着把答复写到另一个任务。
+    fs::write(stale.join("gate.json"), json!({"id":"current","type":"D","status":"open"}).to_string()).unwrap();
+    assert_eq!(task_of_gate_checked(cwd, "current"), Err("lead/gate_invalid".into()));
 }
 
 #[test]
@@ -631,12 +691,15 @@ fn wait_wakes_on_answer_and_dedupes_waiters() {
     h.join().unwrap();
     // 后来者接管（做空审查 H2：旧会话的孤儿等待者不能挡住新会话）：
     // 旧等待者看到 .waiter 被换掉就退出 0；新等待者收到答复
-    write_gate(&t, "g4", "C", "pending");
+    write_gate(&t, "g4", "A", "pending");
+    let mut gate: Value = serde_json::from_str(&read(&t.join("gate.json"))).unwrap();
+    gate["review"] = json!({"revision":"waiter-test", "checks":review_checks(&t).unwrap()});
+    fs::write(t.join("gate.json"), gate.to_string()).unwrap();
     fs::write(t.join(".waiter"), "999999:g4").unwrap(); // 一个已经不在的旧等待者
     let t4 = t.clone();
     let h = std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(150));
-        answer_gate(&t4, "g4", &ans("accept", "")).unwrap();
+        answer_gate(&t4, "g4", &ans("confirm", "")).unwrap();
     });
     assert_eq!(fast(&data).exit, 2, "新等待者直接接管，不被旧记录挡住");
     h.join().unwrap();
@@ -949,7 +1012,7 @@ fn waived_and_leader_items_do_not_block() {
     }
     let v = call(&e, "stop", work.clone()).unwrap();
     let reason = v["reason"].as_str().unwrap();
-    assert!(reason.contains("gate.json") && !reason.contains("再提问") && reason.contains("实施阶段"), "{reason}");
+    assert!(reason.contains("初始化、草稿与发布") && reason.contains("确认关卡已发布后再结束") && !reason.contains("再提问") && reason.contains("实施阶段"), "{reason}");
     // 此前这里提示「加 by:leader 就不再拦你」，uiux-polish 照做给自己能验的条目（CSS 预算）补了 by:leader
     // 绕开拦截（2026-11-12 复盘）。改成：要豁免就发关卡，不许自己加字段。
     assert!(!reason.contains(r#""by": "leader""#) && reason.contains("不要自己加 waived 或 by:leader"), "{reason}");
@@ -1094,7 +1157,7 @@ fn gate_kinds_d_and_q() {
     ));
 }
 
-/// 关卡 C 接受时自动勾上「由 leader 验收」的条目；驳回不动；其他条目、旧字段原样。
+/// 旧收据只能恢复原冻结范围；没有收据的旧 C 即使补 review 也必须重发。
 #[test]
 fn accepting_gate_c_marks_leader_checks() {
     let e = env();
@@ -1114,6 +1177,12 @@ fn accepting_gate_c_marks_leader_checks() {
     };
     assert_eq!(read_items(), items);
     write_gate(&t, "c2", "C", "pending");
+    assert_eq!(answer_gate(&t, "c2", &ans("accept", "")), Err("lead/review_reissue".into()));
+    let mut bound: Value = serde_json::from_str(&read(&t.join("gate.json"))).unwrap();
+    bound["review"] = json!({"revision":"build-1", "checks":review_checks(&t).unwrap()});
+    fs::write(t.join("gate.json"), bound.to_string()).unwrap();
+    assert_eq!(answer_gate(&t, "c2", &ans("accept", "")), Err("lead/review_reissue".into()));
+    seed_legacy_receipt(&t, "c2");
     answer_gate(&t, "c2", &ans("accept", "")).unwrap();
     let after = read_items();
     assert_eq!(after[1]["passes"], json!(true));
@@ -1123,18 +1192,17 @@ fn accepting_gate_c_marks_leader_checks() {
     assert_eq!(after[2], items[2]);
     assert_eq!(after[3], items[3]);
     assert!(!t.join("acceptance.json.tmp").exists());
-    // 坏的验收清单不影响作答
-    fs::write(t.join("acceptance.json"), "{坏").unwrap();
+    let mut updated = read_items();
+    updated.as_array_mut().unwrap().push(json!({"id": 5, "check": "新增范围", "passes": false, "by":"leader"}));
+    fs::write(t.join("acceptance.json"), updated.to_string()).unwrap();
+    answer_gate(&t, "c2", &ans("accept", "")).unwrap();
+    assert_eq!(read_items()[4]["passes"], json!(false));
     write_gate(&t, "c3", "C", "pending");
-    answer_gate(&t, "c3", &ans("accept", "")).unwrap();
-    // PR #156 审查：第一次勾失败（清单读不了），手机重发同一答案时补勾
-    fs::write(
-        t.join("acceptance.json"),
-        json!([{"id": 1, "check": "看视觉", "passes": false, "by": "leader"}]).to_string(),
-    )
-    .unwrap();
-    answer_gate(&t, "c3", &ans("accept", "")).unwrap();
-    assert_eq!(read_items()[0]["verified_by"], json!("leader"));
+    bound["id"] = json!("c3");
+    fs::write(t.join("gate.json"), bound.to_string()).unwrap();
+    assert_eq!(answer_gate(&t, "c3", &ans("accept", "")), Err("lead/review_reissue".into()));
+    fs::write(t.join("acceptance.json"), "{坏").unwrap();
+    assert_eq!(answer_gate(&t, "c3", &ans("accept", "")), Err("lead/review_reissue".into()));
 }
 
 /// 等后台子代理 / 后台 Bash 回报时不拦：通知到了会自动唤醒，拦了只会空转（25 个任务里约 300 次）。
@@ -1313,7 +1381,7 @@ fn blocked_items_reach_panel_and_prompt_gate_d() {
     assert_eq!(got, vec![None, Some("要 beta 开机"), None, None]);
     // 混有没做完的：照旧的提示，但也要催发关卡 D（做空审查：只在全是 blocked 时才催，等于固化攒批）
     let reason = call(&e, "stop", work.clone()).unwrap()["reason"].as_str().unwrap().to_owned();
-    assert!(reason.contains("继续推进下一条") && reason.contains("其中 1 条只差") && reason.contains("发关卡 D") && reason.contains("#2 beta 实发"), "{reason}");
+    assert!(reason.contains("继续推进下一条") && reason.contains("其中 1 条只差") && reason.contains("关卡 D 的初始化、草稿与发布") && reason.contains("#2 beta 实发"), "{reason}");
     // 没有 blocked 的条目：不提关卡 D
     write_items(json!([{"id": 1, "check": "a", "passes": false}]));
     let reason = call(&e, "stop", work.clone()).unwrap()["reason"].as_str().unwrap().to_owned();
@@ -1324,7 +1392,7 @@ fn blocked_items_reach_panel_and_prompt_gate_d() {
     let v = call(&e, "stop", work.clone()).unwrap();
     assert_eq!(v["decision"], "block");
     let reason = v["reason"].as_str().unwrap();
-    assert!(reason.contains("发关卡 D") && reason.contains("#2 beta 实发"), "{reason}");
+    assert!(reason.contains("关卡 D 的初始化、草稿与发布") && reason.contains("#2 beta 实发"), "{reason}");
     // 关卡 D 挂上之后放行（在等 leader）
     write_gate(&t, "D-1", "D", "pending");
     assert!(!blocked(&e, work.clone()));
@@ -1332,4 +1400,261 @@ fn blocked_items_reach_panel_and_prompt_gate_d() {
     write_gate(&t, "D-1", "D", "consumed");
     let reason = call(&e, "stop", work.clone()).unwrap()["reason"].as_str().unwrap().to_owned();
     assert!(reason.contains("关卡 D 已经答复") && reason.contains("不要重发关卡 D") && !reason.contains("现在就按 lead skill 写 gate.json 发关卡 D"), "{reason}");
+}
+
+#[test]
+fn frozen_review_receipt_recovers_without_replaying_a_replaced_gate() {
+    let e = env();
+    let root = e.d.join("recovery");
+    fs::create_dir_all(root.join(".git")).unwrap();
+    let task = make_with(&root, "verify", &[json!(false)], SLUG);
+    let original = json!([{"id":1,"check":"业务确认","passes":false,"by":"leader"}]);
+    fs::write(task.join("acceptance.json"), original.to_string()).unwrap();
+    write_gate(&task, "review-1", "C", "pending");
+    let mut gate: Value = serde_json::from_str(&read(&task.join("gate.json"))).unwrap();
+    gate["review"] = json!({"revision":"build-1","checks":review_checks(&task).unwrap()});
+    fs::write(task.join("gate.json"), gate.to_string()).unwrap();
+    let version = read_gate(&task).unwrap().version;
+    assert_eq!(answer_gate_checked(&task, "review-1", &ans("accept", ""), None), Err("lead/review_reload".into()));
+    assert_eq!(answer_gate_checked(&task, "review-1", &ans("accept", ""), version.as_deref()), Err("lead/review_reissue".into()));
+    seed_legacy_receipt(&task, "review-1");
+    answer_gate_checked(&task, "review-1", &ans("accept", ""), version.as_deref()).unwrap();
+    assert!(read_receipt(&task, "review-1").unwrap().is_some());
+    for status in ["pending", "answered", "consumed"] {
+        fs::write(task.join("acceptance.json"), original.to_string()).unwrap();
+        let mut current = gate.clone();
+        current["status"] = json!(status);
+        if status != "pending" { current["answer"] = json!({"choice":"accept","note":""}); }
+        fs::write(task.join("gate.json"), current.to_string()).unwrap();
+        if status == "pending" {
+            fs::write(task.join("acceptance.json"), "invalid").unwrap();
+            assert_eq!(recover_review(&task), Err("lead/acceptance_invalid".into()));
+            assert_eq!(read_gate(&task).unwrap().status, "pending");
+            fs::write(task.join("acceptance.json"), original.to_string()).unwrap();
+        }
+        recover_review(&task).unwrap();
+        assert!(review_checks(&task).unwrap()[0].passes);
+        assert_eq!(read_gate(&task).unwrap().status, if status == "pending" { "answered" } else { status });
+    }
+    fs::write(task.join("gate.json"), gate.to_string()).unwrap();
+    let mut blocked_items = original.clone();
+    blocked_items[0]["blocked"] = json!("new verification limitation");
+    fs::write(task.join("acceptance.json"), blocked_items.to_string()).unwrap();
+    assert_eq!(recover_review(&task), Err("lead/review_changed".into()));
+    assert_eq!(answer_gate_checked(&task, "review-1", &ans("accept", ""), version.as_deref()), Err("lead/review_changed".into()));
+    assert!(!review_checks(&task).unwrap()[0].passes);
+    assert_eq!(read_gate(&task).unwrap().status, "pending");
+    fs::write(task.join("acceptance.json"), original.to_string()).unwrap();
+    answer_gate_checked(&task, "review-1", &ans("accept", ""), version.as_deref()).unwrap();
+    assert_eq!(read_gate(&task).unwrap().status, "answered");
+    fs::write(task.join("acceptance.json"), original.to_string()).unwrap();
+    write_gate(&task, "next", "A", "pending");
+    recover_review(&task).unwrap();
+    assert!(!review_checks(&task).unwrap()[0].passes);
+    assert_eq!(read_gate(&task).unwrap().id, "next");
+}
+
+#[test]
+fn evidence_is_bound_to_checks_and_resumed_with_decisions() {
+    let e = env();
+    let root = e.d.join("evidence");
+    fs::create_dir_all(root.join(".git")).unwrap();
+    let task = make_with(&root, "verify", &[json!(false)], SLUG);
+    let proof = json!({"command":"cargo test scoped","result":"3 passed","revision":"build-proof","reference":"evidence/test.log","limitations":"macOS pending"});
+    fs::write(task.join("acceptance.json"), json!([{"id":1,"check":"frozen review","passes":false,"evidence":[proof]},{"id":2,"check":"legacy","passes":false}]).to_string()).unwrap();
+    fs::write(task.join("decisions.md"), "keep official TUI").unwrap();
+    let checks = review_checks(&task).unwrap();
+    assert_eq!(checks[0].evidence.as_ref().unwrap()[0].revision, "build-proof");
+    assert!(checks[1].evidence.is_none());
+    let context = session_context(&task, "owner").unwrap();
+    assert!(context.contains("evidence/test.log"));
+    assert!(context.contains("keep official TUI"));
+    fs::write(task.join("acceptance.json"), "broken").unwrap();
+    let snapshot = snapshot_for(&root.to_string_lossy(), None).unwrap();
+    assert!(snapshot.issues.unwrap().contains(&"lead/acceptance_invalid".to_owned()));
+}
+
+#[test]
+fn recovery_context_has_bounded_check_list_and_total_output() {
+    let e = env();
+    let task = make(&e.d);
+    let items: Vec<Value> = (0..1000).map(|id| json!({"id":id,"check":"很长的验收内容".repeat(100),"passes":false})).collect();
+    fs::write(task.join("acceptance.json"), serde_json::to_string(&items).unwrap()).unwrap();
+    for name in ["SPEC.md", "decisions.md", "progress.md"] {
+        fs::write(task.join(name), format!("phase: implement\n{}", "正文".repeat(20000))).unwrap();
+    }
+    let raw = session_context(&task, "owner").unwrap();
+    let value: Value = serde_json::from_str(&raw).unwrap();
+    let text = value.pointer("/hookSpecificOutput/additionalContext").unwrap().as_str().unwrap();
+    assert!(text.chars().count() < 24100);
+    assert!(text.contains("未通过的验收项（1000/1000）"));
+    assert!(text.contains("另有 984 条"));
+    assert!(text.contains("decisions.md"));
+    assert!(text.contains("progress.md"));
+}
+
+
+#[test]
+fn published_state_routes_host_answers_without_overwriting_drafts() {
+    let e = env();
+    let task = make(&e.d);
+    let checks = json!([{"id":"leader", "check":"Inspect delivery", "by":"leader", "passes":false}]);
+    fs::write(task.join("acceptance.json"), checks.to_string()).unwrap();
+    publication::initialize(&task).unwrap();
+    let review = review_checks(&task).unwrap();
+    fs::write(task.join("gate.json"), json!({"id":"published", "type":"C", "status":"pending", "title":"Review", "review":{"revision":"rev1", "checks":review}}).to_string()).unwrap();
+    let gate = publication::publish(&task, None).unwrap();
+    fs::write(task.join("gate.json"), "broken draft").unwrap();
+    let answer = LeadGateAnswerDto { choice: "accept".into(), note: String::new() };
+    answer_gate_checked(&task, &gate.id, &answer, gate.version.as_deref()).unwrap();
+    recover_review(&task).unwrap();
+    assert_eq!(fs::read_to_string(task.join("gate.json")).unwrap(), "broken draft");
+    assert_eq!(fs::read_to_string(task.join("acceptance.json")).unwrap(), checks.to_string());
+    let snapshot = snapshot(e.d.to_str().unwrap()).unwrap();
+    assert_eq!(snapshot.gate.unwrap().status, "answered");
+    assert!(snapshot.checks[0].passes);
+    assert!(snapshot.issues.is_none());
+    assert_eq!(acceptance(&task).unwrap()[0]["passes"], true);
+    publication::consume(&task, &gate.id, gate.version.as_deref().unwrap()).unwrap();
+    assert!(snapshot_for(e.d.to_str().unwrap(), None).unwrap().gate.is_none());
+}
+
+#[test]
+fn publication_withdrawal_and_corruption_never_fall_back_to_draft() {
+    let e = env();
+    let task = make(&e.d);
+    fs::write(task.join("gate.json"), json!({"id":"one", "type":"A", "status":"pending"}).to_string()).unwrap();
+    let gate = publication::publish(&task, None).unwrap();
+    publication::withdraw(&task, &gate.id, gate.version.as_deref().unwrap()).unwrap();
+    assert!(read_gate_checked(&task).unwrap().is_none());
+    assert!(snapshot(e.d.to_str().unwrap()).unwrap().gate.is_none());
+    fs::write(task.join(".gate-publications.json"), "broken state").unwrap();
+    assert_eq!(read_gate_checked(&task).unwrap_err(), "lead/publication_invalid");
+    let snapshot = snapshot(e.d.to_str().unwrap()).unwrap();
+    assert!(snapshot.gate.is_none());
+    assert_eq!(snapshot.issues.unwrap(), vec!["lead/publication_invalid"]);
+    let before = fs::read(task.join("gate.json")).unwrap();
+    assert!(answer_gate_checked(&task, "one", &LeadGateAnswerDto { choice:"confirm".into(), note:String::new() }, gate.version.as_deref()).is_err());
+    assert!(recover_review(&task).is_err());
+    assert_eq!(fs::read(task.join("gate.json")).unwrap(), before);
+}
+
+
+#[test]
+fn claude_wait_rejects_same_id_changed_version_before_waking() {
+    use std::time::Duration;
+    let e = env();
+    let task = make(&e.d);
+    claim_as(&e, &e.d, "S", "Edit", json!({"file_path":task.join("progress.md")}));
+    write_gate(&task, "same", "A", "pending");
+    let registry = e.reg.clone();
+    let data = json!({"session_id":"S","cwd":e.d});
+    let handle = std::thread::spawn(move || wait(&data, &registry, Duration::from_millis(20), Duration::from_secs(5)));
+    for _ in 0..250 {
+        if task.join(".waiter").exists() { break; }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(task.join(".waiter").exists());
+    let changed = json!({"id":"same","type":"A","title":"changed content","status":"answered","answer":{"choice":"confirm","note":"must not wake"}});
+    meowo_agent::fsutil::write_atomic(&task.join("gate.json"), &changed.to_string()).unwrap();
+    assert_eq!(handle.join().unwrap().exit, 0);
+    assert!(!task.join(".delivered").exists());
+    assert!(!task.join(".waiter").exists());
+}
+
+#[test]
+fn claude_migrated_answer_is_preserved_and_consumption_does_not_replay() {
+    use std::time::Duration;
+    let e = env();
+    let task = make(&e.d);
+    claim_as(&e, &e.d, "S", "Edit", json!({"file_path":task.join("progress.md")}));
+    write_gate(&task, "legacy", "A", "pending");
+    answer_gate(&task, "legacy", &ans("confirm", "legacy note")).unwrap();
+    let before = fs::read(task.join("gate.json")).unwrap();
+    publication::initialize(&task).unwrap();
+    let data = json!({"session_id":"S","cwd":e.d,"hook_event_name":"SessionStart"});
+    let output = wait(&data, &e.reg, Duration::from_millis(20), Duration::from_secs(1));
+    assert_eq!(output.exit, 2);
+    let text = output.stderr.unwrap();
+    assert!(text.contains("legacy note") && text.contains("consume"));
+    publication::consume(&task, "legacy", "publication-1").unwrap();
+    assert_eq!(wait(&data, &e.reg, Duration::from_millis(20), Duration::from_secs(1)).exit, 0);
+    assert_eq!(fs::read(task.join("gate.json")).unwrap(), before);
+    fs::write(task.join(".gate-publications.json"), "broken").unwrap();
+    let error = wait(&data, &e.reg, Duration::from_millis(20), Duration::from_secs(1));
+    assert_eq!(error.exit, 0);
+    assert!(error.stderr.unwrap().contains("lead/publication_invalid"));
+}
+
+#[test]
+fn large_text_uses_head_for_phase_and_tail_for_recent_context() {
+    let e = env();
+    let task = make(&e.d);
+    let text = format!("phase: implement\n{}\n最近进展", "中".repeat(FILE_LIMIT as usize));
+    fs::write(task.join("progress.md"), &text).unwrap();
+    fs::write(task.join("decisions.md"), &text).unwrap();
+    fs::write(task.join("SPEC.md"), format!("规格起点\n{text}")).unwrap();
+    assert_eq!(phase_of(&task), "implement");
+    let recent = read_text(&task.join("progress.md"), true);
+    assert!(recent.len() <= TEXT_WINDOW as usize);
+    assert!(!recent.contains('\u{fffd}'));
+    assert!(recent.ends_with("最近进展"));
+    let snapshot = snapshot(e.d.to_str().unwrap()).unwrap();
+    assert!(snapshot.spec.starts_with("规格起点"));
+    assert!(snapshot.progress.ends_with("最近进展"));
+    assert!(snapshot.decisions.ends_with("最近进展"));
+    let context = session_context(&task, "").unwrap();
+    assert!(context.contains("最近进展"));
+}
+
+#[test]
+fn oversized_json_is_rejected_not_parsed_as_a_prefix_or_empty_task() {
+    let e = env();
+    let task = make(&e.d);
+    fs::write(task.join("acceptance.json"), format!("[]{}", " ".repeat(FILE_LIMIT as usize))).unwrap();
+    assert_eq!(review_checks(&task).unwrap_err(), "lead/file_too_large");
+    assert!(acceptance(&task).is_none());
+    let context = session_context(&task, "").unwrap();
+    assert!(context.contains("验收清单不可读"));
+    assert!(!context.contains("未通过的验收项（0/0）"));
+    let snapshot = snapshot(e.d.to_str().unwrap()).unwrap();
+    assert!(snapshot.issues.unwrap().contains(&"lead/file_too_large".to_owned()));
+    fs::write(task.join("gate.json"), " ".repeat(FILE_LIMIT as usize + 1)).unwrap();
+    assert_eq!(read_gate_checked(&task).unwrap_err(), "lead/file_too_large");
+    fs::write(task.join("gate.json"), [0xff]).unwrap();
+    assert_eq!(read_gate_checked(&task).unwrap_err(), "lead/gate_unreadable");
+}
+
+#[test]
+fn text_head_drops_only_incomplete_utf8_and_json_limit_is_inclusive() {
+    let e = env();
+    let path = e.d.join("text");
+    fs::write(&path, "中".repeat(21846)).unwrap();
+    let head = read_text(&path, false);
+    assert_eq!(head, "中".repeat(21845));
+    fs::write(&path, format!("[]{}", " ".repeat(FILE_LIMIT as usize - 2))).unwrap();
+    assert_eq!(read_checked(&path).unwrap().len(), FILE_LIMIT as usize);
+}
+
+#[test]
+fn claim_preserves_unreadable_registry_and_owner() {
+    let e = env();
+    let task = make(&e.d);
+    fs::write(task.join(".owner"), "old-owner").unwrap();
+    let input = json!({"session_id":"new-owner", "cwd": e.d, "tool_name":"Write", "tool_input":{"file_path":task.join("progress.md")}});
+    for raw in [format!("{{}}{}", " ".repeat(FILE_LIMIT as usize)), "broken".into()] {
+        fs::write(&e.reg, &raw).unwrap();
+        claim(&input, &e.reg);
+        assert_eq!(fs::read_to_string(&e.reg).unwrap(), raw);
+        assert_eq!(fs::read_to_string(task.join(".owner")).unwrap(), "old-owner");
+    }
+}
+
+pub(super) fn seed_legacy_receipt(task: &Path, id: &str) {
+    let mut gate: Value = serde_json::from_str(&read(&task.join("gate.json"))).unwrap();
+    gate["status"] = json!("answered");
+    gate["answer"] = json!({"choice":"accept","note":""});
+    let path = receipt_path(task, id);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, gate.to_string()).unwrap();
 }
