@@ -1,4 +1,4 @@
-import { useState, type DragEvent, type MouseEvent } from "react";
+import { useEffect, useRef, useState, type DragEvent, type MouseEvent, type PointerEvent } from "react";
 import { Icon, type Glyph } from "../../icons/Icon";
 import { icClose, icPencil, icRefreshCw } from "../../icons/glyphs";
 import { icArrowUp, icGrip, icPaperclip, icUndo } from "../../icons/glyphs.chat";
@@ -38,6 +38,21 @@ export function QueuedPrompts({
   const [editing, setEditing] = useState<number | null>(null);
   const [draft, setDraft] = useState<QueueDraftDto | null>(null);
   const [dismissing, setDismissing] = useState<number | null>(null);
+  const stackRef = useRef<HTMLElement>(null);
+  const touch = useRef<{ pointerId: number; id: number; x: number; y: number; startY: number; moved: boolean; target: { id: number; after: boolean } | null } | null>(null);
+  const frame = useRef<number | null>(null);
+  const heldKey = items.filter((item) => item.state === "held").map((item) => item.id).join(",");
+  const cancelTouch = () => {
+    touch.current = null;
+    if (frame.current != null) cancelAnimationFrame(frame.current);
+    frame.current = null;
+  };
+  useEffect(() => {
+    cancelTouch();
+    setDragging(null);
+    setDrop(null);
+    return cancelTouch;
+  }, [sessionId, heldKey, busy]);
   if (items.length === 0) return null;
 
   const dismiss = async (item: QueuedPromptDto): Promise<boolean> => {
@@ -108,7 +123,68 @@ export function QueuedPrompts({
     const after = event.clientY > box.top + box.height / 2;
     if (drop?.id !== item.id || drop.after !== after) setDrop({ id: item.id, after });
   };
-  const endDrag = () => { setDragging(null); setDrop(null); };
+  const endDrag = () => { cancelTouch(); setDragging(null); setDrop(null); };
+  const updateTouch = () => {
+    const active = touch.current;
+    const stack = stackRef.current;
+    if (!active || !stack || !active.moved) return;
+    let scroll: HTMLElement | null = stack.parentElement;
+    while (scroll && !(scroll.scrollHeight > scroll.clientHeight && /auto|scroll/.test(getComputedStyle(scroll).overflowY))) scroll = scroll.parentElement;
+    const bounds = stack.getBoundingClientRect();
+    const viewport = scroll?.getBoundingClientRect();
+    const top = Math.max(bounds.top, viewport?.top ?? 0);
+    const bottom = Math.min(bounds.bottom, viewport?.bottom ?? window.innerHeight);
+    const inside = active.x >= bounds.left && active.x <= bounds.right && active.y >= top && active.y <= bottom;
+    if (scroll && inside) {
+      const edge = 36;
+      if (active.y < top + edge) scroll.scrollTop -= 8;
+      else if (active.y > bottom - edge) scroll.scrollTop += 8;
+    }
+    let target: { id: number; after: boolean } | null = null;
+    if (inside) {
+      for (const row of stack.querySelectorAll<HTMLElement>('[data-queue-held="true"]')) {
+        const box = row.getBoundingClientRect();
+        target = { id: Number(row.dataset.queueId), after: active.y > box.top + box.height / 2 };
+        if (!target.after) break;
+      }
+    }
+    active.target = target;
+    setDrop((old) => old?.id === target?.id && old?.after === target?.after ? old : target);
+    frame.current = requestAnimationFrame(updateTouch);
+  };
+  const touchStart = (event: PointerEvent<HTMLButtonElement>, id: number) => {
+    if (busy || event.pointerType === "mouse" || !event.isPrimary) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    touch.current = { pointerId: event.pointerId, id, x: event.clientX, y: event.clientY, startY: event.clientY, moved: false, target: null };
+  };
+  const touchMove = (event: PointerEvent<HTMLButtonElement>) => {
+    const active = touch.current;
+    if (!active || active.pointerId !== event.pointerId) return;
+    active.x = event.clientX;
+    active.y = event.clientY;
+    if (!active.moved && Math.abs(active.y - active.startY) >= 6) {
+      active.moved = true;
+      setDragging(active.id);
+    }
+    if (active.moved) {
+      if (frame.current != null) cancelAnimationFrame(frame.current);
+      updateTouch();
+    }
+  };
+  const touchCancel = (event: PointerEvent<HTMLButtonElement>) => {
+    if (touch.current && touch.current.pointerId === event.pointerId) endDrag();
+  };
+  const touchEnd = (event: PointerEvent<HTMLButtonElement>) => {
+    const active = touch.current;
+    if (!active || active.pointerId !== event.pointerId) return;
+    active.x = event.clientX;
+    active.y = event.clientY;
+    if (frame.current != null) cancelAnimationFrame(frame.current);
+    updateTouch();
+    if (!busy && active.moved && active.target) moveTo(active.id, active.target.id, active.target.after);
+    endDrag();
+  };
 
   const tool = (label: string, glyph: Glyph, props: { "aria-disabled"?: true; onClick: (event: MouseEvent<HTMLButtonElement>) => void }, tip = label) => (
     <button type="button" className="chat-queue-tool" aria-label={label} data-tip={tip} {...props}>
@@ -116,11 +192,13 @@ export function QueuedPrompts({
     </button>
   );
 
-  return <section className="chat-queued-stack chat-prompt-queue" aria-label={t.chat.queueLabel}>
+  return <section ref={stackRef} className="chat-queued-stack chat-prompt-queue" aria-label={t.chat.queueLabel}>
     {/* 只数还会自动发出的；投递失败的不会自己走，不算进「结束后发送」。 */}
     {heldCount > 0 && <div className="chat-queued-head"><span>{t.chat.queueHeldHead(heldCount)}</span></div>}
     {items.map((item) => <div
       key={item.id}
+      data-queue-id={item.id}
+      data-queue-held={item.state === "held"}
       className={"chat-queued-turn is-" + item.state
         + (dragging === item.id ? " is-dragging" : "")
         + (drop?.id === item.id && dragging !== item.id ? (drop.after ? " drop-after" : " drop-before") : "")}
@@ -170,7 +248,13 @@ export function QueuedPrompts({
             aria-label={t.chat.queueDragHandle}
             data-tip={t.chat.queueDragHandle}
             draggable={!busy}
+            onPointerDown={(event) => touchStart(event, item.id)}
+            onPointerMove={touchMove}
+            onPointerUp={touchEnd}
+            onPointerCancel={touchCancel}
+            onLostPointerCapture={touchCancel}
             onDragStart={(event) => {
+              if (touch.current || busy) { event.preventDefault(); return; }
               event.dataTransfer.effectAllowed = "move";
               event.dataTransfer.setData("text/plain", String(item.id));
               setDragging(item.id);

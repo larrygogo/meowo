@@ -41,6 +41,7 @@ function renderQueue(entry: QueuedPromptDto | QueuedPromptDto[] = item(), extra:
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  vi.restoreAllMocks();
 });
 
 const three = () => [
@@ -57,6 +58,8 @@ describe("排队消息拖拽排序（对照 Kimi Code 客户端）", () => {
     const rows = document.querySelectorAll(".chat-queued-turn");
     const dataTransfer = { setData: vi.fn(), effectAllowed: "", dropEffect: "" };
     fireEvent.dragStart(grips()[2], { dataTransfer });
+    fireEvent.pointerCancel(grips()[2], { pointerType: "mouse", pointerId: 1 });
+    fireEvent.lostPointerCapture(grips()[2], { pointerType: "mouse", pointerId: 1 });
     // jsdom 的行高是 0：落点 y=0 不在下半，算「上方」。
     fireEvent.dragOver(rows[0], { dataTransfer, clientY: 0 });
     expect(rows[0].classList.contains("drop-before")).toBe(true);
@@ -64,6 +67,81 @@ describe("排队消息拖拽排序（对照 Kimi Code 客户端）", () => {
     await waitFor(() => expect(promptQueueReorder).toHaveBeenCalledWith(42, [3, 1, 2]));
     expect(props.onChanged).toHaveBeenCalled();
     expect(props.onError).not.toHaveBeenCalled();
+  });
+
+  function touchEvent(element: HTMLElement, type: string, y: number) {
+    const event = new MouseEvent(type, { bubbles: true, clientX: 20, clientY: y });
+    Object.defineProperties(event, { pointerId: { value: 1 }, pointerType: { value: "touch" }, isPrimary: { value: true } });
+    fireEvent(element, event);
+  }
+
+  function touchRows() {
+    const handles = grips();
+    for (const handle of handles) Object.defineProperty(handle, "setPointerCapture", { value: vi.fn(), configurable: true });
+    const stack = document.querySelector(".chat-prompt-queue")!;
+    vi.spyOn(stack, "getBoundingClientRect").mockReturnValue({ left: 0, right: 300, top: 0, bottom: 300 } as DOMRect);
+    document.querySelectorAll(".chat-queued-turn").forEach((row, index) => {
+      vi.spyOn(row, "getBoundingClientRect").mockReturnValue({ top: index * 100, bottom: (index + 1) * 100, height: 100 } as DOMRect);
+    });
+    return handles;
+  }
+
+  it("触摸手柄拖动提交新顺序，不依赖 HTML 拖放", async () => {
+    renderQueue(three());
+    vi.mocked(promptQueueReorder).mockResolvedValue(true);
+    const handles = touchRows();
+    touchEvent(handles[2], "pointerdown", 250);
+    touchEvent(handles[2], "pointermove", 20);
+    touchEvent(handles[2], "pointerup", 20);
+    await waitFor(() => expect(promptQueueReorder).toHaveBeenCalledWith(42, [3, 1, 2]));
+  });
+
+  it.each(["pointercancel", "lostpointercapture"])("轻触或 %s 不改变队列", (cancelEvent) => {
+    renderQueue(three());
+    const handles = touchRows();
+    touchEvent(handles[0], "pointerdown", 20);
+    touchEvent(handles[0], "pointerup", 20);
+    touchEvent(handles[0], "pointerdown", 20);
+    touchEvent(handles[0], "pointermove", 250);
+    touchEvent(handles[0], cancelEvent, 250);
+    touchEvent(handles[0], "pointerup", 250);
+    expect(promptQueueReorder).not.toHaveBeenCalled();
+    expect(document.querySelector(".is-dragging")).toBeNull();
+  });
+
+  it.each([-20, 320])("拖出队列纵向边界 %i 后松手不提交", (endY) => {
+    renderQueue(three());
+    const handles = touchRows();
+    touchEvent(handles[1], "pointerdown", 150);
+    touchEvent(handles[1], "pointermove", 20);
+    touchEvent(handles[1], "pointerup", endY);
+    expect(promptQueueReorder).not.toHaveBeenCalled();
+    expect(document.querySelector(".is-dragging")).toBeNull();
+  });
+
+  it("拖动期间队列被领取或切换会话时取消旧手势", () => {
+    const props = {
+      sessionId: 42, items: three(), busy: false,
+      onDeliver: vi.fn(), onRetry: vi.fn(), onRestore: vi.fn(), onChanged: vi.fn(), onError: vi.fn(),
+    };
+    const { rerender } = render(<QueuedPrompts {...props} />);
+    const handles = touchRows();
+    touchEvent(handles[0], "pointerdown", 20);
+    touchEvent(handles[0], "pointermove", 250);
+    rerender(<QueuedPrompts {...props} sessionId={43} items={three().slice(0, 2)} />);
+    touchEvent(handles[0], "pointerup", 250);
+    expect(promptQueueReorder).not.toHaveBeenCalled();
+    expect(document.querySelector(".is-dragging")).toBeNull();
+  });
+
+  it("忙碌时触摸或键盘都不排序", () => {
+    render(<QueuedPrompts sessionId={42} items={three()} busy onDeliver={() => {}} onRetry={() => {}} onRestore={() => {}} onChanged={() => {}} onError={() => {}} />);
+    const handles = touchRows();
+    touchEvent(handles[0], "pointerdown", 20);
+    touchEvent(handles[0], "pointermove", 250);
+    touchEvent(handles[0], "pointerup", 250);
+    fireEvent.keyDown(handles[0], { key: "ArrowDown" });
+    expect(promptQueueReorder).not.toHaveBeenCalled();
   });
 
   it("键盘：手柄上按上方向键挪一格", async () => {
