@@ -249,6 +249,34 @@ describe("useOutgoingUpkeep：消息已画进 CLI 对话区、会话记录还没
     expect(outgoingStore.get(7)[0].phase).toBe("uncertain");
   });
 
+  // 首读时 Kimi 还没把这句画出来（画面上最后一条用户消息是旧的），之后才画进对话区：
+  // 「未确认送达」期间隔 10 秒重读，读到就转「已排队」，不必等几分钟后写进会话记录。
+  it("首读没认出、之后画面上出现了：重读时转已排队", async () => {
+    const before = kimiShown.map((line) => line.replace("❯ 继续", "❯ 1用本机编译"));
+    api.managedTerminalScreen.mockResolvedValueOnce(before).mockResolvedValue(kimiShown);
+    const text = "继续";
+    const id = outgoingStore.add(7, { kind: "queued", text, attachmentOnly: false, anchor: anchorFrom([], null), phase: "uncertain", bodyWritten: false });
+    const at = Date.now() - 20_000;
+    mountWith([{ id, kind: "queued", text, attachmentOnly: false, at, phase: "uncertain", settledAt: null, anchor: anchorFrom([], null), bodyWritten: false } as OutgoingPrompt], [user("u1", "1用本机编译")]);
+    await waitFor(() => expect(api.managedTerminalScreen).toHaveBeenCalledTimes(1));
+    await act(async () => {});
+    expect(outgoingStore.get(7)[0].phase).toBe("uncertain");
+    await waitFor(() => expect(outgoingStore.get(7)[0].phase).toBe("accepted"), { timeout: 3_000 });
+    expect(api.managedTerminalScreen).toHaveBeenCalledTimes(2);
+  });
+
+  it("没声明画面证据的家不重读", async () => {
+    api.managedTerminalScreen.mockResolvedValue(kimiShown);
+    const id = outgoingStore.add(7, { kind: "echo", text: "继续", attachmentOnly: false, anchor: anchorFrom([], null), phase: "uncertain", bodyWritten: false });
+    renderHook(() => useOutgoingUpkeep({
+      sessionId: 7, outgoing: [{ ...echo(id, "继续"), at: Date.now() - 20_000 }], loading: false, items: [], acks: [], lastUserText: null, ended: false,
+      chatUi: claudeUi, isActive: () => true, running: () => false, onError: () => {},
+    }));
+    await waitFor(() => expect(api.managedTerminalScreen).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => setTimeout(resolve, 2_200));
+    expect(api.managedTerminalScreen).toHaveBeenCalledTimes(1);
+  });
+
   it("排队区提示是「will send after current task」那一种：同样认出已排队", async () => {
     api.managedTerminalScreen.mockResolvedValue([
       "● Read 6 files · 1050 lines",
