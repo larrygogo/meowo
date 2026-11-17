@@ -393,14 +393,14 @@
           "needle": "[Tool call interrupted: the session ended before this call's result was recorded",
           "note": "2.1.316 transcript 实样（meowo 项目会话 a7bec18a 第 19706 行，2026-10-31）；本机 2.1.303 到 2.1.323 共 16 次，文案一致",
           "rule": "record:tool-interrupted-session-ended",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/transcript.rs:339"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/transcript.rs:343"
         },
         {
           "legacy": false,
           "needle": "Interrupted: the response that made this tool call was stopped",
           "note": "2.1.322 transcript 实样（2026-11-11）；本机 2.1.302、2.1.322 共 11 次",
           "rule": "record:tool-interrupted-response-stopped",
-          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/transcript.rs:340"
+          "source": "app/src-tauri/crates/meowo-agent/src/plugins/claude/transcript.rs:344"
         },
         {
           "legacy": false,

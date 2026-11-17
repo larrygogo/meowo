@@ -60,6 +60,10 @@ fn task_notification_result(
     let anchor = tool_use_id.clone().or_else(|| task_id.clone())?;
     // status 缺省按 completed:通知本身就意味着「结束了」,分不清成败时宁可少报失败。
     let failed = tag_text(text, "status").is_some_and(|s| s.eq_ignore_ascii_case("failed"));
+    // killed / stopped：没跑完就停了（进程被结束、会话关闭后恢复时 Claude 补写 stopped，2026-11-17 实拍），
+    // 不是完成也不是失败，按「已中断」报（同 codex interrupt_agent 的口径：三个计数都是 0）。
+    let interrupted = tag_text(text, "status")
+        .is_some_and(|s| s.eq_ignore_ascii_case("killed") || s.eq_ignore_ascii_case("stopped"));
     let summary = tag_text(text, "summary").unwrap_or("task completed").to_string();
     // 「还在等自己的后台活儿」带 status=completed，结论已经交了，只是它派出的后台活儿还在跑：按完成算，
     // 另标 background_running 让徽标次行提示「后台仍在运行」。不按进行中算：本机实拍 9 次里 4 次之后
@@ -73,15 +77,15 @@ fn task_notification_result(
         is_error: failed,
         subagent: Some(SubagentOutcome {
             running: 0,
-            completed: u32::from(!failed),
+            completed: u32::from(!failed && !interrupted),
             failed: u32::from(failed),
-            background_running: waiting,
+            background_running: waiting && !interrupted,
             // 一律带上 task-id,前端按「同 task-id 首见者为委派本体」归回原委派。以前有 tool-use-id
             // 就不带:SendMessage 续上后那一段的完成通知,tool-use-id 指向的是 SendMessage 那次调用
             // (xbot 会话实拍两次),结局记到 SendMessage 名下,原委派被续上回执翻回运行中后一直挂着
             // (实拍 02:44 挂到 04:39)。常规委派的 tool-use-id 本来就是委派本体,带上 task-id 路由结果不变。
             task_id,
-            interrupted: false,
+            interrupted,
         }),
         patch: None,
         facts: ToolFacts::default(),
@@ -1015,7 +1019,20 @@ fn parse_events(line: &str, allow_sidechain: bool) -> Vec<TranscriptEvent> {
                 return Vec::new();
             };
             let head = raw.trim_start();
-            if head.is_empty() || head.starts_with("<agent-message") || head.starts_with("<task-notification>") {
+            // 后台任务的结局通知：入队这一刻结局已定，与 user 行 / queued_command 送达行同款转译成
+            // 合成回执（后端运行数 fold_task_signals 早就把 enqueue 当结局）。不认的话，进程在送达前
+            // 被结束时（Meowo 重启、会话关闭）就只剩这一行：停靠栏的「后台 Bash」一直挂「运行中」，
+            // 直到会话恢复、Claude 补写 stopped 通知才消（2026-11-17 实拍，入队 killed 后挂了一分多钟）。
+            // 送达行之后还会再给一条同样的回执，前端按最后一条算，重复无害。
+            // 「被用户续上」不是结局，照旧不认（见 subagent_prompt::resumed_task_id）。
+            if head.starts_with("<task-notification>") {
+                if super::subagent_prompt::resumed_task_id(raw).is_some() {
+                    return Vec::new();
+                }
+                let id = format!("queued-notice:{}:{}", timestamp.as_deref().unwrap_or(""), raw.len());
+                return task_notification_result(raw, &id, timestamp).into_iter().collect();
+            }
+            if head.is_empty() || head.starts_with("<agent-message") {
                 return Vec::new();
             }
             let text = strip_pasted_content_tags(raw.trim()).trim().to_string();
@@ -2963,7 +2980,8 @@ mod tests {
         assert!(matches!(parse_chat_items(human).as_slice(), [ChatItem::UserText { text, .. }] if text == "继续"));
     }
 
-    /// CLI 正忙时用户的话先入队：enqueue 行解析成送达回执，子代理回报、后台通知与出队记账不算。
+    /// CLI 正忙时用户的话先入队：enqueue 行解析成送达回执，子代理回报与出队记账不算（后台通知另算，
+    /// 见 queued_task_notification_settles_background_shell）。
     #[test]
     fn chat_parser_turns_human_enqueue_into_prompt_queued() {
         let human = r#"{"type":"queue-operation","operation":"enqueue","timestamp":"2026-11-01T04:16:55.516Z","sessionId":"s","content":"<pasted_content id=\"7436\">\n为什么会重复\n</pasted_content id=\"7436\">"}"#;
@@ -2976,8 +2994,6 @@ mod tests {
         assert_eq!(timestamp.as_deref(), Some("2026-11-01T04:16:55.516Z"));
         assert!(id.starts_with("queued:2026-11-01T04:16:55.516Z:"));
         for skipped in [
-            r#"{"type":"queue-operation","operation":"enqueue","timestamp":"t","content":"<task-notification>
-<task-id>b1</task-id>"}"#,
             r#"{"type":"queue-operation","operation":"enqueue","timestamp":"t","content":"<agent-message from="a1">
 报告"}"#,
             r#"{"type":"queue-operation","operation":"remove","timestamp":"t","content":"继续"}"#,
@@ -2985,6 +3001,51 @@ mod tests {
         ] {
             assert!(parse_chat_items(skipped).is_empty(), "{skipped}");
         }
+    }
+
+    /// 2026-11-17 实拍：Claude 进程在后台命令跑着时被结束（Meowo 重启），只留下排队形态的 killed 通知，
+    /// 送达行要等会话恢复后才补写 stopped。修前对话解析不认排队行，停靠栏「后台 Bash」一直挂「运行中」。
+    /// 现在入队这一行就结算成「已中断」；被用户续上的通知不是结局，照旧不认。
+    #[test]
+    fn queued_task_notification_settles_background_shell() {
+        let queued = |ts: &str, content: &str| {
+            serde_json::json!({"type": "queue-operation", "operation": "enqueue", "timestamp": ts, "sessionId": "s", "content": content}).to_string()
+        };
+        let killed = queued(
+            "2026-11-17T08:51:06.884Z",
+            "<task-notification>\n<task-id>brg50q0lh</task-id>\n<tool-use-id>toolu_01EaoXpfHoEB1m79XA31MHdM</tool-use-id>\n<output-file>C:/tmp/brg50q0lh.output</output-file>\n<status>killed</status>\n<summary>Background command \"用最新代码重启测试版\" was stopped</summary>\n</task-notification>",
+        );
+        let items = parse_chat_items(&killed);
+        let [ChatItem::ToolResult { id, tool_use_id, subagent: Some(outcome), is_error, .. }] = items.as_slice() else {
+            panic!("排队的结局通知应转成合成回执：{items:?}");
+        };
+        assert!(id.starts_with("queued-notice:2026-11-17T08:51:06.884Z:"));
+        assert_eq!(tool_use_id.as_deref(), Some("toolu_01EaoXpfHoEB1m79XA31MHdM"));
+        assert!(!is_error);
+        assert_eq!((outcome.running, outcome.completed, outcome.failed, outcome.interrupted), (0, 0, 0, true));
+
+        // 恢复后补写的 stopped（user 行）同样是「已中断」。
+        let stopped = serde_json::json!({"type": "user", "uuid": "s1", "message": {"role": "user", "content": "<task-notification>\n<task-id>brg50q0lh</task-id>\n<tool-use-id>toolu_01EaoXpfHoEB1m79XA31MHdM</tool-use-id>\n<status>stopped</status>\n<summary>Background shell command didn't finish before the previous session ended</summary>\n</task-notification>"}}).to_string();
+        let stopped_items = parse_chat_items(&stopped);
+        let [ChatItem::ToolResult { subagent: Some(outcome), .. }] = stopped_items.as_slice() else {
+            panic!("stopped 通知应转成合成回执：{stopped_items:?}");
+        };
+        assert!(outcome.interrupted && outcome.completed == 0 && outcome.failed == 0);
+
+        // 正常完成的排队通知照旧是「完成」。
+        let done = queued("t", "<task-notification>\n<task-id>b1</task-id>\n<tool-use-id>toolu_b1</tool-use-id>\n<status>completed</status>\n<summary>done</summary>\n</task-notification>");
+        let done_items = parse_chat_items(&done);
+        let [ChatItem::ToolResult { subagent: Some(outcome), .. }] = done_items.as_slice() else {
+            panic!("完成通知应转成合成回执：{done_items:?}");
+        };
+        assert_eq!((outcome.completed, outcome.interrupted), (1, false));
+
+        // 被用户续上：又在跑，不是结局。
+        let resumed = queued(
+            "2026-11-11T04:38:44.145Z",
+            "<task-notification>\n<task-id>a0f1</task-id>\n<summary>Agent \"拆分导入任务\" was resumed by the user</summary>\n<note>The user resumed this agent from its transcript view; it is running again.</note>\n</task-notification>",
+        );
+        assert!(parse_chat_items(&resumed).is_empty());
     }
 
     /// 插话走 queued_command 送入，带 interjected 结构标记；普通 user 行（一轮的开头）不带。
