@@ -1285,7 +1285,7 @@ export const zh = {
     // 送达状态词（发送中、已排队、未确认送达、发送失败…）在词表 t.vocab.delivery，这里只留动作与说明。
     echoRetry: "重发",
     echoRestore: "放回输入框",
-    echoUncertainTip: "对话记录里还没出现这条，Agent 可能还没轮到处理。为免重复不直接重发；确认没收到，可以放回输入框再发",
+    echoUncertainTip: "对话记录里还没出现这条，Agent 可能还没轮到处理。为免重复不直接重发，确认没收到可以放回输入框再发",
     // 读终端画面确认这段话还停在 CLI 输入框里（没按下回车）。
     echoStuck: "停在终端输入框里",
     echoStuckTip: "这段话还在 CLI 的输入框里，没有提交",
