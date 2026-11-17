@@ -13,11 +13,11 @@ import type { ChatItem } from "../../api";
 /// 会话 PR 链接（最新在最后）交给「更改」面板：面板在对话窗之外几层，用 context 传，不逐层加属性。
 export const SessionPrsContext = createContext<readonly string[]>([]);
 
-/// 属于这个仓库的会话 PR，最新在前；排除面板已经按分支显示的那个。repoUrl 形如 https://github.com/o/r。
-export function sessionPrsInRepo(urls: readonly string[], repoUrl: string | null | undefined, shown: string | null | undefined, limit = 3): string[] {
+/// 属于这个仓库的会话 PR，最新在前；排除面板已经按分支显示的那个和用户收起的。repoUrl 形如 https://github.com/o/r。
+export function sessionPrsInRepo(urls: readonly string[], repoUrl: string | null | undefined, shown: string | null | undefined, dismissed: readonly string[] = [], limit = 3): string[] {
   if (!repoUrl) return [];
   const prefix = repoUrl.replace(/\/+$/, "").toLowerCase() + "/pull/";
-  return urls.filter((url) => url.toLowerCase().startsWith(prefix) && url !== shown).reverse().slice(0, limit);
+  return urls.filter((url) => url.toLowerCase().startsWith(prefix) && url !== shown && !dismissed.includes(url)).reverse().slice(0, limit);
 }
 
 const GH_PR = /(?:^|[\s;&|(`"'])gh(?:\.exe)?\s+pr\s+(\S+)/i;
@@ -50,4 +50,25 @@ export function sessionPullRequestUrls(items: readonly ChatItem[]): string[] {
 export function latestSessionPullRequest(items: readonly ChatItem[]): string | null {
   const urls = sessionPullRequestUrls(items);
   return urls[urls.length - 1] ?? null;
+}
+
+/// 手动收起的 PR（「更改」面板里已合并、已关闭的那几条，点 × 不再列）。按链接记，跨会话通用：
+/// 已经了结的 PR 在哪个会话里都不用再看。只是本机的显示偏好，读写失败就当没收起过。
+const DISMISSED_KEY = "meowo-dismissed-prs";
+const DISMISSED_LIMIT = 200;
+
+export function loadDismissedPrs(): string[] {
+  try {
+    const raw: unknown = JSON.parse(localStorage.getItem(DISMISSED_KEY) ?? "[]");
+    return Array.isArray(raw) ? raw.filter((url): url is string => typeof url === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+/// 记下一条收起的 PR，返回新的列表。只留最近 200 条，旧的挤掉（早就不在会话里出现了）。
+export function dismissPr(url: string): string[] {
+  const next = [...loadDismissedPrs().filter((item) => item !== url), url].slice(-DISMISSED_LIMIT);
+  try { localStorage.setItem(DISMISSED_KEY, JSON.stringify(next)); } catch { /* 存不下就只在这次生效 */ }
+  return next;
 }

@@ -27,7 +27,7 @@ import {
   type WorktreeStatusDto,
 } from "../../api";
 import { useT } from "../../i18n";
-import { SessionPrsContext, sessionPrsInRepo } from "./sessionPrs";
+import { dismissPr, loadDismissedPrs, SessionPrsContext, sessionPrsInRepo } from "./sessionPrs";
 import { formatBackendError } from "../../i18n/errors";
 import { remoteUi } from "../../remoteMode";
 import { runWorktreeRemoval } from "../../worktreeCleanup";
@@ -50,14 +50,17 @@ const sameRoot = (a: string, b: string) => normPath(a).toLowerCase() === normPat
 /// 拉 forge 状态：挂载时一次，之后可见时每 60 秒一次；窗口隐藏时不拉，回到可见或重新聚焦时距上次满 60 秒才补一次
 ///（聚焦时带 force，顺手让后端重查 gh 登录状态）。active=false（面板收起）时整个停掉。
 /// 这个会话在本仓库里建过、动过的 PR（链接来自时间线，见 sessionPrs），按链接问现状。最多 3 个，最新在前；
-/// 面板已经按分支显示的那个不重复。面板收起、手机上都不查（按链接查是桌面专用命令）。
-function useSessionPrs(root: string, repoUrl: string | null | undefined, shown: string | null | undefined, active: boolean): PullRequestDto[] {
+/// 面板已经按分支显示的那个、用户收起的不列（收起后空出的位置由更早的补上）。面板收起、手机上都不查
+///（按链接查是桌面专用命令）。
+function useSessionPrs(root: string, repoUrl: string | null | undefined, shown: string | null | undefined, dismissed: readonly string[], active: boolean): PullRequestDto[] {
   const urls = useContext(SessionPrsContext);
   // 链接里没有空格，用空格拼成一个键：数组每次渲染都是新的，拿它当依赖会每次重查。
-  const key = sessionPrsInRepo(urls, repoUrl, shown).join(" ");
+  const key = sessionPrsInRepo(urls, repoUrl, shown, dismissed).join(" ");
   const [prs, setPrs] = useState<PullRequestDto[]>([]);
   useEffect(() => {
-    setPrs([]);
+    // 还在列表里的先留着，等新结果回来再换：收起一条时其余几条不闪一下。
+    const keep = new Set(key ? key.split(" ") : []);
+    setPrs((prev) => prev.filter((item) => keep.has(item.url)));
     if (!key || !active || remoteUi()) return;
     let alive = true;
     void Promise.all(key.split(" ").map((url) => getPullRequestByUrl(root, url).catch(() => null)))
@@ -132,7 +135,8 @@ export function ForgeBar({ repo, sessionCwd, sessionId, active, onChanged }: {
   const t = useT();
   const root = repo.root;
   const { forge, refresh } = useForgeStatus(root, sessionCwd, active);
-  const sessionPrs = useSessionPrs(root, forge?.gh === "ok" ? forge.repoUrl : null, forge?.pr?.url, active);
+  const [dismissedPrs, setDismissedPrs] = useState(loadDismissedPrs);
+  const sessionPrs = useSessionPrs(root, forge?.gh === "ok" ? forge.repoUrl : null, forge?.pr?.url, dismissedPrs, active);
   const [busy, setBusyState] = useState<Busy>(null);
   // 进行中拦重复点击用 ref，按钮不 disabled（disabled 会把正拿着焦点的按钮的焦点踢到 body，第三轮设计准则）。
   const busyRef = useRef<Busy>(null);
@@ -391,10 +395,17 @@ export function ForgeBar({ repo, sessionCwd, sessionId, active, onChanged }: {
         <div className="scm-pr" data-testid="scm-session-prs">
           <span className="scm-pr-label">{t.forge.sessionPrs}</span>
           {sessionPrs.map((item) => (
-            <button key={item.url} type="button" className={`scm-pr-head is-${item.state}`} data-tip={item.url} onClick={() => void openLink(item.url).catch(() => {})}>
-              <span className="scm-pr-state">{t.forge.prState[item.state] ?? item.state}</span>
-              <span className="scm-pr-title">#{item.number} {item.title}</span>
-            </button>
+            <div key={item.url} className="scm-pr-row">
+              <button type="button" className={`scm-pr-head is-${item.state}`} data-tip={item.url} onClick={() => void openLink(item.url).catch(() => {})}>
+                <span className="scm-pr-state">{t.forge.prState[item.state] ?? item.state}</span>
+                <span className="scm-pr-title">#{item.number} {item.title}</span>
+              </button>
+              {/* 已了结的可以收起；还开着的不给，免得把要合的那条藏起来。 */}
+              {(item.state === "merged" || item.state === "closed") && (
+                <button type="button" className="scm-icon-btn" aria-label={t.forge.dismissPr(item.number)} data-tip={t.forge.dismissPrTip}
+                  onClick={() => setDismissedPrs(dismissPr(item.url))}><Icon glyph={icClose} size={12} /></button>
+              )}
+            </div>
           ))}
         </div>
       )}

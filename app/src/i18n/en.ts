@@ -1992,6 +1992,8 @@ export const en: Dict = {
   forge: {
     sessionPrs: "PRs from this session",
     branchPr: "PR for the current branch",
+    dismissPr: (n: number) => `Hide #${n}`,
+    dismissPrTip: "Stop listing this PR",
     reviewOpen: "Review & monitor",
     reviewClose: "Close review",
     reviewDiscussion: "Discussion",

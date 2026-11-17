@@ -2250,6 +2250,8 @@ export const zh = {
     // 「更改」面板里这个会话建过、动过的 PR（常在临时 worktree 里另切分支建），与当前分支的 PR 分开列。
     sessionPrs: "本会话的 PR",
     branchPr: "当前分支的 PR",
+    dismissPr: (n: number) => `收起 #${n}`,
+    dismissPrTip: "不再列出这个 PR",
     reviewOpen: "评论与监控",
     reviewClose: "收起评论",
     reviewDiscussion: "讨论",
