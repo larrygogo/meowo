@@ -4815,7 +4815,8 @@ export function ChatWindow() {
                   </div>
                   <span className="chat-queue-tools">
                     {(item.phase === "uncertain" || item.phase === "failed") && <>
-                      <button type="button" className="chat-queue-tool" aria-label={t.chat.echoRetry} data-tip={t.chat.echoRetry} onClick={() => retryOutgoing(item.id)}><Icon glyph={icRefreshCw} size={14} /></button>
+                      {/* 未确认的不给重发：CLI 可能已收下只是没轮到，retryOutgoing 对它一律拒绝，列出来点了只会报错（见 Message 的 EchoUncertainActions）。 */}
+                      {item.phase === "failed" && <button type="button" className="chat-queue-tool" aria-label={t.chat.echoRetry} data-tip={t.chat.echoRetry} onClick={() => retryOutgoing(item.id)}><Icon glyph={icRefreshCw} size={14} /></button>}
                       <button type="button" className="chat-queue-tool" aria-label={t.chat.echoRestore} data-tip={t.chat.echoRestore} onClick={() => restoreOutgoing(item.id)}><Icon glyph={icUndo} size={14} /></button>
                     </>}
                     <button

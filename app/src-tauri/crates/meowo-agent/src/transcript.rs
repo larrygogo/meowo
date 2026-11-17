@@ -1192,8 +1192,10 @@ fn fold_lines(spec: &dyn TranscriptSpec, path: &Path, base: u64, parsed: &[Parse
                 // append_message）：新的一轮开始了，前一条用户消息不再是谁的双写。不清的话，
                 // 连着两轮发同一句（7ms 内两条「继续」）会被当成双写吞掉一条。
                 // 别家的一轮开始行本身就出用户消息，走不到这里。
+                // 清掉之后前一条是什么已经确定（没有），尾读窗口不必为此扩窗。
                 if line.items.is_empty() {
                     last_user = None;
+                    user_state_unknown = false;
                 }
             }
             Some(ChatLineMark::Undo(count)) => {
