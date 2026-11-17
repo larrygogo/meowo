@@ -9,12 +9,12 @@ exports[`五家回放：真实会话样本 → 解析 → 归并 → 渲染 > cl
 工具[done]｜写入｜.lead/20261114-chat-consistency/ SPEC.md｜+13｜
 工具[error]｜运行｜cd /c/Users/user/Desktop/workspace && ls -d meowo-chat-* 2>&1; cd meowo …｜｜退出码 128：meowo-chat-cards
 助手｜Meowo 这一路盘点已回来，T3 Code 源码那一路还在跑。等它回来后我把两边按同一套维度对齐，再给结论。
-改动卡｜1 个文件已修改｜.lead/20261114-chat-consistency/SPEC.md+13
+改动卡｜1 个文件已修改｜.lead/20261114-chat-consistency/SPEC.md+13›
 样本｜claude.15a3c5a2
 出错卡｜需要重新登录｜Not logged in · Please run /login
 样本｜claude.5c2d4856
 工具[done]｜编辑｜app/src/views/ ChatWindow.tsx｜+10｜
-改动卡｜1 个文件已修改｜app/src/views/ChatWindow.tsx+10
+改动卡｜1 个文件已修改｜app/src/views/ChatWindow.tsx+10›
 样本｜claude.7ec5560a
 分隔｜已中断
 样本｜claude.a7bec18a
@@ -43,7 +43,7 @@ exports[`五家回放：真实会话样本 → 解析 → 归并 → 渲染 > co
 过程块｜已编辑 1 处 · 已运行 1 条命令 · 12s
 工具[done]｜编辑｜app/src-tauri/tests/probe_lead_codex.rs｜+16-8｜
 工具[done]｜运行｜rustfmt --edition 2021 --config max_width=120 tests/probe_lead_codex.rs;…｜｜
-改动卡｜1 个文件已修改｜app/src-tauri/tests/probe_lead_codex.rs+16-8
+改动卡｜1 个文件已修改｜app/src-tauri/tests/probe_lead_codex.rs+16-8›
 用户｜- 完整闭环
 过程块｜已派出 2 个子任务 · 访问了 1 次网页 · 已运行 1 条命令 · 10m52s
 子任务｜lead_design_one｜已中断
@@ -74,7 +74,7 @@ exports[`五家回放：真实会话样本 → 解析 → 归并 → 渲染 > co
 工具[done]｜编辑｜.lead/20261112-lead-providers/progress.md｜+1｜
 工具[done]｜运行｜$env:CARGO_TARGET_DIR='C:\\Users\\user\\Desktop\\workspace\\meowo\\target\\prov…｜｜
 工具[error]｜运行｜rustfmt --check --edition 2021 src/conversation/probe.rs; $env:CARGO_TAR…｜｜退出码 1：Diff in \\\\?\\C:\\Users\\user\\Desktop\\workspace\\meowo\\target\\provider-…
-改动卡｜1 个文件已修改｜.lead/20261112-lead-providers/progress.md+1
+改动卡｜1 个文件已修改｜.lead/20261112-lead-providers/progress.md+1›
 样本｜codex.01a1cefb
 工具[done]｜写入｜target/provider-compat-lead/app/src-tauri/crates/meowo-agent/src/convers…｜+11｜
 改动卡｜1 个文件已修改｜target/provider-compat-lead/app/src-tauri/crates/meowo-agent…"
@@ -95,7 +95,7 @@ exports[`五家回放：真实会话样本 → 解析 → 归并 → 渲染 > ge
 工具[done]｜编辑｜app/src/ styles.css｜+3-3｜
 工具[error]｜编辑｜app/src/ styles.css｜+5-5｜
 助手｜我已经完成了对「新建会话」窗口设计的改进。 主要改动： 容器化配置区：将模型、权限等「启动选项」包裹在一个带背景和边框的容器（.ns-optio…
-改动卡｜2 个文件已修改｜../../../.gemini/tmp/meowo/1b135d85-45ba-4cab-bd8c-1a6719c72…；app/src/styles.css+3-3
+改动卡｜2 个文件已修改｜../../../.gemini/tmp/meowo/1b135d85-45ba-4cab-bd8c-1a6719c72…；app/src/styles.css+3-3›
 分隔｜已中断
 样本｜gemini.882f0730
 用户｜hi
@@ -154,7 +154,7 @@ exports[`五家回放：真实会话样本 → 解析 → 归并 → 渲染 > op
 工具[done]｜编辑｜C:/Users/user/.config/opencode/ opencode.jsonc｜+7-1｜
 思考｜思考过程›
 助手｜已在 ~/.config/opencode/opencode.jsonc 中添加 permission，将 edit、bash、read、tas…
-改动卡｜1 个文件已修改｜C:/Users/user/.config/opencode/opencode.jsonc+7-1
+改动卡｜1 个文件已修改｜C:/Users/user/.config/opencode/opencode.jsonc+7-1›
 样本｜opencode.KbLGZo
 用户｜run the shell command: ping -n 20 127.0.0.1 and then say DONE1
 工具[done]｜运行｜ping -n 20 127.0.0.1｜｜

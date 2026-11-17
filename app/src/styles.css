@@ -4310,7 +4310,13 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-turn-changes-head { display: flex; align-items: center; gap: var(--sp-8); padding: var(--sp-10) var(--sp-14); border-bottom: var(--hairline) solid var(--cc-border); color: var(--cc-text); font-size: var(--text-sm); font-weight: 500; }
 .chat-turn-changes-head svg { flex: 0 0 auto; color: var(--cc-text-dim); }
 .chat-turn-changes-list { margin: 0; padding: var(--sp-6) 0; list-style: none; }
-.chat-turn-changes-row { display: flex; align-items: center; gap: var(--sp-8); padding: var(--sp-3) var(--sp-14); font-size: var(--text-sm); line-height: var(--leading-body); }
+.chat-turn-changes-row { display: flex; align-items: center; gap: var(--sp-8); padding: var(--sp-6) var(--sp-14); width: 100%; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; font-size: var(--text-sm); line-height: var(--leading-body); }
+.chat-turn-changes-row:hover { background: var(--fill-hover); }
+.chat-turn-changes-row[aria-expanded="true"] { background: var(--fill-selected); }
+.chat-turn-changes-row .chat-turn-changes-caret { transform: none; }
+.chat-turn-changes-row[aria-expanded="true"] .chat-turn-changes-caret { transform: rotate(90deg); }
+.chat-turn-changes-detail { padding: var(--sp-8) var(--sp-14); min-width: 0; overflow: hidden; }
+.chat-turn-changes-detail .chat-edit-card + .chat-edit-card { margin-top: var(--sp-8); }
 .chat-turn-changes-path { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-turn-changes-dir { color: var(--cc-text-dim); }
 .chat-turn-changes-name { color: var(--cc-text); font-weight: 500; }
