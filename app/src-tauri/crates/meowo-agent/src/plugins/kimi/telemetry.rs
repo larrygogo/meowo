@@ -368,13 +368,13 @@ fn user_message_text(
     let Some(parts) = value.as_array() else {
         return value_text(value);
     };
-    let mut text = strip_image_compression_notes(
+    let mut text = strip_hook_results(&strip_image_compression_notes(
         &parts
             .iter()
             .filter_map(|part| part.get("text").and_then(|text| text.as_str()))
             .collect::<Vec<_>>()
             .join(""),
-    );
+    ));
     for (index, part) in parts.iter().enumerate() {
         let Some(url) = image_part_url(part) else {
             continue;
@@ -406,6 +406,29 @@ fn strip_image_compression_notes(text: &str) -> String {
     }
     out.push_str(rest);
     out
+}
+
+/// 提交 hook 带回的上下文（Meowo 的 lead 提醒等），kimi 以 `<hook_result hook_event="…">…</hook_result>`
+/// 一段 text part 拼在用户原话前面写进记录（本机 wire 57 条）。那是写给模型的，不是用户说的话：
+/// 修前对话页把整段 hook 文字当成用户消息显示（2026-11-17 实拍）。没有闭合标签就原样保留。
+const HOOK_RESULT_OPEN: &str = "<hook_result";
+const HOOK_RESULT_CLOSE: &str = "</hook_result>";
+
+fn strip_hook_results(text: &str) -> String {
+    if !text.contains(HOOK_RESULT_OPEN) {
+        return text.to_string();
+    }
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(start) = rest.find(HOOK_RESULT_OPEN) {
+        let Some(len) = rest[start..].find(HOOK_RESULT_CLOSE) else {
+            break;
+        };
+        out.push_str(&rest[..start]);
+        rest = &rest[start + len + HOOK_RESULT_CLOSE.len()..];
+    }
+    out.push_str(rest);
+    out.trim().to_string()
 }
 
 /// 用户敲 `/技能名 参数` 激活技能时，kimi 不记用户输入的那一行，只记一条
@@ -541,6 +564,14 @@ fn parse_events(line: &str, wire_dir: Option<&Path>) -> Vec<TranscriptEvent> {
                         })
                         .into_iter()
                         .collect();
+                }
+                // 带 promptId 的用户提交一定紧跟一条 message.id 相同的 context.append_message
+                // （本机 wire 398/398 条），那一条才是记录；这里不再出一条。修前两行靠「2 秒内同文」
+                // 判成双写合一，结果 Kimi 真收了两遍的同一句（如 7ms 内连着两条「继续」，2026-11-17
+                // 实拍）也被合成一条，对话页看不出重复；带 hook 文字的那条又因正文对不上合不掉。
+                // 没有 promptId 的旧版照旧，交给通用层判双写。
+                None | Some("user") if value.get("promptId").is_some_and(|id| id.is_string()) => {
+                    return Vec::new();
                 }
                 _ => {}
             }
@@ -2663,6 +2694,52 @@ mod tests {
             .collect();
         assert_eq!(users, vec!["改一下", "继续", "继续"]);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 2026-11-17 实拍 wire（正文截短）：「继续」先在 07:03:11 交给内核排着，07:07:35 又作为插话交了
+    /// 一次，07:11:24 两条前后 8ms 落盘。第一条的 turn.prompt 前面拼着 lead 提交 hook 的上下文。
+    /// 修前对话页显示「<hook_result …」一条加「继续」一条（第二条「继续」被当成双写吞掉）。
+    #[test]
+    fn full_read_keeps_both_real_duplicates_and_hides_hook_text() {
+        let wire = concat!(
+            r#"{"type":"turn.prompt","agentId":"main","input":[{"type":"text","text":"<hook_result hook_event=\"UserPromptSubmit\">\n[lead] 这个项目有进行中的任务\n</hook_result>"},{"type":"text","text":"继续"}],"origin":{"kind":"user"},"promptId":"msg_01M7M5267TZ897SQK60JTFKEC4","turnId":44,"trigger":"normal","time":1794899484566}"#,
+            "\n",
+            r#"{"type":"context.append_message","agentId":"main","message":{"role":"user","content":[{"type":"text","text":"继续"}],"toolCalls":[],"id":"msg_01M7M5267TZ897SQK60JTFKEC4","origin":{"kind":"user"}},"time":1794899484567}"#,
+            "\n",
+            r#"{"type":"turn.ended","agentId":"main","turnId":44,"reason":"completed","durationMs":0,"stopReason":"prompt_only","time":1794899484570}"#,
+            "\n",
+            r#"{"type":"prompt.completed","agentId":"main","promptId":"msg_01M7M5267TZ897SQK60JTFKEC4","reason":"completed","time":1794899484571}"#,
+            "\n",
+            r#"{"type":"turn.prompt","agentId":"main","input":[{"type":"text","text":"继续"}],"origin":{"kind":"user"},"promptId":"msg_01M7M5A80F55Y8ZZKNW27XT41X","turnId":45,"trigger":"notify","time":1794899484574}"#,
+            "\n",
+            r#"{"type":"context.append_message","agentId":"main","message":{"role":"user","content":[{"type":"text","text":"继续"}],"toolCalls":[],"id":"msg_01M7M5A80F55Y8ZZKNW27XT41X","origin":{"kind":"user"}},"time":1794899484575}"#,
+            "\n",
+            // 旧形态：hook 文字写在 append_message 正文里（本机 57 条），同样不显示。
+            r#"{"type":"context.append_message","message":{"role":"user","content":[{"type":"text","text":"<hook_result hook_event=\"UserPromptSubmit\">\n提醒\n</hook_result>"},{"type":"text","text":"1用本机编译"}]},"time":1794899490000}"#,
+            "\n",
+        );
+        let dir = std::env::temp_dir().join(format!("meowo-kimi-steer-dup-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("wire.jsonl");
+        std::fs::write(&path, wire).unwrap();
+        let delta = crate::transcript::read_chat_delta(&KIMI_TRANSCRIPT, &path, 0, None);
+        let users: Vec<_> = delta
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                ChatItem::UserText { text, .. } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(users, vec!["继续", "继续", "1用本机编译"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn strip_hook_results_keeps_unclosed_and_plain_text() {
+        assert_eq!(strip_hook_results("继续"), "继续");
+        assert_eq!(strip_hook_results("<hook_result a>x</hook_result>\n继续"), "继续");
+        assert_eq!(strip_hook_results("<hook_result a>没闭合"), "<hook_result a>没闭合");
     }
 
     /// `/undo N` 的回放（记录形态取自 kimi.exe 包内 buildUndoSwitchRecords）：撤回追加
