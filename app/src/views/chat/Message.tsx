@@ -568,7 +568,10 @@ function EchoFailedActions({ itemId, actions }: { itemId: string; actions: EchoA
 }
 
 /// 未确认送达的出口（手机上也不能只剩「去终端页看看」）。对话窗读过终端画面：这段话还停在
-/// CLI 输入框里，就给「提交」替你按一次回车；输入框里没有或认不出，给「重发 / 放回输入框」。
+/// CLI 输入框里，就给「提交」替你按一次回车；输入框里没有或认不出，给「放回输入框」。
+/// 不给「重发」：CLI 可能已经收下、只是还没轮到（2026-11-17 Kimi 实拍：4 分半后才插进回合），
+/// 直接重发会让同一句进两遍，所以 retryOutgoing 对未确认的一律拒绝——按钮列出来点了只会报错。
+/// 放回输入框后由用户自己决定要不要再发。
 function EchoUncertainActions({ itemId, actions }: { itemId: string; actions: EchoActions | null }) {
   const t = useT();
   const id = outgoingIdOf(itemId);
@@ -583,10 +586,9 @@ function EchoUncertainActions({ itemId, actions }: { itemId: string; actions: Ec
   return (
     <>
       <span className="chat-user-note is-warn" data-tip={t.chat.echoUncertainTip}>{deliveryStatusLabel(t, "uncertain")}</span>
-      {actions && id != null && <>
-        <button type="button" className="chat-user-action" onClick={() => actions.retry(id)}>{t.chat.echoRetry}</button>
+      {actions && id != null && (
         <button type="button" className="chat-user-action" onClick={() => actions.restore(id)}>{t.chat.echoRestore}</button>
-      </>}
+      )}
     </>
   );
 }

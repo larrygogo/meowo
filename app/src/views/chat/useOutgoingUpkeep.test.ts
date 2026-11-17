@@ -189,3 +189,78 @@ describe("useOutgoingUpkeep：消息排在 CLI 自己的队列里", () => {
     expect(api.managedTerminalScreen).not.toHaveBeenCalled();
   });
 });
+
+/** 2026-11-17 Kimi 实拍：运行中发「继续」，回合结束时 Kimi 把它出队、先画进对话区（`❯ 继续`），可后台任务
+ *  通知抢先开了新回合，wire 要到 4 分半后 prompt.steered 才有这句，提交 hook 也一直没触发。这时画面上没有
+ *  排队区提示行，修前对话页挂「未确认送达」，点重发又说「正文可能仍在终端输入框」。 */
+describe("useOutgoingUpkeep：消息已画进 CLI 对话区、会话记录还没写", () => {
+  const kimiUi = {
+    composer: chatUi("kimi")!.composer, queued_hint: chatUi("kimi")!.queued_hint, user_line_marker: chatUi("kimi")!.user_line_marker,
+  } as unknown as ChatUi;
+  const kimiShown = [
+    "",
+    " ● Ran a command · $ cd /c/cr/depot_tools && cmd //c \"luci-… · 18 more lines",
+    "   … luci-auth.exe",
+    "",
+    " ● bash task completed in background (Bash: cd /c/cr/depot_tools && cat",
+    "   luci-auth.bat; echo \"=== try\"; c… · exit 0)",
+    "",
+    " ❯ 继续",
+    "",
+    " ● `.cipd_bin` now populated (bootstrap worked on first invocation),",
+    "   `luci-auth.exe` exists. The earlier failure was because bootstrap hadn't",
+    "   … (6 more lines, ctrl+o to expand)",
+    "",
+    " ● Running a command · $ sleep 120; date; tail -5 /c/cr/sync3.log; echo \"==…",
+    "   Press Ctrl+B to run in background",
+    "",
+    "  🌖 · Tip: @: mention files",
+    " ╭─────────────────────────────────────────────────────────────────────────╮",
+    " │ >                                                                       │",
+    " ╰─────────────────────────────────────────────────────────────────────────╯",
+    " Ask When Needed  DeepSeek V4.1 Flash 1017 (local TensorFold) thinking: hig…",
+  ];
+  const user = (id: string, text: string): ChatItem => ({ type: "user_text", id, timestamp: null, text } as ChatItem);
+  const mountWith = (outgoing: OutgoingPrompt[], items: ChatItem[]) => renderHook(() => useOutgoingUpkeep({
+    sessionId: 7, outgoing, loading: false, items, acks: [], lastUserText: null, ended: false,
+    chatUi: kimiUi, isActive: () => true, running: () => true, onError: () => {},
+  }));
+  const add = (text: string) => {
+    const id = outgoingStore.add(7, { kind: "queued", text, attachmentOnly: false, anchor: anchorFrom([], null), phase: "uncertain", bodyWritten: false });
+    return { id, prompt: { id, kind: "queued", text, attachmentOnly: false, at: 0, phase: "uncertain", settledAt: null, anchor: anchorFrom([], null), bodyWritten: false } as OutgoingPrompt };
+  };
+
+  it("对话区最后一条用户消息就是刚发的这句：标已排队", async () => {
+    api.managedTerminalScreen.mockResolvedValue(kimiShown);
+    const { prompt } = add("继续");
+    const { result } = mountWith([prompt], [user("u1", "1用本机编译")]);
+    await waitFor(() => expect(outgoingStore.get(7)[0].phase).toBe("accepted"));
+    expect(result.current.stuck.size).toBe(0);
+  });
+
+  it("会话记录里最后一条用户消息也是这句：画面上那行可能是旧的，不算", async () => {
+    api.managedTerminalScreen.mockResolvedValue(kimiShown);
+    // 这条旧的「继续」在发送前就已经在记录里（锚点认得它），不是这次发出的那句。
+    const prior = [user("u1", "继续")];
+    const id = outgoingStore.add(7, { kind: "queued", text: "继续", attachmentOnly: false, anchor: anchorFrom(prior, "继续"), phase: "uncertain", bodyWritten: false });
+    mountWith([{ id, kind: "queued", text: "继续", attachmentOnly: false, at: 0, phase: "uncertain", settledAt: null, anchor: anchorFrom(prior, "继续"), bodyWritten: false } as OutgoingPrompt], prior);
+    await waitFor(() => expect(api.managedTerminalScreen).toHaveBeenCalled());
+    await act(async () => {});
+    expect(outgoingStore.get(7)[0].phase).toBe("uncertain");
+  });
+
+  it("排队区提示是「will send after current task」那一种：同样认出已排队", async () => {
+    api.managedTerminalScreen.mockResolvedValue([
+      "● Read 6 files · 1050 lines",
+      "──────────────────────────────────────────────────────",
+      "❯ 把日志也贴上来",
+      "↑ to edit · will send after current task",
+      "╭────────────────────────────────────────────────────╮",
+      "│ >                                                  │",
+      "╰────────────────────────────────────────────────────╯",
+    ]);
+    const { prompt } = add("把日志也贴上来");
+    mountWith([prompt], [user("u1", "把日志也贴上来")]);
+    await waitFor(() => expect(outgoingStore.get(7)[0].phase).toBe("accepted"));
+  });
+});

@@ -6,7 +6,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { writeManagedTerminal, type ChatItem, type ChatUi } from "../../api";
-import { composerHolds, queuedInCli, readComposerFrame, terminalComposerIo } from "./composer";
+import { composerHolds, messageHead, queuedInCli, readComposerFrame, shownAsLatestUserRow, terminalComposerIo } from "./composer";
 import { ECHO_CONFIRM_MS, outgoingStore, unseenPending, type OutgoingPrompt, type PromptAck } from "./outgoingPrompts";
 
 export function useOutgoingUpkeep({ sessionId, outgoing, loading, items, acks, lastUserText, ended, chatUi, isActive, running, onError }: {
@@ -62,7 +62,8 @@ export function useOutgoingUpkeep({ sessionId, outgoing, loading, items, acks, l
       // CLI 把消息挪到输入框上方排队（插件声明了排队区提示行，见 ChatUi.queued_hint）：这类 CLI 排队时
       // 不写会话记录、不触发提交 hook，等不到证据就会误报「未确认送达」（2026-11-16 Kimi 实拍）。
       // 未确认或超时没回音的排队消息也读一次画面。
-      const queuedInScreen = !!chatUi?.queued_hint && (echo.phase === "uncertain" || overdue);
+      // Kimi 还会先把出队的话画进对话区、过几分钟才写进会话记录（user_line_marker，2026-11-17 实拍），同样读画面。
+      const queuedInScreen = !!(chatUi?.queued_hint || chatUi?.user_line_marker) && (echo.phase === "uncertain" || overdue);
       const candidate = echo.kind === "echo"
         ? echo.phase === "uncertain" || overdue
         : unseen && !running() || queuedInScreen;
@@ -80,7 +81,10 @@ export function useOutgoingUpkeep({ sessionId, outgoing, loading, items, acks, l
         // 读画面途中切走了：这次不算，回来再读。
         if (!isActive(sid)) { probedRef.current.delete(echo.id); return; }
         // 已经排在 CLI 自己的队列里：收下了，只是还没轮到。标「已排队」，正文不在输入框，重发也不拦。
-        if (queuedInCli(frame?.lines, chatUi?.queued_hint, echo.text)) {
+        // 已经画进 CLI 的对话区、成了最后一条用户消息，只是会话记录还没写（CLI 正忙别的回合）：同样是收下了。
+        // 会话记录里最后一条用户消息就是同一句时不算：画面上那行可能是旧的那条。
+        if (queuedInCli(frame?.lines, chatUi?.queued_hint, echo.text)
+          || shownAsLatestUserRow(frame?.lines, chatUi?.user_line_marker, echo.text) && !lastRecordedUserIs(items, echo.text)) {
           outgoingStore.settle(echo.id, { phase: "accepted", bodyWritten: false });
           return;
         }
@@ -109,4 +113,15 @@ export function useOutgoingUpkeep({ sessionId, outgoing, loading, items, acks, l
       .catch(onError);
   };
   return { stuck, submit };
+}
+
+/// 会话记录里最后一条用户消息是不是这句（比首行前 12 个字，与读画面同一口径）。
+function lastRecordedUserIs(items: readonly ChatItem[], text: string): boolean {
+  const head = messageHead(text)?.replace(/\s+/g, "");
+  if (!head) return false;
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index];
+    if (item.type === "user_text") return item.text.replace(/\s+/g, "").includes(head);
+  }
+  return false;
 }
