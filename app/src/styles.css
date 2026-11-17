@@ -4854,6 +4854,9 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .scm-pr-label { font-size: var(--text-2xs); color: var(--cc-text-faint); }
 .scm-pr-head { display: flex; align-items: center; gap: var(--sp-8); min-width: 0; padding: 0; border: 0; background: transparent; color: var(--cc-text); font: inherit; font-size: var(--text-sm); font-weight: 500; text-align: left; cursor: pointer; }
 .scm-pr-head:hover .scm-pr-title { text-decoration: underline; }
+/* 会话 PR 一行：标题占满，已了结的右侧带收起钮。 */
+.scm-pr-row { display: flex; align-items: center; gap: var(--sp-4); min-width: 0; }
+.scm-pr-row > .scm-pr-head { flex: 1; }
 .scm-pr-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .scm-pr-state { flex: 0 0 auto; padding: 0 var(--sp-6); border-radius: var(--radius-full); background: var(--fill-selected); color: var(--cc-text-dim); font-size: var(--text-2xs); font-weight: 400; line-height: calc(18px * var(--cc-ui)); }
 .scm-pr-head.is-open .scm-pr-state { background: color-mix(in srgb, var(--cc-ok-vivid) 14%, transparent); color: var(--cc-ok-text); }

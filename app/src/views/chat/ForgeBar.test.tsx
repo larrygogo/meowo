@@ -443,6 +443,37 @@ describe("「更改」面板列出本会话的 PR", () => {
     ]);
   });
 
+  it("已合并、已关闭的可以收起，记住后不再列，空位由更早的补上；开着的不给收起", async () => {
+    const { SessionPrsContext } = await import("./sessionPrs");
+    localStorage.removeItem("meowo-dismissed-prs");
+    status = forge({ pr: null });
+    const state = (n: string) => (n === "540" ? "merged" : n === "536" ? "closed" : "open");
+    handler = (command, args) => {
+      if (command !== "git_pull_request_by_url") return null;
+      const n = String(args.url).split("/").pop()!;
+      return { number: Number(n), state: state(n), url: args.url, title: `PR ${n}` };
+    };
+    const urls = [520, 530, 536, 540].map((n) => `https://github.com/o/r/pull/${n}`);
+    const view = () => <SessionPrsContext.Provider value={urls}><ForgeBar repo={repo()} sessionCwd="C:/w/meowo" sessionId={7} active onChanged={() => {}} /></SessionPrsContext.Provider>;
+    render(view());
+    const block = await screen.findByTestId("scm-session-prs");
+    await within(block).findByText("#540 PR 540");
+    expect(within(block).queryByRole("button", { name: zh.forge.dismissPr(530) })).toBeNull();
+    fireEvent.click(within(block).getByRole("button", { name: zh.forge.dismissPr(540) }));
+    await waitFor(() => expect(within(block).queryByText("#540 PR 540")).toBeNull());
+    await within(block).findByText("#520 PR 520");
+    fireEvent.click(within(block).getByRole("button", { name: zh.forge.dismissPr(536) }));
+    await waitFor(() => expect(within(block).queryByText("#536 PR 536")).toBeNull());
+    // 重开面板仍不列。
+    cleanup();
+    render(view());
+    const again = await screen.findByTestId("scm-session-prs");
+    await within(again).findByText("#530 PR 530");
+    expect(within(again).queryByText("#540 PR 540")).toBeNull();
+    expect(within(again).queryByText("#536 PR 536")).toBeNull();
+    localStorage.removeItem("meowo-dismissed-prs");
+  });
+
   it("会话里没动过 PR：面板和以前一样，不出这一块、不多问 gh", async () => {
     status = forge({ pr: pr() });
     render(<ForgeBar repo={repo()} sessionCwd="C:/w/meowo" sessionId={7} active onChanged={() => {}} />);
