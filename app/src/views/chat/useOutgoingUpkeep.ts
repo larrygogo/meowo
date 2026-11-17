@@ -6,8 +6,12 @@
 
 import { useEffect, useRef, useState } from "react";
 import { writeManagedTerminal, type ChatItem, type ChatUi } from "../../api";
-import { composerHolds, queuedInCli, readComposerFrame, terminalComposerIo } from "./composer";
+import { composerHolds, messageHead, queuedInCli, readComposerFrame, shownAsLatestUserRow, terminalComposerIo } from "./composer";
 import { ECHO_CONFIRM_MS, outgoingStore, unseenPending, type OutgoingPrompt, type PromptAck } from "./outgoingPrompts";
+
+/// 未确认送达期间重读画面的间隔与期限（只认「CLI 已收下」这一种证据，见下面的重读）。
+export const SCREEN_REPROBE_MS = 10_000;
+export const SCREEN_REPROBE_UNTIL_MS = 30 * 60_000;
 
 export function useOutgoingUpkeep({ sessionId, outgoing, loading, items, acks, lastUserText, ended, chatUi, isActive, running, onError }: {
   sessionId: number;
@@ -40,7 +44,7 @@ export function useOutgoingUpkeep({ sessionId, outgoing, loading, items, acks, l
   }, [outgoing.length]);
 
   // 未确认送达的回显：读一次终端画面，看这段话是不是还停在 CLI 输入框里（没按下回车）。
-  // 每条只读一次；声明了输入框规格的插件才判（五家共用同一份规格，见 composer.ts）。
+  // 每条只首读一次（之后「未确认」期间的重读只认「已收下」，见循环开头）；声明了输入框规格的插件才判（五家共用同一份规格，见 composer.ts）。
   //
   // 加载窗口看不见的那条（unseenPending）由这里定去向，做空第二轮 N1（2026-11-12）：对账对它
   // 不超时也不收起，修前读一次画面、输入框是空的就什么都不做，发送一小时后回显仍挂在后续输出下、
@@ -52,17 +56,37 @@ export function useOutgoingUpkeep({ sessionId, outgoing, loading, items, acks, l
   // （claude 被 Esc 打断时会把队列退回输入框），就转成回显并给「提交」，排队区没有这个出口。
   const [stuck, setStuck] = useState<ReadonlySet<number>>(() => new Set());
   const probedRef = useRef(new Set<number>());
+  // 重读：id → 上次读画面的时刻（读的途中记 Infinity，不并发）。
+  const reprobedRef = useRef(new Map<number, number>());
   useEffect(() => {
     const spec = chatUi?.composer;
     const now = Date.now();
+    const screenEvidence = !!(chatUi?.queued_hint || chatUi?.user_line_marker);
     for (const echo of outgoing) {
-      if (probedRef.current.has(echo.id)) continue;
+      if (probedRef.current.has(echo.id)) {
+        // 首读之后仍「未确认送达」的，隔 10 秒再读：Kimi 可能在首读之后才把这句画进对话区或排队区
+        // （首读时画面还没变，修前就一直挂「未确认」到写进会话记录为止，2026-11-17 那次长达 4 分半）。
+        // 重读只认「CLI 已收下」这一种证据；卡在输入框、看不见收起这些结论首读已经下过，不重下。
+        if (!screenEvidence || echo.phase !== "uncertain" || stuck.has(echo.id) || echo.attachmentOnly) continue;
+        if (now - echo.at > SCREEN_REPROBE_UNTIL_MS) continue;
+        const last = reprobedRef.current.get(echo.id) ?? echo.at;
+        if (now - last < SCREEN_REPROBE_MS) continue;
+        reprobedRef.current.set(echo.id, Infinity);
+        const sid = sessionId;
+        void terminalComposerIo(sid).frame().catch(() => null).then((frame) => {
+          reprobedRef.current.set(echo.id, Date.now());
+          if (!isActive(sid)) return;
+          if (receivedInScreen(frame?.lines, echo.text)) outgoingStore.settle(echo.id, { phase: "accepted", bodyWritten: false });
+        });
+        continue;
+      }
       const overdue = echo.phase === "pending" && now - echo.at > ECHO_CONFIRM_MS;
       const unseen = overdue && unseenPending(echo, items);
       // CLI 把消息挪到输入框上方排队（插件声明了排队区提示行，见 ChatUi.queued_hint）：这类 CLI 排队时
       // 不写会话记录、不触发提交 hook，等不到证据就会误报「未确认送达」（2026-11-16 Kimi 实拍）。
       // 未确认或超时没回音的排队消息也读一次画面。
-      const queuedInScreen = !!chatUi?.queued_hint && (echo.phase === "uncertain" || overdue);
+      // Kimi 还会先把出队的话画进对话区、过几分钟才写进会话记录（user_line_marker，2026-11-17 实拍），同样读画面。
+      const queuedInScreen = !!(chatUi?.queued_hint || chatUi?.user_line_marker) && (echo.phase === "uncertain" || overdue);
       const candidate = echo.kind === "echo"
         ? echo.phase === "uncertain" || overdue
         : unseen && !running() || queuedInScreen;
@@ -80,7 +104,9 @@ export function useOutgoingUpkeep({ sessionId, outgoing, loading, items, acks, l
         // 读画面途中切走了：这次不算，回来再读。
         if (!isActive(sid)) { probedRef.current.delete(echo.id); return; }
         // 已经排在 CLI 自己的队列里：收下了，只是还没轮到。标「已排队」，正文不在输入框，重发也不拦。
-        if (queuedInCli(frame?.lines, chatUi?.queued_hint, echo.text)) {
+        // 已经画进 CLI 的对话区、成了最后一条用户消息，只是会话记录还没写（CLI 正忙别的回合）：同样是收下了。
+        // 会话记录里最后一条用户消息就是同一句时不算：画面上那行可能是旧的那条。
+        if (receivedInScreen(frame?.lines, echo.text)) {
           outgoingStore.settle(echo.id, { phase: "accepted", bodyWritten: false });
           return;
         }
@@ -94,10 +120,17 @@ export function useOutgoingUpkeep({ sessionId, outgoing, loading, items, acks, l
         else if (overdue) outgoingStore.settle(echo.id, { phase: "uncertain" });
       });
     }
-    // isActive / running 是读 ref 的稳定判断，不进依赖。tick 进依赖：看不见的 pending 超时、回合结束时
+    // isActive / running 是读 ref 的稳定判断，不进依赖；stuck 每次渲染都是最新的，tick 每秒触发一次足够。tick 进依赖：看不见的 pending 超时、回合结束时
     // outgoing 不变，只有每秒的计时能让这里看到。
     // eslint-disable-next-line react-hooks/exhaustive-deps -- isActive / running 读 ref，是稳定判断
   }, [outgoing, chatUi, sessionId, items, tick]);
+
+  /// 画面能证明 CLI 已经收下这句：排在它自己的队列里，或已画进对话区成了最后一条用户消息（会话记录
+  /// 里最后一条用户消息就是同一句时不算：画面上那行可能是旧的那条）。
+  function receivedInScreen(lines: readonly string[] | null | undefined, text: string): boolean {
+    return queuedInCli(lines, chatUi?.queued_hint, text)
+      || shownAsLatestUserRow(lines, chatUi?.user_line_marker, text) && !lastRecordedUserIs(items, text);
+  }
 
   /// 「提交」：替用户在 CLI 输入框里按一次回车，回显转回「已写入」重新计时等落盘。
   const submit = (id: number) => {
@@ -109,4 +142,15 @@ export function useOutgoingUpkeep({ sessionId, outgoing, loading, items, acks, l
       .catch(onError);
   };
   return { stuck, submit };
+}
+
+/// 会话记录里最后一条用户消息是不是这句（比首行前 12 个字，与读画面同一口径）。
+function lastRecordedUserIs(items: readonly ChatItem[], text: string): boolean {
+  const head = messageHead(text)?.replace(/\s+/g, "");
+  if (!head) return false;
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    const item = items[index];
+    if (item.type === "user_text") return item.text.replace(/\s+/g, "").includes(head);
+  }
+  return false;
 }

@@ -799,8 +799,17 @@ impl AgentPlugin for Kimi {
 
     /// 运行中提交的消息挪到输入框上方排队，下面一行提示 `↑ to edit · ctrl-s to steer immediately`
     /// （2026-11-16 用户实拍）。排队时 wire 不落记录、UserPromptSubmit 也不触发，只有画面能证明收下了。
+    /// 提示后半句随状态变（包内 queue-pane.ts：`will send after current task`、`will send after
+    /// compaction`），只认三种共有的 `↑ to edit`。
     fn queued_hint(&self) -> Option<&'static str> {
-        Some("ctrl-s to steer immediately")
+        Some("↑ to edit")
+    }
+
+    /// 回合结束时排队的话出队、先画进对话区（包内 sendMessageInternal 先 appendTranscriptEntry
+    /// 再 session.prompt），这时若后台任务通知抢先开了回合，wire 要等几分钟后 prompt.steered
+    /// 才有（2026-11-17 实拍：07:03:08 发出，07:07:35 才插进去，期间对话页挂「未确认送达」）。
+    fn user_line_marker(&self) -> Option<&'static str> {
+        Some("❯ ")
     }
 
     fn interrupt_input(&self) -> Option<&'static str> {

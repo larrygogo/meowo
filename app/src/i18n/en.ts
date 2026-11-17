@@ -1145,7 +1145,7 @@ export const en: Dict = {
     echoQueuedTip: "The agent is still busy; this is in its queue",
     echoRetry: "Resend",
     echoRestore: "Back to input",
-    echoUncertainTip: "This message isn't in the transcript yet. You can resend it or put it back in the input",
+    echoUncertainTip: "This message isn't in the transcript yet; the agent may not have picked it up. It isn't resent directly to avoid duplicates. If it never arrived, put it back in the input and send again",
     interjectedBadgeTip: "The agent read this while it was working",
     toAgentBadge: (name: string) => `To subtask "${name}"`,
     toAgentBadgeTip: "Sent to a subtask, not the main session",

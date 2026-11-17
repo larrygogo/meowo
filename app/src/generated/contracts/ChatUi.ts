@@ -131,6 +131,13 @@ queue_delivery: QueueDelivery | null,
  */
 queued_hint: string | null, 
 /**
+ * TUI 对话区里用户消息那一行的行首记号（Kimi `❯ `）。有的 CLI 一按回车就把这句画进对话区，
+ * 但正赶上它自己在跑别的回合（如后台任务通知开的回合），会话记录和提交 hook 要等几分钟后
+ * 真正插进去才有。对话页读画面：对话区最后一条用户消息就是刚发的那句，就算 CLI 已经收下。
+ * None = 未取证。
+ */
+user_line_marker: string | null, 
+/**
  * Ctrl/Shift+Enter 在 composer 插入换行的注入序列(如 claude 的 ESC+CR)。
  * None = 未声明,前端保持终端原生语义(带修饰的 Enter 与裸 Enter 同码 `\r`)。
  */

@@ -246,6 +246,11 @@ pub trait AgentPlugin: Sync {
         None
     }
 
+    /// 见 [`crate::chat_ui::ChatUi::user_line_marker`]。只在取证过的插件里声明。
+    fn user_line_marker(&self) -> Option<&'static str> {
+        None
+    }
+
     /// 会话内可交互的模式维度。空 = 没有稳定且经过验证的切换方式。
     fn mode_controls(&self) -> &'static [crate::chat_ui::ModeControl] {
         &[]
@@ -397,6 +402,7 @@ pub trait AgentPlugin: Sync {
             queue_input: self.queue_input(),
             queue_delivery: self.queue_delivery(),
             queued_hint: self.queued_hint(),
+            user_line_marker: self.user_line_marker(),
             newline_input: self.newline_input(),
             single_line_paste_pattern: self.single_line_paste_pattern(),
             runtime_commands_pending,

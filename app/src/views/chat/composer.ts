@@ -249,6 +249,35 @@ export function queuedInCli(lines: readonly string[] | null | undefined, hint: s
   return !!head && block.join("").replace(/\s+/g, "").includes(head.replace(/\s+/g, ""));
 }
 
+/// 某段话是不是已经被 CLI 画进对话区、成了最后一条用户消息（Kimi：`❯ 继续`，2026-11-17 实拍）。
+/// prefix 是插件声明的用户行行首（ChatUi.user_line_marker）。Kimi 回合结束时把排队的话先画进对话区
+/// 再交给内核；赶上后台任务通知抢先开回合，会话记录要等几分钟后真正插进去才有。
+/// 只看画面上最后一条用户行（连同它折行的后续行）；更早的同一句不算。调用方还要排除「会话记录里
+/// 最后一条用户消息就是同一句」的情况——那时画面上这行可能是旧的那条。
+export function shownAsLatestUserRow(lines: readonly string[] | null | undefined, prefix: string | null | undefined, message: string): boolean {
+  if (!lines || !prefix) return false;
+  const marker = prefix.trim();
+  let at = -1;
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (lines[index].trimStart().startsWith(marker)) { at = index; break; }
+  }
+  if (at < 0) return false;
+  const block = [lines[at].trimStart().slice(marker.length).trim()];
+  // 长消息折成几行，后续行是缩进的续行；遇到空行或下一条（`●` 之类的记号行）就停。
+  for (let index = at + 1; index < lines.length && block.length < 24; index += 1) {
+    const line = lines[index];
+    if (!line.trim() || !/^\s{2,}\S/.test(line) || /^\s*[●•⏺╭│╰─]/.test(line)) break;
+    block.push(line.trim());
+  }
+  const head = messageHead(message);
+  return !!head && block.join("").replace(/\s+/g, "").startsWith(head.replace(/\s+/g, ""));
+}
+
+/// 比对用的消息开头：第一个非空行的前 12 个字（读画面各处同一口径）。
+export function messageHead(message: string): string | undefined {
+  return message.split(/\r?\n/).map((line) => line.trim()).find(Boolean)?.slice(0, 12);
+}
+
 /// 读屏与按键的出入口。测试里换成回放实拍帧的假终端。
 export type ComposerIo = {
   frame: () => Promise<TerminalScreenFrameDto | null>;
