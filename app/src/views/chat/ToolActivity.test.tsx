@@ -2,7 +2,7 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import { TurnLiveContext } from "./toolState";
 import { loadHighlighter } from "./highlight";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { ToolActivity, ActivityGroup, diffText, lineDelta, todoSummary } from "./ToolActivity";
+import { ToolActivity, ActivityGroup, diffText, lineDelta, todoSummary, toolSummary } from "./ToolActivity";
 import type { ToolResultItem, ToolUseItem } from "./shared";
 
 afterEach(cleanup);
@@ -193,5 +193,20 @@ describe("待办与子任务的工具行", () => {
     const todoIcon = paths(todo("TodoWrite", "x"));
     const agentIcon = paths({ type: "tool_use", id: "i2", timestamp: null, name: "spawn_agent", kind: "agent", summary: "gemini_e2e", detail: null });
     expect(new Set([run, todoIcon, agentIcon]).size).toBe(3);
+  });
+});
+
+/** 2026-11-18 手机实拍的 Kimi 会话：未归类工具的行上是整包 JSON。挑一个说明性的参数显示，认不出也不摊 JSON。 */
+describe("未归类工具的摘要", () => {
+  const other = (name: string, summary: string): ToolUseItem => ({ type: "tool_use", id: name, timestamp: null, name, kind: "other", summary });
+  it("后台任务、技能、浏览器各取最有用的那个参数", () => {
+    expect(toolSummary(other("WaitFor", '{"task_id":"bash-h6nni6nr","timeout":90}'), null)).toBe("bash-h6nni6nr");
+    expect(toolSummary(other("Skill", '{"args":"设计方案","skill":"lead"}'), null)).toBe("lead");
+    expect(toolSummary(other("mcp__meowo__browser_navigate", '{"url":"https://ippure.com/"}'), null)).toBe("https://ippure.com/");
+    expect(toolSummary(other("mcp__meowo__browser_evaluate", '{"expression":"document.title"}'), null)).toBe("document.title");
+  });
+  it("认不出的参数把短值连起来，空参数留空，不再显示 JSON", () => {
+    expect(toolSummary(other("Foo", '{"a":1,"b":"x","c":{"d":2}}'), null)).toBe("1 · x");
+    expect(toolSummary(other("TaskList", "{}"), null)).toBe("");
   });
 });

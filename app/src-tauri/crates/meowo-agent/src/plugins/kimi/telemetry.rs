@@ -137,6 +137,9 @@ fn tool_detail(name: &str, input: Option<&serde_json::Value>) -> Option<ToolDeta
             offset: num("offset"),
             limit: num("limit"),
         }),
+        // 本机实测入参：FetchURL {url}、WebSearch {query}。不给详情时摘要是整包 JSON。
+        "FetchURL" => Some(ToolDetail::Web { url: Some(text("url")?), query: None, more: 0 }),
+        "WebSearch" => Some(ToolDetail::Web { url: None, query: Some(text("query")?), more: 0 }),
         "Grep" | "Glob" => Some(ToolDetail::Search {
             pattern: text("pattern")?,
             path: path(),
@@ -144,6 +147,25 @@ fn tool_detail(name: &str, input: Option<&serde_json::Value>) -> Option<ToolDeta
         }),
         _ => None,
     }
+}
+
+/// NotifyUser 的固定回执（本机 417 次调用全是这一句）。
+const NOTIFY_USER_ACK: &str = "Update shown to the user.";
+
+/// Kimi 的 NotifyUser 是回合中途写给用户的一段进展说明（参数 title 可选、message 必有，
+/// 本机 451 次调用全是这个形状），不是要执行的操作。按工具行显示时摘要是整包 JSON，
+/// 改成一段 Agent 发言：有标题就加粗放第一行。缺 message 时照旧按工具显示。
+fn notify_user_text(name: &str, args: Option<&serde_json::Value>) -> Option<String> {
+    if name != "NotifyUser" {
+        return None;
+    }
+    let args = args?;
+    let message = args.get("message").and_then(|v| v.as_str()).map(str::trim).filter(|text| !text.is_empty())?;
+    let title = args.get("title").and_then(|v| v.as_str()).map(str::trim).filter(|text| !text.is_empty());
+    Some(match title {
+        Some(title) => format!("**{title}**\n\n{message}"),
+        None => message.to_string(),
+    })
 }
 
 /// Kimi 内置工具 → 语义类别（工具名取自本机 164 份主链 wire 的实际调用）。MCP 与其余
@@ -645,6 +667,10 @@ fn parse_events(line: &str, wire_dir: Option<&Path>) -> Vec<TranscriptEvent> {
             let event_type = event.get("type").and_then(|v| v.as_str()).unwrap_or("");
             if matches!(event_type, "tool.result" | "tool_result") {
                 let output = event.get("output").or_else(|| event.pointer("/result/output")).or_else(|| event.get("result"));
+                // NotifyUser 的回执：调用已经显示成一段发言（见 notify_user_text），这句固定回执不再单列。
+                if output.and_then(|v| v.as_str()) == Some(NOTIFY_USER_ACK) {
+                    return Vec::new();
+                }
                 let mut text = output.map(value_text).unwrap_or_default();
                 let tool_call_id = event.get("callId").or_else(|| event.get("call_id")).or_else(|| event.get("toolCallId")).and_then(|v| v.as_str()).map(str::to_string);
                 let id = event_uuid.map(|uuid| format!("kimi-result-{uuid}")).or_else(|| tool_call_id.as_ref().map(|id| format!("kimi-result-{id}"))).unwrap_or_else(|| chat_id("result", line));
@@ -714,6 +740,10 @@ fn parse_events(line: &str, wire_dir: Option<&Path>) -> Vec<TranscriptEvent> {
                         .get("input")
                         .or_else(|| part.get("arguments"))
                         .or_else(|| part.get("args"));
+                    if let Some(text) = notify_user_text(&name, args) {
+                        let id = part.get("toolCallId").or_else(|| part.get("id")).and_then(|v| v.as_str()).map(|id| format!("kimi-notify-{id}"));
+                        return vec![TranscriptEvent::AssistantMessage { id: id.unwrap_or_else(|| stable_id("notify")), timestamp, text }];
+                    }
                     let subagent = KIMI_SUBAGENTS.detect_call(&name, args);
                     vec![TranscriptEvent::ToolCall {
                         id: part
@@ -3458,6 +3488,39 @@ mod tests {
             panic!("应解析成工具调用");
         };
         assert!(subagent.is_none());
+    }
+
+    /// 2026-11-18 手机实拍：NotifyUser 显示成一行「通知 {"message":"接口规则已经问出来了…」。
+    /// 它是写给用户的进展说明，应显示成一段发言；固定回执不单列。
+    #[test]
+    fn notify_user_shows_as_assistant_text() {
+        let wire = concat!(
+            r#"{"type":"context.append_loop_event","event":{"type":"tool.call","uuid":"u1","toolCallId":"call_n","name":"NotifyUser","args":{"title":"规则问出来了","message":"是个字体签名门槛，不是计数。"}},"time":1794934260000}"#,
+            "\n",
+            r#"{"type":"context.append_loop_event","event":{"type":"tool.result","parentUuid":"u1","toolCallId":"call_n","result":{"output":"Update shown to the user.","isError":false}},"time":1794934260057}"#,
+            "\n",
+            r#"{"type":"context.append_loop_event","event":{"type":"tool.call","toolCallId":"call_m","name":"NotifyUser","args":{"message":"只有正文"}}}"#,
+        );
+        let items: Vec<ChatItem> = wire.lines().flat_map(parse_chat_items).collect();
+        let texts: Vec<&str> = items.iter().filter_map(|item| match item {
+            ChatItem::AssistantText { text, .. } => Some(text.as_str()),
+            _ => None,
+        }).collect();
+        assert_eq!(texts, ["**规则问出来了**\n\n是个字体签名门槛，不是计数。", "只有正文"]);
+        assert!(!items.iter().any(|item| matches!(item, ChatItem::ToolUse { .. } | ChatItem::ToolResult { .. })), "{items:?}");
+    }
+
+    /// FetchURL / WebSearch 带网页详情，行上显示地址或查询词，不是整包 JSON。
+    #[test]
+    fn fetch_url_and_web_search_carry_web_detail() {
+        let fetch = r#"{"type":"context.append_loop_event","event":{"type":"tool.call","toolCallId":"f","name":"FetchURL","args":{"url":"https://ip.net.coffee/claude/"}}}"#;
+        let search = r#"{"type":"context.append_loop_event","event":{"type":"tool.call","toolCallId":"s","name":"WebSearch","args":{"query":"指纹检测"}}}"#;
+        let detail = |line: &str| match parse_chat_items(line).into_iter().next() {
+            Some(ChatItem::ToolUse { detail, .. }) => detail,
+            other => panic!("应解析成工具调用：{other:?}"),
+        };
+        assert!(matches!(detail(fetch), Some(ToolDetail::Web { url: Some(url), query: None, .. }) if url == "https://ip.net.coffee/claude/"));
+        assert!(matches!(detail(search), Some(ToolDetail::Web { url: None, query: Some(query), .. }) if query == "指纹检测"));
     }
 
     /// 侧车流定位：回扫主流找到该 callId 的结果 → 抠 agent_id → `agents/<id>/wire.jsonl`。
