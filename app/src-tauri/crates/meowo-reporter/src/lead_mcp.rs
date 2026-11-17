@@ -36,6 +36,7 @@ struct Wait {
     context: Context,
     task: PathBuf,
     gate_id: String,
+    gate_version: Option<String>,
     deadline: Option<Instant>,
     native_thread_id: Option<String>,
     generation: u64,
@@ -112,8 +113,16 @@ fn read_small(path: &Path, limit: usize) -> Option<String> {
         .flatten()
 }
 
+fn gate_checked(task: &Path) -> Result<Option<meowo_protocol::ipc::LeadGateDto>, String> {
+    if lead::publication::exists(task) { return lead::read_gate_checked(task); }
+    if !task.join("gate.json").exists() { return Ok(None); }
+    let raw = read_small(&task.join("gate.json"), MAX_FILE).ok_or("lead/gate_unreadable")?;
+    lead::parse_gate(raw.trim_start_matches('\u{feff}')).map(Some).ok_or("lead/gate_invalid".into())
+}
+
+#[cfg(test)]
 fn gate(task: &Path) -> Option<meowo_protocol::ipc::LeadGateDto> {
-    lead::parse_gate(&read_small(&task.join("gate.json"), MAX_FILE)?)
+    gate_checked(task).ok().flatten()
 }
 
 fn owned(task: &Path, lead_dir: &Path, session: &str) -> bool {
@@ -124,7 +133,17 @@ fn owned(task: &Path, lead_dir: &Path, session: &str) -> bool {
         && read_small(&task.join(".owner"), 256).is_some_and(|s| s.trim() == session)
 }
 
-fn select_task(ctx: &Context, args: &Arguments) -> Result<(PathBuf, String), String> {
+fn task_dirs(cwd: &str) -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    for path in lead::lead_dirs(Path::new(cwd)) {
+        if let Ok(path) = path.canonicalize() {
+            if !dirs.contains(&path) { dirs.push(path); }
+        }
+    }
+    dirs
+}
+
+fn select_task(ctx: &Context, args: &Arguments) -> Result<(PathBuf, meowo_protocol::ipc::LeadGateDto), String> {
     if args
         .task_slug
         .as_ref()
@@ -136,41 +155,46 @@ fn select_task(ctx: &Context, args: &Arguments) -> Result<(PathBuf, String), Str
     {
         return Err("lead/invalid_arguments".into());
     }
-    let dir = lead::project_root(Path::new(&ctx.cwd))
-        .join(".lead")
-        .canonicalize()
-        .map_err(|_| "lead/task_missing")?;
-    let mut best: Option<(PathBuf, String, Option<std::time::SystemTime>)> = None;
-    let entries = std::fs::read_dir(&dir).map_err(|_| "lead/task_missing")?;
-    // 本地任务数量也设上限；意外目录洪泛时明确失败，不默默选择扫描到的一半。
-    for (index, entry) in entries.enumerate() {
-        if index >= 4096 {
-            return Err("lead/task_limit".into());
-        }
-        let Ok(entry) = entry else { continue };
-        let path = entry.path();
-        let Some(slug) = path.file_name().and_then(|s| s.to_str()) else {
-            continue;
-        };
-        if !lead::slug_ok(slug)
-            || args.task_slug.as_ref().is_some_and(|s| s != slug)
-            || !owned(&path, &dir, &ctx.session_id)
-        {
-            continue;
-        }
-        let Some(g) = gate(&path) else { continue };
-        if args.gate_id.as_ref().is_some_and(|id| id != &g.id) {
-            continue;
-        }
-        let modified = std::fs::metadata(path.join("progress.md"))
-            .and_then(|m| m.modified())
-            .ok();
-        if best.as_ref().is_none_or(|b| modified > b.2) {
-            best = Some((path, g.id, modified));
+    let dirs = task_dirs(&ctx.cwd);
+    if dirs.is_empty() { return Err("lead/task_missing".into()); }
+    let mut best: Option<(PathBuf, meowo_protocol::ipc::LeadGateDto, Option<std::time::SystemTime>)> = None;
+    let mut scan_error = None;
+    let mut count = 0;
+    for dir in dirs {
+        let entries = std::fs::read_dir(&dir).map_err(|_| "lead/task_missing")?;
+        // 本地任务数量也设上限；意外目录洪泛时明确失败，不默默选择扫描到的一半。
+        for entry in entries {
+            count += 1;
+            if count > 4096 {
+                return Err("lead/task_limit".into());
+            }
+            let Ok(entry) = entry else { continue };
+            let path = entry.path();
+            let Some(slug) = path.file_name().and_then(|s| s.to_str()) else { continue; };
+            if !lead::slug_ok(slug)
+                || args.task_slug.as_ref().is_some_and(|s| s != slug)
+                || !owned(&path, &dir, &ctx.session_id) {
+                continue;
+            }
+            let g = match gate_checked(&path) {
+                Ok(Some(gate)) => gate,
+                Ok(None) => continue,
+                Err(reason) if args.task_slug.is_some() => return Err(reason),
+                Err(reason) => { scan_error = Some(reason); continue; }
+            };
+            if args.gate_id.as_ref().is_some_and(|id| id != &g.id) { continue; }
+            let modified = std::fs::metadata(path.join("progress.md"))
+                .and_then(|m| m.modified()).ok();
+            if best.is_some() && (args.gate_id.is_some() || args.task_slug.is_some()) {
+                return Err("lead/gate_ambiguous".into());
+            }
+            if best.as_ref().is_none_or(|b| modified > b.2) {
+                best = Some((path, g, modified));
+            }
         }
     }
     best.map(|(path, id, _)| (path, id))
-        .ok_or_else(|| "lead/owned_gate_missing".into())
+        .ok_or_else(|| scan_error.unwrap_or_else(|| "lead/owned_gate_missing".into()))
 }
 
 fn result(id: Value, text: &str, error: bool) -> Value {
@@ -217,7 +241,7 @@ impl Server {
                 let tools = if auth(None, true).is_ok() {
                     json!([{
                         "name":"lead_wait",
-                        "description":"Wait for the leader's answer to your own Lead gate. Read the returned gate.json, record the decision, then mark it consumed. Delivery alone is not consumption. Cancellation leaves the answer on disk.",
+                        "description":"Wait for the leader's answer to your own Lead gate and its version. Follow the returned instructions to record and consume the decision. Delivery alone is not consumption. Cancellation leaves the answer on disk.",
                         "inputSchema":{"type":"object","properties":{"taskSlug":{"type":"string"},"gateId":{"type":"string"}},"additionalProperties":false}
                     }])
                 } else {
@@ -255,13 +279,14 @@ impl Server {
                     Err(_) => return Some(result(id, "lead/invalid_arguments", true)),
                 };
                 match select_task(&ctx, &args) {
-                    Ok((task, gate_id)) => {
+                    Ok((task, gate)) => {
                         self.generation = self.generation.wrapping_add(1);
                         self.active = Some(Wait {
                             id,
                             context: ctx,
                             task,
-                            gate_id,
+                            gate_id: gate.id,
+                            gate_version: gate.version,
                             deadline: None,
                             native_thread_id: thread.map(str::to_owned),
                             generation: self.generation,
@@ -277,26 +302,24 @@ impl Server {
 
     fn tick(&mut self) -> Option<Value> {
         let wait = self.active.as_ref()?;
-        let dir = lead::project_root(Path::new(&wait.context.cwd))
-            .join(".lead")
-            .canonicalize()
-            .ok();
+        let dirs = task_dirs(&wait.context.cwd);
         let outcome = if wait.deadline.is_some_and(|d| Instant::now() >= d) {
             Some(("lead/wait_timeout".to_owned(), true))
-        } else if !dir
-            .as_ref()
-            .is_some_and(|d| owned(&wait.task, d, &wait.context.session_id))
+        } else if !dirs
+            .iter()
+            .any(|d| owned(&wait.task, d, &wait.context.session_id))
         {
             Some(("lead/task_owner_changed".to_owned(), true))
         } else {
-            match gate(&wait.task) {
-                None => Some(("lead/gate_missing".to_owned(), true)),
-                Some(g) if g.id != wait.gate_id => Some(("lead/gate_changed".to_owned(), true)),
-                Some(g) if g.status == "consumed" => Some(("lead/gate_consumed".to_owned(), false)),
-                Some(g) if g.status == "answered" && g.answer.is_some() => {
+            match gate_checked(&wait.task) {
+                Err(reason) => Some((reason, true)),
+                Ok(None) => Some(("lead/gate_missing".to_owned(), true)),
+                Ok(Some(g)) if g.id != wait.gate_id || g.version != wait.gate_version => Some(("lead/gate_changed".to_owned(), true)),
+                Ok(Some(g)) if g.status == "consumed" => Some(("lead/gate_consumed".to_owned(), false)),
+                Ok(Some(g)) if g.status == "answered" && g.answer.is_some() => {
                     Some((lead::answer_message(&wait.task, &g), false))
                 }
-                Some(_) => None,
+                Ok(Some(_)) => None,
             }
         };
         outcome.map(|(text, error)| result(self.active.take().unwrap().id, &text, error))

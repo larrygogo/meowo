@@ -5123,7 +5123,7 @@ export function ChatWindow() {
       {view === "chat" && sessionId !== 0 && (
         <div className="chat-dock">
           {/* 停靠栏（计划/进度/后台任务）：状态、关闭规则与入口判定见 chat/DockWork。 */}
-          <DockWork sessionId={sessionId} cwd={cwd} ccSessionId={history?.ccSessionId ?? null} items={items} history={history} loading={loading} returnFocusTo={promptInputRef} live={{ activity: turnActivityOf(tone), alive: history?.connected ?? false }} />
+          <DockWork sessionId={sessionId} cwd={cwd} ccSessionId={history ? history.ccSessionId ?? null : undefined} items={items} history={history} loading={loading} returnFocusTo={promptInputRef} live={{ activity: turnActivityOf(tone), alive: history?.connected ?? false }} />
           {sideAnswers.length > 0 && (
             <div className="chat-side-answers">
               {sideAnswers.map((entry) => (

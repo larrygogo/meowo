@@ -76,6 +76,15 @@ pub fn live_waiter(task: &Path, gate_id: &str) -> Option<WaiterRecord> {
         .filter(|r| (r.gate == gate_id || r.gate.is_empty()) && same_process(r.pid, r.started))
 }
 
+pub fn target_waiter_ready(task: &Path, gate_id: &str, session: &str, kimi_pid: Option<u32>) -> bool {
+    live_waiter(task, gate_id).is_some_and(|record| {
+        record.gate == gate_id && record.provider == "kimi" && record.session == session
+            && kimi_pid.is_none_or(|pid| record.cli_pid == Some(pid)
+                && record.cli_started.zip(process_started(pid))
+                    .is_some_and(|(before, now)| before.abs_diff(now) <= 1))
+    })
+}
+
 /// 任务里有没有活着的等待器，不论在等哪个关卡。
 pub fn any_live_waiter(task: &Path) -> bool {
     read_record(task).is_some_and(|r| same_process(r.pid, r.started))
@@ -182,6 +191,22 @@ pub fn command(provider: &str, reporter: &str, session: &str) -> Option<String> 
         "{} --session {session}",
         meowo_agent::lead_install::waiter_command_prefix(shell, provider, reporter)
     ))
+}
+
+pub fn valid_target_id(gate_id: &str) -> bool {
+    !gate_id.is_empty() && !gate_id.starts_with("--") && !gate_id.chars().any(char::is_control)
+}
+
+pub fn command_for_gate(provider: &str, reporter: &str, session: &str, gate_id: &str) -> Option<String> {
+    if !valid_target_id(gate_id) {
+        return None;
+    }
+    let shell = gated_shell(provider)?;
+    let quoted = match shell {
+        meowo_agent::lead_install::WaiterShell::PowerShellOnWindows if cfg!(windows) => gate_id.replace('\'', "''"),
+        _ => gate_id.replace('\'', r"'\''"),
+    };
+    Some(format!("{} --gate '{quoted}'", command(provider, reporter, session)?))
 }
 
 /// 按版本门过滤后的等待器 shell。没有等待器机制的先返回，不为它探测版本。
@@ -360,6 +385,13 @@ pub fn run_from_args(args: &[String], registry: &Path) -> Option<Output> {
     };
     let session = flag("--session")?;
     let provider = flag("--provider").unwrap_or_default();
+    let target_gate = flag("--gate");
+    if args.iter().any(|arg| arg == "--gate")
+        && (args.iter().filter(|arg| *arg == "--gate").count() != 1
+            || target_gate.as_deref().is_none_or(|id| !valid_target_id(id)))
+    {
+        return Some(say("[lead] 等待器参数无效，已退出。"));
+    }
     Some(
         std::panic::catch_unwind(|| {
             // 只有 kimi 的 hook 载荷分不出子代理（见 lead_kimi），要靠 wire 认启动者；gemini 的后台完成
@@ -380,6 +412,7 @@ pub fn run_from_args(args: &[String], registry: &Path) -> Option<Output> {
                     launched_by_subagent: &mut launcher,
                     launcher_grace: LAUNCHER_GRACE,
                     parent: parent_process(),
+                    target_gate: target_gate.as_deref(),
                 },
             )
         })
@@ -413,6 +446,7 @@ pub struct Guards<'a> {
     /// 按两次 Ctrl-C 才退；假模型复跑（2026-11-13）新旧 reporter 都在 0.6 秒内退出，没能复现，真模型下
     /// 卡住是不是等待器所致未证实。用户在 gemini 里手动停掉这个后台任务时同理，等待器不该留成孤儿。
     pub parent: Option<(u32, u64)>,
+    pub target_gate: Option<&'a str>,
 }
 
 impl Guards<'_> {
@@ -460,6 +494,7 @@ pub fn wait(
             launched_by_subagent: &mut || None,
             launcher_grace: Duration::ZERO,
             parent: None,
+            target_gate: None,
         },
     )
 }
@@ -496,7 +531,14 @@ pub fn wait_guarded(
     if launcher == Some(true) {
         return refuse_subagent();
     }
-    let initial = lead::read_gate(&task);
+    let initial = match lead::read_gate_checked(&task) {
+        Ok(gate) => gate,
+        Err(reason) => return say(format!("[lead] 无法读取关卡，等待器已退出：{reason}")),
+    };
+    let target = guards.target_gate;
+    let initial = initial.filter(|gate| target.is_none_or(|id| gate.id == id));
+    let mut bound = initial.as_ref().is_some_and(|gate| gate.status == "pending");
+    let mut bound_version = initial.as_ref().filter(|gate| gate.status == "pending").and_then(|gate| gate.version.clone());
     let cli_pid = find_cli();
     let cli_started = cli_pid.and_then(process_started);
     let cli = cli_pid.zip(cli_started);
@@ -531,6 +573,7 @@ pub fn wait_guarded(
             .as_ref()
             .filter(|g| g.status == "pending")
             .map(|g| g.id.clone())
+            .or_else(|| target.map(str::to_owned))
             .unwrap_or_default(),
         session: session.into(),
         provider: provider.into(),
@@ -568,20 +611,34 @@ pub fn wait_guarded(
         if start.elapsed() > max {
             break say("[lead] 等待关卡答复超时，已退出。");
         }
-        let gate = lead::read_gate(&task);
+        let gate = match lead::read_gate_checked(&task) {
+            Ok(gate) => gate,
+            Err(reason) => break say(format!("[lead] 无法读取关卡，等待器已退出：{reason}")),
+        };
+        if bound && gate.as_ref().is_some_and(|gate| gate.id != record.gate || gate.version != bound_version) {
+            break say("[lead] 关卡版本已更换，本条无需处理。");
+        }
+        let gate = gate.filter(|gate| bound || target.is_none_or(|id| gate.id == id));
         if let Some(g) = gate
             .as_ref()
             .filter(|g| stale.as_deref() != Some(g.id.as_str()) && deliverable(&task, g))
         {
             break hand_over(g, &mut guards);
         }
-        if record.gate.is_empty() {
+        if target.is_some() && gate.as_ref().is_some_and(|g| matches!(g.status.as_str(), "answered" | "consumed")) {
+            break say("[lead] 目标关卡已送达或已处理，本条无需处理。");
+        }
+        if !bound {
             match gate {
                 Some(g) if g.status == "pending" && stale.as_deref() != Some(g.id.as_str()) => {
+                    bound = true;
+                    bound_version = g.version;
                     record.gate = g.id;
                     if !publish(&record) {
                         break say("[lead] 等待器无法登记，已退出。在会话里发一句话即可继续。");
                     }
+                    #[cfg(test)]
+                    tests::after_binding(&record.gate, bound_version.as_deref());
                 }
                 _ if start.elapsed() > AWAIT_GATE.min(max) => {
                     break say("[lead] 没等到新的关卡，等待器已退出，无需处理。");
@@ -616,6 +673,19 @@ pub fn wait_guarded(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    type BindingBarrier = (std::sync::mpsc::Sender<(String, Option<String>)>, std::sync::mpsc::Receiver<()>);
+    thread_local! {
+        static BINDING_BARRIER: std::cell::RefCell<Option<BindingBarrier>> = const { std::cell::RefCell::new(None) };
+    }
+    pub(super) fn after_binding(id: &str, version: Option<&str>) {
+        BINDING_BARRIER.with(|slot| {
+            if let Some((bound, resume)) = slot.borrow_mut().take() {
+                bound.send((id.into(), version.map(str::to_owned))).unwrap();
+                resume.recv_timeout(Duration::from_secs(5)).unwrap();
+            }
+        });
+    }
 
     struct Fx {
         root: PathBuf,
@@ -670,6 +740,176 @@ mod tests {
             let _ = std::fs::remove_dir_all(&self.root);
         }
     }
+    #[test]
+    fn published_second_gate_is_delivered_after_consumed_first() {
+        let fx = Fx::new("pending");
+        let first = lead::publication::publish(&fx.task, None).unwrap();
+        fx.answer();
+        lead::publication::consume(&fx.task, "Q-1", first.version.as_deref().unwrap()).unwrap();
+        let registry = fx.registry.clone();
+        let handle = std::thread::spawn(move || wait("kimi", "session_abc", &registry, P, M, || None));
+        wait_for_record(&fx.task, |record| record.gate.is_empty());
+        std::fs::write(fx.task.join("gate.json"), json!({"id":"A-2","type":"A","status":"pending"}).to_string()).unwrap();
+        let next = lead::publication::publish(&fx.task, first.version.as_deref()).unwrap();
+        lead::answer_gate_checked(&fx.task, "A-2", &meowo_protocol::ipc::LeadGateAnswerDto {choice:"confirm".into(),note:"second".into()}, next.version.as_deref()).unwrap();
+        let output = handle.join().unwrap().stdout.unwrap();
+        assert!(output.contains("second") && output.contains("publication-2"));
+        assert_eq!(std::fs::read_to_string(fx.task.join(".delivered")).unwrap(), "A-2");
+        assert_eq!(lead::read_gate(&fx.task).unwrap().status, "answered");
+    }
+
+    #[test]
+    fn bound_waiter_never_delivers_reissued_answer() {
+        let fx = Fx::new("pending");
+        let first = lead::publication::publish(&fx.task, None).unwrap();
+        let registry = fx.registry.clone();
+        let handle = std::thread::spawn(move || wait("kimi", "session_abc", &registry, P, M, || None));
+        wait_for_record(&fx.task, |record| record.gate == "Q-1");
+        std::fs::write(fx.task.join("gate.json"), json!({"id":"A-2","type":"A","status":"pending"}).to_string()).unwrap();
+        let next = lead::publication::publish(&fx.task, first.version.as_deref()).unwrap();
+        lead::answer_gate_checked(&fx.task, "A-2", &meowo_protocol::ipc::LeadGateAnswerDto {choice:"confirm".into(),note:"never-deliver".into()}, next.version.as_deref()).unwrap();
+        let output = handle.join().unwrap().stdout.unwrap();
+        assert!(output.contains("关卡版本已更换"));
+        assert!(!output.contains("never-deliver"));
+        assert!(!fx.task.join(".delivered").exists());
+    }
+
+    fn wait_target(registry: &Path, target: &str) -> Output {
+        wait_guarded("kimi", "session_abc", registry, P, M, || None, Guards {
+            launched_by_subagent: &mut || None,
+            launcher_grace: Duration::ZERO,
+            parent: None,
+            target_gate: Some(target),
+        })
+    }
+
+    #[test]
+    fn targeted_waiter_skips_old_answer_and_delivers_reissued_gate() {
+        for start_after_publish in [false, true] {
+            let fx = Fx::new("pending");
+            let first = lead::publication::publish(&fx.task, None).unwrap();
+            fx.answer();
+            let registry = fx.registry.clone();
+            let early = (!start_after_publish).then(|| std::thread::spawn(move || wait_target(&registry, "A-2")));
+            if early.is_some() {
+                wait_for_record(&fx.task, |record| record.gate == "A-2");
+                assert!(!fx.task.join(".delivered").exists());
+            }
+            lead::publication::consume(&fx.task, "Q-1", first.version.as_deref().unwrap()).unwrap();
+            std::fs::write(fx.task.join("gate.json"), json!({"id":"A-2","type":"A","status":"pending"}).to_string()).unwrap();
+            let next = lead::publication::publish(&fx.task, first.version.as_deref()).unwrap();
+            lead::answer_gate_checked(&fx.task, "A-2", &meowo_protocol::ipc::LeadGateAnswerDto {choice:"confirm".into(),note:"target-only".into()}, next.version.as_deref()).unwrap();
+            let output = match early {
+                Some(handle) => handle.join().unwrap(),
+                None => wait_target(&fx.registry, "A-2"),
+            }.stdout.unwrap();
+            assert!(output.contains("target-only") && output.contains("publication-2"));
+            assert_eq!(std::fs::read_to_string(fx.task.join(".delivered")).unwrap(), "A-2");
+        }
+    }
+
+    #[test]
+    fn targeted_waiter_keeps_bound_version_after_target_appears() {
+        let fx = Fx::new("pending");
+        let first = lead::publication::publish(&fx.task, None).unwrap();
+        let registry = fx.registry.clone();
+        let handle = std::thread::spawn(move || wait_target(&registry, "Q-1"));
+        wait_for_record(&fx.task, |record| record.gate == "Q-1");
+        std::fs::write(fx.task.join("gate.json"), json!({"id":"A-2","type":"A","status":"pending"}).to_string()).unwrap();
+        lead::publication::publish(&fx.task, first.version.as_deref()).unwrap();
+        assert!(handle.join().unwrap().stdout.unwrap().contains("关卡版本已更换"));
+        assert!(!fx.task.join(".delivered").exists());
+    }
+
+    #[test]
+    fn prestarted_waiter_binds_pending_version_before_reissue() {
+        let fx = Fx::new("pending");
+        let first = lead::publication::publish(&fx.task, None).unwrap();
+        let registry = fx.registry.clone();
+        let (bound_tx, bound_rx) = std::sync::mpsc::channel();
+        let (resume_tx, resume_rx) = std::sync::mpsc::channel();
+        let handle = std::thread::spawn(move || {
+            BINDING_BARRIER.with(|slot| *slot.borrow_mut() = Some((bound_tx, resume_rx)));
+            wait_target(&registry, "A-2")
+        });
+        wait_for_record(&fx.task, |record| record.gate == "A-2");
+        std::fs::write(fx.task.join("gate.json"), json!({"id":"A-2","type":"A","status":"pending"}).to_string()).unwrap();
+        let target = lead::publication::publish(&fx.task, first.version.as_deref()).unwrap();
+        let binding = bound_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(binding, ("A-2".into(), target.version.clone()));
+        std::fs::write(fx.task.join("gate.json"), json!({"id":"A-3","type":"A","status":"pending"}).to_string()).unwrap();
+        let next = lead::publication::publish(&fx.task, target.version.as_deref()).unwrap();
+        lead::answer_gate_checked(&fx.task, "A-3", &meowo_protocol::ipc::LeadGateAnswerDto {choice:"confirm".into(),note:"must-not-deliver".into()}, next.version.as_deref()).unwrap();
+        resume_tx.send(()).unwrap();
+        let out = handle.join().unwrap().stdout.unwrap();
+        assert!(out.contains("关卡版本已更换") && !out.contains("must-not-deliver"));
+        assert!(!fx.task.join(".delivered").exists());
+        assert!(!waiter_path(&fx.task).exists());
+    }
+
+    #[test]
+    fn targeted_waiter_exits_when_target_already_processed() {
+        for consumed in [false, true] {
+            let fx = Fx::new("pending");
+            let first = lead::publication::publish(&fx.task, None).unwrap();
+            fx.answer();
+            if consumed {
+                lead::publication::consume(&fx.task, "Q-1", first.version.as_deref().unwrap()).unwrap();
+            } else {
+                mark_delivered(&fx.task, &lead::read_gate(&fx.task).unwrap());
+            }
+            let out = wait_target(&fx.registry, "Q-1").stdout.unwrap();
+            assert!(out.contains("无需处理"));
+            assert!(!out.contains("超时") && !out.contains("没等到"));
+            assert!(!waiter_path(&fx.task).exists());
+        }
+    }
+
+    #[test]
+    fn prestarted_target_waiter_exits_when_target_is_quickly_consumed() {
+        let fx = Fx::new("pending");
+        let first = lead::publication::publish(&fx.task, None).unwrap();
+        let registry = fx.registry.clone();
+        let handle = std::thread::spawn(move || wait_target(&registry, "A-2"));
+        wait_for_record(&fx.task, |record| record.gate == "A-2");
+        std::fs::write(fx.task.join("gate.json"), json!({"id":"A-2","type":"A","status":"pending"}).to_string()).unwrap();
+        let next = lead::publication::publish(&fx.task, first.version.as_deref()).unwrap();
+        lead::answer_gate_checked(&fx.task, "A-2", &meowo_protocol::ipc::LeadGateAnswerDto {choice:"confirm".into(),note:"handled".into()}, next.version.as_deref()).unwrap();
+        lead::publication::consume(&fx.task, "A-2", next.version.as_deref().unwrap()).unwrap();
+        let out = handle.join().unwrap().stdout.unwrap();
+        assert!(!out.contains("超时") && !out.contains("没等到"));
+        assert!(!waiter_path(&fx.task).exists());
+    }
+
+    #[test]
+    fn target_commands_quote_gate_ids_without_shell_expansion() {
+        let command = command_for_gate("kimi", "C:/bin/reporter.exe", "session_abc", "Q-'$(danger); & x").unwrap();
+        assert!(command.ends_with(r"--gate 'Q-'\''$(danger); & x'"));
+        for invalid in ["", "--session", "Q-\n1"] {
+            assert!(command_for_gate("kimi", "reporter", "session_abc", invalid).is_none());
+        }
+    }
+
+    #[test]
+    fn target_argument_requires_one_value() {
+        for suffix in [vec!["--gate"], vec!["--gate", ""], vec!["--gate", "--provider"], vec!["--gate", "A", "--gate", "B"]] {
+            let args = [vec!["lead", "wait", "--session", "session_abc", "--provider", "kimi"], suffix].concat().into_iter().map(str::to_owned).collect::<Vec<_>>();
+            assert!(run_from_args(&args, Path::new("unused")).unwrap().stdout.unwrap().contains("参数无效"));
+        }
+    }
+
+    #[test]
+    fn broken_publication_stops_waiter_with_explicit_error() {
+        let fx = Fx::new("pending");
+        lead::publication::publish(&fx.task, None).unwrap();
+        let registry = fx.registry.clone();
+        let handle = std::thread::spawn(move || wait("kimi", "session_abc", &registry, P, M, || None));
+        wait_for_record(&fx.task, |record| record.gate == "Q-1");
+        std::fs::write(fx.task.join(".gate-publications.json"), "broken").unwrap();
+        assert!(handle.join().unwrap().stdout.unwrap().contains("lead/publication_invalid"));
+        assert!(!waiter_path(&fx.task).exists());
+    }
+
     const P: Duration = Duration::from_millis(20);
     const M: Duration = Duration::from_secs(20);
 
@@ -977,6 +1217,7 @@ mod tests {
                 launched_by_subagent: &mut || Some(true),
                 launcher_grace: Duration::ZERO,
                 parent: None,
+            target_gate: None,
             },
         );
         assert!(out.stdout.unwrap().contains("关卡只由主会话等待"));
@@ -1000,6 +1241,7 @@ mod tests {
                     launched_by_subagent: &mut launcher,
                     launcher_grace: Duration::ZERO,
                     parent: None,
+            target_gate: None,
                 },
             )
         });
@@ -1020,6 +1262,7 @@ mod tests {
                 launched_by_subagent: &mut || Some(false),
                 launcher_grace: Duration::ZERO,
                 parent: None,
+            target_gate: None,
             },
         );
         assert!(out.stdout.unwrap().contains("选择 go"));
@@ -1053,6 +1296,7 @@ mod tests {
                     launched_by_subagent: &mut || None,
                     launcher_grace: Duration::ZERO,
                     parent: Some((pid, started)),
+                    target_gate: None,
                 },
             )
         });

@@ -480,6 +480,7 @@ fn run_inner(provider: &str, mode: &str, raw: &str, registry: &Path) -> Output {
         // 子代理写的关卡不给它起等待器（BeforeTool 本该已拦下，这里兜住没拦到的写法）。
         if provider == Provider::Gemini
             && gate_written
+            && !lead::publication::exists(&task)
             && !gemini_subagent_running(registry, &session, &raw)
         {
             if let Some(tail) = gemini_waiter_tail(&task, &session) {
@@ -742,9 +743,25 @@ fn kimi_gate_guard_with(
         .ok()
         .and_then(|t| t.elapsed().ok())
         .is_some_and(|age| age < std::time::Duration::from_secs(120));
+    let draft_id = (name == "Write")
+        .then(|| serde_json::from_str::<Value>(&body).ok())
+        .flatten()
+        .and_then(|draft| draft.get("id").and_then(Value::as_str).map(str::to_owned));
+    if draft_id.as_deref().is_some_and(|id| !lead_waiter::valid_target_id(id)) {
+        return Some(Output {
+            stderr: Some("[lead] 关卡 id 不能用于目标等待：请使用非空、不以 -- 开头且不含控制字符的新 id。草稿尚未写入。".into()),
+            exit: 2,
+            stdout: None,
+        });
+    }
+    let kimi_pid = crate::proc::owner_pid("kimi");
+    let ready = || match draft_id.as_deref() {
+        Some(id) => lead_waiter::target_waiter_ready(&task, id, session, kimi_pid),
+        None => lead_waiter::any_live_waiter(&task),
+    };
     let rounds = if recently_asked { 50 } else { 1 };
     for round in 0..rounds {
-        if lead_waiter::any_live_waiter(&task) {
+        if ready() {
             return None;
         }
         if round + 1 < rounds {
@@ -753,10 +770,18 @@ fn kimi_gate_guard_with(
     }
     let _ = fs::write(&asked, session);
     let reporter = lead_waiter::reporter_path()?;
-    let command = lead_waiter::command("kimi", &reporter, session)?;
+    let command = match draft_id.as_deref() {
+        Some(id) => lead_waiter::command_for_gate("kimi", &reporter, session, id),
+        None => lead_waiter::command("kimi", &reporter, session),
+    }?;
+    let next = if lead::publication::exists(&task) {
+        "启动后重新写 gate.json 草稿，再按 lead skill 用刚查询的版本执行 publish；确认本次 pending 卡已发布后才能结束本轮。答复到达后用 status 核对权威版本，再通过 consume 确认接手，不修改草稿消费。"
+    } else {
+        "启动后再重新写这个 gate.json，然后结束本轮。答复到达后读 gate.json，按 lead skill 处理。"
+    };
     Some(Output {
         stderr: Some(format!(
-            "[lead] 写关卡前，先用 Bash 工具在后台启动 Meowo 的关卡等待命令（run_in_background=true，disable_timeout=true，description 写「等待 leader 答复」），命令：`{command}`。启动后再重新写这个 gate.json，然后结束本轮，不要轮询。leader 答复后它会结束、你会收到后台任务完成的通知，届时读它的输出和 gate.json，按 lead skill 处理答复。"
+            "[lead] 写关卡前，先用 Bash 工具在后台启动 Meowo 的关卡等待命令（run_in_background=true，disable_timeout=true，description 写「等待 leader 答复」），命令：`{command}`。{next}不要轮询。leader 答复后它会结束、你会收到后台任务完成的通知。"
         )),
         exit: 2,
         stdout: None,
@@ -1015,7 +1040,7 @@ fn waiter_stop(
             _ => "用 run_shell_command 在后台启动它（is_background=true）",
         };
         format!(
-            "[lead] 关卡 {} 在等 leader 答复，会话里还没有等待器。{how}，命令：`{command}`。启动后直接结束本轮，不要轮询；它结束时你会收到后台任务完成的通知，届时读它的输出和任务目录里的 gate.json，按 lead skill 处理答复。",
+            "[lead] 关卡 {} 在等 leader 答复，会话里还没有等待器。{how}，命令：`{command}`。启动后直接结束本轮，不要轮询；它结束时你会收到后台任务完成的通知，届时读它的输出，按 lead skill 查询权威关卡并处理答复。",
             gate.id
         )
     };

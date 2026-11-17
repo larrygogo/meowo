@@ -107,7 +107,9 @@ bridged_args!(AnswerLeadGateArgs {
     cwd: String,
     gate_id: String,
     choice: String,
-    note: String
+    note: String,
+    #[serde(default)]
+    version: Option<String>
 });
 
 bridged_args!(RetryLeadGateDeliveryArgs {

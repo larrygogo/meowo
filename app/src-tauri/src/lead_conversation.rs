@@ -20,18 +20,13 @@ fn owner(task: &Path) -> Result<String, String> {
 }
 
 fn task_for(cwd: &str, gate_id: &str) -> Result<PathBuf, String> {
-    let mut matches = meowo_reporter::lead::project_gates(cwd)
-        .into_iter()
-        .filter(|(_, gate)| gate.id == gate_id);
-    let task = matches.next().ok_or("lead/gate_missing")?.0;
-    if matches.next().is_some() {
-        return Err("lead/gate_ambiguous".into());
-    }
+    let task = meowo_reporter::lead::task_of_gate_checked(cwd, gate_id)?;
     dunce::canonicalize(task).map_err(|_| "lead/gate_missing".into())
 }
 
 /// true 表示答复已交给归属会话的原生续跑机制（已送出 / 等待器接手 / 会话不在、已保存待打开后送达）；
 /// false 表示这家没有续跑机制（claude 走自己的 asyncRewake，其余面板提示手动继续）。
+#[cfg(test)]
 pub(crate) fn answer_and_deliver(
     db: &Path,
     cwd: &str,
@@ -40,9 +35,22 @@ pub(crate) fn answer_and_deliver(
     app: Option<tauri::AppHandle>,
 ) -> Result<bool, String> {
     let task = task_for(cwd, gate_id)?;
-    if let Err(reason) = meowo_reporter::lead::answer_gate(&task, gate_id, answer) {
+    let version = meowo_reporter::lead::read_gate(&task).and_then(|gate| gate.version);
+    answer_and_deliver_checked(db, cwd, gate_id, answer, app, version.as_deref())
+}
+
+pub(crate) fn answer_and_deliver_checked(
+    db: &Path,
+    cwd: &str,
+    gate_id: &str,
+    answer: &LeadGateAnswerDto,
+    app: Option<tauri::AppHandle>,
+    version: Option<&str>,
+) -> Result<bool, String> {
+    let task = task_for(cwd, gate_id)?;
+    if let Err(reason) = meowo_reporter::lead::answer_gate_checked(&task, gate_id, answer, version) {
         // 手机超时重试可能晚于模型的业务接手；仅原关卡同一答案可幂等成功，不重启旧终端。
-        let consumed_same = meowo_reporter::lead::read_gate(&task).is_some_and(|gate| {
+        let consumed_same = reason == "lead/gate_closed" && meowo_reporter::lead::read_gate(&task).is_some_and(|gate| {
             gate.id == gate_id && gate.status == "consumed" && gate.answer.as_ref() == Some(answer)
         });
         if consumed_same && deliver(db, &task, app, false)? {
@@ -198,6 +206,10 @@ fn owner_unknown_status(task: &Path, gate_id: &str, cwd: &str) -> Option<LeadDel
 
 /// 复用既有关卡巡检，不为普通会话另开任务目录轮询。已存在的稳定投递ID不会再次入队。
 pub(crate) fn reconcile_task(db: &Path, task: &Path, app: Option<tauri::AppHandle>) {
+    if let Err(error) = meowo_reporter::lead::recover_review(task) {
+        eprintln!("Lead 签署恢复未完成: {error}");
+        return;
+    }
     let _ = deliver(db, task, app, false);
 }
 
@@ -374,6 +386,21 @@ mod tests {
     }
 
     #[test]
+    fn unrelated_legacy_open_gate_does_not_block_host_answer_path() {
+        let f = Fixture::new();
+        let stale = f.root.join(".lead/20261110-cloud-sale-stable");
+        std::fs::create_dir_all(&stale).unwrap();
+        let legacy = json!({"id":"D-20261112-handoff","type":"D","status":"open"}).to_string();
+        std::fs::write(stale.join("gate.json"), &legacy).unwrap();
+
+        assert_eq!(f.answer(), Ok(false));
+        let gate = meowo_reporter::lead::read_gate(&f.task).unwrap();
+        assert_eq!(gate.status, "answered");
+        assert_eq!(gate.answer.unwrap().note, "Continue safely");
+        assert_eq!(std::fs::read_to_string(stale.join("gate.json")).unwrap(), legacy);
+    }
+
+    #[test]
     fn late_duplicate_after_business_consumption_is_accepted_but_a_new_decision_is_not() {
         let f = Fixture::new();
         f.answer().unwrap();
@@ -396,6 +423,91 @@ mod tests {
             ),
             Err("lead/gate_closed".into())
         );
+    }
+
+    #[test]
+    fn published_mobile_answer_projects_only_frozen_scope_and_consumes_without_draft_writes() {
+        use meowo_reporter::lead::{publication, snapshot_for};
+        let f = Fixture::new();
+        let cwd = f.root.to_string_lossy().into_owned();
+        std::fs::write(f.root.join(".lead/active"), "probe").unwrap();
+        std::fs::write(f.task.join("progress.md"), "phase: implement").unwrap();
+        let items = json!([{"id":"leader","check":"inspect delivery","passes":false,"by":"leader"}]);
+        std::fs::write(f.task.join("acceptance.json"), items.to_string()).unwrap();
+        publication::initialize(&f.task).unwrap();
+        let checks = snapshot_for(&cwd, Some("native-root")).unwrap().checks;
+        let draft = json!({"id":"C-mobile","type":"C","title":"review","status":"pending","review":{"revision":"isolated-build-1","checks":checks}}).to_string();
+        std::fs::write(f.task.join("gate.json"), &draft).unwrap();
+        let gate = publication::publish(&f.task, None).unwrap();
+        let args: meowo_protocol::bridge::AnswerLeadGateArgs = serde_json::from_value(json!({
+            "cwd":cwd,"gateId":gate.id,"choice":"accept","note":"checked frozen delivery","version":gate.version
+        })).unwrap();
+        let answer = LeadGateAnswerDto { choice: args.choice.clone(), note: args.note.clone() };
+        let submit = |version: Option<&str>| answer_and_deliver_checked(&f.db, &args.cwd, &args.gate_id, &answer, None, version);
+        assert_eq!(submit(Some("publication-0")), Err("lead/gate_changed".into()));
+        assert_eq!(submit(args.version.as_deref()), Ok(false));
+        assert_eq!(submit(args.version.as_deref()), Ok(false));
+        let view = snapshot_for(&cwd, Some("native-root")).unwrap();
+        assert!(view.checks[0].passes);
+        assert_eq!(view.gate.unwrap().status, "answered");
+        let changed = json!([items[0].clone(), {"id":"later","check":"not in signed review","passes":false,"by":"leader"}]);
+        std::fs::write(f.task.join("acceptance.json"), changed.to_string()).unwrap();
+        assert_eq!(submit(args.version.as_deref()), Ok(false));
+        let view = snapshot_for(&cwd, Some("native-root")).unwrap();
+        assert!(view.checks[0].passes);
+        assert!(!view.checks[1].passes);
+        publication::consume(&f.task, &args.gate_id, args.version.as_deref().unwrap()).unwrap();
+        assert_eq!(submit(args.version.as_deref()), Ok(true));
+        assert!(snapshot_for(&cwd, Some("native-root")).unwrap().gate.is_none());
+        assert_eq!(std::fs::read_to_string(f.task.join("gate.json")).unwrap(), draft);
+        assert_eq!(std::fs::read_to_string(f.task.join("acceptance.json")).unwrap(), changed.to_string());
+    }
+
+    #[test]
+    fn unreadable_publication_cannot_redirect_answer_to_same_id_in_another_task() {
+        use meowo_reporter::lead::publication;
+        let f = Fixture::new();
+        let second = f.root.join(".lead/other");
+        std::fs::create_dir_all(&second).unwrap();
+        std::fs::copy(f.task.join("gate.json"), second.join("gate.json")).unwrap();
+        let first_gate = publication::publish(&f.task, None).unwrap();
+        let second_gate = publication::publish(&second, None).unwrap();
+        assert_eq!(first_gate.version, second_gate.version);
+        std::fs::write(f.task.join(".gate-publications.json"), "broken").unwrap();
+        let original = std::fs::read(second.join(".gate-publications.json")).unwrap();
+        assert_eq!(answer_and_deliver_checked(
+            &f.db, &f.root.to_string_lossy(), &first_gate.id,
+            &LeadGateAnswerDto { choice: "go".into(), note: "held before corruption".into() },
+            None, first_gate.version.as_deref(),
+        ), Err("lead/publication_invalid".into()));
+        assert_eq!(std::fs::read(second.join(".gate-publications.json")).unwrap(), original);
+        assert_eq!(publication::read(&second).unwrap().unwrap().status, "pending");
+    }
+
+    #[test]
+    fn withdrawn_or_reissued_task_cannot_redirect_old_request_to_another_task() {
+        use meowo_reporter::lead::publication;
+        for reissue in [false, true] {
+            let f = Fixture::new();
+            let first = publication::publish(&f.task, None).unwrap();
+            let second = f.root.join(".lead/other");
+            std::fs::create_dir_all(&second).unwrap();
+            std::fs::copy(f.task.join("gate.json"), second.join("gate.json")).unwrap();
+            publication::publish(&second, None).unwrap();
+            if reissue {
+                std::fs::write(f.task.join("gate.json"), json!({"id":"next","type":"A","title":"next","status":"pending"}).to_string()).unwrap();
+                publication::publish(&f.task, first.version.as_deref()).unwrap();
+            } else {
+                publication::withdraw(&f.task, &first.id, first.version.as_deref().unwrap()).unwrap();
+            }
+            let before = std::fs::read(second.join(".gate-publications.json")).unwrap();
+            assert_eq!(answer_and_deliver_checked(
+                &f.db, &f.root.to_string_lossy(), &first.id,
+                &LeadGateAnswerDto { choice: "go".into(), note: "old card".into() },
+                None, first.version.as_deref(),
+            ), Err("lead/gate_ambiguous".into()));
+            assert_eq!(std::fs::read(second.join(".gate-publications.json")).unwrap(), before);
+        }
     }
 
     #[test]

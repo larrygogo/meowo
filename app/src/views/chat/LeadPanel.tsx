@@ -24,21 +24,40 @@ const POLL_MS = 4000;
 
 /// 拉取会话 cwd 所在项目的 Lead 任务；没有任务为 null。cwd 为空（会话还没起来）时不请求。
 /// session：当前会话的 cc_session_id。还不知道（会话历史没到）时先不查，免得别的会话的任务闪一下。
-export function useLeadTask(cwd: string | null | undefined, session?: string | null): [LeadTaskDto | null, () => void] {
-  const [task, setTask] = useState<LeadTaskDto | null>(null);
+export function useLeadTask(cwd: string | null | undefined, session?: string | null): [LeadTaskDto | null, () => void, string | null] {
+  const key = JSON.stringify([cwd, session]);
+  const [state, setState] = useState<{ key: string; task: LeadTaskDto | null }>({ key, task: null });
+  const [failure, setFailure] = useState<{ key: string; reason: string } | null>(null);
   const seq = useRef(0);
   const refresh = useCallback(() => {
-    if (!cwd || !session) {
-      setTask(null);
+    const mine = ++seq.current;
+    if (!cwd || session === undefined) {
+      setState({ key, task: null });
       return;
     }
-    const mine = ++seq.current;
-    leadTaskSnapshot(cwd, session)
-      .then((next) => { if (mine === seq.current) setTask(next); })
-      // 读失败（手机远程中继抖一下、后端偶发异常）保留上一次的数据：卡片若因此卸载，leader 在手机上
-      // 写了一半的驳回意见会丢（做空审查 M3）。真没有任务时后端返回的是 null，不是报错。
-      .catch(() => {});
-  }, [cwd, session]);
+    (session ? leadTaskSnapshot(cwd, session) : leadTaskSnapshot(cwd))
+      .then((next) => {
+        if (mine !== seq.current) return;
+        setFailure(null);
+        setState((previous) => {
+          const old = previous.key === key && previous.task?.slug === next?.slug ? previous.task : null;
+          const issues = next?.issues ?? [];
+          const task = next && old ? {
+            ...next,
+            checks: issues.includes("lead/acceptance_invalid") ? old.checks : next.checks,
+            gate: issues.includes("lead/gate_invalid") ? old.gate : next.gate,
+          } : next;
+          return { key, task };
+        });
+      })
+      .catch(() => {
+        if (mine !== seq.current) return;
+        setFailure({ key, reason: "lead/snapshot_stale" });
+        setState((previous) => previous.key === key && previous.task
+          ? { key, task: { ...previous.task, issues: [...new Set([...(previous.task.issues ?? []), "lead/snapshot_stale"])] } }
+          : { key, task: null });
+      });
+  }, [cwd, session, key]);
   useEffect(() => {
     refresh();
   }, [cwd, refresh]);
@@ -46,7 +65,7 @@ export function useLeadTask(cwd: string | null | undefined, session?: string | n
   useVisibleInterval(() => {
     if (cwd && session) refresh();
   }, POLL_MS);
-  return [task, refresh];
+  return [state.key === key ? state.task : null, refresh, cwd && session && failure?.key === key ? failure.reason : null];
 }
 
 /// 关卡是否在等 leader：只有 pending 需要作答；answered 表示已答、等 agent 接手。
@@ -90,6 +109,7 @@ export function LeadPill({ task, active, onClick }: { task: LeadTaskDto; active:
     <button type="button" className={"ui-pill" + (active ? " is-active" : "")} onClick={onClick}>
       <LeadIcon className="ui-pill-icon" />
       {t.chat.leadEntry}
+      {!!task.issues?.length && <span className="ui-pill-meta" title={task.issues.map((issue) => formatBackendError(issue, t.locale)).join("\n")}>{t.chat.leadDataIssue}</span>}
       <span className="ui-pill-meta">{total > 0 ? `${passed}/${total}` : t.chat.leadPhase(task.phase)}</span>
       {blockedCount > 0 && <span className="ui-pill-meta">{t.chat.leadPillBlocked(blockedCount)}</span>}
       {gateWaiting(task) && <span className="lead-pill-dot" role="img" aria-label={t.chat.leadGateWaiting} />}
@@ -176,6 +196,43 @@ function LeadStages({ phase }: { phase: string }) {
   );
 }
 
+function LeadNotes({ kind, text }: { kind: "decisions" | "progress"; text: string }) {
+  const entries: { title: string | null; body: string }[] = [];
+  let phase = "";
+  for (const line of text.split(/\r?\n/)) {
+    if (/^phase\s*:/.test(line.trim()) && entries.length === 0) {
+      phase = line.trim();
+      continue;
+    }
+    const match = line.match(/^\s*(?:[-*]|\d+\.)\s+(.*)$/);
+    if (match) {
+      const decision = kind === "decisions" ? match[1].match(/^([^：]{1,180})：([\s\S]*)$/) : null;
+      entries.push({ title: decision?.[1] ?? null, body: decision ? decision[2].trim() : match[1] });
+    } else if (entries.length > 0) {
+      entries[entries.length - 1].body += `\n${line}`;
+    } else if (line.trim()) {
+      entries.push({ title: null, body: line });
+    }
+  }
+  if (entries.length === 0) return <ChatMarkdown text={text} />;
+  return (
+    <div className={`lead-notes is-${kind}`}>
+      {phase && <div className="lead-notes-phase">{phase}</div>}
+      <ol className={kind === "progress" ? "lead-timeline" : undefined}>
+        {entries.map((entry, index) => (
+          <li className="lead-note" key={index}>
+            {kind === "progress" && <span className="lead-timeline-marker" aria-hidden="true" />}
+            <div className={kind === "progress" ? "lead-timeline-content" : undefined}>
+              {entry.title && <h4 className="lead-note-title">{entry.title}</h4>}
+              <div className="lead-note-body"><ChatMarkdown text={entry.body} /></div>
+            </div>
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
 export const LeadPanel = memo(function LeadPanel({ task, onClose }: { task: LeadTaskDto; onClose: () => void }) {
   const t = useT();
   const { passed, total } = leadProgress(task);
@@ -183,6 +240,8 @@ export const LeadPanel = memo(function LeadPanel({ task, onClose }: { task: Lead
   const tabs = useTablist({ keys: LEAD_SECTIONS, active: section, onSelect: setSection });
   // 展开看全文的验收项（默认两行截断）。
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
+  const [showSettled, setShowSettled] = useState(false);
+  useEffect(() => { setOpen(new Set()); setShowSettled(false); setSection("checks"); }, [task.slug]);
   const [retrying, setRetrying] = useState(false);
   const [deliveryError, setDeliveryError] = useState<string | null>(null);
   useEffect(() => setDeliveryError(null), [task.slug, task.gate?.id]);
@@ -196,6 +255,10 @@ export const LeadPanel = memo(function LeadPanel({ task, onClose }: { task: Lead
   };
   // 还要做的排前面，豁免的沉底：一眼看到剩下的事。
   const checks = [...task.checks].sort((a, b) => checkRank(a) - checkRank(b));
+  const settledCount = checks.filter((check) => check.passes || check.waived).length;
+  const visibleChecks = showSettled ? checks : checks.filter((check) => !check.passes && !check.waived);
+  const group = (check: LeadTaskDto["checks"][number]) => check.passes || check.waived ? "settled" : check.leader ? "review" : "work";
+  const groupLabels = { settled: t.chat.leadSettled, review: t.chat.leadCheckLeader, work: t.chat.leadRemaining };
   const title = leadTaskTitle(task);
   const latest = leadLatest(task.progress);
   // 「5/18」只数实测过的。代码写完、只差实测的条目单独报个数，免得 leader 以为只做了三成
@@ -221,6 +284,7 @@ export const LeadPanel = memo(function LeadPanel({ task, onClose }: { task: Lead
         </span>
       </div>
       <div className="lead-overview">
+        {(task.issues ?? []).map((issue) => <p key={issue} className="lead-gate-error" role="status">{formatBackendError(issue, t.locale)}</p>)}
         <LeadStages phase={task.phase} />
         {latest && <p className="lead-latest" title={latest}><span className="lead-latest-label">{t.chat.leadLatest}</span>{latest}</p>}
       </div>
@@ -246,7 +310,7 @@ export const LeadPanel = memo(function LeadPanel({ task, onClose }: { task: Lead
             ? <div className="chat-tasks-empty">{t.chat.leadChecksEmpty}</div>
             : (
               <ul className="lead-checks">
-                {checks.map((c) => {
+                {visibleChecks.map((c, index) => {
                   const state = c.passes ? "pass" : c.waived ? "waived" : c.blocked && !c.leader ? "blocked" : "pending";
                   const label = state === "pass" ? t.chat.leadCheckPass : state === "waived" ? t.chat.leadCheckWaived
                     : state === "blocked" ? t.chat.leadCheckBlocked : t.chat.leadCheckPending;
@@ -254,28 +318,49 @@ export const LeadPanel = memo(function LeadPanel({ task, onClose }: { task: Lead
                     // 展开靠 <button aria-expanded>：原先是 <li onClick>，键盘到不了、读屏不知道能展开，
                     // 截断的全文键盘用户看不到（调研 i11）。图标 role="img" 才让 aria-label 生效。
                     <li key={c.id}>
+                      {(index === 0 || group(visibleChecks[index - 1]) !== group(c)) && <div className="lead-check-group">{groupLabels[group(c)]}</div>}
                       <button type="button" className={"lead-check is-" + state + (open.has(c.id) ? " is-open" : "")}
                         aria-expanded={open.has(c.id)}
                         title={state === "waived" ? `${c.check}
 ${t.chat.leadCheckWaivedReason(c.waived ?? "")}` : c.check}
                         onClick={() => setOpen((prev) => { const next = new Set(prev); if (next.has(c.id)) next.delete(c.id); else next.add(c.id); return next; })}>
                         <span className="lead-check-mark" role="img" aria-label={label}>{CHECK_ICONS[state]}</span>
+                        <span className="lead-check-id">{c.id || index + 1}</span>
                         <span className="lead-check-body">
                           <span className="lead-check-text">{c.check}</span>
                           {state === "waived" && <span className="lead-check-note">{t.chat.leadCheckWaivedReason(c.waived ?? "")}</span>}
                           {state === "blocked" && <span className="lead-check-note is-blocked">{t.chat.leadCheckBlockedReason(c.blocked ?? "")}</span>}
-                          {!c.waived && !c.passes && c.leader && <span className="lead-check-note is-leader">{t.chat.leadCheckLeader}</span>}
+                          {!!c.evidence?.length && <span className="lead-check-note">{t.chat.leadEvidenceCount(c.evidence.length)}</span>}
                         </span>
+                        <span className="lead-check-caret" aria-hidden="true">›</span>
                       </button>
+                      {open.has(c.id) && c.evidence?.map((evidence, index) => (
+                        <div key={index} className="lead-check-evidence">
+                          <p className="lead-check-note">{t.chat.leadReviewRevision(evidence.revision)}</p>
+                          <dl>
+                            <dt>{t.chat.leadEvidenceCommand}</dt><dd className="lead-evidence-command"><code>{evidence.command}</code></dd>
+                            <dt>{t.chat.leadEvidenceResult}</dt><dd>{evidence.result}</dd>
+                            <dt>{t.chat.leadEvidenceReference}</dt><dd>{evidence.reference}</dd>
+                            <dt>{t.chat.leadEvidenceLimitations}</dt><dd>{evidence.limitations}</dd>
+                          </dl>
+                        </div>
+                      ))}
                     </li>
                   );
                 })}
+                {settledCount > 0 && <li>
+                  <button type="button" className="lead-check-toggle" aria-expanded={showSettled} onClick={() => setShowSettled((value) => !value)}>
+                    {t.chat.leadSettledCount(settledCount)}<span className="lead-check-caret" aria-hidden="true">›</span>
+                  </button>
+                </li>}
               </ul>
             )
         )}
         {section !== "checks" && (
-          <div className="chat-plan-doc chat-md">
-            <ChatMarkdown text={(section === "spec" ? task.spec : section === "decisions" ? task.decisions : task.progress) || t.chat.leadSectionEmpty} />
+          <div className="chat-plan-doc">
+            {section === "spec"
+              ? <div className="chat-md"><ChatMarkdown text={task.spec || t.chat.leadSectionEmpty} /></div>
+              : <LeadNotes kind={section} text={(section === "decisions" ? task.decisions : task.progress) || t.chat.leadSectionEmpty} />}
           </div>
         )}
       </div>
@@ -369,7 +454,7 @@ export function LeadGateCard({ cwd, gate, onAnswered, onStale, returnFocusTo }: 
     setError(null);
     // 只发看得见的意见。意见框藏起来时（取消驳回后点通过、改选了不需要意见的项）文字还留在状态里，
     // 原先照发：「通过 + 别合」「允许 + 别花钱」这种自相矛盾的答复会送到 agent（做空审查复现）。
-    answerLeadGate(cwd, gate.id, id, showNote ? note.trim() : "")
+    answerLeadGate(cwd, gate.id, id, showNote ? note.trim() : "", gate.version)
       .then(onAnswered)
       .catch((e) => {
         setError(formatBackendError(e, t.locale));
@@ -400,7 +485,7 @@ export function LeadGateCard({ cwd, gate, onAnswered, onStale, returnFocusTo }: 
   } else {
     actions = choices.map((c) => (
       // 否定类挂 is-deny：键盘 Tab 进卡的首个落点是它（见 ApprovalCard），它只展开意见框，空格、回车都不会误提交。
-      <button key={c.id} type="button" className={c.negative ? "is-deny" : c.primary ? "btn-primary" : undefined}
+      <button key={c.id} type="button" disabled={gate.kind === "C" && c.id === "accept" && !gate.review} className={c.negative ? "is-deny" : c.primary ? "btn-primary" : undefined}
         {...busyProps(busy, () => (c.negative ? setChoice(c.id) : send(c.id)))}>
         {sending === c.id ? t.chat.leadGateSending : c.label}
       </button>
@@ -408,6 +493,19 @@ export function LeadGateCard({ cwd, gate, onAnswered, onStale, returnFocusTo }: 
   }
   return (
     <ApprovalCard returnFocusTo={returnFocusTo} className={"lead-gate-card" + (direct ? " is-direct" : "")} title={`${kindLabel} · ${gate.title}`} actions={actions}>
+      {gate.kind === "C" && !gate.review && (
+        <div className="lead-gate-error" role="status">{formatBackendError("lead/review_reissue", t.locale)}</div>
+      )}
+      {gate.kind === "C" && gate.review && (
+        <div className="lead-gate-summary chat-md is-expanded">
+          <p>{t.chat.leadReviewRevision(gate.review.revision)}</p>
+          <ul aria-label={t.chat.leadReviewScope}>
+            {gate.review.checks.filter((check) => check.leader && !check.waived && !check.passes).map((check) => (
+              <li key={check.id}>{check.id} · {check.check}</li>
+            ))}
+          </ul>
+        </div>
+      )}
       {gate.summary && (
         <div ref={summaryRef} className={"lead-gate-summary chat-md" + (expanded ? " is-expanded" : overflows ? " is-clipped" : "")}>
           <ChatMarkdown text={gate.summary} />

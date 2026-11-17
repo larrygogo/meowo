@@ -21,6 +21,16 @@ fn main() {
     // Lead 工作流 hook（用户在设置里打开 Lead 后才装）。与下面的主路径分开：只有它会输出
     // 改变 CLI 行为的内容；仍然吞掉一切错误、以 0 退出。
     if args.first().is_some_and(|arg| arg == "lead") {
+        if args.get(1).is_some_and(|operation| matches!(operation.as_str(), "initialize" | "status" | "publish" | "withdraw" | "consume")) {
+            match meowo_reporter::lead::command::run(&args[1..]) {
+                Ok(value) => println!("{value}"),
+                Err(reason) => {
+                    eprintln!("{}", serde_json::json!({"error":reason}));
+                    std::process::exit(1);
+                }
+            }
+            return;
+        }
         // 原生 TUI 的关卡等待器（kimi/gemini 在后台命令里跑）：身份全在参数里，且绝不读 stdin——
         // 后台命令的 stdin 可能是 TUI 的伪终端，读它会永远等不到 EOF。
         if args.get(1).map(String::as_str) == Some("wait") {

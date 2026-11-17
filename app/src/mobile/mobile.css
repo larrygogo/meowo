@@ -226,6 +226,7 @@ body.remote-ui .chat-window.is-remote-compact .chat-compose .chat-model-select .
   body.remote-ui button {
     touch-action: manipulation;
   }
+  body.remote-ui .chat-queue-grip { touch-action: none; }
   :where(body.remote-ui button) {
     position: relative;
   }

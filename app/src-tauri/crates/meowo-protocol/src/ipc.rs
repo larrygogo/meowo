@@ -1395,6 +1395,9 @@ pub struct LeadTaskDto {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub delivery: Option<LeadDeliveryDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub issues: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1463,6 +1466,21 @@ pub struct LeadCheckDto {
     /// 「待实测」，不和「还没做」混在一起（2026-11-12：云端 Xbot 第三期 11 条只差 beta 实测，面板只显示 5/18）。
     #[serde(default)]
     pub blocked: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub evidence: Option<Vec<LeadEvidenceDto>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LeadEvidenceDto {
+    pub command: String,
+    pub result: String,
+    pub revision: String,
+    pub reference: String,
+    pub limitations: String,
 }
 
 /// 关卡（`.lead/<task>/gate.json`）。状态 pending → answered（Meowo 写）→ consumed（agent 写）。
@@ -1483,6 +1501,21 @@ pub struct LeadGateDto {
     pub status: String,
     /// 已作答时的答复。
     pub answer: Option<LeadGateAnswerDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub review: Option<LeadReviewDto>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub version: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(export, export_to = "../../../../src/generated/contracts/"))]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LeadReviewDto {
+    pub revision: String,
+    pub checks: Vec<LeadCheckDto>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

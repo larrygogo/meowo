@@ -9,6 +9,7 @@ import type { ChatItem, ChatHistory } from "../../api";
 import { buildTranscriptTodos, type TaskUpdateCache } from "../../chat/transcriptTodos";
 import { pushEscLayer } from "../../escLayers";
 import { useT } from "../../i18n";
+import { formatBackendError } from "../../i18n/errors";
 import { latestPlan, PlanPanel } from "./PlanPanel";
 import { collectBackgroundTasks, TasksDockPanel } from "./TasksPanel";
 import { TodoListItems, type TodoRow } from "./TodoPanel";
@@ -80,7 +81,7 @@ export function DockWork({ sessionId, cwd, ccSessionId, items, history, loading,
   const t = useT();
   const [panel, setPanel] = useState<Panel | null>(null);
   const toggle = (next: Panel) => setPanel((current) => (current === next ? null : next));
-  const [leadTask, refreshLead] = useLeadTask(cwd, ccSessionId);
+  const [leadTask, refreshLead, leadFailure] = useLeadTask(cwd, ccSessionId);
 
   // claude 新版任务列表(TaskCreate/TaskUpdate)从时间线累积重建:CC 对这类 harness
   // 内部工具**不触发 PostToolUse hook**(实测:reporter 手喂事件能落库,真调用不触发),
@@ -193,6 +194,9 @@ export function DockWork({ sessionId, cwd, ccSessionId, items, history, loading,
       {!loading && (
         <div className="dock-workbar">
           {leadTask && <LeadPill task={leadTask} active={panel === "lead"} onClick={() => toggle("lead")} />}
+          {!leadTask && leadFailure && <button type="button" className="ui-pill" onClick={refreshLead} title={formatBackendError(leadFailure, t.locale)}>
+            {t.chat.leadEntry}<span className="ui-pill-meta">{t.chat.leadDataIssue}</span>
+          </button>}
           {showPlan && (
             <button type="button" className={"ui-pill" + (panel === "plan" ? " is-active" : "")} onClick={() => toggle("plan")}>
               <Icon glyph={icPencil} size={16} className="ui-pill-icon" />

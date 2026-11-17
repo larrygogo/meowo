@@ -1059,8 +1059,8 @@ export function setLeadWorkflow(enabled: boolean): Promise<void> {
 }
 
 /// 回答关卡：A 用 confirm/revise，C 用 accept/reject，B 用方案 id；note 为附加意见。
-export function answerLeadGate(cwd: string, gateId: string, choice: string, note: string): Promise<void> {
-  return invoke("answer_lead_gate", { cwd, gateId, choice, note } satisfies AnswerLeadGateArgs);
+export function answerLeadGate(cwd: string, gateId: string, choice: string, note: string, version?: string): Promise<void> {
+  return invoke("answer_lead_gate", { cwd, gateId, choice, note, ...(version ? { version } : {}) } satisfies AnswerLeadGateArgs);
 }
 
 export function retryLeadGateDelivery(cwd: string, gateId: string): Promise<void> {
