@@ -1294,6 +1294,13 @@ impl ParseState {
     /// 工具回执正文:启动回执入集,TaskOutput 拉取的终态回执出集(running/timeout 保持)。
     fn fold_tool_result_text(&mut self, text: &str) {
         if is_launch_receipt(text) {
+            // 后台 Bash 不入集：它跑着时模型并没有在干活，Claude 自己的画面也是空闲提示符加
+            // 「1 shell still running」。入集会让主回合停了的会话一直算「运行中」——实拍（2026-11-17）
+            // 盯 CI 的 shell 跑了 17 分钟，对话页一直「工作中…」、侧栏亮着运行点。它在停靠栏的
+            // 「后台 Bash」里照常显示；跑完的通知若让模型接着干，那一轮自有运行信号。
+            if text.trim_start().starts_with(BACKGROUND_SHELL_PREFIX) {
+                return;
+            }
             if let Some(id) = launch_agent_id(text) {
                 self.running_tasks.insert(id);
             }
@@ -4204,11 +4211,12 @@ mod tests {
         std::fs::remove_file(&p).ok();
     }
 
-    /// 后台 Bash(`run_in_background`)与 Agent 委派共用同一条后台任务通道:启动回执入集、
-    /// `<task-notification>` 出集。2026-08-27 实拍的漏判——主回合停了、`gh run watch` 还在
-    /// 后台跑,会话却报「等你输入」、子任务面板空白——根因就是启动侧只认 Agent 那一句。
+    /// 后台 Bash(`run_in_background`)不计入后台运行数。08-27 曾为「主回合停了、`gh run watch` 还在
+    /// 后台跑,子任务面板空白」把它入集;面板如今由停靠栏「后台 Bash」单独显示(不看这个数),
+    /// 入集只剩副作用:2026-11-17 实拍盯 CI 的 shell 跑 17 分钟,模型早停在提示符上,对话页一直
+    /// 「工作中…」、侧栏亮运行点。Claude 自己的画面同样是空闲提示符加「1 shell still running」。
     #[test]
-    fn analyzer_tracks_background_shell() {
+    fn analyzer_ignores_background_shell() {
         // 真机回执原文(id 后紧跟句点,不是空格)。
         let mut content = String::from(
             r#"{"type":"user","uuid":"l1","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"Command running in background with ID: b78nfkj1v. Output is being written to: C:\tmp\tasks\b78nfkj1v.output. You will be notified when it completes."}]}}"#,
@@ -4219,9 +4227,9 @@ mod tests {
         content.push_str(r#"{"type":"user","uuid":"srcread","message":{"content":[{"type":"tool_result","tool_use_id":"t9","content":"1296  /// Command running in background with ID: ghost1. …"}]}}"#);
         content.push('\n');
         let p = write_tmp("busy_bg_shell", &content);
-        assert_eq!(analyze_transcript(p.to_str().unwrap()).busy_subagents, 1);
+        assert_eq!(analyze_transcript(p.to_str().unwrap()).busy_subagents, 0);
 
-        // 完成通知的 <task-id> 就是 shell id——结局侧无需改动即可了结。
+        // 完成通知出集一个不在集里的 id:无事发生。
         content.push_str(r#"{"type":"user","uuid":"n1","message":{"content":"<task-notification>\n<task-id>b78nfkj1v</task-id>\n<tool-use-id>t1</tool-use-id>\n<status>completed</status>\n<summary>Background command \"gh run watch\" completed (exit code 0)</summary>\n</task-notification>"}}"#);
         content.push('\n');
         std::fs::write(&p, &content).unwrap();
@@ -4290,8 +4298,9 @@ mod tests {
             .detect_result(r#"12  /// {"message":"Successfully stopped task: x","task_id":"x"}"#)
             .is_none());
 
+        // 后台 Bash 不入集(见 analyzer_ignores_background_shell),停成功出集的路径用后台 Agent 验。
         let mut content = String::from(
-            r#"{"type":"user","uuid":"l1","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"Command running in background with ID: bvokc4arn. Output is being written to: C:\tmp\bvokc4arn.output."}]}}"#,
+            r#"{"type":"user","uuid":"l1","message":{"content":[{"type":"tool_result","tool_use_id":"t1","content":"Async agent launched successfully.\nagentId: bvokc4arn (internal ID - do not mention to user.)"}]}}"#,
         );
         content.push('\n');
         let p = write_tmp("busy_bg_stopped", &content);
