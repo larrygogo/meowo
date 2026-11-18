@@ -4614,7 +4614,7 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-diff-filecount { flex: 0 0 auto; color: var(--cc-text-faint); }
 /* 列表 / 树形分段切换，靠行尾。 */
 .chat-diff-layout { flex: none; margin-left: auto; display: inline-flex; gap: 2px; padding: 2px; border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); }
-.chat-diff-layout button { display: inline-flex; align-items: center; gap: var(--sp-4); height: calc(var(--btn-h-sm) * var(--cc-ui)); padding: 0 var(--sp-8); border: 0; border-radius: calc(var(--radius-md) - 2px); background: transparent; color: var(--cc-text-faint); font: inherit; font-size: var(--text-xs); cursor: pointer; }
+.chat-diff-layout button { display: inline-flex; align-items: center; justify-content: center; gap: var(--sp-4); height: calc(var(--btn-h-sm) * var(--cc-ui)); padding: 0 var(--sp-8); border: 0; border-radius: calc(var(--radius-md) - 2px); background: transparent; color: var(--cc-text-faint); font: inherit; font-size: var(--text-xs); cursor: pointer; }
 .chat-diff-layout button:hover { color: var(--cc-text); }
 .chat-diff-layout button[aria-pressed="true"] { color: var(--cc-text); background: var(--fill-selected); }
 /* 面板窄时切换钮只留图标（文字在读屏名里），把宽度让给分支名。 */
