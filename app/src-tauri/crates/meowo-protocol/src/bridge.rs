@@ -419,6 +419,12 @@ bridged_args!(GetSubagentTranscriptArgs {
     tool_use_id: String
 });
 
+bridged_args!(ProbeSubagentStatesArgs {
+    #[cfg_attr(test, ts(type = "number"))]
+    session_id: i64,
+    tool_use_ids: Vec<String>
+});
+
 bridged_args!(ManagedTerminalSnapshotArgs {
     #[cfg_attr(test, ts(type = "number"))]
     session_id: i64,

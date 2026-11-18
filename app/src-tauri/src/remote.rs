@@ -150,6 +150,8 @@ pub(crate) const BRIDGED_COMMANDS: &[&str] = &[
     // 对话流
     "get_chat_history",
     "get_subagent_transcript",
+    // 子任务面板的 token 与最初委派的说明（只读侧车）：不放行时手机上续上的子代理名字退回消息正文。
+    "probe_subagent_states",
     "refresh_session_model",
     "refresh_session_todos",
     // 托管 PTY（发送/打断/答题都经 write_managed_terminal 的按键序列）
@@ -1379,6 +1381,10 @@ async fn dispatch(app: &tauri::AppHandle, command: &str, body: &[u8]) -> Respons
         "get_subagent_transcript" => {
             let a = args!(GetSubagentTranscriptArgs);
             reply(crate::chat::get_subagent_transcript(state, a.session_id, a.tool_use_id).await)
+        }
+        "probe_subagent_states" => {
+            let a = args!(ProbeSubagentStatesArgs);
+            reply(crate::chat::probe_subagent_states(state, a.session_id, a.tool_use_ids).await)
         }
         "refresh_session_model" => {
             let a = args!(SessionArg);
@@ -2743,6 +2749,11 @@ mod tests {
             // api.ts:193
             "get_subagent_transcript" => {
                 parse::<GetSubagentTranscriptArgs>(br#"{"sessionId":7,"toolUseId":"tu-1"}"#)
+                    .map(|_| ())
+            }
+            // api.ts probeSubagentStates
+            "probe_subagent_states" => {
+                parse::<ProbeSubagentStatesArgs>(br#"{"sessionId":7,"toolUseIds":["tu-1"]}"#)
                     .map(|_| ())
             }
             // api.ts:362（since 可选）

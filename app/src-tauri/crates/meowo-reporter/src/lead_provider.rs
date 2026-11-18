@@ -378,6 +378,8 @@ pub(crate) fn claim_target(data: &Value) -> Option<PathBuf> {
             let task = path.canonicalize().ok()?;
             (task.is_dir() && task.parent()?.file_name()? == ".lead").then_some(task)
         })
+        // 任务名只在变量里、cd 进 `.lead` 的写法：与 Claude 同一套认法（只对写入类调用）
+        .or_else(|| lead::ownership::claim_target(data))
 }
 
 /// 显式 Provider 参数只来自已安装的 hook 命令；未知 provider 不回退成 Claude。
