@@ -49,8 +49,11 @@ export function collectBackgroundTasks(items: ChatItem[], live: SessionLive = AS
     // 被 SendMessage 续上的子代理，最初那次委派不在已载入的窗口里（首屏只有末尾一屏）时，续上
     // 回执的 task_id 找不到归属，结局就挂在 SendMessage 自己身上——由它代表这个子代理，否则
     // 终端里在跑的子代理面板上看不见（实拍 2026-11-18）。最初的委派在窗口里时，结局归它，不重复。
-    const resumedHere = !isShell && item.name === "SendMessage" && !!outcomes.get(item.id)?.task_id;
-    if (!isShell && !resumedHere && !isSubagentDelegation(item, outcomes)) continue;
+    // 判据不看工具名（类别只认后端给的 kind）：这条调用自己的回执让某个 task_id 开跑、而那个 task_id
+    // 此前没有归属——正是「续上一个不在窗口里的子代理」的形状（SendMessage 的续上回执）。
+    const delegation = !isShell && isSubagentDelegation(item, outcomes);
+    const resumedHere = !isShell && !delegation && runningSince.has(item.id) && !!outcomes.get(item.id)?.task_id;
+    if (!isShell && !resumedHere && !delegation) continue;
     const outcome = outcomes.get(item.id);
     const state: BackgroundTask["state"] = !outcome
       ? (live.activity !== "idle" && index > turnStart ? "run" : "stop")
