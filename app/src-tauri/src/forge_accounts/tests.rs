@@ -657,3 +657,36 @@ fn 令牌被拒要回查确认才标重登() {
     assert!(report_with(&path, &account.key(), &token, Some(&token), true, true, &rejected));
     assert!(!load_list(&path)[0].needs_relogin);
 }
+
+/// 复核指出：续期回 502 / 503 / 429 / 维护页也一律算「被拒」，账号被永久标重登。现在只有 400 / 401 且
+/// error 是 invalid_grant / invalid_client 才算被拒；5xx、429、不是 JSON 的回包都当暂时失败。
+#[test]
+fn 续期遇到服务器暂时故障不标重登() {
+    let vault = MemVault::default();
+    let vaults = vault.open();
+    let tokens = OauthTokens { access: Token::secret("ACC1").unwrap(), refresh: Token::secret("REF1"), expires_in: Some(30) };
+    let cases: Vec<(u16, &str, bool)> = vec![
+        (503, r#"{"error":"temporarily_unavailable"}"#, false),
+        (502, "<html>Bad gateway</html>", false),
+        (429, r#"{"message":"Retry later"}"#, false),
+        (500, "", false),
+        (200, "<html>maintenance</html>", false),
+        (400, r#"{"error":"invalid_grant","error_description":"The provided authorization grant is invalid"}"#, true),
+        (401, r#"{"error":"invalid_client"}"#, true),
+        (400, r#"{"error":"invalid_request"}"#, false),
+    ];
+    for (i, (status, body, rejected)) in cases.into_iter().enumerate() {
+        let path = sandbox(&format!("refresh-transient-{i}"));
+        let account = Account { platform: "gitlab".into(), host: "gitlab.com".into(), login: format!("u{i}"), ..Default::default() };
+        let stored = store_oauth(&path, &vaults, account, &tokens, 0).unwrap();
+        let body = body.to_string();
+        let http = FakeHttp::new(move |_, _, _, _| Ok(Response { status, body: body.clone(), ..Default::default() }));
+        let got = refresh_with(&path, &vaults, &http, "cid", &stored.key(), 1_000);
+        if rejected {
+            assert_eq!(got, Refresh::Rejected, "{status}");
+        } else {
+            assert_eq!(got, Refresh::Current(Some(Token::secret("ACC1").unwrap())), "{status}");
+        }
+        assert_eq!(load_list(&path)[0].needs_relogin, rejected, "{status}");
+    }
+}

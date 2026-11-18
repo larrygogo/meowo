@@ -719,13 +719,16 @@ pub(crate) fn oauth_refresh(http: &dyn ForgeHttp, host: &str, client_id: &str, r
     ];
     let resp = form(http, &url, pairs).map_err(|e| crate::forge::http::network_error(&e))?;
     let v = json(&resp.body);
-    if resp.status != 200 {
-        return Err(format!(
-            "forge/login_failed: {}",
-            v.get("error").and_then(|e| e.as_str()).unwrap_or("refresh")
-        ));
+    let error = v.get("error").and_then(|e| e.as_str()).unwrap_or_default();
+    // 只有授权服务器明说刷新令牌 / 客户端不认（RFC 6749 §5.2 的 invalid_grant / invalid_client，400 或 401）才算被拒，
+    // 要用户重新登录；5xx、429、维护页、不是 JSON 的回包都是暂时的，下次再续（复核指出以前一律标重登）。
+    if matches!(resp.status, 400 | 401) && matches!(error, "invalid_grant" | "invalid_client") {
+        return Err(format!("forge/login_failed: {error}"));
     }
-    tokens_of(&v).ok_or_else(|| "forge/login_failed: bad response".into())
+    if resp.status != 200 {
+        return Err(format!("forge/network: HTTP {}{}", resp.status, if error.is_empty() { String::new() } else { format!(" {error}") }));
+    }
+    tokens_of(&v).ok_or_else(|| "forge/network: bad refresh response".into())
 }
 
 /// 设备码登录的令牌落库：访问令牌与刷新令牌进凭据库，清单记 oauth 与过期时刻。
