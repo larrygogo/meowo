@@ -65,16 +65,20 @@ describe("面板浏览器", () => {
 
   it("agent 操作时显示提示，可以接管；接管后可以交还", () => {
     const { rerender } = render(<BrowserPane info={pane({ agentActive: true })} visible suggestions={[]} />);
-    expect(screen.getByRole("status").textContent).toContain("网页输入已锁定");
+    expect(screen.getByRole("status").textContent).toContain("Agent 正在控制此页面");
+    expect(document.querySelector(".browser-pane-view")?.classList.contains("is-agent")).toBe(true);
     expect(screen.getByRole("textbox", { name: "搜索或输入网址" }).hasAttribute("disabled")).toBe(true);
     expect(screen.getByRole("button", { name: "后退" }).hasAttribute("disabled")).toBe(true);
-    expect(screen.getByRole("button", { name: "接管" }).hasAttribute("disabled")).toBe(false);
-    fireEvent.click(screen.getByRole("button", { name: "接管" }));
+    expect(screen.getByRole("button", { name: "我来接管" }).hasAttribute("disabled")).toBe(false);
+    fireEvent.click(screen.getByRole("button", { name: "我来接管" }));
     expect(invoke).toHaveBeenCalledWith("browser_pane_set_agent_paused", { id: 5, paused: true });
     rerender(<BrowserPane info={pane({ agentPaused: true })} visible suggestions={[]} />);
     expect(screen.getByRole("textbox", { name: "搜索或输入网址" }).hasAttribute("disabled")).toBe(false);
     expect(screen.getByRole("button", { name: "后退" }).hasAttribute("disabled")).toBe(false);
-    fireEvent.click(screen.getByRole("button", { name: "交还" }));
+    // 接管后：不再画绿框，提示条显示已接管多久。
+    expect(document.querySelector(".browser-pane-view")?.classList.contains("is-agent")).toBe(false);
+    expect(screen.getByRole("status").textContent).toContain("你已接管0:00");
+    fireEvent.click(screen.getByRole("button", { name: "交还 Agent" }));
     expect(invoke).toHaveBeenCalledWith("browser_pane_set_agent_paused", { id: 5, paused: false });
     rerender(<BrowserPane info={pane()} visible suggestions={[]} />);
     expect(screen.queryByRole("status")).toBeNull();

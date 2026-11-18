@@ -4501,8 +4501,14 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .browser-pane-url:disabled { opacity: .55; cursor: default; }
 .browser-pane-error { flex: none; padding: var(--sp-6) var(--sp-10); color: var(--cc-fail-text); font-size: var(--text-xs); }
 /* agent 操作提示条：在工具栏下方，网页之上（不压在原生视图上，原生视图在它下面开始）。 */
-.browser-pane-agent { flex: none; display: flex; align-items: center; gap: var(--sp-8); padding: var(--sp-6) var(--sp-10); border-bottom: var(--hairline) solid var(--cc-border); color: var(--cc-text); background: var(--fill-hover); font-size: var(--text-xs); }
-.browser-pane-agent.is-paused { background: var(--fill-hover); color: var(--cc-text-faint); }
+/* 控制中：浅绿底，和下方网页四周的绿框连成一块（框见 .browser-pane-view.is-agent），绿色也是网页里
+   Agent 鼠标的颜色。原先是一条灰底小字，和「出了什么提示」的其他横条长得一样，用户说不好看、
+   不如 Kimi（2026-11-18 截图）。接管后退回中性灰底，显示已接管多久。 */
+.browser-pane-agent { flex: none; display: flex; align-items: center; gap: var(--sp-8); min-width: 0; padding: var(--sp-6) var(--sp-8) var(--sp-6) var(--sp-10); color: var(--cc-text); background: color-mix(in srgb, var(--cc-ok-vivid) 14%, var(--cc-bg)); font-size: var(--text-xs); }
+.browser-pane-agent.is-paused { border-bottom: var(--hairline) solid var(--cc-border); background: var(--fill-hover); }
+.browser-pane-agent-text { flex: 1 1 auto; min-width: 0; display: flex; align-items: baseline; gap: var(--sp-6); overflow: hidden; white-space: nowrap; }
+.browser-pane-agent-text strong { flex: none; font-weight: 600; }
+.browser-pane-agent-text span { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--cc-text-dim); font-variant-numeric: tabular-nums; }
 /* 网页权限请求与下载提示（BrowserPane.tsx）。与 agent 提示条同一条横条语言，画在网页区域上方的
    HTML 里：原生网页视图盖不住它，页签切走时随面板一起藏，不像 WebView2 原生框那样四处飘。 */
 .browser-pane-notice { flex: none; display: flex; align-items: center; gap: var(--sp-8); min-width: 0; padding: var(--sp-6) var(--sp-10); border-bottom: var(--hairline) solid var(--cc-border); color: var(--cc-text); background: var(--fill-hover); font-size: var(--text-xs); }
@@ -4519,7 +4525,7 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .browser-pane-notice .browser-pane-notice-close:hover { color: var(--cc-text); }
 .browser-pane-agent-dot { flex: none; margin-inline: 3px; width: 8px; height: 8px; border-radius: 50%; background: var(--cc-ok-vivid); animation: browser-agent-pulse var(--dur-pulse) var(--ease-in-out) infinite; }
 .browser-pane-agent.is-paused .browser-pane-agent-dot { animation: none; background: var(--cc-text-faint); }
-.browser-pane-agent button { margin-left: auto; height: calc(var(--btn-h-sm) * var(--cc-ui)); padding: 0 var(--sp-10); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-sm); color: var(--cc-text); background: var(--cc-bg); font: inherit; cursor: pointer; }
+.browser-pane-agent button { flex: none; margin-left: auto; height: calc(var(--btn-h-sm) * var(--cc-ui)); padding: 0 var(--sp-10); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-sm); color: var(--cc-text); background: var(--cc-bg); font: inherit; cursor: pointer; }
 .side-panel-tab-agent { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--cc-ok-vivid); animation: browser-agent-pulse var(--dur-pulse) var(--ease-in-out) infinite; }
 /* 呼吸只变颜色、不变透明度：灯压在图标上，半透明时会透出下面的线条（实拍）。
    暗相是强调色和底色按比例混出来的实色，始终不透明。 */
@@ -4530,8 +4536,11 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 /* 网页在等用户答复权限请求：琥珀色静态点（与「待批准」同色系），区别于 agent 操作中的脉冲点。 */
 .side-panel-tab-waiting { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--cc-warn-vivid); }
 .chat-panel-waiting-dot { position: absolute; top: 4px; right: 4px; width: 7px; height: 7px; border-radius: 50%; background: var(--cc-warn-vivid); box-shadow: 0 0 0 2px var(--cc-bg); }
-@media (prefers-reduced-motion: reduce) { .browser-pane-agent-dot, .side-panel-tab-agent, .chat-panel-agent-dot { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .browser-pane-agent-dot, .side-panel-tab-agent, .chat-panel-agent-dot, .browser-pane-view.is-agent { animation: none; } }
 .browser-pane-view { position: relative; flex: 1; min-height: 0; background: var(--cc-bg); }
+/* Agent 控制中：占位区域留 3px 内边距，原生网页只盖内容区（BrowserPane 量位置时扣掉它），
+   露出来的一圈就是绿框，跟着提示条上的点一起呼吸。 */
+.browser-pane-view.is-agent { padding: 3px; background: var(--cc-ok-vivid); animation: browser-agent-pulse calc(var(--dur-pulse) * 2) var(--ease-in-out) infinite; }
 .browser-pane-start { padding: var(--sp-30) var(--sp-18); color: var(--cc-text-faint); font-size: var(--text-xs); text-align: center; }
 .browser-pane-start ul { margin: var(--sp-14) 0 0; padding: 0; list-style: none; display: flex; flex-direction: column; align-items: center; gap: var(--sp-6); }
 .browser-pane-start button { padding: var(--sp-4) var(--sp-10); border: var(--hairline) solid var(--cc-border); border-radius: var(--radius-md); color: var(--cc-text); background: transparent; font: inherit; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; cursor: pointer; }

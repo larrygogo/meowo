@@ -31,6 +31,22 @@ export function occluded(area: DOMRect, root: ParentNode = document): boolean {
   return false;
 }
 
+/// 接管了多久（m:ss），每秒走一次；没在接管时不起定时器。
+function usePausedFor(paused: boolean): string {
+  const [since, setSince] = useState<number | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!paused) { setSince(null); return; }
+    const start = Date.now();
+    setSince(start);
+    setNow(start);
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [paused]);
+  const seconds = since === null ? 0 : Math.max(0, Math.floor((now - since) / 1000));
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
 /**
  * 面板「浏览器」页签：地址栏 + 一块占位区域。真正的网页是后端在 chat 窗口里叠的原生
  * 子 webview（browser_pane.rs），这里负责把占位区域的位置实时报过去。
@@ -50,6 +66,7 @@ export function BrowserPane({ info, visible, suggestions }: {
   const inputLocked = info.agentActive && !info.agentPaused;
   const [draft, setDraft] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const pausedFor = usePausedFor(!!info.agentPaused);
   const showNative = visible && !blank;
 
   // 位置同步：面板拖宽、最大化、窗口缩放、DOM 里冒出菜单/弹窗，都重新量一次。
@@ -68,7 +85,9 @@ export function BrowserPane({ info, visible, suggestions }: {
       frame = 0;
       const rect = host.getBoundingClientRect();
       const show = rect.width > 0 && rect.height > 0 && !occluded(rect);
-      const bounds = { x: rect.left, y: rect.top, width: rect.width, height: rect.height };
+      // 原生视图只盖内容区：Agent 控制时占位区域留一圈内边距画边框（见 .browser-pane-view.is-agent）。
+      const inset = parseFloat(getComputedStyle(host).paddingTop) || 0;
+      const bounds = { x: rect.left + inset, y: rect.top + inset, width: Math.max(0, rect.width - inset * 2), height: Math.max(0, rect.height - inset * 2) };
       const key = show ? `${bounds.x},${bounds.y},${bounds.width},${bounds.height}` : "hidden";
       if (key === last) return;
       last = key;
@@ -89,7 +108,7 @@ export function BrowserPane({ info, visible, suggestions }: {
       // 卸载（关面板、换会话）时一定要藏起来：原生视图不会跟着 DOM 消失。
       void setBrowserPaneBounds(info.id, { x: 0, y: 0, width: 0, height: 0 }, false).catch(() => {});
     };
-  }, [info.id, showNative]);
+  }, [info.id, showNative, inputLocked]);
 
   // 新开的空白页签直接把光标放进地址栏。
   useEffect(() => {
@@ -206,12 +225,19 @@ export function BrowserPane({ info, visible, suggestions }: {
           ] satisfies (PathMenuItem | "sep")[]}
         />
       )}
-      {/* agent 操作时的提示与接管（同 Kimi Code「你可以随时查看 Agent 的操作并接管」）。 */}
+      {/* agent 操作时的提示与接管（同 Kimi Code「Agent 正在控制此标签页 / 我来接管 / 已接管时长」）。
+          控制中：提示条与网页四周的边框同一个绿色（也是网页里 Agent 鼠标的颜色），连成一体，
+          一眼看出「这块现在归 Agent」；接管后退回中性色，显示已接管多久。 */}
       {(info.agentActive || info.agentPaused) && (
         <div className={"browser-pane-agent" + (info.agentPaused ? " is-paused" : "")} role="status">
           <span className="browser-pane-agent-dot" aria-hidden="true" />
-          <span>{info.agentPaused ? t.chat.browserAgentPaused : inputLocked && isWindows() ? t.chat.browserAgentActiveDetail : t.chat.browserAgentActive}</span>
-          <button type="button" onClick={() => void setBrowserPaneAgentPaused(info.id, !info.agentPaused).catch(() => {})}>
+          <span className="browser-pane-agent-text">
+            <strong>{info.agentPaused ? t.chat.browserAgentPaused : t.chat.browserAgentActive}</strong>
+            {info.agentPaused
+              ? <span>{pausedFor} · {t.chat.browserAgentPausedDetail}</span>
+              : inputLocked && isWindows() && <span>{t.chat.browserAgentActiveDetail}</span>}
+          </span>
+          <button type="button" className={info.agentPaused ? undefined : "btn-primary"} onClick={() => void setBrowserPaneAgentPaused(info.id, !info.agentPaused).catch(() => {})}>
             {info.agentPaused ? t.chat.browserAgentResume : t.chat.browserAgentTakeOver}
           </button>
         </div>
@@ -241,7 +267,7 @@ export function BrowserPane({ info, visible, suggestions }: {
         />
       )}
       {error && <div className="browser-pane-error" role="alert">{error}</div>}
-      <div ref={hostRef} className="browser-pane-view">
+      <div ref={hostRef} className={"browser-pane-view" + (inputLocked && !blank ? " is-agent" : "")}>
         {blank && (
           <div className="browser-pane-start">
             <p>{t.chat.browserStartHint}</p>
