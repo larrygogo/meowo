@@ -417,7 +417,9 @@ export const zh = {
     removed: "worktree 已删除",
     removedKeepBranch: "worktree 已删除，本地分支没能删掉",
     dirMissing: "目录已删除",
-    dirMissingTip: "这个会话的目录已经删掉了，没法再打开或恢复",
+    // 手机列表卡上接在标签后面（桌面侧栏太窄，只在悬停提示里说）。
+    dirMissingMore: " · 只能查看",
+    dirMissingTip: "目录已删除：可以查看历史，不能继续对话",
     confirmTitle: "删除 worktree",
     confirmMessage: (path: string, branch: string) =>
       `将删除目录 ${path}，并删除本地分支 ${branch}。远端分支不动。\n\n这一步不能撤销。`,
@@ -1356,6 +1358,13 @@ export const zh = {
     // 一句说清现状与代价（用户实拍：两句长文把按钮挤到第二行）。点按钮后的确认框再写细节。
     sendNeedsTakeover: "会话在外部终端运行，接管会结束它",
     composerGateEnded: "会话已结束。恢复后即可继续对话。",
+    // 目录已删除的会话（worktree 被清理、目录被手动删了）：只读回看，不给恢复——agent 按目录找会话记录，换目录续不上。
+    dirGoneBanner: "这个会话的目录已经删掉了，可以查看历史，不能继续对话。",
+    dirGoneInput: "目录已删除，只能查看历史",
+    dirGoneNewIn: (name: string) => `在 ${name} 新开会话`,
+    dirGoneNewInTip: (path: string) => `在原项目 ${path} 里新开一个会话`,
+    dirGoneNew: "新建会话",
+    dirGoneNoReopen: "目录已删除，放回进行中也没法继续",
     // 已删除的「Meowo 托管」会话在旧库里只读保留（对话依托官方 CLI，leader 2026-11-13）。
     managedRetired: "这种会话已停用，对话改用官方 CLI",
     managedRetiredOpenCli: "用官方 CLI 打开",

@@ -327,13 +327,16 @@ pub(crate) struct LiveItem {
     /// PTY/审批/收尾都归安装版，本实例只有观察权。id 已加 [`FOREIGN_ID_OFFSET`] 防撞：
     /// 即使某个操作入口漏禁，本库也无此行，落空成 no-op 而不是改错会话。
     foreign: bool,
-    /// 会话工作目录已经不在磁盘上（worktree 被清理、目录被手动删掉）。前端据此在卡片上标
-    /// 「目录已删除」，并把打开/恢复改成提示——否则点下去只会得到一个看不懂的启动失败。
-    /// 只对已归档会话检查：进行中会话的目录没了是另一回事，照旧走原来的报错路径；
-    /// 而且归档列表很长时每次刷新都 stat 一遍没必要扩大到全部会话。
-    cwd_missing: bool,
+    /// 会话工作目录已经不在磁盘上（worktree 被清理、目录被手动删掉），且进程不在。前端据此在
+    /// 卡片上标「目录已删除 · 只能查看」，打开后只读回看历史、输入区换成说明与「新开会话」——
+    /// 恢复注定失败（agent 按目录找会话记录，换个目录续不上），不给这个按钮。
+    /// 已完成与进行中一视同仁：进行中的会话目录没了同样续不上，不标的话点进去只看到「恢复会话」
+    /// 按钮和一句看不懂的启动失败。连着的会话不标（见 enrich）。每行一次 stat，与 origin_root 的读盘同量级。
+    pub(crate) cwd_missing: bool,
     /// 会话开在 linked worktree 里时，主检出的根目录（包 5）。前端分组键 = `origin_root ?? cwd`，
     /// worktree 会话因此归到原项目下。主检出、非 git 目录为 None（见 wtnew::origin）。
+    /// 目录已删（cwd_missing）时换成推出来的原项目（库里记过的、或按路径形状猜的，必须仍在磁盘上），
+    /// 前端的「在原项目新开会话」与分组都用它；推不出为 None。
     /// 「隐藏工作区」仍按会话自己的 cwd，不受它影响。
     pub(crate) origin_root: Option<String>,
 }
@@ -767,7 +770,7 @@ fn cwd_key(dir: &str) -> String {
 }
 
 /// 记过工作目录、但磁盘上已经没有这个目录。没记录 cwd 的老会话不算「已删除」。
-fn cwd_is_missing(cwd: Option<&str>) -> bool {
+pub(crate) fn cwd_is_missing(cwd: Option<&str>) -> bool {
     cwd.map(str::trim)
         .is_some_and(|c| !c.is_empty() && !Path::new(c).is_dir())
 }
@@ -1263,7 +1266,20 @@ pub(crate) fn live_sessions_blocking(
             }
         }
     }
+    fill_missing_origins(&store, &mut items);
     Ok(LiveSessionsPage { items, next_cursor })
+}
+
+/// 目录已删的卡补上原项目（见 LiveItem::origin_root）。这类卡少，逐条查一次库不成问题。
+fn fill_missing_origins(store: &meowo_store::Store, items: &mut [LiveItem]) {
+    for item in items.iter_mut().filter(|item| item.cwd_missing && !item.foreign) {
+        let recorded = store.session_origin_root(item.inner.session.id).ok().flatten();
+        item.origin_root = item
+            .inner
+            .cwd
+            .as_deref()
+            .and_then(|cwd| crate::wtnew::origin::origin_for_missing(recorded.as_deref(), cwd));
+    }
 }
 
 /// 列表的丢弃规则（与 store 的 live_sessions_totals / live_count_candidates 口径对齐）：
@@ -1335,8 +1351,10 @@ fn enrich(
         return None;
     }
     let unread = crate::watch::is_unread(session.session.id);
-    let cwd_missing = session.archived && cwd_is_missing(session.cwd.as_deref());
-    // 目录已删的不推算：.git 文件跟着没了，推不出来，也不必为它读盘。
+    // 进程还连着的不算：它就在那个目录里跑（Windows 上目录被占着也删不掉），能不能继续由它自己说了算。
+    let cwd_missing = !connected && cwd_is_missing(session.cwd.as_deref());
+    // 目录已删的不在这里推算：.git 文件跟着没了，现场推不出来；改由 live_sessions_blocking
+    // 读库里记下的原项目、按路径形状猜（见 wtnew::origin::origin_for_missing）。
     let origin_root = if cwd_missing {
         None
     } else {

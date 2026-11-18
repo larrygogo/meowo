@@ -1798,3 +1798,36 @@ fn migrate_drops_the_unused_events_table() {
 
     let _ = std::fs::remove_file(&path);
 }
+
+/// v31 老库 open 后补上 origin_root（v32）：标记完成、删 worktree 时记下原项目，
+/// 目录删掉以后靠它给「在原项目新开会话」。没记过的会话读回 None。
+#[test]
+fn migrate_adds_origin_root_and_roundtrips() {
+    let path = std::env::temp_dir().join(format!("meowo-mig-v31-{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&path);
+    {
+        let store = Store::open(&path).unwrap();
+        drop(store);
+        // 退回 v31 的形状：删掉新列、版本号压回 31。
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        conn.execute_batch("ALTER TABLE sessions DROP COLUMN origin_root; PRAGMA user_version = 31;")
+            .unwrap();
+    }
+    let store = Store::open(&path).unwrap();
+    assert_eq!(store.user_version().unwrap(), Store::CURRENT_USER_VERSION);
+    let pid = store.upsert_project_by_root("/p", "p", 1).unwrap();
+    let (a, _) = store.start_session(pid, "wt", 1).unwrap();
+    let (b, _) = store.start_session(pid, "plain", 2).unwrap();
+    assert_eq!(store.session_origin_root(a).unwrap(), None);
+    store
+        .set_session_origin_root(a, "C:/w/repo")
+        .expect("v31 老库 open 后 origin_root 列应已补上");
+    assert_eq!(store.session_origin_root(a).unwrap().as_deref(), Some("C:/w/repo"));
+    assert_eq!(store.session_origin_root(b).unwrap(), None);
+    assert_eq!(store.session_origin_root(9999).unwrap(), None, "会话不存在也不报错");
+
+    drop(store);
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+    }
+}

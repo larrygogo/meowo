@@ -23,7 +23,7 @@ import { chatMock } from "../src/demo/chatData";
 import { panelMock } from "../src/demo/panelData";
 import { savePanel } from "../src/views/chat/panelTabs";
 import { NEW_SESSION_EVENT } from "../src/remoteMode";
-import { CHAT_SESSION_ID, FIXED_NOW, leadTask, markReady, MENTION_CANDIDATES, questionInput, scmMock } from "./fixtures";
+import { CHAT_SESSION_ID, DIR_GONE_HISTORY, FIXED_NOW, goneSessions, leadTask, markReady, MENTION_CANDIDATES, questionInput, scmMock } from "./fixtures";
 import "../src/fonts";
 import "../src/styles.css";
 import "../src/mobile/mobile.css";
@@ -52,7 +52,7 @@ const tmsNew = scene.startsWith("mobile-tms-new-");
 const cardScene = scene.startsWith("mobile-card-") ? scene.slice("mobile-card-".length) : null;
 // mobile-tools-<家>-<状态>：五家的工具行与运行状态（数据在 toolScenes.ts，与桌面 flow-tools-* 同一份）。
 const toolScene = scene.startsWith("mobile-tools-") ? scene.slice("mobile-tools-".length) : null;
-const inChat = tmsChat || cardScene !== null || toolScene !== null || scene === "mobile-chat" || scene === "mobile-changes" || scene === "mobile-idle" || scene === "mobile-lead" || scene === "mobile-lead-c" || scene === "mobile-question" || scene === "mobile-tasks" || scene === "mobile-queued" || scene === "mobile-checkpoints" || scene === "mobile-pr-review";
+const inChat = tmsChat || cardScene !== null || toolScene !== null || scene === "mobile-chat" || scene === "mobile-dir-gone" || scene === "mobile-changes" || scene === "mobile-idle" || scene === "mobile-lead" || scene === "mobile-lead-c" || scene === "mobile-question" || scene === "mobile-tasks" || scene === "mobile-queued" || scene === "mobile-checkpoints" || scene === "mobile-pr-review";
 /// 后台任务的假数据：判据是「回执带子任务结局」（与 TasksPanel 同口径），一条调用配一条回执。
 function taskItems(zh: boolean): unknown[] {
   const at = (minutes: number) => new Date(FIXED_NOW - minutes * 60_000).toISOString();
@@ -123,6 +123,11 @@ setExtraMock((cmd, args) => {
   // 列表的空态与首载失败。
   if (cmd === "get_live_sessions_page" && scene === "mobile-list-empty") return [];
   if (cmd === "get_live_sessions_page" && scene === "mobile-list-error") throw new Error("offline");
+  // 「已完成」列表混着目录已删除的会话，条数多过一屏（卡片不许被压扁、标签不许溢出到下一张卡）。
+  if (cmd === "get_live_sessions_page" && scene === "mobile-list-gone") return goneSessions(lang);
+  // 目录已删除的会话点开：只读回看，输入区换成说明与「在原项目新开会话」。
+  if (scene === "mobile-dir-gone" && cmd === "pending_interaction") return { approval: null, question: null };
+  if (scene === "mobile-dir-gone" && cmd === "get_chat_history") return { ...(chat(cmd) as object), ...DIR_GONE_HISTORY };
   return checkpointSceneMock(cmd) ?? reviewSceneMock(cmd) ?? scmMock(cmd) ?? panel(cmd, args) ?? chat(cmd);
 });
 installMocks("chat");

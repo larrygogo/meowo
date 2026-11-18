@@ -1086,6 +1086,40 @@ fn count_other_sessions(db_path: &Path, exclude: &[i64], top: &str) -> u32 {
         .count() as u32
 }
 
+/// worktree 删掉之后的善后（只改标记、不删任何会话数据）：
+/// - 目录里的会话都记下原项目，目录没了以后照样能给「在原项目新开会话」；
+/// - 发起删除的会话若还没标记完成就顺手标上——它的目录已经没了，留在「进行中」只会是一张续不上的卡。
+///   同目录的其他会话不用管：没标记完成的会话在用这个目录时，判定会以 shared_session 拒绝删除。
+pub(crate) fn after_removal(
+    store: &meowo_store::Store,
+    session_id: i64,
+    inside: &[i64],
+    origin: Option<&Path>,
+) {
+    if let Some(origin) = origin {
+        let origin = origin.to_string_lossy().replace('\\', "/");
+        for &id in inside {
+            let _ = store.set_session_origin_root(id, &origin);
+        }
+    }
+    if store.session_header(session_id).is_ok_and(|h| !h.archived) {
+        let _ = store.set_session_archived(session_id, true, super::now_ms());
+    }
+}
+
+/// cwd 落在 `top` 里的全部会话（已完成与进行中）。
+pub(crate) fn sessions_inside(store: &meowo_store::Store, top: &str) -> Vec<i64> {
+    let top = norm(Path::new(top));
+    store
+        .archived_session_cwds()
+        .into_iter()
+        .chain(store.unarchived_session_cwds())
+        .flatten()
+        .filter(|(_, cwd)| is_under(&norm(Path::new(cwd)), &top))
+        .map(|(id, _)| id)
+        .collect()
+}
+
 fn session_dir(db_path: &Path, session_id: i64) -> Result<PathBuf, String> {
     let store = super::open_store(db_path)?;
     let cwd = store
@@ -1127,14 +1161,25 @@ pub(crate) async fn remove_session_worktree(
     let db_path = state.db_path.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         let dir = session_dir(&db_path, session_id)?;
+        // 原项目和目录里有哪些会话都要在删之前算：删完 `.git` 文件没了，路径也规范化不了。
+        let origin = crate::wtnew::origin::origin_root_of(&dir);
+        let inside = super::open_store(&db_path)
+            .map(|store| sessions_inside(&store, &expected_path))
+            .unwrap_or_default();
         // 同一个 worktree 下其他已归档会话不算「在用」：它们本来就会跟着一起显示「目录已删除」。
-        remove_dir_worktree(
+        let result = remove_dir_worktree(
             &dir,
             &expected_path,
             &|top| count_other_sessions(&db_path, &[session_id], top),
             &pr_lookup,
             &confirmed_pids,
-        )
+        );
+        if matches!(&result, Ok(r) if r.removed) {
+            if let Ok(store) = super::open_store(&db_path) {
+                after_removal(&store, session_id, &inside, origin.as_deref());
+            }
+        }
+        result
     })
     .await
     .map_err(|e| e.to_string())?;

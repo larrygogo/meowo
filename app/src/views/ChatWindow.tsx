@@ -5,7 +5,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 // Tauri 事件反而直接给**源路径**,附件协议正好只要路径)。
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import { pathKey, unquotePath } from "../paths";
+import { folderName, pathKey, unquotePath } from "../paths";
 import { COMPACTING_ACTIVITY } from "../activity";
 import { appConfirm } from "../confirm";
 import { forkSession, agentChatUi, attachBackgroundSession, sendBackgroundPrompt, clipboardRestore, clipboardSetImage, confirmStopSession, dismissInteractiveQuestion, getChatHistory, getGitChangesOverview, getGitDiffSummary, getLiveSessionsPage, getSessionLineage, isExternallyHeld, managedTerminalBinding, managedTerminalPendingLaunch, managedTerminalScreen, managedTerminalSnapshot, openNewSessionWindow,  refreshSessionModel, refreshSessionTodos, renameSession as renameSessionCmd, savePastedAttachment, sessionLaunchSelections, setArchived as setArchivedCmd, historyTone, historyTurnTone, liveSessionTone, startManagedTerminal, copySessionToProvider, takeoverManagedTerminal, writeManagedTerminal, type AgentId, type ChatHistory, type ChatItem, type ChatUi, type GitDiffSummaryDto, type RepoChangesDto, type LiveSession, type ModelPreset, type PendingApproval, type RuntimeRequest } from "../api";
@@ -221,6 +221,11 @@ export function ChatWindow() {
   // 已停用的「Meowo 托管」会话（托管路线已删，旧库里的只读保留）：门卡换成停用说明，
   // 有原生会话 id 时给「用官方 CLI 打开」（走原生恢复路径）。
   const retiredManaged = history?.retiredManaged ?? null;
+  // 目录已删除（worktree 被清理、目录被手动删了）且进程不在：只读回看历史。输入区换成说明与「新开会话」，
+  // 不给「恢复会话」——agent 按目录找会话记录，换个目录续不上，原目录又没了，恢复注定失败。
+  const dirGone = !!history?.cwdMissing && !history.connected && !history.background;
+  // 「新开会话」的去处：推得出原项目就预填它；推不出不预填（不拿已经没了的目录去预填）。
+  const dirGoneOrigin = dirGone ? history?.originRoot ?? null : null;
   const [items, setItems] = useState<ChatItem[]>([]);
   // CLI 的送达回执（claude 入队记录）：不进时间线，只喂给发出消息的对账。按会话归零。
   const [queueAcks, setQueueAcks] = useState<readonly PromptAck[]>([]);
@@ -2880,9 +2885,9 @@ export function ChatWindow() {
     sendText: (text) => sendTextRef.current(text),
     undoFrom: undoableIds ? (id, text) => void undoFromRef.current(id, text) : undefined,
     undoableIds,
-    newSession: () => void openNewSessionWindow({ cwd, provider }).catch(() => {}),
+    newSession: () => void openNewSessionWindow({ cwd: dirGone ? dirGoneOrigin : cwd, provider }).catch(() => {}),
     undoRejected: rejectedUndo ? () => void undoFromRef.current(rejectedUndo.id, rejectedUndo.text) : undefined,
-  }), [undoableIds, cwd, provider, rejectedUndo]);
+  }), [undoableIds, cwd, provider, rejectedUndo, dirGone, dirGoneOrigin]);
   /// 原生图片附加：逐张把附件写进系统剪贴板 → 发插件声明的粘贴键（claude 的 Ctrl-V、
   /// kimi 在 Windows 上的 Alt+V——发 Ctrl-V 会被它的 composer 无视，真机实拍）让 TUI
   /// 自己读（claude 的 `[Image #N]`、kimi 的 `[image #N (W×H)]`）→ 等第 N 个占位符出现
@@ -3899,15 +3904,16 @@ export function ChatWindow() {
   // background 例外:它没有终端可接管,composer 是唯一出口(发送时后端另有拒绝话术)。
   // 已停用的「Meowo 托管」会话不看 supported：没绑定原生 id 的读不到原生记录（supported=false），
   // 也得锁住输入框、给出停用说明——托管通道已删，消息发不出去。
-  const composerGated = !!history && !history.background && history.ptyManaged === false
-    && (retiredManaged != null || (history.supported && (externalRunning || history.status === "ended")));
+  // 目录已删除同样锁住输入框，门卡换成只读说明（见 dirGone）。
+  const composerGated = dirGone || (!!history && !history.background && history.ptyManaged === false
+    && (retiredManaged != null || (history.supported && (externalRunning || history.status === "ended"))));
   // CLI 意外退出（二期 #7）：已结束的会话问一次托管终端的定格快照，后端判定为意外退出
   //（退出码非 0、不是用户结束、不在重启窗口内）就把「会话已结束」换成退出码 + 最后几行输出。
   // since 给最大值：只要退出信息，不要整段 1MiB 的输出回放。
-  const endedHere = composerGated && !externalRunning && sessionId > 0;
+  const endedHere = composerGated && !dirGone && !externalRunning && sessionId > 0;
   // 停用说明只在门卡还挂着时生效：「用官方 CLI 打开」之后 ptyManaged 翻 true，它就是普通原生会话，
   // 占位文字与 + 菜单（附件/斜杠/@）必须恢复（做空 R4：此前恢复后仍显示「已停用」、+ 永久置灰）。
-  const retiredGate = composerGated ? retiredManaged : null;
+  const retiredGate = composerGated && !dirGone ? retiredManaged : null;
   const [crash, setCrash] = useState<{ id: number; code: number; tail: string | null } | null>(null);
   useEffect(() => {
     if (!endedHere) return;
@@ -4688,13 +4694,15 @@ export function ChatWindow() {
             starred={!!history.ccSessionId && starredSet.has(history.ccSessionId)}
             onToggleStar={toggleStar}
             onRename={() => setRenaming(true)}
-            onFork={chatUi?.fork && sessionId > 0 ? () => void forkCurrent() : undefined}
-            onCopyResume={resumeCommand && !remoteUi() ? () => copyResumeCommand(resumeCommand) : undefined}
+            // 目录已删：分叉与恢复命令都要在原目录里跑，注定失败，不给入口。
+            onFork={chatUi?.fork && sessionId > 0 && !dirGone ? () => void forkCurrent() : undefined}
+            onCopyResume={resumeCommand && !remoteUi() && !dirGone ? () => copyResumeCommand(resumeCommand) : undefined}
             onCopyConversation={conversationExport.hasContent ? conversationExport.copyConversation : undefined}
             onCopyFinalAnswer={conversationExport.hasFinalAnswer ? conversationExport.copyFinalAnswer : undefined}
             onExportConversation={conversationExport.hasContent ? () => void conversationExport.exportConversation() : undefined}
             forkDisabled={tone === "running" || sending}
             onToggleArchived={() => void toggleArchived()}
+            archiveDisabledReason={history.archived && dirGone ? t.chat.dirGoneNoReopen : undefined}
             onSearch={() => { setView("chat"); setSearchOpen(true); }}
             t={t}
           />
@@ -5173,6 +5181,7 @@ export function ChatWindow() {
             background={history?.background ?? false}
             resumeOptions={resumeOptions}
             takeoverExtra={resumePermissionPicker}
+            dirGone={dirGone}
             // 后台会话的按键注定无效。第一下就把用户领到对话页——那里的输入框走 daemon 的
             // 送话通道，是真能用的。原先的做法是让他打完一整句再弹错误，等于白打。
             onBackgroundInput={() => {
@@ -5278,7 +5287,18 @@ export function ChatWindow() {
             >{t.chat.supersededGo}</button>
           </div>
         </div>}
-        {supersededTo == null && composerGated && <div className="chat-compose-gate">
+        {supersededTo == null && dirGone && history && <div className="chat-compose-gate is-dir-gone" data-testid="compose-dir-gone">
+          <span>{t.chat.dirGoneBanner}</span>
+          <div className="chat-compose-gate-actions">
+            <button
+              type="button"
+              className="sbtn"
+              data-tip={dirGoneOrigin ? t.chat.dirGoneNewInTip(dirGoneOrigin) : undefined}
+              onClick={() => void openNewSessionWindow({ cwd: dirGoneOrigin, provider: history.provider }).catch(() => {})}
+            >{dirGoneOrigin ? t.chat.dirGoneNewIn(folderName(dirGoneOrigin) || dirGoneOrigin) : t.chat.dirGoneNew}</button>
+          </div>
+        </div>}
+        {supersededTo == null && composerGated && !dirGone && <div className="chat-compose-gate">
           <span>{retiredManaged ? t.chat.managedRetired : externalRunning ? t.chat.sendNeedsTakeover : crashShown ? t.chat.agentCrashed(crashShown.code) : t.chat.composerGateEnded}</span>
           {!retiredManaged && crashShown?.tail && <pre className="chat-compose-gate-tail">{crashShown.tail}</pre>}
           {/* 恢复失败的原因就地可见（接管态的主文案已是同一句，不重复）。 */}
@@ -5465,6 +5485,8 @@ export function ChatWindow() {
             // Esc 中断的第一下：确认提示写在占位里——此刻输入框是空的，占位正是视线所在。
             escInterruptArmed && stopMode
               ? t.chat.escInterruptArmed
+            : dirGone
+              ? t.chat.dirGoneInput
             // 停用的托管会话：输入框锁着，占位直接说清楚还能怎么继续，别让它看起来能输入。
             : retiredGate
               ? (retiredGate.resumable ? t.chat.managedRetiredInputResumable : t.chat.managedRetiredInputUnbound)
@@ -5670,7 +5692,7 @@ export function ChatWindow() {
               //（daemon 托管，我们恢复不了它）。
               // 选项清单与 resumePermissionPicker 共用同一份构造（permissionChoiceOptions）。
               const resumeChoices = permissionOption && dimension === permissionOption.id
-                && history && !history.connected && !history.background
+                && history && !history.connected && !history.background && !dirGone
                 ? permissionChoiceOptions.map((option) => ({ ...option, inputs: [] }))
                 : null;
               const resumePick = resumeChoices !== null;

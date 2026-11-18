@@ -1,7 +1,7 @@
 // 补看场景（scene=flow-<名字>，见 qa-scenes.mjs）：对话窗里要靠特定后端返回才出现的状态。
 // 都挂真实 ChatWindow，这里只决定各条 IPC 返回什么、挂载前往本地状态里放什么。
 // 出现条件逐条对过源码（ChatWindow.tsx / LeadPanel.tsx / WorktreeSetupBar.tsx / terminalAttention.ts）。
-import { CHAT_SESSION_ID, FIXED_NOW, leadTask, MENTION_CANDIDATES, MODE_MARKERS } from "./fixtures";
+import { CHAT_SESSION_ID, DIR_GONE_HISTORY, FIXED_NOW, goneSessions, leadTask, MENTION_CANDIDATES, MODE_MARKERS } from "./fixtures";
 import { cardSceneMock } from "./cardScenes";
 import { toolSceneMock } from "./toolScenes";
 import { demoChatUi } from "../src/demo/mock";
@@ -166,6 +166,8 @@ export function qaFlowMock(scene: string, lang: Lang, chat: (cmd: string) => unk
     // 侧栏：空态、首载失败、全文搜索命中、清理 worktree、工作区页签。
     if (cmd === "get_live_sessions_page" && kind === "side-empty") return [];
     if (cmd === "get_live_sessions_page" && kind === "side-error") throw new Error("offline");
+    // 「已完成」页混着目录已删除的会话（卡片第三行的虚线标签）。
+    if (cmd === "get_live_sessions_page" && kind === "side-gone") return goneSessions(lang);
     if (cmd === "search_chat_transcripts") return [
       { sessionId: 2, title: zh ? "修支付回调的重复扣款" : "Fix duplicate charge in payment callback", projectName: "billing", excerpt: zh ? "…回调重试时没带幂等键，同一笔订单被扣了两次，schema 里要加唯一约束…" : "…the retry carried no idempotency key, so the order was charged twice; the schema needs a unique constraint…" },
       { sessionId: 3, title: zh ? "补齐导出接口的单测" : "Add tests for the export API", projectName: "api", excerpt: zh ? "…导出 schema 的字段顺序要固定…" : "…the export schema must keep a stable field order…" },
@@ -274,6 +276,8 @@ export function qaFlowMock(scene: string, lang: Lang, chat: (cmd: string) => unk
       if (kind === "unsupported") return { ...h, ...calm, supported: false, items: [] };
       if (kind === "earlier") return { ...h, ...calm, hasMore: true, earliest: 12 };
       if (kind === "handoff") return { ...h, ...calm, predecessorId: 99 };
+      // 目录已删除：只读回看，输入区换成说明与「在原项目新开会话」。
+      if (kind === "dir-gone") return { ...h, ...DIR_GONE_HISTORY };
       if (kind === "mixed-user") {
         const text = `<hook_result hook_event="UserPromptSubmit">[lead] ${zh ? "这个项目有进行中的任务" : "This project has an active task"}</hook_result>\n${zh ? "为什么本会话一直有一个 Lead 面板？" : "Why does this session keep showing a Lead panel?"}`;
         return { ...h, ...calm, items: [{ type: "user_text", id: "qa-mixed-user", timestamp: ts, text }] };

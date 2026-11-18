@@ -294,6 +294,38 @@ describe("目录已删除", () => {
     expect(onSelect).toHaveBeenCalledWith(5);
   });
 
+  // 2026-11-18 手机实拍：标签单开第三行，卡片又被压扁，标签压到下一张卡上。现在跟在目录名后面同一行。
+  it("标签跟在目录名后面同一行，文案说清只能查看", async () => {
+    const gone = {
+      session: { id: 6, cc_session_id: "cc-6", status: "ended", last_event_at: 1 },
+      project_name: "billing", task_title: "修回调", connected: false, pending_review: null,
+      cwd: "C:/w/billing-fix", provider: "claude", archived: true, cwd_missing: true,
+    } as unknown as LiveSession;
+    invoke.mockImplementation((command: string) =>
+      Promise.resolve(command === "get_live_sessions_page" ? [gone] : undefined));
+    render(<ChatSidebar activeId={0} approvalAwaitingIds={new Set()} onSelect={() => {}} onCollapse={() => {}} />);
+    const tag = await screen.findByTestId("sidebar-dir-missing");
+    expect(tag.textContent).toBe(zh.worktree.dirMissing + zh.worktree.dirMissingMore);
+    expect(tag.parentElement?.className).toBe("chat-sidebar-metaline");
+    expect(tag.parentElement?.querySelector(".chat-sidebar-meta")?.textContent).toBe("billing-fix");
+  });
+
+  it("右键菜单：目录已删的已完成会话「恢复进行中」置灰并写明原因，点了什么都不做", async () => {
+    const onArchive = vi.fn();
+    render(<CardContextMenu x={0} y={0} starred={false} archived onStar={() => {}} onRename={() => {}} onArchive={onArchive}
+      archiveDisabledReason={zh.chat.dirGoneNoReopen} onOpenDir={null} onEndSession={null} onClose={() => {}} />);
+    const reopen = screen.getByRole("menuitem", { name: new RegExp(zh.sticker.unarchive) });
+    expect(reopen.getAttribute("aria-disabled")).toBe("true");
+    expect(screen.getByRole("note").textContent).toBe(zh.chat.dirGoneNoReopen);
+    fireEvent.click(reopen);
+    expect(onArchive).not.toHaveBeenCalled();
+  });
+
+  it("后端拒绝把目录已删的会话放回进行中，报错是人话", () => {
+    expect(formatBackendError("session/dir_missing", "zh-CN")).toContain("目录已经删掉了");
+    expect(formatBackendError("session/dir_missing", "en-US")).toContain("folder has been deleted");
+  });
+
   it("恢复会话时目录不存在，报错映射成人话", () => {
     expect(formatBackendError("目录不存在", "zh-CN")).toBe("项目目录不存在");
     expect(formatBackendError("目录不存在", "en-US")).toBe("Project directory not found");

@@ -217,6 +217,8 @@ export const ENTRIES: ErrorEntry[] = [
   { m: "shell_terminal/not_found", exact: true, zh: "这个终端已经关掉了", en: "This terminal has been closed" },
   { m: "shell_terminal/exited", exact: true, zh: "这个终端里的程序已经退出了", en: "The program in this terminal has exited" },
   { m: "editor/spawn_failed", tail: true, zh: "编辑器没能打开", en: "Couldn't open the editor" },
+  // ── 会话标记（session_command.rs apply_archived）：目录已删的会话不放回进行中 ──
+  { m: "session/dir_missing", exact: true, zh: "这个会话的目录已经删掉了，放回进行中也没法继续，留在已完成里可以查看历史", en: "This session's folder has been deleted, so it can't continue in Ongoing. It stays in Done, where you can still read the history." },
   // ── 已合并 worktree 的清理（worktree.rs）。判定原因码前端另有展示文案，这里兜删除时的失败 ──
   { m: "worktree/busy", exact: true, zh: "目录还被占用（可能有终端停在里面），什么都没删", en: "The folder is still in use (maybe a terminal is open in it). Nothing was deleted." },
   { m: "worktree/no_cwd", exact: true, zh: "这个会话没有记录工作目录", en: "This session has no working folder on record" },

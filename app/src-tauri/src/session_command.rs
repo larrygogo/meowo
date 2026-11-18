@@ -83,9 +83,8 @@ pub(crate) async fn set_archived(
     let db_path = state.db_path.clone();
     let ptys = state.ptys.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        super::open_store(&db_path)?
-            .set_session_archived(session_id, archived, super::now_ms())
-            .map_err(|error| error.to_string())?;
+        let store = super::open_store(&db_path)?;
+        apply_archived(&store, session_id, archived, super::now_ms())?;
         // archived = 「已完成」：标记完成同时结束会话（用户要求，理由见 end_session_for_done）。
         // 恢复进行中不自动拉起——那是点开会话时的「恢复」动作，带着用户的启动选项。
         if archived {
@@ -102,6 +101,40 @@ pub(crate) async fn set_archived(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// 改「已完成」标记的库操作（命令外壳只管线程与收尾，便于单测）。
+///
+/// - 标记完成时趁目录还在记下原项目（worktree 的主检出）：之后 worktree 被清理、`.git` 文件跟着没了，
+///   目录已删的会话靠这一笔给「在原项目新开会话」（见 wtnew::origin::origin_for_missing）。
+///   推不出（不是 worktree）就不记，不覆盖已有的记录。
+/// - 目录已经删掉的会话不能放回「进行中」：放回去也续不上（agent 按目录找会话记录），只会多一张
+///   点开就是「目录已删除」的卡。所有入口（侧栏、会话管理页、手机、批量）都走这里，一处拦住。
+pub(crate) fn apply_archived(
+    store: &meowo_store::Store,
+    session_id: i64,
+    archived: bool,
+    now_ms: i64,
+) -> Result<(), String> {
+    let cwd = store.session_cwd(session_id).map_err(|e| e.to_string())?;
+    if !archived && super::session_query::cwd_is_missing(cwd.as_deref()) {
+        return Err("session/dir_missing".into());
+    }
+    store
+        .set_session_archived(session_id, archived, now_ms)
+        .map_err(|error| error.to_string())?;
+    if archived {
+        let origin = cwd
+            .as_deref()
+            .and_then(|c| crate::wtnew::origin::origin_root_of(std::path::Path::new(c)));
+        if let Some(origin) = origin {
+            let origin = origin.to_string_lossy().replace('\\', "/");
+            if let Err(error) = store.set_session_origin_root(session_id, &origin) {
+                eprintln!("记录会话 {session_id} 的原项目失败: {error}");
+            }
+        }
+    }
+    Ok(())
 }
 
 /// 对话页改选启动选项后的落库（合并单键写回）：模型/权限是**启动参数**，resume/接管
@@ -151,7 +184,37 @@ pub(crate) async fn session_launch_selections(
 
 #[cfg(test)]
 mod tests {
-    use super::is_safe_id;
+    use super::{apply_archived, is_safe_id};
+
+    /// 目录已删的会话不能放回进行中（修复前会照常放回去，点开只有一个注定失败的「恢复会话」）；
+    /// 目录还在的照常放回。标记完成不受目录影响。
+    #[test]
+    fn unarchive_is_refused_once_the_folder_is_gone() {
+        let base = std::env::temp_dir().join(format!(
+            "meowo-unarchive-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let here = base.join("here");
+        std::fs::create_dir_all(&here).unwrap();
+        let gone = base.join("gone");
+        let store = meowo_store::Store::open_in_memory().unwrap();
+        let project = store.upsert_project_by_root("/p", "p", 1).unwrap();
+        let (a, _) = store.start_session(project, "a", 1).unwrap();
+        let (b, _) = store.start_session(project, "b", 2).unwrap();
+        store.set_session_cwd(a, &gone.to_string_lossy(), 3).unwrap();
+        store.set_session_cwd(b, &here.to_string_lossy(), 3).unwrap();
+        apply_archived(&store, a, true, 4).expect("目录没了照样能标记完成");
+        apply_archived(&store, b, true, 4).unwrap();
+        assert_eq!(apply_archived(&store, a, false, 5), Err("session/dir_missing".into()));
+        assert!(store.session_header(a).unwrap().archived, "拒绝时不动标记");
+        apply_archived(&store, b, false, 5).expect("目录还在的照常放回进行中");
+        assert!(!store.session_header(b).unwrap().archived);
+        let _ = std::fs::remove_dir_all(&base);
+    }
 
     #[test]
     fn session_ids_accept_provider_shapes_and_reject_shell_or_path_syntax() {

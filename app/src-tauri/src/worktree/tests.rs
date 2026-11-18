@@ -915,3 +915,40 @@ fn 没有_gh_时_主分支在附近也改过再_squash_仍认得出() {
         "附近有改动的 squash 合并也应认出: {status:?}"
     );
 }
+
+/// 删 worktree 的善后：目录里的会话都记下原项目（目录没了以后「在原项目新开会话」靠它），
+/// 发起删除的会话还没标记完成就顺手标上；目录外的会话不动，任何会话行都不删。
+#[test]
+fn 删除后记下原项目并把发起的会话标记完成() {
+    let fx = fixture("after");
+    let head = run(&fx.wt, &["rev-parse", "HEAD"]);
+    let store = meowo_store::Store::open_in_memory().unwrap();
+    let project = store.upsert_project_by_root("/p", "p", 1).unwrap();
+    let mk = |key: &str, cwd: &Path| {
+        let (id, _) = store.start_session(project, key, 1).unwrap();
+        store.set_session_cwd(id, &cwd.to_string_lossy(), 2).unwrap();
+        id
+    };
+    let target = mk("target", &fx.wt);
+    std::fs::create_dir_all(fx.wt.join("sub")).unwrap();
+    let sibling = mk("sibling", &fx.wt.join("sub"));
+    store.set_session_archived(sibling, true, 3).unwrap();
+    let outside = mk("outside", &fx.main);
+
+    let top = top_of(&fx.wt);
+    let origin = crate::wtnew::origin::origin_root_of(&fx.wt);
+    let inside = sessions_inside(&store, &top);
+    assert_eq!(inside.len(), 2, "worktree 里的两条会话: {inside:?}");
+    let result = remove_dir_worktree(&fx.wt, &top, &nobody, &merged(head), &[]).expect("删除成功");
+    assert!(result.removed);
+    after_removal(&store, target, &inside, origin.as_deref());
+
+    let main = dunce::canonicalize(&fx.main).unwrap().to_string_lossy().replace('\\', "/");
+    for id in [target, sibling] {
+        let recorded = store.session_origin_root(id).unwrap().expect("记下原项目");
+        assert_eq!(norm(Path::new(&recorded)), norm(Path::new(&main)));
+        assert!(store.session_header(id).unwrap().archived, "目录已删的会话都在「已完成」里");
+    }
+    assert_eq!(store.session_origin_root(outside).unwrap(), None, "目录外的会话不动");
+    assert!(!store.session_header(outside).unwrap().archived);
+}
