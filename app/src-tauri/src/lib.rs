@@ -4,6 +4,7 @@ mod agent_updates;
 mod app_bundle;
 mod bgpty;
 mod browser_agent;
+mod browser_emulation;
 mod browser_pane;
 mod browser_permission;
 mod chat;
@@ -1647,6 +1648,7 @@ pub fn run() {
             browser_pane::browser_pane_set_bounds,
             browser_pane::browser_pane_navigate,
             browser_pane::browser_pane_action,
+            browser_pane::browser_pane_emulate,
             browser_pane::browser_pane_close,
             browser_pane::browser_pane_set_agent_paused,
             browser_pane::browser_pane_answer_permission,

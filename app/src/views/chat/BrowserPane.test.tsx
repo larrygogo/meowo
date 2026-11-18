@@ -101,6 +101,34 @@ describe("面板浏览器", () => {
     expect(invoke).toHaveBeenCalledWith("browser_pane_action", { id: 5, action: "print" });
   });
 
+  it("设备模拟：「…」菜单能选设备，当前设备标「当前」；没模拟时不给还原项", () => {
+    const { rerender } = render(<BrowserPane info={pane()} visible suggestions={[]} />);
+    fireEvent.click(screen.getByRole("button", { name: "更多" }));
+    expect(screen.queryByRole("menuitem", { name: /还原为面板尺寸/ })).toBeNull();
+    fireEvent.click(screen.getByRole("menuitem", { name: /模拟桌面/ }));
+    expect(invoke).toHaveBeenCalledWith("browser_pane_emulate", { id: 5, device: "desktop" });
+    rerender(<BrowserPane info={pane({ emulation: { metrics: { device: "mobile", width: 390, height: 844 }, userAgent: "iPhone", headerNames: [] } })} visible suggestions={[]} />);
+    fireEvent.click(screen.getByRole("button", { name: "更多" }));
+    expect(screen.getByRole("menuitem", { name: /模拟手机/ }).textContent).toContain("当前");
+    fireEvent.click(screen.getByRole("menuitem", { name: /还原为面板尺寸/ }));
+    expect(invoke).toHaveBeenCalledWith("browser_pane_emulate", { id: 5, device: "reset" });
+  });
+
+  it("设备模拟：地址栏旁标出设备和尺寸，悬停说明改了 UA 和哪些请求头，点一下还原；Agent 控制时不能点", () => {
+    const emulation = { metrics: { device: "custom" as const, width: 1440, height: 900 }, userAgent: "Bot", headerNames: ["X-Test", "Accept-Language"] };
+    const { rerender } = render(<BrowserPane info={pane({ emulation })} visible suggestions={[]} />);
+    const chip = screen.getByRole("button", { name: /正在模拟/ });
+    expect(chip.textContent).toBe("自定义 1440×900");
+    expect(chip.getAttribute("data-tip")).toContain("UA 已改");
+    expect(chip.getAttribute("data-tip")).toContain("X-Test, Accept-Language");
+    fireEvent.click(chip);
+    expect(invoke).toHaveBeenCalledWith("browser_pane_emulate", { id: 5, device: "reset" });
+    rerender(<BrowserPane info={pane({ emulation, agentActive: true })} visible suggestions={[]} />);
+    expect(screen.getByRole("button", { name: /正在模拟/ }).hasAttribute("disabled")).toBe(true);
+    rerender(<BrowserPane info={pane()} visible suggestions={[]} />);
+    expect(screen.queryByRole("button", { name: /正在模拟/ })).toBeNull();
+  });
+
   it("网页的权限请求在面板里答：允许 / 阻止，答复送达前按钮锁住防连点", () => {
     const ask = { id: 1, kind: "downloads", host: "httpbin.org" };
     const { rerender } = render(<BrowserPane info={pane({ permission: ask })} visible suggestions={[]} />);

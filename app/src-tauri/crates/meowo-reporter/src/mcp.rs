@@ -56,7 +56,7 @@ fn respond(message: &Value, channel: Option<&(String, String)>) -> Option<Value>
             "protocolVersion": params.get("protocolVersion").and_then(Value::as_str).unwrap_or("2025-06-18"),
             "capabilities": { "tools": {} },
             "serverInfo": { "name": "meowo", "version": env!("CARGO_PKG_VERSION") },
-            "instructions": "这是 Meowo 对话窗右侧面板里的浏览器，用户就在旁边看着。凡是要打开网页、在网站上操作（填表、点按钮、查信息）、看本地 dev server 效果的，都优先用这组工具，不用找别的浏览器扩展或桌面控制。需要登录的网站，打开后让用户直接在面板里登录，再继续。用法：先 browser_open 或 browser_snapshot 拿到元素编号（如 e12），再按编号 browser_click / browser_type。提交、付款这类不可撤销的操作，先跟用户确认。",
+            "instructions": "这是 Meowo 对话窗右侧面板里的浏览器，用户就在旁边看着。凡是要打开网页、在网站上操作（填表、点按钮、查信息）、看本地 dev server 效果的，都优先用这组工具，不用找别的浏览器扩展或桌面控制。需要登录的网站，打开后让用户直接在面板里登录，再继续。用法：先 browser_open 或 browser_snapshot 拿到元素编号（如 e12），再按编号 browser_click / browser_type。提交、付款这类不可撤销的操作，先跟用户确认。面板通常比桌面浏览器窄，快照开头会写当前视口：测响应式布局或按 UA 出页面的 SSR 网站前先看一眼，需要桌面版、手机版或特定请求头时先用 browser_emulate 设好再测。",
         }),
         "ping" => json!({}),
         "tools/list" => json!({ "tools": if channel.is_some() { tools() } else { Vec::new() } }),
@@ -212,6 +212,18 @@ fn tools() -> Vec<Value> {
             &[],
         ),
         tool("browser_screenshot", "截下面板浏览器当前的画面（图片）。要看排版、样式、颜色、图表这些快照文字表达不了的东西时用。", json!({}), &[]),
+        tool(
+            "browser_emulate",
+            "模拟设备：设视口尺寸、UA、附加请求头，跳转后仍保持，直到 reset 或关页签。面板窄时响应式网站会显示手机版，要测桌面版用 device: desktop。每次调用整体替换之前的设置，没给的项不改写。改了 UA 或请求头会自动刷新页面（SSR 才拿得到新的那一版），只改尺寸不刷新。返回新的页面快照。目前只有 Windows 支持。",
+            json!({
+                "device": { "type": "string", "enum": ["desktop", "tablet", "mobile", "reset"], "description": "desktop=1280×800；tablet=820×1180 触屏、iPad UA；mobile=390×844 触屏、iPhone UA；reset=全部还原成面板实际大小和默认 UA" },
+                "width": { "type": "integer", "description": "视口宽（CSS 像素，200～4096），覆盖预设" },
+                "height": { "type": "integer", "description": "视口高（CSS 像素，200～4096），覆盖预设" },
+                "user_agent": { "type": "string", "description": "自定义 UA，覆盖预设的 UA" },
+                "headers": { "type": "object", "additionalProperties": { "type": "string" }, "description": "附加请求头，如 {\"Accept-Language\": \"en-US\"}" }
+            }),
+            &[],
+        ),
         tool("browser_back", "后退。", json!({}), &[]),
         tool("browser_forward", "前进。", json!({}), &[]),
         tool("browser_reload", "刷新页面。", json!({}), &[]),

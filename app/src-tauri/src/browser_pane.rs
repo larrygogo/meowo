@@ -204,7 +204,9 @@ pub(crate) struct BrowserPaneInfo {
     /// 实测：阻止后再下两次，既无权限请求也无下载事件），不留这条提示用户又会以为没下成而
     /// 反复点。有新下载开始（说明不拦了）、页面重新加载或跳走、用户点 × 时消失。
     pub(crate) blocked: Option<BrowserPermission>,
-    // 以下三项只在后端用，不发给前端。
+    /// 设备模拟（视口、UA、附加请求头），没模拟是 None。见 browser_emulation.rs。
+    pub(crate) emulation: Option<crate::browser_emulation::Emulation>,
+    // 以下几项只在后端用，不发给前端。
     /// 原生视图眼下摆在哪。
     #[serde(skip)]
     placement: Placement,
@@ -212,6 +214,9 @@ pub(crate) struct BrowserPaneInfo {
     /// 没显示过就是 DEFAULT_VIEWPORT。
     #[serde(skip)]
     viewport: (f64, f64),
+    /// 面板里实际显示的尺寸（不抬下限），设备模拟按它算缩放比例。
+    #[serde(skip)]
+    shown: (f64, f64),
     /// agent 用过这个页签：收起时挪到窗口外接着渲染，而不是藏起来。见 `Placement`。
     #[serde(skip)]
     keep_rendering: bool,
@@ -545,7 +550,7 @@ pub(crate) fn webview(app: &tauri::AppHandle, id: u32) -> Result<tauri::Webview,
         .ok_or_else(|| "browser_pane/not_found".to_string())
 }
 
-fn ensure_human_action_allowed(state: &BrowserPanes, id: u32) -> Result<(), String> {
+pub(crate) fn ensure_human_action_allowed(state: &BrowserPanes, id: u32) -> Result<(), String> {
     let map = state.panes.lock().map_err(|e| e.to_string())?;
     let info = map.get(&id).ok_or("browser_pane/not_found")?;
     if control_allows_human_input(info.agent_active, info.agent_paused) {
@@ -619,8 +624,10 @@ pub(crate) fn open_pane(
         downloads: Vec::new(),
         permission: None,
         blocked: None,
+        emulation: None,
         placement: Placement::Hidden,
         viewport: DEFAULT_VIEWPORT,
+        shown: DEFAULT_VIEWPORT,
         keep_rendering: false,
         operation: Arc::new(Mutex::new(())),
     };
@@ -752,6 +759,10 @@ fn conceal(webview: &tauri::Webview, info: &mut BrowserPaneInfo) -> Result<(), S
             .set_bounds(parked_rect(info.viewport))
             .map_err(|e| e.to_string())?;
         webview.show().map_err(|e| e.to_string())?;
+        // 收起后视口换成 parked 尺寸，模拟的缩放比例跟着重算。
+        if let Some(metrics) = info.emulation.as_ref().and_then(|e| e.metrics.as_ref()) {
+            crate::browser_emulation::refit(webview, metrics, info.viewport);
+        }
     } else {
         webview.hide().map_err(|e| e.to_string())?;
     }
@@ -806,7 +817,63 @@ pub(crate) async fn browser_pane_set_bounds(
         })
         .map_err(|e| e.to_string())?;
     webview.show().map_err(|e| e.to_string())?;
+    // 面板拖宽拖窄：模拟尺寸不变，按新面板重算缩放，整页仍在面板里看得到。
+    let resized = info.shown != (width, height) || info.placement != Placement::OnScreen;
+    info.shown = (width, height);
     info.placement = Placement::OnScreen;
+    if resized {
+        if let Some(metrics) = info.emulation.as_ref().and_then(|e| e.metrics.as_ref()) {
+            crate::browser_emulation::refit(&webview, metrics, (width, height));
+        }
+    }
+    Ok(())
+}
+
+/// 页签此刻给页面的实际视口：在面板上就是面板尺寸，收起时是 parked 尺寸。
+fn view_size(info: &BrowserPaneInfo) -> (f64, f64) {
+    if info.placement == Placement::OnScreen {
+        info.shown
+    } else {
+        info.viewport
+    }
+}
+
+/// 把页签的设备模拟整体换成 `next`（None = 还原）。CDP 全部成功才记状态；返回是否需要刷新
+/// （UA 或请求头变了）。必须在非主线程调用：CDP 的回调在主线程。
+pub(crate) fn set_emulation(
+    app: &tauri::AppHandle,
+    state: &BrowserPanes,
+    id: u32,
+    next: Option<crate::browser_emulation::Emulation>,
+) -> Result<bool, String> {
+    let (before, view) = {
+        let map = state.panes.lock().map_err(|e| e.to_string())?;
+        let info = map.get(&id).ok_or("browser_pane/not_found")?;
+        (info.emulation.clone(), view_size(info))
+    };
+    let webview = webview(app, id)?;
+    crate::browser_emulation::run_calls(
+        &webview,
+        crate::browser_emulation::calls(next.as_ref(), view),
+    )?;
+    let reload = crate::browser_emulation::needs_reload(before.as_ref(), next.as_ref());
+    update(app, &state.panes, id, |info| info.emulation = next);
+    Ok(reload)
+}
+
+/// 用户在「…」菜单里选设备或还原（只给预设，自定义尺寸和请求头留给 Agent 的工具）。
+#[tauri::command]
+pub(crate) async fn browser_pane_emulate(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, BrowserPanes>,
+    id: u32,
+    device: String,
+) -> Result<(), String> {
+    ensure_human_action_allowed(&state, id)?;
+    let next = crate::browser_emulation::parse(&serde_json::json!({ "device": device }))?;
+    if set_emulation(&app, &state, id, next)? {
+        webview(&app, id)?.reload().map_err(|e| e.to_string())?;
+    }
     Ok(())
 }
 

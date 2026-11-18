@@ -1134,6 +1134,15 @@ export const zh = {
     browserZoomReset: "重置缩放",
     browserPrint: "打印",
     browserCopyUrl: "复制网址",
+    browserEmuDesktop: "模拟桌面 1280×800",
+    browserEmuTablet: "模拟平板 820×1180",
+    browserEmuMobile: "模拟手机 390×844",
+    browserEmuReset: "还原为面板尺寸",
+    browserEmuCurrent: "当前",
+    browserEmuDevice: (device: string) => ({ desktop: "桌面", tablet: "平板", mobile: "手机" } as Record<string, string>)[device] ?? "自定义",
+    browserEmuUa: "UA 已改",
+    browserEmuHeaders: (names: string) => `附加请求头：${names}`,
+    browserEmuTip: (detail: string) => `正在模拟：${detail}。点击还原为面板尺寸`,
     // 网页的权限请求（browser_permission.rs）：「httpbin.org 想要下载多个文件」。
     browserPermissionAsk: (host: string, what: string) => `${host} 想要${what}`,
     browserPermissionKinds: {

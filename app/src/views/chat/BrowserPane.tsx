@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { answerBrowserPanePermission, browserPaneAction, navigateBrowserPane, openLink, revealBrowserPaneDownload, setBrowserPaneAgentPaused, setBrowserPaneBounds, type BrowserDownload, type BrowserPaneInfo } from "../../api";
+import { answerBrowserPanePermission, browserPaneAction, emulateBrowserPane, navigateBrowserPane, openLink, revealBrowserPaneDownload, setBrowserPaneAgentPaused, setBrowserPaneBounds, type BrowserDownload, type BrowserPaneInfo } from "../../api";
 import { useT } from "../../i18n";
 import { formatBackendError } from "../../i18n/errors";
 import { PathMenu, type PathMenuItem } from "./pathMenu";
@@ -132,6 +132,19 @@ export function BrowserPane({ info, visible, suggestions }: {
     if (inputLocked) return;
     void browserPaneAction(info.id, action).catch((e) => setError(formatBackendError(e, t.locale)));
   };
+  // 设备模拟：Agent 用 browser_emulate 设的，用户也能在「…」菜单里自己选或还原。只有 Windows
+  // 的 WebView2 有 Chrome 调试协议，其他平台不给入口（后端也会明确拒绝）。
+  const emulation = info.emulation ?? null;
+  const canEmulate = isWindows();
+  const emulate = (device: Parameters<typeof emulateBrowserPane>[1]) => {
+    if (inputLocked) return;
+    void emulateBrowserPane(info.id, device).catch((e) => setError(formatBackendError(e, t.locale)));
+  };
+  const emuDetail = emulation ? [
+    emulation.metrics ? `${t.chat.browserEmuDevice(emulation.metrics.device)} ${emulation.metrics.width}×${emulation.metrics.height}` : null,
+    emulation.userAgent ? t.chat.browserEmuUa : null,
+    emulation.headerNames.length > 0 ? t.chat.browserEmuHeaders(emulation.headerNames.join(", ")) : null,
+  ].filter(Boolean).join(" · ") : "";
 
   // 权限请求：按钮在答复送达前锁住。后端每次答复的是排在最前的那条，连点两下会把下一条也
   // 一起答掉。按请求编号判断，不按对象引用：标题、加载状态这些无关推送每次都是新对象，会提前
@@ -189,6 +202,20 @@ export function BrowserPane({ info, visible, suggestions }: {
             }
           }}
         />
+        {/* 正在模拟时在地址栏右侧标出来：页面看着和面板大小对不上时，一眼知道为什么，点一下还原。 */}
+        {emulation && (
+          <button
+            type="button"
+            className="browser-pane-emu"
+            aria-label={t.chat.browserEmuTip(emuDetail)}
+            data-tip-placement="top"
+            data-tip={t.chat.browserEmuTip(emuDetail)}
+            disabled={inputLocked}
+            onClick={() => emulate("reset")}
+          >
+            {emulation.metrics ? `${t.chat.browserEmuDevice(emulation.metrics.device)} ${emulation.metrics.width}×${emulation.metrics.height}` : t.chat.browserEmuUa}
+          </button>
+        )}
         <button type="button" className="chat-diff-action" aria-label={t.chat.browserOpenExternal} data-tip-placement="top" data-tip={t.chat.browserOpenExternal} disabled={blank || inputLocked} onClick={() => void openLink(info.url).catch((e) => setError(formatBackendError(e, t.locale)))}>
           <Icon glyph={icExternal} size={14} />
         </button>
@@ -222,6 +249,17 @@ export function BrowserPane({ info, visible, suggestions }: {
             "sep",
             { key: "print", label: t.chat.browserPrint, icon: null, hint: "Ctrl+P", onSelect: () => act("print") },
             { key: "copy", label: t.chat.browserCopyUrl, icon: null, onSelect: () => void navigator.clipboard?.writeText(info.url).catch(() => {}) },
+            ...(canEmulate ? [
+              "sep" as const,
+              ...(["desktop", "tablet", "mobile"] as const).map((device) => ({
+                key: `emu_${device}`,
+                label: { desktop: t.chat.browserEmuDesktop, tablet: t.chat.browserEmuTablet, mobile: t.chat.browserEmuMobile }[device],
+                icon: null,
+                hint: emulation?.metrics?.device === device ? t.chat.browserEmuCurrent : undefined,
+                onSelect: () => emulate(device),
+              })),
+              ...(emulation ? [{ key: "emu_reset", label: t.chat.browserEmuReset, icon: null, onSelect: () => emulate("reset") }] : []),
+            ] : []),
           ] satisfies (PathMenuItem | "sep")[]}
         />
       )}
