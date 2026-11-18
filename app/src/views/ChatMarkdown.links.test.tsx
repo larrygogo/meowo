@@ -11,14 +11,14 @@ afterEach(() => {
 });
 
 describe("行内代码里的网址和路径", () => {
-  it("只认网址和绝对路径；斜杠命令、相对路径、普通代码不算", () => {
+  it("网址与绝对路径；斜杠命令、普通代码不算（相对路径另算 relpath，见下方）", () => {
     expect(codeLinkKind("https://github.com/larrygogo/meowo/pull/142")).toBe("url");
     expect(codeLinkKind("C:\\Users\\me\\meowo\\Meowo_0.8.0_x64-installer.exe")).toBe("path");
     expect(codeLinkKind("D:/dev/web-app")).toBe("path");
     expect(codeLinkKind("\\\\nas\\share\\a.txt")).toBe("path");
     expect(codeLinkKind("/Users/me/project/a.ts")).toBe("path");
     expect(codeLinkKind("/model")).toBeNull();
-    expect(codeLinkKind("src/main.ts")).toBeNull();
+    expect(codeLinkKind("src/main.ts")).toBe("relpath");
     expect(codeLinkKind("npm test")).toBeNull();
     expect(codeLinkKind("javascript:alert(1)")).toBeNull();
   });
@@ -114,5 +114,31 @@ describe("自动链接在中文处收尾", () => {
     const links = [...container.querySelectorAll("a")];
     expect(links.map((a) => a.textContent)).toEqual(["https://example.com/a/b", "www.example.org", "说明"]);
     expect(decodeURI(links[2].getAttribute("href") ?? "")).toBe("https://example.com/说明");
+  });
+});
+
+// 2026-11-18 用户：`app/src-tauri/target/release/meowo-app.exe` 这种相对路径识别不出来。
+describe("行内代码里的相对路径", () => {
+  it("带扩展名的多段路径与 ./ ../ ~/ 开头的算路径；分支名、owner/repo、单个文件名不算", async () => {
+    const { codeLinkKind } = await import("./ChatMarkdown");
+    for (const path of ["app/src-tauri/target/release/meowo-app.exe", "app/src-tauri/target/release/bundle/nsis/Meowo_0.8.3_x64-setup.exe", ".lead/2026/progress.md", "src/main.ts:42", "./run.sh", "../x/y", "~/notes"]) {
+      expect(codeLinkKind(path), path).toBe("relpath");
+    }
+    for (const text of ["fix/scm-switch-flash", "larrygogo/meowo", "README.md", "a/b", "1/2", "STATIC_VCRUNTIME"]) {
+      expect(codeLinkKind(text), text).toBeNull();
+    }
+  });
+
+  it("有会话工作目录时可点，按工作目录定位；没有工作目录时是普通代码", async () => {
+    const { ChatCwdContext } = await import("./chat/chatCwd");
+    const text = "主程序：`app/src-tauri/target/release/meowo-app.exe`";
+    const { container, unmount } = render(<ChatCwdContext.Provider value="C:/w/meowo"><ChatMarkdown text={text} /></ChatCwdContext.Provider>);
+    const code = container.querySelector("code[role=link]") as HTMLElement;
+    expect(code?.textContent).toBe("app/src-tauri/target/release/meowo-app.exe");
+    fireEvent.click(code);
+    expect(invoke).toHaveBeenCalledWith("reveal_terminal_path", { cwd: "C:/w/meowo", path: "app/src-tauri/target/release/meowo-app.exe" });
+    unmount();
+    const bare = render(<ChatMarkdown text={text} />);
+    expect(bare.container.querySelector("code[role=link]")).toBeNull();
   });
 });

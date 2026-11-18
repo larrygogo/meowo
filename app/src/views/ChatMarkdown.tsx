@@ -1,4 +1,5 @@
-import { memo, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { memo, useContext, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { ChatCwdContext } from "./chat/chatCwd";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { openLink, revealTerminalPath } from "../api";
@@ -295,11 +296,17 @@ function CopyableTable({ children }: { children?: ReactNode }) {
 /// 路径只认绝对路径：`C:\…`、`\\server\…`，或至少两段的 `/a/b`。单段的 `/model` 是斜杠命令，不算。
 const CODE_URL = /^https?:\/\/[^\s<>"]+$/i;
 const CODE_PATH = /^(?:[A-Za-z]:[\\/]|\\\\[^\\/\s]+[\\/]|\/[^/\s]+\/)[^\n<>"|?*]*$/;
-export function codeLinkKind(text: string): "url" | "path" | null {
+// 相对路径（2026-11-18 用户：`app/src-tauri/target/release/meowo-app.exe` 这种为什么识别不出来）按会话工作目录
+// 定位，只认两类，免得分支名（`fix/scm-switch-flash`）、`owner/repo` 被当成路径：`./`、`../`、`~/` 开头的；
+// 或至少两段、最后一段带扩展名的（`docs/a.md`、`.lead/x/progress.md`）。没有工作目录时相对路径不做成链接。
+const CODE_REL_DOT = /^(?:\.{1,2}|~)[\\/][^\s<>"|?*]+$/;
+const CODE_REL_FILE = /^[\w.@-][\w.@ -]*(?:[\\/][\w.@ -]+)+\.[A-Za-z0-9]{1,8}(?::\d+(?::\d+)?)?$/;
+export function codeLinkKind(text: string): "url" | "path" | "relpath" | null {
   const value = text.trim();
   if (!value || value.includes("\n")) return null;
   if (CODE_URL.test(value)) return "url";
   if (CODE_PATH.test(value)) return "path";
+  if (CODE_REL_DOT.test(value) || CODE_REL_FILE.test(value)) return "relpath";
   return null;
 }
 
@@ -310,7 +317,14 @@ export function stripLineSuffix(path: string): string {
   return path.replace(/(?::\d+(?::\d+)?|\(\d+(?:,\d+)?\))$/, "");
 }
 
-function LinkCode({ text, kind }: { text: string; kind: "url" | "path" }) {
+/// 相对路径：有会话工作目录才做成可点的（接在它后面定位），没有就是普通代码。
+function RelPathCode({ text }: { text: string }) {
+  const cwd = useContext(ChatCwdContext);
+  if (!cwd) return <code>{text}</code>;
+  return <LinkCode text={text} kind="path" cwd={cwd} />;
+}
+
+function LinkCode({ text, kind, cwd = "" }: { text: string; kind: "url" | "path"; cwd?: string }) {
   const t = useT();
   // 点了打不开（路径已删、被移走）要说出来：这里没有 toast，静默吞掉就是「点了没反应」，
   // 必然引来连点。错误就地跟在链接后面。
@@ -322,7 +336,7 @@ function LinkCode({ text, kind }: { text: string; kind: "url" | "path" }) {
     // 拖选这段文字（想复制）松手时也会触发 click：有选区就当是在选字，不打开。
     if (window.getSelection()?.toString()) return;
     const value = text.trim();
-    void (kind === "url" ? openLink(value) : revealTerminalPath("", stripLineSuffix(value))).then(
+    void (kind === "url" ? openLink(value) : revealTerminalPath(cwd, stripLineSuffix(value))).then(
       () => setFailed(null),
       (e) => setFailed(formatBackendError(e, t.locale)),
     );
@@ -392,6 +406,7 @@ export const components: Components = {
     if (!className && !text.includes("\n")) {
       const kind = codeLinkKind(text);
       if (kind === "url" || (kind === "path" && !remoteUi())) return <LinkCode text={text} kind={kind} />;
+      if (kind === "relpath" && !remoteUi()) return <RelPathCode text={text} />;
     }
     const tag = /language-([\w+-]+)/.exec(className ?? "")?.[1];
     const lang = tag ? languageForFence(tag) : null;
