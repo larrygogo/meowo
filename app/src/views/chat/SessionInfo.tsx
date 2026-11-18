@@ -41,7 +41,7 @@ export function SessionInfo({ mode, state, actions, shells, panes, summary, onCl
   const deletions = files.reduce((sum, file) => sum + (file.deletions ?? 0), 0);
   const listed = state.tabs.slice(0, MAX_LISTED);
   const more = state.tabs.length - listed.length;
-  const openable: { type: PanelTabType; label: string; run: () => void }[] = [
+  const openable: { type: Exclude<PanelTabType, "lead">; label: string; run: () => void }[] = [
     { type: "browser", label: t.chat.browserNew, run: () => actions.newBrowser() },
     { type: "term", label: t.chat.shellNew, run: actions.newTerminal },
     { type: "files", label: t.chat.filesTab, run: actions.openFiles },

@@ -16,7 +16,7 @@ import { ChatMarkdown } from "../ChatMarkdown";
 import { ApprovalCard } from "./ApprovalCard";
 import { useTablist } from "../useTablist";
 import { Icon } from "../../icons/Icon";
-import { icCircle, icClock, icFlag, icMinus } from "../../icons/glyphs.chat";
+import { icCircle, icClock, icFlag, icMinus, icSidebarRight } from "../../icons/glyphs.chat";
 import { icCheck } from "../../icons/glyphs";
 
 /// 轮询间隔：任务文件由 agent 随手改写，没有推送通道；读的是本地几个小文件，开销可忽略。
@@ -100,13 +100,19 @@ function LeadIcon({ className }: { className: string }) {
   );
 }
 
-export function LeadPill({ task, active, onClick }: { task: LeadTaskDto; active: boolean; onClick: () => void }) {
+/// useLeadTask 的结果打包成一份，好在对话窗里取一次、同时交给停靠区和侧边面板的 Lead 页签：
+/// 两处各拉各的话，一边作答后只有自己那份立刻刷新，另一边要等下一拍轮询才对上。
+export type LeadTaskState = { task: LeadTaskDto | null; refresh: () => void; failure: string | null };
+
+/// inPanel：任务已在侧边面板的 Lead 页签里开着。胶囊此时是「跳到那个页签」的入口，不再弹停靠面板，
+/// 末尾挂一个侧栏小图标说明去向。
+export function LeadPill({ task, active, onClick, inPanel = false }: { task: LeadTaskDto; active: boolean; onClick: () => void; inPanel?: boolean }) {
   const t = useT();
   const { passed, total } = leadProgress(task);
   // 面板收起时 leader 先扫到的是这颗胶囊：只写「5/18」会被读成只做了三成，待实测的也报出来（做空审查）。
   const blockedCount = leadBlockedCount(task);
   return (
-    <button type="button" className={"ui-pill" + (active ? " is-active" : "")} onClick={onClick}>
+    <button type="button" className={"ui-pill" + (active ? " is-active" : "")} onClick={onClick} data-tip={inPanel ? t.chat.leadInPanelTip : undefined}>
       <LeadIcon className="ui-pill-icon" />
       {t.chat.leadEntry}
       {!!task.issues?.length && <span className="ui-pill-meta" title={task.issues.map((issue) => formatBackendError(issue, t.locale)).join("\n")}>{t.chat.leadDataIssue}</span>}
@@ -116,6 +122,7 @@ export function LeadPill({ task, active, onClick }: { task: LeadTaskDto; active:
       {/* 已答复、agent 还没接手：答复已落盘，agent 醒来或会话被恢复后会接着做。会话没能自动恢复时
           （安装器杀了等待进程、外部终端会话），这就是界面上的降级提示（做空审查第二轮 M2）。 */}
       {task.gate?.status === "answered" && <span className="ui-pill-meta lead-pill-answered">{t.chat.leadGateAnswered}</span>}
+      {inPanel && <Icon glyph={icSidebarRight} size={14} className="ui-pill-meta lead-pill-in-panel" />}
     </button>
   );
 }
@@ -233,7 +240,15 @@ function LeadNotes({ kind, text }: { kind: "decisions" | "progress"; text: strin
   );
 }
 
-export const LeadPanel = memo(function LeadPanel({ task, onClose }: { task: LeadTaskDto; onClose: () => void }) {
+/// onClose：停靠浮层的「×」；侧边面板的页签自己有关闭叉，不给。
+/// onOpenInPanel：「在侧边面板打开」。只有桌面端对话窗给（手机远程页没有右侧面板，给了就是点了没反应的按钮）。
+/// inPanel：渲染在侧边面板页签里，高度跟面板走（见 styles.css 的 .panel-lead.is-in-panel）。
+export const LeadPanel = memo(function LeadPanel({ task, onClose, onOpenInPanel, inPanel = false }: {
+  task: LeadTaskDto;
+  onClose?: () => void;
+  onOpenInPanel?: () => void;
+  inPanel?: boolean;
+}) {
   const t = useT();
   const { passed, total } = leadProgress(task);
   const [section, setSection] = useState<(typeof LEAD_SECTIONS)[number]>("checks");
@@ -265,7 +280,7 @@ export const LeadPanel = memo(function LeadPanel({ task, onClose }: { task: Lead
   //（2026-11-12 leader 看云端 Xbot 第三期：「为什么都已经到了验证阶段进度却才 5/18」）。
   const blockedCount = leadBlockedCount(task);
   return (
-    <div className="dock-work-panel panel-lead">
+    <div className={"dock-work-panel panel-lead" + (inPanel ? " is-in-panel" : "")}>
       <div className="dock-work-head">
         <span className="dock-work-title lead-title" title={title}>
           <LeadIcon className="dock-work-title-icon" />
@@ -280,7 +295,12 @@ export const LeadPanel = memo(function LeadPanel({ task, onClose }: { task: Lead
               {passed}/{total}
             </span>
           )}
-          <button type="button" className="dock-work-close" aria-label={t.chat.close} onClick={onClose}>×</button>
+          {onOpenInPanel && (
+            <button type="button" className="dock-work-close" aria-label={t.chat.leadOpenInPanel} data-tip={t.chat.leadOpenInPanel} onClick={onOpenInPanel}>
+              <Icon glyph={icSidebarRight} size={14} />
+            </button>
+          )}
+          {onClose && <button type="button" className="dock-work-close" aria-label={t.chat.close} onClick={onClose}>×</button>}
         </span>
       </div>
       <div className="lead-overview">
@@ -367,6 +387,29 @@ ${t.chat.leadCheckWaivedReason(c.waived ?? "")}` : c.check}
     </div>
   );
 });
+
+/// 侧边面板里的 Lead 页签：关卡卡片（在等作答时）+ 完整的 Lead 面板，整页一起滚。
+/// 页签开着时停靠区不再放关卡卡片（见 DockWork），作答只在这里一处，免得两张同样的卡各答一次。
+/// 没有任务（任务被清掉、换了会话目录、还没读到）时如实说一句，读失败就报原因，不留空白。
+export function LeadPanelTab({ cwd, lead }: { cwd: string; lead: LeadTaskState }) {
+  const t = useT();
+  const { task, refresh, failure } = lead;
+  if (!task) {
+    return (
+      <div className="side-panel-lead">
+        <p className="side-panel-empty" role="status">{failure ? formatBackendError(failure, t.locale) : t.chat.leadTabEmpty}</p>
+      </div>
+    );
+  }
+  return (
+    <div className="side-panel-lead">
+      {task.gate?.status === "pending" && (
+        <LeadGateCard key={task.gate.id} cwd={cwd} gate={task.gate} onAnswered={refresh} onStale={refresh} />
+      )}
+      <LeadPanel task={task} inPanel />
+    </div>
+  );
+}
 
 /// A、C、D 的选项固定（与 reporter 的 fixed_choices 一致，后端会再校验一次）；B、Q 用 agent 写进 gate.json 的选项。
 /// negative：否定类（要改 / 驳回 / 不允许）。点了不提交，先展开意见框：要改什么得说清楚，而且本仓有「回车即误拒」

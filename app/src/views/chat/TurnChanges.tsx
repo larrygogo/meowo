@@ -7,6 +7,8 @@ import { languageForPath } from "./highlight";
 import type { ToolResultItem, ToolUseItem } from "./shared";
 import { Icon } from "../../icons/Icon";
 import { icPencil } from "../../icons/glyphs";
+import { icSidebarRight } from "../../icons/glyphs.chat";
+import { RevealChangeContext } from "./panelReveal";
 
 /// 折叠时露出的行数（Kimi 实拍：3 行 + 「还有 N 个文件」）。
 const PREVIEW_ROWS = 3;
@@ -53,6 +55,7 @@ export function collectFileChanges(items: ChatItem[], cwd: string | null): FileC
 export const TurnChanges = memo(function TurnChanges({ items }: { items: ChatItem[] }) {
   const t = useT();
   const cwd = useContext(ChatCwdContext);
+  const reveal = useContext(RevealChangeContext);
   const [expanded, setExpanded] = useState(false);
   const [openFile, setOpenFile] = useState<string | null>(null);
   const detailId = useId();
@@ -71,17 +74,29 @@ export const TurnChanges = memo(function TurnChanges({ items }: { items: ChatIte
           const cut = file.path.lastIndexOf("/");
           return (
             <li key={file.path}>
-              <button type="button" className="chat-turn-changes-row" data-tip={file.path}
-                aria-expanded={openFile === file.path} aria-controls={openFile === file.path ? detailId : undefined}
-                onClick={() => setOpenFile((value) => value === file.path ? null : file.path)}>
-                <span className="chat-turn-changes-path">
-                  {cut >= 0 && <span className="chat-turn-changes-dir">{file.path.slice(0, cut + 1)}</span>}
-                  <span className="chat-turn-changes-name">{file.path.slice(cut + 1)}</span>
-                </span>
-                {file.added > 0 && <span className="is-add">+{file.added}</span>}
-                {file.removed > 0 && <span className="is-del">-{file.removed}</span>}
-                <span className="chat-turn-changes-caret" aria-hidden="true">›</span>
-              </button>
+              {/* 点行照旧展开本回合的修改记录；行尾另有一个「在「更改」中查看」，跳到右侧面板里这个文件的
+                  完整 diff（同 VS Code 改动清单的行尾操作）。两个分开放：不把整行变成跳转，原来的展开不受影响。 */}
+              <div className="chat-turn-changes-line">
+                <button type="button" className="chat-turn-changes-row" data-tip={file.path}
+                  aria-expanded={openFile === file.path} aria-controls={openFile === file.path ? detailId : undefined}
+                  onClick={() => setOpenFile((value) => value === file.path ? null : file.path)}>
+                  <span className="chat-turn-changes-path">
+                    {cut >= 0 && <span className="chat-turn-changes-dir">{file.path.slice(0, cut + 1)}</span>}
+                    <span className="chat-turn-changes-name">{file.path.slice(cut + 1)}</span>
+                  </span>
+                  {file.added > 0 && <span className="is-add">+{file.added}</span>}
+                  {file.removed > 0 && <span className="is-del">-{file.removed}</span>}
+                  <span className="chat-turn-changes-caret" aria-hidden="true">›</span>
+                </button>
+                {reveal && (
+                  <button type="button" className="chat-turn-changes-open" data-tip={t.chat.revealInChanges}
+                    aria-label={`${t.chat.revealInChanges} ${file.path}`}
+                    // 传工具记录里的原路径（多半是绝对路径），面板按它找仓库；file.path 是相对会话目录的显示名。
+                    onClick={() => reveal(file.details[0]?.file.path ?? file.path)}>
+                    <Icon glyph={icSidebarRight} size={14} />
+                  </button>
+                )}
+              </div>
               {openFile === file.path && <div id={detailId} className="chat-turn-changes-detail" role="region" aria-label={file.path}>
                 <p className="chat-tool-note">{t.chat.turnChangeHistory}</p>
                 {file.details.map((detail, index) => <div className="chat-edit-card" key={`${detail.id}-${index}`}>

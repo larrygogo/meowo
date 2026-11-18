@@ -1037,7 +1037,14 @@ function cappedCache<T>(prev: Map<string, T>, key: string, value: T): Map<string
 }
 
 /** 「文件」页签：可搜索（文件名 + 内容）的懒加载目录树 + 单文件文本查看（返回行 + pre 文本）。 */
-export function FilesView({ cwd, live = false }: { cwd: string; /** 面板正显示着：这时才在后台查打开的文件过期没有。 */ live?: boolean }) {
+export function FilesView({ cwd, live = false, reveal = null, onRevealed }: {
+  cwd: string;
+  /** 面板正显示着：这时才在后台查打开的文件过期没有。 */
+  live?: boolean;
+  /** 从对话里点过来、要打开的文件（相对 cwd）。已经没有改动的文件从「更改」退到这里看（见 panelReveal.ts）。 */
+  reveal?: { rel: string; nonce: number } | null;
+  onRevealed?: (nonce: number) => void;
+}) {
   const t = useT();
   // 文件树当侧栏（照 Kimi Code 的文件页）：宽面板时可收起、放左边或右边、拖动调宽，三样都记住。
   // 窄面板照旧逐级进出，这几样不起作用（CSS 只在 ≥560px 的容器查询里认它们）。
@@ -1283,6 +1290,17 @@ export function FilesView({ cwd, live = false }: { cwd: string; /** 面板正显
       if (!cached || cached.error) fetchDir(path);
     }
   };
+
+  // 对话里点过来的文件：树逐级展开到它所在的目录（返回树时看得到它在哪），再打开它。每个请求只处理一次。
+  useEffect(() => {
+    if (!reveal) return;
+    const slash = reveal.rel.lastIndexOf("/");
+    if (slash > 0) revealDirFromSearch(reveal.rel.slice(0, slash));
+    else setSearch("");
+    openFile(reveal.rel);
+    onRevealed?.(reveal.nonce);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 只按请求号触发，openFile 等每次渲染新建
+  }, [reveal?.nonce]);
 
   const indent = (depth: number) => ({ paddingLeft: `calc(var(--sp-8) + ${depth * 14}px)` });
   // 手机页没有路径菜单（全是在桌面上开程序/定位文件的动作），也就不出「…」。

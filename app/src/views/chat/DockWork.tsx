@@ -13,10 +13,12 @@ import { formatBackendError } from "../../i18n/errors";
 import { latestPlan, PlanPanel } from "./PlanPanel";
 import { collectBackgroundTasks, TasksDockPanel } from "./TasksPanel";
 import { TodoListItems, type TodoRow } from "./TodoPanel";
-import { LeadGateCard, LeadPanel, LeadPill, useLeadTask } from "./LeadPanel";
+import { LeadGateCard, LeadPanel, LeadPill, useLeadTask, type LeadTaskState } from "./LeadPanel";
 import { ASSUME_LIVE, type SessionLive } from "./toolState";
+import type { PanelState } from "./panelTabs";
+import { remoteUi } from "../../remoteMode";
 import { Icon } from "../../icons/Icon";
-import { icList, icSparkles, icTerminalBox } from "../../icons/glyphs.chat";
+import { icFlag, icList, icSparkles, icTerminalBox } from "../../icons/glyphs.chat";
 import { icPencil } from "../../icons/glyphs";
 
 type Panel = "plan" | "todos" | "tasks" | "subagents" | "lead";
@@ -64,8 +66,29 @@ function TodosIcon({ className }: { className: string }) {
   return <Icon glyph={icList} size={16} className={className} />;
 }
 
-export function DockWork({ sessionId, cwd, ccSessionId, items, history, loading, returnFocusTo, live }: {
+/// 侧边面板里 Lead 页签的状态，对话窗给；手机远程页没有右侧面板，不给（停靠区保持原样，也不出「在侧边面板打开」）。
+export type LeadTabLink = {
+  /** 这个会话的侧边面板里开着 Lead 页签（不论面板收没收起）。 */
+  open: boolean;
+  /** 页签此刻就在眼前：面板展开且当前页签是 Lead。 */
+  shown: boolean;
+  /** 新开或切到 Lead 页签，面板收起时先展开。 */
+  onOpen: () => void;
+};
+
+/// 由侧边面板的页签状态算出 LeadTabLink（对话窗和单测共用这一处）。手机远程页没有右侧面板，给 null。
+/// visible：面板此刻是否展开（对话窗里被新建页等盖住时算收起）。
+export function leadTabLink(state: PanelState, visible: boolean, onOpen: () => void, remote = remoteUi()): LeadTabLink | null {
+  if (remote) return null;
+  const tab = state.tabs.find((item) => item.type === "lead");
+  return { open: !!tab, shown: !!tab && visible && state.active === tab.key, onOpen };
+}
+
+export function DockWork({ sessionId, cwd, ccSessionId, items, history, loading, returnFocusTo, live, lead, leadTab }: {
   sessionId: number;
+  /// 对话窗已经取好的 Lead 任务（和侧边面板的 Lead 页签共用一份）。不给就自己取（单测、旧调用）。
+  lead?: LeadTaskState;
+  leadTab?: LeadTabLink | null;
   /// 会话此刻的活动态与存活（对话窗给）：后台任务算不算「运行中」要看它。
   live?: SessionLive;
   /// 关卡卡片答完收起时焦点的去处（输入框）。
@@ -81,7 +104,20 @@ export function DockWork({ sessionId, cwd, ccSessionId, items, history, loading,
   const t = useT();
   const [panel, setPanel] = useState<Panel | null>(null);
   const toggle = (next: Panel) => setPanel((current) => (current === next ? null : next));
-  const [leadTask, refreshLead, leadFailure] = useLeadTask(cwd, ccSessionId);
+  // 外面给了就不再自己轮询（cwd 传空，hook 不发请求）。
+  const [ownTask, ownRefresh, ownFailure] = useLeadTask(lead ? null : cwd, ccSessionId);
+  const leadTask = lead ? lead.task : ownTask;
+  const refreshLead = lead ? lead.refresh : ownRefresh;
+  const leadFailure = lead ? lead.failure : ownFailure;
+  // Lead 已经在侧边面板的页签里开着：停靠区让位，只留入口。
+  // 为什么不两边都放：关卡卡片两处各一张，在一处答了另一处要等下一拍轮询才收起，期间还能再答一次
+  // （后端会以「已答过」拒掉，但用户看到的是一张报错的卡）；停靠浮层和页签内容也完全重复。
+  const leadInPanel = !!leadTab?.open;
+  // 从别处（面板的「+」菜单）开了页签时，停靠区那份 Lead 浮层一并收起：不然 panel 还记着 "lead"，
+  // 浮层不画了，Esc 监听却还挂着，会把 Esc 吞掉。
+  useEffect(() => {
+    if (leadInPanel) setPanel((current) => (current === "lead" ? null : current));
+  }, [leadInPanel]);
 
   // claude 新版任务列表(TaskCreate/TaskUpdate)从时间线累积重建:CC 对这类 harness
   // 内部工具**不触发 PostToolUse hook**(实测:reporter 手喂事件能落库,真调用不触发),
@@ -167,7 +203,8 @@ export function DockWork({ sessionId, cwd, ccSessionId, items, history, loading,
 
   const done = todos.filter((todo) => todo.status === "completed").length;
   const close = () => setPanel(null);
-  const openPanel = panel === "lead" && leadTask ? <LeadPanel task={leadTask} onClose={close} />
+  const openLeadInPanel = leadTab ? () => { setPanel(null); leadTab.onOpen(); } : undefined;
+  const openPanel = panel === "lead" && leadTask && !leadInPanel ? <LeadPanel task={leadTask} onClose={close} onOpenInPanel={openLeadInPanel} />
     : panel === "plan" && showPlan ? <PlanPanel plan={currentPlan} pending={planPending} onClose={close} />
     : panel === "todos" && todos.length > 0 ? (
       <div className="dock-work-panel panel-todos">
@@ -185,15 +222,26 @@ export function DockWork({ sessionId, cwd, ccSessionId, items, history, loading,
   return (
     <>
       {/* 关卡在等 leader 时常驻显示（不必先点开 Lead 面板）：这是 leader 要做的决定。 */}
-      {cwd && leadTask?.gate?.status === "pending" && (
+      {cwd && leadTask?.gate?.status === "pending" && !leadInPanel && (
         <LeadGateCard key={leadTask.gate.id} cwd={cwd} gate={leadTask.gate} onAnswered={refreshLead} onStale={refreshLead} returnFocusTo={returnFocusTo} />
+      )}
+      {/* 关卡卡片挪进了侧边面板的 Lead 页签：页签不在眼前（面板收起或在看别的页签）时，这里留一行
+          提醒，点了切过去作答。页签就在眼前时不留，免得同一件事在相邻两处各说一遍。 */}
+      {leadTask?.gate?.status === "pending" && leadTab && leadInPanel && !leadTab.shown && (
+        <button type="button" className="lead-gate-moved" onClick={leadTab.onOpen}>
+          <Icon glyph={icFlag} size={14} className="lead-gate-moved-icon" />
+          <span className="lead-gate-moved-text">{t.chat.leadGateInPanel}</span>
+          <span className="lead-gate-moved-go">{t.chat.leadGateInPanelGo}</span>
+        </button>
       )}
       {/* 面板的锚点：零高、紧贴胶囊行上方（在关卡卡片之后），面板从这里向上弹，盖在关卡卡片上，
           而不是顶到关卡卡片上面去。 */}
       {panel && <div className="dock-work-anchor" ref={anchorRef}>{openPanel}</div>}
       {!loading && (
         <div className="dock-workbar">
-          {leadTask && <LeadPill task={leadTask} active={panel === "lead"} onClick={() => toggle("lead")} />}
+          {leadTask && (leadTab && leadInPanel
+            ? <LeadPill task={leadTask} active={leadTab.shown} onClick={leadTab.onOpen} inPanel />
+            : <LeadPill task={leadTask} active={panel === "lead"} onClick={() => toggle("lead")} />)}
           {!leadTask && leadFailure && <button type="button" className="ui-pill" onClick={refreshLead} title={formatBackendError(leadFailure, t.locale)}>
             {t.chat.leadEntry}<span className="ui-pill-meta">{t.chat.leadDataIssue}</span>
           </button>}

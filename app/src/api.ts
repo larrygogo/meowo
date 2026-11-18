@@ -649,8 +649,9 @@ export type BrowserEmulation = {
   headerNames: string[];
 };
 /** 用户在「…」菜单里选设备或还原（自定义尺寸、请求头只给 Agent 的工具用）。 */
-export function emulateBrowserPane(id: number, device: "desktop" | "tablet" | "mobile" | "reset"): Promise<void> {
-  return invoke("browser_pane_emulate", { id, device });
+export type EmulateSpec = { device?: "desktop" | "tablet" | "mobile" | "reset"; width?: number; height?: number; userAgent?: string };
+export function emulateBrowserPane(id: number, spec: EmulateSpec): Promise<void> {
+  return invoke("browser_pane_emulate", { id, device: spec.device ?? null, width: spec.width ?? null, height: spec.height ?? null, userAgent: spec.userAgent ?? null });
 }
 /** id 每条请求不同：前端据此判断答复是否已送达（见 BrowserPane 的防连点）。 */
 export type BrowserPermission = { id: number; kind: string; host: string };

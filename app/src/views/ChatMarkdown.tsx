@@ -1,4 +1,5 @@
-import { memo, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { memo, useContext, useEffect, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
+import { ChatCwdContext } from "./chat/chatCwd";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { openLink, revealTerminalPath } from "../api";
@@ -15,8 +16,43 @@ import { ErrorBoundary } from "../ErrorBoundary";
 import { Icon } from "../icons/Icon";
 import { icImage } from "../icons/glyphs.chat";
 
+// 网址里不会出现的字符：中日韩文字、全角标点与括号、中文引号书名号。GFM 的自动链接只在空白处收尾，中文里
+// 网址后面常常紧跟「）」或汉字、中间没有空格，整句会被吞进链接（2026-11-18 用户截图：飞书文档链接连着
+// 「）内容已经都并进来了，要我删掉吗？」一起变成了链接）。真要出现在网址里的这些字符会被百分号编码，截断不会误伤。
+const NOT_IN_URL = /[‘-‟　-〿぀-ヿ㐀-䶿一-鿿가-힯＀-￯]/;
+
+type MdNode = { type: string; value?: string; url?: string; children?: MdNode[] };
+
+/// 把自动识别出来的网址在第一个「网址里不会有的字符」处截断，剩下的还原成普通文字。只动自动链接（链接文字就是
+/// 网址本身）；作者写的 [文字](地址) 不碰。
+export function trimCjkAutolinks(tree: MdNode): void {
+  const walk = (node: MdNode) => {
+    const kids = node.children;
+    if (!kids) return;
+    for (let i = 0; i < kids.length; i++) {
+      const child = kids[i];
+      const text = child.type === "link" && child.children?.length === 1 && child.children[0].type === "text" ? child.children[0].value ?? "" : null;
+      if (text !== null && child.url && (child.url === text || child.url.endsWith(text) || child.url === `mailto:${text}`)) {
+        const cut = text.search(NOT_IN_URL);
+        if (cut > 0) {
+          const head = text.slice(0, cut);
+          const rest = text.slice(cut);
+          child.children = [{ type: "text", value: head }];
+          child.url = child.url.slice(0, child.url.length - text.length) + head;
+          kids.splice(i + 1, 0, { type: "text", value: rest });
+          i += 1;
+          continue;
+        }
+      }
+      walk(child);
+    }
+  };
+  walk(tree);
+}
+const remarkTrimCjkAutolinks = () => (tree: MdNode) => trimCjkAutolinks(tree);
+
 /** 文件面板的 FileMarkdown 复用同一份 remark 插件表——渲染规则两处不分叉。 */
-export const PLUGINS = [remarkGfm];
+export const PLUGINS = [remarkGfm, remarkTrimCjkAutolinks];
 
 /// 超过这个规模的代码块不高亮：hljs 同步跑在渲染路径上，几百 KB 的日志粘贴会卡住
 /// 整窗；纯文本已有滚动限高，大块不上色是可接受的降级。
@@ -260,11 +296,17 @@ function CopyableTable({ children }: { children?: ReactNode }) {
 /// 路径只认绝对路径：`C:\…`、`\\server\…`，或至少两段的 `/a/b`。单段的 `/model` 是斜杠命令，不算。
 const CODE_URL = /^https?:\/\/[^\s<>"]+$/i;
 const CODE_PATH = /^(?:[A-Za-z]:[\\/]|\\\\[^\\/\s]+[\\/]|\/[^/\s]+\/)[^\n<>"|?*]*$/;
-export function codeLinkKind(text: string): "url" | "path" | null {
+// 相对路径（2026-11-18 用户：`app/src-tauri/target/release/meowo-app.exe` 这种为什么识别不出来）按会话工作目录
+// 定位，只认两类，免得分支名（`fix/scm-switch-flash`）、`owner/repo` 被当成路径：`./`、`../`、`~/` 开头的；
+// 或至少两段、最后一段带扩展名的（`docs/a.md`、`.lead/x/progress.md`）。没有工作目录时相对路径不做成链接。
+const CODE_REL_DOT = /^(?:\.{1,2}|~)[\\/][^\s<>"|?*]+$/;
+const CODE_REL_FILE = /^[\w.@-][\w.@ -]*(?:[\\/][\w.@ -]+)+\.[A-Za-z0-9]{1,8}(?::\d+(?::\d+)?)?$/;
+export function codeLinkKind(text: string): "url" | "path" | "relpath" | null {
   const value = text.trim();
   if (!value || value.includes("\n")) return null;
   if (CODE_URL.test(value)) return "url";
   if (CODE_PATH.test(value)) return "path";
+  if (CODE_REL_DOT.test(value) || CODE_REL_FILE.test(value)) return "relpath";
   return null;
 }
 
@@ -275,7 +317,14 @@ export function stripLineSuffix(path: string): string {
   return path.replace(/(?::\d+(?::\d+)?|\(\d+(?:,\d+)?\))$/, "");
 }
 
-function LinkCode({ text, kind }: { text: string; kind: "url" | "path" }) {
+/// 相对路径：有会话工作目录才做成可点的（接在它后面定位），没有就是普通代码。
+function RelPathCode({ text }: { text: string }) {
+  const cwd = useContext(ChatCwdContext);
+  if (!cwd) return <code>{text}</code>;
+  return <LinkCode text={text} kind="path" cwd={cwd} />;
+}
+
+function LinkCode({ text, kind, cwd = "" }: { text: string; kind: "url" | "path"; cwd?: string }) {
   const t = useT();
   // 点了打不开（路径已删、被移走）要说出来：这里没有 toast，静默吞掉就是「点了没反应」，
   // 必然引来连点。错误就地跟在链接后面。
@@ -287,7 +336,7 @@ function LinkCode({ text, kind }: { text: string; kind: "url" | "path" }) {
     // 拖选这段文字（想复制）松手时也会触发 click：有选区就当是在选字，不打开。
     if (window.getSelection()?.toString()) return;
     const value = text.trim();
-    void (kind === "url" ? openLink(value) : revealTerminalPath("", stripLineSuffix(value))).then(
+    void (kind === "url" ? openLink(value) : revealTerminalPath(cwd, stripLineSuffix(value))).then(
       () => setFailed(null),
       (e) => setFailed(formatBackendError(e, t.locale)),
     );
@@ -357,6 +406,7 @@ export const components: Components = {
     if (!className && !text.includes("\n")) {
       const kind = codeLinkKind(text);
       if (kind === "url" || (kind === "path" && !remoteUi())) return <LinkCode text={text} kind={kind} />;
+      if (kind === "relpath" && !remoteUi()) return <RelPathCode text={text} />;
     }
     const tag = /language-([\w+-]+)/.exec(className ?? "")?.[1];
     const lang = tag ? languageForFence(tag) : null;
