@@ -6369,6 +6369,9 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
   /* 后台任务行：窄屏上「说明 · $ 命令 · 耗时」挤一行，说明和命令都被截成几个字。命令换到
      说明下方独占一行、与说明左对齐（对照 Kimi 的 tp-meta 在 640px 下 order:10 / 整宽）。 */
   .chat-task-row { flex-wrap: wrap; row-gap: var(--sp-2); padding: var(--sp-4) 0; }
+  /* 名字按 0 起算宽度、与图标和耗时同一行截断：按内容宽度起算时长名字（续上的子代理用消息首行）
+     整段占满一行，被折到图标下面，耗时再折到第三行（手机实拍 2026-11-18）。 */
+  .chat-task-row .chat-task-name { flex: 1 1 0%; }
   .chat-task-meta { order: 10; flex: 1 1 100%; padding-left: calc(16px + var(--sp-10)); font-size: var(--text-xs); }
 }
 /* 停靠面板头：标题 + 分段筛选 + 关闭在 480px 以下排不下一行，允许折行（对照 Kimi 的 dock-work-head）。 */
