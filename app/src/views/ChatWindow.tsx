@@ -1081,12 +1081,28 @@ export function ChatWindow() {
   // 认出过的仓库 / worktree 粘住：命令和编辑记录会随翻页滑出加载窗口，滑出去就又认不出来，
   // 列表里的 worktree 忽隐忽现。按会话记着，下次拉清单时当作「碰过的路径」一并交给后端。
   const usedRootsRef = useRef<Set<string>>(new Set());
-  // 换会话也清：同一个工作目录的两个会话改的仓库不同，不清会先露出上一个会话的仓库分组。
+  // 换会话不能露出上一个会话的仓库分组（同一个工作目录的两个会话改的仓库不同）。但一律清空会让「更改」页
+  // 每次切会话都先空一下再画回来（2026-11-18 用户：「每次切换会话，更改页都会闪烁一次」）。按会话记住上一次
+  // 的清单：切回来先显示它自己的旧结果，后台照常刷新、内容没变不重画；没来过的会话才从空开始。
+  const changesKey = `${sessionId}\u0000${diffCwd ?? ""}`;
+  const changesStateKeyRef = useRef(changesKey);
+  const changesCacheRef = useRef(new Map<string, { repos: RepoChangesDto[] | null; scmRoot: string | null; usedRoots: Set<string> }>());
   useEffect(() => {
-    setRepoChanges(null);
-    setScmRoot(null);
-    usedRootsRef.current = new Set();
-  }, [diffCwd, sessionId]);
+    // 只记「属于当前会话」的状态：换会话那一帧状态还是上一个会话的，不能记到新会话名下。
+    if (changesStateKeyRef.current !== changesKey) return;
+    const cache = changesCacheRef.current;
+    cache.delete(changesKey);
+    cache.set(changesKey, { repos: repoChanges, scmRoot, usedRoots: usedRootsRef.current });
+    // 只留最近 20 个会话，长时间不关窗口也不涨内存。
+    while (cache.size > 20) cache.delete(cache.keys().next().value as string);
+  }, [changesKey, repoChanges, scmRoot]);
+  useEffect(() => {
+    const cached = changesCacheRef.current.get(changesKey);
+    changesStateKeyRef.current = changesKey;
+    setRepoChanges(cached?.repos ?? null);
+    setScmRoot(cached?.scmRoot ?? null);
+    usedRootsRef.current = cached ? new Set(cached.usedRoots) : new Set();
+  }, [changesKey]);
   // 会话最近的命令文本（用户要求 2026-11-09）：agent 常 cd 进 worktree 用命令干活，编辑工具一次没碰过，
   // 只认编辑记录就看不到这个 worktree。后端按命令里出现的路径认（绝对 / 相对 / Git Bash 写法）。
   const commandsKey = useMemo(() => {
@@ -1156,11 +1172,17 @@ export function ChatWindow() {
   const effectiveSummary = gitSummary?.isRepo ? gitSummary : (pickedRepo?.summary ?? gitSummary);
   effectiveSummaryRef.current = effectiveSummary;
   isRepoRef.current = !!effectiveSummary?.isRepo;
+  // 摘要只跟工作目录有关：按目录记住上一次的，换会话时先显示该目录自己的旧摘要，不先露出上一个目录的。
+  const summaryCacheRef = useRef(new Map<string, GitDiffSummaryDto>());
+  useEffect(() => {
+    if (gitSummary && diffCwdRef.current) summaryCacheRef.current.set(diffCwdRef.current, gitSummary);
+  }, [gitSummary]);
   useEffect(() => {
     if (!diffCwd) { setGitSummary(null); return; }
+    setGitSummary(summaryCacheRef.current.get(diffCwd) ?? null);
     let cancelled = false;
     getGitDiffSummary(diffCwd)
-      .then((result) => { if (!cancelled) setGitSummary(result); })
+      .then((result) => { if (!cancelled) setGitSummary((prev) => (JSON.stringify(prev) === JSON.stringify(result) ? prev : result)); })
       .catch(() => { if (!cancelled) setGitSummary(null); });
     return () => { cancelled = true; };
   }, [diffCwd]);
