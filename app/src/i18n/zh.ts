@@ -2510,7 +2510,8 @@ export const zh = {
     identitySaving: "正在保存…",
     identitySaved: "已设置 git 身份",
     prPushFirst: (n: number) => `会先推送 ${n} 个提交`,
-    prState: { open: "进行中", draft: "草稿", merged: "已合并", closed: "已关闭" } as Record<string, string>,
+    // 与标题栏、侧栏（chat.prState）同一说法：开着的 PR 叫「已打开」。
+    prState: { open: "已打开", draft: "草稿", merged: "已合并", closed: "已关闭" } as Record<string, string>,
     checks: "检查",
     checksNone: "这个仓库没配 CI",
     checksPass: (n: number) => `${n} 项检查全部通过`,

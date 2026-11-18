@@ -145,6 +145,15 @@ describe("「更改」面板按平台的叫法", () => {
   });
 });
 
+describe("PR 状态的说法", () => {
+  it("「更改」面板、标题栏、侧栏同一说法", () => {
+    for (const state of ["open", "draft", "merged", "closed"]) {
+      expect(zh.forge.prState[state]).toBe(zh.chat.prState[state]);
+      expect(en.forge.prState[state]).toBe(en.chat.prState[state]);
+    }
+  });
+});
+
 describe("侧栏与标题栏按平台的叫法", () => {
   it("GitLab 的 MR 写 !号；没有 forge 字段时按链接认", () => {
     const badge: SidebarGitBadgeDto = { cwd: ROOT, additions: 0, deletions: 0, files: 0, pr: { number: 42, state: "open", checks: "pass", url: "https://gitlab.com/g/app/-/merge_requests/42", title: "x", forge: "gitlab" } };

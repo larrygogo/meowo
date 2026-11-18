@@ -313,6 +313,8 @@ fn api_分页_slurp_与字段() {
     assert!(api.calls()[0].1.ends_with("/repos/acme/repo/pulls/3/files?per_page=100"), "{}", api.calls()[0].1);
     let out = run(&api, &prefs, ".", &["api", "repos/acme/repo/pulls/3/files", "--paginate"]);
     assert_eq!(json_out(&out), json!([{ "filename": "a.ts" }, { "filename": "b.ts" }]));
+    // 这里只测内置 `gh api` 把 -f / -F 字段原样转成请求体（参数是测试自己给的），抓不到 side 写错这类回退；
+    // side 的 NEW/OLD → RIGHT/LEFT 映射由 forge/review.rs 的 writes_use_injected_gh_and_line_comment_pins_current_head 钉住。
     let out = run(&api, &prefs, ".", &["api", "repos/acme/repo/pulls/3/comments", "-f", "body=hi there", "-f", "commit_id=abc", "-f", "path=src/a.ts", "-F", "line=3", "-f", "side=RIGHT"]);
     assert_eq!(out.code, Some(0), "{}", out.stderr);
     assert_eq!(json_out(&run(&api, &prefs, ".", &["api", "user"]))["login"], "me");
