@@ -60,7 +60,11 @@ CREATE TABLE IF NOT EXISTS sessions (
     extra_dirs     TEXT,
     -- 侧栏「手动排序」拖出来的位置（v18）。NULL = 没拖过，排序键退回 started_at * 1024
     -- （见 query.rs MANUAL_KEY）：没拖过时手动顺序就是创建时间倒序，新会话出现在最上面。
-    manual_rank    INTEGER
+    manual_rank    INTEGER,
+    -- 会话开在 linked worktree 里时的原项目（主检出根目录，v32）。平时由 cwd 现场推算，
+    -- 用不着它；worktree 被删、.git 文件跟着没了以后就推不出来了——标记完成、删 worktree
+    -- 时趁目录还在记一笔，目录没了的会话才能给出「在原项目新开会话」。NULL = 没记过。
+    origin_root    TEXT
 );
 
 CREATE TABLE IF NOT EXISTS tasks (

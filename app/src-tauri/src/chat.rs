@@ -280,6 +280,8 @@ fn load_chat_history(
         // 强制切回对话页。本 GUI 自己 spawn 的 PTY 是最强的「交互态」证据。
         background,
         archived: header.archived,
+        cwd_missing: false,
+        origin_root: None,
         last_user_text: header.last_user_text.clone(),
         last_ai_text: header.last_ai_text.clone(),
         predecessor_id: header.predecessor_id,
@@ -291,6 +293,14 @@ fn load_chat_history(
     // 已停用的「Meowo 托管」会话（PR #172 删除托管路线）：照常走原生记录读取——绑定过原生 id 的，
     // cc_session_id 就是 CLI 自己的会话 id，对话页能看到 CLI 落盘的记录；前端据此换门卡文案。
     let running = super::session_query::process_alive(header.pid, &live.alive, live.pty_live);
+    // 目录已删除：只读回看（见 ChatHistoryDto::cwd_missing）。连着的会话不算，与侧栏同口径。
+    if !history.connected && !running {
+        if let Some(cwd) = header.cwd.as_deref().filter(|c| super::session_query::cwd_is_missing(Some(c))) {
+            history.cwd_missing = true;
+            let recorded = store.session_origin_root(session_id).ok().flatten();
+            history.origin_root = crate::wtnew::origin::origin_for_missing(recorded.as_deref(), cwd);
+        }
+    }
     history.retired_managed = retired_marker(
         store
             .retired_managed(session_id)
@@ -1268,6 +1278,62 @@ mod tests {
         assert_eq!(resumable(plain), None);
         // 做空 R4：用官方 CLI 恢复后原生 PTY 在跑，它就是普通原生会话，不再带停用标记。
         assert_eq!(read_with(bound, true).retired_managed, None);
+        drop(store);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// 目录已删的会话：对话页拿到 cwd_missing 与推出来的原项目（只读回看 + 「在原项目新开会话」）；
+    /// 进程还在跑的不算，目录还在的不带原项目。修复前 DTO 里没有这两个字段，对话页只会给「恢复会话」。
+    #[test]
+    fn missing_folder_is_reported_with_origin_unless_the_process_runs() {
+        let dir = std::env::temp_dir().join(format!(
+            "meowo-gone-chat-{}",
+            crate::remote::generate_token().unwrap()
+        ));
+        let origin = dir.join("app");
+        std::fs::create_dir_all(origin.join(".git")).unwrap();
+        let db = dir.join("board.db");
+        let store = super::super::open_store(&db).unwrap();
+        let project = store.upsert_project_by_root("/p", "p", 1).unwrap();
+        let (gone, _) = store.start_session(project, "gone", 1).unwrap();
+        let (here, _) = store.start_session(project, "here", 1).unwrap();
+        store
+            .set_session_cwd(gone, &dir.join("app-fix-1112").to_string_lossy(), 2)
+            .unwrap();
+        store.set_session_cwd(here, &origin.to_string_lossy(), 2).unwrap();
+        store.end_session(gone, 3).unwrap();
+        store.end_session(here, 3).unwrap();
+        let mtimes = Mutex::new(ChatMtimes::default());
+        let cache = Mutex::new(meowo_agent::TranscriptCache::default());
+        let read_with = |id, pty_live| {
+            load_chat_history(
+                &db,
+                &mtimes,
+                &cache,
+                LiveSignals {
+                    alive: Default::default(),
+                    pty_live,
+                    broker_approval: false,
+                    runtimes: Default::default(),
+                    screen_state: None,
+                    screen_assumed: false,
+                },
+                id,
+                ChatRead::default(),
+            )
+            .unwrap()
+        };
+        let history = read_with(gone, false);
+        assert!(history.cwd_missing);
+        assert_eq!(
+            history.origin_root,
+            Some(origin.to_string_lossy().replace('\\', "/"))
+        );
+        let running = read_with(gone, true);
+        assert!(!running.cwd_missing, "进程在跑时由它自己说了算");
+        let fine = read_with(here, false);
+        assert!(!fine.cwd_missing);
+        assert_eq!(fine.origin_root, None);
         drop(store);
         std::fs::remove_dir_all(&dir).unwrap();
     }

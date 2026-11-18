@@ -21,7 +21,8 @@ export type PanelActions = ReturnType<typeof usePanel>["actions"];
  * 页签清单按会话存在 localStorage；终端和浏览器的进程在后端，这里按编号对上号：
  * 切到一个没有活进程的终端 / 浏览器页签（新开的，或应用重启过），就按存下的目录 / 网址重新起一个。
  */
-export function usePanel(sessionId: number, cwd: string | null, onError: (message: string) => void, ended = false) {
+/** blocked：会话目录已删（ChatWindow 的 dirGone）——页签里记着的目录也不在了，不补开任何终端或浏览器进程。 */
+export function usePanel(sessionId: number, cwd: string | null, onError: (message: string) => void, ended = false, blocked = false) {
   const t = useT();
   const [panel, setPanel] = useState<{ sessionId: number; state: PanelState }>(() => ({ sessionId, state: loadPanel(sessionId) }));
   // 换会话：先存旧会话的（保存 effect 已经在每次变化时存过），再读新会话的。
@@ -145,7 +146,7 @@ export function usePanel(sessionId: number, cwd: string | null, onError: (messag
   const spawning = useRef(new Set<string>());
   const active = activeTab(state);
   useEffect(() => {
-    if (remoteUi() || !liveLoaded || !state.visible || !active) return;
+    if (remoteUi() || blocked || !liveLoaded || !state.visible || !active) return;
     if (spawning.current.has(active.key)) return;
     // 已结束的会话不补开旧进程（上面的 effect 会把这种页签去掉）。
     if (ended && ((active.type === "term" && active.shellId !== null) || (active.type === "browser" && active.paneId !== null))) return;
@@ -173,7 +174,7 @@ export function usePanel(sessionId: number, cwd: string | null, onError: (messag
         .catch((e) => onError(formatBackendError(e, t.locale)))
         .finally(() => spawning.current.delete(key));
     }
-  }, [active, state.visible, liveLoaded, shells, panes, sessionId, cwd, update, onError, t.locale, ended]);
+  }, [active, state.visible, liveLoaded, shells, panes, sessionId, cwd, update, onError, t.locale, ended, blocked]);
 
   // ── 关闭：终端里还有程序在跑先确认（参照 Kimi Code「关闭正在运行的终端？」）──
   const close = useCallback(async (keys: readonly string[]) => {

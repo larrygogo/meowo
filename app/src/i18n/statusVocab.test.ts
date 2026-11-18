@@ -74,6 +74,7 @@ const ALLOWED: Record<string, string> = {
   "admin.batchReopenedToast": "未归档的会话",
   "chat.sidebarTabOpen": "未归档的会话",
   "chat.sidebarReopenFailed": "未归档的会话",
+  "chat.dirGoneNoReopen": "未归档的会话",
   "settings.archivedInAdminDesc": "未归档的会话",
   "settings.unarchiveFailed": "未归档的会话",
   "worktree.reason.shared_session": "未归档的会话",

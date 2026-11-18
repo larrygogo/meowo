@@ -6,7 +6,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 // Tauri 事件反而直接给**源路径**,附件协议正好只要路径)。
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import { pathKey, unquotePath } from "../paths";
+import { folderName, pathKey, unquotePath } from "../paths";
 import { COMPACTING_ACTIVITY } from "../activity";
 import { appConfirm } from "../confirm";
 import { forkSession, agentChatUi, attachBackgroundSession, sendBackgroundPrompt, clipboardRestore, clipboardSetImage, confirmStopSession, dismissInteractiveQuestion, getChatHistory, getGitChangesOverview, getGitDiffSummary, getLiveSessionsPage, getSessionLineage, isExternallyHeld, managedTerminalBinding, managedTerminalPendingLaunch, managedTerminalScreen, managedTerminalSnapshot, openNewSessionWindow,  refreshSessionModel, refreshSessionTodos, renameSession as renameSessionCmd, savePastedAttachment, sessionLaunchSelections, setArchived as setArchivedCmd, historyTone, historyTurnTone, liveSessionTone, startManagedTerminal, copySessionToProvider, takeoverManagedTerminal, writeManagedTerminal, type AgentId, type ChatHistory, type ChatItem, type ChatUi, type GitDiffSummaryDto, type RepoChangesDto, type LiveSession, type ModelPreset, type PendingApproval, type RuntimeRequest } from "../api";
@@ -222,6 +222,11 @@ export function ChatWindow() {
   // 已停用的「Meowo 托管」会话（托管路线已删，旧库里的只读保留）：门卡换成停用说明，
   // 有原生会话 id 时给「用官方 CLI 打开」（走原生恢复路径）。
   const retiredManaged = history?.retiredManaged ?? null;
+  // 目录已删除（worktree 被清理、目录被手动删了）且进程不在：只读回看历史。输入区换成说明与「新开会话」，
+  // 不给「恢复会话」——agent 按目录找会话记录，换个目录续不上，原目录又没了，恢复注定失败。
+  const dirGone = !!history?.cwdMissing && !history.connected && !history.background;
+  // 「新开会话」的去处：推得出原项目就预填它；推不出不预填（不拿已经没了的目录去预填）。
+  const dirGoneOrigin = dirGone ? history?.originRoot ?? null : null;
   const [items, setItems] = useState<ChatItem[]>([]);
   // CLI 的送达回执（claude 入队记录）：不进时间线，只喂给发出消息的对账。按会话归零。
   const [queueAcks, setQueueAcks] = useState<readonly PromptAck[]>([]);
@@ -966,7 +971,10 @@ export function ChatWindow() {
   // 运行日志：发出的消息落进「发送失败」「未确认送达」各记一行（chat/chatDiag，验收 19）。
   useOutgoingDiag(sessionId, provider, outgoing);
   const cwd = history?.cwd ?? launchInfo?.cwd ?? null;
-  const folderOpeners = useFolderOpeners(cwd ?? "", setSendError).options;
+  // 目录已删时一切要读这个目录的东西（改动数胶囊、「更改」「文件」面板、用编辑器打开）都不挂：
+  // 读一个不存在的目录只会拿到报错或空壳。标题、会话信息照常用 cwd 显示它原来在哪。
+  const liveCwd = dirGone ? null : cwd;
+  const folderOpeners = useFolderOpeners(liveCwd ?? "", setSendError).options;
   // 「文件」入口有 cwd 即可用；「改动」入口仅当后端确认 cwd 是 git 仓库时出现。
   // 两个入口共用同一停靠面板，activeTab 保证面板不卸载时也能直达对应页签。
   const [gitSummary, setGitSummary] = useState<GitDiffSummaryDto | null>(null);
@@ -974,7 +982,8 @@ export function ChatWindow() {
   // 模型见 chat/panelTabs.ts，状态与动作见 chat/usePanel.ts）。
   // 会话已结束（库里 ended 且进程不在了）：面板不再补开它旧的终端和浏览器。
   const sessionEnded = history?.status === "ended" && !history?.connected;
-  const panel = usePanel(sessionId, cwd, setSendError, sessionEnded);
+  // 目录已删时不给面板目录、也不补开终端：不会在一个不存在的目录里起 shell（shell_terminal_open）。
+  const panel = usePanel(sessionId, liveCwd, setSendError, sessionEnded, dirGone);
   const panelActions = panel.actions;
   const panelState = panel.state;
   // 会话信息栏（chat/SessionInfo）：面板收起时露出来。开关全局一份、默认开（同 Kimi）；
@@ -1033,7 +1042,7 @@ export function ChatWindow() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [panelActions]);
-  const diffCwd = cwd;
+  const diffCwd = liveCwd;
   // 改动面板里写的行评论,按会话分开攒着:切去别的会话再回来还在,点「插入输入框」
   // 才拼成一段文字交给用户自己发(发之前还能再改几句)。
   const [reviewComments, setReviewComments] = useState<ReadonlyMap<number, readonly ReviewComment[]>>(new Map());
@@ -1263,11 +1272,12 @@ export function ChatWindow() {
     ?.launch_options?.some((option) => option.switch === "dialog");
   useEffect(() => {
     setDynamicModeChoices([]);
-    if (!provider || !wantsDynamicModes) return;
+    // 目录已删：输入区整块换成门卡，没有模式菜单可用，也不拿已删的目录去问 agent。
+    if (!provider || !wantsDynamicModes || dirGone) return;
     let cancelled = false;
     agentDynamicModeChoices(provider, cwd).then((value) => { if (!cancelled) setDynamicModeChoices(value ?? []); }).catch(() => {});
     return () => { cancelled = true; };
-  }, [provider, cwd, wantsDynamicModes]);
+  }, [provider, cwd, wantsDynamicModes, dirGone]);
   const permissionOption = (provider
     ? agentsForOptions
         ?.find((agent) => agent.id === provider)
@@ -1342,7 +1352,8 @@ export function ChatWindow() {
   // 换会话/换 provider/换 cwd 仍立即查。
   const chatUiProbeRef = useRef({ key: "", at: 0 });
   useEffect(() => {
-    if (!provider) return;
+    // 目录已删：对话页只读，用不到交互能力表，也不拿已删的目录去探 agent。
+    if (!provider || dirGone) return;
     let stale = false;
     let timer = 0;
     const key = `${provider}\0${cwd ?? ""}\0${sessionId}`;
@@ -1355,7 +1366,7 @@ export function ChatWindow() {
     if (wait > 0) timer = window.setTimeout(fetchUi, wait);
     else fetchUi();
     return () => { stale = true; window.clearTimeout(timer); };
-  }, [provider, cwd, sessionId, runtimeCapabilityProbe]);
+  }, [provider, cwd, sessionId, runtimeCapabilityProbe, dirGone]);
 
   // 启动阻塞属于会话状态，不属于终端视图。即使用户从未打开终端 tab，也先用轻量增量
   // snapshot 探测 PTY；发现活跃 PTY 后在屏幕外挂载 xterm，还原 ANSI 当前屏并持续识别选择器。
@@ -2881,9 +2892,9 @@ export function ChatWindow() {
     sendText: (text) => sendTextRef.current(text),
     undoFrom: undoableIds ? (id, text) => void undoFromRef.current(id, text) : undefined,
     undoableIds,
-    newSession: () => void openNewSessionWindow({ cwd, provider }).catch(() => {}),
+    newSession: () => void openNewSessionWindow({ cwd: dirGone ? dirGoneOrigin : cwd, provider }).catch(() => {}),
     undoRejected: rejectedUndo ? () => void undoFromRef.current(rejectedUndo.id, rejectedUndo.text) : undefined,
-  }), [undoableIds, cwd, provider, rejectedUndo]);
+  }), [undoableIds, cwd, provider, rejectedUndo, dirGone, dirGoneOrigin]);
   /// 原生图片附加：逐张把附件写进系统剪贴板 → 发插件声明的粘贴键（claude 的 Ctrl-V、
   /// kimi 在 Windows 上的 Alt+V——发 Ctrl-V 会被它的 composer 无视，真机实拍）让 TUI
   /// 自己读（claude 的 `[Image #N]`、kimi 的 `[image #N (W×H)]`）→ 等第 N 个占位符出现
@@ -3900,15 +3911,16 @@ export function ChatWindow() {
   // background 例外:它没有终端可接管,composer 是唯一出口(发送时后端另有拒绝话术)。
   // 已停用的「Meowo 托管」会话不看 supported：没绑定原生 id 的读不到原生记录（supported=false），
   // 也得锁住输入框、给出停用说明——托管通道已删，消息发不出去。
-  const composerGated = !!history && !history.background && history.ptyManaged === false
-    && (retiredManaged != null || (history.supported && (externalRunning || history.status === "ended")));
+  // 目录已删除同样锁住输入框，门卡换成只读说明（见 dirGone）。
+  const composerGated = dirGone || (!!history && !history.background && history.ptyManaged === false
+    && (retiredManaged != null || (history.supported && (externalRunning || history.status === "ended"))));
   // CLI 意外退出（二期 #7）：已结束的会话问一次托管终端的定格快照，后端判定为意外退出
   //（退出码非 0、不是用户结束、不在重启窗口内）就把「会话已结束」换成退出码 + 最后几行输出。
   // since 给最大值：只要退出信息，不要整段 1MiB 的输出回放。
-  const endedHere = composerGated && !externalRunning && sessionId > 0;
+  const endedHere = composerGated && !dirGone && !externalRunning && sessionId > 0;
   // 停用说明只在门卡还挂着时生效：「用官方 CLI 打开」之后 ptyManaged 翻 true，它就是普通原生会话，
   // 占位文字与 + 菜单（附件/斜杠/@）必须恢复（做空 R4：此前恢复后仍显示「已停用」、+ 永久置灰）。
-  const retiredGate = composerGated ? retiredManaged : null;
+  const retiredGate = composerGated && !dirGone ? retiredManaged : null;
   const [crash, setCrash] = useState<{ id: number; code: number; tail: string | null } | null>(null);
   useEffect(() => {
     if (!endedHere) return;
@@ -4689,13 +4701,15 @@ export function ChatWindow() {
             starred={!!history.ccSessionId && starredSet.has(history.ccSessionId)}
             onToggleStar={toggleStar}
             onRename={() => setRenaming(true)}
-            onFork={chatUi?.fork && sessionId > 0 ? () => void forkCurrent() : undefined}
-            onCopyResume={resumeCommand && !remoteUi() ? () => copyResumeCommand(resumeCommand) : undefined}
+            // 目录已删：分叉与恢复命令都要在原目录里跑，注定失败，不给入口。
+            onFork={chatUi?.fork && sessionId > 0 && !dirGone ? () => void forkCurrent() : undefined}
+            onCopyResume={resumeCommand && !remoteUi() && !dirGone ? () => copyResumeCommand(resumeCommand) : undefined}
             onCopyConversation={conversationExport.hasContent ? conversationExport.copyConversation : undefined}
             onCopyFinalAnswer={conversationExport.hasFinalAnswer ? conversationExport.copyFinalAnswer : undefined}
             onExportConversation={conversationExport.hasContent ? () => void conversationExport.exportConversation() : undefined}
             forkDisabled={tone === "running" || sending}
             onToggleArchived={() => void toggleArchived()}
+            archiveDisabledReason={history.archived && dirGone ? t.chat.dirGoneNoReopen : undefined}
             onSearch={() => { setView("chat"); setSearchOpen(true); }}
             t={t}
           />
@@ -4713,8 +4727,8 @@ export function ChatWindow() {
         )}
         archive={history && !history.archived && sessionId > 0 ? { busy: archiving, onClick: () => void toggleArchived() } : null}
         end={history?.endable ? { busy: endingSession, onClick: () => void endSession() } : null}
-        cwd={cwd}
-        prCwd={gitSummary?.isRepo ? cwd : (repoChanges?.[0]?.root ?? cwd)}
+        cwd={liveCwd}
+        prCwd={gitSummary?.isRepo ? liveCwd : (repoChanges?.[0]?.root ?? liveCwd)}
         sessionPrUrl={sessionPrUrl}
         gitSummary={effectiveSummary}
         changesOpen={panelState.visible && panel.active?.type === "diff"}
@@ -4726,7 +4740,7 @@ export function ChatWindow() {
         onTogglePanel={panelActions.toggle}
         panelAgentBusy={!panelState.visible && panel.agentBusy}
         panelWaiting={!panelState.visible && panel.permissionWaiting}
-        info={!remoteUi() && cwd && !panelState.visible ? { open: infoWide ? infoOn : infoFloating, onToggle: toggleInfo } : null}
+        info={!remoteUi() && liveCwd && !panelState.visible ? { open: infoWide ? infoOn : infoFloating, onToggle: toggleInfo } : null}
         onToggleTerminal={() => { const next = view === "terminal" ? "chat" : "terminal"; rememberViewPref(next); setView(next); }}
         onError={setSendError}
         onPullRequest={setTitlePullRequest}
@@ -5174,6 +5188,7 @@ export function ChatWindow() {
             background={history?.background ?? false}
             resumeOptions={resumeOptions}
             takeoverExtra={resumePermissionPicker}
+            dirGone={dirGone}
             // 后台会话的按键注定无效。第一下就把用户领到对话页——那里的输入框走 daemon 的
             // 送话通道，是真能用的。原先的做法是让他打完一整句再弹错误，等于白打。
             onBackgroundInput={() => {
@@ -5245,7 +5260,7 @@ export function ChatWindow() {
             </div>
           )}
           {/* sessionId=0(远程未选会话)没有可发送的对象,composer 整体不渲染。 */}
-          <footer ref={composeRef} className={"chat-compose" + (composerLocked ? " is-locked" : "") + (composerExpanded ? " is-expanded" : "")}>
+          <footer ref={composeRef} className={"chat-compose" + (dirGone ? " is-dir-gone" : "") + (composerLocked ? " is-locked" : "") + (composerExpanded ? " is-expanded" : "")}>
           {(promptLong || composerExpanded) && !compactChrome && (
             <button
               type="button"
@@ -5279,7 +5294,18 @@ export function ChatWindow() {
             >{t.chat.supersededGo}</button>
           </div>
         </div>}
-        {supersededTo == null && composerGated && <div className="chat-compose-gate">
+        {supersededTo == null && dirGone && history && <div className="chat-compose-gate is-dir-gone" data-testid="compose-dir-gone">
+          <span>{t.chat.dirGoneBanner}</span>
+          <div className="chat-compose-gate-actions">
+            <button
+              type="button"
+              className="sbtn"
+              data-tip={dirGoneOrigin ? t.chat.dirGoneNewInTip(dirGoneOrigin) : undefined}
+              onClick={() => void openNewSessionWindow({ cwd: dirGoneOrigin, provider: history.provider }).catch(() => {})}
+            >{dirGoneOrigin ? t.chat.dirGoneNewIn(folderName(dirGoneOrigin) || dirGoneOrigin) : t.chat.dirGoneNew}</button>
+          </div>
+        </div>}
+        {supersededTo == null && composerGated && !dirGone && <div className="chat-compose-gate">
           <span>{retiredManaged ? t.chat.managedRetired : externalRunning ? t.chat.sendNeedsTakeover : crashShown ? t.chat.agentCrashed(crashShown.code) : t.chat.composerGateEnded}</span>
           {!retiredManaged && crashShown?.tail && <pre className="chat-compose-gate-tail">{crashShown.tail}</pre>}
           {/* 恢复失败的原因就地可见（接管态的主文案已是同一句，不重复）。 */}
@@ -5297,7 +5323,9 @@ export function ChatWindow() {
             >{retiredManaged ? t.chat.managedRetiredOpenCli : externalRunning ? t.chat.terminalTakeover : t.chat.resumeSession}</button>
           </div>}
         </div>}
-        <>
+        {/* 目录已删：门卡就是整块输入区，不留锁住的输入框和那排用不了的控件（对照 Slack/Linear 的归档频道、
+            GitHub 锁定的 issue：只读状态下不显示不能用的控件）。 */}
+        {!dirGone && <>
         {/* 手机上斜杠命令走底部面板（对照 Kimi 的 slashSheet）：面板盖住输入框，所以自带一个搜索框，
             它直接绑在同一份 prompt 上——两边不用同步，选中命令即写回输入框、面板随之收起。
             还在敲 `/查询`、哪怕一条都没命中也不收，否则边打边消失的搜索框没法用。 */}
@@ -5671,7 +5699,7 @@ export function ChatWindow() {
               //（daemon 托管，我们恢复不了它）。
               // 选项清单与 resumePermissionPicker 共用同一份构造（permissionChoiceOptions）。
               const resumeChoices = permissionOption && dimension === permissionOption.id
-                && history && !history.connected && !history.background
+                && history && !history.connected && !history.background && !dirGone
                 ? permissionChoiceOptions.map((option) => ({ ...option, inputs: [] }))
                 : null;
               const resumePick = resumeChoices !== null;
@@ -6113,7 +6141,7 @@ export function ChatWindow() {
           <button type="button" className="chat-send-takeover" onClick={() => setUndoNotice(false)}>{t.chat.slashMenuDismiss}</button>
         </div>}
         {copyNotice && <div className="chat-send-error" role="status"><span>{copyNotice.text}</span></div>}
-        </>
+        </>}
       </footer>
         </div>
       )}
@@ -6122,7 +6150,7 @@ export function ChatWindow() {
           折叠只加 is-collapsed（display:none）不卸载，面板状态原样保留。
           分栏柄落在两张卡之间的缝隙里，拖拽调宽（折叠/最大化时隐藏）。 */}
       {/* 会话信息栏：面板收起时露出来（同 Kimi Code）。够宽停靠，窄了从标题栏按钮弹浮层。 */}
-      {!remoteUi() && cwd && !pageCovered && !panelState.visible && (infoWide ? infoOn : infoFloating) && (
+      {!remoteUi() && liveCwd && !pageCovered && !panelState.visible && (infoWide ? infoOn : infoFloating) && (
         <SessionInfo
           mode={infoWide ? "docked" : "floating"}
           state={panelState}
@@ -6133,7 +6161,7 @@ export function ChatWindow() {
           onClose={infoWide ? undefined : () => setInfoFloating(false)}
         />
       )}
-      {cwd && (panelState.visible || panelState.tabs.length > 0) && (
+      {liveCwd && (panelState.visible || panelState.tabs.length > 0) && (
         <>
           {!remoteUi() && <div
             className={"chat-diff-resizer" + (shownPanelState.visible && !panelState.expanded ? "" : " is-hidden")}
@@ -6157,7 +6185,7 @@ export function ChatWindow() {
             ? (
               // 手机上只有改动一页、恒铺满全屏，收起即回到对话（远程不给文件、终端、浏览器）。
               <GitDiffView
-                cwd={cwd}
+                cwd={liveCwd}
                 summary={gitSummary}
                 repos={repoChanges}
                 width={diffResize.width}
@@ -6183,7 +6211,7 @@ export function ChatWindow() {
                 actions={panelActions}
                 shells={panel.shells}
                 panes={panel.panes}
-                cwd={cwd}
+                cwd={liveCwd}
                 summary={gitSummary}
                 repos={repoChanges}
                 width={shownPanelWidth}

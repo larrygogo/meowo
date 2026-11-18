@@ -10,6 +10,7 @@ import { WorktreeRemoveButton } from "./worktreeCleanup";
 import { CardContextMenu } from "./views/sticker/CardContextMenu";
 import { ChatSidebar } from "./views/ChatSidebar";
 import { SessionAdmin } from "./views/chat/SessionAdmin";
+import { ArchivedSessions } from "./views/About";
 import { formatBackendError } from "./i18n/errors";
 import { zh } from "./i18n/zh";
 import type { LiveSession, WorktreeStatusDto } from "./api";
@@ -294,8 +295,86 @@ describe("目录已删除", () => {
     expect(onSelect).toHaveBeenCalledWith(5);
   });
 
+  // 2026-11-18 手机实拍：标签单开第三行，卡片又被压扁，标签压到下一张卡上。现在跟在目录名后面同一行。
+  it("标签跟在目录名后面同一行，文案说清只能查看", async () => {
+    const gone = {
+      session: { id: 6, cc_session_id: "cc-6", status: "ended", last_event_at: 1 },
+      project_name: "billing", task_title: "修回调", connected: false, pending_review: null,
+      cwd: "C:/w/billing-fix", provider: "claude", archived: true, cwd_missing: true,
+    } as unknown as LiveSession;
+    invoke.mockImplementation((command: string) =>
+      Promise.resolve(command === "get_live_sessions_page" ? [gone] : undefined));
+    render(<ChatSidebar activeId={0} approvalAwaitingIds={new Set()} onSelect={() => {}} onCollapse={() => {}} />);
+    const tag = await screen.findByTestId("sidebar-dir-missing");
+    expect(tag.textContent).toBe(zh.worktree.dirMissing + zh.worktree.dirMissingMore);
+    expect(tag.parentElement?.className).toBe("chat-sidebar-metaline");
+    expect(tag.parentElement?.querySelector(".chat-sidebar-meta")?.textContent).toBe("billing-fix");
+  });
+
+  it("右键菜单：目录已删的已完成会话「恢复进行中」置灰并写明原因，点了什么都不做", async () => {
+    const onArchive = vi.fn();
+    render(<CardContextMenu x={0} y={0} starred={false} archived onStar={() => {}} onRename={() => {}} onArchive={onArchive}
+      archiveDisabledReason={zh.chat.dirGoneNoReopen} onOpenDir={null} onEndSession={null} onClose={() => {}} />);
+    const reopen = screen.getByRole("menuitem", { name: new RegExp(zh.sticker.unarchive) });
+    expect(reopen.getAttribute("aria-disabled")).toBe("true");
+    expect(screen.getByRole("note").textContent).toBe(zh.chat.dirGoneNoReopen);
+    fireEvent.click(reopen);
+    expect(onArchive).not.toHaveBeenCalled();
+  });
+
+  it("后端拒绝把目录已删的会话放回进行中，报错是人话", () => {
+    expect(formatBackendError("session/dir_missing", "zh-CN")).toContain("目录已经删掉了");
+    expect(formatBackendError("session/dir_missing", "en-US")).toContain("folder has been deleted");
+  });
+
   it("恢复会话时目录不存在，报错映射成人话", () => {
     expect(formatBackendError("目录不存在", "zh-CN")).toBe("项目目录不存在");
     expect(formatBackendError("目录不存在", "en-US")).toBe("Project directory not found");
+  });
+});
+
+describe("目录已删的已完成会话不能放回进行中（设置页、会话管理页）", () => {
+  const row = (id: number, title: string, gone = false) => ({
+    session: { id, cc_session_id: `cc-${id}`, status: "ended", started_at: 1, last_event_at: 1, ended_at: null },
+    project_name: "p", task_title: title, archived: true, archived_at: 1, cwd: `C:/w/x-${id}`, todos: [], connected: false,
+    ...(gone ? { cwd_missing: true } : {}),
+  }) as unknown as LiveSession;
+
+  it("会话管理页单条：「恢复进行中」置灰写原因，点了不发请求", async () => {
+    invoke.mockImplementation((command: string) =>
+      Promise.resolve(command === "get_session_admin_page" ? { items: [row(1, "已删目录的会话", true)], total: 1 } : []));
+    render(<SessionAdmin onBack={() => {}} onOpen={() => {}} initialStatus="done" />);
+    const gone = await screen.findByTestId("admin-reopen-gone");
+    expect(gone.getAttribute("aria-disabled")).toBe("true");
+    expect(gone.getAttribute("data-tip")).toBe(zh.chat.dirGoneNoReopen);
+    fireEvent.click(gone);
+    await act(async () => {});
+    expect(calls("set_archived")).toHaveLength(0);
+  });
+
+  it("会话管理页批量：跳过目录已删的，只发其余的，结果里说跳过了几个", async () => {
+    invoke.mockImplementation((command: string) =>
+      Promise.resolve(command === "get_session_admin_page" ? { items: [row(1, "已删目录的会话", true), row(2, "目录还在的会话")], total: 2 } : []));
+    render(<SessionAdmin onBack={() => {}} onOpen={() => {}} initialStatus="done" />);
+    fireEvent.click(await screen.findByRole("checkbox", { name: "已删目录的会话" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "目录还在的会话" }));
+    fireEvent.click(await screen.findByRole("button", { name: zh.admin.reopenCount(1) }));
+    await waitFor(() => expect(calls("set_archived")).toEqual([{ sessionId: 2, archived: false }]));
+    expect(await screen.findByText(new RegExp(zh.admin.batchSkippedGone(1)))).toBeTruthy();
+  });
+
+  it("设置页「已完成会话」：目录已删的行按钮置灰写原因；恢复失败显示后端的真实原因", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "get_live_sessions_page") return Promise.resolve({ items: [row(1, "已删目录的会话", true), row(2, "目录还在的会话")], next_cursor: null });
+      if (command === "set_archived") return Promise.reject("session/dir_missing");
+      return Promise.resolve();
+    });
+    render(<ArchivedSessions />);
+    expect(await screen.findByTestId("archived-dir-gone")).toBeTruthy();
+    const buttons = screen.getAllByRole("button", { name: zh.sticker.unarchive }) as HTMLButtonElement[];
+    expect(buttons[0].disabled).toBe(true);
+    fireEvent.click(buttons[1]);
+    expect(await screen.findByRole("alert")).toHaveProperty("textContent", formatBackendError("session/dir_missing", "zh-CN"));
+    expect(screen.queryByText(zh.settings.unarchiveFailed)).toBeNull();
   });
 });

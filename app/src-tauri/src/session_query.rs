@@ -327,13 +327,16 @@ pub(crate) struct LiveItem {
     /// PTY/审批/收尾都归安装版，本实例只有观察权。id 已加 [`FOREIGN_ID_OFFSET`] 防撞：
     /// 即使某个操作入口漏禁，本库也无此行，落空成 no-op 而不是改错会话。
     foreign: bool,
-    /// 会话工作目录已经不在磁盘上（worktree 被清理、目录被手动删掉）。前端据此在卡片上标
-    /// 「目录已删除」，并把打开/恢复改成提示——否则点下去只会得到一个看不懂的启动失败。
-    /// 只对已归档会话检查：进行中会话的目录没了是另一回事，照旧走原来的报错路径；
-    /// 而且归档列表很长时每次刷新都 stat 一遍没必要扩大到全部会话。
-    cwd_missing: bool,
+    /// 会话工作目录已经不在磁盘上（worktree 被清理、目录被手动删掉），且进程不在。前端据此在
+    /// 卡片上标「目录已删除 · 只能查看」，打开后只读回看历史、输入区换成说明与「新开会话」——
+    /// 恢复注定失败（agent 按目录找会话记录，换个目录续不上），不给这个按钮。
+    /// 已完成与进行中一视同仁：进行中的会话目录没了同样续不上，不标的话点进去只看到「恢复会话」
+    /// 按钮和一句看不懂的启动失败。连着的会话不标（见 enrich）。每行一次 stat，与 origin_root 的读盘同量级。
+    pub(crate) cwd_missing: bool,
     /// 会话开在 linked worktree 里时，主检出的根目录（包 5）。前端分组键 = `origin_root ?? cwd`，
     /// worktree 会话因此归到原项目下。主检出、非 git 目录为 None（见 wtnew::origin）。
+    /// 目录已删（cwd_missing）时换成推出来的原项目（库里记过的、或按路径形状猜的，必须仍在磁盘上），
+    /// 前端的「在原项目新开会话」与分组都用它；推不出为 None。
     /// 「隐藏工作区」仍按会话自己的 cwd，不受它影响。
     pub(crate) origin_root: Option<String>,
 }
@@ -369,8 +372,18 @@ pub(crate) struct LiveSessionsPage {
 /// 会话管理页的一页（对照 Kimi Code 的会话管理）：这一页的会话 + 当前条件下的总数。
 #[derive(serde::Serialize)]
 pub(crate) struct SessionAdminPage {
-    pub(crate) items: Vec<LiveSession>,
+    pub(crate) items: Vec<AdminItem>,
     pub(crate) total: i64,
+}
+
+/// 会话管理页的一行：会话本身 + 目录已删标记（与侧栏 `LiveItem.cwd_missing` 同一判定）。
+/// 管理页据此把「恢复进行中」置灰、批量恢复时跳过——放回去也续不上，后端同样会拒绝。
+/// 只对已完成的行判：进行中的行标记完成不受目录影响，也就不必为它们 stat。
+#[derive(serde::Serialize)]
+pub(crate) struct AdminItem {
+    #[serde(flatten)]
+    pub(crate) inner: LiveSession,
+    pub(crate) cwd_missing: bool,
 }
 
 /// 会话管理页的单页上限：页长选项最大 100，「选中当前条件下的全部」按 200 一页拉。
@@ -433,6 +446,13 @@ pub(crate) async fn get_session_admin_page(
                 session.task_title = title;
             }
         }
+        let items = items
+            .into_iter()
+            .map(|inner| AdminItem {
+                cwd_missing: inner.archived && cwd_is_missing(inner.cwd.as_deref()),
+                inner,
+            })
+            .collect();
         Ok(SessionAdminPage { items, total })
     })
     .await
@@ -766,10 +786,59 @@ fn cwd_key(dir: &str) -> String {
     dir.replace('\\', "/").trim_end_matches('/').to_lowercase()
 }
 
-/// 记过工作目录、但磁盘上已经没有这个目录。没记录 cwd 的老会话不算「已删除」。
-fn cwd_is_missing(cwd: Option<&str>) -> bool {
+/// 记过工作目录、而这个目录**确实被删掉了**。没记录 cwd 的老会话不算「已删除」。
+///
+/// 「确实」是为了不误锁：判定会把对话页锁成只读、拒绝放回进行中，网络盘断开、U 盘或加密卷
+/// 没挂载时目录只是暂时够不着，不能当成删了（复核指出：此前 `!is_dir()` 把任何 IO 错误都算缺失）。
+/// 见 [`dir_state`]。
+pub(crate) fn cwd_is_missing(cwd: Option<&str>) -> bool {
     cwd.map(str::trim)
-        .is_some_and(|c| !c.is_empty() && !Path::new(c).is_dir())
+        .filter(|c| !c.is_empty())
+        .is_some_and(|c| dir_state(Path::new(c)) == DirState::Gone)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum DirState {
+    /// 目录在。
+    Present,
+    /// 目录确实没了：上一级目录与盘符根 / UNC 共享根都够得着，查目录本身得到 NotFound
+    /// （或那里现在是个文件）。
+    Gone,
+    /// 暂时判断不了：根不在（网络盘断开、卷没挂载）、上一级也没了、或权限等其他 IO 错误。
+    /// 当作目录还在处理：不锁对话页、不拒绝恢复，真恢复时由启动前的检查给出原因。
+    Unavailable,
+}
+
+pub(crate) fn dir_state(dir: &Path) -> DirState {
+    match std::fs::metadata(dir) {
+        Ok(meta) if meta.is_dir() => DirState::Present,
+        Ok(_) => DirState::Gone,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            // 上一级在、根也在，才说明「卷是好的，只是这个目录被删了」。整条上级链都没了的
+            // （整个项目树被删、或挂载点本身消失）宁可算暂时不可用，不误锁。
+            let parent_ok = dir.parent().is_some_and(|p| p.is_dir());
+            if parent_ok && path_root(dir).is_some_and(|root| root.is_dir()) {
+                DirState::Gone
+            } else {
+                DirState::Unavailable
+            }
+        }
+        Err(_) => DirState::Unavailable,
+    }
+}
+
+/// 路径的根：Windows 上是盘符根（`C:\`）或 UNC 共享根（`\\server\share\`），Unix 上是 `/`。
+/// 相对路径没有根，返回 None（按暂时不可用算）。
+fn path_root(dir: &Path) -> Option<std::path::PathBuf> {
+    use std::path::Component;
+    let mut root = std::path::PathBuf::new();
+    for part in dir.components() {
+        match part {
+            Component::Prefix(_) | Component::RootDir => root.push(part.as_os_str()),
+            _ => break,
+        }
+    }
+    root.has_root().then_some(root)
 }
 
 /// 工作目录的末段名（卡片上的仓库名）。两种斜杠都认。
@@ -1263,7 +1332,20 @@ pub(crate) fn live_sessions_blocking(
             }
         }
     }
+    fill_missing_origins(&store, &mut items);
     Ok(LiveSessionsPage { items, next_cursor })
+}
+
+/// 目录已删的卡补上原项目（见 LiveItem::origin_root）。这类卡少，逐条查一次库不成问题。
+fn fill_missing_origins(store: &meowo_store::Store, items: &mut [LiveItem]) {
+    for item in items.iter_mut().filter(|item| item.cwd_missing && !item.foreign) {
+        let recorded = store.session_origin_root(item.inner.session.id).ok().flatten();
+        item.origin_root = item
+            .inner
+            .cwd
+            .as_deref()
+            .and_then(|cwd| crate::wtnew::origin::origin_for_missing(recorded.as_deref(), cwd));
+    }
 }
 
 /// 列表的丢弃规则（与 store 的 live_sessions_totals / live_count_candidates 口径对齐）：
@@ -1335,8 +1417,10 @@ fn enrich(
         return None;
     }
     let unread = crate::watch::is_unread(session.session.id);
-    let cwd_missing = session.archived && cwd_is_missing(session.cwd.as_deref());
-    // 目录已删的不推算：.git 文件跟着没了，推不出来，也不必为它读盘。
+    // 进程还连着的不算：它就在那个目录里跑（Windows 上目录被占着也删不掉），能不能继续由它自己说了算。
+    let cwd_missing = !connected && cwd_is_missing(session.cwd.as_deref());
+    // 目录已删的不在这里推算：.git 文件跟着没了，现场推不出来；改由 live_sessions_blocking
+    // 读库里记下的原项目、按路径形状猜（见 wtnew::origin::origin_for_missing）。
     let origin_root = if cwd_missing {
         None
     } else {
@@ -1498,6 +1582,47 @@ fn foreign_live_items(
             Some(item)
         })
         .collect()
+}
+
+#[cfg(test)]
+mod dir_state_tests {
+    use super::{cwd_is_missing, dir_state, DirState};
+
+    /// 只有「卷在、上一级在、目录本身 NotFound」才算目录已删；其余一律暂时不可用，不锁对话页。
+    #[test]
+    fn only_a_real_not_found_on_a_reachable_volume_counts_as_deleted() {
+        let base = std::env::temp_dir().join(format!("meowo-dirstate-{}", std::process::id()));
+        std::fs::create_dir_all(&base).unwrap();
+        assert_eq!(dir_state(&base), DirState::Present);
+        let gone = base.join("wt-merged");
+        assert_eq!(dir_state(&gone), DirState::Gone, "上一级在、目录 NotFound");
+        assert!(cwd_is_missing(gone.to_str()));
+        // 那里现在是个文件：目录同样没了。
+        let file = base.join("now-a-file");
+        std::fs::write(&file, "x").unwrap();
+        assert_eq!(dir_state(&file), DirState::Gone);
+        // 整条上级链都没了（挂载点消失、整棵树被删）：宁可算暂时不可用。
+        let orphan = base.join("no-such-parent").join("child");
+        assert_eq!(dir_state(&orphan), DirState::Unavailable);
+        assert!(!cwd_is_missing(orphan.to_str()));
+        // 相对路径、空串不判。
+        assert_eq!(dir_state(std::path::Path::new("relative/x")), DirState::Unavailable);
+        assert!(!cwd_is_missing(Some("  ")));
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// 网络盘断开、U 盘没插：盘符根本身不在，目录只是暂时够不着。
+    #[cfg(windows)]
+    #[test]
+    fn a_missing_drive_is_unavailable_not_deleted() {
+        let letter = ('D'..='Z')
+            .rev()
+            .find(|l| !std::path::Path::new(&format!("{l}:\\")).exists())
+            .expect("找一个没在用的盘符");
+        let path = format!("{letter}:\\work\\repo-wt");
+        assert_eq!(dir_state(std::path::Path::new(&path)), DirState::Unavailable);
+        assert!(!cwd_is_missing(Some(&path)));
+    }
 }
 
 #[cfg(test)]

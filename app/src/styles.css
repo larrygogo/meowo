@@ -3949,6 +3949,9 @@ body:not(.remote-ui) .ns-actions .ns-btn { height: var(--btn-h-lg); min-width: 7
 .sa-act { display: flex; align-items: center; gap: 2px; }
 .sa-icon-btn { width: 26px; height: 26px; display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-dim); cursor: pointer; }
 .sa-icon-btn:hover { color: var(--cc-text); background: var(--fill-hover); }
+/* 置灰（目录已删的会话不能放回进行中）：aria-disabled 而非 disabled，悬停提示照样出得来、读屏能聚焦到。 */
+.sa-icon-btn[aria-disabled="true"] { opacity: .4; cursor: default; }
+.sa-icon-btn[aria-disabled="true"]:hover { color: var(--cc-text-dim); background: transparent; }
 .sa-state { display: flex; align-items: center; justify-content: center; padding: 40px var(--sp-16); }
 .sa-empty { color: var(--cc-text-faint); font-size: var(--text-sm); }
 .sa-pager { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--sp-10); margin-top: var(--sp-10); }
@@ -4154,7 +4157,10 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-sidebar-retry:hover { background: var(--fill-selected-hover); }
 /* 选中态只用中性底色，无左缘条。position:relative 是「⋯」菜单按钮的定位锚（它绝对
    定位浮在右上角，见 .chat-sidebar-item-menu——不占位才不会让每行平白让出一列）。 */
-.chat-sidebar-item { position: relative; display: flex; align-items: flex-start; gap: var(--sp-9); padding: var(--sp-8) var(--sp-10); border: 0; border-radius: var(--radius-md); color: var(--cc-text-dim); background: transparent; font: inherit; text-align: left; cursor: pointer; transition: background var(--dur-fast) var(--ease-in-out), color var(--dur-fast) var(--ease-in-out); }
+/* flex-shrink:0：列表是定高的 flex 列，条目一多就会被按比例压缩。条目自己不设 min-height 时
+   默认的 min-height:auto 会拦住；但手机卡片显式写了 min-height（mobile.css），压缩就落到那个值，
+   第二、三行溢出到下一张卡上（2026-11-18 手机实拍：「目录已删除」压在下一张卡的标题上）。 */
+.chat-sidebar-item { position: relative; flex-shrink: 0; display: flex; align-items: flex-start; gap: var(--sp-9); padding: var(--sp-8) var(--sp-10); border: 0; border-radius: var(--radius-md); color: var(--cc-text-dim); background: transparent; font: inherit; text-align: left; cursor: pointer; transition: background var(--dur-fast) var(--ease-in-out), color var(--dur-fast) var(--ease-in-out); }
 .chat-sidebar-item:hover { background: var(--fill-hover); }
 .chat-sidebar-item.is-active { color: var(--cc-text); background: var(--fill-selected-hover); }
 /* agent 徽标：连接=品牌色（tintStyle inline 注入），断开=灰。对齐标题行视觉中线。
@@ -4201,8 +4207,14 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
 .chat-sidebar-time { flex: none; margin-left: auto; }
 /* waiting 态的「已等待 X」警示色（与看板 .stk-time.is-waited 同口径）：等待时长是召唤信号。 */
 .chat-sidebar-time.is-waited { color: var(--cc-warn-text); }
-/* 目录已删除：与看板卡片的虚线徽章同语汇（这里没有东西了），不抢标题的视觉权重。 */
-.chat-sidebar-gone { align-self: flex-start; margin-top: 2px; padding: 0 var(--sp-6); border: 1px dashed var(--cc-border); border-radius: var(--radius-xs); color: var(--cc-text-faint); font-size: var(--text-xs); line-height: 1.5; white-space: nowrap; }
+/* 目录已删除：与看板卡片的虚线徽章同语汇（这里没有东西了），不抢标题的视觉权重。跟在目录名后面同排：
+   上下用负外边距抵掉边框和行高差：带框的标签不把这一行撑高，
+   这张卡与同列别的卡一样高（量过：不抵时手机卡高 1.6px、桌面行高 2.6px）。 */
+.chat-sidebar-gone { flex: none; margin-block: -2px; padding: 0 var(--sp-4); border: 1px dashed var(--cc-border); border-radius: var(--radius-xs); color: var(--cc-text-faint); font-size: var(--text-xs); line-height: 1.3; white-space: nowrap; }
+/* 「· 只能查看」只在手机列表卡上写出来：桌面侧栏一行约 150px，写全了目录名就被挤没了（实拍过），
+   悬停提示里有同一句；手机没有悬停，卡片又宽，后果要直接写在标签上。 */
+.chat-sidebar-gone-more { display: none; }
+.remote-session-list .chat-sidebar-gone-more { display: inline; }
 /* 就地编辑（重命名）：铺满文本列，视觉上顶掉原来那一行，不撑宽条目。 */
 /* 高度钉成标题那一行的行高（--text-sm × 1.4），上下不留内边距：原先输入框 21px 高，顶掉 18.2px 的
    标题行，这一行变高 2.8px，下面的行跟着跳（qa-side-rename：第二行 53.2→56）。 */
@@ -6435,6 +6447,8 @@ button.lead-check { width: 100%; margin: 0; border: 0; background: transparent; 
 .chat-compose-gate { width: 100%; display: flex; align-items: center; gap: var(--sp-8) var(--sp-12); flex-wrap: wrap; padding: var(--sp-2) var(--sp-4); color: var(--cc-text-dim); font-size: var(--text-sm); line-height: var(--leading-normal); }
 /* 外部视图在线提示（T-14）：纯告知、无动作，比门卡再弱一档。 */
 .chat-compose-gate.is-external-viewers { color: var(--cc-text-faint); }
+/* 目录已删除：门卡就是整块输入区（输入框与工具行都不挂），不留空输入框的 108px 起步高度，四周同一圈内边距。 */
+.chat-compose.is-dir-gone { min-height: 0; padding: var(--sp-10) var(--sp-10) var(--sp-10) var(--sp-12); align-items: center; }
 /* 文字与按钮同一行（用户实拍：长文案 + 固定 220px 起步把按钮挤到第二行）；窄到放不下才换行。 */
 .chat-compose-gate > span { flex: 1 1 auto; min-width: 12em; }
 .chat-compose-gate-error { color: var(--cc-fail-text); font-size: var(--text-sm); }

@@ -26,7 +26,7 @@ import { busyProps } from "../../busyButton";
 /** 标题胶囊 + 会话动作菜单（Kimi 式）：标题本身是触发钮（▾），置顶/打开目录/重命名/
  *  归档都收进菜单——标题栏只留「正在看哪条 + 状态 + 视图切换」。重命名走独立 modal
  *  （onRename 只负责打开它）。 */
-export function ChatTitleMenu({ title, provider, cwd, archived, archiving, starred, onToggleStar, onRename, onFork, forkDisabled, onCopyResume, onCopyConversation, onCopyFinalAnswer, onExportConversation, onToggleArchived, onSearch, t }: {
+export function ChatTitleMenu({ title, provider, cwd, archived, archiving, starred, onToggleStar, onRename, onFork, forkDisabled, onCopyResume, onCopyConversation, onCopyFinalAnswer, onExportConversation, onToggleArchived, archiveDisabledReason, onSearch, t }: {
   title: string;
   provider: string;
   cwd: string | null;
@@ -47,6 +47,8 @@ export function ChatTitleMenu({ title, provider, cwd, archived, archiving, starr
   /** 导出会话为 .md 文件（对照 Kimi「导出会话」）；宿主执行类，远程不传。 */
   onExportConversation?: () => void;
   onToggleArchived: () => void;
+  /** 有值时「标记完成 / 恢复进行中」置灰，悬停说明原因（目录已删的会话不能放回进行中）。 */
+  archiveDisabledReason?: string;
   /** 在对话中搜索。桌面另有 Ctrl+Shift+F，手机没有快捷键也没有命令面板，这里是唯一入口。 */
   onSearch?: () => void;
   t: ReturnType<typeof useT>;
@@ -159,7 +161,7 @@ export function ChatTitleMenu({ title, provider, cwd, archived, archiving, starr
               <span className="dd-label">{t.chat.exportConversation}</span>
             </button>
           )}
-          <button type="button" role="menuitem" className="dd-item" {...busyProps(archiving, () => pick(onToggleArchived))}>
+          <button type="button" role="menuitem" className="dd-item" title={archiveDisabledReason} disabled={archiveDisabledReason != null} {...(archiveDisabledReason == null ? busyProps(archiving, () => pick(onToggleArchived)) : {})}>
             <span className="chat-title-action-ico"><ArchiveIcon archived={archived} /></span>
             <span className="dd-label">{archived ? t.sticker.unarchive : t.sticker.archive}</span>
           </button>
