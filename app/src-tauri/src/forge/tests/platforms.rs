@@ -431,6 +431,62 @@ fn gitlab_评审_讨论批准改动文件_行内评论钉在_diff_refs() {
     assert_eq!(body["position"]["head_sha"], mr["diff_refs"]["head_sha"]);
     assert_eq!(body["position"]["old_line"], 7);
     assert!(body["position"].get("new_line").is_none());
+    // 审查指出：没改动的上下文行要同时带 old_line 与 new_line（docs.gitlab.com/api/discussions）。样例 diff 的第一个文件
+    // `@@ -48,6 +48,13 @@`：新 48 是上下文（旧 48）、新 51 是新增行、块后的新 70 对旧 63。
+    let post = |path: &str, line: i64, side: &str| {
+        gl.line_comment(".", "gitlab-org/cli", 4365, path, line, side, "x").unwrap();
+        let (_, _, body, _) = fake.calls().into_iter().rfind(|(m, _, _, _)| m == "POST").unwrap();
+        (body["position"]["old_line"].as_i64(), body["position"]["new_line"].as_i64(), body["position"]["old_path"].clone())
+    };
+    let doc = "docs/source/auth/login.md";
+    assert_eq!(post(doc, 48, "NEW"), (Some(48), Some(48), json!(doc)));
+    assert_eq!(post(doc, 51, "NEW"), (None, Some(51), json!(doc)));
+    assert_eq!(post(doc, 70, "NEW"), (Some(63), Some(70), json!(doc)));
+    assert_eq!(post(doc, 10, "OLD"), (Some(10), Some(10), json!(doc)));
+}
+
+#[test]
+fn gitlab_行内评论_由_diff_推出两侧行号() {
+    let diff = "@@ -1,4 +1,5 @@
+ a
+-b
++B
++B2
+ c
+ d
+@@ -20,3 +21,2 @@
+ x
+-y
+ z
+";
+    assert_eq!(gitlab::diff_position(diff, "NEW", 1), (Some(1), Some(1)), "上下文行两侧都有");
+    assert_eq!(gitlab::diff_position(diff, "NEW", 2), (None, Some(2)), "新增行只有新");
+    assert_eq!(gitlab::diff_position(diff, "OLD", 2), (Some(2), None), "删除行只有旧");
+    assert_eq!(gitlab::diff_position(diff, "NEW", 4), (Some(3), Some(4)));
+    assert_eq!(gitlab::diff_position(diff, "NEW", 10), (Some(9), Some(10)), "块之间没改动的行按累计偏移");
+    assert_eq!(gitlab::diff_position(diff, "OLD", 21), (Some(21), None));
+    assert_eq!(gitlab::diff_position(diff, "NEW", 30), (Some(30), Some(30)), "第二块删一加零后偏移回到 0");
+}
+
+/// 重命名的文件：old_path 用旧路径。
+#[test]
+fn gitlab_行内评论_重命名文件用旧路径() {
+    let mr = fixture("gitlab_mr_4365.json");
+    let fake = Fake::new(move |method, url, _| match (method, url) {
+        ("GET", u) if u.ends_with("/merge_requests/4365") => resp(200, mr.clone()),
+        ("GET", u) if u.contains("/diffs") => resp(200, json!([{ "old_path": "src/old.go", "new_path": "src/new.go", "renamed_file": true, "diff": "@@ -1,2 +1,2 @@
+ a
+-b
++c
+" }])),
+        ("POST", _) => resp(201, json!({})),
+        _ => resp(404, json!({})),
+    });
+    let flags = Mutex::new(Vec::new());
+    gitlab(&fake, &flags).line_comment(".", "gitlab-org/cli", 4365, "src/new.go", 1, "NEW", "x").unwrap();
+    let (_, _, body, _) = fake.calls().into_iter().rfind(|(m, _, _, _)| m == "POST").unwrap();
+    assert_eq!((body["position"]["old_path"].clone(), body["position"]["new_path"].clone()), (json!("src/old.go"), json!("src/new.go")));
+    assert_eq!((body["position"]["old_line"].as_i64(), body["position"]["new_line"].as_i64()), (Some(1), Some(1)));
 }
 
 #[test]

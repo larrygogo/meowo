@@ -231,6 +231,73 @@ pub(crate) fn map_approvals(approvals: &Value) -> Vec<PrCommentDto> {
         .collect()
 }
 
+/// 一侧的行号 → (旧文件行号, 新文件行号)：新增行只有新、删除行只有旧、上下文行（含 diff 块之外没改动的行）两个都有。
+/// side：NEW / OLD（面板的写法）。diff 是 GitLab diffs 接口里这个文件的统一 diff 文本。
+pub(crate) fn diff_position(diff: &str, side: &str, line: i64) -> (Option<i64>, Option<i64>) {
+    let old_side = side == "OLD";
+    // 块外的行：两侧行号差一个固定偏移（之前各块的增删累计）。
+    let mut delta = 0i64; // new - old
+    let (mut old_no, mut new_no) = (0i64, 0i64);
+    let mut in_hunk = false;
+    let outside = |delta: i64| {
+        if old_side {
+            (Some(line), Some(line + delta))
+        } else {
+            (Some(line - delta), Some(line))
+        }
+    };
+    for text in diff.lines() {
+        if let Some(header) = text.strip_prefix("@@ ") {
+            // @@ -a,b +c,d @@
+            let mut parts = header.split_whitespace();
+            let parse = |part: Option<&str>, sign: char| -> Option<(i64, i64)> {
+                let body = part?.strip_prefix(sign)?;
+                let (start, count) = body.split_once(',').unwrap_or((body, "1"));
+                Some((start.parse().ok()?, count.parse().ok()?))
+            };
+            let (Some((old_start, old_count)), Some((new_start, new_count))) = (parse(parts.next(), '-'), parse(parts.next(), '+')) else {
+                continue;
+            };
+            // 要找的行在这一块之前（块与块之间没改动的部分）。
+            let before = if old_side { line < old_start } else { line < new_start };
+            if before {
+                return outside(delta);
+            }
+            old_no = old_start;
+            new_no = new_start;
+            in_hunk = true;
+            delta = (new_start + new_count) - (old_start + old_count);
+            continue;
+        }
+        if !in_hunk {
+            continue;
+        }
+        match text.chars().next() {
+            Some('+') => {
+                if !old_side && new_no == line {
+                    return (None, Some(line));
+                }
+                new_no += 1;
+            }
+            Some('-') => {
+                if old_side && old_no == line {
+                    return (Some(line), None);
+                }
+                old_no += 1;
+            }
+            Some('\\') => {}
+            _ => {
+                if (old_side && old_no == line) || (!old_side && new_no == line) {
+                    return (Some(old_no), Some(new_no));
+                }
+                old_no += 1;
+                new_no += 1;
+            }
+        }
+    }
+    outside(delta)
+}
+
 /// 409 的原话里抠出已有 MR 的号：`… source branch: !7`。
 pub(crate) fn existing_iid(message: &str) -> Option<u32> {
     let (_, rest) = message.rsplit_once('!')?;
@@ -472,18 +539,34 @@ impl ForgeApi for Gitlab<'_> {
     fn line_comment(&self, _dir: &str, slug: &str, number: u32, path: &str, line: i64, side: &str, body: &str) -> Result<(), String> {
         let mr = self.client.get_opt(&self.mr_url(slug, number))?.ok_or("pr/not_found")?;
         let refs = mr.get("diff_refs").filter(|r| !r.is_null()).ok_or("gh/head_changed")?;
+        // GitLab 文档（discussions「Create a new thread in the merge request diff」）：新增行只填 new_line、删除行只填
+        // old_line、没改动的上下文行两个都要填；重命名的文件 old_path 是旧路径。面板只给「哪一侧第几行」，这里按 MR 的
+        // diff 推出另一侧的行号与旧路径；找不到这个文件的 diff 时按面板给的一侧填。
+        let diffs = get_all(&self.client, &self.host, &format!("{}/diffs?per_page=100", self.mr_url(slug, number)), 10).unwrap_or_default();
+        let entry = diffs
+            .iter()
+            .find(|d| s(d, "/new_path") == path)
+            .or_else(|| diffs.iter().find(|d| s(d, "/old_path") == path));
+        let old_path = entry.map(|d| s(d, "/old_path")).filter(|p| !p.is_empty()).unwrap_or(path);
+        let new_path = entry.map(|d| s(d, "/new_path")).filter(|p| !p.is_empty()).unwrap_or(path);
+        let (old_line, new_line) = match entry {
+            Some(d) => diff_position(s(d, "/diff"), side, line),
+            None if side == "OLD" => (Some(line), None),
+            None => (None, Some(line)),
+        };
         let mut position = json!({
             "position_type": "text",
             "base_sha": s(refs, "/base_sha"),
             "start_sha": s(refs, "/start_sha"),
             "head_sha": s(refs, "/head_sha"),
-            "old_path": path,
-            "new_path": path,
+            "old_path": old_path,
+            "new_path": new_path,
         });
-        if side == "OLD" {
-            position["old_line"] = json!(line);
-        } else {
-            position["new_line"] = json!(line);
+        if let Some(old) = old_line {
+            position["old_line"] = json!(old);
+        }
+        if let Some(new) = new_line {
+            position["new_line"] = json!(new);
         }
         let resp = self.client.call(
             "POST",
