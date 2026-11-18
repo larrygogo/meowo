@@ -8,8 +8,18 @@ use super::Token;
 #[cfg_attr(not(any(target_os = "windows", target_os = "macos")), allow(dead_code))]
 const TARGET: &str = "Meowo/github.com";
 /// macOS 钥匙串条目的 account。
-#[cfg(target_os = "macos")]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 const ACCOUNT: &str = "github.com";
+
+/// `security -i` 从标准输入读的那一行：写入（-U 已有则更新）。令牌不进进程参数（`ps` 看不到）。
+/// 各段都放在双引号里；Token::new 已把令牌限制在字母数字与 `_-.`，条目名是常量，拼不出引号或别的命令。
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub(crate) fn interactive_add_line(target: &str, token: &Token) -> Option<String> {
+    let plain = |s: &str| !s.is_empty() && !s.contains(['"', '\\', '\n', '\r']);
+    (plain(target) && plain(token.expose())).then(|| {
+        format!("add-generic-password -U -s \"{target}\" -a \"{ACCOUNT}\" -l \"Meowo GitHub\" -w \"{}\"\n", token.expose())
+    })
+}
 
 pub(crate) trait Vault: Sync {
     fn supported(&self) -> bool;
@@ -100,11 +110,11 @@ mod imp {
     }
 }
 
-/// macOS：/usr/bin/security。写入时令牌经命令行参数传给 security（与 ports.rs 写 Claude 凭据同一做法，
-/// 进程存活的几毫秒里只有同一用户能看到参数）；Token::new 已把字符集限制在字母数字下划线，拼不出别的参数。
+/// macOS：/usr/bin/security。读和删经命令行参数（只有条目名）；写入用 `security -i` 从标准输入传命令，
+/// 令牌不出现在进程参数里。`-i` 的退出码不反映单条命令成败，写完读回核对。
 #[cfg(target_os = "macos")]
 mod imp {
-    use super::{Token, ACCOUNT};
+    use super::{interactive_add_line, Token, ACCOUNT};
     use std::process::{Command, Stdio};
 
     const SECURITY: &str = "/usr/bin/security";
@@ -127,14 +137,25 @@ mod imp {
     }
 
     pub(super) fn write(target: &str, token: &Token) -> Result<(), String> {
-        let status = Command::new(SECURITY)
-            .args(["add-generic-password", "-U", "-s", target, "-a", ACCOUNT, "-l", "Meowo GitHub", "-w", token.expose()])
-            .stdin(Stdio::null())
+        use std::io::Write as _;
+        let line = interactive_add_line(target, token).ok_or("github/credential_failed: bad token")?;
+        let mut child = Command::new(SECURITY)
+            .arg("-i")
+            .stdin(Stdio::piped())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
-            .status()
+            .spawn()
             .map_err(|e| format!("github/credential_failed: {e}"))?;
-        if status.success() { Ok(()) } else { Err(format!("github/credential_failed: security {status}")) }
+        // 写完就关掉标准输入：security -i 读到 EOF 退出。
+        let wrote = child.stdin.take().map(|mut stdin| stdin.write_all(line.as_bytes()));
+        let status = child.wait().map_err(|e| format!("github/credential_failed: {e}"))?;
+        if !matches!(wrote, Some(Ok(()))) || !status.success() {
+            return Err(format!("github/credential_failed: security -i {status}"));
+        }
+        match read(target)? {
+            Some(stored) if stored == *token => Ok(()),
+            _ => Err("github/credential_failed: keychain write not visible".into()),
+        }
     }
 
     pub(super) fn delete(target: &str) -> Result<(), String> {
@@ -197,5 +218,21 @@ mod tests {
         assert_eq!(imp::read(&target).unwrap(), None);
         // 删一条不存在的也算成功（退出登录可重复点）。
         imp::delete(&target).unwrap();
+    }
+}
+#[cfg(test)]
+mod line_tests {
+    use super::*;
+
+    /// macOS 写钥匙串的那一行（各平台都能跑这个纯函数）：令牌在标准输入里、带引号，条目名与 account 对。
+    #[test]
+    fn security_交互写入行_令牌不进参数且拼不出别的命令() {
+        let token = Token::new("gho_ABC_123").unwrap();
+        assert_eq!(
+            interactive_add_line(TARGET, &token).unwrap(),
+            "add-generic-password -U -s \"Meowo/github.com\" -a \"github.com\" -l \"Meowo GitHub\" -w \"gho_ABC_123\"\n"
+        );
+        assert!(interactive_add_line("bad\"target", &token).is_none());
+        assert!(interactive_add_line("line\nbreak", &token).is_none());
     }
 }
