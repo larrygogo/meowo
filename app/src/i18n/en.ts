@@ -1192,6 +1192,7 @@ export const en: Dict = {
     interrupting: "Interrupting…",
     attentionDismiss: "Hide",
     attentionDismissTip: "Hide the card without sending any keys",
+    shortcutTip: (key: string) => `Shortcut: ${key}`,
     attentionCollapsedRestore: "Prompt hidden · click to show",
     questionCollapsedRestore: "Question hidden · click to show",
     questionFoldedInTerminal: "A question is waiting in the terminal · click to show the card",

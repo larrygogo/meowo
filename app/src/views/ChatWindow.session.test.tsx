@@ -944,6 +944,10 @@ describe("ChatWindow", () => {
     await waitFor(() => expect(invoke).toHaveBeenCalledWith("write_managed_terminal", { sessionId: 47, data: "2" }));
     // terminal_live 只写原生 TUI；与 broker 共用 RuntimeRequest 后也不能误入统一 broker 回答命令。
     expect(invoke).not.toHaveBeenCalledWith("respond_runtime_request", expect.anything());
+    // 卡片收起后 transcript 的 pendingReview 还要慢一拍才清：这段空档里不能冒出「去终端页」
+    // 兜底卡闪一下（2026-11-18 用户实拍：每张授权卡点完都闪一次）。
+    await waitFor(() => expect(screen.queryByRole("button", { name: "本会话内允许" })).toBeNull());
+    expect(screen.queryByRole("button", { name: "去终端页" })).toBeNull();
   });
 
   /// gemini 0.65 的 ask_user 提问表单（npm bundle 源码拼出的画面，2026-11-12，未实拍）：

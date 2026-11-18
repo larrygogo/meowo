@@ -1342,6 +1342,7 @@ export const zh = {
     interrupting: "正在中断…",
     attentionDismiss: "仅收起",
     attentionDismissTip: "仅收起卡片，不发送按键",
+    shortcutTip: (key: string) => `快捷键：${key}`,
     attentionCollapsedRestore: "已收起提示，点击展开",
     questionCollapsedRestore: "已收起提问，点击展开",
     questionFoldedInTerminal: "终端里有待答的提问，点此展开卡片",

@@ -66,7 +66,8 @@ export function ApprovalRequestCard({ model, countdown, resolving, error, escArm
             type="button"
             className="is-persistent"
             key={index}
-            data-tip={entry.tip}
+            data-tip={digits && index < 8 ? `${entry.tip || entry.label} · ${t.chat.shortcutTip(String(index + 2))}` : entry.tip}
+            aria-keyshortcuts={digits && index < 8 ? String(index + 2) : undefined}
             aria-disabled={busy}
             onClick={() => decide(`suggestion:${index}`)}
           >
@@ -95,10 +96,10 @@ export function ApprovalRequestCard({ model, countdown, resolving, error, escArm
         {actions.denyWithReason && <button ref={reasonButtonRef} type="button" className="is-deny-reason" aria-disabled={busy} aria-expanded={reasonOpen} onClick={() => { if (!blocked) setReasonOpen((open) => !open); }}>
           {t.chat.denyWithReason}
         </button>}
-        {actions.deny && <button type="button" className={"is-deny" + (escArmed ? " is-esc-armed" : "")} aria-disabled={busy} onClick={() => decide("deny")}>
+        {actions.deny && <button type="button" className={"is-deny" + (escArmed ? " is-esc-armed" : "")} data-tip={kbd ? t.chat.shortcutTip("Esc") : undefined} aria-keyshortcuts={kbd ? "Escape" : undefined} aria-disabled={busy} onClick={() => decide("deny")}>
           {escArmed ? t.chat.denyConfirmEsc : t.chat.deny}{kbd && <kbd aria-hidden="true">Esc</kbd>}
         </button>}
-        {actions.allowOnce && <button type="button" className={"btn-primary" + (model.risky ? " is-danger" : "")} aria-disabled={busy} onClick={() => decide("allow_once")}>
+        {actions.allowOnce && <button type="button" className={"btn-primary" + (model.risky ? " is-danger" : "")} data-tip={digits ? t.chat.shortcutTip("1") : undefined} aria-keyshortcuts={digits ? "1" : undefined} aria-disabled={busy} onClick={() => decide("allow_once")}>
           {t.chat.allowOnce}{digits && <kbd aria-hidden="true">1</kbd>}
         </button>}
       </>}

@@ -5390,16 +5390,18 @@ button.scm-check-name:hover { text-decoration: underline; }
 .chat-approval button.btn-primary:is(:disabled, [aria-disabled="true"]) { opacity: 1; background: var(--fill-selected); color: var(--cc-text-faint); }
 /* 按钮里的快捷键徽章。aria-hidden 在 JSX 那边加了：它是给眼睛的提示，不该混进
    按钮的可访问名（屏幕阅读器用户有自己的导航方式，读出「拒绝 Esc」只是噪音）。 */
-.chat-approval kbd { padding: 0 var(--sp-5); border-radius: var(--radius-sm); background: var(--fill-selected); color: var(--cc-text-dim); font: var(--text-2xs)/var(--leading-body) inherit; }
+/* 快捷键画成键帽（描边 + 加厚的底边），不画成实心胶囊：实心胶囊里的单个数字读作「数量」，
+   用户看到「本会话内允许 2」问过为什么标数字（2026-11-18 截图）。悬停另有「快捷键：N」提示。 */
+.chat-approval kbd { padding: 0 var(--sp-4); border: var(--hairline) solid color-mix(in srgb, var(--cc-text-dim) 40%, transparent); border-bottom-width: calc(var(--hairline) * 2); border-radius: var(--radius-sm); background: transparent; color: var(--cc-text-dim); font: var(--text-2xs)/var(--leading-body) inherit; }
 /* 动作层级：允许一次=实心主按钮（.btn-primary，全应用同一种主按钮，2026-11-11 关卡 A 定：
    此前这里与右侧面板的主动作长相不同，同一个窗里分不清哪个是主动作，UI 调研 sys3），
    拒绝/持久放行/收起都是同一档中性灰。不用绿色：绿读作「安全，点吧」，而这一下是把执行权交出去。 */
-.chat-approval button.btn-primary kbd { background: color-mix(in srgb, var(--cc-on-accent) 16%, transparent); color: var(--cc-on-accent); }
+.chat-approval button.btn-primary kbd { border-color: color-mix(in srgb, var(--cc-on-accent) 45%, transparent); color: var(--cc-on-accent); }
 /* 危险命令(rm -rf / sudo / git reset --hard…,见 isRiskyCommand)的「允许一次」
    降级为红色警示主按钮:与普通命令同一个深色实心,等于给破坏动作发安全通行证。 */
 /* 红底上的字取卡面色：深色主题下白字压 --cc-err 只有 3:1，卡面墨色 5.6:1；浅色下卡面即白，4.6:1。 */
 .chat-approval button.btn-primary.is-danger { color: var(--cc-panel-raised); background: var(--cc-err-vivid); }
-.chat-approval button.btn-primary.is-danger kbd { color: var(--cc-panel-raised); background: color-mix(in srgb, var(--cc-panel-raised) 18%, transparent); }
+.chat-approval button.btn-primary.is-danger kbd { color: var(--cc-panel-raised); border-color: color-mix(in srgb, var(--cc-panel-raised) 45%, transparent); }
 .chat-approval button.btn-primary.is-danger:hover:not(:disabled) { background: color-mix(in srgb, var(--cc-err-vivid) 86%, var(--cc-panel-raised)); }
 /* 拒绝与允许之间多留一档间距(8px→16px):两颗决定按钮贴太近,误点的代价不对称。 */
 .chat-approval-actions .is-deny + .btn-primary { margin-inline-start: var(--sp-8); }
