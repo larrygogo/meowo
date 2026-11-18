@@ -25,7 +25,12 @@ export type PanelState = {
   active: string | null;
   visible: boolean;
   expanded: boolean;
+  /** 对话里点了某个文件，要在这个页签里定位到它（见 panelReveal.ts）。一次性请求：页签处理完就清掉，
+   *  不进 localStorage——否则重开应用、切回会话都会再跳一次。 */
+  reveal?: PanelReveal | null;
 };
+
+export type PanelReveal = { tab: "diff" | "files"; path: string; nonce: number };
 
 export const EMPTY_PANEL: PanelState = { tabs: [], active: null, visible: false, expanded: false };
 
@@ -48,6 +53,19 @@ export function openSingleton(state: PanelState, type: "diff" | "files"): PanelS
   if (existing) return { ...state, active: existing.key, visible: true };
   const tab: PanelTab = { key: newTabKey(type), type };
   return { ...state, tabs: [...state.tabs, tab], active: tab.key, visible: true };
+}
+
+let revealSeq = 0;
+/** 打开「更改」/「文件」并要求定位到 path（绝对路径）。面板收起着也一并展开。
+ *  nonce 每次都换：同一个文件连点两次（中间用户在面板里点去了别处）也要再定位一次。 */
+export function revealIn(state: PanelState, tab: "diff" | "files", path: string): PanelState {
+  revealSeq += 1;
+  return { ...openSingleton(state, tab), reveal: { tab, path, nonce: revealSeq } };
+}
+
+/** 页签处理完定位请求。只清自己处理的那一个：处理期间又来了新的点击，不能被一起清掉。 */
+export function consumeReveal(state: PanelState, nonce: number): PanelState {
+  return state.reveal?.nonce === nonce ? { ...state, reveal: null } : state;
 }
 
 /** 新开一个终端 / 浏览器页签，加在最右边并切过去。 */
@@ -182,7 +200,7 @@ export function savePanel(sessionId: number, state: PanelState, storage: Storage
       storage.removeItem(key);
       return;
     }
-    const stored: Stored = { ...state, savedAt: Date.now() };
+    const stored: Stored = { tabs: state.tabs, active: state.active, visible: state.visible, expanded: state.expanded, savedAt: Date.now() };
     storage.setItem(key, JSON.stringify(stored));
     evict(storage);
   } catch { /* 存不下就只在内存里，下次打开从空面板开始 */ }

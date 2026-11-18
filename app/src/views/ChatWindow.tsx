@@ -92,6 +92,7 @@ import { TranscriptSearch } from "./chat/TranscriptSearch";
 import { formatReviewComments, type ReviewComment } from "./chat/diffComments";
 import { changedFileCount, sessionTouchedPaths } from "./chat/gitDiff";
 import { setPanelLinkHandler } from "./chat/panelLinks";
+import { absolutePath, RevealChangeContext } from "./chat/panelReveal";
 import { localUrlsIn } from "./chat/localUrls";
 import { useGuardedWindowClose } from "./chat/windowClose";
 import { usePanel } from "./chat/usePanel";
@@ -991,6 +992,12 @@ export function ChatWindow() {
     setPanelLinkHandler(panelActions.openUrl);
     return () => setPanelLinkHandler(null);
   }, [panelActions]);
+  // 对话里点改过的文件 → 面板「更改」里它的 diff（panelReveal.ts）。手机远程页没有右侧面板，不提供，
+  // 工具行和改动卡也就不出这个入口。
+  const revealChange = useMemo(
+    () => (remoteUi() || !cwd ? null : (path: string) => panelActions.revealDiff(absolutePath(path, cwd))),
+    [panelActions, cwd],
+  );
   // 面板快捷键（照 Kimi Code）：Ctrl+Shift+B 开合面板，Ctrl+Shift+G 改动，Ctrl+Shift+E 文件
   // （正在看就收起），Ctrl+T 新浏览器，Ctrl+` 面板终端，Ctrl+W 关当前页签，Ctrl+(Shift+)Tab 切换。
   // 焦点在终端里时这些键 xterm 自己吃掉（Ctrl+W 是删词、Ctrl+T 是换字），只有 Ctrl+` 被放行。
@@ -4688,6 +4695,7 @@ export function ChatWindow() {
           终端侧懒挂载（terminalMounted），纯对话的用户不用白付 xterm 的创建成本。 */}
       {/* 工具行里落在会话目录下的路径显示成相对路径（见 ToolActivity 的 relativize）。 */}
       <ChatCwdContext.Provider value={cwd ?? null}>
+      <RevealChangeContext.Provider value={revealChange}>
       <ChatActionsContext.Provider value={chatActions}>
       <EchoPhaseContext.Provider value={echoPhases}>
       <EchoActionsContext.Provider value={echoActions}>
@@ -4880,6 +4888,7 @@ export function ChatWindow() {
       </EchoActionsContext.Provider>
       </EchoPhaseContext.Provider>
       </ChatActionsContext.Provider>
+      </RevealChangeContext.Provider>
       </ChatCwdContext.Provider>
       {/* 区内搜索的叠层与胶囊：覆盖在滚动区之上，故与导航同样放在 main 之外。 */}
       {searchOpen && view === "chat" && !loading && timelineItems.length > 0 && (
