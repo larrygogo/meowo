@@ -339,6 +339,10 @@ fn region_contains(region: &[String], needle: &str) -> bool {
 ///
 /// 编译失败返回 None（该条规则不命中），**绝不 panic**：规则是数据，写坏一条不该让
 /// 整个状态检测停摆；下面有测试保证内置规则全部可编译。
+/// 测试用：正则实际编译了几次（缓存命中不计）。性能测试据此断言缓存生效，不靠墙钟时间。
+#[cfg(test)]
+static REGEX_COMPILES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 fn compiled_regex(pattern: &'static str) -> Option<regex::Regex> {
     use std::sync::{Mutex, OnceLock};
     // 键收 `&'static str`（规则声明本就是静态的）：此前键是 String，缓存**命中**也要为
@@ -351,6 +355,8 @@ fn compiled_regex(pattern: &'static str) -> Option<regex::Regex> {
     cache
         .entry(pattern)
         .or_insert_with(|| {
+            #[cfg(test)]
+            REGEX_COMPILES.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             // 统一大小写不敏感：规则声明侧写小写字面量，与其它谓词的约定一致。
             regex::RegexBuilder::new(pattern)
                 .case_insensitive(true)
@@ -1542,8 +1548,11 @@ mod tests {
             .collect();
         let snap = snap_titled(&lines, "codex - building");
 
-        // 先跑一次让正则进缓存（首次编译不计入——线上也只付一次）。
-        let _ = evaluate("codex", &snap);
+        // 先把三家各跑一次让正则进缓存（首次编译不计入——线上也只付一次）。
+        for agent in ["claude", "codex", "kimi"] {
+            let _ = evaluate(agent, &snap);
+        }
+        let compiles_before = REGEX_COMPILES.load(std::sync::atomic::Ordering::Relaxed);
 
         // 分批计时取最快一批：整体平均会被 CI 共享机器的一次抢占拉高（macOS CI 实测
         // 1.09ms 误报）。缓存失效时每一批都慢，最快那批照样超标，拦截能力不变。
@@ -1560,11 +1569,20 @@ mod tests {
             })
             .min()
             .unwrap();
-        // 阈值取 1ms：实测在开发机上是微秒级，留足 CI 慢机器的余量，只拦「缓存失效」
-        // 这种量级的退化（重编译正则会让单次跳到几十微秒以上并随规则数线性增长）。
+        // 缓存是否生效直接数编译次数：预热后再求值不得重编译任何正则。此前只用 1ms 墙钟阈值兜，
+        // Windows CI 共享机实测 1.07～1.13ms 连续误报（2026-11-18，三个 PR 上与改动无关地失败）。
+        // 别的测试并行时也可能编译它们自己的正则，所以只认「本测试的规则」：同一批规则重复求值，
+        // 计数若涨了，必是缓存失效（并行测试编的是别的模式串，预热后不会在本批循环里反复涨）。
+        let compiles_after = REGEX_COMPILES.load(std::sync::atomic::Ordering::Relaxed);
         assert!(
-            per_eval < std::time::Duration::from_millis(1),
-            "单次求值 {per_eval:?} 过慢——正则缓存可能失效了"
+            compiles_after - compiles_before < (batches * rounds) as usize,
+            "预热后重复求值又编译了 {} 次正则——缓存失效",
+            compiles_after - compiles_before
+        );
+        // 墙钟只兜数量级的退化（例如每轮扫描变成平方级），阈值放到 10ms，不再拿它判断缓存。
+        assert!(
+            per_eval < std::time::Duration::from_millis(10),
+            "单次求值 {per_eval:?} 过慢"
         );
     }
 
