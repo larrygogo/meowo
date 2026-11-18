@@ -246,6 +246,22 @@ pub(crate) fn classify_refusal(message: &str, url: &str) -> String {
     }
 }
 
+/// 列表地址是不是 Gitee 实测会回 500 的组合：带 head 且 state 不是 open（2026-11-18 openharmony/docs 实测
+/// `state=all&head=…`、`state=merged&head=…` 都回 500）。
+pub(crate) fn tolerates_500(url: &str) -> bool {
+    let query = url.split_once('?').map(|(_, q)| q).unwrap_or_default();
+    let mut head = false;
+    let mut open = false;
+    for pair in query.split('&') {
+        match pair.split_once('=') {
+            Some(("head", v)) if !v.is_empty() => head = true,
+            Some(("state", "open")) => open = true,
+            _ => {}
+        }
+    }
+    head && !open
+}
+
 impl Gitee<'_> {
     fn repo(&self, slug: &str) -> String {
         let (owner, name) = slug.split_once('/').unwrap_or((slug, ""));
@@ -273,8 +289,9 @@ impl Gitee<'_> {
 
     fn list(&self, url: &str) -> Result<Vec<Value>, String> {
         let resp = self.client.call("GET", url, None)?;
-        // head 配 state=all / merged 时 Gitee 回 500（实测）：当没找到，不当失败。
-        if resp.status >= 500 {
+        // 只有实测会 500 的组合（head 配 state=all / merged）当没找到；别的 5xx 照常报错（复核指出：一律当空会让 PR 区块
+        // 消失、建 PR 查重被跳过、行内评论报 invalid_line）。
+        if resp.status >= 500 && tolerates_500(url) {
             return Ok(Vec::new());
         }
         if !ok(&resp) {

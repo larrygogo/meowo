@@ -1332,7 +1332,7 @@ fn 布尔型_mergeable_的平台不因还不知道就挡住合并() {
 }
 
 #[test]
-fn gitee_按分支找_head_过滤_fork_与同仓库_500_当没找到() {
+fn gitee_按分支找_head_过滤_fork_与同仓库_只有已知组合的_500_当没找到() {
     let fake = Fake::new(|_, url, _| match url {
         u if u.starts_with("https://gitee.com/api/v5/repos/openharmony/docs/pulls?state=open&head=0704") => {
             resp(200, fixture("gitee_pulls_open_head.json"))
@@ -1356,9 +1356,19 @@ fn gitee_按分支找_head_过滤_fork_与同仓库_500_当没找到() {
         && auth.as_deref() == Some("token glpat-TEST")));
     // 同仓库的 0704 分支没有：不把 fork 的认成自己的。
     assert_eq!(ge.find(".", Some("openharmony/docs"), &branch("0704")).unwrap(), None);
-    // 列表回 500（head 配 state=all 的实测行为）：当没找到，不报错。
+    // 复核指出：以前任何 5xx 都当「没有 PR」，PR 区块会消失、建 PR 查重被跳过、行内评论报 invalid_line。现在只有实测会 500
+    // 的组合（带 head 且 state 不是 open）才当没找到，别的 5xx 照常报错。
     let broken = Fake::new(|_, _, _| resp(500, json!({ "message": "500 Internal Server Error" })));
-    assert_eq!(gitee(&broken, &flags).find(".", Some("o/r"), &branch("x")).unwrap(), None);
+    let ge = gitee(&broken, &flags);
+    assert_eq!(ge.find(".", Some("o/r"), &branch("x")), Err("gh/failed: HTTP 500: 500 Internal Server Error".into()));
+    let new = NewPr { title: "x", body: "", base: "master", head: "x", branch: "x", head_slug: None, draft: false };
+    assert!(ge.create(".", Some("o/r"), &new).is_err());
+    assert!(!broken.calls().iter().any(|(m, _, _, _)| m == "POST"), "查重失败就不建，免得重复建 PR");
+    let err = ge.line_comment(".", "o/r", 1, "a.md", 1, "NEW", "x").unwrap_err();
+    assert_ne!(err, "pr/invalid_line");
+    assert!(super::super::gitee::tolerates_500("https://gitee.com/api/v5/repos/o/r/pulls?state=all&head=x"));
+    assert!(!super::super::gitee::tolerates_500("https://gitee.com/api/v5/repos/o/r/pulls?state=open&head=x"));
+    assert!(!super::super::gitee::tolerates_500("https://gitee.com/api/v5/repos/o/r/pulls?state=all&per_page=50"));
 }
 
 #[test]
