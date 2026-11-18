@@ -723,53 +723,79 @@ fn live_写路径_g7() {
         parse_pr_full(&b.stdout).expect("forge 能解析")
     };
 
+    let flaky = |out: &CmdOut| out.both().contains("error connecting") || out.both().contains("EOF") || out.both().contains("TLS") || out.timed_out;
+    // 写操作只发一次；传输失败（回包可能丢了）先读回确认有没有生效，确认没生效才重发。
+    let write = |step: &str, args: &[&str], took_effect: &dyn Fn() -> bool| -> CmdOut {
+        for attempt in 0..6 {
+            let out = builtin.run(&dir, args);
+            if !flaky(&out) {
+                show(step, &out);
+                return out;
+            }
+            println!("[{step}] 第 {} 次传输失败：{}", attempt + 1, tail(&out.both(), 1));
+            if took_effect() {
+                println!("[{step}] 读回确认已生效（回包丢失）");
+                return CmdOut { code: Some(0), stdout: "（回包丢失，读回确认已生效）".into(), ..Default::default() };
+            }
+        }
+        panic!("[{step}] 一直连不上");
+    };
+    let find_pr = || {
+        let out = ours(&["pr", "view", &head, "--repo", slug, "--json", "number,url"]);
+        (out.code == Some(0)).then(|| serde_json::from_str::<Value>(&out.stdout).unwrap())
+    };
+
     let title = format!("Meowo G7 自测，可忽略（{head}）");
     let create = ["pr", "create", "--title", &title, "--body", "Meowo 内置 gh 写路径验证（G7），由临时分支发起，验证后合进临时分支并删除。", "--base", &base, "--head", &head, "--draft", "--repo", slug];
-    let out = ours(&create);
-    show("pr create --draft", &out);
+    let out = write("pr create --draft", &create, &|| find_pr().is_some());
     assert_eq!(out.code, Some(0));
-    let url = out.stdout.lines().map(str::trim).find(|l| l.starts_with("https://")).expect("链接").to_string();
-    let number = url.rsplit('/').next().unwrap().to_string();
+    let found = find_pr().expect("建好的 PR 读得回");
+    let url = found["url"].as_str().unwrap().to_string();
+    let number = found["number"].to_string();
     println!("PR {url}");
+    if out.stdout.starts_with("https://") {
+        assert_eq!(out.stdout.trim(), url, "pr create 输出的就是 PR 链接（同 gh）");
+    }
 
     let pr = compare("读回草稿", &number);
     assert_eq!((pr.state.as_str(), pr.head_oid.as_deref()), ("draft", Some(sha.as_str())));
 
-    let again = ours(&create);
-    show("再建一次（已存在）", &again);
+    let again = write("再建一次（已存在）", &create, &|| false);
     assert_eq!(again.code, Some(1));
     assert!(again.both().contains("already exists") && again.both().contains(&url), "forge 要从这里抠出链接");
+    println!("  forge 归类：gh/pr_exists 抠出的链接 = {}", again.both().lines().map(str::trim).find(|l| l.starts_with("https://")).unwrap_or_default());
 
-    let out = ours(&["pr", "comment", &number, "--repo", slug, "--body", "Meowo G7 自测评论（内置执行器）"]);
-    show("pr comment", &out);
+    let marker = "Meowo G7 自测评论（内置执行器）";
+    let has_comment = || ours(&["pr", "view", &number, "--repo", slug, "--json", "comments"]).stdout.contains(marker);
+    let out = write("pr comment", &["pr", "comment", &number, "--repo", slug, "--body", marker], &has_comment);
     assert_eq!(out.code, Some(0));
-    let comments = ours(&["pr", "view", &number, "--repo", slug, "--json", "comments"]);
-    assert!(comments.stdout.contains("Meowo G7 自测评论"));
+    assert!(has_comment(), "评论读得回");
+    let gh_comments = gh(&["pr", "view", &number, "--repo", slug, "--json", "comments"]);
+    assert!(gh_comments.stdout.contains(marker), "gh 也看得到这条评论");
 
-    let out = ours(&["pr", "ready", &number, "--repo", slug]);
-    show("pr ready", &out);
+    let is_ready = || ours(&["pr", "view", &number, "--repo", slug, "--json", "isDraft"]).stdout.contains("\"isDraft\":false");
+    let out = write("pr ready", &["pr", "ready", &number, "--repo", slug], &is_ready);
     assert_eq!(out.code, Some(0));
+    assert!(is_ready());
 
     let wrong = "0000000000000000000000000000000000000000";
-    let out = ours(&["pr", "merge", &number, "--squash", "--match-head-commit", wrong, "--repo", slug]);
-    show("头提交不符的合并", &out);
+    let out = write("头提交不符的合并", &["pr", "merge", &number, "--squash", "--match-head-commit", wrong, "--repo", slug], &|| false);
     assert_eq!(out.code, Some(1));
     println!("  forge 归类：{}", classify_gh_failure(&out, None));
 
-    // GitHub 刚转可评审时可能还在算能不能合：405「不可合并」时等一会儿再试。
-    let mut merged = None;
+    let is_merged = || ours(&["pr", "view", &number, "--repo", slug, "--json", "state"]).stdout.contains("MERGED");
+    // GitHub 刚转可评审时可能还在算能不能合：「不可合并」时等一会儿再试。
+    let mut merged = false;
     for _ in 0..10 {
-        let out = ours(&["pr", "merge", &number, "--squash", "--match-head-commit", &sha, "--repo", slug]);
-        show("pr merge --squash", &out);
+        let out = write("pr merge --squash", &["pr", "merge", &number, "--squash", "--match-head-commit", &sha, "--repo", slug], &is_merged);
         if out.code == Some(0) {
-            merged = Some(out);
+            merged = true;
             break;
         }
         std::thread::sleep(std::time::Duration::from_secs(3));
     }
-    assert!(merged.is_some(), "合并没成功");
+    assert!(merged, "合并没成功");
     std::thread::sleep(std::time::Duration::from_secs(2));
     let pr = compare("读回已合并", &number);
-    assert_eq!(pr.state, "merged");
-    println!("G7_PR_NUMBER={number}");
+    assert_eq!(pr.state, "merged");    println!("G7_PR_NUMBER={number}");
 }
