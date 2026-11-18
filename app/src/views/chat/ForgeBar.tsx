@@ -158,7 +158,6 @@ export function mergeBlock(t: ReturnType<typeof useT>, forge: ForgeStatusDto, pr
   // 草稿 PR GitHub 不让合并：按钮灰着要说清楚为什么（做空审查：以前只是灰着，没有原因）。
   if (pr.state === "draft") return ft.mergeBlockedDraft;
   if (forge.repoNeedsChoice) return ft.repoNeedsChoice;
-  if (forge.ghTooOld) return t.forge.mergeTooOld;
   if (forge.mergeMethods.length === 0) return t.forge.mergeNoMethods;
   if (pr.checksSummary === "fail") return ft.mergeBlockedFail;
   // GitHub 还在算能不能合（UNKNOWN）同「检查在跑」：等一轮再合（定案设计）。Gitea / Gitee 的 UNKNOWN 只是平台不给原因，
@@ -168,36 +167,21 @@ export function mergeBlock(t: ReturnType<typeof useT>, forge: ForgeStatusDto, pr
   return null;
 }
 
-/// 看不到 CI 时说为什么、给出路：Meowo 登录方式下没登录（或令牌被拒）、自动方式下没装 gh，都引导去设置 › GitHub
-/// 登录（桌面上；手机远程不放行登录，只说原因）。用的是本机 gh 时文案照旧说 gh 的情况，按钮同样通往设置
-///（在那里可以登录 Meowo，或看到当前方式）。
-/// 别的平台（GitLab、Gitea、Bitbucket、企业版）：还没有这台主机的账号时引导去设置添加（不报错、后端不发请求）；
-/// 账号的令牌被拒时引导去重新添加。
+/// 看不到 CI 时说为什么、给出路（github.com 与其他平台一样）：还没有这台主机的账号时引导去设置添加（不报错、
+/// 后端不发请求）；账号的令牌被拒时引导去重新添加。手机远程不放行添加账号，只说原因。Meowo 不调用本机 gh。
 export function ConnectionNotice({ forge }: { forge: ForgeStatusDto }) {
   const t = useT();
   const offerSignIn = !remoteUi();
   const kind = forgeKind(forge.forge);
-  const viaAccount = forge.gh === "no_account" || (forge.forgeHost != null && forge.forgeHost !== "github.com" && forge.forge != null);
-  if (viaAccount) {
-    const w = kind === "github" ? t.forgeWords.github : t.forgeWords[kind];
-    const word = forge.forgeHost === "codeberg.org" ? { ...w, name: "Codeberg" } : kind === "github" ? { ...w, name: forge.forgeHost ?? w.name } : w;
-    const missing = forge.gh === "no_account";
-    return (
-      <div className="scm-notice scm-cleanup" data-testid="forge-connection-notice">
-        <span>{missing ? t.forgeP.noAccount(word) : t.forgeP.relogin(word)}</span>
-        {offerSignIn && (
-          <button type="button" className="scm-link-btn" onClick={() => openSettingsAt("github")}>{missing ? t.forgeP.addAccount(word) : t.forgeP.reloginAction}</button>
-        )}
-      </div>
-    );
-  }
-  const connection = forge.connection ?? "gh";
-  const text = connection === "meowo" ? t.forge.meowoUnauthed : forge.gh === "missing" ? t.forge.ghMissing : t.forge.ghUnauthed;
+  const w = t.forgeWords[kind];
+  const host = forge.forgeHost;
+  const word = host === "codeberg.org" ? { ...w, name: "Codeberg" } : kind === "github" && host && host !== "github.com" ? { ...w, name: host } : w;
+  const missing = forge.gh === "no_account";
   return (
     <div className="scm-notice scm-cleanup" data-testid="forge-connection-notice">
-      <span>{text}</span>
+      <span>{missing ? t.forgeP.noAccount(word) : t.forgeP.relogin(word)}</span>
       {offerSignIn && (
-        <button type="button" className="scm-link-btn" onClick={() => openSettingsAt("github")}>{t.forge.signInGithub}</button>
+        <button type="button" className="scm-link-btn" onClick={() => openSettingsAt("github")}>{missing ? t.forgeP.addAccount(word) : t.forgeP.reloginAction}</button>
       )}
     </div>
   );
@@ -303,7 +287,7 @@ export function ForgeBar({ repo, sessionCwd, sessionId, active, onChanged }: {
     if (unpushed === 0) setError((prev) => (prev && (prev.code.startsWith("git/push") || prev.code.startsWith("git/pull")) ? null : prev));
   }, [unpushed]);
 
-  // 没装 gh：有没推的提交先推，不然 compare 网页上看不到这些提交。
+  // 没账号（开网页）：有没推的提交先推，不然 compare 网页上看不到这些提交。
   const openCompare = async (url: string) => {
     if (busyRef.current) return;
     if (unpushed > 0) {
@@ -414,8 +398,8 @@ export function ForgeBar({ repo, sessionCwd, sessionId, active, onChanged }: {
 
   const pr = forge?.gh === "ok" ? forge.pr ?? null : null;
   const ghOk = forge?.gh === "ok";
-  // 看不到 PR 与检查、但能给出路的几种：没装 gh、没登录、令牌失效，或认得出平台但还没加账号。
-  const offGh = forge?.gh === "missing" || forge?.gh === "unauthenticated" || forge?.gh === "no_account";
+  // 看不到 PR 与检查、但能给出路的两种：令牌失效，或认得出平台但还没加账号。
+  const offGh = forge?.gh === "unauthenticated" || forge?.gh === "no_account";
   const showPush = !!branch && unpushed > 0;
   const showPr = !!forge && !!branch && (forge.gh === "ok" || offGh);
   if (!showPush && !showPr && !error && !notice && !cleanup && !identityFor && sessionPrs.length === 0) return null;

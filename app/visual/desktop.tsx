@@ -181,6 +181,13 @@ async function boot(): Promise<React.ReactNode> {
           checks: [{ name: "Pipeline #231 for refactor/login-schema", workflow: null, state: "pending", url: null }, { name: "SonarCloud", workflow: null, state: "pass", url: null }] },
         gitee: { forge: "gitee", host: "gitee.com", repo: "https://gitee.com/example/web-app", number: 316, url: "https://gitee.com/example/web-app/pulls/316", methods: ["merge", "squash", "rebase"], summary: "none", checks: [] },
       };
+      // ?forge=ghnoaccount：仓库在 github.com、没添加账号（Meowo 不再调用本机 gh，与其他平台一样引导去设置添加）。
+      if (forgeKind === "ghnoaccount" && cmd === "git_forge_status") {
+        return { ...(scmMock(cmd) as Record<string, unknown>), gh: "no_account", forge: "github", forgeHost: "github.com", pr: null, mergeMethods: [], lastMergeMethod: null };
+      }
+      if (forgeKind === "ghnoaccount" && cmd === "sidebar_git_badges") {
+        return ((args as { cwds?: string[] } | undefined)?.cwds ?? []).slice(0, 3).map((cwd, i) => ({ cwd, additions: 12 + i, deletions: 3, files: 2 }));
+      }
       const picked = forgeKind ? PLATFORM_PR[forgeKind === "noaccount" ? "gitlab" : forgeKind] : undefined;
       if (picked && cmd === "git_pull_request") return { number: picked.number, state: "open", url: picked.url, title, forge: picked.forge === "gitea" ? "gitea" : picked.forge };
       if (picked && forgeKind !== "noaccount" && cmd === "sidebar_git_badges") {
@@ -458,33 +465,24 @@ async function boot(): Promise<React.ReactNode> {
           { id: "spare", name: "备用", active: false, account: null },
         ];
       }
-      // GitHub 分区：?gh=code（显示设备码）/ signedin（已登录）/ relogin（令牌被拒）；缺省是没登录、自动方式。
-      if (cmd === "github_status") {
-        const gh = q.get("gh");
-        const account = { login: "octocat", name: "The Octocat", avatarUrl: null };
-        return {
-          mode: gh === "signedin" || gh === "relogin" ? "meowo" : "auto",
-          active: gh === "signedin" || gh === "relogin" ? "meowo" : "gh",
-          account: gh === "signedin" || gh === "relogin" ? account : null,
-          needsRelogin: gh === "relogin",
-          ghInstalled: true,
-          credentialSupported: true,
-          pending: gh === "code" ? { userCode: "WDJB-MJHT", verificationUri: "https://github.com/login/device", expiresAt: Date.now() + 15 * 60_000 } : null,
-        };
+      // 代码托管 › Git：?git=missing（找不到 git）；缺省找到了、身份已设。
+      if (cmd === "git_tool_status") {
+        if (q.get("git") === "missing") return { found: false, path: null, version: null, userName: null, userEmail: null, error: lang === "zh" ? "系统找不到指定的文件。 (os error 2)" : "program not found" };
+        return { found: true, path: "C:\\Program Files\\Git\\cmd\\git.exe", version: "2.47.1.windows.1", userName: "Larry", userEmail: "larry@example.com", error: null };
       }
-      // 代码托管账号：?fa=list（三个账号，一个令牌失效）/ device（gitlab.com 设备码进行中）/ adddevice（打包了 GitLab
-      // 应用，添加时先给浏览器登录）；缺省没有账号。
+      // 代码托管 › 平台账号：?fa=list（github.com 与其他平台的账号，一个令牌失效）/ device（github.com 设备码进行中）；
+      // 缺省没有账号（添加时默认 GitHub · github.com，先给浏览器登录）。
       if (cmd === "forge_accounts") {
         const fa = q.get("fa");
         const accounts = fa === "list" ? [
-          { platform: "gitlab", host: "gitlab.com", login: "alice", name: "Alice Chen", needsRelogin: false, oauth: true },
+          { platform: "github", host: "github.com", login: "octocat", name: "The Octocat", needsRelogin: false, oauth: true },
+          { platform: "gitlab", host: "gitlab.com", login: "alice", name: "Alice Chen", needsRelogin: false, oauth: false },
           { platform: "gitea", host: "codeberg.org", login: "carol", name: null, needsRelogin: false, oauth: false },
-          { platform: "bitbucket", host: "bitbucket.org", login: "dave", name: "Dave", needsRelogin: false, oauth: false },
           { platform: "gitee", host: "gitee.com", login: "erin", name: "Erin", needsRelogin: false, oauth: false },
           { platform: "github", host: "github.corp.example", login: "bob", name: null, needsRelogin: true, oauth: false },
         ] : [];
-        const pending = fa === "device" ? { platform: "gitlab", host: "gitlab.com", userCode: "0A44L90H", verificationUri: "https://gitlab.com/oauth/device", verificationUriComplete: null, expiresAt: Date.now() + 5 * 60_000 } : null;
-        return { accounts, credentialSupported: true, gitlabDevice: fa === "device" || fa === "adddevice", pending };
+        const pending = fa === "device" ? { platform: "github", host: "github.com", userCode: "WDJB-MJHT", verificationUri: "https://github.com/login/device", verificationUriComplete: null, expiresAt: Date.now() + 15 * 60_000 } : null;
+        return { accounts, credentialSupported: true, pending };
       }
       if (cmd === "remote_access_info") {
         return {

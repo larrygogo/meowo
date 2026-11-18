@@ -31,7 +31,7 @@ const mr = (over: Partial<PullRequestDto> = {}): PullRequestDto => ({
   ...over,
 });
 const gitlab = (over: Partial<ForgeStatusDto> = {}): ForgeStatusDto => ({
-  gh: "ok", ghTooOld: false, repoUrl: "https://gitlab.com/g/app", forge: "gitlab", forgeHost: "gitlab.com",
+  gh: "ok", repoUrl: "https://gitlab.com/g/app", forge: "gitlab", forgeHost: "gitlab.com",
   compareUrl: "https://gitlab.com/g/app/-/merge_requests/new?merge_request%5Bsource_branch%5D=feat%2Fx&merge_request%5Btarget_branch%5D=main",
   mergeMethods: ["merge", "squash"], lastMergeMethod: null, pr: null, prDefaults: { title: "Fix login", body: "", base: "main" },
   repoChoices: [], repoRemote: "origin", repoNeedsChoice: false, ...over,
