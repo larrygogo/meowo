@@ -11,9 +11,18 @@ import type { SubagentBranchProbeDto } from "./SubagentBranchProbeDto";
  */
 export type SubagentProbeDto = { 
 /**
- * 归一化状态：`running` / `completed` / `failed`。
+ * 归一化状态：`running` / `completed` / `failed`；侧车没留下状态信号、只读到了用量时
+ * 为 `unknown`（claude 的侧车不记结局，状态以主链回执为准，这里只补 token）。
  */
 status: string, 
+/**
+ * 子代理到此刻用掉的 token，口径对齐 Claude Code 终端子代理行的「↓ 387.8k tokens」
+ * （2.1.327 包内 `latestInputTokens + cumulativeOutputTokens`）：**最近一条**回复的输入
+ * （含缓存写入与缓存读取，即此刻的上下文大小）+ **每条**回复的输出累加。同一个子代理被
+ * SendMessage 续上后写的还是同一个侧车文件，这里是整个子代理的累计。
+ * None = 该 provider 的侧车不带用量（拿不到就不显示，不估算）。
+ */
+tokens?: number, 
 /**
  * 侧车最后一次落盘的时刻（ISO-8601）。面板据此把耗时从「委派→现在」纠正成
  * 真实执行时长；还在跑时为 None。

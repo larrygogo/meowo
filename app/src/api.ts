@@ -255,6 +255,12 @@ export type LiveSession = Omit<LiveSessionDto, "session" | "todos" | "column" | 
    * 但它非零时，卡片环与分组都按「运行中」处理——后台委派还在独立干活，不该催人。
    */
   busy_subagents: number;
+  /**
+   * 屏幕上正挂着的自动重试（后端 detect.rs retry_note，与对话页运行条同一串正则）：
+   * attempt = 请求出错按次数重试；stalled = 请求发出后迟迟没回应，等倒计时重发。
+   * 缺省/null = 没有在重试，或非托管会话（读不到屏幕）。
+   */
+  screen_retry?: { kind: "attempt"; attempt: number; max: number } | { kind: "stalled" } | null;
   /** 回合结束时用户没在看这个会话（后端 watch 标记，打开即清）。可选：旧后端不带。 */
   unread?: boolean;
   /** 最近一条 AI 正文的轻推预览（清洗+截断），hover 卡片时速览；无正文回合为 null。 */
@@ -502,6 +508,18 @@ export function sessionTone(
 /// （做空 ⑩）。`sessionToneCallSites.test.ts` 扫描源码，保证没有别处再直接调 sessionTone。
 export function historyTone(history: Pick<ChatHistory, "connected" | "status" | "pendingReview" | "errored" | "busySubagents" | "screenState" | "screenAssumed"> | null | undefined): SessionTone {
   return sessionTone(history?.connected ?? false, history?.status, history?.pendingReview, history?.errored, history?.busySubagents, history?.screenState, history?.screenAssumed);
+}
+
+/// 主回合此刻的状态：与 historyTone 同一批事实，只是后台子任务不算「在跑」。
+///
+/// 对话窗的**交互**（发送走排队还是直接提交、能不能撤销/改模型、要不要显示插话去向）只看主回合：
+/// 主回合停了、后台子代理还在跑时，Claude Code 的输入框照常可用，Enter 直接提交（终端底部是
+/// 「✻ Waiting for 1 background agent to finish」加空闲提示符）。此前发送也按 historyTone 判，
+/// 后台在跑就算运行中，消息被扣在「当前任务结束后发送」的队列里，运行条挂着「等这一步完成后
+/// 插入你的插话」（实拍 2026-11-18）。**展示**（侧栏状态点、灵动岛、窗口标题记号、标记完成要不要
+/// 确认）仍按 historyTone 算「运行中」：后台还在干活，不该催人，也不该被一下勾掉。
+export function historyTurnTone(history: Pick<ChatHistory, "connected" | "status" | "pendingReview" | "errored" | "busySubagents" | "screenState" | "screenAssumed"> | null | undefined): SessionTone {
+  return sessionTone(history?.connected ?? false, history?.status, history?.pendingReview, history?.errored, 0, history?.screenState, history?.screenAssumed);
 }
 
 export function liveSessionTone(row: Pick<LiveSession, "connected" | "session" | "pending_review" | "errored" | "busy_subagents" | "screen_state" | "screen_assumed">): SessionTone {

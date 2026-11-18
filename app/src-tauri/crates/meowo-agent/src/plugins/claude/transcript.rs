@@ -1108,6 +1108,36 @@ pub(crate) fn classify_error(text: &str, synthetic: bool) -> Option<&'static str
     None
 }
 
+/// 这一行是不是用户新开的一句（会让回合往前走）：主会话的 user 行，正文是字符串或含
+/// text/image 块。斜杠命令的回显（`<command-name>` / `<local-command-…>`）和 isMeta 注入
+/// 不算——用户在报错后敲 `/cost` 之类本地命令，模型并没有接着干活，错误不能被它抹掉。
+fn is_user_prompt_line(v: &serde_json::Value) -> bool {
+    if v.get("type").and_then(|x| x.as_str()) != Some("user")
+        || v.get("isSidechain").and_then(|x| x.as_bool()) == Some(true)
+        || v.get("isMeta").and_then(|x| x.as_bool()) == Some(true)
+    {
+        return false;
+    }
+    let local = |text: &str| {
+        let text = text.trim_start();
+        text.starts_with("<command-") || text.starts_with("<local-command-")
+    };
+    match v.pointer("/message/content") {
+        Some(serde_json::Value::String(text)) => !text.trim().is_empty() && !local(text),
+        Some(serde_json::Value::Array(blocks)) => blocks.iter().any(|block| {
+            match block.get("type").and_then(|x| x.as_str()) {
+                Some("text") => block
+                    .get("text")
+                    .and_then(|x| x.as_str())
+                    .is_some_and(|text| !text.trim().is_empty() && !local(text)),
+                Some("image") => true,
+                _ => false,
+            }
+        }),
+        _ => false,
+    }
+}
+
 /// ScheduleWakeup 回执的两种开头（见 ParseState::fold_wakeup_receipt）。
 const WAKEUP_SCHEDULED_PREFIX: &str = "Next wakeup scheduled for";
 const LOOP_STOPPED_PREFIX: &str = "Loop stopped";
@@ -1120,6 +1150,13 @@ struct ParseState {
     custom: Option<String>,
     ai: Option<String>,
     last_text: Option<(String, bool)>, // (正文, model 是否 <synthetic>)
+    /// 最近一条正文之后会话又往前走了（用户发了新的一句、模型又出了 thinking/工具调用）。
+    /// 错误只认「停在末尾」的那一条：CC 把 API 错误写成一条 synthetic 正文就结束回合，
+    /// 用户回一句「继续」后，新回合要先 thinking、调工具，往往几分钟后才有下一段正文——
+    /// 只看 last_text 的话这几分钟里错误一直挂着，侧栏顶着红点、对话页却在正常干活
+    /// （实拍 2026-11-18：04:35:18 Connection lost，04:35:19 用户续上，之后全是工具调用）。
+    /// 预览仍取 last_text，不受它影响。
+    moved_on: bool,
     last_usage: Option<u64>,           // 最近一条 assistant 的上下文已用 token
     /// 已发启动回执、尚无结局信号的后台任务 id（Agent 委派的 agentId / 后台 Bash 的
     /// shell id）。结局信号有三形:
@@ -1139,6 +1176,12 @@ impl ParseState {
     fn fold_line(&mut self, line: &str) {
         let has_title = line.contains("-title");
         let has_assistant = line.contains("\"assistant\"");
+        // 用户新开口（不含工具回执行：回执之前必有一条工具调用，那条 assistant 行已经算过）。
+        // 只在挂着正文、还没被顶掉时才值得解析——不让每条用户行都付 JSON 解析的钱。
+        let user_prompt = !self.moved_on
+            && self.last_text.is_some()
+            && line.contains("\"type\":\"user\"")
+            && !line.contains("\"tool_result\"");
         // 后台任务的启动/结局信号:行形态各异(user 回执、排队通知、TaskOutput 回执),
         // 先做廉价子串门卫,命中才付 JSON 解析。
         let has_task_signal = line.contains("Async agent launched")
@@ -1149,7 +1192,7 @@ impl ParseState {
             || line.contains(WAKEUP_SCHEDULED_PREFIX)
             || line.contains(LOOP_STOPPED_PREFIX)
             || line.contains("resumedAgentId");
-        if !has_title && !has_assistant && !has_task_signal {
+        if !has_title && !has_assistant && !has_task_signal && !user_prompt {
             return;
         }
         let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
@@ -1157,6 +1200,9 @@ impl ParseState {
         };
         if has_task_signal {
             self.fold_task_signals(&v);
+        }
+        if user_prompt && is_user_prompt_line(&v) {
+            self.moved_on = true;
         }
         match v.get("type").and_then(|t| t.as_str()) {
             Some("custom-title") => {
@@ -1212,6 +1258,10 @@ impl ParseState {
                         .and_then(|m| m.as_str())
                         == Some("<synthetic>");
                     self.last_text = Some((text, synthetic));
+                    self.moved_on = false;
+                } else if v.get("isSidechain").and_then(|x| x.as_bool()) != Some(true) {
+                    // 纯 thinking / 工具调用：模型又在产出，上一条正文（哪怕是错误）已不是末尾。
+                    self.moved_on = true;
                 }
             }
             _ => {}
@@ -1374,7 +1424,7 @@ impl ParseState {
 
     /// to_info 的可测版：唤醒是否还没到点取决于「此刻」，测试注入时间。
     fn to_info_at(&self, now_ms: i64) -> TranscriptInfo {
-        let error = self.last_text.as_ref().and_then(|(text, synthetic)| {
+        let error = self.last_text.as_ref().filter(|_| !self.moved_on).and_then(|(text, synthetic)| {
             classify_error(text, *synthetic).map(|label| TurnError {
                 label: label.to_string(),
                 raw: text.clone(),
@@ -2058,8 +2108,11 @@ impl SubagentSpec for ClaudeSubagents {
     fn locate_streams(&self, main_transcript: &Path, tool_use_id: &str) -> Vec<SubagentStream> {
         // 常规委派靠 meta 的 toolUseId 直连;连不上再试 forked skill(那条路没有外键,
         // 得回主链捞出 `/<skill> <args>` 去对 meta 的 description,见 locate_forked)。
+        // 最后按子代理 id 直接找 `agent-<id>.jsonl`：被 SendMessage 续上的子代理，最初那次
+        // 委派可能不在对话页已加载的窗口里，面板手里只有它的 agentId（task_id）。
         Self::locate_one(main_transcript, tool_use_id)
             .or_else(|| Self::locate_forked(main_transcript, tool_use_id))
+            .or_else(|| Self::locate_by_agent_id(main_transcript, tool_use_id))
             .map(|path| {
                 vec![SubagentStream {
                     label: None,
@@ -2074,6 +2127,10 @@ impl SubagentSpec for ClaudeSubagents {
 
     fn parse_stream_line(&self, line: &str) -> Vec<TranscriptEvent> {
         parse_events(line, true)
+    }
+
+    fn stream_tokens(&self, stream: &Path) -> Option<u64> {
+        stream_tokens_cached(stream)
     }
 
     /// 后台任务的**启动回执**:`Agent` 现版本默认异步,立即回一句
@@ -2167,6 +2224,66 @@ fn stopped_task_id(output: &str) -> Option<String> {
         .and_then(|x| x.as_str())
         .filter(|s| !s.is_empty())
         .map(str::to_string)
+}
+
+/// 一条侧车流的 token 用量（口径见 `SubagentProbeDto::tokens`）：最近一条 assistant 的输入
+/// （input + cache_creation + cache_read）+ 每条回复的 output 累加。CC 把一次回复按内容块拆成
+/// 几行落盘，每行带同一个 message.id 与同一份 usage，故 output 按 message.id 去重取最后一次。
+/// 没有任何 usage 返回 None。
+pub(crate) fn stream_tokens(content: &str) -> Option<u64> {
+    let mut latest_input: Option<u64> = None;
+    let mut outputs: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+    let mut anonymous = 0u64;
+    for line in content.lines() {
+        if !line.contains("\"usage\"") || !line.contains("\"assistant\"") {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if v.get("type").and_then(|x| x.as_str()) != Some("assistant") {
+            continue;
+        }
+        let Some(usage) = v.pointer("/message/usage") else {
+            continue;
+        };
+        let g = |k: &str| usage.get(k).and_then(|x| x.as_u64()).unwrap_or(0);
+        latest_input =
+            Some(g("input_tokens") + g("cache_creation_input_tokens") + g("cache_read_input_tokens"));
+        match v.pointer("/message/id").and_then(|x| x.as_str()) {
+            Some(id) => {
+                outputs.insert(id.to_string(), g("output_tokens"));
+            }
+            None => anonymous += g("output_tokens"),
+        }
+    }
+    latest_input.map(|input| input + outputs.values().sum::<u64>() + anonymous)
+}
+
+/// [`stream_tokens`] 带缓存：面板开着时每几秒问一次，侧车可达数 MB——文件没变（长度与
+/// 修改时间都相同）就直接回上次的数。
+fn stream_tokens_cached(stream: &Path) -> Option<u64> {
+    use std::sync::{Mutex, OnceLock};
+    type Key = (u64, Option<std::time::SystemTime>);
+    type Cache = std::collections::HashMap<PathBuf, (Key, Option<u64>)>;
+    static CACHE: OnceLock<Mutex<Cache>> =
+        OnceLock::new();
+    let meta = std::fs::metadata(stream).ok()?;
+    let key: Key = (meta.len(), meta.modified().ok());
+    let cache = CACHE.get_or_init(Default::default);
+    if let Some((seen, tokens)) = cache.lock().ok()?.get(stream) {
+        if *seen == key {
+            return *tokens;
+        }
+    }
+    let tokens = stream_tokens(&std::fs::read_to_string(stream).ok()?);
+    if let Ok(mut cache) = cache.lock() {
+        if cache.len() > 256 {
+            cache.clear();
+        }
+        cache.insert(stream.to_path_buf(), (key, tokens));
+    }
+    tokens
 }
 
 /// SendMessage 把一个**已结束**的子代理续上时的回执(CC 2.1.317 实拍):
@@ -2277,6 +2394,16 @@ fn launch_agent_id(output: &str) -> Option<String> {
 }
 
 impl ClaudeSubagents {
+    /// 按子代理 id（Agent 启动回执里的 agentId）找侧车：`subagents/agent-<id>.jsonl`。
+    /// id 只收字母数字，防止拼出目录外的路径。
+    fn locate_by_agent_id(main_transcript: &Path, agent_id: &str) -> Option<PathBuf> {
+        if agent_id.is_empty() || !agent_id.chars().all(|c| c.is_ascii_alphanumeric()) {
+            return None;
+        }
+        let stream = Self::stream_dir(main_transcript)?.join(format!("agent-{agent_id}.jsonl"));
+        stream.is_file().then_some(stream)
+    }
+
     fn locate_one(main_transcript: &Path, tool_use_id: &str) -> Option<PathBuf> {
         let dir = Self::stream_dir(main_transcript)?;
         for entry in std::fs::read_dir(&dir).ok()?.flatten() {
@@ -3424,8 +3551,10 @@ mod tests {
         assert_eq!(info.error, None);
     }
 
+    /// 错误之后模型又出了工具调用 = 已经恢复在干活，错误不再挂着；预览仍是最后那条正文。
+    /// 此前这里断言「错误保留」：只认 last_text，于是恢复后的整段工具调用期间侧栏一直红点。
     #[test]
-    fn analyze_skips_tooluse_only_assistant() {
+    fn analyze_tool_use_after_error_clears_error() {
         let content = concat!(
             r#"{"type":"assistant","uuid":"u-err","message":{"role":"assistant","content":[{"type":"text","text":"Please run /login · API Error: 403 Request not allowed"}]}}"#,
             "\n",
@@ -3435,10 +3564,60 @@ mod tests {
         let p = write_tmp("toolonly", content);
         let info = analyze_transcript(p.to_str().unwrap());
         std::fs::remove_file(&p).ok();
+        assert_eq!(info.error, None);
         assert_eq!(
-            info.error.map(|e| e.label),
-            Some("需要重新登录".to_string())
+            info.preview.as_deref(),
+            Some("Please run /login · API Error: 403 Request not allowed")
         );
+    }
+
+    /// 实拍形态（2026-11-18 本机 transcript，脱敏）：synthetic 的 Connection lost 结束回合，
+    /// 一秒后用户发了新消息（文字 + 图片），随后只有 thinking 与工具调用。用户一开口错误就该
+    /// 消失（新回合起跑到出第一条 thinking 可能隔几分钟），新回合里再出错照样标红。
+    /// 子代理用量对齐 Claude Code 终端的「↓ N tokens」：最近一条的输入（含缓存）+ 各条输出
+    /// 累加；同一回复拆成多行落盘时按 message.id 只算一次（样本照本机侧车行形态，脱敏）。
+    #[test]
+    fn stream_tokens_matches_tui_formula() {
+        let line = |id: &str, input: u64, cache_read: u64, cache_write: u64, output: u64| format!(
+            r#"{{"isSidechain":true,"type":"assistant","message":{{"id":"{id}","role":"assistant","content":[{{"type":"text","text":"x"}}],"usage":{{"input_tokens":{input},"cache_creation_input_tokens":{cache_write},"cache_read_input_tokens":{cache_read},"output_tokens":{output}}}}}}}"#
+        );
+        let content = [
+            r#"{"isSidechain":true,"type":"user","message":{"role":"user","content":"去查一下"}}"#.to_string(),
+            line("msg_1", 3, 0, 12_000, 400),
+            // 同一回复的第二个内容块：同 id，不重复计 output。
+            line("msg_1", 3, 0, 12_000, 400),
+            line("msg_2", 1, 12_000, 2_000, 900),
+        ]
+        .join("\n");
+        // 最近输入 1 + 12000 + 2000 = 14001；输出 400 + 900 = 1300。
+        assert_eq!(super::stream_tokens(&content), Some(15_301));
+        assert_eq!(super::stream_tokens("{\"type\":\"user\"}"), None);
+    }
+
+    #[test]
+    fn analyze_new_prompt_after_error_clears_error_until_next_error() {
+        let error = r#"{"type":"assistant","isSidechain":false,"timestamp":"2026-11-18T04:35:18.645Z","message":{"model":"<synthetic>","role":"assistant","content":[{"type":"text","text":"API Error: Connection lost mid-response. The response above may be incomplete."}]}}"#;
+        let prompt = r#"{"type":"user","isSidechain":false,"timestamp":"2026-11-18T04:35:19.063Z","message":{"role":"user","content":[{"type":"text","text":"看下这两张图"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"AAAA"}}]}}"#;
+        let thinking = r#"{"type":"assistant","isSidechain":false,"timestamp":"2026-11-18T04:35:29.936Z","message":{"model":"claude-opus-5-5","role":"assistant","content":[{"type":"thinking","thinking":"","signature":"x"}]}}"#;
+        let mut st = ParseState::default();
+        st.fold_line(error);
+        assert_eq!(
+            st.to_info().error.map(|e| e.label).as_deref(),
+            Some("API 请求出错")
+        );
+        st.fold_line(prompt);
+        assert_eq!(st.to_info().error, None, "用户续上一句，错误就不该再挂着");
+        st.fold_line(thinking);
+        assert_eq!(st.to_info().error, None);
+        st.fold_line(error);
+        assert!(st.to_info().error.is_some(), "新回合里再出错照样标红");
+
+        // 报错后敲本地斜杠命令、isMeta 注入：模型没接着干活，错误保留。
+        let mut st = ParseState::default();
+        st.fold_line(error);
+        st.fold_line(r#"{"type":"user","message":{"role":"user","content":"<command-name>/cost</command-name>"}}"#);
+        st.fold_line(r#"{"type":"user","isMeta":true,"message":{"role":"user","content":"Caveat: local command"}}"#);
+        assert!(st.to_info().error.is_some());
     }
 
     #[test]

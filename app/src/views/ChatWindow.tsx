@@ -8,7 +8,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { pathKey, unquotePath } from "../paths";
 import { COMPACTING_ACTIVITY } from "../activity";
 import { appConfirm } from "../confirm";
-import { forkSession, agentChatUi, attachBackgroundSession, sendBackgroundPrompt, clipboardRestore, clipboardSetImage, confirmStopSession, dismissInteractiveQuestion, getChatHistory, getGitChangesOverview, getGitDiffSummary, getLiveSessionsPage, getSessionLineage, isExternallyHeld, managedTerminalBinding, managedTerminalPendingLaunch, managedTerminalScreen, managedTerminalSnapshot, openNewSessionWindow,  refreshSessionModel, refreshSessionTodos, renameSession as renameSessionCmd, savePastedAttachment, sessionLaunchSelections, setArchived as setArchivedCmd, historyTone, liveSessionTone, startManagedTerminal, copySessionToProvider, takeoverManagedTerminal, writeManagedTerminal, type AgentId, type ChatHistory, type ChatItem, type ChatUi, type GitDiffSummaryDto, type RepoChangesDto, type LiveSession, type ModelPreset, type PendingApproval, type RuntimeRequest } from "../api";
+import { forkSession, agentChatUi, attachBackgroundSession, sendBackgroundPrompt, clipboardRestore, clipboardSetImage, confirmStopSession, dismissInteractiveQuestion, getChatHistory, getGitChangesOverview, getGitDiffSummary, getLiveSessionsPage, getSessionLineage, isExternallyHeld, managedTerminalBinding, managedTerminalPendingLaunch, managedTerminalScreen, managedTerminalSnapshot, openNewSessionWindow,  refreshSessionModel, refreshSessionTodos, renameSession as renameSessionCmd, savePastedAttachment, sessionLaunchSelections, setArchived as setArchivedCmd, historyTone, historyTurnTone, liveSessionTone, startManagedTerminal, copySessionToProvider, takeoverManagedTerminal, writeManagedTerminal, type AgentId, type ChatHistory, type ChatItem, type ChatUi, type GitDiffSummaryDto, type RepoChangesDto, type LiveSession, type ModelPreset, type PendingApproval, type RuntimeRequest } from "../api";
 import { hasEscLayers } from "../escLayers";
 import { useTauriEvent } from "../hooks/useTauriEvent";
 import { useVisibleInterval } from "../hooks/useVisibleInterval";
@@ -71,7 +71,7 @@ import { QueuedPrompts, queueAttachments } from "./chat/QueuedPrompts";
 import { SessionPrsContext, sessionPullRequestUrls } from "./chat/sessionPrs";
 import { usePromptQueue } from "./chat/usePromptQueue";
 import { BottomSheet, SheetOnPhone } from "./chat/BottomSheet";
-import { runningActivityView, RunningBar, SnakeSpinner, TurnAnnouncer, useCliStatusStore } from "./chat/RunningBar";
+import { liveToolActivity, runningActivityView, RunningBar, SnakeSpinner, TurnAnnouncer, useCliStatusStore } from "./chat/RunningBar";
 import { ModelPicker, readStarred, type ModelPickerItem } from "./chat/ModelPicker";
 import { currentPresetId } from "./chat/modelLabels";
 import { ModelMenu, effortLabel } from "./chat/ModelMenu";
@@ -593,9 +593,12 @@ export function ChatWindow() {
   // history 未加载时按离线处理,避免首帧闪一下运行态。屏幕状态与侧栏同口径带上:gemini
   // 启动即落 running、首条消息前无事件纠正,只看 DB 会把空闲会话当运行中、发送改按排队键
   // Tab——正文停在输入框里发不出去(0.6.11 实机)。
-  // 后台子任务数与侧栏同源（后端同一份 transcript 分析）：主回合停了、后台子任务还在跑时，
-  // 这里和侧栏一样是「运行中」。此前这一位传的是 undefined，对话窗按空闲处理。
-  const tone = historyTone(history);
+  // 两个口径（见 historyTurnTone）：sessionWideTone 与侧栏、灵动岛同源，后台子任务还在跑也算
+  // 「运行中」，管窗口标题记号与标记完成的确认；tone 只看主回合，管发送、排队、撤销、运行条——
+  // 主回合停了、只剩后台子代理在跑时，终端输入框照常可用，对话页也要能直接发。
+  const sessionWideTone = historyTone(history);
+  const tone = historyTurnTone(history);
+  const backgroundOnly = sessionWideTone === "running" && tone === "waiting";
   // 要在终端里答的交互。Lead 关卡（gate）不算：它有自己的卡片（DockWork 的 LeadGateCard），
   // 不能再冒出一张「Agent 请求权限 / 去终端批准」的降级卡和发送软拦（做空审查 M2）。
   const terminalReview = history?.pendingReview && history.pendingReview !== "gate" ? history.pendingReview : null;
@@ -603,9 +606,11 @@ export function ChatWindow() {
   toneRef.current = tone;
   // 运行条：压缩中的哨兵顶替首行动词；真实命令才进次行（空值/哨兵不占次行）。
   const compactingNow = history?.currentActivity === COMPACTING_ACTIVITY;
-  const runningActivity = history?.currentActivity && !compactingNow
-    ? runningActivityView(history.currentActivity, t.chat.compacting, t.chat.running)
-    : null;
+  // 次行优先取 transcript 里还没回执的那条调用（正在跑的那一步）；记录给不出时退回 hook 值
+  // ——hook 只在工具跑完时写，长命令跑着时它是上一条已完成的命令（见 liveToolActivity）。
+  const liveTool = useMemo(() => liveToolActivity(items), [items]);
+  const runningActivity = compactingNow ? null
+    : liveTool ?? (history?.currentActivity ? runningActivityView(history.currentActivity, t.chat.compacting, t.chat.running) : null);
   const cliStatusStore = useCliStatusStore();
   // 换会话清掉上一个会话的状态行，别让它在新会话的运行条上活 3 秒。
   useEffect(() => { cliStatusStore.set(null); cliStatusStore.setRetry(null); }, [sessionId, cliStatusStore]);
@@ -658,10 +663,10 @@ export function ChatWindow() {
   // 任务栏,宜短。▶=在跑,●=等待/待处理,离线不加记号。
   useEffect(() => {
     const name = history?.title || t.chat.title;
-    const marker = tone === "running" ? "▶ " : tone === "pending" || tone === "waiting" ? "● " : "";
+    const marker = sessionWideTone === "running" ? "▶ " : tone === "pending" || tone === "waiting" ? "● " : "";
     // 非 Tauri 环境(测试/浏览器)下 getCurrentWindow 会抛错,吞掉即可(同 Sticker 的置顶写法)。
     try { void getCurrentWindow().setTitle(`${marker}${name} · Meowo`).catch(() => {}); } catch { /* noop */ }
-  }, [tone, history?.title, t]);
+  }, [tone, sessionWideTone, history?.title, t]);
   // 「结束会话」:结束正在跑的 Agent 此前只有终端页操作条里的入口,不开终端页的 GUI 用户
   // 无从结束,会话就一直在后台占着进程。可见性由后端 endable 门控——本 GUI 托管的 PTY,
   // 或进程仍活着的孤儿会话(broker 已收掉 PTY 记录,后端按 pid 杀树兜底);外部终端里跑的
@@ -722,7 +727,7 @@ export function ChatWindow() {
     // 先确认：这颗钮就挨着「结束会话」，那边点了要确认，这边误触却直接停掉一个跑到一半的任务。
     // 停在提示符上的会话（等你/空闲）不拦，勾掉就是勾掉。口径与侧栏、会话管理页共用（S-1，
     // 2026-11-12）：卡在审批上的（pending）回合也没走完，同样先问。
-    if (next && markDoneEndsWork(toneRef.current) && !(await confirmMarkDone([{ working: true }], t))) return;
+    if (next && markDoneEndsWork(historyTone(history)) && !(await confirmMarkDone([{ working: true }], t))) return;
     setArchiving(true);
     // 乐观翻转:IPC 往返 + 下一轮轮询才回真值,期间按钮维持旧文案会让人以为没点上。
     // 失败回滚并报错——静默失败等于骗用户「已归档」。
@@ -3426,7 +3431,8 @@ export function ChatWindow() {
         // 说明与卡片在场时的占位同一句（见 chat/composerCardLock）。
         if (latest.pendingReview && latest.pendingReview !== "gate") throw new Error(cardLockHint(lockForPendingReview(latest.pendingReview), t));
         if (latest.screenState === "blocked") throw new Error(t.chat.cardLockMenu);
-        const currentTone = historyTone(latest);
+        // 写终端前现查一次：只看主回合（后台子代理在跑时输入框照常可用，Enter 直接提交）。
+        const currentTone = historyTurnTone(latest);
         const key = currentTone === "running" ? chatUi?.queue_input : "\r";
         if (!key) throw new Error(t.chat.busySendUnavailable);
         outgoingStore.settle(outgoingId, { kind: currentTone === "running" ? "queued" : "echo" });
@@ -4841,6 +4847,16 @@ export function ChatWindow() {
             fallbackVerb={liveTurnHasOutput ? t.chat.working : t.chat.requesting}
             activity={runningActivity}
           />
+        )}
+        {/* 主回合停了、后台子代理还在跑：照常可以发消息，这里只交代后台还在干活；各个子代理的
+            进度在停靠栏「子代理」里。不计时、不挂插话去向——那是主回合在跑时的说法。 */}
+        {!loading && sessionId !== 0 && backgroundOnly && (
+          <div className="chat-running is-background">
+            <div className="chat-running-line">
+              <SnakeSpinner />
+              <span className="chat-running-verb">{t.chat.backgroundOnlyRunning}</span>
+            </div>
+          </div>
         )}
         {/* 已写进 CLI 的排队回执由 outgoingStore 对账；尚未交付的持久队列在下一组件，
             两者分界就是能否取消：领取后不再提供假取消。 */}

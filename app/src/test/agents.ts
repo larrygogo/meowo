@@ -7,7 +7,7 @@ import type { AgentDescriptor, ChatUi, LaunchChoice, LaunchOption, SlashCommand 
 export const CLAUDE_STATUS_LINE_PATTERN = String.raw`^\s*[✻✽✶✳✢·*✺✷✸✹]\s+([A-Z][A-Za-z'-]*(?: [A-Za-z'-]+){0,2}…)\s*(?:\((\d[^()]{0,160})\))?\s*$`;
 
 /** 与 plugins/claude 的 retry_line_pattern 同一串（改一边必须同步另一边）。 */
-export const CLAUDE_RETRY_LINE_PATTERN = String.raw`· (?:Retrying in|retrying, waiting up to|next try in) [^·]{1,60}· attempt (\d+)/(\d+)(?: · [^·]{0,40})?\s*$`;
+export const CLAUDE_RETRY_LINE_PATTERN = String.raw`· (?:Retrying in|retrying, waiting up to|next try in) [^·]{1,60}· attempt (\d+)/(\d+)(?: · [^·]{0,40})?\s*$|Waiting for API response · will retry in ([^·]{1,20}?) · check your network\s*$`;
 
 /** 测试里已知的五家产品名。真实值由后端 `list_agents()` 下发（须与注册表的 display_name 同值）。 */
 const NAMES: Record<string, string> = {

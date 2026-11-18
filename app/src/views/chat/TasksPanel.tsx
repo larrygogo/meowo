@@ -1,4 +1,4 @@
-import { memo, useId, useState } from "react";
+import { memo, useEffect, useId, useMemo, useState } from "react";
 import { tablistIds, useTablist } from "../useTablist";
 import { useT } from "../../i18n";
 import { collectSubagentReceipts } from "../../chat/reducer";
@@ -8,6 +8,7 @@ import { Icon } from "../../icons/Icon";
 import { icCircleCheck, icClose } from "../../icons/glyphs";
 import { TodoBadge } from "./TodoBadge";
 import { ASSUME_LIVE, liveTurnStart, type SessionLive } from "./toolState";
+import { fmtTokens } from "./cliStatus";
 
 export type BackgroundTask = {
   id: string;
@@ -17,6 +18,11 @@ export type BackgroundTask = {
   meta: string | null;
   /** stop = 已中断：没等到结局，也不会再有（所在回合被打断、会话进程没了）。 */
   state: "run" | "done" | "fail" | "stop";
+  /** 这一轮开跑的时刻（毫秒）：运行中的行据此实时走表。续上的子代理从续上那一刻算。 */
+  startedAt?: number | null;
+  /** 向侧车查用量时用的 id：一般是委派那条调用的 id；最初的委派不在已载入窗口里、由
+   *  SendMessage 代表的子代理，用它的 agentId（侧车文件按它命名）。 */
+  probeId?: string;
   /** 子代理交了结论、它派出的后台活儿还在跑：仍按完成算，行里提示「后台仍在运行」。 */
   backgroundRunning?: boolean;
   durationMs: number | null;
@@ -33,14 +39,21 @@ export type TaskFilter = "recent" | "running" | "done" | "all";
 /// 回执说在跑的后台任务，要会话进程还活着才算。否则是已中断——此前这两种都记成运行中，
 /// 面板头永远挂着「N 运行中」（走查 A1）。
 export function collectBackgroundTasks(items: ChatItem[], live: SessionLive = ASSUME_LIVE): { bash: BackgroundTask[]; subagents: BackgroundTask[] } {
-  const { outcomes, finishedTs } = collectSubagentReceipts(items);
+  const { outcomes, finishedTs, runningSince } = collectSubagentReceipts(items);
   const bash: BackgroundTask[] = [];
   const subagents: BackgroundTask[] = [];
   const turnStart = liveTurnStart(items);
   for (const [index, item] of items.entries()) {
     if (item.type !== "tool_use") continue;
     const isShell = isBackgroundShell(item, outcomes);
-    if (!isShell && !isSubagentDelegation(item, outcomes)) continue;
+    // 被 SendMessage 续上的子代理，最初那次委派不在已载入的窗口里（首屏只有末尾一屏）时，续上
+    // 回执的 task_id 找不到归属，结局就挂在 SendMessage 自己身上——由它代表这个子代理，否则
+    // 终端里在跑的子代理面板上看不见（实拍 2026-11-18）。最初的委派在窗口里时，结局归它，不重复。
+    // 判据不看工具名（类别只认后端给的 kind）：这条调用自己的回执让某个 task_id 开跑、而那个 task_id
+    // 此前没有归属——正是「续上一个不在窗口里的子代理」的形状（SendMessage 的续上回执）。
+    const delegation = !isShell && isSubagentDelegation(item, outcomes);
+    const resumedHere = !isShell && !delegation && runningSince.has(item.id) && !!outcomes.get(item.id)?.task_id;
+    if (!isShell && !resumedHere && !delegation) continue;
     const outcome = outcomes.get(item.id);
     const state: BackgroundTask["state"] = !outcome
       ? (live.activity !== "idle" && index > turnStart ? "run" : "stop")
@@ -48,18 +61,20 @@ export function collectBackgroundTasks(items: ChatItem[], live: SessionLive = AS
       // 被叫停的子任务（codex interrupt_agent）：没跑完，也不是失败。
       : outcome.interrupted ? "stop"
       : outcome.failed > 0 ? "fail" : "done";
-    const started = Date.parse(item.timestamp ?? "");
+    // 本轮开跑时刻：最近一次「开跑」回执（启动或续上）的时间，没有就退回调用时刻。
+    const started = Date.parse(runningSince.get(item.id) ?? item.timestamp ?? "");
     const ended = Date.parse(finishedTs.get(item.id) ?? "");
     const durationMs = state !== "run" && Number.isFinite(started) && Number.isFinite(ended) && ended >= started ? ended - started : null;
     const sortKey = (state !== "run" ? finishedTs.get(item.id) : null) ?? item.timestamp ?? "";
     if (isShell) {
       const command = item.detail?.kind === "command" ? item.detail.command : item.summary;
       const description = item.detail?.kind === "command" ? item.detail.description?.trim() : null;
-      bash.push({ id: item.id, name: description || `$ ${command}`, meta: description ? `$ ${command}` : null, state, durationMs, sortKey });
+      bash.push({ id: item.id, name: description || `$ ${command}`, meta: description ? `$ ${command}` : null, state, durationMs, sortKey, startedAt: Number.isFinite(started) ? started : null });
     } else {
       // 结论已交、后台仍在运行：按完成算（不占「进行中」），行里提示一句（做空第二轮）。
       const backgroundRunning = state === "done" && outcome?.background_running === true;
-      subagents.push({ id: item.id, name: subagentName(item), meta: null, state, durationMs, sortKey, backgroundRunning });
+      const probeId = resumedHere ? outcome?.task_id ?? item.id : item.id;
+      subagents.push({ id: item.id, name: subagentName(item), meta: null, state, durationMs, sortKey, backgroundRunning, startedAt: Number.isFinite(started) ? started : null, probeId });
     }
   }
   return { bash, subagents };
@@ -71,7 +86,8 @@ function subagentName(item: ToolUseItem): string {
   if (raw.startsWith("{")) {
     try {
       const parsed = JSON.parse(raw) as Record<string, unknown>;
-      const text = parsed.description ?? parsed.prompt;
+      // SendMessage 的参数没有 description，取给子代理的话（首行，长的交给 CSS 截断）。
+      const text = parsed.description ?? parsed.prompt ?? parsed.summary ?? (typeof parsed.message === "string" ? parsed.message.split("\n")[0] : undefined);
       if (typeof text === "string" && text.trim()) return text.trim();
     } catch { /* 不是 JSON 就用原文 */ }
   }
@@ -111,14 +127,34 @@ export function TaskFilterTabs({ value, onChange, idBase }: { value: TaskFilter;
   );
 }
 
+/// 一行的耗时与用量（对照 Claude Code 终端子代理行「2m 3s · ↓ 387.8k tokens」）：运行中的从本轮
+/// 开跑起实时走表，结束的显示这一轮的总时长；token 只在侧车给得出时显示（不估算）。
+function taskStats(task: BackgroundTask, now: number, tokens: number | undefined, t: ReturnType<typeof useT>): string | null {
+  const ms = task.state === "run" ? (task.startedAt != null ? now - task.startedAt : null) : task.durationMs;
+  const parts = [
+    ms !== null ? durationText(ms, t) : null,
+    tokens !== undefined && tokens > 0 ? t.chat.taskTokens(fmtTokens(tokens)) : null,
+  ].filter((part): part is string => !!part);
+  return parts.length > 0 ? parts.join(" · ") : null;
+}
+
 /// 任务列表（对照 Kimi 的 TasksPane）：状态图标 + 说明 + 「$ 命令」 + 耗时，一行一个任务。
-export const TasksPanel = memo(function TasksPanel({ tasks, filter }: { tasks: BackgroundTask[]; filter: TaskFilter }) {
+export const TasksPanel = memo(function TasksPanel({ tasks, filter, now = Date.now(), tokens }: {
+  tasks: BackgroundTask[];
+  filter: TaskFilter;
+  /** 运行中的行走表用的「此刻」（面板每秒推一次）。 */
+  now?: number;
+  /** 各任务已用 token，键是 probeId（缺省为 id）。 */
+  tokens?: Record<string, number>;
+}) {
   const t = useT();
   const shown = filterTasks(tasks, filter);
   if (shown.length === 0) return <div className="chat-tasks-empty">{t.chat.taskEmpty[filter]}</div>;
   return (
     <ul className="chat-task-list">
-      {shown.map((task) => (
+      {shown.map((task) => {
+        const stats = taskStats(task, now, tokens?.[task.probeId ?? task.id], t);
+        return (
         <li key={task.id} className={"chat-task-row is-" + task.state} data-tip={task.meta ?? task.name}>
           <span className="chat-task-glyph" role="img" aria-label={t.chat.taskStates[task.state]}>
             {task.state === "run" ? <span className="chat-task-spin" aria-hidden="true" />
@@ -131,20 +167,54 @@ export const TasksPanel = memo(function TasksPanel({ tasks, filter }: { tasks: B
           <span className="chat-task-name">{task.name}</span>
           {task.meta && <span className="chat-task-meta">{task.meta}</span>}
           {task.backgroundRunning && <span className="chat-task-meta">{t.chat.subagentBackgroundRunning}</span>}
-          {task.durationMs !== null && <span className="chat-task-time">{durationText(task.durationMs, t)}</span>}
+          {stats && <span className="chat-task-time">{stats}</span>}
         </li>
-      ))}
+        );
+      })}
     </ul>
   );
 });
 
+/// 用量多久问一次侧车：token 不必逐秒刷新，侧车按文件长度与修改时间缓存，没变化是纯内存读。
+const TOKEN_POLL_MS = 5000;
+
 /// 面板头 + 筛选 + 列表的整块（后台 Bash 与子代理共用；筛选状态各自独立）。
-export function TasksDockPanel({ title, icon, tasks, onClose }: { title: string; icon: JSX.Element; tasks: BackgroundTask[]; onClose: () => void }) {
+/// `probeTokens` 只给子代理面板：向侧车查各子代理用掉的 token（拿不到的不出现在结果里）。
+export function TasksDockPanel({ title, icon, tasks, onClose, probeTokens }: {
+  title: string;
+  icon: JSX.Element;
+  tasks: BackgroundTask[];
+  onClose: () => void;
+  probeTokens?: (ids: string[]) => Promise<Record<string, number>>;
+}) {
   const t = useT();
   const [filter, setFilter] = useState<TaskFilter>("recent");
   const tabsId = useId();
   const ids = tablistIds(tabsId);
   const running = tasks.filter((task) => task.state === "run").length;
+  // 走表：面板开着（本组件挂着）且有运行中的任务才起定时器，否则一个都不起。
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (running === 0) return;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [running]);
+  // 用量：打开时查一次；有运行中的任务时每 5 秒再查（结束的数不会再变）。
+  const probeKey = useMemo(() => tasks.map((task) => `${task.probeId ?? task.id}:${task.state}`).join("|"), [tasks]);
+  const [tokens, setTokens] = useState<Record<string, number>>({});
+  useEffect(() => {
+    if (!probeTokens) return;
+    const probeIds = probeKey.split("|").filter(Boolean).map((key) => key.slice(0, key.lastIndexOf(":")));
+    if (probeIds.length === 0) return;
+    let alive = true;
+    const load = () => {
+      probeTokens(probeIds).then((next) => { if (alive) setTokens(next); }).catch(() => { /* 查不到就不显示数字 */ });
+    };
+    load();
+    const timer = running > 0 ? window.setInterval(load, TOKEN_POLL_MS) : undefined;
+    return () => { alive = false; if (timer !== undefined) window.clearInterval(timer); };
+  }, [probeTokens, probeKey, running]);
   return (
     <div className="dock-work-panel panel-tasks">
       <div className="dock-work-head">
@@ -158,7 +228,7 @@ export function TasksDockPanel({ title, icon, tasks, onClose }: { title: string;
           <button type="button" className="dock-work-close" aria-label={t.chat.close} onClick={onClose}>×</button>
         </span>
       </div>
-      <div className="dock-work-body" id={ids.panelId} role="tabpanel" aria-labelledby={ids.tabId(filter)}><TasksPanel tasks={tasks} filter={filter} /></div>
+      <div className="dock-work-body" id={ids.panelId} role="tabpanel" aria-labelledby={ids.tabId(filter)}><TasksPanel tasks={tasks} filter={filter} now={now} tokens={tokens} /></div>
     </div>
   );
 }

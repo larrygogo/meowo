@@ -669,11 +669,14 @@ export const en: Dict = {
     liveWorking: "Working",
     liveReplyDone: "Reply finished",
     steerWaiting: "Your message goes in after this step",
+    backgroundOnlyRunning: "Background tasks are still running. You can keep sending messages.",
     steerInjected: "Inserted. Continuing…",
     slashSheetTitle: "Commands",
     slashSheetSearch: "Search commands",
     slashSheetEmpty: "No matching commands",
     workingRetry: (attempt: number, max: number) => `Request failed. Retrying (${attempt}/${max})…`,
+    sidebarRetryStalled: "No response from the API. Waiting to retry. Check your network.",
+    workingStalled: (retryIn: string) => `No response from the API. Retrying in ${retryIn}. Check your network.`,
     inputLabel: "Send a message to the Agent",
     runningSend: {
       insert: {
@@ -1162,6 +1165,7 @@ export const en: Dict = {
     subagentTallyFailed: (n: number) => `${n} failed`,
     subagentTallyRunning: (n: number) => `${n} running`,
     subagentBackgroundRunning: "Background still running",
+    taskTokens: (count: string) => `↓ ${count} tokens`,
     subagentDurationSec: (s: number) => `${s}s`,
     subagentDurationMin: (m: number, s: number) => `${m}m ${s}s`,
     subagentDurationHour: (h: number, m: number) => `${h}h ${m}m`,

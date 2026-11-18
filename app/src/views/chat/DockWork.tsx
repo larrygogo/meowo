@@ -4,8 +4,8 @@
 /// 显隐判定、四块面板、连同只有它用的任务列表重建，全摊在 ChatWindow 里。收拢后 ChatWindow
 /// 只交数据，入口何时出现（dockEntries）是可单测的纯函数。
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
-import type { ChatItem, ChatHistory } from "../../api";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { probeSubagentStates, type ChatItem, type ChatHistory } from "../../api";
 import { buildTranscriptTodos, type TaskUpdateCache } from "../../chat/transcriptTodos";
 import { pushEscLayer } from "../../escLayers";
 import { useT } from "../../i18n";
@@ -137,6 +137,12 @@ export function DockWork({ sessionId, cwd, ccSessionId, items, history, loading,
   // 也顺带封住无界增长。
   const taskUpdateCacheRef = useRef<TaskUpdateCache>(new Map());
   useEffect(() => { taskUpdateCacheRef.current = new Map(); }, [sessionId]);
+  // 子代理面板的 token：向侧车实测（probe_subagent_states 带回 tokens），拿不到的 provider 不显示。
+  const probeTokens = useCallback((ids: string[]) => probeSubagentStates(sessionId, ids).then((probes) => {
+    const out: Record<string, number> = {};
+    for (const [id, probe] of Object.entries(probes)) if (typeof probe.tokens === "number") out[id] = probe.tokens;
+    return out;
+  }), [sessionId]);
   const transcriptTodos = useMemo(
     () => buildTranscriptTodos(items, lastUserIdx, taskUpdateCacheRef.current),
     [items, lastUserIdx],
@@ -217,7 +223,7 @@ export function DockWork({ sessionId, cwd, ccSessionId, items, history, loading,
     : panel === "tasks" && backgroundTasks.bash.length > 0
       ? <TasksDockPanel key="bash" title={t.chat.tasksBackground} icon={<TerminalPillIcon className="dock-work-title-icon" />} tasks={backgroundTasks.bash} onClose={close} />
     : panel === "subagents" && backgroundTasks.subagents.length > 0
-      ? <TasksDockPanel key="subagents" title={t.chat.tasksSubagents} icon={<SparklesPillIcon className="dock-work-title-icon" />} tasks={backgroundTasks.subagents} onClose={close} />
+      ? <TasksDockPanel key="subagents" title={t.chat.tasksSubagents} icon={<SparklesPillIcon className="dock-work-title-icon" />} tasks={backgroundTasks.subagents} onClose={close} probeTokens={probeTokens} />
     : null;
   return (
     <>

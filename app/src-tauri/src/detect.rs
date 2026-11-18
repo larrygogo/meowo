@@ -74,6 +74,37 @@ impl Evaluation {
     }
 }
 
+/// 屏幕上正挂着的「自动重试」行（插件的 `retry_line_pattern`，与对话页运行条同一串正则）。
+/// 侧栏据此把「其实卡在网络/接口上」和「正常在干活」分开说。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub(crate) enum ScreenRetry {
+    /// 请求出错，按次数重试：第 attempt 次，共 max 次。
+    Attempt { attempt: u32, max: u32 },
+    /// 请求发出后迟迟没有回应，倒计时到了再重发（没有次数上限）。
+    Stalled,
+}
+
+/// 只看屏幕底部这么多行：重试行画在输入框上方的 spinner 区，正文里引用的同款文字在更上面
+/// （与前端 cliStatus.ts 的 RETRY_SCAN_LINES 同值）。
+const RETRY_SCAN_LINES: usize = 12;
+
+/// 从末屏认出正在进行的自动重试。provider 没声明重试行正则、或屏幕上没有，返回 None。
+pub(crate) fn retry_note(provider: &str, snap: &ScreenSnapshot) -> Option<ScreenRetry> {
+    let pattern = meowo_agent::resolve(Some(provider))?.retry_line_pattern()?;
+    let re = compiled_regex(pattern)?;
+    let start = snap.lines.len().saturating_sub(RETRY_SCAN_LINES);
+    snap.lines[start..].iter().rev().find_map(|line| {
+        let caps = re.captures(line)?;
+        if caps.get(3).is_some() {
+            return Some(ScreenRetry::Stalled);
+        }
+        let attempt = caps.get(1)?.as_str().parse().ok()?;
+        let max = caps.get(2)?.as_str().parse().ok()?;
+        (max > 0).then_some(ScreenRetry::Attempt { attempt, max })
+    })
+}
+
 /// 无规则命中时的回退标签（对齐 herdr 的 default_known_agent_idle_fallback 语义）。
 pub(crate) const FALLBACK_RULE_ID: &str = "fallback_idle";
 
@@ -539,6 +570,55 @@ mod tests {
             state_of(evaluate("claude", &s)),
             Some((ScreenState::Working, "osc_title_working"))
         );
+    }
+
+    /// 用户实拍（2026-11-18）：回合中请求卡住，spinner 行换成红字的等待重试行，输入框照画 ❯。
+    /// 没有标题证据时也要判 working（回合还在），且认出是「API 无响应、等待重试」。
+    #[test]
+    fn api_stalled_retry_line_is_working_and_noted() {
+        let s = snap(&[
+            "  \u{23BF}  Running\u{2026}",
+            "",
+            "\u{273B} Waiting for API response \u{00B7} will retry in 1m 9s \u{00B7} check your network",
+            "────────────────────────",
+            " \u{276F} ",
+            "────────────────────────",
+            "  Opus 5.5 · 41% ctx",
+        ]);
+        assert_eq!(
+            state_of(evaluate("claude", &s)),
+            Some((ScreenState::Working, "api_retry_working"))
+        );
+        assert_eq!(super::retry_note("claude", &s), Some(super::ScreenRetry::Stalled));
+
+        let s = snap(&[
+            "\u{2717} API Error (529 Overloaded) \u{00B7} Retrying in 5s \u{00B7} attempt 2/10",
+            "────────────────────────",
+            " \u{276F} ",
+            "────────────────────────",
+        ]);
+        assert_eq!(
+            state_of(evaluate("claude", &s)),
+            Some((ScreenState::Working, "api_retry_working"))
+        );
+        assert_eq!(
+            super::retry_note("claude", &s),
+            Some(super::ScreenRetry::Attempt { attempt: 2, max: 10 })
+        );
+
+        // 正文里引用这句（不在行尾）不算；没有重试行时为 None。
+        let quoted = snap(&[
+            "日志里出现过 Waiting for API response · will retry in 5s · check your network，后来恢复了",
+            "────────────────────────",
+            " \u{276F} ",
+            "────────────────────────",
+        ]);
+        assert_eq!(super::retry_note("claude", &quoted), None);
+        assert_eq!(
+            state_of(evaluate("claude", &quoted)),
+            Some((ScreenState::Idle, "live_prompt_box"))
+        );
+        assert_eq!(super::retry_note("codex", &s), None);
     }
 
     #[test]
