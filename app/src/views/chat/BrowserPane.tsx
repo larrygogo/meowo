@@ -225,23 +225,6 @@ export function BrowserPane({ info, visible, suggestions }: {
           ] satisfies (PathMenuItem | "sep")[]}
         />
       )}
-      {/* agent 操作时的提示与接管（同 Kimi Code「Agent 正在控制此标签页 / 我来接管 / 已接管时长」）。
-          控制中：提示条与网页四周的边框同一个绿色（也是网页里 Agent 鼠标的颜色），连成一体，
-          一眼看出「这块现在归 Agent」；接管后退回中性色，显示已接管多久。 */}
-      {(info.agentActive || info.agentPaused) && (
-        <div className={"browser-pane-agent" + (info.agentPaused ? " is-paused" : "")} role="status">
-          <span className="browser-pane-agent-dot" aria-hidden="true" />
-          <span className="browser-pane-agent-text">
-            <strong>{info.agentPaused ? t.chat.browserAgentPaused : t.chat.browserAgentActive}</strong>
-            {info.agentPaused
-              ? <span>{pausedFor} · {t.chat.browserAgentPausedDetail}</span>
-              : inputLocked && isWindows() && <span>{t.chat.browserAgentActiveDetail}</span>}
-          </span>
-          <button type="button" className={info.agentPaused ? undefined : "btn-primary"} onClick={() => void setBrowserPaneAgentPaused(info.id, !info.agentPaused).catch(() => {})}>
-            {info.agentPaused ? t.chat.browserAgentResume : t.chat.browserAgentTakeOver}
-          </button>
-        </div>
-      )}
       {info.permission && (
         <div className="browser-pane-notice is-permission" role="alert">
           <Icon glyph={icShield} size={14} className="browser-pane-notice-icon" />
@@ -267,6 +250,23 @@ export function BrowserPane({ info, visible, suggestions }: {
         />
       )}
       {error && <div className="browser-pane-error" role="alert">{error}</div>}
+      {/* agent 操作时的提示与接管（同 Kimi Code「Agent 正在控制此标签页 / 我来接管 / 已接管时长」）。
+          控制中：提示条与网页四周的边框同一个绿色（也是网页里 Agent 鼠标的颜色），连成一体，
+          一眼看出「这块现在归 Agent」。紧贴网页放（权限、下载提示在它上面），条和框才连得上；接管后退回中性色，显示已接管多久。 */}
+      {(info.agentActive || info.agentPaused) && (
+        <div className={"browser-pane-agent" + (info.agentPaused ? " is-paused" : "")} role="status">
+          <span className="browser-pane-agent-dot" aria-hidden="true" />
+          <span className="browser-pane-agent-text">
+            <strong>{info.agentPaused ? t.chat.browserAgentPaused : t.chat.browserAgentActive}</strong>
+            {info.agentPaused
+              ? <span>{pausedFor} · {t.chat.browserAgentPausedDetail}</span>
+              : inputLocked && isWindows() && <span>{t.chat.browserAgentActiveDetail}</span>}
+          </span>
+          <button type="button" onClick={() => void setBrowserPaneAgentPaused(info.id, !info.agentPaused).catch(() => {})}>
+            {info.agentPaused ? t.chat.browserAgentResume : t.chat.browserAgentTakeOver}
+          </button>
+        </div>
+      )}
       <div ref={hostRef} className={"browser-pane-view" + (inputLocked && !blank ? " is-agent" : "")}>
         {blank && (
           <div className="browser-pane-start">

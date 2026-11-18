@@ -4506,6 +4506,10 @@ body.is-sidebar-dragging, body.is-sidebar-dragging * { cursor: grabbing !importa
    不如 Kimi（2026-11-18 截图）。接管后退回中性灰底，显示已接管多久。 */
 .browser-pane-agent { flex: none; display: flex; align-items: center; gap: var(--sp-8); min-width: 0; padding: var(--sp-6) var(--sp-8) var(--sp-6) var(--sp-10); color: var(--cc-text); background: color-mix(in srgb, var(--cc-ok-vivid) 14%, var(--cc-bg)); font-size: var(--text-xs); }
 .browser-pane-agent.is-paused { border-bottom: var(--hairline) solid var(--cc-border); background: var(--fill-hover); }
+/* 「我来接管」用同一个绿，不用应用主色：主色黄绿紧挨着青绿条，两种绿打架（2026-11-18 截图自验）。
+   字取页面底色：深色主题是深字压亮绿，浅色主题是白字压深绿。 */
+.browser-pane-agent:not(.is-paused) button { border-color: transparent; background: var(--cc-ok-vivid); color: var(--cc-bg); font-weight: 600; }
+.browser-pane-agent:not(.is-paused) button:hover { background: color-mix(in srgb, var(--cc-ok-vivid) 85%, var(--cc-text)); }
 .browser-pane-agent-text { flex: 1 1 auto; min-width: 0; display: flex; align-items: baseline; gap: var(--sp-6); overflow: hidden; white-space: nowrap; }
 .browser-pane-agent-text strong { flex: none; font-weight: 600; }
 .browser-pane-agent-text span { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--cc-text-dim); font-variant-numeric: tabular-nums; }
