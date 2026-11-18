@@ -812,3 +812,257 @@ fn 企业版_内置实现走_api_v3_与_api_graphql_只发往这台主机() {
     );
     assert_eq!(*flags.lock().unwrap(), vec![true], "成功的回包回报令牌好用");
 }
+
+// ═══ 只读真机核对（M7）：默认跳过，手动跑 ═══
+//
+// `cargo test -p meowo-app --lib live_只读_三个平台 -- --ignored --nocapture`
+// 不带任何令牌，只发 GET：用本实现对 gitlab.com、codeberg.org、bitbucket.org 的公开仓库按链接与按分支查 PR/MR
+// 与检查，再直接取官方 API 的原始响应逐项对照（号、状态、标题、头提交、检查条数与各项状态）。
+
+fn live_client(host: &str) -> Client<'static> {
+    Client {
+        http: Box::new(super::super::http::RealForgeHttp { host: host.into() }),
+        auth: None,
+        on_auth: Box::new(|_| {}),
+    }
+}
+
+fn live_raw(host: &str, url: &str) -> Value {
+    for attempt in 0..6 {
+        match live_client(host).get(url) {
+            Ok(v) => return v,
+            Err(e) if attempt < 5 => eprintln!("  重试 {url}: {e}"),
+            Err(e) => panic!("{url}: {e}"),
+        }
+    }
+    unreachable!()
+}
+
+fn retry<T>(what: &str, f: impl Fn() -> Result<T, String>) -> T {
+    for attempt in 0..6 {
+        match f() {
+            Ok(v) => return v,
+            Err(e) if attempt < 5 && (e.starts_with("forge/network") || e.starts_with("forge/tls")) => eprintln!("  重试 {what}: {e}"),
+            Err(e) => panic!("{what}: {e}"),
+        }
+    }
+    unreachable!()
+}
+
+fn show(label: &str, pr: &meowo_protocol::ipc::PullRequestDto) {
+    let states: Vec<String> = pr.checks.iter().map(|c| format!("{}={}", c.name, c.state)).collect();
+    eprintln!(
+        "{label}: #{} {} head={} base={:?} head_ref={:?} mergeable={:?}/{:?} checks={} [{}] {}",
+        pr.number,
+        pr.state,
+        pr.head_oid.as_deref().unwrap_or("-"),
+        pr.base_ref,
+        pr.head_ref,
+        pr.mergeable,
+        pr.merge_state,
+        pr.checks_summary.as_deref().unwrap_or("-"),
+        states.join(", "),
+        pr.url
+    );
+}
+
+#[test]
+#[ignore]
+fn live_只读_三个平台() {
+    // GitLab：gitlab-org/cli 最近更新的、同仓库分支的打开 MR。
+    let opened = live_raw(
+        "gitlab.com",
+        "https://gitlab.com/api/v4/projects/gitlab-org%2Fcli/merge_requests?state=opened&per_page=20&order_by=updated_at",
+    );
+    let mr = opened
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["source_project_id"] == m["target_project_id"])
+        .expect("有同仓库分支的打开 MR")
+        .clone();
+    let iid = mr["iid"].as_u64().unwrap() as u32;
+    let gl = Gitlab {
+        client: live_client("gitlab.com"),
+        host: "gitlab.com".into(),
+        state: GhState::Ok,
+        login: None,
+    };
+    let by_branch = retry("gitlab 按分支", || {
+        gl.find(".", Some("gitlab-org/cli"), &branch(mr["source_branch"].as_str().unwrap()))
+    })
+    .expect("按分支找到");
+    let by_url = retry("gitlab 按链接", || gl.find_url(".", mr["web_url"].as_str().unwrap())).expect("按链接找到");
+    show("gitlab 按分支", &by_branch);
+    show("gitlab 按链接", &by_url);
+    let raw = live_raw(
+        "gitlab.com",
+        &format!("https://gitlab.com/api/v4/projects/gitlab-org%2Fcli/merge_requests/{iid}"),
+    );
+    eprintln!(
+        "  原始：!{} state={} draft={} sha={} detailed_merge_status={}",
+        raw["iid"], raw["state"], raw["draft"], raw["sha"], raw["detailed_merge_status"]
+    );
+    assert_eq!((by_branch.number, by_url.number), (iid, iid));
+    assert_eq!(by_branch.head_oid.as_deref(), raw["sha"].as_str());
+    assert_eq!(by_branch.title, raw["title"].as_str().unwrap());
+    assert_eq!(by_branch.state, if raw["draft"].as_bool().unwrap() { "draft" } else { "open" });
+    if let Some(p) = raw["head_pipeline"].as_object() {
+        let jobs = live_raw(
+            "gitlab.com",
+            &format!(
+                "https://gitlab.com/api/v4/projects/{}/pipelines/{}/jobs?per_page=100",
+                p["project_id"], p["id"]
+            ),
+        );
+        let jobs = jobs.as_array().unwrap();
+        let listing: Vec<String> = jobs
+            .iter()
+            .map(|j| format!("{}={}", j["name"].as_str().unwrap(), j["status"].as_str().unwrap()))
+            .collect();
+        eprintln!(
+            "  原始：pipeline {} status={} jobs={} [{}]",
+            p["id"],
+            p["status"],
+            jobs.len(),
+            listing.join(", ")
+        );
+        assert_eq!(by_branch.checks.len(), jobs.len().max(1));
+        for (check, job) in by_branch.checks.iter().zip(jobs) {
+            assert_eq!(check.name, job["name"].as_str().unwrap());
+            assert_eq!(
+                check.state,
+                gitlab::job_state(job["status"].as_str().unwrap(), job["allow_failure"].as_bool().unwrap_or(false))
+            );
+        }
+    } else {
+        eprintln!("  原始：没有 head_pipeline");
+        assert!(by_branch.checks.is_empty());
+    }
+
+    // Codeberg：forgejo/forgejo 最近更新的打开 PR（fork 来的按 owner:分支）。
+    let pulls = live_raw(
+        "codeberg.org",
+        "https://codeberg.org/api/v1/repos/forgejo/forgejo/pulls?state=open&limit=10&sort=recentupdate",
+    );
+    // 挑一个头提交上有检查的（没有就退回第一个）。
+    let candidates: Vec<Value> = pulls
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|p| p["head"]["repo"].is_object())
+        .cloned()
+        .collect();
+    let has_checks = |p: &Value| {
+        let url = format!(
+            "https://codeberg.org/api/v1/repos/forgejo/forgejo/commits/{}/status?limit=100",
+            p["head"]["sha"].as_str().unwrap_or_default()
+        );
+        live_raw("codeberg.org", &url)["statuses"].as_array().is_some_and(|s| !s.is_empty())
+    };
+    let pull = candidates
+        .iter()
+        .find(|p| has_checks(p))
+        .or(candidates.first())
+        .expect("有打开的 PR")
+        .clone();
+    let number = pull["number"].as_u64().unwrap() as u32;
+    let head_repo = pull["head"]["repo"]["full_name"].as_str().unwrap().to_string();
+    let head_branch = pull["head"]["ref"].as_str().unwrap().to_string();
+    let ge = Gitea {
+        client: live_client("codeberg.org"),
+        host: "codeberg.org".into(),
+        state: GhState::Ok,
+        login: None,
+    };
+    let head_slug = (head_repo != "forgejo/forgejo").then_some(head_repo.as_str());
+    let target = Target::Branch {
+        qualified: &head_branch,
+        branch: &head_branch,
+        head_slug,
+    };
+    let by_branch = retry("codeberg 按分支", || ge.find(".", Some("forgejo/forgejo"), &target)).expect("按分支找到");
+    let by_url = retry("codeberg 按链接", || ge.find_url(".", pull["html_url"].as_str().unwrap())).expect("按链接找到");
+    show("codeberg 按分支", &by_branch);
+    show("codeberg 按链接", &by_url);
+    let raw = live_raw(
+        "codeberg.org",
+        &format!("https://codeberg.org/api/v1/repos/forgejo/forgejo/pulls/{number}"),
+    );
+    eprintln!(
+        "  原始：#{} state={} draft={} mergeable={} head={} ({})",
+        raw["number"], raw["state"], raw["draft"], raw["mergeable"], raw["head"]["sha"], head_repo
+    );
+    assert_eq!((by_branch.number, by_url.number), (number, number));
+    assert_eq!(by_branch.head_oid.as_deref(), raw["head"]["sha"].as_str());
+    let status = live_raw(
+        "codeberg.org",
+        &format!(
+            "https://codeberg.org/api/v1/repos/forgejo/forgejo/commits/{}/status?limit=100",
+            raw["head"]["sha"].as_str().unwrap()
+        ),
+    );
+    let statuses = status["statuses"].as_array().cloned().unwrap_or_default();
+    let statuses = &statuses;
+    eprintln!("  原始：combined state={} statuses={}", status["state"], statuses.len());
+    assert_eq!(by_branch.checks.len(), statuses.len());
+    for (check, st) in by_branch.checks.iter().zip(statuses) {
+        assert_eq!(check.name, st["context"].as_str().unwrap());
+        assert_eq!(check.state, gitea::status_state(st["status"].as_str().unwrap()));
+    }
+
+    // Bitbucket：atlassian/atlassian-connect-express 最近的打开 PR（同仓库分支）。
+    let list = live_raw(
+        "api.bitbucket.org",
+        "https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests?state=OPEN&pagelen=5&fields=values.id,values.source.branch.name,values.source.repository.full_name,values.links.html.href",
+    );
+    let item = list["values"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["source"]["repository"]["full_name"] == "atlassian/atlassian-connect-express")
+        .expect("有打开的 PR")
+        .clone();
+    let id = item["id"].as_u64().unwrap() as u32;
+    let bb = Bitbucket {
+        client: live_client(bitbucket::API_HOST),
+        state: GhState::Ok,
+        login: None,
+    };
+    let by_branch = retry("bitbucket 按分支", || {
+        bb.find(
+            ".",
+            Some("atlassian/atlassian-connect-express"),
+            &branch(item["source"]["branch"]["name"].as_str().unwrap()),
+        )
+    })
+    .expect("按分支找到");
+    let by_url = retry("bitbucket 按链接", || {
+        bb.find_url(".", item["links"]["html"]["href"].as_str().unwrap())
+    })
+    .expect("按链接找到");
+    show("bitbucket 按分支", &by_branch);
+    show("bitbucket 按链接", &by_url);
+    let raw = live_raw("api.bitbucket.org", &format!("https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/{id}?fields=id,state,draft,title,source.commit.hash"));
+    eprintln!(
+        "  原始：#{} state={} draft={} hash={}",
+        raw["id"], raw["state"], raw["draft"], raw["source"]["commit"]["hash"]
+    );
+    assert_eq!((by_branch.number, by_url.number), (id, id));
+    assert_eq!(by_branch.head_oid.as_deref(), raw["source"]["commit"]["hash"].as_str());
+    assert_eq!(by_branch.title, raw["title"].as_str().unwrap());
+    let statuses = live_raw(
+        "api.bitbucket.org",
+        &format!("https://api.bitbucket.org/2.0/repositories/atlassian/atlassian-connect-express/pullrequests/{id}/statuses?pagelen=100"),
+    );
+    let statuses = statuses["values"].as_array().unwrap();
+    let listing: Vec<String> = statuses
+        .iter()
+        .map(|s| format!("{}={}", s["name"].as_str().unwrap_or(""), s["state"].as_str().unwrap_or("")))
+        .collect();
+    eprintln!("  原始：statuses={} [{}]", statuses.len(), listing.join(", "));
+    assert_eq!(by_branch.checks.len(), statuses.len());
+    for (check, st) in by_branch.checks.iter().zip(statuses) {
+        assert_eq!(check.state, bitbucket::status_state(st["state"].as_str().unwrap()));
+    }
+}
