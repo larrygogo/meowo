@@ -39,7 +39,7 @@ impl Http for Api {
 }
 
 fn resp(status: u16, body: Value) -> Response {
-    Response { status, body: body.to_string(), link: None }
+    Response { status, body: body.to_string(), ..Default::default() }
 }
 
 fn data(v: Value) -> Response {
@@ -303,6 +303,7 @@ fn api_分页_slurp_与字段() {
             status: 200,
             body: json!([{ "filename": "a.ts" }]).to_string(),
             link: Some("<https://api.github.com/repositories/1/pulls/3/files?page=2>; rel=\"next\", <https://api.github.com/repositories/1/pulls/3/files?page=2>; rel=\"last\"".into()),
+            location: None,
         }
     });
     let out = run(&api, &prefs, ".", &["api", "repos/acme/repo/pulls/3/files", "--paginate", "--slurp"]);

@@ -34,7 +34,7 @@ impl Http for Script {
 }
 
 fn reply(status: u16, body: &str) -> Result<Response, String> {
-    Ok(Response { status, body: body.to_string(), link: None })
+    Ok(Response { status, body: body.to_string(), ..Default::default() })
 }
 
 fn code(expires_in: u64, interval: u64) -> DeviceCode {
@@ -300,4 +300,85 @@ fn 设置_老设置文件默认自动() {
     let settings: crate::settings::Settings = serde_json::from_str("{}").unwrap();
     assert_eq!(settings.github_connection, "auto");
     assert_eq!(crate::settings::Settings::default().github_connection, "auto");
+}
+
+// ═══ 重定向（改名 / 转移过的仓库）═══
+
+type Seen = Mutex<Vec<(String, String, bool, Option<serde_json::Value>)>>;
+
+fn redirecting<'s>(seen: &'s Seen, status: u16, location: &str) -> impl Fn(&Request) -> Result<Response, String> + 's {
+    let location = location.to_string();
+    move |req: &Request| {
+        let body = match &req.body {
+            Some(Body::Json(v)) => Some(v.clone()),
+            _ => None,
+        };
+        seen.lock().unwrap().push((req.method.to_string(), req.url.to_string(), req.token.is_some(), body));
+        if req.url.contains("/old/") {
+            Ok(Response { status, location: Some(location.clone()), ..Default::default() })
+        } else {
+            Ok(Response { status: 200, body: "{}".into(), ..Default::default() })
+        }
+    }
+}
+
+#[test]
+fn 重定向_307_308_保留方法正文与令牌() {
+    let token = Token::new("gho_x").unwrap();
+    for status in [307, 308] {
+        let seen = Seen::default();
+        let raw = redirecting(&seen, status, "https://api.github.com/repos/new/repo/pulls/1/merge");
+        let req = Request { method: "PUT", url: "https://api.github.com/repos/old/repo/pulls/1/merge", token: Some(&token), body: Some(Body::Json(serde_json::json!({ "merge_method": "squash" }))) };
+        assert_eq!(follow_redirects(&raw, &req).unwrap().status, 200);
+        let seen = seen.lock().unwrap().clone();
+        assert_eq!(seen.len(), 2);
+        assert_eq!(seen[1].0, "PUT");
+        assert_eq!(seen[1].1, "https://api.github.com/repos/new/repo/pulls/1/merge");
+        assert!(seen[1].2, "同主机跳转要带着令牌");
+        assert_eq!(seen[1].3, Some(serde_json::json!({ "merge_method": "squash" })));
+    }
+}
+
+#[test]
+fn 重定向_301_302_get_照跟_post_改成不带正文的_get() {
+    let token = Token::new("gho_x").unwrap();
+    let seen = Seen::default();
+    let raw = redirecting(&seen, 301, "/repositories/42/pulls/1/files");
+    let req = Request { method: "GET", url: "https://api.github.com/repos/old/repo/pulls/1/files", token: Some(&token), body: None };
+    assert_eq!(follow_redirects(&raw, &req).unwrap().status, 200);
+    let seen = seen.lock().unwrap().clone();
+    assert_eq!((seen[1].0.as_str(), seen[1].1.as_str(), seen[1].2), ("GET", "https://api.github.com/repositories/42/pulls/1/files", true));
+
+    let seen = Seen::default();
+    let raw = redirecting(&seen, 302, "https://api.github.com/repos/new/repo/issues/1/comments");
+    let req = Request { method: "POST", url: "https://api.github.com/repos/old/repo/issues/1/comments", token: Some(&token), body: Some(Body::Json(serde_json::json!({ "body": "x" }))) };
+    follow_redirects(&raw, &req).unwrap();
+    let seen = seen.lock().unwrap().clone();
+    assert_eq!((seen[1].0.as_str(), seen[1].3.is_none()), ("GET", true));
+}
+
+#[test]
+fn 重定向_别的主机与_http_一律不跟_回包原样返回() {
+    let token = Token::new("gho_x").unwrap();
+    for location in ["https://evil.example.com/steal", "http://api.github.com/repos/new/repo", "https://api.github.com:8443/x", "https://github.com/login"] {
+        let seen = Seen::default();
+        let raw = redirecting(&seen, 307, location);
+        let req = Request { method: "GET", url: "https://api.github.com/repos/old/repo", token: Some(&token), body: None };
+        let resp = follow_redirects(&raw, &req).unwrap();
+        assert_eq!(resp.status, 307, "{location}");
+        assert_eq!(seen.lock().unwrap().clone().len(), 1, "{location} 不能跟");
+    }
+}
+
+#[test]
+fn 重定向_跳数有上限() {
+    let token = Token::new("gho_x").unwrap();
+    let count = AtomicUsize::new(0);
+    let raw = |_: &Request| {
+        let n = count.fetch_add(1, Ordering::SeqCst);
+        Ok(Response { status: 301, location: Some(format!("https://api.github.com/repos/old/r{n}")), ..Default::default() })
+    };
+    let req = Request { method: "GET", url: "https://api.github.com/repos/old/r", token: Some(&token), body: None };
+    assert_eq!(follow_redirects(&raw, &req).unwrap_err(), "github/too_many_redirects");
+    assert_eq!(count.load(Ordering::SeqCst), 6);
 }

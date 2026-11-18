@@ -100,6 +100,7 @@ impl std::fmt::Debug for Token {
 
 // ═══ HTTP（可注入；测试不打真网络）═══
 
+#[derive(Clone)]
 pub(crate) enum Body {
     Json(serde_json::Value),
     Form(Vec<(&'static str, String)>),
@@ -112,12 +113,70 @@ pub(crate) struct Request<'a> {
     pub(crate) body: Option<Body>,
 }
 
-/// 状态码 + 正文 + Link 头（REST 分页）。4xx / 5xx 也走这里，由调用方判读。
+/// 状态码 + 正文 + Link 头（REST 分页）+ Location 头（重定向）。4xx / 5xx 也走这里，由调用方判读。
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Response {
     pub(crate) status: u16,
     pub(crate) body: String,
     pub(crate) link: Option<String>,
+    pub(crate) location: Option<String>,
+}
+
+/// 最多跟几次重定向（改名 / 转移过的仓库通常一跳）。
+const MAX_REDIRECTS: usize = 5;
+
+/// 重定向去哪：只跟 https 的 api.github.com → api.github.com。别的主机、降级成 http、带端口的一律不跟
+///（回包原样交给调用方），令牌不会被带去别处。
+pub(crate) fn redirect_target(from: &str, location: Option<&str>) -> Option<String> {
+    let base = url::Url::parse(from).ok()?;
+    let next = base.join(location?).ok()?;
+    let api = |u: &url::Url| u.scheme() == "https" && u.host_str() == Some("api.github.com") && u.port().is_none();
+    (api(&base) && api(&next)).then(|| next.to_string())
+}
+
+/// 自己跟重定向：ureq 默认跟随时会去掉 Authorization，且 POST / PUT 的 307 不跟——改名或转移过的私有仓库
+/// 读评审 404、建 PR / 合并 / 评论失败。gh（Go 的 net/http）同主机跳转保留登录头，这里对齐：
+/// 301 / 302 把非 GET 改成不带正文的 GET（同 Go），307 / 308 保留方法与正文；带着原令牌重发。
+pub(crate) fn follow_redirects(raw: &dyn Fn(&Request) -> Result<Response, String>, req: &Request) -> Result<Response, String> {
+    let mut method = req.method.to_string();
+    let mut url = req.url.to_string();
+    let mut body = req.body.clone();
+    for _ in 0..=MAX_REDIRECTS {
+        let resp = raw(&Request { method: &method, url: &url, token: req.token, body: body.clone() })?;
+        if !matches!(resp.status, 301 | 302 | 307 | 308) {
+            return Ok(resp);
+        }
+        let Some(next) = redirect_target(&url, resp.location.as_deref()) else {
+            return Ok(resp);
+        };
+        if matches!(resp.status, 301 | 302) && method != "GET" && method != "HEAD" {
+            method = "GET".into();
+            body = None;
+        }
+        url = next;
+    }
+    Err("github/too_many_redirects".into())
+}
+
+/// Meowo 专用的 ureq Agent：不让 ureq 自己跟重定向（见 [`follow_redirects`]），代理与 ports.rs 同一套解析。
+fn agent(proxy: Option<&str>) -> ureq::Agent {
+    static CACHE: Mutex<Option<std::collections::HashMap<String, ureq::Agent>>> = Mutex::new(None);
+    let key = proxy.unwrap_or_default().to_string();
+    let mut guard = lock(&CACHE);
+    let cache = guard.get_or_insert_with(Default::default);
+    if let Some(agent) = cache.get(&key) {
+        return agent.clone();
+    }
+    let mut builder = ureq::AgentBuilder::new().redirects(0);
+    if let Some(p) = proxy {
+        match ureq::Proxy::new(crate::proxy::ureq_compatible_url(p).as_ref()) {
+            Ok(px) => builder = builder.proxy(px),
+            Err(e) => eprintln!("[github] 代理地址无效，本次直连（{}）：{e}", crate::proxy::redact_credentials(p)),
+        }
+    }
+    let agent = builder.build();
+    cache.insert(key, agent.clone());
+    agent
 }
 
 pub(crate) trait Http: Sync {
@@ -135,16 +194,34 @@ pub(crate) struct RealHttp;
 
 impl Http for RealHttp {
     fn send(&self, req: &Request) -> Result<Response, String> {
+        follow_redirects(&raw_send, req)
+    }
+}
+
+/// GraphQL 带上 gh 一直带的预览头：mergeStateStatus 早年是预览字段。2026-11-18 用 gh 2.96 实测 cli/cli，
+/// 不带也能拿到（见 progress.md），这里与 gh 保持一致，防 GitHub 对老账号 / 企业设置收紧。
+const GRAPHQL_ACCEPT: &str = "application/vnd.github.merge-info-preview+json, application/vnd.github+json";
+
+/// 一次请求，不跟重定向。
+fn raw_send(req: &Request) -> Result<Response, String> {
+    {
         if !allowed_url(req.url) {
             return Err("github/host_not_allowed".into());
         }
         let proxy = crate::ports::resolve_proxy(None);
         let api = req.url.starts_with("https://api.github.com/");
-        let mut call = crate::ports::agent_for(proxy.as_deref())
+        let accept = if req.url == format!("{API}/graphql") {
+            GRAPHQL_ACCEPT
+        } else if api {
+            "application/vnd.github+json"
+        } else {
+            "application/json"
+        };
+        let mut call = agent(proxy.as_deref())
             .request(req.method, req.url)
             .timeout(HTTP_TIMEOUT)
             .set("User-Agent", "Meowo")
-            .set("Accept", if api { "application/vnd.github+json" } else { "application/json" });
+            .set("Accept", accept);
         if api {
             call = call.set("X-GitHub-Api-Version", "2022-11-28");
             if let Some(token) = req.token {
@@ -166,8 +243,9 @@ impl Http for RealHttp {
         };
         let status = resp.status();
         let link = resp.header("Link").map(str::to_string);
+        let location = resp.header("Location").map(str::to_string);
         let body = resp.into_string().map_err(|e| e.to_string())?;
-        Ok(Response { status, body, link })
+        Ok(Response { status, body, link, location })
     }
 }
 
