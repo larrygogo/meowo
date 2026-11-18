@@ -23,6 +23,7 @@ mod forge_accounts;
 mod github;
 mod git;
 mod git_target;
+mod git_tool;
 mod island;
 mod lead;
 mod lead_conversation;
@@ -1602,11 +1603,8 @@ pub fn run() {
             forge::gh_pr_create,
             forge::gh_pr_merge,
             forge::forge_choose_repo,
-            github::github_status,
-            github::github_set_mode,
-            github::github_login_start,
-            github::github_login_cancel,
-            github::github_logout,
+            git_tool::git_tool_status,
+            git_tool::git_identity_set,
             forge_accounts::forge_accounts,
             forge_accounts::forge_account_add,
             forge_accounts::forge_account_remove,

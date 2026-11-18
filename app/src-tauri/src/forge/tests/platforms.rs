@@ -902,7 +902,6 @@ fn 企业版_内置实现走_api_v3_与_api_graphql_只发往这台主机() {
         Box::new(|ok| flags.lock().unwrap().push(ok)),
     );
     assert_eq!(forge.state(false), GhState::Ok);
-    assert!(!forge.too_old(), "企业版走内置实现，总能钉住头提交");
     assert_eq!(forge.merge_methods(".", "team/app").unwrap(), vec!["merge", "rebase"]);
     let calls = fake.calls();
     assert!(

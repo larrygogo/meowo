@@ -1,20 +1,15 @@
-//! GitHub 连接：PR 功能用谁的身份连 GitHub（设置 › GitHub）。
+//! github.com 账号：设备码登录（OAuth App，[`device`]）或个人访问令牌，与其他代码托管平台的账号一起列在
+//! 设置 › 代码托管账号（forge_accounts.rs）。Meowo 不调用本机 gh 命令行（leader 2026-11-18「取消gh」），
+//! github.com 的 PR 功能只走这里的账号 + 内置实现（forge/builtin.rs）。
 //!
-//! 四种方式（settings.github_connection）：
-//! - `auto`（默认）：Meowo 登录过就用 Meowo 的令牌，否则用本机 gh——老用户装好的 gh 照旧能用；
-//! - `meowo`：只用 Meowo 的令牌，不碰 gh；没登录时 PR 区块引导去设置里登录；
-//! - `gh`：只用本机 gh（改版前的行为）；
-//! - `off`：不发任何 GitHub 请求，PR 区块不出现。
-//!
-//! Meowo 登录走 GitHub OAuth App 的设备码流程（[`device`]），scope 与 gh 默认一致（`repo read:org`）。
 //! 令牌只进系统凭据库（[`credential`]：Windows 凭据管理器、macOS 钥匙串），不进设置文件、日志、前端、
 //! 远程 RPC；进程内只在 [`Token`] 里存一份（Debug 打码、不可序列化）。OAuth App 关了令牌过期，没有
 //! refresh_token（续期要 client secret，桌面端不能内置），令牌被拒（401）就标「需要重新登录」。
 //!
-//! forge 的 gh 调用经 `forge::connected_gh` 按这里的 [`executor`] 分派：本机 gh、内置实现
-//! （forge/builtin.rs，直接调 REST / GraphQL）、或关闭。
+//! 旧设置「GitHub 连接方式」（自动 / Meowo 登录 / 本机 gh / 关闭）不再生效，四种一样处理：Meowo 登录过就保留为
+//! github.com 账号，没登录就是没添加（不发请求，界面引导去设置添加）。
 
-use meowo_protocol::ipc::{GithubAccountDto, GithubConnectionDto, GithubDeviceCodeDto};
+use meowo_protocol::ipc::{GithubAccountDto, GithubDeviceCodeDto};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
@@ -38,41 +33,10 @@ pub(crate) const SCOPE: &str = "repo read:org";
 pub(crate) const API: &str = "https://api.github.com";
 pub(crate) const DEVICE_CODE_URL: &str = "https://github.com/login/device/code";
 pub(crate) const TOKEN_URL: &str = "https://github.com/login/oauth/access_token";
-/// 连接状态变了（切模式、登录、退出、令牌失效）：前端重拉状态、PR 区块与侧栏角标刷新。
+/// 账号变了（登录、添加、退出、令牌失效）：前端重拉账号、PR 区块与侧栏角标刷新。
+/// 事件名沿用改版前的写法（前端已有的监听照用）。
 pub(crate) const CHANGED_EVENT: &str = "github-connection-changed";
-/// 一次设备码登录结束：`{ state: ok|expired|denied|error, error? }`。取消不发（前端自己收起）。
-pub(crate) const LOGIN_EVENT: &str = "github-login-finished";
 pub(crate) const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
-
-// ═══ 方式 ═══
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Mode {
-    Auto,
-    Meowo,
-    Gh,
-    Off,
-}
-
-impl Mode {
-    pub(crate) fn parse(text: &str) -> Option<Mode> {
-        match text {
-            "auto" => Some(Mode::Auto),
-            "meowo" => Some(Mode::Meowo),
-            "gh" => Some(Mode::Gh),
-            "off" => Some(Mode::Off),
-            _ => None,
-        }
-    }
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            Mode::Auto => "auto",
-            Mode::Meowo => "meowo",
-            Mode::Gh => "gh",
-            Mode::Off => "off",
-        }
-    }
-}
 
 // ═══ 令牌 ═══
 
@@ -189,6 +153,13 @@ pub(crate) fn agent(proxy: Option<&str>) -> ureq::Agent {
 pub(crate) trait Http: Sync {
     /// Err = 没连上（断网、超时、代理不通）。
     fn send(&self, req: &Request) -> Result<Response, String>;
+}
+
+/// 测试常把假 HTTP 借给内置实现。
+impl<T: Http + ?Sized> Http for &T {
+    fn send(&self, req: &Request) -> Result<Response, String> {
+        (**self).send(req)
+    }
 }
 
 /// 只许发往 GitHub：API 与两个设备码端点。令牌只在发往 api.github.com 时带上（见 [`RealHttp`]）。
@@ -313,6 +284,9 @@ pub(crate) struct AccountRecord {
     pub(crate) account: Option<GithubAccountDto>,
     #[serde(default)]
     pub(crate) needs_relogin: bool,
+    /// 用个人访问令牌添加的（否则是设备码登录）。
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) via_token: bool,
 }
 
 /// `~/.meowo/github.json`：只有 login / 名字 / 头像地址与「要重新登录」标记。
@@ -358,8 +332,13 @@ pub(crate) fn fetch_account(http: &dyn Http, token: &Token) -> Result<GithubAcco
 
 /// 落库：令牌存进凭据库，再写不含令牌的账号记录。存凭据失败就不写记录：界面不会显示「已登录」而令牌其实没存下。
 pub(crate) fn store_login(vault: &dyn Vault, path: &Path, token: &Token, account: &GithubAccountDto) -> Result<(), String> {
+    store_login_as(vault, path, token, account, false)
+}
+
+/// 同上，via_token：用个人访问令牌添加的。
+pub(crate) fn store_login_as(vault: &dyn Vault, path: &Path, token: &Token, account: &GithubAccountDto, via_token: bool) -> Result<(), String> {
     vault.write(token)?;
-    save_record(path, &AccountRecord { account: Some(account.clone()), needs_relogin: false })
+    save_record(path, &AccountRecord { account: Some(account.clone()), needs_relogin: false, via_token })
 }
 
 // ═══ 进程内状态 ═══
@@ -370,9 +349,6 @@ struct Session {
 }
 
 static SESSION: Mutex<Session> = Mutex::new(Session { loaded: false, token: None });
-static MODE: Mutex<Option<Mode>> = Mutex::new(None);
-/// 切方式串行：两次 github_set_mode 交错时，设置文件与内存里的方式不会一边一个。
-static MODE_WRITE: Mutex<()> = Mutex::new(());
 /// 记录里「要重新登录」的内存副本（None = 还没读过）：每次成功请求都要报一下，不能每次都读文件。
 static RELOGIN: Mutex<Option<bool>> = Mutex::new(None);
 static APP: OnceLock<tauri::AppHandle> = OnceLock::new();
@@ -412,11 +388,6 @@ pub(crate) fn emit_changed() {
     }
 }
 
-pub(crate) fn mode() -> Mode {
-    let mut guard = lock(&MODE);
-    *guard.get_or_insert_with(|| Mode::parse(&crate::settings::load_settings().github_connection).unwrap_or(Mode::Auto))
-}
-
 /// 进程内的令牌：第一次用时从凭据库读一次，之后用内存里的（登录、退出时更新）。
 pub(crate) fn token() -> Option<Token> {
     let mut session = lock(&SESSION);
@@ -438,50 +409,6 @@ fn set_token(token: Option<Token>) {
     session.loaded = true;
     session.token = token;
     *lock(&RELOGIN) = None;
-}
-
-/// 这一次 gh 调用交给谁。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Executor {
-    /// 关闭：不发任何请求（forge 看到的等同「没装 gh」）。
-    Off,
-    /// 本机 gh。
-    Gh,
-    /// 内置实现；None = Meowo 模式但还没登录（每条命令都回「没登录」）。
-    Meowo(Option<Token>),
-    /// 自动且已登录 Meowo：github.com 的仓库走内置实现，别的主机（企业版）继续走本机 gh。
-    Auto(Token),
-}
-
-impl Executor {
-    pub(crate) fn label(&self) -> &'static str {
-        match self {
-            Executor::Off => "off",
-            Executor::Gh => "gh",
-            Executor::Meowo(_) | Executor::Auto(_) => "meowo",
-        }
-    }
-}
-
-/// 方式 + 有没有令牌 → 执行器。自动：有令牌时 github.com 用 Meowo（令牌被拒也不偷偷退回 gh，给同一个
-/// 「重新登录」提示），企业版仍用 gh。
-pub(crate) fn resolve(mode: Mode, token: Option<Token>) -> Executor {
-    match (mode, token) {
-        (Mode::Off, _) => Executor::Off,
-        (Mode::Gh, _) => Executor::Gh,
-        (Mode::Meowo, token) => Executor::Meowo(token),
-        (Mode::Auto, Some(token)) => Executor::Auto(token),
-        (Mode::Auto, None) => Executor::Gh,
-    }
-}
-
-pub(crate) fn executor() -> Executor {
-    match mode() {
-        // 关闭 / 只用 gh 时不碰凭据库（macOS 上读钥匙串要起进程）。
-        Mode::Off => Executor::Off,
-        Mode::Gh => Executor::Gh,
-        mode => resolve(mode, token()),
-    }
 }
 
 /// 内置实现每拿到一个回包报一次：ok=false 是 401（这个令牌被拒），ok=true 是 2xx（这个令牌好用）。
@@ -518,22 +445,14 @@ fn connection_changed() {
     emit_changed();
 }
 
-pub(crate) fn status_with(mode: Mode, token: Option<Token>, record: &AccountRecord, gh_installed: bool, credential_supported: bool, pending: Option<GithubDeviceCodeDto>) -> GithubConnectionDto {
-    let signed_in = token.is_some();
-    GithubConnectionDto {
-        mode: mode.as_str().into(),
-        active: resolve(mode, token).label().into(),
-        account: if signed_in { record.account.clone() } else { None },
-        needs_relogin: signed_in && record.needs_relogin,
-        gh_installed,
-        credential_supported,
-        pending,
-    }
+/// github.com 的账号记录（不含令牌）。
+pub(crate) fn record() -> AccountRecord {
+    load_record(&record_path())
 }
 
-fn status_now() -> GithubConnectionDto {
-    let pending = lock(&LOGIN).pending.clone();
-    status_with(mode(), token(), &load_record(&record_path()), crate::forge::gh_installed(), SystemVault.supported(), pending)
+/// 进行中的设备码登录（设置窗重开时接着显示）。
+pub(crate) fn pending() -> Option<GithubDeviceCodeDto> {
+    lock(&LOGIN).pending.clone()
 }
 
 // ═══ 登录流程（可注入，单测覆盖取消与并发）═══
@@ -631,113 +550,60 @@ pub(crate) fn logout_with(slot: &Mutex<LoginSlot>, vault: &dyn Vault, path: &Pat
     Ok(())
 }
 
-/// 切方式：串行写设置与内存，再 on_changed（作废缓存、通知前端）。
-pub(crate) fn set_mode_with(mode: Mode, write: &dyn Fn(Mode) -> Result<(), String>, on_changed: &dyn Fn()) -> Result<(), String> {
-    let _guard = lock(&MODE_WRITE);
-    write(mode)?;
-    *lock(&MODE) = Some(mode);
-    on_changed();
-    Ok(())
-}
-
-// ═══ 命令 ═══
-
-#[tauri::command]
-pub(crate) async fn github_status() -> Result<GithubConnectionDto, String> {
-    tauri::async_runtime::spawn_blocking(status_now).await.map_err(|e| e.to_string())
-}
-
-/// 远程 RPC 用：同 [`github_status`]，但不带进行中的登录代码（登录只在桌面设置页做）。
-pub(crate) async fn github_status_remote() -> Result<GithubConnectionDto, String> {
-    github_status().await.map(|mut dto| {
-        dto.pending = None;
-        dto
-    })
-}
-
-#[tauri::command]
-pub(crate) async fn github_set_mode(app: tauri::AppHandle, mode: String) -> Result<GithubConnectionDto, String> {
-    let parsed = Mode::parse(&mode).ok_or("github/invalid_mode")?;
-    let emit_app = app.clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        let write = |mode: Mode| {
-            let settings = crate::settings::update_settings(|s| {
-                s.github_connection = mode.as_str().into();
-                Ok(s.clone())
-            })?;
-            crate::settings::emit_settings_changed(&emit_app, settings);
-            Ok(())
-        };
-        set_mode_with(parsed, &write, &connection_changed)?;
-        Ok(status_now())
-    })
-    .await
-    .map_err(|e| e.to_string())?
-}
-
-#[derive(Clone, serde::Serialize)]
-struct LoginFinished {
-    state: &'static str,
-    error: Option<String>,
-}
-
-fn emit_login(app: &tauri::AppHandle, state: &'static str, error: Option<String>) {
-    let _ = app.emit(LOGIN_EVENT, LoginFinished { state, error });
-}
+// ═══ 设置 › 代码托管账号调的入口（命令在 forge_accounts.rs）═══
 
 /// 开始设备码登录：向 GitHub 要一次性代码，立刻返回给设置页显示；后台线程按 GitHub 给的间隔轮询，
-/// 结果经 [`LOGIN_EVENT`] 推给前端。再点一次「登录」= 作废上一轮、重新要代码。
-#[tauri::command]
-pub(crate) async fn github_login_start(app: tauri::AppHandle) -> Result<GithubDeviceCodeDto, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        if !SystemVault.supported() {
-            return Err("github/credential_unsupported".to_string());
-        }
-        let (generation, code, dto) = begin_login_with(&LOGIN, &RealHttp, CLIENT_ID, crate::now_ms())?;
-        std::thread::spawn(move || {
-            let cancelled = || lock(&LOGIN).generation != generation;
-            let outcome = device::wait_for_token(&RealHttp, CLIENT_ID, &code, &cancelled, &std::thread::sleep);
-            let stored = |token: &Token| set_token(Some(token.clone()));
-            match finish_login_with(&LOGIN, generation, outcome, &RealHttp, &SystemVault, &record_path(), &stored) {
-                Finish::SignedIn(_) => {
-                    connection_changed();
-                    emit_login(&app, "ok", None);
-                }
-                Finish::Stale => {}
-                Finish::Expired => emit_login(&app, "expired", None),
-                Finish::Denied => emit_login(&app, "denied", None),
-                Finish::Failed(e) => emit_login(&app, "error", Some(e)),
+/// 结束时调 done(state, error)（state = ok / expired / denied / error；取消与被顶替不调）。
+/// 再点一次「登录」= 作废上一轮、重新要代码。
+pub(crate) fn start_login(done: impl Fn(&'static str, Option<String>) + Send + 'static) -> Result<GithubDeviceCodeDto, String> {
+    if !SystemVault.supported() {
+        return Err("github/credential_unsupported".to_string());
+    }
+    let (generation, code, dto) = begin_login_with(&LOGIN, &RealHttp, CLIENT_ID, crate::now_ms())?;
+    std::thread::spawn(move || {
+        let cancelled = || lock(&LOGIN).generation != generation;
+        let outcome = device::wait_for_token(&RealHttp, CLIENT_ID, &code, &cancelled, &std::thread::sleep);
+        let stored = |token: &Token| set_token(Some(token.clone()));
+        match finish_login_with(&LOGIN, generation, outcome, &RealHttp, &SystemVault, &record_path(), &stored) {
+            Finish::SignedIn(_) => {
+                connection_changed();
+                done("ok", None);
             }
-        });
-        Ok(dto)
-    })
-    .await
-    .map_err(|e| e.to_string())?
+            Finish::Stale => {}
+            Finish::Expired => done("expired", None),
+            Finish::Denied => done("denied", None),
+            Finish::Failed(e) => done("error", Some(e)),
+        }
+    });
+    Ok(dto)
 }
 
 /// 取消进行中的登录：作废代次，后台轮询在 250ms 内退出，晚到的令牌不会落库。
-#[tauri::command]
-pub(crate) async fn github_login_cancel() -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(|| {
-        let mut slot = lock(&LOGIN);
-        slot.generation += 1;
-        slot.pending = None;
-    })
-    .await
-    .map_err(|e| e.to_string())
+pub(crate) fn cancel_login() {
+    let mut slot = lock(&LOGIN);
+    slot.generation += 1;
+    slot.pending = None;
 }
 
-/// 退出登录：删凭据库里的令牌、删账号记录、作废缓存。令牌本身在 GitHub 上的撤销要 client secret，
-/// 桌面端做不了；设置页写明可以去 GitHub 的「Applications」里撤销授权。
-#[tauri::command]
-pub(crate) async fn github_logout() -> Result<GithubConnectionDto, String> {
-    tauri::async_runtime::spawn_blocking(|| {
-        logout_with(&LOGIN, &SystemVault, &record_path(), &|| {
-            set_token(None);
-            connection_changed();
-        })?;
-        Ok(status_now())
+/// 退出：删凭据库里的令牌、删账号记录、作废缓存。令牌本身在 GitHub 上的撤销要 client secret，
+/// 桌面端做不了；设置页写明可以去 GitHub 的设置里撤销。
+pub(crate) fn logout() -> Result<(), String> {
+    logout_with(&LOGIN, &SystemVault, &record_path(), &|| {
+        set_token(None);
+        connection_changed();
     })
-    .await
-    .map_err(|e| e.to_string())?
+}
+
+/// 用个人访问令牌添加 github.com 账号（经典令牌要 repo 权限）：先问一次「我是谁」，再存进凭据库。
+pub(crate) fn add_token_with(http: &dyn Http, vault: &dyn Vault, path: &Path, token: &Token) -> Result<GithubAccountDto, String> {
+    let account = fetch_account(http, token).map_err(|e| if e == "github/unauthorized" { "forge/token_rejected".to_string() } else { e })?;
+    store_login_as(vault, path, token, &account, true)?;
+    Ok(account)
+}
+
+pub(crate) fn add_token(token: &Token) -> Result<GithubAccountDto, String> {
+    let account = add_token_with(&RealHttp, &SystemVault, &record_path(), token)?;
+    set_token(Some(token.clone()));
+    connection_changed();
+    Ok(account)
 }

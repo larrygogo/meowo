@@ -1,38 +1,30 @@
 //! 代码托管账号（设置 › 代码托管账号）：平台 + 主机 + 账号名。
 //!
-//! - 令牌只进系统凭据库（github/credential.rs 的 [`KeyVault`]，条目名 `Meowo/<平台>/<主机>/<账号>`，GitLab 设备码
-//!   登录的刷新令牌另存 `…#refresh`）；`~/.meowo/forge-accounts.json` 只存非敏感的清单（平台、主机、账号名、展示名、
-//!   Bitbucket 的 Atlassian 邮箱、是否设备码登录、访问令牌何时过期、要不要重新登录）。
-//! - 按远端主机选账号：每台主机（同一平台）一个账号，再添加就替换。github.com 不在这里，沿用 GitHub 连接方式
-//!   （github.rs）；企业版、GitLab、Gitea / Forgejo、Bitbucket Cloud 在这里。
+//! - 令牌只进系统凭据库（github/credential.rs 的 [`KeyVault`]，条目名 `Meowo/<平台>/<主机>/<账号>`）；
+//!   `~/.meowo/forge-accounts.json` 只存非敏感的清单（平台、主机、账号名、展示名、Bitbucket 的 Atlassian 邮箱、
+//!   要不要重新登录）。
+//! - 按远端主机选账号：每台主机（同一平台）一个账号，再添加就替换。github.com 与其他平台列在一起，账号存在
+//!   github.rs（设备码登录或个人访问令牌，凭据条目 `Meowo/github.com`）；Meowo 不调用本机 gh（leader 2026-11-18
+//!   「取消gh」）。企业版、GitLab（gitlab.com 与自管）、Gitea / Forgejo、Bitbucket Cloud、Gitee 用个人访问令牌。
+//! - gitlab.com 不做设备码登录（leader 2026-11-18「取消gitlab」：不注册 OAuth 应用），与自管 GitLab 一样只用令牌。
+//!   旧清单里设备码登录的 GitLab 账号读到时标「要重新添加」，并删掉它的两条凭据（访问令牌与 `#refresh`），见 [`migrate_oauth`]。
 //! - 添加时先用令牌问一次「我是谁」（各平台的当前用户接口），认得出才落库。
-//! - gitlab.com 预留 OAuth 设备码登录（GitLab 文档 docs.gitlab.com/api/oauth2「Device authorization grant」，17.9 起正式可用）：
-//!   要 Meowo 在 gitlab.com 注册的应用 Client ID，打包时用 MEOWO_GITLAB_CLIENT_ID 注入；没注入时只给令牌入口。
-//!   GitLab 的 OAuth 访问令牌 2 小时过期，用刷新令牌续（刷新后旧的两个都作废，新的一并存回）。
 //! - 远程 RPC 只放行只读的 [`forge_accounts_remote`]（不含进行中的登录代码），添加、退出、登录只在桌面设置页做。
 
 use crate::forge::api::ForgeApi;
 use crate::forge::bitbucket::{self, Bitbucket};
 use crate::forge::gitea::{self, Gitea};
 use crate::forge::gitlab::{self, Gitlab};
-use crate::forge::http::{json, Auth, Client, ForgeHttp, RealForgeHttp, Req};
+use crate::forge::http::{Auth, Client, ForgeHttp, RealForgeHttp};
 use crate::forge::platform::{self, Forges, Platform};
 use crate::forge::GhState;
-use crate::github::{Body, KeyVault, Token, Vault};
+use crate::github::{KeyVault, Token, Vault};
 use meowo_protocol::ipc::{ForgeAccountDto, ForgeAccountsDto, ForgeDeviceCodeDto};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::Duration;
 
-/// Meowo 在 gitlab.com 注册的 OAuth 应用（非保密应用，开设备码）。还没注册：空串，设置页只给令牌入口。
-pub(crate) const GITLAB_CLIENT_ID: &str = match option_env!("MEOWO_GITLAB_CLIENT_ID") {
-    Some(id) if !id.is_empty() => id,
-    _ => "",
-};
-/// 建 MR、合并、评论都要写权限：`api`（`read_api` 只够看）。
-pub(crate) const GITLAB_SCOPE: &str = "api";
-/// 一次设备码登录结束：`{ state: ok|expired|denied|error, error? }`。取消不发。
+/// 一次 github.com 设备码登录结束：`{ state: ok|expired|denied|error, error? }`。取消不发。
 pub(crate) const LOGIN_EVENT: &str = "forge-login-finished";
 
 // ═══ 清单（不含令牌）═══
@@ -49,14 +41,11 @@ pub(crate) struct Account {
     /// Bitbucket：Atlassian 账号邮箱（API token 走 Basic 认证要它）；没有就用 Bearer。
     #[serde(default)]
     pub(crate) auth_user: Option<String>,
-    /// 设备码（OAuth）登录的；否则是个人访问令牌。
-    #[serde(default)]
-    pub(crate) oauth: bool,
-    /// OAuth 访问令牌过期的时刻（毫秒）。
-    #[serde(default)]
-    pub(crate) expires_at: Option<i64>,
     #[serde(default)]
     pub(crate) needs_relogin: bool,
+    /// 旧版 gitlab.com 设备码登录的账号（只读，迁移用，见 [`migrate_oauth`]；新版不写）。
+    #[serde(default, rename = "oauth", skip_serializing)]
+    pub(crate) legacy_oauth: bool,
 }
 
 impl Account {
@@ -70,7 +59,7 @@ impl Account {
             login: self.login.clone(),
             name: self.name.clone(),
             needs_relogin: self.needs_relogin,
-            oauth: self.oauth,
+            oauth: false,
         }
     }
     /// 令牌缓存与凭据库的键。
@@ -117,21 +106,42 @@ pub(crate) fn account_for<'l>(list: &'l [Account], host: &str) -> Option<&'l Acc
     list.iter().find(|a| platform::host_name(&platform::host_key(&a.host)) == platform::host_name(&platform::host_key(host)))
 }
 
-/// 凭据库的条目。refresh = GitLab 的刷新令牌那一条。
-pub(crate) fn vault_for(account: &Account, refresh: bool) -> KeyVault {
-    let suffix = if refresh { "#refresh" } else { "" };
+/// 凭据库的条目。
+pub(crate) fn vault_for(account: &Account) -> KeyVault {
     KeyVault {
-        target: format!("Meowo/{}{suffix}", account.key()),
+        target: format!("Meowo/{}", account.key()),
         account: format!("{}@{}", account.login, account.host),
         label: format!("Meowo {} {}", account.platform, account.host),
     }
 }
 
-/// 凭据库的入口（测试换成内存里的）。
-pub(crate) type Vaults<'a> = &'a dyn Fn(&Account, bool) -> Box<dyn Vault>;
+/// 旧版 gitlab.com 设备码登录另存的刷新令牌条目：只在迁移时删掉它。
+fn legacy_refresh_vault(account: &Account) -> KeyVault {
+    KeyVault { target: format!("Meowo/{}#refresh", account.key()), ..vault_for(account) }
+}
 
-fn system_vaults(account: &Account, refresh: bool) -> Box<dyn Vault> {
-    Box::new(vault_for(account, refresh))
+/// 凭据库的入口（测试换成内存里的）。
+pub(crate) type Vaults<'a> = &'a dyn Fn(&Account) -> Box<dyn Vault>;
+
+fn system_vaults(account: &Account) -> Box<dyn Vault> {
+    Box::new(vault_for(account))
+}
+
+/// 迁移：旧清单里设备码（OAuth）登录的 GitLab 账号 → 标「要重新添加」（令牌），删掉它的访问令牌与刷新令牌两条凭据。
+/// legacy_refresh：刷新令牌那一条的入口（测试换成内存里的）。返回 true = 清单改了。删凭据失败不挡迁移（条目留着也
+/// 没人再读），下次读清单不会重复处理（标记已经去掉）。
+pub(crate) fn migrate_oauth(path: &Path, vaults: Vaults, legacy_refresh: Vaults) -> bool {
+    let mut list = load_list(path);
+    if !list.iter().any(|a| a.legacy_oauth) {
+        return false;
+    }
+    for account in list.iter_mut().filter(|a| a.legacy_oauth) {
+        let _ = vaults(account).delete();
+        let _ = legacy_refresh(account).delete();
+        account.legacy_oauth = false;
+        account.needs_relogin = true;
+    }
+    save_list(path, &list).is_ok()
 }
 
 // ═══ 平台接口的组装 ═══
@@ -227,13 +237,13 @@ pub(crate) fn whoami(
 
 // ═══ 添加 / 退出 / 令牌好坏（可注入，单测覆盖）═══
 
-/// 校验平台与主机：github.com 走 GitHub 连接方式；公共主机的平台是固定的；Bitbucket 只有 Cloud。
+/// 校验平台与主机：公共主机的平台是固定的（github.com 只能是 GitHub）；Bitbucket 只有 Cloud。
 pub(crate) fn check_target(platform: &str, host: &str) -> Result<(Platform, String), String> {
     let platform = Platform::parse(platform).ok_or("forge/invalid_platform")?;
     let host = platform::normalize_host_input(host).ok_or("forge/invalid_host")?;
     let name = platform::host_name(&host);
-    if name == platform::GITHUB_COM {
-        return Err("forge/use_github_login".into());
+    if name == platform::GITHUB_COM && platform != Platform::Github {
+        return Err("forge/platform_mismatch: github".into());
     }
     if platform == Platform::Bitbucket && name != "bitbucket.org" {
         return Err("forge/bitbucket_cloud_only".into());
@@ -256,8 +266,7 @@ fn put_account(path: &Path, vaults: Vaults, account: Account) -> Result<(), Stri
         .iter()
         .filter(|a| platform::host_name(&a.host).eq_ignore_ascii_case(platform::host_name(&account.host)) && a.key() != account.key())
     {
-        let _ = vaults(old, false).delete();
-        let _ = vaults(old, true).delete();
+        let _ = vaults(old).delete();
     }
     list.retain(|a| !platform::host_name(&a.host).eq_ignore_ascii_case(platform::host_name(&account.host)));
     list.push(account);
@@ -293,24 +302,21 @@ pub(crate) fn add_with(
         } else {
             None
         },
-        oauth: false,
-        expires_at: None,
         needs_relogin: false,
+        legacy_oauth: false,
     };
-    vaults(&account, false).write(&token)?;
-    let _ = vaults(&account, true).delete();
+    vaults(&account).write(&token)?;
     put_account(path, vaults, account.clone())?;
     Ok(account)
 }
 
-/// 退出：删凭据库里的令牌（含刷新令牌）与清单里这一条。没有这一条也算成功。
+/// 退出：删凭据库里的令牌与清单里这一条。没有这一条也算成功。
 pub(crate) fn remove_with(path: &Path, vaults: Vaults, platform: &str, host: &str) -> Result<(), String> {
     let mut list = load_list(path);
     let host = platform::normalize_host_input(host).unwrap_or_else(|| host.to_string());
     let (gone, keep): (Vec<Account>, Vec<Account>) = list.drain(..).partition(|a| a.platform == platform && a.host.eq_ignore_ascii_case(&host));
     for account in &gone {
-        vaults(account, false).delete()?;
-        vaults(account, true).delete()?;
+        vaults(account).delete()?;
     }
     save_list(path, &keep)
 }
@@ -348,7 +354,14 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 
 fn list() -> Vec<Account> {
     let mut cache = lock(&CACHE);
-    cache.list.get_or_insert_with(|| load_list(&list_path())).clone()
+    cache
+        .list
+        .get_or_insert_with(|| {
+            let path = list_path();
+            migrate_oauth(&path, &system_vaults, &|a| Box::new(legacy_refresh_vault(a)));
+            load_list(&path)
+        })
+        .clone()
 }
 
 fn forget_all() {
@@ -361,7 +374,7 @@ fn token_of(account: &Account) -> Option<Token> {
     if let Some(token) = lock(&CACHE).tokens.as_ref().and_then(|t| t.get(&account.key())) {
         return token.clone();
     }
-    let token = match vault_for(account, false).read() {
+    let token = match vault_for(account).read() {
         Ok(token) => token,
         Err(e) => {
             eprintln!("[forge] 读凭据库失败：{e}");
@@ -406,76 +419,6 @@ fn report_auth(key: String, used: Token, ok: bool, confirm: &dyn Fn() -> bool) {
     }
 }
 
-fn refresh_due(account: &Account, now_ms: i64) -> bool {
-    account.oauth && account.expires_at.is_some_and(|at| at <= now_ms + 60_000)
-}
-
-/// 每个账号一把续期锁：侧栏角标按目录并行查 PR（badge.rs DIR_WORKERS），几个线程同时发现令牌快过期时只能有一个去续。
-/// GitLab 续期后旧的刷新令牌立即作废，第二个线程拿旧刷新令牌再续会被拒，以前就把账号误标成「要重新登录」。
-fn refresh_lock(key: &str) -> std::sync::Arc<Mutex<()>> {
-    static LOCKS: Mutex<Option<HashMap<String, std::sync::Arc<Mutex<()>>>>> = Mutex::new(None);
-    lock(&LOCKS).get_or_insert_with(HashMap::new).entry(key.to_string()).or_default().clone()
-}
-
-/// 续期的结果。
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) enum Refresh {
-    /// 不用续，或别的线程刚续过：用凭据库里现在的令牌。
-    Current(Option<Token>),
-    /// 续好了。
-    Renewed(Token),
-    /// 刷新令牌被拒（撤销、过期）：已标「要重新登录」。
-    Rejected,
-}
-
-/// 续期（可注入，单测覆盖并发）。拿到这个账号的锁之后重读清单与凭据库：别的线程可能刚续过，清单里的过期时刻已经
-/// 往后挪了，这时直接用新令牌。连不上（还没收到回包）不算被拒，不标重登，下次再续。
-pub(crate) fn refresh_with(path: &Path, vaults: Vaults, http: &dyn ForgeHttp, client_id: &str, key: &str, now_ms: i64) -> Refresh {
-    let guard = refresh_lock(key);
-    let _held = lock(&guard);
-    let Some(account) = load_list(path).into_iter().find(|a| a.key() == key) else { return Refresh::Current(None) };
-    let current = || vaults(&account, false).read().ok().flatten();
-    if !refresh_due(&account, now_ms) || account.needs_relogin {
-        return Refresh::Current(current());
-    }
-    let Some(refresh) = vaults(&account, true).read().ok().flatten() else { return Refresh::Current(current()) };
-    match oauth_refresh(http, &account.host, client_id, &refresh) {
-        Ok(tokens) => match store_oauth(path, vaults, account.clone(), &tokens, now_ms) {
-            Ok(_) => Refresh::Renewed(tokens.access),
-            Err(_) => Refresh::Current(current()),
-        },
-        Err(e) if e.starts_with("forge/network") || e.starts_with("forge/tls") => Refresh::Current(current()),
-        Err(_) => {
-            let mut list = load_list(path);
-            if let Some(a) = list.iter_mut().find(|a| a.key() == key) {
-                a.needs_relogin = true;
-            }
-            let _ = save_list(path, &list);
-            Refresh::Rejected
-        }
-    }
-}
-
-/// GitLab 设备码登录的访问令牌快过期了：用刷新令牌续，新的一对存回凭据库。刷新令牌被拒才标「要重新登录」。
-fn refresh_if_due(account: &Account) -> Option<Token> {
-    if !refresh_due(account, crate::now_ms()) || GITLAB_CLIENT_ID.is_empty() {
-        return token_of(account);
-    }
-    let http = RealForgeHttp { host: account.host.clone() };
-    match refresh_with(&list_path(), &system_vaults, &http, GITLAB_CLIENT_ID, &account.key(), crate::now_ms()) {
-        Refresh::Current(token) => token,
-        Refresh::Renewed(token) => {
-            forget_all();
-            Some(token)
-        }
-        Refresh::Rejected => {
-            forget_all();
-            crate::github::emit_changed();
-            None
-        }
-    }
-}
-
 /// 生产的主机 → 平台 / 账号。
 pub(crate) struct Accounts;
 
@@ -485,7 +428,10 @@ impl Forges for Accounts {
     }
 
     fn usable(&self, host: &str) -> bool {
-        platform::host_name(host) == platform::GITHUB_COM || account_for(&list(), host).is_some()
+        if platform::host_name(host) == platform::GITHUB_COM {
+            return crate::github::token().is_some();
+        }
+        account_for(&list(), host).is_some()
     }
 
     fn host_of(&self, host: &str) -> String {
@@ -496,13 +442,16 @@ impl Forges for Accounts {
     }
 
     fn open(&self, host: &str) -> Option<Box<dyn ForgeApi + '_>> {
+        if platform::host_name(host) == platform::GITHUB_COM {
+            return github_com();
+        }
         let account = account_for(&list(), host)?.clone();
         let platform = account.platform()?;
         // 公共主机的平台是固定的：清单里写错了平台（手改文件）就不用它。
-        if platform::public_platform(host).is_some_and(|p| p != platform) || platform::host_name(host) == platform::GITHUB_COM {
+        if platform::public_platform(host).is_some_and(|p| p != platform) {
             return None;
         }
-        let token = refresh_if_due(&account);
+        let token = token_of(&account);
         let http = RealForgeHttp {
             host: api_host(platform, &account.host),
         };
@@ -531,238 +480,63 @@ impl Forges for Accounts {
 
 pub(crate) static ACCOUNTS: Accounts = Accounts;
 
-// ═══ GitLab 设备码（RFC 8628；GitLab 文档 docs.gitlab.com/api/oauth2）═══
-
-/// 设备码。`device_code` 是轮询凭据：只在后端，Debug 打码。
-#[derive(Clone)]
-pub(crate) struct DeviceCode {
-    pub(crate) device_code: String,
-    pub(crate) user_code: String,
-    pub(crate) verification_uri: String,
-    pub(crate) verification_uri_complete: Option<String>,
-    pub(crate) expires_in: u64,
-    pub(crate) interval: u64,
+/// github.com 的平台接口：github.rs 的账号（没有就 None：不发请求，界面引导去设置添加）+ 内置实现。
+fn github_com() -> Option<Box<dyn ForgeApi + 'static>> {
+    let token = crate::github::token()?;
+    let state = if crate::github::record().needs_relogin { GhState::Unauthed } else { GhState::Ok };
+    let used = token.clone();
+    Some(Box::new(crate::forge::builtin::forge(
+        Box::new(crate::github::RealHttp),
+        crate::forge::builtin::Endpoints::github_com(),
+        Some(token),
+        state,
+        crate::db_path().with_file_name("forge.json"),
+        Box::new(move |ok| crate::github::auth_result(&used, ok)),
+    )))
 }
 
-impl std::fmt::Debug for DeviceCode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("DeviceCode")
-            .field("user_code", &self.user_code)
-            .field("expires_in", &self.expires_in)
-            .finish_non_exhaustive()
+/// 设置页列出的账号：github.com（github.rs 的记录）在前，其余按清单。has_token：凭据库里有 github.com 的令牌
+///（没有就不显示旧记录里的账号，视为没添加）。
+pub(crate) fn listed(github: &crate::github::AccountRecord, has_token: bool, list: &[Account]) -> Vec<ForgeAccountDto> {
+    let mut out: Vec<ForgeAccountDto> = github
+        .account
+        .iter()
+        .filter(|_| has_token)
+        .map(|a| ForgeAccountDto {
+            platform: "github".into(),
+            host: platform::GITHUB_COM.into(),
+            login: a.login.clone(),
+            name: a.name.clone(),
+            needs_relogin: github.needs_relogin,
+            oauth: !github.via_token,
+        })
+        .collect();
+    out.extend(list.iter().filter(|a| platform::host_name(&a.host) != platform::GITHUB_COM).map(Account::dto));
+    out
+}
+
+fn is_github_com(platform: &str, host: &str) -> bool {
+    platform == "github" && platform::normalize_host_input(host).is_some_and(|h| platform::host_name(&h) == platform::GITHUB_COM)
+}
+
+// ═══ 设备码登录（github.com）═══
+
+fn device_dto(code: meowo_protocol::ipc::GithubDeviceCodeDto) -> ForgeDeviceCodeDto {
+    ForgeDeviceCodeDto {
+        platform: "github".into(),
+        host: platform::GITHUB_COM.into(),
+        user_code: code.user_code,
+        verification_uri: code.verification_uri.clone(),
+        verification_uri_complete: None,
+        expires_at: code.expires_at,
     }
 }
-
-/// 一组 OAuth 令牌。
-pub(crate) struct OauthTokens {
-    pub(crate) access: Token,
-    pub(crate) refresh: Option<Token>,
-    pub(crate) expires_in: Option<u64>,
-}
-
-fn form(http: &dyn ForgeHttp, url: &str, pairs: Vec<(&'static str, String)>) -> Result<crate::github::Response, String> {
-    http.send(&Req {
-        method: "POST",
-        url,
-        auth: None,
-        body: Some(Body::Form(pairs)),
-        accept: None,
-    })
-}
-
-fn tokens_of(v: &serde_json::Value) -> Option<OauthTokens> {
-    Some(OauthTokens {
-        access: v.get("access_token").and_then(|t| t.as_str()).and_then(Token::secret)?,
-        refresh: v.get("refresh_token").and_then(|t| t.as_str()).and_then(Token::secret),
-        expires_in: v.get("expires_in").and_then(|t| t.as_u64()),
-    })
-}
-
-/// 第 1 步：要一次性代码。
-pub(crate) fn request_code(http: &dyn ForgeHttp, host: &str, client_id: &str) -> Result<DeviceCode, String> {
-    let url = format!("https://{host}/oauth/authorize_device");
-    let resp = form(
-        http,
-        &url,
-        vec![("client_id", client_id.to_string()), ("scope", GITLAB_SCOPE.to_string())],
-    )
-    .map_err(|e| crate::forge::http::network_error(&e))?;
-    let v = json(&resp.body);
-    if let Some(error) = v.get("error").and_then(|e| e.as_str()) {
-        return Err(format!("forge/login_failed: {error}"));
-    }
-    if resp.status != 200 {
-        return Err(format!("forge/login_failed: HTTP {}", resp.status));
-    }
-    let s = |k: &str| v.get(k).and_then(|x| x.as_str()).filter(|x| !x.is_empty()).map(str::to_string);
-    let missing = || "forge/login_failed: bad response".to_string();
-    Ok(DeviceCode {
-        device_code: s("device_code").ok_or_else(missing)?,
-        user_code: s("user_code").ok_or_else(missing)?,
-        verification_uri: s("verification_uri").unwrap_or_else(|| format!("https://{host}/oauth/device")),
-        verification_uri_complete: s("verification_uri_complete"),
-        expires_in: v.get("expires_in").and_then(|x| x.as_u64()).unwrap_or(300),
-        interval: v.get("interval").and_then(|x| x.as_u64()).unwrap_or(5).max(1),
-    })
-}
-
-#[derive(Debug)]
-pub(crate) enum Poll {
-    Pending,
-    SlowDown,
-    Expired,
-    Denied,
-    Tokens(Box<OauthTokens>),
-    Transport(String),
-    Failed(String),
-}
-
-impl std::fmt::Debug for OauthTokens {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("OauthTokens(<redacted>)")
-    }
-}
-
-pub(crate) fn poll_once(http: &dyn ForgeHttp, host: &str, client_id: &str, device_code: &str) -> Poll {
-    let url = format!("https://{host}/oauth/token");
-    let pairs = vec![
-        ("grant_type", "urn:ietf:params:oauth:grant-type:device_code".to_string()),
-        ("device_code", device_code.to_string()),
-        ("client_id", client_id.to_string()),
-    ];
-    let resp = match form(http, &url, pairs) {
-        Ok(resp) => resp,
-        Err(e) => return Poll::Transport(e),
-    };
-    let v = json(&resp.body);
-    match v.get("error").and_then(|e| e.as_str()) {
-        Some("authorization_pending") => Poll::Pending,
-        Some("slow_down") => Poll::SlowDown,
-        Some("expired_token") => Poll::Expired,
-        Some("access_denied") => Poll::Denied,
-        Some(other) => Poll::Failed(format!("forge/login_failed: {other}")),
-        None => match tokens_of(&v) {
-            Some(tokens) => Poll::Tokens(Box::new(tokens)),
-            None if resp.status >= 500 => Poll::Transport(format!("HTTP {}", resp.status)),
-            None => Poll::Failed(format!("forge/login_failed: HTTP {}", resp.status)),
-        },
-    }
-}
-
-#[derive(Debug)]
-pub(crate) enum Outcome {
-    Tokens(Box<OauthTokens>),
-    Expired,
-    Denied,
-    Cancelled,
-    Failed(String),
-}
-
-/// 第 3 步：按间隔轮询，直到拿到令牌、过期、被拒、取消或明确失败。slow_down 每次 +5 秒（RFC 8628 §3.5）；
-/// 连着 3 次连不上才放弃；过期按 expires_in 自己累计。
-pub(crate) fn wait_for_token(
-    http: &dyn ForgeHttp,
-    host: &str,
-    client_id: &str,
-    code: &DeviceCode,
-    cancelled: &dyn Fn() -> bool,
-    sleep: &dyn Fn(Duration),
-) -> Outcome {
-    let mut interval = code.interval;
-    let mut waited = 0;
-    let mut failures = 0;
-    loop {
-        // 每 250ms 看一眼取消。
-        let mut left = Duration::from_secs(interval);
-        while !left.is_zero() {
-            if cancelled() {
-                return Outcome::Cancelled;
-            }
-            let step = left.min(Duration::from_millis(250));
-            sleep(step);
-            left -= step;
-        }
-        if cancelled() {
-            return Outcome::Cancelled;
-        }
-        waited += interval;
-        match poll_once(http, host, client_id, &code.device_code) {
-            Poll::Tokens(tokens) => return Outcome::Tokens(tokens),
-            Poll::Expired => return Outcome::Expired,
-            Poll::Denied => return Outcome::Denied,
-            Poll::Failed(e) => return Outcome::Failed(e),
-            Poll::Pending => failures = 0,
-            Poll::SlowDown => {
-                failures = 0;
-                interval += 5;
-            }
-            Poll::Transport(e) => {
-                failures += 1;
-                if failures >= 3 {
-                    return Outcome::Failed(format!("forge/network: {e}"));
-                }
-            }
-        }
-        if waited >= code.expires_in {
-            return Outcome::Expired;
-        }
-    }
-}
-
-/// 用刷新令牌换新的一对（非保密应用，不带 client secret）。
-pub(crate) fn oauth_refresh(http: &dyn ForgeHttp, host: &str, client_id: &str, refresh: &Token) -> Result<OauthTokens, String> {
-    let url = format!("https://{host}/oauth/token");
-    let pairs = vec![
-        ("grant_type", "refresh_token".to_string()),
-        ("refresh_token", refresh.expose().to_string()),
-        ("client_id", client_id.to_string()),
-    ];
-    let resp = form(http, &url, pairs).map_err(|e| crate::forge::http::network_error(&e))?;
-    let v = json(&resp.body);
-    let error = v.get("error").and_then(|e| e.as_str()).unwrap_or_default();
-    // 只有授权服务器明说刷新令牌 / 客户端不认（RFC 6749 §5.2 的 invalid_grant / invalid_client，400 或 401）才算被拒，
-    // 要用户重新登录；5xx、429、维护页、不是 JSON 的回包都是暂时的，下次再续（复核指出以前一律标重登）。
-    if matches!(resp.status, 400 | 401) && matches!(error, "invalid_grant" | "invalid_client") {
-        return Err(format!("forge/login_failed: {error}"));
-    }
-    if resp.status != 200 {
-        return Err(format!("forge/network: HTTP {}{}", resp.status, if error.is_empty() { String::new() } else { format!(" {error}") }));
-    }
-    tokens_of(&v).ok_or_else(|| "forge/network: bad refresh response".into())
-}
-
-/// 设备码登录的令牌落库：访问令牌与刷新令牌进凭据库，清单记 oauth 与过期时刻。
-pub(crate) fn store_oauth(path: &Path, vaults: Vaults, mut account: Account, tokens: &OauthTokens, now_ms: i64) -> Result<Account, String> {
-    account.oauth = true;
-    account.needs_relogin = false;
-    account.expires_at = tokens.expires_in.map(|s| now_ms + s as i64 * 1000);
-    vaults(&account, false).write(&tokens.access)?;
-    match &tokens.refresh {
-        Some(refresh) => vaults(&account, true).write(refresh)?,
-        None => vaults(&account, true).delete()?,
-    }
-    put_account(path, vaults, account.clone())?;
-    Ok(account)
-}
-
-// ═══ 设备码登录的进程内状态（同 github.rs：代次作废旧的一轮）═══
-
-struct LoginSlot {
-    generation: u64,
-    pending: Option<ForgeDeviceCodeDto>,
-}
-
-static LOGIN: Mutex<LoginSlot> = Mutex::new(LoginSlot {
-    generation: 0,
-    pending: None,
-});
 
 fn status_now() -> ForgeAccountsDto {
     ForgeAccountsDto {
-        accounts: list().iter().map(Account::dto).collect(),
+        accounts: listed(&crate::github::record(), crate::github::token().is_some(), &list()),
         credential_supported: crate::github::SystemVault.supported(),
-        gitlab_device: !GITLAB_CLIENT_ID.is_empty(),
-        pending: lock(&LOGIN).pending.clone(),
+        pending: crate::github::pending().map(device_dto),
     }
 }
 
@@ -794,7 +568,7 @@ pub(crate) async fn forge_accounts_remote() -> Result<ForgeAccountsDto, String> 
     })
 }
 
-/// 用个人访问令牌添加账号。user：Bitbucket 的 Atlassian 邮箱（可空）。
+/// 用个人访问令牌添加账号。user：Bitbucket 的 Atlassian 邮箱（可空）。github.com 的令牌存进 github.rs 的账号。
 #[tauri::command]
 pub(crate) async fn forge_account_add(platform: String, host: String, token: String, user: Option<String>) -> Result<ForgeAccountsDto, String> {
     tauri::async_runtime::spawn_blocking(move || {
@@ -802,6 +576,10 @@ pub(crate) async fn forge_account_add(platform: String, host: String, token: Str
             return Err("github/credential_unsupported".to_string());
         }
         let (parsed, normalized) = check_target(&platform, &host)?;
+        if is_github_com(&platform, &host) {
+            crate::github::add_token(&Token::secret(&token).ok_or("forge/invalid_token")?)?;
+            return Ok(status_now());
+        }
         let http = RealForgeHttp {
             host: api_host(parsed, &normalized),
         };
@@ -816,6 +594,10 @@ pub(crate) async fn forge_account_add(platform: String, host: String, token: Str
 #[tauri::command]
 pub(crate) async fn forge_account_remove(platform: String, host: String) -> Result<ForgeAccountsDto, String> {
     tauri::async_runtime::spawn_blocking(move || {
+        if is_github_com(&platform, &host) {
+            crate::github::logout()?;
+            return Ok(status_now());
+        }
         remove_with(&list_path(), &system_vaults, &platform, &host)?;
         changed();
         Ok(status_now())
@@ -824,107 +606,16 @@ pub(crate) async fn forge_account_remove(platform: String, host: String) -> Resu
     .map_err(|e| e.to_string())?
 }
 
-/// gitlab.com 设备码登录：要代码、立刻返回给设置页显示；后台线程轮询，结果经 [`LOGIN_EVENT`] 推给前端。
+/// github.com 设备码登录：要代码、立刻返回给设置页显示；后台线程轮询，结果经 [`LOGIN_EVENT`] 推给前端。
+/// 再点一次 = 作废上一轮、重新要代码。
 #[tauri::command]
 pub(crate) async fn forge_login_start() -> Result<ForgeDeviceCodeDto, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        if GITLAB_CLIENT_ID.is_empty() {
-            return Err("forge/device_unavailable".to_string());
-        }
-        if !crate::github::SystemVault.supported() {
-            return Err("github/credential_unsupported".to_string());
-        }
-        let host = "gitlab.com".to_string();
-        let generation = {
-            let mut slot = lock(&LOGIN);
-            slot.generation += 1;
-            slot.pending = None;
-            slot.generation
-        };
-        let http = RealForgeHttp { host: host.clone() };
-        let code = request_code(&http, &host, GITLAB_CLIENT_ID)?;
-        let dto = ForgeDeviceCodeDto {
-            platform: "gitlab".into(),
-            host: host.clone(),
-            user_code: code.user_code.clone(),
-            verification_uri: code.verification_uri.clone(),
-            verification_uri_complete: code.verification_uri_complete.clone(),
-            expires_at: crate::now_ms() + code.expires_in as i64 * 1000,
-        };
-        {
-            let mut slot = lock(&LOGIN);
-            if slot.generation != generation {
-                return Err("forge/cancelled".to_string());
-            }
-            slot.pending = Some(dto.clone());
-        }
-        std::thread::spawn(move || {
-            let stale = || lock(&LOGIN).generation != generation;
-            let outcome = wait_for_token(&http, &host, GITLAB_CLIENT_ID, &code, &stale, &std::thread::sleep);
-            let finish = |state: &'static str, error: Option<String>| {
-                let mut slot = lock(&LOGIN);
-                if slot.generation != generation {
-                    return false;
-                }
-                slot.pending = None;
-                drop(slot);
-                emit_login(state, error);
-                true
-            };
-            match outcome {
-                Outcome::Cancelled => {}
-                Outcome::Expired => {
-                    finish("expired", None);
-                }
-                Outcome::Denied => {
-                    finish("denied", None);
-                }
-                Outcome::Failed(e) => {
-                    finish("error", Some(e));
-                }
-                Outcome::Tokens(tokens) => {
-                    let result = whoami(&http, Platform::Gitlab, &host, &tokens.access, None).and_then(|(login, name)| {
-                        if stale() {
-                            return Err("forge/cancelled".into());
-                        }
-                        let account = Account {
-                            platform: "gitlab".into(),
-                            host: host.clone(),
-                            login,
-                            name,
-                            ..Default::default()
-                        };
-                        store_oauth(&list_path(), &system_vaults, account, &tokens, crate::now_ms())
-                    });
-                    match result {
-                        Err(e) if e == "forge/cancelled" => {}
-                        Err(e) => {
-                            finish("error", Some(e));
-                        }
-                        Ok(_) => {
-                            if finish("ok", None) {
-                                changed();
-                            }
-                        }
-                    }
-                }
-            }
-        });
-        Ok(dto)
-    })
-    .await
-    .map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(|| crate::github::start_login(emit_login).map(device_dto)).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 pub(crate) async fn forge_login_cancel() -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(|| {
-        let mut slot = lock(&LOGIN);
-        slot.generation += 1;
-        slot.pending = None;
-    })
-    .await
-    .map_err(|e| e.to_string())
+    tauri::async_runtime::spawn_blocking(crate::github::cancel_login).await.map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

@@ -1,8 +1,9 @@
-//! 代码托管账号：添加 / 退出 / 令牌好坏 / 设备码 / 按主机选账号。凭据库与 HTTP 都是假的，不碰真凭据库、不联网。
+//! 代码托管账号：添加 / 退出 / 令牌好坏 / 旧 GitLab 设备码账号的迁移 / 按主机选账号 / github.com 列在一起。
+//! 凭据库与 HTTP 都是假的，不碰真凭据库、不联网。
 
 use super::*;
 use crate::forge::http::Req;
-use crate::github::Response;
+use crate::github::{Body, Response};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// 内存里的凭据库：键是条目名。
@@ -34,10 +35,19 @@ impl Vault for MemEntry {
 }
 
 impl MemVault {
-    fn open(&self) -> impl Fn(&Account, bool) -> Box<dyn Vault> + '_ {
-        move |account: &Account, refresh: bool| {
+    fn open(&self) -> impl Fn(&Account) -> Box<dyn Vault> + '_ {
+        move |account: &Account| {
             Box::new(MemEntry {
-                target: vault_for(account, refresh).target,
+                target: vault_for(account).target,
+                items: self.items.clone(),
+            }) as Box<dyn Vault>
+        }
+    }
+    /// 旧版 GitLab 设备码登录另存的刷新令牌条目（只在迁移时删）。
+    fn open_refresh(&self) -> impl Fn(&Account) -> Box<dyn Vault> + '_ {
+        move |account: &Account| {
+            Box::new(MemEntry {
+                target: legacy_refresh_vault(account).target,
                 items: self.items.clone(),
             }) as Box<dyn Vault>
         }
@@ -99,11 +109,10 @@ fn 平台与主机校验() {
         Ok((Platform::Gitlab, "git.corp.example:8443".into()))
     );
     assert_eq!(check_target("forgejo", "codeberg.org"), Ok((Platform::Gitea, "codeberg.org".into())));
-    assert_eq!(
-        check_target("github", "github.com"),
-        Err("forge/use_github_login".into()),
-        "github.com 走 GitHub 连接方式"
-    );
+    // github.com 与其他平台在同一个添加流程里（改版前要走单独的 GitHub 连接方式）；只能是 GitHub。
+    assert_eq!(check_target("github", "github.com"), Ok((Platform::Github, "github.com".into())));
+    assert_eq!(check_target("gitlab", "github.com"), Err("forge/platform_mismatch: github".into()));
+    assert!(is_github_com("github", "https://github.com/") && !is_github_com("github", "ghe.corp.example") && !is_github_com("gitlab", "github.com"));
     assert_eq!(
         check_target("github", "ghe.corp.example"),
         Ok((Platform::Github, "ghe.corp.example".into()))
@@ -145,7 +154,7 @@ fn 添加_先验令牌_令牌只进凭据库_清单不含令牌_同主机替换(
     );
     assert!(vault.keys().is_empty() && load_list(&path).is_empty());
     let a = add_with(&path, &vaults, &http, "gitlab", "gitlab.com", " glpat-GOOD ", None).unwrap();
-    assert_eq!((a.login.as_str(), a.name.as_deref(), a.oauth), ("alice", Some("Alice"), false));
+    assert_eq!((a.login.as_str(), a.name.as_deref(), a.dto().oauth), ("alice", Some("Alice"), false));
     add_with(&path, &vaults, &http, "gitea", "codeberg.org", "c0ffee", None).unwrap();
     add_with(
         &path,
@@ -181,7 +190,7 @@ fn 添加_先验令牌_令牌只进凭据库_清单不含令牌_同主机替换(
         ["bob"]
     );
     assert!(!vault.keys().iter().any(|k| k.ends_with("/alice")));
-    // 退出：删凭据（含刷新令牌那一条）与清单；重复退出也成功。
+    // 退出：删凭据与清单；重复退出也成功。
     remove_with(&path, &vaults, "gitea", "codeberg.org").unwrap();
     remove_with(&path, &vaults, "gitea", "codeberg.org").unwrap();
     assert!(!vault.keys().iter().any(|k| k.contains("codeberg")));
@@ -221,7 +230,7 @@ impl Forges for ListForges<'_> {
         platform::public_platform(host).or_else(|| account_for(&self.list, host).and_then(Account::platform))
     }
     fn usable(&self, host: &str) -> bool {
-        platform::host_name(host) == platform::GITHUB_COM || account_for(&self.list, host).is_some()
+        account_for(&self.list, host).is_some()
     }
     fn host_of(&self, host: &str) -> String {
         match account_for(&self.list, host) {
@@ -300,149 +309,80 @@ fn 认证头_各平台() {
     assert_eq!(api_host(Platform::Bitbucket, "bitbucket.org"), "api.bitbucket.org");
 }
 
-// ═══ GitLab 设备码 ═══
+// ═══ 取消 GitLab 设备码（leader 2026-11-18「取消gitlab」）═══
 
-fn code() -> DeviceCode {
-    DeviceCode {
-        device_code: "dev".into(),
-        user_code: "ABCD-1234".into(),
-        verification_uri: "https://gitlab.com/oauth/device".into(),
-        verification_uri_complete: None,
-        expires_in: 300,
-        interval: 5,
-    }
-}
-
+/// 改版前：gitlab.com 可以设备码登录（OAuth，访问令牌 2 小时过期，刷新令牌另存 `#refresh`）。现在 gitlab.com 与
+/// 自管 GitLab 一样只用个人访问令牌；旧清单里的设备码账号读到时标「要重新添加」，两条凭据都删掉，只迁一次。
 #[test]
-fn 设备码_要代码_字段齐全_出错说清楚() {
-    // docs.gitlab.com/api/oauth2 的响应示例。
-    let http = FakeHttp::new(|_, url, body, _| {
-        assert_eq!(url, "https://gitlab.com/oauth/authorize_device");
-        match body {
-            Some(Body::Form(pairs)) => {
-                assert!(pairs.contains(&("client_id", "cid".into())) && pairs.contains(&("scope", "api".into())));
-            }
-            _ => panic!("要表单"),
-        }
-        resp(
-            200,
-            json!({ "device_code": "GmRhm", "user_code": "0A44L90H", "verification_uri": "https://gitlab.example.com/oauth/device", "verification_uri_complete": "https://gitlab.example.com/oauth/device?user_code=0A44L90H", "expires_in": 300, "interval": 5 }),
-        )
-    });
-    let code = request_code(&http, "gitlab.com", "cid").unwrap();
-    assert_eq!((code.user_code.as_str(), code.expires_in, code.interval), ("0A44L90H", 300, 5));
-    assert_eq!(
-        code.verification_uri_complete.as_deref(),
-        Some("https://gitlab.example.com/oauth/device?user_code=0A44L90H")
-    );
-    assert!(!format!("{code:?}").contains("GmRhm"), "设备码不进日志");
-    let bad = FakeHttp::new(|_, _, _, _| {
-        resp(
-            401,
-            json!({ "error": "invalid_client", "error_description": "Client authentication failed" }),
-        )
-    });
-    assert_eq!(request_code(&bad, "gitlab.com", "cid").unwrap_err(), "forge/login_failed: invalid_client");
-}
-
-#[test]
-fn 设备码_轮询_等待_放慢_拿到令牌() {
-    let n = AtomicUsize::new(0);
-    let http = FakeHttp::new(move |_, url, _, _| {
-        assert_eq!(url, "https://gitlab.com/oauth/token");
-        match n.fetch_add(1, Ordering::SeqCst) {
-            0 => resp(400, json!({ "error": "authorization_pending" })),
-            1 => resp(400, json!({ "error": "slow_down" })),
-            2 => Err("tls handshake eof".into()),
-            _ => resp(
-                200,
-                json!({ "access_token": "ACC", "refresh_token": "REF", "expires_in": 7200, "token_type": "Bearer" }),
-            ),
-        }
-    });
-    let slept = Mutex::new(Duration::ZERO);
-    let outcome = wait_for_token(&http, "gitlab.com", "cid", &code(), &|| false, &|d| *slept.lock().unwrap() += d);
-    let Outcome::Tokens(tokens) = outcome else { panic!("{outcome:?}") };
-    assert_eq!(
-        (tokens.access.expose(), tokens.refresh.as_ref().map(Token::expose), tokens.expires_in),
-        ("ACC", Some("REF"), Some(7200))
-    );
-    // 5 + 5 + 10（slow_down 后 +5）+ 10。
-    assert_eq!(*slept.lock().unwrap(), Duration::from_secs(30));
-}
-
-#[test]
-fn 设备码_过期_拒绝_取消_连不上三次() {
-    for (error, want) in [("expired_token", "Expired"), ("access_denied", "Denied")] {
-        let http = FakeHttp::new(move |_, _, _, _| resp(400, json!({ "error": error })));
-        let outcome = wait_for_token(&http, "gitlab.com", "cid", &code(), &|| false, &|_| {});
-        assert!(format!("{outcome:?}").starts_with(want), "{outcome:?}");
-    }
-    let http = FakeHttp::new(|_, _, _, _| resp(400, json!({ "error": "authorization_pending" })));
-    let outcome = wait_for_token(&http, "gitlab.com", "cid", &code(), &|| false, &|_| {});
-    assert!(matches!(outcome, Outcome::Expired), "等满 expires_in 自己判过期");
-    let calls = AtomicUsize::new(0);
-    let cancelled = || calls.fetch_add(1, Ordering::SeqCst) > 3;
-    assert!(matches!(
-        wait_for_token(&http, "gitlab.com", "cid", &code(), &cancelled, &|_| {}),
-        Outcome::Cancelled
-    ));
-    let down = FakeHttp::new(|_, _, _, _| Err("connection refused".into()));
-    let outcome = wait_for_token(&down, "gitlab.com", "cid", &code(), &|| false, &|_| {});
-    assert!(matches!(&outcome, Outcome::Failed(e) if e.starts_with("forge/network")), "{outcome:?}");
-    assert_eq!(down.calls.lock().unwrap().len(), 3);
-}
-
-#[test]
-fn 设备码令牌落库_刷新令牌另存_刷新换新的一对() {
-    let path = sandbox("oauth");
+fn 旧的_gitlab_设备码账号_标要重新添加_删掉两条凭据() {
+    let path = sandbox("legacy-oauth");
+    std::fs::write(
+        &path,
+        r#"{"accounts":[
+            {"platform":"gitlab","host":"gitlab.com","login":"alice","name":"Alice","oauth":true,"expiresAt":1700000000000,"needsRelogin":false},
+            {"platform":"gitea","host":"codeberg.org","login":"carol","needsRelogin":false}
+        ]}"#,
+    )
+    .unwrap();
     let vault = MemVault::default();
-    let vaults = vault.open();
-    let tokens = OauthTokens {
-        access: Token::secret("ACC1").unwrap(),
-        refresh: Token::secret("REF1"),
-        expires_in: Some(7200),
-    };
-    let account = Account {
-        platform: "gitlab".into(),
-        host: "gitlab.com".into(),
-        login: "alice".into(),
-        ..Default::default()
-    };
-    let stored = store_oauth(&path, &vaults, account, &tokens, 1_000).unwrap();
-    assert_eq!((stored.oauth, stored.expires_at), (true, Some(1_000 + 7_200_000)));
-    assert_eq!(vault.keys(), ["Meowo/gitlab/gitlab.com/alice", "Meowo/gitlab/gitlab.com/alice#refresh"]);
-    let http = FakeHttp::new(|_, url, body, _| {
-        assert_eq!(url, "https://gitlab.com/oauth/token");
-        let Some(Body::Form(pairs)) = body else { panic!() };
-        assert!(pairs.contains(&("grant_type", "refresh_token".into())) && pairs.contains(&("refresh_token", "REF1".into())));
-        assert!(!pairs.iter().any(|(k, _)| *k == "client_secret"), "桌面端不带 client secret");
-        resp(200, json!({ "access_token": "ACC2", "refresh_token": "REF2", "expires_in": 7200 }))
-    });
-    let next = oauth_refresh(&http, "gitlab.com", "cid", &Token::secret("REF1").unwrap()).unwrap();
-    assert_eq!(next.access.expose(), "ACC2");
-    let rejected = FakeHttp::new(|_, _, _, _| resp(400, json!({ "error": "invalid_grant" })));
-    assert_eq!(
-        oauth_refresh(&rejected, "gitlab.com", "cid", &Token::secret("REF1").unwrap())
-            .err()
-            .as_deref(),
-        Some("forge/login_failed: invalid_grant")
-    );
+    let (vaults, refresh) = (vault.open(), vault.open_refresh());
+    let alice = load_list(&path).into_iter().find(|a| a.login == "alice").unwrap();
+    let carol = load_list(&path).into_iter().find(|a| a.login == "carol").unwrap();
+    vaults(&alice).write(&Token::secret("ACC").unwrap()).unwrap();
+    refresh(&alice).write(&Token::secret("REF").unwrap()).unwrap();
+    vaults(&carol).write(&Token::secret("c0ffee").unwrap()).unwrap();
+    assert_eq!(vault.keys(), ["Meowo/gitea/codeberg.org/carol", "Meowo/gitlab/gitlab.com/alice", "Meowo/gitlab/gitlab.com/alice#refresh"]);
+
+    assert!(migrate_oauth(&path, &vaults, &refresh));
+    assert_eq!(vault.keys(), ["Meowo/gitea/codeberg.org/carol"], "设备码账号的访问令牌与刷新令牌都删掉，令牌账号不动");
+    let list = load_list(&path);
+    let alice = list.iter().find(|a| a.login == "alice").unwrap();
+    assert!(alice.needs_relogin && !alice.legacy_oauth, "标「要重新添加」");
+    assert!(!alice.dto().oauth);
+    assert!(!list.iter().find(|a| a.login == "carol").unwrap().needs_relogin);
+    let raw = std::fs::read_to_string(&path).unwrap();
+    assert!(!raw.contains("oauth") && !raw.contains("expiresAt"), "新清单不再写设备码字段：{raw}");
+    assert!(!migrate_oauth(&path, &vaults, &refresh), "只迁一次");
 }
 
 #[test]
-fn 没注册_gitlab_应用时设备码不可用() {
-    // 默认构建没有注入 MEOWO_GITLAB_CLIENT_ID：设置页只给令牌入口，代码里也没有 client secret。
-    if option_env!("MEOWO_GITLAB_CLIENT_ID").is_none_or(str::is_empty) {
-        assert!(GITLAB_CLIENT_ID.is_empty());
-    }
+fn 源码里没有_gitlab_oauth() {
     let source = include_str!("../forge_accounts.rs");
-    assert!(!source.contains(&["client", "_secret="].concat()));
+    for gone in ["MEOWO_GITLAB_CLIENT_ID", "authorize_device", "oauth/token", "refresh_token", &["client", "_secret="].concat()] {
+        assert!(!source.contains(gone), "{gone}");
+    }
 }
 
-/// forge 上层接到 GitLab：「更改」面板的状态用 MR 与流水线，一个 gh 调用都不发。
+// ═══ github.com 与其他平台列在一起 ═══
+
 #[test]
-fn 更改面板_gitlab_仓库走平台接口_不碰_gh() {
+fn 设置页清单_github_com_在前_标出登录方式() {
+    let others = vec![
+        Account { platform: "gitlab".into(), host: "gitlab.com".into(), login: "alice".into(), ..Default::default() },
+        // 手改文件写进清单的 github.com 不算（github.com 的账号只在 github.rs）。
+        Account { platform: "github".into(), host: "github.com".into(), login: "stray".into(), ..Default::default() },
+    ];
+    let none = crate::github::AccountRecord::default();
+    assert_eq!(listed(&none, false, &others).iter().map(|a| a.login.as_str()).collect::<Vec<_>>(), ["alice"], "没添加 github.com：只列其他");
+    let device = crate::github::AccountRecord {
+        account: Some(meowo_protocol::ipc::GithubAccountDto { login: "octo".into(), name: Some("Octo".into()), avatar_url: None }),
+        needs_relogin: true,
+        via_token: false,
+    };
+    let list = listed(&device, true, &others);
+    assert_eq!(
+        list.iter().map(|a| (a.platform.as_str(), a.host.as_str(), a.login.as_str())).collect::<Vec<_>>(),
+        [("github", "github.com", "octo"), ("gitlab", "gitlab.com", "alice")]
+    );
+    assert!(list[0].oauth && list[0].needs_relogin, "设备码登录、要重新登录");
+    let token = crate::github::AccountRecord { via_token: true, needs_relogin: false, ..device };
+    assert!(!listed(&token, true, &[])[0].oauth, "令牌添加的");
+    assert!(listed(&token, false, &[]).is_empty(), "凭据库里没令牌：不显示");
+}
+
+/// forge 上层接到 GitLab：「更改」面板的状态用 MR 与流水线，请求只发往 GitLab。
+#[test]
+fn 更改面板_gitlab_仓库走平台接口() {
     let dir = std::env::temp_dir().join(format!("meowo-forge-gl-status-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
@@ -498,15 +438,9 @@ fn 更改面板_gitlab_仓库走平台接口_不碰_gh() {
         }],
         http: &http,
     };
-    let gh_calls = AtomicUsize::new(0);
-    let gh = |_: &str, _: &[&str]| {
-        gh_calls.fetch_add(1, Ordering::SeqCst);
-        None
-    };
     let caches = crate::forge::Caches::default();
     let ctx = crate::forge::Ctx {
         forges: &forges,
-        gh: &gh,
         caches: &caches,
         prefs: dir.join("forge.json"),
         env: &[("GIT_CONFIG_NOSYSTEM", Some("1"))],
@@ -522,7 +456,7 @@ fn 更改面板_gitlab_仓库走平台接口_不碰_gh() {
         (pr.number, pr.forge.as_deref(), pr.checks_summary.as_deref()),
         (4365, Some("gitlab"), Some("pending"))
     );
-    assert_eq!(gh_calls.load(Ordering::SeqCst), 0, "GitLab 仓库不碰 gh");
+    assert!(http.calls.lock().unwrap().iter().all(|(_, url, _)| url.starts_with("https://gitlab.com/api/v4/")), "只发往 GitLab");
     // 合并：流水线还在跑，上层直接拦下，不发合并请求。
     let err = crate::forge::pr_merge_with(&ctx, &dir.to_string_lossy(), 4365, "merge", pr.head_oid.as_deref().unwrap()).unwrap_err();
     assert_eq!(err, "gh/checks_pending");
@@ -550,7 +484,6 @@ fn 自建实例的端口_ssh_与_https_远端都按账号的主机走() {
         u if u.ends_with("/projects/g%2Fapp") => resp(200, json!({ "id": 1, "squash_option": "default_off" })),
         _ => resp(404, json!({})),
     });
-    let gh = |_: &str, _: &[&str]| None;
     for (account_host, remote, want_host) in [
         ("git.corp.example:8443", "ssh://git@git.corp.example:2222/g/app.git", "git.corp.example:8443"),
         ("git.corp.example:8443", "https://git.corp.example:8443/g/app.git", "git.corp.example:8443"),
@@ -562,7 +495,7 @@ fn 自建实例的端口_ssh_与_https_远端都按账号的主机走() {
         let forges = ListForges { list: vec![account], http: &http };
         http.calls.lock().unwrap().clear();
         let caches = crate::forge::Caches::default();
-        let ctx = crate::forge::Ctx { forges: &forges, gh: &gh, caches: &caches, prefs: dir.join("forge.json"), env: &[("GIT_CONFIG_NOSYSTEM", Some("1"))] };
+        let ctx = crate::forge::Ctx { forges: &forges, caches: &caches, prefs: dir.join("forge.json"), env: &[("GIT_CONFIG_NOSYSTEM", Some("1"))] };
         let dto = crate::forge::forge_status_with(&ctx, &dir.to_string_lossy(), false).unwrap();
         assert_eq!((dto.gh.as_str(), dto.forge_host.as_deref()), ("ok", Some(want_host)), "{remote}");
         assert_eq!(dto.repo_url, Some(format!("https://{want_host}/g/app")), "{remote}");
@@ -573,56 +506,6 @@ fn 自建实例的端口_ssh_与_https_远端都按账号的主机走() {
         assert!(crate::forge::http::allowed(&api_host(Platform::Gitlab, &forges.list[0].host), &format!("https://{want_host}/api/v4/user")));
     }
     let _ = std::fs::remove_dir_all(&dir);
-}
-
-/// 审查指出：侧栏按目录并行查 PR，几个线程同时发现 GitLab 令牌快过期会各自续期；GitLab 续期后旧刷新令牌作废，
-/// 后到的线程拿旧刷新令牌被拒，账号被误标「要重新登录」。现在每个账号一把锁、拿锁后重读，只续一次。
-#[test]
-fn 设备码令牌并发续期_只续一次_不误标重登() {
-    let path = sandbox("refresh-race");
-    let vault = MemVault::default();
-    let vaults = vault.open();
-    let account = Account { platform: "gitlab".into(), host: "gitlab.com".into(), login: "alice".into(), ..Default::default() };
-    let tokens = OauthTokens { access: Token::secret("ACC1").unwrap(), refresh: Token::secret("REF1"), expires_in: Some(30) };
-    let stored = store_oauth(&path, &vaults, account, &tokens, 0).unwrap();
-    let calls = AtomicUsize::new(0);
-    let http = FakeHttp::new(move |_, _, body, _| {
-        let Some(Body::Form(pairs)) = body else { panic!() };
-        let used = pairs.iter().find(|(k, _)| *k == "refresh_token").map(|(_, v)| v.clone()).unwrap();
-        std::thread::sleep(Duration::from_millis(50));
-        if used == "REF1" {
-            resp(200, json!({ "access_token": "ACC2", "refresh_token": "REF2", "expires_in": 7200 }))
-        } else {
-            resp(400, json!({ "error": "invalid_grant" }))
-        }
-    });
-    let results: Vec<Refresh> = std::thread::scope(|scope| {
-        let handles: Vec<_> = (0..4)
-            .map(|_| {
-                scope.spawn(|| {
-                    calls.fetch_add(1, Ordering::SeqCst);
-                    refresh_with(&path, &vaults, &http, "cid", &stored.key(), 1_000)
-                })
-            })
-            .collect();
-        handles.into_iter().map(|h| h.join().unwrap()).collect()
-    });
-    assert_eq!(calls.load(Ordering::SeqCst), 4);
-    assert_eq!(http.calls.lock().unwrap().len(), 1, "只续一次");
-    let acc2 = Token::secret("ACC2").unwrap();
-    assert!(results.iter().all(|r| *r == Refresh::Renewed(acc2.clone()) || *r == Refresh::Current(Some(acc2.clone()))), "{results:?}");
-    assert!(!load_list(&path)[0].needs_relogin);
-    // 连不上不算被拒：不标重登，下次再续。
-    let path2 = sandbox("refresh-down");
-    let account = Account { platform: "gitlab".into(), host: "gitlab.com".into(), login: "bob".into(), ..Default::default() };
-    let stored = store_oauth(&path2, &vaults, account, &tokens, 0).unwrap();
-    let down = FakeHttp::new(|_, _, _, _| Err("connection refused".into()));
-    assert_eq!(refresh_with(&path2, &vaults, &down, "cid", &stored.key(), 1_000), Refresh::Current(Some(Token::secret("ACC1").unwrap())));
-    assert!(!load_list(&path2)[0].needs_relogin);
-    // 刷新令牌真的被拒：标重登。
-    let rejected = FakeHttp::new(|_, _, _, _| resp(400, json!({ "error": "invalid_grant" })));
-    assert_eq!(refresh_with(&path2, &vaults, &rejected, "cid", &stored.key(), 1_000), Refresh::Rejected);
-    assert!(load_list(&path2)[0].needs_relogin);
 }
 
 /// 审查指出：401 一次就永久标重登。现在 401 先用同一令牌问一次「我是谁」，确认被拒才标；已标过的不再回查；
@@ -658,35 +541,3 @@ fn 令牌被拒要回查确认才标重登() {
     assert!(!load_list(&path)[0].needs_relogin);
 }
 
-/// 复核指出：续期回 502 / 503 / 429 / 维护页也一律算「被拒」，账号被永久标重登。现在只有 400 / 401 且
-/// error 是 invalid_grant / invalid_client 才算被拒；5xx、429、不是 JSON 的回包都当暂时失败。
-#[test]
-fn 续期遇到服务器暂时故障不标重登() {
-    let vault = MemVault::default();
-    let vaults = vault.open();
-    let tokens = OauthTokens { access: Token::secret("ACC1").unwrap(), refresh: Token::secret("REF1"), expires_in: Some(30) };
-    let cases: Vec<(u16, &str, bool)> = vec![
-        (503, r#"{"error":"temporarily_unavailable"}"#, false),
-        (502, "<html>Bad gateway</html>", false),
-        (429, r#"{"message":"Retry later"}"#, false),
-        (500, "", false),
-        (200, "<html>maintenance</html>", false),
-        (400, r#"{"error":"invalid_grant","error_description":"The provided authorization grant is invalid"}"#, true),
-        (401, r#"{"error":"invalid_client"}"#, true),
-        (400, r#"{"error":"invalid_request"}"#, false),
-    ];
-    for (i, (status, body, rejected)) in cases.into_iter().enumerate() {
-        let path = sandbox(&format!("refresh-transient-{i}"));
-        let account = Account { platform: "gitlab".into(), host: "gitlab.com".into(), login: format!("u{i}"), ..Default::default() };
-        let stored = store_oauth(&path, &vaults, account, &tokens, 0).unwrap();
-        let body = body.to_string();
-        let http = FakeHttp::new(move |_, _, _, _| Ok(Response { status, body: body.clone(), ..Default::default() }));
-        let got = refresh_with(&path, &vaults, &http, "cid", &stored.key(), 1_000);
-        if rejected {
-            assert_eq!(got, Refresh::Rejected, "{status}");
-        } else {
-            assert_eq!(got, Refresh::Current(Some(Token::secret("ACC1").unwrap())), "{status}");
-        }
-        assert_eq!(load_list(&path)[0].needs_relogin, rejected, "{status}");
-    }
-}

@@ -1,5 +1,5 @@
-//! 侧栏 PR / CI 与改动数（forge/badge.rs）的节流：每仓库 60 秒内只查一次 GitHub、窗口隐藏时一次 gh 都不调、
-//! 没装 gh 只给改动数。gh 全是假的（父模块的 FakeGh），git 是真的本地仓库。
+//! 侧栏 PR / CI 与改动数（forge/badge.rs）的节流：每仓库 60 秒内只查一次 GitHub、窗口隐藏时一个请求都不发、
+//! 没账号只给改动数。GitHub 是假的 HTTP（父模块的 FakeGithub），git 是真的本地仓库。
 
 use super::super::badge::{badges_with, DiffCache, DiffCounts};
 use super::*;
@@ -7,10 +7,8 @@ use std::time::{Duration, Instant};
 
 const DIRTY: Option<DiffCounts> = Some((12, 3, 2));
 
-fn run(fake: &FakeGh, caches: &Caches, diffs: &DiffCache, prefs: &Path, cwds: &[String], online: bool, counts: Option<DiffCounts>) -> Vec<SidebarGitBadgeDto> {
-    let gh = |dir: &str, args: &[&str]| fake.run(dir, args);
-    let ctx = Ctx { forges: &crate::forge::platform::NO_ACCOUNTS, gh: &gh, caches, prefs: prefs.to_path_buf(), env: &[] };
-    badges_with(&ctx, diffs, cwds, online, &|_| counts)
+fn run(fake: &FakeGithub, caches: &Caches, diffs: &DiffCache, prefs: &Path, cwds: &[String], online: bool, counts: Option<DiffCounts>) -> Vec<SidebarGitBadgeDto> {
+    badges_with(&ctx_of(fake, caches, prefs), diffs, cwds, online, &|_| counts)
 }
 
 use meowo_protocol::ipc::SidebarGitBadgeDto;
@@ -19,7 +17,7 @@ use meowo_protocol::ipc::SidebarGitBadgeDto;
 fn 侧栏_同一仓库六十秒内只查一次_pr() {
     let sb = Sandbox::new("badge-ttl");
     let repo = github_repo(&sb);
-    let fake = FakeGh::new().views(vec![ok(&fixture("pr_checkrun_fail.json"))]);
+    let fake = FakeGithub::new().views(&["pr_checkrun_fail.json"]);
     let (caches, diffs) = (Caches::default(), DiffCache::default());
     let prefs = sb.root.join("forge.json");
     // 同一目录在列表里出现多次（同仓库多个会话）只算一次。
@@ -32,22 +30,22 @@ fn 侧栏_同一仓库六十秒内只查一次_pr() {
     for _ in 0..5 {
         run(&fake, &caches, &diffs, &prefs, &cwds, true, DIRTY);
     }
-    assert_eq!(fake.count("pr view"), 1, "60 秒内反复刷新只打一次 gh pr view：{:?}", fake.calls.lock().unwrap());
+    assert_eq!(fake.count("view"), 1, "60 秒内反复刷新只打一次 gh pr view：{:?}", fake.calls());
     // 过了 60 秒才再查。
     for entry in lock(&caches.prs).values_mut() {
         entry.0 = Instant::now().checked_sub(Duration::from_secs(61)).unwrap();
     }
     run(&fake, &caches, &diffs, &prefs, &cwds, true, DIRTY);
-    assert_eq!(fake.count("pr view"), 2);
+    assert_eq!(fake.count("view"), 2);
 }
 
 #[test]
-fn 侧栏_gh_出错也按六十秒节流_不每轮重查() {
-    // 断网、限流时 gh pr view 失败：原先出错分支不写缓存时间，前端每 30 秒一轮（目录变化、回前台还会立刻再查）
-    // 都会重打一次 gh，限流时越查越限（做空审查第二轮指出）。出错也记下这次查询时间，60 秒内只读缓存。
+fn 侧栏_查_pr_出错也按六十秒节流_不每轮重查() {
+    // 断网、限流时查 PR 失败：原先出错分支不写缓存时间，前端每 30 秒一轮（目录变化、回前台还会立刻再查）
+    // 都会重查一次，限流时越查越限（做空审查第二轮指出）。出错也记下这次查询时间，60 秒内只读缓存。
     let sb = Sandbox::new("badge-err-ttl");
     let repo = github_repo(&sb);
-    let fake = FakeGh::new().views(vec![fail("HTTP 403: API rate limit exceeded for user")]);
+    let fake = FakeGithub { rate_limited: true, ..FakeGithub::new() };
     let (caches, diffs) = (Caches::default(), DiffCache::default());
     let prefs = sb.root.join("forge.json");
     let cwds = vec![s(&repo)];
@@ -55,44 +53,44 @@ fn 侧栏_gh_出错也按六十秒节流_不每轮重查() {
         let out = run(&fake, &caches, &diffs, &prefs, &cwds, true, DIRTY);
         assert!(out[0].pr.is_none(), "出错时不显示 PR");
     }
-    assert_eq!(fake.count("pr view"), 1, "出错后 60 秒内不再重查：{:?}", fake.calls.lock().unwrap());
+    assert_eq!(fake.count("view"), 1, "出错后 60 秒内不再重查：{:?}", fake.calls());
     for entry in lock(&caches.prs).values_mut() {
         entry.0 = Instant::now().checked_sub(Duration::from_secs(61)).unwrap();
     }
     run(&fake, &caches, &diffs, &prefs, &cwds, true, DIRTY);
-    assert_eq!(fake.count("pr view"), 2, "过了 60 秒再试一次");
+    assert_eq!(fake.count("view"), 2, "过了 60 秒再试一次");
 }
 
 #[test]
-fn 侧栏_窗口隐藏时一次_gh_都不调() {
+fn 侧栏_窗口隐藏时一个请求都不发() {
     let sb = Sandbox::new("badge-hidden");
     let repo = github_repo(&sb);
-    let fake = FakeGh::new().views(vec![ok(&fixture("pr_checkrun_fail.json"))]);
+    let fake = FakeGithub::new().views(&["pr_checkrun_fail.json"]);
     let (caches, diffs) = (Caches::default(), DiffCache::default());
     let prefs = sb.root.join("forge.json");
     let cwds = vec![s(&repo)];
-    // 冷缓存 + 隐藏：只给改动数，gh 零调用（连 auth status 都没有）。
+    // 冷缓存 + 隐藏：只给改动数，零请求。
     let hidden = run(&fake, &caches, &diffs, &prefs, &cwds, false, DIRTY);
     assert_eq!(hidden.len(), 1);
     assert!(hidden[0].pr.is_none());
-    assert!(fake.calls.lock().unwrap().is_empty(), "{:?}", fake.calls.lock().unwrap());
+    assert!(fake.calls.lock().unwrap().is_empty(), "{:?}", fake.calls());
     // 看得见时查一次，之后隐藏：缓存过期了也只读缓存，照样零调用。
     run(&fake, &caches, &diffs, &prefs, &cwds, true, DIRTY);
-    let before = fake.calls.lock().unwrap().len();
+    let before = fake.calls().len();
     for entry in lock(&caches.prs).values_mut() {
         entry.0 = Instant::now().checked_sub(Duration::from_secs(600)).unwrap();
     }
     let stale = run(&fake, &caches, &diffs, &prefs, &cwds, false, DIRTY);
     assert!(stale[0].pr.is_some(), "隐藏时沿用缓存里的 PR");
-    assert_eq!(fake.calls.lock().unwrap().len(), before);
+    assert_eq!(fake.calls().len(), before);
 }
 
+/// 改版前：没装 gh 只给改动数。现在：github.com 没添加账号，同样只给改动数，一个请求都不发。
 #[test]
-fn 侧栏_没装_gh_只给改动数_干净且无_pr_的不回() {
+fn 侧栏_没账号_只给改动数_干净且无_pr_的不回_不发请求() {
     let sb = Sandbox::new("badge-nogh");
     let repo = github_repo(&sb);
-    let mut fake = FakeGh::new();
-    fake.installed = false;
+    let fake = FakeGithub { account: None, ..FakeGithub::new() };
     let (caches, diffs) = (Caches::default(), DiffCache::default());
     let prefs = sb.root.join("forge.json");
     let dirty = run(&fake, &caches, &diffs, &prefs, &[s(&repo)], true, DIRTY);
@@ -101,18 +99,18 @@ fn 侧栏_没装_gh_只给改动数_干净且无_pr_的不回() {
     assert_eq!(dirty[0].additions, 12);
     let clean = run(&fake, &caches, &DiffCache::default(), &prefs, &[s(&repo)], true, Some((0, 0, 0)));
     assert!(clean.is_empty(), "没有改动也没有 PR 的会话行什么都不显示");
+    assert!(fake.calls().is_empty(), "{:?}", fake.calls());
 }
 
 #[test]
 fn 侧栏_改动数按目录缓存() {
     let sb = Sandbox::new("badge-diff");
     let repo = github_repo(&sb);
-    let fake = FakeGh::new();
+    let fake = FakeGithub::new();
     let (caches, diffs) = (Caches::default(), DiffCache::default());
     let prefs = sb.root.join("forge.json");
     let counted = std::sync::atomic::AtomicUsize::new(0);
-    let gh = |dir: &str, args: &[&str]| fake.run(dir, args);
-    let ctx = Ctx { forges: &crate::forge::platform::NO_ACCOUNTS, gh: &gh, caches: &caches, prefs, env: &[] };
+    let ctx = ctx_of(&fake, &caches, &prefs);
     let compute = |_: &str| {
         counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         DIRTY
@@ -127,21 +125,21 @@ fn 侧栏_改动数按目录缓存() {
 fn 侧栏_切分支后_pr_跟着换_不等缓存过期() {
     let sb = Sandbox::new("badge-switch");
     let repo = github_repo(&sb);
-    let fake = FakeGh::new();
+    let fake = FakeGithub::new();
     let (caches, diffs) = (Caches::default(), DiffCache::default());
     let prefs = sb.root.join("forge.json");
     run(&fake, &caches, &diffs, &prefs, &[s(&repo)], true, DIRTY);
     run(&fake, &caches, &diffs, &prefs, &[s(&repo)], true, DIRTY);
-    assert_eq!(fake.count("pr view meowo/drill "), 1);
+    assert_eq!(fake.count_head("meowo/drill"), 1);
     // PR 去向按目录缓存了，但 HEAD 变了就得重算：不然切到新分支后一分钟内还挂着旧分支的 PR。
     sb.git(&repo, &["switch", "-q", "-c", "meowo/other"]);
     run(&fake, &caches, &diffs, &prefs, &[s(&repo)], true, DIRTY);
-    assert_eq!(fake.count("pr view meowo/other "), 1, "{:?}", fake.calls.lock().unwrap());
+    assert_eq!(fake.count_head("meowo/other"), 1, "{:?}", fake.calls());
     // 换远端（改 .git/config）同理：不再是 GitHub 仓库就不查 PR。
     sb.git(&repo, &["remote", "set-url", "origin", "https://gitlab.com/x/y.git"]);
     sb.git(&repo, &["switch", "-q", "-c", "meowo/third"]);
     run(&fake, &caches, &diffs, &prefs, &[s(&repo)], true, DIRTY);
-    assert_eq!(fake.count("pr view meowo/third"), 0);
+    assert_eq!(fake.count_head("meowo/third"), 0);
 }
 
 #[test]
@@ -192,7 +190,7 @@ fn 侧栏_head_文件读不懂就交给_git() {
 }
 
 /// 基准：20 个工作目录（1 个带 15000 个未跟踪文件的大仓库、13 个普通仓库、6 个非仓库）跑一遍侧栏摘要，
-/// 量冷 / 热 / 稳态轮询的耗时与 git 进程数。gh 是假的（已登录、没有 PR），git 是真的。
+/// 量冷 / 热 / 稳态轮询的耗时与 git 进程数。GitHub 是假的 HTTP（有账号、没有 PR），git 是真的。
 /// ignored：要造 15000 个文件，跑 release；`MEOWO_BADGE_BENCH_DIR` 指定造仓库的位置（默认系统临时目录）：
 /// `cargo test --release -p meowo-app --lib forge::tests::badge::bench_sidebar_badges_20_dirs -- --ignored --nocapture`
 #[test]
@@ -243,8 +241,7 @@ fn bench_sidebar_badges_20_dirs() {
         dirs.push(plain);
     }
     let cwds: Vec<String> = dirs.iter().map(|d| s(d)).collect();
-    let fake = FakeGh::new();
-    let gh = |dir: &str, args: &[&str]| fake.run(dir, args);
+    let fake = FakeGithub::new();
     let prefs = root.join("forge.json");
     let trace = root.join("trace2.jsonl");
     // git 进程数：GIT_TRACE2_EVENT 每个 git 进程写一条 start 事件；sid 带「/」的是 git 自己起的子进程，不算。
@@ -270,7 +267,7 @@ fn bench_sidebar_badges_20_dirs() {
     let cold = |list: &[String]| {
         crate::git::invalidate_caches();
         let (caches, diffs) = (Caches::default(), DiffCache::default());
-        let ctx = Ctx { forges: &crate::forge::platform::NO_ACCOUNTS, gh: &gh, caches: &caches, prefs: prefs.clone(), env: &[] };
+        let ctx = ctx_of(&fake, &caches, &prefs);
         let start = Instant::now();
         let rows = badges_with(&ctx, &diffs, list, true, &real_diff_counts);
         (start.elapsed(), rows)
@@ -287,10 +284,10 @@ fn bench_sidebar_badges_20_dirs() {
         cold(std::slice::from_ref(&cwds[0]));
     });
     // 热：同一份缓存 15 秒内再问（侧栏切回前台、列表换了引用）。
-    // 稳态：前端每 30 秒问一次，改动缓存（15s）与折叠计数（30s）都已过期，PR（60s）与登录状态（5min）还新。
+    // 稳态：前端每 30 秒问一次，改动缓存（15s）与折叠计数（30s）都已过期，PR（60s）还新。
     crate::git::invalidate_caches();
     let (caches, diffs) = (Caches::default(), DiffCache::default());
-    let ctx = Ctx { forges: &crate::forge::platform::NO_ACCOUNTS, gh: &gh, caches: &caches, prefs: prefs.clone(), env: &[] };
+    let ctx = ctx_of(&fake, &caches, &prefs);
     badges_with(&ctx, &diffs, &cwds, true, &real_diff_counts);
     let hot_all = median(
         (0..5)
@@ -319,5 +316,5 @@ fn bench_sidebar_badges_20_dirs() {
     eprintln!("冷（仅大仓库）：{:.1} ms，git 进程 {big_spawns}", ms(cold_big));
     eprintln!("热（15s 内复查）：{:.1} ms，git 进程 {hot_spawns}", ms(hot_all));
     eprintln!("稳态（每 30s 一轮）：{:.1} ms，git 进程 {steady_spawns}", ms(steady_all));
-    eprintln!("gh 调用：{:?}", fake.calls.lock().unwrap().iter().take(3).collect::<Vec<_>>());
+    eprintln!("GitHub 请求：{:?}", fake.calls().iter().take(3).map(|(m, u, _)| format!("{m} {u}")).collect::<Vec<_>>());
 }

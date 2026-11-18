@@ -2,8 +2,8 @@
 //! `/api/graphql`（GitHub 文档「Getting started with the REST API」/「Forming calls with GraphQL」，Enterprise Server 版），
 //! 令牌是用户添加账号时给的个人访问令牌（经典令牌要 `repo` 权限）。HTTP 走多主机的 forge/http.rs，只发往这台主机。
 
-use super::api::{GhAuth, GhForge};
-use super::builtin::{Builtin, Endpoints};
+use super::api::GhForge;
+use super::builtin::Endpoints;
 use super::http::{Auth, ForgeHttp, Req};
 use super::GhState;
 use crate::github::{Http, Request, Response, Token, GRAPHQL_ACCEPT};
@@ -11,7 +11,7 @@ use std::path::PathBuf;
 
 /// 把内置实现发出的 GitHub 请求转给多主机 HTTP：带上令牌与 GitHub 的 Accept 头。
 pub(crate) struct GheHttp<'a> {
-    pub(crate) http: &'a dyn ForgeHttp,
+    pub(crate) http: Box<dyn ForgeHttp + 'a>,
 }
 
 impl Http for GheHttp<'_> {
@@ -41,23 +41,7 @@ pub(crate) fn forge<'a>(
     prefs: PathBuf,
     on_auth: Box<dyn Fn(bool) + Sync + 'a>,
 ) -> GhForge<'a> {
-    let host = host.to_string();
-    GhForge {
-        gh: Box::new(move |dir: &str, args: &[&str]| {
-            let adapter = GheHttp { http: &*http };
-            Some(
-                Builtin {
-                    http: &adapter,
-                    token: token.as_ref(),
-                    on_auth: &*on_auth,
-                    prefs: &prefs,
-                    ends: Endpoints::enterprise(&host),
-                }
-                .run(dir, args),
-            )
-        }),
-        auth: GhAuth::Fixed(state),
-    }
+    super::builtin::forge(Box::new(GheHttp { http }), Endpoints::enterprise(host), token, state, prefs, on_auth)
 }
 
 /// 令牌好不好用、是谁：`GET https://<主机>/api/v3/user`。

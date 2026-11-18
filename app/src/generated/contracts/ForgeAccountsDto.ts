@@ -3,17 +3,13 @@ import type { ForgeAccountDto } from "./ForgeAccountDto";
 import type { ForgeDeviceCodeDto } from "./ForgeDeviceCodeDto";
 
 /**
- * 设置页「代码托管账号」的状态（`forge_accounts`）。不含令牌。
+ * 设置页「代码托管 › 平台账号」的状态（`forge_accounts`）。不含令牌。
  */
 export type ForgeAccountsDto = { accounts: Array<ForgeAccountDto>, 
 /**
  * 这个平台有系统凭据库可存令牌。
  */
 credentialSupported: boolean, 
-/**
- * gitlab.com 的设备码登录可用（打包时配了 Meowo 的 GitLab 应用 Client ID）；不可用时只给令牌入口。
- */
-gitlabDevice: boolean, 
 /**
  * 进行中的设备码登录（设置窗重开时接着显示）。
  */

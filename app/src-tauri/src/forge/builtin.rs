@@ -1,13 +1,12 @@
-//! Meowo 登录模式下的 gh 替身：对 forge 用到的 gh 子命令，直接调 GitHub REST / GraphQL，给出与 gh 同形
+//! GitHub 的内置实现（Meowo 不调用本机 gh 命令行）：对 forge 用到的 gh 子命令，直接调 GitHub REST / GraphQL，给出与 gh 同形
 //! 的输出（`--json` 字段名、退出码、`no pull requests found` 等错误文案），上层 forge 代码不用改。
 //!
 //! 覆盖的命令（与 forge.rs / review.rs / badge.rs / worktree.rs 的调用一一对应）：
-//! - `auth status --hostname github.com` → `GET /user`；
 //! - `pr view [号|URL|分支|owner:分支] [--repo slug] --json <字段>` → 一次 GraphQL 取齐字段（检查、评论、
 //!   评审超过 100 条时按游标续页）；
 //! - `pr create --title --body --base --head [--draft] [--repo]` → `POST /repos/{slug}/pulls`；
 //! - `pr merge <号> --merge|--squash|--rebase [--match-head-commit sha] --repo` → `PUT .../merge`
-//!   （仓库要求合并队列时改用 GraphQL `enqueuePullRequest`）；`pr merge --help` 回带 `--match-head-commit` 的帮助；
+//!   （仓库要求合并队列时改用 GraphQL `enqueuePullRequest`）；
 //! - `pr comment` / `pr review --comment` → issue 评论 / COMMENT 评审；
 //! - `repo view <slug> --json mergeCommitAllowed,...` → GraphQL；
 //! - `api <endpoint> [--paginate] [--slurp] [-f k=v] [-F k=v] [-X 方法]` → REST（只认 api.github.com）。
@@ -42,9 +41,7 @@ use serde_json::{json, Map, Value};
 use std::path::Path;
 
 /// 没登录时每条命令的回话。带 `HTTP 401`：forge 的 says_unauthed 据此归为「没登录」。
-const NOT_SIGNED_IN: &str = "HTTP 401: not signed in to GitHub in Meowo\nSign in from Meowo Settings > GitHub.";
-/// `gh pr merge --help` 的替身：forge 只看里面有没有 `--match-head-commit`（判断 gh 新旧）。
-const MERGE_HELP: &str = "Merge a pull request on GitHub.\n\nFLAGS\n      --match-head-commit SHA   Commit SHA that the pull request head must match to allow merge\n  -m, --merge                Merge the commits with the base branch\n  -r, --rebase               Rebase the commits onto the base branch\n  -s, --squash               Squash the commits into one commit and merge it into the base branch\n";
+const NOT_SIGNED_IN: &str = "HTTP 401: not signed in to GitHub in Meowo\nAdd a GitHub account in Meowo Settings > Code hosting.";
 /// gh 对没完成的检查给的零时间（见 forge/fixtures/derived_pr_in_progress.json）。
 const ZERO_TIME: &str = "0001-01-01T00:00:00Z";
 /// 一条连接最多续几页（每页 100）：防异常数据无限翻页。
@@ -303,8 +300,6 @@ impl Builtin<'_> {
             return fail(NOT_SIGNED_IN);
         }
         let result = match args {
-            ["auth", "status", ..] => self.auth_status(),
-            ["pr", "merge", "--help"] => Ok(ok(MERGE_HELP)),
             ["pr", "view", rest @ ..] => self.pr_view(dir, rest),
             ["pr", "create", rest @ ..] => self.pr_create(dir, rest),
             ["pr", "merge", rest @ ..] => self.pr_merge(dir, rest),
@@ -325,7 +320,7 @@ impl Builtin<'_> {
         let resp = self.http.send(&req).map_err(|e| fail(format!("error connecting to {host}\n{e}")))?;
         if resp.status == 401 {
             (self.on_auth)(false);
-            return Err(fail(format!("HTTP 401: Bad credentials (https://{host})\nSign in to GitHub again from Meowo Settings > GitHub.")));
+            return Err(fail(format!("HTTP 401: Bad credentials (https://{host})\nSign in to GitHub again from Meowo Settings > Code hosting.")));
         }
         if success(&resp) {
             (self.on_auth)(true);
@@ -351,7 +346,7 @@ impl Builtin<'_> {
         Ok(v.get("data").cloned().unwrap_or(Value::Null))
     }
 
-    /// 没带 --repo 时按目录认仓库（与 forge 同一个判定：gh-resolved、用户选的远端、唯一的 GitHub 远端）。
+    /// 没带 --repo 时按目录认仓库（与 forge 同一个判定：用户选的远端、唯一的 GitHub 远端）。
     /// 回 (slug, 当前分支的 head 写法)。
     fn local_repo(&self, dir: &str) -> Option<(String, Option<String>)> {
         let (info, _, _) = repo_head(dir, &[], self.prefs, &super::platform::NO_ACCOUNTS, false)?;
@@ -366,15 +361,6 @@ impl Builtin<'_> {
         self.local_repo(dir)
             .map(|(slug, _)| slug)
             .ok_or_else(|| fail("none of the git remotes configured for this repository point to a known GitHub host"))
-    }
-
-    fn auth_status(&self) -> Result<CmdOut, CmdOut> {
-        let resp = self.rest("GET", "user", None)?;
-        if !success(&resp) {
-            return Err(http_fail(&resp));
-        }
-        let login = parse_json(&resp.body).get("login").and_then(|l| l.as_str()).unwrap_or_default().to_string();
-        Ok(ok(format!("{web}\n  ✓ Logged in to {web} account {login} (Meowo)\n", web = self.ends.web)))
     }
 
     fn pr_view(&self, dir: &str, rest: &[&str]) -> Result<CmdOut, CmdOut> {
@@ -667,13 +653,20 @@ impl Builtin<'_> {
     }
 }
 
-/// 生产入口：真 HTTP、真 forge.json，401 时通知 github 模块。
-pub(crate) fn run_real(dir: &str, args: &[&str], token: Option<&Token>) -> CmdOut {
-    let prefs = super::prefs_path();
-    let on_auth = |ok: bool| {
-        if let Some(token) = token {
-            crate::github::auth_result(token, ok);
-        }
-    };
-    Builtin { http: &crate::github::RealHttp, token, on_auth: &on_auth, prefs: &prefs, ends: Endpoints::github_com() }.run(dir, args)
+/// 内置实现的平台接口：给定 HTTP（github.com 用 github.rs 的 RealHttp，企业版用多主机 HTTP 的适配）、端点、账号令牌与状态。
+/// on_auth：每个回包报一次令牌好坏（401 / 2xx），账号据此标或清「要重新登录」。
+pub(crate) fn forge<'a>(
+    http: Box<dyn Http + 'a>,
+    ends: Endpoints,
+    token: Option<Token>,
+    state: super::GhState,
+    prefs: std::path::PathBuf,
+    on_auth: Box<dyn Fn(bool) + Sync + 'a>,
+) -> super::api::GhForge<'a> {
+    super::api::GhForge {
+        gh: Box::new(move |dir: &str, args: &[&str]| {
+            Some(Builtin { http: &*http, token: token.as_ref(), on_auth: &*on_auth, prefs: &prefs, ends: ends.clone() }.run(dir, args))
+        }),
+        state,
+    }
 }

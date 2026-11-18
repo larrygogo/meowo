@@ -4,14 +4,14 @@
 //! - git 联网调用一律不弹凭据框、不等终端输入（GIT_TERMINAL_PROMPT=0、GCM_INTERACTIVE=never、
 //!   `-c credential.interactive=false`），push 120 秒超时，永不 force。GUI 进程没有终端，卡在密码提示上
 //!   用户只会看到按钮一直转。
-//! - 没装 gh（产品事实：Meowo 的用户不一定装了 gh）：push 照常，开 PR 改为打开 GitHub 的 compare 网页，
-//!   不显示 CI、不能应用内合并（leader 关卡 Q-no-gh 选 1）。
-//! - 合并前后端再判一次检查（只有 none / pass 放行），带 `--match-head-commit`：确认框打开之后有人
-//!   推了新提交，GitHub 会拒，不会把用户没看过的提交合进去。不加 `--delete-branch`，worktree 和分支
-//!   的清理交给 worktree.rs 那套判定，只提示不自动删。
+//! - 不调用本机 gh 命令行（leader 2026-11-18「取消gh」）：github.com 与其他平台一样，只走设置里加的账号
+//!   （设备码登录或令牌）+ 内置实现。没有账号的主机：push 照常，开 PR 改为打开网页，不显示 CI、不能应用内合并，
+//!   界面引导去设置添加账号，不发任何请求。
+//! - 合并前后端再判一次检查（只有 none / pass 放行），钉住头提交：确认框打开之后有人推了新提交，平台会拒，
+//!   不会把用户没看过的提交合进去。不删远端分支，worktree 和分支的清理交给 worktree.rs 那套判定，只提示不自动删。
 //!
-//! gh 调用全部经 [`GhExec`] 注入：单测喂录制的 gh JSON（录自真实仓库的只读 `gh pr view`，见
-//! forge/fixtures），不碰任何真实远端。
+//! 平台接口经 [`Ctx::forges`] 注入：单测用假 HTTP（GitHub 的回包由 forge/fixtures 里录自真实仓库的
+//! `pr view` 实录反推），不碰任何真实远端。
 
 use crate::git_target::{resolve, GitConfig, PushTarget};
 use meowo_protocol::ipc::{
@@ -26,7 +26,7 @@ use std::time::{Duration, Instant};
 pub(crate) mod api;
 pub(crate) mod badge;
 pub(crate) mod bitbucket;
-mod builtin;
+pub(crate) mod builtin;
 pub(crate) mod ghe;
 pub(crate) mod gitea;
 pub(crate) mod gitee;
@@ -34,21 +34,15 @@ pub(crate) mod gitlab;
 pub(crate) mod http;
 pub(crate) mod platform;
 pub(crate) mod review;
-use api::{ForgeApi, GhAuth, GhForge, NewPr, Target};
+use api::{ForgeApi, NewPr, Target};
 use platform::{Forges, Platform};
 pub(crate) use badge::sidebar_git_badges_for;
 
 #[cfg(test)]
 mod tests;
-#[cfg(test)]
-mod drill;
 
 /// push 的超时：大仓库首推、慢网络留足余量，又不至于让按钮无限转。
 const PUSH_TIMEOUT: Duration = Duration::from_secs(120);
-/// 单次 gh 调用的超时（gh 自己没有总超时，网络半死时会一直挂着）。
-const GH_TIMEOUT: Duration = Duration::from_secs(60);
-/// gh 登录状态缓存：`gh auth status` 要联网验 token，不能每分钟一次。
-const AUTH_TTL: Duration = Duration::from_secs(300);
 /// 仓库允许的合并方式很少改，缓存 1 小时。
 const METHODS_TTL: Duration = Duration::from_secs(3600);
 /// PR 与检查：每个仓库最多 60 秒查一次 GitHub（规格「每仓库 ≥60s 一次」）。
@@ -542,12 +536,9 @@ pub(crate) async fn git_pull_start(cwd: String) -> Result<String, String> {
 /// 「先在终端里运行 git config」，面板里没有出路。只收一行的名字和带 @ 的邮箱，别的不写。
 pub(crate) fn set_identity_with(cwd: &str, name: &str, email: &str, env: GitEnv) -> Result<(), String> {
     let dir = existing_dir(cwd)?;
-    let (name, email) = (name.trim(), email.trim());
-    let bad = |text: &str| text.is_empty() || text.chars().any(char::is_control) || text.len() > 200;
-    if bad(name) || bad(email) || !email.contains('@') || email.contains(char::is_whitespace) {
-        return Err("git/identity_invalid".into());
-    }
-    for (key, value) in [("user.name", name), ("user.email", email)] {
+    // 与设置 › 代码托管 › Git 同一套写前校验（git_tool.rs）；这里只报一个总的「不合格」。
+    let (name, email) = crate::git_tool::validate(name, email).map_err(|_| "git/identity_invalid".to_string())?;
+    for (key, value) in [("user.name", name.as_str()), ("user.email", email.as_str())] {
         let out = git_step(dir, &["config", "--global", key, value], env, Duration::from_secs(10))?;
         if !out.ok() {
             return Err(format!("git/failed: {}", tail(&out.both(), 4)));
@@ -563,82 +554,9 @@ pub(crate) async fn git_set_identity(cwd: String, name: String, email: String) -
         .map_err(|e| e.to_string())?
 }
 
-// ═══ gh：找得到、登录了没 ═══
+// ═══ 平台接口的状态与缓存 ═══
 
-/// gh 调用的注入点：`(目录, 参数) -> 结果`；None = 没装 gh。
-pub(crate) type GhExec<'a> = &'a (dyn Fn(&str, &[&str]) -> Option<CmdOut> + Sync);
-
-/// 找 gh：进程 PATH 之外再看持久 PATH（Windows，Meowo 启动后才装的 gh）和常见安装目录
-/// （macOS 从 Finder 启动的 App 只有 /usr/bin:/bin，Homebrew 的 /opt/homebrew/bin 不在里面）。
-fn gh_search_dirs() -> Vec<PathBuf> {
-    let mut dirs: Vec<PathBuf> = std::env::var_os("PATH")
-        .map(|p| std::env::split_paths(&p).collect())
-        .unwrap_or_default();
-    #[cfg(target_os = "windows")]
-    {
-        dirs.extend(crate::envpath::persistent_path_dirs().into_iter().map(PathBuf::from));
-        for (var, sub) in [
-            ("ProgramFiles", r"GitHub CLI"),
-            ("LOCALAPPDATA", r"Microsoft\WinGet\Links"),
-            ("USERPROFILE", r"scoop\shims"),
-        ] {
-            if let Some(base) = std::env::var_os(var) {
-                dirs.push(PathBuf::from(base).join(sub));
-            }
-        }
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        for dir in ["/opt/homebrew/bin", "/usr/local/bin", "/home/linuxbrew/.linuxbrew/bin", "/opt/local/bin", "/usr/bin"] {
-            dirs.push(PathBuf::from(dir));
-        }
-        if let Some(home) = std::env::var_os("HOME") {
-            dirs.push(PathBuf::from(home).join(".local/bin"));
-        }
-    }
-    dirs
-}
-
-fn find_gh() -> Option<PathBuf> {
-    let name = if cfg!(target_os = "windows") { "gh.exe" } else { "gh" };
-    gh_search_dirs().into_iter().map(|d| d.join(name)).find(|p| p.is_file())
-}
-
-/// gh 子进程的 PATH：在原 PATH 后补上找 gh 时看过的目录（gh 内部要调 git，macOS 上 git 也可能在 Homebrew 里）。
-fn gh_child_path() -> std::ffi::OsString {
-    std::env::join_paths(gh_search_dirs()).unwrap_or_default()
-}
-
-/// 真实的 gh。路径找过一次就记住；没找到隔 5 分钟再找（期间装上了也能认出来）。
-pub(crate) fn real_gh(dir: &str, args: &[&str]) -> Option<CmdOut> {
-    static FOUND: Mutex<Option<(Instant, Option<PathBuf>)>> = Mutex::new(None);
-    let path = {
-        let mut guard = FOUND.lock().unwrap_or_else(|e| e.into_inner());
-        match guard.as_ref() {
-            Some((_, Some(path))) if path.is_file() => Some(path.clone()),
-            Some((at, None)) if at.elapsed() < AUTH_TTL => None,
-            _ => {
-                let found = find_gh();
-                *guard = Some((Instant::now(), found.clone()));
-                found
-            }
-        }
-    }?;
-    let mut cmd = command(&path);
-    cmd.current_dir(dir)
-        .args(args)
-        .env("PATH", gh_child_path())
-        // gh 也不许交互：没登录时直接报错，不进 `gh auth login` 的问答。
-        .env("GH_PROMPT_DISABLED", "1")
-        .env("GH_NO_UPDATE_NOTIFIER", "1")
-        .env("NO_COLOR", "1")
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .env("GCM_INTERACTIVE", "never");
-    Some(run_with_timeout(cmd, GH_TIMEOUT).unwrap_or_else(|e| CmdOut { code: None, stderr: e.to_string(), ..Default::default() }))
-}
-
-/// gh 报的是「没登录 / token 失效」（实测 gh 2.96：`Try authenticating with:  gh auth login`、
-/// `HTTP 401: Bad credentials`、未登录时 `To get started with GitHub CLI, please run:  gh auth login`）。
+/// 内置实现的失败输出是不是「令牌被拒」（它照 gh 的写法回 `HTTP 401: Bad credentials`）。
 pub(crate) fn says_unauthed(out: &CmdOut) -> bool {
     let low = out.both().to_lowercase();
     low.contains("gh auth login") || low.contains("http 401") || low.contains("bad credentials")
@@ -646,7 +564,7 @@ pub(crate) fn says_unauthed(out: &CmdOut) -> bool {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum GhState {
-    Missing,
+    /// 令牌失效（撤销、过期），要重新登录。
     Unauthed,
     Ok,
 }
@@ -654,8 +572,6 @@ pub(crate) enum GhState {
 /// 进程内的各项缓存。测试各建一份，互不串。
 #[derive(Default)]
 pub(crate) struct Caches {
-    auth: Mutex<Option<(Instant, GhState)>>,
-    too_old: Mutex<Option<bool>>,
     methods: Mutex<HashMap<String, (Instant, Vec<String>)>>,
     prs: Mutex<HashMap<String, (Instant, Option<PullRequestDto>)>>,
     /// 本机发起合并后进了合并队列的 PR：(owner/repo, 号, 头提交)。GitHub 的 pr view 没有「在队列里」这个字段，
@@ -670,38 +586,6 @@ fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 impl Caches {
-    pub(crate) fn gh_state(&self, gh: GhExec, refresh: bool) -> GhState {
-        if !refresh {
-            if let Some((at, state)) = *lock(&self.auth) {
-                if at.elapsed() < AUTH_TTL {
-                    return state;
-                }
-            }
-        }
-        let state = match gh(".", &["auth", "status", "--hostname", "github.com"]) {
-            None => GhState::Missing,
-            Some(out) if out.ok() => GhState::Ok,
-            Some(_) => GhState::Unauthed,
-        };
-        *lock(&self.auth) = Some((Instant::now(), state));
-        state
-    }
-
-    pub(crate) fn mark_unauthed(&self) {
-        *lock(&self.auth) = Some((Instant::now(), GhState::Unauthed));
-    }
-
-    /// gh 太旧：`gh pr merge` 没有 `--match-head-commit`（看 help 文本，不靠版本号猜）。
-    pub(crate) fn gh_too_old(&self, gh: GhExec) -> bool {
-        if let Some(known) = *lock(&self.too_old) {
-            return known;
-        }
-        let Some(out) = gh(".", &["pr", "merge", "--help"]) else { return false };
-        let old = !out.both().contains("--match-head-commit");
-        *lock(&self.too_old) = Some(old);
-        old
-    }
-
     /// 仓库允许的合并方式，按仓库键（[`platform::repo_key`]）缓存 1 小时；查不了回空、不记缓存。
     fn merge_methods(&self, forge: &dyn ForgeApi, dir: &str, key: &str, slug: &str) -> Vec<String> {
         if let Some((at, methods)) = lock(&self.methods).get(key) {
@@ -721,7 +605,7 @@ impl Caches {
     }
 }
 
-/// `gh repo view --json mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed` → 允许的方式，
+/// 内置实现 `repo view --json mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed` 的输出 → 允许的方式，
 /// 按 GitHub 网页上的顺序（merge、squash、rebase）。
 pub(crate) fn parse_merge_methods(json: &str) -> Vec<String> {
     let Ok(v) = serde_json::from_str::<serde_json::Value>(json) else { return Vec::new() };
@@ -807,17 +691,6 @@ fn find_pr(forge: &dyn ForgeApi, dir: &str, slug: Option<&str>, target: &Target)
     forge.find(dir, slug, target)
 }
 
-/// 改版前的入口形状（测试沿用）：直接对 gh 执行器按分支或号查。
-#[cfg(test)]
-fn view_pr(gh: GhExec, caches: &Caches, dir: &str, slug: Option<&str>, target: Option<&str>) -> Result<Option<PullRequestDto>, String> {
-    let forge = GhForge { gh: Box::new(move |d: &str, a: &[&str]| gh(d, a)), auth: GhAuth::Com(caches) };
-    let target = target.map(|t| Target::Branch { qualified: t, branch: t, head_slug: None });
-    match target {
-        Some(target) => forge.find(dir, slug, &target),
-        None => Err("gh/failed: no target".into()),
-    }
-}
-
 // ═══ 仓库信息（本地 git）═══
 
 struct RepoInfo {
@@ -845,9 +718,6 @@ impl GhRemote {
     /// 缓存、合并方式记录的键（github.com 只用 owner/repo，与改版前一致）。
     pub(crate) fn key(&self) -> String {
         platform::repo_key(&self.host, &self.slug)
-    }
-    pub(crate) fn is_github_com(&self) -> bool {
-        self.host == platform::GITHUB_COM
     }
     /// 仓库路径的第一段（fork 的 head 写法要 owner）。
     fn owner(&self) -> &str {
@@ -882,16 +752,13 @@ impl GhRepo {
     }
 }
 
-/// PR 所在仓库：
-/// 1. 远端上有 `gh-resolved = base`（`gh repo set-default`、`gh repo fork --clone` 写的）就用它，与 gh 一致；
-/// 2. 用户在 Meowo 里选过（按仓库记在 forge.json）；
-/// 3. 只有一个认得出平台的远端就是它；
-/// 4. 多个又都没定：先按 origin（没有就第一个）查状态，标 needs_choice，界面给出可选列表。
+/// PR 所在仓库（不再读 gh 的 `gh-resolved`：Meowo 不依赖 gh，leader 2026-11-18「取消gh」）：
+/// 1. 用户在 Meowo 里选过（按仓库记在 forge.json）；
+/// 2. 只有一个认得出平台的远端就是它；
+/// 3. 多个又都没定：先按 origin（没有就第一个）查状态，标 needs_choice，界面给出可选列表（fork 工作流在这里选上游）。
 ///
-/// 认得出的远端分布在几台主机上（GitHub 上游 + 公司 GitLab 镜像）时，只在一台主机的远端里挑：gh-resolved、
-/// 用户选过的、origin、推送远端所在的主机依次优先，没有就第一个。镜像不算候选，不会因此要求用户选。
-///
-/// 做空第二轮实测：以前一律 `--repo` 推送远端（origin），fork 工作流 set-default 到 upstream 后，PR 开进了自己的 fork。
+/// 认得出的远端分布在几台主机上（GitHub 上游 + 公司 GitLab 镜像）时，只在一台主机的远端里挑：用得上的主机
+///（有账号）优先，其中用户选过的、origin、推送远端所在的主机依次优先，没有就第一个。镜像不算候选。
 fn resolve_gh_repo(cfg: &GitConfig, forges: &dyn Forges, chosen: Option<&str>, target: Option<&PushTarget>) -> GhRepo {
     let all: Vec<GhRemote> = cfg
         .remotes()
@@ -907,31 +774,24 @@ fn resolve_gh_repo(cfg: &GitConfig, forges: &dyn Forges, chosen: Option<&str>, t
     // 不改成「推送远端优先于 origin」：fork 工作流里推送远端是自己的 fork，PR 却开在 origin（上游），那样会挑错仓库。
     let usable: Vec<&GhRemote> = all.iter().filter(|g| forges.usable(&g.host)).collect();
     let pool: Vec<&GhRemote> = if usable.is_empty() { all.iter().collect() } else { usable };
-    let resolved_any = pool.iter().copied().find(|g| cfg.get("remote", Some(&g.remote), "gh-resolved") == Some("base"));
     let named = |name: Option<&str>| name.and_then(|n| pool.iter().copied().find(|g| g.remote == n));
-    let host = resolved_any
-        .or_else(|| named(chosen))
+    let host = named(chosen)
         .or_else(|| named(Some("origin")))
         .or_else(|| named(target.map(|t| t.remote.as_str())))
         .or(pool.first().copied())
         .map(|g| g.host.clone());
     let github: Vec<GhRemote> = all.iter().filter(|g| Some(&g.host) == host.as_ref()).cloned().collect();
     let by_name = |name: &str| github.iter().find(|g| g.remote == name).cloned();
-    let resolved = github
-        .iter()
-        .find(|g| cfg.get("remote", Some(&g.remote), "gh-resolved") == Some("base"))
-        .cloned();
     let mut repo = GhRepo::default();
-    repo.base = match (&resolved, chosen.and_then(by_name)) {
-        (Some(base), _) => Some(base.clone()),
-        (None, Some(base)) => Some(base),
-        (None, None) if github.len() <= 1 => github.first().cloned(),
-        (None, None) => {
+    repo.base = match chosen.and_then(by_name) {
+        Some(base) => Some(base),
+        None if github.len() <= 1 => github.first().cloned(),
+        None => {
             repo.needs_choice = true;
             by_name("origin").or_else(|| github.first().cloned())
         }
     };
-    if resolved.is_none() && github.len() > 1 {
+    if github.len() > 1 {
         repo.choices = github.clone();
     }
     repo.head = target.and_then(|t| by_name(&t.remote)).or_else(|| repo.base.clone());
@@ -1098,12 +958,10 @@ fn chosen_remote(path: &Path, common: &str) -> Option<String> {
 
 // ═══ 状态 / 开 PR / 合并 ═══
 
-/// 一次调用要用到的外部依赖。正式命令用 [`Ctx::real`]，测试换成录制的 gh 与临时目录。
+/// 一次调用要用到的外部依赖。正式命令用 [`Ctx::real`]，测试换成假 HTTP 的账号与临时目录。
 pub(crate) struct Ctx<'a> {
-    /// 主机 → 平台与账号（公共主机内置，自建主机看账号声明）。github.com 不经这里。
+    /// 主机 → 平台与账号（github.com 与其他平台一样经这里；公共主机内置，自建主机看账号声明）。
     pub(crate) forges: &'a dyn Forges,
-    /// github.com 的 gh 执行器（本机 gh / 内置实现 / 关闭，按设置里的 GitHub 连接方式）。
-    pub(crate) gh: GhExec<'a>,
     pub(crate) caches: &'a Caches,
     pub(crate) prefs: PathBuf,
     pub(crate) env: GitEnv<'a>,
@@ -1111,80 +969,30 @@ pub(crate) struct Ctx<'a> {
 
 impl Ctx<'static> {
     fn real() -> Self {
-        Ctx { forges: &crate::forge_accounts::ACCOUNTS, gh: &connected_gh, caches: &CACHES, prefs: prefs_path(), env: &[] }
+        Ctx { forges: &crate::forge_accounts::ACCOUNTS, caches: &CACHES, prefs: prefs_path(), env: &[] }
     }
 }
 
 impl Ctx<'_> {
-    /// github.com 的平台接口：gh 执行器 + 进程内缓存。
-    fn github(&self) -> GhForge<'_> {
-        let gh = self.gh;
-        GhForge { gh: Box::new(move |dir: &str, args: &[&str]| gh(dir, args)), auth: GhAuth::Com(self.caches) }
-    }
-
-    /// 仓库所在平台的接口。base 为 None（远端认不出平台：企业版没加账号、ssh 别名）时交给 gh 按目录自己认，
-    /// 与改版前一致。Err(平台) = 认得出平台但没有账号（不发任何请求，界面引导去设置添加账号）。
-    fn forge_for(&self, base: Option<&GhRemote>) -> Result<Box<dyn ForgeApi + '_>, Platform> {
-        match base {
-            None => Ok(Box::new(self.github())),
-            Some(base) if base.is_github_com() => Ok(Box::new(self.github())),
-            Some(base) => self.forges.open(&base.host).ok_or(base.platform),
-        }
+    /// 仓库所在平台的接口。Err(平台) = 认得出平台但没有账号（不发任何请求，界面引导去设置添加账号）。
+    fn forge_for(&self, base: &GhRemote) -> Result<Box<dyn ForgeApi + '_>, Platform> {
+        self.forges.open(&base.host).ok_or(base.platform)
     }
 }
 
-/// 生产的 gh 入口：按设置里的 GitHub 连接分派（见 github.rs）。关闭时什么都不发（等同没装 gh）；
-/// Meowo 登录时交给内置实现（forge/builtin.rs）；否则是本机 gh。forge、侧栏、标题栏、worktree 清理都经这里。
-pub(crate) fn connected_gh(dir: &str, args: &[&str]) -> Option<CmdOut> {
-    dispatch_gh(crate::github::executor(), dir, args, &real_gh, &builtin::run_real, &targets_github_com)
-}
-
-/// 内置实现的入口形状：(目录, 参数, 令牌)。
-pub(crate) type BuiltinExec<'a> = &'a dyn Fn(&str, &[&str], Option<&crate::github::Token>) -> CmdOut;
-
-/// 分派本身（可注入，单测覆盖四种方式与自动方式按主机分流）。
-pub(crate) fn dispatch_gh(executor: crate::github::Executor, dir: &str, args: &[&str], gh: GhExec, builtin: BuiltinExec, is_github: &dyn Fn(&str, &[&str]) -> bool) -> Option<CmdOut> {
-    use crate::github::Executor;
-    match executor {
-        Executor::Off => None,
-        Executor::Gh => gh(dir, args),
-        Executor::Meowo(token) => Some(builtin(dir, args, token.as_ref())),
-        // 自动：Meowo 登录只认 github.com；企业版等别的主机照旧交给本机 gh。
-        Executor::Auto(token) if is_github(dir, args) => Some(builtin(dir, args, Some(&token))),
-        Executor::Auto(_) => gh(dir, args),
-    }
-}
-
-/// 这条 gh 调用是不是冲着 github.com：带链接看链接的主机；带 --repo 的、api、登录状态与 merge --help 是
-/// forge 只对 github.com 远端发的（forge 认不出主机时不带 --repo）；剩下的（worktree 清理、标题栏直查）按
-/// 目录的远端认。
-pub(crate) fn targets_github_com(dir: &str, args: &[&str]) -> bool {
-    if let Some(url) = args.iter().find(|a| a.starts_with("https://")) {
-        return url.starts_with("https://github.com/") || url.starts_with("https://api.github.com/");
-    }
-    match args {
-        ["auth", "status", ..] | ["api", ..] | ["pr", "merge", "--help"] => return true,
-        _ => {}
-    }
-    if args.iter().any(|a| *a == "--repo" || *a == "-R") {
-        return true;
-    }
-    repo_head(dir, &[], &prefs_path(), &platform::NO_ACCOUNTS, false).is_some_and(|(info, _, _)| info.gh.base.as_ref().is_some_and(GhRemote::is_github_com))
-}
-
-/// worktree 清理查当前分支的 PR（不走缓存：删除前要的是此刻的状态）。仓库在 github.com 或远端认不出平台时
-/// 回 None，由 worktree.rs 照旧问 gh；别的平台经统一接口查，没账号、没登录、查不了都是 Unavailable（不删）。
-pub(crate) fn platform_pr_lookup_with(ctx: &Ctx, dir: &str) -> Option<crate::worktree::PrLookup> {
+/// worktree 清理查当前分支的 PR（不走缓存：删除前要的是此刻的状态）。远端认不出平台、没账号、令牌失效、
+/// 查不了都是 Unavailable（判断不了有没有合并，交给 worktree.rs 的本地判定）。
+pub(crate) fn platform_pr_lookup_with(ctx: &Ctx, dir: &str) -> crate::worktree::PrLookup {
     use crate::worktree::PrLookup;
-    let (info, _, _) = repo_head(dir, ctx.env, &ctx.prefs, ctx.forges, false)?;
-    let base = info.gh.base.as_ref().filter(|b| !b.is_github_com())?;
-    let Ok(forge) = ctx.forge_for(Some(base)) else { return Some(PrLookup::Unavailable) };
+    let Some((info, _, _)) = repo_head(dir, ctx.env, &ctx.prefs, ctx.forges, false) else { return PrLookup::Unavailable };
+    let Some(base) = info.gh.base.as_ref() else { return PrLookup::Unavailable };
+    let Ok(forge) = ctx.forge_for(base) else { return PrLookup::Unavailable };
     if forge.state(false) != GhState::Ok {
-        return Some(PrLookup::Unavailable);
+        return PrLookup::Unavailable;
     }
-    let Some((qualified, branch)) = info.branch_target() else { return Some(PrLookup::Unavailable) };
+    let Some((qualified, branch)) = info.branch_target() else { return PrLookup::Unavailable };
     let target = Target::Branch { qualified: &qualified, branch: &branch, head_slug: info.head_slug() };
-    Some(match forge.find(dir, Some(&base.slug), &target) {
+    match forge.find(dir, Some(&base.slug), &target) {
         Ok(None) => PrLookup::NoPr,
         Ok(Some(pr)) => PrLookup::Found {
             number: pr.number,
@@ -1197,23 +1005,16 @@ pub(crate) fn platform_pr_lookup_with(ctx: &Ctx, dir: &str) -> Option<crate::wor
             head_oid: pr.head_oid.unwrap_or_default(),
         },
         Err(_) => PrLookup::Unavailable,
-    })
+    }
 }
 
-pub(crate) fn platform_pr_lookup(dir: &Path) -> Option<crate::worktree::PrLookup> {
+pub(crate) fn platform_pr_lookup(dir: &Path) -> crate::worktree::PrLookup {
     platform_pr_lookup_with(&Ctx::real(), &dir.to_string_lossy())
 }
 
-/// 本机找得到 gh（设置页显示用；与 real_gh 同一套查找）。
-pub(crate) fn gh_installed() -> bool {
-    find_gh().is_some()
-}
-
-/// GitHub 连接变了（切方式、登录、退出）：登录状态、gh 新旧、合并方式、PR 缓存与侧栏 / 标题栏 / 评审的
-/// 缓存全部作废，下一次查询按新的连接重来。
+/// 账号变了（登录、添加、退出）：合并方式、PR 缓存与侧栏 / 标题栏 / 评审的缓存全部作废，
+/// 下一次查询按新的账号重来。
 pub(crate) fn invalidate_connection() {
-    *lock(&CACHES.auth) = None;
-    *lock(&CACHES.too_old) = None;
     lock(&CACHES.methods).clear();
     lock(&CACHES.prs).clear();
     lock(&CACHES.queued).clear();
@@ -1264,7 +1065,6 @@ fn invalidate_after_write(dir: &str) {
 
 fn gh_label(state: GhState) -> &'static str {
     match state {
-        GhState::Missing => "missing",
         GhState::Unauthed => "unauthenticated",
         GhState::Ok => "ok",
     }
@@ -1276,7 +1076,6 @@ pub(crate) fn forge_status_with(ctx: &Ctx, cwd: &str, force: bool) -> Result<For
     let info = repo_info(dir, ctx.env, &ctx.prefs, ctx.forges).ok_or("worktree/not_repo")?;
     let mut dto = ForgeStatusDto {
         gh: "no_remote".into(),
-        gh_too_old: false,
         repo_url: None,
         compare_url: None,
         merge_methods: Vec::new(),
@@ -1286,7 +1085,6 @@ pub(crate) fn forge_status_with(ctx: &Ctx, cwd: &str, force: bool) -> Result<For
         repo_choices: Vec::new(),
         repo_remote: None,
         repo_needs_choice: false,
-        connection: None,
         forge: None,
         forge_host: None,
     };
@@ -1315,7 +1113,7 @@ pub(crate) fn forge_status_with(ctx: &Ctx, cwd: &str, force: bool) -> Result<For
         info.pr_branches().map(|(head, base)| pr_defaults(dir, head, base, base_remote.as_deref(), ctx.env))
     };
     // 认得出平台、但设置里没有这台主机的账号：不发任何请求，界面引导去添加账号。
-    let Ok(forge) = ctx.forge_for(Some(&base)) else {
+    let Ok(forge) = ctx.forge_for(&base) else {
         dto.gh = "no_account".into();
         dto.pr_defaults = defaults(&info);
         return Ok(dto);
@@ -1326,7 +1124,6 @@ pub(crate) fn forge_status_with(ctx: &Ctx, cwd: &str, force: bool) -> Result<For
         dto.pr_defaults = defaults(&info);
         return Ok(dto);
     }
-    dto.gh_too_old = forge.too_old();
     dto.merge_methods = ctx.caches.merge_methods(forge.as_ref(), dir, &base.key(), &slug);
     if let (Some(key), Some((qualified, branch))) = (pr_key(&info), info.branch_target()) {
         let target = Target::Branch { qualified: &qualified, branch: &branch, head_slug: info.head_slug() };
@@ -1360,40 +1157,28 @@ pub(crate) fn forge_status_with(ctx: &Ctx, cwd: &str, force: bool) -> Result<For
 
 #[tauri::command]
 pub(crate) async fn git_forge_status(cwd: String, force: Option<bool>) -> Result<ForgeStatusDto, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let connection = crate::github::executor().label();
-        let mut dto = forge_status_with(&Ctx::real(), &cwd, force.unwrap_or(false))?;
-        label_connection(&mut dto, connection);
-        Ok(dto)
-    })
+    tauri::async_runtime::spawn_blocking(move || forge_status_with(&Ctx::real(), &cwd, force.unwrap_or(false)))
     .await
     .map_err(|e| e.to_string())?
 }
 
-/// 告诉前端这次用的是哪种连接；设置里关了时 `gh` 记为 `off`（前端不显示 PR 区块，也不提示装 gh）。
-pub(crate) fn label_connection(dto: &mut ForgeStatusDto, connection: &str) {
-    dto.connection = Some(connection.to_string());
-    if connection == "off" && dto.gh == "missing" {
-        dto.gh = "off".into();
-    }
-}
-
 fn require(forge: &dyn ForgeApi) -> Result<(), String> {
     match forge.state(false) {
-        GhState::Missing => Err("gh/not_installed".into()),
         GhState::Unauthed => Err("gh/not_authed".into()),
         GhState::Ok => Ok(()),
     }
 }
 
-/// 仓库所在平台的接口，且能用（装了 gh / 登录了 / 有账号）。没有账号：`forge/no_account: <平台>`。
+/// 仓库所在平台的接口，且能用（有账号、令牌没失效）。没有账号：`forge/no_account: <平台>`；
+/// 远端认不出平台：`forge/unknown_host`。
 fn usable<'c>(ctx: &'c Ctx, info: &RepoInfo) -> Result<Box<dyn ForgeApi + 'c>, String> {
-    let forge = ctx.forge_for(info.gh.base.as_ref()).map_err(|platform| format!("forge/no_account: {}", platform.as_str()))?;
+    let base = info.gh.base.as_ref().ok_or("forge/unknown_host")?;
+    let forge = ctx.forge_for(base).map_err(|platform| format!("forge/no_account: {}", platform.as_str()))?;
     require(forge.as_ref())?;
     Ok(forge)
 }
 
-/// gh 的失败输出 → `gh/代码`。
+/// 内置实现（照 gh 的写法回话）的失败输出 → `gh/代码`。
 pub(crate) fn classify_gh_failure(out: &CmdOut, pr_url: Option<&str>) -> String {
     let both = out.both();
     let low = both.to_lowercase();
@@ -1506,9 +1291,6 @@ pub(crate) fn pr_merge_with(ctx: &Ctx, cwd: &str, number: u32, method: &str, exp
     let dir = existing_dir(cwd)?;
     let info = repo_info(dir, ctx.env, &ctx.prefs, ctx.forges).ok_or("worktree/not_repo")?;
     let forge = usable(ctx, &info)?;
-    if forge.too_old() {
-        return Err("gh/too_old".into());
-    }
     if info.gh.needs_choice {
         return Err("gh/ambiguous_repo".into());
     }

@@ -192,7 +192,7 @@ impl Vault for SystemVault {
     }
 }
 
-/// 代码托管账号的一条凭据：条目名 `Meowo/<平台>/<主机>/<账号>`（GitLab 的刷新令牌另加 `#refresh`），
+/// 代码托管账号的一条凭据：条目名 `Meowo/<平台>/<主机>/<账号>`（旧版 GitLab 设备码登录另存的 `#refresh` 只在迁移时删），
 /// macOS 钥匙串的 account 是 `<账号>@<主机>`。
 pub(crate) struct KeyVault {
     pub(crate) target: String,

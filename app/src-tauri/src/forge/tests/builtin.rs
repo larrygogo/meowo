@@ -1,4 +1,4 @@
-//! 内置 gh（forge/builtin.rs）：对 forge 用到的每条 gh 子命令，输出与 gh 同形。GitHub 是假的（按地址与
+//! GitHub 的内置实现（forge/builtin.rs）：对 forge 用到的每个操作（内部照 gh 子命令组织），输出与 gh 同形。GitHub 是假的（按地址与
 //! GraphQL 查询回包），不打真网络。PR 字段的对照基准是 forge/fixtures 里 gh 2.96 实录的 `pr view --json`：
 //! 把实录反推成 GitHub GraphQL 的节点喂进去，内置实现吐出来的 JSON 必须与实录逐字段相等。
 
@@ -64,38 +64,6 @@ fn json_out(out: &CmdOut) -> Value {
     serde_json::from_str(&out.stdout).unwrap_or_else(|e| panic!("{e}: {}", out.stdout))
 }
 
-/// gh `pr view --json` 的实录 → GitHub GraphQL 的 PR 节点（内置实现查到的原样）。
-fn gql_node(gh: &Value, owner: &str, cross: bool) -> Value {
-    let mut node = gh.clone();
-    let contexts: Vec<Value> = gh["statusCheckRollup"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default()
-        .into_iter()
-        .map(|c| {
-            let blank = |v: &Value| if v.as_str().is_some_and(|s| s.is_empty() || s == "0001-01-01T00:00:00Z") { Value::Null } else { v.clone() };
-            if c["__typename"] == "StatusContext" {
-                json!({ "__typename": "StatusContext", "context": c["context"], "state": c["state"], "targetUrl": c["targetUrl"], "createdAt": c["startedAt"] })
-            } else {
-                json!({
-                    "__typename": "CheckRun", "name": c["name"], "status": c["status"], "conclusion": blank(&c["conclusion"]),
-                    "detailsUrl": c["detailsUrl"], "startedAt": blank(&c["startedAt"]), "completedAt": blank(&c["completedAt"]),
-                    "checkSuite": { "workflowRun": { "workflow": { "name": c["workflowName"] } } },
-                })
-            }
-        })
-        .collect();
-    let obj = node.as_object_mut().unwrap();
-    obj.remove("statusCheckRollup");
-    obj.insert("commits".into(), json!({ "nodes": [{ "commit": { "statusCheckRollup": { "contexts": { "nodes": contexts, "pageInfo": { "hasNextPage": false, "endCursor": null } } } } }] }));
-    obj.insert("meowoId".into(), json!("PR_kwDO"));
-    obj.insert("meowoState".into(), gh["state"].clone());
-    obj.insert("meowoCross".into(), json!(cross));
-    obj.insert("meowoOwner".into(), json!({ "login": owner }));
-    obj.insert("meowoHead".into(), gh["headRefName"].clone());
-    node
-}
-
 #[test]
 fn pr_view_按号_各实录样例逐字段同形() {
     let prefs = std::env::temp_dir().join("meowo-builtin-none.json");
@@ -149,9 +117,9 @@ fn pr_view_按分支_挑开着的_不认同名_fork_没有就是_no_pull_request
     let out = run(&api, &prefs, ".", &["pr", "view", "nope", "--repo", "larrygogo/meowo-pr-drill", "--json", "number"]);
     assert_eq!(out.code, Some(1));
     assert!(out.stderr.contains("no pull requests found for branch \"nope\""));
-    // forge 的 view_pr 照常认出「没有 PR」。
-    let gh = |dir: &str, args: &[&str]| Some(run(&api, &prefs, dir, args));
-    assert_eq!(view_pr(&gh, &Caches::default(), ".", Some("larrygogo/meowo-pr-drill"), Some("nope")), Ok(None));
+    // forge 的平台接口照常认出「没有 PR」。
+    let forge = forge_on(&api, Some(token()), Box::new(|_| {}));
+    assert_eq!(forge.find(".", Some("larrygogo/meowo-pr-drill"), &Target::Branch { qualified: "nope", branch: "nope", head_slug: None }), Ok(None));
 }
 
 #[test]
@@ -175,9 +143,11 @@ fn pr_view_按链接与不带目标_按目录认仓库和分支() {
     });
     let out = run(&api, &prefs, &s(&repo), &["pr", "view", "https://github.com/larrygogo/meowo-pr-drill/pull/12", "--json", "number,state,isDraft,url,title"]);
     assert_eq!(json_out(&out)["number"], 12);
-    // worktree 清理的查法：不带目标、不带 --repo。
-    let gh = |dir: &str, args: &[&str]| Some(run(&api, &prefs, dir, args));
-    match crate::worktree::gh_pr_lookup_with(&gh, &repo) {
+    // worktree 清理的查法：经平台接口按当前分支查（github.com 账号 = 这个假 HTTP 上的内置实现）。
+    let forges = ApiForges(&api);
+    let caches = Caches::default();
+    let ctx = Ctx { forges: &forges, caches: &caches, prefs: prefs.clone(), env: &[] };
+    match platform_pr_lookup_with(&ctx, &s(&repo)) {
         crate::worktree::PrLookup::Found { number, state, head_oid } => {
             assert_eq!((number, state.as_str(), head_oid.as_str()), (12, "OPEN", "1111111111111111111111111111111111111111"));
         }
@@ -267,9 +237,6 @@ fn pr_merge_三种方式钉住头提交_头变了与合并队列() {
     let out = run(&api, &prefs, ".", &["pr", "merge", "9", "--merge", "--match-head-commit", "queued", "--repo", "acme/repo"]);
     assert_eq!(out.code, Some(0));
     assert!(out.both().to_lowercase().contains("merge queue"), "forge 靠这句判断进了队列");
-    // gh 新旧探测。
-    let help = run(&api, &prefs, ".", &["pr", "merge", "--help"]);
-    assert!(help.both().contains("--match-head-commit"));
 }
 
 #[test]
@@ -349,37 +316,37 @@ fn 评论与评审写入() {
     assert_eq!(run(&api, &prefs, ".", &["pr", "review", "4", "--repo", "acme/repo", "--body", "lgtm", "--comment"]).code, Some(0));
 }
 
+/// 按分支找 PR（feat，仓库 acme/repo）。
+fn find_feat(forge: &dyn ForgeApi) -> Result<Option<PullRequestDto>, String> {
+    forge.find(".", Some("acme/repo"), &Target::Branch { qualified: "feat", branch: "feat", head_slug: None })
+}
+
+fn forge_on<'a>(api: &'a Api, token: Option<Token>, on_auth: Box<dyn Fn(bool) + Sync + 'a>) -> super::super::api::GhForge<'a> {
+    let state = if token.is_some() { GhState::Ok } else { GhState::Unauthed };
+    crate::forge::builtin::forge(Box::new(api), crate::forge::builtin::Endpoints::github_com(), token, state, std::env::temp_dir().join("meowo-builtin-none.json"), on_auth)
+}
+
 #[test]
-fn 登录状态_401_与没登录_forge_都认成没登录_401_通知重新登录() {
-    let prefs = std::env::temp_dir().join("meowo-builtin-none.json");
+fn 令牌被拒_401_forge_认成没登录_通知重新登录_没令牌不发请求() {
     let api = Api::new(|_, _, _| resp(401, json!({ "message": "Bad credentials" })));
     let flagged = AtomicUsize::new(0);
-    let flag = |ok: bool| {
+    let forge = forge_on(&api, Some(token()), Box::new(|ok| {
         if !ok {
             flagged.fetch_add(1, Ordering::SeqCst);
         }
-    };
-    let token = token();
-    let builtin = Builtin { http: &api, token: Some(&token), on_auth: &flag, prefs: &prefs, ends: crate::forge::builtin::Endpoints::github_com() };
-    let out = builtin.run(".", &["auth", "status", "--hostname", "github.com"]);
+    }));
+    let prefs = std::env::temp_dir().join("meowo-builtin-none.json");
+    let out = run(&api, &prefs, ".", &["pr", "view", "feat", "--repo", "acme/repo", "--json", "number"]);
     assert_eq!(out.code, Some(1));
     assert!(says_unauthed(&out));
     assert!(!out.both().contains("gho_TESTTOKEN"), "错误输出里不能有令牌");
-    assert_eq!(flagged.load(Ordering::SeqCst), 1);
-    let gh = |dir: &str, args: &[&str]| Some(builtin.run(dir, args));
-    let caches = Caches::default();
-    assert_eq!(caches.gh_state(&gh, true), GhState::Unauthed);
-    assert_eq!(view_pr(&gh, &caches, ".", Some("acme/repo"), Some("feat")), Err("gh/not_authed".into()));
-    // Meowo 模式没登录：不发请求，同样是没登录。
-    let none = Builtin { http: &api, token: None, on_auth: &flag, prefs: &prefs, ends: crate::forge::builtin::Endpoints::github_com() };
+    assert_eq!(find_feat(&forge), Err("gh/not_authed".into()));
+    assert_eq!(flagged.load(Ordering::SeqCst), 1, "401 报给账号，标「要重新登录」");
+    // 没有令牌：不发请求，同样是没登录。
     let calls = api.calls().len();
-    let out = none.run(".", &["auth", "status", "--hostname", "github.com"]);
-    assert!(out.code == Some(1) && says_unauthed(&out));
+    let none = forge_on(&api, None, Box::new(|_| {}));
+    assert_eq!(find_feat(&none), Err("gh/not_authed".into()));
     assert_eq!(api.calls().len(), calls);
-    // 登录有效。
-    let good = Api::new(|_, _, _| resp(200, json!({ "login": "octocat" })));
-    let gh = |dir: &str, args: &[&str]| Some(run(&good, &prefs, dir, args));
-    assert_eq!(Caches::default().gh_state(&gh, true), GhState::Ok);
 }
 
 #[test]
@@ -390,15 +357,31 @@ fn 断网_按查询失败处理() {
             Err("Connection refused".into())
         }
     }
-    let prefs = std::env::temp_dir().join("meowo-builtin-none.json");
-    let token = token();
-    let builtin = Builtin { http: &Down, token: Some(&token), on_auth: &|_| {}, prefs: &prefs, ends: crate::forge::builtin::Endpoints::github_com() };
-    let gh = |dir: &str, args: &[&str]| Some(builtin.run(dir, args));
-    let err = view_pr(&gh, &Caches::default(), ".", Some("acme/repo"), Some("feat")).unwrap_err();
+    let forge = crate::forge::builtin::forge(
+        Box::new(Down),
+        crate::forge::builtin::Endpoints::github_com(),
+        Some(token()),
+        GhState::Ok,
+        std::env::temp_dir().join("meowo-builtin-none.json"),
+        Box::new(|_| {}),
+    );
+    let err = find_feat(&forge).unwrap_err();
     assert!(err.starts_with("gh/failed") && err.contains("error connecting"), "{err}");
 }
 
-/// forge 的整条流程跑在内置实现上：「更改」面板状态 → 开 PR → 合并，与 gh 时同样的结果。
+/// github.com 账号 = 假 HTTP 上的内置实现（forge 全流程测试用）。
+struct ApiForges<'a>(&'a Api);
+
+impl Forges for ApiForges<'_> {
+    fn platform(&self, host: &str) -> Option<Platform> {
+        platform::public_platform(host)
+    }
+    fn open(&self, host: &str) -> Option<Box<dyn ForgeApi + '_>> {
+        (platform::host_name(host) == platform::GITHUB_COM).then(|| Box::new(forge_on(self.0, Some(token()), Box::new(|_| {}))) as Box<dyn ForgeApi>)
+    }
+}
+
+/// forge 的整条流程跑在内置实现上：「更改」面板状态 → 开 PR → 合并。
 #[test]
 fn forge_全流程_在内置实现上() {
     let sb = Sandbox::new("builtin-flow");
@@ -425,12 +408,11 @@ fn forge_全流程_在内置实现上() {
         let nodes = if created.load(Ordering::SeqCst) { json!([gql_node(&open, "larrygogo", false)]) } else { json!([]) };
         data(json!({ "repository": { "pullRequests": { "nodes": nodes } } }))
     });
-    let gh = |dir: &str, args: &[&str]| Some(run(&api, &prefs, dir, args));
+    let forges = ApiForges(&api);
     let caches = Caches::default();
-    let ctx = Ctx { forges: &crate::forge::platform::NO_ACCOUNTS, gh: &gh, caches: &caches, prefs: prefs.clone(), env: &[] };
+    let ctx = Ctx { forges: &forges, caches: &caches, prefs: prefs.clone(), env: &[] };
     let dto = forge_status_with(&ctx, &s(&repo), false).unwrap();
     assert_eq!(dto.gh, "ok");
-    assert!(!dto.gh_too_old);
     assert_eq!(dto.merge_methods, ["merge", "squash"]);
     assert!(dto.pr.is_none() && dto.pr_defaults.is_some());
     let pushed = |_: &str| Ok(PushResultDto { remote: "origin".into(), branch: "meowo/drill".into(), set_upstream: true, pushed: 1 });
@@ -438,20 +420,6 @@ fn forge_全流程_在内置实现上() {
     assert_eq!((pr.number, pr.state.as_str()), (12, "open"));
     let merged = pr_merge_with(&ctx, &s(&repo), 12, "squash", "1111111111111111111111111111111111111111").unwrap();
     assert!(merged.merged && !merged.queued);
-}
-
-#[test]
-fn 关闭时状态标为_off() {
-    let sb = Sandbox::new("builtin-off");
-    let repo = github_repo(&sb);
-    let gh = |_: &str, _: &[&str]| -> Option<CmdOut> { None };
-    let ctx = Ctx { forges: &crate::forge::platform::NO_ACCOUNTS, gh: &gh, caches: &Caches::default(), prefs: sb.root.join("forge.json"), env: &[] };
-    let mut dto = forge_status_with(&ctx, &s(&repo), false).unwrap();
-    label_connection(&mut dto, "off");
-    assert_eq!((dto.gh.as_str(), dto.connection.as_deref()), ("off", Some("off")));
-    let mut dto = forge_status_with(&ctx, &s(&repo), false).unwrap();
-    label_connection(&mut dto, "gh");
-    assert_eq!(dto.gh, "missing", "本机 gh 方式没装 gh：照旧是 missing");
 }
 
 /// 回归（独立审查 #2）：与 gh 的 findForRefs 对齐——查 30 条、开着的优先、head 写法完全相等、
@@ -495,182 +463,17 @@ fn pr_view_按分支_对齐_gh_查30条_默认分支不认已了结的() {
     assert_eq!(number(&["pr", "view", "main", "--repo", "acme/repo", "--json", "number"]), None, "默认分支上只有已了结的：没有 PR");
     assert_eq!(number(&["pr", "view", "main", "--repo", "acme/other", "--json", "number"]), Some(23), "默认分支上开着的照认");
 }
-/// connected_gh 的分派本身：关闭不发请求、本机 gh、Meowo（含没登录）、自动按主机分流（审查 #6、#9）。
+/// 登录、添加、退出账号共用的缓存作废：合并方式、PR、入队标记都清掉（审查 #9）。
 #[test]
-fn 分派_四种方式_自动按主机() {
-    use crate::github::Executor;
-    let gh_calls = AtomicUsize::new(0);
-    let builtin_calls = Mutex::new(Vec::<Option<String>>::new());
-    let gh = |_: &str, _: &[&str]| {
-        gh_calls.fetch_add(1, Ordering::SeqCst);
-        Some(CmdOut { code: Some(0), stdout: "gh".into(), ..Default::default() })
-    };
-    let builtin = |_: &str, _: &[&str], token: Option<&Token>| {
-        builtin_calls.lock().unwrap().push(token.map(|t| t.expose().to_string()));
-        CmdOut { code: Some(0), stdout: "builtin".into(), ..Default::default() }
-    };
-    let github_com = |dir: &str, _: &[&str]| dir == "github-repo";
-    let args = ["pr", "view", "--json", "number"];
-    let token = Token::new("gho_t").unwrap();
-    let run = |exec: Executor, dir: &str| dispatch_gh(exec, dir, &args, &gh, &builtin, &github_com).map(|o| o.stdout);
-    assert_eq!(run(Executor::Off, "github-repo"), None);
-    assert_eq!(gh_calls.load(Ordering::SeqCst), 0, "关闭：不发任何请求");
-    assert_eq!(run(Executor::Gh, "github-repo").as_deref(), Some("gh"));
-    assert_eq!(run(Executor::Meowo(None), "ghe-repo").as_deref(), Some("builtin"));
-    assert_eq!(run(Executor::Meowo(Some(token.clone())), "ghe-repo").as_deref(), Some("builtin"));
-    assert_eq!(run(Executor::Auto(token.clone()), "github-repo").as_deref(), Some("builtin"));
-    assert_eq!(run(Executor::Auto(token), "ghe-repo").as_deref(), Some("gh"), "自动：企业版仍走本机 gh");
-    assert_eq!(*builtin_calls.lock().unwrap(), [None, Some("gho_t".to_string()), Some("gho_t".to_string())]);
-    assert_eq!(gh_calls.load(Ordering::SeqCst), 2);
-}
-
-#[test]
-fn 认主机_链接_repo_参数与目录远端() {
-    let sb = Sandbox::new("builtin-host");
-    let github = github_repo(&sb);
-    let ghe = sb.repo("ghe");
-    sb.git(&ghe, &["remote", "add", "origin", "https://github.example.com/acme/app.git"]);
-    let none = sb.root.join("none");
-    std::fs::create_dir_all(&none).unwrap();
-    assert!(targets_github_com(".", &["pr", "view", "https://github.com/o/r/pull/1", "--json", "number"]));
-    assert!(!targets_github_com(".", &["pr", "view", "https://github.example.com/o/r/pull/1", "--json", "number"]));
-    assert!(targets_github_com(".", &["pr", "view", "feat", "--repo", "o/r", "--json", "number"]));
-    assert!(targets_github_com(".", &["auth", "status", "--hostname", "github.com"]));
-    assert!(targets_github_com(&s(&github), &["pr", "view", "--json", "number"]));
-    assert!(!targets_github_com(&s(&ghe), &["pr", "view", "--json", "number"]));
-    assert!(!targets_github_com(&s(&none), &["pr", "view", "--json", "number"]));
-}
-
-/// 切方式、登录、退出共用的缓存作废：登录状态、gh 新旧、合并方式、PR、入队标记都清掉（审查 #9）。
-#[test]
-fn 连接变了_forge_缓存全部作废() {
+fn 账号变了_forge_缓存全部作废() {
     let key = format!("meowo-test-invalidate-{}", std::process::id());
-    *lock(&CACHES.auth) = Some((Instant::now(), GhState::Ok));
-    *lock(&CACHES.too_old) = Some(false);
     lock(&CACHES.methods).insert(key.clone(), (Instant::now(), vec!["merge".into()]));
     lock(&CACHES.prs).insert(key.clone(), (Instant::now(), None));
     lock(&CACHES.queued).insert((key.clone(), 1, "sha".into()));
     invalidate_connection();
-    assert!(lock(&CACHES.auth).is_none());
-    assert!(lock(&CACHES.too_old).is_none());
     assert!(!lock(&CACHES.methods).contains_key(&key));
     assert!(!lock(&CACHES.prs).contains_key(&key));
     assert!(!lock(&CACHES.queued).iter().any(|(k, _, _)| *k == key));
-}
-
-// ═══ 真机核对（G7，只读）═══
-//
-// 默认 #[ignore]。运行（PowerShell，令牌只进环境变量，不落文件、不打印）：
-//   $env:GH_TOKEN = (gh auth token); cargo test -p meowo-app --lib live_对照_gh -- --ignored --nocapture; Remove-Item Env:GH_TOKEN
-// 用内置执行器（真 HTTP）与本机 gh 对同一条只读命令各跑一次，逐字段对比。不做任何写操作。
-
-/// 两份 JSON 的差异路径（gh 有而我们没有的字段、值不同的字段；我们多出的字段也列出）。
-fn json_diff(path: &str, gh: &Value, ours: &Value, out: &mut Vec<String>) {
-    match (gh, ours) {
-        (Value::Object(a), Value::Object(b)) => {
-            for (k, v) in a {
-                match b.get(k) {
-                    Some(w) => json_diff(&format!("{path}.{k}"), v, w, out),
-                    None => out.push(format!("{path}.{k}: 只有 gh 有")),
-                }
-            }
-            for k in b.keys().filter(|k| !a.contains_key(*k)) {
-                out.push(format!("{path}.{k}: 只有内置有"));
-            }
-        }
-        (Value::Array(a), Value::Array(b)) => {
-            if a.len() != b.len() {
-                out.push(format!("{path}: 条数 gh {} / 内置 {}", a.len(), b.len()));
-            }
-            for (i, (v, w)) in a.iter().zip(b).enumerate() {
-                json_diff(&format!("{path}[{i}]"), v, w, out);
-            }
-        }
-        (Value::String(a), Value::String(b)) if a != b => {
-            let at = a.chars().zip(b.chars()).take_while(|(x, y)| x == y).count();
-            let around = |s: &str| s.chars().skip(at.saturating_sub(20)).take(50).collect::<String>().escape_debug().to_string();
-            out.push(format!("{path}: 长度 gh {} / 内置 {}，第 {at} 字起不同：gh「{}」/ 内置「{}」", a.chars().count(), b.chars().count(), around(a), around(b)));
-        }
-        _ if gh != ours => out.push(format!("{path}: gh {} / 内置 {}", short(gh), short(ours))),
-        _ => {}
-    }
-}
-
-fn short(v: &Value) -> String {
-    let text = v.to_string();
-    if text.chars().count() > 60 { format!("{}…", text.chars().take(60).collect::<String>()) } else { text }
-}
-
-/// 断网偶发（本机到 GitHub 的 TLS 握手常超时）：两边各重试几次。
-fn with_retry(run: impl Fn() -> Option<CmdOut>) -> CmdOut {
-    let mut last = CmdOut::default();
-    for _ in 0..6 {
-        let Some(out) = run() else { panic!("gh 不在") };
-        let flaky = out.both().contains("error connecting") || out.both().contains("TLS handshake") || out.both().contains("EOF") || out.timed_out;
-        if !flaky {
-            return out;
-        }
-        last = out;
-    }
-    panic!("连不上 GitHub：{}", tail(&last.both(), 3))
-}
-
-#[test]
-#[ignore]
-fn live_对照_gh() {
-    let token = Token::new(&std::env::var("GH_TOKEN").expect("设 GH_TOKEN")).expect("令牌格式");
-    let prefs = std::env::temp_dir().join("meowo-live-none.json");
-    let builtin = Builtin { http: &crate::github::RealHttp, token: Some(&token), on_auth: &|_| {}, prefs: &prefs, ends: crate::forge::builtin::Endpoints::github_com() };
-    let dir = std::env::temp_dir();
-    let dir = dir.to_string_lossy();
-    let cli_pr = with_retry(|| real_gh(&dir, &["pr", "list", "--repo", "cli/cli", "--state", "merged", "--limit", "1", "--json", "number"]));
-    let cli_pr = serde_json::from_str::<Value>(&cli_pr.stdout).unwrap()[0]["number"].to_string();
-    let fields_review = format!("{PR_FIELDS},comments,reviews");
-    let cases: Vec<Vec<&str>> = vec![
-        vec!["pr", "view", "192", "--repo", "larrygogo/meowo", "--json", PR_FIELDS],
-        vec!["pr", "view", "192", "--repo", "larrygogo/meowo", "--json", &fields_review],
-        vec!["pr", "view", "fix/scm-switch-flash", "--repo", "larrygogo/meowo", "--json", "number,state"],
-        vec!["pr", "view", "meowo/no-such-branch-for-g7", "--repo", "larrygogo/meowo", "--json", "number,state"],
-        vec!["repo", "view", "larrygogo/meowo", "--json", "mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed"],
-        vec!["api", "repos/larrygogo/meowo/pulls/192/files", "--paginate", "--slurp"],
-        vec!["api", "user"],
-        vec!["pr", "view", &cli_pr, "--repo", "cli/cli", "--json", PR_FIELDS],
-        vec!["auth", "status", "--hostname", "github.com"],
-    ];
-    let mut report = Vec::new();
-    for args in &cases {
-        let gh = with_retry(|| real_gh(&dir, args));
-        let ours = with_retry(|| Some(builtin.run(&dir, args)));
-        let line = args.join(" ");
-        if gh.code != ours.code {
-            report.push(format!("{line}\n  退出码 gh {:?} / 内置 {:?}\n  gh: {}\n  内置: {}", gh.code, ours.code, tail(&gh.both(), 2), tail(&ours.both(), 2)));
-            continue;
-        }
-        if gh.code != Some(0) {
-            report.push(format!("{line}\n  都失败（退出码 {:?}）\n  gh: {}\n  内置: {}", gh.code, tail(&gh.stderr, 1), tail(&ours.stderr, 1)));
-            continue;
-        }
-        if args[0] == "auth" {
-            report.push(format!("{line}\n  都成功"));
-            continue;
-        }
-        let a: Value = serde_json::from_str(&gh.stdout).unwrap_or(Value::Null);
-        let b: Value = serde_json::from_str(&ours.stdout).unwrap_or(Value::Null);
-        let mut diffs = Vec::new();
-        json_diff("", &a, &b, &mut diffs);
-        let checks = a.get("statusCheckRollup").and_then(|c| c.as_array()).map(|c| c.len());
-        let parsed_same = args[0] == "pr" && args.iter().any(|x| x.contains("statusCheckRollup")) && parse_pr_full(&gh.stdout) == parse_pr_full(&ours.stdout);
-        report.push(format!(
-            "{line}\n  逐字段差异 {} 处{}{}{}",
-            diffs.len(),
-            checks.map(|n| format!("；检查 {n} 项")).unwrap_or_default(),
-            if parsed_same { "；forge 解析结果相同" } else { "" },
-            diffs.iter().take(25).map(|d| format!("\n    {d}")).collect::<String>()
-        ));
-    }
-    println!("\n===== G7 真机对照 =====\n{}", report.join("\n"));
-    // 令牌不能出现在报告里。
-    assert!(!report.join("").contains(token.expose()));
 }
 
 #[test]
@@ -693,111 +496,4 @@ fn pr_ready_草稿转可评审_已就绪不再发变更() {
     let out = run(&api, &prefs, ".", &["pr", "ready", "6", "--repo", "acme/repo"]);
     assert!(out.code == Some(0) && out.stdout.contains("already"));
     assert_eq!(api.calls().iter().filter(|c| query_of(&c.2).contains("markPullRequestReadyForReview")).count(), 1);
-}
-
-// ═══ 真机写路径（G7，leader 授权）═══
-//
-// 默认 #[ignore]。只对临时分支操作：G7_BASE / G7_HEAD 是事先从 main 推上去的临时分支，G7_HEAD_SHA 是 head
-// 的提交号。依次：建草稿 PR → 读回（与 gh 对照）→ 再建一次（已存在）→ 评论 → 转可评审 → 头提交不符的合并被拒
-// → 正确合并（squash 进临时 base）→ 读回已合并（与 gh 对照）。令牌只从 GH_TOKEN 读，不打印。
-#[test]
-#[ignore]
-fn live_写路径_g7() {
-    let token = Token::new(&std::env::var("GH_TOKEN").expect("设 GH_TOKEN")).expect("令牌格式");
-    let base = std::env::var("G7_BASE").expect("G7_BASE");
-    let head = std::env::var("G7_HEAD").expect("G7_HEAD");
-    let sha = std::env::var("G7_HEAD_SHA").expect("G7_HEAD_SHA");
-    assert!(base.starts_with("meowo-g7-base-") && head.starts_with("meowo-g7-head-"), "只许对临时分支操作");
-    let slug = "larrygogo/meowo";
-    let prefs = std::env::temp_dir().join("meowo-live-none.json");
-    let builtin = Builtin { http: &crate::github::RealHttp, token: Some(&token), on_auth: &|_| {}, prefs: &prefs, ends: crate::forge::builtin::Endpoints::github_com() };
-    let dir = std::env::temp_dir();
-    let dir = dir.to_string_lossy();
-    let ours = |args: &[&str]| with_retry(|| Some(builtin.run(&dir, args)));
-    let gh = |args: &[&str]| with_retry(|| real_gh(&dir, args));
-    let show = |step: &str, out: &CmdOut| println!("[{step}] 退出码 {:?}\n  stdout: {}\n  stderr: {}", out.code, tail(&out.stdout, 3), tail(&out.stderr, 3));
-    let compare = |step: &str, number: &str| {
-        let a = gh(&["pr", "view", number, "--repo", slug, "--json", PR_FIELDS]);
-        let b = ours(&["pr", "view", number, "--repo", slug, "--json", PR_FIELDS]);
-        let mut diffs = Vec::new();
-        json_diff("", &serde_json::from_str(&a.stdout).unwrap_or(Value::Null), &serde_json::from_str(&b.stdout).unwrap_or(Value::Null), &mut diffs);
-        println!("[{step}] pr view 与 gh 逐字段差异 {} 处{}", diffs.len(), diffs.iter().take(10).map(|d| format!("\n    {d}")).collect::<String>());
-        parse_pr_full(&b.stdout).expect("forge 能解析")
-    };
-
-    let flaky = |out: &CmdOut| out.both().contains("error connecting") || out.both().contains("EOF") || out.both().contains("TLS") || out.timed_out;
-    // 写操作只发一次；传输失败（回包可能丢了）先读回确认有没有生效，确认没生效才重发。
-    let write = |step: &str, args: &[&str], took_effect: &dyn Fn() -> bool| -> CmdOut {
-        for attempt in 0..6 {
-            let out = builtin.run(&dir, args);
-            if !flaky(&out) {
-                show(step, &out);
-                return out;
-            }
-            println!("[{step}] 第 {} 次传输失败：{}", attempt + 1, tail(&out.both(), 1));
-            if took_effect() {
-                println!("[{step}] 读回确认已生效（回包丢失）");
-                return CmdOut { code: Some(0), stdout: "（回包丢失，读回确认已生效）".into(), ..Default::default() };
-            }
-        }
-        panic!("[{step}] 一直连不上");
-    };
-    let find_pr = || {
-        let out = ours(&["pr", "view", &head, "--repo", slug, "--json", "number,url"]);
-        (out.code == Some(0)).then(|| serde_json::from_str::<Value>(&out.stdout).unwrap())
-    };
-
-    let title = format!("Meowo G7 自测，可忽略（{head}）");
-    let create = ["pr", "create", "--title", &title, "--body", "Meowo 内置 gh 写路径验证（G7），由临时分支发起，验证后合进临时分支并删除。", "--base", &base, "--head", &head, "--draft", "--repo", slug];
-    let out = write("pr create --draft", &create, &|| find_pr().is_some());
-    assert_eq!(out.code, Some(0));
-    let found = find_pr().expect("建好的 PR 读得回");
-    let url = found["url"].as_str().unwrap().to_string();
-    let number = found["number"].to_string();
-    println!("PR {url}");
-    if out.stdout.starts_with("https://") {
-        assert_eq!(out.stdout.trim(), url, "pr create 输出的就是 PR 链接（同 gh）");
-    }
-
-    let pr = compare("读回草稿", &number);
-    assert_eq!((pr.state.as_str(), pr.head_oid.as_deref()), ("draft", Some(sha.as_str())));
-
-    let again = write("再建一次（已存在）", &create, &|| false);
-    assert_eq!(again.code, Some(1));
-    assert!(again.both().contains("already exists") && again.both().contains(&url), "forge 要从这里抠出链接");
-    println!("  forge 归类：gh/pr_exists 抠出的链接 = {}", again.both().lines().map(str::trim).find(|l| l.starts_with("https://")).unwrap_or_default());
-
-    let marker = "Meowo G7 自测评论（内置执行器）";
-    let has_comment = || ours(&["pr", "view", &number, "--repo", slug, "--json", "comments"]).stdout.contains(marker);
-    let out = write("pr comment", &["pr", "comment", &number, "--repo", slug, "--body", marker], &has_comment);
-    assert_eq!(out.code, Some(0));
-    assert!(has_comment(), "评论读得回");
-    let gh_comments = gh(&["pr", "view", &number, "--repo", slug, "--json", "comments"]);
-    assert!(gh_comments.stdout.contains(marker), "gh 也看得到这条评论");
-
-    let is_ready = || ours(&["pr", "view", &number, "--repo", slug, "--json", "isDraft"]).stdout.contains("\"isDraft\":false");
-    let out = write("pr ready", &["pr", "ready", &number, "--repo", slug], &is_ready);
-    assert_eq!(out.code, Some(0));
-    assert!(is_ready());
-
-    let wrong = "0000000000000000000000000000000000000000";
-    let out = write("头提交不符的合并", &["pr", "merge", &number, "--squash", "--match-head-commit", wrong, "--repo", slug], &|| false);
-    assert_eq!(out.code, Some(1));
-    println!("  forge 归类：{}", classify_gh_failure(&out, None));
-
-    let is_merged = || ours(&["pr", "view", &number, "--repo", slug, "--json", "state"]).stdout.contains("MERGED");
-    // GitHub 刚转可评审时可能还在算能不能合：「不可合并」时等一会儿再试。
-    let mut merged = false;
-    for _ in 0..10 {
-        let out = write("pr merge --squash", &["pr", "merge", &number, "--squash", "--match-head-commit", &sha, "--repo", slug], &is_merged);
-        if out.code == Some(0) {
-            merged = true;
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_secs(3));
-    }
-    assert!(merged, "合并没成功");
-    std::thread::sleep(std::time::Duration::from_secs(2));
-    let pr = compare("读回已合并", &number);
-    assert_eq!(pr.state, "merged");    println!("G7_PR_NUMBER={number}");
 }

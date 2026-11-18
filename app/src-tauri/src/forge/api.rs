@@ -1,9 +1,8 @@
 //! 统一的 PR / MR 接口：forge 上层（「更改」面板、侧栏角标、标题栏、评审、worktree 清理）只经它说话，
 //! 各平台各自实现。
 //!
-//! - GitHub：[`GhForge`] 把每个操作翻成 gh 子命令，交给注入的执行器——本机 gh，或内置实现（forge/builtin.rs，
-//!   直接调 REST / GraphQL）。github.com 走设置里的「GitHub 连接方式」；GitHub 企业版用账号令牌驱动内置实现，
-//!   基址换成 `https://<主机>/api/v3` 与 `/api/graphql`（forge/ghe.rs）。
+//! - GitHub：[`GhForge`] 交给内置实现（forge/builtin.rs）直接调 REST / GraphQL；github.com 用设备码登录或令牌的
+//!   账号，企业版基址换成 `https://<主机>/api/v3` 与 `/api/graphql`（forge/ghe.rs）。不调用本机 gh 命令行。
 //! - GitLab / Gitea（Forgejo、Codeberg）/ Bitbucket Cloud：forge/gitlab.rs、gitea.rs、bitbucket.rs，直接调
 //!   各自的 REST，HTTP 可注入（forge/http.rs）。
 //!
@@ -17,7 +16,7 @@
 //! 的判定（检查、冲突、头提交）在 forge 上层只写一遍。
 
 use super::platform::Platform;
-use super::{classify_gh_failure, parse_pr_full, says_unauthed, tail, Caches, CmdOut, GhState};
+use super::{classify_gh_failure, parse_pr_full, says_unauthed, tail, CmdOut, GhState};
 use meowo_protocol::ipc::{PrReviewDto, PullRequestDto};
 
 /// 按什么找 PR。
@@ -59,15 +58,11 @@ pub(crate) struct NewPr<'a> {
 }
 
 /// 一个平台（一台主机 + 一个身份）上的 PR / MR 操作。`slug` 是仓库路径（`owner/repo`、GitLab 可带子组）；
-/// github.com 认不出仓库（企业版、ssh 别名）时为 None，交给 gh 按目录自己认。
+/// 内置实现没给仓库时（只有测试会这样）按目录认。
 pub(crate) trait ForgeApi {
     fn platform(&self) -> Platform;
-    /// 能不能用：Ok / Unauthed（没登录、令牌失效）/ Missing（没装 gh）。refresh = 跳过缓存重查。
+    /// 能不能用：Ok / Unauthed（令牌失效，要重新登录）。refresh：保留给要重查的平台（现在都看账号记录，不联网）。
     fn state(&self, refresh: bool) -> GhState;
-    /// 合并没法钉住头提交（gh 太旧）。
-    fn too_old(&self) -> bool {
-        false
-    }
     /// 仓库允许的合并方式（`merge` / `squash` / `rebase`，按网页顺序）。Err = 查不了。
     fn merge_methods(&self, dir: &str, slug: &str) -> Result<Vec<String>, String>;
     /// 找 PR（含检查）。Ok(None) = 没有。
@@ -89,39 +84,24 @@ pub(crate) trait ForgeApi {
     fn viewer(&self, dir: &str) -> Option<String>;
 }
 
-/// gh 执行器（本机 gh、内置实现、企业版的内置实现）。
+/// 内置实现的执行入口：(目录, gh 式的子命令参数) → gh 式的输出。只是 forge/builtin.rs 内部的调用约定（照 gh 的
+/// 子命令与 JSON 字段组织，便于逐字段对照实录），不会启动任何外部程序；每个子命令都翻成 GitHub 的 REST / GraphQL 请求。
 pub(crate) type GhRun<'a> = dyn Fn(&str, &[&str]) -> Option<CmdOut> + Sync + 'a;
 
-/// GitHub：每个操作翻成 gh 子命令交给执行器（本机 gh 或内置实现）。参数形状与改版前逐字相同，
-/// 现有的假 gh 测试照样适用。
+/// GitHub（github.com 与企业版）：内置实现（forge/builtin.rs）直接调 GitHub 的 REST / GraphQL，令牌来自账号。
+/// Meowo 不再调用本机 gh 命令行（leader 2026-11-18「取消gh」）。
 pub(crate) struct GhForge<'a> {
     pub(crate) gh: Box<GhRun<'a>>,
-    pub(crate) auth: GhAuth<'a>,
-}
-
-/// GitHub 的登录状态从哪来。
-pub(crate) enum GhAuth<'a> {
-    /// github.com：`gh auth status`（本机 gh 或内置实现），5 分钟缓存，与 gh 太旧、合并方式同一份缓存。
-    Com(&'a Caches),
-    /// 企业版账号：账号记录说了算（令牌失效时内置实现回报，记录标「要重新登录」）。
-    Fixed(GhState),
+    /// 账号状态：Ok，或令牌失效要重新登录（Unauthed）。
+    pub(crate) state: GhState,
 }
 
 impl GhForge<'_> {
     fn run(&self, dir: &str, args: &[&str]) -> Result<CmdOut, String> {
-        (self.gh)(dir, args).ok_or_else(|| "gh/not_installed".to_string())
-    }
-
-    fn mark_unauthed(&self) {
-        if let GhAuth::Com(caches) = &self.auth {
-            caches.mark_unauthed();
-        }
+        (self.gh)(dir, args).ok_or_else(|| "gh/failed: no executor".to_string())
     }
 
     fn fail(&self, out: &CmdOut, pr_url: Option<&str>) -> String {
-        if says_unauthed(out) {
-            self.mark_unauthed();
-        }
         classify_gh_failure(out, pr_url)
     }
 
@@ -140,7 +120,6 @@ impl GhForge<'_> {
             return Ok(None);
         }
         if says_unauthed(&out) {
-            self.mark_unauthed();
             return Err("gh/not_authed".into());
         }
         Err(format!("gh/failed: {}", tail(&out.both(), 4)))
@@ -152,19 +131,8 @@ impl ForgeApi for GhForge<'_> {
         Platform::Github
     }
 
-    fn state(&self, refresh: bool) -> GhState {
-        match &self.auth {
-            GhAuth::Com(caches) => caches.gh_state(&*self.gh, refresh),
-            GhAuth::Fixed(state) => *state,
-        }
-    }
-
-    fn too_old(&self) -> bool {
-        match &self.auth {
-            GhAuth::Com(caches) => caches.gh_too_old(&*self.gh),
-            // 企业版走内置实现，合并总能钉住头提交。
-            GhAuth::Fixed(_) => false,
-        }
+    fn state(&self, _refresh: bool) -> GhState {
+        self.state
     }
 
     fn merge_methods(&self, dir: &str, slug: &str) -> Result<Vec<String>, String> {
@@ -174,7 +142,7 @@ impl ForgeApi for GhForge<'_> {
         )?;
         if !out.ok() {
             if says_unauthed(&out) {
-                self.mark_unauthed();
+                return Err("gh/not_authed".into());
             }
             return Err(format!("gh/failed: {}", tail(&out.both(), 4)));
         }
